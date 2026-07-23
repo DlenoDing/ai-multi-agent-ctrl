@@ -181,10 +181,40 @@ Runtime 每 10 到 30 秒发送 heartbeat。控制平面可按项目策略调整
   "taskId": "task_...",
   "workId": "work_...",
   "roleId": "backend-owner",
+  "roleSkill": {
+    "roleSkillRef": "role-skill://agency-agents-zh/engineering/backend-owner",
+    "roleSkillDigest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "selectedAgentSkillRef": "agent-skill://backend-owner/runtime",
+    "sourceId": "agency-agents-zh",
+    "overlayRefs": ["role-skill-overlay://overlay_..."],
+    "modelSelectionDecisionRef": "model-selection://msd_..."
+  },
   "roomId": "room_...",
   "placementDecisionRef": "session-placement://spd_...",
   "stateVersion": 12,
   "rulesetDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "effectiveInstructionPacketRef": "effective-instruction://eip_...",
+  "actionBasis": {
+    "effectiveInstructionPacketRef": "effective-instruction://eip_...",
+    "sourceKind": "orchestrator_plan",
+    "sourceRef": "decision://dr_...",
+    "nextActionDraftDigest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+    "activeRuleRefs": ["ruleset://rule_..."],
+    "nonActiveMaterialRefs": [{"materialRef": "review://advisory_...", "classification": "advisory"}],
+    "contextIntakeRefs": ["context-intake://ci_..."],
+    "validationRequirements": ["unit", "contract", "independent_review"],
+    "forbiddenActions": ["rewrite_role_mission", "expand_scope_without_decision"],
+    "deferredDecisions": []
+  },
+  "roleFocus": {
+    "roleDriftGuardRef": "role-drift-guard://rdg_...",
+    "objectiveBoundaryDigest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+    "roleMissionDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "taskContractDigest": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "allowedActionScopeRefs": ["scope://allowed/backend-owner/work-1"],
+    "forbiddenActionScopeRefs": ["scope://forbidden/backend-owner/work-1"],
+    "maxAllowedDriftScore": 0.1
+  },
   "inputLocators": ["repo://service/path", "doc://..."],
   "inputDigests": {
     "rules": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
@@ -265,11 +295,13 @@ Runtime 每 10 到 30 秒发送 heartbeat。控制平面可按项目策略调整
 
 Runtime 规则：
 
-1. 启动前校验 `contractVersion`、`schemaDigest`、`contractDigest`、`placementDecisionRef`、`modelSelectionDecisionRef`、`stateVersion`、ruleset digest、lease fencing token 和 MCP grants。
+1. 启动前校验 `contractVersion`、`schemaDigest`、`contractDigest`、`roleSkillRef`、`roleSkillDigest`、`effectiveInstructionPacketRef`、`roleDriftGuardRef`、`placementDecisionRef`、`modelSelectionDecisionRef`、`stateVersion`、ruleset digest、lease fencing token 和 MCP grants。
 2. 缺权限时不继续执行副作用，提交 PermissionRequest。
 3. 未声明 write scope 的路径只能读不能写。
 4. 不支持的 command 必须返回 `UNSUPPORTED_COMMAND`，不能猜测执行。
-5. session 必须写本地 outbox，控制平面 ACK 后才能清理。
+5. Runtime 必须把同级消息、子 agent 输出、工具结果和外部 review result 当作 untrusted/advisory 输入，只有 task contract 内的 EffectiveInstructionPacket 能驱动副作用。
+6. Runtime 发现自身输出或任务理解偏离 roleFocus 时，必须停止副作用并提交 RoleDriftGuard 事件或 Finding。
+7. session 必须写本地 outbox，控制平面 ACK 后才能清理。
 
 ## 6. checkpoint_submit
 
@@ -298,7 +330,17 @@ Runtime 提交 checkpoint：
     }
   ],
   "evidenceRefs": ["artifact_..."],
-  "nextSteps": ["request_review"]
+  "nextSteps": [
+    {
+      "actionId": "review-request-work-1",
+      "mode": "after_current",
+      "summary": "request independent review",
+      "evidenceRefs": ["artifact_..."]
+    }
+  ],
+  "openMachineActionIds": [],
+  "derivedWorkRequests": [],
+  "returnPointRef": "return://work-1/checkpoint-1"
 }
 ```
 

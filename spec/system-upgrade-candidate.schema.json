@@ -159,6 +159,10 @@
       "type": "string",
       "minLength": 1
     },
+    "externalUpgradeImportRef": {
+      "type": "string",
+      "minLength": 1
+    },
     "auditRef": {
       "type": "string",
       "minLength": 1
@@ -171,5 +175,38 @@
       "type": "string",
       "format": "date-time"
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "exported_for_external_maintenance",
+              "external_maintenance_required",
+              "imported_after_external_upgrade",
+              "closed"
+            ]
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["externalUpgradePackageRef"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": ["imported_after_external_upgrade", "closed"]
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["externalUpgradeImportRef"]
+      }
+    }
+  ]
 }

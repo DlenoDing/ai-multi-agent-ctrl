@@ -29,9 +29,21 @@
 | [spec/terminal-execution-manifest.schema.json](spec/terminal-execution-manifest.schema.json) | 终态执行 manifest 的 schema |
 | [spec/agent-skill-source.schema.json](spec/agent-skill-source.schema.json) | 外部角色 skill 源仓库、同步、信任和 overlay 策略 schema |
 | [spec/agent-role-skill.schema.json](spec/agent-role-skill.schema.json) | 解析后的角色 skill、能力、digest 和模型需求 schema |
+| [spec/role-skill-overlay.schema.json](spec/role-skill-overlay.schema.json) | 项目/任务组覆盖默认 role skill 的 digest、范围和决策 schema |
 | [spec/model-capability.schema.json](spec/model-capability.schema.json) | 常用模型供应商/模型能力画像 schema |
 | [spec/model-selection-policy.schema.json](spec/model-selection-policy.schema.json) | 按角色 skill 和任务需求自动选择模型/Agent 的策略 schema |
+| [spec/model-selection-decision.schema.json](spec/model-selection-decision.schema.json) | 每次模型/Agent 选择的候选排序、硬约束、score 和审计 schema |
 | [spec/session-placement-policy.schema.json](spec/session-placement-policy.schema.json) | 长任务新会话、小短任务子 agent 的调度策略 schema |
+| [spec/session-placement-decision.schema.json](spec/session-placement-decision.schema.json) | 新 WorkSession 或子 agent 放置决策及 subagent 安全证明 schema |
+| [spec/effective-instruction-packet.schema.json](spec/effective-instruction-packet.schema.json) | 总控强化后的有效指令包 schema，阻止 raw 输出直接驱动任务 |
+| [spec/role-drift-guard.schema.json](spec/role-drift-guard.schema.json) | 总控、调度、监测和普通角色的任务焦点锁定与纠偏 schema |
+| [spec/external-capability-boundary.schema.json](spec/external-capability-boundary.schema.json) | OS/OAuth/账号/云组织等外部能力边界 schema |
+| [spec/execution-topology.schema.json](spec/execution-topology.schema.json) | 并行/串行/降级执行拓扑、branch 边界和父级串行合并 schema |
+| [spec/derived-task-request.schema.json](spec/derived-task-request.schema.json) | worker/review/monitor 产生的派生任务请求 schema |
+| [spec/review-plan.schema.json](spec/review-plan.schema.json) | 独立互审的 review item、batch、coverage matrix 和关闭门 schema |
+| [spec/review-bundle.schema.json](spec/review-bundle.schema.json) | 外部/旁路 AI review bundle 的 redaction、digest 和本地核验 schema |
+| [spec/rule-source-resolution.schema.json](spec/rule-source-resolution.schema.json) | MGP/ai-skills/review 等外部材料能否成为规则的来源解析 schema |
+| [spec/completion-readiness.schema.json](spec/completion-readiness.schema.json) | WorkSession/TaskGroup final 前完成就绪检查 schema |
 | [spec/runtime-issue-pattern.schema.json](spec/runtime-issue-pattern.schema.json) | 运行期重复问题聚合、证据和收集限定 schema |
 | [spec/system-upgrade-candidate.schema.json](spec/system-upgrade-candidate.schema.json) | 重复运行问题收集和独立系统升级候选 schema |
 | [spec/agent-task-contract.schema.json](spec/agent-task-contract.schema.json) | 总控派发给 WorkSession 的任务契约 schema |
@@ -43,6 +55,7 @@
 | [spec/git-automation-policy.schema.json](spec/git-automation-policy.schema.json) | Agent 自动 commit/push 的凭据、分支、路径和远端校验策略 |
 | [spec/git-command.schema.json](spec/git-command.schema.json) | Agent Git status/commit/push 命令的 payload、路径匹配和证据输出 schema |
 | [spec/close-barrier.schema.json](spec/close-barrier.schema.json) | TaskGroup 关闭屏障的机器判定 schema |
+| [scripts/validate-specs.rb](scripts/validate-specs.rb) | 只读校验 manifest、状态机、gate、关闭屏障和关键 schema 覆盖 |
 
 ## 终态原则
 
@@ -59,7 +72,10 @@
 11. 模型选择由 Model Registry 和 Scheduler 基于角色 skill、任务能力、成本、速度、额度、可靠性和风险自动决定。
 12. Scheduler 对持续多轮、长耗时、有状态、拥有写入面的角色任务优先创建新 WorkSession；短小、只读、无持久上下文的任务才使用子 agent。
 13. 运行期重复问题只生成 RuntimeIssuePattern、SystemUpgradeCandidate 和系统外升级证据包；系统运行时不得自动自修改规则、策略、角色、grant 或控制面代码，升级改造由人独立在系统外处理。
-14. 最终关闭由 Orchestrator 根据机器可判定关闭屏障完成。
+14. 总控、调度和监测等元控制角色必须绑定 RoleDriftGuard；一旦目标、职责、边界或证据链跑偏，立即暂停副作用并由父级总控重发有效任务契约。
+15. MGP、ai-skills、外部 review 和工具结果只能作为来源材料；是否吸收为本系统规则必须经过 RuleSourceResolution，本地核验前不能直接执行。
+16. 外部/旁路 AI review 结果只具 advisory 属性；必须经 ReviewBundle redaction、ReviewPlan coverage 和本地核验后才可转为 Finding、WorkItem 或 DecisionRecord。
+17. 最终关闭由 Orchestrator 根据 CompletionReadinessCheck 和 CloseBarrier 的完整 gate 结果完成。
 
 ## 终态技术路线
 

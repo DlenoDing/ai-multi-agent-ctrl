@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/review-bundle.schema.json",
+  "title": "ReviewBundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "reviewBundleId",
+    "projectId",
+    "taskGroupId",
+    "reviewPlanId",
+    "reviewBatchId",
+    "status",
+    "scopeRoot",
+    "includedLocators",
+    "forbiddenPatterns",
+    "redaction",
+    "payloadDigest",
+    "providerPolicy",
+    "auditRef",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "review-bundle/v1"},
+    "reviewBundleId": {"type": "string", "minLength": 1},
+    "projectId": {"type": "string", "minLength": 1},
+    "taskGroupId": {"type": "string", "minLength": 1},
+    "reviewPlanId": {"type": "string", "minLength": 1},
+    "reviewBatchId": {"type": "string", "minLength": 1},
+    "status": {"type": "string", "enum": ["assembling", "redacted", "submitted", "consumed", "blocked", "rejected"]},
+    "scopeRoot": {"type": "string", "minLength": 1},
+    "includedLocators": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "forbiddenPatterns": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["redacted", "secretScanPassed", "pathScopeVerified", "largeFilesExcluded", "providerAuthExcluded"],
+      "properties": {
+        "redacted": {"type": "boolean", "const": true},
+        "secretScanPassed": {"type": "boolean", "const": true},
+        "pathScopeVerified": {"type": "boolean", "const": true},
+        "largeFilesExcluded": {"type": "boolean", "const": true},
+        "providerAuthExcluded": {"type": "boolean", "const": true}
+      }
+    },
+    "payloadDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
+    "providerPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resultIsAdvisory", "requiresLocalVerification", "storesProviderStateOutsideProject"],
+      "properties": {
+        "resultIsAdvisory": {"type": "boolean", "const": true},
+        "requiresLocalVerification": {"type": "boolean", "const": true},
+        "storesProviderStateOutsideProject": {"type": "boolean", "const": true}
+      }
+    },
+    "providerGrantRef": {"type": "string"},
+    "advisoryResultRef": {"type": "string"},
+    "localVerificationEvidenceRefs": {"type": "array", "items": {"type": "string"}},
+    "auditRef": {"type": "string", "minLength": 1},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "consumed"}},
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["advisoryResultRef", "localVerificationEvidenceRefs"],
+        "properties": {
+          "localVerificationEvidenceRefs": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"status": {"const": "submitted"}},
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["providerGrantRef"]
+      }
+    }
+  ]
+}

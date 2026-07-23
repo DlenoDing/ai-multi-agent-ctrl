@@ -13,7 +13,7 @@
     "scoringWeights",
     "hardConstraints",
     "fallbackPolicy",
-    "decisionOutput"
+    "decisionSchemaRef"
   ],
   "properties": {
     "schemaVersion": {
@@ -110,18 +110,9 @@
         }
       }
     },
-    "decisionOutput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["modelSelectionDecisionRef", "selectedModelId", "selectedAgentSkillRef", "scoreBreakdownRef", "policyDecisionRef", "auditRef"],
-      "properties": {
-        "modelSelectionDecisionRef": {"type": "string"},
-        "selectedModelId": {"type": "string"},
-        "selectedAgentSkillRef": {"type": "string"},
-        "scoreBreakdownRef": {"type": "string"},
-        "policyDecisionRef": {"type": "string"},
-        "auditRef": {"type": "string"}
-      }
+    "decisionSchemaRef": {
+      "type": "string",
+      "const": "spec/model-selection-decision.schema.json"
     }
   },
   "$defs": {

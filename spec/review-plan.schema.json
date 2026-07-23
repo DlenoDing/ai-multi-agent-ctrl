@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/review-plan.schema.json",
+  "title": "ReviewPlan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "reviewPlanId",
+    "projectId",
+    "taskGroupId",
+    "sourceRef",
+    "status",
+    "objective",
+    "trigger",
+    "batchingDecision",
+    "reviewItems",
+    "batches",
+    "coverageMatrix",
+    "closureGate",
+    "history",
+    "auditRef",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "review-plan/v1"},
+    "reviewPlanId": {"type": "string", "minLength": 1},
+    "projectId": {"type": "string", "minLength": 1},
+    "taskGroupId": {"type": "string", "minLength": 1},
+    "sourceRef": {"type": "string", "minLength": 1},
+    "status": {"type": "string", "enum": ["draft", "ready", "in_progress", "blocked", "coverage_satisfied", "closed", "rejected", "superseded"]},
+    "objective": {"type": "string", "minLength": 1},
+    "trigger": {"type": "string", "enum": ["multi_issue_review", "multi_surface_review", "high_risk_surface", "reviewer_expansion", "user_requested_mutual_review", "close_gate"]},
+    "batchingDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "reason"],
+      "properties": {
+        "strategy": {"type": "string", "enum": ["single_packet", "by_topic", "by_risk", "by_file_surface", "hybrid"]},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "reviewItems": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["itemId", "source", "summary", "required", "riskLevel", "topic", "fileSurfaces", "authorityFiles", "reviewInvariants", "coveredByBatchIds", "status"],
+        "properties": {
+          "itemId": {"type": "string", "minLength": 1},
+          "source": {"type": "string", "enum": ["local_review", "validation", "changed_surface", "reviewer_feedback", "user_request", "system_gate"]},
+          "summary": {"type": "string", "minLength": 1},
+          "required": {"type": "boolean"},
+          "riskLevel": {"type": "string", "enum": ["S0", "S1", "S2", "S3"]},
+          "topic": {"type": "string", "minLength": 1},
+          "fileSurfaces": {"type": "array", "items": {"type": "string"}},
+          "authorityFiles": {"type": "array", "items": {"type": "string"}},
+          "reviewInvariants": {"type": "array", "items": {"type": "string"}},
+          "coveredByBatchIds": {"type": "array", "items": {"type": "string"}},
+          "status": {"type": "string", "enum": ["open", "covered", "deferred", "not_applicable"]}
+        }
+      }
+    },
+    "batches": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["batchId", "status", "focus", "coveredItemIds", "mustCompleteBeforeClose", "sufficiencyRequired", "expansionTriggers"],
+        "properties": {
+          "batchId": {"type": "string", "minLength": 1},
+          "status": {"type": "string", "enum": ["planned", "packet_ready", "submitted", "consumed", "blocked", "skipped"]},
+          "focus": {"type": "string", "minLength": 1},
+          "coveredItemIds": {"type": "array", "items": {"type": "string"}},
+          "reviewBundleRef": {"type": "string"},
+          "dependsOn": {"type": "array", "items": {"type": "string"}},
+          "mustCompleteBeforeClose": {"type": "boolean"},
+          "sufficiencyRequired": {"type": "boolean"},
+          "expansionTriggers": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "coverageMatrix": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}},
+    "closureGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredItemsCovered", "requiredBatchesConsumed", "packetSufficiencyPassed", "noUnresolvedMustFix", "noUnprocessedExpansion"],
+      "properties": {
+        "requiredItemsCovered": {"type": "boolean"},
+        "requiredBatchesConsumed": {"type": "boolean"},
+        "packetSufficiencyPassed": {"type": "boolean"},
+        "noUnresolvedMustFix": {"type": "boolean"},
+        "noUnprocessedExpansion": {"type": "boolean"}
+      }
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["eventRef", "at", "digest"],
+        "properties": {
+          "eventRef": {"type": "string", "minLength": 1},
+          "at": {"type": "string", "format": "date-time"},
+          "digest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"}
+        }
+      }
+    },
+    "auditRef": {"type": "string", "minLength": 1},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "closed"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "closureGate": {
+            "properties": {
+              "requiredItemsCovered": {"const": true},
+              "requiredBatchesConsumed": {"const": true},
+              "packetSufficiencyPassed": {"const": true},
+              "noUnresolvedMustFix": {"const": true},
+              "noUnprocessedExpansion": {"const": true}
+            }
+          }
+        }
+      }
+    }
+  ]
+}

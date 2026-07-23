@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/derived-task-request.schema.json",
+  "title": "DerivedTaskRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "projectId",
+    "taskGroupId",
+    "sourceRef",
+    "reason",
+    "proposedInsertionMode",
+    "topologyEffect",
+    "summary",
+    "evidenceRef",
+    "actionBasisRef",
+    "status",
+    "auditRef",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "derived-task-request/v1"},
+    "requestId": {"type": "string", "minLength": 1},
+    "projectId": {"type": "string", "minLength": 1},
+    "taskGroupId": {"type": "string", "minLength": 1},
+    "sourceRef": {"type": "string", "minLength": 1},
+    "sourceBranch": {"type": "string"},
+    "sourceGroup": {"type": "string"},
+    "reason": {
+      "type": "string",
+      "enum": ["user_guidance", "test_failure", "review_expand", "repair_needed", "post_fix_validation", "spec_drift", "permission_blocker", "topology_replan"]
+    },
+    "proposedInsertionMode": {
+      "type": "string",
+      "enum": ["current_absorb", "preempt_current", "after_current", "scheduled_after", "backlog"]
+    },
+    "topologyEffect": {
+      "type": "string",
+      "enum": ["none", "blocks_branch", "blocks_group", "requires_replan"]
+    },
+    "summary": {"type": "string", "minLength": 1},
+    "evidenceRef": {"type": "string", "minLength": 1},
+    "actionBasisRef": {"type": "string", "minLength": 1},
+    "status": {
+      "type": "string",
+      "enum": ["candidate", "strengthened", "classified", "absorbed", "queued", "backlog", "rejected"]
+    },
+    "decisionRecordRef": {"type": "string"},
+    "createdWorkItemRef": {"type": "string"},
+    "returnToRef": {"type": "string"},
+    "auditRef": {"type": "string", "minLength": 1},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  }
+}

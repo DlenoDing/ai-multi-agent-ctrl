@@ -19,6 +19,7 @@
 | Release Agent | AI release executor | 自动生成 release manifest、验证部署准备和回滚路径 |
 | Rule Steward Agent | AI rule governor | 自动处理项目规则候选；系统级重复问题只导出升级候选包 |
 | Monitor Agent | autonomous monitor | 自动监控 heartbeat、DLQ、lease、成本、质量门和告警 |
+| RoleDriftGuard | control object + monitor loop | 锁定角色目标、职责、允许动作和禁止动作，检测并阻断任务跑偏 |
 
 ## 2. 外部输入边界
 
@@ -47,7 +48,9 @@
 | --- | --- |
 | 目标解析 | 把外部目标转为 Project、TaskGroup、success criteria、risk 和 non-goals |
 | 任务拆解 | 自动生成 DAG、WorkItem、role requirements、write scope、dependencies |
+| 有效指令 | Orchestrator 把目标、规则、review、工具结果强化成 EffectiveInstructionPacket，raw 输出不能直接驱动任务 |
 | 角色实例化 | 持续多轮、有状态或写入型 work 自动创建新 WorkSession；短小封闭 work 才使用 session 内部 subagent |
+| 角色防跑偏 | 总控、调度、监测和普通 Agent 都绑定 RoleDriftGuard；元控制角色漂移会暂停下游副作用并触发父级纠偏 |
 | 模型选择 | 根据任务风险、复杂度、上下文、Agent 能力、额度和历史质量自动选择模型 |
 | 上下文投递 | 只传 schema、locator、digest、stateVersion、scope、stop condition |
 | 实时协作 | Room Broker 自动传递 delta、checkpoint、finding、decision、wake、ACK |
@@ -55,11 +58,15 @@
 | 工具授权 | MCP Proxy 自动校验 schema、grant、参数策略、idempotency 和 result filter |
 | 代码执行 | Agent 自动修改、测试、lint、提交 checkpoint、注册 evidence |
 | 独立复验 | Reviewer/QA Agent 自动分离实现者和复验者 |
+| 互审计划 | 多风险、多 surface 或关闭前互审自动生成 ReviewPlan、ReviewBundle、coverage matrix 和本地核验结果 |
+| 并行拓扑 | Scheduler 自动生成 ExecutionTopology；并行 branch 只能返回 result bundle，由父级 Orchestrator 串行集成 |
+| 派生任务 | worker、reviewer、monitor 只能提交 DerivedTaskRequest，由 Orchestrator 强化、分类和排入 DAG |
 | 契约治理 | Contract Registry 自动计算消费者影响面、级联失效和 reverify work |
 | 集成合并 | IntegrationBatch 自动 rebase、batch CI、定位冲突 owner、生成 release manifest |
 | 权限阻断 | Permission Gateway 自动分类、路由、授权、改派、降级或中止 |
 | 审批裁决 | Approval Center 自动基于 policy/quorum/risk/evidence 产出 DecisionRecord |
 | 规则沉淀 | Rule Steward Agent 自动处理项目级规则候选；系统级重复问题只收集为 RuntimeIssuePattern 和 SystemUpgradeCandidate |
+| 来源解析 | MGP、ai-skills、外部 review 和工具输出必须经 RuleSourceResolution 分类，只有 generic 且通过冲突检查的机制可成为 active rule |
 | 系统升级候选 | Monitor 自动聚合重复运行问题并导出系统外升级证据包，不自动改造运行中的系统 |
 | 质量关闭 | Orchestrator 自动检查 close barrier 并关闭 TaskGroup |
 
@@ -76,6 +83,9 @@
 9. 不能把外部安全机制要求的授权伪装成系统自动批准。
 10. 不能留下“非系统执行路径后续处理”的开放项作为完成状态。
 11. 不能在项目运行时把重复问题自动转成系统自修改；只能收集、聚合、导出系统外升级证据包。
+12. 不能让总控、调度或监测角色脱离 objective boundary、role mission、task contract、ruleset digest 和 allowed action scope。
+13. 不能让同级 Agent、子 agent、工具输出或 review advisory 覆盖角色职责；只能由 Orchestrator 通过 EffectiveInstructionPacket 和 DecisionRecord 重新签发。
+14. 不能让外部 review 或旧项目规则在未本地核验、未做 RuleSourceResolution 前成为 active rule 或执行动作。
 
 ## 5. 自动审批模型
 
@@ -142,3 +152,6 @@ external_capability_required
 9. 所有 Agent 断线都能恢复、改派或隔离。
 10. 所有最终输出都能由另一个 AI Agent 独立复验。
 11. 所有重复运行问题都能聚合为候选并导出系统外升级证据包，且不会触发运行期自动自改造。
+12. 所有 WorkSession final 和 TaskGroup close 前都通过 CompletionReadinessCheck。
+13. 所有元控制角色都有 RoleDriftGuard，且无 active drift blocker。
+14. 所有并行拓扑、互审计划、review bundle、派生任务请求和规则来源解析都处于 terminal 或明确非阻断状态。

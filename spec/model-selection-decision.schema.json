@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/model-selection-decision.schema.json",
+  "title": "ModelSelectionDecision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "decisionId",
+    "projectId",
+    "taskGroupId",
+    "workItemId",
+    "status",
+    "roleId",
+    "roleSkillRef",
+    "roleSkillDigest",
+    "selectionMode",
+    "candidateRankings",
+    "hardConstraintResults",
+    "scoreBreakdown",
+    "policyDecisionRef",
+    "auditRef",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "model-selection-decision/v1"
+    },
+    "decisionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workItemId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["evaluating", "selected", "rejected"]
+    },
+    "roleId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roleSkillRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roleSkillDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "selectedAgentSkillRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "selectedModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["providerClass", "providerId", "modelId", "reasoningLevel", "capabilityProfileRef"],
+      "properties": {
+        "providerClass": {
+          "$ref": "#/$defs/providerClass"
+        },
+        "providerId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reasoningLevel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capabilityProfileRef": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "selectionMode": {
+      "type": "string",
+      "enum": ["fixed_model", "fixed_tier", "auto_best", "auto_fast", "cost_aware"]
+    },
+    "candidateRankings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rank", "providerClass", "modelId", "totalScore", "eligible", "capabilityProfileRef"],
+        "properties": {
+          "rank": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "providerClass": {
+            "$ref": "#/$defs/providerClass"
+          },
+          "modelId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "totalScore": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "eligible": {
+            "type": "boolean"
+          },
+          "capabilityProfileRef": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rejectionReason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "hardConstraintResults": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["constraint", "status", "evidenceRefs"],
+        "properties": {
+          "constraint": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": ["passed", "failed", "blocked"]
+          },
+          "evidenceRefs": {
+            "$ref": "#/$defs/refArray"
+          }
+        }
+      }
+    },
+    "scoreBreakdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capabilityFit", "roleSkillFit", "quality", "latency", "cost", "quota", "reliability", "risk"],
+      "properties": {
+        "capabilityFit": {"$ref": "#/$defs/score"},
+        "roleSkillFit": {"$ref": "#/$defs/score"},
+        "quality": {"$ref": "#/$defs/score"},
+        "latency": {"$ref": "#/$defs/score"},
+        "cost": {"$ref": "#/$defs/score"},
+        "quota": {"$ref": "#/$defs/score"},
+        "reliability": {"$ref": "#/$defs/score"},
+        "risk": {"$ref": "#/$defs/score"}
+      }
+    },
+    "fallbackPolicyRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "denialReason": {
+      "type": "string"
+    },
+    "policyDecisionRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "selected"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["selectedAgentSkillRef", "selectedModel"],
+        "properties": {
+          "hardConstraintResults": {
+            "items": {
+              "properties": {
+                "status": {
+                  "const": "passed"
+                }
+              },
+              "required": ["status"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "rejected"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["denialReason", "fallbackPolicyRef"]
+      }
+    }
+  ],
+  "$defs": {
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "refArray": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "providerClass": {
+      "type": "string",
+      "enum": [
+        "openai",
+        "anthropic",
+        "google",
+        "xai",
+        "meta",
+        "mistral",
+        "deepseek",
+        "qwen",
+        "moonshot",
+        "zhipu",
+        "baidu",
+        "tencent",
+        "openrouter",
+        "azure_openai",
+        "aws_bedrock",
+        "vertex_ai",
+        "ollama",
+        "vllm",
+        "custom"
+      ]
+    }
+  }
+}

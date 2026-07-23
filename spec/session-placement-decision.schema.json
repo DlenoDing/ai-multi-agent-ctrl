@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/session-placement-decision.schema.json",
+  "title": "SessionPlacementDecision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "decisionId",
+    "projectId",
+    "taskGroupId",
+    "workItemId",
+    "status",
+    "placement",
+    "workSignals",
+    "capacitySnapshotRef",
+    "modelSelectionDecisionRef",
+    "taskContractRef",
+    "rationaleRefs",
+    "auditRef",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "session-placement-decision/v1"
+    },
+    "decisionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workItemId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["evaluating", "capacity_checked", "new_session_selected", "subagent_selected", "rejected"]
+    },
+    "placement": {
+      "type": "string",
+      "enum": ["new_session", "subagent", "undecided"]
+    },
+    "workSignals": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/workSignal"
+      }
+    },
+    "capacitySnapshotRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "modelSelectionDecisionRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskContractRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rationaleRefs": {
+      "$ref": "#/$defs/refArray"
+    },
+    "subagentSafetyProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "singleTurn",
+        "readOnlyOrFormatOnly",
+        "noPersistentState",
+        "noGlobalTaskOwnership",
+        "noWriteScopeOwnership",
+        "noExternalCapabilityFlow",
+        "subagentCapacityAvailable"
+      ],
+      "properties": {
+        "singleTurn": {"type": "boolean"},
+        "readOnlyOrFormatOnly": {"type": "boolean"},
+        "noPersistentState": {"type": "boolean"},
+        "noGlobalTaskOwnership": {"type": "boolean"},
+        "noWriteScopeOwnership": {"type": "boolean"},
+        "noExternalCapabilityFlow": {"type": "boolean"},
+        "subagentCapacityAvailable": {"type": "boolean"}
+      }
+    },
+    "denialReason": {
+      "type": "string"
+    },
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "placement": {
+            "const": "new_session"
+          }
+        },
+        "required": ["placement"]
+      },
+      "then": {
+        "required": ["subagentSafetyProof"],
+        "properties": {
+          "status": {
+            "const": "new_session_selected"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "placement": {
+            "const": "subagent"
+          }
+        },
+        "required": ["placement"]
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "const": "subagent_selected"
+          },
+          "subagentSafetyProof": {
+            "properties": {
+              "singleTurn": {"const": true},
+              "noPersistentState": {"const": true},
+              "noGlobalTaskOwnership": {"const": true},
+              "noWriteScopeOwnership": {"const": true},
+              "noExternalCapabilityFlow": {"const": true},
+              "subagentCapacityAvailable": {"const": true}
+            }
+          }
+        }
+      }
+    },
+    {
+      "not": {
+        "properties": {
+          "placement": {
+            "const": "subagent"
+          },
+          "workSignals": {
+            "contains": {
+              "$ref": "#/$defs/sustainedWorkSignal"
+            }
+          }
+        },
+        "required": ["placement", "workSignals"]
+      }
+    }
+  ],
+  "$defs": {
+    "refArray": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "sustainedWorkSignal": {
+      "type": "string",
+      "enum": [
+        "expected_multi_turn",
+        "long_running",
+        "stateful_context",
+        "role_owner_required",
+        "independent_work_owner",
+        "write_scope_owner",
+        "cross_file_or_cross_service_change",
+        "external_capability_flow",
+        "git_or_release_side_effect",
+        "subagent_limit_approaching",
+        "controller_context_pressure"
+      ]
+    },
+    "workSignal": {
+      "type": "string",
+      "enum": [
+        "expected_multi_turn",
+        "long_running",
+        "stateful_context",
+        "role_owner_required",
+        "independent_work_owner",
+        "write_scope_owner",
+        "cross_file_or_cross_service_change",
+        "external_capability_flow",
+        "git_or_release_side_effect",
+        "single_turn",
+        "read_only_scan",
+        "localized_search",
+        "format_only_change",
+        "no_persistent_state",
+        "no_global_task_ownership",
+        "subagent_limit_approaching",
+        "controller_context_pressure"
+      ]
+    }
+  }
+}

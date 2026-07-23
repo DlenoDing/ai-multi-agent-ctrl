@@ -14,6 +14,9 @@ flowchart TD
     A --> S["SKILL-A: agency-agents-zh 角色 skill registry"]
     A --> T["MODEL-A: 常用模型 provider 和能力画像"]
     A --> P["PLACE-A: session placement policy"]
+    A --> U["INSTR-A: EffectiveInstructionPacket 和 RoleDriftGuard"]
+    A --> V["TOPO-A: ExecutionTopology 和 DerivedTaskRequest"]
+    A --> W["REVIEW-A: ReviewPlan、ReviewBundle、CompletionReadiness"]
     B --> E["ROOM-A: Room Broker 和事件可靠性"]
     B --> F["COMMAND-A: Command Bus、Outbox、DLQ"]
     B --> G["LEASE-A: 项目级资源锁"]
@@ -27,6 +30,9 @@ flowchart TD
     S --> K
     T --> K
     P --> K
+    U --> K
+    V --> K
+    W --> K
     J --> K["ORCH-A: Orchestrator 调度循环"]
     K --> L["VERIFY-A: Reviewer/QA/Security 自动复验"]
     L --> M["INTEGRATE-A: ChangeSet、IntegrationBatch、release manifest"]
@@ -41,12 +47,16 @@ flowchart TD
 WORK_ID=<dag-node-id>
 ROLE_ID=<ai-role>
 ROLE_SKILL_REF=<agent-role-skill-ref>
+ROLE_SKILL_DIGEST=<sha256 digest>
+EFFECTIVE_INSTRUCTION_PACKET_REF=<effective-instruction-packet-ref>
+ROLE_DRIFT_GUARD_REF=<role-drift-guard-ref>
 INPUT_SCHEMA=<schema-ref>
 INPUT_LOCATORS=<docs/spec/code locators>
 INPUT_DIGESTS=<sha256 digests>
 WRITE_SCOPE=<repo/path/db/tool scope>
 MODEL_SELECTION_DECISION_REF=<model-selection-decision-ref>
 SESSION_PLACEMENT_DECISION_REF=<session-placement-decision-ref>
+EXECUTION_TOPOLOGY_REF=<execution-topology-ref when parallel or downgraded>
 DEPENDENCIES=<dag upstream nodes>
 OUTPUT=<code|migration|schema|checkpoint|artifact|finding|commitRef|pushRef|evidenceRefs|verificationRefs>
 STOP_OR_RETURN=<done|blocked|stale_state|permission_required|spec_drift>
@@ -69,6 +79,9 @@ VERIFY_BY=<independent reviewer or qa role>
 | SKILL | Skill Registry Agent | agency-agents-zh source sync, role skill parse, overlay validation |
 | MODEL | Model Registry Agent | provider probe, capability profile, model selection policy |
 | PLACE | Scheduler Agent | new WorkSession vs subagent placement decision |
+| INSTR | Orchestrator/Policy Agent | effective instruction packet, action basis, role drift guard |
+| TOPO | Scheduler/Orchestrator Agent | execution topology, branch result bundle, derived task request |
+| REVIEW | Reviewer/QA Agent | review plan, review bundle, completion readiness evidence |
 | SESSION | WorkSession Agent | task execution and checkpoint |
 | ORCH | Orchestrator Agent | scheduling loop and close barrier |
 | VERIFY | QA/Reviewer/Security Agent | independent verification evidence |
@@ -102,6 +115,11 @@ AI Agent 执行节点时必须按 `spec/git-automation-policy.schema.json` 和 `
 | mcp_proxy_enforced | unauthorized tool call test |
 | permission_routed | permission request simulation |
 | checkpoint_registered | checkpoint and artifact metadata |
+| effective_instruction_active | EffectiveInstructionPacket status + action basis evidence |
+| role_drift_guard_clear | RoleDriftGuard status and monitor evidence |
+| topology_merged_or_downgraded | ExecutionTopology terminal status |
+| review_plan_closed | ReviewPlan coverage gate |
+| completion_readiness_clear | CompletionReadinessCheck |
 | independent_review_passed | Reviewer Agent evidence |
 | close_barrier_satisfied | Orchestrator state check |
 

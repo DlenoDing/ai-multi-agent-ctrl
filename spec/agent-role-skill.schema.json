@@ -17,7 +17,9 @@
     "capabilities",
     "defaultModelRequirements",
     "overlayRefs",
-    "status"
+    "status",
+    "stateVersion",
+    "auditRef"
   ],
   "properties": {
     "schemaVersion": {
@@ -96,7 +98,15 @@
     },
     "status": {
       "type": "string",
-      "enum": ["discovered", "validated", "active", "overridden", "retired", "quarantined"]
+      "enum": ["discovered", "parsed", "validated", "active", "overridden", "retired", "quarantined"]
+    },
+    "stateVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
     }
   }
 }

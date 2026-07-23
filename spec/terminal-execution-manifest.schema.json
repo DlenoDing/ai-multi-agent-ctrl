@@ -12,6 +12,10 @@
     "modelProviderPolicy",
     "sessionPlacementPolicy",
     "runtimeImprovementPolicy",
+    "roleDriftControlPolicy",
+    "genericMechanismAssimilationPolicy",
+    "parallelExecutionPolicy",
+    "reviewPlanningPolicy",
     "authorityModel",
     "nonNegotiableInvariants",
     "roles",
@@ -267,7 +271,9 @@
               "repeated_model_selection_failure",
               "repeated_spec_drift",
               "repeated_test_flake",
-              "repeated_review_finding"
+              "repeated_review_finding",
+              "repeated_capacity_blocker",
+              "repeated_integration_conflict"
             ]
           }
         },
@@ -283,6 +289,215 @@
               "mark_system_external_maintenance_required",
               "await_system_external_upgrade_import"
             ]
+          }
+        }
+      }
+    },
+    "roleDriftControlPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "guardObject",
+        "effectiveInstructionObject",
+        "protectedRoleClasses",
+        "requiredFocusLocks",
+        "driftSignals",
+        "onDrift",
+        "metaControlMaxDriftScore",
+        "childReboundObject"
+      ],
+      "properties": {
+        "guardObject": {
+          "type": "string",
+          "const": "RoleDriftGuard"
+        },
+        "effectiveInstructionObject": {
+          "type": "string",
+          "const": "EffectiveInstructionPacket"
+        },
+        "protectedRoleClasses": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["meta_control", "control", "monitor"]
+          }
+        },
+        "requiredFocusLocks": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "objective_boundary_digest",
+              "role_mission_digest",
+              "task_contract_digest",
+              "effective_instruction_packet_ref",
+              "ruleset_digest",
+              "allowed_action_scope",
+              "forbidden_action_scope"
+            ]
+          }
+        },
+        "driftSignals": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "goal_mismatch",
+              "scope_expansion_without_decision",
+              "peer_instruction_override",
+              "review_result_used_without_local_verification",
+              "monitor_alert_unrelated_to_objective",
+              "control_loop_repeated_without_progress",
+              "missing_completion_readiness",
+              "forbidden_action_attempted"
+            ]
+          }
+        },
+        "onDrift": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "pause_side_effects",
+              "submit_drift_finding",
+              "compute_parent_rebound",
+              "reissue_task_contract",
+              "reassign_role",
+              "escalate_to_decision_center",
+              "abort_drifted_branch"
+            ]
+          }
+        },
+        "metaControlMaxDriftScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.1
+        },
+        "childReboundObject": {
+          "type": "string",
+          "const": "DerivedTaskRequest"
+        }
+      }
+    },
+    "genericMechanismAssimilationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceClasses", "absorbOnly", "rejectSourceClasses", "decisionObject"],
+      "properties": {
+        "sourceClasses": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["mgp_project_experience", "ai_skills_reference", "external_review_result"]
+          }
+        },
+        "absorbOnly": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "execution_topology",
+              "review_planning",
+              "derived_task_request",
+              "completion_readiness",
+              "rule_source_resolution",
+              "review_bundle_redaction"
+            ]
+          }
+        },
+        "rejectSourceClasses": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "project_specific_business_rule",
+              "tool_specific_storage_path",
+              "archived_rule_as_authority",
+              "raw_provider_output_as_authority",
+              "non_system_execution_instruction"
+            ]
+          }
+        },
+        "decisionObject": {
+          "type": "string",
+          "const": "RuleSourceResolution"
+        }
+      }
+    },
+    "parallelExecutionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topologyObject", "derivedTaskObject", "defaultMergePolicy", "requiredEligibilityGates", "fallbackMode"],
+      "properties": {
+        "topologyObject": {"type": "string", "const": "ExecutionTopology"},
+        "derivedTaskObject": {"type": "string", "const": "DerivedTaskRequest"},
+        "defaultMergePolicy": {"type": "string", "const": "parent_serial_after_all_required_reported"},
+        "requiredEligibilityGates": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "independent_deliverables",
+              "owned_paths_disjoint",
+              "resource_scopes_disjoint",
+              "runner_isolated",
+              "result_bundle_contract",
+              "parent_serial_merge_owner",
+              "final_validation_available"
+            ]
+          }
+        },
+        "fallbackMode": {"type": "string", "const": "downgraded_serial"}
+      }
+    },
+    "reviewPlanningPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planObject", "bundleObject", "completionObject", "createPlanWhen", "bundlePolicy"],
+      "properties": {
+        "planObject": {"type": "string", "const": "ReviewPlan"},
+        "bundleObject": {"type": "string", "const": "ReviewBundle"},
+        "completionObject": {"type": "string", "const": "CompletionReadinessCheck"},
+        "createPlanWhen": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "multi_issue_review",
+              "multi_surface_review",
+              "high_risk_surface",
+              "reviewer_expansion",
+              "user_requested_mutual_review",
+              "close_gate"
+            ]
+          }
+        },
+        "bundlePolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["requireRedaction", "resultIsAdvisory", "requireLocalVerification"],
+          "properties": {
+            "requireRedaction": {"type": "boolean", "const": true},
+            "resultIsAdvisory": {"type": "boolean", "const": true},
+            "requireLocalVerification": {"type": "boolean", "const": true}
           }
         }
       }
@@ -305,7 +520,7 @@
               "type": "array",
               "items": {
                 "type": "string",
-                "enum": ["submit_objective", "define_boundary", "provide_external_capability_signal"]
+                  "enum": ["submit_objective", "define_boundary", "provide_external_capability_signal"]
               }
             },
             "forbiddenAsExecutionDependency": {
@@ -327,7 +542,7 @@
               "type": "array",
               "items": {
                 "type": "string",
-                "enum": ["observe_state", "configure_capability_registry", "inspect_audit"]
+                  "enum": ["observe_state", "configure_capability_registry", "inspect_audit", "import_external_system_upgrade"]
               }
             },
             "forbiddenAsExecutionDependency": {
@@ -521,6 +736,29 @@
       }
     }
   },
+  "allOf": [
+    {
+      "properties": {
+        "skillRoleSources": {
+          "contains": {
+            "type": "object",
+            "required": ["sourceId", "repositoryUrl", "pinnedCommit"],
+            "properties": {
+              "sourceId": {
+                "const": "agency-agents-zh"
+              },
+              "repositoryUrl": {
+                "const": "https://github.com/DlenoDing/agency-agents-zh.git"
+              },
+              "pinnedCommit": {
+                "const": "1d2345927e4a70c426472c37771e31f9333d7e0a"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "providerClass": {
       "type": "string",

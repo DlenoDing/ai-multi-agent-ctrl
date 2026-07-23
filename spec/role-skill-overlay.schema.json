@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/role-skill-overlay.schema.json",
+  "title": "RoleSkillOverlay",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "overlayId",
+    "status",
+    "scope",
+    "roleSkillRef",
+    "baseRoleSkillDigest",
+    "overlayDigest",
+    "patch",
+    "decisionRecordRef",
+    "auditRef",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "role-skill-overlay/v1"
+    },
+    "overlayId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["proposed", "validated", "active", "rejected", "superseded"]
+    },
+    "scope": {
+      "type": "string",
+      "enum": ["project", "task_group"]
+    },
+    "roleSkillRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "baseRoleSkillDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "overlayDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "patch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowedCapabilityAdds", "forbiddenCapabilityAdds", "instructionRef", "modelRequirementPatchRef"],
+      "properties": {
+        "allowedCapabilityAdds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "forbiddenCapabilityAdds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "instructionRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelRequirementPatchRef": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "decisionRecordRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rejectionReason": {
+      "type": "string"
+    },
+    "successorOverlayRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "scope": {
+            "const": "project"
+          }
+        },
+        "required": ["scope"]
+      },
+      "then": {
+        "required": ["projectId"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "scope": {
+            "const": "task_group"
+          }
+        },
+        "required": ["scope"]
+      },
+      "then": {
+        "required": ["projectId", "taskGroupId"]
+      }
+    }
+  ]
+}

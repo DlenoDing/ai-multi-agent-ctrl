@@ -8,7 +8,12 @@ resolvers:
     match:
       exactIds:
         - "action"
+        - "adoption_classification"
+        - "authority_level_assigned"
         - "baseline_commit"
+        - "blocking_objects"
+        - "branch_boundaries_defined"
+        - "coverage_matrix"
         - "fencing_token"
         - "gate_target"
         - "idempotency_key"
@@ -26,9 +31,16 @@ resolvers:
         - "scope"
         - "severity"
         - "suggested_actions"
+        - "meta_control_role_drift"
+        - "runner_handle_uncertain"
     inputs:
       - "transition_context"
       - "subject_snapshot"
+    evaluation:
+      kind: "field_presence"
+      assertions:
+        - "field_non_empty"
+        - "bound_to_state_version"
     predicate: "required field exists, is non-empty, and is bound to the current subject stateVersion"
     evidence:
       required: false
@@ -43,6 +55,12 @@ resolvers:
       - "spec/terminal-execution-manifest.yaml.roles"
       - "spec/state-machines.yaml"
       - "policy_decisions"
+    evaluation:
+      kind: "actor_authorization"
+      assertions:
+        - "actor_in_manifest"
+        - "actor_not_entry_or_admin"
+        - "policy_decision_valid"
     predicate: "transition actor resolves to a manifest role or controlled service and is not entryControllerSession or adminConsole"
     evidence:
       required: true
@@ -72,6 +90,13 @@ resolvers:
       - "mcp_grants"
       - "policy_decisions"
       - "audit_log"
+    evaluation:
+      kind: "authorization_integrity"
+      assertions:
+        - "authorization_exact"
+        - "grant_scoped_unexpired"
+        - "external_boundary_evidenced"
+        - "policy_decision_valid"
     predicate: "authorization is exact, scoped, unexpired, policy-admitted, externally evidenced when required, and audit-linked"
     evidence:
       required: true
@@ -91,6 +116,10 @@ resolvers:
       - "canonical_state"
       - "artifact_index"
       - "resource_snapshot"
+    evaluation:
+      kind: "digest_integrity"
+      assertions:
+        - "digest_matches_canonical_snapshot"
     predicate: "digest exists and matches the canonical artifact, resource, or input snapshot referenced by the transition"
     evidence:
       required: true
@@ -107,6 +136,12 @@ resolvers:
       - "canonical_state"
       - "event_log"
       - "artifact_index"
+    evaluation:
+      kind: "reference_integrity"
+      assertions:
+        - "reference_exists"
+        - "reference_readable_by_actor"
+        - "referenced_object_schema_valid"
     predicate: "referenced object exists, is readable by the actor, and has a digest or audit row at the transition stateVersion"
     evidence:
       required: true
@@ -118,12 +153,30 @@ resolvers:
 
   - id: "status_predicate"
     match:
+      exactIds:
+        - "all_required_branches_reported"
+        - "backlog_recorded"
+        - "drift_score_within_limit"
+        - "forbidden_paths_excluded"
+        - "no_blocking_derived_task_request"
+        - "no_open_execution_topology"
+        - "no_pending_external_review"
+        - "no_topology_blockers"
+        - "owned_paths_disjoint"
+        - "review_items_normalized"
+        - "role_drift_guard_clear"
+        - "role_focus_reverified"
       pattern: ".*(_passed|_failed|_available|_unavailable|_resolved|_elapsed|_exceeded|_detected|_changed|_verified|_allows|_admitted|_admission|_initialized|_selected|_created|_submitted|_complete|_required|_registered|_removed|_updated|_continued|_checkpointed|_extended|_preempted|_classified|_valid|_rebound|_satisfied|_incremented|_requested|_accepted|_reduced|_routed|_persisted|_uploaded|_sealed|_issued|_released|_published|_ready|_integrated|_batched|_delivered|_set|_reached|_forbidden|_linked|_closed|_exported|_recovered|_score|_findings|_passed_without_repair)$"
     inputs:
       - "canonical_state"
       - "state_machine"
       - "quality_gate_results"
       - "policy_decisions"
+    evaluation:
+      kind: "state_predicate"
+      assertions:
+        - "status_matches_required_predicate"
+        - "bound_to_state_version"
     predicate: "source object status or computed gate result equals the required predicate for the current transition"
     evidence:
       required: true
@@ -142,6 +195,12 @@ resolvers:
       - "approval_requests"
       - "policy_decisions"
       - "audit_log"
+    evaluation:
+      kind: "decision_integrity"
+      assertions:
+        - "decision_object_immutable"
+        - "decision_scope_matches_subject"
+        - "policy_decision_valid"
     predicate: "decision object is terminal or active as required, immutable, scoped to the exact subject/action, and independently auditable"
     evidence:
       required: true
@@ -161,6 +220,12 @@ resolvers:
       - "leases"
       - "scheduler_snapshot"
       - "permission_requests"
+    evaluation:
+      kind: "capability_integrity"
+      assertions:
+        - "capability_scope_matches_subject"
+        - "grant_scoped_unexpired"
+        - "lease_active_or_terminal_as_required"
     predicate: "capability, grant, lease, resource, dependency, or assignment is exact, unexpired, scoped, and recorded for the current subject"
     evidence:
       required: true
@@ -183,6 +248,12 @@ resolvers:
       - "release_manifests"
       - "findings"
       - "close_barriers"
+    evaluation:
+      kind: "effect_integrity"
+      assertions:
+        - "effect_schema_valid"
+        - "result_evidence_present"
+        - "referenced_object_schema_valid"
     predicate: "effect, result, retry, recovery, integration, release, or close object exists and satisfies its object schema at the current stateVersion"
     evidence:
       required: true
@@ -202,6 +273,12 @@ resolvers:
     inputs:
       - "checkpoints"
       - "artifact_index"
+    evaluation:
+      kind: "checkpoint_integrity"
+      assertions:
+        - "checkpoint_schema_valid"
+        - "output_contract_satisfied"
+        - "result_evidence_present"
     predicate: "checkpoint exists with commitRefs, pushRefs when required, evidenceRefs, stateVersion, and accepted output contract"
     evidence:
       required: true

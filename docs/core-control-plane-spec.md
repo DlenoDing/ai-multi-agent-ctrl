@@ -308,6 +308,7 @@ unique(project_id, resource_type, resource_key) where status = 'active'
 | secret_grants | `id,project_id,task_group_id,work_item_id,session_id,agent_node_id,secret_ref,action,status,policy_decision_id,approval_request_id,expires_at,revocation_ref,audit_ref,created_at` |
 | secret_leases | `id,project_id,task_group_id,work_item_id,session_id,agent_node_id,secret_grant_id,status,lease_ref,expires_at,release_audit_ref,created_at` |
 | temp_grants | `id,project_id,task_group_id,work_item_id,session_id,agent_node_id,resource_ref,action,status,policy_decision_id,expires_at,revocation_ref,audit_ref,created_at` |
+| external_capability_boundaries | `id,project_id,task_group_id,work_item_id,status,boundary_type,resource_ref,risk_level,forbids_ai_approval,allowed_resolution_modes,capability_grant_ref,evidence_refs,audit_ref,created_at` |
 | agent_skill_sources | `id,source_id,repository_url,default_ref,pinned_commit,status,catalog_digest,index_ref,overlay_policy,created_at` |
 | agent_role_skills | `id,source_id,source_path,name,category,status,frontmatter_digest,content_digest,capabilities,default_model_requirements,overlay_refs,created_at` |
 | role_skill_overlays | `id,project_id,task_group_id,role_skill_id,status,overlay_digest,decision_record_id,created_at` |
@@ -316,10 +317,18 @@ unique(project_id, resource_type, resource_key) where status = 'active'
 | model_selection_decisions | `id,project_id,task_group_id,work_item_id,role_skill_id,selected_model_id,status,score_breakdown_ref,policy_decision_id,audit_ref,created_at` |
 | session_placement_policies | `id,project_id,task_group_id,status,default_placement,capacity_policy,placement_rules,decision_record_id,created_at` |
 | session_placement_decisions | `id,project_id,task_group_id,work_item_id,status,placement,work_signals,capacity_snapshot_ref,model_selection_decision_id,task_contract_ref,audit_ref,created_at` |
+| effective_instruction_packets | `id,project_id,task_group_id,work_item_id,status,objective_boundary_digest,next_action_draft_digest,action_basis_ref,active_rule_refs,non_active_material_refs,context_intake_refs,validation_requirements,forbidden_actions,audit_ref,created_at` |
+| role_drift_guards | `id,project_id,task_group_id,work_item_id,session_id,role_id,role_class,status,objective_boundary_digest,role_mission_digest,task_contract_digest,effective_instruction_packet_id,drift_score,max_allowed_drift_score,corrective_actions,audit_ref,created_at` |
+| execution_topologies | `id,project_id,task_group_id,work_item_id,status,mode,runner_kind,isolation,base_snapshot,merge_policy,eligibility_gates,branch_refs,blockers,audit_ref,created_at` |
+| derived_task_requests | `id,project_id,task_group_id,source_ref,status,reason,proposed_insertion_mode,topology_effect,summary,evidence_ref,action_basis_ref,audit_ref,created_at` |
+| review_plans | `id,project_id,task_group_id,source_ref,status,trigger,batching_decision,coverage_matrix,closure_gate,audit_ref,created_at` |
+| review_bundles | `id,project_id,task_group_id,review_plan_id,review_batch_id,status,scope_root,payload_digest,redaction_status,provider_grant_ref,advisory_result_ref,local_verification_status,audit_ref,created_at` |
+| rule_source_resolutions | `id,project_id,task_group_id,status,source_locator,source_scope,authority_level,source_digest,conflict_check,active_rule_refs,reference_only_refs,excluded_source_refs,audit_ref,created_at` |
+| completion_readiness_checks | `id,project_id,task_group_id,target_ref,status,state_version,state_digest,required_checks,check_results,blocking_objects,evidence_refs,computed_at` |
 | runtime_issue_patterns | `id,project_id,task_group_id,status,issue_fingerprint,recurrence_count,evidence_refs,sample_refs,upgrade_candidate_id,created_at` |
 | system_upgrade_candidates | `id,project_id,task_group_id,status,issue_pattern_id,issue_fingerprint,recurrence_count,affected_components,evidence_refs,sample_refs,external_upgrade_package_ref,audit_ref,created_at` |
 
-`task_groups.close_barrier` 只保存 Orchestrator 最近一次计算出的 `CloseBarrier` 快照。关闭判定必须从 `work_items`、`findings`、`quality_gate_results`、`permission_requests`、`approval_requests`、`leases`、`commands`、`command_effects`、`dlq_entries`、`integration_batches`、`release_manifests`、`rulesets`、`runtime_issue_patterns` 和 `system_upgrade_candidates` 的终态状态确定性计算，并写入 `stateDigest`、`sourceQueryRefs`、`gateResults`、`blockingObjects`、`waivers` 和 `evidenceRefs`。重复运行问题只要求已聚合并导出系统外升级证据包；关闭屏障不得要求运行中的系统自动执行自身升级。不能把自由文本或聊天结论写入 `close_barrier` 后直接关闭。
+`task_groups.close_barrier` 只保存 Orchestrator 最近一次计算出的 `CloseBarrier` 快照。关闭判定必须从 `work_items`、`findings`、`quality_gate_results`、`permission_requests`、`approval_requests`、`leases`、`commands`、`command_effects`、`dlq_entries`、`integration_batches`、`release_manifests`、`external_capability_boundaries`、`effective_instruction_packets`、`role_drift_guards`、`execution_topologies`、`derived_task_requests`、`review_plans`、`review_bundles`、`rule_source_resolutions`、`completion_readiness_checks`、`rulesets`、`runtime_issue_patterns` 和 `system_upgrade_candidates` 的终态或非阻断状态确定性计算，并写入 `stateDigest`、`sourceQueryRefs`、按 gate 名称索引的 `gateResults`、`blockingObjects`、`waivers` 和 `evidenceRefs`。重复运行问题只要求已聚合并导出系统外升级证据包；关闭屏障不得要求运行中的系统自动执行自身升级。不能把自由文本或聊天结论写入 `close_barrier` 后直接关闭。
 
 ## 4. HTTP API
 
@@ -333,7 +342,17 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | GET | `/api/task-groups/:taskGroupId` | 读取任务组快照 | orchestrator、scheduler、agent-runtime、monitor、admin read-only |
 | POST | `/api/work-items` | 创建 work item | orchestrator、decision-center |
 | POST | `/api/work-items/:workItemId/assign` | 分配或改派 | scheduler、orchestrator |
+| POST | `/api/effective-instruction-packets` | 创建强化后的有效指令包 | orchestrator、policy-engine |
+| POST | `/api/role-drift-guards` | 绑定或更新角色漂移防护对象 | orchestrator、monitor |
+| POST | `/api/role-drift-guards/:guardId/rebound` | 暂停跑偏角色并重签任务契约 | orchestrator |
+| POST | `/api/model-selection-decisions` | 记录模型和 Agent 自动选择结果 | model-registry、scheduler |
 | POST | `/api/session-placement-decisions` | 记录新会话或子 Agent placement | scheduler |
+| POST | `/api/execution-topologies` | 创建并行/降级执行拓扑 | scheduler、orchestrator |
+| POST | `/api/derived-task-requests` | 提交派生任务请求 | agent-runtime、reviewer、monitor、orchestrator |
+| POST | `/api/review-plans` | 创建或更新互审计划 | reviewer、orchestrator |
+| POST | `/api/review-bundles` | 注册 redacted review bundle 和 advisory result | reviewer、security |
+| POST | `/api/rule-source-resolutions` | 解析外部/旧项目/互审材料是否可成为 active rule | rule-steward、orchestrator |
+| POST | `/api/completion-readiness/compute` | 计算 WorkSession/TaskGroup 完成就绪 | orchestrator、monitor |
 | POST | `/api/rooms/:roomId/messages` | 发送 room message | room-broker、agent-runtime、orchestrator |
 | GET | `/api/rooms/:roomId/messages?after=` | 按 cursor 补读消息 | room-broker、agent-runtime、orchestrator |
 | POST | `/api/commands` | 创建 command | orchestrator、command-bus、agent-runtime |
@@ -349,6 +368,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/integration-batches` | 创建集成批次 | release、orchestrator |
 | POST | `/api/runtime-issue-patterns` | 聚合重复运行问题 | monitor |
 | POST | `/api/system-upgrade-candidates/export` | 导出系统外升级证据包 | monitor、rule-steward |
+| POST | `/api/system-upgrade-candidates/import-external-result` | 导入系统外独立升级后的版本化结果 | admin console、orchestrator import service |
 | POST | `/api/close-barriers/compute` | 计算并校验关闭屏障 | orchestrator |
 | POST | `/api/agents/join` | 使用 join token 初始化 Agent | agent-runtime |
 | POST | `/api/agents/:nodeId/heartbeat` | Agent 心跳 | agent-runtime |
@@ -362,12 +382,14 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | `orchestration-mcp` | `project_create`、`task_group_create`、`work_item_create`、`work_assign`、`state_get` |
 | `room-mcp` | `room_join`、`room_send`、`room_wait`、`room_ack` |
 | `agent-control-mcp` | `node_register`、`node_probe`、`session_start`、`session_pause`、`session_cancel`、`session_recover` |
-| `scheduler-mcp` | `model_select`、`session_place`、`work_assign`、`capacity_snapshot` |
+| `scheduler-mcp` | `model_select`、`session_place`、`work_assign`、`capacity_snapshot`、`execution_topology_plan`、`derived_task_classify` |
 | `resource-mcp` | `lease_claim`、`lease_release`、`resource_snapshot` |
 | `model-mcp` | `model_capabilities`、`model_policy_get`、`model_select` |
+| `skill-mcp` | `skill_source_sync`、`role_skill_parse`、`role_skill_overlay_validate`、`role_skill_resolve` |
 | `evidence-mcp` | `artifact_register`、`checkpoint_submit`、`test_result_submit` |
 | `permission-mcp` | `permission_probe`、`permission_request_submit`、`permission_status`、`permission_resolve` |
-| `governance-mcp` | `approval_request_create`、`policy_decision_eval`、`finding_submit`、`contract_publish`、`runtime_issue_pattern_submit`、`system_upgrade_candidate_export`、`close_barrier_compute` |
+| `review-mcp` | `review_plan_create`、`review_bundle_register`、`review_result_consume`、`completion_readiness_compute` |
+| `governance-mcp` | `approval_request_create`、`policy_decision_eval`、`finding_submit`、`contract_publish`、`effective_instruction_create`、`role_drift_guard_bind`、`role_drift_rebound`、`rule_source_resolve`、`runtime_issue_pattern_submit`、`system_upgrade_candidate_export`、`system_upgrade_external_import`、`close_barrier_compute` |
 
 ## 6. 事件模型
 

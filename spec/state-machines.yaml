@@ -115,7 +115,7 @@ machines:
       - from: "draft"
         to: "ready"
         actor: "orchestrator"
-        requires: ["task_contract_created"]
+        requires: ["task_contract_created", "effective_instruction_packet_ref", "task_draft_review_passed", "split_basis_digest", "quality_surface_plan_ref"]
       - from: "ready"
         to: "assigned"
         actor: "scheduler"
@@ -171,7 +171,7 @@ machines:
       - from: "review_requested"
         to: "review_passed"
         actor: "reviewer"
-        requires: ["review_report"]
+        requires: ["review_report", "local_verification_evidence", "adoption_classification"]
       - from: "review_passed"
         to: "verification_ready"
         actor: "orchestrator"
@@ -312,7 +312,7 @@ machines:
       - from: "completed_objective"
         to: "recycled"
         actor: "orchestrator"
-        requires: ["session_recycle_ack"]
+        requires: ["session_recycle_ack", "completion_readiness_passed", "role_drift_guard_clear"]
 
   Command:
     initial: "created"
@@ -1525,11 +1525,367 @@ machines:
       - from: "capacity_checked"
         to: "subagent_selected"
         actor: "scheduler"
-        requires: ["short_task_classified", "subagent_capacity_available", "audit_ref"]
+        requires: ["short_task_classified", "subagent_capacity_available", "subagent_safety_proof", "audit_ref"]
       - from: "capacity_checked"
         to: "rejected"
         actor: "scheduler"
         requires: ["denial_reason"]
+
+  EffectiveInstructionPacket:
+    initial: "assembled"
+    terminal: ["active", "rejected", "superseded"]
+    states:
+      - "assembled"
+      - "strengthened"
+      - "validated"
+      - "active"
+      - "rejected"
+      - "superseded"
+    transitions:
+      - from: "assembled"
+        to: "strengthened"
+        actor: "orchestrator"
+        requires: ["source_material_classified", "action_basis_ref", "context_intake_ref"]
+      - from: "strengthened"
+        to: "validated"
+        actor: "policy-engine"
+        requires: ["active_rule_refs", "forbidden_actions_ref", "validation_requirements_ref"]
+      - from: "validated"
+        to: "active"
+        actor: "orchestrator"
+        requires: ["state_version_incremented", "audit_ref"]
+      - from: "assembled"
+        to: "rejected"
+        actor: "reviewer"
+        requires: ["rejection_reason"]
+      - from: "active"
+        to: "superseded"
+        actor: "orchestrator"
+        requires: ["successor_instruction_packet_ref"]
+
+  RoleDriftGuard:
+    initial: "bound"
+    terminal: ["closed", "blocked"]
+    states:
+      - "bound"
+      - "monitoring"
+      - "drift_detected"
+      - "correction_required"
+      - "corrected"
+      - "blocked"
+      - "closed"
+    transitions:
+      - from: "bound"
+        to: "monitoring"
+        actor: "orchestrator"
+        requires: ["role_focus_contract_ref", "mission_digest", "allowed_action_scope_ref", "forbidden_action_scope_ref"]
+      - from: "monitoring"
+        to: "drift_detected"
+        actor: "monitor"
+        requires: ["drift_signal_detected", "drift_score_exceeded", "evidence_refs"]
+      - from: "drift_detected"
+        to: "correction_required"
+        actor: "orchestrator"
+        requires: ["parent_boundary_ref", "correction_plan_ref"]
+      - from: "correction_required"
+        to: "corrected"
+        actor: "orchestrator"
+        requires: ["rebound_task_contract_ref", "corrective_delta"]
+      - from: "corrected"
+        to: "monitoring"
+        actor: "monitor"
+        requires: ["role_focus_reverified", "drift_score_within_limit"]
+      - from: "drift_detected"
+        to: "blocked"
+        actor: "monitor"
+        requires: ["meta_control_role_drift", "emergency_pause_issued", "blocking_finding_ref"]
+      - from: "monitoring"
+        to: "closed"
+        actor: "orchestrator"
+        requires: ["completion_readiness_ref", "role_drift_guard_clear"]
+
+  ExternalCapabilityBoundary:
+    initial: "detected"
+    terminal: ["resolved", "blocked", "expired"]
+    states:
+      - "detected"
+      - "classified"
+      - "routed"
+      - "capability_registered"
+      - "blocked"
+      - "resolved"
+      - "expired"
+    transitions:
+      - from: "detected"
+        to: "classified"
+        actor: "permission-gateway"
+        requires: ["external_boundary_classified", "evidence_refs"]
+      - from: "classified"
+        to: "routed"
+        actor: "permission-gateway"
+        requires: ["capability_route", "audit_ref"]
+      - from: "routed"
+        to: "capability_registered"
+        actor: "permission-gateway"
+        requires: ["capability_grant_registered", "policy_decision_ref", "audit_ref"]
+      - from: "capability_registered"
+        to: "resolved"
+        actor: "agent-runtime"
+        requires: ["work_continued_or_checkpointed"]
+      - from: "routed"
+        to: "blocked"
+        actor: "permission-gateway"
+        requires: ["capability_unavailable", "audit_ref"]
+      - from: "routed"
+        to: "expired"
+        actor: "permission-gateway"
+        requires: ["expires_at_elapsed"]
+
+  ExecutionTopology:
+    initial: "planned"
+    terminal: ["merged", "downgraded", "cancelled"]
+    states:
+      - "planned"
+      - "eligibility_checked"
+      - "running"
+      - "integrating"
+      - "merged"
+      - "blocked"
+      - "needs_reconcile"
+      - "downgraded"
+      - "cancelled"
+    transitions:
+      - from: "planned"
+        to: "eligibility_checked"
+        actor: "scheduler"
+        requires: ["topology_plan_ref", "branch_boundaries_defined", "base_snapshot_ref"]
+      - from: "eligibility_checked"
+        to: "running"
+        actor: "scheduler"
+        requires: ["runner_gate_passed", "isolation_available", "owned_paths_disjoint", "resource_scopes_disjoint", "result_bundle_contract"]
+      - from: "eligibility_checked"
+        to: "downgraded"
+        actor: "scheduler"
+        requires: ["downgrade_reason"]
+      - from: "running"
+        to: "integrating"
+        actor: "orchestrator"
+        requires: ["all_required_branches_reported", "branch_result_bundles_ref"]
+      - from: "running"
+        to: "needs_reconcile"
+        actor: "monitor"
+        requires: ["runner_handle_uncertain"]
+      - from: "needs_reconcile"
+        to: "integrating"
+        actor: "orchestrator"
+        requires: ["runner_reconcile_evidence"]
+      - from: "integrating"
+        to: "merged"
+        actor: "orchestrator"
+        requires: ["serial_integration_verified", "final_validation_evidence", "no_topology_blockers"]
+      - from: "integrating"
+        to: "blocked"
+        actor: "orchestrator"
+        requires: ["blocking_derived_task_request_ref"]
+      - from: "blocked"
+        to: "integrating"
+        actor: "orchestrator"
+        requires: ["topology_blocker_resolved"]
+      - from: "running"
+        to: "cancelled"
+        actor: "orchestrator"
+        requires: ["cancel_ref"]
+
+  DerivedTaskRequest:
+    initial: "candidate"
+    terminal: ["absorbed", "queued", "backlog", "rejected"]
+    states:
+      - "candidate"
+      - "strengthened"
+      - "classified"
+      - "absorbed"
+      - "queued"
+      - "backlog"
+      - "rejected"
+    transitions:
+      - from: "candidate"
+        to: "strengthened"
+        actor: "orchestrator"
+        requires: ["source_evidence_ref", "action_basis_ref"]
+      - from: "strengthened"
+        to: "classified"
+        actor: "orchestrator"
+        requires: ["classification_decision", "topology_effect_recorded"]
+      - from: "classified"
+        to: "absorbed"
+        actor: "orchestrator"
+        requires: ["current_work_absorbed", "audit_ref"]
+      - from: "classified"
+        to: "queued"
+        actor: "scheduler"
+        requires: ["work_item_ref", "return_point_ref", "audit_ref"]
+      - from: "classified"
+        to: "backlog"
+        actor: "scheduler"
+        requires: ["backlog_recorded", "audit_ref"]
+      - from: "classified"
+        to: "rejected"
+        actor: "reviewer"
+        requires: ["rejection_reason", "decision_record"]
+
+  ReviewPlan:
+    initial: "draft"
+    terminal: ["closed", "rejected", "superseded"]
+    states:
+      - "draft"
+      - "ready"
+      - "in_progress"
+      - "blocked"
+      - "coverage_satisfied"
+      - "closed"
+      - "rejected"
+      - "superseded"
+    transitions:
+      - from: "draft"
+        to: "ready"
+        actor: "reviewer"
+        requires: ["review_items_normalized", "batching_decision", "coverage_matrix"]
+      - from: "ready"
+        to: "in_progress"
+        actor: "reviewer"
+        requires: ["review_batches_ready"]
+      - from: "in_progress"
+        to: "coverage_satisfied"
+        actor: "reviewer"
+        requires: ["required_batches_consumed", "coverage_matrix_verified", "no_unresolved_must_fix"]
+      - from: "coverage_satisfied"
+        to: "closed"
+        actor: "orchestrator"
+        requires: ["completion_readiness_ref", "audit_ref"]
+      - from: "in_progress"
+        to: "blocked"
+        actor: "reviewer"
+        requires: ["review_batch_blocked"]
+      - from: "blocked"
+        to: "in_progress"
+        actor: "reviewer"
+        requires: ["review_blocker_resolved"]
+      - from: "draft"
+        to: "rejected"
+        actor: "reviewer"
+        requires: ["rejection_reason"]
+      - from: "ready"
+        to: "superseded"
+        actor: "orchestrator"
+        requires: ["successor_review_plan_ref"]
+
+  ReviewBundle:
+    initial: "assembling"
+    terminal: ["consumed", "rejected"]
+    states:
+      - "assembling"
+      - "redacted"
+      - "submitted"
+      - "blocked"
+      - "consumed"
+      - "rejected"
+    transitions:
+      - from: "assembling"
+        to: "redacted"
+        actor: "reviewer"
+        requires: ["path_scope_verified", "forbidden_paths_excluded", "secret_scan_passed"]
+      - from: "redacted"
+        to: "submitted"
+        actor: "reviewer"
+        requires: ["provider_grant_ref", "payload_digest"]
+      - from: "submitted"
+        to: "consumed"
+        actor: "reviewer"
+        requires: ["advisory_result_ref", "local_verification_evidence"]
+      - from: "submitted"
+        to: "blocked"
+        actor: "reviewer"
+        requires: ["provider_failure_ref"]
+      - from: "blocked"
+        to: "submitted"
+        actor: "reviewer"
+        requires: ["provider_retry_accepted"]
+      - from: "redacted"
+        to: "rejected"
+        actor: "security"
+        requires: ["redaction_failure_ref"]
+
+  RuleSourceResolution:
+    initial: "discovered"
+    terminal: ["reference_only", "quarantined", "rejected", "superseded"]
+    states:
+      - "discovered"
+      - "resolved"
+      - "active"
+      - "reference_only"
+      - "quarantined"
+      - "rejected"
+      - "superseded"
+    transitions:
+      - from: "discovered"
+        to: "resolved"
+        actor: "rule-steward"
+        requires: ["source_locator_ref", "source_scope_classified", "authority_level_assigned"]
+      - from: "resolved"
+        to: "active"
+        actor: "rule-steward"
+        requires: ["source_digest", "conflict_check_passed"]
+      - from: "resolved"
+        to: "reference_only"
+        actor: "rule-steward"
+        requires: ["source_scope_not_authoritative", "audit_ref"]
+      - from: "resolved"
+        to: "quarantined"
+        actor: "security"
+        requires: ["rule_source_risk_ref"]
+      - from: "resolved"
+        to: "rejected"
+        actor: "reviewer"
+        requires: ["rejection_reason"]
+      - from: "active"
+        to: "superseded"
+        actor: "rule-steward"
+        requires: ["successor_rule_source_resolution_ref"]
+
+  CompletionReadinessCheck:
+    initial: "collecting"
+    terminal: ["clear", "expired"]
+    states:
+      - "collecting"
+      - "evaluated"
+      - "blocked"
+      - "clear"
+      - "expired"
+    transitions:
+      - from: "collecting"
+        to: "evaluated"
+        actor: "orchestrator"
+        requires: ["state_digest", "source_query_refs"]
+      - from: "evaluated"
+        to: "clear"
+        actor: "orchestrator"
+        requires: ["all_required_gates_passed", "no_open_execution_topology", "no_open_review_plan", "no_blocking_derived_task_request", "no_pending_external_review", "evidence_refs"]
+      - from: "evaluated"
+        to: "blocked"
+        actor: "orchestrator"
+        requires: ["blocking_objects"]
+      - from: "blocked"
+        to: "clear"
+        actor: "orchestrator"
+        requires: ["blockers_resolved", "evidence_refs"]
+      - from: "evaluated"
+        to: "expired"
+        actor: "monitor"
+        requires: ["state_version_changed"]
+      - from: "blocked"
+        to: "expired"
+        actor: "monitor"
+        requires: ["state_version_changed"]
 
   RuntimeIssuePattern:
     initial: "observed"
@@ -1560,7 +1916,7 @@ machines:
 
   SystemUpgradeCandidate:
     initial: "observed"
-    terminal: ["dismissed", "superseded", "closed"]
+    terminal: ["external_maintenance_required", "dismissed", "superseded", "closed"]
     states:
       - "observed"
       - "clustered"

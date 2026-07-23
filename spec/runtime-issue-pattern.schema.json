@@ -139,5 +139,20 @@
       "type": "string",
       "format": "date-time"
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "candidate_created"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["candidateRef"]
+      }
+    }
+  ]
 }

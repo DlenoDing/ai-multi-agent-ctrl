@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/rule-source-resolution.schema.json",
+  "title": "RuleSourceResolution",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "resolutionId",
+    "projectId",
+    "taskGroupId",
+    "status",
+    "sourceLocator",
+    "sourceScope",
+    "authorityLevel",
+    "sourceDigest",
+    "activeRuleRefs",
+    "referenceOnlyRefs",
+    "excludedSourceRefs",
+    "conflictCheck",
+    "auditRef",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rule-source-resolution/v1"},
+    "resolutionId": {"type": "string", "minLength": 1},
+    "projectId": {"type": "string", "minLength": 1},
+    "taskGroupId": {"type": "string", "minLength": 1},
+    "status": {"type": "string", "enum": ["discovered", "resolved", "active", "reference_only", "quarantined", "superseded", "rejected"]},
+    "sourceLocator": {"type": "string", "minLength": 1},
+    "sourceScope": {"type": "string", "enum": ["system", "project", "task_group", "role_skill", "reference_material", "archive", "test_fixture"]},
+    "authorityLevel": {"type": "string", "enum": ["authoritative", "advisory", "reference_only", "excluded"]},
+    "sourceDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
+    "activeRuleRefs": {"type": "array", "items": {"type": "string"}},
+    "referenceOnlyRefs": {"type": "array", "items": {"type": "string"}},
+    "excludedSourceRefs": {"type": "array", "items": {"type": "string"}},
+    "conflictCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "decisionRecordRef"],
+      "properties": {
+        "passed": {"type": "boolean"},
+        "decisionRecordRef": {"type": "string", "minLength": 1}
+      }
+    },
+    "auditRef": {"type": "string", "minLength": 1},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "active"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "authorityLevel": {"const": "authoritative"},
+          "conflictCheck": {
+            "properties": {
+              "passed": {"const": true}
+            }
+          },
+          "activeRuleRefs": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"status": {"const": "reference_only"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "authorityLevel": {"enum": ["advisory", "reference_only"]}
+        }
+      }
+    }
+  ]
+}

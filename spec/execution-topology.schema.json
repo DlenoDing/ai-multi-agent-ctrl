@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/execution-topology.schema.json",
+  "title": "ExecutionTopology",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "topologyId",
+    "projectId",
+    "taskGroupId",
+    "workItemId",
+    "status",
+    "mode",
+    "runnerKind",
+    "isolation",
+    "baseSnapshot",
+    "mergePolicy",
+    "groups",
+    "eligibilityGates",
+    "blockers",
+    "auditRef",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "execution-topology/v1"},
+    "topologyId": {"type": "string", "minLength": 1},
+    "projectId": {"type": "string", "minLength": 1},
+    "taskGroupId": {"type": "string", "minLength": 1},
+    "workItemId": {"type": "string", "minLength": 1},
+    "status": {
+      "type": "string",
+      "enum": ["planned", "eligibility_checked", "running", "integrating", "merged", "blocked", "needs_reconcile", "downgraded", "cancelled"]
+    },
+    "mode": {"type": "string", "enum": ["serial", "parallel_active", "downgraded_serial"]},
+    "runnerKind": {"type": "string", "enum": ["work_session", "subagent", "git_worktree", "external_runner", "none"]},
+    "isolation": {"type": "string", "enum": ["new_work_session", "forked_workspace", "git_worktree", "equivalent", "none"]},
+    "runnerGrantRef": {"type": "string", "minLength": 1},
+    "localVerificationEvidenceRefs": {"type": "array", "items": {"type": "string"}},
+    "baseSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stateVersion", "gitHead", "dirtyDigest"],
+      "properties": {
+        "stateVersion": {"type": "integer", "minimum": 1},
+        "gitHead": {"type": "string"},
+        "dirtyDigest": {"type": "string"}
+      }
+    },
+    "mergePolicy": {"type": "string", "const": "parent_serial_after_all_required_reported"},
+    "groups": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["groupId", "branches", "blockers"],
+        "properties": {
+          "groupId": {"type": "string", "minLength": 1},
+          "branches": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "branchId",
+                "status",
+                "objective",
+                "ownedPaths",
+                "forbiddenPaths",
+                "resourceScopes",
+                "acceptanceChecks",
+                "outputContract",
+                "actualChangedPaths"
+              ],
+              "properties": {
+                "branchId": {"type": "string", "minLength": 1},
+                "runnerId": {"type": "string"},
+                "status": {
+                  "type": "string",
+                  "enum": ["queued", "running", "reported", "accepted", "rejected", "failed", "orphaned", "needs_reconcile", "blocked"]
+                },
+                "objective": {"type": "string", "minLength": 1},
+                "objectiveDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
+                "ownedPaths": {"type": "array", "items": {"type": "string"}},
+                "forbiddenPaths": {"type": "array", "items": {"type": "string"}},
+                "resourceScopes": {"type": "array", "items": {"type": "string"}},
+                "acceptanceChecks": {"type": "array", "items": {"type": "string"}},
+                "outputContract": {
+                  "type": "array",
+                  "minItems": 4,
+                  "items": {
+                    "type": "string",
+                    "enum": ["changedPaths", "resultRef", "validationEvidence", "unresolvedRisks", "derivedTaskRequests"]
+                  }
+                },
+                "actualChangedPaths": {"type": "array", "items": {"type": "string"}},
+                "resultRef": {"type": "string"},
+                "validationEvidenceRefs": {"type": "array", "items": {"type": "string"}},
+                "unresolvedRisks": {"type": "array", "items": {"type": "string"}},
+                "derivedTaskRequestRefs": {"type": "array", "items": {"type": "string"}}
+              }
+            }
+          },
+          "blockers": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "eligibilityGates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "independent_deliverables",
+          "owned_paths_disjoint",
+          "resource_scopes_disjoint",
+          "runner_isolated",
+          "result_bundle_contract",
+          "parent_serial_merge_owner",
+          "final_validation_available"
+        ]
+      }
+    },
+    "blockers": {"type": "array", "items": {"type": "string"}},
+    "auditRef": {"type": "string", "minLength": 1},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"runnerKind": {"const": "external_runner"}},
+        "required": ["runnerKind"]
+      },
+      "then": {
+        "required": ["runnerGrantRef", "localVerificationEvidenceRefs"],
+        "properties": {
+          "localVerificationEvidenceRefs": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"status": {"enum": ["running", "integrating", "merged"]}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "runnerKind": {
+            "not": {"const": "none"}
+          },
+          "isolation": {
+            "not": {"const": "none"}
+          }
+        }
+      }
+    }
+  ]
+}

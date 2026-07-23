@@ -16,9 +16,21 @@
 | `spec/gate-catalog.schema.json` | Control Plane、Spec Validator | 校验 gate catalog 结构 |
 | `spec/agent-skill-source.schema.json` | Skill Registry、Scheduler、Orchestrator | 校验 `agency-agents-zh` 等角色 skill 源、同步、信任和 overlay 策略 |
 | `spec/agent-role-skill.schema.json` | Skill Registry、Scheduler、WorkSession | 校验解析后的角色 skill、能力、digest 和模型需求 |
+| `spec/role-skill-overlay.schema.json` | Skill Registry、Rule Steward、Orchestrator | 校验项目/任务组 role skill 覆盖范围、digest 和决策记录 |
 | `spec/model-capability.schema.json` | Model Registry、Scheduler、Agent Runtime | 校验市面常用模型供应商和模型能力画像 |
 | `spec/model-selection-policy.schema.json` | Scheduler、Model Registry、Decision Center | 校验角色/任务驱动的模型与 Agent 自动选择策略 |
+| `spec/model-selection-decision.schema.json` | Model Registry、Scheduler、Agent Runtime | 校验每次模型/Agent 选择的候选排序、硬约束、score、选中模型和审计 |
 | `spec/session-placement-policy.schema.json` | Scheduler、Orchestrator、Agent Runtime | 校验长任务新会话、小短任务子 agent 的 placement 策略 |
+| `spec/session-placement-decision.schema.json` | Scheduler、Agent Runtime | 校验每次新 WorkSession/subagent 放置决策和 subagent 安全证明 |
+| `spec/effective-instruction-packet.schema.json` | Orchestrator、Policy Engine、Agent Runtime | 校验强化后的有效指令包、来源分类、active rule 和 forbidden action |
+| `spec/role-drift-guard.schema.json` | Orchestrator、Scheduler、Monitor Agent | 校验角色任务焦点锁、漂移信号、纠偏动作和元控制角色保护 |
+| `spec/external-capability-boundary.schema.json` | Permission Gateway、Policy Engine、Agent Runtime | 校验外部能力边界、不可 AI 批准范围、可接受 resolution mode 和证据 |
+| `spec/execution-topology.schema.json` | Scheduler、Orchestrator、Agent Runtime | 校验并行拓扑、branch 隔离、owned path、result bundle 和父级串行合并 |
+| `spec/derived-task-request.schema.json` | Orchestrator、Scheduler、Reviewer Agent、Monitor Agent | 校验派生任务请求、插入模式、拓扑影响和审计证据 |
+| `spec/review-plan.schema.json` | Reviewer Agent、Orchestrator、QA Agent | 校验互审计划、batch、coverage matrix 和 closure gate |
+| `spec/review-bundle.schema.json` | Reviewer Agent、Security Agent、External Review Adapter | 校验 review bundle redaction、payload digest、provider grant 和本地核验 |
+| `spec/rule-source-resolution.schema.json` | Rule Steward、Orchestrator、Policy Engine | 校验 MGP/ai-skills/review 等来源是否可成为 active rule |
+| `spec/completion-readiness.schema.json` | Orchestrator、Monitor Agent、Agent Runtime | 校验 WorkSession/TaskGroup final 前所有未闭合对象和证据覆盖 |
 | `spec/runtime-issue-pattern.schema.json` | Monitor Agent、Rule Steward、Orchestrator | 校验运行期重复问题聚合、证据和收集限定 |
 | `spec/system-upgrade-candidate.schema.json` | Monitor Agent、Rule Steward、Orchestrator | 校验重复运行问题收集、候选归档和系统外升级证据包 |
 | `spec/agent-task-contract.schema.json` | Orchestrator、Agent Runtime、WorkSession | 校验每次 session_start 的任务契约 |
@@ -30,6 +42,7 @@
 | `spec/git-automation-policy.schema.json` | Agent Runtime、Command Bus、Release Agent | 校验自动 commit/push 凭据、分支、路径范围和远端 SHA |
 | `spec/git-command.schema.json` | Agent Runtime、Command Bus、Release Agent | 校验 Git status/commit/push 命令 payload、路径匹配和证据输出 |
 | `spec/close-barrier.schema.json` | Orchestrator、Monitor Agent、Release Agent | 校验 TaskGroup 关闭屏障、质量门结果和阻断对象 |
+| `scripts/validate-specs.rb` | CI、Spec Validator、Orchestrator preflight | 只读验证 manifest、状态机、gate resolver、CloseBarrier、CompletionReadiness 和关键 schema 覆盖 |
 
 ## 3. 执行规则
 
@@ -42,11 +55,15 @@
 7. Skill Registry 必须从 `agency-agents-zh` pinned commit 加载默认角色 skill，并按 taskGroup overlay、project overlay、upstream default 的顺序解析。
 8. Model Registry 必须探测常用模型供应商能力画像，Scheduler 必须按角色 skill、任务能力和策略输出 `ModelSelectionDecision`。
 9. Scheduler 必须按 SessionPlacementPolicy 输出 `SessionPlacementDecision`，持续多轮任务优先新 WorkSession，短小封闭任务才可用子 agent。
-10. Monitor 只能把重复问题聚合为 RuntimeIssuePattern 和 SystemUpgradeCandidate，并导出系统外升级证据包；运行中系统不能自动改写系统规则、策略、角色、grant 或控制面代码，也不能自动创建升级任务组。
-11. MCP Proxy 执行 tool 前必须校验 grant、参数策略、结果过滤和过期时间。
-12. Agent Runtime 执行 Git 副作用前必须校验 GitAutomationPolicy、writeScope 和 changedPathPolicy。
-13. Orchestrator 关闭 TaskGroup 前必须生成并校验 CloseBarrier。
-14. 不符合 schema 的消息只能进入 DLQ，不能被 Agent 自然语言猜测执行。
+10. Orchestrator 派发任何 WorkSession 前必须生成 `EffectiveInstructionPacket`，并把 role skill、model decision、placement decision、RoleDriftGuard 和 action basis 写入 task contract。
+11. Scheduler 对 subagent placement 必须证明单轮、无持久状态、无全局任务 owner、无 write scope owner、无外部能力流且容量可用；任何 sustained signal 都必须落到新 WorkSession。
+12. Monitor 和 Orchestrator 必须持续校验 RoleDriftGuard。总控、调度或监测角色漂移时，系统先暂停副作用，再生成 Finding/DerivedTaskRequest/DecisionRecord 完成父级纠偏。
+13. Monitor 只能把重复问题聚合为 RuntimeIssuePattern 和 SystemUpgradeCandidate，并导出系统外升级证据包；运行中系统不能自动改写系统规则、策略、角色、grant 或控制面代码，也不能自动创建升级任务组。
+14. MGP、ai-skills、外部 review、工具输出和旧规则文本必须先进入 RuleSourceResolution 或 ReviewBundle；本地核验和来源解析完成前不能成为 active rule 或执行动作。
+15. MCP Proxy 执行 tool 前必须校验 grant、参数策略、结果过滤和过期时间。
+16. Agent Runtime 执行 Git 副作用前必须校验 GitAutomationPolicy、writeScope 和 changedPathPolicy。
+17. Orchestrator 关闭 TaskGroup 前必须生成并校验 CompletionReadinessCheck 和 CloseBarrier。
+18. 不符合 schema 的消息只能进入 DLQ，不能被 Agent 自然语言猜测执行。
 
 ## 4. schema 优先级
 
@@ -71,14 +88,20 @@ System instruction
 | task dispatch | task contract schema、stateVersion、rulesetDigest、writeScope、stopCondition |
 | state transition | source state、target state、allowed actor、gate resolver、required evidence、failureCode |
 | role skill selection | skill source digest、role skill digest、project overlay、taskGroup overlay、model requirements |
-| model selection | provider capability profile、roleSkillFit、task capability fit、quota/cost/latency/reliability、decision refs |
-| session placement | sustainedWorkSignals、shortTaskSignals、subagent capacity、task contract、modelSelectionDecisionRef、auditRef |
+| model selection | provider capability profile、roleSkillFit、task capability fit、candidate rankings、hard constraints、quota/cost/latency/reliability、decision refs |
+| session placement | sustainedWorkSignals、shortTaskSignals、subagent capacity、subagent safety proof、task contract、modelSelectionDecisionRef、auditRef |
+| effective instruction | source classification、nextActionDraftDigest、activeRuleRefs、nonActiveMaterialRefs、contextIntakeRefs、forbiddenActions |
+| role drift guard | objectiveBoundaryDigest、roleMissionDigest、taskContractDigest、allowed/forbidden action scope、driftScore、correctiveActions |
+| execution topology | branch boundaries、owned/forbidden paths、resource scopes、runner isolation、result bundle contract、parent serial merge |
+| review plan/bundle | review items、batches、coverage matrix、redaction、payload digest、advisory result、本地核验证据 |
+| rule source resolution | sourceScope、authorityLevel、sourceDigest、conflictCheck、activeRuleRefs、referenceOnlyRefs、excludedSourceRefs |
 | runtime issue collection | issue fingerprint、recurrenceCount、evidenceRefs、sampleRefs、collect-only policy、externalUpgradePackageRef |
 | command dispatch | idempotencyKey、policyDecisionRef、leaseRef、timeout、retry、commandEffect |
 | mcp call | mcp-grant schema、tool schema digest、grant、param policy、result filter、risk gate、expiresAt |
 | git side effect | git policy schema、git command schema、credentialProfileRef、changed paths、writeScope、remote SHA、pushRef |
-| checkpoint | workId、sessionId、stateVersion、artifactRefs、commitRefs、pushRefs、nextSteps |
-| close barrier | close-barrier schema、完整 required gate 集合、open findings、quality gates、DLQ、pending permission/approval、policy decisions、commands、command effects、secret leases、temporary grants、external capability boundaries、lease terminal 状态 |
+| checkpoint | workId、sessionId、stateVersion、artifactRefs、commitRefs、pushRefs、nextSteps、openMachineActionIds、derivedWorkRequests、returnPointRef |
+| completion readiness | requiredChecks 完整覆盖、blockingObjects、evidenceRefs、open topology/review/derived task/external review/role drift |
+| close barrier | close-barrier schema、按 gate 名称索引的完整 gateResults、open findings、quality gates、DLQ、pending permission/approval、policy decisions、commands、command effects、secret leases、temporary grants、external capability boundaries、lease terminal 状态 |
 
 ## 6. drift 处理
 

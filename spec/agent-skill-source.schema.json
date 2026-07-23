@@ -10,8 +10,14 @@
     "repositoryUrl",
     "defaultRef",
     "pinnedCommit",
+    "status",
+    "stateVersion",
     "catalogFiles",
     "roleFileGlobs",
+    "catalogDigest",
+    "roleSkillIndexRef",
+    "digestIndexRef",
+    "digestIndexVerified",
     "trustPolicy",
     "syncPolicy",
     "overlayPolicy"
@@ -37,6 +43,14 @@
       "type": "string",
       "pattern": "^[a-fA-F0-9]{40}$"
     },
+    "status": {
+      "type": "string",
+      "enum": ["configured", "syncing", "indexed", "active", "stale", "quarantined", "retired"]
+    },
+    "stateVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
     "catalogFiles": {
       "type": "array",
       "minItems": 1,
@@ -50,6 +64,21 @@
       "items": {
         "type": "string"
       }
+    },
+    "catalogDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "roleSkillIndexRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "digestIndexRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "digestIndexVerified": {
+      "type": "boolean"
     },
     "trustPolicy": {
       "type": "object",
@@ -104,5 +133,24 @@
         "requiresDigest": {"type": "boolean", "const": true}
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "active"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "digestIndexVerified": {
+            "const": true
+          }
+        }
+      }
+    }
+  ]
 }

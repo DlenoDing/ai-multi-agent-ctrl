@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/role-drift-guard.schema.json",
+  "title": "RoleDriftGuard",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "guardId",
+    "projectId",
+    "taskGroupId",
+    "status",
+    "roleId",
+    "roleClass",
+    "sessionId",
+    "parentControllerRef",
+    "objectiveBoundaryDigest",
+    "roleMissionDigest",
+    "taskContractDigest",
+    "effectiveInstructionPacketRef",
+    "allowedActionScopeRefs",
+    "forbiddenActionScopeRefs",
+    "driftChecks",
+    "driftScore",
+    "maxAllowedDriftScore",
+    "correctiveActions",
+    "auditRef",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "role-drift-guard/v1"
+    },
+    "guardId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workItemId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["bound", "monitoring", "drift_detected", "correction_required", "corrected", "blocked", "closed"]
+    },
+    "roleId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roleClass": {
+      "type": "string",
+      "enum": ["meta_control", "control", "execution", "review", "monitor", "service"]
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "parentControllerRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "objectiveBoundaryDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "roleMissionDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "taskContractDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "effectiveInstructionPacketRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "allowedActionScopeRefs": {
+      "$ref": "#/$defs/refArray"
+    },
+    "forbiddenActionScopeRefs": {
+      "$ref": "#/$defs/refArray"
+    },
+    "driftChecks": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/driftCheck"
+      }
+    },
+    "driftScore": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "maxAllowedDriftScore": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "driftSignals": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/driftSignal"
+      },
+      "default": []
+    },
+    "monitorEvidenceRefs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": []
+    },
+    "correctiveActions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/correctiveAction"
+      }
+    },
+    "reboundTaskContractRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "blockingFindingRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "roleClass": {
+            "enum": ["meta_control", "control", "monitor"]
+          }
+        },
+        "required": ["roleClass"]
+      },
+      "then": {
+        "properties": {
+          "maxAllowedDriftScore": {
+            "maximum": 0.1
+          },
+          "driftChecks": {
+            "contains": {
+              "const": "objective_boundary_match"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": ["drift_detected", "correction_required", "blocked"]
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "driftSignals": {
+            "minItems": 1
+          },
+          "monitorEvidenceRefs": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "corrected"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["reboundTaskContractRef"]
+      }
+    }
+  ],
+  "$defs": {
+    "refArray": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "driftCheck": {
+      "type": "string",
+      "enum": [
+        "objective_boundary_match",
+        "role_mission_match",
+        "task_contract_match",
+        "allowed_action_scope_match",
+        "forbidden_action_absent",
+        "peer_instruction_not_authoritative",
+        "external_review_not_directive",
+        "progress_signal_relevant",
+        "completion_readiness_not_bypassed"
+      ]
+    },
+    "driftSignal": {
+      "type": "string",
+      "enum": [
+        "goal_mismatch",
+        "scope_expansion_without_decision",
+        "peer_instruction_override",
+        "review_result_used_without_local_verification",
+        "monitor_alert_unrelated_to_objective",
+        "control_loop_repeated_without_progress",
+        "missing_completion_readiness",
+        "forbidden_action_attempted"
+      ]
+    },
+    "correctiveAction": {
+      "type": "string",
+      "enum": [
+        "pause_side_effects",
+        "submit_drift_finding",
+        "compute_parent_rebound",
+        "reissue_task_contract",
+        "reassign_role",
+        "escalate_to_decision_center",
+        "abort_drifted_branch"
+      ]
+    }
+  }
+}

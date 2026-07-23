@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/completion-readiness.schema.json",
+  "title": "CompletionReadinessCheck",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "checkId",
+    "projectId",
+    "taskGroupId",
+    "targetRef",
+    "status",
+    "stateVersion",
+    "stateDigest",
+    "sourceQueryRefs",
+    "requiredChecks",
+    "checkResults",
+    "blockingObjects",
+    "evidenceRefs",
+    "computedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "completion-readiness/v1"},
+    "checkId": {"type": "string", "minLength": 1},
+    "projectId": {"type": "string", "minLength": 1},
+    "taskGroupId": {"type": "string", "minLength": 1},
+    "targetRef": {"type": "string", "minLength": 1},
+    "status": {"type": "string", "enum": ["collecting", "evaluated", "blocked", "clear", "expired"]},
+    "stateVersion": {"type": "integer", "minimum": 1},
+    "stateDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
+    "sourceQueryRefs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "requiredChecks": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "no_open_execution_topology",
+          "no_open_review_plan",
+          "no_pending_review_bundle",
+          "no_blocking_derived_task_request",
+          "no_pending_external_review",
+          "no_active_role_drift_guard",
+          "effective_instruction_packet_active",
+          "all_required_outputs_present",
+          "all_required_evidence_present",
+          "all_required_validation_present",
+          "no_pending_permission_or_approval",
+          "no_unreconciled_command_effect"
+        ]
+      }
+    },
+    "checkResults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "no_open_execution_topology",
+        "no_open_review_plan",
+        "no_pending_review_bundle",
+        "no_blocking_derived_task_request",
+        "no_pending_external_review",
+        "no_active_role_drift_guard",
+        "effective_instruction_packet_active",
+        "all_required_outputs_present",
+        "all_required_evidence_present",
+        "all_required_validation_present",
+        "no_pending_permission_or_approval",
+        "no_unreconciled_command_effect"
+      ],
+      "properties": {
+        "no_open_execution_topology": {"$ref": "#/$defs/checkResult"},
+        "no_open_review_plan": {"$ref": "#/$defs/checkResult"},
+        "no_pending_review_bundle": {"$ref": "#/$defs/checkResult"},
+        "no_blocking_derived_task_request": {"$ref": "#/$defs/checkResult"},
+        "no_pending_external_review": {"$ref": "#/$defs/checkResult"},
+        "no_active_role_drift_guard": {"$ref": "#/$defs/checkResult"},
+        "effective_instruction_packet_active": {"$ref": "#/$defs/checkResult"},
+        "all_required_outputs_present": {"$ref": "#/$defs/checkResult"},
+        "all_required_evidence_present": {"$ref": "#/$defs/checkResult"},
+        "all_required_validation_present": {"$ref": "#/$defs/checkResult"},
+        "no_pending_permission_or_approval": {"$ref": "#/$defs/checkResult"},
+        "no_unreconciled_command_effect": {"$ref": "#/$defs/checkResult"}
+      }
+    },
+    "blockingObjects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["objectType", "objectId", "status"],
+        "properties": {
+          "objectType": {"type": "string"},
+          "objectId": {"type": "string"},
+          "status": {"type": "string"}
+        }
+      }
+    },
+    "evidenceRefs": {"type": "array", "items": {"type": "string"}},
+    "computedAt": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "clear"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "blockingObjects": {"maxItems": 0},
+          "checkResults": {
+            "patternProperties": {
+              ".*": {
+              "properties": {"status": {"const": "passed"}},
+              "required": ["status"]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "checkResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidenceRefs"],
+      "properties": {
+        "status": {"type": "string", "enum": ["passed", "failed", "blocked"]},
+        "evidenceRefs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "reasonCode": {"type": "string"}
+      }
+    }
+  }
+}

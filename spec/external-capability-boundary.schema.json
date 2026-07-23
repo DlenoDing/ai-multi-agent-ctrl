@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/external-capability-boundary.schema.json",
+  "title": "ExternalCapabilityBoundary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "boundaryId",
+    "projectId",
+    "taskGroupId",
+    "status",
+    "boundaryType",
+    "resourceRef",
+    "detectedBy",
+    "riskLevel",
+    "forbidsAiApproval",
+    "allowedResolutionModes",
+    "evidenceRefs",
+    "auditRef",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "external-capability-boundary/v1"
+    },
+    "boundaryId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workItemId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["detected", "classified", "routed", "capability_registered", "blocked", "resolved", "expired"]
+    },
+    "boundaryType": {
+      "type": "string",
+      "enum": ["os_permission", "oauth_login", "account_session", "uac_or_sudo", "keychain", "hardware_key", "payment", "cloud_org_policy", "provider_terms"]
+    },
+    "resourceRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "detectedBy": {
+      "type": "string",
+      "minLength": 1
+    },
+    "riskLevel": {
+      "type": "string",
+      "enum": ["L1", "L2", "L3"]
+    },
+    "forbidsAiApproval": {
+      "type": "boolean",
+      "const": true
+    },
+    "allowedResolutionModes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["preauthorized_capability", "service_account_grant", "scope_reduction", "reassign_agent", "abort_blocked_work"]
+      }
+    },
+    "capabilityGrantRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "capability_registered"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["capabilityGrantRef"]
+      }
+    }
+  ]
+}

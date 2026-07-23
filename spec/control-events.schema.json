@@ -91,7 +91,59 @@
       "required": ["type", "id"],
       "properties": {
         "type": {
-          "type": "string"
+          "type": "string",
+          "enum": [
+            "Project",
+            "TaskGroup",
+            "WorkItem",
+            "WorkSession",
+            "AgentNode",
+            "Room",
+            "RoomMessage",
+            "Command",
+            "CommandEffect",
+            "Lease",
+            "Checkpoint",
+            "Artifact",
+            "Finding",
+            "Contract",
+            "IntegrationBatch",
+            "PermissionRequest",
+            "ApprovalRequest",
+            "DecisionRecord",
+            "AuditLog",
+            "Alert",
+            "Ruleset",
+            "PolicyDecision",
+            "QualityGate",
+            "ChangeSet",
+            "MergeQueueItem",
+            "ReleaseManifest",
+            "DLQEntry",
+            "SecretGrant",
+            "SecretLease",
+            "TempGrant",
+            "ExternalCapabilityBoundary",
+            "AgentSkillSource",
+            "AgentRoleSkill",
+            "RoleSkillOverlay",
+            "ModelProvider",
+            "ModelCapabilityProfile",
+            "ModelSelectionPolicy",
+            "ModelSelectionDecision",
+            "SessionPlacementPolicy",
+            "SessionPlacementDecision",
+            "EffectiveInstructionPacket",
+            "RoleDriftGuard",
+            "ExecutionTopology",
+            "DerivedTaskRequest",
+            "ReviewPlan",
+            "ReviewBundle",
+            "RuleSourceResolution",
+            "CompletionReadinessCheck",
+            "RuntimeIssuePattern",
+            "SystemUpgradeCandidate"
+          ]
         },
         "id": {
           "type": "string"
@@ -132,7 +184,19 @@
         "integration_batch",
         "command_effect",
         "close_candidate",
-        "spec_drift"
+        "spec_drift",
+        "model_selection_decision",
+        "session_placement_decision",
+        "effective_instruction_packet",
+        "role_drift_guard",
+        "execution_topology",
+        "derived_task_request",
+        "review_plan",
+        "review_bundle",
+        "rule_source_resolution",
+        "completion_readiness",
+        "external_capability_boundary",
+        "system_upgrade_import"
       ]
     },
     "priority": {
@@ -180,7 +244,7 @@
     "stateTransition": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["machine", "fromState", "toState", "stateVersionBefore", "stateVersionAfter"],
+      "required": ["machine", "fromState", "toState", "stateVersionBefore", "stateVersionAfter", "transitionId"],
       "properties": {
         "machine": {
           "type": "string"
@@ -222,6 +286,19 @@
           "required": ["payloadSchemaRef", "payloadRef", "payloadDigest"]
         }
       ]
+    },
+    {
+      "if": {
+        "required": ["stateTransition"]
+      },
+      "then": {
+        "required": ["guardEvidenceRefs"],
+        "properties": {
+          "guardEvidenceRefs": {
+            "minItems": 1
+          }
+        }
+      }
     }
   ]
 }

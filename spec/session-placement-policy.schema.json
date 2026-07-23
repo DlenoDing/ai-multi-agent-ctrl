@@ -13,7 +13,7 @@
     "sustainedWorkSignals",
     "shortTaskSignals",
     "placementRules",
-    "decisionOutput"
+    "decisionSchemaRef"
   ],
   "properties": {
     "schemaVersion": {
@@ -96,42 +96,34 @@
             }
           }
         },
-        "anyOf": [
+        "oneOf": [
           {"required": ["whenAny"]},
           {"required": ["whenAll"]}
         ]
       }
     },
-    "decisionOutput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "sessionPlacementDecisionRef",
-        "placement",
-        "workSignals",
-        "capacitySnapshotRef",
-        "modelSelectionDecisionRef",
-        "taskContractRef",
-        "auditRef"
-      ],
-      "properties": {
-        "sessionPlacementDecisionRef": {"type": "string", "minLength": 1},
-        "placement": {"type": "string", "enum": ["new_session", "subagent"]},
-        "workSignals": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/workSignal"
-          }
-        },
-        "capacitySnapshotRef": {"type": "string", "minLength": 1},
-        "modelSelectionDecisionRef": {"type": "string", "minLength": 1},
-        "taskContractRef": {"type": "string", "minLength": 1},
-        "auditRef": {"type": "string", "minLength": 1}
-      }
+    "decisionSchemaRef": {
+      "type": "string",
+      "const": "spec/session-placement-decision.schema.json"
     }
   },
   "$defs": {
+    "sustainedWorkSignal": {
+      "type": "string",
+      "enum": [
+        "expected_multi_turn",
+        "long_running",
+        "stateful_context",
+        "role_owner_required",
+        "independent_work_owner",
+        "write_scope_owner",
+        "cross_file_or_cross_service_change",
+        "external_capability_flow",
+        "git_or_release_side_effect",
+        "subagent_limit_approaching",
+        "controller_context_pressure"
+      ]
+    },
     "workSignal": {
       "type": "string",
       "enum": [

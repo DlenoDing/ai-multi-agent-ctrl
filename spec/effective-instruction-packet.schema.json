@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/effective-instruction-packet.schema.json",
+  "title": "EffectiveInstructionPacket",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "packetId",
+    "projectId",
+    "taskGroupId",
+    "workItemId",
+    "status",
+    "objectiveBoundaryDigest",
+    "nextActionDraftDigest",
+    "actionBasisRef",
+    "activeRuleRefs",
+    "nonActiveMaterialRefs",
+    "contextIntakeRefs",
+    "validationRequirements",
+    "forbiddenActions",
+    "deferredDecisions",
+    "auditRef",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "effective-instruction-packet/v1"
+    },
+    "packetId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workItemId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["assembled", "strengthened", "validated", "active", "rejected", "superseded"]
+    },
+    "objectiveBoundaryDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "nextActionDraftDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "actionBasisRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "activeRuleRefs": {
+      "$ref": "#/$defs/refArray"
+    },
+    "nonActiveMaterialRefs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["materialRef", "classification"],
+        "properties": {
+          "materialRef": {
+            "type": "string",
+            "minLength": 1
+          },
+          "classification": {
+            "type": "string",
+            "enum": ["reference_only", "advisory", "history", "test_fixture", "excluded"]
+          }
+        }
+      }
+    },
+    "contextIntakeRefs": {
+      "$ref": "#/$defs/refArray"
+    },
+    "validationRequirements": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "forbiddenActions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "deferredDecisions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "refArray": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

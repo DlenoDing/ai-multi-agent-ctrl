@@ -35,7 +35,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "match", "inputs", "predicate", "evidence", "failureCode"],
+        "required": ["id", "match", "inputs", "evaluation", "predicate", "evidence", "failureCode"],
         "properties": {
           "id": {
             "type": "string",
@@ -68,6 +68,58 @@
           "predicate": {
             "type": "string",
             "minLength": 1
+          },
+          "evaluation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "assertions"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "field_presence",
+                  "actor_authorization",
+                  "authorization_integrity",
+                  "digest_integrity",
+                  "reference_integrity",
+                  "state_predicate",
+                  "decision_integrity",
+                  "capability_integrity",
+                  "effect_integrity",
+                  "checkpoint_integrity"
+                ]
+              },
+              "assertions": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "field_non_empty",
+                    "bound_to_state_version",
+                    "actor_in_manifest",
+                    "actor_not_entry_or_admin",
+                    "policy_decision_valid",
+                    "authorization_exact",
+                    "grant_scoped_unexpired",
+                    "external_boundary_evidenced",
+                    "digest_matches_canonical_snapshot",
+                    "reference_exists",
+                    "reference_readable_by_actor",
+                    "referenced_object_schema_valid",
+                    "status_matches_required_predicate",
+                    "decision_object_immutable",
+                    "decision_scope_matches_subject",
+                    "capability_scope_matches_subject",
+                    "lease_active_or_terminal_as_required",
+                    "effect_schema_valid",
+                    "result_evidence_present",
+                    "checkpoint_schema_valid",
+                    "output_contract_satisfied"
+                  ]
+                }
+              }
+            }
           },
           "evidence": {
             "type": "object",
