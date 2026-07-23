@@ -574,7 +574,7 @@ function renderRuntime() {
     escapeHtml(decision.workItemId),
     escapeHtml(decision.selectedModel?.modelId || "-"),
     pill(decision.status),
-    escapeHtml(decision.selectionMode)
+    escapeHtml(decision.modelDecision || decision.selectionMode)
   ])).join("");
   const placements = (state.sessionPlacementDecisions || []).slice(0, 12).map((decision) => row([
     escapeHtml(decision.workItemId),
@@ -637,7 +637,7 @@ function renderRuntime() {
     `, "wide"),
     panel("模型选择记录", h`
       <table class="data-table">
-        <thead><tr><th>角色</th><th>Work</th><th>模型</th><th>状态</th><th>模式</th></tr></thead>
+        <thead><tr><th>角色</th><th>Work</th><th>模型</th><th>状态</th><th>modelDecision</th></tr></thead>
         <tbody>${decisions || row(["-", "-", "-", "-", "-"])}</tbody>
       </table>
     `),

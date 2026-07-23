@@ -104,7 +104,7 @@ System instruction
 | task dispatch | task contract schema、stateVersion、rulesetDigest、writeScope、stopCondition |
 | state transition | source state、target state、allowed actor、gate resolver、required evidence、failureCode |
 | role skill selection | skill source digest、role skill digest、project overlay、taskGroup overlay、model requirements |
-| model selection | provider capability profile、roleSkillFit、task capability fit、candidate rankings、hard constraints、quota/cost/latency/reliability、decision refs |
+| model selection | available model inventory、roleSkillFit、task capability fit、candidate rankings、hard constraints、quota/cost/latency/reliability、explicit model/reasoning、short modelDecision、decision refs |
 | session placement | sustainedWorkSignals、shortTaskSignals、subagent capacity、subagent safety proof、task contract、modelSelectionDecisionRef、auditRef |
 | effective instruction | source classification、nextActionDraftDigest、activeRuleRefs、nonActiveMaterialRefs、contextIntakeRefs、forbiddenActions |
 | role drift guard | objectiveBoundaryDigest、roleMissionDigest、taskContractDigest、allowed/forbidden action scope、driftScore、correctiveActions |

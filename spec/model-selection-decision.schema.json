@@ -15,6 +15,7 @@
     "roleSkillRef",
     "roleSkillDigest",
     "selectionMode",
+    "modelDecision",
     "candidateRankings",
     "hardConstraintResults",
     "scoreBreakdown",
@@ -86,7 +87,7 @@
     "selectedModel": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["providerClass", "providerId", "modelId", "reasoningLevel", "capabilityProfileRef"],
+      "required": ["providerClass", "providerId", "modelId", "reasoningLevel", "reasoning", "modelDecision", "capabilityProfileRef"],
       "properties": {
         "providerClass": {
           "$ref": "#/$defs/providerClass"
@@ -106,6 +107,15 @@
           "type": "string",
           "minLength": 1
         },
+        "reasoning": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelDecision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
         "maxModelTier": {
           "$ref": "#/$defs/modelTier"
         },
@@ -121,7 +131,12 @@
     },
     "selectionMode": {
       "type": "string",
-      "enum": ["fixed_model", "fixed_tier", "auto_best", "auto_fast", "cost_aware"]
+      "enum": ["dynamic_context", "auto_best", "auto_fast", "cost_aware"]
+    },
+    "modelDecision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
     },
     "candidateRankings": {
       "type": "array",
@@ -154,10 +169,19 @@
             "type": "string",
             "minLength": 1
           },
-          "reasoningLevel": {
-            "type": "string",
-            "minLength": 1
-          },
+        "reasoningLevel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reasoning": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelDecision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
           "modelTier": {
             "$ref": "#/$defs/modelTier"
           },

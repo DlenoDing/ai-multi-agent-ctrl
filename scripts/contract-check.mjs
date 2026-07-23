@@ -103,12 +103,12 @@ function verifyAgentGatewayContracts(output) {
   const registered = registerAgentNode(state, {nodeName: "contract-node", requestedRoles: ["*"], runtimeVersion: "contract", profile: {platform: "test", arch: "test", tools: [], models: [{providerClass: "custom", available: true}]}}, {joinToken: issued.joinToken, publicUrl: "https://control.example.test"});
   validateSchema(state.agentRuntimeNodes[0], runtimeNodeSchema, "AgentRuntimeNode", output);
   const contract = buildTaskContract(state, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", root});
-  if (!contract.model.modelId || !contract.model.reasoningLevel || !contract.model.modelTier || contract.model.maxModelTier !== "frontier_standard" || contract.model.maxReasoningLevel !== "high") {
-    output.push("AgentTaskContract did not bind explicit provider-neutral model tier and reasoning ceiling");
+  if (!contract.model.model || !contract.model.modelId || !contract.model.reasoning || !contract.model.reasoningLevel || !contract.model.modelDecision || !contract.model.modelDecision.startsWith("modelDecision:")) {
+    output.push("AgentTaskContract did not bind explicit model, reasoning and short modelDecision");
   }
   const deepAnalysisDecision = selectModel(state, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", roleId: "orchestrator", workItem: {id: "work_deep_analysis", title: "深度分析架构方案", ownerRole: "orchestrator", requirements: ["analysis only"]}});
-  if (deepAnalysisDecision.taskExecutionClass !== "deep_analysis" || deepAnalysisDecision.maxModelTier !== "frontier_standard" || deepAnalysisDecision.maxReasoningLevel !== "high" || deepAnalysisDecision.escalationAllowed !== false) {
-    output.push("Model selection did not enforce provider-neutral default ceiling for deep analysis");
+  if (deepAnalysisDecision.taskExecutionClass !== "deep_analysis" || deepAnalysisDecision.escalationAllowed !== false || !deepAnalysisDecision.modelDecision?.startsWith("modelDecision:") || deepAnalysisDecision.modelDecision.length > 240) {
+    output.push("Model selection did not create a bounded one-line integration-owner modelDecision");
   }
   const mixedState = JSON.parse(JSON.stringify(seedState));
   ensureRuntimeCollections(mixedState, {root});

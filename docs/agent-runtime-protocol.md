@@ -272,14 +272,14 @@ Runtime 每 10 到 30 秒发送 heartbeat。控制平面可按项目策略调整
     }
   ],
   "model": {
+    "model": "provider/model",
     "modelId": "provider/model",
     "alias": "balanced",
     "providerClass": "openai|anthropic|google|xai|deepseek|qwen|ollama|custom",
-    "modelTier": "frontier_standard",
-    "maxModelTier": "frontier_standard",
     "taskExecutionClass": "deep_analysis|implementation|verification|short_execution",
+    "reasoning": "medium",
     "reasoningLevel": "medium",
-    "maxReasoningLevel": "high",
+    "modelDecision": "modelDecision: fixed writeSet implementation; no architecture裁决 -> provider/model / medium",
     "selectionMode": "auto_best",
     "modelSelectionDecisionRef": "model-selection://msd_..."
   },

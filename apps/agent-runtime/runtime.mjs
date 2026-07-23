@@ -355,16 +355,54 @@ function prepareRepository(config, target) {
 }
 
 function buildExecutionPrompt(dispatchPackage, workset, packagePath) {
+  const contract = dispatchPackage.taskContract;
+  const model = contract.model || {};
+  const repositoryTarget = dispatchPackage.repositoryOutputTarget || {};
+  const readLocators = uniqueStrings([
+    "AGENTS.md",
+    ...(contract.inputLocators || []),
+    `package:${packagePath}`,
+    `skill-manifest:${workset.manifestPath}`
+  ]);
+  const writeSet = repositoryTarget.pathAllowlist?.length ? repositoryTarget.pathAllowlist : ["<repositoryOutputTarget.pathAllowlist>"];
+  const gates = contract.actionBasis?.validationRequirements?.length ? contract.actionBasis.validationRequirements : ["schema_valid", "checkpoint_registered", "repository_output_target_selected"];
+  const doNot = uniqueStrings([...(contract.actionBasis?.forbiddenActions || []), "do not expand graph", "return to owner if writeSet/dependency changes"]);
   return [
-    `You are the ${dispatchPackage.taskContract.roleId} execution agent for work item ${dispatchPackage.taskContract.workId}.`,
-    `Use the explicitly assigned model contract: provider=${dispatchPackage.taskContract.model.providerClass || dispatchPackage.taskContract.model.alias}, modelId=${dispatchPackage.taskContract.model.modelId}, modelTier=${dispatchPackage.taskContract.model.modelTier || "standard"}, reasoningLevel=${dispatchPackage.taskContract.model.reasoningLevel}, maxReasoningLevel=${dispatchPackage.taskContract.model.maxReasoningLevel || "high"}. Do not inherit any previous model or reasoning defaults.`,
-    dispatchPackage.skillWorkset.executionDirective,
-    `Load the skill manifest at ${workset.manifestPath} and every listed skill file before acting.`,
-    `The authoritative task package is ${packagePath}.`,
-    `Use only the remote MCP server ${dispatchPackage.remoteServices.mcpPath}; do not start or install any local MCP server.`,
-    "Keep all task outputs in the assigned Git repository and within repositoryOutputTarget.pathAllowlist.",
-    "Do not modify control-plane rules, scheduler policy, permissions, or skills during task execution.",
-    "Run the required verification and leave the repository with task output changes ready for the runtime to commit and push."
+    "DISPATCH v1",
+    "ruleset: 2026-07-23.33",
+    `model: ${model.model || model.modelId || "custom:auto"}`,
+    `reasoning: ${model.reasoning || model.reasoningLevel || "standard"}`,
+    model.modelDecision || "modelDecision: bounded dispatch; explicit model/reasoning assigned by integration owner",
+    "",
+    `node: ${contract.workId}`,
+    `graph: ${contract.taskGroupId}`,
+    `base: state@${contract.stateVersion} contract@${contract.contractDigest} repo@${repositoryTarget.targetId}`,
+    "writeSet:",
+    ...writeSet.map((item) => `- ${item}`),
+    "",
+    "read:",
+    ...readLocators.map((item) => `- ${item}`),
+    "",
+    "do:",
+    `- implement only ${contract.workId}`,
+    "- run stated focused gates",
+    "- commit/push task-owned checkpoint when stable",
+    `- load skill workset ${workset.manifestPath}`,
+    `- use only remote MCP ${dispatchPackage.remoteServices.mcpPath}`,
+    "",
+    "doNot:",
+    ...doNot.map((item) => `- ${item}`),
+    "- do not start or install any local MCP server",
+    "",
+    "gate:",
+    ...gates.map((item) => `- ${item}`),
+    "",
+    "return:",
+    "- status",
+    "- changed paths",
+    "- commits",
+    "- commands/results",
+    "- blockers or expansion request"
   ].join("\n");
 }
 
@@ -587,6 +625,10 @@ function parseArgs(argv) {
 
 function splitCsv(value) {
   return value ? String(value).split(",").map((item) => item.trim()).filter(Boolean) : undefined;
+}
+
+function uniqueStrings(values) {
+  return [...new Set((values || []).map((item) => String(item || "").trim()).filter(Boolean))];
 }
 
 function globalClientConfigurationEnabled() {

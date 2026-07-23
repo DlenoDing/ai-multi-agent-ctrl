@@ -536,11 +536,13 @@ export function selectModel(state, request = {}) {
     ...inferCapabilities(`${workItem.title || ""} ${workItem.ownerRole || roleId}`)
   ]);
   const hardConstraints = {...(policy?.hardConstraints || {}), ...(request.hardConstraints || {}), maxReasoningLevel: modelCeiling.maxReasoningLevel};
-  const candidates = state.modelCapabilities.map((profile) => rankModel(profile, roleSkill, requiredCapabilities, hardConstraints, request.selectionMode || "auto_best", taskExecution, modelCeiling));
+  const selectionMode = normalizeSelectionMode(request.selectionMode);
+  const candidates = state.modelCapabilities.map((candidateModel) => rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstraints, selectionMode, taskExecution, modelCeiling));
   candidates.sort((a, b) => Number(b.eligible) - Number(a.eligible) || b.totalScore - a.totalScore);
   const selected = candidates.find((candidate) => candidate.eligible);
   const at = new Date().toISOString();
   const decisionId = createId("msd");
+  const modelDecision = shortModelDecision({workItem, request, taskExecution, selected, modelCeiling});
   const decision = {
     schemaVersion: "model-selection-decision/v1",
     decisionId,
@@ -557,7 +559,8 @@ export function selectModel(state, request = {}) {
     maxReasoningLevel: modelCeiling.maxReasoningLevel,
     escalationAllowed: modelCeiling.escalationAllowed,
     escalationRationaleRefs: modelCeiling.escalationRationaleRefs,
-    selectionMode: request.selectionMode || "auto_best",
+    selectionMode,
+    modelDecision,
     candidateRankings: candidates.slice(0, Math.min(8, candidates.length)).map((candidate, index) => ({
       rank: index + 1,
       providerClass: candidate.providerClass,
@@ -583,6 +586,8 @@ export function selectModel(state, request = {}) {
       modelId: selected.modelId,
       modelTier: selected.modelTier,
       reasoningLevel: selected.reasoningLevel,
+      reasoning: selected.reasoningLevel,
+      modelDecision,
       maxModelTier: modelCeiling.maxModelTier,
       maxReasoningLevel: modelCeiling.maxReasoningLevel,
       capabilityProfileRef: selected.capabilityProfileRef
@@ -597,36 +602,36 @@ export function selectModel(state, request = {}) {
   return decision;
 }
 
-function rankModel(profile, roleSkill, requiredCapabilities, hardConstraints, selectionMode, taskExecution, modelCeiling) {
+function rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstraints, selectionMode, taskExecution, modelCeiling) {
   const reasons = [];
-  if (hardConstraints.minContextWindowTokens && profile.limits.contextWindowTokens < hardConstraints.minContextWindowTokens) reasons.push("context_window");
-  if (hardConstraints.requiresStructuredOutput && !profile.limits.supportsStructuredOutput) reasons.push("structured_output");
-  if (hardConstraints.requiresToolUse && !profile.limits.supportsToolUse) reasons.push("tool_use");
-  if (hardConstraints.allowedProviderClasses?.length && !hardConstraints.allowedProviderClasses.includes(profile.providerClass)) reasons.push("provider_not_allowed");
-  if (hardConstraints.forbiddenProviderClasses?.includes(profile.providerClass)) reasons.push("provider_forbidden");
-  if (hardConstraints.minReliabilityScore && profile.qualitySignals.reliabilityScore < hardConstraints.minReliabilityScore) reasons.push("reliability");
-  if (hardConstraints.maxCostClass && costRank(profile.costSignals.costClass) > costRank(hardConstraints.maxCostClass)) reasons.push("cost");
-  const baseReasoningLevel = reasoningLevelForTask(profile, taskExecution);
-  const modelTier = modelTierForProfile(profile);
+  if (hardConstraints.minContextWindowTokens && candidateModel.limits.contextWindowTokens < hardConstraints.minContextWindowTokens) reasons.push("context_window");
+  if (hardConstraints.requiresStructuredOutput && !candidateModel.limits.supportsStructuredOutput) reasons.push("structured_output");
+  if (hardConstraints.requiresToolUse && !candidateModel.limits.supportsToolUse) reasons.push("tool_use");
+  if (hardConstraints.allowedProviderClasses?.length && !hardConstraints.allowedProviderClasses.includes(candidateModel.providerClass)) reasons.push("provider_not_allowed");
+  if (hardConstraints.forbiddenProviderClasses?.includes(candidateModel.providerClass)) reasons.push("provider_forbidden");
+  if (hardConstraints.minReliabilityScore && candidateModel.qualitySignals.reliabilityScore < hardConstraints.minReliabilityScore) reasons.push("reliability");
+  if (hardConstraints.maxCostClass && costRank(candidateModel.costSignals.costClass) > costRank(hardConstraints.maxCostClass)) reasons.push("cost");
+  const baseReasoningLevel = reasoningLevelForTask(candidateModel, taskExecution);
+  const modelTier = modelTierForCandidate(candidateModel);
   if (reasoningRank[baseReasoningLevel] > reasoningRank[hardConstraints.maxReasoningLevel || "high"] && !modelCeiling.escalationAllowed) reasons.push("reasoning_above_task_ceiling");
   if (modelTierRank[modelTier] > modelTierRank[modelCeiling.maxModelTier || "frontier_standard"] && !modelCeiling.escalationAllowed) reasons.push("model_tier_above_task_ceiling");
-  const capabilityFit = overlapScore(requiredCapabilities, profile.strengths);
-  const roleSkillFit = overlapScore(roleSkill.capabilities, profile.strengths);
-  const quality = (profile.qualitySignals.reasoningScore + profile.qualitySignals.codingScore + profile.qualitySignals.reviewScore) / 3;
-  const latency = latencyScore(profile.qualitySignals.latencyClass, selectionMode);
-  const cost = 1 - costRank(profile.costSignals.costClass) / 3;
-  const quota = quotaScore(profile.costSignals.quotaClass);
-  const reliability = profile.qualitySignals.reliabilityScore;
-  const risk = ["ollama", "vllm"].includes(profile.providerClass) ? 0.92 : 0.84;
+  const capabilityFit = overlapScore(requiredCapabilities, candidateModel.strengths);
+  const roleSkillFit = overlapScore(roleSkill.capabilities, candidateModel.strengths);
+  const quality = (candidateModel.qualitySignals.reasoningScore + candidateModel.qualitySignals.codingScore + candidateModel.qualitySignals.reviewScore) / 3;
+  const latency = latencyScore(candidateModel.qualitySignals.latencyClass, selectionMode);
+  const cost = 1 - costRank(candidateModel.costSignals.costClass) / 3;
+  const quota = quotaScore(candidateModel.costSignals.quotaClass);
+  const reliability = candidateModel.qualitySignals.reliabilityScore;
+  const risk = ["ollama", "vllm"].includes(candidateModel.providerClass) ? 0.92 : 0.84;
   const scoreBreakdown = {capabilityFit, roleSkillFit, quality, latency, cost, quota, reliability, risk};
   const weighted = capabilityFit * 2 + roleSkillFit * 2 + quality * 2 + latency + cost + quota + reliability * 2 + risk;
   return {
-    providerClass: profile.providerClass,
-    providerId: profile.providerId,
-    modelId: profile.modelId,
+    providerClass: candidateModel.providerClass,
+    providerId: candidateModel.providerId,
+    modelId: candidateModel.modelId,
     totalScore: Math.max(0, Math.min(1, Number((weighted / 12).toFixed(4)))),
     eligible: reasons.length === 0,
-    capabilityProfileRef: `${profile.providerId}/${profile.modelId}`,
+    capabilityProfileRef: `${candidateModel.providerId}/${candidateModel.modelId}`,
     modelTier,
     reasoningLevel: modelCeiling.escalationAllowed ? baseReasoningLevel : capReasoning(baseReasoningLevel, modelCeiling.maxReasoningLevel),
     scoreBreakdown,
@@ -668,19 +673,29 @@ function modelCeilingForTask(taskExecution, request = {}) {
   };
 }
 
-function reasoningLevelForTask(profile, taskExecution) {
-  if (taskExecution.taskExecutionClass === "deep_analysis") return profile.qualitySignals.reasoningScore >= 0.82 ? "high" : "medium";
-  if (taskExecution.taskExecutionClass === "verification") return profile.qualitySignals.reviewScore >= 0.86 ? "medium" : "standard";
+function shortModelDecision({workItem = {}, request = {}, taskExecution, selected, modelCeiling}) {
+  const text = `${workItem.title || ""} ${(workItem.requirements || []).join(" ")} ${request.taskPrompt || ""}`.toLowerCase();
+  const risk = taskExecution.specialEscalationSignal ? "P0 risk" : /权限|跨仓|cross-repo|root-cause|裁决|architecture|架构/u.test(text) ? "decision risk" : "no architecture裁决";
+  const writeSet = request.writeSet?.length ? "fixed writeSet" : "bounded writeSet";
+  const workKind = taskExecution.taskExecutionClass === "verification" ? "directed verification" : taskExecution.taskExecutionClass === "short_execution" ? "short mechanical task" : taskExecution.taskExecutionClass === "deep_analysis" ? "analysis/cross-check" : "implementation";
+  const model = selected?.modelId || "custom:auto";
+  const reasoning = selected?.reasoningLevel || capReasoning(modelCeiling.maxReasoningLevel || "medium", "high");
+  return `modelDecision: ${writeSet} ${workKind}; ${risk} -> ${model} / ${reasoning}`.slice(0, 220);
+}
+
+function reasoningLevelForTask(candidateModel, taskExecution) {
+  if (taskExecution.taskExecutionClass === "deep_analysis") return candidateModel.qualitySignals.reasoningScore >= 0.82 ? "high" : "medium";
+  if (taskExecution.taskExecutionClass === "verification") return candidateModel.qualitySignals.reviewScore >= 0.86 ? "medium" : "standard";
   if (taskExecution.taskExecutionClass === "short_execution") return "low";
-  return profile.qualitySignals.codingScore >= 0.88 ? "medium" : "standard";
+  return candidateModel.qualitySignals.codingScore >= 0.88 ? "medium" : "standard";
 }
 
 function capReasoning(reasoningLevel, maxReasoningLevel) {
   return reasoningRank[reasoningLevel] > reasoningRank[maxReasoningLevel] ? maxReasoningLevel : reasoningLevel;
 }
 
-function modelTierForProfile(profile) {
-  const quality = (profile.qualitySignals.reasoningScore + profile.qualitySignals.codingScore + profile.qualitySignals.reviewScore) / 3;
+function modelTierForCandidate(candidateModel) {
+  const quality = (candidateModel.qualitySignals.reasoningScore + candidateModel.qualitySignals.codingScore + candidateModel.qualitySignals.reviewScore) / 3;
   if (quality >= 0.9) return "frontier_standard";
   if (quality >= 0.84) return "frontier_economy";
   return "standard";
@@ -710,6 +725,10 @@ function overlapScore(required, available) {
 function latencyScore(latencyClass, selectionMode) {
   const base = {low: 1, normal: 0.75, high: 0.45, unknown: 0.55}[latencyClass] ?? 0.55;
   return selectionMode === "auto_fast" ? base : Math.min(1, base + 0.1);
+}
+
+function normalizeSelectionMode(value) {
+  return ["dynamic_context", "auto_best", "auto_fast", "cost_aware"].includes(value) ? value : "dynamic_context";
 }
 
 function costRank(costClass) {
@@ -852,15 +871,15 @@ export function buildTaskContract(state, request = {}) {
     artifactManifestPath: repositoryTarget.artifactManifestPath || `docs/artifact-manifests/${workItem?.id || "work"}.json`,
     readScope: [{resourceType: "state", resourceKey: `TaskGroup:${taskGroup?.id || "tg_runtime_management"}`, access: "read", resourceDigest: digestOf(taskGroup || {})}],
     model: {
+      model: modelDecision.selectedModel?.modelId || "custom:auto",
       modelId: modelDecision.selectedModel?.modelId || "custom:auto",
       alias: modelDecision.selectedModel?.providerClass || "custom",
       providerClass: modelDecision.selectedModel?.providerClass || "custom",
-      modelTier: modelDecision.selectedModel?.modelTier || "standard",
-      maxModelTier: modelDecision.selectedModel?.maxModelTier || "frontier_standard",
       taskExecutionClass: modelDecision.taskExecutionClass || "implementation",
+      reasoning: modelDecision.selectedModel?.reasoning || modelDecision.selectedModel?.reasoningLevel || "standard",
       reasoningLevel: modelDecision.selectedModel?.reasoningLevel || "standard",
-      maxReasoningLevel: modelDecision.selectedModel?.maxReasoningLevel || "high",
       selectionMode: modelDecision.selectionMode,
+      modelDecision: modelDecision.modelDecision,
       modelSelectionDecisionRef: modelDecision.decisionId
     },
     mcpGrants: [],

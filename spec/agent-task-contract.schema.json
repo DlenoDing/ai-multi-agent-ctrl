@@ -415,8 +415,12 @@
     "model": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["modelId", "reasoningLevel", "selectionMode", "modelSelectionDecisionRef"],
+      "required": ["model", "modelId", "reasoning", "reasoningLevel", "modelDecision", "selectionMode", "modelSelectionDecisionRef"],
       "properties": {
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
         "modelId": {
           "type": "string",
           "minLength": 1
@@ -442,12 +446,21 @@
         "reasoningLevel": {
           "type": "string"
         },
+        "reasoning": {
+          "type": "string",
+          "minLength": 1
+        },
         "maxReasoningLevel": {
           "type": "string"
         },
+        "modelDecision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
         "selectionMode": {
           "type": "string",
-          "enum": ["fixed_model", "fixed_tier", "auto_best", "auto_fast", "cost_aware"]
+          "enum": ["dynamic_context", "auto_best", "auto_fast", "cost_aware"]
         },
         "modelSelectionDecisionRef": {
           "type": "string",
