@@ -430,6 +430,19 @@ function renderProjects() {
         <button class="primary-button" type="submit">授权</button>
       </form>
     `),
+    panel("Agent 入网授权", h`
+      <form id="join-token-form" class="form-grid compact-form">
+        <div class="form-row">
+          <label for="joinProjectId">项目</label>
+          <select id="joinProjectId" name="projectId">${state.projects.map((project) => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}</option>`).join("")}</select>
+        </div>
+        <div class="form-row"><label for="joinNodeName">节点名</label><input id="joinNodeName" name="nodeName" placeholder="可留空"></div>
+        <div class="form-row"><label for="joinRoles">角色范围</label><input id="joinRoles" name="allowedRoles" value="agent-runtime"></div>
+        <div class="form-row"><label for="joinTtl">有效秒数</label><input id="joinTtl" name="ttlSeconds" type="number" min="60" max="86400" value="1800"></div>
+        <button class="primary-button" type="submit">生成一次性 Agent 注册命令</button>
+      </form>
+      ${lastJoinCommands ? `<pre class="command-output">${escapeHtml(["direct:", lastJoinCommands.installCommand, "", "verified:", lastJoinCommands.verifiedInstallCommand].join("\n"))}</pre>` : ""}
+    `, "wide"),
     panel("项目状态", h`
       <table class="data-table">
         <thead><tr><th>项目</th><th>状态</th><th>进度</th><th>阶段</th><th>健康度</th><th>成员</th></tr></thead>
@@ -465,6 +478,22 @@ function renderProjects() {
     const data = Object.fromEntries(form.entries());
     try {
       await api(`/api/projects/${data.projectId}/members`, {method: "POST", body: JSON.stringify(data)});
+      lastError = "";
+      await load();
+    } catch (error) {
+      showError(error);
+    }
+  });
+
+  document.querySelector("#join-token-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target).entries());
+    data.allowedRoles = String(data.allowedRoles || "agent-runtime").split(",").map((item) => item.trim()).filter(Boolean);
+    data.ttlSeconds = Number(data.ttlSeconds || 1800);
+    data.maxUses = 1;
+    try {
+      const result = await api("/api/agent-join-tokens", {method: "POST", body: JSON.stringify(data)});
+      lastJoinCommands = {installCommand: result.installCommand, verifiedInstallCommand: result.verifiedInstallCommand};
       lastError = "";
       await load();
     } catch (error) {
@@ -582,16 +611,6 @@ function renderRuntime() {
         <button class="secondary-button" data-action="decide-model">模型决策</button>
       </div>
     `),
-    panel("Agent Runtime 入网", h`
-      <form id="join-token-form" class="form-grid compact-form">
-        <div class="form-row"><label for="joinProjectId">项目</label><select id="joinProjectId" name="projectId">${state.projects.map((project) => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}</option>`).join("")}</select></div>
-        <div class="form-row"><label for="joinNodeName">节点名</label><input id="joinNodeName" name="nodeName" placeholder="可留空"></div>
-        <div class="form-row"><label for="joinRoles">角色范围</label><input id="joinRoles" name="allowedRoles" value="agent-runtime"></div>
-        <div class="form-row"><label for="joinTtl">有效秒数</label><input id="joinTtl" name="ttlSeconds" type="number" min="60" max="86400" value="1800"></div>
-        <button class="primary-button" type="submit">生成一次性加入命令</button>
-      </form>
-      ${lastJoinCommands ? `<pre class="command-output">${escapeHtml(["direct:", lastJoinCommands.installCommand, "", "verified:", lastJoinCommands.verifiedInstallCommand].join("\n"))}</pre>` : ""}
-    `, "wide"),
     panel("Agent Runtime 节点", h`
       <table class="data-table">
         <thead><tr><th>节点</th><th>Node ID</th><th>项目</th><th>角色</th><th>状态</th><th>准入</th><th>心跳</th><th>操作</th></tr></thead>
@@ -648,21 +667,6 @@ function renderRuntime() {
     `, "wide")
   ].join("");
 
-  document.querySelector("#join-token-form")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const data = Object.fromEntries(new FormData(event.target).entries());
-    data.allowedRoles = String(data.allowedRoles || "*").split(",").map((item) => item.trim()).filter(Boolean);
-    data.ttlSeconds = Number(data.ttlSeconds || 1800);
-    data.maxUses = 1;
-    try {
-      const result = await api("/api/agent-join-tokens", {method: "POST", body: JSON.stringify(data)});
-      lastJoinCommands = {installCommand: result.installCommand, verifiedInstallCommand: result.verifiedInstallCommand};
-      lastError = "";
-      await load();
-    } catch (error) {
-      showError(error);
-    }
-  });
 }
 
 function renderInstructions() {

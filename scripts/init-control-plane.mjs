@@ -69,9 +69,12 @@ if (!force && storedStateExists(stateStoreOptions())) {
 
 const existingConfig = existsSync(configPath) ? loadJson(configPath) : {};
 const bootstrapToken = process.env.AIMAC_BOOTSTRAP_TOKEN || existingConfig.localBootstrapToken || randomBytes(24).toString("base64url");
-const workspaceOwnerToken = process.env.AIMAC_WORKSPACE_OWNER_TOKEN || existingConfig.localAccountTokens?.acct_workspace_owner || randomBytes(24).toString("base64url");
-const reviewerToken = process.env.AIMAC_REVIEWER_TOKEN || existingConfig.localAccountTokens?.acct_reviewer || randomBytes(24).toString("base64url");
-const agentRuntimeToken = process.env.AIMAC_AGENT_RUNTIME_TOKEN || existingConfig.localAccountTokens?.acct_agent_runtime || randomBytes(24).toString("base64url");
+const workspaceOwnerTokenEnv = process.env.AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN || process.env.AIMAC_WORKSPACE_OWNER_TOKEN;
+const reviewerTokenEnv = process.env.AIMAC_LOCAL_SEED_REVIEWER_TOKEN || process.env.AIMAC_REVIEWER_TOKEN;
+const agentRuntimeTokenEnv = process.env.AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN || process.env.AIMAC_AGENT_RUNTIME_TOKEN;
+const workspaceOwnerToken = workspaceOwnerTokenEnv || existingConfig.localAccountTokens?.acct_workspace_owner || randomBytes(24).toString("base64url");
+const reviewerToken = reviewerTokenEnv || existingConfig.localAccountTokens?.acct_reviewer || randomBytes(24).toString("base64url");
+const agentRuntimeToken = agentRuntimeTokenEnv || existingConfig.localAccountTokens?.acct_agent_runtime || randomBytes(24).toString("base64url");
 const mcpServiceToken = process.env.AIMAC_MCP_SERVICE_TOKEN || existingConfig.localMcpServiceToken || randomBytes(32).toString("base64url");
 writeJson(configPath, {
   schemaVersion: "runtime-local-config/v1",
@@ -95,21 +98,21 @@ writeJson(configPath, {
   localBootstrapToken: process.env.AIMAC_BOOTSTRAP_TOKEN ? undefined : bootstrapToken,
   localMcpServiceToken: process.env.AIMAC_MCP_SERVICE_TOKEN ? undefined : mcpServiceToken,
   localAccountTokens: {
-    ...(process.env.AIMAC_WORKSPACE_OWNER_TOKEN ? {} : {acct_workspace_owner: workspaceOwnerToken}),
-    ...(process.env.AIMAC_REVIEWER_TOKEN ? {} : {acct_reviewer: reviewerToken}),
-    ...(process.env.AIMAC_AGENT_RUNTIME_TOKEN ? {} : {acct_agent_runtime: agentRuntimeToken})
+    ...(workspaceOwnerTokenEnv ? {} : {acct_workspace_owner: workspaceOwnerToken}),
+    ...(reviewerTokenEnv ? {} : {acct_reviewer: reviewerToken}),
+    ...(agentRuntimeTokenEnv ? {} : {acct_agent_runtime: agentRuntimeToken})
   },
   updatedAt: new Date().toISOString()
 });
 
 console.log("next: npm start");
 console.log("mcp: hosted by npm start at $AIMAC_PUBLIC_URL/mcp");
-console.log("agent: create a join token in the management console, then run the returned curl | sh command on the Agent host");
+console.log("agent: log in to the management console, open the target project, generate a one-time join command, then run that command on the Agent host");
 if (!process.env.AIMAC_BOOTSTRAP_TOKEN) {
   console.log(`local bootstrap token: ${bootstrapToken}`);
 }
-if (!process.env.AIMAC_WORKSPACE_OWNER_TOKEN) {
-  console.log(`local workspace owner token: ${workspaceOwnerToken}`);
+if (!workspaceOwnerTokenEnv) {
+  console.log(`local seed workspace owner token: ${workspaceOwnerToken}`);
 }
 if (!process.env.AIMAC_MCP_SERVICE_TOKEN) {
   console.log(`central MCP service token: ${mcpServiceToken}`);

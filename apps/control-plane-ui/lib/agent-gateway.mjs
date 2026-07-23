@@ -88,12 +88,13 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
   state.agentJoinTokens.unshift(record);
   state.agentJoinTokens = state.agentJoinTokens.slice(0, 500);
   const serverUrl = trimTrailingSlash(options.publicUrl || "http://127.0.0.1:4317");
+  const nodeNameArg = record.expectedNodeName ? ` --node-name ${shellArg(record.expectedNodeName)}` : "";
   appendGatewayEvent(state, "join_token_issued", record.joinTokenId, {projectId, allowedRoles});
   return {
     joinToken: token,
     joinTokenRecord: publicJoinToken(record),
-    installCommand: `curl -fsSL ${shellUrl(`${serverUrl}/install-agent.sh`)} | sh -s -- --server ${shellArg(serverUrl)} --join-token ${shellArg(token)}`,
-    verifiedInstallCommand: `curl -fsSLO ${shellUrl(`${serverUrl}/install-agent.sh`)} && curl -fsSLO ${shellUrl(`${serverUrl}/install-agent.sh.sha256`)} && ( if command -v sha256sum >/dev/null 2>&1; then sha256sum -c install-agent.sh.sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 -c install-agent.sh.sha256; else printf '%s\\n' 'sha256sum or shasum is required' >&2; exit 1; fi ) && sh install-agent.sh --server ${shellArg(serverUrl)} --join-token ${shellArg(token)}`
+    installCommand: `curl -fsSL ${shellUrl(`${serverUrl}/install-agent.sh`)} | sh -s -- --server ${shellArg(serverUrl)} --join-token ${shellArg(token)}${nodeNameArg}`,
+    verifiedInstallCommand: `curl -fsSLO ${shellUrl(`${serverUrl}/install-agent.sh`)} && curl -fsSLO ${shellUrl(`${serverUrl}/install-agent.sh.sha256`)} && ( if command -v sha256sum >/dev/null 2>&1; then sha256sum -c install-agent.sh.sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 -c install-agent.sh.sha256; else printf '%s\\n' 'sha256sum or shasum is required' >&2; exit 1; fi ) && sh install-agent.sh --server ${shellArg(serverUrl)} --join-token ${shellArg(token)}${nodeNameArg}`
   };
 }
 

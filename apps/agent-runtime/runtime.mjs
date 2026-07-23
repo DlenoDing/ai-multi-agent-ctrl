@@ -61,7 +61,8 @@ async function bootstrap() {
   };
   for (const path of [config.repositoryDir, config.skillCacheDir, config.taskDir, config.outboxDir]) mkdirSync(path, {recursive: true});
   writeSecretJson(configPath, config);
-  if (clientConfigurationEnabled()) configureRemoteMcpClients(config, profile);
+  writeAgentScopedMcpConfig(config, profile);
+  if (globalClientConfigurationEnabled()) configureGlobalRemoteMcpClients(config, profile);
   const check = await selfCheck(config);
   if (!check.ok) throw new Error(`agent self-check failed: ${check.missingChecks.join(",")}`);
   process.stdout.write([
@@ -119,7 +120,8 @@ async function run(config) {
       if (heartbeat.nodeToken) {
         config.nodeToken = heartbeat.nodeToken;
         writeSecretJson(configPath, config);
-        if (clientConfigurationEnabled()) configureRemoteMcpClients(config, currentProfile);
+        writeAgentScopedMcpConfig(config, currentProfile);
+        if (globalClientConfigurationEnabled()) configureGlobalRemoteMcpClients(config, currentProfile);
       }
       lastHeartbeat = Date.now();
     }
@@ -390,12 +392,37 @@ function writeArtifactManifest(repositoryRoot, manifestPath, dispatchPackage, ou
   writeFileSync(target, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
-function configureRemoteMcpClients(config, profile) {
-  const clients = new Set((profile.tools || []).filter((tool) => tool.available).map((tool) => tool.name));
+function writeAgentScopedMcpConfig(config, profile) {
   const generatedDir = join(config.workDir, "mcp-client-configs");
   mkdirSync(generatedDir, {recursive: true});
   const remote = {url: config.gateway.mcpUrl, headers: {Authorization: `Bearer ${config.nodeToken}`}};
-  writeSecretJson(join(generatedDir, "mcp-server.json"), {mcpServers: {ai_multi_agent_ctrl: remote}});
+  writeSecretJson(join(generatedDir, "mcp-server.json"), {
+    generatedBy: "aimac-agent-runtime",
+    schemaVersion: "aimac-agent-remote-mcp-config/v1",
+    serverName: "ai-multi-agent-ctrl",
+    transport: "streamable-http",
+    hostedBy: config.serverUrl,
+    nodeId: config.nodeId,
+    projectIds: config.projectIds,
+    allowedRoles: config.allowedRoles,
+    detectedClients: (profile.tools || []).filter((tool) => ["codex", "claude", "cursor"].includes(tool.name) && tool.available).map((tool) => tool.name),
+    mcpServers: {ai_multi_agent_ctrl: remote}
+  });
+  writeFileSync(join(generatedDir, "codex_config.toml"), [
+    "# BEGIN ai-multi-agent-ctrl REMOTE MCP",
+    "[mcp_servers.ai_multi_agent_ctrl]",
+    `url = ${JSON.stringify(config.gateway.mcpUrl)}`,
+    `http_headers = { Authorization = ${JSON.stringify(`Bearer ${config.nodeToken}`)} }`,
+    "# END ai-multi-agent-ctrl REMOTE MCP",
+    ""
+  ].join("\n"), {mode: 0o600});
+  writeSecretJson(join(generatedDir, "claude_desktop_config.json"), {mcpServers: {"ai_multi_agent_ctrl": remote}});
+  writeSecretJson(join(generatedDir, "cursor_mcp.json"), {mcpServers: {"ai_multi_agent_ctrl": remote}});
+}
+
+function configureGlobalRemoteMcpClients(config, profile) {
+  const clients = new Set((profile.tools || []).filter((tool) => tool.available).map((tool) => tool.name));
+  const remote = {url: config.gateway.mcpUrl, headers: {Authorization: `Bearer ${config.nodeToken}`}};
   if (clients.has("codex")) {
     const codexHome = process.env.CODEX_HOME || join(homedir(), ".codex");
     const path = join(codexHome, "config.toml");
@@ -562,8 +589,8 @@ function splitCsv(value) {
   return value ? String(value).split(",").map((item) => item.trim()).filter(Boolean) : undefined;
 }
 
-function clientConfigurationEnabled() {
-  return args["configure-clients"] === "true" || process.env.AIMAC_AGENT_CONFIGURE_CLIENTS === "true";
+function globalClientConfigurationEnabled() {
+  return args["configure-global-clients"] === "true" || args["configure-clients"] === "true" || process.env.AIMAC_AGENT_CONFIGURE_GLOBAL_CLIENTS === "true" || process.env.AIMAC_AGENT_CONFIGURE_CLIENTS === "true";
 }
 
 function safeName(value) {

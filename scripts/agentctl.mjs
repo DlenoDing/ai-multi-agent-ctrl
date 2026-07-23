@@ -4,7 +4,7 @@ const action = args._.join(" ");
 const serverUrl = String(args.server || process.env.AIMAC_PUBLIC_URL || "http://127.0.0.1:4317").replace(/\/+$/u, "");
 
 if (action !== "join-token create" && action !== "nodes list" && action !== "doctor") {
-  throw new Error("usage: agentctl join-token create|nodes list|doctor --server=<url> [options]");
+  throw new Error("usage: agentctl join-token create|nodes list|doctor --server=<url> [options]; join-token create is for server automation and doctor flows, normal Agent onboarding is generated from the project management UI");
 }
 
 if (action === "doctor") {

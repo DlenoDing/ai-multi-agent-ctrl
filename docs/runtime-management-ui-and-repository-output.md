@@ -200,7 +200,7 @@ AI-native 运行入口：
 | --- | --- |
 | `npm run doctor` | 校验 schema、控制平面、远程 Streamable HTTP MCP、一次性 Agent 入网、初始化/自检、按任务 Skill 工作集、远程 dispatch、Git commit/push、服务端远端取证和 checkpoint |
 | `npm run contract:check` | 按 JSON schema 校验 runtime seed、生成的 McpGrant、MCP tool definition contract 和 state-store 写冲突检测 |
-| `npm run mcp:register -- --server-url=https://...` | 生成只含远程 `/mcp` URL 和 bearer 鉴权的 Codex、Claude、Cursor 配置；不生成本地进程命令 |
+| `npm run mcp:register -- --server-url=https://...` | 运维/管理机专用：生成只含远程 `/mcp` URL 和 bearer 鉴权的 Codex、Claude、Cursor 配置；Agent 入网不得单独执行该脚本，Agent 侧 MCP 配置由安装脚本和 Runtime 自动维护 |
 | `npm run mcp:start` | 与 `npm start` 等价，启动承载管理 API、Agent Gateway、Skill Registry 和 `/mcp` 的系统服务器；Agent 端不运行此命令 |
 | `npm run mcp:doctor` | 校验远程 MCP 鉴权、`initialize`、scoped `tools/list`、`tools/call`、输入校验、idempotency、lease/fencing，以及本地 stdio 默认禁用 |
 | `npm run agent:doctor` | 验证服务端安装脚本、一次性 join token、节点自检、远程 MCP、按任务 Skill 工作集、dispatch、Git 和 checkpoint 全链路 |
@@ -231,7 +231,7 @@ AI-native 运行入口：
 | `scripts/run-with-env.mjs` | 加载项目 `.env` 后执行 Node 入口脚本，供 npm/shell/MCP 启动复用 |
 | `scripts/contract-check.mjs` | RuntimeBootstrapProfile、McpGrant 和 MCP tool schema contract check |
 | `scripts/docker-up.sh` | 兼容 `docker compose` 与 `docker-compose` 的 Compose 启动入口 |
-| `scripts/register-mcp-client.mjs` | 生成或合并 MCP 客户端配置 |
+| `scripts/register-mcp-client.mjs` | 运维/管理机生成或合并远程 MCP 客户端配置；不作为 Agent 注册步骤 |
 | `scripts/doctor-mcp.mjs` | MCP server 协议级、输入校验、idempotency、lease/fencing 自检 |
 | `scripts/doctor-agent-remote.mjs` | 远程 Agent 安装、注册、自检、Skill、模型执行、Git 和 checkpoint 自检 |
 | `scripts/install-agent.sh` | 控制平面公开发布、Agent 端直接执行的轻量安装脚本 |

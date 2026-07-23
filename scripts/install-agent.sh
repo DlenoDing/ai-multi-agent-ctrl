@@ -8,7 +8,7 @@ WORK_DIR="${AIMAC_AGENT_WORK_DIR:-${HOME}/.local/share/aimac-agent}"
 ROLES="${AIMAC_AGENT_ROLES:-}"
 EXECUTOR_COMMAND="${AIMAC_AGENT_EXECUTOR_COMMAND:-}"
 START_DAEMON=true
-CONFIGURE_CLIENTS=false
+CONFIGURE_GLOBAL_CLIENTS=false
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -19,8 +19,8 @@ while [ "$#" -gt 0 ]; do
     --roles) ROLES=$2; shift 2 ;;
     --executor-command) EXECUTOR_COMMAND=$2; shift 2 ;;
     --no-daemon) START_DAEMON=false; shift ;;
-    --configure-clients) CONFIGURE_CLIENTS=true; shift ;;
-    --no-configure-clients) CONFIGURE_CLIENTS=false; shift ;;
+    --configure-global-clients|--configure-clients) CONFIGURE_GLOBAL_CLIENTS=true; shift ;;
+    --no-configure-global-clients|--no-configure-clients) CONFIGURE_GLOBAL_CLIENTS=false; shift ;;
     *) printf '%s\n' "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -87,7 +87,7 @@ fi
 
 install -m 700 "$TMP_DIR/agent-runtime.mjs" "$RUNTIME_PATH"
 
-set -- bootstrap --server "$SERVER_URL" --join-token "$JOIN_TOKEN" --node-name "$NODE_NAME" --work-dir "$WORK_DIR" --configure-clients "$CONFIGURE_CLIENTS"
+set -- bootstrap --server "$SERVER_URL" --join-token "$JOIN_TOKEN" --node-name "$NODE_NAME" --work-dir "$WORK_DIR" --configure-global-clients "$CONFIGURE_GLOBAL_CLIENTS"
 if [ -n "$ROLES" ]; then
   set -- "$@" --roles "$ROLES"
 fi

@@ -97,7 +97,7 @@ function verifyAgentGatewayContracts(output) {
   const issued = createAgentJoinToken(state, {projectId: "prj_control_plane", nodeName: "contract-node", allowedRoles: ["*"]}, {publicUrl: "https://control.example.test"});
   validateSchema(state.agentJoinTokens[0], joinTokenSchema, "AgentJoinToken", output);
   if (!issued.installCommand.startsWith("curl -fsSL 'https://control.example.test/install-agent.sh' | sh -s --")) output.push("Agent join token did not return a one-line server-hosted installer command");
-  if (!issued.verifiedInstallCommand.includes("( if command -v sha256sum") || !issued.verifiedInstallCommand.includes("elif command -v shasum") || !issued.verifiedInstallCommand.endsWith(`--join-token '${issued.joinToken}'`)) {
+  if (!issued.verifiedInstallCommand.includes("( if command -v sha256sum") || !issued.verifiedInstallCommand.includes("elif command -v shasum") || !issued.verifiedInstallCommand.endsWith(`--join-token '${issued.joinToken}' --node-name 'contract-node'`)) {
     output.push("Agent join token did not return a portable checksum-verified installer command");
   }
   const registered = registerAgentNode(state, {nodeName: "contract-node", requestedRoles: ["*"], runtimeVersion: "contract", profile: {platform: "test", arch: "test", tools: [], models: [{providerClass: "custom", available: true}]}}, {joinToken: issued.joinToken, publicUrl: "https://control.example.test"});

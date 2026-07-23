@@ -85,9 +85,12 @@ function ensureRuntimeConfig() {
   mkdirSync(runtimeDir, { recursive: true });
   const existing = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) : {};
   const localToken = process.env.AIMAC_BOOTSTRAP_TOKEN || existing.localBootstrapToken || randomBytes(24).toString("base64url");
-  const workspaceOwnerToken = process.env.AIMAC_WORKSPACE_OWNER_TOKEN || existing.localAccountTokens?.acct_workspace_owner || randomBytes(24).toString("base64url");
-  const reviewerToken = process.env.AIMAC_REVIEWER_TOKEN || existing.localAccountTokens?.acct_reviewer || randomBytes(24).toString("base64url");
-  const agentRuntimeToken = process.env.AIMAC_AGENT_RUNTIME_TOKEN || existing.localAccountTokens?.acct_agent_runtime || randomBytes(24).toString("base64url");
+  const workspaceOwnerTokenEnv = process.env.AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN || process.env.AIMAC_WORKSPACE_OWNER_TOKEN;
+  const reviewerTokenEnv = process.env.AIMAC_LOCAL_SEED_REVIEWER_TOKEN || process.env.AIMAC_REVIEWER_TOKEN;
+  const agentRuntimeTokenEnv = process.env.AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN || process.env.AIMAC_AGENT_RUNTIME_TOKEN;
+  const workspaceOwnerToken = workspaceOwnerTokenEnv || existing.localAccountTokens?.acct_workspace_owner || randomBytes(24).toString("base64url");
+  const reviewerToken = reviewerTokenEnv || existing.localAccountTokens?.acct_reviewer || randomBytes(24).toString("base64url");
+  const agentRuntimeToken = agentRuntimeTokenEnv || existing.localAccountTokens?.acct_agent_runtime || randomBytes(24).toString("base64url");
   const mcpServiceToken = process.env.AIMAC_MCP_SERVICE_TOKEN || existing.localMcpServiceToken || randomBytes(32).toString("base64url");
   const localAccountTokenHashes = {
     acct_workspace_owner: digestOf(`account:acct_workspace_owner:${workspaceOwnerToken}`),
@@ -95,9 +98,9 @@ function ensureRuntimeConfig() {
     acct_agent_runtime: digestOf(`account:acct_agent_runtime:${agentRuntimeToken}`)
   };
   const localAccountTokens = {
-    ...(process.env.AIMAC_WORKSPACE_OWNER_TOKEN ? {} : {acct_workspace_owner: workspaceOwnerToken}),
-    ...(process.env.AIMAC_REVIEWER_TOKEN ? {} : {acct_reviewer: reviewerToken}),
-    ...(process.env.AIMAC_AGENT_RUNTIME_TOKEN ? {} : {acct_agent_runtime: agentRuntimeToken})
+    ...(workspaceOwnerTokenEnv ? {} : {acct_workspace_owner: workspaceOwnerToken}),
+    ...(reviewerTokenEnv ? {} : {acct_reviewer: reviewerToken}),
+    ...(agentRuntimeTokenEnv ? {} : {acct_agent_runtime: agentRuntimeToken})
   };
   const config = {
     schemaVersion: "runtime-local-config/v1",

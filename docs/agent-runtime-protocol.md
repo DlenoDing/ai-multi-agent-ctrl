@@ -8,17 +8,7 @@ Runtime 不是无限远程 shell。所有副作用都必须由控制平面授权
 
 ## 2. 自动加入流程
 
-总控生成一次性 join token：
-
-```bash
-npm run agentctl -- join-token create \
-  --server https://control.example.com \
-  --project <project_id> \
-  --node-name <expected_node_name> \
-  --roles backend,frontend,reviewer,qa \
-  --ttl 30m \
-  --max-uses 1
-```
+系统管理员或具有项目 `agent:activate` 权限的账号登录管理界面，在目标项目的“Agent 入网授权”中生成一次性 join token。join token 必须绑定 project、expected node、allowed roles、MCP tool allowlist、ttl、maxUses 和创建者审计记录；管理界面返回 direct/verified 两条加入命令。常规 Agent 入网不得要求用户在服务器命令行单独执行 token 生成脚本。
 
 受信执行环境的自动加入命令模板：
 
@@ -120,6 +110,19 @@ Runtime 必须上报：
 | tool | shell、git、node、npm、docker、Codex、Claude、Gemini、Ollama 等本机执行工具；不包含本地 MCP server |
 | permission | OS、browser、credential helper、OAuth、network、Git、DB、Keychain/sudo |
 | integrity | runtime digest、installer digest、config digest、sandbox mode |
+
+### 3.3 remote MCP client config
+
+安装脚本和 Runtime 必须在 Agent 工作目录下自动生成并持续维护：
+
+```text
+$AIMAC_AGENT_WORK_DIR/mcp-client-configs/mcp-server.json
+$AIMAC_AGENT_WORK_DIR/mcp-client-configs/codex_config.toml
+$AIMAC_AGENT_WORK_DIR/mcp-client-configs/claude_desktop_config.json
+$AIMAC_AGENT_WORK_DIR/mcp-client-configs/cursor_mcp.json
+```
+
+这些配置只指向控制平面公网 `/mcp` Streamable HTTP endpoint，并携带服务端签发的 node token。node token 轮换后 Runtime 必须刷新这些文件。默认不得改写 Agent 主机上的 Codex/Claude/Cursor 用户全局配置；只有安装命令显式携带 `--configure-global-clients` 时，才把同一远程 MCP endpoint 合并到全局客户端配置。Agent 主机禁止安装或启动本地 MCP server。
 
 ## 4. 心跳协议
 

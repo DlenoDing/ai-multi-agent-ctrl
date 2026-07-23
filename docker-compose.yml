@@ -14,10 +14,10 @@ services:
       AIMAC_SYSTEM_ADMIN_EMAIL: "${AIMAC_SYSTEM_ADMIN_EMAIL:-system.admin@local}"
       AIMAC_SYSTEM_ADMIN_NAME: "${AIMAC_SYSTEM_ADMIN_NAME:-System Owner}"
       AIMAC_BOOTSTRAP_TOKEN: "${AIMAC_BOOTSTRAP_TOKEN:-change-this-bootstrap-token}"
-      AIMAC_WORKSPACE_OWNER_TOKEN: "${AIMAC_WORKSPACE_OWNER_TOKEN:-change-this-workspace-owner-token}"
-      AIMAC_REVIEWER_TOKEN: "${AIMAC_REVIEWER_TOKEN:-change-this-reviewer-token}"
-      AIMAC_AGENT_RUNTIME_TOKEN: "${AIMAC_AGENT_RUNTIME_TOKEN:-change-this-agent-runtime-token}"
       AIMAC_MCP_SERVICE_TOKEN: "${AIMAC_MCP_SERVICE_TOKEN:-change-this-mcp-service-token}"
+      AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN: "${AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN:-change-this-local-workspace-owner-token}"
+      AIMAC_LOCAL_SEED_REVIEWER_TOKEN: "${AIMAC_LOCAL_SEED_REVIEWER_TOKEN:-change-this-local-reviewer-token}"
+      AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN: "${AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN:-change-this-local-agent-runtime-token}"
       DATABASE_URL: "postgres://aimac:aimac@postgres:5432/aimac"
     volumes:
       - aimac-runtime:/app/.runtime

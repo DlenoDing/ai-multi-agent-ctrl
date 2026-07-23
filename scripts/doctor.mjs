@@ -143,9 +143,9 @@ const child = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
     AIMAC_STATE_STORE: "runtime_json",
     DATABASE_URL: "",
     AIMAC_BOOTSTRAP_TOKEN: "doctor-bootstrap-token",
-    AIMAC_WORKSPACE_OWNER_TOKEN: "doctor-workspace-token",
-    AIMAC_REVIEWER_TOKEN: "doctor-reviewer-token",
-    AIMAC_AGENT_RUNTIME_TOKEN: "doctor-agent-runtime-token",
+    AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN: "doctor-workspace-token",
+    AIMAC_LOCAL_SEED_REVIEWER_TOKEN: "doctor-reviewer-token",
+    AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN: "doctor-agent-runtime-token",
     AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND: doctorRepo.executorCommand,
     OPENAI_API_KEY: "doctor-provider-key"
   },

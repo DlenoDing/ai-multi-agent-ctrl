@@ -96,6 +96,7 @@ try {
   if (verifiedInstall.status !== 0 || !verifiedInstall.stdout.includes("AGENT_JOINED") || !verifiedInstall.stdout.includes("AGENT_RUNTIME_STARTED")) {
     throw new Error(`checksum-verified Agent install command failed: ${verifiedInstall.stderr || verifiedInstall.stdout}`);
   }
+  assertAgentScopedMcpConfig(verifiedCommandWorkDir, baseUrl);
 
   const install = spawnSync("sh", ["-s", "--", "--server", baseUrl, "--join-token", joinResult.joinToken, "--node-name", "doctor-node", "--work-dir", agentWorkDir, "--no-daemon", "--no-configure-clients", "--executor-command", `node ${JSON.stringify(executor)}`], {
     cwd: sandbox,
@@ -105,20 +106,25 @@ try {
     maxBuffer: 32 * 1024 * 1024
   });
   if (install.status !== 0 || !install.stdout.includes("AGENT_JOINED") || !install.stdout.includes(`remoteMcp=${baseUrl}/mcp`)) throw new Error(`Agent one-command bootstrap failed: ${install.stderr || install.stdout}`);
+  assertAgentScopedMcpConfig(agentWorkDir, baseUrl);
 
   const agentConfigPath = join(agentWorkDir, "agent-config.json");
   const agentConfig = JSON.parse(readFileSync(agentConfigPath, "utf8"));
+  const runtimePath = join(agentWorkDir, "bin", "aimac-agent-runtime.mjs");
+  if (!existsSync(runtimePath)) throw new Error("Agent Runtime artifact was not installed");
   forceNodeCredentialNearExpiry(agentConfig.nodeId);
-  const rotatedHeartbeat = await json("/api/agent/v1/heartbeat", {
-    method: "POST",
-    token: agentConfig.nodeToken,
-    body: {profile: {tools: [], models: [{providerClass: "custom", adapter: "doctor", available: true}]}, runtimeVersion: "doctor"}
+  const rotationRun = spawnSync(process.execPath, [runtimePath, "run", "--work-dir", agentWorkDir, "--once"], {
+    env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false"},
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024
   });
-  if (!rotatedHeartbeat.nodeToken) throw new Error("Agent Gateway did not rotate a near-expiry node credential");
+  if (rotationRun.status !== 0) throw new Error(`Agent Runtime credential rotation run failed: ${rotationRun.stderr || rotationRun.stdout}`);
+  const rotatedAgentConfig = JSON.parse(readFileSync(agentConfigPath, "utf8"));
+  if (rotatedAgentConfig.nodeToken === agentConfig.nodeToken) throw new Error("Agent Runtime did not persist a rotated node credential");
   const previousCredentialProbe = await jsonRaw("/api/agent/v1/nodes/me", {token: agentConfig.nodeToken});
-  const currentCredentialProbe = await jsonRaw("/api/agent/v1/nodes/me", {token: rotatedHeartbeat.nodeToken});
+  const currentCredentialProbe = await jsonRaw("/api/agent/v1/nodes/me", {token: rotatedAgentConfig.nodeToken});
   if (!previousCredentialProbe.response.ok || !currentCredentialProbe.response.ok) throw new Error("Agent Gateway did not accept both previous and current credentials during rotation overlap");
-  writeFileSync(agentConfigPath, `${JSON.stringify({...agentConfig, nodeToken: rotatedHeartbeat.nodeToken}, null, 2)}\n`, {mode: 0o600});
+  assertAgentScopedMcpConfig(agentWorkDir, baseUrl, rotatedAgentConfig.nodeToken);
 
   const reuse = await jsonRaw("/api/agent/v1/register", {method: "POST", token: joinResult.joinToken, body: {nodeName: "doctor-node", profile: {}}});
   if (reuse.response.status !== 409) throw new Error(`one-time join token was reusable: ${reuse.response.status}`);
@@ -131,8 +137,6 @@ try {
   });
   if (!orchestrated.changed.some((item) => item.dispatchId)) throw new Error("orchestrator did not enqueue a dispatch for the remote Agent Runtime");
 
-  const runtimePath = join(agentWorkDir, "bin", "aimac-agent-runtime.mjs");
-  if (!existsSync(runtimePath)) throw new Error("Agent Runtime artifact was not installed");
   const run = spawnSync(process.execPath, [runtimePath, "run", "--work-dir", agentWorkDir, "--once"], {
     env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false", AIMAC_AGENT_VERIFICATION_DEFER_CHECKPOINT: "true"},
     encoding: "utf8",
@@ -246,6 +250,20 @@ function okSelfChecks(baseUrl) {
     {checkId: "git", status: "ok", detail: "doctor"},
     {checkId: "remote_mcp", status: "ok", detail: `${baseUrl}/mcp`}
   ];
+}
+
+function assertAgentScopedMcpConfig(workDir, baseUrl, expectedToken) {
+  const configDir = join(workDir, "mcp-client-configs");
+  const mcpConfigPath = join(configDir, "mcp-server.json");
+  if (!existsSync(mcpConfigPath)) throw new Error(`Agent scoped MCP config was not generated: ${mcpConfigPath}`);
+  const config = JSON.parse(readFileSync(mcpConfigPath, "utf8"));
+  const server = config.mcpServers?.ai_multi_agent_ctrl;
+  if (config.transport !== "streamable-http" || config.hostedBy !== baseUrl || server?.url !== `${baseUrl}/mcp`) throw new Error("Agent scoped MCP config does not point at the centralized remote MCP endpoint");
+  if (Object.prototype.hasOwnProperty.call(server, "command")) throw new Error("Agent scoped MCP config must not contain a local command");
+  if (expectedToken && server.headers?.Authorization !== `Bearer ${expectedToken}`) throw new Error("Agent scoped MCP config was not refreshed after node credential rotation");
+  for (const filename of ["codex_config.toml", "claude_desktop_config.json", "cursor_mcp.json"]) {
+    if (!existsSync(join(configDir, filename))) throw new Error(`Agent scoped MCP client snippet missing: ${filename}`);
+  }
 }
 
 async function json(path, options = {}) {
