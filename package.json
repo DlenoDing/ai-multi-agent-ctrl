@@ -9,14 +9,18 @@
     "npm": ">=10.0.0"
   },
   "scripts": {
-    "init": "node scripts/init-control-plane.mjs",
-    "dev": "node apps/control-plane-ui/server.mjs",
-    "start": "node apps/control-plane-ui/server.mjs",
+    "init": "node scripts/run-with-env.mjs scripts/init-control-plane.mjs",
+    "dev": "node scripts/run-with-env.mjs apps/control-plane-ui/server.mjs",
+    "start": "node scripts/run-with-env.mjs apps/control-plane-ui/server.mjs",
     "shell:start": "./scripts/start.sh",
-    "skills:sync": "node scripts/sync-agent-skills.mjs",
-    "validate": "ruby scripts/validate-specs.rb",
-    "doctor": "npm run validate && node scripts/init-control-plane.mjs --check && node scripts/doctor.mjs",
+    "mcp:start": "node scripts/run-with-env.mjs apps/mcp-server/server.mjs",
+    "mcp:register": "node scripts/run-with-env.mjs scripts/register-mcp-client.mjs",
+    "mcp:doctor": "node scripts/run-with-env.mjs scripts/doctor-mcp.mjs",
+    "skills:sync": "node scripts/run-with-env.mjs scripts/sync-agent-skills.mjs",
+    "contract:check": "node scripts/run-with-env.mjs scripts/contract-check.mjs",
+    "validate": "ruby scripts/validate-specs.rb && npm run contract:check",
+    "doctor": "npm run validate && (node scripts/run-with-env.mjs scripts/init-control-plane.mjs --check || node scripts/run-with-env.mjs scripts/init-control-plane.mjs) && node scripts/run-with-env.mjs scripts/doctor.mjs && node scripts/run-with-env.mjs scripts/doctor-mcp.mjs",
     "docker:build": "docker build -t ai-multi-agent-ctrl:local .",
-    "docker:up": "docker compose up --build"
+    "docker:up": "./scripts/docker-up.sh"
   }
 }

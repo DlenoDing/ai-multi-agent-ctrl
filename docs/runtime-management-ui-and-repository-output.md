@@ -27,7 +27,7 @@
 | Docker | `docker compose up --build` | 构建镜像并启动容器内控制台服务 |
 | Shell | `./scripts/start.sh` | shell 封装入口，内部执行 npm 初始化和启动 |
 
-初始化写入本地 `.runtime/` 运行态目录。`.runtime/` 不是项目产出目录，不进入 Git。部署到 PostgreSQL 时仍复用同一对象、状态机和事件契约，项目任务产出仍不得写入控制面文件库。
+初始化写入本地 `.runtime/` 运行态目录。`.runtime/` 不是项目产出目录，不进入 Git。npm/shell 默认使用 `runtime_json`；Docker Compose 设置 `AIMAC_STATE_STORE=postgresql`，HTTP server 和 MCP server 通过同一个 state-store 抽象读写 Postgres JSONB 权威状态。Docker 镜像不在 build 阶段初始化账号 token；容器运行时由 Compose 注入 token 和 `DATABASE_URL` 后执行 `shell:start`。无论使用哪种 state store，项目任务产出仍不得写入控制面文件库。
 
 `RuntimeBootstrapProfile` 必须记录：
 
@@ -198,7 +198,11 @@ AI-native 运行入口：
 
 | 命令 | 机器语义 |
 | --- | --- |
-| `npm run doctor` | 校验 schema、初始化状态、启动临时控制面、创建临时 Git remote，并执行模型选择、会话放置、路径阻断、自治编排、worker commit/push、checkpoint 证据负例和 readiness 冒烟 |
+| `npm run doctor` | 校验 schema、初始化状态、启动临时控制面、创建临时 Git remote，并执行模型选择、会话放置、路径阻断、自治编排、worker commit/push、checkpoint 证据负例、readiness 和 MCP stdio 冒烟 |
+| `npm run contract:check` | 按 JSON schema 校验 runtime seed、生成的 McpGrant 和 MCP tool definition contract |
+| `npm run mcp:register` | 生成 Codex、Claude Desktop、Cursor MCP 客户端配置；带 `--apply --client=... --config=...` 时自动合并到指定配置 |
+| `npm run mcp:start` | 启动内置 stdio MCP server，由 MCP 客户端按注册配置自动拉起；注册配置会启用本地 MCP 写 grant |
+| `npm run mcp:doctor` | 启动真实 MCP server 并校验 `initialize`、`tools/list`、`tools/call`、写入 idempotency 和结构化返回 |
 | `npm run skills:sync` | 同步 `DlenoDing/agency-agents-zh` pinned snapshot，解析 `AgentRoleSkill` 索引并写入运行态 |
 | `POST /api/orchestrator/run` | 由 Orchestrator 执行当前任务组自动调度循环，只投递 `AgentDispatch`，不伪造完成 |
 | `POST /api/agent-runtime/run` | 由 Agent Runtime 消费 durable dispatch，实际写 Git、commit、push，然后提交可验证 checkpoint |
@@ -212,11 +216,18 @@ AI-native 运行入口：
 | --- | --- |
 | `apps/control-plane-ui/server.mjs` | 无依赖 Node HTTP 服务、本地 API、幂等命令入口和权限 guard |
 | `apps/control-plane-ui/lib/control-plane-core.mjs` | 模型 registry、skill registry、session placement、task contract、dispatch outbox、worker、checkpoint Git 证据、readiness 和 close barrier 核心逻辑 |
+| `apps/control-plane-ui/lib/state-store.mjs` | 本地 JSON 与 Postgres JSONB 共用 state-store，确保 HTTP 和 MCP 入口读写同一权威状态 |
+| `apps/mcp-server/server.mjs` | 内置 MCP stdio server，提供系统逻辑 MCP tools、policy decision、idempotency、audit 和 untrusted result 标记 |
 | `apps/control-plane-ui/public/index.html` | 管理控制台入口 |
 | `apps/control-plane-ui/public/styles.css` | SaaS 管理界面样式 |
 | `apps/control-plane-ui/public/app.js` | 系统管理、用户管理、项目、任务组、AI Runtime 和指令协议交互 |
 | `data/seed-state.json` | 本地运行态 seed state |
 | `scripts/init-control-plane.mjs` | 初始化 `.runtime/control-plane-state.json` |
+| `scripts/run-with-env.mjs` | 加载项目 `.env` 后执行 Node 入口脚本，供 npm/shell/MCP 启动复用 |
+| `scripts/contract-check.mjs` | RuntimeBootstrapProfile、McpGrant 和 MCP tool schema contract check |
+| `scripts/docker-up.sh` | 兼容 `docker compose` 与 `docker-compose` 的 Compose 启动入口 |
+| `scripts/register-mcp-client.mjs` | 生成或合并 MCP 客户端配置 |
+| `scripts/doctor-mcp.mjs` | MCP server 协议级自检 |
 | `scripts/sync-agent-skills.mjs` | 拉取并索引默认角色 skill 源 |
 | `scripts/doctor.mjs` | 本地控制面端到端自检 |
 

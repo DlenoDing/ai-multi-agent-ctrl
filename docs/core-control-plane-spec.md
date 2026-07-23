@@ -422,9 +422,9 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 
 | MCP server | tools |
 | --- | --- |
-| `orchestration-mcp` | `project_create`、`task_group_create`、`work_item_create`、`work_assign`、`state_get` |
+| `orchestration-mcp` | `project_create`、`task_group_create`、`work_item_create`、`work_assign`、`orchestrator_run`、`state_get` |
 | `room-mcp` | `room_join`、`room_send`、`room_wait`、`room_ack` |
-| `agent-control-mcp` | `node_register`、`node_probe`、`session_start`、`session_pause`、`session_cancel`、`session_recover` |
+| `agent-control-mcp` | `node_register`、`node_probe`、`session_start`、`session_pause`、`session_cancel`、`session_recover`、`runtime_run` |
 | `scheduler-mcp` | `model_select`、`session_place`、`work_assign`、`capacity_snapshot`、`execution_topology_plan`、`derived_task_classify` |
 | `resource-mcp` | `lease_claim`、`lease_release`、`resource_snapshot` |
 | `model-mcp` | `model_capabilities`、`model_policy_get`、`model_select` |

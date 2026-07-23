@@ -142,7 +142,7 @@ drift_detected
 
 ## 7. 代码生成约束
 
-实现代码、运行时 validator、MCP schema 和 contract tests 必须从 `spec/` 生成：
+终态实现代码、运行时 validator、MCP schema 和 contract tests 必须从 `spec/` 生成：
 
 1. TypeScript types。
 2. runtime validators。
@@ -153,3 +153,5 @@ drift_detected
 7. contract tests。
 
 不要让实现代码手写一套和 `spec/` 不一致的对象模型。
+
+当前本地可执行基线提供 `apps/mcp-server/server.mjs` 作为内置 stdio MCP server，`scripts/doctor-mcp.mjs` 作为协议级 contract smoke，`scripts/validate-specs.rb` 会校验 MCP 入口、工具清单、客户端注册命令和 runtime seed 元数据。完整 codegen 管线属于后续系统外升级项，运行中的项目执行链路不得自动修改生成策略。

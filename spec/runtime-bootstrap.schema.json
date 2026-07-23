@@ -11,6 +11,7 @@
     "executionProfile",
     "launchModes",
     "commands",
+    "mcp",
     "services",
     "storage",
     "adminSeedPolicy",
@@ -47,14 +48,36 @@
     "commands": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["init", "start", "doctor", "dockerBuild", "dockerUp", "shellStart"],
+      "required": ["init", "start", "doctor", "dockerBuild", "dockerUp", "shellStart", "mcpStart", "mcpRegister", "mcpDoctor"],
       "properties": {
         "init": {"type": "string", "const": "npm run init"},
         "start": {"type": "string", "const": "npm start"},
         "doctor": {"type": "string", "const": "npm run doctor"},
         "dockerBuild": {"type": "string", "const": "npm run docker:build"},
         "dockerUp": {"type": "string", "const": "npm run docker:up"},
-        "shellStart": {"type": "string", "const": "npm run shell:start"}
+        "shellStart": {"type": "string", "const": "npm run shell:start"},
+        "mcpStart": {"type": "string", "const": "npm run mcp:start"},
+        "mcpRegister": {"type": "string", "const": "npm run mcp:register"},
+        "mcpDoctor": {"type": "string", "const": "npm run mcp:doctor"}
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "serverId", "logicalServers", "toolCount", "startupCommand", "registrationCommand", "doctorCommand"],
+      "properties": {
+        "protocol": {"type": "string", "const": "mcp/json-rpc-stdio"},
+        "serverId": {"type": "string", "const": "ai-multi-agent-ctrl"},
+        "logicalServers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "toolCount": {"type": "integer", "minimum": 1},
+        "startupCommand": {"type": "string", "const": "npm run mcp:start"},
+        "registrationCommand": {"type": "string", "const": "npm run mcp:register"},
+        "doctorCommand": {"type": "string", "const": "npm run mcp:doctor"}
       }
     },
     "services": {

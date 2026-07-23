@@ -53,11 +53,18 @@ required_runtime_files = %w[
   Dockerfile
   docker-compose.yml
   scripts/start.sh
+  scripts/docker-up.sh
+  scripts/run-with-env.mjs
+  scripts/contract-check.mjs
   scripts/init-control-plane.mjs
   scripts/doctor.mjs
+  scripts/doctor-mcp.mjs
+  scripts/register-mcp-client.mjs
   scripts/sync-agent-skills.mjs
+  apps/mcp-server/server.mjs
   apps/control-plane-ui/server.mjs
   apps/control-plane-ui/lib/control-plane-core.mjs
+  apps/control-plane-ui/lib/state-store.mjs
   apps/control-plane-ui/public/index.html
   apps/control-plane-ui/public/styles.css
   apps/control-plane-ui/public/app.js
@@ -69,7 +76,7 @@ required_runtime_files.each do |path|
   errors << "runtime entrypoint missing: #{path}" unless File.exist?(File.join(ROOT, path))
 end
 
-required_npm_scripts = %w[init dev start shell:start skills:sync validate doctor docker:build docker:up]
+required_npm_scripts = %w[init dev start shell:start mcp:start mcp:register mcp:doctor skills:sync contract:check validate doctor docker:build docker:up]
 available_scripts = package_json.fetch("scripts", {})
 missing_npm_scripts = required_npm_scripts.reject { |script_name| available_scripts.key?(script_name) }
 errors << "package.json missing scripts: #{missing_npm_scripts.join(", ")}" unless missing_npm_scripts.empty?
@@ -77,9 +84,14 @@ errors << "package.json missing scripts: #{missing_npm_scripts.join(", ")}" unle
 unless File.executable?(File.join(ROOT, "scripts/start.sh"))
   errors << "scripts/start.sh must be executable"
 end
+unless File.executable?(File.join(ROOT, "scripts/docker-up.sh"))
+  errors << "scripts/docker-up.sh must be executable"
+end
 
 dockerfile = File.read(File.join(ROOT, "Dockerfile"))
 errors << "Dockerfile must install git for skills:sync" unless dockerfile.include?("git")
+errors << "Dockerfile must install postgresql-client for docker compose state store" unless dockerfile.include?("postgresql-client")
+errors << "Dockerfile must not run bootstrap init at build time" if dockerfile.include?("RUN npm run init")
 
 manifest["requiredMachineSpecs"].each do |spec_path|
   errors << "manifest required spec missing: #{spec_path}" unless File.exist?(File.join(ROOT, spec_path))
@@ -236,6 +248,7 @@ runtime = seed_state.fetch("runtime")
 %w[schemaVersion profileId status executionProfile launchModes commands services storage adminSeedPolicy healthChecks createdAt updatedAt].each do |field|
   errors << "seed runtime missing #{field}" if runtime[field].nil? || runtime[field].to_s.empty?
 end
+errors << "seed runtime missing mcp metadata" if runtime["mcp"].nil? || runtime["mcp"].to_s.empty?
 errors << "seed runtime executionProfile must default to production" unless runtime["executionProfile"] == "production"
 errors << "seed runtime uses deprecated startModes field" if runtime.key?("startModes")
 errors << "seed runtime uses deprecated initializedAt field" if runtime.key?("initializedAt")
@@ -332,7 +345,13 @@ end
 
 server_source = File.read(File.join(ROOT, "apps/control-plane-ui/server.mjs"))
 core_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/control-plane-core.mjs"))
+state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs"))
 doctor_source = File.read(File.join(ROOT, "scripts/doctor.mjs"))
+mcp_source = File.read(File.join(ROOT, "apps/mcp-server/server.mjs"))
+mcp_doctor_source = File.read(File.join(ROOT, "scripts/doctor-mcp.mjs"))
+mcp_register_source = File.read(File.join(ROOT, "scripts/register-mcp-client.mjs"))
+run_with_env_source = File.read(File.join(ROOT, "scripts/run-with-env.mjs"))
+contract_check_source = File.read(File.join(ROOT, "scripts/contract-check.mjs"))
 {
   "server must expose agent runtime worker endpoint" => "/api/agent-runtime/run",
   "server must scope state reads by authenticated account" => "scopedStateForAccount",
@@ -360,6 +379,72 @@ doctor_source = File.read(File.join(ROOT, "scripts/doctor.mjs"))
 }.each do |message, needle|
   source = message.start_with?("server") || message.start_with?("core") ? "#{server_source}\n#{core_source}" : doctor_source
   errors << message unless source.include?(needle)
+end
+
+expected_mcp_tools = {
+  "orchestration-mcp" => %w[project_create task_group_create work_item_create work_assign orchestrator_run state_get],
+  "room-mcp" => %w[room_join room_send room_wait room_ack],
+  "agent-control-mcp" => %w[node_register node_probe session_start session_pause session_cancel session_recover runtime_run],
+  "scheduler-mcp" => %w[model_select session_place work_assign capacity_snapshot execution_topology_plan derived_task_classify],
+  "resource-mcp" => %w[lease_claim lease_release resource_snapshot],
+  "model-mcp" => %w[model_capabilities model_policy_get model_select],
+  "skill-mcp" => %w[skill_source_sync role_skill_parse role_skill_overlay_validate role_skill_resolve],
+  "evidence-mcp" => %w[artifact_register checkpoint_submit test_result_submit],
+  "permission-mcp" => %w[permission_probe permission_request_submit permission_status permission_resolve],
+  "review-mcp" => %w[review_plan_create review_bundle_register review_result_consume completion_readiness_compute],
+  "governance-mcp" => %w[approval_request_create policy_decision_eval finding_submit contract_publish effective_instruction_create role_drift_guard_bind role_drift_rebound rule_source_resolve runtime_issue_pattern_submit system_upgrade_candidate_export system_upgrade_external_import close_barrier_compute],
+  "identity-mcp" => %w[account_invite account_suspend grant_create grant_revoke permission_matrix_get],
+  "ui-console-mcp" => %w[runtime_health_get management_surface_get project_progress_get task_group_progress_get guarded_action_dispatch],
+  "definition-mcp" => %w[shared_definition_create shared_definition_publish shared_definition_consumer_bind shared_definition_conflict_report],
+  "instruction-mcp" => %w[instruction_envelope_create cache_key_index stable_prefix_get delta_payload_compact],
+  "repository-mcp" => %w[repository_output_target_select repository_target_lease_bind artifact_manifest_index]
+}
+expected_mcp_tools.each do |server_id, tool_names|
+  errors << "MCP server #{server_id} missing from implementation" unless mcp_source.include?("\"#{server_id}\"")
+  tool_names.each do |tool_name|
+    full_name = "#{server_id}.#{tool_name}"
+    errors << "MCP tool missing from implementation: #{full_name}" unless mcp_source.include?(full_name)
+    errors << "MCP doctor does not exercise expected MCP protocol surface" unless mcp_doctor_source.include?("tools/list") && mcp_doctor_source.include?("tools/call")
+  end
+end
+errors << "MCP server must implement JSON-RPC initialize" unless mcp_source.include?("initialize") && mcp_source.include?("tools/list") && mcp_source.include?("tools/call")
+errors << "MCP server must enforce write idempotency" unless mcp_source.include?("idempotency_key_required")
+errors << "MCP server must bind MCP token to generated runtime token file" unless mcp_source.include?("currentMcpTokenDigest") && mcp_source.include?("mcp_write_token_binding_required")
+errors << "MCP server must make write dryRun non-mutating" unless mcp_source.include?("wouldCall") && mcp_doctor_source.include?("write MCP dryRun changed stateVersion")
+errors << "MCP server must reject idempotency key reuse conflicts" unless mcp_source.include?("idempotency_key_reuse_conflict") && mcp_doctor_source.include?("MCP idempotency key reuse")
+errors << "MCP server must require write grants" unless mcp_source.include?("mcp_write_grant_required") && mcp_source.include?("validateMcpGrant")
+errors << "MCP server must block runtime_run unless explicitly enabled" unless mcp_source.include?("AIMAC_MCP_ENABLE_RUNTIME_RUN") && mcp_doctor_source.include?("runtime_run was not blocked")
+errors << "MCP server must reject full state scope by default" unless mcp_source.include?("full_state_scope_not_allowed") && mcp_doctor_source.include?("state_get full scope was not denied")
+errors << "MCP server must enforce unique active lease and fencing token" unless mcp_source.include?("lease_already_active") && mcp_source.include?("lease_fencing_token_mismatch") && mcp_doctor_source.include?("lease_claim allowed a second active holder")
+errors << "MCP grant validation must require active leases for lease-bound tools" unless mcp_source.include?("active_mcp_lease_required") && mcp_source.include?("leaseRequiredForTool")
+errors << "MCP server must mark tool results untrusted" unless mcp_source.include?("untrustedResult")
+errors << "HTTP server must use shared state-store" unless server_source.include?("readStoredState") && server_source.include?("writeStoredState")
+errors << "MCP server must use shared state-store" unless mcp_source.include?("readStoredState") && mcp_source.include?("writeStoredState")
+errors << "state-store must support PostgreSQL JSONB authority" unless state_store_source.include?("AIMAC_STATE_STORE") && state_store_source.include?("jsonb") && state_store_source.include?("psql")
+errors << "MCP register script must generate Codex config" unless mcp_register_source.include?("codex_config.toml")
+errors << "MCP register script must generate Claude config" unless mcp_register_source.include?("claude_desktop_config.json")
+errors << "MCP register script must generate Cursor config" unless mcp_register_source.include?("cursor_mcp.json")
+errors << "MCP register script must enable local write grants in generated configs" unless mcp_register_source.include?("AIMAC_MCP_LOCAL_WRITE_ENABLE")
+errors << "MCP doctor must spawn from generated client config" unless mcp_doctor_source.include?("mcp-server.json") && mcp_doctor_source.include?("serverConfig.command")
+errors << "npm scripts must load .env through run-with-env wrapper" unless package_json.dig("scripts", "start").to_s.include?("run-with-env") && package_json.dig("scripts", "mcp:start").to_s.include?("run-with-env")
+errors << "run-with-env must parse .env before importing target script" unless run_with_env_source.include?("loadDotEnv") && run_with_env_source.include?("await import")
+errors << "contract-check must validate runtime and McpGrant schemas" unless contract_check_source.include?("RuntimeBootstrapProfile") || (contract_check_source.include?("runtime-bootstrap.schema.json") && contract_check_source.include?("mcp-grant.schema.json"))
+errors << "package validate must run contract:check" unless package_json.dig("scripts", "validate").to_s.include?("contract:check")
+errors << "doctor script must run MCP doctor" unless package_json.dig("scripts", "doctor").to_s.include?("doctor-mcp.mjs")
+errors << "seed runtime must expose MCP metadata" unless seed_state.dig("runtime", "mcp", "toolCount").to_i >= expected_mcp_tools.values.flatten.length
+%w[mcpStart mcpRegister mcpDoctor].each do |command_name|
+  errors << "seed runtime commands missing #{command_name}" unless seed_state.dig("runtime", "commands", command_name)
+end
+runtime_schema = load_json("spec/runtime-bootstrap.schema.json")
+errors << "RuntimeBootstrapProfile schema must require mcp" unless runtime_schema.fetch("required").include?("mcp")
+%w[mcpStart mcpRegister mcpDoctor].each do |command_name|
+  errors << "RuntimeBootstrapProfile commands schema missing #{command_name}" unless runtime_schema.dig("properties", "commands", "properties", command_name)
+end
+errors << "RuntimeBootstrapProfile schema missing mcp property" unless runtime_schema.dig("properties", "mcp", "properties", "toolCount")
+compose_source = File.read(File.join(ROOT, "docker-compose.yml"))
+errors << "docker-compose must run control plane with PostgreSQL state store" unless compose_source.include?("AIMAC_STATE_STORE") && compose_source.include?("postgresql")
+%w[AIMAC_BOOTSTRAP_TOKEN AIMAC_WORKSPACE_OWNER_TOKEN AIMAC_REVIEWER_TOKEN AIMAC_AGENT_RUNTIME_TOKEN].each do |env_name|
+  errors << "docker-compose must pass #{env_name}" unless compose_source.include?(env_name)
 end
 
 seed_state.fetch("repositoryOutputs", []).each do |target|

@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ensureStoredState, markRuntimeStorage, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
 import {
   canUseGitPath,
   acceptAgentCheckpoint,
@@ -49,13 +50,16 @@ function now() {
 function ensureState() {
   mkdirSync(runtimeDir, { recursive: true });
   ensureRuntimeConfig();
-  if (!existsSync(statePath)) {
-    const seed = JSON.parse(readFileSync(seedPath, "utf8"));
-    seed.runtime.updatedAt = now();
-    seed.runtime.executionProfile = executionProfile;
-    ensureRuntimeCollections(seed, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), executionProfile});
-    writeState(seed);
-  }
+  ensureStoredState({root, runtimeDir, statePath, seedPath, buildInitialState});
+}
+
+function buildInitialState() {
+  const seed = JSON.parse(readFileSync(seedPath, "utf8"));
+  seed.runtime.updatedAt = now();
+  seed.runtime.executionProfile = executionProfile;
+  ensureRuntimeCollections(seed, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), executionProfile});
+  markRuntimeStorage(seed, ".runtime/control-plane-state.json");
+  return seed;
 }
 
 function ensureRuntimeConfig() {
@@ -84,6 +88,7 @@ function ensureRuntimeConfig() {
     host,
     port,
     databaseUrl: process.env.DATABASE_URL || existing.databaseUrl || null,
+    stateStore: stateStoreKind(),
     bootstrapTokenHash: digestOf(`bootstrap:${localToken}`),
     bootstrapTokenConfigured: true,
     localAccountTokenHashes,
@@ -106,13 +111,15 @@ function readRuntimeConfig() {
 
 function readState() {
   ensureState();
-  const state = JSON.parse(readFileSync(statePath, "utf8"));
+  const state = readStoredState({root, runtimeDir, statePath, seedPath, buildInitialState});
   ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), executionProfile});
+  markRuntimeStorage(state, ".runtime/control-plane-state.json");
   return state;
 }
 
 function writeState(state) {
-  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  markRuntimeStorage(state, ".runtime/control-plane-state.json");
+  writeStoredState(state, {root, runtimeDir, statePath, seedPath, buildInitialState});
 }
 
 function audit(state, actor, action, subject, result = "succeeded") {

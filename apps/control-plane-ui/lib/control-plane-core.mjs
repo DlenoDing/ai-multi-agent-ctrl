@@ -44,6 +44,27 @@ const embeddedServices = [
   ["monitor", "monitor"]
 ];
 
+const embeddedMcpLogicalServers = [
+  "agent-control-mcp",
+  "definition-mcp",
+  "evidence-mcp",
+  "governance-mcp",
+  "identity-mcp",
+  "instruction-mcp",
+  "model-mcp",
+  "orchestration-mcp",
+  "permission-mcp",
+  "repository-mcp",
+  "resource-mcp",
+  "review-mcp",
+  "room-mcp",
+  "scheduler-mcp",
+  "skill-mcp",
+  "ui-console-mcp"
+];
+
+const embeddedMcpToolCount = 77;
+
 const modelProviderAdapters = providerClasses.map((providerClass) => ({
   providerClass,
   adapterId: `adapter:${providerClass}`,
@@ -259,6 +280,19 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.runtimeIssueSamples ||= [];
   state.checkpoints ||= [];
   state.leases ||= [];
+  state.roomParticipants ||= [];
+  state.roomMessages ||= [];
+  state.roomAcks ||= [];
+  state.agentRuntimeNodes ||= [];
+  state.permissionRequests ||= [];
+  state.approvalRequests ||= [];
+  state.artifacts ||= [];
+  state.testResults ||= [];
+  state.ruleSourceResolutions ||= [];
+  state.mcpGrants ||= [];
+  state.mcpCalls ||= [];
+  state.leaseSequence ||= 0;
+  state.externalUpgradeImports ||= [];
   state.findings ||= [];
   state.qualityGates ||= [];
   state.commandEffects ||= [];
@@ -271,6 +305,19 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.auditLog ||= [];
   state.runtime ||= {};
   state.runtime.executionProfile ||= options.executionProfile || process.env.AIMAC_EXECUTION_PROFILE || "production";
+  state.runtime.commands ||= {};
+  state.runtime.commands.mcpStart ||= "npm run mcp:start";
+  state.runtime.commands.mcpRegister ||= "npm run mcp:register";
+  state.runtime.commands.mcpDoctor ||= "npm run mcp:doctor";
+  state.runtime.mcp ||= {
+    protocol: "mcp/json-rpc-stdio",
+    serverId: "ai-multi-agent-ctrl",
+    logicalServers: embeddedMcpLogicalServers,
+    toolCount: embeddedMcpToolCount,
+    startupCommand: "npm run mcp:start",
+    registrationCommand: "npm run mcp:register",
+    doctorCommand: "npm run mcp:doctor"
+  };
   ensureServices(state, options.endpoint);
   ensureDefaultServiceAccounts(state);
   ensureDefaultAccessGrants(state);

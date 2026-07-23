@@ -20,7 +20,36 @@
       "doctor": "npm run doctor",
       "dockerBuild": "npm run docker:build",
       "dockerUp": "npm run docker:up",
-      "shellStart": "npm run shell:start"
+      "shellStart": "npm run shell:start",
+      "mcpStart": "npm run mcp:start",
+      "mcpRegister": "npm run mcp:register",
+      "mcpDoctor": "npm run mcp:doctor"
+    },
+    "mcp": {
+      "protocol": "mcp/json-rpc-stdio",
+      "serverId": "ai-multi-agent-ctrl",
+      "logicalServers": [
+        "agent-control-mcp",
+        "definition-mcp",
+        "evidence-mcp",
+        "governance-mcp",
+        "identity-mcp",
+        "instruction-mcp",
+        "model-mcp",
+        "orchestration-mcp",
+        "permission-mcp",
+        "repository-mcp",
+        "resource-mcp",
+        "review-mcp",
+        "room-mcp",
+        "scheduler-mcp",
+        "skill-mcp",
+        "ui-console-mcp"
+      ],
+      "toolCount": 77,
+      "startupCommand": "npm run mcp:start",
+      "registrationCommand": "npm run mcp:register",
+      "doctorCommand": "npm run mcp:doctor"
     },
     "services": [
       {

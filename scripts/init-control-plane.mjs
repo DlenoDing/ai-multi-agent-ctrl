@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { digestOf, ensureRuntimeCollections } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
+import { markRuntimeStorage, stateStoreKind, storedStateExists, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeDir = resolve(root, process.env.AIMAC_RUNTIME_DIR || ".runtime");
@@ -22,6 +23,10 @@ function writeJson(path, data) {
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`);
 }
 
+function stateStoreOptions() {
+  return {root, runtimeDir, statePath, seedPath, buildInitialState: buildState};
+}
+
 function buildState() {
   const state = loadJson(seedPath);
   const now = new Date().toISOString();
@@ -35,6 +40,7 @@ function buildState() {
   state.runtime.updatedAt = now;
   state.runtime.executionProfile = executionProfile;
   ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: `http://${process.env.AIMAC_HOST || "127.0.0.1"}:${Number(process.env.AIMAC_PORT || 4317)}`, executionProfile});
+  markRuntimeStorage(state, ".runtime/control-plane-state.json");
   state.auditLog.unshift({
     id: `audit_bootstrap_${Date.now()}`,
     at: now,
@@ -49,16 +55,16 @@ function buildState() {
 mkdirSync(runtimeDir, { recursive: true });
 
 if (checkOnly) {
-  const ready = existsSync(statePath) && existsSync(configPath);
+  const ready = storedStateExists(stateStoreOptions()) && existsSync(configPath);
   console.log(ready ? "runtime initialized" : "runtime not initialized");
   process.exit(ready ? 0 : 1);
 }
 
-if (!force && existsSync(statePath)) {
-  console.log(`runtime state already exists: ${statePath}`);
+if (!force && storedStateExists(stateStoreOptions())) {
+  console.log(`runtime state already exists: ${stateStoreKind() === "postgresql" ? "postgresql://aimac_control_plane_state/default" : statePath}`);
 } else {
-  writeJson(statePath, buildState());
-  console.log(`runtime state initialized: ${statePath}`);
+  writeStoredState(buildState(), stateStoreOptions());
+  console.log(`runtime state initialized: ${stateStoreKind() === "postgresql" ? "postgresql://aimac_control_plane_state/default" : statePath}`);
 }
 
 const existingConfig = existsSync(configPath) ? loadJson(configPath) : {};
@@ -75,6 +81,7 @@ writeJson(configPath, {
   host: process.env.AIMAC_HOST || "127.0.0.1",
   port: Number(process.env.AIMAC_PORT || 4317),
   databaseUrl: process.env.DATABASE_URL || null,
+  stateStore: stateStoreKind(),
   bootstrapTokenConfigured: true,
   bootstrapTokenHash: digestOf(`bootstrap:${bootstrapToken}`),
   localAccountTokenHashes: {
@@ -92,6 +99,7 @@ writeJson(configPath, {
 });
 
 console.log("next: npm start");
+console.log("mcp: npm run mcp:register && npm run mcp:start");
 if (!process.env.AIMAC_BOOTSTRAP_TOKEN) {
   console.log(`local bootstrap token: ${bootstrapToken}`);
 }
