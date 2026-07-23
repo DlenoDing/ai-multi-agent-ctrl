@@ -74,6 +74,28 @@ try {
   if (joinResult.installCommand.includes("--join-token ") || !joinResult.installCommand.includes("--join-token-file")) throw new Error("join token install command exposed token in argv");
   if (!joinResult.verifiedInstallCommand.includes("( if command -v sha256sum") || !joinResult.verifiedInstallCommand.includes("elif command -v shasum")) throw new Error("join token did not produce a portable checksum-verified install command");
 
+  const noExecutorJoin = await json("/api/agent-join-tokens", {
+    method: "POST",
+    token: login.sessionToken,
+    idempotencyKey: "doctor-agent-no-executor-token",
+    body: {projectId: "prj_control_plane", nodeName: "no-executor-node", allowedRoles: ["*"], ttlSeconds: 1800, maxUses: 1}
+  });
+  const noExecutorRegistration = await json("/api/agent/v1/register", {
+    method: "POST",
+    token: noExecutorJoin.joinToken,
+    body: {nodeName: "no-executor-node", requestedRoles: ["*"], runtimeVersion: "doctor", profile: {tools: [], models: [{providerClass: "custom", adapter: "unconfigured", available: false}]}}
+  });
+  const noExecutorSelfCheck = await jsonRaw("/api/agent/v1/self-check", {
+    method: "POST",
+    token: noExecutorRegistration.nodeToken,
+    body: {checks: okSelfChecks(baseUrl, {modelExecutor: false}), runtimeVersion: "doctor"}
+  });
+  if (noExecutorSelfCheck.response.status !== 409 || noExecutorSelfCheck.payload.admission !== "read_only" || !noExecutorSelfCheck.payload.missingChecks?.includes("model_executor")) {
+    throw new Error(`agent without model executor was not rejected from full admission: ${noExecutorSelfCheck.response.status}`);
+  }
+  const noExecutorClaim = await json("/api/agent/v1/dispatches/next", {method: "POST", token: noExecutorRegistration.nodeToken, body: {claimTtlSeconds: 900}});
+  if (noExecutorClaim.dispatch || noExecutorClaim.reason !== "node_not_admitted") throw new Error("agent without model executor was allowed to claim dispatch");
+
   const verifiedJoinResult = await json("/api/agent-join-tokens", {
     method: "POST",
     token: login.sessionToken,
@@ -127,6 +149,9 @@ try {
   const previousCredentialProbe = await jsonRaw("/api/agent/v1/nodes/me", {token: agentConfig.nodeToken});
   const currentCredentialProbe = await jsonRaw("/api/agent/v1/nodes/me", {token: rotatedAgentConfig.nodeToken});
   if (!previousCredentialProbe.response.ok || !currentCredentialProbe.response.ok) throw new Error("Agent Gateway did not accept both previous and current credentials during rotation overlap");
+  const previousHeartbeat = await jsonRaw("/api/agent/v1/heartbeat", {method: "POST", token: agentConfig.nodeToken, body: {profile: {tools: [], models: [{providerClass: "custom", adapter: "doctor", available: true}]}}});
+  const currentAfterPreviousHeartbeat = await jsonRaw("/api/agent/v1/nodes/me", {token: rotatedAgentConfig.nodeToken});
+  if (!previousHeartbeat.response.ok || !currentAfterPreviousHeartbeat.response.ok) throw new Error("Agent heartbeat with previous credential invalidated the current credential");
   assertAgentScopedMcpConfig(agentWorkDir, baseUrl, rotatedAgentConfig.nodeToken);
 
   await json(`/api/agent-nodes/${agentConfig.nodeId}/control`, {
@@ -190,6 +215,8 @@ try {
     if (!eventTypes.has(requiredEvent)) throw new Error(`Agent execution event stream missing ${requiredEvent}`);
   }
   if (eventLog.storage?.storageKind !== "project-jsonl" || !eventLog.storage?.storageRef?.includes("project-db/")) throw new Error("Agent execution events were not read from the project-level event store");
+  const sessionEventLog = await json(`/api/work-sessions/${completed.sessionId}/execution-events?limit=80`, {token: login.sessionToken});
+  if (!(sessionEventLog.events || []).some((event) => event.dispatchId === completed.dispatchId)) throw new Error("WorkSession execution event stream did not return dispatch events");
   const remoteTree = execFileSync("git", ["--git-dir", remote, "ls-tree", "-r", "--name-only", "refs/heads/main"], {encoding: "utf8"});
   if (!remoteTree.includes("docs/agent-runtime-output/") || !remoteTree.includes("docs/artifact-manifests/")) throw new Error("Agent outputs were not committed and pushed to the project Git repository");
 
@@ -222,16 +249,33 @@ try {
     token: login.sessionToken,
     idempotencyKey: "doctor-agent-node-revoke"
   });
-  const revokedDispatchId = revokeClaim.dispatch.dispatch.dispatchId;
-  const postRevokeState = await json("/api/state", {token: login.sessionToken});
-  const requeuedDispatch = postRevokeState.agentDispatches.find((dispatch) => dispatch.dispatchId === revokedDispatchId);
-  if (!revokeResult.requeuedDispatchIds.includes(revokedDispatchId) || requeuedDispatch?.status !== "queued" || requeuedDispatch.assignedNodeId) {
-    throw new Error("Agent node revocation did not requeue the running dispatch");
-  }
-  if (revokeResult.status !== "draining" || revokeResult.command?.commandType !== "revoke") {
-    throw new Error("Agent node revocation did not queue a draining revoke command");
-  }
-  console.log("agent remote doctor ok: one-command join, checksum install, credential rotation, initialization, self-check, remote MCP, control command ACK, project-level execution event stream, on-demand skill workset, dispatch, commit, push and checkpoint outbox replay, revoke requeue verified");
+	  const revokedDispatchId = revokeClaim.dispatch.dispatch.dispatchId;
+	  const postRevokeState = await json("/api/state", {token: login.sessionToken});
+	  const pendingDispatch = postRevokeState.agentDispatches.find((dispatch) => dispatch.dispatchId === revokedDispatchId);
+		  if (!revokeResult.pendingDispatchIds.includes(revokedDispatchId) || pendingDispatch?.status !== "blocked" || pendingDispatch.assignedNodeId !== revokeRegistration.node.nodeId) {
+		    throw new Error("Agent node revocation did not fence the running dispatch before ACK");
+		  }
+      if ((postRevokeState.mcpGrants || []).some((grant) => grant.agentNodeId === revokeRegistration.node.nodeId && grant.dispatchId === revokedDispatchId && grant.grantStatus === "issued")) {
+        throw new Error("Agent node revocation did not revoke dispatch MCP grants before ACK");
+      }
+	  if (revokeResult.status !== "draining" || revokeResult.command?.commandType !== "revoke") {
+	    throw new Error("Agent node revocation did not queue a draining revoke command");
+	  }
+	  const revokeControls = await json("/api/agent/v1/control?afterSequence=0&waitMs=1000", {token: revokeRegistration.nodeToken});
+	  if (!revokeControls.commands.some((command) => command.commandId === revokeResult.command.commandId && command.commandType === "revoke")) {
+	    throw new Error("Agent node control channel did not deliver revoke command");
+	  }
+	  await json(`/api/agent/v1/control/${revokeResult.command.commandId}/ack`, {
+	    method: "POST",
+	    token: revokeRegistration.nodeToken,
+	    body: {status: "completed", result: {stopped: true}}
+	  });
+	  const postAckState = await json("/api/state", {token: login.sessionToken});
+	  const requeuedDispatch = postAckState.agentDispatches.find((dispatch) => dispatch.dispatchId === revokedDispatchId);
+	  if (requeuedDispatch?.status !== "queued" || requeuedDispatch.assignedNodeId) {
+	    throw new Error("Agent node revocation ACK did not requeue the fenced dispatch");
+	  }
+		  console.log("agent remote doctor ok: one-command join, checksum install, credential rotation, initialization, self-check, remote MCP, control command ACK, project/session-level execution event stream, on-demand skill workset, dispatch, commit, push and checkpoint outbox replay, revoke pending+ACK requeue verified");
 } finally {
   server.kill("SIGTERM");
   await Promise.race([once(server, "exit"), new Promise((resolveWait) => setTimeout(resolveWait, 3000))]);
@@ -271,14 +315,18 @@ function stopAgentDaemon(workDir) {
   }
 }
 
-function okSelfChecks(baseUrl) {
-  return [
+function okSelfChecks(baseUrl, options = {}) {
+  const checks = [
     {checkId: "runtime", status: "ok", detail: "doctor"},
     {checkId: "gateway", status: "ok", detail: baseUrl},
     {checkId: "filesystem", status: "ok", detail: "doctor"},
     {checkId: "git", status: "ok", detail: "doctor"},
     {checkId: "remote_mcp", status: "ok", detail: `${baseUrl}/mcp`}
   ];
+  checks.push(options.modelExecutor === false
+    ? {checkId: "model_executor", status: "failed", detail: "no model executor configured"}
+    : {checkId: "model_executor", status: "ok", detail: "custom:doctor:available"});
+  return checks;
 }
 
 function assertAgentScopedMcpConfig(workDir, baseUrl, expectedToken) {

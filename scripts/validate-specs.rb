@@ -86,7 +86,7 @@ required_runtime_files.each do |path|
   errors << "runtime entrypoint missing: #{path}" unless File.exist?(File.join(ROOT, path))
 end
 
-required_npm_scripts = %w[init dev start shell:start mcp:start mcp:register mcp:doctor agentctl agent:doctor skills:sync contract:check validate doctor docker:build docker:up docker:doctor]
+required_npm_scripts = %w[init dev start shell:start mcp:start mcp:doctor agentctl agent:doctor skills:sync contract:check validate doctor docker:build docker:up docker:doctor]
 available_scripts = package_json.fetch("scripts", {})
 missing_npm_scripts = required_npm_scripts.reject { |script_name| available_scripts.key?(script_name) }
 errors << "package.json missing scripts: #{missing_npm_scripts.join(", ")}" unless missing_npm_scripts.empty?
@@ -368,11 +368,14 @@ mcp_doctor_source = File.read(File.join(ROOT, "scripts/doctor-mcp.mjs"))
 agent_doctor_source = File.read(File.join(ROOT, "scripts/doctor-agent-remote.mjs"))
 agent_runtime_source = File.read(File.join(ROOT, "apps/agent-runtime/runtime.mjs"))
 agent_gateway_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/agent-gateway.mjs"))
+public_app_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
 agent_installer_source = File.read(File.join(ROOT, "scripts/install-agent.sh"))
 mcp_register_source = File.read(File.join(ROOT, "scripts/register-mcp-client.mjs"))
 skill_sync_source = File.read(File.join(ROOT, "scripts/sync-agent-skills.mjs"))
 run_with_env_source = File.read(File.join(ROOT, "scripts/run-with-env.mjs"))
 contract_check_source = File.read(File.join(ROOT, "scripts/contract-check.mjs"))
+docker_up_source = File.read(File.join(ROOT, "scripts/docker-up.sh"))
+env_example_source = File.read(File.join(ROOT, ".env.example"))
 {
   "server must isolate deterministic agent runtime worker to verification endpoint" => "/api/verification/agent-runtime/run",
   "server must scope state reads by authenticated account" => "scopedStateForAccount",
@@ -391,6 +394,8 @@ contract_check_source = File.read(File.join(ROOT, "scripts/contract-check.mjs"))
   "doctor must reject checkpoint without runId" => "doctor-agent-checkpoint-missing-run",
   "doctor must verify workspace owner invite does not cross project scope" => "doctor-owner-cross-project-invite-denied",
   "doctor must verify workspace owner agent activation does not cross project scope" => "doctor-owner-cross-project-agent-denied",
+  "doctor must verify invited account token login" => "doctor-invited-account-login",
+  "doctor must verify project-only users do not inherit task group visibility" => "doctor-project-only-task-scope",
   "core must bind checkpoints to active agent dispatch" => "active_agent_dispatch_required",
   "core must require checkpoint runId" => "checkpoint_run_id_required",
   "core must preserve dispatch deliveryMode from work session placement" => "workSession?.placement",
@@ -436,6 +441,11 @@ errors << "MCP server must make write dryRun non-mutating" unless mcp_source.inc
 errors << "MCP server must reject idempotency key reuse conflicts" unless mcp_source.include?("idempotency_key_reuse_conflict") && mcp_doctor_source.include?("MCP idempotency key reuse")
 errors << "MCP doctor must exercise input validation" unless mcp_doctor_source.include?("MCP input schema did not reject unknown properties") && mcp_doctor_source.include?("MCP repository target selection accepted a non-git-trackable path")
 errors << "MCP server must require principal-scoped tool grants" unless mcp_source.include?("mcp_tool_not_granted_to_principal") && mcp_source.include?("validateMcpGrant")
+errors << "MCP service principals must be project-scoped for read projections" unless server_source.include?("AIMAC_MCP_SERVICE_PROJECT_IDS") && mcp_source.include?("validateRemotePrincipalScope") && mcp_source.include?("scopeStateForProjectPrincipal")
+errors << "MCP tools/list must reflect active dispatch-bound grants for agent nodes" unless mcp_source.include?("createVisibleMcpToolDefinitions") && mcp_source.include?("active.has(name)")
+errors << "MCP agent-node read-only tools must require a unique dispatch-bound scope" unless mcp_source.include?("mcp_grant_scope_required") && mcp_source.include?("scopeFromGrant(scopedGrants[0])") && !mcp_source.include?("grantCheck.readOnly || !grantCheck.scope")
+errors << "MCP room messages must be bounded, paginated and use persistent per-room sequence" unless mcp_source.include?("pruneRoomMessages") && mcp_source.include?("AIMAC_ROOM_MESSAGES_MAX_TOTAL") && mcp_source.include?("Math.min(500") && mcp_source.include?("roomSequenceByRoom")
+errors << "MCP audit must rotate with unique locked files and mark conflict writes as failed" unless mcp_source.include?("rotateMcpAuditIfNeeded") && mcp_source.include?("AIMAC_MCP_AUDIT_MAX_BYTES") && mcp_source.include?("withMcpAuditLock") && mcp_source.include?("randomBytes(4)") && mcp_source.include?("conflict: true")
 errors << "production MCP must not expose server-side agent execution" if mcp_source.include?("agent-control-mcp.runtime_run") || !mcp_doctor_source.include?("remote MCP still exposes server-side Agent execution")
 errors << "MCP server must reject full state scope by default" unless mcp_source.include?("full_state_scope_not_allowed") && mcp_doctor_source.include?("state_get full scope was not denied")
 errors << "MCP server must enforce unique active lease and fencing token" unless mcp_source.include?("lease_already_active") && mcp_source.include?("lease_fencing_token_mismatch") && mcp_doctor_source.include?("lease_claim allowed a second active holder")
@@ -445,11 +455,17 @@ errors << "MCP server must validate tool input schemas at call time" unless mcp_
 errors << "MCP repository target selection must reject non-git-trackable paths" unless mcp_source.include?("repository_output_target_must_use_git_trackable_paths") && mcp_source.include?("pathAllowlistValid")
 errors << "MCP server must mark tool results untrusted" unless mcp_source.include?("untrustedResult")
 errors << "HTTP server must use shared state-store" unless server_source.include?("readStoredState") && server_source.include?("writeStoredState")
+errors << "HTTP health checks must avoid full project shard hydration" unless server_source.include?("readHealthState") && server_source.include?("readStoredCentralState")
 errors << "MCP server must use shared state-store" unless mcp_source.include?("readStoredState") && mcp_source.include?("writeStoredState")
 errors << "state-store must support PostgreSQL JSONB authority" unless state_store_source.include?("AIMAC_STATE_STORE") && state_store_source.include?("jsonb") && state_store_source.include?("psql")
 errors << "state-store must enforce versioned write conflict detection" unless state_store_source.include?("expectedStateVersion") && state_store_source.include?("AIMAC_STATE_CONFLICT")
 errors << "state-store must externalize project-scoped collections into project shards" unless state_store_source.include?("projectShardCollections") && state_store_source.include?("aimac_project_state_shards") && state_store_source.include?(".state.json")
 errors << "project shard writes must be protected by the central state CAS" unless state_store_source.include?("writePostgresStateWithProjectShards") && state_store_source.include?("AIMAC_WRITE_CONFLICT") && state_store_source.index("assertExpectedVersion") && state_store_source.index("writeRuntimeJsonProjectShards") && state_store_source.index("assertExpectedVersion") < state_store_source.index("writeRuntimeJsonProjectShards")
+errors << "runtime_json state-store reads and writes must share a file lock and atomic central rename" unless state_store_source.include?("return withRuntimeJsonLock(options") && state_store_source.include?("writeRuntimeJsonCentralState") && state_store_source.include?("renameSync(temporary, options.statePath)")
+errors << "project shard filenames must use bounded hash ids and preserve legacy reads" unless state_store_source.include?("p_${createHash") && state_store_source.include?("legacySafeProjectId") && project_event_store_source.include?("p_${createHash") && project_event_store_source.include?("legacySafeProjectId")
+errors << "runtime_json shard GC must run only after central atomic rename and hydrate must follow central shard index" unless state_store_source.include?("gcRuntimeJsonProjectShards") && state_store_source.index("writeRuntimeJsonCentralState(centralState") && state_store_source.index("gcRuntimeJsonProjectShards") && state_store_source.index("writeRuntimeJsonCentralState(centralState") < state_store_source.index("gcRuntimeJsonProjectShards") && state_store_source.include?("runtimeJsonShardNamesFromCentral")
+errors << "runtime_json shard writes must use central-indexed generation files for crash consistency" unless state_store_source.include?("runtimeJsonShardGeneration") && state_store_source.include?("storageGeneration") && state_store_source.include?("runtimeJsonProjectShardName") && contract_check_source.include?("generation-qualified hash shard file")
+errors << "runtime_json project shards must fsync and verify payload digests" unless state_store_source.include?("writeDurableFile") && state_store_source.include?("fsyncDirectory") && state_store_source.include?("storagePayloadDigest") && contract_check_source.include?("shard digest mismatch was not rejected")
 errors << "state-store must cap idempotency records" unless state_store_source.include?("pruneIdempotencyRecords") && state_store_source.include?("AIMAC_IDEMPOTENCY_MAX_RECORDS")
 errors << "skills sync must use shared state-store" unless skill_sync_source.include?("readStoredState") && skill_sync_source.include?("writeStoredState")
 errors << "doctor must isolate verification state from configured PostgreSQL stores" unless doctor_source.include?("AIMAC_STATE_STORE: \"runtime_json\"") && !package_json.dig("scripts", "doctor").to_s.include?("init-control-plane")
@@ -458,6 +474,8 @@ errors << "MCP register script must generate Claude config" unless mcp_register_
 errors << "MCP register script must generate Cursor config" unless mcp_register_source.include?("cursor_mcp.json")
 errors << "MCP register script must generate remote Streamable HTTP configs" unless mcp_register_source.include?("streamable-http") && mcp_register_source.include?("--server-url=") && mcp_register_source.include?("url: mcpUrl")
 errors << "MCP register script must allow env-controlled output dir" unless mcp_register_source.include?("AIMAC_MCP_CONFIG_DIR")
+errors << "MCP register script must not use central service token as a client bearer default" if mcp_register_source.include?("AIMAC_MCP_SERVICE_TOKEN")
+errors << "npm scripts must not expose standalone MCP client registration" if package_json.dig("scripts", "mcp:register")
 errors << "MCP doctor must verify remote-only generated config" unless mcp_doctor_source.include?("mcp-server.json") && mcp_doctor_source.include?("entry.command") && mcp_doctor_source.include?("streamable-http")
 errors << "local MCP stdio server must be disabled by default" unless mcp_source.include?("Local MCP stdio startup is disabled") && mcp_doctor_source.include?("Agent-local MCP stdio server was not disabled")
 errors << "Agent installer must download and verify the server runtime" unless agent_installer_source.include?("agent-runtime.mjs.sha256") && agent_installer_source.include?("checksum verification failed")
@@ -466,14 +484,29 @@ errors << "Agent Gateway must implement one-time join, heartbeat, self-check and
 errors << "Agent Gateway must implement durable bidirectional control commands" unless %w[createAgentControlCommand listAgentControlCommands ackAgentControlCommand].all? { |needle| agent_gateway_source.include?(needle) } && server_source.include?("/api/agent/v1/control")
 errors << "Agent Gateway must persist delivered/received control state" unless agent_gateway_source.include?("deliveredAt") && agent_gateway_source.include?("\"received\"") && agent_runtime_source.include?("\"received\"")
 errors << "pause/cancel control must freeze dispatch and revoke MCP grants before agent ACK" unless agent_gateway_source.include?("applyControlCommandPreEffects") && agent_gateway_source.include?("revokeDispatchMcpGrants") && agent_gateway_source.include?("control_pause_requested")
+errors << "Agent revoke must fence dispatches until runtime ACK before requeue" unless agent_gateway_source.include?("assigned_node_revocation_pending_stop") && agent_gateway_source.include?("pendingDispatchIds") && agent_gateway_source.include?("finalizeNodeRevocation") && contract_check_source.include?("did not fence its running dispatch until runtime ACK")
+errors << "Agent shutdown ACK must offline nodes and requeue active dispatches" unless agent_gateway_source.include?("finalizeNodeShutdown") && agent_gateway_source.include?("node_shutdown_completed") && contract_check_source.include?("Agent shutdown ACK did not offline")
+errors << "Agent revoke/shutdown failed ACK must queue a retry instead of permanently fencing dispatches" unless agent_gateway_source.include?("handleStopControlFailure") && agent_gateway_source.include?("agent_stop_control_retry_queued") && agent_gateway_source.include?("control-retry:")
+errors << "resume_dispatch must have a server-side state transition" unless agent_gateway_source.include?("control_resume_requested") && agent_gateway_source.include?("resume_dispatch")
 errors << "task group controls must reuse dispatch control commands" unless server_source.include?("applyTaskGroupRuntimeControl") && server_source.include?("pause_dispatch") && server_source.include?("cancel_dispatch") && server_source.include?("createAgentControlCommand")
 errors << "MCP session pause/cancel must reuse dispatch control commands" unless mcp_source.include?("createAgentControlCommand") && mcp_source.include?("mcp_session_paused") && mcp_source.include?("revokeDispatchMcpGrants")
 errors << "Agent Runtime must poll and ack the server-side control channel" unless agent_runtime_source.include?("startControlWatcher") && agent_runtime_source.include?("pollControlCommands") && agent_runtime_source.include?("ackControlCommand")
+errors << "Agent Runtime control watcher must continue after command handling errors" unless agent_runtime_source.include?("control watcher iteration deferred")
 errors << "Agent Runtime must terminate executor process groups for stop controls" unless agent_runtime_source.include?("terminateChild") && agent_runtime_source.include?("SIGKILL") && agent_runtime_source.include?("detached:")
+errors << "Agent Runtime must pass selected model and reasoning to known CLIs" unless agent_runtime_source.include?("AIMAC_DISPATCH_MODEL_ID") && agent_runtime_source.include?("--model") && agent_runtime_source.include?("model_reasoning_effort") && agent_runtime_source.include?("--effort")
+errors << "Agent Runtime must not pass provider auto aliases as CLI model ids" unless agent_runtime_source.include?('stripped === "auto"') && agent_runtime_source.include?("reasoningForCli") && agent_runtime_source.include?("rawReasoningLevel")
+errors << "default model registry must bind concrete model ids instead of provider:auto" unless core_source.include?("providerDefaultModelIds") && seed_state.fetch("modelCapabilities", []).none? { |profile| profile["modelId"].to_s.end_with?(":auto") }
+errors << "model selection must reject unavailable/quota-limited models and fail closed before dispatch" unless core_source.include?("availability_unavailable") && core_source.include?("availability_quota_limited") && core_source.include?("assertSelectedModelDecision") && contract_check_source.include?("all models were unavailable")
+errors << "Agent self-check and scheduler admission must require a runnable model executor" unless agent_runtime_source.include?("\"model_executor\"") && agent_gateway_source.include?("\"model_executor\"") && agent_gateway_source.include?("if (!providers.size) return false")
+errors << "Agent revoke/shutdown control must request local runtime shutdown after stopping an active executor" unless agent_runtime_source.include?("config.shutdownRequested = true") && agent_runtime_source.include?("[\"revoke\", \"shutdown\"].includes(command.commandType)")
 errors << "Agent Runtime must stream execution events before final checkpoint" unless agent_runtime_source.include?("submitExecutionEvent") && agent_runtime_source.include?("executor_output") && server_source.include?("/api/agent/v1/events")
 errors << "Execution events must be isolated into project-level server files" unless project_event_store_source.include?("project-db") && project_event_store_source.include?("appendProjectExecutionEvent") && server_source.include?("readProjectExecutionEvents")
-errors << "Execution events must be idempotent and tail-readable" unless project_event_store_source.include?("eventKeyRecentlyStored") && project_event_store_source.include?("tail-window") && agent_runtime_source.include?("eventKey")
-errors << "Execution event projection must recover from state CAS conflicts" unless server_source.include?("retryExecutionEventProjection") && server_source.include?("conflictRecovered")
+errors << "Execution events must be idempotent through a persistent key index and tail-readable" unless project_event_store_source.include?("project-execution-event-key/v1") && project_event_store_source.include?("ensureProjectExecutionEventIndex") && project_event_store_source.include?("tail-window") && agent_runtime_source.include?("eventKey")
+errors << "Execution events must require eventKey and rotate project JSONL segments" unless load_json("spec/agent-execution-event.schema.json").fetch("required").include?("eventKey") && server_source.include?("execution_event_key_required") && project_event_store_source.include?("execution-events.manifest.json") && project_event_store_source.include?("rotateProjectExecutionEventIfNeeded") && contract_check_source.include?("segment manifest")
+errors << "UI and API must expose session-scoped execution events" unless server_source.include?("work-sessions") && server_source.include?("sessionEventsMatch") && server_source.include?("sessionId: session.sessionId") && public_app_source.include?("show-session-events")
+errors << "Execution event project sequence must be assigned under the per-project append lock" unless project_event_store_source.include?("sequence: Number(index.lastSequence || 0) + 1") && contract_check_source.include?("append-order project sequences inside the project lock")
+errors << "Execution event projection must append durable events before central projection and recover historical bindings" unless server_source.include?("prepareAgentExecutionEvent") && server_source.include?("appendProjectExecutionEvent(runtimeDir, prepared.event)") && server_source.include?("allowHistoricalNodeBinding") && server_source.include?("event_node_binding_mismatch")
+errors << "Long polling must use write notifications instead of fixed interval synchronous polling" unless server_source.include?("waitForLongPollSignal") && server_source.include?("notifyLongPollWaiters") && !server_source.include?("await delay(250)")
 errors << "Agent Gateway must issue server-managed skill worksets" unless agent_gateway_source.include?("agent-skill-workset/v1") && agent_gateway_source.include?("server_managed_on_demand") && agent_gateway_source.include?("Child roles MUST receive")
 errors << "Agent Runtime must use remote MCP and on-demand skill worksets" unless agent_runtime_source.include?("AIMAC_MCP_URL") && agent_runtime_source.include?("syncSkillWorkset") && agent_runtime_source.include?("do not start or install any local MCP server")
 errors << "Agent Runtime dispatch prompt must use compact DISPATCH v1 envelope" unless agent_runtime_source.include?("\"DISPATCH v1\"") && agent_runtime_source.include?("`model: ${model.model") && agent_runtime_source.include?("`reasoning: ${model.reasoning") && agent_runtime_source.include?("model.modelDecision")
@@ -483,18 +516,24 @@ errors << "Model selection decision schema must require short modelDecision" unl
 errors << "Agent Runtime must always maintain agent-scoped remote MCP client config" unless agent_runtime_source.include?("writeAgentScopedMcpConfig") && agent_runtime_source.include?("mcp-client-configs") && agent_runtime_source.include?("configureGlobalRemoteMcpClients")
 errors << "Agent doctor must verify agent-scoped MCP config and credential rotation refresh" unless agent_doctor_source.include?("assertAgentScopedMcpConfig") && agent_doctor_source.include?("was not refreshed after node credential rotation")
 errors << "Agent doctor must verify remote join/MCP/skill/dispatch/Git/checkpoint flow" unless agent_doctor_source.include?("one-command join") && agent_doctor_source.include?("on-demand skill workset") && agent_doctor_source.include?("commit, push and checkpoint")
+errors << "Agent doctor must reject nodes without model executors" unless agent_doctor_source.include?("doctor-agent-no-executor-token") && agent_doctor_source.include?("node_not_admitted")
 errors << "npm scripts must load .env through run-with-env wrapper" unless package_json.dig("scripts", "start").to_s.include?("run-with-env") && package_json.dig("scripts", "mcp:start").to_s.include?("run-with-env")
 errors << "run-with-env must parse .env before importing target script" unless run_with_env_source.include?("loadDotEnv") && run_with_env_source.include?("await import")
+errors << "account invites must issue one-time per-account token digests usable by login" unless server_source.include?("account-invite:") && server_source.include?("credentialConsumedAt") && server_source.include?("delete account.credentialDigest") && doctor_source.include?("invite account token to be one-time")
+errors << "project account invites must not escalate to system admins" unless server_source.include?("requestedSystemAccountInvite") && server_source.include?("system_account_invite") && doctor_source.include?("project-scoped inviter not to create system admin")
+errors << ".env.example must not define empty secret values that fail weak-secret checks" if env_example_source.match?(/^(AIMAC_BOOTSTRAP_TOKEN|AIMAC_MCP_SERVICE_TOKEN|AIMAC_LOCAL_SEED_.*TOKEN|POSTGRES_PASSWORD)=/m)
+errors << "docker:up must generate and then reuse persisted local verification secrets" unless docker_up_source.include?("value_or_generated") && docker_up_source.include?("existing_env_value") && docker_up_source.include?("POSTGRES_PASSWORD_VALUE") && docker_up_source.include?("--env-file")
+errors << "docker:up must not fall back to predictable timestamp-derived secrets" if docker_up_source.include?("date \"+%s\"")
 errors << "contract-check must validate runtime and McpGrant schemas" unless contract_check_source.include?("RuntimeBootstrapProfile") || (contract_check_source.include?("runtime-bootstrap.schema.json") && contract_check_source.include?("mcp-grant.schema.json"))
 errors << "package validate must run contract:check" unless package_json.dig("scripts", "validate").to_s.include?("contract:check")
 errors << "doctor script must run MCP doctor" unless package_json.dig("scripts", "doctor").to_s.include?("mcp:doctor")
 errors << "seed runtime must expose MCP metadata" unless seed_state.dig("runtime", "mcp", "toolCount").to_i >= expected_mcp_tools.values.flatten.length
-%w[mcpStart mcpRegister mcpDoctor].each do |command_name|
+%w[mcpStart agentJoin mcpDoctor].each do |command_name|
   errors << "seed runtime commands missing #{command_name}" unless seed_state.dig("runtime", "commands", command_name)
 end
 runtime_schema = load_json("spec/runtime-bootstrap.schema.json")
 errors << "RuntimeBootstrapProfile schema must require mcp" unless runtime_schema.fetch("required").include?("mcp")
-%w[mcpStart mcpRegister mcpDoctor].each do |command_name|
+%w[mcpStart agentJoin mcpDoctor].each do |command_name|
   errors << "RuntimeBootstrapProfile commands schema missing #{command_name}" unless runtime_schema.dig("properties", "commands", "properties", command_name)
 end
 errors << "RuntimeBootstrapProfile schema missing mcp property" unless runtime_schema.dig("properties", "mcp", "properties", "toolCount")

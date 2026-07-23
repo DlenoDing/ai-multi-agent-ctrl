@@ -4,8 +4,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
-import { appendProjectExecutionEvent, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
+import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
+import { appendProjectExecutionEvent, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
 import {
   authenticateAgentNode,
   ackAgentControlCommand,
@@ -19,13 +19,13 @@ import {
   heartbeatAgentNode,
   listAgentControlCommands,
   listAgentJoinTokens,
+  prepareAgentExecutionEvent,
   publicAgentNode,
   registerAgentNode,
+  recordAgentExecutionEvent,
   requestAgentNodeRevocation,
   revokeDispatchMcpGrants,
-  revokeAgentNode,
-  selfCheckAgentNode,
-  submitAgentExecutionEvent
+  selfCheckAgentNode
 } from "./lib/agent-gateway.mjs";
 import { handleMcpJsonRpc, isWriteTool } from "../mcp-server/server.mjs";
 import {
@@ -64,6 +64,9 @@ const executionProfile = process.env.AIMAC_EXECUTION_PROFILE || "production";
 const stateViewCache = new Map();
 const stateViewCacheTtlMs = Number(process.env.AIMAC_STATE_VIEW_CACHE_TTL_MS || 500);
 const stateViewMaxEntries = Number(process.env.AIMAC_STATE_VIEW_CACHE_MAX_ENTRIES || 200);
+const agentControlWaitFanout = new Map();
+const projectExecutionWaitFanout = new Map();
+const longPollWaiters = new Map();
 
 const unsafeSecretValues = new Set([
   "",
@@ -237,9 +240,18 @@ function readState() {
   return state;
 }
 
+function readHealthState() {
+  ensureState();
+  const state = readStoredCentralState({root, runtimeDir, statePath, seedPath, buildInitialState});
+  ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: process.env.AIMAC_PUBLIC_URL || localEndpoint(), executionProfile});
+  markRuntimeStorage(state, ".runtime/control-plane-state.json");
+  return state;
+}
+
 function writeState(state) {
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
   writeStoredState(state, {root, runtimeDir, statePath, seedPath, buildInitialState, expectedStateVersion: state.__loadedStateVersion});
+  notifyLongPollWaiters("state");
 }
 
 function audit(state, actor, action, subject, result = "succeeded") {
@@ -352,6 +364,59 @@ function accountIdOf(account) {
   return account.accountId || account.id;
 }
 
+function publicAccountRecord(account) {
+  return {
+    schemaVersion: account.schemaVersion,
+    accountId: account.accountId,
+    accountType: account.accountType,
+    displayName: account.displayName,
+    email: account.email,
+    status: account.status,
+    roles: account.roles || [],
+    permissions: account.permissions || [],
+    authPolicy: account.authPolicy ? {method: account.authPolicy.method, mfaRequired: Boolean(account.authPolicy.mfaRequired), passwordSet: Boolean(account.authPolicy.passwordSet), sessionTtlSeconds: account.authPolicy.sessionTtlSeconds} : undefined,
+    credentialIssuedAt: account.credentialIssuedAt,
+    credentialExpiresAt: account.credentialExpiresAt,
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt
+  };
+}
+
+function normalizeStringList(value, fallback = []) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || "").split(",");
+  const normalized = [...new Set(source.map((item) => String(item).trim()).filter(Boolean))];
+  return normalized.length ? normalized : fallback;
+}
+
+function requestedSystemAccountInvite(input = {}) {
+  const accountType = String(input.accountType || "user_account");
+  const roles = normalizeStringList(input.roles, []);
+  const permissions = normalizeStringList(input.permissions, []);
+  return accountType === "system_admin" ||
+    roles.includes("system_admin") ||
+    permissions.some((permission) => permission === "system:*" || permission.startsWith("system:"));
+}
+
+function normalizeInvitedAccount(input = {}, systemScoped = false) {
+  const roles = normalizeStringList(input.roles, ["viewer"]);
+  const permissions = normalizeStringList(input.permissions, ["project:view"]);
+  if (systemScoped) {
+    return {
+      accountType: String(input.accountType || "user_account"),
+      roles,
+      permissions
+    };
+  }
+  if (requestedSystemAccountInvite(input)) throw new Error("project_invite_cannot_grant_system_account_or_permission");
+  return {
+    accountType: "user_account",
+    roles: roles.filter((role) => role !== "system_admin"),
+    permissions: permissions.filter((permission) => permission !== "system:*" && !permission.startsWith("system:"))
+  };
+}
+
 function principalAllowedForAction(account, action) {
   if (!account) return false;
   if (["agent_runtime_worker_run", "checkpoint_submit"].includes(action)) {
@@ -451,9 +516,14 @@ function mcpContextFromRequest(req, state) {
   const config = readRuntimeConfig();
   if (config.mcpServiceTokenHash === digestOf(`mcp-service:${token}`)) {
     const allowedMcpTools = mcpServiceAllowedTools();
-    return {principal: {kind: "system_service", id: "remote-mcp-client", allowedMcpTools}, allowedMcpTools};
+    return {principal: {kind: "system_service", id: "remote-mcp-client", projectIds: mcpServiceProjectIds(), allowedMcpTools}, allowedMcpTools};
   }
   return null;
+}
+
+function mcpServiceProjectIds() {
+  const configured = String(process.env.AIMAC_MCP_SERVICE_PROJECT_IDS || "").split(",").map((item) => item.trim()).filter(Boolean);
+  return configured.length ? configured : ["prj_control_plane"];
 }
 
 function mcpServiceAllowedTools() {
@@ -503,7 +573,9 @@ function canReadProject(state, account, projectId) {
 function canReadTaskGroup(state, account, taskGroupId) {
   const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
   if (!taskGroup) return false;
-  if (canReadProject(state, account, taskGroup.projectId)) return true;
+  if (account.accountType === "system_admin" || (account.permissions || []).includes("system:*")) return true;
+  const project = state.projects.find((item) => item.id === taskGroup.projectId);
+  if (project?.ownerAccountId === account.accountId) return true;
   return ["task_group:read", "task_group:review", "task_group:control", "task_group:orchestrate", "task_group:monitor", "task_group:*"].some((permission) =>
     hasPermission(state, account.accountId, permission, {resourceType: "task_group", resourceId: taskGroupId, projectId: taskGroup.projectId})
   );
@@ -519,10 +591,12 @@ function scopedStateForAccount(state, account, session) {
   cloned.agentJoinTokens = listAgentJoinTokens(state);
   if (isSystem) return cloned;
   const visibleProjectIds = new Set((state.projects || []).filter((project) => canReadProject(state, account, project.id)).map((project) => project.id));
-  const visibleTaskGroupIds = new Set((state.taskGroups || []).filter((taskGroup) => visibleProjectIds.has(taskGroup.projectId) || canReadTaskGroup(state, account, taskGroup.id)).map((taskGroup) => taskGroup.id));
+  const visibleTaskGroupIds = new Set((state.taskGroups || []).filter((taskGroup) => canReadTaskGroup(state, account, taskGroup.id)).map((taskGroup) => taskGroup.id));
   cloned.projects = (state.projects || []).filter((project) => visibleProjectIds.has(project.id));
   cloned.taskGroups = (state.taskGroups || []).filter((taskGroup) => visibleTaskGroupIds.has(taskGroup.id));
-  cloned.repositoryOutputs = (state.repositoryOutputs || []).filter((target) => visibleProjectIds.has(target.projectId) || visibleTaskGroupIds.has(target.taskGroupId));
+  cloned.repositoryOutputs = (state.repositoryOutputs || []).filter((target) =>
+    target.taskGroupId ? visibleTaskGroupIds.has(target.taskGroupId) : visibleProjectIds.has(target.projectId)
+  );
   cloned.workSessions = (state.workSessions || []).filter((sessionItem) => visibleTaskGroupIds.has(sessionItem.taskGroupId));
   cloned.agentDispatches = (state.agentDispatches || []).filter((dispatch) => visibleTaskGroupIds.has(dispatch.taskGroupId));
   cloned.agentRuntimeNodes = (state.agentRuntimeNodes || []).filter((node) => (node.projectIds || []).some((projectId) => visibleProjectIds.has(projectId))).map(publicAgentNode);
@@ -535,6 +609,10 @@ function scopedStateForAccount(state, account, session) {
   cloned.roleDriftGuards = (state.roleDriftGuards || []).filter((guard) => visibleTaskGroupIds.has(guard.taskGroupId));
   cloned.modelSelectionDecisions = (state.modelSelectionDecisions || []).filter((decision) => visibleTaskGroupIds.has(decision.taskGroupId));
   cloned.sessionPlacementDecisions = (state.sessionPlacementDecisions || []).filter((decision) => visibleTaskGroupIds.has(decision.taskGroupId));
+  cloned.roleSkillOverlays = (state.roleSkillOverlays || []).filter((overlay) =>
+    (overlay.taskGroupId && visibleTaskGroupIds.has(overlay.taskGroupId)) ||
+    (!overlay.taskGroupId && overlay.projectId && visibleProjectIds.has(overlay.projectId))
+  );
   cloned.executionTopologies = (state.executionTopologies || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
   cloned.reviewPlans = (state.reviewPlans || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
   cloned.reviewBundles = (state.reviewBundles || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
@@ -630,6 +708,7 @@ function sliceItems(items, limit) {
 
 function permissionForAction(action) {
   if (action === "bootstrap_init") return "system:bootstrap";
+  if (action === "system_account_invite") return "system:account_admin";
   if (action === "account_invite") return "member:invite";
   if (action === "project_create") return "project:create";
   if (action === "project_member_grant") return "member:invite";
@@ -876,6 +955,10 @@ function mcpJsonRpcIsWriteCall(message) {
 }
 
 async function waitForAgentControlCommands(node, options = {}) {
+  return sharedLongPoll(agentControlWaitFanout, `agent-control:${node.nodeId}:${options.afterSequence || 0}:${options.limit || 20}:${options.waitMs || 0}`, () => waitForAgentControlCommandsDirect(node, options));
+}
+
+async function waitForAgentControlCommandsDirect(node, options = {}) {
   const deadline = Date.now() + Math.max(0, Math.min(30000, Number(options.waitMs || 0)));
   let latest = readState();
   for (;;) {
@@ -890,18 +973,67 @@ async function waitForAgentControlCommands(node, options = {}) {
       }
     }
     if (result.commands.length || Date.now() >= deadline) return result;
-    await delay(250);
+    await waitForLongPollSignal(["state", `agent-control:${node.nodeId}`], Math.max(1, deadline - Date.now()));
     latest = readState();
   }
 }
 
 async function waitForProjectExecutionEvents(projectId, options = {}) {
+  return sharedLongPoll(projectExecutionWaitFanout, `project-events:${projectId}:${options.afterSequence || 0}:${options.dispatchId || ""}:${options.taskGroupId || ""}:${options.sessionId || ""}:${options.limit || 120}:${options.waitMs || 0}`, () => waitForProjectExecutionEventsDirect(projectId, options));
+}
+
+async function waitForProjectExecutionEventsDirect(projectId, options = {}) {
   const deadline = Date.now() + Math.max(0, Math.min(30000, Number(options.waitMs || 0)));
   for (;;) {
     const result = readProjectExecutionEvents(runtimeDir, projectId, options);
     if (result.events.length || Date.now() >= deadline) return result;
-    await delay(250);
+    await waitForLongPollSignal([`project-events:${projectId}`], Math.max(1, deadline - Date.now()));
   }
+}
+
+async function sharedLongPoll(cache, key, producer) {
+  const existing = cache.get(key);
+  if (existing) return existing;
+  const pending = (async () => producer())();
+  cache.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    if (cache.get(key) === pending) cache.delete(key);
+  }
+}
+
+function waitForLongPollSignal(keys, timeoutMs) {
+  return new Promise((resolveSignal) => {
+    let settled = false;
+    const cleanup = () => {
+      for (const key of keys) {
+        const waiters = longPollWaiters.get(key);
+        if (!waiters) continue;
+        waiters.delete(resolveOnce);
+        if (!waiters.size) longPollWaiters.delete(key);
+      }
+      clearTimeout(timer);
+    };
+    const resolveOnce = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolveSignal();
+    };
+    const timer = setTimeout(resolveOnce, Math.max(1, timeoutMs));
+    for (const key of keys) {
+      if (!longPollWaiters.has(key)) longPollWaiters.set(key, new Set());
+      longPollWaiters.get(key).add(resolveOnce);
+    }
+  });
+}
+
+function notifyLongPollWaiters(key) {
+  const waiters = longPollWaiters.get(key);
+  if (!waiters?.size) return;
+  longPollWaiters.delete(key);
+  for (const resolveWaiter of waiters) resolveWaiter();
 }
 
 function retryExecutionEventProjection(req, body) {
@@ -910,8 +1042,16 @@ function retryExecutionEventProjection(req, body) {
     const latestNode = authenticateAgentNode(latest, bearerToken(req));
     if (!latestNode) return {ok: false, error: "agent_node_auth_required"};
     try {
-      const result = submitAgentExecutionEvent(latest, latestNode, body);
-      const storage = appendProjectExecutionEvent(runtimeDir, result.event);
+      const dispatch = (latest.agentDispatches || []).find((item) => item.dispatchId === body.dispatchId);
+      if (!dispatch) return {ok: false, error: "dispatch_not_found"};
+      const storedEvent = body.eventKey ? readProjectExecutionEventByKey(runtimeDir, dispatch.projectId, body.eventKey) : null;
+      if (storedEvent && storedEvent.nodeId !== latestNode.nodeId) return {ok: false, error: "event_node_binding_mismatch"};
+      const prepared = storedEvent ? null : prepareAgentExecutionEvent(latest, latestNode, body);
+      const storage = storedEvent
+        ? {...projectExecutionEventStorageInfo(dispatch.projectId), replayedProjection: true, duplicate: true, event: storedEvent}
+        : appendProjectExecutionEvent(runtimeDir, prepared.event);
+      if (storage.event && !storage.duplicate) notifyLongPollWaiters(`project-events:${storage.event.projectId}`);
+      const result = recordAgentExecutionEvent(latest, latestNode, storage.event || storedEvent || prepared.event, {allowHistoricalNodeBinding: Boolean(storedEvent || storage.duplicate)});
       commitGatewayWrite(latest);
       return {ok: true, result, storage};
     } catch (error) {
@@ -1042,11 +1182,8 @@ function serveStatic(req, res) {
 
 async function handleApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const state = readState();
-  const body = req.method === "POST" ? await parseBody(req) : {};
-  req.bodyDigest = digestOf(body);
-
   if (req.method === "GET" && ["/api/health", "/api/runtime/health"].includes(url.pathname)) {
+    const state = readHealthState();
     json(res, 200, {
       status: "ok",
       runtime: state.runtime.status,
@@ -1057,6 +1194,10 @@ async function handleApi(req, res) {
     });
     return;
   }
+
+  const state = readState();
+  const body = req.method === "POST" ? await parseBody(req) : {};
+  req.bodyDigest = digestOf(body);
 
   if (req.method === "GET" && url.pathname === "/api/agent/v1/bootstrap-manifest") {
     json(res, 200, {
@@ -1128,8 +1269,21 @@ async function handleApi(req, res) {
 
   if (req.method === "POST" && url.pathname === "/api/agent/v1/events") {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
-    const result = submitAgentExecutionEvent(state, node, body);
-    const storage = appendProjectExecutionEvent(runtimeDir, result.event);
+    if (!String(body.eventKey || "").trim()) return json(res, 400, {error: "execution_event_key_required"});
+    let prepared;
+    try {
+      prepared = prepareAgentExecutionEvent(state, node, body);
+    } catch (error) {
+      const historicalDispatch = (state.agentDispatches || []).find((item) => item.dispatchId === body.dispatchId);
+      const historicalEvent = historicalDispatch && body.eventKey ? readProjectExecutionEventByKey(runtimeDir, historicalDispatch.projectId, body.eventKey) : null;
+      if (!historicalEvent || historicalEvent.nodeId !== node.nodeId) throw error;
+      prepared = {event: historicalEvent, duplicate: true, historical: true};
+    }
+    const storage = prepared.duplicate
+      ? {...projectExecutionEventStorageInfo(prepared.event.projectId), duplicate: true, replayedProjection: Boolean(prepared.historical), event: prepared.event}
+      : appendProjectExecutionEvent(runtimeDir, prepared.event);
+    if (storage.event && !storage.duplicate) notifyLongPollWaiters(`project-events:${storage.event.projectId}`);
+    const result = recordAgentExecutionEvent(state, node, storage.event || prepared.event, {allowHistoricalNodeBinding: Boolean(prepared.historical || storage.duplicate)});
     try {
       commitGatewayWrite(state);
       json(res, 202, {...result, storage, centralStateUpdated: true});
@@ -1240,14 +1394,23 @@ async function handleApi(req, res) {
     const email = String(body.email || "");
     const account = state.accounts.find((item) => item.email === email || item.accountId === email);
     const method = account?.authPolicy?.method;
-    const tokenOk = method === "bootstrap_token"
-      ? digestOf(`bootstrap:${token}`) === config.bootstrapTokenHash
-      : Boolean(account && config.localAccountTokenHashes?.[account.accountId] === digestOf(`account:${account.accountId}:${token}`));
-    if (!tokenOk || !account || account.status !== "active") {
+    const bootstrapOk = method === "bootstrap_token" && digestOf(`bootstrap:${token}`) === config.bootstrapTokenHash;
+    const localAccountOk = Boolean(account && config.localAccountTokenHashes?.[account.accountId] === digestOf(`account:${account.accountId}:${token}`));
+    const issuedAccountOk = Boolean(account?.status === "invited" && account?.credentialDigest && account.credentialDigest === digestOf(`account-invite:${account.accountId}:${token}`) && (!account.credentialExpiresAt || new Date(account.credentialExpiresAt).getTime() > Date.now()));
+    const tokenOk = bootstrapOk || localAccountOk || issuedAccountOk;
+    if (!tokenOk || !account || !["active", "invited"].includes(account.status)) {
       audit(state, "auth-service", "auth_login", `Account:${email}`, "denied");
       commitDirectStateWrite(state);
       json(res, 401, {error: "invalid_credentials"});
       return;
+    }
+    if (account.status === "invited" && issuedAccountOk) {
+      account.status = "active";
+      account.activatedAt = now();
+      account.credentialConsumedAt = now();
+      account.credentialExpiresAt = account.credentialConsumedAt;
+      delete account.credentialDigest;
+      account.updatedAt = now();
     }
     const sessionToken = randomBytes(32).toString("base64url");
     const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
@@ -1285,10 +1448,11 @@ async function handleApi(req, res) {
       json(res, 401, {error: "auth_required"});
       return;
     }
+    const scoped = scopedStateForAccount(state, reader.account, reader.session);
     json(res, 200, {
-      modelCapabilities: state.modelCapabilities,
-      modelSelectionPolicies: state.modelSelectionPolicies,
-      modelSelectionDecisions: state.modelSelectionDecisions.slice(0, 40)
+      modelCapabilities: scoped.modelCapabilities,
+      modelSelectionPolicies: scoped.modelSelectionPolicies,
+      modelSelectionDecisions: (scoped.modelSelectionDecisions || []).slice(0, 40)
     });
     return;
   }
@@ -1299,10 +1463,11 @@ async function handleApi(req, res) {
       json(res, 401, {error: "auth_required"});
       return;
     }
+    const scoped = scopedStateForAccount(state, reader.account, reader.session);
     json(res, 200, {
-      skillSources: state.skillSources,
-      roleSkills: state.roleSkills,
-      roleSkillOverlays: state.roleSkillOverlays
+      skillSources: scoped.skillSources,
+      roleSkills: scoped.roleSkills,
+      roleSkillOverlays: scoped.roleSkillOverlays
     });
     return;
   }
@@ -1479,6 +1644,23 @@ async function handleApi(req, res) {
     if (reader.status) return json(res, reader.status, reader.payload);
     const result = await waitForProjectExecutionEvents(taskGroup.projectId, {
       taskGroupId: taskGroup.id,
+      afterSequence: Number(url.searchParams.get("afterSequence") || 0),
+      waitMs: Number(url.searchParams.get("waitMs") || 0),
+      limit: Number(url.searchParams.get("limit") || 120)
+    });
+    json(res, 200, result);
+    return;
+  }
+
+  const sessionEventsMatch = url.pathname.match(/^\/api\/work-sessions\/([^/]+)\/execution-events$/);
+  if (req.method === "GET" && sessionEventsMatch) {
+    const session = state.workSessions.find((item) => item.sessionId === sessionEventsMatch[1]);
+    if (!session) return json(res, 404, {error: "work_session_not_found"});
+    const reader = requireRead(req, state, taskGroupScope(state, session.taskGroupId));
+    if (reader.status) return json(res, reader.status, reader.payload);
+    const taskGroup = state.taskGroups.find((item) => item.id === session.taskGroupId);
+    const result = await waitForProjectExecutionEvents(taskGroup?.projectId || session.projectId || "prj_control_plane", {
+      sessionId: session.sessionId,
       afterSequence: Number(url.searchParams.get("afterSequence") || 0),
       waitMs: Number(url.searchParams.get("waitMs") || 0),
       limit: Number(url.searchParams.get("limit") || 120)
@@ -1812,32 +1994,56 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/accounts") {
-    const guard = beginGuardedWrite(req, state, "account_invite", "Account:new", {resourceType: "project", resourceId: body.projectId || "prj_control_plane"});
+    const systemScopedInvite = requestedSystemAccountInvite(body);
+    const guard = beginGuardedWrite(
+      req,
+      state,
+      systemScopedInvite ? "system_account_invite" : "account_invite",
+      "Account:new",
+      systemScopedInvite ? {resourceType: "system", resourceId: "accounts"} : {resourceType: "project", resourceId: body.projectId || "prj_control_plane"}
+    );
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
     }
+    let invitedAccount;
+    try {
+      invitedAccount = normalizeInvitedAccount(body, systemScopedInvite);
+    } catch (error) {
+      json(res, 400, {error: error.message});
+      return;
+    }
     const at = now();
     const accountId = createId("acct");
+    const accountToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
     const account = {
       schemaVersion: "account/v1",
       accountId,
-      accountType: body.accountType || "user_account",
+      accountType: invitedAccount.accountType,
       displayName: body.displayName || "New User",
       email: body.email || `user-${Date.now()}@local`,
       status: "invited",
-      roles: body.roles || ["viewer"],
-      permissions: body.permissions || ["project:view"],
+      roles: invitedAccount.roles,
+      permissions: invitedAccount.permissions,
       authPolicy: {method: "invite_token", mfaRequired: false, passwordSet: false, sessionTtlSeconds: 3600},
+      credentialDigest: digestOf(`account-invite:${accountId}:${accountToken}`),
+      credentialIssuedAt: at,
+      credentialExpiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
       auditRef: `audit:${guard.idempotencyKey}`,
       createdAt: at,
       updatedAt: at
     };
     state.accounts.push(account);
     audit(state, "ui-console-service", "account_invite", `Account:${account.accountId}`);
-    finishGuardedWrite(state, guard, 201, account);
+    const publicAccount = publicAccountRecord(account);
+    finishGuardedWrite(state, guard, 201, publicAccount);
     writeState(state);
-    json(res, 201, account);
+    json(res, 201, {
+      account: publicAccount,
+      accountToken,
+      tokenExpiresAt: account.credentialExpiresAt,
+      login: {email: account.email, tokenField: "accountToken"}
+    });
     return;
   }
 
@@ -1854,7 +2060,7 @@ async function handleApi(req, res) {
       subjectRef: {subjectType: "account", subjectId: body.subjectId || "acct_workspace_owner"},
       resource: {resourceType: body.resourceType || "project", resourceId: body.resourceId || "prj_control_plane"},
       role: body.role || "viewer",
-      permissions: body.permissions || ["project:view"],
+      permissions: normalizeStringList(body.permissions, ["project:view"]),
       status: "active",
       policyDecisionRef: guard.policyDecision.id,
       auditRef: `audit:${guard.idempotencyKey}`,

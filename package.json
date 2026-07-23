@@ -17,7 +17,6 @@
     "start": "node scripts/run-with-env.mjs apps/control-plane-ui/server.mjs",
     "shell:start": "./scripts/start.sh",
     "mcp:start": "node scripts/run-with-env.mjs apps/control-plane-ui/server.mjs",
-    "mcp:register": "node scripts/run-with-env.mjs scripts/register-mcp-client.mjs",
     "mcp:doctor": "node scripts/run-with-env.mjs scripts/doctor-mcp.mjs",
     "agentctl": "node scripts/run-with-env.mjs scripts/agentctl.mjs",
     "agent:doctor": "node scripts/run-with-env.mjs scripts/doctor-agent-remote.mjs",

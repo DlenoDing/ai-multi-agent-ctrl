@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredState, writeStoredState } from "../control-plane-ui/lib/state-store.mjs";
@@ -36,6 +37,7 @@ const statePath = resolve(runtimeDir, "control-plane-state.json");
 const seedPath = resolve(root, "data", "seed-state.json");
 const repositoryRoot = resolve(process.env.AIMAC_REPOSITORY_ROOT || root);
 const mcpAuditPath = resolve(runtimeDir, "mcp-audit.jsonl");
+const agentJoinCommand = "create one-time join token in project UI, then run the generated curl installer command on the Agent host";
 
 export const mcpToolGroups = {
   "orchestration-mcp": ["project_create", "task_group_create", "work_item_create", "work_assign", "orchestrator_run", "state_get"],
@@ -178,6 +180,7 @@ function buildInitialState() {
 function ensureMcpCollections(state) {
   state.roomParticipants ||= [];
   state.roomMessages ||= [];
+  state.roomSequenceByRoom ||= {};
   state.roomAcks ||= [];
   state.agentRuntimeNodes ||= [];
   state.permissionRequests ||= [];
@@ -192,7 +195,8 @@ function ensureMcpCollections(state) {
   state.runtime ||= {};
   state.runtime.commands ||= {};
   state.runtime.commands.mcpStart ||= "npm start";
-  state.runtime.commands.mcpRegister ||= "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL";
+  delete state.runtime.commands.mcpRegister;
+  state.runtime.commands.agentJoin ||= agentJoinCommand;
   state.runtime.commands.mcpDoctor ||= "npm run mcp:doctor";
   state.runtime.mcp = {
     ...(state.runtime.mcp || {}),
@@ -203,7 +207,7 @@ function ensureMcpCollections(state) {
     endpointPath: "/mcp",
     hostedBy: "control-plane",
     startupCommand: "npm start",
-    registrationCommand: "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL",
+    registrationCommand: agentJoinCommand,
     doctorCommand: "npm run mcp:doctor",
     agentLocalServerAllowed: false
   };
@@ -341,6 +345,7 @@ function commonInputProperties() {
     holderRef: string,
     idempotencyKey: string,
     leaseId: string,
+    limit: number,
     locatorRefs: array,
     maxJobs: number,
     mcpGrantId: string,
@@ -507,7 +512,7 @@ export async function callTool(name, args = {}, context = {}) {
             action: name,
             argumentDigest,
             resultDigest: digestOf(result),
-            payload: result,
+            payload: redactMcpPayload(result),
             policyDecisionRef: policyDecision?.decisionId,
             mcpGrantRef: grantCheck.grantRef,
             createdAt: new Date().toISOString()
@@ -528,7 +533,6 @@ export async function callTool(name, args = {}, context = {}) {
     untrustedResult: true,
     createdAt: at
   };
-  appendMcpAudit(mcpCall);
   if (isWriteTool(name)) {
     state.mcpCalls.unshift(mcpCall);
     state.mcpCalls = state.mcpCalls.slice(0, 300);
@@ -541,15 +545,18 @@ export async function callTool(name, args = {}, context = {}) {
   } catch (error) {
     if (!isStateStoreConflict(error)) throw error;
     result = {ok: false, error: "state_write_conflict", retryable: true, message: error.message};
+    const conflictCall = {...mcpCall, status: "failed", resultDigest: digestOf(result), conflict: true};
+    appendMcpAudit(conflictCall);
     return {
       ok: false,
       tool: name,
       stateVersion: beforeVersion,
       result,
       untrustedResult: true,
-      auditRef: mcpCall.callId
+      auditRef: conflictCall.callId
     };
   }
+  appendMcpAudit(mcpCall);
   return {
     ok: result.ok !== false,
     tool: name,
@@ -592,6 +599,24 @@ function validateInputArgs(name, args) {
     }
   }
   return {ok: true};
+}
+
+function redactMcpPayload(value) {
+  if (!value || typeof value !== "object") return value;
+  const clone = JSON.parse(JSON.stringify(value));
+  redactSecretFields(clone);
+  return clone;
+}
+
+function redactSecretFields(value) {
+  if (!value || typeof value !== "object") return;
+  for (const key of Object.keys(value)) {
+    if (["accountToken", "joinToken", "nodeToken", "bearerToken"].includes(key)) {
+      value[key] = `[redacted:${digestOf(value[key]).slice(7, 19)}]`;
+    } else {
+      redactSecretFields(value[key]);
+    }
+  }
 }
 
 function schemaTypeMatches(value, expectedType) {
@@ -668,13 +693,15 @@ function validateMcpGrant(state, toolName, args, argumentDigest, context = {}) {
     if (!activeGrants.length) return {allowed: false, error: "mcp_dispatch_bound_grant_required", required: toolName};
     const scopedGrants = activeGrants.filter((grant) => grantMatchesArgs(state, grant, args));
     if (!scopedGrants.length) return {allowed: false, error: "mcp_grant_scope_mismatch", required: toolName};
-    if (!readOnly && scopedGrants.length !== 1) {
-      return {allowed: false, error: "mcp_grant_scope_ambiguous", required: "dispatchId or exact dispatch-bound scope"};
+    if (scopedGrants.length !== 1) {
+      return {allowed: false, error: readOnly ? "mcp_grant_scope_required" : "mcp_grant_scope_ambiguous", required: "dispatchId or exact dispatch-bound scope"};
     }
     const grantRef = scopedGrants.map((grant) => `McpGrant:${grant.grantId}`).join(",");
-    return {allowed: true, grantRef, grants: scopedGrants, scope: scopedGrants.length === 1 ? scopeFromGrant(scopedGrants[0]) : null, argumentDigest, readOnly};
+    return {allowed: true, grantRef, grants: scopedGrants, scope: scopeFromGrant(scopedGrants[0]), argumentDigest, readOnly};
   }
   const grantRef = `remote-principal:${principal.kind}:${principal.id}`;
+  const scopeCheck = validateRemotePrincipalScope(state, principal, args);
+  if (!scopeCheck.allowed) return {allowed: false, error: scopeCheck.error, grantRef, required: scopeCheck.required};
   if (leaseRequiredForTool(toolName) && !["resource-mcp.lease_claim", "repository-mcp.repository_target_lease_bind"].includes(toolName)) {
     const leaseId = args.leaseId || args.leaseRef || args.repositoryLeaseRef;
     const lease = state.leases.find((item) => item.leaseId === leaseId && item.status === "active");
@@ -687,8 +714,50 @@ function validateMcpGrant(state, toolName, args, argumentDigest, context = {}) {
   return {allowed: true, grantRef, argumentDigest, readOnly};
 }
 
+function validateRemotePrincipalScope(state, principal, args = {}) {
+  if (principal.kind === "system_admin") return {allowed: true};
+  const allowedProjectIds = new Set(principal.projectIds || []);
+  if (allowedProjectIds.has("*")) return {allowed: true};
+  const projectIds = inferMcpArgumentProjectIds(state, args);
+  if (!projectIds.size) return {allowed: true};
+  for (const projectId of projectIds) {
+    if (!allowedProjectIds.has(projectId)) {
+      return {allowed: false, error: "mcp_principal_project_scope_mismatch", required: projectId};
+    }
+  }
+  return {allowed: true};
+}
+
+function inferMcpArgumentProjectIds(state, args = {}) {
+  const projectIds = new Set();
+  if (args.projectId) projectIds.add(String(args.projectId));
+  if (args.taskGroupId) {
+    const taskGroup = (state.taskGroups || []).find((item) => item.id === args.taskGroupId);
+    if (taskGroup?.projectId) projectIds.add(taskGroup.projectId);
+  }
+  if (args.dispatchId) {
+    const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === args.dispatchId);
+    if (dispatch?.projectId) projectIds.add(dispatch.projectId);
+  }
+  if (args.repositoryOutputTargetRef || args.targetId) {
+    const target = (state.repositoryOutputs || []).find((item) => item.targetId === (args.repositoryOutputTargetRef || args.targetId));
+    if (target?.projectId) projectIds.add(target.projectId);
+  }
+  if (args.leaseId) {
+    const lease = (state.leases || []).find((item) => item.leaseId === args.leaseId);
+    const target = lease && (state.repositoryOutputs || []).find((item) => item.targetId === lease.resourceRef || item.targetId === lease.repositoryOutputTargetRef);
+    if (target?.projectId) projectIds.add(target.projectId);
+  }
+  if (args.roomId && String(args.roomId).startsWith("room_")) {
+    const taskGroupId = String(args.roomId).slice("room_".length);
+    const taskGroup = (state.taskGroups || []).find((item) => item.id === taskGroupId);
+    if (taskGroup?.projectId) projectIds.add(taskGroup.projectId);
+  }
+  return projectIds;
+}
+
 function applyAgentGrantScopeArgs(toolName, args, grantCheck = {}) {
-  if (grantCheck.readOnly || !grantCheck.scope || !isWriteTool(toolName)) return args;
+  if (!grantCheck.scope) return args;
   return {
     ...args,
     dispatchId: args.dispatchId || grantCheck.scope.dispatchId,
@@ -757,7 +826,59 @@ function riskLevelForTool(toolName) {
 
 function appendMcpAudit(event) {
   mkdirSync(runtimeDir, {recursive: true});
-  appendFileSync(mcpAuditPath, `${JSON.stringify(event)}\n`);
+  withMcpAuditLock(() => {
+    rotateMcpAuditIfNeeded();
+    appendFileSync(mcpAuditPath, `${JSON.stringify(event)}\n`);
+  });
+}
+
+function rotateMcpAuditIfNeeded() {
+  const maxBytes = Math.max(1024 * 1024, Number(process.env.AIMAC_MCP_AUDIT_MAX_BYTES || 64 * 1024 * 1024));
+  try {
+    if (!existsSync(mcpAuditPath) || statSync(mcpAuditPath).size < maxBytes) return;
+    const rotatedPath = `${mcpAuditPath}.${new Date().toISOString().replace(/[^0-9T]/g, "")}.${process.pid}.${randomBytes(4).toString("hex")}.rotated`;
+    renameSync(mcpAuditPath, rotatedPath);
+    pruneMcpAuditRotations();
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+
+function pruneMcpAuditRotations() {
+  const keep = Math.max(1, Number(process.env.AIMAC_MCP_AUDIT_ROTATIONS || 20));
+  const dir = dirname(mcpAuditPath);
+  const prefix = `${mcpAuditPath.split("/").pop()}.`;
+  const rotated = readdirSync(dir)
+    .filter((name) => name.startsWith(prefix) && name.endsWith(".rotated"))
+    .map((name) => ({name, mtime: statSync(join(dir, name)).mtimeMs}))
+    .sort((left, right) => right.mtime - left.mtime);
+  for (const item of rotated.slice(keep)) unlinkSync(join(dir, item.name));
+}
+
+function withMcpAuditLock(fn) {
+  const lockPath = `${mcpAuditPath}.lock`;
+  const deadline = Date.now() + 10000;
+  for (;;) {
+    try {
+      mkdirSync(lockPath);
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      if (Date.now() > deadline) throw new Error("mcp_audit_lock_timeout");
+      try {
+        if (Date.now() - statSync(lockPath).mtimeMs > 30000) {
+          rmSync(lockPath, {recursive: true, force: true});
+          continue;
+        }
+      } catch {}
+      sleepSync(25);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    rmSync(lockPath, {recursive: true, force: true});
+  }
 }
 
 async function dispatchTool(state, name, args, context = {}) {
@@ -1016,6 +1137,16 @@ function stateGet(state, args, context = {}) {
     if (scope === "full") return {state: redactStateForMcp(scoped)};
     return summaryState(scoped);
   }
+  if (context.principal?.kind === "system_service") {
+    const scoped = scopeStateForProjectPrincipal(state, context.principal);
+    if (scope === "full") {
+      if (process.env.AIMAC_MCP_ALLOW_FULL_STATE !== "true") {
+        return {ok: false, error: "full_state_scope_not_allowed", summary: summaryState(scoped)};
+      }
+      return {state: redactStateForMcp(scoped)};
+    }
+    return summaryState(scoped);
+  }
   if (scope === "full") {
     if (process.env.AIMAC_MCP_ALLOW_FULL_STATE !== "true") {
       return {ok: false, error: "full_state_scope_not_allowed", summary: summaryState(state)};
@@ -1023,6 +1154,39 @@ function stateGet(state, args, context = {}) {
     return {state: redactStateForMcp(state)};
   }
   return summaryState(state);
+}
+
+function scopeStateForProjectPrincipal(state, principal) {
+  const projectIds = new Set(principal.projectIds || []);
+  if (projectIds.has("*")) return JSON.parse(JSON.stringify(state));
+  const visibleTaskGroupIds = new Set((state.taskGroups || [])
+    .filter((taskGroup) => projectIds.has(taskGroup.projectId))
+    .map((taskGroup) => taskGroup.id));
+  const scoped = JSON.parse(JSON.stringify(state));
+  scoped.projects = (scoped.projects || []).filter((project) => projectIds.has(project.id));
+  scoped.taskGroups = (scoped.taskGroups || []).filter((taskGroup) => visibleTaskGroupIds.has(taskGroup.id));
+  scoped.progressSnapshots = (scoped.progressSnapshots || []).filter((snapshot) =>
+    projectIds.has(snapshot.projectId) && (!snapshot.taskGroupId || visibleTaskGroupIds.has(snapshot.taskGroupId))
+  );
+  scoped.agentDispatches = (scoped.agentDispatches || []).filter((dispatch) =>
+    projectIds.has(dispatch.projectId) && visibleTaskGroupIds.has(dispatch.taskGroupId)
+  );
+  scoped.workSessions = (scoped.workSessions || []).filter((session) => visibleTaskGroupIds.has(session.taskGroupId));
+  scoped.repositoryOutputs = (scoped.repositoryOutputs || []).filter((target) =>
+    projectIds.has(target.projectId) && visibleTaskGroupIds.has(target.taskGroupId)
+  );
+  scoped.agentExecutionEvents = (scoped.agentExecutionEvents || []).filter((event) =>
+    projectIds.has(event.projectId) && visibleTaskGroupIds.has(event.taskGroupId)
+  );
+  scoped.agentControlCommands = (scoped.agentControlCommands || []).filter((command) =>
+    !command.projectId || projectIds.has(command.projectId)
+  );
+  scoped.accounts = [];
+  scoped.authSessions = [];
+  scoped.accessGrants = [];
+  scoped.agentJoinTokens = [];
+  scoped.mcpGrants = (scoped.mcpGrants || []).filter((grant) => !grant.projectId || projectIds.has(grant.projectId));
+  return scoped;
 }
 
 function scopeStateForAgentPrincipal(state, principal, grants = []) {
@@ -1121,10 +1285,14 @@ function roomJoin(state, args) {
 function roomSend(state, args) {
   const at = new Date().toISOString();
   const roomId = args.roomId || `room_${args.taskGroupId || "tg_runtime_management"}`;
+  state.roomSequenceByRoom ||= {};
+  const retainedMax = Math.max(0, ...state.roomMessages.filter((item) => item.roomId === roomId).map((item) => Number(item.sequence || 0)));
+  const nextSequence = Math.max(Number(state.roomSequenceByRoom[roomId] || 0), retainedMax) + 1;
+  state.roomSequenceByRoom[roomId] = nextSequence;
   const message = {
     messageId: args.messageId || createId("room_msg"),
     roomId,
-    sequence: state.roomMessages.filter((item) => item.roomId === roomId).length + 1,
+    sequence: nextSequence,
     senderRef: args.senderRef || args.roleId || "agent-runtime",
     payload: args.payload || {text: args.text || ""},
     payloadDigest: digestOf(args.payload || args.text || ""),
@@ -1132,6 +1300,7 @@ function roomSend(state, args) {
     createdAt: at
   };
   state.roomMessages.push(message);
+  pruneRoomMessages(state);
   state.commands.unshift({
     id: createId("cmd_room"),
     type: "room_send",
@@ -1157,8 +1326,30 @@ function roomSend(state, args) {
 function roomWait(state, args) {
   const roomId = args.roomId || `room_${args.taskGroupId || "tg_runtime_management"}`;
   const afterSequence = Number(args.afterSequence || args.cursor || 0);
-  const messages = state.roomMessages.filter((item) => item.roomId === roomId && Number(item.sequence || 0) > afterSequence);
+  const limit = Math.max(1, Math.min(500, Number(args.limit || 50)));
+  const messages = state.roomMessages
+    .filter((item) => item.roomId === roomId && Number(item.sequence || 0) > afterSequence)
+    .sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0))
+    .slice(0, limit);
   return {roomId, messages, nextCursor: messages.at(-1)?.sequence || afterSequence};
+}
+
+function pruneRoomMessages(state) {
+  const maxTotal = Math.max(1000, Number(process.env.AIMAC_ROOM_MESSAGES_MAX_TOTAL || 10000));
+  const maxPerRoom = Math.max(100, Number(process.env.AIMAC_ROOM_MESSAGES_MAX_PER_ROOM || 1000));
+  const ttlMs = Math.max(60 * 1000, Number(process.env.AIMAC_ROOM_MESSAGES_TTL_MS || 7 * 24 * 60 * 60 * 1000));
+  const cutoff = Date.now() - ttlMs;
+  const perRoom = new Map();
+  const kept = [];
+  for (const message of [...(state.roomMessages || [])].reverse()) {
+    if (new Date(message.createdAt || 0).getTime() < cutoff) continue;
+    const count = perRoom.get(message.roomId) || 0;
+    if (count >= maxPerRoom) continue;
+    perRoom.set(message.roomId, count + 1);
+    kept.push(message);
+    if (kept.length >= maxTotal) break;
+  }
+  state.roomMessages = kept.reverse();
 }
 
 function roomAck(state, args) {
@@ -1173,6 +1364,10 @@ function roomAck(state, args) {
   };
   state.roomAcks.unshift(ack);
   return {ack};
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 function nodeRegister(state, args) {
@@ -1691,16 +1886,21 @@ function systemUpgradeExternalImport(state, args) {
 
 function accountInvite(state, args) {
   const at = new Date().toISOString();
+  const accountId = args.accountId || createId("acct");
+  const accountToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
   const account = {
     schemaVersion: "account/v1",
-    accountId: args.accountId || createId("acct"),
+    accountId,
     accountType: "user_account",
     displayName: args.displayName || args.email || "Project User",
     email: args.email || `${createId("user")}@local`,
     status: "invited",
     roles: args.roles || ["project_member"],
     permissions: [],
-    authPolicy: {method: "local_password", mfaRequired: false, passwordSet: false, sessionTtlSeconds: 3600},
+    authPolicy: {method: "invite_token", mfaRequired: false, passwordSet: false, sessionTtlSeconds: 3600},
+    credentialDigest: digestOf(`account-invite:${accountId}:${accountToken}`),
+    credentialIssuedAt: at,
+    credentialExpiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
     auditRef: `audit:account-invite:${at}`,
     createdAt: at,
     updatedAt: at
@@ -1714,7 +1914,17 @@ function accountInvite(state, args) {
       permissions: args.grantPermissions || ["project:read"]
     });
   }
-  return {account};
+  return {
+    account: publicAccountForMcp(account),
+    accountToken,
+    tokenExpiresAt: account.credentialExpiresAt,
+    login: {email: account.email, tokenField: "accountToken"}
+  };
+}
+
+function publicAccountForMcp(account) {
+  const {credentialDigest: _credentialDigest, ...publicAccount} = account;
+  return publicAccount;
 }
 
 function accountSuspend(state, args) {
@@ -1989,8 +2199,7 @@ export async function handleMcpJsonRpc(message, context = {}) {
     }};
   }
   if (message.method === "tools/list") {
-    const allowedTools = context.allowedMcpTools || context.principal?.allowedMcpTools || [];
-    const tools = allowedTools.includes("*") ? createMcpToolDefinitions() : createMcpToolDefinitions().filter((tool) => allowedTools.includes(tool.name));
+    const tools = createVisibleMcpToolDefinitions(context);
     return {jsonrpc: "2.0", id: message.id, result: {
       resultType: "complete",
       tools,
@@ -2013,6 +2222,20 @@ export async function handleMcpJsonRpc(message, context = {}) {
   }
   if (message.id !== undefined) return {jsonrpc: "2.0", id: message.id, error: {code: -32601, message: `Method not found: ${message.method}`}};
   return null;
+}
+
+function createVisibleMcpToolDefinitions(context = {}) {
+  const allowedTools = context.allowedMcpTools || context.principal?.allowedMcpTools || [];
+  if (allowedTools.includes("*")) return createMcpToolDefinitions();
+  let names = new Set(allowedTools);
+  if (context.principal?.kind === "agent_node") {
+    const state = loadState();
+    const active = new Set((state.mcpGrants || [])
+      .filter((grant) => grant.grantStatus === "issued" && grant.agentNodeId === context.principal.id && (!grant.expiresAt || new Date(grant.expiresAt).getTime() > Date.now()))
+      .map((grant) => grant.toolName));
+    names = new Set([...names].filter((name) => active.has(name)));
+  }
+  return createMcpToolDefinitions().filter((tool) => names.has(tool.name));
 }
 
 async function handleMessage(message) {

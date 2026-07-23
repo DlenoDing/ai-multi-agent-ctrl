@@ -620,11 +620,11 @@ Room 不是普通聊天室，而是结构化协作和控制通道。每个 Proje
 
 AgentNode 可能位于公网不同主机。接入方式：
 
-1. 每个 AgentNode 启动本地 `agent-runtime`。
-2. runtime 通过 TLS 连接 Agent Gateway。
+1. 每个 AgentNode 只运行轻量 `agent-runtime` 客户端进程。
+2. runtime 通过 TLS 连接公网控制平面的 Agent Gateway 和集中式 `/mcp`。
 3. Gateway 先执行 Agent 初始化，不直接分配业务任务。
-4. 节点注册能力：模型、工具、语言、平台、可访问项目、Docker、数据库、本地路径、并发容量、MCP server 和可代理 tools。
-5. 心跳上报：CPU、内存、磁盘、GPU、网络、任务数、session 状态、工具可用性、MCP 健康和配额画像。
+4. 节点注册能力：模型执行器、工具、语言、平台、可访问项目、Docker、本地路径、并发容量和远程 MCP 可达性；不注册本地 MCP server。
+5. 心跳上报：CPU、内存、磁盘、GPU、网络、任务数、session 状态、工具可用性、远程 MCP 健康和配额画像。
 6. Scheduler 根据资源状态、可用额度、项目权限、写入面 lease 和任务风险分配 work session，传入最小任务契约。
 7. session 通过 Room Broker 通信，通过 Evidence Metadata Registry 登记证据 locator 和 digest，通过 MCP Control Plane 使用被授权工具；项目交付文件仍以 Git 仓库 commit/push 为准。
 
@@ -633,8 +633,8 @@ AgentNode 可能位于公网不同主机。接入方式：
 Agent 首次加入或重连后必须完成初始化握手：
 
 ```text
-agent-runtime start
--> node_register
+curl -fsSL https://control.example.com/install-agent.sh | sh -s -- --server https://control.example.com --join-token-file /path/to/0600.join-token
+-> /api/agent/v1/register
 -> protocol_negotiation
 -> runtime_integrity_attestation
 -> node_attest
@@ -642,7 +642,7 @@ agent-runtime start
 -> model_discovery
 -> resource_snapshot
 -> quota_snapshot
--> mcp_discovery
+-> remote_mcp_probe
 -> project_access_probe
 -> control_channel_open
 -> scheduler_admission
@@ -832,11 +832,11 @@ sh install-agent.sh \
 
 ### 10.7 实时控制与执行事件回送
 
-总控、调度、监测角色不能只等最终 checkpoint。每个 Agent Runtime 必须通过 node token 长轮询系统服务器 `/api/agent/v1/control`，按 sequence 获取并 ACK `AgentControlCommand`。命令取走后持久化为 `delivered`，Runtime 先 ACK `received`，完成实际停止、刷新或撤销后再 ACK 终态。服务端可以在运行中下发 `refresh_profile`、`pause_dispatch`、`cancel_dispatch`、`shutdown`、`revoke` 等命令；pause/cancel 在服务端入队时即冻结 dispatch/session/work item 并撤销对应 MCP grant，Runtime 负责停止本地执行器进程组。Agent 主机不暴露反连端口，所有控制仍由中心服务端统一授权和审计。
+总控、调度、监测角色不能只等最终 checkpoint。每个 Agent Runtime 必须通过 node token 长轮询系统服务器 `/api/agent/v1/control`，按 sequence 获取并 ACK `AgentControlCommand`。命令取走后持久化为 `delivered`，Runtime 先 ACK `received`，完成实际停止、刷新或撤销后再 ACK 终态。服务端可以在运行中下发 `refresh_profile`、`pause_dispatch`、`cancel_dispatch`、`resume_dispatch`、`shutdown`、`revoke` 等命令；pause/cancel/revoke/shutdown 在服务端入队时即冻结 dispatch/session/work item 并撤销对应 MCP grant，Runtime 负责停止本地执行器进程组，只有完成 ACK 后才 requeue 或 offline/revoked。Agent 主机不暴露反连端口，所有控制仍由中心服务端统一授权和审计。
 
-每个 dispatch 执行过程中必须持续向 `/api/agent/v1/events` 回送带 `eventKey` 的幂等 `AgentExecutionEvent`，至少覆盖 dispatch 接收、Skill 同步、模型启动、模型输出摘要、仓库变更、commit、push、checkpoint 准备、checkpoint 提交、阻断和跑偏信号。监测角色和总控读取 `/api/agent-dispatches/:dispatchId/events` 或 `/api/task-groups/:taskGroupId/execution-events`，实时发现偏离并下发纠偏命令。
+每个 dispatch 执行过程中必须持续向 `/api/agent/v1/events` 回送带 `eventKey` 的幂等 `AgentExecutionEvent`，至少覆盖 dispatch 接收、Skill 同步、模型启动、模型输出摘要、仓库变更、commit、push、checkpoint 准备、checkpoint 提交、阻断和跑偏信号。监测角色和总控读取 `/api/agent-dispatches/:dispatchId/events`、`/api/work-sessions/:sessionId/execution-events` 或 `/api/task-groups/:taskGroupId/execution-events`，实时发现偏离并下发纠偏命令。
 
-项目运行数据按项目隔离存放到系统服务器：任务组、session、dispatch、contract、checkpoint、仓库输出目标、控制命令和近期事件投影进入 `.runtime/project-db/<projectId>.state.json` 或 PostgreSQL `aimac_project_state_shards` 项目行；完整执行事件追加到 `.runtime/project-db/<projectId>.execution-events.jsonl`，并使用幂等索引与 tail-window 读取。中央 state 只保存系统级数据、项目 shard 索引、非项目对象和近期摘要，避免项目数量、任务数量或模型输出规模增长后撑爆单个全局状态文件。
+项目运行数据按项目隔离存放到系统服务器：任务组、session、dispatch、contract、checkpoint、仓库输出目标、控制命令和近期事件投影进入 `.runtime/project-db/p_<projectId_sha256>.<generation>.state.json` 或 PostgreSQL `aimac_project_state_shards` 项目行；中心索引用 generation、payload digest 和 size 指向当前有效 shard。完整执行事件追加到 `.runtime/project-db/p_<projectId_sha256>.execution-events.jsonl` 当前段，超过阈值后轮转为 `.runtime/project-db/p_<projectId_sha256>.execution-events.<firstSeq>-<lastSeq>.<sealedAt>.jsonl`，并使用 manifest、eventKey KV 索引与 tail-window 读取。中央 state 只保存系统级数据、项目 shard 索引、非项目对象和近期摘要，避免项目数量、任务数量或模型输出规模增长后撑爆单个全局状态文件或单个项目事件文件。
 
 交互式 token 写法只用于避免 token 留在 shell history，不替代生产校验版：
 
@@ -848,22 +848,23 @@ curl -fsSL https://control.example.com/install-agent.sh | AGENT_JOIN_TOKEN="$AGE
   --work-dir /opt/ai-agent
 ```
 
-容器化加入方式：
+容器化加入方式不是默认路径。若确需容器化，也只能封装轻量 Agent Runtime 客户端并访问公网控制平面，不得在 Agent 主机内运行 MCP server、PostgreSQL、Skill Registry 或控制面：
 
 ```bash
 docker run -d --name ai-agent-runtime --restart unless-stopped \
-  -e AGENT_JOIN_TOKEN="<one_time_join_token>" \
-  -e AGENT_SERVER="https://control.example.com" \
-  -e AGENT_NODE_NAME="$(hostname)" \
+  -e AIMAC_SERVER_URL="https://control.example.com" \
+  -e AIMAC_AGENT_NODE_NAME="$(hostname)" \
+  -v /path/to/0600.join-token:/run/aimac/join-token:ro \
   -v /opt/ai-agent:/var/lib/ai-agent \
-  ghcr.io/example/ai-agent-runtime@sha256:<pinned_digest>
+  ghcr.io/example/ai-agent-runtime@sha256:<pinned_digest> \
+  bootstrap --server https://control.example.com --join-token-file /run/aimac/join-token
 ```
 
 默认容器模式不挂载 `/var/run/docker.sock`。确实需要构建容器或管理测试环境时，应使用受限 Docker proxy 或项目专用 rootless Docker，并把可操作 image、network、volume 和 compose profile 纳入 policy。
 
 脚本必须自动完成：
 
-1. 安装或更新 `agent-runtime`。
+1. 安装或更新轻量 `agent-runtime` 客户端。
 2. 创建权限隔离的工作目录、`0600` 节点配置、Skill 缓存和 checkpoint JSON outbox；不安装数据库服务。
 3. 校验安装脚本、runtime 包、容器镜像、manifest、配置模板的 SHA256 和签名。
 4. 固定 runtime 版本或镜像 digest，不使用 `latest` 作为生产加入方式。

@@ -176,7 +176,7 @@ GET /api/agent/v1/control?afterSequence=<cursor>&waitMs=25000
 POST /api/agent/v1/control/:commandId/ack
 ```
 
-控制命令是持久化 `AgentControlCommand`，绑定 node、project、taskGroup、session、dispatch 和 idempotency。支持 `refresh_profile`、`pause_dispatch`、`cancel_dispatch`、`shutdown`、`revoke`。命令被 Runtime 拉取后进入 `delivered`；Runtime 必须先 ACK `received`，然后执行命令副作用，最终 ACK `completed`、`failed` 或 `rejected`。对 pause/cancel，服务端在入队时已经把 dispatch/session/work item 冻结并撤销 dispatch MCP grant；Runtime 侧仍必须终止执行器进程组，确认停止后再完成 ACK。断线恢复时从上次 cursor 重放未确认命令。
+控制命令是持久化 `AgentControlCommand`，绑定 node、project、taskGroup、session、dispatch 和 idempotency。支持 `refresh_profile`、`pause_dispatch`、`cancel_dispatch`、`resume_dispatch`、`shutdown`、`revoke`。命令被 Runtime 拉取后进入 `delivered`；Runtime 必须先 ACK `received`，然后执行命令副作用，最终 ACK `completed`、`failed` 或 `rejected`。对 pause/cancel/revoke/shutdown，服务端在入队时先冻结 dispatch/session/work item 并撤销 dispatch MCP grant，Runtime 侧仍必须终止执行器进程组，确认停止后再完成 ACK；只有收到完成 ACK 后服务端才释放重派，失败或拒绝 ACK 会保持节点隔离并排队控制重试。断线恢复时从上次 cursor 重放未确认命令。
 
 ### 4.2 执行过程事件流
 
@@ -188,7 +188,7 @@ GET /api/agent-dispatches/:dispatchId/events?afterSequence=<cursor>&waitMs=25000
 GET /api/task-groups/:taskGroupId/execution-events?afterSequence=<cursor>&waitMs=25000
 ```
 
-事件覆盖 `dispatch_received`、`skill_synced`、`executor_started`、`executor_output`、`repository_changed`、`git_committed`、`git_pushed`、`checkpoint_prepared`、`checkpoint_submitted`、`blocked`、`drift_signal`、`failed`。事件只提交阶段、摘要、进度、digest、`eventKey` 和 evidence refs，不上传大段原始 stdout。服务端把完整事件追加到 `.runtime/project-db/<projectId>.execution-events.jsonl`，维护近期 eventKey 幂等索引和 tail-window 读取；中央 state 只保留最近轻量索引和进度摘要，并在 CAS 冲突时重读最新状态重放事件投影。管理界面默认展示汇总，点击任务组详情或 dispatch 后长轮询项目级事件库。
+事件覆盖 `dispatch_received`、`skill_synced`、`executor_started`、`executor_output`、`repository_changed`、`git_committed`、`git_pushed`、`checkpoint_prepared`、`checkpoint_submitted`、`blocked`、`drift_signal`、`failed`。事件只提交阶段、摘要、进度、digest、`eventKey` 和 evidence refs，不上传大段原始 stdout；`eventKey` 是必填幂等键。服务端把完整事件追加到 `.runtime/project-db/p_<projectId_sha256>.execution-events.jsonl` 当前段，超过阈值后轮转为 `.runtime/project-db/p_<projectId_sha256>.execution-events.<firstSeq>-<lastSeq>.<sealedAt>.jsonl`，并维护 `.execution-events.manifest.json`、eventKey KV 索引和 tail-window 读取；中央 state 只保留最近轻量索引和进度摘要，并在 CAS 冲突时重读最新状态重放事件投影。管理界面默认展示汇总，点击任务组详情、work session 或 dispatch 后长轮询项目级事件库。
 
 ## 5. dispatch 与 Skill 工作集
 

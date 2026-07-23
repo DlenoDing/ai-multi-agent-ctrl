@@ -48,7 +48,7 @@
     "commands": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["init", "start", "doctor", "dockerBuild", "dockerUp", "shellStart", "mcpStart", "mcpRegister", "mcpDoctor"],
+      "required": ["init", "start", "doctor", "dockerBuild", "dockerUp", "shellStart", "mcpStart", "agentJoin", "mcpDoctor"],
       "properties": {
         "init": {"type": "string", "const": "npm run init"},
         "start": {"type": "string", "const": "npm start"},
@@ -57,7 +57,7 @@
         "dockerUp": {"type": "string", "const": "npm run docker:up"},
         "shellStart": {"type": "string", "const": "npm run shell:start"},
         "mcpStart": {"type": "string", "const": "npm start"},
-        "mcpRegister": {"type": "string", "const": "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL"},
+        "agentJoin": {"type": "string", "const": "create one-time join token in project UI, then run the generated curl installer command on the Agent host"},
         "mcpDoctor": {"type": "string", "const": "npm run mcp:doctor"}
       }
     },
@@ -78,7 +78,7 @@
         "endpointPath": {"type": "string", "const": "/mcp"},
         "hostedBy": {"type": "string", "const": "control-plane"},
         "startupCommand": {"type": "string", "const": "npm start"},
-        "registrationCommand": {"type": "string", "const": "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL"},
+        "registrationCommand": {"type": "string", "const": "create one-time join token in project UI, then run the generated curl installer command on the Agent host"},
         "doctorCommand": {"type": "string", "const": "npm run mcp:doctor"},
         "agentLocalServerAllowed": {"type": "boolean", "const": false}
       }

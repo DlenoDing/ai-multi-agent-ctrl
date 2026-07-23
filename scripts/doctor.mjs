@@ -272,16 +272,56 @@ try {
     headers: {"Idempotency-Key": "doctor-owner-cross-project-invite-denied", authorization: auth},
     body: JSON.stringify({projectId: "prj_other", displayName: "Other Project User", email: "other-project-user@local"})
   });
-  if (ownerCrossProjectInviteDenied.response.status !== 403) {
-    throw new Error(`expected workspace owner invite to stay project-scoped, got ${ownerCrossProjectInviteDenied.response.status}`);
-  }
-  const ownerCrossProjectAgentDenied = await jsonFetch(port, "/api/agents", {
+	  if (ownerCrossProjectInviteDenied.response.status !== 403) {
+	    throw new Error(`expected workspace owner invite to stay project-scoped, got ${ownerCrossProjectInviteDenied.response.status}`);
+	  }
+	  const ownerSystemInviteDenied = await jsonFetch(port, "/api/accounts", {
+	    method: "POST",
+	    headers: {"Idempotency-Key": "doctor-owner-system-invite-denied", authorization: auth},
+	    body: JSON.stringify({projectId: "prj_control_plane", accountType: "system_admin", displayName: "Escalated Admin", email: "escalated-admin@local", roles: "system_admin", permissions: "system:*"})
+	  });
+	  if (ownerSystemInviteDenied.response.status !== 403) {
+	    throw new Error(`expected project-scoped inviter not to create system admin, got ${ownerSystemInviteDenied.response.status}`);
+	  }
+	  const ownerCrossProjectAgentDenied = await jsonFetch(port, "/api/agents", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-owner-cross-project-agent-denied", authorization: auth},
     body: JSON.stringify({projectId: "prj_other", name: "Other Project Agent", role: "reviewer", model: "auto_best"})
   });
   if (ownerCrossProjectAgentDenied.response.status !== 403) {
     throw new Error(`expected workspace owner agent activation to stay project-scoped, got ${ownerCrossProjectAgentDenied.response.status}`);
+  }
+  const invitedAccount = await jsonFetch(port, "/api/accounts", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-invited-account-login", authorization: auth},
+    body: JSON.stringify({projectId: "prj_control_plane", displayName: "Project View Only", email: "project-view-only@local", roles: "viewer", permissions: "project:view"})
+  });
+  if (!invitedAccount.response.ok || !invitedAccount.payload.accountToken || invitedAccount.payload.account?.credentialDigest) {
+    throw new Error("account invite did not return a one-time account token with a redacted public account");
+	  }
+	  const invitedAuth = await loginAs(port, "project-view-only@local", invitedAccount.payload.accountToken);
+	  const invitedReplayDenied = await jsonFetch(port, "/api/auth/login", {
+	    method: "POST",
+	    body: JSON.stringify({email: "project-view-only@local", token: invitedAccount.payload.accountToken})
+	  });
+	  if (invitedReplayDenied.response.status !== 401) {
+	    throw new Error(`expected invite account token to be one-time, got ${invitedReplayDenied.response.status}`);
+	  }
+	  const projectOnlyGrant = await jsonFetch(port, "/api/access-grants", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-project-only-task-scope", authorization: auth},
+    body: JSON.stringify({subjectId: invitedAccount.payload.account.accountId, resourceType: "project", resourceId: "prj_control_plane", role: "viewer", permissions: ["project:view"]})
+  });
+  if (!projectOnlyGrant.response.ok) throw new Error("failed to create project-only view grant for invited account");
+  const projectOnlyState = await jsonFetch(port, "/api/state", {headers: {authorization: invitedAuth}});
+  if (!projectOnlyState.payload.projects.some((project) => project.id === "prj_control_plane")) {
+    throw new Error("project-only account could not read its granted project");
+  }
+  if (projectOnlyState.payload.taskGroups.some((taskGroup) => taskGroup.id === "tg_runtime_management")) {
+    throw new Error("project-only account unexpectedly inherited task group visibility from project membership");
+  }
+  if (projectOnlyState.payload.repositoryOutputs.some((target) => target.taskGroupId === "tg_runtime_management")) {
+    throw new Error("project-only account unexpectedly inherited task group repository output visibility");
   }
   const unrelatedDefinition = await jsonFetch(port, "/api/shared-definition-contracts", {
     method: "POST",
@@ -423,20 +463,22 @@ try {
   const runtimeOutputPath = join(doctorRepo.work, "docs", "agent-runtime-output", "tg_runtime_management", `${dispatched.workItemId}.md`);
   if (!existsSync(runtimeOutputPath)) {
     throw new Error("agent runtime worker did not persist executor task output in the project git repository");
-  }
-  const statePath = join(root, doctorRuntimeDir, "control-plane-state.json");
-  const configPath = join(root, doctorRuntimeDir, "runtime-config.json");
-  const projectShardPath = join(root, doctorRuntimeDir, "project-db", "prj_control_plane.state.json");
-  if (!existsSync(projectShardPath)) {
-    throw new Error("project-scoped state shard was not written for prj_control_plane");
-  }
-  const centralState = JSON.parse(readFileSync(statePath, "utf8"));
-  if ((centralState.taskGroups || []).some((taskGroup) => taskGroup.projectId === "prj_control_plane")) {
-    throw new Error("central state still contains project-scoped task groups instead of shard indexes");
-  }
-  if (!centralState.projectStateShards?.projects?.some((project) => project.projectId === "prj_control_plane")) {
-    throw new Error("central state does not index the prj_control_plane project shard");
-  }
+	  }
+	  const statePath = join(root, doctorRuntimeDir, "control-plane-state.json");
+	  const configPath = join(root, doctorRuntimeDir, "runtime-config.json");
+	  const centralState = JSON.parse(readFileSync(statePath, "utf8"));
+	  const projectShardIndex = centralState.projectStateShards?.projects?.find((project) => project.projectId === "prj_control_plane");
+	  const projectShardFile = projectShardIndex?.storageRef?.split("/").pop();
+	  const projectShardPath = projectShardFile ? join(root, doctorRuntimeDir, "project-db", projectShardFile) : "";
+	  if (!projectShardPath || !existsSync(projectShardPath)) {
+	    throw new Error("project-scoped state shard was not written for prj_control_plane");
+	  }
+	  if ((centralState.taskGroups || []).some((taskGroup) => taskGroup.projectId === "prj_control_plane")) {
+	    throw new Error("central state still contains project-scoped task groups instead of shard indexes");
+	  }
+	  if (!projectShardIndex) {
+	    throw new Error("central state does not index the prj_control_plane project shard");
+	  }
   const stateHashBeforeReadiness = hashFile(statePath);
   const configHashBeforeReadiness = hashFile(configPath);
   const readinessDenied = await jsonFetch(port, "/api/task-groups/tg_runtime_management/readiness");

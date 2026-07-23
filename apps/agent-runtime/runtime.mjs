@@ -80,9 +80,11 @@ async function bootstrap() {
 
 async function selfCheck(config) {
   const checks = [];
+  const profile = probeProfile(config.executorCommand);
   checks.push(check("runtime", Number(process.versions.node.split(".")[0]) >= 20, `node ${process.versions.node}; runtime ${RUNTIME_VERSION}`));
   checks.push(check("filesystem", writableDirectory(config.workDir), config.workDir));
   checks.push(check("git", executableVersion("git", ["--version"]).available, executableVersion("git", ["--version"]).version));
+  checks.push(check("model_executor", profile.models.some((item) => item.available === true), modelExecutorDetail(profile)));
   let gatewayOk = false;
   try {
     const health = await jsonRequest(`${config.serverUrl}/api/health`);
@@ -100,7 +102,7 @@ async function selfCheck(config) {
     mcpOk = initialized.result?.serverInfo?.name === "ai-multi-agent-ctrl";
   } catch {}
   checks.push(check("remote_mcp", mcpOk, config.gateway.mcpUrl));
-  const result = await jsonRequest(config.gateway.selfCheckUrl, {method: "POST", token: config.nodeToken, body: {checks, runtimeVersion: RUNTIME_VERSION}});
+  const result = await jsonRequest(config.gateway.selfCheckUrl, {method: "POST", token: config.nodeToken, body: {checks, runtimeVersion: RUNTIME_VERSION, profile}});
   process.stdout.write(`agent self-check: ${result.ok ? "ok" : "failed"}\n`);
   return result;
 }
@@ -199,7 +201,11 @@ function startControlWatcher(config, dispatchPackage) {
   };
   const loop = (async () => {
     while (state.running && !state.cancelled) {
-      await pollControlCommands(config, {waitMs: 2500, dispatchPackage, controlState: state});
+      try {
+        await pollControlCommands(config, {waitMs: 2500, dispatchPackage, controlState: state});
+      } catch (error) {
+        process.stderr.write(`control watcher iteration deferred: ${error.message}\n`);
+      }
       await delay(250);
     }
   })().catch((error) => {
@@ -248,6 +254,10 @@ async function handleControlCommand(config, command, options = {}) {
     await ackControlCommand(config, command, "completed", {profileDigest: heartbeat.node?.profileDigest || null});
     return;
   }
+  if (command.commandType === "resume_dispatch") {
+    await ackControlCommand(config, command, "completed", {serverStateTransition: "resume_dispatch_already_applied", activeDispatchId});
+    return;
+  }
   if (!scopedToActiveDispatch) {
     await ackControlCommand(config, command, "rejected", {reason: "dispatch_scope_not_active", activeDispatchId});
     return;
@@ -259,6 +269,10 @@ async function handleControlCommand(config, command, options = {}) {
       controlState.controlStatus = command.commandType === "pause_dispatch" ? "blocked" : "cancelled";
       controlState.reason = `dispatch interrupted by control command: ${command.commandType}`;
       const stopResult = await terminateChild(controlState.child, Number(command.payload?.stopTimeoutMs || process.env.AIMAC_AGENT_STOP_TIMEOUT_MS || 10000));
+      if (["revoke", "shutdown"].includes(command.commandType)) {
+        config.shutdownRequested = true;
+        writeSecretJson(configPath, config);
+      }
       await submitExecutionEvent(config, dispatchPackage, command.commandType === "pause_dispatch" ? "blocked" : "failed", {
         status: command.commandType === "pause_dispatch" ? "attention" : "failed",
         summary: controlState.reason,
@@ -422,6 +436,9 @@ async function executeDispatch(config, dispatchPackage, control) {
 }
 
 async function runModelExecutor(config, dispatchPackage, repositoryRoot, skillWorkset, packagePath, promptPath, control) {
+  const dispatchModel = dispatchPackage.taskContract.model || {};
+  const modelId = modelIdForProvider(dispatchModel);
+  const reasoning = rawReasoningLevel(dispatchModel.reasoning || dispatchModel.reasoningLevel || "");
   const env = {
     ...process.env,
     AIMAC_SERVER_URL: config.serverUrl,
@@ -430,6 +447,12 @@ async function runModelExecutor(config, dispatchPackage, repositoryRoot, skillWo
     AIMAC_AGENT_NODE_ID: config.nodeId,
     AIMAC_DISPATCH_PACKAGE_FILE: packagePath,
     AIMAC_TASK_CONTRACT_FILE: packagePath,
+    AIMAC_DISPATCH_MODEL: modelId || String(dispatchModel.model || dispatchModel.modelId || ""),
+    AIMAC_DISPATCH_MODEL_ID: modelId || String(dispatchModel.model || dispatchModel.modelId || ""),
+    AIMAC_DISPATCH_PROVIDER_CLASS: String(dispatchModel.providerClass || dispatchModel.alias || ""),
+    AIMAC_DISPATCH_REASONING: reasoning,
+    AIMAC_DISPATCH_REASONING_LEVEL: reasoning,
+    AIMAC_MODEL_DECISION: String(dispatchModel.modelDecision || ""),
     AIMAC_SKILL_WORKSET_DIR: skillWorkset.directory,
     AIMAC_SKILL_MANIFEST_FILE: skillWorkset.manifestPath,
     AIMAC_EXECUTION_PROMPT_FILE: promptPath
@@ -557,16 +580,61 @@ function boundedOutputAppend(current, chunk) {
 }
 
 function runKnownModelCli(model, prompt, cwd, env, control, onOutput) {
-  const provider = model?.alias || String(model?.modelId || "").split(":")[0];
-  if (["openai", "azure_openai"].includes(provider) && commandAvailable("codex")) return spawnAndCapture("codex", ["exec", "--full-auto", "-C", cwd, prompt], {cwd, env, control, onOutput});
-  if (["anthropic", "aws_bedrock"].includes(provider) && commandAvailable("claude")) return spawnAndCapture("claude", ["-p", "--permission-mode", "acceptEdits", prompt], {cwd, env, control, onOutput});
-  if (["google", "vertex_ai"].includes(provider) && commandAvailable("gemini")) return spawnAndCapture("gemini", ["-p", prompt, "-y"], {cwd, env, control, onOutput});
+  const provider = providerClassForModel(model);
+  const modelId = modelIdForProvider(model);
+  const reasoning = reasoningForCli(model?.reasoning || model?.reasoningLevel || "", provider);
+  if (["openai", "azure_openai"].includes(provider) && commandAvailable("codex")) {
+    const args = ["exec", "--full-auto", "-C", cwd];
+    if (modelId) args.push("--model", modelId);
+    if (reasoning) args.push("--config", `model_reasoning_effort=${JSON.stringify(reasoning)}`);
+    args.push(prompt);
+    return spawnAndCapture("codex", args, {cwd, env, control, onOutput});
+  }
+  if (["anthropic", "aws_bedrock"].includes(provider) && commandAvailable("claude")) {
+    const args = ["-p", "--permission-mode", "acceptEdits"];
+    if (modelId) args.push("--model", modelId);
+    if (reasoning) args.push("--effort", reasoning === "standard" ? "low" : reasoning);
+    args.push(prompt);
+    return spawnAndCapture("claude", args, {cwd, env, control, onOutput});
+  }
+  if (["google", "vertex_ai"].includes(provider) && commandAvailable("gemini")) {
+    const args = [];
+    if (modelId) args.push("--model", modelId);
+    args.push("-p", prompt, "-y");
+    return spawnAndCapture("gemini", args, {cwd, env, control, onOutput});
+  }
   if (provider === "ollama" && commandAvailable("ollama")) {
-    const modelId = String(model?.modelId || "").replace(/^ollama:/u, "") || process.env.AIMAC_OLLAMA_MODEL;
-    if (!modelId) throw new Error("ollama execution requires a modelId or AIMAC_OLLAMA_MODEL");
-    return spawnAndCapture("ollama", ["run", modelId], {cwd, env, input: prompt, control, onOutput});
+    const ollamaModel = modelId || process.env.AIMAC_OLLAMA_MODEL;
+    if (!ollamaModel) throw new Error("ollama execution requires a modelId or AIMAC_OLLAMA_MODEL");
+    return spawnAndCapture("ollama", ["run", ollamaModel], {cwd, env, input: prompt, control, onOutput});
   }
   throw new Error(`no installed AI executor for provider ${provider}; configure --executor-command`);
+}
+
+function providerClassForModel(model = {}) {
+  return String(model.providerClass || model.alias || String(model.modelId || model.model || "").split(":")[0] || "custom");
+}
+
+function modelIdForProvider(model = {}) {
+  const provider = providerClassForModel(model);
+  const raw = String(model.modelId || model.model || "").trim();
+  if (!raw) return "";
+  const prefix = `${provider}:`;
+  const stripped = raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
+  return stripped === "auto" ? "" : stripped;
+}
+
+function rawReasoningLevel(value) {
+  return String(value || "").toLowerCase().trim();
+}
+
+function reasoningForCli(value, provider = "") {
+  const normalized = String(value || "").toLowerCase().trim();
+  if (["minimal", "low", "medium", "high"].includes(normalized)) return normalized;
+  if (["xhigh", "max"].includes(normalized)) return provider === "anthropic" || provider === "aws_bedrock" ? normalized : "high";
+  if (normalized === "ultra") return provider === "anthropic" || provider === "aws_bedrock" ? "max" : "high";
+  if (["standard", "normal"].includes(normalized)) return "low";
+  return "";
 }
 
 function syncSkillWorkset(config, dispatchPackage) {
@@ -634,7 +702,7 @@ function buildExecutionPrompt(dispatchPackage, workset, packagePath) {
     "ruleset: 2026-07-23.33",
     `model: ${model.model || model.modelId}`,
     `reasoning: ${model.reasoning || model.reasoningLevel}`,
-    model.modelDecision,
+    modelDecisionLine(model.modelDecision),
     "",
     `node: ${contract.workId}`,
     `graph: ${contract.taskGroupId}`,
@@ -666,6 +734,11 @@ function buildExecutionPrompt(dispatchPackage, workset, packagePath) {
     "- commands/results",
     "- blockers or expansion request"
   ].join("\n");
+}
+
+function modelDecisionLine(value) {
+  const text = String(value || "").trim();
+  return text.startsWith("modelDecision:") ? text : `modelDecision: ${text}`;
 }
 
 function writeArtifactManifest(repositoryRoot, manifestPath, dispatchPackage, outputRefs, output) {
@@ -773,7 +846,15 @@ function probeProfile(executorCommand = "") {
   if (tools.find((tool) => tool.name === "ollama")?.available) models.push({providerClass: "ollama", adapter: "ollama", available: true});
   if (executorCommand) models.push({providerClass: "custom", adapter: "custom_command", available: true});
   if (!models.length) models.push({providerClass: "custom", adapter: "unconfigured", available: false});
-  return {platform: platform(), arch: arch(), cpuCount: cpus().length, memoryBytes: totalmem(), diskFreeBytes: diskFree(workDir), tools, models, capabilityFlags: ["git", "remote_mcp", "skill_workset_cache", "model_agent_executor"]};
+  const capabilityFlags = ["git", "remote_mcp", "skill_workset_cache"];
+  if (models.some((item) => item.available === true)) capabilityFlags.push("model_agent_executor");
+  return {platform: platform(), arch: arch(), cpuCount: cpus().length, memoryBytes: totalmem(), diskFreeBytes: diskFree(workDir), tools, models, capabilityFlags};
+}
+
+function modelExecutorDetail(profile) {
+  return (profile.models || [])
+    .map((item) => `${item.providerClass}:${item.adapter}:${item.available === true ? "available" : "unavailable"}`)
+    .join(",") || "no model executor detected";
 }
 
 function executableVersion(name, versionArgs) {

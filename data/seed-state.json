@@ -22,8 +22,8 @@
       "dockerUp": "npm run docker:up",
       "shellStart": "npm run shell:start",
       "mcpStart": "npm start",
-      "mcpRegister": "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL",
-      "mcpDoctor": "npm run mcp:doctor"
+      "mcpDoctor": "npm run mcp:doctor",
+      "agentJoin": "create one-time join token in project UI, then run the generated curl installer command on the Agent host"
     },
     "mcp": {
       "protocol": "mcp/streamable-http",
@@ -50,7 +50,7 @@
       "endpointPath": "/mcp",
       "hostedBy": "control-plane",
       "startupCommand": "npm start",
-      "registrationCommand": "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL",
+      "registrationCommand": "create one-time join token in project UI, then run the generated curl installer command on the Agent host",
       "doctorCommand": "npm run mcp:doctor",
       "agentLocalServerAllowed": false
     },
@@ -1274,7 +1274,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "openai:default",
       "providerClass": "openai",
-      "modelId": "openai:auto",
+      "modelId": "openai:gpt-5.5",
       "aliases": [
         "openai:auto_best",
         "openai:auto_fast",
@@ -1325,7 +1325,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "anthropic:default",
       "providerClass": "anthropic",
-      "modelId": "anthropic:auto",
+      "modelId": "anthropic:claude-sonnet-4-5",
       "aliases": [
         "anthropic:auto_best",
         "anthropic:auto_fast",
@@ -1374,7 +1374,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "google:default",
       "providerClass": "google",
-      "modelId": "google:auto",
+      "modelId": "google:gemini-2.5-pro",
       "aliases": [
         "google:auto_best",
         "google:auto_fast",
@@ -1425,7 +1425,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "xai:default",
       "providerClass": "xai",
-      "modelId": "xai:auto",
+      "modelId": "xai:grok-4",
       "aliases": [
         "xai:auto_best",
         "xai:auto_fast",
@@ -1472,7 +1472,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "meta:default",
       "providerClass": "meta",
-      "modelId": "meta:auto",
+      "modelId": "meta:llama-4-maverick",
       "aliases": [
         "meta:auto_best",
         "meta:auto_fast",
@@ -1518,7 +1518,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "mistral:default",
       "providerClass": "mistral",
-      "modelId": "mistral:auto",
+      "modelId": "mistral:mistral-large-latest",
       "aliases": [
         "mistral:auto_best",
         "mistral:auto_fast",
@@ -1564,7 +1564,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "deepseek:default",
       "providerClass": "deepseek",
-      "modelId": "deepseek:auto",
+      "modelId": "deepseek:deepseek-chat",
       "aliases": [
         "deepseek:auto_best",
         "deepseek:auto_fast",
@@ -1610,7 +1610,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "qwen:default",
       "providerClass": "qwen",
-      "modelId": "qwen:auto",
+      "modelId": "qwen:qwen-max-latest",
       "aliases": [
         "qwen:auto_best",
         "qwen:auto_fast",
@@ -1658,7 +1658,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "moonshot:default",
       "providerClass": "moonshot",
-      "modelId": "moonshot:auto",
+      "modelId": "moonshot:kimi-k2",
       "aliases": [
         "moonshot:auto_best",
         "moonshot:auto_fast",
@@ -1705,7 +1705,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "zhipu:default",
       "providerClass": "zhipu",
-      "modelId": "zhipu:auto",
+      "modelId": "zhipu:glm-4.5",
       "aliases": [
         "zhipu:auto_best",
         "zhipu:auto_fast",
@@ -1752,7 +1752,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "baidu:default",
       "providerClass": "baidu",
-      "modelId": "baidu:auto",
+      "modelId": "baidu:ernie-4.5",
       "aliases": [
         "baidu:auto_best",
         "baidu:auto_fast",
@@ -1799,7 +1799,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "tencent:default",
       "providerClass": "tencent",
-      "modelId": "tencent:auto",
+      "modelId": "tencent:hunyuan-turbos-latest",
       "aliases": [
         "tencent:auto_best",
         "tencent:auto_fast",
@@ -1846,7 +1846,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "openrouter:default",
       "providerClass": "openrouter",
-      "modelId": "openrouter:auto",
+      "modelId": "openrouter:openai/gpt-5.5",
       "aliases": [
         "openrouter:auto_best",
         "openrouter:auto_fast",
@@ -1893,7 +1893,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "azure_openai:default",
       "providerClass": "azure_openai",
-      "modelId": "azure_openai:auto",
+      "modelId": "azure_openai:gpt-5.5",
       "aliases": [
         "azure_openai:auto_best",
         "azure_openai:auto_fast",
@@ -1943,7 +1943,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "aws_bedrock:default",
       "providerClass": "aws_bedrock",
-      "modelId": "aws_bedrock:auto",
+      "modelId": "aws_bedrock:anthropic.claude-sonnet-4-5",
       "aliases": [
         "aws_bedrock:auto_best",
         "aws_bedrock:auto_fast",
@@ -1990,7 +1990,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "vertex_ai:default",
       "providerClass": "vertex_ai",
-      "modelId": "vertex_ai:auto",
+      "modelId": "vertex_ai:gemini-2.5-pro",
       "aliases": [
         "vertex_ai:auto_best",
         "vertex_ai:auto_fast",
@@ -2039,7 +2039,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "ollama:default",
       "providerClass": "ollama",
-      "modelId": "ollama:auto",
+      "modelId": "ollama:llama3.1",
       "aliases": [
         "ollama:auto_best",
         "ollama:auto_fast",
@@ -2085,7 +2085,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "vllm:default",
       "providerClass": "vllm",
-      "modelId": "vllm:auto",
+      "modelId": "vllm:Qwen/Qwen2.5-Coder-32B-Instruct",
       "aliases": [
         "vllm:auto_best",
         "vllm:auto_fast",
@@ -2131,7 +2131,7 @@
       "schemaVersion": "model-capability/v1",
       "providerId": "custom:default",
       "providerClass": "custom",
-      "modelId": "custom:auto",
+      "modelId": "custom:custom-model",
       "aliases": [
         "custom:auto_best",
         "custom:auto_fast",

@@ -12,7 +12,7 @@ const apply = Boolean(args.apply);
 const outputDir = resolve(root, args.outputDir || process.env.AIMAC_MCP_CONFIG_DIR || join(".runtime", "mcp-client-configs"));
 const serverUrl = normalizeServerUrl(args.serverUrl || process.env.AIMAC_PUBLIC_URL || "http://127.0.0.1:4317");
 const mcpUrl = `${serverUrl}/mcp`;
-const bearerToken = args.token || process.env.AIMAC_MCP_BEARER_TOKEN || process.env.AIMAC_MCP_SERVICE_TOKEN || "";
+const bearerToken = args.token || process.env.AIMAC_MCP_BEARER_TOKEN || "";
 const tokenEnv = args.tokenEnv || "AIMAC_MCP_BEARER_TOKEN";
 const outputs = [];
 

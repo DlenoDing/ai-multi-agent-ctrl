@@ -413,8 +413,13 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/system-upgrade-candidates/export` | 导出系统外升级证据包 | monitor、rule-steward |
 | POST | `/api/system-upgrade-candidates/import-external-result` | 导入系统外独立升级后的版本化结果 | admin console、orchestrator import service |
 | POST | `/api/close-barriers/compute` | 计算并校验关闭屏障 | orchestrator |
-| POST | `/api/agents/join` | 使用 join token 初始化 Agent | agent-runtime |
-| POST | `/api/agents/:nodeId/heartbeat` | Agent 心跳 | agent-runtime |
+| POST | `/api/agent/v1/register` | 使用一次性 join token 初始化 Agent Runtime 节点 | agent-runtime |
+| POST | `/api/agent/v1/heartbeat` | Agent Runtime 心跳与凭据轮换 | agent-runtime |
+| POST | `/api/agent/v1/self-check` | Agent Runtime 初始化自检与准入 | agent-runtime |
+| GET | `/api/agent/v1/control` | Agent Runtime 长轮询接收服务端控制命令 | agent-runtime |
+| POST | `/api/agent/v1/control/:commandId/ack` | Agent Runtime ACK 控制命令结果 | agent-runtime |
+| POST | `/api/agent/v1/dispatches/next` | Agent Runtime 拉取可执行 dispatch | agent-runtime |
+| POST | `/api/agent/v1/events` | Agent Runtime 实时回送执行事件 | agent-runtime |
 | POST | `/api/agents/:nodeId/activation` | 激活或停用 Agent | ui-console-service、policy-engine |
 | POST | `/api/agents` | 创建项目可用 Agent identity | ui-console-service、identity-service |
 | GET | `/api/runtime/health` | 运行健康检查 | ui-console-service、monitor |

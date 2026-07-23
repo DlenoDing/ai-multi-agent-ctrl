@@ -44,6 +44,8 @@ const embeddedServices = [
   ["monitor", "monitor"]
 ];
 
+const agentJoinCommand = "create one-time join token in project UI, then run the generated curl installer command on the Agent host";
+
 const embeddedMcpLogicalServers = [
   "agent-control-mcp",
   "definition-mcp",
@@ -170,6 +172,28 @@ const providerDefaults = {
   custom: {modalities: ["text", "tool_use"], strengths: ["planning", "coding", "review"], context: 128000, output: 8000, quality: [0.75, 0.75, 0.75, "unknown", 0.75], cost: ["unknown", "unknown"]}
 };
 
+const providerDefaultModelIds = {
+  openai: "openai:gpt-5.5",
+  anthropic: "anthropic:claude-sonnet-4-5",
+  google: "google:gemini-2.5-pro",
+  xai: "xai:grok-4",
+  meta: "meta:llama-4-maverick",
+  mistral: "mistral:mistral-large-latest",
+  deepseek: "deepseek:deepseek-chat",
+  qwen: "qwen:qwen-max-latest",
+  moonshot: "moonshot:kimi-k2",
+  zhipu: "zhipu:glm-4.5",
+  baidu: "baidu:ernie-4.5",
+  tencent: "tencent:hunyuan-turbos-latest",
+  openrouter: "openrouter:openai/gpt-5.5",
+  azure_openai: "azure_openai:gpt-5.5",
+  aws_bedrock: "aws_bedrock:anthropic.claude-sonnet-4-5",
+  vertex_ai: "vertex_ai:gemini-2.5-pro",
+  ollama: "ollama:llama3.1",
+  vllm: "vllm:Qwen/Qwen2.5-Coder-32B-Instruct",
+  custom: "custom:custom-model"
+};
+
 const defaultModelCeiling = {
   maxModelTier: "frontier_standard",
   maxReasoningLevel: "high",
@@ -291,6 +315,7 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.leases ||= [];
   state.roomParticipants ||= [];
   state.roomMessages ||= [];
+  state.roomSequenceByRoom ||= {};
   state.roomAcks ||= [];
   state.agentRuntimeNodes ||= [];
   state.agentJoinTokens ||= [];
@@ -320,20 +345,21 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.auditLog ||= [];
   state.runtime ||= {};
   state.runtime.executionProfile ||= options.executionProfile || process.env.AIMAC_EXECUTION_PROFILE || "production";
-  state.runtime.commands ||= {};
-  state.runtime.commands.mcpStart ||= "npm start";
-  state.runtime.commands.mcpRegister ||= "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL";
-  state.runtime.commands.mcpDoctor ||= "npm run mcp:doctor";
+	  state.runtime.commands ||= {};
+	  state.runtime.commands.mcpStart ||= "npm start";
+	  delete state.runtime.commands.mcpRegister;
+	  state.runtime.commands.agentJoin ||= agentJoinCommand;
+	  state.runtime.commands.mcpDoctor ||= "npm run mcp:doctor";
   state.runtime.mcp = {
     ...(state.runtime.mcp || {}),
     protocol: "mcp/streamable-http",
     serverId: "ai-multi-agent-ctrl",
     logicalServers: embeddedMcpLogicalServers,
     toolCount: embeddedMcpToolCount,
-    endpointPath: "/mcp",
-    hostedBy: "control-plane",
-    startupCommand: "npm start",
-    registrationCommand: "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL",
+	    endpointPath: "/mcp",
+	    hostedBy: "control-plane",
+	    startupCommand: "npm start",
+	    registrationCommand: agentJoinCommand,
     doctorCommand: "npm run mcp:doctor",
     agentLocalServerAllowed: false
   };
@@ -486,11 +512,11 @@ export function defaultModelCapabilities(observedAt = new Date().toISOString()) 
     const [reasoningScore, codingScore, reviewScore, latencyClass, reliabilityScore] = spec.quality;
     const [costClass, quotaClass] = spec.cost;
     return {
-      schemaVersion: "model-capability/v1",
-      providerId: `${providerClass}:default`,
-      providerClass,
-      modelId: `${providerClass}:auto`,
-      aliases: [`${providerClass}:auto_best`, `${providerClass}:auto_fast`, `${providerClass}:cost_aware`],
+	      schemaVersion: "model-capability/v1",
+	      providerId: `${providerClass}:default`,
+	      providerClass,
+	      modelId: providerDefaultModelIds[providerClass],
+	      aliases: [`${providerClass}:auto_best`, `${providerClass}:auto_fast`, `${providerClass}:cost_aware`],
       capabilityDigest: digestOf({providerClass, strengths: spec.strengths, context: spec.context}),
       modalities: spec.modalities,
       strengths: spec.strengths,
@@ -541,7 +567,7 @@ export function selectModel(state, request = {}) {
   ]);
   const hardConstraints = {...(policy?.hardConstraints || {}), ...(request.hardConstraints || {}), maxReasoningLevel: modelCeiling.maxReasoningLevel};
   const selectionMode = normalizeSelectionMode(request.selectionMode);
-  const candidates = state.modelCapabilities.map((candidateModel) => rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstraints, selectionMode, taskExecution, modelCeiling));
+  const candidates = state.modelCapabilities.map((candidateModel) => rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstraints, selectionMode, taskExecution, modelCeiling, policy?.fallbackPolicy || {}));
   candidates.sort((a, b) => Number(b.eligible) - Number(a.eligible) || b.totalScore - a.totalScore);
   const selected = candidates.find((candidate) => candidate.eligible);
   const at = new Date().toISOString();
@@ -606,8 +632,12 @@ export function selectModel(state, request = {}) {
   return decision;
 }
 
-function rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstraints, selectionMode, taskExecution, modelCeiling) {
+function rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstraints, selectionMode, taskExecution, modelCeiling, fallbackPolicy = {}) {
   const reasons = [];
+  const availability = candidateModel.availability || "available";
+  if (availability === "unavailable") reasons.push("availability_unavailable");
+  if (availability === "quota_limited" && fallbackPolicy.onQuotaLimited === "select_next_ranked") reasons.push("availability_quota_limited");
+  if (availability === "degraded" && fallbackPolicy.onProviderDegraded === "select_next_ranked") reasons.push("availability_degraded");
   if (hardConstraints.minContextWindowTokens && candidateModel.limits.contextWindowTokens < hardConstraints.minContextWindowTokens) reasons.push("context_window");
   if (hardConstraints.requiresStructuredOutput && !candidateModel.limits.supportsStructuredOutput) reasons.push("structured_output");
   if (hardConstraints.requiresToolUse && !candidateModel.limits.supportsToolUse) reasons.push("tool_use");
@@ -625,7 +655,7 @@ function rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstrai
   const latency = latencyScore(candidateModel.qualitySignals.latencyClass, selectionMode);
   const cost = 1 - costRank(candidateModel.costSignals.costClass) / 3;
   const quota = quotaScore(candidateModel.costSignals.quotaClass);
-  const reliability = candidateModel.qualitySignals.reliabilityScore;
+  const reliability = candidateModel.qualitySignals.reliabilityScore * availabilityScore(availability, fallbackPolicy);
   const risk = ["ollama", "vllm"].includes(candidateModel.providerClass) ? 0.92 : 0.84;
   const scoreBreakdown = {capabilityFit, roleSkillFit, quality, latency, cost, quota, reliability, risk};
   const weighted = capabilityFit * 2 + roleSkillFit * 2 + quality * 2 + latency + cost + quota + reliability * 2 + risk;
@@ -636,6 +666,7 @@ function rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstrai
     totalScore: Math.max(0, Math.min(1, Number((weighted / 12).toFixed(4)))),
     eligible: reasons.length === 0,
     capabilityProfileRef: `${candidateModel.providerId}/${candidateModel.modelId}`,
+    availability,
     modelTier,
     reasoningLevel: modelCeiling.escalationAllowed ? baseReasoningLevel : capReasoning(baseReasoningLevel, modelCeiling.maxReasoningLevel),
     scoreBreakdown,
@@ -682,7 +713,7 @@ function shortModelDecision({workItem = {}, request = {}, taskExecution, selecte
   const risk = taskExecution.specialEscalationSignal ? "P0 risk" : /权限|跨仓|cross-repo|root-cause|裁决|architecture|架构/u.test(text) ? "decision risk" : "no architecture裁决";
   const writeSet = request.writeSet?.length ? "fixed writeSet" : "bounded writeSet";
   const workKind = taskExecution.taskExecutionClass === "verification" ? "directed verification" : taskExecution.taskExecutionClass === "short_execution" ? "short mechanical task" : taskExecution.taskExecutionClass === "deep_analysis" ? "analysis/cross-check" : "implementation";
-  const model = selected?.modelId || "custom:auto";
+  const model = selected?.modelId || providerDefaultModelIds.custom;
   const reasoning = selected?.reasoningLevel || capReasoning(modelCeiling.maxReasoningLevel || "medium", "high");
   return `modelDecision: ${writeSet} ${workKind}; ${risk} -> ${model} / ${reasoning}`.slice(0, 220);
 }
@@ -743,6 +774,13 @@ function quotaScore(quotaClass) {
   return {high: 1, normal: 0.75, low: 0.45, unknown: 0.55}[quotaClass] ?? 0.55;
 }
 
+function availabilityScore(availability, fallbackPolicy = {}) {
+  if (availability === "available") return 1;
+  if (availability === "degraded") return fallbackPolicy.onProviderDegraded === "select_next_ranked" ? 0.55 : 0.75;
+  if (availability === "quota_limited") return 0.35;
+  return 0;
+}
+
 export function decideSessionPlacement(state, request = {}) {
   ensureRuntimeCollections(state);
   const taskGroup = state.taskGroups?.find((item) => item.id === request.taskGroupId);
@@ -792,6 +830,7 @@ export function buildTaskContract(state, request = {}) {
   const workItem = request.workItem || findWorkItem(state, taskGroup?.id, request.workItemId) || taskGroup?.workItems?.[0];
   const project = state.projects.find((item) => item.id === taskGroup?.projectId) || state.projects[0];
   const modelDecision = request.modelSelectionDecision || selectModel(state, {projectId: project?.id, taskGroupId: taskGroup?.id, workItemId: workItem?.id, roleId: workItem?.ownerRole || "orchestrator"});
+  assertSelectedModelDecision(modelDecision);
   const placementDecision = request.placementDecision || decideSessionPlacement(state, {projectId: project?.id, taskGroupId: taskGroup?.id, workItemId: workItem?.id, workItem, modelSelectionDecision: modelDecision});
   const repositoryTarget = ensureRepositoryTarget(state, project, taskGroup, workItem, request);
   const sessionId = placementDecision.placement === "new_session" ? createId("sess") : `subagent_${createId("sa")}`;
@@ -875,13 +914,13 @@ export function buildTaskContract(state, request = {}) {
     artifactManifestPath: repositoryTarget.artifactManifestPath || `docs/artifact-manifests/${workItem?.id || "work"}.json`,
     readScope: [{resourceType: "state", resourceKey: `TaskGroup:${taskGroup?.id || "tg_runtime_management"}`, access: "read", resourceDigest: digestOf(taskGroup || {})}],
     model: {
-      model: modelDecision.selectedModel?.modelId || "custom:auto",
-      modelId: modelDecision.selectedModel?.modelId || "custom:auto",
-      alias: modelDecision.selectedModel?.providerClass || "custom",
-      providerClass: modelDecision.selectedModel?.providerClass || "custom",
+      model: modelDecision.selectedModel.modelId,
+      modelId: modelDecision.selectedModel.modelId,
+      alias: modelDecision.selectedModel.providerClass,
+      providerClass: modelDecision.selectedModel.providerClass,
       taskExecutionClass: modelDecision.taskExecutionClass || "implementation",
-      reasoning: modelDecision.selectedModel?.reasoning || modelDecision.selectedModel?.reasoningLevel || "standard",
-      reasoningLevel: modelDecision.selectedModel?.reasoningLevel || "standard",
+      reasoning: modelDecision.selectedModel.reasoning || modelDecision.selectedModel.reasoningLevel,
+      reasoningLevel: modelDecision.selectedModel.reasoningLevel,
       selectionMode: modelDecision.selectionMode,
       modelDecision: modelDecision.modelDecision,
       modelSelectionDecisionRef: modelDecision.decisionId
@@ -937,6 +976,14 @@ export function buildTaskContract(state, request = {}) {
   state.roleDriftGuards.unshift(buildRoleDriftGuard(contract, guardRef, at));
   appendEvent(state, "command_created", "Command", contract.commandId, "orchestrator", contract);
   return contract;
+}
+
+function assertSelectedModelDecision(modelDecision) {
+  if (modelDecision?.status === "selected" && modelDecision.selectedModel?.modelId && modelDecision.selectedModel?.reasoningLevel) return;
+  const error = new Error(`model_selection_rejected:${modelDecision?.denialReason || "no_selected_model"}`);
+  error.code = "AIMAC_MODEL_SELECTION_REJECTED";
+  error.decision = modelDecision;
+  throw error;
 }
 
 function buildEffectiveInstructionPacket(contract, packetId, at) {
@@ -1048,7 +1095,18 @@ export function runAutonomousCycle(state, request = {}) {
         if (request.mode !== "until_blocked" && request.mode !== "all") break;
         continue;
       }
-      const contract = buildTaskContract(state, {projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workItemId: workItem.id, workItem, root: request.root});
+      let contract;
+      try {
+        contract = buildTaskContract(state, {projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workItemId: workItem.id, workItem, root: request.root});
+      } catch (error) {
+        if (error.code !== "AIMAC_MODEL_SELECTION_REJECTED") throw error;
+        workItem.status = "blocked";
+        workItem.blockedReason = "model_selection_rejected";
+        workItem.updatedAt = new Date().toISOString();
+        addBlocker(taskGroup, "S1", `No runnable model satisfied hard constraints for ${workItem.id}.`);
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "blocked", reason: "model_selection_rejected", modelSelectionDecisionRef: error.decision?.decisionId});
+        continue;
+      }
       const repositoryTarget = state.repositoryOutputs.find((target) => target.targetId === contract.repositoryOutputTargetRef);
       const drift = evaluateRoleDrift(state, {sessionId: contract.sessionId, taskGroupId: taskGroup.id, actionScopeRefs: [`TaskGroup:${taskGroup.id}`, `RepositoryOutputTarget:${repositoryTarget.targetId}`]});
       if (!drift.allowed) {
@@ -1681,6 +1739,9 @@ function activeExecutionForWork(state, taskGroupId, workItemId) {
 }
 
 function enqueueAgentDispatch(state, contract, repositoryTarget) {
+  if (!contract?.model?.modelId || !contract?.model?.modelDecision || !contract?.model?.modelSelectionDecisionRef) {
+    throw new Error("agent_dispatch_requires_selected_model_decision");
+  }
   const existing = (state.agentDispatches || []).find((item) =>
     item.taskGroupId === contract.taskGroupId &&
     item.workItemId === contract.workId &&
@@ -1699,7 +1760,7 @@ function enqueueAgentDispatch(state, contract, repositoryTarget) {
     runId: contract.runId,
     status: "queued",
     deliveryMode: workSession?.placement || "new_session",
-    model: contract.model.model || contract.model.modelId || "custom:auto",
+    model: contract.model.model || contract.model.modelId || providerDefaultModelIds.custom,
     reasoning: contract.model.reasoning || contract.model.reasoningLevel || "standard",
     modelDecision: contract.model.modelDecision,
     modelSelectionDecisionRef: contract.model.modelSelectionDecisionRef,

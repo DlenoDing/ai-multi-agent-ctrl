@@ -60,6 +60,7 @@
     "claimedAt": {"type": "string", "format": "date-time"},
     "claimExpiresAt": {"type": "string", "format": "date-time"},
     "controlCommandRef": {"type": "string", "minLength": 1},
+    "revocationPending": {"type": "boolean"},
     "controlRequestedAt": {"type": "string", "format": "date-time"},
     "progressPercent": {"type": "integer", "minimum": 0, "maximum": 100},
     "lastExecutionEventRef": {"type": "string", "minLength": 1},

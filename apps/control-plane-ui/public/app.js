@@ -20,7 +20,9 @@ let authToken = localStorage.getItem("aimac.sessionToken") || "";
 let currentAccount = JSON.parse(localStorage.getItem("aimac.account") || "null");
 let lastError = "";
 let lastJoinCommands = null;
+let lastAccountInvite = null;
 let selectedExecutionDispatchId = "";
+let selectedExecutionScope = {type: "", id: ""};
 let selectedExecutionEvents = [];
 let selectedExecutionCursor = 0;
 let executionPollTimer = null;
@@ -112,7 +114,8 @@ function findWorkItemDispatch(taskGroupId, workItemId) {
 }
 
 function renderSelectedExecutionPanel() {
-  if (!selectedExecutionDispatchId) return "";
+  const scope = selectedExecutionScope.id ? selectedExecutionScope : (selectedExecutionDispatchId ? {type: "dispatch", id: selectedExecutionDispatchId} : {type: "", id: ""});
+  if (!scope.id) return "";
   const selectedEventRows = selectedExecutionEvents.slice().reverse().slice(0, 100).map((event) => row([
     escapeHtml(event.sequence),
     escapeHtml(event.eventType),
@@ -122,7 +125,7 @@ function renderSelectedExecutionPanel() {
     escapeHtml(event.outputTailDigest || "-"),
     escapeHtml(event.createdAt)
   ])).join("");
-  return panel(`Dispatch 实时事件 ${selectedExecutionDispatchId}`, h`
+  return panel(`${scope.type === "session" ? "Session" : "Dispatch"} 实时事件 ${scope.id}`, h`
     <table class="data-table">
       <thead><tr><th>Seq</th><th>事件</th><th>进度</th><th>状态</th><th>摘要</th><th>Tail Digest</th><th>时间</th></tr></thead>
       <tbody>${selectedEventRows || row(["-", "-", "-", "-", "-", "-", "-"])}</tbody>
@@ -195,10 +198,14 @@ async function load() {
 }
 
 async function loadExecutionEvents(options = {}) {
-  if (!selectedExecutionDispatchId || !authToken) return;
+  const scope = selectedExecutionScope.id ? selectedExecutionScope : (selectedExecutionDispatchId ? {type: "dispatch", id: selectedExecutionDispatchId} : {type: "", id: ""});
+  if (!scope.id || !authToken) return;
   const after = options.reset ? 0 : selectedExecutionCursor;
   const waitMs = options.longPoll ? 2000 : 0;
-  const result = await api(`/api/agent-dispatches/${encodeURIComponent(selectedExecutionDispatchId)}/events?afterSequence=${after}&limit=200&waitMs=${waitMs}`);
+  const path = scope.type === "session"
+    ? `/api/work-sessions/${encodeURIComponent(scope.id)}/execution-events`
+    : `/api/agent-dispatches/${encodeURIComponent(scope.id)}/events`;
+  const result = await api(`${path}?afterSequence=${after}&limit=200&waitMs=${waitMs}`);
   if (options.reset) selectedExecutionEvents = [];
   const existing = new Set(selectedExecutionEvents.map((event) => event.eventId));
   for (const event of result.events || []) {
@@ -213,7 +220,7 @@ function setExecutionPolling(enabled) {
     clearInterval(executionPollTimer);
     executionPollTimer = null;
   }
-  if (!enabled || !selectedExecutionDispatchId || !isExecutionPollingView()) return;
+  if (!enabled || !(selectedExecutionScope.id || selectedExecutionDispatchId) || !isExecutionPollingView()) return;
   executionPollTimer = setInterval(async () => {
     try {
       await loadExecutionEvents({longPoll: true});
@@ -299,8 +306,8 @@ function renderSystem() {
           <thead><tr><th>方式</th><th>命令</th><th>用途</th></tr></thead>
           <tbody>
             ${row(["npm", "<span class='mono'>npm run init && npm start</span>", "初始化并启动控制台"])}
-            ${row(["Docker", "<span class='mono'>docker compose up --build</span>", "容器化启动"])}
-            ${row(["Shell", "<span class='mono'>./scripts/start.sh</span>", "脚本入口"])}
+            ${row(["Docker", "<span class='mono'>npm run docker:up</span>", "生成缺失环境值并容器化启动"])}
+            ${row(["Shell", "<span class='mono'>npm run shell:start</span>", "脚本入口"])}
           </tbody>
         </table>
       </div>
@@ -353,6 +360,12 @@ function renderSystem() {
 }
 
 function renderUsers() {
+  const canCreateSystemAccount = currentAccount?.accountType === "system_admin" || (currentAccount?.permissions || []).includes("system:*");
+  const accountTypeOptions = [
+    `<option value="user_account">用户账号</option>`,
+    canCreateSystemAccount ? `<option value="system_admin">系统管理员</option>` : "",
+    `<option value="service_account">服务账号</option>`
+  ].join("");
   const accounts = state.accounts.map((account) => row([
     escapeHtml(account.displayName),
     escapeHtml(account.email),
@@ -384,13 +397,21 @@ function renderUsers() {
         <div class="form-row">
           <label for="accountType">账号类型</label>
           <select id="accountType" name="accountType">
-            <option value="user_account">用户账号</option>
-            <option value="system_admin">系统管理员</option>
-            <option value="service_account">服务账号</option>
+            ${accountTypeOptions}
           </select>
         </div>
+        <div class="form-row"><label for="inviteRoles">角色</label><input id="inviteRoles" name="roles" value="viewer"></div>
+        <div class="form-row"><label for="invitePermissions">默认权限</label><input id="invitePermissions" name="permissions" value="project:view"></div>
         <button class="primary-button" type="submit">邀请</button>
       </form>
+      ${lastAccountInvite ? h`
+        <div class="command-box">
+          <strong>账号登录凭据</strong>
+          <pre>email=${escapeHtml(lastAccountInvite.account?.email || lastAccountInvite.login?.email || "")}
+accountToken=${escapeHtml(lastAccountInvite.accountToken || "")}
+expiresAt=${escapeHtml(lastAccountInvite.tokenExpiresAt || "")}</pre>
+        </div>
+      ` : ""}
     `),
     panel("Agent 激活", h`
       <form id="agent-form" class="form-grid compact-form">
@@ -411,6 +432,14 @@ function renderUsers() {
       </table>
     `, "wide"),
     panel("授权", h`
+      <form id="grant-form" class="form-grid compact-form">
+        <div class="form-row"><label for="grantSubject">账号 ID</label><input id="grantSubject" name="subjectId" value="acct_workspace_owner" required></div>
+        <div class="form-row"><label for="grantResourceType">资源类型</label><select id="grantResourceType" name="resourceType"><option value="project">项目</option><option value="task_group">任务组</option></select></div>
+        <div class="form-row"><label for="grantResourceId">资源 ID</label><input id="grantResourceId" name="resourceId" value="prj_control_plane" required></div>
+        <div class="form-row"><label for="grantRole">角色</label><input id="grantRole" name="role" value="viewer"></div>
+        <div class="form-row"><label for="grantPermissions">权限</label><input id="grantPermissions" name="permissions" value="project:view"></div>
+        <button class="primary-button" type="submit">新增授权</button>
+      </form>
       <table class="data-table">
         <thead><tr><th>主体</th><th>资源</th><th>角色</th><th>状态</th><th>权限</th><th>操作</th></tr></thead>
         <tbody>${grants}</tbody>
@@ -422,7 +451,19 @@ function renderUsers() {
     event.preventDefault();
     const form = new FormData(event.target);
     try {
-      await api("/api/accounts", {method: "POST", body: JSON.stringify(Object.fromEntries(form.entries()))});
+      lastAccountInvite = await api("/api/accounts", {method: "POST", body: JSON.stringify(Object.fromEntries(form.entries()))});
+      lastError = "";
+      await load();
+    } catch (error) {
+      showError(error);
+    }
+  });
+
+  document.querySelector("#grant-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    try {
+      await api("/api/access-grants", {method: "POST", body: JSON.stringify(Object.fromEntries(form.entries()))});
       lastError = "";
       await load();
     } catch (error) {
@@ -678,7 +719,8 @@ function renderRuntime() {
     escapeHtml(session.roleId),
     escapeHtml(session.workItemId),
     escapeHtml(session.placement),
-    pill(session.status)
+    pill(session.status),
+    `<button class="secondary-button" data-action="show-session-events" data-session-id="${escapeHtml(session.sessionId)}">事件</button>`
   ])).join("");
   const dispatches = (state.agentDispatches || []).slice(0, 12).map((dispatch) => row([
     escapeHtml(dispatch.dispatchId),
@@ -770,8 +812,8 @@ function renderRuntime() {
     `),
     panel("Work Sessions", h`
       <table class="data-table">
-        <thead><tr><th>Session</th><th>角色</th><th>Work</th><th>Placement</th><th>状态</th></tr></thead>
-        <tbody>${sessions || row(["-", "-", "-", "-", "-"])}</tbody>
+        <thead><tr><th>Session</th><th>角色</th><th>Work</th><th>Placement</th><th>状态</th><th>详情</th></tr></thead>
+        <tbody>${sessions || row(["-", "-", "-", "-", "-", "-"])}</tbody>
       </table>
     `, "wide"),
     panel("Agent Dispatch Outbox", h`
@@ -923,6 +965,17 @@ document.addEventListener("click", async (event) => {
     }
     if (target.dataset.action === "show-dispatch-events") {
       selectedExecutionDispatchId = target.dataset.dispatchId || "";
+      selectedExecutionScope = {type: "dispatch", id: selectedExecutionDispatchId};
+      selectedExecutionCursor = 0;
+      selectedExecutionEvents = [];
+      await loadExecutionEvents({reset: true});
+      setExecutionPolling(true);
+      lastError = "";
+      render();
+    }
+    if (target.dataset.action === "show-session-events") {
+      selectedExecutionDispatchId = "";
+      selectedExecutionScope = {type: "session", id: target.dataset.sessionId || ""};
       selectedExecutionCursor = 0;
       selectedExecutionEvents = [];
       await loadExecutionEvents({reset: true});

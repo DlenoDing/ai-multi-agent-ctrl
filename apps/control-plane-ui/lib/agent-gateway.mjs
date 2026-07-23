@@ -214,12 +214,10 @@ export function heartbeatAgentNode(state, node, input = {}, options = {}) {
   const usingPreviousCredential = node.previousCredentialDigest === presentedDigest
     && new Date(node.previousCredentialExpiresAt || 0).getTime() > Date.now();
   let rotatedNodeToken;
-  if (usingPreviousCredential || !node.credentialExpiresAt || new Date(node.credentialExpiresAt).getTime() - Date.now() < 7 * 24 * 60 * 60 * 1000) {
+  if (!usingPreviousCredential && (!node.credentialExpiresAt || new Date(node.credentialExpiresAt).getTime() - Date.now() < 7 * 24 * 60 * 60 * 1000)) {
     rotatedNodeToken = `aimac_node_${randomBytes(40).toString("base64url")}`;
-    if (!usingPreviousCredential) {
-      node.previousCredentialDigest = node.credentialDigest;
-      node.previousCredentialExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    }
+    node.previousCredentialDigest = node.credentialDigest;
+    node.previousCredentialExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     node.credentialDigest = digestOf(`agent-node:${node.nodeId}:${rotatedNodeToken}`);
     node.credentialIssuedAt = at;
     node.credentialExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -231,54 +229,30 @@ export function heartbeatAgentNode(state, node, input = {}, options = {}) {
 export function revokeAgentNode(state, node) {
   ensureAgentGatewayCollections(state);
   const at = new Date().toISOString();
-  const requeuedDispatchIds = [];
-  for (const dispatch of state.agentDispatches || []) {
-    if (dispatch.status !== "running" || dispatch.assignedNodeId !== node.nodeId) continue;
-    dispatch.status = "queued";
-    dispatch.blockedReason = "assigned_node_revoked_requeued";
-    delete dispatch.assignedNodeId;
-    delete dispatch.claimedAt;
-    delete dispatch.claimExpiresAt;
-    dispatch.updatedAt = at;
-    requeuedDispatchIds.push(dispatch.dispatchId);
+  const activeDispatchIds = (state.agentDispatches || [])
+    .filter((dispatch) => dispatch.assignedNodeId === node.nodeId && ["running", "blocked"].includes(dispatch.status))
+    .map((dispatch) => dispatch.dispatchId);
+  if (activeDispatchIds.length) {
+    throw gatewayError("active_node_revocation_requires_control_ack", 409);
   }
-  for (const dispatchId of requeuedDispatchIds) revokeDispatchMcpGrants(state, node.nodeId, dispatchId, "assigned_node_revoked_requeued");
   node.status = "revoked";
   node.admission = "read_only";
   node.activeDispatchIds = [];
   node.updatedAt = at;
-  appendGatewayEvent(state, "node_revoked", node.nodeId, {requeuedDispatchIds});
-  return {nodeId: node.nodeId, status: node.status, requeuedDispatchIds};
+  appendGatewayEvent(state, "node_revoked", node.nodeId, {requeuedDispatchIds: []});
+  return {nodeId: node.nodeId, status: node.status, requeuedDispatchIds: []};
 }
 
 export function requestAgentNodeRevocation(state, node, input = {}, options = {}) {
   ensureAgentGatewayCollections(state);
-  const activeDispatchIds = [...(node.activeDispatchIds || [])];
   const result = createAgentControlCommand(state, node, {
     ...input,
     commandType: "revoke",
-    payload: {...(input.payload || {}), activeDispatchIds}
+    payload: {...(input.payload || {})}
   }, options);
-  const at = new Date().toISOString();
-  const requeuedDispatchIds = [];
-  for (const dispatch of state.agentDispatches || []) {
-    if (dispatch.assignedNodeId !== node.nodeId || !["running", "blocked"].includes(dispatch.status)) continue;
-    dispatch.status = "queued";
-    dispatch.blockedReason = "assigned_node_revocation_requested_requeued";
-    dispatch.controlCommandRef = result.command.commandId;
-    delete dispatch.assignedNodeId;
-    delete dispatch.claimedAt;
-    delete dispatch.claimExpiresAt;
-    dispatch.updatedAt = at;
-    requeuedDispatchIds.push(dispatch.dispatchId);
-    revokeDispatchMcpGrants(state, node.nodeId, dispatch.dispatchId, "assigned_node_revocation_requested_requeued");
-  }
-  node.status = "draining";
-  node.admission = "read_only";
-  node.activeDispatchIds = [];
-  node.updatedAt = at;
-  appendGatewayEvent(state, "node_revocation_requested", node.nodeId, {commandId: result.command.commandId, requeuedDispatchIds});
-  return {nodeId: node.nodeId, status: node.status, command: result.command, requeuedDispatchIds};
+  const pendingDispatchIds = [...(result.command.payload?.activeDispatchIds || [])];
+  appendGatewayEvent(state, "node_revocation_requested", node.nodeId, {commandId: result.command.commandId, pendingDispatchIds});
+  return {nodeId: node.nodeId, status: node.status, command: result.command, pendingDispatchIds, requeuedDispatchIds: []};
 }
 
 function ensureDispatchMcpGrants(state, dispatch, node) {
@@ -359,8 +333,12 @@ function dispatchBoundRiskLevel(toolName) {
 }
 
 export function selfCheckAgentNode(state, node, input = {}) {
+  if (input.profile) {
+    node.profile = sanitizeNodeProfile(input.profile);
+    node.profileDigest = digestOf(node.profile);
+  }
   const checks = normalizeChecks(input.checks || []);
-  const required = ["runtime", "gateway", "filesystem", "git", "remote_mcp"];
+  const required = ["runtime", "gateway", "filesystem", "git", "remote_mcp", "model_executor"];
   const missing = required.filter((checkId) => !checks.some((check) => check.checkId === checkId && check.status === "ok"));
   const at = new Date().toISOString();
   node.lastSelfCheckAt = at;
@@ -440,7 +418,9 @@ export function createAgentControlCommand(state, node, input = {}, options = {})
     sessionId: input.sessionId || null,
     dispatchId: input.dispatchId || null,
     commandType,
-    payload: input.payload || {},
+    payload: ["shutdown", "revoke"].includes(commandType)
+      ? {...(input.payload || {}), activeDispatchIds: [...(node.activeDispatchIds || [])]}
+      : input.payload || {},
     status: "queued",
     requiresAck: true,
     createdBy: options.actor || "control-plane",
@@ -493,16 +473,25 @@ export function ackAgentControlCommand(state, node, commandId, input = {}) {
   command.resultDigest = digestOf(command.ackResult);
   command.updatedAt = command.acknowledgedAt;
   if (status === "completed" && command.commandType === "revoke") finalizeNodeRevocation(state, node, command);
+  if (status === "completed" && command.commandType === "shutdown") finalizeNodeShutdown(state, node, command);
+  if (["failed", "rejected"].includes(status) && ["revoke", "shutdown"].includes(command.commandType)) handleStopControlFailure(state, node, command, status);
   appendGatewayEvent(state, "agent_control_command_ack", command.commandId, {nodeId: node.nodeId, status});
   return {command};
 }
 
 export function submitAgentExecutionEvent(state, node, input = {}) {
+  const prepared = prepareAgentExecutionEvent(state, node, input);
+  if (prepared.duplicate) return prepared;
+  return recordAgentExecutionEvent(state, node, prepared.event);
+}
+
+export function prepareAgentExecutionEvent(state, node, input = {}) {
   ensureAgentGatewayCollections(state);
   const dispatchId = String(input.dispatchId || "").trim();
   const dispatch = state.agentDispatches.find((item) => item.dispatchId === dispatchId && item.assignedNodeId === node.nodeId);
   if (!dispatch) throw gatewayError("dispatch_not_found", 404);
   const eventKey = String(input.eventKey || "").slice(0, 240);
+  if (!eventKey) throw gatewayError("execution_event_key_required", 400);
   if (eventKey) {
     const existing = (state.agentExecutionEvents || []).find((item) => item.eventKey === eventKey);
     if (existing) return {event: existing, duplicate: true};
@@ -532,15 +521,35 @@ export function submitAgentExecutionEvent(state, node, input = {}) {
     payloadDigest: digestOf(input.payload || input.summary || eventType),
     createdAt: at
   };
+  return {event};
+}
+
+export function recordAgentExecutionEvent(state, node, event = {}, options = {}) {
+  ensureAgentGatewayCollections(state);
+  const dispatch = state.agentDispatches.find((item) =>
+    item.dispatchId === event.dispatchId &&
+    (item.assignedNodeId === node.nodeId || (options.allowHistoricalNodeBinding && event.nodeId === node.nodeId))
+  );
+  if (!dispatch) throw gatewayError("dispatch_not_found", 404);
+  if (event.eventKey) {
+    const existing = (state.agentExecutionEvents || []).find((item) => item.eventKey === event.eventKey);
+    if (existing) return {event: existing, duplicate: true};
+  }
+  if ((state.agentExecutionEvents || []).some((item) => item.eventId === event.eventId)) return {event, duplicate: true};
+  state.agentExecutionSequence = Math.max(Number(state.agentExecutionSequence || 0), Number(event.sequence || 0));
   state.agentExecutionEvents.unshift(event);
   state.agentExecutionEvents = state.agentExecutionEvents.slice(0, 500);
-  updateExecutionProgress(state, dispatch, event, at);
-  appendGatewayEvent(state, "agent_execution_event", event.eventId, {nodeId: node.nodeId, dispatchId, eventType, progressPercent: event.progressPercent});
+  updateExecutionProgress(state, dispatch, event, event.createdAt || new Date().toISOString());
+  appendGatewayEvent(state, "agent_execution_event", event.eventId, {nodeId: node.nodeId, dispatchId: event.dispatchId, eventType: event.eventType, progressPercent: event.progressPercent});
   return {event};
 }
 
 function applyControlCommandPreEffects(state, node, command) {
-  if (!["pause_dispatch", "cancel_dispatch"].includes(command.commandType)) return;
+  if (["revoke", "shutdown"].includes(command.commandType)) {
+    applyNodeStopPreEffects(state, node, command);
+    return;
+  }
+  if (!["pause_dispatch", "cancel_dispatch", "resume_dispatch"].includes(command.commandType)) return;
   const dispatch = findNodeDispatchForControl(state, node, command);
   if (!dispatch) throw gatewayError("control_dispatch_not_active", 409);
   const at = command.createdAt;
@@ -553,30 +562,66 @@ function applyControlCommandPreEffects(state, node, command) {
   if (command.commandType === "pause_dispatch") {
     dispatch.status = "blocked";
     dispatch.blockedReason = "control_pause_requested";
-  } else {
+  } else if (command.commandType === "cancel_dispatch") {
     dispatch.status = "cancelled";
     dispatch.failureReason = "control_cancel_requested";
+  } else {
+    dispatch.status = "queued";
+    dispatch.blockedReason = "control_resume_requested";
+    delete dispatch.assignedNodeId;
+    delete dispatch.claimedAt;
+    delete dispatch.claimExpiresAt;
+    delete dispatch.revocationPending;
   }
   dispatch.updatedAt = at;
   revokeDispatchMcpGrants(state, node.nodeId, dispatch.dispatchId, `control_${command.commandType}`);
   const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
   if (session) {
-    session.status = command.commandType === "pause_dispatch" ? "blocked" : "aborted";
+    session.status = command.commandType === "pause_dispatch" ? "blocked" : command.commandType === "cancel_dispatch" ? "aborted" : "active";
     session.controlCommandRef = command.commandId;
     session.updatedAt = at;
   }
   const taskGroup = state.taskGroups.find((item) => item.id === dispatch.taskGroupId);
   const workItem = taskGroup?.workItems?.find((item) => item.id === dispatch.workItemId);
   if (workItem) {
-    workItem.status = "blocked";
-    workItem.blockedReason = command.commandType === "pause_dispatch" ? "control_pause_requested" : "control_cancel_requested";
+    workItem.status = command.commandType === "resume_dispatch" ? "ready" : "blocked";
+    workItem.blockedReason = command.commandType === "pause_dispatch" ? "control_pause_requested" : command.commandType === "cancel_dispatch" ? "control_cancel_requested" : "control_resume_requested";
     workItem.updatedAt = at;
   }
+  if (command.commandType === "resume_dispatch") node.activeDispatchIds = (node.activeDispatchIds || []).filter((id) => id !== dispatch.dispatchId);
   if (taskGroup) {
     taskGroup.health = "attention";
     taskGroup.updatedAt = at;
   }
   appendGatewayEvent(state, "agent_control_pre_effect_applied", command.commandId, {dispatchId: dispatch.dispatchId, commandType: command.commandType});
+}
+
+function applyNodeStopPreEffects(state, node, command) {
+  const at = command.createdAt || new Date().toISOString();
+  const pendingReason = command.commandType === "revoke"
+    ? "assigned_node_revocation_pending_stop"
+    : "assigned_node_shutdown_pending_stop";
+  const pendingDispatchIds = [];
+  for (const dispatch of state.agentDispatches || []) {
+    if (dispatch.assignedNodeId !== node.nodeId || !["running", "blocked"].includes(dispatch.status)) continue;
+    dispatch.status = "blocked";
+    dispatch.blockedReason = pendingReason;
+    dispatch.controlCommandRef = command.commandId;
+    dispatch.controlRequestedAt = at;
+    if (command.commandType === "revoke") dispatch.revocationPending = true;
+    else delete dispatch.revocationPending;
+    dispatch.updatedAt = at;
+    pendingDispatchIds.push(dispatch.dispatchId);
+    revokeDispatchMcpGrants(state, node.nodeId, dispatch.dispatchId, pendingReason);
+  }
+  command.payload = {
+    ...(command.payload || {}),
+    activeDispatchIds: uniqueStrings([...(command.payload?.activeDispatchIds || []), ...pendingDispatchIds])
+  };
+  node.status = "draining";
+  node.admission = "read_only";
+  node.updatedAt = at;
+  appendGatewayEvent(state, "agent_node_stop_pre_effect_applied", command.commandId, {nodeId: node.nodeId, commandType: command.commandType, pendingDispatchIds});
 }
 
 function findNodeDispatchForControl(state, node, command) {
@@ -589,12 +634,86 @@ function findNodeDispatchForControl(state, node, command) {
 
 function finalizeNodeRevocation(state, node, command) {
   const at = new Date().toISOString();
+  const commandDispatchIds = new Set(command.payload?.activeDispatchIds || []);
+  const requeuedDispatchIds = [];
+  for (const dispatch of state.agentDispatches || []) {
+    if (dispatch.assignedNodeId !== node.nodeId) continue;
+    const commandOwned = dispatch.controlCommandRef === command.commandId || dispatch.revocationPending;
+    const wasActive = commandDispatchIds.has(dispatch.dispatchId) || (node.activeDispatchIds || []).includes(dispatch.dispatchId);
+    if (!commandOwned && !wasActive) continue;
+    if (!["running", "blocked", "cancelled", "failed"].includes(dispatch.status)) continue;
+    dispatch.status = "queued";
+    dispatch.blockedReason = "assigned_node_revocation_ack_requeued";
+    delete dispatch.assignedNodeId;
+    delete dispatch.claimedAt;
+    delete dispatch.claimExpiresAt;
+    delete dispatch.revocationPending;
+    dispatch.updatedAt = at;
+    requeuedDispatchIds.push(dispatch.dispatchId);
+  }
   node.status = "revoked";
   node.admission = "read_only";
   node.activeDispatchIds = [];
   node.updatedAt = at;
   command.finalizedAt = at;
-  appendGatewayEvent(state, "node_revoked", node.nodeId, {commandId: command.commandId});
+  appendGatewayEvent(state, "node_revoked", node.nodeId, {commandId: command.commandId, requeuedDispatchIds});
+}
+
+function finalizeNodeShutdown(state, node, command) {
+  const at = new Date().toISOString();
+  const commandDispatchIds = new Set(command.payload?.activeDispatchIds || []);
+  const requeuedDispatchIds = [];
+  for (const dispatch of state.agentDispatches || []) {
+    if (dispatch.assignedNodeId !== node.nodeId) continue;
+    const wasActive = commandDispatchIds.has(dispatch.dispatchId) || (node.activeDispatchIds || []).includes(dispatch.dispatchId);
+    if (!wasActive || !["running", "blocked", "cancelled", "failed"].includes(dispatch.status)) continue;
+    dispatch.status = "queued";
+    dispatch.blockedReason = "assigned_node_shutdown_ack_requeued";
+    delete dispatch.assignedNodeId;
+    delete dispatch.claimedAt;
+    delete dispatch.claimExpiresAt;
+    delete dispatch.revocationPending;
+    dispatch.updatedAt = at;
+    revokeDispatchMcpGrants(state, node.nodeId, dispatch.dispatchId, "assigned_node_shutdown_ack_requeued");
+    requeuedDispatchIds.push(dispatch.dispatchId);
+  }
+  node.status = "offline";
+  node.admission = "read_only";
+  node.activeDispatchIds = [];
+  node.updatedAt = at;
+  command.finalizedAt = at;
+  appendGatewayEvent(state, "node_shutdown_completed", node.nodeId, {commandId: command.commandId, requeuedDispatchIds});
+}
+
+function handleStopControlFailure(state, node, command, status) {
+  const at = new Date().toISOString();
+  node.status = "degraded";
+  node.admission = "read_only";
+  node.updatedAt = at;
+  const affectedDispatchIds = [];
+  for (const dispatch of state.agentDispatches || []) {
+    if (dispatch.assignedNodeId !== node.nodeId) continue;
+    const commandOwned = dispatch.controlCommandRef === command.commandId || dispatch.revocationPending || (command.payload?.activeDispatchIds || []).includes(dispatch.dispatchId);
+    if (!commandOwned || !["running", "blocked", "cancelled", "failed"].includes(dispatch.status)) continue;
+    dispatch.status = "blocked";
+    dispatch.blockedReason = `assigned_node_${command.commandType}_${status}_retry_queued`;
+    dispatch.controlCommandRef = command.commandId;
+    if (command.commandType === "revoke" || dispatch.revocationPending) dispatch.revocationPending = true;
+    else delete dispatch.revocationPending;
+    dispatch.updatedAt = at;
+    affectedDispatchIds.push(dispatch.dispatchId);
+  }
+  const retryAttempt = Number(command.payload?.retryAttempt || 0) + 1;
+  if (retryAttempt <= 3) {
+    const retry = createAgentControlCommand(state, node, {
+      commandType: command.commandType,
+      payload: {...(command.payload || {}), retryOf: command.commandId, retryAttempt},
+      ttlSeconds: 300
+    }, {actor: "agent-gateway", idempotencyKey: `control-retry:${command.commandId}:${retryAttempt}`}).command;
+    command.retryCommandId = retry.commandId;
+  }
+  command.failureHandledAt = at;
+  appendGatewayEvent(state, "agent_stop_control_retry_queued", command.commandId, {nodeId: node.nodeId, commandType: command.commandType, status, affectedDispatchIds, retryCommandId: command.retryCommandId || null});
 }
 
 export function finishNodeDispatch(state, node, dispatchId, succeeded) {
@@ -807,8 +926,9 @@ function rolesAllowed(requested, allowed) {
 
 function modelRunnable(model, profile = {}) {
   const providers = new Set((profile.models || []).filter((item) => item.available !== false).map((item) => item.providerClass || item.provider).filter(Boolean));
-  if (!providers.size) return true;
-  return providers.has(model?.alias) || providers.has(String(model?.modelId || "").split(":")[0]) || providers.has("custom");
+  if (!providers.size) return false;
+  const provider = String(model?.providerClass || model?.alias || String(model?.modelId || model?.model || "").split(":")[0] || "custom");
+  return providers.has(provider) || providers.has("custom");
 }
 
 function sanitizeNodeProfile(profile) {

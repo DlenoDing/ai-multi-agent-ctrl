@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,10 +17,11 @@ import {
   heartbeatAgentNode,
   listAgentControlCommands,
   registerAgentNode,
-  revokeAgentNode,
+  requestAgentNodeRevocation,
+  selfCheckAgentNode,
   submitAgentExecutionEvent
 } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
-import { appendProjectExecutionEvent, readProjectExecutionEvents } from "../apps/control-plane-ui/lib/project-event-store.mjs";
+import { appendProjectExecutionEvent, readProjectExecutionEventByKey, readProjectExecutionEvents } from "../apps/control-plane-ui/lib/project-event-store.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const seedState = loadJson("data/seed-state.json");
@@ -90,6 +92,38 @@ function verifyRuntimeJsonConflict(output) {
     } catch (error) {
       if (!isStateStoreConflict(error)) output.push(`runtime_json state-store stale write raised wrong error: ${error.message}`);
     }
+    writeStoredState({
+      stateVersion: 3,
+      runtime: {},
+      taskGroups: [{id: "tg_collision_a", projectId: "project/a", workItems: []}],
+      agentDispatches: [{dispatchId: "adp_collision_a", projectId: "project/a", taskGroupId: "tg_collision_a", updatedAt: new Date().toISOString()}],
+      idempotencyRecords: {}
+    }, {...options, expectedStateVersion: 2});
+	    const sharded = readStoredState(options);
+	    if (!sharded.agentDispatches.some((dispatch) => dispatch.dispatchId === "adp_collision_a")) {
+	      output.push("runtime_json project shard did not hydrate project-scoped dispatches");
+	    }
+		    const centralShardIndex = JSON.parse(readFileSync(options.statePath, "utf8")).projectStateShards?.projects?.find((project) => project.projectId === "project/a");
+		    if (!centralShardIndex?.storageRef?.match(/project-db\/p_[a-f0-9]{24}\.sv[0-9]+-[a-f0-9]{12}\.state\.json/u)) {
+		      output.push("runtime_json project shard index did not point at a generation-qualified hash shard file");
+		    }
+        if (!centralShardIndex?.storagePayloadDigest || !centralShardIndex?.storagePayloadBytes) {
+          output.push("runtime_json project shard index did not record shard payload digest and size");
+        } else {
+          const shardPath = join(runtimeDir, centralShardIndex.storageRef.replace(/^runtime:\/\//u, ""));
+          const originalShard = readFileSync(shardPath, "utf8");
+          writeFileSync(shardPath, originalShard.replace("adp_collision_a", "adp_tampered"));
+          try {
+            readStoredState(options);
+            output.push("runtime_json project shard digest mismatch was not rejected");
+          } catch {}
+          writeFileSync(shardPath, originalShard);
+        }
+		    writeStoredState({stateVersion: 4, runtime: {}, taskGroups: [], agentDispatches: [], idempotencyRecords: {}}, {...options, expectedStateVersion: sharded.__loadedStateVersion});
+    const emptied = readStoredState(options);
+    if (emptied.agentDispatches.some((dispatch) => dispatch.dispatchId === "adp_collision_a") || emptied.taskGroups.some((taskGroup) => taskGroup.id === "tg_collision_a")) {
+      output.push("runtime_json project shard stale data was resurrected after shard deletion");
+    }
   } finally {
     if (previousStore === undefined) delete process.env.AIMAC_STATE_STORE;
     else process.env.AIMAC_STATE_STORE = previousStore;
@@ -116,14 +150,48 @@ function verifyAgentGatewayContracts(output) {
     output.push("Agent join token did not return a portable checksum-verified installer command using token file");
   }
   const registered = registerAgentNode(state, {nodeName: "contract-node", requestedRoles: ["*"], runtimeVersion: "contract", profile: {platform: "test", arch: "test", tools: [], models: [{providerClass: "custom", available: true}]}}, {joinToken: issued.joinToken, publicUrl: "https://control.example.test"});
-  validateSchema(state.agentRuntimeNodes[0], runtimeNodeSchema, "AgentRuntimeNode", output);
+  const registeredNode = state.agentRuntimeNodes.find((item) => item.nodeId === registered.node.nodeId);
+  validateSchema(registeredNode, runtimeNodeSchema, "AgentRuntimeNode", output);
+  const noExecutorIssued = createAgentJoinToken(state, {projectId: "prj_control_plane", nodeName: "contract-no-executor", allowedRoles: ["*"]}, {publicUrl: "https://control.example.test"});
+  registerAgentNode(state, {nodeName: "contract-no-executor", requestedRoles: ["*"], runtimeVersion: "contract", profile: {platform: "test", arch: "test", tools: [], models: [{providerClass: "custom", adapter: "unconfigured", available: false}]}}, {joinToken: noExecutorIssued.joinToken, publicUrl: "https://control.example.test"});
+  const noExecutorNode = state.agentRuntimeNodes.find((item) => item.nodeName === "contract-no-executor");
+  const noExecutorCheck = selfCheckAgentNode(state, noExecutorNode, {checks: [
+    {checkId: "runtime", status: "ok"},
+    {checkId: "gateway", status: "ok"},
+    {checkId: "filesystem", status: "ok"},
+    {checkId: "git", status: "ok"},
+    {checkId: "remote_mcp", status: "ok"},
+    {checkId: "model_executor", status: "failed"}
+  ]});
+  if (noExecutorCheck.ok || noExecutorNode.admission !== "read_only") output.push("Agent Gateway admitted a node without a runnable model executor");
   const contract = buildTaskContract(state, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", root});
   if (!contract.model.model || !contract.model.modelId || !contract.model.reasoning || !contract.model.reasoningLevel || !contract.model.modelDecision || !contract.model.modelDecision.startsWith("modelDecision:")) {
     output.push("AgentTaskContract did not bind explicit model, reasoning and short modelDecision");
   }
-  const deepAnalysisDecision = selectModel(state, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", roleId: "orchestrator", workItem: {id: "work_deep_analysis", title: "深度分析架构方案", ownerRole: "orchestrator", requirements: ["analysis only"]}});
+	  const deepAnalysisDecision = selectModel(state, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", roleId: "orchestrator", workItem: {id: "work_deep_analysis", title: "深度分析架构方案", ownerRole: "orchestrator", requirements: ["analysis only"]}});
   if (deepAnalysisDecision.taskExecutionClass !== "deep_analysis" || deepAnalysisDecision.escalationAllowed !== false || !deepAnalysisDecision.modelDecision?.startsWith("modelDecision:") || deepAnalysisDecision.modelDecision.length > 240) {
     output.push("Model selection did not create a bounded one-line integration-owner modelDecision");
+	  }
+  const unavailableState = JSON.parse(JSON.stringify(seedState));
+  ensureRuntimeCollections(unavailableState, {root});
+  const baselineDecision = selectModel(unavailableState, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "ui-console-service"});
+  const baselineModelId = baselineDecision.selectedModel?.modelId;
+  const unavailableModel = unavailableState.modelCapabilities.find((item) => item.modelId === baselineModelId);
+  if (unavailableModel) unavailableModel.availability = "unavailable";
+  const fallbackDecision = selectModel(unavailableState, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "ui-console-service"});
+  if (baselineModelId && fallbackDecision.selectedModel?.modelId === baselineModelId) {
+    output.push("Model selection chose a provider/model marked unavailable instead of the next ranked model");
+  }
+  unavailableState.modelCapabilities.forEach((item) => { item.availability = "unavailable"; });
+  const rejectedDecision = selectModel(unavailableState, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "ui-console-service"});
+  if (rejectedDecision.status !== "rejected" || !rejectedDecision.candidateRankings.some((item) => String(item.rejectionReason || "").includes("availability_unavailable"))) {
+    output.push("Model selection did not fail closed when all models were unavailable");
+  }
+  try {
+    buildTaskContract(unavailableState, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", root});
+    output.push("AgentTaskContract was created even though model selection was rejected");
+  } catch (error) {
+    if (error.code !== "AIMAC_MODEL_SELECTION_REJECTED") output.push(`AgentTaskContract rejected model failure with wrong error: ${error.message}`);
   }
   const mixedState = JSON.parse(JSON.stringify(seedState));
   ensureRuntimeCollections(mixedState, {root});
@@ -161,23 +229,27 @@ function verifyAgentGatewayContracts(output) {
   });
   validateSchema(state.agentDispatches[0], agentDispatchSchema, "AgentDispatch", output);
   try {
-    getSkillWorkset(state, state.agentRuntimeNodes[0], contract.roleSkill.worksetId, {runtimeDir: join(root, ".runtime")});
+    getSkillWorkset(state, registeredNode, contract.roleSkill.worksetId, {runtimeDir: join(root, ".runtime")});
     output.push("Agent Gateway allowed skill workset download before dispatch claim");
   } catch {}
   if (registered.gateway.mcpUrl !== "https://control.example.test/mcp") output.push("AgentRuntimeNode registration did not bind remote MCP URL");
-  const node = state.agentRuntimeNodes[0];
+  const node = registeredNode;
   const firstNodeToken = registered.nodeToken;
   node.credentialExpiresAt = new Date(Date.now() + 60 * 1000).toISOString();
   const rotated = heartbeatAgentNode(state, node, {profile: node.profile}, {presentedToken: firstNodeToken});
   if (!rotated.nodeToken) output.push("Agent heartbeat did not rotate near-expiry node credentials");
-  if (rotated.nodeToken && !authenticateAgentNode(state, firstNodeToken)) output.push("Agent Gateway rejected previous credential during rotation overlap");
-  if (rotated.nodeToken && !authenticateAgentNode(state, rotated.nodeToken)) output.push("Agent Gateway rejected rotated current credential");
+	  if (rotated.nodeToken && !authenticateAgentNode(state, firstNodeToken)) output.push("Agent Gateway rejected previous credential during rotation overlap");
+	  if (rotated.nodeToken && !authenticateAgentNode(state, rotated.nodeToken)) output.push("Agent Gateway rejected rotated current credential");
+    const previousHeartbeat = heartbeatAgentNode(state, node, {profile: node.profile}, {presentedToken: firstNodeToken});
+    if (previousHeartbeat.nodeToken || (rotated.nodeToken && !authenticateAgentNode(state, rotated.nodeToken))) {
+      output.push("Agent heartbeat with previous credential invalidated the current node token");
+    }
   node.status = "online";
   node.admission = "full";
   const claimed = claimNextDispatch(state, node, {runtimeDir: join(root, ".runtime"), claimTtlSeconds: 300});
   if (!claimed.dispatch) output.push(`Agent Gateway did not claim a compatible dispatch: ${claimed.reason || "unknown"}`);
   if (claimed.dispatch) {
-    const workset = getSkillWorkset(state, state.agentRuntimeNodes[0], contract.roleSkill.worksetId, {runtimeDir: join(root, ".runtime")});
+    const workset = getSkillWorkset(state, registeredNode, contract.roleSkill.worksetId, {runtimeDir: join(root, ".runtime")});
     validateSchema(workset, skillWorksetSchema, "AgentSkillWorkset", output);
     const issuedGrant = state.mcpGrants.find((grant) => grant.agentNodeId === node.nodeId && grant.dispatchId === claimed.dispatch.dispatch.dispatchId && grant.grantStatus === "issued");
     if (!issuedGrant) output.push("Agent Gateway did not issue dispatch-bound MCP grants after claim");
@@ -190,25 +262,102 @@ function verifyAgentGatewayContracts(output) {
     if (!pendingCommands.commands.some((command) => command.commandId === controlCommand.commandId)) output.push("Agent control channel did not return queued command");
     const acked = ackAgentControlCommand(state, node, controlCommand.commandId, {status: "completed", result: {profileDigest: node.profileDigest}}).command;
     if (acked.status !== "completed" || !acked.resultDigest) output.push("Agent control command ack did not persist terminal status and digest");
-    const event = submitAgentExecutionEvent(state, node, {dispatchId: claimed.dispatch.dispatch.dispatchId, eventType: "executor_output", progressPercent: 45, summary: "contract event"}).event;
-    validateSchema(event, agentExecutionEventSchema, "AgentExecutionEvent", output);
-    const eventRuntimeDir = mkdtempSync(join(tmpdir(), "aimac-contract-events-"));
-    try {
-      appendProjectExecutionEvent(eventRuntimeDir, event);
-      const eventLog = readProjectExecutionEvents(eventRuntimeDir, event.projectId, {dispatchId: event.dispatchId, limit: 10});
-      if (!eventLog.events.some((item) => item.eventId === event.eventId) || eventLog.storage.storageKind !== "project-jsonl") {
-        output.push("Project-level execution event store did not isolate and return the dispatch event");
+	    const event = submitAgentExecutionEvent(state, node, {dispatchId: claimed.dispatch.dispatch.dispatchId, eventType: "executor_output", progressPercent: 45, summary: "contract event", eventKey: "contract-event-key"}).event;
+	    validateSchema(event, agentExecutionEventSchema, "AgentExecutionEvent", output);
+      try {
+        submitAgentExecutionEvent(state, node, {dispatchId: claimed.dispatch.dispatch.dispatchId, eventType: "progress", summary: "missing key"});
+        output.push("Agent execution event accepted a missing eventKey");
+      } catch {}
+			    const eventRuntimeDir = mkdtempSync(join(tmpdir(), "aimac-contract-events-"));
+          const previousSegmentSize = process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES;
+			    try {
+	          process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES = "1024";
+		      const stored = appendProjectExecutionEvent(eventRuntimeDir, event);
+	      const durableEvent = stored.event || event;
+	      const eventLog = readProjectExecutionEvents(eventRuntimeDir, event.projectId, {dispatchId: event.dispatchId, limit: 10});
+	      if (!eventLog.events.some((item) => item.eventId === durableEvent.eventId) || eventLog.storage.storageKind !== "project-jsonl") {
+	        output.push("Project-level execution event store did not isolate and return the dispatch event");
+	      }
+	      const eventByKey = readProjectExecutionEventByKey(eventRuntimeDir, event.projectId, event.eventKey);
+	      if (!eventByKey || eventByKey.eventId !== durableEvent.eventId || eventByKey.sequence !== durableEvent.sequence) {
+	        output.push("Project-level execution event store did not return the durable event by eventKey");
+	      }
+	      const firstOrdered = appendProjectExecutionEvent(eventRuntimeDir, {...event, eventId: "evt_order_first", eventKey: "order-first", sequence: 999});
+	      const secondOrdered = appendProjectExecutionEvent(eventRuntimeDir, {...event, eventId: "evt_order_second", eventKey: "order-second", sequence: 1});
+	      if (!(secondOrdered.event.sequence > firstOrdered.event.sequence)) {
+	        output.push("Project-level execution event store did not assign append-order project sequences inside the project lock");
+	      }
+	      const afterFirst = readProjectExecutionEvents(eventRuntimeDir, event.projectId, {afterSequence: firstOrdered.event.sequence, limit: 10});
+		      if (!afterFirst.events.some((item) => item.eventId === "evt_order_second")) {
+		        output.push("Project-level execution event cursor skipped an append-later event");
+		      }
+          try {
+            appendProjectExecutionEvent(eventRuntimeDir, {...event, eventId: "evt_missing_key", eventKey: ""});
+            output.push("Project-level execution event store accepted a missing eventKey");
+          } catch {}
+          for (let index = 0; index < 8; index += 1) {
+            appendProjectExecutionEvent(eventRuntimeDir, {...event, eventId: `evt_segment_${index}`, eventKey: `segment-${index}`, summary: "x".repeat(1200), sequence: 1});
+          }
+          const segmentedRead = readProjectExecutionEvents(eventRuntimeDir, event.projectId, {afterSequence: 0, limit: 50});
+          const segmentEvent = readProjectExecutionEventByKey(eventRuntimeDir, event.projectId, "segment-7");
+          if (!segmentEvent || !segmentedRead.events.some((item) => item.eventId === "evt_segment_7")) {
+            output.push("Project-level execution event store did not read events across rotated project segments");
+          }
+          if (!existsSync(join(eventRuntimeDir, "project-db", `${safeProjectIdForContract(event.projectId)}.execution-events.manifest.json`))) {
+            output.push("Project-level execution event store did not create a segment manifest");
+          }
+			      const firstStorage = appendProjectExecutionEvent(eventRuntimeDir, {...event, eventId: "evt_collision_a", eventKey: "collision-a", projectId: "project/a", sequence: 1});
+      const secondStorage = appendProjectExecutionEvent(eventRuntimeDir, {...event, eventId: "evt_collision_b", eventKey: "collision-b", projectId: "project_a", sequence: 1});
+      if (firstStorage.storageRef === secondStorage.storageRef) {
+        output.push("Project-level execution event store collapsed sanitized project ids into the same file");
       }
-    } finally {
-      rmSync(eventRuntimeDir, {recursive: true, force: true});
-    }
+	    } finally {
+        if (previousSegmentSize === undefined) delete process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES;
+        else process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES = previousSegmentSize;
+	      rmSync(eventRuntimeDir, {recursive: true, force: true});
+	    }
   }
   const claimedDispatchId = claimed.dispatch?.dispatch.dispatchId;
   if (claimedDispatchId) {
-    const revoked = revokeAgentNode(state, node);
+    const revokeRequest = requestAgentNodeRevocation(state, node, {ttlSeconds: 300}, {actor: "contract-check", idempotencyKey: "contract-node-revoke"});
+    const pending = state.agentDispatches.find((dispatch) => dispatch.dispatchId === claimedDispatchId);
+    if (!revokeRequest.pendingDispatchIds.includes(claimedDispatchId) || pending?.status !== "blocked" || pending.assignedNodeId !== node.nodeId || node.status !== "draining") {
+      output.push("Agent node revocation request did not fence its running dispatch until runtime ACK");
+    }
+    if (state.mcpGrants.some((grant) => grant.agentNodeId === node.nodeId && grant.dispatchId === claimedDispatchId && grant.grantStatus === "issued")) {
+      output.push("Agent node revocation request did not revoke dispatch-bound MCP grants before ACK");
+    }
+    ackAgentControlCommand(state, node, revokeRequest.command.commandId, {status: "completed", result: {stopped: true}});
     const requeued = state.agentDispatches.find((dispatch) => dispatch.dispatchId === claimedDispatchId);
-    if (!revoked.requeuedDispatchIds.includes(claimedDispatchId) || requeued?.status !== "queued" || requeued.assignedNodeId) {
-      output.push("Agent node revocation did not requeue its running dispatch");
+    if (requeued?.status !== "queued" || requeued.assignedNodeId || node.status !== "revoked") {
+      output.push("Agent node revocation ACK did not requeue its fenced dispatch and revoke the node");
+    }
+    const shutdownIssued = createAgentJoinToken(state, {projectId: "prj_control_plane", nodeName: "contract-shutdown-node", allowedRoles: ["*"]}, {publicUrl: "https://control.example.test"});
+    registerAgentNode(state, {nodeName: "contract-shutdown-node", requestedRoles: ["*"], runtimeVersion: "contract", profile: {platform: "test", arch: "test", tools: [], models: [{providerClass: "custom", available: true}]}}, {joinToken: shutdownIssued.joinToken, publicUrl: "https://control.example.test"});
+    const shutdownNode = state.agentRuntimeNodes.find((item) => item.nodeName === "contract-shutdown-node");
+    selfCheckAgentNode(state, shutdownNode, {checks: [
+      {checkId: "runtime", status: "ok"},
+      {checkId: "gateway", status: "ok"},
+      {checkId: "filesystem", status: "ok"},
+      {checkId: "git", status: "ok"},
+      {checkId: "remote_mcp", status: "ok"},
+      {checkId: "model_executor", status: "ok"}
+    ]});
+    const shutdownClaim = claimNextDispatch(state, shutdownNode, {runtimeDir: join(root, ".runtime"), claimTtlSeconds: 300});
+	    if (shutdownClaim.dispatch) {
+	      const shutdownDispatchId = shutdownClaim.dispatch.dispatch.dispatchId;
+	      const shutdownCommand = createAgentControlCommand(state, shutdownNode, {commandType: "shutdown"}, {actor: "contract-check", idempotencyKey: "contract-node-shutdown"}).command;
+        const preAckShutdownDispatch = state.agentDispatches.find((dispatch) => dispatch.dispatchId === shutdownDispatchId);
+        if (preAckShutdownDispatch?.status !== "blocked" || shutdownNode.status !== "draining" || state.mcpGrants.some((grant) => grant.agentNodeId === shutdownNode.nodeId && grant.dispatchId === shutdownDispatchId && grant.grantStatus === "issued")) {
+          output.push("Agent shutdown command did not freeze dispatch and revoke MCP grants before runtime ACK");
+        }
+	      ackAgentControlCommand(state, shutdownNode, shutdownCommand.commandId, {status: "completed", result: {stopped: true}});
+      const shutdownDispatch = state.agentDispatches.find((dispatch) => dispatch.dispatchId === shutdownDispatchId);
+      if (shutdownNode.status !== "offline" || shutdownNode.admission !== "read_only" || shutdownDispatch?.status !== "queued" || shutdownDispatch.assignedNodeId) {
+        output.push("Agent shutdown ACK did not offline the node and requeue active dispatches");
+      }
+    } else {
+      output.push(`Agent shutdown contract could not claim a dispatch: ${shutdownClaim.reason || "unknown"}`);
     }
   }
 }
@@ -254,4 +403,8 @@ function validateType(value, type, path, output) {
   if (type === "boolean" && typeof value !== "boolean") output.push(`${path} expected boolean`);
   if (type === "integer" && !Number.isInteger(value)) output.push(`${path} expected integer`);
   if (type === "number" && typeof value !== "number") output.push(`${path} expected number`);
+}
+
+function safeProjectIdForContract(projectId) {
+  return `p_${createHash("sha256").update(String(projectId || "unknown")).digest("hex").slice(0, 24)}`;
 }

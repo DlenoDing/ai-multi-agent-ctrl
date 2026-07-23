@@ -24,6 +24,8 @@
     "deliveredAt": {"type": "string", "format": "date-time"},
     "acknowledgedAt": {"type": "string", "format": "date-time"},
     "finalizedAt": {"type": "string", "format": "date-time"},
+    "retryCommandId": {"type": "string", "minLength": 1},
+    "failureHandledAt": {"type": "string", "format": "date-time"},
     "ackResult": {"type": "object"},
     "resultDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
     "createdAt": {"type": "string", "format": "date-time"},
