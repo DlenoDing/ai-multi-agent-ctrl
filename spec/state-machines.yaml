@@ -24,14 +24,42 @@ machines:
         to: "discovery"
         actor: "orchestrator"
         requires: ["objective_digest", "boundary_digest"]
+      - from: "discovery"
+        to: "product_design"
+        actor: "orchestrator"
+        requires: ["discovery_checkpoint"]
+      - from: "product_design"
+        to: "solution_design"
+        actor: "orchestrator"
+        requires: ["product_acceptance_contract"]
+      - from: "solution_design"
+        to: "ui_design"
+        actor: "orchestrator"
+        requires: ["architecture_decision_record"]
+      - from: "ui_design"
+        to: "development"
+        actor: "orchestrator"
+        requires: ["design_gate_passed"]
       - from: "development"
         to: "global_development_review"
         actor: "orchestrator"
         requires: ["all_required_work_code_complete"]
+      - from: "global_development_review"
+        to: "verification"
+        actor: "reviewer"
+        requires: ["global_review_passed"]
       - from: "verification"
         to: "repair"
         actor: "orchestrator"
         requires: ["accepted_findings"]
+      - from: "verification"
+        to: "integration"
+        actor: "orchestrator"
+        requires: ["verification_passed_without_repair"]
+      - from: "repair"
+        to: "reverification"
+        actor: "orchestrator"
+        requires: ["repair_checkpoint"]
       - from: "reverification"
         to: "integration"
         actor: "orchestrator"
@@ -40,10 +68,18 @@ machines:
         to: "release"
         actor: "release"
         requires: ["integration_batch_verified", "release_manifest"]
+      - from: "release"
+        to: "online_quality"
+        actor: "release"
+        requires: ["release_gate_passed"]
       - from: "online_quality"
         to: "closed"
         actor: "orchestrator"
         requires: ["close_barrier_satisfied"]
+      - from: "intake"
+        to: "aborted"
+        actor: "orchestrator"
+        requires: ["abort_decision"]
 
   WorkItem:
     initial: "draft"
@@ -72,6 +108,10 @@ machines:
       - "superseded"
       - "aborted"
     transitions:
+      - from: "draft"
+        to: "ready"
+        actor: "orchestrator"
+        requires: ["task_contract_created"]
       - from: "ready"
         to: "assigned"
         actor: "scheduler"
@@ -80,10 +120,46 @@ machines:
         to: "in_progress"
         actor: "work-session"
         requires: ["task_contract_valid"]
+      - from: "assigned"
+        to: "blocked_resource"
+        actor: "scheduler"
+        requires: ["lease_conflict_detected"]
       - from: "in_progress"
         to: "checkpoint_submitted"
         actor: "work-session"
         requires: ["checkpoint"]
+      - from: "in_progress"
+        to: "blocked_dependency"
+        actor: "work-session"
+        requires: ["dependency_blocker"]
+      - from: "in_progress"
+        to: "blocked_resource"
+        actor: "scheduler"
+        requires: ["resource_preempted"]
+      - from: "in_progress"
+        to: "permission_required"
+        actor: "work-session"
+        requires: ["permission_request_submitted"]
+      - from: "in_progress"
+        to: "needs_decision"
+        actor: "work-session"
+        requires: ["decision_request_submitted"]
+      - from: "in_progress"
+        to: "stale_state"
+        actor: "work-session"
+        requires: ["state_compare_failed"]
+      - from: "in_progress"
+        to: "invalidated"
+        actor: "orchestrator"
+        requires: ["input_digest_changed"]
+      - from: "checkpoint_submitted"
+        to: "code_complete"
+        actor: "work-session"
+        requires: ["required_outputs_submitted"]
+      - from: "code_complete"
+        to: "review_requested"
+        actor: "orchestrator"
+        requires: ["review_request_event"]
       - from: "checkpoint_submitted"
         to: "review_requested"
         actor: "orchestrator"
@@ -92,18 +168,74 @@ machines:
         to: "review_passed"
         actor: "reviewer"
         requires: ["review_report"]
+      - from: "review_passed"
+        to: "verification_ready"
+        actor: "orchestrator"
+        requires: ["verification_plan"]
+      - from: "verification_ready"
+        to: "verified"
+        actor: "qa"
+        requires: ["verification_evidence"]
       - from: "verified"
         to: "close_candidate"
         actor: "qa"
         requires: ["verification_evidence"]
+      - from: "verified"
+        to: "reverify_required"
+        actor: "orchestrator"
+        requires: ["upstream_digest_changed"]
       - from: "close_candidate"
         to: "closed"
         actor: "orchestrator"
         requires: ["close_barrier_work_item"]
+      - from: "close_candidate"
+        to: "reopened"
+        actor: "orchestrator"
+        requires: ["close_barrier_failed"]
+      - from: "ready"
+        to: "superseded"
+        actor: "orchestrator"
+        requires: ["replacement_work_item"]
+      - from: "in_progress"
+        to: "aborted"
+        actor: "orchestrator"
+        requires: ["abort_decision"]
+      - from: "blocked_dependency"
+        to: "ready"
+        actor: "orchestrator"
+        requires: ["dependency_resolved"]
+      - from: "blocked_resource"
+        to: "ready"
+        actor: "scheduler"
+        requires: ["resource_available"]
+      - from: "permission_required"
+        to: "ready"
+        actor: "permission-gateway"
+        requires: ["permission_resolution_delta"]
+      - from: "needs_decision"
+        to: "ready"
+        actor: "decision-center"
+        requires: ["decision_record"]
+      - from: "stale_state"
+        to: "ready"
+        actor: "orchestrator"
+        requires: ["state_rebound"]
+      - from: "invalidated"
+        to: "ready"
+        actor: "orchestrator"
+        requires: ["new_input_digest"]
+      - from: "reverify_required"
+        to: "verification_ready"
+        actor: "orchestrator"
+        requires: ["reverify_plan"]
+      - from: "reopened"
+        to: "ready"
+        actor: "orchestrator"
+        requires: ["reopen_reason"]
 
   WorkSession:
     initial: "starting"
-    terminal: ["completed_objective", "recycled", "failed", "aborted"]
+    terminal: ["recycled", "failed", "aborted"]
     states:
       - "starting"
       - "active"
@@ -125,18 +257,62 @@ machines:
         to: "permission_required"
         actor: "agent-runtime"
         requires: ["permission_request_submitted"]
+      - from: "active"
+        to: "needs_decision"
+        actor: "agent-runtime"
+        requires: ["decision_request_submitted"]
+      - from: "active"
+        to: "waiting_room_event"
+        actor: "agent-runtime"
+        requires: ["wake_trigger_registered"]
+      - from: "active"
+        to: "waiting_dependency"
+        actor: "agent-runtime"
+        requires: ["dependency_wait_registered"]
+      - from: "active"
+        to: "stale_state"
+        actor: "agent-runtime"
+        requires: ["state_compare_failed"]
+      - from: "active"
+        to: "failed"
+        actor: "agent-runtime"
+        requires: ["failure_evidence"]
+      - from: "active"
+        to: "aborted"
+        actor: "orchestrator"
+        requires: ["cancel_ref"]
+      - from: "waiting_room_event"
+        to: "active"
+        actor: "agent-runtime"
+        requires: ["wake_delta"]
+      - from: "waiting_dependency"
+        to: "active"
+        actor: "agent-runtime"
+        requires: ["dependency_resolved"]
       - from: "permission_required"
         to: "active"
         actor: "permission-gateway"
         requires: ["permission_resolution_delta"]
+      - from: "needs_decision"
+        to: "active"
+        actor: "decision-center"
+        requires: ["decision_delta"]
+      - from: "stale_state"
+        to: "active"
+        actor: "orchestrator"
+        requires: ["session_rebound"]
       - from: "active"
         to: "completed_objective"
         actor: "work-session"
         requires: ["checkpoint", "evidence_refs"]
+      - from: "completed_objective"
+        to: "recycled"
+        actor: "orchestrator"
+        requires: ["session_recycle_ack"]
 
   Command:
     initial: "created"
-    terminal: ["succeeded", "failed", "cancelled", "timed_out", "compensated", "dlq"]
+    terminal: ["succeeded", "cancelled", "timed_out", "compensated", "dlq"]
     states:
       - "created"
       - "admitted"
@@ -158,30 +334,66 @@ machines:
         to: "dispatched"
         actor: "command-bus"
         requires: ["target_available"]
+      - from: "dispatched"
+        to: "running"
+        actor: "agent-runtime"
+        requires: ["dispatch_ack"]
+      - from: "running"
+        to: "checkpointed"
+        actor: "agent-runtime"
+        requires: ["checkpoint_ref"]
       - from: "running"
         to: "succeeded"
         actor: "agent-runtime"
         requires: ["result_ref", "effect_record_if_side_effect"]
+      - from: "checkpointed"
+        to: "succeeded"
+        actor: "agent-runtime"
+        requires: ["result_ref"]
+      - from: "running"
+        to: "failed"
+        actor: "agent-runtime"
+        requires: ["failure_ref"]
+      - from: "running"
+        to: "timed_out"
+        actor: "command-bus"
+        requires: ["timeout_at_elapsed"]
+      - from: "running"
+        to: "cancelled"
+        actor: "command-bus"
+        requires: ["cancel_ref"]
       - from: "failed"
         to: "dlq"
         actor: "command-bus"
         requires: ["max_attempts_exceeded"]
+      - from: "failed"
+        to: "admitted"
+        actor: "command-bus"
+        requires: ["retry_policy_allows"]
+      - from: "failed"
+        to: "compensated"
+        actor: "command-bus"
+        requires: ["compensation_command_verified"]
 
   PermissionRequest:
     initial: "observed"
-    terminal: ["resolved", "aborted", "rejected"]
+    terminal: ["resolved", "aborted", "rejected", "external_capability_blocked", "expired"]
     states:
       - "observed"
       - "classified"
       - "routed_to_controller"
+      - "pending_approval"
       - "approved"
       - "rejected"
       - "external_capability_required"
+      - "external_capability_blocked"
       - "reassigned"
+      - "scope_reduced"
       - "grant_issued"
       - "retrying"
       - "resolved"
       - "aborted"
+      - "expired"
     transitions:
       - from: "observed"
         to: "classified"
@@ -192,6 +404,18 @@ machines:
         actor: "permission-gateway"
         requires: ["risk_level", "suggested_actions"]
       - from: "routed_to_controller"
+        to: "pending_approval"
+        actor: "orchestrator"
+        requires: ["approval_required"]
+      - from: "pending_approval"
+        to: "approved"
+        actor: "orchestrator"
+        requires: ["approval_decision_ref"]
+      - from: "pending_approval"
+        to: "rejected"
+        actor: "orchestrator"
+        requires: ["approval_rejection_ref"]
+      - from: "routed_to_controller"
         to: "grant_issued"
         actor: "orchestrator"
         requires: ["policy_passed", "grant_ref"]
@@ -199,10 +423,38 @@ machines:
         to: "reassigned"
         actor: "scheduler"
         requires: ["alternate_agent_has_capability"]
+      - from: "reassigned"
+        to: "resolved"
+        actor: "scheduler"
+        requires: ["reassignment_ack"]
       - from: "routed_to_controller"
         to: "external_capability_required"
         actor: "orchestrator"
         requires: ["external_boundary_classified"]
+      - from: "external_capability_required"
+        to: "grant_issued"
+        actor: "permission-gateway"
+        requires: ["capability_grant_registered"]
+      - from: "external_capability_required"
+        to: "external_capability_blocked"
+        actor: "permission-gateway"
+        requires: ["capability_unavailable"]
+      - from: "routed_to_controller"
+        to: "scope_reduced"
+        actor: "orchestrator"
+        requires: ["scope_reduction_decision"]
+      - from: "scope_reduced"
+        to: "resolved"
+        actor: "agent-runtime"
+        requires: ["work_continued_with_reduced_scope"]
+      - from: "routed_to_controller"
+        to: "aborted"
+        actor: "orchestrator"
+        requires: ["abort_decision"]
+      - from: "routed_to_controller"
+        to: "expired"
+        actor: "permission-gateway"
+        requires: ["expires_at_elapsed"]
       - from: "grant_issued"
         to: "retrying"
         actor: "agent-runtime"
@@ -211,3 +463,415 @@ machines:
         to: "resolved"
         actor: "agent-runtime"
         requires: ["work_continued_or_checkpointed"]
+      - from: "approved"
+        to: "grant_issued"
+        actor: "permission-gateway"
+        requires: ["exact_grant_issued"]
+
+  ApprovalRequest:
+    initial: "requested"
+    terminal: ["approved", "rejected", "expired", "cancelled"]
+    states:
+      - "requested"
+      - "policy_precheck"
+      - "risk_classified"
+      - "quorum_collecting"
+      - "approved"
+      - "rejected"
+      - "expired"
+      - "cancelled"
+    transitions:
+      - from: "requested"
+        to: "policy_precheck"
+        actor: "policy-engine"
+        requires: ["action_ref", "scope_ref", "idempotency_key"]
+      - from: "policy_precheck"
+        to: "risk_classified"
+        actor: "security"
+        requires: ["risk_level", "evidence_bundle"]
+      - from: "risk_classified"
+        to: "quorum_collecting"
+        actor: "decision-center"
+        requires: ["required_approver_roles", "quorum_policy"]
+      - from: "quorum_collecting"
+        to: "approved"
+        actor: "orchestrator"
+        requires: ["ai_quorum_passed", "decision_record"]
+      - from: "quorum_collecting"
+        to: "rejected"
+        actor: "orchestrator"
+        requires: ["ai_quorum_rejected", "decision_record"]
+      - from: "quorum_collecting"
+        to: "expired"
+        actor: "orchestrator"
+        requires: ["expires_at_elapsed"]
+      - from: "requested"
+        to: "cancelled"
+        actor: "orchestrator"
+        requires: ["superseded_or_aborted_action"]
+
+  DecisionRecord:
+    initial: "drafted"
+    terminal: ["superseded", "revoked"]
+    states:
+      - "drafted"
+      - "validated"
+      - "active"
+      - "superseded"
+      - "revoked"
+    transitions:
+      - from: "drafted"
+        to: "validated"
+        actor: "decision-center"
+        requires: ["scope", "evidence_refs", "expiry_or_invalidation_rule"]
+      - from: "validated"
+        to: "active"
+        actor: "orchestrator"
+        requires: ["state_version_incremented", "audit_ref"]
+      - from: "active"
+        to: "superseded"
+        actor: "orchestrator"
+        requires: ["successor_decision_ref"]
+      - from: "active"
+        to: "revoked"
+        actor: "orchestrator"
+        requires: ["revocation_decision_ref"]
+
+  Finding:
+    initial: "reported"
+    terminal: ["closed", "rejected", "duplicate"]
+    states:
+      - "reported"
+      - "triaged"
+      - "accepted"
+      - "rejected"
+      - "duplicate"
+      - "root_cause_confirmed"
+      - "impact_scanned"
+      - "fix_planned"
+      - "fixed"
+      - "reverify_requested"
+      - "reverified"
+      - "closed"
+    transitions:
+      - from: "reported"
+        to: "triaged"
+        actor: "reviewer"
+        requires: ["severity", "evidence_refs"]
+      - from: "triaged"
+        to: "accepted"
+        actor: "orchestrator"
+        requires: ["owner_role", "impact_scope"]
+      - from: "triaged"
+        to: "rejected"
+        actor: "orchestrator"
+        requires: ["rejection_reason"]
+      - from: "triaged"
+        to: "duplicate"
+        actor: "reviewer"
+        requires: ["duplicate_finding_ref"]
+      - from: "accepted"
+        to: "root_cause_confirmed"
+        actor: "work-session"
+        requires: ["root_cause_ref"]
+      - from: "root_cause_confirmed"
+        to: "impact_scanned"
+        actor: "reviewer"
+        requires: ["impact_scan_ref"]
+      - from: "impact_scanned"
+        to: "fix_planned"
+        actor: "orchestrator"
+        requires: ["fix_plan"]
+      - from: "fix_planned"
+        to: "fixed"
+        actor: "work-session"
+        requires: ["fix_checkpoint"]
+      - from: "fixed"
+        to: "reverify_requested"
+        actor: "orchestrator"
+        requires: ["fix_checkpoint"]
+      - from: "reverify_requested"
+        to: "reverified"
+        actor: "qa"
+        requires: ["independent_reverify_evidence"]
+      - from: "reverified"
+        to: "closed"
+        actor: "orchestrator"
+        requires: ["finding_close_evidence"]
+
+  Contract:
+    initial: "draft"
+    terminal: ["superseded", "retired"]
+    states:
+      - "draft"
+      - "proposed"
+      - "compatibility_checking"
+      - "approved"
+      - "active"
+      - "superseded"
+      - "retired"
+    transitions:
+      - from: "draft"
+        to: "proposed"
+        actor: "work-session"
+        requires: ["contract_digest", "consumer_refs"]
+      - from: "proposed"
+        to: "compatibility_checking"
+        actor: "orchestrator"
+        requires: ["affected_work_scan"]
+      - from: "compatibility_checking"
+        to: "approved"
+        actor: "reviewer"
+        requires: ["compatibility_evidence"]
+      - from: "approved"
+        to: "active"
+        actor: "orchestrator"
+        requires: ["consumer_bindings_updated", "state_version_incremented"]
+      - from: "active"
+        to: "superseded"
+        actor: "orchestrator"
+        requires: ["successor_contract_version"]
+      - from: "active"
+        to: "retired"
+        actor: "orchestrator"
+        requires: ["consumer_refs_removed"]
+
+  IntegrationBatch:
+    initial: "queued"
+    terminal: ["merged", "rolled_back", "aborted"]
+    states:
+      - "queued"
+      - "rebasing"
+      - "batch_ci_running"
+      - "batch_verified"
+      - "merge_ready"
+      - "merged"
+      - "merge_conflict"
+      - "batch_ci_failed"
+      - "rolled_back"
+      - "aborted"
+    transitions:
+      - from: "queued"
+        to: "rebasing"
+        actor: "release"
+        requires: ["change_set_refs", "baseline_commit"]
+      - from: "rebasing"
+        to: "batch_ci_running"
+        actor: "release"
+        requires: ["rebase_result_ref"]
+      - from: "rebasing"
+        to: "merge_conflict"
+        actor: "release"
+        requires: ["conflict_ref"]
+      - from: "batch_ci_running"
+        to: "batch_verified"
+        actor: "qa"
+        requires: ["batch_ci_evidence"]
+      - from: "batch_ci_running"
+        to: "batch_ci_failed"
+        actor: "qa"
+        requires: ["batch_ci_failure_evidence"]
+      - from: "batch_verified"
+        to: "merge_ready"
+        actor: "release"
+        requires: ["release_manifest"]
+      - from: "merge_ready"
+        to: "merged"
+        actor: "release"
+        requires: ["merge_commit", "command_effect_ref"]
+      - from: "merge_ready"
+        to: "aborted"
+        actor: "release"
+        requires: ["abort_decision"]
+      - from: "batch_verified"
+        to: "rolled_back"
+        actor: "release"
+        requires: ["rollback_evidence"]
+      - from: "merge_conflict"
+        to: "rebasing"
+        actor: "release"
+        requires: ["conflict_resolution_checkpoint"]
+      - from: "batch_ci_failed"
+        to: "queued"
+        actor: "release"
+        requires: ["split_or_retry_plan"]
+
+  CommandEffect:
+    initial: "prepared"
+    terminal: ["verified", "rolled_back", "abandoned"]
+    states:
+      - "prepared"
+      - "applied"
+      - "verifying"
+      - "verified"
+      - "rollback_required"
+      - "rolled_back"
+      - "abandoned"
+    transitions:
+      - from: "prepared"
+        to: "applied"
+        actor: "agent-runtime"
+        requires: ["before_digest", "external_operation_id", "fencing_token"]
+      - from: "applied"
+        to: "verifying"
+        actor: "agent-runtime"
+        requires: ["after_digest", "result_ref"]
+      - from: "verifying"
+        to: "verified"
+        actor: "reviewer"
+        requires: ["effect_verify_evidence"]
+      - from: "verifying"
+        to: "rollback_required"
+        actor: "reviewer"
+        requires: ["effect_mismatch"]
+      - from: "rollback_required"
+        to: "rolled_back"
+        actor: "release"
+        requires: ["rollback_command_id", "rollback_evidence"]
+      - from: "rollback_required"
+        to: "abandoned"
+        actor: "orchestrator"
+        requires: ["abandon_decision_record"]
+
+  PolicyDecision:
+    initial: "evaluating"
+    terminal: ["allowed", "denied"]
+    states:
+      - "evaluating"
+      - "allowed"
+      - "denied"
+    transitions:
+      - from: "evaluating"
+        to: "allowed"
+        actor: "policy-engine"
+        requires: ["policy_version", "actor", "action", "resource", "context_digest"]
+      - from: "evaluating"
+        to: "denied"
+        actor: "policy-engine"
+        requires: ["policy_version", "denial_reason"]
+
+  QualityGate:
+    initial: "pending"
+    terminal: ["passed", "waived"]
+    states:
+      - "pending"
+      - "running"
+      - "passed"
+      - "failed"
+      - "waived"
+    transitions:
+      - from: "pending"
+        to: "running"
+        actor: "qa"
+        requires: ["gate_target", "run_id"]
+      - from: "running"
+        to: "passed"
+        actor: "qa"
+        requires: ["evidence_refs"]
+      - from: "running"
+        to: "failed"
+        actor: "qa"
+        requires: ["failure_evidence"]
+      - from: "failed"
+        to: "waived"
+        actor: "orchestrator"
+        requires: ["decision_record", "scope_boundary_adjustment"]
+      - from: "failed"
+        to: "running"
+        actor: "qa"
+        requires: ["rerun_requested"]
+
+  Lease:
+    initial: "requested"
+    terminal: ["released", "expired", "revoked"]
+    states:
+      - "requested"
+      - "active"
+      - "renewing"
+      - "released"
+      - "expired"
+      - "revoked"
+    transitions:
+      - from: "requested"
+        to: "active"
+        actor: "scheduler"
+        requires: ["resource_available", "fencing_token"]
+      - from: "active"
+        to: "renewing"
+        actor: "agent-runtime"
+        requires: ["owner_heartbeat"]
+      - from: "renewing"
+        to: "active"
+        actor: "scheduler"
+        requires: ["lease_extended"]
+      - from: "active"
+        to: "released"
+        actor: "agent-runtime"
+        requires: ["work_checkpointed"]
+      - from: "active"
+        to: "expired"
+        actor: "monitor"
+        requires: ["ttl_elapsed"]
+      - from: "active"
+        to: "revoked"
+        actor: "orchestrator"
+        requires: ["preemption_decision"]
+
+  DLQEntry:
+    initial: "created"
+    terminal: ["replayed", "discarded", "superseded"]
+    states:
+      - "created"
+      - "classified"
+      - "assigned"
+      - "replayed"
+      - "discarded"
+      - "superseded"
+    transitions:
+      - from: "created"
+        to: "classified"
+        actor: "monitor"
+        requires: ["root_cause_hint"]
+      - from: "classified"
+        to: "assigned"
+        actor: "orchestrator"
+        requires: ["owner_role"]
+      - from: "assigned"
+        to: "replayed"
+        actor: "command-bus"
+        requires: ["replay_policy_passed"]
+      - from: "assigned"
+        to: "discarded"
+        actor: "orchestrator"
+        requires: ["decision_record"]
+      - from: "assigned"
+        to: "superseded"
+        actor: "orchestrator"
+        requires: ["source_object_superseded"]
+
+  Ruleset:
+    initial: "draft"
+    terminal: ["superseded", "revoked"]
+    states:
+      - "draft"
+      - "reviewing"
+      - "active"
+      - "superseded"
+      - "revoked"
+    transitions:
+      - from: "draft"
+        to: "reviewing"
+        actor: "rule-steward"
+        requires: ["rule_candidate_ref"]
+      - from: "reviewing"
+        to: "active"
+        actor: "orchestrator"
+        requires: ["review_report", "ruleset_digest"]
+      - from: "active"
+        to: "superseded"
+        actor: "rule-steward"
+        requires: ["successor_ruleset_digest"]
+      - from: "active"
+        to: "revoked"
+        actor: "orchestrator"
+        requires: ["revocation_decision_ref"]

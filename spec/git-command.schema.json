@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/git-command.schema.json",
+  "title": "GitCommand",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "commandId",
+    "projectId",
+    "taskGroupId",
+    "workId",
+    "sessionId",
+    "runId",
+    "repositoryId",
+    "operation",
+    "gitPolicyRef",
+    "idempotencyKey",
+    "expectedHead",
+    "changedPaths",
+    "writeScopeDigest",
+    "outputRequired",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "git-command/v1"
+    },
+    "commandId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repositoryId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "operation": {
+      "type": "string",
+      "enum": ["prepare", "status_check", "commit", "push", "tag", "merge_queue_submit"]
+    },
+    "gitPolicyRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expectedHead": {
+      "type": "string",
+      "minLength": 1
+    },
+    "branch": {
+      "type": "string"
+    },
+    "changedPaths": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "changeType", "matchedWriteScope"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "changeType": {
+            "type": "string",
+            "enum": ["add", "modify", "delete", "rename"]
+          },
+          "matchedWriteScope": {
+            "type": "boolean",
+            "const": true
+          },
+          "beforeDigest": {
+            "type": "string"
+          },
+          "afterDigest": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "writeScopeDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "commit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message", "authorIdentityRef", "paths", "allowEmpty"],
+      "properties": {
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authorIdentityRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowEmpty": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "push": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["remoteName", "targetRef", "expectedLocalSha", "forbidForcePush", "verifyRemoteSha"],
+      "properties": {
+        "remoteName": {
+          "type": "string",
+          "default": "origin"
+        },
+        "targetRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expectedLocalSha": {
+          "type": "string",
+          "minLength": 1
+        },
+        "forbidForcePush": {
+          "type": "boolean",
+          "const": true
+        },
+        "verifyRemoteSha": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    },
+    "outputRequired": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": ["statusSnapshot", "commitRef", "pushRef", "commandEffect", "evidenceRef"]
+      }
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

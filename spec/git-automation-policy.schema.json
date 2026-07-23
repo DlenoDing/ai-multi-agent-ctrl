@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/git-automation-policy.schema.json",
+  "title": "GitAutomationPolicy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "repositoryId",
+    "credentialProfileRef",
+    "baseRef",
+    "workBranch",
+    "commitPolicy",
+    "pushPolicy",
+    "changedPathPolicy"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "git-automation-policy/v1"
+    },
+    "repositoryId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "remoteName": {
+      "type": "string",
+      "default": "origin"
+    },
+    "credentialProfileRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "baseRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workBranch": {
+      "type": "string",
+      "pattern": "^(tg|work|agent)/.+"
+    },
+    "commitPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authorIdentityRef", "messageTemplate", "requireSignedCommit"],
+      "properties": {
+        "authorIdentityRef": {
+          "type": "string"
+        },
+        "messageTemplate": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requireSignedCommit": {
+          "type": "boolean"
+        }
+      }
+    },
+    "pushPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetRef", "forbidForcePush", "verifyRemoteSha", "retryPolicy"],
+      "properties": {
+        "targetRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "forbidForcePush": {
+          "type": "boolean",
+          "const": true
+        },
+        "verifyRemoteSha": {
+          "type": "boolean",
+          "const": true
+        },
+        "retryPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxAttempts", "backoff"],
+          "properties": {
+            "maxAttempts": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "backoff": {
+              "type": "string",
+              "enum": ["fixed", "exponential"]
+            }
+          }
+        }
+      }
+    },
+    "changedPathPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mustMatchWriteScope", "allowGeneratedFiles", "allowLockfileChanges", "allowDeletes", "allowRenames"],
+      "properties": {
+        "mustMatchWriteScope": {
+          "type": "boolean",
+          "const": true
+        },
+        "allowGeneratedFiles": {
+          "type": "boolean"
+        },
+        "allowLockfileChanges": {
+          "type": "boolean"
+        },
+        "allowDeletes": {
+          "type": "boolean"
+        },
+        "allowRenames": {
+          "type": "boolean"
+        },
+        "extraAllowedPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
+    }
+  }
+}

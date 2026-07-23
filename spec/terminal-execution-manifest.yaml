@@ -2,12 +2,19 @@ schemaVersion: "terminal-execution-manifest/v1"
 systemId: "ai-multi-agent-ctrl"
 executionMode: "ai_agent_autonomous"
 authorityModel:
-  externalUser:
-    role: "objective_source"
+  entryControllerSession:
+    role: "objective_boundary_source"
     allowedActions:
       - "submit_objective"
       - "define_boundary"
       - "provide_external_capability_signal"
+    forbiddenAsExecutionDependency: true
+  adminConsole:
+    role: "configuration_observation_surface"
+    allowedActions:
+      - "observe_state"
+      - "configure_capability_registry"
+      - "inspect_audit"
     forbiddenAsExecutionDependency: true
   orchestrator:
     role: "canonical_controller"
@@ -21,8 +28,8 @@ authorityModel:
     blocksUnauthorizedSideEffects: true
 
 nonNegotiableInvariants:
-  - id: "no_human_execution_steps"
-    rule: "Do not emit completion plans that require a human to execute project work."
+  - id: "no_non_system_execution_steps"
+    rule: "Do not emit completion plans that require non-system execution paths to execute project work."
   - id: "database_is_canonical"
     rule: "PostgreSQL state, event log, checkpoint and artifact digest are authoritative."
   - id: "schema_before_execution"
@@ -37,6 +44,24 @@ nonNegotiableInvariants:
     rule: "Permission blockers must become PermissionRequest objects."
   - id: "external_capability_boundary"
     rule: "External systems that forbid automation must be modeled as external capability boundaries, not bypassed."
+  - id: "no_close_with_pending_security_objects"
+    rule: "TaskGroup and WorkItem closure is forbidden while PermissionRequest, ApprovalRequest, PolicyDecision, Command, CommandEffect, DLQEntry, Lease, temporary grant, secret lease, or external capability blocker is non-terminal."
+  - id: "external_capability_cannot_be_ai_approved"
+    rule: "OS, OAuth, account login, UAC, Keychain, sudo, hardware key, payment, cloud, and production organization boundaries cannot be transformed into ordinary approval by AI quorum."
+  - id: "grant_is_exact_and_expiring"
+    rule: "Every tool, secret, git, network, service, and browser-session grant must bind project, taskGroup, workItem, session, agentNode, resource, action, parameter policy, expiresAt, revocationRef, and auditRef."
+  - id: "policy_decision_is_recorded"
+    rule: "Every command admission, MCP write call, permission grant, and approval decision must create an immutable PolicyDecision."
+  - id: "approval_authorizes_only_exact_action"
+    rule: "ApprovalRequest success releases only the exact command or diff referenced by the request."
+  - id: "permission_request_must_converge"
+    rule: "PermissionRequest must converge to resolved, rejected, reassigned, scope_reduced, aborted, expired, or external_capability_blocked before close."
+  - id: "ambient_browser_session_forbidden"
+    rule: "Browser session, device code, OAuth URL, and service account use must be registered capability grants with scope, expiry, evidence, and revocation."
+  - id: "decision_record_is_immutable"
+    rule: "DecisionRecord is append-only; changes require supersede and affected-work invalidation."
+  - id: "high_risk_no_self_approval"
+    rule: "High-risk actions cannot be approved only by the same session or role that proposed them."
 
 roles:
   - id: "orchestrator"
@@ -108,6 +133,38 @@ roles:
       - "lease_monitor"
       - "cost_monitor"
       - "alert_route"
+  - id: "agent-runtime"
+    kind: "system_service"
+    responsibilities:
+      - "node_probe"
+      - "session_start"
+      - "checkpoint_upload"
+      - "outbox_recovery"
+  - id: "command-bus"
+    kind: "system_service"
+    responsibilities:
+      - "command_dispatch"
+      - "retry"
+      - "dlq_route"
+  - id: "permission-gateway"
+    kind: "system_service"
+    responsibilities:
+      - "permission_classification"
+      - "capability_route"
+      - "resolution_delta"
+  - id: "policy-engine"
+    kind: "system_service"
+    responsibilities:
+      - "policy_evaluation"
+      - "command_admission"
+      - "grant_decision"
+      - "policy_decision_record"
+  - id: "mcp-proxy"
+    kind: "system_service"
+    responsibilities:
+      - "tool_grant_check"
+      - "param_policy_check"
+      - "result_filter"
 
 requiredControlObjects:
   - "Project"
@@ -131,6 +188,24 @@ requiredControlObjects:
   - "AuditLog"
   - "Alert"
   - "Ruleset"
+  - "PolicyDecision"
+  - "QualityGate"
+  - "ChangeSet"
+  - "MergeQueueItem"
+  - "ReleaseManifest"
+  - "DLQEntry"
+
+requiredMachineSpecs:
+  - "spec/terminal-execution-manifest.yaml"
+  - "spec/terminal-execution-manifest.schema.json"
+  - "spec/state-machines.yaml"
+  - "spec/state-machines.schema.json"
+  - "spec/agent-task-contract.schema.json"
+  - "spec/control-events.schema.json"
+  - "spec/mcp-grant.schema.json"
+  - "spec/git-automation-policy.schema.json"
+  - "spec/git-command.schema.json"
+  - "spec/close-barrier.schema.json"
 
 qualityGates:
   required:
@@ -160,6 +235,8 @@ autoGitPolicy:
     - "mix_unleased_changes"
     - "push_without_status_check"
     - "claim_done_without_evidence"
+    - "missing_push_ref"
+    - "dirty_paths_outside_write_scope"
 
 completionContract:
   requiredFields:
@@ -174,3 +251,10 @@ completionContract:
     - "not_machine_actionable"
     - "理论上可以"
     - "未验证但应该可用"
+    - "waiting_for_non_system_path"
+    - "no_evidence_available"
+    - "self_verified"
+    - "future_implementation_only"
+    - "external_confirmation_required"
+    - "untested_assertion"
+    - "missing_independent_review"

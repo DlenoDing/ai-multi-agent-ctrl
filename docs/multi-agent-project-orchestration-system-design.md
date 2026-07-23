@@ -212,16 +212,16 @@ AgentTrustEvent
 
 | 决策类型 | 默认 owner |
 | --- | --- |
-| 产品范围、优先级、里程碑 | 总控 + 产品 Owner |
-| 架构、契约、数据库、接口 | 决策中心 + 对应领域 owner |
-| UI/交互终态 | 产品/UX/UI owner，重大变更由总控裁决 |
-| 测试、验收和发布门 | QA/Release owner + 独立 reviewer |
+| 产品范围、优先级、里程碑 | 总控 + Product Analyst Agent |
+| 架构、契约、数据库、接口 | 决策中心 + 对应领域 Agent owner |
+| UI/交互终态 | Product/UX/UI Agent owner，重大变更由总控裁决 |
+| 测试、验收和发布门 | QA/Release Agent + 独立 Reviewer Agent |
 | 跨角色冲突 | 总控最终裁决 |
-| 规则变更 | Rule Steward + 独立 reviewer + 总控确认 |
+| 规则变更 | Rule Steward Agent + 独立 Reviewer Agent + 总控确认 |
 
 ## 6. 角色体系
 
-系统内置角色不是固定人数，而是角色模板。总控根据项目和任务组自动实例化为一个或多个 WorkSession。
+系统内置角色不是固定人数，而是角色模板。Owner、Manager、Reviewer 等名称都表示可实例化的 Agent role，不表示非系统岗位。总控根据项目和任务组自动实例化为一个或多个 WorkSession。
 
 基础角色：
 
@@ -274,6 +274,8 @@ flowchart TD
 ```
 
 阶段说明：
+
+下表是 TaskGroup 的运行期 lifecycle state，不是交付分期、路线图或渐进版本计划。每个状态都必须有机器可判定输入、输出和关闭条件。
 
 | 阶段 | 关键输出 | 关闭条件 |
 | --- | --- | --- |
@@ -415,7 +417,7 @@ Agent 遇到权限弹窗、授权缺失、OAuth 登录、系统许可、网络 a
 
 ```text
 observed -> classified -> routed_to_controller
-         -> approved|rejected|manual_action_required|reassigned|grant_issued
+         -> approved|rejected|external_capability_required|reassigned|grant_issued
          -> retrying -> resolved|aborted
 ```
 
@@ -747,11 +749,11 @@ gitProfiles=<count>
 schedulerAdmission=read_only|limited|full
 ```
 
-总控给远程人员或远程 Agent 的最简自然语言指令：
+入口总控会话生成的 Agent Runtime bootstrap 指令：
 
 ```text
-在目标主机执行下面的一条加入命令。不要在 Agent Runtime 之外 clone 仓库，不要在 Agent Runtime 之外配置 MCP、数据库或密钥。
-命令完成后只把 AGENT_JOINED 回显里的 nodeId 发回。
+由受信执行环境执行下面的一条加入命令。目标主机只完成 Agent Runtime 入网，不在 Agent Runtime 之外 clone 仓库、配置 MCP、连接数据库或注入密钥。
+命令完成后只上报 AGENT_JOINED 回显里的 nodeId、agentProfileDigest 和 schedulerAdmission。
 ```
 
 鉴权建议：
@@ -1359,14 +1361,13 @@ PROJECT_DB_CONFIG=<project db profile>
 PROJECT_GIT_PROFILE=<git account/repository profile>
 MCP_PROFILE=<system/project/agent-local mcp grants>
 MODEL_POLICY=<fixed_model|fixed_tier|auto_best|auto_fast|cost_aware>
-PARALLELISM_POLICY=<max_parallel_with_leases|limited|manual>
+PARALLELISM_POLICY=<max_parallel_with_leases|limited|policy_required>
 CONTRACT_POLICY=<contract registry/version/compatibility policy>
 INTEGRATION_POLICY=<merge queue/integration batch policy>
-PERMISSION_POLICY=<preflight/auto-allowlist/manual-required/reassign-on-missing>
+PERMISSION_POLICY=<preflight/auto-allowlist/external_capability_required/reassign-on-missing>
 APPROVAL_POLICY=<approval gates/quorum/timeout>
 SYSTEM_STATE_LOCATOR=<state uri>
 ROOM_ID=<room id>
-HUMAN_APPROVAL_POLICY=<approval gates>
 
 请先只做现状和影响面分析，输出：
 1. 项目/任务组边界
@@ -1397,7 +1398,7 @@ WRITE_SCOPE=<repo/path/db/topic/env>
 GIT_PROFILE=<repo/account/key ref>
 MCP_GRANTS=<tools>
 PERMISSION_REQUIREMENTS=<os/browser/oauth/git/db/network/tool permissions>
-PERMISSION_POLICY=<auto_grant_if_allowed|request_approval|manual_action_required|reassign_if_missing>
+PERMISSION_POLICY=<auto_grant_if_allowed|request_approval|external_capability_required|reassign_if_missing>
 CONTRACT_REFS=<contract versions/consumer bindings>
 ENVIRONMENT_REF=<execution environment or snapshot>
 MODEL=<provider/model-id or model-alias>
@@ -1666,9 +1667,9 @@ Wake Bridge 订阅 Room Broker 事件：
 4. Agent 执行 `git_prepare` 时只能使用被授权的项目 credential secret ref。
 5. 形成可恢复 checkpoint、暂停、长等待或交接前，精确提交并推送 task-owned 改动。
 6. 不混入其他会话改动。
-7. 不强推、不回滚他人改动。
+7. 不强推、不回滚其它 Agent 或系统外变更。
 8. CI 结果进入 evidence。
-9. Release Manager 汇总构建版本、迁移、配置、回滚和监控。
+9. Release Agent 汇总构建版本、迁移、配置、回滚和监控。
 10. 账号/key 轮换、仓库迁移、默认分支变化或权限变化都递增 project runtime config version，并通知相关 session 重新绑定。
 
 ### 21.1 合并列车和 Integration Batch
@@ -1843,7 +1844,9 @@ ChangeSet -> MergeQueueItem -> IntegrationBatch
 
 当前设计已经覆盖协作模型，但要变成可长期运行的 AI-native 平台，还必须具备以下实施层能力。这里列的是终态必备能力；实现方式可由 Orchestrator 按依赖 DAG 自动拆解和提交，但不能退化为非系统执行路径补齐。
 
-| 优先级 | 缺口 | 终态要求 |
+P0/P1/P2 是终态能力的机器调度关键性和关闭阻断等级，不表示渐进路线图。所有条目都属于终态系统对象，Orchestrator 可按依赖、风险和资源自动排序实现。
+
+| terminalCriticality | 缺口 | 终态要求 |
 | --- | --- | --- |
 | P0 | Workflow/Command Bus | 所有总控命令、Agent 控制、MCP 写操作、Git 操作都必须有 command id、attempt、timeout、retry、cancel、compensation 和结果状态 |
 | P0 | Agent 沙箱 | 每个项目使用独立运行用户、工作目录、容器/进程组、网络策略、命令白名单和 kill tree；不能让总控变成无限远程 shell |
@@ -2059,7 +2062,7 @@ prepare -> apply -> verify -> commit_effect|rollback_effect
 
 审批、审计和告警都必须是系统对象：
 
-1. ApprovalRequest 必须包含精确 command/diff 引用、风险、审批人、quorum、超时策略和范围变更引用。
+1. ApprovalRequest 必须包含精确 command/diff 引用、风险、approver role、quorum、超时策略和范围变更引用。
 2. 审批通过后只授权本次 exact action，不自动扩大为长期权限。
 3. 审计记录 append-only，覆盖读、写、授权、secret 使用、artifact 下载、MCP/Git 操作、管理员动作和审批。
 4. 审计行形成 hash chain，周期性签名 digest；高风险项目定期导出 digest。
@@ -2279,9 +2282,9 @@ Agent 加入保持一条命令，但系统内部必须强制以下控制：
 13. 规则沉淀候选已处理或登记。
 14. 总控更新 taskGroup `goalExecutionStatus=closed`，并广播关闭 checkpoint。
 
-## 28. 复验和外部互审终态检查
+## 28. 复验和独立 AI 互审终态检查
 
-为了避免总控单点误判，重大系统设计、P0/P1 变更、上线前关闭和规则升级必须走复验和外部互审。
+为了避免总控单点误判，重大系统设计、P0/P1 变更、上线前关闭和规则升级必须走独立 AI Agent 复验和互审。互审角色是未参与对应实现批次的 Agent role 或系统服务，不是非系统执行路径。
 
 互审角色至少包括：
 

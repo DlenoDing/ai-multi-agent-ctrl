@@ -66,15 +66,16 @@ VERIFY_BY=<independent reviewer or qa role>
 
 ## 5. 自动提交和推送策略
 
-AI Agent 执行节点时必须自动提交和推送，不把 Git 操作交给用户。
+AI Agent 执行节点时必须按 `spec/git-automation-policy.schema.json` 和 `spec/git-command.schema.json` 自动提交和推送，不把 Git 操作交给入口会话或非系统执行路径。
 
 规则：
 
 1. 一个 DAG 节点完成且通过本节点验证后提交。
 2. 提交信息包含 node id、role、stateVersion 和影响面。
-3. 推送前检查 `git status --short`，不得混入其它 Agent 未声明的写入面。
-4. 推送失败进入 command retry；连续失败进入 DLQ 并触发 Monitor Agent。
-5. 合并到主线必须走 IntegrationBatch，不由实现 Agent 自行宣布发布完成。
+3. 推送前检查 `git status --short`，并用 `changedPathPolicy.mustMatchWriteScope=true` 校验所有 changed path。
+4. 推送后必须记录 `pushRef`、远端 SHA 和 command effect evidence。
+5. 推送失败进入 command retry；连续失败进入 DLQ 并触发 Monitor Agent。
+6. 合并到主线必须走 IntegrationBatch，不由实现 Agent 自行宣布发布完成。
 
 ## 6. 机器验收信号
 
@@ -101,7 +102,7 @@ Agent 不能使用以下内容作为完成：
 2. “需要非系统执行路径确认后继续”。
 3. “理论上可以”。
 4. “未运行测试但应该没问题”。
-5. “等待其它人处理”。
+5. “等待非系统路径处理”。
 6. “本地通过但没有 evidence”。
 7. “已修复但没有独立复验”。
 

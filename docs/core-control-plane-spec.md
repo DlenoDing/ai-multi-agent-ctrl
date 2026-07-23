@@ -21,9 +21,19 @@ Command
 Lease
 Checkpoint
 Artifact
+Finding
+Contract
+QualityGate
+ChangeSet
+MergeQueueItem
+IntegrationBatch
+ReleaseManifest
 PermissionRequest
 ApprovalRequest
+PolicyDecision
 DecisionRecord
+CommandEffect
+DLQEntry
 AuditLog
 ```
 
@@ -55,7 +65,7 @@ AuditLog
 | risk_level | text | L0, L1, L2, L3 |
 | control_state_version | bigint | not null default 1 |
 | owner_session_id | text | nullable |
-| close_barrier | jsonb | not null default `{}` |
+| close_barrier | jsonb | not null default `{}`，快照必须符合 `spec/close-barrier.schema.json` |
 | created_at | timestamptz | not null |
 | updated_at | timestamptz | not null |
 
@@ -160,7 +170,7 @@ unique(room_id, idempotency_key)
 | task_group_id | text | nullable |
 | session_id | text | nullable |
 | type | text | not null |
-| status | text | created, admitted, dispatched, running, succeeded, failed, timed_out, cancelled, dlq |
+| status | text | created, admitted, dispatched, running, checkpointed, succeeded, failed, timed_out, cancelled, compensated, dlq |
 | payload | jsonb | not null |
 | idempotency_key | text | not null |
 | attempt | integer | not null default 0 |
@@ -213,6 +223,7 @@ unique(project_id, resource_type, resource_key) where status = 'active'
 | state_version | bigint | not null |
 | summary | text | not null |
 | commit_refs | jsonb | not null default `[]` |
+| push_refs | jsonb | not null default `[]` |
 | evidence_refs | jsonb | not null default `[]` |
 | next_steps | jsonb | not null default `[]` |
 | created_at | timestamptz | not null |
@@ -242,7 +253,7 @@ unique(project_id, resource_type, resource_key) where status = 'active'
 | work_item_id | text | nullable |
 | session_id | text | nullable |
 | agent_node_id | text | references agent_nodes |
-| status | text | observed, classified, routed_to_controller, approved, rejected, manual_action_required, reassigned, resolved, aborted |
+| status | text | observed, classified, routed_to_controller, pending_approval, approved, rejected, external_capability_required, external_capability_blocked, reassigned, scope_reduced, grant_issued, retrying, resolved, aborted, expired |
 | prompt_type | text | not null |
 | requested_capability | text | not null |
 | requested_resource | text | nullable |
@@ -268,6 +279,29 @@ unique(project_id, resource_type, resource_key) where status = 'active'
 | row_hash | text | not null |
 | created_at | timestamptz | not null |
 
+### 3.12 terminal_governance_objects
+
+以下终态治理对象必须有独立表或等价的强 schema 存储。它们可以由代码生成 migration，但不能只存为无约束聊天文本。
+
+| 对象 | 最小字段 |
+| --- | --- |
+| approval_requests | `id,project_id,task_group_id,action_ref,risk_level,required_approver_roles,quorum_policy,status,decision_record_id,expires_at,created_at` |
+| approval_decisions | `id,approval_request_id,approver_role,decision,evidence_refs,audit_ref,created_at` |
+| policy_decisions | `id,project_id,task_group_id,actor_ref,action,resource_ref,policy_version,decision,reason,evidence_refs,expires_at,created_at` |
+| decision_records | `id,project_id,task_group_id,title,scope,status,decision,evidence_refs,invalidates_on,supersedes,created_at` |
+| findings | `id,project_id,task_group_id,source_session_id,severity,status,root_cause_group,evidence_refs,owner_role,created_at` |
+| contracts | `id,project_id,type,name,status,current_version_id,owner_role,created_at` |
+| contract_versions | `id,contract_id,version,digest,source_ref,compatibility,status,created_by,created_at` |
+| quality_gate_results | `id,project_id,task_group_id,target_ref,gate,status,evidence_refs,decision_record_id,created_at` |
+| change_sets | `id,project_id,task_group_id,work_item_refs,base_commit,head_commit,changed_paths,status,evidence_refs,created_at` |
+| merge_queue_items | `id,project_id,task_group_id,change_set_id,priority,status,lease_ref,created_at` |
+| integration_batches | `id,project_id,task_group_id,baseline_commit,status,change_set_refs,ci_run_ref,release_manifest_ref,created_at` |
+| release_manifests | `id,project_id,task_group_id,version_ref,commit_refs,push_refs,artifact_refs,rollback_refs,status,created_at` |
+| command_effects | `id,command_id,effect_type,resource_key,before_digest,after_digest,external_operation_id,reversible,rollback_command_id,verified_at,fencing_token` |
+| dlq_entries | `id,project_id,task_group_id,source_type,source_id,status,reason_code,owner_role,replay_policy_ref,created_at` |
+
+`task_groups.close_barrier` 只保存 Orchestrator 最近一次计算出的 `CloseBarrier` 快照。关闭判定必须从 `work_items`、`findings`、`quality_gate_results`、`permission_requests`、`approval_requests`、`leases`、`commands`、`command_effects`、`dlq_entries`、`integration_batches`、`release_manifests` 和 `rulesets` 的终态状态确定性计算，不能把自由文本或聊天结论写入 `close_barrier` 后直接关闭。
+
 ## 4. HTTP API
 
 HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证器和只读观察 UI 使用。所有写接口必须接收 `Idempotency-Key` header，并写入 audit。
@@ -288,6 +322,12 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/checkpoints` | 提交 checkpoint |
 | POST | `/api/artifacts` | 注册 artifact |
 | POST | `/api/permission-requests` | 提交权限阻断 |
+| POST | `/api/approval-requests` | 创建审批状态机对象 |
+| POST | `/api/policy-decisions/evaluate` | 记录策略判定并返回准入结果 |
+| POST | `/api/findings` | 提交独立复验发现 |
+| POST | `/api/contracts` | 注册或更新契约对象 |
+| POST | `/api/integration-batches` | 创建集成批次 |
+| POST | `/api/close-barriers/compute` | 计算并校验关闭屏障 |
 | POST | `/api/agents/join` | 使用 join token 初始化 Agent |
 | POST | `/api/agents/:nodeId/heartbeat` | Agent 心跳 |
 
@@ -304,6 +344,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | `model-mcp` | `model_capabilities`、`model_policy_get`、`model_select` |
 | `evidence-mcp` | `artifact_register`、`checkpoint_submit`、`test_result_submit` |
 | `permission-mcp` | `permission_probe`、`permission_request_submit`、`permission_status`、`permission_resolve` |
+| `governance-mcp` | `approval_request_create`、`policy_decision_eval`、`finding_submit`、`contract_publish`、`close_barrier_compute` |
 
 ## 6. 事件模型
 
@@ -313,14 +354,26 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 
 ```json
 {
+  "schemaVersion": "control-event/v1",
   "eventId": "evt_...",
   "projectId": "prj_...",
   "taskGroupId": "tg_...",
+  "roomId": "room_...",
+  "sequence": 120,
   "type": "checkpoint_submitted",
   "stateVersion": 12,
   "correlationId": "corr_...",
+  "actor": {
+    "actorType": "session",
+    "actorId": "sess_..."
+  },
+  "subject": {
+    "type": "checkpoint",
+    "id": "chk_..."
+  },
   "idempotencyKey": "checkpoint-work-1-run-1",
   "payloadRef": "db:checkpoints/chk_...",
+  "payloadDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "createdAt": "2026-07-23T08:00:00Z"
 }
 ```

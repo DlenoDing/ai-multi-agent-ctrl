@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/terminal-execution-manifest.schema.json",
+  "title": "TerminalExecutionManifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "systemId",
+    "executionMode",
+    "authorityModel",
+    "nonNegotiableInvariants",
+    "roles",
+    "requiredControlObjects",
+    "qualityGates",
+    "autoGitPolicy",
+    "completionContract"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "terminal-execution-manifest/v1"
+    },
+    "systemId": {
+      "type": "string"
+    },
+    "executionMode": {
+      "type": "string",
+      "const": "ai_agent_autonomous"
+    },
+    "authorityModel": {
+      "type": "object"
+    },
+    "nonNegotiableInvariants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "rule"]
+      }
+    },
+    "roles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "responsibilities"]
+      }
+    },
+    "requiredControlObjects": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "qualityGates": {
+      "type": "object"
+    },
+    "autoGitPolicy": {
+      "type": "object"
+    },
+    "completionContract": {
+      "type": "object"
+    }
+  }
+}

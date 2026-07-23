@@ -23,8 +23,14 @@
 | --- | --- |
 | [spec/terminal-execution-manifest.yaml](spec/terminal-execution-manifest.yaml) | 系统终态能力 manifest，供 Orchestrator 读取和校验 |
 | [spec/state-machines.yaml](spec/state-machines.yaml) | TaskGroup、WorkItem、WorkSession、Command、PermissionRequest 等状态机 |
+| [spec/state-machines.schema.json](spec/state-machines.schema.json) | 状态机规格自身的 schema |
+| [spec/terminal-execution-manifest.schema.json](spec/terminal-execution-manifest.schema.json) | 终态执行 manifest 的 schema |
 | [spec/agent-task-contract.schema.json](spec/agent-task-contract.schema.json) | 总控派发给 WorkSession 的任务契约 schema |
 | [spec/control-events.schema.json](spec/control-events.schema.json) | Room/Command/Checkpoint/Permission 等控制事件 envelope schema |
+| [spec/mcp-grant.schema.json](spec/mcp-grant.schema.json) | MCP tool grant 的最小权限、参数策略、结果过滤和过期 schema |
+| [spec/git-automation-policy.schema.json](spec/git-automation-policy.schema.json) | Agent 自动 commit/push 的凭据、分支、路径和远端校验策略 |
+| [spec/git-command.schema.json](spec/git-command.schema.json) | Agent Git status/commit/push 命令的 payload、路径匹配和证据输出 schema |
+| [spec/close-barrier.schema.json](spec/close-barrier.schema.json) | TaskGroup 关闭屏障的机器判定 schema |
 
 ## 终态原则
 
@@ -32,8 +38,8 @@
 2. 总控不是项目经理岗位，而是唯一目标入口和权威调度器。
 3. Decision Center 默认由 AI Agent 运行，输出可审计 `DecisionRecord`。
 4. Reviewer、QA、Security、Release、Rule Steward 都是角色化 Agent，不是外部岗位。
-5. 审批不是“人点同意”，而是 `ApprovalRequest` + policy/quorum + AI decision + audit 的状态机。
-6. 权限阻断不是“等人处理”，而是 `PermissionRequest` + capability routing + service grant + reassign + retry 的自动流程。
+5. 审批不是外部点击确认，而是 `ApprovalRequest` + policy/quorum + AI decision + audit 的状态机。
+6. 权限阻断不是等待非系统路径处理，而是 `PermissionRequest` + capability routing + service grant + reassign + retry 的自动流程。
 7. 对 OS、OAuth、第三方平台明确禁止自动化越权的场景，系统只把它建模为外部能力边界事件；这不是项目执行步骤，也不能伪装成自动批准。
 8. 所有状态以 PostgreSQL、event log、checkpoint、artifact digest、schema 和 state machine 为准，不以聊天文本为准。
 9. 所有写入型动作必须经过 policy、lease、idempotency、command effect 和 audit。
@@ -64,4 +70,4 @@
 6. stop/return 条件。
 7. checkpoint 和 evidence 要求。
 
-任务完成后由 Agent 自动提交 checkpoint、更新状态、运行验证、提交 Git commit 并按策略 push。不能把“需要人后续执行”作为完成结果。
+任务完成后由 Agent 自动提交 checkpoint、更新状态、运行验证、提交 Git commit 并按策略 push。不能把“需要非系统路径后续执行”作为完成结果。

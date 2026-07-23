@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/close-barrier.schema.json",
+  "title": "CloseBarrier",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "taskGroupId",
+    "stateVersion",
+    "requiredGates",
+    "gateResults",
+    "blockingObjects",
+    "computedAt",
+    "satisfied"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "close-barrier/v1"
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stateVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "requiredGates": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "all_required_work_closed",
+          "all_findings_terminal",
+          "all_quality_gates_passed",
+          "all_contracts_compatible",
+          "all_changes_integrated",
+          "no_pending_permissions",
+          "no_pending_approvals",
+          "no_active_dlq",
+          "no_active_leases",
+          "artifacts_verified",
+          "release_manifest_ready",
+          "rules_candidates_processed"
+        ]
+      }
+    },
+    "gateResults": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gate", "status", "evidenceRefs"],
+        "properties": {
+          "gate": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["passed", "failed", "blocked"]
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reasonCode": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "blockingObjects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["objectType", "objectId", "status"],
+        "properties": {
+          "objectType": {
+            "type": "string"
+          },
+          "objectId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "computedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "satisfied": {
+      "type": "boolean"
+    }
+  }
+}

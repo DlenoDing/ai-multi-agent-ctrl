@@ -86,8 +86,8 @@ install_runtime
 {
   "joinToken": "join_...",
   "nodeName": "builder-01",
-  "protocolVersion": "0.1",
-  "runtimeVersion": "0.1.0",
+  "protocolVersion": "agent-runtime/v1",
+  "runtimeVersion": "1.0.0",
   "platform": {
     "os": "darwin",
     "arch": "arm64",
@@ -108,7 +108,7 @@ install_runtime
     "http": "https://control.example.com/api",
     "ws": "wss://control.example.com/ws"
   },
-  "minRuntimeVersion": "0.1.0",
+  "minRuntimeVersion": "1.0.0",
   "capabilityFlags": ["room", "command", "mcp_proxy", "permission_request"]
 }
 ```
@@ -155,7 +155,7 @@ Runtime 每 10 到 30 秒发送 heartbeat。控制平面可按项目策略调整
   "accepted": true,
   "serverTime": "2026-07-23T08:00:01Z",
   "commandsAvailable": true,
-  "minRuntimeVersion": "0.1.0",
+  "minRuntimeVersion": "1.0.0",
   "requestedProbes": ["resource", "permission"]
 }
 ```
@@ -166,29 +166,59 @@ Runtime 每 10 到 30 秒发送 heartbeat。控制平面可按项目策略调整
 
 ```json
 {
+  "contractVersion": "agent-task-contract/v1",
   "commandId": "cmd_...",
   "sessionId": "sess_...",
+  "runId": "run_...",
+  "idempotencyKey": "session-start-work-1-run-1",
+  "protocolVersion": "agent-runtime/v1",
+  "schemaDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "contractDigest": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+  "issuedAt": "2026-07-23T08:00:00Z",
+  "expiresAt": "2026-07-23T09:00:00Z",
   "projectId": "prj_...",
   "taskGroupId": "tg_...",
+  "taskId": "task_...",
   "workId": "work_...",
   "roleId": "backend-owner",
   "roomId": "room_...",
   "stateVersion": 12,
-  "rulesetDigest": "sha256:...",
+  "rulesetDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
   "inputLocators": ["repo://service/path", "doc://..."],
   "inputDigests": {
-    "rules": "sha256:...",
-    "contract": "sha256:..."
+    "rules": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "contract": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
   },
+  "readScope": [
+    {
+      "access": "read",
+      "resourceType": "repo_path",
+      "resourceKey": "service/src"
+    }
+  ],
   "writeScope": [
     {
+      "access": "write",
       "resourceType": "file_path",
       "resourceKey": "service/src/foo.ts",
       "leaseId": "lease_...",
-      "fencingToken": 77
+      "fencingToken": 77,
+      "leaseExpiresAt": "2026-07-23T09:00:00Z",
+      "resourceDigestBefore": "git-tree:abc123"
     }
   ],
-  "mcpGrants": ["grant_..."],
+  "mcpGrants": [
+    {
+      "grantId": "grant_...",
+      "serverId": "resource-mcp",
+      "toolName": "lease_release",
+      "schemaDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "paramPolicyRef": "policy://mcp/lease-release/work-1",
+      "resultFilterRef": "filter://mcp/default-redaction",
+      "riskLevel": "L1",
+      "expiresAt": "2026-07-23T09:00:00Z"
+    }
+  ],
   "model": {
     "modelId": "provider/model",
     "alias": "balanced",
@@ -199,13 +229,20 @@ Runtime 每 10 到 30 秒发送 heartbeat。控制平面可按项目策略调整
     "onMissing": "permission_request",
     "autoAllowPromptTypes": ["browser_download"]
   },
-  "stopOrReturn": ["done", "blocked", "stale_state", "needs_decision", "permission_required"]
+  "stopOrReturn": ["done", "blocked", "stale_state", "needs_decision", "permission_required", "spec_drift"],
+  "outputContract": {
+    "requiredOutputs": ["checkpoint", "commit_ref", "push_ref", "evidence_refs"],
+    "evidenceRequired": true,
+    "checkpointRequired": true,
+    "independentReviewRequired": true,
+    "pushRefRequired": true
+  }
 }
 ```
 
 Runtime 规则：
 
-1. 启动前校验 `stateVersion`、ruleset digest、lease fencing token 和 MCP grants。
+1. 启动前校验 `contractVersion`、`schemaDigest`、`contractDigest`、`stateVersion`、ruleset digest、lease fencing token 和 MCP grants。
 2. 缺权限时不继续执行副作用，提交 PermissionRequest。
 3. 未声明 write scope 的路径只能读不能写。
 4. 不支持的 command 必须返回 `UNSUPPORTED_COMMAND`，不能猜测执行。
@@ -227,6 +264,14 @@ Runtime 提交 checkpoint：
       "repo": "service",
       "branch": "tg/tg-1/work-1",
       "commit": "abc123"
+    }
+  ],
+  "pushRefs": [
+    {
+      "repo": "service",
+      "remote": "origin",
+      "ref": "refs/heads/tg/tg-1/work-1",
+      "remoteSha": "abc123"
     }
   ],
   "evidenceRefs": ["artifact_..."],
@@ -290,7 +335,7 @@ Runtime 捕获权限阻断后提交：
     "step": "before_git_push",
     "sideEffectsPaused": true
   },
-  "suggestedActions": ["grant_credential", "manual_login", "reassign", "abort"]
+  "suggestedActions": ["grant_credential", "capability_exchange_required", "reassign", "abort"]
 }
 ```
 

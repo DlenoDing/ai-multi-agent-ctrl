@@ -6,6 +6,16 @@
   "additionalProperties": false,
   "required": [
     "contractVersion",
+    "projectId",
+    "taskGroupId",
+    "commandId",
+    "sessionId",
+    "runId",
+    "idempotencyKey",
+    "protocolVersion",
+    "schemaDigest",
+    "contractDigest",
+    "issuedAt",
     "taskId",
     "workId",
     "roleId",
@@ -23,6 +33,50 @@
     "contractVersion": {
       "type": "string",
       "const": "agent-task-contract/v1"
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commandId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "protocolVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schemaDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "contractDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
     },
     "taskId": {
       "type": "string",
@@ -66,8 +120,12 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["resourceType", "resourceKey"],
+        "required": ["resourceType", "resourceKey", "access", "leaseId", "fencingToken", "leaseExpiresAt", "resourceDigestBefore"],
         "properties": {
+          "access": {
+            "type": "string",
+            "enum": ["write", "admin"]
+          },
           "resourceType": {
             "type": "string",
             "enum": [
@@ -94,9 +152,41 @@
           "fencingToken": {
             "type": "integer",
             "minimum": 1
+          },
+          "leaseExpiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "resourceDigestBefore": {
+            "type": "string"
           }
         }
       }
+    },
+    "readScope": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resourceType", "resourceKey", "access"],
+        "properties": {
+          "access": {
+            "type": "string",
+            "const": "read"
+          },
+          "resourceType": {
+            "type": "string"
+          },
+          "resourceKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resourceDigest": {
+            "type": "string"
+          }
+        }
+      },
+      "default": []
     },
     "model": {
       "type": "object",
@@ -122,7 +212,38 @@
     "mcpGrants": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["grantId", "serverId", "toolName", "schemaDigest", "paramPolicyRef", "resultFilterRef", "riskLevel", "expiresAt"],
+        "properties": {
+          "grantId": {
+            "type": "string"
+          },
+          "serverId": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "schemaDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-fA-F0-9]{64}$"
+          },
+          "paramPolicyRef": {
+            "type": "string"
+          },
+          "resultFilterRef": {
+            "type": "string"
+          },
+          "riskLevel": {
+            "type": "string",
+            "enum": ["L0", "L1", "L2", "L3"]
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "default": []
     },
@@ -173,6 +294,10 @@
           "default": true
         },
         "independentReviewRequired": {
+          "type": "boolean",
+          "default": true
+        },
+        "pushRefRequired": {
           "type": "boolean",
           "default": true
         }
