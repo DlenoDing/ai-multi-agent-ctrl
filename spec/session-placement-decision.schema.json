@@ -77,10 +77,9 @@
       "additionalProperties": false,
       "required": [
         "singleTurn",
-        "readOnlyOrFormatOnly",
         "noPersistentState",
         "noGlobalTaskOwnership",
-        "noWriteScopeOwnership",
+        "boundedRepositoryLeaseOnly",
         "noExternalCapabilityFlow",
         "subagentCapacityAvailable"
       ],
@@ -90,6 +89,7 @@
         "noPersistentState": {"type": "boolean"},
         "noGlobalTaskOwnership": {"type": "boolean"},
         "noWriteScopeOwnership": {"type": "boolean"},
+        "boundedRepositoryLeaseOnly": {"type": "boolean"},
         "noExternalCapabilityFlow": {"type": "boolean"},
         "subagentCapacityAvailable": {"type": "boolean"}
       }
@@ -142,10 +142,9 @@
           "subagentSafetyProof": {
             "properties": {
               "singleTurn": {"const": true},
-              "readOnlyOrFormatOnly": {"const": true},
               "noPersistentState": {"const": true},
               "noGlobalTaskOwnership": {"const": true},
-              "noWriteScopeOwnership": {"const": true},
+              "boundedRepositoryLeaseOnly": {"const": true},
               "noExternalCapabilityFlow": {"const": true},
               "subagentCapacityAvailable": {"const": true}
             }

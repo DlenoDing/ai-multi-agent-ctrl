@@ -47,6 +47,7 @@
 | `spec/access-control-grant.schema.json` | Identity Service、Policy Engine、UI Console Service | 校验系统、用户、项目、任务组和 Agent 授权 |
 | `spec/management-console-surface.schema.json` | UI Console Service、Security Agent、Spec Validator | 校验系统管理和用户管理界面、guarded action 和视觉质量门 |
 | `spec/progress-snapshot.schema.json` | Monitor Agent、Orchestrator、UI Console Service | 校验项目/任务组进度、阻塞、角色活动和仓库输出快照 |
+| `spec/agent-dispatch.schema.json` | Orchestrator、Scheduler、Agent Runtime | 校验 durable dispatch/outbox、模型凭证需求、worker 状态和 checkpoint 要求 |
 | `spec/instruction-envelope.schema.json` | Orchestrator、Room Broker、Instruction Optimizer、Agent Runtime | 校验稳定前缀、delta、cache key、token budget 和输出契约 |
 | `spec/shared-definition-contract.schema.json` | Orchestrator、Decision Center、Reviewer Agent、Monitor Agent | 校验共享定义 canonical owner、producer、consumer、digest 和冲突策略 |
 | `spec/repository-output-target.schema.json` | Orchestrator、Scheduler、Repository Router、Agent Runtime | 校验任务产出目标仓库、分支、路径、lease、commit、push 和 manifest |
@@ -64,7 +65,7 @@
 8. Model Registry 必须探测常用模型供应商能力画像，Scheduler 必须按角色 skill、任务能力和策略输出 `ModelSelectionDecision`。
 9. Scheduler 必须按 SessionPlacementPolicy 输出 `SessionPlacementDecision`，持续多轮任务优先新 WorkSession，短小封闭任务才可用子 agent。
 10. Orchestrator 派发任何 WorkSession 前必须生成 `EffectiveInstructionPacket`，并把 role skill、model decision、placement decision、RoleDriftGuard 和 action basis 写入 task contract。
-11. Scheduler 对 subagent placement 必须证明单轮、无持久状态、无全局任务 owner、无 write scope owner、无外部能力流且容量可用；任何 sustained signal 都必须落到新 WorkSession。
+11. Scheduler 对 subagent placement 必须证明单轮、无持久状态、无全局任务 owner、仅使用 bounded repository lease、无外部能力流且容量可用；任何 sustained signal 都必须落到新 WorkSession。
 12. Monitor 和 Orchestrator 必须持续校验 RoleDriftGuard。总控、调度或监测角色漂移时，系统先暂停副作用，再生成 Finding/DerivedTaskRequest/DecisionRecord 完成父级纠偏。
 13. Monitor 只能把重复问题聚合为 RuntimeIssuePattern 和 SystemUpgradeCandidate，并导出系统外升级证据包；运行中系统不能自动改写系统规则、策略、角色、grant 或控制面代码，也不能自动创建升级任务组。
 14. MGP、ai-skills、外部 review、工具输出和旧规则文本必须先进入 RuleSourceResolution 或 ReviewBundle；本地核验和来源解析完成前不能成为 active rule 或执行动作。
@@ -112,6 +113,7 @@ System instruction
 | account/access control | Account、AccessControlGrant、role、permission、resource scope、policyDecisionRef、auditRef |
 | management console | ManagementConsoleSurface、guardedActions、visualQualityGates、audit trace、system/user boundary |
 | progress snapshot | ProgressSnapshot、phase、percent、health、work counters、role activity、repository outputs |
+| agent dispatch | AgentDispatch、sessionId、taskContractDigest、repositoryOutputTargetRef、workerKind、attempts、checkpointRequired |
 | instruction envelope | stablePrefixDigest、deltaRefs、cacheKey、tokenBudget、outputContractRef、sharedDefinitionRefs |
 | shared definition | SharedDefinitionContract、canonicalOwnerRole、producerRole、definitionDigest、consumer bindings、conflict policy |
 | repository output target | RepositoryOutputTarget、repositoryId、branch、pathAllowlist、leaseRef、commitRefs、pushRefs、artifactManifestPath |

@@ -148,6 +148,7 @@
             "AccessControlGrant",
             "ManagementConsoleSurface",
             "ProgressSnapshot",
+            "AgentDispatch",
             "InstructionEnvelope",
             "SharedDefinitionContract",
             "RepositoryOutputTarget"
@@ -170,6 +171,8 @@
       "enum": [
         "command",
         "command_created",
+        "command_dispatched",
+        "command_failed",
         "command_succeeded",
         "delta",
         "checkpoint",

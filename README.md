@@ -35,9 +35,16 @@ http://127.0.0.1:4317
 
 ```bash
 npm run doctor
+npm run skills:sync
 ./scripts/start.sh
 docker compose up --build
 ```
+
+`npm run doctor` 会启动临时控制平面并执行 AI-native 冒烟链路：模型选择、session placement、仓库路径阻断、Orchestrator 自治循环、AgentDispatch outbox、受控 executor、Git commit/push 证据、CompletionReadiness 和 CloseBarrier 计算。`npm run skills:sync` 会同步 `DlenoDing/agency-agents-zh` pinned commit 并生成角色 skill 索引。
+
+`npm run init` 会生成本地系统 bootstrap token 和用户管理账号 token。系统管理员账号使用 bootstrap token；普通用户、项目管理员和服务账号使用各自账号 token，不能用 bootstrap token 直接登录任意账号。
+
+常规 Agent Runtime 必须具备选中模型 provider 的凭证，并通过 `AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND` 指向受控 executor；executor 接收 task contract JSON，输出 Git 路径化产物和 artifact manifest。`AIMAC_EXECUTION_PROFILE=verification` 加 `.aimac-verification-repository` 仓库标记时，才可配合 `AIMAC_ALLOW_LOCAL_DETERMINISTIC_WORKER=true` 走本地确定性验证 fallback；生产 profile 缺少凭证或 executor 时只能阻断，不能伪造完成。
 
 ## 机器可执行规格
 
@@ -82,6 +89,7 @@ docker compose up --build
 | [spec/access-control-grant.schema.json](spec/access-control-grant.schema.json) | 系统、用户、项目、任务组和 Agent 权限授权 schema |
 | [spec/management-console-surface.schema.json](spec/management-console-surface.schema.json) | 系统管理和用户管理界面 schema |
 | [spec/progress-snapshot.schema.json](spec/progress-snapshot.schema.json) | 项目/任务组进度、阻塞、角色活动和仓库输出快照 schema |
+| [spec/agent-dispatch.schema.json](spec/agent-dispatch.schema.json) | Orchestrator 投递给 Agent Runtime 的 durable dispatch/outbox schema |
 | [spec/instruction-envelope.schema.json](spec/instruction-envelope.schema.json) | 指令稳定前缀、delta、cache key、token budget 和输出契约 schema |
 | [spec/shared-definition-contract.schema.json](spec/shared-definition-contract.schema.json) | 多子系统共享定义 canonical owner、producer、consumer 和 digest schema |
 | [spec/repository-output-target.schema.json](spec/repository-output-target.schema.json) | 任务产出写入项目 Git 仓库的目标仓库、分支、路径和提交证据 schema |
@@ -100,7 +108,7 @@ docker compose up --build
 9. 所有写入型动作必须经过 policy、lease、idempotency、command effect 和 audit。
 10. 角色 skill 默认从 `DlenoDing/agency-agents-zh` pinned commit 自动加载，项目/任务组特殊要求通过 overlay 对象覆盖。
 11. 模型选择由 Model Registry 和 Scheduler 基于角色 skill、任务能力、成本、速度、额度、可靠性和风险自动决定。
-12. Scheduler 对持续多轮、长耗时、有状态、拥有写入面的角色任务优先创建新 WorkSession；短小、只读、无持久上下文的任务才使用子 agent。
+12. Scheduler 对持续多轮、长耗时、有状态、拥有广义写入面的角色任务优先创建新 WorkSession；短小、单轮、无持久上下文的任务可使用子 agent，但仍必须绑定 bounded repository lease、commit、push 和 checkpoint 证据。
 13. 运行期重复问题只生成 RuntimeIssuePattern、SystemUpgradeCandidate 和系统外升级证据包；系统运行时不得自动自修改规则、策略、角色、grant 或控制面代码，升级改造由人独立在系统外处理。
 14. 总控、调度和监测等元控制角色必须绑定 RoleDriftGuard；一旦目标、职责、边界或证据链跑偏，立即暂停副作用并由父级总控重发有效任务契约。
 15. MGP、ai-skills、外部 review 和工具结果只能作为来源材料；是否吸收为本系统规则必须经过 RuleSourceResolution，本地核验前不能直接执行。
@@ -121,6 +129,18 @@ docker compose up --build
 | Evidence/Artifact | 证据 locator、digest、sensitivity、retention、redaction、verify、GC、backup；项目交付文件以 Git 仓库 commit/push 为准 |
 | Policy/Secret | policy table/engine、secret lease、credential helper、grant revoke、audit |
 | UI | 只作为后台管理、观察和入口总控会话界面，不作为执行依赖 |
+
+## 本地控制平面实现
+
+当前实现提供无依赖 Node 控制服务、SaaS 管理控制台和 AI Runtime 视图。核心运行逻辑位于 `apps/control-plane-ui/lib/control-plane-core.mjs`，覆盖：
+
+1. 常用模型 provider class 的能力 registry 和自动模型选择。
+2. `agency-agents-zh` pinned snapshot 的 skill source 同步、frontmatter 解析和 digest 索引。
+3. 长任务新 WorkSession、短任务 subagent 的 session placement 决策。
+4. AgentTaskContract、AgentDispatch durable outbox、EffectiveInstructionPacket、RoleDriftGuard、Checkpoint、ProgressSnapshot、CompletionReadiness 和 CloseBarrier 的本地生成。
+5. Agent Runtime worker 消费 dispatch 后实际写入项目 Git 仓库、commit、push，并用 Git commit、remote ref、artifact manifest、changed path 和 lease 证据校验 checkpoint。
+6. 运行期重复问题的 collect-only 聚合和 SystemUpgradeCandidate 生成。
+7. 项目、任务组、Agent、账号、授权、审计和仓库输出目标的受控 API。
 
 ## 执行方式
 

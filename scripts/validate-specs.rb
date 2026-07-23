@@ -55,18 +55,21 @@ required_runtime_files = %w[
   scripts/start.sh
   scripts/init-control-plane.mjs
   scripts/doctor.mjs
+  scripts/sync-agent-skills.mjs
   apps/control-plane-ui/server.mjs
+  apps/control-plane-ui/lib/control-plane-core.mjs
   apps/control-plane-ui/public/index.html
   apps/control-plane-ui/public/styles.css
   apps/control-plane-ui/public/app.js
   data/seed-state.json
+  spec/agent-dispatch.schema.json
 ]
 
 required_runtime_files.each do |path|
   errors << "runtime entrypoint missing: #{path}" unless File.exist?(File.join(ROOT, path))
 end
 
-required_npm_scripts = %w[init dev start shell:start validate doctor docker:build docker:up]
+required_npm_scripts = %w[init dev start shell:start skills:sync validate doctor docker:build docker:up]
 available_scripts = package_json.fetch("scripts", {})
 missing_npm_scripts = required_npm_scripts.reject { |script_name| available_scripts.key?(script_name) }
 errors << "package.json missing scripts: #{missing_npm_scripts.join(", ")}" unless missing_npm_scripts.empty?
@@ -74,6 +77,9 @@ errors << "package.json missing scripts: #{missing_npm_scripts.join(", ")}" unle
 unless File.executable?(File.join(ROOT, "scripts/start.sh"))
   errors << "scripts/start.sh must be executable"
 end
+
+dockerfile = File.read(File.join(ROOT, "Dockerfile"))
+errors << "Dockerfile must install git for skills:sync" unless dockerfile.include?("git")
 
 manifest["requiredMachineSpecs"].each do |spec_path|
   errors << "manifest required spec missing: #{spec_path}" unless File.exist?(File.join(ROOT, spec_path))
@@ -151,8 +157,8 @@ session_placement_decision.fetch("allOf").each do |clause|
   end
   if placement_const == "subagent"
     errors << "SessionPlacementDecision must require subagentSafetyProof for subagent" unless required_then.include?("subagentSafetyProof")
-    read_only_const = clause.dig("then", "properties", "subagentSafetyProof", "properties", "readOnlyOrFormatOnly", "const")
-    errors << "SessionPlacementDecision subagent proof must require readOnlyOrFormatOnly=true" unless read_only_const == true
+    bounded_lease_const = clause.dig("then", "properties", "subagentSafetyProof", "properties", "boundedRepositoryLeaseOnly", "const")
+    errors << "SessionPlacementDecision subagent proof must require boundedRepositoryLeaseOnly=true" unless bounded_lease_const == true
   end
 end
 
@@ -163,6 +169,7 @@ end
 %w[lease_bound writing committed pushed].each do |status|
   errors << "RepositoryOutputTarget schema missing state evidence condition for #{status}" unless rot_condition_statuses.include?(status)
 end
+errors << "RepositoryOutputTarget schema must include remote binding" unless repository_output_target_schema.dig("properties", "remote")
 
 critical_schema_titles = Set.new(%w[
   AgentSkillSource
@@ -189,6 +196,7 @@ critical_schema_titles = Set.new(%w[
   AccessControlGrant
   ManagementConsoleSurface
   ProgressSnapshot
+  AgentDispatch
   InstructionEnvelope
   SharedDefinitionContract
   RepositoryOutputTarget
@@ -225,9 +233,10 @@ unless manifest.dig("repositoryOutputPolicy", "outputPolicy") == "project_git_re
 end
 
 runtime = seed_state.fetch("runtime")
-%w[schemaVersion profileId status launchModes commands services storage adminSeedPolicy healthChecks createdAt updatedAt].each do |field|
+%w[schemaVersion profileId status executionProfile launchModes commands services storage adminSeedPolicy healthChecks createdAt updatedAt].each do |field|
   errors << "seed runtime missing #{field}" if runtime[field].nil? || runtime[field].to_s.empty?
 end
+errors << "seed runtime executionProfile must default to production" unless runtime["executionProfile"] == "production"
 errors << "seed runtime uses deprecated startModes field" if runtime.key?("startModes")
 errors << "seed runtime uses deprecated initializedAt field" if runtime.key?("initializedAt")
 runtime.fetch("services", []).each do |service|
@@ -235,6 +244,122 @@ runtime.fetch("services", []).each do |service|
     errors << "seed runtime service missing #{field}: #{service.inspect}" if service[field].nil? || service[field].to_s.empty?
   end
   errors << "seed runtime service #{service["serviceId"]} uses deprecated id field" if service.key?("id")
+  errors << "seed runtime service #{service["serviceId"]} must be executable, not simulated" if service["status"] == "simulated"
+end
+
+required_embedded_services = %w[
+  control-plane
+  room-broker
+  scheduler
+  agent-runtime
+  identity-service
+  ui-console-service
+  repository-router
+  instruction-optimizer
+  policy-engine
+  command-bus
+  permission-gateway
+  mcp-proxy
+  model-registry
+  skill-registry
+  monitor
+]
+seed_service_ids = runtime.fetch("services", []).map { |service| service["serviceId"] }.to_set
+missing_seed_services = required_embedded_services.to_set - seed_service_ids
+errors << "seed runtime missing embedded services: #{missing_seed_services.to_a.sort.join(", ")}" unless missing_seed_services.empty?
+
+provider_classes = manifest.dig("modelProviderPolicy", "providerClasses").to_set
+seed_provider_classes = seed_state.fetch("modelCapabilities", []).map { |profile| profile["providerClass"] }.to_set
+missing_seed_provider_classes = provider_classes - seed_provider_classes
+errors << "seed modelCapabilities missing provider classes: #{missing_seed_provider_classes.to_a.sort.join(", ")}" unless missing_seed_provider_classes.empty?
+seed_state.fetch("modelCapabilities", []).each do |profile|
+  %w[schemaVersion providerId providerClass modelId capabilityDigest modalities strengths limits toolCapabilities qualitySignals costSignals availability observedAt].each do |field|
+    errors << "seed model capability missing #{field}: #{profile.inspect}" if profile[field].nil? || profile[field].to_s.empty?
+  end
+end
+
+skill_sources = seed_state.fetch("skillSources", [])
+agency_source = skill_sources.find { |source| source["sourceId"] == "agency-agents-zh" }
+if agency_source.nil?
+  errors << "seed skillSources must include agency-agents-zh"
+else
+  expected_source = manifest.fetch("skillRoleSources").find { |source| source["sourceId"] == "agency-agents-zh" }
+  errors << "agency-agents-zh pinnedCommit mismatch between manifest and seed" if expected_source && agency_source["pinnedCommit"] != expected_source["pinnedCommit"]
+  required_skill_dirs = %w[academic design engineering finance game-development gis hr integrations legal marketing paid-media product project-management sales security spatial-computing specialized strategy supply-chain support testing writing]
+  source_globs = agency_source.fetch("roleFileGlobs", [])
+  missing_skill_dirs = required_skill_dirs.reject { |dir| source_globs.include?("#{dir}/**/*.md") }
+  errors << "agency-agents-zh roleFileGlobs missing directories: #{missing_skill_dirs.join(", ")}" unless missing_skill_dirs.empty?
+  %w[schemaVersion sourceId repositoryUrl defaultRef pinnedCommit status stateVersion catalogFiles roleFileGlobs catalogDigest roleSkillIndexRef digestIndexRef digestIndexVerified trustPolicy syncPolicy overlayPolicy].each do |field|
+    errors << "agency-agents-zh skill source missing #{field}" if agency_source[field].nil? || agency_source[field].to_s.empty?
+  end
+end
+
+if seed_state.fetch("roleSkills", []).empty?
+  errors << "seed roleSkills must include executable default role skills"
+end
+if seed_state.fetch("modelSelectionPolicies", []).empty?
+  errors << "seed modelSelectionPolicies must include scheduler policies"
+end
+management_surface_types = seed_state.fetch("managementSurfaces", []).map { |surface| surface["consoleType"] }.to_set
+%w[system_management user_management].each do |console_type|
+  errors << "seed managementSurfaces missing #{console_type}" unless management_surface_types.include?(console_type)
+end
+if seed_state.fetch("progressSnapshots", []).empty?
+  errors << "seed progressSnapshots must be precomputed for UI consumption"
+end
+errors << "seed must include agentDispatches durable outbox collection" unless seed_state.key?("agentDispatches") && seed_state["agentDispatches"].is_a?(Array)
+errors << "seed must include transitionEvidence collection for state-machine proof" unless seed_state.key?("transitionEvidence") && seed_state["transitionEvidence"].is_a?(Array)
+agent_runtime_account = seed_state.fetch("accounts", []).find { |account| account["accountId"] == "acct_agent_runtime" }
+if agent_runtime_account.nil?
+  errors << "seed accounts must include acct_agent_runtime service account"
+else
+  errors << "acct_agent_runtime must be a service_account" unless agent_runtime_account["accountType"] == "service_account"
+  errors << "acct_agent_runtime must use service_token auth" unless agent_runtime_account.dig("authPolicy", "method") == "service_token"
+  errors << "acct_agent_runtime missing service_agent_runtime role" unless agent_runtime_account.fetch("roles", []).include?("service_agent_runtime")
+  disallowed_direct = agent_runtime_account.fetch("permissions", []).grep(/\A(project|task_group):/)
+  errors << "acct_agent_runtime must not use direct project/task permissions: #{disallowed_direct.sort.join(", ")}" unless disallowed_direct.empty?
+end
+agent_runtime_grant = seed_state.fetch("accessGrants", []).find do |grant|
+  grant.dig("subjectRef", "subjectId") == "acct_agent_runtime" && grant.dig("resource", "resourceType") == "task_group"
+end
+if agent_runtime_grant.nil?
+  errors << "seed accessGrants must include scoped task_group grant for acct_agent_runtime"
+else
+  %w[task_group:checkpoint_submit task_group:orchestrate].each do |permission|
+    errors << "acct_agent_runtime scoped grant missing #{permission}" unless agent_runtime_grant.fetch("permissions", []).include?(permission)
+  end
+end
+
+server_source = File.read(File.join(ROOT, "apps/control-plane-ui/server.mjs"))
+core_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/control-plane-core.mjs"))
+doctor_source = File.read(File.join(ROOT, "scripts/doctor.mjs"))
+{
+  "server must expose agent runtime worker endpoint" => "/api/agent-runtime/run",
+  "server must scope state reads by authenticated account" => "scopedStateForAccount",
+  "server must require auth for state reads" => "auth_required",
+  "server must gate deterministic worker behind environment flag" => "AIMAC_ALLOW_LOCAL_DETERMINISTIC_WORKER",
+  "server must require executor command for provider-backed agent runtime" => "AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND",
+  "server must enforce service agent runtime principal gates" => "service_agent_runtime",
+  "server login must bind local account token hashes" => "localAccountTokenHashes",
+  "doctor must reject forged wrong target checkpoints" => "doctor-forged-wrong-target",
+  "doctor must reject forged missing manifest checkpoints" => "doctor-forged-missing-manifest",
+  "doctor must run agent runtime worker instead of hand-built checkpoint success" => "doctor-agent-runtime-worker",
+  "doctor must verify duplicate orchestrator dispatch reuse" => "awaiting_existing_checkpoint",
+  "doctor must verify scoped permission isolation" => "doctor-reviewer-cross-project-denied",
+  "doctor must verify workspace owner direct permissions do not cross project scope" => "doctor-owner-cross-project-denied",
+  "doctor must verify unauthenticated state read is blocked" => "expected unauthenticated state read 401",
+  "doctor must reject checkpoint without runId" => "doctor-agent-checkpoint-missing-run",
+  "doctor must verify workspace owner invite does not cross project scope" => "doctor-owner-cross-project-invite-denied",
+  "doctor must verify workspace owner agent activation does not cross project scope" => "doctor-owner-cross-project-agent-denied",
+  "core must bind checkpoints to active agent dispatch" => "active_agent_dispatch_required",
+  "core must require checkpoint runId" => "checkpoint_run_id_required",
+  "core must preserve dispatch deliveryMode from work session placement" => "workSession?.placement",
+  "core must reject executor undeclared changes" => "agent_runtime_executor_undeclared_changes",
+  "core must bind push remote to selected repository" => "push_ref_remote_repository_mismatch",
+  "core must require artifact manifest output refs" => "artifact_manifest_missing_output_refs"
+}.each do |message, needle|
+  source = message.start_with?("server") || message.start_with?("core") ? "#{server_source}\n#{core_source}" : doctor_source
+  errors << message unless source.include?(needle)
 end
 
 seed_state.fetch("repositoryOutputs", []).each do |target|
@@ -256,6 +381,12 @@ seed_state.fetch("accounts", []).each do |account|
   end
   errors << "seed account #{account["accountId"]} uses deprecated id field" if account.key?("id")
   errors << "seed account #{account["accountId"]} uses deprecated auth field" if account.key?("auth")
+  if account["accountType"] == "user_account"
+    disallowed_direct = account.fetch("permissions", []).grep(/\A(project|task_group):/)
+    disallowed_direct -= ["project:create"]
+    disallowed_direct += account.fetch("permissions", []) & %w[member:invite agent:activate]
+    errors << "seed user account #{account["accountId"]} has non-scoped direct project/task permissions: #{disallowed_direct.sort.join(", ")}" unless disallowed_direct.empty?
+  end
 end
 
 account_role_enum = load_json("spec/account.schema.json").dig("properties", "roles", "items", "enum").to_set

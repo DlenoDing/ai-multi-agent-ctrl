@@ -344,13 +344,13 @@ unique(project_id, resource_type, resource_key) where status = 'active'
 | progress_snapshots | `id,scope_type,scope_ref,status,progress,health,counters,role_activity,work_items,blockers,repository_outputs,digest,created_at,updated_at` |
 | instruction_envelopes | `id,project_id,task_group_id,work_item_id,status,recipient_role,effective_instruction_packet_id,stable_prefix_digest,delta_refs,cache_key,token_budget,output_contract_ref,payload_digest,audit_ref,created_at,updated_at` |
 | shared_definition_contracts | `id,project_id,task_group_id,status,definition_type,scope_refs,canonical_owner_role,producer_role,consumer_refs,definition_digest,repository_target,conflict_policy,change_policy,review_evidence_refs,audit_ref,created_at,updated_at` |
-| repository_output_targets | `id,project_id,task_group_id,work_item_id,status,repository_id,repository_url,branch,base_ref,path_allowlist,path_denylist,output_policy,decision_record_id,lease_id,commit_refs,push_refs,artifact_manifest_path,audit_ref,created_at,updated_at` |
+| repository_output_targets | `id,project_id,task_group_id,work_item_id,status,repository_id,repository_url,remote,branch,base_ref,path_allowlist,path_denylist,output_policy,decision_record_id,lease_id,commit_refs,push_refs,artifact_manifest_path,audit_ref,created_at,updated_at` |
 
 `task_groups.close_barrier` 只保存 Orchestrator 最近一次计算出的 `CloseBarrier` 快照。关闭判定必须从 `work_items`、`findings`、`quality_gate_results`、`permission_requests`、`approval_requests`、`leases`、`commands`、`command_effects`、`dlq_entries`、`integration_batches`、`release_manifests`、`external_capability_boundaries`、`effective_instruction_packets`、`role_drift_guards`、`execution_topologies`、`derived_task_requests`、`review_plans`、`review_bundles`、`rule_source_resolutions`、`completion_readiness_checks`、`shared_definition_contracts`、`repository_output_targets`、`progress_snapshots`、`instruction_envelopes`、`rulesets`、`runtime_issue_patterns` 和 `system_upgrade_candidates` 的终态或非阻断状态确定性计算，并写入 `stateDigest`、`sourceQueryRefs`、按 gate 名称索引的 `gateResults`、`blockingObjects`、`waivers` 和 `evidenceRefs`。重复运行问题只要求已聚合并导出系统外升级证据包；关闭屏障不得要求运行中的系统自动执行自身升级。不能把自由文本或聊天结论写入 `close_barrier` 后直接关闭。
 
 ## 4. HTTP API
 
-HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证器和只读观察 UI 使用。所有写接口必须接收 `Idempotency-Key` header，并写入 audit。入口总控会话只能提交目标、边界和外部能力信号；后台管理只能配置能力 registry、查看审计和导入系统外升级产物；它们都不能作为项目执行 actor 调用任务写入接口。
+HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证器和只读观察 UI 使用。所有读接口必须认证并按账号、项目、任务组 scope 过滤；所有写接口必须接收 `Idempotency-Key` header，并写入 audit。入口总控会话只能提交目标、边界和外部能力信号；后台管理只能配置能力 registry、查看审计和导入系统外升级产物；它们都不能作为项目执行 actor 调用任务写入接口。
 
 | 方法 | 路径 | 作用 | 允许 actor |
 | --- | --- | --- | --- |
@@ -361,6 +361,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/task-groups` | 创建任务组 | orchestrator |
 | GET | `/api/task-groups/:taskGroupId` | 读取任务组快照 | orchestrator、scheduler、agent-runtime、monitor、admin read-only |
 | GET | `/api/task-groups/:taskGroupId/progress` | 读取任务组进度快照 | orchestrator、monitor、ui-console-service |
+| GET | `/api/task-groups/:taskGroupId/readiness` | 计算任务组完成就绪和关闭屏障 | orchestrator、monitor、ui-console-service |
 | POST | `/api/task-groups/:taskGroupId/control` | 暂停、恢复、请求复验或纠偏 | orchestrator、ui-console-service |
 | POST | `/api/work-items` | 创建 work item | orchestrator、decision-center |
 | POST | `/api/work-items/:workItemId/assign` | 分配或改派 | scheduler、orchestrator |
@@ -368,8 +369,17 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/instruction-envelopes` | 创建压缩后的角色指令信封 | orchestrator、instruction-optimizer |
 | POST | `/api/role-drift-guards` | 绑定或更新角色漂移防护对象 | orchestrator、monitor |
 | POST | `/api/role-drift-guards/:guardId/rebound` | 暂停跑偏角色并重签任务契约 | orchestrator |
+| GET | `/api/model-registry` | 读取模型能力画像、选择策略和选择记录 | model-registry、scheduler、ui-console-service |
+| POST | `/api/model-capabilities` | 注册或覆盖模型能力画像 | model-registry、policy-engine |
+| POST | `/api/model-selection/decide` | 根据角色 skill、任务能力和策略生成模型选择决策 | scheduler、model-registry |
 | POST | `/api/model-selection-decisions` | 记录模型和 Agent 自动选择结果 | model-registry、scheduler |
+| GET | `/api/skill-registry` | 读取 skill source、role skill 和 overlay 索引 | skill-registry、scheduler、ui-console-service |
+| POST | `/api/skill-sources/:sourceId/sync` | 同步 pinned skill source 并生成 digest 索引 | skill-registry |
+| POST | `/api/role-skill-overlays` | 创建项目或任务组级 role skill overlay | skill-registry、decision-center |
+| POST | `/api/session-placement/decide` | 生成新 WorkSession 或 subagent 放置决策 | scheduler |
 | POST | `/api/session-placement-decisions` | 记录新会话或子 Agent placement | scheduler |
+| POST | `/api/orchestrator/run` | 执行 Orchestrator 自治调度循环 | orchestrator |
+| POST | `/api/agent-runtime/run` | 消费 `AgentDispatch` outbox，执行 Git 写入、commit、push 并提交 checkpoint | agent-runtime |
 | POST | `/api/execution-topologies` | 创建并行/降级执行拓扑 | scheduler、orchestrator |
 | POST | `/api/derived-task-requests` | 提交派生任务请求 | agent-runtime、reviewer、monitor、orchestrator |
 | POST | `/api/review-plans` | 创建或更新互审计划 | reviewer、orchestrator |
@@ -391,6 +401,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/shared-definition-contracts` | 创建或更新共享定义合同 | orchestrator、decision-center |
 | POST | `/api/repository-output-targets` | 为 WorkItem 选择项目 Git 仓库输出目标 | orchestrator、repository-router |
 | POST | `/api/integration-batches` | 创建集成批次 | release、orchestrator |
+| POST | `/api/runtime-issues` | 收集重复运行期问题并生成升级候选，不触发运行时自修改 | monitor |
 | POST | `/api/runtime-issue-patterns` | 聚合重复运行问题 | monitor |
 | POST | `/api/system-upgrade-candidates/export` | 导出系统外升级证据包 | monitor、rule-steward |
 | POST | `/api/system-upgrade-candidates/import-external-result` | 导入系统外独立升级后的版本化结果 | admin console、orchestrator import service |
@@ -398,10 +409,12 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/agents/join` | 使用 join token 初始化 Agent | agent-runtime |
 | POST | `/api/agents/:nodeId/heartbeat` | Agent 心跳 | agent-runtime |
 | POST | `/api/agents/:nodeId/activation` | 激活或停用 Agent | ui-console-service、policy-engine |
+| POST | `/api/agents` | 创建项目可用 Agent identity | ui-console-service、identity-service |
 | GET | `/api/runtime/health` | 运行健康检查 | ui-console-service、monitor |
 | POST | `/api/bootstrap/init` | 初始化运行态 | ui-console-service、agent-runtime |
 | POST | `/api/accounts` | 创建或邀请账号 | identity-service、ui-console-service |
 | POST | `/api/access-grants` | 创建授权 | identity-service、policy-engine、ui-console-service |
+| POST | `/api/access-grants/:grantId/revoke` | 撤销授权 | identity-service、policy-engine、ui-console-service |
 
 ## 5. MCP tools
 
@@ -477,7 +490,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | 发送 room message | 插入 message、递增 room sequence、插入 outbox、写 audit |
 | 创建 command | 插入 command、插入 outbox、写 audit |
 | 获取 lease | 检查唯一 active lease、插入 lease、递增 fencing token、写 audit |
-| 提交 checkpoint | 插入 checkpoint、更新 work/session 状态、递增 stateVersion、发送 checkpoint message、写 audit |
+| 提交 checkpoint | 校验 active AgentDispatch、runId、taskContractDigest、lease、RepositoryOutputTarget、commit/push remote 和 artifact manifest outputRefs 后，插入 checkpoint、更新 work/session 状态、递增 stateVersion、发送 checkpoint message、写 audit |
 | PermissionRequest | 插入 request、更新 session 为 `permission_required`、发送事件、写 audit |
 
 ## 8. 可靠性规则

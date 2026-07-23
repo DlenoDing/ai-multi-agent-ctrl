@@ -182,7 +182,7 @@ h1 {
 
 .status-line {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -354,6 +354,12 @@ h1 {
   gap: 10px;
 }
 
+.compact-form {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
 .form-row {
   display: grid;
   gap: 6px;
@@ -393,6 +399,12 @@ select {
   background: #ecfeff;
   color: #164e63;
   font-size: 13px;
+}
+
+.error-notice {
+  border-left-color: var(--rose);
+  background: #fff1f2;
+  color: var(--rose);
 }
 
 @media (max-width: 940px) {

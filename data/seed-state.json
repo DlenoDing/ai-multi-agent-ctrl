@@ -8,7 +8,12 @@
     "schemaVersion": "runtime-bootstrap-profile/v1",
     "profileId": "runtime_local",
     "status": "initialized",
-    "launchModes": ["npm", "docker", "shell"],
+    "executionProfile": "production",
+    "launchModes": [
+      "npm",
+      "docker",
+      "shell"
+    ],
     "commands": {
       "init": "npm run init",
       "start": "npm start",
@@ -18,14 +23,98 @@
       "shellStart": "npm run shell:start"
     },
     "services": [
-      {"serviceId": "control-plane", "roleId": "ui-console-service", "status": "running", "health": "ok", "endpoint": "http://127.0.0.1:4317"},
-      {"serviceId": "room-broker", "roleId": "room-broker", "status": "simulated", "health": "ok"},
-      {"serviceId": "scheduler", "roleId": "scheduler", "status": "simulated", "health": "ok"},
-      {"serviceId": "agent-runtime", "roleId": "agent-runtime", "status": "simulated", "health": "ok"},
-      {"serviceId": "identity-service", "roleId": "identity-service", "status": "simulated", "health": "ok"},
-      {"serviceId": "ui-console-service", "roleId": "ui-console-service", "status": "running", "health": "ok"},
-      {"serviceId": "repository-router", "roleId": "repository-router", "status": "simulated", "health": "ok"},
-      {"serviceId": "instruction-optimizer", "roleId": "instruction-optimizer", "status": "simulated", "health": "ok"}
+      {
+        "serviceId": "control-plane",
+        "roleId": "ui-console-service",
+        "status": "running",
+        "health": "ok",
+        "endpoint": "http://127.0.0.1:4317"
+      },
+      {
+        "serviceId": "room-broker",
+        "roleId": "room-broker",
+        "status": "running",
+        "health": "ok"
+      },
+      {
+        "serviceId": "scheduler",
+        "roleId": "scheduler",
+        "status": "running",
+        "health": "ok"
+      },
+      {
+        "serviceId": "agent-runtime",
+        "roleId": "agent-runtime",
+        "status": "running",
+        "health": "ok"
+      },
+      {
+        "serviceId": "identity-service",
+        "roleId": "identity-service",
+        "status": "running",
+        "health": "ok"
+      },
+      {
+        "serviceId": "ui-console-service",
+        "roleId": "ui-console-service",
+        "status": "running",
+        "health": "ok",
+        "endpoint": "http://127.0.0.1:4317"
+      },
+      {
+        "serviceId": "repository-router",
+        "roleId": "repository-router",
+        "status": "running",
+        "health": "ok"
+      },
+      {
+        "serviceId": "instruction-optimizer",
+        "roleId": "instruction-optimizer",
+        "status": "running",
+        "health": "ok"
+      },
+      {
+        "serviceId": "policy-engine",
+        "roleId": "policy-engine",
+        "status": "running",
+        "health": "ok"
+      },
+      {
+        "serviceId": "command-bus",
+        "roleId": "command-bus",
+        "status": "running",
+        "health": "ok"
+      },
+      {
+        "serviceId": "permission-gateway",
+        "roleId": "permission-gateway",
+        "status": "running",
+        "health": "ok"
+      },
+      {
+        "serviceId": "mcp-proxy",
+        "roleId": "mcp-proxy",
+        "status": "running",
+        "health": "ok"
+      },
+      {
+        "serviceId": "model-registry",
+        "roleId": "model-registry",
+        "status": "running",
+        "health": "ok"
+      },
+      {
+        "serviceId": "skill-registry",
+        "roleId": "skill-registry",
+        "status": "running",
+        "health": "ok"
+      },
+      {
+        "serviceId": "monitor",
+        "roleId": "monitor",
+        "status": "running",
+        "health": "ok"
+      }
     ],
     "storage": {
       "stateStore": "runtime_json",
@@ -39,7 +128,11 @@
       "secretPolicy": "bootstrap_token"
     },
     "healthChecks": [
-      {"checkId": "runtime_health", "command": "npm run doctor", "expected": "control console health ok"}
+      {
+        "checkId": "runtime_health",
+        "command": "npm run doctor",
+        "expected": "control console health ok"
+      }
     ],
     "auditRef": "audit_seed_runtime",
     "createdAt": "2026-07-23T09:30:00Z",
@@ -53,9 +146,23 @@
       "displayName": "System Owner",
       "email": "system.admin@local",
       "status": "active",
-      "roles": ["system_owner"],
-      "permissions": ["system:*"],
-      "authPolicy": {"method": "bootstrap_token", "mfaRequired": false, "passwordSet": false, "sessionTtlSeconds": 3600},
+      "roles": [
+        "system_owner"
+      ],
+      "permissions": [
+        "system:*",
+        "system:bootstrap",
+        "system:skill_sync",
+        "system:model_registry",
+        "system:audit",
+        "project:grant"
+      ],
+      "authPolicy": {
+        "method": "bootstrap_token",
+        "mfaRequired": false,
+        "passwordSet": false,
+        "sessionTtlSeconds": 3600
+      },
       "auditRef": "audit_seed_system_owner",
       "createdAt": "2026-07-23T09:30:00Z",
       "updatedAt": "2026-07-23T09:30:00Z"
@@ -67,9 +174,18 @@
       "displayName": "Workspace Owner",
       "email": "owner@local",
       "status": "active",
-      "roles": ["workspace_owner"],
-      "permissions": ["project:create", "agent:activate", "member:invite"],
-      "authPolicy": {"method": "local_password", "mfaRequired": false, "passwordSet": false, "sessionTtlSeconds": 3600},
+      "roles": [
+        "workspace_owner"
+      ],
+      "permissions": [
+        "project:create"
+      ],
+      "authPolicy": {
+        "method": "local_password",
+        "mfaRequired": false,
+        "passwordSet": false,
+        "sessionTtlSeconds": 3600
+      },
       "auditRef": "audit_seed_workspace_owner",
       "createdAt": "2026-07-23T09:30:00Z",
       "updatedAt": "2026-07-23T09:30:00Z"
@@ -81,22 +197,58 @@
       "displayName": "Review Lead",
       "email": "review@local",
       "status": "active",
-      "roles": ["reviewer"],
-      "permissions": ["project:view", "task_group:review"],
-      "authPolicy": {"method": "local_password", "mfaRequired": false, "passwordSet": false, "sessionTtlSeconds": 3600},
+      "roles": [
+        "reviewer"
+      ],
+      "permissions": [],
+      "authPolicy": {
+        "method": "local_password",
+        "mfaRequired": false,
+        "passwordSet": false,
+        "sessionTtlSeconds": 3600
+      },
       "auditRef": "audit_seed_reviewer",
       "createdAt": "2026-07-23T09:30:00Z",
       "updatedAt": "2026-07-23T09:30:00Z"
+    },
+    {
+      "schemaVersion": "account/v1",
+      "accountId": "acct_agent_runtime",
+      "accountType": "service_account",
+      "displayName": "Agent Runtime Service",
+      "email": "agent.runtime@local",
+      "status": "active",
+      "roles": [
+        "service_agent_runtime"
+      ],
+      "permissions": [],
+      "authPolicy": {
+        "method": "service_token",
+        "mfaRequired": false,
+        "passwordSet": false,
+        "sessionTtlSeconds": 3600
+      },
+      "auditRef": "audit_seed_agent_runtime",
+      "createdAt": "2026-07-23T11:31:40.232Z",
+      "updatedAt": "2026-07-23T11:31:40.232Z"
     }
   ],
   "accessGrants": [
     {
       "schemaVersion": "access-control-grant/v1",
       "grantId": "grant_system_owner",
-      "subjectRef": {"subjectType": "account", "subjectId": "acct_system_owner"},
-      "resource": {"resourceType": "system_console", "resourceId": "system"},
+      "subjectRef": {
+        "subjectType": "account",
+        "subjectId": "acct_system_owner"
+      },
+      "resource": {
+        "resourceType": "system_console",
+        "resourceId": "system"
+      },
       "role": "system_owner",
-      "permissions": ["system:*"],
+      "permissions": [
+        "system:*"
+      ],
       "status": "active",
       "policyDecisionRef": "pd_seed_system_owner",
       "auditRef": "audit_seed_grant_system_owner",
@@ -106,13 +258,92 @@
     {
       "schemaVersion": "access-control-grant/v1",
       "grantId": "grant_workspace_owner_project",
-      "subjectRef": {"subjectType": "account", "subjectId": "acct_workspace_owner"},
-      "resource": {"resourceType": "project", "resourceId": "prj_control_plane"},
+      "subjectRef": {
+        "subjectType": "account",
+        "subjectId": "acct_workspace_owner"
+      },
+      "resource": {
+        "resourceType": "project",
+        "resourceId": "prj_control_plane"
+      },
       "role": "project_owner",
-      "permissions": ["project:*", "task_group:*", "agent:activate", "member:invite"],
+      "permissions": [
+        "project:*",
+        "task_group:*",
+        "agent:activate",
+        "member:invite",
+        "project:grant",
+        "task_group:control"
+      ],
       "status": "active",
       "policyDecisionRef": "pd_seed_workspace_owner_project",
       "auditRef": "audit_seed_grant_workspace_owner_project",
+      "createdAt": "2026-07-23T09:30:00Z",
+      "updatedAt": "2026-07-23T09:30:00Z"
+    },
+    {
+      "schemaVersion": "access-control-grant/v1",
+      "grantId": "grant_reviewer_project",
+      "subjectRef": {
+        "subjectType": "account",
+        "subjectId": "acct_reviewer"
+      },
+      "resource": {
+        "resourceType": "project",
+        "resourceId": "prj_control_plane"
+      },
+      "role": "reviewer",
+      "permissions": [
+        "project:view"
+      ],
+      "status": "active",
+      "policyDecisionRef": "pd_seed_reviewer_project",
+      "auditRef": "audit_seed_grant_reviewer_project",
+      "createdAt": "2026-07-23T09:30:00Z",
+      "updatedAt": "2026-07-23T09:30:00Z"
+    },
+    {
+      "schemaVersion": "access-control-grant/v1",
+      "grantId": "grant_reviewer_task_group",
+      "subjectRef": {
+        "subjectType": "account",
+        "subjectId": "acct_reviewer"
+      },
+      "resource": {
+        "resourceType": "task_group",
+        "resourceId": "tg_runtime_management"
+      },
+      "role": "reviewer",
+      "permissions": [
+        "task_group:review"
+      ],
+      "status": "active",
+      "policyDecisionRef": "pd_seed_reviewer_task_group",
+      "auditRef": "audit_seed_grant_reviewer_task_group",
+      "createdAt": "2026-07-23T09:30:00Z",
+      "updatedAt": "2026-07-23T09:30:00Z"
+    },
+    {
+      "schemaVersion": "access-control-grant/v1",
+      "grantId": "grant_agent_runtime_task_group",
+      "subjectRef": {
+        "subjectType": "account",
+        "subjectId": "acct_agent_runtime"
+      },
+      "resource": {
+        "resourceType": "task_group",
+        "resourceId": "tg_runtime_management"
+      },
+      "role": "agent_operator",
+      "permissions": [
+        "task_group:orchestrate",
+        "task_group:checkpoint_submit",
+        "task_group:read",
+        "task_group:monitor"
+      ],
+      "status": "active",
+      "policyDecisionRef": "pd_seed_agent_runtime_task_group",
+      "auditRef": "audit_seed_grant_agent_runtime_task_group",
       "createdAt": "2026-07-23T09:30:00Z",
       "updatedAt": "2026-07-23T09:30:00Z"
     }
@@ -144,6 +375,42 @@
       "status": "inactive",
       "trustScore": 0.91,
       "capacity": "standby"
+    },
+    {
+      "id": "agent_qa",
+      "name": "QA Runtime",
+      "role": "qa",
+      "model": "cost_aware",
+      "status": "active",
+      "trustScore": 0.9,
+      "capacity": "ready"
+    },
+    {
+      "id": "agent_security",
+      "name": "Security Reviewer",
+      "role": "security",
+      "model": "auto_best",
+      "status": "active",
+      "trustScore": 0.9,
+      "capacity": "ready"
+    },
+    {
+      "id": "agent_release",
+      "name": "Release Runtime",
+      "role": "release",
+      "model": "auto_fast",
+      "status": "active",
+      "trustScore": 0.9,
+      "capacity": "ready"
+    },
+    {
+      "id": "agent_monitor",
+      "name": "Monitor Agent",
+      "role": "monitor",
+      "model": "auto_fast",
+      "status": "active",
+      "trustScore": 0.9,
+      "capacity": "ready"
     }
   ],
   "projects": [
@@ -153,19 +420,30 @@
       "status": "active",
       "ownerAccountId": "acct_workspace_owner",
       "members": [
-        {"accountId": "acct_workspace_owner", "role": "project_owner"},
-        {"accountId": "acct_reviewer", "role": "reviewer"}
+        {
+          "accountId": "acct_workspace_owner",
+          "role": "project_owner"
+        },
+        {
+          "accountId": "acct_reviewer",
+          "role": "reviewer"
+        }
       ],
       "repositories": [
-        {"id": "repo_control_plane", "url": "git@github.com:dleno/ai-multi-agent-ctrl.git", "defaultBranch": "main", "purpose": "control_plane_specs_and_runtime"}
+        {
+          "id": "repo_control_plane",
+          "url": "git@github.com:dleno/ai-multi-agent-ctrl.git",
+          "defaultBranch": "main",
+          "purpose": "control_plane_specs_and_runtime"
+        }
       ],
       "progress": {
-        "percent": 68,
+        "percent": 73,
         "phase": "governance_design",
-        "health": "attention",
+        "health": "ok",
         "openTaskGroups": 2,
-        "blockedItems": 1,
-        "updatedAt": "2026-07-23T09:30:00Z"
+        "blockedItems": 0,
+        "updatedAt": "2026-07-23T11:31:40.233Z"
       }
     }
   ],
@@ -179,21 +457,55 @@
       "goalExecutionStatus": "active",
       "phase": "implementation",
       "progress": 62,
-      "health": "attention",
+      "health": "ok",
       "roles": [
-        {"roleId": "orchestrator", "sessionId": "sess_orch_1", "status": "monitoring"},
-        {"roleId": "scheduler", "sessionId": "sess_sched_1", "status": "ready"},
-        {"roleId": "reviewer", "sessionId": "sess_review_1", "status": "standby"}
+        {
+          "roleId": "orchestrator",
+          "sessionId": "sess_orch_1",
+          "status": "monitoring"
+        },
+        {
+          "roleId": "scheduler",
+          "sessionId": "sess_sched_1",
+          "status": "ready"
+        },
+        {
+          "roleId": "reviewer",
+          "sessionId": "sess_review_1",
+          "status": "standby"
+        }
       ],
       "workItems": [
-        {"id": "work_bootstrap", "title": "Runtime bootstrap profile", "status": "verified", "ownerRole": "agent-runtime", "progress": 100},
-        {"id": "work_management_ui", "title": "System and user management console", "status": "in_progress", "ownerRole": "ui-console-service", "progress": 58},
-        {"id": "work_permissions", "title": "Project and task-group permission model", "status": "review_requested", "ownerRole": "policy-engine", "progress": 74},
-        {"id": "work_progress", "title": "Progress snapshots and task visibility", "status": "in_progress", "ownerRole": "monitor", "progress": 44}
+        {
+          "id": "work_bootstrap",
+          "title": "Runtime bootstrap profile",
+          "status": "verified",
+          "ownerRole": "agent-runtime",
+          "progress": 100
+        },
+        {
+          "id": "work_management_ui",
+          "title": "System and user management console",
+          "status": "in_progress",
+          "ownerRole": "ui-console-service",
+          "progress": 58
+        },
+        {
+          "id": "work_permissions",
+          "title": "Project and task-group permission model",
+          "status": "review_requested",
+          "ownerRole": "policy-engine",
+          "progress": 74
+        },
+        {
+          "id": "work_progress",
+          "title": "Progress snapshots and task visibility",
+          "status": "in_progress",
+          "ownerRole": "monitor",
+          "progress": 44
+        }
       ],
-      "blockers": [
-        {"id": "blk_shared_semantics", "severity": "S1", "summary": "Shared definition owner must be explicit before multi-subsystem work expands."}
-      ]
+      "blockers": []
     },
     {
       "id": "tg_instruction_efficiency",
@@ -206,12 +518,32 @@
       "progress": 71,
       "health": "ok",
       "roles": [
-        {"roleId": "orchestrator", "sessionId": "sess_orch_1", "status": "monitoring"},
-        {"roleId": "room-broker", "sessionId": "svc_room", "status": "ready"}
+        {
+          "roleId": "orchestrator",
+          "sessionId": "sess_orch_1",
+          "status": "monitoring"
+        },
+        {
+          "roleId": "room-broker",
+          "sessionId": "svc_room",
+          "status": "ready"
+        }
       ],
       "workItems": [
-        {"id": "work_instruction_envelope", "title": "InstructionEnvelope schema", "status": "verified", "ownerRole": "orchestrator", "progress": 100},
-        {"id": "work_cache_hints", "title": "Cache hint and token budget policy", "status": "in_progress", "ownerRole": "room-broker", "progress": 60}
+        {
+          "id": "work_instruction_envelope",
+          "title": "InstructionEnvelope schema",
+          "status": "verified",
+          "ownerRole": "orchestrator",
+          "progress": 100
+        },
+        {
+          "id": "work_cache_hints",
+          "title": "Cache hint and token budget policy",
+          "status": "in_progress",
+          "ownerRole": "room-broker",
+          "progress": 60
+        }
       ],
       "blockers": []
     }
@@ -222,17 +554,35 @@
       "contractId": "sdc_status_semantics",
       "projectId": "prj_control_plane",
       "definitionType": "status_semantics",
-      "scopeRefs": ["Project", "TaskGroup", "WorkItem", "WorkSession", "ProgressSnapshot"],
+      "scopeRefs": [
+        "Project",
+        "TaskGroup",
+        "WorkItem",
+        "WorkSession",
+        "ProgressSnapshot"
+      ],
       "canonicalOwnerRole": "orchestrator",
       "producerRole": "decision-center",
       "status": "active",
       "definitionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-      "consumerRefs": ["Project", "TaskGroup", "WorkItem", "WorkSession", "ProgressSnapshot"],
+      "consumerRefs": [
+        "Project",
+        "TaskGroup",
+        "WorkItem",
+        "WorkSession",
+        "ProgressSnapshot"
+      ],
       "repositoryOutputTargetRef": "rot_runtime_management",
       "repositoryOutputTargetDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "conflictPolicy": "block_and_request_canonical_decision",
-      "changePolicy": {"requiresDecisionRecord": true, "invalidatesConsumers": true, "consumerAckRequired": true},
-      "reviewEvidenceRefs": ["review_seed_status_semantics"],
+      "changePolicy": {
+        "requiresDecisionRecord": true,
+        "invalidatesConsumers": true,
+        "consumerAckRequired": true
+      },
+      "reviewEvidenceRefs": [
+        "review_seed_status_semantics"
+      ],
       "auditRef": "audit_seed_status_semantics",
       "createdAt": "2026-07-23T09:30:00Z",
       "updatedAt": "2026-07-23T09:30:00Z"
@@ -246,9 +596,19 @@
       "taskGroupId": "tg_runtime_management",
       "workItemId": "work_management_ui",
       "repositoryId": "repo_control_plane",
+      "repositoryUrl": "git@github.com:dleno/ai-multi-agent-ctrl.git",
+      "remote": "origin",
       "branch": "main",
       "baseRef": "HEAD",
-      "pathAllowlist": ["apps/control-plane-ui/**", "spec/**", "docs/**", "scripts/**", "package.json", "Dockerfile", "docker-compose.yml"],
+      "pathAllowlist": [
+        "apps/control-plane-ui/**",
+        "spec/**",
+        "docs/**",
+        "scripts/**",
+        "package.json",
+        "Dockerfile",
+        "docker-compose.yml"
+      ],
       "status": "selected",
       "outputPolicy": "project_git_repository_only",
       "decisionRecordRef": "decision_seed_runtime_management_repo",
@@ -273,11 +633,29 @@
         "effectiveInstructionPacketRef": "eip_runtime_management",
         "formatVersion": "ai-native-instruction-envelope/v1",
         "stablePrefixDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-        "digestRefs": ["ruleset:runtime:v1", "contract:sdc_status_semantics"],
-        "sharedDefinitionRefs": [{"contractRef": "sdc_status_semantics", "definitionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "status": "active"}],
+        "digestRefs": [
+          "ruleset:runtime:v1",
+          "contract:sdc_status_semantics"
+        ],
+        "sharedDefinitionRefs": [
+          {
+            "contractRef": "sdc_status_semantics",
+            "definitionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "status": "active"
+          }
+        ],
         "cacheKey": "orch:v1:runtime-management",
-        "tokenBudget": {"maxInputTokens": 4096, "targetDeltaTokens": 392, "maxOutputTokens": 1200},
-        "cacheHints": ["stable_prefix_first", "digest_locator_over_inline_context", "delta_only_room_messages", "role_specific_output_contract"],
+        "tokenBudget": {
+          "maxInputTokens": 4096,
+          "targetDeltaTokens": 392,
+          "maxOutputTokens": 1200
+        },
+        "cacheHints": [
+          "stable_prefix_first",
+          "digest_locator_over_inline_context",
+          "delta_only_room_messages",
+          "role_specific_output_contract"
+        ],
         "outputContractRef": "spec/checkpoint.schema.json",
         "payloadDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
         "auditRef": "audit_seed_env_orch_runtime",
@@ -293,11 +671,29 @@
         "effectiveInstructionPacketRef": "eip_review_ui",
         "formatVersion": "ai-native-instruction-envelope/v1",
         "stablePrefixDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
-        "digestRefs": ["ruleset:review:v1", "contract:sdc_status_semantics"],
-        "sharedDefinitionRefs": [{"contractRef": "sdc_status_semantics", "definitionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "status": "active"}],
+        "digestRefs": [
+          "ruleset:review:v1",
+          "contract:sdc_status_semantics"
+        ],
+        "sharedDefinitionRefs": [
+          {
+            "contractRef": "sdc_status_semantics",
+            "definitionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "status": "active"
+          }
+        ],
         "cacheKey": "review:v1:ui-management",
-        "tokenBudget": {"maxInputTokens": 4096, "targetDeltaTokens": 288, "maxOutputTokens": 1200},
-        "cacheHints": ["stable_prefix_first", "digest_locator_over_inline_context", "delta_only_room_messages", "role_specific_output_contract"],
+        "tokenBudget": {
+          "maxInputTokens": 4096,
+          "targetDeltaTokens": 288,
+          "maxOutputTokens": 1200
+        },
+        "cacheHints": [
+          "stable_prefix_first",
+          "digest_locator_over_inline_context",
+          "delta_only_room_messages",
+          "role_specific_output_contract"
+        ],
         "outputContractRef": "spec/review-bundle.schema.json",
         "payloadDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
         "auditRef": "audit_seed_env_review_ui",
@@ -306,5 +702,2281 @@
       }
     ]
   },
-  "auditLog": []
+  "auditLog": [],
+  "decisionRecords": [],
+  "eventLog": [],
+  "managementSurfaces": [
+    {
+      "schemaVersion": "management-console-surface/v1",
+      "surfaceId": "surface_system_management",
+      "consoleType": "system_management",
+      "status": "active",
+      "route": "/#system",
+      "views": [
+        "runtime",
+        "accounts",
+        "audit",
+        "policies",
+        "instructions"
+      ],
+      "guardedActions": [
+        {
+          "actionId": "runtime_reinitialize",
+          "riskClass": "high",
+          "requiredPermission": "system:bootstrap",
+          "decisionRequired": true
+        },
+        {
+          "actionId": "skill_source_sync",
+          "riskClass": "medium",
+          "requiredPermission": "system:skill_sync",
+          "decisionRequired": true
+        },
+        {
+          "actionId": "model_capability_register",
+          "riskClass": "medium",
+          "requiredPermission": "system:model_registry",
+          "decisionRequired": true
+        }
+      ],
+      "visualQualityGates": [
+        "responsive_layout",
+        "text_no_overlap",
+        "action_state_visible",
+        "progress_visible",
+        "audit_trace_visible"
+      ],
+      "auditRef": "audit_seed_surface_system",
+      "createdAt": "2026-07-23T10:45:35.942Z",
+      "updatedAt": "2026-07-23T10:45:35.942Z"
+    },
+    {
+      "schemaVersion": "management-console-surface/v1",
+      "surfaceId": "surface_user_management",
+      "consoleType": "user_management",
+      "status": "active",
+      "route": "/#projects",
+      "views": [
+        "projects",
+        "task_groups",
+        "agents",
+        "permissions",
+        "progress",
+        "instructions"
+      ],
+      "guardedActions": [
+        {
+          "actionId": "project_create",
+          "riskClass": "medium",
+          "requiredPermission": "project:create",
+          "decisionRequired": true
+        },
+        {
+          "actionId": "task_group_control",
+          "riskClass": "medium",
+          "requiredPermission": "task_group:control",
+          "decisionRequired": true
+        },
+        {
+          "actionId": "activate_agent",
+          "riskClass": "medium",
+          "requiredPermission": "agent:activate",
+          "decisionRequired": true
+        }
+      ],
+      "visualQualityGates": [
+        "responsive_layout",
+        "text_no_overlap",
+        "action_state_visible",
+        "progress_visible",
+        "audit_trace_visible"
+      ],
+      "auditRef": "audit_seed_surface_user",
+      "createdAt": "2026-07-23T10:45:35.942Z",
+      "updatedAt": "2026-07-23T10:45:35.942Z"
+    }
+  ],
+  "skillSources": [
+    {
+      "schemaVersion": "agent-skill-source/v1",
+      "sourceId": "agency-agents-zh",
+      "repositoryUrl": "https://github.com/DlenoDing/agency-agents-zh.git",
+      "defaultRef": "main",
+      "pinnedCommit": "1d2345927e4a70c426472c37771e31f9333d7e0a",
+      "status": "configured",
+      "stateVersion": 1,
+      "catalogFiles": [
+        "AGENT-LIST.md",
+        "CATALOG.md"
+      ],
+      "roleFileGlobs": [
+        "academic/**/*.md",
+        "design/**/*.md",
+        "engineering/**/*.md",
+        "finance/**/*.md",
+        "game-development/**/*.md",
+        "gis/**/*.md",
+        "hr/**/*.md",
+        "integrations/**/*.md",
+        "legal/**/*.md",
+        "marketing/**/*.md",
+        "paid-media/**/*.md",
+        "product/**/*.md",
+        "project-management/**/*.md",
+        "sales/**/*.md",
+        "security/**/*.md",
+        "spatial-computing/**/*.md",
+        "specialized/**/*.md",
+        "strategy/**/*.md",
+        "supply-chain/**/*.md",
+        "support/**/*.md",
+        "testing/**/*.md",
+        "writing/**/*.md"
+      ],
+      "catalogDigest": "sha256:353d8fbb3b2c2a13ca9b12061d51ec4609d6232e8015e06660c9b45e164d1392",
+      "roleSkillIndexRef": "runtime://skill-sources/agency-agents-zh/index.json",
+      "digestIndexRef": "runtime://skill-sources/agency-agents-zh/digest-index.json",
+      "digestIndexVerified": false,
+      "trustPolicy": {
+        "requirePinnedCommit": true,
+        "requireFrontmatter": true,
+        "requireDigestIndex": true,
+        "allowUnsignedContent": false
+      },
+      "syncPolicy": {
+        "mode": "pinned_snapshot",
+        "refreshTrigger": "orchestrator_need",
+        "onUpstreamChange": "create_system_upgrade_candidate"
+      },
+      "overlayPolicy": {
+        "defaultPrecedence": [
+          "task_group_overlay",
+          "project_overlay",
+          "upstream_default"
+        ],
+        "allowedScopes": [
+          "project",
+          "task_group"
+        ],
+        "requiresDecisionRecord": true,
+        "requiresDigest": true
+      }
+    }
+  ],
+  "roleSkills": [
+    {
+      "schemaVersion": "agent-role-skill/v1",
+      "sourceId": "system-default",
+      "roleSkillId": "system-orchestrator",
+      "sourcePath": "runtime://system-role-skills/orchestrator",
+      "name": "orchestrator system role skill",
+      "description": "Built-in role skill for orchestrator until agency-agents-zh is synced.",
+      "category": "control",
+      "frontmatterDigest": "sha256:a06c61b87816845fd200a935b80e09a0fddb9100bc08b1f5e8bf963f6bbc77d6",
+      "contentDigest": "sha256:c36eaf9f30137d11572aaa41b8255130046961de42af4a4b0f022aaaf0f19571",
+      "capabilities": [
+        "planning",
+        "architecture",
+        "deep_reasoning",
+        "long_context",
+        "tool_use",
+        "review"
+      ],
+      "defaultModelRequirements": {
+        "strengths": [
+          "planning",
+          "architecture",
+          "deep_reasoning",
+          "long_context"
+        ],
+        "minContextWindowTokens": 128000,
+        "requiresToolUse": true,
+        "riskLevel": "L2"
+      },
+      "overlayRefs": [],
+      "status": "active",
+      "stateVersion": 1,
+      "auditRef": "audit_seed_skill_orchestrator"
+    },
+    {
+      "schemaVersion": "agent-role-skill/v1",
+      "sourceId": "system-default",
+      "roleSkillId": "system-scheduler",
+      "sourcePath": "runtime://system-role-skills/scheduler",
+      "name": "scheduler system role skill",
+      "description": "Built-in role skill for scheduler until agency-agents-zh is synced.",
+      "category": "control",
+      "frontmatterDigest": "sha256:c6e0c70633b40fa1a1a1cca813c4e90f3178e3541cb133cdeefadc97f0f8d871",
+      "contentDigest": "sha256:4d039898b5d9439336822d068f8eae3e38468b68d613fe00d9f0a554a5b91af2",
+      "capabilities": [
+        "planning",
+        "fast_execution",
+        "cost_aware",
+        "quota_aware",
+        "tool_use"
+      ],
+      "defaultModelRequirements": {
+        "strengths": [
+          "planning",
+          "fast_execution"
+        ],
+        "minContextWindowTokens": 32000,
+        "requiresToolUse": true,
+        "riskLevel": "L1"
+      },
+      "overlayRefs": [],
+      "status": "active",
+      "stateVersion": 1,
+      "auditRef": "audit_seed_skill_scheduler"
+    },
+    {
+      "schemaVersion": "agent-role-skill/v1",
+      "sourceId": "system-default",
+      "roleSkillId": "system-reviewer",
+      "sourcePath": "runtime://system-role-skills/reviewer",
+      "name": "reviewer system role skill",
+      "description": "Built-in role skill for reviewer until agency-agents-zh is synced.",
+      "category": "review",
+      "frontmatterDigest": "sha256:d6b8a201ab35c59728d316f7ac935b97a1314c4b626c38153dd78e58fb9f6b7d",
+      "contentDigest": "sha256:9833d2c5972daca3785a3f9ac5b85b6f9e9a93e22191d4e1a11097ee2a848265",
+      "capabilities": [
+        "review",
+        "coding",
+        "security",
+        "qa",
+        "deep_reasoning"
+      ],
+      "defaultModelRequirements": {
+        "strengths": [
+          "review",
+          "coding",
+          "security"
+        ],
+        "minContextWindowTokens": 32000,
+        "requiresToolUse": true,
+        "riskLevel": "L1"
+      },
+      "overlayRefs": [],
+      "status": "active",
+      "stateVersion": 1,
+      "auditRef": "audit_seed_skill_reviewer"
+    },
+    {
+      "schemaVersion": "agent-role-skill/v1",
+      "sourceId": "system-default",
+      "roleSkillId": "system-qa",
+      "sourcePath": "runtime://system-role-skills/qa",
+      "name": "qa system role skill",
+      "description": "Built-in role skill for qa until agency-agents-zh is synced.",
+      "category": "quality",
+      "frontmatterDigest": "sha256:25c4fad84e26ba8641a32969b2d993064a19a184bafc23fd97252f0100ff91a7",
+      "contentDigest": "sha256:ce640d9daff4f469e5342177e6d88fa7e615074e95ba0f3734c19a4804881477",
+      "capabilities": [
+        "qa",
+        "review",
+        "coding",
+        "data_analysis"
+      ],
+      "defaultModelRequirements": {
+        "strengths": [
+          "qa",
+          "review"
+        ],
+        "minContextWindowTokens": 32000,
+        "requiresToolUse": true,
+        "riskLevel": "L1"
+      },
+      "overlayRefs": [],
+      "status": "active",
+      "stateVersion": 1,
+      "auditRef": "audit_seed_skill_qa"
+    },
+    {
+      "schemaVersion": "agent-role-skill/v1",
+      "sourceId": "system-default",
+      "roleSkillId": "system-security",
+      "sourcePath": "runtime://system-role-skills/security",
+      "name": "security system role skill",
+      "description": "Built-in role skill for security until agency-agents-zh is synced.",
+      "category": "security",
+      "frontmatterDigest": "sha256:7e4431d43b5457977c83d8ecf0d6c2d54096cb07b1c611a114a59dcdc0224d62",
+      "contentDigest": "sha256:39d57bfc6ae5c357c27714b68cc3fd3480f458f7125a0cf3ecb12c42252dbcd6",
+      "capabilities": [
+        "security",
+        "review",
+        "deep_reasoning",
+        "tool_use"
+      ],
+      "defaultModelRequirements": {
+        "strengths": [
+          "security",
+          "review",
+          "deep_reasoning"
+        ],
+        "minContextWindowTokens": 32000,
+        "requiresToolUse": true,
+        "riskLevel": "L2"
+      },
+      "overlayRefs": [],
+      "status": "active",
+      "stateVersion": 1,
+      "auditRef": "audit_seed_skill_security"
+    },
+    {
+      "schemaVersion": "agent-role-skill/v1",
+      "sourceId": "system-default",
+      "roleSkillId": "system-release",
+      "sourcePath": "runtime://system-role-skills/release",
+      "name": "release system role skill",
+      "description": "Built-in role skill for release until agency-agents-zh is synced.",
+      "category": "release",
+      "frontmatterDigest": "sha256:a8cd30e599d316e20d14570b40a2a608fa436941ec2206e3a4d17e2b830542ef",
+      "contentDigest": "sha256:ffc2606c0c620aabea06077ac0e4b7893cc626151a7a1eab8f5b02da8ffd547a",
+      "capabilities": [
+        "coding",
+        "qa",
+        "planning",
+        "tool_use",
+        "fast_execution"
+      ],
+      "defaultModelRequirements": {
+        "strengths": [
+          "coding",
+          "qa",
+          "planning"
+        ],
+        "minContextWindowTokens": 32000,
+        "requiresToolUse": true,
+        "riskLevel": "L1"
+      },
+      "overlayRefs": [],
+      "status": "active",
+      "stateVersion": 1,
+      "auditRef": "audit_seed_skill_release"
+    },
+    {
+      "schemaVersion": "agent-role-skill/v1",
+      "sourceId": "system-default",
+      "roleSkillId": "system-monitor",
+      "sourcePath": "runtime://system-role-skills/monitor",
+      "name": "monitor system role skill",
+      "description": "Built-in role skill for monitor until agency-agents-zh is synced.",
+      "category": "monitor",
+      "frontmatterDigest": "sha256:a537fcbcba1f35cacdb80aa00a31d96e4993441921890c71dd76d9e3dff34983",
+      "contentDigest": "sha256:d5daa5a184a4e525991e624fcd874d4e57689fbb7238910430a485ea9e6351fb",
+      "capabilities": [
+        "qa",
+        "data_analysis",
+        "fast_execution",
+        "tool_use"
+      ],
+      "defaultModelRequirements": {
+        "strengths": [
+          "qa",
+          "data_analysis",
+          "fast_execution"
+        ],
+        "minContextWindowTokens": 32000,
+        "requiresToolUse": true,
+        "riskLevel": "L1"
+      },
+      "overlayRefs": [],
+      "status": "active",
+      "stateVersion": 1,
+      "auditRef": "audit_seed_skill_monitor"
+    },
+    {
+      "schemaVersion": "agent-role-skill/v1",
+      "sourceId": "system-default",
+      "roleSkillId": "system-agent-runtime",
+      "sourcePath": "runtime://system-role-skills/agent-runtime",
+      "name": "agent-runtime system role skill",
+      "description": "Built-in role skill for agent-runtime until agency-agents-zh is synced.",
+      "category": "runtime",
+      "frontmatterDigest": "sha256:1ba5383bc42f5150d7f709e0a826c1f111ec7bf223f2678bcadf7d813fe80a6a",
+      "contentDigest": "sha256:c4992bdabd23f96fa2fbea8defe77f1e88cbe9d61eab562ed710ac29c8da51d9",
+      "capabilities": [
+        "coding",
+        "architecture",
+        "tool_use",
+        "qa"
+      ],
+      "defaultModelRequirements": {
+        "strengths": [
+          "coding",
+          "architecture"
+        ],
+        "minContextWindowTokens": 32000,
+        "requiresToolUse": true,
+        "riskLevel": "L1"
+      },
+      "overlayRefs": [],
+      "status": "active",
+      "stateVersion": 1,
+      "auditRef": "audit_seed_skill_agent-runtime"
+    },
+    {
+      "schemaVersion": "agent-role-skill/v1",
+      "sourceId": "system-default",
+      "roleSkillId": "system-ui-console-service",
+      "sourcePath": "runtime://system-role-skills/ui-console-service",
+      "name": "ui-console-service system role skill",
+      "description": "Built-in role skill for ui-console-service until agency-agents-zh is synced.",
+      "category": "ui",
+      "frontmatterDigest": "sha256:c1b7e5b072252d99a254d56c96a6db03ed1e12063299f48f4eb64d0d7c27dbdc",
+      "contentDigest": "sha256:ca67f870b19c4c4b27e93c9936d9b590875b2daaf32720cb67060c4ba5aaa23d",
+      "capabilities": [
+        "coding",
+        "creative",
+        "qa",
+        "tool_use"
+      ],
+      "defaultModelRequirements": {
+        "strengths": [
+          "coding",
+          "creative"
+        ],
+        "minContextWindowTokens": 32000,
+        "requiresToolUse": true,
+        "riskLevel": "L1"
+      },
+      "overlayRefs": [],
+      "status": "active",
+      "stateVersion": 1,
+      "auditRef": "audit_seed_skill_ui-console-service"
+    },
+    {
+      "schemaVersion": "agent-role-skill/v1",
+      "sourceId": "system-default",
+      "roleSkillId": "system-policy-engine",
+      "sourcePath": "runtime://system-role-skills/policy-engine",
+      "name": "policy-engine system role skill",
+      "description": "Built-in role skill for policy-engine until agency-agents-zh is synced.",
+      "category": "policy",
+      "frontmatterDigest": "sha256:7a0669692628dc42ff9acffb571d3fede594ccfa46b2b1babed5b76c40ecbcb6",
+      "contentDigest": "sha256:6edafe9197c5d9c81f2db4eb3f07c4d3e4840a102a67599e5451f525a1bd0dab",
+      "capabilities": [
+        "security",
+        "review",
+        "deep_reasoning",
+        "planning"
+      ],
+      "defaultModelRequirements": {
+        "strengths": [
+          "security",
+          "review"
+        ],
+        "minContextWindowTokens": 32000,
+        "requiresToolUse": true,
+        "riskLevel": "L2"
+      },
+      "overlayRefs": [],
+      "status": "active",
+      "stateVersion": 1,
+      "auditRef": "audit_seed_skill_policy-engine"
+    },
+    {
+      "schemaVersion": "agent-role-skill/v1",
+      "sourceId": "system-default",
+      "roleSkillId": "system-model-registry",
+      "sourcePath": "runtime://system-role-skills/model-registry",
+      "name": "model-registry system role skill",
+      "description": "Built-in role skill for model-registry until agency-agents-zh is synced.",
+      "category": "runtime",
+      "frontmatterDigest": "sha256:2c73324102a69603e20d735c51f68d70c30c9cbd2a4d56aa627973fb33bdfbbb",
+      "contentDigest": "sha256:f6ccfe0410f6ea977d56710b68f2fb192d168c2f0c160fc8bb07541c36e2311b",
+      "capabilities": [
+        "data_analysis",
+        "planning",
+        "deep_reasoning",
+        "tool_use"
+      ],
+      "defaultModelRequirements": {
+        "strengths": [
+          "data_analysis",
+          "planning"
+        ],
+        "minContextWindowTokens": 32000,
+        "requiresToolUse": true,
+        "riskLevel": "L1"
+      },
+      "overlayRefs": [],
+      "status": "active",
+      "stateVersion": 1,
+      "auditRef": "audit_seed_skill_model-registry"
+    },
+    {
+      "schemaVersion": "agent-role-skill/v1",
+      "sourceId": "system-default",
+      "roleSkillId": "system-skill-registry",
+      "sourcePath": "runtime://system-role-skills/skill-registry",
+      "name": "skill-registry system role skill",
+      "description": "Built-in role skill for skill-registry until agency-agents-zh is synced.",
+      "category": "runtime",
+      "frontmatterDigest": "sha256:4d71685fa5858b25169a12b9acbfae6c0ad848f406a491e641a6b2bb6ea7e928",
+      "contentDigest": "sha256:e1c44edad8004303aec98355a55bcce3eb6b50d1e6c09648196c5b21eeb0aee3",
+      "capabilities": [
+        "writing",
+        "planning",
+        "review",
+        "translation"
+      ],
+      "defaultModelRequirements": {
+        "strengths": [
+          "writing",
+          "planning"
+        ],
+        "minContextWindowTokens": 32000,
+        "requiresToolUse": true,
+        "riskLevel": "L1"
+      },
+      "overlayRefs": [],
+      "status": "active",
+      "stateVersion": 1,
+      "auditRef": "audit_seed_skill_skill-registry"
+    }
+  ],
+  "roleSkillOverlays": [],
+  "modelCapabilities": [
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "openai:default",
+      "providerClass": "openai",
+      "modelId": "openai:auto",
+      "aliases": [
+        "openai:auto_best",
+        "openai:auto_fast",
+        "openai:cost_aware"
+      ],
+      "capabilityDigest": "sha256:f134c7c2e2c15266b73ce3990bf6c19c1a278810839e24c8c59eef4b7f225630",
+      "modalities": [
+        "text",
+        "vision",
+        "tool_use"
+      ],
+      "strengths": [
+        "deep_reasoning",
+        "coding",
+        "architecture",
+        "review",
+        "security",
+        "qa",
+        "planning",
+        "long_context"
+      ],
+      "limits": {
+        "contextWindowTokens": 128000,
+        "maxOutputTokens": 16000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.96,
+        "codingScore": 0.95,
+        "reviewScore": 0.94,
+        "latencyClass": "normal",
+        "reliabilityScore": 0.95
+      },
+      "costSignals": {
+        "costClass": "high",
+        "quotaClass": "normal"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "anthropic:default",
+      "providerClass": "anthropic",
+      "modelId": "anthropic:auto",
+      "aliases": [
+        "anthropic:auto_best",
+        "anthropic:auto_fast",
+        "anthropic:cost_aware"
+      ],
+      "capabilityDigest": "sha256:6da40cfd72b2b7d9b9b12a8c99ce8bd9155f727930b1fb72530c0e69f11820be",
+      "modalities": [
+        "text",
+        "vision",
+        "tool_use"
+      ],
+      "strengths": [
+        "deep_reasoning",
+        "coding",
+        "architecture",
+        "review",
+        "writing",
+        "long_context"
+      ],
+      "limits": {
+        "contextWindowTokens": 200000,
+        "maxOutputTokens": 16000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.94,
+        "codingScore": 0.92,
+        "reviewScore": 0.94,
+        "latencyClass": "normal",
+        "reliabilityScore": 0.94
+      },
+      "costSignals": {
+        "costClass": "high",
+        "quotaClass": "normal"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "google:default",
+      "providerClass": "google",
+      "modelId": "google:auto",
+      "aliases": [
+        "google:auto_best",
+        "google:auto_fast",
+        "google:cost_aware"
+      ],
+      "capabilityDigest": "sha256:39c8a14730905594640b685b0bc80ac2bd78e9887c2de6bbc7020acddff194a2",
+      "modalities": [
+        "text",
+        "vision",
+        "audio",
+        "video",
+        "tool_use"
+      ],
+      "strengths": [
+        "deep_reasoning",
+        "coding",
+        "math",
+        "data_analysis",
+        "multimodal",
+        "long_context"
+      ],
+      "limits": {
+        "contextWindowTokens": 1000000,
+        "maxOutputTokens": 16000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.92,
+        "codingScore": 0.9,
+        "reviewScore": 0.9,
+        "latencyClass": "normal",
+        "reliabilityScore": 0.92
+      },
+      "costSignals": {
+        "costClass": "normal",
+        "quotaClass": "high"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "xai:default",
+      "providerClass": "xai",
+      "modelId": "xai:auto",
+      "aliases": [
+        "xai:auto_best",
+        "xai:auto_fast",
+        "xai:cost_aware"
+      ],
+      "capabilityDigest": "sha256:a1b008e2752ed5d8e80b7e40457a346de5d329f3876f7adfeeb6698eaf5a0d9c",
+      "modalities": [
+        "text",
+        "vision",
+        "tool_use"
+      ],
+      "strengths": [
+        "deep_reasoning",
+        "fast_execution",
+        "coding",
+        "writing"
+      ],
+      "limits": {
+        "contextWindowTokens": 128000,
+        "maxOutputTokens": 12000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.89,
+        "codingScore": 0.86,
+        "reviewScore": 0.84,
+        "latencyClass": "low",
+        "reliabilityScore": 0.88
+      },
+      "costSignals": {
+        "costClass": "normal",
+        "quotaClass": "normal"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "meta:default",
+      "providerClass": "meta",
+      "modelId": "meta:auto",
+      "aliases": [
+        "meta:auto_best",
+        "meta:auto_fast",
+        "meta:cost_aware"
+      ],
+      "capabilityDigest": "sha256:e8068101bb59b838563c9326a323c24fe9ca100b6a1e9c011e5cbec826e8c7b0",
+      "modalities": [
+        "text",
+        "tool_use"
+      ],
+      "strengths": [
+        "coding",
+        "fast_execution",
+        "low_cost",
+        "local_private"
+      ],
+      "limits": {
+        "contextWindowTokens": 128000,
+        "maxOutputTokens": 8000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.84,
+        "codingScore": 0.85,
+        "reviewScore": 0.8,
+        "latencyClass": "low",
+        "reliabilityScore": 0.84
+      },
+      "costSignals": {
+        "costClass": "low",
+        "quotaClass": "high"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "mistral:default",
+      "providerClass": "mistral",
+      "modelId": "mistral:auto",
+      "aliases": [
+        "mistral:auto_best",
+        "mistral:auto_fast",
+        "mistral:cost_aware"
+      ],
+      "capabilityDigest": "sha256:e9c803fc3ecef81468028bff77e1605ba45548c63bf42aae7c3a24fb3cf30fdd",
+      "modalities": [
+        "text",
+        "tool_use"
+      ],
+      "strengths": [
+        "coding",
+        "fast_execution",
+        "low_cost",
+        "multimodal"
+      ],
+      "limits": {
+        "contextWindowTokens": 128000,
+        "maxOutputTokens": 8000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.86,
+        "codingScore": 0.86,
+        "reviewScore": 0.82,
+        "latencyClass": "low",
+        "reliabilityScore": 0.86
+      },
+      "costSignals": {
+        "costClass": "low",
+        "quotaClass": "high"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "deepseek:default",
+      "providerClass": "deepseek",
+      "modelId": "deepseek:auto",
+      "aliases": [
+        "deepseek:auto_best",
+        "deepseek:auto_fast",
+        "deepseek:cost_aware"
+      ],
+      "capabilityDigest": "sha256:a2f5032b72fc77f696eeeedfc3acd4dc24c634d57e206b0face924c93b82b4b1",
+      "modalities": [
+        "text",
+        "tool_use"
+      ],
+      "strengths": [
+        "deep_reasoning",
+        "coding",
+        "math",
+        "low_cost"
+      ],
+      "limits": {
+        "contextWindowTokens": 128000,
+        "maxOutputTokens": 8000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.91,
+        "codingScore": 0.92,
+        "reviewScore": 0.85,
+        "latencyClass": "normal",
+        "reliabilityScore": 0.86
+      },
+      "costSignals": {
+        "costClass": "low",
+        "quotaClass": "normal"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "qwen:default",
+      "providerClass": "qwen",
+      "modelId": "qwen:auto",
+      "aliases": [
+        "qwen:auto_best",
+        "qwen:auto_fast",
+        "qwen:cost_aware"
+      ],
+      "capabilityDigest": "sha256:b51582a99a3048f74765b57d53b3d3a7c28eb52aeb4bef570c70dc0cbeaad6e8",
+      "modalities": [
+        "text",
+        "vision",
+        "tool_use"
+      ],
+      "strengths": [
+        "coding",
+        "math",
+        "translation",
+        "low_cost",
+        "long_context"
+      ],
+      "limits": {
+        "contextWindowTokens": 128000,
+        "maxOutputTokens": 8000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.88,
+        "codingScore": 0.89,
+        "reviewScore": 0.84,
+        "latencyClass": "low",
+        "reliabilityScore": 0.87
+      },
+      "costSignals": {
+        "costClass": "low",
+        "quotaClass": "high"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "moonshot:default",
+      "providerClass": "moonshot",
+      "modelId": "moonshot:auto",
+      "aliases": [
+        "moonshot:auto_best",
+        "moonshot:auto_fast",
+        "moonshot:cost_aware"
+      ],
+      "capabilityDigest": "sha256:eea758089c6af6fddf3382ca024ef9007c080cff7dcead942905e7d2dc722529",
+      "modalities": [
+        "text",
+        "vision",
+        "tool_use"
+      ],
+      "strengths": [
+        "long_context",
+        "writing",
+        "translation",
+        "deep_reasoning"
+      ],
+      "limits": {
+        "contextWindowTokens": 1000000,
+        "maxOutputTokens": 8000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.88,
+        "codingScore": 0.84,
+        "reviewScore": 0.84,
+        "latencyClass": "normal",
+        "reliabilityScore": 0.87
+      },
+      "costSignals": {
+        "costClass": "normal",
+        "quotaClass": "normal"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "zhipu:default",
+      "providerClass": "zhipu",
+      "modelId": "zhipu:auto",
+      "aliases": [
+        "zhipu:auto_best",
+        "zhipu:auto_fast",
+        "zhipu:cost_aware"
+      ],
+      "capabilityDigest": "sha256:f149740fa8f7e6e100bfd4e9fc8c4dcd44a1adde3ebe3ec3e65f849bd52044bd",
+      "modalities": [
+        "text",
+        "vision",
+        "tool_use"
+      ],
+      "strengths": [
+        "translation",
+        "writing",
+        "low_cost",
+        "multimodal"
+      ],
+      "limits": {
+        "contextWindowTokens": 128000,
+        "maxOutputTokens": 8000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.84,
+        "codingScore": 0.82,
+        "reviewScore": 0.8,
+        "latencyClass": "low",
+        "reliabilityScore": 0.84
+      },
+      "costSignals": {
+        "costClass": "low",
+        "quotaClass": "normal"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "baidu:default",
+      "providerClass": "baidu",
+      "modelId": "baidu:auto",
+      "aliases": [
+        "baidu:auto_best",
+        "baidu:auto_fast",
+        "baidu:cost_aware"
+      ],
+      "capabilityDigest": "sha256:1cf4cea27fd2cc20a6bd64a109f92573216b469d05668d5c255a4e8bb7a1417a",
+      "modalities": [
+        "text",
+        "vision",
+        "tool_use"
+      ],
+      "strengths": [
+        "translation",
+        "writing",
+        "data_analysis",
+        "multimodal"
+      ],
+      "limits": {
+        "contextWindowTokens": 128000,
+        "maxOutputTokens": 8000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.83,
+        "codingScore": 0.8,
+        "reviewScore": 0.8,
+        "latencyClass": "normal",
+        "reliabilityScore": 0.84
+      },
+      "costSignals": {
+        "costClass": "normal",
+        "quotaClass": "normal"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "tencent:default",
+      "providerClass": "tencent",
+      "modelId": "tencent:auto",
+      "aliases": [
+        "tencent:auto_best",
+        "tencent:auto_fast",
+        "tencent:cost_aware"
+      ],
+      "capabilityDigest": "sha256:ca222e94b5d16791000cfaeac01e48c77ef048d2ca8d298a4dac1a792c3f34bc",
+      "modalities": [
+        "text",
+        "vision",
+        "tool_use"
+      ],
+      "strengths": [
+        "writing",
+        "translation",
+        "data_analysis",
+        "low_cost"
+      ],
+      "limits": {
+        "contextWindowTokens": 128000,
+        "maxOutputTokens": 8000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.82,
+        "codingScore": 0.8,
+        "reviewScore": 0.8,
+        "latencyClass": "normal",
+        "reliabilityScore": 0.83
+      },
+      "costSignals": {
+        "costClass": "normal",
+        "quotaClass": "normal"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "openrouter:default",
+      "providerClass": "openrouter",
+      "modelId": "openrouter:auto",
+      "aliases": [
+        "openrouter:auto_best",
+        "openrouter:auto_fast",
+        "openrouter:cost_aware"
+      ],
+      "capabilityDigest": "sha256:a658c4b790c3cd0eeabe978c76ab72181fa12670bdb074d3658c72167e712b46",
+      "modalities": [
+        "text",
+        "vision",
+        "tool_use"
+      ],
+      "strengths": [
+        "planning",
+        "coding",
+        "low_cost",
+        "fast_execution"
+      ],
+      "limits": {
+        "contextWindowTokens": 128000,
+        "maxOutputTokens": 12000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.86,
+        "codingScore": 0.86,
+        "reviewScore": 0.84,
+        "latencyClass": "low",
+        "reliabilityScore": 0.82
+      },
+      "costSignals": {
+        "costClass": "low",
+        "quotaClass": "high"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "azure_openai:default",
+      "providerClass": "azure_openai",
+      "modelId": "azure_openai:auto",
+      "aliases": [
+        "azure_openai:auto_best",
+        "azure_openai:auto_fast",
+        "azure_openai:cost_aware"
+      ],
+      "capabilityDigest": "sha256:97a0c21f90091ecf50cd1f461ed05c2f20f76b7a0b9ed98af37f3c2d2032d98c",
+      "modalities": [
+        "text",
+        "vision",
+        "tool_use"
+      ],
+      "strengths": [
+        "deep_reasoning",
+        "coding",
+        "architecture",
+        "review",
+        "security",
+        "planning",
+        "long_context"
+      ],
+      "limits": {
+        "contextWindowTokens": 128000,
+        "maxOutputTokens": 16000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.95,
+        "codingScore": 0.94,
+        "reviewScore": 0.94,
+        "latencyClass": "normal",
+        "reliabilityScore": 0.95
+      },
+      "costSignals": {
+        "costClass": "high",
+        "quotaClass": "normal"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "aws_bedrock:default",
+      "providerClass": "aws_bedrock",
+      "modelId": "aws_bedrock:auto",
+      "aliases": [
+        "aws_bedrock:auto_best",
+        "aws_bedrock:auto_fast",
+        "aws_bedrock:cost_aware"
+      ],
+      "capabilityDigest": "sha256:48f87233ffc6d0c6d21e287296e23f421399fb118eb45980bc337a47b42f6174",
+      "modalities": [
+        "text",
+        "vision",
+        "tool_use"
+      ],
+      "strengths": [
+        "architecture",
+        "security",
+        "writing",
+        "planning"
+      ],
+      "limits": {
+        "contextWindowTokens": 200000,
+        "maxOutputTokens": 12000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.9,
+        "codingScore": 0.87,
+        "reviewScore": 0.9,
+        "latencyClass": "normal",
+        "reliabilityScore": 0.92
+      },
+      "costSignals": {
+        "costClass": "normal",
+        "quotaClass": "normal"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "vertex_ai:default",
+      "providerClass": "vertex_ai",
+      "modelId": "vertex_ai:auto",
+      "aliases": [
+        "vertex_ai:auto_best",
+        "vertex_ai:auto_fast",
+        "vertex_ai:cost_aware"
+      ],
+      "capabilityDigest": "sha256:7ff5a787af60bccbe3144c0575f7026a27402a04524304e90b4082fbfb163bac",
+      "modalities": [
+        "text",
+        "vision",
+        "audio",
+        "video",
+        "tool_use"
+      ],
+      "strengths": [
+        "data_analysis",
+        "multimodal",
+        "long_context",
+        "planning"
+      ],
+      "limits": {
+        "contextWindowTokens": 1000000,
+        "maxOutputTokens": 16000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.91,
+        "codingScore": 0.88,
+        "reviewScore": 0.89,
+        "latencyClass": "normal",
+        "reliabilityScore": 0.92
+      },
+      "costSignals": {
+        "costClass": "normal",
+        "quotaClass": "normal"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "ollama:default",
+      "providerClass": "ollama",
+      "modelId": "ollama:auto",
+      "aliases": [
+        "ollama:auto_best",
+        "ollama:auto_fast",
+        "ollama:cost_aware"
+      ],
+      "capabilityDigest": "sha256:050b289b4bbb0ac0b6e3eafd3a13875a3278010baf56e0925ed2b09e82787be2",
+      "modalities": [
+        "text",
+        "tool_use"
+      ],
+      "strengths": [
+        "local_private",
+        "low_cost",
+        "fast_execution",
+        "coding"
+      ],
+      "limits": {
+        "contextWindowTokens": 64000,
+        "maxOutputTokens": 8000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.76,
+        "codingScore": 0.78,
+        "reviewScore": 0.74,
+        "latencyClass": "low",
+        "reliabilityScore": 0.78
+      },
+      "costSignals": {
+        "costClass": "low",
+        "quotaClass": "high"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "vllm:default",
+      "providerClass": "vllm",
+      "modelId": "vllm:auto",
+      "aliases": [
+        "vllm:auto_best",
+        "vllm:auto_fast",
+        "vllm:cost_aware"
+      ],
+      "capabilityDigest": "sha256:8977ec149d209aff49acaaef47215439e446215f6e9358d934f4a1c779faf73d",
+      "modalities": [
+        "text",
+        "tool_use"
+      ],
+      "strengths": [
+        "local_private",
+        "low_cost",
+        "fast_execution",
+        "coding"
+      ],
+      "limits": {
+        "contextWindowTokens": 128000,
+        "maxOutputTokens": 8000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.78,
+        "codingScore": 0.8,
+        "reviewScore": 0.75,
+        "latencyClass": "low",
+        "reliabilityScore": 0.8
+      },
+      "costSignals": {
+        "costClass": "low",
+        "quotaClass": "high"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    },
+    {
+      "schemaVersion": "model-capability/v1",
+      "providerId": "custom:default",
+      "providerClass": "custom",
+      "modelId": "custom:auto",
+      "aliases": [
+        "custom:auto_best",
+        "custom:auto_fast",
+        "custom:cost_aware"
+      ],
+      "capabilityDigest": "sha256:d05478dcb253289cec71a97fa1af904c9c59839a9eb2c5b78f72610ea23400a7",
+      "modalities": [
+        "text",
+        "tool_use"
+      ],
+      "strengths": [
+        "planning",
+        "coding",
+        "review"
+      ],
+      "limits": {
+        "contextWindowTokens": 128000,
+        "maxOutputTokens": 8000,
+        "supportsStructuredOutput": true,
+        "supportsToolUse": true
+      },
+      "toolCapabilities": [
+        "mcp_proxy",
+        "function_calling",
+        "json_schema_output"
+      ],
+      "qualitySignals": {
+        "reasoningScore": 0.75,
+        "codingScore": 0.75,
+        "reviewScore": 0.75,
+        "latencyClass": "unknown",
+        "reliabilityScore": 0.75
+      },
+      "costSignals": {
+        "costClass": "unknown",
+        "quotaClass": "unknown"
+      },
+      "availability": "available",
+      "observedAt": "2026-07-23T10:45:35.943Z"
+    }
+  ],
+  "modelSelectionPolicies": [
+    {
+      "schemaVersion": "model-selection-policy/v1",
+      "taskType": "ai_native_work_item",
+      "scoringWeights": {
+        "capabilityFit": 2,
+        "roleSkillFit": 2,
+        "quality": 2,
+        "latency": 1,
+        "cost": 1,
+        "quota": 1,
+        "reliability": 2,
+        "risk": 1
+      },
+      "hardConstraints": {
+        "minContextWindowTokens": 32000,
+        "requiresStructuredOutput": true,
+        "requiresToolUse": true,
+        "minReliabilityScore": 0.75
+      },
+      "fallbackPolicy": {
+        "onNoModel": "split_task",
+        "onQuotaLimited": "select_next_ranked",
+        "onProviderDegraded": "select_next_ranked"
+      },
+      "decisionSchemaRef": "spec/model-selection-decision.schema.json",
+      "policyId": "msp_orchestrator",
+      "roleId": "orchestrator",
+      "requiredCapabilities": [
+        "planning",
+        "architecture",
+        "deep_reasoning",
+        "long_context",
+        "tool_use",
+        "review"
+      ]
+    },
+    {
+      "schemaVersion": "model-selection-policy/v1",
+      "taskType": "ai_native_work_item",
+      "scoringWeights": {
+        "capabilityFit": 2,
+        "roleSkillFit": 2,
+        "quality": 2,
+        "latency": 1,
+        "cost": 1,
+        "quota": 1,
+        "reliability": 2,
+        "risk": 1
+      },
+      "hardConstraints": {
+        "minContextWindowTokens": 32000,
+        "requiresStructuredOutput": true,
+        "requiresToolUse": true,
+        "minReliabilityScore": 0.75
+      },
+      "fallbackPolicy": {
+        "onNoModel": "split_task",
+        "onQuotaLimited": "select_next_ranked",
+        "onProviderDegraded": "select_next_ranked"
+      },
+      "decisionSchemaRef": "spec/model-selection-decision.schema.json",
+      "policyId": "msp_scheduler",
+      "roleId": "scheduler",
+      "requiredCapabilities": [
+        "planning",
+        "fast_execution",
+        "cost_aware",
+        "quota_aware",
+        "tool_use"
+      ]
+    },
+    {
+      "schemaVersion": "model-selection-policy/v1",
+      "taskType": "ai_native_work_item",
+      "scoringWeights": {
+        "capabilityFit": 2,
+        "roleSkillFit": 2,
+        "quality": 2,
+        "latency": 1,
+        "cost": 1,
+        "quota": 1,
+        "reliability": 2,
+        "risk": 1
+      },
+      "hardConstraints": {
+        "minContextWindowTokens": 32000,
+        "requiresStructuredOutput": true,
+        "requiresToolUse": true,
+        "minReliabilityScore": 0.75
+      },
+      "fallbackPolicy": {
+        "onNoModel": "split_task",
+        "onQuotaLimited": "select_next_ranked",
+        "onProviderDegraded": "select_next_ranked"
+      },
+      "decisionSchemaRef": "spec/model-selection-decision.schema.json",
+      "policyId": "msp_reviewer",
+      "roleId": "reviewer",
+      "requiredCapabilities": [
+        "review",
+        "coding",
+        "security",
+        "qa",
+        "deep_reasoning"
+      ]
+    },
+    {
+      "schemaVersion": "model-selection-policy/v1",
+      "taskType": "ai_native_work_item",
+      "scoringWeights": {
+        "capabilityFit": 2,
+        "roleSkillFit": 2,
+        "quality": 2,
+        "latency": 1,
+        "cost": 1,
+        "quota": 1,
+        "reliability": 2,
+        "risk": 1
+      },
+      "hardConstraints": {
+        "minContextWindowTokens": 32000,
+        "requiresStructuredOutput": true,
+        "requiresToolUse": true,
+        "minReliabilityScore": 0.75
+      },
+      "fallbackPolicy": {
+        "onNoModel": "split_task",
+        "onQuotaLimited": "select_next_ranked",
+        "onProviderDegraded": "select_next_ranked"
+      },
+      "decisionSchemaRef": "spec/model-selection-decision.schema.json",
+      "policyId": "msp_qa",
+      "roleId": "qa",
+      "requiredCapabilities": [
+        "qa",
+        "review",
+        "coding",
+        "data_analysis"
+      ]
+    },
+    {
+      "schemaVersion": "model-selection-policy/v1",
+      "taskType": "ai_native_work_item",
+      "scoringWeights": {
+        "capabilityFit": 2,
+        "roleSkillFit": 2,
+        "quality": 2,
+        "latency": 1,
+        "cost": 1,
+        "quota": 1,
+        "reliability": 2,
+        "risk": 1
+      },
+      "hardConstraints": {
+        "minContextWindowTokens": 32000,
+        "requiresStructuredOutput": true,
+        "requiresToolUse": true,
+        "minReliabilityScore": 0.75
+      },
+      "fallbackPolicy": {
+        "onNoModel": "split_task",
+        "onQuotaLimited": "select_next_ranked",
+        "onProviderDegraded": "select_next_ranked"
+      },
+      "decisionSchemaRef": "spec/model-selection-decision.schema.json",
+      "policyId": "msp_security",
+      "roleId": "security",
+      "requiredCapabilities": [
+        "security",
+        "review",
+        "deep_reasoning",
+        "tool_use"
+      ]
+    },
+    {
+      "schemaVersion": "model-selection-policy/v1",
+      "taskType": "ai_native_work_item",
+      "scoringWeights": {
+        "capabilityFit": 2,
+        "roleSkillFit": 2,
+        "quality": 2,
+        "latency": 1,
+        "cost": 1,
+        "quota": 1,
+        "reliability": 2,
+        "risk": 1
+      },
+      "hardConstraints": {
+        "minContextWindowTokens": 32000,
+        "requiresStructuredOutput": true,
+        "requiresToolUse": true,
+        "minReliabilityScore": 0.75
+      },
+      "fallbackPolicy": {
+        "onNoModel": "split_task",
+        "onQuotaLimited": "select_next_ranked",
+        "onProviderDegraded": "select_next_ranked"
+      },
+      "decisionSchemaRef": "spec/model-selection-decision.schema.json",
+      "policyId": "msp_release",
+      "roleId": "release",
+      "requiredCapabilities": [
+        "coding",
+        "qa",
+        "planning",
+        "tool_use",
+        "fast_execution"
+      ]
+    },
+    {
+      "schemaVersion": "model-selection-policy/v1",
+      "taskType": "ai_native_work_item",
+      "scoringWeights": {
+        "capabilityFit": 2,
+        "roleSkillFit": 2,
+        "quality": 2,
+        "latency": 1,
+        "cost": 1,
+        "quota": 1,
+        "reliability": 2,
+        "risk": 1
+      },
+      "hardConstraints": {
+        "minContextWindowTokens": 32000,
+        "requiresStructuredOutput": true,
+        "requiresToolUse": true,
+        "minReliabilityScore": 0.75
+      },
+      "fallbackPolicy": {
+        "onNoModel": "split_task",
+        "onQuotaLimited": "select_next_ranked",
+        "onProviderDegraded": "select_next_ranked"
+      },
+      "decisionSchemaRef": "spec/model-selection-decision.schema.json",
+      "policyId": "msp_monitor",
+      "roleId": "monitor",
+      "requiredCapabilities": [
+        "qa",
+        "data_analysis",
+        "fast_execution",
+        "tool_use"
+      ]
+    },
+    {
+      "schemaVersion": "model-selection-policy/v1",
+      "taskType": "ai_native_work_item",
+      "scoringWeights": {
+        "capabilityFit": 2,
+        "roleSkillFit": 2,
+        "quality": 2,
+        "latency": 1,
+        "cost": 1,
+        "quota": 1,
+        "reliability": 2,
+        "risk": 1
+      },
+      "hardConstraints": {
+        "minContextWindowTokens": 32000,
+        "requiresStructuredOutput": true,
+        "requiresToolUse": true,
+        "minReliabilityScore": 0.75
+      },
+      "fallbackPolicy": {
+        "onNoModel": "split_task",
+        "onQuotaLimited": "select_next_ranked",
+        "onProviderDegraded": "select_next_ranked"
+      },
+      "decisionSchemaRef": "spec/model-selection-decision.schema.json",
+      "policyId": "msp_agent-runtime",
+      "roleId": "agent-runtime",
+      "requiredCapabilities": [
+        "coding",
+        "architecture",
+        "tool_use",
+        "qa"
+      ]
+    },
+    {
+      "schemaVersion": "model-selection-policy/v1",
+      "taskType": "ai_native_work_item",
+      "scoringWeights": {
+        "capabilityFit": 2,
+        "roleSkillFit": 2,
+        "quality": 2,
+        "latency": 1,
+        "cost": 1,
+        "quota": 1,
+        "reliability": 2,
+        "risk": 1
+      },
+      "hardConstraints": {
+        "minContextWindowTokens": 32000,
+        "requiresStructuredOutput": true,
+        "requiresToolUse": true,
+        "minReliabilityScore": 0.75
+      },
+      "fallbackPolicy": {
+        "onNoModel": "split_task",
+        "onQuotaLimited": "select_next_ranked",
+        "onProviderDegraded": "select_next_ranked"
+      },
+      "decisionSchemaRef": "spec/model-selection-decision.schema.json",
+      "policyId": "msp_ui-console-service",
+      "roleId": "ui-console-service",
+      "requiredCapabilities": [
+        "coding",
+        "creative",
+        "qa",
+        "tool_use"
+      ]
+    },
+    {
+      "schemaVersion": "model-selection-policy/v1",
+      "taskType": "ai_native_work_item",
+      "scoringWeights": {
+        "capabilityFit": 2,
+        "roleSkillFit": 2,
+        "quality": 2,
+        "latency": 1,
+        "cost": 1,
+        "quota": 1,
+        "reliability": 2,
+        "risk": 1
+      },
+      "hardConstraints": {
+        "minContextWindowTokens": 32000,
+        "requiresStructuredOutput": true,
+        "requiresToolUse": true,
+        "minReliabilityScore": 0.75
+      },
+      "fallbackPolicy": {
+        "onNoModel": "split_task",
+        "onQuotaLimited": "select_next_ranked",
+        "onProviderDegraded": "select_next_ranked"
+      },
+      "decisionSchemaRef": "spec/model-selection-decision.schema.json",
+      "policyId": "msp_policy-engine",
+      "roleId": "policy-engine",
+      "requiredCapabilities": [
+        "security",
+        "review",
+        "deep_reasoning",
+        "planning"
+      ]
+    },
+    {
+      "schemaVersion": "model-selection-policy/v1",
+      "taskType": "ai_native_work_item",
+      "scoringWeights": {
+        "capabilityFit": 2,
+        "roleSkillFit": 2,
+        "quality": 2,
+        "latency": 1,
+        "cost": 1,
+        "quota": 1,
+        "reliability": 2,
+        "risk": 1
+      },
+      "hardConstraints": {
+        "minContextWindowTokens": 32000,
+        "requiresStructuredOutput": true,
+        "requiresToolUse": true,
+        "minReliabilityScore": 0.75
+      },
+      "fallbackPolicy": {
+        "onNoModel": "split_task",
+        "onQuotaLimited": "select_next_ranked",
+        "onProviderDegraded": "select_next_ranked"
+      },
+      "decisionSchemaRef": "spec/model-selection-decision.schema.json",
+      "policyId": "msp_model-registry",
+      "roleId": "model-registry",
+      "requiredCapabilities": [
+        "data_analysis",
+        "planning",
+        "deep_reasoning",
+        "tool_use"
+      ]
+    },
+    {
+      "schemaVersion": "model-selection-policy/v1",
+      "taskType": "ai_native_work_item",
+      "scoringWeights": {
+        "capabilityFit": 2,
+        "roleSkillFit": 2,
+        "quality": 2,
+        "latency": 1,
+        "cost": 1,
+        "quota": 1,
+        "reliability": 2,
+        "risk": 1
+      },
+      "hardConstraints": {
+        "minContextWindowTokens": 32000,
+        "requiresStructuredOutput": true,
+        "requiresToolUse": true,
+        "minReliabilityScore": 0.75
+      },
+      "fallbackPolicy": {
+        "onNoModel": "split_task",
+        "onQuotaLimited": "select_next_ranked",
+        "onProviderDegraded": "select_next_ranked"
+      },
+      "decisionSchemaRef": "spec/model-selection-decision.schema.json",
+      "policyId": "msp_skill-registry",
+      "roleId": "skill-registry",
+      "requiredCapabilities": [
+        "writing",
+        "planning",
+        "review",
+        "translation"
+      ]
+    }
+  ],
+  "modelSelectionDecisions": [],
+  "sessionPlacementDecisions": [],
+  "workSessions": [],
+  "agentTaskContracts": [],
+  "transitionEvidence": [],
+  "effectiveInstructionPackets": [],
+  "roleDriftGuards": [],
+  "executionTopologies": [],
+  "reviewPlans": [],
+  "reviewBundles": [],
+  "completionReadiness": [],
+  "closeBarriers": [],
+  "runtimeIssuePatterns": [],
+  "systemUpgradeCandidates": [],
+  "checkpoints": [],
+  "leases": [],
+  "findings": [],
+  "qualityGates": [],
+  "commandEffects": [],
+  "progressSnapshots": [
+    {
+      "schemaVersion": "progress-snapshot/v1",
+      "snapshotId": "ps_project_prj_control_plane",
+      "scopeType": "project",
+      "scopeRef": "prj_control_plane",
+      "status": "current",
+      "progress": {
+        "percent": 73,
+        "phase": "governance_design"
+      },
+      "health": "ok",
+      "counters": {
+        "total": 6,
+        "done": 2,
+        "inProgress": 4,
+        "blocked": 0
+      },
+      "roleActivity": [
+        {
+          "roleId": "orchestrator",
+          "status": "monitoring",
+          "lastEventRef": "event:prj_control_plane:orchestrator"
+        },
+        {
+          "roleId": "scheduler",
+          "status": "ready",
+          "lastEventRef": "event:prj_control_plane:scheduler"
+        },
+        {
+          "roleId": "reviewer",
+          "status": "standby",
+          "lastEventRef": "event:prj_control_plane:reviewer"
+        },
+        {
+          "roleId": "orchestrator",
+          "status": "monitoring",
+          "lastEventRef": "event:prj_control_plane:orchestrator"
+        },
+        {
+          "roleId": "room-broker",
+          "status": "ready",
+          "lastEventRef": "event:prj_control_plane:room-broker"
+        }
+      ],
+      "workItems": [
+        {
+          "workItemId": "work_bootstrap",
+          "title": "Runtime bootstrap profile",
+          "status": "verified",
+          "progress": 100
+        },
+        {
+          "workItemId": "work_management_ui",
+          "title": "System and user management console",
+          "status": "in_progress",
+          "progress": 58
+        },
+        {
+          "workItemId": "work_permissions",
+          "title": "Project and task-group permission model",
+          "status": "review_requested",
+          "progress": 74
+        },
+        {
+          "workItemId": "work_progress",
+          "title": "Progress snapshots and task visibility",
+          "status": "in_progress",
+          "progress": 44
+        },
+        {
+          "workItemId": "work_instruction_envelope",
+          "title": "InstructionEnvelope schema",
+          "status": "verified",
+          "progress": 100
+        },
+        {
+          "workItemId": "work_cache_hints",
+          "title": "Cache hint and token budget policy",
+          "status": "in_progress",
+          "progress": 60
+        }
+      ],
+      "blockers": [],
+      "repositoryOutputs": [
+        {
+          "repositoryOutputTargetRef": "rot_runtime_management",
+          "repositoryId": "repo_control_plane",
+          "branch": "main",
+          "commitRefs": [],
+          "pushRefs": [],
+          "artifactManifestPath": "docs/artifact-manifests/runtime-management.json"
+        }
+      ],
+      "createdAt": "2026-07-23T11:31:40.233Z",
+      "updatedAt": "2026-07-23T11:31:40.233Z",
+      "digest": "sha256:c87a29a2e8b69a15b76e7f4a9a63bb026988bc5cb73af48bffb2ff05af5776e0"
+    },
+    {
+      "schemaVersion": "progress-snapshot/v1",
+      "snapshotId": "ps_task_group_tg_runtime_management",
+      "scopeType": "task_group",
+      "scopeRef": "tg_runtime_management",
+      "status": "current",
+      "progress": {
+        "percent": 62,
+        "phase": "implementation"
+      },
+      "health": "ok",
+      "counters": {
+        "total": 4,
+        "done": 1,
+        "inProgress": 3,
+        "blocked": 0
+      },
+      "roleActivity": [
+        {
+          "roleId": "orchestrator",
+          "status": "monitoring",
+          "lastEventRef": "event:tg_runtime_management:orchestrator"
+        },
+        {
+          "roleId": "scheduler",
+          "status": "ready",
+          "lastEventRef": "event:tg_runtime_management:scheduler"
+        },
+        {
+          "roleId": "reviewer",
+          "status": "standby",
+          "lastEventRef": "event:tg_runtime_management:reviewer"
+        }
+      ],
+      "workItems": [
+        {
+          "workItemId": "work_bootstrap",
+          "title": "Runtime bootstrap profile",
+          "status": "verified",
+          "progress": 100
+        },
+        {
+          "workItemId": "work_management_ui",
+          "title": "System and user management console",
+          "status": "in_progress",
+          "progress": 58
+        },
+        {
+          "workItemId": "work_permissions",
+          "title": "Project and task-group permission model",
+          "status": "review_requested",
+          "progress": 74
+        },
+        {
+          "workItemId": "work_progress",
+          "title": "Progress snapshots and task visibility",
+          "status": "in_progress",
+          "progress": 44
+        }
+      ],
+      "blockers": [],
+      "repositoryOutputs": [
+        {
+          "repositoryOutputTargetRef": "rot_runtime_management",
+          "repositoryId": "repo_control_plane",
+          "branch": "main",
+          "commitRefs": [],
+          "pushRefs": [],
+          "artifactManifestPath": "docs/artifact-manifests/runtime-management.json"
+        }
+      ],
+      "createdAt": "2026-07-23T11:31:40.233Z",
+      "updatedAt": "2026-07-23T11:31:40.233Z",
+      "digest": "sha256:edf6725e41d1173c46e15ca4fbeddecea4227dbed2977d2a6e1d4edd7e11dd6d"
+    },
+    {
+      "schemaVersion": "progress-snapshot/v1",
+      "snapshotId": "ps_task_group_tg_instruction_efficiency",
+      "scopeType": "task_group",
+      "scopeRef": "tg_instruction_efficiency",
+      "status": "current",
+      "progress": {
+        "percent": 71,
+        "phase": "protocol"
+      },
+      "health": "ok",
+      "counters": {
+        "total": 2,
+        "done": 1,
+        "inProgress": 1,
+        "blocked": 0
+      },
+      "roleActivity": [
+        {
+          "roleId": "orchestrator",
+          "status": "monitoring",
+          "lastEventRef": "event:tg_instruction_efficiency:orchestrator"
+        },
+        {
+          "roleId": "room-broker",
+          "status": "ready",
+          "lastEventRef": "event:tg_instruction_efficiency:room-broker"
+        }
+      ],
+      "workItems": [
+        {
+          "workItemId": "work_instruction_envelope",
+          "title": "InstructionEnvelope schema",
+          "status": "verified",
+          "progress": 100
+        },
+        {
+          "workItemId": "work_cache_hints",
+          "title": "Cache hint and token budget policy",
+          "status": "in_progress",
+          "progress": 60
+        }
+      ],
+      "blockers": [],
+      "repositoryOutputs": [],
+      "createdAt": "2026-07-23T11:31:40.233Z",
+      "updatedAt": "2026-07-23T11:31:40.233Z",
+      "digest": "sha256:7fed303d90b37cdc49252b34aaec6a18bd4e2bb952beabbb44b07dbcd3b5aee3"
+    }
+  ],
+  "authSessions": [],
+  "modelProviders": [
+    {
+      "providerClass": "openai",
+      "adapterId": "adapter:openai",
+      "credentialEnvNames": [
+        "OPENAI_API_KEY"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "anthropic",
+      "adapterId": "adapter:anthropic",
+      "credentialEnvNames": [
+        "ANTHROPIC_API_KEY"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "google",
+      "adapterId": "adapter:google",
+      "credentialEnvNames": [
+        "GOOGLE_API_KEY",
+        "GEMINI_API_KEY"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "xai",
+      "adapterId": "adapter:xai",
+      "credentialEnvNames": [
+        "XAI_API_KEY"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "meta",
+      "adapterId": "adapter:meta",
+      "credentialEnvNames": [
+        "META_API_KEY"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "mistral",
+      "adapterId": "adapter:mistral",
+      "credentialEnvNames": [
+        "MISTRAL_API_KEY"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "deepseek",
+      "adapterId": "adapter:deepseek",
+      "credentialEnvNames": [
+        "DEEPSEEK_API_KEY"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "qwen",
+      "adapterId": "adapter:qwen",
+      "credentialEnvNames": [
+        "DASHSCOPE_API_KEY",
+        "QWEN_API_KEY"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "moonshot",
+      "adapterId": "adapter:moonshot",
+      "credentialEnvNames": [
+        "MOONSHOT_API_KEY"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "zhipu",
+      "adapterId": "adapter:zhipu",
+      "credentialEnvNames": [
+        "ZHIPU_API_KEY"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "baidu",
+      "adapterId": "adapter:baidu",
+      "credentialEnvNames": [
+        "BAIDU_API_KEY"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "tencent",
+      "adapterId": "adapter:tencent",
+      "credentialEnvNames": [
+        "TENCENT_HUNYUAN_API_KEY"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "openrouter",
+      "adapterId": "adapter:openrouter",
+      "credentialEnvNames": [
+        "OPENROUTER_API_KEY"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "azure_openai",
+      "adapterId": "adapter:azure_openai",
+      "credentialEnvNames": [
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_ENDPOINT"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "aws_bedrock",
+      "adapterId": "adapter:aws_bedrock",
+      "credentialEnvNames": [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_PROFILE"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "vertex_ai",
+      "adapterId": "adapter:vertex_ai",
+      "credentialEnvNames": [
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "VERTEX_PROJECT_ID"
+      ],
+      "invocationMode": "provider_api",
+      "status": "configured"
+    },
+    {
+      "providerClass": "ollama",
+      "adapterId": "adapter:ollama",
+      "credentialEnvNames": [
+        "OLLAMA_HOST"
+      ],
+      "invocationMode": "local_or_http_endpoint",
+      "status": "configured"
+    },
+    {
+      "providerClass": "vllm",
+      "adapterId": "adapter:vllm",
+      "credentialEnvNames": [
+        "VLLM_ENDPOINT"
+      ],
+      "invocationMode": "local_or_http_endpoint",
+      "status": "configured"
+    },
+    {
+      "providerClass": "custom",
+      "adapterId": "adapter:custom",
+      "credentialEnvNames": [
+        "AIMAC_CUSTOM_MODEL_ENDPOINT"
+      ],
+      "invocationMode": "local_or_http_endpoint",
+      "status": "configured"
+    }
+  ],
+  "agentDispatches": [],
+  "runtimeIssueSamples": []
 }

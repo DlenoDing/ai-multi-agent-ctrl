@@ -1,15 +1,39 @@
 import { createServer } from "node:http";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  canUseGitPath,
+  acceptAgentCheckpoint,
+  collectRuntimeIssue,
+  computeCloseBarrier,
+  computeCompletionReadiness,
+  createId,
+  decideSessionPlacement,
+  defaultModelCapabilities,
+  digestOf,
+  ensureRuntimeCollections,
+  gitHead,
+  gitRemoteUrl,
+  pathAllowlistValid,
+  registerRoleSkillOverlay,
+  runAgentRuntimeWorker,
+  runAutonomousCycle,
+  selectModel,
+  syncSkillSource
+} from "./lib/control-plane-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const repositoryRoot = resolve(process.env.AIMAC_REPOSITORY_ROOT || root);
 const publicDir = join(root, "apps", "control-plane-ui", "public");
 const runtimeDir = resolve(root, process.env.AIMAC_RUNTIME_DIR || ".runtime");
 const statePath = join(runtimeDir, "control-plane-state.json");
+const configPath = join(runtimeDir, "runtime-config.json");
 const seedPath = join(root, "data", "seed-state.json");
 const host = process.env.AIMAC_HOST || "127.0.0.1";
 const port = Number(process.env.AIMAC_PORT || 4317);
+const executionProfile = process.env.AIMAC_EXECUTION_PROFILE || "production";
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -24,16 +48,67 @@ function now() {
 
 function ensureState() {
   mkdirSync(runtimeDir, { recursive: true });
+  ensureRuntimeConfig();
   if (!existsSync(statePath)) {
     const seed = JSON.parse(readFileSync(seedPath, "utf8"));
     seed.runtime.updatedAt = now();
+    seed.runtime.executionProfile = executionProfile;
+    ensureRuntimeCollections(seed, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), executionProfile});
     writeState(seed);
   }
 }
 
+function ensureRuntimeConfig() {
+  mkdirSync(runtimeDir, { recursive: true });
+  const existing = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) : {};
+  const localToken = process.env.AIMAC_BOOTSTRAP_TOKEN || existing.localBootstrapToken || randomBytes(24).toString("base64url");
+  const workspaceOwnerToken = process.env.AIMAC_WORKSPACE_OWNER_TOKEN || existing.localAccountTokens?.acct_workspace_owner || randomBytes(24).toString("base64url");
+  const reviewerToken = process.env.AIMAC_REVIEWER_TOKEN || existing.localAccountTokens?.acct_reviewer || randomBytes(24).toString("base64url");
+  const agentRuntimeToken = process.env.AIMAC_AGENT_RUNTIME_TOKEN || existing.localAccountTokens?.acct_agent_runtime || randomBytes(24).toString("base64url");
+  const localAccountTokenHashes = {
+    acct_workspace_owner: digestOf(`account:acct_workspace_owner:${workspaceOwnerToken}`),
+    acct_reviewer: digestOf(`account:acct_reviewer:${reviewerToken}`),
+    acct_agent_runtime: digestOf(`account:acct_agent_runtime:${agentRuntimeToken}`)
+  };
+  const localAccountTokens = {
+    ...(process.env.AIMAC_WORKSPACE_OWNER_TOKEN ? {} : {acct_workspace_owner: workspaceOwnerToken}),
+    ...(process.env.AIMAC_REVIEWER_TOKEN ? {} : {acct_reviewer: reviewerToken}),
+    ...(process.env.AIMAC_AGENT_RUNTIME_TOKEN ? {} : {acct_agent_runtime: agentRuntimeToken})
+  };
+  const config = {
+    schemaVersion: "runtime-local-config/v1",
+    runtimeDir,
+    statePath,
+    repositoryRoot,
+    executionProfile,
+    host,
+    port,
+    databaseUrl: process.env.DATABASE_URL || existing.databaseUrl || null,
+    bootstrapTokenHash: digestOf(`bootstrap:${localToken}`),
+    bootstrapTokenConfigured: true,
+    localAccountTokenHashes,
+    localBootstrapToken: process.env.AIMAC_BOOTSTRAP_TOKEN ? undefined : localToken,
+    localAccountTokens,
+    updatedAt: existing.updatedAt || now()
+  };
+  const comparableExisting = {...existing, updatedAt: config.updatedAt};
+  if (!existsSync(configPath) || JSON.stringify(comparableExisting) !== JSON.stringify(config)) {
+    config.updatedAt = now();
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  }
+  return config;
+}
+
+function readRuntimeConfig() {
+  if (!existsSync(configPath)) return ensureRuntimeConfig();
+  return JSON.parse(readFileSync(configPath, "utf8"));
+}
+
 function readState() {
   ensureState();
-  return JSON.parse(readFileSync(statePath, "utf8"));
+  const state = JSON.parse(readFileSync(statePath, "utf8"));
+  ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), executionProfile});
+  return state;
 }
 
 function writeState(state) {
@@ -54,33 +129,58 @@ function audit(state, actor, action, subject, result = "succeeded") {
 }
 
 function ensureControlState(state) {
-  state.stateVersion ||= 1;
-  state.auditLog ||= [];
-  state.policyDecisions ||= [];
-  state.commands ||= [];
-  state.idempotencyRecords ||= {};
+  ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), executionProfile});
 }
 
-function beginGuardedWrite(req, state, action, subject) {
+function beginGuardedWrite(req, state, action, subject, resourceScope = inferResourceScope(state, subject)) {
   ensureControlState(state);
+  const authenticated = authenticateRequest(req, state);
+  if (!authenticated) {
+    return {status: 401, payload: {error: "auth_required"}};
+  }
   const idempotencyKey = req.headers["idempotency-key"];
   if (!idempotencyKey) {
     return {status: 428, payload: {error: "idempotency_key_required"}};
   }
-  if (state.idempotencyRecords[idempotencyKey]) {
-    return state.idempotencyRecords[idempotencyKey];
+  const actor = authenticated.accountId;
+  const account = state.accounts.find((item) => accountIdOf(item) === actor);
+  if (!principalAllowedForAction(account, action)) {
+    return {status: 403, payload: {error: "principal_not_allowed_for_action", actor, action}};
+  }
+  const bodyDigest = req.bodyDigest || digestOf("");
+  const existingRecord = state.idempotencyRecords[idempotencyKey];
+  if (existingRecord) {
+    if (existingRecord.actor !== actor || existingRecord.action !== action || existingRecord.bodyDigest !== bodyDigest) {
+      return {status: 409, payload: {error: "idempotency_key_reuse_conflict"}};
+    }
+    return {status: existingRecord.status, payload: existingRecord.payload};
+  }
+  const drift = writeDriftCheck(state, action, resourceScope);
+  if (!drift.allowed) {
+    return {status: 409, payload: {error: "role_drift_guard_not_clear", driftSignals: drift.signals}};
   }
   const at = now();
+  const requiredPermission = permissionForAction(action);
+  const allowed = hasPermission(state, actor, requiredPermission, resourceScope);
   const policyDecision = {
     id: createId("pd"),
-    status: "allowed",
-    actor: "ui-console-service",
+    status: allowed ? "allowed" : "denied",
+    actor,
     action,
     resource: subject,
+    resourceScope,
     policyVersion: "local-demo-policy/v1",
-    evidenceRefs: [`idempotency:${idempotencyKey}`],
+    requiredPermission,
+    evidenceRefs: [`idempotency:${idempotencyKey}`, `actor:${actor}`],
     createdAt: at
   };
+  if (!allowed) {
+    state.policyDecisions.unshift(policyDecision);
+    state.policyDecisions = state.policyDecisions.slice(0, 120);
+    audit(state, "policy-engine", "policy_decision_denied", subject, "denied");
+    writeState(state);
+    return {status: 403, payload: {error: "policy_denied", actor, requiredPermission, resourceScope}};
+  }
   const command = {
     id: createId("cmd"),
     type: action,
@@ -91,18 +191,31 @@ function beginGuardedWrite(req, state, action, subject) {
     createdAt: at,
     updatedAt: at
   };
-  return {idempotencyKey, policyDecision, command};
+  return {idempotencyKey, policyDecision, command, actor, bodyDigest, resourceScope};
 }
 
 function finishGuardedWrite(state, guard, status, payload) {
   ensureControlState(state);
   const updatedAt = now();
   state.stateVersion += 1;
+  const decisionRecord = {
+    decisionId: createId("decision"),
+    status: "accepted",
+    actor: guard.actor,
+    action: guard.command.type,
+    subject: guard.command.subject,
+    policyDecisionRef: guard.policyDecision.id,
+    payloadDigest: digestOf(payload),
+    createdAt: updatedAt,
+    auditRef: `audit:${guard.idempotencyKey}`
+  };
+  state.decisionRecords.unshift(decisionRecord);
   state.policyDecisions.unshift(guard.policyDecision);
   state.commands.unshift({...guard.command, status: "succeeded", resultRef: `response:${guard.idempotencyKey}`, updatedAt});
+  state.decisionRecords = state.decisionRecords.slice(0, 120);
   state.policyDecisions = state.policyDecisions.slice(0, 120);
   state.commands = state.commands.slice(0, 120);
-  state.idempotencyRecords[guard.idempotencyKey] = {status, payload};
+  state.idempotencyRecords[guard.idempotencyKey] = {status, payload, actor: guard.actor, action: guard.command.type, bodyDigest: guard.bodyDigest, createdAt: updatedAt};
   audit(state, "policy-engine", "policy_decision_allowed", guard.command.subject);
   audit(state, "command-bus", "command_succeeded", guard.command.subject);
 }
@@ -111,16 +224,245 @@ function accountIdOf(account) {
   return account.accountId || account.id;
 }
 
+function principalAllowedForAction(account, action) {
+  if (!account) return false;
+  if (["agent_runtime_worker_run", "checkpoint_submit"].includes(action)) {
+    return account.accountType === "service_account" && (account.roles || []).includes("service_agent_runtime");
+  }
+  return true;
+}
+
 function stableDigest(fill) {
-  return `sha256:${fill.repeat(64).slice(0, 64)}`;
+  return digestOf(fill);
 }
 
 function gitTrackablePath(path) {
-  return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.startsWith("artifacts/") && !path.startsWith(".runtime/") && !path.startsWith("tmp/") && !path.includes("..");
+  return canUseGitPath(path);
 }
 
 function validPathAllowlist(paths) {
-  return Array.isArray(paths) && paths.length > 0 && paths.every(gitTrackablePath);
+  return pathAllowlistValid(paths);
+}
+
+function localEndpoint() {
+  return `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`;
+}
+
+function authenticateRequest(req, state) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
+  if (!token) return null;
+  const tokenDigest = digestOf(`session:${token}`);
+  const session = (state.authSessions || []).find((item) => item.tokenDigest === tokenDigest && item.status === "active" && new Date(item.expiresAt).getTime() > Date.now());
+  if (!session) return null;
+  return session;
+}
+
+function accountFromRequest(req, state) {
+  const session = authenticateRequest(req, state);
+  if (!session) return null;
+  const account = state.accounts.find((item) => accountIdOf(item) === session.accountId && item.status === "active");
+  return account ? {session, account} : null;
+}
+
+function requireRead(req, state, resourceScope = {resourceType: "system", resourceId: "state"}) {
+  const authenticated = accountFromRequest(req, state);
+  if (!authenticated) return {status: 401, payload: {error: "auth_required"}};
+  if (canReadResource(state, authenticated.account, resourceScope)) return authenticated;
+  return {status: 403, payload: {error: "permission_denied"}};
+}
+
+function canReadResource(state, account, resourceScope = {}) {
+  if (!account) return false;
+  if (account.accountType === "system_admin" || (account.permissions || []).includes("system:*")) return true;
+  if (resourceScope.resourceType === "system") return false;
+  if (resourceScope.resourceType === "project") return canReadProject(state, account, resourceScope.resourceId);
+  if (resourceScope.resourceType === "task_group") return canReadTaskGroup(state, account, resourceScope.resourceId);
+  return true;
+}
+
+function canReadProject(state, account, projectId) {
+  if (!projectId) return false;
+  const project = state.projects.find((item) => item.id === projectId);
+  if (project?.ownerAccountId === account.accountId || (project?.members || []).some((member) => member.accountId === account.accountId)) return true;
+  return ["project:view", "project:*"].some((permission) => hasPermission(state, account.accountId, permission, {resourceType: "project", resourceId: projectId}));
+}
+
+function canReadTaskGroup(state, account, taskGroupId) {
+  const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
+  if (!taskGroup) return false;
+  if (canReadProject(state, account, taskGroup.projectId)) return true;
+  return ["task_group:read", "task_group:review", "task_group:control", "task_group:orchestrate", "task_group:monitor", "task_group:*"].some((permission) =>
+    hasPermission(state, account.accountId, permission, {resourceType: "task_group", resourceId: taskGroupId, projectId: taskGroup.projectId})
+  );
+}
+
+function scopedStateForAccount(state, account, session) {
+  const cloned = JSON.parse(JSON.stringify(state));
+  const isSystem = account.accountType === "system_admin" || (account.permissions || []).includes("system:*");
+  cloned.authSessions = (state.authSessions || [])
+    .filter((item) => isSystem || item.sessionId === session.sessionId)
+    .map((item) => ({sessionId: item.sessionId, accountId: item.accountId, status: item.status, expiresAt: item.expiresAt, createdAt: item.createdAt, updatedAt: item.updatedAt}));
+  if (isSystem) return cloned;
+  const visibleProjectIds = new Set((state.projects || []).filter((project) => canReadProject(state, account, project.id)).map((project) => project.id));
+  const visibleTaskGroupIds = new Set((state.taskGroups || []).filter((taskGroup) => visibleProjectIds.has(taskGroup.projectId) || canReadTaskGroup(state, account, taskGroup.id)).map((taskGroup) => taskGroup.id));
+  cloned.projects = (state.projects || []).filter((project) => visibleProjectIds.has(project.id));
+  cloned.taskGroups = (state.taskGroups || []).filter((taskGroup) => visibleTaskGroupIds.has(taskGroup.id));
+  cloned.repositoryOutputs = (state.repositoryOutputs || []).filter((target) => visibleProjectIds.has(target.projectId) || visibleTaskGroupIds.has(target.taskGroupId));
+  cloned.workSessions = (state.workSessions || []).filter((sessionItem) => visibleTaskGroupIds.has(sessionItem.taskGroupId));
+  cloned.agentDispatches = (state.agentDispatches || []).filter((dispatch) => visibleTaskGroupIds.has(dispatch.taskGroupId));
+  cloned.agentTaskContracts = (state.agentTaskContracts || []).filter((contract) => visibleTaskGroupIds.has(contract.taskGroupId));
+  cloned.effectiveInstructionPackets = (state.effectiveInstructionPackets || []).filter((packet) => visibleTaskGroupIds.has(packet.taskGroupId));
+  cloned.roleDriftGuards = (state.roleDriftGuards || []).filter((guard) => visibleTaskGroupIds.has(guard.taskGroupId));
+  cloned.modelSelectionDecisions = (state.modelSelectionDecisions || []).filter((decision) => visibleTaskGroupIds.has(decision.taskGroupId));
+  cloned.sessionPlacementDecisions = (state.sessionPlacementDecisions || []).filter((decision) => visibleTaskGroupIds.has(decision.taskGroupId));
+  cloned.executionTopologies = (state.executionTopologies || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
+  cloned.reviewPlans = (state.reviewPlans || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
+  cloned.reviewBundles = (state.reviewBundles || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
+  cloned.checkpoints = (state.checkpoints || []).filter((checkpoint) => visibleTaskGroupIds.has(checkpoint.taskGroupId));
+  cloned.completionReadiness = (state.completionReadiness || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
+  cloned.closeBarriers = (state.closeBarriers || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
+  cloned.sharedDefinitions = (state.sharedDefinitions || []).filter((definition) => visibleProjectIds.has(definition.projectId) || (definition.scopeRefs || []).some((ref) => visibleTaskGroupIds.has(String(ref).replace("TaskGroup:", ""))));
+  cloned.progressSnapshots = (state.progressSnapshots || []).filter((snapshot) => snapshot.scopeType === "project" ? visibleProjectIds.has(snapshot.scopeRef) : visibleTaskGroupIds.has(snapshot.scopeRef));
+  cloned.leases = (state.leases || []).filter((lease) => cloned.repositoryOutputs.some((target) => lease.resourceRef === `RepositoryOutputTarget:${target.targetId}`));
+  const visibleAccountIds = new Set([account.accountId]);
+  for (const project of cloned.projects) {
+    for (const member of project.members || []) visibleAccountIds.add(member.accountId);
+  }
+  cloned.accounts = (state.accounts || []).filter((item) => visibleAccountIds.has(item.accountId)).map((item) => ({
+    schemaVersion: item.schemaVersion,
+    accountId: item.accountId,
+    accountType: item.accountType,
+    displayName: item.displayName,
+    email: item.email,
+    status: item.status,
+    roles: item.roles,
+    permissions: item.accountId === account.accountId ? item.permissions : [],
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt
+  }));
+  cloned.accessGrants = (state.accessGrants || []).filter((grant) => {
+    const resource = grant.resource || {};
+    return grant.subjectRef?.subjectId === account.accountId ||
+      (resource.resourceType === "project" && visibleProjectIds.has(resource.resourceId)) ||
+      (resource.resourceType === "task_group" && visibleTaskGroupIds.has(resource.resourceId));
+  });
+  cloned.auditLog = [];
+  cloned.policyDecisions = [];
+  cloned.commands = [];
+  cloned.decisionRecords = [];
+  cloned.commandEffects = [];
+  cloned.idempotencyRecords = {};
+  cloned.runtimeIssuePatterns = [];
+  cloned.runtimeIssueSamples = [];
+  cloned.systemUpgradeCandidates = [];
+  cloned.eventLog = (state.eventLog || []).filter((event) => event.taskGroupId && visibleTaskGroupIds.has(event.taskGroupId));
+  return cloned;
+}
+
+function permissionForAction(action) {
+  if (action === "bootstrap_init") return "system:bootstrap";
+  if (action === "account_invite") return "member:invite";
+  if (action === "project_create") return "project:create";
+  if (action === "project_member_grant") return "member:invite";
+  if (action === "access_grant_create" || action === "access_grant_revoke") return "project:grant";
+  if (action === "agent_create" || action === "agent_activation_update") return "agent:activate";
+  if (action.startsWith("task_group_")) return "task_group:control";
+  if (action === "repository_output_target_select") return "project:*";
+  if (action === "instruction_envelope_create") return "task_group:control";
+  if (action === "shared_definition_contract_create") return "project:*";
+  if (action === "skill_source_sync") return "system:skill_sync";
+  if (action === "role_skill_overlay_create") return "project:*";
+  if (action === "model_capability_register") return "system:model_registry";
+  if (action === "model_selection_decide" || action === "session_placement_decide") return "task_group:orchestrate";
+  if (action === "orchestrator_run" || action === "agent_runtime_worker_run") return "task_group:orchestrate";
+  if (action === "checkpoint_submit") return "task_group:checkpoint_submit";
+  if (action === "runtime_issue_collect") return "task_group:monitor";
+  return "system:*";
+}
+
+function hasPermission(state, actor, requiredPermission, resourceScope) {
+  if (!requiredPermission) return true;
+  const account = state.accounts.find((item) => accountIdOf(item) === actor);
+  if (!account || account.status !== "active") return false;
+  const direct = (account.permissions || []).filter((permission) => directPermissionApplies(account, permission, requiredPermission, resourceScope));
+  const grantPermissions = state.accessGrants
+    .filter((grant) => grant.status === "active" && grant.subjectRef?.subjectType === "account" && grant.subjectRef?.subjectId === actor)
+    .filter((grant) => grantAppliesToResource(state, grant, resourceScope))
+    .flatMap((grant) => grant.permissions || []);
+  return [...direct, ...grantPermissions].some((permission) => permissionMatches(permission, requiredPermission));
+}
+
+function directPermissionApplies(account, permission, requiredPermission, resourceScope = {}) {
+  if (account.accountType === "system_admin") return true;
+  if (["member:invite", "agent:activate"].includes(permission) && ["project", "task_group"].includes(resourceScope.resourceType)) return false;
+  if (resourceScope.resourceType === "task_group" && permission.startsWith("task_group:")) return false;
+  if (resourceScope.resourceType === "project" && permission.startsWith("project:") && requiredPermission !== "project:create") return false;
+  return true;
+}
+
+function permissionMatches(granted, required) {
+  if (granted === required || granted === "system:*") return true;
+  if (granted.endsWith(":*") && !required.endsWith(":*")) return required.startsWith(granted.slice(0, -1));
+  if (granted.endsWith(":*") && required.endsWith(":*")) return granted === required;
+  return false;
+}
+
+function inferResourceScope(state, subject) {
+  const [type, id] = String(subject || "").split(":");
+  if (type === "Project") return {resourceType: "project", resourceId: id};
+  if (type === "TaskGroup") {
+    const taskGroup = state.taskGroups.find((item) => item.id === id);
+    return {resourceType: "task_group", resourceId: id, projectId: taskGroup?.projectId};
+  }
+  if (type === "WorkItem" || type === "Checkpoint") {
+    const parts = String(subject).split(":");
+    const taskGroupId = parts[1] || id;
+    const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
+    return {resourceType: "task_group", resourceId: taskGroupId, projectId: taskGroup?.projectId};
+  }
+  if (type === "AgentSkillSource" || type === "RuntimeBootstrapProfile" || type === "ModelCapabilityProfile") return {resourceType: "system", resourceId: type};
+  return {resourceType: "system", resourceId: type || "system"};
+}
+
+function grantAppliesToResource(state, grant, resourceScope = {}) {
+  const grantResource = grant.resource || {resourceType: grant.resourceType, resourceId: grant.resourceId};
+  if (!grantResource?.resourceType) return false;
+  if (grantResource.resourceType === "system") return resourceScope.resourceType === "system";
+  if (grantResource.resourceType === "project") {
+    if (resourceScope.resourceType === "project") return grantResource.resourceId === resourceScope.resourceId;
+    if (resourceScope.resourceType === "task_group") {
+      const taskGroup = state.taskGroups.find((item) => item.id === resourceScope.resourceId);
+      return taskGroup?.projectId === grantResource.resourceId || resourceScope.projectId === grantResource.resourceId;
+    }
+    return false;
+  }
+  if (grantResource.resourceType === "task_group") return resourceScope.resourceType === "task_group" && grantResource.resourceId === resourceScope.resourceId;
+  return false;
+}
+
+function taskGroupScope(state, taskGroupId) {
+  const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
+  return {resourceType: "task_group", resourceId: taskGroupId, projectId: taskGroup?.projectId};
+}
+
+function projectScope(projectId) {
+  return {resourceType: "project", resourceId: projectId};
+}
+
+function writeDriftCheck(state, action, resourceScope = {}) {
+  if (resourceScope.resourceType !== "task_group") return {allowed: true};
+  return state.roleDriftGuards?.length
+    ? state.roleDriftGuards
+        .filter((guard) => guard.taskGroupId === resourceScope.resourceId && !["closed", "corrected"].includes(guard.status))
+        .reduce((result, guard) => {
+          if (!result.allowed) return result;
+          return {
+            ...result,
+            ...({allowed: guard.allowedActionScopeRefs.includes(`TaskGroup:${resourceScope.resourceId}`), signals: guard.allowedActionScopeRefs.includes(`TaskGroup:${resourceScope.resourceId}`) ? [] : [`write_scope_not_allowed:${action}`]})
+          };
+        }, {allowed: true, signals: []})
+    : {allowed: true, signals: []};
 }
 
 function json(res, status, payload) {
@@ -146,10 +488,6 @@ function parseBody(req) {
   });
 }
 
-function createId(prefix) {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 function serveStatic(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const requested = url.pathname === "/" ? "/index.html" : url.pathname;
@@ -167,19 +505,126 @@ async function handleApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const state = readState();
   const body = req.method === "POST" ? await parseBody(req) : {};
+  req.bodyDigest = digestOf(body);
 
   if (req.method === "GET" && ["/api/health", "/api/runtime/health"].includes(url.pathname)) {
     json(res, 200, {status: "ok", runtime: state.runtime.status, at: now()});
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/auth/bootstrap-hint") {
+    const config = readRuntimeConfig();
+    json(res, 200, {
+      bootstrapTokenConfigured: Boolean(config.bootstrapTokenHash),
+      tokenSource: process.env.AIMAC_BOOTSTRAP_TOKEN ? "environment" : "runtime-local-config",
+      tokenHint: config.localBootstrapToken ? `${config.localBootstrapToken.slice(0, 4)}...${config.localBootstrapToken.slice(-4)}` : null,
+      localAccountTokenHints: Object.fromEntries(Object.entries(config.localAccountTokens || {}).map(([accountId, token]) => [accountId, `${token.slice(0, 4)}...${token.slice(-4)}`]))
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/login") {
+    const config = readRuntimeConfig();
+    const token = String(body.token || body.accountToken || body.bootstrapToken || "");
+    const email = String(body.email || "");
+    const account = state.accounts.find((item) => item.email === email || item.accountId === email);
+    const method = account?.authPolicy?.method;
+    const tokenOk = method === "bootstrap_token"
+      ? digestOf(`bootstrap:${token}`) === config.bootstrapTokenHash
+      : Boolean(account && config.localAccountTokenHashes?.[account.accountId] === digestOf(`account:${account.accountId}:${token}`));
+    if (!tokenOk || !account || account.status !== "active") {
+      audit(state, "auth-service", "auth_login", `Account:${email}`, "denied");
+      writeState(state);
+      json(res, 401, {error: "invalid_credentials"});
+      return;
+    }
+    const sessionToken = randomBytes(32).toString("base64url");
+    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
+    state.authSessions.unshift({
+      sessionId: createId("authsess"),
+      tokenDigest: digestOf(`session:${sessionToken}`),
+      accountId: account.accountId,
+      status: "active",
+      expiresAt,
+      createdAt: now(),
+      updatedAt: now()
+    });
+    state.authSessions = state.authSessions.slice(0, 80);
+    audit(state, "auth-service", "auth_login", `Account:${account.accountId}`);
+    writeState(state);
+    json(res, 200, {sessionToken, expiresAt, account: {accountId: account.accountId, email: account.email, displayName: account.displayName, roles: account.roles, permissions: account.permissions}});
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/state") {
-    json(res, 200, state);
+    const reader = accountFromRequest(req, state);
+    if (!reader) {
+      json(res, 401, {error: "auth_required"});
+      return;
+    }
+    json(res, 200, scopedStateForAccount(state, reader.account, reader.session));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/model-registry") {
+    const reader = accountFromRequest(req, state);
+    if (!reader) {
+      json(res, 401, {error: "auth_required"});
+      return;
+    }
+    json(res, 200, {
+      modelCapabilities: state.modelCapabilities,
+      modelSelectionPolicies: state.modelSelectionPolicies,
+      modelSelectionDecisions: state.modelSelectionDecisions.slice(0, 40)
+    });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/skill-registry") {
+    const reader = accountFromRequest(req, state);
+    if (!reader) {
+      json(res, 401, {error: "auth_required"});
+      return;
+    }
+    json(res, 200, {
+      skillSources: state.skillSources,
+      roleSkills: state.roleSkills,
+      roleSkillOverlays: state.roleSkillOverlays
+    });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/progress-snapshots") {
+    const reader = accountFromRequest(req, state);
+    if (!reader) {
+      json(res, 401, {error: "auth_required"});
+      return;
+    }
+    json(res, 200, {progressSnapshots: scopedStateForAccount(state, reader.account, reader.session).progressSnapshots});
+    return;
+  }
+
+  const readinessMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/readiness$/);
+  if (req.method === "GET" && readinessMatch) {
+    const reader = requireRead(req, state, taskGroupScope(state, readinessMatch[1]));
+    if (reader.status) {
+      json(res, reader.status, reader.payload);
+      return;
+    }
+    const readOnlyState = JSON.parse(JSON.stringify(state));
+    const readiness = computeCompletionReadiness(readOnlyState, readinessMatch[1], {root: repositoryRoot});
+    const closeBarrier = computeCloseBarrier(readOnlyState, readinessMatch[1], {root: repositoryRoot, mutate: false});
+    json(res, 200, {readiness, closeBarrier});
     return;
   }
 
   const projectProgressMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/progress$/);
   if (req.method === "GET" && projectProgressMatch) {
+    const reader = requireRead(req, state, projectScope(projectProgressMatch[1]));
+    if (reader.status) {
+      json(res, reader.status, reader.payload);
+      return;
+    }
     const project = state.projects.find((item) => item.id === projectProgressMatch[1]);
     if (!project) {
       json(res, 404, {error: "project_not_found"});
@@ -195,6 +640,11 @@ async function handleApi(req, res) {
 
   const taskGroupProgressMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/progress$/);
   if (req.method === "GET" && taskGroupProgressMatch) {
+    const reader = requireRead(req, state, taskGroupScope(state, taskGroupProgressMatch[1]));
+    if (reader.status) {
+      json(res, reader.status, reader.payload);
+      return;
+    }
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupProgressMatch[1]);
     if (!taskGroup) {
       json(res, 404, {error: "task_group_not_found"});
@@ -214,13 +664,15 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/bootstrap/init") {
-    const guard = beginGuardedWrite(req, state, "bootstrap_init", "RuntimeBootstrapProfile:runtime_local");
+    const guard = beginGuardedWrite(req, state, "bootstrap_init", "RuntimeBootstrapProfile:runtime_local", {resourceType: "system", resourceId: "runtime_local"});
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
     }
     const seed = JSON.parse(readFileSync(seedPath, "utf8"));
     seed.runtime.updatedAt = now();
+    seed.runtime.executionProfile = executionProfile;
+    ensureRuntimeCollections(seed, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), executionProfile});
     finishGuardedWrite(seed, guard, 200, {profileId: "runtime_local"});
     audit(seed, "system", "bootstrap_init", "RuntimeBootstrapProfile:runtime_local");
     writeState(seed);
@@ -228,8 +680,173 @@ async function handleApi(req, res) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/orchestrator/run") {
+    const guard = beginGuardedWrite(req, state, "orchestrator_run", `TaskGroup:${body.taskGroupId || "all"}`, body.taskGroupId ? taskGroupScope(state, body.taskGroupId) : {resourceType: "project", resourceId: body.projectId || "prj_control_plane"});
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    const result = runAutonomousCycle(state, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), mode: body.mode || "all", taskGroupId: body.taskGroupId});
+    audit(state, "orchestrator", "orchestrator_run", `TaskGroup:${body.taskGroupId || "all"}`);
+    finishGuardedWrite(state, guard, 200, result);
+    writeState(state);
+    json(res, 200, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent-runtime/run") {
+    const guard = beginGuardedWrite(req, state, "agent_runtime_worker_run", `TaskGroup:${body.taskGroupId || "all"}`, body.taskGroupId ? taskGroupScope(state, body.taskGroupId) : {resourceType: "project", resourceId: body.projectId || "prj_control_plane"});
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    const result = runAgentRuntimeWorker(state, {
+      root: repositoryRoot,
+      repositoryRoot,
+      runtimeDir,
+      endpoint: localEndpoint(),
+      taskGroupId: body.taskGroupId,
+      maxJobs: body.maxJobs || 1,
+      allowDeterministicLocalWorker: body.allowDeterministicLocalWorker === true && process.env.AIMAC_ALLOW_LOCAL_DETERMINISTIC_WORKER === "true"
+    });
+    audit(state, "agent-runtime", "agent_runtime_worker_run", `TaskGroup:${body.taskGroupId || "all"}`);
+    finishGuardedWrite(state, guard, 200, result);
+    writeState(state);
+    json(res, 200, result);
+    return;
+  }
+
+  const closeComputeMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/close-barrier\/compute$/);
+  if (req.method === "POST" && closeComputeMatch) {
+    const guard = beginGuardedWrite(req, state, "task_group_close_barrier_compute", `TaskGroup:${closeComputeMatch[1]}`, taskGroupScope(state, closeComputeMatch[1]));
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    const readiness = computeCompletionReadiness(state, closeComputeMatch[1], {root: repositoryRoot});
+    const closeBarrier = computeCloseBarrier(state, closeComputeMatch[1], {root: repositoryRoot, mutate: body.mutate === true});
+    const result = {readiness, closeBarrier};
+    audit(state, "orchestrator", "task_group_close_barrier_compute", `TaskGroup:${closeComputeMatch[1]}`);
+    finishGuardedWrite(state, guard, 200, result);
+    writeState(state);
+    json(res, 200, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/checkpoints") {
+    const guard = beginGuardedWrite(req, state, "checkpoint_submit", `Checkpoint:${body.taskGroupId || "unknown"}:${body.workId || "unknown"}`, taskGroupScope(state, body.taskGroupId));
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    const result = acceptAgentCheckpoint(state, body, {root: repositoryRoot});
+    if (!result.accepted) {
+      json(res, result.status || 409, {error: result.error});
+      return;
+    }
+    audit(state, "agent-runtime", "checkpoint_submit", `Checkpoint:${result.checkpoint.taskGroupId}:${result.checkpoint.workId}`);
+    finishGuardedWrite(state, guard, 201, result.checkpoint);
+    writeState(state);
+    json(res, 201, result.checkpoint);
+    return;
+  }
+
+  const skillSyncMatch = url.pathname.match(/^\/api\/skill-sources\/([^/]+)\/sync$/);
+  if (req.method === "POST" && skillSyncMatch) {
+    const guard = beginGuardedWrite(req, state, "skill_source_sync", `AgentSkillSource:${skillSyncMatch[1]}`, {resourceType: "system", resourceId: "skill_registry"});
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    const result = syncSkillSource(state, skillSyncMatch[1], {root, runtimeDir});
+    audit(state, "skill-registry", "skill_source_sync", `AgentSkillSource:${skillSyncMatch[1]}`);
+    finishGuardedWrite(state, guard, 200, result);
+    writeState(state);
+    json(res, 200, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/model-capabilities") {
+    const guard = beginGuardedWrite(req, state, "model_capability_register", `ModelCapabilityProfile:${body.providerClass || "custom"}`, {resourceType: "system", resourceId: "model_registry"});
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    const profile = {
+      ...defaultModelCapabilities(now()).find((item) => item.providerClass === (body.providerClass || "custom")),
+      ...body,
+      schemaVersion: "model-capability/v1",
+      capabilityDigest: body.capabilityDigest || digestOf(body),
+      observedAt: body.observedAt || now()
+    };
+    state.modelCapabilities = state.modelCapabilities.filter((item) => !(item.providerId === profile.providerId && item.modelId === profile.modelId));
+    state.modelCapabilities.unshift(profile);
+    audit(state, "model-registry", "model_capability_register", `ModelCapabilityProfile:${profile.providerId}/${profile.modelId}`);
+    finishGuardedWrite(state, guard, 201, profile);
+    writeState(state);
+    json(res, 201, profile);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/model-selection/decide") {
+    const guard = beginGuardedWrite(req, state, "model_selection_decide", `WorkItem:${body.workItemId || "unknown"}`, taskGroupScope(state, body.taskGroupId));
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    const decision = selectModel(state, {...body, policyDecisionRef: guard.policyDecision.id, auditRef: `audit:${guard.idempotencyKey}`});
+    audit(state, "scheduler", "model_selection_decide", `ModelSelectionDecision:${decision.decisionId}`);
+    finishGuardedWrite(state, guard, 201, decision);
+    writeState(state);
+    json(res, 201, decision);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/session-placement/decide") {
+    const guard = beginGuardedWrite(req, state, "session_placement_decide", `WorkItem:${body.workItemId || "unknown"}`, taskGroupScope(state, body.taskGroupId));
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    const decision = decideSessionPlacement(state, {...body, auditRef: `audit:${guard.idempotencyKey}`});
+    audit(state, "scheduler", "session_placement_decide", `SessionPlacementDecision:${decision.decisionId}`);
+    finishGuardedWrite(state, guard, 201, decision);
+    writeState(state);
+    json(res, 201, decision);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/runtime-issues") {
+    const guard = beginGuardedWrite(req, state, "runtime_issue_collect", `RuntimeIssuePattern:${body.issueFingerprint || "new"}`, body.taskGroupId ? taskGroupScope(state, body.taskGroupId) : {resourceType: "project", resourceId: body.projectId || "prj_control_plane"});
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    const issue = collectRuntimeIssue(state, body);
+    const issueRef = issue.patternId ? `RuntimeIssuePattern:${issue.patternId}` : `RuntimeIssueSample:${issue.sampleId}`;
+    audit(state, "monitor", "runtime_issue_collect", issueRef);
+    finishGuardedWrite(state, guard, 201, issue);
+    writeState(state);
+    json(res, 201, issue);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/role-skill-overlays") {
+    const guard = beginGuardedWrite(req, state, "role_skill_overlay_create", `AgentRoleSkill:${body.roleSkillRef || "default"}`, body.taskGroupId ? taskGroupScope(state, body.taskGroupId) : projectScope(body.projectId || "prj_control_plane"));
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    const overlay = registerRoleSkillOverlay(state, body);
+    audit(state, "skill-registry", "role_skill_overlay_create", `RoleSkillOverlay:${overlay.overlayId}`);
+    finishGuardedWrite(state, guard, 201, overlay);
+    writeState(state);
+    json(res, 201, overlay);
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/projects") {
-    const guard = beginGuardedWrite(req, state, "project_create", "Project:new");
+    const guard = beginGuardedWrite(req, state, "project_create", "Project:new", {resourceType: "project", resourceId: "new"});
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
@@ -263,7 +880,7 @@ async function handleApi(req, res) {
       json(res, 400, {error: "account_not_found"});
       return;
     }
-    const guard = beginGuardedWrite(req, state, "project_member_grant", `Project:${project.id}`);
+    const guard = beginGuardedWrite(req, state, "project_member_grant", `Project:${project.id}`, projectScope(project.id));
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
@@ -297,7 +914,7 @@ async function handleApi(req, res) {
       json(res, 404, {error: "agent_not_found"});
       return;
     }
-    const guard = beginGuardedWrite(req, state, "agent_activation_update", `AgentNode:${agent.id}`);
+    const guard = beginGuardedWrite(req, state, "agent_activation_update", `AgentNode:${agent.id}`, agent.projectId ? projectScope(agent.projectId) : {resourceType: "project", resourceId: "prj_control_plane"});
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
@@ -311,6 +928,33 @@ async function handleApi(req, res) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/agents") {
+    const guard = beginGuardedWrite(req, state, "agent_create", `AgentNode:${body.role || "custom"}`, projectScope(body.projectId || "prj_control_plane"));
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    const agent = {
+      id: createId("agent"),
+      name: body.name || `${body.role || "custom"} Agent`,
+      role: body.role || "custom",
+      model: body.model || "auto_best",
+      status: body.status || "active",
+      trustScore: Number(body.trustScore || 0.85),
+      capacity: body.status === "inactive" ? "standby" : "ready",
+      projectId: body.projectId,
+      roleSkillRef: body.roleSkillRef,
+      createdAt: now(),
+      updatedAt: now()
+    };
+    state.agents.push(agent);
+    audit(state, "ui-console-service", "agent_create", `AgentNode:${agent.id}`);
+    finishGuardedWrite(state, guard, 201, agent);
+    writeState(state);
+    json(res, 201, agent);
+    return;
+  }
+
   const taskGroupMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/control$/);
   if (req.method === "POST" && taskGroupMatch) {
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupMatch[1]);
@@ -318,7 +962,7 @@ async function handleApi(req, res) {
       json(res, 404, {error: "task_group_not_found"});
       return;
     }
-    const guard = beginGuardedWrite(req, state, `task_group_${body.action || "recompute_readiness"}`, `TaskGroup:${taskGroup.id}`);
+    const guard = beginGuardedWrite(req, state, `task_group_${body.action || "recompute_readiness"}`, `TaskGroup:${taskGroup.id}`, taskGroupScope(state, taskGroup.id));
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
@@ -337,7 +981,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/accounts") {
-    const guard = beginGuardedWrite(req, state, "account_invite", "Account:new");
+    const guard = beginGuardedWrite(req, state, "account_invite", "Account:new", {resourceType: "project", resourceId: body.projectId || "prj_control_plane"});
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
@@ -367,7 +1011,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/access-grants") {
-    const guard = beginGuardedWrite(req, state, "access_grant_create", `${body.resourceType || "project"}:${body.resourceId || "prj_control_plane"}`);
+    const guard = beginGuardedWrite(req, state, "access_grant_create", `${body.resourceType || "project"}:${body.resourceId || "prj_control_plane"}`, {resourceType: body.resourceType || "project", resourceId: body.resourceId || "prj_control_plane"});
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
@@ -394,8 +1038,29 @@ async function handleApi(req, res) {
     return;
   }
 
+  const revokeGrantMatch = url.pathname.match(/^\/api\/access-grants\/([^/]+)\/revoke$/);
+  if (req.method === "POST" && revokeGrantMatch) {
+    const grant = state.accessGrants.find((item) => item.grantId === revokeGrantMatch[1]);
+    if (!grant) {
+      json(res, 404, {error: "access_grant_not_found"});
+      return;
+    }
+    const guard = beginGuardedWrite(req, state, "access_grant_revoke", `AccessControlGrant:${grant.grantId}`, grant.resource || {resourceType: grant.resourceType, resourceId: grant.resourceId});
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    grant.status = "revoked";
+    grant.updatedAt = now();
+    audit(state, "ui-console-service", "access_grant_revoke", `AccessControlGrant:${grant.grantId}`);
+    finishGuardedWrite(state, guard, 200, grant);
+    writeState(state);
+    json(res, 200, grant);
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/instruction-envelopes") {
-    const guard = beginGuardedWrite(req, state, "instruction_envelope_create", "InstructionEnvelope:new");
+    const guard = beginGuardedWrite(req, state, "instruction_envelope_create", "InstructionEnvelope:new", taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
@@ -429,7 +1094,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/shared-definition-contracts") {
-    const guard = beginGuardedWrite(req, state, "shared_definition_contract_create", "SharedDefinitionContract:new");
+    const guard = beginGuardedWrite(req, state, "shared_definition_contract_create", "SharedDefinitionContract:new", projectScope(body.projectId || "prj_control_plane"));
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
@@ -464,18 +1129,21 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/repository-output-targets") {
+    const guard = beginGuardedWrite(req, state, "repository_output_target_select", "RepositoryOutputTarget:new", taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
     const pathAllowlist = body.pathAllowlist || ["docs/**", "spec/**"];
     const artifactManifestPath = body.artifactManifestPath || `docs/artifact-manifests/manifest.${Date.now()}.json`;
     if (!validPathAllowlist(pathAllowlist) || !gitTrackablePath(artifactManifestPath)) {
       json(res, 400, {error: "repository_output_target_must_use_git_trackable_paths"});
       return;
     }
-    const guard = beginGuardedWrite(req, state, "repository_output_target_select", "RepositoryOutputTarget:new");
-    if (guard.status) {
-      json(res, guard.status, guard.payload);
-      return;
-    }
     const at = now();
+    const remote = body.remote || "origin";
+    const project = state.projects.find((item) => item.id === (body.projectId || "prj_control_plane"));
+    const repository = (project?.repositories || []).find((item) => item.id === body.repositoryId) || project?.repositories?.[0];
     const target = {
       schemaVersion: "repository-output-target/v1",
       targetId: createId("rot"),
@@ -483,8 +1151,10 @@ async function handleApi(req, res) {
       taskGroupId: body.taskGroupId || "tg_runtime_management",
       workItemId: body.workItemId || "work_unknown",
       repositoryId: body.repositoryId || "repo_control_plane",
+      repositoryUrl: body.repositoryUrl || gitRemoteUrl(repositoryRoot, remote) || repository?.url || "git:unknown-project-repository",
+      remote,
       branch: body.branch || "main",
-      baseRef: body.baseRef || "HEAD",
+      baseRef: body.baseRef || gitHead(repositoryRoot),
       pathAllowlist,
       status: "selected",
       outputPolicy: "project_git_repository_only",

@@ -8,6 +8,7 @@
     "schemaVersion",
     "profileId",
     "status",
+    "executionProfile",
     "launchModes",
     "commands",
     "services",
@@ -29,6 +30,10 @@
     "status": {
       "type": "string",
       "enum": ["draft", "validated", "initialized", "running", "degraded", "stopped", "failed"]
+    },
+    "executionProfile": {
+      "type": "string",
+      "enum": ["production", "verification"]
     },
     "launchModes": {
       "type": "array",
@@ -62,7 +67,7 @@
         "properties": {
           "serviceId": {"type": "string", "minLength": 1},
           "roleId": {"type": "string", "minLength": 1},
-          "status": {"type": "string", "enum": ["planned", "running", "simulated", "degraded", "stopped"]},
+          "status": {"type": "string", "enum": ["planned", "running", "degraded", "stopped"]},
           "health": {"type": "string", "enum": ["unknown", "ok", "attention", "failed"]},
           "endpoint": {"type": "string"}
         }

@@ -1,12 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { digestOf, ensureRuntimeCollections } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeDir = resolve(root, process.env.AIMAC_RUNTIME_DIR || ".runtime");
 const statePath = join(runtimeDir, "control-plane-state.json");
 const configPath = join(runtimeDir, "runtime-config.json");
 const seedPath = join(root, "data", "seed-state.json");
+const repositoryRoot = resolve(process.env.AIMAC_REPOSITORY_ROOT || root);
+const executionProfile = process.env.AIMAC_EXECUTION_PROFILE || "production";
 const force = process.argv.includes("--force");
 const checkOnly = process.argv.includes("--check");
 
@@ -29,6 +33,8 @@ function buildState() {
     systemOwner.displayName = systemAdminName;
   }
   state.runtime.updatedAt = now;
+  state.runtime.executionProfile = executionProfile;
+  ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: `http://${process.env.AIMAC_HOST || "127.0.0.1"}:${Number(process.env.AIMAC_PORT || 4317)}`, executionProfile});
   state.auditLog.unshift({
     id: `audit_bootstrap_${Date.now()}`,
     at: now,
@@ -55,15 +61,40 @@ if (!force && existsSync(statePath)) {
   console.log(`runtime state initialized: ${statePath}`);
 }
 
+const existingConfig = existsSync(configPath) ? loadJson(configPath) : {};
+const bootstrapToken = process.env.AIMAC_BOOTSTRAP_TOKEN || existingConfig.localBootstrapToken || randomBytes(24).toString("base64url");
+const workspaceOwnerToken = process.env.AIMAC_WORKSPACE_OWNER_TOKEN || existingConfig.localAccountTokens?.acct_workspace_owner || randomBytes(24).toString("base64url");
+const reviewerToken = process.env.AIMAC_REVIEWER_TOKEN || existingConfig.localAccountTokens?.acct_reviewer || randomBytes(24).toString("base64url");
+const agentRuntimeToken = process.env.AIMAC_AGENT_RUNTIME_TOKEN || existingConfig.localAccountTokens?.acct_agent_runtime || randomBytes(24).toString("base64url");
 writeJson(configPath, {
   schemaVersion: "runtime-local-config/v1",
   runtimeDir,
   statePath,
+  repositoryRoot,
+  executionProfile,
   host: process.env.AIMAC_HOST || "127.0.0.1",
   port: Number(process.env.AIMAC_PORT || 4317),
   databaseUrl: process.env.DATABASE_URL || null,
-  bootstrapTokenConfigured: Boolean(process.env.AIMAC_BOOTSTRAP_TOKEN),
+  bootstrapTokenConfigured: true,
+  bootstrapTokenHash: digestOf(`bootstrap:${bootstrapToken}`),
+  localAccountTokenHashes: {
+    acct_workspace_owner: digestOf(`account:acct_workspace_owner:${workspaceOwnerToken}`),
+    acct_reviewer: digestOf(`account:acct_reviewer:${reviewerToken}`),
+    acct_agent_runtime: digestOf(`account:acct_agent_runtime:${agentRuntimeToken}`)
+  },
+  localBootstrapToken: process.env.AIMAC_BOOTSTRAP_TOKEN ? undefined : bootstrapToken,
+  localAccountTokens: {
+    ...(process.env.AIMAC_WORKSPACE_OWNER_TOKEN ? {} : {acct_workspace_owner: workspaceOwnerToken}),
+    ...(process.env.AIMAC_REVIEWER_TOKEN ? {} : {acct_reviewer: reviewerToken}),
+    ...(process.env.AIMAC_AGENT_RUNTIME_TOKEN ? {} : {acct_agent_runtime: agentRuntimeToken})
+  },
   updatedAt: new Date().toISOString()
 });
 
 console.log("next: npm start");
+if (!process.env.AIMAC_BOOTSTRAP_TOKEN) {
+  console.log(`local bootstrap token: ${bootstrapToken}`);
+}
+if (!process.env.AIMAC_WORKSPACE_OWNER_TOKEN) {
+  console.log(`local workspace owner token: ${workspaceOwnerToken}`);
+}

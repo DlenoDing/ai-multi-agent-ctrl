@@ -2251,6 +2251,42 @@ machines:
         actor: "reviewer"
         requires: ["rejection_reason"]
 
+  AgentDispatch:
+    initial: "queued"
+    terminal: ["completed", "failed", "cancelled"]
+    states:
+      - "queued"
+      - "running"
+      - "blocked"
+      - "completed"
+      - "failed"
+      - "cancelled"
+    transitions:
+      - from: "queued"
+        to: "running"
+        actor: "agent-runtime"
+        requires: ["agent_contract_ref", "model_selection_decision", "repository_output_target_ref"]
+      - from: "queued"
+        to: "blocked"
+        actor: "agent-runtime"
+        requires: ["permission_request_ref"]
+      - from: "blocked"
+        to: "running"
+        actor: "agent-runtime"
+        requires: ["permission_resolution_ref", "model_capability_available"]
+      - from: "running"
+        to: "completed"
+        actor: "agent-runtime"
+        requires: ["checkpoint_ref", "commit_ref", "push_ref", "artifact_manifest_ref"]
+      - from: "running"
+        to: "failed"
+        actor: "agent-runtime"
+        requires: ["failure_reason", "audit_ref"]
+      - from: "queued"
+        to: "cancelled"
+        actor: "scheduler"
+        requires: ["cancellation_reason", "audit_ref"]
+
   RepositoryOutputTarget:
     initial: "candidate"
     terminal: ["pushed", "rejected", "superseded"]

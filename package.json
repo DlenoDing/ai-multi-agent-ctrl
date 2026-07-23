@@ -13,6 +13,7 @@
     "dev": "node apps/control-plane-ui/server.mjs",
     "start": "node apps/control-plane-ui/server.mjs",
     "shell:start": "./scripts/start.sh",
+    "skills:sync": "node scripts/sync-agent-skills.mjs",
     "validate": "ruby scripts/validate-specs.rb",
     "doctor": "npm run validate && node scripts/init-control-plane.mjs --check && node scripts/doctor.mjs",
     "docker:build": "docker build -t ai-multi-agent-ctrl:local .",

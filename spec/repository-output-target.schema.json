@@ -4,7 +4,7 @@
   "title": "RepositoryOutputTarget",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "targetId", "status", "projectId", "taskGroupId", "workItemId", "repositoryId", "branch", "baseRef", "pathAllowlist", "outputPolicy", "decisionRecordRef", "auditRef", "createdAt", "updatedAt"],
+  "required": ["schemaVersion", "targetId", "status", "projectId", "taskGroupId", "workItemId", "repositoryId", "repositoryUrl", "remote", "branch", "baseRef", "pathAllowlist", "outputPolicy", "decisionRecordRef", "auditRef", "createdAt", "updatedAt"],
   "properties": {
     "schemaVersion": {
       "type": "string",
@@ -36,6 +36,10 @@
     },
     "repositoryUrl": {
       "type": "string"
+    },
+    "remote": {
+      "type": "string",
+      "minLength": 1
     },
     "branch": {
       "type": "string",

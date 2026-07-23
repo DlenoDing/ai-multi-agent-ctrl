@@ -10,11 +10,41 @@ const viewMeta = {
   users: ["用户管理", "账号、项目成员、Agent 激活和权限授权"],
   projects: ["项目总览", "项目状态、进度、成员和仓库输出归属"],
   tasks: ["任务组监控", "任务组阶段、角色、工作项、阻塞和控制操作"],
+  runtime: ["AI Runtime", "模型选择、角色 Skill、会话放置和自治执行证据"],
   instructions: ["指令协议", "稳定前缀、增量载荷、缓存键和共享定义归属"]
 };
 
 let state = null;
 let activeView = "system";
+let authToken = localStorage.getItem("aimac.sessionToken") || "";
+let currentAccount = JSON.parse(localStorage.getItem("aimac.account") || "null");
+let lastError = "";
+
+function emptyState() {
+  return {
+    runtime: {status: "login_required", services: []},
+    accounts: [],
+    accessGrants: [],
+    agents: [],
+    projects: [],
+    taskGroups: [],
+    modelCapabilities: [],
+    modelSelectionPolicies: [],
+    modelSelectionDecisions: [],
+    skillSources: [],
+    roleSkills: [],
+    roleSkillOverlays: [],
+    sessionPlacementDecisions: [],
+    workSessions: [],
+    agentDispatches: [],
+    repositoryOutputs: [],
+    closeBarriers: [],
+    sharedDefinitions: [],
+    instructionMetrics: {stablePrefixTokens: 0, deltaMessageTargetTokens: 0, cacheHitTarget: 0, envelopes: []},
+    auditLog: [],
+    progressSnapshots: []
+  };
+}
 
 function h(strings, ...values) {
   return strings.reduce((acc, part, index) => `${acc}${part}${values[index] ?? ""}`, "");
@@ -34,7 +64,7 @@ function pill(status) {
     ? "warn"
     : ["rejected", "revoked", "error"].includes(status)
       ? "bad"
-      : ["review_requested", "simulated", "initialized", "cache_indexed"].includes(status)
+      : ["review_requested", "initialized", "cache_indexed"].includes(status)
         ? "neutral"
         : "";
   return `<span class="pill ${tone}">${value}</span>`;
@@ -62,13 +92,25 @@ async function api(path, options = {}) {
   const method = (options.method || "GET").toUpperCase();
   const idempotencyKey = `idem_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   const headers = {"content-type": "application/json", ...(options.headers || {})};
+  if (authToken) headers.authorization = `Bearer ${authToken}`;
   if (method !== "GET") headers["Idempotency-Key"] = idempotencyKey;
   const response = await fetch(path, {
     ...options,
     headers,
   });
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = (await response.json()).error || "";
+    } catch {}
+    throw new Error(`${response.status} ${response.statusText}${detail ? `: ${detail}` : ""}`);
+  }
   return response.json();
+}
+
+function showError(error) {
+  lastError = error.message || String(error);
+  render();
 }
 
 function accountIdOf(account) {
@@ -89,7 +131,24 @@ function envelopeTokens(envelope) {
 }
 
 async function load() {
-  state = await api("/api/state");
+  if (!authToken) {
+    state = emptyState();
+    render();
+    return;
+  }
+  try {
+    state = await api("/api/state");
+  } catch (error) {
+    if (String(error.message || "").startsWith("401")) {
+      authToken = "";
+      currentAccount = null;
+      localStorage.removeItem("aimac.sessionToken");
+      localStorage.removeItem("aimac.account");
+      state = emptyState();
+    } else {
+      throw error;
+    }
+  }
   render();
 }
 
@@ -97,6 +156,7 @@ function renderStatusLine() {
   const activeAgents = state.agents.filter((agent) => agent.status === "active").length;
   const openTaskGroups = state.taskGroups.filter((task) => !["closed", "aborted"].includes(task.status)).length;
   const blockers = state.taskGroups.flatMap((task) => task.blockers || []).length;
+  const providers = new Set((state.modelCapabilities || []).map((profile) => profile.providerClass)).size;
   const projectProgress = Math.round(
     state.projects.reduce((sum, project) => sum + (project.progress?.percent || 0), 0) / Math.max(1, state.projects.length)
   );
@@ -105,12 +165,28 @@ function renderStatusLine() {
     <div class="metric"><span>Runtime</span><strong>${escapeHtml(state.runtime.status)}</strong></div>
     <div class="metric"><span>Active Agents</span><strong>${activeAgents}/${state.agents.length}</strong></div>
     <div class="metric"><span>Open Task Groups</span><strong>${openTaskGroups}</strong></div>
+    <div class="metric"><span>Model Providers</span><strong>${providers}</strong></div>
     <div class="metric"><span>Avg Project Progress</span><strong>${projectProgress}%</strong></div>
   `;
 
   if (blockers > 0) {
     statusLine.insertAdjacentHTML("beforeend", `<div class="metric"><span>Blockers</span><strong>${blockers}</strong></div>`);
   }
+}
+
+function authPanel() {
+  return panel("登录", h`
+    <form id="login-form" class="form-grid">
+      <div class="notice">写操作必须使用管理账号登录后的 bearer session。系统管理员使用 bootstrap token，用户管理账号使用对应账号 token。</div>
+      <div class="form-row"><label for="loginEmail">账号</label><input id="loginEmail" name="email" value="${escapeHtml(currentAccount?.email || "owner@local")}" required></div>
+      <div class="form-row"><label for="loginToken">登录 Token</label><input id="loginToken" name="token" type="password" required></div>
+      <button class="primary-button" type="submit">登录</button>
+    </form>
+  `);
+}
+
+function errorPanel() {
+  return lastError ? panel("操作错误", `<div class="notice error-notice">${escapeHtml(lastError)}</div>`) : "";
 }
 
 function renderSystem() {
@@ -136,6 +212,11 @@ function renderSystem() {
   ])).join("");
 
   content.innerHTML = [
+    errorPanel(),
+    authToken ? panel("当前会话", h`
+      <div class="record-title"><strong>${escapeHtml(currentAccount?.displayName || currentAccount?.email || "authenticated")}</strong>${pill("authenticated")}</div>
+      <div class="button-row"><button class="secondary-button" data-action="logout">退出</button></div>
+    `) : authPanel(),
     panel("运行入口", h`
       <div class="stack">
         <div class="notice">支持 npm、Docker、Shell 直接启动；初始化只写入本地运行态目录，项目产出文件始终进入对应项目 Git 仓库。</div>
@@ -175,6 +256,25 @@ function renderSystem() {
       </table>
     `, "wide")
   ].join("");
+
+  const loginForm = document.querySelector("#login-form");
+  if (loginForm) {
+    loginForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      try {
+        const result = await api("/api/auth/login", {method: "POST", body: JSON.stringify(Object.fromEntries(form.entries()))});
+        authToken = result.sessionToken;
+        currentAccount = result.account;
+        localStorage.setItem("aimac.sessionToken", authToken);
+        localStorage.setItem("aimac.account", JSON.stringify(currentAccount));
+        lastError = "";
+        await load();
+      } catch (error) {
+        showError(error);
+      }
+    });
+  }
 }
 
 function renderUsers() {
@@ -190,7 +290,8 @@ function renderUsers() {
     escapeHtml(grantResourceText(grant)),
     escapeHtml(grant.role),
     pill(grant.status),
-    escapeHtml(grant.permissions.join(", "))
+    escapeHtml(grant.permissions.join(", ")),
+    grant.status === "active" ? `<button class="secondary-button" data-action="revoke-grant" data-grant="${escapeHtml(grant.grantId)}">撤销</button>` : "-"
   ])).join("");
   const agents = state.agents.map((agent) => row([
     escapeHtml(agent.name),
@@ -217,6 +318,12 @@ function renderUsers() {
       </form>
     `),
     panel("Agent 激活", h`
+      <form id="agent-form" class="form-grid compact-form">
+        <div class="form-row"><label for="agentName">Agent</label><input id="agentName" name="name" required></div>
+        <div class="form-row"><label for="agentRole">角色</label><input id="agentRole" name="role" value="reviewer" required></div>
+        <div class="form-row"><label for="agentModel">模型策略</label><select id="agentModel" name="model"><option value="auto_best">auto_best</option><option value="auto_fast">auto_fast</option><option value="cost_aware">cost_aware</option></select></div>
+        <button class="primary-button" type="submit">创建 Agent</button>
+      </form>
       <table class="data-table">
         <thead><tr><th>Agent</th><th>角色</th><th>模型</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>${agents}</tbody>
@@ -230,7 +337,7 @@ function renderUsers() {
     `, "wide"),
     panel("授权", h`
       <table class="data-table">
-        <thead><tr><th>主体</th><th>资源</th><th>角色</th><th>状态</th><th>权限</th></tr></thead>
+        <thead><tr><th>主体</th><th>资源</th><th>角色</th><th>状态</th><th>权限</th><th>操作</th></tr></thead>
         <tbody>${grants}</tbody>
       </table>
     `, "wide")
@@ -239,8 +346,25 @@ function renderUsers() {
   document.querySelector("#invite-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.target);
-    await api("/api/accounts", {method: "POST", body: JSON.stringify(Object.fromEntries(form.entries()))});
-    await load();
+    try {
+      await api("/api/accounts", {method: "POST", body: JSON.stringify(Object.fromEntries(form.entries()))});
+      lastError = "";
+      await load();
+    } catch (error) {
+      showError(error);
+    }
+  });
+
+  document.querySelector("#agent-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    try {
+      await api("/api/agents", {method: "POST", body: JSON.stringify(Object.fromEntries(form.entries()))});
+      lastError = "";
+      await load();
+    } catch (error) {
+      showError(error);
+    }
   });
 }
 
@@ -321,16 +445,26 @@ function renderProjects() {
   document.querySelector("#project-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.target);
-    await api("/api/projects", {method: "POST", body: JSON.stringify(Object.fromEntries(form.entries()))});
-    await load();
+    try {
+      await api("/api/projects", {method: "POST", body: JSON.stringify(Object.fromEntries(form.entries()))});
+      lastError = "";
+      await load();
+    } catch (error) {
+      showError(error);
+    }
   });
 
   document.querySelector("#member-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.target);
     const data = Object.fromEntries(form.entries());
-    await api(`/api/projects/${data.projectId}/members`, {method: "POST", body: JSON.stringify(data)});
-    await load();
+    try {
+      await api(`/api/projects/${data.projectId}/members`, {method: "POST", body: JSON.stringify(data)});
+      lastError = "";
+      await load();
+    } catch (error) {
+      showError(error);
+    }
   });
 }
 
@@ -349,7 +483,7 @@ function renderTasks() {
       : "<div class='record'>无阻塞</div>";
     return panel(taskGroup.name, h`
       <div class="stack">
-        <div class="record-title"><strong>${escapeHtml(taskGroup.phase)}</strong>${pill(taskGroup.status)}</div>
+        <div class="record-title"><strong>${escapeHtml(taskGroup.phase)}</strong><span>${pill(taskGroup.status)} ${pill(taskGroup.goalExecutionStatus || "active")}</span></div>
         ${progress(taskGroup.progress)}
         <div class="record-meta"><span>health: ${escapeHtml(taskGroup.health)}</span><span>roles: ${escapeHtml(roles)}</span></div>
         <div class="button-row">
@@ -365,6 +499,109 @@ function renderTasks() {
   }).join("");
 
   content.innerHTML = taskGroups;
+}
+
+function renderRuntime() {
+  const sources = (state.skillSources || []).map((source) => row([
+    escapeHtml(source.sourceId),
+    pill(source.status),
+    escapeHtml(source.pinnedCommit),
+    String((state.roleSkills || []).filter((skill) => skill.sourceId === source.sourceId).length),
+    `<button class="secondary-button" data-action="sync-skill-source" data-source="${escapeHtml(source.sourceId)}">同步</button>`
+  ])).join("");
+  const modelRows = (state.modelCapabilities || []).slice(0, 24).map((profile) => row([
+    escapeHtml(profile.providerClass),
+    escapeHtml(profile.modelId),
+    escapeHtml(profile.strengths.slice(0, 5).join(", ")),
+    escapeHtml(profile.limits.contextWindowTokens),
+    pill(profile.availability)
+  ])).join("");
+  const decisions = (state.modelSelectionDecisions || []).slice(0, 12).map((decision) => row([
+    escapeHtml(decision.roleId),
+    escapeHtml(decision.workItemId),
+    escapeHtml(decision.selectedModel?.modelId || "-"),
+    pill(decision.status),
+    escapeHtml(decision.selectionMode)
+  ])).join("");
+  const placements = (state.sessionPlacementDecisions || []).slice(0, 12).map((decision) => row([
+    escapeHtml(decision.workItemId),
+    escapeHtml(decision.placement),
+    pill(decision.status),
+    escapeHtml(decision.workSignals.join(", "))
+  ])).join("");
+  const sessions = (state.workSessions || []).slice(0, 12).map((session) => row([
+    escapeHtml(session.sessionId),
+    escapeHtml(session.roleId),
+    escapeHtml(session.workItemId),
+    escapeHtml(session.placement),
+    pill(session.status)
+  ])).join("");
+  const dispatches = (state.agentDispatches || []).slice(0, 12).map((dispatch) => row([
+    escapeHtml(dispatch.dispatchId),
+    escapeHtml(dispatch.workItemId),
+    escapeHtml(dispatch.deliveryMode),
+    pill(dispatch.status),
+    escapeHtml(dispatch.repositoryOutputTargetRef),
+    escapeHtml(dispatch.blockedReason || dispatch.failureReason || "-")
+  ])).join("");
+  const closeRows = (state.closeBarriers || []).slice(0, 8).map((barrier) => row([
+    escapeHtml(barrier.taskGroupId),
+    barrier.satisfied ? pill("satisfied") : pill("blocked"),
+    String(barrier.blockingObjects.length),
+    escapeHtml(barrier.computedAt)
+  ])).join("");
+
+  content.innerHTML = [
+    panel("自治控制", h`
+      <div class="button-row">
+        <button class="primary-button" data-action="orchestrator-run">运行自治循环</button>
+        <button class="secondary-button" data-action="agent-runtime-run">运行 Agent Runtime</button>
+        <button class="secondary-button" data-action="decide-model">模型决策</button>
+      </div>
+    `),
+    panel("Skill Registry", h`
+      <table class="data-table">
+        <thead><tr><th>Source</th><th>状态</th><th>Pinned Commit</th><th>角色数</th><th>操作</th></tr></thead>
+        <tbody>${sources}</tbody>
+      </table>
+    `),
+    panel("Model Registry", h`
+      <table class="data-table">
+        <thead><tr><th>Provider</th><th>Model</th><th>能力</th><th>Context</th><th>可用性</th></tr></thead>
+        <tbody>${modelRows}</tbody>
+      </table>
+    `, "wide"),
+    panel("模型选择记录", h`
+      <table class="data-table">
+        <thead><tr><th>角色</th><th>Work</th><th>模型</th><th>状态</th><th>模式</th></tr></thead>
+        <tbody>${decisions || row(["-", "-", "-", "-", "-"])}</tbody>
+      </table>
+    `),
+    panel("会话放置记录", h`
+      <table class="data-table">
+        <thead><tr><th>Work</th><th>Placement</th><th>状态</th><th>Signals</th></tr></thead>
+        <tbody>${placements || row(["-", "-", "-", "-"])}</tbody>
+      </table>
+    `),
+    panel("Work Sessions", h`
+      <table class="data-table">
+        <thead><tr><th>Session</th><th>角色</th><th>Work</th><th>Placement</th><th>状态</th></tr></thead>
+        <tbody>${sessions || row(["-", "-", "-", "-", "-"])}</tbody>
+      </table>
+    `, "wide"),
+    panel("Agent Dispatch Outbox", h`
+      <table class="data-table">
+        <thead><tr><th>Dispatch</th><th>Work</th><th>模式</th><th>状态</th><th>仓库目标</th><th>原因</th></tr></thead>
+        <tbody>${dispatches || row(["-", "-", "-", "-", "-", "-"])}</tbody>
+      </table>
+    `, "wide"),
+    panel("Close Barrier", h`
+      <table class="data-table">
+        <thead><tr><th>任务组</th><th>状态</th><th>阻塞数</th><th>计算时间</th></tr></thead>
+        <tbody>${closeRows || row(["-", "-", "-", "-"])}</tbody>
+      </table>
+    `, "wide")
+  ].join("");
 }
 
 function renderInstructions() {
@@ -419,7 +656,11 @@ function render() {
   if (activeView === "users") renderUsers();
   if (activeView === "projects") renderProjects();
   if (activeView === "tasks") renderTasks();
+  if (activeView === "runtime") renderRuntime();
   if (activeView === "instructions") renderInstructions();
+  if (lastError && !content.querySelector(".error-notice")) {
+    content.insertAdjacentHTML("afterbegin", errorPanel());
+  }
 }
 
 document.querySelector(".nav").addEventListener("click", (event) => {
@@ -432,21 +673,65 @@ document.querySelector(".nav").addEventListener("click", (event) => {
 document.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
-  if (target.dataset.action === "toggle-agent") {
-    const agent = state.agents.find((item) => item.id === target.dataset.agent);
-    await api(`/api/agents/${target.dataset.agent}/activate`, {method: "POST", body: JSON.stringify({active: agent.status !== "active"})});
-    await load();
-  }
-  if (target.dataset.action === "task-control") {
-    await api(`/api/task-groups/${target.dataset.task}/control`, {method: "POST", body: JSON.stringify({action: target.dataset.taskAction})});
-    await load();
+  try {
+    if (target.dataset.action === "logout") {
+      authToken = "";
+      currentAccount = null;
+      localStorage.removeItem("aimac.sessionToken");
+      localStorage.removeItem("aimac.account");
+      render();
+      return;
+    }
+    if (target.dataset.action === "toggle-agent") {
+      const agent = state.agents.find((item) => item.id === target.dataset.agent);
+      await api(`/api/agents/${target.dataset.agent}/activate`, {method: "POST", body: JSON.stringify({active: agent.status !== "active"})});
+      lastError = "";
+      await load();
+    }
+    if (target.dataset.action === "task-control") {
+      await api(`/api/task-groups/${target.dataset.task}/control`, {method: "POST", body: JSON.stringify({action: target.dataset.taskAction})});
+      lastError = "";
+      await load();
+    }
+    if (target.dataset.action === "revoke-grant") {
+      await api(`/api/access-grants/${target.dataset.grant}/revoke`, {method: "POST", body: "{}"});
+      lastError = "";
+      await load();
+    }
+    if (target.dataset.action === "sync-skill-source") {
+      await api(`/api/skill-sources/${target.dataset.source}/sync`, {method: "POST", body: "{}"});
+      lastError = "";
+      await load();
+    }
+    if (target.dataset.action === "orchestrator-run") {
+      await api("/api/orchestrator/run", {method: "POST", body: JSON.stringify({mode: "all"})});
+      lastError = "";
+      await load();
+    }
+    if (target.dataset.action === "agent-runtime-run") {
+      await api("/api/agent-runtime/run", {method: "POST", body: JSON.stringify({taskGroupId: "tg_runtime_management", maxJobs: 1})});
+      lastError = "";
+      await load();
+    }
+    if (target.dataset.action === "decide-model") {
+      await api("/api/model-selection/decide", {method: "POST", body: JSON.stringify({taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "ui-console-service"})});
+      lastError = "";
+      await load();
+    }
+  } catch (error) {
+    showError(error);
   }
 });
 
 refreshButton.addEventListener("click", load);
 bootstrapButton.addEventListener("click", async () => {
-  await api("/api/bootstrap/init", {method: "POST", body: "{}"});
-  await load();
+  try {
+    await api("/api/bootstrap/init", {method: "POST", body: "{}"});
+    lastError = "";
+    await load();
+  } catch (error) {
+    showError(error);
+  }
 });
 
 load().catch((error) => {

@@ -44,6 +44,7 @@
           "project_admin",
           "task_group_owner",
           "agent_operator",
+          "service_agent_runtime",
           "reviewer",
           "viewer"
         ]

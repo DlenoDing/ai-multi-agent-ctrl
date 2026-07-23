@@ -27,7 +27,7 @@
 | Docker | `docker compose up --build` | 构建镜像并启动容器内控制台服务 |
 | Shell | `./scripts/start.sh` | shell 封装入口，内部执行 npm 初始化和启动 |
 
-初始化写入本地 `.runtime/` 运行态目录。`.runtime/` 不是项目产出目录，不进入 Git。生产实现可以把运行态替换为 PostgreSQL，但项目任务产出仍不得写入控制面文件库。
+初始化写入本地 `.runtime/` 运行态目录。`.runtime/` 不是项目产出目录，不进入 Git。部署到 PostgreSQL 时仍复用同一对象、状态机和事件契约，项目任务产出仍不得写入控制面文件库。
 
 `RuntimeBootstrapProfile` 必须记录：
 
@@ -148,7 +148,7 @@ detect_shared_definition_need
 `RepositoryOutputTarget` 必须包含：
 
 1. projectId、taskGroupId、workItemId。
-2. repositoryId 和可选 repositoryUrl。
+2. repositoryId、remote 和 repositoryUrl。
 3. branch 和 baseRef。
 4. pathAllowlist 和 pathDenylist。
 5. decisionRecordRef。
@@ -174,13 +174,14 @@ candidate
 1. Control Plane 不实现独立项目文件管理系统。
 2. UI 不提供“上传项目产出文件”的文件库。
 3. 证据、截图、日志和测试报告可以登记为 evidence/artifact metadata，但最终交付文件必须以 Git 仓库中的路径、commit、push 和 manifest 为准。
-4. WorkSession checkout、edit、commit 和 push 前必须持有 repository/path lease。
-5. Checkpoint 必须引用 `RepositoryOutputTarget`、CommitRef、PushRef 和 artifact manifest。
+4. WorkSession 或短任务 subagent checkout、edit、commit 和 push 前必须持有对应 target 的 active repository/path lease。
+5. Checkpoint 必须引用 `RepositoryOutputTarget`、CommitRef、PushRef 和 artifact manifest，并且必须绑定 active `AgentDispatch`、runId 和 taskContractDigest。
 6. 多仓库任务中，Orchestrator 可以为不同 WorkItem 选择不同 repository target，但每个 writing WorkItem 只能写入自己被分配的 target 和 path scope。
+7. PushRef 的 remote 必须等于 `RepositoryOutputTarget.remote`，且运行时本地 Git remote URL 必须等于 target 记录的 repositoryUrl。
 
-## 9. 本地控制台
+## 9. 本地控制平面
 
-当前仓库提供最小可运行控制台：
+当前仓库提供可直接运行的本地控制平面：
 
 ```bash
 npm run init
@@ -193,15 +194,34 @@ npm start
 http://127.0.0.1:4317
 ```
 
+AI-native 运行入口：
+
+| 命令 | 机器语义 |
+| --- | --- |
+| `npm run doctor` | 校验 schema、初始化状态、启动临时控制面、创建临时 Git remote，并执行模型选择、会话放置、路径阻断、自治编排、worker commit/push、checkpoint 证据负例和 readiness 冒烟 |
+| `npm run skills:sync` | 同步 `DlenoDing/agency-agents-zh` pinned snapshot，解析 `AgentRoleSkill` 索引并写入运行态 |
+| `POST /api/orchestrator/run` | 由 Orchestrator 执行当前任务组自动调度循环，只投递 `AgentDispatch`，不伪造完成 |
+| `POST /api/agent-runtime/run` | 由 Agent Runtime 消费 durable dispatch，实际写 Git、commit、push，然后提交可验证 checkpoint |
+| `POST /api/model-selection/decide` | 由 Scheduler/Model Registry 生成 `ModelSelectionDecision` |
+| `POST /api/session-placement/decide` | 按长任务新会话、短任务子 agent 规则生成 `SessionPlacementDecision` |
+| `GET /api/task-groups/:taskGroupId/readiness` | 计算 `CompletionReadinessCheck` 和 `CloseBarrier` |
+
 控制台实现文件：
 
 | 文件 | 用途 |
 | --- | --- |
-| `apps/control-plane-ui/server.mjs` | 无依赖 Node HTTP 服务和本地 API |
+| `apps/control-plane-ui/server.mjs` | 无依赖 Node HTTP 服务、本地 API、幂等命令入口和权限 guard |
+| `apps/control-plane-ui/lib/control-plane-core.mjs` | 模型 registry、skill registry、session placement、task contract、dispatch outbox、worker、checkpoint Git 证据、readiness 和 close barrier 核心逻辑 |
 | `apps/control-plane-ui/public/index.html` | 管理控制台入口 |
 | `apps/control-plane-ui/public/styles.css` | SaaS 管理界面样式 |
-| `apps/control-plane-ui/public/app.js` | 系统管理、用户管理、项目、任务组和指令协议交互 |
-| `data/seed-state.json` | 本地演示 seed state |
+| `apps/control-plane-ui/public/app.js` | 系统管理、用户管理、项目、任务组、AI Runtime 和指令协议交互 |
+| `data/seed-state.json` | 本地运行态 seed state |
 | `scripts/init-control-plane.mjs` | 初始化 `.runtime/control-plane-state.json` |
+| `scripts/sync-agent-skills.mjs` | 拉取并索引默认角色 skill 源 |
+| `scripts/doctor.mjs` | 本地控制面端到端自检 |
 
-该控制台用于本地启动、验证管理边界和展示对象关系。生产实现必须继续遵守本文的对象和状态机，不得把本地 JSON seed 当成权威数据库模型。
+本地 JSON 运行态和 PostgreSQL 部署形态共享同一对象边界：UI 只消费经认证和资源 scope 过滤后的控制面状态，并发送受控命令；执行推进由 Orchestrator、Scheduler、Model Registry、Skill Registry、Agent Runtime、Monitor 等系统角色完成。
+
+常规执行中，Agent Runtime 必须具备选中模型 provider 的凭证，并通过 `AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND` 调用受控 executor。控制面向 executor 传入 task contract、模型选择、role skill、仓库根目录和 RepositoryOutputTarget；executor 只能返回 `changedPaths`、`artifactManifestRefs`、summary 和 evidence refs。Runtime Worker 要求执行前 worktree 干净，拒绝未声明改动，统一 `git add`、commit、push，并把远端 SHA、commit tree、artifact manifest 和 manifest.outputRefs 绑定到 checkpoint。
+
+`AIMAC_ALLOW_LOCAL_DETERMINISTIC_WORKER=true` 仅作为 `AIMAC_EXECUTION_PROFILE=verification` 且目标仓库存在 `.aimac-verification-repository` 标记时的本地验证 fallback，用于证明 dispatch、Git、push、manifest 和 checkpoint 校验链路。生产 profile 不启用该路径；缺少凭证或 executor 时只返回 `credential_required` / `agent_runtime_executor_required`，不得伪造完成。

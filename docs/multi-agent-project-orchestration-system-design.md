@@ -1446,7 +1446,7 @@ work_item
 
 并行不是默认开启，而是由 `ExecutionTopology` 计算出来的执行形态。Scheduler 只有在以下条件全部满足时才能开启并行：交付面独立、owned paths 不重叠、resource scopes 不冲突、runner 隔离可证明、branch result bundle contract 完整、父级 Orchestrator 是唯一合并者、最终集成验证可用。任一条件不满足时，拓扑必须降级为 `downgraded_serial` 并记录原因。
 
-branch worker、session 内 subagent 和外部 runner 不能写 central state、关闭父级任务、commit、push 或 merge。它们只能返回 result bundle：changed paths、resultRef、validationEvidence、unresolvedRisks 和 derivedTaskRequests。父级 Orchestrator 在所有 required branch 报告后串行集成、验证和更新状态。
+branch worker、session 内 subagent 和外部 runner 不能写 central state、关闭父级任务或 merge。短小单轮 subagent 可以在自己的 bounded RepositoryOutputTarget lease 内 commit 和 push，随后只返回 checkpoint evidence、changed paths、resultRef、validationEvidence、unresolvedRisks 和 derivedTaskRequests；父级 Orchestrator 在所有 required branch 报告后串行集成、验证和更新状态。
 
 worker、reviewer、monitor 发现新问题时只能提交 `DerivedTaskRequest`。Orchestrator 必须把 request strengthen 成 action basis，分类为 current_absorb、preempt_current、after_current、scheduled_after 或 backlog，再决定是否创建 WorkItem、阻塞 topology、重开 review 或记录为 backlog。
 
