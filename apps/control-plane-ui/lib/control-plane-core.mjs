@@ -30,7 +30,7 @@ const embeddedServices = [
   ["control-plane", "ui-console-service"],
   ["room-broker", "room-broker"],
   ["scheduler", "scheduler"],
-  ["agent-runtime", "agent-runtime"],
+  ["agent-gateway", "agent-runtime"],
   ["identity-service", "identity-service"],
   ["ui-console-service", "ui-console-service"],
   ["repository-router", "repository-router"],
@@ -170,6 +170,15 @@ const providerDefaults = {
   custom: {modalities: ["text", "tool_use"], strengths: ["planning", "coding", "review"], context: 128000, output: 8000, quality: [0.75, 0.75, 0.75, "unknown", 0.75], cost: ["unknown", "unknown"]}
 };
 
+const defaultModelCeiling = {
+  maxModelTier: "frontier_standard",
+  maxReasoningLevel: "high",
+  escalationPolicy: "special_signal_required"
+};
+
+const reasoningRank = {low: 0, standard: 1, medium: 2, high: 3, max: 4, ultra: 5};
+const modelTierRank = {standard: 0, frontier_economy: 1, frontier_standard: 2, frontier_plus: 3};
+
 const defaultSkillSource = {
   schemaVersion: "agent-skill-source/v1",
   sourceId: "agency-agents-zh",
@@ -284,6 +293,8 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.roomMessages ||= [];
   state.roomAcks ||= [];
   state.agentRuntimeNodes ||= [];
+  state.agentJoinTokens ||= [];
+  state.agentGatewayEvents ||= [];
   state.permissionRequests ||= [];
   state.approvalRequests ||= [];
   state.artifacts ||= [];
@@ -306,17 +317,21 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.runtime ||= {};
   state.runtime.executionProfile ||= options.executionProfile || process.env.AIMAC_EXECUTION_PROFILE || "production";
   state.runtime.commands ||= {};
-  state.runtime.commands.mcpStart ||= "npm run mcp:start";
-  state.runtime.commands.mcpRegister ||= "npm run mcp:register";
+  state.runtime.commands.mcpStart ||= "npm start";
+  state.runtime.commands.mcpRegister ||= "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL";
   state.runtime.commands.mcpDoctor ||= "npm run mcp:doctor";
-  state.runtime.mcp ||= {
-    protocol: "mcp/json-rpc-stdio",
+  state.runtime.mcp = {
+    ...(state.runtime.mcp || {}),
+    protocol: "mcp/streamable-http",
     serverId: "ai-multi-agent-ctrl",
     logicalServers: embeddedMcpLogicalServers,
     toolCount: embeddedMcpToolCount,
-    startupCommand: "npm run mcp:start",
-    registrationCommand: "npm run mcp:register",
-    doctorCommand: "npm run mcp:doctor"
+    endpointPath: "/mcp",
+    hostedBy: "control-plane",
+    startupCommand: "npm start",
+    registrationCommand: "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL",
+    doctorCommand: "npm run mcp:doctor",
+    agentLocalServerAllowed: false
   };
   ensureServices(state, options.endpoint);
   ensureDefaultServiceAccounts(state);
@@ -334,7 +349,7 @@ function ensureServices(state, endpoint) {
     roleId,
     status: existing.get(serviceId)?.status || "running",
     health: existing.get(serviceId)?.health || "ok",
-    ...(serviceId === "control-plane" || serviceId === "ui-console-service" ? {endpoint: endpoint || existing.get(serviceId)?.endpoint || "http://127.0.0.1:4317"} : {})
+    ...(serviceId === "control-plane" || serviceId === "ui-console-service" || serviceId === "agent-gateway" || serviceId === "mcp-proxy" || serviceId === "skill-registry" ? {endpoint: endpoint || existing.get(serviceId)?.endpoint || "http://127.0.0.1:4317"} : {})
   }));
 }
 
@@ -513,13 +528,15 @@ export function selectModel(state, request = {}) {
   const workItem = request.workItem || findWorkItem(state, request.taskGroupId, request.workItemId) || {};
   const policy = state.modelSelectionPolicies.find((item) => item.roleId === roleId) || state.modelSelectionPolicies[0];
   const roleSkill = resolveRoleSkill(state, roleId, request);
+  const taskExecution = classifyTaskExecution(workItem, request);
+  const modelCeiling = modelCeilingForTask(taskExecution, request);
   const requiredCapabilities = unique([
     ...(request.requiredCapabilities || []),
     ...(policy?.requiredCapabilities || []),
     ...inferCapabilities(`${workItem.title || ""} ${workItem.ownerRole || roleId}`)
   ]);
-  const hardConstraints = {...(policy?.hardConstraints || {}), ...(request.hardConstraints || {})};
-  const candidates = state.modelCapabilities.map((profile) => rankModel(profile, roleSkill, requiredCapabilities, hardConstraints, request.selectionMode || "auto_best"));
+  const hardConstraints = {...(policy?.hardConstraints || {}), ...(request.hardConstraints || {}), maxReasoningLevel: modelCeiling.maxReasoningLevel};
+  const candidates = state.modelCapabilities.map((profile) => rankModel(profile, roleSkill, requiredCapabilities, hardConstraints, request.selectionMode || "auto_best", taskExecution, modelCeiling));
   candidates.sort((a, b) => Number(b.eligible) - Number(a.eligible) || b.totalScore - a.totalScore);
   const selected = candidates.find((candidate) => candidate.eligible);
   const at = new Date().toISOString();
@@ -534,6 +551,12 @@ export function selectModel(state, request = {}) {
     roleId,
     roleSkillRef: roleSkill.roleSkillId,
     roleSkillDigest: roleSkill.contentDigest,
+    taskExecutionClass: taskExecution.taskExecutionClass,
+    splitRequired: taskExecution.splitRequired,
+    maxModelTier: modelCeiling.maxModelTier,
+    maxReasoningLevel: modelCeiling.maxReasoningLevel,
+    escalationAllowed: modelCeiling.escalationAllowed,
+    escalationRationaleRefs: modelCeiling.escalationRationaleRefs,
     selectionMode: request.selectionMode || "auto_best",
     candidateRankings: candidates.slice(0, Math.min(8, candidates.length)).map((candidate, index) => ({
       rank: index + 1,
@@ -542,6 +565,8 @@ export function selectModel(state, request = {}) {
       totalScore: candidate.totalScore,
       eligible: candidate.eligible,
       capabilityProfileRef: candidate.capabilityProfileRef,
+      reasoningLevel: candidate.reasoningLevel,
+      modelTier: candidate.modelTier,
       ...(candidate.rejectionReason ? {rejectionReason: candidate.rejectionReason} : {})
     })),
     hardConstraintResults: hardConstraintResults(hardConstraints, selected),
@@ -556,7 +581,10 @@ export function selectModel(state, request = {}) {
       providerClass: selected.providerClass,
       providerId: selected.providerId,
       modelId: selected.modelId,
+      modelTier: selected.modelTier,
       reasoningLevel: selected.reasoningLevel,
+      maxModelTier: modelCeiling.maxModelTier,
+      maxReasoningLevel: modelCeiling.maxReasoningLevel,
       capabilityProfileRef: selected.capabilityProfileRef
     };
   } else {
@@ -569,7 +597,7 @@ export function selectModel(state, request = {}) {
   return decision;
 }
 
-function rankModel(profile, roleSkill, requiredCapabilities, hardConstraints, selectionMode) {
+function rankModel(profile, roleSkill, requiredCapabilities, hardConstraints, selectionMode, taskExecution, modelCeiling) {
   const reasons = [];
   if (hardConstraints.minContextWindowTokens && profile.limits.contextWindowTokens < hardConstraints.minContextWindowTokens) reasons.push("context_window");
   if (hardConstraints.requiresStructuredOutput && !profile.limits.supportsStructuredOutput) reasons.push("structured_output");
@@ -578,6 +606,10 @@ function rankModel(profile, roleSkill, requiredCapabilities, hardConstraints, se
   if (hardConstraints.forbiddenProviderClasses?.includes(profile.providerClass)) reasons.push("provider_forbidden");
   if (hardConstraints.minReliabilityScore && profile.qualitySignals.reliabilityScore < hardConstraints.minReliabilityScore) reasons.push("reliability");
   if (hardConstraints.maxCostClass && costRank(profile.costSignals.costClass) > costRank(hardConstraints.maxCostClass)) reasons.push("cost");
+  const baseReasoningLevel = reasoningLevelForTask(profile, taskExecution);
+  const modelTier = modelTierForProfile(profile);
+  if (reasoningRank[baseReasoningLevel] > reasoningRank[hardConstraints.maxReasoningLevel || "high"] && !modelCeiling.escalationAllowed) reasons.push("reasoning_above_task_ceiling");
+  if (modelTierRank[modelTier] > modelTierRank[modelCeiling.maxModelTier || "frontier_standard"] && !modelCeiling.escalationAllowed) reasons.push("model_tier_above_task_ceiling");
   const capabilityFit = overlapScore(requiredCapabilities, profile.strengths);
   const roleSkillFit = overlapScore(roleSkill.capabilities, profile.strengths);
   const quality = (profile.qualitySignals.reasoningScore + profile.qualitySignals.codingScore + profile.qualitySignals.reviewScore) / 3;
@@ -595,10 +627,63 @@ function rankModel(profile, roleSkill, requiredCapabilities, hardConstraints, se
     totalScore: Math.max(0, Math.min(1, Number((weighted / 12).toFixed(4)))),
     eligible: reasons.length === 0,
     capabilityProfileRef: `${profile.providerId}/${profile.modelId}`,
-    reasoningLevel: quality >= 0.9 ? "high" : quality >= 0.82 ? "medium" : "standard",
+    modelTier,
+    reasoningLevel: modelCeiling.escalationAllowed ? baseReasoningLevel : capReasoning(baseReasoningLevel, modelCeiling.maxReasoningLevel),
     scoreBreakdown,
     ...(reasons.length ? {rejectionReason: reasons.join(",")} : {})
   };
+}
+
+function classifyTaskExecution(workItem = {}, request = {}) {
+  const text = `${workItem.title || ""} ${workItem.ownerRole || ""} ${(workItem.requirements || []).join(" ")} ${request.taskPrompt || ""}`.toLowerCase();
+  const analysis = /分析|深度|调研|架构|设计|方案|复验|审查|review|audit|research|architecture|design|planning/u.test(text);
+  const implementation = /代码|开发|实现|修复|改造|构建|提交|push|docker|npm|shell|code|implement|build|fix|patch|commit/u.test(text);
+  const verification = /测试|验证|自检|doctor|e2e|复测|test|verify|validation/u.test(text);
+  const special = /安全|权限|高风险|生产|跨系统|核心故障|总控偏移|调度安全|监测偏移|security|permission|production|critical/u.test(text);
+  let taskExecutionClass = "implementation";
+  if (analysis && !implementation) taskExecutionClass = "deep_analysis";
+  else if (verification && !implementation) taskExecutionClass = "verification";
+  else if (analysis && implementation) taskExecutionClass = "mixed_analysis_implementation";
+  else if (/小任务|短任务|quick|minor/u.test(text)) taskExecutionClass = "short_execution";
+  return {
+    taskExecutionClass,
+    splitRequired: taskExecutionClass === "mixed_analysis_implementation",
+    specialEscalationSignal: special,
+    signals: unique([
+      ...(analysis ? ["analysis"] : []),
+      ...(implementation ? ["implementation"] : []),
+      ...(verification ? ["verification"] : []),
+      ...(special ? ["special_escalation_signal"] : [])
+    ])
+  };
+}
+
+function modelCeilingForTask(taskExecution, request = {}) {
+  const escalationAllowed = request.allowModelEscalation === true || taskExecution.specialEscalationSignal === true;
+  return {
+    maxModelTier: escalationAllowed ? (request.maxModelTier || "frontier_plus") : (request.maxModelTier || defaultModelCeiling.maxModelTier),
+    maxReasoningLevel: escalationAllowed ? (request.maxReasoningLevel || "high") : (request.maxReasoningLevel || defaultModelCeiling.maxReasoningLevel),
+    escalationAllowed,
+    escalationRationaleRefs: escalationAllowed ? [`task-signal:${taskExecution.signals.join("+") || "special"}`] : ["policy:default_cap_frontier_standard_high"]
+  };
+}
+
+function reasoningLevelForTask(profile, taskExecution) {
+  if (taskExecution.taskExecutionClass === "deep_analysis") return profile.qualitySignals.reasoningScore >= 0.82 ? "high" : "medium";
+  if (taskExecution.taskExecutionClass === "verification") return profile.qualitySignals.reviewScore >= 0.86 ? "medium" : "standard";
+  if (taskExecution.taskExecutionClass === "short_execution") return "low";
+  return profile.qualitySignals.codingScore >= 0.88 ? "medium" : "standard";
+}
+
+function capReasoning(reasoningLevel, maxReasoningLevel) {
+  return reasoningRank[reasoningLevel] > reasoningRank[maxReasoningLevel] ? maxReasoningLevel : reasoningLevel;
+}
+
+function modelTierForProfile(profile) {
+  const quality = (profile.qualitySignals.reasoningScore + profile.qualitySignals.codingScore + profile.qualitySignals.reviewScore) / 3;
+  if (quality >= 0.9) return "frontier_standard";
+  if (quality >= 0.84) return "frontier_economy";
+  return "standard";
 }
 
 function hardConstraintResults(hardConstraints, selected) {
@@ -691,6 +776,13 @@ export function buildTaskContract(state, request = {}) {
   const at = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
   const roleSkill = resolveRoleSkill(state, workItem?.ownerRole || "orchestrator", {projectId: project?.id, taskGroupId: taskGroup?.id});
+  const skillBindingDigest = digestOf({
+    roleId: workItem?.ownerRole || "orchestrator",
+    roleSkillRef: roleSkill.roleSkillId,
+    roleSkillDigest: roleSkill.contentDigest,
+    overlayRefs: roleSkill.overlayRefs || []
+  });
+  const skillWorksetId = `skillset_${skillBindingDigest.slice("sha256:".length, "sha256:".length + 24)}`;
   const sharedDefinitionRefs = activeSharedDefinitionRefs(state, {projectId: project?.id, taskGroupId: taskGroup?.id, workItemId: workItem?.id});
   const contractSeed = {projectId: project?.id, taskGroupId: taskGroup?.id, workId: workItem?.id, roleId: workItem?.ownerRole, stateVersion: state.stateVersion};
   const contractDigest = digestOf(contractSeed);
@@ -719,6 +811,9 @@ export function buildTaskContract(state, request = {}) {
       selectedAgentSkillRef: roleSkill.roleSkillId,
       sourceId: roleSkill.sourceId,
       overlayRefs: roleSkill.overlayRefs || [],
+      worksetId: skillWorksetId,
+      synchronizationMode: "server_managed_on_demand",
+      usageDirective: `The ${workItem?.ownerRole || "orchestrator"} agent must load this exact skill workset before execution and must explicitly bind a separate server-issued workset for every child role.`,
       modelSelectionDecisionRef: modelDecision.decisionId
     },
     roomId: `room_${taskGroup?.id || "runtime"}`,
@@ -759,7 +854,12 @@ export function buildTaskContract(state, request = {}) {
     model: {
       modelId: modelDecision.selectedModel?.modelId || "custom:auto",
       alias: modelDecision.selectedModel?.providerClass || "custom",
+      providerClass: modelDecision.selectedModel?.providerClass || "custom",
+      modelTier: modelDecision.selectedModel?.modelTier || "standard",
+      maxModelTier: modelDecision.selectedModel?.maxModelTier || "frontier_standard",
+      taskExecutionClass: modelDecision.taskExecutionClass || "implementation",
       reasoningLevel: modelDecision.selectedModel?.reasoningLevel || "standard",
+      maxReasoningLevel: modelDecision.selectedModel?.maxReasoningLevel || "high",
       selectionMode: modelDecision.selectionMode,
       modelSelectionDecisionRef: modelDecision.decisionId
     },
@@ -919,6 +1019,12 @@ export function runAutonomousCycle(state, request = {}) {
         if (request.mode !== "until_blocked" && request.mode !== "all") break;
         continue;
       }
+      const split = splitMixedWorkItemIfNeeded(state, taskGroup, workItem);
+      if (split) {
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "split", reason: "mixed_analysis_implementation_split", derivedWorkItemIds: split.derivedWorkItemIds});
+        if (request.mode !== "until_blocked" && request.mode !== "all") break;
+        continue;
+      }
       const contract = buildTaskContract(state, {projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workItemId: workItem.id, workItem, root: request.root});
       const repositoryTarget = state.repositoryOutputs.find((target) => target.targetId === contract.repositoryOutputTargetRef);
       const drift = evaluateRoleDrift(state, {sessionId: contract.sessionId, taskGroupId: taskGroup.id, actionScopeRefs: [`TaskGroup:${taskGroup.id}`, `RepositoryOutputTarget:${repositoryTarget.targetId}`]});
@@ -939,6 +1045,66 @@ export function runAutonomousCycle(state, request = {}) {
   computeProgressSnapshots(state);
   appendEvent(state, "progress", "ProgressSnapshot", `cycle:${Date.now()}`, "orchestrator", {changed});
   return {changed, progressSnapshots: state.progressSnapshots.slice(0, 8)};
+}
+
+function splitMixedWorkItemIfNeeded(state, taskGroup, workItem) {
+  if (workItem.splitFrom || workItem.splitStatus === "split_by_orchestrator") return null;
+  const taskExecution = classifyTaskExecution(workItem);
+  if (!taskExecution.splitRequired) return null;
+  const existingChildren = (taskGroup.workItems || []).filter((item) => item.splitFrom === workItem.id);
+  if (existingChildren.length) return {derivedWorkItemIds: existingChildren.map((item) => item.id), existing: true};
+  const at = new Date().toISOString();
+  const baseRequirements = workItem.requirements || [];
+  const analysis = {
+    id: `${workItem.id}_analysis`,
+    title: `${workItem.title} - analysis`,
+    status: "ready",
+    ownerRole: analysisRoleFor(workItem.ownerRole),
+    progress: 0,
+    taskExecutionClass: "deep_analysis",
+    splitFrom: workItem.id,
+    requirements: unique([...baseRequirements, "Produce bounded analysis, architecture decisions, risk notes and implementation inputs. Do not modify repository code."]),
+    createdAt: at,
+    updatedAt: at
+  };
+  const implementation = {
+    id: `${workItem.id}_implementation`,
+    title: `${workItem.title} - implementation`,
+    status: "blocked",
+    ownerRole: workItem.ownerRole || "agent-runtime",
+    progress: 0,
+    taskExecutionClass: "implementation",
+    splitFrom: workItem.id,
+    dependsOnWorkItemRefs: [analysis.id],
+    requirements: unique([...baseRequirements, `Use analysis output from WorkItem:${analysis.id} as input before writing code.`]),
+    createdAt: at,
+    updatedAt: at
+  };
+  taskGroup.workItems.push(analysis, implementation);
+  workItem.status = "split";
+  workItem.splitStatus = "split_by_orchestrator";
+  workItem.progress = Math.max(Number(workItem.progress || 0), 1);
+  workItem.updatedAt = at;
+  state.derivedTaskRequests ||= [];
+  state.derivedTaskRequests.unshift({
+    requestId: createId("dtr"),
+    projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id,
+    sourceWorkItemId: workItem.id,
+    status: "accepted",
+    classification: "mixed_analysis_implementation_split",
+    derivedWorkItemRefs: [analysis.id, implementation.id],
+    createdAt: at,
+    updatedAt: at
+  });
+  appendEvent(state, "derived_task_created", "WorkItem", workItem.id, "orchestrator", {derivedWorkItemRefs: [analysis.id, implementation.id], taskExecutionClass: taskExecution.taskExecutionClass});
+  return {derivedWorkItemIds: [analysis.id, implementation.id]};
+}
+
+function analysisRoleFor(roleId) {
+  if (["security", "policy-engine"].includes(roleId)) return "security";
+  if (["reviewer", "qa", "release"].includes(roleId)) return "reviewer";
+  return "orchestrator";
 }
 
 function dispatchWorkItem(state, taskGroup, workItem, contract, repositoryTarget) {
@@ -1083,6 +1249,14 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {})
 
 export function runAgentRuntimeWorker(state, request = {}) {
   ensureRuntimeCollections(state, {root: request.root, endpoint: request.endpoint});
+  if (state.runtime?.executionProfile !== "verification") {
+    return {
+      results: [],
+      blocked: true,
+      reason: "server_side_agent_execution_forbidden",
+      required: "registered Agent Runtime must claim the dispatch through Agent Gateway"
+    };
+  }
   const root = request.repositoryRoot || request.root || process.cwd();
   const maxJobs = Number(request.maxJobs || 1);
   const results = [];
@@ -1506,6 +1680,8 @@ function enqueueAgentDispatch(state, contract, repositoryTarget) {
     taskContractDigest: contract.contractDigest,
     taskContractRef: `AgentTaskContract:${contract.commandId}`,
     repositoryOutputTargetRef: repositoryTarget.targetId,
+    roleId: contract.roleId,
+    skillWorksetId: contract.roleSkill.worksetId,
     requiredCredentialEnvNames: credentialEnvNames(contract.model.alias),
     workerKind: "model_agent_runtime",
     attempts: 0,
@@ -1945,6 +2121,7 @@ function ensureRepositoryTarget(state, project, taskGroup, workItem, request) {
     branch: repository.defaultBranch || "main",
     baseRef: gitHead(request.root),
     pathAllowlist: request.pathAllowlist || ["apps/control-plane-ui/**", "spec/**", "docs/**", "scripts/**", "data/**", "package.json", "Dockerfile", "docker-compose.yml"],
+    forbiddenPathRules: request.forbiddenPathRules || ((project?.id || "prj_control_plane") === "prj_control_plane" ? ["apps/**", "scripts/**", "spec/**", "data/**", ".runtime/**", "Dockerfile", "docker-compose.yml", "package.json"] : []),
     status: "selected",
     outputPolicy: "project_git_repository_only",
     decisionRecordRef: request.decisionRecordRef || `decision:repo-target:${workItem?.id || "work"}`,

@@ -54,11 +54,35 @@
       "type": "string",
       "minLength": 1
     },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dispatchId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roleId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "principalRef": {
+      "type": "string",
+      "minLength": 1
+    },
     "agentNodeId": {
       "type": "string",
       "minLength": 1
     },
     "serverId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "endpointPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "transport": {
       "type": "string",
       "minLength": 1
     },
@@ -141,6 +165,10 @@
     "grantDigest": {
       "type": "string",
       "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
     }
   }
 }

@@ -393,6 +393,19 @@ select {
   font-size: 12px;
 }
 
+.command-output {
+  margin: 12px 0 0;
+  padding: 12px;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--line);
+  background: #111827;
+  color: #f9fafb;
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .notice {
   border-left: 4px solid var(--accent);
   padding: 10px 12px;

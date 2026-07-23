@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "AI-native multi-agent control plane specs and local management console.",
+  "bin": {
+    "aimac-agentctl": "./scripts/agentctl.mjs"
+  },
   "engines": {
     "node": ">=20.0.0",
     "npm": ">=10.0.0"
@@ -13,14 +16,17 @@
     "dev": "node scripts/run-with-env.mjs apps/control-plane-ui/server.mjs",
     "start": "node scripts/run-with-env.mjs apps/control-plane-ui/server.mjs",
     "shell:start": "./scripts/start.sh",
-    "mcp:start": "node scripts/run-with-env.mjs apps/mcp-server/server.mjs",
+    "mcp:start": "node scripts/run-with-env.mjs apps/control-plane-ui/server.mjs",
     "mcp:register": "node scripts/run-with-env.mjs scripts/register-mcp-client.mjs",
-    "mcp:doctor": "node scripts/run-with-env.mjs scripts/doctor-mcp.mjs && node scripts/run-with-env.mjs scripts/doctor-mcp-runtime-run.mjs",
+    "mcp:doctor": "node scripts/run-with-env.mjs scripts/doctor-mcp.mjs",
+    "agentctl": "node scripts/run-with-env.mjs scripts/agentctl.mjs",
+    "agent:doctor": "node scripts/run-with-env.mjs scripts/doctor-agent-remote.mjs",
     "skills:sync": "node scripts/run-with-env.mjs scripts/sync-agent-skills.mjs",
     "contract:check": "node scripts/run-with-env.mjs scripts/contract-check.mjs",
     "validate": "ruby scripts/validate-specs.rb && npm run contract:check",
-    "doctor": "npm run validate && node scripts/run-with-env.mjs scripts/doctor.mjs && npm run mcp:doctor",
+    "doctor": "npm run validate && node scripts/run-with-env.mjs scripts/doctor.mjs && npm run mcp:doctor && npm run agent:doctor && npm run docker:doctor",
     "docker:build": "docker build -t ai-multi-agent-ctrl:local .",
-    "docker:up": "./scripts/docker-up.sh"
+    "docker:up": "./scripts/docker-up.sh",
+    "docker:doctor": "node scripts/doctor-docker-compose.mjs"
   }
 }

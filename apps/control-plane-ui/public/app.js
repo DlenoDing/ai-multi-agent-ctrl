@@ -19,6 +19,7 @@ let activeView = "system";
 let authToken = localStorage.getItem("aimac.sessionToken") || "";
 let currentAccount = JSON.parse(localStorage.getItem("aimac.account") || "null");
 let lastError = "";
+let lastJoinCommands = null;
 
 function emptyState() {
   return {
@@ -37,6 +38,8 @@ function emptyState() {
     sessionPlacementDecisions: [],
     workSessions: [],
     agentDispatches: [],
+    agentRuntimeNodes: [],
+    agentJoinTokens: [],
     repositoryOutputs: [],
     closeBarriers: [],
     sharedDefinitions: [],
@@ -157,6 +160,7 @@ function renderStatusLine() {
   const openTaskGroups = state.taskGroups.filter((task) => !["closed", "aborted"].includes(task.status)).length;
   const blockers = state.taskGroups.flatMap((task) => task.blockers || []).length;
   const providers = new Set((state.modelCapabilities || []).map((profile) => profile.providerClass)).size;
+  const onlineNodes = (state.agentRuntimeNodes || []).filter((node) => node.status === "online").length;
   const projectProgress = Math.round(
     state.projects.reduce((sum, project) => sum + (project.progress?.percent || 0), 0) / Math.max(1, state.projects.length)
   );
@@ -166,6 +170,7 @@ function renderStatusLine() {
     <div class="metric"><span>Active Agents</span><strong>${activeAgents}/${state.agents.length}</strong></div>
     <div class="metric"><span>Open Task Groups</span><strong>${openTaskGroups}</strong></div>
     <div class="metric"><span>Model Providers</span><strong>${providers}</strong></div>
+    <div class="metric"><span>Runtime Nodes</span><strong>${onlineNodes}/${(state.agentRuntimeNodes || []).length}</strong></div>
     <div class="metric"><span>Avg Project Progress</span><strong>${projectProgress}%</strong></div>
   `;
 
@@ -502,6 +507,25 @@ function renderTasks() {
 }
 
 function renderRuntime() {
+  const nodeRows = (state.agentRuntimeNodes || []).map((node) => row([
+    escapeHtml(node.nodeName),
+    escapeHtml(node.nodeId),
+    escapeHtml((node.projectIds || []).join(", ")),
+    escapeHtml((node.allowedRoles || []).join(", ")),
+    pill(node.status),
+    pill(node.admission),
+    escapeHtml(node.lastHeartbeatAt || "-"),
+    node.status !== "revoked" ? `<button class="secondary-button" data-action="revoke-agent-node" data-node-id="${escapeHtml(node.nodeId)}">撤销</button>` : "-"
+  ])).join("");
+  const joinTokenRows = (state.agentJoinTokens || []).slice(0, 20).map((token) => row([
+    escapeHtml(token.joinTokenId),
+    escapeHtml(token.projectId),
+    escapeHtml((token.allowedRoles || []).join(", ")),
+    pill(token.status),
+    `${token.useCount}/${token.maxUses}`,
+    escapeHtml(token.expiresAt),
+    token.status === "issued" ? `<button class="secondary-button" data-action="revoke-join-token" data-token-id="${escapeHtml(token.joinTokenId)}">撤销</button>` : "-"
+  ])).join("");
   const sources = (state.skillSources || []).map((source) => row([
     escapeHtml(source.sourceId),
     pill(source.status),
@@ -555,10 +579,31 @@ function renderRuntime() {
     panel("自治控制", h`
       <div class="button-row">
         <button class="primary-button" data-action="orchestrator-run">运行自治循环</button>
-        <button class="secondary-button" data-action="agent-runtime-run">运行 Agent Runtime</button>
         <button class="secondary-button" data-action="decide-model">模型决策</button>
       </div>
     `),
+    panel("Agent Runtime 入网", h`
+      <form id="join-token-form" class="form-grid compact-form">
+        <div class="form-row"><label for="joinProjectId">项目</label><select id="joinProjectId" name="projectId">${state.projects.map((project) => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}</option>`).join("")}</select></div>
+        <div class="form-row"><label for="joinNodeName">节点名</label><input id="joinNodeName" name="nodeName" placeholder="可留空"></div>
+        <div class="form-row"><label for="joinRoles">角色范围</label><input id="joinRoles" name="allowedRoles" value="agent-runtime"></div>
+        <div class="form-row"><label for="joinTtl">有效秒数</label><input id="joinTtl" name="ttlSeconds" type="number" min="60" max="86400" value="1800"></div>
+        <button class="primary-button" type="submit">生成一次性加入命令</button>
+      </form>
+      ${lastJoinCommands ? `<pre class="command-output">${escapeHtml(["direct:", lastJoinCommands.installCommand, "", "verified:", lastJoinCommands.verifiedInstallCommand].join("\n"))}</pre>` : ""}
+    `, "wide"),
+    panel("Agent Runtime 节点", h`
+      <table class="data-table">
+        <thead><tr><th>节点</th><th>Node ID</th><th>项目</th><th>角色</th><th>状态</th><th>准入</th><th>心跳</th><th>操作</th></tr></thead>
+        <tbody>${nodeRows || row(["-", "-", "-", "-", "-", "-", "-", "-"])}</tbody>
+      </table>
+    `, "wide"),
+    panel("一次性 Join Token", h`
+      <table class="data-table">
+        <thead><tr><th>ID</th><th>项目</th><th>角色</th><th>状态</th><th>使用</th><th>过期</th><th>操作</th></tr></thead>
+        <tbody>${joinTokenRows || row(["-", "-", "-", "-", "-", "-", "-"])}</tbody>
+      </table>
+    `, "wide"),
     panel("Skill Registry", h`
       <table class="data-table">
         <thead><tr><th>Source</th><th>状态</th><th>Pinned Commit</th><th>角色数</th><th>操作</th></tr></thead>
@@ -602,6 +647,22 @@ function renderRuntime() {
       </table>
     `, "wide")
   ].join("");
+
+  document.querySelector("#join-token-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target).entries());
+    data.allowedRoles = String(data.allowedRoles || "*").split(",").map((item) => item.trim()).filter(Boolean);
+    data.ttlSeconds = Number(data.ttlSeconds || 1800);
+    data.maxUses = 1;
+    try {
+      const result = await api("/api/agent-join-tokens", {method: "POST", body: JSON.stringify(data)});
+      lastJoinCommands = {installCommand: result.installCommand, verifiedInstallCommand: result.verifiedInstallCommand};
+      lastError = "";
+      await load();
+    } catch (error) {
+      showError(error);
+    }
+  });
 }
 
 function renderInstructions() {
@@ -708,8 +769,13 @@ document.addEventListener("click", async (event) => {
       lastError = "";
       await load();
     }
-    if (target.dataset.action === "agent-runtime-run") {
-      await api("/api/agent-runtime/run", {method: "POST", body: JSON.stringify({taskGroupId: "tg_runtime_management", maxJobs: 1})});
+    if (target.dataset.action === "revoke-join-token") {
+      await api(`/api/agent-join-tokens/${target.dataset.tokenId}/revoke`, {method: "POST", body: "{}"});
+      lastError = "";
+      await load();
+    }
+    if (target.dataset.action === "revoke-agent-node") {
+      await api(`/api/agent-nodes/${target.dataset.nodeId}/revoke`, {method: "POST", body: "{}"});
       lastError = "";
       await load();
     }

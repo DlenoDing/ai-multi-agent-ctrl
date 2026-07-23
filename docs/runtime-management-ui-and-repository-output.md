@@ -198,14 +198,17 @@ AI-native 运行入口：
 
 | 命令 | 机器语义 |
 | --- | --- |
-| `npm run doctor` | 校验 schema、启动隔离临时控制面、创建临时 Git remote，并执行模型选择、会话放置、路径阻断、自治编排、worker commit/push、checkpoint 证据负例、readiness、MCP stdio 冒烟和 MCP `runtime_run` 正向执行链路 |
+| `npm run doctor` | 校验 schema、控制平面、远程 Streamable HTTP MCP、一次性 Agent 入网、初始化/自检、按任务 Skill 工作集、远程 dispatch、Git commit/push、服务端远端取证和 checkpoint |
 | `npm run contract:check` | 按 JSON schema 校验 runtime seed、生成的 McpGrant、MCP tool definition contract 和 state-store 写冲突检测 |
-| `npm run mcp:register` | 生成 Codex、Claude Desktop、Cursor MCP 客户端配置；带 `--apply --client=... --config=...` 时自动合并到指定配置 |
-| `npm run mcp:start` | 启动内置 stdio MCP server，由 MCP 客户端按注册配置自动拉起；注册配置会启用本地 MCP 写 grant |
-| `npm run mcp:doctor` | 启动真实 MCP server 并校验 `initialize`、`tools/list`、`tools/call`、输入校验、写入 idempotency、lease/fencing、结构化返回，以及启用后的 `runtime_run` dispatch/executor/commit/push/checkpoint 链路 |
-| `npm run skills:sync` | 同步 `DlenoDing/agency-agents-zh` pinned snapshot，解析 `AgentRoleSkill` 索引并通过共享 state-store 写入运行态 |
+| `npm run mcp:register -- --server-url=https://...` | 生成只含远程 `/mcp` URL 和 bearer 鉴权的 Codex、Claude、Cursor 配置；不生成本地进程命令 |
+| `npm run mcp:start` | 与 `npm start` 等价，启动承载管理 API、Agent Gateway、Skill Registry 和 `/mcp` 的系统服务器；Agent 端不运行此命令 |
+| `npm run mcp:doctor` | 校验远程 MCP 鉴权、`initialize`、scoped `tools/list`、`tools/call`、输入校验、idempotency、lease/fencing，以及本地 stdio 默认禁用 |
+| `npm run agent:doctor` | 验证服务端安装脚本、一次性 join token、节点自检、远程 MCP、按任务 Skill 工作集、dispatch、Git 和 checkpoint 全链路 |
+| `npm run skills:sync` | 仅在系统服务器同步 `DlenoDing/agency-agents-zh` pinned snapshot，解析后写入集中式 Skill Registry |
 | `POST /api/orchestrator/run` | 由 Orchestrator 执行当前任务组自动调度循环，只投递 `AgentDispatch`，不伪造完成 |
-| `POST /api/agent-runtime/run` | 由 Agent Runtime 消费 durable dispatch，实际写 Git、commit、push，然后提交可验证 checkpoint |
+| `POST /api/agent/v1/dispatches/next` | 由已注册远程 Agent Runtime 原子 claim durable dispatch |
+| `GET /api/agent/v1/skill-worksets/:id` | 下发总控为当前角色/任务解析的最小 Skill 工作集 |
+| `POST /api/agent/v1/dispatches/:id/checkpoint` | 控制平面从远端 Git 独立取证后接受节点 checkpoint |
 | `POST /api/model-selection/decide` | 由 Scheduler/Model Registry 生成 `ModelSelectionDecision` |
 | `POST /api/session-placement/decide` | 按长任务新会话、短任务子 agent 规则生成 `SessionPlacementDecision` |
 | `GET /api/task-groups/:taskGroupId/readiness` | 计算 `CompletionReadinessCheck` 和 `CloseBarrier` |
@@ -214,10 +217,12 @@ AI-native 运行入口：
 
 | 文件 | 用途 |
 | --- | --- |
-| `apps/control-plane-ui/server.mjs` | 无依赖 Node HTTP 服务、本地 API、幂等命令入口和权限 guard |
+| `apps/control-plane-ui/server.mjs` | Node HTTP 控制平面、管理 API、Agent Gateway、远程 MCP transport、幂等命令和权限 guard |
+| `apps/control-plane-ui/lib/agent-gateway.mjs` | 一次性入网、节点凭证、心跳、自检、dispatch claim 和 Skill 工作集下发 |
 | `apps/control-plane-ui/lib/control-plane-core.mjs` | 模型 registry、skill registry、session placement、task contract、dispatch outbox、worker、checkpoint Git 证据、readiness 和 close barrier 核心逻辑 |
 | `apps/control-plane-ui/lib/state-store.mjs` | 本地 JSON 与 Postgres JSONB 共用 state-store，确保 HTTP、MCP 和 CLI skill sync 入口读写同一权威状态，并用 `stateVersion` 检测并发写冲突 |
-| `apps/mcp-server/server.mjs` | 内置 MCP stdio server，提供系统逻辑 MCP tools、policy decision、idempotency、audit 和 untrusted result 标记 |
+| `apps/mcp-server/server.mjs` | 由控制平面 `/mcp` 托管的远程 MCP JSON-RPC 处理器，提供 principal scope、policy、idempotency、audit 和结果过滤 |
+| `apps/agent-runtime/runtime.mjs` | Agent 端唯一常驻组件；访问远程 MCP、同步最小 Skill 工作集、启动模型 Agent、提交 Git/checkpoint |
 | `apps/control-plane-ui/public/index.html` | 管理控制台入口 |
 | `apps/control-plane-ui/public/styles.css` | SaaS 管理界面样式 |
 | `apps/control-plane-ui/public/app.js` | 系统管理、用户管理、项目、任务组、AI Runtime 和指令协议交互 |
@@ -228,12 +233,13 @@ AI-native 运行入口：
 | `scripts/docker-up.sh` | 兼容 `docker compose` 与 `docker-compose` 的 Compose 启动入口 |
 | `scripts/register-mcp-client.mjs` | 生成或合并 MCP 客户端配置 |
 | `scripts/doctor-mcp.mjs` | MCP server 协议级、输入校验、idempotency、lease/fencing 自检 |
-| `scripts/doctor-mcp-runtime-run.mjs` | MCP `runtime_run` 启用后的真实 dispatch、executor、commit、push、checkpoint 自检 |
+| `scripts/doctor-agent-remote.mjs` | 远程 Agent 安装、注册、自检、Skill、模型执行、Git 和 checkpoint 自检 |
+| `scripts/install-agent.sh` | 控制平面公开发布、Agent 端直接执行的轻量安装脚本 |
 | `scripts/sync-agent-skills.mjs` | 拉取并索引默认角色 skill 源 |
 | `scripts/doctor.mjs` | 本地控制面端到端自检 |
 
 本地 JSON 运行态和 PostgreSQL 部署形态共享同一对象边界：UI 只消费经认证和资源 scope 过滤后的控制面状态，并发送受控命令；执行推进由 Orchestrator、Scheduler、Model Registry、Skill Registry、Agent Runtime、Monitor 等系统角色完成。
 
-常规执行中，Agent Runtime 必须具备选中模型 provider 的凭证，并通过 `AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND` 调用受控 executor。控制面向 executor 传入 task contract、模型选择、role skill、仓库根目录和 RepositoryOutputTarget；executor 只能返回 `changedPaths`、`artifactManifestRefs`、summary 和 evidence refs。Runtime Worker 要求执行前 worktree 干净，拒绝未声明改动，统一 `git add`、commit、push，并把远端 SHA、commit tree、artifact manifest 和 manifest.outputRefs 绑定到 checkpoint。
+常规执行中，Agent Runtime 必须具备选中模型 provider 的凭证和可用模型 adapter。控制面通过 dispatch 传入 task contract、有效指令包、模型选择、role Skill 工作集和 RepositoryOutputTarget；Agent Runtime 要求 worktree 干净，拒绝 allowlist 外改动，统一 commit、push，把 checkpoint 写入本地 outbox，再由控制平面从远端 Git 独立 fetch 和核验。MCP、Skill Registry、调度和数据库均不下沉到 Agent 主机。
 
 `AIMAC_ALLOW_LOCAL_DETERMINISTIC_WORKER=true` 仅作为 `AIMAC_EXECUTION_PROFILE=verification` 且目标仓库存在 `.aimac-verification-repository` 标记时的本地验证 fallback，用于证明 dispatch、Git、push、manifest 和 checkpoint 校验链路。生产 profile 不启用该路径；缺少凭证或 executor 时只返回 `credential_required` / `agent_runtime_executor_required`，不得伪造完成。

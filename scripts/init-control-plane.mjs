@@ -39,7 +39,7 @@ function buildState() {
   }
   state.runtime.updatedAt = now;
   state.runtime.executionProfile = executionProfile;
-  ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: `http://${process.env.AIMAC_HOST || "127.0.0.1"}:${Number(process.env.AIMAC_PORT || 4317)}`, executionProfile});
+  ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: process.env.AIMAC_PUBLIC_URL || `http://${process.env.AIMAC_HOST || "127.0.0.1"}:${Number(process.env.AIMAC_PORT || 4317)}`, executionProfile});
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
   state.auditLog.unshift({
     id: `audit_bootstrap_${Date.now()}`,
@@ -72,6 +72,7 @@ const bootstrapToken = process.env.AIMAC_BOOTSTRAP_TOKEN || existingConfig.local
 const workspaceOwnerToken = process.env.AIMAC_WORKSPACE_OWNER_TOKEN || existingConfig.localAccountTokens?.acct_workspace_owner || randomBytes(24).toString("base64url");
 const reviewerToken = process.env.AIMAC_REVIEWER_TOKEN || existingConfig.localAccountTokens?.acct_reviewer || randomBytes(24).toString("base64url");
 const agentRuntimeToken = process.env.AIMAC_AGENT_RUNTIME_TOKEN || existingConfig.localAccountTokens?.acct_agent_runtime || randomBytes(24).toString("base64url");
+const mcpServiceToken = process.env.AIMAC_MCP_SERVICE_TOKEN || existingConfig.localMcpServiceToken || randomBytes(32).toString("base64url");
 writeJson(configPath, {
   schemaVersion: "runtime-local-config/v1",
   runtimeDir,
@@ -80,16 +81,19 @@ writeJson(configPath, {
   executionProfile,
   host: process.env.AIMAC_HOST || "127.0.0.1",
   port: Number(process.env.AIMAC_PORT || 4317),
+  publicUrl: process.env.AIMAC_PUBLIC_URL || existingConfig.publicUrl || null,
   databaseUrl: process.env.DATABASE_URL || null,
   stateStore: stateStoreKind(),
   bootstrapTokenConfigured: true,
   bootstrapTokenHash: digestOf(`bootstrap:${bootstrapToken}`),
+  mcpServiceTokenHash: digestOf(`mcp-service:${mcpServiceToken}`),
   localAccountTokenHashes: {
     acct_workspace_owner: digestOf(`account:acct_workspace_owner:${workspaceOwnerToken}`),
     acct_reviewer: digestOf(`account:acct_reviewer:${reviewerToken}`),
     acct_agent_runtime: digestOf(`account:acct_agent_runtime:${agentRuntimeToken}`)
   },
   localBootstrapToken: process.env.AIMAC_BOOTSTRAP_TOKEN ? undefined : bootstrapToken,
+  localMcpServiceToken: process.env.AIMAC_MCP_SERVICE_TOKEN ? undefined : mcpServiceToken,
   localAccountTokens: {
     ...(process.env.AIMAC_WORKSPACE_OWNER_TOKEN ? {} : {acct_workspace_owner: workspaceOwnerToken}),
     ...(process.env.AIMAC_REVIEWER_TOKEN ? {} : {acct_reviewer: reviewerToken}),
@@ -99,10 +103,14 @@ writeJson(configPath, {
 });
 
 console.log("next: npm start");
-console.log("mcp: npm run mcp:register && npm run mcp:start");
+console.log("mcp: hosted by npm start at $AIMAC_PUBLIC_URL/mcp");
+console.log("agent: create a join token in the management console, then run the returned curl | sh command on the Agent host");
 if (!process.env.AIMAC_BOOTSTRAP_TOKEN) {
   console.log(`local bootstrap token: ${bootstrapToken}`);
 }
 if (!process.env.AIMAC_WORKSPACE_OWNER_TOKEN) {
   console.log(`local workspace owner token: ${workspaceOwnerToken}`);
+}
+if (!process.env.AIMAC_MCP_SERVICE_TOKEN) {
+  console.log(`central MCP service token: ${mcpServiceToken}`);
 }

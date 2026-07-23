@@ -1,9 +1,26 @@
 import { createServer } from "node:http";
-import { randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
+import {
+  authenticateAgentNode,
+  claimNextDispatch,
+  createAgentJoinToken,
+  ensureAgentGatewayCollections,
+  finishNodeDispatch,
+  getDispatchForNode,
+  getSkillWorkset,
+  heartbeatAgentNode,
+  listAgentJoinTokens,
+  publicAgentNode,
+  registerAgentNode,
+  revokeAgentNode,
+  selfCheckAgentNode
+} from "./lib/agent-gateway.mjs";
+import { handleMcpJsonRpc } from "../mcp-server/server.mjs";
 import {
   canUseGitPath,
   acceptAgentCheckpoint,
@@ -32,6 +49,8 @@ const runtimeDir = resolve(root, process.env.AIMAC_RUNTIME_DIR || ".runtime");
 const statePath = join(runtimeDir, "control-plane-state.json");
 const configPath = join(runtimeDir, "runtime-config.json");
 const seedPath = join(root, "data", "seed-state.json");
+const agentInstallerPath = join(root, "scripts", "install-agent.sh");
+const agentRuntimePath = join(root, "apps", "agent-runtime", "runtime.mjs");
 const host = process.env.AIMAC_HOST || "127.0.0.1";
 const port = Number(process.env.AIMAC_PORT || 4317);
 const executionProfile = process.env.AIMAC_EXECUTION_PROFILE || "production";
@@ -57,7 +76,7 @@ function buildInitialState() {
   const seed = JSON.parse(readFileSync(seedPath, "utf8"));
   seed.runtime.updatedAt = now();
   seed.runtime.executionProfile = executionProfile;
-  ensureRuntimeCollections(seed, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), executionProfile});
+  ensureRuntimeCollections(seed, {root: repositoryRoot, runtimeDir, endpoint: process.env.AIMAC_PUBLIC_URL || localEndpoint(), executionProfile});
   markRuntimeStorage(seed, ".runtime/control-plane-state.json");
   return seed;
 }
@@ -69,6 +88,7 @@ function ensureRuntimeConfig() {
   const workspaceOwnerToken = process.env.AIMAC_WORKSPACE_OWNER_TOKEN || existing.localAccountTokens?.acct_workspace_owner || randomBytes(24).toString("base64url");
   const reviewerToken = process.env.AIMAC_REVIEWER_TOKEN || existing.localAccountTokens?.acct_reviewer || randomBytes(24).toString("base64url");
   const agentRuntimeToken = process.env.AIMAC_AGENT_RUNTIME_TOKEN || existing.localAccountTokens?.acct_agent_runtime || randomBytes(24).toString("base64url");
+  const mcpServiceToken = process.env.AIMAC_MCP_SERVICE_TOKEN || existing.localMcpServiceToken || randomBytes(32).toString("base64url");
   const localAccountTokenHashes = {
     acct_workspace_owner: digestOf(`account:acct_workspace_owner:${workspaceOwnerToken}`),
     acct_reviewer: digestOf(`account:acct_reviewer:${reviewerToken}`),
@@ -87,12 +107,15 @@ function ensureRuntimeConfig() {
     executionProfile,
     host,
     port,
+    publicUrl: process.env.AIMAC_PUBLIC_URL || existing.publicUrl || null,
     databaseUrl: process.env.DATABASE_URL || existing.databaseUrl || null,
     stateStore: stateStoreKind(),
     bootstrapTokenHash: digestOf(`bootstrap:${localToken}`),
     bootstrapTokenConfigured: true,
+    mcpServiceTokenHash: digestOf(`mcp-service:${mcpServiceToken}`),
     localAccountTokenHashes,
     localBootstrapToken: process.env.AIMAC_BOOTSTRAP_TOKEN ? undefined : localToken,
+    localMcpServiceToken: process.env.AIMAC_MCP_SERVICE_TOKEN ? undefined : mcpServiceToken,
     localAccountTokens,
     updatedAt: existing.updatedAt || now()
   };
@@ -112,7 +135,7 @@ function readRuntimeConfig() {
 function readState() {
   ensureState();
   const state = readStoredState({root, runtimeDir, statePath, seedPath, buildInitialState});
-  ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), executionProfile});
+  ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: process.env.AIMAC_PUBLIC_URL || localEndpoint(), executionProfile});
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
   return state;
 }
@@ -136,7 +159,8 @@ function audit(state, actor, action, subject, result = "succeeded") {
 }
 
 function ensureControlState(state) {
-  ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), executionProfile});
+  ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: process.env.AIMAC_PUBLIC_URL || localEndpoint(), executionProfile});
+  ensureAgentGatewayCollections(state);
 }
 
 function beginGuardedWrite(req, state, action, subject, resourceScope = inferResourceScope(state, subject)) {
@@ -255,14 +279,48 @@ function localEndpoint() {
   return `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`;
 }
 
+function publicEndpoint(req) {
+  const configured = process.env.AIMAC_PUBLIC_URL || readRuntimeConfig().publicUrl;
+  if (configured) return String(configured).replace(/\/+$/u, "");
+  if (!req) return localEndpoint();
+  const forwardedProto = process.env.AIMAC_TRUST_PROXY === "true" ? String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() : "";
+  const protocol = forwardedProto || (req.socket.encrypted ? "https" : "http");
+  return `${protocol}://${req.headers.host}`.replace(/\/+$/u, "");
+}
+
 function authenticateRequest(req, state) {
-  const header = req.headers.authorization || "";
-  const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
+  const token = bearerToken(req);
   if (!token) return null;
   const tokenDigest = digestOf(`session:${token}`);
   const session = (state.authSessions || []).find((item) => item.tokenDigest === tokenDigest && item.status === "active" && new Date(item.expiresAt).getTime() > Date.now());
   if (!session) return null;
   return session;
+}
+
+function bearerToken(req) {
+  const header = req.headers.authorization || "";
+  return header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
+}
+
+function mcpContextFromRequest(req, state) {
+  const token = bearerToken(req);
+  if (!token) return null;
+  const node = authenticateAgentNode(state, token);
+  if (node) {
+    return {
+      principal: {kind: "agent_node", id: node.nodeId, projectIds: node.projectIds, allowedMcpTools: node.allowedMcpTools},
+      allowedMcpTools: node.allowedMcpTools
+    };
+  }
+  const accountContext = accountFromRequest(req, state);
+  if (accountContext?.account.accountType === "system_admin") {
+    return {principal: {kind: "system_admin", id: accountContext.account.accountId, allowedMcpTools: ["*"]}, allowedMcpTools: ["*"]};
+  }
+  const config = readRuntimeConfig();
+  if (config.mcpServiceTokenHash === digestOf(`mcp-service:${token}`)) {
+    return {principal: {kind: "system_service", id: "remote-mcp-client", allowedMcpTools: ["*"]}, allowedMcpTools: ["*"]};
+  }
+  return null;
 }
 
 function accountFromRequest(req, state) {
@@ -310,6 +368,8 @@ function scopedStateForAccount(state, account, session) {
   cloned.authSessions = (state.authSessions || [])
     .filter((item) => isSystem || item.sessionId === session.sessionId)
     .map((item) => ({sessionId: item.sessionId, accountId: item.accountId, status: item.status, expiresAt: item.expiresAt, createdAt: item.createdAt, updatedAt: item.updatedAt}));
+  cloned.agentRuntimeNodes = (state.agentRuntimeNodes || []).map(publicAgentNode);
+  cloned.agentJoinTokens = listAgentJoinTokens(state);
   if (isSystem) return cloned;
   const visibleProjectIds = new Set((state.projects || []).filter((project) => canReadProject(state, account, project.id)).map((project) => project.id));
   const visibleTaskGroupIds = new Set((state.taskGroups || []).filter((taskGroup) => visibleProjectIds.has(taskGroup.projectId) || canReadTaskGroup(state, account, taskGroup.id)).map((taskGroup) => taskGroup.id));
@@ -318,6 +378,8 @@ function scopedStateForAccount(state, account, session) {
   cloned.repositoryOutputs = (state.repositoryOutputs || []).filter((target) => visibleProjectIds.has(target.projectId) || visibleTaskGroupIds.has(target.taskGroupId));
   cloned.workSessions = (state.workSessions || []).filter((sessionItem) => visibleTaskGroupIds.has(sessionItem.taskGroupId));
   cloned.agentDispatches = (state.agentDispatches || []).filter((dispatch) => visibleTaskGroupIds.has(dispatch.taskGroupId));
+  cloned.agentRuntimeNodes = (state.agentRuntimeNodes || []).filter((node) => (node.projectIds || []).some((projectId) => visibleProjectIds.has(projectId))).map(publicAgentNode);
+  cloned.agentJoinTokens = listAgentJoinTokens(state).filter((token) => visibleProjectIds.has(token.projectId));
   cloned.agentTaskContracts = (state.agentTaskContracts || []).filter((contract) => visibleTaskGroupIds.has(contract.taskGroupId));
   cloned.effectiveInstructionPackets = (state.effectiveInstructionPackets || []).filter((packet) => visibleTaskGroupIds.has(packet.taskGroupId));
   cloned.roleDriftGuards = (state.roleDriftGuards || []).filter((guard) => visibleTaskGroupIds.has(guard.taskGroupId));
@@ -374,6 +436,7 @@ function permissionForAction(action) {
   if (action === "project_member_grant") return "member:invite";
   if (action === "access_grant_create" || action === "access_grant_revoke") return "project:grant";
   if (action === "agent_create" || action === "agent_activation_update") return "agent:activate";
+  if (action === "agent_join_token_create" || action === "agent_join_token_revoke" || action === "agent_node_revoke") return "agent:activate";
   if (action.startsWith("task_group_")) return "task_group:control";
   if (action === "repository_output_target_select") return "project:*";
   if (action === "instruction_envelope_create") return "task_group:control";
@@ -473,15 +536,30 @@ function writeDriftCheck(state, action, resourceScope = {}) {
 }
 
 function json(res, status, payload) {
-  res.writeHead(status, {"content-type": "application/json; charset=utf-8"});
+  res.writeHead(status, {"content-type": "application/json; charset=utf-8", "cache-control": "no-store"});
   res.end(JSON.stringify(payload));
 }
 
 function parseBody(req) {
   return new Promise((resolveBody, reject) => {
     const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
+    let size = 0;
+    let tooLarge = false;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > 2 * 1024 * 1024) {
+        tooLarge = true;
+        return;
+      }
+      if (!tooLarge) chunks.push(chunk);
+    });
     req.on("end", () => {
+      if (tooLarge) {
+        const error = new Error("request_body_too_large");
+        error.status = 413;
+        reject(error);
+        return;
+      }
       if (!chunks.length) {
         resolveBody({});
         return;
@@ -493,6 +571,82 @@ function parseBody(req) {
       }
     });
   });
+}
+
+function commitGatewayWrite(state) {
+  state.stateVersion = Number(state.stateVersion || 0) + 1;
+  writeState(state);
+}
+
+function serveAgentAsset(req, res, pathname) {
+  let content;
+  let filename;
+  if (pathname.startsWith("/install-agent.sh")) {
+    content = readFileSync(agentInstallerPath, "utf8").replaceAll("__AIMAC_SERVER_URL__", publicEndpoint(req));
+    filename = "install-agent.sh";
+  } else {
+    content = readFileSync(agentRuntimePath);
+    filename = "agent-runtime.mjs";
+  }
+  if (pathname.endsWith(".sha256")) {
+    const hash = createHash("sha256").update(content).digest("hex");
+    res.writeHead(200, {"content-type": "text/plain; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff"});
+    res.end(`${hash}  ${filename}\n`);
+    return;
+  }
+  res.writeHead(200, {
+    "content-type": filename.endsWith(".sh") ? "text/x-shellscript; charset=utf-8" : "application/javascript; charset=utf-8",
+    "cache-control": "no-store",
+    "content-disposition": `inline; filename=${filename}`,
+    "x-content-type-options": "nosniff"
+  });
+  res.end(content);
+}
+
+async function handleMcp(req, res) {
+  if (req.method !== "POST") {
+    res.writeHead(405, {allow: "POST", "content-type": "application/json; charset=utf-8"});
+    res.end(JSON.stringify({error: "mcp_streamable_http_requires_post"}));
+    return;
+  }
+  const state = readState();
+  const context = mcpContextFromRequest(req, state);
+  if (!context) {
+    res.writeHead(401, {"www-authenticate": "Bearer", "content-type": "application/json; charset=utf-8", "cache-control": "no-store"});
+    res.end(JSON.stringify({error: "mcp_auth_required"}));
+    return;
+  }
+  const message = await parseBody(req);
+  const response = Array.isArray(message)
+    ? (await Promise.all(message.map((item) => handleMcpJsonRpc(item, context)))).filter(Boolean)
+    : await handleMcpJsonRpc(message, context);
+  if (response === null || (Array.isArray(response) && !response.length)) {
+    res.writeHead(202, {"cache-control": "no-store"});
+    res.end();
+    return;
+  }
+  res.writeHead(200, {"content-type": "application/json; charset=utf-8", "cache-control": "no-store", "mcp-protocol-version": "2025-06-18"});
+  res.end(JSON.stringify(response));
+}
+
+function prepareRemoteGitVerification(target, checkpointInput) {
+  const safeTargetId = String(target.targetId).replace(/[^A-Za-z0-9._-]+/gu, "_");
+  const verificationRoot = join(runtimeDir, "git-verification", `${safeTargetId}.git`);
+  mkdirSync(dirname(verificationRoot), {recursive: true});
+  if (!existsSync(join(verificationRoot, "HEAD"))) execFileSync("git", ["init", "--bare", verificationRoot], {stdio: "pipe"});
+  const remotes = execFileSync("git", ["-C", verificationRoot, "remote"], {encoding: "utf8"}).trim().split("\n").filter(Boolean);
+  if (remotes.includes(target.remote || "origin")) execFileSync("git", ["-C", verificationRoot, "remote", "set-url", target.remote || "origin", target.repositoryUrl], {stdio: "pipe"});
+  else execFileSync("git", ["-C", verificationRoot, "remote", "add", target.remote || "origin", target.repositoryUrl], {stdio: "pipe"});
+  const remote = target.remote || "origin";
+  execFileSync("git", ["-C", verificationRoot, "fetch", "--force", "--no-tags", remote, `refs/heads/${target.branch}:refs/remotes/${remote}/${target.branch}`], {stdio: "pipe"});
+  for (const commitRef of checkpointInput.commitRefs || []) {
+    try {
+      execFileSync("git", ["-C", verificationRoot, "cat-file", "-e", `${commitRef.commit}^{commit}`], {stdio: "pipe"});
+    } catch {
+      execFileSync("git", ["-C", verificationRoot, "fetch", "--force", "--no-tags", remote, commitRef.commit], {stdio: "pipe"});
+    }
+  }
+  return verificationRoot;
 }
 
 function serveStatic(req, res) {
@@ -515,7 +669,134 @@ async function handleApi(req, res) {
   req.bodyDigest = digestOf(body);
 
   if (req.method === "GET" && ["/api/health", "/api/runtime/health"].includes(url.pathname)) {
-    json(res, 200, {status: "ok", runtime: state.runtime.status, at: now()});
+    json(res, 200, {
+      status: "ok",
+      runtime: state.runtime.status,
+      publicUrl: publicEndpoint(req),
+      mcp: {transport: "streamable-http", endpoint: `${publicEndpoint(req)}/mcp`, hostedBy: "control-plane"},
+      agentGateway: {endpoint: `${publicEndpoint(req)}/api/agent/v1`, onlineNodes: state.agentRuntimeNodes.filter((node) => node.status === "online").length},
+      at: now()
+    });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent/v1/bootstrap-manifest") {
+    json(res, 200, {
+      schemaVersion: "agent-bootstrap-manifest/v1",
+      serverUrl: publicEndpoint(req),
+      installScriptUrl: `${publicEndpoint(req)}/install-agent.sh`,
+      installScriptChecksumUrl: `${publicEndpoint(req)}/install-agent.sh.sha256`,
+      runtimeUrl: `${publicEndpoint(req)}/agent-runtime.mjs`,
+      runtimeChecksumUrl: `${publicEndpoint(req)}/agent-runtime.mjs.sha256`,
+      mcpUrl: `${publicEndpoint(req)}/mcp`,
+      localMcpServerAllowed: false,
+      skillSynchronization: "server_managed_on_demand"
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent/v1/register") {
+    const result = registerAgentNode(state, body, {joinToken: bearerToken(req), publicUrl: publicEndpoint(req)});
+    audit(state, "agent-gateway", "agent_node_register", `AgentRuntimeNode:${result.node.nodeId}`);
+    commitGatewayWrite(state);
+    json(res, 201, result);
+    return;
+  }
+
+  const node = url.pathname.startsWith("/api/agent/v1/") ? authenticateAgentNode(state, bearerToken(req)) : null;
+
+  if (req.method === "GET" && url.pathname === "/api/agent/v1/nodes/me") {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    json(res, 200, {node: publicAgentNode(node)});
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent/v1/heartbeat") {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    const result = heartbeatAgentNode(state, node, body, {presentedToken: bearerToken(req)});
+    commitGatewayWrite(state);
+    json(res, 200, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent/v1/self-check") {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    const result = selfCheckAgentNode(state, node, body);
+    commitGatewayWrite(state);
+    json(res, result.ok ? 200 : 409, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent/v1/dispatches/next") {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    const result = claimNextDispatch(state, node, {runtimeDir, claimTtlSeconds: body.claimTtlSeconds});
+    if (result.dispatch) commitGatewayWrite(state);
+    json(res, 200, result);
+    return;
+  }
+
+  const nodeDispatchMatch = url.pathname.match(/^\/api\/agent\/v1\/dispatches\/([^/]+)$/);
+  if (req.method === "GET" && nodeDispatchMatch) {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    json(res, 200, {dispatch: getDispatchForNode(state, node, nodeDispatchMatch[1], {runtimeDir})});
+    return;
+  }
+
+  const skillWorksetMatch = url.pathname.match(/^\/api\/agent\/v1\/skill-worksets\/([^/]+)$/);
+  if (req.method === "GET" && skillWorksetMatch) {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    json(res, 200, getSkillWorkset(state, node, decodeURIComponent(skillWorksetMatch[1]), {runtimeDir}));
+    return;
+  }
+
+  const nodeCheckpointMatch = url.pathname.match(/^\/api\/agent\/v1\/dispatches\/([^/]+)\/checkpoint$/);
+  if (req.method === "POST" && nodeCheckpointMatch) {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    const dispatch = state.agentDispatches.find((item) => item.dispatchId === nodeCheckpointMatch[1] && item.assignedNodeId === node.nodeId);
+    if (!dispatch) return json(res, 404, {error: "dispatch_not_found"});
+    if (dispatch.status === "completed") {
+      const existingCheckpoint = state.checkpoints.find((item) => item.runId === dispatch.runId && item.sessionId === dispatch.sessionId && item.workId === dispatch.workItemId);
+      const submittedCommit = body.commitRefs?.at(-1)?.commit;
+      const existingCommit = existingCheckpoint?.commitRefs?.at(-1)?.commit;
+      if (!existingCheckpoint || body.runId !== dispatch.runId || body.sessionId !== dispatch.sessionId || submittedCommit !== existingCommit) {
+        return json(res, 409, {error: "checkpoint_replay_binding_mismatch"});
+      }
+      json(res, 200, {accepted: true, replayed: true, checkpoint: existingCheckpoint});
+      return;
+    }
+    const target = state.repositoryOutputs.find((item) => item.targetId === dispatch.repositoryOutputTargetRef);
+    if (!target) return json(res, 409, {error: "repository_output_target_missing"});
+    const verificationRoot = prepareRemoteGitVerification(target, body);
+    const result = acceptAgentCheckpoint(state, body, {root: verificationRoot, repositoryRoot: verificationRoot});
+    if (!result.accepted) {
+      commitGatewayWrite(state);
+      json(res, result.status || 409, result);
+      return;
+    }
+    finishNodeDispatch(state, node, dispatch.dispatchId, true);
+    audit(state, `agent-node:${node.nodeId}`, "checkpoint_submit", `AgentDispatch:${dispatch.dispatchId}`);
+    commitGatewayWrite(state);
+    json(res, 201, result);
+    return;
+  }
+
+  const nodeFailureMatch = url.pathname.match(/^\/api\/agent\/v1\/dispatches\/([^/]+)\/fail$/);
+  if (req.method === "POST" && nodeFailureMatch) {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    const dispatch = state.agentDispatches.find((item) => item.dispatchId === nodeFailureMatch[1] && item.assignedNodeId === node.nodeId);
+    if (!dispatch) return json(res, 404, {error: "dispatch_not_found"});
+    dispatch.status = "failed";
+    dispatch.failureReason = String(body.reason || "agent_runtime_failure").slice(0, 2000);
+    dispatch.updatedAt = now();
+    const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
+    if (session) {
+      session.status = "failed";
+      session.updatedAt = now();
+    }
+    finishNodeDispatch(state, node, dispatch.dispatchId, false);
+    audit(state, `agent-node:${node.nodeId}`, "dispatch_failed", `AgentDispatch:${dispatch.dispatchId}`, "failed");
+    commitGatewayWrite(state);
+    json(res, 200, {ok: true, dispatchId: dispatch.dispatchId, status: dispatch.status});
     return;
   }
 
@@ -611,6 +892,66 @@ async function handleApi(req, res) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/agent-nodes") {
+    const reader = accountFromRequest(req, state);
+    if (!reader) return json(res, 401, {error: "auth_required"});
+    const visible = reader.account.accountType === "system_admin"
+      ? state.agentRuntimeNodes
+      : state.agentRuntimeNodes.filter((nodeItem) => (nodeItem.projectIds || []).some((projectId) => canReadProject(state, reader.account, projectId)));
+    json(res, 200, {agentRuntimeNodes: visible.map(publicAgentNode)});
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent-join-tokens") {
+    const reader = accountFromRequest(req, state);
+    if (!reader) return json(res, 401, {error: "auth_required"});
+    const projectId = url.searchParams.get("projectId") || undefined;
+    const tokens = listAgentJoinTokens(state, projectId).filter((token) => reader.account.accountType === "system_admin" || canReadProject(state, reader.account, token.projectId));
+    json(res, 200, {agentJoinTokens: tokens});
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent-join-tokens") {
+    const guard = beginGuardedWrite(req, state, "agent_join_token_create", `Project:${body.projectId || "unknown"}`, projectScope(body.projectId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = createAgentJoinToken(state, body, {actor: guard.actor, publicUrl: publicEndpoint(req)});
+    const persistedResult = {joinTokenRecord: result.joinTokenRecord, secretReturnedOnce: true};
+    audit(state, guard.actor, "agent_join_token_create", `AgentJoinToken:${result.joinTokenRecord.joinTokenId}`);
+    finishGuardedWrite(state, guard, 201, persistedResult);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  const revokeJoinTokenMatch = url.pathname.match(/^\/api\/agent-join-tokens\/([^/]+)\/revoke$/);
+  if (req.method === "POST" && revokeJoinTokenMatch) {
+    const record = state.agentJoinTokens.find((item) => item.joinTokenId === revokeJoinTokenMatch[1]);
+    if (!record) return json(res, 404, {error: "agent_join_token_not_found"});
+    const guard = beginGuardedWrite(req, state, "agent_join_token_revoke", `Project:${record.projectId}`, projectScope(record.projectId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    record.status = "revoked";
+    record.updatedAt = now();
+    const payload = {joinTokenId: record.joinTokenId, status: record.status};
+    finishGuardedWrite(state, guard, 200, payload);
+    writeState(state);
+    json(res, 200, payload);
+    return;
+  }
+
+  const revokeNodeMatch = url.pathname.match(/^\/api\/agent-nodes\/([^/]+)\/revoke$/);
+  if (req.method === "POST" && revokeNodeMatch) {
+    const targetNode = state.agentRuntimeNodes.find((item) => item.nodeId === revokeNodeMatch[1]);
+    if (!targetNode) return json(res, 404, {error: "agent_node_not_found"});
+    const projectId = targetNode.projectIds?.[0];
+    const guard = beginGuardedWrite(req, state, "agent_node_revoke", `Project:${projectId}`, projectScope(projectId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const payload = revokeAgentNode(state, targetNode);
+    finishGuardedWrite(state, guard, 200, payload);
+    writeState(state);
+    json(res, 200, payload);
+    return;
+  }
+
   const readinessMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/readiness$/);
   if (req.method === "GET" && readinessMatch) {
     const reader = requireRead(req, state, taskGroupScope(state, readinessMatch[1]));
@@ -693,7 +1034,7 @@ async function handleApi(req, res) {
       json(res, guard.status, guard.payload);
       return;
     }
-    const result = runAutonomousCycle(state, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), mode: body.mode || "all", taskGroupId: body.taskGroupId});
+    const result = runAutonomousCycle(state, {root: repositoryRoot, runtimeDir, endpoint: publicEndpoint(req), mode: body.mode || "all", taskGroupId: body.taskGroupId, autoSyncSkills: body.autoSyncSkills !== false});
     audit(state, "orchestrator", "orchestrator_run", `TaskGroup:${body.taskGroupId || "all"}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
@@ -701,7 +1042,11 @@ async function handleApi(req, res) {
     return;
   }
 
-  if (req.method === "POST" && url.pathname === "/api/agent-runtime/run") {
+  if (req.method === "POST" && url.pathname === "/api/verification/agent-runtime/run") {
+    if (executionProfile !== "verification") {
+      json(res, 409, {error: "server_side_agent_execution_forbidden", required: "register an Agent Runtime and let it claim the dispatch through /api/agent/v1/dispatches/next"});
+      return;
+    }
     const guard = beginGuardedWrite(req, state, "agent_runtime_worker_run", `TaskGroup:${body.taskGroupId || "all"}`, body.taskGroupId ? taskGroupScope(state, body.taskGroupId) : {resourceType: "project", resourceId: body.projectId || "prj_control_plane"});
     if (guard.status) {
       json(res, guard.status, guard.payload);
@@ -1184,6 +1529,17 @@ async function handleApi(req, res) {
 }
 
 const server = createServer((req, res) => {
+  const pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
+  if (["/install-agent.sh", "/install-agent.sh.sha256", "/agent-runtime.mjs", "/agent-runtime.mjs.sha256"].includes(pathname)) {
+    serveAgentAsset(req, res, pathname);
+    return;
+  }
+  if (pathname === "/mcp") {
+    handleMcp(req, res).catch((error) => {
+      json(res, error.status || 500, {error: error.message || "mcp_server_error"});
+    });
+    return;
+  }
   if (!req.url.startsWith("/api/")) {
     serveStatic(req, res);
     return;
@@ -1194,11 +1550,13 @@ const server = createServer((req, res) => {
       json(res, 409, {error: "state_write_conflict", retryable: true, message: error.message});
       return;
     }
-    json(res, 500, {error: "server_error", message: error.message});
+    json(res, error.status || 500, {error: "server_error", message: error.message});
   });
 });
 
 ensureState();
 server.listen(port, host, () => {
   console.log(`AI Multi-Agent Ctrl console: http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`);
+  console.log(`Centralized MCP endpoint: ${publicEndpoint()}/mcp`);
+  console.log(`Agent installer: ${publicEndpoint()}/install-agent.sh`);
 });

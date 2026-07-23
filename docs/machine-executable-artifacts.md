@@ -48,6 +48,9 @@
 | `spec/management-console-surface.schema.json` | UI Console Service、Security Agent、Spec Validator | 校验系统管理和用户管理界面、guarded action 和视觉质量门 |
 | `spec/progress-snapshot.schema.json` | Monitor Agent、Orchestrator、UI Console Service | 校验项目/任务组进度、阻塞、角色活动和仓库输出快照 |
 | `spec/agent-dispatch.schema.json` | Orchestrator、Scheduler、Agent Runtime | 校验 durable dispatch/outbox、模型凭证需求、worker 状态和 checkpoint 要求 |
+| `spec/agent-join-token.schema.json` | Agent Gateway、Policy Engine | 校验一次性加入令牌、项目/角色/MCP scope、次数和有效期 |
+| `spec/agent-runtime-node.schema.json` | Agent Gateway、Scheduler | 校验远程节点身份、能力、自检、准入和心跳状态 |
+| `spec/agent-skill-workset.schema.json` | Orchestrator、Skill Registry、Agent Runtime | 校验按任务下发的最小 Skill 工作集、overlay、摘要和强制使用指令 |
 | `spec/instruction-envelope.schema.json` | Orchestrator、Room Broker、Instruction Optimizer、Agent Runtime | 校验稳定前缀、delta、cache key、token budget 和输出契约 |
 | `spec/shared-definition-contract.schema.json` | Orchestrator、Decision Center、Reviewer Agent、Monitor Agent | 校验共享定义 canonical owner、producer、consumer、digest 和冲突策略 |
 | `spec/repository-output-target.schema.json` | Orchestrator、Scheduler、Repository Router、Agent Runtime | 校验任务产出目标仓库、分支、路径、lease、commit、push 和 manifest |
@@ -154,4 +157,4 @@ drift_detected
 
 不要让实现代码手写一套和 `spec/` 不一致的对象模型。
 
-当前本地可执行基线提供 `apps/mcp-server/server.mjs` 作为内置 stdio MCP server，`scripts/doctor-mcp.mjs` 作为协议级、输入校验、idempotency、lease/fencing contract smoke，`scripts/doctor-mcp-runtime-run.mjs` 作为启用后 `runtime_run` 的真实 dispatch/executor/commit/push/checkpoint 验收，`scripts/validate-specs.rb` 会校验 MCP 入口、工具清单、客户端注册命令、state-store 冲突保护和 runtime seed 元数据。完整 codegen 管线属于后续系统外升级项，运行中的项目执行链路不得自动修改生成策略。
+当前可执行基线由控制平面服务器在 `/mcp` 托管 Streamable HTTP MCP，Agent 端默认禁止启动 stdio MCP。`scripts/doctor-mcp.mjs` 校验远程鉴权、协议、输入、idempotency、lease/fencing 和 remote-only 客户端配置；`scripts/doctor-agent-remote.mjs` 校验一次性加入、服务端安装制品、节点自检、远程 MCP、最小 Skill 工作集、dispatch、commit/push 和 checkpoint。`scripts/validate-specs.rb` 同时校验服务端/Agent 端职责边界。完整 codegen 管线属于后续系统外升级项，运行中的项目执行链路不得自动修改生成策略。

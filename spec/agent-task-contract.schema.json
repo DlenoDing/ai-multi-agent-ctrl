@@ -111,6 +111,9 @@
         "selectedAgentSkillRef",
         "sourceId",
         "overlayRefs",
+        "worksetId",
+        "synchronizationMode",
+        "usageDirective",
         "modelSelectionDecisionRef"
       ],
       "properties": {
@@ -137,6 +140,18 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "worksetId": {
+          "type": "string",
+          "pattern": "^skillset_[a-fA-F0-9]{24}$"
+        },
+        "synchronizationMode": {
+          "type": "string",
+          "const": "server_managed_on_demand"
+        },
+        "usageDirective": {
+          "type": "string",
+          "minLength": 1
         },
         "modelSelectionDecisionRef": {
           "type": "string",
@@ -409,7 +424,25 @@
         "alias": {
           "type": "string"
         },
+        "providerClass": {
+          "type": "string"
+        },
+        "modelTier": {
+          "type": "string",
+          "enum": ["standard", "frontier_economy", "frontier_standard", "frontier_plus"]
+        },
+        "maxModelTier": {
+          "type": "string",
+          "enum": ["standard", "frontier_economy", "frontier_standard", "frontier_plus"]
+        },
+        "taskExecutionClass": {
+          "type": "string",
+          "enum": ["deep_analysis", "implementation", "verification", "short_execution", "mixed_analysis_implementation"]
+        },
         "reasoningLevel": {
+          "type": "string"
+        },
+        "maxReasoningLevel": {
           "type": "string"
         },
         "selectionMode": {

@@ -36,42 +36,64 @@ http://127.0.0.1:4317
 ```bash
 npm run doctor
 npm run mcp:register
-npm run mcp:start
 npm run mcp:doctor
+npm run agent:doctor
+npm run agentctl -- doctor --server=http://127.0.0.1:4317
 npm run skills:sync
 ./scripts/start.sh
 npm run docker:up
 ```
 
-`npm run doctor` 会启动隔离的临时控制平面并执行 AI-native 冒烟链路：模型选择、session placement、仓库路径阻断、Orchestrator 自治循环、AgentDispatch outbox、受控 executor、Git commit/push 证据、CompletionReadiness、CloseBarrier、MCP stdio 握手、`tools/list`、读写工具调用、输入校验、idempotency 拒绝路径，以及启用后的 MCP `runtime_run` 正向 dispatch/executor/commit/push/checkpoint 链路。`npm run skills:sync` 会同步 `DlenoDing/agency-agents-zh` pinned commit 并通过共享 state-store 生成角色 skill 索引；本地默认写 `.runtime/control-plane-state.json`，Postgres 模式写 `aimac_control_plane_state.state`。
+`npm run doctor` 会执行控制平面、远程 Streamable HTTP MCP 和公网 Agent Runtime 三条真实链路。Agent 验收覆盖一次性 join token、服务端脚本下载与 SHA256 校验、自动注册、初始化、自检、远程 MCP 鉴权、按任务同步最小 Skill 工作集、模型 executor、Git commit/push、服务端远端 Git 复验和 checkpoint。`npm run skills:sync` 只在系统服务器同步 `DlenoDing/agency-agents-zh` pinned commit，并通过共享 state-store 建立 Skill Registry；Agent 主机不运行此命令，也不保存完整 Skill 仓库。
 
 MCP 客户端注册：
 
 ```bash
-npm run mcp:register
+AIMAC_MCP_BEARER_TOKEN=<service-or-node-token> npm run mcp:register -- \
+  --server-url=https://control.example.com
 ```
 
 默认会在 `.runtime/mcp-client-configs/` 生成 `mcp-server.json`、`codex_config.toml`、`claude_desktop_config.json` 和 `cursor_mcp.json`。输出目录可通过 `--output-dir=...` 或 `AIMAC_MCP_CONFIG_DIR` 覆盖。需要直接合并到指定客户端配置时使用：
 
 ```bash
-node scripts/register-mcp-client.mjs --client=codex --apply --config=/path/to/config.toml
-node scripts/register-mcp-client.mjs --client=claude --apply --config=/path/to/claude_desktop_config.json
-node scripts/register-mcp-client.mjs --client=cursor --apply --config=/path/to/mcp.json
+node scripts/register-mcp-client.mjs --server-url=https://control.example.com --client=codex --apply --config=/path/to/config.toml
+node scripts/register-mcp-client.mjs --server-url=https://control.example.com --client=claude --apply --config=/path/to/claude_mcp.json
+node scripts/register-mcp-client.mjs --server-url=https://control.example.com --client=cursor --apply --config=/path/to/mcp.json
 ```
 
-MCP server 是 stdio 进程，由客户端按配置自动拉起：
+MCP 是控制平面服务器的一部分，由 `npm start` 或 Docker 同端启动，固定入口为：
+
+```text
+https://control.example.com/mcp
+```
+
+`npm run mcp:register` 只生成指向公网 `/mcp` 的远程客户端配置，不包含 `command`、本地 server 路径或本地 MCP 依赖。MCP 请求必须携带节点 token、系统管理员 session 或服务 token；Agent 节点只能看到并调用 join token 所授予的工具。生产 MCP 不提供服务端代执行 Agent 任务的工具，任务必须由已注册节点从 Agent Gateway claim。
+
+Agent 加入由系统管理员或有项目 `agent:activate` 权限的账号生成一次性命令：
 
 ```bash
-npm run mcp:start
+npm run agentctl -- join-token create \
+  --server=https://control.example.com \
+  --project=prj_example \
+  --roles=orchestrator,backend,reviewer \
+  --token="$AIMAC_ADMIN_TOKEN"
 ```
 
-本地 `npm` 和 `shell` 入口会在执行目标脚本前加载项目根目录 `.env`，已有进程环境变量优先级更高。`.env.example` 给出完整变量名。`npm run mcp:register` 生成的客户端配置会设置 `AIMAC_MCP_TOKEN` 和 `AIMAC_MCP_LOCAL_WRITE_ENABLE=true`，从而启用本地 stdio 写 grant；没有该配置时 MCP 写工具默认拒绝。`agent-control-mcp.runtime_run` 还需要显式设置 `AIMAC_MCP_ENABLE_RUNTIME_RUN=true`，否则不能从 MCP 入口触发 Agent Runtime worker。
+命令会返回只能使用一次且有有效期的安装命令，形式如下：
 
-Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token 写入镜像层。`npm run docker:up` 由 Compose 在容器运行时注入 `AIMAC_BOOTSTRAP_TOKEN`、`AIMAC_WORKSPACE_OWNER_TOKEN`、`AIMAC_REVIEWER_TOKEN`、`AIMAC_AGENT_RUNTIME_TOKEN` 和 `DATABASE_URL`，再通过 `shell:start` 初始化并启动控制面。Compose 默认 token 和数据库口令只适合本地验证，共享环境必须用外部 secret 覆盖。
+```bash
+curl -fsSL https://control.example.com/install-agent.sh | sh -s -- \
+  --server https://control.example.com \
+  --join-token '<one-time-token>'
+```
+
+安装脚本只下载轻量 `agent-runtime.mjs`，校验服务端发布的 SHA256，注册节点、探测本机模型/工具、在任务执行时注入远程 MCP endpoint、执行自检并启动轮询进程。它不会安装或启动 MCP server、PostgreSQL、控制平面、Skill Registry，也不会同步完整 Skill 仓库。默认不会把长期 node token 写入 Codex/Claude/Cursor 等全局客户端配置；只有显式传 `--configure-clients` 时才生成远程 MCP 客户端配置。总控为每个 dispatch 解析有效 role skill 和项目/任务组 overlay，Agent 只下载摘要绑定的最小工作集；下级角色必须取得总控单独签发的工作集，不能隐式继承或自行选择。
+
+Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token 写入镜像层。`npm run docker:up` 由 Compose 在容器运行时注入 `AIMAC_PUBLIC_URL`、`AIMAC_BOOTSTRAP_TOKEN`、`AIMAC_MCP_SERVICE_TOKEN`、用户 token 和 `DATABASE_URL`，再通过 `shell:start` 初始化并启动控制面、Agent Gateway、Skill Registry 与远程 MCP。Compose 默认 token 和数据库口令只适合本地验证，共享环境必须使用 HTTPS 反向代理和外部 secret 覆盖。
 
 `npm run init` 会生成本地系统 bootstrap token 和用户管理账号 token。系统管理员账号使用 bootstrap token；普通用户、项目管理员和服务账号使用各自账号 token，不能用 bootstrap token 直接登录任意账号。
 
-常规 Agent Runtime 必须具备选中模型 provider 的凭证，并通过 `AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND` 指向受控 executor；executor 接收 task contract JSON，输出 Git 路径化产物和 artifact manifest。`AIMAC_EXECUTION_PROFILE=verification` 加 `.aimac-verification-repository` 仓库标记时，才可配合 `AIMAC_ALLOW_LOCAL_DETERMINISTIC_WORKER=true` 走本地确定性验证 fallback；生产 profile 缺少凭证或 executor 时只能阻断，不能伪造完成。
+常规 Agent Runtime 必须具备选中模型 provider 的凭证。Runtime 会优先调用已探测到的 Codex、Claude 或 Gemini CLI，也可在安装时用 `--executor-command` 绑定其他模型/Agent 适配器；executor 接收 task contract、有效指令包、远程 MCP 和 Skill 工作集路径。`AIMAC_EXECUTION_PROFILE=verification` 才能使用服务器内的确定性验证 worker；生产 profile 永远由远程注册节点执行，缺少模型适配器或凭证时只能上报失败，不能在服务器伪造完成。
 
 ## 机器可执行规格
 
@@ -117,6 +139,9 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | [spec/management-console-surface.schema.json](spec/management-console-surface.schema.json) | 系统管理和用户管理界面 schema |
 | [spec/progress-snapshot.schema.json](spec/progress-snapshot.schema.json) | 项目/任务组进度、阻塞、角色活动和仓库输出快照 schema |
 | [spec/agent-dispatch.schema.json](spec/agent-dispatch.schema.json) | Orchestrator 投递给 Agent Runtime 的 durable dispatch/outbox schema |
+| [spec/agent-join-token.schema.json](spec/agent-join-token.schema.json) | 一次性 Agent 入网令牌、项目/角色/MCP scope 和有效期 schema |
+| [spec/agent-runtime-node.schema.json](spec/agent-runtime-node.schema.json) | 远程 Agent 节点身份、能力、自检、准入和心跳 schema |
+| [spec/agent-skill-workset.schema.json](spec/agent-skill-workset.schema.json) | 总控按任务下发的最小 Skill 工作集、摘要、overlay 和强制使用指令 schema |
 | [spec/instruction-envelope.schema.json](spec/instruction-envelope.schema.json) | 指令稳定前缀、delta、cache key、token budget 和输出契约 schema |
 | [spec/shared-definition-contract.schema.json](spec/shared-definition-contract.schema.json) | 多子系统共享定义 canonical owner、producer、consumer 和 digest schema |
 | [spec/repository-output-target.schema.json](spec/repository-output-target.schema.json) | 任务产出写入项目 Git 仓库的目标仓库、分支、路径和提交证据 schema |
@@ -134,7 +159,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 8. 所有状态以 PostgreSQL、event log、checkpoint、Git-backed artifact manifest digest、schema 和 state machine 为准，不以聊天文本为准。
 9. 所有写入型动作必须经过 policy、lease、idempotency、command effect 和 audit。
 10. 角色 skill 默认从 `DlenoDing/agency-agents-zh` pinned commit 自动加载，项目/任务组特殊要求通过 overlay 对象覆盖。
-11. 模型选择由 Model Registry 和 Scheduler 基于角色 skill、任务能力、成本、速度、额度、可靠性和风险自动决定。
+11. 模型选择由 Model Registry 和 Scheduler 基于角色 skill、任务能力、成本、速度、额度、可靠性和风险自动决定；调度使用供应商中立档位 `standard/frontier_economy/frontier_standard/frontier_plus` 与 `low/standard/medium/high/max/ultra` 推理层级，默认不超过 `frontier_standard + high`，只有特殊风险信号才允许越级。
 12. Scheduler 对持续多轮、长耗时、有状态、拥有广义写入面的角色任务优先创建新 WorkSession；短小、单轮、无持久上下文的任务可使用子 agent，但仍必须绑定 bounded repository lease、commit、push 和 checkpoint 证据。
 13. 运行期重复问题只生成 RuntimeIssuePattern、SystemUpgradeCandidate 和系统外升级证据包；系统运行时不得自动自修改规则、策略、角色、grant 或控制面代码，升级改造由人独立在系统外处理。
 14. 总控、调度和监测等元控制角色必须绑定 RoleDriftGuard；一旦目标、职责、边界或证据链跑偏，立即暂停副作用并由父级总控重发有效任务契约。
@@ -152,7 +177,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | 系统库 | 本地 npm/shell 默认 `runtime_json`；Docker Compose 设置 `AIMAC_STATE_STORE=postgresql` 并使用 Postgres JSONB 存储权威状态、event log、lease、audit、rules 和 Git-backed artifact manifest metadata |
 | Agent Runtime | 可远程加入、探测、执行、隔离、恢复、上报证据的机器执行器 |
 | 实时通道 | WebSocket 负责实时性，PostgreSQL outbox/inbox/DLQ 负责可靠性 |
-| MCP | 系统级、项目级、Agent-local MCP 全部经 MCP Proxy 授权和审计 |
+| MCP | 全部 MCP server 集中运行在控制平面服务器；Agent 仅以节点凭证访问远程 MCP，不允许运行 Agent-local MCP server |
 | Evidence/Artifact | 证据 locator、digest、sensitivity、retention、redaction、verify、GC、backup；项目交付文件以 Git 仓库 commit/push 为准 |
 | Policy/Secret | policy table/engine、secret lease、credential helper、grant revoke、audit |
 | UI | 只作为后台管理、观察和入口总控会话界面，不作为执行依赖 |
@@ -165,10 +190,10 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 2. `agency-agents-zh` pinned snapshot 的 skill source 同步、frontmatter 解析和 digest 索引。
 3. 长任务新 WorkSession、短任务 subagent 的 session placement 决策。
 4. AgentTaskContract、AgentDispatch durable outbox、EffectiveInstructionPacket、RoleDriftGuard、Checkpoint、ProgressSnapshot、CompletionReadiness 和 CloseBarrier 的本地生成。
-5. Agent Runtime worker 消费 dispatch 后实际写入项目 Git 仓库、commit、push，并用 Git commit、remote ref、artifact manifest、changed path 和 lease 证据校验 checkpoint。
+5. 远程 Agent Runtime 从 Agent Gateway 原子 claim dispatch，按摘要同步 Skill 工作集，实际写入项目 Git 仓库、commit、push；控制平面从远端仓库独立 fetch 后再校验 commit、remote ref、artifact manifest、changed path 和 lease 证据。
 6. 运行期重复问题的 collect-only 聚合和 SystemUpgradeCandidate 生成。
 7. 项目、任务组、Agent、账号、授权、审计和仓库输出目标的受控 API。
-8. `apps/mcp-server/server.mjs` 提供内置 MCP stdio server，暴露 `orchestration-mcp`、`agent-control-mcp`、`scheduler-mcp`、`model-mcp`、`skill-mcp`、`evidence-mcp`、`permission-mcp`、`review-mcp`、`governance-mcp`、`identity-mcp`、`ui-console-mcp`、`definition-mcp`、`instruction-mcp`、`repository-mcp` 等逻辑工具面，并对写入型调用执行输入校验、idempotency、token-bound grant、lease/fencing、policy decision、audit 和 untrusted result 标记。
+8. `apps/mcp-server/server.mjs` 是由控制平面 `/mcp` 托管的 Streamable HTTP MCP 处理器，暴露各逻辑工具面，并对写入型调用执行输入校验、idempotency、远程 principal scope、lease/fencing、policy decision、audit 和 untrusted result 标记；直接启动本地 stdio server 默认失败。
 9. `apps/control-plane-ui/lib/state-store.mjs` 提供同步 state store；本地默认 `.runtime/control-plane-state.json`，Docker Compose 通过 `psql` 使用 `aimac_control_plane_state.state jsonb` 作为 HTTP、MCP 和 CLI skill sync 的共同权威状态；写入按 `stateVersion` 做冲突检测，避免多 agent 并发静默覆盖。
 
 ## 执行方式

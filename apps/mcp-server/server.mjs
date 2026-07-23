@@ -22,7 +22,6 @@ import {
   pathMatchesAllowlist,
   registerRoleSkillOverlay,
   runAutonomousCycle,
-  runAgentRuntimeWorker,
   selectModel,
   syncSkillSource
 } from "../control-plane-ui/lib/control-plane-core.mjs";
@@ -33,12 +32,11 @@ const statePath = resolve(runtimeDir, "control-plane-state.json");
 const seedPath = resolve(root, "data", "seed-state.json");
 const repositoryRoot = resolve(process.env.AIMAC_REPOSITORY_ROOT || root);
 const mcpAuditPath = resolve(runtimeDir, "mcp-audit.jsonl");
-const mcpTokenPath = resolve(runtimeDir, "mcp-client-token");
 
 export const mcpToolGroups = {
   "orchestration-mcp": ["project_create", "task_group_create", "work_item_create", "work_assign", "orchestrator_run", "state_get"],
   "room-mcp": ["room_join", "room_send", "room_wait", "room_ack"],
-  "agent-control-mcp": ["node_register", "node_probe", "session_start", "session_pause", "session_cancel", "session_recover", "runtime_run"],
+  "agent-control-mcp": ["node_register", "node_probe", "session_start", "session_pause", "session_cancel", "session_recover", "dispatch_status"],
   "scheduler-mcp": ["model_select", "session_place", "work_assign", "capacity_snapshot", "execution_topology_plan", "derived_task_classify"],
   "resource-mcp": ["lease_claim", "lease_release", "resource_snapshot"],
   "model-mcp": ["model_capabilities", "model_policy_get", "model_select"],
@@ -86,7 +84,7 @@ const toolDescriptions = {
   "agent-control-mcp.session_pause": "Pause an active work session and its queued dispatch.",
   "agent-control-mcp.session_cancel": "Cancel an active work session and its queued dispatch.",
   "agent-control-mcp.session_recover": "Recover a paused or failed session into active state.",
-  "agent-control-mcp.runtime_run": "Run the Agent Runtime worker against queued dispatches with checkpoint evidence rules.",
+  "agent-control-mcp.dispatch_status": "Read a remotely claimed AgentDispatch status without executing work on the control-plane server.",
   "scheduler-mcp.model_select": "Select the best available model for a role and task requirement.",
   "scheduler-mcp.session_place": "Choose new-session or subagent placement from machine signals.",
   "scheduler-mcp.work_assign": "Assign a role to a work item using the scheduler policy surface.",
@@ -189,19 +187,22 @@ function ensureMcpCollections(state) {
   state.externalUpgradeImports ||= [];
   state.runtime ||= {};
   state.runtime.commands ||= {};
-  state.runtime.commands.mcpStart ||= "npm run mcp:start";
-  state.runtime.commands.mcpRegister ||= "npm run mcp:register";
+  state.runtime.commands.mcpStart ||= "npm start";
+  state.runtime.commands.mcpRegister ||= "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL";
   state.runtime.commands.mcpDoctor ||= "npm run mcp:doctor";
-  state.runtime.mcp ||= {
-    protocol: "mcp/json-rpc-stdio",
+  state.runtime.mcp = {
+    ...(state.runtime.mcp || {}),
+    protocol: "mcp/streamable-http",
     serverId: "ai-multi-agent-ctrl",
     logicalServers: Object.keys(mcpToolGroups),
     toolCount: mcpToolNames.length,
-    startupCommand: "npm run mcp:start",
-    registrationCommand: "npm run mcp:register",
-    doctorCommand: "npm run mcp:doctor"
+    endpointPath: "/mcp",
+    hostedBy: "control-plane",
+    startupCommand: "npm start",
+    registrationCommand: "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL",
+    doctorCommand: "npm run mcp:doctor",
+    agentLocalServerAllowed: false
   };
-  ensureDefaultMcpGrants(state);
 }
 
 export function createMcpToolDefinitions() {
@@ -255,6 +256,7 @@ function requiredInputPropertiesFor(name) {
     "agent-control-mcp.session_pause": ["sessionId"],
     "agent-control-mcp.session_cancel": ["sessionId"],
     "agent-control-mcp.session_recover": ["sessionId"],
+    "agent-control-mcp.dispatch_status": ["dispatchId"],
     "scheduler-mcp.model_select": ["taskGroupId", "workItemId", "roleId"],
     "scheduler-mcp.session_place": ["taskGroupId", "workItemId", "roleId"],
     "scheduler-mcp.work_assign": ["taskGroupId", "workItemId", "roleId"],
@@ -313,6 +315,7 @@ function commonInputProperties() {
     definitionType: string,
     delta: object,
     description: string,
+    dispatchId: string,
     digestRefs: array,
     displayName: string,
     dryRun: boolean,
@@ -422,6 +425,7 @@ function isReadOnlyTool(name) {
     ".state_get",
     ".room_wait",
     ".node_probe",
+    ".dispatch_status",
     ".capacity_snapshot",
     ".resource_snapshot",
     ".model_capabilities",
@@ -446,7 +450,7 @@ function isWriteTool(name) {
   return !isReadOnlyTool(name);
 }
 
-async function callTool(name, args = {}) {
+export async function callTool(name, args = {}, context = {}) {
   if (!mcpToolNames.includes(name)) {
     const error = new Error(`Unknown tool: ${name}`);
     error.code = -32602;
@@ -469,7 +473,7 @@ async function callTool(name, args = {}) {
     } else if (existingRecord) {
       result = {ok: true, replayed: true, idempotencyRecord: existingRecord, payload: existingRecord.payload};
     } else {
-      const grantCheck = validateMcpGrant(state, name, args, argumentDigest);
+      const grantCheck = validateMcpGrant(state, name, args, argumentDigest, context);
       if (!grantCheck.allowed) {
         result = {ok: false, error: grantCheck.error, grantRef: grantCheck.grantRef, required: grantCheck.required};
       } else {
@@ -479,13 +483,13 @@ async function callTool(name, args = {}) {
           resource: {resourceType: "mcp_tool", resourceId: name},
           subjectRef: {subjectType: "service", subjectId: "mcp-proxy"},
           allowed: true,
-          reasonCode: "local_mcp_proxy_grant",
+          reasonCode: "remote_mcp_principal_grant",
           evidenceRefs: [grantCheck.grantRef, `argument:${argumentDigest}`]
         }).policyDecision
       : null;
         result = isWriteTool(name) && args.dryRun
           ? {ok: true, dryRun: true, wouldCall: name, argumentDigest}
-          : await dispatchTool(state, name, sanitizeArgs(args));
+          : await dispatchTool(state, name, sanitizeArgs(args), {principal: context.principal, grantCheck});
         if (policyDecision && result && typeof result === "object") result.policyDecisionRef = policyDecision.decisionId;
         if (grantCheck.grantRef && result && typeof result === "object") result.mcpGrantRef = grantCheck.grantRef;
         if (isWriteTool(name) && idempotencyKey && result.ok !== false && !args.dryRun) {
@@ -604,31 +608,18 @@ function hasAnyInputArg(args, keys) {
   return keys.some((key) => hasInputArg(args, key));
 }
 
-function ensureDefaultMcpGrants(state) {
-  const at = new Date().toISOString();
-  const existing = new Set(state.mcpGrants.map((grant) => grant.grantId));
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  for (const toolName of mcpToolNames) {
-    const readOnly = isReadOnlyTool(toolName);
-    if (!readOnly && !localMcpWriteEnabled(state)) continue;
-    const grantId = defaultMcpGrantId(toolName);
-    if (existing.has(grantId)) continue;
-    state.mcpGrants.push(createMcpGrant(toolName, {issuedAt: at, expiresAt, tokenDigest: state.runtime?.mcp?.localTokenDigest}));
-  }
-}
-
 export function createMcpGrant(toolName, options = {}) {
   const readOnly = isReadOnlyTool(toolName);
   const [serverId] = toolName.split(".");
   const issuedAt = options.issuedAt || new Date().toISOString();
   const expiresAt = options.expiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   const seed = {
-    grantId: options.grantId || defaultMcpGrantId(toolName),
+    grantId: options.grantId || `mcp_grant_${createId("remote")}`,
     projectId: options.projectId || "prj_control_plane",
     taskGroupId: options.taskGroupId || "tg_runtime_management",
     workId: options.workId || "*",
-    sessionId: options.sessionId || "local-mcp-stdio",
-    agentNodeId: options.agentNodeId || (readOnly ? "local-mcp-read-client" : "local-mcp-write-client"),
+    sessionId: options.sessionId || "remote-mcp-session",
+    agentNodeId: options.agentNodeId || "remote-mcp-principal",
     serverId,
     toolName,
     resource: `mcp://${toolName}`,
@@ -640,7 +631,7 @@ export function createMcpGrant(toolName, options = {}) {
     ...seed,
     schemaDigest: digestOf(`mcp-tool:${toolName}:v1`),
     policyDecisionRef: `policy:mcp:${toolName}`,
-    approvalRequestRef: readOnly ? "approval:not-required:read-only" : "approval:local-stdio-bootstrap",
+    approvalRequestRef: readOnly ? "approval:not-required:read-only" : "approval:remote-principal-policy",
     riskLevel: readOnly ? "L0" : riskLevelForTool(toolName),
     paramPolicyRef: `policy://mcp/default/${toolName}`,
     paramPolicyDigest: digestOf({toolName, requiresIdempotency: !readOnly, dryRunSupported: true, tokenDigest: options.tokenDigest || null}),
@@ -656,86 +647,72 @@ export function createMcpGrant(toolName, options = {}) {
   };
 }
 
-function localMcpWriteEnabled(state) {
-  if (process.env.AIMAC_MCP_LOCAL_WRITE_ENABLE !== "true") return false;
-  const tokenDigest = currentMcpTokenDigest();
-  if (!tokenDigest) return false;
-  state.runtime ||= {};
-  state.runtime.mcp ||= {};
-  state.runtime.mcp.localTokenDigest ||= tokenDigest;
-  return state.runtime.mcp.localTokenDigest === tokenDigest;
-}
-
-function currentMcpTokenDigest() {
-  const token = process.env.AIMAC_MCP_TOKEN;
-  if (!token || !existsSync(mcpTokenPath)) return null;
-  const storedToken = readFileSync(mcpTokenPath, "utf8").trim();
-  if (!storedToken || storedToken !== token) return null;
-  return digestOf(`mcp-token:${storedToken}`);
-}
-
-function defaultMcpGrantId(toolName) {
-  return `mcp_grant_local_${toolName.replace(/[^A-Za-z0-9_]+/gu, "_")}`;
-}
-
-function validateMcpGrant(state, toolName, args, argumentDigest) {
+function validateMcpGrant(state, toolName, args, argumentDigest, context = {}) {
   const readOnly = isReadOnlyTool(toolName);
-  if (!readOnly && !localMcpWriteEnabled(state)) {
-    return {allowed: false, error: "mcp_write_token_binding_required", required: "run through npm run mcp:register generated client config so AIMAC_MCP_TOKEN matches .runtime/mcp-client-token"};
+  const principal = context.principal;
+  if (!principal) return {allowed: false, error: "mcp_remote_auth_required", required: "Bearer node, account-session, or MCP service token"};
+  const allowedTools = context.allowedMcpTools || principal.allowedMcpTools || [];
+  if (!allowedTools.includes("*") && !allowedTools.includes(toolName)) {
+    return {allowed: false, error: "mcp_tool_not_granted_to_principal", required: toolName};
   }
-  if (!readOnly && !args.mcpGrantId && !state.mcpGrants.some((grant) => grant.grantId === defaultMcpGrantId(toolName))) {
-    return {allowed: false, error: "mcp_write_grant_required", required: "active local McpGrant"};
+  if (principal.kind === "agent_node") {
+    const activeGrants = activeAgentMcpGrants(state, principal, toolName);
+    if (!activeGrants.length) return {allowed: false, error: "mcp_dispatch_bound_grant_required", required: toolName};
+    const scopedGrants = activeGrants.filter((grant) => grantMatchesArgs(state, grant, args));
+    if (!scopedGrants.length) return {allowed: false, error: "mcp_grant_scope_mismatch", required: toolName};
+    const grantRef = scopedGrants.map((grant) => `McpGrant:${grant.grantId}`).join(",");
+    return {allowed: true, grantRef, grants: scopedGrants, argumentDigest, readOnly};
   }
-  if (toolName === "agent-control-mcp.runtime_run" && process.env.AIMAC_MCP_ENABLE_RUNTIME_RUN !== "true") {
-    return {allowed: false, error: "agent_runtime_worker_mcp_disabled", required: "AIMAC_MCP_ENABLE_RUNTIME_RUN=true plus service scoped grant"};
-  }
-  const [serverId] = toolName.split(".");
-  const grantId = args.mcpGrantId || defaultMcpGrantId(toolName);
-  const grant = state.mcpGrants.find((item) => item.grantId === grantId);
-  if (!grant) return {allowed: false, error: "mcp_grant_not_found", grantRef: grantId};
-  if (grant.grantStatus !== "issued") return {allowed: false, error: "mcp_grant_not_active", grantRef: grant.grantId};
-  if (new Date(grant.expiresAt).getTime() <= Date.now()) {
-    grant.grantStatus = "expired";
-    return {allowed: false, error: "mcp_grant_expired", grantRef: grant.grantId};
-  }
-  if (grant.serverId !== serverId) return {allowed: false, error: "mcp_grant_server_mismatch", grantRef: grant.grantId};
-  if (grant.toolName !== toolName && grant.toolName !== "*") return {allowed: false, error: "mcp_grant_tool_mismatch", grantRef: grant.grantId};
-  if (grant.projectId !== "*" && args.projectId && grant.projectId !== args.projectId) return {allowed: false, error: "mcp_grant_project_scope_mismatch", grantRef: grant.grantId};
-  if (grant.taskGroupId !== "*" && args.taskGroupId && grant.taskGroupId !== args.taskGroupId) return {allowed: false, error: "mcp_grant_task_group_scope_mismatch", grantRef: grant.grantId};
-  if (grant.workId !== "*" && (args.workItemId || args.workId) && grant.workId !== (args.workItemId || args.workId)) return {allowed: false, error: "mcp_grant_work_scope_mismatch", grantRef: grant.grantId};
-  if (grant.idempotencyKey !== "*" && !readOnly && args.idempotencyKey && grant.idempotencyKey !== args.idempotencyKey) return {allowed: false, error: "mcp_grant_idempotency_mismatch", grantRef: grant.grantId};
+  const grantRef = `remote-principal:${principal.kind}:${principal.id}`;
   if (leaseRequiredForTool(toolName) && !["resource-mcp.lease_claim", "repository-mcp.repository_target_lease_bind"].includes(toolName)) {
     const leaseId = args.leaseId || args.leaseRef || args.repositoryLeaseRef;
     const lease = state.leases.find((item) => item.leaseId === leaseId && item.status === "active");
-    if (!lease) return {allowed: false, error: "active_mcp_lease_required", grantRef: grant.grantId};
-    if (!args.fencingToken) return {allowed: false, error: "mcp_lease_fencing_token_required", grantRef: grant.grantId};
-    if (String(lease.fencingToken) !== String(args.fencingToken)) return {allowed: false, error: "mcp_lease_fencing_token_mismatch", grantRef: grant.grantId};
-    if (args.holderRef && lease.holderRef !== args.holderRef) return {allowed: false, error: "mcp_lease_holder_mismatch", grantRef: grant.grantId};
-    if (args.sessionId && lease.holderRef !== `session:${args.sessionId}`) return {allowed: false, error: "mcp_lease_session_mismatch", grantRef: grant.grantId};
+    if (!lease) return {allowed: false, error: "active_mcp_lease_required", grantRef};
+    if (!args.fencingToken) return {allowed: false, error: "mcp_lease_fencing_token_required", grantRef};
+    if (String(lease.fencingToken) !== String(args.fencingToken)) return {allowed: false, error: "mcp_lease_fencing_token_mismatch", grantRef};
+    if (args.holderRef && lease.holderRef !== args.holderRef) return {allowed: false, error: "mcp_lease_holder_mismatch", grantRef};
+    if (args.sessionId && lease.holderRef !== `session:${args.sessionId}`) return {allowed: false, error: "mcp_lease_session_mismatch", grantRef};
   }
-  if (toolName === "agent-control-mcp.runtime_run") {
-    const serviceAccount = state.accounts.find((account) => account.accountId === "acct_agent_runtime" && account.accountType === "service_account" && (account.roles || []).includes("service_agent_runtime"));
-    const serviceGrant = state.accessGrants.find((accessGrant) =>
-      accessGrant.status === "active" &&
-      accessGrant.subjectRef?.subjectId === "acct_agent_runtime" &&
-      (accessGrant.permissions || []).includes("task_group:orchestrate") &&
-      (!args.taskGroupId || accessGrant.resource?.resourceId === args.taskGroupId)
-    );
-    if (!serviceAccount || !serviceGrant) return {allowed: false, error: "service_agent_runtime_grant_required", grantRef: grant.grantId};
+  return {allowed: true, grantRef, argumentDigest, readOnly};
+}
+
+function activeAgentMcpGrants(state, principal, toolName) {
+  const projectIds = new Set(principal.projectIds || []);
+  return (state.mcpGrants || []).filter((grant) =>
+    grant.grantStatus === "issued" &&
+    grant.agentNodeId === principal.id &&
+    grant.toolName === toolName &&
+    (!grant.expiresAt || new Date(grant.expiresAt).getTime() > Date.now()) &&
+    (!grant.projectId || projectIds.has(grant.projectId))
+  );
+}
+
+function grantMatchesArgs(state, grant, args = {}) {
+  if (args.dispatchId && args.dispatchId !== grant.dispatchId) return false;
+  if (args.projectId && args.projectId !== grant.projectId) return false;
+  if (args.taskGroupId && args.taskGroupId !== grant.taskGroupId) return false;
+  if ((args.workId || args.workItemId) && (args.workId || args.workItemId) !== grant.workId) return false;
+  if (args.sessionId && args.sessionId !== grant.sessionId) return false;
+  if (args.repositoryOutputTargetRef || args.targetId) {
+    const target = state.repositoryOutputs.find((item) => item.targetId === (args.repositoryOutputTargetRef || args.targetId));
+    if (!target || target.projectId !== grant.projectId || target.taskGroupId !== grant.taskGroupId || target.workItemId !== grant.workId) return false;
   }
-  return {allowed: true, grantRef: grant.grantId, argumentDigest};
+  if (args.roomId) {
+    const allowedRoomIds = new Set([`room_${grant.taskGroupId}`, grant.sessionId].filter(Boolean));
+    if (!allowedRoomIds.has(args.roomId)) return false;
+  }
+  return true;
 }
 
 function leaseRequiredForTool(toolName) {
   return [
-    "agent-control-mcp.runtime_run",
     "evidence-mcp.checkpoint_submit",
     "resource-mcp.lease_release"
   ].includes(toolName);
 }
 
 function riskLevelForTool(toolName) {
-  if (toolName === "agent-control-mcp.runtime_run" || toolName === "evidence-mcp.checkpoint_submit") return "L3";
+  if (toolName === "evidence-mcp.checkpoint_submit") return "L3";
   if (toolName.includes("grant") || toolName.includes("account") || toolName.includes("approval") || toolName.includes("lease")) return "L2";
   return "L1";
 }
@@ -745,7 +722,7 @@ function appendMcpAudit(event) {
   appendFileSync(mcpAuditPath, `${JSON.stringify(event)}\n`);
 }
 
-async function dispatchTool(state, name, args) {
+async function dispatchTool(state, name, args, context = {}) {
   switch (name) {
     case "orchestration-mcp.project_create":
       return createProject(state, args);
@@ -759,7 +736,7 @@ async function dispatchTool(state, name, args) {
     case "orchestration-mcp.orchestrator_run":
       return runAutonomousCycle(state, {...args, root: args.repositoryRoot || repositoryRoot, runtimeDir});
     case "orchestration-mcp.state_get":
-      return stateGet(state, args);
+      return stateGet(state, args, context);
     case "room-mcp.room_join":
       return roomJoin(state, args);
     case "room-mcp.room_send":
@@ -780,8 +757,8 @@ async function dispatchTool(state, name, args) {
       return sessionMutate(state, args, "cancelled");
     case "agent-control-mcp.session_recover":
       return sessionMutate(state, args, "active");
-    case "agent-control-mcp.runtime_run":
-      return runAgentRuntimeWorker(state, {...args, root: args.repositoryRoot || repositoryRoot, repositoryRoot: args.repositoryRoot || repositoryRoot});
+    case "agent-control-mcp.dispatch_status":
+      return {dispatch: scopedDispatch(state, args.dispatchId, context) || null};
     case "scheduler-mcp.model_select":
     case "model-mcp.model_select":
       return selectModel(state, args);
@@ -993,9 +970,14 @@ function assignWorkItem(state, args) {
   return {taskGroupId: taskGroup.id, workItem, modelDecision};
 }
 
-function stateGet(state, args) {
+function stateGet(state, args, context = {}) {
   const scope = args.scope || "summary";
   computeProgressSnapshots(state);
+  if (context.principal?.kind === "agent_node") {
+    const scoped = scopeStateForAgentPrincipal(state, context.principal, context.grantCheck?.grants || []);
+    if (scope === "full") return {state: redactStateForMcp(scoped)};
+    return summaryState(scoped);
+  }
   if (scope === "full") {
     if (process.env.AIMAC_MCP_ALLOW_FULL_STATE !== "true") {
       return {ok: false, error: "full_state_scope_not_allowed", summary: summaryState(state)};
@@ -1003,6 +985,44 @@ function stateGet(state, args) {
     return {state: redactStateForMcp(state)};
   }
   return summaryState(state);
+}
+
+function scopeStateForAgentPrincipal(state, principal, grants = []) {
+  const projectIds = new Set(principal.projectIds || []);
+  const grantTaskGroupIds = new Set(grants.map((grant) => grant.taskGroupId).filter(Boolean));
+  const grantDispatchIds = new Set(grants.map((grant) => grant.dispatchId).filter(Boolean));
+  const visibleTaskGroupIds = new Set((state.taskGroups || [])
+    .filter((taskGroup) => projectIds.has(taskGroup.projectId) && (!grantTaskGroupIds.size || grantTaskGroupIds.has(taskGroup.id)))
+    .map((taskGroup) => taskGroup.id));
+  const scoped = JSON.parse(JSON.stringify(state));
+  scoped.projects = (scoped.projects || []).filter((project) => projectIds.has(project.id));
+  scoped.taskGroups = (scoped.taskGroups || []).filter((taskGroup) => visibleTaskGroupIds.has(taskGroup.id));
+  scoped.progressSnapshots = (scoped.progressSnapshots || []).filter((snapshot) =>
+    projectIds.has(snapshot.projectId) && (!snapshot.taskGroupId || visibleTaskGroupIds.has(snapshot.taskGroupId))
+  );
+  scoped.agentDispatches = (scoped.agentDispatches || []).filter((dispatch) =>
+    dispatch.assignedNodeId === principal.id || grantDispatchIds.has(dispatch.dispatchId)
+  );
+  scoped.workSessions = (scoped.workSessions || []).filter((session) =>
+    visibleTaskGroupIds.has(session.taskGroupId) && scoped.agentDispatches.some((dispatch) => dispatch.sessionId === session.sessionId)
+  );
+  scoped.repositoryOutputs = (scoped.repositoryOutputs || []).filter((target) =>
+    projectIds.has(target.projectId) && visibleTaskGroupIds.has(target.taskGroupId)
+  );
+  scoped.roleSkills = [];
+  scoped.roleSkillOverlays = [];
+  scoped.accounts = [];
+  scoped.accessGrants = [];
+  scoped.mcpGrants = (scoped.mcpGrants || []).filter((grant) => grant.agentNodeId === principal.id && grant.grantStatus === "issued");
+  return scoped;
+}
+
+function scopedDispatch(state, dispatchId, context = {}) {
+  const dispatch = state.agentDispatches.find((item) => item.dispatchId === dispatchId);
+  if (!dispatch) return null;
+  if (context.principal?.kind !== "agent_node") return dispatch;
+  const grantDispatchIds = new Set((context.grantCheck?.grants || []).map((grant) => grant.dispatchId));
+  return dispatch.assignedNodeId === context.principal.id || grantDispatchIds.has(dispatch.dispatchId) ? dispatch : null;
 }
 
 function summaryState(state) {
@@ -1122,7 +1142,7 @@ function nodeRegister(state, args) {
   const node = {
     nodeId: args.nodeId || createId("node"),
     status: "online",
-    endpoint: args.endpoint || "local-stdio",
+    endpoint: args.endpoint || "remote-agent-gateway",
     capabilityFlags: args.capabilityFlags || ["room", "command", "mcp_proxy", "permission_request", "git"],
     toolSignals: args.toolSignals || ["node", "git"],
     mcpServers: Object.keys(mcpToolGroups),
@@ -1810,41 +1830,52 @@ function toolResult(payload, isError = false) {
   };
 }
 
-async function handleMessage(message) {
-  if (message.method === "notifications/initialized") return;
+export async function handleMcpJsonRpc(message, context = {}) {
+  if (!message || typeof message !== "object" || Array.isArray(message)) return {jsonrpc: "2.0", id: null, error: {code: -32600, message: "Invalid Request"}};
+  if (message.method === "notifications/initialized") return null;
   if (message.method === "initialize") {
-    respond(message.id, {
-      protocolVersion: message.params?.protocolVersion || "2025-03-26",
+    return {jsonrpc: "2.0", id: message.id, result: {
+      protocolVersion: message.params?.protocolVersion || "2025-06-18",
       capabilities: {tools: {listChanged: false}},
-      serverInfo: {name: "ai-multi-agent-ctrl", version: "0.1.0"}
-    });
-    return;
+      serverInfo: {name: "ai-multi-agent-ctrl", version: "0.2.0"},
+      instructions: "This is the centralized remote MCP control plane. Agent hosts must not start a local MCP server."
+    }};
   }
   if (message.method === "tools/list") {
-    respond(message.id, {
+    const allowedTools = context.allowedMcpTools || context.principal?.allowedMcpTools || [];
+    const tools = allowedTools.includes("*") ? createMcpToolDefinitions() : createMcpToolDefinitions().filter((tool) => allowedTools.includes(tool.name));
+    return {jsonrpc: "2.0", id: message.id, result: {
       resultType: "complete",
-      tools: createMcpToolDefinitions(),
+      tools,
       ttlMs: 300000,
-      cacheScope: "public"
-    });
-    return;
+      cacheScope: "principal"
+    }};
   }
   if (message.method === "tools/call") {
     try {
       const name = message.params?.name;
       const args = message.params?.arguments || {};
-      const payload = await callTool(name, args);
-      respond(message.id, toolResult(payload, false));
+      const payload = await callTool(name, args, context);
+      return {jsonrpc: "2.0", id: message.id, result: toolResult(payload, payload.ok === false)};
     } catch (error) {
       if (error.code) {
-        respondError(message.id, error.code, error.message);
-      } else {
-        respond(message.id, toolResult({ok: false, error: error.message}, true));
+        return {jsonrpc: "2.0", id: message.id, error: {code: error.code, message: error.message}};
       }
+      return {jsonrpc: "2.0", id: message.id, result: toolResult({ok: false, error: error.message}, true)};
     }
-    return;
   }
-  if (message.id !== undefined) respondError(message.id, -32601, `Method not found: ${message.method}`);
+  if (message.id !== undefined) return {jsonrpc: "2.0", id: message.id, error: {code: -32601, message: `Method not found: ${message.method}`}};
+  return null;
+}
+
+async function handleMessage(message) {
+  const response = await handleMcpJsonRpc(message, {
+    principal: {kind: "system_service", id: "internal-stdio", allowedMcpTools: ["*"]},
+    allowedMcpTools: ["*"]
+  });
+  if (!response) return;
+  if (response.error) respondError(response.id, response.error.code, response.error.message, response.error.data);
+  else respond(response.id, response.result);
 }
 
 export function startStdioServer() {
@@ -1875,5 +1906,9 @@ export function startStdioServer() {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (process.env.AIMAC_MCP_INTERNAL_STDIO !== "true") {
+    process.stderr.write("Local MCP stdio startup is disabled. Start the control-plane service and connect to its /mcp endpoint.\n");
+    process.exit(2);
+  }
   startStdioServer();
 }

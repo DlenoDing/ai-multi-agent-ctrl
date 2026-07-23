@@ -56,17 +56,17 @@
         "dockerBuild": {"type": "string", "const": "npm run docker:build"},
         "dockerUp": {"type": "string", "const": "npm run docker:up"},
         "shellStart": {"type": "string", "const": "npm run shell:start"},
-        "mcpStart": {"type": "string", "const": "npm run mcp:start"},
-        "mcpRegister": {"type": "string", "const": "npm run mcp:register"},
+        "mcpStart": {"type": "string", "const": "npm start"},
+        "mcpRegister": {"type": "string", "const": "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL"},
         "mcpDoctor": {"type": "string", "const": "npm run mcp:doctor"}
       }
     },
     "mcp": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["protocol", "serverId", "logicalServers", "toolCount", "startupCommand", "registrationCommand", "doctorCommand"],
+      "required": ["protocol", "serverId", "logicalServers", "toolCount", "endpointPath", "hostedBy", "startupCommand", "registrationCommand", "doctorCommand", "agentLocalServerAllowed"],
       "properties": {
-        "protocol": {"type": "string", "const": "mcp/json-rpc-stdio"},
+        "protocol": {"type": "string", "const": "mcp/streamable-http"},
         "serverId": {"type": "string", "const": "ai-multi-agent-ctrl"},
         "logicalServers": {
           "type": "array",
@@ -75,9 +75,12 @@
           "items": {"type": "string", "minLength": 1}
         },
         "toolCount": {"type": "integer", "minimum": 1},
-        "startupCommand": {"type": "string", "const": "npm run mcp:start"},
-        "registrationCommand": {"type": "string", "const": "npm run mcp:register"},
-        "doctorCommand": {"type": "string", "const": "npm run mcp:doctor"}
+        "endpointPath": {"type": "string", "const": "/mcp"},
+        "hostedBy": {"type": "string", "const": "control-plane"},
+        "startupCommand": {"type": "string", "const": "npm start"},
+        "registrationCommand": {"type": "string", "const": "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL"},
+        "doctorCommand": {"type": "string", "const": "npm run mcp:doctor"},
+        "agentLocalServerAllowed": {"type": "boolean", "const": false}
       }
     },
     "services": {

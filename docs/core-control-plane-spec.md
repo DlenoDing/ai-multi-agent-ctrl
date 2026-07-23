@@ -4,7 +4,7 @@
 
 本文档把总体设计收敛为终态控制平面规格，覆盖数据库核心表、HTTP API、MCP tools、事件模型、事务边界和可靠性规则。该规格的消费者是 Orchestrator、Agent Runtime、MCP Proxy、Scheduler、Monitor Agent 和自动化验证器，不是外部操作流程。
 
-控制平面是系统权威状态来源。Agent Runtime、本地 SQLite、Room WS、MCP Proxy、UI 和外部脚本都不能越过控制平面直接改变权威状态。
+控制平面是系统权威状态来源。Agent Runtime 的本地配置/缓存/outbox、Room WS、远程 MCP、UI 和外部脚本都不能越过控制平面直接改变权威状态。所有服务型组件和 MCP Server 均运行在控制平面服务器，Agent 节点只运行轻量执行器。
 
 ## 2. 核心实体
 
@@ -379,7 +379,14 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/session-placement/decide` | 生成新 WorkSession 或 subagent 放置决策 | scheduler |
 | POST | `/api/session-placement-decisions` | 记录新会话或子 Agent placement | scheduler |
 | POST | `/api/orchestrator/run` | 执行 Orchestrator 自治调度循环 | orchestrator |
-| POST | `/api/agent-runtime/run` | 消费 `AgentDispatch` outbox，执行 Git 写入、commit、push 并提交 checkpoint | agent-runtime |
+| POST | `/api/agent-join-tokens` | 生成项目/角色/MCP scope 绑定的一次性 Agent 加入令牌 | agent-gateway |
+| POST | `/api/agent/v1/register` | 消费 join token，注册轻量 Agent Runtime 并签发节点凭证 | agent-gateway |
+| POST | `/api/agent/v1/heartbeat` | 上报节点资源、模型和工具能力 | agent-gateway |
+| POST | `/api/agent/v1/self-check` | 验证 runtime、filesystem、Git、Gateway 和远程 MCP | agent-gateway |
+| POST | `/api/agent/v1/dispatches/next` | 由已准入节点原子 claim 兼容 dispatch | agent-gateway |
+| GET | `/api/agent/v1/skill-worksets/:worksetId` | 按 task contract 下发摘要绑定的最小 Skill 工作集 | skill-registry |
+| POST | `/api/agent/v1/dispatches/:dispatchId/checkpoint` | 从远端 Git 独立取证后接受 checkpoint | agent-gateway、evidence-service |
+| POST | `/api/verification/agent-runtime/run` | 仅 verification profile 的服务器内确定性测试入口，生产禁用 | spec-validator |
 | POST | `/api/execution-topologies` | 创建并行/降级执行拓扑 | scheduler、orchestrator |
 | POST | `/api/derived-task-requests` | 提交派生任务请求 | agent-runtime、reviewer、monitor、orchestrator |
 | POST | `/api/review-plans` | 创建或更新互审计划 | reviewer、orchestrator |
@@ -424,7 +431,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | --- | --- |
 | `orchestration-mcp` | `project_create`、`task_group_create`、`work_item_create`、`work_assign`、`orchestrator_run`、`state_get` |
 | `room-mcp` | `room_join`、`room_send`、`room_wait`、`room_ack` |
-| `agent-control-mcp` | `node_register`、`node_probe`、`session_start`、`session_pause`、`session_cancel`、`session_recover`、`runtime_run` |
+| `agent-control-mcp` | `node_register`、`node_probe`、`session_start`、`session_pause`、`session_cancel`、`session_recover`、`dispatch_status` |
 | `scheduler-mcp` | `model_select`、`session_place`、`work_assign`、`capacity_snapshot`、`execution_topology_plan`、`derived_task_classify` |
 | `resource-mcp` | `lease_claim`、`lease_release`、`resource_snapshot` |
 | `model-mcp` | `model_capabilities`、`model_policy_get`、`model_select` |

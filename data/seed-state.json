@@ -21,12 +21,12 @@
       "dockerBuild": "npm run docker:build",
       "dockerUp": "npm run docker:up",
       "shellStart": "npm run shell:start",
-      "mcpStart": "npm run mcp:start",
-      "mcpRegister": "npm run mcp:register",
+      "mcpStart": "npm start",
+      "mcpRegister": "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL",
       "mcpDoctor": "npm run mcp:doctor"
     },
     "mcp": {
-      "protocol": "mcp/json-rpc-stdio",
+      "protocol": "mcp/streamable-http",
       "serverId": "ai-multi-agent-ctrl",
       "logicalServers": [
         "agent-control-mcp",
@@ -47,9 +47,12 @@
         "ui-console-mcp"
       ],
       "toolCount": 77,
-      "startupCommand": "npm run mcp:start",
-      "registrationCommand": "npm run mcp:register",
-      "doctorCommand": "npm run mcp:doctor"
+      "endpointPath": "/mcp",
+      "hostedBy": "control-plane",
+      "startupCommand": "npm start",
+      "registrationCommand": "npm run mcp:register -- --server-url=$AIMAC_PUBLIC_URL",
+      "doctorCommand": "npm run mcp:doctor",
+      "agentLocalServerAllowed": false
     },
     "services": [
       {
@@ -72,7 +75,7 @@
         "health": "ok"
       },
       {
-        "serviceId": "agent-runtime",
+        "serviceId": "agent-gateway",
         "roleId": "agent-runtime",
         "status": "running",
         "health": "ok"

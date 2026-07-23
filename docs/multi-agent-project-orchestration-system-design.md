@@ -29,9 +29,9 @@
 4. 一个 Agent 可能是公共网络上的不同主机地址。系统必须提供统一实时协作、状态同步和唤醒机制。
 5. 一个项目可以有多个任务组。每个任务组拥有独立协作房间、状态机、规则版本、证据和关闭屏障。
 6. 系统数据库与业务项目数据库严格分离。项目自己的数据库按项目配置，优先支持本地 PostgreSQL，也允许 Agent 侧本地库做增量镜像。
-7. 系统内置初始 skill/rules，并能在实际运行中把稳定问题、协作流程、角色要求、业务规则沉淀为版本化规则，约束后继会话。
+7. 系统内置版本化 skill/rules；运行中只收集重复问题和升级证据，不自动修改 skill/rules。后续由人独立在系统外完成系统升级，再导入新版本。
 8. 开发期、验证期和终态线上质量要求要分层，不能把代码完成、开发 safeguard、静态审计或单接口通过误报成生产完成。
-9. 系统本身要同时提供 MCP Server 能力，并能管理项目级、Agent 级 MCP Server，使加入系统的 Agent 可被总控完整调度、观测、授权、唤醒、停用和回收。
+9. 系统服务器必须集中提供全部 MCP Server 能力和项目/节点 principal 的 tool grant；Agent 端只运行轻量执行器并访问公网 MCP，不部署服务型组件。
 
 ## 2. 从 MGP 当前协作吸收的关键经验
 
@@ -87,7 +87,7 @@ flowchart LR
     MCP --> DB
     MCP --> M1["System MCP Servers"]
     MCP --> M2["Project MCP Servers"]
-    MCP --> M3["Agent-local MCP Servers"]
+    MCP --> M3["Node-scoped Remote Tool Grants"]
     OC --> RULE["Skill/Rules Engine"]
     RULE --> DB
     OC --> PRJ["Project Runtime Config"]
@@ -103,7 +103,7 @@ flowchart LR
 | Role/Session Scheduler | 根据角色需求、Agent 能力、资源和写入面创建或复用会话 |
 | Agent Gateway | 管理公网 Agent 节点注册、鉴权、心跳、能力、任务下发和结果回传 |
 | Room Broker | 每个项目和任务组的实时协作房间，提供 WS、消息游标、ACK、订阅、唤醒 |
-| MCP Control Plane | 注册、发布、代理、授权和审计系统级、项目级、Agent 本地 MCP Server 和 tools |
+| MCP Control Plane | 在系统服务器集中托管、注册、发布、授权和审计全部 MCP Server 与 tools；Agent 只作为远程客户端 |
 | Rules Engine | 加载系统规则、项目规则、角色规则、任务规则和动态沉淀规则 |
 | Work Lease Manager | 管理文件、目录、仓库、DB、环境、容器、外部资源等互斥写入或运行资源 |
 | Monitor | 监测会话状态、进度、阻塞、长时间无产出、消息风暴、token 成本和质量门 |
@@ -126,7 +126,7 @@ flowchart LR
 | Agent 沙箱 | 专用用户、工作目录、进程组/容器、网络限制、命令白名单、清理 |
 | 权限/弹窗治理 | 权限预检、弹窗检测、权限阻断回传、总控/决策中心裁决、重试或改派 |
 | 实时协作 | Room、WS、消息序列、ACK、cursor、delta、checkpoint、wake |
-| MCP 能力 | 系统 MCP Server、项目 MCP Server、Agent-local MCP、tool grant、schema、审计 |
+| MCP 能力 | 服务器集中托管系统/项目 MCP Server、节点 principal tool grant、schema、审计和统一升级 |
 | Git 管理 | 项目 Git 账号池、仓库配置、凭据绑定、checkout/worktree、commit/push/PR |
 | 规则治理 | ruleset、skill、动态规则沉淀、互审、版本、通知 |
 | 资源和锁 | 文件/目录/仓库/DB/topic/Docker/MCP/tool/provider lease |
@@ -800,7 +800,8 @@ Agent 加入系统必须做到“总控生成 join token、受信执行环境运
 总控侧生成一次性加入令牌：
 
 ```bash
-agentctl join-token create \
+npm run agentctl -- join-token create \
+  --server https://control.example.com \
   --project <project_id> \
   --node-name <expected_node_name> \
   --roles backend,frontend,reviewer,qa \
@@ -811,11 +812,11 @@ agentctl join-token create \
 给 Agent 主机执行的最小 bootstrap 模板。受信开发环境可以使用管道方式，生产环境必须使用后面的校验版：
 
 ```bash
-curl -fsSL https://control.example.com/install-agent.sh | sudo bash -s -- \
+curl -fsSL https://control.example.com/install-agent.sh | sh -s -- \
   --server https://control.example.com \
   --join-token <one_time_join_token> \
   --node-name "$(hostname)" \
-  --work-dir /opt/ai-agent
+  --work-dir "$HOME/.local/share/aimac-agent"
 ```
 
 生产推荐的校验版保持单命令模板形态，但必须先校验再执行：
@@ -824,21 +825,19 @@ curl -fsSL https://control.example.com/install-agent.sh | sudo bash -s -- \
 tmp="$(mktemp -d)" && cd "$tmp" && \
 curl -fsSLO https://control.example.com/install-agent.sh && \
 curl -fsSLO https://control.example.com/install-agent.sh.sha256 && \
-shasum -a 256 -c install-agent.sh.sha256 && \
-sudo bash install-agent.sh \
+( if command -v sha256sum >/dev/null 2>&1; then sha256sum -c install-agent.sh.sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 -c install-agent.sh.sha256; else printf '%s\n' 'sha256sum or shasum is required' >&2; exit 1; fi ) && \
+sh install-agent.sh \
   --server https://control.example.com \
   --join-token <one_time_join_token> \
   --node-name "$(hostname)" \
-  --work-dir /opt/ai-agent \
-  --runtime-version <pinned_version> \
-  --runtime-sha256 <expected_sha256>
+  --work-dir "$HOME/.local/share/aimac-agent"
 ```
 
 交互式 token 写法只用于避免 token 留在 shell history，不替代生产校验版：
 
 ```bash
 read -s AGENT_JOIN_TOKEN
-curl -fsSL https://control.example.com/install-agent.sh | sudo AGENT_JOIN_TOKEN="$AGENT_JOIN_TOKEN" bash -s -- \
+curl -fsSL https://control.example.com/install-agent.sh | AGENT_JOIN_TOKEN="$AGENT_JOIN_TOKEN" sh -s -- \
   --server https://control.example.com \
   --node-name "$(hostname)" \
   --work-dir /opt/ai-agent
@@ -860,15 +859,15 @@ docker run -d --name ai-agent-runtime --restart unless-stopped \
 脚本必须自动完成：
 
 1. 安装或更新 `agent-runtime`。
-2. 创建专用运行用户、工作目录和本地 SQLite。
+2. 创建权限隔离的工作目录、`0600` 节点配置、Skill 缓存和 checkpoint JSON outbox；不安装数据库服务。
 3. 校验安装脚本、runtime 包、容器镜像、manifest、配置模板的 SHA256 和签名。
 4. 固定 runtime 版本或镜像 digest，不使用 `latest` 作为生产加入方式。
 5. 连接 Agent Gateway 并完成 mTLS/JWT bootstrap。
 6. 上报 CPU、内存、磁盘、GPU、网络、Docker 和工具链。
 7. 识别支持的模型、推理档位、上下文能力、速度/质量/成本等级。
 8. 采集模型/工具额度和近期 throttle 状态。
-9. 发现本地 MCP server 和可代理 tools。
-10. 拉取项目 runtime config、Git 仓库配置和授权的 secret refs。
+9. 验证公网系统服务器 `/mcp`，并按节点 token 获取允许的远程 tool 清单；禁止发现、安装或启动本地 MCP server。
+10. 按 dispatch 拉取项目 runtime config、Git 仓库配置、授权的 secret refs 和最小 Skill 工作集。
 11. 验证 Git 账号池权限，但不默认 clone 全部仓库。
 12. 打开 Room/Control channel，返回 `nodeId`、`agent_profile_digest` 和 `scheduler_admission`。
 
@@ -1130,6 +1129,10 @@ repositories:
 
 每次选择都必须生成 `ModelSelectionDecision`，包含候选模型排序、score breakdown、selectedModelId、selectedAgentSkillRef、policyDecisionRef 和 auditRef。
 
+默认模型上限必须是供应商中立的，不把 GPT 作为全局语义。系统使用 `standard`、`frontier_economy`、`frontier_standard`、`frontier_plus` 四级模型档位映射 OpenAI、Anthropic、Google、xAI、DeepSeek、Qwen、Ollama/vLLM 和 custom provider 的实际模型；推理层级使用 `low/standard/medium/high/max/ultra`。除安全、生产、权限、核心故障、总控偏移、调度安全、监测偏移等特殊信号外，自动分派不得超过 `frontier_standard + high`。每个 dispatch 的 task contract 必须显式写入 `providerClass`、`modelId`、`modelTier`、`reasoningLevel`、`maxModelTier` 和 `maxReasoningLevel`，禁止继承上一次会话的模型默认值。
+
+混合任务必须先拆分再分派。若 work item 同时包含深度分析/架构判断和代码开发/改造，总控先自动派生 `deep_analysis` 与 `implementation` 两个机器任务：分析任务可使用 `frontier_standard + high`，实现任务按代码复杂度通常使用 `frontier_economy/standard + medium/standard`。不得把详细深度分析和代码实现塞进同一 task contract，避免低模型分析不充分或高模型执行普通代码开发造成浪费。
+
 ```yaml
 modelPolicy:
   mode: auto_best
@@ -1194,31 +1197,25 @@ modelPolicy:
 4. `auto_fast` 只能用于低风险、低影响、可快速复验的任务。
 5. 每次实际选择必须写入 `session_model_assignments` 和 `model_selection_events`，方便复盘质量、速度和成本。
 
-### 11.5 Agent 本地库
+### 11.5 Agent 本地最小状态
 
-AgentNode 可维护本地 SQLite 或 PostgreSQL：
+AgentNode 不运行 SQLite、PostgreSQL、MCP、Scheduler 或 Skill Registry。轻量 Runtime 只保存恢复执行必需的最小文件：
 
-| 本地表 | 用途 |
+| 本地路径 | 用途 |
 | --- | --- |
-| `local_message_cursor` | 每个 room 的消费游标 |
-| `local_rules_cache` | 当前规则版本和 digest |
-| `local_project_cache` | 项目配置和 locator 缓存 |
-| `local_model_capability_cache` | 本节点可用模型、别名、推理档位、上下文和额度摘要 |
-| `local_git_account_cache` | 当前节点可用的项目 Git 凭据引用和权限摘要 |
-| `local_repo_checkout_cache` | 本地仓库路径、分支、commit、worktree 和 credential binding |
-| `local_mcp_registry_cache` | 已授权 MCP server/tool schema 和健康状态 |
-| `local_resource_snapshots` | 本地资源和额度最近采样，供断线恢复后补传 |
-| `local_permission_profile` | 本节点 OS、浏览器、credential helper、OAuth、网络和本地工具权限缓存 |
-| `local_permission_outbox` | 断线时暂存权限弹窗、授权缺失和处理结果，恢复后增量上报 |
-| `local_work_cache` | 当前被分配的 work item |
-| `local_artifact_manifest` | 已上传/待上传证据 |
-| `local_sync_log` | 离线或断线后的增量同步记录 |
+| `agent-config.json` | 节点身份、服务器 URL、节点 token、executor 和目录，权限固定为 `0600` |
+| `skill-worksets/<digest>` | 当前 dispatch 的最小 Skill 工作集和摘要 manifest |
+| `repositories/<repositoryId>` | 由 RepositoryOutputTarget 授权的项目 Git checkout |
+| `tasks/<dispatchId>` | 当前 task contract、有效指令包和模型 prompt |
+| `outbox/<dispatchId>.json` | Git push 成功但 checkpoint 未 ACK 时的可重放记录 |
+
+所有权威状态、MCP tool schema、节点 profile 历史、调度决策、Skill 索引、lease 和 audit 都留在系统服务器。Agent 重启时先重放 outbox，再心跳和 claim；不能从本地缓存恢复或修改系统规则。
 
 同步策略：
 
 1. 系统库事件流为权威。
-2. Agent 只按 cursor 增量拉取消息、规则、任务和配置。
-3. 本地变更通过 outbox 提交给系统库。
+2. Agent 只从 Gateway claim dispatch，并按 dispatch 拉取 task contract、远程 MCP endpoint、仓库目标和最小 Skill 工作集。
+3. 本地变更只通过 Git push 和 checkpoint outbox 提交给系统库。
 4. `idempotencyKey` 和 `fencingToken` 防重复提交。
 5. 断线后恢复时先提交本地 outbox，再读取系统最新 stateVersion。若过期，返回 `STALE_STATE`。
 
@@ -1578,7 +1575,7 @@ SUCCESS_CRITERIA=<可验收终态>
 NON_GOALS=<明确不做>
 PROJECT_DB_CONFIG=<project db profile>
 PROJECT_GIT_PROFILE=<git account/repository profile>
-MCP_PROFILE=<system/project/agent-local mcp grants>
+MCP_PROFILE=<central-server system/project/node-scoped remote grants>
 MODEL_POLICY=<fixed_model|fixed_tier|auto_best|auto_fast|cost_aware>
 PARALLELISM_POLICY=<max_parallel_with_leases|limited|policy_required>
 CONTRACT_POLICY=<contract registry/version/compatibility policy>
@@ -1803,14 +1800,14 @@ MCP Server 分三类：
 | --- | --- |
 | 系统级 MCP | 系统自带，所有项目可按权限使用，例如 room、orchestration、rules、evidence |
 | 项目级 MCP | 项目单独配置，例如 GitHub、Jira、Figma、私有部署、内部 API、项目数据库只读工具 |
-| Agent 本地 MCP | 某 AgentNode 本地可用工具，例如本机浏览器、Docker、移动端模拟器、专用构建工具 |
+| Agent 本地工具 | 某 AgentNode 本地可执行的浏览器、Docker、移动端模拟器、编译器等；它们由 Agent Runtime adapter 执行，不作为本地 MCP server 暴露 |
 
 管理规则：
 
 1. MCP tool 必须有 schema digest、风险级别、scope、owner 和授权策略。
 2. 总控通过 MCP Control Plane 下发 tool grant，不让 session 自行发现并滥用高风险工具。
 3. 项目级 MCP 可以绑定项目 Git 账号、文档系统、设计系统或部署平台。
-4. Agent 本地 MCP 只能在对应节点和授权 session 中使用，不能被其它节点直接绕过调用。
+4. Agent 本地工具只能由对应节点的受控 Runtime 在授权 session 中执行；所有服务型 MCP 调用必须回到系统服务器，不能把节点工具包装成常驻本地 MCP server。
 5. MCP 工具结果进入 session 上下文前要标记来源、时间、tool version 和权限 scope。
 6. 写入型 MCP tool 必须经过 lease 和 idempotencyKey，避免重复提交、重复部署或重复写库。
 7. MCP Server 健康异常时，Scheduler 不应把依赖该工具的任务派给相关 session。
@@ -2390,18 +2387,18 @@ Agent 加入保持一条命令，但系统内部必须强制以下控制：
 | System DB | PostgreSQL |
 | Command/Workflow | PostgreSQL `commands`、`command_attempts`、`outbox`、`inbox`、`dlq` 表 |
 | Queue/Event | PostgreSQL outbox + `FOR UPDATE SKIP LOCKED` worker；LISTEN/NOTIFY 只做唤醒 |
-| Local Agent DB | SQLite WAL |
+| Local Agent State | 权限为 0600 的配置、Skill 缓存和 checkpoint JSON outbox；不运行数据库服务 |
 | Cache/Presence | PostgreSQL 表或 Redis adapter，权威状态仍在 PostgreSQL |
 | Artifact | 本地文件系统目录 + PostgreSQL metadata/digest/retention/quota |
 | API | REST + WS + 内置 MCP Server/Client adapter |
-| MCP | 控制服务内置系统 MCP；项目 MCP 和 Agent-local MCP 先经内置 proxy 转发 |
+| MCP | 控制服务在公网 `/mcp` 集中托管系统/项目 MCP；Agent 仅以节点 token 访问远程 tool grant |
 | Auth | 系统内置用户/session token/service token；公网 Agent 用短期 join token + 后继 mTLS/JWT |
 | Policy | PostgreSQL policy 表 + 代码内 enforcement，可接 OPA/OpenFGA adapter |
 | Secret | PostgreSQL encrypted secret 表或 secret manager adapter，master key 来自环境变量或宿主 keychain |
 | Observability | JSON structured logs + PostgreSQL metrics/audit/alert 表 + webhook/email |
 | E2E | Playwright，作为测试依赖，不作为平台基础设施 |
 | UI | React + TanStack Query，只作为后台管理、观察和入口总控会话界面 |
-| 部署 | 单机 Docker Compose：control-plane、PostgreSQL、可选 agent-runtime |
+| 部署 | 系统服务器 Docker Compose：control-plane（含 Agent Gateway、Skill Registry、MCP）、PostgreSQL；Agent Runtime 通过服务端安装脚本部署到独立节点 |
 
 ### 25.1 自治部署运行手册
 
@@ -2472,7 +2469,7 @@ Agent 加入保持一条命令，但系统内部必须强制以下控制：
 6. 业务项目数据库和系统数据库分离。
 7. 每个 Agent 入网必须初始化资源、工具、MCP、项目访问和额度画像，调度基于画像，执行默认不设不可靠的小预算硬限制。
 8. 每个 Agent 必须上报支持模型、推理档位、上下文和额度；总控创建 session 时必须按任务组模型策略指定模型和推理级别。
-9. 系统必须提供 MCP Server 能力，并能管理项目级和 Agent 本地 MCP 工具授权。
+9. 系统必须在控制平面服务器集中提供 MCP Server 能力，并管理系统/项目/节点 principal 的远程 MCP tool 授权；Agent 端不得部署 MCP server。
 10. 每个项目的 Git 账号池、仓库地址、账号/key 绑定和本地 checkout 状态是一等配置。
 11. 技术栈必须低成本、少组件、可完整闭环；复杂专用基础设施只能作为按指标扩展项。
 12. 规则版本化，历史不覆盖当前规则。
@@ -2563,7 +2560,7 @@ Agent 加入保持一条命令，但系统内部必须强制以下控制：
 + 项目/任务组分层
 + 角色到会话的动态调度
 + Room Broker 实时事件和唤醒
-+ MCP Control Plane 和系统/项目/Agent 本地 MCP Server
++ 集中式 MCP Control Plane、系统/项目远程 MCP tools 和节点 principal scope
 + PostgreSQL 权威状态
 + Agent 资源、工具、额度画像和控制面
 + Agent 模型能力识别、任务组模型策略和会话级模型指定

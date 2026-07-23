@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,55 +9,44 @@ const args = parseArgs(process.argv.slice(2));
 const client = args.client || "all";
 const target = args.target || "project";
 const apply = Boolean(args.apply);
-const runtimeDir = resolve(root, args.runtimeDir || process.env.AIMAC_RUNTIME_DIR || ".runtime");
 const outputDir = resolve(root, args.outputDir || process.env.AIMAC_MCP_CONFIG_DIR || join(".runtime", "mcp-client-configs"));
-const serverPath = resolve(root, "apps", "mcp-server", "server.mjs");
-const tokenPath = join(runtimeDir, "mcp-client-token");
-const nodeCommand = args.node || process.execPath;
-
-mkdirSync(runtimeDir, {recursive: true});
-mkdirSync(outputDir, {recursive: true});
-
-const token = ensureToken(tokenPath);
-const serverEntry = {
-  command: nodeCommand,
-  args: [serverPath],
-  env: {
-    AIMAC_RUNTIME_DIR: runtimeDir,
-    AIMAC_REPOSITORY_ROOT: root,
-    AIMAC_MCP_TOKEN: token,
-    AIMAC_MCP_LOCAL_WRITE_ENABLE: "true"
-  }
-};
-
+const serverUrl = normalizeServerUrl(args.serverUrl || process.env.AIMAC_PUBLIC_URL || "http://127.0.0.1:4317");
+const mcpUrl = `${serverUrl}/mcp`;
+const bearerToken = args.token || process.env.AIMAC_MCP_BEARER_TOKEN || process.env.AIMAC_MCP_SERVICE_TOKEN || "";
+const tokenEnv = args.tokenEnv || "AIMAC_MCP_BEARER_TOKEN";
 const outputs = [];
 
-function main() {
-  if (apply && client === "all") {
-    throw new Error("--apply requires --client=codex, --client=claude or --client=cursor");
-  }
-  const canonical = {
-    generatedBy: "ai-multi-agent-ctrl",
-    serverName: "ai-multi-agent-ctrl",
-    logicalServers: logicalServersFromTools(),
-    toolCount: mcpToolNames.length,
-    mcpServers: {"ai-multi-agent-ctrl": serverEntry}
-  };
-  writeJson(join(outputDir, "mcp-server.json"), canonical);
-  outputs.push(join(outputDir, "mcp-server.json"));
+mkdirSync(outputDir, {recursive: true});
 
-  if (client === "all" || client === "codex") writeCodexSnippet();
-  if (client === "all" || client === "claude") writeJsonSnippet("claude_desktop_config.json");
-  if (client === "all" || client === "cursor") writeJsonSnippet("cursor_mcp.json");
+if (apply && client === "all") throw new Error("--apply requires --client=codex, --client=claude or --client=cursor");
+if (apply && !bearerToken && client !== "codex") throw new Error("--apply for JSON MCP clients requires --token or AIMAC_MCP_BEARER_TOKEN");
 
-  if (apply) applyClientConfig();
+const remoteEntry = {
+  url: mcpUrl,
+  headers: {Authorization: bearerToken ? `Bearer ${bearerToken}` : `Bearer \${${tokenEnv}}`}
+};
 
-  console.log("mcp client registration artifacts generated");
-  console.log(`server: ai-multi-agent-ctrl`);
-  console.log(`tool count: ${mcpToolNames.length}`);
-  console.log(`runtime dir: ${runtimeDir}`);
-  for (const output of outputs) console.log(`config: ${output}`);
-}
+writeJson(join(outputDir, "mcp-server.json"), {
+  generatedBy: "ai-multi-agent-ctrl",
+  serverName: "ai-multi-agent-ctrl",
+  transport: "streamable-http",
+  hostedBy: serverUrl,
+  logicalServers: logicalServersFromTools(),
+  toolCount: mcpToolNames.length,
+  mcpServers: {"ai-multi-agent-ctrl": remoteEntry}
+});
+outputs.push(join(outputDir, "mcp-server.json"));
+
+if (client === "all" || client === "codex") writeCodexSnippet();
+if (client === "all" || client === "claude") writeJsonSnippet("claude_desktop_config.json");
+if (client === "all" || client === "cursor") writeJsonSnippet("cursor_mcp.json");
+if (apply) applyClientConfig();
+
+console.log("remote MCP client registration artifacts generated");
+console.log(`server: ${mcpUrl}`);
+console.log(`transport: streamable-http`);
+console.log(`tool count: ${mcpToolNames.length}`);
+for (const output of outputs) console.log(`config: ${output}`);
 
 function parseArgs(argv) {
   const parsed = {};
@@ -67,9 +55,10 @@ function parseArgs(argv) {
     else if (arg.startsWith("--client=")) parsed.client = arg.slice("--client=".length);
     else if (arg.startsWith("--target=")) parsed.target = arg.slice("--target=".length);
     else if (arg.startsWith("--config=")) parsed.config = arg.slice("--config=".length);
-    else if (arg.startsWith("--runtime-dir=")) parsed.runtimeDir = arg.slice("--runtime-dir=".length);
     else if (arg.startsWith("--output-dir=")) parsed.outputDir = arg.slice("--output-dir=".length);
-    else if (arg.startsWith("--node=")) parsed.node = arg.slice("--node=".length);
+    else if (arg.startsWith("--server-url=")) parsed.serverUrl = arg.slice("--server-url=".length);
+    else if (arg.startsWith("--token=")) parsed.token = arg.slice("--token=".length);
+    else if (arg.startsWith("--token-env=")) parsed.tokenEnv = arg.slice("--token-env=".length);
     else throw new Error(`unknown argument: ${arg}`);
   }
   if (!["all", "codex", "claude", "cursor"].includes(parsed.client || "all")) throw new Error("--client must be all, codex, claude or cursor");
@@ -77,11 +66,13 @@ function parseArgs(argv) {
   return parsed;
 }
 
-function ensureToken(path) {
-  if (existsSync(path)) return readFileSync(path, "utf8").trim();
-  const token = `aimac_mcp_${randomBytes(24).toString("hex")}`;
-  writeFileSync(path, `${token}\n`, {mode: 0o600});
-  return token;
+function normalizeServerUrl(value) {
+  const parsed = new URL(value);
+  const local = ["127.0.0.1", "localhost", "::1"].includes(parsed.hostname);
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && local) && process.env.AIMAC_ALLOW_INSECURE_REMOTE_MCP !== "true") {
+    throw new Error("remote MCP requires HTTPS; set AIMAC_ALLOW_INSECURE_REMOTE_MCP=true only for isolated verification");
+  }
+  return String(value).replace(/\/+$/u, "");
 }
 
 function logicalServersFromTools() {
@@ -95,7 +86,7 @@ function writeJson(path, value) {
 
 function writeJsonSnippet(filename) {
   const path = join(outputDir, filename);
-  writeJson(path, {mcpServers: {"ai-multi-agent-ctrl": serverEntry}});
+  writeJson(path, {mcpServers: {"ai-multi-agent-ctrl": remoteEntry}});
   outputs.push(path);
 }
 
@@ -107,19 +98,15 @@ function writeCodexSnippet() {
 
 function codexTomlBlock() {
   return [
-    "# BEGIN ai-multi-agent-ctrl MCP",
+    "# BEGIN ai-multi-agent-ctrl REMOTE MCP",
     "[mcp_servers.ai_multi_agent_ctrl]",
-    `command = ${tomlString(serverEntry.command)}`,
-    `args = [${serverEntry.args.map(tomlString).join(", ")}]`,
-    "[mcp_servers.ai_multi_agent_ctrl.env]",
-    ...Object.entries(serverEntry.env).map(([key, value]) => `${key} = ${tomlString(value)}`),
-    "# END ai-multi-agent-ctrl MCP",
+    `url = ${JSON.stringify(mcpUrl)}`,
+    ...(bearerToken
+      ? [`http_headers = { Authorization = ${JSON.stringify(`Bearer ${bearerToken}`)} }`]
+      : [`bearer_token_env_var = ${JSON.stringify(tokenEnv)}`]),
+    "# END ai-multi-agent-ctrl REMOTE MCP",
     ""
   ].join("\n");
-}
-
-function tomlString(value) {
-  return JSON.stringify(String(value));
 }
 
 function applyClientConfig() {
@@ -135,28 +122,27 @@ function applyClientConfig() {
   const raw = existsSync(configPath) ? readFileSync(configPath, "utf8").trim() : "";
   const previous = raw ? JSON.parse(raw) : {};
   previous.mcpServers ||= {};
-  previous.mcpServers["ai-multi-agent-ctrl"] = serverEntry;
+  previous.mcpServers["ai-multi-agent-ctrl"] = remoteEntry;
   writeJson(configPath, previous);
   outputs.push(configPath);
 }
 
 function defaultClientConfigPath(selectedClient) {
-  if (args.config) return args.config;
-  const home = process.env.HOME;
-  if (!home) throw new Error("--config is required when HOME is unavailable");
+  const userHome = process.env.HOME;
+  if (!userHome) throw new Error("--config is required when HOME is unavailable");
   if (target !== "user") {
     if (selectedClient === "claude") return join(outputDir, "claude_desktop_config.json");
     if (selectedClient === "cursor") return join(outputDir, "cursor_mcp.json");
     return join(outputDir, "codex_config.toml");
   }
-  if (selectedClient === "claude") return join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
-  if (selectedClient === "cursor") return join(home, ".cursor", "mcp.json");
-  return join(process.env.CODEX_HOME || join(home, ".codex"), "config.toml");
+  if (selectedClient === "claude") return join(userHome, ".claude", "mcp.json");
+  if (selectedClient === "cursor") return join(userHome, ".cursor", "mcp.json");
+  return join(process.env.CODEX_HOME || join(userHome, ".codex"), "config.toml");
 }
 
 function replaceMarkedBlock(previous, block) {
-  const start = "# BEGIN ai-multi-agent-ctrl MCP";
-  const end = "# END ai-multi-agent-ctrl MCP";
+  const start = "# BEGIN ai-multi-agent-ctrl REMOTE MCP";
+  const end = "# END ai-multi-agent-ctrl REMOTE MCP";
   const startIndex = previous.indexOf(start);
   const endIndex = previous.indexOf(end);
   if (startIndex >= 0 && endIndex > startIndex) {
@@ -166,5 +152,3 @@ function replaceMarkedBlock(previous, block) {
   }
   return [previous.trimEnd(), block.trimEnd()].filter(Boolean).join("\n\n") + "\n";
 }
-
-main();

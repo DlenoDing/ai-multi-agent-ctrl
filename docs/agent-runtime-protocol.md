@@ -2,7 +2,7 @@
 
 ## 1. 目标
 
-Agent Runtime 是公网或内网 Agent 节点上的本地控制进程，负责节点入网、心跳、资源探测、模型探测、MCP 本地代理、session 启动、checkpoint 提交、evidence/artifact metadata 登记、权限阻断回传和断线恢复。
+Agent Runtime 是公网或内网 Agent 节点上的轻量执行进程，负责节点入网、心跳、资源/模型/工具探测、远程 MCP 访问、dispatch claim、按任务同步 Skill 工作集、模型 Agent 启动、checkpoint 提交和断线恢复。MCP server、Agent Gateway、Skill Registry、Scheduler、Policy Engine、数据库和管理服务全部集中运行在系统服务器；Agent 主机禁止启动本地 MCP server。
 
 Runtime 不是无限远程 shell。所有副作用都必须由控制平面授权，并绑定 project、taskGroup、work、session、command、lease 和 audit。Runtime 的所有控制入口都面向 AI Agent 和系统服务，不依赖非系统执行路径处理项目工作。
 
@@ -11,7 +11,8 @@ Runtime 不是无限远程 shell。所有副作用都必须由控制平面授权
 总控生成一次性 join token：
 
 ```bash
-agentctl join-token create \
+npm run agentctl -- join-token create \
+  --server https://control.example.com \
   --project <project_id> \
   --node-name <expected_node_name> \
   --roles backend,frontend,reviewer,qa \
@@ -22,11 +23,11 @@ agentctl join-token create \
 受信执行环境的自动加入命令模板：
 
 ```bash
-curl -fsSL https://control.example.com/install-agent.sh | sudo bash -s -- \
+curl -fsSL https://control.example.com/install-agent.sh | sh -s -- \
   --server https://control.example.com \
   --join-token <one_time_join_token> \
   --node-name "$(hostname)" \
-  --work-dir /opt/ai-agent
+  --work-dir "$HOME/.local/share/aimac-agent"
 ```
 
 高信任要求环境必须使用校验版：
@@ -35,14 +36,12 @@ curl -fsSL https://control.example.com/install-agent.sh | sudo bash -s -- \
 tmp="$(mktemp -d)" && cd "$tmp" && \
 curl -fsSLO https://control.example.com/install-agent.sh && \
 curl -fsSLO https://control.example.com/install-agent.sh.sha256 && \
-shasum -a 256 -c install-agent.sh.sha256 && \
-sudo bash install-agent.sh \
+( if command -v sha256sum >/dev/null 2>&1; then sha256sum -c install-agent.sh.sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 -c install-agent.sh.sha256; else printf '%s\n' 'sha256sum or shasum is required' >&2; exit 1; fi ) && \
+sh install-agent.sh \
   --server https://control.example.com \
   --join-token <one_time_join_token> \
   --node-name "$(hostname)" \
-  --work-dir /opt/ai-agent \
-  --runtime-version <pinned_version> \
-  --runtime-sha256 <expected_sha256>
+  --work-dir "$HOME/.local/share/aimac-agent"
 ```
 
 加入成功回显：
@@ -52,13 +51,9 @@ AGENT_JOINED
 nodeId=agent_...
 nodeName=...
 agentProfileDigest=sha256:...
-resourceClass=small|medium|large|xlarge
-quotaClass=low|normal|high|unknown
-models=<count>
-modelAliases=deep_reasoning,balanced,fast_fix
-mcpServers=<count>
-gitProfiles=<count>
 schedulerAdmission=read_only|limited|full
+remoteMcp=https://control.example.com/mcp
+skills=on_demand
 ```
 
 ## 3. 初始化握手
@@ -66,15 +61,12 @@ schedulerAdmission=read_only|limited|full
 ```text
 install_runtime
 -> node_register
--> protocol_negotiation
--> runtime_integrity_attestation
 -> resource_probe
 -> model_probe
 -> tool_probe
--> permission_probe
--> project_access_probe
--> local_db_init
--> control_channel_open
+-> remote_mcp_initialize
+-> local_cache_init
+-> self_check
 -> scheduler_admission
 ```
 
@@ -84,15 +76,15 @@ install_runtime
 
 ```json
 {
-  "joinToken": "join_...",
   "nodeName": "builder-01",
-  "protocolVersion": "agent-runtime/v1",
-  "runtimeVersion": "1.0.0",
-  "platform": {
-    "os": "darwin",
+  "runtimeVersion": "0.2.0",
+  "profile": {
+    "platform": "darwin",
     "arch": "arm64",
-    "hostname": "builder-01",
-    "timezone": "Asia/Kuala_Lumpur"
+    "cpuCount": 12,
+    "memoryBytes": 34359738368,
+    "tools": [],
+    "models": []
   }
 }
 ```
@@ -101,15 +93,19 @@ install_runtime
 
 ```json
 {
-  "nodeId": "agent_...",
-  "projectScopes": ["prj_..."],
-  "controlToken": "short_lived_token",
-  "roomEndpoints": {
-    "http": "https://control.example.com/api",
-    "ws": "wss://control.example.com/ws"
+  "node": {
+    "nodeId": "node_...",
+    "projectIds": ["prj_..."],
+    "allowedRoles": ["backend", "reviewer"]
   },
-  "minRuntimeVersion": "1.0.0",
-  "capabilityFlags": ["room", "command", "mcp_proxy", "permission_request"]
+  "nodeToken": "aimac_node_...",
+  "gateway": {
+    "serverUrl": "https://control.example.com",
+    "mcpUrl": "https://control.example.com/mcp",
+    "skillWorksetBaseUrl": "https://control.example.com/api/agent/v1/skill-worksets"
+  },
+  "heartbeatIntervalSeconds": 30,
+  "pollIntervalSeconds": 5
 }
 ```
 
@@ -121,7 +117,7 @@ Runtime 必须上报：
 | --- | --- |
 | resource | cpu、memory、disk、load、network、docker、browser、workspace |
 | model | provider、modelId、alias、reasoningLevels、contextWindow、speed、quality、quotaState |
-| tool | shell、git、node、python、docker、browser、test runners、本地 MCP |
+| tool | shell、git、node、npm、docker、Codex、Claude、Gemini、Ollama 等本机执行工具；不包含本地 MCP server |
 | permission | OS、browser、credential helper、OAuth、network、Git、DB、Keychain/sudo |
 | integrity | runtime digest、installer digest、config digest、sandbox mode |
 
@@ -160,7 +156,7 @@ Runtime 每 10 到 30 秒发送 heartbeat。控制平面可按项目策略调整
 }
 ```
 
-## 5. session_start
+## 5. dispatch 与 Skill 工作集
 
 控制平面启动 session 时必须传最小任务契约。
 
@@ -187,6 +183,9 @@ Runtime 每 10 到 30 秒发送 heartbeat。控制平面可按项目策略调整
     "selectedAgentSkillRef": "agent-skill://backend-owner/runtime",
     "sourceId": "agency-agents-zh",
     "overlayRefs": ["role-skill-overlay://overlay_..."],
+    "worksetId": "skillset_0123456789abcdef01234567",
+    "synchronizationMode": "server_managed_on_demand",
+    "usageDirective": "Load this exact workset before execution and bind a separately issued workset for every child role.",
     "modelSelectionDecisionRef": "model-selection://msd_..."
   },
   "roomId": "room_...",
@@ -272,7 +271,12 @@ Runtime 每 10 到 30 秒发送 heartbeat。控制平面可按项目策略调整
   "model": {
     "modelId": "provider/model",
     "alias": "balanced",
+    "providerClass": "openai|anthropic|google|xai|deepseek|qwen|ollama|custom",
+    "modelTier": "frontier_standard",
+    "maxModelTier": "frontier_standard",
+    "taskExecutionClass": "deep_analysis|implementation|verification|short_execution",
     "reasoningLevel": "medium",
+    "maxReasoningLevel": "high",
     "selectionMode": "auto_best",
     "modelSelectionDecisionRef": "model-selection://msd_..."
   },
@@ -295,13 +299,14 @@ Runtime 每 10 到 30 秒发送 heartbeat。控制平面可按项目策略调整
 
 Runtime 规则：
 
-1. 启动前校验 `contractVersion`、`schemaDigest`、`contractDigest`、`roleSkillRef`、`roleSkillDigest`、`effectiveInstructionPacketRef`、`roleDriftGuardRef`、`placementDecisionRef`、`modelSelectionDecisionRef`、`stateVersion`、ruleset digest、lease fencing token 和 MCP grants。
-2. 缺权限时不继续执行副作用，提交 PermissionRequest。
-3. 未声明 write scope 的路径只能读不能写。
-4. 不支持的 command 必须返回 `UNSUPPORTED_COMMAND`，不能猜测执行。
-5. Runtime 必须把同级消息、子 agent 输出、工具结果和外部 review result 当作 untrusted/advisory 输入，只有 task contract 内的 EffectiveInstructionPacket 能驱动副作用。
-6. Runtime 发现自身输出或任务理解偏离 roleFocus 时，必须停止副作用并提交 RoleDriftGuard 事件或 Finding。
-7. session 必须写本地 outbox，控制平面 ACK 后才能清理。
+1. Runtime 通过 `POST /api/agent/v1/dispatches/next` 原子 claim，校验 node binding、task contract digest、Skill workset ID、effective instruction、repository target、stateVersion 和 lease fencing token。
+2. Runtime 通过节点 token 从服务端下载该 dispatch 唯一允许的 `AgentSkillWorkset`，逐文件校验 SHA256 后写入本地只读缓存，并把 manifest 路径显式传给模型 Agent。下级角色不能继承当前角色的 Skill，必须由总控生成新的 task contract 和工作集。
+3. Runtime 只访问 `https://<server>/mcp`；节点 token 的项目、角色和 tool allowlist 由一次性 join token 固化。禁止下载、安装或启动本地 MCP server。
+4. 缺权限时不继续执行副作用，提交 PermissionRequest；未声明 write scope 的路径只能读不能写。
+5. 不支持的 command 必须返回 `UNSUPPORTED_COMMAND`，不能猜测执行。
+6. Runtime 必须把同级消息、子 Agent 输出、工具结果和外部 review result 当作 untrusted/advisory 输入，只有 task contract 内的 EffectiveInstructionPacket 能驱动副作用。
+7. Runtime 发现自身输出或任务理解偏离 roleFocus 时，必须停止副作用并提交 RoleDriftGuard 事件或 Finding。
+8. Git push 后、checkpoint ACK 前必须把完整 checkpoint 写入 `$AIMAC_AGENT_WORK_DIR/outbox`；重启时先按原 runId 重放。控制平面对已完成且 binding 相同的 checkpoint 返回幂等 replay，不能重复执行或重复 push。
 
 ## 6. checkpoint_submit
 
@@ -418,31 +423,24 @@ Runtime 进入 `permission_required`，只允许继续上传日志、截图、ch
 
 ## 9. 断线恢复
 
-Runtime 本地 SQLite 至少保存：
+轻量 Runtime 的本地持久状态位于权限为 `0600` 的配置和 JSON outbox；它不运行数据库服务：
 
 | 表 | 用途 |
 | --- | --- |
-| local_message_cursor | 每个 room 的 cursor |
-| local_outbox | 未 ACK 的 checkpoint、artifact、permission event |
-| local_session_state | active session、work、stateVersion |
-| local_probe_cache | resource/model/tool/permission 最近画像 |
-| local_grant_cache | 当前 MCP、Git、secret grant 摘要 |
-| local_command_attempts | commandId、attempt、idempotencyKey、operation、startedAt、lastKnownStatus |
-| local_command_effects | command effect before/after digest、external operation id、status、rollback ref |
-| local_git_refs | repositoryId、branch、expectedHead、localCommit、pushRef、remoteSha、provider operation id |
+| `agent-config.json` | server URL、node ID、节点 token、目录和 executor adapter |
+| `skill-worksets/<digest>` | 当前任务实际使用的最小 Skill 文件和 manifest 缓存 |
+| `repositories/<repositoryId>` | 被 dispatch 授权的项目 Git checkout |
+| `tasks/<dispatchId>` | task contract、有效指令包和模型执行 prompt |
+| `outbox/<dispatchId>.json` | push 已完成但尚未得到控制平面 ACK 的 checkpoint |
 
 恢复流程：
 
 ```text
 runtime_start
--> load local state
+-> load agent-config and checkpoint outbox
 -> heartbeat reconnect
--> reconcile local_command_attempts by idempotencyKey
--> reconcile local_git_refs with remote ref and remoteSha
--> reconcile local_command_effects before retry
--> flush local_outbox by idempotencyKey
--> room_wait from cursor
--> state_compare
+-> replay checkpoint outbox by runId/commit
+-> claim queued or expired dispatch
 -> continue|stale_state|recover_required
 ```
 

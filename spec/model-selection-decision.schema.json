@@ -59,6 +59,26 @@
       "type": "string",
       "pattern": "^sha256:[a-fA-F0-9]{64}$"
     },
+    "taskExecutionClass": {
+      "type": "string",
+      "enum": ["deep_analysis", "implementation", "verification", "short_execution", "mixed_analysis_implementation"]
+    },
+    "splitRequired": {
+      "type": "boolean"
+    },
+    "maxModelTier": {
+      "$ref": "#/$defs/modelTier"
+    },
+    "maxReasoningLevel": {
+      "type": "string",
+      "enum": ["low", "standard", "medium", "high", "max", "ultra"]
+    },
+    "escalationAllowed": {
+      "type": "boolean"
+    },
+    "escalationRationaleRefs": {
+      "$ref": "#/$defs/refArray"
+    },
     "selectedAgentSkillRef": {
       "type": "string",
       "minLength": 1
@@ -79,7 +99,17 @@
           "type": "string",
           "minLength": 1
         },
+        "modelTier": {
+          "$ref": "#/$defs/modelTier"
+        },
         "reasoningLevel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxModelTier": {
+          "$ref": "#/$defs/modelTier"
+        },
+        "maxReasoningLevel": {
           "type": "string",
           "minLength": 1
         },
@@ -123,6 +153,13 @@
           "capabilityProfileRef": {
             "type": "string",
             "minLength": 1
+          },
+          "reasoningLevel": {
+            "type": "string",
+            "minLength": 1
+          },
+          "modelTier": {
+            "$ref": "#/$defs/modelTier"
           },
           "rejectionReason": {
             "type": "string"
@@ -265,6 +302,10 @@
         "vllm",
         "custom"
       ]
+    },
+    "modelTier": {
+      "type": "string",
+      "enum": ["standard", "frontier_economy", "frontier_standard", "frontier_plus"]
     }
   }
 }

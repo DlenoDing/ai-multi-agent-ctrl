@@ -407,7 +407,7 @@ try {
   if (forgedMissingManifest.response.status !== 409) {
     throw new Error(`expected forged missing manifest 409, got ${forgedMissingManifest.response.status}`);
   }
-  const workerResult = await jsonFetch(port, "/api/agent-runtime/run", {
+  const workerResult = await jsonFetch(port, "/api/verification/agent-runtime/run", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-agent-runtime-worker", authorization: agentAuth},
     body: JSON.stringify({taskGroupId: "tg_runtime_management", maxJobs: 1})

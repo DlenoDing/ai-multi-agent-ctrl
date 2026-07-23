@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/agent-skill-workset.schema.json",
+  "title": "AgentSkillWorkset",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "worksetId", "worksetDigest", "projectId", "taskGroupId", "workItemId", "roleId", "synchronizationMode", "requiredSkillRefs", "overlays", "files", "executionDirective", "createdAt"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "agent-skill-workset/v1"},
+    "worksetId": {"type": "string", "pattern": "^skillset_[a-fA-F0-9]{24}$"},
+    "worksetDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
+    "projectId": {"type": "string", "minLength": 1},
+    "taskGroupId": {"type": "string", "minLength": 1},
+    "workItemId": {"type": "string", "minLength": 1},
+    "roleId": {"type": "string", "minLength": 1},
+    "synchronizationMode": {"type": "string", "const": "server_managed_on_demand"},
+    "requiredSkillRefs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "overlays": {"type": "array", "items": {"type": "object"}},
+    "files": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["path", "content", "contentDigest"], "properties": {"path": {"type": "string", "minLength": 1}, "content": {"type": "string", "minLength": 1}, "contentDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"}, "sourcePath": {"type": "string"}}}},
+    "executionDirective": {"type": "string", "minLength": 1},
+    "createdAt": {"type": "string", "format": "date-time"}
+  }
+}

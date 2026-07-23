@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/agent-runtime-node.schema.json",
+  "title": "AgentRuntimeNode",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schemaVersion", "nodeId", "nodeName", "projectIds", "allowedRoles", "allowedMcpTools", "status", "admission", "credentialDigest", "credentialIssuedAt", "credentialExpiresAt", "profile", "profileDigest", "lastHeartbeatAt", "createdAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "agent-runtime-node/v1"},
+    "nodeId": {"type": "string", "minLength": 1},
+    "nodeName": {"type": "string", "minLength": 1},
+    "projectIds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "allowedRoles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "allowedMcpTools": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "status": {"type": "string", "enum": ["initializing", "online", "degraded", "offline", "draining", "revoked"]},
+    "admission": {"type": "string", "enum": ["read_only", "limited", "full"]},
+    "credentialDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
+    "credentialIssuedAt": {"type": "string", "format": "date-time"},
+    "credentialExpiresAt": {"type": "string", "format": "date-time"},
+    "previousCredentialDigest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "previousCredentialExpiresAt": {"type": "string", "format": "date-time"},
+    "profile": {"type": "object"},
+    "profileDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
+    "lastHeartbeatAt": {"type": "string", "format": "date-time"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  }
+}

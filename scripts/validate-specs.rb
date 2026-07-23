@@ -59,10 +59,13 @@ required_runtime_files = %w[
   scripts/init-control-plane.mjs
   scripts/doctor.mjs
   scripts/doctor-mcp.mjs
-  scripts/doctor-mcp-runtime-run.mjs
+  scripts/doctor-agent-remote.mjs
+  scripts/agentctl.mjs
+  scripts/install-agent.sh
   scripts/register-mcp-client.mjs
   scripts/sync-agent-skills.mjs
   apps/mcp-server/server.mjs
+  apps/agent-runtime/runtime.mjs
   apps/control-plane-ui/server.mjs
   apps/control-plane-ui/lib/control-plane-core.mjs
   apps/control-plane-ui/lib/state-store.mjs
@@ -71,13 +74,16 @@ required_runtime_files = %w[
   apps/control-plane-ui/public/app.js
   data/seed-state.json
   spec/agent-dispatch.schema.json
+  spec/agent-join-token.schema.json
+  spec/agent-runtime-node.schema.json
+  spec/agent-skill-workset.schema.json
 ]
 
 required_runtime_files.each do |path|
   errors << "runtime entrypoint missing: #{path}" unless File.exist?(File.join(ROOT, path))
 end
 
-required_npm_scripts = %w[init dev start shell:start mcp:start mcp:register mcp:doctor skills:sync contract:check validate doctor docker:build docker:up]
+required_npm_scripts = %w[init dev start shell:start mcp:start mcp:register mcp:doctor agentctl agent:doctor skills:sync contract:check validate doctor docker:build docker:up docker:doctor]
 available_scripts = package_json.fetch("scripts", {})
 missing_npm_scripts = required_npm_scripts.reject { |script_name| available_scripts.key?(script_name) }
 errors << "package.json missing scripts: #{missing_npm_scripts.join(", ")}" unless missing_npm_scripts.empty?
@@ -87,6 +93,9 @@ unless File.executable?(File.join(ROOT, "scripts/start.sh"))
 end
 unless File.executable?(File.join(ROOT, "scripts/docker-up.sh"))
   errors << "scripts/docker-up.sh must be executable"
+end
+unless File.executable?(File.join(ROOT, "scripts/install-agent.sh"))
+  errors << "scripts/install-agent.sh must be executable"
 end
 
 dockerfile = File.read(File.join(ROOT, "Dockerfile"))
@@ -265,7 +274,7 @@ required_embedded_services = %w[
   control-plane
   room-broker
   scheduler
-  agent-runtime
+  agent-gateway
   identity-service
   ui-console-service
   repository-router
@@ -350,13 +359,16 @@ state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-
 doctor_source = File.read(File.join(ROOT, "scripts/doctor.mjs"))
 mcp_source = File.read(File.join(ROOT, "apps/mcp-server/server.mjs"))
 mcp_doctor_source = File.read(File.join(ROOT, "scripts/doctor-mcp.mjs"))
-mcp_runtime_doctor_source = File.read(File.join(ROOT, "scripts/doctor-mcp-runtime-run.mjs"))
+agent_doctor_source = File.read(File.join(ROOT, "scripts/doctor-agent-remote.mjs"))
+agent_runtime_source = File.read(File.join(ROOT, "apps/agent-runtime/runtime.mjs"))
+agent_gateway_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/agent-gateway.mjs"))
+agent_installer_source = File.read(File.join(ROOT, "scripts/install-agent.sh"))
 mcp_register_source = File.read(File.join(ROOT, "scripts/register-mcp-client.mjs"))
 skill_sync_source = File.read(File.join(ROOT, "scripts/sync-agent-skills.mjs"))
 run_with_env_source = File.read(File.join(ROOT, "scripts/run-with-env.mjs"))
 contract_check_source = File.read(File.join(ROOT, "scripts/contract-check.mjs"))
 {
-  "server must expose agent runtime worker endpoint" => "/api/agent-runtime/run",
+  "server must isolate deterministic agent runtime worker to verification endpoint" => "/api/verification/agent-runtime/run",
   "server must scope state reads by authenticated account" => "scopedStateForAccount",
   "server must require auth for state reads" => "auth_required",
   "server must gate deterministic worker behind environment flag" => "AIMAC_ALLOW_LOCAL_DETERMINISTIC_WORKER",
@@ -387,7 +399,7 @@ end
 expected_mcp_tools = {
   "orchestration-mcp" => %w[project_create task_group_create work_item_create work_assign orchestrator_run state_get],
   "room-mcp" => %w[room_join room_send room_wait room_ack],
-  "agent-control-mcp" => %w[node_register node_probe session_start session_pause session_cancel session_recover runtime_run],
+  "agent-control-mcp" => %w[node_register node_probe session_start session_pause session_cancel session_recover dispatch_status],
   "scheduler-mcp" => %w[model_select session_place work_assign capacity_snapshot execution_topology_plan derived_task_classify],
   "resource-mcp" => %w[lease_claim lease_release resource_snapshot],
   "model-mcp" => %w[model_capabilities model_policy_get model_select],
@@ -412,13 +424,13 @@ expected_mcp_tools.each do |server_id, tool_names|
 end
 errors << "MCP server must implement JSON-RPC initialize" unless mcp_source.include?("initialize") && mcp_source.include?("tools/list") && mcp_source.include?("tools/call")
 errors << "MCP server must enforce write idempotency" unless mcp_source.include?("idempotency_key_required")
-errors << "MCP server must bind MCP token to generated runtime token file" unless mcp_source.include?("currentMcpTokenDigest") && mcp_source.include?("mcp_write_token_binding_required")
+errors << "HTTP control plane must host Streamable HTTP MCP" unless server_source.include?("handleMcp") && server_source.include?("pathname === \"/mcp\"") && mcp_source.include?("mcp/streamable-http")
+errors << "MCP server must require a remote authenticated principal" unless mcp_source.include?("mcp_remote_auth_required") && server_source.include?("mcpContextFromRequest")
 errors << "MCP server must make write dryRun non-mutating" unless mcp_source.include?("wouldCall") && mcp_doctor_source.include?("write MCP dryRun changed stateVersion")
 errors << "MCP server must reject idempotency key reuse conflicts" unless mcp_source.include?("idempotency_key_reuse_conflict") && mcp_doctor_source.include?("MCP idempotency key reuse")
 errors << "MCP doctor must exercise input validation" unless mcp_doctor_source.include?("MCP input schema did not reject unknown properties") && mcp_doctor_source.include?("MCP repository target selection accepted a non-git-trackable path")
-errors << "MCP server must require write grants" unless mcp_source.include?("mcp_write_grant_required") && mcp_source.include?("validateMcpGrant")
-errors << "MCP server must block runtime_run unless explicitly enabled" unless mcp_source.include?("AIMAC_MCP_ENABLE_RUNTIME_RUN") && mcp_doctor_source.include?("runtime_run was not blocked")
-errors << "MCP doctor must verify enabled runtime_run end-to-end" unless package_json.dig("scripts", "mcp:doctor").to_s.include?("doctor-mcp-runtime-run.mjs") && mcp_runtime_doctor_source.include?("mcp runtime_run doctor ok")
+errors << "MCP server must require principal-scoped tool grants" unless mcp_source.include?("mcp_tool_not_granted_to_principal") && mcp_source.include?("validateMcpGrant")
+errors << "production MCP must not expose server-side agent execution" if mcp_source.include?("agent-control-mcp.runtime_run") || !mcp_doctor_source.include?("remote MCP still exposes server-side Agent execution")
 errors << "MCP server must reject full state scope by default" unless mcp_source.include?("full_state_scope_not_allowed") && mcp_doctor_source.include?("state_get full scope was not denied")
 errors << "MCP server must enforce unique active lease and fencing token" unless mcp_source.include?("lease_already_active") && mcp_source.include?("lease_fencing_token_mismatch") && mcp_doctor_source.include?("lease_claim allowed a second active holder")
 errors << "MCP grant validation must require active leases for lease-bound tools" unless mcp_source.include?("active_mcp_lease_required") && mcp_source.include?("leaseRequiredForTool")
@@ -435,9 +447,15 @@ errors << "doctor must isolate verification state from configured PostgreSQL sto
 errors << "MCP register script must generate Codex config" unless mcp_register_source.include?("codex_config.toml")
 errors << "MCP register script must generate Claude config" unless mcp_register_source.include?("claude_desktop_config.json")
 errors << "MCP register script must generate Cursor config" unless mcp_register_source.include?("cursor_mcp.json")
-errors << "MCP register script must enable local write grants in generated configs" unless mcp_register_source.include?("AIMAC_MCP_LOCAL_WRITE_ENABLE")
+errors << "MCP register script must generate remote Streamable HTTP configs" unless mcp_register_source.include?("streamable-http") && mcp_register_source.include?("--server-url=") && mcp_register_source.include?("url: mcpUrl")
 errors << "MCP register script must allow env-controlled output dir" unless mcp_register_source.include?("AIMAC_MCP_CONFIG_DIR")
-errors << "MCP doctor must spawn from generated client config" unless mcp_doctor_source.include?("mcp-server.json") && mcp_doctor_source.include?("serverConfig.command")
+errors << "MCP doctor must verify remote-only generated config" unless mcp_doctor_source.include?("mcp-server.json") && mcp_doctor_source.include?("entry.command") && mcp_doctor_source.include?("streamable-http")
+errors << "local MCP stdio server must be disabled by default" unless mcp_source.include?("Local MCP stdio startup is disabled") && mcp_doctor_source.include?("Agent-local MCP stdio server was not disabled")
+errors << "Agent installer must download and verify the server runtime" unless agent_installer_source.include?("agent-runtime.mjs.sha256") && agent_installer_source.include?("checksum verification failed")
+errors << "Agent Gateway must implement one-time join, heartbeat, self-check and dispatch claim" unless %w[registerAgentNode heartbeatAgentNode selfCheckAgentNode claimNextDispatch].all? { |needle| agent_gateway_source.include?(needle) }
+errors << "Agent Gateway must issue server-managed skill worksets" unless agent_gateway_source.include?("agent-skill-workset/v1") && agent_gateway_source.include?("server_managed_on_demand") && agent_gateway_source.include?("Child roles MUST receive")
+errors << "Agent Runtime must use remote MCP and on-demand skill worksets" unless agent_runtime_source.include?("AIMAC_MCP_URL") && agent_runtime_source.include?("syncSkillWorkset") && agent_runtime_source.include?("do not start or install any local MCP server")
+errors << "Agent doctor must verify remote join/MCP/skill/dispatch/Git/checkpoint flow" unless agent_doctor_source.include?("one-command join") && agent_doctor_source.include?("on-demand skill workset") && agent_doctor_source.include?("commit, push and checkpoint")
 errors << "npm scripts must load .env through run-with-env wrapper" unless package_json.dig("scripts", "start").to_s.include?("run-with-env") && package_json.dig("scripts", "mcp:start").to_s.include?("run-with-env")
 errors << "run-with-env must parse .env before importing target script" unless run_with_env_source.include?("loadDotEnv") && run_with_env_source.include?("await import")
 errors << "contract-check must validate runtime and McpGrant schemas" unless contract_check_source.include?("RuntimeBootstrapProfile") || (contract_check_source.include?("runtime-bootstrap.schema.json") && contract_check_source.include?("mcp-grant.schema.json"))
