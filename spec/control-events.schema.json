@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/control-events.schema.json",
+  "title": "ControlEventEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "projectId",
+    "type",
+    "stateVersion",
+    "idempotencyKey",
+    "createdAt",
+    "payload"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "control-event/v1"
+    },
+    "eventId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string"
+    },
+    "roomId": {
+      "type": "string"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sender": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "roleId": {
+          "type": "string"
+        },
+        "agentNodeId": {
+          "type": "string"
+        }
+      }
+    },
+    "recipients": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "command",
+        "delta",
+        "checkpoint",
+        "finding",
+        "decision",
+        "decision_request",
+        "review_request",
+        "review_result",
+        "handoff",
+        "blocker",
+        "progress",
+        "wake",
+        "permission_required",
+        "permission_resolution",
+        "close_candidate",
+        "spec_drift"
+      ]
+    },
+    "priority": {
+      "type": "string",
+      "enum": ["normal", "important", "p0"],
+      "default": "normal"
+    },
+    "stateVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "correlationId": {
+      "type": "string"
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

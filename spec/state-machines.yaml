@@ -1,0 +1,213 @@
+schemaVersion: "state-machines/v1"
+machines:
+  TaskGroup:
+    initial: "intake"
+    terminal: ["closed", "aborted"]
+    states:
+      - "intake"
+      - "discovery"
+      - "product_design"
+      - "solution_design"
+      - "ui_design"
+      - "development"
+      - "global_development_review"
+      - "verification"
+      - "repair"
+      - "reverification"
+      - "integration"
+      - "release"
+      - "online_quality"
+      - "closed"
+      - "aborted"
+    transitions:
+      - from: "intake"
+        to: "discovery"
+        actor: "orchestrator"
+        requires: ["objective_digest", "boundary_digest"]
+      - from: "development"
+        to: "global_development_review"
+        actor: "orchestrator"
+        requires: ["all_required_work_code_complete"]
+      - from: "verification"
+        to: "repair"
+        actor: "orchestrator"
+        requires: ["accepted_findings"]
+      - from: "reverification"
+        to: "integration"
+        actor: "orchestrator"
+        requires: ["independent_reverify_passed"]
+      - from: "integration"
+        to: "release"
+        actor: "release"
+        requires: ["integration_batch_verified", "release_manifest"]
+      - from: "online_quality"
+        to: "closed"
+        actor: "orchestrator"
+        requires: ["close_barrier_satisfied"]
+
+  WorkItem:
+    initial: "draft"
+    terminal: ["closed", "aborted", "superseded"]
+    states:
+      - "draft"
+      - "ready"
+      - "assigned"
+      - "in_progress"
+      - "checkpoint_submitted"
+      - "code_complete"
+      - "review_requested"
+      - "review_passed"
+      - "verification_ready"
+      - "verified"
+      - "reverify_required"
+      - "invalidated"
+      - "close_candidate"
+      - "closed"
+      - "blocked_dependency"
+      - "blocked_resource"
+      - "permission_required"
+      - "needs_decision"
+      - "stale_state"
+      - "reopened"
+      - "superseded"
+      - "aborted"
+    transitions:
+      - from: "ready"
+        to: "assigned"
+        actor: "scheduler"
+        requires: ["agent_selected", "model_selected", "lease_admitted"]
+      - from: "assigned"
+        to: "in_progress"
+        actor: "work-session"
+        requires: ["task_contract_valid"]
+      - from: "in_progress"
+        to: "checkpoint_submitted"
+        actor: "work-session"
+        requires: ["checkpoint"]
+      - from: "checkpoint_submitted"
+        to: "review_requested"
+        actor: "orchestrator"
+        requires: ["evidence_refs"]
+      - from: "review_requested"
+        to: "review_passed"
+        actor: "reviewer"
+        requires: ["review_report"]
+      - from: "verified"
+        to: "close_candidate"
+        actor: "qa"
+        requires: ["verification_evidence"]
+      - from: "close_candidate"
+        to: "closed"
+        actor: "orchestrator"
+        requires: ["close_barrier_work_item"]
+
+  WorkSession:
+    initial: "starting"
+    terminal: ["completed_objective", "recycled", "failed", "aborted"]
+    states:
+      - "starting"
+      - "active"
+      - "waiting_room_event"
+      - "waiting_dependency"
+      - "permission_required"
+      - "needs_decision"
+      - "stale_state"
+      - "completed_objective"
+      - "recycled"
+      - "failed"
+      - "aborted"
+    transitions:
+      - from: "starting"
+        to: "active"
+        actor: "agent-runtime"
+        requires: ["session_start_valid", "local_state_initialized"]
+      - from: "active"
+        to: "permission_required"
+        actor: "agent-runtime"
+        requires: ["permission_request_submitted"]
+      - from: "permission_required"
+        to: "active"
+        actor: "permission-gateway"
+        requires: ["permission_resolution_delta"]
+      - from: "active"
+        to: "completed_objective"
+        actor: "work-session"
+        requires: ["checkpoint", "evidence_refs"]
+
+  Command:
+    initial: "created"
+    terminal: ["succeeded", "failed", "cancelled", "timed_out", "compensated", "dlq"]
+    states:
+      - "created"
+      - "admitted"
+      - "dispatched"
+      - "running"
+      - "checkpointed"
+      - "succeeded"
+      - "failed"
+      - "cancelled"
+      - "timed_out"
+      - "compensated"
+      - "dlq"
+    transitions:
+      - from: "created"
+        to: "admitted"
+        actor: "policy-engine"
+        requires: ["policy_passed", "idempotency_key"]
+      - from: "admitted"
+        to: "dispatched"
+        actor: "command-bus"
+        requires: ["target_available"]
+      - from: "running"
+        to: "succeeded"
+        actor: "agent-runtime"
+        requires: ["result_ref", "effect_record_if_side_effect"]
+      - from: "failed"
+        to: "dlq"
+        actor: "command-bus"
+        requires: ["max_attempts_exceeded"]
+
+  PermissionRequest:
+    initial: "observed"
+    terminal: ["resolved", "aborted", "rejected"]
+    states:
+      - "observed"
+      - "classified"
+      - "routed_to_controller"
+      - "approved"
+      - "rejected"
+      - "external_capability_required"
+      - "reassigned"
+      - "grant_issued"
+      - "retrying"
+      - "resolved"
+      - "aborted"
+    transitions:
+      - from: "observed"
+        to: "classified"
+        actor: "permission-gateway"
+        requires: ["prompt_type", "artifact_ref", "safe_retry_point"]
+      - from: "classified"
+        to: "routed_to_controller"
+        actor: "permission-gateway"
+        requires: ["risk_level", "suggested_actions"]
+      - from: "routed_to_controller"
+        to: "grant_issued"
+        actor: "orchestrator"
+        requires: ["policy_passed", "grant_ref"]
+      - from: "routed_to_controller"
+        to: "reassigned"
+        actor: "scheduler"
+        requires: ["alternate_agent_has_capability"]
+      - from: "routed_to_controller"
+        to: "external_capability_required"
+        actor: "orchestrator"
+        requires: ["external_boundary_classified"]
+      - from: "grant_issued"
+        to: "retrying"
+        actor: "agent-runtime"
+        requires: ["resolution_delta_ack"]
+      - from: "retrying"
+        to: "resolved"
+        actor: "agent-runtime"
+        requires: ["work_continued_or_checkpointed"]

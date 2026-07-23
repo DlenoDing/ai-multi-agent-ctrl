@@ -4,7 +4,7 @@
 
 Agent Runtime 是公网或内网 Agent 节点上的本地控制进程，负责节点入网、心跳、资源探测、模型探测、MCP 本地代理、session 启动、checkpoint 上传、artifact 上传、权限阻断回传和断线恢复。
 
-Runtime 不是无限远程 shell。所有副作用都必须由控制平面授权，并绑定 project、taskGroup、work、session、command、lease 和 audit。
+Runtime 不是无限远程 shell。所有副作用都必须由控制平面授权，并绑定 project、taskGroup、work、session、command、lease 和 audit。Runtime 的所有控制入口都面向 AI Agent 和系统服务，不依赖非系统执行路径处理项目工作。
 
 ## 2. 一键加入流程
 
@@ -19,7 +19,7 @@ agentctl join-token create \
   --max-uses 1
 ```
 
-受信开发环境的简单加入命令：
+受信执行环境的简单加入命令：
 
 ```bash
 curl -fsSL https://control.example.com/install-agent.sh | sudo bash -s -- \
@@ -29,7 +29,7 @@ curl -fsSL https://control.example.com/install-agent.sh | sudo bash -s -- \
   --work-dir /opt/ai-agent
 ```
 
-生产环境必须使用校验版：
+高信任要求环境必须使用校验版：
 
 ```bash
 tmp="$(mktemp -d)" && cd "$tmp" && \
@@ -301,7 +301,7 @@ Runtime 进入 `permission_required`，只允许继续上传日志、截图、ch
 | resolution | Runtime 行为 |
 | --- | --- |
 | grant_issued | 刷新 profile，从 safe retry point 重试 |
-| manual_action_done | 重新 probe，对比权限变化后重试 |
+| external_capability_available | 重新 probe，对比外部能力变化后重试 |
 | reassign | 停止当前 session，提交 handoff checkpoint |
 | rejected | 标记 work blocked 或 aborted |
 | scope_reduced | 重新读取 work contract 后继续 |
@@ -336,5 +336,5 @@ runtime_start
 2. Worker Session 与 Control Agent 分离。
 3. session 结束、取消或隔离时清理临时凭据、临时文件、子进程和 shell history。
 4. 默认不允许访问其它项目目录、全局 SSH key、宿主敏感路径和未授权网络。
-5. 默认不自动批准 OS、Keychain、sudo、UAC、Screen Recording、Accessibility 权限弹窗。
+5. 默认不自动批准 OS、Keychain、sudo、UAC、Screen Recording、Accessibility 权限弹窗；这些场景只能建模为外部能力边界、预授权能力、改派或中止。
 6. 所有 command、MCP 写操作、Git 写操作和权限处理都必须进入 audit。

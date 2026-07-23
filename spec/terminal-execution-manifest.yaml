@@ -1,0 +1,176 @@
+schemaVersion: "terminal-execution-manifest/v1"
+systemId: "ai-multi-agent-ctrl"
+executionMode: "ai_agent_autonomous"
+authorityModel:
+  externalUser:
+    role: "objective_source"
+    allowedActions:
+      - "submit_objective"
+      - "define_boundary"
+      - "provide_external_capability_signal"
+    forbiddenAsExecutionDependency: true
+  orchestrator:
+    role: "canonical_controller"
+    closesTaskGroups: true
+    ownsStateVersion: true
+  decisionCenter:
+    role: "ai_decision_quorum"
+    emits: "DecisionRecord"
+  policyEngine:
+    role: "deterministic_policy_guard"
+    blocksUnauthorizedSideEffects: true
+
+nonNegotiableInvariants:
+  - id: "no_human_execution_steps"
+    rule: "Do not emit completion plans that require a human to execute project work."
+  - id: "database_is_canonical"
+    rule: "PostgreSQL state, event log, checkpoint and artifact digest are authoritative."
+  - id: "schema_before_execution"
+    rule: "All machine actions must validate against schema before side effects."
+  - id: "lease_before_write"
+    rule: "Every write-side operation must hold an active project-level lease."
+  - id: "idempotency_before_command"
+    rule: "Every command and MCP write call must include idempotencyKey."
+  - id: "independent_reverify"
+    rule: "Implementation session cannot mark its own batch as reverified."
+  - id: "permission_as_state"
+    rule: "Permission blockers must become PermissionRequest objects."
+  - id: "external_capability_boundary"
+    rule: "External systems that forbid automation must be modeled as external capability boundaries, not bypassed."
+
+roles:
+  - id: "orchestrator"
+    kind: "ai_controller"
+    responsibilities:
+      - "project_intake"
+      - "task_group_creation"
+      - "dag_planning"
+      - "session_scheduling"
+      - "state_version_control"
+      - "close_barrier_decision"
+  - id: "decision-center"
+    kind: "ai_agent_cluster"
+    responsibilities:
+      - "architecture_decision"
+      - "risk_classification"
+      - "conflict_resolution"
+      - "policy_exception_decision"
+  - id: "scheduler"
+    kind: "deterministic_service_with_ai_planner"
+    responsibilities:
+      - "agent_selection"
+      - "model_selection"
+      - "parallelism_control"
+      - "lease_admission"
+  - id: "work-session"
+    kind: "ai_agent_session"
+    responsibilities:
+      - "execute_work_item"
+      - "submit_checkpoint"
+      - "register_evidence"
+      - "return_blocker"
+  - id: "reviewer"
+    kind: "ai_agent_session"
+    responsibilities:
+      - "independent_review"
+      - "finding_submit"
+      - "reverify"
+  - id: "qa"
+    kind: "ai_agent_session"
+    responsibilities:
+      - "test_matrix_execution"
+      - "evidence_collection"
+      - "regression_validation"
+  - id: "security"
+    kind: "ai_agent_session"
+    responsibilities:
+      - "secret_review"
+      - "mcp_grant_review"
+      - "network_policy_review"
+      - "supply_chain_review"
+  - id: "release"
+    kind: "ai_agent_session"
+    responsibilities:
+      - "integration_batch"
+      - "release_manifest"
+      - "rollback_plan"
+  - id: "rule-steward"
+    kind: "ai_agent_session"
+    responsibilities:
+      - "rule_candidate"
+      - "rule_review"
+      - "ruleset_publish"
+  - id: "monitor"
+    kind: "autonomous_service_agent"
+    responsibilities:
+      - "heartbeat_monitor"
+      - "dlq_monitor"
+      - "lease_monitor"
+      - "cost_monitor"
+      - "alert_route"
+
+requiredControlObjects:
+  - "Project"
+  - "TaskGroup"
+  - "WorkItem"
+  - "WorkSession"
+  - "AgentNode"
+  - "Room"
+  - "RoomMessage"
+  - "Command"
+  - "CommandEffect"
+  - "Lease"
+  - "Checkpoint"
+  - "Artifact"
+  - "Finding"
+  - "Contract"
+  - "IntegrationBatch"
+  - "PermissionRequest"
+  - "ApprovalRequest"
+  - "DecisionRecord"
+  - "AuditLog"
+  - "Alert"
+  - "Ruleset"
+
+qualityGates:
+  required:
+    - "RequirementGate"
+    - "ArchitectureGate"
+    - "ContractGate"
+    - "CodeGate"
+    - "IntegrationGate"
+    - "SecurityGate"
+    - "EvidenceGate"
+    - "ReverificationGate"
+    - "ReleaseGate"
+    - "OnlineQualityGate"
+    - "CloseGate"
+
+autoGitPolicy:
+  commitWhen:
+    - "work_item_done"
+    - "schema_changed"
+    - "docs_changed"
+    - "checkpoint_required_before_wait"
+  pushWhen:
+    - "commit_created"
+    - "handoff"
+    - "close_candidate"
+  forbidden:
+    - "mix_unleased_changes"
+    - "push_without_status_check"
+    - "claim_done_without_evidence"
+
+completionContract:
+  requiredFields:
+    - "stateTransition"
+    - "commitRef"
+    - "pushRef"
+    - "evidenceRefs"
+    - "verificationRefs"
+    - "openMachineActionIds"
+  forbiddenPhrases:
+    - "external_executor_required"
+    - "not_machine_actionable"
+    - "理论上可以"
+    - "未验证但应该可用"

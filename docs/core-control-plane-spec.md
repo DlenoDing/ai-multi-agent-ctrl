@@ -2,9 +2,9 @@
 
 ## 1. 范围
 
-本文档把总体设计收敛为 v0.1 可实现的控制平面规格，覆盖数据库核心表、HTTP API、MCP tools、事件模型、事务边界和可靠性规则。
+本文档把总体设计收敛为终态控制平面规格，覆盖数据库核心表、HTTP API、MCP tools、事件模型、事务边界和可靠性规则。该规格的消费者是 Orchestrator、Agent Runtime、MCP Proxy、Scheduler、Monitor Agent 和自动化验证器，不是外部操作流程。
 
-控制平面是系统权威状态来源。Agent Runtime、本地 SQLite、Room WS、MCP Proxy、UI 都不能越过控制平面直接改变权威状态。
+控制平面是系统权威状态来源。Agent Runtime、本地 SQLite、Room WS、MCP Proxy、UI 和外部脚本都不能越过控制平面直接改变权威状态。
 
 ## 2. 核心实体
 
@@ -22,10 +22,12 @@ Lease
 Checkpoint
 Artifact
 PermissionRequest
+ApprovalRequest
+DecisionRecord
 AuditLog
 ```
 
-v0.1 只保留上面实体的最小字段。Contract、IntegrationBatch、ApprovalRequest、EnvironmentSnapshot 在 v0.1 先保留表边界或 JSON placeholder，不阻塞核心闭环。
+终态规格不区分“先做/后做”的非系统执行阶段。所有实体都必须在 schema、state machine 和事件模型中拥有明确边界。具体编码时可以由 Orchestrator 按依赖 DAG 自动分批提交，但不能把未实现实体设计成需要非系统执行路径补齐的开放项。
 
 ## 3. 数据库核心表
 
@@ -268,7 +270,7 @@ unique(project_id, resource_type, resource_key) where status = 'active'
 
 ## 4. HTTP API
 
-v0.1 HTTP API 供 UI、CLI 和测试脚本使用。所有写接口必须接收 `Idempotency-Key` header。
+HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证器和只读观察 UI 使用。所有写接口必须接收 `Idempotency-Key` header，并写入 audit。
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
@@ -291,7 +293,7 @@ v0.1 HTTP API 供 UI、CLI 和测试脚本使用。所有写接口必须接收 `
 
 ## 5. MCP tools
 
-v0.1 至少内置以下 MCP tools。MCP tool 与 HTTP API 可以共用 service layer，但 MCP 调用必须经过 MCP Proxy。
+系统必须内置以下 MCP tools。MCP tool 与 HTTP API 可以共用 service layer，但 MCP 调用必须经过 MCP Proxy、policy、lease、idempotency 和 audit。
 
 | MCP server | tools |
 | --- | --- |

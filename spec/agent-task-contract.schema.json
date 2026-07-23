@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/agent-task-contract.schema.json",
+  "title": "AgentTaskContract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "taskId",
+    "workId",
+    "roleId",
+    "roomId",
+    "stateVersion",
+    "rulesetDigest",
+    "inputLocators",
+    "inputDigests",
+    "writeScope",
+    "model",
+    "stopOrReturn",
+    "outputContract"
+  ],
+  "properties": {
+    "contractVersion": {
+      "type": "string",
+      "const": "agent-task-contract/v1"
+    },
+    "taskId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roleId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roomId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stateVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "rulesetDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "inputLocators": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "inputDigests": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "writeScope": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resourceType", "resourceKey"],
+        "properties": {
+          "resourceType": {
+            "type": "string",
+            "enum": [
+              "git_repo",
+              "git_worktree",
+              "file_path",
+              "dir_path",
+              "db_schema",
+              "db_table",
+              "mcp_server",
+              "mcp_tool",
+              "external_provider",
+              "artifact_path",
+              "environment"
+            ]
+          },
+          "resourceKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "leaseId": {
+            "type": "string"
+          },
+          "fencingToken": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modelId", "reasoningLevel", "selectionMode"],
+      "properties": {
+        "modelId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "alias": {
+          "type": "string"
+        },
+        "reasoningLevel": {
+          "type": "string"
+        },
+        "selectionMode": {
+          "type": "string",
+          "enum": ["fixed_model", "fixed_tier", "auto_best", "auto_fast", "cost_aware"]
+        }
+      }
+    },
+    "mcpGrants": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "permissionPolicy": {
+      "type": "object",
+      "additionalProperties": true,
+      "default": {}
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "stopOrReturn": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "done",
+          "blocked",
+          "stale_state",
+          "needs_decision",
+          "permission_required",
+          "spec_drift",
+          "failed"
+        ]
+      }
+    },
+    "outputContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredOutputs", "evidenceRequired"],
+      "properties": {
+        "requiredOutputs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidenceRequired": {
+          "type": "boolean"
+        },
+        "checkpointRequired": {
+          "type": "boolean",
+          "default": true
+        },
+        "independentReviewRequired": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  }
+}
