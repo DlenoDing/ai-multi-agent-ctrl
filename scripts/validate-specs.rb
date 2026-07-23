@@ -43,6 +43,33 @@ gates = load_yaml("spec/gates.yaml")
 close_barrier = load_json("spec/close-barrier.schema.json")
 completion_readiness = load_json("spec/completion-readiness.schema.json")
 control_events = load_json("spec/control-events.schema.json")
+package_json = load_json("package.json")
+
+required_runtime_files = %w[
+  package.json
+  Dockerfile
+  docker-compose.yml
+  scripts/start.sh
+  scripts/init-control-plane.mjs
+  apps/control-plane-ui/server.mjs
+  apps/control-plane-ui/public/index.html
+  apps/control-plane-ui/public/styles.css
+  apps/control-plane-ui/public/app.js
+  data/seed-state.json
+]
+
+required_runtime_files.each do |path|
+  errors << "runtime entrypoint missing: #{path}" unless File.exist?(File.join(ROOT, path))
+end
+
+required_npm_scripts = %w[init dev start shell:start validate doctor docker:build docker:up]
+available_scripts = package_json.fetch("scripts", {})
+missing_npm_scripts = required_npm_scripts.reject { |script_name| available_scripts.key?(script_name) }
+errors << "package.json missing scripts: #{missing_npm_scripts.join(", ")}" unless missing_npm_scripts.empty?
+
+unless File.executable?(File.join(ROOT, "scripts/start.sh"))
+  errors << "scripts/start.sh must be executable"
+end
 
 manifest["requiredMachineSpecs"].each do |spec_path|
   errors << "manifest required spec missing: #{spec_path}" unless File.exist?(File.join(ROOT, spec_path))
@@ -132,6 +159,14 @@ critical_schema_titles = Set.new(%w[
   CompletionReadinessCheck
   RuntimeIssuePattern
   SystemUpgradeCandidate
+  RuntimeBootstrapProfile
+  Account
+  AccessControlGrant
+  ManagementConsoleSurface
+  ProgressSnapshot
+  InstructionEnvelope
+  SharedDefinitionContract
+  RepositoryOutputTarget
   AgentTaskContract
   CloseBarrier
 ])
@@ -158,6 +193,10 @@ end
 invariant_text = manifest.fetch("nonNegotiableInvariants").map { |item| item.fetch("rule") }.join("\n")
 if invariant_text.match?(/[Hh][Uu][Mm][Aa][Nn]|[Mm][Aa][Nn][Uu][Aa][Ll]|[Oo][Pp][Ee][Rr][Aa][Tt][Oo][Rr]|[Pp][Rr][Oo][Jj][Ee][Cc][Tt] [Mm][Aa][Nn][Aa][Gg][Ee][Rr]/)
   errors << "nonNegotiableInvariants contain forbidden non-system actor wording"
+end
+
+unless manifest.dig("repositoryOutputPolicy", "outputPolicy") == "project_git_repository_only"
+  errors << "repositoryOutputPolicy.outputPolicy must be project_git_repository_only"
 end
 
 fail_with(errors)

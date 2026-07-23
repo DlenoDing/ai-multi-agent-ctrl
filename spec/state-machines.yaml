@@ -1960,3 +1960,339 @@ machines:
         to: "superseded"
         actor: "monitor"
         requires: ["successor_upgrade_candidate_ref"]
+
+  RuntimeBootstrapProfile:
+    initial: "draft"
+    terminal: ["stopped", "failed"]
+    states:
+      - "draft"
+      - "validated"
+      - "initialized"
+      - "running"
+      - "degraded"
+      - "stopped"
+      - "failed"
+    transitions:
+      - from: "draft"
+        to: "validated"
+        actor: "agent-runtime"
+        requires: ["bootstrap_profile_valid", "entrypoints_available"]
+      - from: "validated"
+        to: "initialized"
+        actor: "agent-runtime"
+        requires: ["runtime_initialized", "audit_ref"]
+      - from: "initialized"
+        to: "running"
+        actor: "agent-runtime"
+        requires: ["runtime_health_verified"]
+      - from: "running"
+        to: "degraded"
+        actor: "monitor"
+        requires: ["service_health_failed", "alert_route"]
+      - from: "degraded"
+        to: "running"
+        actor: "agent-runtime"
+        requires: ["service_health_verified"]
+      - from: "running"
+        to: "stopped"
+        actor: "agent-runtime"
+        requires: ["shutdown_requested", "audit_ref"]
+      - from: "running"
+        to: "failed"
+        actor: "monitor"
+        requires: ["failure_evidence"]
+      - from: "degraded"
+        to: "failed"
+        actor: "monitor"
+        requires: ["failure_evidence"]
+
+  Account:
+    initial: "invited"
+    terminal: ["retired"]
+    states:
+      - "invited"
+      - "active"
+      - "suspended"
+      - "locked"
+      - "retired"
+    transitions:
+      - from: "invited"
+        to: "active"
+        actor: "identity-service"
+        requires: ["account_invite_ref", "auth_policy_valid", "policy_passed", "audit_ref"]
+      - from: "active"
+        to: "suspended"
+        actor: "identity-service"
+        requires: ["suspension_decision_ref", "audit_ref"]
+      - from: "active"
+        to: "locked"
+        actor: "identity-service"
+        requires: ["risk_level", "lock_decision_ref", "audit_ref"]
+      - from: "suspended"
+        to: "active"
+        actor: "identity-service"
+        requires: ["reactivation_decision_ref", "policy_passed", "audit_ref"]
+      - from: "locked"
+        to: "active"
+        actor: "identity-service"
+        requires: ["reactivation_decision_ref", "policy_passed", "audit_ref"]
+      - from: "active"
+        to: "retired"
+        actor: "identity-service"
+        requires: ["retire_decision_ref", "audit_ref"]
+      - from: "suspended"
+        to: "retired"
+        actor: "identity-service"
+        requires: ["retire_decision_ref", "audit_ref"]
+
+  AccessControlGrant:
+    initial: "requested"
+    terminal: ["revoked", "expired"]
+    states:
+      - "requested"
+      - "policy_checked"
+      - "active"
+      - "suspended"
+      - "revoked"
+      - "expired"
+    transitions:
+      - from: "requested"
+        to: "policy_checked"
+        actor: "policy-engine"
+        requires: ["grant_request_ref", "policy_passed", "scope_digest"]
+      - from: "policy_checked"
+        to: "active"
+        actor: "identity-service"
+        requires: ["grant_ref", "audit_ref"]
+      - from: "active"
+        to: "suspended"
+        actor: "identity-service"
+        requires: ["suspension_decision_ref", "audit_ref"]
+      - from: "suspended"
+        to: "active"
+        actor: "identity-service"
+        requires: ["reactivation_decision_ref", "policy_passed", "audit_ref"]
+      - from: "active"
+        to: "revoked"
+        actor: "identity-service"
+        requires: ["revocation_decision_ref", "audit_ref"]
+      - from: "active"
+        to: "expired"
+        actor: "monitor"
+        requires: ["expires_at_elapsed"]
+
+  ManagementConsoleSurface:
+    initial: "drafted"
+    terminal: ["retired"]
+    states:
+      - "drafted"
+      - "validated"
+      - "active"
+      - "disabled"
+      - "retired"
+    transitions:
+      - from: "drafted"
+        to: "validated"
+        actor: "ui-console-service"
+        requires: ["surface_contract_created", "visual_quality_passed", "policy_passed"]
+      - from: "validated"
+        to: "active"
+        actor: "ui-console-service"
+        requires: ["activation_decision_ref", "audit_ref"]
+      - from: "active"
+        to: "disabled"
+        actor: "ui-console-service"
+        requires: ["disable_decision_ref", "audit_ref"]
+      - from: "disabled"
+        to: "active"
+        actor: "ui-console-service"
+        requires: ["activation_decision_ref", "policy_passed", "audit_ref"]
+      - from: "active"
+        to: "retired"
+        actor: "ui-console-service"
+        requires: ["retire_decision_ref", "audit_ref"]
+
+  ProgressSnapshot:
+    initial: "collecting"
+    terminal: ["archived"]
+    states:
+      - "collecting"
+      - "current"
+      - "stale"
+      - "blocked"
+      - "archived"
+    transitions:
+      - from: "collecting"
+        to: "current"
+        actor: "monitor"
+        requires: ["source_events_available", "digest_verified", "state_version_incremented"]
+      - from: "current"
+        to: "stale"
+        actor: "monitor"
+        requires: ["state_version_changed"]
+      - from: "stale"
+        to: "collecting"
+        actor: "monitor"
+        requires: ["source_events_available"]
+      - from: "current"
+        to: "blocked"
+        actor: "monitor"
+        requires: ["blocking_objects"]
+      - from: "blocked"
+        to: "collecting"
+        actor: "monitor"
+        requires: ["blockers_resolved"]
+      - from: "current"
+        to: "archived"
+        actor: "monitor"
+        requires: ["archive_decision_ref"]
+      - from: "stale"
+        to: "archived"
+        actor: "monitor"
+        requires: ["archive_decision_ref"]
+
+  InstructionEnvelope:
+    initial: "drafted"
+    terminal: ["acknowledged", "invalidated"]
+    states:
+      - "drafted"
+      - "compacted"
+      - "cache_indexed"
+      - "dispatched"
+      - "acknowledged"
+      - "invalidated"
+    transitions:
+      - from: "drafted"
+        to: "compacted"
+        actor: "instruction-optimizer"
+        requires: ["stable_prefix_digest", "delta_payload_ref", "output_contract_ref", "token_budget_valid"]
+      - from: "compacted"
+        to: "cache_indexed"
+        actor: "instruction-optimizer"
+        requires: ["cache_index_ref", "payload_digest"]
+      - from: "cache_indexed"
+        to: "dispatched"
+        actor: "room-broker"
+        requires: ["dispatch_ack"]
+      - from: "dispatched"
+        to: "acknowledged"
+        actor: "room-broker"
+        requires: ["recipient_ack"]
+      - from: "drafted"
+        to: "invalidated"
+        actor: "orchestrator"
+        requires: ["input_digest_changed"]
+      - from: "compacted"
+        to: "invalidated"
+        actor: "orchestrator"
+        requires: ["input_digest_changed"]
+      - from: "cache_indexed"
+        to: "invalidated"
+        actor: "orchestrator"
+        requires: ["input_digest_changed"]
+
+  SharedDefinitionContract:
+    initial: "draft"
+    terminal: ["superseded", "retired", "rejected"]
+    states:
+      - "draft"
+      - "owner_assigned"
+      - "proposed"
+      - "reviewing"
+      - "active"
+      - "change_requested"
+      - "conflicted"
+      - "superseded"
+      - "retired"
+      - "rejected"
+    transitions:
+      - from: "draft"
+        to: "owner_assigned"
+        actor: "orchestrator"
+        requires: ["scope_digest", "owner_role", "producer_role", "decision_record"]
+      - from: "owner_assigned"
+        to: "proposed"
+        actor: "decision-center"
+        requires: ["definition_digest", "consumer_refs", "repository_output_target_ref"]
+      - from: "proposed"
+        to: "reviewing"
+        actor: "reviewer"
+        requires: ["review_request_event"]
+      - from: "reviewing"
+        to: "active"
+        actor: "orchestrator"
+        requires: ["review_report", "consumer_bindings_updated", "state_version_incremented", "audit_ref"]
+      - from: "active"
+        to: "change_requested"
+        actor: "orchestrator"
+        requires: ["change_request_ref"]
+      - from: "change_requested"
+        to: "owner_assigned"
+        actor: "orchestrator"
+        requires: ["owner_role", "producer_role", "decision_record"]
+      - from: "active"
+        to: "conflicted"
+        actor: "monitor"
+        requires: ["conflict_ref"]
+      - from: "conflicted"
+        to: "owner_assigned"
+        actor: "orchestrator"
+        requires: ["conflict_resolution_checkpoint", "decision_record"]
+      - from: "active"
+        to: "superseded"
+        actor: "orchestrator"
+        requires: ["successor_contract_version"]
+      - from: "active"
+        to: "retired"
+        actor: "orchestrator"
+        requires: ["consumer_refs_removed"]
+      - from: "proposed"
+        to: "rejected"
+        actor: "reviewer"
+        requires: ["rejection_reason"]
+
+  RepositoryOutputTarget:
+    initial: "candidate"
+    terminal: ["pushed", "rejected", "superseded"]
+    states:
+      - "candidate"
+      - "selected"
+      - "lease_bound"
+      - "writing"
+      - "committed"
+      - "pushed"
+      - "rejected"
+      - "superseded"
+    transitions:
+      - from: "candidate"
+        to: "selected"
+        actor: "orchestrator"
+        requires: ["repository_decision_ref", "path_allowlist_defined"]
+      - from: "selected"
+        to: "lease_bound"
+        actor: "scheduler"
+        requires: ["lease_admitted"]
+      - from: "lease_bound"
+        to: "writing"
+        actor: "work-session"
+        requires: ["repository_checkout_ready"]
+      - from: "writing"
+        to: "committed"
+        actor: "work-session"
+        requires: ["commit_ref", "artifact_manifest_ref"]
+      - from: "committed"
+        to: "pushed"
+        actor: "work-session"
+        requires: ["push_ref"]
+      - from: "selected"
+        to: "rejected"
+        actor: "orchestrator"
+        requires: ["rejection_reason"]
+      - from: "selected"
+        to: "superseded"
+        actor: "orchestrator"
+        requires: ["successor_output_target_ref"]
+      - from: "writing"
+        to: "superseded"
+        actor: "orchestrator"
+        requires: ["successor_output_target_ref"]

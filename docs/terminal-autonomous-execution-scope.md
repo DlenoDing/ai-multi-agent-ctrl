@@ -49,6 +49,9 @@
 | 目标解析 | 把外部目标转为 Project、TaskGroup、success criteria、risk 和 non-goals |
 | 任务拆解 | 自动生成 DAG、WorkItem、role requirements、write scope、dependencies |
 | 有效指令 | Orchestrator 把目标、规则、review、工具结果强化成 EffectiveInstructionPacket，raw 输出不能直接驱动任务 |
+| 共享定义归属 | 自动识别跨子项目/子系统公共术语、状态、接口、数据模型、错误码、质量标准、权限语义和指令格式，并创建 SharedDefinitionContract |
+| 仓库产出归属 | 自动为写入型 WorkItem 选择 RepositoryOutputTarget，明确项目 Git 仓库、分支、路径、lease、commitRef 和 pushRef |
+| 管理和进度 | 自动维护 RuntimeBootstrapProfile、Account、AccessControlGrant、ManagementConsoleSurface 和 ProgressSnapshot，供管理面观察与受控操作 |
 | 角色实例化 | 持续多轮、有状态或写入型 work 自动创建新 WorkSession；短小封闭 work 才使用 session 内部 subagent |
 | 角色防跑偏 | 总控、调度、监测和普通 Agent 都绑定 RoleDriftGuard；元控制角色漂移会暂停下游副作用并触发父级纠偏 |
 | 模型选择 | 根据任务风险、复杂度、上下文、Agent 能力、额度和历史质量自动选择模型 |
@@ -86,6 +89,9 @@
 12. 不能让总控、调度或监测角色脱离 objective boundary、role mission、task contract、ruleset digest 和 allowed action scope。
 13. 不能让同级 Agent、子 agent、工具输出或 review advisory 覆盖角色职责；只能由 Orchestrator 通过 EffectiveInstructionPacket 和 DecisionRecord 重新签发。
 14. 不能让外部 review 或旧项目规则在未本地核验、未做 RuleSourceResolution 前成为 active rule 或执行动作。
+15. 不能让各角色各自定义共享术语、状态、接口、数据模型、错误码、质量标准、权限语义或指令格式；必须先有 SharedDefinitionContract。
+16. 不能建立独立项目产出文件管理系统；任务产出文件只能进入 Orchestrator 选定的项目 Git 仓库目标。
+17. 不能用管理 UI 的显示状态覆盖 schema、state machine、event log、checkpoint、CommitRef 或 PushRef。
 
 ## 5. 自动审批模型
 
@@ -155,3 +161,6 @@ external_capability_required
 12. 所有 WorkSession final 和 TaskGroup close 前都通过 CompletionReadinessCheck。
 13. 所有元控制角色都有 RoleDriftGuard，且无 active drift blocker。
 14. 所有并行拓扑、互审计划、review bundle、派生任务请求和规则来源解析都处于 terminal 或明确非阻断状态。
+15. 所有共享定义都有 canonical owner、producer、definition digest、consumer binding 和冲突策略。
+16. 所有写入型 WorkItem 都有 RepositoryOutputTarget，并且产出文件能通过项目 Git commit/push 和 artifact manifest 追溯。
+17. 系统可通过 npm、Docker 和 Shell 启动，本地自检覆盖规格校验、运行态初始化和控制台入口。

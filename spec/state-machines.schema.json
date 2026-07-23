@@ -85,7 +85,11 @@
                     "mcp-proxy",
                     "room-broker",
                     "model-registry",
-                    "skill-registry"
+                    "skill-registry",
+                    "identity-service",
+                    "ui-console-service",
+                    "repository-router",
+                    "instruction-optimizer"
                   ]
                 },
                 "requires": {

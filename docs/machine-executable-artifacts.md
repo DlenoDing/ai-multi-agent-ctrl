@@ -42,6 +42,14 @@
 | `spec/git-automation-policy.schema.json` | Agent Runtime、Command Bus、Release Agent | 校验自动 commit/push 凭据、分支、路径范围和远端 SHA |
 | `spec/git-command.schema.json` | Agent Runtime、Command Bus、Release Agent | 校验 Git status/commit/push 命令 payload、路径匹配和证据输出 |
 | `spec/close-barrier.schema.json` | Orchestrator、Monitor Agent、Release Agent | 校验 TaskGroup 关闭屏障、质量门结果和阻断对象 |
+| `spec/runtime-bootstrap.schema.json` | Agent Runtime、UI Console Service、Spec Validator | 校验 npm/Docker/Shell 启动、初始化、自检和文件产出策略 |
+| `spec/account.schema.json` | Identity Service、Policy Engine、UI Console Service | 校验系统管理员、用户账号、服务账号和 Agent identity |
+| `spec/access-control-grant.schema.json` | Identity Service、Policy Engine、UI Console Service | 校验系统、用户、项目、任务组和 Agent 授权 |
+| `spec/management-console-surface.schema.json` | UI Console Service、Security Agent、Spec Validator | 校验系统管理和用户管理界面、guarded action 和视觉质量门 |
+| `spec/progress-snapshot.schema.json` | Monitor Agent、Orchestrator、UI Console Service | 校验项目/任务组进度、阻塞、角色活动和仓库输出快照 |
+| `spec/instruction-envelope.schema.json` | Orchestrator、Room Broker、Instruction Optimizer、Agent Runtime | 校验稳定前缀、delta、cache key、token budget 和输出契约 |
+| `spec/shared-definition-contract.schema.json` | Orchestrator、Decision Center、Reviewer Agent、Monitor Agent | 校验共享定义 canonical owner、producer、consumer、digest 和冲突策略 |
+| `spec/repository-output-target.schema.json` | Orchestrator、Scheduler、Repository Router、Agent Runtime | 校验任务产出目标仓库、分支、路径、lease、commit、push 和 manifest |
 | `scripts/validate-specs.rb` | CI、Spec Validator、Orchestrator preflight | 只读验证 manifest、状态机、gate resolver、CloseBarrier、CompletionReadiness 和关键 schema 覆盖 |
 
 ## 3. 执行规则
@@ -62,8 +70,12 @@
 14. MGP、ai-skills、外部 review、工具输出和旧规则文本必须先进入 RuleSourceResolution 或 ReviewBundle；本地核验和来源解析完成前不能成为 active rule 或执行动作。
 15. MCP Proxy 执行 tool 前必须校验 grant、参数策略、结果过滤和过期时间。
 16. Agent Runtime 执行 Git 副作用前必须校验 GitAutomationPolicy、writeScope 和 changedPathPolicy。
-17. Orchestrator 关闭 TaskGroup 前必须生成并校验 CompletionReadinessCheck 和 CloseBarrier。
-18. 不符合 schema 的消息只能进入 DLQ，不能被 Agent 自然语言猜测执行。
+17. Orchestrator 派发会产生文件的 WorkItem 前必须创建 `RepositoryOutputTarget`，明确仓库、分支、路径范围、lease 和 artifact manifest；项目产出文件只能写入该 Git target。
+18. Orchestrator 识别到跨子项目、跨子系统或多端共享术语、状态、接口、数据模型、错误码、设计 token、质量标准、权限语义或指令格式时，必须先创建 `SharedDefinitionContract` 并分配 canonical owner 和 producer。
+19. Room Broker 下发任务指令必须使用 `InstructionEnvelope`，优先传 stable prefix digest、locator、delta、cache key 和 output contract，降低 token 消耗并提高缓存命中。
+20. Monitor 计算项目和任务组进度时必须输出 `ProgressSnapshot`，UI 只能展示 snapshot，不能用自由文本覆盖状态机。
+21. Orchestrator 关闭 TaskGroup 前必须生成并校验 CompletionReadinessCheck 和 CloseBarrier。
+22. 不符合 schema 的消息只能进入 DLQ，不能被 Agent 自然语言猜测执行。
 
 ## 4. schema 优先级
 
@@ -96,6 +108,13 @@ System instruction
 | review plan/bundle | review items、batches、coverage matrix、redaction、payload digest、advisory result、本地核验证据 |
 | rule source resolution | sourceScope、authorityLevel、sourceDigest、conflictCheck、activeRuleRefs、referenceOnlyRefs、excludedSourceRefs |
 | runtime issue collection | issue fingerprint、recurrenceCount、evidenceRefs、sampleRefs、collect-only policy、externalUpgradePackageRef |
+| runtime bootstrap | RuntimeBootstrapProfile、npm/Docker/Shell entrypoint、health check、admin seed、fileOutputPolicy |
+| account/access control | Account、AccessControlGrant、role、permission、resource scope、policyDecisionRef、auditRef |
+| management console | ManagementConsoleSurface、guardedActions、visualQualityGates、audit trace、system/user boundary |
+| progress snapshot | ProgressSnapshot、phase、percent、health、work counters、role activity、repository outputs |
+| instruction envelope | stablePrefixDigest、deltaRefs、cacheKey、tokenBudget、outputContractRef、sharedDefinitionRefs |
+| shared definition | SharedDefinitionContract、canonicalOwnerRole、producerRole、definitionDigest、consumer bindings、conflict policy |
+| repository output target | RepositoryOutputTarget、repositoryId、branch、pathAllowlist、leaseRef、commitRefs、pushRefs、artifactManifestPath |
 | command dispatch | idempotencyKey、policyDecisionRef、leaseRef、timeout、retry、commandEffect |
 | mcp call | mcp-grant schema、tool schema digest、grant、param policy、result filter、risk gate、expiresAt |
 | git side effect | git policy schema、git command schema、credentialProfileRef、changed paths、writeScope、remote SHA、pushRef |

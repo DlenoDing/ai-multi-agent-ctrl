@@ -35,6 +35,14 @@ DecisionRecord
 CommandEffect
 DLQEntry
 AuditLog
+RuntimeBootstrapProfile
+Account
+AccessControlGrant
+ManagementConsoleSurface
+ProgressSnapshot
+InstructionEnvelope
+SharedDefinitionContract
+RepositoryOutputTarget
 ```
 
 终态规格不区分“先做/后做”的非系统执行阶段。所有实体都必须在 schema、state machine 和事件模型中拥有明确边界。具体编码时可以由 Orchestrator 按依赖 DAG 自动分批提交，但不能把未实现实体设计成需要非系统执行路径补齐的开放项。
@@ -209,7 +217,7 @@ unique(project_id, idempotency_key)
 unique(project_id, resource_type, resource_key) where status = 'active'
 ```
 
-### 3.9 checkpoints 和 artifacts
+### 3.9 checkpoints 和 evidence/artifact metadata
 
 `checkpoints`：
 
@@ -227,6 +235,8 @@ unique(project_id, resource_type, resource_key) where status = 'active'
 | evidence_refs | jsonb | not null default `[]` |
 | next_steps | jsonb | not null default `[]` |
 | created_at | timestamptz | not null |
+
+`artifacts` 只登记证据、日志、截图、测试报告和 artifact manifest metadata。项目任务的交付文件不进入独立文件管理系统，必须由 `RepositoryOutputTarget` 指向项目 Git 仓库路径，并通过 `commit_refs`、`push_refs` 和 `artifact_manifest_path` 证明。
 
 `artifacts`：
 
@@ -327,8 +337,16 @@ unique(project_id, resource_type, resource_key) where status = 'active'
 | completion_readiness_checks | `id,project_id,task_group_id,target_ref,status,state_version,state_digest,required_checks,check_results,blocking_objects,evidence_refs,computed_at` |
 | runtime_issue_patterns | `id,project_id,task_group_id,status,issue_fingerprint,recurrence_count,evidence_refs,sample_refs,upgrade_candidate_id,created_at` |
 | system_upgrade_candidates | `id,project_id,task_group_id,status,issue_pattern_id,issue_fingerprint,recurrence_count,affected_components,evidence_refs,sample_refs,external_upgrade_package_ref,audit_ref,created_at` |
+| runtime_bootstrap_profiles | `id,status,launch_modes,commands,services,storage,admin_seed_policy,health_checks,audit_ref,created_at,updated_at` |
+| accounts | `id,account_type,status,display_name,email,roles,permissions,auth_policy,last_login_at,audit_ref,created_at,updated_at` |
+| access_control_grants | `id,status,subject_ref,resource_ref,role,permissions,scope_digest,policy_decision_id,expires_at,audit_ref,created_at,updated_at` |
+| management_console_surfaces | `id,console_type,status,route,views,guarded_actions,visual_quality_gates,audit_ref,created_at,updated_at` |
+| progress_snapshots | `id,scope_type,scope_ref,status,progress,health,counters,role_activity,work_items,blockers,repository_outputs,digest,created_at,updated_at` |
+| instruction_envelopes | `id,project_id,task_group_id,work_item_id,status,recipient_role,effective_instruction_packet_id,stable_prefix_digest,delta_refs,cache_key,token_budget,output_contract_ref,payload_digest,audit_ref,created_at,updated_at` |
+| shared_definition_contracts | `id,project_id,task_group_id,status,definition_type,scope_refs,canonical_owner_role,producer_role,consumer_refs,definition_digest,repository_target,conflict_policy,change_policy,review_evidence_refs,audit_ref,created_at,updated_at` |
+| repository_output_targets | `id,project_id,task_group_id,work_item_id,status,repository_id,repository_url,branch,base_ref,path_allowlist,path_denylist,output_policy,decision_record_id,lease_id,commit_refs,push_refs,artifact_manifest_path,audit_ref,created_at,updated_at` |
 
-`task_groups.close_barrier` 只保存 Orchestrator 最近一次计算出的 `CloseBarrier` 快照。关闭判定必须从 `work_items`、`findings`、`quality_gate_results`、`permission_requests`、`approval_requests`、`leases`、`commands`、`command_effects`、`dlq_entries`、`integration_batches`、`release_manifests`、`external_capability_boundaries`、`effective_instruction_packets`、`role_drift_guards`、`execution_topologies`、`derived_task_requests`、`review_plans`、`review_bundles`、`rule_source_resolutions`、`completion_readiness_checks`、`rulesets`、`runtime_issue_patterns` 和 `system_upgrade_candidates` 的终态或非阻断状态确定性计算，并写入 `stateDigest`、`sourceQueryRefs`、按 gate 名称索引的 `gateResults`、`blockingObjects`、`waivers` 和 `evidenceRefs`。重复运行问题只要求已聚合并导出系统外升级证据包；关闭屏障不得要求运行中的系统自动执行自身升级。不能把自由文本或聊天结论写入 `close_barrier` 后直接关闭。
+`task_groups.close_barrier` 只保存 Orchestrator 最近一次计算出的 `CloseBarrier` 快照。关闭判定必须从 `work_items`、`findings`、`quality_gate_results`、`permission_requests`、`approval_requests`、`leases`、`commands`、`command_effects`、`dlq_entries`、`integration_batches`、`release_manifests`、`external_capability_boundaries`、`effective_instruction_packets`、`role_drift_guards`、`execution_topologies`、`derived_task_requests`、`review_plans`、`review_bundles`、`rule_source_resolutions`、`completion_readiness_checks`、`shared_definition_contracts`、`repository_output_targets`、`progress_snapshots`、`instruction_envelopes`、`rulesets`、`runtime_issue_patterns` 和 `system_upgrade_candidates` 的终态或非阻断状态确定性计算，并写入 `stateDigest`、`sourceQueryRefs`、按 gate 名称索引的 `gateResults`、`blockingObjects`、`waivers` 和 `evidenceRefs`。重复运行问题只要求已聚合并导出系统外升级证据包；关闭屏障不得要求运行中的系统自动执行自身升级。不能把自由文本或聊天结论写入 `close_barrier` 后直接关闭。
 
 ## 4. HTTP API
 
@@ -338,11 +356,16 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | --- | --- | --- | --- |
 | POST | `/api/projects` | 创建项目 | orchestrator |
 | GET | `/api/projects/:projectId` | 读取项目 | orchestrator、scheduler、agent-runtime、monitor、admin read-only |
+| GET | `/api/projects/:projectId/progress` | 读取项目进度快照 | orchestrator、monitor、ui-console-service |
+| POST | `/api/projects/:projectId/members` | 授予项目成员权限 | ui-console-service、identity-service、policy-engine |
 | POST | `/api/task-groups` | 创建任务组 | orchestrator |
 | GET | `/api/task-groups/:taskGroupId` | 读取任务组快照 | orchestrator、scheduler、agent-runtime、monitor、admin read-only |
+| GET | `/api/task-groups/:taskGroupId/progress` | 读取任务组进度快照 | orchestrator、monitor、ui-console-service |
+| POST | `/api/task-groups/:taskGroupId/control` | 暂停、恢复、请求复验或纠偏 | orchestrator、ui-console-service |
 | POST | `/api/work-items` | 创建 work item | orchestrator、decision-center |
 | POST | `/api/work-items/:workItemId/assign` | 分配或改派 | scheduler、orchestrator |
 | POST | `/api/effective-instruction-packets` | 创建强化后的有效指令包 | orchestrator、policy-engine |
+| POST | `/api/instruction-envelopes` | 创建压缩后的角色指令信封 | orchestrator、instruction-optimizer |
 | POST | `/api/role-drift-guards` | 绑定或更新角色漂移防护对象 | orchestrator、monitor |
 | POST | `/api/role-drift-guards/:guardId/rebound` | 暂停跑偏角色并重签任务契约 | orchestrator |
 | POST | `/api/model-selection-decisions` | 记录模型和 Agent 自动选择结果 | model-registry、scheduler |
@@ -365,6 +388,8 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/policy-decisions/evaluate` | 记录策略判定并返回准入结果 | policy-engine |
 | POST | `/api/findings` | 提交独立复验发现 | reviewer、qa、security、monitor |
 | POST | `/api/contracts` | 注册或更新契约对象 | orchestrator、decision-center |
+| POST | `/api/shared-definition-contracts` | 创建或更新共享定义合同 | orchestrator、decision-center |
+| POST | `/api/repository-output-targets` | 为 WorkItem 选择项目 Git 仓库输出目标 | orchestrator、repository-router |
 | POST | `/api/integration-batches` | 创建集成批次 | release、orchestrator |
 | POST | `/api/runtime-issue-patterns` | 聚合重复运行问题 | monitor |
 | POST | `/api/system-upgrade-candidates/export` | 导出系统外升级证据包 | monitor、rule-steward |
@@ -372,6 +397,11 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/close-barriers/compute` | 计算并校验关闭屏障 | orchestrator |
 | POST | `/api/agents/join` | 使用 join token 初始化 Agent | agent-runtime |
 | POST | `/api/agents/:nodeId/heartbeat` | Agent 心跳 | agent-runtime |
+| POST | `/api/agents/:nodeId/activation` | 激活或停用 Agent | ui-console-service、policy-engine |
+| GET | `/api/runtime/health` | 运行健康检查 | ui-console-service、monitor |
+| POST | `/api/bootstrap/init` | 初始化运行态 | ui-console-service、agent-runtime |
+| POST | `/api/accounts` | 创建或邀请账号 | identity-service、ui-console-service |
+| POST | `/api/access-grants` | 创建授权 | identity-service、policy-engine、ui-console-service |
 
 ## 5. MCP tools
 
@@ -390,6 +420,11 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | `permission-mcp` | `permission_probe`、`permission_request_submit`、`permission_status`、`permission_resolve` |
 | `review-mcp` | `review_plan_create`、`review_bundle_register`、`review_result_consume`、`completion_readiness_compute` |
 | `governance-mcp` | `approval_request_create`、`policy_decision_eval`、`finding_submit`、`contract_publish`、`effective_instruction_create`、`role_drift_guard_bind`、`role_drift_rebound`、`rule_source_resolve`、`runtime_issue_pattern_submit`、`system_upgrade_candidate_export`、`system_upgrade_external_import`、`close_barrier_compute` |
+| `identity-mcp` | `account_invite`、`account_suspend`、`grant_create`、`grant_revoke`、`permission_matrix_get` |
+| `ui-console-mcp` | `runtime_health_get`、`management_surface_get`、`project_progress_get`、`task_group_progress_get`、`guarded_action_dispatch` |
+| `definition-mcp` | `shared_definition_create`、`shared_definition_publish`、`shared_definition_consumer_bind`、`shared_definition_conflict_report` |
+| `instruction-mcp` | `instruction_envelope_create`、`cache_key_index`、`stable_prefix_get`、`delta_payload_compact` |
+| `repository-mcp` | `repository_output_target_select`、`repository_target_lease_bind`、`artifact_manifest_index` |
 
 ## 6. 事件模型
 
@@ -455,5 +490,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 7. `controlStateVersion` 变化后，旧 session 必须 rebind 或返回 `STALE_STATE`。
 8. DLQ 不能静默堆积，必须出现在关闭屏障和告警中。
 9. MCP tool result 进入上下文前标记为 untrusted。
-10. Artifact 只在消息中传 locator 和 digest，不传大内容。
+10. Evidence/artifact 只在消息中传 locator 和 digest，不传大内容；项目交付文件只通过 Git repository target、commitRef、pushRef 和 artifact manifest 表达。
 11. Secret 只以 secret ref 表达，不进入 room message、artifact 正文或普通日志。
+12. 共享定义必须先有 canonical owner、producer、definition digest 和 consumer binding；依赖 work 不能各自定义公共语义。
+13. 指令 envelope 必须 stable-prefix/digest/delta/cache-key 优先，避免重复长上下文和低缓存命中。

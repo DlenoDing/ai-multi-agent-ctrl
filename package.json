@@ -1,0 +1,21 @@
+{
+  "name": "ai-multi-agent-ctrl",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AI-native multi-agent control plane specs and local management console.",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "init": "node scripts/init-control-plane.mjs",
+    "dev": "node apps/control-plane-ui/server.mjs",
+    "start": "node apps/control-plane-ui/server.mjs",
+    "shell:start": "./scripts/start.sh",
+    "validate": "ruby scripts/validate-specs.rb",
+    "doctor": "npm run validate && node scripts/init-control-plane.mjs --check",
+    "docker:build": "docker build -t ai-multi-agent-ctrl:local .",
+    "docker:up": "docker compose up --build"
+  }
+}

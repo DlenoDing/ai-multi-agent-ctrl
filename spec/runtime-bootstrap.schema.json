@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/runtime-bootstrap.schema.json",
+  "title": "RuntimeBootstrapProfile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "profileId",
+    "status",
+    "launchModes",
+    "commands",
+    "services",
+    "storage",
+    "adminSeedPolicy",
+    "healthChecks",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "runtime-bootstrap-profile/v1"
+    },
+    "profileId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "validated", "initialized", "running", "degraded", "stopped", "failed"]
+    },
+    "launchModes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["npm", "docker", "shell"]
+      }
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["init", "start", "doctor", "dockerBuild", "dockerUp", "shellStart"],
+      "properties": {
+        "init": {"type": "string", "const": "npm run init"},
+        "start": {"type": "string", "const": "npm start"},
+        "doctor": {"type": "string", "const": "npm run doctor"},
+        "dockerBuild": {"type": "string", "const": "npm run docker:build"},
+        "dockerUp": {"type": "string", "const": "npm run docker:up"},
+        "shellStart": {"type": "string", "const": "npm run shell:start"}
+      }
+    },
+    "services": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["serviceId", "roleId", "status", "health"],
+        "properties": {
+          "serviceId": {"type": "string", "minLength": 1},
+          "roleId": {"type": "string", "minLength": 1},
+          "status": {"type": "string", "enum": ["planned", "running", "simulated", "degraded", "stopped"]},
+          "health": {"type": "string", "enum": ["unknown", "ok", "attention", "failed"]},
+          "endpoint": {"type": "string"}
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stateStore", "runtimeStatePath", "fileOutputPolicy"],
+      "properties": {
+        "stateStore": {"type": "string", "enum": ["postgresql", "runtime_json"]},
+        "runtimeStatePath": {"type": "string", "minLength": 1},
+        "databaseUrlSecretRef": {"type": "string"},
+        "fileOutputPolicy": {"type": "string", "const": "project_git_repository_only"}
+      }
+    },
+    "adminSeedPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["systemAdminRequired", "workspaceOwnerRequired", "secretPolicy"],
+      "properties": {
+        "systemAdminRequired": {"type": "boolean", "const": true},
+        "workspaceOwnerRequired": {"type": "boolean", "const": true},
+        "defaultSystemAdminEmail": {"type": "string"},
+        "secretPolicy": {"type": "string", "enum": ["bootstrap_token", "external_secret_ref"]}
+      }
+    },
+    "healthChecks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["checkId", "command", "expected"],
+        "properties": {
+          "checkId": {"type": "string", "minLength": 1},
+          "command": {"type": "string", "minLength": 1},
+          "expected": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "auditRef": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

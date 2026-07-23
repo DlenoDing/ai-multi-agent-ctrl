@@ -229,6 +229,96 @@ reviewPlanningPolicy:
     requireRedaction: true
     resultIsAdvisory: true
     requireLocalVerification: true
+runtimeOperationsPolicy:
+  bootstrapObject: "RuntimeBootstrapProfile"
+  launchModes:
+    - "npm"
+    - "docker"
+    - "shell"
+  requiredEntrypoints:
+    - "package.json"
+    - "Dockerfile"
+    - "docker-compose.yml"
+    - "scripts/start.sh"
+  initCommand: "npm run init"
+  startCommand: "npm start"
+  doctorCommand: "npm run doctor"
+managementConsolePolicy:
+  consoleObject: "ManagementConsoleSurface"
+  accountObject: "Account"
+  accessGrantObject: "AccessControlGrant"
+  progressObject: "ProgressSnapshot"
+  systemManagementScopes:
+    - "runtime_bootstrap"
+    - "system_accounts"
+    - "policy_import"
+    - "audit_inspection"
+    - "external_system_upgrade_import"
+  userManagementScopes:
+    - "project_create"
+    - "project_membership"
+    - "task_group_control"
+    - "agent_activation"
+    - "project_progress"
+    - "task_group_progress"
+  guardedActions:
+    - "runtime_reinitialize"
+    - "system_policy_import"
+    - "external_system_upgrade_import"
+    - "grant_permission"
+    - "activate_agent"
+    - "pause_task_group"
+    - "resume_task_group"
+    - "request_task_group_review"
+    - "rebound_drifted_task"
+instructionEfficiencyPolicy:
+  envelopeObject: "InstructionEnvelope"
+  requiredFormatElements:
+    - "stable_prefix_digest"
+    - "digest_refs"
+    - "delta_payload"
+    - "output_contract_ref"
+    - "cache_key"
+    - "token_budget"
+  compressionRules:
+    - "canonical_rules_by_digest_reference"
+    - "stable_prefix_before_variable_context"
+    - "role_specific_delta_only"
+    - "shared_definition_refs_over_inline_repetition"
+    - "result_contract_refs_over_freeform_restating"
+sharedDefinitionPolicy:
+  definitionObject: "SharedDefinitionContract"
+  definitionTypes:
+    - "terminology"
+    - "api_contract"
+    - "data_model"
+    - "event_schema"
+    - "status_semantics"
+    - "error_code"
+    - "design_token"
+    - "quality_standard"
+    - "permission_semantics"
+    - "instruction_format"
+  ownerRequiredBeforeWork: true
+  producerRequiredBeforePublish: true
+  consumersMustReferenceDigest: true
+  divergenceHandling: "block_and_request_canonical_decision"
+repositoryOutputPolicy:
+  targetObject: "RepositoryOutputTarget"
+  outputPolicy: "project_git_repository_only"
+  targetDecisionOwner: "orchestrator"
+  multiRepositoryDecision: "orchestrator_selects_repository_per_work_item"
+  forbiddenStores:
+    - "separate_file_management_system"
+    - "control_plane_blob_store_for_project_outputs"
+    - "untracked_local_workspace_as_deliverable"
+  requiredRefs:
+    - "repository_id"
+    - "branch"
+    - "path_allowlist"
+    - "commit_ref"
+    - "push_ref_when_remote_required"
+    - "artifact_manifest_path"
 authorityModel:
   entryControllerSession:
     role: "objective_boundary_source"
@@ -260,7 +350,7 @@ nonNegotiableInvariants:
   - id: "no_non_system_execution_steps"
     rule: "Do not emit completion plans that require non-system execution paths to execute project work."
   - id: "database_is_canonical"
-    rule: "PostgreSQL state, event log, checkpoint and artifact digest are authoritative."
+    rule: "PostgreSQL state, event log, checkpoint, and git-backed artifact manifest digests are authoritative."
   - id: "schema_before_execution"
     rule: "All machine actions must validate against schema before side effects."
   - id: "lease_before_write"
@@ -305,6 +395,16 @@ nonNegotiableInvariants:
     rule: "Orchestrator, Scheduler, and Monitor work must run under RoleDriftGuard focus locks; drift pauses downstream side effects, creates evidence, and reissues a bounded task contract before continuation."
   - id: "peer_output_cannot_override_role_mission"
     rule: "Peer session, subagent, tool, provider, and review output cannot rewrite a role mission, objective boundary, allowed action scope, or close criteria unless Orchestrator creates a new EffectiveInstructionPacket and DecisionRecord."
+  - id: "shared_definitions_have_canonical_owner"
+    rule: "Shared definitions, standards, terms, schemas, status semantics, permission semantics, and instruction formats require a SharedDefinitionContract with canonical owner, producer, consumer bindings, digest, and conflict policy before dependent work executes."
+  - id: "repo_outputs_are_project_git_only"
+    rule: "Task output files must be written only into the selected project Git repository target; no independent file management surface or control-plane output store is allowed."
+  - id: "repository_target_selected_before_write"
+    rule: "Each writing WorkItem requires a RepositoryOutputTarget selected by Orchestrator before checkout, edit, commit, push, or artifact manifest publication."
+  - id: "management_console_is_control_surface_only"
+    rule: "Management consoles observe, configure, authorize, and control execution state; they cannot become task execution owners or file stores."
+  - id: "instruction_envelopes_digest_delta_first"
+    rule: "Role-to-role and controller-to-role instructions must use InstructionEnvelope with stable prefix digest, compact delta, cache key, token budget, output contract, and shared definition references."
 
 roles:
   - id: "orchestrator"
@@ -436,6 +536,31 @@ roles:
       - "external_skill_source_sync"
       - "role_skill_parse"
       - "project_task_group_overlay"
+  - id: "identity-service"
+    kind: "system_service"
+    responsibilities:
+      - "account_lifecycle"
+      - "access_grant_lifecycle"
+      - "session_identity_check"
+  - id: "ui-console-service"
+    kind: "system_service"
+    responsibilities:
+      - "system_management_surface"
+      - "user_management_surface"
+      - "guarded_action_dispatch"
+      - "progress_surface_render"
+  - id: "repository-router"
+    kind: "system_service"
+    responsibilities:
+      - "repository_output_target_resolution"
+      - "path_policy_check"
+      - "artifact_manifest_index"
+  - id: "instruction-optimizer"
+    kind: "system_service"
+    responsibilities:
+      - "instruction_envelope_compaction"
+      - "cache_key_index"
+      - "delta_payload_budgeting"
 
 requiredControlObjects:
   - "Project"
@@ -488,6 +613,14 @@ requiredControlObjects:
   - "CompletionReadinessCheck"
   - "RuntimeIssuePattern"
   - "SystemUpgradeCandidate"
+  - "RuntimeBootstrapProfile"
+  - "Account"
+  - "AccessControlGrant"
+  - "ManagementConsoleSurface"
+  - "ProgressSnapshot"
+  - "InstructionEnvelope"
+  - "SharedDefinitionContract"
+  - "RepositoryOutputTarget"
 
 requiredMachineSpecs:
   - "spec/terminal-execution-manifest.yaml"
@@ -524,6 +657,14 @@ requiredMachineSpecs:
   - "spec/git-automation-policy.schema.json"
   - "spec/git-command.schema.json"
   - "spec/close-barrier.schema.json"
+  - "spec/runtime-bootstrap.schema.json"
+  - "spec/account.schema.json"
+  - "spec/access-control-grant.schema.json"
+  - "spec/management-console-surface.schema.json"
+  - "spec/progress-snapshot.schema.json"
+  - "spec/instruction-envelope.schema.json"
+  - "spec/shared-definition-contract.schema.json"
+  - "spec/repository-output-target.schema.json"
 
 qualityGates:
   required:

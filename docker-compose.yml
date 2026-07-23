@@ -1,0 +1,42 @@
+services:
+  control-plane:
+    build: .
+    ports:
+      - "${AIMAC_PORT:-4317}:4317"
+    environment:
+      AIMAC_HOST: "0.0.0.0"
+      AIMAC_PORT: "4317"
+      AIMAC_RUNTIME_DIR: "/app/.runtime"
+      AIMAC_SYSTEM_ADMIN_EMAIL: "${AIMAC_SYSTEM_ADMIN_EMAIL:-system.admin@local}"
+      AIMAC_SYSTEM_ADMIN_NAME: "${AIMAC_SYSTEM_ADMIN_NAME:-System Owner}"
+      DATABASE_URL: "postgres://aimac:aimac@postgres:5432/aimac"
+    volumes:
+      - aimac-runtime:/app/.runtime
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4317/api/health >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: "aimac"
+      POSTGRES_PASSWORD: "aimac"
+      POSTGRES_DB: "aimac"
+    ports:
+      - "55432:5432"
+    volumes:
+      - aimac-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aimac -d aimac"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  aimac-runtime:
+  aimac-postgres:

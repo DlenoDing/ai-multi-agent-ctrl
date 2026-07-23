@@ -15,6 +15,9 @@ flowchart TD
     A --> T["MODEL-A: 常用模型 provider 和能力画像"]
     A --> P["PLACE-A: session placement policy"]
     A --> U["INSTR-A: EffectiveInstructionPacket 和 RoleDriftGuard"]
+    A --> X["DEFINE-A: SharedDefinitionContract"]
+    A --> Y["REPOOUT-A: RepositoryOutputTarget"]
+    A --> Z["UI-A: Runtime/Management/Progress Console"]
     A --> V["TOPO-A: ExecutionTopology 和 DerivedTaskRequest"]
     A --> W["REVIEW-A: ReviewPlan、ReviewBundle、CompletionReadiness"]
     B --> E["ROOM-A: Room Broker 和事件可靠性"]
@@ -33,6 +36,9 @@ flowchart TD
     U --> K
     V --> K
     W --> K
+    X --> K
+    Y --> K
+    Z --> K
     J --> K["ORCH-A: Orchestrator 调度循环"]
     K --> L["VERIFY-A: Reviewer/QA/Security 自动复验"]
     L --> M["INTEGRATE-A: ChangeSet、IntegrationBatch、release manifest"]
@@ -50,10 +56,12 @@ ROLE_SKILL_REF=<agent-role-skill-ref>
 ROLE_SKILL_DIGEST=<sha256 digest>
 EFFECTIVE_INSTRUCTION_PACKET_REF=<effective-instruction-packet-ref>
 ROLE_DRIFT_GUARD_REF=<role-drift-guard-ref>
+SHARED_DEFINITION_REFS=<shared-definition-contract ids and digests>
+REPOSITORY_OUTPUT_TARGET_REF=<repository-output-target-ref when writing files>
 INPUT_SCHEMA=<schema-ref>
 INPUT_LOCATORS=<docs/spec/code locators>
 INPUT_DIGESTS=<sha256 digests>
-WRITE_SCOPE=<repo/path/db/tool scope>
+WRITE_SCOPE=<repo/path/db/tool scope, must match RepositoryOutputTarget for file outputs>
 MODEL_SELECTION_DECISION_REF=<model-selection-decision-ref>
 SESSION_PLACEMENT_DECISION_REF=<session-placement-decision-ref>
 EXECUTION_TOPOLOGY_REF=<execution-topology-ref when parallel or downgraded>
@@ -68,6 +76,9 @@ VERIFY_BY=<independent reviewer or qa role>
 | 节点前缀 | 默认 AI role | 输出 |
 | --- | --- | --- |
 | SPEC | Protocol Architect Agent | schema、manifest、state machine |
+| DEFINE | Orchestrator/Decision Center/Reviewer Agent | shared definition contract、canonical owner、producer、consumer binding、definition digest |
+| REPOOUT | Orchestrator/Repository Router Agent | repository output target、path allowlist、lease binding、commit/push manifest |
+| UI | UI Console Service Agent | runtime bootstrap、system management、user management、progress dashboard |
 | CORE | Control Plane Backend Agent | migrations、services、tests |
 | PROTO | Agent Runtime Agent | runtime protocol、local db、recovery |
 | MCP | MCP Security Agent | proxy、grant、tool schemas |
@@ -100,6 +111,8 @@ AI Agent 执行节点时必须按 `spec/git-automation-policy.schema.json` 和 `
 4. 推送后必须记录 `pushRef`、远端 SHA 和 command effect evidence。
 5. 推送失败进入 command retry；连续失败进入 DLQ 并触发 Monitor Agent。
 6. 合并到主线必须走 IntegrationBatch，不由实现 Agent 自行宣布发布完成。
+7. 写入型 WorkItem 提交前必须有 RepositoryOutputTarget，且 changed paths 必须落在 target pathAllowlist 内。
+8. 多仓库项目的目标仓库由 Orchestrator 决定，WorkSession 不能自行改写目标仓库。
 
 ## 6. 机器验收信号
 
@@ -116,6 +129,9 @@ AI Agent 执行节点时必须按 `spec/git-automation-policy.schema.json` 和 `
 | permission_routed | permission request simulation |
 | checkpoint_registered | checkpoint and artifact metadata |
 | effective_instruction_active | EffectiveInstructionPacket status + action basis evidence |
+| shared_definition_active | SharedDefinitionContract owner, producer, digest, consumer binding |
+| repository_output_target_selected | RepositoryOutputTarget repository, branch, pathAllowlist, decisionRecordRef |
+| management_console_validated | RuntimeBootstrapProfile, ManagementConsoleSurface, Account, AccessControlGrant, ProgressSnapshot |
 | role_drift_guard_clear | RoleDriftGuard status and monitor evidence |
 | topology_merged_or_downgraded | ExecutionTopology terminal status |
 | review_plan_closed | ReviewPlan coverage gate |

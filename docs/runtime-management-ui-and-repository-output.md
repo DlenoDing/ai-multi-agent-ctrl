@@ -1,0 +1,207 @@
+# 运行启动、管理界面、共享定义和仓库产出规范
+
+## 1. 定位
+
+本文把系统运行、后台管理、用户管理、项目进度可视化、指令压缩、共享定义归属和任务产出仓库归属收敛为可实现规范。对应机器对象为：
+
+| 对象 | Schema |
+| --- | --- |
+| RuntimeBootstrapProfile | `spec/runtime-bootstrap.schema.json` |
+| Account | `spec/account.schema.json` |
+| AccessControlGrant | `spec/access-control-grant.schema.json` |
+| ManagementConsoleSurface | `spec/management-console-surface.schema.json` |
+| ProgressSnapshot | `spec/progress-snapshot.schema.json` |
+| InstructionEnvelope | `spec/instruction-envelope.schema.json` |
+| SharedDefinitionContract | `spec/shared-definition-contract.schema.json` |
+| RepositoryOutputTarget | `spec/repository-output-target.schema.json` |
+
+这些对象不是说明材料。Orchestrator、Scheduler、Agent Runtime、Policy Engine、Monitor 和 UI Console Service 必须按 schema、state machine 和 event envelope 执行。
+
+## 2. 启动和初始化
+
+系统必须支持三类直接启动入口：
+
+| 入口 | 命令 | 机器语义 |
+| --- | --- | --- |
+| npm | `npm run init && npm start` | 初始化运行态并启动控制台服务 |
+| Docker | `docker compose up --build` | 构建镜像并启动容器内控制台服务 |
+| Shell | `./scripts/start.sh` | shell 封装入口，内部执行 npm 初始化和启动 |
+
+初始化写入本地 `.runtime/` 运行态目录。`.runtime/` 不是项目产出目录，不进入 Git。生产实现可以把运行态替换为 PostgreSQL，但项目任务产出仍不得写入控制面文件库。
+
+`RuntimeBootstrapProfile` 必须记录：
+
+1. 支持的启动方式。
+2. 初始化、启动、自检、Docker 构建、Docker 启动和 Shell 启动命令。
+3. 系统服务清单和健康状态。
+4. 运行态存储位置。
+5. 管理账号 seed 策略。
+6. 文件产出策略 `project_git_repository_only`。
+
+## 3. 管理面边界
+
+系统有两个管理面：
+
+| 管理面 | 范围 |
+| --- | --- |
+| 系统管理系统 | runtime bootstrap、系统管理员、系统策略导入、审计、系统外升级结果导入 |
+| 用户管理系统 | 项目创建、项目成员、任务组控制、Agent 激活、项目进度、任务组进度 |
+
+管理面是控制和观察界面，不是项目执行者。它可以触发受控动作，例如暂停任务组、恢复任务组、请求复验、纠偏、激活 Agent、授权成员；每个写动作必须转为 `AccessControlGrant`、`PolicyDecision`、`DecisionRecord`、`Command` 或对应状态机事件，并写入 audit。
+
+项目和 Agent 属于用户管理系统。有权限的用户账号可以：
+
+1. 创建项目。
+2. 邀请账号加入项目。
+3. 给项目、任务组和 Agent 分配权限。
+4. 激活或停用项目内可用 Agent。
+5. 查看项目、任务组、工作项、阻塞、角色活动和仓库产出目标。
+
+系统管理系统只处理系统级能力，不直接拥有项目文件、任务执行或 Agent 角色输出。
+
+## 4. 账号和权限
+
+账号类型：
+
+| 类型 | 用途 |
+| --- | --- |
+| system_admin | 管理系统运行、审计、策略导入和系统外升级结果 |
+| user_account | 管理用户侧项目、任务组、Agent 和成员 |
+| service_account | 系统服务调用和自动化集成 |
+| agent_identity | Agent Runtime 或角色会话的机器身份 |
+
+授权必须通过 `AccessControlGrant` 表达，授权资源包括 `system_console`、`user_console`、`project`、`task_group`、`agent`、`system_policy`、`shared_definition`。授权状态必须可撤销、可过期、可审计，不能只存在 UI session。
+
+## 5. 项目和任务组进度
+
+`ProgressSnapshot` 是 UI 展示和 Monitor 计算的统一对象。项目和任务组视图必须至少显示：
+
+1. 当前阶段。
+2. 百分比进度。
+3. 健康度。
+4. 工作项计数。
+5. 阻塞数和阻塞摘要。
+6. 角色活动。
+7. 仓库产出目标、提交引用和推送引用。
+8. 更新时间和快照 digest。
+
+进度不是聊天摘要。Monitor 从事件、checkpoint、状态机、gate 结果、RepositoryOutputTarget、CommitRef 和 PushRef 计算，UI 只消费计算后的 snapshot。
+
+## 6. 指令格式和 token/cache 策略
+
+总控、角色会话和任务组房间之间的指令必须使用 `InstructionEnvelope`。默认格式：
+
+```text
+stable_prefix_digest=<ruleset/role/base protocol digest>
+effective_instruction_packet_ref=<effective packet id>
+shared_definition_refs=<contract ids and digests>
+input_locators=<short list>
+delta_payload=<only changed request>
+output_contract_ref=<schema or checkpoint contract>
+cache_key=<stable deterministic key>
+token_budget=<input/output limits and target delta tokens>
+```
+
+规则：
+
+1. 稳定规则、角色说明、状态机和共享定义尽量用 digest/ref 引用，不在每轮重复粘贴。
+2. 变量内容使用 delta payload，限定 role、scope、stop condition 和 output contract。
+3. 多角色广播不得发送无界自由文本，必须发送可消费的 event envelope 或 checkpoint/ref。
+4. 需要共用的术语、状态、接口、数据模型、错误码、设计 token 和质量标准必须引用 `SharedDefinitionContract`。
+5. Cache key 必须由 role、ruleset digest、shared definition digest、task contract digest 和 output contract 组成，降低重复上下文成本。
+
+## 7. 共享定义归属
+
+多子项目、多子系统、多端或多仓库任务中，以下内容属于共享定义：
+
+| 类型 | 示例 |
+| --- | --- |
+| terminology | 业务术语、阶段名称、核心实体命名 |
+| api_contract | HTTP/RPC 接口契约 |
+| data_model | DB schema、领域模型、DTO |
+| event_schema | Room、队列、事件 payload |
+| status_semantics | 任务、会话、发布、账号状态语义 |
+| error_code | 错误码、异常分类、重试语义 |
+| design_token | 颜色、间距、组件状态 |
+| quality_standard | 测试、验收、性能、安全标准 |
+| permission_semantics | 角色、授权、审批、外部能力边界 |
+| instruction_format | Agent 间指令信封、输出契约 |
+
+总控执行流程：
+
+```text
+detect_shared_definition_need
+-> create SharedDefinitionContract(draft)
+-> assign canonicalOwnerRole and producerRole
+-> producer publishes definition digest into selected Git repository
+-> reviewer verifies consumers and compatibility
+-> orchestrator activates contract
+-> consumers bind by digest
+```
+
+任何角色发现自己需要定义共享语义时，必须先提交 `DerivedTaskRequest` 或 `decision_request`。在 `SharedDefinitionContract` 进入 `active` 之前，依赖 work 不能各自发明自己的术语、状态、接口或标准。发现分歧时，Monitor 把合同标为 `conflicted`，Orchestrator 阻断依赖分支并要求 canonical owner 重新发布。
+
+## 8. 仓库产出目标
+
+项目任务的产出文件只保存到对应项目 Git 仓库。多仓库项目中，具体仓库由 Orchestrator 通过 `RepositoryOutputTarget` 决定。
+
+`RepositoryOutputTarget` 必须包含：
+
+1. projectId、taskGroupId、workItemId。
+2. repositoryId 和可选 repositoryUrl。
+3. branch 和 baseRef。
+4. pathAllowlist 和 pathDenylist。
+5. decisionRecordRef。
+6. leaseRef。
+7. commitRefs。
+8. pushRefs。
+9. artifactManifestPath。
+10. outputPolicy=`project_git_repository_only`。
+
+执行流程：
+
+```text
+candidate
+-> selected
+-> lease_bound
+-> writing
+-> committed
+-> pushed
+```
+
+规则：
+
+1. Control Plane 不实现独立项目文件管理系统。
+2. UI 不提供“上传项目产出文件”的文件库。
+3. 证据、截图、日志和测试报告可以登记为 evidence/artifact metadata，但最终交付文件必须以 Git 仓库中的路径、commit、push 和 manifest 为准。
+4. WorkSession checkout、edit、commit 和 push 前必须持有 repository/path lease。
+5. Checkpoint 必须引用 `RepositoryOutputTarget`、CommitRef、PushRef 和 artifact manifest。
+6. 多仓库任务中，Orchestrator 可以为不同 WorkItem 选择不同 repository target，但每个 writing WorkItem 只能写入自己被分配的 target 和 path scope。
+
+## 9. 本地控制台
+
+当前仓库提供最小可运行控制台：
+
+```bash
+npm run init
+npm start
+```
+
+默认地址：
+
+```text
+http://127.0.0.1:4317
+```
+
+控制台实现文件：
+
+| 文件 | 用途 |
+| --- | --- |
+| `apps/control-plane-ui/server.mjs` | 无依赖 Node HTTP 服务和本地 API |
+| `apps/control-plane-ui/public/index.html` | 管理控制台入口 |
+| `apps/control-plane-ui/public/styles.css` | SaaS 管理界面样式 |
+| `apps/control-plane-ui/public/app.js` | 系统管理、用户管理、项目、任务组和指令协议交互 |
+| `data/seed-state.json` | 本地演示 seed state |
+| `scripts/init-control-plane.mjs` | 初始化 `.runtime/control-plane-state.json` |
+
+该控制台用于本地启动、验证管理边界和展示对象关系。生产实现必须继续遵守本文的对象和状态机，不得把本地 JSON seed 当成权威数据库模型。

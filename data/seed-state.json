@@ -1,0 +1,207 @@
+{
+  "schemaVersion": "control-plane-runtime-state/v1",
+  "runtime": {
+    "profileId": "runtime_local",
+    "status": "initialized",
+    "startModes": ["npm", "docker", "shell"],
+    "initializedAt": null,
+    "services": [
+      {"id": "control-plane", "status": "running", "health": "ok"},
+      {"id": "room-broker", "status": "simulated", "health": "ok"},
+      {"id": "scheduler", "status": "simulated", "health": "ok"},
+      {"id": "agent-runtime", "status": "simulated", "health": "ok"},
+      {"id": "identity-service", "status": "simulated", "health": "ok"},
+      {"id": "ui-console-service", "status": "running", "health": "ok"},
+      {"id": "repository-router", "status": "simulated", "health": "ok"},
+      {"id": "instruction-optimizer", "status": "simulated", "health": "ok"}
+    ]
+  },
+  "accounts": [
+    {
+      "id": "acct_system_owner",
+      "accountType": "system_admin",
+      "displayName": "System Owner",
+      "email": "system.admin@local",
+      "status": "active",
+      "roles": ["system_owner"],
+      "permissions": ["system:*"],
+      "auth": {"method": "bootstrap_token", "passwordSet": false}
+    },
+    {
+      "id": "acct_workspace_owner",
+      "accountType": "user_account",
+      "displayName": "Workspace Owner",
+      "email": "owner@local",
+      "status": "active",
+      "roles": ["workspace_owner"],
+      "permissions": ["project:create", "agent:activate", "member:invite"],
+      "auth": {"method": "local_password", "passwordSet": false}
+    },
+    {
+      "id": "acct_reviewer",
+      "accountType": "user_account",
+      "displayName": "Review Lead",
+      "email": "review@local",
+      "status": "active",
+      "roles": ["project_reviewer"],
+      "permissions": ["project:view", "task_group:review"],
+      "auth": {"method": "local_password", "passwordSet": false}
+    }
+  ],
+  "accessGrants": [
+    {
+      "id": "grant_system_owner",
+      "subjectId": "acct_system_owner",
+      "resourceType": "system_console",
+      "resourceId": "system",
+      "role": "system_owner",
+      "permissions": ["system:*"],
+      "status": "active"
+    },
+    {
+      "id": "grant_workspace_owner_project",
+      "subjectId": "acct_workspace_owner",
+      "resourceType": "project",
+      "resourceId": "prj_control_plane",
+      "role": "project_owner",
+      "permissions": ["project:*", "task_group:*", "agent:activate", "member:invite"],
+      "status": "active"
+    }
+  ],
+  "agents": [
+    {
+      "id": "agent_orchestrator",
+      "name": "Orchestrator Runtime",
+      "role": "orchestrator",
+      "model": "auto_best",
+      "status": "active",
+      "trustScore": 0.96,
+      "capacity": "ready"
+    },
+    {
+      "id": "agent_scheduler",
+      "name": "Scheduler Agent",
+      "role": "scheduler",
+      "model": "balanced",
+      "status": "active",
+      "trustScore": 0.94,
+      "capacity": "ready"
+    },
+    {
+      "id": "agent_reviewer",
+      "name": "Independent Reviewer",
+      "role": "reviewer",
+      "model": "deep",
+      "status": "inactive",
+      "trustScore": 0.91,
+      "capacity": "standby"
+    }
+  ],
+  "projects": [
+    {
+      "id": "prj_control_plane",
+      "name": "AI-native Control Plane",
+      "status": "active",
+      "ownerAccountId": "acct_workspace_owner",
+      "members": [
+        {"accountId": "acct_workspace_owner", "role": "project_owner"},
+        {"accountId": "acct_reviewer", "role": "project_reviewer"}
+      ],
+      "repositories": [
+        {"id": "repo_control_plane", "url": "git@github.com:dleno/ai-multi-agent-ctrl.git", "defaultBranch": "main", "purpose": "control_plane_specs_and_runtime"}
+      ],
+      "progress": {
+        "percent": 68,
+        "phase": "governance_design",
+        "health": "attention",
+        "openTaskGroups": 2,
+        "blockedItems": 1,
+        "updatedAt": "2026-07-23T09:30:00Z"
+      }
+    }
+  ],
+  "taskGroups": [
+    {
+      "id": "tg_runtime_management",
+      "projectId": "prj_control_plane",
+      "name": "Runtime and Management Console",
+      "objective": "Bootstrap, account control, permissions, project dashboards, task-group monitoring",
+      "status": "in_progress",
+      "phase": "implementation",
+      "progress": 62,
+      "health": "attention",
+      "roles": [
+        {"roleId": "orchestrator", "sessionId": "sess_orch_1", "status": "monitoring"},
+        {"roleId": "scheduler", "sessionId": "sess_sched_1", "status": "ready"},
+        {"roleId": "reviewer", "sessionId": "sess_review_1", "status": "standby"}
+      ],
+      "workItems": [
+        {"id": "work_bootstrap", "title": "Runtime bootstrap profile", "status": "verified", "ownerRole": "agent-runtime", "progress": 100},
+        {"id": "work_management_ui", "title": "System and user management console", "status": "in_progress", "ownerRole": "ui-console-service", "progress": 58},
+        {"id": "work_permissions", "title": "Project and task-group permission model", "status": "review_requested", "ownerRole": "policy-engine", "progress": 74},
+        {"id": "work_progress", "title": "Progress snapshots and task visibility", "status": "in_progress", "ownerRole": "monitor", "progress": 44}
+      ],
+      "blockers": [
+        {"id": "blk_shared_semantics", "severity": "S1", "summary": "Shared definition owner must be explicit before multi-subsystem work expands."}
+      ]
+    },
+    {
+      "id": "tg_instruction_efficiency",
+      "projectId": "prj_control_plane",
+      "name": "Instruction Format and Cache Efficiency",
+      "objective": "Compact role instructions, stable prefix cache keys, delta-only room messages",
+      "status": "in_progress",
+      "phase": "protocol",
+      "progress": 71,
+      "health": "ok",
+      "roles": [
+        {"roleId": "orchestrator", "sessionId": "sess_orch_1", "status": "monitoring"},
+        {"roleId": "room-broker", "sessionId": "svc_room", "status": "ready"}
+      ],
+      "workItems": [
+        {"id": "work_instruction_envelope", "title": "InstructionEnvelope schema", "status": "verified", "ownerRole": "orchestrator", "progress": 100},
+        {"id": "work_cache_hints", "title": "Cache hint and token budget policy", "status": "in_progress", "ownerRole": "room-broker", "progress": 60}
+      ],
+      "blockers": []
+    }
+  ],
+  "sharedDefinitions": [
+    {
+      "id": "sdc_status_semantics",
+      "name": "Task and session status semantics",
+      "definitionType": "status_semantics",
+      "canonicalOwnerRole": "orchestrator",
+      "producerRole": "decision-center",
+      "status": "active",
+      "definitionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "consumerRefs": ["Project", "TaskGroup", "WorkItem", "WorkSession", "ProgressSnapshot"],
+      "repositoryTarget": {"repositoryId": "repo_control_plane", "branch": "main", "path": "spec/state-machines.yaml"}
+    }
+  ],
+  "repositoryOutputs": [
+    {
+      "id": "rot_runtime_management",
+      "projectId": "prj_control_plane",
+      "taskGroupId": "tg_runtime_management",
+      "workItemId": "work_management_ui",
+      "repositoryId": "repo_control_plane",
+      "branch": "main",
+      "baseRef": "HEAD",
+      "pathAllowlist": ["apps/control-plane-ui/**", "spec/**", "docs/**", "scripts/**", "package.json", "Dockerfile", "docker-compose.yml"],
+      "status": "selected",
+      "outputPolicy": "project_git_repository_only",
+      "artifactManifestPath": "artifacts/manifest.runtime-management.json"
+    }
+  ],
+  "instructionMetrics": {
+    "tokenBudgetPolicy": "delta_locators_digest_first",
+    "cacheHitTarget": 0.7,
+    "stablePrefixTokens": 1800,
+    "deltaMessageTargetTokens": 420,
+    "envelopes": [
+      {"id": "env_orch_runtime", "recipientRole": "orchestrator", "cacheKey": "orch:v1:runtime-management", "status": "acknowledged", "estimatedTokens": 392},
+      {"id": "env_review_ui", "recipientRole": "reviewer", "cacheKey": "review:v1:ui-management", "status": "cache_indexed", "estimatedTokens": 288}
+    ]
+  },
+  "auditLog": []
+}

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/account.schema.json",
+  "title": "Account",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "accountId", "accountType", "status", "displayName", "roles", "permissions", "authPolicy", "createdAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "account/v1"
+    },
+    "accountId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "accountType": {
+      "type": "string",
+      "enum": ["system_admin", "user_account", "service_account", "agent_identity"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["invited", "active", "suspended", "locked", "retired"]
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "email": {
+      "type": "string"
+    },
+    "roles": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "system_owner",
+          "system_admin",
+          "system_auditor",
+          "workspace_owner",
+          "project_owner",
+          "project_admin",
+          "task_group_owner",
+          "agent_operator",
+          "reviewer",
+          "viewer"
+        ]
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "authPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "mfaRequired", "sessionTtlSeconds"],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["bootstrap_token", "invite_token", "local_password", "oauth", "service_token", "no_login"]
+        },
+        "mfaRequired": {
+          "type": "boolean"
+        },
+        "passwordSet": {
+          "type": "boolean"
+        },
+        "sessionTtlSeconds": {
+          "type": "integer",
+          "minimum": 300
+        }
+      }
+    },
+    "lastLoginAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "auditRef": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

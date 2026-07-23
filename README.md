@@ -14,8 +14,30 @@
 | [终态自动执行范围](docs/terminal-autonomous-execution-scope.md) | 全系统终态能力边界、自动执行原则、不可降级能力和完成条件 |
 | [核心控制平面规格](docs/core-control-plane-spec.md) | 终态控制平面对象、数据库表、API/MCP tools、事件模型和事务边界 |
 | [Agent Runtime 协议](docs/agent-runtime-protocol.md) | Agent 入网、心跳、probe、session、artifact、权限阻断和恢复协议 |
+| [运行启动、管理界面、共享定义和仓库产出规范](docs/runtime-management-ui-and-repository-output.md) | npm/Docker/Shell 启动、系统/用户管理、进度视图、指令压缩、共享定义归属和 Git 仓库产出目标 |
 | [机器可执行制品说明](docs/machine-executable-artifacts.md) | `spec/` 下 schema、manifest、state machine 和 event contract 的用途 |
 | [AI 执行图](docs/autonomous-execution-graph.md) | 由 AI Agent 自动执行的 DAG、优先级、依赖、验收信号和提交策略 |
+
+## 本地启动
+
+```bash
+npm run init
+npm start
+```
+
+默认控制台地址：
+
+```text
+http://127.0.0.1:4317
+```
+
+其他入口：
+
+```bash
+npm run doctor
+./scripts/start.sh
+docker compose up --build
+```
 
 ## 机器可执行规格
 
@@ -55,18 +77,26 @@
 | [spec/git-automation-policy.schema.json](spec/git-automation-policy.schema.json) | Agent 自动 commit/push 的凭据、分支、路径和远端校验策略 |
 | [spec/git-command.schema.json](spec/git-command.schema.json) | Agent Git status/commit/push 命令的 payload、路径匹配和证据输出 schema |
 | [spec/close-barrier.schema.json](spec/close-barrier.schema.json) | TaskGroup 关闭屏障的机器判定 schema |
+| [spec/runtime-bootstrap.schema.json](spec/runtime-bootstrap.schema.json) | npm/Docker/Shell 运行启动和初始化 profile schema |
+| [spec/account.schema.json](spec/account.schema.json) | 系统管理员、用户账号、服务账号和 Agent identity schema |
+| [spec/access-control-grant.schema.json](spec/access-control-grant.schema.json) | 系统、用户、项目、任务组和 Agent 权限授权 schema |
+| [spec/management-console-surface.schema.json](spec/management-console-surface.schema.json) | 系统管理和用户管理界面 schema |
+| [spec/progress-snapshot.schema.json](spec/progress-snapshot.schema.json) | 项目/任务组进度、阻塞、角色活动和仓库输出快照 schema |
+| [spec/instruction-envelope.schema.json](spec/instruction-envelope.schema.json) | 指令稳定前缀、delta、cache key、token budget 和输出契约 schema |
+| [spec/shared-definition-contract.schema.json](spec/shared-definition-contract.schema.json) | 多子系统共享定义 canonical owner、producer、consumer 和 digest schema |
+| [spec/repository-output-target.schema.json](spec/repository-output-target.schema.json) | 任务产出写入项目 Git 仓库的目标仓库、分支、路径和提交证据 schema |
 | [scripts/validate-specs.rb](scripts/validate-specs.rb) | 只读校验 manifest、状态机、gate、关闭屏障和关键 schema 覆盖 |
 
 ## 终态原则
 
 1. 所有可程序化动作都由 AI Agent 或系统服务执行，不设计成外部执行步骤。
-2. 总控不是项目经理岗位，而是唯一目标入口和权威调度器。
+2. 总控不是非系统执行角色，而是唯一目标入口和权威调度器。
 3. Decision Center 默认由 AI Agent 运行，输出可审计 `DecisionRecord`。
 4. Reviewer、QA、Security、Release、Rule Steward 都是角色化 Agent，不是外部岗位。
 5. 审批不是外部点击确认，而是 `ApprovalRequest` + policy/quorum + AI decision + audit 的状态机。
 6. 权限阻断不是等待非系统路径处理，而是 `PermissionRequest` + capability routing + service grant + reassign + retry 的自动流程。
 7. 对 OS、OAuth、第三方平台明确禁止自动化越权的场景，系统只把它建模为外部能力边界事件；这不是项目执行步骤，也不能伪装成自动批准。
-8. 所有状态以 PostgreSQL、event log、checkpoint、artifact digest、schema 和 state machine 为准，不以聊天文本为准。
+8. 所有状态以 PostgreSQL、event log、checkpoint、Git-backed artifact manifest digest、schema 和 state machine 为准，不以聊天文本为准。
 9. 所有写入型动作必须经过 policy、lease、idempotency、command effect 和 audit。
 10. 角色 skill 默认从 `DlenoDing/agency-agents-zh` pinned commit 自动加载，项目/任务组特殊要求通过 overlay 对象覆盖。
 11. 模型选择由 Model Registry 和 Scheduler 基于角色 skill、任务能力、成本、速度、额度、可靠性和风险自动决定。
@@ -76,17 +106,19 @@
 15. MGP、ai-skills、外部 review 和工具结果只能作为来源材料；是否吸收为本系统规则必须经过 RuleSourceResolution，本地核验前不能直接执行。
 16. 外部/旁路 AI review 结果只具 advisory 属性；必须经 ReviewBundle redaction、ReviewPlan coverage 和本地核验后才可转为 Finding、WorkItem 或 DecisionRecord。
 17. 最终关闭由 Orchestrator 根据 CompletionReadinessCheck 和 CloseBarrier 的完整 gate 结果完成。
+18. 共享定义、标准、术语、状态语义、接口、数据模型、错误码和指令格式必须由 SharedDefinitionContract 明确 canonical owner、producer、consumer 和 digest。
+19. 任务产出文件只写入 Orchestrator 选定的项目 Git 仓库目标；系统不另建项目产出文件管理层。
 
 ## 终态技术路线
 
 | 层 | 终态要求 |
 | --- | --- |
 | 控制服务 | TypeScript/Node.js 控制平面，可按负载拆分服务但协议不变 |
-| 系统库 | PostgreSQL 权威状态、event log、lease、audit、rules、artifact metadata |
+| 系统库 | PostgreSQL 权威状态、event log、lease、audit、rules、Git-backed artifact manifest metadata |
 | Agent Runtime | 可远程加入、探测、执行、隔离、恢复、上报证据的机器执行器 |
 | 实时通道 | WebSocket 负责实时性，PostgreSQL outbox/inbox/DLQ 负责可靠性 |
 | MCP | 系统级、项目级、Agent-local MCP 全部经 MCP Proxy 授权和审计 |
-| Artifact | digest、sensitivity、retention、redaction、verify、GC、backup 全流程机器处理 |
+| Evidence/Artifact | 证据 locator、digest、sensitivity、retention、redaction、verify、GC、backup；项目交付文件以 Git 仓库 commit/push 为准 |
 | Policy/Secret | policy table/engine、secret lease、credential helper、grant revoke、audit |
 | UI | 只作为后台管理、观察和入口总控会话界面，不作为执行依赖 |
 

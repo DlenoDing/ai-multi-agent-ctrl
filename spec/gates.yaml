@@ -21,6 +21,7 @@ resolvers:
         - "merge_commit"
         - "external_operation_id"
         - "owner_role"
+        - "producer_role"
         - "policy_version"
         - "prompt_type"
         - "quorum_policy"
@@ -33,6 +34,7 @@ resolvers:
         - "suggested_actions"
         - "meta_control_role_drift"
         - "runner_handle_uncertain"
+        - "path_allowlist_defined"
     inputs:
       - "transition_context"
       - "subject_snapshot"

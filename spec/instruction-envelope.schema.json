@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/instruction-envelope.schema.json",
+  "title": "InstructionEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "envelopeId", "status", "taskGroupId", "recipientRole", "effectiveInstructionPacketRef", "formatVersion", "stablePrefixDigest", "cacheKey", "tokenBudget", "outputContractRef", "createdAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "instruction-envelope/v1"
+    },
+    "envelopeId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["drafted", "compacted", "cache_indexed", "dispatched", "acknowledged", "invalidated"]
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workItemId": {
+      "type": "string"
+    },
+    "recipientRole": {
+      "type": "string",
+      "minLength": 1
+    },
+    "effectiveInstructionPacketRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "formatVersion": {
+      "type": "string",
+      "const": "ai-native-instruction-envelope/v1"
+    },
+    "stablePrefixDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "deltaRefs": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "cacheKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tokenBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxInputTokens", "targetDeltaTokens", "maxOutputTokens"],
+      "properties": {
+        "maxInputTokens": {"type": "integer", "minimum": 1},
+        "targetDeltaTokens": {"type": "integer", "minimum": 1},
+        "maxOutputTokens": {"type": "integer", "minimum": 1}
+      }
+    },
+    "cacheHints": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["stable_prefix_first", "digest_locator_over_inline_context", "delta_only_room_messages", "role_specific_output_contract"]
+      }
+    },
+    "outputContractRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "payloadDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "auditRef": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+.git
+.DS_Store
+node_modules
+.runtime
+coverage
+dist
+tmp
+artifacts
+workspace
+*.log
+.env

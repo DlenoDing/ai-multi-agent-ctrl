@@ -11,6 +11,7 @@
 | [终态自动执行范围](terminal-autonomous-execution-scope.md) | 定义全系统必须由 AI Agent 自动执行的终态能力边界 |
 | [核心控制平面规格](core-control-plane-spec.md) | 固化终态数据库核心表、HTTP API、MCP tools、事件模型和事务边界 |
 | [Agent Runtime 协议](agent-runtime-protocol.md) | 定义 Agent 自动加入、初始化、心跳、session、artifact、权限阻断和断线恢复 |
+| [运行启动、管理界面、共享定义和仓库产出规范](runtime-management-ui-and-repository-output.md) | 固化 npm/Docker/Shell 启动、系统/用户管理、进度视图、共享定义和 Git 仓库产出目标 |
 | [机器可执行制品说明](machine-executable-artifacts.md) | 说明 `spec/` 下 manifest、schema、state machine 和 event contract 的用途 |
 | [AI 执行图](autonomous-execution-graph.md) | 定义由 AI Agent 自动执行的 DAG、角色绑定、验收信号和自动提交推送策略 |
 
@@ -54,6 +55,8 @@
 16. WorkSession final、handoff、父级集成和 TaskGroup close 都必须先计算 `CompletionReadinessCheck`，不能只靠聊天计划或 Agent 自报完成。
 17. 总控、调度和监测角色必须使用 `RoleDriftGuard` 锁定 objective boundary、role mission、task contract、ruleset digest 和 allowed action scope；元控制角色跑偏时要立即暂停下游副作用并由父级纠偏。
 18. 系统运行中重复问题只收集为 RuntimeIssuePattern/SystemUpgradeCandidate 和外部维护证据包；真正系统升级由独立系统外维护完成，再通过后台管理或入口总控会话导入版本化结果。
+19. 多子项目、多子系统、多端和多仓库协作中，公共术语、状态语义、接口、数据模型、错误码、质量标准、权限语义和指令格式必须由 `SharedDefinitionContract` 明确 canonical owner、producer、consumer 和 digest。
+20. 任务产出文件只落到 Orchestrator 选定的项目 Git 仓库。控制平面只记录 `RepositoryOutputTarget`、CommitRef、PushRef、evidence locator 和 artifact manifest，不建立独立项目文件管理系统。
 
 这些经验不是 MGP 特例，应作为系统默认机制。但 MGP 的项目路径、工具名、业务规则、历史兼容要求、旧规则文件和非系统执行指令不能被整体搬入本系统；只能抽取通用协作机制，并经 `RuleSourceResolution` 分类为 generic 后进入 active rule 或 schema。
 
@@ -80,7 +83,7 @@ flowchart LR
     RM --> RB
     MON --> RB
     RB --> DB["System PostgreSQL"]
-    RB --> AR["Artifact/Evidence Store"]
+    RB --> AR["Evidence Metadata Registry"]
     MCP --> DB
     MCP --> M1["System MCP Servers"]
     MCP --> M2["Project MCP Servers"]
@@ -104,7 +107,7 @@ flowchart LR
 | Rules Engine | 加载系统规则、项目规则、角色规则、任务规则和动态沉淀规则 |
 | Work Lease Manager | 管理文件、目录、仓库、DB、环境、容器、外部资源等互斥写入或运行资源 |
 | Monitor | 监测会话状态、进度、阻塞、长时间无产出、消息风暴、token 成本和质量门 |
-| Artifact Store | 存放方案、设计稿、PRD、ADR、证据、截图、日志摘要、测试报告和最终交付 |
+| Evidence Metadata Registry | 登记证据、截图、日志摘要、测试报告、artifact manifest 和 digest；项目交付文件以 Git 仓库 commit/push 为准 |
 | Project Runtime Config | 项目级数据库、Git、环境、CI、部署、密钥引用和运行拓扑配置 |
 
 ### 3.1 系统功能域
@@ -130,6 +133,11 @@ flowchart LR
 | 权限和密钥 | OIDC、service identity、policy engine、secret ref、租约、轮换、撤销 |
 | 审批审计 | ApprovalRequest、quorum、超时、append-only audit、hash chain、读写审计 |
 | 证据管理 | artifact、run、test report、screenshot、trace、review report、digest |
+| 运行启动 | npm、Docker、Shell 入口、初始化、自检、运行态 profile 和健康检查 |
+| 管理界面 | 系统管理、用户管理、账号、授权、Agent 激活、guarded action、审计和进度视图 |
+| 共享定义 | 多子系统公共术语、状态、接口、模型、错误码、质量标准和指令格式的 canonical owner/producer/consumer/digest |
+| 指令效率 | InstructionEnvelope、stable prefix digest、delta payload、cache key、token budget 和 output contract |
+| 仓库产出 | RepositoryOutputTarget、仓库选择、路径 lease、commitRef、pushRef 和 artifact manifest |
 | 执行环境 | environment allocation、snapshot、seed、feature flag、镜像、配置和污染清理 |
 | 知识索引 | rules、文档、代码、checkpoint、evidence、decision 的定位和检索 |
 | 质量门禁 | 开发门、集成门、E2E、性能、安全、多实例、发布、线上质量 |
@@ -175,6 +183,14 @@ PermissionRequest
 ApprovalRequest
 AuditLog
 AgentTrustEvent
+RuntimeBootstrapProfile
+Account
+AccessControlGrant
+ManagementConsoleSurface
+ProgressSnapshot
+InstructionEnvelope
+SharedDefinitionContract
+RepositoryOutputTarget
 ```
 
 对象定义：
@@ -200,10 +216,18 @@ AgentTrustEvent
 | ApprovalRequest | 高风险动作、范围变更、生产动作或权限发放的可调度审批对象 |
 | AuditLog | 控制面、读写工具、secret、artifact、Git、MCP 和审批的防篡改审计记录 |
 | AgentTrustEvent | Agent 运行期可信度变化、违规、降级、隔离和基于可信证据的自动解封记录 |
+| RuntimeBootstrapProfile | 系统启动、初始化、健康检查和文件产出策略的机器 profile |
+| Account | 系统管理员、用户账号、服务账号和 Agent identity |
+| AccessControlGrant | 系统、用户、项目、任务组、Agent 和共享定义的可撤销授权 |
+| ManagementConsoleSurface | 系统管理和用户管理界面能力、guarded action 和视觉质量门 |
+| ProgressSnapshot | 项目或任务组进度、角色活动、阻塞、工作项和仓库输出快照 |
+| InstructionEnvelope | 角色间指令的稳定前缀 digest、delta、cache key、token budget 和输出契约 |
+| SharedDefinitionContract | 公共定义的 canonical owner、producer、consumer、digest、变更和冲突策略 |
+| RepositoryOutputTarget | WorkItem 产出写入的目标 Git 仓库、分支、路径、lease、commit、push 和 manifest |
 
 ## 5. 总控职责
 
-总控是入口总控会话和权威调度器，不是项目经理岗位。它不亲自完成所有实现，而是把目标转换为机器可执行任务契约并调度角色化 AI Agent。主要职责是：
+总控是入口总控会话和权威调度器，不是非系统执行角色。它不亲自完成所有实现，而是把目标转换为机器可执行任务契约并调度角色化 AI Agent。主要职责是：
 
 1. 接收入口总控会话目标并建立项目或任务组。
 2. 判断任务类型：新项目、功能修改、新功能、bug 修复、重构、性能、线上故障、规则治理、验收发布。
@@ -282,6 +306,53 @@ task_group_overlay
 5. 供应链、安全或格式异常时，Skill Registry 把 source 或 skill 标记为 `quarantined`，Scheduler 不再选择它。
 6. 上游仓库变化不得在运行期自动替换 pinned commit；只能生成 `SystemUpgradeCandidate` 和系统外升级证据包。
 7. Scheduler 选择 Agent 时同时选择 `AgentRoleSkill` 和模型，写入 `ModelSelectionDecision`。
+
+### 6.2 公共定义和标准归属
+
+总控拆解任务时必须先扫描是否存在跨子项目、跨子系统、多端、多仓库或多角色共用的定义。共用内容不能由各角色在自己的 WorkSession 中临时定义。
+
+共享定义范围：
+
+| 类型 | 例子 |
+| --- | --- |
+| terminology | 业务术语、实体名称、任务阶段名 |
+| api_contract | HTTP/RPC 接口、参数、响应、兼容性 |
+| data_model | DB schema、领域模型、DTO、事件对象 |
+| event_schema | Room event、队列消息、webhook payload |
+| status_semantics | Project、TaskGroup、WorkItem、WorkSession、发布和账号状态语义 |
+| error_code | 错误码、异常分类、重试/降级语义 |
+| design_token | 颜色、间距、组件状态、响应式断点 |
+| quality_standard | 测试、验收、性能、安全、线上质量标准 |
+| permission_semantics | 角色、授权、审批、外部能力边界 |
+| instruction_format | Agent 指令信封、输出契约、cache key 语义 |
+
+执行规则：
+
+1. Orchestrator 检测到共享定义需求后，先创建 `SharedDefinitionContract(draft)`。
+2. Orchestrator 分配 `canonicalOwnerRole` 和 `producerRole`，并写入 DecisionRecord。
+3. Producer 只把定义发布到 Orchestrator 选择的 `RepositoryOutputTarget`，产出 digest。
+4. Reviewer 校验 consumer binding、兼容性和冲突面。
+5. Orchestrator 将合同置为 `active`，消费者只能按 digest 引用。
+6. 任意 WorkSession 发现共享定义缺失或冲突，只能提交 `DerivedTaskRequest`、`decision_request` 或 `conflict_ref`，不能自行建立旁路标准。
+7. Monitor 发现同一语义出现多个不一致定义时，把合同置为 `conflicted` 并阻断依赖分支，等待 canonical owner 重新发布。
+
+### 6.3 仓库产出目标
+
+任务产出文件必须保存到对应项目 Git 仓库。控制平面不提供独立项目文件库，也不把本地 workspace 作为最终交付源。
+
+执行流程：
+
+```text
+WorkItem requires write output
+-> Orchestrator selects RepositoryOutputTarget
+-> Scheduler binds repository/path lease
+-> WorkSession writes within pathAllowlist
+-> WorkSession commits
+-> WorkSession pushes when remote is required
+-> Checkpoint references commitRef, pushRef, artifactManifestPath
+```
+
+多仓库项目中，Orchestrator 按 WorkItem 决定目标仓库。一个 WorkItem 只能写入自己被分配的 repository、branch 和 path scope；跨仓库 work 必须拆成多个 WorkItem 或创建受控 IntegrationBatch。
 
 ## 7. 项目全生命周期流程
 
@@ -555,7 +626,7 @@ AgentNode 可能位于公网不同主机。接入方式：
 4. 节点注册能力：模型、工具、语言、平台、可访问项目、Docker、数据库、本地路径、并发容量、MCP server 和可代理 tools。
 5. 心跳上报：CPU、内存、磁盘、GPU、网络、任务数、session 状态、工具可用性、MCP 健康和配额画像。
 6. Scheduler 根据资源状态、可用额度、项目权限、写入面 lease 和任务风险分配 work session，传入最小任务契约。
-7. session 通过 Room Broker 通信，通过 Artifact Store 上传证据，通过 MCP Control Plane 使用被授权工具。
+7. session 通过 Room Broker 通信，通过 Evidence Metadata Registry 登记证据 locator 和 digest，通过 MCP Control Plane 使用被授权工具；项目交付文件仍以 Git 仓库 commit/push 为准。
 
 ### 10.1 Agent 初始化流程
 
@@ -1617,7 +1688,7 @@ nextAction
 
 ## 17. 证据和 Artifact 规范
 
-证据不是聊天记录。系统只把聊天中的结论、locator 和摘要入库，原始证据放 Artifact Store。
+证据不是聊天记录。系统只把聊天中的结论、locator 和摘要入库，原始证据按 evidence/artifact metadata 登记；项目交付文件不进入独立文件库，必须落到项目 Git 仓库。
 
 证据类型：
 
@@ -1639,11 +1710,11 @@ nextAction
 1. 证据必须绑定 runId、环境、代码 commit、配置 digest 和 owner。
 2. 正式验收不能使用受临时插桩污染的构建作为通过证据。
 3. 失败证据同样要保存，不得只保存成功片段。
-4. 大日志、截图、HAR、DB dump 不进入 room 消息，只存 artifact 并引用 digest。
+4. 大日志、截图、HAR、DB dump 不进入 room 消息，只登记 evidence/artifact locator 并引用 digest。
 5. Artifact 必须有 `sensitivity`、retention policy、owner、digest、项目 scope 和访问审计。
 6. 上传前执行基础脱敏：secret、token、cookie、authorization header、私钥、生产用户数据和内部高敏 URL。
 7. 任务组关闭时必须决定证据保留策略：release/事故证据长期保留，临时日志和大体积 dump 按 TTL 清理。
-8. 使用本地文件系统也必须做 `artifact_verify` 和 `artifact_gc`：校验 DB metadata 与文件 digest 一致，按项目 quota 和 retention 清理。
+8. 使用本地文件系统保存临时证据也必须做 `artifact_verify` 和 `artifact_gc`：校验 DB metadata 与文件 digest 一致，按项目 quota 和 retention 清理；交付文件仍以 Git repository target 为准。
 
 ## 18. 成本和上下文控制
 
@@ -1892,7 +1963,7 @@ ChangeSet -> MergeQueueItem -> IntegrationBatch
 
 系统终态必须包含以下自治能力域。它们不是给非系统执行路径处理的计划，而是 Orchestrator 可按依赖 DAG 自动拆解、自动派发、自动验证、自动提交和自动推送的能力闭环。
 
-运行期重复问题不属于项目执行链路的自动自改进范围。Monitor 可以收集重复失败、重复权限阻断、重复模型选择失败、重复 spec drift、重复 flaky test 和重复 review finding，生成 `RuntimeIssuePattern` 与 `SystemUpgradeCandidate`，并导出 `externalUpgradePackageRef`。系统运行中不得自动修改自身规则、策略、角色 skill、MCP grant、permission policy、调度策略或控制面代码，也不得自动创建系统升级任务组。真正的系统升级改造由人独立在系统外完成，再由后台管理或入口总控会话导入新的版本化规则、schema 或代码基线。
+运行期重复问题不属于项目执行链路的自动自改进范围。Monitor 可以收集重复失败、重复权限阻断、重复模型选择失败、重复 spec drift、重复 flaky test 和重复 review finding，生成 `RuntimeIssuePattern` 与 `SystemUpgradeCandidate`，并导出 `externalUpgradePackageRef`。系统运行中不得自动修改自身规则、策略、角色 skill、MCP grant、permission policy、调度策略或控制面代码，也不得自动创建系统升级任务组。真正的系统升级改造由系统外独立维护流程完成，再由后台管理或入口总控会话导入新的版本化规则、schema 或代码基线。
 
 ### Local Broker 自治能力
 

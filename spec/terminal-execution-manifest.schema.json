@@ -16,6 +16,11 @@
     "genericMechanismAssimilationPolicy",
     "parallelExecutionPolicy",
     "reviewPlanningPolicy",
+    "runtimeOperationsPolicy",
+    "managementConsolePolicy",
+    "instructionEfficiencyPolicy",
+    "sharedDefinitionPolicy",
+    "repositoryOutputPolicy",
     "authorityModel",
     "nonNegotiableInvariants",
     "roles",
@@ -498,6 +503,162 @@
             "requireRedaction": {"type": "boolean", "const": true},
             "resultIsAdvisory": {"type": "boolean", "const": true},
             "requireLocalVerification": {"type": "boolean", "const": true}
+          }
+        }
+      }
+    },
+    "runtimeOperationsPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bootstrapObject", "launchModes", "requiredEntrypoints", "initCommand", "startCommand", "doctorCommand"],
+      "properties": {
+        "bootstrapObject": {"type": "string", "const": "RuntimeBootstrapProfile"},
+        "launchModes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "enum": ["npm", "docker", "shell"]}
+        },
+        "requiredEntrypoints": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["package.json", "Dockerfile", "docker-compose.yml", "scripts/start.sh"]
+          }
+        },
+        "initCommand": {"type": "string", "const": "npm run init"},
+        "startCommand": {"type": "string", "const": "npm start"},
+        "doctorCommand": {"type": "string", "const": "npm run doctor"}
+      }
+    },
+    "managementConsolePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["consoleObject", "accountObject", "accessGrantObject", "progressObject", "systemManagementScopes", "userManagementScopes", "guardedActions"],
+      "properties": {
+        "consoleObject": {"type": "string", "const": "ManagementConsoleSurface"},
+        "accountObject": {"type": "string", "const": "Account"},
+        "accessGrantObject": {"type": "string", "const": "AccessControlGrant"},
+        "progressObject": {"type": "string", "const": "ProgressSnapshot"},
+        "systemManagementScopes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["runtime_bootstrap", "system_accounts", "policy_import", "audit_inspection", "external_system_upgrade_import"]
+          }
+        },
+        "userManagementScopes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["project_create", "project_membership", "task_group_control", "agent_activation", "project_progress", "task_group_progress"]
+          }
+        },
+        "guardedActions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "runtime_reinitialize",
+              "system_policy_import",
+              "external_system_upgrade_import",
+              "grant_permission",
+              "activate_agent",
+              "pause_task_group",
+              "resume_task_group",
+              "request_task_group_review",
+              "rebound_drifted_task"
+            ]
+          }
+        }
+      }
+    },
+    "instructionEfficiencyPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["envelopeObject", "requiredFormatElements", "compressionRules"],
+      "properties": {
+        "envelopeObject": {"type": "string", "const": "InstructionEnvelope"},
+        "requiredFormatElements": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["stable_prefix_digest", "digest_refs", "delta_payload", "output_contract_ref", "cache_key", "token_budget"]
+          }
+        },
+        "compressionRules": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "canonical_rules_by_digest_reference",
+              "stable_prefix_before_variable_context",
+              "role_specific_delta_only",
+              "shared_definition_refs_over_inline_repetition",
+              "result_contract_refs_over_freeform_restating"
+            ]
+          }
+        }
+      }
+    },
+    "sharedDefinitionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["definitionObject", "definitionTypes", "ownerRequiredBeforeWork", "producerRequiredBeforePublish", "consumersMustReferenceDigest", "divergenceHandling"],
+      "properties": {
+        "definitionObject": {"type": "string", "const": "SharedDefinitionContract"},
+        "definitionTypes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["terminology", "api_contract", "data_model", "event_schema", "status_semantics", "error_code", "design_token", "quality_standard", "permission_semantics", "instruction_format"]
+          }
+        },
+        "ownerRequiredBeforeWork": {"type": "boolean", "const": true},
+        "producerRequiredBeforePublish": {"type": "boolean", "const": true},
+        "consumersMustReferenceDigest": {"type": "boolean", "const": true},
+        "divergenceHandling": {"type": "string", "const": "block_and_request_canonical_decision"}
+      }
+    },
+    "repositoryOutputPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetObject", "outputPolicy", "targetDecisionOwner", "multiRepositoryDecision", "forbiddenStores", "requiredRefs"],
+      "properties": {
+        "targetObject": {"type": "string", "const": "RepositoryOutputTarget"},
+        "outputPolicy": {"type": "string", "const": "project_git_repository_only"},
+        "targetDecisionOwner": {"type": "string", "const": "orchestrator"},
+        "multiRepositoryDecision": {"type": "string", "const": "orchestrator_selects_repository_per_work_item"},
+        "forbiddenStores": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["separate_file_management_system", "control_plane_blob_store_for_project_outputs", "untracked_local_workspace_as_deliverable"]
+          }
+        },
+        "requiredRefs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["repository_id", "branch", "path_allowlist", "commit_ref", "push_ref_when_remote_required", "artifact_manifest_path"]
           }
         }
       }

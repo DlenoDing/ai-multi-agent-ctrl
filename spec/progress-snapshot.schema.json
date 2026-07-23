@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/progress-snapshot.schema.json",
+  "title": "ProgressSnapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "snapshotId", "scopeType", "scopeRef", "status", "progress", "health", "counters", "roleActivity", "workItems", "createdAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "progress-snapshot/v1"
+    },
+    "snapshotId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scopeType": {
+      "type": "string",
+      "enum": ["project", "task_group"]
+    },
+    "scopeRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["collecting", "current", "stale", "blocked", "archived"]
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["percent", "phase"],
+      "properties": {
+        "percent": {"type": "number", "minimum": 0, "maximum": 100},
+        "phase": {"type": "string", "minLength": 1}
+      }
+    },
+    "health": {
+      "type": "string",
+      "enum": ["ok", "attention", "blocked", "failed"]
+    },
+    "counters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "done", "inProgress", "blocked"],
+      "properties": {
+        "total": {"type": "integer", "minimum": 0},
+        "done": {"type": "integer", "minimum": 0},
+        "inProgress": {"type": "integer", "minimum": 0},
+        "blocked": {"type": "integer", "minimum": 0}
+      }
+    },
+    "roleActivity": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["roleId", "status", "lastEventRef"],
+        "properties": {
+          "roleId": {"type": "string", "minLength": 1},
+          "status": {"type": "string", "minLength": 1},
+          "lastEventRef": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "workItems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workItemId", "title", "status", "progress"],
+        "properties": {
+          "workItemId": {"type": "string", "minLength": 1},
+          "title": {"type": "string", "minLength": 1},
+          "status": {"type": "string", "minLength": 1},
+          "progress": {"type": "number", "minimum": 0, "maximum": 100},
+          "repositoryOutputTargetRef": {"type": "string"}
+        }
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "repositoryOutputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repositoryOutputTargetRef", "repositoryId", "branch"],
+        "properties": {
+          "repositoryOutputTargetRef": {"type": "string", "minLength": 1},
+          "repositoryId": {"type": "string", "minLength": 1},
+          "branch": {"type": "string", "minLength": 1},
+          "commitRefs": {"type": "array", "items": {"type": "string"}},
+          "pushRefs": {"type": "array", "items": {"type": "string"}},
+          "artifactManifestPath": {"type": "string"}
+        }
+      }
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

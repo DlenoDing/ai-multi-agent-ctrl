@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/repository-output-target.schema.json",
+  "title": "RepositoryOutputTarget",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "targetId", "status", "projectId", "taskGroupId", "workItemId", "repositoryId", "branch", "baseRef", "pathAllowlist", "outputPolicy", "decisionRecordRef", "createdAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "repository-output-target/v1"
+    },
+    "targetId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["candidate", "selected", "lease_bound", "writing", "committed", "pushed", "rejected", "superseded"]
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workItemId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repositoryId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repositoryUrl": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "baseRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pathAllowlist": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "pathDenylist": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "outputPolicy": {
+      "type": "string",
+      "const": "project_git_repository_only"
+    },
+    "decisionRecordRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "leaseRef": {
+      "type": "string"
+    },
+    "commitRefs": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "pushRefs": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "artifactManifestPath": {
+      "type": "string"
+    },
+    "auditRef": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

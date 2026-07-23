@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/shared-definition-contract.schema.json",
+  "title": "SharedDefinitionContract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "contractId", "status", "projectId", "definitionType", "scopeRefs", "conflictPolicy", "changePolicy", "createdAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "shared-definition-contract/v1"
+    },
+    "contractId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "owner_assigned", "proposed", "reviewing", "active", "change_requested", "conflicted", "superseded", "retired", "rejected"]
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string"
+    },
+    "definitionType": {
+      "type": "string",
+      "enum": ["terminology", "api_contract", "data_model", "event_schema", "status_semantics", "error_code", "design_token", "quality_standard", "permission_semantics", "instruction_format"]
+    },
+    "scopeRefs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string"}
+    },
+    "canonicalOwnerRole": {
+      "type": "string"
+    },
+    "producerRole": {
+      "type": "string"
+    },
+    "consumerRefs": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "sourceRefs": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "definitionDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "repositoryTarget": {
+      "$ref": "#/$defs/repositoryTarget"
+    },
+    "conflictPolicy": {
+      "type": "string",
+      "enum": ["block_and_request_canonical_decision", "owner_reconciles_then_republish"]
+    },
+    "changePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiresDecisionRecord", "invalidatesConsumers", "consumerAckRequired"],
+      "properties": {
+        "requiresDecisionRecord": {"type": "boolean", "const": true},
+        "invalidatesConsumers": {"type": "boolean"},
+        "consumerAckRequired": {"type": "boolean", "const": true}
+      }
+    },
+    "reviewEvidenceRefs": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "auditRef": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "active"}
+        }
+      },
+      "then": {
+        "required": ["canonicalOwnerRole", "producerRole", "consumerRefs", "definitionDigest", "repositoryTarget", "reviewEvidenceRefs"]
+      }
+    }
+  ],
+  "$defs": {
+    "repositoryTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositoryId", "branch", "path", "commitRef"],
+      "properties": {
+        "repositoryId": {"type": "string", "minLength": 1},
+        "branch": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "commitRef": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

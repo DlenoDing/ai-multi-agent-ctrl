@@ -142,7 +142,15 @@
             "RuleSourceResolution",
             "CompletionReadinessCheck",
             "RuntimeIssuePattern",
-            "SystemUpgradeCandidate"
+            "SystemUpgradeCandidate",
+            "RuntimeBootstrapProfile",
+            "Account",
+            "AccessControlGrant",
+            "ManagementConsoleSurface",
+            "ProgressSnapshot",
+            "InstructionEnvelope",
+            "SharedDefinitionContract",
+            "RepositoryOutputTarget"
           ]
         },
         "id": {
@@ -196,7 +204,15 @@
         "rule_source_resolution",
         "completion_readiness",
         "external_capability_boundary",
-        "system_upgrade_import"
+        "system_upgrade_import",
+        "runtime_bootstrap",
+        "account_lifecycle",
+        "access_control_grant",
+        "management_console_surface",
+        "progress_snapshot",
+        "instruction_envelope",
+        "shared_definition_contract",
+        "repository_output_target"
       ]
     },
     "priority": {

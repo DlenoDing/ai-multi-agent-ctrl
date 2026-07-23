@@ -2,7 +2,7 @@
 
 ## 1. 目标
 
-Agent Runtime 是公网或内网 Agent 节点上的本地控制进程，负责节点入网、心跳、资源探测、模型探测、MCP 本地代理、session 启动、checkpoint 上传、artifact 上传、权限阻断回传和断线恢复。
+Agent Runtime 是公网或内网 Agent 节点上的本地控制进程，负责节点入网、心跳、资源探测、模型探测、MCP 本地代理、session 启动、checkpoint 提交、evidence/artifact metadata 登记、权限阻断回传和断线恢复。
 
 Runtime 不是无限远程 shell。所有副作用都必须由控制平面授权，并绑定 project、taskGroup、work、session、command、lease 和 audit。Runtime 的所有控制入口都面向 AI Agent 和系统服务，不依赖非系统执行路径处理项目工作。
 
@@ -346,15 +346,15 @@ Runtime 提交 checkpoint：
 
 控制平面返回新 stateVersion。Runtime 必须保存 ACK。
 
-## 7. artifact_upload
+## 7. evidence_artifact_register
 
-Artifact 上传分两步：
+Evidence/artifact 登记分两步。该流程只用于日志、截图、测试报告、HAR、trace、DB dump 摘要和 artifact manifest 等证据，不用于保存项目交付文件。项目任务产出文件必须写入 `RepositoryOutputTarget` 指定的 Git 仓库、分支和路径。
 
 ```text
-artifact_prepare -> upload file -> artifact_commit
+artifact_prepare -> register locator/digest -> artifact_commit
 ```
 
-上传前 Runtime 必须做基础脱敏：
+登记前 Runtime 必须做基础脱敏：
 
 1. authorization header。
 2. cookie。
