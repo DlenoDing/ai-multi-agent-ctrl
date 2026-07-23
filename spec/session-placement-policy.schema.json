@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/session-placement-policy.schema.json",
+  "title": "SessionPlacementPolicy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "policyId",
+    "defaultPlacement",
+    "decisionObject",
+    "capacityPolicy",
+    "sustainedWorkSignals",
+    "shortTaskSignals",
+    "placementRules",
+    "decisionOutput"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "session-placement-policy/v1"
+    },
+    "policyId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "defaultPlacement": {
+      "type": "string",
+      "const": "new_session_for_sustained_work"
+    },
+    "decisionObject": {
+      "type": "string",
+      "const": "SessionPlacementDecision"
+    },
+    "capacityPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxSubagentsPerControllerSession", "onSubagentLimitApproach"],
+      "properties": {
+        "maxSubagentsPerControllerSession": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "onSubagentLimitApproach": {
+          "type": "string",
+          "const": "start_new_session"
+        }
+      }
+    },
+    "sustainedWorkSignals": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/workSignal"
+      }
+    },
+    "shortTaskSignals": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/workSignal"
+      }
+    },
+    "placementRules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ruleId", "placement"],
+        "properties": {
+          "ruleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "placement": {
+            "type": "string",
+            "enum": ["new_session", "subagent"]
+          },
+          "whenAny": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/$defs/workSignal"
+            }
+          },
+          "whenAll": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/$defs/workSignal"
+            }
+          }
+        },
+        "anyOf": [
+          {"required": ["whenAny"]},
+          {"required": ["whenAll"]}
+        ]
+      }
+    },
+    "decisionOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sessionPlacementDecisionRef",
+        "placement",
+        "workSignals",
+        "capacitySnapshotRef",
+        "modelSelectionDecisionRef",
+        "taskContractRef",
+        "auditRef"
+      ],
+      "properties": {
+        "sessionPlacementDecisionRef": {"type": "string", "minLength": 1},
+        "placement": {"type": "string", "enum": ["new_session", "subagent"]},
+        "workSignals": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/workSignal"
+          }
+        },
+        "capacitySnapshotRef": {"type": "string", "minLength": 1},
+        "modelSelectionDecisionRef": {"type": "string", "minLength": 1},
+        "taskContractRef": {"type": "string", "minLength": 1},
+        "auditRef": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "$defs": {
+    "workSignal": {
+      "type": "string",
+      "enum": [
+        "expected_multi_turn",
+        "long_running",
+        "stateful_context",
+        "role_owner_required",
+        "independent_work_owner",
+        "write_scope_owner",
+        "cross_file_or_cross_service_change",
+        "external_capability_flow",
+        "git_or_release_side_effect",
+        "single_turn",
+        "read_only_scan",
+        "localized_search",
+        "format_only_change",
+        "no_persistent_state",
+        "no_global_task_ownership",
+        "subagent_limit_approaching",
+        "controller_context_pressure"
+      ]
+    }
+  }
+}

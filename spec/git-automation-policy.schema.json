@@ -8,6 +8,9 @@
     "schemaVersion",
     "repositoryId",
     "credentialProfileRef",
+    "credentialGrantRef",
+    "expiresAt",
+    "allowedActions",
     "baseRef",
     "workBranch",
     "commitPolicy",
@@ -30,6 +33,23 @@
     "credentialProfileRef": {
       "type": "string",
       "minLength": 1
+    },
+    "credentialGrantRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "allowedActions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["fetch", "status", "commit", "push", "tag", "merge_queue_submit"]
+      }
     },
     "baseRef": {
       "type": "string",
@@ -59,11 +79,19 @@
     "pushPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetRef", "forbidForcePush", "verifyRemoteSha", "retryPolicy"],
+      "required": ["targetRef", "allowedTargetRefPatterns", "forbidForcePush", "verifyRemoteSha", "nonFastForward", "retryPolicy", "dlqPolicyRef"],
       "properties": {
         "targetRef": {
           "type": "string",
           "minLength": 1
+        },
+        "allowedTargetRefPatterns": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "forbidForcePush": {
           "type": "boolean",
@@ -73,20 +101,40 @@
           "type": "boolean",
           "const": true
         },
+        "nonFastForward": {
+          "type": "string",
+          "enum": ["reject_and_rebase_batch", "reject_to_dlq"]
+        },
         "retryPolicy": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["maxAttempts", "backoff"],
+          "required": ["maxAttempts", "backoff", "maxRetryWindow", "retryableErrorClasses"],
           "properties": {
             "maxAttempts": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 2
             },
             "backoff": {
               "type": "string",
               "enum": ["fixed", "exponential"]
+            },
+            "maxRetryWindow": {
+              "type": "string",
+              "minLength": 1
+            },
+            "retryableErrorClasses": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": ["network", "remote_transient", "credential_refreshable", "lock_contention"]
+              }
             }
           }
+        },
+        "dlqPolicyRef": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },

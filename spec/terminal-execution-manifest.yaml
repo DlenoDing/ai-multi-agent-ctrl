@@ -1,6 +1,149 @@
 schemaVersion: "terminal-execution-manifest/v1"
 systemId: "ai-multi-agent-ctrl"
 executionMode: "ai_agent_autonomous"
+skillRoleSources:
+  - sourceId: "agency-agents-zh"
+    repositoryUrl: "https://github.com/DlenoDing/agency-agents-zh.git"
+    defaultRef: "main"
+    pinnedCommit: "1d2345927e4a70c426472c37771e31f9333d7e0a"
+    catalogFiles:
+      - "AGENT-LIST.md"
+      - "CATALOG.md"
+    roleFileGlobs:
+      - "academic/**/*.md"
+      - "design/**/*.md"
+      - "engineering/**/*.md"
+      - "finance/**/*.md"
+      - "game-development/**/*.md"
+      - "gis/**/*.md"
+      - "hr/**/*.md"
+      - "marketing/**/*.md"
+      - "product/**/*.md"
+      - "project-management/**/*.md"
+      - "sales/**/*.md"
+      - "writing/**/*.md"
+    trustPolicy:
+      requirePinnedCommit: true
+      requireFrontmatter: true
+      requireDigestIndex: true
+      allowUnsignedContent: false
+    syncPolicy:
+      mode: "pinned_snapshot"
+      refreshTrigger: "orchestrator_need"
+      onUpstreamChange: "create_system_upgrade_candidate"
+    overlayPolicy:
+      defaultPrecedence:
+        - "task_group_overlay"
+        - "project_overlay"
+        - "upstream_default"
+      allowedScopes:
+        - "project"
+        - "task_group"
+      requiresDecisionRecord: true
+      requiresDigest: true
+modelProviderPolicy:
+  registryMode: "dynamic_provider_capability_probe"
+  providerClasses:
+    - "openai"
+    - "anthropic"
+    - "google"
+    - "xai"
+    - "meta"
+    - "mistral"
+    - "deepseek"
+    - "qwen"
+    - "moonshot"
+    - "zhipu"
+    - "baidu"
+    - "tencent"
+    - "openrouter"
+    - "azure_openai"
+    - "aws_bedrock"
+    - "vertex_ai"
+    - "ollama"
+    - "vllm"
+    - "custom"
+  selectionBasis:
+    - "role_skill_capability"
+    - "task_required_capability"
+    - "context_window"
+    - "tool_use"
+    - "structured_output"
+    - "quality_signal"
+    - "latency_signal"
+    - "cost_signal"
+    - "quota_signal"
+    - "risk_level"
+    - "data_boundary"
+  decisionObject: "ModelSelectionDecision"
+sessionPlacementPolicy:
+  defaultPlacement: "new_session_for_sustained_work"
+  decisionObject: "SessionPlacementDecision"
+  capacityPolicy:
+    maxSubagentsPerControllerSession: 4
+    onSubagentLimitApproach: "start_new_session"
+  sustainedWorkSignals:
+    - "expected_multi_turn"
+    - "long_running"
+    - "stateful_context"
+    - "role_owner_required"
+    - "independent_work_owner"
+    - "write_scope_owner"
+    - "cross_file_or_cross_service_change"
+    - "external_capability_flow"
+    - "git_or_release_side_effect"
+  shortTaskSignals:
+    - "single_turn"
+    - "read_only_scan"
+    - "localized_search"
+    - "format_only_change"
+    - "no_persistent_state"
+    - "no_global_task_ownership"
+  placementRules:
+    - ruleId: "sustained-role-work"
+      placement: "new_session"
+      whenAny:
+        - "expected_multi_turn"
+        - "long_running"
+        - "role_owner_required"
+        - "write_scope_owner"
+    - ruleId: "short-contained-work"
+      placement: "subagent"
+      whenAll:
+        - "single_turn"
+        - "no_persistent_state"
+        - "no_global_task_ownership"
+    - ruleId: "subagent-limit-pressure"
+      placement: "new_session"
+      whenAny:
+        - "subagent_limit_approaching"
+        - "controller_context_pressure"
+runtimeImprovementPolicy:
+  mode: "collect_only_during_project_execution"
+  candidateObject: "SystemUpgradeCandidate"
+  issuePatternObject: "RuntimeIssuePattern"
+  forbiddenRuntimeActions:
+    - "mutate_active_ruleset"
+    - "self_patch_control_plane"
+    - "change_scheduler_policy"
+    - "auto_publish_role_skill_overlay"
+    - "auto_change_permission_policy"
+    - "auto_expand_mcp_grant"
+    - "create_runtime_self_upgrade_task_group"
+    - "execute_system_upgrade_during_project_run"
+  collectionTriggers:
+    - "repeated_failure_fingerprint"
+    - "repeated_permission_blocker"
+    - "repeated_model_selection_failure"
+    - "repeated_spec_drift"
+    - "repeated_test_flake"
+    - "repeated_review_finding"
+  externalMaintenanceHandoff:
+    - "cluster_issue_pattern"
+    - "create_system_upgrade_candidate"
+    - "export_upgrade_evidence_package"
+    - "mark_system_external_maintenance_required"
+    - "await_system_external_upgrade_import"
 authorityModel:
   entryControllerSession:
     role: "objective_boundary_source"
@@ -62,6 +205,10 @@ nonNegotiableInvariants:
     rule: "DecisionRecord is append-only; changes require supersede and affected-work invalidation."
   - id: "high_risk_no_self_approval"
     rule: "High-risk actions cannot be approved only by the same session or role that proposed them."
+  - id: "new_session_for_sustained_work"
+    rule: "Scheduler must prefer a new WorkSession for sustained, multi-turn, stateful, write-owning, or role-owner work; subagents are reserved for short contained work."
+  - id: "runtime_improvement_collect_only"
+    rule: "Repeated runtime issues are collected as RuntimeIssuePattern and SystemUpgradeCandidate objects; active execution must not self-modify rules, policies, roles, grants, control-plane code, or create runtime self-upgrade task groups."
 
 roles:
   - id: "orchestrator"
@@ -85,6 +232,7 @@ roles:
     responsibilities:
       - "agent_selection"
       - "model_selection"
+      - "session_placement"
       - "parallelism_control"
       - "lease_admission"
   - id: "work-session"
@@ -125,6 +273,7 @@ roles:
       - "rule_candidate"
       - "rule_review"
       - "ruleset_publish"
+      - "system_upgrade_candidate_review"
   - id: "monitor"
     kind: "autonomous_service_agent"
     responsibilities:
@@ -133,6 +282,7 @@ roles:
       - "lease_monitor"
       - "cost_monitor"
       - "alert_route"
+      - "runtime_issue_pattern_collection"
   - id: "agent-runtime"
     kind: "system_service"
     responsibilities:
@@ -165,6 +315,24 @@ roles:
       - "tool_grant_check"
       - "param_policy_check"
       - "result_filter"
+  - id: "room-broker"
+    kind: "system_service"
+    responsibilities:
+      - "room_event_persist"
+      - "cursor_delivery"
+      - "ack_tracking"
+  - id: "model-registry"
+    kind: "system_service"
+    responsibilities:
+      - "provider_probe"
+      - "capability_profile_index"
+      - "model_selection_decision"
+  - id: "skill-registry"
+    kind: "system_service"
+    responsibilities:
+      - "external_skill_source_sync"
+      - "role_skill_parse"
+      - "project_task_group_overlay"
 
 requiredControlObjects:
   - "Project"
@@ -194,14 +362,40 @@ requiredControlObjects:
   - "MergeQueueItem"
   - "ReleaseManifest"
   - "DLQEntry"
+  - "SecretGrant"
+  - "SecretLease"
+  - "TempGrant"
+  - "AgentSkillSource"
+  - "AgentRoleSkill"
+  - "RoleSkillOverlay"
+  - "ModelProvider"
+  - "ModelCapabilityProfile"
+  - "ModelSelectionPolicy"
+  - "ModelSelectionDecision"
+  - "SessionPlacementPolicy"
+  - "SessionPlacementDecision"
+  - "RuntimeIssuePattern"
+  - "SystemUpgradeCandidate"
 
 requiredMachineSpecs:
   - "spec/terminal-execution-manifest.yaml"
   - "spec/terminal-execution-manifest.schema.json"
   - "spec/state-machines.yaml"
   - "spec/state-machines.schema.json"
+  - "spec/gates.yaml"
+  - "spec/gate-catalog.schema.json"
+  - "spec/agent-skill-source.schema.json"
+  - "spec/agent-role-skill.schema.json"
+  - "spec/model-capability.schema.json"
+  - "spec/model-selection-policy.schema.json"
+  - "spec/session-placement-policy.schema.json"
+  - "spec/runtime-issue-pattern.schema.json"
+  - "spec/system-upgrade-candidate.schema.json"
   - "spec/agent-task-contract.schema.json"
   - "spec/control-events.schema.json"
+  - "spec/checkpoint.schema.json"
+  - "spec/commit-ref.schema.json"
+  - "spec/push-ref.schema.json"
   - "spec/mcp-grant.schema.json"
   - "spec/git-automation-policy.schema.json"
   - "spec/git-command.schema.json"

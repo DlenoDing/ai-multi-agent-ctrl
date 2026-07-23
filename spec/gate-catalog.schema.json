@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/gate-catalog.schema.json",
+  "title": "GateCatalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "catalogId", "resolverPolicy", "resolvers"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "gate-catalog/v1"
+    },
+    "catalogId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "resolverPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unresolvedGate", "validationOrder"],
+      "properties": {
+        "unresolvedGate": {
+          "type": "string",
+          "const": "reject_transition"
+        },
+        "validationOrder": {
+          "type": "string",
+          "const": "listed"
+        }
+      }
+    },
+    "resolvers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "match", "inputs", "predicate", "evidence", "failureCode"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "match": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "exactIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "pattern": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "inputs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "predicate": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["required", "acceptedRefs"],
+            "properties": {
+              "required": {
+                "type": "boolean"
+              },
+              "acceptedRefs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "failureCode": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

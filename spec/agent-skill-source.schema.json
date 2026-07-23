@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/agent-skill-source.schema.json",
+  "title": "AgentSkillSource",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "sourceId",
+    "repositoryUrl",
+    "defaultRef",
+    "pinnedCommit",
+    "catalogFiles",
+    "roleFileGlobs",
+    "trustPolicy",
+    "syncPolicy",
+    "overlayPolicy"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "agent-skill-source/v1"
+    },
+    "sourceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repositoryUrl": {
+      "type": "string",
+      "format": "uri"
+    },
+    "defaultRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pinnedCommit": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{40}$"
+    },
+    "catalogFiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "roleFileGlobs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "trustPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requirePinnedCommit", "requireFrontmatter", "requireDigestIndex", "allowUnsignedContent"],
+      "properties": {
+        "requirePinnedCommit": {"type": "boolean", "const": true},
+        "requireFrontmatter": {"type": "boolean", "const": true},
+        "requireDigestIndex": {"type": "boolean", "const": true},
+        "allowUnsignedContent": {"type": "boolean", "const": false}
+      }
+    },
+    "syncPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "refreshTrigger", "onUpstreamChange"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["pinned_snapshot", "tracked_ref_with_digest_gate"]
+        },
+        "refreshTrigger": {
+          "type": "string",
+          "enum": ["scheduled_probe", "admin_config_change", "orchestrator_need"]
+        },
+        "onUpstreamChange": {
+          "type": "string",
+          "enum": ["create_system_upgrade_candidate", "quarantine_until_verified", "keep_pinned_snapshot"]
+        }
+      }
+    },
+    "overlayPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["defaultPrecedence", "allowedScopes", "requiresDecisionRecord", "requiresDigest"],
+      "properties": {
+        "defaultPrecedence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["task_group_overlay", "project_overlay", "upstream_default"]
+          }
+        },
+        "allowedScopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["project", "task_group"]
+          }
+        },
+        "requiresDecisionRecord": {"type": "boolean", "const": true},
+        "requiresDigest": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}

@@ -9,9 +9,12 @@
     "projectId",
     "taskGroupId",
     "stateVersion",
+    "stateDigest",
+    "sourceQueryRefs",
     "requiredGates",
     "gateResults",
     "blockingObjects",
+    "evidenceRefs",
     "computedAt",
     "satisfied"
   ],
@@ -32,24 +35,39 @@
       "type": "integer",
       "minimum": 1
     },
+    "stateDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "sourceQueryRefs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["queryId", "source", "digest"],
+        "properties": {
+          "queryId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-fA-F0-9]{64}$"
+          }
+        }
+      }
+    },
     "requiredGates": {
       "type": "array",
+      "minItems": 19,
+      "uniqueItems": true,
       "items": {
-        "type": "string",
-        "enum": [
-          "all_required_work_closed",
-          "all_findings_terminal",
-          "all_quality_gates_passed",
-          "all_contracts_compatible",
-          "all_changes_integrated",
-          "no_pending_permissions",
-          "no_pending_approvals",
-          "no_active_dlq",
-          "no_active_leases",
-          "artifacts_verified",
-          "release_manifest_ready",
-          "rules_candidates_processed"
-        ]
+        "$ref": "#/$defs/closeGate"
       }
     },
     "gateResults": {
@@ -60,7 +78,7 @@
         "required": ["gate", "status", "evidenceRefs"],
         "properties": {
           "gate": {
-            "type": "string"
+            "$ref": "#/$defs/closeGate"
           },
           "status": {
             "type": "string",
@@ -86,7 +104,29 @@
         "required": ["objectType", "objectId", "status"],
         "properties": {
           "objectType": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "WorkItem",
+              "Finding",
+              "QualityGate",
+              "Contract",
+              "IntegrationBatch",
+              "ReleaseManifest",
+              "PermissionRequest",
+              "ApprovalRequest",
+              "PolicyDecision",
+              "Command",
+              "CommandEffect",
+              "DLQEntry",
+              "Lease",
+              "TempGrant",
+              "SecretLease",
+              "ExternalCapabilityBoundary",
+              "Ruleset",
+              "RuntimeIssuePattern",
+              "SystemUpgradeCandidate",
+              "Artifact"
+            ]
           },
           "objectId": {
             "type": "string"
@@ -97,12 +137,123 @@
         }
       }
     },
+    "waivers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gate", "decisionRecordRef", "expiresAt"],
+        "properties": {
+          "gate": {
+            "type": "string"
+          },
+          "decisionRecordRef": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "default": []
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "computedAt": {
       "type": "string",
       "format": "date-time"
     },
     "satisfied": {
       "type": "boolean"
+    }
+  },
+  "allOf": [
+    {
+      "properties": {
+        "requiredGates": {
+          "allOf": [
+            {"contains": {"const": "all_required_work_closed"}},
+            {"contains": {"const": "all_findings_terminal"}},
+            {"contains": {"const": "all_quality_gates_passed"}},
+            {"contains": {"const": "all_contracts_compatible"}},
+            {"contains": {"const": "all_changes_integrated"}},
+            {"contains": {"const": "no_pending_permissions"}},
+            {"contains": {"const": "no_pending_approvals"}},
+            {"contains": {"const": "all_policy_decisions_terminal"}},
+            {"contains": {"const": "all_commands_terminal"}},
+            {"contains": {"const": "all_command_effects_terminal"}},
+            {"contains": {"const": "no_active_dlq"}},
+            {"contains": {"const": "all_leases_terminal"}},
+            {"contains": {"const": "no_active_temp_grants"}},
+            {"contains": {"const": "no_active_secret_leases"}},
+            {"contains": {"const": "no_open_external_capability_boundaries"}},
+            {"contains": {"const": "artifacts_verified"}},
+            {"contains": {"const": "release_manifest_ready"}},
+            {"contains": {"const": "rules_candidates_processed"}},
+            {"contains": {"const": "runtime_issue_candidates_exported"}}
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "satisfied": {
+            "const": true
+          }
+        },
+        "required": ["satisfied"]
+      },
+      "then": {
+        "properties": {
+          "blockingObjects": {
+            "maxItems": 0
+          },
+          "gateResults": {
+            "minItems": 19,
+            "items": {
+              "properties": {
+                "status": {
+                  "const": "passed"
+                }
+              },
+              "required": ["status"]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "closeGate": {
+      "type": "string",
+      "enum": [
+        "all_required_work_closed",
+        "all_findings_terminal",
+        "all_quality_gates_passed",
+        "all_contracts_compatible",
+        "all_changes_integrated",
+        "no_pending_permissions",
+        "no_pending_approvals",
+        "all_policy_decisions_terminal",
+        "all_commands_terminal",
+        "all_command_effects_terminal",
+        "no_active_dlq",
+        "all_leases_terminal",
+        "no_active_temp_grants",
+        "no_active_secret_leases",
+        "no_open_external_capability_boundaries",
+        "artifacts_verified",
+        "release_manifest_ready",
+        "rules_candidates_processed",
+        "runtime_issue_candidates_exported"
+      ]
     }
   }
 }

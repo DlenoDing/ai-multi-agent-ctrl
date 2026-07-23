@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/push-ref.schema.json",
+  "title": "PushRef",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repo", "remote", "ref", "sourceCommit", "remoteSha", "providerOperationId", "verifiedAt"],
+  "properties": {
+    "repo": {
+      "type": "string",
+      "minLength": 1
+    },
+    "remote": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceCommit": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{7,64}$"
+    },
+    "remoteSha": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{7,64}$"
+    },
+    "providerOperationId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "verifiedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "rewriteRelation": {
+      "type": "string",
+      "enum": ["same_commit", "merge_commit", "rebased_commit"],
+      "default": "same_commit"
+    }
+  }
+}

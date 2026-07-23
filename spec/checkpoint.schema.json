@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/checkpoint.schema.json",
+  "title": "Checkpoint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "taskGroupId",
+    "workId",
+    "sessionId",
+    "runId",
+    "stateVersion",
+    "summary",
+    "commitRefs",
+    "pushRefs",
+    "evidenceRefs",
+    "outputContractDigest",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "checkpoint/v1"
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stateVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commitRefs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "commit-ref.schema.json"
+      }
+    },
+    "pushRefs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "push-ref.schema.json"
+      }
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "outputContractDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

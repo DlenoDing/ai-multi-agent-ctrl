@@ -4,11 +4,30 @@
   "title": "StateMachinesSpec",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "machines"],
+  "required": ["schemaVersion", "gateCatalogRef", "gateResolutionPolicy", "machines"],
   "properties": {
     "schemaVersion": {
       "type": "string",
       "const": "state-machines/v1"
+    },
+    "gateCatalogRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "gateResolutionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unresolvedGate", "resolverSelection"],
+      "properties": {
+        "unresolvedGate": {
+          "type": "string",
+          "const": "reject_transition"
+        },
+        "resolverSelection": {
+          "type": "string",
+          "enum": ["first_matching_specificity", "exact_id_only"]
+        }
+      }
     },
     "machines": {
       "type": "object",
@@ -47,7 +66,27 @@
                   "type": "string"
                 },
                 "actor": {
-                  "type": "string"
+                  "type": "string",
+                  "enum": [
+                    "orchestrator",
+                    "decision-center",
+                    "scheduler",
+                    "work-session",
+                    "reviewer",
+                    "qa",
+                    "security",
+                    "release",
+                    "rule-steward",
+                    "monitor",
+                    "agent-runtime",
+                    "command-bus",
+                    "permission-gateway",
+                    "policy-engine",
+                    "mcp-proxy",
+                    "room-broker",
+                    "model-registry",
+                    "skill-registry"
+                  ]
                 },
                 "requires": {
                   "type": "array",

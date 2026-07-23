@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/system-upgrade-candidate.schema.json",
+  "title": "SystemUpgradeCandidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "candidateId",
+    "issuePatternId",
+    "status",
+    "issueFingerprint",
+    "recurrenceCount",
+    "affectedComponents",
+    "evidenceRefs",
+    "sampleRefs",
+    "runtimeMutationPolicy",
+    "externalMaintenancePolicy",
+    "auditRef",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "system-upgrade-candidate/v1"
+    },
+    "candidateId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "issuePatternId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "observed",
+        "clustered",
+        "candidate_created",
+        "exported_for_external_maintenance",
+        "external_maintenance_required",
+        "imported_after_external_upgrade",
+        "dismissed",
+        "superseded",
+        "closed"
+      ]
+    },
+    "issueFingerprint": {
+      "type": "string",
+      "minLength": 1
+    },
+    "recurrenceCount": {
+      "type": "integer",
+      "minimum": 2
+    },
+    "affectedComponents": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "orchestrator",
+          "scheduler",
+          "agent_runtime",
+          "mcp_proxy",
+          "policy_engine",
+          "room_broker",
+          "model_registry",
+          "skill_registry",
+          "state_machine",
+          "schema",
+          "docs",
+          "ruleset",
+          "git_automation",
+          "quality_gate",
+          "permission_gateway"
+        ]
+      }
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "sampleRefs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "runtimeMutationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "forbidActiveExecutionMutation", "forbiddenActions"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "const": "collect_only"
+        },
+        "forbidActiveExecutionMutation": {
+          "type": "boolean",
+          "const": true
+        },
+        "forbiddenActions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "mutate_active_ruleset",
+              "self_patch_control_plane",
+              "change_scheduler_policy",
+              "auto_publish_role_skill_overlay",
+              "auto_change_permission_policy",
+              "auto_expand_mcp_grant",
+              "create_runtime_self_upgrade_task_group",
+              "execute_system_upgrade_during_project_run"
+            ]
+          }
+        }
+      }
+    },
+    "externalMaintenancePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requiresExternalMaintenance",
+        "forbidsRuntimeAutoUpgrade",
+        "forbidsAutoUpgradeTaskGroup",
+        "exportPackageRequired"
+      ],
+      "properties": {
+        "requiresExternalMaintenance": {"type": "boolean", "const": true},
+        "forbidsRuntimeAutoUpgrade": {"type": "boolean", "const": true},
+        "forbidsAutoUpgradeTaskGroup": {"type": "boolean", "const": true},
+        "exportPackageRequired": {"type": "boolean", "const": true}
+      }
+    },
+    "externalUpgradePackageRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

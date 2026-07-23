@@ -16,16 +16,19 @@
     "schemaDigest",
     "contractDigest",
     "issuedAt",
+    "expiresAt",
     "taskId",
     "workId",
     "roleId",
     "roomId",
+    "placementDecisionRef",
     "stateVersion",
     "rulesetDigest",
     "inputLocators",
     "inputDigests",
     "writeScope",
     "model",
+    "permissionPolicy",
     "stopOrReturn",
     "outputContract"
   ],
@@ -94,6 +97,10 @@
       "type": "string",
       "minLength": 1
     },
+    "placementDecisionRef": {
+      "type": "string",
+      "minLength": 1
+    },
     "stateVersion": {
       "type": "integer",
       "minimum": 1
@@ -124,7 +131,7 @@
         "properties": {
           "access": {
             "type": "string",
-            "enum": ["write", "admin"]
+            "const": "write"
           },
           "resourceType": {
             "type": "string",
@@ -137,7 +144,6 @@
               "db_table",
               "mcp_server",
               "mcp_tool",
-              "external_provider",
               "artifact_path",
               "environment"
             ]
@@ -191,7 +197,7 @@
     "model": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["modelId", "reasoningLevel", "selectionMode"],
+      "required": ["modelId", "reasoningLevel", "selectionMode", "modelSelectionDecisionRef"],
       "properties": {
         "modelId": {
           "type": "string",
@@ -206,6 +212,10 @@
         "selectionMode": {
           "type": "string",
           "enum": ["fixed_model", "fixed_tier", "auto_best", "auto_fast", "cost_aware"]
+        },
+        "modelSelectionDecisionRef": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -214,9 +224,52 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["grantId", "serverId", "toolName", "schemaDigest", "paramPolicyRef", "resultFilterRef", "riskLevel", "expiresAt"],
+        "required": [
+          "grantId",
+          "projectId",
+          "taskGroupId",
+          "workId",
+          "sessionId",
+          "agentNodeId",
+          "serverId",
+          "toolName",
+          "resource",
+          "action",
+          "schemaDigest",
+          "policyDecisionRef",
+          "approvalRequestRef",
+          "paramPolicyRef",
+          "paramPolicyDigest",
+          "resultFilterRef",
+          "resultFilterDigest",
+          "leaseRef",
+          "idempotencyKey",
+          "riskLevel",
+          "issuedAt",
+          "expiresAt",
+          "maxTtl",
+          "grantStatus",
+          "revocationRef",
+          "auditRef",
+          "grantDigest"
+        ],
         "properties": {
           "grantId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "taskGroupId": {
+            "type": "string"
+          },
+          "workId": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "agentNodeId": {
             "type": "string"
           },
           "serverId": {
@@ -225,23 +278,70 @@
           "toolName": {
             "type": "string"
           },
+          "resource": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
           "schemaDigest": {
             "type": "string",
             "pattern": "^sha256:[a-fA-F0-9]{64}$"
           },
+          "policyDecisionRef": {
+            "type": "string"
+          },
+          "approvalRequestRef": {
+            "type": "string"
+          },
           "paramPolicyRef": {
             "type": "string"
           },
+          "paramPolicyDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-fA-F0-9]{64}$"
+          },
           "resultFilterRef": {
+            "type": "string"
+          },
+          "resultFilterDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-fA-F0-9]{64}$"
+          },
+          "leaseRef": {
+            "type": "string"
+          },
+          "idempotencyKey": {
             "type": "string"
           },
           "riskLevel": {
             "type": "string",
             "enum": ["L0", "L1", "L2", "L3"]
           },
+          "issuedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
           "expiresAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "maxTtl": {
+            "type": "string"
+          },
+          "grantStatus": {
+            "type": "string",
+            "enum": ["issued", "revoked", "expired"]
+          },
+          "revocationRef": {
+            "type": "string"
+          },
+          "auditRef": {
+            "type": "string"
+          },
+          "grantDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-fA-F0-9]{64}$"
           }
         }
       },
@@ -249,8 +349,44 @@
     },
     "permissionPolicy": {
       "type": "object",
-      "additionalProperties": true,
-      "default": {}
+      "additionalProperties": false,
+      "required": ["onMissing", "autoAllowPromptTypes", "denyPromptTypes", "policyDecisionRef"],
+      "properties": {
+        "onMissing": {
+          "type": "string",
+          "enum": ["permission_request", "reassign", "scope_reduce", "abort"]
+        },
+        "autoAllowPromptTypes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["browser_download", "local_file_picker_read_only", "dev_server_open"]
+          },
+          "default": []
+        },
+        "denyPromptTypes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "oauth_consent",
+              "account_login",
+              "uac_admin",
+              "keychain_access",
+              "sudo",
+              "hardware_key",
+              "payment_authorization",
+              "cloud_org_boundary",
+              "production_boundary"
+            ]
+          }
+        },
+        "policyDecisionRef": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     },
     "dependencies": {
       "type": "array",
@@ -278,30 +414,73 @@
     "outputContract": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["requiredOutputs", "evidenceRequired"],
+      "required": ["requiredOutputs", "evidenceRequired", "checkpointRequired", "independentReviewRequired", "pushRefRequired"],
       "properties": {
         "requiredOutputs": {
           "type": "array",
+          "minItems": 5,
+          "uniqueItems": true,
           "items": {
-            "type": "string"
+            "type": "string",
+            "enum": ["checkpoint", "commitRef", "pushRef", "evidenceRefs", "verificationRefs"]
           }
         },
         "evidenceRequired": {
-          "type": "boolean"
+          "type": "boolean",
+          "const": true
         },
         "checkpointRequired": {
           "type": "boolean",
-          "default": true
+          "const": true
         },
         "independentReviewRequired": {
           "type": "boolean",
-          "default": true
+          "const": true
         },
         "pushRefRequired": {
           "type": "boolean",
-          "default": true
+          "const": true
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "properties": {
+        "outputContract": {
+          "properties": {
+            "requiredOutputs": {
+              "allOf": [
+                {
+                  "contains": {
+                    "const": "checkpoint"
+                  }
+                },
+                {
+                  "contains": {
+                    "const": "commitRef"
+                  }
+                },
+                {
+                  "contains": {
+                    "const": "pushRef"
+                  }
+                },
+                {
+                  "contains": {
+                    "const": "evidenceRefs"
+                  }
+                },
+                {
+                  "contains": {
+                    "const": "verificationRefs"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
 }

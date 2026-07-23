@@ -161,6 +161,7 @@
     "outputRequired": {
       "type": "array",
       "minItems": 1,
+      "uniqueItems": true,
       "items": {
         "type": "string",
         "enum": ["statusSnapshot", "commitRef", "pushRef", "commandEffect", "evidenceRef"]
@@ -170,5 +171,61 @@
       "type": "string",
       "format": "date-time"
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "commit"
+          }
+        },
+        "required": ["operation"]
+      },
+      "then": {
+        "required": ["commit"],
+        "properties": {
+          "changedPaths": {
+            "minItems": 1
+          },
+          "commit": {
+            "properties": {
+              "paths": {
+                "minItems": 1
+              }
+            }
+          },
+          "outputRequired": {
+            "allOf": [
+              {"contains": {"const": "commitRef"}},
+              {"contains": {"const": "commandEffect"}},
+              {"contains": {"const": "evidenceRef"}}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "push"
+          }
+        },
+        "required": ["operation"]
+      },
+      "then": {
+        "required": ["push"],
+        "properties": {
+          "outputRequired": {
+            "allOf": [
+              {"contains": {"const": "pushRef"}},
+              {"contains": {"const": "commandEffect"}},
+              {"contains": {"const": "evidenceRef"}}
+            ]
+          }
+        }
+      }
+    }
+  ]
 }

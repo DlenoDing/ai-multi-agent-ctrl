@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/agent-role-skill.schema.json",
+  "title": "AgentRoleSkill",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "sourceId",
+    "roleSkillId",
+    "sourcePath",
+    "name",
+    "description",
+    "category",
+    "frontmatterDigest",
+    "contentDigest",
+    "capabilities",
+    "defaultModelRequirements",
+    "overlayRefs",
+    "status"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "agent-role-skill/v1"
+    },
+    "sourceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roleSkillId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourcePath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1
+    },
+    "frontmatterDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "contentDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "defaultModelRequirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strengths", "minContextWindowTokens", "requiresToolUse", "riskLevel"],
+      "properties": {
+        "strengths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "minContextWindowTokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "requiresToolUse": {
+          "type": "boolean"
+        },
+        "riskLevel": {
+          "type": "string",
+          "enum": ["L0", "L1", "L2", "L3"]
+        }
+      }
+    },
+    "overlayRefs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "status": {
+      "type": "string",
+      "enum": ["discovered", "validated", "active", "overridden", "retired", "quarantined"]
+    }
+  }
+}

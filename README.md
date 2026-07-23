@@ -24,9 +24,21 @@
 | [spec/terminal-execution-manifest.yaml](spec/terminal-execution-manifest.yaml) | 系统终态能力 manifest，供 Orchestrator 读取和校验 |
 | [spec/state-machines.yaml](spec/state-machines.yaml) | TaskGroup、WorkItem、WorkSession、Command、PermissionRequest 等状态机 |
 | [spec/state-machines.schema.json](spec/state-machines.schema.json) | 状态机规格自身的 schema |
+| [spec/gates.yaml](spec/gates.yaml) | 状态机 `requires` 的机器 gate resolver 和失败码 |
+| [spec/gate-catalog.schema.json](spec/gate-catalog.schema.json) | gate catalog 的 schema |
 | [spec/terminal-execution-manifest.schema.json](spec/terminal-execution-manifest.schema.json) | 终态执行 manifest 的 schema |
+| [spec/agent-skill-source.schema.json](spec/agent-skill-source.schema.json) | 外部角色 skill 源仓库、同步、信任和 overlay 策略 schema |
+| [spec/agent-role-skill.schema.json](spec/agent-role-skill.schema.json) | 解析后的角色 skill、能力、digest 和模型需求 schema |
+| [spec/model-capability.schema.json](spec/model-capability.schema.json) | 常用模型供应商/模型能力画像 schema |
+| [spec/model-selection-policy.schema.json](spec/model-selection-policy.schema.json) | 按角色 skill 和任务需求自动选择模型/Agent 的策略 schema |
+| [spec/session-placement-policy.schema.json](spec/session-placement-policy.schema.json) | 长任务新会话、小短任务子 agent 的调度策略 schema |
+| [spec/runtime-issue-pattern.schema.json](spec/runtime-issue-pattern.schema.json) | 运行期重复问题聚合、证据和收集限定 schema |
+| [spec/system-upgrade-candidate.schema.json](spec/system-upgrade-candidate.schema.json) | 重复运行问题收集和独立系统升级候选 schema |
 | [spec/agent-task-contract.schema.json](spec/agent-task-contract.schema.json) | 总控派发给 WorkSession 的任务契约 schema |
 | [spec/control-events.schema.json](spec/control-events.schema.json) | Room/Command/Checkpoint/Permission 等控制事件 envelope schema |
+| [spec/checkpoint.schema.json](spec/checkpoint.schema.json) | checkpoint、commitRefs、pushRefs 和 evidenceRefs 的终态输出 schema |
+| [spec/commit-ref.schema.json](spec/commit-ref.schema.json) | Git commit 证据引用 schema |
+| [spec/push-ref.schema.json](spec/push-ref.schema.json) | Git push 远端验证证据 schema |
 | [spec/mcp-grant.schema.json](spec/mcp-grant.schema.json) | MCP tool grant 的最小权限、参数策略、结果过滤和过期 schema |
 | [spec/git-automation-policy.schema.json](spec/git-automation-policy.schema.json) | Agent 自动 commit/push 的凭据、分支、路径和远端校验策略 |
 | [spec/git-command.schema.json](spec/git-command.schema.json) | Agent Git status/commit/push 命令的 payload、路径匹配和证据输出 schema |
@@ -43,7 +55,11 @@
 7. 对 OS、OAuth、第三方平台明确禁止自动化越权的场景，系统只把它建模为外部能力边界事件；这不是项目执行步骤，也不能伪装成自动批准。
 8. 所有状态以 PostgreSQL、event log、checkpoint、artifact digest、schema 和 state machine 为准，不以聊天文本为准。
 9. 所有写入型动作必须经过 policy、lease、idempotency、command effect 和 audit。
-10. 最终关闭由 Orchestrator 根据机器可判定关闭屏障完成。
+10. 角色 skill 默认从 `DlenoDing/agency-agents-zh` pinned commit 自动加载，项目/任务组特殊要求通过 overlay 对象覆盖。
+11. 模型选择由 Model Registry 和 Scheduler 基于角色 skill、任务能力、成本、速度、额度、可靠性和风险自动决定。
+12. Scheduler 对持续多轮、长耗时、有状态、拥有写入面的角色任务优先创建新 WorkSession；短小、只读、无持久上下文的任务才使用子 agent。
+13. 运行期重复问题只生成 RuntimeIssuePattern、SystemUpgradeCandidate 和系统外升级证据包；系统运行时不得自动自修改规则、策略、角色、grant 或控制面代码，升级改造由人独立在系统外处理。
+14. 最终关闭由 Orchestrator 根据机器可判定关闭屏障完成。
 
 ## 终态技术路线
 
@@ -60,7 +76,7 @@
 
 ## 执行方式
 
-所有后续工作都应按 [AI 执行图](docs/autonomous-execution-graph.md) 和 `spec/terminal-execution-manifest.yaml` 执行。每个 Agent 接到任务时必须读取：
+系统内所有工作都应按 [AI 执行图](docs/autonomous-execution-graph.md) 和 `spec/terminal-execution-manifest.yaml` 执行。每个 Agent 接到任务时必须读取：
 
 1. 对应 schema。
 2. 当前 stateVersion。

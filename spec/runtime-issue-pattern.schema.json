@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/runtime-issue-pattern.schema.json",
+  "title": "RuntimeIssuePattern",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "patternId",
+    "status",
+    "issueClass",
+    "issueFingerprint",
+    "recurrenceCount",
+    "affectedComponents",
+    "evidenceRefs",
+    "sampleRefs",
+    "collectionPolicy",
+    "auditRef",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "runtime-issue-pattern/v1"
+    },
+    "patternId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["observed", "clustered", "candidate_created", "suppressed", "closed"]
+    },
+    "issueClass": {
+      "type": "string",
+      "enum": [
+        "repeated_failure_fingerprint",
+        "repeated_permission_blocker",
+        "repeated_model_selection_failure",
+        "repeated_spec_drift",
+        "repeated_test_flake",
+        "repeated_review_finding",
+        "repeated_capacity_blocker",
+        "repeated_integration_conflict"
+      ]
+    },
+    "issueFingerprint": {
+      "type": "string",
+      "minLength": 1
+    },
+    "recurrenceCount": {
+      "type": "integer",
+      "minimum": 2
+    },
+    "affectedComponents": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "orchestrator",
+          "scheduler",
+          "agent_runtime",
+          "mcp_proxy",
+          "policy_engine",
+          "room_broker",
+          "model_registry",
+          "skill_registry",
+          "state_machine",
+          "schema",
+          "docs",
+          "ruleset",
+          "git_automation",
+          "quality_gate",
+          "permission_gateway"
+        ]
+      }
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "sampleRefs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "candidateRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "collectionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "forbidsRuntimeAutoUpgrade", "externalUpgradePackageRequired"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "const": "collect_only"
+        },
+        "forbidsRuntimeAutoUpgrade": {
+          "type": "boolean",
+          "const": true
+        },
+        "externalUpgradePackageRequired": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    },
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/model-capability.schema.json",
+  "title": "ModelCapabilityProfile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "providerId",
+    "providerClass",
+    "modelId",
+    "capabilityDigest",
+    "modalities",
+    "strengths",
+    "limits",
+    "toolCapabilities",
+    "qualitySignals",
+    "costSignals",
+    "availability",
+    "observedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "model-capability/v1"
+    },
+    "providerId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "providerClass": {
+      "type": "string",
+      "enum": [
+        "openai",
+        "anthropic",
+        "google",
+        "xai",
+        "meta",
+        "mistral",
+        "deepseek",
+        "qwen",
+        "moonshot",
+        "zhipu",
+        "baidu",
+        "tencent",
+        "openrouter",
+        "azure_openai",
+        "aws_bedrock",
+        "vertex_ai",
+        "ollama",
+        "vllm",
+        "custom"
+      ]
+    },
+    "modelId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "aliases": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "capabilityDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "modalities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": ["text", "vision", "audio", "video", "embedding", "image_generation", "tool_use", "computer_use"]
+      }
+    },
+    "strengths": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": ["deep_reasoning", "coding", "architecture", "review", "security", "qa", "planning", "writing", "translation", "math", "data_analysis", "creative", "fast_execution", "long_context", "multimodal", "low_cost", "local_private"]
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contextWindowTokens", "maxOutputTokens", "supportsStructuredOutput", "supportsToolUse"],
+      "properties": {
+        "contextWindowTokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "supportsStructuredOutput": {
+          "type": "boolean"
+        },
+        "supportsToolUse": {
+          "type": "boolean"
+        }
+      }
+    },
+    "toolCapabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "qualitySignals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reasoningScore", "codingScore", "reviewScore", "latencyClass", "reliabilityScore"],
+      "properties": {
+        "reasoningScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "codingScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reviewScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "latencyClass": {
+          "type": "string",
+          "enum": ["low", "normal", "high", "unknown"]
+        },
+        "reliabilityScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "costSignals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["costClass", "quotaClass"],
+      "properties": {
+        "costClass": {
+          "type": "string",
+          "enum": ["low", "normal", "high", "unknown"]
+        },
+        "quotaClass": {
+          "type": "string",
+          "enum": ["low", "normal", "high", "unknown"]
+        }
+      }
+    },
+    "availability": {
+      "type": "string",
+      "enum": ["available", "degraded", "quota_limited", "unavailable"]
+    },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

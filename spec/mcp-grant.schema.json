@@ -6,16 +6,55 @@
   "additionalProperties": false,
   "required": [
     "grantId",
+    "projectId",
+    "taskGroupId",
+    "workId",
+    "sessionId",
+    "agentNodeId",
     "serverId",
     "toolName",
+    "resource",
+    "action",
     "schemaDigest",
+    "policyDecisionRef",
+    "approvalRequestRef",
     "riskLevel",
     "paramPolicyRef",
+    "paramPolicyDigest",
     "resultFilterRef",
-    "expiresAt"
+    "resultFilterDigest",
+    "leaseRef",
+    "idempotencyKey",
+    "issuedAt",
+    "expiresAt",
+    "maxTtl",
+    "grantStatus",
+    "revocationRef",
+    "auditRef",
+    "grantDigest"
   ],
   "properties": {
     "grantId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agentNodeId": {
       "type": "string",
       "minLength": 1
     },
@@ -27,9 +66,25 @@
       "type": "string",
       "minLength": 1
     },
+    "resource": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1
+    },
     "schemaDigest": {
       "type": "string",
       "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "policyDecisionRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "approvalRequestRef": {
+      "type": "string",
+      "minLength": 1
     },
     "riskLevel": {
       "type": "string",
@@ -39,13 +94,53 @@
       "type": "string",
       "minLength": 1
     },
+    "paramPolicyDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
     "resultFilterRef": {
       "type": "string",
       "minLength": 1
     },
+    "resultFilterDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "leaseRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
     "expiresAt": {
       "type": "string",
       "format": "date-time"
+    },
+    "maxTtl": {
+      "type": "string",
+      "minLength": 1
+    },
+    "grantStatus": {
+      "type": "string",
+      "enum": ["issued", "revoked", "expired"]
+    },
+    "revocationRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "grantDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
     }
   }
 }

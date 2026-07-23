@@ -11,6 +11,9 @@ flowchart TD
     A["SPEC-A: 固化终态机器规格"] --> B["CORE-A: 控制平面对象和迁移"]
     A --> C["PROTO-A: Agent Runtime 协议实现"]
     A --> D["MCP-A: MCP Proxy 和工具 schema"]
+    A --> S["SKILL-A: agency-agents-zh 角色 skill registry"]
+    A --> T["MODEL-A: 常用模型 provider 和能力画像"]
+    A --> P["PLACE-A: session placement policy"]
     B --> E["ROOM-A: Room Broker 和事件可靠性"]
     B --> F["COMMAND-A: Command Bus、Outbox、DLQ"]
     B --> G["LEASE-A: 项目级资源锁"]
@@ -21,6 +24,9 @@ flowchart TD
     G --> J
     H --> J
     I --> J
+    S --> K
+    T --> K
+    P --> K
     J --> K["ORCH-A: Orchestrator 调度循环"]
     K --> L["VERIFY-A: Reviewer/QA/Security 自动复验"]
     L --> M["INTEGRATE-A: ChangeSet、IntegrationBatch、release manifest"]
@@ -34,13 +40,15 @@ flowchart TD
 ```text
 WORK_ID=<dag-node-id>
 ROLE_ID=<ai-role>
+ROLE_SKILL_REF=<agent-role-skill-ref>
 INPUT_SCHEMA=<schema-ref>
 INPUT_LOCATORS=<docs/spec/code locators>
 INPUT_DIGESTS=<sha256 digests>
 WRITE_SCOPE=<repo/path/db/tool scope>
-MODEL_POLICY=<required tier and reasoning level>
+MODEL_SELECTION_DECISION_REF=<model-selection-decision-ref>
+SESSION_PLACEMENT_DECISION_REF=<session-placement-decision-ref>
 DEPENDENCIES=<dag upstream nodes>
-OUTPUT=<code|migration|schema|checkpoint|artifact|finding>
+OUTPUT=<code|migration|schema|checkpoint|artifact|finding|commitRef|pushRef|evidenceRefs|verificationRefs>
 STOP_OR_RETURN=<done|blocked|stale_state|permission_required|spec_drift>
 VERIFY_BY=<independent reviewer or qa role>
 ```
@@ -58,6 +66,9 @@ VERIFY_BY=<independent reviewer or qa role>
 | LEASE | Resource Control Agent | lease、fencing、conflict handling |
 | AGENT | Runtime Integration Agent | join、heartbeat、probe、session runner |
 | TOOL | MCP Tooling Agent | orchestration/resource/model/evidence/permission tools |
+| SKILL | Skill Registry Agent | agency-agents-zh source sync, role skill parse, overlay validation |
+| MODEL | Model Registry Agent | provider probe, capability profile, model selection policy |
+| PLACE | Scheduler Agent | new WorkSession vs subagent placement decision |
 | SESSION | WorkSession Agent | task execution and checkpoint |
 | ORCH | Orchestrator Agent | scheduling loop and close barrier |
 | VERIFY | QA/Reviewer/Security Agent | independent verification evidence |
@@ -110,9 +121,10 @@ Agent 不能使用以下内容作为完成：
 
 ```text
 state transition
-commit ref
-push ref
-test/evidence refs
+commitRef
+pushRef
+evidenceRefs
+verificationRefs
 remaining blockers if any
 next machine-actionable work ids
 ```

@@ -1,0 +1,213 @@
+schemaVersion: "gate-catalog/v1"
+catalogId: "ai-multi-agent-ctrl-transition-gates"
+resolverPolicy:
+  unresolvedGate: "reject_transition"
+  validationOrder: "listed"
+resolvers:
+  - id: "context_field_present"
+    match:
+      exactIds:
+        - "action"
+        - "baseline_commit"
+        - "fencing_token"
+        - "gate_target"
+        - "idempotency_key"
+        - "issue_fingerprint"
+        - "merge_commit"
+        - "external_operation_id"
+        - "owner_role"
+        - "policy_version"
+        - "prompt_type"
+        - "quorum_policy"
+        - "required_approver_roles"
+        - "resource"
+        - "risk_level"
+        - "run_id"
+        - "scope"
+        - "severity"
+        - "suggested_actions"
+    inputs:
+      - "transition_context"
+      - "subject_snapshot"
+    predicate: "required field exists, is non-empty, and is bound to the current subject stateVersion"
+    evidence:
+      required: false
+      acceptedRefs: []
+    failureCode: "gate.context_field_missing"
+
+  - id: "actor_authorized"
+    match:
+      exactIds:
+        - "actor"
+    inputs:
+      - "spec/terminal-execution-manifest.yaml.roles"
+      - "spec/state-machines.yaml"
+      - "policy_decisions"
+    predicate: "transition actor resolves to a manifest role or controlled service and is not entryControllerSession or adminConsole"
+    evidence:
+      required: true
+      acceptedRefs:
+        - "manifest_role_ref"
+        - "policy_decision_ref"
+        - "audit_ref"
+    failureCode: "gate.actor_not_authorized"
+
+  - id: "security_authorization_exact"
+    match:
+      exactIds:
+        - "approval_required"
+        - "not_external_capability_boundary"
+        - "capability_grant_registered"
+        - "exact_grant_issued"
+        - "external_actor_evidence_ref"
+        - "capability_registry_ref"
+        - "policy_decision_ref"
+        - "grant_ref"
+        - "audit_ref"
+        - "resolution_audit_ref"
+    inputs:
+      - "approval_requests"
+      - "permission_requests"
+      - "capability_registry"
+      - "mcp_grants"
+      - "policy_decisions"
+      - "audit_log"
+    predicate: "authorization is exact, scoped, unexpired, policy-admitted, externally evidenced when required, and audit-linked"
+    evidence:
+      required: true
+      acceptedRefs:
+        - "approval_request_ref"
+        - "permission_request_ref"
+        - "capability_registry_ref"
+        - "grant_ref"
+        - "policy_decision_ref"
+        - "audit_ref"
+    failureCode: "gate.security_authorization_invalid"
+
+  - id: "digest_present_or_changed"
+    match:
+      pattern: ".*_digest$|^before_digest$|^after_digest$"
+    inputs:
+      - "canonical_state"
+      - "artifact_index"
+      - "resource_snapshot"
+    predicate: "digest exists and matches the canonical artifact, resource, or input snapshot referenced by the transition"
+    evidence:
+      required: true
+      acceptedRefs:
+        - "artifact_digest"
+        - "resource_digest"
+        - "input_digest"
+    failureCode: "gate.digest_unverified"
+
+  - id: "reference_exists"
+    match:
+      pattern: ".*(_ref|_refs|_record|_manifest|_checkpoint|_report|_plan|_delta|_ack|_snapshot|_contract|_version|_hint|_adjustment|_event|_reason|_rule|_heartbeat|_evidence|_bundle|_route|_package|_import)$"
+    inputs:
+      - "canonical_state"
+      - "event_log"
+      - "artifact_index"
+    predicate: "referenced object exists, is readable by the actor, and has a digest or audit row at the transition stateVersion"
+    evidence:
+      required: true
+      acceptedRefs:
+        - "db_ref"
+        - "artifact_ref"
+        - "audit_ref"
+    failureCode: "gate.reference_unresolved"
+
+  - id: "status_predicate"
+    match:
+      pattern: ".*(_passed|_failed|_available|_unavailable|_resolved|_elapsed|_exceeded|_detected|_changed|_verified|_allows|_admitted|_admission|_initialized|_selected|_created|_submitted|_complete|_required|_registered|_removed|_updated|_continued|_checkpointed|_extended|_preempted|_classified|_valid|_rebound|_satisfied|_incremented|_requested|_accepted|_reduced|_routed|_persisted|_uploaded|_sealed|_issued|_released|_published|_ready|_integrated|_batched|_delivered|_set|_reached|_forbidden|_linked|_closed|_exported|_recovered|_score|_findings|_passed_without_repair)$"
+    inputs:
+      - "canonical_state"
+      - "state_machine"
+      - "quality_gate_results"
+      - "policy_decisions"
+    predicate: "source object status or computed gate result equals the required predicate for the current transition"
+    evidence:
+      required: true
+      acceptedRefs:
+        - "state_ref"
+        - "quality_gate_ref"
+        - "policy_decision_ref"
+        - "audit_ref"
+    failureCode: "gate.status_predicate_false"
+
+  - id: "decision_or_approval"
+    match:
+      pattern: ".*decision.*|.*approval.*|.*quorum.*|.*rejection.*|.*abort.*|.*superseded.*|.*revocation.*"
+    inputs:
+      - "decision_records"
+      - "approval_requests"
+      - "policy_decisions"
+      - "audit_log"
+    predicate: "decision object is terminal or active as required, immutable, scoped to the exact subject/action, and independently auditable"
+    evidence:
+      required: true
+      acceptedRefs:
+        - "decision_record_ref"
+        - "approval_request_ref"
+        - "policy_decision_ref"
+        - "audit_ref"
+    failureCode: "gate.decision_not_authoritative"
+
+  - id: "capability_or_grant"
+    match:
+      pattern: ".*capability.*|.*grant.*|.*permission.*|.*scope.*|.*lease.*|.*resource.*|.*dependency.*|.*target.*|.*model.*|.*agent.*"
+    inputs:
+      - "capability_registry"
+      - "mcp_grants"
+      - "leases"
+      - "scheduler_snapshot"
+      - "permission_requests"
+    predicate: "capability, grant, lease, resource, dependency, or assignment is exact, unexpired, scoped, and recorded for the current subject"
+    evidence:
+      required: true
+      acceptedRefs:
+        - "grant_ref"
+        - "lease_ref"
+        - "permission_request_ref"
+        - "scheduler_decision_ref"
+        - "audit_ref"
+    failureCode: "gate.capability_or_grant_invalid"
+
+  - id: "effect_or_result"
+    match:
+      pattern: ".*effect.*|.*result.*|.*failure.*|.*rollback.*|.*compensation.*|.*retry.*|.*replay.*|.*conflict.*|.*fix.*|.*rebase.*|.*batch.*|.*integration.*|.*release.*|.*close_barrier.*|.*work.*|.*consumer.*|.*replacement.*|.*successor.*|.*reopen.*|.*wake.*|.*ttl.*|.*timeout.*|.*max_attempts.*|.*safe_retry.*|.*root_cause.*|.*impact.*"
+    inputs:
+      - "commands"
+      - "command_effects"
+      - "checkpoints"
+      - "integration_batches"
+      - "release_manifests"
+      - "findings"
+      - "close_barriers"
+    predicate: "effect, result, retry, recovery, integration, release, or close object exists and satisfies its object schema at the current stateVersion"
+    evidence:
+      required: true
+      acceptedRefs:
+        - "command_effect_ref"
+        - "checkpoint_ref"
+        - "integration_batch_ref"
+        - "release_manifest_ref"
+        - "finding_ref"
+        - "close_barrier_ref"
+    failureCode: "gate.effect_or_result_invalid"
+
+  - id: "checkpoint_literal"
+    match:
+      exactIds:
+        - "checkpoint"
+    inputs:
+      - "checkpoints"
+      - "artifact_index"
+    predicate: "checkpoint exists with commitRefs, pushRefs when required, evidenceRefs, stateVersion, and accepted output contract"
+    evidence:
+      required: true
+      acceptedRefs:
+        - "checkpoint_ref"
+        - "commit_ref"
+        - "push_ref"
+        - "artifact_ref"
+    failureCode: "gate.checkpoint_invalid"

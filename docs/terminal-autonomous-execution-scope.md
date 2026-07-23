@@ -10,14 +10,14 @@
 | --- | --- | --- |
 | Orchestrator | AI controller + deterministic service | 唯一目标入口、状态权威、调度和关闭裁决 |
 | Decision Center | AI decision agent cluster | 自动做方案、架构、风险、冲突和策略决策 |
-| Scheduler | deterministic service + AI planner | 根据 DAG、scope、lease、模型、资源和风险派发 session |
+| Scheduler | deterministic service + AI planner | 根据 DAG、scope、lease、模型、资源、风险和 placement 策略派发 session |
 | WorkSession | role-bound AI agent session | 最小全局调度工作单元 |
-| SessionSubAgent | local AI subagent | 由 WorkSession 内部启动，只服务局部分析、实现或复验 |
+| SessionSubAgent | local AI subagent | 由 WorkSession 内部启动，只服务短小封闭任务，不拥有全局 WorkItem |
 | Reviewer Agent | independent AI reviewer | 独立审查，不参与同批实现 |
 | QA Agent | AI verification agent | 自动执行测试矩阵、证据采集和复验 |
 | Security Agent | AI security reviewer | 自动做权限、secret、依赖、MCP、网络、审计检查 |
 | Release Agent | AI release executor | 自动生成 release manifest、验证部署准备和回滚路径 |
-| Rule Steward Agent | AI rule governor | 自动沉淀、互审、发布和回滚规则 |
+| Rule Steward Agent | AI rule governor | 自动处理项目规则候选；系统级重复问题只导出升级候选包 |
 | Monitor Agent | autonomous monitor | 自动监控 heartbeat、DLQ、lease、成本、质量门和告警 |
 
 ## 2. 外部输入边界
@@ -47,7 +47,7 @@
 | --- | --- |
 | 目标解析 | 把外部目标转为 Project、TaskGroup、success criteria、risk 和 non-goals |
 | 任务拆解 | 自动生成 DAG、WorkItem、role requirements、write scope、dependencies |
-| 角色实例化 | 自动创建或复用 WorkSession，并允许 session 内部启动 subagent |
+| 角色实例化 | 持续多轮、有状态或写入型 work 自动创建新 WorkSession；短小封闭 work 才使用 session 内部 subagent |
 | 模型选择 | 根据任务风险、复杂度、上下文、Agent 能力、额度和历史质量自动选择模型 |
 | 上下文投递 | 只传 schema、locator、digest、stateVersion、scope、stop condition |
 | 实时协作 | Room Broker 自动传递 delta、checkpoint、finding、decision、wake、ACK |
@@ -59,7 +59,8 @@
 | 集成合并 | IntegrationBatch 自动 rebase、batch CI、定位冲突 owner、生成 release manifest |
 | 权限阻断 | Permission Gateway 自动分类、路由、授权、改派、降级或中止 |
 | 审批裁决 | Approval Center 自动基于 policy/quorum/risk/evidence 产出 DecisionRecord |
-| 规则沉淀 | Rule Steward Agent 自动发现重复问题、生成规则候选、互审和发布 |
+| 规则沉淀 | Rule Steward Agent 自动处理项目级规则候选；系统级重复问题只收集为 RuntimeIssuePattern 和 SystemUpgradeCandidate |
+| 系统升级候选 | Monitor 自动聚合重复运行问题并导出系统外升级证据包，不自动改造运行中的系统 |
 | 质量关闭 | Orchestrator 自动检查 close barrier 并关闭 TaskGroup |
 
 ## 4. 不可降级规则
@@ -74,6 +75,7 @@
 8. 不能用“Agent 很强”替代证据、复验、审计和回滚。
 9. 不能把外部安全机制要求的授权伪装成系统自动批准。
 10. 不能留下“非系统执行路径后续处理”的开放项作为完成状态。
+11. 不能在项目运行时把重复问题自动转成系统自修改；只能收集、聚合、导出系统外升级证据包。
 
 ## 5. 自动审批模型
 
@@ -139,3 +141,4 @@ external_capability_required
 8. 所有规则变化都能通知受影响 session。
 9. 所有 Agent 断线都能恢复、改派或隔离。
 10. 所有最终输出都能由另一个 AI Agent 独立复验。
+11. 所有重复运行问题都能聚合为候选并导出系统外升级证据包，且不会触发运行期自动自改造。

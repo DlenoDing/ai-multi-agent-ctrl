@@ -6,6 +6,8 @@
   "additionalProperties": false,
   "required": [
     "schemaVersion",
+    "protocolVersion",
+    "schemaDigest",
     "eventId",
     "projectId",
     "type",
@@ -27,6 +29,14 @@
     "schemaVersion": {
       "type": "string",
       "const": "control-event/v1"
+    },
+    "protocolVersion": {
+      "type": "string",
+      "const": "control-plane/v1"
+    },
+    "schemaDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
     },
     "eventId": {
       "type": "string",
@@ -156,12 +166,62 @@
       "type": "object",
       "additionalProperties": true
     },
+    "payloadSchemaRef": {
+      "type": "string",
+      "minLength": 1
+    },
     "payloadRef": {
       "type": "string"
     },
     "payloadDigest": {
       "type": "string",
       "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "stateTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["machine", "fromState", "toState", "stateVersionBefore", "stateVersionAfter"],
+      "properties": {
+        "machine": {
+          "type": "string"
+        },
+        "fromState": {
+          "type": "string"
+        },
+        "toState": {
+          "type": "string"
+        },
+        "stateVersionBefore": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stateVersionAfter": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "transitionId": {
+          "type": "string"
+        }
+      }
+    },
+    "guardEvidenceRefs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
     }
-  }
+  },
+  "allOf": [
+    {
+      "anyOf": [
+        {
+          "required": ["payloadSchemaRef", "payload"]
+        },
+        {
+          "required": ["payloadSchemaRef", "payloadRef", "payloadDigest"]
+        }
+      ]
+    }
+  ]
 }

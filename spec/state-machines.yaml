@@ -1,4 +1,8 @@
 schemaVersion: "state-machines/v1"
+gateCatalogRef: "spec/gates.yaml"
+gateResolutionPolicy:
+  unresolvedGate: "reject_transition"
+  resolverSelection: "first_matching_specificity"
 machines:
   TaskGroup:
     initial: "intake"
@@ -115,7 +119,7 @@ machines:
       - from: "ready"
         to: "assigned"
         actor: "scheduler"
-        requires: ["agent_selected", "model_selected", "lease_admitted"]
+        requires: ["agent_selected", "model_selected", "session_placement_selected", "lease_admitted"]
       - from: "assigned"
         to: "in_progress"
         actor: "work-session"
@@ -349,7 +353,7 @@ machines:
       - from: "checkpointed"
         to: "succeeded"
         actor: "agent-runtime"
-        requires: ["result_ref"]
+        requires: ["result_ref", "effect_record_if_side_effect"]
       - from: "running"
         to: "failed"
         actor: "agent-runtime"
@@ -386,6 +390,8 @@ machines:
       - "approved"
       - "rejected"
       - "external_capability_required"
+      - "external_capability_available"
+      - "preauthorized_capability_bound"
       - "external_capability_blocked"
       - "reassigned"
       - "scope_reduced"
@@ -410,7 +416,7 @@ machines:
       - from: "pending_approval"
         to: "approved"
         actor: "orchestrator"
-        requires: ["approval_decision_ref"]
+        requires: ["approval_decision_ref", "not_external_capability_boundary", "policy_decision_ref", "audit_ref"]
       - from: "pending_approval"
         to: "rejected"
         actor: "orchestrator"
@@ -432,9 +438,17 @@ machines:
         actor: "orchestrator"
         requires: ["external_boundary_classified"]
       - from: "external_capability_required"
+        to: "external_capability_available"
+        actor: "permission-gateway"
+        requires: ["external_actor_evidence_ref", "capability_registry_ref", "audit_ref"]
+      - from: "external_capability_available"
+        to: "preauthorized_capability_bound"
+        actor: "permission-gateway"
+        requires: ["capability_grant_registered", "policy_decision_ref", "audit_ref"]
+      - from: "preauthorized_capability_bound"
         to: "grant_issued"
         actor: "permission-gateway"
-        requires: ["capability_grant_registered"]
+        requires: ["exact_grant_issued", "grant_ref", "policy_decision_ref", "audit_ref"]
       - from: "external_capability_required"
         to: "external_capability_blocked"
         actor: "permission-gateway"
@@ -466,7 +480,7 @@ machines:
       - from: "approved"
         to: "grant_issued"
         actor: "permission-gateway"
-        requires: ["exact_grant_issued"]
+        requires: ["not_external_capability_boundary", "exact_grant_issued", "grant_ref", "policy_decision_ref", "audit_ref"]
 
   ApprovalRequest:
     initial: "requested"
@@ -496,7 +510,7 @@ machines:
       - from: "quorum_collecting"
         to: "approved"
         actor: "orchestrator"
-        requires: ["ai_quorum_passed", "decision_record"]
+        requires: ["ai_quorum_passed", "not_external_capability_boundary", "decision_record", "policy_decision_ref", "audit_ref"]
       - from: "quorum_collecting"
         to: "rejected"
         actor: "orchestrator"
@@ -843,11 +857,11 @@ machines:
       - from: "assigned"
         to: "discarded"
         actor: "orchestrator"
-        requires: ["decision_record"]
+        requires: ["decision_record", "resolution_effect_ref"]
       - from: "assigned"
         to: "superseded"
         actor: "orchestrator"
-        requires: ["source_object_superseded"]
+        requires: ["source_object_superseded", "resolution_effect_ref"]
 
   Ruleset:
     initial: "draft"
@@ -875,3 +889,718 @@ machines:
         to: "revoked"
         actor: "orchestrator"
         requires: ["revocation_decision_ref"]
+
+  Project:
+    initial: "active"
+    terminal: ["archived"]
+    states:
+      - "active"
+      - "archived"
+    transitions:
+      - from: "active"
+        to: "archived"
+        actor: "orchestrator"
+        requires: ["close_barrier_satisfied", "audit_ref"]
+
+  AgentNode:
+    initial: "joining"
+    terminal: ["retired"]
+    states:
+      - "joining"
+      - "online"
+      - "offline"
+      - "read_only"
+      - "quarantine"
+      - "retired"
+    transitions:
+      - from: "joining"
+        to: "online"
+        actor: "agent-runtime"
+        requires: ["runtime_integrity_verified", "scheduler_admission"]
+      - from: "joining"
+        to: "offline"
+        actor: "monitor"
+        requires: ["heartbeat_timeout_elapsed"]
+      - from: "online"
+        to: "offline"
+        actor: "monitor"
+        requires: ["heartbeat_timeout_elapsed"]
+      - from: "online"
+        to: "read_only"
+        actor: "monitor"
+        requires: ["trust_score_reduced"]
+      - from: "online"
+        to: "quarantine"
+        actor: "security"
+        requires: ["security_finding_ref"]
+      - from: "offline"
+        to: "online"
+        actor: "agent-runtime"
+        requires: ["runtime_integrity_verified", "state_rebound"]
+      - from: "read_only"
+        to: "online"
+        actor: "scheduler"
+        requires: ["trust_score_recovered"]
+      - from: "read_only"
+        to: "quarantine"
+        actor: "security"
+        requires: ["security_finding_ref"]
+      - from: "quarantine"
+        to: "read_only"
+        actor: "security"
+        requires: ["remediation_evidence"]
+      - from: "online"
+        to: "retired"
+        actor: "orchestrator"
+        requires: ["retire_decision_ref"]
+      - from: "offline"
+        to: "retired"
+        actor: "orchestrator"
+        requires: ["retire_decision_ref"]
+      - from: "read_only"
+        to: "retired"
+        actor: "orchestrator"
+        requires: ["retire_decision_ref"]
+      - from: "quarantine"
+        to: "retired"
+        actor: "orchestrator"
+        requires: ["retire_decision_ref"]
+
+  Room:
+    initial: "active"
+    terminal: ["closed"]
+    states:
+      - "active"
+      - "closed"
+    transitions:
+      - from: "active"
+        to: "closed"
+        actor: "orchestrator"
+        requires: ["close_barrier_satisfied"]
+
+  RoomMessage:
+    initial: "created"
+    terminal: ["delivered", "dlq"]
+    states:
+      - "created"
+      - "persisted"
+      - "delivered"
+      - "dlq"
+    transitions:
+      - from: "created"
+        to: "persisted"
+        actor: "room-broker"
+        requires: ["idempotency_key", "state_version_incremented"]
+      - from: "persisted"
+        to: "delivered"
+        actor: "room-broker"
+        requires: ["recipient_ack"]
+      - from: "persisted"
+        to: "dlq"
+        actor: "room-broker"
+        requires: ["delivery_failure_ref"]
+
+  Checkpoint:
+    initial: "prepared"
+    terminal: ["accepted", "rejected"]
+    states:
+      - "prepared"
+      - "submitted"
+      - "accepted"
+      - "rejected"
+    transitions:
+      - from: "prepared"
+        to: "submitted"
+        actor: "work-session"
+        requires: ["checkpoint", "evidence_refs"]
+      - from: "submitted"
+        to: "accepted"
+        actor: "orchestrator"
+        requires: ["commit_ref", "push_ref", "evidence_refs"]
+      - from: "submitted"
+        to: "rejected"
+        actor: "reviewer"
+        requires: ["rejection_reason"]
+
+  Artifact:
+    initial: "prepared"
+    terminal: ["rejected", "gc"]
+    states:
+      - "prepared"
+      - "uploaded"
+      - "redacted"
+      - "verified"
+      - "rejected"
+      - "gc"
+    transitions:
+      - from: "prepared"
+        to: "uploaded"
+        actor: "agent-runtime"
+        requires: ["artifact_ref", "content_digest"]
+      - from: "uploaded"
+        to: "redacted"
+        actor: "security"
+        requires: ["redaction_evidence"]
+      - from: "uploaded"
+        to: "verified"
+        actor: "qa"
+        requires: ["artifact_digest_verified"]
+      - from: "redacted"
+        to: "verified"
+        actor: "qa"
+        requires: ["artifact_digest_verified"]
+      - from: "uploaded"
+        to: "rejected"
+        actor: "security"
+        requires: ["sensitivity_violation_ref"]
+      - from: "verified"
+        to: "gc"
+        actor: "monitor"
+        requires: ["retention_ttl_elapsed"]
+
+  AuditLog:
+    initial: "appended"
+    terminal: ["sealed"]
+    states:
+      - "appended"
+      - "sealed"
+    transitions:
+      - from: "appended"
+        to: "sealed"
+        actor: "monitor"
+        requires: ["hash_chain_verified", "signed_digest_ref"]
+
+  Alert:
+    initial: "raised"
+    terminal: ["resolved", "suppressed"]
+    states:
+      - "raised"
+      - "routed"
+      - "resolved"
+      - "suppressed"
+    transitions:
+      - from: "raised"
+        to: "routed"
+        actor: "monitor"
+        requires: ["owner_role", "alert_route"]
+      - from: "routed"
+        to: "resolved"
+        actor: "orchestrator"
+        requires: ["resolution_evidence"]
+      - from: "routed"
+        to: "suppressed"
+        actor: "orchestrator"
+        requires: ["decision_record"]
+
+  ChangeSet:
+    initial: "opened"
+    terminal: ["integrated", "superseded"]
+    states:
+      - "opened"
+      - "ready"
+      - "queued"
+      - "integrated"
+      - "superseded"
+    transitions:
+      - from: "opened"
+        to: "ready"
+        actor: "work-session"
+        requires: ["commit_ref", "push_ref", "evidence_refs"]
+      - from: "ready"
+        to: "queued"
+        actor: "release"
+        requires: ["merge_queue_item_ref"]
+      - from: "queued"
+        to: "integrated"
+        actor: "release"
+        requires: ["integration_batch_verified", "merge_commit"]
+      - from: "ready"
+        to: "superseded"
+        actor: "orchestrator"
+        requires: ["replacement_work_item"]
+
+  MergeQueueItem:
+    initial: "queued"
+    terminal: ["merged", "rejected", "superseded"]
+    states:
+      - "queued"
+      - "batched"
+      - "merged"
+      - "rejected"
+      - "superseded"
+    transitions:
+      - from: "queued"
+        to: "batched"
+        actor: "release"
+        requires: ["integration_batch_ref"]
+      - from: "batched"
+        to: "merged"
+        actor: "release"
+        requires: ["merge_commit", "push_ref"]
+      - from: "batched"
+        to: "rejected"
+        actor: "release"
+        requires: ["rejection_reason"]
+      - from: "queued"
+        to: "superseded"
+        actor: "orchestrator"
+        requires: ["source_object_superseded"]
+
+  ReleaseManifest:
+    initial: "drafted"
+    terminal: ["rejected", "retired"]
+    states:
+      - "drafted"
+      - "verified"
+      - "ready"
+      - "published"
+      - "rejected"
+      - "retired"
+    transitions:
+      - from: "drafted"
+        to: "verified"
+        actor: "qa"
+        requires: ["release_manifest", "verification_evidence"]
+      - from: "verified"
+        to: "ready"
+        actor: "release"
+        requires: ["release_gate_passed"]
+      - from: "ready"
+        to: "published"
+        actor: "release"
+        requires: ["push_ref", "audit_ref"]
+      - from: "verified"
+        to: "rejected"
+        actor: "reviewer"
+        requires: ["rejection_reason"]
+      - from: "published"
+        to: "retired"
+        actor: "release"
+        requires: ["successor_release_ref"]
+
+  SecretGrant:
+    initial: "requested"
+    terminal: ["revoked", "expired", "rejected"]
+    states:
+      - "requested"
+      - "issued"
+      - "revoked"
+      - "expired"
+      - "rejected"
+    transitions:
+      - from: "requested"
+        to: "issued"
+        actor: "policy-engine"
+        requires: ["policy_decision_ref", "grant_ref", "audit_ref"]
+      - from: "requested"
+        to: "rejected"
+        actor: "policy-engine"
+        requires: ["denial_reason"]
+      - from: "issued"
+        to: "revoked"
+        actor: "permission-gateway"
+        requires: ["revocation_decision_ref", "audit_ref"]
+      - from: "issued"
+        to: "expired"
+        actor: "monitor"
+        requires: ["expires_at_elapsed"]
+
+  SecretLease:
+    initial: "requested"
+    terminal: ["released", "revoked", "expired"]
+    states:
+      - "requested"
+      - "active"
+      - "released"
+      - "revoked"
+      - "expired"
+    transitions:
+      - from: "requested"
+        to: "active"
+        actor: "permission-gateway"
+        requires: ["grant_ref", "lease_extended"]
+      - from: "active"
+        to: "released"
+        actor: "agent-runtime"
+        requires: ["work_checkpointed", "audit_ref"]
+      - from: "active"
+        to: "revoked"
+        actor: "permission-gateway"
+        requires: ["revocation_decision_ref"]
+      - from: "active"
+        to: "expired"
+        actor: "monitor"
+        requires: ["expires_at_elapsed"]
+
+  TempGrant:
+    initial: "issued"
+    terminal: ["revoked", "expired"]
+    states:
+      - "issued"
+      - "revoked"
+      - "expired"
+    transitions:
+      - from: "issued"
+        to: "revoked"
+        actor: "permission-gateway"
+        requires: ["revocation_decision_ref", "audit_ref"]
+      - from: "issued"
+        to: "expired"
+        actor: "monitor"
+        requires: ["expires_at_elapsed"]
+
+  AgentSkillSource:
+    initial: "configured"
+    terminal: ["retired"]
+    states:
+      - "configured"
+      - "syncing"
+      - "indexed"
+      - "active"
+      - "stale"
+      - "quarantined"
+      - "retired"
+    transitions:
+      - from: "configured"
+        to: "syncing"
+        actor: "skill-registry"
+        requires: ["pinned_commit_verified", "source_policy_valid"]
+      - from: "syncing"
+        to: "indexed"
+        actor: "skill-registry"
+        requires: ["catalog_digest", "role_skill_index_ref"]
+      - from: "indexed"
+        to: "active"
+        actor: "skill-registry"
+        requires: ["digest_index_verified"]
+      - from: "active"
+        to: "stale"
+        actor: "monitor"
+        requires: ["upstream_digest_changed"]
+      - from: "stale"
+        to: "syncing"
+        actor: "skill-registry"
+        requires: ["review_request_event"]
+      - from: "active"
+        to: "quarantined"
+        actor: "security"
+        requires: ["supply_chain_finding_ref"]
+      - from: "quarantined"
+        to: "retired"
+        actor: "orchestrator"
+        requires: ["retire_decision_ref"]
+
+  AgentRoleSkill:
+    initial: "discovered"
+    terminal: ["retired", "quarantined"]
+    states:
+      - "discovered"
+      - "parsed"
+      - "validated"
+      - "active"
+      - "overridden"
+      - "retired"
+      - "quarantined"
+    transitions:
+      - from: "discovered"
+        to: "parsed"
+        actor: "skill-registry"
+        requires: ["frontmatter_digest", "content_digest"]
+      - from: "parsed"
+        to: "validated"
+        actor: "skill-registry"
+        requires: ["role_skill_schema_valid"]
+      - from: "validated"
+        to: "active"
+        actor: "skill-registry"
+        requires: ["digest_index_verified"]
+      - from: "active"
+        to: "overridden"
+        actor: "skill-registry"
+        requires: ["role_skill_overlay_ref", "decision_record"]
+      - from: "active"
+        to: "retired"
+        actor: "orchestrator"
+        requires: ["retire_decision_ref"]
+      - from: "active"
+        to: "quarantined"
+        actor: "security"
+        requires: ["supply_chain_finding_ref"]
+      - from: "overridden"
+        to: "retired"
+        actor: "orchestrator"
+        requires: ["retire_decision_ref"]
+
+  RoleSkillOverlay:
+    initial: "proposed"
+    terminal: ["rejected", "superseded"]
+    states:
+      - "proposed"
+      - "validated"
+      - "active"
+      - "rejected"
+      - "superseded"
+    transitions:
+      - from: "proposed"
+        to: "validated"
+        actor: "skill-registry"
+        requires: ["overlay_digest", "decision_record"]
+      - from: "validated"
+        to: "active"
+        actor: "orchestrator"
+        requires: ["state_version_incremented"]
+      - from: "proposed"
+        to: "rejected"
+        actor: "reviewer"
+        requires: ["rejection_reason"]
+      - from: "active"
+        to: "superseded"
+        actor: "skill-registry"
+        requires: ["successor_overlay_ref"]
+
+  ModelProvider:
+    initial: "discovered"
+    terminal: ["retired"]
+    states:
+      - "discovered"
+      - "probed"
+      - "available"
+      - "degraded"
+      - "unavailable"
+      - "retired"
+    transitions:
+      - from: "discovered"
+        to: "probed"
+        actor: "model-registry"
+        requires: ["provider_probe_ref"]
+      - from: "probed"
+        to: "available"
+        actor: "model-registry"
+        requires: ["capability_profile_ref"]
+      - from: "available"
+        to: "degraded"
+        actor: "monitor"
+        requires: ["provider_degraded_event"]
+      - from: "degraded"
+        to: "available"
+        actor: "model-registry"
+        requires: ["capability_profile_ref"]
+      - from: "available"
+        to: "unavailable"
+        actor: "monitor"
+        requires: ["provider_unavailable_event"]
+      - from: "unavailable"
+        to: "probed"
+        actor: "model-registry"
+        requires: ["provider_probe_ref"]
+      - from: "available"
+        to: "retired"
+        actor: "orchestrator"
+        requires: ["retire_decision_ref"]
+      - from: "degraded"
+        to: "retired"
+        actor: "orchestrator"
+        requires: ["retire_decision_ref"]
+      - from: "unavailable"
+        to: "retired"
+        actor: "orchestrator"
+        requires: ["retire_decision_ref"]
+
+  ModelCapabilityProfile:
+    initial: "observed"
+    terminal: ["superseded", "expired"]
+    states:
+      - "observed"
+      - "verified"
+      - "active"
+      - "superseded"
+      - "expired"
+    transitions:
+      - from: "observed"
+        to: "verified"
+        actor: "model-registry"
+        requires: ["capability_digest", "probe_evidence"]
+      - from: "verified"
+        to: "active"
+        actor: "model-registry"
+        requires: ["capability_profile_ref"]
+      - from: "active"
+        to: "superseded"
+        actor: "model-registry"
+        requires: ["successor_capability_profile_ref"]
+      - from: "active"
+        to: "expired"
+        actor: "monitor"
+        requires: ["expires_at_elapsed"]
+
+  ModelSelectionPolicy:
+    initial: "drafted"
+    terminal: ["superseded", "rejected"]
+    states:
+      - "drafted"
+      - "validated"
+      - "active"
+      - "superseded"
+      - "rejected"
+    transitions:
+      - from: "drafted"
+        to: "validated"
+        actor: "model-registry"
+        requires: ["model_selection_schema_valid"]
+      - from: "validated"
+        to: "active"
+        actor: "orchestrator"
+        requires: ["decision_record"]
+      - from: "drafted"
+        to: "rejected"
+        actor: "reviewer"
+        requires: ["rejection_reason"]
+      - from: "active"
+        to: "superseded"
+        actor: "model-registry"
+        requires: ["successor_model_policy_ref"]
+
+  ModelSelectionDecision:
+    initial: "evaluating"
+    terminal: ["selected", "rejected"]
+    states:
+      - "evaluating"
+      - "selected"
+      - "rejected"
+    transitions:
+      - from: "evaluating"
+        to: "selected"
+        actor: "model-registry"
+        requires: ["role_skill_fit_score", "model_capability_fit_score", "policy_decision_ref", "audit_ref"]
+      - from: "evaluating"
+        to: "rejected"
+        actor: "model-registry"
+        requires: ["denial_reason", "fallback_policy_ref"]
+
+  SessionPlacementPolicy:
+    initial: "drafted"
+    terminal: ["superseded", "rejected"]
+    states:
+      - "drafted"
+      - "validated"
+      - "active"
+      - "superseded"
+      - "rejected"
+    transitions:
+      - from: "drafted"
+        to: "validated"
+        actor: "scheduler"
+        requires: ["session_placement_schema_valid"]
+      - from: "validated"
+        to: "active"
+        actor: "orchestrator"
+        requires: ["decision_record"]
+      - from: "drafted"
+        to: "rejected"
+        actor: "reviewer"
+        requires: ["rejection_reason"]
+      - from: "active"
+        to: "superseded"
+        actor: "scheduler"
+        requires: ["successor_session_placement_policy_ref"]
+
+  SessionPlacementDecision:
+    initial: "evaluating"
+    terminal: ["new_session_selected", "subagent_selected", "rejected"]
+    states:
+      - "evaluating"
+      - "capacity_checked"
+      - "new_session_selected"
+      - "subagent_selected"
+      - "rejected"
+    transitions:
+      - from: "evaluating"
+        to: "capacity_checked"
+        actor: "scheduler"
+        requires: ["work_signal_set", "capacity_snapshot_ref"]
+      - from: "capacity_checked"
+        to: "new_session_selected"
+        actor: "scheduler"
+        requires: ["new_session_required", "task_contract_ref", "model_selection_decision_ref", "audit_ref"]
+      - from: "capacity_checked"
+        to: "subagent_selected"
+        actor: "scheduler"
+        requires: ["short_task_classified", "subagent_capacity_available", "audit_ref"]
+      - from: "capacity_checked"
+        to: "rejected"
+        actor: "scheduler"
+        requires: ["denial_reason"]
+
+  RuntimeIssuePattern:
+    initial: "observed"
+    terminal: ["suppressed", "closed"]
+    states:
+      - "observed"
+      - "clustered"
+      - "candidate_created"
+      - "suppressed"
+      - "closed"
+    transitions:
+      - from: "observed"
+        to: "clustered"
+        actor: "monitor"
+        requires: ["recurrence_threshold_reached", "evidence_refs"]
+      - from: "clustered"
+        to: "candidate_created"
+        actor: "monitor"
+        requires: ["upgrade_candidate_ref"]
+      - from: "clustered"
+        to: "suppressed"
+        actor: "rule-steward"
+        requires: ["decision_record"]
+      - from: "candidate_created"
+        to: "closed"
+        actor: "rule-steward"
+        requires: ["upgrade_candidate_linked"]
+
+  SystemUpgradeCandidate:
+    initial: "observed"
+    terminal: ["dismissed", "superseded", "closed"]
+    states:
+      - "observed"
+      - "clustered"
+      - "candidate_created"
+      - "exported_for_external_maintenance"
+      - "external_maintenance_required"
+      - "imported_after_external_upgrade"
+      - "dismissed"
+      - "superseded"
+      - "closed"
+    transitions:
+      - from: "observed"
+        to: "clustered"
+        actor: "monitor"
+        requires: ["issue_fingerprint", "recurrence_count_reached", "evidence_refs"]
+      - from: "clustered"
+        to: "candidate_created"
+        actor: "monitor"
+        requires: ["runtime_mutation_forbidden", "sample_refs"]
+      - from: "candidate_created"
+        to: "exported_for_external_maintenance"
+        actor: "rule-steward"
+        requires: ["external_upgrade_package_ref"]
+      - from: "exported_for_external_maintenance"
+        to: "external_maintenance_required"
+        actor: "orchestrator"
+        requires: ["system_external_maintenance_required", "runtime_upgrade_forbidden"]
+      - from: "external_maintenance_required"
+        to: "imported_after_external_upgrade"
+        actor: "orchestrator"
+        requires: ["external_upgrade_import_ref", "audit_ref"]
+      - from: "imported_after_external_upgrade"
+        to: "closed"
+        actor: "rule-steward"
+        requires: ["candidate_resolution_ref"]
+      - from: "candidate_created"
+        to: "dismissed"
+        actor: "reviewer"
+        requires: ["rejection_reason", "decision_record"]
+      - from: "candidate_created"
+        to: "superseded"
+        actor: "monitor"
+        requires: ["successor_upgrade_candidate_ref"]

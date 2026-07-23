@@ -198,7 +198,7 @@ unique(project_id, idempotency_key)
 | resource_key | text | not null |
 | owner_session_id | text | references work_sessions |
 | fencing_token | bigint | not null |
-| status | text | active, released, expired, transferred |
+| status | text | requested, active, renewing, released, expired, revoked |
 | expires_at | timestamptz | not null |
 | created_at | timestamptz | not null |
 | updated_at | timestamptz | not null |
@@ -261,6 +261,12 @@ unique(project_id, resource_type, resource_key) where status = 'active'
 | artifact_ref | text | nullable |
 | safe_retry_point | jsonb | not null default `{}` |
 | suggested_actions | jsonb | not null default `[]` |
+| expires_at | timestamptz | not null |
+| on_timeout | text | reject, reassign, scope_reduce, abort |
+| approval_request_id | text | nullable references approval_requests |
+| policy_decision_id | text | nullable references policy_decisions |
+| grant_ref | text | nullable |
+| resolution_audit_ref | text | nullable |
 | created_at | timestamptz | not null |
 | updated_at | timestamptz | not null |
 
@@ -295,41 +301,57 @@ unique(project_id, resource_type, resource_key) where status = 'active'
 | quality_gate_results | `id,project_id,task_group_id,target_ref,gate,status,evidence_refs,decision_record_id,created_at` |
 | change_sets | `id,project_id,task_group_id,work_item_refs,base_commit,head_commit,changed_paths,status,evidence_refs,created_at` |
 | merge_queue_items | `id,project_id,task_group_id,change_set_id,priority,status,lease_ref,created_at` |
-| integration_batches | `id,project_id,task_group_id,baseline_commit,status,change_set_refs,ci_run_ref,release_manifest_ref,created_at` |
+| integration_batches | `id,project_id,task_group_id,baseline_commit,status,change_set_refs,merge_commit,push_refs,command_effect_refs,batch_ci_evidence_refs,failed_change_set_refs,conflict_owner_refs,ci_run_ref,release_manifest_ref,created_at` |
 | release_manifests | `id,project_id,task_group_id,version_ref,commit_refs,push_refs,artifact_refs,rollback_refs,status,created_at` |
-| command_effects | `id,command_id,effect_type,resource_key,before_digest,after_digest,external_operation_id,reversible,rollback_command_id,verified_at,fencing_token` |
-| dlq_entries | `id,project_id,task_group_id,source_type,source_id,status,reason_code,owner_role,replay_policy_ref,created_at` |
+| command_effects | `id,project_id,task_group_id,command_id,status,effect_type,resource_key,before_digest,after_digest,external_operation_id,reversible,rollback_command_id,evidence_refs,verified_at,fencing_token` |
+| dlq_entries | `id,project_id,task_group_id,source_type,source_id,source_command_id,source_effect_id,status,reason_code,owner_role,replay_policy_ref,resolution_effect_ref,created_at` |
+| secret_grants | `id,project_id,task_group_id,work_item_id,session_id,agent_node_id,secret_ref,action,status,policy_decision_id,approval_request_id,expires_at,revocation_ref,audit_ref,created_at` |
+| secret_leases | `id,project_id,task_group_id,work_item_id,session_id,agent_node_id,secret_grant_id,status,lease_ref,expires_at,release_audit_ref,created_at` |
+| temp_grants | `id,project_id,task_group_id,work_item_id,session_id,agent_node_id,resource_ref,action,status,policy_decision_id,expires_at,revocation_ref,audit_ref,created_at` |
+| agent_skill_sources | `id,source_id,repository_url,default_ref,pinned_commit,status,catalog_digest,index_ref,overlay_policy,created_at` |
+| agent_role_skills | `id,source_id,source_path,name,category,status,frontmatter_digest,content_digest,capabilities,default_model_requirements,overlay_refs,created_at` |
+| role_skill_overlays | `id,project_id,task_group_id,role_skill_id,status,overlay_digest,decision_record_id,created_at` |
+| model_providers | `id,provider_class,status,probe_ref,capability_profile_ref,created_at` |
+| model_capability_profiles | `id,provider_id,model_id,status,capability_digest,modalities,strengths,limits,quality_signals,cost_signals,observed_at` |
+| model_selection_decisions | `id,project_id,task_group_id,work_item_id,role_skill_id,selected_model_id,status,score_breakdown_ref,policy_decision_id,audit_ref,created_at` |
+| session_placement_policies | `id,project_id,task_group_id,status,default_placement,capacity_policy,placement_rules,decision_record_id,created_at` |
+| session_placement_decisions | `id,project_id,task_group_id,work_item_id,status,placement,work_signals,capacity_snapshot_ref,model_selection_decision_id,task_contract_ref,audit_ref,created_at` |
+| runtime_issue_patterns | `id,project_id,task_group_id,status,issue_fingerprint,recurrence_count,evidence_refs,sample_refs,upgrade_candidate_id,created_at` |
+| system_upgrade_candidates | `id,project_id,task_group_id,status,issue_pattern_id,issue_fingerprint,recurrence_count,affected_components,evidence_refs,sample_refs,external_upgrade_package_ref,audit_ref,created_at` |
 
-`task_groups.close_barrier` 只保存 Orchestrator 最近一次计算出的 `CloseBarrier` 快照。关闭判定必须从 `work_items`、`findings`、`quality_gate_results`、`permission_requests`、`approval_requests`、`leases`、`commands`、`command_effects`、`dlq_entries`、`integration_batches`、`release_manifests` 和 `rulesets` 的终态状态确定性计算，不能把自由文本或聊天结论写入 `close_barrier` 后直接关闭。
+`task_groups.close_barrier` 只保存 Orchestrator 最近一次计算出的 `CloseBarrier` 快照。关闭判定必须从 `work_items`、`findings`、`quality_gate_results`、`permission_requests`、`approval_requests`、`leases`、`commands`、`command_effects`、`dlq_entries`、`integration_batches`、`release_manifests`、`rulesets`、`runtime_issue_patterns` 和 `system_upgrade_candidates` 的终态状态确定性计算，并写入 `stateDigest`、`sourceQueryRefs`、`gateResults`、`blockingObjects`、`waivers` 和 `evidenceRefs`。重复运行问题只要求已聚合并导出系统外升级证据包；关闭屏障不得要求运行中的系统自动执行自身升级。不能把自由文本或聊天结论写入 `close_barrier` 后直接关闭。
 
 ## 4. HTTP API
 
-HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证器和只读观察 UI 使用。所有写接口必须接收 `Idempotency-Key` header，并写入 audit。
+HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证器和只读观察 UI 使用。所有写接口必须接收 `Idempotency-Key` header，并写入 audit。入口总控会话只能提交目标、边界和外部能力信号；后台管理只能配置能力 registry、查看审计和导入系统外升级产物；它们都不能作为项目执行 actor 调用任务写入接口。
 
-| 方法 | 路径 | 作用 |
-| --- | --- | --- |
-| POST | `/api/projects` | 创建项目 |
-| GET | `/api/projects/:projectId` | 读取项目 |
-| POST | `/api/task-groups` | 创建任务组 |
-| GET | `/api/task-groups/:taskGroupId` | 读取任务组快照 |
-| POST | `/api/work-items` | 创建 work item |
-| POST | `/api/work-items/:workItemId/assign` | 分配或改派 |
-| POST | `/api/rooms/:roomId/messages` | 发送 room message |
-| GET | `/api/rooms/:roomId/messages?after=` | 按 cursor 补读消息 |
-| POST | `/api/commands` | 创建 command |
-| POST | `/api/leases/claim` | 获取 lease |
-| POST | `/api/leases/:leaseId/release` | 释放 lease |
-| POST | `/api/checkpoints` | 提交 checkpoint |
-| POST | `/api/artifacts` | 注册 artifact |
-| POST | `/api/permission-requests` | 提交权限阻断 |
-| POST | `/api/approval-requests` | 创建审批状态机对象 |
-| POST | `/api/policy-decisions/evaluate` | 记录策略判定并返回准入结果 |
-| POST | `/api/findings` | 提交独立复验发现 |
-| POST | `/api/contracts` | 注册或更新契约对象 |
-| POST | `/api/integration-batches` | 创建集成批次 |
-| POST | `/api/close-barriers/compute` | 计算并校验关闭屏障 |
-| POST | `/api/agents/join` | 使用 join token 初始化 Agent |
-| POST | `/api/agents/:nodeId/heartbeat` | Agent 心跳 |
+| 方法 | 路径 | 作用 | 允许 actor |
+| --- | --- | --- | --- |
+| POST | `/api/projects` | 创建项目 | orchestrator |
+| GET | `/api/projects/:projectId` | 读取项目 | orchestrator、scheduler、agent-runtime、monitor、admin read-only |
+| POST | `/api/task-groups` | 创建任务组 | orchestrator |
+| GET | `/api/task-groups/:taskGroupId` | 读取任务组快照 | orchestrator、scheduler、agent-runtime、monitor、admin read-only |
+| POST | `/api/work-items` | 创建 work item | orchestrator、decision-center |
+| POST | `/api/work-items/:workItemId/assign` | 分配或改派 | scheduler、orchestrator |
+| POST | `/api/session-placement-decisions` | 记录新会话或子 Agent placement | scheduler |
+| POST | `/api/rooms/:roomId/messages` | 发送 room message | room-broker、agent-runtime、orchestrator |
+| GET | `/api/rooms/:roomId/messages?after=` | 按 cursor 补读消息 | room-broker、agent-runtime、orchestrator |
+| POST | `/api/commands` | 创建 command | orchestrator、command-bus、agent-runtime |
+| POST | `/api/leases/claim` | 获取 lease | scheduler、agent-runtime |
+| POST | `/api/leases/:leaseId/release` | 释放 lease | agent-runtime、orchestrator |
+| POST | `/api/checkpoints` | 提交 checkpoint | agent-runtime |
+| POST | `/api/artifacts` | 注册 artifact | agent-runtime、evidence-mcp |
+| POST | `/api/permission-requests` | 提交权限阻断 | permission-gateway、agent-runtime |
+| POST | `/api/approval-requests` | 创建审批状态机对象 | decision-center、policy-engine、orchestrator |
+| POST | `/api/policy-decisions/evaluate` | 记录策略判定并返回准入结果 | policy-engine |
+| POST | `/api/findings` | 提交独立复验发现 | reviewer、qa、security、monitor |
+| POST | `/api/contracts` | 注册或更新契约对象 | orchestrator、decision-center |
+| POST | `/api/integration-batches` | 创建集成批次 | release、orchestrator |
+| POST | `/api/runtime-issue-patterns` | 聚合重复运行问题 | monitor |
+| POST | `/api/system-upgrade-candidates/export` | 导出系统外升级证据包 | monitor、rule-steward |
+| POST | `/api/close-barriers/compute` | 计算并校验关闭屏障 | orchestrator |
+| POST | `/api/agents/join` | 使用 join token 初始化 Agent | agent-runtime |
+| POST | `/api/agents/:nodeId/heartbeat` | Agent 心跳 | agent-runtime |
 
 ## 5. MCP tools
 
@@ -340,11 +362,12 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | `orchestration-mcp` | `project_create`、`task_group_create`、`work_item_create`、`work_assign`、`state_get` |
 | `room-mcp` | `room_join`、`room_send`、`room_wait`、`room_ack` |
 | `agent-control-mcp` | `node_register`、`node_probe`、`session_start`、`session_pause`、`session_cancel`、`session_recover` |
+| `scheduler-mcp` | `model_select`、`session_place`、`work_assign`、`capacity_snapshot` |
 | `resource-mcp` | `lease_claim`、`lease_release`、`resource_snapshot` |
 | `model-mcp` | `model_capabilities`、`model_policy_get`、`model_select` |
 | `evidence-mcp` | `artifact_register`、`checkpoint_submit`、`test_result_submit` |
 | `permission-mcp` | `permission_probe`、`permission_request_submit`、`permission_status`、`permission_resolve` |
-| `governance-mcp` | `approval_request_create`、`policy_decision_eval`、`finding_submit`、`contract_publish`、`close_barrier_compute` |
+| `governance-mcp` | `approval_request_create`、`policy_decision_eval`、`finding_submit`、`contract_publish`、`runtime_issue_pattern_submit`、`system_upgrade_candidate_export`、`close_barrier_compute` |
 
 ## 6. 事件模型
 
@@ -355,6 +378,8 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 ```json
 {
   "schemaVersion": "control-event/v1",
+  "protocolVersion": "control-plane/v1",
+  "schemaDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "eventId": "evt_...",
   "projectId": "prj_...",
   "taskGroupId": "tg_...",
@@ -372,8 +397,17 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
     "id": "chk_..."
   },
   "idempotencyKey": "checkpoint-work-1-run-1",
+  "payloadSchemaRef": "spec/checkpoint.schema.json",
   "payloadRef": "db:checkpoints/chk_...",
   "payloadDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "stateTransition": {
+    "machine": "WorkItem",
+    "fromState": "in_progress",
+    "toState": "checkpoint_submitted",
+    "stateVersionBefore": 11,
+    "stateVersionAfter": 12
+  },
+  "guardEvidenceRefs": ["artifact_..."],
   "createdAt": "2026-07-23T08:00:00Z"
 }
 ```
@@ -395,8 +429,9 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 3. 所有写接口必须有 idempotencyKey。
 4. 所有副作用必须记录 command effect 或至少记录 resultRef。
 5. lease 写入必须校验 fencing token。
-6. `controlStateVersion` 变化后，旧 session 必须 rebind 或返回 `STALE_STATE`。
-7. DLQ 不能静默堆积，必须出现在关闭屏障和告警中。
-8. MCP tool result 进入上下文前标记为 untrusted。
-9. Artifact 只在消息中传 locator 和 digest，不传大内容。
-10. Secret 只以 secret ref 表达，不进入 room message、artifact 正文或普通日志。
+6. 状态转移必须用 `spec/gates.yaml` 解析每个 `requires`，未匹配 resolver 的 gate 直接拒绝。
+7. `controlStateVersion` 变化后，旧 session 必须 rebind 或返回 `STALE_STATE`。
+8. DLQ 不能静默堆积，必须出现在关闭屏障和告警中。
+9. MCP tool result 进入上下文前标记为 untrusted。
+10. Artifact 只在消息中传 locator 和 digest，不传大内容。
+11. Secret 只以 secret ref 表达，不进入 room message、artifact 正文或普通日志。

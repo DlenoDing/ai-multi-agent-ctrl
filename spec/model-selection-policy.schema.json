@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/model-selection-policy.schema.json",
+  "title": "ModelSelectionPolicy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "policyId",
+    "roleId",
+    "taskType",
+    "requiredCapabilities",
+    "scoringWeights",
+    "hardConstraints",
+    "fallbackPolicy",
+    "decisionOutput"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "model-selection-policy/v1"
+    },
+    "policyId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roleId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskType": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requiredCapabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "scoringWeights": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capabilityFit", "roleSkillFit", "quality", "latency", "cost", "quota", "reliability", "risk"],
+      "properties": {
+        "capabilityFit": {"type": "number", "minimum": 0},
+        "roleSkillFit": {"type": "number", "minimum": 0},
+        "quality": {"type": "number", "minimum": 0},
+        "latency": {"type": "number", "minimum": 0},
+        "cost": {"type": "number", "minimum": 0},
+        "quota": {"type": "number", "minimum": 0},
+        "reliability": {"type": "number", "minimum": 0},
+        "risk": {"type": "number", "minimum": 0}
+      }
+    },
+    "hardConstraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minContextWindowTokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "requiresStructuredOutput": {
+          "type": "boolean"
+        },
+        "requiresToolUse": {
+          "type": "boolean"
+        },
+        "allowedProviderClasses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/providerClass"
+          }
+        },
+        "forbiddenProviderClasses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/providerClass"
+          }
+        },
+        "maxCostClass": {
+          "type": "string",
+          "enum": ["low", "normal", "high"]
+        },
+        "minReliabilityScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "fallbackPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["onNoModel", "onQuotaLimited", "onProviderDegraded"],
+      "properties": {
+        "onNoModel": {
+          "type": "string",
+          "enum": ["replan_role", "split_task", "request_decision", "abort"]
+        },
+        "onQuotaLimited": {
+          "type": "string",
+          "enum": ["select_next_ranked", "split_task", "defer_until_quota_event", "abort"]
+        },
+        "onProviderDegraded": {
+          "type": "string",
+          "enum": ["select_next_ranked", "reduce_parallelism", "abort"]
+        }
+      }
+    },
+    "decisionOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modelSelectionDecisionRef", "selectedModelId", "selectedAgentSkillRef", "scoreBreakdownRef", "policyDecisionRef", "auditRef"],
+      "properties": {
+        "modelSelectionDecisionRef": {"type": "string"},
+        "selectedModelId": {"type": "string"},
+        "selectedAgentSkillRef": {"type": "string"},
+        "scoreBreakdownRef": {"type": "string"},
+        "policyDecisionRef": {"type": "string"},
+        "auditRef": {"type": "string"}
+      }
+    }
+  },
+  "$defs": {
+    "providerClass": {
+      "type": "string",
+      "enum": [
+        "openai",
+        "anthropic",
+        "google",
+        "xai",
+        "meta",
+        "mistral",
+        "deepseek",
+        "qwen",
+        "moonshot",
+        "zhipu",
+        "baidu",
+        "tencent",
+        "openrouter",
+        "azure_openai",
+        "aws_bedrock",
+        "vertex_ai",
+        "ollama",
+        "vllm",
+        "custom"
+      ]
+    }
+  }
+}
