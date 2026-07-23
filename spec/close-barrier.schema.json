@@ -64,7 +64,7 @@
     },
     "requiredGates": {
       "type": "array",
-      "minItems": 27,
+      "minItems": 29,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/closeGate"
@@ -100,7 +100,9 @@
         "all_rule_sources_resolved",
         "completion_readiness_clear",
         "no_active_role_drift_blockers",
-        "all_effective_instruction_packets_terminal"
+        "all_effective_instruction_packets_terminal",
+        "all_shared_definitions_active",
+        "all_repository_output_targets_terminal"
       ],
       "properties": {
         "all_required_work_closed": {"$ref": "#/$defs/gateResult"},
@@ -129,7 +131,9 @@
         "all_rule_sources_resolved": {"$ref": "#/$defs/gateResult"},
         "completion_readiness_clear": {"$ref": "#/$defs/gateResult"},
         "no_active_role_drift_blockers": {"$ref": "#/$defs/gateResult"},
-        "all_effective_instruction_packets_terminal": {"$ref": "#/$defs/gateResult"}
+        "all_effective_instruction_packets_terminal": {"$ref": "#/$defs/gateResult"},
+        "all_shared_definitions_active": {"$ref": "#/$defs/gateResult"},
+        "all_repository_output_targets_terminal": {"$ref": "#/$defs/gateResult"}
       }
     },
     "blockingObjects": {
@@ -170,6 +174,8 @@
               "Ruleset",
               "RuntimeIssuePattern",
               "SystemUpgradeCandidate",
+              "SharedDefinitionContract",
+              "RepositoryOutputTarget",
               "Artifact"
             ]
           },
@@ -249,7 +255,9 @@
             {"contains": {"const": "all_rule_sources_resolved"}},
             {"contains": {"const": "completion_readiness_clear"}},
             {"contains": {"const": "no_active_role_drift_blockers"}},
-            {"contains": {"const": "all_effective_instruction_packets_terminal"}}
+            {"contains": {"const": "all_effective_instruction_packets_terminal"}},
+            {"contains": {"const": "all_shared_definitions_active"}},
+            {"contains": {"const": "all_repository_output_targets_terminal"}}
           ]
         }
       }
@@ -314,7 +322,9 @@
         "all_rule_sources_resolved",
         "completion_readiness_clear",
         "no_active_role_drift_blockers",
-        "all_effective_instruction_packets_terminal"
+        "all_effective_instruction_packets_terminal",
+        "all_shared_definitions_active",
+        "all_repository_output_targets_terminal"
       ]
     },
     "gateResult": {

@@ -5,6 +5,10 @@ RUN apk add --no-cache ruby
 WORKDIR /app
 
 COPY package.json ./
+COPY Dockerfile ./
+COPY docker-compose.yml ./
+COPY .dockerignore ./
+COPY .env.example ./
 COPY README.md ./
 COPY docs ./docs
 COPY spec ./spec

@@ -1,71 +1,120 @@
 {
   "schemaVersion": "control-plane-runtime-state/v1",
+  "stateVersion": 1,
+  "idempotencyRecords": {},
+  "policyDecisions": [],
+  "commands": [],
   "runtime": {
+    "schemaVersion": "runtime-bootstrap-profile/v1",
     "profileId": "runtime_local",
     "status": "initialized",
-    "startModes": ["npm", "docker", "shell"],
-    "initializedAt": null,
+    "launchModes": ["npm", "docker", "shell"],
+    "commands": {
+      "init": "npm run init",
+      "start": "npm start",
+      "doctor": "npm run doctor",
+      "dockerBuild": "npm run docker:build",
+      "dockerUp": "npm run docker:up",
+      "shellStart": "npm run shell:start"
+    },
     "services": [
-      {"id": "control-plane", "status": "running", "health": "ok"},
-      {"id": "room-broker", "status": "simulated", "health": "ok"},
-      {"id": "scheduler", "status": "simulated", "health": "ok"},
-      {"id": "agent-runtime", "status": "simulated", "health": "ok"},
-      {"id": "identity-service", "status": "simulated", "health": "ok"},
-      {"id": "ui-console-service", "status": "running", "health": "ok"},
-      {"id": "repository-router", "status": "simulated", "health": "ok"},
-      {"id": "instruction-optimizer", "status": "simulated", "health": "ok"}
-    ]
+      {"serviceId": "control-plane", "roleId": "ui-console-service", "status": "running", "health": "ok", "endpoint": "http://127.0.0.1:4317"},
+      {"serviceId": "room-broker", "roleId": "room-broker", "status": "simulated", "health": "ok"},
+      {"serviceId": "scheduler", "roleId": "scheduler", "status": "simulated", "health": "ok"},
+      {"serviceId": "agent-runtime", "roleId": "agent-runtime", "status": "simulated", "health": "ok"},
+      {"serviceId": "identity-service", "roleId": "identity-service", "status": "simulated", "health": "ok"},
+      {"serviceId": "ui-console-service", "roleId": "ui-console-service", "status": "running", "health": "ok"},
+      {"serviceId": "repository-router", "roleId": "repository-router", "status": "simulated", "health": "ok"},
+      {"serviceId": "instruction-optimizer", "roleId": "instruction-optimizer", "status": "simulated", "health": "ok"}
+    ],
+    "storage": {
+      "stateStore": "runtime_json",
+      "runtimeStatePath": ".runtime/control-plane-state.json",
+      "fileOutputPolicy": "project_git_repository_only"
+    },
+    "adminSeedPolicy": {
+      "systemAdminRequired": true,
+      "workspaceOwnerRequired": true,
+      "defaultSystemAdminEmail": "system.admin@local",
+      "secretPolicy": "bootstrap_token"
+    },
+    "healthChecks": [
+      {"checkId": "runtime_health", "command": "npm run doctor", "expected": "control console health ok"}
+    ],
+    "auditRef": "audit_seed_runtime",
+    "createdAt": "2026-07-23T09:30:00Z",
+    "updatedAt": "2026-07-23T09:30:00Z"
   },
   "accounts": [
     {
-      "id": "acct_system_owner",
+      "schemaVersion": "account/v1",
+      "accountId": "acct_system_owner",
       "accountType": "system_admin",
       "displayName": "System Owner",
       "email": "system.admin@local",
       "status": "active",
       "roles": ["system_owner"],
       "permissions": ["system:*"],
-      "auth": {"method": "bootstrap_token", "passwordSet": false}
+      "authPolicy": {"method": "bootstrap_token", "mfaRequired": false, "passwordSet": false, "sessionTtlSeconds": 3600},
+      "auditRef": "audit_seed_system_owner",
+      "createdAt": "2026-07-23T09:30:00Z",
+      "updatedAt": "2026-07-23T09:30:00Z"
     },
     {
-      "id": "acct_workspace_owner",
+      "schemaVersion": "account/v1",
+      "accountId": "acct_workspace_owner",
       "accountType": "user_account",
       "displayName": "Workspace Owner",
       "email": "owner@local",
       "status": "active",
       "roles": ["workspace_owner"],
       "permissions": ["project:create", "agent:activate", "member:invite"],
-      "auth": {"method": "local_password", "passwordSet": false}
+      "authPolicy": {"method": "local_password", "mfaRequired": false, "passwordSet": false, "sessionTtlSeconds": 3600},
+      "auditRef": "audit_seed_workspace_owner",
+      "createdAt": "2026-07-23T09:30:00Z",
+      "updatedAt": "2026-07-23T09:30:00Z"
     },
     {
-      "id": "acct_reviewer",
+      "schemaVersion": "account/v1",
+      "accountId": "acct_reviewer",
       "accountType": "user_account",
       "displayName": "Review Lead",
       "email": "review@local",
       "status": "active",
-      "roles": ["project_reviewer"],
+      "roles": ["reviewer"],
       "permissions": ["project:view", "task_group:review"],
-      "auth": {"method": "local_password", "passwordSet": false}
+      "authPolicy": {"method": "local_password", "mfaRequired": false, "passwordSet": false, "sessionTtlSeconds": 3600},
+      "auditRef": "audit_seed_reviewer",
+      "createdAt": "2026-07-23T09:30:00Z",
+      "updatedAt": "2026-07-23T09:30:00Z"
     }
   ],
   "accessGrants": [
     {
-      "id": "grant_system_owner",
-      "subjectId": "acct_system_owner",
-      "resourceType": "system_console",
-      "resourceId": "system",
+      "schemaVersion": "access-control-grant/v1",
+      "grantId": "grant_system_owner",
+      "subjectRef": {"subjectType": "account", "subjectId": "acct_system_owner"},
+      "resource": {"resourceType": "system_console", "resourceId": "system"},
       "role": "system_owner",
       "permissions": ["system:*"],
-      "status": "active"
+      "status": "active",
+      "policyDecisionRef": "pd_seed_system_owner",
+      "auditRef": "audit_seed_grant_system_owner",
+      "createdAt": "2026-07-23T09:30:00Z",
+      "updatedAt": "2026-07-23T09:30:00Z"
     },
     {
-      "id": "grant_workspace_owner_project",
-      "subjectId": "acct_workspace_owner",
-      "resourceType": "project",
-      "resourceId": "prj_control_plane",
+      "schemaVersion": "access-control-grant/v1",
+      "grantId": "grant_workspace_owner_project",
+      "subjectRef": {"subjectType": "account", "subjectId": "acct_workspace_owner"},
+      "resource": {"resourceType": "project", "resourceId": "prj_control_plane"},
       "role": "project_owner",
       "permissions": ["project:*", "task_group:*", "agent:activate", "member:invite"],
-      "status": "active"
+      "status": "active",
+      "policyDecisionRef": "pd_seed_workspace_owner_project",
+      "auditRef": "audit_seed_grant_workspace_owner_project",
+      "createdAt": "2026-07-23T09:30:00Z",
+      "updatedAt": "2026-07-23T09:30:00Z"
     }
   ],
   "agents": [
@@ -105,7 +154,7 @@
       "ownerAccountId": "acct_workspace_owner",
       "members": [
         {"accountId": "acct_workspace_owner", "role": "project_owner"},
-        {"accountId": "acct_reviewer", "role": "project_reviewer"}
+        {"accountId": "acct_reviewer", "role": "reviewer"}
       ],
       "repositories": [
         {"id": "repo_control_plane", "url": "git@github.com:dleno/ai-multi-agent-ctrl.git", "defaultBranch": "main", "purpose": "control_plane_specs_and_runtime"}
@@ -126,7 +175,8 @@
       "projectId": "prj_control_plane",
       "name": "Runtime and Management Console",
       "objective": "Bootstrap, account control, permissions, project dashboards, task-group monitoring",
-      "status": "in_progress",
+      "status": "development",
+      "goalExecutionStatus": "active",
       "phase": "implementation",
       "progress": 62,
       "health": "attention",
@@ -150,7 +200,8 @@
       "projectId": "prj_control_plane",
       "name": "Instruction Format and Cache Efficiency",
       "objective": "Compact role instructions, stable prefix cache keys, delta-only room messages",
-      "status": "in_progress",
+      "status": "solution_design",
+      "goalExecutionStatus": "active",
       "phase": "protocol",
       "progress": 71,
       "health": "ok",
@@ -167,20 +218,30 @@
   ],
   "sharedDefinitions": [
     {
-      "id": "sdc_status_semantics",
-      "name": "Task and session status semantics",
+      "schemaVersion": "shared-definition-contract/v1",
+      "contractId": "sdc_status_semantics",
+      "projectId": "prj_control_plane",
       "definitionType": "status_semantics",
+      "scopeRefs": ["Project", "TaskGroup", "WorkItem", "WorkSession", "ProgressSnapshot"],
       "canonicalOwnerRole": "orchestrator",
       "producerRole": "decision-center",
       "status": "active",
       "definitionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       "consumerRefs": ["Project", "TaskGroup", "WorkItem", "WorkSession", "ProgressSnapshot"],
-      "repositoryTarget": {"repositoryId": "repo_control_plane", "branch": "main", "path": "spec/state-machines.yaml"}
+      "repositoryOutputTargetRef": "rot_runtime_management",
+      "repositoryOutputTargetDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "conflictPolicy": "block_and_request_canonical_decision",
+      "changePolicy": {"requiresDecisionRecord": true, "invalidatesConsumers": true, "consumerAckRequired": true},
+      "reviewEvidenceRefs": ["review_seed_status_semantics"],
+      "auditRef": "audit_seed_status_semantics",
+      "createdAt": "2026-07-23T09:30:00Z",
+      "updatedAt": "2026-07-23T09:30:00Z"
     }
   ],
   "repositoryOutputs": [
     {
-      "id": "rot_runtime_management",
+      "schemaVersion": "repository-output-target/v1",
+      "targetId": "rot_runtime_management",
       "projectId": "prj_control_plane",
       "taskGroupId": "tg_runtime_management",
       "workItemId": "work_management_ui",
@@ -190,7 +251,11 @@
       "pathAllowlist": ["apps/control-plane-ui/**", "spec/**", "docs/**", "scripts/**", "package.json", "Dockerfile", "docker-compose.yml"],
       "status": "selected",
       "outputPolicy": "project_git_repository_only",
-      "artifactManifestPath": "artifacts/manifest.runtime-management.json"
+      "decisionRecordRef": "decision_seed_runtime_management_repo",
+      "artifactManifestPath": "docs/artifact-manifests/runtime-management.json",
+      "auditRef": "audit_seed_runtime_management_repo",
+      "createdAt": "2026-07-23T09:30:00Z",
+      "updatedAt": "2026-07-23T09:30:00Z"
     }
   ],
   "instructionMetrics": {
@@ -199,8 +264,46 @@
     "stablePrefixTokens": 1800,
     "deltaMessageTargetTokens": 420,
     "envelopes": [
-      {"id": "env_orch_runtime", "recipientRole": "orchestrator", "cacheKey": "orch:v1:runtime-management", "status": "acknowledged", "estimatedTokens": 392},
-      {"id": "env_review_ui", "recipientRole": "reviewer", "cacheKey": "review:v1:ui-management", "status": "cache_indexed", "estimatedTokens": 288}
+      {
+        "schemaVersion": "instruction-envelope/v1",
+        "envelopeId": "env_orch_runtime",
+        "status": "acknowledged",
+        "taskGroupId": "tg_runtime_management",
+        "recipientRole": "orchestrator",
+        "effectiveInstructionPacketRef": "eip_runtime_management",
+        "formatVersion": "ai-native-instruction-envelope/v1",
+        "stablePrefixDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "digestRefs": ["ruleset:runtime:v1", "contract:sdc_status_semantics"],
+        "sharedDefinitionRefs": [{"contractRef": "sdc_status_semantics", "definitionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "status": "active"}],
+        "cacheKey": "orch:v1:runtime-management",
+        "tokenBudget": {"maxInputTokens": 4096, "targetDeltaTokens": 392, "maxOutputTokens": 1200},
+        "cacheHints": ["stable_prefix_first", "digest_locator_over_inline_context", "delta_only_room_messages", "role_specific_output_contract"],
+        "outputContractRef": "spec/checkpoint.schema.json",
+        "payloadDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "auditRef": "audit_seed_env_orch_runtime",
+        "createdAt": "2026-07-23T09:30:00Z",
+        "updatedAt": "2026-07-23T09:30:00Z"
+      },
+      {
+        "schemaVersion": "instruction-envelope/v1",
+        "envelopeId": "env_review_ui",
+        "status": "cache_indexed",
+        "taskGroupId": "tg_runtime_management",
+        "recipientRole": "reviewer",
+        "effectiveInstructionPacketRef": "eip_review_ui",
+        "formatVersion": "ai-native-instruction-envelope/v1",
+        "stablePrefixDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "digestRefs": ["ruleset:review:v1", "contract:sdc_status_semantics"],
+        "sharedDefinitionRefs": [{"contractRef": "sdc_status_semantics", "definitionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "status": "active"}],
+        "cacheKey": "review:v1:ui-management",
+        "tokenBudget": {"maxInputTokens": 4096, "targetDeltaTokens": 288, "maxOutputTokens": 1200},
+        "cacheHints": ["stable_prefix_first", "digest_locator_over_inline_context", "delta_only_room_messages", "role_specific_output_contract"],
+        "outputContractRef": "spec/review-bundle.schema.json",
+        "payloadDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+        "auditRef": "audit_seed_env_review_ui",
+        "createdAt": "2026-07-23T09:30:00Z",
+        "updatedAt": "2026-07-23T09:30:00Z"
+      }
     ]
   },
   "auditLog": []

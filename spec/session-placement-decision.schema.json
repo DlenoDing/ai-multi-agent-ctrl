@@ -117,7 +117,6 @@
         "required": ["placement"]
       },
       "then": {
-        "required": ["subagentSafetyProof"],
         "properties": {
           "status": {
             "const": "new_session_selected"
@@ -135,6 +134,7 @@
         "required": ["placement"]
       },
       "then": {
+        "required": ["subagentSafetyProof"],
         "properties": {
           "status": {
             "const": "subagent_selected"
@@ -142,6 +142,7 @@
           "subagentSafetyProof": {
             "properties": {
               "singleTurn": {"const": true},
+              "readOnlyOrFormatOnly": {"const": true},
               "noPersistentState": {"const": true},
               "noGlobalTaskOwnership": {"const": true},
               "noWriteScopeOwnership": {"const": true},

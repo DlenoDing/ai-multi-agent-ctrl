@@ -26,11 +26,16 @@
     "stateVersion",
     "rulesetDigest",
     "effectiveInstructionPacketRef",
+    "digestRefs",
+    "sharedDefinitionRefs",
     "actionBasis",
     "roleFocus",
     "inputLocators",
     "inputDigests",
     "writeScope",
+    "repositoryOutputTargetRef",
+    "repositoryOutputTargetDigest",
+    "artifactManifestPath",
     "model",
     "permissionPolicy",
     "stopOrReturn",
@@ -158,6 +163,16 @@
     "effectiveInstructionPacketRef": {
       "type": "string",
       "minLength": 1
+    },
+    "digestRefs": {
+      "$ref": "#/$defs/refArray"
+    },
+    "sharedDefinitionRefs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/sharedDefinitionRef"
+      }
     },
     "actionBasis": {
       "type": "object",
@@ -344,6 +359,18 @@
           }
         }
       }
+    },
+    "repositoryOutputTargetRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repositoryOutputTargetDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "artifactManifestPath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!artifacts/)(?!\\.runtime/)(?!tmp/).+"
     },
     "readScope": {
       "type": "array",
@@ -657,6 +684,27 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "writeScope": {
+            "contains": {
+              "type": "object",
+              "properties": {
+                "resourceType": {
+                  "enum": ["git_repo", "git_worktree", "file_path", "dir_path"]
+                }
+              },
+              "required": ["resourceType"]
+            }
+          }
+        },
+        "required": ["writeScope"]
+      },
+      "then": {
+        "required": ["repositoryOutputTargetRef", "repositoryOutputTargetDigest", "artifactManifestPath"]
+      }
     }
   ],
   "$defs": {
@@ -667,6 +715,25 @@
       "items": {
         "type": "string",
         "minLength": 1
+      }
+    },
+    "sharedDefinitionRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractRef", "definitionDigest", "status"],
+      "properties": {
+        "contractRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "definitionDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-fA-F0-9]{64}$"
+        },
+        "status": {
+          "type": "string",
+          "const": "active"
+        }
       }
     }
   }

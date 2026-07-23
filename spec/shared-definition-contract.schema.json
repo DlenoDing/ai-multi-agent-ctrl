@@ -53,6 +53,14 @@
       "type": "string",
       "pattern": "^sha256:[a-fA-F0-9]{64}$"
     },
+    "repositoryOutputTargetRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repositoryOutputTargetDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
     "repositoryTarget": {
       "$ref": "#/$defs/repositoryTarget"
     },
@@ -94,7 +102,7 @@
         }
       },
       "then": {
-        "required": ["canonicalOwnerRole", "producerRole", "consumerRefs", "definitionDigest", "repositoryTarget", "reviewEvidenceRefs"]
+        "required": ["canonicalOwnerRole", "producerRole", "consumerRefs", "definitionDigest", "repositoryOutputTargetRef", "repositoryOutputTargetDigest", "reviewEvidenceRefs"]
       }
     }
   ],

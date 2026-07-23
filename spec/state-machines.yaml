@@ -115,7 +115,7 @@ machines:
       - from: "draft"
         to: "ready"
         actor: "orchestrator"
-        requires: ["task_contract_created", "effective_instruction_packet_ref", "task_draft_review_passed", "split_basis_digest", "quality_surface_plan_ref"]
+        requires: ["task_contract_created", "effective_instruction_packet_ref", "repository_output_target_ref", "shared_definition_refs_resolved", "task_draft_review_passed", "split_basis_digest", "quality_surface_plan_ref"]
       - from: "ready"
         to: "assigned"
         actor: "scheduler"
@@ -123,7 +123,7 @@ machines:
       - from: "assigned"
         to: "in_progress"
         actor: "work-session"
-        requires: ["task_contract_valid"]
+        requires: ["task_contract_valid", "repository_output_target_bound"]
       - from: "assigned"
         to: "blocked_resource"
         actor: "scheduler"
@@ -1016,7 +1016,7 @@ machines:
       - from: "submitted"
         to: "accepted"
         actor: "orchestrator"
-        requires: ["commit_ref", "push_ref", "evidence_refs"]
+        requires: ["commit_ref", "push_ref", "repository_output_target_ref", "artifact_manifest_ref", "changed_paths_within_repository_target", "evidence_refs"]
       - from: "submitted"
         to: "rejected"
         actor: "reviewer"

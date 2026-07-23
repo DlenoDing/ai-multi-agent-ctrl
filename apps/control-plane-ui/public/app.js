@@ -59,12 +59,33 @@ function row(items) {
 }
 
 async function api(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  const idempotencyKey = `idem_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const headers = {"content-type": "application/json", ...(options.headers || {})};
+  if (method !== "GET") headers["Idempotency-Key"] = idempotencyKey;
   const response = await fetch(path, {
-    headers: {"content-type": "application/json"},
-    ...options
+    ...options,
+    headers,
   });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return response.json();
+}
+
+function accountIdOf(account) {
+  return account.accountId || account.id;
+}
+
+function grantSubjectId(grant) {
+  return grant.subjectRef?.subjectId || grant.subjectId;
+}
+
+function grantResourceText(grant) {
+  const resource = grant.resource || {resourceType: grant.resourceType, resourceId: grant.resourceId};
+  return `${resource.resourceType}:${resource.resourceId}`;
+}
+
+function envelopeTokens(envelope) {
+  return envelope.tokenBudget?.targetDeltaTokens || envelope.estimatedTokens || "-";
 }
 
 async function load() {
@@ -94,7 +115,7 @@ function renderStatusLine() {
 
 function renderSystem() {
   const services = state.runtime.services.map((service) => row([
-    escapeHtml(service.id),
+    escapeHtml(service.serviceId || service.id),
     pill(service.status),
     pill(service.health)
   ])).join("");
@@ -165,8 +186,8 @@ function renderUsers() {
     escapeHtml(account.roles.join(", "))
   ])).join("");
   const grants = state.accessGrants.map((grant) => row([
-    escapeHtml(grant.subjectId),
-    escapeHtml(`${grant.resourceType}:${grant.resourceId}`),
+    escapeHtml(grantSubjectId(grant)),
+    escapeHtml(grantResourceText(grant)),
     escapeHtml(grant.role),
     pill(grant.status),
     escapeHtml(grant.permissions.join(", "))
@@ -251,7 +272,7 @@ function renderProjects() {
         <div class="form-row">
           <label for="ownerAccountId">Owner</label>
           <select id="ownerAccountId" name="ownerAccountId">
-            ${state.accounts.map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.displayName)}</option>`).join("")}
+            ${state.accounts.map((account) => `<option value="${escapeHtml(accountIdOf(account))}">${escapeHtml(account.displayName)}</option>`).join("")}
           </select>
         </div>
         <button class="primary-button" type="submit">创建</button>
@@ -265,7 +286,7 @@ function renderProjects() {
         </div>
         <div class="form-row">
           <label for="memberAccountId">账号</label>
-          <select id="memberAccountId" name="accountId">${state.accounts.map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.displayName)}</option>`).join("")}</select>
+          <select id="memberAccountId" name="accountId">${state.accounts.map((account) => `<option value="${escapeHtml(accountIdOf(account))}">${escapeHtml(account.displayName)}</option>`).join("")}</select>
         </div>
         <div class="form-row">
           <label for="memberRole">角色</label>
@@ -349,14 +370,14 @@ function renderTasks() {
 function renderInstructions() {
   const metrics = state.instructionMetrics;
   const envelopes = metrics.envelopes.map((envelope) => row([
-    escapeHtml(envelope.id),
+    escapeHtml(envelope.envelopeId || envelope.id),
     escapeHtml(envelope.recipientRole),
     escapeHtml(envelope.cacheKey),
     pill(envelope.status),
-    escapeHtml(envelope.estimatedTokens)
+    escapeHtml(envelopeTokens(envelope))
   ])).join("");
   const definitions = state.sharedDefinitions.map((definition) => row([
-    escapeHtml(definition.name),
+    escapeHtml(definition.contractId || definition.id),
     escapeHtml(definition.definitionType),
     escapeHtml(definition.canonicalOwnerRole),
     escapeHtml(definition.producerRole),

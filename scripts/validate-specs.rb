@@ -44,6 +44,9 @@ close_barrier = load_json("spec/close-barrier.schema.json")
 completion_readiness = load_json("spec/completion-readiness.schema.json")
 control_events = load_json("spec/control-events.schema.json")
 package_json = load_json("package.json")
+seed_state = load_json("data/seed-state.json")
+session_placement_decision = load_json("spec/session-placement-decision.schema.json")
+repository_output_target_schema = load_json("spec/repository-output-target.schema.json")
 
 required_runtime_files = %w[
   package.json
@@ -51,6 +54,7 @@ required_runtime_files = %w[
   docker-compose.yml
   scripts/start.sh
   scripts/init-control-plane.mjs
+  scripts/doctor.mjs
   apps/control-plane-ui/server.mjs
   apps/control-plane-ui/public/index.html
   apps/control-plane-ui/public/styles.css
@@ -139,6 +143,27 @@ subject_types = Set.new(control_events.dig("properties", "subject", "properties"
 missing_subject_types = required_objects - subject_types
 errors << "ControlEvent subject.type missing control objects: #{missing_subject_types.to_a.sort.join(", ")}" unless missing_subject_types.empty?
 
+session_placement_decision.fetch("allOf").each do |clause|
+  placement_const = clause.dig("if", "properties", "placement", "const")
+  required_then = clause.dig("then", "required").to_a
+  if placement_const == "new_session" && required_then.include?("subagentSafetyProof")
+    errors << "SessionPlacementDecision must not require subagentSafetyProof for new_session"
+  end
+  if placement_const == "subagent"
+    errors << "SessionPlacementDecision must require subagentSafetyProof for subagent" unless required_then.include?("subagentSafetyProof")
+    read_only_const = clause.dig("then", "properties", "subagentSafetyProof", "properties", "readOnlyOrFormatOnly", "const")
+    errors << "SessionPlacementDecision subagent proof must require readOnlyOrFormatOnly=true" unless read_only_const == true
+  end
+end
+
+rot_condition_statuses = repository_output_target_schema.fetch("allOf").flat_map do |clause|
+  status = clause.dig("if", "properties", "status")
+  Array(status && (status["enum"] || status["const"]))
+end
+%w[lease_bound writing committed pushed].each do |status|
+  errors << "RepositoryOutputTarget schema missing state evidence condition for #{status}" unless rot_condition_statuses.include?(status)
+end
+
 critical_schema_titles = Set.new(%w[
   AgentSkillSource
   AgentRoleSkill
@@ -197,6 +222,76 @@ end
 
 unless manifest.dig("repositoryOutputPolicy", "outputPolicy") == "project_git_repository_only"
   errors << "repositoryOutputPolicy.outputPolicy must be project_git_repository_only"
+end
+
+runtime = seed_state.fetch("runtime")
+%w[schemaVersion profileId status launchModes commands services storage adminSeedPolicy healthChecks createdAt updatedAt].each do |field|
+  errors << "seed runtime missing #{field}" if runtime[field].nil? || runtime[field].to_s.empty?
+end
+errors << "seed runtime uses deprecated startModes field" if runtime.key?("startModes")
+errors << "seed runtime uses deprecated initializedAt field" if runtime.key?("initializedAt")
+runtime.fetch("services", []).each do |service|
+  %w[serviceId roleId status health].each do |field|
+    errors << "seed runtime service missing #{field}: #{service.inspect}" if service[field].nil? || service[field].to_s.empty?
+  end
+  errors << "seed runtime service #{service["serviceId"]} uses deprecated id field" if service.key?("id")
+end
+
+seed_state.fetch("repositoryOutputs", []).each do |target|
+  unless target["outputPolicy"] == "project_git_repository_only"
+    errors << "seed repository output #{target["targetId"]} must use project_git_repository_only"
+  end
+  manifest_path = target["artifactManifestPath"].to_s
+  if manifest_path.empty? || manifest_path.start_with?("artifacts/", "/tmp/", ".runtime/")
+    errors << "seed repository output #{target["targetId"]} artifactManifestPath must be a git-trackable project path"
+  end
+  %w[schemaVersion targetId decisionRecordRef auditRef createdAt updatedAt].each do |field|
+    errors << "seed repository output missing #{field}: #{target.inspect}" if target[field].nil? || target[field].to_s.empty?
+  end
+end
+
+seed_state.fetch("accounts", []).each do |account|
+  %w[schemaVersion accountId accountType status displayName roles permissions authPolicy createdAt updatedAt].each do |field|
+    errors << "seed account missing #{field}: #{account.inspect}" if account[field].nil? || account[field].to_s.empty?
+  end
+  errors << "seed account #{account["accountId"]} uses deprecated id field" if account.key?("id")
+  errors << "seed account #{account["accountId"]} uses deprecated auth field" if account.key?("auth")
+end
+
+account_role_enum = load_json("spec/account.schema.json").dig("properties", "roles", "items", "enum").to_set
+seed_state.fetch("accounts", []).each do |account|
+  account.fetch("roles", []).each do |role|
+    errors << "seed account #{account["accountId"]} role not in Account schema: #{role}" unless account_role_enum.include?(role)
+  end
+end
+
+task_group_states = Set.new(state_machines.dig("machines", "TaskGroup", "states"))
+seed_state.fetch("taskGroups", []).each do |task_group|
+  errors << "seed taskGroup #{task_group["id"]} status not in TaskGroup state machine: #{task_group["status"]}" unless task_group_states.include?(task_group["status"])
+end
+
+seed_state.fetch("accessGrants", []).each do |grant|
+  %w[schemaVersion grantId status subjectRef resource role permissions policyDecisionRef createdAt updatedAt].each do |field|
+    errors << "seed access grant missing #{field}: #{grant.inspect}" if grant[field].nil? || grant[field].to_s.empty?
+  end
+  %w[id subjectId resourceType resourceId].each do |field|
+    errors << "seed access grant #{grant["grantId"]} uses deprecated #{field} field" if grant.key?(field)
+  end
+end
+
+seed_state.fetch("sharedDefinitions", []).each do |definition|
+  %w[schemaVersion contractId status projectId definitionType scopeRefs canonicalOwnerRole producerRole consumerRefs definitionDigest repositoryOutputTargetRef repositoryOutputTargetDigest conflictPolicy changePolicy reviewEvidenceRefs createdAt updatedAt].each do |field|
+    errors << "seed shared definition missing #{field}: #{definition.inspect}" if definition[field].nil? || definition[field].to_s.empty?
+  end
+  errors << "seed shared definition #{definition["contractId"]} uses deprecated id field" if definition.key?("id")
+  errors << "seed shared definition #{definition["contractId"]} has schema-extra name field" if definition.key?("name")
+end
+
+seed_state.dig("instructionMetrics", "envelopes").to_a.each do |envelope|
+  %w[schemaVersion envelopeId status taskGroupId recipientRole effectiveInstructionPacketRef formatVersion stablePrefixDigest digestRefs sharedDefinitionRefs cacheKey tokenBudget outputContractRef createdAt updatedAt].each do |field|
+    errors << "seed instruction envelope missing #{field}: #{envelope.inspect}" if envelope[field].nil? || envelope[field].to_s.empty?
+  end
+  errors << "seed instruction envelope #{envelope["envelopeId"]} uses deprecated id field" if envelope.key?("id")
 end
 
 fail_with(errors)

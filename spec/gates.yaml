@@ -168,7 +168,8 @@ resolvers:
         - "review_items_normalized"
         - "role_drift_guard_clear"
         - "role_focus_reverified"
-      pattern: ".*(_passed|_failed|_available|_unavailable|_resolved|_elapsed|_exceeded|_detected|_changed|_verified|_allows|_admitted|_admission|_initialized|_selected|_created|_submitted|_complete|_required|_registered|_removed|_updated|_continued|_checkpointed|_extended|_preempted|_classified|_valid|_rebound|_satisfied|_incremented|_requested|_accepted|_reduced|_routed|_persisted|_uploaded|_sealed|_issued|_released|_published|_ready|_integrated|_batched|_delivered|_set|_reached|_forbidden|_linked|_closed|_exported|_recovered|_score|_findings|_passed_without_repair)$"
+        - "changed_paths_within_repository_target"
+      pattern: ".*(_passed|_failed|_available|_unavailable|_resolved|_elapsed|_exceeded|_detected|_changed|_verified|_allows|_admitted|_admission|_initialized|_selected|_created|_submitted|_complete|_required|_registered|_removed|_updated|_continued|_checkpointed|_extended|_preempted|_classified|_valid|_rebound|_bound|_satisfied|_incremented|_requested|_accepted|_reduced|_routed|_persisted|_uploaded|_sealed|_issued|_released|_published|_ready|_integrated|_batched|_delivered|_set|_reached|_forbidden|_linked|_closed|_exported|_recovered|_score|_findings|_passed_without_repair)$"
     inputs:
       - "canonical_state"
       - "state_machine"

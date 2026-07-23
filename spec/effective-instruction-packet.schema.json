@@ -12,6 +12,8 @@
     "workItemId",
     "status",
     "objectiveBoundaryDigest",
+    "digestRefs",
+    "sharedDefinitionRefs",
     "nextActionDraftDigest",
     "actionBasisRef",
     "activeRuleRefs",
@@ -51,6 +53,14 @@
     "objectiveBoundaryDigest": {
       "type": "string",
       "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "digestRefs": {
+      "$ref": "#/$defs/refArray"
+    },
+    "sharedDefinitionRefs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/sharedDefinitionRef"}
     },
     "nextActionDraftDigest": {
       "type": "string",
@@ -127,6 +137,16 @@
       "items": {
         "type": "string",
         "minLength": 1
+      }
+    },
+    "sharedDefinitionRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractRef", "definitionDigest", "status"],
+      "properties": {
+        "contractRef": {"type": "string", "minLength": 1},
+        "definitionDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
+        "status": {"type": "string", "const": "active"}
       }
     }
   }

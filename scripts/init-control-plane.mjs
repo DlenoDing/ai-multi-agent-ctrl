@@ -23,12 +23,12 @@ function buildState() {
   const now = new Date().toISOString();
   const systemAdminEmail = process.env.AIMAC_SYSTEM_ADMIN_EMAIL || "system.admin@local";
   const systemAdminName = process.env.AIMAC_SYSTEM_ADMIN_NAME || "System Owner";
-  const systemOwner = state.accounts.find((account) => account.id === "acct_system_owner");
+  const systemOwner = state.accounts.find((account) => account.accountId === "acct_system_owner");
   if (systemOwner) {
     systemOwner.email = systemAdminEmail;
     systemOwner.displayName = systemAdminName;
   }
-  state.runtime.initializedAt = now;
+  state.runtime.updatedAt = now;
   state.auditLog.unshift({
     id: `audit_bootstrap_${Date.now()}`,
     at: now,

@@ -450,7 +450,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
     "actorId": "sess_..."
   },
   "subject": {
-    "type": "checkpoint",
+    "type": "Checkpoint",
     "id": "chk_..."
   },
   "idempotencyKey": "checkpoint-work-1-run-1",
@@ -462,7 +462,8 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
     "fromState": "in_progress",
     "toState": "checkpoint_submitted",
     "stateVersionBefore": 11,
-    "stateVersionAfter": 12
+    "stateVersionAfter": 12,
+    "transitionId": "WorkItem:in_progress:checkpoint_submitted"
   },
   "guardEvidenceRefs": ["artifact_..."],
   "createdAt": "2026-07-23T08:00:00Z"

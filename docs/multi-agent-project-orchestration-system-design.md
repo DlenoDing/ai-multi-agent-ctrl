@@ -574,7 +574,7 @@ Room 不是普通聊天室，而是结构化协作和控制通道。每个 Proje
     "actorId": "sess_..."
   },
   "subject": {
-    "type": "checkpoint",
+    "type": "Checkpoint",
     "id": "chk_..."
   },
   "recipients": ["role:qa-owner", "session:sess_..."],
