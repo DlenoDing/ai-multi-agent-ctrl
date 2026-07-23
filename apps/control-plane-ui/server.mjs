@@ -5,22 +5,29 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
+import { appendProjectExecutionEvent, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
 import {
   authenticateAgentNode,
+  ackAgentControlCommand,
   claimNextDispatch,
+  createAgentControlCommand,
   createAgentJoinToken,
   ensureAgentGatewayCollections,
   finishNodeDispatch,
   getDispatchForNode,
   getSkillWorkset,
   heartbeatAgentNode,
+  listAgentControlCommands,
   listAgentJoinTokens,
   publicAgentNode,
   registerAgentNode,
+  requestAgentNodeRevocation,
+  revokeDispatchMcpGrants,
   revokeAgentNode,
-  selfCheckAgentNode
+  selfCheckAgentNode,
+  submitAgentExecutionEvent
 } from "./lib/agent-gateway.mjs";
-import { handleMcpJsonRpc } from "../mcp-server/server.mjs";
+import { handleMcpJsonRpc, isWriteTool } from "../mcp-server/server.mjs";
 import {
   canUseGitPath,
   acceptAgentCheckpoint,
@@ -54,6 +61,66 @@ const agentRuntimePath = join(root, "apps", "agent-runtime", "runtime.mjs");
 const host = process.env.AIMAC_HOST || "127.0.0.1";
 const port = Number(process.env.AIMAC_PORT || 4317);
 const executionProfile = process.env.AIMAC_EXECUTION_PROFILE || "production";
+const stateViewCache = new Map();
+const stateViewCacheTtlMs = Number(process.env.AIMAC_STATE_VIEW_CACHE_TTL_MS || 500);
+const stateViewMaxEntries = Number(process.env.AIMAC_STATE_VIEW_CACHE_MAX_ENTRIES || 200);
+
+const unsafeSecretValues = new Set([
+  "",
+  "change-this-bootstrap-token",
+  "change-this-mcp-service-token",
+  "change-this-local-workspace-owner-token",
+  "change-this-local-reviewer-token",
+  "change-this-local-agent-runtime-token"
+]);
+
+const defaultMcpServiceToolAllowlist = [
+  "orchestration-mcp.state_get",
+  "room-mcp.room_join",
+  "room-mcp.room_send",
+  "room-mcp.room_wait",
+  "room-mcp.room_ack",
+  "agent-control-mcp.node_probe",
+  "agent-control-mcp.dispatch_status",
+  "scheduler-mcp.model_select",
+  "scheduler-mcp.session_place",
+  "scheduler-mcp.capacity_snapshot",
+  "scheduler-mcp.execution_topology_plan",
+  "scheduler-mcp.derived_task_classify",
+  "resource-mcp.lease_claim",
+  "resource-mcp.lease_release",
+  "resource-mcp.resource_snapshot",
+  "model-mcp.model_capabilities",
+  "model-mcp.model_policy_get",
+  "model-mcp.model_select",
+  "skill-mcp.skill_source_sync",
+  "skill-mcp.role_skill_parse",
+  "skill-mcp.role_skill_overlay_validate",
+  "skill-mcp.role_skill_resolve",
+  "evidence-mcp.artifact_register",
+  "evidence-mcp.test_result_submit",
+  "permission-mcp.permission_probe",
+  "permission-mcp.permission_request_submit",
+  "permission-mcp.permission_status",
+  "review-mcp.review_plan_create",
+  "review-mcp.review_bundle_register",
+  "review-mcp.review_result_consume",
+  "review-mcp.completion_readiness_compute",
+  "definition-mcp.shared_definition_create",
+  "definition-mcp.shared_definition_publish",
+  "definition-mcp.shared_definition_consumer_bind",
+  "definition-mcp.shared_definition_conflict_report",
+  "instruction-mcp.cache_key_index",
+  "instruction-mcp.stable_prefix_get",
+  "instruction-mcp.delta_payload_compact",
+  "repository-mcp.repository_output_target_select",
+  "repository-mcp.repository_target_lease_bind",
+  "repository-mcp.artifact_manifest_index",
+  "ui-console-mcp.runtime_health_get",
+  "ui-console-mcp.management_surface_get",
+  "ui-console-mcp.project_progress_get",
+  "ui-console-mcp.task_group_progress_get"
+];
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -85,9 +152,9 @@ function ensureRuntimeConfig() {
   mkdirSync(runtimeDir, { recursive: true });
   const existing = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) : {};
   const localToken = process.env.AIMAC_BOOTSTRAP_TOKEN || existing.localBootstrapToken || randomBytes(24).toString("base64url");
-  const workspaceOwnerTokenEnv = process.env.AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN || process.env.AIMAC_WORKSPACE_OWNER_TOKEN;
-  const reviewerTokenEnv = process.env.AIMAC_LOCAL_SEED_REVIEWER_TOKEN || process.env.AIMAC_REVIEWER_TOKEN;
-  const agentRuntimeTokenEnv = process.env.AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN || process.env.AIMAC_AGENT_RUNTIME_TOKEN;
+  const workspaceOwnerTokenEnv = process.env.AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN;
+  const reviewerTokenEnv = process.env.AIMAC_LOCAL_SEED_REVIEWER_TOKEN;
+  const agentRuntimeTokenEnv = process.env.AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN;
   const workspaceOwnerToken = workspaceOwnerTokenEnv || existing.localAccountTokens?.acct_workspace_owner || randomBytes(24).toString("base64url");
   const reviewerToken = reviewerTokenEnv || existing.localAccountTokens?.acct_reviewer || randomBytes(24).toString("base64url");
   const agentRuntimeToken = agentRuntimeTokenEnv || existing.localAccountTokens?.acct_agent_runtime || randomBytes(24).toString("base64url");
@@ -133,6 +200,33 @@ function ensureRuntimeConfig() {
 function readRuntimeConfig() {
   if (!existsSync(configPath)) return ensureRuntimeConfig();
   return JSON.parse(readFileSync(configPath, "utf8"));
+}
+
+function assertRuntimeSecurity() {
+  for (const envName of [
+    "AIMAC_BOOTSTRAP_TOKEN",
+    "AIMAC_MCP_SERVICE_TOKEN",
+    "AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN",
+    "AIMAC_LOCAL_SEED_REVIEWER_TOKEN",
+    "AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN"
+  ]) {
+    if (process.env[envName] !== undefined && weakSecret(process.env[envName])) {
+      throw new Error(`${envName}_is_unsafe_default_or_too_short`);
+    }
+  }
+  const configuredPublicUrl = process.env.AIMAC_PUBLIC_URL || readRuntimeConfig().publicUrl || "";
+  if (host === "0.0.0.0" && !configuredPublicUrl) throw new Error("AIMAC_PUBLIC_URL_required_when_binding_public_host");
+  if (configuredPublicUrl) {
+    const parsed = new URL(configuredPublicUrl);
+    if (parsed.protocol !== "https:" && !isLocalHostname(parsed.hostname) && process.env.AIMAC_ALLOW_INSECURE_PUBLIC_URL !== "true") {
+      throw new Error("AIMAC_PUBLIC_URL_requires_https_for_non_local_hosts");
+    }
+  }
+}
+
+function weakSecret(value) {
+  const text = String(value || "").trim();
+  return unsafeSecretValues.has(text) || text.length < 20;
 }
 
 function readState() {
@@ -212,7 +306,7 @@ function beginGuardedWrite(req, state, action, subject, resourceScope = inferRes
     state.policyDecisions.unshift(policyDecision);
     state.policyDecisions = state.policyDecisions.slice(0, 120);
     audit(state, "policy-engine", "policy_decision_denied", subject, "denied");
-    writeState(state);
+    commitDirectStateWrite(state);
     return {status: 403, payload: {error: "policy_denied", actor, requiredPermission, resourceScope}};
   }
   const command = {
@@ -286,9 +380,44 @@ function publicEndpoint(req) {
   const configured = process.env.AIMAC_PUBLIC_URL || readRuntimeConfig().publicUrl;
   if (configured) return String(configured).replace(/\/+$/u, "");
   if (!req) return localEndpoint();
+  const hostHeader = String(req.headers.host || "").trim();
+  if (!requestHostAllowed(hostHeader)) return localEndpoint();
   const forwardedProto = process.env.AIMAC_TRUST_PROXY === "true" ? String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() : "";
   const protocol = forwardedProto || (req.socket.encrypted ? "https" : "http");
-  return `${protocol}://${req.headers.host}`.replace(/\/+$/u, "");
+  if (protocol !== "https" && !isLocalHostHeader(hostHeader) && process.env.AIMAC_ALLOW_INSECURE_PUBLIC_URL !== "true") return localEndpoint();
+  return `${protocol}://${hostHeader}`.replace(/\/+$/u, "");
+}
+
+function requestHostAllowed(hostHeader) {
+  if (!hostHeader) return false;
+  if (isLocalHostHeader(hostHeader)) return true;
+  const allowed = new Set(String(process.env.AIMAC_ALLOWED_PUBLIC_HOSTS || "").split(",").map((item) => item.trim()).filter(Boolean));
+  const hostname = hostnameFromHostHeader(hostHeader);
+  return allowed.has(hostHeader) || allowed.has(hostname);
+}
+
+function isLocalHostHeader(hostHeader) {
+  return isLocalHostname(hostnameFromHostHeader(hostHeader));
+}
+
+function hostnameFromHostHeader(hostHeader) {
+  const value = String(hostHeader || "").trim();
+  if (value.startsWith("[")) return value.slice(1, value.indexOf("]"));
+  return value.split(":")[0];
+}
+
+function isLocalHostname(hostname) {
+  return ["127.0.0.1", "localhost", "::1"].includes(String(hostname || "").toLowerCase());
+}
+
+function canExposeBootstrapHint(req) {
+  if (process.env.AIMAC_EXPOSE_BOOTSTRAP_HINT !== "true" && executionProfile === "production") return false;
+  return isLoopbackAddress(req.socket.remoteAddress) && isLocalHostHeader(String(req.headers.host || ""));
+}
+
+function isLoopbackAddress(address) {
+  const value = String(address || "");
+  return value === "127.0.0.1" || value === "::1" || value === "::ffff:127.0.0.1";
 }
 
 function authenticateRequest(req, state) {
@@ -321,9 +450,24 @@ function mcpContextFromRequest(req, state) {
   }
   const config = readRuntimeConfig();
   if (config.mcpServiceTokenHash === digestOf(`mcp-service:${token}`)) {
-    return {principal: {kind: "system_service", id: "remote-mcp-client", allowedMcpTools: ["*"]}, allowedMcpTools: ["*"]};
+    const allowedMcpTools = mcpServiceAllowedTools();
+    return {principal: {kind: "system_service", id: "remote-mcp-client", allowedMcpTools}, allowedMcpTools};
   }
   return null;
+}
+
+function mcpServiceAllowedTools() {
+  const configured = String(process.env.AIMAC_MCP_SERVICE_ALLOWED_TOOLS || "").split(",").map((item) => item.trim()).filter(Boolean);
+  const tools = configured.length ? configured : defaultMcpServiceToolAllowlist;
+  return tools.filter((tool) => !forbiddenMcpServiceTool(tool));
+}
+
+function forbiddenMcpServiceTool(tool) {
+  return tool === "*" ||
+    tool === "evidence-mcp.checkpoint_submit" ||
+    tool.startsWith("identity-mcp.") ||
+    tool.startsWith("governance-mcp.") ||
+    (tool.startsWith("orchestration-mcp.") && tool !== "orchestration-mcp.state_get");
 }
 
 function accountFromRequest(req, state) {
@@ -382,6 +526,9 @@ function scopedStateForAccount(state, account, session) {
   cloned.workSessions = (state.workSessions || []).filter((sessionItem) => visibleTaskGroupIds.has(sessionItem.taskGroupId));
   cloned.agentDispatches = (state.agentDispatches || []).filter((dispatch) => visibleTaskGroupIds.has(dispatch.taskGroupId));
   cloned.agentRuntimeNodes = (state.agentRuntimeNodes || []).filter((node) => (node.projectIds || []).some((projectId) => visibleProjectIds.has(projectId))).map(publicAgentNode);
+  const visibleNodeIds = new Set(cloned.agentRuntimeNodes.map((node) => node.nodeId));
+  cloned.agentControlCommands = (state.agentControlCommands || []).filter((command) => visibleNodeIds.has(command.nodeId));
+  cloned.agentExecutionEvents = (state.agentExecutionEvents || []).filter((event) => visibleTaskGroupIds.has(event.taskGroupId) || visibleNodeIds.has(event.nodeId));
   cloned.agentJoinTokens = listAgentJoinTokens(state).filter((token) => visibleProjectIds.has(token.projectId));
   cloned.agentTaskContracts = (state.agentTaskContracts || []).filter((contract) => visibleTaskGroupIds.has(contract.taskGroupId));
   cloned.effectiveInstructionPackets = (state.effectiveInstructionPackets || []).filter((packet) => visibleTaskGroupIds.has(packet.taskGroupId));
@@ -432,6 +579,55 @@ function scopedStateForAccount(state, account, session) {
   return cloned;
 }
 
+function stateViewForAccount(state, account, session, view = "full", limit = 80) {
+  const scoped = scopedStateForAccount(state, account, session);
+  if (!view || view === "full") return scoped;
+  const capped = Math.max(10, Math.min(500, Number(limit || 80)));
+  const base = {
+    schemaVersion: scoped.schemaVersion,
+    stateVersion: scoped.stateVersion,
+    runtime: scoped.runtime,
+    agents: sliceItems(scoped.agents, capped),
+    projects: sliceItems(scoped.projects, capped),
+    taskGroups: sliceItems(scoped.taskGroups, capped),
+    modelCapabilities: sliceItems(scoped.modelCapabilities, capped),
+    agentRuntimeNodes: sliceItems(scoped.agentRuntimeNodes, capped),
+    progressSnapshots: sliceItems(scoped.progressSnapshots, capped)
+  };
+  const viewFields = {
+    system: ["accounts", "auditLog", "policyDecisions", "commands", "decisionRecords"],
+    users: ["accounts", "accessGrants", "projects"],
+    projects: ["accounts", "accessGrants", "projects", "repositoryOutputs", "agentJoinTokens"],
+    tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots"],
+    runtime: ["modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkills", "roleSkillOverlays"],
+    instructions: ["instructionMetrics", "sharedDefinitions", "effectiveInstructionPackets", "roleDriftGuards"]
+  };
+  for (const field of viewFields[view] || []) {
+    const value = scoped[field];
+    base[field] = Array.isArray(value) ? sliceItems(value, capped) : value;
+  }
+  return base;
+}
+
+function cachedStateView(state, account, session, view, limit) {
+  const key = `${account.accountId}:${session.sessionId}:${state.stateVersion}:${view || "full"}:${limit || "default"}`;
+  const cached = stateViewCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.payload;
+  const payload = JSON.stringify(stateViewForAccount(state, account, session, view, limit));
+  stateViewCache.set(key, {payload, expiresAt: Date.now() + stateViewCacheTtlMs});
+  if (stateViewCache.size > stateViewMaxEntries) {
+    for (const cacheKey of stateViewCache.keys()) {
+      stateViewCache.delete(cacheKey);
+      if (stateViewCache.size <= stateViewMaxEntries) break;
+    }
+  }
+  return payload;
+}
+
+function sliceItems(items, limit) {
+  return Array.isArray(items) ? items.slice(0, limit) : [];
+}
+
 function permissionForAction(action) {
   if (action === "bootstrap_init") return "system:bootstrap";
   if (action === "account_invite") return "member:invite";
@@ -439,7 +635,7 @@ function permissionForAction(action) {
   if (action === "project_member_grant") return "member:invite";
   if (action === "access_grant_create" || action === "access_grant_revoke") return "project:grant";
   if (action === "agent_create" || action === "agent_activation_update") return "agent:activate";
-  if (action === "agent_join_token_create" || action === "agent_join_token_revoke" || action === "agent_node_revoke") return "agent:activate";
+  if (action === "agent_join_token_create" || action === "agent_join_token_revoke" || action === "agent_node_revoke" || action === "agent_control_command_create") return "agent:activate";
   if (action.startsWith("task_group_")) return "task_group:control";
   if (action === "repository_output_target_select") return "project:*";
   if (action === "instruction_envelope_create") return "task_group:control";
@@ -525,22 +721,41 @@ function projectScope(projectId) {
 
 function writeDriftCheck(state, action, resourceScope = {}) {
   if (resourceScope.resourceType !== "task_group") return {allowed: true};
-  return state.roleDriftGuards?.length
-    ? state.roleDriftGuards
-        .filter((guard) => guard.taskGroupId === resourceScope.resourceId && !["closed", "corrected"].includes(guard.status))
-        .reduce((result, guard) => {
-          if (!result.allowed) return result;
-          return {
-            ...result,
-            ...({allowed: guard.allowedActionScopeRefs.includes(`TaskGroup:${resourceScope.resourceId}`), signals: guard.allowedActionScopeRefs.includes(`TaskGroup:${resourceScope.resourceId}`) ? [] : [`write_scope_not_allowed:${action}`]})
-          };
-        }, {allowed: true, signals: []})
-    : {allowed: true, signals: []};
+  const activeGuards = (state.roleDriftGuards || []).filter((guard) => guard.taskGroupId === resourceScope.resourceId && !["closed", "corrected"].includes(guard.status));
+  if (!activeGuards.length) {
+    return driftGuardRequiredForAction(action)
+      ? {allowed: false, signals: [`role_drift_guard_missing:${action}`]}
+      : {allowed: true, signals: []};
+  }
+  return activeGuards.reduce((result, guard) => {
+    if (!result.allowed) return result;
+    const allowed = guard.allowedActionScopeRefs.includes(`TaskGroup:${resourceScope.resourceId}`);
+    return {
+      ...result,
+      allowed,
+      signals: allowed ? [] : [`write_scope_not_allowed:${action}`]
+    };
+  }, {allowed: true, signals: []});
+}
+
+function driftGuardRequiredForAction(action) {
+  return [
+    "agent_runtime_worker_run",
+    "checkpoint_submit",
+    "repository_output_target_select",
+    "role_skill_overlay_create",
+    "instruction_envelope_create"
+  ].includes(action);
 }
 
 function json(res, status, payload) {
   res.writeHead(status, {"content-type": "application/json; charset=utf-8", "cache-control": "no-store"});
   res.end(JSON.stringify(payload));
+}
+
+function jsonString(res, status, payload) {
+  res.writeHead(status, {"content-type": "application/json; charset=utf-8", "cache-control": "no-store"});
+  res.end(payload);
 }
 
 function parseBody(req) {
@@ -577,6 +792,11 @@ function parseBody(req) {
 }
 
 function commitGatewayWrite(state) {
+  state.stateVersion = Number(state.stateVersion || 0) + 1;
+  writeState(state);
+}
+
+function commitDirectStateWrite(state) {
   state.stateVersion = Number(state.stateVersion || 0) + 1;
   writeState(state);
 }
@@ -621,7 +841,7 @@ async function handleMcp(req, res) {
   }
   const message = await parseBody(req);
   const response = Array.isArray(message)
-    ? (await Promise.all(message.map((item) => handleMcpJsonRpc(item, context)))).filter(Boolean)
+    ? await handleMcpBatch(message, context)
     : await handleMcpJsonRpc(message, context);
   if (response === null || (Array.isArray(response) && !response.length)) {
     res.writeHead(202, {"cache-control": "no-store"});
@@ -630,6 +850,161 @@ async function handleMcp(req, res) {
   }
   res.writeHead(200, {"content-type": "application/json; charset=utf-8", "cache-control": "no-store", "mcp-protocol-version": "2025-06-18"});
   res.end(JSON.stringify(response));
+}
+
+async function handleMcpBatch(messages, context) {
+  const writeCount = messages.filter(mcpJsonRpcIsWriteCall).length;
+  if (writeCount === 0) return (await Promise.all(messages.map((item) => handleMcpJsonRpc(item, context)))).filter(Boolean);
+  const responses = [];
+  for (const item of messages) {
+    if (writeCount > 1 && mcpJsonRpcIsWriteCall(item)) {
+      responses.push({
+        jsonrpc: "2.0",
+        id: item?.id ?? null,
+        error: {code: -32600, message: "mcp_batch_multiple_write_calls_forbidden"}
+      });
+      continue;
+    }
+    const response = await handleMcpJsonRpc(item, context);
+    if (response) responses.push(response);
+  }
+  return responses;
+}
+
+function mcpJsonRpcIsWriteCall(message) {
+  return message?.method === "tools/call" && isWriteTool(message.params?.name);
+}
+
+async function waitForAgentControlCommands(node, options = {}) {
+  const deadline = Date.now() + Math.max(0, Math.min(30000, Number(options.waitMs || 0)));
+  let latest = readState();
+  for (;;) {
+    const currentNode = authenticateAgentNode(latest, options.token);
+    if (!currentNode || currentNode.nodeId !== node.nodeId) return {commands: [], nextCursor: Number(options.afterSequence || 0), reason: "node_not_active"};
+    const result = listAgentControlCommands(latest, currentNode, options);
+    if (result.deliveredCount) {
+      try {
+        commitGatewayWrite(latest);
+      } catch (error) {
+        if (!isStateStoreConflict(error)) throw error;
+      }
+    }
+    if (result.commands.length || Date.now() >= deadline) return result;
+    await delay(250);
+    latest = readState();
+  }
+}
+
+async function waitForProjectExecutionEvents(projectId, options = {}) {
+  const deadline = Date.now() + Math.max(0, Math.min(30000, Number(options.waitMs || 0)));
+  for (;;) {
+    const result = readProjectExecutionEvents(runtimeDir, projectId, options);
+    if (result.events.length || Date.now() >= deadline) return result;
+    await delay(250);
+  }
+}
+
+function retryExecutionEventProjection(req, body) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const latest = readState();
+    const latestNode = authenticateAgentNode(latest, bearerToken(req));
+    if (!latestNode) return {ok: false, error: "agent_node_auth_required"};
+    try {
+      const result = submitAgentExecutionEvent(latest, latestNode, body);
+      const storage = appendProjectExecutionEvent(runtimeDir, result.event);
+      commitGatewayWrite(latest);
+      return {ok: true, result, storage};
+    } catch (error) {
+      if (!isStateStoreConflict(error)) return {ok: false, error: error.message};
+    }
+  }
+  return {ok: false, error: "state_conflict_not_recovered"};
+}
+
+function applyTaskGroupRuntimeControl(state, taskGroup, action, options = {}) {
+  const at = now();
+  const controlCommands = [];
+  const directDispatches = [];
+  const resumedDispatches = [];
+  const stopCommandType = ["cancel", "abort"].includes(action)
+    ? "cancel_dispatch"
+    : ["pause", "rebound_drift"].includes(action)
+      ? "pause_dispatch"
+      : null;
+  if (stopCommandType) {
+    for (const dispatch of state.agentDispatches || []) {
+      if (dispatch.taskGroupId !== taskGroup.id || ["completed", "failed", "cancelled"].includes(dispatch.status)) continue;
+      const node = dispatch.assignedNodeId ? (state.agentRuntimeNodes || []).find((item) => item.nodeId === dispatch.assignedNodeId) : null;
+      if (node && ["running", "blocked"].includes(dispatch.status)) {
+        const result = createAgentControlCommand(state, node, {
+          commandType: stopCommandType,
+          dispatchId: dispatch.dispatchId,
+          taskGroupId: taskGroup.id,
+          payload: {reason: `task_group_${action}`}
+        }, {
+          actor: options.actor || "ui-console-service",
+          idempotencyKey: `${options.idempotencyKey || "task-group-control"}:${dispatch.dispatchId}`
+        });
+        controlCommands.push(result.command);
+        continue;
+      }
+      applyDirectDispatchControl(state, dispatch, stopCommandType, `task_group_${action}`, at);
+      directDispatches.push(dispatch.dispatchId);
+    }
+  }
+  if (action === "resume") {
+    for (const dispatch of state.agentDispatches || []) {
+      if (dispatch.taskGroupId !== taskGroup.id || dispatch.status !== "blocked") continue;
+      if (!["control_pause_requested", "task_group_pause", "task_group_rebound_drift"].includes(dispatch.blockedReason)) continue;
+      dispatch.status = "queued";
+      delete dispatch.blockedReason;
+      delete dispatch.controlCommandRef;
+      delete dispatch.assignedNodeId;
+      delete dispatch.claimedAt;
+      delete dispatch.claimExpiresAt;
+      dispatch.updatedAt = at;
+      const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
+      if (session && ["blocked", "monitor_attention"].includes(session.status)) {
+        session.status = "active";
+        session.updatedAt = at;
+      }
+      resumedDispatches.push(dispatch.dispatchId);
+    }
+  }
+  return {
+    controlCommands,
+    directDispatches,
+    resumedDispatches
+  };
+}
+
+function applyDirectDispatchControl(state, dispatch, commandType, reason, at) {
+  if (commandType === "cancel_dispatch") {
+    dispatch.status = "cancelled";
+    dispatch.failureReason = reason;
+  } else {
+    dispatch.status = "blocked";
+    dispatch.blockedReason = reason;
+  }
+  dispatch.controlRequestedAt = at;
+  dispatch.updatedAt = at;
+  if (dispatch.assignedNodeId) revokeDispatchMcpGrants(state, dispatch.assignedNodeId, dispatch.dispatchId, reason);
+  const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
+  if (session) {
+    session.status = commandType === "cancel_dispatch" ? "aborted" : "blocked";
+    session.updatedAt = at;
+  }
+  const taskGroup = state.taskGroups.find((item) => item.id === dispatch.taskGroupId);
+  const workItem = taskGroup?.workItems?.find((item) => item.id === dispatch.workItemId);
+  if (workItem) {
+    workItem.status = "blocked";
+    workItem.blockedReason = reason;
+    workItem.updatedAt = at;
+  }
+}
+
+function delay(ms) {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
 function prepareRemoteGitVerification(target, checkpointInput) {
@@ -730,6 +1105,42 @@ async function handleApi(req, res) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/agent/v1/control") {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    const result = await waitForAgentControlCommands(node, {
+      token: bearerToken(req),
+      afterSequence: Number(url.searchParams.get("afterSequence") || 0),
+      waitMs: Number(url.searchParams.get("waitMs") || 25000),
+      limit: Number(url.searchParams.get("limit") || 20)
+    });
+    json(res, 200, result);
+    return;
+  }
+
+  const nodeControlAckMatch = url.pathname.match(/^\/api\/agent\/v1\/control\/([^/]+)\/ack$/);
+  if (req.method === "POST" && nodeControlAckMatch) {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    const result = ackAgentControlCommand(state, node, nodeControlAckMatch[1], body);
+    commitGatewayWrite(state);
+    json(res, 200, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent/v1/events") {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    const result = submitAgentExecutionEvent(state, node, body);
+    const storage = appendProjectExecutionEvent(runtimeDir, result.event);
+    try {
+      commitGatewayWrite(state);
+      json(res, 202, {...result, storage, centralStateUpdated: true});
+    } catch (error) {
+      if (!isStateStoreConflict(error)) throw error;
+      const recovered = retryExecutionEventProjection(req, body);
+      json(res, 202, {...(recovered.result || result), storage: recovered.storage || storage, centralStateUpdated: recovered.ok, stateConflict: true, conflictRecovered: recovered.ok});
+    }
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/agent/v1/dispatches/next") {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     const result = claimNextDispatch(state, node, {runtimeDir, claimTtlSeconds: body.claimTtlSeconds});
@@ -788,16 +1199,17 @@ async function handleApi(req, res) {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     const dispatch = state.agentDispatches.find((item) => item.dispatchId === nodeFailureMatch[1] && item.assignedNodeId === node.nodeId);
     if (!dispatch) return json(res, 404, {error: "dispatch_not_found"});
-    dispatch.status = "failed";
+    const reportedStatus = ["blocked", "cancelled"].includes(body.status) ? body.status : "failed";
+    dispatch.status = reportedStatus;
     dispatch.failureReason = String(body.reason || "agent_runtime_failure").slice(0, 2000);
     dispatch.updatedAt = now();
     const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
     if (session) {
-      session.status = "failed";
+      session.status = reportedStatus === "blocked" ? "blocked" : reportedStatus === "cancelled" ? "aborted" : "failed";
       session.updatedAt = now();
     }
     finishNodeDispatch(state, node, dispatch.dispatchId, false);
-    audit(state, `agent-node:${node.nodeId}`, "dispatch_failed", `AgentDispatch:${dispatch.dispatchId}`, "failed");
+    audit(state, `agent-node:${node.nodeId}`, `dispatch_${reportedStatus}`, `AgentDispatch:${dispatch.dispatchId}`, reportedStatus);
     commitGatewayWrite(state);
     json(res, 200, {ok: true, dispatchId: dispatch.dispatchId, status: dispatch.status});
     return;
@@ -805,8 +1217,16 @@ async function handleApi(req, res) {
 
   if (req.method === "GET" && url.pathname === "/api/auth/bootstrap-hint") {
     const config = readRuntimeConfig();
+    if (!canExposeBootstrapHint(req)) {
+      json(res, 200, {
+        bootstrapTokenConfigured: Boolean(config.bootstrapTokenHash),
+        tokenHintsExposed: false
+      });
+      return;
+    }
     json(res, 200, {
       bootstrapTokenConfigured: Boolean(config.bootstrapTokenHash),
+      tokenHintsExposed: true,
       tokenSource: process.env.AIMAC_BOOTSTRAP_TOKEN ? "environment" : "runtime-local-config",
       tokenHint: config.localBootstrapToken ? `${config.localBootstrapToken.slice(0, 4)}...${config.localBootstrapToken.slice(-4)}` : null,
       localAccountTokenHints: Object.fromEntries(Object.entries(config.localAccountTokens || {}).map(([accountId, token]) => [accountId, `${token.slice(0, 4)}...${token.slice(-4)}`]))
@@ -825,7 +1245,7 @@ async function handleApi(req, res) {
       : Boolean(account && config.localAccountTokenHashes?.[account.accountId] === digestOf(`account:${account.accountId}:${token}`));
     if (!tokenOk || !account || account.status !== "active") {
       audit(state, "auth-service", "auth_login", `Account:${email}`, "denied");
-      writeState(state);
+      commitDirectStateWrite(state);
       json(res, 401, {error: "invalid_credentials"});
       return;
     }
@@ -842,7 +1262,7 @@ async function handleApi(req, res) {
     });
     state.authSessions = state.authSessions.slice(0, 80);
     audit(state, "auth-service", "auth_login", `Account:${account.accountId}`);
-    writeState(state);
+    commitDirectStateWrite(state);
     json(res, 200, {sessionToken, expiresAt, account: {accountId: account.accountId, email: account.email, displayName: account.displayName, roles: account.roles, permissions: account.permissions}});
     return;
   }
@@ -853,7 +1273,9 @@ async function handleApi(req, res) {
       json(res, 401, {error: "auth_required"});
       return;
     }
-    json(res, 200, scopedStateForAccount(state, reader.account, reader.session));
+    const view = url.searchParams.get("view") || "full";
+    const limit = Number(url.searchParams.get("limit") || 80);
+    jsonString(res, 200, cachedStateView(state, reader.account, reader.session, view, limit));
     return;
   }
 
@@ -948,10 +1370,29 @@ async function handleApi(req, res) {
     const projectId = targetNode.projectIds?.[0];
     const guard = beginGuardedWrite(req, state, "agent_node_revoke", `Project:${projectId}`, projectScope(projectId));
     if (guard.status) return json(res, guard.status, guard.payload);
-    const payload = revokeAgentNode(state, targetNode);
+    const payload = requestAgentNodeRevocation(state, targetNode, body, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});
     finishGuardedWrite(state, guard, 200, payload);
     writeState(state);
     json(res, 200, payload);
+    return;
+  }
+
+  const controlNodeMatch = url.pathname.match(/^\/api\/agent-nodes\/([^/]+)\/control$/);
+  if (req.method === "POST" && controlNodeMatch) {
+    const targetNode = state.agentRuntimeNodes.find((item) => item.nodeId === controlNodeMatch[1]);
+    if (!targetNode) return json(res, 404, {error: "agent_node_not_found"});
+    const commandType = String(body.commandType || body.action || "refresh_profile");
+    const targetDispatch = body.dispatchId ? state.agentDispatches.find((dispatch) => dispatch.dispatchId === body.dispatchId) : null;
+    const taskScopedControl = ["pause_dispatch", "cancel_dispatch", "resume_dispatch"].includes(commandType) && targetDispatch;
+    const projectId = targetNode.projectIds?.[0];
+    const guard = taskScopedControl
+      ? beginGuardedWrite(req, state, "task_group_agent_control_command_create", `TaskGroup:${targetDispatch.taskGroupId}`, taskGroupScope(state, targetDispatch.taskGroupId))
+      : beginGuardedWrite(req, state, "agent_control_command_create", `AgentRuntimeNode:${targetNode.nodeId}`, projectScope(projectId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = createAgentControlCommand(state, targetNode, body, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});
+    finishGuardedWrite(state, guard, 201, result.command);
+    writeState(state);
+    json(res, 201, result);
     return;
   }
 
@@ -1014,6 +1455,38 @@ async function handleApi(req, res) {
     return;
   }
 
+  const dispatchEventsMatch = url.pathname.match(/^\/api\/agent-dispatches\/([^/]+)\/events$/);
+  if (req.method === "GET" && dispatchEventsMatch) {
+    const dispatch = state.agentDispatches.find((item) => item.dispatchId === dispatchEventsMatch[1]);
+    if (!dispatch) return json(res, 404, {error: "dispatch_not_found"});
+    const reader = requireRead(req, state, taskGroupScope(state, dispatch.taskGroupId));
+    if (reader.status) return json(res, reader.status, reader.payload);
+    const result = await waitForProjectExecutionEvents(dispatch.projectId, {
+      dispatchId: dispatch.dispatchId,
+      afterSequence: Number(url.searchParams.get("afterSequence") || 0),
+      waitMs: Number(url.searchParams.get("waitMs") || 0),
+      limit: Number(url.searchParams.get("limit") || 120)
+    });
+    json(res, 200, result);
+    return;
+  }
+
+  const taskGroupEventsMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/execution-events$/);
+  if (req.method === "GET" && taskGroupEventsMatch) {
+    const taskGroup = state.taskGroups.find((item) => item.id === taskGroupEventsMatch[1]);
+    if (!taskGroup) return json(res, 404, {error: "task_group_not_found"});
+    const reader = requireRead(req, state, taskGroupScope(state, taskGroup.id));
+    if (reader.status) return json(res, reader.status, reader.payload);
+    const result = await waitForProjectExecutionEvents(taskGroup.projectId, {
+      taskGroupId: taskGroup.id,
+      afterSequence: Number(url.searchParams.get("afterSequence") || 0),
+      waitMs: Number(url.searchParams.get("waitMs") || 0),
+      limit: Number(url.searchParams.get("limit") || 120)
+    });
+    json(res, 200, result);
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/bootstrap/init") {
     const guard = beginGuardedWrite(req, state, "bootstrap_init", "RuntimeBootstrapProfile:runtime_local", {resourceType: "system", resourceId: "runtime_local"});
     if (guard.status) {
@@ -1021,6 +1494,7 @@ async function handleApi(req, res) {
       return;
     }
     const seed = JSON.parse(readFileSync(seedPath, "utf8"));
+    seed.__loadedStateVersion = state.__loadedStateVersion;
     seed.runtime.updatedAt = now();
     seed.runtime.executionProfile = executionProfile;
     ensureRuntimeCollections(seed, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), executionProfile});
@@ -1327,11 +1801,13 @@ async function handleApi(req, res) {
     if (action === "resume") taskGroup.goalExecutionStatus = "active";
     if (action === "request_review") taskGroup.reviewState = "review_requested";
     if (action === "rebound_drift") taskGroup.health = "attention";
+    const runtimeControl = applyTaskGroupRuntimeControl(state, taskGroup, action, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});
     taskGroup.updatedAt = now();
     audit(state, "ui-console-service", `task_group_${action}`, `TaskGroup:${taskGroup.id}`);
-    finishGuardedWrite(state, guard, 200, taskGroup);
+    const payload = {taskGroup, runtimeControl};
+    finishGuardedWrite(state, guard, 200, payload);
     writeState(state);
-    json(res, 200, taskGroup);
+    json(res, 200, payload);
     return;
   }
 
@@ -1484,15 +1960,15 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/repository-output-targets") {
-    const guard = beginGuardedWrite(req, state, "repository_output_target_select", "RepositoryOutputTarget:new", taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
-    if (guard.status) {
-      json(res, guard.status, guard.payload);
-      return;
-    }
     const pathAllowlist = body.pathAllowlist || ["docs/**", "spec/**"];
     const artifactManifestPath = body.artifactManifestPath || `docs/artifact-manifests/manifest.${Date.now()}.json`;
     if (!validPathAllowlist(pathAllowlist) || !gitTrackablePath(artifactManifestPath)) {
       json(res, 400, {error: "repository_output_target_must_use_git_trackable_paths"});
+      return;
+    }
+    const guard = beginGuardedWrite(req, state, "repository_output_target_select", "RepositoryOutputTarget:new", taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
       return;
     }
     const at = now();
@@ -1557,6 +2033,7 @@ const server = createServer((req, res) => {
   });
 });
 
+assertRuntimeSecurity();
 ensureState();
 server.listen(port, host, () => {
   console.log(`AI Multi-Agent Ctrl console: http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`);

@@ -20,6 +20,11 @@ let authToken = localStorage.getItem("aimac.sessionToken") || "";
 let currentAccount = JSON.parse(localStorage.getItem("aimac.account") || "null");
 let lastError = "";
 let lastJoinCommands = null;
+let selectedExecutionDispatchId = "";
+let selectedExecutionEvents = [];
+let selectedExecutionCursor = 0;
+let executionPollTimer = null;
+let expandedTaskGroupId = "";
 
 function emptyState() {
   return {
@@ -41,6 +46,8 @@ function emptyState() {
     agentRuntimeNodes: [],
     agentJoinTokens: [],
     repositoryOutputs: [],
+    agentControlCommands: [],
+    agentExecutionEvents: [],
     closeBarriers: [],
     sharedDefinitions: [],
     instructionMetrics: {stablePrefixTokens: 0, deltaMessageTargetTokens: 0, cacheHitTarget: 0, envelopes: []},
@@ -89,6 +96,38 @@ function panel(title, body, extra = "") {
 
 function row(items) {
   return `<tr>${items.map((item) => `<td>${item}</td>`).join("")}</tr>`;
+}
+
+const terminalDispatchStatuses = new Set(["completed", "failed", "cancelled"]);
+
+function isExecutionPollingView() {
+  return ["runtime", "tasks"].includes(activeView);
+}
+
+function findWorkItemDispatch(taskGroupId, workItemId) {
+  const candidates = (state.agentDispatches || [])
+    .filter((dispatch) => dispatch.taskGroupId === taskGroupId && dispatch.workItemId === workItemId)
+    .sort((left, right) => String(right.updatedAt || right.createdAt || "").localeCompare(String(left.updatedAt || left.createdAt || "")));
+  return candidates.find((dispatch) => !terminalDispatchStatuses.has(dispatch.status)) || candidates[0] || null;
+}
+
+function renderSelectedExecutionPanel() {
+  if (!selectedExecutionDispatchId) return "";
+  const selectedEventRows = selectedExecutionEvents.slice().reverse().slice(0, 100).map((event) => row([
+    escapeHtml(event.sequence),
+    escapeHtml(event.eventType),
+    `${escapeHtml(event.progressPercent)}%`,
+    pill(event.status),
+    escapeHtml(event.summary || "-"),
+    escapeHtml(event.outputTailDigest || "-"),
+    escapeHtml(event.createdAt)
+  ])).join("");
+  return panel(`Dispatch 实时事件 ${selectedExecutionDispatchId}`, h`
+    <table class="data-table">
+      <thead><tr><th>Seq</th><th>事件</th><th>进度</th><th>状态</th><th>摘要</th><th>Tail Digest</th><th>时间</th></tr></thead>
+      <tbody>${selectedEventRows || row(["-", "-", "-", "-", "-", "-", "-"])}</tbody>
+    </table>
+  `, "wide");
 }
 
 async function api(path, options = {}) {
@@ -140,7 +179,7 @@ async function load() {
     return;
   }
   try {
-    state = await api("/api/state");
+    state = {...emptyState(), ...(await api(`/api/state?view=${encodeURIComponent(activeView)}&limit=120`))};
   } catch (error) {
     if (String(error.message || "").startsWith("401")) {
       authToken = "";
@@ -153,6 +192,37 @@ async function load() {
     }
   }
   render();
+}
+
+async function loadExecutionEvents(options = {}) {
+  if (!selectedExecutionDispatchId || !authToken) return;
+  const after = options.reset ? 0 : selectedExecutionCursor;
+  const waitMs = options.longPoll ? 2000 : 0;
+  const result = await api(`/api/agent-dispatches/${encodeURIComponent(selectedExecutionDispatchId)}/events?afterSequence=${after}&limit=200&waitMs=${waitMs}`);
+  if (options.reset) selectedExecutionEvents = [];
+  const existing = new Set(selectedExecutionEvents.map((event) => event.eventId));
+  for (const event of result.events || []) {
+    if (!existing.has(event.eventId)) selectedExecutionEvents.push(event);
+  }
+  selectedExecutionEvents = selectedExecutionEvents.slice(-300);
+  selectedExecutionCursor = Number(result.nextCursor || selectedExecutionCursor || 0);
+}
+
+function setExecutionPolling(enabled) {
+  if (executionPollTimer) {
+    clearInterval(executionPollTimer);
+    executionPollTimer = null;
+  }
+  if (!enabled || !selectedExecutionDispatchId || !isExecutionPollingView()) return;
+  executionPollTimer = setInterval(async () => {
+    try {
+      await loadExecutionEvents({longPoll: true});
+      render();
+    } catch (error) {
+      lastError = error.message || String(error);
+      render();
+    }
+  }, 2500);
 }
 
 function renderStatusLine() {
@@ -504,13 +574,26 @@ function renderProjects() {
 
 function renderTasks() {
   const taskGroups = state.taskGroups.map((taskGroup) => {
-    const workItems = taskGroup.workItems.map((workItem) => h`
-      <div class="record">
-        <div class="record-title"><strong>${escapeHtml(workItem.title)}</strong>${pill(workItem.status)}</div>
-        ${progress(workItem.progress)}
-        <div class="record-meta"><span>${escapeHtml(workItem.ownerRole)}</span><span>${workItem.progress}%</span></div>
-      </div>
-    `).join("");
+    const expanded = expandedTaskGroupId === taskGroup.id;
+    const workItems = taskGroup.workItems.map((workItem) => {
+      const dispatch = findWorkItemDispatch(taskGroup.id, workItem.id);
+      return h`
+        <div class="record">
+          <div class="record-title"><strong>${escapeHtml(workItem.title)}</strong>${pill(workItem.status)}</div>
+          ${progress(workItem.progress)}
+          <div class="record-meta"><span>${escapeHtml(workItem.ownerRole)}</span><span>${workItem.progress}%</span></div>
+          ${dispatch ? h`
+            <div class="record-meta">
+              <span>dispatch: ${escapeHtml(dispatch.dispatchId)}</span>
+              <span>${pill(dispatch.status)} ${escapeHtml(dispatch.progressPercent || 0)}%</span>
+            </div>
+            <div class="button-row">
+              <button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${escapeHtml(dispatch.dispatchId)}">实时事件</button>
+            </div>
+          ` : ""}
+        </div>
+      `;
+    }).join("");
     const roles = taskGroup.roles.map((role) => `${role.roleId}:${role.status}`).join(", ");
     const blockers = taskGroup.blockers.length
       ? taskGroup.blockers.map((blocker) => `<div class="record"><strong>${escapeHtml(blocker.severity)}</strong><span>${escapeHtml(blocker.summary)}</span></div>`).join("")
@@ -521,18 +604,21 @@ function renderTasks() {
         ${progress(taskGroup.progress)}
         <div class="record-meta"><span>health: ${escapeHtml(taskGroup.health)}</span><span>roles: ${escapeHtml(roles)}</span></div>
         <div class="button-row">
+          <button class="secondary-button" data-action="toggle-task-detail" data-task="${escapeHtml(taskGroup.id)}">${expanded ? "收起详情" : "查看详情"}</button>
           <button class="secondary-button" data-action="task-control" data-task="${escapeHtml(taskGroup.id)}" data-task-action="pause">暂停</button>
           <button class="secondary-button" data-action="task-control" data-task="${escapeHtml(taskGroup.id)}" data-task-action="resume">恢复</button>
           <button class="secondary-button" data-action="task-control" data-task="${escapeHtml(taskGroup.id)}" data-task-action="request_review">复验</button>
           <button class="danger-button" data-action="task-control" data-task="${escapeHtml(taskGroup.id)}" data-task-action="rebound_drift">纠偏</button>
         </div>
-        <div class="stack">${workItems}</div>
-        <div class="stack">${blockers}</div>
+        ${expanded ? h`
+          <div class="stack">${workItems}</div>
+          <div class="stack">${blockers}</div>
+        ` : ""}
       </div>
     `, "wide");
   }).join("");
 
-  content.innerHTML = taskGroups;
+  content.innerHTML = [taskGroups, renderSelectedExecutionPanel()].join("");
 }
 
 function renderRuntime() {
@@ -544,7 +630,12 @@ function renderRuntime() {
     pill(node.status),
     pill(node.admission),
     escapeHtml(node.lastHeartbeatAt || "-"),
-    node.status !== "revoked" ? `<button class="secondary-button" data-action="revoke-agent-node" data-node-id="${escapeHtml(node.nodeId)}">撤销</button>` : "-"
+    node.status !== "revoked" ? [
+      `<button class="secondary-button" data-action="agent-control" data-node-id="${escapeHtml(node.nodeId)}" data-command="refresh_profile">刷新</button>`,
+      `<button class="secondary-button" data-action="agent-control" data-node-id="${escapeHtml(node.nodeId)}" data-command="pause_dispatch">暂停</button>`,
+      `<button class="danger-button" data-action="agent-control" data-node-id="${escapeHtml(node.nodeId)}" data-command="cancel_dispatch">取消</button>`,
+      `<button class="secondary-button" data-action="revoke-agent-node" data-node-id="${escapeHtml(node.nodeId)}">撤销</button>`
+    ].join(" ") : "-"
   ])).join("");
   const joinTokenRows = (state.agentJoinTokens || []).slice(0, 20).map((token) => row([
     escapeHtml(token.joinTokenId),
@@ -594,8 +685,10 @@ function renderRuntime() {
     escapeHtml(dispatch.workItemId),
     escapeHtml(dispatch.deliveryMode),
     pill(dispatch.status),
+    `${escapeHtml(dispatch.progressPercent || 0)}%`,
     escapeHtml(dispatch.repositoryOutputTargetRef),
-    escapeHtml(dispatch.blockedReason || dispatch.failureReason || "-")
+    escapeHtml(dispatch.blockedReason || dispatch.failureReason || "-"),
+    `<button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${escapeHtml(dispatch.dispatchId)}">事件</button>`
   ])).join("");
   const closeRows = (state.closeBarriers || []).slice(0, 8).map((barrier) => row([
     escapeHtml(barrier.taskGroupId),
@@ -603,7 +696,23 @@ function renderRuntime() {
     String(barrier.blockingObjects.length),
     escapeHtml(barrier.computedAt)
   ])).join("");
-
+  const controlRows = (state.agentControlCommands || []).slice(0, 16).map((command) => row([
+    escapeHtml(command.sequence),
+    escapeHtml(command.nodeId),
+    escapeHtml(command.commandType),
+    escapeHtml(command.dispatchId || command.sessionId || "-"),
+    pill(command.status),
+    escapeHtml(command.updatedAt || command.createdAt)
+  ])).join("");
+  const eventRows = (state.agentExecutionEvents || []).slice(0, 20).map((event) => row([
+    escapeHtml(event.sequence),
+    escapeHtml(event.dispatchId),
+    escapeHtml(event.eventType),
+    `${escapeHtml(event.progressPercent)}%`,
+    pill(event.status),
+    escapeHtml(event.summary || "-"),
+    escapeHtml(event.createdAt)
+  ])).join("");
   content.innerHTML = [
     panel("自治控制", h`
       <div class="button-row">
@@ -615,6 +724,18 @@ function renderRuntime() {
       <table class="data-table">
         <thead><tr><th>节点</th><th>Node ID</th><th>项目</th><th>角色</th><th>状态</th><th>准入</th><th>心跳</th><th>操作</th></tr></thead>
         <tbody>${nodeRows || row(["-", "-", "-", "-", "-", "-", "-", "-"])}</tbody>
+      </table>
+    `, "wide"),
+    panel("Agent 控制通道", h`
+      <table class="data-table">
+        <thead><tr><th>Seq</th><th>Node</th><th>命令</th><th>Scope</th><th>状态</th><th>更新时间</th></tr></thead>
+        <tbody>${controlRows || row(["-", "-", "-", "-", "-", "-"])}</tbody>
+      </table>
+    `, "wide"),
+    panel("执行事件流", h`
+      <table class="data-table">
+        <thead><tr><th>Seq</th><th>Dispatch</th><th>事件</th><th>进度</th><th>状态</th><th>摘要</th><th>时间</th></tr></thead>
+        <tbody>${eventRows || row(["-", "-", "-", "-", "-", "-", "-"])}</tbody>
       </table>
     `, "wide"),
     panel("一次性 Join Token", h`
@@ -655,10 +776,11 @@ function renderRuntime() {
     `, "wide"),
     panel("Agent Dispatch Outbox", h`
       <table class="data-table">
-        <thead><tr><th>Dispatch</th><th>Work</th><th>模式</th><th>状态</th><th>仓库目标</th><th>原因</th></tr></thead>
-        <tbody>${dispatches || row(["-", "-", "-", "-", "-", "-"])}</tbody>
+        <thead><tr><th>Dispatch</th><th>Work</th><th>模式</th><th>状态</th><th>进度</th><th>仓库目标</th><th>原因</th><th>详情</th></tr></thead>
+        <tbody>${dispatches || row(["-", "-", "-", "-", "-", "-", "-", "-"])}</tbody>
       </table>
     `, "wide"),
+    renderSelectedExecutionPanel(),
     panel("Close Barrier", h`
       <table class="data-table">
         <thead><tr><th>任务组</th><th>状态</th><th>阻塞数</th><th>计算时间</th></tr></thead>
@@ -732,7 +854,8 @@ document.querySelector(".nav").addEventListener("click", (event) => {
   const button = event.target.closest("[data-view]");
   if (!button) return;
   activeView = button.dataset.view;
-  render();
+  setExecutionPolling(isExecutionPollingView());
+  load().catch(showError);
 });
 
 document.addEventListener("click", async (event) => {
@@ -758,6 +881,10 @@ document.addEventListener("click", async (event) => {
       lastError = "";
       await load();
     }
+    if (target.dataset.action === "toggle-task-detail") {
+      expandedTaskGroupId = expandedTaskGroupId === target.dataset.task ? "" : target.dataset.task;
+      render();
+    }
     if (target.dataset.action === "revoke-grant") {
       await api(`/api/access-grants/${target.dataset.grant}/revoke`, {method: "POST", body: "{}"});
       lastError = "";
@@ -782,6 +909,26 @@ document.addEventListener("click", async (event) => {
       await api(`/api/agent-nodes/${target.dataset.nodeId}/revoke`, {method: "POST", body: "{}"});
       lastError = "";
       await load();
+    }
+    if (target.dataset.action === "agent-control") {
+      const nodeId = target.dataset.nodeId;
+      const node = (state.agentRuntimeNodes || []).find((item) => item.nodeId === nodeId);
+      const dispatchId = (node?.activeDispatchIds || [])[0] || "";
+      await api(`/api/agent-nodes/${nodeId}/control`, {
+        method: "POST",
+        body: JSON.stringify({commandType: target.dataset.command, dispatchId: dispatchId || undefined})
+      });
+      lastError = "";
+      await load();
+    }
+    if (target.dataset.action === "show-dispatch-events") {
+      selectedExecutionDispatchId = target.dataset.dispatchId || "";
+      selectedExecutionCursor = 0;
+      selectedExecutionEvents = [];
+      await loadExecutionEvents({reset: true});
+      setExecutionPolling(true);
+      lastError = "";
+      render();
     }
     if (target.dataset.action === "decide-model") {
       await api("/api/model-selection/decide", {method: "POST", body: JSON.stringify({taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "ui-console-service"})});

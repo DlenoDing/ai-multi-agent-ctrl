@@ -7,20 +7,28 @@ import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps
 import { createMcpGrant, createMcpToolDefinitions, mcpToolNames } from "../apps/mcp-server/server.mjs";
 import { buildTaskContract, ensureRuntimeCollections, runAutonomousCycle, selectModel } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import {
+  ackAgentControlCommand,
   authenticateAgentNode,
   claimNextDispatch,
+  createAgentControlCommand,
   createAgentJoinToken,
   getSkillWorkset,
   heartbeatAgentNode,
+  listAgentControlCommands,
   registerAgentNode,
-  revokeAgentNode
+  revokeAgentNode,
+  submitAgentExecutionEvent
 } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
+import { appendProjectExecutionEvent, readProjectExecutionEvents } from "../apps/control-plane-ui/lib/project-event-store.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const seedState = loadJson("data/seed-state.json");
 const runtimeSchema = loadJson("spec/runtime-bootstrap.schema.json");
 const mcpGrantSchema = loadJson("spec/mcp-grant.schema.json");
 const joinTokenSchema = loadJson("spec/agent-join-token.schema.json");
+const agentDispatchSchema = loadJson("spec/agent-dispatch.schema.json");
+const agentControlCommandSchema = loadJson("spec/agent-control-command.schema.json");
+const agentExecutionEventSchema = loadJson("spec/agent-execution-event.schema.json");
 const runtimeNodeSchema = loadJson("spec/agent-runtime-node.schema.json");
 const skillWorksetSchema = loadJson("spec/agent-skill-workset.schema.json");
 const errors = [];
@@ -96,9 +104,16 @@ function verifyAgentGatewayContracts(output) {
   ensureRuntimeCollections(state, {root});
   const issued = createAgentJoinToken(state, {projectId: "prj_control_plane", nodeName: "contract-node", allowedRoles: ["*"]}, {publicUrl: "https://control.example.test"});
   validateSchema(state.agentJoinTokens[0], joinTokenSchema, "AgentJoinToken", output);
-  if (!issued.installCommand.startsWith("curl -fsSL 'https://control.example.test/install-agent.sh' | sh -s --")) output.push("Agent join token did not return a one-line server-hosted installer command");
-  if (!issued.verifiedInstallCommand.includes("( if command -v sha256sum") || !issued.verifiedInstallCommand.includes("elif command -v shasum") || !issued.verifiedInstallCommand.endsWith(`--join-token '${issued.joinToken}' --node-name 'contract-node'`)) {
-    output.push("Agent join token did not return a portable checksum-verified installer command");
+  try {
+    createAgentJoinToken(state, {projectId: "prj_control_plane", nodeName: "bad-contract-node", allowedRoles: ["*"], maxUses: 2}, {publicUrl: "https://control.example.test"});
+    output.push("Agent join token allowed maxUses greater than one");
+  } catch {}
+  if (!issued.installCommand.includes("curl -fsSL 'https://control.example.test/install-agent.sh' | sh -s --")) output.push("Agent join token did not return a server-hosted installer command");
+  if (issued.installCommand.includes("--join-token ") || issued.verifiedInstallCommand.includes("--join-token ") || !issued.installCommand.includes("--join-token-file") || !issued.verifiedInstallCommand.includes("--join-token-file")) {
+    output.push("Agent join token installer command exposed token in argv instead of using --join-token-file");
+  }
+  if (!issued.verifiedInstallCommand.includes("( if command -v sha256sum") || !issued.verifiedInstallCommand.includes("elif command -v shasum") || !issued.verifiedInstallCommand.includes("--join-token-file \"$tmp/aimac.join\"")) {
+    output.push("Agent join token did not return a portable checksum-verified installer command using token file");
   }
   const registered = registerAgentNode(state, {nodeName: "contract-node", requestedRoles: ["*"], runtimeVersion: "contract", profile: {platform: "test", arch: "test", tools: [], models: [{providerClass: "custom", available: true}]}}, {joinToken: issued.joinToken, publicUrl: "https://control.example.test"});
   validateSchema(state.agentRuntimeNodes[0], runtimeNodeSchema, "AgentRuntimeNode", output);
@@ -128,6 +143,9 @@ function verifyAgentGatewayContracts(output) {
     runId: contract.runId,
     status: "queued",
     deliveryMode: "new_session",
+    model: contract.model.model,
+    reasoning: contract.model.reasoning,
+    modelDecision: contract.model.modelDecision,
     modelSelectionDecisionRef: contract.model.modelSelectionDecisionRef,
     taskContractDigest: contract.contractDigest,
     taskContractRef: `AgentTaskContract:${contract.commandId}`,
@@ -141,6 +159,7 @@ function verifyAgentGatewayContracts(output) {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   });
+  validateSchema(state.agentDispatches[0], agentDispatchSchema, "AgentDispatch", output);
   try {
     getSkillWorkset(state, state.agentRuntimeNodes[0], contract.roleSkill.worksetId, {runtimeDir: join(root, ".runtime")});
     output.push("Agent Gateway allowed skill workset download before dispatch claim");
@@ -162,6 +181,27 @@ function verifyAgentGatewayContracts(output) {
     validateSchema(workset, skillWorksetSchema, "AgentSkillWorkset", output);
     const issuedGrant = state.mcpGrants.find((grant) => grant.agentNodeId === node.nodeId && grant.dispatchId === claimed.dispatch.dispatch.dispatchId && grant.grantStatus === "issued");
     if (!issuedGrant) output.push("Agent Gateway did not issue dispatch-bound MCP grants after claim");
+    if (state.mcpGrants.some((grant) => grant.agentNodeId === node.nodeId && grant.toolName === "evidence-mcp.checkpoint_submit" && grant.grantStatus === "issued")) {
+      output.push("Agent Gateway issued checkpoint_submit as an Agent MCP grant instead of forcing Gateway checkpoint path");
+    }
+    const controlCommand = createAgentControlCommand(state, node, {commandType: "refresh_profile", dispatchId: claimed.dispatch.dispatch.dispatchId}, {actor: "contract-check", idempotencyKey: "contract-control-command"}).command;
+    validateSchema(controlCommand, agentControlCommandSchema, "AgentControlCommand", output);
+    const pendingCommands = listAgentControlCommands(state, node, {afterSequence: 0});
+    if (!pendingCommands.commands.some((command) => command.commandId === controlCommand.commandId)) output.push("Agent control channel did not return queued command");
+    const acked = ackAgentControlCommand(state, node, controlCommand.commandId, {status: "completed", result: {profileDigest: node.profileDigest}}).command;
+    if (acked.status !== "completed" || !acked.resultDigest) output.push("Agent control command ack did not persist terminal status and digest");
+    const event = submitAgentExecutionEvent(state, node, {dispatchId: claimed.dispatch.dispatch.dispatchId, eventType: "executor_output", progressPercent: 45, summary: "contract event"}).event;
+    validateSchema(event, agentExecutionEventSchema, "AgentExecutionEvent", output);
+    const eventRuntimeDir = mkdtempSync(join(tmpdir(), "aimac-contract-events-"));
+    try {
+      appendProjectExecutionEvent(eventRuntimeDir, event);
+      const eventLog = readProjectExecutionEvents(eventRuntimeDir, event.projectId, {dispatchId: event.dispatchId, limit: 10});
+      if (!eventLog.events.some((item) => item.eventId === event.eventId) || eventLog.storage.storageKind !== "project-jsonl") {
+        output.push("Project-level execution event store did not isolate and return the dispatch event");
+      }
+    } finally {
+      rmSync(eventRuntimeDir, {recursive: true, force: true});
+    }
   }
   const claimedDispatchId = claimed.dispatch?.dispatch.dispatchId;
   if (claimedDispatchId) {

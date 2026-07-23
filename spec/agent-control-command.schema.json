@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/agent-control-command.schema.json",
+  "title": "AgentControlCommand",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "commandId", "sequence", "nodeId", "commandType", "status", "requiresAck", "createdBy", "createdAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "agent-control-command/v1"},
+    "commandId": {"type": "string", "minLength": 1},
+    "sequence": {"type": "integer", "minimum": 1},
+    "nodeId": {"type": "string", "minLength": 1},
+    "projectId": {"type": ["string", "null"]},
+    "taskGroupId": {"type": ["string", "null"]},
+    "sessionId": {"type": ["string", "null"]},
+    "dispatchId": {"type": ["string", "null"]},
+    "commandType": {"type": "string", "enum": ["refresh_profile", "pause_dispatch", "cancel_dispatch", "resume_dispatch", "shutdown", "revoke"]},
+    "payload": {"type": "object"},
+    "status": {"type": "string", "enum": ["queued", "delivered", "received", "acked", "completed", "failed", "rejected", "expired"]},
+    "requiresAck": {"type": "boolean", "const": true},
+    "createdBy": {"type": "string", "minLength": 1},
+    "idempotencyKey": {"type": ["string", "null"]},
+    "expiresAt": {"type": "string", "format": "date-time"},
+    "deliveredAt": {"type": "string", "format": "date-time"},
+    "acknowledgedAt": {"type": "string", "format": "date-time"},
+    "finalizedAt": {"type": "string", "format": "date-time"},
+    "ackResult": {"type": "object"},
+    "resultDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  }
+}

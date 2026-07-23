@@ -39,8 +39,11 @@ try {
   const initialized = await mcp("initialize", {protocolVersion: "2025-06-18", capabilities: {}, clientInfo: {name: "doctor", version: "1"}});
   if (initialized.serverInfo?.name !== "ai-multi-agent-ctrl") throw new Error("remote MCP initialize failed");
   const listed = await mcp("tools/list", {});
-  if (!Array.isArray(listed.tools) || listed.tools.length < 70) throw new Error("remote MCP tools/list returned an incomplete server surface");
+  if (!Array.isArray(listed.tools) || listed.tools.length < 35) throw new Error("remote MCP service allowlist returned an incomplete integration surface");
   if (listed.tools.some((tool) => tool.name === "agent-control-mcp.runtime_run")) throw new Error("remote MCP still exposes server-side Agent execution");
+  if (listed.tools.some((tool) => tool.name === "identity-mcp.grant_create" || tool.name === "governance-mcp.approval_request_create" || tool.name === "evidence-mcp.checkpoint_submit")) {
+    throw new Error("remote MCP service token exposed high-risk admin or Agent checkpoint tools");
+  }
 
   const health = await mcp("tools/call", {name: "ui-console-mcp.runtime_health_get", arguments: {}});
   if (health.isError || health.structuredContent?.result?.runtime?.mcp?.protocol !== "mcp/streamable-http") throw new Error("remote MCP health did not report centralized streamable HTTP");

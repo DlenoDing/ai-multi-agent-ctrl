@@ -14,7 +14,7 @@
     "allowedMcpTools": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "tokenDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
     "status": {"type": "string", "enum": ["issued", "consumed", "expired", "revoked"]},
-    "maxUses": {"type": "integer", "minimum": 1},
+    "maxUses": {"type": "integer", "const": 1},
     "useCount": {"type": "integer", "minimum": 0},
     "expiresAt": {"type": "string", "format": "date-time"},
     "createdBy": {"type": "string", "minLength": 1},

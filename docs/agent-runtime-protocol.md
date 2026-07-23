@@ -13,9 +13,13 @@ Runtime 不是无限远程 shell。所有副作用都必须由控制平面授权
 受信执行环境的自动加入命令模板：
 
 ```bash
+umask 077; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT HUP INT TERM; \
+cat > "$tmp/aimac.join" <<'AIMAC_JOIN_TOKEN'
+<one_time_join_token>
+AIMAC_JOIN_TOKEN
 curl -fsSL https://control.example.com/install-agent.sh | sh -s -- \
   --server https://control.example.com \
-  --join-token <one_time_join_token> \
+  --join-token-file "$tmp/aimac.join" \
   --node-name "$(hostname)" \
   --work-dir "$HOME/.local/share/aimac-agent"
 ```
@@ -23,13 +27,17 @@ curl -fsSL https://control.example.com/install-agent.sh | sh -s -- \
 高信任要求环境必须使用校验版：
 
 ```bash
-tmp="$(mktemp -d)" && cd "$tmp" && \
+umask 077; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT HUP INT TERM; \
+cat > "$tmp/aimac.join" <<'AIMAC_JOIN_TOKEN'
+<one_time_join_token>
+AIMAC_JOIN_TOKEN
+cd "$tmp" && \
 curl -fsSLO https://control.example.com/install-agent.sh && \
 curl -fsSLO https://control.example.com/install-agent.sh.sha256 && \
 ( if command -v sha256sum >/dev/null 2>&1; then sha256sum -c install-agent.sh.sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 -c install-agent.sh.sha256; else printf '%s\n' 'sha256sum or shasum is required' >&2; exit 1; fi ) && \
 sh install-agent.sh \
   --server https://control.example.com \
-  --join-token <one_time_join_token> \
+  --join-token-file "$tmp/aimac.join" \
   --node-name "$(hostname)" \
   --work-dir "$HOME/.local/share/aimac-agent"
 ```
@@ -158,6 +166,29 @@ Runtime 每 10 到 30 秒发送 heartbeat。控制平面可按项目策略调整
   "requestedProbes": ["resource", "permission"]
 }
 ```
+
+### 4.1 实时控制通道
+
+服务端不反连 Agent 主机。Runtime 使用 node token 长轮询控制面：
+
+```text
+GET /api/agent/v1/control?afterSequence=<cursor>&waitMs=25000
+POST /api/agent/v1/control/:commandId/ack
+```
+
+控制命令是持久化 `AgentControlCommand`，绑定 node、project、taskGroup、session、dispatch 和 idempotency。支持 `refresh_profile`、`pause_dispatch`、`cancel_dispatch`、`shutdown`、`revoke`。命令被 Runtime 拉取后进入 `delivered`；Runtime 必须先 ACK `received`，然后执行命令副作用，最终 ACK `completed`、`failed` 或 `rejected`。对 pause/cancel，服务端在入队时已经把 dispatch/session/work item 冻结并撤销 dispatch MCP grant；Runtime 侧仍必须终止执行器进程组，确认停止后再完成 ACK。断线恢复时从上次 cursor 重放未确认命令。
+
+### 4.2 执行过程事件流
+
+Runtime 不能等到最终 checkpoint 才回送结果。每个 dispatch 执行过程中必须持续提交 `AgentExecutionEvent`：
+
+```text
+POST /api/agent/v1/events
+GET /api/agent-dispatches/:dispatchId/events?afterSequence=<cursor>&waitMs=25000
+GET /api/task-groups/:taskGroupId/execution-events?afterSequence=<cursor>&waitMs=25000
+```
+
+事件覆盖 `dispatch_received`、`skill_synced`、`executor_started`、`executor_output`、`repository_changed`、`git_committed`、`git_pushed`、`checkpoint_prepared`、`checkpoint_submitted`、`blocked`、`drift_signal`、`failed`。事件只提交阶段、摘要、进度、digest、`eventKey` 和 evidence refs，不上传大段原始 stdout。服务端把完整事件追加到 `.runtime/project-db/<projectId>.execution-events.jsonl`，维护近期 eventKey 幂等索引和 tail-window 读取；中央 state 只保留最近轻量索引和进度摘要，并在 CAS 冲突时重读最新状态重放事件投影。管理界面默认展示汇总，点击任务组详情或 dispatch 后长轮询项目级事件库。
 
 ## 5. dispatch 与 Skill 工作集
 

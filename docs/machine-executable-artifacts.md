@@ -48,6 +48,8 @@
 | `spec/management-console-surface.schema.json` | UI Console Service、Security Agent、Spec Validator | 校验系统管理和用户管理界面、guarded action 和视觉质量门 |
 | `spec/progress-snapshot.schema.json` | Monitor Agent、Orchestrator、UI Console Service | 校验项目/任务组进度、阻塞、角色活动和仓库输出快照 |
 | `spec/agent-dispatch.schema.json` | Orchestrator、Scheduler、Agent Runtime | 校验 durable dispatch/outbox、模型凭证需求、worker 状态和 checkpoint 要求 |
+| `spec/agent-control-command.schema.json` | Agent Gateway、Monitor Agent、UI Console Service | 校验服务端下发给 Agent 的持久控制命令、scope、ACK 和重放 |
+| `spec/agent-execution-event.schema.json` | Agent Runtime、Monitor Agent、UI Console Service | 校验执行过程实时事件、进度、digest、evidence 和项目级事件库索引 |
 | `spec/agent-join-token.schema.json` | Agent Gateway、Policy Engine | 校验一次性加入令牌、项目/角色/MCP scope、次数和有效期 |
 | `spec/agent-runtime-node.schema.json` | Agent Gateway、Scheduler | 校验远程节点身份、能力、自检、准入和心跳状态 |
 | `spec/agent-skill-workset.schema.json` | Orchestrator、Skill Registry、Agent Runtime | 校验按任务下发的最小 Skill 工作集、overlay、摘要和强制使用指令 |

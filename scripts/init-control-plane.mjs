@@ -69,9 +69,9 @@ if (!force && storedStateExists(stateStoreOptions())) {
 
 const existingConfig = existsSync(configPath) ? loadJson(configPath) : {};
 const bootstrapToken = process.env.AIMAC_BOOTSTRAP_TOKEN || existingConfig.localBootstrapToken || randomBytes(24).toString("base64url");
-const workspaceOwnerTokenEnv = process.env.AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN || process.env.AIMAC_WORKSPACE_OWNER_TOKEN;
-const reviewerTokenEnv = process.env.AIMAC_LOCAL_SEED_REVIEWER_TOKEN || process.env.AIMAC_REVIEWER_TOKEN;
-const agentRuntimeTokenEnv = process.env.AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN || process.env.AIMAC_AGENT_RUNTIME_TOKEN;
+const workspaceOwnerTokenEnv = process.env.AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN;
+const reviewerTokenEnv = process.env.AIMAC_LOCAL_SEED_REVIEWER_TOKEN;
+const agentRuntimeTokenEnv = process.env.AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN;
 const workspaceOwnerToken = workspaceOwnerTokenEnv || existingConfig.localAccountTokens?.acct_workspace_owner || randomBytes(24).toString("base64url");
 const reviewerToken = reviewerTokenEnv || existingConfig.localAccountTokens?.acct_reviewer || randomBytes(24).toString("base64url");
 const agentRuntimeToken = agentRuntimeTokenEnv || existingConfig.localAccountTokens?.acct_agent_runtime || randomBytes(24).toString("base64url");

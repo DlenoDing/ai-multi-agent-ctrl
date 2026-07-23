@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, hostname, platform, arch, cpus, totalmem } from "node:os";
@@ -24,12 +24,12 @@ async function main() {
 async function bootstrap() {
   mkdirSync(workDir, {recursive: true});
   const serverUrl = trimSlash(args.server || process.env.AIMAC_SERVER_URL || "");
-  const joinToken = args["join-token"] || process.env.AIMAC_AGENT_JOIN_TOKEN || "";
-  if (!serverUrl || !joinToken) throw new Error("bootstrap requires --server and --join-token");
+  const joinToken = readJoinToken();
+  if (!serverUrl || !joinToken) throw new Error("bootstrap requires --server and --join-token-file");
   requireSecureServerUrl(serverUrl);
   const configuredExecutor = args["executor-command"] || process.env.AIMAC_AGENT_EXECUTOR_COMMAND || "";
   const profile = probeProfile(configuredExecutor);
-  const registration = await jsonRequest(`${serverUrl}/api/agent/v1/register`, {
+  const registration = await retryableAgentRequest(() => jsonRequest(`${serverUrl}/api/agent/v1/register`, {
     method: "POST",
     token: joinToken,
     body: {
@@ -38,7 +38,7 @@ async function bootstrap() {
       runtimeVersion: RUNTIME_VERSION,
       profile
     }
-  });
+  }), "register");
   const config = {
     schemaVersion: "aimac-agent-local-config/v1",
     runtimeVersion: RUNTIME_VERSION,
@@ -49,6 +49,7 @@ async function bootstrap() {
     projectIds: registration.node.projectIds,
     allowedRoles: registration.node.allowedRoles,
     gateway: registration.gateway,
+    controlCursor: 0,
     workDir,
     repositoryDir: join(workDir, "repositories"),
     skillCacheDir: join(workDir, "skill-worksets"),
@@ -116,7 +117,7 @@ async function run(config) {
     await flushCheckpointOutbox(config);
     if (Date.now() - lastHeartbeat >= config.heartbeatIntervalSeconds * 1000) {
       const currentProfile = probeProfile(config.executorCommand);
-      const heartbeat = await jsonRequest(config.gateway.heartbeatUrl, {method: "POST", token: config.nodeToken, body: {profile: currentProfile, runtimeVersion: RUNTIME_VERSION}});
+      const heartbeat = await retryableAgentRequest(() => jsonRequest(config.gateway.heartbeatUrl, {method: "POST", token: config.nodeToken, body: {profile: currentProfile, runtimeVersion: RUNTIME_VERSION}}), "heartbeat");
       if (heartbeat.nodeToken) {
         config.nodeToken = heartbeat.nodeToken;
         writeSecretJson(configPath, config);
@@ -125,10 +126,21 @@ async function run(config) {
       }
       lastHeartbeat = Date.now();
     }
-    const claimed = await jsonRequest(config.gateway.dispatchUrl, {method: "POST", token: config.nodeToken, body: {claimTtlSeconds: Number(args["claim-ttl"] || 1800)}});
+    await pollControlCommands(config, {waitMs: 0});
+    if (config.shutdownRequested) {
+      process.stdout.write("agent runtime shutdown requested by control plane\n");
+      return;
+    }
+    const claimed = await retryableAgentRequest(() => jsonRequest(config.gateway.dispatchUrl, {method: "POST", token: config.nodeToken, body: {claimTtlSeconds: Number(args["claim-ttl"] || 1800)}}), "dispatch_claim");
     if (claimed.dispatch) {
       try {
-        const checkpoint = executeDispatch(config, claimed.dispatch);
+        const control = startControlWatcher(config, claimed.dispatch);
+        let checkpoint;
+        try {
+          checkpoint = await executeDispatch(config, claimed.dispatch, control);
+        } finally {
+          await control.stop();
+        }
         const outboxPath = persistCheckpointOutbox(config, claimed.dispatch, checkpoint);
         if (process.env.AIMAC_AGENT_VERIFICATION_DEFER_CHECKPOINT === "true") {
           process.stdout.write(`checkpoint intentionally deferred for verification: ${claimed.dispatch.dispatch.dispatchId}\n`);
@@ -136,19 +148,144 @@ async function run(config) {
           try {
             const result = await submitCheckpoint(config, claimed.dispatch.remoteServices.checkpointPath, checkpoint);
             unlinkSync(outboxPath);
+            await submitExecutionEvent(config, claimed.dispatch, "checkpoint_submitted", {progressPercent: 100, summary: "Checkpoint accepted by control plane.", evidenceRefs: [`checkpoint:${result.checkpoint?.runId || "accepted"}`]}).catch(() => {});
             process.stdout.write(`dispatch completed: ${claimed.dispatch.dispatch.dispatchId} checkpoint=${result.checkpoint?.runId || "accepted"}\n`);
           } catch (error) {
             process.stderr.write(`checkpoint pending retry: ${claimed.dispatch.dispatch.dispatchId} ${error.message}\n`);
           }
         }
       } catch (error) {
-        await jsonRequest(`${config.serverUrl}${claimed.dispatch.remoteServices.failurePath}`, {method: "POST", token: config.nodeToken, body: {reason: String(error.message || error).slice(0, 2000)}}).catch(() => {});
+        const eventType = error.controlStatus === "blocked" ? "blocked" : "failed";
+        await submitExecutionEvent(config, claimed.dispatch, eventType, {summary: String(error.message || error).slice(0, 1000), status: eventType === "blocked" ? "attention" : "failed"}).catch(() => {});
+        await jsonRequest(`${config.serverUrl}${claimed.dispatch.remoteServices.failurePath}`, {method: "POST", token: config.nodeToken, body: {reason: String(error.message || error).slice(0, 2000), status: error.controlStatus || "failed"}}).catch(() => {});
         process.stderr.write(`dispatch failed: ${claimed.dispatch.dispatch.dispatchId} ${error.message}\n`);
       }
     }
     if (once) return;
     await delay(config.pollIntervalSeconds * 1000);
   }
+}
+
+function startControlWatcher(config, dispatchPackage) {
+  const state = {
+    running: true,
+    cancelled: false,
+    controlStatus: "cancelled",
+    reason: "",
+    child: null,
+    stopPromise: null
+  };
+  const watcher = {
+    signal: state,
+    attachChild(child) {
+      state.child = child;
+      if (state.cancelled && child && !state.stopPromise) state.stopPromise = terminateChild(child, Number(process.env.AIMAC_AGENT_STOP_TIMEOUT_MS || 10000));
+    },
+    throwIfCancelled() {
+      if (!state.cancelled) return;
+      const error = new Error(state.reason || "dispatch interrupted by control command");
+      error.controlStatus = state.controlStatus;
+      throw error;
+    },
+    requestStop(timeoutMs) {
+      if (!state.child) return Promise.resolve({stopped: true, reason: "no_child"});
+      if (!state.stopPromise) state.stopPromise = terminateChild(state.child, timeoutMs);
+      return state.stopPromise;
+    },
+    async stop() {
+      state.running = false;
+      await loop.catch(() => {});
+    }
+  };
+  const loop = (async () => {
+    while (state.running && !state.cancelled) {
+      await pollControlCommands(config, {waitMs: 2500, dispatchPackage, controlState: state});
+      await delay(250);
+    }
+  })().catch((error) => {
+    process.stderr.write(`control watcher stopped: ${error.message}\n`);
+  });
+  return watcher;
+}
+
+async function pollControlCommands(config, options = {}) {
+  const controlUrl = config.gateway.controlUrl || `${config.serverUrl}/api/agent/v1/control`;
+  const url = new URL(controlUrl);
+  url.searchParams.set("afterSequence", String(config.controlCursor || 0));
+  url.searchParams.set("waitMs", String(Math.max(0, Math.min(30000, Number(options.waitMs || 0)))));
+  url.searchParams.set("limit", "20");
+  let result;
+  try {
+    result = await retryableAgentRequest(() => jsonRequest(url.href, {token: config.nodeToken}), "control_poll");
+  } catch (error) {
+    process.stderr.write(`control poll deferred: ${error.message}\n`);
+    return {commands: [], nextCursor: config.controlCursor || 0};
+  }
+  for (const command of result.commands || []) {
+    await handleControlCommand(config, command, options);
+  }
+  if (Number(result.nextCursor || 0) > Number(config.controlCursor || 0)) {
+    config.controlCursor = Number(result.nextCursor || 0);
+    writeSecretJson(configPath, config);
+  }
+  return result;
+}
+
+async function handleControlCommand(config, command, options = {}) {
+  const dispatchPackage = options.dispatchPackage;
+  const controlState = options.controlState;
+  const activeDispatchId = dispatchPackage?.dispatch?.dispatchId;
+  const scopedToActiveDispatch = !command.dispatchId || command.dispatchId === activeDispatchId;
+  if (command.commandType === "refresh_profile") {
+    const profile = probeProfile(config.executorCommand);
+    const heartbeat = await retryableAgentRequest(() => jsonRequest(config.gateway.heartbeatUrl, {method: "POST", token: config.nodeToken, body: {profile, runtimeVersion: RUNTIME_VERSION}}), "control_refresh_profile");
+    if (heartbeat.nodeToken) {
+      config.nodeToken = heartbeat.nodeToken;
+      writeSecretJson(configPath, config);
+      writeAgentScopedMcpConfig(config, profile);
+      if (globalClientConfigurationEnabled()) configureGlobalRemoteMcpClients(config, profile);
+    }
+    await ackControlCommand(config, command, "completed", {profileDigest: heartbeat.node?.profileDigest || null});
+    return;
+  }
+  if (!scopedToActiveDispatch) {
+    await ackControlCommand(config, command, "rejected", {reason: "dispatch_scope_not_active", activeDispatchId});
+    return;
+  }
+  if (["pause_dispatch", "cancel_dispatch", "revoke", "shutdown"].includes(command.commandType)) {
+    await ackControlCommand(config, command, "received", {phase: "received", activeDispatchId});
+    if (controlState) {
+      controlState.cancelled = true;
+      controlState.controlStatus = command.commandType === "pause_dispatch" ? "blocked" : "cancelled";
+      controlState.reason = `dispatch interrupted by control command: ${command.commandType}`;
+      const stopResult = await terminateChild(controlState.child, Number(command.payload?.stopTimeoutMs || process.env.AIMAC_AGENT_STOP_TIMEOUT_MS || 10000));
+      await submitExecutionEvent(config, dispatchPackage, command.commandType === "pause_dispatch" ? "blocked" : "failed", {
+        status: command.commandType === "pause_dispatch" ? "attention" : "failed",
+        summary: controlState.reason,
+        evidenceRefs: [`AgentControlCommand:${command.commandId}`],
+        payload: stopResult
+      }).catch(() => {});
+      await ackControlCommand(config, command, stopResult.stopped ? "completed" : "failed", {reason: controlState.reason, stopResult});
+      return;
+    }
+    if (["revoke", "shutdown"].includes(command.commandType)) {
+      config.shutdownRequested = true;
+      writeSecretJson(configPath, config);
+      await ackControlCommand(config, command, "completed", {reason: "node-level shutdown accepted while idle"});
+      return;
+    }
+    await ackControlCommand(config, command, "rejected", {reason: "no_active_dispatch_context"});
+    return;
+  }
+  await ackControlCommand(config, command, "completed", {ignored: true});
+}
+
+function ackControlCommand(config, command, status, result) {
+  return retryableAgentRequest(() => jsonRequest(`${config.serverUrl}/api/agent/v1/control/${encodeURIComponent(command.commandId)}/ack`, {
+    method: "POST",
+    token: config.nodeToken,
+    body: {status, result}
+  }), "control_ack");
 }
 
 async function flushCheckpointOutbox(config) {
@@ -160,6 +297,7 @@ async function flushCheckpointOutbox(config) {
     try {
       verifyCheckpointReplayRemote(config, item);
       await submitCheckpoint(config, item.checkpointPath, item.checkpoint);
+      await submitExecutionEventForDispatch(config, item.dispatchId, "checkpoint_submitted", {progressPercent: 100, summary: "Checkpoint replay accepted by control plane.", evidenceRefs: [`checkpoint:${item.checkpoint?.runId || "accepted"}`]}).catch(() => {});
       unlinkSync(path);
       process.stdout.write(`checkpoint replayed: ${item.dispatchId}\n`);
     } catch (error) {
@@ -194,9 +332,33 @@ function submitCheckpoint(config, checkpointPath, checkpoint) {
   return jsonRequest(`${config.serverUrl}${checkpointPath}`, {method: "POST", token: config.nodeToken, body: checkpoint});
 }
 
-function executeDispatch(config, dispatchPackage) {
+function submitExecutionEvent(config, dispatchPackage, eventType, payload = {}) {
+  return submitExecutionEventForDispatch(config, dispatchPackage.dispatch.dispatchId, eventType, payload);
+}
+
+function submitExecutionEventForDispatch(config, dispatchId, eventType, payload = {}) {
+  const eventUrl = config.gateway.eventUrl || `${config.serverUrl}/api/agent/v1/events`;
+  config.eventSequence = Number(config.eventSequence || 0) + 1;
+  writeSecretJson(configPath, config);
+  return retryableAgentRequest(() => jsonRequest(eventUrl, {
+    method: "POST",
+    token: config.nodeToken,
+    body: {
+      dispatchId,
+      eventType,
+      eventKey: `${config.nodeId}:${dispatchId}:${config.eventSequence}:${eventType}`,
+      ...payload
+    }
+  }), `event_${eventType}`);
+}
+
+async function executeDispatch(config, dispatchPackage, control) {
   verifyPackageBinding(config, dispatchPackage);
+  await submitExecutionEvent(config, dispatchPackage, "dispatch_received", {progressPercent: 8, summary: "Dispatch package received and binding verified."});
+  control?.throwIfCancelled();
   const skillWorkset = syncSkillWorkset(config, dispatchPackage);
+  await submitExecutionEvent(config, dispatchPackage, "skill_synced", {progressPercent: 15, summary: "Server-issued skill workset synchronized.", evidenceRefs: [`skill-workset:${skillWorkset.worksetDigest}`]});
+  control?.throwIfCancelled();
   const repositoryRoot = prepareRepository(config, dispatchPackage.repositoryOutputTarget);
   const taskRoot = join(config.taskDir, dispatchPackage.dispatch.dispatchId);
   mkdirSync(taskRoot, {recursive: true});
@@ -206,10 +368,13 @@ function executeDispatch(config, dispatchPackage) {
   writeFileSync(promptPath, buildExecutionPrompt(dispatchPackage, skillWorkset, packagePath), {mode: 0o600});
   ensureCleanWorktree(repositoryRoot);
   const before = git(repositoryRoot, ["rev-parse", "HEAD"]);
-  const output = runModelExecutor(config, dispatchPackage, repositoryRoot, skillWorkset, packagePath, promptPath);
+  await submitExecutionEvent(config, dispatchPackage, "executor_started", {progressPercent: 25, summary: "Model executor started.", evidenceRefs: [`prompt:${sha256(readFileSync(promptPath, "utf8"))}`]});
+  const output = await runModelExecutor(config, dispatchPackage, repositoryRoot, skillWorkset, packagePath, promptPath, control);
+  control?.throwIfCancelled();
   const changedBeforeManifest = gitStatusPaths(repositoryRoot);
   if (!changedBeforeManifest.length) throw new Error("model agent produced no repository changes");
   assertAllowedPaths(changedBeforeManifest, dispatchPackage.repositoryOutputTarget);
+  await submitExecutionEvent(config, dispatchPackage, "repository_changed", {progressPercent: 65, summary: `Model executor changed ${changedBeforeManifest.length} repository paths.`, evidenceRefs: changedBeforeManifest.slice(0, 20).map((path) => `git-path:${path}`)});
   const manifestPath = dispatchPackage.repositoryOutputTarget.artifactManifestPath;
   const outputRefs = changedBeforeManifest.filter((path) => path !== manifestPath);
   if (!outputRefs.length) throw new Error("model agent produced no task output besides artifact manifest");
@@ -220,13 +385,16 @@ function executeDispatch(config, dispatchPackage) {
   git(repositoryRoot, ["add", "--", ...changed]);
   git(repositoryRoot, ["commit", "-m", output.commitMessage || `Complete ${dispatchPackage.taskContract.workId} via AI agent`]);
   const commit = git(repositoryRoot, ["rev-parse", "HEAD"]);
+  await submitExecutionEvent(config, dispatchPackage, "git_committed", {progressPercent: 80, summary: `Committed repository changes at ${commit}.`, evidenceRefs: [`commit:${commit}`]});
+  control?.throwIfCancelled();
   const branch = dispatchPackage.repositoryOutputTarget.branch;
   const remote = dispatchPackage.repositoryOutputTarget.remote || "origin";
   git(repositoryRoot, ["push", remote, `HEAD:refs/heads/${branch}`]);
   const remoteSha = gitLsRemote(repositoryRoot, remote, `refs/heads/${branch}`);
   if (remoteSha !== commit) throw new Error("remote push verification failed");
+  await submitExecutionEvent(config, dispatchPackage, "git_pushed", {progressPercent: 90, summary: `Pushed ${commit} to ${remote}/refs/heads/${branch}.`, evidenceRefs: [`push:${remote}:refs/heads/${branch}:${remoteSha}`]});
   const tree = git(repositoryRoot, ["rev-parse", `${commit}^{tree}`]);
-  return {
+  const checkpoint = {
     schemaVersion: "checkpoint/v1",
     projectId: dispatchPackage.taskContract.projectId,
     taskGroupId: dispatchPackage.taskContract.taskGroupId,
@@ -249,9 +417,11 @@ function executeDispatch(config, dispatchPackage) {
     outputContractDigest: sha256("spec/checkpoint.schema.json"),
     createdAt: new Date().toISOString()
   };
+  await submitExecutionEvent(config, dispatchPackage, "checkpoint_prepared", {progressPercent: 95, summary: "Checkpoint prepared for local outbox and control-plane ACK.", evidenceRefs: checkpoint.evidenceRefs});
+  return checkpoint;
 }
 
-function runModelExecutor(config, dispatchPackage, repositoryRoot, skillWorkset, packagePath, promptPath) {
+async function runModelExecutor(config, dispatchPackage, repositoryRoot, skillWorkset, packagePath, promptPath, control) {
   const env = {
     ...process.env,
     AIMAC_SERVER_URL: config.serverUrl,
@@ -282,11 +452,13 @@ function runModelExecutor(config, dispatchPackage, repositoryRoot, skillWorkset,
     requiredOutputs: ["repository_changes", "verification", "artifact_manifest_inputs"]
   };
   let result;
+  const outputReporter = createExecutorOutputReporter(config, dispatchPackage);
   if (config.executorCommand) {
-    result = spawnSync("sh", ["-c", config.executorCommand], {cwd: repositoryRoot, env, input: `${JSON.stringify(executorInput)}\n`, encoding: "utf8", maxBuffer: 32 * 1024 * 1024});
+    result = await spawnAndCapture("sh", ["-c", config.executorCommand], {cwd: repositoryRoot, env, input: `${JSON.stringify(executorInput)}\n`, control, onOutput: outputReporter});
   } else {
-    result = runKnownModelCli(dispatchPackage.taskContract.model, readFileSync(promptPath, "utf8"), repositoryRoot, env);
+    result = await runKnownModelCli(dispatchPackage.taskContract.model, readFileSync(promptPath, "utf8"), repositoryRoot, env, control, outputReporter);
   }
+  control?.throwIfCancelled();
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`model executor exited ${result.status}: ${String(result.stderr || result.stdout || "").slice(-4000)}`);
   const lines = String(result.stdout || "").trim().split("\n").filter(Boolean);
@@ -297,15 +469,102 @@ function runModelExecutor(config, dispatchPackage, repositoryRoot, skillWorkset,
   }
 }
 
-function runKnownModelCli(model, prompt, cwd, env) {
+function createExecutorOutputReporter(config, dispatchPackage) {
+  let lastAt = 0;
+  let tail = "";
+  return (stream, chunk) => {
+    tail = `${tail}${chunk}`.slice(-2000);
+    if (Date.now() - lastAt < 1500) return;
+    lastAt = Date.now();
+    submitExecutionEvent(config, dispatchPackage, "executor_output", {
+      progressPercent: 45,
+      summary: `${stream} output received from model executor.`,
+      outputTailDigest: sha256(tail),
+      payload: {stream, tail: tail.slice(-500)}
+    }).catch(() => {});
+  };
+}
+
+function spawnAndCapture(commandName, commandArgs, options = {}) {
+  return new Promise((resolveResult, reject) => {
+    const child = spawn(commandName, commandArgs, {cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32"});
+    options.control?.attachChild(child);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      const text = chunk.toString();
+      stdout = boundedOutputAppend(stdout, text);
+      options.onOutput?.("stdout", text);
+    });
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      stderr = boundedOutputAppend(stderr, text);
+      options.onOutput?.("stderr", text);
+    });
+    child.on("error", reject);
+    child.on("close", (status, signal) => {
+      resolveResult({status: status ?? (signal ? 143 : 1), signal, stdout, stderr});
+    });
+    if (options.input) child.stdin.end(options.input);
+    else child.stdin.end();
+  });
+}
+
+function terminateChild(child, timeoutMs = 10000) {
+  if (!child || child.exitCode !== null || child.signalCode) return Promise.resolve({stopped: true, reason: "no_running_child"});
+  const graceMs = Math.max(1000, Math.min(60000, Number(timeoutMs || 10000)));
+  return new Promise((resolveStop) => {
+    let resolved = false;
+    const finish = (status, signal) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(killTimer);
+      clearTimeout(giveUpTimer);
+      resolveStop({stopped: true, status: status ?? null, signal: signal || null});
+    };
+    const killTimer = setTimeout(() => {
+      killChildProcessGroup(child, "SIGKILL");
+    }, graceMs);
+    const giveUpTimer = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      resolveStop({stopped: false, reason: "child_stop_timeout"});
+    }, graceMs + 10000);
+    child.once("close", finish);
+    killChildProcessGroup(child, "SIGTERM");
+  });
+}
+
+function killChildProcessGroup(child, signal) {
+  if (!child || child.exitCode !== null || child.signalCode) return;
+  try {
+    if (process.platform !== "win32" && child.pid) {
+      process.kill(-child.pid, signal);
+      return;
+    }
+  } catch (error) {
+    if (error.code !== "ESRCH") process.stderr.write(`process group ${signal} failed: ${error.message}\n`);
+  }
+  try {
+    child.kill(signal);
+  } catch (error) {
+    if (error.code !== "ESRCH") process.stderr.write(`child ${signal} failed: ${error.message}\n`);
+  }
+}
+
+function boundedOutputAppend(current, chunk) {
+  return `${current}${chunk}`.slice(-(32 * 1024 * 1024));
+}
+
+function runKnownModelCli(model, prompt, cwd, env, control, onOutput) {
   const provider = model?.alias || String(model?.modelId || "").split(":")[0];
-  if (["openai", "azure_openai"].includes(provider) && commandAvailable("codex")) return spawnSync("codex", ["exec", "--full-auto", "-C", cwd, prompt], {cwd, env, encoding: "utf8", maxBuffer: 32 * 1024 * 1024});
-  if (["anthropic", "aws_bedrock"].includes(provider) && commandAvailable("claude")) return spawnSync("claude", ["-p", "--permission-mode", "acceptEdits", prompt], {cwd, env, encoding: "utf8", maxBuffer: 32 * 1024 * 1024});
-  if (["google", "vertex_ai"].includes(provider) && commandAvailable("gemini")) return spawnSync("gemini", ["-p", prompt, "-y"], {cwd, env, encoding: "utf8", maxBuffer: 32 * 1024 * 1024});
+  if (["openai", "azure_openai"].includes(provider) && commandAvailable("codex")) return spawnAndCapture("codex", ["exec", "--full-auto", "-C", cwd, prompt], {cwd, env, control, onOutput});
+  if (["anthropic", "aws_bedrock"].includes(provider) && commandAvailable("claude")) return spawnAndCapture("claude", ["-p", "--permission-mode", "acceptEdits", prompt], {cwd, env, control, onOutput});
+  if (["google", "vertex_ai"].includes(provider) && commandAvailable("gemini")) return spawnAndCapture("gemini", ["-p", prompt, "-y"], {cwd, env, control, onOutput});
   if (provider === "ollama" && commandAvailable("ollama")) {
     const modelId = String(model?.modelId || "").replace(/^ollama:/u, "") || process.env.AIMAC_OLLAMA_MODEL;
     if (!modelId) throw new Error("ollama execution requires a modelId or AIMAC_OLLAMA_MODEL");
-    return spawnSync("ollama", ["run", modelId], {cwd, env, input: prompt, encoding: "utf8", maxBuffer: 32 * 1024 * 1024});
+    return spawnAndCapture("ollama", ["run", modelId], {cwd, env, input: prompt, control, onOutput});
   }
   throw new Error(`no installed AI executor for provider ${provider}; configure --executor-command`);
 }
@@ -357,6 +616,9 @@ function prepareRepository(config, target) {
 function buildExecutionPrompt(dispatchPackage, workset, packagePath) {
   const contract = dispatchPackage.taskContract;
   const model = contract.model || {};
+  if (!model.modelDecision || !(model.model || model.modelId) || !(model.reasoning || model.reasoningLevel)) {
+    throw new Error("dispatch model, reasoning and modelDecision are required");
+  }
   const repositoryTarget = dispatchPackage.repositoryOutputTarget || {};
   const readLocators = uniqueStrings([
     "AGENTS.md",
@@ -370,9 +632,9 @@ function buildExecutionPrompt(dispatchPackage, workset, packagePath) {
   return [
     "DISPATCH v1",
     "ruleset: 2026-07-23.33",
-    `model: ${model.model || model.modelId || "custom:auto"}`,
-    `reasoning: ${model.reasoning || model.reasoningLevel || "standard"}`,
-    model.modelDecision || "modelDecision: bounded dispatch; explicit model/reasoning assigned by integration owner",
+    `model: ${model.model || model.modelId}`,
+    `reasoning: ${model.reasoning || model.reasoningLevel}`,
+    model.modelDecision,
     "",
     `node: ${contract.workId}`,
     `graph: ${contract.taskGroupId}`,
@@ -559,6 +821,26 @@ async function jsonRequest(url, options = {}) {
   return payload;
 }
 
+async function retryableAgentRequest(fn, label) {
+  const attempts = Number(process.env.AIMAC_AGENT_RETRY_ATTEMPTS || 4);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (!retryableControlPlaneError(error) || attempt >= attempts) throw error;
+      const waitMs = Math.min(2000, 150 * attempt + Math.floor(Math.random() * 150));
+      process.stderr.write(`${label} retryable control-plane conflict; retry ${attempt}/${attempts} after ${waitMs}ms\n`);
+      await delay(waitMs);
+    }
+  }
+  throw new Error(`${label} retry exhausted`);
+}
+
+function retryableControlPlaneError(error) {
+  const message = String(error?.message || error);
+  return /state_write_conflict|AIMAC_STATE_CONFLICT|409/u.test(message);
+}
+
 function syncJson(url, token) {
   const result = spawnSync("curl", ["-fsSL", "--config", "-", url], {input: `header = "Authorization: Bearer ${token}"\n`, encoding: "utf8", maxBuffer: 32 * 1024 * 1024});
   if (result.error || result.status !== 0) throw new Error(`skill workset download failed: ${result.stderr || result.error?.message}`);
@@ -633,6 +915,11 @@ function uniqueStrings(values) {
 
 function globalClientConfigurationEnabled() {
   return args["configure-global-clients"] === "true" || args["configure-clients"] === "true" || process.env.AIMAC_AGENT_CONFIGURE_GLOBAL_CLIENTS === "true" || process.env.AIMAC_AGENT_CONFIGURE_CLIENTS === "true";
+}
+
+function readJoinToken() {
+  if (args["join-token-file"]) return readFileSync(resolve(String(args["join-token-file"])), "utf8").trim();
+  return String(args["join-token"] || process.env.AIMAC_AGENT_JOIN_TOKEN || "").trim();
 }
 
 function safeName(value) {

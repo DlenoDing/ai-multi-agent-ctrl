@@ -71,6 +71,7 @@ try {
     body: {projectId: "prj_control_plane", nodeName: "doctor-node", allowedRoles: ["*"], ttlSeconds: 1800, maxUses: 1}
   });
   if (!joinResult.installCommand.includes(`${baseUrl}/install-agent.sh`)) throw new Error("join token did not produce a server-hosted install command");
+  if (joinResult.installCommand.includes("--join-token ") || !joinResult.installCommand.includes("--join-token-file")) throw new Error("join token install command exposed token in argv");
   if (!joinResult.verifiedInstallCommand.includes("( if command -v sha256sum") || !joinResult.verifiedInstallCommand.includes("elif command -v shasum")) throw new Error("join token did not produce a portable checksum-verified install command");
 
   const verifiedJoinResult = await json("/api/agent-join-tokens", {
@@ -98,7 +99,9 @@ try {
   }
   assertAgentScopedMcpConfig(verifiedCommandWorkDir, baseUrl);
 
-  const install = spawnSync("sh", ["-s", "--", "--server", baseUrl, "--join-token", joinResult.joinToken, "--node-name", "doctor-node", "--work-dir", agentWorkDir, "--no-daemon", "--no-configure-clients", "--executor-command", `node ${JSON.stringify(executor)}`], {
+  const joinTokenFile = join(sandbox, "doctor.join");
+  writeFileSync(joinTokenFile, joinResult.joinToken, {mode: 0o600});
+  const install = spawnSync("sh", ["-s", "--", "--server", baseUrl, "--join-token-file", joinTokenFile, "--node-name", "doctor-node", "--work-dir", agentWorkDir, "--no-daemon", "--no-configure-clients", "--executor-command", `node ${JSON.stringify(executor)}`], {
     cwd: sandbox,
     input: installerText,
     env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false"},
@@ -125,6 +128,23 @@ try {
   const currentCredentialProbe = await jsonRaw("/api/agent/v1/nodes/me", {token: rotatedAgentConfig.nodeToken});
   if (!previousCredentialProbe.response.ok || !currentCredentialProbe.response.ok) throw new Error("Agent Gateway did not accept both previous and current credentials during rotation overlap");
   assertAgentScopedMcpConfig(agentWorkDir, baseUrl, rotatedAgentConfig.nodeToken);
+
+  await json(`/api/agent-nodes/${agentConfig.nodeId}/control`, {
+    method: "POST",
+    token: login.sessionToken,
+    idempotencyKey: "doctor-agent-control-refresh",
+    body: {commandType: "refresh_profile"}
+  });
+  const controlRun = spawnSync(process.execPath, [runtimePath, "run", "--work-dir", agentWorkDir, "--once"], {
+    env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false"},
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024
+  });
+  if (controlRun.status !== 0) throw new Error(`Agent Runtime control-channel run failed: ${controlRun.stderr || controlRun.stdout}`);
+  const controlState = await json("/api/state?view=runtime&limit=200", {token: login.sessionToken});
+  const controlCommand = (controlState.agentControlCommands || []).find((command) => command.idempotencyKey === "doctor-agent-control-refresh");
+  if (!controlCommand || controlCommand.status !== "completed" || !controlCommand.resultDigest) throw new Error("Agent control command was not delivered and ACKed");
+  if (!controlCommand.deliveredAt || !controlCommand.acknowledgedAt) throw new Error("Agent control command did not persist delivered and ACK timestamps");
 
   const reuse = await jsonRaw("/api/agent/v1/register", {method: "POST", token: joinResult.joinToken, body: {nodeName: "doctor-node", profile: {}}});
   if (reuse.response.status !== 409) throw new Error(`one-time join token was reusable: ${reuse.response.status}`);
@@ -164,6 +184,12 @@ try {
   if (!completed || !node || node.status !== "online" || node.completedDispatchCount < 1) throw new Error("remote Agent completion was not persisted");
   const contract = state.agentTaskContracts.find((item) => item.sessionId === completed.sessionId);
   if (contract.roleSkill.synchronizationMode !== "server_managed_on_demand" || !contract.roleSkill.usageDirective.includes("child role")) throw new Error("dispatch did not bind the server-issued skill workset and child-role skill directive");
+  const eventLog = await json(`/api/agent-dispatches/${completed.dispatchId}/events?limit=80`, {token: login.sessionToken});
+  const eventTypes = new Set((eventLog.events || []).map((event) => event.eventType));
+  for (const requiredEvent of ["dispatch_received", "skill_synced", "executor_started", "executor_output", "repository_changed", "git_committed", "git_pushed", "checkpoint_prepared", "checkpoint_submitted"]) {
+    if (!eventTypes.has(requiredEvent)) throw new Error(`Agent execution event stream missing ${requiredEvent}`);
+  }
+  if (eventLog.storage?.storageKind !== "project-jsonl" || !eventLog.storage?.storageRef?.includes("project-db/")) throw new Error("Agent execution events were not read from the project-level event store");
   const remoteTree = execFileSync("git", ["--git-dir", remote, "ls-tree", "-r", "--name-only", "refs/heads/main"], {encoding: "utf8"});
   if (!remoteTree.includes("docs/agent-runtime-output/") || !remoteTree.includes("docs/artifact-manifests/")) throw new Error("Agent outputs were not committed and pushed to the project Git repository");
 
@@ -202,7 +228,10 @@ try {
   if (!revokeResult.requeuedDispatchIds.includes(revokedDispatchId) || requeuedDispatch?.status !== "queued" || requeuedDispatch.assignedNodeId) {
     throw new Error("Agent node revocation did not requeue the running dispatch");
   }
-  console.log("agent remote doctor ok: one-command join, checksum install, credential rotation, initialization, self-check, remote MCP, on-demand skill workset, dispatch, commit, push and checkpoint outbox replay, revoke requeue verified");
+  if (revokeResult.status !== "draining" || revokeResult.command?.commandType !== "revoke") {
+    throw new Error("Agent node revocation did not queue a draining revoke command");
+  }
+  console.log("agent remote doctor ok: one-command join, checksum install, credential rotation, initialization, self-check, remote MCP, control command ACK, project-level execution event stream, on-demand skill workset, dispatch, commit, push and checkpoint outbox replay, revoke requeue verified");
 } finally {
   server.kill("SIGTERM");
   await Promise.race([once(server, "exit"), new Promise((resolveWait) => setTimeout(resolveWait, 3000))]);

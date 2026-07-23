@@ -295,6 +295,10 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.agentRuntimeNodes ||= [];
   state.agentJoinTokens ||= [];
   state.agentGatewayEvents ||= [];
+  state.agentControlCommands ||= [];
+  state.agentControlSequence ||= 0;
+  state.agentExecutionEvents ||= [];
+  state.agentExecutionSequence ||= 0;
   state.permissionRequests ||= [];
   state.approvalRequests ||= [];
   state.artifacts ||= [];
@@ -1695,6 +1699,9 @@ function enqueueAgentDispatch(state, contract, repositoryTarget) {
     runId: contract.runId,
     status: "queued",
     deliveryMode: workSession?.placement || "new_session",
+    model: contract.model.model || contract.model.modelId || "custom:auto",
+    reasoning: contract.model.reasoning || contract.model.reasoningLevel || "standard",
+    modelDecision: contract.model.modelDecision,
     modelSelectionDecisionRef: contract.model.modelSelectionDecisionRef,
     taskContractDigest: contract.contractDigest,
     taskContractRef: `AgentTaskContract:${contract.commandId}`,
@@ -1718,7 +1725,10 @@ export function evaluateRoleDrift(state, request = {}) {
   const guard = request.sessionId
     ? state.roleDriftGuards.find((item) => item.sessionId === request.sessionId)
     : state.roleDriftGuards.find((item) => item.taskGroupId === request.taskGroupId && !["closed", "corrected"].includes(item.status));
-  if (!guard || ["closed", "corrected"].includes(guard.status)) return {allowed: true, driftScore: 0, signals: []};
+  if (!guard || ["closed", "corrected"].includes(guard.status)) {
+    if (request.requireGuard === true) return {allowed: false, driftScore: 1, signals: ["role_drift_guard_missing"], guardRef: null};
+    return {allowed: true, driftScore: 0, signals: []};
+  }
   const signals = [];
   const taskGroup = state.taskGroups.find((item) => item.id === guard.taskGroupId);
   const workItem = taskGroup?.workItems?.find((item) => item.id === guard.workItemId);
@@ -2140,7 +2150,7 @@ function ensureRepositoryTarget(state, project, taskGroup, workItem, request) {
     branch: repository.defaultBranch || "main",
     baseRef: gitHead(request.root),
     pathAllowlist: request.pathAllowlist || ["apps/control-plane-ui/**", "spec/**", "docs/**", "scripts/**", "data/**", "package.json", "Dockerfile", "docker-compose.yml"],
-    forbiddenPathRules: request.forbiddenPathRules || ((project?.id || "prj_control_plane") === "prj_control_plane" ? ["apps/**", "scripts/**", "spec/**", "data/**", ".runtime/**", "Dockerfile", "docker-compose.yml", "package.json"] : []),
+    forbiddenPathRules: request.forbiddenPathRules || [".runtime/**", ".git/**", "node_modules/**", ".env", ".env.local", ".env.production"],
     status: "selected",
     outputPolicy: "project_git_repository_only",
     decisionRecordRef: request.decisionRecordRef || `decision:repo-target:${workItem?.id || "work"}`,

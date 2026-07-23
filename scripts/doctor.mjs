@@ -426,6 +426,17 @@ try {
   }
   const statePath = join(root, doctorRuntimeDir, "control-plane-state.json");
   const configPath = join(root, doctorRuntimeDir, "runtime-config.json");
+  const projectShardPath = join(root, doctorRuntimeDir, "project-db", "prj_control_plane.state.json");
+  if (!existsSync(projectShardPath)) {
+    throw new Error("project-scoped state shard was not written for prj_control_plane");
+  }
+  const centralState = JSON.parse(readFileSync(statePath, "utf8"));
+  if ((centralState.taskGroups || []).some((taskGroup) => taskGroup.projectId === "prj_control_plane")) {
+    throw new Error("central state still contains project-scoped task groups instead of shard indexes");
+  }
+  if (!centralState.projectStateShards?.projects?.some((project) => project.projectId === "prj_control_plane")) {
+    throw new Error("central state does not index the prj_control_plane project shard");
+  }
   const stateHashBeforeReadiness = hashFile(statePath);
   const configHashBeforeReadiness = hashFile(configPath);
   const readinessDenied = await jsonFetch(port, "/api/task-groups/tg_runtime_management/readiness");

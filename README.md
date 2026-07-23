@@ -74,12 +74,16 @@ Agent 加入必须在管理界面完成：系统管理员或有项目 `agent:act
 ```bash
 curl -fsSL https://control.example.com/install-agent.sh | sh -s -- \
   --server https://control.example.com \
-  --join-token '<one-time-token>'
+  --join-token-file /path/to/0600.join-token
 ```
 
 安装脚本只下载轻量 `agent-runtime.mjs`，校验服务端发布的 SHA256，注册节点、探测本机模型/工具、自动生成并维护 `$AIMAC_AGENT_WORK_DIR/mcp-client-configs/` 下的远程 MCP 配置、执行自检并启动轮询进程。它不会安装或启动 MCP server、PostgreSQL、控制平面、Skill Registry，也不会同步完整 Skill 仓库。默认不会把长期 node token 写入 Codex/Claude/Cursor 等用户全局配置；只有显式传 `--configure-global-clients` 时才把远程 MCP 配置合并到本机全局客户端配置。总控为每个 dispatch 解析有效 role skill 和项目/任务组 overlay，Agent 只下载摘要绑定的最小工作集；下级角色必须取得总控单独签发的工作集，不能隐式继承或自行选择。
 
-注册后交互链路固定为服务器集中式：Agent Runtime 使用一次性 join token 调用 `/api/agent/v1/register`，服务端签发唯一 node token 并只保存 digest；后续用 node token 调用 `/api/agent/v1/heartbeat`、`/self-check`、`/dispatches/next`、`/skill-worksets/:id`、`/checkpoint` 和 `/fail`。执行中的 MCP 工具调用统一走公网 `/mcp` Streamable HTTP，并受 node/project/dispatch 绑定的 MCP grant 限制。节点 token 可按节点撤销或轮换，服务端撤销节点时会停止后续 claim、撤销 dispatch MCP grant，并把运行中的 dispatch 重新入队。
+注册后交互链路固定为服务器集中式：Agent Runtime 使用一次性 join token 调用 `/api/agent/v1/register`，服务端签发唯一 node token 并只保存 digest；后续用 node token 调用 `/api/agent/v1/heartbeat`、`/self-check`、`/dispatches/next`、`/skill-worksets/:id`、`/control`、`/events`、`/checkpoint` 和 `/fail`。执行中的 MCP 工具调用统一走公网 `/mcp` Streamable HTTP，并受 node/project/dispatch 绑定的 MCP grant 限制。节点 token 可按节点撤销或轮换，服务端撤销节点时会停止后续 claim、撤销 dispatch MCP grant，并把运行中的 dispatch 重新入队。
+
+服务端对 Agent 的实时控制不依赖反连 Agent 主机。Agent 通过 node token 长轮询 `/api/agent/v1/control`，拉取持久化 `AgentControlCommand`；命令被拉取后进入 `delivered`，Agent 先 ACK `received`，对 `pause_dispatch`、`cancel_dispatch`、`revoke`、`shutdown` 会终止执行器进程组并在停止确认后 ACK `completed` 或 `failed`。服务端在投递 pause/cancel 时立即冻结对应 dispatch/session/work item，撤销该 dispatch 的 MCP grant，后续 checkpoint 会被拒绝，不能等 Agent 最终回传才生效。Agent 执行过程中不会等到最终 checkpoint 才回送结果，而是持续向 `/api/agent/v1/events` 提交带 `eventKey` 的幂等 `AgentExecutionEvent`，覆盖 dispatch 接收、Skill 同步、模型启动、模型输出摘要、仓库变更、commit、push、checkpoint 准备和提交等阶段。管理界面默认只显示汇总，点击任务组详情或某个 dispatch 后从 `/api/agent-dispatches/:dispatchId/events` 长轮询实时事件流。
+
+项目数据按项目隔离落盘：任务组、session、dispatch、contract、checkpoint、仓库输出目标、控制命令和近期事件投影写入 `.runtime/project-db/<projectId>.state.json`，PostgreSQL 模式写入 `aimac_project_state_shards` 的项目行；中央 control-plane state 只保留系统级数据、项目 shard 索引和非项目对象。完整执行事件追加到 `.runtime/project-db/<projectId>.execution-events.jsonl`，并维护幂等索引和 tail-window 读取，避免项目多、任务多或模型过程输出多时撑爆单个全局状态文件或每次长轮询全量扫描。
 
 如果运维或管理机需要单独生成 Codex/Claude/Cursor 的远程 MCP 配置，可使用 `npm run mcp:register -- --server-url=https://control.example.com`。这不是 Agent 入网步骤；Agent 侧配置由安装脚本和 Runtime 统一完成。
 
@@ -168,7 +172,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | 层 | 终态要求 |
 | --- | --- |
 | 控制服务 | TypeScript/Node.js 控制平面，可按负载拆分服务但协议不变 |
-| 系统库 | 本地 npm/shell 默认 `runtime_json`；Docker Compose 设置 `AIMAC_STATE_STORE=postgresql` 并使用 Postgres JSONB 存储权威状态、event log、lease、audit、rules 和 Git-backed artifact manifest metadata |
+| 系统库 | 本地 npm/shell 默认 `runtime_json` 中央状态 + 项目级 state shard；Docker Compose 设置 `AIMAC_STATE_STORE=postgresql` 并使用 Postgres JSONB 中央状态表和项目 shard 表存储权威状态、event log、lease、audit、rules 和 Git-backed artifact manifest metadata |
 | Agent Runtime | 可远程加入、探测、执行、隔离、恢复、上报证据的机器执行器 |
 | 实时通道 | WebSocket 负责实时性，PostgreSQL outbox/inbox/DLQ 负责可靠性 |
 | MCP | 全部 MCP server 集中运行在控制平面服务器；Agent 仅以节点凭证访问远程 MCP，不允许运行 Agent-local MCP server |
@@ -188,7 +192,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 6. 运行期重复问题的 collect-only 聚合和 SystemUpgradeCandidate 生成。
 7. 项目、任务组、Agent、账号、授权、审计和仓库输出目标的受控 API。
 8. `apps/mcp-server/server.mjs` 是由控制平面 `/mcp` 托管的 Streamable HTTP MCP 处理器，暴露各逻辑工具面，并对写入型调用执行输入校验、idempotency、远程 principal scope、lease/fencing、policy decision、audit 和 untrusted result 标记；直接启动本地 stdio server 默认失败。
-9. `apps/control-plane-ui/lib/state-store.mjs` 提供同步 state store；本地默认 `.runtime/control-plane-state.json`，Docker Compose 通过 `psql` 使用 `aimac_control_plane_state.state jsonb` 作为 HTTP、MCP 和 CLI skill sync 的共同权威状态；写入按 `stateVersion` 做冲突检测，避免多 agent 并发静默覆盖。
+9. `apps/control-plane-ui/lib/state-store.mjs` 提供同步 state store；本地默认 `.runtime/control-plane-state.json` + `.runtime/project-db/<projectId>.state.json`，Docker Compose 通过 `psql` 使用 `aimac_control_plane_state` 和 `aimac_project_state_shards` 作为 HTTP、MCP 和 CLI skill sync 的共同权威状态；写入按 `stateVersion` 做冲突检测，避免多 agent 并发静默覆盖。
 
 ## 执行方式
 

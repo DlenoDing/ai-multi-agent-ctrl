@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/agent-execution-event.schema.json",
+  "title": "AgentExecutionEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "eventId", "sequence", "nodeId", "dispatchId", "projectId", "taskGroupId", "workItemId", "sessionId", "runId", "eventType", "progressPercent", "status", "summary", "payloadDigest", "createdAt"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "agent-execution-event/v1"},
+    "eventId": {"type": "string", "minLength": 1},
+    "sequence": {"type": "integer", "minimum": 1},
+    "nodeId": {"type": "string", "minLength": 1},
+    "dispatchId": {"type": "string", "minLength": 1},
+    "projectId": {"type": "string", "minLength": 1},
+    "taskGroupId": {"type": "string", "minLength": 1},
+    "workItemId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "runId": {"type": "string", "minLength": 1},
+    "eventType": {
+      "type": "string",
+      "enum": ["dispatch_received", "skill_synced", "executor_started", "executor_output", "repository_changed", "git_committed", "git_pushed", "checkpoint_prepared", "checkpoint_submitted", "heartbeat", "blocked", "drift_signal", "failed", "progress"]
+    },
+    "progressPercent": {"type": "integer", "minimum": 0, "maximum": 100},
+    "status": {"type": "string", "enum": ["running", "attention", "completed", "failed"]},
+    "summary": {"type": "string", "maxLength": 1000},
+    "outputTailDigest": {"type": ["string", "null"], "pattern": "^sha256:[a-fA-F0-9]{64}$"},
+    "evidenceRefs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "eventKey": {"type": ["string", "null"], "maxLength": 240},
+    "payloadDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
+    "createdAt": {"type": "string", "format": "date-time"}
+  }
+}

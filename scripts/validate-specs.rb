@@ -69,11 +69,14 @@ required_runtime_files = %w[
   apps/control-plane-ui/server.mjs
   apps/control-plane-ui/lib/control-plane-core.mjs
   apps/control-plane-ui/lib/state-store.mjs
+  apps/control-plane-ui/lib/project-event-store.mjs
   apps/control-plane-ui/public/index.html
   apps/control-plane-ui/public/styles.css
   apps/control-plane-ui/public/app.js
   data/seed-state.json
   spec/agent-dispatch.schema.json
+  spec/agent-control-command.schema.json
+  spec/agent-execution-event.schema.json
   spec/agent-join-token.schema.json
   spec/agent-runtime-node.schema.json
   spec/agent-skill-workset.schema.json
@@ -219,6 +222,8 @@ critical_schema_titles = Set.new(%w[
   ManagementConsoleSurface
   ProgressSnapshot
   AgentDispatch
+  AgentControlCommand
+  AgentExecutionEvent
   InstructionEnvelope
   SharedDefinitionContract
   RepositoryOutputTarget
@@ -356,6 +361,7 @@ end
 server_source = File.read(File.join(ROOT, "apps/control-plane-ui/server.mjs"))
 core_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/control-plane-core.mjs"))
 state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs"))
+project_event_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/project-event-store.mjs"))
 doctor_source = File.read(File.join(ROOT, "scripts/doctor.mjs"))
 mcp_source = File.read(File.join(ROOT, "apps/mcp-server/server.mjs"))
 mcp_doctor_source = File.read(File.join(ROOT, "scripts/doctor-mcp.mjs"))
@@ -442,6 +448,9 @@ errors << "HTTP server must use shared state-store" unless server_source.include
 errors << "MCP server must use shared state-store" unless mcp_source.include?("readStoredState") && mcp_source.include?("writeStoredState")
 errors << "state-store must support PostgreSQL JSONB authority" unless state_store_source.include?("AIMAC_STATE_STORE") && state_store_source.include?("jsonb") && state_store_source.include?("psql")
 errors << "state-store must enforce versioned write conflict detection" unless state_store_source.include?("expectedStateVersion") && state_store_source.include?("AIMAC_STATE_CONFLICT")
+errors << "state-store must externalize project-scoped collections into project shards" unless state_store_source.include?("projectShardCollections") && state_store_source.include?("aimac_project_state_shards") && state_store_source.include?(".state.json")
+errors << "project shard writes must be protected by the central state CAS" unless state_store_source.include?("writePostgresStateWithProjectShards") && state_store_source.include?("AIMAC_WRITE_CONFLICT") && state_store_source.index("assertExpectedVersion") && state_store_source.index("writeRuntimeJsonProjectShards") && state_store_source.index("assertExpectedVersion") < state_store_source.index("writeRuntimeJsonProjectShards")
+errors << "state-store must cap idempotency records" unless state_store_source.include?("pruneIdempotencyRecords") && state_store_source.include?("AIMAC_IDEMPOTENCY_MAX_RECORDS")
 errors << "skills sync must use shared state-store" unless skill_sync_source.include?("readStoredState") && skill_sync_source.include?("writeStoredState")
 errors << "doctor must isolate verification state from configured PostgreSQL stores" unless doctor_source.include?("AIMAC_STATE_STORE: \"runtime_json\"") && !package_json.dig("scripts", "doctor").to_s.include?("init-control-plane")
 errors << "MCP register script must generate Codex config" unless mcp_register_source.include?("codex_config.toml")
@@ -454,6 +463,17 @@ errors << "local MCP stdio server must be disabled by default" unless mcp_source
 errors << "Agent installer must download and verify the server runtime" unless agent_installer_source.include?("agent-runtime.mjs.sha256") && agent_installer_source.include?("checksum verification failed")
 errors << "Agent installer must make global client config an explicit opt-in" unless agent_installer_source.include?("--configure-global-clients") && agent_installer_source.include?("CONFIGURE_GLOBAL_CLIENTS=false")
 errors << "Agent Gateway must implement one-time join, heartbeat, self-check and dispatch claim" unless %w[registerAgentNode heartbeatAgentNode selfCheckAgentNode claimNextDispatch].all? { |needle| agent_gateway_source.include?(needle) }
+errors << "Agent Gateway must implement durable bidirectional control commands" unless %w[createAgentControlCommand listAgentControlCommands ackAgentControlCommand].all? { |needle| agent_gateway_source.include?(needle) } && server_source.include?("/api/agent/v1/control")
+errors << "Agent Gateway must persist delivered/received control state" unless agent_gateway_source.include?("deliveredAt") && agent_gateway_source.include?("\"received\"") && agent_runtime_source.include?("\"received\"")
+errors << "pause/cancel control must freeze dispatch and revoke MCP grants before agent ACK" unless agent_gateway_source.include?("applyControlCommandPreEffects") && agent_gateway_source.include?("revokeDispatchMcpGrants") && agent_gateway_source.include?("control_pause_requested")
+errors << "task group controls must reuse dispatch control commands" unless server_source.include?("applyTaskGroupRuntimeControl") && server_source.include?("pause_dispatch") && server_source.include?("cancel_dispatch") && server_source.include?("createAgentControlCommand")
+errors << "MCP session pause/cancel must reuse dispatch control commands" unless mcp_source.include?("createAgentControlCommand") && mcp_source.include?("mcp_session_paused") && mcp_source.include?("revokeDispatchMcpGrants")
+errors << "Agent Runtime must poll and ack the server-side control channel" unless agent_runtime_source.include?("startControlWatcher") && agent_runtime_source.include?("pollControlCommands") && agent_runtime_source.include?("ackControlCommand")
+errors << "Agent Runtime must terminate executor process groups for stop controls" unless agent_runtime_source.include?("terminateChild") && agent_runtime_source.include?("SIGKILL") && agent_runtime_source.include?("detached:")
+errors << "Agent Runtime must stream execution events before final checkpoint" unless agent_runtime_source.include?("submitExecutionEvent") && agent_runtime_source.include?("executor_output") && server_source.include?("/api/agent/v1/events")
+errors << "Execution events must be isolated into project-level server files" unless project_event_store_source.include?("project-db") && project_event_store_source.include?("appendProjectExecutionEvent") && server_source.include?("readProjectExecutionEvents")
+errors << "Execution events must be idempotent and tail-readable" unless project_event_store_source.include?("eventKeyRecentlyStored") && project_event_store_source.include?("tail-window") && agent_runtime_source.include?("eventKey")
+errors << "Execution event projection must recover from state CAS conflicts" unless server_source.include?("retryExecutionEventProjection") && server_source.include?("conflictRecovered")
 errors << "Agent Gateway must issue server-managed skill worksets" unless agent_gateway_source.include?("agent-skill-workset/v1") && agent_gateway_source.include?("server_managed_on_demand") && agent_gateway_source.include?("Child roles MUST receive")
 errors << "Agent Runtime must use remote MCP and on-demand skill worksets" unless agent_runtime_source.include?("AIMAC_MCP_URL") && agent_runtime_source.include?("syncSkillWorkset") && agent_runtime_source.include?("do not start or install any local MCP server")
 errors << "Agent Runtime dispatch prompt must use compact DISPATCH v1 envelope" unless agent_runtime_source.include?("\"DISPATCH v1\"") && agent_runtime_source.include?("`model: ${model.model") && agent_runtime_source.include?("`reasoning: ${model.reasoning") && agent_runtime_source.include?("model.modelDecision")

@@ -25,6 +25,10 @@ import {
   selectModel,
   syncSkillSource
 } from "../control-plane-ui/lib/control-plane-core.mjs";
+import {
+  createAgentControlCommand,
+  revokeDispatchMcpGrants
+} from "../control-plane-ui/lib/agent-gateway.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const runtimeDir = resolve(root, process.env.AIMAC_RUNTIME_DIR || ".runtime");
@@ -411,6 +415,7 @@ function commonInputProperties() {
     text: string,
     title: string,
     tokenBudget: object,
+    ttlSeconds: number,
     toolSignals: array,
     trustScore: number,
     workId: string,
@@ -446,7 +451,7 @@ function isReadOnlyTool(name) {
   ].some((suffix) => name.endsWith(suffix));
 }
 
-function isWriteTool(name) {
+export function isWriteTool(name) {
   return !isReadOnlyTool(name);
 }
 
@@ -459,7 +464,9 @@ export async function callTool(name, args = {}, context = {}) {
   const state = loadState();
   const beforeVersion = Number(state.stateVersion || 1);
   const idempotencyKey = args.idempotencyKey || null;
-  const argumentDigest = digestOf(sanitizeArgs(args));
+  const rawArgs = sanitizeArgs(args);
+  let effectiveArgs = rawArgs;
+  let argumentDigest = digestOf(rawArgs);
   let result;
   const inputValidation = validateInputArgs(name, args);
   if (!inputValidation.ok) {
@@ -467,15 +474,17 @@ export async function callTool(name, args = {}, context = {}) {
   } else if (isWriteTool(name) && !idempotencyKey) {
     result = {ok: false, error: "idempotency_key_required"};
   } else {
-    const existingRecord = isWriteTool(name) ? state.idempotencyRecords[idempotencyKey] : null;
-    if (existingRecord && (existingRecord.action !== name || existingRecord.argumentDigest !== argumentDigest)) {
-      result = {ok: false, error: "idempotency_key_reuse_conflict", idempotencyKey};
-    } else if (existingRecord) {
-      result = {ok: true, replayed: true, idempotencyRecord: existingRecord, payload: existingRecord.payload};
+    const grantCheck = validateMcpGrant(state, name, rawArgs, argumentDigest, context);
+    if (!grantCheck.allowed) {
+      result = {ok: false, error: grantCheck.error, grantRef: grantCheck.grantRef, required: grantCheck.required};
     } else {
-      const grantCheck = validateMcpGrant(state, name, args, argumentDigest, context);
-      if (!grantCheck.allowed) {
-        result = {ok: false, error: grantCheck.error, grantRef: grantCheck.grantRef, required: grantCheck.required};
+      effectiveArgs = applyAgentGrantScopeArgs(name, rawArgs, grantCheck);
+      argumentDigest = digestOf(effectiveArgs);
+      const existingRecord = isWriteTool(name) ? state.idempotencyRecords[idempotencyKey] : null;
+      if (existingRecord && (existingRecord.action !== name || existingRecord.argumentDigest !== argumentDigest)) {
+        result = {ok: false, error: "idempotency_key_reuse_conflict", idempotencyKey};
+      } else if (existingRecord) {
+        result = {ok: true, replayed: true, idempotencyRecord: existingRecord, payload: existingRecord.payload};
       } else {
         const policyDecision = isWriteTool(name)
       ? policyDecisionEval(state, {
@@ -487,12 +496,12 @@ export async function callTool(name, args = {}, context = {}) {
           evidenceRefs: [grantCheck.grantRef, `argument:${argumentDigest}`]
         }).policyDecision
       : null;
-        result = isWriteTool(name) && args.dryRun
+        result = isWriteTool(name) && effectiveArgs.dryRun
           ? {ok: true, dryRun: true, wouldCall: name, argumentDigest}
-          : await dispatchTool(state, name, sanitizeArgs(args), {principal: context.principal, grantCheck});
+          : await dispatchTool(state, name, effectiveArgs, {principal: context.principal, grantCheck});
         if (policyDecision && result && typeof result === "object") result.policyDecisionRef = policyDecision.decisionId;
         if (grantCheck.grantRef && result && typeof result === "object") result.mcpGrantRef = grantCheck.grantRef;
-        if (isWriteTool(name) && idempotencyKey && result.ok !== false && !args.dryRun) {
+        if (isWriteTool(name) && idempotencyKey && result.ok !== false && !effectiveArgs.dryRun) {
           state.idempotencyRecords[idempotencyKey] = {
             status: 200,
             action: name,
@@ -525,12 +534,8 @@ export async function callTool(name, args = {}, context = {}) {
     state.mcpCalls = state.mcpCalls.slice(0, 300);
   }
   try {
-    if (isWriteTool(name) && result.ok !== false && !result.replayed && !args.dryRun) {
+    if (isWriteTool(name) && !effectiveArgs.dryRun) {
       state.stateVersion = beforeVersion + 1;
-      writeState(state);
-    } else if (result.ok === false) {
-      if (isWriteTool(name) && !args.dryRun) writeState(state);
-    } else if (isWriteTool(name) && !args.dryRun) {
       writeState(state);
     }
   } catch (error) {
@@ -656,12 +661,18 @@ function validateMcpGrant(state, toolName, args, argumentDigest, context = {}) {
     return {allowed: false, error: "mcp_tool_not_granted_to_principal", required: toolName};
   }
   if (principal.kind === "agent_node") {
+    if (toolName === "evidence-mcp.checkpoint_submit") {
+      return {allowed: false, error: "agent_checkpoint_must_use_gateway", required: "/api/agent/v1/dispatches/:dispatchId/checkpoint"};
+    }
     const activeGrants = activeAgentMcpGrants(state, principal, toolName);
     if (!activeGrants.length) return {allowed: false, error: "mcp_dispatch_bound_grant_required", required: toolName};
     const scopedGrants = activeGrants.filter((grant) => grantMatchesArgs(state, grant, args));
     if (!scopedGrants.length) return {allowed: false, error: "mcp_grant_scope_mismatch", required: toolName};
+    if (!readOnly && scopedGrants.length !== 1) {
+      return {allowed: false, error: "mcp_grant_scope_ambiguous", required: "dispatchId or exact dispatch-bound scope"};
+    }
     const grantRef = scopedGrants.map((grant) => `McpGrant:${grant.grantId}`).join(",");
-    return {allowed: true, grantRef, grants: scopedGrants, argumentDigest, readOnly};
+    return {allowed: true, grantRef, grants: scopedGrants, scope: scopedGrants.length === 1 ? scopeFromGrant(scopedGrants[0]) : null, argumentDigest, readOnly};
   }
   const grantRef = `remote-principal:${principal.kind}:${principal.id}`;
   if (leaseRequiredForTool(toolName) && !["resource-mcp.lease_claim", "repository-mcp.repository_target_lease_bind"].includes(toolName)) {
@@ -674,6 +685,33 @@ function validateMcpGrant(state, toolName, args, argumentDigest, context = {}) {
     if (args.sessionId && lease.holderRef !== `session:${args.sessionId}`) return {allowed: false, error: "mcp_lease_session_mismatch", grantRef};
   }
   return {allowed: true, grantRef, argumentDigest, readOnly};
+}
+
+function applyAgentGrantScopeArgs(toolName, args, grantCheck = {}) {
+  if (grantCheck.readOnly || !grantCheck.scope || !isWriteTool(toolName)) return args;
+  return {
+    ...args,
+    dispatchId: args.dispatchId || grantCheck.scope.dispatchId,
+    projectId: args.projectId || grantCheck.scope.projectId,
+    taskGroupId: args.taskGroupId || grantCheck.scope.taskGroupId,
+    workId: args.workId || grantCheck.scope.workId,
+    workItemId: args.workItemId || grantCheck.scope.workId,
+    sessionId: args.sessionId || grantCheck.scope.sessionId,
+    runId: args.runId || grantCheck.scope.runId,
+    roleId: args.roleId || grantCheck.scope.roleId
+  };
+}
+
+function scopeFromGrant(grant) {
+  return {
+    dispatchId: grant.dispatchId,
+    projectId: grant.projectId,
+    taskGroupId: grant.taskGroupId,
+    workId: grant.workId,
+    sessionId: grant.sessionId,
+    runId: grant.runId,
+    roleId: grant.roleId
+  };
 }
 
 function activeAgentMcpGrants(state, principal, toolName) {
@@ -1178,13 +1216,46 @@ function sessionMutate(state, args, status) {
   if (!session) return {ok: false, error: "session_not_found"};
   session.status = status;
   session.updatedAt = new Date().toISOString();
+  const controlCommands = [];
+  const directDispatches = [];
   for (const dispatch of state.agentDispatches.filter((item) => item.sessionId === session.sessionId && !["completed", "failed", "cancelled"].includes(item.status))) {
-    if (status === "cancelled") dispatch.status = "cancelled";
-    if (status === "paused") dispatch.status = "blocked";
-    if (status === "active" && ["blocked", "cancelled"].includes(dispatch.status)) dispatch.status = "queued";
+    const commandType = status === "cancelled" ? "cancel_dispatch" : status === "paused" ? "pause_dispatch" : null;
+    const node = dispatch.assignedNodeId ? state.agentRuntimeNodes.find((item) => item.nodeId === dispatch.assignedNodeId) : null;
+    if (commandType && node && ["running", "blocked"].includes(dispatch.status)) {
+      const result = createAgentControlCommand(state, node, {
+        commandType,
+        dispatchId: dispatch.dispatchId,
+        sessionId: session.sessionId,
+        taskGroupId: session.taskGroupId,
+        payload: {reason: `mcp_session_${status}`}
+      }, {
+        actor: "mcp-agent-control",
+        idempotencyKey: `${args.idempotencyKey || "mcp-session-control"}:${dispatch.dispatchId}`
+      });
+      controlCommands.push(result.command);
+      continue;
+    }
+    if (status === "cancelled") {
+      dispatch.status = "cancelled";
+      dispatch.failureReason = "mcp_session_cancelled";
+    }
+    if (status === "paused") {
+      dispatch.status = "blocked";
+      dispatch.blockedReason = "mcp_session_paused";
+    }
+    if (status === "active" && ["blocked", "cancelled"].includes(dispatch.status)) {
+      dispatch.status = "queued";
+      delete dispatch.blockedReason;
+      delete dispatch.failureReason;
+      delete dispatch.assignedNodeId;
+      delete dispatch.claimedAt;
+      delete dispatch.claimExpiresAt;
+    }
+    if (commandType && dispatch.assignedNodeId) revokeDispatchMcpGrants(state, dispatch.assignedNodeId, dispatch.dispatchId, `mcp_session_${status}`);
     dispatch.updatedAt = session.updatedAt;
+    directDispatches.push(dispatch.dispatchId);
   }
-  return {session};
+  return {session, controlCommands, directDispatches};
 }
 
 function capacitySnapshot(state) {
@@ -1343,18 +1414,27 @@ function testResultSubmit(state, args) {
 function permissionProbe(state, args) {
   const subjectId = args.subjectId || args.accountId || "acct_agent_runtime";
   const permission = args.permission || args.action;
-  const grants = state.accessGrants.filter((grant) => grant.status === "active" && grant.subjectRef?.subjectId === subjectId);
+  const resource = normalizePermissionResource(args);
+  const grants = state.accessGrants.filter((grant) =>
+    grant.status === "active" &&
+    grant.subjectRef?.subjectId === subjectId &&
+    resourceMatches(grant.resource, resource)
+  );
   const allowed = grants.some((grant) => (grant.permissions || []).includes(permission) || (grant.permissions || []).includes("*"));
-  return {subjectId, permission, allowed, grants};
+  return {subjectId, permission, resource, allowed, grants};
 }
 
 function permissionRequestSubmit(state, args) {
   const at = new Date().toISOString();
   const request = {
     requestId: args.requestId || createId("perm_req"),
-    subjectId: args.subjectId || "acct_agent_runtime",
-    resource: args.resource || {resourceType: "task_group", resourceId: args.taskGroupId || "tg_runtime_management"},
+    subjectId: args.subjectId || args.subjectRef?.subjectId || "acct_agent_runtime",
+    subjectRef: args.subjectRef || {subjectType: "account", subjectId: args.subjectId || "acct_agent_runtime"},
+    resource: normalizePermissionResource(args),
     permission: args.permission || args.action || "task_group:read",
+    sessionId: args.sessionId,
+    taskGroupId: args.taskGroupId,
+    workId: args.workId || args.workItemId,
     status: "pending",
     reason: args.reason || args.actionReason || "machine permission request",
     createdAt: at,
@@ -1379,10 +1459,77 @@ function permissionStatus(state, args) {
 function permissionResolve(state, args) {
   const request = state.permissionRequests.find((item) => item.requestId === args.requestId);
   if (!request) return {ok: false, error: "permission_request_not_found"};
+  const at = new Date().toISOString();
   request.status = args.status || (args.allowed === false ? "denied" : "approved");
-  request.policyDecisionRef = policyDecisionEval(state, {action: request.permission, resource: request.resource, allowed: request.status === "approved"}).policyDecision.decisionId;
-  request.updatedAt = new Date().toISOString();
-  return {permissionRequest: request};
+  const decision = policyDecisionEval(state, {
+    action: request.permission,
+    resource: request.resource,
+    subjectRef: request.subjectRef || {subjectType: "account", subjectId: request.subjectId},
+    allowed: request.status === "approved",
+    reasonCode: request.status === "approved" ? "permission_request_approved" : "permission_request_denied",
+    evidenceRefs: [`PermissionRequest:${request.requestId}`]
+  }).policyDecision;
+  request.policyDecisionRef = decision.decisionId;
+  request.updatedAt = at;
+  let accessGrant = null;
+  if (request.status === "approved") {
+    accessGrant = ensurePermissionAccessGrant(state, request, args, decision, at);
+    resumePermissionBlockedSession(state, request, at);
+  }
+  return {permissionRequest: request, accessGrant};
+}
+
+function normalizePermissionResource(args = {}) {
+  const resource = args.resource && typeof args.resource === "object" ? args.resource : {};
+  return {
+    resourceType: resource.resourceType || args.resourceType || (args.taskGroupId ? "task_group" : "project"),
+    resourceId: resource.resourceId || args.resourceId || args.taskGroupId || args.projectId || "prj_control_plane"
+  };
+}
+
+function resourceMatches(grantResource = {}, requestedResource = {}) {
+  if (!grantResource.resourceType || !requestedResource.resourceType) return false;
+  return grantResource.resourceType === requestedResource.resourceType && grantResource.resourceId === requestedResource.resourceId;
+}
+
+function ensurePermissionAccessGrant(state, request, args, decision, at) {
+  const subjectRef = request.subjectRef || {subjectType: "account", subjectId: request.subjectId};
+  const permissions = [request.permission].filter(Boolean);
+  const existing = state.accessGrants.find((grant) =>
+    grant.status === "active" &&
+    grant.subjectRef?.subjectType === subjectRef.subjectType &&
+    grant.subjectRef?.subjectId === subjectRef.subjectId &&
+    resourceMatches(grant.resource, request.resource) &&
+    permissions.every((permission) => (grant.permissions || []).includes(permission) || (grant.permissions || []).includes("*"))
+  );
+  if (existing) return existing;
+  const ttlSeconds = Math.max(60, Math.min(86400, Number(args.ttlSeconds || 3600)));
+  const grant = {
+    schemaVersion: "access-control-grant/v1",
+    grantId: createId("grant"),
+    subjectRef,
+    resource: request.resource,
+    role: args.role || (request.resource?.resourceType === "task_group" ? "agent_operator" : "viewer"),
+    permissions,
+    scopeDigest: digestOf({subjectRef, resource: request.resource, permissions}),
+    status: "active",
+    policyDecisionRef: decision.decisionId,
+    expiresAt: args.expiresAt || new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+    auditRef: `audit:permission:${request.requestId}`,
+    createdAt: at,
+    updatedAt: at
+  };
+  state.accessGrants.unshift(grant);
+  return grant;
+}
+
+function resumePermissionBlockedSession(state, request, at) {
+  if (!request.sessionId) return;
+  const session = state.workSessions.find((item) => item.sessionId === request.sessionId);
+  if (!session || session.status !== "permission_required") return;
+  session.status = "active";
+  session.permissionRequestRef = `PermissionRequest:${request.requestId}`;
+  session.updatedAt = at;
 }
 
 function reviewPlanCreate(state, args) {

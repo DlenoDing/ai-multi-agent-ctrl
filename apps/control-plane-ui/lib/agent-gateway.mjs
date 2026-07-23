@@ -18,7 +18,6 @@ const DEFAULT_AGENT_MCP_TOOLS = [
   "skill-mcp.role_skill_parse",
   "skill-mcp.role_skill_resolve",
   "evidence-mcp.artifact_register",
-  "evidence-mcp.checkpoint_submit",
   "evidence-mcp.test_result_submit",
   "permission-mcp.permission_probe",
   "permission-mcp.permission_request_submit",
@@ -57,6 +56,10 @@ export function ensureAgentGatewayCollections(state) {
   state.agentJoinTokens ||= [];
   state.agentRuntimeNodes ||= [];
   state.agentGatewayEvents ||= [];
+  state.agentControlCommands ||= [];
+  state.agentControlSequence ||= 0;
+  state.agentExecutionEvents ||= [];
+  state.agentExecutionSequence ||= 0;
   return state;
 }
 
@@ -65,7 +68,8 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
   const projectId = String(input.projectId || "").trim();
   if (!state.projects.some((project) => project.id === projectId)) throw new Error("join_token_project_not_found");
   const ttlSeconds = boundedInteger(input.ttlSeconds, 60, 86400, 1800);
-  const maxUses = boundedInteger(input.maxUses, 1, 100, 1);
+  if (input.maxUses !== undefined && Number(input.maxUses) !== 1) throw gatewayError("join_token_must_be_one_time", 400);
+  const maxUses = 1;
   const allowedRoles = uniqueStrings(input.allowedRoles?.length ? input.allowedRoles : ["agent-runtime"]);
   const token = `aimac_join_${randomBytes(32).toString("base64url")}`;
   const at = new Date().toISOString();
@@ -89,12 +93,14 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
   state.agentJoinTokens = state.agentJoinTokens.slice(0, 500);
   const serverUrl = trimTrailingSlash(options.publicUrl || "http://127.0.0.1:4317");
   const nodeNameArg = record.expectedNodeName ? ` --node-name ${shellArg(record.expectedNodeName)}` : "";
+  const tokenFileCommand = `umask 077; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT HUP INT TERM; cat > "$tmp/aimac.join" <<'AIMAC_JOIN_TOKEN'\n${token}\nAIMAC_JOIN_TOKEN\ncurl -fsSL ${shellUrl(`${serverUrl}/install-agent.sh`)} | sh -s -- --server ${shellArg(serverUrl)} --join-token-file "$tmp/aimac.join"${nodeNameArg}`;
+  const verifiedTokenFileCommand = `umask 077; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT HUP INT TERM; cat > "$tmp/aimac.join" <<'AIMAC_JOIN_TOKEN'\n${token}\nAIMAC_JOIN_TOKEN\ncd "$tmp" && curl -fsSLO ${shellUrl(`${serverUrl}/install-agent.sh`)} && curl -fsSLO ${shellUrl(`${serverUrl}/install-agent.sh.sha256`)} && ( if command -v sha256sum >/dev/null 2>&1; then sha256sum -c install-agent.sh.sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 -c install-agent.sh.sha256; else printf '%s\\n' 'sha256sum or shasum is required' >&2; exit 1; fi ) && sh install-agent.sh --server ${shellArg(serverUrl)} --join-token-file "$tmp/aimac.join"${nodeNameArg}`;
   appendGatewayEvent(state, "join_token_issued", record.joinTokenId, {projectId, allowedRoles});
   return {
     joinToken: token,
     joinTokenRecord: publicJoinToken(record),
-    installCommand: `curl -fsSL ${shellUrl(`${serverUrl}/install-agent.sh`)} | sh -s -- --server ${shellArg(serverUrl)} --join-token ${shellArg(token)}${nodeNameArg}`,
-    verifiedInstallCommand: `curl -fsSLO ${shellUrl(`${serverUrl}/install-agent.sh`)} && curl -fsSLO ${shellUrl(`${serverUrl}/install-agent.sh.sha256`)} && ( if command -v sha256sum >/dev/null 2>&1; then sha256sum -c install-agent.sh.sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 -c install-agent.sh.sha256; else printf '%s\\n' 'sha256sum or shasum is required' >&2; exit 1; fi ) && sh install-agent.sh --server ${shellArg(serverUrl)} --join-token ${shellArg(token)}${nodeNameArg}`
+    installCommand: tokenFileCommand,
+    verifiedInstallCommand: verifiedTokenFileCommand
   };
 }
 
@@ -169,6 +175,8 @@ export function registerAgentNode(state, input = {}, options = {}) {
       heartbeatUrl: `${publicUrl}/api/agent/v1/heartbeat`,
       selfCheckUrl: `${publicUrl}/api/agent/v1/self-check`,
       dispatchUrl: `${publicUrl}/api/agent/v1/dispatches/next`,
+      controlUrl: `${publicUrl}/api/agent/v1/control`,
+      eventUrl: `${publicUrl}/api/agent/v1/events`,
       mcpUrl: `${publicUrl}/mcp`,
       skillWorksetBaseUrl: `${publicUrl}/api/agent/v1/skill-worksets`,
       runtimeUrl: `${publicUrl}/agent-runtime.mjs`
@@ -243,6 +251,36 @@ export function revokeAgentNode(state, node) {
   return {nodeId: node.nodeId, status: node.status, requeuedDispatchIds};
 }
 
+export function requestAgentNodeRevocation(state, node, input = {}, options = {}) {
+  ensureAgentGatewayCollections(state);
+  const activeDispatchIds = [...(node.activeDispatchIds || [])];
+  const result = createAgentControlCommand(state, node, {
+    ...input,
+    commandType: "revoke",
+    payload: {...(input.payload || {}), activeDispatchIds}
+  }, options);
+  const at = new Date().toISOString();
+  const requeuedDispatchIds = [];
+  for (const dispatch of state.agentDispatches || []) {
+    if (dispatch.assignedNodeId !== node.nodeId || !["running", "blocked"].includes(dispatch.status)) continue;
+    dispatch.status = "queued";
+    dispatch.blockedReason = "assigned_node_revocation_requested_requeued";
+    dispatch.controlCommandRef = result.command.commandId;
+    delete dispatch.assignedNodeId;
+    delete dispatch.claimedAt;
+    delete dispatch.claimExpiresAt;
+    dispatch.updatedAt = at;
+    requeuedDispatchIds.push(dispatch.dispatchId);
+    revokeDispatchMcpGrants(state, node.nodeId, dispatch.dispatchId, "assigned_node_revocation_requested_requeued");
+  }
+  node.status = "draining";
+  node.admission = "read_only";
+  node.activeDispatchIds = [];
+  node.updatedAt = at;
+  appendGatewayEvent(state, "node_revocation_requested", node.nodeId, {commandId: result.command.commandId, requeuedDispatchIds});
+  return {nodeId: node.nodeId, status: node.status, command: result.command, requeuedDispatchIds};
+}
+
 function ensureDispatchMcpGrants(state, dispatch, node) {
   state.mcpGrants ||= [];
   const contract = state.agentTaskContracts.find((item) => item.sessionId === dispatch.sessionId && item.runId === dispatch.runId);
@@ -305,7 +343,7 @@ function ensureDispatchMcpGrants(state, dispatch, node) {
   state.mcpGrants = state.mcpGrants.slice(0, 2000);
 }
 
-function revokeDispatchMcpGrants(state, nodeId, dispatchId, reason) {
+export function revokeDispatchMcpGrants(state, nodeId, dispatchId, reason) {
   const at = new Date().toISOString();
   for (const grant of state.mcpGrants || []) {
     if (grant.agentNodeId !== nodeId || grant.dispatchId !== dispatchId || grant.grantStatus !== "issued") continue;
@@ -327,8 +365,10 @@ export function selfCheckAgentNode(state, node, input = {}) {
   const at = new Date().toISOString();
   node.lastSelfCheckAt = at;
   node.selfCheckDigest = digestOf(checks);
-  node.status = missing.length ? "degraded" : "online";
-  node.admission = missing.length ? "read_only" : "full";
+  if (node.status !== "draining") {
+    node.status = missing.length ? "degraded" : "online";
+    node.admission = missing.length ? "read_only" : "full";
+  }
   node.updatedAt = at;
   appendGatewayEvent(state, "node_self_check", node.nodeId, {status: node.status, missing});
   return {ok: missing.length === 0, admission: node.admission, missingChecks: missing, node: publicAgentNode(node)};
@@ -382,6 +422,179 @@ export function getDispatchForNode(state, node, dispatchId, options = {}) {
   const dispatch = state.agentDispatches.find((item) => item.dispatchId === dispatchId && item.assignedNodeId === node.nodeId);
   if (!dispatch) throw gatewayError("dispatch_not_found", 404);
   return buildDispatchPackage(state, dispatch, node, options);
+}
+
+export function createAgentControlCommand(state, node, input = {}, options = {}) {
+  ensureAgentGatewayCollections(state);
+  if (!node || node.status === "revoked") throw gatewayError("agent_node_not_active", 409);
+  const commandType = normalizeControlCommandType(input.commandType || input.action || "refresh_profile");
+  const at = new Date().toISOString();
+  state.agentControlSequence = Number(state.agentControlSequence || 0) + 1;
+  const command = {
+    schemaVersion: "agent-control-command/v1",
+    commandId: createId("acc"),
+    sequence: state.agentControlSequence,
+    nodeId: node.nodeId,
+    projectId: input.projectId || node.projectIds?.[0] || null,
+    taskGroupId: input.taskGroupId || null,
+    sessionId: input.sessionId || null,
+    dispatchId: input.dispatchId || null,
+    commandType,
+    payload: input.payload || {},
+    status: "queued",
+    requiresAck: true,
+    createdBy: options.actor || "control-plane",
+    idempotencyKey: options.idempotencyKey || null,
+    expiresAt: input.expiresAt || new Date(Date.now() + boundedInteger(input.ttlSeconds, 60, 86400, 1800) * 1000).toISOString(),
+    createdAt: at,
+    updatedAt: at
+  };
+  applyControlCommandPreEffects(state, node, command);
+  state.agentControlCommands.unshift(command);
+  state.agentControlCommands = state.agentControlCommands.slice(0, 2000);
+  appendGatewayEvent(state, "agent_control_command_queued", command.commandId, {nodeId: node.nodeId, commandType, dispatchId: command.dispatchId});
+  return {command};
+}
+
+export function listAgentControlCommands(state, node, input = {}) {
+  ensureAgentGatewayCollections(state);
+  const afterSequence = Number(input.afterSequence || 0);
+  const limit = boundedInteger(input.limit, 1, 50, 20);
+  const nowMs = Date.now();
+  const commands = (state.agentControlCommands || [])
+    .filter((command) =>
+      command.nodeId === node.nodeId &&
+      Number(command.sequence || 0) > afterSequence &&
+      ["queued", "delivered", "received"].includes(command.status) &&
+      (!command.expiresAt || new Date(command.expiresAt).getTime() > nowMs)
+    )
+    .sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0))
+    .slice(0, limit);
+  let deliveredCount = 0;
+  const at = new Date().toISOString();
+  for (const command of commands) {
+    if (command.status !== "queued") continue;
+    command.status = "delivered";
+    command.deliveredAt = at;
+    command.updatedAt = at;
+    deliveredCount += 1;
+  }
+  return {commands, nextCursor: commands.at(-1)?.sequence || afterSequence, deliveredCount};
+}
+
+export function ackAgentControlCommand(state, node, commandId, input = {}) {
+  ensureAgentGatewayCollections(state);
+  const command = state.agentControlCommands.find((item) => item.commandId === commandId && item.nodeId === node.nodeId);
+  if (!command) throw gatewayError("agent_control_command_not_found", 404);
+  const status = ["received", "acked", "completed", "failed", "rejected"].includes(input.status) ? input.status : "acked";
+  command.status = status;
+  command.acknowledgedAt = new Date().toISOString();
+  command.ackResult = sanitizeAckResult(input.result || {});
+  command.resultDigest = digestOf(command.ackResult);
+  command.updatedAt = command.acknowledgedAt;
+  if (status === "completed" && command.commandType === "revoke") finalizeNodeRevocation(state, node, command);
+  appendGatewayEvent(state, "agent_control_command_ack", command.commandId, {nodeId: node.nodeId, status});
+  return {command};
+}
+
+export function submitAgentExecutionEvent(state, node, input = {}) {
+  ensureAgentGatewayCollections(state);
+  const dispatchId = String(input.dispatchId || "").trim();
+  const dispatch = state.agentDispatches.find((item) => item.dispatchId === dispatchId && item.assignedNodeId === node.nodeId);
+  if (!dispatch) throw gatewayError("dispatch_not_found", 404);
+  const eventKey = String(input.eventKey || "").slice(0, 240);
+  if (eventKey) {
+    const existing = (state.agentExecutionEvents || []).find((item) => item.eventKey === eventKey);
+    if (existing) return {event: existing, duplicate: true};
+  }
+  const at = new Date().toISOString();
+  const nextSequence = Math.max(Number(state.agentExecutionSequence || 0) + 1, Date.now() * 1000 + Math.floor(Math.random() * 1000));
+  state.agentExecutionSequence = nextSequence;
+  const eventType = normalizeExecutionEventType(input.eventType || input.phase || "progress");
+  const event = {
+    schemaVersion: "agent-execution-event/v1",
+    eventId: createId("aee"),
+    sequence: nextSequence,
+    nodeId: node.nodeId,
+    dispatchId,
+    projectId: dispatch.projectId,
+    taskGroupId: dispatch.taskGroupId,
+    workItemId: dispatch.workItemId,
+    sessionId: dispatch.sessionId,
+    runId: dispatch.runId,
+    eventType,
+    progressPercent: boundedInteger(input.progressPercent, 0, 100, progressForEventType(eventType)),
+    status: input.status || statusForExecutionEvent(eventType),
+    summary: String(input.summary || "").slice(0, 1000),
+    outputTailDigest: input.outputTailDigest || null,
+    evidenceRefs: uniqueStrings(input.evidenceRefs || []).slice(0, 40),
+    eventKey: eventKey || null,
+    payloadDigest: digestOf(input.payload || input.summary || eventType),
+    createdAt: at
+  };
+  state.agentExecutionEvents.unshift(event);
+  state.agentExecutionEvents = state.agentExecutionEvents.slice(0, 500);
+  updateExecutionProgress(state, dispatch, event, at);
+  appendGatewayEvent(state, "agent_execution_event", event.eventId, {nodeId: node.nodeId, dispatchId, eventType, progressPercent: event.progressPercent});
+  return {event};
+}
+
+function applyControlCommandPreEffects(state, node, command) {
+  if (!["pause_dispatch", "cancel_dispatch"].includes(command.commandType)) return;
+  const dispatch = findNodeDispatchForControl(state, node, command);
+  if (!dispatch) throw gatewayError("control_dispatch_not_active", 409);
+  const at = command.createdAt;
+  command.dispatchId = dispatch.dispatchId;
+  command.projectId = dispatch.projectId;
+  command.taskGroupId = dispatch.taskGroupId;
+  command.sessionId = dispatch.sessionId;
+  dispatch.controlCommandRef = command.commandId;
+  dispatch.controlRequestedAt = at;
+  if (command.commandType === "pause_dispatch") {
+    dispatch.status = "blocked";
+    dispatch.blockedReason = "control_pause_requested";
+  } else {
+    dispatch.status = "cancelled";
+    dispatch.failureReason = "control_cancel_requested";
+  }
+  dispatch.updatedAt = at;
+  revokeDispatchMcpGrants(state, node.nodeId, dispatch.dispatchId, `control_${command.commandType}`);
+  const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
+  if (session) {
+    session.status = command.commandType === "pause_dispatch" ? "blocked" : "aborted";
+    session.controlCommandRef = command.commandId;
+    session.updatedAt = at;
+  }
+  const taskGroup = state.taskGroups.find((item) => item.id === dispatch.taskGroupId);
+  const workItem = taskGroup?.workItems?.find((item) => item.id === dispatch.workItemId);
+  if (workItem) {
+    workItem.status = "blocked";
+    workItem.blockedReason = command.commandType === "pause_dispatch" ? "control_pause_requested" : "control_cancel_requested";
+    workItem.updatedAt = at;
+  }
+  if (taskGroup) {
+    taskGroup.health = "attention";
+    taskGroup.updatedAt = at;
+  }
+  appendGatewayEvent(state, "agent_control_pre_effect_applied", command.commandId, {dispatchId: dispatch.dispatchId, commandType: command.commandType});
+}
+
+function findNodeDispatchForControl(state, node, command) {
+  const candidates = (state.agentDispatches || []).filter((dispatch) =>
+    dispatch.assignedNodeId === node.nodeId &&
+    (command.dispatchId ? dispatch.dispatchId === command.dispatchId : (node.activeDispatchIds || []).includes(dispatch.dispatchId))
+  );
+  return candidates.find((dispatch) => ["running", "blocked"].includes(dispatch.status)) || candidates[0] || null;
+}
+
+function finalizeNodeRevocation(state, node, command) {
+  const at = new Date().toISOString();
+  node.status = "revoked";
+  node.admission = "read_only";
+  node.activeDispatchIds = [];
+  node.updatedAt = at;
+  command.finalizedAt = at;
+  appendGatewayEvent(state, "node_revoked", node.nodeId, {commandId: command.commandId});
 }
 
 export function finishNodeDispatch(state, node, dispatchId, succeeded) {
@@ -503,6 +716,85 @@ function buildSkillWorkset(state, contract, options) {
 function mcpToolsForRoles(roles) {
   const control = roles.some((role) => ["orchestrator", "scheduler", "monitor", "reviewer", "security"].includes(role));
   return uniqueStrings([...DEFAULT_AGENT_MCP_TOOLS, ...(control ? CONTROL_ROLE_MCP_TOOLS : [])]);
+}
+
+function normalizeControlCommandType(value) {
+  const normalized = String(value || "").trim();
+  if (["refresh_profile", "pause_dispatch", "cancel_dispatch", "resume_dispatch", "shutdown", "revoke"].includes(normalized)) return normalized;
+  throw gatewayError("agent_control_command_type_invalid", 400);
+}
+
+function normalizeExecutionEventType(value) {
+  const normalized = String(value || "").trim();
+  if ([
+    "dispatch_received",
+    "skill_synced",
+    "executor_started",
+    "executor_output",
+    "repository_changed",
+    "git_committed",
+    "git_pushed",
+    "checkpoint_prepared",
+    "checkpoint_submitted",
+    "heartbeat",
+    "blocked",
+    "drift_signal",
+    "failed"
+  ].includes(normalized)) return normalized;
+  return "progress";
+}
+
+function progressForEventType(eventType) {
+  return {
+    dispatch_received: 8,
+    skill_synced: 15,
+    executor_started: 25,
+    executor_output: 45,
+    repository_changed: 65,
+    git_committed: 80,
+    git_pushed: 90,
+    checkpoint_prepared: 95,
+    checkpoint_submitted: 100,
+    blocked: 35,
+    drift_signal: 35,
+    failed: 100
+  }[eventType] || 50;
+}
+
+function statusForExecutionEvent(eventType) {
+  if (eventType === "failed") return "failed";
+  if (eventType === "blocked" || eventType === "drift_signal") return "attention";
+  if (eventType === "checkpoint_submitted") return "completed";
+  return "running";
+}
+
+function updateExecutionProgress(state, dispatch, event, at) {
+  dispatch.lastExecutionEventRef = `AgentExecutionEvent:${event.eventId}`;
+  dispatch.lastExecutionEventAt = at;
+  dispatch.progressPercent = Math.max(Number(dispatch.progressPercent || 0), event.progressPercent);
+  dispatch.updatedAt = at;
+  const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
+  if (session) {
+    session.lastExecutionEventRef = dispatch.lastExecutionEventRef;
+    session.progressPercent = Math.max(Number(session.progressPercent || 0), event.progressPercent);
+    if (event.status === "attention" && session.status === "active") session.status = "monitor_attention";
+    session.updatedAt = at;
+  }
+  const taskGroup = state.taskGroups.find((item) => item.id === dispatch.taskGroupId);
+  const workItem = taskGroup?.workItems?.find((item) => item.id === dispatch.workItemId);
+  if (workItem) {
+    workItem.progress = Math.max(Number(workItem.progress || 0), Math.min(99, event.progressPercent));
+    if (event.status === "attention") taskGroup.health = "attention";
+    workItem.updatedAt = at;
+    taskGroup.updatedAt = at;
+  }
+}
+
+function sanitizeAckResult(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const text = JSON.stringify(value);
+  if (text.length > 10000) return {truncated: true, resultDigest: digestOf(text)};
+  return JSON.parse(text);
 }
 
 function roleAllowed(role, allowedRoles) {

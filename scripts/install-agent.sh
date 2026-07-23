@@ -3,6 +3,7 @@ set -eu
 
 SERVER_URL="${AIMAC_SERVER_URL:-__AIMAC_SERVER_URL__}"
 JOIN_TOKEN="${AIMAC_AGENT_JOIN_TOKEN:-}"
+JOIN_TOKEN_FILE=""
 NODE_NAME="${AIMAC_AGENT_NODE_NAME:-$(hostname 2>/dev/null || uname -n)}"
 WORK_DIR="${AIMAC_AGENT_WORK_DIR:-${HOME}/.local/share/aimac-agent}"
 ROLES="${AIMAC_AGENT_ROLES:-}"
@@ -14,6 +15,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --server) SERVER_URL=$2; shift 2 ;;
     --join-token) JOIN_TOKEN=$2; shift 2 ;;
+    --join-token-file) JOIN_TOKEN_FILE=$2; shift 2 ;;
     --node-name) NODE_NAME=$2; shift 2 ;;
     --work-dir) WORK_DIR=$2; shift 2 ;;
     --roles) ROLES=$2; shift 2 ;;
@@ -29,8 +31,15 @@ if [ -z "$SERVER_URL" ]; then
   printf '%s\n' "--server is required" >&2
   exit 2
 fi
+if [ -n "$JOIN_TOKEN_FILE" ]; then
+  if [ ! -f "$JOIN_TOKEN_FILE" ]; then
+    printf '%s\n' "--join-token-file does not exist" >&2
+    exit 2
+  fi
+  JOIN_TOKEN=$(sed -n '1p' "$JOIN_TOKEN_FILE")
+fi
 if [ -z "$JOIN_TOKEN" ]; then
-  printf '%s\n' "--join-token or AIMAC_AGENT_JOIN_TOKEN is required" >&2
+  printf '%s\n' "--join-token-file, --join-token or AIMAC_AGENT_JOIN_TOKEN is required" >&2
   exit 2
 fi
 if ! command -v node >/dev/null 2>&1; then
@@ -65,7 +74,13 @@ esac
 BIN_DIR="$WORK_DIR/bin"
 RUNTIME_PATH="$BIN_DIR/aimac-agent-runtime.mjs"
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aimac-agent-install.XXXXXX")
-trap 'rm -rf "$TMP_DIR"' EXIT HUP INT TERM
+cleanup() {
+  rm -rf "$TMP_DIR"
+  if [ -n "$JOIN_TOKEN_FILE" ] && [ "${AIMAC_AGENT_KEEP_JOIN_TOKEN_FILE:-false}" != "true" ]; then
+    rm -f "$JOIN_TOKEN_FILE" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT HUP INT TERM
 
 mkdir -p "$BIN_DIR" "$WORK_DIR/logs" "$WORK_DIR/run"
 curl -fsSL "$SERVER_URL/agent-runtime.mjs" -o "$TMP_DIR/agent-runtime.mjs"
@@ -87,7 +102,12 @@ fi
 
 install -m 700 "$TMP_DIR/agent-runtime.mjs" "$RUNTIME_PATH"
 
-set -- bootstrap --server "$SERVER_URL" --join-token "$JOIN_TOKEN" --node-name "$NODE_NAME" --work-dir "$WORK_DIR" --configure-global-clients "$CONFIGURE_GLOBAL_CLIENTS"
+if [ -z "$JOIN_TOKEN_FILE" ]; then
+  JOIN_TOKEN_FILE="$TMP_DIR/aimac.join"
+  ( umask 077 && printf '%s' "$JOIN_TOKEN" > "$JOIN_TOKEN_FILE" )
+fi
+
+set -- bootstrap --server "$SERVER_URL" --join-token-file "$JOIN_TOKEN_FILE" --node-name "$NODE_NAME" --work-dir "$WORK_DIR" --configure-global-clients "$CONFIGURE_GLOBAL_CLIENTS"
 if [ -n "$ROLES" ]; then
   set -- "$@" --roles "$ROLES"
 fi
