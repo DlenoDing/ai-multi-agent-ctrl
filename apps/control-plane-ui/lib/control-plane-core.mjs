@@ -2202,7 +2202,7 @@ export function pathAllowlistValid(paths) {
   return Array.isArray(paths) && paths.length > 0 && paths.every(canUseGitPath);
 }
 
-function pathMatchesAllowlist(path, allowlist) {
+export function pathMatchesAllowlist(path, allowlist) {
   if (!canUseGitPath(path)) return false;
   return (allowlist || []).some((pattern) => {
     if (!canUseGitPath(pattern)) return false;

@@ -134,6 +134,30 @@ async function main() {
     throw new Error("write MCP call without idempotencyKey was not rejected");
   }
 
+  const unknownInput = await request("tools/call", {
+    name: "ui-console-mcp.runtime_health_get",
+    arguments: {unknownProperty: true}
+  });
+  if (!unknownInput.structuredContent?.result?.error?.includes("mcp_input_unknown_property")) {
+    throw new Error("MCP input schema did not reject unknown properties");
+  }
+
+  const missingRequiredArgument = await request("tools/call", {
+    name: "model-mcp.model_select",
+    arguments: {idempotencyKey: "doctor-model-select-missing-role", taskGroupId: "tg_runtime_management", workItemId: "work_ai_native_runtime"}
+  });
+  if (!missingRequiredArgument.structuredContent?.result?.error?.includes("mcp_required_argument_missing")) {
+    throw new Error("MCP input schema did not reject missing required arguments");
+  }
+
+  const badRepositoryTarget = await request("tools/call", {
+    name: "repository-mcp.repository_output_target_select",
+    arguments: {idempotencyKey: "doctor-bad-repository-path", taskGroupId: "tg_runtime_management", workItemId: "work_bootstrap", artifactManifestPath: "/tmp/bad.json"}
+  });
+  if (!badRepositoryTarget.structuredContent?.result?.error?.includes("repository_output_target_must_use_git_trackable_paths")) {
+    throw new Error("MCP repository target selection accepted a non-git-trackable path");
+  }
+
   const stateBeforeDryRun = await request("tools/call", {
     name: "orchestration-mcp.state_get",
     arguments: {scope: "summary"}
@@ -205,6 +229,14 @@ async function main() {
   });
   if (!wrongRelease.structuredContent?.result?.error?.includes("lease_fencing_token_mismatch")) {
     throw new Error("lease_release accepted wrong fencing token");
+  }
+
+  const missingFencingRelease = await request("tools/call", {
+    name: "resource-mcp.lease_release",
+    arguments: {idempotencyKey: "doctor-lease-release-missing-fence", leaseId: lease.leaseId, holderRef: "session:doctor-a"}
+  });
+  if (!missingFencingRelease.structuredContent?.result?.error?.includes("mcp_required_argument_missing")) {
+    throw new Error("lease_release accepted a missing fencing token");
   }
 
   const runtimeRun = await request("tools/call", {

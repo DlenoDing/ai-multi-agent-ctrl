@@ -140,6 +140,8 @@ const child = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
     AIMAC_RUNTIME_DIR: doctorRuntimeDir,
     AIMAC_REPOSITORY_ROOT: doctorRepo.work,
     AIMAC_EXECUTION_PROFILE: "verification",
+    AIMAC_STATE_STORE: "runtime_json",
+    DATABASE_URL: "",
     AIMAC_BOOTSTRAP_TOKEN: "doctor-bootstrap-token",
     AIMAC_WORKSPACE_OWNER_TOKEN: "doctor-workspace-token",
     AIMAC_REVIEWER_TOKEN: "doctor-reviewer-token",

@@ -59,6 +59,7 @@ required_runtime_files = %w[
   scripts/init-control-plane.mjs
   scripts/doctor.mjs
   scripts/doctor-mcp.mjs
+  scripts/doctor-mcp-runtime-run.mjs
   scripts/register-mcp-client.mjs
   scripts/sync-agent-skills.mjs
   apps/mcp-server/server.mjs
@@ -349,7 +350,9 @@ state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-
 doctor_source = File.read(File.join(ROOT, "scripts/doctor.mjs"))
 mcp_source = File.read(File.join(ROOT, "apps/mcp-server/server.mjs"))
 mcp_doctor_source = File.read(File.join(ROOT, "scripts/doctor-mcp.mjs"))
+mcp_runtime_doctor_source = File.read(File.join(ROOT, "scripts/doctor-mcp-runtime-run.mjs"))
 mcp_register_source = File.read(File.join(ROOT, "scripts/register-mcp-client.mjs"))
+skill_sync_source = File.read(File.join(ROOT, "scripts/sync-agent-skills.mjs"))
 run_with_env_source = File.read(File.join(ROOT, "scripts/run-with-env.mjs"))
 contract_check_source = File.read(File.join(ROOT, "scripts/contract-check.mjs"))
 {
@@ -412,25 +415,34 @@ errors << "MCP server must enforce write idempotency" unless mcp_source.include?
 errors << "MCP server must bind MCP token to generated runtime token file" unless mcp_source.include?("currentMcpTokenDigest") && mcp_source.include?("mcp_write_token_binding_required")
 errors << "MCP server must make write dryRun non-mutating" unless mcp_source.include?("wouldCall") && mcp_doctor_source.include?("write MCP dryRun changed stateVersion")
 errors << "MCP server must reject idempotency key reuse conflicts" unless mcp_source.include?("idempotency_key_reuse_conflict") && mcp_doctor_source.include?("MCP idempotency key reuse")
+errors << "MCP doctor must exercise input validation" unless mcp_doctor_source.include?("MCP input schema did not reject unknown properties") && mcp_doctor_source.include?("MCP repository target selection accepted a non-git-trackable path")
 errors << "MCP server must require write grants" unless mcp_source.include?("mcp_write_grant_required") && mcp_source.include?("validateMcpGrant")
 errors << "MCP server must block runtime_run unless explicitly enabled" unless mcp_source.include?("AIMAC_MCP_ENABLE_RUNTIME_RUN") && mcp_doctor_source.include?("runtime_run was not blocked")
+errors << "MCP doctor must verify enabled runtime_run end-to-end" unless package_json.dig("scripts", "mcp:doctor").to_s.include?("doctor-mcp-runtime-run.mjs") && mcp_runtime_doctor_source.include?("mcp runtime_run doctor ok")
 errors << "MCP server must reject full state scope by default" unless mcp_source.include?("full_state_scope_not_allowed") && mcp_doctor_source.include?("state_get full scope was not denied")
 errors << "MCP server must enforce unique active lease and fencing token" unless mcp_source.include?("lease_already_active") && mcp_source.include?("lease_fencing_token_mismatch") && mcp_doctor_source.include?("lease_claim allowed a second active holder")
 errors << "MCP grant validation must require active leases for lease-bound tools" unless mcp_source.include?("active_mcp_lease_required") && mcp_source.include?("leaseRequiredForTool")
+errors << "MCP grant validation must require fencing tokens for lease-bound tools" unless mcp_source.include?("mcp_lease_fencing_token_required")
+errors << "MCP server must validate tool input schemas at call time" unless mcp_source.include?("validateInputArgs") && mcp_source.include?("mcp_input_unknown_property") && mcp_source.include?("mcp_required_argument_missing")
+errors << "MCP repository target selection must reject non-git-trackable paths" unless mcp_source.include?("repository_output_target_must_use_git_trackable_paths") && mcp_source.include?("pathAllowlistValid")
 errors << "MCP server must mark tool results untrusted" unless mcp_source.include?("untrustedResult")
 errors << "HTTP server must use shared state-store" unless server_source.include?("readStoredState") && server_source.include?("writeStoredState")
 errors << "MCP server must use shared state-store" unless mcp_source.include?("readStoredState") && mcp_source.include?("writeStoredState")
 errors << "state-store must support PostgreSQL JSONB authority" unless state_store_source.include?("AIMAC_STATE_STORE") && state_store_source.include?("jsonb") && state_store_source.include?("psql")
+errors << "state-store must enforce versioned write conflict detection" unless state_store_source.include?("expectedStateVersion") && state_store_source.include?("AIMAC_STATE_CONFLICT")
+errors << "skills sync must use shared state-store" unless skill_sync_source.include?("readStoredState") && skill_sync_source.include?("writeStoredState")
+errors << "doctor must isolate verification state from configured PostgreSQL stores" unless doctor_source.include?("AIMAC_STATE_STORE: \"runtime_json\"") && !package_json.dig("scripts", "doctor").to_s.include?("init-control-plane")
 errors << "MCP register script must generate Codex config" unless mcp_register_source.include?("codex_config.toml")
 errors << "MCP register script must generate Claude config" unless mcp_register_source.include?("claude_desktop_config.json")
 errors << "MCP register script must generate Cursor config" unless mcp_register_source.include?("cursor_mcp.json")
 errors << "MCP register script must enable local write grants in generated configs" unless mcp_register_source.include?("AIMAC_MCP_LOCAL_WRITE_ENABLE")
+errors << "MCP register script must allow env-controlled output dir" unless mcp_register_source.include?("AIMAC_MCP_CONFIG_DIR")
 errors << "MCP doctor must spawn from generated client config" unless mcp_doctor_source.include?("mcp-server.json") && mcp_doctor_source.include?("serverConfig.command")
 errors << "npm scripts must load .env through run-with-env wrapper" unless package_json.dig("scripts", "start").to_s.include?("run-with-env") && package_json.dig("scripts", "mcp:start").to_s.include?("run-with-env")
 errors << "run-with-env must parse .env before importing target script" unless run_with_env_source.include?("loadDotEnv") && run_with_env_source.include?("await import")
 errors << "contract-check must validate runtime and McpGrant schemas" unless contract_check_source.include?("RuntimeBootstrapProfile") || (contract_check_source.include?("runtime-bootstrap.schema.json") && contract_check_source.include?("mcp-grant.schema.json"))
 errors << "package validate must run contract:check" unless package_json.dig("scripts", "validate").to_s.include?("contract:check")
-errors << "doctor script must run MCP doctor" unless package_json.dig("scripts", "doctor").to_s.include?("doctor-mcp.mjs")
+errors << "doctor script must run MCP doctor" unless package_json.dig("scripts", "doctor").to_s.include?("mcp:doctor")
 errors << "seed runtime must expose MCP metadata" unless seed_state.dig("runtime", "mcp", "toolCount").to_i >= expected_mcp_tools.values.flatten.length
 %w[mcpStart mcpRegister mcpDoctor].each do |command_name|
   errors << "seed runtime commands missing #{command_name}" unless seed_state.dig("runtime", "commands", command_name)

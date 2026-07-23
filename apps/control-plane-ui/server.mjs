@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureStoredState, markRuntimeStorage, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
+import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
 import {
   canUseGitPath,
   acceptAgentCheckpoint,
@@ -119,7 +119,7 @@ function readState() {
 
 function writeState(state) {
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
-  writeStoredState(state, {root, runtimeDir, statePath, seedPath, buildInitialState});
+  writeStoredState(state, {root, runtimeDir, statePath, seedPath, buildInitialState, expectedStateVersion: state.__loadedStateVersion});
 }
 
 function audit(state, actor, action, subject, result = "succeeded") {
@@ -1190,6 +1190,10 @@ const server = createServer((req, res) => {
   }
 
   handleApi(req, res).catch((error) => {
+    if (isStateStoreConflict(error)) {
+      json(res, 409, {error: "state_write_conflict", retryable: true, message: error.message});
+      return;
+    }
     json(res, 500, {error: "server_error", message: error.message});
   });
 });

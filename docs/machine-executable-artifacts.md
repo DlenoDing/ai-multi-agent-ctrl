@@ -154,4 +154,4 @@ drift_detected
 
 不要让实现代码手写一套和 `spec/` 不一致的对象模型。
 
-当前本地可执行基线提供 `apps/mcp-server/server.mjs` 作为内置 stdio MCP server，`scripts/doctor-mcp.mjs` 作为协议级 contract smoke，`scripts/validate-specs.rb` 会校验 MCP 入口、工具清单、客户端注册命令和 runtime seed 元数据。完整 codegen 管线属于后续系统外升级项，运行中的项目执行链路不得自动修改生成策略。
+当前本地可执行基线提供 `apps/mcp-server/server.mjs` 作为内置 stdio MCP server，`scripts/doctor-mcp.mjs` 作为协议级、输入校验、idempotency、lease/fencing contract smoke，`scripts/doctor-mcp-runtime-run.mjs` 作为启用后 `runtime_run` 的真实 dispatch/executor/commit/push/checkpoint 验收，`scripts/validate-specs.rb` 会校验 MCP 入口、工具清单、客户端注册命令、state-store 冲突保护和 runtime seed 元数据。完整 codegen 管线属于后续系统外升级项，运行中的项目执行链路不得自动修改生成策略。

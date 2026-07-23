@@ -2,7 +2,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureStoredState, markRuntimeStorage, readStoredState, writeStoredState } from "../control-plane-ui/lib/state-store.mjs";
+import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredState, writeStoredState } from "../control-plane-ui/lib/state-store.mjs";
 import {
   acceptAgentCheckpoint,
   buildTaskContract,
@@ -10,6 +10,7 @@ import {
   computeCloseBarrier,
   computeCompletionReadiness,
   computeProgressSnapshots,
+  canUseGitPath,
   createId,
   decideSessionPlacement,
   digestOf,
@@ -17,6 +18,8 @@ import {
   evaluateRoleDrift,
   gitHead,
   gitRemoteUrl,
+  pathAllowlistValid,
+  pathMatchesAllowlist,
   registerRoleSkillOverlay,
   runAutonomousCycle,
   runAgentRuntimeWorker,
@@ -159,7 +162,7 @@ function loadState() {
 function writeState(state) {
   ensureMcpCollections(state);
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
-  writeStoredState(state, {root, runtimeDir, statePath, seedPath, buildInitialState});
+  writeStoredState(state, {root, runtimeDir, statePath, seedPath, buildInitialState, expectedStateVersion: state.__loadedStateVersion});
 }
 
 function buildInitialState() {
@@ -228,7 +231,8 @@ function inputSchemaFor(name) {
   const base = {
     type: "object",
     properties: commonInputProperties(),
-    additionalProperties: false
+    additionalProperties: false,
+    ...(requiredInputPropertiesFor(name).length ? {required: requiredInputPropertiesFor(name)} : {})
   };
   if (isReadOnlyTool(name)) return base;
   return {
@@ -237,8 +241,38 @@ function inputSchemaFor(name) {
       ...base.properties,
       actionReason: {type: "string"},
       dryRun: {type: "boolean"}
-    }
+    },
+    ...(requiredInputPropertiesFor(name).length ? {required: requiredInputPropertiesFor(name)} : {})
   };
+}
+
+function requiredInputPropertiesFor(name) {
+  return {
+    "orchestration-mcp.work_item_create": ["taskGroupId"],
+    "orchestration-mcp.work_assign": ["taskGroupId", "workItemId", "roleId"],
+    "orchestration-mcp.orchestrator_run": ["taskGroupId"],
+    "agent-control-mcp.session_start": ["taskGroupId", "workItemId"],
+    "agent-control-mcp.session_pause": ["sessionId"],
+    "agent-control-mcp.session_cancel": ["sessionId"],
+    "agent-control-mcp.session_recover": ["sessionId"],
+    "scheduler-mcp.model_select": ["taskGroupId", "workItemId", "roleId"],
+    "scheduler-mcp.session_place": ["taskGroupId", "workItemId", "roleId"],
+    "scheduler-mcp.work_assign": ["taskGroupId", "workItemId", "roleId"],
+    "scheduler-mcp.execution_topology_plan": ["taskGroupId"],
+    "model-mcp.model_select": ["taskGroupId", "workItemId", "roleId"],
+    "resource-mcp.lease_release": ["leaseId", "holderRef", "fencingToken"],
+    "skill-mcp.role_skill_overlay_validate": ["roleSkillRef"],
+    "evidence-mcp.checkpoint_submit": ["taskGroupId", "workId", "sessionId", "runId"],
+    "permission-mcp.permission_status": ["requestId"],
+    "permission-mcp.permission_resolve": ["requestId"],
+    "identity-mcp.account_suspend": ["accountId"],
+    "identity-mcp.grant_revoke": ["grantId"],
+    "definition-mcp.shared_definition_publish": ["contractId"],
+    "definition-mcp.shared_definition_consumer_bind": ["contractId"],
+    "definition-mcp.shared_definition_conflict_report": ["contractId"],
+    "repository-mcp.repository_output_target_select": ["taskGroupId", "workItemId"],
+    "repository-mcp.repository_target_lease_bind": ["holderRef"]
+  }[name] || [];
 }
 
 function commonInputProperties() {
@@ -253,6 +287,7 @@ function commonInputProperties() {
     actionReason: string,
     afterSequence: number,
     allowed: boolean,
+    autoSyncSkills: boolean,
     approvalId: string,
     artifactId: string,
     artifactManifestPath: string,
@@ -300,8 +335,10 @@ function commonInputProperties() {
     idempotencyKey: string,
     leaseId: string,
     locatorRefs: array,
+    maxJobs: number,
     mcpGrantId: string,
     messageId: string,
+    mode: string,
     modelSelectionDecision: object,
     name: string,
     nodeId: string,
@@ -320,6 +357,7 @@ function commonInputProperties() {
     payload: object,
     permission: string,
     projectId: string,
+    pushRefs: array,
     quorum: number,
     reason: string,
     recipientRole: string,
@@ -349,6 +387,7 @@ function commonInputProperties() {
     roleSkillRef: string,
     roles: array,
     roomId: string,
+    runId: string,
     scope: string,
     scopeRefs: array,
     selectionMode: string,
@@ -418,7 +457,10 @@ async function callTool(name, args = {}) {
   const idempotencyKey = args.idempotencyKey || null;
   const argumentDigest = digestOf(sanitizeArgs(args));
   let result;
-  if (isWriteTool(name) && !idempotencyKey) {
+  const inputValidation = validateInputArgs(name, args);
+  if (!inputValidation.ok) {
+    result = inputValidation;
+  } else if (isWriteTool(name) && !idempotencyKey) {
     result = {ok: false, error: "idempotency_key_required"};
   } else {
     const existingRecord = isWriteTool(name) ? state.idempotencyRecords[idempotencyKey] : null;
@@ -478,13 +520,26 @@ async function callTool(name, args = {}) {
     state.mcpCalls.unshift(mcpCall);
     state.mcpCalls = state.mcpCalls.slice(0, 300);
   }
-  if (isWriteTool(name) && result.ok !== false && !result.replayed && !args.dryRun) {
-    state.stateVersion = beforeVersion + 1;
-    writeState(state);
-  } else if (result.ok === false) {
-    if (isWriteTool(name) && !args.dryRun) writeState(state);
-  } else if (isWriteTool(name) && !args.dryRun) {
-    writeState(state);
+  try {
+    if (isWriteTool(name) && result.ok !== false && !result.replayed && !args.dryRun) {
+      state.stateVersion = beforeVersion + 1;
+      writeState(state);
+    } else if (result.ok === false) {
+      if (isWriteTool(name) && !args.dryRun) writeState(state);
+    } else if (isWriteTool(name) && !args.dryRun) {
+      writeState(state);
+    }
+  } catch (error) {
+    if (!isStateStoreConflict(error)) throw error;
+    result = {ok: false, error: "state_write_conflict", retryable: true, message: error.message};
+    return {
+      ok: false,
+      tool: name,
+      stateVersion: beforeVersion,
+      result,
+      untrustedResult: true,
+      auditRef: mcpCall.callId
+    };
   }
   return {
     ok: result.ok !== false,
@@ -494,6 +549,59 @@ async function callTool(name, args = {}) {
     untrustedResult: true,
     auditRef: mcpCall.callId
   };
+}
+
+function validateInputArgs(name, args) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return {ok: false, error: "mcp_input_must_be_object"};
+  }
+  const schema = inputSchemaFor(name);
+  const properties = schema.properties || {};
+  for (const key of Object.keys(args)) {
+    if (!properties[key]) return {ok: false, error: "mcp_input_unknown_property", property: key};
+    if (!schemaTypeMatches(args[key], properties[key].type)) {
+      return {ok: false, error: "mcp_input_type_mismatch", property: key, expectedType: properties[key].type};
+    }
+  }
+  for (const key of requiredInputPropertiesFor(name)) {
+    if (!hasInputArg(args, key)) return {ok: false, error: "mcp_required_argument_missing", argument: key};
+  }
+  if (name === "resource-mcp.lease_claim" && !hasAnyInputArg(args, ["repositoryOutputTargetRef", "targetId"])) {
+    return {ok: false, error: "mcp_required_argument_missing", argument: "repositoryOutputTargetRef"};
+  }
+  if (name === "repository-mcp.repository_target_lease_bind" && !hasAnyInputArg(args, ["repositoryOutputTargetRef", "targetId"])) {
+    return {ok: false, error: "mcp_required_argument_missing", argument: "repositoryOutputTargetRef"};
+  }
+  if (name === "repository-mcp.repository_output_target_select") {
+    const pathAllowlist = args.pathAllowlist || ["docs/**", "apps/**", "scripts/**", "spec/**", "data/**", "package.json", "Dockerfile", "docker-compose.yml", "README.md"];
+    const artifactManifestPath = args.artifactManifestPath || `docs/artifact-manifests/${args.workItemId}.json`;
+    if (!pathAllowlistValid(pathAllowlist) || !canUseGitPath(artifactManifestPath)) {
+      return {ok: false, error: "repository_output_target_must_use_git_trackable_paths"};
+    }
+    if (!pathMatchesAllowlist(artifactManifestPath, pathAllowlist)) {
+      return {ok: false, error: "artifact_manifest_outside_allowlist"};
+    }
+  }
+  return {ok: true};
+}
+
+function schemaTypeMatches(value, expectedType) {
+  if (value === undefined) return true;
+  if (expectedType === "array") return Array.isArray(value);
+  if (expectedType === "object") return value !== null && typeof value === "object" && !Array.isArray(value);
+  if (expectedType === "number") return typeof value === "number" && Number.isFinite(value);
+  return typeof value === expectedType;
+}
+
+function hasInputArg(args, key) {
+  if (args[key] === undefined || args[key] === null) return false;
+  if (typeof args[key] === "string") return args[key].trim().length > 0;
+  if (Array.isArray(args[key])) return args[key].length > 0;
+  return true;
+}
+
+function hasAnyInputArg(args, keys) {
+  return keys.some((key) => hasInputArg(args, key));
 }
 
 function ensureDefaultMcpGrants(state) {
@@ -600,7 +708,10 @@ function validateMcpGrant(state, toolName, args, argumentDigest) {
     const leaseId = args.leaseId || args.leaseRef || args.repositoryLeaseRef;
     const lease = state.leases.find((item) => item.leaseId === leaseId && item.status === "active");
     if (!lease) return {allowed: false, error: "active_mcp_lease_required", grantRef: grant.grantId};
-    if (args.fencingToken && lease.fencingToken !== args.fencingToken) return {allowed: false, error: "mcp_lease_fencing_token_mismatch", grantRef: grant.grantId};
+    if (!args.fencingToken) return {allowed: false, error: "mcp_lease_fencing_token_required", grantRef: grant.grantId};
+    if (String(lease.fencingToken) !== String(args.fencingToken)) return {allowed: false, error: "mcp_lease_fencing_token_mismatch", grantRef: grant.grantId};
+    if (args.holderRef && lease.holderRef !== args.holderRef) return {allowed: false, error: "mcp_lease_holder_mismatch", grantRef: grant.grantId};
+    if (args.sessionId && lease.holderRef !== `session:${args.sessionId}`) return {allowed: false, error: "mcp_lease_session_mismatch", grantRef: grant.grantId};
   }
   if (toolName === "agent-control-mcp.runtime_run") {
     const serviceAccount = state.accounts.find((account) => account.accountId === "acct_agent_runtime" && account.accountType === "service_account" && (account.roles || []).includes("service_agent_runtime"));
@@ -1096,7 +1207,9 @@ function classifyDerivedTask(state, args) {
 }
 
 function claimLease(state, args) {
-  const target = state.repositoryOutputs.find((item) => item.targetId === args.repositoryOutputTargetRef || item.targetId === args.targetId) || repositoryOutputTargetSelect(state, args).repositoryOutputTarget;
+  const targetRef = args.repositoryOutputTargetRef || args.targetId;
+  const target = state.repositoryOutputs.find((item) => item.targetId === targetRef);
+  if (!target) return {ok: false, error: "repository_output_target_not_found", targetRef};
   const at = new Date().toISOString();
   const resourceRef = `RepositoryOutputTarget:${target.targetId}`;
   const holderRef = args.holderRef || `session:${args.sessionId || createId("sess")}`;
@@ -1128,7 +1241,8 @@ function releaseLease(state, args) {
   const lease = state.leases.find((item) => item.leaseId === args.leaseId);
   if (!lease) return {ok: false, error: "lease_not_found"};
   if (args.holderRef && lease.holderRef !== args.holderRef) return {ok: false, error: "lease_holder_mismatch"};
-  if (args.fencingToken && lease.fencingToken !== args.fencingToken) return {ok: false, error: "lease_fencing_token_mismatch"};
+  if (!args.fencingToken) return {ok: false, error: "lease_fencing_token_required"};
+  if (String(lease.fencingToken) !== String(args.fencingToken)) return {ok: false, error: "lease_fencing_token_mismatch"};
   lease.status = "released";
   lease.updatedAt = new Date().toISOString();
   return {lease};
@@ -1633,6 +1747,14 @@ function repositoryOutputTargetSelect(state, args) {
   const taskGroup = findTaskGroup(state, args.taskGroupId);
   const workItem = findWorkItem(state, taskGroup?.id, args.workItemId);
   const at = new Date().toISOString();
+  const pathAllowlist = args.pathAllowlist || ["docs/**", "apps/**", "scripts/**", "spec/**", "data/**", "package.json", "Dockerfile", "docker-compose.yml", "README.md"];
+  const artifactManifestPath = args.artifactManifestPath || `docs/artifact-manifests/${args.workItemId || workItem?.id || "work"}.json`;
+  if (!pathAllowlistValid(pathAllowlist) || !canUseGitPath(artifactManifestPath)) {
+    return {ok: false, error: "repository_output_target_must_use_git_trackable_paths"};
+  }
+  if (!pathMatchesAllowlist(artifactManifestPath, pathAllowlist)) {
+    return {ok: false, error: "artifact_manifest_outside_allowlist"};
+  }
   const target = {
     schemaVersion: "repository-output-target/v1",
     targetId: args.targetId || createId("rot"),
@@ -1645,9 +1767,9 @@ function repositoryOutputTargetSelect(state, args) {
     branch: args.branch || "main",
     status: "selected",
     outputPolicy: "project_git_repository_only",
-    pathAllowlist: args.pathAllowlist || ["docs/**", "apps/**", "scripts/**", "spec/**", "data/**", "package.json", "Dockerfile", "docker-compose.yml", "README.md"],
+    pathAllowlist,
     baseRef: args.baseRef || gitHead(repositoryRoot),
-    artifactManifestPath: args.artifactManifestPath || `docs/artifact-manifests/${args.workItemId || workItem?.id || "work"}.json`,
+    artifactManifestPath,
     decisionRecordRef: args.decisionRecordRef || `decision:repository-target:${at}`,
     auditRef: args.auditRef || `audit:repository-target:${at}`,
     createdAt: at,

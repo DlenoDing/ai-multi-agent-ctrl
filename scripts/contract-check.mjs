@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { createMcpGrant, createMcpToolDefinitions, mcpToolNames } from "../apps/mcp-server/server.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -26,13 +28,53 @@ for (const tool of toolDefs) {
   if (!toolNamePattern.test(tool.name)) errors.push(`MCP tool name invalid: ${tool.name}`);
   if (tool.inputSchema?.type !== "object") errors.push(`MCP tool ${tool.name} inputSchema must be object`);
   if (tool.inputSchema?.additionalProperties !== false) errors.push(`MCP tool ${tool.name} inputSchema must be closed`);
+  for (const requiredKey of tool.inputSchema?.required || []) {
+    if (!tool.inputSchema.properties?.[requiredKey]) errors.push(`MCP tool ${tool.name} required key ${requiredKey} missing from properties`);
+  }
   if (tool.outputSchema?.type !== "object") errors.push(`MCP tool ${tool.name} outputSchema must be object`);
 }
+
+verifyRuntimeJsonConflict(errors);
 
 if (errors.length) {
   console.error("contract check failed:");
   for (const error of errors) console.error(`- ${error}`);
   process.exit(1);
+}
+
+function verifyRuntimeJsonConflict(output) {
+  const previousStore = process.env.AIMAC_STATE_STORE;
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  process.env.AIMAC_STATE_STORE = "runtime_json";
+  delete process.env.DATABASE_URL;
+  const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-contract-state-"));
+  const options = {
+    root,
+    runtimeDir,
+    statePath: join(runtimeDir, "control-plane-state.json"),
+    seedPath: resolve(root, "data", "seed-state.json"),
+    buildInitialState: () => ({stateVersion: 1, runtime: {}})
+  };
+  try {
+    writeStoredState({stateVersion: 1, runtime: {}}, options);
+    const first = readStoredState(options);
+    const second = readStoredState(options);
+    first.stateVersion = 2;
+    writeStoredState(first, {...options, expectedStateVersion: first.__loadedStateVersion});
+    second.stateVersion = 2;
+    try {
+      writeStoredState(second, {...options, expectedStateVersion: second.__loadedStateVersion});
+      output.push("runtime_json state-store did not reject stale expectedStateVersion");
+    } catch (error) {
+      if (!isStateStoreConflict(error)) output.push(`runtime_json state-store stale write raised wrong error: ${error.message}`);
+    }
+  } finally {
+    if (previousStore === undefined) delete process.env.AIMAC_STATE_STORE;
+    else process.env.AIMAC_STATE_STORE = previousStore;
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
+    rmSync(runtimeDir, {recursive: true, force: true});
+  }
 }
 
 console.log("contract check ok");
