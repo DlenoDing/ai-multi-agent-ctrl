@@ -96,6 +96,7 @@ stable_prefix_digest=<ruleset/role/base protocol digest>
 effective_instruction_packet_ref=<effective packet id>
 shared_definition_refs=<contract ids and digests>
 input_locators=<short list>
+language_policy_digest=<task group language policy digest>
 delta_payload=<only changed request>
 output_contract_ref=<schema or checkpoint contract>
 cache_key=<stable deterministic key>
@@ -108,6 +109,7 @@ token_budget=<input/output limits and target delta tokens>
 2. 变量内容使用 delta payload，限定 role、scope、stop condition 和 output contract。
 3. 多角色广播不得发送无界自由文本，必须发送可消费的 event envelope 或 checkpoint/ref。
 4. 需要共用的术语、状态、接口、数据模型、错误码、设计 token 和质量标准必须引用 `SharedDefinitionContract`。
+5. 任务组统一语言使用 `LanguagePolicy` 和 digest 传递；UI 只在任务组设置处修改，dispatch、Room、execution event、checkpoint 和 review 输出不得自行切换语言。
 5. Cache key 必须由 role、ruleset digest、shared definition digest、task contract digest 和 output contract 组成，降低重复上下文成本。
 
 ## 7. 共享定义归属
@@ -211,6 +213,7 @@ AI-native 运行入口：
 | `POST /api/agent/v1/dispatches/:id/checkpoint` | 控制平面从远端 Git 独立取证后接受节点 checkpoint |
 | `POST /api/model-selection/decide` | 由 Scheduler/Model Registry 生成 `ModelSelectionDecision` |
 | `POST /api/session-placement/decide` | 按长任务新会话、短任务子 agent 规则生成 `SessionPlacementDecision` |
+| `POST /api/task-groups/:taskGroupId/language-policy` | 在任务组权限内设置统一语言策略，并让后续契约、dispatch、事件和 checkpoint 绑定同一 digest |
 | `GET /api/task-groups/:taskGroupId/readiness` | 计算 `CompletionReadinessCheck` 和 `CloseBarrier` |
 
 控制台实现文件：

@@ -13,6 +13,9 @@
     "status",
     "objectiveBoundaryDigest",
     "digestRefs",
+    "languagePolicy",
+    "languagePolicyDigest",
+    "languageDirective",
     "sharedDefinitionRefs",
     "nextActionDraftDigest",
     "actionBasisRef",
@@ -56,6 +59,17 @@
     },
     "digestRefs": {
       "$ref": "#/$defs/refArray"
+    },
+    "languagePolicy": {
+      "$ref": "language-policy.schema.json"
+    },
+    "languagePolicyDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "languageDirective": {
+      "type": "string",
+      "minLength": 1
     },
     "sharedDefinitionRefs": {
       "type": "array",

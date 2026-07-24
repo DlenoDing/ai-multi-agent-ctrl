@@ -1,7 +1,8 @@
 import { createServer } from "node:http";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
@@ -46,7 +47,8 @@ import {
   runAgentRuntimeWorker,
   runAutonomousCycle,
   selectModel,
-  syncSkillSource
+  syncSkillSource,
+  updateTaskGroupLanguagePolicy
 } from "./lib/control-plane-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -252,19 +254,31 @@ function writeState(state) {
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
   writeStoredState(state, {root, runtimeDir, statePath, seedPath, buildInitialState, expectedStateVersion: state.__loadedStateVersion});
   notifyLongPollWaiters("state");
+  const nodeIdsWithQueuedCommands = new Set((state.agentControlCommands || [])
+    .filter((command) => command.status === "queued")
+    .map((command) => command.nodeId));
+  for (const nodeId of nodeIdsWithQueuedCommands) notifyLongPollWaiters(`agent-control:${nodeId}`);
 }
 
 function audit(state, actor, action, subject, result = "succeeded") {
   ensureControlState(state);
-  state.auditLog.unshift({
+  const entry = {
     id: `audit_${Date.now()}_${Math.random().toString(16).slice(2)}`,
     at: now(),
     actor,
     action,
     subject,
-    result
-  });
+    result,
+    stateVersion: Number(state.stateVersion || 0),
+    prevHash: state.auditLog[0]?.rowHash || state.auditChainHead || "sha256:genesis"
+  };
+  entry.rowHash = digestOf(entry);
+  state.auditLog.unshift(entry);
   state.auditLog = state.auditLog.slice(0, 80);
+  state.auditChainHead = entry.rowHash;
+  try {
+    appendFileSync(join(runtimeDir, "audit-log.jsonl"), `${JSON.stringify(entry)}\n`, {mode: 0o600});
+  } catch {}
 }
 
 function ensureControlState(state) {
@@ -485,6 +499,22 @@ function isLoopbackAddress(address) {
   return value === "127.0.0.1" || value === "::1" || value === "::ffff:127.0.0.1";
 }
 
+const loginAttempts = new Map();
+
+function loginRateLimited(req) {
+  const ip = String(req.socket.remoteAddress || "unknown");
+  const nowMs = Date.now();
+  const maxAttempts = Math.max(3, Number(process.env.AIMAC_LOGIN_ATTEMPTS_PER_MINUTE || 10));
+  const entry = loginAttempts.get(ip);
+  if (!entry || nowMs > entry.resetAt) {
+    if (loginAttempts.size > 10000) loginAttempts.clear();
+    loginAttempts.set(ip, {count: 1, resetAt: nowMs + 60000});
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > maxAttempts;
+}
+
 function authenticateRequest(req, state) {
   const token = bearerToken(req);
   if (!token) return null;
@@ -582,7 +612,8 @@ function canReadTaskGroup(state, account, taskGroupId) {
 }
 
 function scopedStateForAccount(state, account, session) {
-  const cloned = JSON.parse(JSON.stringify(state));
+  const cloned = {...state};
+  delete cloned.__loadedStateVersion;
   const isSystem = account.accountType === "system_admin" || (account.permissions || []).includes("system:*");
   cloned.authSessions = (state.authSessions || [])
     .filter((item) => isSystem || item.sessionId === session.sessionId)
@@ -653,12 +684,49 @@ function scopedStateForAccount(state, account, session) {
   cloned.runtimeIssuePatterns = [];
   cloned.runtimeIssueSamples = [];
   cloned.systemUpgradeCandidates = [];
+  cloned.agentGatewayEvents = [];
+  cloned.mcpCalls = [];
+  cloned.mcpProbeNodes = [];
+  cloned.transitionEvidence = [];
+  cloned.ruleSourceResolutions = [];
+  cloned.externalUpgradeImports = [];
+  cloned.mcpGrants = (state.mcpGrants || []).filter((grant) => grant.taskGroupId && visibleTaskGroupIds.has(grant.taskGroupId));
+  const visibleRoomIds = new Set([...visibleTaskGroupIds].map((taskGroupId) => `room_${taskGroupId}`));
+  cloned.roomMessages = (state.roomMessages || []).filter((message) => visibleRoomIds.has(message.roomId));
+  cloned.roomParticipants = (state.roomParticipants || []).filter((participant) => visibleRoomIds.has(participant.roomId));
+  cloned.roomAcks = (state.roomAcks || []).filter((ack) => visibleRoomIds.has(ack.roomId));
+  cloned.roomSequenceByRoom = Object.fromEntries(Object.entries(state.roomSequenceByRoom || {}).filter(([roomId]) => visibleRoomIds.has(roomId)));
+  cloned.permissionRequests = (state.permissionRequests || []).filter((item) => item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId));
+  cloned.approvalRequests = (state.approvalRequests || []).filter((item) => item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId));
+  cloned.artifacts = (state.artifacts || []).filter((item) => item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId));
+  cloned.testResults = (state.testResults || []).filter((item) => item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId));
+  cloned.findings = (state.findings || []).filter((item) => item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId));
+  cloned.qualityGates = (state.qualityGates || []).filter((item) => item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId));
+  cloned.derivedTaskRequests = (state.derivedTaskRequests || []).filter((item) => item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId));
   cloned.eventLog = (state.eventLog || []).filter((event) => event.taskGroupId && visibleTaskGroupIds.has(event.taskGroupId));
   return cloned;
 }
 
-function stateViewForAccount(state, account, session, view = "full", limit = 80) {
+const scopedStateCache = new Map();
+
+function withoutStateInternals(state) {
+  const clean = {...state};
+  delete clean.__loadedStateVersion;
+  return clean;
+}
+
+function cachedScopedState(state, account, session) {
+  const key = `${account.accountId}:${session.sessionId}:${state.stateVersion}`;
+  const cached = scopedStateCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.scoped;
   const scoped = scopedStateForAccount(state, account, session);
+  if (scopedStateCache.size > stateViewMaxEntries) scopedStateCache.clear();
+  scopedStateCache.set(key, {scoped, expiresAt: Date.now() + stateViewCacheTtlMs});
+  return scoped;
+}
+
+function stateViewForAccount(state, account, session, view = "full", limit = 80) {
+  const scoped = cachedScopedState(state, account, session);
   if (!view || view === "full") return scoped;
   const capped = Math.max(10, Math.min(500, Number(limit || 80)));
   const base = {
@@ -842,6 +910,14 @@ function parseBody(req) {
     const chunks = [];
     let size = 0;
     let tooLarge = false;
+    let settled = false;
+    const fail = (message, status) => {
+      if (settled) return;
+      settled = true;
+      const error = new Error(message);
+      error.status = status;
+      reject(error);
+    };
     req.on("data", (chunk) => {
       size += chunk.length;
       if (size > 2 * 1024 * 1024) {
@@ -850,21 +926,24 @@ function parseBody(req) {
       }
       if (!tooLarge) chunks.push(chunk);
     });
+    req.on("error", () => fail("request_stream_error", 400));
+    req.on("aborted", () => fail("request_aborted", 400));
     req.on("end", () => {
+      if (settled) return;
       if (tooLarge) {
-        const error = new Error("request_body_too_large");
-        error.status = 413;
-        reject(error);
+        fail("request_body_too_large", 413);
         return;
       }
+      settled = true;
       if (!chunks.length) {
         resolveBody({});
         return;
       }
       try {
         resolveBody(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      } catch (error) {
-        reject(error);
+      } catch {
+        settled = false;
+        fail("request_body_invalid_json", 400);
       }
     });
   });
@@ -973,7 +1052,7 @@ async function waitForAgentControlCommandsDirect(node, options = {}) {
       }
     }
     if (result.commands.length || Date.now() >= deadline) return result;
-    await waitForLongPollSignal(["state", `agent-control:${node.nodeId}`], Math.max(1, deadline - Date.now()));
+    await waitForLongPollSignal([`agent-control:${node.nodeId}`], Math.max(1, deadline - Date.now()));
     latest = readState();
   }
 }
@@ -1147,41 +1226,65 @@ function delay(ms) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
-function prepareRemoteGitVerification(target, checkpointInput) {
+async function prepareRemoteGitVerification(target, checkpointInput) {
   const safeTargetId = String(target.targetId).replace(/[^A-Za-z0-9._-]+/gu, "_");
   const verificationRoot = join(runtimeDir, "git-verification", `${safeTargetId}.git`);
   mkdirSync(dirname(verificationRoot), {recursive: true});
-  if (!existsSync(join(verificationRoot, "HEAD"))) execFileSync("git", ["init", "--bare", verificationRoot], {stdio: "pipe"});
-  const remotes = execFileSync("git", ["-C", verificationRoot, "remote"], {encoding: "utf8"}).trim().split("\n").filter(Boolean);
-  if (remotes.includes(target.remote || "origin")) execFileSync("git", ["-C", verificationRoot, "remote", "set-url", target.remote || "origin", target.repositoryUrl], {stdio: "pipe"});
-  else execFileSync("git", ["-C", verificationRoot, "remote", "add", target.remote || "origin", target.repositoryUrl], {stdio: "pipe"});
+  if (!existsSync(join(verificationRoot, "HEAD"))) await execFileAsync("git", ["init", "--bare", verificationRoot]);
   const remote = target.remote || "origin";
-  execFileSync("git", ["-C", verificationRoot, "fetch", "--force", "--no-tags", remote, `refs/heads/${target.branch}:refs/remotes/${remote}/${target.branch}`], {stdio: "pipe"});
+  const remotes = (await execFileAsync("git", ["-C", verificationRoot, "remote"])).stdout.trim().split("\n").filter(Boolean);
+  if (remotes.includes(remote)) await execFileAsync("git", ["-C", verificationRoot, "remote", "set-url", remote, target.repositoryUrl]);
+  else await execFileAsync("git", ["-C", verificationRoot, "remote", "add", remote, target.repositoryUrl]);
+  await execFileAsync("git", ["-C", verificationRoot, "fetch", "--force", "--no-tags", remote, `refs/heads/${target.branch}:refs/remotes/${remote}/${target.branch}`]);
   for (const commitRef of checkpointInput.commitRefs || []) {
     try {
-      execFileSync("git", ["-C", verificationRoot, "cat-file", "-e", `${commitRef.commit}^{commit}`], {stdio: "pipe"});
+      await execFileAsync("git", ["-C", verificationRoot, "cat-file", "-e", `${commitRef.commit}^{commit}`]);
     } catch {
-      execFileSync("git", ["-C", verificationRoot, "fetch", "--force", "--no-tags", remote, commitRef.commit], {stdio: "pipe"});
+      await execFileAsync("git", ["-C", verificationRoot, "fetch", "--force", "--no-tags", remote, commitRef.commit]);
     }
   }
   return verificationRoot;
 }
 
-function serveStatic(req, res) {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const requested = url.pathname === "/" ? "/index.html" : url.pathname;
+const staticFileCache = new Map();
+
+function serveStatic(req, res, pathname) {
+  let requested = pathname === "/" ? "/index.html" : pathname;
+  try {
+    requested = decodeURIComponent(requested);
+  } catch {
+    res.writeHead(400, {"content-type": "text/plain; charset=utf-8"});
+    res.end("Bad request");
+    return;
+  }
   const target = normalize(join(publicDir, requested));
-  if (!target.startsWith(publicDir) || !existsSync(target)) {
+  if ((target !== publicDir && !target.startsWith(`${publicDir}/`)) || !existsSync(target)) {
     res.writeHead(404, {"content-type": "text/plain; charset=utf-8"});
     res.end("Not found");
     return;
   }
-  res.writeHead(200, {"content-type": mimeTypes[extname(target)] || "application/octet-stream"});
-  res.end(readFileSync(target));
+  const stat = statSync(target);
+  if (!stat.isFile()) {
+    res.writeHead(404, {"content-type": "text/plain; charset=utf-8"});
+    res.end("Not found");
+    return;
+  }
+  const stamp = `${stat.mtimeMs}:${stat.size}`;
+  let cached = staticFileCache.get(target);
+  if (!cached || cached.stamp !== stamp) {
+    cached = {stamp, content: readFileSync(target)};
+    if (staticFileCache.size > 64) staticFileCache.clear();
+    staticFileCache.set(target, cached);
+  }
+  const content = cached.content;
+  res.writeHead(200, {"content-type": mimeTypes[extname(target)] || "application/octet-stream", "x-content-type-options": "nosniff"});
+  res.end(content);
 }
 
+const execFileAsync = promisify(execFile);
+
 async function handleApi(req, res) {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  const url = new URL(req.url, "http://request.local");
   if (req.method === "GET" && ["/api/health", "/api/runtime/health"].includes(url.pathname)) {
     const state = readHealthState();
     json(res, 200, {
@@ -1233,7 +1336,7 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/agent/v1/heartbeat") {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     const result = heartbeatAgentNode(state, node, body, {presentedToken: bearerToken(req)});
-    commitGatewayWrite(state);
+    if (result.persistRequired !== false) commitGatewayWrite(state);
     json(res, 200, result);
     return;
   }
@@ -1334,7 +1437,7 @@ async function handleApi(req, res) {
     }
     const target = state.repositoryOutputs.find((item) => item.targetId === dispatch.repositoryOutputTargetRef);
     if (!target) return json(res, 409, {error: "repository_output_target_missing"});
-    const verificationRoot = prepareRemoteGitVerification(target, body);
+    const verificationRoot = await prepareRemoteGitVerification(target, body);
     const result = acceptAgentCheckpoint(state, body, {root: verificationRoot, repositoryRoot: verificationRoot});
     if (!result.accepted) {
       commitGatewayWrite(state);
@@ -1389,6 +1492,10 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/auth/login") {
+    if (loginRateLimited(req)) {
+      json(res, 429, {error: "too_many_login_attempts", retryAfterSeconds: 60});
+      return;
+    }
     const config = readRuntimeConfig();
     const token = String(body.token || body.accountToken || body.bootstrapToken || "");
     const email = String(body.email || "");
@@ -1448,7 +1555,7 @@ async function handleApi(req, res) {
       json(res, 401, {error: "auth_required"});
       return;
     }
-    const scoped = scopedStateForAccount(state, reader.account, reader.session);
+    const scoped = cachedScopedState(state, reader.account, reader.session);
     json(res, 200, {
       modelCapabilities: scoped.modelCapabilities,
       modelSelectionPolicies: scoped.modelSelectionPolicies,
@@ -1463,7 +1570,7 @@ async function handleApi(req, res) {
       json(res, 401, {error: "auth_required"});
       return;
     }
-    const scoped = scopedStateForAccount(state, reader.account, reader.session);
+    const scoped = cachedScopedState(state, reader.account, reader.session);
     json(res, 200, {
       skillSources: scoped.skillSources,
       roleSkills: scoped.roleSkills,
@@ -1478,7 +1585,7 @@ async function handleApi(req, res) {
       json(res, 401, {error: "auth_required"});
       return;
     }
-    json(res, 200, {progressSnapshots: scopedStateForAccount(state, reader.account, reader.session).progressSnapshots});
+    json(res, 200, {progressSnapshots: cachedScopedState(state, reader.account, reader.session).progressSnapshots});
     return;
   }
 
@@ -1568,7 +1675,7 @@ async function handleApi(req, res) {
       json(res, reader.status, reader.payload);
       return;
     }
-    const readOnlyState = JSON.parse(JSON.stringify(state));
+    const readOnlyState = structuredClone(withoutStateInternals(state));
     const readiness = computeCompletionReadiness(readOnlyState, readinessMatch[1], {root: repositoryRoot});
     const closeBarrier = computeCloseBarrier(readOnlyState, readinessMatch[1], {root: repositoryRoot, mutate: false});
     json(res, 200, {readiness, closeBarrier});
@@ -1612,6 +1719,7 @@ async function handleApi(req, res) {
       phase: taskGroup.phase,
       progress: taskGroup.progress,
       health: taskGroup.health,
+      languagePolicy: taskGroup.languagePolicy,
       roles: taskGroup.roles,
       workItems: taskGroup.workItems,
       blockers: taskGroup.blockers,
@@ -1966,6 +2074,27 @@ async function handleApi(req, res) {
     return;
   }
 
+  const taskGroupLanguageMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/language-policy$/);
+  if (req.method === "POST" && taskGroupLanguageMatch) {
+    const taskGroupId = taskGroupLanguageMatch[1];
+    const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
+    if (!taskGroup) {
+      json(res, 404, {error: "task_group_not_found"});
+      return;
+    }
+    const guard = beginGuardedWrite(req, state, "task_group_language_policy_update", `TaskGroup:${taskGroup.id}`, taskGroupScope(state, taskGroup.id));
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    const result = updateTaskGroupLanguagePolicy(state, taskGroup.id, body, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});
+    audit(state, "ui-console-service", "task_group_language_policy_update", `TaskGroup:${taskGroup.id}`);
+    finishGuardedWrite(state, guard, 200, result);
+    writeState(state);
+    json(res, 200, result);
+    return;
+  }
+
   const taskGroupMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/control$/);
   if (req.method === "POST" && taskGroupMatch) {
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupMatch[1]);
@@ -2214,30 +2343,60 @@ async function handleApi(req, res) {
 }
 
 const server = createServer((req, res) => {
-  const pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
-  if (["/install-agent.sh", "/install-agent.sh.sha256", "/agent-runtime.mjs", "/agent-runtime.mjs.sha256"].includes(pathname)) {
-    serveAgentAsset(req, res, pathname);
-    return;
-  }
-  if (pathname === "/mcp") {
-    handleMcp(req, res).catch((error) => {
-      json(res, error.status || 500, {error: error.message || "mcp_server_error"});
-    });
-    return;
-  }
-  if (!req.url.startsWith("/api/")) {
-    serveStatic(req, res);
-    return;
-  }
-
-  handleApi(req, res).catch((error) => {
-    if (isStateStoreConflict(error)) {
-      json(res, 409, {error: "state_write_conflict", retryable: true, message: error.message});
+  try {
+    const pathname = safeRequestPathname(req);
+    if (pathname === null) {
+      json(res, 400, {error: "invalid_request_url"});
       return;
     }
-    json(res, error.status || 500, {error: "server_error", message: error.message});
-  });
+    if (["/install-agent.sh", "/install-agent.sh.sha256", "/agent-runtime.mjs", "/agent-runtime.mjs.sha256"].includes(pathname)) {
+      serveAgentAsset(req, res, pathname);
+      return;
+    }
+    if (pathname === "/mcp") {
+      handleMcp(req, res).catch((error) => {
+        json(res, error.status || 500, {error: error.message || "mcp_server_error"});
+      });
+      return;
+    }
+    if (!pathname.startsWith("/api/")) {
+      serveStatic(req, res, pathname);
+      return;
+    }
+
+    handleApi(req, res).catch((error) => {
+      respondApiError(res, error);
+    });
+  } catch (error) {
+    try {
+      respondApiError(res, error);
+    } catch {}
+  }
 });
+
+function safeRequestPathname(req) {
+  try {
+    return new URL(req.url, "http://request.local").pathname;
+  } catch {
+    return null;
+  }
+}
+
+function respondApiError(res, error) {
+  if (res.headersSent) {
+    res.end();
+    return;
+  }
+  if (isStateStoreConflict(error)) {
+    json(res, 409, {error: "state_write_conflict", retryable: true, message: error.message});
+    return;
+  }
+  json(res, error.status || 500, {error: "server_error", message: error.message});
+}
+
+server.keepAliveTimeout = Math.max(5000, Number(process.env.AIMAC_KEEP_ALIVE_TIMEOUT_MS || 65000));
+server.headersTimeout = server.keepAliveTimeout + 5000;
+server.requestTimeout = Math.max(server.headersTimeout, Number(process.env.AIMAC_REQUEST_TIMEOUT_MS || 300000));
 
 assertRuntimeSecurity();
 ensureState();

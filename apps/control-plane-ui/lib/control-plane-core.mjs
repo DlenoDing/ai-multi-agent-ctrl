@@ -2,7 +2,23 @@ import { execFileSync } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const controlPlaneRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "../../..");
+const specDigestCache = new Map();
+
+export function specContentDigest(specRelativePath) {
+  if (specDigestCache.has(specRelativePath)) return specDigestCache.get(specRelativePath);
+  let digest;
+  try {
+    digest = digestOf(readFileSync(join(controlPlaneRoot, specRelativePath), "utf8"));
+  } catch {
+    digest = digestOf(specRelativePath);
+  }
+  specDigestCache.set(specRelativePath, digest);
+  return digest;
+}
 
 export const providerClasses = [
   "openai",
@@ -203,6 +219,47 @@ const defaultModelCeiling = {
 const reasoningRank = {low: 0, standard: 1, medium: 2, high: 3, max: 4, ultra: 5};
 const modelTierRank = {standard: 0, frontier_economy: 1, frontier_standard: 2, frontier_plus: 3};
 
+const defaultLanguagePolicy = Object.freeze({
+  schemaVersion: "language-policy/v1",
+  languageTag: "zh-CN",
+  languageName: "Chinese",
+  script: "Hans",
+  scope: [
+    "role_interaction",
+    "dispatch_instruction",
+    "room_message",
+    "execution_event",
+    "checkpoint",
+    "repository_output",
+    "review_material"
+  ],
+  enforcement: "required",
+  fallback: "return_blocked_for_language_mismatch"
+});
+
+const languageAliases = new Map([
+  ["中文", {languageTag: "zh-CN", languageName: "Chinese", script: "Hans"}],
+  ["汉语", {languageTag: "zh-CN", languageName: "Chinese", script: "Hans"}],
+  ["简体中文", {languageTag: "zh-CN", languageName: "Chinese", script: "Hans"}],
+  ["zh", {languageTag: "zh-CN", languageName: "Chinese", script: "Hans"}],
+  ["zh-cn", {languageTag: "zh-CN", languageName: "Chinese", script: "Hans"}],
+  ["chinese", {languageTag: "zh-CN", languageName: "Chinese", script: "Hans"}],
+  ["english", {languageTag: "en", languageName: "English"}],
+  ["英语", {languageTag: "en", languageName: "English"}],
+  ["en", {languageTag: "en", languageName: "English"}],
+  ["en-us", {languageTag: "en-US", languageName: "English"}],
+  ["french", {languageTag: "fr", languageName: "French"}],
+  ["法语", {languageTag: "fr", languageName: "French"}],
+  ["fr", {languageTag: "fr", languageName: "French"}],
+  ["fr-fr", {languageTag: "fr-FR", languageName: "French"}],
+  ["ja", {languageTag: "ja", languageName: "Japanese"}],
+  ["japanese", {languageTag: "ja", languageName: "Japanese"}],
+  ["de", {languageTag: "de", languageName: "German"}],
+  ["german", {languageTag: "de", languageName: "German"}],
+  ["es", {languageTag: "es", languageName: "Spanish"}],
+  ["spanish", {languageTag: "es", languageName: "Spanish"}]
+]);
+
 const defaultSkillSource = {
   schemaVersion: "agent-skill-source/v1",
   sourceId: "agency-agents-zh",
@@ -280,6 +337,63 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+export function normalizeTaskGroupLanguagePolicy(input = {}, fallback = {}) {
+  const rawPolicy = input?.languagePolicy && typeof input.languagePolicy === "object" ? input.languagePolicy : input;
+  const fallbackPolicy = fallback?.languagePolicy && typeof fallback.languagePolicy === "object" ? fallback.languagePolicy : fallback;
+  const rawLanguage = String(
+    rawPolicy.languageTag ||
+    rawPolicy.language ||
+    rawPolicy.outputLanguage ||
+    rawPolicy.interactionLanguage ||
+    fallbackPolicy.languageTag ||
+    defaultLanguagePolicy.languageTag
+  ).trim();
+  const preset = resolveLanguagePreset(rawLanguage);
+  const scope = unique([
+    ...(Array.isArray(rawPolicy.scope) ? rawPolicy.scope : []),
+    ...(Array.isArray(rawPolicy.appliesTo) ? rawPolicy.appliesTo : []),
+    ...(!rawPolicy.scope && !rawPolicy.appliesTo && Array.isArray(fallbackPolicy.scope) ? fallbackPolicy.scope : []),
+    ...(!rawPolicy.scope && !rawPolicy.appliesTo && !fallbackPolicy.scope ? defaultLanguagePolicy.scope : [])
+  ]);
+  return {
+    schemaVersion: "language-policy/v1",
+    languageTag: preset.languageTag,
+    languageName: String(rawPolicy.languageName || preset.languageName || preset.languageTag),
+    ...(rawPolicy.script || preset.script ? {script: String(rawPolicy.script || preset.script)} : {}),
+    scope: scope.length ? scope : [...defaultLanguagePolicy.scope],
+    enforcement: rawPolicy.enforcement === "advisory" ? "advisory" : "required",
+    fallback: ["return_blocked_for_language_mismatch", "translate_or_return_blocked"].includes(rawPolicy.fallback)
+      ? rawPolicy.fallback
+      : (fallbackPolicy.fallback || defaultLanguagePolicy.fallback)
+  };
+}
+
+export function languagePolicyDirective(policy = defaultLanguagePolicy) {
+  const normalized = normalizeTaskGroupLanguagePolicy(policy);
+  return `LanguagePolicy ${normalized.languageTag}/${normalized.languageName}: all role interaction, dispatch instructions, room messages, execution events, checkpoints, repository outputs and review materials MUST use this language; return blocked if unable.`;
+}
+
+function resolveLanguagePreset(rawLanguage) {
+  const key = String(rawLanguage || "").trim().toLowerCase();
+  const alias = languageAliases.get(key);
+  if (alias) return alias;
+  if (/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/iu.test(rawLanguage)) {
+    return {languageTag: canonicalLanguageTag(rawLanguage), languageName: canonicalLanguageTag(rawLanguage)};
+  }
+  return {...defaultLanguagePolicy};
+}
+
+function canonicalLanguageTag(value) {
+  const parts = String(value || "").trim().split("-").filter(Boolean);
+  return parts.map((part, index) => index === 0 ? part.toLowerCase() : part.toUpperCase()).join("-");
+}
+
+function ensureTaskGroupLanguagePolicies(state) {
+  for (const taskGroup of state.taskGroups || []) {
+    taskGroup.languagePolicy = normalizeTaskGroupLanguagePolicy(taskGroup.languagePolicy || taskGroup);
+  }
+}
+
 export function ensureRuntimeCollections(state, options = {}) {
   state.stateVersion ||= 1;
   state.idempotencyRecords ||= {};
@@ -318,6 +432,7 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.roomSequenceByRoom ||= {};
   state.roomAcks ||= [];
   state.agentRuntimeNodes ||= [];
+  state.mcpProbeNodes ||= [];
   state.agentJoinTokens ||= [];
   state.agentGatewayEvents ||= [];
   state.agentControlCommands ||= [];
@@ -340,6 +455,8 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.repositoryOutputs ||= [];
   state.sharedDefinitions ||= [];
   state.accessGrants ||= [];
+  state.taskGroups ||= [];
+  ensureTaskGroupLanguagePolicies(state);
   state.instructionMetrics ||= {tokenBudgetPolicy: "delta_locators_digest_first", cacheHitTarget: 0.7, stablePrefixTokens: 1800, deltaMessageTargetTokens: 420, envelopes: []};
   state.instructionMetrics.envelopes ||= [];
   state.auditLog ||= [];
@@ -439,6 +556,29 @@ function ensureDefaultAccessGrants(state) {
     createdAt: at,
     updatedAt: at
   });
+}
+
+export function updateTaskGroupLanguagePolicy(state, taskGroupId, input = {}, options = {}) {
+  ensureRuntimeCollections(state);
+  const taskGroup = (state.taskGroups || []).find((item) => item.id === taskGroupId);
+  if (!taskGroup) {
+    const error = new Error("task_group_not_found");
+    error.status = 404;
+    throw error;
+  }
+  const at = new Date().toISOString();
+  const previousDigest = digestOf(taskGroup.languagePolicy || {});
+  taskGroup.languagePolicy = normalizeTaskGroupLanguagePolicy(input.languagePolicy || input, taskGroup.languagePolicy);
+  taskGroup.updatedAt = at;
+  const languagePolicyDigest = digestOf(taskGroup.languagePolicy);
+  appendEvent(state, "task_group_language_policy_updated", "TaskGroup", taskGroup.id, options.actor || "ui-console-service", {
+    projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id,
+    previousDigest,
+    languagePolicyDigest,
+    languageTag: taskGroup.languagePolicy.languageTag
+  });
+  return {taskGroup, languagePolicy: taskGroup.languagePolicy, languagePolicyDigest};
 }
 
 function defaultManagementSurfaces() {
@@ -837,6 +977,8 @@ export function buildTaskContract(state, request = {}) {
   const runId = createId("run");
   const at = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
+  const languagePolicy = normalizeTaskGroupLanguagePolicy(taskGroup?.languagePolicy);
+  const languagePolicyDigest = digestOf(languagePolicy);
   const roleSkill = resolveRoleSkill(state, workItem?.ownerRole || "orchestrator", {projectId: project?.id, taskGroupId: taskGroup?.id});
   const skillBindingDigest = digestOf({
     roleId: workItem?.ownerRole || "orchestrator",
@@ -846,7 +988,7 @@ export function buildTaskContract(state, request = {}) {
   });
   const skillWorksetId = `skillset_${skillBindingDigest.slice("sha256:".length, "sha256:".length + 24)}`;
   const sharedDefinitionRefs = activeSharedDefinitionRefs(state, {projectId: project?.id, taskGroupId: taskGroup?.id, workItemId: workItem?.id});
-  const contractSeed = {projectId: project?.id, taskGroupId: taskGroup?.id, workId: workItem?.id, roleId: workItem?.ownerRole, stateVersion: state.stateVersion};
+  const contractSeed = {projectId: project?.id, taskGroupId: taskGroup?.id, workId: workItem?.id, roleId: workItem?.ownerRole, stateVersion: state.stateVersion, languagePolicyDigest};
   const contractDigest = digestOf(contractSeed);
   const guardRef = createId("rdg");
   const packetRef = createId("eip");
@@ -860,7 +1002,7 @@ export function buildTaskContract(state, request = {}) {
     runId,
     idempotencyKey: request.idempotencyKey || createId("idem_contract"),
     protocolVersion: "control-plane/v1",
-    schemaDigest: digestOf("spec/agent-task-contract.schema.json"),
+    schemaDigest: specContentDigest("spec/agent-task-contract.schema.json"),
     contractDigest,
     issuedAt: at,
     expiresAt,
@@ -875,7 +1017,7 @@ export function buildTaskContract(state, request = {}) {
       overlayRefs: roleSkill.overlayRefs || [],
       worksetId: skillWorksetId,
       synchronizationMode: "server_managed_on_demand",
-      usageDirective: `The ${workItem?.ownerRole || "orchestrator"} agent must load this exact skill workset before execution and must explicitly bind a separate server-issued workset for every child role.`,
+      usageDirective: `The ${workItem?.ownerRole || "orchestrator"} agent must load this exact skill workset before execution and must explicitly bind a separate server-issued workset for every child role. ${languagePolicyDirective(languagePolicy)}`,
       modelSelectionDecisionRef: modelDecision.decisionId
     },
     roomId: `room_${taskGroup?.id || "runtime"}`,
@@ -883,17 +1025,19 @@ export function buildTaskContract(state, request = {}) {
     stateVersion: state.stateVersion,
     rulesetDigest: digestOf("ruleset:ai-native-control-plane:v1"),
     effectiveInstructionPacketRef: packetRef,
-    digestRefs: ["ruleset:ai-native-control-plane:v1", `model-selection:${modelDecision.decisionId}`, `session-placement:${placementDecision.decisionId}`],
+    digestRefs: ["ruleset:ai-native-control-plane:v1", `model-selection:${modelDecision.decisionId}`, `session-placement:${placementDecision.decisionId}`, `language-policy:${languagePolicyDigest}`],
+    languagePolicy,
+    languagePolicyDigest,
     sharedDefinitionRefs,
     actionBasis: {
       effectiveInstructionPacketRef: packetRef,
       sourceKind: "orchestrator_plan",
       sourceRef: `TaskGroup:${taskGroup?.id || "tg_runtime_management"}`,
       nextActionDraftDigest: digestOf({workItem, action: "execute"}),
-      activeRuleRefs: ["terminal-execution-manifest:v1", "state-machines:v1"],
+      activeRuleRefs: ["terminal-execution-manifest:v1", "state-machines:v1", "language-policy:v1"],
       nonActiveMaterialRefs: [],
-      contextIntakeRefs: [`Project:${project?.id || "prj_control_plane"}`, `TaskGroup:${taskGroup?.id || "tg_runtime_management"}`],
-      validationRequirements: ["schema_valid", "checkpoint_registered", "repository_output_target_selected"],
+      contextIntakeRefs: [`Project:${project?.id || "prj_control_plane"}`, `TaskGroup:${taskGroup?.id || "tg_runtime_management"}`, `LanguagePolicy:${languagePolicyDigest}`],
+      validationRequirements: ["schema_valid", "checkpoint_registered", "repository_output_target_selected", "language_policy_satisfied"],
       forbiddenActions: ["mutate_active_ruleset", "self_patch_control_plane", "auto_expand_mcp_grant"],
       deferredDecisions: []
     },
@@ -906,8 +1050,8 @@ export function buildTaskContract(state, request = {}) {
       forbiddenActionScopeRefs: ["forbidden:external_capability_bypass", "forbidden:runtime_self_upgrade"],
       maxAllowedDriftScore: ["orchestrator", "scheduler", "monitor"].includes(workItem?.ownerRole) ? 0.1 : 0.2
     },
-    inputLocators: [`state://task-groups/${taskGroup?.id || "tg_runtime_management"}`, `state://work-items/${workItem?.id || "work_unknown"}`],
-    inputDigests: {[`work-item:${workItem?.id || "work_unknown"}`]: digestOf(workItem || {})},
+    inputLocators: [`state://task-groups/${taskGroup?.id || "tg_runtime_management"}`, `state://task-groups/${taskGroup?.id || "tg_runtime_management"}/language-policy`, `state://work-items/${workItem?.id || "work_unknown"}`],
+    inputDigests: {[`work-item:${workItem?.id || "work_unknown"}`]: digestOf(workItem || {}), [`language-policy:${taskGroup?.id || "tg_runtime_management"}`]: languagePolicyDigest},
     writeScope: [],
     repositoryOutputTargetRef: repositoryTarget.targetId,
     repositoryOutputTargetDigest: digestOf(repositoryTarget),
@@ -939,7 +1083,12 @@ export function buildTaskContract(state, request = {}) {
       evidenceRequired: true,
       checkpointRequired: true,
       independentReviewRequired: true,
-      pushRefRequired: true
+      pushRefRequired: true,
+      requiredLanguage: languagePolicy.languageTag,
+      languagePolicyDigest,
+      languagePolicyRef: `LanguagePolicy:${languagePolicyDigest}`,
+      schemaRef: "spec/checkpoint.schema.json",
+      schemaDigest: specContentDigest("spec/checkpoint.schema.json")
     }
   };
   if (grantsWriteScope) {
@@ -996,6 +1145,9 @@ function buildEffectiveInstructionPacket(contract, packetId, at) {
     status: "active",
     objectiveBoundaryDigest: contract.roleFocus.objectiveBoundaryDigest,
     digestRefs: contract.digestRefs,
+    languagePolicy: contract.languagePolicy,
+    languagePolicyDigest: contract.languagePolicyDigest,
+    languageDirective: languagePolicyDirective(contract.languagePolicy),
     sharedDefinitionRefs: contract.sharedDefinitionRefs,
     nextActionDraftDigest: contract.actionBasis.nextActionDraftDigest,
     actionBasisRef: `action-basis:${contract.commandId}`,
@@ -1065,9 +1217,15 @@ export function runAutonomousCycle(state, request = {}) {
   }
   const taskGroups = (state.taskGroups || []).filter((taskGroup) => !request.taskGroupId || taskGroup.id === request.taskGroupId);
   for (const taskGroup of taskGroups) {
-    if (["closed", "aborted"].includes(taskGroup.status) || taskGroup.goalExecutionStatus === "active_paused_by_control") continue;
+    if (["closed", "aborted"].includes(taskGroup.status) || ["active_paused_by_freeze", "active_paused_by_control"].includes(taskGroup.goalExecutionStatus)) continue;
     for (const workItem of taskGroup.workItems || []) {
+      if (workItem.status === "superseded") continue;
       if (["verified", "closed"].includes(workItem.status) && workItem.progress >= 100) continue;
+      if (["checkpoint_submitted", "code_complete", "review_requested", "review_passed", "verification_ready"].includes(workItem.status)) {
+        const review = performIndependentReview(state, taskGroup, workItem, request);
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, progress: workItem.progress, awaiting: review.verdict === "passed" ? null : "independent_review", review});
+        continue;
+      }
       const missingDefinition = relatedSharedDefinitions(state, taskGroup, workItem).find((definition) => definition.status !== "active");
       if (missingDefinition) {
         addBlocker(taskGroup, "S1", `Shared definition ${missingDefinition.contractId} is not active for ${workItem.id}.`);
@@ -1091,7 +1249,7 @@ export function runAutonomousCycle(state, request = {}) {
       }
       const split = splitMixedWorkItemIfNeeded(state, taskGroup, workItem);
       if (split) {
-        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "split", reason: "mixed_analysis_implementation_split", derivedWorkItemIds: split.derivedWorkItemIds});
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "superseded", reason: "mixed_analysis_implementation_split", derivedWorkItemIds: split.derivedWorkItemIds});
         if (request.mode !== "until_blocked" && request.mode !== "all") break;
         continue;
       }
@@ -1162,7 +1320,7 @@ function splitMixedWorkItemIfNeeded(state, taskGroup, workItem) {
     updatedAt: at
   };
   taskGroup.workItems.push(analysis, implementation);
-  workItem.status = "split";
+  workItem.status = "superseded";
   workItem.splitStatus = "split_by_orchestrator";
   workItem.progress = Math.max(Number(workItem.progress || 0), 1);
   workItem.updatedAt = at;
@@ -1247,6 +1405,13 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {})
   if (!contract || contract.contractDigest !== dispatch.taskContractDigest) {
     return {accepted: false, status: 409, error: "agent_dispatch_contract_mismatch"};
   }
+  const expectedLanguagePolicyDigest = contract.languagePolicyDigest || digestOf(normalizeTaskGroupLanguagePolicy(taskGroup.languagePolicy));
+  if (!checkpointInput.languagePolicyDigest) {
+    return {accepted: false, status: 409, error: "checkpoint_language_policy_digest_required"};
+  }
+  if (checkpointInput.languagePolicyDigest !== expectedLanguagePolicyDigest) {
+    return {accepted: false, status: 409, error: "checkpoint_language_policy_digest_mismatch"};
+  }
   const drift = evaluateRoleDrift(state, {sessionId: checkpointInput.sessionId, taskGroupId: taskGroup.id, actionScopeRefs: (checkpointInput.repositoryOutputTargetRefs || []).map((ref) => `RepositoryOutputTarget:${ref}`)});
   if (!drift.allowed) {
     return {accepted: false, status: 409, error: "role_drift_guard_not_clear"};
@@ -1290,7 +1455,8 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {})
     artifactManifestRefs: checkpointInput.artifactManifestRefs,
     changedPathEvidenceRefs: checkpointInput.changedPathEvidenceRefs,
     evidenceRefs: unique([...(checkpointInput.evidenceRefs || ["evidence:agent-runtime-checkpoint"]), evidence.evidenceRef]),
-    outputContractDigest: checkpointInput.outputContractDigest || digestOf("spec/checkpoint.schema.json"),
+    languagePolicyDigest: expectedLanguagePolicyDigest,
+    outputContractDigest: checkpointInput.outputContractDigest || specContentDigest("spec/checkpoint.schema.json"),
     createdAt: checkpointInput.createdAt || at
   };
   state.checkpoints.unshift(checkpoint);
@@ -1315,8 +1481,8 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {})
     guard.status = "closed";
     guard.updatedAt = at;
   }
-  advanceWorkItemToVerified(state, workItem, checkpoint);
-  workItem.progress = 100;
+  advanceWorkItemToReviewRequested(state, workItem, checkpoint);
+  workItem.progress = Math.max(Number(workItem.progress || 0), 95);
   if (dispatch) {
     dispatch.status = "completed";
     dispatch.completedAt = at;
@@ -1413,6 +1579,8 @@ export function runAgentRuntimeWorker(state, request = {}) {
 function runLocalGitArtifactWorker(state, request) {
   const {dispatch, taskGroup, workItem, session, target, root} = request;
   const at = new Date().toISOString();
+  const languagePolicy = normalizeTaskGroupLanguagePolicy(taskGroup.languagePolicy);
+  const languagePolicyDigest = digestOf(languagePolicy);
   const manifestPath = target.artifactManifestPath || `docs/artifact-manifests/${workItem.id}.json`;
   const outputPath = `docs/agent-runtime-output/${taskGroup.id}/${workItem.id}.md`;
   if (!canUseGitPath(manifestPath)) throw new Error("artifact_manifest_must_be_git_trackable");
@@ -1427,6 +1595,7 @@ function runLocalGitArtifactWorker(state, request) {
     `TaskGroup: ${taskGroup.id}`,
     `Session: ${session.sessionId}`,
     `Dispatch: ${dispatch.dispatchId}`,
+    `LanguagePolicy: ${languagePolicy.languageTag}`,
     ""
   ].join("\n"));
   const manifest = {
@@ -1438,6 +1607,8 @@ function runLocalGitArtifactWorker(state, request) {
     dispatchId: dispatch.dispatchId,
     repositoryOutputTargetRefs: [target.targetId],
     taskContractDigest: dispatch.taskContractDigest,
+    languagePolicy,
+    languagePolicyDigest,
     outputPolicy: "project_git_repository_only",
     generatedBy: "agent-runtime",
     outputRefs: [outputPath],
@@ -1468,6 +1639,7 @@ function runLocalGitArtifactWorker(state, request) {
     sessionId: session.sessionId,
     runId: dispatch.runId,
     taskContractDigest: dispatch.taskContractDigest,
+    languagePolicyDigest,
     summary: `${workItem.title} completed by Agent Runtime worker.`,
     commitRefs: [{repo: target.repositoryId, branch, commit, treeDigest, createdAt: at}],
     pushRefs: [{repo: target.repositoryId, remote: "origin", ref: `refs/heads/${branch}`, sourceCommit: commit, remoteSha, providerOperationId: `git-push:${dispatch.dispatchId}:${remoteSha}`, verifiedAt: new Date().toISOString(), rewriteRelation: "same_commit"}],
@@ -1493,6 +1665,8 @@ function runExecutorBackedAgentWorker(state, request) {
     sessionId: session.sessionId,
     dispatchId: dispatch.dispatchId,
     model: contract.model,
+    languagePolicy: contract.languagePolicy,
+    languagePolicyDigest: contract.languagePolicyDigest,
     roleSkill: contract.roleSkill,
     taskContract: contract,
     repositoryOutputTarget: target,
@@ -1545,6 +1719,7 @@ function runExecutorBackedAgentWorker(state, request) {
     sessionId: session.sessionId,
     runId: dispatch.runId,
     taskContractDigest: dispatch.taskContractDigest,
+    languagePolicyDigest: contract.languagePolicyDigest,
     summary: output.summary || `${workItem.title} completed by executor-backed Agent Runtime.`,
     commitRefs: [{repo: target.repositoryId, branch, commit, treeDigest, createdAt: new Date().toISOString()}],
     pushRefs: [{repo: target.repositoryId, remote: "origin", ref: `refs/heads/${branch}`, sourceCommit: commit, remoteSha, providerOperationId: output.providerOperationId || `git-push:${dispatch.dispatchId}:${remoteSha}`, verifiedAt: new Date().toISOString(), rewriteRelation: "same_commit"}],
@@ -1586,15 +1761,23 @@ function validateCheckpointGitEvidence(state, request) {
     if (target.repositoryUrl && configuredRemoteUrl && normalizeGitRemoteUrl(configuredRemoteUrl) !== normalizeGitRemoteUrl(target.repositoryUrl)) {
       return {valid: false, status: 409, error: "push_ref_remote_repository_mismatch"};
     }
-    const remoteSha = gitRemoteSha(root, pushRef.remote, pushRef.ref);
-    if (!remoteSha || remoteSha !== git(root, ["rev-parse", "--verify", `${pushRef.remoteSha}^{commit}`], "")) {
+    const liveRemoteSha = gitRemoteSha(root, pushRef.remote, pushRef.ref);
+    const recordedRemoteSha = git(root, ["rev-parse", "--verify", `${pushRef.remoteSha}^{commit}`], "");
+    if (!liveRemoteSha || !recordedRemoteSha) {
       return {valid: false, status: 409, error: "push_ref_remote_sha_mismatch"};
     }
+    let remoteAdvancedContained = false;
+    if (liveRemoteSha !== recordedRemoteSha) {
+      if (!gitIsAncestor(root, recordedRemoteSha, liveRemoteSha)) {
+        return {valid: false, status: 409, error: "push_ref_remote_sha_mismatch"};
+      }
+      remoteAdvancedContained = true;
+    }
     const sourceCommit = git(root, ["rev-parse", "--verify", `${pushRef.sourceCommit}^{commit}`]);
-    if (remoteSha !== sourceCommit || remoteSha !== finalCommit) {
+    if (recordedRemoteSha !== sourceCommit || recordedRemoteSha !== finalCommit) {
       return {valid: false, status: 409, error: "push_ref_must_point_to_final_commit"};
     }
-    normalizedPushRefs.push({...pushRef, sourceCommit, remoteSha});
+    normalizedPushRefs.push({...pushRef, sourceCommit, remoteSha: recordedRemoteSha, ...(remoteAdvancedContained ? {remoteAdvancedContained: true, observedRemoteSha: liveRemoteSha} : {})});
   }
   const changedPaths = git(root, ["diff", "--name-only", target.baseRef || `${finalCommit}^`, finalCommit], "")
     .split("\n")
@@ -1689,7 +1872,13 @@ export function computeProgressSnapshots(state) {
     const counters = countWork(taskGroup.workItems || []);
     snapshots.push(progressSnapshot("task_group", taskGroup.id, taskGroup.status, {percent: taskGroup.progress || 0, phase: taskGroup.phase || taskGroup.status}, taskGroup.health || "ok", counters, taskGroup.roles || [], taskGroup.workItems || [], state.repositoryOutputs.filter((target) => target.taskGroupId === taskGroup.id), at));
   }
-  state.progressSnapshots = snapshots.map((snapshot) => ({...snapshot, digest: digestOf(snapshot)}));
+  const previousById = new Map((state.progressSnapshots || []).map((snapshot) => [snapshot.snapshotId, snapshot]));
+  state.progressSnapshots = snapshots.map((snapshot) => {
+    const contentDigest = digestOf({...snapshot, createdAt: null, updatedAt: null});
+    const previous = previousById.get(snapshot.snapshotId);
+    if (previous?.contentDigest === contentDigest) return previous;
+    return {...snapshot, contentDigest, digest: digestOf({...snapshot, contentDigest})};
+  });
   return state.progressSnapshots;
 }
 
@@ -1764,6 +1953,8 @@ function enqueueAgentDispatch(state, contract, repositoryTarget) {
     reasoning: contract.model.reasoning || contract.model.reasoningLevel || "standard",
     modelDecision: contract.model.modelDecision,
     modelSelectionDecisionRef: contract.model.modelSelectionDecisionRef,
+    language: contract.languagePolicy?.languageTag || defaultLanguagePolicy.languageTag,
+    languagePolicyDigest: contract.languagePolicyDigest || digestOf(normalizeTaskGroupLanguagePolicy()),
     taskContractDigest: contract.contractDigest,
     taskContractRef: `AgentTaskContract:${contract.commandId}`,
     repositoryOutputTargetRef: repositoryTarget.targetId,
@@ -1814,11 +2005,12 @@ export function evaluateRoleDrift(state, request = {}) {
 }
 
 function countWork(workItems) {
+  const active = (workItems || []).filter((item) => item.status !== "superseded");
   return {
-    total: workItems.length,
-    done: workItems.filter((item) => ["verified", "closed"].includes(item.status) || Number(item.progress || 0) >= 100).length,
-    inProgress: workItems.filter((item) => ["ready", "assigned", "in_progress", "review_requested"].includes(item.status)).length,
-    blocked: workItems.filter((item) => ["blocked", "failed"].includes(item.status)).length
+    total: active.length,
+    done: active.filter((item) => ["verified", "closed"].includes(item.status) || Number(item.progress || 0) >= 100).length,
+    inProgress: active.filter((item) => ["ready", "assigned", "in_progress", "checkpoint_submitted", "review_requested", "review_passed", "verification_ready"].includes(item.status)).length,
+    blocked: active.filter((item) => ["blocked", "failed"].includes(item.status)).length
   };
 }
 
@@ -1826,18 +2018,50 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
   ensureRuntimeCollections(state);
   const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
   const at = new Date().toISOString();
-  const checks = ["no_open_execution_topology", "no_open_review_plan", "no_pending_review_bundle", "no_blocking_derived_task_request", "no_pending_external_review", "no_active_role_drift_guard", "effective_instruction_packet_active", "shared_definitions_active", "repository_output_target_terminal", "all_required_outputs_present", "all_required_evidence_present", "all_required_validation_present", "no_pending_permission_or_approval", "no_unreconciled_command_effect"];
+  const workItems = (taskGroup?.workItems || []).filter((item) => item.status !== "superseded");
+  const verifiedItems = workItems.filter((item) => ["verified", "closed"].includes(item.status));
+  const taskGroupCheckpoints = (state.checkpoints || []).filter((checkpoint) => checkpoint.taskGroupId === taskGroupId);
+  const pendingStatuses = ["open", "pending", "requested", "submitted", "in_review", "waiting"];
+  const checkFailures = {
+    no_open_execution_topology: (state.executionTopologies || []).some((item) => item.taskGroupId === taskGroupId && !["closed", "completed", "superseded"].includes(item.status)),
+    no_open_review_plan: (state.reviewPlans || []).some((item) => item.taskGroupId === taskGroupId && !["closed", "completed", "cancelled"].includes(item.status)),
+    no_pending_review_bundle: (state.reviewBundles || []).some((item) => item.taskGroupId === taskGroupId && !["consumed", "closed"].includes(item.status)),
+    no_blocking_derived_task_request: (state.derivedTaskRequests || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)),
+    no_pending_external_review: (state.reviewBundles || []).some((item) => item.taskGroupId === taskGroupId && item.reviewMode === "external" && !["consumed", "closed"].includes(item.status)),
+    no_active_role_drift_guard: (state.roleDriftGuards || []).some((guard) => guard.taskGroupId === taskGroupId && !["closed", "corrected"].includes(guard.status)),
+    effective_instruction_packet_active: (state.effectiveInstructionPackets || []).some((packet) => packet.taskGroupId === taskGroupId && !["active", "consumed", "expired", "superseded"].includes(packet.status)),
+    shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => definition.status !== "active"),
+    repository_output_target_terminal: (state.repositoryOutputs || []).filter((target) => target.taskGroupId === taskGroupId).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status)),
+    all_required_outputs_present: workItems.length === 0 || workItems.some((item) => !["verified", "closed"].includes(item.status)),
+    all_required_evidence_present: !taskGroupCheckpoints.some((checkpoint) => checkpoint.commitRefs?.length && checkpoint.pushRefs?.length && checkpoint.artifactManifestRefs?.length),
+    all_required_validation_present: verifiedItems.some((item) => !item.reviewBundleRef && !(state.reviewBundles || []).some((bundle) => bundle.workItemId === item.id && bundle.verdict === "passed")),
+    no_pending_permission_or_approval: (state.permissionRequests || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)) ||
+      (state.approvalRequests || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)),
+    no_unreconciled_command_effect: (state.commandEffects || []).some((item) => item.taskGroupId === taskGroupId && item.status !== "reconciled")
+  };
   const blockers = [];
-  if ((taskGroup?.workItems || []).some((item) => !["verified", "closed"].includes(item.status))) blockers.push({objectType: "WorkItem", objectId: taskGroup.id, status: "open"});
-  if ((state.roleDriftGuards || []).some((guard) => guard.taskGroupId === taskGroupId && !["closed", "corrected"].includes(guard.status))) blockers.push({objectType: "RoleDriftGuard", objectId: taskGroupId, status: "active"});
-  if (relatedSharedDefinitions(state, taskGroup).some((definition) => definition.status !== "active")) blockers.push({objectType: "SharedDefinitionContract", objectId: taskGroupId, status: "not_active"});
-  if ((state.repositoryOutputs || []).filter((target) => target.taskGroupId === taskGroupId).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status))) blockers.push({objectType: "RepositoryOutputTarget", objectId: taskGroupId, status: "non_terminal"});
+  if (checkFailures.all_required_outputs_present) blockers.push({objectType: "WorkItem", objectId: taskGroup?.id || taskGroupId, status: "open"});
+  if (checkFailures.no_active_role_drift_guard) blockers.push({objectType: "RoleDriftGuard", objectId: taskGroupId, status: "active"});
+  if (checkFailures.shared_definitions_active) blockers.push({objectType: "SharedDefinitionContract", objectId: taskGroupId, status: "not_active"});
+  if (checkFailures.repository_output_target_terminal) blockers.push({objectType: "RepositoryOutputTarget", objectId: taskGroupId, status: "non_terminal"});
   if ((state.workSessions || []).some((session) => session.taskGroupId === taskGroupId && !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status))) blockers.push({objectType: "WorkSession", objectId: taskGroupId, status: "active"});
   if ((state.agentDispatches || []).some((dispatch) => dispatch.taskGroupId === taskGroupId && !["completed", "failed", "cancelled"].includes(dispatch.status))) blockers.push({objectType: "AgentDispatch", objectId: taskGroupId, status: "active"});
   if ((state.leases || []).some((lease) => lease.status === "active" && leaseAppliesToTaskGroup(state, lease, taskGroupId))) blockers.push({objectType: "Lease", objectId: taskGroupId, status: "active"});
-  if (!(state.checkpoints || []).some((checkpoint) => checkpoint.taskGroupId === taskGroupId && checkpoint.commitRefs?.length && checkpoint.pushRefs?.length && checkpoint.artifactManifestRefs?.length)) blockers.push({objectType: "Checkpoint", objectId: taskGroupId, status: "missing_git_evidence"});
+  if (checkFailures.all_required_evidence_present) blockers.push({objectType: "Checkpoint", objectId: taskGroupId, status: "missing_git_evidence"});
+  if (checkFailures.all_required_validation_present) blockers.push({objectType: "ReviewBundle", objectId: taskGroupId, status: "independent_review_missing"});
+  if (checkFailures.no_pending_permission_or_approval) blockers.push({objectType: "PermissionOrApprovalRequest", objectId: taskGroupId, status: "pending"});
+  if (checkFailures.no_open_execution_topology) blockers.push({objectType: "ExecutionTopology", objectId: taskGroupId, status: "open"});
+  if (checkFailures.no_open_review_plan) blockers.push({objectType: "ReviewPlan", objectId: taskGroupId, status: "open"});
+  if (checkFailures.no_pending_review_bundle) blockers.push({objectType: "ReviewBundle", objectId: taskGroupId, status: "pending"});
+  if (checkFailures.no_blocking_derived_task_request) blockers.push({objectType: "DerivedTaskRequest", objectId: taskGroupId, status: "pending"});
+  if (checkFailures.no_unreconciled_command_effect) blockers.push({objectType: "CommandEffect", objectId: taskGroupId, status: "unreconciled"});
+  const checks = Object.keys(checkFailures);
   const clear = blockers.length === 0;
-  const checkResults = Object.fromEntries(checks.map((check) => [check, {status: clear ? "passed" : "blocked", evidenceRefs: [`readiness:${taskGroupId}:${check}`], ...(!clear ? {reasonCode: "blocking_objects_present"} : {})}]));
+  const checkResults = Object.fromEntries(checks.map((check) => [check, {
+    status: checkFailures[check] ? "blocked" : "passed",
+    evidenceRefs: [`readiness:${taskGroupId}:${check}`],
+    ...(checkFailures[check] ? {reasonCode: "blocking_objects_present"} : {})
+  }]));
   const readiness = {
     schemaVersion: "completion-readiness/v1",
     checkId: createId("ready"),
@@ -1846,8 +2070,14 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
     targetRef: `TaskGroup:${taskGroupId}`,
     status: clear ? "clear" : "blocked",
     stateVersion: state.stateVersion,
-    stateDigest: digestOf(state.stateVersion),
-    sourceQueryRefs: [`state://task-groups/${taskGroupId}`],
+    stateDigest: digestOf({
+      workItems: workItems.map((item) => ({id: item.id, status: item.status, progress: item.progress})),
+      guards: (state.roleDriftGuards || []).filter((guard) => guard.taskGroupId === taskGroupId).map((guard) => ({id: guard.guardId, status: guard.status})),
+      targets: (state.repositoryOutputs || []).filter((target) => target.taskGroupId === taskGroupId).map((target) => ({id: target.targetId, status: target.status})),
+      checkpoints: taskGroupCheckpoints.map((checkpoint) => checkpoint.runId),
+      blockers
+    }),
+    sourceQueryRefs: [`state://task-groups/${taskGroupId}`, `state://checkpoints/${taskGroupId}`, `state://review-bundles/${taskGroupId}`, `state://permission-requests/${taskGroupId}`, `state://approval-requests/${taskGroupId}`],
     requiredChecks: checks,
     checkResults,
     blockingObjects: blockers,
@@ -1862,19 +2092,64 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
   ensureRuntimeCollections(state);
   const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
   const readiness = state.completionReadiness.find((item) => item.taskGroupId === taskGroupId) || computeCompletionReadiness(state, taskGroupId, request);
-  const gates = ["all_required_work_closed", "all_findings_terminal", "all_quality_gates_passed", "all_contracts_compatible", "all_changes_integrated", "no_pending_permissions", "no_pending_approvals", "all_policy_decisions_terminal", "all_commands_terminal", "all_command_effects_terminal", "no_active_dlq", "all_leases_terminal", "no_active_temp_grants", "no_active_secret_leases", "no_open_external_capability_boundaries", "artifacts_verified", "release_manifest_ready", "rules_candidates_processed", "runtime_issue_candidates_exported", "no_open_execution_topologies", "no_blocking_derived_task_requests", "all_review_plans_closed", "no_pending_review_bundles", "all_rule_sources_resolved", "completion_readiness_clear", "no_active_role_drift_blockers", "all_effective_instruction_packets_terminal", "all_shared_definitions_active", "all_repository_output_targets_terminal"];
+  const nowMs = Date.now();
+  const pendingStatuses = ["open", "pending", "requested", "submitted", "in_review", "waiting"];
+  const forTaskGroup = (items) => (items || []).filter((item) => item.taskGroupId === taskGroupId);
+  const notModeled = {status: "passed", reasonCode: "not_applicable_collection_not_modeled"};
+  const gateFailures = {
+    all_required_work_closed: readiness.blockingObjects.some((item) => item.objectType === "WorkItem"),
+    all_findings_terminal: forTaskGroup(state.findings).some((item) => !["resolved", "closed", "dismissed", "wontfix"].includes(item.status)),
+    all_quality_gates_passed: forTaskGroup(state.qualityGates).some((item) => !["passed", "waived"].includes(item.status)),
+    all_contracts_compatible: relatedSharedDefinitions(state, taskGroup).some((definition) => ["conflict", "blocked"].includes(definition.status)),
+    all_changes_integrated: forTaskGroup(state.repositoryOutputs).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status)),
+    no_pending_permissions: forTaskGroup(state.permissionRequests).some((item) => pendingStatuses.includes(item.status)),
+    no_pending_approvals: forTaskGroup(state.approvalRequests).some((item) => pendingStatuses.includes(item.status)),
+    all_policy_decisions_terminal: false,
+    all_commands_terminal: (state.commands || []).some((command) => String(command.subject || "").includes(taskGroupId) && !["succeeded", "failed", "cancelled"].includes(command.status)),
+    all_command_effects_terminal: forTaskGroup(state.commandEffects).some((item) => item.status !== "reconciled"),
+    no_active_dlq: false,
+    all_leases_terminal: (state.leases || []).some((lease) => lease.status === "active" && leaseAppliesToTaskGroup(state, lease, taskGroupId)),
+    no_active_temp_grants: (state.mcpGrants || []).some((grant) => grant.taskGroupId === taskGroupId && grant.grantStatus === "issued" && new Date(grant.expiresAt || 0).getTime() > nowMs),
+    no_active_secret_leases: false,
+    no_open_external_capability_boundaries: false,
+    artifacts_verified: forTaskGroup(state.artifacts).some((item) => !["verified", "registered"].includes(item.status)),
+    release_manifest_ready: false,
+    rules_candidates_processed: (state.ruleSourceResolutions || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)),
+    runtime_issue_candidates_exported: forTaskGroup(state.systemUpgradeCandidates).some((item) => item.status === "candidate_created"),
+    no_open_execution_topologies: forTaskGroup(state.executionTopologies).some((item) => !["closed", "completed", "superseded"].includes(item.status)),
+    no_blocking_derived_task_requests: forTaskGroup(state.derivedTaskRequests).some((item) => pendingStatuses.includes(item.status)),
+    all_review_plans_closed: forTaskGroup(state.reviewPlans).some((item) => !["closed", "completed", "cancelled"].includes(item.status)),
+    no_pending_review_bundles: forTaskGroup(state.reviewBundles).some((item) => !["consumed", "closed"].includes(item.status)),
+    all_rule_sources_resolved: (state.ruleSourceResolutions || []).some((item) => item.taskGroupId === taskGroupId && item.status === "conflict"),
+    completion_readiness_clear: readiness.status !== "clear",
+    no_active_role_drift_blockers: readiness.blockingObjects.some((item) => item.objectType === "RoleDriftGuard"),
+    all_effective_instruction_packets_terminal: forTaskGroup(state.effectiveInstructionPackets).some((packet) => !["active", "consumed", "expired", "superseded"].includes(packet.status)),
+    all_shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => definition.status !== "active"),
+    all_repository_output_targets_terminal: forTaskGroup(state.repositoryOutputs).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status))
+  };
+  const notModeledGates = new Set(["all_policy_decisions_terminal", "no_active_dlq", "no_active_secret_leases", "no_open_external_capability_boundaries", "release_manifest_ready"]);
+  const gates = Object.keys(gateFailures);
+  const failedGates = gates.filter((gate) => gateFailures[gate]);
   const blockers = [...readiness.blockingObjects];
-  const satisfied = blockers.length === 0;
+  for (const gate of failedGates) {
+    if (!blockers.some((item) => item.gate === gate)) blockers.push({objectType: "CloseBarrierGate", objectId: taskGroupId, gate, status: "blocked"});
+  }
+  const satisfied = failedGates.length === 0 && readiness.status === "clear";
   const at = new Date().toISOString();
   const barrier = {
     schemaVersion: "close-barrier/v1",
     projectId: taskGroup?.projectId || request.projectId || "prj_control_plane",
     taskGroupId,
     stateVersion: state.stateVersion,
-    stateDigest: digestOf(state.stateVersion),
-    sourceQueryRefs: [{queryId: `close:${taskGroupId}`, source: `state://task-groups/${taskGroupId}`, digest: digestOf(taskGroup || {})}],
+    stateDigest: digestOf({readinessDigest: readiness.stateDigest, failedGates, taskGroupStatus: taskGroup?.status}),
+    sourceQueryRefs: [{queryId: `close:${taskGroupId}`, source: `state://task-groups/${taskGroupId}`, digest: digestOf({id: taskGroup?.id, status: taskGroup?.status, workItems: (taskGroup?.workItems || []).map((item) => ({id: item.id, status: item.status}))})}],
     requiredGates: gates,
-    gateResults: Object.fromEntries(gates.map((gate) => [gate, {status: satisfied ? "passed" : "blocked", evidenceRefs: [`close:${taskGroupId}:${gate}`], ...(!satisfied ? {reasonCode: "completion_readiness_not_clear"} : {})}])),
+    gateResults: Object.fromEntries(gates.map((gate) => [gate, {
+      status: gateFailures[gate] ? "blocked" : "passed",
+      evidenceRefs: [`close:${taskGroupId}:${gate}`],
+      ...(gateFailures[gate] ? {reasonCode: `gate_blocked:${gate}`} : {}),
+      ...(notModeledGates.has(gate) && !gateFailures[gate] ? {reasonCode: notModeled.reasonCode} : {})
+    }])),
     blockingObjects: blockers,
     evidenceRefs: [`close:${taskGroupId}`, readiness.checkId],
     computedAt: at,
@@ -1883,7 +2158,7 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
   state.closeBarriers = [barrier, ...state.closeBarriers.filter((item) => item.taskGroupId !== taskGroupId)].slice(0, 80);
   if (satisfied && request.mutate === true && taskGroup) {
     taskGroup.status = "closed";
-    taskGroup.goalExecutionStatus = "completed";
+    taskGroup.goalExecutionStatus = "closed";
     taskGroup.progress = 100;
     taskGroup.health = "ok";
     taskGroup.updatedAt = at;
@@ -2226,14 +2501,15 @@ function ensureRepositoryTarget(state, project, taskGroup, workItem, request) {
 
 function ensureLease(state, repositoryTarget, holderRef = "orchestrator", taskContractDigest) {
   let lease = state.leases.find((item) => item.resourceRef === `RepositoryOutputTarget:${repositoryTarget.targetId}` && item.status === "active");
+  const at = new Date().toISOString();
   if (!lease) {
-    const at = new Date().toISOString();
+    state.leaseSequence = Number(state.leaseSequence || 0) + 1;
     lease = {
       leaseId: createId("lease"),
       resourceRef: `RepositoryOutputTarget:${repositoryTarget.targetId}`,
       holderRef,
       status: "active",
-      fencingToken: 1,
+      fencingToken: state.leaseSequence,
       expiresAt: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
       taskContractDigest,
       auditRef: `audit:lease:${repositoryTarget.targetId}`,
@@ -2241,21 +2517,29 @@ function ensureLease(state, repositoryTarget, holderRef = "orchestrator", taskCo
       updatedAt: at
     };
     state.leases.push(lease);
-  } else {
-    lease.holderRef = holderRef || lease.holderRef;
+  } else if (holderRef && lease.holderRef !== holderRef) {
+    state.leaseSequence = Number(state.leaseSequence || 0) + 1;
+    lease.transferEvidenceRefs = unique([...(lease.transferEvidenceRefs || []), `lease-transfer:${lease.holderRef}->${holderRef}:fence:${state.leaseSequence}`]);
+    lease.previousHolderRef = lease.holderRef;
+    lease.holderRef = holderRef;
+    lease.fencingToken = state.leaseSequence;
     lease.taskContractDigest = taskContractDigest || lease.taskContractDigest;
-    lease.updatedAt = new Date().toISOString();
+    lease.updatedAt = at;
+  } else {
+    lease.taskContractDigest = taskContractDigest || lease.taskContractDigest;
+    lease.updatedAt = at;
   }
   repositoryTarget.leaseRef = lease.leaseId;
   return lease;
 }
 
 function recomputeTaskGroup(taskGroup) {
-  const items = taskGroup.workItems || [];
+  const items = (taskGroup.workItems || []).filter((item) => item.status !== "superseded");
   taskGroup.progress = items.length ? Math.round(items.reduce((sum, item) => sum + Number(item.progress || 0), 0) / items.length) : 100;
   taskGroup.health = items.some((item) => ["blocked", "failed"].includes(item.status)) ? "blocked" : "ok";
   taskGroup.blockers = taskGroup.health === "ok" ? [] : taskGroup.blockers || [];
-  if (taskGroup.progress >= 100 && taskGroup.health === "ok") taskGroup.status = "verification";
+  const allTerminal = items.length > 0 && items.every((item) => ["verified", "closed"].includes(item.status));
+  if (allTerminal && taskGroup.health === "ok" && !["closed", "aborted"].includes(taskGroup.status)) taskGroup.status = "verification";
   taskGroup.updatedAt = new Date().toISOString();
 }
 
@@ -2313,7 +2597,7 @@ function agentForRole(state, roleId) {
 
 function git(root = process.cwd(), args = [], fallback = "") {
   try {
-    return execFileSync("git", ["-C", root, ...args], {encoding: "utf8"}).trim();
+    return execFileSync("git", ["-C", root, ...args], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}).trim();
   } catch {
     return fallback;
   }
@@ -2349,6 +2633,15 @@ function gitSnapshot(root = process.cwd()) {
     remoteSha,
     treeDigest: digestOf({head, status})
   };
+}
+
+function gitIsAncestor(root, ancestor, descendant) {
+  try {
+    execFileSync("git", ["-C", root, "merge-base", "--is-ancestor", ancestor, descendant], {stdio: ["ignore", "pipe", "pipe"]});
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function gitRemoteSha(root, remote, ref) {
@@ -2437,24 +2730,96 @@ function recordTransition(state, machine, objectId, from, to, actor, evidenceRef
   return transition;
 }
 
-function advanceWorkItemToVerified(state, workItem, checkpoint) {
+function advanceWorkItemToReviewRequested(state, workItem, checkpoint) {
   const pathByStatus = {
-    assigned: ["in_progress", "checkpoint_submitted", "review_requested", "review_passed", "verification_ready", "verified"],
-    in_progress: ["checkpoint_submitted", "review_requested", "review_passed", "verification_ready", "verified"],
-    checkpoint_submitted: ["review_requested", "review_passed", "verification_ready", "verified"],
-    code_complete: ["review_requested", "review_passed", "verification_ready", "verified"],
-    review_requested: ["review_passed", "verification_ready", "verified"],
-    review_passed: ["verification_ready", "verified"],
-    verification_ready: ["verified"],
-    verified: []
+    assigned: ["in_progress", "checkpoint_submitted", "review_requested"],
+    in_progress: ["checkpoint_submitted", "review_requested"],
+    checkpoint_submitted: ["review_requested"],
+    code_complete: ["review_requested"],
+    review_requested: []
   };
-  const path = pathByStatus[workItem.status] || ["in_progress", "checkpoint_submitted", "review_requested", "review_passed", "verification_ready", "verified"];
+  const path = pathByStatus[workItem.status] || ["checkpoint_submitted", "review_requested"];
   let from = workItem.status;
   for (const to of path) {
-    recordTransition(state, "WorkItem", workItem.id, from, to, to === "verified" ? "qa" : "agent-runtime", [`checkpoint:${checkpoint.runId}`, ...(checkpoint.evidenceRefs || [])]);
+    recordTransition(state, "WorkItem", workItem.id, from, to, "agent-runtime", [`checkpoint:${checkpoint.runId}`, ...(checkpoint.evidenceRefs || [])]);
     from = to;
   }
+  workItem.status = "review_requested";
+  workItem.reviewState = "review_requested";
+}
+
+export function performIndependentReview(state, taskGroup, workItem, request = {}) {
+  const checkpoint = (state.checkpoints || []).find((item) => item.taskGroupId === taskGroup.id && item.workId === workItem.id);
+  if (!checkpoint) return {reviewed: false, reason: "checkpoint_missing"};
+  const target = (state.repositoryOutputs || []).find((item) => (checkpoint.repositoryOutputTargetRefs || []).includes(item.targetId));
+  const finalCommit = checkpoint.commitRefs?.at(-1)?.commit;
+  const findings = [];
+  if (!target || !["pushed", "committed"].includes(target.status)) findings.push("repository_output_target_not_terminal");
+  if (!checkpoint.pushRefs?.length) findings.push("push_evidence_missing");
+  if (!checkpoint.artifactManifestRefs?.length) findings.push("artifact_manifest_missing");
+  const reviewRoots = [];
+  if (target && request.runtimeDir) {
+    const safeTargetId = String(target.targetId).replace(/[^A-Za-z0-9._-]+/gu, "_");
+    const verificationRoot = join(request.runtimeDir, "git-verification", `${safeTargetId}.git`);
+    if (existsSync(join(verificationRoot, "HEAD"))) reviewRoots.push(verificationRoot);
+  }
+  reviewRoots.push(request.root || process.cwd());
+  if (!finalCommit || !reviewRoots.some((reviewRoot) => git(reviewRoot, ["rev-parse", "--verify", `${finalCommit}^{commit}`], ""))) findings.push("final_commit_not_verifiable");
+  const changedPaths = target?.changedPaths || [];
+  if (target && changedPaths.some((path) => !pathMatchesAllowlist(path, target.pathAllowlist || []))) findings.push("changed_paths_outside_allowlist");
+  const at = new Date().toISOString();
+  const verdict = findings.length ? "changes_requested" : "passed";
+  const bundle = {
+    schemaVersion: "review-bundle/v1",
+    bundleId: createId("rvb"),
+    projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id,
+    workItemId: workItem.id,
+    checkpointRef: `checkpoint:${checkpoint.runId}`,
+    reviewerRole: "reviewer",
+    reviewMode: "independent_control_plane_review",
+    verdict,
+    findings,
+    evidenceRefs: [
+      `review-evidence:commit:${finalCommit || "missing"}`,
+      ...(checkpoint.pushRefs || []).map((push) => `review-evidence:push:${push.remote}/${push.ref}:${push.remoteSha}`)
+    ],
+    status: "consumed",
+    createdAt: at,
+    updatedAt: at
+  };
+  state.reviewBundles.unshift(bundle);
+  state.reviewBundles = state.reviewBundles.slice(0, 160);
+  if (verdict !== "passed") {
+    workItem.reviewState = "changes_requested";
+    workItem.updatedAt = at;
+    addBlocker(taskGroup, "S1", `Independent review requested changes for ${workItem.id}: ${findings.join(",")}`);
+    appendEvent(state, "review_result", "WorkItem", workItem.id, "reviewer", {verdict, findings, reviewBundleRef: bundle.bundleId});
+    return {reviewed: true, verdict, reviewBundleRef: bundle.bundleId, findings};
+  }
+  let from = workItem.status;
+  if (["checkpoint_submitted", "code_complete"].includes(from)) {
+    recordTransition(state, "WorkItem", workItem.id, from, "review_requested", "agent-runtime", [`checkpoint:${checkpoint.runId}`]);
+    from = "review_requested";
+  }
+  if (from === "review_requested") {
+    recordTransition(state, "WorkItem", workItem.id, "review_requested", "review_passed", "reviewer", [`review-bundle:${bundle.bundleId}`, `local_verification_evidence:${finalCommit}`, "adoption_classification:adopted"]);
+    from = "review_passed";
+  }
+  if (from === "review_passed") {
+    recordTransition(state, "WorkItem", workItem.id, "review_passed", "verification_ready", "orchestrator", [`review-bundle:${bundle.bundleId}`]);
+    from = "verification_ready";
+  }
+  if (from === "verification_ready") {
+    recordTransition(state, "WorkItem", workItem.id, "verification_ready", "verified", "qa", [`verification_evidence:push:${checkpoint.pushRefs?.at(-1)?.remoteSha || finalCommit}`]);
+  }
   workItem.status = "verified";
+  workItem.reviewState = "review_passed";
+  workItem.reviewBundleRef = bundle.bundleId;
+  workItem.progress = 100;
+  workItem.updatedAt = at;
+  appendEvent(state, "review_result", "WorkItem", workItem.id, "reviewer", {verdict, reviewBundleRef: bundle.bundleId});
+  return {reviewed: true, verdict, reviewBundleRef: bundle.bundleId};
 }
 
 function unique(items) {
@@ -2476,9 +2841,12 @@ export function pathMatchesAllowlist(path, allowlist) {
     if (pattern.endsWith("/**")) return path === pattern.slice(0, -3) || path.startsWith(pattern.slice(0, -2));
     if (!pattern.includes("*")) return path === pattern;
     const escaped = pattern
-      .replace(/[.+?^${}()|[\]\\]/gu, "\\$&")
-      .replaceAll("\\*\\*", ".*")
-      .replaceAll("\\*", "[^/]*");
+      .split("**")
+      .map((segment) => segment
+        .split("*")
+        .map((piece) => piece.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+        .join("[^/]*"))
+      .join(".*");
     return new RegExp(`^${escaped}$`, "u").test(path);
   });
 }

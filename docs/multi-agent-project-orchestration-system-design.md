@@ -838,6 +838,10 @@ sh install-agent.sh \
 
 项目运行数据按项目隔离存放到系统服务器：任务组、session、dispatch、contract、checkpoint、仓库输出目标、控制命令和近期事件投影进入 `.runtime/project-db/p_<projectId_sha256>.<generation>.state.json` 或 PostgreSQL `aimac_project_state_shards` 项目行；中心索引用 generation、payload digest 和 size 指向当前有效 shard。完整执行事件追加到 `.runtime/project-db/p_<projectId_sha256>.execution-events.jsonl` 当前段，超过阈值后轮转为 `.runtime/project-db/p_<projectId_sha256>.execution-events.<firstSeq>-<lastSeq>.<sealedAt>.jsonl`，并使用 manifest、eventKey KV 索引与 tail-window 读取。中央 state 只保存系统级数据、项目 shard 索引、非项目对象和近期摘要，避免项目数量、任务数量或模型输出规模增长后撑爆单个全局状态文件或单个项目事件文件。
 
+### 10.8 任务组统一语言策略
+
+任务组必须保存 `LanguagePolicy`，默认 `zh-CN`，也可在用户管理界面按项目/任务组权限设置为 English、Français 或其他 BCP-47 语言标签。该策略覆盖角色间交互、总控下发指令、DISPATCH envelope、Room 消息、执行事件摘要、checkpoint、仓库输出和 review 材料。总控在生成 `AgentTaskContract`、`EffectiveInstructionPacket`、`AgentDispatch` 和 `AgentSkillWorkset` 时必须写入同一 `languagePolicyDigest`；Agent Runtime 回送 `AgentExecutionEvent` 和 `Checkpoint` 时也必须绑定该 digest。无法满足语言要求时，角色返回 blocked，不得自行改用其他语言继续执行。
+
 交互式 token 写法只用于避免 token 留在 shell history，不替代生产校验版：
 
 ```bash
@@ -1137,6 +1141,8 @@ ruleset: 2026-07-23.33
 model: gpt-5.5
 reasoning: medium
 modelDecision: fixed writeSet implementation; no architecture裁决; G05 source correction only -> gpt-5.5 / medium
+language: zh-CN
+languagePolicy: required; use Chinese/zh-CN for role interaction, instructions, execution events, checkpoints, repository outputs and review material
 
 node: G05-C03-SOURCE-SWITCH-FENCE
 graph: CORE-INIT-GRAPH-20260724.4

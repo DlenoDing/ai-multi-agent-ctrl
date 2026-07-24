@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/language-policy.schema.json",
+  "title": "LanguagePolicy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "languageTag", "languageName", "scope", "enforcement", "fallback"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "language-policy/v1"},
+    "languageTag": {
+      "type": "string",
+      "pattern": "^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$"
+    },
+    "languageName": {"type": "string", "minLength": 1},
+    "script": {"type": "string", "minLength": 1},
+    "scope": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "role_interaction",
+          "dispatch_instruction",
+          "room_message",
+          "execution_event",
+          "checkpoint",
+          "repository_output",
+          "review_material"
+        ]
+      }
+    },
+    "enforcement": {"type": "string", "enum": ["required", "advisory"]},
+    "fallback": {"type": "string", "enum": ["return_blocked_for_language_mismatch", "translate_or_return_blocked"]}
+  }
+}

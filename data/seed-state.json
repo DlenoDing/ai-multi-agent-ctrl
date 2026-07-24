@@ -490,6 +490,23 @@
       "phase": "implementation",
       "progress": 62,
       "health": "ok",
+      "languagePolicy": {
+        "schemaVersion": "language-policy/v1",
+        "languageTag": "zh-CN",
+        "languageName": "Chinese",
+        "script": "Hans",
+        "scope": [
+          "role_interaction",
+          "dispatch_instruction",
+          "room_message",
+          "execution_event",
+          "checkpoint",
+          "repository_output",
+          "review_material"
+        ],
+        "enforcement": "required",
+        "fallback": "return_blocked_for_language_mismatch"
+      },
       "roles": [
         {
           "roleId": "orchestrator",
@@ -549,6 +566,23 @@
       "phase": "protocol",
       "progress": 71,
       "health": "ok",
+      "languagePolicy": {
+        "schemaVersion": "language-policy/v1",
+        "languageTag": "zh-CN",
+        "languageName": "Chinese",
+        "script": "Hans",
+        "scope": [
+          "role_interaction",
+          "dispatch_instruction",
+          "room_message",
+          "execution_event",
+          "checkpoint",
+          "repository_output",
+          "review_material"
+        ],
+        "enforcement": "required",
+        "fallback": "return_blocked_for_language_mismatch"
+      },
       "roles": [
         {
           "roleId": "orchestrator",
@@ -667,8 +701,27 @@
         "stablePrefixDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
         "digestRefs": [
           "ruleset:runtime:v1",
-          "contract:sdc_status_semantics"
+          "contract:sdc_status_semantics",
+          "language-policy:sha256:d829288fb7c967ec7d7652fdc91a4b1beac9c26a218e4c14d100886cc4a0cadb"
         ],
+        "languagePolicy": {
+          "schemaVersion": "language-policy/v1",
+          "languageTag": "zh-CN",
+          "languageName": "Chinese",
+          "script": "Hans",
+          "scope": [
+            "role_interaction",
+            "dispatch_instruction",
+            "room_message",
+            "execution_event",
+            "checkpoint",
+            "repository_output",
+            "review_material"
+          ],
+          "enforcement": "required",
+          "fallback": "return_blocked_for_language_mismatch"
+        },
+        "languagePolicyDigest": "sha256:d829288fb7c967ec7d7652fdc91a4b1beac9c26a218e4c14d100886cc4a0cadb",
         "sharedDefinitionRefs": [
           {
             "contractRef": "sdc_status_semantics",
@@ -705,8 +758,27 @@
         "stablePrefixDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
         "digestRefs": [
           "ruleset:review:v1",
-          "contract:sdc_status_semantics"
+          "contract:sdc_status_semantics",
+          "language-policy:sha256:d829288fb7c967ec7d7652fdc91a4b1beac9c26a218e4c14d100886cc4a0cadb"
         ],
+        "languagePolicy": {
+          "schemaVersion": "language-policy/v1",
+          "languageTag": "zh-CN",
+          "languageName": "Chinese",
+          "script": "Hans",
+          "scope": [
+            "role_interaction",
+            "dispatch_instruction",
+            "room_message",
+            "execution_event",
+            "checkpoint",
+            "repository_output",
+            "review_material"
+          ],
+          "enforcement": "required",
+          "fallback": "return_blocked_for_language_mismatch"
+        },
+        "languagePolicyDigest": "sha256:d829288fb7c967ec7d7652fdc91a4b1beac9c26a218e4c14d100886cc4a0cadb",
         "sharedDefinitionRefs": [
           {
             "contractRef": "sdc_status_semantics",

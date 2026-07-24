@@ -171,6 +171,27 @@ function grantResourceText(grant) {
   return `${resource.resourceType}:${resource.resourceId}`;
 }
 
+const languageOptions = [
+  ["zh-CN", "中文"],
+  ["en", "English"],
+  ["fr", "Français"],
+  ["ja", "日本語"],
+  ["de", "Deutsch"],
+  ["es", "Español"]
+];
+
+function languagePolicyText(policy = {}) {
+  const tag = policy.languageTag || "zh-CN";
+  const label = policy.languageName || languageOptions.find(([value]) => value === tag)?.[1] || tag;
+  return `${label} (${tag})`;
+}
+
+function languageOptionTags(selected) {
+  const known = languageOptions.some(([value]) => value === selected);
+  const options = (known ? languageOptions : [[selected, selected], ...languageOptions]).filter(([value]) => value);
+  return options.map(([value, label]) => `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(label)} · ${escapeHtml(value)}</option>`).join("");
+}
+
 function envelopeTokens(envelope) {
   return envelope.tokenBudget?.targetDeltaTokens || envelope.estimatedTokens || "-";
 }
@@ -616,7 +637,8 @@ function renderProjects() {
 function renderTasks() {
   const taskGroups = state.taskGroups.map((taskGroup) => {
     const expanded = expandedTaskGroupId === taskGroup.id;
-    const workItems = taskGroup.workItems.map((workItem) => {
+    const languagePolicy = taskGroup.languagePolicy || {languageTag: "zh-CN", languageName: "Chinese"};
+    const workItems = (taskGroup.workItems || []).map((workItem) => {
       const dispatch = findWorkItemDispatch(taskGroup.id, workItem.id);
       return h`
         <div class="record">
@@ -635,15 +657,25 @@ function renderTasks() {
         </div>
       `;
     }).join("");
-    const roles = taskGroup.roles.map((role) => `${role.roleId}:${role.status}`).join(", ");
-    const blockers = taskGroup.blockers.length
-      ? taskGroup.blockers.map((blocker) => `<div class="record"><strong>${escapeHtml(blocker.severity)}</strong><span>${escapeHtml(blocker.summary)}</span></div>`).join("")
+    const roles = (taskGroup.roles || []).map((role) => `${role.roleId}:${role.status}`).join(", ");
+    const blockers = (taskGroup.blockers || []).length
+      ? (taskGroup.blockers || []).map((blocker) => `<div class="record"><strong>${escapeHtml(blocker.severity)}</strong><span>${escapeHtml(blocker.summary)}</span></div>`).join("")
       : "<div class='record'>无阻塞</div>";
-    return panel(taskGroup.name, h`
+    const languageForm = h`
+      <form class="form-grid compact-form" data-language-policy-form data-task="${escapeHtml(taskGroup.id)}">
+        <div class="form-row">
+          <label for="language-${escapeHtml(taskGroup.id)}">任务组语言</label>
+          <select id="language-${escapeHtml(taskGroup.id)}" name="languageTag">${languageOptionTags(languagePolicy.languageTag || "zh-CN")}</select>
+        </div>
+        <div class="form-row"><label for="language-name-${escapeHtml(taskGroup.id)}">显示名</label><input id="language-name-${escapeHtml(taskGroup.id)}" name="languageName" value="${escapeHtml(languagePolicy.languageName || "")}"></div>
+        <button class="primary-button" type="submit">保存语言策略</button>
+      </form>
+    `;
+    return panel(taskGroup.name || taskGroup.title || taskGroup.id, h`
       <div class="stack">
         <div class="record-title"><strong>${escapeHtml(taskGroup.phase)}</strong><span>${pill(taskGroup.status)} ${pill(taskGroup.goalExecutionStatus || "active")}</span></div>
         ${progress(taskGroup.progress)}
-        <div class="record-meta"><span>health: ${escapeHtml(taskGroup.health)}</span><span>roles: ${escapeHtml(roles)}</span></div>
+        <div class="record-meta"><span>health: ${escapeHtml(taskGroup.health)}</span><span>language: ${escapeHtml(languagePolicyText(languagePolicy))}</span><span>roles: ${escapeHtml(roles)}</span></div>
         <div class="button-row">
           <button class="secondary-button" data-action="toggle-task-detail" data-task="${escapeHtml(taskGroup.id)}">${expanded ? "收起详情" : "查看详情"}</button>
           <button class="secondary-button" data-action="task-control" data-task="${escapeHtml(taskGroup.id)}" data-task-action="pause">暂停</button>
@@ -652,6 +684,7 @@ function renderTasks() {
           <button class="danger-button" data-action="task-control" data-task="${escapeHtml(taskGroup.id)}" data-task-action="rebound_drift">纠偏</button>
         </div>
         ${expanded ? h`
+          ${languageForm}
           <div class="stack">${workItems}</div>
           <div class="stack">${blockers}</div>
         ` : ""}
@@ -660,6 +693,23 @@ function renderTasks() {
   }).join("");
 
   content.innerHTML = [taskGroups, renderSelectedExecutionPanel()].join("");
+  document.querySelectorAll("[data-language-policy-form]").forEach((form) => {
+    form.querySelector("select[name='languageTag']")?.addEventListener("change", (event) => {
+      const label = event.target.selectedOptions[0]?.textContent?.split(" · ")[0] || event.target.value;
+      form.querySelector("input[name='languageName']").value = label;
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target).entries());
+      try {
+        await api(`/api/task-groups/${event.target.dataset.task}/language-policy`, {method: "POST", body: JSON.stringify(data)});
+        lastError = "";
+        await load();
+      } catch (error) {
+        showError(error);
+      }
+    });
+  });
 }
 
 function renderRuntime() {

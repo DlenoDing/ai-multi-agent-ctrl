@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { normalize, resolve, sep } from "node:path";
-import { createId, digestOf, ensureRuntimeCollections } from "./control-plane-core.mjs";
+import { createId, digestOf, ensureRuntimeCollections, languagePolicyDirective, normalizeTaskGroupLanguagePolicy } from "./control-plane-core.mjs";
 
 const DEFAULT_AGENT_MCP_TOOLS = [
   "agent-control-mcp.node_probe",
@@ -186,23 +186,42 @@ export function registerAgentNode(state, input = {}, options = {}) {
   };
 }
 
+const nodeTokenCache = new Map();
+
 export function authenticateAgentNode(state, bearerToken) {
   ensureAgentGatewayCollections(state);
   const token = String(bearerToken || "");
   if (!token.startsWith("aimac_node_")) return null;
+  const cachedNodeId = nodeTokenCache.get(token);
+  if (cachedNodeId) {
+    const node = state.agentRuntimeNodes.find((item) => item.nodeId === cachedNodeId);
+    if (node && nodeAcceptsToken(node, token)) return node;
+    nodeTokenCache.delete(token);
+  }
   for (const node of state.agentRuntimeNodes) {
-    if (node.status === "revoked") continue;
-    const presentedDigest = digestOf(`agent-node:${node.nodeId}:${token}`);
-    const currentValid = !node.credentialExpiresAt || new Date(node.credentialExpiresAt).getTime() > Date.now();
-    const previousValid = node.previousCredentialDigest === presentedDigest
-      && new Date(node.previousCredentialExpiresAt || 0).getTime() > Date.now();
-    if ((currentValid && node.credentialDigest === presentedDigest) || previousValid) return node;
+    if (nodeAcceptsToken(node, token)) {
+      if (nodeTokenCache.size > 5000) nodeTokenCache.clear();
+      nodeTokenCache.set(token, node.nodeId);
+      return node;
+    }
   }
   return null;
 }
 
+function nodeAcceptsToken(node, token) {
+  if (node.status === "revoked") return false;
+  const presentedDigest = digestOf(`agent-node:${node.nodeId}:${token}`);
+  const currentValid = !node.credentialExpiresAt || new Date(node.credentialExpiresAt).getTime() > Date.now();
+  const previousValid = node.previousCredentialDigest === presentedDigest
+    && new Date(node.previousCredentialExpiresAt || 0).getTime() > Date.now();
+  return (currentValid && node.credentialDigest === presentedDigest) || previousValid;
+}
+
 export function heartbeatAgentNode(state, node, input = {}, options = {}) {
   const at = new Date().toISOString();
+  const previousHeartbeatAt = node.lastHeartbeatAt;
+  const previousStatus = node.status;
+  const previousProfileDigest = node.profileDigest;
   node.lastHeartbeatAt = at;
   node.updatedAt = at;
   if (input.profile) {
@@ -222,8 +241,29 @@ export function heartbeatAgentNode(state, node, input = {}, options = {}) {
     node.credentialIssuedAt = at;
     node.credentialExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   }
+  renewNodeDispatchClaims(state, node, at);
+  const heartbeatPersistFloorMs = Math.max(30000, Number(process.env.AIMAC_HEARTBEAT_PERSIST_FLOOR_MS || 120000));
+  const persistRequired = Boolean(rotatedNodeToken) ||
+    node.status !== previousStatus ||
+    node.profileDigest !== previousProfileDigest ||
+    !previousHeartbeatAt ||
+    Date.now() - new Date(previousHeartbeatAt).getTime() >= heartbeatPersistFloorMs ||
+    (node.activeDispatchIds || []).length > 0;
   appendGatewayEvent(state, "node_heartbeat", node.nodeId, {profileDigest: node.profileDigest, credentialRotated: Boolean(rotatedNodeToken)});
-  return {ok: true, node: publicAgentNode(node), serverTime: at, ...(rotatedNodeToken ? {nodeToken: rotatedNodeToken} : {})};
+  const queuedCommands = (state.agentControlCommands || []).filter((command) => command.nodeId === node.nodeId && command.status === "queued").length;
+  return {ok: true, accepted: true, commandsAvailable: queuedCommands, node: publicAgentNode(node), serverTime: at, persistRequired, ...(rotatedNodeToken ? {nodeToken: rotatedNodeToken} : {})};
+}
+
+function renewNodeDispatchClaims(state, node, at) {
+  for (const dispatch of state.agentDispatches || []) {
+    if (dispatch.assignedNodeId !== node.nodeId || dispatch.status !== "running" || !dispatch.claimExpiresAt) continue;
+    const ttlSeconds = boundedInteger(dispatch.claimTtlSeconds, 60, 21600, 1800);
+    const renewed = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+    if (renewed > dispatch.claimExpiresAt) {
+      dispatch.claimExpiresAt = renewed;
+      dispatch.updatedAt = at;
+    }
+  }
 }
 
 export function revokeAgentNode(state, node) {
@@ -361,14 +401,16 @@ export function claimNextDispatch(state, node, options = {}) {
     if (!node.projectIds.includes(item.projectId)) return false;
     if (item.assignedNodeId && item.assignedNodeId !== node.nodeId) return false;
     const contract = state.agentTaskContracts.find((candidate) => candidate.sessionId === item.sessionId && candidate.runId === item.runId);
-    return contract && roleAllowed(contract.roleId, node.allowedRoles) && modelRunnable(contract.model, node.profile);
+    if (!contract || (contract.expiresAt && new Date(contract.expiresAt).getTime() <= Date.now())) return false;
+    return roleAllowed(contract.roleId, node.allowedRoles) && modelRunnable(contract.model, node.profile);
   });
   if (!dispatch) return {dispatch: null, reason: "no_compatible_dispatch"};
   const at = new Date().toISOString();
   dispatch.status = "running";
   dispatch.assignedNodeId = node.nodeId;
   dispatch.claimedAt = at;
-  dispatch.claimExpiresAt = new Date(Date.now() + boundedInteger(options.claimTtlSeconds, 60, 21600, 1800) * 1000).toISOString();
+  dispatch.claimTtlSeconds = boundedInteger(options.claimTtlSeconds, 60, 21600, 1800);
+  dispatch.claimExpiresAt = new Date(Date.now() + dispatch.claimTtlSeconds * 1000).toISOString();
   dispatch.attempts = Number(dispatch.attempts || 0) + 1;
   dispatch.updatedAt = at;
   node.activeDispatchIds = uniqueStrings([...(node.activeDispatchIds || []), dispatch.dispatchId]);
@@ -462,11 +504,17 @@ export function listAgentControlCommands(state, node, input = {}) {
   return {commands, nextCursor: commands.at(-1)?.sequence || afterSequence, deliveredCount};
 }
 
+const controlAckRank = {queued: 0, delivered: 1, received: 2, acked: 3, completed: 4, failed: 4, rejected: 4};
+
 export function ackAgentControlCommand(state, node, commandId, input = {}) {
   ensureAgentGatewayCollections(state);
   const command = state.agentControlCommands.find((item) => item.commandId === commandId && item.nodeId === node.nodeId);
   if (!command) throw gatewayError("agent_control_command_not_found", 404);
   const status = ["received", "acked", "completed", "failed", "rejected"].includes(input.status) ? input.status : "acked";
+  const currentRank = controlAckRank[command.status] ?? 0;
+  if (command.status === status) return {command, replayed: true};
+  if (currentRank >= 4) throw gatewayError("agent_control_command_already_terminal", 409);
+  if ((controlAckRank[status] ?? 0) < currentRank) throw gatewayError("agent_control_command_ack_regression", 409);
   command.status = status;
   command.acknowledgedAt = new Date().toISOString();
   command.ackResult = sanitizeAckResult(input.result || {});
@@ -475,8 +523,32 @@ export function ackAgentControlCommand(state, node, commandId, input = {}) {
   if (status === "completed" && command.commandType === "revoke") finalizeNodeRevocation(state, node, command);
   if (status === "completed" && command.commandType === "shutdown") finalizeNodeShutdown(state, node, command);
   if (["failed", "rejected"].includes(status) && ["revoke", "shutdown"].includes(command.commandType)) handleStopControlFailure(state, node, command, status);
+  if (["failed", "rejected"].includes(status) && ["pause_dispatch", "cancel_dispatch"].includes(command.commandType)) handleDispatchControlFailure(state, node, command, status);
   appendGatewayEvent(state, "agent_control_command_ack", command.commandId, {nodeId: node.nodeId, status});
   return {command};
+}
+
+function handleDispatchControlFailure(state, node, command, status) {
+  const at = new Date().toISOString();
+  const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === command.dispatchId);
+  if (!dispatch) return;
+  const retryAttempt = Number(command.payload?.retryAttempt || 0) + 1;
+  if (status === "failed" && retryAttempt <= 3 && ["running", "blocked"].includes(dispatch.status)) {
+    const retry = createAgentControlCommand(state, node, {
+      commandType: command.commandType,
+      dispatchId: command.dispatchId,
+      payload: {...(command.payload || {}), retryOf: command.commandId, retryAttempt},
+      ttlSeconds: 300
+    }, {actor: "agent-gateway", idempotencyKey: `control-retry:${command.commandId}:${retryAttempt}`}).command;
+    command.retryCommandId = retry.commandId;
+  }
+  const taskGroup = state.taskGroups.find((item) => item.id === dispatch.taskGroupId);
+  if (taskGroup) {
+    taskGroup.health = "attention";
+    taskGroup.updatedAt = at;
+  }
+  command.failureHandledAt = at;
+  appendGatewayEvent(state, "agent_dispatch_control_ack_failure", command.commandId, {nodeId: node.nodeId, commandType: command.commandType, status, dispatchId: dispatch.dispatchId, retryCommandId: command.retryCommandId || null});
 }
 
 export function submitAgentExecutionEvent(state, node, input = {}) {
@@ -513,12 +585,13 @@ export function prepareAgentExecutionEvent(state, node, input = {}) {
     runId: dispatch.runId,
     eventType,
     progressPercent: boundedInteger(input.progressPercent, 0, 100, progressForEventType(eventType)),
-    status: input.status || statusForExecutionEvent(eventType),
+    status: ["running", "attention", "failed", "completed"].includes(input.status) ? input.status : statusForExecutionEvent(eventType),
     summary: String(input.summary || "").slice(0, 1000),
-    outputTailDigest: input.outputTailDigest || null,
+    outputTailDigest: /^sha256:[0-9a-f]{64}$/u.test(String(input.outputTailDigest || "")) ? input.outputTailDigest : null,
     evidenceRefs: uniqueStrings(input.evidenceRefs || []).slice(0, 40),
     eventKey: eventKey || null,
     payloadDigest: digestOf(input.payload || input.summary || eventType),
+    languagePolicyDigest: dispatch.languagePolicyDigest || null,
     createdAt: at
   };
   return {event};
@@ -539,7 +612,13 @@ export function recordAgentExecutionEvent(state, node, event = {}, options = {})
   state.agentExecutionSequence = Math.max(Number(state.agentExecutionSequence || 0), Number(event.sequence || 0));
   state.agentExecutionEvents.unshift(event);
   state.agentExecutionEvents = state.agentExecutionEvents.slice(0, 500);
-  updateExecutionProgress(state, dispatch, event, event.createdAt || new Date().toISOString());
+  const at = event.createdAt || new Date().toISOString();
+  if (dispatch.status === "running" && dispatch.assignedNodeId === node.nodeId && dispatch.claimExpiresAt) {
+    const ttlSeconds = boundedInteger(dispatch.claimTtlSeconds, 60, 21600, 1800);
+    const renewed = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+    if (renewed > dispatch.claimExpiresAt) dispatch.claimExpiresAt = renewed;
+  }
+  updateExecutionProgress(state, dispatch, event, at);
   appendGatewayEvent(state, "agent_execution_event", event.eventId, {nodeId: node.nodeId, dispatchId: event.dispatchId, eventType: event.eventType, progressPercent: event.progressPercent});
   return {event};
 }
@@ -768,6 +847,8 @@ function buildDispatchPackage(state, dispatch, node, options) {
       worksetDigest: skillWorkset.worksetDigest,
       downloadPath: `/api/agent/v1/skill-worksets/${encodeURIComponent(skillWorkset.worksetId)}`,
       requiredSkillRefs: skillWorkset.requiredSkillRefs,
+      languagePolicy: skillWorkset.languagePolicy,
+      languagePolicyDigest: skillWorkset.languagePolicyDigest,
       executionDirective: skillWorkset.executionDirective
     },
     remoteServices: {
@@ -804,12 +885,15 @@ function buildSkillWorkset(state, contract, options) {
     overlayDigest: overlay.overlayDigest,
     patch: overlay.patch
   }));
+  const languagePolicy = normalizeTaskGroupLanguagePolicy(contract.languagePolicy);
+  const languagePolicyDigest = contract.languagePolicyDigest || digestOf(languagePolicy);
   const requiredSkillRefs = [effectiveRef];
   const manifestSeed = {
     roleId: contract.roleId,
     synchronizationMode: "server_managed_on_demand",
     requiredSkillRefs,
     roleSkillDigest: contract.roleSkill.roleSkillDigest,
+    languagePolicyDigest,
     overlays,
     files: files.map(({path, contentDigest, sourcePath}) => ({path, contentDigest, sourcePath}))
   };
@@ -824,10 +908,12 @@ function buildSkillWorkset(state, contract, options) {
     workItemId: contract.workId,
     roleId: contract.roleId,
     synchronizationMode: "server_managed_on_demand",
+    languagePolicy,
+    languagePolicyDigest,
     requiredSkillRefs,
     overlays,
     files,
-    executionDirective: `The ${contract.roleId} agent MUST load and apply every skill in this workset before executing the task. Child roles MUST receive their own explicit skill workset from the control plane; they may not inherit or choose skills implicitly.`,
+    executionDirective: `The ${contract.roleId} agent MUST load and apply every skill in this workset before executing the task. Child roles MUST receive their own explicit skill workset from the control plane; they may not inherit or choose skills implicitly. ${languagePolicyDirective(languagePolicy)}`,
     createdAt: contract.issuedAt
   };
 }

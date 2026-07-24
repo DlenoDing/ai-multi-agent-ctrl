@@ -33,6 +33,7 @@
 | `spec/completion-readiness.schema.json` | Orchestrator、Monitor Agent、Agent Runtime | 校验 WorkSession/TaskGroup final 前所有未闭合对象和证据覆盖 |
 | `spec/runtime-issue-pattern.schema.json` | Monitor Agent、Rule Steward、Orchestrator | 校验运行期重复问题聚合、证据和收集限定 |
 | `spec/system-upgrade-candidate.schema.json` | Monitor Agent、Rule Steward、Orchestrator | 校验重复运行问题收集、候选归档和系统外升级证据包 |
+| `spec/language-policy.schema.json` | Orchestrator、Instruction Optimizer、Agent Runtime、UI Console Service | 校验任务组统一语言及其对指令、事件、checkpoint、仓库输出和 review 材料的覆盖 |
 | `spec/agent-task-contract.schema.json` | Orchestrator、Agent Runtime、WorkSession | 校验每次 session_start 的任务契约 |
 | `spec/control-events.schema.json` | Room Broker、Command Bus、MCP Proxy | 校验 room event、command event、checkpoint event 和 permission event envelope |
 | `spec/checkpoint.schema.json` | Evidence MCP、Agent Runtime、Close Barrier | 校验 checkpoint、commitRefs、pushRefs 和 evidenceRefs |
@@ -108,6 +109,7 @@ System instruction
 | role skill selection | skill source digest、role skill digest、project overlay、taskGroup overlay、model requirements |
 | model selection | available model inventory、roleSkillFit、task capability fit、candidate rankings、hard constraints、quota/cost/latency/reliability、explicit model/reasoning、short modelDecision、decision refs |
 | session placement | sustainedWorkSignals、shortTaskSignals、subagent capacity、subagent safety proof、task contract、modelSelectionDecisionRef、auditRef |
+| language policy | taskGroup.languagePolicy、languagePolicyDigest、AgentTaskContract、EffectiveInstructionPacket、AgentDispatch、AgentSkillWorkset、AgentExecutionEvent、Checkpoint |
 | effective instruction | source classification、nextActionDraftDigest、activeRuleRefs、nonActiveMaterialRefs、contextIntakeRefs、forbiddenActions |
 | role drift guard | objectiveBoundaryDigest、roleMissionDigest、taskContractDigest、allowed/forbidden action scope、driftScore、correctiveActions |
 | execution topology | branch boundaries、owned/forbidden paths、resource scopes、runner isolation、result bundle contract、parent serial merge |

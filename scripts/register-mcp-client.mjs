@@ -33,7 +33,7 @@ writeJson(join(outputDir, "mcp-server.json"), {
   hostedBy: serverUrl,
   logicalServers: logicalServersFromTools(),
   toolCount: mcpToolNames.length,
-  mcpServers: {"ai-multi-agent-ctrl": remoteEntry}
+  mcpServers: {"ai_multi_agent_ctrl": remoteEntry}
 });
 outputs.push(join(outputDir, "mcp-server.json"));
 
@@ -86,7 +86,7 @@ function writeJson(path, value) {
 
 function writeJsonSnippet(filename) {
   const path = join(outputDir, filename);
-  writeJson(path, {mcpServers: {"ai-multi-agent-ctrl": remoteEntry}});
+  writeJson(path, {mcpServers: {"ai_multi_agent_ctrl": remoteEntry}});
   outputs.push(path);
 }
 
@@ -122,7 +122,8 @@ function applyClientConfig() {
   const raw = existsSync(configPath) ? readFileSync(configPath, "utf8").trim() : "";
   const previous = raw ? JSON.parse(raw) : {};
   previous.mcpServers ||= {};
-  previous.mcpServers["ai-multi-agent-ctrl"] = remoteEntry;
+  previous.mcpServers.ai_multi_agent_ctrl = remoteEntry;
+  delete previous.mcpServers["ai-multi-agent-ctrl"];
   writeJson(configPath, previous);
   outputs.push(configPath);
 }

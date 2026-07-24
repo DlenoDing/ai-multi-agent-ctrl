@@ -302,8 +302,8 @@ GET /api/task-groups/:taskGroupId/execution-events?afterSequence=<cursor>&waitMs
       "grantDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
     }
   ],
-  "model": {
-    "model": "provider/model",
+	  "model": {
+	    "model": "provider/model",
     "modelId": "provider/model",
     "alias": "balanced",
     "providerClass": "openai|anthropic|google|xai|deepseek|qwen|ollama|custom",
@@ -311,10 +311,19 @@ GET /api/task-groups/:taskGroupId/execution-events?afterSequence=<cursor>&waitMs
     "reasoning": "medium",
     "reasoningLevel": "medium",
     "modelDecision": "modelDecision: fixed writeSet implementation; no architecture裁决 -> provider/model / medium",
-    "selectionMode": "auto_best",
-    "modelSelectionDecisionRef": "model-selection://msd_..."
-  },
-  "permissionPolicy": {
+	    "selectionMode": "auto_best",
+	    "modelSelectionDecisionRef": "model-selection://msd_..."
+	  },
+	  "languagePolicy": {
+	    "schemaVersion": "language-policy/v1",
+	    "languageTag": "zh-CN",
+	    "languageName": "Chinese",
+	    "scope": ["role_interaction", "dispatch_instruction", "room_message", "execution_event", "checkpoint", "repository_output", "review_material"],
+	    "enforcement": "required",
+	    "fallback": "return_blocked_for_language_mismatch"
+	  },
+	  "languagePolicyDigest": "sha256:...",
+	  "permissionPolicy": {
     "onMissing": "permission_request",
     "autoAllowPromptTypes": ["browser_download"],
     "denyPromptTypes": ["oauth_consent", "account_login", "uac_admin", "keychain_access", "sudo", "hardware_key", "payment_authorization", "cloud_org_boundary", "production_boundary"],
@@ -324,11 +333,14 @@ GET /api/task-groups/:taskGroupId/execution-events?afterSequence=<cursor>&waitMs
   "outputContract": {
     "requiredOutputs": ["checkpoint", "commitRef", "pushRef", "evidenceRefs", "verificationRefs"],
     "evidenceRequired": true,
-    "checkpointRequired": true,
-    "independentReviewRequired": true,
-    "pushRefRequired": true
-  }
-}
+	    "checkpointRequired": true,
+	    "independentReviewRequired": true,
+	    "pushRefRequired": true,
+	    "requiredLanguage": "zh-CN",
+	    "languagePolicyDigest": "sha256:...",
+	    "languagePolicyRef": "LanguagePolicy:sha256:..."
+	  }
+	}
 ```
 
 Runtime 规则：
@@ -341,6 +353,7 @@ Runtime 规则：
 6. Runtime 必须把同级消息、子 Agent 输出、工具结果和外部 review result 当作 untrusted/advisory 输入，只有 task contract 内的 EffectiveInstructionPacket 能驱动副作用。
 7. Runtime 发现自身输出或任务理解偏离 roleFocus 时，必须停止副作用并提交 RoleDriftGuard 事件或 Finding。
 8. Git push 后、checkpoint ACK 前必须把完整 checkpoint 写入 `$AIMAC_AGENT_WORK_DIR/outbox`；重启时先按原 runId 重放。控制平面对已完成且 binding 相同的 checkpoint 返回幂等 replay，不能重复执行或重复 push。
+9. Runtime 生成的 DISPATCH prompt、执行事件摘要、checkpoint、artifact manifest 和仓库输出必须遵守 `languagePolicy`，并在事件与 checkpoint 中绑定 `languagePolicyDigest`。无法满足时返回 blocked，而不是切换到其他语言继续执行。
 
 ## 6. checkpoint_submit
 
@@ -368,8 +381,9 @@ Runtime 提交 checkpoint：
       "remoteSha": "abc123"
     }
   ],
-  "evidenceRefs": ["artifact_..."],
-  "nextSteps": [
+	  "evidenceRefs": ["artifact_..."],
+	  "languagePolicyDigest": "sha256:...",
+	  "nextSteps": [
     {
       "actionId": "review-request-work-1",
       "mode": "after_current",

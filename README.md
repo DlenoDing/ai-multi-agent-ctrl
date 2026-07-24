@@ -122,6 +122,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | [spec/completion-readiness.schema.json](spec/completion-readiness.schema.json) | WorkSession/TaskGroup final 前完成就绪检查 schema |
 | [spec/runtime-issue-pattern.schema.json](spec/runtime-issue-pattern.schema.json) | 运行期重复问题聚合、证据和收集限定 schema |
 | [spec/system-upgrade-candidate.schema.json](spec/system-upgrade-candidate.schema.json) | 重复运行问题收集和独立系统升级候选 schema |
+| [spec/language-policy.schema.json](spec/language-policy.schema.json) | 任务组统一交互、指令、执行事件、checkpoint、仓库输出和 review 材料语言策略 schema |
 | [spec/agent-task-contract.schema.json](spec/agent-task-contract.schema.json) | 总控派发给 WorkSession 的任务契约 schema |
 | [spec/control-events.schema.json](spec/control-events.schema.json) | Room/Command/Checkpoint/Permission 等控制事件 envelope schema |
 | [spec/checkpoint.schema.json](spec/checkpoint.schema.json) | checkpoint、commitRefs、pushRefs 和 evidenceRefs 的终态输出 schema |

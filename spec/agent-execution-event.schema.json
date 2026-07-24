@@ -4,7 +4,7 @@
   "title": "AgentExecutionEvent",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "eventId", "sequence", "nodeId", "dispatchId", "projectId", "taskGroupId", "workItemId", "sessionId", "runId", "eventType", "progressPercent", "status", "summary", "eventKey", "payloadDigest", "createdAt"],
+  "required": ["schemaVersion", "eventId", "sequence", "nodeId", "dispatchId", "projectId", "taskGroupId", "workItemId", "sessionId", "runId", "eventType", "progressPercent", "status", "summary", "eventKey", "payloadDigest", "languagePolicyDigest", "createdAt"],
   "properties": {
     "schemaVersion": {"type": "string", "const": "agent-execution-event/v1"},
     "eventId": {"type": "string", "minLength": 1},
@@ -27,6 +27,7 @@
     "evidenceRefs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "eventKey": {"type": "string", "minLength": 1, "maxLength": 240},
     "payloadDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
+    "languagePolicyDigest": {"type": ["string", "null"], "pattern": "^sha256:[a-fA-F0-9]{64}$"},
     "createdAt": {"type": "string", "format": "date-time"}
   }
 }

@@ -114,12 +114,17 @@ async function status(config) {
 
 async function run(config) {
   let lastHeartbeat = 0;
+  let lastAdmissionSelfCheckAt = 0;
   const once = args.once === true || process.env.AIMAC_AGENT_ONCE === "true";
   for (;;) {
-    await flushCheckpointOutbox(config);
+    if (config.shutdownRequested) {
+      process.stdout.write("agent runtime shutdown requested by control plane\n");
+      return;
+    }
+    const outboxPending = await flushCheckpointOutbox(config);
     if (Date.now() - lastHeartbeat >= config.heartbeatIntervalSeconds * 1000) {
       const currentProfile = probeProfile(config.executorCommand);
-      const heartbeat = await retryableAgentRequest(() => jsonRequest(config.gateway.heartbeatUrl, {method: "POST", token: config.nodeToken, body: {profile: currentProfile, runtimeVersion: RUNTIME_VERSION}}), "heartbeat");
+      const heartbeat = await retryableAgentRequest(() => jsonRequest(config.gateway.heartbeatUrl, {method: "POST", token: config.nodeToken, body: {nodeId: config.nodeId, status: "online", profile: currentProfile, runtimeVersion: RUNTIME_VERSION, capturedAt: new Date().toISOString()}}), "heartbeat");
       if (heartbeat.nodeToken) {
         config.nodeToken = heartbeat.nodeToken;
         writeSecretJson(configPath, config);
@@ -133,7 +138,17 @@ async function run(config) {
       process.stdout.write("agent runtime shutdown requested by control plane\n");
       return;
     }
+    if (outboxPending > 0) {
+      process.stderr.write(`dispatch claim deferred: ${outboxPending} checkpoint outbox item(s) pending replay\n`);
+      if (once) return;
+      await delay(config.pollIntervalSeconds * 1000);
+      continue;
+    }
     const claimed = await retryableAgentRequest(() => jsonRequest(config.gateway.dispatchUrl, {method: "POST", token: config.nodeToken, body: {claimTtlSeconds: Number(args["claim-ttl"] || 1800)}}), "dispatch_claim");
+    if (!claimed.dispatch && claimed.reason === "node_not_admitted" && Date.now() - lastAdmissionSelfCheckAt > 5 * 60 * 1000) {
+      lastAdmissionSelfCheckAt = Date.now();
+      await selfCheck(config).catch((error) => process.stderr.write(`re-admission self-check failed: ${error.message}\n`));
+    }
     if (claimed.dispatch) {
       try {
         const control = startControlWatcher(config, claimed.dispatch);
@@ -199,12 +214,19 @@ function startControlWatcher(config, dispatchPackage) {
       await loop.catch(() => {});
     }
   };
+  const keepAliveMs = Math.max(15000, Number(process.env.AIMAC_AGENT_EXECUTION_KEEPALIVE_MS || 60000));
+  let lastKeepAliveAt = Date.now();
   const loop = (async () => {
     while (state.running && !state.cancelled) {
       try {
-        await pollControlCommands(config, {waitMs: 2500, dispatchPackage, controlState: state});
+        await pollControlCommands(config, {waitMs: 15000, dispatchPackage, controlState: state});
       } catch (error) {
         process.stderr.write(`control watcher iteration deferred: ${error.message}\n`);
+        await delay(1000);
+      }
+      if (state.running && !state.cancelled && Date.now() - lastKeepAliveAt >= keepAliveMs) {
+        lastKeepAliveAt = Date.now();
+        await submitExecutionEvent(config, dispatchPackage, "heartbeat", {progressPercent: 0, summary: "Execution keep-alive heartbeat renews the dispatch claim."}).catch(() => {});
       }
       await delay(250);
     }
@@ -222,13 +244,18 @@ async function pollControlCommands(config, options = {}) {
   url.searchParams.set("limit", "20");
   let result;
   try {
-    result = await retryableAgentRequest(() => jsonRequest(url.href, {token: config.nodeToken}), "control_poll");
+    result = await retryableAgentRequest(() => jsonRequest(url.href, {token: config.nodeToken, timeoutMs: Math.max(0, Math.min(30000, Number(options.waitMs || 0))) + 15000}), "control_poll");
   } catch (error) {
     process.stderr.write(`control poll deferred: ${error.message}\n`);
     return {commands: [], nextCursor: config.controlCursor || 0};
   }
   for (const command of result.commands || []) {
-    await handleControlCommand(config, command, options);
+    try {
+      await handleControlCommand(config, command, options);
+    } catch (error) {
+      process.stderr.write(`control command handling failed: ${command.commandId} ${error.message}\n`);
+      await ackControlCommand(config, command, "failed", {reason: String(error.message || error).slice(0, 500)}).catch(() => {});
+    }
   }
   if (Number(result.nextCursor || 0) > Number(config.controlCursor || 0)) {
     config.controlCursor = Number(result.nextCursor || 0);
@@ -243,6 +270,7 @@ async function handleControlCommand(config, command, options = {}) {
   const activeDispatchId = dispatchPackage?.dispatch?.dispatchId;
   const scopedToActiveDispatch = !command.dispatchId || command.dispatchId === activeDispatchId;
   if (command.commandType === "refresh_profile") {
+    await ackControlCommand(config, command, "received", {phase: "received"});
     const profile = probeProfile(config.executorCommand);
     const heartbeat = await retryableAgentRequest(() => jsonRequest(config.gateway.heartbeatUrl, {method: "POST", token: config.nodeToken, body: {profile, runtimeVersion: RUNTIME_VERSION}}), "control_refresh_profile");
     if (heartbeat.nodeToken) {
@@ -291,7 +319,7 @@ async function handleControlCommand(config, command, options = {}) {
     await ackControlCommand(config, command, "rejected", {reason: "no_active_dispatch_context"});
     return;
   }
-  await ackControlCommand(config, command, "completed", {ignored: true});
+  await ackControlCommand(config, command, "rejected", {reason: "UNSUPPORTED_COMMAND", commandType: command.commandType});
 }
 
 function ackControlCommand(config, command, status, result) {
@@ -305,6 +333,7 @@ function ackControlCommand(config, command, status, result) {
 async function flushCheckpointOutbox(config) {
   const outboxDir = config.outboxDir || join(config.workDir, "outbox");
   mkdirSync(outboxDir, {recursive: true});
+  let pending = 0;
   for (const filename of readdirSync(outboxDir).filter((name) => name.endsWith(".json")).sort()) {
     const path = join(outboxDir, filename);
     const item = JSON.parse(readFileSync(path, "utf8"));
@@ -315,9 +344,22 @@ async function flushCheckpointOutbox(config) {
       unlinkSync(path);
       process.stdout.write(`checkpoint replayed: ${item.dispatchId}\n`);
     } catch (error) {
+      if (String(error.message || "").includes("recover_required")) {
+        const recoverPath = `${path}.recover-${Date.now()}`;
+        renameSync(path, recoverPath);
+        await jsonRequest(`${config.serverUrl}/api/agent/v1/dispatches/${encodeURIComponent(item.dispatchId)}/fail`, {
+          method: "POST",
+          token: config.nodeToken,
+          body: {status: "blocked", reason: `checkpoint_replay_recover_required: ${String(error.message).slice(0, 500)}`}
+        }).catch(() => {});
+        process.stderr.write(`checkpoint replay moved to recovery: ${item.dispatchId} -> ${recoverPath}\n`);
+        continue;
+      }
+      pending += 1;
       process.stderr.write(`checkpoint replay deferred: ${item.dispatchId} ${error.message}\n`);
     }
   }
+  return pending;
 }
 
 function persistCheckpointOutbox(config, dispatchPackage, checkpoint) {
@@ -336,9 +378,14 @@ function verifyCheckpointReplayRemote(config, item) {
   if (!target || !pushRef?.ref || !pushRef.remoteSha) return;
   const repositoryRoot = join(config.repositoryDir, safeName(target.repositoryId));
   if (!existsSync(join(repositoryRoot, ".git"))) throw new Error("checkpoint replay recover_required: repository checkout missing");
-  const currentRemoteSha = gitLsRemote(repositoryRoot, pushRef.remote || target.remote || "origin", pushRef.ref);
-  if (currentRemoteSha !== pushRef.remoteSha) {
-    throw new Error(`checkpoint replay recover_required: remote ref changed ${pushRef.ref}`);
+  const remote = pushRef.remote || target.remote || "origin";
+  const currentRemoteSha = gitLsRemote(repositoryRoot, remote, pushRef.ref);
+  if (currentRemoteSha === pushRef.remoteSha) return;
+  try {
+    git(repositoryRoot, ["fetch", "--no-tags", remote, pushRef.ref]);
+    git(repositoryRoot, ["merge-base", "--is-ancestor", pushRef.remoteSha, "FETCH_HEAD"]);
+  } catch {
+    throw new Error(`checkpoint replay recover_required: pushed commit no longer contained in remote ${pushRef.ref}`);
   }
 }
 
@@ -428,7 +475,8 @@ async function executeDispatch(config, dispatchPackage, control) {
     artifactManifestRefs: [manifestPath],
     changedPathEvidenceRefs: [`git-diff:${before}:${commit}`, ...changed.map((path) => `git-path:${path}`)],
     evidenceRefs: [`agent-node:${config.nodeId}`, `skill-workset:${skillWorkset.worksetDigest}`, `remote-mcp:${config.gateway.mcpUrl}`],
-    outputContractDigest: sha256("spec/checkpoint.schema.json"),
+    languagePolicyDigest: dispatchPackage.taskContract.languagePolicyDigest,
+    outputContractDigest: dispatchPackage.taskContract.outputContract?.schemaDigest || sha256("spec/checkpoint.schema.json"),
     createdAt: new Date().toISOString()
   };
   await submitExecutionEvent(config, dispatchPackage, "checkpoint_prepared", {progressPercent: 95, summary: "Checkpoint prepared for local outbox and control-plane ACK.", evidenceRefs: checkpoint.evidenceRefs});
@@ -453,6 +501,8 @@ async function runModelExecutor(config, dispatchPackage, repositoryRoot, skillWo
     AIMAC_DISPATCH_REASONING: reasoning,
     AIMAC_DISPATCH_REASONING_LEVEL: reasoning,
     AIMAC_MODEL_DECISION: String(dispatchModel.modelDecision || ""),
+    AIMAC_TASK_GROUP_LANGUAGE: String(dispatchPackage.taskContract.languagePolicy?.languageTag || "zh-CN"),
+    AIMAC_LANGUAGE_POLICY_DIGEST: String(dispatchPackage.taskContract.languagePolicyDigest || ""),
     AIMAC_SKILL_WORKSET_DIR: skillWorkset.directory,
     AIMAC_SKILL_MANIFEST_FILE: skillWorkset.manifestPath,
     AIMAC_EXECUTION_PROMPT_FILE: promptPath
@@ -466,6 +516,8 @@ async function runModelExecutor(config, dispatchPackage, repositoryRoot, skillWo
     workId: dispatchPackage.taskContract.workId,
     sessionId: dispatchPackage.taskContract.sessionId,
     model: dispatchPackage.taskContract.model,
+    languagePolicy: dispatchPackage.taskContract.languagePolicy,
+    languagePolicyDigest: dispatchPackage.taskContract.languagePolicyDigest,
     roleSkill: dispatchPackage.taskContract.roleSkill,
     skillWorksetDir: skillWorkset.directory,
     taskContract: dispatchPackage.taskContract,
@@ -687,6 +739,9 @@ function buildExecutionPrompt(dispatchPackage, workset, packagePath) {
   if (!model.modelDecision || !(model.model || model.modelId) || !(model.reasoning || model.reasoningLevel)) {
     throw new Error("dispatch model, reasoning and modelDecision are required");
   }
+  const languagePolicy = contract.languagePolicy || {};
+  const languageTag = languagePolicy.languageTag || "zh-CN";
+  const languageName = languagePolicy.languageName || languageTag;
   const repositoryTarget = dispatchPackage.repositoryOutputTarget || {};
   const readLocators = uniqueStrings([
     "AGENTS.md",
@@ -703,6 +758,8 @@ function buildExecutionPrompt(dispatchPackage, workset, packagePath) {
     `model: ${model.model || model.modelId}`,
     `reasoning: ${model.reasoning || model.reasoningLevel}`,
     modelDecisionLine(model.modelDecision),
+    `language: ${languageTag}`,
+    `languagePolicy: required; use ${languageName}/${languageTag} for role interaction, instructions, execution events, checkpoints, repository outputs and review material`,
     "",
     `node: ${contract.workId}`,
     `graph: ${contract.taskGroupId}`,
@@ -719,6 +776,7 @@ function buildExecutionPrompt(dispatchPackage, workset, packagePath) {
     "- commit/push task-owned checkpoint when stable",
     `- load skill workset ${workset.manifestPath}`,
     `- use only remote MCP ${dispatchPackage.remoteServices.mcpPath}`,
+    `- keep all task-facing output in ${languageTag}`,
     "",
     "doNot:",
     ...doNot.map((item) => `- ${item}`),
@@ -754,6 +812,8 @@ function writeArtifactManifest(repositoryRoot, manifestPath, dispatchPackage, ou
     dispatchId: dispatchPackage.dispatch.dispatchId,
     repositoryOutputTargetRefs: [dispatchPackage.repositoryOutputTarget.targetId],
     taskContractDigest: dispatchPackage.taskContract.contractDigest,
+    languagePolicy: dispatchPackage.taskContract.languagePolicy,
+    languagePolicyDigest: dispatchPackage.taskContract.languagePolicyDigest,
     outputPolicy: "project_git_repository_only",
     generatedBy: "aimac-agent-runtime",
     model: dispatchPackage.taskContract.model,
@@ -890,10 +950,12 @@ function writableDirectory(path) {
 }
 
 async function jsonRequest(url, options = {}) {
+  const timeoutMs = Math.max(1000, Number(options.timeoutMs || process.env.AIMAC_AGENT_REQUEST_TIMEOUT_MS || 30000));
   const response = await fetch(url, {
     method: options.method || (options.body ? "POST" : "GET"),
     headers: {accept: "application/json", ...(options.body ? {"content-type": "application/json"} : {}), ...(options.token ? {authorization: `Bearer ${options.token}`} : {}), ...(options.headers || {})},
-    ...(options.body ? {body: JSON.stringify(options.body)} : {})
+    ...(options.body ? {body: JSON.stringify(options.body)} : {}),
+    signal: AbortSignal.timeout(timeoutMs)
   });
   const text = await response.text();
   let payload;
@@ -995,7 +1057,8 @@ function uniqueStrings(values) {
 }
 
 function globalClientConfigurationEnabled() {
-  return args["configure-global-clients"] === "true" || args["configure-clients"] === "true" || process.env.AIMAC_AGENT_CONFIGURE_GLOBAL_CLIENTS === "true" || process.env.AIMAC_AGENT_CONFIGURE_CLIENTS === "true";
+  return [args["configure-global-clients"], args["configure-clients"]].some((value) => value === true || value === "true") ||
+    process.env.AIMAC_AGENT_CONFIGURE_GLOBAL_CLIENTS === "true" || process.env.AIMAC_AGENT_CONFIGURE_CLIENTS === "true";
 }
 
 function readJoinToken() {

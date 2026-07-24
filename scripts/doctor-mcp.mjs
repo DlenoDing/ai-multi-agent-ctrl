@@ -91,8 +91,8 @@ try {
   });
   if (registration.status !== 0) throw new Error(`remote MCP registration failed: ${registration.stderr}`);
   const generated = JSON.parse(readFileSync(join(configDir, "mcp-server.json"), "utf8"));
-  const entry = generated.mcpServers["ai-multi-agent-ctrl"];
-  if (entry.url !== `${baseUrl}/mcp` || entry.command || generated.transport !== "streamable-http") throw new Error("MCP client registration did not generate a remote-only endpoint");
+  const entry = generated.mcpServers.ai_multi_agent_ctrl;
+  if (generated.mcpServers["ai-multi-agent-ctrl"] || entry?.url !== `${baseUrl}/mcp` || entry.command || generated.transport !== "streamable-http") throw new Error("MCP client registration did not generate a remote-only endpoint");
 
   const localStart = spawnSync(process.execPath, ["apps/mcp-server/server.mjs"], {cwd: root, encoding: "utf8"});
   if (localStart.status === 0 || !localStart.stderr.includes("Local MCP stdio startup is disabled")) throw new Error("Agent-local MCP stdio server was not disabled");

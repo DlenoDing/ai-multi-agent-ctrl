@@ -327,7 +327,7 @@ unique(project_id, resource_type, resource_key) where status = 'active'
 | model_selection_decisions | `id,project_id,task_group_id,work_item_id,role_skill_id,selected_model_id,status,score_breakdown_ref,policy_decision_id,audit_ref,created_at` |
 | session_placement_policies | `id,project_id,task_group_id,status,default_placement,capacity_policy,placement_rules,decision_record_id,created_at` |
 | session_placement_decisions | `id,project_id,task_group_id,work_item_id,status,placement,work_signals,capacity_snapshot_ref,model_selection_decision_id,task_contract_ref,audit_ref,created_at` |
-| effective_instruction_packets | `id,project_id,task_group_id,work_item_id,status,objective_boundary_digest,next_action_draft_digest,action_basis_ref,active_rule_refs,non_active_material_refs,context_intake_refs,validation_requirements,forbidden_actions,audit_ref,created_at` |
+| effective_instruction_packets | `id,project_id,task_group_id,work_item_id,status,objective_boundary_digest,next_action_draft_digest,action_basis_ref,language_policy_digest,active_rule_refs,non_active_material_refs,context_intake_refs,validation_requirements,forbidden_actions,audit_ref,created_at` |
 | role_drift_guards | `id,project_id,task_group_id,work_item_id,session_id,role_id,role_class,status,objective_boundary_digest,role_mission_digest,task_contract_digest,effective_instruction_packet_id,drift_score,max_allowed_drift_score,corrective_actions,audit_ref,created_at` |
 | execution_topologies | `id,project_id,task_group_id,work_item_id,status,mode,runner_kind,isolation,base_snapshot,merge_policy,eligibility_gates,branch_refs,blockers,audit_ref,created_at` |
 | derived_task_requests | `id,project_id,task_group_id,source_ref,status,reason,proposed_insertion_mode,topology_effect,summary,evidence_ref,action_basis_ref,audit_ref,created_at` |
@@ -342,7 +342,7 @@ unique(project_id, resource_type, resource_key) where status = 'active'
 | access_control_grants | `id,status,subject_ref,resource_ref,role,permissions,scope_digest,policy_decision_id,expires_at,audit_ref,created_at,updated_at` |
 | management_console_surfaces | `id,console_type,status,route,views,guarded_actions,visual_quality_gates,audit_ref,created_at,updated_at` |
 | progress_snapshots | `id,scope_type,scope_ref,status,progress,health,counters,role_activity,work_items,blockers,repository_outputs,digest,created_at,updated_at` |
-| instruction_envelopes | `id,project_id,task_group_id,work_item_id,status,recipient_role,effective_instruction_packet_id,stable_prefix_digest,delta_refs,cache_key,token_budget,output_contract_ref,payload_digest,audit_ref,created_at,updated_at` |
+| instruction_envelopes | `id,project_id,task_group_id,work_item_id,status,recipient_role,effective_instruction_packet_id,stable_prefix_digest,language_policy_digest,delta_refs,cache_key,token_budget,output_contract_ref,payload_digest,audit_ref,created_at,updated_at` |
 | shared_definition_contracts | `id,project_id,task_group_id,status,definition_type,scope_refs,canonical_owner_role,producer_role,consumer_refs,definition_digest,repository_target,conflict_policy,change_policy,review_evidence_refs,audit_ref,created_at,updated_at` |
 | repository_output_targets | `id,project_id,task_group_id,work_item_id,status,repository_id,repository_url,remote,branch,base_ref,path_allowlist,path_denylist,output_policy,decision_record_id,lease_id,commit_refs,push_refs,artifact_manifest_path,audit_ref,created_at,updated_at` |
 
@@ -362,6 +362,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | GET | `/api/task-groups/:taskGroupId` | 读取任务组快照 | orchestrator、scheduler、agent-runtime、monitor、admin read-only |
 | GET | `/api/task-groups/:taskGroupId/progress` | 读取任务组进度快照 | orchestrator、monitor、ui-console-service |
 | GET | `/api/task-groups/:taskGroupId/readiness` | 计算任务组完成就绪和关闭屏障 | orchestrator、monitor、ui-console-service |
+| POST | `/api/task-groups/:taskGroupId/language-policy` | 设置任务组统一语言策略 | orchestrator、ui-console-service |
 | POST | `/api/task-groups/:taskGroupId/control` | 暂停、恢复、请求复验或纠偏 | orchestrator、ui-console-service |
 | POST | `/api/work-items` | 创建 work item | orchestrator、decision-center |
 | POST | `/api/work-items/:workItemId/assign` | 分配或改派 | scheduler、orchestrator |

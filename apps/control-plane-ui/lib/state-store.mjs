@@ -43,6 +43,46 @@ export function isStateStoreConflict(error) {
   return error?.code === "AIMAC_STATE_CONFLICT";
 }
 
+const hydratedStateCache = new Map();
+const centralStateCache = new Map();
+
+function statCacheKey(path) {
+  try {
+    const stat = statSync(path);
+    return `${stat.ino}:${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return null;
+  }
+}
+
+function runtimeJsonStateCacheKey(options, central) {
+  const centralKey = statCacheKey(options.statePath);
+  if (!centralKey) return null;
+  const parts = [centralKey];
+  for (const entry of central?.projectStateShards?.projects || []) {
+    const name = runtimeJsonShardNameFromIndexEntry(entry);
+    if (!name) return null;
+    const shardKey = statCacheKey(join(options.runtimeDir, projectDbDirName, name));
+    if (!shardKey) return null;
+    parts.push(`${name}=${shardKey}`);
+  }
+  return parts.join("|");
+}
+
+function cacheStoredState(cache, statePath, value, key) {
+  if (!key) return;
+  cache.clear();
+  cache.set(statePath, {key, value: structuredClone(value)});
+}
+
+function cachedStoredState(cache, statePath, keyBuilder) {
+  const entry = cache.get(statePath);
+  if (!entry) return null;
+  const currentKey = keyBuilder(entry.value);
+  if (!currentKey || entry.key !== currentKey) return null;
+  return structuredClone(entry.value);
+}
+
 export function stateStoreKind() {
   return process.env.AIMAC_STATE_STORE === "postgresql" && Boolean(process.env.DATABASE_URL) ? "postgresql" : "runtime_json";
 }
@@ -70,9 +110,15 @@ export function storedStateExists(options) {
 export function readStoredState(options) {
   ensureStoredState(options);
   if (stateStoreKind() !== "postgresql") {
+    const cached = cachedStoredState(hydratedStateCache, options.statePath, (value) => runtimeJsonStateCacheKey(options, value));
+    if (cached) {
+      cached.__loadedStateVersion = Number(cached.stateVersion || 0);
+      return cached;
+    }
     return withRuntimeJsonLock(options, () => {
       const central = JSON.parse(readFileSync(options.statePath, "utf8"));
       const state = hydrateProjectState(central, options);
+      cacheStoredState(hydratedStateCache, options.statePath, state, runtimeJsonStateCacheKey(options, central));
       state.__loadedStateVersion = Number(state.stateVersion || 0);
       return state;
     });
@@ -85,26 +131,66 @@ export function readStoredState(options) {
 
 export function readStoredCentralState(options) {
   ensureStoredState(options);
+  if (stateStoreKind() !== "postgresql") {
+    const cached = cachedStoredState(centralStateCache, options.statePath, () => statCacheKey(options.statePath));
+    if (cached) {
+      cached.__loadedStateVersion = Number(cached.stateVersion || 0);
+      return cached;
+    }
+  }
   const central = stateStoreKind() === "postgresql"
     ? JSON.parse(readPostgresState(options))
     : JSON.parse(readFileSync(options.statePath, "utf8"));
+  if (stateStoreKind() !== "postgresql") cacheStoredState(centralStateCache, options.statePath, central, statCacheKey(options.statePath));
   central.__loadedStateVersion = Number(central.stateVersion || 0);
   return central;
 }
 
 export function writeStoredState(state, options) {
   mkdirSync(options.runtimeDir, {recursive: true});
-  const {centralState, projectShards} = externalizeProjectState(withoutInternalStateFields(state));
   if (stateStoreKind() === "postgresql") {
+    const {centralState, projectShards} = externalizeProjectState(withoutInternalStateFields(state));
     writePostgresStateWithProjectShards(centralState, projectShards, options, options.expectedStateVersion);
     return;
   }
   withRuntimeJsonLock(options, () => {
-    assertExpectedVersion(options.statePath, options.expectedStateVersion);
-    const shardWrite = writeRuntimeJsonProjectShards(projectShards, options);
+    const previousCentral = readCentralStateIfPresent(options.statePath);
+    assertExpectedVersionFromCentral(previousCentral, options.expectedStateVersion);
+    const previousShardIndex = new Map((previousCentral?.projectStateShards?.projects || []).map((entry) => [entry.projectId, entry]));
+    const {centralState, projectShards, unchangedProjectIds} = externalizeProjectState(withoutInternalStateFields(state), previousShardIndex, options);
+    const shardWrite = writeRuntimeJsonProjectShards(projectShards, options, unchangedProjectIds);
     writeRuntimeJsonCentralState(centralState, options);
     gcRuntimeJsonProjectShards(options, shardWrite.activeNames);
+    cacheStoredState(centralStateCache, options.statePath, centralState, statCacheKey(options.statePath));
+    cacheStoredState(hydratedStateCache, options.statePath, hydratedStateFromParts(centralState, projectShards), runtimeJsonStateCacheKey(options, centralState));
   });
+}
+
+function readCentralStateIfPresent(statePath) {
+  if (!existsSync(statePath)) return null;
+  return JSON.parse(readFileSync(statePath, "utf8"));
+}
+
+function assertExpectedVersionFromCentral(central, expectedStateVersion) {
+  if (expectedStateVersion === undefined || expectedStateVersion === null || !central) return;
+  if (Number(central.stateVersion || 0) !== Number(expectedStateVersion)) {
+    throwStateStoreConflict(`runtime_json state version conflict; expected ${expectedStateVersion}, found ${central.stateVersion}`);
+  }
+}
+
+function hydratedStateFromParts(centralState, projectShards) {
+  const state = {...centralState};
+  for (const collection of projectShardCollections) {
+    state[collection] = Array.isArray(state[collection]) ? [...state[collection]] : [];
+  }
+  const ordered = [...projectShards].sort((left, right) => String(left.projectId).localeCompare(String(right.projectId)));
+  for (const shard of ordered) {
+    for (const collection of projectShardCollections) {
+      const items = Array.isArray(shard.collections?.[collection]) ? shard.collections[collection] : [];
+      if (items.length) state[collection].push(...items);
+    }
+  }
+  return state;
 }
 
 export function markRuntimeStorage(state, statePath = ".runtime/control-plane-state.json") {
@@ -243,26 +329,20 @@ function writePostgresProjectShards(projectShards, options) {
   }
 }
 
-function assertExpectedVersion(path, expectedStateVersion) {
-  if (expectedStateVersion === undefined || expectedStateVersion === null || !existsSync(path)) return;
-  const current = JSON.parse(readFileSync(path, "utf8"));
-  if (Number(current.stateVersion || 0) !== Number(expectedStateVersion)) {
-    throwStateStoreConflict(`runtime_json state version conflict; expected ${expectedStateVersion}, found ${current.stateVersion}`);
-  }
-}
-
 function withoutInternalStateFields(state) {
   const clean = {...state};
   delete clean.__loadedStateVersion;
   return clean;
 }
 
-function externalizeProjectState(state) {
+function externalizeProjectState(state, previousShardIndex = null, options = null) {
   const centralState = pruneCentralState({...state});
   const taskGroupProjectIds = new Map((state.taskGroups || []).map((taskGroup) => [taskGroup.id, taskGroup.projectId]));
   const shardsByProject = new Map();
   const indexes = [];
-  const runtimeShardGeneration = stateStoreKind() === "postgresql" ? null : runtimeJsonShardGeneration(state);
+  const unchangedProjectIds = new Set();
+  const runtimeJson = stateStoreKind() !== "postgresql";
+  const nextGeneration = runtimeJson ? runtimeJsonShardGeneration(state) : null;
   for (const collection of projectShardCollections) {
     const items = Array.isArray(state[collection]) ? state[collection] : [];
     const unscoped = [];
@@ -280,21 +360,36 @@ function externalizeProjectState(state) {
   }
   for (const shard of shardsByProject.values()) {
     capProjectShardCollections(shard);
-    if (runtimeShardGeneration) {
-      shard.storageGeneration = runtimeShardGeneration;
-      shard.storageName = runtimeJsonProjectShardName(shard.projectId, runtimeShardGeneration);
-      shard.storagePayloadDigest = digestProjectShardPayload(shard);
+    if (nextGeneration) {
+      const payloadDigest = digestProjectShardPayload(shard);
+      const previous = previousShardIndex?.get(shard.projectId);
+      const previousName = previous ? runtimeJsonShardNameFromIndexEntry(previous) : null;
+      const reusable = previous &&
+        previous.storagePayloadDigest === payloadDigest &&
+        previousName &&
+        options &&
+        existsSync(join(options.runtimeDir, projectDbDirName, previousName));
+      if (reusable) {
+        shard.storageGeneration = previous.storageGeneration || "legacy";
+        shard.storageName = previousName;
+        shard.updatedAt = previous.updatedAt || shard.updatedAt;
+        unchangedProjectIds.add(shard.projectId);
+      } else {
+        shard.storageGeneration = nextGeneration;
+        shard.storageName = runtimeJsonProjectShardName(shard.projectId, nextGeneration);
+      }
+      shard.storagePayloadDigest = payloadDigest;
       shard.storagePayloadBytes = Buffer.byteLength(projectShardPayloadText(shard));
     }
     const collectionCounts = Object.fromEntries(projectShardCollections.map((collection) => [collection, shard.collections[collection]?.length || 0]));
     indexes.push({
       projectId: shard.projectId,
-      storageKind: stateStoreKind() === "postgresql" ? "postgresql-project-row" : "project-json",
-	      storageRef: stateStoreKind() === "postgresql"
-	        ? `postgresql://${projectShardTableName}/${shard.projectId}`
-	        : `runtime://project-db/${shard.storageName}`,
-	      ...(runtimeShardGeneration ? {storageGeneration: runtimeShardGeneration} : {}),
-	      ...(shard.storagePayloadDigest ? {storagePayloadDigest: shard.storagePayloadDigest, storagePayloadBytes: shard.storagePayloadBytes} : {}),
+      storageKind: runtimeJson ? "project-json" : "postgresql-project-row",
+      storageRef: runtimeJson
+        ? `runtime://project-db/${shard.storageName}`
+        : `postgresql://${projectShardTableName}/${shard.projectId}`,
+      ...(shard.storageGeneration ? {storageGeneration: shard.storageGeneration} : {}),
+      ...(shard.storagePayloadDigest ? {storagePayloadDigest: shard.storagePayloadDigest, storagePayloadBytes: shard.storagePayloadBytes} : {}),
       collectionCounts,
       updatedAt: shard.updatedAt
     });
@@ -305,7 +400,14 @@ function externalizeProjectState(state) {
     projects: indexes.sort((left, right) => left.projectId.localeCompare(right.projectId)),
     updatedAt: new Date().toISOString()
   };
-  return {centralState, projectShards: Array.from(shardsByProject.values())};
+  return {centralState, projectShards: Array.from(shardsByProject.values()), unchangedProjectIds};
+}
+
+function runtimeJsonShardNameFromIndexEntry(entry) {
+  const refName = String(entry.storageRef || "").split("/").pop();
+  if (refName?.endsWith(".state.json")) return refName;
+  if (entry.projectId && entry.storageGeneration) return runtimeJsonProjectShardName(entry.projectId, entry.storageGeneration);
+  return null;
 }
 
 function capProjectShardCollections(shard) {
@@ -405,7 +507,9 @@ function readRuntimeJsonProjectShards(options, centralState = {}) {
         if (indexedEntry?.storagePayloadBytes && Number(indexedEntry.storagePayloadBytes) !== Number(shard.storagePayloadBytes || 0)) {
           throw new Error(`project_state_shard_payload_size_mismatch:${name}`);
         }
-        if (indexedEntry?.storagePayloadDigest && indexedEntry.storagePayloadDigest !== digestProjectShardPayload(shard)) {
+        if (indexedEntry?.storagePayloadDigest &&
+            indexedEntry.storagePayloadDigest !== digestProjectShardPayload(shard) &&
+            indexedEntry.storagePayloadDigest !== legacyDigestProjectShardPayload(shard)) {
           throw new Error(`project_state_shard_digest_mismatch:${name}`);
         }
         return name === currentName || name === stableName || name === legacyName ? shard : null;
@@ -417,19 +521,20 @@ function readRuntimeJsonProjectShards(options, centralState = {}) {
     .filter(Boolean);
 }
 
-function writeRuntimeJsonProjectShards(projectShards, options) {
+function writeRuntimeJsonProjectShards(projectShards, options, unchangedProjectIds = new Set()) {
   const dir = join(options.runtimeDir, projectDbDirName);
   mkdirSync(dir, {recursive: true});
   assertUniqueSafeProjectIds(projectShards);
   const activeNames = new Set(projectShards.map((shard) => shard.storageName || runtimeJsonProjectShardName(shard.projectId, shard.storageGeneration || "legacy")));
   for (const shard of projectShards) {
-	    const path = join(dir, shard.storageName || runtimeJsonProjectShardName(shard.projectId, shard.storageGeneration || "legacy"));
-	    const temporary = `${path}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-	    mkdirSync(dirname(path), {recursive: true});
-	    writeDurableFile(temporary, `${JSON.stringify(shard, null, 2)}\n`);
-	    renameSync(temporary, path);
-	    fsyncDirectory(dirname(path));
-	  }
+    const path = join(dir, shard.storageName || runtimeJsonProjectShardName(shard.projectId, shard.storageGeneration || "legacy"));
+    if (unchangedProjectIds.has(shard.projectId) && existsSync(path)) continue;
+    const temporary = `${path}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
+    mkdirSync(dirname(path), {recursive: true});
+    writeDurableFile(temporary, `${JSON.stringify(shard)}\n`);
+    renameSync(temporary, path);
+    fsyncDirectory(dirname(path));
+  }
   return {activeNames};
 }
 
@@ -456,7 +561,8 @@ function assertUniqueSafeProjectIds(projectShards) {
 function writeRuntimeJsonCentralState(centralState, options) {
   const temporary = `${options.statePath}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
   mkdirSync(dirname(options.statePath), {recursive: true});
-  writeDurableFile(temporary, `${JSON.stringify(centralState, null, 2)}\n`);
+  const pretty = process.env.AIMAC_RUNTIME_JSON_PRETTY === "true";
+  writeDurableFile(temporary, `${pretty ? JSON.stringify(centralState, null, 2) : JSON.stringify(centralState)}\n`);
   renameSync(temporary, options.statePath);
   fsyncDirectory(dirname(options.statePath));
 }
@@ -510,11 +616,25 @@ function projectShardPayloadText(shard = {}) {
   const payload = {...shard};
   delete payload.storagePayloadDigest;
   delete payload.storagePayloadBytes;
+  delete payload.storageGeneration;
+  delete payload.storageName;
+  delete payload.updatedAt;
+  return JSON.stringify(payload);
+}
+
+function legacyProjectShardPayloadText(shard = {}) {
+  const payload = {...shard};
+  delete payload.storagePayloadDigest;
+  delete payload.storagePayloadBytes;
   return JSON.stringify(payload);
 }
 
 function digestProjectShardPayload(shard = {}) {
   return `sha256:${createHash("sha256").update(projectShardPayloadText(shard)).digest("hex")}`;
+}
+
+function legacyDigestProjectShardPayload(shard = {}) {
+  return `sha256:${createHash("sha256").update(legacyProjectShardPayloadText(shard)).digest("hex")}`;
 }
 
 function writeDurableFile(path, data) {

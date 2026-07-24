@@ -34,6 +34,10 @@
     "grantDigest"
   ],
   "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "mcp-grant/v1"
+    },
     "grantId": {
       "type": "string",
       "minLength": 1

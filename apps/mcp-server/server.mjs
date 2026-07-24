@@ -22,6 +22,7 @@ import {
   pathAllowlistValid,
   pathMatchesAllowlist,
   registerRoleSkillOverlay,
+  normalizeTaskGroupLanguagePolicy,
   runAutonomousCycle,
   selectModel,
   syncSkillSource
@@ -335,7 +336,7 @@ function commonInputProperties() {
     evidenceRefs: array,
     expiresAt: string,
     externalUpgradePackageRef: string,
-    fencingToken: string,
+    fencingToken: {type: ["string", "number"]},
     findingId: string,
     findingType: string,
     grantId: string,
@@ -345,6 +346,9 @@ function commonInputProperties() {
     holderRef: string,
     idempotencyKey: string,
     leaseId: string,
+    languageName: string,
+    languagePolicy: object,
+    languageTag: string,
     limit: number,
     locatorRefs: array,
     maxJobs: number,
@@ -621,6 +625,7 @@ function redactSecretFields(value) {
 
 function schemaTypeMatches(value, expectedType) {
   if (value === undefined) return true;
+  if (Array.isArray(expectedType)) return expectedType.some((candidate) => schemaTypeMatches(value, candidate));
   if (expectedType === "array") return Array.isArray(value);
   if (expectedType === "object") return value !== null && typeof value === "object" && !Array.isArray(value);
   if (expectedType === "number") return typeof value === "number" && Number.isFinite(value);
@@ -1068,9 +1073,11 @@ function createProject(state, args) {
 function createTaskGroup(state, args) {
   const project = state.projects.find((item) => item.id === args.projectId) || state.projects[0];
   const at = new Date().toISOString();
+  const languagePolicy = normalizeTaskGroupLanguagePolicy(args.languagePolicy || args);
   const taskGroup = {
     id: args.taskGroupId || createId("tg"),
     projectId: project?.id || "prj_control_plane",
+    name: args.name || args.title || "AI-native Task Group",
     title: args.title || "AI-native Task Group",
     objective: args.objective || args.title || "Machine-executed task group",
     status: "planned",
@@ -1078,6 +1085,7 @@ function createTaskGroup(state, args) {
     phase: "planning",
     progress: 0,
     health: "ok",
+    languagePolicy,
     roles: args.roles || [],
     workItems: [],
     blockers: [],
@@ -1372,8 +1380,10 @@ function sleepSync(ms) {
 
 function nodeRegister(state, args) {
   const at = new Date().toISOString();
+  state.mcpProbeNodes ||= [];
   const node = {
-    nodeId: args.nodeId || createId("node"),
+    schemaVersion: "mcp-probe-node/v1",
+    nodeId: args.nodeId || createId("probe_node"),
     status: "online",
     endpoint: args.endpoint || "remote-agent-gateway",
     capabilityFlags: args.capabilityFlags || ["room", "command", "mcp_proxy", "permission_request", "git"],
@@ -1384,12 +1394,13 @@ function nodeRegister(state, args) {
     registeredAt: at,
     updatedAt: at
   };
-  state.agentRuntimeNodes = [node, ...state.agentRuntimeNodes.filter((item) => item.nodeId !== node.nodeId)];
+  state.mcpProbeNodes = [node, ...state.mcpProbeNodes.filter((item) => item.nodeId !== node.nodeId)].slice(0, 200);
   return {node};
 }
 
 function nodeProbe(state, args) {
-  const node = state.agentRuntimeNodes.find((item) => item.nodeId === args.nodeId) || nodeRegister(state, args).node;
+  state.mcpProbeNodes ||= [];
+  const node = state.mcpProbeNodes.find((item) => item.nodeId === args.nodeId) || nodeRegister(state, args).node;
   node.lastProbe = {
     probedAt: new Date().toISOString(),
     gitHead: gitHead(repositoryRoot),
@@ -1510,7 +1521,7 @@ function claimLease(state, args) {
     resourceRef,
     holderRef,
     status: "active",
-    fencingToken: `fence-${String(state.leaseSequence).padStart(12, "0")}`,
+    fencingToken: state.leaseSequence,
     sequence: state.leaseSequence,
     expiresAt: args.expiresAt || new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
     createdAt: at,
@@ -2067,19 +2078,29 @@ function sharedDefinitionConflictReport(state, args) {
 
 function instructionEnvelopeCreate(state, args, sourceKind) {
   const at = new Date().toISOString();
+  const taskGroup = findTaskGroup(state, args.taskGroupId);
+  const languagePolicy = normalizeTaskGroupLanguagePolicy(taskGroup?.languagePolicy || args.languagePolicy || args);
+  const languagePolicyDigest = digestOf(languagePolicy);
+  const tokenBudget = args.tokenBudget || {};
   const envelope = {
     schemaVersion: "instruction-envelope/v1",
     envelopeId: args.envelopeId || createId("ienv"),
-    status: "active",
-    taskGroupId: args.taskGroupId || "tg_runtime_management",
+    status: args.status && ["drafted", "compacted", "cache_indexed", "dispatched", "acknowledged", "invalidated"].includes(args.status) ? args.status : "drafted",
+    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
     recipientRole: args.recipientRole || args.roleId || "agent-runtime",
     effectiveInstructionPacketRef: args.effectiveInstructionPacketRef || args.packetRef || "eip:runtime",
-    formatVersion: "digest_first/v1",
+    formatVersion: "ai-native-instruction-envelope/v1",
     stablePrefixDigest: digestOf(args.stablePrefix || "ai-native-control-plane"),
-    digestRefs: args.digestRefs || [],
+    digestRefs: [...new Set([...(args.digestRefs || []), `language-policy:${languagePolicyDigest}`])],
+    languagePolicy,
+    languagePolicyDigest,
     sharedDefinitionRefs: args.sharedDefinitionRefs || [],
-    cacheKey: digestOf({role: args.recipientRole || args.roleId, taskGroupId: args.taskGroupId, sourceKind}),
-    tokenBudget: args.tokenBudget || {stablePrefixTokens: 1800, deltaMessageTargetTokens: 420},
+    cacheKey: digestOf({role: args.recipientRole || args.roleId, taskGroupId: taskGroup?.id || args.taskGroupId, sourceKind, languagePolicyDigest}),
+    tokenBudget: {
+      maxInputTokens: Number(tokenBudget.maxInputTokens || 4096),
+      targetDeltaTokens: Number(tokenBudget.targetDeltaTokens || tokenBudget.deltaMessageTargetTokens || 420),
+      maxOutputTokens: Number(tokenBudget.maxOutputTokens || 1200)
+    },
     outputContractRef: args.outputContractRef || "spec/checkpoint.schema.json",
     createdAt: at,
     updatedAt: at
@@ -2191,8 +2212,10 @@ export async function handleMcpJsonRpc(message, context = {}) {
   if (!message || typeof message !== "object" || Array.isArray(message)) return {jsonrpc: "2.0", id: null, error: {code: -32600, message: "Invalid Request"}};
   if (message.method === "notifications/initialized") return null;
   if (message.method === "initialize") {
+    const supportedProtocolVersions = ["2025-06-18", "2025-03-26", "2024-11-05"];
+    const requestedProtocolVersion = String(message.params?.protocolVersion || "");
     return {jsonrpc: "2.0", id: message.id, result: {
-      protocolVersion: message.params?.protocolVersion || "2025-06-18",
+      protocolVersion: supportedProtocolVersions.includes(requestedProtocolVersion) ? requestedProtocolVersion : "2025-06-18",
       capabilities: {tools: {listChanged: false}},
       serverInfo: {name: "ai-multi-agent-ctrl", version: "0.2.0"},
       instructions: "This is the centralized remote MCP control plane. Agent hosts must not start a local MCP server."
@@ -2217,7 +2240,7 @@ export async function handleMcpJsonRpc(message, context = {}) {
       if (error.code) {
         return {jsonrpc: "2.0", id: message.id, error: {code: error.code, message: error.message}};
       }
-      return {jsonrpc: "2.0", id: message.id, result: toolResult({ok: false, error: error.message}, true)};
+      return {jsonrpc: "2.0", id: message.id, result: toolResult({ok: false, tool: message.params?.name || "unknown", error: error.message}, true)};
     }
   }
   if (message.id !== undefined) return {jsonrpc: "2.0", id: message.id, error: {code: -32601, message: `Method not found: ${message.method}`}};

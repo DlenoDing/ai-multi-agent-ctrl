@@ -204,7 +204,7 @@ function updateProjectExecutionEventIndex(runtimeDir, event, existingIndex = nul
   const path = projectExecutionEventIndexPath(runtimeDir, event.projectId, {forWrite: true});
   let index = existingIndex || readProjectExecutionEventIndex(runtimeDir, event.projectId) || {};
   index = {schemaVersion: "project-execution-event-index/v4", projectId: event.projectId, fileId: safeProjectId(event.projectId), recentEventKeys: [], eventsByKey: {}, keyIndex: "project-event-key-kv", segments: [], ...index};
-  const keyWindow = Math.max(100, Number(process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS || 5000));
+  const keyWindow = Math.max(100, Number(process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS || 500));
   index.lastSequence = Math.max(Number(index.lastSequence || 0), Number(event.sequence || 0));
   const entries = Object.entries(index.eventsByKey || {}).filter(([key]) => key && key !== event.eventKey);
   if (event.eventKey) entries.unshift([event.eventKey, event]);
@@ -235,7 +235,7 @@ function ensureProjectExecutionEventIndex(runtimeDir, projectId) {
     backfilledAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
-  const keyWindow = Math.max(100, Number(process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS || 5000));
+  const keyWindow = Math.max(100, Number(process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS || 500));
   const keyEntries = [];
   for (const path of currentPaths) {
     const source = readFileSync(path, "utf8");
@@ -364,8 +364,43 @@ function sequenceBoundsInFile(path) {
   return {firstSequence, lastSequence};
 }
 
+const firstSequenceCache = new Map();
+
 function firstSequenceInFile(path) {
-  return sequenceBoundsInFile(path).firstSequence || Number.MAX_SAFE_INTEGER;
+  const fromName = String(path.split("/").pop()).match(/\.execution-events\.(\d+)-\d+\./u);
+  if (fromName) return Number(fromName[1]);
+  let stat;
+  try {
+    stat = statSync(path);
+  } catch {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  const cached = firstSequenceCache.get(path);
+  if (cached && cached.ino === stat.ino) return cached.firstSequence;
+  let firstSequence = firstSequenceInSource(readFileHead(path, 64 * 1024));
+  if (!firstSequence) firstSequence = sequenceBoundsInFile(path).firstSequence;
+  if (firstSequence) {
+    firstSequenceCache.set(path, {ino: stat.ino, firstSequence});
+    if (firstSequenceCache.size > 512) firstSequenceCache.delete(firstSequenceCache.keys().next().value);
+    return firstSequence;
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
+function readFileHead(path, maxBytes) {
+  const fd = openSync(path, "r");
+  try {
+    const buffer = Buffer.alloc(maxBytes);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const bytes = readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (!bytes) break;
+      offset += bytes;
+    }
+    return buffer.subarray(0, offset).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function digestFile(path) {

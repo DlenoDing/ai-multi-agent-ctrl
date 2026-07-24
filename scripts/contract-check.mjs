@@ -33,6 +33,9 @@ const agentControlCommandSchema = loadJson("spec/agent-control-command.schema.js
 const agentExecutionEventSchema = loadJson("spec/agent-execution-event.schema.json");
 const runtimeNodeSchema = loadJson("spec/agent-runtime-node.schema.json");
 const skillWorksetSchema = loadJson("spec/agent-skill-workset.schema.json");
+const agentTaskContractSchema = loadJson("spec/agent-task-contract.schema.json");
+const effectiveInstructionPacketSchema = loadJson("spec/effective-instruction-packet.schema.json");
+const languagePolicySchema = loadJson("spec/language-policy.schema.json");
 const errors = [];
 
 validateSchema(seedState.runtime, runtimeSchema, "seed.runtime", errors);
@@ -165,8 +168,17 @@ function verifyAgentGatewayContracts(output) {
   ]});
   if (noExecutorCheck.ok || noExecutorNode.admission !== "read_only") output.push("Agent Gateway admitted a node without a runnable model executor");
   const contract = buildTaskContract(state, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", root});
+  validateSchema(contract, agentTaskContractSchema, "AgentTaskContract", output);
+  const instructionPacket = state.effectiveInstructionPackets.find((packet) => packet.packetId === contract.effectiveInstructionPacketRef);
+  validateSchema(instructionPacket, effectiveInstructionPacketSchema, "EffectiveInstructionPacket", output);
   if (!contract.model.model || !contract.model.modelId || !contract.model.reasoning || !contract.model.reasoningLevel || !contract.model.modelDecision || !contract.model.modelDecision.startsWith("modelDecision:")) {
     output.push("AgentTaskContract did not bind explicit model, reasoning and short modelDecision");
+  }
+  if (!contract.languagePolicy?.languageTag || !contract.languagePolicyDigest || contract.outputContract.languagePolicyDigest !== contract.languagePolicyDigest || !contract.inputLocators.some((locator) => locator.includes("language-policy"))) {
+    output.push("AgentTaskContract did not bind task-group language policy through contract, locators and output contract");
+  }
+  if (!instructionPacket?.languagePolicyDigest || instructionPacket.languagePolicyDigest !== contract.languagePolicyDigest || !instructionPacket.languageDirective?.includes(contract.languagePolicy.languageTag)) {
+    output.push("EffectiveInstructionPacket did not carry the task-group language policy");
   }
 	  const deepAnalysisDecision = selectModel(state, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", roleId: "orchestrator", workItem: {id: "work_deep_analysis", title: "深度分析架构方案", ownerRole: "orchestrator", requirements: ["analysis only"]}});
   if (deepAnalysisDecision.taskExecutionClass !== "deep_analysis" || deepAnalysisDecision.escalationAllowed !== false || !deepAnalysisDecision.modelDecision?.startsWith("modelDecision:") || deepAnalysisDecision.modelDecision.length > 240) {
@@ -215,6 +227,8 @@ function verifyAgentGatewayContracts(output) {
     reasoning: contract.model.reasoning,
     modelDecision: contract.model.modelDecision,
     modelSelectionDecisionRef: contract.model.modelSelectionDecisionRef,
+    language: contract.languagePolicy.languageTag,
+    languagePolicyDigest: contract.languagePolicyDigest,
     taskContractDigest: contract.contractDigest,
     taskContractRef: `AgentTaskContract:${contract.commandId}`,
     repositoryOutputTargetRef: contract.repositoryOutputTargetRef,
@@ -251,6 +265,9 @@ function verifyAgentGatewayContracts(output) {
   if (claimed.dispatch) {
     const workset = getSkillWorkset(state, registeredNode, contract.roleSkill.worksetId, {runtimeDir: join(root, ".runtime")});
     validateSchema(workset, skillWorksetSchema, "AgentSkillWorkset", output);
+    if (workset.languagePolicyDigest !== contract.languagePolicyDigest || !workset.executionDirective.includes(contract.languagePolicy.languageTag)) {
+      output.push("Agent skill workset did not carry the task-group language policy");
+    }
     const issuedGrant = state.mcpGrants.find((grant) => grant.agentNodeId === node.nodeId && grant.dispatchId === claimed.dispatch.dispatch.dispatchId && grant.grantStatus === "issued");
     if (!issuedGrant) output.push("Agent Gateway did not issue dispatch-bound MCP grants after claim");
     if (state.mcpGrants.some((grant) => grant.agentNodeId === node.nodeId && grant.toolName === "evidence-mcp.checkpoint_submit" && grant.grantStatus === "issued")) {
@@ -268,7 +285,8 @@ function verifyAgentGatewayContracts(output) {
         submitAgentExecutionEvent(state, node, {dispatchId: claimed.dispatch.dispatch.dispatchId, eventType: "progress", summary: "missing key"});
         output.push("Agent execution event accepted a missing eventKey");
       } catch {}
-			    const eventRuntimeDir = mkdtempSync(join(tmpdir(), "aimac-contract-events-"));
+				    const eventRuntimeDir = mkdtempSync(join(tmpdir(), "aimac-contract-events-"));
+        if (event.languagePolicyDigest !== contract.languagePolicyDigest) output.push("Agent execution event did not bind the task-group language policy digest");
           const previousSegmentSize = process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES;
 			    try {
 	          process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES = "1024";
@@ -370,6 +388,7 @@ function loadJson(path) {
 
 function validateSchema(value, schema, path, output) {
   if (!schema || typeof schema !== "object") return;
+  if (schema.$ref === "language-policy.schema.json") return validateSchema(value, languagePolicySchema, path, output);
   if (schema.const !== undefined && value !== schema.const) output.push(`${path} expected const ${JSON.stringify(schema.const)}, got ${JSON.stringify(value)}`);
   if (schema.enum && !schema.enum.includes(value)) output.push(`${path} expected enum ${schema.enum.join("|")}, got ${JSON.stringify(value)}`);
   if (schema.type) validateType(value, schema.type, path, output);

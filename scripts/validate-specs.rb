@@ -229,6 +229,7 @@ critical_schema_titles = Set.new(%w[
   RepositoryOutputTarget
   AgentTaskContract
   CloseBarrier
+  LanguagePolicy
 ])
 
 schema_titles = Set.new(Dir[File.join(ROOT, "spec/*.schema.json")].map { |path| JSON.parse(File.read(path)).fetch("title") })
@@ -512,6 +513,8 @@ errors << "Agent Runtime must use remote MCP and on-demand skill worksets" unles
 errors << "Agent Runtime dispatch prompt must use compact DISPATCH v1 envelope" unless agent_runtime_source.include?("\"DISPATCH v1\"") && agent_runtime_source.include?("`model: ${model.model") && agent_runtime_source.include?("`reasoning: ${model.reasoning") && agent_runtime_source.include?("model.modelDecision")
 errors << "Agent Runtime dispatch prompt must prefer locators over pasted long context" unless agent_runtime_source.include?("contract.inputLocators") && agent_runtime_source.include?("`package:${packagePath}`") && agent_runtime_source.include?("writeSet:")
 errors << "Agent task contract schema must require explicit model/reasoning/modelDecision" unless load_json("spec/agent-task-contract.schema.json").dig("properties", "model", "required")&.include?("modelDecision")
+errors << "Task group language policy must be a first-class dispatch contract and runtime field" unless core_source.include?("normalizeTaskGroupLanguagePolicy") && core_source.include?("languagePolicyDigest") && load_json("spec/agent-task-contract.schema.json").fetch("required").include?("languagePolicy") && load_json("spec/effective-instruction-packet.schema.json").fetch("required").include?("languagePolicy") && load_json("spec/agent-skill-workset.schema.json").fetch("required").include?("languagePolicy") && agent_runtime_source.include?("`language: ${languageTag}`") && public_app_source.include?("data-language-policy-form") && server_source.include?("/language-policy")
+errors << "Execution outputs and events must bind language policy digest" unless load_json("spec/checkpoint.schema.json").fetch("required").include?("languagePolicyDigest") && load_json("spec/agent-execution-event.schema.json").fetch("required").include?("languagePolicyDigest") && agent_gateway_source.include?("languagePolicyDigest: dispatch.languagePolicyDigest") && contract_check_source.include?("Agent execution event did not bind")
 errors << "Model selection decision schema must require short modelDecision" unless load_json("spec/model-selection-decision.schema.json").fetch("required").include?("modelDecision")
 errors << "Agent Runtime must always maintain agent-scoped remote MCP client config" unless agent_runtime_source.include?("writeAgentScopedMcpConfig") && agent_runtime_source.include?("mcp-client-configs") && agent_runtime_source.include?("configureGlobalRemoteMcpClients")
 errors << "Agent doctor must verify agent-scoped MCP config and credential rotation refresh" unless agent_doctor_source.include?("assertAgentScopedMcpConfig") && agent_doctor_source.include?("was not refreshed after node credential rotation")
@@ -580,6 +583,10 @@ end
 task_group_states = Set.new(state_machines.dig("machines", "TaskGroup", "states"))
 seed_state.fetch("taskGroups", []).each do |task_group|
   errors << "seed taskGroup #{task_group["id"]} status not in TaskGroup state machine: #{task_group["status"]}" unless task_group_states.include?(task_group["status"])
+  policy = task_group["languagePolicy"]
+  unless policy && policy["schemaVersion"] == "language-policy/v1" && policy["languageTag"].to_s.length.positive?
+    errors << "seed taskGroup #{task_group["id"]} missing languagePolicy"
+  end
 end
 
 seed_state.fetch("accessGrants", []).each do |grant|
