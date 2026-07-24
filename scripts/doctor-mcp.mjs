@@ -83,6 +83,17 @@ try {
   if (!secondLease.structuredContent?.result?.error?.includes("lease_already_active")) throw new Error("lease_claim allowed a second active holder");
   const wrongRelease = await mcp("tools/call", {name: "resource-mcp.lease_release", arguments: {idempotencyKey: "doctor-lease-release", leaseId: lease.leaseId, holderRef: "session:doctor-a", fencingToken: "wrong"}});
   if (!wrongRelease.structuredContent?.result?.error?.includes("lease_fencing_token_mismatch")) throw new Error("lease release accepted the wrong fencing token");
+  const admin = await api("/api/auth/login", {method: "POST", body: {email: "system.admin@local", token: "doctor-bootstrap-token"}});
+  const foreignTarget = await mcpAs(admin.sessionToken, "tools/call", {name: "repository-mcp.repository_output_target_select", arguments: {idempotencyKey: "doctor-foreign-target", targetId: "rot_doctor_foreign_scope", projectId: "prj_foreign_scope", taskGroupId: "tg_runtime_management", workItemId: "work_bootstrap", artifactManifestPath: "docs/artifact-manifests/doctor-foreign-scope.json"}});
+  const foreignTargetId = foreignTarget.structuredContent?.result?.repositoryOutputTarget?.targetId;
+  if (!foreignTargetId) throw new Error("system admin MCP could not create a foreign-scope repository target");
+  const foreignLeaseClaim = await mcpAs(admin.sessionToken, "tools/call", {name: "resource-mcp.lease_claim", arguments: {idempotencyKey: "doctor-foreign-lease", repositoryOutputTargetRef: foreignTargetId, holderRef: "session:doctor-foreign"}});
+  const foreignLease = foreignLeaseClaim.structuredContent?.result?.lease;
+  if (!foreignLease?.leaseId) throw new Error("system admin MCP could not create a foreign-scope lease");
+  const foreignRelease = await mcp("tools/call", {name: "resource-mcp.lease_release", arguments: {idempotencyKey: "doctor-foreign-release-service-token", leaseId: foreignLease.leaseId, holderRef: "session:doctor-foreign", fencingToken: foreignLease.fencingToken}});
+  if (!foreignRelease.structuredContent?.result?.error?.includes("mcp_principal_project_scope_mismatch")) {
+    throw new Error("MCP service token released a lease outside its project scope when only leaseId was supplied");
+  }
 
   const registration = spawnSync(process.execPath, ["scripts/register-mcp-client.mjs", `--server-url=${baseUrl}`, `--output-dir=${configDir}`], {
     cwd: root,
@@ -106,14 +117,29 @@ try {
 }
 
 async function mcp(method, params) {
+  return mcpAs(token, method, params);
+}
+
+async function mcpAs(bearer, method, params) {
   const response = await fetch(`${baseUrl}/mcp`, {
     method: "POST",
-    headers: {"content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}`},
+    headers: {"content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${bearer}`},
     body: JSON.stringify({jsonrpc: "2.0", id: ++requestId, method, params})
   });
   const payload = await response.json();
   if (!response.ok || payload.error) throw new Error(`MCP ${method} failed: ${JSON.stringify(payload.error || payload)}`);
   return payload.result;
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: options.method || "GET",
+    headers: {"content-type": "application/json", accept: "application/json", ...(options.token ? {authorization: `Bearer ${options.token}`} : {})},
+    ...(options.body ? {body: JSON.stringify(options.body)} : {})
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(`API ${path} failed: ${JSON.stringify(payload)}`);
+  return payload;
 }
 
 async function waitForHealth() {

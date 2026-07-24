@@ -362,9 +362,7 @@ export function normalizeTaskGroupLanguagePolicy(input = {}, fallback = {}) {
     ...(rawPolicy.script || preset.script ? {script: String(rawPolicy.script || preset.script)} : {}),
     scope: scope.length ? scope : [...defaultLanguagePolicy.scope],
     enforcement: rawPolicy.enforcement === "advisory" ? "advisory" : "required",
-    fallback: ["return_blocked_for_language_mismatch", "translate_or_return_blocked"].includes(rawPolicy.fallback)
-      ? rawPolicy.fallback
-      : (fallbackPolicy.fallback || defaultLanguagePolicy.fallback)
+    fallback: normalizeLanguageFallback(rawPolicy.fallback, fallbackPolicy.fallback)
   };
 }
 
@@ -381,6 +379,13 @@ function resolveLanguagePreset(rawLanguage) {
     return {languageTag: canonicalLanguageTag(rawLanguage), languageName: canonicalLanguageTag(rawLanguage)};
   }
   return {...defaultLanguagePolicy};
+}
+
+function normalizeLanguageFallback(primary, fallback) {
+  const allowed = new Set(["return_blocked_for_language_mismatch", "translate_or_return_blocked"]);
+  if (allowed.has(primary)) return primary;
+  if (allowed.has(fallback)) return fallback;
+  return defaultLanguagePolicy.fallback;
 }
 
 function canonicalLanguageTag(value) {

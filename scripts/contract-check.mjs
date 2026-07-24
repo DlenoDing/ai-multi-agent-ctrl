@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { createMcpGrant, createMcpToolDefinitions, mcpToolNames } from "../apps/mcp-server/server.mjs";
-import { buildTaskContract, ensureRuntimeCollections, runAutonomousCycle, selectModel } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
+import { buildTaskContract, ensureRuntimeCollections, runAutonomousCycle, selectModel, updateTaskGroupLanguagePolicy } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import {
   ackAgentControlCommand,
   authenticateAgentNode,
@@ -179,6 +179,21 @@ function verifyAgentGatewayContracts(output) {
   }
   if (!instructionPacket?.languagePolicyDigest || instructionPacket.languagePolicyDigest !== contract.languagePolicyDigest || !instructionPacket.languageDirective?.includes(contract.languagePolicy.languageTag)) {
     output.push("EffectiveInstructionPacket did not carry the task-group language policy");
+  }
+  const languageState = JSON.parse(JSON.stringify(seedState));
+  ensureRuntimeCollections(languageState, {root});
+  languageState.taskGroups.find((item) => item.id === "tg_runtime_management").languagePolicy.fallback = "legacy_invalid_fallback";
+  const updatedLanguage = updateTaskGroupLanguagePolicy(languageState, "tg_runtime_management", {languageTag: "fr", languageName: "French"});
+  validateSchema(updatedLanguage.languagePolicy, languagePolicySchema, "UpdatedLanguagePolicy", output);
+  const localizedContract = buildTaskContract(languageState, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", root});
+  const localizedPacket = languageState.effectiveInstructionPackets.find((packet) => packet.packetId === localizedContract.effectiveInstructionPacketRef);
+  if (localizedContract.languagePolicy.languageTag !== "fr" ||
+      localizedContract.languagePolicyDigest !== updatedLanguage.languagePolicyDigest ||
+      localizedContract.outputContract.requiredLanguage !== "fr" ||
+      localizedPacket?.languagePolicyDigest !== updatedLanguage.languagePolicyDigest ||
+      !localizedPacket.languageDirective?.includes("fr/French") ||
+      localizedContract.languagePolicy.fallback !== "return_blocked_for_language_mismatch") {
+    output.push("Task-group language policy update did not propagate to new contracts, EIP and output contract");
   }
 	  const deepAnalysisDecision = selectModel(state, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", roleId: "orchestrator", workItem: {id: "work_deep_analysis", title: "深度分析架构方案", ownerRole: "orchestrator", requirements: ["analysis only"]}});
   if (deepAnalysisDecision.taskExecutionClass !== "deep_analysis" || deepAnalysisDecision.escalationAllowed !== false || !deepAnalysisDecision.modelDecision?.startsWith("modelDecision:") || deepAnalysisDecision.modelDecision.length > 240) {

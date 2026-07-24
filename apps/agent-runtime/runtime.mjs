@@ -426,7 +426,7 @@ async function executeDispatch(config, dispatchPackage, control) {
   const packagePath = join(taskRoot, "dispatch-package.json");
   const promptPath = join(taskRoot, "execution-prompt.txt");
   writeFileSync(packagePath, `${JSON.stringify(dispatchPackage, null, 2)}\n`, {mode: 0o600});
-  writeFileSync(promptPath, buildExecutionPrompt(dispatchPackage, skillWorkset, packagePath), {mode: 0o600});
+  writeFileSync(promptPath, buildExecutionPrompt(config, dispatchPackage, skillWorkset, packagePath), {mode: 0o600});
   ensureCleanWorktree(repositoryRoot);
   const before = git(repositoryRoot, ["rev-parse", "HEAD"]);
   await submitExecutionEvent(config, dispatchPackage, "executor_started", {progressPercent: 25, summary: "Model executor started.", evidenceRefs: [`prompt:${sha256(readFileSync(promptPath, "utf8"))}`]});
@@ -733,7 +733,7 @@ function prepareRepository(config, target) {
   return repositoryRoot;
 }
 
-function buildExecutionPrompt(dispatchPackage, workset, packagePath) {
+function buildExecutionPrompt(config, dispatchPackage, workset, packagePath) {
   const contract = dispatchPackage.taskContract;
   const model = contract.model || {};
   if (!model.modelDecision || !(model.model || model.modelId) || !(model.reasoning || model.reasoningLevel)) {
@@ -775,7 +775,7 @@ function buildExecutionPrompt(dispatchPackage, workset, packagePath) {
     "- run stated focused gates",
     "- commit/push task-owned checkpoint when stable",
     `- load skill workset ${workset.manifestPath}`,
-    `- use only remote MCP ${dispatchPackage.remoteServices.mcpPath}`,
+    `- use only the centralized remote MCP ${config.gateway.mcpUrl || `${config.serverUrl}${dispatchPackage.remoteServices.mcpPath}`}`,
     `- keep all task-facing output in ${languageTag}`,
     "",
     "doNot:",

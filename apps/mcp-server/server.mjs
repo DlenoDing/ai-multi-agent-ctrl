@@ -750,7 +750,7 @@ function inferMcpArgumentProjectIds(state, args = {}) {
   }
   if (args.leaseId) {
     const lease = (state.leases || []).find((item) => item.leaseId === args.leaseId);
-    const target = lease && (state.repositoryOutputs || []).find((item) => item.targetId === lease.resourceRef || item.targetId === lease.repositoryOutputTargetRef);
+    const target = repositoryOutputTargetForLease(state, lease);
     if (target?.projectId) projectIds.add(target.projectId);
   }
   if (args.roomId && String(args.roomId).startsWith("room_")) {
@@ -759,6 +759,15 @@ function inferMcpArgumentProjectIds(state, args = {}) {
     if (taskGroup?.projectId) projectIds.add(taskGroup.projectId);
   }
   return projectIds;
+}
+
+function repositoryOutputTargetForLease(state, lease) {
+  if (!lease) return null;
+  const resourceRefTargetId = String(lease.resourceRef || "").startsWith("RepositoryOutputTarget:")
+    ? String(lease.resourceRef).slice("RepositoryOutputTarget:".length)
+    : String(lease.resourceRef || "");
+  const targetId = lease.repositoryOutputTargetRef || resourceRefTargetId;
+  return (state.repositoryOutputs || []).find((item) => item.targetId === targetId) || null;
 }
 
 function applyAgentGrantScopeArgs(toolName, args, grantCheck = {}) {
