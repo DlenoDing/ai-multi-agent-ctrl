@@ -30,7 +30,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -256,6 +257,16 @@ h1 {
   table-layout: fixed;
 }
 
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.data-table.wide-table {
+  min-width: 860px;
+  table-layout: auto;
+}
+
 .data-table th,
 .data-table td {
   padding: 10px 8px;
@@ -372,7 +383,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 38px;
   border: 1px solid var(--line);
@@ -380,6 +392,12 @@ select {
   padding: 8px 10px;
   background: #ffffff;
   color: var(--text);
+}
+
+textarea {
+  min-height: 88px;
+  resize: vertical;
+  line-height: 1.45;
 }
 
 .button-row {

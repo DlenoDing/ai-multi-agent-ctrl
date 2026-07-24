@@ -23,6 +23,7 @@ import {
   pathMatchesAllowlist,
   registerRoleSkillOverlay,
   normalizeTaskGroupLanguagePolicy,
+  projectOwnerGrantPermissions,
   runAutonomousCycle,
   selectModel,
   syncSkillSource
@@ -258,6 +259,7 @@ function inputSchemaFor(name) {
 
 function requiredInputPropertiesFor(name) {
   return {
+    "orchestration-mcp.task_group_create": ["projectId"],
     "orchestration-mcp.work_item_create": ["taskGroupId"],
     "orchestration-mcp.work_assign": ["taskGroupId", "workItemId", "roleId"],
     "orchestration-mcp.orchestrator_run": ["taskGroupId"],
@@ -643,6 +645,22 @@ function hasAnyInputArg(args, keys) {
   return keys.some((key) => hasInputArg(args, key));
 }
 
+function normalizeMcpStringList(value, fallback = []) {
+  const source = Array.isArray(value) ? value : String(value || "").split(/[\n,]/u);
+  const normalized = [...new Set(source.map((item) => String(item).trim()).filter(Boolean))];
+  return normalized.length ? normalized : fallback;
+}
+
+function normalizeMcpRoleBindings(value, fallback = []) {
+  const roles = Array.isArray(value) ? value : fallback;
+  const roleIds = roles.map((role) => typeof role === "string" ? role : role?.roleId).filter(Boolean);
+  return normalizeMcpStringList(roleIds, fallback).map((roleId) => ({
+    roleId,
+    status: "ready",
+    skillBinding: "server_resolved_on_dispatch"
+  }));
+}
+
 export function createMcpGrant(toolName, options = {}) {
   const readOnly = isReadOnlyTool(toolName);
   const [serverId] = toolName.split(".");
@@ -690,6 +708,10 @@ function validateMcpGrant(state, toolName, args, argumentDigest, context = {}) {
   if (!allowedTools.includes("*") && !allowedTools.includes(toolName)) {
     return {allowed: false, error: "mcp_tool_not_granted_to_principal", required: toolName};
   }
+  const creationScope = validateMcpCreationScope(toolName, args, principal);
+  if (!creationScope.allowed) return {...creationScope, grantRef: `remote-principal:${principal.kind}:${principal.id}`};
+  const scopeExists = validateExplicitMcpScopeExists(state, toolName, args);
+  if (!scopeExists.allowed) return {...scopeExists, grantRef: `remote-principal:${principal.kind}:${principal.id}`};
   if (principal.kind === "agent_node") {
     if (toolName === "evidence-mcp.checkpoint_submit") {
       return {allowed: false, error: "agent_checkpoint_must_use_gateway", required: "/api/agent/v1/dispatches/:dispatchId/checkpoint"};
@@ -719,6 +741,92 @@ function validateMcpGrant(state, toolName, args, argumentDigest, context = {}) {
   return {allowed: true, grantRef, argumentDigest, readOnly};
 }
 
+function validateMcpCreationScope(toolName, args = {}, principal = {}) {
+  if (toolName === "orchestration-mcp.project_create" && principal.kind !== "system_admin") {
+    return {allowed: false, error: "mcp_project_create_requires_system_admin", required: "system_admin"};
+  }
+  if (toolName === "orchestration-mcp.task_group_create" && !hasInputArg(args, "projectId")) {
+    return {allowed: false, error: "project_id_required", required: "projectId"};
+  }
+  return {allowed: true};
+}
+
+function validateExplicitMcpScopeExists(state, toolName, args = {}) {
+  const createsProject = toolName === "orchestration-mcp.project_create";
+  const createsTaskGroup = toolName === "orchestration-mcp.task_group_create";
+  const createsWorkItem = toolName === "orchestration-mcp.work_item_create";
+  const projectId = hasInputArg(args, "projectId") ? String(args.projectId) : "";
+  const taskGroupId = hasInputArg(args, "taskGroupId") ? String(args.taskGroupId) : "";
+  const workItemId = hasInputArg(args, "workItemId") ? String(args.workItemId) : hasInputArg(args, "workId") ? String(args.workId) : "";
+  if (projectId && !createsProject && !(state.projects || []).some((item) => item.id === projectId)) {
+    return {allowed: false, error: "project_not_found", required: projectId};
+  }
+  const taskGroup = taskGroupId ? (state.taskGroups || []).find((item) => item.id === taskGroupId) : null;
+  if (taskGroupId && !createsTaskGroup && !taskGroup) {
+    return {allowed: false, error: "task_group_not_found", required: taskGroupId};
+  }
+  if (projectId && taskGroup && !createsTaskGroup && taskGroup.projectId !== projectId) {
+    return {allowed: false, error: "task_group_project_scope_mismatch", required: `${projectId}:${taskGroupId}`};
+  }
+  const explicitResource = explicitMcpResourceScope(args);
+  if (explicitResource?.resourceType === "project") {
+    const resourceProject = (state.projects || []).find((item) => item.id === explicitResource.resourceId);
+    if (!resourceProject) return {allowed: false, error: "project_not_found", required: explicitResource.resourceId};
+    if (projectId && projectId !== explicitResource.resourceId) {
+      return {allowed: false, error: "resource_project_scope_mismatch", required: `${projectId}:${explicitResource.resourceId}`};
+    }
+    if (taskGroup && taskGroup.projectId !== explicitResource.resourceId) {
+      return {allowed: false, error: "resource_task_group_project_scope_mismatch", required: `${taskGroup.id}:${explicitResource.resourceId}`};
+    }
+  }
+  if (explicitResource?.resourceType === "task_group") {
+    const resourceTaskGroup = (state.taskGroups || []).find((item) => item.id === explicitResource.resourceId);
+    if (!resourceTaskGroup) return {allowed: false, error: "task_group_not_found", required: explicitResource.resourceId};
+    if (taskGroupId && taskGroupId !== explicitResource.resourceId) {
+      return {allowed: false, error: "resource_task_group_scope_mismatch", required: `${taskGroupId}:${explicitResource.resourceId}`};
+    }
+    if (projectId && resourceTaskGroup.projectId !== projectId) {
+      return {allowed: false, error: "resource_project_scope_mismatch", required: `${projectId}:${explicitResource.resourceId}`};
+    }
+  }
+  if (workItemId && !createsWorkItem) {
+    const workItemMatches = taskGroup
+      ? (taskGroup.workItems || []).filter((item) => item.id === workItemId)
+      : (state.taskGroups || []).flatMap((item) => (item.workItems || []).filter((workItem) => workItem.id === workItemId).map((workItem) => ({taskGroup: item, workItem})));
+    if (!workItemMatches.length) return {allowed: false, error: "work_item_not_found", required: workItemId};
+    if (projectId && !taskGroup && !workItemMatches.some((match) => match.taskGroup?.projectId === projectId)) {
+      return {allowed: false, error: "work_item_project_scope_mismatch", required: `${projectId}:${workItemId}`};
+    }
+  }
+  if (hasInputArg(args, "dispatchId")) {
+    const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === args.dispatchId);
+    if (!dispatch) return {allowed: false, error: "dispatch_not_found", required: args.dispatchId};
+    if (projectId && dispatch.projectId !== projectId) return {allowed: false, error: "dispatch_project_scope_mismatch", required: `${projectId}:${args.dispatchId}`};
+    if (taskGroupId && dispatch.taskGroupId !== taskGroupId) return {allowed: false, error: "dispatch_task_group_scope_mismatch", required: `${taskGroupId}:${args.dispatchId}`};
+    if (workItemId && dispatch.workItemId !== workItemId) return {allowed: false, error: "dispatch_work_item_scope_mismatch", required: `${workItemId}:${args.dispatchId}`};
+  }
+  const targetRef = hasInputArg(args, "repositoryOutputTargetRef") ? args.repositoryOutputTargetRef : hasInputArg(args, "targetId") ? args.targetId : "";
+  if (targetRef && toolName !== "repository-mcp.repository_output_target_select") {
+    const target = (state.repositoryOutputs || []).find((item) => item.targetId === targetRef);
+    if (!target) return {allowed: false, error: "repository_output_target_not_found", required: targetRef};
+    if (projectId && target.projectId !== projectId) return {allowed: false, error: "repository_target_project_scope_mismatch", required: `${projectId}:${targetRef}`};
+    if (taskGroupId && target.taskGroupId !== taskGroupId) return {allowed: false, error: "repository_target_task_group_scope_mismatch", required: `${taskGroupId}:${targetRef}`};
+    if (workItemId && target.workItemId !== workItemId) return {allowed: false, error: "repository_target_work_item_scope_mismatch", required: `${workItemId}:${targetRef}`};
+  }
+  return {allowed: true};
+}
+
+function explicitMcpResourceScope(args = {}) {
+  const resource = args.resource && typeof args.resource === "object" ? args.resource : {};
+  const resourceType = resource.resourceType || (hasInputArg(args, "resourceType") ? args.resourceType : "");
+  const resourceId = resource.resourceId ||
+    (hasInputArg(args, "resourceId") ? args.resourceId : "") ||
+    (String(resourceType) === "task_group" ? args.taskGroupId : "") ||
+    (String(resourceType) === "project" ? args.projectId : "");
+  if (!resourceType && !resourceId) return null;
+  return {resourceType: String(resourceType || "project"), resourceId: String(resourceId || "")};
+}
+
 function validateRemotePrincipalScope(state, principal, args = {}) {
   if (principal.kind === "system_admin") return {allowed: true};
   const allowedProjectIds = new Set(principal.projectIds || []);
@@ -736,6 +844,12 @@ function validateRemotePrincipalScope(state, principal, args = {}) {
 function inferMcpArgumentProjectIds(state, args = {}) {
   const projectIds = new Set();
   if (args.projectId) projectIds.add(String(args.projectId));
+  const explicitResource = explicitMcpResourceScope(args);
+  if (explicitResource?.resourceType === "project" && explicitResource.resourceId) projectIds.add(explicitResource.resourceId);
+  if (explicitResource?.resourceType === "task_group" && explicitResource.resourceId) {
+    const taskGroup = (state.taskGroups || []).find((item) => item.id === explicitResource.resourceId);
+    if (taskGroup?.projectId) projectIds.add(taskGroup.projectId);
+  }
   if (args.taskGroupId) {
     const taskGroup = (state.taskGroups || []).find((item) => item.id === args.taskGroupId);
     if (taskGroup?.projectId) projectIds.add(taskGroup.projectId);
@@ -813,6 +927,9 @@ function grantMatchesArgs(state, grant, args = {}) {
   if (args.projectId && args.projectId !== grant.projectId) return false;
   if (args.taskGroupId && args.taskGroupId !== grant.taskGroupId) return false;
   if ((args.workId || args.workItemId) && (args.workId || args.workItemId) !== grant.workId) return false;
+  const explicitResource = explicitMcpResourceScope(args);
+  if (explicitResource?.resourceType === "project" && explicitResource.resourceId && explicitResource.resourceId !== grant.projectId) return false;
+  if (explicitResource?.resourceType === "task_group" && explicitResource.resourceId && explicitResource.resourceId !== grant.taskGroupId) return false;
   if (args.sessionId && args.sessionId !== grant.sessionId) return false;
   if (args.repositoryOutputTargetRef || args.targetId) {
     const target = state.repositoryOutputs.find((item) => item.targetId === (args.repositoryOutputTargetRef || args.targetId));
@@ -1064,30 +1181,42 @@ function sanitizeArgs(args) {
 
 function createProject(state, args) {
   const at = new Date().toISOString();
+  const projectId = args.projectId || createId("prj");
+  if (state.projects.some((item) => item.id === projectId)) return {ok: false, error: "project_id_conflict"};
+  const ownerAccountId = args.ownerAccountId || "acct_workspace_owner";
+  if (!state.accounts.some((account) => account.accountId === ownerAccountId && ["active", "invited"].includes(account.status))) {
+    return {ok: false, error: "owner_account_not_found"};
+  }
   const project = {
-    id: args.projectId || createId("prj"),
+    id: projectId,
     name: args.name || args.title || "AI-native Project",
     status: "active",
-    ownerAccountId: args.ownerAccountId || "acct_workspace_owner",
+    ownerAccountId,
+    members: [{accountId: ownerAccountId, role: "project_owner"}],
     repositoryRefs: args.repositoryRefs || [],
     progress: {percent: 0, phase: "initialized", health: "ok", updatedAt: at},
     createdAt: at,
     updatedAt: at
   };
   state.projects.unshift(project);
+  const ownerGrant = ensureMcpProjectOwnerGrant(state, project, ownerAccountId, `policy:mcp:project_create:${projectId}`);
   computeProgressSnapshots(state);
-  return {project};
+  return {project, ownerGrant};
 }
 
 function createTaskGroup(state, args) {
-  const project = state.projects.find((item) => item.id === args.projectId) || state.projects[0];
+  if (!args.projectId) return {ok: false, error: "project_id_required"};
+  const project = state.projects.find((item) => item.id === args.projectId);
+  if (!project) return {ok: false, error: "project_not_found"};
+  const taskGroupId = args.taskGroupId || createId("tg");
+  if (state.taskGroups.some((item) => item.id === taskGroupId)) return {ok: false, error: "task_group_id_conflict"};
   const at = new Date().toISOString();
   const languagePolicy = normalizeTaskGroupLanguagePolicy(args.languagePolicy || args);
   const taskGroup = {
-    id: args.taskGroupId || createId("tg"),
-    projectId: project?.id || "prj_control_plane",
+    id: taskGroupId,
+    projectId: project.id,
     name: args.name || args.title || "AI-native Task Group",
-    title: args.title || "AI-native Task Group",
+    title: args.title || args.name || "AI-native Task Group",
     objective: args.objective || args.title || "Machine-executed task group",
     status: "planned",
     goalExecutionStatus: "ready",
@@ -1095,7 +1224,7 @@ function createTaskGroup(state, args) {
     progress: 0,
     health: "ok",
     languagePolicy,
-    roles: args.roles || [],
+    roles: normalizeMcpRoleBindings(args.roles, ["orchestrator", "agent-runtime", "reviewer"]),
     workItems: [],
     blockers: [],
     createdAt: at,
@@ -1106,33 +1235,73 @@ function createTaskGroup(state, args) {
   return {taskGroup};
 }
 
+function ensureMcpProjectOwnerGrant(state, project, ownerAccountId, policyDecisionRef) {
+  state.accessGrants ||= [];
+  const existing = state.accessGrants.find((grant) =>
+    grant.status === "active" &&
+    grant.subjectRef?.subjectType === "account" &&
+    grant.subjectRef?.subjectId === ownerAccountId &&
+    grant.resource?.resourceType === "project" &&
+    grant.resource?.resourceId === project.id &&
+    grant.role === "project_owner"
+  );
+  if (existing) {
+    existing.permissions = [...projectOwnerGrantPermissions];
+    existing.updatedAt = new Date().toISOString();
+    return existing;
+  }
+  const at = new Date().toISOString();
+  const grant = {
+    schemaVersion: "access-control-grant/v1",
+    grantId: createId("grant"),
+    subjectRef: {subjectType: "account", subjectId: ownerAccountId},
+    resource: {resourceType: "project", resourceId: project.id},
+    role: "project_owner",
+    permissions: [...projectOwnerGrantPermissions],
+    status: "active",
+    policyDecisionRef,
+    auditRef: `audit:mcp:project_create:${project.id}`,
+    createdAt: at,
+    updatedAt: at
+  };
+  state.accessGrants.unshift(grant);
+  return grant;
+}
+
 function createWorkItem(state, args) {
-  const taskGroup = state.taskGroups.find((item) => item.id === args.taskGroupId) || state.taskGroups[0];
+  const taskGroup = findTaskGroup(state, args.taskGroupId);
+  if (!taskGroup) return {ok: false, error: "task_group_not_found"};
+  const workItemId = args.workItemId || createId("work");
+  if ((taskGroup.workItems || []).some((item) => item.id === workItemId)) return {ok: false, error: "work_item_id_conflict"};
   const at = new Date().toISOString();
   const workItem = {
-    id: args.workItemId || createId("work"),
+    id: workItemId,
     title: args.title || "AI-native work item",
-    status: args.status || "draft",
+    status: ["draft", "ready", "blocked"].includes(args.status) ? args.status : "ready",
     ownerRole: args.roleId || args.ownerRole || "orchestrator",
     progress: 0,
-    requirements: args.requirements || [],
+    requirements: normalizeMcpStringList(args.requirements, []),
     createdAt: at,
     updatedAt: at
   };
   taskGroup.workItems ||= [];
   taskGroup.workItems.push(workItem);
+  taskGroup.roles ||= [];
+  if (!taskGroup.roles.some((role) => role.roleId === workItem.ownerRole)) {
+    taskGroup.roles.push({roleId: workItem.ownerRole, status: "ready", skillBinding: "server_resolved_on_dispatch"});
+  }
   taskGroup.updatedAt = at;
   computeProgressSnapshots(state);
-  return {taskGroupId: taskGroup.id, workItem};
+  return {taskGroupId: taskGroup.id, workItem, taskGroup};
 }
 
 function findTaskGroup(state, taskGroupId) {
-  return state.taskGroups.find((item) => item.id === taskGroupId) || state.taskGroups[0];
+  return taskGroupId ? state.taskGroups.find((item) => item.id === taskGroupId) || null : state.taskGroups[0] || null;
 }
 
 function findWorkItem(state, taskGroupId, workItemId) {
   const taskGroup = findTaskGroup(state, taskGroupId);
-  return taskGroup?.workItems?.find((item) => item.id === workItemId) || taskGroup?.workItems?.[0];
+  return workItemId ? taskGroup?.workItems?.find((item) => item.id === workItemId) || null : taskGroup?.workItems?.[0] || null;
 }
 
 function assignWorkItem(state, args) {
@@ -1183,7 +1352,7 @@ function scopeStateForProjectPrincipal(state, principal) {
   scoped.projects = (scoped.projects || []).filter((project) => projectIds.has(project.id));
   scoped.taskGroups = (scoped.taskGroups || []).filter((taskGroup) => visibleTaskGroupIds.has(taskGroup.id));
   scoped.progressSnapshots = (scoped.progressSnapshots || []).filter((snapshot) =>
-    projectIds.has(snapshot.projectId) && (!snapshot.taskGroupId || visibleTaskGroupIds.has(snapshot.taskGroupId))
+    progressSnapshotVisibleForScope(snapshot, projectIds, visibleTaskGroupIds)
   );
   scoped.agentDispatches = (scoped.agentDispatches || []).filter((dispatch) =>
     projectIds.has(dispatch.projectId) && visibleTaskGroupIds.has(dispatch.taskGroupId)
@@ -1217,7 +1386,7 @@ function scopeStateForAgentPrincipal(state, principal, grants = []) {
   scoped.projects = (scoped.projects || []).filter((project) => projectIds.has(project.id));
   scoped.taskGroups = (scoped.taskGroups || []).filter((taskGroup) => visibleTaskGroupIds.has(taskGroup.id));
   scoped.progressSnapshots = (scoped.progressSnapshots || []).filter((snapshot) =>
-    projectIds.has(snapshot.projectId) && (!snapshot.taskGroupId || visibleTaskGroupIds.has(snapshot.taskGroupId))
+    progressSnapshotVisibleForScope(snapshot, projectIds, visibleTaskGroupIds)
   );
   scoped.agentDispatches = (scoped.agentDispatches || []).filter((dispatch) =>
     dispatch.assignedNodeId === principal.id || grantDispatchIds.has(dispatch.dispatchId)
@@ -1234,6 +1403,12 @@ function scopeStateForAgentPrincipal(state, principal, grants = []) {
   scoped.accessGrants = [];
   scoped.mcpGrants = (scoped.mcpGrants || []).filter((grant) => grant.agentNodeId === principal.id && grant.grantStatus === "issued");
   return scoped;
+}
+
+function progressSnapshotVisibleForScope(snapshot, projectIds, visibleTaskGroupIds) {
+  if (snapshot.scopeType === "project") return projectIds.has(snapshot.scopeRef);
+  if (snapshot.scopeType === "task_group") return visibleTaskGroupIds.has(snapshot.scopeRef);
+  return false;
 }
 
 function scopedDispatch(state, dispatchId, context = {}) {

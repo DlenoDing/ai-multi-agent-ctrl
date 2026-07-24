@@ -300,11 +300,12 @@
       },
       "role": "project_owner",
       "permissions": [
-        "project:*",
-        "task_group:*",
-        "agent:activate",
-        "member:invite",
+        "project:view",
+        "project:update",
         "project:grant",
+        "member:invite",
+        "agent:activate",
+        "task_group:read",
         "task_group:control"
       ],
       "status": "active",

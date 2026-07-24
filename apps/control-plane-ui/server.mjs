@@ -35,6 +35,7 @@ import {
   collectRuntimeIssue,
   computeCloseBarrier,
   computeCompletionReadiness,
+  computeProgressSnapshots,
   createId,
   decideSessionPlacement,
   defaultModelCapabilities,
@@ -44,6 +45,8 @@ import {
   gitRemoteUrl,
   pathAllowlistValid,
   registerRoleSkillOverlay,
+  normalizeTaskGroupLanguagePolicy,
+  projectOwnerGrantPermissions,
   runAgentRuntimeWorker,
   runAutonomousCycle,
   selectModel,
@@ -251,6 +254,8 @@ function readHealthState() {
 }
 
 function writeState(state) {
+  stateViewCache.clear();
+  scopedStateCache.clear();
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
   writeStoredState(state, {root, runtimeDir, statePath, seedPath, buildInitialState, expectedStateVersion: state.__loadedStateVersion});
   notifyLongPollWaiters("state");
@@ -378,6 +383,10 @@ function accountIdOf(account) {
   return account.accountId || account.id;
 }
 
+function isSystemAccount(account) {
+  return Boolean(account && (account.accountType === "system_admin" || (account.roles || []).includes("system_admin") || (account.permissions || []).includes("system:*")));
+}
+
 function publicAccountRecord(account) {
   return {
     schemaVersion: account.schemaVersion,
@@ -399,7 +408,7 @@ function publicAccountRecord(account) {
 function normalizeStringList(value, fallback = []) {
   const source = Array.isArray(value)
     ? value
-    : String(value || "").split(",");
+    : String(value || "").split(/[\n,]/u);
   const normalized = [...new Set(source.map((item) => String(item).trim()).filter(Boolean))];
   return normalized.length ? normalized : fallback;
 }
@@ -429,6 +438,184 @@ function normalizeInvitedAccount(input = {}, systemScoped = false) {
     roles: roles.filter((role) => role !== "system_admin"),
     permissions: permissions.filter((permission) => permission !== "system:*" && !permission.startsWith("system:"))
   };
+}
+
+const roleGrantPermissionTemplates = Object.freeze({
+  project_owner: [...projectOwnerGrantPermissions],
+  project_admin: ["project:view", "project:update", "project:grant", "member:invite", "agent:activate", "task_group:read", "task_group:control"],
+  task_group_owner: ["project:view", "task_group:read", "task_group:control"],
+  agent_operator: ["project:view", "agent:activate", "task_group:read"],
+  reviewer: ["project:view", "task_group:read", "task_group:review"],
+  viewer: ["project:view"],
+  project_member: ["project:view"]
+});
+
+const taskGroupGrantPermissionTemplates = Object.freeze({
+  task_group_owner: ["task_group:read", "task_group:control"],
+  agent_operator: ["task_group:read", "task_group:monitor"],
+  reviewer: ["task_group:read", "task_group:review"],
+  viewer: ["task_group:read"],
+  project_member: ["task_group:read"]
+});
+
+const unsafeDelegatedGrantPermissions = new Set([
+  "system:*",
+  "project:*",
+  "task_group:*",
+  "project:create",
+  "task_group:orchestrate",
+  "task_group:checkpoint_submit"
+]);
+
+function permissionsForRoleGrant(role, resourceType) {
+  const templates = resourceType === "task_group" ? taskGroupGrantPermissionTemplates : roleGrantPermissionTemplates;
+  return templates[role] || templates.viewer;
+}
+
+function projectIdFromGrantScope(state, resourceScope = {}) {
+  if (resourceScope.resourceType === "project") return resourceScope.resourceId;
+  if (resourceScope.resourceType === "task_group") {
+    return resourceScope.projectId || state.taskGroups.find((item) => item.id === resourceScope.resourceId)?.projectId || "";
+  }
+  return "";
+}
+
+function actorIsProjectOwnerForScope(state, actor, resourceScope = {}) {
+  const projectId = projectIdFromGrantScope(state, resourceScope);
+  if (!projectId) return false;
+  const project = state.projects.find((item) => item.id === projectId);
+  if (project?.ownerAccountId === actor) return true;
+  return (state.accessGrants || []).some((grant) =>
+    grant.status === "active" &&
+    grant.role === "project_owner" &&
+    grant.subjectRef?.subjectType === "account" &&
+    grant.subjectRef?.subjectId === actor &&
+    grant.resource?.resourceType === "project" &&
+    grant.resource?.resourceId === projectId
+  );
+}
+
+function sanitizeGrantRequest(state, actor, input = {}, resourceScope = {}) {
+  const account = state.accounts.find((item) => accountIdOf(item) === actor);
+  const role = String(input.role || "viewer");
+  const resource = {
+    resourceType: String(input.resourceType || resourceScope.resourceType || "project"),
+    resourceId: String(input.resourceId || resourceScope.resourceId || "prj_control_plane")
+  };
+  const explicitPermissions = normalizeStringList(input.permissions, []);
+  const permissions = explicitPermissions.length
+    ? explicitPermissions
+    : permissionsForRoleGrant(role, resource.resourceType);
+  const unsafe = permissions.filter((permission) =>
+    unsafeDelegatedGrantPermissions.has(permission) || permission.startsWith("system:")
+  );
+  if (unsafe.length) {
+    return {ok: false, status: 400, error: "unsafe_grant_permissions", permissions: unsafe};
+  }
+  if (!isSystemAccount(account)) {
+    const denied = permissions.filter((permission) => {
+      if (permission === "project:grant" && !actorIsProjectOwnerForScope(state, actor, resourceScope)) return true;
+      return !hasPermission(state, actor, permission, resourceScope);
+    });
+    if (denied.length) return {ok: false, status: 403, error: "grant_permission_not_delegable", permissions: denied};
+  }
+  return {ok: true, role, resource, permissions};
+}
+
+function ensureProjectOwnerGrant(state, project, ownerAccountId, policyDecisionRef, auditRef) {
+  state.accessGrants ||= [];
+  const existing = state.accessGrants.find((grant) =>
+    grant.status === "active" &&
+    grant.subjectRef?.subjectType === "account" &&
+    grant.subjectRef?.subjectId === ownerAccountId &&
+    grant.resource?.resourceType === "project" &&
+    grant.resource?.resourceId === project.id
+  );
+  if (existing) return existing;
+  const at = now();
+  const grant = {
+    schemaVersion: "access-control-grant/v1",
+    grantId: createId("grant"),
+    subjectRef: {subjectType: "account", subjectId: ownerAccountId},
+    resource: {resourceType: "project", resourceId: project.id},
+    role: "project_owner",
+    permissions: [...projectOwnerGrantPermissions],
+    status: "active",
+    policyDecisionRef,
+    auditRef,
+    createdAt: at,
+    updatedAt: at
+  };
+  state.accessGrants.push(grant);
+  return grant;
+}
+
+function createTaskGroupRecord(state, input = {}, options = {}) {
+  const projectId = String(input.projectId || "prj_control_plane");
+  const project = state.projects.find((item) => item.id === projectId);
+  if (!project) return {ok: false, status: 404, error: "project_not_found"};
+  const taskGroupId = input.taskGroupId || createId("tg");
+  if (state.taskGroups.some((item) => item.id === taskGroupId)) {
+    return {ok: false, status: 409, error: "task_group_id_conflict"};
+  }
+  const at = now();
+  const roles = normalizeStringList(input.roles, []).map((roleId) => ({
+    roleId,
+    status: "ready",
+    skillBinding: "server_resolved_on_dispatch"
+  }));
+  const taskGroup = {
+    id: taskGroupId,
+    projectId,
+    name: input.name || input.title || "AI-native Task Group",
+    title: input.title || input.name || "AI-native Task Group",
+    objective: input.objective || input.title || input.name || "Machine-executed task group",
+    status: input.status || "planned",
+    goalExecutionStatus: "ready",
+    phase: input.phase || "planning",
+    progress: 0,
+    health: "ok",
+    languagePolicy: normalizeTaskGroupLanguagePolicy(input.languagePolicy || input),
+    roles,
+    workItems: [],
+    blockers: [],
+    auditRef: options.auditRef,
+    createdAt: at,
+    updatedAt: at
+  };
+  state.taskGroups.unshift(taskGroup);
+  computeProgressSnapshots(state);
+  return {taskGroup};
+}
+
+function createWorkItemRecord(state, taskGroupId, input = {}, options = {}) {
+  const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
+  if (!taskGroup) return {ok: false, status: 404, error: "task_group_not_found"};
+  const workItemId = input.workItemId || createId("work");
+  if ((taskGroup.workItems || []).some((item) => item.id === workItemId)) {
+    return {ok: false, status: 409, error: "work_item_id_conflict"};
+  }
+  const at = now();
+  const workItem = {
+    id: workItemId,
+    title: input.title || "AI-native work item",
+    status: ["draft", "ready", "blocked"].includes(input.status) ? input.status : "ready",
+    ownerRole: input.ownerRole || input.roleId || "orchestrator",
+    progress: 0,
+    requirements: normalizeStringList(input.requirements, []),
+    auditRef: options.auditRef,
+    createdAt: at,
+    updatedAt: at
+  };
+  taskGroup.workItems ||= [];
+  taskGroup.workItems.push(workItem);
+  if (!taskGroup.roles?.some((role) => role.roleId === workItem.ownerRole)) {
+    taskGroup.roles ||= [];
+    taskGroup.roles.push({roleId: workItem.ownerRole, status: "ready", skillBinding: "server_resolved_on_dispatch"});
+  }
+  taskGroup.updatedAt = at;
+  computeProgressSnapshots(state);
+  return {taskGroupId: taskGroup.id, workItem, taskGroup};
 }
 
 function principalAllowedForAction(account, action) {
@@ -540,7 +727,7 @@ function mcpContextFromRequest(req, state) {
     };
   }
   const accountContext = accountFromRequest(req, state);
-  if (accountContext?.account.accountType === "system_admin") {
+  if (isSystemAccount(accountContext?.account)) {
     return {principal: {kind: "system_admin", id: accountContext.account.accountId, allowedMcpTools: ["*"]}, allowedMcpTools: ["*"]};
   }
   const config = readRuntimeConfig();
@@ -586,7 +773,7 @@ function requireRead(req, state, resourceScope = {resourceType: "system", resour
 
 function canReadResource(state, account, resourceScope = {}) {
   if (!account) return false;
-  if (account.accountType === "system_admin" || (account.permissions || []).includes("system:*")) return true;
+  if (isSystemAccount(account)) return true;
   if (resourceScope.resourceType === "system") return false;
   if (resourceScope.resourceType === "project") return canReadProject(state, account, resourceScope.resourceId);
   if (resourceScope.resourceType === "task_group") return canReadTaskGroup(state, account, resourceScope.resourceId);
@@ -603,7 +790,7 @@ function canReadProject(state, account, projectId) {
 function canReadTaskGroup(state, account, taskGroupId) {
   const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
   if (!taskGroup) return false;
-  if (account.accountType === "system_admin" || (account.permissions || []).includes("system:*")) return true;
+  if (isSystemAccount(account)) return true;
   const project = state.projects.find((item) => item.id === taskGroup.projectId);
   if (project?.ownerAccountId === account.accountId) return true;
   return ["task_group:read", "task_group:review", "task_group:control", "task_group:orchestrate", "task_group:monitor", "task_group:*"].some((permission) =>
@@ -614,7 +801,7 @@ function canReadTaskGroup(state, account, taskGroupId) {
 function scopedStateForAccount(state, account, session) {
   const cloned = {...state};
   delete cloned.__loadedStateVersion;
-  const isSystem = account.accountType === "system_admin" || (account.permissions || []).includes("system:*");
+  const isSystem = isSystemAccount(account);
   cloned.authSessions = (state.authSessions || [])
     .filter((item) => isSystem || item.sessionId === session.sessionId)
     .map((item) => ({sessionId: item.sessionId, accountId: item.accountId, status: item.status, expiresAt: item.expiresAt, createdAt: item.createdAt, updatedAt: item.updatedAt}));
@@ -810,7 +997,7 @@ function hasPermission(state, actor, requiredPermission, resourceScope) {
 }
 
 function directPermissionApplies(account, permission, requiredPermission, resourceScope = {}) {
-  if (account.accountType === "system_admin") return true;
+  if (isSystemAccount(account)) return true;
   if (["member:invite", "agent:activate"].includes(permission) && ["project", "task_group"].includes(resourceScope.resourceType)) return false;
   if (resourceScope.resourceType === "task_group" && permission.startsWith("task_group:")) return false;
   if (resourceScope.resourceType === "project" && permission.startsWith("project:") && requiredPermission !== "project:create") return false;
@@ -1491,7 +1678,7 @@ async function handleApi(req, res) {
     return;
   }
 
-  if (req.method === "POST" && url.pathname === "/api/auth/login") {
+	  if (req.method === "POST" && url.pathname === "/api/auth/login") {
     if (loginRateLimited(req)) {
       json(res, 429, {error: "too_many_login_attempts", retryAfterSeconds: 60});
       return;
@@ -1533,7 +1720,20 @@ async function handleApi(req, res) {
     state.authSessions = state.authSessions.slice(0, 80);
     audit(state, "auth-service", "auth_login", `Account:${account.accountId}`);
     commitDirectStateWrite(state);
-    json(res, 200, {sessionToken, expiresAt, account: {accountId: account.accountId, email: account.email, displayName: account.displayName, roles: account.roles, permissions: account.permissions}});
+	    json(res, 200, {sessionToken, expiresAt, account: {accountId: account.accountId, accountType: account.accountType, email: account.email, displayName: account.displayName, roles: account.roles, permissions: account.permissions}});
+	    return;
+	  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/logout") {
+    const session = authenticateRequest(req, state);
+    if (session) {
+      session.status = "revoked";
+      session.revokedAt = now();
+      session.updatedAt = session.revokedAt;
+      audit(state, "auth-service", "auth_logout", `Account:${session.accountId}`);
+      commitDirectStateWrite(state);
+    }
+    json(res, 200, {ok: true});
     return;
   }
 
@@ -1592,7 +1792,7 @@ async function handleApi(req, res) {
   if (req.method === "GET" && url.pathname === "/api/agent-nodes") {
     const reader = accountFromRequest(req, state);
     if (!reader) return json(res, 401, {error: "auth_required"});
-    const visible = reader.account.accountType === "system_admin"
+    const visible = isSystemAccount(reader.account)
       ? state.agentRuntimeNodes
       : state.agentRuntimeNodes.filter((nodeItem) => (nodeItem.projectIds || []).some((projectId) => canReadProject(state, reader.account, projectId)));
     json(res, 200, {agentRuntimeNodes: visible.map(publicAgentNode)});
@@ -1603,7 +1803,7 @@ async function handleApi(req, res) {
     const reader = accountFromRequest(req, state);
     if (!reader) return json(res, 401, {error: "auth_required"});
     const projectId = url.searchParams.get("projectId") || undefined;
-    const tokens = listAgentJoinTokens(state, projectId).filter((token) => reader.account.accountType === "system_admin" || canReadProject(state, reader.account, token.projectId));
+    const tokens = listAgentJoinTokens(state, projectId).filter((token) => isSystemAccount(reader.account) || canReadProject(state, reader.account, token.projectId));
     json(res, 200, {agentJoinTokens: tokens});
     return;
   }
@@ -1965,13 +2165,33 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/projects") {
+    const authenticated = accountFromRequest(req, state);
+    if (!authenticated) {
+      json(res, 401, {error: "auth_required"});
+      return;
+    }
+    if (!req.headers["idempotency-key"]) {
+      json(res, 428, {error: "idempotency_key_required"});
+      return;
+    }
+    const authenticatedAccountId = accountIdOf(authenticated.account);
+    const requestedOwnerAccountId = String(body.ownerAccountId || authenticatedAccountId || "").trim() || authenticatedAccountId;
+    if (requestedOwnerAccountId !== authenticatedAccountId && !isSystemAccount(authenticated.account)) {
+      json(res, 403, {error: "project_owner_assignment_denied"});
+      return;
+    }
+    const ownerAccount = state.accounts.find((item) => accountIdOf(item) === requestedOwnerAccountId && ["active", "invited"].includes(item.status));
+    if (!ownerAccount) {
+      json(res, 404, {error: "owner_account_not_found"});
+      return;
+    }
     const guard = beginGuardedWrite(req, state, "project_create", "Project:new", {resourceType: "project", resourceId: "new"});
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
     }
     const id = createId("prj");
-    const ownerAccountId = body.ownerAccountId || "acct_workspace_owner";
+    const ownerAccountId = requestedOwnerAccountId;
     state.projects.push({
       id,
       name: body.name || "Untitled Project",
@@ -1980,15 +2200,97 @@ async function handleApi(req, res) {
       members: [{accountId: ownerAccountId, role: "project_owner"}],
       progress: {percent: 0, phase: "intake", health: "ok", openTaskGroups: 0, blockedItems: 0, updatedAt: now()}
     });
-    audit(state, ownerAccountId, "project_create", `Project:${id}`);
-    finishGuardedWrite(state, guard, 201, {id});
+    const project = state.projects.at(-1);
+    const ownerGrant = ensureProjectOwnerGrant(state, project, ownerAccountId, guard.policyDecision.id, `audit:${guard.idempotencyKey}`);
+    computeProgressSnapshots(state);
+    audit(state, guard.actor, "project_create", `Project:${id}`);
+    const result = {id, ownerGrant};
+    finishGuardedWrite(state, guard, 201, result);
     writeState(state);
-    json(res, 201, {id});
+    json(res, 201, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/task-groups") {
+    const authenticated = accountFromRequest(req, state);
+    if (!authenticated) {
+      json(res, 401, {error: "auth_required"});
+      return;
+    }
+    if (!req.headers["idempotency-key"]) {
+      json(res, 428, {error: "idempotency_key_required"});
+      return;
+    }
+    const projectId = String(body.projectId || "").trim();
+    if (!projectId) {
+      json(res, 400, {error: "project_id_required"});
+      return;
+    }
+    if (!state.projects.some((item) => item.id === projectId)) {
+      json(res, 404, {error: "project_not_found"});
+      return;
+    }
+    const guard = beginGuardedWrite(req, state, "task_group_create", `Project:${projectId}`, projectScope(projectId));
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    const result = createTaskGroupRecord(state, body, {auditRef: `audit:${guard.idempotencyKey}`});
+    if (result.ok === false) {
+      json(res, result.status || 409, {error: result.error});
+      return;
+    }
+    audit(state, "ui-console-service", "task_group_create", `TaskGroup:${result.taskGroup.id}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  const workItemCreateMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/work-items$/);
+  if (req.method === "POST" && workItemCreateMatch) {
+    const authenticated = accountFromRequest(req, state);
+    if (!authenticated) {
+      json(res, 401, {error: "auth_required"});
+      return;
+    }
+    if (!req.headers["idempotency-key"]) {
+      json(res, 428, {error: "idempotency_key_required"});
+      return;
+    }
+    const taskGroup = state.taskGroups.find((item) => item.id === workItemCreateMatch[1]);
+    if (!taskGroup) {
+      json(res, 404, {error: "task_group_not_found"});
+      return;
+    }
+    const guard = beginGuardedWrite(req, state, "task_group_work_item_create", `TaskGroup:${taskGroup.id}`, taskGroupScope(state, taskGroup.id));
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    const result = createWorkItemRecord(state, taskGroup.id, body, {auditRef: `audit:${guard.idempotencyKey}`});
+    if (result.ok === false) {
+      json(res, result.status || 409, {error: result.error});
+      return;
+    }
+    audit(state, "ui-console-service", "task_group_work_item_create", `WorkItem:${taskGroup.id}:${result.workItem.id}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
     return;
   }
 
   const memberMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/members$/);
   if (req.method === "POST" && memberMatch) {
+    const authenticated = accountFromRequest(req, state);
+    if (!authenticated) {
+      json(res, 401, {error: "auth_required"});
+      return;
+    }
+    if (!req.headers["idempotency-key"]) {
+      json(res, 428, {error: "idempotency_key_required"});
+      return;
+    }
     const project = state.projects.find((item) => item.id === memberMatch[1]);
     if (!project) {
       json(res, 404, {error: "project_not_found"});
@@ -2004,15 +2306,20 @@ async function handleApi(req, res) {
       json(res, guard.status, guard.payload);
       return;
     }
+    const sanitizedGrant = sanitizeGrantRequest(state, guard.actor, {...body, resourceType: "project", resourceId: project.id}, projectScope(project.id));
+    if (!sanitizedGrant.ok) {
+      json(res, sanitizedGrant.status, {error: sanitizedGrant.error, permissions: sanitizedGrant.permissions});
+      return;
+    }
     project.members = project.members.filter((member) => member.accountId !== accountId);
-    project.members.push({accountId, role: body.role || "viewer"});
+    project.members.push({accountId, role: sanitizedGrant.role});
     state.accessGrants.push({
       schemaVersion: "access-control-grant/v1",
       grantId: createId("grant"),
       subjectRef: {subjectType: "account", subjectId: accountId},
-      resource: {resourceType: "project", resourceId: project.id},
-      role: body.role || "viewer",
-      permissions: body.permissions || ["project:view"],
+      resource: sanitizedGrant.resource,
+      role: sanitizedGrant.role,
+      permissions: sanitizedGrant.permissions,
       status: "active",
       policyDecisionRef: guard.policyDecision.id,
       auditRef: `audit:${guard.idempotencyKey}`,
@@ -2177,9 +2484,15 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/access-grants") {
-    const guard = beginGuardedWrite(req, state, "access_grant_create", `${body.resourceType || "project"}:${body.resourceId || "prj_control_plane"}`, {resourceType: body.resourceType || "project", resourceId: body.resourceId || "prj_control_plane"});
+    const resourceScope = {resourceType: body.resourceType || "project", resourceId: body.resourceId || "prj_control_plane"};
+    const guard = beginGuardedWrite(req, state, "access_grant_create", `${resourceScope.resourceType}:${resourceScope.resourceId}`, resourceScope);
     if (guard.status) {
       json(res, guard.status, guard.payload);
+      return;
+    }
+    const sanitizedGrant = sanitizeGrantRequest(state, guard.actor, body, resourceScope);
+    if (!sanitizedGrant.ok) {
+      json(res, sanitizedGrant.status, {error: sanitizedGrant.error, permissions: sanitizedGrant.permissions});
       return;
     }
     const at = now();
@@ -2187,9 +2500,9 @@ async function handleApi(req, res) {
       schemaVersion: "access-control-grant/v1",
       grantId: createId("grant"),
       subjectRef: {subjectType: "account", subjectId: body.subjectId || "acct_workspace_owner"},
-      resource: {resourceType: body.resourceType || "project", resourceId: body.resourceId || "prj_control_plane"},
-      role: body.role || "viewer",
-      permissions: normalizeStringList(body.permissions, ["project:view"]),
+      resource: sanitizedGrant.resource,
+      role: sanitizedGrant.role,
+      permissions: sanitizedGrant.permissions,
       status: "active",
       policyDecisionRef: guard.policyDecision.id,
       auditRef: `audit:${guard.idempotencyKey}`,

@@ -172,6 +172,20 @@ try {
   if (unauth.response.status !== 401) {
     throw new Error(`expected unauthenticated 401, got ${unauth.response.status}`);
   }
+  const unauthTaskGroupCreate = await jsonFetch(port, "/api/task-groups", {
+    method: "POST",
+    body: JSON.stringify({projectId: "prj_missing_probe", name: "Unauth probe"})
+  });
+  if (unauthTaskGroupCreate.response.status !== 401) {
+    throw new Error(`expected unauthenticated task-group create 401 before existence checks, got ${unauthTaskGroupCreate.response.status}`);
+  }
+  const unauthWorkItemCreate = await jsonFetch(port, "/api/task-groups/tg_missing_probe/work-items", {
+    method: "POST",
+    body: JSON.stringify({title: "Unauth probe"})
+  });
+  if (unauthWorkItemCreate.response.status !== 401) {
+    throw new Error(`expected unauthenticated work-item create 401 before existence checks, got ${unauthWorkItemCreate.response.status}`);
+  }
   const ownerBootstrapDenied = await jsonFetch(port, "/api/auth/login", {
     method: "POST",
     body: JSON.stringify({email: "owner@local", token: "doctor-bootstrap-token"})
@@ -183,6 +197,32 @@ try {
   const auth = await loginAs(port, "owner@local", "doctor-workspace-token");
   const reviewerAuth = await loginAs(port, "review@local", "doctor-reviewer-token");
   const agentAuth = await loginAs(port, "agent.runtime@local", "doctor-agent-runtime-token");
+  const logoutLogin = await jsonFetch(port, "/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({email: "owner@local", token: "doctor-workspace-token"})
+  });
+  if (!logoutLogin.response.ok || !logoutLogin.payload.sessionToken) {
+    throw new Error("logout fixture login failed");
+  }
+  const logoutAuth = `Bearer ${logoutLogin.payload.sessionToken}`;
+  const logoutStateBefore = await jsonFetch(port, "/api/state", {
+    headers: {authorization: logoutAuth}
+  });
+  if (!logoutStateBefore.response.ok) throw new Error("logout fixture bearer could not read state before revocation");
+  const logoutResult = await jsonFetch(port, "/api/auth/logout", {
+    method: "POST",
+    headers: {authorization: logoutAuth},
+    body: "{}"
+  });
+  if (!logoutResult.response.ok || logoutResult.payload.ok !== true) {
+    throw new Error("auth logout did not return a successful idempotent response");
+  }
+  const logoutStateAfter = await jsonFetch(port, "/api/state", {
+    headers: {authorization: logoutAuth}
+  });
+  if (logoutStateAfter.response.status !== 401) {
+    throw new Error(`expected revoked bearer to be rejected after logout, got ${logoutStateAfter.response.status}`);
+  }
   const stateResult = await jsonFetch(port, "/api/state", {
     headers: {authorization: systemAuth}
   });
@@ -213,7 +253,7 @@ try {
   }
   const modelDecision = await jsonFetch(port, "/api/model-selection/decide", {
     method: "POST",
-    headers: {"Idempotency-Key": "doctor-model-selection", authorization: auth},
+    headers: {"Idempotency-Key": "doctor-model-selection", authorization: systemAuth},
     body: JSON.stringify({taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "ui-console-service"})
   });
   if (!modelDecision.response.ok || modelDecision.payload.status !== "selected") {
@@ -221,7 +261,7 @@ try {
   }
   const idempotencyConflict = await jsonFetch(port, "/api/model-selection/decide", {
     method: "POST",
-    headers: {"Idempotency-Key": "doctor-model-selection", authorization: auth},
+    headers: {"Idempotency-Key": "doctor-model-selection", authorization: systemAuth},
     body: JSON.stringify({taskGroupId: "tg_runtime_management", workItemId: "work_permissions", roleId: "policy-engine"})
   });
   if (idempotencyConflict.response.status !== 409) {
@@ -259,6 +299,22 @@ try {
   if (reviewerCrossProjectDenied.response.status !== 403) {
     throw new Error(`expected project-scoped grant isolation 403, got ${reviewerCrossProjectDenied.response.status}`);
   }
+  const reviewerRuntimeGrantDenied = await jsonFetch(port, "/api/access-grants", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-reviewer-runtime-grant-denied", authorization: reviewerAuth},
+    body: JSON.stringify({subjectId: "acct_reviewer", resourceType: "project", resourceId: "prj_control_plane", role: "agent_operator", permissions: ["task_group:orchestrate"]})
+  });
+  if (![400, 403].includes(reviewerRuntimeGrantDenied.response.status)) {
+    throw new Error(`expected project grant holder not to delegate runtime orchestration permission, got ${reviewerRuntimeGrantDenied.response.status}`);
+  }
+  const ownerWildcardGrantDenied = await jsonFetch(port, "/api/access-grants", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-owner-wildcard-grant-denied", authorization: auth},
+    body: JSON.stringify({subjectId: "acct_reviewer", resourceType: "project", resourceId: "prj_control_plane", role: "project_admin", permissions: ["project:*"]})
+  });
+  if (ownerWildcardGrantDenied.response.status !== 400) {
+    throw new Error(`expected project owner wildcard grant to be rejected, got ${ownerWildcardGrantDenied.response.status}`);
+  }
   const ownerCrossProjectDenied = await jsonFetch(port, "/api/access-grants", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-owner-cross-project-denied", authorization: auth},
@@ -272,24 +328,117 @@ try {
     headers: {"Idempotency-Key": "doctor-owner-cross-project-invite-denied", authorization: auth},
     body: JSON.stringify({projectId: "prj_other", displayName: "Other Project User", email: "other-project-user@local"})
   });
-	  if (ownerCrossProjectInviteDenied.response.status !== 403) {
-	    throw new Error(`expected workspace owner invite to stay project-scoped, got ${ownerCrossProjectInviteDenied.response.status}`);
-	  }
-	  const ownerSystemInviteDenied = await jsonFetch(port, "/api/accounts", {
-	    method: "POST",
-	    headers: {"Idempotency-Key": "doctor-owner-system-invite-denied", authorization: auth},
-	    body: JSON.stringify({projectId: "prj_control_plane", accountType: "system_admin", displayName: "Escalated Admin", email: "escalated-admin@local", roles: "system_admin", permissions: "system:*"})
-	  });
-	  if (ownerSystemInviteDenied.response.status !== 403) {
-	    throw new Error(`expected project-scoped inviter not to create system admin, got ${ownerSystemInviteDenied.response.status}`);
-	  }
-	  const ownerCrossProjectAgentDenied = await jsonFetch(port, "/api/agents", {
+  if (ownerCrossProjectInviteDenied.response.status !== 403) {
+    throw new Error(`expected workspace owner invite to stay project-scoped, got ${ownerCrossProjectInviteDenied.response.status}`);
+  }
+  const ownerSystemInviteDenied = await jsonFetch(port, "/api/accounts", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-owner-system-invite-denied", authorization: auth},
+    body: JSON.stringify({projectId: "prj_control_plane", accountType: "system_admin", displayName: "Escalated Admin", email: "escalated-admin@local", roles: "system_admin", permissions: "system:*"})
+  });
+  if (ownerSystemInviteDenied.response.status !== 403) {
+    throw new Error(`expected project-scoped inviter not to create system admin, got ${ownerSystemInviteDenied.response.status}`);
+  }
+  const ownerCrossProjectAgentDenied = await jsonFetch(port, "/api/agents", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-owner-cross-project-agent-denied", authorization: auth},
     body: JSON.stringify({projectId: "prj_other", name: "Other Project Agent", role: "reviewer", model: "auto_best"})
   });
   if (ownerCrossProjectAgentDenied.response.status !== 403) {
     throw new Error(`expected workspace owner agent activation to stay project-scoped, got ${ownerCrossProjectAgentDenied.response.status}`);
+  }
+  const delegatedDenyStateBefore = await jsonFetch(port, "/api/state?view=system&limit=20", {
+    headers: {authorization: systemAuth}
+  });
+  const delegatedProjectOwnerDenied = await jsonFetch(port, "/api/projects", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-project-delegated-owner-denied", authorization: auth},
+    body: JSON.stringify({name: "Delegated Owner Project", ownerAccountId: "acct_reviewer"})
+  });
+  if (delegatedProjectOwnerDenied.response.status !== 403) {
+    throw new Error(`expected non-system project creator not to assign another owner, got ${delegatedProjectOwnerDenied.response.status}`);
+  }
+  const delegatedProjectOwnerDeniedReplay = await jsonFetch(port, "/api/projects", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-project-delegated-owner-denied", authorization: auth},
+    body: JSON.stringify({name: "Delegated Owner Project", ownerAccountId: "acct_reviewer"})
+  });
+  const delegatedDenyStateAfter = await jsonFetch(port, "/api/state?view=system&limit=20", {
+    headers: {authorization: systemAuth}
+  });
+  if (delegatedProjectOwnerDeniedReplay.response.status !== 403) {
+    throw new Error(`expected delegated owner deny replay to remain 403, got ${delegatedProjectOwnerDeniedReplay.response.status}`);
+  }
+  if (delegatedDenyStateAfter.payload.stateVersion !== delegatedDenyStateBefore.payload.stateVersion) {
+    throw new Error("delegated project owner denial or replay advanced stateVersion");
+  }
+  const createdProject = await jsonFetch(port, "/api/projects", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-project-create-owner-grant", authorization: auth},
+    body: JSON.stringify({name: "Doctor Managed Project"})
+  });
+  if (!createdProject.response.ok || !createdProject.payload.id || createdProject.payload.ownerGrant?.subjectRef?.subjectId !== "acct_workspace_owner" || !createdProject.payload.ownerGrant?.permissions?.includes("task_group:control")) {
+    throw new Error("project creation did not return an owner grant with task-group control");
+  }
+  const ownerGrantPermissions = createdProject.payload.ownerGrant.permissions || [];
+  if (["project:*", "task_group:*", "task_group:orchestrate", "task_group:checkpoint_submit"].some((permission) => ownerGrantPermissions.includes(permission))) {
+    throw new Error("project owner grant carried broad or runtime-execution permissions");
+  }
+  const createdProjectReplay = await jsonFetch(port, "/api/projects", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-project-create-owner-grant", authorization: auth},
+    body: JSON.stringify({name: "Doctor Managed Project"})
+  });
+  if (!createdProjectReplay.response.ok || createdProjectReplay.payload.id !== createdProject.payload.id || createdProjectReplay.payload.ownerGrant?.grantId !== createdProject.payload.ownerGrant?.grantId) {
+    throw new Error("project creation idempotency replay did not preserve owner grant payload");
+  }
+  const createdTaskGroup = await jsonFetch(port, "/api/task-groups", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-task-group-create", authorization: auth},
+    body: JSON.stringify({projectId: createdProject.payload.id, name: "Doctor API Task Group", objective: "Verify user management can create task groups.", languageTag: "en", roles: ["orchestrator", "agent-runtime"]})
+  });
+  if (!createdTaskGroup.response.ok || createdTaskGroup.payload.taskGroup?.projectId !== createdProject.payload.id || createdTaskGroup.payload.taskGroup?.languagePolicy?.languageTag !== "en") {
+    throw new Error("task group management API did not create a project-scoped language-bound task group");
+  }
+  const createdWorkItem = await jsonFetch(port, `/api/task-groups/${createdTaskGroup.payload.taskGroup.id}/work-items`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-work-item-create", authorization: auth},
+    body: JSON.stringify({title: "Doctor API work item", ownerRole: "agent-runtime", requirements: ["commit to project git", "return checkpoint"]})
+  });
+  if (!createdWorkItem.response.ok || createdWorkItem.payload.workItem?.ownerRole !== "agent-runtime" || !createdWorkItem.payload.taskGroup?.roles?.some((role) => role.roleId === "agent-runtime")) {
+    throw new Error("work item management API did not create role-bound machine-executable work");
+  }
+  const memberGrant = await jsonFetch(port, `/api/projects/${createdProject.payload.id}/members`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-project-member-role-template", authorization: auth},
+    body: JSON.stringify({accountId: "acct_reviewer", role: "project_admin"})
+  });
+  if (!memberGrant.response.ok || !memberGrant.payload.members?.some((member) => member.accountId === "acct_reviewer" && member.role === "project_admin")) {
+    throw new Error("project member role grant did not update project membership");
+  }
+  const reviewerManagedTaskGroup = await jsonFetch(port, "/api/task-groups", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-reviewer-project-admin-task-group", authorization: reviewerAuth},
+    body: JSON.stringify({projectId: createdProject.payload.id, name: "Reviewer Managed Task Group", objective: "Verify role template grants task_group control.", languageTag: "zh-CN", roles: ["orchestrator"]})
+  });
+  if (!reviewerManagedTaskGroup.response.ok || reviewerManagedTaskGroup.payload.taskGroup?.projectId !== createdProject.payload.id) {
+    throw new Error("project member role template did not grant usable project task-group management permission");
+  }
+  const ownerCreatedTaskOrchestrateDenied = await jsonFetch(port, "/api/orchestrator/run", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-owner-created-task-orchestrate-denied", authorization: auth},
+    body: JSON.stringify({mode: "single", taskGroupId: createdTaskGroup.payload.taskGroup.id, autoSyncSkills: false})
+  });
+  if (ownerCreatedTaskOrchestrateDenied.response.status !== 403) {
+    throw new Error(`expected project owner task_group:control not to satisfy orchestration permission, got ${ownerCreatedTaskOrchestrateDenied.response.status}`);
+  }
+  const ownerWorkerRunDenied = await jsonFetch(port, "/api/verification/agent-runtime/run", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-owner-worker-run-denied", authorization: auth},
+    body: JSON.stringify({taskGroupId: createdTaskGroup.payload.taskGroup.id, maxJobs: 1})
+  });
+  if (ownerWorkerRunDenied.response.status !== 403) {
+    throw new Error(`expected user account not to run agent runtime worker, got ${ownerWorkerRunDenied.response.status}`);
   }
   const invitedAccount = await jsonFetch(port, "/api/accounts", {
     method: "POST",
@@ -333,7 +482,7 @@ try {
   }
   const placementDecision = await jsonFetch(port, "/api/session-placement/decide", {
     method: "POST",
-    headers: {"Idempotency-Key": "doctor-session-placement", authorization: auth},
+    headers: {"Idempotency-Key": "doctor-session-placement", authorization: systemAuth},
     body: JSON.stringify({taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "ui-console-service"})
   });
   if (!placementDecision.response.ok || placementDecision.payload.placement !== "new_session") {
@@ -349,7 +498,7 @@ try {
   }
   const runResult = await jsonFetch(port, "/api/orchestrator/run", {
     method: "POST",
-    headers: {"Idempotency-Key": "doctor-orchestrator-run", authorization: auth},
+    headers: {"Idempotency-Key": "doctor-orchestrator-run", authorization: systemAuth},
     body: JSON.stringify({mode: "single", taskGroupId: "tg_runtime_management"})
   });
   if (!runResult.response.ok || !Array.isArray(runResult.payload.changed) || runResult.payload.changed.length === 0) {
@@ -367,7 +516,7 @@ try {
   const activeSessionCount = dispatchedState.workSessions.filter((session) => session.taskGroupId === "tg_runtime_management" && session.workItemId === dispatched.workItemId && openSession(session)).length;
   const duplicateRun = await jsonFetch(port, "/api/orchestrator/run", {
     method: "POST",
-    headers: {"Idempotency-Key": "doctor-orchestrator-run-duplicate", authorization: auth},
+    headers: {"Idempotency-Key": "doctor-orchestrator-run-duplicate", authorization: systemAuth},
     body: JSON.stringify({mode: "single", taskGroupId: "tg_runtime_management"})
   });
   if (!duplicateRun.response.ok || !duplicateRun.payload.changed.some((item) => item.awaiting === "awaiting_existing_checkpoint")) {
@@ -398,7 +547,7 @@ try {
   }
   const wrongTarget = await jsonFetch(port, "/api/repository-output-targets", {
     method: "POST",
-    headers: {"Idempotency-Key": "doctor-wrong-target", authorization: auth},
+    headers: {"Idempotency-Key": "doctor-wrong-target", authorization: systemAuth},
     body: JSON.stringify({taskGroupId: dispatched.taskGroupId, workItemId: "work_permissions", artifactManifestPath: "docs/artifact-manifests/wrong-target.json", pathAllowlist: ["docs/**"]})
   });
   if (!wrongTarget.response.ok) throw new Error("failed to create wrong target negative fixture");

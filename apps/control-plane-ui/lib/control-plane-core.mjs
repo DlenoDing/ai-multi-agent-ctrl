@@ -91,7 +91,7 @@ const modelProviderAdapters = providerClasses.map((providerClass) => ({
   status: "configured"
 }));
 
-const roleProfiles = {
+const roleCapabilityHints = {
   orchestrator: {
     category: "control",
     skillRef: "engineering-multi-agent-systems-architect",
@@ -215,6 +215,16 @@ const defaultModelCeiling = {
   maxReasoningLevel: "high",
   escalationPolicy: "special_signal_required"
 };
+
+export const projectOwnerGrantPermissions = Object.freeze([
+  "project:view",
+  "project:update",
+  "project:grant",
+  "member:invite",
+  "agent:activate",
+  "task_group:read",
+  "task_group:control"
+]);
 
 const reasoningRank = {low: 0, standard: 1, medium: 2, high: 3, max: 4, ultra: 5};
 const modelTierRank = {standard: 0, frontier_economy: 1, frontier_standard: 2, frontier_plus: 3};
@@ -460,6 +470,7 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.repositoryOutputs ||= [];
   state.sharedDefinitions ||= [];
   state.accessGrants ||= [];
+  normalizeProjectOwnerAccessGrants(state);
   state.taskGroups ||= [];
   ensureTaskGroupLanguagePolicies(state);
   state.instructionMetrics ||= {tokenBudgetPolicy: "delta_locators_digest_first", cacheHitTarget: 0.7, stablePrefixTokens: 1800, deltaMessageTargetTokens: 420, envelopes: []};
@@ -491,6 +502,13 @@ export function ensureRuntimeCollections(state, options = {}) {
   ensureDefaultAgents(state);
   computeProgressSnapshots(state);
   return state;
+}
+
+function normalizeProjectOwnerAccessGrants(state) {
+  for (const grant of state.accessGrants || []) {
+    if (grant.role !== "project_owner" || grant.resource?.resourceType !== "project") continue;
+    grant.permissions = [...projectOwnerGrantPermissions];
+  }
 }
 
 function ensureServices(state, endpoint) {
@@ -627,19 +645,19 @@ function defaultManagementSurfaces() {
 }
 
 function defaultRoleSkills() {
-  return Object.entries(roleProfiles).map(([roleId, profile]) => ({
+  return Object.entries(roleCapabilityHints).map(([roleId, hint]) => ({
     schemaVersion: "agent-role-skill/v1",
     sourceId: "system-default",
     roleSkillId: `system-${roleId}`,
     sourcePath: `runtime://system-role-skills/${roleId}`,
     name: `${roleId} system role skill`,
     description: `Built-in role skill for ${roleId} until agency-agents-zh is synced.`,
-    category: profile.category,
+    category: hint.category,
     frontmatterDigest: digestOf({roleId, type: "frontmatter"}),
-    contentDigest: digestOf({roleId, capabilities: profile.capabilities}),
-    capabilities: profile.capabilities,
+    contentDigest: digestOf({roleId, capabilities: hint.capabilities}),
+    capabilities: hint.capabilities,
     defaultModelRequirements: {
-      strengths: profile.strengths,
+      strengths: hint.strengths,
       minContextWindowTokens: roleId === "orchestrator" ? 128000 : 32000,
       requiresToolUse: true,
       riskLevel: ["orchestrator", "security", "policy-engine"].includes(roleId) ? "L2" : "L1"
@@ -689,11 +707,11 @@ function defaultModelSelectionPolicies() {
     fallbackPolicy: {onNoModel: "split_task", onQuotaLimited: "select_next_ranked", onProviderDegraded: "select_next_ranked"},
     decisionSchemaRef: "spec/model-selection-decision.schema.json"
   };
-  return Object.keys(roleProfiles).map((roleId) => ({
+  return Object.keys(roleCapabilityHints).map((roleId) => ({
     ...clone(common),
     policyId: `msp_${roleId}`,
     roleId,
-    requiredCapabilities: roleProfiles[roleId].capabilities
+    requiredCapabilities: roleCapabilityHints[roleId].capabilities
   }));
 }
 
@@ -2421,8 +2439,8 @@ function strengthsFromCapabilities(capabilities) {
 }
 
 function resolveRoleSkill(state, roleId, request = {}) {
-  const profile = roleProfiles[roleId] || roleProfiles.orchestrator;
-  const baseSkill = state.roleSkills.find((skill) => skill.roleSkillId === profile.skillRef || skill.roleSkillId.endsWith(profile.skillRef)) ||
+  const hint = roleCapabilityHints[roleId] || roleCapabilityHints.orchestrator;
+  const baseSkill = state.roleSkills.find((skill) => skill.roleSkillId === hint.skillRef || skill.roleSkillId.endsWith(hint.skillRef)) ||
     state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`) ||
     state.roleSkills[0];
   const overlay = selectRoleSkillOverlay(state, baseSkill?.roleSkillId, request);

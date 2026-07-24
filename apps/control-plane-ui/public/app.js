@@ -126,10 +126,12 @@ function renderSelectedExecutionPanel() {
     escapeHtml(event.createdAt)
   ])).join("");
   return panel(`${scope.type === "session" ? "Session" : "Dispatch"} 实时事件 ${scope.id}`, h`
-    <table class="data-table">
+    <div class="table-scroll">
+    <table class="data-table wide-table">
       <thead><tr><th>Seq</th><th>事件</th><th>进度</th><th>状态</th><th>摘要</th><th>Tail Digest</th><th>时间</th></tr></thead>
       <tbody>${selectedEventRows || row(["-", "-", "-", "-", "-", "-", "-"])}</tbody>
     </table>
+    </div>
   `, "wide");
 }
 
@@ -206,11 +208,7 @@ async function load() {
     state = {...emptyState(), ...(await api(`/api/state?view=${encodeURIComponent(activeView)}&limit=120`))};
   } catch (error) {
     if (String(error.message || "").startsWith("401")) {
-      authToken = "";
-      currentAccount = null;
-      localStorage.removeItem("aimac.sessionToken");
-      localStorage.removeItem("aimac.account");
-      state = emptyState();
+      clearAuthenticatedState();
     } else {
       throw error;
     }
@@ -288,6 +286,53 @@ function authPanel() {
   `);
 }
 
+function accountIsSystem(account = currentAccount) {
+  return account?.accountType === "system_admin" || (account?.roles || []).includes("system_admin") || (account?.permissions || []).includes("system:*");
+}
+
+function resetSessionUiState(options = {}) {
+  lastJoinCommands = null;
+  lastAccountInvite = null;
+  selectedExecutionDispatchId = "";
+  selectedExecutionScope = {type: "", id: ""};
+  selectedExecutionEvents = [];
+  selectedExecutionCursor = 0;
+  expandedTaskGroupId = "";
+  setExecutionPolling(false);
+  if (options.clearError) lastError = "";
+}
+
+function clearAuthenticatedState(options = {}) {
+  authToken = "";
+  currentAccount = null;
+  state = emptyState();
+  resetSessionUiState(options);
+  localStorage.removeItem("aimac.sessionToken");
+  localStorage.removeItem("aimac.account");
+}
+
+function bindLoginForm() {
+  const loginForm = document.querySelector("#login-form");
+  if (!loginForm) return;
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    const credentials = Object.fromEntries(form.entries());
+    clearAuthenticatedState({clearError: true});
+    try {
+      const result = await api("/api/auth/login", {method: "POST", body: JSON.stringify(credentials)});
+      authToken = result.sessionToken;
+      currentAccount = result.account;
+      localStorage.setItem("aimac.sessionToken", authToken);
+      localStorage.setItem("aimac.account", JSON.stringify(currentAccount));
+      lastError = "";
+      await load();
+    } catch (error) {
+      showError(error);
+    }
+  });
+}
+
 function errorPanel() {
   return lastError ? panel("操作错误", `<div class="notice error-notice">${escapeHtml(lastError)}</div>`) : "";
 }
@@ -359,25 +404,7 @@ function renderSystem() {
       </table>
     `, "wide")
   ].join("");
-
-  const loginForm = document.querySelector("#login-form");
-  if (loginForm) {
-    loginForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const form = new FormData(event.target);
-      try {
-        const result = await api("/api/auth/login", {method: "POST", body: JSON.stringify(Object.fromEntries(form.entries()))});
-        authToken = result.sessionToken;
-        currentAccount = result.account;
-        localStorage.setItem("aimac.sessionToken", authToken);
-        localStorage.setItem("aimac.account", JSON.stringify(currentAccount));
-        lastError = "";
-        await load();
-      } catch (error) {
-        showError(error);
-      }
-    });
-  }
+  bindLoginForm();
 }
 
 function renderUsers() {
@@ -506,6 +533,17 @@ expiresAt=${escapeHtml(lastAccountInvite.tokenExpiresAt || "")}</pre>
 }
 
 function renderProjects() {
+  const canChooseProjectOwner = accountIsSystem();
+  const projectOwnerField = canChooseProjectOwner
+    ? h`
+      <div class="form-row">
+        <label for="ownerAccountId">Owner</label>
+        <select id="ownerAccountId" name="ownerAccountId">
+          ${state.accounts.map((account) => `<option value="${escapeHtml(accountIdOf(account))}">${escapeHtml(account.displayName)}</option>`).join("")}
+        </select>
+      </div>
+    `
+    : `<div class="notice">Owner 将固定为当前登录账号 ${escapeHtml(currentAccount?.displayName || currentAccount?.email || "")}。</div>`;
   const projectRows = state.projects.map((project) => {
     const members = project.members.map((member) => `${member.accountId}:${member.role}`).join(", ");
     return row([
@@ -530,12 +568,7 @@ function renderProjects() {
     panel("创建项目", h`
       <form id="project-form" class="form-grid">
         <div class="form-row"><label for="projectName">项目名称</label><input id="projectName" name="name" required></div>
-        <div class="form-row">
-          <label for="ownerAccountId">Owner</label>
-          <select id="ownerAccountId" name="ownerAccountId">
-            ${state.accounts.map((account) => `<option value="${escapeHtml(accountIdOf(account))}">${escapeHtml(account.displayName)}</option>`).join("")}
-          </select>
-        </div>
+        ${projectOwnerField}
         <button class="primary-button" type="submit">创建</button>
       </form>
     `),
@@ -635,6 +668,14 @@ function renderProjects() {
 }
 
 function renderTasks() {
+  const projectOptions = state.projects.map((project) => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name || project.id)}</option>`).join("");
+  const hasProjects = state.projects.length > 0;
+  const taskGroupOptions = state.taskGroups.map((taskGroup) => `<option value="${escapeHtml(taskGroup.id)}">${escapeHtml(taskGroup.name || taskGroup.title || taskGroup.id)}</option>`).join("");
+  const hasTaskGroups = state.taskGroups.length > 0;
+  const roleOptions = [...new Set(["orchestrator", "agent-runtime", "reviewer", "qa", "security", "release", "monitor", ...(state.agents || []).map((agent) => agent.role)])]
+    .filter(Boolean)
+    .map((role) => `<option value="${escapeHtml(role)}">${escapeHtml(role)}</option>`)
+    .join("");
   const taskGroups = state.taskGroups.map((taskGroup) => {
     const expanded = expandedTaskGroupId === taskGroup.id;
     const languagePolicy = taskGroup.languagePolicy || {languageTag: "zh-CN", languageName: "Chinese"};
@@ -692,7 +733,84 @@ function renderTasks() {
     `, "wide");
   }).join("");
 
-  content.innerHTML = [taskGroups, renderSelectedExecutionPanel()].join("");
+  content.innerHTML = [
+    panel("创建任务组", h`
+      <form id="task-group-form" class="form-grid">
+        <div class="form-row">
+          <label for="taskGroupProjectId">项目</label>
+          <select id="taskGroupProjectId" name="projectId" ${hasProjects ? "" : "disabled"}>${projectOptions}</select>
+        </div>
+        <div class="form-row"><label for="taskGroupName">任务组名称</label><input id="taskGroupName" name="name" required></div>
+        <div class="form-row"><label for="taskGroupObjective">目标</label><textarea id="taskGroupObjective" name="objective" required></textarea></div>
+        <div class="form-row">
+          <label for="taskGroupLanguage">统一语言</label>
+          <select id="taskGroupLanguage" name="languageTag">${languageOptionTags("zh-CN")}</select>
+        </div>
+        <div class="form-row"><label for="taskGroupRoles">初始角色</label><input id="taskGroupRoles" name="roles" value="orchestrator,agent-runtime,reviewer"></div>
+        ${hasProjects ? "" : "<div class='notice'>当前账号没有可管理项目，先创建或加入项目后再创建任务组。</div>"}
+        <button class="primary-button" type="submit" ${hasProjects ? "" : "disabled"}>创建任务组</button>
+      </form>
+    `),
+    panel("创建工作项", h`
+      <form id="work-item-form" class="form-grid">
+        <div class="form-row">
+          <label for="workItemTaskGroupId">任务组</label>
+          <select id="workItemTaskGroupId" name="taskGroupId" ${hasTaskGroups ? "" : "disabled"}>${taskGroupOptions}</select>
+        </div>
+        <div class="form-row"><label for="workItemTitle">工作项标题</label><input id="workItemTitle" name="title" required></div>
+        <div class="form-row">
+          <label for="workItemOwnerRole">执行角色</label>
+          <select id="workItemOwnerRole" name="ownerRole">${roleOptions}</select>
+        </div>
+        <div class="form-row"><label for="workItemRequirements">机器可执行要求</label><textarea id="workItemRequirements" name="requirements" placeholder="每行一条约束或验收条件"></textarea></div>
+        ${hasTaskGroups ? "" : "<div class='notice'>先创建任务组后再追加工作项。</div>"}
+        <button class="primary-button" type="submit" ${hasTaskGroups ? "" : "disabled"}>创建工作项</button>
+      </form>
+    `),
+    taskGroups || panel("任务组", "<div class='notice'>当前账号可见范围内暂无任务组。</div>", "wide"),
+    renderSelectedExecutionPanel()
+  ].join("");
+  document.querySelector("#taskGroupLanguage")?.addEventListener("change", (event) => {
+    const label = event.target.selectedOptions[0]?.textContent?.split(" · ")[0] || event.target.value;
+    event.target.form.querySelector("input[name='languageName']")?.remove();
+    const hidden = document.createElement("input");
+    hidden.type = "hidden";
+    hidden.name = "languageName";
+    hidden.value = label;
+    event.target.form.append(hidden);
+  });
+  document.querySelector("#task-group-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target).entries());
+    if (!data.projectId) {
+      showError(new Error("project_id_required"));
+      return;
+    }
+    data.roles = String(data.roles || "").split(/[\n,]/u).map((item) => item.trim()).filter(Boolean);
+    try {
+      const result = await api("/api/task-groups", {method: "POST", body: JSON.stringify(data)});
+      expandedTaskGroupId = result.taskGroup?.id || expandedTaskGroupId;
+      lastError = "";
+      await load();
+    } catch (error) {
+      showError(error);
+    }
+  });
+  document.querySelector("#work-item-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target).entries());
+    const taskGroupId = data.taskGroupId;
+    delete data.taskGroupId;
+    data.requirements = String(data.requirements || "").split(/\n/u).map((item) => item.trim()).filter(Boolean);
+    try {
+      const result = await api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/work-items`, {method: "POST", body: JSON.stringify(data)});
+      expandedTaskGroupId = result.taskGroupId || taskGroupId || expandedTaskGroupId;
+      lastError = "";
+      await load();
+    } catch (error) {
+      showError(error);
+    }
+  });
   document.querySelectorAll("[data-language-policy-form]").forEach((form) => {
     form.querySelector("select[name='languageTag']")?.addEventListener("change", (event) => {
       const label = event.target.selectedOptions[0]?.textContent?.split(" · ")[0] || event.target.value;
@@ -930,6 +1048,11 @@ function render() {
   viewSubtitle.textContent = subtitle;
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === activeView));
   renderStatusLine();
+  if (!authToken) {
+    content.innerHTML = [errorPanel(), authPanel()].join("");
+    bindLoginForm();
+    return;
+  }
 
   if (activeView === "system") renderSystem();
   if (activeView === "users") renderUsers();
@@ -955,10 +1078,14 @@ document.addEventListener("click", async (event) => {
   if (!target) return;
   try {
     if (target.dataset.action === "logout") {
-      authToken = "";
-      currentAccount = null;
-      localStorage.removeItem("aimac.sessionToken");
-      localStorage.removeItem("aimac.account");
+      if (authToken) {
+        try {
+          await api("/api/auth/logout", {method: "POST", body: JSON.stringify({})});
+        } catch (error) {
+          lastError = error.message || String(error);
+        }
+      }
+      clearAuthenticatedState();
       render();
       return;
     }
