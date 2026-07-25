@@ -2065,6 +2065,17 @@ function activeExecutionForWork(state, taskGroupId, workItemId) {
   };
 }
 
+function capLeaseHistory(leases, limit = 2000) {
+  if (leases.length <= limit) return leases;
+  // Never drop an active lease (fencing / holder authority still matters); trim oldest released history.
+  const active = leases.filter((item) => item.status === "active");
+  const released = leases
+    .filter((item) => item.status !== "active")
+    .sort((left, right) => new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime())
+    .slice(0, Math.max(0, limit - active.length));
+  return [...active, ...released];
+}
+
 function capDispatchHistory(dispatches, limit) {
   if (dispatches.length <= limit) return dispatches;
   const terminal = new Set(["completed", "failed", "cancelled"]);
@@ -2674,6 +2685,7 @@ function ensureLease(state, repositoryTarget, holderRef = "orchestrator", taskCo
       updatedAt: at
     };
     state.leases.push(lease);
+    state.leases = capLeaseHistory(state.leases);
   } else if (holderRef && lease.holderRef !== holderRef) {
     state.leaseSequence = Number(state.leaseSequence || 0) + 1;
     lease.transferEvidenceRefs = unique([...(lease.transferEvidenceRefs || []), `lease-transfer:${lease.holderRef}->${holderRef}:fence:${state.leaseSequence}`]);

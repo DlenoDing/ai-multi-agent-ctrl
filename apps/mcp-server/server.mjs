@@ -455,6 +455,15 @@ function commonInputProperties() {
   };
 }
 
+function capRetainingOpen(items, terminalStatuses, limit) {
+  if (items.length <= limit) return items;
+  const terminal = new Set(terminalStatuses);
+  const open = items.filter((item) => !terminal.has(item.status));
+  const closed = items.filter((item) => terminal.has(item.status)).slice(0, Math.max(0, limit - open.length));
+  // Never drop a non-terminal (gating) item; trim oldest terminal history first.
+  return [...open, ...closed];
+}
+
 function confirmationReadableByPrincipal(confirmation, context = {}) {
   const principal = context.principal || {};
   if (principal.kind === "agent_node") return confirmation.nodeId === principal.id;
@@ -1595,15 +1604,20 @@ function pruneRoomMessages(state) {
 
 function roomAck(state, args) {
   const at = new Date().toISOString();
+  const roomId = args.roomId || `room_${args.taskGroupId || "tg_runtime_management"}`;
+  const participantId = args.participantId || args.sessionId || "agent-runtime";
+  const existing = (state.roomAcks || []).find((item) => item.roomId === roomId && item.participantId === participantId);
   const ack = {
-    ackId: args.ackId || createId("room_ack"),
-    roomId: args.roomId || `room_${args.taskGroupId || "tg_runtime_management"}`,
-    participantId: args.participantId || args.sessionId || "agent-runtime",
+    ackId: existing?.ackId || args.ackId || createId("room_ack"),
+    roomId,
+    participantId,
     messageRefs: args.messageRefs || [],
-    cursor: Number(args.cursor || 0),
-    createdAt: at
+    cursor: Math.max(Number(args.cursor || 0), existing ? Number(existing.cursor || 0) : 0),
+    createdAt: existing?.createdAt || at,
+    updatedAt: at
   };
-  state.roomAcks.unshift(ack);
+  // Ack is a per-participant cursor: replace in place rather than append unbounded history.
+  state.roomAcks = [ack, ...(state.roomAcks || []).filter((item) => !(item.roomId === roomId && item.participantId === participantId))].slice(0, 5000);
   return {ack};
 }
 
@@ -1829,7 +1843,7 @@ function artifactRegister(state, args) {
     status: "registered",
     createdAt: at
   };
-  state.artifacts.unshift(artifact);
+  state.artifacts = capRetainingOpen([artifact, ...state.artifacts], ["verified", "registered", "rejected", "superseded"], 2000);
   return {artifact};
 }
 
@@ -1846,7 +1860,7 @@ function testResultSubmit(state, args) {
     evidenceRefs: args.evidenceRefs || [],
     createdAt: at
   };
-  state.testResults.unshift(testResult);
+  state.testResults = capRetainingOpen([testResult, ...state.testResults], ["passed", "failed", "skipped", "error"], 2000);
   return {testResult};
 }
 
@@ -1879,7 +1893,7 @@ function permissionRequestSubmit(state, args) {
     createdAt: at,
     updatedAt: at
   };
-  state.permissionRequests.unshift(request);
+  state.permissionRequests = capRetainingOpen([request, ...state.permissionRequests], ["resolved", "granted", "denied", "revoked", "expired", "cancelled"], 2000);
   if (args.sessionId) {
     const session = state.workSessions.find((item) => item.sessionId === args.sessionId);
     if (session) {
@@ -2032,7 +2046,7 @@ function approvalRequestCreate(state, args) {
     createdAt: at,
     updatedAt: at
   };
-  state.approvalRequests.unshift(request);
+  state.approvalRequests = capRetainingOpen([request, ...state.approvalRequests], ["approved", "rejected", "cancelled", "expired"], 2000);
   return {approvalRequest: request};
 }
 
@@ -2067,7 +2081,7 @@ function findingSubmit(state, args) {
     createdAt: at,
     updatedAt: at
   };
-  state.findings.unshift(finding);
+  state.findings = capRetainingOpen([finding, ...state.findings], ["resolved", "closed", "dismissed", "wontfix"], 2000);
   return {finding};
 }
 
