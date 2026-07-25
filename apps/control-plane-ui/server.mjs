@@ -405,6 +405,18 @@ function accountIdOf(account) {
   return account.accountId || account.id;
 }
 
+function accountEffectivePermissions(state, account) {
+  // Union of direct permissions and all active grant permissions for this account. Resource-scope-agnostic,
+  // so it is a superset used only as a UI capability hint; the backend still enforces per-scope on every write.
+  const direct = account.permissions || [];
+  const granted = (state.accessGrants || [])
+    .filter((grant) => grant.status === "active" && grant.subjectRef?.subjectType === "account" && grant.subjectRef?.subjectId === accountIdOf(account))
+    .flatMap((grant) => grant.permissions || []);
+  const owns = (state.projects || []).some((project) => project.ownerAccountId === accountIdOf(account));
+  const ownerHint = owns ? projectOwnerGrantPermissions : [];
+  return [...new Set([...direct, ...granted, ...ownerHint])];
+}
+
 function isSystemAccount(account) {
   return Boolean(account && (account.accountType === "system_admin" || (account.roles || []).includes("system_admin") || (account.permissions || []).includes("system:*")));
 }
@@ -939,6 +951,7 @@ function scopedStateForAccount(state, account, session) {
     status: item.status,
     roles: item.roles,
     permissions: item.accountId === account.accountId ? item.permissions : [],
+    ...(item.accountId === account.accountId ? {effectivePermissions: accountEffectivePermissions(state, account)} : {}),
     createdAt: item.createdAt,
     updatedAt: item.updatedAt
   }));
@@ -1075,7 +1088,7 @@ function permissionForAction(action) {
   if (action === "orchestrator_run" || action === "agent_runtime_worker_run") return "task_group:orchestrate";
   if (action === "checkpoint_submit") return "task_group:checkpoint_submit";
   if (action === "runtime_issue_collect") return "task_group:monitor";
-  if (action === "project_config_update") return "project:*";
+  if (action === "project_config_update") return "project:update";
   if (["org_create", "org_quota_update", "org_status_update"].includes(action)) return "system:*";
   if (["org_member_create", "org_member_permissions_update", "org_member_status_update"].includes(action)) return "org:member_admin";
   if (action === "org_project_create") return "org:project_admin";
@@ -1859,7 +1872,7 @@ async function handleApi(req, res) {
     state.authSessions = state.authSessions.slice(0, 80);
     audit(state, "auth-service", "auth_login", `Account:${account.accountId}`);
     commitDirectStateWrite(state);
-	    json(res, 200, {sessionToken, expiresAt, account: {accountId: account.accountId, accountType: account.accountType, organizationId: account.organizationId || null, defaultProjectId: account.defaultProjectId || null, email: account.email, displayName: account.displayName, roles: account.roles, permissions: account.permissions, passwordSet: Boolean(account.authPolicy?.passwordSet)}});
+	    json(res, 200, {sessionToken, expiresAt, account: {accountId: account.accountId, accountType: account.accountType, organizationId: account.organizationId || null, defaultProjectId: account.defaultProjectId || null, email: account.email, displayName: account.displayName, roles: account.roles, permissions: account.permissions, effectivePermissions: accountEffectivePermissions(state, account), passwordSet: Boolean(account.authPolicy?.passwordSet)}});
 	    return;
 	  }
 

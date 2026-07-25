@@ -413,6 +413,8 @@
     org_member_not_found: "未找到组织成员",
 
     project_not_found: "未找到项目",
+    access_grant_not_found: "未找到访问授权",
+    cross_org_grant_not_allowed: "不允许跨组织授权",
     project_id_required: "缺少项目 ID",
     task_group_not_found: "未找到任务组",
     task_group_id_conflict: "任务组 ID 冲突",

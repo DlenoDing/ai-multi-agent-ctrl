@@ -186,9 +186,13 @@ function hasPerm(perm) {
   const account = currentAccount;
   if (!account) return false;
   if (account.accountType === "system_admin" || account.accountType === "org_admin") return true;
-  const permissions = account.permissions || [];
+  // effectivePermissions is the backend-resolved union of direct + granted (incl. project-owner) permissions.
+  const permissions = account.effectivePermissions || account.permissions || [];
   if (permissions.includes("system:*") || permissions.includes("org:*")) return true;
   if (permissions.includes(perm)) return true;
+  // wildcard family match (e.g. project:* grants project:update)
+  const family = `${String(perm).split(":")[0]}:*`;
+  if (permissions.includes(family)) return true;
   return false;
 }
 
@@ -1815,7 +1819,7 @@ function renderMonitor() {
   ])).join("");
 
   const canControlNodes = hasPerm("agent:activate");
-  const canOrchestrate = hasPerm("task_group:control");
+  const canOrchestrate = hasPerm("task_group:orchestrate");
   const nodes = (state.agentRuntimeNodes || []).map((node) => row([
     `<strong>${esc(node.nodeName || node.nodeId)}</strong><div class="small muted mono">${esc(node.nodeId)}</div>`,
     badge(node.status),
@@ -1912,7 +1916,7 @@ function renderProjectSettings() {
   if (!project) return panel("项目设置", `<div class="notice">当前账号暂无可见项目。</div>`, {wide: true});
   const config = project.config || {};
   const resolved = projConfig || {};
-  const canEdit = hasPerm("project:grant");
+  const canEdit = hasPerm("project:update");
   const editDisabled = canEdit ? "" : "disabled";
   const readOnlyNotice = canEdit ? "" : `<div class="notice warn-notice">当前账号无“项目授权管理”权限，项目配置为只读。</div>`;
 
