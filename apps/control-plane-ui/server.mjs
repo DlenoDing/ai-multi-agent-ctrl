@@ -442,6 +442,15 @@ function requestedSystemAccountInvite(input = {}) {
     permissions.some((permission) => permission === "system:*" || permission.startsWith("system:"));
 }
 
+function sanitizeMemberPermissions(value, fallback = ["project:view"]) {
+  const sanitized = normalizeStringList(value, fallback).filter((permission) =>
+    !permission.startsWith("system:") &&
+    !permission.startsWith("org:") &&
+    !unsafeDelegatedGrantPermissions.has(permission) &&
+    !permission.endsWith(":*"));
+  return sanitized.length ? sanitized : fallback;
+}
+
 function normalizeInvitedAccount(input = {}, systemScoped = false) {
   const roles = normalizeStringList(input.roles, ["viewer"]);
   const permissions = normalizeStringList(input.permissions, ["project:view"]);
@@ -535,6 +544,11 @@ function sanitizeGrantRequest(state, actor, input = {}, resourceScope = {}) {
   );
   if (unsafe.length) {
     return {ok: false, status: 400, error: "unsafe_grant_permissions", permissions: unsafe};
+  }
+  const subjectAccount = state.accounts.find((item) => accountIdOf(item) === (input.subjectId || "acct_workspace_owner"));
+  const resourceOrg = resourceScopeOrganizationId(state, resource);
+  if (subjectAccount?.organizationId && resourceOrg && subjectAccount.organizationId !== resourceOrg) {
+    return {ok: false, status: 400, error: "cross_org_grant_not_allowed"};
   }
   if (!isSystemAccount(account)) {
     const denied = permissions.filter((permission) => {
@@ -870,6 +884,9 @@ function scopedStateForAccount(state, account, session) {
   cloned.agentControlCommands = (state.agentControlCommands || []).filter((command) => visibleNodeIds.has(command.nodeId));
   cloned.agentExecutionEvents = (state.agentExecutionEvents || []).filter((event) => visibleTaskGroupIds.has(event.taskGroupId) || visibleNodeIds.has(event.nodeId));
   cloned.agentJoinTokens = listAgentJoinTokens(state).filter((token) => visibleProjectIds.has(token.projectId));
+  cloned.agents = (state.agents || []).filter((agent) =>
+    (agent.organizationId || DEFAULT_ORGANIZATION_ID) === account.organizationId &&
+    (!agent.projectId || visibleProjectIds.has(agent.projectId)));
   cloned.agentTaskContracts = (state.agentTaskContracts || []).filter((contract) => visibleTaskGroupIds.has(contract.taskGroupId));
   cloned.effectiveInstructionPackets = (state.effectiveInstructionPackets || []).filter((packet) => visibleTaskGroupIds.has(packet.taskGroupId));
   cloned.roleDriftGuards = (state.roleDriftGuards || []).filter((guard) => visibleTaskGroupIds.has(guard.taskGroupId));
@@ -1054,12 +1071,15 @@ function resourceScopeOrganizationId(state, resourceScope = {}) {
   }
   if (resourceScope.resourceType === "task_group") {
     const taskGroup = state.taskGroups.find((item) => item.id === resourceScope.resourceId);
-    const project = taskGroup ? state.projects.find((item) => item.id === taskGroup.projectId) : null;
-    if (resourceScope.projectId && !project) {
+    if (taskGroup) {
+      const project = state.projects.find((item) => item.id === taskGroup.projectId);
+      return project ? project.organizationId || DEFAULT_ORGANIZATION_ID : null;
+    }
+    if (resourceScope.projectId) {
       const scopedProject = state.projects.find((item) => item.id === resourceScope.projectId);
       return scopedProject ? scopedProject.organizationId || DEFAULT_ORGANIZATION_ID : null;
     }
-    return project ? project.organizationId || DEFAULT_ORGANIZATION_ID : null;
+    return null;
   }
   return null;
 }
@@ -2400,8 +2420,13 @@ async function handleApi(req, res) {
       return;
     }
     const accountId = body.accountId;
-    if (!state.accounts.some((account) => accountIdOf(account) === accountId)) {
+    const inviteeAccount = state.accounts.find((account) => accountIdOf(account) === accountId);
+    if (!inviteeAccount) {
       json(res, 400, {error: "account_not_found"});
+      return;
+    }
+    if (inviteeAccount.organizationId && (project.organizationId || DEFAULT_ORGANIZATION_ID) !== inviteeAccount.organizationId) {
+      json(res, 400, {error: "cross_org_member_not_allowed"});
       return;
     }
     const guard = beginGuardedWrite(req, state, "project_member_grant", `Project:${project.id}`, projectScope(project.id));
@@ -2472,6 +2497,9 @@ async function handleApi(req, res) {
       trustScore: Number(body.trustScore || 0.85),
       capacity: body.status === "inactive" ? "standby" : "ready",
       projectId: body.projectId,
+      organizationId: (body.projectId ? state.projects.find((item) => item.id === body.projectId)?.organizationId : null)
+        || accountFromRequest(req, state)?.account?.organizationId
+        || DEFAULT_ORGANIZATION_ID,
       roleSkillRef: body.roleSkillRef,
       createdAt: now(),
       updatedAt: now()
@@ -2931,7 +2959,7 @@ async function handleApi(req, res) {
     const at = now();
     const accountId = createId("acct");
     const memberToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
-    const permissions = normalizeStringList(body.permissions, ["project:view"]).filter((permission) => !permission.startsWith("system:") && permission !== "org:*");
+    const permissions = sanitizeMemberPermissions(body.permissions, ["project:view"]);
     const member = {
       schemaVersion: "account/v1",
       accountId,
@@ -2940,7 +2968,7 @@ async function handleApi(req, res) {
       displayName: String(body.displayName || "新成员"),
       email: String(body.email || `member-${Date.now()}@local`),
       status: "invited",
-      roles: normalizeStringList(body.roles, ["member"]).filter((role) => role !== "system_admin"),
+      roles: normalizeStringList(body.roles, ["member"]).filter((role) => role !== "system_admin" && role !== "org_admin"),
       permissions,
       defaultProjectId: body.defaultProjectId || null,
       authPolicy: {method: "invite_token", mfaRequired: false, passwordSet: false, sessionTtlSeconds: 28800},
@@ -2967,7 +2995,7 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const member = state.accounts.find((item) => item.accountId === orgMemberPermMatch[1] && item.organizationId === orgId && item.accountType !== "org_admin");
     if (!member) return json(res, 404, {error: "org_member_not_found"});
-    member.permissions = normalizeStringList(body.permissions, member.permissions || []).filter((permission) => !permission.startsWith("system:") && permission !== "org:*");
+    member.permissions = sanitizeMemberPermissions(body.permissions, member.permissions || ["project:view"]);
     if (body.defaultProjectId !== undefined) member.defaultProjectId = body.defaultProjectId || null;
     member.updatedAt = now();
     audit(state, guard.actor, "org_member_permissions_update", `Account:${member.accountId}`);
