@@ -1132,8 +1132,15 @@ async function dispatchTool(state, name, args, context = {}) {
       if (!confirmation || !confirmationReadableByPrincipal(confirmation, context)) return {ok: false, error: "human_confirmation_not_found"};
       return {request: consumeHumanConfirmation(state, args.requestId, {actor: context?.principal?.id || "mcp-client"})};
     }
-    case "human-review-mcp.confirmation_decide":
+    case "human-review-mcp.confirmation_decide": {
+      const confirmation = (state.humanConfirmationRequests || []).find((item) => item.requestId === args.requestId);
+      if (!confirmation) return {ok: false, error: "human_confirmation_not_found"};
+      // A human decision must never be proxied by an executing agent node; only human-operated
+      // principals (system admin, or a project-scoped service acting on the console's behalf) may decide.
+      if (context?.principal?.kind === "agent_node") return {ok: false, error: "human_confirmation_decision_forbidden_for_agent"};
+      if (!confirmationReadableByPrincipal(confirmation, context)) return {ok: false, error: "human_confirmation_not_found"};
       return {request: decideHumanConfirmation(state, args.requestId, args, {actor: context?.principal?.id || "mcp-client"})};
+    }
     case "review-mcp.review_plan_create":
       return reviewPlanCreate(state, args);
     case "review-mcp.review_bundle_register":
