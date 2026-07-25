@@ -3165,6 +3165,12 @@ export function expireStaleHumanConfirmations(state) {
         delete dispatch.blockedReason;
         revokeDispatchNodeBinding(state, dispatch, "human_confirmation_expired_requeued");
         dispatch.updatedAt = at;
+        const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
+        if (session && session.status === "blocked" && session.blockedReason === "awaiting_human_confirmation") {
+          session.status = "active";
+          delete session.blockedReason;
+          session.updatedAt = at;
+        }
       }
     }
     const taskGroup = (state.taskGroups || []).find((item) => item.id === request.taskGroupId);
