@@ -5,7 +5,11 @@ SERVER_URL="${AIMAC_SERVER_URL:-__AIMAC_SERVER_URL__}"
 JOIN_TOKEN="${AIMAC_AGENT_JOIN_TOKEN:-}"
 JOIN_TOKEN_FILE=""
 NODE_NAME="${AIMAC_AGENT_NODE_NAME:-$(hostname 2>/dev/null || uname -n)}"
-WORK_DIR="${AIMAC_AGENT_WORK_DIR:-${HOME}/.local/share/aimac-agent}"
+case "$(uname -s)" in
+  Darwin) DEFAULT_WORK_DIR="${HOME}/Library/Application Support/aimac-agent" ;;
+  *) DEFAULT_WORK_DIR="${HOME}/.local/share/aimac-agent" ;;
+esac
+WORK_DIR="${AIMAC_AGENT_DATA_ROOT:-${AIMAC_AGENT_WORK_DIR:-${DEFAULT_WORK_DIR}}}"
 ROLES="${AIMAC_AGENT_ROLES:-}"
 EXECUTOR_COMMAND="${AIMAC_AGENT_EXECUTOR_COMMAND:-}"
 START_DAEMON=true

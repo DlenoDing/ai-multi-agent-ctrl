@@ -2,7 +2,8 @@ import { createServer } from "node:http";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash, randomBytes } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node:os";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
@@ -10,6 +11,7 @@ import { appendProjectExecutionEvent, projectExecutionEventStorageInfo, readProj
 import {
   authenticateAgentNode,
   ackAgentControlCommand,
+  buildExecutionContentBundle,
   claimNextDispatch,
   createAgentControlCommand,
   createAgentJoinToken,
@@ -36,14 +38,23 @@ import {
   computeCloseBarrier,
   computeCompletionReadiness,
   computeProgressSnapshots,
+  consumeHumanConfirmation,
+  createHumanConfirmationRequest,
+  createHumanDirective,
   createId,
+  decideHumanConfirmation,
   decideSessionPlacement,
   defaultModelCapabilities,
+  DEFAULT_ORGANIZATION_ID,
   digestOf,
+  effectiveTaskGroupConfig,
   ensureRuntimeCollections,
   gitHead,
   gitRemoteUrl,
+  organizationOf,
+  organizationQuotaCheck,
   pathAllowlistValid,
+  recomputeOrganizationUsage,
   registerRoleSkillOverlay,
   normalizeTaskGroupLanguagePolicy,
   projectOwnerGrantPermissions,
@@ -258,6 +269,7 @@ function writeState(state) {
   scopedStateCache.clear();
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
   writeStoredState(state, {root, runtimeDir, statePath, seedPath, buildInitialState, expectedStateVersion: state.__loadedStateVersion});
+  flushPendingAuditAppends(state);
   notifyLongPollWaiters("state");
   const nodeIdsWithQueuedCommands = new Set((state.agentControlCommands || [])
     .filter((command) => command.status === "queued")
@@ -281,8 +293,15 @@ function audit(state, actor, action, subject, result = "succeeded") {
   state.auditLog.unshift(entry);
   state.auditLog = state.auditLog.slice(0, 80);
   state.auditChainHead = entry.rowHash;
+  state.__pendingAuditAppends = [...(state.__pendingAuditAppends || []), entry];
+}
+
+function flushPendingAuditAppends(state) {
+  const pending = state.__pendingAuditAppends || [];
+  delete state.__pendingAuditAppends;
+  if (!pending.length) return;
   try {
-    appendFileSync(join(runtimeDir, "audit-log.jsonl"), `${JSON.stringify(entry)}\n`, {mode: 0o600});
+    appendFileSync(join(runtimeDir, "audit-log.jsonl"), pending.map((entry) => `${JSON.stringify(entry)}\n`).join(""), {mode: 0o600});
   } catch {}
 }
 
@@ -688,18 +707,31 @@ function isLoopbackAddress(address) {
 
 const loginAttempts = new Map();
 
+function loginClientIp(req) {
+  if (process.env.AIMAC_TRUST_PROXY === "true") {
+    const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+    if (forwarded) return forwarded;
+  }
+  return String(req.socket.remoteAddress || "unknown");
+}
+
 function loginRateLimited(req) {
-  const ip = String(req.socket.remoteAddress || "unknown");
-  const nowMs = Date.now();
+  const entry = loginAttempts.get(loginClientIp(req));
+  if (!entry || Date.now() > entry.resetAt) return false;
   const maxAttempts = Math.max(3, Number(process.env.AIMAC_LOGIN_ATTEMPTS_PER_MINUTE || 10));
+  return entry.count >= maxAttempts;
+}
+
+function recordFailedLogin(req) {
+  const ip = loginClientIp(req);
+  const nowMs = Date.now();
   const entry = loginAttempts.get(ip);
   if (!entry || nowMs > entry.resetAt) {
     if (loginAttempts.size > 10000) loginAttempts.clear();
     loginAttempts.set(ip, {count: 1, resetAt: nowMs + 60000});
-    return false;
+    return;
   }
   entry.count += 1;
-  return entry.count > maxAttempts;
 }
 
 function authenticateRequest(req, state) {
@@ -774,6 +806,7 @@ function requireRead(req, state, resourceScope = {resourceType: "system", resour
 function canReadResource(state, account, resourceScope = {}) {
   if (!account) return false;
   if (isSystemAccount(account)) return true;
+  if (resourceScope.resourceType === "organization") return account.organizationId === resourceScope.resourceId;
   if (resourceScope.resourceType === "system") return false;
   if (resourceScope.resourceType === "project") return canReadProject(state, account, resourceScope.resourceId);
   if (resourceScope.resourceType === "task_group") return canReadTaskGroup(state, account, resourceScope.resourceId);
@@ -783,6 +816,7 @@ function canReadResource(state, account, resourceScope = {}) {
 function canReadProject(state, account, projectId) {
   if (!projectId) return false;
   const project = state.projects.find((item) => item.id === projectId);
+  if (account.accountType === "org_admin" && project && (project.organizationId || DEFAULT_ORGANIZATION_ID) === account.organizationId) return true;
   if (project?.ownerAccountId === account.accountId || (project?.members || []).some((member) => member.accountId === account.accountId)) return true;
   return ["project:view", "project:*"].some((permission) => hasPermission(state, account.accountId, permission, {resourceType: "project", resourceId: projectId}));
 }
@@ -874,6 +908,13 @@ function scopedStateForAccount(state, account, session) {
   cloned.agentGatewayEvents = [];
   cloned.mcpCalls = [];
   cloned.mcpProbeNodes = [];
+  cloned.instructionMetrics = {
+    ...state.instructionMetrics,
+    envelopes: (state.instructionMetrics?.envelopes || []).filter((envelope) => envelope.taskGroupId && visibleTaskGroupIds.has(envelope.taskGroupId))
+  };
+  cloned.organizations = (state.organizations || []).filter((org) => org.orgId === account.organizationId);
+  cloned.humanConfirmationRequests = (state.humanConfirmationRequests || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
+  cloned.humanDirectives = (state.humanDirectives || []).filter((item) => (item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId)) || (!item.taskGroupId && visibleProjectIds.has(item.projectId)));
   cloned.transitionEvidence = [];
   cloned.ruleSourceResolutions = [];
   cloned.externalUpgradeImports = [];
@@ -981,6 +1022,12 @@ function permissionForAction(action) {
   if (action === "orchestrator_run" || action === "agent_runtime_worker_run") return "task_group:orchestrate";
   if (action === "checkpoint_submit") return "task_group:checkpoint_submit";
   if (action === "runtime_issue_collect") return "task_group:monitor";
+  if (action === "project_config_update") return "project:*";
+  if (["org_create", "org_quota_update", "org_status_update"].includes(action)) return "system:*";
+  if (["org_member_create", "org_member_permissions_update", "org_member_status_update"].includes(action)) return "org:member_admin";
+  if (action === "org_project_create") return "org:project_admin";
+  if (action === "human_confirmation_decide") return "task_group:review";
+  if (action === "human_directive_create") return "task_group:control";
   return "system:*";
 }
 
@@ -998,6 +1045,9 @@ function hasPermission(state, actor, requiredPermission, resourceScope) {
 
 function directPermissionApplies(account, permission, requiredPermission, resourceScope = {}) {
   if (isSystemAccount(account)) return true;
+  if (resourceScope.resourceType === "organization") {
+    return account.organizationId === resourceScope.resourceId && permission.startsWith("org:");
+  }
   if (["member:invite", "agent:activate"].includes(permission) && ["project", "task_group"].includes(resourceScope.resourceType)) return false;
   if (resourceScope.resourceType === "task_group" && permission.startsWith("task_group:")) return false;
   if (resourceScope.resourceType === "project" && permission.startsWith("project:") && requiredPermission !== "project:create") return false;
@@ -1691,10 +1741,12 @@ async function handleApi(req, res) {
     const bootstrapOk = method === "bootstrap_token" && digestOf(`bootstrap:${token}`) === config.bootstrapTokenHash;
     const localAccountOk = Boolean(account && config.localAccountTokenHashes?.[account.accountId] === digestOf(`account:${account.accountId}:${token}`));
     const issuedAccountOk = Boolean(account?.status === "invited" && account?.credentialDigest && account.credentialDigest === digestOf(`account-invite:${account.accountId}:${token}`) && (!account.credentialExpiresAt || new Date(account.credentialExpiresAt).getTime() > Date.now()));
-    const tokenOk = bootstrapOk || localAccountOk || issuedAccountOk;
+    const passwordOk = Boolean(account?.passwordDigest && body.password && account.passwordDigest === digestOf(`account-password:${account.accountId}:${body.password}`));
+    const tokenOk = bootstrapOk || localAccountOk || issuedAccountOk || passwordOk;
     if (!tokenOk || !account || !["active", "invited"].includes(account.status)) {
       audit(state, "auth-service", "auth_login", `Account:${email}`, "denied");
       commitDirectStateWrite(state);
+      recordFailedLogin(req);
       json(res, 401, {error: "invalid_credentials"});
       return;
     }
@@ -1720,7 +1772,7 @@ async function handleApi(req, res) {
     state.authSessions = state.authSessions.slice(0, 80);
     audit(state, "auth-service", "auth_login", `Account:${account.accountId}`);
     commitDirectStateWrite(state);
-	    json(res, 200, {sessionToken, expiresAt, account: {accountId: account.accountId, accountType: account.accountType, email: account.email, displayName: account.displayName, roles: account.roles, permissions: account.permissions}});
+	    json(res, 200, {sessionToken, expiresAt, account: {accountId: account.accountId, accountType: account.accountType, organizationId: account.organizationId || null, defaultProjectId: account.defaultProjectId || null, email: account.email, displayName: account.displayName, roles: account.roles, permissions: account.permissions, passwordSet: Boolean(account.authPolicy?.passwordSet)}});
 	    return;
 	  }
 
@@ -1921,6 +1973,7 @@ async function handleApi(req, res) {
       health: taskGroup.health,
       languagePolicy: taskGroup.languagePolicy,
       roles: taskGroup.roles,
+      taskAnalysis: taskGroup.taskAnalysis || null,
       workItems: taskGroup.workItems,
       blockers: taskGroup.blockers,
       repositoryOutputs: (state.repositoryOutputs || []).filter((target) => target.taskGroupId === taskGroup.id)
@@ -2190,10 +2243,17 @@ async function handleApi(req, res) {
       json(res, guard.status, guard.payload);
       return;
     }
+    const projectOrgId = ownerAccount.organizationId || authenticated.account.organizationId || DEFAULT_ORGANIZATION_ID;
+    const projectQuota = organizationQuotaCheck(state, projectOrgId, "projects");
+    if (!projectQuota.allowed) {
+      json(res, 409, {error: projectQuota.error, quota: projectQuota.quota, usage: projectQuota.usage});
+      return;
+    }
     const id = createId("prj");
     const ownerAccountId = requestedOwnerAccountId;
     state.projects.push({
       id,
+      organizationId: projectOrgId,
       name: body.name || "Untitled Project",
       status: "active",
       ownerAccountId,
@@ -2235,6 +2295,12 @@ async function handleApi(req, res) {
       json(res, guard.status, guard.payload);
       return;
     }
+    const taskGroupProject = state.projects.find((item) => item.id === projectId);
+    const taskGroupQuota = organizationQuotaCheck(state, taskGroupProject?.organizationId || DEFAULT_ORGANIZATION_ID, "taskGroups");
+    if (!taskGroupQuota.allowed) {
+      json(res, 409, {error: taskGroupQuota.error, quota: taskGroupQuota.quota, usage: taskGroupQuota.usage});
+      return;
+    }
     const result = createTaskGroupRecord(state, body, {auditRef: `audit:${guard.idempotencyKey}`});
     if (result.ok === false) {
       json(res, result.status || 409, {error: result.error});
@@ -2258,14 +2324,14 @@ async function handleApi(req, res) {
       json(res, 428, {error: "idempotency_key_required"});
       return;
     }
+    const guard = beginGuardedWrite(req, state, "task_group_work_item_create", `TaskGroup:${workItemCreateMatch[1]}`, taskGroupScope(state, workItemCreateMatch[1]));
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
     const taskGroup = state.taskGroups.find((item) => item.id === workItemCreateMatch[1]);
     if (!taskGroup) {
       json(res, 404, {error: "task_group_not_found"});
-      return;
-    }
-    const guard = beginGuardedWrite(req, state, "task_group_work_item_create", `TaskGroup:${taskGroup.id}`, taskGroupScope(state, taskGroup.id));
-    if (guard.status) {
-      json(res, guard.status, guard.payload);
       return;
     }
     const result = createWorkItemRecord(state, taskGroup.id, body, {auditRef: `audit:${guard.idempotencyKey}`});
@@ -2384,14 +2450,14 @@ async function handleApi(req, res) {
   const taskGroupLanguageMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/language-policy$/);
   if (req.method === "POST" && taskGroupLanguageMatch) {
     const taskGroupId = taskGroupLanguageMatch[1];
+    const guard = beginGuardedWrite(req, state, "task_group_language_policy_update", `TaskGroup:${taskGroupId}`, taskGroupScope(state, taskGroupId));
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
     if (!taskGroup) {
       json(res, 404, {error: "task_group_not_found"});
-      return;
-    }
-    const guard = beginGuardedWrite(req, state, "task_group_language_policy_update", `TaskGroup:${taskGroup.id}`, taskGroupScope(state, taskGroup.id));
-    if (guard.status) {
-      json(res, guard.status, guard.payload);
       return;
     }
     const result = updateTaskGroupLanguagePolicy(state, taskGroup.id, body, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});
@@ -2545,6 +2611,9 @@ async function handleApi(req, res) {
       return;
     }
     const at = now();
+    const envelopeTaskGroup = state.taskGroups.find((item) => item.id === (body.taskGroupId || "tg_runtime_management"));
+    const envelopeLanguagePolicy = normalizeTaskGroupLanguagePolicy(body.languagePolicy || envelopeTaskGroup?.languagePolicy || {});
+    const envelopeLanguagePolicyDigest = digestOf(envelopeLanguagePolicy);
     const envelope = {
       schemaVersion: "instruction-envelope/v1",
       envelopeId: createId("env"),
@@ -2553,7 +2622,9 @@ async function handleApi(req, res) {
       effectiveInstructionPacketRef: body.effectiveInstructionPacketRef || "eip_runtime_management",
       formatVersion: "ai-native-instruction-envelope/v1",
       stablePrefixDigest: body.stablePrefixDigest || stableDigest("6"),
-      digestRefs: body.digestRefs || ["ruleset:runtime:v1"],
+      digestRefs: [...new Set([...(body.digestRefs || ["ruleset:runtime:v1"]), `language-policy:${envelopeLanguagePolicyDigest}`])],
+      languagePolicy: envelopeLanguagePolicy,
+      languagePolicyDigest: envelopeLanguagePolicyDigest,
       sharedDefinitionRefs: body.sharedDefinitionRefs || [],
       cacheKey: body.cacheKey || `runtime:v1:${Date.now()}`,
       status: "cache_indexed",
@@ -2649,6 +2720,459 @@ async function handleApi(req, res) {
     finishGuardedWrite(state, guard, 201, target);
     writeState(state);
     json(res, 201, target);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orgs") {
+    const guard = beginGuardedWrite(req, state, "org_create", "Organization:new", {resourceType: "system", resourceId: "organizations"});
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const at = now();
+    const orgId = createId("org");
+    const quotas = {
+      maxMembers: Math.max(1, Number(body.quotas?.maxMembers || 50)),
+      maxProjects: Math.max(1, Number(body.quotas?.maxProjects || 20)),
+      maxTaskGroups: Math.max(1, Number(body.quotas?.maxTaskGroups || 200)),
+      maxAgents: Math.max(1, Number(body.quotas?.maxAgents || 100))
+    };
+    const adminAccountId = createId("acct");
+    const adminToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
+    const adminAccount = {
+      schemaVersion: "account/v1",
+      accountId: adminAccountId,
+      accountType: "org_admin",
+      organizationId: orgId,
+      displayName: String(body.admin?.displayName || "组织管理员"),
+      email: String(body.admin?.email || `org-admin-${Date.now()}@local`),
+      status: "invited",
+      roles: ["org_admin"],
+      permissions: ["org:*", "project:create", "project:*", "task_group:*", "member:invite", "agent:activate", "project:grant"],
+      authPolicy: {method: "invite_token", mfaRequired: false, passwordSet: false, sessionTtlSeconds: 28800},
+      credentialDigest: digestOf(`account-invite:${adminAccountId}:${adminToken}`),
+      credentialIssuedAt: at,
+      credentialExpiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
+      createdAt: at,
+      updatedAt: at
+    };
+    const organization = {
+      schemaVersion: "organization/v1",
+      orgId,
+      name: String(body.name || "").trim() || `组织 ${orgId.slice(-6)}`,
+      status: "active",
+      quotas,
+      usage: {members: 1, projects: 0, taskGroups: 0, agents: 0},
+      initialAdminAccountId: adminAccountId,
+      createdBy: guard.actor,
+      createdAt: at,
+      updatedAt: at
+    };
+    state.organizations.push(organization);
+    state.accounts.push(adminAccount);
+    audit(state, guard.actor, "org_create", `Organization:${orgId}`);
+    finishGuardedWrite(state, guard, 201, {organization, adminAccountId});
+    writeState(state);
+    json(res, 201, {organization, adminAccount: publicAccountRecord(adminAccount), accountToken: adminToken, login: {email: adminAccount.email, tokenField: "accountToken"}});
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/orgs") {
+    const reader = requireRead(req, state, {resourceType: "system", resourceId: "organizations"});
+    if (reader.status) return json(res, reader.status, reader.payload);
+    recomputeOrganizationUsage(state);
+    json(res, 200, {organizations: state.organizations});
+    return;
+  }
+
+  const orgQuotaMatch = url.pathname.match(/^\/api\/orgs\/([^/]+)\/quotas$/);
+  if (req.method === "POST" && orgQuotaMatch) {
+    const guard = beginGuardedWrite(req, state, "org_quota_update", `Organization:${orgQuotaMatch[1]}`, {resourceType: "system", resourceId: "organizations"});
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const organization = organizationOf(state, orgQuotaMatch[1]);
+    if (!organization) return json(res, 404, {error: "organization_not_found"});
+    for (const key of ["maxMembers", "maxProjects", "maxTaskGroups", "maxAgents"]) {
+      if (body.quotas?.[key] !== undefined) organization.quotas[key] = Math.max(1, Number(body.quotas[key]));
+      else if (body[key] !== undefined) organization.quotas[key] = Math.max(1, Number(body[key]));
+    }
+    organization.updatedAt = now();
+    audit(state, guard.actor, "org_quota_update", `Organization:${organization.orgId}`);
+    finishGuardedWrite(state, guard, 200, organization);
+    writeState(state);
+    json(res, 200, organization);
+    return;
+  }
+
+  const orgStatusMatch = url.pathname.match(/^\/api\/orgs\/([^/]+)\/status$/);
+  if (req.method === "POST" && orgStatusMatch) {
+    const guard = beginGuardedWrite(req, state, "org_status_update", `Organization:${orgStatusMatch[1]}`, {resourceType: "system", resourceId: "organizations"});
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const organization = organizationOf(state, orgStatusMatch[1]);
+    if (!organization) return json(res, 404, {error: "organization_not_found"});
+    organization.status = body.status === "suspended" ? "suspended" : "active";
+    organization.updatedAt = now();
+    audit(state, guard.actor, "org_status_update", `Organization:${organization.orgId}`, organization.status);
+    finishGuardedWrite(state, guard, 200, organization);
+    writeState(state);
+    json(res, 200, organization);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/system/overview") {
+    const reader = requireRead(req, state, {resourceType: "system", resourceId: "overview"});
+    if (reader.status) return json(res, reader.status, reader.payload);
+    const memory = process.memoryUsage();
+    const cpu = process.cpuUsage();
+    const cpuSeconds = (cpu.user + cpu.system) / 1e6;
+    const wattsPerCpu = Number(process.env.AIMAC_ENERGY_WATTS_PER_CPU || 15);
+    let stateBytes = 0;
+    let projectDbBytes = 0;
+    try { stateBytes = statSync(statePath).size; } catch {}
+    try {
+      const projectDbDir = join(runtimeDir, "project-db");
+      if (existsSync(projectDbDir)) {
+        for (const name of readdirSync(projectDbDir)) {
+          try { projectDbBytes += statSync(join(projectDbDir, name)).size; } catch {}
+        }
+      }
+    } catch {}
+    recomputeOrganizationUsage(state);
+    json(res, 200, {
+      server: {platform: platform(), arch: arch(), hostname: hostname(), nodeVersion: process.version, uptimeSeconds: Math.round(process.uptime()), pid: process.pid},
+      resources: {rssBytes: memory.rss, heapUsedBytes: memory.heapUsed, cpuSeconds: Math.round(cpuSeconds), loadAverage: loadavg(), totalMemoryBytes: totalmem(), freeMemoryBytes: freemem(), cpuCount: cpus().length},
+      energy: {estimatedWattHours: Math.round(cpuSeconds / 3600 * wattsPerCpu * 100) / 100, wattsPerCpuCoefficient: wattsPerCpu},
+      storage: {centralStateBytes: stateBytes, projectDbBytes, stateStore: stateStoreKind()},
+      runtime: {
+        onlineNodes: (state.agentRuntimeNodes || []).filter((node) => node.status === "online").length,
+        totalNodes: (state.agentRuntimeNodes || []).length,
+        organizations: state.organizations.length,
+        projects: (state.projects || []).length,
+        activeTaskGroups: (state.taskGroups || []).filter((taskGroup) => !["closed", "aborted"].includes(taskGroup.status)).length,
+        stateVersion: state.stateVersion,
+        auditChainHead: state.auditChainHead || null
+      },
+      at: now()
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/change-password") {
+    const authenticated = accountFromRequest(req, state);
+    if (!authenticated) return json(res, 401, {error: "auth_required"});
+    const newPassword = String(body.newPassword || "");
+    if (newPassword.length < 8) return json(res, 400, {error: "password_too_short", minLength: 8});
+    const account = authenticated.account;
+    if (account.passwordDigest) {
+      const currentOk = body.currentPassword && account.passwordDigest === digestOf(`account-password:${account.accountId}:${body.currentPassword}`);
+      if (!currentOk) return json(res, 403, {error: "current_password_incorrect"});
+    }
+    account.passwordDigest = digestOf(`account-password:${account.accountId}:${newPassword}`);
+    account.authPolicy = {...(account.authPolicy || {}), method: account.authPolicy?.method || "password", passwordSet: true};
+    account.updatedAt = now();
+    audit(state, account.accountId, "auth_change_password", `Account:${account.accountId}`);
+    commitDirectStateWrite(state);
+    json(res, 200, {ok: true, accountId: account.accountId, passwordSet: true});
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/org/members") {
+    const actorAccount = accountFromRequest(req, state)?.account;
+    const orgId = actorAccount?.organizationId;
+    const guard = beginGuardedWrite(req, state, "org_member_create", `Organization:${orgId || "unknown"}`, {resourceType: "organization", resourceId: orgId});
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const quota = organizationQuotaCheck(state, orgId, "members");
+    if (!quota.allowed) return json(res, 409, {error: quota.error, quota: quota.quota, usage: quota.usage});
+    const at = now();
+    const accountId = createId("acct");
+    const memberToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
+    const permissions = normalizeStringList(body.permissions, ["project:view"]).filter((permission) => !permission.startsWith("system:") && permission !== "org:*");
+    const member = {
+      schemaVersion: "account/v1",
+      accountId,
+      accountType: "user_account",
+      organizationId: orgId,
+      displayName: String(body.displayName || "新成员"),
+      email: String(body.email || `member-${Date.now()}@local`),
+      status: "invited",
+      roles: normalizeStringList(body.roles, ["member"]).filter((role) => role !== "system_admin"),
+      permissions,
+      defaultProjectId: body.defaultProjectId || null,
+      authPolicy: {method: "invite_token", mfaRequired: false, passwordSet: false, sessionTtlSeconds: 28800},
+      credentialDigest: digestOf(`account-invite:${accountId}:${memberToken}`),
+      credentialIssuedAt: at,
+      credentialExpiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
+      createdAt: at,
+      updatedAt: at
+    };
+    state.accounts.push(member);
+    recomputeOrganizationUsage(state);
+    audit(state, guard.actor, "org_member_create", `Account:${accountId}`);
+    finishGuardedWrite(state, guard, 201, publicAccountRecord(member));
+    writeState(state);
+    json(res, 201, {account: publicAccountRecord(member), accountToken: memberToken, login: {email: member.email, tokenField: "accountToken"}});
+    return;
+  }
+
+  const orgMemberPermMatch = url.pathname.match(/^\/api\/org\/members\/([^/]+)\/permissions$/);
+  if (req.method === "POST" && orgMemberPermMatch) {
+    const actorAccount = accountFromRequest(req, state)?.account;
+    const orgId = actorAccount?.organizationId;
+    const guard = beginGuardedWrite(req, state, "org_member_permissions_update", `Account:${orgMemberPermMatch[1]}`, {resourceType: "organization", resourceId: orgId});
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const member = state.accounts.find((item) => item.accountId === orgMemberPermMatch[1] && item.organizationId === orgId && item.accountType !== "org_admin");
+    if (!member) return json(res, 404, {error: "org_member_not_found"});
+    member.permissions = normalizeStringList(body.permissions, member.permissions || []).filter((permission) => !permission.startsWith("system:") && permission !== "org:*");
+    if (body.defaultProjectId !== undefined) member.defaultProjectId = body.defaultProjectId || null;
+    member.updatedAt = now();
+    audit(state, guard.actor, "org_member_permissions_update", `Account:${member.accountId}`);
+    finishGuardedWrite(state, guard, 200, publicAccountRecord(member));
+    writeState(state);
+    json(res, 200, publicAccountRecord(member));
+    return;
+  }
+
+  const orgMemberStatusMatch = url.pathname.match(/^\/api\/org\/members\/([^/]+)\/status$/);
+  if (req.method === "POST" && orgMemberStatusMatch) {
+    const actorAccount = accountFromRequest(req, state)?.account;
+    const orgId = actorAccount?.organizationId;
+    const guard = beginGuardedWrite(req, state, "org_member_status_update", `Account:${orgMemberStatusMatch[1]}`, {resourceType: "organization", resourceId: orgId});
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const member = state.accounts.find((item) => item.accountId === orgMemberStatusMatch[1] && item.organizationId === orgId && item.accountType !== "org_admin");
+    if (!member) return json(res, 404, {error: "org_member_not_found"});
+    member.status = body.status === "disabled" ? "disabled" : "active";
+    member.updatedAt = now();
+    if (member.status === "disabled") {
+      for (const session of state.authSessions || []) {
+        if (session.accountId === member.accountId && session.status === "active") session.status = "revoked";
+      }
+    }
+    recomputeOrganizationUsage(state);
+    audit(state, guard.actor, "org_member_status_update", `Account:${member.accountId}`, member.status);
+    finishGuardedWrite(state, guard, 200, publicAccountRecord(member));
+    writeState(state);
+    json(res, 200, publicAccountRecord(member));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/org/members") {
+    const reader = accountFromRequest(req, state);
+    if (!reader) return json(res, 401, {error: "auth_required"});
+    const orgId = isSystemAccount(reader.account) ? (url.searchParams.get("orgId") || DEFAULT_ORGANIZATION_ID) : reader.account.organizationId;
+    if (!orgId) return json(res, 400, {error: "organization_required"});
+    if (!isSystemAccount(reader.account) && !canReadResource(state, reader.account, {resourceType: "organization", resourceId: orgId})) {
+      return json(res, 403, {error: "permission_denied"});
+    }
+    const members = (state.accounts || [])
+      .filter((item) => item.organizationId === orgId && item.accountType !== "service_account")
+      .map((item) => ({...publicAccountRecord(item), organizationId: item.organizationId, defaultProjectId: item.defaultProjectId || null}));
+    json(res, 200, {orgId, members});
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/org/agents") {
+    const reader = accountFromRequest(req, state);
+    if (!reader) return json(res, 401, {error: "auth_required"});
+    const orgId = isSystemAccount(reader.account) ? (url.searchParams.get("orgId") || DEFAULT_ORGANIZATION_ID) : reader.account.organizationId;
+    if (!orgId) return json(res, 400, {error: "organization_required"});
+    if (!isSystemAccount(reader.account) && reader.account.organizationId !== orgId) return json(res, 403, {error: "permission_denied"});
+    const nodes = (state.agentRuntimeNodes || [])
+      .filter((node) => (node.organizationId || DEFAULT_ORGANIZATION_ID) === orgId)
+      .map((node) => ({
+        ...publicAgentNode(node),
+        display: {
+          region: node.profile?.region || null,
+          dataRoot: node.profile?.dataRoot || null,
+          health: node.status === "online" ? (node.admission === "full" ? "healthy" : "limited") : node.status,
+          currentDispatchIds: node.activeDispatchIds || [],
+          networkSpeedMbps: node.profile?.networkSpeedMbps || null,
+          models: (node.profile?.models || []).filter((model) => model.available !== false).map((model) => model.providerClass)
+        }
+      }));
+    json(res, 200, {orgId, agentRuntimeNodes: nodes});
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/org/projects") {
+    const actorAccount = accountFromRequest(req, state)?.account;
+    const orgId = actorAccount?.organizationId;
+    const guard = beginGuardedWrite(req, state, "org_project_create", `Organization:${orgId || "unknown"}`, {resourceType: "organization", resourceId: orgId});
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const quota = organizationQuotaCheck(state, orgId, "projects");
+    if (!quota.allowed) return json(res, 409, {error: quota.error, quota: quota.quota, usage: quota.usage});
+    const id = createId("prj");
+    state.projects.push({
+      id,
+      organizationId: orgId,
+      name: String(body.name || "").trim() || "未命名项目",
+      status: "active",
+      ownerAccountId: guard.actor,
+      members: [{accountId: guard.actor, role: "project_owner"}],
+      config: {
+        repositories: Array.isArray(body.repositories) ? body.repositories : [],
+        baselineData: [],
+        businessRuleRefs: [],
+        defaultRoles: []
+      },
+      progress: {percent: 0, phase: "intake", health: "ok", openTaskGroups: 0, blockedItems: 0, updatedAt: now()}
+    });
+    recomputeOrganizationUsage(state);
+    audit(state, guard.actor, "org_project_create", `Project:${id}`);
+    finishGuardedWrite(state, guard, 201, {id});
+    writeState(state);
+    json(res, 201, {id});
+    return;
+  }
+
+  const humanConfirmationListMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/human-confirmations$/);
+  if (req.method === "GET" && humanConfirmationListMatch) {
+    const reader = requireRead(req, state, taskGroupScope(state, humanConfirmationListMatch[1]));
+    if (reader.status) return json(res, reader.status, reader.payload);
+    json(res, 200, {humanConfirmationRequests: (state.humanConfirmationRequests || []).filter((item) => item.taskGroupId === humanConfirmationListMatch[1])});
+    return;
+  }
+
+  const humanConfirmationDecideMatch = url.pathname.match(/^\/api\/human-confirmations\/([^/]+)\/decide$/);
+  if (req.method === "POST" && humanConfirmationDecideMatch) {
+    const target = (state.humanConfirmationRequests || []).find((item) => item.requestId === humanConfirmationDecideMatch[1]);
+    const guard = beginGuardedWrite(req, state, "human_confirmation_decide", `HumanConfirmationRequest:${humanConfirmationDecideMatch[1]}`, target ? taskGroupScope(state, target.taskGroupId) : {resourceType: "system", resourceId: "human_confirmations"});
+    if (guard.status) return json(res, guard.status, guard.payload);
+    let decided;
+    try {
+      decided = decideHumanConfirmation(state, humanConfirmationDecideMatch[1], body, {actor: guard.actor});
+    } catch (error) {
+      return json(res, error.status || 500, {error: error.message});
+    }
+    audit(state, guard.actor, "human_confirmation_decide", `HumanConfirmationRequest:${decided.requestId}`);
+    finishGuardedWrite(state, guard, 200, decided);
+    writeState(state);
+    json(res, 200, decided);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/human-directives") {
+    const guard = beginGuardedWrite(req, state, "human_directive_create", `TaskGroup:${body.taskGroupId || body.projectId || "unknown"}`, body.taskGroupId ? taskGroupScope(state, body.taskGroupId) : projectScope(body.projectId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    let directive;
+    try {
+      directive = createHumanDirective(state, body, {actor: guard.actor});
+    } catch (error) {
+      return json(res, error.status || 500, {error: error.message});
+    }
+    audit(state, guard.actor, "human_directive_create", `HumanDirective:${directive.directiveId}`);
+    finishGuardedWrite(state, guard, 201, directive);
+    writeState(state);
+    json(res, 201, directive);
+    return;
+  }
+
+  const humanDirectiveListMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/human-directives$/);
+  if (req.method === "GET" && humanDirectiveListMatch) {
+    const reader = requireRead(req, state, taskGroupScope(state, humanDirectiveListMatch[1]));
+    if (reader.status) return json(res, reader.status, reader.payload);
+    json(res, 200, {humanDirectives: (state.humanDirectives || []).filter((item) => item.taskGroupId === humanDirectiveListMatch[1])});
+    return;
+  }
+
+  const projectConfigMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/config$/);
+  if (req.method === "POST" && projectConfigMatch) {
+    const guard = beginGuardedWrite(req, state, "project_config_update", `Project:${projectConfigMatch[1]}`, projectScope(projectConfigMatch[1]));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const project = state.projects.find((item) => item.id === projectConfigMatch[1]);
+    if (!project) return json(res, 404, {error: "project_not_found"});
+    project.config = {
+      ...(project.config || {}),
+      ...(body.repositories !== undefined ? {repositories: Array.isArray(body.repositories) ? body.repositories : []} : {}),
+      ...(body.baselineData !== undefined ? {baselineData: Array.isArray(body.baselineData) ? body.baselineData : []} : {}),
+      ...(body.businessRules !== undefined ? {businessRules: Array.isArray(body.businessRules) ? body.businessRules : []} : {}),
+      ...(body.defaultRoles !== undefined ? {defaultRoles: Array.isArray(body.defaultRoles) ? body.defaultRoles : []} : {})
+    };
+    project.updatedAt = now();
+    audit(state, guard.actor, "project_config_update", `Project:${project.id}`);
+    finishGuardedWrite(state, guard, 200, project.config);
+    writeState(state);
+    json(res, 200, {projectId: project.id, config: project.config});
+    return;
+  }
+
+  const taskGroupConfigMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/config$/);
+  if (req.method === "GET" && taskGroupConfigMatch) {
+    const reader = requireRead(req, state, taskGroupScope(state, taskGroupConfigMatch[1]));
+    if (reader.status) return json(res, reader.status, reader.payload);
+    const taskGroup = state.taskGroups.find((item) => item.id === taskGroupConfigMatch[1]);
+    if (!taskGroup) return json(res, 404, {error: "task_group_not_found"});
+    json(res, 200, {taskGroupId: taskGroup.id, config: effectiveTaskGroupConfig(state, taskGroup)});
+    return;
+  }
+  if (req.method === "POST" && taskGroupConfigMatch) {
+    const guard = beginGuardedWrite(req, state, "task_group_config_update", `TaskGroup:${taskGroupConfigMatch[1]}`, taskGroupScope(state, taskGroupConfigMatch[1]));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const taskGroup = state.taskGroups.find((item) => item.id === taskGroupConfigMatch[1]);
+    if (!taskGroup) return json(res, 404, {error: "task_group_not_found"});
+    taskGroup.configOverrides = {
+      ...(taskGroup.configOverrides || {}),
+      ...(body.repositories !== undefined ? {repositories: body.repositories} : {}),
+      ...(body.baselineData !== undefined ? {baselineData: body.baselineData} : {}),
+      ...(body.businessRules !== undefined ? {businessRules: body.businessRules} : {}),
+      ...(body.defaultRoles !== undefined ? {defaultRoles: body.defaultRoles} : {})
+    };
+    taskGroup.updatedAt = now();
+    audit(state, guard.actor, "task_group_config_update", `TaskGroup:${taskGroup.id}`);
+    const effective = effectiveTaskGroupConfig(state, taskGroup);
+    finishGuardedWrite(state, guard, 200, effective);
+    writeState(state);
+    json(res, 200, {taskGroupId: taskGroup.id, config: effective});
+    return;
+  }
+
+  const taskGroupConfigResetMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/config\/reset$/);
+  if (req.method === "POST" && taskGroupConfigResetMatch) {
+    const guard = beginGuardedWrite(req, state, "task_group_config_reset", `TaskGroup:${taskGroupConfigResetMatch[1]}`, taskGroupScope(state, taskGroupConfigResetMatch[1]));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const taskGroup = state.taskGroups.find((item) => item.id === taskGroupConfigResetMatch[1]);
+    if (!taskGroup) return json(res, 404, {error: "task_group_not_found"});
+    delete taskGroup.configOverrides;
+    taskGroup.updatedAt = now();
+    audit(state, guard.actor, "task_group_config_reset", `TaskGroup:${taskGroup.id}`);
+    const effective = effectiveTaskGroupConfig(state, taskGroup);
+    finishGuardedWrite(state, guard, 200, effective);
+    writeState(state);
+    json(res, 200, {taskGroupId: taskGroup.id, config: effective});
+    return;
+  }
+
+  const contentBundleMatch = url.pathname.match(/^\/api\/agent\/v1\/content-bundles\/([^/]+)$/);
+  if (req.method === "GET" && contentBundleMatch) {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    try {
+      const bundle = buildExecutionContentBundle(state, node, decodeURIComponent(contentBundleMatch[1]), {runtimeDir});
+      json(res, 200, bundle);
+    } catch (error) {
+      json(res, error.status || 500, {error: error.message});
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent/v1/confirmations") {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    let request;
+    try {
+      request = createHumanConfirmationRequest(state, {...body, nodeId: node.nodeId});
+    } catch (error) {
+      return json(res, error.status || 500, {error: error.message});
+    }
+    audit(state, `agent-node:${node.nodeId}`, "human_confirmation_request", `HumanConfirmationRequest:${request.requestId}`);
+    commitGatewayWrite(state);
+    json(res, 201, {request});
+    return;
+  }
+
+  const agentConfirmationMatch = url.pathname.match(/^\/api\/agent\/v1\/confirmations\/([^/]+)$/);
+  if (req.method === "GET" && agentConfirmationMatch) {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    const request = (state.humanConfirmationRequests || []).find((item) => item.requestId === agentConfirmationMatch[1]);
+    if (!request) return json(res, 404, {error: "human_confirmation_not_found"});
+    if (url.searchParams.get("consume") === "true" && request.status === "answered") {
+      consumeHumanConfirmation(state, request.requestId, {actor: `agent-node:${node.nodeId}`});
+      commitGatewayWrite(state);
+    }
+    json(res, 200, {request});
     return;
   }
 

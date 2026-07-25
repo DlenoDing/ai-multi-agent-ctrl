@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/execution-content-bundle.schema.json",
+  "title": "ExecutionContentBundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "bundleId",
+    "bundleDigest",
+    "projectId",
+    "taskGroupId",
+    "sessionId",
+    "entries"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "execution-content-bundle/v1"
+    },
+    "bundleId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bundleDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "organizationId": {
+      "type": "string"
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dispatchId": {
+      "type": "string"
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "category",
+          "retention",
+          "contentDigest"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^/].*"
+          },
+          "category": {
+            "enum": [
+              "role",
+              "business",
+              "task"
+            ]
+          },
+          "retention": {
+            "enum": [
+              "durable",
+              "task"
+            ]
+          },
+          "contentDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-fA-F0-9]{64}$"
+          },
+          "content": {
+            "type": "string"
+          },
+          "sourceRef": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "gitTransfer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "repositoryUrl": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

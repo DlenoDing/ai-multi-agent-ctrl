@@ -7,6 +7,9 @@ import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStored
 import {
   acceptAgentCheckpoint,
   buildTaskContract,
+  consumeHumanConfirmation,
+  createHumanConfirmationRequest,
+  decideHumanConfirmation,
   collectRuntimeIssue,
   computeCloseBarrier,
   computeCompletionReadiness,
@@ -51,6 +54,7 @@ export const mcpToolGroups = {
   "skill-mcp": ["skill_source_sync", "role_skill_parse", "role_skill_overlay_validate", "role_skill_resolve"],
   "evidence-mcp": ["artifact_register", "checkpoint_submit", "test_result_submit"],
   "permission-mcp": ["permission_probe", "permission_request_submit", "permission_status", "permission_resolve"],
+  "human-review-mcp": ["confirmation_request_submit", "confirmation_status", "confirmation_consume", "confirmation_decide"],
   "review-mcp": ["review_plan_create", "review_bundle_register", "review_result_consume", "completion_readiness_compute"],
   "governance-mcp": [
     "approval_request_create",
@@ -114,6 +118,10 @@ const toolDescriptions = {
   "evidence-mcp.test_result_submit": "Record machine test results as evidence for readiness gates.",
   "permission-mcp.permission_probe": "Evaluate whether a scoped permission or grant exists.",
   "permission-mcp.permission_request_submit": "Submit a structured permission request for policy resolution.",
+  "human-review-mcp.confirmation_request_submit": "Submit a question that requires human confirmation with AI-provided options.",
+  "human-review-mcp.confirmation_status": "Read the status and decision of a human confirmation request.",
+  "human-review-mcp.confirmation_consume": "Mark an answered human confirmation as consumed by the executor.",
+  "human-review-mcp.confirmation_decide": "Record the human decision for a pending confirmation request.",
   "permission-mcp.permission_status": "Read a permission request state.",
   "permission-mcp.permission_resolve": "Resolve a permission request and record the policy decision.",
   "review-mcp.review_plan_create": "Create an independent review plan for a task group.",
@@ -277,6 +285,10 @@ function requiredInputPropertiesFor(name) {
     "skill-mcp.role_skill_overlay_validate": ["roleSkillRef"],
     "evidence-mcp.checkpoint_submit": ["taskGroupId", "workId", "sessionId", "runId"],
     "permission-mcp.permission_status": ["requestId"],
+    "human-review-mcp.confirmation_request_submit": ["dispatchId", "options"],
+    "human-review-mcp.confirmation_status": ["requestId"],
+    "human-review-mcp.confirmation_consume": ["requestId"],
+    "human-review-mcp.confirmation_decide": ["requestId", "selectedOptionId"],
     "permission-mcp.permission_resolve": ["requestId"],
     "identity-mcp.account_suspend": ["accountId"],
     "identity-mcp.grant_revoke": ["grantId"],
@@ -326,15 +338,20 @@ function commonInputProperties() {
     definitionType: string,
     delta: object,
     description: string,
+    detail: string,
     dispatchId: string,
     digestRefs: array,
     displayName: string,
     dryRun: boolean,
+    blocking: boolean,
     edges: array,
     effectiveInstructionPacketRef: string,
     email: string,
     endpoint: string,
     envelopeId: string,
+    question: object,
+    options: array,
+    selectedOptionId: string,
     evidenceRefs: array,
     expiresAt: string,
     externalUpgradePackageRef: string,
@@ -345,6 +362,7 @@ function commonInputProperties() {
     grantPermissions: array,
     grantRole: string,
     hardConstraints: object,
+    inputText: string,
     holderRef: string,
     idempotencyKey: string,
     leaseId: string,
@@ -439,6 +457,7 @@ function commonInputProperties() {
 function isReadOnlyTool(name) {
   return [
     ".state_get",
+    ".confirmation_status",
     ".room_wait",
     ".node_probe",
     ".dispatch_status",
@@ -1092,6 +1111,17 @@ async function dispatchTool(state, name, args, context = {}) {
       return permissionStatus(state, args);
     case "permission-mcp.permission_resolve":
       return permissionResolve(state, args);
+    case "human-review-mcp.confirmation_request_submit":
+      return {request: createHumanConfirmationRequest(state, {...args, nodeId: context?.principal?.kind === "agent_node" ? context.principal.id : args.nodeId})};
+    case "human-review-mcp.confirmation_status": {
+      const confirmation = (state.humanConfirmationRequests || []).find((item) => item.requestId === args.requestId);
+      if (!confirmation) return {ok: false, error: "human_confirmation_not_found"};
+      return {request: confirmation};
+    }
+    case "human-review-mcp.confirmation_consume":
+      return {request: consumeHumanConfirmation(state, args.requestId, {actor: context?.principal?.id || "mcp-client"})};
+    case "human-review-mcp.confirmation_decide":
+      return {request: decideHumanConfirmation(state, args.requestId, args, {actor: context?.principal?.id || "mcp-client"})};
     case "review-mcp.review_plan_create":
       return reviewPlanCreate(state, args);
     case "review-mcp.review_bundle_register":

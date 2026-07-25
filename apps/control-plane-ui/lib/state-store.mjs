@@ -21,7 +21,9 @@ const projectShardCollections = [
   "closeBarriers",
   "progressSnapshots",
   "agentControlCommands",
-  "agentExecutionEvents"
+  "agentExecutionEvents",
+  "humanConfirmationRequests",
+  "humanDirectives"
 ];
 const projectShardCollectionLimits = {
   taskGroups: 2000,
@@ -36,7 +38,9 @@ const projectShardCollectionLimits = {
   closeBarriers: 2000,
   progressSnapshots: 5000,
   agentControlCommands: 5000,
-  agentExecutionEvents: 1000
+  agentExecutionEvents: 1000,
+  humanConfirmationRequests: 2000,
+  humanDirectives: 2000
 };
 
 export function isStateStoreConflict(error) {
@@ -48,8 +52,8 @@ const centralStateCache = new Map();
 
 function statCacheKey(path) {
   try {
-    const stat = statSync(path);
-    return `${stat.ino}:${stat.mtimeMs}:${stat.size}`;
+    const stat = statSync(path, {bigint: true});
+    return `${stat.ino}:${stat.mtimeNs}:${stat.size}`;
   } catch {
     return null;
   }
@@ -331,7 +335,9 @@ function writePostgresProjectShards(projectShards, options) {
 
 function withoutInternalStateFields(state) {
   const clean = {...state};
-  delete clean.__loadedStateVersion;
+  for (const key of Object.keys(clean)) {
+    if (key.startsWith("__")) delete clean[key];
+  }
   return clean;
 }
 

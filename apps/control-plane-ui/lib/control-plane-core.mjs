@@ -371,7 +371,9 @@ export function normalizeTaskGroupLanguagePolicy(input = {}, fallback = {}) {
     languageName: String(rawPolicy.languageName || preset.languageName || preset.languageTag),
     ...(rawPolicy.script || preset.script ? {script: String(rawPolicy.script || preset.script)} : {}),
     scope: scope.length ? scope : [...defaultLanguagePolicy.scope],
-    enforcement: rawPolicy.enforcement === "advisory" ? "advisory" : "required",
+    enforcement: ["advisory", "required"].includes(rawPolicy.enforcement)
+      ? rawPolicy.enforcement
+      : fallbackPolicy.enforcement === "advisory" ? "advisory" : "required",
     fallback: normalizeLanguageFallback(rawPolicy.fallback, fallbackPolicy.fallback)
   };
 }
@@ -450,6 +452,9 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.mcpProbeNodes ||= [];
   state.agentJoinTokens ||= [];
   state.agentGatewayEvents ||= [];
+  state.organizations ||= [];
+  state.humanConfirmationRequests ||= [];
+  state.humanDirectives ||= [];
   state.agentControlCommands ||= [];
   state.agentControlSequence ||= 0;
   state.agentExecutionEvents ||= [];
@@ -500,8 +505,73 @@ export function ensureRuntimeCollections(state, options = {}) {
   ensureDefaultServiceAccounts(state);
   ensureDefaultAccessGrants(state);
   ensureDefaultAgents(state);
+  ensureOrganizations(state);
   computeProgressSnapshots(state);
   return state;
+}
+
+export const DEFAULT_ORGANIZATION_ID = "org_default";
+
+const defaultOrganizationQuotas = {
+  maxMembers: Number(process.env.AIMAC_ORG_DEFAULT_MAX_MEMBERS || 50),
+  maxProjects: Number(process.env.AIMAC_ORG_DEFAULT_MAX_PROJECTS || 20),
+  maxTaskGroups: Number(process.env.AIMAC_ORG_DEFAULT_MAX_TASK_GROUPS || 200),
+  maxAgents: Number(process.env.AIMAC_ORG_DEFAULT_MAX_AGENTS || 100)
+};
+
+function ensureOrganizations(state) {
+  if (!state.organizations.some((org) => org.orgId === DEFAULT_ORGANIZATION_ID)) {
+    const at = new Date().toISOString();
+    state.organizations.push({
+      schemaVersion: "organization/v1",
+      orgId: DEFAULT_ORGANIZATION_ID,
+      name: "默认组织",
+      status: "active",
+      quotas: {...defaultOrganizationQuotas},
+      usage: {members: 0, projects: 0, taskGroups: 0, agents: 0},
+      initialAdminAccountId: "acct_workspace_owner",
+      createdBy: "system",
+      createdAt: at,
+      updatedAt: at
+    });
+  }
+  for (const account of state.accounts || []) {
+    if (["system_admin", "service_account"].includes(account.accountType)) continue;
+    account.organizationId ||= DEFAULT_ORGANIZATION_ID;
+  }
+  for (const project of state.projects || []) project.organizationId ||= DEFAULT_ORGANIZATION_ID;
+  for (const agent of state.agents || []) agent.organizationId ||= DEFAULT_ORGANIZATION_ID;
+  for (const node of state.agentRuntimeNodes || []) node.organizationId ||= DEFAULT_ORGANIZATION_ID;
+  for (const token of state.agentJoinTokens || []) token.organizationId ||= DEFAULT_ORGANIZATION_ID;
+  recomputeOrganizationUsage(state);
+}
+
+export function recomputeOrganizationUsage(state) {
+  const projectOrg = new Map((state.projects || []).map((project) => [project.id, project.organizationId || DEFAULT_ORGANIZATION_ID]));
+  for (const org of state.organizations || []) {
+    org.usage = {
+      members: (state.accounts || []).filter((account) => account.organizationId === org.orgId && account.status !== "disabled").length,
+      projects: (state.projects || []).filter((project) => (project.organizationId || DEFAULT_ORGANIZATION_ID) === org.orgId && project.status !== "deleted").length,
+      taskGroups: (state.taskGroups || []).filter((taskGroup) => projectOrg.get(taskGroup.projectId) === org.orgId && !["closed", "aborted"].includes(taskGroup.status)).length,
+      agents: (state.agentRuntimeNodes || []).filter((node) => (node.organizationId || DEFAULT_ORGANIZATION_ID) === org.orgId && node.status !== "revoked").length
+    };
+  }
+}
+
+export function organizationOf(state, orgId) {
+  return (state.organizations || []).find((org) => org.orgId === orgId) || null;
+}
+
+export function organizationQuotaCheck(state, orgId, kind) {
+  const org = organizationOf(state, orgId);
+  if (!org) return {allowed: false, error: "organization_not_found"};
+  if (org.status !== "active") return {allowed: false, error: "organization_suspended"};
+  recomputeOrganizationUsage(state);
+  const quotaKeyByKind = {members: "maxMembers", projects: "maxProjects", taskGroups: "maxTaskGroups", agents: "maxAgents"};
+  const quota = Number(org.quotas?.[quotaKeyByKind[kind]] || 0);
+  const usage = Number(org.usage?.[kind] || 0);
+  if (usage >= quota) return {allowed: false, error: "org_quota_exceeded", quota, usage, kind};
+  return {allowed: true, quota, usage, kind};
 }
 
 function normalizeProjectOwnerAccessGrants(state) {
@@ -1238,16 +1308,26 @@ export function runAutonomousCycle(state, request = {}) {
       }
     }
   }
+  consumeQueuedHumanDirectives(state, request);
+  expireStaleQueuedDispatches(state);
   const taskGroups = (state.taskGroups || []).filter((taskGroup) => !request.taskGroupId || taskGroup.id === request.taskGroupId);
   for (const taskGroup of taskGroups) {
     if (["closed", "aborted"].includes(taskGroup.status) || ["active_paused_by_freeze", "active_paused_by_control"].includes(taskGroup.goalExecutionStatus)) continue;
     for (const workItem of taskGroup.workItems || []) {
       if (workItem.status === "superseded") continue;
-      if (["verified", "closed"].includes(workItem.status) && workItem.progress >= 100) continue;
+      if (["verified", "closed"].includes(workItem.status) && workItem.progress >= 100) {
+        if (workItem.status === "verified" && needsReviewBackfill(state, taskGroup, workItem)) {
+          const backfill = performIndependentReview(state, taskGroup, workItem, request, {backfill: true});
+          changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, progress: workItem.progress, awaiting: backfill.verdict === "passed" ? null : "independent_review_backfill", review: backfill});
+        }
+        continue;
+      }
       if (["checkpoint_submitted", "code_complete", "review_requested", "review_passed", "verification_ready"].includes(workItem.status)) {
         const review = performIndependentReview(state, taskGroup, workItem, request);
-        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, progress: workItem.progress, awaiting: review.verdict === "passed" ? null : "independent_review", review});
-        continue;
+        if (review.reviewed !== false) {
+          changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, progress: workItem.progress, awaiting: review.verdict === "passed" ? null : "independent_review", review});
+          continue;
+        }
       }
       const missingDefinition = relatedSharedDefinitions(state, taskGroup, workItem).find((definition) => definition.status !== "active");
       if (missingDefinition) {
@@ -1301,6 +1381,7 @@ export function runAutonomousCycle(state, request = {}) {
       if (request.mode !== "until_blocked" && request.mode !== "all") break;
     }
     recomputeTaskGroup(taskGroup);
+    ensureTaskAnalysis(state, taskGroup);
     computeCompletionReadiness(state, taskGroup.id, request);
     computeCloseBarrier(state, taskGroup.id, request);
   }
@@ -1389,6 +1470,7 @@ function dispatchWorkItem(state, taskGroup, workItem, contract, repositoryTarget
   }
   workItem.progress = Math.max(Number(workItem.progress || 0), 5);
   workItem.repositoryOutputTargetRef = repositoryTarget.targetId;
+  ensureTaskGroupRole(state, taskGroup, contract.roleId, "auto");
   taskGroup.goalExecutionStatus = "active";
   const dispatch = enqueueAgentDispatch(state, contract, repositoryTarget);
   appendEvent(state, "command_dispatched", "WorkSession", contract.sessionId, "orchestrator", {projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workItemId: workItem.id, sessionId: contract.sessionId, dispatchId: dispatch.dispatchId});
@@ -1429,10 +1511,14 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {})
     return {accepted: false, status: 409, error: "agent_dispatch_contract_mismatch"};
   }
   const expectedLanguagePolicyDigest = contract.languagePolicyDigest || digestOf(normalizeTaskGroupLanguagePolicy(taskGroup.languagePolicy));
-  if (!checkpointInput.languagePolicyDigest) {
-    return {accepted: false, status: 409, error: "checkpoint_language_policy_digest_required"};
-  }
-  if (checkpointInput.languagePolicyDigest !== expectedLanguagePolicyDigest) {
+  if (contract.languagePolicyDigest) {
+    if (!checkpointInput.languagePolicyDigest) {
+      return {accepted: false, status: 409, error: "checkpoint_language_policy_digest_required"};
+    }
+    if (checkpointInput.languagePolicyDigest !== expectedLanguagePolicyDigest) {
+      return {accepted: false, status: 409, error: "checkpoint_language_policy_digest_mismatch"};
+    }
+  } else if (checkpointInput.languagePolicyDigest && checkpointInput.languagePolicyDigest !== expectedLanguagePolicyDigest) {
     return {accepted: false, status: 409, error: "checkpoint_language_policy_digest_mismatch"};
   }
   const drift = evaluateRoleDrift(state, {sessionId: checkpointInput.sessionId, taskGroupId: taskGroup.id, actionScopeRefs: (checkpointInput.repositoryOutputTargetRefs || []).map((ref) => `RepositoryOutputTarget:${ref}`)});
@@ -1513,6 +1599,7 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {})
     dispatch.checkpointRef = `checkpoint:${checkpoint.runId}`;
   }
   recomputeTaskGroup(taskGroup);
+  ensureTaskAnalysis(state, taskGroup);
   appendEvent(state, "checkpoint_submitted", "Checkpoint", `${checkpoint.taskGroupId}:${checkpoint.workId}:${checkpoint.runId}`, session.roleId, checkpoint);
   return {accepted: true, status: 201, checkpoint};
 }
@@ -1602,8 +1689,9 @@ export function runAgentRuntimeWorker(state, request = {}) {
 function runLocalGitArtifactWorker(state, request) {
   const {dispatch, taskGroup, workItem, session, target, root} = request;
   const at = new Date().toISOString();
-  const languagePolicy = normalizeTaskGroupLanguagePolicy(taskGroup.languagePolicy);
-  const languagePolicyDigest = digestOf(languagePolicy);
+  const workerContract = state.agentTaskContracts.find((item) => item.sessionId === session.sessionId && item.runId === dispatch.runId);
+  const languagePolicy = workerContract?.languagePolicy || normalizeTaskGroupLanguagePolicy(taskGroup.languagePolicy);
+  const languagePolicyDigest = workerContract?.languagePolicyDigest || digestOf(languagePolicy);
   const manifestPath = target.artifactManifestPath || `docs/artifact-manifests/${workItem.id}.json`;
   const outputPath = `docs/agent-runtime-output/${taskGroup.id}/${workItem.id}.md`;
   if (!canUseGitPath(manifestPath)) throw new Error("artifact_manifest_must_be_git_trackable");
@@ -2057,10 +2145,15 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
     repository_output_target_terminal: (state.repositoryOutputs || []).filter((target) => target.taskGroupId === taskGroupId).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status)),
     all_required_outputs_present: workItems.length === 0 || workItems.some((item) => !["verified", "closed"].includes(item.status)),
     all_required_evidence_present: !taskGroupCheckpoints.some((checkpoint) => checkpoint.commitRefs?.length && checkpoint.pushRefs?.length && checkpoint.artifactManifestRefs?.length),
-    all_required_validation_present: verifiedItems.some((item) => !item.reviewBundleRef && !(state.reviewBundles || []).some((bundle) => bundle.workItemId === item.id && bundle.verdict === "passed")),
+    all_required_validation_present: verifiedItems.some((item) =>
+      taskGroupCheckpoints.some((checkpoint) => checkpoint.workId === item.id) &&
+      !item.reviewBundleRef &&
+      !(state.reviewBundles || []).some((bundle) => bundle.workItemId === item.id && bundle.verdict === "passed")),
     no_pending_permission_or_approval: (state.permissionRequests || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)) ||
       (state.approvalRequests || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)),
-    no_unreconciled_command_effect: (state.commandEffects || []).some((item) => item.taskGroupId === taskGroupId && item.status !== "reconciled")
+    no_unreconciled_command_effect: (state.commandEffects || []).some((item) => item.taskGroupId === taskGroupId && item.status !== "reconciled"),
+    no_pending_human_confirmations: (state.humanConfirmationRequests || []).some((item) => item.taskGroupId === taskGroupId && item.status === "pending"),
+    no_pending_human_directives: (state.humanDirectives || []).some((item) => item.taskGroupId === taskGroupId && ["queued", "acknowledged"].includes(item.status))
   };
   const blockers = [];
   if (checkFailures.all_required_outputs_present) blockers.push({objectType: "WorkItem", objectId: taskGroup?.id || taskGroupId, status: "open"});
@@ -2078,6 +2171,8 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
   if (checkFailures.no_pending_review_bundle) blockers.push({objectType: "ReviewBundle", objectId: taskGroupId, status: "pending"});
   if (checkFailures.no_blocking_derived_task_request) blockers.push({objectType: "DerivedTaskRequest", objectId: taskGroupId, status: "pending"});
   if (checkFailures.no_unreconciled_command_effect) blockers.push({objectType: "CommandEffect", objectId: taskGroupId, status: "unreconciled"});
+  if (checkFailures.no_pending_human_confirmations) blockers.push({objectType: "HumanConfirmationRequest", objectId: taskGroupId, status: "pending"});
+  if (checkFailures.no_pending_human_directives) blockers.push({objectType: "HumanDirective", objectId: taskGroupId, status: "pending"});
   const checks = Object.keys(checkFailures);
   const clear = blockers.length === 0;
   const checkResults = Object.fromEntries(checks.map((check) => [check, {
@@ -2145,6 +2240,8 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     no_pending_review_bundles: forTaskGroup(state.reviewBundles).some((item) => !["consumed", "closed"].includes(item.status)),
     all_rule_sources_resolved: (state.ruleSourceResolutions || []).some((item) => item.taskGroupId === taskGroupId && item.status === "conflict"),
     completion_readiness_clear: readiness.status !== "clear",
+    no_pending_human_confirmations: forTaskGroup(state.humanConfirmationRequests).some((item) => item.status === "pending"),
+    no_pending_human_directives: forTaskGroup(state.humanDirectives).some((item) => ["queued", "acknowledged"].includes(item.status)),
     no_active_role_drift_blockers: readiness.blockingObjects.some((item) => item.objectType === "RoleDriftGuard"),
     all_effective_instruction_packets_terminal: forTaskGroup(state.effectiveInstructionPackets).some((packet) => !["active", "consumed", "expired", "superseded"].includes(packet.status)),
     all_shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => definition.status !== "active"),
@@ -2481,7 +2578,7 @@ function inferWorkSignals(workItem = {}, taskGroup = {}) {
 }
 
 function ensureRepositoryTarget(state, project, taskGroup, workItem, request) {
-  const existing = state.repositoryOutputs.find((target) => target.taskGroupId === taskGroup?.id && target.workItemId === workItem?.id);
+  const existing = state.repositoryOutputs.find((target) => target.taskGroupId === taskGroup?.id && target.workItemId === workItem?.id && target.status !== "superseded");
   if (existing) {
     existing.remote ||= request.remote || "origin";
     const existingRemoteUrl = gitRemoteUrl(request.root, existing.remote);
@@ -2771,7 +2868,304 @@ function advanceWorkItemToReviewRequested(state, workItem, checkpoint) {
   workItem.reviewState = "review_requested";
 }
 
-export function performIndependentReview(state, taskGroup, workItem, request = {}) {
+export function effectiveTaskGroupConfig(state, taskGroup) {
+  const project = (state.projects || []).find((item) => item.id === taskGroup?.projectId);
+  const base = project?.config || {};
+  const overrides = taskGroup?.configOverrides || null;
+  return {
+    configSource: overrides ? "customized" : "inherited",
+    repositories: overrides?.repositories ?? base.repositories ?? [],
+    baselineData: overrides?.baselineData ?? base.baselineData ?? [],
+    businessRules: overrides?.businessRules ?? base.businessRules ?? [],
+    defaultRoles: overrides?.defaultRoles ?? base.defaultRoles ?? []
+  };
+}
+
+export function ensureTaskAnalysis(state, taskGroup) {
+  if (!taskGroup) return null;
+  const statusOf = (workItem) => {
+    if (["verified", "closed"].includes(workItem.status)) return "completed";
+    if (["blocked", "failed"].includes(workItem.status)) return "blocked";
+    if (["draft", "ready"].includes(workItem.status)) return "pending";
+    return "in_progress";
+  };
+  const noteOf = (workItem) => {
+    if (workItem.blockedReason) return `受阻原因：${workItem.blockedReason}`;
+    if (workItem.reviewState === "changes_requested") return "独立评审要求返工";
+    if (workItem.status === "verified") return "已通过独立评审与验证";
+    return "";
+  };
+  const majors = (taskGroup.workItems || []).filter((item) => !item.splitFrom);
+  const childrenByParent = new Map();
+  for (const item of (taskGroup.workItems || []).filter((child) => child.splitFrom)) {
+    childrenByParent.set(item.splitFrom, [...(childrenByParent.get(item.splitFrom) || []), item]);
+  }
+  const items = majors.map((workItem, majorIndex) => {
+    const splitChildren = childrenByParent.get(workItem.id) || [];
+    const children = splitChildren.length
+      ? splitChildren.map((child, childIndex) => ({
+          itemId: `ta_${majorIndex + 1}_${childIndex + 1}`,
+          title: child.title || child.id,
+          kind: "minor",
+          status: statusOf(child),
+          progress: Math.max(0, Math.min(100, Number(child.progress || 0))),
+          note: noteOf(child),
+          workItemRefs: [child.id]
+        }))
+      : (workItem.requirements || []).slice(0, 20).map((requirement, childIndex) => ({
+          itemId: `ta_${majorIndex + 1}_${childIndex + 1}`,
+          title: String(requirement).slice(0, 200),
+          kind: "minor",
+          status: statusOf(workItem),
+          progress: Math.max(0, Math.min(100, Number(workItem.progress || 0))),
+          note: "",
+          workItemRefs: [workItem.id]
+        }));
+    return {
+      itemId: `ta_${majorIndex + 1}`,
+      title: workItem.title || workItem.id,
+      kind: "major",
+      status: workItem.status === "superseded" ? "in_progress" : statusOf(workItem),
+      progress: Math.max(0, Math.min(100, Number(workItem.progress || 0))),
+      note: noteOf(workItem),
+      workItemRefs: [workItem.id],
+      children
+    };
+  });
+  const contentDigest = digestOf(items);
+  if (taskGroup.taskAnalysis?.contentDigest === contentDigest) return taskGroup.taskAnalysis;
+  const at = new Date().toISOString();
+  taskGroup.taskAnalysis = {
+    schemaVersion: "task-analysis/v1",
+    taskGroupId: taskGroup.id,
+    items,
+    contentDigest,
+    generatedBy: "orchestrator",
+    generatedAt: taskGroup.taskAnalysis?.generatedAt || at,
+    updatedAt: at
+  };
+  return taskGroup.taskAnalysis;
+}
+
+export function ensureTaskGroupRole(state, taskGroup, roleId, addedBy = "auto") {
+  if (!taskGroup || !roleId) return null;
+  taskGroup.roles ||= [];
+  let role = taskGroup.roles.find((item) => item.roleId === roleId);
+  if (!role) {
+    role = {roleId, status: "active", addedBy, addedAt: new Date().toISOString()};
+    taskGroup.roles.push(role);
+    if (addedBy === "auto") appendEvent(state, "progress", "TaskGroup", taskGroup.id, "scheduler", {autoAddedRole: roleId});
+  }
+  return role;
+}
+
+export function createHumanConfirmationRequest(state, input = {}) {
+  ensureRuntimeCollections(state);
+  const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === input.dispatchId);
+  const taskGroup = (state.taskGroups || []).find((item) => item.id === (input.taskGroupId || dispatch?.taskGroupId));
+  if (!taskGroup) throw Object.assign(new Error("task_group_not_found"), {status: 404});
+  const summary = String(input.question?.summary || input.summary || "").trim().slice(0, 300);
+  if (!summary) throw Object.assign(new Error("human_confirmation_question_required"), {status: 400});
+  const aiOptions = (Array.isArray(input.options) ? input.options : [])
+    .filter((option) => option && String(option.label || "").trim())
+    .slice(0, 8)
+    .map((option, index) => ({
+      optionId: String(option.optionId || `opt_${index + 1}`),
+      label: String(option.label).trim().slice(0, 200),
+      description: String(option.description || "").slice(0, 1000),
+      ...(option.recommended === true ? {recommended: true} : {})
+    }))
+    .filter((option) => option.optionId !== "none");
+  if (!aiOptions.length) throw Object.assign(new Error("human_confirmation_options_required"), {status: 400});
+  const at = new Date().toISOString();
+  const request = {
+    schemaVersion: "human-confirmation-request/v1",
+    requestId: createId("hcr"),
+    projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id,
+    workItemId: input.workItemId || dispatch?.workItemId || null,
+    sessionId: input.sessionId || dispatch?.sessionId || null,
+    dispatchId: dispatch?.dispatchId || null,
+    nodeId: input.nodeId || dispatch?.assignedNodeId || null,
+    question: {
+      summary,
+      detail: String(input.question?.detail || input.detail || "").slice(0, 4000),
+      evidenceRefs: unique(input.question?.evidenceRefs || input.evidenceRefs || []).slice(0, 20)
+    },
+    options: [...aiOptions, {optionId: "none", label: "不选择（自定义输入）", description: "以上选项均不采用，由人工直接输入确认内容。", system: true}],
+    blocking: input.blocking !== false,
+    status: "pending",
+    expiresAt: input.expiresAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    createdAt: at,
+    updatedAt: at
+  };
+  state.humanConfirmationRequests.unshift(request);
+  if (request.blocking && dispatch && ["running", "queued"].includes(dispatch.status)) {
+    dispatch.status = "blocked";
+    dispatch.blockedReason = "awaiting_human_confirmation";
+    dispatch.humanConfirmationRef = request.requestId;
+    dispatch.updatedAt = at;
+    const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
+    if (session && !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status)) {
+      session.status = "blocked";
+      session.blockedReason = "awaiting_human_confirmation";
+      session.updatedAt = at;
+    }
+    taskGroup.health = "attention";
+    taskGroup.updatedAt = at;
+  }
+  appendEvent(state, "decision_request", "HumanConfirmationRequest", request.requestId, "agent-runtime", {taskGroupId: taskGroup.id, summary, blocking: request.blocking});
+  return request;
+}
+
+export function decideHumanConfirmation(state, requestId, decision = {}, options = {}) {
+  ensureRuntimeCollections(state);
+  const request = (state.humanConfirmationRequests || []).find((item) => item.requestId === requestId);
+  if (!request) throw Object.assign(new Error("human_confirmation_not_found"), {status: 404});
+  if (request.status !== "pending") throw Object.assign(new Error("human_confirmation_not_pending"), {status: 409});
+  const selectedOptionId = String(decision.selectedOptionId || "");
+  const option = (request.options || []).find((item) => item.optionId === selectedOptionId);
+  if (!option) throw Object.assign(new Error("human_confirmation_option_invalid"), {status: 400});
+  const inputText = String(decision.inputText || "").trim().slice(0, 4000);
+  if (selectedOptionId === "none" && !inputText) throw Object.assign(new Error("human_confirmation_input_required_for_none"), {status: 400});
+  const at = new Date().toISOString();
+  request.status = "answered";
+  request.decision = {selectedOptionId, selectedLabel: option.label, inputText, decidedBy: options.actor || "unknown", decidedAt: at};
+  request.updatedAt = at;
+  if (request.dispatchId) {
+    const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === request.dispatchId);
+    if (dispatch && dispatch.status === "blocked" && dispatch.blockedReason === "awaiting_human_confirmation") {
+      dispatch.status = "queued";
+      delete dispatch.blockedReason;
+      delete dispatch.assignedNodeId;
+      delete dispatch.claimedAt;
+      delete dispatch.claimExpiresAt;
+      dispatch.updatedAt = at;
+      const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
+      if (session && session.status === "blocked" && session.blockedReason === "awaiting_human_confirmation") {
+        session.status = "active";
+        delete session.blockedReason;
+        session.updatedAt = at;
+      }
+    }
+  }
+  appendEvent(state, "decision", "HumanConfirmationRequest", request.requestId, options.actor || "human-reviewer", {selectedOptionId, hasInput: Boolean(inputText)});
+  return request;
+}
+
+export function consumeHumanConfirmation(state, requestId, options = {}) {
+  const request = (state.humanConfirmationRequests || []).find((item) => item.requestId === requestId);
+  if (!request) throw Object.assign(new Error("human_confirmation_not_found"), {status: 404});
+  if (request.status === "answered") {
+    request.status = "consumed";
+    request.consumedBy = options.actor || "agent-runtime";
+    request.updatedAt = new Date().toISOString();
+  }
+  return request;
+}
+
+export function createHumanDirective(state, input = {}, options = {}) {
+  ensureRuntimeCollections(state);
+  const taskGroup = input.taskGroupId ? (state.taskGroups || []).find((item) => item.id === input.taskGroupId) : null;
+  const projectId = taskGroup?.projectId || input.projectId;
+  if (!projectId) throw Object.assign(new Error("human_directive_project_required"), {status: 400});
+  const directiveType = ["pause", "resume", "cancel", "adjust_priority", "add_requirement", "free_text"].includes(input.directiveType)
+    ? input.directiveType
+    : "free_text";
+  const instruction = String(input.instruction || "").trim().slice(0, 4000);
+  if (!instruction && directiveType === "free_text") throw Object.assign(new Error("human_directive_instruction_required"), {status: 400});
+  const at = new Date().toISOString();
+  const directive = {
+    schemaVersion: "human-directive/v1",
+    directiveId: createId("hd"),
+    projectId,
+    taskGroupId: taskGroup?.id || null,
+    directiveType,
+    instruction,
+    issuedBy: options.actor || "unknown",
+    status: "queued",
+    appliedActions: [],
+    createdAt: at,
+    updatedAt: at
+  };
+  state.humanDirectives.unshift(directive);
+  appendEvent(state, "command_created", "HumanDirective", directive.directiveId, options.actor || "human-operator", {directiveType, taskGroupId: directive.taskGroupId});
+  return directive;
+}
+
+export function consumeQueuedHumanDirectives(state, request = {}) {
+  const applied = [];
+  for (const directive of (state.humanDirectives || []).filter((item) => item.status === "queued")) {
+    const at = new Date().toISOString();
+    directive.status = "acknowledged";
+    directive.updatedAt = at;
+    const taskGroup = directive.taskGroupId ? (state.taskGroups || []).find((item) => item.id === directive.taskGroupId) : null;
+    try {
+      if (directive.directiveType === "pause" && taskGroup) {
+        taskGroup.goalExecutionStatus = "active_paused_by_freeze";
+        taskGroup.pauseReason = "human_directive";
+        directive.appliedActions.push({action: "task_group_pause", ref: `TaskGroup:${taskGroup.id}`});
+      } else if (directive.directiveType === "resume" && taskGroup) {
+        taskGroup.goalExecutionStatus = "active";
+        delete taskGroup.pauseReason;
+        directive.appliedActions.push({action: "task_group_resume", ref: `TaskGroup:${taskGroup.id}`});
+      } else if (directive.directiveType === "cancel" && taskGroup) {
+        for (const dispatch of (state.agentDispatches || []).filter((item) => item.taskGroupId === taskGroup.id && ["queued", "blocked"].includes(item.status))) {
+          dispatch.status = "cancelled";
+          dispatch.failureReason = "human_directive_cancel";
+          dispatch.updatedAt = at;
+        }
+        directive.appliedActions.push({action: "task_group_cancel_pending_dispatches", ref: `TaskGroup:${taskGroup.id}`});
+      } else if (directive.directiveType === "add_requirement" && taskGroup) {
+        taskGroup.humanGuidance = [...(taskGroup.humanGuidance || []), {directiveRef: directive.directiveId, text: directive.instruction, addedAt: at}];
+        directive.appliedActions.push({action: "task_group_requirement_appended", ref: `TaskGroup:${taskGroup.id}`});
+      } else {
+        taskGroup?.humanGuidance
+          ? taskGroup.humanGuidance.push({directiveRef: directive.directiveId, text: directive.instruction, addedAt: at})
+          : taskGroup && (taskGroup.humanGuidance = [{directiveRef: directive.directiveId, text: directive.instruction, addedAt: at}]);
+        directive.appliedActions.push({action: taskGroup ? "task_group_guidance_appended" : "recorded_without_task_group", ref: taskGroup ? `TaskGroup:${taskGroup.id}` : `Project:${directive.projectId}`});
+      }
+      directive.status = "applied";
+    } catch (error) {
+      directive.status = "rejected";
+      directive.rejectReason = String(error.message || error).slice(0, 500);
+    }
+    directive.updatedAt = new Date().toISOString();
+    applied.push({directiveId: directive.directiveId, status: directive.status, appliedActions: directive.appliedActions});
+    appendEvent(state, "command_succeeded", "HumanDirective", directive.directiveId, "orchestrator", {status: directive.status});
+  }
+  return applied;
+}
+
+export function expireStaleQueuedDispatches(state) {
+  const nowMs = Date.now();
+  const at = new Date().toISOString();
+  const expired = [];
+  for (const dispatch of state.agentDispatches || []) {
+    if (dispatch.status !== "queued") continue;
+    const contract = (state.agentTaskContracts || []).find((item) => item.sessionId === dispatch.sessionId && item.runId === dispatch.runId);
+    if (contract && (!contract.expiresAt || new Date(contract.expiresAt).getTime() > nowMs)) continue;
+    dispatch.status = "cancelled";
+    dispatch.failureReason = contract ? "task_contract_expired" : "task_contract_missing";
+    dispatch.updatedAt = at;
+    const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
+    if (session && !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status)) {
+      session.status = "recycled";
+      session.updatedAt = at;
+    }
+    expired.push(dispatch.dispatchId);
+    appendEvent(state, "command_failed", "AgentDispatch", dispatch.dispatchId, "scheduler", {projectId: dispatch.projectId, taskGroupId: dispatch.taskGroupId, reason: dispatch.failureReason});
+  }
+  return expired;
+}
+
+export function needsReviewBackfill(state, taskGroup, workItem) {
+  if (workItem.reviewBundleRef) return false;
+  if ((state.reviewBundles || []).some((bundle) => bundle.workItemId === workItem.id && bundle.verdict === "passed")) return false;
+  return (state.checkpoints || []).some((checkpoint) => checkpoint.taskGroupId === taskGroup.id && checkpoint.workId === workItem.id);
+}
+
+export function performIndependentReview(state, taskGroup, workItem, request = {}, options = {}) {
   const checkpoint = (state.checkpoints || []).find((item) => item.taskGroupId === taskGroup.id && item.workId === workItem.id);
   if (!checkpoint) return {reviewed: false, reason: "checkpoint_missing"};
   const target = (state.repositoryOutputs || []).find((item) => (checkpoint.repositoryOutputTargetRefs || []).includes(item.targetId));
@@ -2792,32 +3186,58 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
   if (target && changedPaths.some((path) => !pathMatchesAllowlist(path, target.pathAllowlist || []))) findings.push("changed_paths_outside_allowlist");
   const at = new Date().toISOString();
   const verdict = findings.length ? "changes_requested" : "passed";
-  const bundle = {
-    schemaVersion: "review-bundle/v1",
-    bundleId: createId("rvb"),
-    projectId: taskGroup.projectId,
-    taskGroupId: taskGroup.id,
-    workItemId: workItem.id,
-    checkpointRef: `checkpoint:${checkpoint.runId}`,
-    reviewerRole: "reviewer",
-    reviewMode: "independent_control_plane_review",
-    verdict,
-    findings,
-    evidenceRefs: [
-      `review-evidence:commit:${finalCommit || "missing"}`,
-      ...(checkpoint.pushRefs || []).map((push) => `review-evidence:push:${push.remote}/${push.ref}:${push.remoteSha}`)
-    ],
-    status: "consumed",
-    createdAt: at,
-    updatedAt: at
-  };
-  state.reviewBundles.unshift(bundle);
-  state.reviewBundles = state.reviewBundles.slice(0, 160);
+  const checkpointRef = `checkpoint:${checkpoint.runId}`;
+  const previousRejections = (state.reviewBundles || []).filter((item) =>
+    item.workItemId === workItem.id && item.verdict === "changes_requested");
+  const duplicateRejection = verdict === "changes_requested"
+    ? previousRejections.find((item) => item.checkpointRef === checkpointRef && JSON.stringify(item.findings || []) === JSON.stringify(findings))
+    : null;
+  let bundle = duplicateRejection || null;
+  if (!bundle) {
+    bundle = {
+      schemaVersion: "review-bundle/v1",
+      bundleId: createId("rvb"),
+      projectId: taskGroup.projectId,
+      taskGroupId: taskGroup.id,
+      workItemId: workItem.id,
+      checkpointRef,
+      reviewerRole: "reviewer",
+      reviewMode: "independent_control_plane_review",
+      verdict,
+      findings,
+      evidenceRefs: [
+        `review-evidence:commit:${finalCommit || "missing"}`,
+        ...(checkpoint.pushRefs || []).map((push) => `review-evidence:push:${push.remote}/${push.ref}:${push.remoteSha}`)
+      ],
+      status: "consumed",
+      createdAt: at,
+      updatedAt: at
+    };
+    state.reviewBundles.unshift(bundle);
+    state.reviewBundles = state.reviewBundles.slice(0, 160);
+  }
   if (verdict !== "passed") {
     workItem.reviewState = "changes_requested";
     workItem.updatedAt = at;
-    addBlocker(taskGroup, "S1", `Independent review requested changes for ${workItem.id}: ${findings.join(",")}`);
-    appendEvent(state, "review_result", "WorkItem", workItem.id, "reviewer", {verdict, findings, reviewBundleRef: bundle.bundleId});
+    const rejectionCount = previousRejections.length + (duplicateRejection ? 0 : 1);
+    const maxReworkAttempts = Math.max(1, Number(process.env.AIMAC_REVIEW_MAX_REWORK_ATTEMPTS || 3));
+    if (options.backfill || rejectionCount >= maxReworkAttempts) {
+      if (!options.backfill) {
+        workItem.status = "blocked";
+        workItem.blockedReason = "independent_review_changes_requested";
+      }
+      addBlocker(taskGroup, "S1", `Independent review requested changes for ${workItem.id}: ${findings.join(",")}`);
+    } else {
+      if (target && ["pushed", "committed"].includes(target.status)) {
+        target.status = "superseded";
+        target.updatedAt = at;
+      }
+      workItem.status = "ready";
+      workItem.progress = Math.min(Number(workItem.progress || 0), 60);
+      delete workItem.blockedReason;
+      addBlocker(taskGroup, "S2", `Independent review requeued ${workItem.id} for rework (attempt ${rejectionCount}/${maxReworkAttempts}): ${findings.join(",")}`);
+    }
+    if (!duplicateRejection) appendEvent(state, "review_result", "WorkItem", workItem.id, "reviewer", {verdict, findings, reviewBundleRef: bundle.bundleId});
     return {reviewed: true, verdict, reviewBundleRef: bundle.bundleId, findings};
   }
   let from = workItem.status;
@@ -2863,15 +3283,58 @@ export function pathMatchesAllowlist(path, allowlist) {
     if (!canUseGitPath(pattern)) return false;
     if (pattern.endsWith("/**")) return path === pattern.slice(0, -3) || path.startsWith(pattern.slice(0, -2));
     if (!pattern.includes("*")) return path === pattern;
-    const escaped = pattern
-      .split("**")
-      .map((segment) => segment
-        .split("*")
-        .map((piece) => piece.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
-        .join("[^/]*"))
-      .join(".*");
-    return new RegExp(`^${escaped}$`, "u").test(path);
+    return globPathMatches(pattern.split("/"), path.split("/"));
   });
+}
+
+function globPathMatches(patternSegments, pathSegments) {
+  let patternIndex = 0;
+  let pathIndex = 0;
+  let starPatternIndex = -1;
+  let starPathIndex = -1;
+  while (pathIndex < pathSegments.length) {
+    if (patternIndex < patternSegments.length && patternSegments[patternIndex] === "**") {
+      starPatternIndex = patternIndex;
+      starPathIndex = pathIndex;
+      patternIndex += 1;
+    } else if (patternIndex < patternSegments.length && globSegmentMatches(patternSegments[patternIndex], pathSegments[pathIndex])) {
+      patternIndex += 1;
+      pathIndex += 1;
+    } else if (starPatternIndex >= 0) {
+      starPathIndex += 1;
+      pathIndex = starPathIndex;
+      patternIndex = starPatternIndex + 1;
+    } else {
+      return false;
+    }
+  }
+  while (patternIndex < patternSegments.length && patternSegments[patternIndex] === "**") patternIndex += 1;
+  return patternIndex === patternSegments.length;
+}
+
+function globSegmentMatches(patternSegment, pathSegment) {
+  let patternIndex = 0;
+  let pathIndex = 0;
+  let starPatternIndex = -1;
+  let starPathIndex = -1;
+  while (pathIndex < pathSegment.length) {
+    if (patternIndex < patternSegment.length && patternSegment[patternIndex] === "*") {
+      starPatternIndex = patternIndex;
+      starPathIndex = pathIndex;
+      patternIndex += 1;
+    } else if (patternIndex < patternSegment.length && patternSegment[patternIndex] === pathSegment[pathIndex]) {
+      patternIndex += 1;
+      pathIndex += 1;
+    } else if (starPatternIndex >= 0) {
+      starPathIndex += 1;
+      pathIndex = starPathIndex;
+      patternIndex = starPatternIndex + 1;
+    } else {
+      return false;
+    }
+  }
+  while (patternIndex < patternSegment.length && patternSegment[patternIndex] === "*") patternIndex += 1;
+  return patternIndex === patternSegment.length;
 }
 
 export function defaultSourceConfig() {

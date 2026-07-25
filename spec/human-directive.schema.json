@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/human-directive.schema.json",
+  "title": "HumanDirective",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "directiveId",
+    "projectId",
+    "directiveType",
+    "issuedBy",
+    "status",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "human-directive/v1"
+    },
+    "directiveId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "directiveType": {
+      "enum": [
+        "pause",
+        "resume",
+        "cancel",
+        "adjust_priority",
+        "add_requirement",
+        "free_text"
+      ]
+    },
+    "instruction": {
+      "type": "string",
+      "maxLength": 4000
+    },
+    "issuedBy": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "queued",
+        "acknowledged",
+        "applied",
+        "rejected"
+      ]
+    },
+    "appliedActions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "rejectReason": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

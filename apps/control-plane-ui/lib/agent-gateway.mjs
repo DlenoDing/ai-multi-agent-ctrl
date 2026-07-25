@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { normalize, resolve, sep } from "node:path";
-import { createId, digestOf, ensureRuntimeCollections, languagePolicyDirective, normalizeTaskGroupLanguagePolicy } from "./control-plane-core.mjs";
+import { createId, digestOf, effectiveTaskGroupConfig, ensureRuntimeCollections, expireStaleQueuedDispatches, languagePolicyDirective, normalizeTaskGroupLanguagePolicy, organizationQuotaCheck } from "./control-plane-core.mjs";
 
 const DEFAULT_AGENT_MCP_TOOLS = [
   "agent-control-mcp.node_probe",
@@ -22,6 +22,9 @@ const DEFAULT_AGENT_MCP_TOOLS = [
   "permission-mcp.permission_probe",
   "permission-mcp.permission_request_submit",
   "permission-mcp.permission_status",
+  "human-review-mcp.confirmation_request_submit",
+  "human-review-mcp.confirmation_status",
+  "human-review-mcp.confirmation_consume",
   "ui-console-mcp.runtime_health_get",
   "ui-console-mcp.project_progress_get",
   "ui-console-mcp.task_group_progress_get",
@@ -66,7 +69,10 @@ export function ensureAgentGatewayCollections(state) {
 export function createAgentJoinToken(state, input = {}, options = {}) {
   ensureAgentGatewayCollections(state);
   const projectId = String(input.projectId || "").trim();
-  if (!state.projects.some((project) => project.id === projectId)) throw new Error("join_token_project_not_found");
+  const tokenProject = state.projects.find((project) => project.id === projectId);
+  if (!tokenProject) throw new Error("join_token_project_not_found");
+  const quota = organizationQuotaCheck(state, tokenProject.organizationId || "org_default", "agents");
+  if (!quota.allowed) throw gatewayError(quota.error || "org_quota_exceeded", 409);
   const ttlSeconds = boundedInteger(input.ttlSeconds, 60, 86400, 1800);
   if (input.maxUses !== undefined && Number(input.maxUses) !== 1) throw gatewayError("join_token_must_be_one_time", 400);
   const maxUses = 1;
@@ -77,6 +83,7 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
     schemaVersion: "agent-join-token/v1",
     joinTokenId: createId("ajt"),
     projectId,
+    organizationId: tokenProject.organizationId || "org_default",
     expectedNodeName: String(input.nodeName || input.expectedNodeName || "").trim() || null,
     allowedRoles,
     allowedMcpTools: mcpToolsForRoles(allowedRoles),
@@ -142,6 +149,7 @@ export function registerAgentNode(state, input = {}, options = {}) {
     schemaVersion: "agent-runtime-node/v1",
     nodeId,
     nodeName,
+    organizationId: record.organizationId || "org_default",
     projectIds: [record.projectId],
     allowedRoles: requestedRoles,
     allowedMcpTools: record.allowedMcpTools,
@@ -396,6 +404,7 @@ export function claimNextDispatch(state, node, options = {}) {
   ensureAgentGatewayCollections(state);
   if (node.status !== "online" || node.admission !== "full") return {dispatch: null, reason: "node_not_admitted"};
   recycleExpiredClaims(state);
+  expireStaleQueuedDispatches(state);
   const dispatch = state.agentDispatches.find((item) => {
     if (item.status !== "queued") return false;
     if (!node.projectIds.includes(item.projectId)) return false;
@@ -804,6 +813,68 @@ export function finishNodeDispatch(state, node, dispatchId, succeeded) {
   appendGatewayEvent(state, succeeded ? "dispatch_completed" : "dispatch_failed", dispatchId, {nodeId: node.nodeId});
 }
 
+export function buildExecutionContentBundle(state, node, sessionId, options = {}) {
+  const dispatch = (state.agentDispatches || []).find((item) => item.sessionId === sessionId && item.assignedNodeId === node.nodeId && item.status === "running");
+  if (!dispatch) throw gatewayError("content_bundle_dispatch_not_active", 404);
+  const contract = state.agentTaskContracts.find((item) => item.sessionId === dispatch.sessionId && item.runId === dispatch.runId);
+  const taskGroup = state.taskGroups.find((item) => item.id === dispatch.taskGroupId);
+  if (!contract || !taskGroup) throw gatewayError("content_bundle_context_missing", 409);
+  const project = state.projects.find((item) => item.id === dispatch.projectId);
+  const config = effectiveTaskGroupConfig(state, taskGroup);
+  let skillWorkset = options.skillWorkset || null;
+  if (!skillWorkset) {
+    try {
+      skillWorkset = buildSkillWorkset(state, contract, options);
+    } catch {
+      skillWorkset = null;
+    }
+  }
+  const entries = [];
+  const pushEntry = (path, category, retention, content, sourceRef) => {
+    const text = String(content || "");
+    if (!text.trim()) return;
+    entries.push({path, category, retention, contentDigest: digestOf(text), content: text, ...(sourceRef ? {sourceRef} : {})});
+  };
+  if (skillWorkset?.files?.length) {
+    for (const file of skillWorkset.files) {
+      pushEntry(`role/${file.path}`, "role", "durable", file.content, `role-skill:${contract.roleSkill?.roleSkillRef || ""}`);
+    }
+  }
+  const businessRules = (config.businessRules || []).map((rule, index) =>
+    `## ${rule.title || `业务规则 ${index + 1}`}\n\n${rule.content || ""}`).join("\n\n");
+  pushEntry("business/rules.md", "business", "durable", businessRules, `TaskGroup:${taskGroup.id}`);
+  const baselineText = (config.baselineData || []).map((item) => `- ${item.name || item.locator}: ${item.locator || ""} ${item.digest || ""}`).join("\n");
+  pushEntry("business/baseline.md", "business", "durable", baselineText, `Project:${dispatch.projectId}`);
+  const answeredConfirmations = (state.humanConfirmationRequests || [])
+    .filter((item) => item.taskGroupId === taskGroup.id && ["answered", "consumed"].includes(item.status))
+    .map((item) => ({requestId: item.requestId, question: item.question?.summary, selectedOptionId: item.decision?.selectedOptionId, selectedLabel: item.decision?.selectedLabel, inputText: item.decision?.inputText}));
+  pushEntry("task/confirmations.json", "task", "task", answeredConfirmations.length ? JSON.stringify(answeredConfirmations, null, 2) : "", `TaskGroup:${taskGroup.id}`);
+  const guidance = (taskGroup.humanGuidance || []).map((item) => `- ${item.text}`).join("\n");
+  const contextText = [
+    `# 任务上下文`,
+    `任务组：${taskGroup.id}（${taskGroup.phase || taskGroup.status || ""}）`,
+    taskGroup.objective ? `目标：${taskGroup.objective}` : "",
+    guidance ? `\n## 人工补充要求\n${guidance}` : "",
+    taskGroup.taskAnalysis ? `\n## 事项清单\n${taskGroup.taskAnalysis.items.map((item) => `- [${item.status}] ${item.title}`).join("\n")}` : ""
+  ].filter(Boolean).join("\n");
+  pushEntry("task/context.md", "task", "task", contextText, `TaskGroup:${taskGroup.id}`);
+  if (!entries.length) pushEntry("task/context.md", "task", "task", `# 任务上下文\n任务组：${taskGroup.id}`, `TaskGroup:${taskGroup.id}`);
+  const bundleDigest = digestOf(entries.map((entry) => `${entry.path}:${entry.contentDigest}`));
+  return {
+    schemaVersion: "execution-content-bundle/v1",
+    bundleId: `ecb_${bundleDigest.slice("sha256:".length, "sha256:".length + 20)}`,
+    bundleDigest,
+    organizationId: node.organizationId || project?.organizationId || "org_default",
+    projectId: dispatch.projectId,
+    taskGroupId: taskGroup.id,
+    sessionId: dispatch.sessionId,
+    dispatchId: dispatch.dispatchId,
+    entries,
+    ...(config.repositories?.length ? {gitTransfer: {enabled: true, repositoryUrl: config.repositories[0].url, ref: config.repositories[0].defaultBranch || "main", paths: []}} : {}),
+    createdAt: new Date().toISOString()
+  };
+}
+
 export function getSkillWorkset(state, node, worksetId, options = {}) {
   const dispatch = (state.agentDispatches || []).find((item) =>
     item.status === "running" &&
@@ -854,8 +925,11 @@ function buildDispatchPackage(state, dispatch, node, options) {
     remoteServices: {
       mcpPath: "/mcp",
       checkpointPath: `/api/agent/v1/dispatches/${encodeURIComponent(dispatch.dispatchId)}/checkpoint`,
-      failurePath: `/api/agent/v1/dispatches/${encodeURIComponent(dispatch.dispatchId)}/fail`
+      failurePath: `/api/agent/v1/dispatches/${encodeURIComponent(dispatch.dispatchId)}/fail`,
+      contentBundlePath: `/api/agent/v1/content-bundles/${encodeURIComponent(dispatch.sessionId)}`,
+      confirmationPath: "/api/agent/v1/confirmations"
     },
+    organizationId: node.organizationId || "org_default",
     nodeBinding: {nodeId: node.nodeId, profileDigest: node.profileDigest},
     packageDigest: digestOf({dispatch, contractDigest: contract.contractDigest, worksetDigest: skillWorkset.worksetDigest, nodeId: node.nodeId})
   };
@@ -1027,6 +1101,9 @@ function sanitizeNodeProfile(profile) {
     tools: Array.isArray(profile.tools) ? profile.tools.slice(0, 100).map((item) => ({name: String(item.name || ""), version: String(item.version || "unknown"), available: item.available === true})) : [],
     models: Array.isArray(profile.models) ? profile.models.slice(0, 100).map((item) => ({providerClass: String(item.providerClass || "custom"), adapter: String(item.adapter || "custom"), available: item.available !== false})) : [],
     capabilityFlags: uniqueStrings(profile.capabilityFlags || []).slice(0, 100),
+    region: String(profile.region || "").slice(0, 100) || undefined,
+    dataRoot: String(profile.dataRoot || "").slice(0, 500) || undefined,
+    networkSpeedMbps: Number.isFinite(Number(profile.networkSpeedMbps)) && Number(profile.networkSpeedMbps) > 0 ? Number(profile.networkSpeedMbps) : undefined,
     observedAt: new Date().toISOString()
   };
 }

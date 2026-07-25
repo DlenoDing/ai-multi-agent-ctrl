@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/human-confirmation-request.schema.json",
+  "title": "HumanConfirmationRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "projectId",
+    "taskGroupId",
+    "question",
+    "options",
+    "blocking",
+    "status",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "human-confirmation-request/v1"
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workItemId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sessionId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "dispatchId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "nodeId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "summary"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "options": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "optionId",
+          "label"
+        ],
+        "properties": {
+          "optionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "recommended": {
+            "type": "boolean"
+          },
+          "system": {
+            "type": "boolean"
+          }
+        }
+      },
+      "contains": {
+        "type": "object",
+        "properties": {
+          "optionId": {
+            "const": "none"
+          }
+        },
+        "required": [
+          "optionId"
+        ]
+      }
+    },
+    "blocking": {
+      "type": "boolean"
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "answered",
+        "consumed",
+        "expired",
+        "cancelled"
+      ]
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selectedOptionId",
+        "decidedBy",
+        "decidedAt"
+      ],
+      "properties": {
+        "selectedOptionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selectedLabel": {
+          "type": "string"
+        },
+        "inputText": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "decidedBy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decidedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "consumedBy": {
+      "type": "string"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

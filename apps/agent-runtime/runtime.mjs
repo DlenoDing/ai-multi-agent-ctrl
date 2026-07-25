@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, hostname, platform, arch, cpus, totalmem } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 
 const RUNTIME_VERSION = "0.2.0";
 const args = parseArgs(process.argv.slice(2));
 const command = args._[0] || "run";
-const workDir = resolve(args["work-dir"] || process.env.AIMAC_AGENT_WORK_DIR || join(homedir(), ".local", "share", "aimac-agent"));
+function defaultDataRoot() {
+  if (platform() === "darwin") return join(homedir(), "Library", "Application Support", "aimac-agent");
+  if (platform() === "win32") return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "aimac-agent");
+  return join(homedir(), ".local", "share", "aimac-agent");
+}
+const workDir = resolve(args["work-dir"] || process.env.AIMAC_AGENT_DATA_ROOT || process.env.AIMAC_AGENT_WORK_DIR || defaultDataRoot());
 const configPath = join(workDir, "agent-config.json");
 
 await main();
@@ -46,6 +51,7 @@ async function bootstrap() {
     nodeId: registration.node.nodeId,
     nodeToken: registration.nodeToken,
     nodeName: registration.node.nodeName,
+    organizationId: registration.node.organizationId || "org_default",
     projectIds: registration.node.projectIds,
     allowedRoles: registration.node.allowedRoles,
     gateway: registration.gateway,
@@ -167,6 +173,7 @@ async function run(config) {
             unlinkSync(outboxPath);
             await submitExecutionEvent(config, claimed.dispatch, "checkpoint_submitted", {progressPercent: 100, summary: "Checkpoint accepted by control plane.", evidenceRefs: [`checkpoint:${result.checkpoint?.runId || "accepted"}`]}).catch(() => {});
             process.stdout.write(`dispatch completed: ${claimed.dispatch.dispatch.dispatchId} checkpoint=${result.checkpoint?.runId || "accepted"}\n`);
+            cleanupSessionDirectory(config, claimed.dispatch);
           } catch (error) {
             process.stderr.write(`checkpoint pending retry: ${claimed.dispatch.dispatch.dispatchId} ${error.message}\n`);
           }
@@ -176,6 +183,7 @@ async function run(config) {
         await submitExecutionEvent(config, claimed.dispatch, eventType, {summary: String(error.message || error).slice(0, 1000), status: eventType === "blocked" ? "attention" : "failed"}).catch(() => {});
         await jsonRequest(`${config.serverUrl}${claimed.dispatch.remoteServices.failurePath}`, {method: "POST", token: config.nodeToken, body: {reason: String(error.message || error).slice(0, 2000), status: error.controlStatus || "failed"}}).catch(() => {});
         process.stderr.write(`dispatch failed: ${claimed.dispatch.dispatch.dispatchId} ${error.message}\n`);
+        cleanupSessionDirectory(config, claimed.dispatch);
       }
     }
     if (once) return;
@@ -344,7 +352,7 @@ async function flushCheckpointOutbox(config) {
       unlinkSync(path);
       process.stdout.write(`checkpoint replayed: ${item.dispatchId}\n`);
     } catch (error) {
-      if (String(error.message || "").includes("recover_required")) {
+      if (checkpointReplayErrorIsTerminal(error)) {
         const recoverPath = `${path}.recover-${Date.now()}`;
         renameSync(path, recoverPath);
         await jsonRequest(`${config.serverUrl}/api/agent/v1/dispatches/${encodeURIComponent(item.dispatchId)}/fail`, {
@@ -370,6 +378,62 @@ function persistCheckpointOutbox(config, dispatchPackage, checkpoint) {
   writeFileSync(temporary, `${JSON.stringify({dispatchId: dispatchPackage.dispatch.dispatchId, checkpointPath: dispatchPackage.remoteServices.checkpointPath, repositoryOutputTarget: dispatchPackage.repositoryOutputTarget, checkpoint, createdAt: new Date().toISOString()}, null, 2)}\n`, {mode: 0o600});
   renameSync(temporary, target);
   return target;
+}
+
+function checkpointReplayErrorIsTerminal(error) {
+  if (String(error?.message || "").includes("recover_required")) return true;
+  const status = Number(error?.status || 0);
+  if (!status || status >= 500) return false;
+  if (/state_write_conflict|AIMAC_STATE_CONFLICT/u.test(String(error?.message || ""))) return false;
+  return status >= 400;
+}
+
+function sessionDirectory(config, dispatchPackage) {
+  const contract = dispatchPackage.taskContract;
+  const orgId = safeName(dispatchPackage.organizationId || config.organizationId || "org_default");
+  return join(config.workDir, "orgs", orgId, "projects", safeName(contract.projectId), "task-groups", safeName(contract.taskGroupId), "sessions", safeName(contract.sessionId));
+}
+
+async function syncContentBundle(config, dispatchPackage, taskRoot) {
+  const bundlePath = dispatchPackage.remoteServices?.contentBundlePath;
+  if (!bundlePath) return null;
+  let bundle;
+  try {
+    bundle = await retryableAgentRequest(() => jsonRequest(`${config.serverUrl}${bundlePath}`, {token: config.nodeToken}), "content_bundle");
+  } catch (error) {
+    process.stderr.write(`content bundle sync skipped: ${error.message}\n`);
+    return null;
+  }
+  const bundleDir = join(taskRoot, "bundle");
+  const libraryDir = join(config.workDir, "library");
+  for (const entry of bundle.entries || []) {
+    const content = String(entry.content ?? "");
+    if (sha256(content) !== entry.contentDigest) throw new Error(`content bundle digest mismatch: ${entry.path}`);
+    const sessionTarget = resolve(bundleDir, normalize(entry.path));
+    if (!inside(bundleDir, sessionTarget)) throw new Error(`content bundle path escapes session: ${entry.path}`);
+    mkdirSync(dirname(sessionTarget), {recursive: true});
+    writeFileSync(sessionTarget, content, {mode: 0o600});
+    if (entry.retention === "durable") {
+      const digestKey = String(entry.contentDigest).replace(/^sha256:/u, "").slice(0, 40);
+      const libraryTarget = resolve(libraryDir, digestKey, normalize(entry.path.split("/").at(-1) || "content.md"));
+      if (inside(libraryDir, libraryTarget) && !existsSync(libraryTarget)) {
+        mkdirSync(dirname(libraryTarget), {recursive: true});
+        writeFileSync(libraryTarget, content, {mode: 0o600});
+      }
+    }
+  }
+  return {directory: bundleDir, bundleDigest: bundle.bundleDigest};
+}
+
+function cleanupSessionDirectory(config, dispatchPackage) {
+  if (process.env.AIMAC_AGENT_KEEP_SESSION_DIRS === "true") return;
+  if (process.env.AIMAC_AGENT_VERIFICATION_DEFER_CHECKPOINT === "true") return;
+  try {
+    const dir = sessionDirectory(config, dispatchPackage);
+    if (existsSync(dir)) rmSync(dir, {recursive: true, force: true});
+  } catch (error) {
+    process.stderr.write(`session directory cleanup failed: ${error.message}\n`);
+  }
 }
 
 function verifyCheckpointReplayRemote(config, item) {
@@ -421,8 +485,13 @@ async function executeDispatch(config, dispatchPackage, control) {
   await submitExecutionEvent(config, dispatchPackage, "skill_synced", {progressPercent: 15, summary: "Server-issued skill workset synchronized.", evidenceRefs: [`skill-workset:${skillWorkset.worksetDigest}`]});
   control?.throwIfCancelled();
   const repositoryRoot = prepareRepository(config, dispatchPackage.repositoryOutputTarget);
-  const taskRoot = join(config.taskDir, dispatchPackage.dispatch.dispatchId);
+  const taskRoot = sessionDirectory(config, dispatchPackage);
   mkdirSync(taskRoot, {recursive: true});
+  const contentBundle = await syncContentBundle(config, dispatchPackage, taskRoot);
+  if (contentBundle) {
+    dispatchPackage.__contentBundleDir = contentBundle.directory;
+    await submitExecutionEvent(config, dispatchPackage, "skill_synced", {progressPercent: 18, summary: "Execution content bundle synchronized and verified.", evidenceRefs: [`content-bundle:${contentBundle.bundleDigest}`]}).catch(() => {});
+  }
   const packagePath = join(taskRoot, "dispatch-package.json");
   const promptPath = join(taskRoot, "execution-prompt.txt");
   writeFileSync(packagePath, `${JSON.stringify(dispatchPackage, null, 2)}\n`, {mode: 0o600});
@@ -504,6 +573,7 @@ async function runModelExecutor(config, dispatchPackage, repositoryRoot, skillWo
     AIMAC_TASK_GROUP_LANGUAGE: String(dispatchPackage.taskContract.languagePolicy?.languageTag || "zh-CN"),
     AIMAC_LANGUAGE_POLICY_DIGEST: String(dispatchPackage.taskContract.languagePolicyDigest || ""),
     AIMAC_SKILL_WORKSET_DIR: skillWorkset.directory,
+    AIMAC_CONTENT_BUNDLE_DIR: dispatchPackage.__contentBundleDir || "",
     AIMAC_SKILL_MANIFEST_FILE: skillWorkset.manifestPath,
     AIMAC_EXECUTION_PROMPT_FILE: promptPath
   };
@@ -908,7 +978,7 @@ function probeProfile(executorCommand = "") {
   if (!models.length) models.push({providerClass: "custom", adapter: "unconfigured", available: false});
   const capabilityFlags = ["git", "remote_mcp", "skill_workset_cache"];
   if (models.some((item) => item.available === true)) capabilityFlags.push("model_agent_executor");
-  return {platform: platform(), arch: arch(), cpuCount: cpus().length, memoryBytes: totalmem(), diskFreeBytes: diskFree(workDir), tools, models, capabilityFlags};
+  return {platform: platform(), arch: arch(), cpuCount: cpus().length, memoryBytes: totalmem(), diskFreeBytes: diskFree(workDir), tools, models, capabilityFlags, dataRoot: workDir, ...(process.env.AIMAC_AGENT_REGION ? {region: process.env.AIMAC_AGENT_REGION} : {})};
 }
 
 function modelExecutorDetail(profile) {
@@ -960,7 +1030,11 @@ async function jsonRequest(url, options = {}) {
   const text = await response.text();
   let payload;
   try { payload = text ? JSON.parse(text) : {}; } catch { payload = {message: text}; }
-  if (!response.ok) throw new Error(`${payload.error || "request_failed"}: ${payload.message || response.status}`);
+  if (!response.ok) {
+    const error = new Error(`${payload.error || "request_failed"}: ${payload.message || response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   return payload;
 }
 

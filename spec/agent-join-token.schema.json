@@ -4,21 +4,98 @@
   "title": "AgentJoinToken",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "joinTokenId", "projectId", "allowedRoles", "allowedMcpTools", "tokenDigest", "status", "maxUses", "useCount", "expiresAt", "createdBy", "createdAt", "updatedAt"],
+  "required": [
+    "schemaVersion",
+    "joinTokenId",
+    "projectId",
+    "allowedRoles",
+    "allowedMcpTools",
+    "tokenDigest",
+    "status",
+    "maxUses",
+    "useCount",
+    "expiresAt",
+    "createdBy",
+    "createdAt",
+    "updatedAt"
+  ],
   "properties": {
-    "schemaVersion": {"type": "string", "const": "agent-join-token/v1"},
-    "joinTokenId": {"type": "string", "minLength": 1},
-    "projectId": {"type": "string", "minLength": 1},
-    "expectedNodeName": {"type": ["string", "null"]},
-    "allowedRoles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-    "allowedMcpTools": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-    "tokenDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
-    "status": {"type": "string", "enum": ["issued", "consumed", "expired", "revoked"]},
-    "maxUses": {"type": "integer", "const": 1},
-    "useCount": {"type": "integer", "minimum": 0},
-    "expiresAt": {"type": "string", "format": "date-time"},
-    "createdBy": {"type": "string", "minLength": 1},
-    "createdAt": {"type": "string", "format": "date-time"},
-    "updatedAt": {"type": "string", "format": "date-time"}
+    "schemaVersion": {
+      "type": "string",
+      "const": "agent-join-token/v1"
+    },
+    "joinTokenId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expectedNodeName": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "allowedRoles": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "allowedMcpTools": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "tokenDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "issued",
+        "consumed",
+        "expired",
+        "revoked"
+      ]
+    },
+    "maxUses": {
+      "type": "integer",
+      "const": 1
+    },
+    "useCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "createdBy": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "organizationId": {
+      "type": "string",
+      "minLength": 1
+    }
   }
 }
