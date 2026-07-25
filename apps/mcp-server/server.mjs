@@ -920,6 +920,14 @@ function inferMcpArgumentProjectIds(state, args = {}) {
     const taskGroup = (state.taskGroups || []).find((item) => item.id === taskGroupId);
     if (taskGroup?.projectId) projectIds.add(taskGroup.projectId);
   }
+  if (args.findingId) {
+    const finding = (state.findings || []).find((item) => item.findingId === args.findingId);
+    if (finding?.projectId) projectIds.add(finding.projectId);
+  }
+  if (args.approvalId) {
+    const approval = (state.approvalRequests || []).find((item) => item.approvalId === args.approvalId);
+    if (approval?.projectId) projectIds.add(approval.projectId);
+  }
   return projectIds;
 }
 
