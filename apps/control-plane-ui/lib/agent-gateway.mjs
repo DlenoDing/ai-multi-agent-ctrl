@@ -824,9 +824,17 @@ export function finishNodeDispatch(state, node, dispatchId, succeeded) {
   appendGatewayEvent(state, succeeded ? "dispatch_completed" : "dispatch_failed", dispatchId, {nodeId: node.nodeId});
 }
 
+function isSafeGitRemoteUrl(url) {
+  const value = String(url || "");
+  if (!value || value.startsWith("-")) return false;
+  if (/^[a-z0-9+.-]*::/iu.test(value)) return false;
+  if (value.startsWith("ext:") || value.startsWith("fd:")) return false;
+  return /^https?:\/\//iu.test(value) || /^ssh:\/\//iu.test(value) || /^git:\/\//iu.test(value) || /^[^@\s]+@[^:\s]+:.+/u.test(value);
+}
+
 function gitTransferForBundle(config) {
   const repository = config.repositories?.[0];
-  if (!repository?.url || String(repository.url).startsWith("git:unknown")) return {};
+  if (!repository?.url || String(repository.url).startsWith("git:unknown") || !isSafeGitRemoteUrl(repository.url)) return {};
   // Only declared git-backed baseline entries (locator "git:<path>") transfer via git; everything else
   // rides the inline bundle. Large binaries therefore never bloat the JSON payload.
   const paths = (config.baselineData || [])

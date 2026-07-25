@@ -487,13 +487,24 @@ async function syncContentBundle(config, dispatchPackage, taskRoot) {
   return {directory: bundleDir, bundleDigest: bundle.bundleDigest, gitTransfer};
 }
 
+function isSafeGitRemoteUrl(url) {
+  const value = String(url || "");
+  if (!value || value.startsWith("-")) return false;
+  // Reject git's local-command transports (ext::, fd::, remote helpers) that can run arbitrary commands.
+  if (/^[a-z0-9+.-]*::/iu.test(value)) return false;
+  if (value.startsWith("ext:") || value.startsWith("fd:")) return false;
+  return /^https?:\/\//iu.test(value) || /^ssh:\/\//iu.test(value) || /^git:\/\//iu.test(value) || /^[^@\s]+@[^:\s]+:.+/u.test(value);
+}
+
 function syncContentBundleGitTransfer(config, bundle, bundleDir) {
   const transfer = bundle.gitTransfer;
   if (!transfer?.enabled || !transfer.repositoryUrl || String(transfer.repositoryUrl).startsWith("git:unknown")) return null;
+  if (!isSafeGitRemoteUrl(transfer.repositoryUrl)) throw new Error("content_bundle_git_transfer_unsafe_repository_url");
   const transferDir = join(bundleDir, "git-transfer");
   if (!inside(bundleDir, transferDir)) throw new Error("content_bundle_git_transfer_escapes_session");
   const ref = String(transfer.ref || "main");
-  const paths = (Array.isArray(transfer.paths) ? transfer.paths : []).filter((path) => typeof path === "string" && path && !path.startsWith("/") && !path.includes(".."));
+  if (ref.startsWith("-") || /[\s^~:?*[\\]/u.test(ref)) throw new Error("content_bundle_git_transfer_unsafe_ref");
+  const paths = (Array.isArray(transfer.paths) ? transfer.paths : []).filter((path) => typeof path === "string" && path && !path.startsWith("/") && !path.startsWith("-") && !path.includes("..") && !/[\0]/u.test(path));
   try {
     if (!existsSync(join(transferDir, ".git"))) {
       mkdirSync(dirname(transferDir), {recursive: true});
