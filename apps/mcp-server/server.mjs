@@ -2142,8 +2142,8 @@ function approvalRequestCreate(state, args) {
   const taskGroup = taskGroupForRecord(state, args);
   const request = {
     approvalId: args.approvalId || createId("approval"),
-    projectId: taskGroup?.projectId || args.projectId,
-    taskGroupId: taskGroup?.id || args.taskGroupId,
+    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
+    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
     action: args.action || "guarded_action",
     resource: args.resource || {},
     status: "pending",

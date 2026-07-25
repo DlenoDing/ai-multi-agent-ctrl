@@ -1112,6 +1112,11 @@ function permissionForAction(action) {
   return "system:*";
 }
 
+// Unmatchable sentinel org for a scope that names a resource which must already exist but does not resolve to
+// any organization. Returning this (instead of null) makes the org-boundary gate DENY rather than skip, so a
+// phantom taskGroupId cannot fail the gate open and let an org_admin's blanket task_group:* reach another tenant.
+const UNRESOLVED_ORGANIZATION_SCOPE = "__unresolved_org_scope__";
+
 function resourceScopeOrganizationId(state, resourceScope = {}) {
   if (resourceScope.resourceType === "organization") return resourceScope.resourceId;
   if (resourceScope.resourceType === "project") {
@@ -1126,9 +1131,10 @@ function resourceScopeOrganizationId(state, resourceScope = {}) {
     }
     if (resourceScope.projectId) {
       const scopedProject = state.projects.find((item) => item.id === resourceScope.projectId);
-      return scopedProject ? scopedProject.organizationId || DEFAULT_ORGANIZATION_ID : null;
+      if (scopedProject) return scopedProject.organizationId || DEFAULT_ORGANIZATION_ID;
     }
-    return null;
+    // Task-group scope naming a task group that does not exist and has no resolvable project: fail closed.
+    return UNRESOLVED_ORGANIZATION_SCOPE;
   }
   return null;
 }
