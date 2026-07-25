@@ -58,8 +58,10 @@ export const mcpToolGroups = {
   "review-mcp": ["review_plan_create", "review_bundle_register", "review_result_consume", "completion_readiness_compute"],
   "governance-mcp": [
     "approval_request_create",
+    "approval_resolve",
     "policy_decision_eval",
     "finding_submit",
+    "finding_resolve",
     "contract_publish",
     "effective_instruction_create",
     "role_drift_guard_bind",
@@ -131,6 +133,8 @@ const toolDescriptions = {
   "governance-mcp.approval_request_create": "Create a machine approval request for high-risk actions.",
   "governance-mcp.policy_decision_eval": "Evaluate and record a policy decision for an action.",
   "governance-mcp.finding_submit": "Submit a governance, review, quality or security finding.",
+  "governance-mcp.finding_resolve": "Move a governance finding to a terminal status (resolved/dismissed/wontfix).",
+  "governance-mcp.approval_resolve": "Record the terminal decision (approved/rejected) on a machine approval request.",
   "governance-mcp.contract_publish": "Publish a shared contract record for downstream agents.",
   "governance-mcp.effective_instruction_create": "Create a compact effective instruction envelope.",
   "governance-mcp.role_drift_guard_bind": "Bind or refresh a role drift guard.",
@@ -286,6 +290,8 @@ function requiredInputPropertiesFor(name) {
     "skill-mcp.role_skill_overlay_validate": ["roleSkillRef"],
     "evidence-mcp.checkpoint_submit": ["taskGroupId", "workId", "sessionId", "runId"],
     "permission-mcp.permission_status": ["requestId"],
+    "governance-mcp.finding_resolve": ["findingId", "status"],
+    "governance-mcp.approval_resolve": ["approvalId"],
     "human-review-mcp.confirmation_request_submit": ["dispatchId", "options"],
     "human-review-mcp.confirmation_status": ["requestId"],
     "human-review-mcp.confirmation_consume": ["requestId"],
@@ -412,6 +418,8 @@ function commonInputProperties() {
     requiredReviewerRoles: array,
     requirements: array,
     resource: object,
+    resolvedBy: string,
+    resolutionRef: string,
     resourceId: string,
     resourceType: string,
     returnPointRef: string,
@@ -1167,6 +1175,10 @@ async function dispatchTool(state, name, args, context = {}) {
       return policyDecisionEval(state, args);
     case "governance-mcp.finding_submit":
       return findingSubmit(state, args);
+    case "governance-mcp.finding_resolve":
+      return findingResolve(state, args);
+    case "governance-mcp.approval_resolve":
+      return approvalResolve(state, args);
     case "governance-mcp.contract_publish":
       return contractPublish(state, args);
     case "governance-mcp.effective_instruction_create":
@@ -2071,6 +2083,19 @@ function policyDecisionEval(state, args) {
 
 function findingSubmit(state, args) {
   const at = new Date().toISOString();
+  if (args.findingId) {
+    const existing = (state.findings || []).find((item) => item.findingId === args.findingId);
+    if (existing) {
+      Object.assign(existing, {
+        severity: args.severity || existing.severity,
+        status: args.status || existing.status,
+        summary: args.summary || existing.summary,
+        evidenceRefs: [...new Set([...(existing.evidenceRefs || []), ...(args.evidenceRefs || [])])],
+        updatedAt: at
+      });
+      return {finding: existing};
+    }
+  }
   const finding = {
     findingId: args.findingId || createId("finding"),
     projectId: args.projectId || "prj_control_plane",
@@ -2086,6 +2111,31 @@ function findingSubmit(state, args) {
   };
   state.findings = capRetainingOpen([finding, ...state.findings], ["resolved", "closed", "dismissed", "wontfix"], 2000);
   return {finding};
+}
+
+function findingResolve(state, args) {
+  const finding = (state.findings || []).find((item) => item.findingId === args.findingId);
+  if (!finding) return {ok: false, error: "finding_not_found"};
+  const terminal = ["resolved", "closed", "dismissed", "wontfix"];
+  const status = terminal.includes(args.status) ? args.status : "resolved";
+  finding.status = status;
+  finding.resolutionRef = args.resolutionRef || `resolution:${status}`;
+  finding.evidenceRefs = [...new Set([...(finding.evidenceRefs || []), ...(args.evidenceRefs || [])])];
+  finding.updatedAt = new Date().toISOString();
+  return {finding};
+}
+
+function approvalResolve(state, args) {
+  const request = (state.approvalRequests || []).find((item) => item.approvalId === args.approvalId);
+  if (!request) return {ok: false, error: "approval_request_not_found"};
+  const status = ["approved", "rejected", "cancelled"].includes(args.status)
+    ? args.status
+    : (args.allowed === false ? "rejected" : "approved");
+  request.status = status;
+  request.decisionRecordRef = args.decisionRecordRef || request.decisionRecordRef;
+  request.resolvedBy = args.resolvedBy || "policy-engine";
+  request.updatedAt = new Date().toISOString();
+  return {approvalRequest: request};
 }
 
 function contractPublish(state, args) {
