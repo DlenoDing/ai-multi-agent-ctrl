@@ -355,7 +355,16 @@ async function flushCheckpointOutbox(config) {
   let pending = 0;
   for (const filename of readdirSync(outboxDir).filter((name) => name.endsWith(".json")).sort()) {
     const path = join(outboxDir, filename);
-    const item = JSON.parse(readFileSync(path, "utf8"));
+    let item;
+    try {
+      item = JSON.parse(readFileSync(path, "utf8"));
+    } catch (error) {
+      // A corrupt outbox item must not crash the durability loop; quarantine and keep replaying the rest.
+      const corruptPath = `${path}.corrupt-${Date.now()}`;
+      try { renameSync(path, corruptPath); } catch {}
+      process.stderr.write(`checkpoint outbox item corrupt, quarantined: ${filename} -> ${corruptPath} (${error.message})\n`);
+      continue;
+    }
     try {
       verifyCheckpointReplayRemote(config, item);
       await submitCheckpoint(config, item.checkpointPath, item.checkpoint);

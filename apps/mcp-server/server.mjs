@@ -777,7 +777,7 @@ function validateMcpGrant(state, toolName, args, argumentDigest, context = {}) {
     return {allowed: true, grantRef, grants: scopedGrants, scope: scopeFromGrant(scopedGrants[0]), argumentDigest, readOnly};
   }
   const grantRef = `remote-principal:${principal.kind}:${principal.id}`;
-  const scopeCheck = validateRemotePrincipalScope(state, principal, args);
+  const scopeCheck = validateRemotePrincipalScope(state, principal, args, {toolName, readOnly});
   if (!scopeCheck.allowed) return {allowed: false, error: scopeCheck.error, grantRef, required: scopeCheck.required};
   if (leaseRequiredForTool(toolName) && !["resource-mcp.lease_claim", "repository-mcp.repository_target_lease_bind"].includes(toolName)) {
     const leaseId = args.leaseId || args.leaseRef || args.repositoryLeaseRef;
@@ -885,8 +885,11 @@ const RESOURCE_ADDRESSING_ARG_KEYS = [
   "projectId", "taskGroupId", "workId", "workItemId", "dispatchId", "sessionId", "requestId",
   "contractId", "leaseId", "roomId", "findingId", "approvalId", "repositoryOutputTargetRef", "targetId"
 ];
+// Handlers that receive no explicit resource default their write to this project; a bounded principal not
+// scoped to it must not perform such an unscoped write into the control-plane tenant's default project.
+const DEFAULT_CONTROL_PLANE_PROJECT_ID = "prj_control_plane";
 
-function validateRemotePrincipalScope(state, principal, args = {}) {
+function validateRemotePrincipalScope(state, principal, args = {}, meta = {}) {
   if (principal.kind === "system_admin") return {allowed: true};
   const allowedProjectIds = new Set(principal.projectIds || []);
   if (allowedProjectIds.has("*")) return {allowed: true};
@@ -895,6 +898,11 @@ function validateRemotePrincipalScope(state, principal, args = {}) {
     // A call that addresses a specific project-scoped resource we could not tie to a project must not
     // proceed for a bounded principal (defends future-added tools/args against the fail-open path).
     if (RESOURCE_ADDRESSING_ARG_KEYS.some((key) => hasInputArg(args, key))) {
+      return {allowed: false, error: "mcp_principal_project_scope_unresolved"};
+    }
+    // A state-mutating tool with no addressing argument defaults its resource to the control-plane project;
+    // deny it for a bounded principal not scoped there so it cannot write into another tenant's default.
+    if (meta.readOnly === false && !allowedProjectIds.has(DEFAULT_CONTROL_PLANE_PROJECT_ID)) {
       return {allowed: false, error: "mcp_principal_project_scope_unresolved"};
     }
     return {allowed: true};
@@ -951,6 +959,16 @@ function inferMcpArgumentProjectIds(state, args = {}) {
     // resolve it to the owning project so a bounded principal cannot mutate another tenant's definition.
     const definition = (state.sharedDefinitions || []).find((item) => item.contractId === args.contractId);
     if (definition?.projectId) projectIds.add(definition.projectId);
+  }
+  const workItemId = args.workItemId || args.workId;
+  if (workItemId) {
+    // A bare workItemId resolves through its owning task group to a project (mirrors validateExplicitMcpScopeExists),
+    // so the owner is not falsely denied and a cross-tenant work id becomes a scope mismatch rather than unresolved.
+    for (const taskGroup of state.taskGroups || []) {
+      if ((taskGroup.workItems || []).some((item) => item.id === workItemId) && taskGroup.projectId) {
+        projectIds.add(taskGroup.projectId);
+      }
+    }
   }
   const projectIdForTaskGroupId = (taskGroupId) => {
     if (!taskGroupId) return;
