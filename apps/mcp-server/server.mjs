@@ -877,12 +877,28 @@ function explicitMcpResourceScope(args = {}) {
   return {resourceType: String(resourceType || "project"), resourceId: String(resourceId || "")};
 }
 
+// Arguments that address a project-scoped resource. If a bounded principal supplies any of these but
+// none resolves to a project, we fail closed rather than fall through — so an unresolved (e.g. foreign or
+// not-yet-existing) id can never reach a tool with no scope confinement. Identity/node args (subjectId,
+// nodeId) are intentionally excluded: they are not project-scoped and must not be forced through this gate.
+const RESOURCE_ADDRESSING_ARG_KEYS = [
+  "projectId", "taskGroupId", "workId", "workItemId", "dispatchId", "sessionId", "requestId",
+  "contractId", "leaseId", "roomId", "findingId", "approvalId", "repositoryOutputTargetRef", "targetId"
+];
+
 function validateRemotePrincipalScope(state, principal, args = {}) {
   if (principal.kind === "system_admin") return {allowed: true};
   const allowedProjectIds = new Set(principal.projectIds || []);
   if (allowedProjectIds.has("*")) return {allowed: true};
   const projectIds = inferMcpArgumentProjectIds(state, args);
-  if (!projectIds.size) return {allowed: true};
+  if (!projectIds.size) {
+    // A call that addresses a specific project-scoped resource we could not tie to a project must not
+    // proceed for a bounded principal (defends future-added tools/args against the fail-open path).
+    if (RESOURCE_ADDRESSING_ARG_KEYS.some((key) => hasInputArg(args, key))) {
+      return {allowed: false, error: "mcp_principal_project_scope_unresolved"};
+    }
+    return {allowed: true};
+  }
   for (const projectId of projectIds) {
     if (!allowedProjectIds.has(projectId)) {
       return {allowed: false, error: "mcp_principal_project_scope_mismatch", required: projectId};
