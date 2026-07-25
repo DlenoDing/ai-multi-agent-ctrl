@@ -512,17 +512,23 @@
         {
           "roleId": "orchestrator",
           "sessionId": "sess_orch_1",
-          "status": "monitoring"
+          "status": "monitoring",
+          "addedBy": "inherited",
+          "addedAt": "2026-07-23T09:30:00Z"
         },
         {
           "roleId": "scheduler",
           "sessionId": "sess_sched_1",
-          "status": "ready"
+          "status": "ready",
+          "addedBy": "inherited",
+          "addedAt": "2026-07-23T09:30:00Z"
         },
         {
           "roleId": "reviewer",
           "sessionId": "sess_review_1",
-          "status": "standby"
+          "status": "standby",
+          "addedBy": "inherited",
+          "addedAt": "2026-07-23T09:30:00Z"
         }
       ],
       "workItems": [
@@ -555,7 +561,64 @@
           "progress": 44
         }
       ],
-      "blockers": []
+      "blockers": [],
+      "taskAnalysis": {
+        "schemaVersion": "task-analysis/v1",
+        "taskGroupId": "tg_runtime_management",
+        "items": [
+          {
+            "itemId": "ta_1",
+            "title": "Runtime bootstrap profile",
+            "kind": "major",
+            "status": "completed",
+            "progress": 100,
+            "note": "已通过独立评审与验证",
+            "workItemRefs": [
+              "work_bootstrap"
+            ],
+            "children": []
+          },
+          {
+            "itemId": "ta_2",
+            "title": "System and user management console",
+            "kind": "major",
+            "status": "in_progress",
+            "progress": 58,
+            "note": "",
+            "workItemRefs": [
+              "work_management_ui"
+            ],
+            "children": []
+          },
+          {
+            "itemId": "ta_3",
+            "title": "Project and task-group permission model",
+            "kind": "major",
+            "status": "in_progress",
+            "progress": 74,
+            "note": "",
+            "workItemRefs": [
+              "work_permissions"
+            ],
+            "children": []
+          },
+          {
+            "itemId": "ta_4",
+            "title": "Progress snapshots and task visibility",
+            "kind": "major",
+            "status": "in_progress",
+            "progress": 44,
+            "note": "",
+            "workItemRefs": [
+              "work_progress"
+            ],
+            "children": []
+          }
+        ],
+        "generatedBy": "orchestrator",
+        "generatedAt": "2026-07-23T10:00:00Z",
+        "updatedAt": "2026-07-23T10:00:00Z"
+      }
     },
     {
       "id": "tg_instruction_efficiency",
@@ -588,12 +651,16 @@
         {
           "roleId": "orchestrator",
           "sessionId": "sess_orch_1",
-          "status": "monitoring"
+          "status": "monitoring",
+          "addedBy": "inherited",
+          "addedAt": "2026-07-23T09:30:00Z"
         },
         {
           "roleId": "room-broker",
           "sessionId": "svc_room",
-          "status": "ready"
+          "status": "ready",
+          "addedBy": "inherited",
+          "addedAt": "2026-07-23T09:30:00Z"
         }
       ],
       "workItems": [
@@ -612,7 +679,40 @@
           "progress": 60
         }
       ],
-      "blockers": []
+      "blockers": [],
+      "taskAnalysis": {
+        "schemaVersion": "task-analysis/v1",
+        "taskGroupId": "tg_instruction_efficiency",
+        "items": [
+          {
+            "itemId": "ta_1",
+            "title": "InstructionEnvelope schema",
+            "kind": "major",
+            "status": "completed",
+            "progress": 100,
+            "note": "已通过独立评审与验证",
+            "workItemRefs": [
+              "work_instruction_envelope"
+            ],
+            "children": []
+          },
+          {
+            "itemId": "ta_2",
+            "title": "Cache hint and token budget policy",
+            "kind": "major",
+            "status": "in_progress",
+            "progress": 60,
+            "note": "",
+            "workItemRefs": [
+              "work_cache_hints"
+            ],
+            "children": []
+          }
+        ],
+        "generatedBy": "orchestrator",
+        "generatedAt": "2026-07-23T10:00:00Z",
+        "updatedAt": "2026-07-23T10:00:00Z"
+      }
     }
   ],
   "sharedDefinitions": [
