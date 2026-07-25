@@ -269,6 +269,12 @@ function verifyAgentGatewayContracts(output) {
   ensureRuntimeCollections(state, {root});
   const issued = createAgentJoinToken(state, {projectId: "prj_control_plane", nodeName: "contract-node", allowedRoles: ["*"]}, {publicUrl: "https://control.example.test"});
   validateSchema(state.agentJoinTokens[0], joinTokenSchema, "AgentJoinToken", output);
+  if ((state.agentJoinTokens[0].allowedMcpTools || []).includes("human-review-mcp.confirmation_decide")) {
+    output.push("Agent join token must not grant human-review-mcp.confirmation_decide (agents cannot proxy human decisions)");
+  }
+  if (!(state.agentJoinTokens[0].allowedMcpTools || []).includes("human-review-mcp.confirmation_request_submit")) {
+    output.push("Agent join token should grant human-review-mcp.confirmation_request_submit for raising confirmations");
+  }
   try {
     createAgentJoinToken(state, {projectId: "prj_control_plane", nodeName: "bad-contract-node", allowedRoles: ["*"], maxUses: 2}, {publicUrl: "https://control.example.test"});
     output.push("Agent join token allowed maxUses greater than one");
