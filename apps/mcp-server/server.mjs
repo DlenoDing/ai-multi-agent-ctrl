@@ -455,6 +455,9 @@ function commonInputProperties() {
   };
 }
 
+// terminalStatuses MUST match the "non-blocking" set the readiness/close-barrier gates use for
+// this collection (control-plane-core computeCompletionReadiness/computeCloseBarrier), so a still-gating
+// item is treated as "open" and never trimmed away from under a gate.
 function capRetainingOpen(items, terminalStatuses, limit) {
   if (items.length <= limit) return items;
   const terminal = new Set(terminalStatuses);
@@ -1843,7 +1846,7 @@ function artifactRegister(state, args) {
     status: "registered",
     createdAt: at
   };
-  state.artifacts = capRetainingOpen([artifact, ...state.artifacts], ["verified", "registered", "rejected", "superseded"], 2000);
+  state.artifacts = capRetainingOpen([artifact, ...state.artifacts], ["verified", "registered"], 2000);
   return {artifact};
 }
 
