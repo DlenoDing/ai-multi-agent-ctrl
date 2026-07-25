@@ -145,7 +145,8 @@ function escapeHtml(value) {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 const esc = escapeHtml;
@@ -352,7 +353,7 @@ async function loadPage() {
     } else if (page === "proj-overview") {
       state = await fetchState("tasks");
       ensureProjectSelection();
-      await loadPendingConfirmCount();
+      loadPendingConfirmCount();
     } else if (page === "tg") {
       state = await fetchState("tasks");
       ensureProjectSelection();
@@ -425,14 +426,11 @@ async function loadDirectiveData() {
   directiveList = result.humanDirectives || [];
 }
 
-async function loadPendingConfirmCount() {
-  const groups = projectTaskGroups().slice(0, 12);
-  const counts = await Promise.all(groups.map((taskGroup) =>
-    api(`/api/task-groups/${encodeURIComponent(taskGroup.id)}/human-confirmations`)
-      .then((result) => (result.humanConfirmationRequests || []).filter((item) => item.status === "pending").length)
-      .catch(() => 0)
-  ));
-  pendingConfirmCount = counts.reduce((sum, count) => sum + count, 0);
+function loadPendingConfirmCount() {
+  const visibleTaskGroupIds = new Set(projectTaskGroups().map((taskGroup) => taskGroup.id));
+  pendingConfirmCount = (state.humanConfirmationRequests || [])
+    .filter((item) => item.status === "pending" && visibleTaskGroupIds.has(item.taskGroupId))
+    .length;
 }
 
 /* ---------------- 执行事件长轮询 ---------------- */
@@ -1515,6 +1513,7 @@ const DIRECTIVE_TYPES = [
   ["pause", "暂停执行"],
   ["resume", "恢复执行"],
   ["cancel", "取消任务"],
+  ["adjust_priority", "调整优先级"],
   ["add_requirement", "补充要求"],
   ["free_text", "自由指令"]
 ];

@@ -180,6 +180,9 @@
     "updatedAt": {
       "type": "string",
       "format": "date-time"
+    },
+    "dedupeKey": {
+      "type": "string"
     }
   }
 }

@@ -6,7 +6,19 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { createMcpGrant, createMcpToolDefinitions, mcpToolNames } from "../apps/mcp-server/server.mjs";
-import { buildTaskContract, ensureRuntimeCollections, runAutonomousCycle, selectModel, updateTaskGroupLanguagePolicy } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
+import {
+  buildTaskContract,
+  createHumanConfirmationRequest,
+  createHumanDirective,
+  consumeQueuedHumanDirectives,
+  decideHumanConfirmation,
+  effectiveTaskGroupConfig,
+  ensureRuntimeCollections,
+  organizationQuotaCheck,
+  runAutonomousCycle,
+  selectModel,
+  updateTaskGroupLanguagePolicy
+} from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import {
   ackAgentControlCommand,
   authenticateAgentNode,
@@ -36,10 +48,14 @@ const skillWorksetSchema = loadJson("spec/agent-skill-workset.schema.json");
 const agentTaskContractSchema = loadJson("spec/agent-task-contract.schema.json");
 const effectiveInstructionPacketSchema = loadJson("spec/effective-instruction-packet.schema.json");
 const languagePolicySchema = loadJson("spec/language-policy.schema.json");
+const humanConfirmationSchema = loadJson("spec/human-confirmation-request.schema.json");
+const humanDirectiveSchema = loadJson("spec/human-directive.schema.json");
+const organizationSchema = loadJson("spec/organization.schema.json");
 const errors = [];
 
 validateSchema(seedState.runtime, runtimeSchema, "seed.runtime", errors);
 verifyAgentGatewayContracts(errors);
+verifyHumanAndOrganizationContracts(errors);
 
 for (const toolName of ["ui-console-mcp.runtime_health_get", "room-mcp.room_send", "agent-control-mcp.dispatch_status"]) {
   validateSchema(createMcpGrant(toolName, {tokenDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}), mcpGrantSchema, `McpGrant:${toolName}`, errors);
@@ -67,6 +83,90 @@ if (errors.length) {
   console.error("contract check failed:");
   for (const error of errors) console.error(`- ${error}`);
   process.exit(1);
+}
+
+function verifyHumanAndOrganizationContracts(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+
+  // Default organization exists and backfills membership/usage.
+  const defaultOrg = (state.organizations || []).find((org) => org.orgId === "org_default");
+  if (!defaultOrg) output.push("Default organization was not created during migration");
+  else validateSchema(defaultOrg, organizationSchema, "Organization:default", output);
+  if (!(state.accounts || []).every((account) => ["system_admin", "service_account"].includes(account.accountType) ? true : account.organizationId)) {
+    output.push("Organization migration left an org-scoped account without organizationId");
+  }
+
+  // Quota enforcement returns quota + usage detail.
+  if (defaultOrg) {
+    defaultOrg.quotas.maxProjects = defaultOrg.usage.projects;
+    const denied = organizationQuotaCheck(state, "org_default", "projects");
+    if (denied.allowed || denied.error !== "org_quota_exceeded" || typeof denied.quota !== "number" || typeof denied.usage !== "number") {
+      output.push("organizationQuotaCheck did not report org_quota_exceeded with quota/usage detail");
+    }
+    defaultOrg.quotas.maxProjects = 100;
+  }
+
+  // Task-group config inheritance and reset.
+  const taskGroup = state.taskGroups?.[0];
+  const project = state.projects.find((item) => item.id === taskGroup?.projectId);
+  if (taskGroup && project) {
+    project.config = {...(project.config || {}), businessRules: [{ruleId: "br_ct", title: "验收", content: "必须测试"}]};
+    const inherited = effectiveTaskGroupConfig(state, taskGroup);
+    if (inherited.configSource !== "inherited" || inherited.businessRules.length !== 1) output.push("Task group config did not inherit project business rules");
+    taskGroup.configOverrides = {businessRules: []};
+    if (effectiveTaskGroupConfig(state, taskGroup).configSource !== "customized") output.push("Task group config override did not switch configSource to customized");
+    delete taskGroup.configOverrides;
+    const reset = effectiveTaskGroupConfig(state, taskGroup);
+    if (reset.configSource !== "inherited" || reset.businessRules.length !== 1) output.push("Task group config reset did not restore inherited project config");
+  }
+
+  // Human directive consumption applies to task group and is auditable.
+  if (taskGroup) {
+    createHumanDirective(state, {taskGroupId: taskGroup.id, directiveType: "add_requirement", instruction: "输出必须包含中文摘要"}, {actor: "acct_ct"});
+    const applied = consumeQueuedHumanDirectives(state);
+    if (!applied.some((item) => item.status === "applied")) output.push("Human directive was not applied by the orchestrator cycle");
+    const directive = state.humanDirectives?.[0];
+    if (directive) validateSchema(directive, humanDirectiveSchema, "HumanDirective", output);
+  }
+
+  // Human confirmation forces a none option, requires input for none, and dedups pending.
+  const cycle = runAutonomousCycle(state, {root, mode: "all"});
+  const dispatch = (state.agentDispatches || []).find((item) => item.status === "queued" || item.status === "running");
+  if (!dispatch) {
+    output.push("No dispatch available to attach a human confirmation contract");
+  } else {
+    dispatch.status = "running";
+    dispatch.assignedNodeId = dispatch.assignedNodeId || "node_ct";
+    const request = createHumanConfirmationRequest(state, {dispatchId: dispatch.dispatchId, summary: "选型确认", options: [{label: "方案A", recommended: true}, {label: "方案B"}]});
+    validateSchema(request, humanConfirmationSchema, "HumanConfirmationRequest", output);
+    if (!request.options.some((option) => option.optionId === "none" && option.system)) output.push("Human confirmation did not force a system none option");
+    const dupe = createHumanConfirmationRequest(state, {dispatchId: dispatch.dispatchId, summary: "选型确认", options: [{label: "方案A"}, {label: "方案B"}]});
+    if (dupe.requestId !== request.requestId) output.push("Human confirmation did not dedupe an identical pending request");
+    let noneRejected = false;
+    try {
+      decideHumanConfirmation(state, request.requestId, {selectedOptionId: "none"}, {actor: "acct_ct"});
+    } catch (error) {
+      noneRejected = error.message === "human_confirmation_input_required_for_none";
+    }
+    if (!noneRejected) output.push("Human confirmation accepted a none selection without input text");
+    const decided = decideHumanConfirmation(state, request.requestId, {selectedOptionId: request.options[0].optionId, inputText: "采用方案A"}, {actor: "acct_ct"});
+    if (decided.status !== "answered") output.push("Human confirmation decision did not move the request to answered");
+    const requeued = (state.agentDispatches || []).find((item) => item.dispatchId === dispatch.dispatchId);
+    if (requeued.status !== "queued") output.push("Answered human confirmation did not requeue its blocked dispatch");
+  }
+
+  // Readiness/close-barrier expose the new human gates.
+  if (taskGroup) {
+    const readiness = cycle && state.completionReadiness?.find((item) => item.taskGroupId === taskGroup.id);
+    if (readiness && !Object.prototype.hasOwnProperty.call(readiness.checkResults, "no_pending_human_confirmations")) {
+      output.push("Completion readiness is missing the no_pending_human_confirmations check");
+    }
+    const barrier = state.closeBarriers?.find((item) => item.taskGroupId === taskGroup.id);
+    if (barrier && !Object.prototype.hasOwnProperty.call(barrier.gateResults, "no_pending_human_confirmations")) {
+      output.push("Close barrier is missing the no_pending_human_confirmations gate");
+    }
+  }
 }
 
 function verifyRuntimeJsonConflict(output) {

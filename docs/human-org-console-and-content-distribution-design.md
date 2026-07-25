@@ -244,7 +244,7 @@
 1. **系统能力优先**：内容包经网关 `GET /api/agent/v1/content-bundles/:sessionId` 下载（含正文），或条目声明 `gitTransfer` 时由运行时直接 `git fetch` 获取大文件——不通过指令文本传递。
 2. **归档规则**：`retention=durable` 条目按 `contentDigest` 存入 `library/`（已存在则跳过下载，实现增量同步）；`retention=task` 条目存入会话目录 `bundle/`，随会话清理自动删除。
 3. **隔离**：条目 `path` 只允许相对路径且解包目标限定在会话 `bundle/` 或 `library/` 内。
-4. 契约新增 `contentBundleRef` + `contentBundleDigest`；`dispatch package` 携带下载地址。运行时校验每个条目摘要后方可启动执行器；执行器通过环境变量 `AIMAC_CONTENT_BUNDLE_DIR` 获得解包目录。
+4. 内容包由**派发包**携带下载地址（`remoteServices.contentBundlePath`），不冻结进契约——因为内容包包含"已答人工确认"等随执行推进而变化的任务态内容，契约级摘要冻结会造成必然失配。运行时校验每个条目摘要后方可启动执行器（下载失败或摘要不符即终止执行并上报失败）；执行器通过环境变量 `AIMAC_CONTENT_BUNDLE_DIR` 获得解包目录。
 
 ---
 

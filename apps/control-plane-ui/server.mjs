@@ -78,7 +78,7 @@ const host = process.env.AIMAC_HOST || "127.0.0.1";
 const port = Number(process.env.AIMAC_PORT || 4317);
 const executionProfile = process.env.AIMAC_EXECUTION_PROFILE || "production";
 const stateViewCache = new Map();
-const stateViewCacheTtlMs = Number(process.env.AIMAC_STATE_VIEW_CACHE_TTL_MS || 500);
+const stateViewCacheTtlMs = Number(process.env.AIMAC_STATE_VIEW_CACHE_TTL_MS || 60000);
 const stateViewMaxEntries = Number(process.env.AIMAC_STATE_VIEW_CACHE_MAX_ENTRIES || 200);
 const agentControlWaitFanout = new Map();
 const projectExecutionWaitFanout = new Map();
@@ -267,6 +267,7 @@ function readHealthState() {
 function writeState(state) {
   stateViewCache.clear();
   scopedStateCache.clear();
+  computeProgressSnapshots(state);
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
   writeStoredState(state, {root, runtimeDir, statePath, seedPath, buildInitialState, expectedStateVersion: state.__loadedStateVersion});
   flushPendingAuditAppends(state);
@@ -578,11 +579,20 @@ function createTaskGroupRecord(state, input = {}, options = {}) {
     return {ok: false, status: 409, error: "task_group_id_conflict"};
   }
   const at = now();
-  const roles = normalizeStringList(input.roles, []).map((roleId) => ({
-    roleId,
-    status: "ready",
-    skillBinding: "server_resolved_on_dispatch"
-  }));
+  const inheritedRoleIds = (project.config?.defaultRoles || []).map((role) => role.roleId).filter(Boolean);
+  const userRoleIds = normalizeStringList(input.roles, []);
+  const roleIdSet = new Set();
+  const roles = [];
+  for (const roleId of userRoleIds) {
+    if (roleIdSet.has(roleId)) continue;
+    roleIdSet.add(roleId);
+    roles.push({roleId, status: "ready", skillBinding: "server_resolved_on_dispatch", addedBy: "user", addedAt: at});
+  }
+  for (const roleId of inheritedRoleIds) {
+    if (roleIdSet.has(roleId)) continue;
+    roleIdSet.add(roleId);
+    roles.push({roleId, status: "ready", skillBinding: "server_resolved_on_dispatch", addedBy: "inherited", addedAt: at});
+  }
   const taskGroup = {
     id: taskGroupId,
     projectId,
@@ -630,7 +640,7 @@ function createWorkItemRecord(state, taskGroupId, input = {}, options = {}) {
   taskGroup.workItems.push(workItem);
   if (!taskGroup.roles?.some((role) => role.roleId === workItem.ownerRole)) {
     taskGroup.roles ||= [];
-    taskGroup.roles.push({roleId: workItem.ownerRole, status: "ready", skillBinding: "server_resolved_on_dispatch"});
+    taskGroup.roles.push({roleId: workItem.ownerRole, status: "ready", skillBinding: "server_resolved_on_dispatch", addedBy: "user", addedAt: at});
   }
   taskGroup.updatedAt = at;
   computeProgressSnapshots(state);
@@ -972,7 +982,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     system: ["accounts", "auditLog", "policyDecisions", "commands", "decisionRecords"],
     users: ["accounts", "accessGrants", "projects"],
     projects: ["accounts", "accessGrants", "projects", "repositoryOutputs", "agentJoinTokens"],
-    tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots"],
+    tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots", "humanConfirmationRequests", "humanDirectives"],
     runtime: ["modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkills", "roleSkillOverlays"],
     instructions: ["instructionMetrics", "sharedDefinitions", "effectiveInstructionPackets", "roleDriftGuards"]
   };
@@ -2515,6 +2525,17 @@ async function handleApi(req, res) {
       json(res, 400, {error: error.message});
       return;
     }
+    const inviterAccount = state.accounts.find((item) => accountIdOf(item) === guard.actor);
+    const inviteOrgId = invitedAccount.accountType === "system_admin"
+      ? null
+      : (inviterAccount?.organizationId || DEFAULT_ORGANIZATION_ID);
+    if (inviteOrgId) {
+      const inviteQuota = organizationQuotaCheck(state, inviteOrgId, "members");
+      if (!inviteQuota.allowed) {
+        json(res, 409, {error: inviteQuota.error, quota: inviteQuota.quota, usage: inviteQuota.usage});
+        return;
+      }
+    }
     const at = now();
     const accountId = createId("acct");
     const accountToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
@@ -2522,6 +2543,7 @@ async function handleApi(req, res) {
       schemaVersion: "account/v1",
       accountId,
       accountType: invitedAccount.accountType,
+      ...(inviteOrgId ? {organizationId: inviteOrgId} : {}),
       displayName: body.displayName || "New User",
       email: body.email || `user-${Date.now()}@local`,
       status: "invited",
@@ -3007,7 +3029,7 @@ async function handleApi(req, res) {
       config: {
         repositories: Array.isArray(body.repositories) ? body.repositories : [],
         baselineData: [],
-        businessRuleRefs: [],
+        businessRules: [],
         defaultRoles: []
       },
       progress: {percent: 0, phase: "intake", health: "ok", openTaskGroups: 0, blockedItems: 0, updatedAt: now()}
@@ -3054,6 +3076,18 @@ async function handleApi(req, res) {
       directive = createHumanDirective(state, body, {actor: guard.actor});
     } catch (error) {
       return json(res, error.status || 500, {error: error.message});
+    }
+    const controlAction = {pause: "pause", resume: "resume", cancel: "cancel"}[directive.directiveType];
+    const directiveTaskGroup = directive.taskGroupId ? state.taskGroups.find((item) => item.id === directive.taskGroupId) : null;
+    if (controlAction && directiveTaskGroup) {
+      if (directive.directiveType === "pause") directiveTaskGroup.goalExecutionStatus = "active_paused_by_freeze";
+      if (directive.directiveType === "resume") directiveTaskGroup.goalExecutionStatus = "active";
+      const runtimeControl = applyTaskGroupRuntimeControl(state, directiveTaskGroup, controlAction, {actor: guard.actor, idempotencyKey: `human-directive:${directive.directiveId}`});
+      directive.status = "applied";
+      directive.appliedActions = [{action: `task_group_${controlAction}`, ref: `TaskGroup:${directiveTaskGroup.id}`}];
+      directive.runtimeControl = {controlCommands: runtimeControl.controlCommands.map((command) => command.commandId), directDispatches: runtimeControl.directDispatches, resumedDispatches: runtimeControl.resumedDispatches};
+      directive.updatedAt = now();
+      directiveTaskGroup.updatedAt = now();
     }
     audit(state, guard.actor, "human_directive_create", `HumanDirective:${directive.directiveId}`);
     finishGuardedWrite(state, guard, 201, directive);
@@ -3226,6 +3260,10 @@ function respondApiError(res, error) {
   }
   if (isStateStoreConflict(error)) {
     json(res, 409, {error: "state_write_conflict", retryable: true, message: error.message});
+    return;
+  }
+  if (error.status && error.status < 500) {
+    json(res, error.status, {error: error.message, ...(error.details || {})});
     return;
   }
   json(res, error.status || 500, {error: "server_error", message: error.message});

@@ -643,6 +643,87 @@ try {
   if (hashFile(statePath) !== stateHashBeforeReadiness || hashFile(configPath) !== configHashBeforeReadiness) {
     throw new Error("readiness GET mutated runtime state or config");
   }
+
+  // Organization, quota, human-directive and human-confirmation HTTP lifecycle.
+  const orgCreate = await jsonFetch(port, "/api/orgs", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-org-create", authorization: systemAuth},
+    body: JSON.stringify({name: "医生组织", quotas: {maxMembers: 2, maxProjects: 1, maxTaskGroups: 1, maxAgents: 1}, admin: {displayName: "组织超管", email: "doctor.org.admin@local"}})
+  });
+  if (orgCreate.response.status !== 201 || !orgCreate.payload.accountToken) {
+    throw new Error(`organization create failed: ${orgCreate.response.status}`);
+  }
+  const orgId = orgCreate.payload.organization.orgId;
+  const orgAdminAuth = await loginAs(port, "doctor.org.admin@local", orgCreate.payload.accountToken);
+  const changePassword = await jsonFetch(port, "/api/auth/change-password", {
+    method: "POST",
+    headers: {authorization: orgAdminAuth},
+    body: JSON.stringify({newPassword: "doctor-org-admin-pass"})
+  });
+  if (!changePassword.response.ok) throw new Error("org admin change-password failed");
+  const passwordLogin = await jsonFetch(port, "/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({email: "doctor.org.admin@local", password: "doctor-org-admin-pass"})
+  });
+  if (!passwordLogin.response.ok || !passwordLogin.payload.sessionToken) throw new Error("org admin password login failed");
+  const memberCreate = await jsonFetch(port, "/api/org/members", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-org-member", authorization: orgAdminAuth},
+    body: JSON.stringify({displayName: "组织成员甲", email: "doctor.member1@local", permissions: ["project:view", "task_group:review"]})
+  });
+  if (memberCreate.response.status !== 201) throw new Error(`org member create failed: ${memberCreate.response.status}`);
+  const memberOverQuota = await jsonFetch(port, "/api/org/members", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-org-member-2", authorization: orgAdminAuth},
+    body: JSON.stringify({displayName: "组织成员乙", email: "doctor.member2@local"})
+  });
+  if (memberOverQuota.response.status !== 409 || memberOverQuota.payload.error !== "org_quota_exceeded" || typeof memberOverQuota.payload.quota !== "number") {
+    throw new Error(`member quota was not enforced with detail: ${memberOverQuota.response.status}:${memberOverQuota.payload.error}`);
+  }
+  const orgMembers = await jsonFetch(port, "/api/org/members", {headers: {authorization: orgAdminAuth}});
+  if (!orgMembers.response.ok || !orgMembers.payload.members.some((member) => member.email === "doctor.member1@local")) {
+    throw new Error("org member list did not return the created member");
+  }
+  const directive = await jsonFetch(port, "/api/human-directives", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-directive", authorization: systemAuth},
+    body: JSON.stringify({taskGroupId: "tg_runtime_management", directiveType: "add_requirement", instruction: "输出文档必须包含中文摘要"})
+  });
+  if (directive.response.status !== 201) throw new Error(`human directive create failed: ${directive.response.status}`);
+  await jsonFetch(port, "/api/orchestrator/run", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-directive-run", authorization: systemAuth},
+    body: JSON.stringify({taskGroupId: "tg_runtime_management", mode: "all"})
+  });
+  const directiveList = await jsonFetch(port, "/api/task-groups/tg_runtime_management/human-directives", {headers: {authorization: systemAuth}});
+  if (!directiveList.payload.humanDirectives.some((item) => item.status === "applied")) {
+    throw new Error("human directive was not applied by orchestrator run");
+  }
+  const analysis = await jsonFetch(port, "/api/task-groups/tg_runtime_management/progress", {headers: {authorization: systemAuth}});
+  if (!analysis.payload.taskAnalysis?.items?.length) throw new Error("task analysis breakdown was not generated");
+  const cfgInherited = await jsonFetch(port, "/api/task-groups/tg_runtime_management/config", {headers: {authorization: systemAuth}});
+  if (cfgInherited.payload.config.configSource !== "inherited") throw new Error("task group config did not default to inherited");
+  const cfgCustom = await jsonFetch(port, "/api/task-groups/tg_runtime_management/config", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-config-set", authorization: systemAuth},
+    body: JSON.stringify({businessRules: [{ruleId: "br_doctor", title: "验收规范", content: "必须包含测试"}]})
+  });
+  if (cfgCustom.payload.config.configSource !== "customized") throw new Error("task group config override did not customize");
+  const cfgReset = await jsonFetch(port, "/api/task-groups/tg_runtime_management/config/reset", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-config-reset", authorization: systemAuth},
+    body: JSON.stringify({})
+  });
+  if (cfgReset.payload.config.configSource !== "inherited") throw new Error("task group config reset did not restore inheritance");
+  const decideMissing = await jsonFetch(port, "/api/human-confirmations/hcr_missing/decide", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-decide-missing", authorization: systemAuth},
+    body: JSON.stringify({selectedOptionId: "none", inputText: "x"})
+  });
+  if (decideMissing.response.status !== 404) throw new Error("decide on unknown confirmation should 404");
+  void orgId;
+  void passwordLogin;
+
   console.log("ai-native control flow ok");
 } finally {
   child.kill("SIGTERM");

@@ -71,8 +71,12 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
   const projectId = String(input.projectId || "").trim();
   const tokenProject = state.projects.find((project) => project.id === projectId);
   if (!tokenProject) throw new Error("join_token_project_not_found");
-  const quota = organizationQuotaCheck(state, tokenProject.organizationId || "org_default", "agents");
-  if (!quota.allowed) throw gatewayError(quota.error || "org_quota_exceeded", 409);
+  const tokenOrgId = tokenProject.organizationId || "org_default";
+  const outstandingJoinTokens = (state.agentJoinTokens || []).filter((item) => item.status === "issued" && (item.organizationId || "org_default") === tokenOrgId && new Date(item.expiresAt).getTime() > Date.now()).length;
+  const quota = organizationQuotaCheck(state, tokenOrgId, "agents");
+  if (!quota.allowed || quota.usage + outstandingJoinTokens >= quota.quota) {
+    throw gatewayError("org_quota_exceeded", 409, {kind: "agents", quota: quota.quota, usage: (quota.usage || 0) + outstandingJoinTokens});
+  }
   const ttlSeconds = boundedInteger(input.ttlSeconds, 60, 86400, 1800);
   if (input.maxUses !== undefined && Number(input.maxUses) !== 1) throw gatewayError("join_token_must_be_one_time", 400);
   const maxUses = 1;
@@ -140,6 +144,13 @@ export function registerAgentNode(state, input = {}, options = {}) {
   if (record.expectedNodeName && record.expectedNodeName !== nodeName) throw gatewayError("join_token_node_name_mismatch", 403);
   const requestedRoles = uniqueStrings(input.requestedRoles || record.allowedRoles);
   if (!rolesAllowed(requestedRoles, record.allowedRoles)) throw gatewayError("join_token_role_scope_mismatch", 403);
+  const registerOrgId = record.organizationId || "org_default";
+  const registerQuota = organizationQuotaCheck(state, registerOrgId, "agents");
+  if (!registerQuota.allowed) {
+    record.status = "revoked";
+    record.updatedAt = new Date().toISOString();
+    throw gatewayError("org_quota_exceeded", 409, {kind: "agents", quota: registerQuota.quota, usage: registerQuota.usage});
+  }
 
   const nodeToken = `aimac_node_${randomBytes(40).toString("base64url")}`;
   const nodeId = createId("node");
@@ -1154,8 +1165,9 @@ function shellUrl(value) {
   return shellArg(value);
 }
 
-function gatewayError(message, status) {
+function gatewayError(message, status, details = null) {
   const error = new Error(message);
   error.status = status;
+  if (details) error.details = details;
   return error;
 }

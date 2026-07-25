@@ -184,6 +184,12 @@
     human_directive: "人工指令",
     org_quota_exceeded: "组织配额超限",
     active_paused_by_control: "已被控制暂停",
+    active_paused_by_freeze: "已被冻结暂停",
+    active_waiting_dependency: "等待依赖中",
+    active_waiting_approval: "等待审批中",
+    active_supporting_group: "支援其他任务组中",
+    awaiting_human_confirmation: "等待人工确认",
+    independent_review_changes_requested: "独立评审要求返工",
 
     /* ---------- 账号 / 组织 ---------- */
     invited: "已邀请",

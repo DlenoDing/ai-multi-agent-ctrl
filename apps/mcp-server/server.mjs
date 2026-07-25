@@ -175,6 +175,7 @@ function loadState() {
 
 function writeState(state) {
   ensureMcpCollections(state);
+  computeProgressSnapshots(state);
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
   writeStoredState(state, {root, runtimeDir, statePath, seedPath, buildInitialState, expectedStateVersion: state.__loadedStateVersion});
 }

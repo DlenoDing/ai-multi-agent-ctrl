@@ -67,6 +67,7 @@ const embeddedMcpLogicalServers = [
   "definition-mcp",
   "evidence-mcp",
   "governance-mcp",
+  "human-review-mcp",
   "identity-mcp",
   "instruction-mcp",
   "model-mcp",
@@ -81,7 +82,7 @@ const embeddedMcpLogicalServers = [
   "ui-console-mcp"
 ];
 
-const embeddedMcpToolCount = 77;
+const embeddedMcpToolCount = 81;
 
 const modelProviderAdapters = providerClasses.map((providerClass) => ({
   providerClass,
@@ -412,6 +413,7 @@ function ensureTaskGroupLanguagePolicies(state) {
 }
 
 export function ensureRuntimeCollections(state, options = {}) {
+  if (state.__runtimeEnsured) return state;
   state.stateVersion ||= 1;
   state.idempotencyRecords ||= {};
   state.policyDecisions ||= [];
@@ -506,7 +508,8 @@ export function ensureRuntimeCollections(state, options = {}) {
   ensureDefaultAccessGrants(state);
   ensureDefaultAgents(state);
   ensureOrganizations(state);
-  computeProgressSnapshots(state);
+  if (!Array.isArray(state.progressSnapshots) || !state.progressSnapshots.length) computeProgressSnapshots(state);
+  Object.defineProperty(state, "__runtimeEnsured", {value: true, enumerable: false, configurable: true});
   return state;
 }
 
@@ -520,6 +523,7 @@ const defaultOrganizationQuotas = {
 };
 
 function ensureOrganizations(state) {
+  if (state.orgMigrationVersion === 1 && state.organizations.length) return;
   if (!state.organizations.some((org) => org.orgId === DEFAULT_ORGANIZATION_ID)) {
     const at = new Date().toISOString();
     state.organizations.push({
@@ -544,6 +548,7 @@ function ensureOrganizations(state) {
   for (const node of state.agentRuntimeNodes || []) node.organizationId ||= DEFAULT_ORGANIZATION_ID;
   for (const token of state.agentJoinTokens || []) token.organizationId ||= DEFAULT_ORGANIZATION_ID;
   recomputeOrganizationUsage(state);
+  state.orgMigrationVersion = 1;
 }
 
 export function recomputeOrganizationUsage(state) {
@@ -1309,6 +1314,7 @@ export function runAutonomousCycle(state, request = {}) {
     }
   }
   consumeQueuedHumanDirectives(state, request);
+  expireStaleHumanConfirmations(state);
   expireStaleQueuedDispatches(state);
   const taskGroups = (state.taskGroups || []).filter((taskGroup) => !request.taskGroupId || taskGroup.id === request.taskGroupId);
   for (const taskGroup of taskGroups) {
@@ -1966,22 +1972,38 @@ function markDispatchFailed(state, dispatch, reason) {
 export function computeProgressSnapshots(state) {
   const at = new Date().toISOString();
   const snapshots = [];
+  const taskGroupsByProject = new Map();
+  for (const taskGroup of state.taskGroups || []) {
+    taskGroupsByProject.set(taskGroup.projectId, [...(taskGroupsByProject.get(taskGroup.projectId) || []), taskGroup]);
+  }
+  const outputsByProject = new Map();
+  const outputsByTaskGroup = new Map();
+  for (const target of state.repositoryOutputs || []) {
+    if (target.projectId) outputsByProject.set(target.projectId, [...(outputsByProject.get(target.projectId) || []), target]);
+    if (target.taskGroupId) outputsByTaskGroup.set(target.taskGroupId, [...(outputsByTaskGroup.get(target.taskGroupId) || []), target]);
+  }
   for (const project of state.projects || []) {
-    const taskGroups = (state.taskGroups || []).filter((taskGroup) => taskGroup.projectId === project.id);
+    const taskGroups = taskGroupsByProject.get(project.id) || [];
     const workItems = taskGroups.flatMap((taskGroup) => taskGroup.workItems || []);
     const counters = countWork(workItems);
     const progressPercent = workItems.length ? Math.round(workItems.reduce((sum, item) => sum + Number(item.progress || 0), 0) / workItems.length) : project.progress?.percent || 0;
     project.progress ||= {};
-    project.progress.percent = progressPercent;
-    project.progress.openTaskGroups = taskGroups.filter((taskGroup) => !["closed", "aborted"].includes(taskGroup.status)).length;
-    project.progress.blockedItems = counters.blocked;
-    project.progress.health = counters.blocked ? "attention" : taskGroups.some((taskGroup) => taskGroup.health === "attention") ? "attention" : "ok";
-    project.progress.updatedAt = at;
-    snapshots.push(progressSnapshot("project", project.id, project.status, project.progress, project.progress.health, counters, taskGroups.flatMap((taskGroup) => taskGroup.roles || []), workItems, state.repositoryOutputs.filter((target) => target.projectId === project.id), at));
+    const nextProgress = {
+      percent: progressPercent,
+      openTaskGroups: taskGroups.filter((taskGroup) => !["closed", "aborted"].includes(taskGroup.status)).length,
+      blockedItems: counters.blocked,
+      health: counters.blocked ? "attention" : taskGroups.some((taskGroup) => taskGroup.health === "attention") ? "attention" : "ok"
+    };
+    const progressChanged = ["percent", "openTaskGroups", "blockedItems", "health"].some((key) => project.progress[key] !== nextProgress[key]);
+    if (progressChanged) {
+      Object.assign(project.progress, nextProgress);
+      project.progress.updatedAt = at;
+    }
+    snapshots.push(progressSnapshot("project", project.id, project.status, project.progress, project.progress.health, counters, taskGroups.flatMap((taskGroup) => taskGroup.roles || []), workItems, outputsByProject.get(project.id) || [], at));
   }
   for (const taskGroup of state.taskGroups || []) {
     const counters = countWork(taskGroup.workItems || []);
-    snapshots.push(progressSnapshot("task_group", taskGroup.id, taskGroup.status, {percent: taskGroup.progress || 0, phase: taskGroup.phase || taskGroup.status}, taskGroup.health || "ok", counters, taskGroup.roles || [], taskGroup.workItems || [], state.repositoryOutputs.filter((target) => target.taskGroupId === taskGroup.id), at));
+    snapshots.push(progressSnapshot("task_group", taskGroup.id, taskGroup.status, {percent: taskGroup.progress || 0, phase: taskGroup.phase || taskGroup.status}, taskGroup.health || "ok", counters, taskGroup.roles || [], taskGroup.workItems || [], outputsByTaskGroup.get(taskGroup.id) || [], at));
   }
   const previousById = new Map((state.progressSnapshots || []).map((snapshot) => [snapshot.snapshotId, snapshot]));
   state.progressSnapshots = snapshots.map((snapshot) => {
@@ -2977,6 +2999,9 @@ export function createHumanConfirmationRequest(state, input = {}) {
     }))
     .filter((option) => option.optionId !== "none");
   if (!aiOptions.length) throw Object.assign(new Error("human_confirmation_options_required"), {status: 400});
+  const dedupeKey = String(input.requestKey || "").trim() || digestOf({dispatchId: dispatch?.dispatchId || null, workItemId: input.workItemId || dispatch?.workItemId || null, summary});
+  const existingPending = (state.humanConfirmationRequests || []).find((item) => item.status === "pending" && item.dedupeKey === dedupeKey);
+  if (existingPending) return existingPending;
   const at = new Date().toISOString();
   const request = {
     schemaVersion: "human-confirmation-request/v1",
@@ -2994,6 +3019,7 @@ export function createHumanConfirmationRequest(state, input = {}) {
     },
     options: [...aiOptions, {optionId: "none", label: "不选择（自定义输入）", description: "以上选项均不采用，由人工直接输入确认内容。", system: true}],
     blocking: input.blocking !== false,
+    dedupeKey,
     status: "pending",
     expiresAt: input.expiresAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     createdAt: at,
@@ -3093,6 +3119,33 @@ export function createHumanDirective(state, input = {}, options = {}) {
   return directive;
 }
 
+export function expireStaleHumanConfirmations(state) {
+  const nowMs = Date.now();
+  const at = new Date().toISOString();
+  const expired = [];
+  for (const request of (state.humanConfirmationRequests || []).filter((item) => item.status === "pending")) {
+    if (!request.expiresAt || new Date(request.expiresAt).getTime() > nowMs) continue;
+    request.status = "expired";
+    request.updatedAt = at;
+    if (request.dispatchId) {
+      const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === request.dispatchId);
+      if (dispatch && dispatch.status === "blocked" && dispatch.blockedReason === "awaiting_human_confirmation") {
+        dispatch.status = "queued";
+        delete dispatch.blockedReason;
+        delete dispatch.assignedNodeId;
+        delete dispatch.claimedAt;
+        delete dispatch.claimExpiresAt;
+        dispatch.updatedAt = at;
+      }
+    }
+    const taskGroup = (state.taskGroups || []).find((item) => item.id === request.taskGroupId);
+    if (taskGroup) addBlocker(taskGroup, "S2", `人工确认请求超时未作答已过期：${request.question?.summary || request.requestId}`);
+    expired.push(request.requestId);
+    appendEvent(state, "decision", "HumanConfirmationRequest", request.requestId, "monitor", {expired: true});
+  }
+  return expired;
+}
+
 export function consumeQueuedHumanDirectives(state, request = {}) {
   const applied = [];
   for (const directive of (state.humanDirectives || []).filter((item) => item.status === "queued")) {
@@ -3118,12 +3171,23 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
         directive.appliedActions.push({action: "task_group_cancel_pending_dispatches", ref: `TaskGroup:${taskGroup.id}`});
       } else if (directive.directiveType === "add_requirement" && taskGroup) {
         taskGroup.humanGuidance = [...(taskGroup.humanGuidance || []), {directiveRef: directive.directiveId, text: directive.instruction, addedAt: at}];
-        directive.appliedActions.push({action: "task_group_requirement_appended", ref: `TaskGroup:${taskGroup.id}`});
+        const openWorkItem = (taskGroup.workItems || []).find((item) => !["verified", "closed", "superseded"].includes(item.status));
+        if (openWorkItem && directive.instruction) {
+          openWorkItem.requirements = unique([...(openWorkItem.requirements || []), directive.instruction]);
+          openWorkItem.updatedAt = at;
+          directive.appliedActions.push({action: "work_item_requirement_appended", ref: `WorkItem:${openWorkItem.id}`});
+        } else {
+          directive.appliedActions.push({action: "task_group_requirement_appended", ref: `TaskGroup:${taskGroup.id}`});
+        }
+      } else if (directive.directiveType === "adjust_priority" && taskGroup) {
+        taskGroup.priorityHint = directive.instruction || taskGroup.priorityHint || "elevated";
+        taskGroup.humanGuidance = [...(taskGroup.humanGuidance || []), {directiveRef: directive.directiveId, text: `优先级调整：${directive.instruction}`, addedAt: at}];
+        directive.appliedActions.push({action: "task_group_priority_adjusted", ref: `TaskGroup:${taskGroup.id}`});
+      } else if (taskGroup) {
+        taskGroup.humanGuidance = [...(taskGroup.humanGuidance || []), {directiveRef: directive.directiveId, text: directive.instruction, addedAt: at}];
+        directive.appliedActions.push({action: "task_group_guidance_appended", ref: `TaskGroup:${taskGroup.id}`});
       } else {
-        taskGroup?.humanGuidance
-          ? taskGroup.humanGuidance.push({directiveRef: directive.directiveId, text: directive.instruction, addedAt: at})
-          : taskGroup && (taskGroup.humanGuidance = [{directiveRef: directive.directiveId, text: directive.instruction, addedAt: at}]);
-        directive.appliedActions.push({action: taskGroup ? "task_group_guidance_appended" : "recorded_without_task_group", ref: taskGroup ? `TaskGroup:${taskGroup.id}` : `Project:${directive.projectId}`});
+        directive.appliedActions.push({action: "recorded_without_task_group", ref: `Project:${directive.projectId}`});
       }
       directive.status = "applied";
     } catch (error) {

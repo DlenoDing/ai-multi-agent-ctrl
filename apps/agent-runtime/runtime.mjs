@@ -119,6 +119,8 @@ async function status(config) {
 }
 
 async function run(config) {
+  sweepStaleSessionDirectories(config);
+  sweepLibraryOverCapacity(config);
   let lastHeartbeat = 0;
   let lastAdmissionSelfCheckAt = 0;
   const once = args.once === true || process.env.AIMAC_AGENT_ONCE === "true";
@@ -388,6 +390,57 @@ function checkpointReplayErrorIsTerminal(error) {
   return status >= 400;
 }
 
+function sweepStaleSessionDirectories(config) {
+  const ttlMs = Math.max(1, Number(process.env.AIMAC_AGENT_SESSION_TTL_HOURS || 72)) * 60 * 60 * 1000;
+  const orgsRoot = join(config.workDir, "orgs");
+  if (!existsSync(orgsRoot)) return;
+  const cutoff = Date.now() - ttlMs;
+  const walkLevel = (dir) => existsSync(dir) ? readdirSync(dir).map((name) => join(dir, name)) : [];
+  for (const orgDir of walkLevel(orgsRoot)) {
+    for (const projectDir of walkLevel(join(orgDir, "projects"))) {
+      for (const taskGroupDir of walkLevel(join(projectDir, "task-groups"))) {
+        for (const sessionDir of walkLevel(join(taskGroupDir, "sessions"))) {
+          try {
+            if (statSync(sessionDir).mtimeMs < cutoff) {
+              rmSync(sessionDir, {recursive: true, force: true});
+              process.stdout.write(`stale session directory removed: ${sessionDir}\n`);
+            }
+          } catch {}
+        }
+      }
+    }
+  }
+}
+
+function sweepLibraryOverCapacity(config) {
+  const maxBytes = Math.max(64, Number(process.env.AIMAC_AGENT_LIBRARY_MAX_MB || 2048)) * 1024 * 1024;
+  const libraryDir = join(config.workDir, "library");
+  if (!existsSync(libraryDir)) return;
+  const entries = [];
+  for (const name of readdirSync(libraryDir)) {
+    const dir = join(libraryDir, name);
+    try {
+      const stat = statSync(dir);
+      if (!stat.isDirectory()) continue;
+      let size = 0;
+      for (const file of readdirSync(dir)) {
+        try { size += statSync(join(dir, file)).size; } catch {}
+      }
+      entries.push({dir, size, mtimeMs: stat.mtimeMs});
+    } catch {}
+  }
+  let total = entries.reduce((sum, entry) => sum + entry.size, 0);
+  if (total <= maxBytes) return;
+  for (const entry of entries.sort((left, right) => left.mtimeMs - right.mtimeMs)) {
+    if (total <= maxBytes) break;
+    try {
+      rmSync(entry.dir, {recursive: true, force: true});
+      total -= entry.size;
+      process.stdout.write(`library entry evicted for capacity: ${entry.dir}\n`);
+    } catch {}
+  }
+}
+
 function sessionDirectory(config, dispatchPackage) {
   const contract = dispatchPackage.taskContract;
   const orgId = safeName(dispatchPackage.organizationId || config.organizationId || "org_default");
@@ -401,16 +454,15 @@ async function syncContentBundle(config, dispatchPackage, taskRoot) {
   try {
     bundle = await retryableAgentRequest(() => jsonRequest(`${config.serverUrl}${bundlePath}`, {token: config.nodeToken}), "content_bundle");
   } catch (error) {
-    process.stderr.write(`content bundle sync skipped: ${error.message}\n`);
-    return null;
+    throw new Error(`content bundle sync failed; execution is not allowed without synchronized rules: ${error.message}`);
   }
   const bundleDir = join(taskRoot, "bundle");
   const libraryDir = join(config.workDir, "library");
   for (const entry of bundle.entries || []) {
     const content = String(entry.content ?? "");
-    if (sha256(content) !== entry.contentDigest) throw new Error(`content bundle digest mismatch: ${entry.path}`);
+    if (sha256(content) !== entry.contentDigest) throw new Error(`content_bundle_digest_mismatch: ${entry.path}`);
     const sessionTarget = resolve(bundleDir, normalize(entry.path));
-    if (!inside(bundleDir, sessionTarget)) throw new Error(`content bundle path escapes session: ${entry.path}`);
+    if (!inside(bundleDir, sessionTarget)) throw new Error(`content_bundle_path_escapes_session: ${entry.path}`);
     mkdirSync(dirname(sessionTarget), {recursive: true});
     writeFileSync(sessionTarget, content, {mode: 0o600});
     if (entry.retention === "durable") {

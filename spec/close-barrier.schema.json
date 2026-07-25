@@ -45,7 +45,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["queryId", "source", "digest"],
+        "required": [
+          "queryId",
+          "source",
+          "digest"
+        ],
         "properties": {
           "queryId": {
             "type": "string",
@@ -64,7 +68,7 @@
     },
     "requiredGates": {
       "type": "array",
-      "minItems": 29,
+      "minItems": 31,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/closeGate"
@@ -102,38 +106,104 @@
         "no_active_role_drift_blockers",
         "all_effective_instruction_packets_terminal",
         "all_shared_definitions_active",
-        "all_repository_output_targets_terminal"
+        "all_repository_output_targets_terminal",
+        "no_pending_human_confirmations",
+        "no_pending_human_directives"
       ],
       "properties": {
-        "all_required_work_closed": {"$ref": "#/$defs/gateResult"},
-        "all_findings_terminal": {"$ref": "#/$defs/gateResult"},
-        "all_quality_gates_passed": {"$ref": "#/$defs/gateResult"},
-        "all_contracts_compatible": {"$ref": "#/$defs/gateResult"},
-        "all_changes_integrated": {"$ref": "#/$defs/gateResult"},
-        "no_pending_permissions": {"$ref": "#/$defs/gateResult"},
-        "no_pending_approvals": {"$ref": "#/$defs/gateResult"},
-        "all_policy_decisions_terminal": {"$ref": "#/$defs/gateResult"},
-        "all_commands_terminal": {"$ref": "#/$defs/gateResult"},
-        "all_command_effects_terminal": {"$ref": "#/$defs/gateResult"},
-        "no_active_dlq": {"$ref": "#/$defs/gateResult"},
-        "all_leases_terminal": {"$ref": "#/$defs/gateResult"},
-        "no_active_temp_grants": {"$ref": "#/$defs/gateResult"},
-        "no_active_secret_leases": {"$ref": "#/$defs/gateResult"},
-        "no_open_external_capability_boundaries": {"$ref": "#/$defs/gateResult"},
-        "artifacts_verified": {"$ref": "#/$defs/gateResult"},
-        "release_manifest_ready": {"$ref": "#/$defs/gateResult"},
-        "rules_candidates_processed": {"$ref": "#/$defs/gateResult"},
-        "runtime_issue_candidates_exported": {"$ref": "#/$defs/gateResult"},
-        "no_open_execution_topologies": {"$ref": "#/$defs/gateResult"},
-        "no_blocking_derived_task_requests": {"$ref": "#/$defs/gateResult"},
-        "all_review_plans_closed": {"$ref": "#/$defs/gateResult"},
-        "no_pending_review_bundles": {"$ref": "#/$defs/gateResult"},
-        "all_rule_sources_resolved": {"$ref": "#/$defs/gateResult"},
-        "completion_readiness_clear": {"$ref": "#/$defs/gateResult"},
-        "no_active_role_drift_blockers": {"$ref": "#/$defs/gateResult"},
-        "all_effective_instruction_packets_terminal": {"$ref": "#/$defs/gateResult"},
-        "all_shared_definitions_active": {"$ref": "#/$defs/gateResult"},
-        "all_repository_output_targets_terminal": {"$ref": "#/$defs/gateResult"}
+        "all_required_work_closed": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "all_findings_terminal": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "all_quality_gates_passed": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "all_contracts_compatible": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "all_changes_integrated": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "no_pending_permissions": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "no_pending_approvals": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "all_policy_decisions_terminal": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "all_commands_terminal": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "all_command_effects_terminal": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "no_active_dlq": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "all_leases_terminal": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "no_active_temp_grants": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "no_active_secret_leases": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "no_open_external_capability_boundaries": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "artifacts_verified": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "release_manifest_ready": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "rules_candidates_processed": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "runtime_issue_candidates_exported": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "no_open_execution_topologies": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "no_blocking_derived_task_requests": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "all_review_plans_closed": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "no_pending_review_bundles": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "all_rule_sources_resolved": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "completion_readiness_clear": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "no_active_role_drift_blockers": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "all_effective_instruction_packets_terminal": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "all_shared_definitions_active": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "all_repository_output_targets_terminal": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "no_pending_human_confirmations": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "no_pending_human_directives": {
+          "$ref": "#/$defs/gateResult"
+        }
       }
     },
     "blockingObjects": {
@@ -141,7 +211,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["objectType", "objectId", "status"],
+        "required": [
+          "objectType",
+          "objectId",
+          "status"
+        ],
         "properties": {
           "objectType": {
             "type": "string",
@@ -193,7 +267,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["gate", "decisionRecordRef", "expiresAt"],
+        "required": [
+          "gate",
+          "decisionRecordRef",
+          "expiresAt"
+        ],
         "properties": {
           "gate": {
             "type": "string"
@@ -229,35 +307,161 @@
       "properties": {
         "requiredGates": {
           "allOf": [
-            {"contains": {"const": "all_required_work_closed"}},
-            {"contains": {"const": "all_findings_terminal"}},
-            {"contains": {"const": "all_quality_gates_passed"}},
-            {"contains": {"const": "all_contracts_compatible"}},
-            {"contains": {"const": "all_changes_integrated"}},
-            {"contains": {"const": "no_pending_permissions"}},
-            {"contains": {"const": "no_pending_approvals"}},
-            {"contains": {"const": "all_policy_decisions_terminal"}},
-            {"contains": {"const": "all_commands_terminal"}},
-            {"contains": {"const": "all_command_effects_terminal"}},
-            {"contains": {"const": "no_active_dlq"}},
-            {"contains": {"const": "all_leases_terminal"}},
-            {"contains": {"const": "no_active_temp_grants"}},
-            {"contains": {"const": "no_active_secret_leases"}},
-            {"contains": {"const": "no_open_external_capability_boundaries"}},
-            {"contains": {"const": "artifacts_verified"}},
-            {"contains": {"const": "release_manifest_ready"}},
-            {"contains": {"const": "rules_candidates_processed"}},
-            {"contains": {"const": "runtime_issue_candidates_exported"}},
-            {"contains": {"const": "no_open_execution_topologies"}},
-            {"contains": {"const": "no_blocking_derived_task_requests"}},
-            {"contains": {"const": "all_review_plans_closed"}},
-            {"contains": {"const": "no_pending_review_bundles"}},
-            {"contains": {"const": "all_rule_sources_resolved"}},
-            {"contains": {"const": "completion_readiness_clear"}},
-            {"contains": {"const": "no_active_role_drift_blockers"}},
-            {"contains": {"const": "all_effective_instruction_packets_terminal"}},
-            {"contains": {"const": "all_shared_definitions_active"}},
-            {"contains": {"const": "all_repository_output_targets_terminal"}}
+            {
+              "contains": {
+                "const": "all_required_work_closed"
+              }
+            },
+            {
+              "contains": {
+                "const": "all_findings_terminal"
+              }
+            },
+            {
+              "contains": {
+                "const": "all_quality_gates_passed"
+              }
+            },
+            {
+              "contains": {
+                "const": "all_contracts_compatible"
+              }
+            },
+            {
+              "contains": {
+                "const": "all_changes_integrated"
+              }
+            },
+            {
+              "contains": {
+                "const": "no_pending_permissions"
+              }
+            },
+            {
+              "contains": {
+                "const": "no_pending_approvals"
+              }
+            },
+            {
+              "contains": {
+                "const": "all_policy_decisions_terminal"
+              }
+            },
+            {
+              "contains": {
+                "const": "all_commands_terminal"
+              }
+            },
+            {
+              "contains": {
+                "const": "all_command_effects_terminal"
+              }
+            },
+            {
+              "contains": {
+                "const": "no_active_dlq"
+              }
+            },
+            {
+              "contains": {
+                "const": "all_leases_terminal"
+              }
+            },
+            {
+              "contains": {
+                "const": "no_active_temp_grants"
+              }
+            },
+            {
+              "contains": {
+                "const": "no_active_secret_leases"
+              }
+            },
+            {
+              "contains": {
+                "const": "no_open_external_capability_boundaries"
+              }
+            },
+            {
+              "contains": {
+                "const": "artifacts_verified"
+              }
+            },
+            {
+              "contains": {
+                "const": "release_manifest_ready"
+              }
+            },
+            {
+              "contains": {
+                "const": "rules_candidates_processed"
+              }
+            },
+            {
+              "contains": {
+                "const": "runtime_issue_candidates_exported"
+              }
+            },
+            {
+              "contains": {
+                "const": "no_open_execution_topologies"
+              }
+            },
+            {
+              "contains": {
+                "const": "no_blocking_derived_task_requests"
+              }
+            },
+            {
+              "contains": {
+                "const": "all_review_plans_closed"
+              }
+            },
+            {
+              "contains": {
+                "const": "no_pending_review_bundles"
+              }
+            },
+            {
+              "contains": {
+                "const": "all_rule_sources_resolved"
+              }
+            },
+            {
+              "contains": {
+                "const": "completion_readiness_clear"
+              }
+            },
+            {
+              "contains": {
+                "const": "no_active_role_drift_blockers"
+              }
+            },
+            {
+              "contains": {
+                "const": "all_effective_instruction_packets_terminal"
+              }
+            },
+            {
+              "contains": {
+                "const": "all_shared_definitions_active"
+              }
+            },
+            {
+              "contains": {
+                "const": "all_repository_output_targets_terminal"
+              }
+            },
+            {
+              "contains": {
+                "const": "no_pending_human_confirmations"
+              }
+            },
+            {
+              "contains": {
+                "const": "no_pending_human_directives"
+              }
+            }
           ]
         }
       }
@@ -269,7 +473,9 @@
             "const": true
           }
         },
-        "required": ["satisfied"]
+        "required": [
+          "satisfied"
+        ]
       },
       "then": {
         "properties": {
@@ -279,12 +485,14 @@
           "gateResults": {
             "patternProperties": {
               ".*": {
-              "properties": {
-                "status": {
-                  "const": "passed"
-                }
-              },
-              "required": ["status"]
+                "properties": {
+                  "status": {
+                    "const": "passed"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
               }
             }
           }
@@ -324,17 +532,26 @@
         "no_active_role_drift_blockers",
         "all_effective_instruction_packets_terminal",
         "all_shared_definitions_active",
-        "all_repository_output_targets_terminal"
+        "all_repository_output_targets_terminal",
+        "no_pending_human_confirmations",
+        "no_pending_human_directives"
       ]
     },
     "gateResult": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "evidenceRefs"],
+      "required": [
+        "status",
+        "evidenceRefs"
+      ],
       "properties": {
         "status": {
           "type": "string",
-          "enum": ["passed", "failed", "blocked"]
+          "enum": [
+            "passed",
+            "failed",
+            "blocked"
+          ]
         },
         "evidenceRefs": {
           "type": "array",
