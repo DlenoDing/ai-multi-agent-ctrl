@@ -1421,7 +1421,9 @@ function ensureMcpProjectOwnerGrant(state, project, ownerAccountId, policyDecisi
 }
 
 function createWorkItem(state, args) {
-  const taskGroup = findTaskGroup(state, args.taskGroupId);
+  // A work item must attach to an explicitly named task group — never findTaskGroup's taskGroups[0] fallback,
+  // which would add the item to an arbitrary tenant's task group when taskGroupId is omitted.
+  const taskGroup = args.taskGroupId ? findTaskGroup(state, args.taskGroupId) : null;
   if (!taskGroup) return {ok: false, error: "task_group_not_found"};
   const workItemId = args.workItemId || createId("work");
   if ((taskGroup.workItems || []).some((item) => item.id === workItemId)) return {ok: false, error: "work_item_id_conflict"};
@@ -2092,7 +2094,7 @@ function resumePermissionBlockedSession(state, request, at) {
 }
 
 function reviewPlanCreate(state, args) {
-  const taskGroup = findTaskGroup(state, args.taskGroupId);
+  const taskGroup = taskGroupForRecord(state, args);
   const at = new Date().toISOString();
   const plan = {
     schemaVersion: "review-plan/v1",
@@ -2483,7 +2485,7 @@ function sharedDefinitionConflictReport(state, args) {
 
 function instructionEnvelopeCreate(state, args, sourceKind) {
   const at = new Date().toISOString();
-  const taskGroup = findTaskGroup(state, args.taskGroupId);
+  const taskGroup = taskGroupForRecord(state, args);
   const languagePolicy = normalizeTaskGroupLanguagePolicy(taskGroup?.languagePolicy || args.languagePolicy || args);
   const languagePolicyDigest = digestOf(languagePolicy);
   const tokenBudget = args.tokenBudget || {};
