@@ -84,7 +84,7 @@ const PAGE_META = {
   "sys-overview": ["系统概览", "服务器信息、资源占用、能耗估算、存储体量与运行指标"],
   "sys-orgs": ["组织管理", "组织列表、配额与用量、创建组织并签发初始超管账号"],
   "sys-settings": ["系统设置", "运行参数只读展示、模型能力注册、技能源与指令协议"],
-  "sys-accounts": ["账号与授权", "账号邀请、访问授权、项目归属与 Agent 入网令牌"],
+  "sys-accounts": ["账号与授权", "账号邀请、访问授权、项目归属与智能体入网令牌"],
   "org-overview": ["组织概览", "配额用量、活跃项目与任务组统计"],
   "org-members": ["成员管理", "创建成员、权限分配、停用与一次性登录令牌"],
   "org-agents": ["AI 智能体", "组织内智能体节点：运行状态、健康度、加入令牌与吊销"],
@@ -289,20 +289,48 @@ function row(items) {
   return `<tr>${items.map((item) => `<td>${item}</td>`).join("")}</tr>`;
 }
 
-function table(headers, bodyRows) {
-  const emptyRow = row(headers.map(() => "-"));
+function table(headers, bodyRows, options = {}) {
+  const emptyRow = `<tr><td class="empty-cell" colspan="${headers.length}">${esc(options.emptyText || "暂无数据")}</td></tr>`;
+  const footer = options.moreText ? `<div class="table-more">${esc(options.moreText)}</div>` : "";
   return `
     <div class="table-scroll">
       <table class="data-table">
         <thead><tr>${headers.map((headline) => `<th>${esc(headline)}</th>`).join("")}</tr></thead>
         <tbody>${bodyRows || emptyRow}</tbody>
       </table>
+      ${footer}
     </div>
   `;
 }
 
-function filterInput(placeholder = "关键字过滤…") {
-  return `<input class="filter-input" data-filter-input placeholder="${esc(placeholder)}">`;
+// 截断提示：数据超过展示上限时给出"共 N 条，仅显示前 M 条"
+function moreText(total, shown) {
+  return total > shown ? `共 ${total} 条，仅显示最新 ${shown} 条` : "";
+}
+
+const filterState = {};
+
+function filterInput(placeholder = "关键字过滤…", key = "") {
+  const value = key ? filterState[key] || "" : "";
+  return `<input class="filter-input" data-filter-input ${key ? `data-filter-key="${esc(key)}"` : ""} value="${esc(value)}" placeholder="${esc(placeholder)}">`;
+}
+
+// 按输入框内容隐藏不匹配的行/卡片；供输入时与每次 render 后回填复用
+function applyFilterFor(inputEl) {
+  if (!inputEl) return;
+  const scope = inputEl.closest(".panel") || document;
+  const query = String(inputEl.value || "").trim().toLowerCase();
+  scope.querySelectorAll(".data-table tbody tr, .agent-cards .agent-card").forEach((rowEl) => {
+    if (rowEl.querySelector(".empty-cell")) return;
+    rowEl.style.display = !query || rowEl.textContent.toLowerCase().includes(query) ? "" : "none";
+  });
+}
+
+// render 后重新应用所有已保存的过滤词，避免自动刷新/轮询把用户的筛选抹掉
+function reapplyFilters() {
+  document.querySelectorAll("[data-filter-input]").forEach((inputEl) => {
+    if (inputEl.value) applyFilterFor(inputEl);
+  });
 }
 
 function errorBanner() {
@@ -758,7 +786,7 @@ function renderLogin() {
           <span class="brand-mark">智</span>
           <h1>AI 多智能体管控台</h1>
         </div>
-        <p class="login-sub">面向人的组织化管理后台 · 系统管理员 / 组织管理员 / 组织成员</p>
+        <p class="login-sub">面向人的组织化管理后台 · 系统管理员、组织管理员、组织成员</p>
         ${lastError ? `<div class="notice error-notice" style="margin-bottom:14px;">登录失败：${esc(lastError)}</div>` : ""}
         <form class="form-grid" data-form="login">
           <div class="form-row"><label for="loginEmail">登录账号（邮箱或账号 ID）</label><input id="loginEmail" name="email" required autocomplete="username"></div>
@@ -766,7 +794,7 @@ function renderLogin() {
           <button class="primary-button" type="submit">登 录</button>
         </form>
         ${hintBlock}
-        <p class="small muted" style="margin-top:16px;">首次使用一次性令牌登录后，可在顶栏"修改密码"设置个人密码。</p>
+        <p class="small muted" style="margin-top:16px;">首次使用一次性令牌登录后，可在顶栏“修改密码”设置个人密码。</p>
       </div>
     </div>
   `;
@@ -843,6 +871,7 @@ function render() {
   prevTableScroll.forEach((left, index) => {
     if (tableScrolls[index]) tableScrolls[index].scrollLeft = left;
   });
+  reapplyFilters();
 }
 
 function renderContent() {
@@ -876,8 +905,8 @@ function renderSysOverview() {
   ])).join("");
   const audit = (state.auditLog || []).slice(0, 15).map((entry) => row([
     fmtTime(entry.at),
-    esc(entry.actor),
-    esc(entry.action),
+    esc(accountName(entry.actor)),
+    esc(t(entry.action)),
     esc(entry.subject),
     badge(entry.result || "ok")
   ])).join("");
@@ -979,10 +1008,10 @@ function renderSysOrgs() {
     panel("说明", `
       <div class="stack">
         <div class="record"><div class="record-title"><strong>三级职责边界</strong></div><div class="record-meta"><span>系统管理员负责组织与配额；组织管理员负责成员、智能体与项目；组织成员在被授权的项目内工作。</span></div></div>
-        <div class="record"><div class="record-title"><strong>配额强制</strong></div><div class="record-meta"><span>成员 / 项目 / 任务组 / 智能体创建时校验配额，超限将返回"组织配额超限"。</span></div></div>
+        <div class="record"><div class="record-title"><strong>配额强制</strong></div><div class="record-meta"><span>成员、项目、任务组、智能体创建时校验配额，超限将返回“组织配额超限”。</span></div></div>
       </div>
     `),
-    panel("组织列表", table(["组织", "状态", "成员", "项目", "任务组", "智能体", "创建时间", "操作"], orgRows), {wide: true, headerSide: filterInput("按组织名过滤…")})
+    panel("组织列表", table(["组织", "状态", "成员", "项目", "任务组", "智能体", "创建时间", "操作"], orgRows), {wide: true, headerSide: filterInput("按组织名过滤…", "orgs")})
   ].join("");
 }
 
@@ -993,7 +1022,7 @@ function renderSysSettings() {
   const models = (state.modelCapabilities || []).slice(0, 40).map((profile) => row([
     esc(t(profile.providerClass)),
     `<span class="mono">${esc(profile.modelId)}</span>`,
-    esc((profile.strengths || []).slice(0, 4).join("、")),
+    esc((profile.strengths || []).slice(0, 4).map((item) => t(item)).join("、")),
     esc(profile.limits?.contextWindowTokens ?? "-"),
     badge(profile.availability)
   ])).join("");
@@ -1014,7 +1043,7 @@ function renderSysSettings() {
   ])).join("");
   const definitions = (instructionState?.sharedDefinitions || []).map((definition) => row([
     `<span class="mono">${esc(definition.contractId)}</span>`,
-    esc(definition.definitionType),
+    esc(t(definition.definitionType)),
     esc(t(definition.canonicalOwnerRole)),
     esc(t(definition.producerRole)),
     badge(definition.status)
@@ -1035,12 +1064,12 @@ function renderSysSettings() {
     panel("模型能力注册（只读）", table(["供应商", "模型", "能力", "上下文窗口", "可用性"], models), {wide: true}),
     panel("指令压缩指标", `
       <div class="metric-grid">
-        <div class="metric"><span>稳定前缀 tokens</span><strong>${esc(metrics.stablePrefixTokens)}</strong></div>
-        <div class="metric"><span>增量消息目标 tokens</span><strong>${esc(metrics.deltaMessageTargetTokens)}</strong></div>
+        <div class="metric"><span>稳定前缀 Token 数</span><strong>${esc(metrics.stablePrefixTokens)}</strong></div>
+        <div class="metric"><span>增量消息目标 Token 数</span><strong>${esc(metrics.deltaMessageTargetTokens)}</strong></div>
         <div class="metric"><span>缓存命中目标</span><strong>${Math.round((metrics.cacheHitTarget || 0) * 100)}%</strong></div>
       </div>
     `),
-    panel("指令信封", table(["编号", "接收角色", "缓存键", "状态", "目标 tokens"], envelopes)),
+    panel("指令信封", table(["编号", "接收角色", "缓存键", "状态", "目标 Token 数"], envelopes)),
     panel("共享定义归属", table(["定义", "类型", "归属角色", "生产角色", "状态"], definitions), {wide: true})
   ].join("");
 }
@@ -1112,7 +1141,7 @@ function renderSysAccounts() {
       </form>
     `),
     panel("项目成员授权", renderProjectMemberForm()),
-    panel("Agent 入网令牌", renderJoinTokenSection(), {wide: true}),
+    panel("智能体入网令牌", renderJoinTokenSection(), {wide: true}),
     panel("账号列表", table(["账号", "邮箱", "类型", "状态", "角色"], accounts), {wide: true}),
     panel("访问授权列表", table(["主体", "资源", "角色", "状态", "权限", "操作"], grants), {wide: true}),
     panel("编排智能体档案", table(["名称", "角色", "模型策略", "状态", "操作"], agents) + `
@@ -1287,11 +1316,11 @@ function renderOrgMembers() {
     `),
     panel("说明", `
       <div class="stack">
-        <div class="record"><div class="record-title"><strong>一次性令牌</strong></div><div class="record-meta"><span>成员首次使用令牌登录后令牌即失效，可在顶栏"修改密码"设置个人密码。</span></div></div>
+        <div class="record"><div class="record-title"><strong>一次性令牌</strong></div><div class="record-meta"><span>成员首次使用令牌登录后令牌即失效，可在顶栏“修改密码”设置个人密码。</span></div></div>
         <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目/任务组细粒度授权可在"账号与授权 / 项目管理"中补充。</span></div></div>
       </div>
     `),
-    panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows), {wide: true, headerSide: filterInput("按姓名 / 邮箱过滤…")})
+    panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows), {wide: true, headerSide: filterInput("按姓名、邮箱过滤…", "members")})
   ].join("");
 }
 
@@ -1364,7 +1393,7 @@ function renderOrgAgents() {
   }
 
   return [
-    panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成 / 失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名 / 地区过滤…")}${toggle}`}),
+    panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成 / 失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
     panel("签发加入令牌 / 令牌管理", renderJoinTokenSection(), {wide: true})
   ].join("");
 }
@@ -1378,7 +1407,7 @@ function renderOrgProjects() {
     progressLine(project.progress?.percent),
     badge(project.progress?.phase),
     badge(project.progress?.health),
-    esc((project.members || []).map((member) => `${member.accountId}(${t(member.role)})`).join("、"))
+    esc((project.members || []).map((member) => `${accountName(member.accountId)}（${t(member.role)}）`).join("、"))
   ])).join("");
 
   return [
@@ -1585,7 +1614,7 @@ function renderTaskGroupDetail(taskGroup) {
         layer: "task_group",
         task: taskGroup.id,
         readOnly: !canControl,
-        note: "展示解析结果：徽标标明来自默认 / 项目 / 任务组。可在任务组层停用、改写或新增。"
+        note: "展示解析结果：徽标标明来自默认、项目、任务组。可在任务组层停用、改写或新增。"
       }))}
       ${sectionBlock("业务规则（默认 / 项目 / 任务组）", ruleEditorForm({
         rules: config.businessRules || [],
@@ -1882,7 +1911,7 @@ function renderDirectives() {
     badge(directive.directiveType, "blue"),
     esc(directive.instruction || "-"),
     badge(directive.status),
-    esc((directive.appliedActions || []).map((action) => action.action).join("、") || "-"),
+    esc((directive.appliedActions || []).map((action) => t(action.action)).join("、") || "-"),
     esc(directive.rejectReason ? t(directive.rejectReason) : "-")
   ])).join("");
 
@@ -1901,11 +1930,11 @@ function renderDirectives() {
   return [
     panel("下达人工指令", `
       <div class="stack">
-        <div class="notice">总控 / 调度会话不接受人工直接输入。所有人工操作通过本通道生成结构化指令，由编排周期作为决策输入消费并全程留审计。</div>
+        <div class="notice">总控与调度会话不接受人工直接输入。所有人工操作通过本通道生成结构化指令，由编排周期作为决策输入消费并全程留审计。</div>
         ${formHtml}
       </div>
     `, {wide: true}),
-    panel("指令流水", table(["时间", "类型", "指令内容", "状态", "已执行动作", "拒绝原因"], directiveRows), {wide: true, headerSide: filterInput("按指令内容过滤…")})
+    panel("指令流水", table(["时间", "类型", "指令内容", "状态", "已执行动作", "拒绝原因"], directiveRows), {wide: true, headerSide: filterInput("按指令内容过滤…", "directives")})
   ].join("");
 }
 
@@ -2004,11 +2033,11 @@ function renderMonitor() {
         <div class="record-meta"><span>监听范围：</span><select data-select="exec-scope">${scopeOptions.map((option) => `<option value="${esc(option.value)}" ${option.value === scopeValue ? "selected" : ""}>${esc(option.label)}</option>`).join("")}</select></div>
         ${table(["序号", "事件", "进度", "状态", "摘要", "时间"], eventRows)}
       </div>
-    `, {wide: true, headerSide: filterInput("按事件 / 摘要过滤…")}),
-    panel("工作会话", table(["会话", "角色", "工作项", "放置方式", "状态", "详情"], sessions), {wide: true, headerSide: filterInput("按会话 / 工作项过滤…")}),
-    panel("智能体派发", table(["派发", "工作项", "状态", "进度", "原因", "详情"], dispatches), {wide: true, headerSide: filterInput("按派发 / 工作项过滤…")}),
+    `, {wide: true, headerSide: filterInput("按事件、摘要过滤…", "events")}),
+    panel("工作会话", table(["会话", "角色", "工作项", "放置方式", "状态", "详情"], sessions), {wide: true, headerSide: filterInput("按会话、工作项过滤…", "sessions")}),
+    panel("智能体派发", table(["派发", "工作项", "状态", "进度", "原因", "详情"], dispatches), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
     panel("控制通道", table(["序号", "节点", "命令", "作用对象", "状态", "更新时间"], commands), {wide: true}),
-    panel("运行时节点", table(["节点", "状态", "准入", "最近心跳", "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…")}),
+    panel("运行时节点", table(["节点", "状态", "准入", "最近心跳", "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
     panel("模型选择记录", table(["角色", "工作项", "模型", "状态", "决策说明"], decisions)),
     panel("会话放置记录", table(["工作项", "放置方式", "状态"], placements)),
     panel("关闭门禁", table(["任务组", "状态", "阻塞对象数", "计算时间"], barriers), {wide: true})
@@ -2085,7 +2114,7 @@ function renderProjectSettings() {
       layer: "project",
       project: project.id,
       readOnly: !canEdit,
-      note: "内置默认系统规则可在项目层“停用”或“改写内容”，也可新增自定义系统规则。徽标标明来源：默认 / 项目。"
+      note: "内置默认系统规则可在项目层“停用”或“改写内容”，也可新增自定义系统规则。徽标标明来源：默认、项目。"
     }), {wide: true}),
     panel("业务规则", ruleEditorForm({
       rules: resolved.businessRules || [],
@@ -2201,7 +2230,7 @@ document.addEventListener("submit", async (event) => {
       };
       const result = await api("/api/agent-join-tokens", {method: "POST", body: JSON.stringify(payload)});
       await loadPage();
-      openModal("一次性 Agent 加入令牌", `
+      openModal("一次性智能体加入令牌", `
         <div class="stack">
           <div class="notice warn-notice">以下注册命令仅显示一次，请立即复制到目标主机执行。</div>
           <div class="command-box"><strong>直接安装</strong><pre id="join-install">${esc(result.installCommand || "-")}</pre></div>
@@ -2387,11 +2416,8 @@ document.addEventListener("change", async (event) => {
 document.addEventListener("input", (event) => {
   const filter = event.target.closest("[data-filter-input]");
   if (filter) {
-    const scope = filter.closest(".panel") || document;
-    const query = filter.value.trim().toLowerCase();
-    scope.querySelectorAll(".data-table tbody tr, .agent-cards .agent-card").forEach((rowEl) => {
-      rowEl.style.display = !query || rowEl.textContent.toLowerCase().includes(query) ? "" : "none";
-    });
+    if (filter.dataset.filterKey) filterState[filter.dataset.filterKey] = filter.value;
+    applyFilterFor(filter);
     return;
   }
   if (event.target.closest("form[data-form]")) formTouched = true;
