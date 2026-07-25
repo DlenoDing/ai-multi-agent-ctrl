@@ -2081,6 +2081,14 @@ function policyDecisionEval(state, args) {
   return {policyDecision};
 }
 
+const findingTerminalStatuses = ["resolved", "closed", "dismissed", "wontfix"];
+
+function nonTerminalFindingStatus(status, fallback) {
+  // Raising a finding must never terminalize it; only governance-mcp.finding_resolve can. This keeps
+  // finding_submit (available to control-role agents) from bypassing the resolve separation of duties.
+  return status && !findingTerminalStatuses.includes(status) ? status : fallback;
+}
+
 function findingSubmit(state, args) {
   const at = new Date().toISOString();
   if (args.findingId) {
@@ -2088,7 +2096,7 @@ function findingSubmit(state, args) {
     if (existing) {
       Object.assign(existing, {
         severity: args.severity || existing.severity,
-        status: args.status || existing.status,
+        status: nonTerminalFindingStatus(args.status, existing.status),
         summary: args.summary || existing.summary,
         evidenceRefs: [...new Set([...(existing.evidenceRefs || []), ...(args.evidenceRefs || [])])],
         updatedAt: at
@@ -2103,13 +2111,13 @@ function findingSubmit(state, args) {
     workItemId: args.workItemId || args.workId,
     findingType: args.findingType || "governance",
     severity: args.severity || "medium",
-    status: args.status || "open",
+    status: nonTerminalFindingStatus(args.status, "open"),
     summary: args.summary || "Machine-submitted finding",
     evidenceRefs: args.evidenceRefs || [],
     createdAt: at,
     updatedAt: at
   };
-  state.findings = capRetainingOpen([finding, ...state.findings], ["resolved", "closed", "dismissed", "wontfix"], 2000);
+  state.findings = capRetainingOpen([finding, ...state.findings], findingTerminalStatuses, 2000);
   return {finding};
 }
 
