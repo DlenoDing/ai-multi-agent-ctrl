@@ -266,7 +266,8 @@
 {
   "repositories": [{"id": "...", "url": "...", "defaultBranch": "main", "credentialSecretRef": "env:AIMAC_REPO_TOKEN_xxx"}],
   "baselineData": [{"name": "...", "locator": "git:docs/baseline/...", "digest": "sha256:..."}],
-  "businessRuleRefs": ["br_xxx"],
+  "systemRules": [{"ruleId": "sys.time-semantics", "enabled": false}, {"ruleId": "sys.custom-1", "title": "...", "content": "..."}],
+  "businessRules": [{"ruleId": "biz.acceptance", "title": "验收标准", "content": "..."}],
   "defaultRoles": [
     {"roleId": "orchestrator", "roleSkillRef": "rs_xxx", "skillRuleOverride": null},
     {"roleId": "backend-developer", "roleSkillRef": "rs_yyy", "skillRuleOverride": "br_zzz"}
@@ -274,7 +275,9 @@
 }
 ```
 
-仓库访问凭证只存**引用**（环境变量名 / 秘钥管理地址），状态库不落明文。
+- `systemRules`/`businessRules` 为**层级覆盖片段**：只需写要停用/改写/新增的规则（按 `ruleId` 与内置默认集合并），未写的默认规则原样继承（见 §4.4）。
+- 解析视图：`GET /api/projects/:id/config`、`GET /api/task-groups/:id/config` 返回 `effective*Config`，含 `systemRules`/`businessRules`（带 `source: default|project|task_group` 与 `contentDigest`）及 `activeSystemRules`/`activeBusinessRules`（实际下发的已启用集）。
+- 仓库访问凭证只存**引用**（环境变量名 / 秘钥管理地址），状态库不落明文。
 
 ### 5.2 任务组继承与覆盖
 
