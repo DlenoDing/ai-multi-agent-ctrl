@@ -1634,14 +1634,22 @@ function collectRuleFragments(form, layer) {
     const source = rowEl.dataset.ruleSource || "";
     const owned = source.split("+").includes(layer);
     const isNew = !source;
-    const dirty = enabled !== (rowEl.dataset.origEnabled === "1")
-      || content !== (rowEl.dataset.origContent || "")
-      || title !== (rowEl.dataset.origTitle || "");
+    const enabledChanged = enabled !== (rowEl.dataset.origEnabled === "1");
+    const contentChanged = content !== (rowEl.dataset.origContent || "");
+    const titleChanged = title !== (rowEl.dataset.origTitle || "");
+    const dirty = enabledChanged || contentChanged || titleChanged;
     // 未在本层改动、且非本层既有覆盖的默认/继承项不提交，保持继承
     if (!owned && !isNew && !dirty) continue;
     if (isNew && !title && !content) continue;
-    const fragment = {category, title, content, enabled, status: "active"};
+    const fragment = {category, enabled};
     if (ruleId) fragment.ruleId = ruleId;
+    // 仅在标题/内容确实被编辑、或规则缺少稳定 ruleId（无 id 时需内容派生 id）时才携带正文，
+    // 否则省略，避免仅切换启用状态就把上游默认/继承规则的正文冻结为旧文本。
+    if (isNew || !ruleId || titleChanged || contentChanged) {
+      fragment.title = title;
+      fragment.content = content;
+      fragment.status = "active";
+    }
     fragments.push(fragment);
   }
   return fragments;

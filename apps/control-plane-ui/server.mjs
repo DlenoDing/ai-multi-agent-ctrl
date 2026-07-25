@@ -462,6 +462,21 @@ function boundedQuota(value, fallback) {
   return Math.max(1, Math.min(1_000_000, Math.floor(numeric)));
 }
 
+// Reject over-length rule fragments up front so a safety rule is never silently truncated (which would
+// quietly weaken its semantics). Returns an error code string, or null when the payload is within limits.
+function ruleFragmentsRejection(value) {
+  if (value === undefined) return null;
+  if (!Array.isArray(value)) return null;
+  if (value.length > 200) return "too_many_rules";
+  for (const rule of value) {
+    if (!rule || typeof rule !== "object") continue;
+    if (rule.ruleId !== undefined && String(rule.ruleId).length > 128) return "rule_id_too_long";
+    if (rule.title !== undefined && String(rule.title).length > 256) return "rule_title_too_long";
+    if (rule.content !== undefined && String(rule.content).length > 8192) return "rule_content_too_long";
+  }
+  return null;
+}
+
 function sanitizeRuleFragments(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 200).filter((rule) => rule && typeof rule === "object").map((rule) => {
@@ -3220,6 +3235,8 @@ async function handleApi(req, res) {
     return;
   }
   if (req.method === "POST" && projectConfigMatch) {
+    const ruleErr = ruleFragmentsRejection(body.systemRules) || ruleFragmentsRejection(body.businessRules);
+    if (ruleErr) return json(res, 422, {error: ruleErr, limits: {rules: 200, title: 256, content: 8192}});
     const guard = beginGuardedWrite(req, state, "project_config_update", `Project:${projectConfigMatch[1]}`, projectScope(projectConfigMatch[1]));
     if (guard.status) return json(res, guard.status, guard.payload);
     const project = state.projects.find((item) => item.id === projectConfigMatch[1]);
@@ -3250,6 +3267,8 @@ async function handleApi(req, res) {
     return;
   }
   if (req.method === "POST" && taskGroupConfigMatch) {
+    const ruleErr = ruleFragmentsRejection(body.systemRules) || ruleFragmentsRejection(body.businessRules);
+    if (ruleErr) return json(res, 422, {error: ruleErr, limits: {rules: 200, title: 256, content: 8192}});
     const guard = beginGuardedWrite(req, state, "task_group_config_update", `TaskGroup:${taskGroupConfigMatch[1]}`, taskGroupScope(state, taskGroupConfigMatch[1]));
     if (guard.status) return json(res, guard.status, guard.payload);
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupConfigMatch[1]);

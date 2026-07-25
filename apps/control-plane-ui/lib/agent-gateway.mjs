@@ -829,7 +829,12 @@ function isSafeGitRemoteUrl(url) {
   if (!value || value.startsWith("-")) return false;
   if (/^[a-z0-9+.-]*::/iu.test(value)) return false;
   if (value.startsWith("ext:") || value.startsWith("fd:")) return false;
-  return /^https?:\/\//iu.test(value) || /^ssh:\/\//iu.test(value) || /^git:\/\//iu.test(value) || /^[^@\s]+@[^:\s]+:.+/u.test(value);
+  // Reject a host segment that begins with '-' so git cannot pass it to ssh as an option (e.g. -oProxyCommand=...).
+  const scp = value.match(/^[^@\s]+@([^:\s]+):.+/u);
+  if (scp) return !scp[1].startsWith("-");
+  const sshUrl = value.match(/^ssh:\/\/(?:[^@/\s]+@)?([^/:\s]+)/iu);
+  if (sshUrl) return !sshUrl[1].startsWith("-");
+  return /^https?:\/\//iu.test(value) || /^git:\/\//iu.test(value);
 }
 
 function gitTransferForBundle(config) {
