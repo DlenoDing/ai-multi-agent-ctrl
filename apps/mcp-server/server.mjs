@@ -1896,7 +1896,7 @@ function permissionRequestSubmit(state, args) {
     createdAt: at,
     updatedAt: at
   };
-  state.permissionRequests = capRetainingOpen([request, ...state.permissionRequests], ["resolved", "granted", "denied", "revoked", "expired", "cancelled"], 2000);
+  state.permissionRequests = capRetainingOpen([request, ...state.permissionRequests], ["approved", "denied", "resolved", "revoked", "expired", "cancelled"], 2000);
   if (args.sessionId) {
     const session = state.workSessions.find((item) => item.sessionId === args.sessionId);
     if (session) {
