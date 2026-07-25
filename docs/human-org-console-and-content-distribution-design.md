@@ -210,14 +210,21 @@
 - `library/`：digest 寻址长期保留；LRU 清理阈值 `AIMAC_AGENT_LIBRARY_MAX_MB`（默认 2048）。
 - `projects/<id>/repository/`：长期保留，项目在控制面删除后由 revoke/shutdown 流程提示清理。
 
-### 4.4 双规则体系
+### 4.4 三类规则体系（角色规则 / 系统规则 / 业务规则）
 
-| 类型 | 定义 | 存储 | 作用 |
-|---|---|---|---|
-| 角色规则（roleSkill） | 会话身份定义："你是谁、职责边界、禁区"（对应 agency-agents-zh 角色） | 既有 `roleSkills` + 项目/任务组默认角色配置 | 契约 `roleSkill` 引用，内容包 `role` 分类下发 |
-| 业务规则（businessRule） | 项目/任务组的业务约束："必须怎么做、验收标准、领域规范" | **v1 实现**：内联于 `project.config.businessRules` / `taskGroup.configOverrides.businessRules`（`{ruleId?, title, content}` 数组，随项目/任务组分片落盘），经 `effectiveTaskGroupConfig` 合并；独立分片集合 `businessRules`（含 contentDigest/retention/status）为后续演进项 | 内容包 `business` 分类下发（`buildExecutionContentBundle`）；契约通过内容包摘要绑定 |
+规则分三类，其中**系统规则与业务规则均为一等对象**，各自带**内置默认规则集**，并按 **默认 → 项目 → 任务组** 三级继承与覆盖（与 §5 配置继承同一机制：任务组默认继承项目，可自定义，可重置回继承）。
 
-约束不靠指令原文传达：契约与提示词只携带**引用与摘要**，正文一律走内容包（见 4.5）。执行会话在开始前必须完成内容包同步校验，摘要不符即拒绝执行（`content_bundle_digest_mismatch`）。
+| 类型 | 定义 | 默认来源 | 层级覆盖 | 内容包分类 |
+|---|---|---|---|---|
+| 角色规则（roleSkill） | 会话身份定义："你是谁、职责边界、禁区"（对应 agency-agents-zh 角色） | `roleSkills` 内置角色 | 项目/任务组默认角色 + overlay | `role` |
+| 系统规则（systemRule） | 领域无关的**执行/编排/验证纪律**："如何正确地做"——会话自动 git 持久化、证据必须新鲜带时间戳、临时测试代码收尾前必须移除、实现与复验分离、superseded 路径生命周期、真实外部约束边界、中文协作等 | 内置默认系统规则集 `defaultSystemRules`（从通用工程规则沉淀） | 项目 `config.systemRules` / 任务组 `configOverrides.systemRules`（启用/停用/新增/改写单条，`enabled`/`content` 级覆盖，可 reset） | `system` |
+| 业务规则（businessRule） | 项目/任务组的**业务约束**："必须满足什么"——验收标准、领域规范、禁止项 | 内置默认业务规则集 `defaultBusinessRules`（通用空/占位，项目定义为主） | 项目 `config.businessRules` / 任务组 `configOverrides.businessRules` | `business` |
+
+规则对象形态（系统/业务同构）：`{ruleId, category: "system"|"business", title, content, contentDigest, status: "active"|"draft"|"disabled", enabled, source: "default"|"project"|"task_group"}`。
+
+三级合并（`effectiveTaskGroupConfig`）：以 `ruleId` 为键，默认集打底 → 项目层同 id 覆盖/停用/新增 → 任务组层再覆盖，`enabled:false` 或 `status:"disabled"` 的规则不下发；任务组 `reset` 删除其覆盖回到"继承项目"。
+
+约束不靠指令原文传达：契约与提示词只携带**引用与摘要**，正文一律走内容包（见 4.5）。执行会话开始前必须完成内容包同步校验，摘要不符即拒绝执行（`content_bundle_digest_mismatch`）。系统规则与业务规则均以此方式硬性约束会话，而非依赖指令措辞。
 
 ### 4.5 执行内容包（ExecutionContentBundle）
 
@@ -241,7 +248,10 @@
 
 分发规则：
 
-1. **系统能力优先**：内容包经网关 `GET /api/agent/v1/content-bundles/:sessionId` 下载（含正文），不通过指令文本传递。小文本条目走内容包正文内联下发并逐条摘要校验；**大文件走 git 仓库通道**：项目配置 `baselineData` 中 `locator: "git:<path>"` 的条目由网关汇聚为 `gitTransfer{repositoryUrl, ref, paths}`，运行时对这些 path 做 `--depth 1` + sparse-checkout 的 `git fetch` 拉进会话 `bundle/git-transfer/`（经 `AIMAC_CONTENT_BUNDLE_GIT_DIR` 暴露给执行器），因而大二进制永不膨胀 JSON 载荷；git 传递失败即终止执行。
+1. **通道分离（稳定性优先）**：
+   - **规则类内容（角色/系统/业务规则）一律走系统内置内容包通道**（`GET /api/agent/v1/content-bundles/:sessionId`，由控制面/内置 MCP 托管），正文内联 + 逐条摘要校验。规则是执行正确性的硬约束，必须走最稳定的系统自有链路，**不依赖外部 git**。
+   - **仅少数业务需求/基线大文件走项目 git 仓库**：项目 `baselineData` 中 `locator: "git:<path>"` 的条目由网关汇聚为 `gitTransfer{repositoryUrl, ref, paths}`，运行时对这些 path 做 `--depth 1` + sparse-checkout 的 `git fetch` 拉进会话 `bundle/git-transfer/`（经 `AIMAC_CONTENT_BUNDLE_GIT_DIR` 暴露给执行器），大二进制不膨胀 JSON 载荷；git 传递失败即终止执行。
+   - 即：**规则=内容包内联（系统 MCP）**；**大业务数据=git**。二者互不混用。
 2. **归档规则**：`retention=durable` 条目按 `contentDigest` 存入 `library/`（已存在则跳过下载，实现增量同步）；`retention=task` 条目存入会话目录 `bundle/`，随会话清理自动删除。
 3. **隔离**：条目 `path` 只允许相对路径且解包目标限定在会话 `bundle/` 或 `library/` 内。
 4. 内容包由**派发包**携带下载地址（`remoteServices.contentBundlePath`），不冻结进契约——因为内容包包含"已答人工确认"等随执行推进而变化的任务态内容，契约级摘要冻结会造成必然失配。运行时校验每个条目摘要后方可启动执行器（下载失败或摘要不符即终止执行并上报失败）；执行器通过环境变量 `AIMAC_CONTENT_BUNDLE_DIR` 获得解包目录。

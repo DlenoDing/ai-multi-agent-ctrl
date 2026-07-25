@@ -48,6 +48,7 @@ import {
   defaultModelCapabilities,
   DEFAULT_ORGANIZATION_ID,
   digestOf,
+  effectiveProjectConfig,
   effectiveTaskGroupConfig,
   ensureRuntimeCollections,
   gitHead,
@@ -3184,6 +3185,14 @@ async function handleApi(req, res) {
   }
 
   const projectConfigMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/config$/);
+  if (req.method === "GET" && projectConfigMatch) {
+    const reader = requireRead(req, state, projectScope(projectConfigMatch[1]));
+    if (reader.status) return json(res, reader.status, reader.payload);
+    const project = state.projects.find((item) => item.id === projectConfigMatch[1]);
+    if (!project) return json(res, 404, {error: "project_not_found"});
+    json(res, 200, {projectId: project.id, config: effectiveProjectConfig(project)});
+    return;
+  }
   if (req.method === "POST" && projectConfigMatch) {
     const guard = beginGuardedWrite(req, state, "project_config_update", `Project:${projectConfigMatch[1]}`, projectScope(projectConfigMatch[1]));
     if (guard.status) return json(res, guard.status, guard.payload);
@@ -3194,6 +3203,7 @@ async function handleApi(req, res) {
       ...(body.repositories !== undefined ? {repositories: Array.isArray(body.repositories) ? body.repositories : []} : {}),
       ...(body.baselineData !== undefined ? {baselineData: Array.isArray(body.baselineData) ? body.baselineData : []} : {}),
       ...(body.businessRules !== undefined ? {businessRules: Array.isArray(body.businessRules) ? body.businessRules : []} : {}),
+      ...(body.systemRules !== undefined ? {systemRules: Array.isArray(body.systemRules) ? body.systemRules : []} : {}),
       ...(body.defaultRoles !== undefined ? {defaultRoles: Array.isArray(body.defaultRoles) ? body.defaultRoles : []} : {})
     };
     project.updatedAt = now();
@@ -3223,6 +3233,7 @@ async function handleApi(req, res) {
       ...(body.repositories !== undefined ? {repositories: Array.isArray(body.repositories) ? body.repositories : []} : {}),
       ...(body.baselineData !== undefined ? {baselineData: Array.isArray(body.baselineData) ? body.baselineData : []} : {}),
       ...(body.businessRules !== undefined ? {businessRules: Array.isArray(body.businessRules) ? body.businessRules : []} : {}),
+      ...(body.systemRules !== undefined ? {systemRules: Array.isArray(body.systemRules) ? body.systemRules : []} : {}),
       ...(body.defaultRoles !== undefined ? {defaultRoles: Array.isArray(body.defaultRoles) ? body.defaultRoles : []} : {})
     };
     taskGroup.updatedAt = now();

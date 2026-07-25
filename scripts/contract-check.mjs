@@ -12,6 +12,7 @@ import {
   createHumanDirective,
   consumeQueuedHumanDirectives,
   decideHumanConfirmation,
+  defaultSystemRules,
   effectiveTaskGroupConfig,
   ensureRuntimeCollections,
   organizationQuotaCheck,
@@ -119,6 +120,25 @@ function verifyHumanAndOrganizationContracts(output) {
     delete taskGroup.configOverrides;
     const reset = effectiveTaskGroupConfig(state, taskGroup);
     if (reset.configSource !== "inherited" || reset.businessRules.length !== 1) output.push("Task group config reset did not restore inherited project config");
+
+    // Three-category rule model: default system rules inherit and can be disabled/overridden per level.
+    const defaults = defaultSystemRules();
+    if (!defaults.length) output.push("defaultSystemRules must be non-empty");
+    const baseResolved = effectiveTaskGroupConfig(state, taskGroup);
+    if (baseResolved.activeSystemRules.length !== defaults.length) output.push("Task group did not inherit all default system rules");
+    if (baseResolved.systemRules.some((rule) => !rule.contentDigest)) output.push("Resolved system rule missing contentDigest");
+    const sampleRuleId = defaults[0].ruleId;
+    project.config = {...(project.config || {}), systemRules: [{ruleId: sampleRuleId, enabled: false}]};
+    const afterDisable = effectiveTaskGroupConfig(state, taskGroup);
+    if (afterDisable.activeSystemRules.some((rule) => rule.ruleId === sampleRuleId)) output.push("Project could not disable a default system rule");
+    taskGroup.configOverrides = {systemRules: [{ruleId: sampleRuleId, enabled: true, content: "override"}]};
+    const afterReenable = effectiveTaskGroupConfig(state, taskGroup);
+    const reenabled = afterReenable.systemRules.find((rule) => rule.ruleId === sampleRuleId);
+    if (!reenabled?.enabled || reenabled.content !== "override" || !String(reenabled.source).includes("task_group")) {
+      output.push("Task group could not re-enable/override a system rule with source tracking");
+    }
+    delete taskGroup.configOverrides;
+    delete project.config.systemRules;
   }
 
   // Human directive consumption applies to task group and is auditable.

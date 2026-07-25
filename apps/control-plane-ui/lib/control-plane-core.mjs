@@ -2917,15 +2917,86 @@ function advanceWorkItemToReviewRequested(state, workItem, checkpoint) {
   workItem.reviewState = "review_requested";
 }
 
+const DEFAULT_SYSTEM_RULES = [
+  {ruleId: "sys.risk-grading", title: "行为语义风险分级", content: "按真实运行影响面（L0–L3）而非文件路径/类名/所在层级定级；动手前先明确「级别 + 影响面 + 允许动作 + 验证方式 + 互审要求」；同一任务命中多档按最高风险执行。"},
+  {ruleId: "sys.interrupt-recovery", title: "中断恢复先校主线", content: "接手/压缩/恢复后执行任何新动作前，先重新确认用户最终目标与最新修正、当前权威规则与验收标准、已完成/未完成/阻断项、真实运行状态是否支持旧记录、主线是否偏离；发现走偏立即停止支线、保留证据、回主线；纠偏时冻结有争议的推导分支再继续。"},
+  {ruleId: "sys.temp-instrumentation", title: "临时测试插桩生命周期", content: "临时 debug/插桩须分配唯一 temp_id + 成对 marker + 每 run 唯一 manifest 登记；默认关闭、有界激活、精确清理；active 临时 hunk 不进普通提交/推送/构建；正式复验前必须停用+移除+按污染范围重建 run 状态；不得整文件回退或按 TODO/test 泛词删除；改变被测行为的 run 只作 diagnostic evidence。"},
+  {ruleId: "sys.evidence-freshness", title: "证据新鲜度", content: "证据必须晚于变更真实生效点，并记录镜像/commit、实例 generation、启动时间、实际加载文件/构建摘要；过期或只剩历史观测标 historical_unverified，只作恢复线索，不能支撑当前完成结论，重测须生成新证据，不得原地改写历史 artifact。"},
+  {ruleId: "sys.verification-target-binding", title: "验证目标层级绑定", content: "每条验证状态绑定具体对象 + 层级（plan/source/config/runtime/data/wire/client/capability/production）+ claimScope；方案/文档层「已修」不等于代码接线/运行正确/数据已供/客户端通过/生产达标；跨层完成声明必须分别引用每层证据，缺失层记 verification_incomplete/pending_window/blocked_external。"},
+  {ruleId: "sys.completion-boundary", title: "完成声明边界", content: "「页面打开/接口 200/编译通过/没有继续报错/没有新日志」均不能单独作为完成证据；完成结论只覆盖已定义并执行的验证矩阵，明确列出未覆盖/外部阻断/待窗口项与恢复条件。"},
+  {ruleId: "sys.observation-control", title: "观察通道正对照与可逆变异", content: "断言「0 行/无日志/无 key/无事件」前先用正对照证明观察通道、认证、库/分区、查询窗口有效；重要守卫交付前做可逆变异检验（制造应捕获的缺陷确认转红，还原转绿），变异前先清缓存/单例。"},
+  {ruleId: "sys.precise-git-staging", title: "精确暂存禁止 add .", content: "用 git add <具体路径> 或 git add -p 暂存，提交前用 status/diff 核对归属，核对 git diff --cached，提交后核对 git show --stat 与 upstream；禁止 git add . / git add -A；不提交未知归属/他人 hunk/secret/原始证据/冲突标记。"},
+  {ruleId: "sys.root-cause-owner", title: "根因落 canonical owner", content: "从用户可见入口沿链路反查 producer/consumer/owner，修复点落在被违反不变量的 canonical owner，不在症状点加默认值/别名/吞异常/私有推断/长期兼容分支掩盖上游；普通问题按根因批量收敛，P0/安全/资金/数据破坏先最小留证 + 止血 + 隔离 + 升级。"},
+  {ruleId: "sys.environment-by-config", title: "环境由配置表达", content: "环境统一枚举（local/dev/test/pre/prod），差异只由配置表达，不用 hostname/IP/容器名/路径/git 分支/机器职责推断业务环境；不擅自清理已有凭据。"},
+  {ruleId: "sys.time-semantics", title: "五类时间语义分类", content: "比较时间前先分类 instant/civilTime/businessCalendar/elapsedDuration/logicalOrder 并声明字段语义，比较方法先定义 exact/resolution-aware/tolerance/window；不同 role 不因都能转 UTC 就互换；elapsed 同进程用 monotonic，跨主机 wall-clock 差值须有 skew bound；因果顺序用 sequence/version/offset 不用时间戳替代。"},
+  {ruleId: "sys.scope-convergence", title: "变更范围收敛", content: "变更图/范围冻结后仅「可定位真实引用 / 冻结契约新直接依赖 / P0安全数据破坏 / 已执行节点暴露的新 required 依赖」四类证据可扩范围，禁止「继续看看是否还有问题」式无界扫描；全量验证建版本化覆盖矩阵、按根因批量收敛，不以「无新增可疑点」为无限目标。"}
+].map((rule) => ({schemaVersion: "rule/v1", category: "system", status: "active", enabled: true, source: "default", ...rule}));
+
+export function defaultSystemRules() {
+  return DEFAULT_SYSTEM_RULES.map((rule) => ({...rule}));
+}
+
+export function defaultBusinessRules() {
+  return [];
+}
+
+function mergeRuleLayer(base, overlay, source) {
+  const byId = new Map(base.map((rule) => [rule.ruleId, {...rule}]));
+  for (const raw of overlay || []) {
+    if (!raw || typeof raw !== "object") continue;
+    const ruleId = String(raw.ruleId || raw.title || "").trim() || createId("rule");
+    const existing = byId.get(ruleId);
+    const merged = {
+      schemaVersion: "rule/v1",
+      ruleId,
+      category: raw.category || existing?.category || "business",
+      title: raw.title ?? existing?.title ?? ruleId,
+      content: raw.content ?? existing?.content ?? "",
+      status: raw.status ?? existing?.status ?? "active",
+      enabled: raw.enabled !== undefined ? raw.enabled !== false : (existing?.enabled ?? true),
+      source: existing ? `${existing.source || "default"}+${source}` : source
+    };
+    byId.set(ruleId, merged);
+  }
+  return [...byId.values()];
+}
+
+function resolveRuleCategory(defaults, projectRules, taskGroupRules) {
+  const withProject = mergeRuleLayer(defaults, projectRules, "project");
+  const withTaskGroup = mergeRuleLayer(withProject, taskGroupRules, "task_group");
+  return withTaskGroup.map((rule) => ({...rule, contentDigest: digestOf({ruleId: rule.ruleId, category: rule.category, content: rule.content})}));
+}
+
+export function effectiveProjectConfig(project) {
+  const base = project?.config || {};
+  const systemRules = resolveRuleCategory(defaultSystemRules(), base.systemRules, null);
+  const businessRules = resolveRuleCategory(defaultBusinessRules(), base.businessRules, null);
+  return {
+    projectId: project?.id,
+    repositories: base.repositories ?? [],
+    baselineData: base.baselineData ?? [],
+    systemRules,
+    businessRules,
+    activeSystemRules: systemRules.filter((rule) => rule.enabled && rule.status === "active"),
+    activeBusinessRules: businessRules.filter((rule) => rule.enabled && rule.status === "active"),
+    defaultRoles: base.defaultRoles ?? []
+  };
+}
+
 export function effectiveTaskGroupConfig(state, taskGroup) {
   const project = (state.projects || []).find((item) => item.id === taskGroup?.projectId);
   const base = project?.config || {};
   const overrides = taskGroup?.configOverrides || null;
+  const systemRules = resolveRuleCategory(defaultSystemRules(), base.systemRules, overrides?.systemRules);
+  const businessRules = resolveRuleCategory(defaultBusinessRules(), base.businessRules, overrides?.businessRules);
   return {
     configSource: overrides ? "customized" : "inherited",
     repositories: overrides?.repositories ?? base.repositories ?? [],
     baselineData: overrides?.baselineData ?? base.baselineData ?? [],
-    businessRules: overrides?.businessRules ?? base.businessRules ?? [],
+    systemRules,
+    businessRules,
+    activeSystemRules: systemRules.filter((rule) => rule.enabled && rule.status === "active"),
+    activeBusinessRules: businessRules.filter((rule) => rule.enabled && rule.status === "active"),
     defaultRoles: overrides?.defaultRoles ?? base.defaultRoles ?? []
   };
 }

@@ -65,7 +65,8 @@
             "enum": [
               "role",
               "business",
-              "task"
+              "task",
+              "system"
             ]
           },
           "retention": {

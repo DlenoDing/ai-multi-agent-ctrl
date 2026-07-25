@@ -865,9 +865,13 @@ export function buildExecutionContentBundle(state, node, sessionId, options = {}
       pushEntry(`role/${file.path}`, "role", "durable", file.content, `role-skill:${contract.roleSkill?.roleSkillRef || ""}`);
     }
   }
-  const businessRules = (config.businessRules || []).map((rule, index) =>
-    `## ${rule.title || `业务规则 ${index + 1}`}\n\n${rule.content || ""}`).join("\n\n");
-  pushEntry("business/rules.md", "business", "durable", businessRules, `TaskGroup:${taskGroup.id}`);
+  const renderRules = (rules, label) => (rules || [])
+    .map((rule, index) => `## ${rule.title || `${label} ${index + 1}`}\n\n${rule.content || ""}`)
+    .join("\n\n");
+  const systemRulesText = renderRules(config.activeSystemRules, "系统规则");
+  pushEntry("system/rules.md", "system", "durable", systemRulesText, `TaskGroup:${taskGroup.id}`);
+  const businessRulesText = renderRules(config.activeBusinessRules, "业务规则");
+  pushEntry("business/rules.md", "business", "durable", businessRulesText, `TaskGroup:${taskGroup.id}`);
   const baselineText = (config.baselineData || []).map((item) => `- ${item.name || item.locator}: ${item.locator || ""} ${item.digest || ""}`).join("\n");
   pushEntry("business/baseline.md", "business", "durable", baselineText, `Project:${dispatch.projectId}`);
   const answeredConfirmations = (state.humanConfirmationRequests || [])
