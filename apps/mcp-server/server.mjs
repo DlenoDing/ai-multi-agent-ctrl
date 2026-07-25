@@ -881,9 +881,12 @@ function explicitMcpResourceScope(args = {}) {
 // none resolves to a project, we fail closed rather than fall through — so an unresolved (e.g. foreign or
 // not-yet-existing) id can never reach a tool with no scope confinement. Identity/node args (subjectId,
 // nodeId) are intentionally excluded: they are not project-scoped and must not be forced through this gate.
+// roomId is intentionally excluded: an unresolvable room (room_<non-existent-tg> or an ad-hoc room) is not a
+// project-scoped object, so fail-closing on it would wrongly deny legitimate room traffic; a room backed by a
+// real task group is still scope-enforced because inferMcpArgumentProjectIds resolves room_<tgId> to its project.
 const RESOURCE_ADDRESSING_ARG_KEYS = [
   "projectId", "taskGroupId", "workId", "workItemId", "dispatchId", "sessionId", "requestId",
-  "contractId", "leaseId", "roomId", "findingId", "approvalId", "repositoryOutputTargetRef", "targetId"
+  "contractId", "leaseId", "findingId", "approvalId", "repositoryOutputTargetRef", "targetId"
 ];
 // Handlers that receive no explicit resource default their write to this project; a bounded principal not
 // scoped to it must not perform such an unscoped write into the control-plane tenant's default project.
@@ -1920,12 +1923,21 @@ function resolveRoleSkillView(state, args) {
   return {roleSkill, overlays, precedence: ["task_group_overlay", "project_overlay", "upstream_default"]};
 }
 
+function taskGroupForRecord(state, args) {
+  // Attribute a record to the project that actually owns its task group / work item, never a hardcoded
+  // default, so a tenant-scoped write cannot be misfiled under the control-plane project.
+  const workItemId = args.workItemId || args.workId;
+  return findTaskGroup(state, args.taskGroupId)
+    || (workItemId ? (state.taskGroups || []).find((item) => (item.workItems || []).some((work) => work.id === workItemId)) : null);
+}
+
 function artifactRegister(state, args) {
   const at = new Date().toISOString();
+  const taskGroup = taskGroupForRecord(state, args);
   const artifact = {
     artifactId: args.artifactId || createId("artifact"),
-    projectId: args.projectId || "prj_control_plane",
-    taskGroupId: args.taskGroupId || "tg_runtime_management",
+    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
+    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
     workItemId: args.workItemId || args.workId,
     repositoryOutputTargetRef: args.repositoryOutputTargetRef,
     artifactManifestRef: args.artifactManifestRef || args.path,
@@ -1940,10 +1952,11 @@ function artifactRegister(state, args) {
 
 function testResultSubmit(state, args) {
   const at = new Date().toISOString();
+  const taskGroup = taskGroupForRecord(state, args);
   const testResult = {
     testResultId: args.testResultId || createId("test_result"),
-    projectId: args.projectId || "prj_control_plane",
-    taskGroupId: args.taskGroupId || "tg_runtime_management",
+    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
+    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
     workItemId: args.workItemId || args.workId,
     status: args.status || "passed",
     command: args.command,
@@ -2097,11 +2110,12 @@ function reviewPlanCreate(state, args) {
 
 function reviewBundleRegister(state, args) {
   const at = new Date().toISOString();
+  const taskGroup = taskGroupForRecord(state, args);
   const bundle = {
     schemaVersion: "review-bundle/v1",
     reviewBundleId: args.reviewBundleId || createId("review_bundle"),
-    projectId: args.projectId || "prj_control_plane",
-    taskGroupId: args.taskGroupId || "tg_runtime_management",
+    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
+    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
     status: "registered",
     artifactRefs: args.artifactRefs || [],
     checkpointRefs: args.checkpointRefs || [],
