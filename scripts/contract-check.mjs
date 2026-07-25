@@ -176,6 +176,12 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     const cancelledConfirmation = (cancelState.humanConfirmationRequests || []).find((item) => item.requestId === cancelRequest.requestId);
     if (cancelledConfirmation.status !== "cancelled") output.push("Human cancel directive left the pending confirmation orphaned");
+    const cancelledTaskGroup = (cancelState.taskGroups || []).find((item) => item.id === cancelDispatch.taskGroupId);
+    if (cancelledTaskGroup.goalExecutionStatus !== "active_paused_by_freeze") output.push("Human cancel directive did not freeze the task group");
+    const dispatchCountBefore = (cancelState.agentDispatches || []).length;
+    runAutonomousCycle(cancelState, {root, mode: "all"});
+    const dispatchCountAfter = (cancelState.agentDispatches || []).length;
+    if (dispatchCountAfter !== dispatchCountBefore) output.push("Cancelled+frozen task group re-dispatched work on the next cycle");
   }
 
   // Readiness/close-barrier expose the new human gates.

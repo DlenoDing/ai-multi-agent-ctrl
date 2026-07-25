@@ -1753,6 +1753,9 @@ async function handleApi(req, res) {
     const dispatch = state.agentDispatches.find((item) => item.dispatchId === nodeFailureMatch[1] && item.assignedNodeId === node.nodeId);
     if (!dispatch) return json(res, 404, {error: "dispatch_not_found"});
     const reportedStatus = ["blocked", "cancelled"].includes(body.status) ? body.status : "failed";
+    if (dispatch.blockedReason === "awaiting_human_confirmation" && reportedStatus !== "blocked") {
+      cancelPendingConfirmationsForDispatch(state, dispatch.dispatchId, `dispatch_${reportedStatus}`);
+    }
     dispatch.status = reportedStatus;
     dispatch.failureReason = String(body.reason || "agent_runtime_failure").slice(0, 2000);
     dispatch.updatedAt = now();
@@ -3138,7 +3141,14 @@ async function handleApi(req, res) {
     const directiveTaskGroup = directive.taskGroupId ? state.taskGroups.find((item) => item.id === directive.taskGroupId) : null;
     if (controlAction && directiveTaskGroup) {
       if (directive.directiveType === "pause") directiveTaskGroup.goalExecutionStatus = "active_paused_by_freeze";
-      if (directive.directiveType === "resume") directiveTaskGroup.goalExecutionStatus = "active";
+      if (directive.directiveType === "resume") {
+        directiveTaskGroup.goalExecutionStatus = "active";
+        delete directiveTaskGroup.pauseReason;
+      }
+      if (directive.directiveType === "cancel") {
+        directiveTaskGroup.goalExecutionStatus = "active_paused_by_freeze";
+        directiveTaskGroup.pauseReason = "human_directive_cancel";
+      }
       const runtimeControl = applyTaskGroupRuntimeControl(state, directiveTaskGroup, controlAction, {actor: guard.actor, idempotencyKey: `human-directive:${directive.directiveId}`});
       directive.status = "applied";
       directive.appliedActions = [{action: `task_group_${controlAction}`, ref: `TaskGroup:${directiveTaskGroup.id}`}];

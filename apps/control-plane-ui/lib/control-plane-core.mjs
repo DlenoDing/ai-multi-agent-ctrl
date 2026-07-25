@@ -3192,6 +3192,8 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
         delete taskGroup.pauseReason;
         directive.appliedActions.push({action: "task_group_resume", ref: `TaskGroup:${taskGroup.id}`});
       } else if (directive.directiveType === "cancel" && taskGroup) {
+        taskGroup.goalExecutionStatus = "active_paused_by_freeze";
+        taskGroup.pauseReason = "human_directive_cancel";
         for (const dispatch of (state.agentDispatches || []).filter((item) => item.taskGroupId === taskGroup.id && ["queued", "blocked"].includes(item.status))) {
           dispatch.status = "cancelled";
           dispatch.failureReason = "human_directive_cancel";
