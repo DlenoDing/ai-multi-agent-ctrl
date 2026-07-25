@@ -29,6 +29,7 @@ let lastError = "";
 let loading = false;
 let formTouched = false;
 let modalHtml = "";
+let modalProtected = false;
 
 let expandedTaskGroupId = "";
 let tgDetail = null;
@@ -368,8 +369,115 @@ function clearSession() {
 
 function showError(error) {
   lastError = error?.message || String(error);
+  // 通过顶层 toast 呈现错误，确保弹窗遮罩之上也可见（此前弹窗内表单报错被遮罩挡住成为静默失败）
+  toast.error(lastError);
   render();
 }
+
+/* ---------------- 反馈层：toast / 二次确认 / 提交态 ---------------- */
+
+function ensureToastLayer() {
+  let layer = document.getElementById("toast-layer");
+  if (!layer) {
+    layer = document.createElement("div");
+    layer.id = "toast-layer";
+    layer.className = "toast-layer";
+    layer.setAttribute("aria-live", "polite");
+    document.body.appendChild(layer);
+  }
+  return layer;
+}
+
+function toast(message, kind = "success", ms = 2600) {
+  if (!message) return;
+  const layer = ensureToastLayer();
+  const el = document.createElement("div");
+  el.className = `toast ${kind}`;
+  el.setAttribute("role", kind === "error" ? "alert" : "status");
+  const ico = kind === "success" ? "✓" : kind === "error" ? "!" : "i";
+  el.innerHTML = `<span class="toast-ico">${ico}</span><span>${esc(message)}</span>`;
+  layer.appendChild(el);
+  setTimeout(() => {
+    el.classList.add("leaving");
+    setTimeout(() => el.remove(), 240);
+  }, ms);
+}
+toast.success = (message) => toast(message, "success", 2400);
+toast.error = (message) => toast(message, "error", 4200);
+toast.info = (message) => toast(message, "info", 2600);
+
+// 一致的中文二次确认弹窗，替代浏览器原生 confirm()。返回 Promise<boolean>。
+function confirmDialog(options = {}) {
+  const {title = "确认操作", message = "", sub = "", danger = false, confirmText = "确定", cancelText = "取消"} = options;
+  return new Promise((resolve) => {
+    const mask = document.createElement("div");
+    mask.className = "modal-mask";
+    mask.style.zIndex = "350";
+    mask.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true" style="width:420px;">
+        <div class="modal-header"><h3>${esc(title)}</h3></div>
+        <div class="modal-body"><div class="confirm-message">${esc(message)}${sub ? `<span class="confirm-sub">${esc(sub)}</span>` : ""}</div></div>
+        <div class="modal-footer">
+          <button type="button" class="secondary-button" data-confirm="cancel">${esc(cancelText)}</button>
+          <button type="button" class="primary-button ${danger ? "danger" : ""}" data-confirm="ok">${esc(confirmText)}</button>
+        </div>
+      </div>`;
+    const done = (value) => {
+      document.removeEventListener("keydown", onKey);
+      mask.remove();
+      resolve(value);
+    };
+    const onKey = (event) => {
+      if (event.key === "Escape") done(false);
+      else if (event.key === "Enter") done(true);
+    };
+    mask.addEventListener("click", (event) => {
+      const act = event.target.closest("[data-confirm]")?.dataset.confirm;
+      if (act === "ok") done(true);
+      else if (act === "cancel") done(false);
+      // 点击遮罩空白处不关闭，强制用户明确选择
+    });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(mask);
+    mask.querySelector('[data-confirm="ok"]').focus();
+  });
+}
+
+// 异步提交期间禁用按钮并显示 loading，防止重复提交
+async function withSubmitting(button, fn) {
+  if (button) {
+    button.disabled = true;
+    button.classList.add("is-loading");
+  }
+  try {
+    return await fn();
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.classList.remove("is-loading");
+    }
+  }
+}
+
+// 各表单提交成功后的中文反馈（展示令牌/结果弹窗的表单不在此列，弹窗本身即反馈）
+const SUBMIT_SUCCESS = {
+  "org-quotas": "已保存组织配额",
+  "member-perms": "已更新成员权限",
+  "grant-create": "已创建访问授权",
+  "project-create": "已创建项目",
+  "org-project-create": "已创建项目",
+  "project-member": "已添加项目成员",
+  "agent-create": "已创建智能体档案",
+  "task-group-create": "已创建任务组",
+  "work-item-create": "已添加工作项",
+  "language-policy": "已更新语言策略",
+  "tg-config": "已保存任务组配置",
+  "project-config": "已保存项目配置",
+  "project-rules": "已保存规则",
+  "tg-rules": "已保存规则",
+  "hcr-decide": "已提交人工确认",
+  "directive-create": "已下达人工指令"
+};
 
 /* ---------------- 项目范围 ---------------- */
 
@@ -572,21 +680,41 @@ function startExecPolling() {
 
 /* ---------------- 弹窗 ---------------- */
 
-function openModal(title, body) {
+function openModal(title, body, options = {}) {
+  modalProtected = Boolean(options.protected);
   modalHtml = `
     <div class="modal-mask" data-modal-mask>
-      <div class="modal">
+      <div class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}">
         <div class="modal-header"><h3>${esc(title)}</h3><button class="modal-close" data-action="modal-close" title="关闭">×</button></div>
         <div class="modal-body">${body}</div>
       </div>
     </div>
   `;
+  document.body.classList.add("modal-open");
   render();
 }
 
 function closeModal() {
   modalHtml = "";
+  modalProtected = false;
+  document.body.classList.remove("modal-open");
   render();
+}
+
+// 受保护弹窗（一次性令牌等）关闭前二次确认，避免误触导致不可恢复的信息丢失
+async function requestCloseModal() {
+  if (!modalHtml) return;
+  if (modalProtected) {
+    const ok = await confirmDialog({
+      title: "确认关闭",
+      message: "确认关闭该窗口？",
+      sub: "其中的一次性令牌 / 安装命令关闭后将无法再次查看。",
+      danger: true,
+      confirmText: "仍要关闭"
+    });
+    if (!ok) return;
+  }
+  closeModal();
 }
 
 function oneTimeTokenModal(title, loginEmail, token, extraNote = "") {
@@ -598,7 +726,7 @@ function oneTimeTokenModal(title, loginEmail, token, extraNote = "") {
       <div class="button-row"><button type="button" class="secondary-button" data-action="copy-el" data-copy-target="#otm-token">复制登录凭据</button></div>
       ${extraNote ? `<div class="notice">${esc(extraNote)}</div>` : ""}
     </div>
-  `);
+  `, {protected: true});
 }
 
 /* ---------------- 登录页 ---------------- */
@@ -1979,7 +2107,9 @@ document.addEventListener("submit", async (event) => {
   event.preventDefault();
   const kind = form.dataset.form;
   const data = Object.fromEntries(new FormData(form).entries());
+  const submitBtn = form.querySelector("button[type='submit'], button:not([type='button'])");
   try {
+    await withSubmitting(submitBtn, async () => {
     if (kind === "login") {
       const secret = String(data.secret || "");
       const result = await api("/api/auth/login", {method: "POST", body: JSON.stringify({email: data.email, token: secret, password: secret})});
@@ -2079,7 +2209,7 @@ document.addEventListener("submit", async (event) => {
           <div class="command-box"><strong>校验安装（推荐）</strong><pre id="join-verified">${esc(result.verifiedInstallCommand || "-")}</pre></div>
           <div class="button-row"><button type="button" class="secondary-button" data-action="copy-el" data-copy-target="#join-verified">复制校验安装命令</button></div>
         </div>
-      `);
+      `, {protected: true});
       return;
     }
     if (kind === "agent-create") {
@@ -2193,6 +2323,8 @@ document.addEventListener("submit", async (event) => {
       await loadPage();
       return;
     }
+    });
+    if (SUBMIT_SUCCESS[kind]) toast.success(SUBMIT_SUCCESS[kind]);
   } catch (error) {
     showError(error);
   }
@@ -2210,6 +2342,11 @@ document.addEventListener("change", async (event) => {
       return;
     }
     if (target.id === "project-switcher") {
+      if (target.value !== currentProjectId && formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "切换项目将丢失当前页面未保存的修改，确认切换？", danger: true, confirmText: "放弃并切换"}))) {
+        target.value = currentProjectId;
+        return;
+      }
+      formTouched = false;
       currentProjectId = target.value;
       sessionStorage.setItem("aimac.projectId", currentProjectId);
       expandedTaskGroupId = "";
@@ -2284,11 +2421,12 @@ document.addEventListener("mouseout", (event) => {
 document.addEventListener("click", async (event) => {
   const mask = event.target.closest("[data-modal-mask]");
   if (mask && event.target === mask) {
-    closeModal();
+    await requestCloseModal();
     return;
   }
   const menuButton = event.target.closest("[data-menu]");
   if (menuButton) {
+    if (menuButton.dataset.menu !== page && formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "当前页面有未保存的修改，确认离开？", danger: true, confirmText: "放弃并离开"}))) return;
     page = menuButton.dataset.menu;
     sessionStorage.setItem("aimac.page", page);
     lastError = "";
@@ -2309,7 +2447,7 @@ document.addEventListener("click", async (event) => {
   const action = target.dataset.action;
   try {
     if (action === "modal-close") {
-      closeModal();
+      await requestCloseModal();
       return;
     }
     if (action === "copy-el") {
@@ -2345,9 +2483,10 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "bootstrap-init") {
-      if (!confirm("确认重新初始化运行态？该操作会重置为种子数据，仅用于本地排障。")) return;
+      if (!(await confirmDialog({title: "重新初始化运行态", message: "确认重新初始化运行态？", sub: "该操作会重置为种子数据，仅用于本地排障。", danger: true, confirmText: "重新初始化"}))) return;
       await api("/api/bootstrap/init", {method: "POST", body: "{}"});
       await loadPage();
+      toast.success("已重新初始化运行态");
       return;
     }
     if (action === "org-quota") {
@@ -2366,9 +2505,10 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "org-status") {
       const status = target.dataset.status;
-      if (status === "suspended" && !confirm("确认停用该组织？停用后组织内账号与智能体将无法工作。")) return;
+      if (status === "suspended" && !(await confirmDialog({title: "停用组织", message: "确认停用该组织？", sub: "停用后组织内账号与智能体将无法工作。", danger: true, confirmText: "停用"}))) return;
       await api(`/api/orgs/${encodeURIComponent(target.dataset.org)}/status`, {method: "POST", body: JSON.stringify({status})});
       await loadPage();
+      toast.success(status === "suspended" ? "已停用组织" : "已启用组织");
       return;
     }
     if (action === "member-perms") {
@@ -2385,9 +2525,10 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "member-status") {
       const status = target.dataset.status;
-      if (status === "disabled" && !confirm("确认停用该成员？其活动会话将被立即吊销。")) return;
+      if (status === "disabled" && !(await confirmDialog({title: "停用成员", message: "确认停用该成员？", sub: "其活动会话将被立即吊销。", danger: true, confirmText: "停用"}))) return;
       await api(`/api/org/members/${encodeURIComponent(target.dataset.account)}/status`, {method: "POST", body: JSON.stringify({status})});
       await loadPage();
+      toast.success(status === "disabled" ? "已停用成员" : "已启用成员");
       return;
     }
     if (action === "agent-view-mode") {
@@ -2397,37 +2538,42 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "toggle-agent") {
       const agent = (state.agents || []).find((item) => item.id === target.dataset.agent);
-      if (agent?.status === "active" && !confirm("确认停用该智能体档案？")) return;
+      if (agent?.status === "active" && !(await confirmDialog({title: "停用智能体", message: "确认停用该智能体档案？", danger: true, confirmText: "停用"}))) return;
       await api(`/api/agents/${encodeURIComponent(target.dataset.agent)}/activate`, {method: "POST", body: JSON.stringify({active: agent?.status !== "active"})});
       await loadPage();
+      toast.success(agent?.status === "active" ? "已停用智能体" : "已启用智能体");
       return;
     }
     if (action === "revoke-grant") {
-      if (!confirm("确认撤销该访问授权？")) return;
+      if (!(await confirmDialog({title: "撤销访问授权", message: "确认撤销该访问授权？", danger: true, confirmText: "撤销"}))) return;
       await api(`/api/access-grants/${encodeURIComponent(target.dataset.grant)}/revoke`, {method: "POST", body: "{}"});
       await loadPage();
+      toast.success("已撤销访问授权");
       return;
     }
     if (action === "sync-skill-source") {
       await api(`/api/skill-sources/${encodeURIComponent(target.dataset.source)}/sync`, {method: "POST", body: "{}"});
       await loadPage();
+      toast.success("已触发技能源同步");
       return;
     }
     if (action === "revoke-join-token") {
-      if (!confirm("确认撤销该加入令牌？未使用的令牌将立即失效。")) return;
+      if (!(await confirmDialog({title: "撤销加入令牌", message: "确认撤销该加入令牌？", sub: "未使用的令牌将立即失效。", danger: true, confirmText: "撤销"}))) return;
       await api(`/api/agent-join-tokens/${encodeURIComponent(target.dataset.tokenId)}/revoke`, {method: "POST", body: "{}"});
       await loadPage();
+      toast.success("已撤销加入令牌");
       return;
     }
     if (action === "revoke-agent-node") {
-      if (!confirm("确认吊销该智能体节点？节点上运行中的任务将被围栏并重新排队。")) return;
+      if (!(await confirmDialog({title: "吊销智能体节点", message: "确认吊销该智能体节点？", sub: "节点上运行中的任务将被围栏并重新排队。", danger: true, confirmText: "吊销"}))) return;
       await api(`/api/agent-nodes/${encodeURIComponent(target.dataset.nodeId)}/revoke`, {method: "POST", body: "{}"});
       await loadPage();
+      toast.success("已吊销智能体节点");
       return;
     }
     if (action === "agent-control") {
       const command = target.dataset.command;
-      if (command === "cancel_dispatch" && !confirm("确认取消该节点当前派发的任务？")) return;
+      if (command === "cancel_dispatch" && !(await confirmDialog({title: "取消派发", message: "确认取消该节点当前派发的任务？", danger: true, confirmText: "取消派发"}))) return;
       const node = [...(state.agentRuntimeNodes || []), ...orgAgentNodes].find((item) => item.nodeId === target.dataset.nodeId);
       const dispatchId = (node?.activeDispatchIds || node?.display?.currentDispatchIds || [])[0] || "";
       await api(`/api/agent-nodes/${encodeURIComponent(target.dataset.nodeId)}/control`, {
@@ -2435,13 +2581,15 @@ document.addEventListener("click", async (event) => {
         body: JSON.stringify({commandType: command, dispatchId: dispatchId || undefined})
       });
       await loadPage();
+      toast.success({pause_dispatch: "已暂停派发", resume_dispatch: "已恢复派发", cancel_dispatch: "已取消派发", refresh_profile: "已刷新节点档案", shutdown: "已关停节点"}[command] || "已下发控制指令");
       return;
     }
     if (action === "task-control") {
       const taskAction = target.dataset.taskAction;
-      if (taskAction === "rebound_drift" && !confirm("确认执行纠偏？任务组健康度将标记为需关注并触发复核。")) return;
+      if (taskAction === "rebound_drift" && !(await confirmDialog({title: "执行纠偏", message: "确认执行纠偏？", sub: "任务组健康度将标记为需关注并触发复核。", confirmText: "执行纠偏"}))) return;
       await api(`/api/task-groups/${encodeURIComponent(target.dataset.task)}/control`, {method: "POST", body: JSON.stringify({action: taskAction})});
       await loadPage();
+      toast.success({pause: "已暂停任务组", resume: "已恢复任务组", rebound_drift: "已触发纠偏"}[taskAction] || "已执行任务组操作");
       return;
     }
     if (action === "tg-detail") {
@@ -2460,9 +2608,10 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "tg-config-reset") {
-      if (!confirm("确认重置任务组配置？将删除全部自定义项并回到继承项目配置。")) return;
+      if (!(await confirmDialog({title: "重置任务组配置", message: "确认重置任务组配置？", sub: "将删除全部自定义项并回到继承项目配置。", danger: true, confirmText: "重置"}))) return;
       await api(`/api/task-groups/${encodeURIComponent(target.dataset.task)}/config/reset`, {method: "POST", body: "{}"});
       await loadPage();
+      toast.success("已重置任务组配置");
       return;
     }
     if (action === "cfg-add") {
@@ -2564,3 +2713,10 @@ if (authToken && currentAccount) {
 } else {
   render();
 }
+
+// ESC 关闭当前弹窗（受保护弹窗会先二次确认）
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && modalHtml && !document.querySelector('.modal-mask[style*="z-index: 350"]')) {
+    requestCloseModal();
+  }
+});
