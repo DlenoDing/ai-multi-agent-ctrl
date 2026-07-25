@@ -1112,6 +1112,11 @@ function directPermissionApplies(account, permission, requiredPermission, resour
   if (resourceScope.resourceType === "organization") {
     return account.organizationId === resourceScope.resourceId && permission.startsWith("org:");
   }
+  // Organization admins manage every resource in their own organization; the org-boundary
+  // gate in hasPermission has already confirmed the resource belongs to their organization.
+  if (account.accountType === "org_admin" && ["project", "task_group"].includes(resourceScope.resourceType)) {
+    return permission.startsWith("project:") || permission.startsWith("task_group:") || ["member:invite", "agent:activate"].includes(permission);
+  }
   if (["member:invite", "agent:activate"].includes(permission) && ["project", "task_group"].includes(resourceScope.resourceType)) return false;
   if (resourceScope.resourceType === "task_group" && permission.startsWith("task_group:")) return false;
   if (resourceScope.resourceType === "project" && permission.startsWith("project:") && requiredPermission !== "project:create") return false;
@@ -3275,7 +3280,7 @@ async function handleApi(req, res) {
   if (req.method === "GET" && agentConfirmationMatch) {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     const request = (state.humanConfirmationRequests || []).find((item) => item.requestId === agentConfirmationMatch[1]);
-    if (!request || (request.nodeId && request.nodeId !== node.nodeId)) return json(res, 404, {error: "human_confirmation_not_found"});
+    if (!request || request.nodeId !== node.nodeId) return json(res, 404, {error: "human_confirmation_not_found"});
     if (url.searchParams.get("consume") === "true" && request.status === "answered") {
       consumeHumanConfirmation(state, request.requestId, {actor: `agent-node:${node.nodeId}`});
       commitGatewayWrite(state);

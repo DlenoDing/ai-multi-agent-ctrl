@@ -705,6 +705,23 @@ try {
   if (orgControl.response.status !== 200) {
     throw new Error(`org_admin could not control its own org project's task group, got ${orgControl.response.status}`);
   }
+  // org_admin has full org resource management: project-level config edit and confirmation review authority.
+  const orgProjectConfig = await jsonFetch(port, `/api/projects/${orgProject.payload.id}/config`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-org-proj-config", authorization: orgAdminAuth},
+    body: JSON.stringify({baselineData: [{name: "基线", locator: "git:docs/baseline"}]})
+  });
+  if (orgProjectConfig.response.status !== 200) {
+    throw new Error(`org_admin could not edit its own org project config, got ${orgProjectConfig.response.status}`);
+  }
+  const orgReviewAuthority = await jsonFetch(port, "/api/human-confirmations/hcr_probe/decide", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-org-review-authority", authorization: orgAdminAuth},
+    body: JSON.stringify({selectedOptionId: "none", inputText: "x"})
+  });
+  if (orgReviewAuthority.response.status !== 404) {
+    throw new Error(`org_admin confirmation review authority check expected 404 (not 403 denial), got ${orgReviewAuthority.response.status}`);
+  }
   // Cross-organization write isolation: an org_admin cannot create a task group in another org's project.
   const crossOrgTaskGroup = await jsonFetch(port, "/api/task-groups", {
     method: "POST",

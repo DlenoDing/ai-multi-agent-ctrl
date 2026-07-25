@@ -1458,6 +1458,11 @@ function analysisRoleFor(roleId) {
 
 function dispatchWorkItem(state, taskGroup, workItem, contract, repositoryTarget) {
   const at = new Date().toISOString();
+  if (workItem.status === "blocked") {
+    recordTransition(state, "WorkItem", workItem.id, "blocked", "ready", "orchestrator", [`redispatch:${contract.sessionId}`, workItem.blockedReason || "unblocked"]);
+    workItem.status = "ready";
+    delete workItem.blockedReason;
+  }
   if (contract.writeScope.length) {
     const lease = ensureLease(state, repositoryTarget, `session:${contract.sessionId}`, contract.contractDigest);
     repositoryTarget.status = "lease_bound";
@@ -2060,6 +2065,16 @@ function activeExecutionForWork(state, taskGroupId, workItemId) {
   };
 }
 
+function capDispatchHistory(dispatches, limit) {
+  if (dispatches.length <= limit) return dispatches;
+  const terminal = new Set(["completed", "failed", "cancelled"]);
+  const kept = dispatches.slice(0, limit);
+  const keptIds = new Set(kept.map((item) => item.dispatchId));
+  // Never drop a still-active dispatch beyond the window (its checkpoint could still arrive).
+  const strandedActive = dispatches.slice(limit).filter((item) => !terminal.has(item.status) && !keptIds.has(item.dispatchId));
+  return strandedActive.length ? [...kept, ...strandedActive] : kept;
+}
+
 function enqueueAgentDispatch(state, contract, repositoryTarget) {
   if (!contract?.model?.modelId || !contract?.model?.modelDecision || !contract?.model?.modelSelectionDecisionRef) {
     throw new Error("agent_dispatch_requires_selected_model_decision");
@@ -2101,7 +2116,7 @@ function enqueueAgentDispatch(state, contract, repositoryTarget) {
     updatedAt: at
   };
   state.agentDispatches.unshift(dispatch);
-  state.agentDispatches = state.agentDispatches.slice(0, 240);
+  state.agentDispatches = capDispatchHistory(state.agentDispatches, 240);
   return dispatch;
 }
 

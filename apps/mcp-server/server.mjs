@@ -455,6 +455,14 @@ function commonInputProperties() {
   };
 }
 
+function confirmationReadableByPrincipal(confirmation, context = {}) {
+  const principal = context.principal || {};
+  if (principal.kind === "agent_node") return confirmation.nodeId === principal.id;
+  if (principal.kind === "system_admin") return true;
+  if (Array.isArray(principal.projectIds)) return principal.projectIds.includes(confirmation.projectId);
+  return false;
+}
+
 function isReadOnlyTool(name) {
   return [
     ".state_get",
@@ -1116,11 +1124,14 @@ async function dispatchTool(state, name, args, context = {}) {
       return {request: createHumanConfirmationRequest(state, {...args, nodeId: context?.principal?.kind === "agent_node" ? context.principal.id : args.nodeId})};
     case "human-review-mcp.confirmation_status": {
       const confirmation = (state.humanConfirmationRequests || []).find((item) => item.requestId === args.requestId);
-      if (!confirmation) return {ok: false, error: "human_confirmation_not_found"};
+      if (!confirmation || !confirmationReadableByPrincipal(confirmation, context)) return {ok: false, error: "human_confirmation_not_found"};
       return {request: confirmation};
     }
-    case "human-review-mcp.confirmation_consume":
+    case "human-review-mcp.confirmation_consume": {
+      const confirmation = (state.humanConfirmationRequests || []).find((item) => item.requestId === args.requestId);
+      if (!confirmation || !confirmationReadableByPrincipal(confirmation, context)) return {ok: false, error: "human_confirmation_not_found"};
       return {request: consumeHumanConfirmation(state, args.requestId, {actor: context?.principal?.id || "mcp-client"})};
+    }
     case "human-review-mcp.confirmation_decide":
       return {request: decideHumanConfirmation(state, args.requestId, args, {actor: context?.principal?.id || "mcp-client"})};
     case "review-mcp.review_plan_create":
