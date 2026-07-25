@@ -409,6 +409,19 @@
     organization_required: "缺少组织信息",
     org_member_not_found: "未找到组织成员",
 
+    rule_content_too_long: "规则内容过长（上限 8192 字），请精简后再保存",
+    rule_title_too_long: "规则标题过长（上限 256 字）",
+    rule_id_too_long: "规则标识过长（上限 128 字）",
+    too_many_rules: "规则数量超出上限（最多 200 条）",
+
+    human_confirmation_not_pending: "该人工确认已被处理，无法重复决策",
+    human_confirmation_option_invalid: "所选确认选项无效",
+    human_confirmation_options_required: "缺少可选确认项",
+    human_confirmation_question_required: "缺少确认问题描述",
+    human_confirmation_decision_forbidden_for_agent: "智能体身份不允许进行人工确认决策",
+    human_directive_instruction_required: "缺少指令内容",
+    human_directive_project_required: "缺少项目信息",
+
     project_not_found: "未找到项目",
     access_grant_not_found: "未找到访问授权",
     cross_org_grant_not_allowed: "不允许跨组织授权",

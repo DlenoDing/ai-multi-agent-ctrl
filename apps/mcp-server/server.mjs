@@ -930,6 +930,12 @@ function inferMcpArgumentProjectIds(state, args = {}) {
     const approval = (state.approvalRequests || []).find((item) => item.approvalId === args.approvalId);
     if (approval?.projectId) projectIds.add(approval.projectId);
   }
+  if (args.contractId) {
+    // Shared-definition tools (publish/consumer_bind/conflict_report) are addressed solely by contractId;
+    // resolve it to the owning project so a bounded principal cannot mutate another tenant's definition.
+    const definition = (state.sharedDefinitions || []).find((item) => item.contractId === args.contractId);
+    if (definition?.projectId) projectIds.add(definition.projectId);
+  }
   const projectIdForTaskGroupId = (taskGroupId) => {
     if (!taskGroupId) return;
     const taskGroup = (state.taskGroups || []).find((item) => item.id === taskGroupId);

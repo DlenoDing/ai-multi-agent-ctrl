@@ -1574,12 +1574,12 @@ function ruleRow(rule, layer) {
       data-orig-content="${esc(rule.content || "")}"
       data-orig-title="${esc(rule.title || "")}">
       <div class="rule-head">
-        <input class="rule-title-input" name="ruleTitle" value="${esc(rule.title || "")}" ${isDefault ? "readonly" : ""} placeholder="规则标题">
+        <input class="rule-title-input" name="ruleTitle" maxlength="256" value="${esc(rule.title || "")}" ${isDefault ? "readonly" : ""} placeholder="规则标题">
         ${ruleSourceBadge(source)}
         <label class="rule-toggle"><input type="checkbox" name="ruleEnabled" ${enabled ? "checked" : ""}> 启用</label>
         ${canDelete ? `<button type="button" class="danger-button" data-action="rule-del">删除</button>` : ""}
       </div>
-      <textarea name="ruleContent" placeholder="规则内容（可改写默认内容）">${esc(rule.content || "")}</textarea>
+      <textarea name="ruleContent" maxlength="8192" placeholder="规则内容（可改写默认内容）">${esc(rule.content || "")}</textarea>
     </div>
   `;
 }
@@ -1588,12 +1588,12 @@ function ruleRowNew(category) {
   return `
     <div class="rule-row" data-rule-row data-rule-category="${esc(category)}" data-rule-source="" data-orig-enabled="1" data-orig-content="" data-orig-title="">
       <div class="rule-head">
-        <input class="rule-id-input" name="ruleId" placeholder="规则 ID（可留空自动生成）">
-        <input class="rule-title-input" name="ruleTitle" placeholder="规则标题">
+        <input class="rule-id-input" name="ruleId" maxlength="128" placeholder="规则 ID（可留空自动生成）">
+        <input class="rule-title-input" name="ruleTitle" maxlength="256" placeholder="规则标题">
         <label class="rule-toggle"><input type="checkbox" name="ruleEnabled" checked> 启用</label>
         <button type="button" class="danger-button" data-action="rule-del">删除</button>
       </div>
-      <textarea name="ruleContent" placeholder="规则内容"></textarea>
+      <textarea name="ruleContent" maxlength="8192" placeholder="规则内容"></textarea>
     </div>
   `;
 }
