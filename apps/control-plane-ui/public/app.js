@@ -1415,12 +1415,12 @@ function renderTaskGroupDetail(taskGroup) {
   const analysisHtml = analysis && (analysis.items || []).length
     ? `<div class="tree">${(analysis.items || []).map((item) => `
         <div class="tree-item">
-          <div class="tree-head">${customBadge(t(item.kind), "gray")} <strong>${esc(item.title)}</strong> ${badge(item.status)} <em class="small muted">${item.progress ?? 0}%</em></div>
+          <div class="tree-head">${customBadge(t(`kind_${item.kind}`), "gray")} <strong>${esc(item.title)}</strong> ${badge(item.status)} <em class="small muted">${item.progress ?? 0}%</em></div>
           ${progressBar(item.progress)}
           ${item.note ? `<div class="tree-note">${esc(item.note)}</div>` : ""}
           ${(item.children || []).length ? `<div class="tree-children">${item.children.map((child) => `
             <div class="tree-item minor">
-              <div class="tree-head">${customBadge(t(child.kind), "gray")} ${esc(child.title)} ${badge(child.status)} <em class="small muted">${child.progress ?? 0}%</em></div>
+              <div class="tree-head">${customBadge(t(`kind_${child.kind}`), "gray")} ${esc(child.title)} ${badge(child.status)} <em class="small muted">${child.progress ?? 0}%</em></div>
               ${child.note ? `<div class="tree-note">${esc(child.note)}</div>` : ""}
             </div>
           `).join("")}</div>` : ""}
@@ -1643,9 +1643,12 @@ function collectRuleFragments(form, layer) {
     if (isNew && !title && !content) continue;
     const fragment = {category, enabled};
     if (ruleId) fragment.ruleId = ruleId;
-    // 仅在标题/内容确实被编辑、或规则缺少稳定 ruleId（无 id 时需内容派生 id）时才携带正文，
-    // 否则省略，避免仅切换启用状态就把上游默认/继承规则的正文冻结为旧文本。
-    if (isNew || !ruleId || titleChanged || contentChanged) {
+    // 仅当本行内容并非「权威地存放在本层覆盖」时，才允许在纯切换启用状态时省略正文：
+    // - owned（source 含本层）：正文就存在本层覆盖里，服务端整体替换本层覆盖后无法从下层找回，必须携带；
+    // - isNew / 无 ruleId：新规则或需用内容派生 id 的规则，必须携带；
+    // - 标题/内容被编辑：显然要携带。
+    // 其余（仅从下层继承的默认/继承项）省略正文，避免仅切换启用状态就把上游正文冻结为旧文本。
+    if (isNew || !ruleId || owned || titleChanged || contentChanged) {
       fragment.title = title;
       fragment.content = content;
       fragment.status = "active";
