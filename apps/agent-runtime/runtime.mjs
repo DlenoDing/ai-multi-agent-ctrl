@@ -483,7 +483,37 @@ async function syncContentBundle(config, dispatchPackage, taskRoot) {
       }
     }
   }
-  return {directory: bundleDir, bundleDigest: bundle.bundleDigest};
+  const gitTransfer = syncContentBundleGitTransfer(config, bundle, bundleDir);
+  return {directory: bundleDir, bundleDigest: bundle.bundleDigest, gitTransfer};
+}
+
+function syncContentBundleGitTransfer(config, bundle, bundleDir) {
+  const transfer = bundle.gitTransfer;
+  if (!transfer?.enabled || !transfer.repositoryUrl || String(transfer.repositoryUrl).startsWith("git:unknown")) return null;
+  const transferDir = join(bundleDir, "git-transfer");
+  if (!inside(bundleDir, transferDir)) throw new Error("content_bundle_git_transfer_escapes_session");
+  const ref = String(transfer.ref || "main");
+  const paths = (Array.isArray(transfer.paths) ? transfer.paths : []).filter((path) => typeof path === "string" && path && !path.startsWith("/") && !path.includes(".."));
+  try {
+    if (!existsSync(join(transferDir, ".git"))) {
+      mkdirSync(dirname(transferDir), {recursive: true});
+      execFileSync("git", ["init", "-q", transferDir], {stdio: "pipe"});
+      execFileSync("git", ["-C", transferDir, "remote", "add", "origin", transfer.repositoryUrl], {stdio: "pipe"});
+    } else {
+      execFileSync("git", ["-C", transferDir, "remote", "set-url", "origin", transfer.repositoryUrl], {stdio: "pipe"});
+    }
+    // Fetch only the requested ref; large binaries come via git rather than inline bundle content.
+    execFileSync("git", ["-C", transferDir, "fetch", "--depth", "1", "--no-tags", "origin", ref], {stdio: "pipe"});
+    if (paths.length) {
+      // Sparse, path-scoped checkout so only the declared large-file paths land in the session.
+      execFileSync("git", ["-C", transferDir, "sparse-checkout", "init", "--no-cone"], {stdio: "pipe"});
+      execFileSync("git", ["-C", transferDir, "sparse-checkout", "set", ...paths], {stdio: "pipe"});
+    }
+    execFileSync("git", ["-C", transferDir, "checkout", "-q", "FETCH_HEAD"], {stdio: "pipe"});
+    return {directory: transferDir, ref, paths};
+  } catch (error) {
+    throw new Error(`content_bundle_git_transfer_failed: ${error.message}`);
+  }
 }
 
 function cleanupSessionDirectory(config, dispatchPackage) {
@@ -551,7 +581,9 @@ async function executeDispatch(config, dispatchPackage, control) {
   const contentBundle = await syncContentBundle(config, dispatchPackage, taskRoot);
   if (contentBundle) {
     dispatchPackage.__contentBundleDir = contentBundle.directory;
-    await submitExecutionEvent(config, dispatchPackage, "skill_synced", {progressPercent: 18, summary: "Execution content bundle synchronized and verified.", evidenceRefs: [`content-bundle:${contentBundle.bundleDigest}`]}).catch(() => {});
+    dispatchPackage.__contentBundleGitDir = contentBundle.gitTransfer?.directory || "";
+    const gitNote = contentBundle.gitTransfer ? ` git-transfer(${contentBundle.gitTransfer.ref})` : "";
+    await submitExecutionEvent(config, dispatchPackage, "skill_synced", {progressPercent: 18, summary: `Execution content bundle synchronized and verified.${gitNote}`, evidenceRefs: [`content-bundle:${contentBundle.bundleDigest}`]}).catch(() => {});
   }
   const packagePath = join(taskRoot, "dispatch-package.json");
   const promptPath = join(taskRoot, "execution-prompt.txt");
@@ -635,6 +667,7 @@ async function runModelExecutor(config, dispatchPackage, repositoryRoot, skillWo
     AIMAC_LANGUAGE_POLICY_DIGEST: String(dispatchPackage.taskContract.languagePolicyDigest || ""),
     AIMAC_SKILL_WORKSET_DIR: skillWorkset.directory,
     AIMAC_CONTENT_BUNDLE_DIR: dispatchPackage.__contentBundleDir || "",
+    AIMAC_CONTENT_BUNDLE_GIT_DIR: dispatchPackage.__contentBundleGitDir || "",
     AIMAC_SKILL_MANIFEST_FILE: skillWorkset.manifestPath,
     AIMAC_EXECUTION_PROMPT_FILE: promptPath
   };

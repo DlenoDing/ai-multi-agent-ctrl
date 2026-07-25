@@ -241,7 +241,7 @@
 
 分发规则：
 
-1. **系统能力优先**：内容包经网关 `GET /api/agent/v1/content-bundles/:sessionId` 下载（含正文），不通过指令文本传递。**v1 实现**：全部条目走内容包正文内联下发并逐条摘要校验；`gitTransfer` 字段由网关产出、作为大文件走既有 git 仓库通道的**预留能力**，运行时暂未消费（后续演进：条目声明 `gitTransfer` 时由运行时 `git fetch` 拉取，跳过正文内联）。
+1. **系统能力优先**：内容包经网关 `GET /api/agent/v1/content-bundles/:sessionId` 下载（含正文），不通过指令文本传递。小文本条目走内容包正文内联下发并逐条摘要校验；**大文件走 git 仓库通道**：项目配置 `baselineData` 中 `locator: "git:<path>"` 的条目由网关汇聚为 `gitTransfer{repositoryUrl, ref, paths}`，运行时对这些 path 做 `--depth 1` + sparse-checkout 的 `git fetch` 拉进会话 `bundle/git-transfer/`（经 `AIMAC_CONTENT_BUNDLE_GIT_DIR` 暴露给执行器），因而大二进制永不膨胀 JSON 载荷；git 传递失败即终止执行。
 2. **归档规则**：`retention=durable` 条目按 `contentDigest` 存入 `library/`（已存在则跳过下载，实现增量同步）；`retention=task` 条目存入会话目录 `bundle/`，随会话清理自动删除。
 3. **隔离**：条目 `path` 只允许相对路径且解包目标限定在会话 `bundle/` 或 `library/` 内。
 4. 内容包由**派发包**携带下载地址（`remoteServices.contentBundlePath`），不冻结进契约——因为内容包包含"已答人工确认"等随执行推进而变化的任务态内容，契约级摘要冻结会造成必然失配。运行时校验每个条目摘要后方可启动执行器（下载失败或摘要不符即终止执行并上报失败）；执行器通过环境变量 `AIMAC_CONTENT_BUNDLE_DIR` 获得解包目录。

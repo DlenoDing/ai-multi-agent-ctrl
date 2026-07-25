@@ -824,6 +824,20 @@ export function finishNodeDispatch(state, node, dispatchId, succeeded) {
   appendGatewayEvent(state, succeeded ? "dispatch_completed" : "dispatch_failed", dispatchId, {nodeId: node.nodeId});
 }
 
+function gitTransferForBundle(config) {
+  const repository = config.repositories?.[0];
+  if (!repository?.url || String(repository.url).startsWith("git:unknown")) return {};
+  // Only declared git-backed baseline entries (locator "git:<path>") transfer via git; everything else
+  // rides the inline bundle. Large binaries therefore never bloat the JSON payload.
+  const paths = (config.baselineData || [])
+    .map((item) => String(item.locator || ""))
+    .filter((locator) => locator.startsWith("git:"))
+    .map((locator) => locator.slice("git:".length).replace(/^\/+/u, ""))
+    .filter((path) => path && !path.includes(".."));
+  if (!paths.length) return {};
+  return {gitTransfer: {enabled: true, repositoryUrl: repository.url, ref: repository.defaultBranch || "main", paths: [...new Set(paths)]}};
+}
+
 export function buildExecutionContentBundle(state, node, sessionId, options = {}) {
   const dispatch = (state.agentDispatches || []).find((item) => item.sessionId === sessionId && item.assignedNodeId === node.nodeId && item.status === "running");
   if (!dispatch) throw gatewayError("content_bundle_dispatch_not_active", 404);
@@ -881,7 +895,7 @@ export function buildExecutionContentBundle(state, node, sessionId, options = {}
     sessionId: dispatch.sessionId,
     dispatchId: dispatch.dispatchId,
     entries,
-    ...(config.repositories?.length ? {gitTransfer: {enabled: true, repositoryUrl: config.repositories[0].url, ref: config.repositories[0].defaultBranch || "main", paths: []}} : {}),
+    ...gitTransferForBundle(config),
     createdAt: new Date().toISOString()
   };
 }
