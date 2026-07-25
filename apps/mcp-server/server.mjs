@@ -1185,7 +1185,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "resource-mcp.lease_release":
       return releaseLease(state, args);
     case "resource-mcp.resource_snapshot":
-      return resourceSnapshot(state, args);
+      return resourceSnapshot(state, args, principalProjectFilter(context));
     case "model-mcp.model_capabilities":
       return {modelCapabilities: state.modelCapabilities};
     case "model-mcp.model_policy_get":
@@ -1205,7 +1205,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "evidence-mcp.test_result_submit":
       return testResultSubmit(state, args);
     case "permission-mcp.permission_probe":
-      return permissionProbe(state, args);
+      return permissionProbe(state, args, principalProjectFilter(context));
     case "permission-mcp.permission_request_submit":
       return permissionRequestSubmit(state, args);
     case "permission-mcp.permission_status":
@@ -1300,7 +1300,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "instruction-mcp.instruction_envelope_create":
       return instructionEnvelopeCreate(state, args, "instruction_envelope");
     case "instruction-mcp.cache_key_index":
-      return cacheKeyIndex(state, args);
+      return cacheKeyIndex(state, args, principalProjectFilter(context));
     case "instruction-mcp.stable_prefix_get":
       return stablePrefixGet(state, args);
     case "instruction-mcp.delta_payload_compact":
@@ -1310,7 +1310,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "repository-mcp.repository_target_lease_bind":
       return repositoryTargetLeaseBind(state, args);
     case "repository-mcp.artifact_manifest_index":
-      return artifactManifestIndex(state, args);
+      return artifactManifestIndex(state, args, principalProjectFilter(context));
     default:
       throw new Error(`Unhandled tool: ${name}`);
   }
@@ -1888,10 +1888,38 @@ function releaseLease(state, args) {
   return {lease};
 }
 
-function resourceSnapshot(state, args) {
+// Project scope filter for read tools: null = unrestricted (system_admin, or a wildcard/unset principal),
+// otherwise a Set of the bounded principal's project ids. Read handlers filter their output by this so a
+// bounded remote-service token cannot read another tenant's operational or authorization data.
+function principalProjectFilter(context = {}) {
+  const principal = context.principal || {};
+  if (principal.kind === "system_admin") return null;
+  const ids = principal.projectIds;
+  if (!Array.isArray(ids) || ids.includes("*")) return null;
+  return new Set(ids);
+}
+
+function grantResourceProjectId(state, grant = {}) {
+  const resource = grant.resource || {};
+  if (resource.resourceType === "project") return resource.resourceId;
+  if (resource.resourceType === "task_group") {
+    return (state.taskGroups.find((item) => item.id === resource.resourceId) || {}).projectId;
+  }
+  return undefined;
+}
+
+function resourceSnapshot(state, args, filter) {
+  const leaseInScope = (lease) => {
+    if (!filter) return true;
+    const ref = String(lease.resourceRef || "");
+    const target = ref.startsWith("RepositoryOutputTarget:")
+      ? state.repositoryOutputs.find((item) => `RepositoryOutputTarget:${item.targetId}` === ref)
+      : null;
+    return Boolean(target && filter.has(target.projectId));
+  };
   return {
-    leases: state.leases.filter((item) => !args.status || item.status === args.status),
-    repositoryOutputs: state.repositoryOutputs.filter((item) => !args.taskGroupId || item.taskGroupId === args.taskGroupId)
+    leases: state.leases.filter((item) => (!args.status || item.status === args.status) && leaseInScope(item)),
+    repositoryOutputs: state.repositoryOutputs.filter((item) => (!args.taskGroupId || item.taskGroupId === args.taskGroupId) && (!filter || filter.has(item.projectId)))
   };
 }
 
@@ -1972,14 +2000,15 @@ function testResultSubmit(state, args) {
   return {testResult};
 }
 
-function permissionProbe(state, args) {
+function permissionProbe(state, args, filter) {
   const subjectId = args.subjectId || args.accountId || "acct_agent_runtime";
   const permission = args.permission || args.action;
   const resource = normalizePermissionResource(args);
   const grants = state.accessGrants.filter((grant) =>
     grant.status === "active" &&
     grant.subjectRef?.subjectId === subjectId &&
-    resourceMatches(grant.resource, resource)
+    resourceMatches(grant.resource, resource) &&
+    (!filter || filter.has(grantResourceProjectId(state, grant)))
   );
   const allowed = grants.some((grant) => (grant.permissions || []).includes(permission) || (grant.permissions || []).includes("*"));
   return {subjectId, permission, resource, allowed, grants};
@@ -2516,10 +2545,11 @@ function instructionEnvelopeCreate(state, args, sourceKind) {
   return {instructionEnvelope: envelope};
 }
 
-function cacheKeyIndex(state, args) {
+function cacheKeyIndex(state, args, filter) {
+  const projectOf = (taskGroupId) => (state.taskGroups.find((item) => item.id === taskGroupId) || {}).projectId;
   return {
     cacheKeys: state.instructionMetrics.envelopes
-      .filter((item) => !args.taskGroupId || item.taskGroupId === args.taskGroupId)
+      .filter((item) => (!args.taskGroupId || item.taskGroupId === args.taskGroupId) && (!filter || filter.has(projectOf(item.taskGroupId))))
       .map((item) => ({envelopeId: item.envelopeId, cacheKey: item.cacheKey, stablePrefixDigest: item.stablePrefixDigest}))
   };
 }
@@ -2588,10 +2618,11 @@ function repositoryTargetLeaseBind(state, args) {
   return claimLease(state, args);
 }
 
-function artifactManifestIndex(state, args) {
+function artifactManifestIndex(state, args, filter) {
+  const inScope = (projectId) => !filter || filter.has(projectId);
   const manifests = [
-    ...state.artifacts.map((artifact) => artifact.artifactManifestRef).filter(Boolean),
-    ...state.repositoryOutputs.map((target) => target.artifactManifestPath).filter(Boolean),
+    ...state.artifacts.filter((artifact) => inScope(artifact.projectId)).map((artifact) => artifact.artifactManifestRef).filter(Boolean),
+    ...state.repositoryOutputs.filter((target) => inScope(target.projectId)).map((target) => target.artifactManifestPath).filter(Boolean),
     ...(args.artifactManifestRefs || [])
   ];
   return {artifactManifestRefs: [...new Set(manifests)]};
