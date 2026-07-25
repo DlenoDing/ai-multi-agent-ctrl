@@ -2034,6 +2034,15 @@ async function handleApi(req, res) {
       ? beginGuardedWrite(req, state, "task_group_agent_control_command_create", `TaskGroup:${targetDispatch.taskGroupId}`, taskGroupScope(state, targetDispatch.taskGroupId))
       : beginGuardedWrite(req, state, "agent_control_command_create", `AgentRuntimeNode:${targetNode.nodeId}`, projectScope(projectId));
     if (guard.status) return json(res, guard.status, guard.payload);
+    // Defense in depth: the command's visibility is keyed on nodeId, but the task-scoped branch guards only the
+    // dispatch's task group. Independently confirm the target node's project is within the actor's organization,
+    // so this endpoint also satisfies the "guard covers the visibility-keying field" invariant even if a future
+    // change persisted the command before the node-ownership pre-effect check.
+    const controlActor = state.accounts.find((item) => accountIdOf(item) === guard.actor);
+    const targetNodeOrg = resourceScopeOrganizationId(state, projectScope(projectId));
+    if (controlActor && !isSystemAccount(controlActor) && controlActor.organizationId && targetNodeOrg && targetNodeOrg !== controlActor.organizationId) {
+      return json(res, 403, {error: "policy_denied", reason: "target_node_out_of_organization"});
+    }
     const result = createAgentControlCommand(state, targetNode, body, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});
     finishGuardedWrite(state, guard, 201, result.command);
     writeState(state);
