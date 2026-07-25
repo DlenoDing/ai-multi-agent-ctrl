@@ -154,6 +154,28 @@ function verifyHumanAndOrganizationContracts(output) {
     if (decided.status !== "answered") output.push("Human confirmation decision did not move the request to answered");
     const requeued = (state.agentDispatches || []).find((item) => item.dispatchId === dispatch.dispatchId);
     if (requeued.status !== "queued") output.push("Answered human confirmation did not requeue its blocked dispatch");
+    if (requeued.assignedNodeId) output.push("Requeued dispatch retained its node binding after human confirmation");
+  }
+
+  // A human cancel directive over a confirmation-blocked dispatch must not deadlock the work item.
+  const cancelState = structuredClone(seedState);
+  ensureRuntimeCollections(cancelState, {root});
+  runAutonomousCycle(cancelState, {root, mode: "all"});
+  const cancelDispatch = (cancelState.agentDispatches || []).find((item) => ["queued", "running"].includes(item.status));
+  if (cancelDispatch) {
+    cancelDispatch.status = "running";
+    cancelDispatch.assignedNodeId = "node_cancel_ct";
+    const cancelRequest = createHumanConfirmationRequest(cancelState, {dispatchId: cancelDispatch.dispatchId, summary: "取消前确认", options: [{label: "继续"}]});
+    createHumanDirective(cancelState, {taskGroupId: cancelDispatch.taskGroupId, directiveType: "cancel"}, {actor: "acct_ct"});
+    consumeQueuedHumanDirectives(cancelState);
+    const cancelledDispatch = (cancelState.agentDispatches || []).find((item) => item.dispatchId === cancelDispatch.dispatchId);
+    if (cancelledDispatch.status !== "cancelled") output.push("Human cancel directive did not cancel the confirmation-blocked dispatch");
+    const cancelledSession = (cancelState.workSessions || []).find((item) => item.sessionId === cancelledDispatch.sessionId);
+    if (cancelledSession && !["aborted", "failed", "closed", "recycled", "completed_objective"].includes(cancelledSession.status)) {
+      output.push("Human cancel directive left the work session non-terminal, deadlocking re-dispatch");
+    }
+    const cancelledConfirmation = (cancelState.humanConfirmationRequests || []).find((item) => item.requestId === cancelRequest.requestId);
+    if (cancelledConfirmation.status !== "cancelled") output.push("Human cancel directive left the pending confirmation orphaned");
   }
 
   // Readiness/close-barrier expose the new human gates.

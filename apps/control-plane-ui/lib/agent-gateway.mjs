@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { normalize, resolve, sep } from "node:path";
-import { createId, digestOf, effectiveTaskGroupConfig, ensureRuntimeCollections, expireStaleQueuedDispatches, languagePolicyDirective, normalizeTaskGroupLanguagePolicy, organizationQuotaCheck } from "./control-plane-core.mjs";
+import { cancelPendingConfirmationsForDispatch, createId, digestOf, effectiveTaskGroupConfig, ensureRuntimeCollections, expireStaleQueuedDispatches, languagePolicyDirective, normalizeTaskGroupLanguagePolicy, organizationQuotaCheck } from "./control-plane-core.mjs";
 
 const DEFAULT_AGENT_MCP_TOOLS = [
   "agent-control-mcp.node_probe",
@@ -656,6 +656,7 @@ function applyControlCommandPreEffects(state, node, command) {
   command.sessionId = dispatch.sessionId;
   dispatch.controlCommandRef = command.commandId;
   dispatch.controlRequestedAt = at;
+  if (dispatch.blockedReason === "awaiting_human_confirmation") cancelPendingConfirmationsForDispatch(state, dispatch.dispatchId, `control_${command.commandType}`);
   if (command.commandType === "pause_dispatch") {
     dispatch.status = "blocked";
     dispatch.blockedReason = "control_pause_requested";
@@ -701,6 +702,7 @@ function applyNodeStopPreEffects(state, node, command) {
   const pendingDispatchIds = [];
   for (const dispatch of state.agentDispatches || []) {
     if (dispatch.assignedNodeId !== node.nodeId || !["running", "blocked"].includes(dispatch.status)) continue;
+    if (dispatch.blockedReason === "awaiting_human_confirmation") cancelPendingConfirmationsForDispatch(state, dispatch.dispatchId, pendingReason);
     dispatch.status = "blocked";
     dispatch.blockedReason = pendingReason;
     dispatch.controlCommandRef = command.commandId;

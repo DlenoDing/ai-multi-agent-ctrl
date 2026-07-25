@@ -2981,6 +2981,36 @@ export function ensureTaskGroupRole(state, taskGroup, roleId, addedBy = "auto") 
   return role;
 }
 
+function revokeDispatchNodeBinding(state, dispatch, reason) {
+  const at = new Date().toISOString();
+  const previousNodeId = dispatch.assignedNodeId;
+  if (previousNodeId) {
+    for (const grant of state.mcpGrants || []) {
+      if (grant.agentNodeId === previousNodeId && grant.dispatchId === dispatch.dispatchId && grant.grantStatus === "issued") {
+        grant.grantStatus = "revoked";
+        grant.revocationRef = `revocation:${reason}`;
+        grant.updatedAt = at;
+      }
+    }
+    const previousNode = (state.agentRuntimeNodes || []).find((item) => item.nodeId === previousNodeId);
+    if (previousNode) previousNode.activeDispatchIds = (previousNode.activeDispatchIds || []).filter((id) => id !== dispatch.dispatchId);
+  }
+  delete dispatch.assignedNodeId;
+  delete dispatch.claimedAt;
+  delete dispatch.claimExpiresAt;
+}
+
+export function cancelPendingConfirmationsForDispatch(state, dispatchId, reason) {
+  const at = new Date().toISOString();
+  for (const request of state.humanConfirmationRequests || []) {
+    if (request.dispatchId === dispatchId && request.status === "pending") {
+      request.status = "cancelled";
+      request.cancelReason = reason;
+      request.updatedAt = at;
+    }
+  }
+}
+
 export function createHumanConfirmationRequest(state, input = {}) {
   ensureRuntimeCollections(state);
   const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === input.dispatchId);
@@ -3066,9 +3096,7 @@ export function decideHumanConfirmation(state, requestId, decision = {}, options
     if (dispatch && dispatch.status === "blocked" && dispatch.blockedReason === "awaiting_human_confirmation") {
       dispatch.status = "queued";
       delete dispatch.blockedReason;
-      delete dispatch.assignedNodeId;
-      delete dispatch.claimedAt;
-      delete dispatch.claimExpiresAt;
+      revokeDispatchNodeBinding(state, dispatch, "human_confirmation_answered_requeued");
       dispatch.updatedAt = at;
       const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
       if (session && session.status === "blocked" && session.blockedReason === "awaiting_human_confirmation") {
@@ -3135,9 +3163,7 @@ export function expireStaleHumanConfirmations(state) {
       if (dispatch && dispatch.status === "blocked" && dispatch.blockedReason === "awaiting_human_confirmation") {
         dispatch.status = "queued";
         delete dispatch.blockedReason;
-        delete dispatch.assignedNodeId;
-        delete dispatch.claimedAt;
-        delete dispatch.claimExpiresAt;
+        revokeDispatchNodeBinding(state, dispatch, "human_confirmation_expired_requeued");
         dispatch.updatedAt = at;
       }
     }
@@ -3169,7 +3195,21 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
         for (const dispatch of (state.agentDispatches || []).filter((item) => item.taskGroupId === taskGroup.id && ["queued", "blocked"].includes(item.status))) {
           dispatch.status = "cancelled";
           dispatch.failureReason = "human_directive_cancel";
+          cancelPendingConfirmationsForDispatch(state, dispatch.dispatchId, "human_directive_cancel");
+          revokeDispatchNodeBinding(state, dispatch, "human_directive_cancel");
           dispatch.updatedAt = at;
+          const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
+          if (session && !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status)) {
+            session.status = "aborted";
+            delete session.blockedReason;
+            session.updatedAt = at;
+          }
+          const workItem = (taskGroup.workItems || []).find((item) => item.id === dispatch.workItemId);
+          if (workItem && !["verified", "closed", "superseded"].includes(workItem.status)) {
+            workItem.status = "blocked";
+            workItem.blockedReason = "human_directive_cancel";
+            workItem.updatedAt = at;
+          }
         }
         directive.appliedActions.push({action: "task_group_cancel_pending_dispatches", ref: `TaskGroup:${taskGroup.id}`});
       } else if (directive.directiveType === "add_requirement" && taskGroup) {

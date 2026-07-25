@@ -38,6 +38,7 @@ import {
   computeCloseBarrier,
   computeCompletionReadiness,
   computeProgressSnapshots,
+  cancelPendingConfirmationsForDispatch,
   consumeHumanConfirmation,
   createHumanConfirmationRequest,
   createHumanDirective,
@@ -1492,6 +1493,7 @@ function applyTaskGroupRuntimeControl(state, taskGroup, action, options = {}) {
 }
 
 function applyDirectDispatchControl(state, dispatch, commandType, reason, at) {
+  if (dispatch.blockedReason === "awaiting_human_confirmation") cancelPendingConfirmationsForDispatch(state, dispatch.dispatchId, reason);
   if (commandType === "cancel_dispatch") {
     dispatch.status = "cancelled";
     dispatch.failureReason = reason;
