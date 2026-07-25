@@ -1925,9 +1925,11 @@ function resolveRoleSkillView(state, args) {
 
 function taskGroupForRecord(state, args) {
   // Attribute a record to the project that actually owns its task group / work item, never a hardcoded
-  // default, so a tenant-scoped write cannot be misfiled under the control-plane project.
+  // default, so a tenant-scoped write cannot be misfiled under the control-plane project. Resolve ONLY on a
+  // real id — findTaskGroup falls back to taskGroups[0] on a falsy id, which would misfile an
+  // unscoped record under an arbitrary tenant instead of the intended control-plane default.
   const workItemId = args.workItemId || args.workId;
-  return findTaskGroup(state, args.taskGroupId)
+  return (args.taskGroupId ? findTaskGroup(state, args.taskGroupId) : null)
     || (workItemId ? (state.taskGroups || []).find((item) => (item.workItems || []).some((work) => work.id === workItemId)) : null);
 }
 
@@ -2135,10 +2137,11 @@ function reviewResultConsume(state, args) {
 
 function approvalRequestCreate(state, args) {
   const at = new Date().toISOString();
+  const taskGroup = taskGroupForRecord(state, args);
   const request = {
     approvalId: args.approvalId || createId("approval"),
-    projectId: args.projectId,
-    taskGroupId: args.taskGroupId,
+    projectId: taskGroup?.projectId || args.projectId,
+    taskGroupId: taskGroup?.id || args.taskGroupId,
     action: args.action || "guarded_action",
     resource: args.resource || {},
     status: "pending",
@@ -2194,10 +2197,11 @@ function findingSubmit(state, args) {
       return {finding: existing};
     }
   }
+  const taskGroup = taskGroupForRecord(state, args);
   const finding = {
     findingId: args.findingId || createId("finding"),
-    projectId: args.projectId || "prj_control_plane",
-    taskGroupId: args.taskGroupId || "tg_runtime_management",
+    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
+    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
     workItemId: args.workItemId || args.workId,
     findingType: args.findingType || "governance",
     severity: args.severity || "medium",
@@ -2426,13 +2430,16 @@ function guardedActionDispatch(state, args) {
 
 function sharedDefinitionCreate(state, args) {
   const at = new Date().toISOString();
+  const taskGroup = taskGroupForRecord(state, args);
+  const projectId = taskGroup?.projectId || args.projectId || "prj_control_plane";
+  const scopedTaskGroupId = taskGroup?.id || args.taskGroupId;
   const definition = {
     schemaVersion: "shared-definition-contract/v1",
     contractId: args.contractId || createId("sdc"),
     status: args.status || "draft",
-    projectId: args.projectId || "prj_control_plane",
+    projectId,
     definitionType: args.definitionType || "semantic_contract",
-    scopeRefs: args.scopeRefs || [args.taskGroupId ? `TaskGroup:${args.taskGroupId}` : "Project:prj_control_plane"],
+    scopeRefs: args.scopeRefs || [scopedTaskGroupId ? `TaskGroup:${scopedTaskGroupId}` : `Project:${projectId}`],
     canonicalOwnerRole: args.canonicalOwnerRole || args.ownerRole || "orchestrator",
     producerRole: args.producerRole || args.ownerRole || "orchestrator",
     consumerRefs: args.consumerRefs || [],
