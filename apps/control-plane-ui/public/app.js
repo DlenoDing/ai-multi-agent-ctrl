@@ -20,6 +20,8 @@ let state = emptyState();
 let systemOverview = null;
 let organizations = [];
 let orgAgentNodes = [];
+let orgMembers = [];
+let projConfig = null;
 let instructionState = null;
 let loginHint = null;
 
@@ -140,6 +142,63 @@ function emptyState() {
   };
 }
 
+/* 兼容非 HTTPS / 非 localhost：crypto.randomUUID 可能不存在 */
+function uuid() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0"));
+    return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10, 16).join("")}`;
+  }
+  const rand = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).slice(1);
+  return `${rand()}${rand()}-${rand()}-4${rand().slice(1)}-${rand()}-${rand()}${rand()}${Date.now().toString(16).slice(-6)}`;
+}
+
+/* 剪贴板降级：navigator.clipboard 在非安全上下文可能不可用 */
+async function copyText(text) {
+  const value = String(text ?? "");
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {}
+  try {
+    const area = document.createElement("textarea");
+    area.value = value;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.focus();
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/* 权限门控：system_admin / org_admin 全权；user_account 看 permissions 列表 */
+function hasPerm(perm) {
+  const account = currentAccount;
+  if (!account) return false;
+  if (account.accountType === "system_admin" || account.accountType === "org_admin") return true;
+  const permissions = account.permissions || [];
+  if (permissions.includes("system:*") || permissions.includes("org:*")) return true;
+  if (permissions.includes(perm)) return true;
+  return false;
+}
+
+function accountName(accountId) {
+  if (!accountId) return "-";
+  const pool = [...(state.accounts || []), ...orgMembers];
+  const found = pool.find((account) => account.accountId === accountId || account.email === accountId);
+  return found ? (found.displayName || found.email || accountId) : accountId;
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -154,7 +213,12 @@ const esc = escapeHtml;
 const TONE_GREEN = new Set(["completed", "verified", "ok", "active", "online", "passed", "succeeded", "accepted", "applied", "answered", "consumed", "satisfied", "clear", "healthy", "available", "pushed", "committed", "merged", "full", "current", "resolved", "admitted", "acked", "indexed", "review_passed", "completed_objective", "closed", "fixed", "reverified", "code_complete", "corrected", "verification_ready"]);
 const TONE_BLUE = new Set(["running", "in_progress", "queued", "assigned", "delivered", "monitoring", "syncing", "starting", "development", "evaluating", "collecting", "dispatched", "ready", "selected", "acknowledged", "received", "intake", "discovery", "product_design", "solution_design", "ui_design", "global_development_review", "verification", "repair", "reverification", "integration", "release", "online_quality", "implementation", "governance_design", "protocol", "cache_indexed", "initialized", "configured", "prepared", "submitted", "new_session", "subagent", "issued", "bound", "planned", "integrating", "checkpointed", "checkpoint_submitted", "created", "executor_started", "executor_output", "git_committed", "git_pushed", "repository_changed", "skill_synced", "dispatch_received", "heartbeat", "progress", "writing", "lease_bound"]);
 const TONE_ORANGE = new Set(["attention", "pending", "review_requested", "paused", "draining", "degraded", "limited", "invited", "waiting_room_event", "waiting_dependency", "permission_required", "needs_decision", "stale_state", "reverify_required", "standby", "active_paused_by_control", "change_requested", "reopened", "requested", "reviewing", "candidate", "drift_signal", "monitor_attention", "needs_reconcile", "quota_limited", "awaiting_human_confirmation", "read_only", "close_candidate"]);
-const TONE_RED = new Set(["failed", "blocked", "rejected", "denied", "error", "aborted", "quarantined", "quarantine", "dlq", "correction_required", "drift_detected", "timed_out", "unavailable", "blocked_dependency", "blocked_resource", "conflicted", "merge_conflict", "rolled_back", "invalidated"]);
+const TONE_RED = new Set(["failed", "blocked", "rejected", "denied", "error", "aborted", "quarantined", "quarantine", "dlq", "correction_required", "drift_detected", "timed_out", "unavailable", "blocked_dependency", "blocked_resource", "conflicted", "merge_conflict", "rolled_back", "invalidated", "S0", "critical"]);
+
+/* 阻塞严重度着色：S0 阻断=红，S1 严重=橙，S2 一般=蓝 */
+TONE_ORANGE.add("S1").add("major");
+TONE_BLUE.add("S2").add("normal");
+TONE_GREEN.add("S3");
 
 function toneOf(value) {
   const key = String(value ?? "");
@@ -232,6 +296,10 @@ function table(headers, bodyRows) {
   `;
 }
 
+function filterInput(placeholder = "关键字过滤…") {
+  return `<input class="filter-input" data-filter-input placeholder="${esc(placeholder)}">`;
+}
+
 function errorBanner() {
   return lastError ? `<article class="panel wide"><div class="panel-body"><div class="notice error-notice">操作失败：${esc(lastError)}</div></div></article>` : "";
 }
@@ -242,7 +310,7 @@ async function api(path, options = {}) {
   const method = (options.method || "GET").toUpperCase();
   const headers = {"content-type": "application/json", ...(options.headers || {})};
   if (authToken) headers.authorization = `Bearer ${authToken}`;
-  if (method !== "GET") headers["Idempotency-Key"] = crypto.randomUUID();
+  if (method !== "GET") headers["Idempotency-Key"] = uuid();
   const response = await fetch(path, {...options, headers});
   if (!response.ok) {
     let detail = "";
@@ -276,6 +344,8 @@ function clearSession() {
   systemOverview = null;
   organizations = [];
   orgAgentNodes = [];
+  orgMembers = [];
+  projConfig = null;
   instructionState = null;
   modalHtml = "";
   expandedTaskGroupId = "";
@@ -343,7 +413,9 @@ async function loadPage() {
     } else if (page === "org-overview") {
       state = await fetchState("full");
     } else if (page === "org-members") {
-      state = await fetchState("users");
+      const [membersResult, projectState] = await Promise.all([api("/api/org/members"), fetchState("projects")]);
+      orgMembers = membersResult.members || [];
+      state = projectState;
     } else if (page === "org-agents") {
       const [agentsResult, projectState] = await Promise.all([api("/api/org/agents"), fetchState("projects")]);
       orgAgentNodes = agentsResult.agentRuntimeNodes || [];
@@ -380,6 +452,13 @@ async function loadPage() {
       ensureExecScope();
     } else if (page === "proj-settings") {
       state = await fetchState("tasks");
+      ensureProjectSelection();
+      if (currentProjectId) {
+        const configResult = await api(`/api/projects/${encodeURIComponent(currentProjectId)}/config`).catch(() => null);
+        projConfig = configResult?.config || null;
+      } else {
+        projConfig = null;
+      }
     }
     ensureProjectSelection();
     lastError = "";
@@ -510,8 +589,9 @@ function oneTimeTokenModal(title, loginEmail, token, extraNote = "") {
   openModal(title, `
     <div class="stack">
       <div class="notice warn-notice">该登录令牌仅显示一次，请立即复制并妥善保存。关闭本弹窗后将无法再次查看。</div>
-      <div class="command-box"><strong>登录凭据</strong><pre>登录账号：${esc(loginEmail)}
+      <div class="command-box"><strong>登录凭据</strong><pre id="otm-token">登录账号：${esc(loginEmail)}
 一次性令牌：${esc(token)}</pre></div>
+      <div class="button-row"><button type="button" class="secondary-button" data-action="copy-el" data-copy-target="#otm-token">复制登录凭据</button></div>
       ${extraNote ? `<div class="notice">${esc(extraNote)}</div>` : ""}
     </div>
   `);
@@ -590,6 +670,9 @@ function render() {
     `
     : "";
 
+  const prevScrollY = window.scrollY;
+  const prevTableScroll = [...document.querySelectorAll(".table-scroll")].map((el) => el.scrollLeft);
+
   app.innerHTML = `
     <div class="app-shell">
       <aside class="sidebar">
@@ -621,6 +704,13 @@ function render() {
     </div>
     ${modalHtml}
   `;
+
+  // 轮询/局部刷新后恢复滚动位置，避免整页 render 抖动
+  window.scrollTo(0, prevScrollY);
+  const tableScrolls = document.querySelectorAll(".table-scroll");
+  prevTableScroll.forEach((left, index) => {
+    if (tableScrolls[index]) tableScrolls[index].scrollLeft = left;
+  });
 }
 
 function renderContent() {
@@ -760,7 +850,7 @@ function renderSysOrgs() {
         <div class="record"><div class="record-title"><strong>配额强制</strong></div><div class="record-meta"><span>成员 / 项目 / 任务组 / 智能体创建时校验配额，超限将返回"组织配额超限"。</span></div></div>
       </div>
     `),
-    panel("组织列表", table(["组织", "状态", "成员", "项目", "任务组", "智能体", "创建时间", "操作"], orgRows), {wide: true})
+    panel("组织列表", table(["组织", "状态", "成员", "项目", "任务组", "智能体", "创建时间", "操作"], orgRows), {wide: true, headerSide: filterInput("按组织名过滤…")})
   ].join("");
 }
 
@@ -1006,12 +1096,10 @@ function renderOrgOverview() {
 
 const MEMBER_PERMISSION_OPTIONS = [
   ["project:view", "查看项目"],
-  ["project:create", "创建项目"],
   ["project:grant", "项目授权管理"],
   ["task_group:read", "查看任务组"],
   ["task_group:review", "人工审核"],
   ["task_group:control", "任务组控制 / 人工指令"],
-  ["task_group:orchestrate", "编排调度"],
   ["task_group:monitor", "执行监控"],
   ["member:invite", "邀请成员"],
   ["agent:activate", "智能体管理"]
@@ -1028,7 +1116,7 @@ function permissionCheckboxes(selected = ["project:view", "task_group:read"]) {
 }
 
 function renderOrgMembers() {
-  const members = (state.accounts || []).filter((account) => account.accountType !== "service_account");
+  const members = (orgMembers || []).filter((account) => account.accountType !== "service_account");
   const memberRows = members.map((account) => {
     const isSelf = account.accountId === currentAccount.accountId;
     const manageable = account.accountType === "user_account" && !isSelf;
@@ -1071,7 +1159,7 @@ function renderOrgMembers() {
         <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目/任务组细粒度授权可在"账号与授权 / 项目管理"中补充。</span></div></div>
       </div>
     `),
-    panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows), {wide: true})
+    panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows), {wide: true, headerSide: filterInput("按姓名 / 邮箱过滤…")})
   ].join("");
 }
 
@@ -1144,7 +1232,7 @@ function renderOrgAgents() {
   }
 
   return [
-    panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成 / 失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: toggle}),
+    panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成 / 失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名 / 地区过滤…")}${toggle}`}),
     panel("签发加入令牌 / 令牌管理", renderJoinTokenSection(), {wide: true})
   ].join("");
 }
@@ -1254,10 +1342,12 @@ function languageSelectOptions(selected) {
 
 function renderTaskGroups() {
   const groups = projectTaskGroups();
+  const canControl = hasPerm("task_group:control");
+  const canReview = hasPerm("task_group:review");
   const roleOptions = [...new Set(["orchestrator", "agent-runtime", "reviewer", "qa", "security", "release", "monitor"])]
     .map((role) => `<option value="${esc(role)}">${esc(t(role))} (${esc(role)})</option>`).join("");
 
-  const createPanels = [
+  const createPanels = !canControl ? [] : [
     panel("创建任务组", `
       <form class="form-grid" data-form="task-group-create">
         <div class="form-row"><label>任务组名称</label><input name="name" required></div>
@@ -1298,10 +1388,10 @@ function renderTaskGroups() {
         </div>
         <div class="button-row">
           <button class="secondary-button" data-action="tg-detail" data-task="${esc(taskGroup.id)}">${expanded ? "收起详情" : "查看详情"}</button>
-          <button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="pause">暂停</button>
-          <button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="resume">恢复</button>
-          <button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="request_review">请求评审</button>
-          <button class="danger-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="rebound_drift">纠偏</button>
+          ${canControl ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="pause">暂停</button>
+          <button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="resume">恢复</button>` : ""}
+          ${canReview || canControl ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="request_review">请求评审</button>` : ""}
+          ${canControl ? `<button class="danger-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="rebound_drift">纠偏</button>` : ""}
         </div>
         ${expanded ? renderTaskGroupDetail(taskGroup) : ""}
       </div>
@@ -1346,34 +1436,49 @@ function renderTaskGroupDetail(taskGroup) {
   `).join("") || `<div class="notice">暂无角色记录。</div>`;
 
   const config = tgDetail.config;
+  const canControl = hasPerm("task_group:control");
+  const editDisabled = canControl ? "" : "disabled";
   const configHtml = config ? `
     <div class="stack">
       <div class="record-title">
         <strong>配置来源：</strong>
         ${config.configSource === "customized" ? customBadge("已自定义", "orange") : customBadge("继承项目", "green")}
-        ${config.configSource === "customized" ? `<button class="danger-button" data-action="tg-config-reset" data-task="${esc(taskGroup.id)}">重置为继承</button>` : ""}
+        ${config.configSource === "customized" && canControl ? `<button class="danger-button" data-action="tg-config-reset" data-task="${esc(taskGroup.id)}">重置为继承项目</button>` : ""}
       </div>
+      ${canControl ? "" : `<div class="notice warn-notice">当前账号无“任务组控制”权限，配置为只读。</div>`}
+      ${sectionBlock("系统规则（默认 / 项目 / 任务组）", ruleEditorForm({
+        rules: config.systemRules || [],
+        listId: "tg-system-rules",
+        category: "system",
+        layer: "task_group",
+        task: taskGroup.id,
+        readOnly: !canControl,
+        note: "展示解析结果：徽标标明来自默认 / 项目 / 任务组。可在任务组层停用、改写或新增。"
+      }))}
+      ${sectionBlock("业务规则（默认 / 项目 / 任务组）", ruleEditorForm({
+        rules: config.businessRules || [],
+        listId: "tg-business-rules",
+        category: "business",
+        layer: "task_group",
+        task: taskGroup.id,
+        readOnly: !canControl,
+        note: "任务组层可覆盖项目业务规则，或新增仅本任务组生效的规则。"
+      }))}
       <form class="form-grid" data-form="tg-config" data-task="${esc(taskGroup.id)}">
-        <div class="form-row"><label>业务规则（标题 + 内容）</label>
-          <div class="cfg-rows" data-cfg-list="tg-business">
-            ${(config.businessRules || []).map((rule) => cfgBusinessRow(rule)).join("")}
-          </div>
-          <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="business" data-target="tg-business">添加规则</button></div>
-        </div>
         <div class="form-row"><label>默认角色（逗号分隔角色 ID）</label>
-          <input name="defaultRoles" value="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}">
+          <input name="defaultRoles" value="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" ${editDisabled}>
         </div>
         <div class="record-meta">
-          <span>仓库配置：${(config.repositories || []).length} 条（在"项目设置"维护，任务组可覆盖）</span>
+          <span>仓库配置：${(config.repositories || []).length} 条（在“项目设置”维护，任务组可覆盖）</span>
           <span>基线数据：${(config.baselineData || []).length} 条</span>
         </div>
-        <button class="primary-button" type="submit">保存任务组配置</button>
+        <button class="primary-button" type="submit" ${editDisabled}>保存默认角色</button>
       </form>
     </div>
   ` : `<div class="notice">暂无法读取任务组配置。</div>`;
 
   const languagePolicy = taskGroup.languagePolicy || {languageTag: "zh-CN"};
-  const controlHtml = `
+  const controlHtml = canControl ? `
     <div class="stack">
       <div class="button-row">
         <button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="pause">暂停执行</button>
@@ -1385,7 +1490,7 @@ function renderTaskGroupDetail(taskGroup) {
         <button class="primary-button" type="submit">保存语言策略</button>
       </form>
     </div>
-  `;
+  ` : `<div class="notice">当前账号无“任务组控制”权限，仅可查看。当前统一语言：${esc(languagePolicy.languageName || languagePolicy.languageTag || "中文")}。</div>`;
 
   const workItems = (progressData.workItems || taskGroup.workItems || []).map((workItem) => {
     const dispatch = findWorkItemDispatch(taskGroup.id, workItem.id);
@@ -1432,6 +1537,112 @@ function cfgBusinessRow(rule = {}) {
   `;
 }
 
+/* ---------------- 规则管理（系统规则 / 业务规则） ----------------
+ * 三级继承：默认 → 项目 → 任务组。GET /config 返回解析后的规则视图，
+ * 每条含 {ruleId, category, title, content, status, enabled, source, contentDigest}。
+ * 保存时按“本层覆盖片段”提交（只提交本层既有覆盖 + 本次改动 / 新增 / 停用的条目）。
+ */
+
+function ruleOwnedAtLayer(source, layer) {
+  return String(source || "").split("+").includes(layer);
+}
+
+function ruleSourceBadge(source) {
+  const parts = String(source || "").split("+");
+  if (parts.includes("task_group")) return customBadge("任务组", "orange");
+  if (parts.includes("project")) return customBadge("项目", "blue");
+  return customBadge("默认", "gray");
+}
+
+function ruleRow(rule, layer) {
+  const source = String(rule.source || "");
+  const isDefault = source.split("+").includes("default");
+  const owned = ruleOwnedAtLayer(source, layer);
+  const enabled = rule.enabled !== false && (rule.status ? rule.status === "active" : true);
+  const canDelete = owned && !isDefault; // 本层新增（非默认）规则可删除
+  return `
+    <div class="rule-row ${enabled ? "" : "disabled"}"
+      data-rule-row
+      data-rule-id="${esc(rule.ruleId || "")}"
+      data-rule-category="${esc(rule.category || "")}"
+      data-rule-source="${esc(source)}"
+      data-orig-enabled="${enabled ? "1" : "0"}"
+      data-orig-content="${esc(rule.content || "")}"
+      data-orig-title="${esc(rule.title || "")}">
+      <div class="rule-head">
+        <input class="rule-title-input" name="ruleTitle" value="${esc(rule.title || "")}" ${isDefault ? "readonly" : ""} placeholder="规则标题">
+        ${ruleSourceBadge(source)}
+        <label class="rule-toggle"><input type="checkbox" name="ruleEnabled" ${enabled ? "checked" : ""}> 启用</label>
+        ${canDelete ? `<button type="button" class="danger-button" data-action="rule-del">删除</button>` : ""}
+      </div>
+      <textarea name="ruleContent" placeholder="规则内容（可改写默认内容）">${esc(rule.content || "")}</textarea>
+    </div>
+  `;
+}
+
+function ruleRowNew(category) {
+  return `
+    <div class="rule-row" data-rule-row data-rule-category="${esc(category)}" data-rule-source="" data-orig-enabled="1" data-orig-content="" data-orig-title="">
+      <div class="rule-head">
+        <input class="rule-id-input" name="ruleId" placeholder="规则 ID（可留空自动生成）">
+        <input class="rule-title-input" name="ruleTitle" placeholder="规则标题">
+        <label class="rule-toggle"><input type="checkbox" name="ruleEnabled" checked> 启用</label>
+        <button type="button" class="danger-button" data-action="rule-del">删除</button>
+      </div>
+      <textarea name="ruleContent" placeholder="规则内容"></textarea>
+    </div>
+  `;
+}
+
+function ruleEditorForm(opts) {
+  const {rules, listId, category, layer, project, task, readOnly} = opts;
+  const formAttr = layer === "project"
+    ? `data-form="project-rules" data-project="${esc(project || "")}"`
+    : `data-form="tg-rules" data-task="${esc(task || "")}"`;
+  const catLabel = category === "system" ? "系统" : "业务";
+  const disabled = readOnly ? "disabled" : "";
+  return `
+    <form class="form-grid" ${formAttr} data-category="${esc(category)}" data-list="${esc(listId)}">
+      ${opts.note ? `<div class="notice">${opts.note}</div>` : ""}
+      <div class="rule-list" data-cfg-list="${esc(listId)}">
+        ${(rules || []).map((rule) => ruleRow(rule, layer)).join("") || `<div class="small muted">暂无规则。</div>`}
+      </div>
+      <div class="button-row">
+        <button type="button" class="secondary-button" data-action="rule-add" data-target="${esc(listId)}" data-category="${esc(category)}" ${disabled}>新增${catLabel}规则</button>
+        <button class="primary-button" type="submit" ${disabled}>保存${catLabel}规则</button>
+      </div>
+    </form>
+  `;
+}
+
+function collectRuleFragments(form, layer) {
+  const listId = form.dataset.list;
+  const category = form.dataset.category;
+  const rows = [...form.querySelectorAll(`[data-cfg-list='${listId}'] [data-rule-row]`)];
+  const fragments = [];
+  for (const rowEl of rows) {
+    const idFromData = rowEl.dataset.ruleId || "";
+    const idFromInput = rowEl.querySelector("input[name='ruleId']")?.value?.trim() || "";
+    const ruleId = (idFromData || idFromInput).trim();
+    const title = rowEl.querySelector("input[name='ruleTitle']")?.value?.trim() || "";
+    const content = rowEl.querySelector("textarea[name='ruleContent']")?.value ?? "";
+    const enabled = Boolean(rowEl.querySelector("input[name='ruleEnabled']")?.checked);
+    const source = rowEl.dataset.ruleSource || "";
+    const owned = source.split("+").includes(layer);
+    const isNew = !source;
+    const dirty = enabled !== (rowEl.dataset.origEnabled === "1")
+      || content !== (rowEl.dataset.origContent || "")
+      || title !== (rowEl.dataset.origTitle || "");
+    // 未在本层改动、且非本层既有覆盖的默认/继承项不提交，保持继承
+    if (!owned && !isNew && !dirty) continue;
+    if (isNew && !title && !content) continue;
+    const fragment = {category, title, content, enabled, status: "active"};
+    if (ruleId) fragment.ruleId = ruleId;
+    fragments.push(fragment);
+  }
+  return fragments;
+}
+
 const terminalDispatchStatuses = new Set(["completed", "failed", "cancelled"]);
 
 function findWorkItemDispatch(taskGroupId, workItemId) {
@@ -1456,6 +1667,7 @@ function renderReview() {
   if (!projectTaskGroups().length) {
     return panel("人工审核", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true});
   }
+  const canReview = hasPerm("task_group:review");
   const pending = reviewRequests.filter((request) => request.status === "pending");
   const answered = reviewRequests.filter((request) => request.status !== "pending");
 
@@ -1469,7 +1681,7 @@ function renderReview() {
         <span>提交时间：${fmtTime(request.createdAt)}</span>
         <span>过期时间：${fmtTime(request.expiresAt)}</span>
       </div>
-      <form class="form-grid" data-form="hcr-decide" data-request="${esc(request.requestId)}" style="margin-top:10px;">
+      ${canReview ? `<form class="form-grid" data-form="hcr-decide" data-request="${esc(request.requestId)}" style="margin-top:10px;">
         <div class="option-list">
           ${(request.options || []).map((option, index) => `
             <label class="option-item">
@@ -1483,7 +1695,7 @@ function renderReview() {
         </div>
         <div class="form-row"><label>确认内容（选择"不选择（自定义输入）"时必填）</label><textarea name="inputText" placeholder="补充说明或自定义决定"></textarea></div>
         <button class="primary-button" type="submit">提交确认</button>
-      </form>
+      </form>` : `<div class="notice warn-notice" style="margin-top:10px;">当前账号无“人工审核”权限，仅可查看待确认问题。</div>`}
     </div>
   `).join("") : `<div class="notice">当前任务组没有待确认的问题。</div>`;
 
@@ -1492,7 +1704,7 @@ function renderReview() {
     badge(request.status),
     esc(request.decision?.selectedLabel || request.decision?.selectedOptionId || "-"),
     esc(request.decision?.inputText || "-"),
-    esc(request.decision?.decidedBy || "-"),
+    esc(request.decision?.decidedBy ? accountName(request.decision.decidedBy) : "-"),
     fmtTime(request.decision?.decidedAt || request.updatedAt)
   ])).join("");
 
@@ -1531,10 +1743,8 @@ function renderDirectives() {
     esc(directive.rejectReason ? t(directive.rejectReason) : "-")
   ])).join("");
 
-  return [
-    panel("下达人工指令", `
-      <div class="stack">
-        <div class="notice">总控 / 调度会话不接受人工直接输入。所有人工操作通过本通道生成结构化指令，由编排周期作为决策输入消费并全程留审计。</div>
+  const canControl = hasPerm("task_group:control");
+  const formHtml = canControl ? `
         <form class="form-grid" data-form="directive-create">
           <div class="form-row"><label>目标任务组</label>${taskGroupSelector(directiveTaskGroupId, "directive-tg")}</div>
           <div class="form-row"><label>指令类型</label>
@@ -1543,9 +1753,16 @@ function renderDirectives() {
           <div class="form-row"><label>指令内容</label><textarea name="instruction" placeholder="补充要求 / 自由指令必填，其余类型可选"></textarea></div>
           <button class="primary-button" type="submit">提交指令</button>
         </form>
+  ` : `<div class="notice warn-notice">当前账号无“任务组控制 / 人工指令”权限，仅可查看指令流水。</div>`;
+
+  return [
+    panel("下达人工指令", `
+      <div class="stack">
+        <div class="notice">总控 / 调度会话不接受人工直接输入。所有人工操作通过本通道生成结构化指令，由编排周期作为决策输入消费并全程留审计。</div>
+        ${formHtml}
       </div>
     `, {wide: true}),
-    panel("指令流水", table(["时间", "类型", "指令内容", "状态", "已执行动作", "拒绝原因"], directiveRows), {wide: true})
+    panel("指令流水", table(["时间", "类型", "指令内容", "状态", "已执行动作", "拒绝原因"], directiveRows), {wide: true, headerSide: filterInput("按指令内容过滤…")})
   ].join("");
 }
 
@@ -1597,12 +1814,14 @@ function renderMonitor() {
     fmtTime(command.updatedAt || command.createdAt)
   ])).join("");
 
+  const canControlNodes = hasPerm("agent:activate");
+  const canOrchestrate = hasPerm("task_group:control");
   const nodes = (state.agentRuntimeNodes || []).map((node) => row([
     `<strong>${esc(node.nodeName || node.nodeId)}</strong><div class="small muted mono">${esc(node.nodeId)}</div>`,
     badge(node.status),
     badge(node.admission),
     fmtTime(node.lastHeartbeatAt),
-    node.status !== "revoked" ? [
+    node.status !== "revoked" && canControlNodes ? [
       `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="refresh_profile">刷新</button>`,
       `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="pause_dispatch">暂停</button>`,
       `<button class="danger-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="cancel_dispatch">取消</button>`
@@ -1631,22 +1850,22 @@ function renderMonitor() {
   ])).join("");
 
   return [
-    panel("自治控制", `
+    canOrchestrate ? panel("自治控制", `
       <div class="button-row">
         <button class="primary-button" data-action="orchestrator-run">运行自治循环</button>
         <button class="secondary-button" data-action="decide-model">模型决策</button>
       </div>
-    `),
+    `) : "",
     panel("实时事件流", `
       <div class="stack">
         <div class="record-meta"><span>监听范围：</span><select data-select="exec-scope">${scopeOptions.map((option) => `<option value="${esc(option.value)}" ${option.value === scopeValue ? "selected" : ""}>${esc(option.label)}</option>`).join("")}</select></div>
         ${table(["序号", "事件", "进度", "状态", "摘要", "时间"], eventRows)}
       </div>
-    `, {wide: true}),
-    panel("工作会话", table(["会话", "角色", "工作项", "放置方式", "状态", "详情"], sessions), {wide: true}),
-    panel("智能体派发", table(["派发", "工作项", "状态", "进度", "原因", "详情"], dispatches), {wide: true}),
+    `, {wide: true, headerSide: filterInput("按事件 / 摘要过滤…")}),
+    panel("工作会话", table(["会话", "角色", "工作项", "放置方式", "状态", "详情"], sessions), {wide: true, headerSide: filterInput("按会话 / 工作项过滤…")}),
+    panel("智能体派发", table(["派发", "工作项", "状态", "进度", "原因", "详情"], dispatches), {wide: true, headerSide: filterInput("按派发 / 工作项过滤…")}),
     panel("控制通道", table(["序号", "节点", "命令", "作用对象", "状态", "更新时间"], commands), {wide: true}),
-    panel("运行时节点", table(["节点", "状态", "准入", "最近心跳", "操作"], nodes), {wide: true}),
+    panel("运行时节点", table(["节点", "状态", "准入", "最近心跳", "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…")}),
     panel("模型选择记录", table(["角色", "工作项", "模型", "状态", "决策说明"], decisions)),
     panel("会话放置记录", table(["工作项", "放置方式", "状态"], placements)),
     panel("关闭门禁", table(["任务组", "状态", "阻塞对象数", "计算时间"], barriers), {wide: true})
@@ -1692,28 +1911,48 @@ function renderProjectSettings() {
   const project = currentProject();
   if (!project) return panel("项目设置", `<div class="notice">当前账号暂无可见项目。</div>`, {wide: true});
   const config = project.config || {};
+  const resolved = projConfig || {};
+  const canEdit = hasPerm("project:grant");
+  const editDisabled = canEdit ? "" : "disabled";
+  const readOnlyNotice = canEdit ? "" : `<div class="notice warn-notice">当前账号无“项目授权管理”权限，项目配置为只读。</div>`;
+
   return [
     panel(`项目设置 · ${esc(project.name)}`, `
+      ${readOnlyNotice}
       <form class="form-grid" data-form="project-config" data-project="${esc(project.id)}">
         <div class="form-row"><label>仓库与凭证引用（凭证只存引用，不落明文）</label>
           <div class="cfg-rows" data-cfg-list="proj-repos">${(config.repositories || []).map((repo) => cfgRepoRow(repo)).join("")}</div>
-          <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="repo" data-target="proj-repos">添加仓库</button></div>
+          <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="repo" data-target="proj-repos" ${editDisabled}>添加仓库</button></div>
         </div>
         <div class="form-row"><label>基线数据</label>
           <div class="cfg-rows" data-cfg-list="proj-baseline">${(config.baselineData || []).map((item) => cfgBaselineRow(item)).join("")}</div>
-          <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="baseline" data-target="proj-baseline">添加基线</button></div>
-        </div>
-        <div class="form-row"><label>业务规则（标题 + 内容）</label>
-          <div class="cfg-rows" data-cfg-list="proj-business">${(config.businessRules || []).map((rule) => cfgBusinessRow(rule)).join("")}</div>
-          <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="business" data-target="proj-business">添加规则</button></div>
+          <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="baseline" data-target="proj-baseline" ${editDisabled}>添加基线</button></div>
         </div>
         <div class="form-row"><label>默认角色</label>
           <div class="cfg-rows" data-cfg-list="proj-roles">${(config.defaultRoles || []).map((role) => cfgRoleRow(role)).join("")}</div>
-          <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="role" data-target="proj-roles">添加角色</button></div>
+          <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="role" data-target="proj-roles" ${editDisabled}>添加角色</button></div>
         </div>
-        <button class="primary-button" type="submit">保存项目配置</button>
+        <button class="primary-button" type="submit" ${editDisabled}>保存项目配置</button>
       </form>
-    `, {wide: true})
+    `, {wide: true}),
+    panel("系统规则", ruleEditorForm({
+      rules: resolved.systemRules || [],
+      listId: "proj-system-rules",
+      category: "system",
+      layer: "project",
+      project: project.id,
+      readOnly: !canEdit,
+      note: "内置默认系统规则可在项目层“停用”或“改写内容”，也可新增自定义系统规则。徽标标明来源：默认 / 项目。"
+    }), {wide: true}),
+    panel("业务规则", ruleEditorForm({
+      rules: resolved.businessRules || [],
+      listId: "proj-business-rules",
+      category: "business",
+      layer: "project",
+      project: project.id,
+      readOnly: !canEdit,
+      note: "业务规则通常在项目层定义，可新增、停用或改写。任务组可进一步覆盖。"
+    }), {wide: true})
   ].join("");
 }
 
@@ -1820,8 +2059,10 @@ document.addEventListener("submit", async (event) => {
       openModal("一次性 Agent 加入令牌", `
         <div class="stack">
           <div class="notice warn-notice">以下注册命令仅显示一次，请立即复制到目标主机执行。</div>
-          <div class="command-box"><strong>直接安装</strong><pre>${esc(result.installCommand || "-")}</pre></div>
-          <div class="command-box"><strong>校验安装（推荐）</strong><pre>${esc(result.verifiedInstallCommand || "-")}</pre></div>
+          <div class="command-box"><strong>直接安装</strong><pre id="join-install">${esc(result.installCommand || "-")}</pre></div>
+          <div class="button-row"><button type="button" class="secondary-button" data-action="copy-el" data-copy-target="#join-install">复制直接安装命令</button></div>
+          <div class="command-box"><strong>校验安装（推荐）</strong><pre id="join-verified">${esc(result.verifiedInstallCommand || "-")}</pre></div>
+          <div class="button-row"><button type="button" class="secondary-button" data-action="copy-el" data-copy-target="#join-verified">复制校验安装命令</button></div>
         </div>
       `);
       return;
@@ -1871,12 +2112,8 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     if (kind === "tg-config") {
-      const businessRules = [...form.querySelectorAll("[data-cfg-kind='business']")].map((rowEl) => ({
-        title: rowEl.querySelector("input[name='brTitle']")?.value?.trim() || "",
-        content: rowEl.querySelector("textarea[name='brContent']")?.value?.trim() || ""
-      })).filter((rule) => rule.title || rule.content);
       const defaultRoles = String(data.defaultRoles || "").split(",").map((item) => item.trim()).filter(Boolean).map((roleId) => ({roleId}));
-      await api(`/api/task-groups/${encodeURIComponent(form.dataset.task)}/config`, {method: "POST", body: JSON.stringify({businessRules, defaultRoles})});
+      await api(`/api/task-groups/${encodeURIComponent(form.dataset.task)}/config`, {method: "POST", body: JSON.stringify({defaultRoles})});
       formTouched = false;
       await loadPage();
       return;
@@ -1893,15 +2130,27 @@ document.addEventListener("submit", async (event) => {
         locator: rowEl.querySelector("input[name='blLocator']")?.value?.trim() || "",
         digest: rowEl.querySelector("input[name='blDigest']")?.value?.trim() || ""
       })).filter((item) => item.name || item.locator);
-      const businessRules = [...form.querySelectorAll("[data-cfg-kind='business']")].map((rowEl) => ({
-        title: rowEl.querySelector("input[name='brTitle']")?.value?.trim() || "",
-        content: rowEl.querySelector("textarea[name='brContent']")?.value?.trim() || ""
-      })).filter((rule) => rule.title || rule.content);
       const defaultRoles = [...form.querySelectorAll("[data-cfg-kind='role']")].map((rowEl) => ({
         roleId: rowEl.querySelector("input[name='roleId']")?.value?.trim() || "",
         roleSkillRef: rowEl.querySelector("input[name='roleSkillRef']")?.value?.trim() || ""
       })).filter((role) => role.roleId);
-      await api(`/api/projects/${encodeURIComponent(form.dataset.project)}/config`, {method: "POST", body: JSON.stringify({repositories, baselineData, businessRules, defaultRoles})});
+      await api(`/api/projects/${encodeURIComponent(form.dataset.project)}/config`, {method: "POST", body: JSON.stringify({repositories, baselineData, defaultRoles})});
+      formTouched = false;
+      await loadPage();
+      return;
+    }
+    if (kind === "project-rules") {
+      const fragments = collectRuleFragments(form, "project");
+      const payload = form.dataset.category === "system" ? {systemRules: fragments} : {businessRules: fragments};
+      await api(`/api/projects/${encodeURIComponent(form.dataset.project)}/config`, {method: "POST", body: JSON.stringify(payload)});
+      formTouched = false;
+      await loadPage();
+      return;
+    }
+    if (kind === "tg-rules") {
+      const fragments = collectRuleFragments(form, "task_group");
+      const payload = form.dataset.category === "system" ? {systemRules: fragments} : {businessRules: fragments};
+      await api(`/api/task-groups/${encodeURIComponent(form.dataset.task)}/config`, {method: "POST", body: JSON.stringify(payload)});
       formTouched = false;
       await loadPage();
       return;
@@ -1939,6 +2188,12 @@ document.addEventListener("submit", async (event) => {
 document.addEventListener("change", async (event) => {
   const target = event.target;
   try {
+    if (target.name === "ruleEnabled") {
+      const rowEl = target.closest(".rule-row");
+      if (rowEl) rowEl.classList.toggle("disabled", !target.checked);
+      formTouched = true;
+      return;
+    }
     if (target.id === "project-switcher") {
       currentProjectId = target.value;
       sessionStorage.setItem("aimac.projectId", currentProjectId);
@@ -1978,7 +2233,37 @@ document.addEventListener("change", async (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  const filter = event.target.closest("[data-filter-input]");
+  if (filter) {
+    const scope = filter.closest(".panel") || document;
+    const query = filter.value.trim().toLowerCase();
+    scope.querySelectorAll(".data-table tbody tr, .agent-cards .agent-card").forEach((rowEl) => {
+      rowEl.style.display = !query || rowEl.textContent.toLowerCase().includes(query) ? "" : "none";
+    });
+    return;
+  }
   if (event.target.closest("form[data-form]")) formTouched = true;
+});
+
+/* 悬浮气泡 fixed 定位，避免被 .table-scroll 裁剪 */
+document.addEventListener("mouseover", (event) => {
+  const wrap = event.target.closest(".hover-wrap");
+  if (!wrap) return;
+  const pop = wrap.querySelector(".hover-pop");
+  if (!pop) return;
+  const rect = wrap.getBoundingClientRect();
+  const width = pop.offsetWidth || 300;
+  pop.style.display = "block";
+  pop.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
+  pop.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - 20)}px`;
+});
+
+document.addEventListener("mouseout", (event) => {
+  const wrap = event.target.closest(".hover-wrap");
+  if (!wrap) return;
+  if (wrap.contains(event.relatedTarget)) return;
+  const pop = wrap.querySelector(".hover-pop");
+  if (pop) pop.style.display = "none";
 });
 
 document.addEventListener("click", async (event) => {
@@ -2010,6 +2295,14 @@ document.addEventListener("click", async (event) => {
   try {
     if (action === "modal-close") {
       closeModal();
+      return;
+    }
+    if (action === "copy-el") {
+      const source = document.querySelector(target.dataset.copyTarget);
+      const ok = await copyText(source ? source.textContent : "");
+      const original = target.textContent;
+      target.textContent = ok ? "已复制" : "复制失败，请手动选择";
+      setTimeout(() => { target.textContent = original; }, 1600);
       return;
     }
     if (action === "logout") {
@@ -2064,7 +2357,7 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "member-perms") {
-      const member = (state.accounts || []).find((account) => account.accountId === target.dataset.account);
+      const member = (orgMembers || []).find((account) => account.accountId === target.dataset.account);
       if (!member) return;
       openModal(`调整权限 · ${member.displayName}`, `
         <form class="form-grid" data-form="member-perms" data-account="${esc(member.accountId)}">
@@ -2168,6 +2461,20 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "cfg-del") {
       target.closest(".cfg-row")?.remove();
+      formTouched = true;
+      return;
+    }
+    if (action === "rule-add") {
+      const container = document.querySelector(`[data-cfg-list='${target.dataset.target}']`);
+      if (!container) return;
+      const placeholder = container.querySelector(".small.muted");
+      if (placeholder) placeholder.remove();
+      container.insertAdjacentHTML("beforeend", ruleRowNew(target.dataset.category));
+      formTouched = true;
+      return;
+    }
+    if (action === "rule-del") {
+      target.closest(".rule-row")?.remove();
       formTouched = true;
       return;
     }

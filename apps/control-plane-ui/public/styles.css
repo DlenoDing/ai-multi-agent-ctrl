@@ -370,22 +370,24 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .tree-children { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 
 /* ============ 悬浮气泡 ============ */
+/* 使用 position:fixed + JS 定位，避免被 .table-scroll 的 overflow 裁剪 */
 .hover-wrap { position: relative; display: inline-block; }
 .hover-wrap .hover-pop {
   display: none;
-  position: absolute;
+  position: fixed;
   left: 0;
-  top: calc(100% + 6px);
-  z-index: 60;
+  top: 0;
+  z-index: 200;
   width: 300px;
+  max-width: calc(100vw - 24px);
   background: #1d2433;
   color: #dbe3f5;
   border-radius: 10px;
   padding: 12px 14px;
   box-shadow: 0 10px 30px rgba(10, 16, 32, 0.4);
   font-size: 12px;
+  pointer-events: none;
 }
-.hover-wrap:hover .hover-pop { display: block; }
 .hover-pop dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; }
 .hover-pop dt { color: #93a0bd; }
 .hover-pop dd { margin: 0; word-break: break-all; }
@@ -452,6 +454,41 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .status-line { display: flex; gap: 12px; flex-wrap: wrap; padding: 14px 24px 0; }
 .status-line .metric { min-width: 140px; }
+
+/* 关键字过滤输入 */
+.filter-input { min-width: 200px; }
+@media (max-width: 640px) { .filter-input { min-width: 130px; } }
+
+/* 规则管理编辑器 */
+.rule-list { display: flex; flex-direction: column; gap: 10px; }
+.rule-row {
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fbfcfe;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rule-row.disabled { opacity: 0.62; }
+.rule-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rule-head .rule-title-input { flex: 1; min-width: 160px; font-weight: 600; }
+.rule-head .rule-id-input { flex: 0 0 auto; width: 200px; }
+.rule-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-sub); white-space: nowrap; }
+.rule-toggle input { accent-color: var(--brand-accent); }
+.rule-row textarea[name="ruleContent"] { min-height: 60px; }
+.rule-row .rule-content-view {
+  font-size: 12px;
+  color: var(--text-main);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.rule-collapsed .rule-content-view {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 @media (max-width: 860px) {
   .app-shell { flex-direction: column; }

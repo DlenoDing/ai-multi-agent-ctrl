@@ -372,7 +372,71 @@
     openrouter: "OpenRouter",
     ollama: "Ollama",
     vllm: "vLLM",
-    custom: "自定义"
+    custom: "自定义",
+
+    /* ---------- 阻塞 / 严重度 ---------- */
+    S0: "阻断",
+    S1: "严重",
+    S2: "一般",
+    S3: "轻微",
+    critical: "阻断",
+    major: "严重",
+    normal: "一般",
+
+    /* ---------- 错误码（api 报错中文化） ---------- */
+    auth_required: "请先登录",
+    invalid_credentials: "账号或登录令牌不正确",
+    too_many_login_attempts: "登录尝试过于频繁，请稍后再试",
+    permission_denied: "无权执行该操作",
+    policy_denied: "策略校验未通过，权限不足",
+    principal_not_allowed_for_action: "当前身份不允许执行该操作",
+    project_owner_assignment_denied: "无权指定项目负责人",
+    idempotency_key_required: "缺少幂等键，请重试",
+    idempotency_key_reuse_conflict: "幂等键重复使用冲突，请重试",
+    role_drift_guard_not_clear: "角色偏移守卫未清除，暂不能执行",
+    state_write_conflict: "状态写入冲突，请重试",
+    state_conflict_not_recovered: "状态冲突未能自动恢复，请刷新后重试",
+    server_error: "服务器内部错误",
+    api_not_found: "接口不存在",
+    invalid_request_url: "请求地址不合法",
+
+    unsafe_grant_permissions: "包含不允许下放的权限",
+    cross_org_grant_not_allowed: "不允许跨组织授权",
+    grant_permission_not_delegable: "存在不可下放的权限",
+    cross_org_member_not_allowed: "不允许跨组织添加成员",
+    project_invite_cannot_grant_system_account_or_permission: "项目邀请不能授予系统级账号或权限",
+
+    org_quota_exceeded: "组织配额已超限",
+    organization_not_found: "未找到组织",
+    organization_suspended: "组织已停用",
+    organization_required: "缺少组织信息",
+    org_member_not_found: "未找到组织成员",
+
+    project_not_found: "未找到项目",
+    project_id_required: "缺少项目 ID",
+    task_group_not_found: "未找到任务组",
+    task_group_id_conflict: "任务组 ID 冲突",
+    work_item_not_found: "未找到工作项",
+    work_item_id_conflict: "工作项 ID 冲突",
+    work_session_not_found: "未找到工作会话",
+    dispatch_not_found: "未找到派发",
+    owner_account_not_found: "未找到负责人账号",
+    account_not_found: "未找到账号",
+    agent_not_found: "未找到智能体档案",
+    agent_node_not_found: "未找到智能体节点",
+    agent_node_auth_required: "智能体节点需要认证",
+    agent_join_token_not_found: "未找到加入令牌",
+    human_confirmation_not_found: "未找到人工确认请求",
+    human_confirmation_input_required_for_none: "选择“不选择（自定义输入）”时必须填写确认内容",
+
+    password_too_short: "新密码长度不足（至少 8 位）",
+    current_password_incorrect: "当前密码不正确",
+
+    server_side_agent_execution_forbidden: "禁止在服务端直接执行智能体任务，请由智能体运行时认领派发",
+    repository_output_target_missing: "缺少仓库产出目标",
+    repository_output_target_must_use_git_trackable_paths: "仓库产出路径必须是可被 Git 跟踪的路径",
+    agent_dispatch_requires_selected_model_decision: "派发前需要已选定的模型决策",
+    skill_source_not_found: "未找到技能源"
   };
 
   const warned = new Set();
