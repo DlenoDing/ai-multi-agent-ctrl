@@ -2791,12 +2791,23 @@ async function handleApi(req, res) {
       return;
     }
     const at = now();
+    const definitionProjectId = body.projectId || "prj_control_plane";
+    const definitionOrg = resourceScopeOrganizationId(state, {resourceType: "project", resourceId: definitionProjectId});
+    // Drop any TaskGroup scopeRef outside the definition's own organization: the write is guarded only on the
+    // definition's project, and the console shows a shared definition to anyone who can see a scopeRef task
+    // group (server.mjs ~953), so an unconstrained cross-org scopeRef would inject it into another tenant's view.
+    const sanitizedScopeRefs = (Array.isArray(body.scopeRefs) && body.scopeRefs.length ? body.scopeRefs : ["Project"]).filter((ref) => {
+      const value = String(ref);
+      if (!value.startsWith("TaskGroup:")) return true;
+      const taskGroup = state.taskGroups.find((item) => item.id === value.slice("TaskGroup:".length));
+      return taskGroup && resourceScopeOrganizationId(state, {resourceType: "task_group", resourceId: taskGroup.id}) === definitionOrg;
+    });
     const definition = {
       schemaVersion: "shared-definition-contract/v1",
       contractId: createId("sdc"),
-      projectId: body.projectId || "prj_control_plane",
+      projectId: definitionProjectId,
       definitionType: body.definitionType || "terminology",
-      scopeRefs: body.scopeRefs || ["Project"],
+      scopeRefs: sanitizedScopeRefs.length ? sanitizedScopeRefs : ["Project"],
       canonicalOwnerRole: body.canonicalOwnerRole || "orchestrator",
       producerRole: body.producerRole || "decision-center",
       status: body.status || "owner_assigned",
@@ -2833,13 +2844,18 @@ async function handleApi(req, res) {
     }
     const at = now();
     const remote = body.remote || "origin";
-    const project = state.projects.find((item) => item.id === (body.projectId || "prj_control_plane"));
+    // Derive the target's project from its task group (the guarded scope), never a free body.projectId, so the
+    // stored projectId cannot contradict the taskGroupId the write was authorized against.
+    const targetTaskGroupId = body.taskGroupId || "tg_runtime_management";
+    const targetTaskGroup = state.taskGroups.find((item) => item.id === targetTaskGroupId);
+    const targetProjectId = targetTaskGroup?.projectId || body.projectId || "prj_control_plane";
+    const project = state.projects.find((item) => item.id === targetProjectId);
     const repository = (project?.repositories || []).find((item) => item.id === body.repositoryId) || project?.repositories?.[0];
     const target = {
       schemaVersion: "repository-output-target/v1",
       targetId: createId("rot"),
-      projectId: body.projectId || "prj_control_plane",
-      taskGroupId: body.taskGroupId || "tg_runtime_management",
+      projectId: targetProjectId,
+      taskGroupId: targetTaskGroupId,
       workItemId: body.workItemId || "work_unknown",
       repositoryId: body.repositoryId || "repo_control_plane",
       repositoryUrl: body.repositoryUrl || gitRemoteUrl(repositoryRoot, remote) || repository?.url || "git:unknown-project-repository",
