@@ -506,21 +506,23 @@ function syncContentBundleGitTransfer(config, bundle, bundleDir) {
   if (ref.startsWith("-") || /[\s^~:?*[\\]/u.test(ref)) throw new Error("content_bundle_git_transfer_unsafe_ref");
   const paths = (Array.isArray(transfer.paths) ? transfer.paths : []).filter((path) => typeof path === "string" && path && !path.startsWith("/") && !path.startsWith("-") && !path.includes("..") && !/[\0]/u.test(path));
   try {
+    // Restrict git to safe network transports so a hostile repository URL cannot invoke a local command.
+    const gitOpts = {stdio: "pipe", env: {...process.env, GIT_ALLOW_PROTOCOL: "https:ssh:git"}};
     if (!existsSync(join(transferDir, ".git"))) {
       mkdirSync(dirname(transferDir), {recursive: true});
-      execFileSync("git", ["init", "-q", transferDir], {stdio: "pipe"});
-      execFileSync("git", ["-C", transferDir, "remote", "add", "origin", transfer.repositoryUrl], {stdio: "pipe"});
+      execFileSync("git", ["init", "-q", transferDir], gitOpts);
+      execFileSync("git", ["-C", transferDir, "remote", "add", "origin", transfer.repositoryUrl], gitOpts);
     } else {
-      execFileSync("git", ["-C", transferDir, "remote", "set-url", "origin", transfer.repositoryUrl], {stdio: "pipe"});
+      execFileSync("git", ["-C", transferDir, "remote", "set-url", "origin", transfer.repositoryUrl], gitOpts);
     }
     // Fetch only the requested ref; large binaries come via git rather than inline bundle content.
-    execFileSync("git", ["-C", transferDir, "fetch", "--depth", "1", "--no-tags", "origin", ref], {stdio: "pipe"});
+    execFileSync("git", ["-C", transferDir, "fetch", "--depth", "1", "--no-tags", "origin", ref], gitOpts);
     if (paths.length) {
       // Sparse, path-scoped checkout so only the declared large-file paths land in the session.
-      execFileSync("git", ["-C", transferDir, "sparse-checkout", "init", "--no-cone"], {stdio: "pipe"});
-      execFileSync("git", ["-C", transferDir, "sparse-checkout", "set", ...paths], {stdio: "pipe"});
+      execFileSync("git", ["-C", transferDir, "sparse-checkout", "init", "--no-cone"], gitOpts);
+      execFileSync("git", ["-C", transferDir, "sparse-checkout", "set", "--", ...paths], gitOpts);
     }
-    execFileSync("git", ["-C", transferDir, "checkout", "-q", "FETCH_HEAD"], {stdio: "pipe"});
+    execFileSync("git", ["-C", transferDir, "checkout", "-q", "FETCH_HEAD"], gitOpts);
     return {directory: transferDir, ref, paths};
   } catch (error) {
     throw new Error(`content_bundle_git_transfer_failed: ${error.message}`);
@@ -885,12 +887,21 @@ function syncSkillWorkset(config, dispatchPackage) {
   return {...workset, directory, manifestPath};
 }
 
+function isSafeCloneUrl(url) {
+  const value = String(url || "");
+  if (!value || value.startsWith("-")) return false;
+  // Reject arbitrary-command git transports (ext::/fd::/<helper>::) regardless of scheme.
+  if (/^[a-z0-9+.-]*::/iu.test(value) || value.startsWith("ext:") || value.startsWith("fd:")) return false;
+  return true;
+}
+
 function prepareRepository(config, target) {
   const repositoryRoot = join(config.repositoryDir, safeName(target.repositoryId));
   if (!existsSync(join(repositoryRoot, ".git"))) {
     if (!target.repositoryUrl || target.repositoryUrl.startsWith("git:unknown")) throw new Error("dispatch repository URL is not cloneable");
+    if (!isSafeCloneUrl(target.repositoryUrl)) throw new Error("dispatch repository URL uses an unsafe git transport");
     mkdirSync(dirname(repositoryRoot), {recursive: true});
-    execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe"});
+    execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe", env: {...process.env, GIT_ALLOW_PROTOCOL: "file:https:ssh:git"}});
   }
   const remote = target.remote || "origin";
   const configuredUrl = git(repositoryRoot, ["remote", "get-url", remote]);

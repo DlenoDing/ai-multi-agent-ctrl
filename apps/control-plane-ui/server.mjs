@@ -450,6 +450,19 @@ function boundedQuota(value, fallback) {
   return Math.max(1, Math.min(1_000_000, Math.floor(numeric)));
 }
 
+function sanitizeRuleFragments(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 200).filter((rule) => rule && typeof rule === "object").map((rule) => {
+    const clean = {};
+    if (rule.ruleId !== undefined) clean.ruleId = String(rule.ruleId).slice(0, 128);
+    if (rule.title !== undefined) clean.title = String(rule.title).slice(0, 256);
+    if (rule.content !== undefined) clean.content = String(rule.content).slice(0, 8192);
+    if (rule.status !== undefined) clean.status = ["active", "draft", "disabled"].includes(rule.status) ? rule.status : "active";
+    if (rule.enabled !== undefined) clean.enabled = rule.enabled !== false;
+    return clean;
+  });
+}
+
 function sanitizeMemberPermissions(value, fallback = ["project:view"]) {
   const sanitized = normalizeStringList(value, fallback).filter((permission) =>
     !permission.startsWith("system:") &&
@@ -3202,8 +3215,8 @@ async function handleApi(req, res) {
       ...(project.config || {}),
       ...(body.repositories !== undefined ? {repositories: Array.isArray(body.repositories) ? body.repositories : []} : {}),
       ...(body.baselineData !== undefined ? {baselineData: Array.isArray(body.baselineData) ? body.baselineData : []} : {}),
-      ...(body.businessRules !== undefined ? {businessRules: Array.isArray(body.businessRules) ? body.businessRules : []} : {}),
-      ...(body.systemRules !== undefined ? {systemRules: Array.isArray(body.systemRules) ? body.systemRules : []} : {}),
+      ...(body.businessRules !== undefined ? {businessRules: sanitizeRuleFragments(body.businessRules)} : {}),
+      ...(body.systemRules !== undefined ? {systemRules: sanitizeRuleFragments(body.systemRules)} : {}),
       ...(body.defaultRoles !== undefined ? {defaultRoles: Array.isArray(body.defaultRoles) ? body.defaultRoles : []} : {})
     };
     project.updatedAt = now();
@@ -3232,8 +3245,8 @@ async function handleApi(req, res) {
       ...(taskGroup.configOverrides || {}),
       ...(body.repositories !== undefined ? {repositories: Array.isArray(body.repositories) ? body.repositories : []} : {}),
       ...(body.baselineData !== undefined ? {baselineData: Array.isArray(body.baselineData) ? body.baselineData : []} : {}),
-      ...(body.businessRules !== undefined ? {businessRules: Array.isArray(body.businessRules) ? body.businessRules : []} : {}),
-      ...(body.systemRules !== undefined ? {systemRules: Array.isArray(body.systemRules) ? body.systemRules : []} : {}),
+      ...(body.businessRules !== undefined ? {businessRules: sanitizeRuleFragments(body.businessRules)} : {}),
+      ...(body.systemRules !== undefined ? {systemRules: sanitizeRuleFragments(body.systemRules)} : {}),
       ...(body.defaultRoles !== undefined ? {defaultRoles: Array.isArray(body.defaultRoles) ? body.defaultRoles : []} : {})
     };
     taskGroup.updatedAt = now();

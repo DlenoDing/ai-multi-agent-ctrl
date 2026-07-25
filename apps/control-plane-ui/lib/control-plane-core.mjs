@@ -2940,16 +2940,26 @@ export function defaultBusinessRules() {
   return [];
 }
 
-function mergeRuleLayer(base, overlay, source) {
+function stableRuleId(raw, category) {
+  const explicit = String(raw.ruleId || "").trim();
+  if (explicit) return explicit;
+  const title = String(raw.title || "").trim();
+  if (title) return `${category}.${title.replace(/[^A-Za-z0-9._-]+/gu, "-").slice(0, 48).replace(/^-+|-+$/gu, "") || "rule"}`;
+  // Deterministic id from content so a title-less rule keeps a stable id (and thus stable contentDigest) across reads.
+  return `${category}.${digestOf(String(raw.content || "")).slice("sha256:".length, "sha256:".length + 16)}`;
+}
+
+function mergeRuleLayer(base, overlay, source, category) {
   const byId = new Map(base.map((rule) => [rule.ruleId, {...rule}]));
   for (const raw of overlay || []) {
     if (!raw || typeof raw !== "object") continue;
-    const ruleId = String(raw.ruleId || raw.title || "").trim() || createId("rule");
+    const ruleId = stableRuleId(raw, category);
     const existing = byId.get(ruleId);
     const merged = {
       schemaVersion: "rule/v1",
       ruleId,
-      category: raw.category || existing?.category || "business",
+      // Category is authoritative from the array the rule lives in, never from client-supplied payload.
+      category,
       title: raw.title ?? existing?.title ?? ruleId,
       content: raw.content ?? existing?.content ?? "",
       status: raw.status ?? existing?.status ?? "active",
@@ -2961,16 +2971,16 @@ function mergeRuleLayer(base, overlay, source) {
   return [...byId.values()];
 }
 
-function resolveRuleCategory(defaults, projectRules, taskGroupRules) {
-  const withProject = mergeRuleLayer(defaults, projectRules, "project");
-  const withTaskGroup = mergeRuleLayer(withProject, taskGroupRules, "task_group");
-  return withTaskGroup.map((rule) => ({...rule, contentDigest: digestOf({ruleId: rule.ruleId, category: rule.category, content: rule.content})}));
+function resolveRuleCategory(defaults, projectRules, taskGroupRules, category) {
+  const withProject = mergeRuleLayer(defaults, projectRules, "project", category);
+  const withTaskGroup = mergeRuleLayer(withProject, taskGroupRules, "task_group", category);
+  return withTaskGroup.map((rule) => ({...rule, category, contentDigest: digestOf({ruleId: rule.ruleId, category, content: rule.content})}));
 }
 
 export function effectiveProjectConfig(project) {
   const base = project?.config || {};
-  const systemRules = resolveRuleCategory(defaultSystemRules(), base.systemRules, null);
-  const businessRules = resolveRuleCategory(defaultBusinessRules(), base.businessRules, null);
+  const systemRules = resolveRuleCategory(defaultSystemRules(), base.systemRules, null, "system");
+  const businessRules = resolveRuleCategory(defaultBusinessRules(), base.businessRules, null, "business");
   return {
     projectId: project?.id,
     repositories: base.repositories ?? [],
@@ -2987,8 +2997,8 @@ export function effectiveTaskGroupConfig(state, taskGroup) {
   const project = (state.projects || []).find((item) => item.id === taskGroup?.projectId);
   const base = project?.config || {};
   const overrides = taskGroup?.configOverrides || null;
-  const systemRules = resolveRuleCategory(defaultSystemRules(), base.systemRules, overrides?.systemRules);
-  const businessRules = resolveRuleCategory(defaultBusinessRules(), base.businessRules, overrides?.businessRules);
+  const systemRules = resolveRuleCategory(defaultSystemRules(), base.systemRules, overrides?.systemRules, "system");
+  const businessRules = resolveRuleCategory(defaultBusinessRules(), base.businessRules, overrides?.businessRules, "business");
   return {
     configSource: overrides ? "customized" : "inherited",
     repositories: overrides?.repositories ?? base.repositories ?? [],
