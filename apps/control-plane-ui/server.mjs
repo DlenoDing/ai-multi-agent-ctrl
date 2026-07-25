@@ -2325,7 +2325,15 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/role-skill-overlays") {
-    const guard = beginGuardedWrite(req, state, "role_skill_overlay_create", `AgentRoleSkill:${body.roleSkillRef || "default"}`, body.taskGroupId ? taskGroupScope(state, body.taskGroupId) : projectScope(body.projectId || "prj_control_plane"));
+    // Guard on the SAME task group the overlay will be stamped with (registerRoleSkillOverlay stamps
+    // taskGroupId when scope === "task_group" OR a taskGroupId is supplied, defaulting to tg_runtime_management),
+    // so a task_group-scoped overlay with no explicit taskGroupId cannot slip through a project-only guard and
+    // inject into the default tenant's view.
+    const overlayScopesTaskGroup = body.scope === "task_group" || Boolean(body.taskGroupId);
+    const overlayGuardScope = overlayScopesTaskGroup
+      ? taskGroupScope(state, body.taskGroupId || "tg_runtime_management")
+      : projectScope(body.projectId || "prj_control_plane");
+    const guard = beginGuardedWrite(req, state, "role_skill_overlay_create", `AgentRoleSkill:${body.roleSkillRef || "default"}`, overlayGuardScope);
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
