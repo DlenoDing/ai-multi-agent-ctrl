@@ -119,12 +119,21 @@ async function status(config) {
 }
 
 async function run(config) {
-  sweepStaleSessionDirectories(config);
-  sweepLibraryOverCapacity(config);
+  const sweepIntervalMs = Math.max(5 * 60 * 1000, Number(process.env.AIMAC_AGENT_SWEEP_INTERVAL_MS || 60 * 60 * 1000));
+  const runSweeps = () => {
+    sweepStaleSessionDirectories(config);
+    sweepLibraryOverCapacity(config);
+  };
+  runSweeps();
+  let lastSweepAt = Date.now();
   let lastHeartbeat = 0;
   let lastAdmissionSelfCheckAt = 0;
   const once = args.once === true || process.env.AIMAC_AGENT_ONCE === "true";
   for (;;) {
+    if (Date.now() - lastSweepAt >= sweepIntervalMs) {
+      runSweeps();
+      lastSweepAt = Date.now();
+    }
     if (config.shutdownRequested) {
       process.stdout.write("agent runtime shutdown requested by control plane\n");
       return;

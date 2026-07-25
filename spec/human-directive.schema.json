@@ -86,6 +86,30 @@
     "updatedAt": {
       "type": "string",
       "format": "date-time"
+    },
+    "runtimeControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "controlCommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "directDispatches": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resumedDispatches": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
     }
   }
 }

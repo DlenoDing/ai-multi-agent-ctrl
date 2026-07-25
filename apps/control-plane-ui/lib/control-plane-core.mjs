@@ -2984,7 +2984,10 @@ export function ensureTaskGroupRole(state, taskGroup, roleId, addedBy = "auto") 
 export function createHumanConfirmationRequest(state, input = {}) {
   ensureRuntimeCollections(state);
   const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === input.dispatchId);
-  const taskGroup = (state.taskGroups || []).find((item) => item.id === (input.taskGroupId || dispatch?.taskGroupId));
+  if (!dispatch) throw Object.assign(new Error("dispatch_not_found"), {status: 404});
+  if (input.nodeId && dispatch.assignedNodeId !== input.nodeId) throw Object.assign(new Error("confirmation_dispatch_node_mismatch"), {status: 403});
+  if (input.taskGroupId && input.taskGroupId !== dispatch.taskGroupId) throw Object.assign(new Error("confirmation_task_group_mismatch"), {status: 409});
+  const taskGroup = (state.taskGroups || []).find((item) => item.id === dispatch.taskGroupId);
   if (!taskGroup) throw Object.assign(new Error("task_group_not_found"), {status: 404});
   const summary = String(input.question?.summary || input.summary || "").trim().slice(0, 300);
   if (!summary) throw Object.assign(new Error("human_confirmation_question_required"), {status: 400});

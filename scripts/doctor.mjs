@@ -684,6 +684,24 @@ try {
   if (!orgMembers.response.ok || !orgMembers.payload.members.some((member) => member.email === "doctor.member1@local")) {
     throw new Error("org member list did not return the created member");
   }
+  // Cross-organization write isolation: an org_admin cannot create a task group in another org's project.
+  const crossOrgTaskGroup = await jsonFetch(port, "/api/task-groups", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-cross-org-tg", authorization: orgAdminAuth},
+    body: JSON.stringify({projectId: "prj_control_plane", title: "越权任务组"})
+  });
+  if (crossOrgTaskGroup.response.status !== 403) {
+    throw new Error(`cross-organization task group creation was not denied, got ${crossOrgTaskGroup.response.status}`);
+  }
+  const crossOrgDirective = await jsonFetch(port, "/api/human-directives", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-cross-org-directive", authorization: orgAdminAuth},
+    body: JSON.stringify({taskGroupId: "tg_runtime_management", directiveType: "pause"})
+  });
+  if (crossOrgDirective.response.status !== 403) {
+    throw new Error(`cross-organization directive was not denied, got ${crossOrgDirective.response.status}`);
+  }
+
   const directive = await jsonFetch(port, "/api/human-directives", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-directive", authorization: systemAuth},

@@ -455,8 +455,12 @@ function normalizeInvitedAccount(input = {}, systemScoped = false) {
   if (requestedSystemAccountInvite(input)) throw new Error("project_invite_cannot_grant_system_account_or_permission");
   return {
     accountType: "user_account",
-    roles: roles.filter((role) => role !== "system_admin"),
-    permissions: permissions.filter((permission) => permission !== "system:*" && !permission.startsWith("system:"))
+    roles: roles.filter((role) => role !== "system_admin" && role !== "org_admin"),
+    permissions: permissions.filter((permission) =>
+      !permission.startsWith("system:") &&
+      !permission.startsWith("org:") &&
+      !unsafeDelegatedGrantPermissions.has(permission) &&
+      !permission.endsWith(":*"))
   };
 }
 
@@ -976,7 +980,8 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     taskGroups: sliceItems(scoped.taskGroups, capped),
     modelCapabilities: sliceItems(scoped.modelCapabilities, capped),
     agentRuntimeNodes: sliceItems(scoped.agentRuntimeNodes, capped),
-    progressSnapshots: sliceItems(scoped.progressSnapshots, capped)
+    progressSnapshots: sliceItems(scoped.progressSnapshots, capped),
+    pendingHumanConfirmationTaskGroupIds: (scoped.humanConfirmationRequests || []).filter((item) => item.status === "pending").map((item) => item.taskGroupId)
   };
   const viewFields = {
     system: ["accounts", "auditLog", "policyDecisions", "commands", "decisionRecords"],
@@ -1041,10 +1046,32 @@ function permissionForAction(action) {
   return "system:*";
 }
 
+function resourceScopeOrganizationId(state, resourceScope = {}) {
+  if (resourceScope.resourceType === "organization") return resourceScope.resourceId;
+  if (resourceScope.resourceType === "project") {
+    const project = state.projects.find((item) => item.id === resourceScope.resourceId);
+    return project ? project.organizationId || DEFAULT_ORGANIZATION_ID : null;
+  }
+  if (resourceScope.resourceType === "task_group") {
+    const taskGroup = state.taskGroups.find((item) => item.id === resourceScope.resourceId);
+    const project = taskGroup ? state.projects.find((item) => item.id === taskGroup.projectId) : null;
+    if (resourceScope.projectId && !project) {
+      const scopedProject = state.projects.find((item) => item.id === resourceScope.projectId);
+      return scopedProject ? scopedProject.organizationId || DEFAULT_ORGANIZATION_ID : null;
+    }
+    return project ? project.organizationId || DEFAULT_ORGANIZATION_ID : null;
+  }
+  return null;
+}
+
 function hasPermission(state, actor, requiredPermission, resourceScope) {
   if (!requiredPermission) return true;
   const account = state.accounts.find((item) => accountIdOf(item) === actor);
   if (!account || account.status !== "active") return false;
+  if (!isSystemAccount(account) && account.organizationId) {
+    const resourceOrg = resourceScopeOrganizationId(state, resourceScope);
+    if (resourceOrg && resourceOrg !== account.organizationId) return false;
+  }
   const direct = (account.permissions || []).filter((permission) => directPermissionApplies(account, permission, requiredPermission, resourceScope));
   const grantPermissions = state.accessGrants
     .filter((grant) => grant.status === "active" && grant.subjectRef?.subjectType === "account" && grant.subjectRef?.subjectId === actor)

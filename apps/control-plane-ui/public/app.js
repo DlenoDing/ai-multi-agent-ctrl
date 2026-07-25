@@ -428,9 +428,9 @@ async function loadDirectiveData() {
 
 function loadPendingConfirmCount() {
   const visibleTaskGroupIds = new Set(projectTaskGroups().map((taskGroup) => taskGroup.id));
-  pendingConfirmCount = (state.humanConfirmationRequests || [])
-    .filter((item) => item.status === "pending" && visibleTaskGroupIds.has(item.taskGroupId))
-    .length;
+  const pendingIds = state.pendingHumanConfirmationTaskGroupIds
+    || (state.humanConfirmationRequests || []).filter((item) => item.status === "pending").map((item) => item.taskGroupId);
+  pendingConfirmCount = pendingIds.filter((taskGroupId) => visibleTaskGroupIds.has(taskGroupId)).length;
 }
 
 /* ---------------- 执行事件长轮询 ---------------- */

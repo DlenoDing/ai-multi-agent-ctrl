@@ -147,8 +147,6 @@ export function registerAgentNode(state, input = {}, options = {}) {
   const registerOrgId = record.organizationId || "org_default";
   const registerQuota = organizationQuotaCheck(state, registerOrgId, "agents");
   if (!registerQuota.allowed) {
-    record.status = "revoked";
-    record.updatedAt = new Date().toISOString();
     throw gatewayError("org_quota_exceeded", 409, {kind: "agents", quota: registerQuota.quota, usage: registerQuota.usage});
   }
 
