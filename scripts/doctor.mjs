@@ -684,6 +684,27 @@ try {
   if (!orgMembers.response.ok || !orgMembers.payload.members.some((member) => member.email === "doctor.member1@local")) {
     throw new Error("org member list did not return the created member");
   }
+  // Org-created project must let its org_admin owner control its task groups end-to-end.
+  const orgProject = await jsonFetch(port, "/api/org/projects", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-org-project", authorization: orgAdminAuth},
+    body: JSON.stringify({name: "组织自建项目"})
+  });
+  if (orgProject.response.status !== 201) throw new Error(`org project create failed: ${orgProject.response.status}`);
+  const orgTaskGroup = await jsonFetch(port, "/api/task-groups", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-org-tg", authorization: orgAdminAuth},
+    body: JSON.stringify({projectId: orgProject.payload.id, title: "组织任务组"})
+  });
+  if (orgTaskGroup.response.status !== 201) throw new Error(`org task group create failed: ${orgTaskGroup.response.status}`);
+  const orgControl = await jsonFetch(port, `/api/task-groups/${orgTaskGroup.payload.taskGroup.id}/control`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-org-tg-control", authorization: orgAdminAuth},
+    body: JSON.stringify({action: "pause"})
+  });
+  if (orgControl.response.status !== 200) {
+    throw new Error(`org_admin could not control its own org project's task group, got ${orgControl.response.status}`);
+  }
   // Cross-organization write isolation: an org_admin cannot create a task group in another org's project.
   const crossOrgTaskGroup = await jsonFetch(port, "/api/task-groups", {
     method: "POST",

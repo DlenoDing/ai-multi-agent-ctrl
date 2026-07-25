@@ -443,6 +443,12 @@ function requestedSystemAccountInvite(input = {}) {
     permissions.some((permission) => permission === "system:*" || permission.startsWith("system:"));
 }
 
+function boundedQuota(value, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return Math.max(1, Number(fallback) || 1);
+  return Math.max(1, Math.min(1_000_000, Math.floor(numeric)));
+}
+
 function sanitizeMemberPermissions(value, fallback = ["project:view"]) {
   const sanitized = normalizeStringList(value, fallback).filter((permission) =>
     !permission.startsWith("system:") &&
@@ -2811,10 +2817,10 @@ async function handleApi(req, res) {
     const at = now();
     const orgId = createId("org");
     const quotas = {
-      maxMembers: Math.max(1, Number(body.quotas?.maxMembers || 50)),
-      maxProjects: Math.max(1, Number(body.quotas?.maxProjects || 20)),
-      maxTaskGroups: Math.max(1, Number(body.quotas?.maxTaskGroups || 200)),
-      maxAgents: Math.max(1, Number(body.quotas?.maxAgents || 100))
+      maxMembers: boundedQuota(body.quotas?.maxMembers, 50),
+      maxProjects: boundedQuota(body.quotas?.maxProjects, 20),
+      maxTaskGroups: boundedQuota(body.quotas?.maxTaskGroups, 200),
+      maxAgents: boundedQuota(body.quotas?.maxAgents, 100)
     };
     const adminAccountId = createId("acct");
     const adminToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
@@ -2871,8 +2877,8 @@ async function handleApi(req, res) {
     const organization = organizationOf(state, orgQuotaMatch[1]);
     if (!organization) return json(res, 404, {error: "organization_not_found"});
     for (const key of ["maxMembers", "maxProjects", "maxTaskGroups", "maxAgents"]) {
-      if (body.quotas?.[key] !== undefined) organization.quotas[key] = Math.max(1, Number(body.quotas[key]));
-      else if (body[key] !== undefined) organization.quotas[key] = Math.max(1, Number(body[key]));
+      if (body.quotas?.[key] !== undefined) organization.quotas[key] = boundedQuota(body.quotas[key], organization.quotas[key]);
+      else if (body[key] !== undefined) organization.quotas[key] = boundedQuota(body[key], organization.quotas[key]);
     }
     organization.updatedAt = now();
     audit(state, guard.actor, "org_quota_update", `Organization:${organization.orgId}`);
@@ -3094,11 +3100,12 @@ async function handleApi(req, res) {
       },
       progress: {percent: 0, phase: "intake", health: "ok", openTaskGroups: 0, blockedItems: 0, updatedAt: now()}
     });
+    const ownerGrant = ensureProjectOwnerGrant(state, state.projects.at(-1), guard.actor, guard.policyDecision.id, `audit:${guard.idempotencyKey}`);
     recomputeOrganizationUsage(state);
     audit(state, guard.actor, "org_project_create", `Project:${id}`);
-    finishGuardedWrite(state, guard, 201, {id});
+    finishGuardedWrite(state, guard, 201, {id, ownerGrant});
     writeState(state);
-    json(res, 201, {id});
+    json(res, 201, {id, ownerGrant});
     return;
   }
 
@@ -3208,10 +3215,10 @@ async function handleApi(req, res) {
     if (!taskGroup) return json(res, 404, {error: "task_group_not_found"});
     taskGroup.configOverrides = {
       ...(taskGroup.configOverrides || {}),
-      ...(body.repositories !== undefined ? {repositories: body.repositories} : {}),
-      ...(body.baselineData !== undefined ? {baselineData: body.baselineData} : {}),
-      ...(body.businessRules !== undefined ? {businessRules: body.businessRules} : {}),
-      ...(body.defaultRoles !== undefined ? {defaultRoles: body.defaultRoles} : {})
+      ...(body.repositories !== undefined ? {repositories: Array.isArray(body.repositories) ? body.repositories : []} : {}),
+      ...(body.baselineData !== undefined ? {baselineData: Array.isArray(body.baselineData) ? body.baselineData : []} : {}),
+      ...(body.businessRules !== undefined ? {businessRules: Array.isArray(body.businessRules) ? body.businessRules : []} : {}),
+      ...(body.defaultRoles !== undefined ? {defaultRoles: Array.isArray(body.defaultRoles) ? body.defaultRoles : []} : {})
     };
     taskGroup.updatedAt = now();
     audit(state, guard.actor, "task_group_config_update", `TaskGroup:${taskGroup.id}`);
@@ -3268,7 +3275,7 @@ async function handleApi(req, res) {
   if (req.method === "GET" && agentConfirmationMatch) {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     const request = (state.humanConfirmationRequests || []).find((item) => item.requestId === agentConfirmationMatch[1]);
-    if (!request) return json(res, 404, {error: "human_confirmation_not_found"});
+    if (!request || (request.nodeId && request.nodeId !== node.nodeId)) return json(res, 404, {error: "human_confirmation_not_found"});
     if (url.searchParams.get("consume") === "true" && request.status === "answered") {
       consumeHumanConfirmation(state, request.requestId, {actor: `agent-node:${node.nodeId}`});
       commitGatewayWrite(state);
