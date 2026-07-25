@@ -20,6 +20,8 @@ import {
   digestOf,
   ensureRuntimeCollections,
   evaluateRoleDrift,
+  organizationQuotaCheck,
+  DEFAULT_ORGANIZATION_ID,
   gitHead,
   gitRemoteUrl,
   pathAllowlistValid,
@@ -928,6 +930,25 @@ function inferMcpArgumentProjectIds(state, args = {}) {
     const approval = (state.approvalRequests || []).find((item) => item.approvalId === args.approvalId);
     if (approval?.projectId) projectIds.add(approval.projectId);
   }
+  const projectIdForTaskGroupId = (taskGroupId) => {
+    if (!taskGroupId) return;
+    const taskGroup = (state.taskGroups || []).find((item) => item.id === taskGroupId);
+    if (taskGroup?.projectId) projectIds.add(taskGroup.projectId);
+  };
+  const projectIdForSessionId = (sessionId) => {
+    if (!sessionId) return;
+    const session = (state.workSessions || []).find((item) => item.sessionId === sessionId);
+    projectIdForTaskGroupId(session?.taskGroupId);
+  };
+  // A session/request-addressed tool (e.g. permission_request_submit, confirmation_*, session control)
+  // must confine a bounded service principal to the owning project, else it could mutate another tenant's session.
+  projectIdForSessionId(args.sessionId);
+  if (args.requestId) {
+    const request = (state.permissionRequests || []).find((item) => item.requestId === args.requestId)
+      || (state.humanConfirmationRequests || []).find((item) => item.requestId === args.requestId);
+    projectIdForTaskGroupId(request?.taskGroupId);
+    projectIdForSessionId(request?.sessionId);
+  }
   return projectIds;
 }
 
@@ -1265,11 +1286,16 @@ function createProject(state, args) {
   const projectId = args.projectId || createId("prj");
   if (state.projects.some((item) => item.id === projectId)) return {ok: false, error: "project_id_conflict"};
   const ownerAccountId = args.ownerAccountId || "acct_workspace_owner";
-  if (!state.accounts.some((account) => account.accountId === ownerAccountId && ["active", "invited"].includes(account.status))) {
+  const ownerAccount = state.accounts.find((account) => account.accountId === ownerAccountId && ["active", "invited"].includes(account.status));
+  if (!ownerAccount) {
     return {ok: false, error: "owner_account_not_found"};
   }
+  const organizationId = ownerAccount.organizationId || DEFAULT_ORGANIZATION_ID;
+  const quota = organizationQuotaCheck(state, organizationId, "projects");
+  if (!quota.allowed) return {ok: false, error: quota.error, quota};
   const project = {
     id: projectId,
+    organizationId,
     name: args.name || args.title || "AI-native Project",
     status: "active",
     ownerAccountId,
@@ -1291,6 +1317,8 @@ function createTaskGroup(state, args) {
   if (!project) return {ok: false, error: "project_not_found"};
   const taskGroupId = args.taskGroupId || createId("tg");
   if (state.taskGroups.some((item) => item.id === taskGroupId)) return {ok: false, error: "task_group_id_conflict"};
+  const quota = organizationQuotaCheck(state, project.organizationId || DEFAULT_ORGANIZATION_ID, "taskGroups");
+  if (!quota.allowed) return {ok: false, error: quota.error, quota};
   const at = new Date().toISOString();
   const languagePolicy = normalizeTaskGroupLanguagePolicy(args.languagePolicy || args);
   const taskGroup = {

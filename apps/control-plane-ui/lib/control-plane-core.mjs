@@ -2944,7 +2944,13 @@ function stableRuleId(raw, category) {
   const explicit = String(raw.ruleId || "").trim();
   if (explicit) return explicit;
   const title = String(raw.title || "").trim();
-  if (title) return `${category}.${title.replace(/[^A-Za-z0-9._-]+/gu, "-").slice(0, 48).replace(/^-+|-+$/gu, "") || "rule"}`;
+  if (title) {
+    const slug = title.replace(/[^A-Za-z0-9._-]+/gu, "-").slice(0, 48).replace(/^-+|-+$/gu, "");
+    if (slug) return `${category}.${slug}`;
+    // A non-Latin (e.g. Chinese) title slugifies to empty; derive a deterministic id from the title
+    // digest so two distinct titles keep distinct, stable ids instead of colliding on a constant "rule".
+    return `${category}.t-${digestOf(title).slice("sha256:".length, "sha256:".length + 16)}`;
+  }
   // Deterministic id from content so a title-less rule keeps a stable id (and thus stable contentDigest) across reads.
   return `${category}.${digestOf(String(raw.content || "")).slice("sha256:".length, "sha256:".length + 16)}`;
 }
