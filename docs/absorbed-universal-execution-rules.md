@@ -51,11 +51,15 @@
 15. **弱证据结论重分类 [sys.evidence-qualification]**（§4.5.2 既往结论回扫）：load-bearing 的 raw/单点证据结论按影响面重分类并经正确路径复验；证据"方法强度"决定可承载结论范围（与 `sys.evidence-freshness` 的"时间新鲜度"正交）。
 16. **昂贵前置 guard 复用纪律 [sys.guard-reuse]**（§4.6 buildChainGuard）：输入不变可复用昂贵 guard 但须登记依据、"跳过≠通过"、输入变化或正式 pass 前重跑。
 
-### 待落地为控制面机制（A 类候选，记入 known-design-gaps）
+### 已落地为控制面机制（2026-07-26 实现）
 
-- **可复用 worker lane 模型 + lane registry**（§2.2）：把顶层会话建模为可复用 lane（laneId/reuseMode/reusePrecheck/rotate-retire），当前 placement 仅 subagent|new_session（一次性），无 lane/registry/复用前置校验。
-- **每派发机器可读 admissionDecision 记录**（§4.5）：候选/选定/deferred/blocked/resourceQueued/evidenceQualification/whyThisCellNow/workerCarrierDecision/modelDecision 一条持久化记录 + 正交状态字段互斥。
-- **单 cell 阻断防升格全局门 + 正交调度维度**（§4.5）：存在可执行 cell 时禁止 overall_blocked，defer 后强制全局重扫。
-- **findingDisposition 闭合枚举强化**（§4.6）：`verification_incomplete/no_pass_preflift/"已记录"/"后续再看"` 不是闭合状态；close-barrier 终态集（现 resolved/closed/dismissed/wontfix）宜收敛为需绑定受限终态+证据，避免"无修复即闭合"。
+- ~~可复用 worker lane 模型 + lane registry~~（§2.2）**已实现**：`state.workerLanes` + `acquireWorkerLane`/`rotateWorkerLane`/`maintainWorkerLanes`/`laneReusePrecheck`（角色 1:N、复用/漂移归档）。
+- ~~每派发机器可读 admissionDecision 记录~~（§4.5）**已实现**：`recordAdmissionDecision`/`state.admissionDecisions`（单一互斥 outcome + 派生布尔恰一 true + cellClass + 正交 dimensions + whyThisCellNow + workerCarrierDecision + modelDecisionRef）。
+- ~~单 cell 阻断防升格全局门 + 正交调度维度~~（§4.5）**已实现**：`recomputeTaskGroup.singleCellEscalationGuard`（有可执行 cell 不升格）+ A6 `NON_ESCALATING_WAIT_CLASSES` 最小作用域白名单 + A1 `ADMISSION_PRIORITY_TIERS`/`cellAdmissionPriority` 优先级排序 + A2 `admissibleCellClass` 8 类分类 + A8 `recordAdmissionScan` 周期级候选扫描。
+- ~~findingDisposition 闭合枚举强化~~（§4.6）**已实现**：close-barrier `all_findings_terminal` 要求 dispositionClass ∈ {fixed_verified/not_applicable/scope_adjusted/blocked_external}，`findingResolve` 对无证据/缺 owner 降级。
+
+### 2026-07-26 第二轮吸收（调度/分配规则调整，commit 4f9e2ab）
+
+从 development-verification-operating-model.md §2.2/§4.5/§4.6.0 通用化吸收（市场/session→条件窗口，Provider 额度→外部资源）：A1 优先级排序、A2/A5 cellClass+正交维度、A3/A4/A9 条件窗口准入（`conditionWindowGate`，按 environment 独立、每周期重采样、defer 记 wakeTrigger、恒 continue）、A6 最小作用域 blocker 白名单、A7 载体 4 选1+nonSelectedCarriers/nonReuseReason/retireOrArchiveCondition、A8 周期级 admissionScan、A10 规则 `sys.layered-admission`（分层准入+最小复验+禁混用 gating 状态）。全部 work-item 描述符可选，缺省=旧行为。
 
 > 说明：默认系统规则可被项目/任务组按 §4.4 三级机制启用/停用/改写单条。控制面对 A 类规则已有硬约束；B 类规则通过内容包硬性下发（不靠指令措辞），会话开始前摘要校验不符即拒绝执行。
