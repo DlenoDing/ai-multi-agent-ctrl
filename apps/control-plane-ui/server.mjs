@@ -1695,6 +1695,19 @@ async function prepareRemoteGitVerification(target, checkpointInput) {
     error.status = 400;
     throw error;
   }
+  // ext::/fd:/remote-helper transports (RCE) are always rejected above. file://+local paths are
+  // permitted by default (local deployments and the doctor use them and they cannot execute
+  // commands), but a hosted multi-tenant deployment can forbid them — they would let a tenant-set
+  // repositoryUrl make the shared host git-fetch arbitrary local repos — by setting
+  // AIMAC_ALLOW_LOCAL_GIT_REMOTE=false.
+  if (process.env.AIMAC_ALLOW_LOCAL_GIT_REMOTE === "false") {
+    const url = String(target.repositoryUrl || "");
+    if (/^file:\/\//iu.test(url) || url.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(url) || url.startsWith("./") || url.startsWith("../")) {
+      const error = new Error("repository_output_target_local_git_remote_disabled");
+      error.status = 400;
+      throw error;
+    }
+  }
   const branch = String(target.branch || "main");
   if (!/^[A-Za-z0-9._\/-]+$/u.test(branch) || branch.startsWith("-") || branch.includes("..")) {
     const error = new Error("repository_output_target_unsafe_branch");
