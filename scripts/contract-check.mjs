@@ -25,6 +25,7 @@ import {
   recomputeTaskGroup,
   cellAdmissionPriority,
   conditionWindowGate,
+  admissibleCellClass,
   decideSessionPlacement,
   roomSend,
   selectModel,
@@ -247,6 +248,12 @@ function verifyHumanAndOrganizationContracts(output) {
   if (!gatedCell || gatedCell.currentWindowState !== "closed" || !gatedCell.wakeTrigger) output.push("condition-window gate did not defer a closed-window cell with a wakeTrigger (A3)");
   if (conditionWindowGate({conditionDependency: {environment: "envA", requiredWindowState: "open"}}, {windowStateByEnvironment: {envA: "open"}}) !== null) output.push("condition-window gate deferred a satisfied-window cell (A3)");
   if (conditionWindowGate({}, {windowStateByEnvironment: {envA: "closed"}}) !== null) output.push("condition-window gate gated a condition-independent cell (A3/A4)");
+  // A2/A5: a window-deferred cell must be classified pending_window (not conflated into
+  // defer_downstream) — the reason code and the dependency both drive the class.
+  const gatedWorkItem = {conditionDependency: {environment: "envA", requiredWindowState: "open"}};
+  if (admissibleCellClass("deferred", gatedCell.reasonCode, gatedWorkItem) !== "pending_window") output.push("window-deferred cell was misclassified (not pending_window) (A2/A3)");
+  if (admissibleCellClass("deferred", "awaiting_downstream_output", {}) !== "defer_downstream") output.push("non-window deferral misclassified as pending_window (A2)");
+  if (admissibleCellClass("selected", "dispatched", {}) !== "ready_now") output.push("selected cell not classified ready_now (A2)");
 
   // A7: carrier decision records the 4-way carrier + nonSelectedCarriers + nonReuseReason.
   const carrierDecision = decideSessionPlacement(state, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", workSignals: ["expected_multi_turn", "role_owner_required"]}).workerCarrierDecision;

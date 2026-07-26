@@ -1512,13 +1512,15 @@ export function cellAdmissionPriority(workItem) {
 }
 
 // A2/A4: map an admission verdict to a cell class (per (cell, condition) where a condition applies).
-function admissibleCellClass(outcome, reasonCode, workItem) {
+export function admissibleCellClass(outcome, reasonCode, workItem) {
   const reason = String(reasonCode || "");
   if (outcome === "selected") return "ready_now";
   if (outcome === "resource_queued") return "ready_after_resource_admission";
   if (outcome === "awaiting_review" || outcome === "awaiting_checkpoint") return "ready_now";
   if (outcome === "superseded") return "defer_downstream";
-  if (outcome === "deferred") return /window|condition|market|session/u.test(reason) ? "pending_window" : "defer_downstream";
+  // A deferred cell that declares a condition dependency (or whose reason names one) is a window
+  // wait — classify off the dependency itself, not a fragile regex over a free-form reason string.
+  if (outcome === "deferred") return (workItem?.conditionDependency || /window|condition|market|session/u.test(reason)) ? "pending_window" : "defer_downstream";
   if (outcome === "blocked") {
     if (/window|condition|market|session/u.test(reason)) return "pending_window";
     if (/data_volume|volume/u.test(reason)) return "pending_data_volume";
@@ -1636,7 +1638,7 @@ export function conditionWindowGate(workItem, conditionSource) {
     environment,
     requiredWindowState: dependency.requiredWindowState,
     currentWindowState: current,
-    reasonCode: `deferred_${environment}_${current}_awaiting_${dependency.requiredWindowState}`,
+    reasonCode: `condition_window_deferred_${environment}_${current}_awaiting_${dependency.requiredWindowState}`,
     wakeTrigger: {
       environment,
       nextWindowState: dependency.requiredWindowState,
