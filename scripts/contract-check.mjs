@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -546,6 +546,30 @@ function verifyAgentGatewayContracts(output) {
           }
           if (!existsSync(join(eventRuntimeDir, "project-db", `${safeProjectIdForContract(event.projectId)}.execution-events.manifest.json`))) {
             output.push("Project-level execution event store did not create a segment manifest");
+          }
+          // event-key KV GC: appending beyond the file cap must bound the KV dir while
+          // preserving dedup for keys still inside the retained window.
+          const gcRuntimeDir = mkdtempSync(join(tmpdir(), "aimac-contract-evk-gc-"));
+          const gcEnvKeys = ["AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS", "AIMAC_PROJECT_EVENT_KEY_FILE_CAP", "AIMAC_PROJECT_EVENT_KEY_GC_STRIDE"];
+          const gcPrev = Object.fromEntries(gcEnvKeys.map((key) => [key, process.env[key]]));
+          try {
+            process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS = "50";
+            process.env.AIMAC_PROJECT_EVENT_KEY_FILE_CAP = "100";
+            process.env.AIMAC_PROJECT_EVENT_KEY_GC_STRIDE = "10";
+            for (let index = 1; index <= 130; index += 1) {
+              appendProjectExecutionEvent(gcRuntimeDir, {...event, projectId: "prj_gc", eventId: `evt_gc_${index}`, eventKey: `gc-${index}`, sequence: 1});
+            }
+            const gcDir = join(gcRuntimeDir, "project-db", "event-keys", safeProjectIdForContract("prj_gc"));
+            const gcFiles = readdirSync(gcDir).filter((name) => name.endsWith(".json"));
+            if (gcFiles.length !== 100) output.push(`event-key KV GC did not bound key files to the cap (got ${gcFiles.length})`);
+            const gcDedup = appendProjectExecutionEvent(gcRuntimeDir, {...event, projectId: "prj_gc", eventId: "evt_gc_dup", eventKey: "gc-130", sequence: 1});
+            if (!gcDedup.duplicate) output.push("event-key KV GC dropped a recent key still needed for dedup");
+          } finally {
+            for (const key of gcEnvKeys) {
+              if (gcPrev[key] === undefined) delete process.env[key];
+              else process.env[key] = gcPrev[key];
+            }
+            rmSync(gcRuntimeDir, {recursive: true, force: true});
           }
 			      const firstStorage = appendProjectExecutionEvent(eventRuntimeDir, {...event, eventId: "evt_collision_a", eventKey: "collision-a", projectId: "project/a", sequence: 1});
       const secondStorage = appendProjectExecutionEvent(eventRuntimeDir, {...event, eventId: "evt_collision_b", eventKey: "collision-b", projectId: "project_a", sequence: 1});

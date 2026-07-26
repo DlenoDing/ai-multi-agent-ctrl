@@ -26,6 +26,7 @@ export function appendProjectExecutionEvent(runtimeDir, event) {
     };
     appendDurableLine(path, `${JSON.stringify(storedEvent)}\n`);
     writeProjectExecutionEventKey(runtimeDir, storedEvent, path);
+    maybeGcProjectExecutionEventKeys(runtimeDir, storedEvent);
     updateProjectExecutionEventIndex(runtimeDir, storedEvent, index);
     return {
       storageKind: "project-jsonl",
@@ -304,6 +305,54 @@ function writeProjectExecutionEventKey(runtimeDir, event, path) {
     event,
     updatedAt: new Date().toISOString()
   });
+}
+
+function projectExecutionEventKeyDir(runtimeDir, projectId) {
+  return join(runtimeDir, "project-db", "event-keys", safeProjectId(projectId));
+}
+
+// The per-event-key KV files back idempotent dedup as the fast path ahead of the
+// (capped) in-memory index and the event-log scan. Left ungoverned they grow one
+// file per unique key forever. GC caps them by count and evicts the oldest by
+// mtime; the cap is held at or above the index key window so file-backed dedup is
+// never narrower than index-backed dedup (removing a key only drops a fast path —
+// dedup still falls back to the index for recent keys and the log scan for older
+// ones). Amortized: only runs once every AIMAC_PROJECT_EVENT_KEY_GC_STRIDE appends.
+function maybeGcProjectExecutionEventKeys(runtimeDir, event) {
+  const stride = Math.max(1, Number(process.env.AIMAC_PROJECT_EVENT_KEY_GC_STRIDE || 256));
+  if (Number(event.sequence || 0) % stride !== 0) return;
+  gcProjectExecutionEventKeys(runtimeDir, event.projectId);
+}
+
+function gcProjectExecutionEventKeys(runtimeDir, projectId) {
+  const dir = projectExecutionEventKeyDir(runtimeDir, projectId);
+  if (!existsSync(dir)) return;
+  const keyWindow = Math.max(100, Number(process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS || 500));
+  const cap = Math.max(keyWindow, Number(process.env.AIMAC_PROJECT_EVENT_KEY_FILE_CAP || 5000));
+  let names;
+  try {
+    names = readdirSync(dir).filter((name) => name.endsWith(".json"));
+  } catch {
+    return;
+  }
+  if (names.length <= cap) return;
+  const entries = [];
+  for (const name of names) {
+    try {
+      entries.push({name, mtime: statSync(join(dir, name)).mtimeMs});
+    } catch {
+      // File removed concurrently; skip.
+    }
+  }
+  entries.sort((left, right) => left.mtime - right.mtime);
+  const removeCount = entries.length - cap;
+  for (let i = 0; i < removeCount; i += 1) {
+    try {
+      rmSync(join(dir, entries[i].name), {force: true});
+    } catch {
+      // Best-effort; a failed unlink just defers reclamation to the next sweep.
+    }
+  }
 }
 
 function readProjectExecutionEventManifest(runtimeDir, projectId) {
