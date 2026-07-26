@@ -2035,7 +2035,7 @@ function renderMonitor() {
     `<strong>${esc(node.nodeName || node.nodeId)}</strong><div class="small muted mono">${esc(node.nodeId)}</div>`,
     badge(node.status),
     badge(node.admission),
-    fmtTime(node.lastHeartbeatAt),
+    {v: fmtTime(node.lastHeartbeatAt), c: "nowrap"},
     node.status !== "revoked" && canControlNodes ? [
       `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="refresh_profile">刷新</button>`,
       `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="pause_dispatch">暂停</button>`,
@@ -2080,7 +2080,7 @@ function renderMonitor() {
     panel("工作会话", table(["会话", "角色", "工作项", "放置方式", "状态", "详情"], sessions, {moreText: moreText(sessionsAll.length, 20)}), {wide: true, headerSide: filterInput("按会话、工作项过滤…", "sessions")}),
     panel("智能体派发", table(["派发", "工作项", "状态", {label: "进度", c: "num"}, "原因", "详情"], dispatches, {moreText: moreText(dispatchesAll.length, 20)}), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
     panel("控制通道", table([{label: "序号", c: "num"}, "节点", "命令", "作用对象", "状态", {label: "更新时间", c: "nowrap"}], commands, {moreText: moreText((state.agentControlCommands || []).length, 16)}), {wide: true}),
-    panel("运行时节点", table(["节点", "状态", "准入", "最近心跳", "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
+    panel("运行时节点", table(["节点", "状态", "准入", {label: "最近心跳", c: "nowrap"}, "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
     panel("模型选择记录", table(["角色", "工作项", "模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText((state.modelSelectionDecisions || []).length, 10)})),
     panel("会话放置记录", table(["工作项", "放置方式", "状态"], placements, {moreText: moreText((state.sessionPlacementDecisions || []).length, 10)})),
     panel("关闭门禁", table(["任务组", "状态", {label: "阻塞对象数", c: "num"}, {label: "计算时间", c: "nowrap"}], barriers, {moreText: moreText((state.closeBarriers || []).length, 8)}), {wide: true})
@@ -2759,8 +2759,8 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "orchestrator-run") {
       await api("/api/orchestrator/run", {method: "POST", body: JSON.stringify({mode: "all"})});
-      toast.success("已触发编排循环");
       await loadPage();
+      toast.success("已触发编排循环");
       return;
     }
     if (action === "decide-model") {
@@ -2768,8 +2768,8 @@ document.addEventListener("click", async (event) => {
       const workItem = (taskGroup?.workItems || [])[0];
       if (!taskGroup || !workItem) throw new Error("当前项目暂无可用于模型决策的任务组和工作项");
       await api("/api/model-selection/decide", {method: "POST", body: JSON.stringify({taskGroupId: taskGroup.id, workItemId: workItem.id, roleId: "orchestrator"})});
-      toast.success("已完成模型决策");
       await loadPage();
+      toast.success("已完成模型决策");
       return;
     }
   } catch (error) {
