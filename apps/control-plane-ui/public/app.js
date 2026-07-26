@@ -1047,7 +1047,7 @@ function renderSysSettings() {
     `<span class="mono">${esc(source.sourceId)}</span>`,
     badge(source.status),
     `<span class="mono">${esc(String(source.pinnedCommit || "").slice(0, 10))}</span>`,
-    String((state.roleSkills || []).filter((skill) => skill.sourceId === source.sourceId).length),
+    {v: String((state.roleSkills || []).filter((skill) => skill.sourceId === source.sourceId).length), c: "num"},
     `<button class="secondary-button" data-action="sync-skill-source" data-source="${esc(source.sourceId)}">同步</button>`
   ])).join("");
   const metrics = instructionState?.instructionMetrics || {stablePrefixTokens: 0, deltaMessageTargetTokens: 0, cacheHitTarget: 0, envelopes: []};
@@ -1077,7 +1077,7 @@ function renderSysSettings() {
         <dt>更新时间</dt><dd>${fmtTime(runtime.updatedAt)}</dd>
       </dl>
     `),
-    panel("技能源", table(["技能源", "状态", "固定提交", "角色数", "操作"], sources)),
+    panel("技能源", table(["技能源", "状态", "固定提交", {label: "角色数", c: "num"}, "操作"], sources)),
     panel("模型能力注册（只读）", table(["供应商", "模型", "能力", {label: "上下文窗口", c: "num"}, "可用性"], models, {moreText: moreText((state.modelCapabilities || []).length, 40)}), {wide: true}),
     panel("指令压缩指标", `
       <div class="metric-grid">
@@ -1358,7 +1358,7 @@ function renderOrgMembers() {
     panel("说明", `
       <div class="stack">
         <div class="record"><div class="record-title"><strong>一次性令牌</strong></div><div class="record-meta"><span>成员首次使用令牌登录后令牌即失效，可在顶栏“修改密码”设置个人密码。</span></div></div>
-        <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目/任务组细粒度授权可在"账号与授权 / 项目管理"中补充。</span></div></div>
+        <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目、任务组细粒度授权可在“账号与授权、项目管理”中补充。</span></div></div>
       </div>
     `),
     panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows), {wide: true, headerSide: filterInput("按姓名、邮箱过滤…", "members")})
@@ -1426,16 +1426,16 @@ function renderOrgAgents() {
       badge(node.status),
       esc(node.display?.region || "-"),
       badge(node.display?.health),
-      String((node.display?.currentDispatchIds || []).length),
-      fmtTime(node.lastHeartbeatAt),
+      {v: String((node.display?.currentDispatchIds || []).length), c: "num"},
+      {v: fmtTime(node.lastHeartbeatAt), c: "nowrap"},
       agentActions(node)
     ])).join("");
-    bodyHtml = table(["名称", "运行状态", "地区", "健康度", "当前任务数", "最近心跳", "操作"], nodeRows);
+    bodyHtml = table(["名称", "运行状态", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"], nodeRows);
   }
 
   return [
-    panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成 / 失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
-    panel("签发加入令牌 / 令牌管理", renderJoinTokenSection(), {wide: true})
+    panel("智能体节点", `<div class="stack"><div class="notice">鼠标悬浮在节点名称上可查看资源、支持模型、网络速度、数据根路径与累计完成、失败。</div>${bodyHtml}</div>`, {wide: true, headerSide: `${filterInput("按节点名、地区过滤…", "org-nodes")}${toggle}`}),
+    panel("加入令牌管理", renderJoinTokenSection(), {wide: true})
   ].join("");
 }
 
@@ -1479,7 +1479,7 @@ function renderProjectOverview() {
     badge(taskGroup.phase),
     progressLine(taskGroup.progress),
     badge(taskGroup.health),
-    String((taskGroup.blockers || []).length)
+    {v: String((taskGroup.blockers || []).length), c: "num"}
   ])).join("");
   const repoRows = (state.repositoryOutputs || []).filter((target) => target.projectId === project.id).map((target) => row([
     esc(taskGroupNameOf(target.taskGroupId)),
@@ -1515,7 +1515,7 @@ function renderProjectOverview() {
         <div class="metric"><span>待人工确认</span><strong>${pendingConfirmCount}</strong></div>
       </div>
     `),
-    panel("任务组一览", table(["任务组", "状态", "阶段", "进度", "健康度", "受阻数"], groupRows), {wide: true}),
+    panel("任务组一览", table(["任务组", "状态", "阶段", "进度", "健康度", {label: "受阻数", c: "num"}], groupRows), {wide: true}),
     panel("最新执行事件", table([{label: "时间", c: "nowrap"}, "事件", "状态", {label: "摘要", c: "text-clip"}], events)),
     panel("仓库产出归属", table(["任务组", "仓库", "分支", "状态", "允许路径"], repoRows))
   ].join("");
@@ -1677,7 +1677,7 @@ function renderTaskGroupDetail(taskGroup) {
         <button class="primary-button" type="submit" ${editDisabled}>保存默认角色</button>
       </form>
     </div>
-  ` : `<div class="notice">暂无法读取任务组配置。</div>`;
+  ` : `<div class="notice">暂时无法读取任务组配置。</div>`;
 
   const languagePolicy = taskGroup.languagePolicy || {languageTag: "zh-CN"};
   const controlHtml = canControl ? `
@@ -1906,7 +1906,7 @@ function renderReview() {
             </label>
           `).join("")}
         </div>
-        <div class="form-row"><label>确认内容（选择"不选择（自定义输入）"时必填）</label><textarea name="inputText" placeholder="补充说明或自定义决定"></textarea></div>
+        <div class="form-row"><label>确认内容（选择“不选择（自定义输入）”时必填）</label><textarea name="inputText" placeholder="补充说明或自定义决定"></textarea></div>
         <button class="primary-button" type="submit">提交确认</button>
       </form>` : `<div class="notice warn-notice" style="margin-top:10px;">当前账号无“人工审核”权限，仅可查看待确认问题。</div>`}
     </div>
@@ -2000,7 +2000,8 @@ function renderMonitor() {
     {v: fmtTime(event.createdAt), c: "nowrap"}
   ])).join("");
 
-  const sessions = (state.workSessions || []).filter((session) => groups.some((taskGroup) => taskGroup.id === session.taskGroupId)).slice(0, 20).map((session) => row([
+  const sessionsAll = (state.workSessions || []).filter((session) => groups.some((taskGroup) => taskGroup.id === session.taskGroupId));
+  const sessions = sessionsAll.slice(0, 20).map((session) => row([
     `<span class="mono">${esc(session.sessionId)}</span>`,
     esc(t(session.roleId)),
     `<span class="mono">${esc(session.workItemId || "-")}</span>`,
@@ -2009,7 +2010,8 @@ function renderMonitor() {
     `<button class="secondary-button" data-action="show-session-events" data-session-id="${esc(session.sessionId)}">事件</button>`
   ])).join("");
 
-  const dispatches = (state.agentDispatches || []).filter((dispatch) => groups.some((taskGroup) => taskGroup.id === dispatch.taskGroupId)).slice(0, 20).map((dispatch) => row([
+  const dispatchesAll = (state.agentDispatches || []).filter((dispatch) => groups.some((taskGroup) => taskGroup.id === dispatch.taskGroupId));
+  const dispatches = dispatchesAll.slice(0, 20).map((dispatch) => row([
     `<span class="mono">${esc(dispatch.dispatchId)}</span>`,
     `<span class="mono">${esc(dispatch.workItemId || "-")}</span>`,
     badge(dispatch.status),
@@ -2075,8 +2077,8 @@ function renderMonitor() {
         ${table([{label: "序号", c: "num"}, "事件", {label: "进度", c: "num"}, "状态", {label: "摘要", c: "text-clip"}, {label: "时间", c: "nowrap"}], eventRows, {moreText: moreText(execEvents.length, 120)})}
       </div>
     `, {wide: true, headerSide: filterInput("按事件、摘要过滤…", "events")}),
-    panel("工作会话", table(["会话", "角色", "工作项", "放置方式", "状态", "详情"], sessions, {moreText: moreText((state.workSessions || []).length, 20)}), {wide: true, headerSide: filterInput("按会话、工作项过滤…", "sessions")}),
-    panel("智能体派发", table(["派发", "工作项", "状态", {label: "进度", c: "num"}, "原因", "详情"], dispatches, {moreText: moreText((state.agentDispatches || []).length, 20)}), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
+    panel("工作会话", table(["会话", "角色", "工作项", "放置方式", "状态", "详情"], sessions, {moreText: moreText(sessionsAll.length, 20)}), {wide: true, headerSide: filterInput("按会话、工作项过滤…", "sessions")}),
+    panel("智能体派发", table(["派发", "工作项", "状态", {label: "进度", c: "num"}, "原因", "详情"], dispatches, {moreText: moreText(dispatchesAll.length, 20)}), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
     panel("控制通道", table([{label: "序号", c: "num"}, "节点", "命令", "作用对象", "状态", {label: "更新时间", c: "nowrap"}], commands, {moreText: moreText((state.agentControlCommands || []).length, 16)}), {wide: true}),
     panel("运行时节点", table(["节点", "状态", "准入", "最近心跳", "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
     panel("模型选择记录", table(["角色", "工作项", "模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText((state.modelSelectionDecisions || []).length, 10)})),
@@ -2757,6 +2759,7 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "orchestrator-run") {
       await api("/api/orchestrator/run", {method: "POST", body: JSON.stringify({mode: "all"})});
+      toast.success("已触发编排循环");
       await loadPage();
       return;
     }
@@ -2765,6 +2768,7 @@ document.addEventListener("click", async (event) => {
       const workItem = (taskGroup?.workItems || [])[0];
       if (!taskGroup || !workItem) throw new Error("当前项目暂无可用于模型决策的任务组和工作项");
       await api("/api/model-selection/decide", {method: "POST", body: JSON.stringify({taskGroupId: taskGroup.id, workItemId: workItem.id, roleId: "orchestrator"})});
+      toast.success("已完成模型决策");
       await loadPage();
       return;
     }
