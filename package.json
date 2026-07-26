@@ -27,5 +27,8 @@
     "docker:build": "docker build -t ai-multi-agent-ctrl:local .",
     "docker:up": "./scripts/docker-up.sh",
     "docker:doctor": "node scripts/doctor-docker-compose.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.22.0"
   }
 }

@@ -103,7 +103,9 @@ end
 
 dockerfile = File.read(File.join(ROOT, "Dockerfile"))
 errors << "Dockerfile must install git for skills:sync" unless dockerfile.include?("git")
-errors << "Dockerfile must install postgresql-client for docker compose state store" unless dockerfile.include?("postgresql-client")
+# The Postgres backend upgraded from the `psql` subprocess to the pooled `pg` client, so the
+# image no longer needs postgresql-client but MUST install node dependencies (pg) reproducibly.
+errors << "Dockerfile must install node dependencies (pg) via npm ci with a lockfile" unless dockerfile.include?("npm ci") && dockerfile.include?("package-lock.json")
 errors << "Dockerfile must not run bootstrap init at build time" if dockerfile.include?("RUN npm run init")
 
 manifest["requiredMachineSpecs"].each do |spec_path|
@@ -362,6 +364,14 @@ end
 server_source = File.read(File.join(ROOT, "apps/control-plane-ui/server.mjs"))
 core_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/control-plane-core.mjs"))
 state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs"))
+# The Postgres backend upgraded from per-query `psql` subprocesses to a pooled `pg` client.
+# Because Node has no synchronous Postgres driver, the async pool lives in a worker thread
+# (pg-pool-worker.mjs) driven synchronously from state-store via pg-sync-store.mjs (Atomics.wait
+# + receiveMessageOnPort). The JSONB DDL and version-guarded CAS therefore moved into those files;
+# tamper assertions read the combined source so they stay meaningful after the relocation.
+pg_pool_worker_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/pg-pool-worker.mjs"))
+pg_sync_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/pg-sync-store.mjs"))
+postgres_backend_source = "#{state_store_source}\n#{pg_sync_store_source}\n#{pg_pool_worker_source}"
 project_event_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/project-event-store.mjs"))
 doctor_source = File.read(File.join(ROOT, "scripts/doctor.mjs"))
 mcp_source = File.read(File.join(ROOT, "apps/mcp-server/server.mjs"))
@@ -462,10 +472,10 @@ errors << "MCP server must mark tool results untrusted" unless mcp_source.includ
 errors << "HTTP server must use shared state-store" unless server_source.include?("readStoredState") && server_source.include?("writeStoredState")
 errors << "HTTP health checks must avoid full project shard hydration" unless server_source.include?("readHealthState") && server_source.include?("readStoredCentralState")
 errors << "MCP server must use shared state-store" unless mcp_source.include?("readStoredState") && mcp_source.include?("writeStoredState")
-errors << "state-store must support PostgreSQL JSONB authority" unless state_store_source.include?("AIMAC_STATE_STORE") && state_store_source.include?("jsonb") && state_store_source.include?("psql")
+errors << "state-store must support PostgreSQL JSONB authority via a pooled pg client" unless state_store_source.include?("AIMAC_STATE_STORE") && postgres_backend_source.include?("jsonb") && pg_pool_worker_source.include?("new pg.Pool") && pg_sync_store_source.include?("receiveMessageOnPort")
 errors << "state-store must enforce versioned write conflict detection" unless state_store_source.include?("expectedStateVersion") && state_store_source.include?("AIMAC_STATE_CONFLICT")
 errors << "state-store must externalize project-scoped collections into project shards" unless state_store_source.include?("projectShardCollections") && state_store_source.include?("aimac_project_state_shards") && state_store_source.include?(".state.json")
-errors << "project shard writes must be protected by the central state CAS" unless state_store_source.include?("writePostgresStateWithProjectShards") && state_store_source.include?("AIMAC_WRITE_CONFLICT") && state_store_source.index("assertExpectedVersion") && state_store_source.index("writeRuntimeJsonProjectShards") && state_store_source.index("assertExpectedVersion") < state_store_source.index("writeRuntimeJsonProjectShards")
+errors << "project shard writes must be protected by the central state CAS" unless state_store_source.include?("writePostgresStateWithProjectShards") && pg_pool_worker_source.include?("state->>'stateVersion'") && pg_pool_worker_source.index("upsert.rowCount === 0") && pg_pool_worker_source.index("INSERT INTO ${ident(shardTable)}") && pg_pool_worker_source.index("upsert.rowCount === 0") < pg_pool_worker_source.index("INSERT INTO ${ident(shardTable)}") && state_store_source.index("assertExpectedVersion") && state_store_source.index("writeRuntimeJsonProjectShards") && state_store_source.index("assertExpectedVersion") < state_store_source.index("writeRuntimeJsonProjectShards")
 errors << "runtime_json state-store reads and writes must share a file lock and atomic central rename" unless state_store_source.include?("return withRuntimeJsonLock(options") && state_store_source.include?("writeRuntimeJsonCentralState") && state_store_source.include?("renameSync(temporary, options.statePath)")
 errors << "project shard filenames must use bounded hash ids and preserve legacy reads" unless state_store_source.include?("p_${createHash") && state_store_source.include?("legacySafeProjectId") && project_event_store_source.include?("p_${createHash") && project_event_store_source.include?("legacySafeProjectId")
 errors << "runtime_json shard GC must run only after central atomic rename and hydrate must follow central shard index" unless state_store_source.include?("gcRuntimeJsonProjectShards") && state_store_source.index("writeRuntimeJsonCentralState(centralState") && state_store_source.index("gcRuntimeJsonProjectShards") && state_store_source.index("writeRuntimeJsonCentralState(centralState") < state_store_source.index("gcRuntimeJsonProjectShards") && state_store_source.include?("runtimeJsonShardNamesFromCentral")

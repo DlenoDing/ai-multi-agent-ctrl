@@ -1,10 +1,15 @@
 FROM node:22-alpine
 
-RUN apk add --no-cache ruby git postgresql-client
+RUN apk add --no-cache ruby git
 
 WORKDIR /app
 
-COPY package.json ./
+# Install runtime deps first for layer caching. The Postgres backend uses the pooled
+# `pg` client (node-postgres, pure JS — no native build), reached from a worker thread;
+# `psql` is no longer needed in this image.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
 COPY Dockerfile ./
 COPY docker-compose.yml ./
 COPY .dockerignore ./

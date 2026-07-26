@@ -1,7 +1,7 @@
-import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { pgEnsureTables, pgReadProjectShards, pgReadState, pgWriteStateWithProjectShards } from "./pg-sync-store.mjs";
 
 const tableName = "aimac_control_plane_state";
 const projectShardTableName = "aimac_project_state_shards";
@@ -127,7 +127,7 @@ export function readStoredState(options) {
       return state;
     });
   }
-  const central = JSON.parse(readPostgresState(options));
+  const central = readPostgresState();
   const state = hydrateProjectState(central, options);
   state.__loadedStateVersion = Number(state.stateVersion || 0);
   return state;
@@ -143,7 +143,7 @@ export function readStoredCentralState(options) {
     }
   }
   const central = stateStoreKind() === "postgresql"
-    ? JSON.parse(readPostgresState(options))
+    ? readPostgresState()
     : JSON.parse(readFileSync(options.statePath, "utf8"));
   if (stateStoreKind() !== "postgresql") cacheStoredState(centralStateCache, options.statePath, central, statCacheKey(options.statePath));
   central.__loadedStateVersion = Number(central.stateVersion || 0);
@@ -206,131 +206,22 @@ export function markRuntimeStorage(state, statePath = ".runtime/control-plane-st
   else delete state.runtime.storage.databaseUrlSecretRef;
 }
 
-function ensurePostgresTable(options) {
-  runPsql([
-    `CREATE TABLE IF NOT EXISTS ${tableName} (`,
-    "id text PRIMARY KEY,",
-    "state jsonb NOT NULL,",
-    "updated_at timestamptz NOT NULL DEFAULT now()",
-    ");",
-    `CREATE TABLE IF NOT EXISTS ${projectShardTableName} (`,
-    "project_id text PRIMARY KEY,",
-    "shard jsonb NOT NULL,",
-    "updated_at timestamptz NOT NULL DEFAULT now()",
-    ");"
-  ].join(" "), options);
+function ensurePostgresTable() {
+  pgEnsureTables();
 }
 
-function readPostgresState(options) {
-  const output = runPsql(`SELECT state::text FROM ${tableName} WHERE id = '${stateId}';`, options, ["-t", "-A"]);
-  const value = output.trim();
-  return value.length ? value : null;
-}
-
-function writePostgresState(state, options, expectedStateVersion) {
-  const tag = `$aimac_${randomBytes(8).toString("hex")}$`;
-  const sqlPath = join(options.runtimeDir, `.state-store-${Date.now()}-${randomBytes(4).toString("hex")}.sql`);
-  const payload = JSON.stringify(withoutInternalStateFields(state));
-  const versionGuard = expectedStateVersion === undefined || expectedStateVersion === null
-    ? ""
-    : ` WHERE COALESCE((${tableName}.state->>'stateVersion')::bigint, 0) = ${Number(expectedStateVersion)}`;
-  writeFileSync(sqlPath, [
-    `CREATE TABLE IF NOT EXISTS ${tableName} (id text PRIMARY KEY, state jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());`,
-    `INSERT INTO ${tableName} (id, state, updated_at) VALUES ('${stateId}', ${tag}${payload}${tag}::jsonb, now())`,
-    `ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = now()${versionGuard};`
-  ].join("\n"));
-  try {
-    const output = runPsqlFile(sqlPath, options);
-    if (versionGuard && output.includes("INSERT 0 0")) {
-      throwStateStoreConflict(`postgresql state version conflict; expected ${expectedStateVersion}`);
-    }
-  } finally {
-    unlinkSync(sqlPath);
-  }
+// Returns the parsed central-state object (jsonb decodes to a JS object) or null.
+function readPostgresState() {
+  return pgReadState();
 }
 
 function writePostgresStateWithProjectShards(state, projectShards, options, expectedStateVersion) {
-  const tag = `$aimac_${randomBytes(8).toString("hex")}$`;
-  const sqlPath = join(options.runtimeDir, `.state-store-${Date.now()}-${randomBytes(4).toString("hex")}.sql`);
-  const payload = JSON.stringify(withoutInternalStateFields(state));
-  const versionGuard = expectedStateVersion === undefined || expectedStateVersion === null
-    ? "TRUE"
-    : `COALESCE((${tableName}.state->>'stateVersion')::bigint, 0) = ${Number(expectedStateVersion)}`;
-  const shardValues = projectShards.length
-    ? projectShards.map((shard) => `(${sqlString(shard.projectId)}, ${tag}${JSON.stringify(shard)}${tag}::jsonb)`).join(",\n")
-    : "";
-  const shardSql = projectShards.length ? [
-    ", shard_payload(project_id, shard) AS (",
-    `VALUES ${shardValues}`,
-    "), stale_shard_delete AS (",
-    `DELETE FROM ${projectShardTableName}`,
-    "WHERE EXISTS (SELECT 1 FROM central_upsert)",
-    "AND project_id NOT IN (SELECT project_id FROM shard_payload)",
-    "RETURNING project_id",
-    "), shard_upsert AS (",
-    `INSERT INTO ${projectShardTableName} (project_id, shard, updated_at)`,
-    "SELECT project_id, shard, now() FROM shard_payload WHERE EXISTS (SELECT 1 FROM central_upsert)",
-    "ON CONFLICT (project_id) DO UPDATE SET shard = EXCLUDED.shard, updated_at = now()",
-    "RETURNING project_id",
-    ")"
-  ].join("\n") : [
-    ", stale_shard_delete AS (",
-    `DELETE FROM ${projectShardTableName}`,
-    "WHERE EXISTS (SELECT 1 FROM central_upsert)",
-    "RETURNING project_id",
-    ")"
-  ].join("\n");
-  writeFileSync(sqlPath, [
-    "BEGIN;",
-    `CREATE TABLE IF NOT EXISTS ${tableName} (id text PRIMARY KEY, state jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());`,
-    `CREATE TABLE IF NOT EXISTS ${projectShardTableName} (project_id text PRIMARY KEY, shard jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());`,
-    "WITH central_upsert AS (",
-    `INSERT INTO ${tableName} (id, state, updated_at) VALUES ('${stateId}', ${tag}${payload}${tag}::jsonb, now())`,
-    `ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = now() WHERE ${versionGuard}`,
-    "RETURNING id",
-    ")",
-    shardSql,
-    "SELECT CASE WHEN EXISTS (SELECT 1 FROM central_upsert) THEN 'AIMAC_WRITE_OK' ELSE 'AIMAC_WRITE_CONFLICT' END;",
-    "COMMIT;"
-  ].filter(Boolean).join("\n"));
-  try {
-    const output = runPsqlFile(sqlPath, options);
-    if (output.includes("AIMAC_WRITE_CONFLICT")) {
-      throwStateStoreConflict(`postgresql state version conflict; expected ${expectedStateVersion}`);
-    }
-  } finally {
-    unlinkSync(sqlPath);
-  }
+  pgWriteStateWithProjectShards(withoutInternalStateFields(state), projectShards, expectedStateVersion);
 }
 
-function readPostgresProjectShards(options) {
-  ensurePostgresTable(options);
-  const output = runPsql(`SELECT COALESCE(jsonb_agg(shard ORDER BY project_id), '[]'::jsonb)::text FROM ${projectShardTableName};`, options, ["-t", "-A"]);
-  const value = output.trim();
-  return value.length ? JSON.parse(value) : [];
-}
-
-function writePostgresProjectShards(projectShards, options) {
-  ensurePostgresTable(options);
-  if (!projectShards.length) return;
-  const tag = `$aimac_project_${randomBytes(8).toString("hex")}$`;
-  const sqlPath = join(options.runtimeDir, `.project-state-store-${Date.now()}-${randomBytes(4).toString("hex")}.sql`);
-  const statements = [
-    `CREATE TABLE IF NOT EXISTS ${projectShardTableName} (project_id text PRIMARY KEY, shard jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());`
-  ];
-  for (const shard of projectShards) {
-    statements.push([
-      `INSERT INTO ${projectShardTableName} (project_id, shard, updated_at)`,
-      `VALUES (${sqlString(shard.projectId)}, ${tag}${JSON.stringify(shard)}${tag}::jsonb, now())`,
-      "ON CONFLICT (project_id) DO UPDATE SET shard = EXCLUDED.shard, updated_at = now();"
-    ].join(" "));
-  }
-  writeFileSync(sqlPath, statements.join("\n"));
-  try {
-    runPsqlFile(sqlPath, options);
-  } finally {
-    unlinkSync(sqlPath);
-  }
+function readPostgresProjectShards() {
+  ensurePostgresTable();
+  return pgReadProjectShards();
 }
 
 function withoutInternalStateFields(state) {
@@ -665,10 +556,6 @@ function fsyncDirectory(path) {
   } catch {}
 }
 
-function sqlString(value) {
-  return `'${String(value).replaceAll("'", "''")}'`;
-}
-
 function withRuntimeJsonLock(options, fn) {
   const lockDir = `${options.statePath}.lock`;
   const deadline = Date.now() + 10000;
@@ -708,20 +595,4 @@ function throwStateStoreConflict(message) {
   const error = new Error(message);
   error.code = "AIMAC_STATE_CONFLICT";
   throw error;
-}
-
-function runPsql(sql, options, extraArgs = []) {
-  return execFileSync("psql", [process.env.DATABASE_URL, "-v", "ON_ERROR_STOP=1", ...extraArgs, "-c", sql], {
-    cwd: options.root,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-}
-
-function runPsqlFile(sqlPath, options) {
-  return execFileSync("psql", [process.env.DATABASE_URL, "-v", "ON_ERROR_STOP=1", "-f", sqlPath], {
-    cwd: options.root,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
-  });
 }

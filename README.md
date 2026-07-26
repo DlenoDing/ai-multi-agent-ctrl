@@ -193,7 +193,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 6. 运行期重复问题的 collect-only 聚合和 SystemUpgradeCandidate 生成。
 7. 项目、任务组、Agent、账号、授权、审计和仓库输出目标的受控 API。
 8. `apps/mcp-server/server.mjs` 是由控制平面 `/mcp` 托管的 Streamable HTTP MCP 处理器，暴露各逻辑工具面，并对写入型调用执行输入校验、idempotency、远程 principal scope、lease/fencing、policy decision、audit 和 untrusted result 标记；直接启动本地 stdio server 默认失败。
-9. `apps/control-plane-ui/lib/state-store.mjs` 提供同步 state store；本地默认 `.runtime/control-plane-state.json` + `.runtime/project-db/p_<projectId_sha256>.<generation>.state.json`，Docker Compose 通过 `psql` 使用 `aimac_control_plane_state` 和 `aimac_project_state_shards` 作为 HTTP、MCP 和 CLI skill sync 的共同权威状态；写入按 `stateVersion` 做冲突检测，避免多 agent 并发静默覆盖。
+9. `apps/control-plane-ui/lib/state-store.mjs` 提供同步 state store；本地默认 `.runtime/control-plane-state.json` + `.runtime/project-db/p_<projectId_sha256>.<generation>.state.json`，Docker Compose 设 `AIMAC_STATE_STORE=postgresql`，通过连接池化的 `pg` 客户端（node-postgres 运行在 worker 线程，主线程经 `Atomics.wait` + `receiveMessageOnPort` 同步取结果，保持 state store 同步 API 不变）使用 `aimac_control_plane_state` 和 `aimac_project_state_shards` 作为 HTTP、MCP 和 CLI skill sync 的共同权威状态；写入按 `stateVersion` 做版本守卫 CAS（冲突则回滚且不触碰 shard），避免多 agent 并发静默覆盖。首次运行需 `npm install` 安装 `pg` 依赖（本地默认 `runtime_json` 文件态零外部依赖、不加载 pg）。
 
 ## 执行方式
 
