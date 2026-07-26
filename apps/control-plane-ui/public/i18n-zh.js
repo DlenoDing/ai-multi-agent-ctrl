@@ -178,6 +178,7 @@
     awaiting_dependency: "等待依赖项完成",
     awaiting_decision: "等待人工决策",
     /* ---------- 准入决策 outcome / cellClass / 载体（§4.5） ---------- */
+    deferred: "已延后",
     resource_queued: "资源排队中",
     awaiting_review: "等待独立评审",
     awaiting_checkpoint: "等待检查点",

@@ -3813,11 +3813,14 @@ export function createHumanDirective(state, input = {}, options = {}) {
   const taskGroup = input.taskGroupId ? (state.taskGroups || []).find((item) => item.id === input.taskGroupId) : null;
   const projectId = taskGroup?.projectId || input.projectId;
   if (!projectId) throw Object.assign(new Error("human_directive_project_required"), {status: 400});
-  const directiveType = ["pause", "resume", "cancel", "adjust_priority", "add_requirement", "free_text"].includes(input.directiveType)
+  const directiveType = ["pause", "resume", "cancel", "adjust_priority", "add_requirement", "resolve_decision", "free_text"].includes(input.directiveType)
     ? input.directiveType
     : "free_text";
   const instruction = String(input.instruction || "").trim().slice(0, 4000);
   if (!instruction && directiveType === "free_text") throw Object.assign(new Error("human_directive_instruction_required"), {status: 400});
+  const resolution = directiveType === "resolve_decision"
+    ? (["reopen", "abandon"].includes(input.resolution) ? input.resolution : "reopen")
+    : null;
   const at = new Date().toISOString();
   const directive = {
     schemaVersion: "human-directive/v1",
@@ -3826,6 +3829,7 @@ export function createHumanDirective(state, input = {}, options = {}) {
     taskGroupId: taskGroup?.id || null,
     directiveType,
     instruction,
+    ...(directiveType === "resolve_decision" ? {resolution, workItemId: input.workItemId || null} : {}),
     issuedBy: options.actor || "unknown",
     status: "queued",
     appliedActions: [],
@@ -3921,6 +3925,32 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
         taskGroup.priorityHint = directive.instruction || taskGroup.priorityHint || "elevated";
         taskGroup.humanGuidance = [...(taskGroup.humanGuidance || []), {directiveRef: directive.directiveId, text: `优先级调整：${directive.instruction}`, addedAt: at}];
         directive.appliedActions.push({action: "task_group_priority_adjusted", ref: `TaskGroup:${taskGroup.id}`});
+      } else if (directive.directiveType === "resolve_decision" && taskGroup) {
+        // The operator's decision on a needs_decision cell — the actuator that resolves the
+        // rework-cap / role-drift escalation the autonomous cycle deliberately will not auto-resume.
+        // reopen: return to ready for another genuine attempt (reset the rework count by superseding
+        // the prior changes_requested review bundles); abandon: supersede the cell so it stops
+        // blocking close. Without this a needs_decision cell would wedge the close barrier forever.
+        const targets = (taskGroup.workItems || []).filter((item) => item.status === "needs_decision" && (!directive.workItemId || item.id === directive.workItemId));
+        for (const workItem of targets) {
+          if (directive.resolution === "abandon") {
+            workItem.status = "superseded";
+            workItem.splitStatus = workItem.splitStatus || "abandoned_by_human_decision";
+            delete workItem.blockedReason;
+          } else {
+            for (const bundle of (state.reviewBundles || [])) {
+              if (bundle.workItemId === workItem.id && bundle.verdict === "changes_requested") bundle.supersededByHumanDecision = true;
+            }
+            workItem.status = "ready";
+            workItem.reviewState = "reopened_by_human_decision";
+            workItem.humanDecisionRef = directive.directiveId;
+            workItem.progress = Math.min(Number(workItem.progress || 0), 60);
+            delete workItem.blockedReason;
+          }
+          workItem.updatedAt = at;
+          directive.appliedActions.push({action: `work_item_decision_${directive.resolution || "reopen"}`, ref: `WorkItem:${workItem.id}`});
+        }
+        if (!targets.length) directive.appliedActions.push({action: "no_needs_decision_work_item", ref: `TaskGroup:${taskGroup.id}`});
       } else if (taskGroup) {
         taskGroup.humanGuidance = [...(taskGroup.humanGuidance || []), {directiveRef: directive.directiveId, text: directive.instruction, addedAt: at}];
         directive.appliedActions.push({action: "task_group_guidance_appended", ref: `TaskGroup:${taskGroup.id}`});
@@ -4315,7 +4345,7 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
   const verdict = findings.length ? "changes_requested" : "passed";
   const checkpointRef = `checkpoint:${checkpoint.runId}`;
   const previousRejections = (state.reviewBundles || []).filter((item) =>
-    item.workItemId === workItem.id && item.verdict === "changes_requested");
+    item.workItemId === workItem.id && item.verdict === "changes_requested" && !item.supersededByHumanDecision);
   const duplicateRejection = verdict === "changes_requested"
     ? previousRejections.find((item) => item.checkpointRef === checkpointRef && JSON.stringify(item.findings || []) === JSON.stringify(findings))
     : null;

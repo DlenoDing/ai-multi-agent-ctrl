@@ -305,6 +305,27 @@ function verifyHumanAndOrganizationContracts(output) {
     if ((holdState.agentDispatches || []).some((item) => item.workItemId === "wi_impl_hold")) output.push("blocked_dependency hold: implementation cell dispatched before its analysis dependency was verified");
     const heldAdmission = (holdState.admissionDecisions || []).find((item) => item.workItemId === "wi_impl_hold");
     if (!heldAdmission || heldAdmission.reasonCode !== "awaiting_dependency") output.push("blocked_dependency hold: no awaiting_dependency admission recorded");
+
+    // resolve_decision actuator: reopen returns a needs_decision cell to ready and resets the rework
+    // count (supersedes prior changes_requested bundles); abandon supersedes the cell.
+    const decisionState = structuredClone(seedState);
+    ensureRuntimeCollections(decisionState, {root});
+    const decisionTg = decisionState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    decisionTg.workItems = [{id: "wi_decide", title: "决策项", status: "needs_decision", blockedReason: "independent_review_changes_requested", ownerRole: "agent-runtime", progress: 40}];
+    decisionState.reviewBundles = [{bundleId: "rvb_x", workItemId: "wi_decide", verdict: "changes_requested", status: "consumed"}];
+    createHumanDirective(decisionState, {taskGroupId: "tg_runtime_management", directiveType: "resolve_decision", workItemId: "wi_decide", resolution: "reopen"}, {actor: "acct_ct"});
+    consumeQueuedHumanDirectives(decisionState);
+    const reopened = decisionTg.workItems.find((item) => item.id === "wi_decide");
+    if (reopened.status !== "ready") output.push("resolve_decision reopen did not return the needs_decision cell to ready");
+    if (reopened.blockedReason) output.push("resolve_decision reopen left a blockedReason");
+    if (!decisionState.reviewBundles.every((item) => item.workItemId !== "wi_decide" || item.supersededByHumanDecision)) output.push("resolve_decision reopen did not reset the rework count");
+    const abandonState = structuredClone(seedState);
+    ensureRuntimeCollections(abandonState, {root});
+    const abandonTg = abandonState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    abandonTg.workItems = [{id: "wi_abandon", title: "放弃项", status: "needs_decision", blockedReason: "role_drift_guard_blocked", ownerRole: "agent-runtime", progress: 10}];
+    createHumanDirective(abandonState, {taskGroupId: "tg_runtime_management", directiveType: "resolve_decision", workItemId: "wi_abandon", resolution: "abandon"}, {actor: "acct_ct"});
+    consumeQueuedHumanDirectives(abandonState);
+    if (abandonTg.workItems.find((item) => item.id === "wi_abandon").status !== "superseded") output.push("resolve_decision abandon did not supersede the needs_decision cell");
   }
 
   // §4.5 single-cell-block guard (gap #12): a blocked cell must not escalate the whole task

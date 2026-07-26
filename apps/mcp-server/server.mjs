@@ -1255,7 +1255,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "review-mcp.review_result_consume":
       return reviewResultConsume(state, args);
     case "review-mcp.completion_readiness_compute":
-      return computeCompletionReadiness(state, args.taskGroupId || "tg_runtime_management", args);
+      return boundedTaskGroupGuard(state, args, context) || computeCompletionReadiness(state, args.taskGroupId || "tg_runtime_management", args);
     case "governance-mcp.approval_request_create":
       return approvalRequestCreate(state, args);
     case "governance-mcp.policy_decision_eval":
@@ -1283,7 +1283,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "governance-mcp.system_upgrade_external_import":
       return systemUpgradeExternalImport(state, args);
     case "governance-mcp.close_barrier_compute":
-      return computeCloseBarrier(state, args.taskGroupId || "tg_runtime_management", args);
+      return boundedTaskGroupGuard(state, args, context) || computeCloseBarrier(state, args.taskGroupId || "tg_runtime_management", args);
     case "identity-mcp.account_invite":
       return accountInvite(state, args);
     case "identity-mcp.account_suspend":
@@ -1774,6 +1774,18 @@ function principalProjectFilter(context = {}) {
   const ids = principal.projectIds;
   if (!Array.isArray(ids) || ids.includes("*")) return null;
   return new Set(ids);
+}
+
+// For read tools that would otherwise default to tg_runtime_management: a bounded principal must
+// address an in-scope taskGroupId, else it could read the control-plane project's state. Returns an
+// error result to short-circuit, or null when unrestricted / in-scope.
+function boundedTaskGroupGuard(state, args, context) {
+  const filter = principalProjectFilter(context);
+  if (!filter) return null;
+  if (!args.taskGroupId) return {ok: false, error: "task_group_id_required_for_bounded_principal"};
+  const project = state.taskGroups.find((item) => item.id === args.taskGroupId)?.projectId;
+  if (!project || !filter.has(project)) return {ok: false, error: "out_of_scope"};
+  return null;
 }
 
 function resourceSnapshot(state, args, filter) {

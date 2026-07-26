@@ -112,7 +112,9 @@ async function handle(op, args) {
       // produce a torn read (central@N with shards@N+1).
       const client = await p.connect();
       try {
-        await client.query("BEGIN TRANSACTION READ ONLY");
+        // REPEATABLE READ (not the default READ COMMITTED) so both SELECTs share ONE snapshot and
+        // cannot straddle a concurrent atomic write (central@N + shards@N+1).
+        await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
         const stateResult = await client.query(`SELECT state FROM ${ident(args.table)} WHERE id = $1`, [args.stateId]);
         const shardResult = await client.query(`SELECT shard FROM ${ident(args.shardTable)} ORDER BY project_id`);
         await client.query("COMMIT");
