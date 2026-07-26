@@ -30,10 +30,26 @@ import {
   revokeDispatchMcpGrants,
   selfCheckAgentNode
 } from "./lib/agent-gateway.mjs";
-import { handleMcpJsonRpc, isWriteTool } from "../mcp-server/server.mjs";
+import { approvalResolve, assignWorkItem, handleMcpJsonRpc, isWriteTool, permissionResolve } from "../mcp-server/server.mjs";
 import {
   canUseGitPath,
   acceptAgentCheckpoint,
+  approvalRequestCreate,
+  artifactRegister,
+  claimLease,
+  classifyDerivedTask,
+  contractPublish,
+  createExecutionTopology,
+  findingResolve,
+  findingSubmit,
+  policyDecisionEval,
+  permissionRequestSubmit,
+  releaseLease,
+  reviewBundleRegister,
+  reviewPlanCreate,
+  roomSend,
+  roomWait,
+  ruleSourceResolve,
   collectRuntimeIssue,
   computeCloseBarrier,
   computeCompletionReadiness,
@@ -1142,6 +1158,14 @@ function permissionForAction(action) {
   if (action === "orchestrator_run" || action === "agent_runtime_worker_run") return "task_group:orchestrate";
   if (action === "checkpoint_submit") return "task_group:checkpoint_submit";
   if (action === "runtime_issue_collect") return "task_group:monitor";
+  // Gap 2B: §4 REST endpoints over shared core mutators.
+  if (["finding_submit", "finding_resolve", "approval_request_create", "approval_resolve", "review_plan_create", "review_bundle_register"].includes(action)) return "task_group:review";
+  if (["work_assign", "lease_claim", "lease_release", "execution_topology_plan", "derived_task_classify"].includes(action)) return "task_group:orchestrate";
+  if (["artifact_register", "permission_request_submit"].includes(action)) return "task_group:checkpoint_submit";
+  if (["room_send", "rule_source_resolve"].includes(action)) return "task_group:control";
+  if (action === "permission_resolve") return "project:grant";
+  if (action === "contract_publish") return "project:*";
+  if (action === "policy_decision_eval") return "system:*";
   if (action === "project_config_update") return "project:update";
   if (["org_create", "org_quota_update", "org_status_update"].includes(action)) return "system:*";
   if (["org_member_create", "org_member_permissions_update", "org_member_status_update"].includes(action)) return "org:member_admin";
@@ -2935,6 +2959,241 @@ async function handleApi(req, res) {
     finishGuardedWrite(state, guard, 201, target);
     writeState(state);
     json(res, 201, target);
+    return;
+  }
+
+  // ── Gap 2B: §4 REST endpoints over shared core mutators ─────────────────────
+  const workItemAssignMatch = url.pathname.match(/^\/api\/work-items\/([^/]+)\/assign$/);
+  if (req.method === "POST" && workItemAssignMatch) {
+    const guard = beginGuardedWrite(req, state, "work_assign", `WorkItem:${workItemAssignMatch[1]}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = assignWorkItem(state, {...body, workItemId: workItemAssignMatch[1]});
+    if (result.ok === false) return json(res, 404, {error: result.error});
+    audit(state, "scheduler", "work_assign", `WorkItem:${result.workItem.id}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/findings") {
+    const guard = beginGuardedWrite(req, state, "finding_submit", `Finding:${body.findingId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = findingSubmit(state, body);
+    audit(state, "reviewer", "finding_submit", `Finding:${result.finding.findingId}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  const findingResolveMatch = url.pathname.match(/^\/api\/findings\/([^/]+)\/resolve$/);
+  if (req.method === "POST" && findingResolveMatch) {
+    const existingFinding = (state.findings || []).find((item) => item.findingId === findingResolveMatch[1]);
+    const guard = beginGuardedWrite(req, state, "finding_resolve", `Finding:${findingResolveMatch[1]}`, taskGroupScope(state, existingFinding?.taskGroupId || "tg_runtime_management"));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = findingResolve(state, {...body, findingId: findingResolveMatch[1]});
+    if (result.ok === false) return json(res, 404, {error: result.error});
+    audit(state, "policy-engine", "finding_resolve", `Finding:${result.finding.findingId}`);
+    finishGuardedWrite(state, guard, 200, result);
+    writeState(state);
+    json(res, 200, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/approval-requests") {
+    const guard = beginGuardedWrite(req, state, "approval_request_create", `ApprovalRequest:${body.approvalId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = approvalRequestCreate(state, body);
+    audit(state, "decision-center", "approval_request_create", `ApprovalRequest:${result.approvalRequest.approvalId}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  const approvalResolveMatch = url.pathname.match(/^\/api\/approval-requests\/([^/]+)\/resolve$/);
+  if (req.method === "POST" && approvalResolveMatch) {
+    const existingApproval = (state.approvalRequests || []).find((item) => item.approvalId === approvalResolveMatch[1]);
+    const guard = beginGuardedWrite(req, state, "approval_resolve", `ApprovalRequest:${approvalResolveMatch[1]}`, taskGroupScope(state, existingApproval?.taskGroupId || "tg_runtime_management"));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = approvalResolve(state, {...body, approvalId: approvalResolveMatch[1]});
+    if (result.ok === false) return json(res, 404, {error: result.error});
+    audit(state, "policy-engine", "approval_resolve", `ApprovalRequest:${result.approvalRequest.approvalId}`);
+    finishGuardedWrite(state, guard, 200, result);
+    writeState(state);
+    json(res, 200, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/policy-decisions/evaluate") {
+    const guard = beginGuardedWrite(req, state, "policy_decision_eval", `PolicyDecision:${body.decisionId || "new"}`, {resourceType: "system", resourceId: "policy_engine"});
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = policyDecisionEval(state, body);
+    audit(state, "policy-engine", "policy_decision_eval", `PolicyDecision:${result.policyDecision.decisionId}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/contracts") {
+    const contractTaskGroup = body.taskGroupId ? state.taskGroups.find((item) => item.id === body.taskGroupId) : null;
+    const contractProjectId = contractTaskGroup?.projectId || body.projectId || "prj_control_plane";
+    const guard = beginGuardedWrite(req, state, "contract_publish", `Contract:${body.contractId || "new"}`, projectScope(contractProjectId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = contractPublish(state, {...body, projectId: contractProjectId});
+    audit(state, "orchestrator", "contract_publish", `Contract:${result.contract.contractId}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  const roomMessagesMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/messages$/);
+  if (roomMessagesMatch) {
+    const roomId = roomMessagesMatch[1];
+    const roomTaskGroupId = roomId.startsWith("room_") ? roomId.slice("room_".length) : roomId;
+    if (req.method === "GET") {
+      const authenticated = requireRead(req, state, taskGroupScope(state, roomTaskGroupId));
+      if (authenticated.status) return json(res, authenticated.status, authenticated.payload);
+      const result = roomWait(state, {roomId, afterSequence: Number(url.searchParams.get("after") || url.searchParams.get("afterSequence") || 0), limit: Number(url.searchParams.get("limit") || 50)});
+      json(res, 200, result);
+      return;
+    }
+    if (req.method === "POST") {
+      const guard = beginGuardedWrite(req, state, "room_send", `Room:${roomId}`, taskGroupScope(state, body.taskGroupId || roomTaskGroupId));
+      if (guard.status) return json(res, guard.status, guard.payload);
+      const result = roomSend(state, {...body, roomId});
+      audit(state, "room-broker", "room_send", `Room:${roomId}`);
+      finishGuardedWrite(state, guard, 201, result);
+      writeState(state);
+      json(res, 201, result);
+      return;
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/leases/claim") {
+    const claimTargetId = body.repositoryOutputTargetRef || body.targetId;
+    const claimTarget = claimTargetId ? (state.repositoryOutputs || []).find((item) => item.targetId === claimTargetId) : null;
+    const guard = beginGuardedWrite(req, state, "lease_claim", `Lease:${claimTargetId || "new"}`, taskGroupScope(state, claimTarget?.taskGroupId || body.taskGroupId || "tg_runtime_management"));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = claimLease(state, body);
+    if (result.ok === false) return json(res, result.error === "repository_output_target_not_found" ? 404 : 409, result);
+    audit(state, "resource-broker", "lease_claim", `Lease:${result.lease.leaseId}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  const leaseReleaseMatch = url.pathname.match(/^\/api\/leases\/([^/]+)\/release$/);
+  if (req.method === "POST" && leaseReleaseMatch) {
+    const lease = (state.leases || []).find((item) => item.leaseId === leaseReleaseMatch[1]);
+    const leaseTargetId = lease?.resourceRef?.startsWith("RepositoryOutputTarget:") ? lease.resourceRef.slice("RepositoryOutputTarget:".length) : null;
+    const leaseTarget = leaseTargetId ? (state.repositoryOutputs || []).find((item) => item.targetId === leaseTargetId) : null;
+    const guard = beginGuardedWrite(req, state, "lease_release", `Lease:${leaseReleaseMatch[1]}`, taskGroupScope(state, leaseTarget?.taskGroupId || body.taskGroupId || "tg_runtime_management"));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = releaseLease(state, {...body, leaseId: leaseReleaseMatch[1]});
+    if (result.ok === false) return json(res, result.error === "lease_not_found" ? 404 : 409, result);
+    audit(state, "resource-broker", "lease_release", `Lease:${result.lease.leaseId}`);
+    finishGuardedWrite(state, guard, 200, result);
+    writeState(state);
+    json(res, 200, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/artifacts") {
+    const guard = beginGuardedWrite(req, state, "artifact_register", `Artifact:${body.artifactId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = artifactRegister(state, body);
+    audit(state, "agent-runtime", "artifact_register", `Artifact:${result.artifact.artifactId}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/permission-requests") {
+    const guard = beginGuardedWrite(req, state, "permission_request_submit", `PermissionRequest:${body.requestId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = permissionRequestSubmit(state, body);
+    audit(state, "permission-gateway", "permission_request_submit", `PermissionRequest:${result.permissionRequest.requestId}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  const permissionResolveMatch = url.pathname.match(/^\/api\/permission-requests\/([^/]+)\/resolve$/);
+  if (req.method === "POST" && permissionResolveMatch) {
+    const existingPermission = (state.permissionRequests || []).find((item) => item.requestId === permissionResolveMatch[1]);
+    const permissionResolveScope = existingPermission?.taskGroupId
+      ? taskGroupScope(state, existingPermission.taskGroupId)
+      : (existingPermission?.resource?.resourceType === "project" ? projectScope(existingPermission.resource.resourceId) : projectScope("prj_control_plane"));
+    const guard = beginGuardedWrite(req, state, "permission_resolve", `PermissionRequest:${permissionResolveMatch[1]}`, permissionResolveScope);
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = permissionResolve(state, {...body, requestId: permissionResolveMatch[1]});
+    if (result.ok === false) return json(res, 404, {error: result.error});
+    audit(state, "permission-gateway", "permission_resolve", `PermissionRequest:${result.permissionRequest.requestId}`);
+    finishGuardedWrite(state, guard, 200, result);
+    writeState(state);
+    json(res, 200, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/execution-topologies") {
+    const guard = beginGuardedWrite(req, state, "execution_topology_plan", `ExecutionTopology:${body.topologyId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = createExecutionTopology(state, body);
+    audit(state, "scheduler", "execution_topology_plan", `ExecutionTopology:${result.topology.topologyId}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/derived-task-requests") {
+    const guard = beginGuardedWrite(req, state, "derived_task_classify", `DerivedTaskRequest:${body.taskGroupId || "tg_runtime_management"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = classifyDerivedTask(state, body);
+    audit(state, "scheduler", "derived_task_classify", `DerivedTaskRequest:${result.roleId}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/review-plans") {
+    const guard = beginGuardedWrite(req, state, "review_plan_create", `ReviewPlan:${body.reviewPlanId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = reviewPlanCreate(state, body);
+    audit(state, "reviewer", "review_plan_create", `ReviewPlan:${result.reviewPlan.reviewPlanId}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/review-bundles") {
+    const guard = beginGuardedWrite(req, state, "review_bundle_register", `ReviewBundle:${body.reviewBundleId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = reviewBundleRegister(state, body);
+    audit(state, "reviewer", "review_bundle_register", `ReviewBundle:${result.reviewBundle.reviewBundleId}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/rule-source-resolutions") {
+    const guard = beginGuardedWrite(req, state, "rule_source_resolve", `RuleSourceResolution:${body.resolutionId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const result = ruleSourceResolve(state, body);
+    audit(state, "rule-steward", "rule_source_resolve", `RuleSourceResolution:${result.ruleSourceResolution.resolutionId}`);
+    finishGuardedWrite(state, guard, 201, result);
+    writeState(state);
+    json(res, 201, result);
     return;
   }
 

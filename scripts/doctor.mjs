@@ -49,6 +49,13 @@ async function loginAs(port, email, token) {
   return `Bearer ${login.payload.sessionToken}`;
 }
 
+function expectStatus(result, status, label) {
+  if (result.response.status !== status) {
+    throw new Error(`${label}: expected ${status}, got ${result.response.status} ${JSON.stringify(result.payload)}`);
+  }
+  return result;
+}
+
 function git(repoRoot, args, fallback = "") {
   try {
     return execFileSync("git", ["-C", repoRoot, ...args], {encoding: "utf8"}).trim();
@@ -780,6 +787,79 @@ try {
   void orgId;
   void passwordLogin;
 
+  // ── Gap 2B: §4 REST endpoints over shared core mutators (happy-path + auth deny) ──
+  const g2 = async (path, auth, key, payload, method = "POST") => jsonFetch(port, path, {
+    method,
+    headers: {...(key ? {"Idempotency-Key": key} : {}), ...(auth ? {authorization: auth} : {})},
+    ...(method === "POST" ? {body: JSON.stringify(payload || {})} : {})
+  });
+
+  // work-items assign → task_group:orchestrate
+  expectStatus(await g2("/api/work-items/work_management_ui/assign", agentAuth, "g2b-assign-ok", {taskGroupId: "tg_runtime_management", roleId: "reviewer"}), 201, "work assign happy");
+  expectStatus(await g2("/api/work-items/work_management_ui/assign", invitedAuth, "g2b-assign-deny", {taskGroupId: "tg_runtime_management", roleId: "reviewer"}), 403, "work assign deny");
+
+  // findings → task_group:review (+ cross-tenant deny + resolve)
+  const findingOk = expectStatus(await g2("/api/findings", reviewerAuth, "g2b-finding-ok", {taskGroupId: "tg_runtime_management", findingType: "review", severity: "low", summary: "doctor finding"}), 201, "finding submit happy");
+  expectStatus(await g2("/api/findings", invitedAuth, "g2b-finding-deny", {taskGroupId: "tg_runtime_management", summary: "denied"}), 403, "finding submit deny");
+  expectStatus(await g2("/api/findings", orgAdminAuth, "g2b-finding-crossorg", {taskGroupId: "tg_runtime_management", summary: "cross org"}), 403, "finding submit cross-tenant deny");
+  expectStatus(await g2(`/api/findings/${findingOk.payload.finding.findingId}/resolve`, reviewerAuth, "g2b-finding-resolve-ok", {status: "resolved", evidenceRefs: ["evidence:doctor"], rootCauseOwner: "reviewer"}), 200, "finding resolve happy");
+
+  // approval-requests → task_group:review (+ resolve)
+  const approvalOk = expectStatus(await g2("/api/approval-requests", reviewerAuth, "g2b-approval-ok", {taskGroupId: "tg_runtime_management", action: "guarded_action"}), 201, "approval create happy");
+  expectStatus(await g2("/api/approval-requests", invitedAuth, "g2b-approval-deny", {taskGroupId: "tg_runtime_management"}), 403, "approval create deny");
+  expectStatus(await g2(`/api/approval-requests/${approvalOk.payload.approvalRequest.approvalId}/resolve`, reviewerAuth, "g2b-approval-resolve-ok", {status: "approved"}), 200, "approval resolve happy");
+
+  // policy-decisions/evaluate → system:*
+  expectStatus(await g2("/api/policy-decisions/evaluate", systemAuth, "g2b-policy-ok", {action: "mcp_tool_call", allowed: true}), 201, "policy eval happy");
+  expectStatus(await g2("/api/policy-decisions/evaluate", reviewerAuth, "g2b-policy-deny", {action: "mcp_tool_call"}), 403, "policy eval deny");
+
+  // contracts → project:*
+  expectStatus(await g2("/api/contracts", systemAuth, "g2b-contract-ok", {projectId: "prj_control_plane", definitionType: "semantic_contract"}), 201, "contract publish happy");
+  expectStatus(await g2("/api/contracts", reviewerAuth, "g2b-contract-deny", {projectId: "prj_control_plane"}), 403, "contract publish deny");
+
+  // rooms/:roomId/messages → task_group:control (POST) / read (GET)
+  expectStatus(await g2("/api/rooms/room_tg_runtime_management/messages", systemAuth, "g2b-room-ok", {taskGroupId: "tg_runtime_management", text: "doctor room message"}), 201, "room send happy");
+  expectStatus(await g2("/api/rooms/room_tg_runtime_management/messages", invitedAuth, "g2b-room-deny", {taskGroupId: "tg_runtime_management", text: "x"}), 403, "room send deny");
+  const roomRead = expectStatus(await g2("/api/rooms/room_tg_runtime_management/messages", systemAuth, null, null, "GET"), 200, "room wait read happy");
+  if (!roomRead.payload.messages.some((message) => message.payload?.text === "doctor room message")) throw new Error("room wait did not return the sent message");
+  expectStatus(await g2("/api/rooms/room_tg_runtime_management/messages", invitedAuth, null, null, "GET"), 403, "room wait read deny");
+
+  // leases claim/release → task_group:orchestrate
+  const leaseTarget = expectStatus(await g2("/api/repository-output-targets", systemAuth, "g2b-lease-target", {taskGroupId: "tg_runtime_management", workItemId: "work_permissions", artifactManifestPath: "docs/artifact-manifests/g2b-lease.json", pathAllowlist: ["docs/**"]}), 201, "lease target fixture");
+  const leaseOk = expectStatus(await g2("/api/leases/claim", systemAuth, "g2b-lease-ok", {repositoryOutputTargetRef: leaseTarget.payload.targetId, holderRef: "session:doctor-g2b"}), 201, "lease claim happy");
+  expectStatus(await g2("/api/leases/claim", invitedAuth, "g2b-lease-deny", {repositoryOutputTargetRef: leaseTarget.payload.targetId}), 403, "lease claim deny");
+  expectStatus(await g2(`/api/leases/${leaseOk.payload.lease.leaseId}/release`, systemAuth, "g2b-lease-release-ok", {holderRef: "session:doctor-g2b", fencingToken: leaseOk.payload.lease.fencingToken}), 200, "lease release happy");
+
+  // artifacts → task_group:checkpoint_submit (runtime service account allowed)
+  expectStatus(await g2("/api/artifacts", agentAuth, "g2b-artifact-ok", {taskGroupId: "tg_runtime_management", artifactManifestRef: "docs/artifact-manifests/doctor.json"}), 201, "artifact register happy");
+  expectStatus(await g2("/api/artifacts", invitedAuth, "g2b-artifact-deny", {taskGroupId: "tg_runtime_management"}), 403, "artifact register deny");
+
+  // permission-requests submit/resolve → checkpoint_submit (runtime allowed) / project:grant
+  const permOk = expectStatus(await g2("/api/permission-requests", agentAuth, "g2b-perm-ok", {taskGroupId: "tg_runtime_management", permission: "task_group:read", subjectId: "acct_agent_runtime"}), 201, "permission request happy");
+  expectStatus(await g2("/api/permission-requests", invitedAuth, "g2b-perm-deny", {taskGroupId: "tg_runtime_management", permission: "task_group:read"}), 403, "permission request deny");
+  expectStatus(await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-resolve-ok", {status: "approved"}), 200, "permission resolve happy");
+
+  // execution-topologies → task_group:orchestrate
+  expectStatus(await g2("/api/execution-topologies", systemAuth, "g2b-topo-ok", {taskGroupId: "tg_runtime_management"}), 201, "execution topology happy");
+  expectStatus(await g2("/api/execution-topologies", invitedAuth, "g2b-topo-deny", {taskGroupId: "tg_runtime_management"}), 403, "execution topology deny");
+
+  // derived-task-requests → task_group:orchestrate
+  expectStatus(await g2("/api/derived-task-requests", systemAuth, "g2b-derived-ok", {taskGroupId: "tg_runtime_management", title: "review the security configuration"}), 201, "derived task happy");
+  expectStatus(await g2("/api/derived-task-requests", invitedAuth, "g2b-derived-deny", {taskGroupId: "tg_runtime_management", title: "x"}), 403, "derived task deny");
+
+  // review-plans → task_group:review
+  expectStatus(await g2("/api/review-plans", reviewerAuth, "g2b-reviewplan-ok", {taskGroupId: "tg_runtime_management"}), 201, "review plan happy");
+  expectStatus(await g2("/api/review-plans", invitedAuth, "g2b-reviewplan-deny", {taskGroupId: "tg_runtime_management"}), 403, "review plan deny");
+
+  // review-bundles → task_group:review
+  expectStatus(await g2("/api/review-bundles", reviewerAuth, "g2b-reviewbundle-ok", {taskGroupId: "tg_runtime_management"}), 201, "review bundle happy");
+  expectStatus(await g2("/api/review-bundles", invitedAuth, "g2b-reviewbundle-deny", {taskGroupId: "tg_runtime_management"}), 403, "review bundle deny");
+
+  // rule-source-resolutions → task_group:control
+  expectStatus(await g2("/api/rule-source-resolutions", systemAuth, "g2b-rulesource-ok", {taskGroupId: "tg_runtime_management", sourceRef: "reference:doctor", classification: "reference_only"}), 201, "rule source resolve happy");
+  expectStatus(await g2("/api/rule-source-resolutions", invitedAuth, "g2b-rulesource-deny", {taskGroupId: "tg_runtime_management", sourceRef: "reference:x"}), 403, "rule source resolve deny");
+
+  console.log("gap 2b §4 rest endpoints ok");
   console.log("ai-native control flow ok");
 } finally {
   child.kill("SIGTERM");

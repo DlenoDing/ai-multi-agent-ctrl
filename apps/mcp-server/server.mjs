@@ -1467,7 +1467,7 @@ function findWorkItem(state, taskGroupId, workItemId) {
   return workItemId ? taskGroup?.workItems?.find((item) => item.id === workItemId) || null : taskGroup?.workItems?.[0] || null;
 }
 
-function assignWorkItem(state, args) {
+export function assignWorkItem(state, args) {
   const taskGroup = findTaskGroup(state, args.taskGroupId);
   const workItem = findWorkItem(state, taskGroup?.id, args.workItemId);
   if (!taskGroup || !workItem) return {ok: false, error: "work_item_not_found"};
@@ -1836,7 +1836,7 @@ function permissionStatus(state, args) {
   return {permissionRequest: request || null};
 }
 
-function permissionResolve(state, args) {
+export function permissionResolve(state, args) {
   const request = state.permissionRequests.find((item) => item.requestId === args.requestId);
   if (!request) return {ok: false, error: "permission_request_not_found"};
   const at = new Date().toISOString();
@@ -1905,7 +1905,7 @@ function reviewResultConsume(state, args) {
   return {finding: finding.finding, readiness};
 }
 
-function approvalResolve(state, args) {
+export function approvalResolve(state, args) {
   const request = (state.approvalRequests || []).find((item) => item.approvalId === args.approvalId);
   if (!request) return {ok: false, error: "approval_request_not_found"};
   const status = ["approved", "rejected", "cancelled"].includes(args.status)
