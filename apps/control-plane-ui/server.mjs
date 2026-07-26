@@ -78,6 +78,7 @@ import {
   projectOwnerGrantPermissions,
   runAgentRuntimeWorker,
   runAutonomousCycle,
+  runCommandLifecycle,
   selectModel,
   syncSkillSource,
   updateTaskGroupLanguagePolicy
@@ -419,10 +420,18 @@ function finishGuardedWrite(state, guard, status, payload) {
   };
   state.decisionRecords.unshift(decisionRecord);
   state.policyDecisions.unshift(guard.policyDecision);
-  state.commands.unshift({...guard.command, status: "succeeded", resultRef: `response:${guard.idempotencyKey}`, updatedAt});
+  // Gap #3: run the guarded write through the real Command bus lifecycle (created -> admitted ->
+  // dispatched -> running -> succeeded) instead of pushing a terminal stub. Control-plane writes
+  // are internal state mutations (no external side effect), so no CommandEffect is emitted.
+  runCommandLifecycle(state, {
+    type: guard.command.type,
+    subject: guard.command.subject,
+    idempotencyKey: guard.idempotencyKey,
+    policyDecisionRef: guard.policyDecision.id,
+    resultRef: `response:${guard.idempotencyKey}`
+  });
   state.decisionRecords = state.decisionRecords.slice(0, 120);
   state.policyDecisions = state.policyDecisions.slice(0, 120);
-  state.commands = state.commands.slice(0, 120);
   state.idempotencyRecords[guard.idempotencyKey] = {status, payload, actor: guard.actor, action: guard.command.type, bodyDigest: guard.bodyDigest, createdAt: updatedAt};
   evictIdempotencyRecords(state);
   audit(state, "policy-engine", "policy_decision_allowed", guard.command.subject);
@@ -947,7 +956,7 @@ const SCOPED_ALLOWED_TOP_KEYS = new Set([
   "agentTaskContracts", "effectiveInstructionPackets", "roleDriftGuards", "modelSelectionDecisions",
   "sessionPlacementDecisions", "roleSkillOverlays", "executionTopologies", "reviewPlans", "reviewBundles",
   "checkpoints", "completionReadiness", "closeBarriers", "sharedDefinitions", "progressSnapshots", "leases",
-  "accounts", "accessGrants", "auditLog", "policyDecisions", "commands", "decisionRecords", "commandEffects",
+  "accounts", "accessGrants", "auditLog", "policyDecisions", "commands", "decisionRecords", "commandEffects", "dlqEntries", "integrationBatches",
   "idempotencyRecords", "runtimeIssuePatterns", "runtimeIssueSamples", "systemUpgradeCandidates",
   "agentGatewayEvents", "mcpCalls", "mcpProbeNodes", "instructionMetrics", "organizations",
   "humanConfirmationRequests", "humanDirectives", "transitionEvidence", "ruleSourceResolutions",
@@ -1032,6 +1041,8 @@ function scopedStateForAccount(state, account, session) {
   cloned.commands = [];
   cloned.decisionRecords = [];
   cloned.commandEffects = [];
+  cloned.dlqEntries = [];
+  cloned.integrationBatches = [];
   cloned.idempotencyRecords = {};
   cloned.runtimeIssuePatterns = [];
   cloned.runtimeIssueSamples = [];

@@ -11,6 +11,7 @@ import {
   maintainWorkerLanes,
   rotateWorkerLane,
   buildTaskContract,
+  computeCloseBarrier,
   computeProgressSnapshots,
   createHumanConfirmationRequest,
   createHumanDirective,
@@ -22,7 +23,22 @@ import {
   organizationQuotaCheck,
   runAutonomousCycle,
   selectModel,
-  updateTaskGroupLanguagePolicy
+  updateTaskGroupLanguagePolicy,
+  createCommand,
+  dispatchCommand,
+  markRunning,
+  succeedCommand,
+  failCommand,
+  retryCommand,
+  toDlq,
+  recordCommandEffect,
+  applyCommandEffect,
+  verifyingCommandEffect,
+  verifyCommandEffect,
+  classifyDlqEntry,
+  assignDlqEntry,
+  replayDlqEntry,
+  sweepCommandBus
 } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import {
   ackAgentControlCommand,
@@ -87,6 +103,7 @@ for (const tool of toolDefs) {
 verifyRuntimeJsonConflict(errors);
 verifyWorkStatusEnumConvergence(errors);
 verifyTransitionEngine(errors);
+verifyCommandBusLifecycle(errors);
 
 if (errors.length) {
   console.error("contract check failed:");
@@ -583,6 +600,111 @@ function verifyAgentGatewayContracts(output) {
     } else {
       output.push(`Agent shutdown contract could not claim a dispatch: ${shutdownClaim.reason || "unknown"}`);
     }
+  }
+}
+
+// Gap #3: the Command / CommandEffect / DLQEntry lifecycle must be real, and the close-barrier
+// command-effect / DLQ gates must actually bite. Prove both directions so neither gate is a new
+// vacuous constant: an unreconciled effect (or active DLQ) blocks the close; reconciling the
+// effect / clearing the DLQ un-blocks the corresponding gate.
+function verifyCommandBusLifecycle(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const tgId = "tg_runtime_management";
+
+  // Baseline: with no command effects and no DLQ entries, both gates pass (not vacuously false).
+  const base = computeCloseBarrier(state, tgId, {mutate: false});
+  if (base.gateResults.all_command_effects_terminal?.status !== "passed") {
+    output.push("command-bus: baseline all_command_effects_terminal should pass with no effects");
+  }
+  if (base.gateResults.no_active_dlq?.status !== "passed") {
+    output.push("command-bus: baseline no_active_dlq should pass with no DLQ entries");
+  }
+
+  // Happy path with no side effect: created -> admitted -> dispatched -> running -> succeeded.
+  const cmd = createCommand(state, {type: "control_write", taskGroupId: tgId, subject: `TaskGroup:${tgId}`});
+  if (cmd.status !== "admitted") output.push("command-bus: createCommand did not admit the command via policy-engine");
+  dispatchCommand(state, cmd, {targetRef: "target:x"});
+  if (cmd.status !== "dispatched") output.push("command-bus: dispatchCommand did not move admitted -> dispatched");
+  markRunning(state, cmd, {});
+  const done = succeedCommand(state, cmd, {resultRef: "result:x"});
+  if (done.command.status !== "succeeded" || done.commandEffect) {
+    output.push("command-bus: no-side-effect command should succeed without a CommandEffect");
+  }
+
+  // Side-effecting command records a CommandEffect and reconciles it to verified.
+  const cmd2 = createCommand(state, {type: "repository_push", taskGroupId: tgId, subject: `TaskGroup:${tgId}`});
+  dispatchCommand(state, cmd2, {});
+  markRunning(state, cmd2, {});
+  const sideDone = succeedCommand(state, cmd2, {resultRef: "result:y", sideEffect: {taskGroupId: tgId}});
+  if (!sideDone.commandEffect || sideDone.commandEffect.status !== "verified") {
+    output.push("command-bus: side-effect command did not record and reconcile a CommandEffect to verified");
+  }
+  if (computeCloseBarrier(state, tgId, {mutate: false}).gateResults.all_command_effects_terminal?.status !== "passed") {
+    output.push("command-bus: a reconciled (verified) CommandEffect must not block the close barrier");
+  }
+
+  // Unreconciled effect must block the close-barrier command-effect gate.
+  const cmd3 = createCommand(state, {type: "repository_push", taskGroupId: tgId, subject: `TaskGroup:${tgId}`});
+  dispatchCommand(state, cmd3, {});
+  markRunning(state, cmd3, {});
+  const pending = recordCommandEffect(state, cmd3, {taskGroupId: tgId, autoReconcile: false});
+  if (pending.status !== "prepared") output.push("command-bus: recordCommandEffect autoReconcile:false should leave effect prepared");
+  const blocked = computeCloseBarrier(state, tgId, {mutate: false});
+  if (blocked.gateResults.all_command_effects_terminal?.status !== "blocked") {
+    output.push("command-bus: an unreconciled CommandEffect did not block all_command_effects_terminal");
+  }
+  if (!blocked.blockingObjects.some((item) => item.gate === "all_command_effects_terminal")) {
+    output.push("command-bus: blocked close barrier did not list the command-effect gate as a blocker");
+  }
+  // Drive it through applied -> verifying -> verified and confirm the gate clears.
+  applyCommandEffect(state, pending, {});
+  verifyingCommandEffect(state, pending, {});
+  verifyCommandEffect(state, pending, {});
+  if (pending.status !== "verified") output.push("command-bus: manual CommandEffect reconciliation did not reach verified");
+  if (computeCloseBarrier(state, tgId, {mutate: false}).gateResults.all_command_effects_terminal?.status !== "passed") {
+    output.push("command-bus: reconciling the CommandEffect did not clear all_command_effects_terminal");
+  }
+
+  // Failed command exhausting attempts lands in the DLQ, which blocks no_active_dlq until resolved.
+  const cmd4 = createCommand(state, {type: "repository_push", taskGroupId: tgId, subject: `TaskGroup:${tgId}`, maxAttempts: 1});
+  dispatchCommand(state, cmd4, {});
+  markRunning(state, cmd4, {});
+  failCommand(state, cmd4, {failureRef: "failure:x"});
+  if (cmd4.status !== "failed") output.push("command-bus: failCommand did not move running -> failed");
+  const dlq = toDlq(state, cmd4, {reason: "max_attempts_exceeded"});
+  if (cmd4.status !== "dlq" || dlq.dlqEntry.status !== "created") {
+    output.push("command-bus: toDlq did not move the command to dlq and create a DLQ entry");
+  }
+  const dlqBlocked = computeCloseBarrier(state, tgId, {mutate: false});
+  if (dlqBlocked.gateResults.no_active_dlq?.status !== "blocked") {
+    output.push("command-bus: an active DLQ entry did not block no_active_dlq");
+  }
+  classifyDlqEntry(state, dlq.dlqEntry, {rootCauseHint: "flaky remote push"});
+  assignDlqEntry(state, dlq.dlqEntry, {ownerRole: "release"});
+  replayDlqEntry(state, dlq.dlqEntry, {});
+  if (dlq.dlqEntry.status !== "replayed") output.push("command-bus: DLQ entry did not progress created -> classified -> assigned -> replayed");
+  if (computeCloseBarrier(state, tgId, {mutate: false}).gateResults.no_active_dlq?.status !== "passed") {
+    output.push("command-bus: replaying the DLQ entry did not clear no_active_dlq");
+  }
+
+  // Retry: a failed command within its attempt budget re-admits.
+  const cmd5 = createCommand(state, {type: "repository_push", taskGroupId: tgId, subject: `TaskGroup:${tgId}`, maxAttempts: 3});
+  dispatchCommand(state, cmd5, {});
+  markRunning(state, cmd5, {});
+  failCommand(state, cmd5, {failureRef: "failure:y"});
+  const retried = retryCommand(state, cmd5, {});
+  if (!retried || cmd5.status !== "admitted") {
+    output.push("command-bus: retryCommand did not re-admit a failed command within its attempt budget");
+  }
+
+  // Sweeper: a running command past its timeoutAt is timed out on the maintenance cadence.
+  const cmd6 = createCommand(state, {type: "repository_push", taskGroupId: tgId, subject: `TaskGroup:${tgId}`, timeoutAt: new Date(Date.now() - 1000).toISOString()});
+  dispatchCommand(state, cmd6, {});
+  markRunning(state, cmd6, {});
+  sweepCommandBus(state);
+  if (cmd6.status !== "timed_out") {
+    output.push("command-bus: sweepCommandBus did not time out a running command past its timeoutAt");
   }
 }
 

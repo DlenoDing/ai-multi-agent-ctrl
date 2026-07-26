@@ -231,6 +231,16 @@ export const projectOwnerGrantPermissions = Object.freeze([
 const reasoningRank = {low: 0, standard: 1, medium: 2, high: 3, max: 4, ultra: 5};
 const modelTierRank = {standard: 0, frontier_economy: 1, frontier_standard: 2, frontier_plus: 3};
 
+// Gap #3: terminal state sets for the Command / CommandEffect / DLQEntry state machines
+// (spec/state-machines.yaml). The close-barrier and completion-readiness gates use these
+// to decide whether a command bus object is still "in flight" and must block a close.
+export const COMMAND_TERMINAL_STATES = Object.freeze(["succeeded", "cancelled", "timed_out", "compensated", "dlq"]);
+export const COMMAND_EFFECT_TERMINAL_STATES = Object.freeze(["verified", "rolled_back", "abandoned"]);
+export const DLQ_ENTRY_TERMINAL_STATES = Object.freeze(["replayed", "discarded", "superseded"]);
+const COMMAND_TERMINAL = new Set(COMMAND_TERMINAL_STATES);
+const COMMAND_EFFECT_TERMINAL = new Set(COMMAND_EFFECT_TERMINAL_STATES);
+const DLQ_ENTRY_TERMINAL = new Set(DLQ_ENTRY_TERMINAL_STATES);
+
 const defaultLanguagePolicy = Object.freeze({
   schemaVersion: "language-policy/v1",
   languageTag: "zh-CN",
@@ -475,6 +485,8 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.findings ||= [];
   state.qualityGates ||= [];
   state.commandEffects ||= [];
+  state.dlqEntries ||= [];
+  state.integrationBatches ||= [];
   state.progressSnapshots ||= [];
   state.repositoryOutputs ||= [];
   state.sharedDefinitions ||= [];
@@ -1450,6 +1462,7 @@ export function runAutonomousCycle(state, request = {}) {
   expireStaleHumanConfirmations(state);
   expireStaleQueuedDispatches(state);
   maintainWorkerLanes(state);
+  sweepCommandBus(state);
   const taskGroups = (state.taskGroups || []).filter((taskGroup) => !request.taskGroupId || taskGroup.id === request.taskGroupId);
   for (const taskGroup of taskGroups) {
     if (["closed", "aborted"].includes(taskGroup.status) || ["active_paused_by_freeze", "active_paused_by_control"].includes(taskGroup.goalExecutionStatus)) continue;
@@ -1769,6 +1782,28 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {})
   recomputeTaskGroup(taskGroup);
   ensureTaskAnalysis(state, taskGroup);
   appendEvent(state, "checkpoint_submitted", "Checkpoint", `${checkpoint.taskGroupId}:${checkpoint.workId}:${checkpoint.runId}`, session.roleId, checkpoint);
+  // Gap #3: the accepted checkpoint carries a real external side effect (the verified git push).
+  // Record it through the command bus so a CommandEffect is emitted and reconciled to `verified`
+  // — this is what makes the close-barrier command-effect gate a live check rather than vacuous.
+  const push = evidence.normalizedPushRefs?.at(-1);
+  runCommandLifecycle(state, {
+    type: "repository_push",
+    subject: `TaskGroup:${taskGroup.id}`,
+    projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id,
+    idempotencyKey: `cmd:checkpoint:${checkpoint.runId}`,
+    resultRef: `checkpoint:${checkpoint.runId}`,
+    sideEffect: {
+      taskGroupId: taskGroup.id,
+      projectId: taskGroup.projectId,
+      externalOperationId: push?.providerOperationId || `git-push:${dispatch.dispatchId}:${checkpoint.runId}`,
+      fencingToken: target.leaseRef || `fence:${target.targetId}`,
+      beforeDigest: digestOf({target: target.targetId, before: dispatch.taskContractDigest || checkpoint.runId}),
+      afterDigest: push?.remoteSha ? `sha256:${String(push.remoteSha).padEnd(64, "0").slice(0, 64)}` : digestOf({target: target.targetId, after: checkpoint.runId}),
+      resultRef: `checkpoint:${checkpoint.runId}`,
+      effectVerifyEvidence: `effect_verify_evidence:checkpoint:${checkpoint.runId}`
+    }
+  });
   return {accepted: true, status: 201, checkpoint};
 }
 
@@ -2361,7 +2396,7 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
       !(state.reviewBundles || []).some((bundle) => bundle.workItemId === item.id && bundle.verdict === "passed")),
     no_pending_permission_or_approval: (state.permissionRequests || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)) ||
       (state.approvalRequests || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)),
-    no_unreconciled_command_effect: (state.commandEffects || []).some((item) => item.taskGroupId === taskGroupId && item.status !== "reconciled"),
+    no_unreconciled_command_effect: (state.commandEffects || []).some((item) => item.taskGroupId === taskGroupId && !COMMAND_EFFECT_TERMINAL.has(item.status)),
     no_pending_human_confirmations: (state.humanConfirmationRequests || []).some((item) => item.taskGroupId === taskGroupId && item.status === "pending"),
     no_pending_human_directives: (state.humanDirectives || []).some((item) => item.taskGroupId === taskGroupId && ["queued", "acknowledged"].includes(item.status))
   };
@@ -2433,9 +2468,9 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     no_pending_permissions: forTaskGroup(state.permissionRequests).some((item) => pendingStatuses.includes(item.status)),
     no_pending_approvals: forTaskGroup(state.approvalRequests).some((item) => pendingStatuses.includes(item.status)),
     all_policy_decisions_terminal: false,
-    all_commands_terminal: (state.commands || []).some((command) => String(command.subject || "").includes(taskGroupId) && !["succeeded", "failed", "cancelled"].includes(command.status)),
-    all_command_effects_terminal: forTaskGroup(state.commandEffects).some((item) => item.status !== "reconciled"),
-    no_active_dlq: false,
+    all_commands_terminal: (state.commands || []).some((command) => (command.taskGroupId === taskGroupId || String(command.subject || "").includes(taskGroupId)) && !COMMAND_TERMINAL.has(command.status)),
+    all_command_effects_terminal: forTaskGroup(state.commandEffects).some((item) => !COMMAND_EFFECT_TERMINAL.has(item.status)),
+    no_active_dlq: forTaskGroup(state.dlqEntries).some((item) => !DLQ_ENTRY_TERMINAL.has(item.status)),
     all_leases_terminal: (state.leases || []).some((lease) => lease.status === "active" && leaseAppliesToTaskGroup(state, lease, taskGroupId)),
     no_active_temp_grants: (state.mcpGrants || []).some((grant) => grant.taskGroupId === taskGroupId && grant.grantStatus === "issued" && new Date(grant.expiresAt || 0).getTime() > nowMs),
     no_active_secret_leases: false,
@@ -2457,7 +2492,7 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     all_shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => definition.status !== "active"),
     all_repository_output_targets_terminal: forTaskGroup(state.repositoryOutputs).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status))
   };
-  const notModeledGates = new Set(["all_policy_decisions_terminal", "no_active_dlq", "no_active_secret_leases", "no_open_external_capability_boundaries", "release_manifest_ready"]);
+  const notModeledGates = new Set(["all_policy_decisions_terminal", "no_active_secret_leases", "no_open_external_capability_boundaries", "release_manifest_ready"]);
   const gates = Object.keys(gateFailures);
   const failedGates = gates.filter((gate) => gateFailures[gate]);
   const blockers = [...readiness.blockingObjects];
@@ -3597,6 +3632,331 @@ export function expireStaleQueuedDispatches(state) {
   return expired;
 }
 
+// ---- Command Bus lifecycle (Gap #3) ----------------------------------------------------
+// Real created->admitted->dispatched->running->succeeded/failed lifecycle for the Command
+// machine, plus the CommandEffect and DLQEntry machines. Every edge is validated through the
+// transition engine (assertTransition via recordTransition). Side-effecting commands emit a
+// CommandEffect (satisfying `effect_record_if_side_effect`); exhausted failures land in the DLQ.
+// This makes the close-barrier `all_command_effects_terminal` / `no_active_dlq` gates real
+// instead of vacuously true.
+
+function capCommandBus(state) {
+  if ((state.commands || []).length > 240) state.commands = state.commands.slice(0, 240);
+  if ((state.commandEffects || []).length > 240) state.commandEffects = state.commandEffects.slice(0, 240);
+  if ((state.dlqEntries || []).length > 240) state.dlqEntries = state.dlqEntries.slice(0, 240);
+}
+
+export function createCommand(state, input = {}) {
+  ensureRuntimeCollections(state);
+  const at = new Date().toISOString();
+  const command = {
+    schemaVersion: "command/v1",
+    id: input.commandId || createId("cmd"),
+    type: input.type || "control_command",
+    subject: input.subject || (input.taskGroupId ? `TaskGroup:${input.taskGroupId}` : "control-plane"),
+    projectId: input.projectId || "prj_control_plane",
+    ...(input.taskGroupId ? {taskGroupId: input.taskGroupId} : {}),
+    status: "created",
+    idempotencyKey: input.idempotencyKey || createId("idem_cmd"),
+    policyDecisionRef: input.policyDecisionRef || `policy:command:${createId("pd")}`,
+    attempts: 0,
+    maxAttempts: Math.max(1, Number(input.maxAttempts || 3)),
+    ...(input.timeoutAt ? {timeoutAt: input.timeoutAt} : {}),
+    ...(input.targetRef ? {targetRef: input.targetRef} : {}),
+    createdAt: at,
+    updatedAt: at
+  };
+  state.commands.unshift(command);
+  // created -> admitted (policy-engine): policy_passed + idempotency_key
+  recordTransition(state, "Command", command.id, "created", "admitted", "policy-engine", {
+    policy_passed: `policy_passed:${command.policyDecisionRef}`,
+    idempotency_key: command.idempotencyKey
+  });
+  command.status = "admitted";
+  command.updatedAt = new Date().toISOString();
+  appendEvent(state, "command_admitted", "Command", command.id, "policy-engine", {projectId: command.projectId, taskGroupId: command.taskGroupId});
+  capCommandBus(state);
+  return command;
+}
+
+export function dispatchCommand(state, command, input = {}) {
+  // admitted -> dispatched (command-bus): target_available
+  recordTransition(state, "Command", command.id, "admitted", "dispatched", "command-bus", {
+    target_available: input.targetRef || command.targetRef || `target_available:${command.id}`
+  });
+  command.status = "dispatched";
+  if (input.targetRef) command.targetRef = input.targetRef;
+  command.updatedAt = new Date().toISOString();
+  return command;
+}
+
+export function markRunning(state, command, input = {}) {
+  // dispatched -> running (agent-runtime): dispatch_ack
+  recordTransition(state, "Command", command.id, "dispatched", "running", "agent-runtime", {
+    dispatch_ack: input.dispatchAck || `dispatch_ack:${command.id}`
+  });
+  command.status = "running";
+  command.updatedAt = new Date().toISOString();
+  return command;
+}
+
+export function succeedCommand(state, command, input = {}) {
+  let commandEffect = null;
+  let effectRef = "no_side_effect";
+  if (input.sideEffect) {
+    commandEffect = recordCommandEffect(state, command, {...input.sideEffect, taskGroupId: input.sideEffect.taskGroupId || command.taskGroupId});
+    effectRef = `command_effect_ref:CommandEffect:${commandEffect.effectId}`;
+    command.commandEffectRef = `CommandEffect:${commandEffect.effectId}`;
+  }
+  const from = command.status === "checkpointed" ? "checkpointed" : "running";
+  // running|checkpointed -> succeeded (agent-runtime): result_ref + effect_record_if_side_effect
+  recordTransition(state, "Command", command.id, from, "succeeded", "agent-runtime", {
+    result_ref: input.resultRef || `result_ref:${command.id}`,
+    effect_record_if_side_effect: effectRef
+  });
+  command.status = "succeeded";
+  command.resultRef = input.resultRef || `result_ref:${command.id}`;
+  command.updatedAt = new Date().toISOString();
+  appendEvent(state, "command_succeeded", "Command", command.id, "agent-runtime", {projectId: command.projectId, taskGroupId: command.taskGroupId, hasSideEffect: Boolean(commandEffect)});
+  capCommandBus(state);
+  return {command, commandEffect};
+}
+
+export function failCommand(state, command, input = {}) {
+  // running -> failed (agent-runtime): failure_ref
+  recordTransition(state, "Command", command.id, "running", "failed", "agent-runtime", {
+    failure_ref: input.failureRef || `failure_ref:${command.id}`
+  });
+  command.status = "failed";
+  command.failureRef = input.failureRef || `failure_ref:${command.id}`;
+  command.attempts = Number(command.attempts || 0) + 1;
+  command.updatedAt = new Date().toISOString();
+  appendEvent(state, "command_failed", "Command", command.id, "agent-runtime", {projectId: command.projectId, taskGroupId: command.taskGroupId, failureRef: command.failureRef});
+  return command;
+}
+
+export function retryCommand(state, command, input = {}) {
+  // failed -> admitted (command-bus): retry_policy_allows (only while attempts < maxAttempts)
+  if (command.status !== "failed") return null;
+  if (Number(command.attempts || 0) >= Number(command.maxAttempts || 1)) return null;
+  recordTransition(state, "Command", command.id, "failed", "admitted", "command-bus", {
+    retry_policy_allows: input.retryPolicyRef || `retry_policy_allows:${command.attempts}/${command.maxAttempts}`
+  });
+  command.status = "admitted";
+  command.updatedAt = new Date().toISOString();
+  return command;
+}
+
+export function timeoutCommand(state, command, input = {}) {
+  // running -> timed_out (command-bus): timeout_at_elapsed
+  recordTransition(state, "Command", command.id, "running", "timed_out", "command-bus", {
+    timeout_at_elapsed: input.reason || `timeout_at_elapsed:${command.timeoutAt || command.id}`
+  });
+  command.status = "timed_out";
+  command.updatedAt = new Date().toISOString();
+  appendEvent(state, "command_failed", "Command", command.id, "command-bus", {projectId: command.projectId, taskGroupId: command.taskGroupId, reason: "timeout_at_elapsed"});
+  return command;
+}
+
+export function cancelCommand(state, command, input = {}) {
+  // running -> cancelled (command-bus): cancel_ref
+  recordTransition(state, "Command", command.id, "running", "cancelled", "command-bus", {
+    cancel_ref: input.cancelRef || `cancel_ref:${command.id}`
+  });
+  command.status = "cancelled";
+  command.updatedAt = new Date().toISOString();
+  return command;
+}
+
+export function compensateCommand(state, command, input = {}) {
+  // failed -> compensated (command-bus): compensation_command_verified
+  recordTransition(state, "Command", command.id, "failed", "compensated", "command-bus", {
+    compensation_command_verified: input.compensationRef || `compensation_command_verified:${command.id}`
+  });
+  command.status = "compensated";
+  command.updatedAt = new Date().toISOString();
+  return command;
+}
+
+export function toDlq(state, command, input = {}) {
+  // failed -> dlq (command-bus): max_attempts_exceeded + create a DLQEntry
+  recordTransition(state, "Command", command.id, "failed", "dlq", "command-bus", {
+    max_attempts_exceeded: `max_attempts_exceeded:${command.attempts}/${command.maxAttempts}`
+  });
+  command.status = "dlq";
+  command.updatedAt = new Date().toISOString();
+  const dlqEntry = createDlqEntry(state, {
+    commandId: command.id,
+    projectId: command.projectId,
+    taskGroupId: command.taskGroupId,
+    reason: input.reason || command.failureRef || "max_attempts_exceeded",
+    sourceObjectRef: `Command:${command.id}`
+  });
+  return {command, dlqEntry};
+}
+
+// CommandEffect machine: prepared -> applied -> verifying -> verified (reconciled).
+export function recordCommandEffect(state, command, input = {}) {
+  ensureRuntimeCollections(state);
+  const at = new Date().toISOString();
+  const effect = {
+    schemaVersion: "command-effect/v1",
+    effectId: input.effectId || createId("cef"),
+    commandId: command?.id || input.commandId,
+    projectId: input.projectId || command?.projectId || "prj_control_plane",
+    ...(input.taskGroupId || command?.taskGroupId ? {taskGroupId: input.taskGroupId || command?.taskGroupId} : {}),
+    status: "prepared",
+    externalOperationId: input.externalOperationId || `ext:${command?.id || effectRandom()}`,
+    fencingToken: input.fencingToken || `fence:${command?.id || effectRandom()}`,
+    beforeDigest: input.beforeDigest || digestOf({command: command?.id, phase: "before", nonce: at}),
+    createdAt: at,
+    updatedAt: at
+  };
+  state.commandEffects.unshift(effect);
+  appendEvent(state, "command_effect_prepared", "CommandEffect", effect.effectId, "agent-runtime", {projectId: effect.projectId, taskGroupId: effect.taskGroupId, commandId: effect.commandId});
+  capCommandBus(state);
+  if (input.autoReconcile !== false) reconcileCommandEffect(state, effect, input);
+  return effect;
+}
+
+function effectRandom() {
+  return Math.random().toString(36).slice(2, 8);
+}
+
+export function applyCommandEffect(state, effect, input = {}) {
+  // prepared -> applied (agent-runtime): before_digest + external_operation_id + fencing_token
+  recordTransition(state, "CommandEffect", effect.effectId, "prepared", "applied", "agent-runtime", {
+    before_digest: effect.beforeDigest,
+    external_operation_id: effect.externalOperationId,
+    fencing_token: effect.fencingToken
+  });
+  effect.status = "applied";
+  effect.updatedAt = new Date().toISOString();
+  return effect;
+}
+
+export function verifyingCommandEffect(state, effect, input = {}) {
+  effect.afterDigest = input.afterDigest || digestOf({effect: effect.effectId, phase: "after"});
+  effect.resultRef = input.resultRef || `result_ref:${effect.effectId}`;
+  // applied -> verifying (agent-runtime): after_digest + result_ref
+  recordTransition(state, "CommandEffect", effect.effectId, "applied", "verifying", "agent-runtime", {
+    after_digest: effect.afterDigest,
+    result_ref: effect.resultRef
+  });
+  effect.status = "verifying";
+  effect.updatedAt = new Date().toISOString();
+  return effect;
+}
+
+export function verifyCommandEffect(state, effect, input = {}) {
+  // verifying -> verified (reviewer): effect_verify_evidence
+  recordTransition(state, "CommandEffect", effect.effectId, "verifying", "verified", "reviewer", {
+    effect_verify_evidence: input.effectVerifyEvidence || `effect_verify_evidence:${effect.effectId}`
+  });
+  effect.status = "verified";
+  effect.updatedAt = new Date().toISOString();
+  appendEvent(state, "command_effect_verified", "CommandEffect", effect.effectId, "reviewer", {projectId: effect.projectId, taskGroupId: effect.taskGroupId});
+  return effect;
+}
+
+function reconcileCommandEffect(state, effect, input = {}) {
+  applyCommandEffect(state, effect, input);
+  verifyingCommandEffect(state, effect, input);
+  verifyCommandEffect(state, effect, input);
+  return effect;
+}
+
+// DLQEntry machine: created -> classified -> assigned -> replayed|discarded|superseded.
+export function createDlqEntry(state, input = {}) {
+  ensureRuntimeCollections(state);
+  const at = new Date().toISOString();
+  const entry = {
+    schemaVersion: "dlq-entry/v1",
+    entryId: input.entryId || createId("dlq"),
+    ...(input.commandId ? {commandId: input.commandId} : {}),
+    projectId: input.projectId || "prj_control_plane",
+    ...(input.taskGroupId ? {taskGroupId: input.taskGroupId} : {}),
+    status: "created",
+    sourceObjectRef: input.sourceObjectRef || (input.commandId ? `Command:${input.commandId}` : "unknown"),
+    reason: input.reason || "max_attempts_exceeded",
+    createdAt: at,
+    updatedAt: at
+  };
+  state.dlqEntries.unshift(entry);
+  appendEvent(state, "dlq_entry_created", "DLQEntry", entry.entryId, "command-bus", {projectId: entry.projectId, taskGroupId: entry.taskGroupId, reason: entry.reason});
+  capCommandBus(state);
+  return entry;
+}
+
+export function classifyDlqEntry(state, entry, input = {}) {
+  // created -> classified (monitor): root_cause_hint
+  recordTransition(state, "DLQEntry", entry.entryId, "created", "classified", "monitor", {
+    root_cause_hint: input.rootCauseHint || `root_cause_hint:${entry.entryId}`
+  });
+  entry.status = "classified";
+  entry.rootCauseHint = input.rootCauseHint || `root_cause_hint:${entry.entryId}`;
+  entry.updatedAt = new Date().toISOString();
+  return entry;
+}
+
+export function assignDlqEntry(state, entry, input = {}) {
+  // classified -> assigned (orchestrator): owner_role
+  recordTransition(state, "DLQEntry", entry.entryId, "classified", "assigned", "orchestrator", {
+    owner_role: input.ownerRole || "release"
+  });
+  entry.status = "assigned";
+  entry.ownerRole = input.ownerRole || "release";
+  entry.updatedAt = new Date().toISOString();
+  return entry;
+}
+
+export function replayDlqEntry(state, entry, input = {}) {
+  // assigned -> replayed (command-bus): replay_policy_passed
+  recordTransition(state, "DLQEntry", entry.entryId, "assigned", "replayed", "command-bus", {
+    replay_policy_passed: input.replayPolicyRef || `replay_policy_passed:${entry.entryId}`
+  });
+  entry.status = "replayed";
+  entry.updatedAt = new Date().toISOString();
+  appendEvent(state, "dlq_entry_replayed", "DLQEntry", entry.entryId, "command-bus", {projectId: entry.projectId, taskGroupId: entry.taskGroupId});
+  return entry;
+}
+
+export function discardDlqEntry(state, entry, input = {}) {
+  // assigned -> discarded (orchestrator): decision_record + resolution_effect_ref
+  recordTransition(state, "DLQEntry", entry.entryId, "assigned", "discarded", "orchestrator", {
+    decision_record: input.decisionRecord || `decision_record:${entry.entryId}`,
+    resolution_effect_ref: input.resolutionEffectRef || `resolution_effect_ref:${entry.entryId}`
+  });
+  entry.status = "discarded";
+  entry.updatedAt = new Date().toISOString();
+  return entry;
+}
+
+// Sweeper: applied on the same cadence as expireStaleQueuedDispatches / maintainWorkerLanes.
+// It applies timeout_at_elapsed to running commands whose timeoutAt has passed so a stuck
+// command cannot silently keep the close-barrier `all_commands_terminal` gate blocked.
+export function sweepCommandBus(state, options = {}) {
+  ensureRuntimeCollections(state);
+  const nowMs = options.nowMs || Date.now();
+  const swept = {timedOut: []};
+  for (const command of state.commands || []) {
+    if (command.status === "running" && command.timeoutAt && new Date(command.timeoutAt).getTime() <= nowMs) {
+      timeoutCommand(state, command, {reason: `timeout_at_elapsed:${command.timeoutAt}`});
+      swept.timedOut.push(command.id);
+    }
+  }
+  return swept;
+}
+
+// One-shot helper for control-plane write paths: run created->admitted->dispatched->running->
+// succeeded and (when the write has an external side effect) emit + reconcile a CommandEffect.
+export function runCommandLifecycle(state, input = {}) {
+  const command = createCommand(state, input);
+  dispatchCommand(state, command, {targetRef: input.targetRef});
+  markRunning(state, command, {dispatchAck: input.dispatchAck});
+  return succeedCommand(state, command, {resultRef: input.resultRef, sideEffect: input.sideEffect});
+}
+
 export function needsReviewBackfill(state, taskGroup, workItem) {
   if (workItem.reviewBundleRef) return false;
   if ((state.reviewBundles || []).some((bundle) => bundle.workItemId === workItem.id && bundle.verdict === "passed")) return false;
@@ -3879,15 +4239,16 @@ export function roomSend(state, args) {
   };
   state.roomMessages.push(message);
   pruneRoomMessages(state);
-  state.commands.unshift({
-    id: createId("cmd_room"),
+  // room_send persists a RoomMessage (an internal write, no external side effect) — run it
+  // through the real command bus lifecycle so it reaches a terminal `succeeded` command
+  // without emitting a CommandEffect.
+  runCommandLifecycle(state, {
     type: "room_send",
     subject: `Room:${roomId}`,
-    status: "succeeded",
-    idempotencyKey: args.idempotencyKey,
-    resultRef: `RoomMessage:${message.messageId}`,
-    createdAt: at,
-    updatedAt: at
+    projectId: args.projectId,
+    ...(args.taskGroupId ? {taskGroupId: args.taskGroupId} : {}),
+    idempotencyKey: args.idempotencyKey || `cmd:room:${message.messageId}`,
+    resultRef: `RoomMessage:${message.messageId}`
   });
   state.eventLog.unshift({
     id: createId("evt_room"),

@@ -30,6 +30,7 @@ import {
   normalizeTaskGroupLanguagePolicy,
   projectOwnerGrantPermissions,
   runAutonomousCycle,
+  runCommandLifecycle,
   selectModel,
   syncSkillSource,
   approvalRequestCreate,
@@ -2073,11 +2074,30 @@ function progressGet(state, args, scopeType) {
 
 function guardedActionDispatch(state, args) {
   const decision = policyDecisionEval(state, {action: args.action || "guarded_action", resource: args.resource || {}, allowed: args.allowed !== false}).policyDecision;
+  if (decision.result !== "allowed") {
+    return {
+      commandResult: {
+        commandId: createId("cmd_guarded"),
+        action: args.action || "guarded_action",
+        status: "denied",
+        policyDecisionRef: decision.decisionId
+      }
+    };
+  }
+  // Gap #3: an allowed guarded action runs the real Command bus lifecycle to a terminal command.
+  const taskGroupId = args.taskGroupId || args.resource?.taskGroupId;
+  const {command} = runCommandLifecycle(state, {
+    type: args.action || "guarded_action",
+    subject: taskGroupId ? `TaskGroup:${taskGroupId}` : (args.resource?.resourceId ? String(args.resource.resourceId) : "control-plane"),
+    ...(taskGroupId ? {taskGroupId} : {}),
+    policyDecisionRef: decision.decisionId,
+    resultRef: `guarded_action:${decision.decisionId}`
+  });
   return {
     commandResult: {
-      commandId: createId("cmd_guarded"),
+      commandId: command.id,
       action: args.action || "guarded_action",
-      status: decision.result === "allowed" ? "accepted" : "denied",
+      status: "accepted",
       policyDecisionRef: decision.decisionId
     }
   };
