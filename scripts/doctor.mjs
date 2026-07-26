@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 
@@ -786,6 +786,8 @@ try {
 }
 
 const [code, signal] = await exitPromise;
+try { rmSync(doctorRepo.base, {recursive: true, force: true}); } catch {}
+if (!process.env.AIMAC_DOCTOR_RUNTIME_DIR) { try { rmSync(join(root, doctorRuntimeDir), {recursive: true, force: true}); } catch {} }
 if (code && signal !== "SIGTERM") {
   throw new Error(`doctor server exited with ${code}: ${stderr}`);
 }

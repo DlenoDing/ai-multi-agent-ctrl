@@ -266,6 +266,8 @@ function executionProfileLabel(code) { return EXECUTION_PROFILE_LABELS[String(co
 // 任务执行类别 / 推理档 专用映射（避免 verification 与"验证中"等跨域冲突）
 const TASK_EXECUTION_CLASS_LABELS = { verification: "定向验证", short_execution: "短机械任务", deep_analysis: "深度分析", implementation: "实现", mixed_analysis_implementation: "分析并实现" };
 const REASONING_LEVEL_LABELS = { high: "高", medium: "中", standard: "标准", low: "低", minimal: "最简" };
+const LANE_FUNCTION_LABELS = { ...TASK_EXECUTION_CLASS_LABELS, general_execution: "通用执行", review: "评审", analysis: "分析", short_execution: "短机械任务", implementation: "实现" };
+function laneFunctionLabel(value) { return value ? (LANE_FUNCTION_LABELS[value] || value) : "-"; }
 // 模型决策的中文可读摘要（原始 modelDecision 为机器契约技术串，此处从结构化字段生成人读版本）
 function modelDecisionSummaryZh(decision) {
   const parts = [];
@@ -2059,7 +2061,7 @@ function renderMonitor() {
   const lanesAll = (state.workerLanes || []).filter((lane) => groups.some((taskGroup) => taskGroup.id === lane.taskGroupId));
   const laneRows = lanesAll.slice(0, 20).map((lane) => row([
     esc(t(lane.roleId)),
-    esc(t(lane.laneFunction)),
+    esc(laneFunctionLabel(lane.laneFunction)),
     customBadge((LANE_STATUS[lane.status] || {label: lane.status}).label, (LANE_STATUS[lane.status] || {}).tone || "gray"),
     {v: String(lane.reuseGeneration ?? 0), c: "num"},
     lane.currentSessionId ? {v: `<span class="mono">${esc(lane.currentSessionId)}</span>`, c: "nowrap"} : "-",

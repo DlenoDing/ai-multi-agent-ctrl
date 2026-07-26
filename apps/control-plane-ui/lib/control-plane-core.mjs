@@ -1156,7 +1156,7 @@ export function decideSessionPlacement(state, request = {}) {
   // 此处只记录载体意图与角色；具体 lane 的选取+占用在 buildTaskContract 建会话时由 acquireWorkerLane 原子完成。
   const laneRoleId = workItem.ownerRole || request.roleId || "orchestrator";
   if (placement === "new_session") {
-    decision.workerCarrierDecision = {mode: "worker_lane", roleId: laneRoleId, laneFunction: request.laneFunction || "general_execution"};
+    decision.workerCarrierDecision = {mode: "worker_lane", roleId: laneRoleId, laneFunction: request.laneFunction || modelDecision.taskExecutionClass || "general_execution"};
   } else {
     decision.workerCarrierDecision = {mode: "subagent", roleId: laneRoleId};
     decision.subagentSafetyProof = {
