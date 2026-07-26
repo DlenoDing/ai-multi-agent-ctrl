@@ -365,6 +365,10 @@ state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-
 project_event_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/project-event-store.mjs"))
 doctor_source = File.read(File.join(ROOT, "scripts/doctor.mjs"))
 mcp_source = File.read(File.join(ROOT, "apps/mcp-server/server.mjs"))
+# Gap 2A lifted the pure (state,args) governance/room/lease mutators into control-plane-core.mjs so the
+# MCP surface and future HTTP/runtime/command-bus callers share one implementation. Source-presence
+# assertions for those mutators therefore accept the definition in either the MCP server or shared core.
+mcp_shared_governance_source = "#{mcp_source}\n#{core_source}"
 mcp_doctor_source = File.read(File.join(ROOT, "scripts/doctor-mcp.mjs"))
 agent_doctor_source = File.read(File.join(ROOT, "scripts/doctor-agent-remote.mjs"))
 agent_runtime_source = File.read(File.join(ROOT, "apps/agent-runtime/runtime.mjs"))
@@ -445,11 +449,11 @@ errors << "MCP server must require principal-scoped tool grants" unless mcp_sour
 errors << "MCP service principals must be project-scoped for read projections" unless server_source.include?("AIMAC_MCP_SERVICE_PROJECT_IDS") && mcp_source.include?("validateRemotePrincipalScope") && mcp_source.include?("scopeStateForProjectPrincipal")
 errors << "MCP tools/list must reflect active dispatch-bound grants for agent nodes" unless mcp_source.include?("createVisibleMcpToolDefinitions") && mcp_source.include?("active.has(name)")
 errors << "MCP agent-node read-only tools must require a unique dispatch-bound scope" unless mcp_source.include?("mcp_grant_scope_required") && mcp_source.include?("scopeFromGrant(scopedGrants[0])") && !mcp_source.include?("grantCheck.readOnly || !grantCheck.scope")
-errors << "MCP room messages must be bounded, paginated and use persistent per-room sequence" unless mcp_source.include?("pruneRoomMessages") && mcp_source.include?("AIMAC_ROOM_MESSAGES_MAX_TOTAL") && mcp_source.include?("Math.min(500") && mcp_source.include?("roomSequenceByRoom")
+errors << "MCP room messages must be bounded, paginated and use persistent per-room sequence" unless mcp_shared_governance_source.include?("pruneRoomMessages") && mcp_shared_governance_source.include?("AIMAC_ROOM_MESSAGES_MAX_TOTAL") && mcp_shared_governance_source.include?("Math.min(500") && mcp_shared_governance_source.include?("roomSequenceByRoom")
 errors << "MCP audit must rotate with unique locked files and mark conflict writes as failed" unless mcp_source.include?("rotateMcpAuditIfNeeded") && mcp_source.include?("AIMAC_MCP_AUDIT_MAX_BYTES") && mcp_source.include?("withMcpAuditLock") && mcp_source.include?("randomBytes(4)") && mcp_source.include?("conflict: true")
 errors << "production MCP must not expose server-side agent execution" if mcp_source.include?("agent-control-mcp.runtime_run") || !mcp_doctor_source.include?("remote MCP still exposes server-side Agent execution")
 errors << "MCP server must reject full state scope by default" unless mcp_source.include?("full_state_scope_not_allowed") && mcp_doctor_source.include?("state_get full scope was not denied")
-errors << "MCP server must enforce unique active lease and fencing token" unless mcp_source.include?("lease_already_active") && mcp_source.include?("lease_fencing_token_mismatch") && mcp_doctor_source.include?("lease_claim allowed a second active holder")
+errors << "MCP server must enforce unique active lease and fencing token" unless mcp_shared_governance_source.include?("lease_already_active") && mcp_shared_governance_source.include?("lease_fencing_token_mismatch") && mcp_doctor_source.include?("lease_claim allowed a second active holder")
 errors << "MCP grant validation must require active leases for lease-bound tools" unless mcp_source.include?("active_mcp_lease_required") && mcp_source.include?("leaseRequiredForTool")
 errors << "MCP grant validation must require fencing tokens for lease-bound tools" unless mcp_source.include?("mcp_lease_fencing_token_required")
 errors << "MCP server must validate tool input schemas at call time" unless mcp_source.include?("validateInputArgs") && mcp_source.include?("mcp_input_unknown_property") && mcp_source.include?("mcp_required_argument_missing")

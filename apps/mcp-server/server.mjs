@@ -31,7 +31,29 @@ import {
   projectOwnerGrantPermissions,
   runAutonomousCycle,
   selectModel,
-  syncSkillSource
+  syncSkillSource,
+  approvalRequestCreate,
+  artifactRegister,
+  capRetainingOpen,
+  claimLease,
+  classifyDerivedTask,
+  contractPublish,
+  createExecutionTopology,
+  findTaskGroup,
+  findingResolve,
+  findingSubmit,
+  permissionProbe,
+  permissionRequestSubmit,
+  policyDecisionEval,
+  releaseLease,
+  resourceMatches,
+  reviewBundleRegister,
+  reviewPlanCreate,
+  roomSend,
+  roomWait,
+  ruleSourceResolve,
+  sharedDefinitionCreate,
+  taskGroupForRecord
 } from "../control-plane-ui/lib/control-plane-core.mjs";
 import {
   createAgentControlCommand,
@@ -468,15 +490,6 @@ function commonInputProperties() {
 // terminalStatuses MUST match the "non-blocking" set the readiness/close-barrier gates use for
 // this collection (control-plane-core computeCompletionReadiness/computeCloseBarrier), so a still-gating
 // item is treated as "open" and never trimmed away from under a gate.
-function capRetainingOpen(items, terminalStatuses, limit) {
-  if (items.length <= limit) return items;
-  const terminal = new Set(terminalStatuses);
-  const open = items.filter((item) => !terminal.has(item.status));
-  const closed = items.filter((item) => terminal.has(item.status)).slice(0, Math.max(0, limit - open.length));
-  // Never drop a non-terminal (gating) item; trim oldest terminal history first.
-  return [...open, ...closed];
-}
-
 function confirmationReadableByPrincipal(confirmation, context = {}) {
   const principal = context.principal || {};
   if (principal.kind === "agent_node") return confirmation.nodeId === principal.id;
@@ -1449,10 +1462,6 @@ function createWorkItem(state, args) {
   return {taskGroupId: taskGroup.id, workItem, taskGroup};
 }
 
-function findTaskGroup(state, taskGroupId) {
-  return taskGroupId ? state.taskGroups.find((item) => item.id === taskGroupId) || null : state.taskGroups[0] || null;
-}
-
 function findWorkItem(state, taskGroupId, workItemId) {
   const taskGroup = findTaskGroup(state, taskGroupId);
   return workItemId ? taskGroup?.workItems?.find((item) => item.id === workItemId) || null : taskGroup?.workItems?.[0] || null;
@@ -1628,76 +1637,6 @@ function roomJoin(state, args) {
   return {participant};
 }
 
-function roomSend(state, args) {
-  const at = new Date().toISOString();
-  const roomId = args.roomId || `room_${args.taskGroupId || "tg_runtime_management"}`;
-  state.roomSequenceByRoom ||= {};
-  const retainedMax = Math.max(0, ...state.roomMessages.filter((item) => item.roomId === roomId).map((item) => Number(item.sequence || 0)));
-  const nextSequence = Math.max(Number(state.roomSequenceByRoom[roomId] || 0), retainedMax) + 1;
-  state.roomSequenceByRoom[roomId] = nextSequence;
-  const message = {
-    messageId: args.messageId || createId("room_msg"),
-    roomId,
-    sequence: nextSequence,
-    senderRef: args.senderRef || args.roleId || "agent-runtime",
-    payload: args.payload || {text: args.text || ""},
-    payloadDigest: digestOf(args.payload || args.text || ""),
-    status: "sent",
-    createdAt: at
-  };
-  state.roomMessages.push(message);
-  pruneRoomMessages(state);
-  state.commands.unshift({
-    id: createId("cmd_room"),
-    type: "room_send",
-    subject: `Room:${roomId}`,
-    status: "succeeded",
-    idempotencyKey: args.idempotencyKey,
-    resultRef: `RoomMessage:${message.messageId}`,
-    createdAt: at,
-    updatedAt: at
-  });
-  state.eventLog.unshift({
-    id: createId("evt_room"),
-    at,
-    type: "room_message",
-    subject: {type: "RoomMessage", id: message.messageId},
-    actor: message.senderRef,
-    taskGroupId: args.taskGroupId,
-    payloadDigest: message.payloadDigest
-  });
-  return {message};
-}
-
-function roomWait(state, args) {
-  const roomId = args.roomId || `room_${args.taskGroupId || "tg_runtime_management"}`;
-  const afterSequence = Number(args.afterSequence || args.cursor || 0);
-  const limit = Math.max(1, Math.min(500, Number(args.limit || 50)));
-  const messages = state.roomMessages
-    .filter((item) => item.roomId === roomId && Number(item.sequence || 0) > afterSequence)
-    .sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0))
-    .slice(0, limit);
-  return {roomId, messages, nextCursor: messages.at(-1)?.sequence || afterSequence};
-}
-
-function pruneRoomMessages(state) {
-  const maxTotal = Math.max(1000, Number(process.env.AIMAC_ROOM_MESSAGES_MAX_TOTAL || 10000));
-  const maxPerRoom = Math.max(100, Number(process.env.AIMAC_ROOM_MESSAGES_MAX_PER_ROOM || 1000));
-  const ttlMs = Math.max(60 * 1000, Number(process.env.AIMAC_ROOM_MESSAGES_TTL_MS || 7 * 24 * 60 * 60 * 1000));
-  const cutoff = Date.now() - ttlMs;
-  const perRoom = new Map();
-  const kept = [];
-  for (const message of [...(state.roomMessages || [])].reverse()) {
-    if (new Date(message.createdAt || 0).getTime() < cutoff) continue;
-    const count = perRoom.get(message.roomId) || 0;
-    if (count >= maxPerRoom) continue;
-    perRoom.set(message.roomId, count + 1);
-    kept.push(message);
-    if (kept.length >= maxTotal) break;
-  }
-  state.roomMessages = kept.reverse();
-}
-
 function roomAck(state, args) {
   const at = new Date().toISOString();
   const roomId = args.roomId || `room_${args.taskGroupId || "tg_runtime_management"}`;
@@ -1818,76 +1757,6 @@ function capacitySnapshot(state) {
   };
 }
 
-function createExecutionTopology(state, args) {
-  const taskGroup = findTaskGroup(state, args.taskGroupId);
-  const at = new Date().toISOString();
-  const topology = {
-    schemaVersion: "execution-topology/v1",
-    topologyId: args.topologyId || createId("topo"),
-    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
-    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
-    status: "planned",
-    nodes: (taskGroup?.workItems || []).map((item) => ({workItemId: item.id, roleId: item.ownerRole, status: item.status})),
-    edges: args.edges || [],
-    createdAt: at,
-    updatedAt: at
-  };
-  state.executionTopologies.unshift(topology);
-  return {topology};
-}
-
-function classifyDerivedTask(state, args) {
-  const title = `${args.title || ""} ${args.description || ""}`.toLowerCase();
-  const signals = [];
-  if (title.includes("review") || title.includes("audit")) signals.push("review_required");
-  if (title.includes("test") || title.includes("qa")) signals.push("qa_required");
-  if (title.includes("security") || title.includes("permission")) signals.push("security_required");
-  const roleId = signals.includes("security_required") ? "security" : signals.includes("qa_required") ? "qa" : signals.includes("review_required") ? "reviewer" : args.roleId || "orchestrator";
-  return {roleId, signals, modelDecision: selectModel(state, {...args, roleId})};
-}
-
-function claimLease(state, args) {
-  const targetRef = args.repositoryOutputTargetRef || args.targetId;
-  const target = state.repositoryOutputs.find((item) => item.targetId === targetRef);
-  if (!target) return {ok: false, error: "repository_output_target_not_found", targetRef};
-  const at = new Date().toISOString();
-  const resourceRef = `RepositoryOutputTarget:${target.targetId}`;
-  const holderRef = args.holderRef || `session:${args.sessionId || createId("sess")}`;
-  const existing = state.leases.find((item) => item.resourceRef === resourceRef && item.status === "active");
-  if (existing) {
-    if (existing.holderRef === holderRef) return {lease: existing, repositoryOutputTarget: target, replayedActiveLease: true};
-    return {ok: false, error: "lease_already_active", activeLeaseRef: existing.leaseId, holderRef: existing.holderRef};
-  }
-  state.leaseSequence = Number(state.leaseSequence || 0) + 1;
-  const lease = {
-    leaseId: args.leaseId || createId("lease"),
-    resourceRef,
-    holderRef,
-    status: "active",
-    fencingToken: state.leaseSequence,
-    sequence: state.leaseSequence,
-    expiresAt: args.expiresAt || new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
-    createdAt: at,
-    updatedAt: at
-  };
-  state.leases.unshift(lease);
-  target.status = "lease_bound";
-  target.leaseRef = lease.leaseId;
-  target.updatedAt = at;
-  return {lease, repositoryOutputTarget: target};
-}
-
-function releaseLease(state, args) {
-  const lease = state.leases.find((item) => item.leaseId === args.leaseId);
-  if (!lease) return {ok: false, error: "lease_not_found"};
-  if (args.holderRef && lease.holderRef !== args.holderRef) return {ok: false, error: "lease_holder_mismatch"};
-  if (!args.fencingToken) return {ok: false, error: "lease_fencing_token_required"};
-  if (String(lease.fencingToken) !== String(args.fencingToken)) return {ok: false, error: "lease_fencing_token_mismatch"};
-  lease.status = "released";
-  lease.updatedAt = new Date().toISOString();
-  return {lease};
-}
-
 // Project scope filter for read tools: null = unrestricted (system_admin, or a wildcard/unset principal),
 // otherwise a Set of the bounded principal's project ids. Read handlers filter their output by this so a
 // bounded remote-service token cannot read another tenant's operational or authorization data.
@@ -1897,15 +1766,6 @@ function principalProjectFilter(context = {}) {
   const ids = principal.projectIds;
   if (!Array.isArray(ids) || ids.includes("*")) return null;
   return new Set(ids);
-}
-
-function grantResourceProjectId(state, grant = {}) {
-  const resource = grant.resource || {};
-  if (resource.resourceType === "project") return resource.resourceId;
-  if (resource.resourceType === "task_group") {
-    return (state.taskGroups.find((item) => item.id === resource.resourceId) || {}).projectId;
-  }
-  return undefined;
 }
 
 function resourceSnapshot(state, args, filter) {
@@ -1953,35 +1813,6 @@ function resolveRoleSkillView(state, args) {
   return {roleSkill, overlays, precedence: ["task_group_overlay", "project_overlay", "upstream_default"]};
 }
 
-function taskGroupForRecord(state, args) {
-  // Attribute a record to the project that actually owns its task group / work item, never a hardcoded
-  // default, so a tenant-scoped write cannot be misfiled under the control-plane project. Resolve ONLY on a
-  // real id — findTaskGroup falls back to taskGroups[0] on a falsy id, which would misfile an
-  // unscoped record under an arbitrary tenant instead of the intended control-plane default.
-  const workItemId = args.workItemId || args.workId;
-  return (args.taskGroupId ? findTaskGroup(state, args.taskGroupId) : null)
-    || (workItemId ? (state.taskGroups || []).find((item) => (item.workItems || []).some((work) => work.id === workItemId)) : null);
-}
-
-function artifactRegister(state, args) {
-  const at = new Date().toISOString();
-  const taskGroup = taskGroupForRecord(state, args);
-  const artifact = {
-    artifactId: args.artifactId || createId("artifact"),
-    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
-    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
-    workItemId: args.workItemId || args.workId,
-    repositoryOutputTargetRef: args.repositoryOutputTargetRef,
-    artifactManifestRef: args.artifactManifestRef || args.path,
-    outputRefs: args.outputRefs || [],
-    digest: digestOf(args),
-    status: "registered",
-    createdAt: at
-  };
-  state.artifacts = capRetainingOpen([artifact, ...state.artifacts], ["verified", "registered"], 2000);
-  return {artifact};
-}
-
 function testResultSubmit(state, args) {
   const at = new Date().toISOString();
   const taskGroup = taskGroupForRecord(state, args);
@@ -1998,47 +1829,6 @@ function testResultSubmit(state, args) {
   };
   state.testResults = capRetainingOpen([testResult, ...state.testResults], ["passed", "failed", "skipped", "error"], 2000);
   return {testResult};
-}
-
-function permissionProbe(state, args, filter) {
-  const subjectId = args.subjectId || args.accountId || "acct_agent_runtime";
-  const permission = args.permission || args.action;
-  const resource = normalizePermissionResource(args);
-  const grants = state.accessGrants.filter((grant) =>
-    grant.status === "active" &&
-    grant.subjectRef?.subjectId === subjectId &&
-    resourceMatches(grant.resource, resource) &&
-    (!filter || filter.has(grantResourceProjectId(state, grant)))
-  );
-  const allowed = grants.some((grant) => (grant.permissions || []).includes(permission) || (grant.permissions || []).includes("*"));
-  return {subjectId, permission, resource, allowed, grants};
-}
-
-function permissionRequestSubmit(state, args) {
-  const at = new Date().toISOString();
-  const request = {
-    requestId: args.requestId || createId("perm_req"),
-    subjectId: args.subjectId || args.subjectRef?.subjectId || "acct_agent_runtime",
-    subjectRef: args.subjectRef || {subjectType: "account", subjectId: args.subjectId || "acct_agent_runtime"},
-    resource: normalizePermissionResource(args),
-    permission: args.permission || args.action || "task_group:read",
-    sessionId: args.sessionId,
-    taskGroupId: args.taskGroupId,
-    workId: args.workId || args.workItemId,
-    status: "pending",
-    reason: args.reason || args.actionReason || "machine permission request",
-    createdAt: at,
-    updatedAt: at
-  };
-  state.permissionRequests = capRetainingOpen([request, ...state.permissionRequests], ["approved", "denied", "resolved", "revoked", "expired", "cancelled"], 2000);
-  if (args.sessionId) {
-    const session = state.workSessions.find((item) => item.sessionId === args.sessionId);
-    if (session) {
-      session.status = "permission_required";
-      session.updatedAt = at;
-    }
-  }
-  return {permissionRequest: request};
 }
 
 function permissionStatus(state, args) {
@@ -2067,19 +1857,6 @@ function permissionResolve(state, args) {
     resumePermissionBlockedSession(state, request, at);
   }
   return {permissionRequest: request, accessGrant};
-}
-
-function normalizePermissionResource(args = {}) {
-  const resource = args.resource && typeof args.resource === "object" ? args.resource : {};
-  return {
-    resourceType: resource.resourceType || args.resourceType || (args.taskGroupId ? "task_group" : "project"),
-    resourceId: resource.resourceId || args.resourceId || args.taskGroupId || args.projectId || "prj_control_plane"
-  };
-}
-
-function resourceMatches(grantResource = {}, requestedResource = {}) {
-  if (!grantResource.resourceType || !requestedResource.resourceType) return false;
-  return grantResource.resourceType === requestedResource.resourceType && grantResource.resourceId === requestedResource.resourceId;
 }
 
 function ensurePermissionAccessGrant(state, request, args, decision, at) {
@@ -2122,153 +1899,10 @@ function resumePermissionBlockedSession(state, request, at) {
   session.updatedAt = at;
 }
 
-function reviewPlanCreate(state, args) {
-  const taskGroup = taskGroupForRecord(state, args);
-  const at = new Date().toISOString();
-  const plan = {
-    schemaVersion: "review-plan/v1",
-    reviewPlanId: args.reviewPlanId || createId("review_plan"),
-    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
-    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
-    status: "planned",
-    reviewScopeRefs: args.reviewScopeRefs || [`TaskGroup:${taskGroup?.id || "tg_runtime_management"}`],
-    requiredReviewerRoles: args.requiredReviewerRoles || ["reviewer", "qa"],
-    evidenceRefs: args.evidenceRefs || [],
-    createdAt: at,
-    updatedAt: at
-  };
-  state.reviewPlans.unshift(plan);
-  return {reviewPlan: plan};
-}
-
-function reviewBundleRegister(state, args) {
-  const at = new Date().toISOString();
-  const taskGroup = taskGroupForRecord(state, args);
-  const bundle = {
-    schemaVersion: "review-bundle/v1",
-    reviewBundleId: args.reviewBundleId || createId("review_bundle"),
-    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
-    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
-    status: "registered",
-    artifactRefs: args.artifactRefs || [],
-    checkpointRefs: args.checkpointRefs || [],
-    evidenceRefs: args.evidenceRefs || [],
-    createdAt: at,
-    updatedAt: at
-  };
-  state.reviewBundles.unshift(bundle);
-  return {reviewBundle: bundle};
-}
-
 function reviewResultConsume(state, args) {
   const finding = findingSubmit(state, {...args, findingType: args.findingType || "review", severity: args.severity || "info"});
   const readiness = computeCompletionReadiness(state, args.taskGroupId || "tg_runtime_management", args);
   return {finding: finding.finding, readiness};
-}
-
-function approvalRequestCreate(state, args) {
-  const at = new Date().toISOString();
-  const taskGroup = taskGroupForRecord(state, args);
-  const request = {
-    approvalId: args.approvalId || createId("approval"),
-    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
-    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
-    action: args.action || "guarded_action",
-    resource: args.resource || {},
-    status: "pending",
-    riskClass: args.riskClass || "medium",
-    requiredApprovers: args.requiredApprovers || ["policy-engine", "security"],
-    quorum: Number(args.quorum || 1),
-    expiresAt: args.expiresAt || new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-    decisionRecordRef: args.decisionRecordRef || `decision:approval:${at}`,
-    auditRef: args.auditRef || `audit:approval:${at}`,
-    createdAt: at,
-    updatedAt: at
-  };
-  state.approvalRequests = capRetainingOpen([request, ...state.approvalRequests], ["approved", "rejected", "cancelled", "expired"], 2000);
-  return {approvalRequest: request};
-}
-
-function policyDecisionEval(state, args) {
-  const at = new Date().toISOString();
-  const policyDecision = {
-    decisionId: args.decisionId || createId("pd"),
-    action: args.action || "mcp_tool_call",
-    resource: args.resource || {},
-    subjectRef: args.subjectRef || {subjectType: "service", subjectId: "mcp-proxy"},
-    result: args.allowed === false ? "denied" : "allowed",
-    reasonCode: args.reasonCode || "local_mcp_policy_eval",
-    evidenceRefs: args.evidenceRefs || [],
-    createdAt: at
-  };
-  state.policyDecisions.unshift(policyDecision);
-  return {policyDecision};
-}
-
-const findingTerminalStatuses = ["resolved", "closed", "dismissed", "wontfix"];
-
-function nonTerminalFindingStatus(status, fallback) {
-  // Raising a finding must never terminalize it; only governance-mcp.finding_resolve can. This keeps
-  // finding_submit (available to control-role agents) from bypassing the resolve separation of duties.
-  return status && !findingTerminalStatuses.includes(status) ? status : fallback;
-}
-
-function findingSubmit(state, args) {
-  const at = new Date().toISOString();
-  if (args.findingId) {
-    const existing = (state.findings || []).find((item) => item.findingId === args.findingId);
-    if (existing) {
-      Object.assign(existing, {
-        severity: args.severity || existing.severity,
-        status: nonTerminalFindingStatus(args.status, existing.status),
-        summary: args.summary || existing.summary,
-        evidenceRefs: [...new Set([...(existing.evidenceRefs || []), ...(args.evidenceRefs || [])])],
-        updatedAt: at
-      });
-      return {finding: existing};
-    }
-  }
-  const taskGroup = taskGroupForRecord(state, args);
-  const finding = {
-    findingId: args.findingId || createId("finding"),
-    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
-    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
-    workItemId: args.workItemId || args.workId,
-    findingType: args.findingType || "governance",
-    severity: args.severity || "medium",
-    status: nonTerminalFindingStatus(args.status, "open"),
-    summary: args.summary || "Machine-submitted finding",
-    evidenceRefs: args.evidenceRefs || [],
-    createdAt: at,
-    updatedAt: at
-  };
-  state.findings = capRetainingOpen([finding, ...state.findings], findingTerminalStatuses, 2000);
-  return {finding};
-}
-
-// 允许作为"已妥善闭合"的处置类（close-barrier 只认这些 + 相应证据/归属）
-const VALID_FINDING_DISPOSITIONS = ["fixed_verified", "not_applicable", "scope_adjusted", "blocked_external"];
-
-function findingResolve(state, args) {
-  const finding = (state.findings || []).find((item) => item.findingId === args.findingId);
-  if (!finding) return {ok: false, error: "finding_not_found"};
-  const terminal = ["resolved", "closed", "dismissed", "wontfix"];
-  const status = terminal.includes(args.status) ? args.status : "resolved";
-  const evidenceRefs = [...new Set([...(finding.evidenceRefs || []), ...(args.evidenceRefs || [])])];
-  // 处置类：显式指定优先，否则按状态派生；不足证据/归属者降级为不可闭合类，供 close-barrier 拦截"无修复即闭合"
-  let disposition = VALID_FINDING_DISPOSITIONS.includes(args.dispositionClass)
-    ? args.dispositionClass
-    : {resolved: "fixed_verified", closed: "fixed_verified", dismissed: "not_applicable", wontfix: "scope_adjusted"}[status];
-  if (disposition === "fixed_verified" && evidenceRefs.length === 0) disposition = "fixed_unverified";
-  if (disposition === "blocked_external" && !(args.rootCauseOwner && (args.recoveryRef || args.resolutionRef))) disposition = "blocked_external_incomplete";
-  finding.status = status;
-  finding.dispositionClass = disposition;
-  finding.resolutionRef = args.resolutionRef || `resolution:${status}`;
-  if (args.rootCauseOwner) finding.rootCauseOwner = args.rootCauseOwner;
-  if (args.recoveryRef) finding.recoveryRef = args.recoveryRef;
-  finding.evidenceRefs = evidenceRefs;
-  finding.updatedAt = new Date().toISOString();
-  return {finding};
 }
 
 function approvalResolve(state, args) {
@@ -2284,11 +1918,6 @@ function approvalResolve(state, args) {
   return {approvalRequest: request};
 }
 
-function contractPublish(state, args) {
-  const contract = sharedDefinitionCreate(state, {...args, status: "active"}).sharedDefinition;
-  return {contract};
-}
-
 function roleDriftGuardBind(state, args) {
   const contract = args.sessionId
     ? state.agentTaskContracts.find((item) => item.sessionId === args.sessionId)
@@ -2296,24 +1925,6 @@ function roleDriftGuardBind(state, args) {
   if (!contract) return {ok: false, error: "task_contract_not_found"};
   const drift = evaluateRoleDrift(state, {sessionId: contract.sessionId, taskGroupId: contract.taskGroupId, actionScopeRefs: args.actionScopeRefs || [`TaskGroup:${contract.taskGroupId}`]});
   return {contractRef: contract.commandId, drift};
-}
-
-function ruleSourceResolve(state, args) {
-  const at = new Date().toISOString();
-  const resolution = {
-    schemaVersion: "rule-source-resolution/v1",
-    resolutionId: args.resolutionId || createId("rsr"),
-    sourceRef: args.sourceRef || "reference:unknown",
-    sourceScope: args.sourceScope || "reference_material",
-    status: args.status || "classified",
-    classification: args.classification || "reference_only",
-    adoptionPolicy: args.classification === "generic_mechanism" ? "external_review_required" : "not_active_rule",
-    evidenceRefs: args.evidenceRefs || [],
-    createdAt: at,
-    updatedAt: at
-  };
-  state.ruleSourceResolutions.unshift(resolution);
-  return {ruleSourceResolution: resolution};
 }
 
 function systemUpgradeCandidateExport(state, args) {
@@ -2470,34 +2081,6 @@ function guardedActionDispatch(state, args) {
       policyDecisionRef: decision.decisionId
     }
   };
-}
-
-function sharedDefinitionCreate(state, args) {
-  const at = new Date().toISOString();
-  const taskGroup = taskGroupForRecord(state, args);
-  const projectId = taskGroup?.projectId || args.projectId || "prj_control_plane";
-  const scopedTaskGroupId = taskGroup?.id || args.taskGroupId;
-  const definition = {
-    schemaVersion: "shared-definition-contract/v1",
-    contractId: args.contractId || createId("sdc"),
-    status: args.status || "draft",
-    projectId,
-    definitionType: args.definitionType || "semantic_contract",
-    scopeRefs: args.scopeRefs || [scopedTaskGroupId ? `TaskGroup:${scopedTaskGroupId}` : `Project:${projectId}`],
-    canonicalOwnerRole: args.canonicalOwnerRole || args.ownerRole || "orchestrator",
-    producerRole: args.producerRole || args.ownerRole || "orchestrator",
-    consumerRefs: args.consumerRefs || [],
-    definitionDigest: digestOf(args.definition || args),
-    repositoryOutputTargetRef: args.repositoryOutputTargetRef || "rot_shared_definition",
-    repositoryOutputTargetDigest: digestOf(args.repositoryOutputTargetRef || "rot_shared_definition"),
-    conflictPolicy: args.conflictPolicy || {onConflict: "canonical_owner_decides"},
-    changePolicy: args.changePolicy || {requiresConsumersRebind: true},
-    reviewEvidenceRefs: args.reviewEvidenceRefs || [],
-    createdAt: at,
-    updatedAt: at
-  };
-  state.sharedDefinitions.unshift(definition);
-  return {sharedDefinition: definition};
 }
 
 function sharedDefinitionPublish(state, args) {
