@@ -23,6 +23,9 @@ import {
   organizationQuotaCheck,
   runAutonomousCycle,
   recomputeTaskGroup,
+  cellAdmissionPriority,
+  conditionWindowGate,
+  decideSessionPlacement,
   roomSend,
   selectModel,
   updateTaskGroupLanguagePolicy,
@@ -221,6 +224,34 @@ function verifyHumanAndOrganizationContracts(output) {
       if (!decision.workItemId || !decision.outcome || !decision.candidateRef) output.push("admissionDecision missing candidate/outcome fields");
     }
     if (!state.admissionDecisions.some((decision) => decision.selected)) output.push("admissionDecision ledger recorded no selected dispatch");
+    // A2/A5: every admission decision carries a cell class and orthogonal dimensions.
+    for (const decision of state.admissionDecisions) {
+      if (!decision.cellClass) output.push("admissionDecision missing cellClass (A2)");
+      if (!decision.dimensions || !decision.dimensions.evidenceQualificationDimension) output.push("admissionDecision missing orthogonal dimensions (A5)");
+    }
+  }
+  // A8: a cycle-level admission scan holds the candidate set + per-cell classification.
+  if (!Array.isArray(state.admissionScans) || !state.admissionScans.length) {
+    output.push("runAutonomousCycle did not record an admissionScan (A8)");
+  } else {
+    const scan = state.admissionScans[0];
+    if (!Array.isArray(scan.candidateCells) || !scan.cellClasses || typeof scan.cellClasses !== "object") output.push("admissionScan missing candidateCells/cellClasses (A8)");
+  }
+
+  // A1: explicit next-cell priority ordering (lower tier index = admitted first).
+  if (!(cellAdmissionPriority({admissionPriorityClass: "p0_safety"}) < cellAdmissionPriority({admissionPriorityClass: "formal_gate"}))) output.push("cell admission priority ordering is wrong (A1)");
+  if (cellAdmissionPriority({priorityHint: "P0 urgent"}) !== 0) output.push("priorityHint P0 did not map to the top tier (A1)");
+
+  // A3/A4: condition-window gate defers only cells whose declared window is unmet, per environment.
+  const gatedCell = conditionWindowGate({conditionDependency: {environment: "envA", requiredWindowState: "open", conditionSource: "src"}}, {windowStateByEnvironment: {envA: "closed"}});
+  if (!gatedCell || gatedCell.currentWindowState !== "closed" || !gatedCell.wakeTrigger) output.push("condition-window gate did not defer a closed-window cell with a wakeTrigger (A3)");
+  if (conditionWindowGate({conditionDependency: {environment: "envA", requiredWindowState: "open"}}, {windowStateByEnvironment: {envA: "open"}}) !== null) output.push("condition-window gate deferred a satisfied-window cell (A3)");
+  if (conditionWindowGate({}, {windowStateByEnvironment: {envA: "closed"}}) !== null) output.push("condition-window gate gated a condition-independent cell (A3/A4)");
+
+  // A7: carrier decision records the 4-way carrier + nonSelectedCarriers + nonReuseReason.
+  const carrierDecision = decideSessionPlacement(state, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", workSignals: ["expected_multi_turn", "role_owner_required"]}).workerCarrierDecision;
+  if (!carrierDecision.carrier || !Array.isArray(carrierDecision.nonSelectedCarriers) || carrierDecision.nonSelectedCarriers.length !== 3 || !carrierDecision.nonReuseReason || !carrierDecision.retireOrArchiveCondition) {
+    output.push("carrier decision missing 4-way carrier / nonSelectedCarriers / nonReuseReason (A7)");
   }
 
   // §4.5 single-cell-block guard (gap #12): a blocked cell must not escalate the whole task
@@ -240,6 +271,15 @@ function verifyHumanAndOrganizationContracts(output) {
   recomputeTaskGroup(fullyBlockedGuard);
   if (fullyBlockedGuard.health !== "blocked") output.push("single-cell-block guard did not block a task group with no executable cell");
   if (fullyBlockedGuard.singleCellEscalationGuard.overallBlockedPermitted !== true) output.push("single-cell-block guard did not permit overall block when every cell is blocked");
+  // A6 minimal-scope allow-list: a group made up only of transient waits must stay "attention"
+  // even with no executable cell — a window/quota wait is never a parent block.
+  const waitOnlyGuard = {status: "development", workItems: [
+    {id: "wi_wait_a", status: "blocked_resource", blockerClass: "resource_queued", progress: 0},
+    {id: "wi_wait_b", status: "blocked_dependency", blockerClass: "pending_window", progress: 0}
+  ]};
+  recomputeTaskGroup(waitOnlyGuard);
+  if (waitOnlyGuard.health === "blocked") output.push("minimal-scope allow-list escalated a wait-only group to blocked (A6)");
+  if (waitOnlyGuard.singleCellEscalationGuard.overallBlockedPermitted !== false) output.push("minimal-scope allow-list permitted overall block for a wait-only group (A6)");
 
   // gap #3: room_send (roomId, idempotencyKey) domain-level dedup returns the original message
   // on a same-key replay instead of appending a duplicate with a fresh sequence.

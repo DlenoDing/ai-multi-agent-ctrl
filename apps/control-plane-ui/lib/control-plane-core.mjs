@@ -454,6 +454,7 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.completionReadiness ||= [];
   state.closeBarriers ||= [];
   state.admissionDecisions ||= [];
+  state.admissionScans ||= [];
   state.runtimeIssuePatterns ||= [];
   state.systemUpgradeCandidates ||= [];
   state.runtimeIssueSamples ||= [];
@@ -1173,10 +1174,29 @@ export function decideSessionPlacement(state, request = {}) {
   // worker 载体决策：持续型工作走可复用 worker lane（归属工作项 owner 角色，角色 1:N lane），短工作走 subagent。
   // 此处只记录载体意图与角色；具体 lane 的选取+占用在 buildTaskContract 建会话时由 acquireWorkerLane 原子完成。
   const laneRoleId = workItem.ownerRole || request.roleId || "orchestrator";
+  // A7: choose among the four carriers and record why the others were NOT chosen (a placement
+  // lacking nonSelectedCarriers/nonReuseReason is an incomplete admission record). `mode` is kept
+  // for backward compatibility with acquireWorkerLane; `carrier` is the 4-way generalized enum.
+  const selectedCarrier = placement === "new_session" ? "reusable_top_level_lane" : "short_subagent";
+  const carrierReasons = {
+    short_subagent: sustained ? "rejected: sustained/multi-turn/stateful/ownership signals present" : "selected: single-turn contained work",
+    reusable_top_level_lane: sustained ? "selected: reuse a free role-owned lane when acquire precheck passes" : "rejected: no persistent ownership needed",
+    new_top_level_lane: sustained ? "deferred: only if no reusable free role lane passes the acquire precheck" : "rejected: single-turn contained work",
+    integration_owner_direct: "rejected: delegable role task, not an integration-owner-only side effect"
+  };
+  const nonSelectedCarriers = [...WORKER_CARRIER_MODES].filter((carrier) => carrier !== selectedCarrier).map((carrier) => ({carrier, reason: carrierReasons[carrier]}));
   if (placement === "new_session") {
-    decision.workerCarrierDecision = {mode: "worker_lane", roleId: laneRoleId, laneFunction: request.laneFunction || modelDecision.taskExecutionClass || "general_execution"};
+    decision.workerCarrierDecision = {
+      mode: "worker_lane",
+      carrier: selectedCarrier,
+      roleId: laneRoleId,
+      laneFunction: request.laneFunction || modelDecision.taskExecutionClass || "general_execution",
+      nonReuseReason: "prefer_reuse_of_free_role_lane_via_acquire_precheck",
+      retireOrArchiveCondition: "base_drift | ruleset_change | P0-P1_adopted | max_reuse_generations_exceeded | owning_session_terminal",
+      nonSelectedCarriers
+    };
   } else {
-    decision.workerCarrierDecision = {mode: "subagent", roleId: laneRoleId};
+    decision.workerCarrierDecision = {mode: "subagent", carrier: selectedCarrier, roleId: laneRoleId, nonReuseReason: "not_applicable_short_subagent", retireOrArchiveCondition: "session_end", nonSelectedCarriers};
     decision.subagentSafetyProof = {
       singleTurn: true,
       noPersistentState: true,
@@ -1446,6 +1466,90 @@ const ADMISSION_OUTCOMES = new Set([
   "awaiting_review", "awaiting_checkpoint", "superseded", "skipped_terminal"
 ]);
 
+// ---- §4.5 generalized admission/scheduling model (absorbed from the MGP core-init operating
+// model, domain-agnostic: MGP market/session -> condition window; provider quota -> external
+// resource). All descriptors below are OPTIONAL on a work item; absent -> prior behaviour. ----
+
+// A1: next-cell priority tiers, admitted in this order (index = priority, lower first).
+const ADMISSION_PRIORITY_TIERS = [
+  "p0_safety",          // P0 / safety / funds / data-corruption / evidence-pollution
+  "unblock_many",       // blocks many downstream cells (source / runtime / provisioning)
+  "available_window",   // a currently-open, time-bounded external window
+  "current_condition",  // current-condition correctness (baseline / closed-state semantics)
+  "capability_data",    // non-condition capability / data / client work
+  "readiness_preflight",// read-only / preflight / matrix / readiness
+  "formal_gate"         // formal / performance / multi-instance gate
+];
+const DEFAULT_PRIORITY_TIER = ADMISSION_PRIORITY_TIERS.indexOf("current_condition");
+
+// A2: classification of every non-terminal cell each scan.
+const ADMISSIBLE_CELL_CLASSES = new Set([
+  "ready_now", "ready_after_resource_admission", "pending_window", "pending_data_volume",
+  "blocked_external", "blocked_by_exact_dependency", "diagnostic_only_no_pass", "defer_downstream"
+]);
+
+// A6: transient-wait blocker classes that must NEVER escalate a blocked cell to a whole-group block
+// (a window/quota/data-volume/verification wait is not a parent block). De-escalation is opt-in: a
+// cell must explicitly declare one of these on `blockerClass`; unmarked blocked cells escalate as
+// before, preserving prior behaviour. The complementary escalatable root causes are, for reference:
+// p0 / safety / funds / data_corruption / shared_resource_uninsulable / evidence_pollution /
+// global_infra_down.
+const NON_ESCALATING_WAIT_CLASSES = new Set([
+  "pending_window", "pending_data_volume", "resource_queued", "external_wait",
+  "verification_incomplete", "formal_pass_ineligible", "no_pass_preflight"
+]);
+
+// A7: the four worker-carrier options a placement decision must choose among and justify.
+const WORKER_CARRIER_MODES = new Set([
+  "short_subagent", "reusable_top_level_lane", "new_top_level_lane", "integration_owner_direct"
+]);
+
+export function cellAdmissionPriority(workItem) {
+  const explicit = workItem.admissionPriorityClass || workItem.priorityClass;
+  if (explicit && ADMISSION_PRIORITY_TIERS.includes(explicit)) return ADMISSION_PRIORITY_TIERS.indexOf(explicit);
+  if (/p0|safety|funds|corrupt|urgent|critical/u.test(String(workItem.priorityHint || "").toLowerCase())) return 0;
+  return DEFAULT_PRIORITY_TIER;
+}
+
+// A2/A4: map an admission verdict to a cell class (per (cell, condition) where a condition applies).
+function admissibleCellClass(outcome, reasonCode, workItem) {
+  const reason = String(reasonCode || "");
+  if (outcome === "selected") return "ready_now";
+  if (outcome === "resource_queued") return "ready_after_resource_admission";
+  if (outcome === "awaiting_review" || outcome === "awaiting_checkpoint") return "ready_now";
+  if (outcome === "superseded") return "defer_downstream";
+  if (outcome === "deferred") return /window|condition|market|session/u.test(reason) ? "pending_window" : "defer_downstream";
+  if (outcome === "blocked") {
+    if (/window|condition|market|session/u.test(reason)) return "pending_window";
+    if (/data_volume|volume/u.test(reason)) return "pending_data_volume";
+    if (/external|provider|quota|resource/u.test(reason)) return "blocked_external";
+    if (workItem && workItem.diagnosticOnly) return "diagnostic_only_no_pass";
+    return "blocked_by_exact_dependency";
+  }
+  return "defer_downstream";
+}
+
+// A5: orthogonal admission dimensions — recorded separately so "why not running" is never conflated
+// into one field (condition vs shared-resource vs external-capability vs evidence-qualification).
+function admissionDimensions(workItem, outcome) {
+  const condition = workItem?.conditionDependency || null;
+  return {
+    conditionDimension: condition
+      ? {source: condition.conditionSource || null, requiredWindowState: condition.requiredWindowState || null, environment: condition.environment || null}
+      : null,
+    functionDimension: workItem?.taskExecutionClass || null,
+    resourceDimension: outcome === "resource_queued"
+      ? "external_quota_account"
+      : ((workItem?.writeScope || []).length ? "mutable_shared_store" : "read_only_preflight"),
+    evidenceQualificationDimension: outcome === "selected" ? "pass"
+      : outcome === "resource_queued" ? "resource_queued"
+      : outcome === "awaiting_review" ? "verification_incomplete"
+      : outcome === "blocked" ? "blocked_external"
+      : outcome === "deferred" ? "deferred_condition_mismatch"
+      : "pending_window"
+  };
+}
+
 function recordAdmissionDecision(state, input = {}) {
   state.admissionDecisions ||= [];
   const outcome = ADMISSION_OUTCOMES.has(input.outcome) ? input.outcome : "deferred";
@@ -1470,11 +1574,14 @@ function recordAdmissionDecision(state, input = {}) {
     awaitingCheckpoint: outcome === "awaiting_checkpoint",
     superseded: outcome === "superseded",
     skippedTerminal: outcome === "skipped_terminal",
+    cellClass: admissibleCellClass(outcome, reasonCode, input.workItem),
+    dimensions: admissionDimensions(input.workItem, outcome),
     reasonCode,
     whyThisCellNow: input.whyThisCellNow || null,
     evidenceQualification: input.evidenceQualification || null,
     workerCarrierDecision: input.workerCarrierDecision || null,
     modelDecisionRef: input.modelDecisionRef || null,
+    wakeTrigger: input.wakeTrigger || null,
     sessionId: input.sessionId || null,
     dispatchId: input.dispatchId || null,
     cycleRef: input.cycleRef || null,
@@ -1483,6 +1590,61 @@ function recordAdmissionDecision(state, input = {}) {
   const cap = Math.max(50, Number(process.env.AIMAC_ADMISSION_DECISION_CAP || 400));
   state.admissionDecisions = [decision, ...state.admissionDecisions].slice(0, cap);
   return decision;
+}
+
+// A8: one cycle-level admission scan per task group per cycle, holding the whole candidate set and
+// the deferred/blocked/resource-queued lists together with the resampled condition/resource
+// snapshots — the machine-readable record of "what else could run" behind each dispatch decision.
+function recordAdmissionScan(state, input = {}) {
+  state.admissionScans ||= [];
+  const decisions = input.decisions || [];
+  const byClass = (predicate) => decisions.filter(predicate).map((decision) => decision.workItemId);
+  const scan = {
+    schemaVersion: "admission-scan/v1",
+    scanId: createId("adms"),
+    projectId: input.taskGroup?.projectId || "prj_control_plane",
+    taskGroupId: input.taskGroup?.id || null,
+    cycleRef: input.cycleRef || null,
+    ruleset: "ai-native-control-plane:v1",
+    conditionSource: input.conditionSource || null,
+    resourceSnapshot: input.resourceSnapshot || null,
+    candidateCells: decisions.map((decision) => decision.workItemId),
+    selectedCells: byClass((decision) => decision.selected),
+    deferredCells: byClass((decision) => decision.deferred),
+    blockedCells: byClass((decision) => decision.blocked),
+    resourceQueuedCells: byClass((decision) => decision.resourceQueued),
+    cellClasses: Object.fromEntries(decisions.map((decision) => [decision.workItemId, decision.cellClass])),
+    sampledAt: new Date().toISOString()
+  };
+  const cap = Math.max(20, Number(process.env.AIMAC_ADMISSION_SCAN_CAP || 200));
+  state.admissionScans = [scan, ...state.admissionScans].slice(0, cap);
+  return scan;
+}
+
+// A3/A9: is this cell gated by an as-yet-unmet external condition window? Returns null when the cell
+// declares no condition dependency (so condition-independent cells are NEVER gated by a closed
+// window) or when the required window state is currently satisfied. `conditionSource` is resampled
+// per cycle by the caller (never inferred from a local clock).
+export function conditionWindowGate(workItem, conditionSource) {
+  const dependency = workItem?.conditionDependency;
+  if (!dependency || !dependency.requiredWindowState) return null;
+  const environment = dependency.environment || "default";
+  const current = conditionSource?.windowStateByEnvironment?.[environment];
+  if (current === undefined || current === null) return null; // unknown -> do not gate (fail-open to progress)
+  if (current === dependency.requiredWindowState) return null; // window satisfied
+  return {
+    environment,
+    requiredWindowState: dependency.requiredWindowState,
+    currentWindowState: current,
+    reasonCode: `deferred_${environment}_${current}_awaiting_${dependency.requiredWindowState}`,
+    wakeTrigger: {
+      environment,
+      nextWindowState: dependency.requiredWindowState,
+      conditionSource: dependency.conditionSource || null,
+      commandsToRun: dependency.wakeCommands || [],
+      reason: "condition_window_reopen"
+    }
+  };
 }
 
 export function runAutonomousCycle(state, request = {}) {
@@ -1514,10 +1676,18 @@ export function runAutonomousCycle(state, request = {}) {
   maintainWorkerLanes(state);
   sweepCommandBus(state);
   const taskGroups = (state.taskGroups || []).filter((taskGroup) => !request.taskGroupId || taskGroup.id === request.taskGroupId);
+  // A9: resample the external condition source once per cycle from the request/state — never from a
+  // local clock — so window-gated cells are admitted/deferred against a verifiable current baseline.
+  const conditionSource = request.conditionSource || state.conditionSource || null;
   for (const taskGroup of taskGroups) {
     if (["closed", "aborted"].includes(taskGroup.status) || ["active_paused_by_freeze", "active_paused_by_control"].includes(taskGroup.goalExecutionStatus)) continue;
-    for (const workItem of taskGroup.workItems || []) {
+    const cycleCandidates = [];
+    // A1: admit cells in priority order (a stable sort keeps declared order within a tier). Iterating
+    // a snapshot means cells created mid-cycle (e.g. by a split) are picked up on the next cycle.
+    const orderedWorkItems = [...(taskGroup.workItems || [])].sort((left, right) => cellAdmissionPriority(left) - cellAdmissionPriority(right));
+    for (const workItem of orderedWorkItems) {
       if (workItem.status === "superseded") continue;
+      if (!["verified", "closed"].includes(workItem.status)) cycleCandidates.push(workItem.id);
       if (["verified", "closed"].includes(workItem.status) && workItem.progress >= 100) {
         if (workItem.status === "verified" && needsReviewBackfill(state, taskGroup, workItem)) {
           const backfill = performIndependentReview(state, taskGroup, workItem, request, {backfill: true});
@@ -1554,6 +1724,16 @@ export function runAutonomousCycle(state, request = {}) {
           awaiting: "awaiting_existing_checkpoint"
         });
         if (request.mode !== "until_blocked" && request.mode !== "all") break;
+        continue;
+      }
+      // A3/A4/A9: defer ONLY cells whose declared condition window is unmet; condition-independent
+      // cells and cells for other environments stay admissible. Always `continue` (never `break`) so
+      // one closed window can never stop the scan from admitting another cell.
+      const windowGate = conditionWindowGate(workItem, conditionSource);
+      if (windowGate) {
+        workItem.wakeTrigger = windowGate.wakeTrigger;
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "deferred", reasonCode: windowGate.reasonCode, whyThisCellNow: `condition window ${windowGate.environment}=${windowGate.currentWindowState}, awaiting ${windowGate.requiredWindowState}`, cycleRef, wakeTrigger: windowGate.wakeTrigger});
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, awaiting: "condition_window", conditionWindow: windowGate});
         continue;
       }
       const split = splitMixedWorkItemIfNeeded(state, taskGroup, workItem);
@@ -1600,6 +1780,18 @@ export function runAutonomousCycle(state, request = {}) {
       });
       changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, progress: workItem.progress, sessionId: contract.sessionId, dispatchId: dispatch.dispatchId, awaiting: "agent_runtime_checkpoint"});
       if (request.mode !== "until_blocked" && request.mode !== "all") break;
+    }
+    // A8: record one cycle-level admission scan holding the latest verdict for every candidate cell
+    // seen this cycle (dedup means an unchanged cell keeps its prior decision, so resolve by cell).
+    if (cycleCandidates.length) {
+      const seen = new Set();
+      const scanDecisions = [];
+      for (const decision of state.admissionDecisions) {
+        if (decision.taskGroupId !== taskGroup.id || seen.has(decision.workItemId) || !cycleCandidates.includes(decision.workItemId)) continue;
+        seen.add(decision.workItemId);
+        scanDecisions.push(decision);
+      }
+      recordAdmissionScan(state, {taskGroup, cycleRef, decisions: scanDecisions, conditionSource});
     }
     recomputeTaskGroup(taskGroup);
     ensureTaskAnalysis(state, taskGroup);
@@ -2971,18 +3163,24 @@ export function recomputeTaskGroup(taskGroup) {
   taskGroup.progress = items.length ? Math.round(items.reduce((sum, item) => sum + Number(item.progress || 0), 0) / items.length) : 100;
   const blockedItems = items.filter((item) => BLOCKED_OR_FAILED_WORKITEM_STATUSES.includes(item.status));
   const executableCells = items.filter((item) => !BLOCKED_OR_FAILED_WORKITEM_STATUSES.includes(item.status) && !["verified", "closed"].includes(item.status));
-  // §4.5 single-cell-block guard: a blocked cell must not escalate the whole task group to a
-  // global block while at least one executable cell can still make progress. The group is only
-  // genuinely "blocked" when every non-terminal cell is blocked/failed; otherwise it stays
-  // "attention" (blocked cells present, progress still possible) or "ok".
+  // A6 escalatable blocked cell = a genuine root-cause block, NOT an opt-in transient wait.
+  const escalatableBlocked = blockedItems.filter((item) => !NON_ESCALATING_WAIT_CLASSES.has(item.blockerClass));
+  // §4.5 single-cell-block guard + minimal-scope allow-list: a blocked cell must not escalate the
+  // whole task group to a global block while an executable cell can still make progress; and even
+  // with no executable cell, a group made up only of transient waits (window/quota/data-volume/
+  // verification) stays "attention", never "blocked". Overall block requires zero executable cells
+  // AND at least one genuine (non-wait) blocker.
+  const overallBlockedPermitted = executableCells.length === 0 && escalatableBlocked.length > 0;
   taskGroup.singleCellEscalationGuard = {
     executableCells: executableCells.map((item) => item.id),
     blockedCells: blockedItems.map((item) => item.id),
-    overallBlockedPermitted: blockedItems.length > 0 && executableCells.length === 0
+    escalatableBlockedCells: escalatableBlocked.map((item) => item.id),
+    waitingCells: blockedItems.filter((item) => NON_ESCALATING_WAIT_CLASSES.has(item.blockerClass)).map((item) => item.id),
+    overallBlockedPermitted
   };
   if (!blockedItems.length) taskGroup.health = "ok";
-  else if (executableCells.length) taskGroup.health = "attention";
-  else taskGroup.health = "blocked";
+  else if (overallBlockedPermitted) taskGroup.health = "blocked";
+  else taskGroup.health = "attention";
   taskGroup.blockers = taskGroup.health === "ok" ? [] : taskGroup.blockers || [];
   const allTerminal = items.length > 0 && items.every((item) => ["verified", "closed"].includes(item.status));
   if (allTerminal && taskGroup.health === "ok" && !["closed", "aborted"].includes(taskGroup.status)) taskGroup.status = "verification";
@@ -3249,7 +3447,8 @@ const DEFAULT_SYSTEM_RULES = [
   {ruleId: "sys.full-chain-diagnosis", title: "运行事实全链路溯源", content: "把任何运行事实（键名/表名/前缀/头/序列化/时区/locale/env/命名空间等）判定为缺陷前，先沿全链路溯源：业务代码→helper/契约→framework/SDK/client adapter→依赖默认值→env/config overlay→容器/runtime→原始存储/传输观测→应用回读；任何 raw 外部观测须声明是否经 client/SDK 自动改写。若写入与回读走同一 canonical owner path 且回读通过，「物理名≠逻辑名」先归类为 evidence_probe_mismatch，不得据单点 raw 观测升级为 blocker 或擅改全局 prefix/config/key/schema；finding 只有溯源后才定性（source bug / config mismatch / runtime env mismatch / evidence probe mismatch / adapter bug / schema bug / true gap）。"},
   {ruleId: "sys.owner-path-verification", title: "服务内 owner-path 终判", content: "pass/fail、缺陷判定与修复验证必须在完整启动的服务实例内经真实程序路径（owner path / 应用 client / API / CLI / consumer / cron / WS / 框架配置的 SDK 路径）完成；raw 技术栈探针（redis-cli / 直连 DB / 队列 CLI / raw curl / grep 代码 / 单条日志 / 隔离 helper 单点）只作定位、前后状态观测或负对照，非特殊情况不得单独作为最终 pass/fail 或修复方向依据；build/依赖安装/容器启动/HTTP 200/静态清单是前置条件而非验证。"},
   {ruleId: "sys.evidence-qualification", title: "弱证据结论重分类", content: "凡曾作为解锁/完成/正确性/资金安全 owner 判断依据、却主要基于 raw 探针或单点证据的历史结论，须按影响面重分类（must_reverify_now / defer_to_e2e / diagnostic_only_no_pass / already_service_verified）并经正确路径复验；重分类是证据质量修正、不停止整体任务；任一 defer_to_e2e 一旦被用作解锁依据须升格为 must_reverify_now。证据的方法强度（不只是新鲜度）决定其可承载的结论范围。"},
-  {ruleId: "sys.guard-reuse", title: "昂贵前置 guard 复用纪律", content: "昂贵的可部署性/前置 guard（构建、依赖安装、环境 provisioning、资源重建）是 required，但非每轮固定重跑：输入（依赖/构建输入/generation）未变且可证明时可复用，复用须登记依据与未作废理由（reused_previous_valid_guard + 上次证据 + 输入摘要），不得把「未执行」写成「新通过」；输入变化或进入正式 pass 前必须重跑。"}
+  {ruleId: "sys.guard-reuse", title: "昂贵前置 guard 复用纪律", content: "昂贵的可部署性/前置 guard（构建、依赖安装、环境 provisioning、资源重建）是 required，但非每轮固定重跑：输入（依赖/构建输入/generation）未变且可证明时可复用，复用须登记依据与未作废理由（reused_previous_valid_guard + 上次证据 + 输入摘要），不得把「未执行」写成「新通过」；输入变化或进入正式 pass 前必须重跑。"},
+  {ruleId: "sys.layered-admission", title: "分层准入与最小复验", content: "cell 因数据量/外部条件窗口/资源额度/设备/完整生产覆盖/多实例 formal gate 暂不能声明正式 pass，不等于不能执行当前条件下的真实验证：必须先产出受限当前条件的真实证据，未满足项精确登记为对应 pending_window/pending_data_volume/resource_queued/verification_incomplete/no_pass_preflight cell，绝不写成父级整体 blocked；条件满足后只复验受影响 cell，不因单个 reverify 触发机械重跑整个大项。准入不得混用 gating 状态字段——条件/资源/外部能力/证据资格是各自正交维度分别记录。"}
 ].map((rule) => ({schemaVersion: "rule/v1", category: "system", status: "active", enabled: true, source: "default", ...rule}));
 
 export function defaultSystemRules() {
