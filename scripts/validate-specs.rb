@@ -543,6 +543,10 @@ errors << "Task contracts of active dispatches must not be evicted" unless core_
 errors << "buildTaskContract must be idempotent against an existing active dispatch" unless core_source.include?("Idempotency guard: if a non-terminal dispatch already exists") && contract_check_source.include?("buildTaskContract idempotency")
 errors << "close-barrier all_commands_terminal must match the exact task-group subject" unless core_source.include?("command.subject === `TaskGroup:${taskGroupId}`")
 errors << "Postgres central+shards read must be transactionally consistent" unless pg_pool_worker_source.include?("readStateWithShards") && pg_pool_worker_source.include?("BEGIN TRANSACTION READ ONLY") && pg_sync_store_source.include?("pgReadStateWithShards") && state_store_source.include?("pgReadStateWithShards()")
+app_js_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+i18n_zh_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/i18n-zh.js"))
+errors << "Console must surface the admission ledger and single-cell escalation guard" unless server_source.include?("\"admissionDecisions\", \"workerLanes\"") && app_js_source.include?("singleCellEscalationGuard") && app_js_source.include?("准入决策") && app_js_source.include?("workerCarrierDecision?.carrier")
+errors << "Console i18n must localize admission enums and blocked-reason codes" unless i18n_zh_source.include?("awaiting_analysis_output") && i18n_zh_source.include?("pending_window") && i18n_zh_source.include?("reusable_top_level_lane")
 errors << "Server must offer authenticated real-time WebSocket push over the long-poll channels" unless server_source.include?("WebSocketServer") && server_source.include?("/api/realtime") && server_source.include?("pushRealtime") && server_source.include?("authorizeRealtime") && server_source.include?("pushRealtime(key)") && doctor_source.include?("verifyRealtimeWebSocket")
 # The upgrade handler must guard authorizeRealtime() (which calls readState()) so a state-store throw
 # destroys the socket instead of becoming an uncaughtException that exits the process.

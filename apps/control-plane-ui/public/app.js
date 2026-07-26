@@ -1775,6 +1775,20 @@ function renderTaskGroupDetail(taskGroup) {
     <div class="record"><div class="record-title">${badge(blocker.severity || "attention")} <span>${esc(blocker.summary)}</span></div></div>
   `).join("") || `<div class="record">无阻塞</div>`;
 
+  const guard = taskGroup.singleCellEscalationGuard;
+  const cellIds = (ids) => (ids || []).length ? (ids || []).map((id) => esc(id)).join("、") : "—";
+  const admissionHtml = guard ? `
+      <div class="record-meta">
+        <span>可执行 cell：${(guard.executableCells || []).length}</span>
+        <span>等待 cell：${(guard.waitingCells || []).length}</span>
+        <span>阻塞 cell：${(guard.blockedCells || []).length}</span>
+        <span>整体阻断：${guard.overallBlockedPermitted ? customBadge("允许", "red") : customBadge("不允许（仍有可推进项）", "green")}</span>
+      </div>
+      <div class="small muted">可执行：${cellIds(guard.executableCells)}</div>
+      <div class="small muted">等待（不升格）：${cellIds(guard.waitingCells)}</div>
+      <div class="small muted">真实阻断：${cellIds(guard.escalatableBlockedCells)}</div>
+    ` : `<div class="notice">暂无准入分类（编排运行后自动生成）。</div>`;
+
   return `
     <div class="stack" style="margin-top:8px;">
       ${sectionBlock("事项清单", analysisHtml)}
@@ -1782,6 +1796,7 @@ function renderTaskGroupDetail(taskGroup) {
       ${sectionBlock("配置（继承 / 自定义）", configHtml)}
       ${sectionBlock("执行控制", controlHtml)}
       ${sectionBlock("工作项", `<div class="stack">${workItems || `<div class="notice">暂无工作项。</div>`}</div>`)}
+      ${sectionBlock("准入与阻断分类", admissionHtml)}
       ${sectionBlock("阻塞", `<div class="stack">${blockers}</div>`)}
     </div>
   `;
@@ -2131,7 +2146,15 @@ function renderMonitor() {
   const placements = (state.sessionPlacementDecisions || []).slice(0, 10).map((decision) => row([
     `<span class="mono">${esc(decision.workItemId || "-")}</span>`,
     badge(decision.placement),
+    badge(decision.workerCarrierDecision?.carrier || "-"),
     badge(decision.status)
+  ])).join("");
+
+  const admissions = (state.admissionDecisions || []).slice(0, 12).map((decision) => row([
+    `<span class="mono">${esc(decision.workItemId || "-")}</span>`,
+    badge(decision.outcome),
+    badge(decision.cellClass || "-"),
+    {v: esc(decision.whyThisCellNow || decision.reasonCode || "-"), c: "text-clip"}
   ])).join("");
 
   const barriers = (state.closeBarriers || []).slice(0, 8).map((barrier) => row([
@@ -2160,7 +2183,8 @@ function renderMonitor() {
     panel("控制通道", table([{label: "序号", c: "num"}, "节点", "命令", "作用对象", "状态", {label: "更新时间", c: "nowrap"}], commands, {moreText: moreText((state.agentControlCommands || []).length, 16)}), {wide: true}),
     panel("运行时节点", table(["节点", "状态", "准入", {label: "最近心跳", c: "nowrap"}, "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
     panel("模型选择记录", table(["角色", "工作项", "模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText((state.modelSelectionDecisions || []).length, 10)})),
-    panel("会话放置记录", table(["工作项", "放置方式", "状态"], placements, {moreText: moreText((state.sessionPlacementDecisions || []).length, 10)})),
+    panel("会话放置记录", table(["工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态"], placements, {moreText: moreText((state.sessionPlacementDecisions || []).length, 10)})),
+    panel("准入决策", table(["工作项", "判定", "分类", {label: "原因", c: "text-clip"}], admissions, {moreText: moreText((state.admissionDecisions || []).length, 12)}), {wide: true}),
     panel("关闭门禁", table(["任务组", "状态", {label: "阻塞对象数", c: "num"}, {label: "计算时间", c: "nowrap"}], barriers, {moreText: moreText((state.closeBarriers || []).length, 8)}), {wide: true})
   ].join("");
 }
