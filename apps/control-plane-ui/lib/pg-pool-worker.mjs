@@ -107,6 +107,23 @@ async function handle(op, args) {
       const result = await p.query(`SELECT shard FROM ${ident(args.shardTable)} ORDER BY project_id`);
       return {ok: true, value: result.rows.map((row) => row.shard)};
     }
+    case "readStateWithShards": {
+      // Read central + shards in one read-only transaction so a concurrent committed write cannot
+      // produce a torn read (central@N with shards@N+1).
+      const client = await p.connect();
+      try {
+        await client.query("BEGIN TRANSACTION READ ONLY");
+        const stateResult = await client.query(`SELECT state FROM ${ident(args.table)} WHERE id = $1`, [args.stateId]);
+        const shardResult = await client.query(`SELECT shard FROM ${ident(args.shardTable)} ORDER BY project_id`);
+        await client.query("COMMIT");
+        return {ok: true, value: {central: stateResult.rows.length ? stateResult.rows[0].state : null, shards: shardResult.rows.map((row) => row.shard)}};
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* connection already broken */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
     case "writeStateWithShards":
       return writeStateWithShards(p, args);
     default:

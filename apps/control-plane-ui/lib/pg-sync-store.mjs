@@ -104,6 +104,11 @@ export function pgReadProjectShards() {
   return call("readShards", {shardTable: projectShardTableName}).value || [];
 }
 
+// Transactionally consistent read of central + all project shards ({central, shards}).
+export function pgReadStateWithShards() {
+  return call("readStateWithShards", {table: tableName, shardTable: projectShardTableName, stateId}).value || {central: null, shards: []};
+}
+
 export function pgWriteStateWithProjectShards(centralState, projectShards, expectedStateVersion) {
   const response = call("writeStateWithShards", {
     table: tableName,

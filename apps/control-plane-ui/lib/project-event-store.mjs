@@ -312,12 +312,15 @@ function projectExecutionEventKeyDir(runtimeDir, projectId) {
 }
 
 // The per-event-key KV files back idempotent dedup as the fast path ahead of the
-// (capped) in-memory index and the event-log scan. Left ungoverned they grow one
-// file per unique key forever. GC caps them by count and evicts the oldest by
-// mtime; the cap is held at or above the index key window so file-backed dedup is
-// never narrower than index-backed dedup (removing a key only drops a fast path —
-// dedup still falls back to the index for recent keys and the log scan for older
-// ones). Amortized: only runs once every AIMAC_PROJECT_EVENT_KEY_GC_STRIDE appends.
+// (capped) in-memory index. Left ungoverned they grow one file per unique key
+// forever. GC caps them by count and evicts the oldest by mtime; the cap is held at
+// or above the index key window so file-backed dedup is never narrower than
+// index-backed dedup. The APPEND dedup path (readProjectExecutionEventByKey with
+// indexOnly) checks only the KV files + the index — it does NOT scan the log — so a
+// re-append of a key older than BOTH the file cap and the index window can duplicate;
+// the cap (default 5000) makes this window far larger than the idempotency window
+// (default 500). The full log scan is available only to explicit indexOnly:false /
+// allowFullScan reads. Amortized: runs once every AIMAC_PROJECT_EVENT_KEY_GC_STRIDE appends.
 function maybeGcProjectExecutionEventKeys(runtimeDir, event) {
   const stride = Math.max(1, Number(process.env.AIMAC_PROJECT_EVENT_KEY_GC_STRIDE || 256));
   if (Number(event.sequence || 0) % stride !== 0) return;

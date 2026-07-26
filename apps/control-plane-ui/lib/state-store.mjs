@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { pgEnsureTables, pgReadProjectShards, pgReadState, pgWriteStateWithProjectShards } from "./pg-sync-store.mjs";
+import { pgEnsureTables, pgReadProjectShards, pgReadState, pgReadStateWithShards, pgWriteStateWithProjectShards } from "./pg-sync-store.mjs";
 
 const tableName = "aimac_control_plane_state";
 const projectShardTableName = "aimac_project_state_shards";
@@ -127,8 +127,8 @@ export function readStoredState(options) {
       return state;
     });
   }
-  const central = readPostgresState();
-  const state = hydrateProjectState(central, options);
+  const {central, shards} = pgReadStateWithShards();
+  const state = hydrateProjectState(central, options, shards);
   state.__loadedStateVersion = Number(state.stateVersion || 0);
   return state;
 }
@@ -324,14 +324,16 @@ function sortableTime(item) {
   return new Date(item.updatedAt || item.createdAt || item.completedAt || item.issuedAt || item.sequence || 0).getTime() || 0;
 }
 
-function hydrateProjectState(centralState, options) {
+function hydrateProjectState(centralState, options, preReadShards) {
   const state = {...centralState};
   for (const collection of projectShardCollections) {
     state[collection] = Array.isArray(state[collection]) ? [...state[collection]] : [];
   }
-  const shards = stateStoreKind() === "postgresql"
-    ? readPostgresProjectShards(options)
-    : readRuntimeJsonProjectShards(options, centralState);
+  const shards = preReadShards !== undefined
+    ? preReadShards
+    : (stateStoreKind() === "postgresql"
+      ? readPostgresProjectShards(options)
+      : readRuntimeJsonProjectShards(options, centralState));
   for (const shard of shards) {
     for (const collection of projectShardCollections) {
       const items = Array.isArray(shard.collections?.[collection]) ? shard.collections[collection] : [];
