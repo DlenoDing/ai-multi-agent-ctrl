@@ -2746,6 +2746,15 @@ function leaseAppliesToTaskGroup(state, lease, taskGroupId) {
   return target?.taskGroupId === taskGroupId;
 }
 
+const REVIEW_FINDING_LABELS = {
+  repository_output_target_not_terminal: "仓库产出目标未到终态",
+  push_evidence_missing: "缺少推送证据",
+  artifact_manifest_missing: "缺少产物清单",
+  final_commit_not_verifiable: "最终提交无法验证",
+  changed_paths_outside_allowlist: "变更路径超出允许范围"
+};
+function reviewFindingLabel(code) { return REVIEW_FINDING_LABELS[code] || code; }
+
 function addBlocker(taskGroup, severity, summary) {
   taskGroup.blockers ||= [];
   if (!taskGroup.blockers.some((blocker) => blocker.summary === summary)) {
@@ -3459,7 +3468,7 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
         workItem.status = "blocked";
         workItem.blockedReason = "independent_review_changes_requested";
       }
-      addBlocker(taskGroup, "S1", `独立评审要求工作项 ${workItem.id} 返工：${findings.join("，")}`);
+      addBlocker(taskGroup, "S1", `独立评审要求工作项 ${workItem.id} 返工：${findings.map(reviewFindingLabel).join("，")}`);
     } else {
       if (target && ["pushed", "committed"].includes(target.status)) {
         target.status = "superseded";
@@ -3468,7 +3477,7 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
       workItem.status = "ready";
       workItem.progress = Math.min(Number(workItem.progress || 0), 60);
       delete workItem.blockedReason;
-      addBlocker(taskGroup, "S2", `独立评审已将工作项 ${workItem.id} 重新排队返工（第 ${rejectionCount}/${maxReworkAttempts} 次）：${findings.join("，")}`);
+      addBlocker(taskGroup, "S2", `独立评审已将工作项 ${workItem.id} 重新排队返工（第 ${rejectionCount}/${maxReworkAttempts} 次）：${findings.map(reviewFindingLabel).join("，")}`);
     }
     if (!duplicateRejection) appendEvent(state, "review_result", "WorkItem", workItem.id, "reviewer", {verdict, findings, reviewBundleRef: bundle.bundleId});
     return {reviewed: true, verdict, reviewBundleRef: bundle.bundleId, findings};

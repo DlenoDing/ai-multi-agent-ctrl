@@ -207,6 +207,11 @@
     "policy-engine": "策略引擎",
     "room-broker": "协作室代理",
     "decision-center": "决策中心",
+    "command-bus": "命令总线",
+    "auth-service": "认证服务",
+    "bootstrap": "初始化",
+    "repository-router": "仓库路由",
+    "skill-registry": "技能注册表",
     reviewer: "评审员",
     qa: "质量保障",
     security: "安全",
@@ -512,6 +517,7 @@
     task_group_cancel_pending_dispatches: "取消待派发任务",
     work_item_requirement_appended: "追加工作项需求",
     bootstrap_init: "重新初始化运行态",
+    runtime_initialized: "运行态已初始化",
 
     /* ---------- 模型能力标签 ---------- */
     planning: "规划",

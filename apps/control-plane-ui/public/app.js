@@ -201,7 +201,7 @@ function accountName(accountId) {
   if (!accountId) return "-";
   const pool = [...(state.accounts || []), ...orgMembers];
   const found = pool.find((account) => account.accountId === accountId || account.email === accountId);
-  return found ? (found.displayName || found.email || accountId) : accountId;
+  return found ? (found.displayName || found.email || accountId) : t(accountId);
 }
 
 function escapeHtml(value) {
@@ -2236,7 +2236,7 @@ document.addEventListener("submit", async (event) => {
   const data = Object.fromEntries(new FormData(form).entries());
   const submitBtn = form.querySelector("button[type='submit'], button:not([type='button'])");
   try {
-    await withSubmitting(submitBtn, async () => {
+    const submitOutcome = await withSubmitting(submitBtn, async () => {
     if (kind === "login") {
       const secret = String(data.secret || "");
       const result = await api("/api/auth/login", {method: "POST", body: JSON.stringify({email: data.email, token: secret, password: secret})});
@@ -2386,7 +2386,7 @@ document.addEventListener("submit", async (event) => {
     if (kind === "tg-config") {
       const origRoles = form.querySelector("input[name='defaultRoles']")?.dataset.orig || "";
       const changed = String(data.defaultRoles || "").trim() !== String(origRoles).trim();
-      if (!changed) { formTouched = false; toast.info("默认角色未改动，任务组仍继承项目配置"); return; }
+      if (!changed) { formTouched = false; toast.info("默认角色未改动，任务组仍继承项目配置"); return "__skip_success__"; }
       const defaultRoles = String(data.defaultRoles || "").split(",").map((item) => item.trim()).filter(Boolean).map((roleId) => ({roleId}));
       await api(`/api/task-groups/${encodeURIComponent(form.dataset.task)}/config`, {method: "POST", body: JSON.stringify({defaultRoles})});
       formTouched = false;
@@ -2454,7 +2454,7 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     });
-    if (SUBMIT_SUCCESS[kind]) toast.success(SUBMIT_SUCCESS[kind]);
+    if (SUBMIT_SUCCESS[kind] && submitOutcome !== "__skip_success__") toast.success(SUBMIT_SUCCESS[kind]);
   } catch (error) {
     showError(error);
   }
