@@ -44,4 +44,18 @@
 11. **五类时间语义 [C07]**（rule 49）：比较时间前先分类 instant/civilTime/businessCalendar/elapsedDuration/logicalOrder，不同 role 不因都能转 UTC 就互换；因果顺序用 sequence/version 不用时间戳。
 12. **变更范围收敛 [C10]**（rule 7/28）：图冻结后仅四类证据可扩图，禁止"继续看看"式无界扫描；全量验证建覆盖矩阵、批量按根因收敛，不以"无新增可疑点"为无限目标。
 
+### 增量吸收（2026-07-26 复读 operating-model §4.5/§4.6 后新增，来自 Ruleset .38/.225 演进）
+
+13. **运行事实全链路溯源 [sys.full-chain-diagnosis]**（operating-model §4.5.1）：把运行事实判定为缺陷前先沿业务→helper→framework/SDK→依赖默认→env/config→容器→原始存储→应用回读全链路溯源；同一 canonical owner path 写入+回读通过时"物理名≠逻辑名"先归类 evidence_probe_mismatch，不据单点 raw 观测升级 blocker/擅改全局。补 `sys.observation-control`（观察通道有效性）与 `sys.root-cause-owner`（在哪修）之外的"raw 观测是否真是缺陷"一环。
+14. **服务内 owner-path 终判 [sys.owner-path-verification]**（§4.5.2）：pass/fail 与修复验证必须在完整服务实例内经真实程序路径完成，raw 技术栈探针只作辅助/负对照不作终判。补 `sys.completion-boundary` 的"正向验证方法"缺口。
+15. **弱证据结论重分类 [sys.evidence-qualification]**（§4.5.2 既往结论回扫）：load-bearing 的 raw/单点证据结论按影响面重分类并经正确路径复验；证据"方法强度"决定可承载结论范围（与 `sys.evidence-freshness` 的"时间新鲜度"正交）。
+16. **昂贵前置 guard 复用纪律 [sys.guard-reuse]**（§4.6 buildChainGuard）：输入不变可复用昂贵 guard 但须登记依据、"跳过≠通过"、输入变化或正式 pass 前重跑。
+
+### 待落地为控制面机制（A 类候选，记入 known-design-gaps）
+
+- **可复用 worker lane 模型 + lane registry**（§2.2）：把顶层会话建模为可复用 lane（laneId/reuseMode/reusePrecheck/rotate-retire），当前 placement 仅 subagent|new_session（一次性），无 lane/registry/复用前置校验。
+- **每派发机器可读 admissionDecision 记录**（§4.5）：候选/选定/deferred/blocked/resourceQueued/evidenceQualification/whyThisCellNow/workerCarrierDecision/modelDecision 一条持久化记录 + 正交状态字段互斥。
+- **单 cell 阻断防升格全局门 + 正交调度维度**（§4.5）：存在可执行 cell 时禁止 overall_blocked，defer 后强制全局重扫。
+- **findingDisposition 闭合枚举强化**（§4.6）：`verification_incomplete/no_pass_preflift/"已记录"/"后续再看"` 不是闭合状态；close-barrier 终态集（现 resolved/closed/dismissed/wontfix）宜收敛为需绑定受限终态+证据，避免"无修复即闭合"。
+
 > 说明：默认系统规则可被项目/任务组按 §4.4 三级机制启用/停用/改写单条。控制面对 A 类规则已有硬约束；B 类规则通过内容包硬性下发（不靠指令措辞），会话开始前摘要校验不符即拒绝执行。
