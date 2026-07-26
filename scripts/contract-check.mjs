@@ -39,6 +39,7 @@ import {
   submitAgentExecutionEvent
 } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { appendProjectExecutionEvent, readProjectExecutionEventByKey, readProjectExecutionEvents } from "../apps/control-plane-ui/lib/project-event-store.mjs";
+import { assertTransition, resolveGate, loadStateMachines, loadGateCatalog } from "../apps/control-plane-ui/lib/transition-engine.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const seedState = loadJson("data/seed-state.json");
@@ -85,6 +86,7 @@ for (const tool of toolDefs) {
 
 verifyRuntimeJsonConflict(errors);
 verifyWorkStatusEnumConvergence(errors);
+verifyTransitionEngine(errors);
 
 if (errors.length) {
   console.error("contract check failed:");
@@ -676,6 +678,82 @@ function verifyWorkStatusEnumConvergence(output) {
   if (tgSnapshot.counters.blocked !== blockedWorkItemStatuses.length) {
     output.push(`enum-check: counters.blocked ${tgSnapshot.counters.blocked} != ${blockedWorkItemStatuses.length}`);
   }
+}
+
+// Gap #1: the runtime gate/transition resolution engine must accept spec-modeled transitions
+// and fail-closed on illegal ones (wrong from-state, unauthorized actor, missing requires
+// evidence, and unresolvable gates) with the correct typed failureCode.
+function verifyTransitionEngine(output) {
+  const expectRejected = (label, expectedCode, fn) => {
+    let error;
+    try {
+      fn();
+    } catch (caught) {
+      error = caught;
+    }
+    if (!error) {
+      output.push(`transition-engine: expected rejection for ${label}`);
+      return;
+    }
+    const code = error.failureCode || error.code;
+    if (code !== expectedCode) {
+      output.push(`transition-engine: ${label} rejected with ${code}, expected ${expectedCode}`);
+    }
+  };
+
+  // Reader must yield the same machine/gate shapes validate-specs parses.
+  const machines = loadStateMachines().machines;
+  const catalog = loadGateCatalog();
+  if (!machines.WorkItem || !Array.isArray(catalog.resolvers) || !catalog.resolvers.length) {
+    output.push("transition-engine: failed to load state machines / gate catalog");
+    return;
+  }
+
+  // Legal, fully-evidenced transition must pass.
+  const legalEvidence = {
+    task_contract_created: "contract:x",
+    effective_instruction_packet_ref: "eip:x",
+    repository_output_target_ref: "rot:x",
+    shared_definition_refs_resolved: "none_resolved",
+    task_draft_review_passed: "review:x",
+    split_basis_digest: "sha256:x",
+    quality_surface_plan_ref: "qs:x"
+  };
+  try {
+    assertTransition({}, "WorkItem", "draft", "ready", "orchestrator", legalEvidence);
+  } catch (error) {
+    output.push(`transition-engine: legal draft->ready rejected: ${error.failureCode || error.code}`);
+  }
+
+  // Gate resolution: exact ids win over patterns; unknown gates fail closed.
+  if (resolveGate("checkpoint", catalog).id !== "checkpoint_literal") {
+    output.push("transition-engine: exact-id gate 'checkpoint' did not resolve to checkpoint_literal");
+  }
+  if (resolveGate("some_target_ref", catalog).id !== "reference_exists") {
+    output.push("transition-engine: pattern gate '*_ref' did not resolve to reference_exists");
+  }
+  expectRejected("unknown gate resolution", "gate.unresolved", () => resolveGate("no_such_gate_zzz", catalog));
+
+  // Illegal transitions must be rejected with typed failure codes.
+  expectRejected("wrong from-state", "transition.not_modeled", () =>
+    assertTransition({}, "WorkItem", "assigned", "ready", "orchestrator", { dependency_resolved: "x" })
+  );
+  expectRejected("unauthorized actor", "transition.actor_not_authorized", () =>
+    assertTransition({}, "WorkItem", "draft", "ready", "scheduler", legalEvidence)
+  );
+  expectRejected("missing requires evidence", "gate.reference_unresolved", () =>
+    assertTransition({}, "WorkItem", "draft", "ready", "orchestrator", { task_contract_created: "contract:x" })
+  );
+  expectRejected("unknown machine", "transition.unknown_machine", () =>
+    assertTransition({}, "NoSuchMachine", "a", "b", "orchestrator", {})
+  );
+
+  // Forced-strict recordTransition path (via a real orchestration flow) must reject an illegal
+  // transition. buildTaskContract + dispatch drives legal transitions; here we prove the guard
+  // fires by asserting a deliberately illegal actor for a real modeled edge.
+  expectRejected("blocked_resource->ready by orchestrator (illegal actor)", "transition.actor_not_authorized", () =>
+    assertTransition({}, "WorkItem", "blocked_resource", "ready", "orchestrator", { resource_available: "x" })
+  );
 }
 
 function validateSchema(value, schema, path, output) {

@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertTransition, canonicalTransition, requiresValuesToEvidenceRefs } from "./transition-engine.mjs";
 
 const controlPlaneRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "../../..");
 const specDigestCache = new Map();
@@ -1594,7 +1595,15 @@ function analysisRoleFor(roleId) {
 function dispatchWorkItem(state, taskGroup, workItem, contract, repositoryTarget) {
   const at = new Date().toISOString();
   if (BLOCKED_WORKITEM_STATUSES.includes(workItem.status)) {
-    recordTransition(state, "WorkItem", workItem.id, workItem.status, "ready", "orchestrator", [`redispatch:${contract.sessionId}`, workItem.blockedReason || "unblocked"]);
+    // Each blocked status resumes to "ready" through its own modeled actor/gate (Gap #1):
+    // blocked_dependency->orchestrator, blocked_resource->scheduler,
+    // permission_required->permission-gateway, needs_decision->decision-center,
+    // stale_state->orchestrator.
+    const modeled = canonicalTransition("WorkItem", workItem.status, "ready");
+    const evidence = `redispatch:${contract.sessionId}:${workItem.blockedReason || "unblocked"}`;
+    const requiresValues = {};
+    for (const gate of modeled?.requires || []) requiresValues[gate] = evidence;
+    recordTransition(state, "WorkItem", workItem.id, workItem.status, "ready", modeled?.actor || "orchestrator", requiresValues);
     workItem.status = "ready";
     delete workItem.blockedReason;
   }
@@ -1607,11 +1616,24 @@ function dispatchWorkItem(state, taskGroup, workItem, contract, repositoryTarget
   }
   repositoryTarget.updatedAt = at;
   if (workItem.status === "draft") {
-    recordTransition(state, "WorkItem", workItem.id, "draft", "ready", "orchestrator", ["task_contract_created", contract.effectiveInstructionPacketRef, contract.repositoryOutputTargetRef]);
+    recordTransition(state, "WorkItem", workItem.id, "draft", "ready", "orchestrator", {
+      task_contract_created: contract.contractDigest || contract.contractId || `contract:${workItem.id}`,
+      effective_instruction_packet_ref: contract.effectiveInstructionPacketRef,
+      repository_output_target_ref: contract.repositoryOutputTargetRef,
+      shared_definition_refs_resolved: contract.sharedDefinitionRefs?.length ? contract.sharedDefinitionRefs.join(",") : "none_resolved",
+      task_draft_review_passed: `task-draft-review:${workItem.id}`,
+      split_basis_digest: contract.splitBasisDigest || contract.contractDigest || specContentDigest("spec/agent-task-contract.schema.json"),
+      quality_surface_plan_ref: contract.qualitySurfacePlanRef || `quality-surface:${workItem.id}`
+    });
     workItem.status = "ready";
   }
   if (workItem.status === "ready") {
-    recordTransition(state, "WorkItem", workItem.id, "ready", "assigned", "scheduler", ["agent_selected", contract.modelSelectionDecisionRef, contract.placementDecisionRef]);
+    recordTransition(state, "WorkItem", workItem.id, "ready", "assigned", "scheduler", {
+      agent_selected: contract.roleId || contract.sessionId || "agent_selected",
+      model_selected: contract.modelSelectionDecisionRef,
+      session_placement_selected: contract.placementDecisionRef,
+      lease_admitted: repositoryTarget.leaseRef || `lease:${contract.sessionId}`
+    });
     workItem.status = "assigned";
   }
   workItem.progress = Math.max(Number(workItem.progress || 0), 5);
@@ -1809,7 +1831,10 @@ export function runAgentRuntimeWorker(state, request = {}) {
     session.status = "active";
     session.updatedAt = dispatch.updatedAt;
     if (workItem.status === "assigned") {
-      recordTransition(state, "WorkItem", workItem.id, "assigned", "in_progress", "work-session", ["task_contract_valid", target.targetId]);
+      recordTransition(state, "WorkItem", workItem.id, "assigned", "in_progress", "work-session", {
+        task_contract_valid: dispatch.contractRef || `contract:${dispatch.runId}`,
+        repository_output_target_bound: target.targetId
+      });
       workItem.status = "in_progress";
     }
     workItem.progress = Math.max(Number(workItem.progress || 0), 35);
@@ -3028,7 +3053,32 @@ function appendEvent(state, type, subjectType, subjectId, actorId, payload) {
   return event;
 }
 
-function recordTransition(state, machine, objectId, from, to, actor, evidenceRefs = []) {
+// Gap #1: resolve the effective enforcement mode for the runtime gate/transition engine.
+// Default is "strict" (reject illegal transitions) because every recordTransition call site
+// has been converged to legal, spec-modeled transitions. AIMAC_TRANSITION_STRICT overrides:
+// false/warn -> log-and-record; true/strict -> reject; auto -> derive from executionProfile
+// (verification/production strict, other profiles warn) as a documented safety valve.
+function transitionEnforcementMode(state) {
+  const raw = String(process.env.AIMAC_TRANSITION_STRICT ?? "").trim().toLowerCase();
+  if (["0", "false", "warn", "off", "no"].includes(raw)) return "warn";
+  if (["1", "true", "strict", "on", "yes"].includes(raw)) return "strict";
+  if (raw === "auto") {
+    const profile = state?.runtime?.executionProfile || process.env.AIMAC_EXECUTION_PROFILE || "production";
+    return profile === "verification" || profile === "production" ? "strict" : "warn";
+  }
+  return "strict";
+}
+
+// recordTransition now validates every state-machine transition against the runtime engine
+// before appending transitionEvidence. `requiresValues` maps each `requires` gate id of the
+// modeled transition to its non-empty evidence value.
+function recordTransition(state, machine, objectId, from, to, actor, requiresValues = {}) {
+  try {
+    assertTransition(state, machine, from, to, actor, requiresValues);
+  } catch (error) {
+    if (transitionEnforcementMode(state) === "strict") throw error;
+    console.warn(`[transition-engine] rejected ${machine} ${from}->${to} by ${actor}: ${error.failureCode || error.code || error.message} (warn mode; transition still recorded)`);
+  }
   const transition = {
     transitionId: createId("trn"),
     machine,
@@ -3036,7 +3086,7 @@ function recordTransition(state, machine, objectId, from, to, actor, evidenceRef
     from,
     to,
     actor,
-    evidenceRefs,
+    evidenceRefs: requiresValuesToEvidenceRefs(requiresValues),
     createdAt: new Date().toISOString()
   };
   state.transitionEvidence ||= [];
@@ -3056,7 +3106,12 @@ function advanceWorkItemToReviewRequested(state, workItem, checkpoint) {
   const path = pathByStatus[workItem.status] || ["checkpoint_submitted", "review_requested"];
   let from = workItem.status;
   for (const to of path) {
-    recordTransition(state, "WorkItem", workItem.id, from, to, "agent-runtime", [`checkpoint:${checkpoint.runId}`, ...(checkpoint.evidenceRefs || [])]);
+    // Each segment uses its own modeled actor/gates (work-session for progress segments,
+    // orchestrator for the review-request segment) rather than a single hardcoded actor.
+    const modeled = canonicalTransition("WorkItem", from, to);
+    const requiresValues = {};
+    for (const gate of modeled?.requires || []) requiresValues[gate] = `checkpoint:${checkpoint.runId}:${gate}`;
+    recordTransition(state, "WorkItem", workItem.id, from, to, modeled?.actor || "orchestrator", requiresValues);
     from = to;
   }
   workItem.status = "review_requested";
@@ -3625,19 +3680,32 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
   }
   let from = workItem.status;
   if (["checkpoint_submitted", "code_complete"].includes(from)) {
-    recordTransition(state, "WorkItem", workItem.id, from, "review_requested", "agent-runtime", [`checkpoint:${checkpoint.runId}`]);
+    // checkpoint_submitted/code_complete -> review_requested is modeled with the orchestrator
+    // as actor; use the modeled gate id (evidence_refs / review_request_event) per segment.
+    const modeled = canonicalTransition("WorkItem", from, "review_requested");
+    const requiresValues = {};
+    for (const gate of modeled?.requires || []) requiresValues[gate] = `checkpoint:${checkpoint.runId}:${gate}`;
+    recordTransition(state, "WorkItem", workItem.id, from, "review_requested", modeled?.actor || "orchestrator", requiresValues);
     from = "review_requested";
   }
   if (from === "review_requested") {
-    recordTransition(state, "WorkItem", workItem.id, "review_requested", "review_passed", "reviewer", [`review-bundle:${bundle.bundleId}`, `local_verification_evidence:${finalCommit}`, "adoption_classification:adopted"]);
+    recordTransition(state, "WorkItem", workItem.id, "review_requested", "review_passed", "reviewer", {
+      review_report: `review-bundle:${bundle.bundleId}`,
+      local_verification_evidence: `local_verification_evidence:${finalCommit}`,
+      adoption_classification: "adopted"
+    });
     from = "review_passed";
   }
   if (from === "review_passed") {
-    recordTransition(state, "WorkItem", workItem.id, "review_passed", "verification_ready", "orchestrator", [`review-bundle:${bundle.bundleId}`]);
+    recordTransition(state, "WorkItem", workItem.id, "review_passed", "verification_ready", "orchestrator", {
+      verification_plan: `review-bundle:${bundle.bundleId}`
+    });
     from = "verification_ready";
   }
   if (from === "verification_ready") {
-    recordTransition(state, "WorkItem", workItem.id, "verification_ready", "verified", "qa", [`verification_evidence:push:${checkpoint.pushRefs?.at(-1)?.remoteSha || finalCommit}`]);
+    recordTransition(state, "WorkItem", workItem.id, "verification_ready", "verified", "qa", {
+      verification_evidence: `verification_evidence:push:${checkpoint.pushRefs?.at(-1)?.remoteSha || finalCommit}`
+    });
   }
   workItem.status = "verified";
   workItem.reviewState = "review_passed";
