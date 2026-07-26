@@ -430,6 +430,7 @@ function saveSession(sessionToken, account) {
   currentAccount = account;
   sessionStorage.setItem("aimac.sessionToken", sessionToken);
   sessionStorage.setItem("aimac.account", JSON.stringify(account));
+  connectRealtime();
 }
 
 function clearSession() {
@@ -453,6 +454,7 @@ function clearSession() {
   execEvents = [];
   execCursor = 0;
   stopExecPolling();
+  disconnectRealtime();
   sessionStorage.removeItem("aimac.sessionToken");
   sessionStorage.removeItem("aimac.account");
   sessionStorage.removeItem("aimac.page");
@@ -2855,8 +2857,56 @@ document.addEventListener("click", async (event) => {
   }
 });
 
-/* ---------------- 自动刷新（5 秒） ---------------- */
+/* ---------------- 实时推送（WebSocket，回退到 5 秒轮询） ---------------- */
 
+let realtimeSocket = null;
+let realtimeReconnectTimer = null;
+let realtimeWakeTimer = null;
+
+function realtimeWake() {
+  if (realtimeWakeTimer) return;
+  realtimeWakeTimer = setTimeout(() => {
+    realtimeWakeTimer = null;
+    if (!authToken || loading || modalHtml || formTouched) return;
+    const active = document.activeElement;
+    if (active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;
+    loadPage().catch(() => {});
+  }, 300);
+}
+
+function connectRealtime() {
+  if (!authToken || realtimeSocket) return;
+  let socket;
+  try {
+    const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+    socket = new WebSocket(`${scheme}//${location.host}/api/realtime?token=${encodeURIComponent(authToken)}`);
+  } catch {
+    return;
+  }
+  realtimeSocket = socket;
+  socket.addEventListener("open", () => {
+    try { socket.send(JSON.stringify({subscribe: ["state"]})); } catch { /* closing */ }
+  });
+  socket.addEventListener("message", (event) => {
+    let message;
+    try { message = JSON.parse(event.data); } catch { return; }
+    if (message.event === "wake") realtimeWake();
+  });
+  const scheduleReconnect = () => {
+    if (realtimeSocket === socket) realtimeSocket = null;
+    if (!authToken || realtimeReconnectTimer) return;
+    realtimeReconnectTimer = setTimeout(() => { realtimeReconnectTimer = null; connectRealtime(); }, 3000);
+  };
+  socket.addEventListener("close", scheduleReconnect);
+  socket.addEventListener("error", () => { try { socket.close(); } catch { /* already closed */ } });
+}
+
+function disconnectRealtime() {
+  if (realtimeReconnectTimer) { clearTimeout(realtimeReconnectTimer); realtimeReconnectTimer = null; }
+  if (realtimeSocket) { try { realtimeSocket.close(); } catch { /* already closed */ } realtimeSocket = null; }
+}
+
+// Long-poll fallback keeps the console fresh if the WebSocket is unavailable or between reconnects.
 setInterval(() => {
   if (!authToken || loading || modalHtml || formTouched) return;
   const active = document.activeElement;
@@ -2868,6 +2918,7 @@ setInterval(() => {
 
 if (authToken && currentAccount) {
   page = page || defaultPageFor(perspectiveOf(currentAccount));
+  connectRealtime();
   loadPage().then(() => {
     if (page === "monitor") {
       loadExecEvents({reset: true}).catch(() => {});

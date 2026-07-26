@@ -175,7 +175,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | 控制服务 | TypeScript/Node.js 控制平面，可按负载拆分服务但协议不变 |
 | 系统库 | 本地 npm/shell 默认 `runtime_json` 中央状态 + 项目级 state shard；Docker Compose 设置 `AIMAC_STATE_STORE=postgresql` 并使用 Postgres JSONB 中央状态表和项目 shard 表存储权威状态、event log、lease、audit、rules 和 Git-backed artifact manifest metadata |
 | Agent Runtime | 可远程加入、探测、执行、隔离、恢复、上报证据的机器执行器 |
-| 实时通道 | Agent Gateway 长轮询 + 写入通知负责实时性，持久 command/event log 负责断线重放；PostgreSQL 部署可接入 LISTEN/NOTIFY 和 outbox/DLQ 扩展横向扩容 |
+| 实时通道 | 控制台经认证的 WebSocket（`/api/realtime`）接收 state/agent-control 频道的实时 wake 帧（仅信号、无载荷，客户端经既有已鉴权作用域端点重取），并回退到 Agent Gateway 长轮询 + 写入通知；持久 command/event log 负责断线重放；PostgreSQL 部署可接入 LISTEN/NOTIFY 和 outbox/DLQ 扩展横向扩容 |
 | MCP | 全部 MCP server 集中运行在控制平面服务器；Agent 仅以节点凭证访问远程 MCP，不允许运行 Agent-local MCP server |
 | Evidence/Artifact | 证据 locator、digest、sensitivity、retention、redaction、verify、GC、backup；项目交付文件以 Git 仓库 commit/push 为准 |
 | Policy/Secret | policy table/engine、secret lease、credential helper、grant revoke、audit |

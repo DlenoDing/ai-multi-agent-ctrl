@@ -29,6 +29,7 @@
     "docker:doctor": "node scripts/doctor-docker-compose.mjs"
   },
   "dependencies": {
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "ws": "^8.21.1"
   }
 }

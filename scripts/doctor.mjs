@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
+import WebSocket from "ws";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
@@ -47,6 +48,36 @@ async function loginAs(port, email, token) {
     throw new Error(`doctor login failed for ${email}`);
   }
   return `Bearer ${login.payload.sessionToken}`;
+}
+
+async function verifyRealtimeWebSocket(port, bearerAuth) {
+  const token = bearerAuth.replace(/^Bearer\s+/u, "");
+  // An unauthenticated upgrade must be rejected before the socket opens.
+  await new Promise((resolveProbe, rejectProbe) => {
+    const bad = new WebSocket(`ws://127.0.0.1:${port}/api/realtime?token=bogus-token`);
+    const timer = setTimeout(() => { bad.terminate(); rejectProbe(new Error("unauthenticated realtime WS was not rejected")); }, 4000);
+    bad.on("error", () => { clearTimeout(timer); resolveProbe(); });
+    bad.on("open", () => { clearTimeout(timer); bad.close(); rejectProbe(new Error("unauthenticated realtime WS was accepted")); });
+  });
+  // Authenticated: subscribe to state, trigger a scoped write, and expect a wake frame.
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/api/realtime?token=${encodeURIComponent(token)}`);
+  try {
+    await new Promise((resolveWake, rejectWake) => {
+      const timer = setTimeout(() => rejectWake(new Error("no realtime wake frame within 6s")), 6000);
+      ws.on("error", (error) => { clearTimeout(timer); rejectWake(error); });
+      ws.on("message", (data) => {
+        let message;
+        try { message = JSON.parse(String(data)); } catch { return; }
+        if (message.event === "connected") ws.send(JSON.stringify({subscribe: ["state"]}));
+        if (message.event === "subscribed") {
+          jsonFetch(port, "/api/task-groups", {method: "POST", headers: {authorization: bearerAuth, "idempotency-key": "doctor-realtime-probe"}, body: JSON.stringify({projectId: "prj_control_plane", name: "Realtime probe"})}).catch((error) => rejectWake(error));
+        }
+        if (message.event === "wake" && message.channel === "state") { clearTimeout(timer); resolveWake(); }
+      });
+    });
+  } finally {
+    try { ws.close(); } catch { /* already closing */ }
+  }
 }
 
 function expectStatus(result, status, label) {
@@ -860,6 +891,8 @@ try {
   expectStatus(await g2("/api/rule-source-resolutions", invitedAuth, "g2b-rulesource-deny", {taskGroupId: "tg_runtime_management", sourceRef: "reference:x"}), 403, "rule source resolve deny");
 
   console.log("gap 2b §4 rest endpoints ok");
+  await verifyRealtimeWebSocket(port, auth);
+  console.log("realtime websocket ok");
   console.log("ai-native control flow ok");
 } finally {
   child.kill("SIGTERM");

@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { WebSocketServer } from "ws";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash, randomBytes } from "node:crypto";
@@ -102,6 +103,9 @@ const stateViewMaxEntries = Number(process.env.AIMAC_STATE_VIEW_CACHE_MAX_ENTRIE
 const agentControlWaitFanout = new Map();
 const projectExecutionWaitFanout = new Map();
 const longPollWaiters = new Map();
+// WebSocket clients subscribed to real-time wake channels (see /api/realtime). Wake frames carry
+// no payload; the client re-fetches through the existing authenticated + tenant-scoped endpoints.
+const realtimeClients = new Set();
 
 const unsafeSecretValues = new Set([
   "",
@@ -1538,10 +1542,28 @@ function waitForLongPollSignal(keys, timeoutMs) {
 }
 
 function notifyLongPollWaiters(key) {
+  pushRealtime(key);
   const waiters = longPollWaiters.get(key);
   if (!waiters?.size) return;
   longPollWaiters.delete(key);
   for (const resolveWaiter of waiters) resolveWaiter();
+}
+
+// Push a lightweight wake frame to every WS client subscribed to this channel. Signal only —
+// no data — so the delivery path carries no tenant-visible content; subscribing to a channel is
+// authorized at subscribe time and the client re-fetches scoped data itself.
+function pushRealtime(key) {
+  if (!realtimeClients.size) return;
+  const frame = JSON.stringify({event: "wake", channel: key, at: new Date().toISOString()});
+  for (const client of realtimeClients) {
+    if (client.readyState === client.OPEN && client.subscriptions?.has(key)) {
+      try {
+        client.send(frame);
+      } catch {
+        realtimeClients.delete(client);
+      }
+    }
+  }
 }
 
 function retryExecutionEventProjection(req, body) {
@@ -3745,6 +3767,111 @@ function safeRequestPathname(req) {
     return null;
   }
 }
+
+// --- Real-time WebSocket push (additive over long-poll) --------------------------------------
+const realtimeServer = new WebSocketServer({noServer: true});
+
+function realtimeToken(req) {
+  const header = req.headers.authorization || "";
+  if (header.startsWith("Bearer ")) return header.slice("Bearer ".length).trim();
+  try {
+    return new URL(req.url, "http://request.local").searchParams.get("token") || "";
+  } catch {
+    return "";
+  }
+}
+
+function authorizeRealtime(req) {
+  const token = realtimeToken(req);
+  if (!token) return null;
+  const state = readState();
+  const tokenDigest = digestOf(`session:${token}`);
+  const session = (state.authSessions || []).find((item) => item.tokenDigest === tokenDigest && item.status === "active" && new Date(item.expiresAt).getTime() > Date.now());
+  if (session) {
+    const account = (state.accounts || []).find((item) => item.accountId === session.accountId);
+    if (account) return {kind: "account", accountId: account.accountId};
+  }
+  const node = authenticateAgentNode(state, token);
+  if (node) return {kind: "agent", nodeId: node.nodeId};
+  return null;
+}
+
+function realtimeChannelAuthorized(principal, channel) {
+  if (channel === "state") return true; // wake-only; client re-fetches tenant-scoped state
+  if (channel.startsWith("agent-control:")) return principal.kind === "agent" && channel === `agent-control:${principal.nodeId}`;
+  return false;
+}
+
+function handleRealtimeMessage(socket, data) {
+  let message;
+  try {
+    message = JSON.parse(String(data));
+  } catch {
+    return;
+  }
+  if (Array.isArray(message.subscribe)) {
+    for (const channel of message.subscribe) {
+      if (realtimeChannelAuthorized(socket.principal, String(channel))) socket.subscriptions.add(String(channel));
+    }
+  }
+  if (Array.isArray(message.unsubscribe)) {
+    for (const channel of message.unsubscribe) socket.subscriptions.delete(String(channel));
+  }
+  try {
+    socket.send(JSON.stringify({event: "subscribed", channels: [...socket.subscriptions]}));
+  } catch {
+    realtimeClients.delete(socket);
+  }
+}
+
+server.on("upgrade", (req, socket, head) => {
+  let pathname;
+  try {
+    pathname = new URL(req.url, "http://request.local").pathname;
+  } catch {
+    socket.destroy();
+    return;
+  }
+  if (pathname !== "/api/realtime") {
+    socket.destroy();
+    return;
+  }
+  const principal = authorizeRealtime(req);
+  if (!principal) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+  realtimeServer.handleUpgrade(req, socket, head, (client) => {
+    client.principal = principal;
+    client.subscriptions = new Set();
+    client.isAlive = true;
+    if (principal.kind === "agent") client.subscriptions.add(`agent-control:${principal.nodeId}`);
+    realtimeClients.add(client);
+    client.on("pong", () => { client.isAlive = true; });
+    client.on("message", (data) => handleRealtimeMessage(client, data));
+    client.on("close", () => realtimeClients.delete(client));
+    client.on("error", () => { realtimeClients.delete(client); try { client.terminate(); } catch {} });
+    try {
+      client.send(JSON.stringify({event: "connected", channels: [...client.subscriptions]}));
+    } catch {
+      realtimeClients.delete(client);
+    }
+  });
+});
+
+const realtimeHeartbeat = setInterval(() => {
+  for (const client of realtimeClients) {
+    if (client.isAlive === false) {
+      realtimeClients.delete(client);
+      try { client.terminate(); } catch {}
+      continue;
+    }
+    client.isAlive = false;
+    try { client.ping(); } catch { realtimeClients.delete(client); }
+  }
+}, Math.max(10000, Number(process.env.AIMAC_REALTIME_HEARTBEAT_MS || 30000)));
+realtimeHeartbeat.unref();
 
 function respondApiError(res, error) {
   if (res.headersSent) {
