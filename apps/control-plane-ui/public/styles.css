@@ -577,6 +577,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   gap: 10px;
   padding: 14px 18px;
   border-top: 1px solid var(--card-border);
+  flex-wrap: wrap;
 }
 .primary-button.danger { background: var(--danger-strong); color: #fff; border-color: var(--danger-strong); }
 .primary-button.danger:hover { filter: brightness(1.08); }

@@ -243,6 +243,13 @@ function customBadge(label, tone) {
   return `<span class="badge ${tone}">${esc(label)}</span>`;
 }
 
+// 任务分解项类别标签：优先 kind_<k> 映射，缺失则退回裸类别（再经 t 兜底），避免直出 "kind_xxx"
+function kindLabel(k) {
+  const key = `kind_${k}`;
+  const mapped = t(key);
+  return mapped === key ? String(k) : mapped;
+}
+
 function fmtTime(value) {
   if (!value) return "-";
   const date = new Date(value);
@@ -285,17 +292,26 @@ function panel(title, body, options = {}) {
   `;
 }
 
+// 单元格可为字符串，或 {v, c} 形态（v=已转义内容，c=列 class，如 "num"/"text-clip"/"nowrap"）
+function cell(item) {
+  if (item && typeof item === "object" && "v" in item) return `<td class="${item.c || ""}">${item.v}</td>`;
+  return `<td>${item}</td>`;
+}
+
 function row(items) {
-  return `<tr>${items.map((item) => `<td>${item}</td>`).join("")}</tr>`;
+  return `<tr>${items.map(cell).join("")}</tr>`;
 }
 
 function table(headers, bodyRows, options = {}) {
+  const th = (headline) => (headline && typeof headline === "object" && "label" in headline)
+    ? `<th class="${headline.c || ""}">${esc(headline.label)}</th>`
+    : `<th>${esc(headline)}</th>`;
   const emptyRow = `<tr><td class="empty-cell" colspan="${headers.length}">${esc(options.emptyText || "暂无数据")}</td></tr>`;
   const footer = options.moreText ? `<div class="table-more">${esc(options.moreText)}</div>` : "";
   return `
     <div class="table-scroll">
       <table class="data-table">
-        <thead><tr>${headers.map((headline) => `<th>${esc(headline)}</th>`).join("")}</tr></thead>
+        <thead><tr>${headers.map(th).join("")}</tr></thead>
         <tbody>${bodyRows || emptyRow}</tbody>
       </table>
       ${footer}
@@ -303,9 +319,9 @@ function table(headers, bodyRows, options = {}) {
   `;
 }
 
-// 截断提示：数据超过展示上限时给出"共 N 条，仅显示前 M 条"
+// 截断提示：数据超过展示上限时给出中性文案（不区分前/最新，避免与实际排序不符）
 function moreText(total, shown) {
-  return total > shown ? `共 ${total} 条，仅显示最新 ${shown} 条` : "";
+  return total > shown ? `共 ${total} 条，当前展示 ${shown} 条` : "";
 }
 
 const filterState = {};
@@ -373,6 +389,8 @@ function saveSession(sessionToken, account) {
 function clearSession() {
   authToken = "";
   currentAccount = null;
+  modalProtected = false;
+  document.body.classList.remove("modal-open");
   state = emptyState();
   systemOverview = null;
   organizations = [];
@@ -875,7 +893,6 @@ function render() {
 }
 
 function renderContent() {
-  const banner = errorBanner();
   let body = "";
   if (page === "sys-overview") body = renderSysOverview();
   else if (page === "sys-orgs") body = renderSysOrgs();
@@ -891,7 +908,7 @@ function renderContent() {
   else if (page === "directives") body = renderDirectives();
   else if (page === "monitor") body = renderMonitor();
   else if (page === "proj-settings") body = renderProjectSettings();
-  return banner + body;
+  return body;
 }
 
 /* ---------------- 系统管理员：系统概览 ---------------- */
@@ -907,7 +924,7 @@ function renderSysOverview() {
     fmtTime(entry.at),
     esc(accountName(entry.actor)),
     esc(t(entry.action)),
-    esc(entry.subject),
+    {v: esc(entry.subject), c: "text-clip"},
     badge(entry.result || "ok")
   ])).join("");
 
@@ -964,7 +981,7 @@ function renderSysOverview() {
         <div class="button-row"><button class="danger-button" data-action="bootstrap-init">重新初始化运行态</button></div>
       </div>
     `),
-    panel("审计日志", table(["时间", "操作者", "动作", "对象", "结果"], audit), {wide: true})
+    panel("审计日志", table(["时间", "操作者", "动作", {label: "对象", c: "text-clip"}, "结果"], audit, {moreText: moreText((state.auditLog || []).length, 15)}), {wide: true})
   ].join("");
 }
 
@@ -1023,7 +1040,7 @@ function renderSysSettings() {
     esc(t(profile.providerClass)),
     `<span class="mono">${esc(profile.modelId)}</span>`,
     esc((profile.strengths || []).slice(0, 4).map((item) => t(item)).join("、")),
-    esc(profile.limits?.contextWindowTokens ?? "-"),
+    {v: esc(profile.limits?.contextWindowTokens ?? "-"), c: "num"},
     badge(profile.availability)
   ])).join("");
   const sources = (state.skillSources || []).map((source) => row([
@@ -1039,7 +1056,7 @@ function renderSysSettings() {
     esc(t(envelope.recipientRole)),
     `<span class="mono">${esc(String(envelope.cacheKey || "").slice(0, 28))}</span>`,
     badge(envelope.status),
-    esc(envelope.tokenBudget?.targetDeltaTokens ?? "-")
+    {v: esc(envelope.tokenBudget?.targetDeltaTokens ?? "-"), c: "num"}
   ])).join("");
   const definitions = (instructionState?.sharedDefinitions || []).map((definition) => row([
     `<span class="mono">${esc(definition.contractId)}</span>`,
@@ -1061,7 +1078,7 @@ function renderSysSettings() {
       </dl>
     `),
     panel("技能源", table(["技能源", "状态", "固定提交", "角色数", "操作"], sources)),
-    panel("模型能力注册（只读）", table(["供应商", "模型", "能力", "上下文窗口", "可用性"], models), {wide: true}),
+    panel("模型能力注册（只读）", table(["供应商", "模型", "能力", {label: "上下文窗口", c: "num"}, "可用性"], models, {moreText: moreText((state.modelCapabilities || []).length, 40)}), {wide: true}),
     panel("指令压缩指标", `
       <div class="metric-grid">
         <div class="metric"><span>稳定前缀 Token 数</span><strong>${esc(metrics.stablePrefixTokens)}</strong></div>
@@ -1069,7 +1086,7 @@ function renderSysSettings() {
         <div class="metric"><span>缓存命中目标</span><strong>${Math.round((metrics.cacheHitTarget || 0) * 100)}%</strong></div>
       </div>
     `),
-    panel("指令信封", table(["编号", "接收角色", "缓存键", "状态", "目标 Token 数"], envelopes)),
+    panel("指令信封", table(["编号", "接收角色", "缓存键", "状态", {label: "目标 Token 数", c: "num"}], envelopes, {moreText: moreText((metrics.envelopes || []).length, 12)})),
     panel("共享定义归属", table(["定义", "类型", "归属角色", "生产角色", "状态"], definitions), {wide: true})
   ].join("");
 }
@@ -1086,10 +1103,10 @@ function renderSysAccounts() {
   ])).join("");
   const grants = (state.accessGrants || []).map((grant) => row([
     `<span class="mono">${esc(grant.subjectRef?.subjectId || "-")}</span>`,
-    `<span class="mono">${esc(`${grant.resource?.resourceType || "-"}:${grant.resource?.resourceId || "-"}`)}</span>`,
+    resourceScopeLabel(grant.resource),
     esc(t(grant.role)),
     badge(grant.status),
-    esc((grant.permissions || []).join("、")),
+    esc((grant.permissions || []).map(permLabel).join("、")),
     grant.status === "active" ? `<button class="danger-button" data-action="revoke-grant" data-grant="${esc(grant.grantId)}">撤销</button>` : "-"
   ])).join("");
   const agents = (state.agents || []).map((agent) => row([
@@ -1188,8 +1205,8 @@ function renderJoinTokenSection() {
     esc(projectNameOf(token.projectId)),
     esc((token.allowedRoles || []).join("、")),
     badge(token.status),
-    `${token.useCount ?? 0}/${token.maxUses ?? 1}`,
-    fmtTime(token.expiresAt),
+    {v: `${token.useCount ?? 0}/${token.maxUses ?? 1}`, c: "num"},
+    {v: fmtTime(token.expiresAt), c: "nowrap"},
     token.status === "issued" ? `<button class="danger-button" data-action="revoke-join-token" data-token-id="${esc(token.joinTokenId)}">撤销</button>` : "-"
   ])).join("");
   return `
@@ -1205,7 +1222,7 @@ function renderJoinTokenSection() {
         </div>
         <button class="primary-button" type="submit">签发一次性加入令牌</button>
       </form>
-      ${table(["令牌", "项目", "角色范围", "状态", "已用次数", "过期时间", "操作"], tokens)}
+      ${table(["令牌", "项目", "角色范围", "状态", {label: "已用次数", c: "num"}, {label: "过期时间", c: "nowrap"}, "操作"], tokens, {moreText: moreText((state.agentJoinTokens || []).length, 20)})}
     </div>
   `;
 }
@@ -1260,11 +1277,35 @@ const MEMBER_PERMISSION_OPTIONS = [
   ["project:grant", "项目授权管理"],
   ["task_group:read", "查看任务组"],
   ["task_group:review", "人工审核"],
-  ["task_group:control", "任务组控制 / 人工指令"],
+  ["task_group:control", "任务组控制与人工指令"],
   ["task_group:monitor", "执行监控"],
   ["member:invite", "邀请成员"],
   ["agent:activate", "智能体管理"]
 ];
+
+// 权限码 → 中文（授权列表等处复用，覆盖成员可选项之外的权限码）
+const PERMISSION_LABELS = {
+  ...Object.fromEntries(MEMBER_PERMISSION_OPTIONS),
+  "project:update": "编辑项目",
+  "project:create": "创建项目",
+  "project:*": "项目全部权限",
+  "task_group:orchestrate": "编排调度",
+  "task_group:checkpoint_submit": "提交检查点",
+  "task_group:*": "任务组全部权限",
+  "org:member_admin": "组织成员管理",
+  "org:project_admin": "组织项目管理",
+  "org:*": "组织全部权限",
+  "system:*": "系统全部权限"
+};
+function permLabel(code) {
+  return PERMISSION_LABELS[String(code || "")] || t(code);
+}
+const RESOURCE_TYPE_LABELS = {project: "项目", task_group: "任务组", organization: "组织", system: "系统"};
+function resourceScopeLabel(resource) {
+  const type = resource?.resourceType;
+  const typeLabel = RESOURCE_TYPE_LABELS[type] || (type || "-");
+  return `${esc(typeLabel)}：<span class="mono">${esc(resource?.resourceId || "-")}</span>`;
+}
 
 function permissionCheckboxes(selected = ["project:view", "task_group:read"]) {
   return `
@@ -1448,10 +1489,10 @@ function renderProjectOverview() {
     `<span class="mono">${esc((target.pathAllowlist || []).join("、"))}</span>`
   ])).join("");
   const events = (state.agentExecutionEvents || []).filter((event) => groups.some((taskGroup) => taskGroup.id === event.taskGroupId)).slice(0, 10).map((event) => row([
-    fmtTime(event.createdAt),
+    {v: fmtTime(event.createdAt), c: "nowrap"},
     badge(event.eventType, "blue"),
     badge(event.status),
-    esc(event.summary || "-")
+    {v: esc(event.summary || "-"), c: "text-clip"}
   ])).join("");
 
   return [
@@ -1475,7 +1516,7 @@ function renderProjectOverview() {
       </div>
     `),
     panel("任务组一览", table(["任务组", "状态", "阶段", "进度", "健康度", "受阻数"], groupRows), {wide: true}),
-    panel("最新执行事件", table(["时间", "事件", "状态", "摘要"], events)),
+    panel("最新执行事件", table([{label: "时间", c: "nowrap"}, "事件", "状态", {label: "摘要", c: "text-clip"}], events)),
     panel("仓库产出归属", table(["任务组", "仓库", "分支", "状态", "允许路径"], repoRows))
   ].join("");
 }
@@ -1572,12 +1613,12 @@ function renderTaskGroupDetail(taskGroup) {
   const analysisHtml = analysis && (analysis.items || []).length
     ? `<div class="tree">${(analysis.items || []).map((item) => `
         <div class="tree-item">
-          <div class="tree-head">${customBadge(t(`kind_${item.kind}`), "gray")} <strong>${esc(item.title)}</strong> ${badge(item.status)} <em class="small muted">${item.progress ?? 0}%</em></div>
+          <div class="tree-head">${customBadge(kindLabel(item.kind), "gray")} <strong>${esc(item.title)}</strong> ${badge(item.status)} <em class="small muted">${item.progress ?? 0}%</em></div>
           ${progressBar(item.progress)}
           ${item.note ? `<div class="tree-note">${esc(item.note)}</div>` : ""}
           ${(item.children || []).length ? `<div class="tree-children">${item.children.map((child) => `
             <div class="tree-item minor">
-              <div class="tree-head">${customBadge(t(`kind_${child.kind}`), "gray")} ${esc(child.title)} ${badge(child.status)} <em class="small muted">${child.progress ?? 0}%</em></div>
+              <div class="tree-head">${customBadge(kindLabel(child.kind), "gray")} ${esc(child.title)} ${badge(child.status)} <em class="small muted">${child.progress ?? 0}%</em></div>
               ${child.note ? `<div class="tree-note">${esc(child.note)}</div>` : ""}
             </div>
           `).join("")}</div>` : ""}
@@ -1872,12 +1913,12 @@ function renderReview() {
   `).join("") : `<div class="notice">当前任务组没有待确认的问题。</div>`;
 
   const answeredRows = answered.map((request) => row([
-    esc(request.question?.summary || "-"),
+    {v: esc(request.question?.summary || "-"), c: "text-clip"},
     badge(request.status),
     esc(request.decision?.selectedLabel || request.decision?.selectedOptionId || "-"),
-    esc(request.decision?.inputText || "-"),
+    {v: esc(request.decision?.inputText || "-"), c: "text-clip"},
     esc(request.decision?.decidedBy ? accountName(request.decision.decidedBy) : "-"),
-    fmtTime(request.decision?.decidedAt || request.updatedAt)
+    {v: fmtTime(request.decision?.decidedAt || request.updatedAt), c: "nowrap"}
   ])).join("");
 
   return [
@@ -1887,7 +1928,7 @@ function renderReview() {
         ${pendingHtml}
       </div>
     `, {wide: true}),
-    panel("已答历史", table(["问题", "状态", "所选选项", "确认内容", "确认人", "确认时间"], answeredRows), {wide: true})
+    panel("已答历史", table([{label: "问题", c: "text-clip"}, "状态", "所选选项", {label: "确认内容", c: "text-clip"}, "确认人", {label: "确认时间", c: "nowrap"}], answeredRows), {wide: true})
   ].join("");
 }
 
@@ -1907,11 +1948,11 @@ function renderDirectives() {
     return panel("人工指令", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true});
   }
   const directiveRows = directiveList.map((directive) => row([
-    fmtTime(directive.createdAt),
+    {v: fmtTime(directive.createdAt), c: "nowrap"},
     badge(directive.directiveType, "blue"),
-    esc(directive.instruction || "-"),
+    {v: esc(directive.instruction || "-"), c: "text-clip"},
     badge(directive.status),
-    esc((directive.appliedActions || []).map((action) => t(action.action)).join("、") || "-"),
+    {v: esc((directive.appliedActions || []).map((action) => t(action.action)).join("、") || "-"), c: "text-clip"},
     esc(directive.rejectReason ? t(directive.rejectReason) : "-")
   ])).join("");
 
@@ -1934,7 +1975,7 @@ function renderDirectives() {
         ${formHtml}
       </div>
     `, {wide: true}),
-    panel("指令流水", table(["时间", "类型", "指令内容", "状态", "已执行动作", "拒绝原因"], directiveRows), {wide: true, headerSide: filterInput("按指令内容过滤…", "directives")})
+    panel("指令流水", table([{label: "时间", c: "nowrap"}, "类型", {label: "指令内容", c: "text-clip"}, "状态", {label: "已执行动作", c: "text-clip"}, "拒绝原因"], directiveRows), {wide: true, headerSide: filterInput("按指令内容过滤…", "directives")})
   ].join("");
 }
 
@@ -1951,12 +1992,12 @@ function renderMonitor() {
   }
 
   const eventRows = execEvents.slice().reverse().slice(0, 120).map((event) => row([
-    esc(event.sequence),
+    {v: esc(event.sequence), c: "num"},
     badge(event.eventType, "blue"),
-    `${esc(event.progressPercent ?? 0)}%`,
+    {v: `${esc(event.progressPercent ?? 0)}%`, c: "num"},
     badge(event.status),
-    esc(event.summary || "-"),
-    fmtTime(event.createdAt)
+    {v: esc(event.summary || "-"), c: "text-clip"},
+    {v: fmtTime(event.createdAt), c: "nowrap"}
   ])).join("");
 
   const sessions = (state.workSessions || []).filter((session) => groups.some((taskGroup) => taskGroup.id === session.taskGroupId)).slice(0, 20).map((session) => row([
@@ -1972,18 +2013,18 @@ function renderMonitor() {
     `<span class="mono">${esc(dispatch.dispatchId)}</span>`,
     `<span class="mono">${esc(dispatch.workItemId || "-")}</span>`,
     badge(dispatch.status),
-    `${esc(dispatch.progressPercent || 0)}%`,
+    {v: `${esc(dispatch.progressPercent || 0)}%`, c: "num"},
     esc(dispatch.blockedReason || dispatch.failureReason ? t(dispatch.blockedReason || dispatch.failureReason) : "-"),
     `<button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${esc(dispatch.dispatchId)}">事件</button>`
   ])).join("");
 
   const commands = (state.agentControlCommands || []).slice(0, 16).map((command) => row([
-    esc(command.sequence),
+    {v: esc(command.sequence), c: "num"},
     `<span class="mono">${esc(command.nodeId)}</span>`,
     badge(command.commandType, "blue"),
     `<span class="mono">${esc(command.dispatchId || command.sessionId || "-")}</span>`,
     badge(command.status),
-    fmtTime(command.updatedAt || command.createdAt)
+    {v: fmtTime(command.updatedAt || command.createdAt), c: "nowrap"}
   ])).join("");
 
   const canControlNodes = hasPerm("agent:activate");
@@ -2005,7 +2046,7 @@ function renderMonitor() {
     `<span class="mono">${esc(decision.workItemId || "-")}</span>`,
     `<span class="mono">${esc(decision.selectedModel?.modelId || "-")}</span>`,
     badge(decision.status),
-    esc(decision.modelDecision || t(decision.selectionMode || "-"))
+    {v: esc(decision.modelDecision || t(decision.selectionMode || "-")), c: "text-clip"}
   ])).join("");
 
   const placements = (state.sessionPlacementDecisions || []).slice(0, 10).map((decision) => row([
@@ -2017,8 +2058,8 @@ function renderMonitor() {
   const barriers = (state.closeBarriers || []).slice(0, 8).map((barrier) => row([
     esc(taskGroupNameOf(barrier.taskGroupId)),
     barrier.satisfied ? customBadge("可关闭", "green") : customBadge("存在阻塞", "red"),
-    String((barrier.blockingObjects || []).length),
-    fmtTime(barrier.computedAt)
+    {v: String((barrier.blockingObjects || []).length), c: "num"},
+    {v: fmtTime(barrier.computedAt), c: "nowrap"}
   ])).join("");
 
   return [
@@ -2031,16 +2072,16 @@ function renderMonitor() {
     panel("实时事件流", `
       <div class="stack">
         <div class="record-meta"><span>监听范围：</span><select data-select="exec-scope">${scopeOptions.map((option) => `<option value="${esc(option.value)}" ${option.value === scopeValue ? "selected" : ""}>${esc(option.label)}</option>`).join("")}</select></div>
-        ${table(["序号", "事件", "进度", "状态", "摘要", "时间"], eventRows)}
+        ${table([{label: "序号", c: "num"}, "事件", {label: "进度", c: "num"}, "状态", {label: "摘要", c: "text-clip"}, {label: "时间", c: "nowrap"}], eventRows, {moreText: moreText(execEvents.length, 120)})}
       </div>
     `, {wide: true, headerSide: filterInput("按事件、摘要过滤…", "events")}),
-    panel("工作会话", table(["会话", "角色", "工作项", "放置方式", "状态", "详情"], sessions), {wide: true, headerSide: filterInput("按会话、工作项过滤…", "sessions")}),
-    panel("智能体派发", table(["派发", "工作项", "状态", "进度", "原因", "详情"], dispatches), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
-    panel("控制通道", table(["序号", "节点", "命令", "作用对象", "状态", "更新时间"], commands), {wide: true}),
+    panel("工作会话", table(["会话", "角色", "工作项", "放置方式", "状态", "详情"], sessions, {moreText: moreText((state.workSessions || []).length, 20)}), {wide: true, headerSide: filterInput("按会话、工作项过滤…", "sessions")}),
+    panel("智能体派发", table(["派发", "工作项", "状态", {label: "进度", c: "num"}, "原因", "详情"], dispatches, {moreText: moreText((state.agentDispatches || []).length, 20)}), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
+    panel("控制通道", table([{label: "序号", c: "num"}, "节点", "命令", "作用对象", "状态", {label: "更新时间", c: "nowrap"}], commands, {moreText: moreText((state.agentControlCommands || []).length, 16)}), {wide: true}),
     panel("运行时节点", table(["节点", "状态", "准入", "最近心跳", "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
-    panel("模型选择记录", table(["角色", "工作项", "模型", "状态", "决策说明"], decisions)),
-    panel("会话放置记录", table(["工作项", "放置方式", "状态"], placements)),
-    panel("关闭门禁", table(["任务组", "状态", "阻塞对象数", "计算时间"], barriers), {wide: true})
+    panel("模型选择记录", table(["角色", "工作项", "模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText((state.modelSelectionDecisions || []).length, 10)})),
+    panel("会话放置记录", table(["工作项", "放置方式", "状态"], placements, {moreText: moreText((state.sessionPlacementDecisions || []).length, 10)})),
+    panel("关闭门禁", table(["任务组", "状态", {label: "阻塞对象数", c: "num"}, {label: "计算时间", c: "nowrap"}], barriers, {moreText: moreText((state.closeBarriers || []).length, 8)}), {wide: true})
   ].join("");
 }
 
@@ -2171,7 +2212,7 @@ document.addEventListener("submit", async (event) => {
       await api(`/api/orgs/${encodeURIComponent(form.dataset.org)}/quotas`, {method: "POST", body: JSON.stringify({
         quotas: {maxMembers: Number(data.maxMembers), maxProjects: Number(data.maxProjects), maxTaskGroups: Number(data.maxTaskGroups), maxAgents: Number(data.maxAgents)}
       })});
-      modalHtml = "";
+      closeModal();
       await loadPage();
       return;
     }
@@ -2190,7 +2231,7 @@ document.addEventListener("submit", async (event) => {
     if (kind === "member-perms") {
       const permissions = [...form.querySelectorAll("input[name='perm']:checked")].map((input) => input.value);
       await api(`/api/org/members/${encodeURIComponent(form.dataset.account)}/permissions`, {method: "POST", body: JSON.stringify({permissions})});
-      modalHtml = "";
+      closeModal();
       await loadPage();
       return;
     }
@@ -2468,6 +2509,23 @@ document.addEventListener("click", async (event) => {
     }
     return;
   }
+  // 触屏/无悬浮环境：点击 hover-wrap 切换资源气泡显隐（桌面仍支持悬浮）
+  const hoverWrap = event.target.closest(".hover-wrap");
+  if (hoverWrap && !event.target.closest("[data-action]")) {
+    const pop = hoverWrap.querySelector(".hover-pop");
+    if (pop) {
+      const open = pop.style.display === "block";
+      document.querySelectorAll(".hover-pop").forEach((el) => { el.style.display = "none"; });
+      if (!open) {
+        const rect = hoverWrap.getBoundingClientRect();
+        const width = pop.offsetWidth || 300;
+        pop.style.display = "block";
+        pop.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
+        pop.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - 20)}px`;
+      }
+      return;
+    }
+  }
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
@@ -2494,7 +2552,8 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "refresh") {
-      await loadPage();
+      target.classList.add("spinning");
+      try { await loadPage(); } finally { target.classList.remove("spinning"); }
       return;
     }
     if (action === "open-change-password") {
