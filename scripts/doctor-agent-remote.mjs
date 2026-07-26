@@ -137,6 +137,10 @@ try {
   const agentConfig = JSON.parse(readFileSync(agentConfigPath, "utf8"));
   const runtimePath = join(agentWorkDir, "bin", "aimac-agent-runtime.mjs");
   if (!existsSync(runtimePath)) throw new Error("Agent Runtime artifact was not installed");
+
+  // Gap 5 §3.2: the self-check profile ingested by the gateway must carry the permission and integrity probe blocks.
+  const probedNode = await json("/api/agent/v1/nodes/me", {token: agentConfig.nodeToken});
+  assertProbeProfileBlocks(probedNode.node.profile);
   forceNodeCredentialNearExpiry(agentConfig.nodeId);
   const rotationRun = spawnSync(process.execPath, [runtimePath, "run", "--work-dir", agentWorkDir, "--once"], {
     env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false"},
@@ -220,6 +224,80 @@ try {
   const remoteTree = execFileSync("git", ["--git-dir", remote, "ls-tree", "-r", "--name-only", "refs/heads/main"], {encoding: "utf8"});
   if (!remoteTree.includes("docs/agent-runtime-output/") || !remoteTree.includes("docs/artifact-manifests/")) throw new Error("Agent outputs were not committed and pushed to the project Git repository");
 
+  // Gap 5 §7: the two-step evidence/artifact registration performed during dispatch execution must produce
+  // a registered evidence artifact bound to the dispatch's task group with a computed sha256 digest.
+  const artifactState = await json("/api/state", {token: login.sessionToken});
+  const evidenceArtifact = (artifactState.artifacts || []).find((item) =>
+    item.taskGroupId === completed.taskGroupId &&
+    ["registered", "verified"].includes(item.status) &&
+    /^sha256:[0-9a-f]{64}$/u.test(String(item.digest || "")) &&
+    (item.outputRefs || []).some((ref) => String(ref).startsWith("artifact://")));
+  if (!evidenceArtifact) throw new Error("two-step evidence artifact registration did not produce a registered artifact with a digest");
+
+  // Gap 5 §8: simulate a permission block, observe the structured PermissionRequest, resolve it, and verify the
+  // runtime resumes from the safe retry point per the §8 resolution table and completes the dispatch.
+  const permissionJoin = await json("/api/agent-join-tokens", {
+    method: "POST",
+    token: login.sessionToken,
+    idempotencyKey: "doctor-agent-permission-token",
+    body: {projectId: "prj_control_plane", nodeName: "permission-node", allowedRoles: ["*"], ttlSeconds: 1800, maxUses: 1}
+  });
+  const permissionWorkDir = join(sandbox, "permission-agent-work");
+  const permissionTokenFile = join(sandbox, "permission.join");
+  writeFileSync(permissionTokenFile, permissionJoin.joinToken, {mode: 0o600});
+  const permissionInstall = spawnSync("sh", ["-s", "--", "--server", baseUrl, "--join-token-file", permissionTokenFile, "--node-name", "permission-node", "--work-dir", permissionWorkDir, "--no-daemon", "--no-configure-clients", "--executor-command", `node ${JSON.stringify(executor)}`], {
+    cwd: sandbox,
+    input: installerText,
+    env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false"},
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024
+  });
+  if (permissionInstall.status !== 0 || !permissionInstall.stdout.includes("AGENT_JOINED")) throw new Error(`permission-report Agent bootstrap failed: ${permissionInstall.stderr || permissionInstall.stdout}`);
+  const permissionConfig = JSON.parse(readFileSync(join(permissionWorkDir, "agent-config.json"), "utf8"));
+  const permissionRuntime = join(permissionWorkDir, "bin", "aimac-agent-runtime.mjs");
+  await json("/api/orchestrator/run", {
+    method: "POST",
+    token: login.sessionToken,
+    idempotencyKey: "doctor-agent-permission-orchestrate",
+    body: {mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false}
+  });
+  const permissionChild = spawn(process.execPath, [permissionRuntime, "run", "--work-dir", permissionWorkDir, "--once"], {
+    env: {
+      ...process.env,
+      AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true",
+      AIMAC_AGENT_CONFIGURE_CLIENTS: "false",
+      AIMAC_AGENT_SIMULATE_PERMISSION_BLOCK: "github_push@repo:agent-gateway-doctor",
+      AIMAC_AGENT_SIMULATE_PERMISSION_PROMPT_TYPE: "oauth_login_required",
+      AIMAC_AGENT_PERMISSION_POLL_INTERVAL_MS: "300",
+      AIMAC_AGENT_PERMISSION_POLL_ATTEMPTS: "200"
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let permissionOut = "";
+  let permissionErr = "";
+  permissionChild.stdout.on("data", (chunk) => { permissionOut += chunk.toString(); });
+  permissionChild.stderr.on("data", (chunk) => { permissionErr += chunk.toString(); });
+  const pendingRequest = await waitForPendingPermissionRequest(login.sessionToken, "github_push");
+  if (pendingRequest.status !== "pending" || pendingRequest.permission !== "github_push" || !pendingRequest.reason) {
+    throw new Error("permission report was not observed and classified as a pending permission request");
+  }
+  await json(`/api/permission-requests/${pendingRequest.requestId}/resolve`, {
+    method: "POST",
+    token: login.sessionToken,
+    idempotencyKey: "doctor-agent-permission-resolve",
+    body: {status: "approved"}
+  });
+  const [permissionExit] = await once(permissionChild, "exit");
+  if (permissionExit !== 0) throw new Error(`permission-report Agent run failed: ${permissionErr || permissionOut}`);
+  if (!permissionOut.includes("permission report submitted")) throw new Error("Agent did not emit a structured permission report");
+  const resolvedState = await json("/api/state", {token: login.sessionToken});
+  const resolvedRequest = (resolvedState.permissionRequests || []).find((item) => item.requestId === pendingRequest.requestId);
+  if (!resolvedRequest || resolvedRequest.status !== "approved" || !resolvedRequest.policyDecisionRef) {
+    throw new Error("permission request was not resolved and classified with a policy decision");
+  }
+  const permissionCompleted = (resolvedState.agentDispatches || []).some((dispatch) => dispatch.assignedNodeId === permissionConfig.nodeId && dispatch.status === "completed");
+  if (!permissionCompleted) throw new Error("permission-report dispatch did not complete after resolution from the safe retry point");
+
   const revokeJoinResult = await json("/api/agent-join-tokens", {
     method: "POST",
     token: login.sessionToken,
@@ -275,7 +353,7 @@ try {
 	  if (requeuedDispatch?.status !== "queued" || requeuedDispatch.assignedNodeId) {
 	    throw new Error("Agent node revocation ACK did not requeue the fenced dispatch");
 	  }
-		  console.log("agent remote doctor ok: one-command join, checksum install, credential rotation, initialization, self-check, remote MCP, control command ACK, project/session-level execution event stream, on-demand skill workset, dispatch, commit, push and checkpoint outbox replay, revoke pending+ACK requeue verified");
+		  console.log("agent remote doctor ok: one-command join, checksum install, credential rotation, initialization, self-check (permission+integrity probe), remote MCP, control command ACK, project/session-level execution event stream, on-demand skill workset, dispatch, commit, push and checkpoint outbox replay, two-step evidence artifact registration, permission_report loop with safe-retry-point recovery, revoke pending+ACK requeue verified");
 } finally {
   server.kill("SIGTERM");
   await Promise.race([once(server, "exit"), new Promise((resolveWait) => setTimeout(resolveWait, 3000))]);
@@ -313,6 +391,32 @@ function stopAgentDaemon(workDir) {
   if (pid > 0) {
     try { process.kill(pid, "SIGTERM"); } catch {}
   }
+}
+
+function assertProbeProfileBlocks(profile) {
+  const permission = profile?.permission;
+  if (!permission || typeof permission !== "object") throw new Error("agent self-check profile is missing the §3.2 permission probe block");
+  for (const field of ["os", "browser", "credentialHelper", "oauth", "network", "git", "db", "keychainSudo"]) {
+    if (!permission[field] || typeof permission[field].status !== "string") throw new Error(`permission probe block missing field: ${field}`);
+    if (typeof permission[field].toolDriven !== "boolean") throw new Error(`permission probe field ${field} did not annotate tool-driven detection`);
+  }
+  const integrity = profile?.integrity;
+  if (!integrity || typeof integrity !== "object") throw new Error("agent self-check profile is missing the §3.2 integrity probe block");
+  for (const field of ["runtimeDigest", "installerDigest", "configDigest", "sandboxMode"]) {
+    if (typeof integrity[field] !== "string" || !integrity[field]) throw new Error(`integrity probe block missing field: ${field}`);
+  }
+  if (!/^sha256:[0-9a-f]{64}$/u.test(String(integrity.runtimeDigest || ""))) throw new Error("integrity probe did not compute a runtime digest");
+}
+
+async function waitForPendingPermissionRequest(sessionToken, permission) {
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    const state = await json("/api/state", {token: sessionToken}).catch(() => null);
+    const request = (state?.permissionRequests || []).find((item) => item.permission === permission && item.status === "pending");
+    if (request) return request;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+  }
+  throw new Error("pending permission request from the Agent Runtime did not appear");
 }
 
 function okSelfChecks(baseUrl, options = {}) {

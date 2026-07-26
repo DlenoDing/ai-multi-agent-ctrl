@@ -102,7 +102,31 @@
       "format": "date-time"
     },
     "profile": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "permission": {
+          "type": "object",
+          "description": "Optional §3.2 permission probe: os, browser, credentialHelper, oauth, network, git, db, keychainSudo. Additive-optional.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "status": {"type": "string", "enum": ["available", "unavailable", "unknown", "denied"]},
+              "detectedBy": {"type": "string"},
+              "toolDriven": {"type": "boolean"}
+            }
+          }
+        },
+        "integrity": {
+          "type": "object",
+          "description": "Optional §3.2 integrity probe: runtimeDigest, installerDigest, configDigest, sandboxMode. Additive-optional.",
+          "properties": {
+            "runtimeDigest": {"type": "string"},
+            "installerDigest": {"type": "string"},
+            "configDigest": {"type": "string"},
+            "sandboxMode": {"type": "string"}
+          }
+        }
+      }
     },
     "profileDigest": {
       "type": "string",

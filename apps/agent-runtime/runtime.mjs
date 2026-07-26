@@ -2,10 +2,12 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir, hostname, platform, arch, cpus, totalmem } from "node:os";
+import { homedir, hostname, platform, arch, cpus, totalmem, networkInterfaces } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const RUNTIME_VERSION = "0.2.0";
+const runtimeFilePath = fileURLToPath(import.meta.url);
 const args = parseArgs(process.argv.slice(2));
 const command = args._[0] || "run";
 function defaultDataRoot() {
@@ -595,6 +597,192 @@ function submitExecutionEventForDispatch(config, dispatchId, eventType, payload 
   }), `event_${eventType}`);
 }
 
+// Centralized remote MCP tool call over Streamable HTTP (node-token authenticated, dispatch-bound grants).
+// The runtime never runs a local MCP server; artifact/permission side effects reuse the existing tools.
+async function mcpToolCall(config, name, args) {
+  const response = await retryableAgentRequest(() => jsonRequest(config.gateway.mcpUrl, {
+    method: "POST",
+    token: config.nodeToken,
+    headers: {accept: "application/json, text/event-stream"},
+    body: {jsonrpc: "2.0", id: `agent-${name}-${Date.now()}`, method: "tools/call", params: {name, arguments: args}}
+  }), `mcp_${name}`);
+  if (response.error) throw new Error(`mcp ${name} error: ${response.error.message}`);
+  const payload = response.result?.structuredContent || {};
+  if (payload.ok === false) throw new Error(`mcp ${name} failed: ${payload.result?.error || "unknown"}`);
+  return payload.result || {};
+}
+
+// §7 basic redaction applied before an evidence artifact digest/locator is registered: strip auth headers,
+// cookies, tokens/secrets/private keys, credentialed URLs and known token prefixes.
+function redactEvidence(value) {
+  let text = String(value ?? "");
+  text = text.replace(/(authorization\s*[:=]\s*)(?:bearer\s+)?\S+/giu, "$1[redacted]");
+  text = text.replace(/((?:set-)?cookie\s*[:=]\s*)[^\n\r]+/giu, "$1[redacted]");
+  text = text.replace(/((?:token|secret|api[_-]?key|password|passwd|private[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)\S+/giu, "$1[redacted]");
+  text = text.replace(/\b(?:aimac_node_|aimac_join_|sk-|ghp_|gho_|github_pat_|xox[baprs]-)[A-Za-z0-9._-]+/gu, "[redacted-token]");
+  text = text.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu, "[redacted-private-key]");
+  text = text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^@/\s]+@/giu, "$1[redacted]@");
+  return text;
+}
+
+function redactEvidenceMetadata(metadata = {}) {
+  const result = {};
+  for (const [key, value] of Object.entries(metadata || {})) {
+    result[key] = typeof value === "string" ? redactEvidence(value).slice(0, 500) : value;
+  }
+  return result;
+}
+
+// §7 two-step evidence/artifact registration: (1) prepare — redact + digest locally; (2) commit — register
+// the locator/digest via evidence-mcp.artifact_register. This is only for evidence (logs, screenshots,
+// test reports, HAR, trace, DB dump summaries), never for project deliverables (those go to Git).
+async function registerEvidenceArtifact(config, dispatchPackage, evidence) {
+  try {
+    const redacted = redactEvidence(evidence.content || "");
+    const digest = sha256(redacted);
+    const shortDigest = digest.slice("sha256:".length, "sha256:".length + 40);
+    const contract = dispatchPackage.taskContract;
+    const locator = `artifact://${contract.projectId}/${contract.taskGroupId}/${contract.runId}/${evidence.type}/${shortDigest}`;
+    const result = await mcpToolCall(config, "evidence-mcp.artifact_register", {
+      dispatchId: dispatchPackage.dispatch.dispatchId,
+      idempotencyKey: `artifact:${dispatchPackage.dispatch.dispatchId}:${evidence.type}:${shortDigest.slice(0, 20)}`,
+      outputRefs: [locator],
+      evidenceRefs: [`digest:${digest}`, ...(evidence.evidenceRefs || [])],
+      payload: {
+        schemaVersion: "evidence-artifact/v1",
+        type: evidence.type,
+        uri: locator,
+        digest,
+        sizeBytes: Buffer.byteLength(redacted),
+        sensitivity: evidence.sensitivity || "internal",
+        redacted: true,
+        metadata: redactEvidenceMetadata(evidence.metadata)
+      }
+    });
+    return result.artifact || null;
+  } catch (error) {
+    // Evidence registration is best-effort and must never fail the dispatch; deliverables still land in Git.
+    process.stderr.write(`evidence artifact registration deferred: ${error.message}\n`);
+    return null;
+  }
+}
+
+function permissionBlockedError(message) {
+  const error = new Error(message);
+  error.controlStatus = "blocked";
+  return error;
+}
+
+// §3.2/§8: detect a permission-blocked condition at a safe retry point. Real deployments wire concrete
+// detectors here; verification uses AIMAC_AGENT_SIMULATE_PERMISSION_BLOCK=<capability>[@<resource>].
+function detectPermissionBlock(dispatchPackage, step) {
+  const simulate = String(process.env.AIMAC_AGENT_SIMULATE_PERMISSION_BLOCK || "").trim();
+  if (!simulate) return null;
+  const [capability, resource] = simulate.split("@");
+  return {
+    step,
+    promptType: process.env.AIMAC_AGENT_SIMULATE_PERMISSION_PROMPT_TYPE || "oauth_login_required",
+    requestedCapability: capability || "github_push",
+    requestedResource: resource || `repo:${dispatchPackage.repositoryOutputTarget.repositoryId}`,
+    riskLevel: process.env.AIMAC_AGENT_SIMULATE_PERMISSION_RISK || "L2",
+    suggestedActions: ["grant_credential", "capability_exchange_required", "reassign", "abort"]
+  };
+}
+
+// §8 permission_report: submit the structured report, hold at the safe retry point (only logs/checkpoint/
+// outbox may continue), poll for resolution, then act per the §8 resolution table.
+async function runPermissionReport(config, dispatchPackage, block, control) {
+  const contract = dispatchPackage.taskContract;
+  const evidence = await registerEvidenceArtifact(config, dispatchPackage, {
+    type: "permission_evidence",
+    content: `permission blocked: ${block.promptType} capability=${block.requestedCapability} resource=${block.requestedResource} step=${block.step}`,
+    metadata: {promptType: block.promptType, step: block.step, riskLevel: block.riskLevel},
+    sensitivity: "internal"
+  });
+  const artifactRef = evidence?.artifactId ? `Artifact:${evidence.artifactId}` : "artifact:permission-evidence";
+  const report = {
+    projectId: contract.projectId,
+    taskGroupId: contract.taskGroupId,
+    workItemId: contract.workId,
+    sessionId: contract.sessionId,
+    agentNodeId: config.nodeId,
+    promptType: block.promptType,
+    requestedCapability: block.requestedCapability,
+    requestedResource: block.requestedResource,
+    riskLevel: block.riskLevel,
+    artifactRef,
+    safeRetryPoint: {commandId: dispatchPackage.dispatch.dispatchId, step: block.step, sideEffectsPaused: true},
+    suggestedActions: block.suggestedActions
+  };
+  await submitExecutionEvent(config, dispatchPackage, "blocked", {
+    status: "attention",
+    progressPercent: 85,
+    summary: `Permission required: ${block.promptType} for ${block.requestedCapability} on ${block.requestedResource}.`,
+    evidenceRefs: [artifactRef],
+    payload: report
+  }).catch(() => {});
+  const submitResult = await mcpToolCall(config, "permission-mcp.permission_request_submit", {
+    dispatchId: dispatchPackage.dispatch.dispatchId,
+    idempotencyKey: `permission:${dispatchPackage.dispatch.dispatchId}:${block.requestedCapability}`,
+    permission: block.requestedCapability,
+    resource: {resourceType: "external_capability", resourceId: block.requestedResource},
+    reason: JSON.stringify(report).slice(0, 900)
+  });
+  const requestId = submitResult.permissionRequest?.requestId;
+  if (!requestId) throw permissionBlockedError("permission request submission did not return a requestId");
+  process.stdout.write(`permission report submitted: ${requestId} promptType=${block.promptType} capability=${block.requestedCapability}\n`);
+  const attempts = Math.max(1, Number(process.env.AIMAC_AGENT_PERMISSION_POLL_ATTEMPTS || 240));
+  const intervalMs = Math.max(200, Number(process.env.AIMAC_AGENT_PERMISSION_POLL_INTERVAL_MS || 1000));
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    control?.throwIfCancelled();
+    const statusResult = await mcpToolCall(config, "permission-mcp.permission_status", {requestId, dispatchId: dispatchPackage.dispatch.dispatchId}).catch((error) => {
+      process.stderr.write(`permission status poll deferred: ${error.message}\n`);
+      return {};
+    });
+    const status = statusResult.permissionRequest?.status;
+    if (status && status !== "pending") {
+      return {requestId, status, permissionRequest: statusResult.permissionRequest, safeRetryPoint: report.safeRetryPoint};
+    }
+    await delay(intervalMs);
+  }
+  throw permissionBlockedError(`permission request ${requestId} was not resolved before timeout`);
+}
+
+// §8 resolution table. Returns when execution may resume from the safe retry point; throws blocked/aborted otherwise.
+async function applyPermissionResolution(config, dispatchPackage, resolution) {
+  const status = String(resolution.status || "").toLowerCase();
+  const point = resolution.safeRetryPoint?.step || "safe_retry_point";
+  if (["grant_issued", "approved", "granted"].includes(status)) {
+    await refreshProfileHeartbeat(config).catch(() => {});
+    await submitExecutionEvent(config, dispatchPackage, "heartbeat", {summary: `Permission ${status}; refreshing profile and retrying from ${point}.`, evidenceRefs: [`PermissionRequest:${resolution.requestId}`]}).catch(() => {});
+    return "retry";
+  }
+  if (status === "external_capability_available") {
+    probeProfile(config.executorCommand);
+    await refreshProfileHeartbeat(config).catch(() => {});
+    await submitExecutionEvent(config, dispatchPackage, "heartbeat", {summary: `External capability now available; re-probed and retrying from ${point}.`, evidenceRefs: [`PermissionRequest:${resolution.requestId}`]}).catch(() => {});
+    return "retry";
+  }
+  if (status === "scope_reduced") {
+    await submitExecutionEvent(config, dispatchPackage, "heartbeat", {summary: `Permission scope reduced; re-reading work contract before resuming from ${point}.`, evidenceRefs: [`PermissionRequest:${resolution.requestId}`]}).catch(() => {});
+    return "retry";
+  }
+  if (status === "reassign") {
+    throw permissionBlockedError(`permission reassigned; handing off at ${point} (PermissionRequest:${resolution.requestId})`);
+  }
+  throw permissionBlockedError(`permission ${status || "rejected"}; work blocked at ${point} (PermissionRequest:${resolution.requestId})`);
+}
+
+async function refreshProfileHeartbeat(config) {
+  const profile = probeProfile(config.executorCommand);
+  const heartbeat = await retryableAgentRequest(() => jsonRequest(config.gateway.heartbeatUrl, {method: "POST", token: config.nodeToken, body: {nodeId: config.nodeId, status: "online", profile, runtimeVersion: RUNTIME_VERSION, capturedAt: new Date().toISOString()}}), "permission_refresh_profile");
+  if (heartbeat.nodeToken) {
+    config.nodeToken = heartbeat.nodeToken;
+    writeSecretJson(configPath, config);
+    writeAgentScopedMcpConfig(config, profile);
+  }
+}
+
 async function executeDispatch(config, dispatchPackage, control) {
   verifyPackageBinding(config, dispatchPackage);
   await submitExecutionEvent(config, dispatchPackage, "dispatch_received", {progressPercent: 8, summary: "Dispatch package received and binding verified."});
@@ -625,6 +813,14 @@ async function executeDispatch(config, dispatchPackage, control) {
   if (!changedBeforeManifest.length) throw new Error("model agent produced no repository changes");
   assertAllowedPaths(changedBeforeManifest, dispatchPackage.repositoryOutputTarget);
   await submitExecutionEvent(config, dispatchPackage, "repository_changed", {progressPercent: 65, summary: `Model executor changed ${changedBeforeManifest.length} repository paths.`, evidenceRefs: changedBeforeManifest.slice(0, 20).map((path) => `git-path:${path}`)});
+  // §7 evidence: register a redacted test/execution report artifact (evidence only; deliverables stay in Git).
+  await registerEvidenceArtifact(config, dispatchPackage, {
+    type: "test_report",
+    content: JSON.stringify({summary: output.summary || "", verificationRefs: output.verificationRefs || [], changedPaths: changedBeforeManifest}),
+    metadata: {command: config.executorCommand ? "executor_command" : "model_cli", changedPathCount: changedBeforeManifest.length},
+    evidenceRefs: (output.verificationRefs || []).slice(0, 20),
+    sensitivity: "internal"
+  });
   const manifestPath = dispatchPackage.repositoryOutputTarget.artifactManifestPath;
   const outputRefs = changedBeforeManifest.filter((path) => path !== manifestPath);
   if (!outputRefs.length) throw new Error("model agent produced no task output besides artifact manifest");
@@ -637,6 +833,15 @@ async function executeDispatch(config, dispatchPackage, control) {
   const commit = git(repositoryRoot, ["rev-parse", "HEAD"]);
   await submitExecutionEvent(config, dispatchPackage, "git_committed", {progressPercent: 80, summary: `Committed repository changes at ${commit}.`, evidenceRefs: [`commit:${commit}`]});
   control?.throwIfCancelled();
+  // §8 safe retry point "before_git_push": if a permission is blocked, submit a structured permission_report,
+  // pause the remote side effect (push), poll for resolution and act per the §8 resolution table.
+  const permissionBlock = detectPermissionBlock(dispatchPackage, "before_git_push");
+  if (permissionBlock) {
+    const resolution = await runPermissionReport(config, dispatchPackage, permissionBlock, control);
+    await applyPermissionResolution(config, dispatchPackage, resolution);
+    control?.throwIfCancelled();
+    await submitExecutionEvent(config, dispatchPackage, "git_committed", {progressPercent: 82, summary: `Resumed from safe retry point after permission ${resolution.status}.`, evidenceRefs: [`PermissionRequest:${resolution.requestId}`]}).catch(() => {});
+  }
   const branch = dispatchPackage.repositoryOutputTarget.branch;
   const remote = dispatchPackage.repositoryOutputTarget.remote || "origin";
   git(repositoryRoot, ["push", remote, `HEAD:refs/heads/${branch}`]);
@@ -1108,7 +1313,63 @@ function probeProfile(executorCommand = "") {
   if (!models.length) models.push({providerClass: "custom", adapter: "unconfigured", available: false});
   const capabilityFlags = ["git", "remote_mcp", "skill_workset_cache"];
   if (models.some((item) => item.available === true)) capabilityFlags.push("model_agent_executor");
-  return {platform: platform(), arch: arch(), cpuCount: cpus().length, memoryBytes: totalmem(), diskFreeBytes: diskFree(workDir), tools, models, capabilityFlags, dataRoot: workDir, ...(process.env.AIMAC_AGENT_REGION ? {region: process.env.AIMAC_AGENT_REGION} : {})};
+  return {platform: platform(), arch: arch(), cpuCount: cpus().length, memoryBytes: totalmem(), diskFreeBytes: diskFree(workDir), tools, models, capabilityFlags, permission: probePermission(tools), integrity: probeIntegrity(), dataRoot: workDir, ...(process.env.AIMAC_AGENT_REGION ? {region: process.env.AIMAC_AGENT_REGION} : {})};
+}
+
+// §3.2 permission probe: best-effort local detection with conservative defaults. Every raw observation
+// records `toolDriven` (whether it was produced by an automated tool invocation) so downstream analysis
+// can distinguish a direct syscall from a tool/SDK-mediated result before treating it as a blocker
+// (echoes sys.full-chain-diagnosis). Undetectable capabilities fail closed to unavailable/unknown.
+function probePermission(tools = []) {
+  const entry = (status, detectedBy, toolDriven) => ({status, detectedBy, toolDriven});
+  const gitAvailable = (tools.find((tool) => tool.name === "git") || executableVersion("git", ["--version"])).available;
+  let gitIdentity = false;
+  let credentialHelper = false;
+  if (gitAvailable) {
+    try { gitIdentity = Boolean(String(spawnSync("git", ["config", "--get", "user.email"], {encoding: "utf8", timeout: 5000}).stdout || "").trim()); } catch {}
+    try { credentialHelper = Boolean(String(spawnSync("git", ["config", "--get", "credential.helper"], {encoding: "utf8", timeout: 5000}).stdout || "").trim()); } catch {}
+  }
+  const elevated = typeof process.getuid === "function" && process.getuid() === 0;
+  let network = false;
+  try {
+    network = Object.values(networkInterfaces()).flat().some((iface) => iface && !iface.internal);
+  } catch {}
+  return {
+    // OS/Keychain/sudo elevation is never auto-approved (security boundary §10); we only report observed elevation.
+    os: entry(elevated ? "available" : "unavailable", "process_uid", false),
+    browser: entry("unknown", "default", false),
+    credentialHelper: entry(credentialHelper ? "available" : "unavailable", "git_config", gitAvailable),
+    oauth: entry("unknown", "default", false),
+    network: entry(network ? "available" : "unavailable", "network_interfaces", false),
+    git: entry(gitAvailable && gitIdentity ? "available" : gitAvailable ? "unknown" : "unavailable", "git_config", gitAvailable),
+    db: entry("unknown", "default", false),
+    keychainSudo: entry("unavailable", "default", false)
+  };
+}
+
+// §3.2 integrity probe: digests of the running runtime, the installer (when present) and the agent config,
+// plus the observed sandbox mode. Anything undetectable in a restricted sandbox reports "unknown".
+function probeIntegrity() {
+  const digestFile = (path) => {
+    try { return path && existsSync(path) ? sha256(readFileSync(path)) : "unknown"; } catch { return "unknown"; }
+  };
+  const installerPath = [
+    join(dirname(runtimeFilePath), "install-agent.sh"),
+    join(workDir, "install-agent.sh"),
+    join(workDir, "bin", "install-agent.sh")
+  ].find((path) => existsSync(path));
+  return {
+    runtimeDigest: digestFile(runtimeFilePath),
+    installerDigest: digestFile(installerPath),
+    configDigest: digestFile(configPath),
+    sandboxMode: detectSandboxMode()
+  };
+}
+
+function detectSandboxMode() {
+  if (process.env.AIMAC_AGENT_SANDBOX_MODE) return String(process.env.AIMAC_AGENT_SANDBOX_MODE).slice(0, 60);
+  try { if (existsSync("/.dockerenv") || process.env.container) return "container"; } catch {}
+  return "unknown";
 }
 
 function modelExecutorDetail(profile) {

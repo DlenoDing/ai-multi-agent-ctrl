@@ -1148,10 +1148,46 @@ function sanitizeNodeProfile(profile) {
     tools: Array.isArray(profile.tools) ? profile.tools.slice(0, 100).map((item) => ({name: String(item.name || ""), version: String(item.version || "unknown"), available: item.available === true})) : [],
     models: Array.isArray(profile.models) ? profile.models.slice(0, 100).map((item) => ({providerClass: String(item.providerClass || "custom"), adapter: String(item.adapter || "custom"), available: item.available !== false})) : [],
     capabilityFlags: uniqueStrings(profile.capabilityFlags || []).slice(0, 100),
+    ...(sanitizePermissionProbe(profile.permission) ? {permission: sanitizePermissionProbe(profile.permission)} : {}),
+    ...(sanitizeIntegrityProbe(profile.integrity) ? {integrity: sanitizeIntegrityProbe(profile.integrity)} : {}),
     region: String(profile.region || "").slice(0, 100) || undefined,
     dataRoot: String(profile.dataRoot || "").slice(0, 500) || undefined,
     networkSpeedMbps: Number.isFinite(Number(profile.networkSpeedMbps)) && Number(profile.networkSpeedMbps) > 0 ? Number(profile.networkSpeedMbps) : undefined,
     observedAt: new Date().toISOString()
+  };
+}
+
+// §3.2 permission probe ingestion — additive-optional. Each raw observation keeps its detection method and
+// whether it was produced by an automated tool invocation (toolDriven), per sys.full-chain-diagnosis.
+function sanitizePermissionProbe(permission) {
+  if (!permission || typeof permission !== "object" || Array.isArray(permission)) return undefined;
+  const fields = ["os", "browser", "credentialHelper", "oauth", "network", "git", "db", "keychainSudo"];
+  const result = {};
+  for (const field of fields) {
+    const raw = permission[field];
+    if (raw === undefined) continue;
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      result[field] = {
+        status: ["available", "unavailable", "unknown", "denied"].includes(raw.status) ? raw.status : "unknown",
+        detectedBy: String(raw.detectedBy || "default").slice(0, 80),
+        toolDriven: raw.toolDriven === true
+      };
+    } else {
+      result[field] = {status: raw === true ? "available" : raw === false ? "unavailable" : "unknown", detectedBy: "default", toolDriven: false};
+    }
+  }
+  return Object.keys(result).length ? result : undefined;
+}
+
+// §3.2 integrity probe ingestion — additive-optional runtime/installer/config digests and sandbox mode.
+function sanitizeIntegrityProbe(integrity) {
+  if (!integrity || typeof integrity !== "object" || Array.isArray(integrity)) return undefined;
+  const digest = (value) => /^sha256:[a-f0-9]{64}$/u.test(String(value || "")) ? String(value) : "unknown";
+  return {
+    runtimeDigest: digest(integrity.runtimeDigest),
+    installerDigest: digest(integrity.installerDigest),
+    configDigest: digest(integrity.configDigest),
+    sandboxMode: String(integrity.sandboxMode || "unknown").slice(0, 60)
   };
 }
 
