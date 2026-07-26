@@ -1051,7 +1051,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
   };
   const viewFields = {
     system: ["accounts", "auditLog", "policyDecisions", "commands", "decisionRecords"],
-    users: ["accounts", "accessGrants", "projects"],
+    users: ["accounts", "accessGrants", "projects", "agentJoinTokens"],
     projects: ["accounts", "accessGrants", "projects", "repositoryOutputs", "agentJoinTokens"],
     tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots", "humanConfirmationRequests", "humanDirectives"],
     runtime: ["modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkills", "roleSkillOverlays"],
@@ -3312,7 +3312,7 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupConfigMatch[1]);
     if (!taskGroup) return json(res, 404, {error: "task_group_not_found"});
-    taskGroup.configOverrides = {
+    const mergedOverrides = {
       ...(taskGroup.configOverrides || {}),
       ...(body.repositories !== undefined ? {repositories: Array.isArray(body.repositories) ? body.repositories : []} : {}),
       ...(body.baselineData !== undefined ? {baselineData: Array.isArray(body.baselineData) ? body.baselineData : []} : {}),
@@ -3320,6 +3320,13 @@ async function handleApi(req, res) {
       ...(body.systemRules !== undefined ? {systemRules: sanitizeRuleFragments(body.systemRules)} : {}),
       ...(body.defaultRoles !== undefined ? {defaultRoles: Array.isArray(body.defaultRoles) ? body.defaultRoles : []} : {})
     };
+    // 仅保留非空覆盖键；若全为空则删除整个 configOverrides，使任务组回到"继承项目"，
+    // 避免无实际改动的保存把任务组误标为"已自定义"并冻结当时继承到的值。
+    for (const key of Object.keys(mergedOverrides)) {
+      if (Array.isArray(mergedOverrides[key]) && mergedOverrides[key].length === 0) delete mergedOverrides[key];
+    }
+    if (Object.keys(mergedOverrides).length) taskGroup.configOverrides = mergedOverrides;
+    else delete taskGroup.configOverrides;
     taskGroup.updatedAt = now();
     audit(state, guard.actor, "task_group_config_update", `TaskGroup:${taskGroup.id}`);
     const effective = effectiveTaskGroupConfig(state, taskGroup);

@@ -204,6 +204,9 @@
     /* ---------- 角色 ---------- */
     orchestrator: "总控编排",
     "agent-runtime": "智能体运行时",
+    "policy-engine": "策略引擎",
+    "room-broker": "协作室代理",
+    "decision-center": "决策中心",
     reviewer: "评审员",
     qa: "质量保障",
     security: "安全",
@@ -273,6 +276,8 @@
     subagent_selected: "选定子智能体",
     new_session: "新会话",
     subagent: "子智能体",
+    balanced: "均衡",
+    deep: "深度",
     auto_best: "自动最优",
     auto_fast: "自动快速",
     cost_aware: "成本优先",

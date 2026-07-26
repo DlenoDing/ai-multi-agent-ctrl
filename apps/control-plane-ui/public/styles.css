@@ -12,15 +12,15 @@
   --card-border: #e4e8f0;
   --text-main: #22293a;
   --text-sub: #6b7488;
-  --green: #15803d;
+  --green: #0f6e30;
   --green-bg: #e6f6ec;
   --blue: #1d4ed8;
   --blue-bg: #e8effd;
-  --orange: #b45309;
+  --orange: #98470a;
   --orange-bg: #fdf0e0;
   --red: #c62828;
   --red-bg: #fdeaea;
-  --gray: #667085;
+  --gray: #566072;
   --gray-bg: #eef0f4;
   --danger: #d23c3c;
   --danger-strong: #c62828;
@@ -504,6 +504,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   .sidebar { width: 100%; flex: none; height: auto; position: static; }
   .nav { flex-direction: row; flex-wrap: wrap; }
   .nav-item { border-left: none; }
+  .nav-item.active { border-bottom: 3px solid var(--brand-accent); font-weight: 600; }
 }
 
 /* ============ 表格增强：数字右对齐 / 文本截断 / 时间列 / 空态 ============ */

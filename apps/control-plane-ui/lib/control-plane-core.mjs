@@ -3003,17 +3003,21 @@ export function effectiveTaskGroupConfig(state, taskGroup) {
   const project = (state.projects || []).find((item) => item.id === taskGroup?.projectId);
   const base = project?.config || {};
   const overrides = taskGroup?.configOverrides || null;
+  // 空数组覆盖视为"继承"（不冻结上层值）；configSource 仅在存在非空覆盖内容时才算"已自定义"。
+  const overriddenKeys = ["repositories", "baselineData", "defaultRoles", "systemRules", "businessRules"];
+  const hasOverride = Boolean(overrides) && overriddenKeys.some((key) => Array.isArray(overrides[key]) && overrides[key].length > 0);
+  const pick = (key) => (Array.isArray(overrides?.[key]) && overrides[key].length ? overrides[key] : (base[key] ?? []));
   const systemRules = resolveRuleCategory(defaultSystemRules(), base.systemRules, overrides?.systemRules, "system");
   const businessRules = resolveRuleCategory(defaultBusinessRules(), base.businessRules, overrides?.businessRules, "business");
   return {
-    configSource: overrides ? "customized" : "inherited",
-    repositories: overrides?.repositories ?? base.repositories ?? [],
-    baselineData: overrides?.baselineData ?? base.baselineData ?? [],
+    configSource: hasOverride ? "customized" : "inherited",
+    repositories: pick("repositories"),
+    baselineData: pick("baselineData"),
     systemRules,
     businessRules,
     activeSystemRules: systemRules.filter((rule) => rule.enabled && rule.status === "active"),
     activeBusinessRules: businessRules.filter((rule) => rule.enabled && rule.status === "active"),
-    defaultRoles: overrides?.defaultRoles ?? base.defaultRoles ?? []
+    defaultRoles: pick("defaultRoles")
   };
 }
 

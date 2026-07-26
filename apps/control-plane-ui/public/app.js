@@ -82,7 +82,7 @@ const MENUS = {
 
 const PAGE_META = {
   "sys-overview": ["系统概览", "服务器信息、资源占用、能耗估算、存储体量与运行指标"],
-  "sys-orgs": ["组织管理", "组织列表、配额与用量、创建组织并签发初始超管账号"],
+  "sys-orgs": ["组织管理", "组织列表、配额与用量、创建组织并签发初始组织管理员账号"],
   "sys-settings": ["系统设置", "运行参数只读展示、模型能力注册、技能源与指令协议"],
   "sys-accounts": ["账号与授权", "账号邀请、访问授权、项目归属与智能体入网令牌"],
   "org-overview": ["组织概览", "配额用量、活跃项目与任务组统计"],
@@ -250,6 +250,19 @@ function kindLabel(k) {
   return mapped === key ? String(k) : mapped;
 }
 
+// 模型能力标签专用映射（与 t() 共享命名空间隔离，避免 writing 等与仓库状态冲突）
+const STRENGTH_LABELS = {
+  planning: "规划", architecture: "架构", deep_reasoning: "深度推理", long_context: "长上下文",
+  fast_execution: "快速执行", coding: "编码", review: "评审", security: "安全", qa: "质量保障",
+  math: "数学", data_analysis: "数据分析", multimodal: "多模态", low_cost: "低成本",
+  local_private: "本地私有", translation: "翻译", writing: "写作", reasoning: "推理", vision: "视觉"
+};
+function strengthLabel(code) { return STRENGTH_LABELS[String(code || "")] || t(code); }
+
+// 执行档位专用映射（避免 verification 与"验证中"状态冲突）
+const EXECUTION_PROFILE_LABELS = { verification: "验证档位", standard: "标准档位", fast: "高速档位", full: "完整档位" };
+function executionProfileLabel(code) { return EXECUTION_PROFILE_LABELS[String(code || "")] || t(code); }
+
 function fmtTime(value) {
   if (!value) return "-";
   const date = new Date(value);
@@ -294,7 +307,11 @@ function panel(title, body, options = {}) {
 
 // 单元格可为字符串，或 {v, c} 形态（v=已转义内容，c=列 class，如 "num"/"text-clip"/"nowrap"）
 function cell(item) {
-  if (item && typeof item === "object" && "v" in item) return `<td class="${item.c || ""}">${item.v}</td>`;
+  if (item && typeof item === "object" && "v" in item) {
+    // 截断列补 title，鼠标悬浮可看全文（v 为已转义纯文本时才加，避免把 HTML 塞进 title）
+    const titleAttr = (item.c && item.c.includes("text-clip") && !/[<>]/u.test(String(item.v))) ? ` title="${item.v}"` : "";
+    return `<td class="${item.c || ""}"${titleAttr}>${item.v}</td>`;
+  }
   return `<td>${item}</td>`;
 }
 
@@ -328,7 +345,7 @@ const filterState = {};
 
 function filterInput(placeholder = "关键字过滤…", key = "") {
   const value = key ? filterState[key] || "" : "";
-  return `<input class="filter-input" data-filter-input ${key ? `data-filter-key="${esc(key)}"` : ""} value="${esc(value)}" placeholder="${esc(placeholder)}">`;
+  return `<input class="filter-input" data-filter-input aria-label="${esc(placeholder)}" ${key ? `data-filter-key="${esc(key)}"` : ""} value="${esc(value)}" placeholder="${esc(placeholder)}">`;
 }
 
 // 按输入框内容隐藏不匹配的行/卡片；供输入时与每次 render 后回填复用
@@ -346,6 +363,19 @@ function applyFilterFor(inputEl) {
 function reapplyFilters() {
   document.querySelectorAll("[data-filter-input]").forEach((inputEl) => {
     if (inputEl.value) applyFilterFor(inputEl);
+  });
+}
+
+let __labelSeq = 0;
+// 为 .form-row 内"label + 控件"自动补 for/id 关联，让读屏正确朗读标签（避免逐表单手写 for）
+function associateFormLabels() {
+  document.querySelectorAll(".form-row").forEach((rowEl) => {
+    const label = rowEl.querySelector(":scope > label");
+    if (!label || label.getAttribute("for")) return;
+    const control = rowEl.querySelector("input, select, textarea");
+    if (!control) return;
+    if (!control.id) control.id = `fld-${++__labelSeq}`;
+    label.setAttribute("for", control.id);
   });
 }
 
@@ -569,7 +599,9 @@ async function loadPage() {
     } else if (page === "sys-accounts") {
       state = await fetchState("users");
     } else if (page === "org-overview") {
-      state = await fetchState("full");
+      const [fullState, agentsResult] = await Promise.all([fetchState("full"), api("/api/org/agents")]);
+      state = fullState;
+      orgAgentNodes = agentsResult.agentRuntimeNodes || [];
     } else if (page === "org-members") {
       const [membersResult, projectState] = await Promise.all([api("/api/org/members"), fetchState("projects")]);
       orgMembers = membersResult.members || [];
@@ -579,7 +611,9 @@ async function loadPage() {
       orgAgentNodes = agentsResult.agentRuntimeNodes || [];
       state = projectState;
     } else if (page === "org-projects") {
-      state = await fetchState("projects");
+      const [projectState, membersResult] = await Promise.all([fetchState("projects"), api("/api/org/members")]);
+      state = projectState;
+      orgMembers = membersResult.members || [];
     } else if (page === "proj-overview") {
       state = await fetchState("tasks");
       ensureProjectSelection();
@@ -731,13 +765,25 @@ function openModal(title, body, options = {}) {
   modalHtml = `
     <div class="modal-mask" data-modal-mask>
       <div class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}">
-        <div class="modal-header"><h3>${esc(title)}</h3><button class="modal-close" data-action="modal-close" title="关闭">×</button></div>
+        <div class="modal-header"><h3>${esc(title)}</h3><button class="modal-close" data-action="modal-close" title="关闭" aria-label="关闭">×</button></div>
         <div class="modal-body">${body}</div>
       </div>
     </div>
   `;
   document.body.classList.add("modal-open");
   render();
+  // 打开后把焦点移入弹窗首个可交互控件（无障碍）
+  const modalEl = document.querySelector("#app .modal") || document.querySelector(".modal");
+  const firstField = modalEl?.querySelector("input, select, textarea, button:not(.modal-close)") || modalEl?.querySelector("button");
+  if (firstField) firstField.focus();
+}
+
+// 当前置顶弹窗容器（确认框优先，其次 openModal 弹窗），用于 Tab 焦点陷阱
+function activeModalContainer() {
+  const confirmEl = document.querySelector('.modal-mask[style*="z-index: 350"] .modal');
+  if (confirmEl) return confirmEl;
+  if (modalHtml) return document.querySelector("#app .modal") || document.querySelector(".modal");
+  return null;
 }
 
 function closeModal() {
@@ -873,7 +919,7 @@ function render() {
           <div class="topbar-actions">
             <span class="account-chip">${esc(currentAccount.displayName || currentAccount.email)} ${badge(currentAccount.accountType)}</span>
             <button class="secondary-button" data-action="open-change-password">修改密码</button>
-            <button class="icon-button" data-action="refresh" title="刷新">↻</button>
+            <button class="icon-button" data-action="refresh" title="刷新" aria-label="刷新">↻</button>
             <button class="secondary-button" data-action="logout">退出登录</button>
           </div>
         </header>
@@ -890,6 +936,7 @@ function render() {
     if (tableScrolls[index]) tableScrolls[index].scrollLeft = left;
   });
   reapplyFilters();
+  associateFormLabels();
 }
 
 function renderContent() {
@@ -929,6 +976,16 @@ function renderSysOverview() {
   ])).join("");
 
   const overviewPanels = overview ? [
+    panel("运行指标", `
+      <div class="metric-grid">
+        <div class="metric"><span>在线节点</span><strong>${esc(overview.runtime.onlineNodes)}/${esc(overview.runtime.totalNodes)}</strong></div>
+        <div class="metric"><span>组织数</span><strong>${esc(overview.runtime.organizations)}</strong></div>
+        <div class="metric"><span>项目数</span><strong>${esc(overview.runtime.projects)}</strong></div>
+        <div class="metric"><span>活跃任务组</span><strong>${esc(overview.runtime.activeTaskGroups)}</strong></div>
+        <div class="metric"><span>状态版本</span><strong>${esc(overview.runtime.stateVersion)}</strong></div>
+      </div>
+      <p class="small muted" style="margin-bottom:0;">审计链头：<span class="mono">${overview.runtime.auditChainHead ? esc(String(overview.runtime.auditChainHead).slice(0, 24)) + "…" : "-"}</span> · 统计时间 ${fmtTime(overview.at)}</p>
+    `, {wide: true}),
     panel("服务器信息", `
       <dl class="kv-list">
         <dt>主机名</dt><dd class="mono">${esc(overview.server.hostname)}</dd>
@@ -960,17 +1017,7 @@ function renderSysOverview() {
         <dt>项目事件库</dt><dd>${fmtBytes(overview.storage.projectDbBytes)}</dd>
         <dt>状态存储引擎</dt><dd>${esc(t(overview.storage.stateStore))}</dd>
       </dl>
-    `),
-    panel("运行指标", `
-      <div class="metric-grid">
-        <div class="metric"><span>在线节点</span><strong>${esc(overview.runtime.onlineNodes)}/${esc(overview.runtime.totalNodes)}</strong></div>
-        <div class="metric"><span>组织数</span><strong>${esc(overview.runtime.organizations)}</strong></div>
-        <div class="metric"><span>项目数</span><strong>${esc(overview.runtime.projects)}</strong></div>
-        <div class="metric"><span>活跃任务组</span><strong>${esc(overview.runtime.activeTaskGroups)}</strong></div>
-        <div class="metric"><span>状态版本</span><strong>${esc(overview.runtime.stateVersion)}</strong></div>
-      </div>
-      <p class="small muted" style="margin-bottom:0;">审计链头：<span class="mono">${esc(String(overview.runtime.auditChainHead || "-").slice(0, 24))}…</span> · 统计时间 ${fmtTime(overview.at)}</p>
-    `, {wide: true})
+    `)
   ].join("") : panel("系统概览", `<div class="notice">正在加载系统概览…</div>`, {wide: true});
 
   return overviewPanels + [
@@ -1009,8 +1056,8 @@ function renderSysOrgs() {
       <form class="form-grid" data-form="org-create">
         <div class="form-row"><label>组织名称</label><input name="name" required placeholder="示例：华东研发中心"></div>
         <div class="form-row-inline">
-          <div class="form-row"><label>初始超管姓名</label><input name="adminName" required placeholder="组织管理员"></div>
-          <div class="form-row"><label>初始超管邮箱</label><input name="adminEmail" type="email" required></div>
+          <div class="form-row"><label>初始组织管理员姓名</label><input name="adminName" required placeholder="组织管理员"></div>
+          <div class="form-row"><label>初始组织管理员邮箱</label><input name="adminEmail" type="email" required></div>
         </div>
         <div class="form-row-inline">
           <div class="form-row"><label>成员上限</label><input name="maxMembers" type="number" min="1" value="50"></div>
@@ -1018,8 +1065,8 @@ function renderSysOrgs() {
           <div class="form-row"><label>任务组上限</label><input name="maxTaskGroups" type="number" min="1" value="200"></div>
           <div class="form-row"><label>智能体上限</label><input name="maxAgents" type="number" min="1" value="100"></div>
         </div>
-        <div class="notice">创建成功后将弹窗展示初始超管的一次性登录令牌，请务必保存。</div>
-        <button class="primary-button" type="submit">创建组织并签发超管账号</button>
+        <div class="notice">创建成功后将弹窗展示初始组织管理员的一次性登录令牌，请务必保存。</div>
+        <button class="primary-button" type="submit">创建组织并签发管理员账号</button>
       </form>
     `),
     panel("说明", `
@@ -1039,7 +1086,7 @@ function renderSysSettings() {
   const models = (state.modelCapabilities || []).slice(0, 40).map((profile) => row([
     esc(t(profile.providerClass)),
     `<span class="mono">${esc(profile.modelId)}</span>`,
-    esc((profile.strengths || []).slice(0, 4).map((item) => t(item)).join("、")),
+    esc((profile.strengths || []).slice(0, 4).map((item) => strengthLabel(item)).join("、")),
     {v: esc(profile.limits?.contextWindowTokens ?? "-"), c: "num"},
     badge(profile.availability)
   ])).join("");
@@ -1071,7 +1118,7 @@ function renderSysSettings() {
       <dl class="kv-list">
         <dt>运行档案</dt><dd class="mono">${esc(runtime.profileId || "-")}</dd>
         <dt>运行状态</dt><dd>${badge(runtime.status)}</dd>
-        <dt>执行档位</dt><dd>${esc(t(runtime.executionProfile || "-"))}</dd>
+        <dt>执行档位</dt><dd>${esc(executionProfileLabel(runtime.executionProfile || "-"))}</dd>
         <dt>启动方式</dt><dd>${esc((runtime.launchModes || []).join("、") || "-")}</dd>
         <dt>MCP 工具数</dt><dd>${esc(runtime.mcp?.toolCount ?? "-")}</dd>
         <dt>更新时间</dt><dd>${fmtTime(runtime.updatedAt)}</dd>
@@ -1183,7 +1230,7 @@ function renderProjectMemberForm() {
         <select name="projectId">${(state.projects || []).map((project) => `<option value="${esc(project.id)}">${esc(project.name || project.id)}</option>`).join("")}</select>
       </div>
       <div class="form-row"><label>账号</label>
-        <select name="accountId">${(state.accounts || []).map((account) => `<option value="${esc(account.accountId)}">${esc(account.displayName)}</option>`).join("")}</select>
+        <select name="accountId">${((orgMembers && orgMembers.length ? orgMembers : (state.accounts || [])).map((account) => `<option value="${esc(account.accountId)}">${esc(account.displayName || account.accountId)}</option>`)).join("")}</select>
       </div>
       <div class="form-row"><label>项目角色</label>
         <select name="role">
@@ -1262,7 +1309,7 @@ function renderOrgOverview() {
       <div class="metric-grid">
         <div class="metric"><span>项目总数</span><strong>${projects.length}</strong></div>
         <div class="metric"><span>进行中的任务组</span><strong>${openTaskGroups.length}</strong></div>
-        <div class="metric"><span>在线智能体节点</span><strong>${(state.agentRuntimeNodes || []).filter((node) => node.status === "online").length}/${(state.agentRuntimeNodes || []).length}</strong></div>
+        <div class="metric"><span>在线智能体节点</span><strong>${(orgAgentNodes || []).filter((node) => node.status === "online").length}/${(orgAgentNodes || []).length}</strong></div>
         <div class="metric"><span>受阻项</span><strong>${(state.taskGroups || []).flatMap((taskGroup) => taskGroup.blockers || []).length}</strong></div>
       </div>
     `),
@@ -1668,7 +1715,7 @@ function renderTaskGroupDetail(taskGroup) {
       }))}
       <form class="form-grid" data-form="tg-config" data-task="${esc(taskGroup.id)}">
         <div class="form-row"><label>默认角色（逗号分隔角色 ID）</label>
-          <input name="defaultRoles" value="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" ${editDisabled}>
+          <input name="defaultRoles" data-orig="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" value="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" ${editDisabled}>
         </div>
         <div class="record-meta">
           <span>仓库配置：${(config.repositories || []).length} 条（在“项目设置”维护，任务组可覆盖）</span>
@@ -2207,7 +2254,7 @@ document.addEventListener("submit", async (event) => {
         quotas: {maxMembers: Number(data.maxMembers), maxProjects: Number(data.maxProjects), maxTaskGroups: Number(data.maxTaskGroups), maxAgents: Number(data.maxAgents)}
       })});
       await loadPage();
-      oneTimeTokenModal(`组织「${result.organization?.name || data.name}」创建成功`, result.adminAccount?.email || data.adminEmail, result.accountToken || "-", "请将令牌交给该组织的初始超管，首次登录后建议立即设置密码。");
+      oneTimeTokenModal(`组织「${result.organization?.name || data.name}」创建成功`, result.adminAccount?.email || data.adminEmail, result.accountToken || "-", "请将令牌交给该组织的初始组织管理员，首次登录后建议立即设置密码。");
       return;
     }
     if (kind === "org-quotas") {
@@ -2329,6 +2376,9 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     if (kind === "tg-config") {
+      const origRoles = form.querySelector("input[name='defaultRoles']")?.dataset.orig || "";
+      const changed = String(data.defaultRoles || "").trim() !== String(origRoles).trim();
+      if (!changed) { formTouched = false; toast.info("默认角色未改动，任务组仍继承项目配置"); return; }
       const defaultRoles = String(data.defaultRoles || "").split(",").map((item) => item.trim()).filter(Boolean).map((roleId) => ({roleId}));
       await api(`/api/task-groups/${encodeURIComponent(form.dataset.task)}/config`, {method: "POST", body: JSON.stringify({defaultRoles})});
       formTouched = false;
@@ -2803,9 +2853,29 @@ if (authToken && currentAccount) {
   render();
 }
 
-// ESC 关闭当前弹窗（受保护弹窗会先二次确认）
+// ESC 关闭当前弹窗（受保护弹窗会先二次确认）+ Tab 焦点陷阱（无障碍）
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && modalHtml && !document.querySelector('.modal-mask[style*="z-index: 350"]')) {
     requestCloseModal();
+    return;
+  }
+  if (event.key === "Tab") {
+    const container = activeModalContainer();
+    if (!container) return;
+    const focusable = [...container.querySelectorAll('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])')]
+      .filter((el) => !el.disabled && el.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!container.contains(document.activeElement)) {
+      event.preventDefault();
+      first.focus();
+    } else if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 });

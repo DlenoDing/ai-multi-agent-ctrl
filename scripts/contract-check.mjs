@@ -115,7 +115,11 @@ function verifyHumanAndOrganizationContracts(output) {
     project.config = {...(project.config || {}), businessRules: [{ruleId: "br_ct", title: "验收", content: "必须测试"}]};
     const inherited = effectiveTaskGroupConfig(state, taskGroup);
     if (inherited.configSource !== "inherited" || inherited.businessRules.length !== 1) output.push("Task group config did not inherit project business rules");
+    // 空覆盖视为继承（不应误标已自定义、也不应冻结继承值）
     taskGroup.configOverrides = {businessRules: []};
+    if (effectiveTaskGroupConfig(state, taskGroup).configSource !== "inherited") output.push("Empty task group config override should stay inherited, not customized");
+    // 仅在存在非空覆盖内容时才切换为已自定义
+    taskGroup.configOverrides = {businessRules: [{ruleId: "br_tg", title: "任务组验收", content: "任务组级补充"}]};
     if (effectiveTaskGroupConfig(state, taskGroup).configSource !== "customized") output.push("Task group config override did not switch configSource to customized");
     delete taskGroup.configOverrides;
     const reset = effectiveTaskGroupConfig(state, taskGroup);
