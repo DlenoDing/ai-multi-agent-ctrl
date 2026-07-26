@@ -4303,7 +4303,16 @@ function pruneRoomMessages(state) {
 export function roomSend(state, args) {
   const at = new Date().toISOString();
   const roomId = args.roomId || `room_${args.taskGroupId || "tg_runtime_management"}`;
+  state.roomMessages ||= [];
   state.roomSequenceByRoom ||= {};
+  // (roomId, idempotencyKey) dedup: a retried send with the same key must return the original
+  // message instead of appending a duplicate with a fresh sequence. The dedup window is bounded
+  // by roomMessages retention (pruneRoomMessages), consistent with the command-bus idempotency.
+  const idempotencyKey = args.idempotencyKey || null;
+  if (idempotencyKey) {
+    const existing = state.roomMessages.find((item) => item.roomId === roomId && item.idempotencyKey === idempotencyKey);
+    if (existing) return {message: existing, duplicate: true};
+  }
   const retainedMax = Math.max(0, ...state.roomMessages.filter((item) => item.roomId === roomId).map((item) => Number(item.sequence || 0)));
   const nextSequence = Math.max(Number(state.roomSequenceByRoom[roomId] || 0), retainedMax) + 1;
   state.roomSequenceByRoom[roomId] = nextSequence;
@@ -4315,6 +4324,7 @@ export function roomSend(state, args) {
     payload: args.payload || {text: args.text || ""},
     payloadDigest: digestOf(args.payload || args.text || ""),
     status: "sent",
+    ...(idempotencyKey ? {idempotencyKey} : {}),
     createdAt: at
   };
   state.roomMessages.push(message);

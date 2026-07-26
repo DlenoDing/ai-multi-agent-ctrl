@@ -23,6 +23,7 @@ import {
   organizationQuotaCheck,
   runAutonomousCycle,
   recomputeTaskGroup,
+  roomSend,
   selectModel,
   updateTaskGroupLanguagePolicy,
   createCommand,
@@ -239,6 +240,21 @@ function verifyHumanAndOrganizationContracts(output) {
   recomputeTaskGroup(fullyBlockedGuard);
   if (fullyBlockedGuard.health !== "blocked") output.push("single-cell-block guard did not block a task group with no executable cell");
   if (fullyBlockedGuard.singleCellEscalationGuard.overallBlockedPermitted !== true) output.push("single-cell-block guard did not permit overall block when every cell is blocked");
+
+  // gap #3: room_send (roomId, idempotencyKey) domain-level dedup returns the original message
+  // on a same-key replay instead of appending a duplicate with a fresh sequence.
+  const roomFirst = roomSend(state, {roomId: "room_dedup_ct", idempotencyKey: "room-dedup-1", payload: {text: "first"}});
+  const roomReplay = roomSend(state, {roomId: "room_dedup_ct", idempotencyKey: "room-dedup-1", payload: {text: "first"}});
+  if (roomReplay.message.messageId !== roomFirst.message.messageId || roomReplay.message.sequence !== roomFirst.message.sequence || !roomReplay.duplicate) {
+    output.push("room_send did not dedup a repeated (roomId, idempotencyKey) send");
+  }
+  if (state.roomMessages.filter((item) => item.roomId === "room_dedup_ct").length !== 1) {
+    output.push("room_send appended a duplicate room message for a repeated idempotency key");
+  }
+  const roomOtherKey = roomSend(state, {roomId: "room_dedup_ct", idempotencyKey: "room-dedup-2", payload: {text: "second"}});
+  if (roomOtherKey.message.sequence <= roomFirst.message.sequence || roomOtherKey.duplicate) {
+    output.push("room_send did not append a new message for a distinct idempotency key");
+  }
   const dispatch = (state.agentDispatches || []).find((item) => item.status === "queued" || item.status === "running");
   if (!dispatch) {
     output.push("No dispatch available to attach a human confirmation contract");
