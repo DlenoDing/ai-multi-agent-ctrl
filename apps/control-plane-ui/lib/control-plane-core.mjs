@@ -2393,7 +2393,7 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
   const notModeled = {status: "passed", reasonCode: "not_applicable_collection_not_modeled"};
   const gateFailures = {
     all_required_work_closed: readiness.blockingObjects.some((item) => item.objectType === "WorkItem"),
-    all_findings_terminal: forTaskGroup(state.findings).some((item) => !["resolved", "closed", "dismissed", "wontfix"].includes(item.status)),
+    all_findings_terminal: forTaskGroup(state.findings).some((item) => !(["resolved", "closed", "dismissed", "wontfix"].includes(item.status) && ["fixed_verified", "not_applicable", "scope_adjusted", "blocked_external"].includes(item.dispositionClass))),
     all_quality_gates_passed: forTaskGroup(state.qualityGates).some((item) => !["passed", "waived"].includes(item.status)),
     all_contracts_compatible: relatedSharedDefinitions(state, taskGroup).some((definition) => ["conflict", "blocked"].includes(definition.status)),
     all_changes_integrated: forTaskGroup(state.repositoryOutputs).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status)),

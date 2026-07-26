@@ -2246,14 +2246,27 @@ function findingSubmit(state, args) {
   return {finding};
 }
 
+// 允许作为"已妥善闭合"的处置类（close-barrier 只认这些 + 相应证据/归属）
+const VALID_FINDING_DISPOSITIONS = ["fixed_verified", "not_applicable", "scope_adjusted", "blocked_external"];
+
 function findingResolve(state, args) {
   const finding = (state.findings || []).find((item) => item.findingId === args.findingId);
   if (!finding) return {ok: false, error: "finding_not_found"};
   const terminal = ["resolved", "closed", "dismissed", "wontfix"];
   const status = terminal.includes(args.status) ? args.status : "resolved";
+  const evidenceRefs = [...new Set([...(finding.evidenceRefs || []), ...(args.evidenceRefs || [])])];
+  // 处置类：显式指定优先，否则按状态派生；不足证据/归属者降级为不可闭合类，供 close-barrier 拦截"无修复即闭合"
+  let disposition = VALID_FINDING_DISPOSITIONS.includes(args.dispositionClass)
+    ? args.dispositionClass
+    : {resolved: "fixed_verified", closed: "fixed_verified", dismissed: "not_applicable", wontfix: "scope_adjusted"}[status];
+  if (disposition === "fixed_verified" && evidenceRefs.length === 0) disposition = "fixed_unverified";
+  if (disposition === "blocked_external" && !(args.rootCauseOwner && (args.recoveryRef || args.resolutionRef))) disposition = "blocked_external_incomplete";
   finding.status = status;
+  finding.dispositionClass = disposition;
   finding.resolutionRef = args.resolutionRef || `resolution:${status}`;
-  finding.evidenceRefs = [...new Set([...(finding.evidenceRefs || []), ...(args.evidenceRefs || [])])];
+  if (args.rootCauseOwner) finding.rootCauseOwner = args.rootCauseOwner;
+  if (args.recoveryRef) finding.recoveryRef = args.recoveryRef;
+  finding.evidenceRefs = evidenceRefs;
   finding.updatedAt = new Date().toISOString();
   return {finding};
 }

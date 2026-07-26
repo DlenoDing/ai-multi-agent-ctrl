@@ -375,6 +375,17 @@ function beginGuardedWrite(req, state, action, subject, resourceScope = inferRes
   return {idempotencyKey, policyDecision, command, actor, bodyDigest, resourceScope};
 }
 
+// 幂等记录按数量淘汰最旧项，界住 state.json 无限增长（保留近期重放正确性；幂等键本就是近期重试语义）。
+function evictIdempotencyRecords(state) {
+  const cap = Number(process.env.AIMAC_IDEMPOTENCY_RECORD_CAP || 5000);
+  const keys = Object.keys(state.idempotencyRecords || {});
+  if (keys.length <= cap) return;
+  const ordered = keys
+    .map((key) => ({key, createdAt: state.idempotencyRecords[key]?.createdAt || ""}))
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  for (const {key} of ordered.slice(0, keys.length - cap)) delete state.idempotencyRecords[key];
+}
+
 function finishGuardedWrite(state, guard, status, payload) {
   ensureControlState(state);
   const updatedAt = now();
@@ -397,6 +408,7 @@ function finishGuardedWrite(state, guard, status, payload) {
   state.policyDecisions = state.policyDecisions.slice(0, 120);
   state.commands = state.commands.slice(0, 120);
   state.idempotencyRecords[guard.idempotencyKey] = {status, payload, actor: guard.actor, action: guard.command.type, bodyDigest: guard.bodyDigest, createdAt: updatedAt};
+  evictIdempotencyRecords(state);
   audit(state, "policy-engine", "policy_decision_allowed", guard.command.subject);
   audit(state, "command-bus", "command_succeeded", guard.command.subject);
 }
@@ -908,6 +920,28 @@ function canReadTaskGroup(state, account, taskGroupId) {
   );
 }
 
+// 非系统账号可下发的顶层 state 键白名单（已显式过滤的租户集合 + 全局安全的系统配置/计数器）。
+// fail-closed：任何未列入的键（含未来新增且忘记过滤的键）在下发前被删除，避免默认整份泄漏给租户。
+const SCOPED_ALLOWED_TOP_KEYS = new Set([
+  "schemaVersion", "stateVersion", "orgMigrationVersion", "runtime", "managementSurfaces",
+  "modelProviders", "modelCapabilities", "modelSelectionPolicies", "skillSources", "roleSkills",
+  "agentControlSequence", "agentExecutionSequence", "leaseSequence",
+  "projects", "taskGroups", "repositoryOutputs", "workSessions", "workerLanes", "agentDispatches",
+  "agentRuntimeNodes", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "agents",
+  "agentTaskContracts", "effectiveInstructionPackets", "roleDriftGuards", "modelSelectionDecisions",
+  "sessionPlacementDecisions", "roleSkillOverlays", "executionTopologies", "reviewPlans", "reviewBundles",
+  "checkpoints", "completionReadiness", "closeBarriers", "sharedDefinitions", "progressSnapshots", "leases",
+  "accounts", "accessGrants", "auditLog", "policyDecisions", "commands", "decisionRecords", "commandEffects",
+  "idempotencyRecords", "runtimeIssuePatterns", "runtimeIssueSamples", "systemUpgradeCandidates",
+  "agentGatewayEvents", "mcpCalls", "mcpProbeNodes", "instructionMetrics", "organizations",
+  "humanConfirmationRequests", "humanDirectives", "transitionEvidence", "ruleSourceResolutions",
+  "externalUpgradeImports", "mcpGrants", "roomMessages", "roomParticipants", "roomAcks", "roomSequenceByRoom",
+  "permissionRequests", "approvalRequests", "artifacts", "testResults", "findings", "qualityGates",
+  "derivedTaskRequests", "eventLog", "authSessions",
+  // stateViewForAccount / 登录响应后续附加的派生字段
+  "pendingHumanConfirmationTaskGroupIds"
+]);
+
 function scopedStateForAccount(state, account, session) {
   const cloned = {...state};
   delete cloned.__loadedStateVersion;
@@ -1013,6 +1047,10 @@ function scopedStateForAccount(state, account, session) {
   cloned.qualityGates = (state.qualityGates || []).filter((item) => item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId));
   cloned.derivedTaskRequests = (state.derivedTaskRequests || []).filter((item) => item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId));
   cloned.eventLog = (state.eventLog || []).filter((event) => event.taskGroupId && visibleTaskGroupIds.has(event.taskGroupId));
+  // fail-closed：删除白名单外的任何顶层键（防未来新增未过滤的键默认整份泄漏给租户）
+  for (const key of Object.keys(cloned)) {
+    if (!SCOPED_ALLOWED_TOP_KEYS.has(key)) delete cloned[key];
+  }
   return cloned;
 }
 
