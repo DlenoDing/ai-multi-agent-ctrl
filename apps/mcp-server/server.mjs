@@ -1431,7 +1431,7 @@ function createWorkItem(state, args) {
   const workItem = {
     id: workItemId,
     title: args.title || "AI-native work item",
-    status: ["draft", "ready", "blocked"].includes(args.status) ? args.status : "ready",
+    status: ["draft", "ready"].includes(args.status) ? args.status : "ready",
     ownerRole: args.roleId || args.ownerRole || "orchestrator",
     progress: 0,
     requirements: normalizeMcpStringList(args.requirements, []),

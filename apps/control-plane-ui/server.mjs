@@ -706,7 +706,7 @@ function createWorkItemRecord(state, taskGroupId, input = {}, options = {}) {
   const workItem = {
     id: workItemId,
     title: input.title || "AI-native work item",
-    status: ["draft", "ready", "blocked"].includes(input.status) ? input.status : "ready",
+    status: ["draft", "ready"].includes(input.status) ? input.status : "ready",
     ownerRole: input.ownerRole || input.roleId || "orchestrator",
     progress: 0,
     requirements: normalizeStringList(input.requirements, []),
@@ -1576,7 +1576,7 @@ function applyTaskGroupRuntimeControl(state, taskGroup, action, options = {}) {
       delete dispatch.claimExpiresAt;
       dispatch.updatedAt = at;
       const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
-      if (session && ["blocked", "monitor_attention"].includes(session.status)) {
+      if (session && ["needs_decision", "waiting_dependency", "stale_state"].includes(session.status)) {
         session.status = "active";
         session.updatedAt = at;
       }
@@ -1604,13 +1604,14 @@ function applyDirectDispatchControl(state, dispatch, commandType, reason, at) {
   if (dispatch.assignedNodeId) revokeDispatchMcpGrants(state, dispatch.assignedNodeId, dispatch.dispatchId, reason);
   const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
   if (session) {
-    session.status = commandType === "cancel_dispatch" ? "aborted" : "blocked";
+    session.status = commandType === "cancel_dispatch" ? "aborted" : "needs_decision";
+    session.blockedReason = commandType === "cancel_dispatch" ? session.blockedReason : reason;
     session.updatedAt = at;
   }
   const taskGroup = state.taskGroups.find((item) => item.id === dispatch.taskGroupId);
   const workItem = taskGroup?.workItems?.find((item) => item.id === dispatch.workItemId);
   if (workItem) {
-    workItem.status = "blocked";
+    workItem.status = "needs_decision";
     workItem.blockedReason = reason;
     workItem.updatedAt = at;
   }
@@ -1859,7 +1860,8 @@ async function handleApi(req, res) {
     dispatch.updatedAt = now();
     const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
     if (session) {
-      session.status = reportedStatus === "blocked" ? "blocked" : reportedStatus === "cancelled" ? "aborted" : "failed";
+      session.status = reportedStatus === "blocked" ? "needs_decision" : reportedStatus === "cancelled" ? "aborted" : "failed";
+      if (reportedStatus === "blocked") session.blockedReason = dispatch.blockedReason || session.blockedReason;
       session.updatedAt = now();
     }
     finishNodeDispatch(state, node, dispatch.dispatchId, false);

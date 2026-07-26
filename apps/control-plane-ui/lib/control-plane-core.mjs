@@ -1025,6 +1025,10 @@ function availabilityScore(availability, fallbackPolicy = {}) {
  * 复用前须通过 reusePrecheck；在 base 漂移 / 采纳 P0-P1 / Ruleset 变化 / 上下文过长 / 模型档不匹配时轮换归档。
  */
 const WORKER_LANE_TERMINAL = new Set(["retired"]);
+// Legal WorkItem states (spec/state-machines.yaml) that represent a work item held back from progress.
+// There is no "blocked" WorkItem state; blockage is expressed via one of these specific enums.
+export const BLOCKED_WORKITEM_STATUSES = ["blocked_dependency", "blocked_resource", "permission_required", "needs_decision", "stale_state"];
+const BLOCKED_OR_FAILED_WORKITEM_STATUSES = [...BLOCKED_WORKITEM_STATUSES, "failed"];
 
 function laneReusePrecheck(state, lane) {
   const currentSession = lane.currentSessionId ? (state.workSessions || []).find((item) => item.sessionId === lane.currentSessionId) : null;
@@ -1435,7 +1439,7 @@ export function runAutonomousCycle(state, request = {}) {
             evidenceRefs: [`skill-sync-error:${error.message}`],
             sampleRefs: [`skill-sync:${source.sourceId}:${Date.now()}`]
           });
-          changed.push({status: "blocked", reason: "skill_source_sync_failed", issueRef: issue.patternId || issue.sampleId});
+          changed.push({status: "blocked_resource", reason: "skill_source_sync_failed", issueRef: issue.patternId || issue.sampleId});
           return {changed, progressSnapshots: computeProgressSnapshots(state).slice(0, 8)};
         }
       }
@@ -1467,7 +1471,7 @@ export function runAutonomousCycle(state, request = {}) {
       const missingDefinition = relatedSharedDefinitions(state, taskGroup, workItem).find((definition) => definition.status !== "active");
       if (missingDefinition) {
         addBlocker(taskGroup, "S1", `共享定义 ${missingDefinition.contractId} 尚未对工作项 ${workItem.id} 生效。`);
-        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "blocked", reason: "shared_definition_not_active", sharedDefinitionRef: missingDefinition.contractId});
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "blocked_dependency", reason: "shared_definition_not_active", sharedDefinitionRef: missingDefinition.contractId});
         if (request.mode !== "until_blocked" && request.mode !== "all") break;
         continue;
       }
@@ -1496,19 +1500,20 @@ export function runAutonomousCycle(state, request = {}) {
         contract = buildTaskContract(state, {projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workItemId: workItem.id, workItem, root: request.root});
       } catch (error) {
         if (error.code !== "AIMAC_MODEL_SELECTION_REJECTED") throw error;
-        workItem.status = "blocked";
+        workItem.status = "blocked_resource";
         workItem.blockedReason = "model_selection_rejected";
         workItem.updatedAt = new Date().toISOString();
         addBlocker(taskGroup, "S1", `没有可运行的模型满足工作项 ${workItem.id} 的硬性约束。`);
-        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "blocked", reason: "model_selection_rejected", modelSelectionDecisionRef: error.decision?.decisionId});
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "blocked_resource", reason: "model_selection_rejected", modelSelectionDecisionRef: error.decision?.decisionId});
         continue;
       }
       const repositoryTarget = state.repositoryOutputs.find((target) => target.targetId === contract.repositoryOutputTargetRef);
       const drift = evaluateRoleDrift(state, {sessionId: contract.sessionId, taskGroupId: taskGroup.id, actionScopeRefs: [`TaskGroup:${taskGroup.id}`, `RepositoryOutputTarget:${repositoryTarget.targetId}`]});
       if (!drift.allowed) {
-        workItem.status = "blocked";
+        workItem.status = "needs_decision";
+        workItem.blockedReason = "role_drift_guard_blocked";
         addBlocker(taskGroup, "S0", `角色偏移守卫拦截了工作项 ${workItem.id} 的派发。`);
-        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "blocked", reason: "role_drift_guard_blocked"});
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "needs_decision", reason: "role_drift_guard_blocked"});
         continue;
       }
       const dispatch = dispatchWorkItem(state, taskGroup, workItem, contract, repositoryTarget);
@@ -1548,7 +1553,8 @@ function splitMixedWorkItemIfNeeded(state, taskGroup, workItem) {
   const implementation = {
     id: `${workItem.id}_implementation`,
     title: `${workItem.title} - implementation`,
-    status: "blocked",
+    status: "blocked_dependency",
+    blockedReason: "awaiting_analysis_output",
     ownerRole: workItem.ownerRole || "agent-runtime",
     progress: 0,
     taskExecutionClass: "implementation",
@@ -1587,8 +1593,8 @@ function analysisRoleFor(roleId) {
 
 function dispatchWorkItem(state, taskGroup, workItem, contract, repositoryTarget) {
   const at = new Date().toISOString();
-  if (workItem.status === "blocked") {
-    recordTransition(state, "WorkItem", workItem.id, "blocked", "ready", "orchestrator", [`redispatch:${contract.sessionId}`, workItem.blockedReason || "unblocked"]);
+  if (BLOCKED_WORKITEM_STATUSES.includes(workItem.status)) {
+    recordTransition(state, "WorkItem", workItem.id, workItem.status, "ready", "orchestrator", [`redispatch:${contract.sessionId}`, workItem.blockedReason || "unblocked"]);
     workItem.status = "ready";
     delete workItem.blockedReason;
   }
@@ -1783,14 +1789,16 @@ export function runAgentRuntimeWorker(state, request = {}) {
     const hasRuntimeCredential = dispatch.requiredCredentialEnvNames.length === 0 || dispatch.requiredCredentialEnvNames.some((name) => Boolean(process.env[name]));
     if (!deterministicLocalWorker && !hasRuntimeCredential) {
       markDispatchBlocked(state, dispatch, "credential_required");
-      workItem.status = "blocked";
+      workItem.status = "permission_required";
+      workItem.blockedReason = "credential_required";
       addBlocker(taskGroup, "S1", `执行需要智能体运行时凭据：${dispatch.requiredCredentialEnvNames.join(" 或 ")}。`);
       results.push({dispatchId: dispatch.dispatchId, status: "blocked", reason: "credential_required", requiredCredentialEnvNames: dispatch.requiredCredentialEnvNames});
       continue;
     }
     if (!deterministicLocalWorker && !process.env.AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND) {
       markDispatchBlocked(state, dispatch, "agent_runtime_executor_required");
-      workItem.status = "blocked";
+      workItem.status = "blocked_resource";
+      workItem.blockedReason = "agent_runtime_executor_required";
       addBlocker(taskGroup, "S1", "由供应商模型执行需要配置智能体运行时执行器命令。");
       results.push({dispatchId: dispatch.dispatchId, status: "blocked", reason: "agent_runtime_executor_required"});
       continue;
@@ -2161,7 +2169,7 @@ function progressSnapshot(scopeType, scopeRef, status, progress, health, counter
     counters,
     roleActivity: roles.map((role) => ({roleId: role.roleId, status: role.status, lastEventRef: `event:${scopeRef}:${role.roleId}`})),
     workItems: workItems.map((item) => ({workItemId: item.id || item.workItemId, title: item.title, status: item.status, progress: Number(item.progress || 0), ...(item.repositoryOutputTargetRef ? {repositoryOutputTargetRef: item.repositoryOutputTargetRef} : {})})),
-    blockers: workItems.filter((item) => ["blocked", "failed"].includes(item.status)).map((item) => item.id),
+    blockers: workItems.filter((item) => BLOCKED_OR_FAILED_WORKITEM_STATUSES.includes(item.status)).map((item) => item.id),
     repositoryOutputs: repositoryOutputs.map((target) => ({
       repositoryOutputTargetRef: target.targetId,
       repositoryId: target.repositoryId,
@@ -2298,7 +2306,7 @@ function countWork(workItems) {
     total: active.length,
     done: active.filter((item) => ["verified", "closed"].includes(item.status) || Number(item.progress || 0) >= 100).length,
     inProgress: active.filter((item) => ["ready", "assigned", "in_progress", "checkpoint_submitted", "review_requested", "review_passed", "verification_ready"].includes(item.status)).length,
-    blocked: active.filter((item) => ["blocked", "failed"].includes(item.status)).length
+    blocked: active.filter((item) => BLOCKED_OR_FAILED_WORKITEM_STATUSES.includes(item.status)).length
   };
 }
 
@@ -2834,7 +2842,7 @@ function ensureLease(state, repositoryTarget, holderRef = "orchestrator", taskCo
 function recomputeTaskGroup(taskGroup) {
   const items = (taskGroup.workItems || []).filter((item) => item.status !== "superseded");
   taskGroup.progress = items.length ? Math.round(items.reduce((sum, item) => sum + Number(item.progress || 0), 0) / items.length) : 100;
-  taskGroup.health = items.some((item) => ["blocked", "failed"].includes(item.status)) ? "blocked" : "ok";
+  taskGroup.health = items.some((item) => BLOCKED_OR_FAILED_WORKITEM_STATUSES.includes(item.status)) ? "blocked" : "ok";
   taskGroup.blockers = taskGroup.health === "ok" ? [] : taskGroup.blockers || [];
   const allTerminal = items.length > 0 && items.every((item) => ["verified", "closed"].includes(item.status));
   if (allTerminal && taskGroup.health === "ok" && !["closed", "aborted"].includes(taskGroup.status)) taskGroup.status = "verification";
@@ -3167,7 +3175,7 @@ export function ensureTaskAnalysis(state, taskGroup) {
   if (!taskGroup) return null;
   const statusOf = (workItem) => {
     if (["verified", "closed"].includes(workItem.status)) return "completed";
-    if (["blocked", "failed"].includes(workItem.status)) return "blocked";
+    if (BLOCKED_OR_FAILED_WORKITEM_STATUSES.includes(workItem.status)) return "blocked";
     if (["draft", "ready"].includes(workItem.status)) return "pending";
     return "in_progress";
   };
@@ -3326,7 +3334,7 @@ export function createHumanConfirmationRequest(state, input = {}) {
     dispatch.updatedAt = at;
     const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
     if (session && !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status)) {
-      session.status = "blocked";
+      session.status = "needs_decision";
       session.blockedReason = "awaiting_human_confirmation";
       session.updatedAt = at;
     }
@@ -3359,7 +3367,7 @@ export function decideHumanConfirmation(state, requestId, decision = {}, options
       revokeDispatchNodeBinding(state, dispatch, "human_confirmation_answered_requeued");
       dispatch.updatedAt = at;
       const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
-      if (session && session.status === "blocked" && session.blockedReason === "awaiting_human_confirmation") {
+      if (session && session.status === "needs_decision" && session.blockedReason === "awaiting_human_confirmation") {
         session.status = "active";
         delete session.blockedReason;
         session.updatedAt = at;
@@ -3426,7 +3434,7 @@ export function expireStaleHumanConfirmations(state) {
         revokeDispatchNodeBinding(state, dispatch, "human_confirmation_expired_requeued");
         dispatch.updatedAt = at;
         const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
-        if (session && session.status === "blocked" && session.blockedReason === "awaiting_human_confirmation") {
+        if (session && session.status === "needs_decision" && session.blockedReason === "awaiting_human_confirmation") {
           session.status = "active";
           delete session.blockedReason;
           session.updatedAt = at;
@@ -3474,7 +3482,7 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
           }
           const workItem = (taskGroup.workItems || []).find((item) => item.id === dispatch.workItemId);
           if (workItem && !["verified", "closed", "superseded"].includes(workItem.status)) {
-            workItem.status = "blocked";
+            workItem.status = "needs_decision";
             workItem.blockedReason = "human_directive_cancel";
             workItem.updatedAt = at;
           }
@@ -3598,7 +3606,7 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
     const maxReworkAttempts = Math.max(1, Number(process.env.AIMAC_REVIEW_MAX_REWORK_ATTEMPTS || 3));
     if (options.backfill || rejectionCount >= maxReworkAttempts) {
       if (!options.backfill) {
-        workItem.status = "blocked";
+        workItem.status = "needs_decision";
         workItem.blockedReason = "independent_review_changes_requested";
       }
       addBlocker(taskGroup, "S1", `独立评审要求工作项 ${workItem.id} 返工：${findings.map(reviewFindingLabel).join("，")}`);

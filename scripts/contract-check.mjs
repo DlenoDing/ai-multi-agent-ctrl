@@ -11,6 +11,7 @@ import {
   maintainWorkerLanes,
   rotateWorkerLane,
   buildTaskContract,
+  computeProgressSnapshots,
   createHumanConfirmationRequest,
   createHumanDirective,
   consumeQueuedHumanDirectives,
@@ -83,6 +84,7 @@ for (const tool of toolDefs) {
 }
 
 verifyRuntimeJsonConflict(errors);
+verifyWorkStatusEnumConvergence(errors);
 
 if (errors.length) {
   console.error("contract check failed:");
@@ -586,6 +588,94 @@ console.log("contract check ok");
 
 function loadJson(path) {
   return JSON.parse(readFileSync(resolve(root, path), "utf8"));
+}
+
+// Extract the declared states of a state-machine from spec/state-machines.yaml without a YAML dependency.
+function extractMachineStates(yamlText, machine) {
+  const lines = yamlText.split(/\r?\n/);
+  let index = lines.findIndex((line) => line === `  ${machine}:`);
+  if (index < 0) return [];
+  const states = [];
+  let inStates = false;
+  for (index += 1; index < lines.length; index++) {
+    const line = lines[index];
+    if (/^  \S/.test(line)) break; // next machine at 2-space indent
+    if (/^    states:\s*$/.test(line)) { inStates = true; continue; }
+    if (!inStates) continue;
+    const item = line.match(/^      - "([^"]+)"\s*$/);
+    if (item) { states.push(item[1]); continue; }
+    if (/^    \S/.test(line)) break; // next key (e.g. transitions:)
+  }
+  return states;
+}
+
+// Gap #4: WorkItem/WorkSession status must stay within the legal state-machine enums; there is no
+// "blocked"/"monitor_attention" state. Also confirm the converged blocked enums are recognized by
+// the derived blockers/counters logic.
+function verifyWorkStatusEnumConvergence(output) {
+  const smText = readFileSync(resolve(root, "spec/state-machines.yaml"), "utf8");
+  const workItemSet = new Set(extractMachineStates(smText, "WorkItem"));
+  const workSessionSet = new Set(extractMachineStates(smText, "WorkSession"));
+  if (workItemSet.size === 0 || workSessionSet.size === 0) {
+    output.push("state-machines: failed to extract WorkItem/WorkSession states");
+    return;
+  }
+  for (const illegal of ["blocked"]) {
+    if (workItemSet.has(illegal)) output.push(`state-machines WorkItem must not contain '${illegal}'`);
+  }
+  for (const illegal of ["blocked", "monitor_attention"]) {
+    if (workSessionSet.has(illegal)) output.push(`state-machines WorkSession must not contain '${illegal}'`);
+  }
+  const blockedWorkItemStatuses = ["blocked_dependency", "blocked_resource", "permission_required", "needs_decision", "stale_state"];
+  for (const status of blockedWorkItemStatuses) {
+    if (!workItemSet.has(status)) output.push(`state-machines WorkItem missing expected enum ${status}`);
+  }
+
+  for (const taskGroup of seedState.taskGroups || []) {
+    for (const workItem of taskGroup.workItems || []) {
+      if (!workItemSet.has(workItem.status)) {
+        output.push(`seed WorkItem ${taskGroup.id}/${workItem.id} has illegal status "${workItem.status}"`);
+      }
+    }
+  }
+  for (const session of seedState.workSessions || []) {
+    if (!workSessionSet.has(session.status)) {
+      output.push(`seed WorkSession ${session.sessionId} has illegal status "${session.status}"`);
+    }
+  }
+
+  // Blocked-work-item scenario: every converged blocked enum must be surfaced by readiness/blockers.
+  const scenario = {
+    projects: [{id: "project/enum-check", status: "development", progress: {}}],
+    taskGroups: [{
+      id: "tg/enum-check",
+      projectId: "project/enum-check",
+      status: "development",
+      health: "ok",
+      roles: [],
+      workItems: [
+        {id: "wi-active", title: "active", status: "in_progress", progress: 40},
+        ...blockedWorkItemStatuses.map((status) => ({id: `wi-${status}`, title: status, status, blockedReason: `${status}_reason`, progress: 0}))
+      ]
+    }],
+    repositoryOutputs: [],
+    workSessions: [],
+    progressSnapshots: []
+  };
+  const snapshots = computeProgressSnapshots(scenario);
+  const tgSnapshot = snapshots.find((snapshot) => snapshot.scopeType === "task_group" && snapshot.scopeRef === "tg/enum-check");
+  if (!tgSnapshot) {
+    output.push("enum-check: task group progress snapshot missing");
+    return;
+  }
+  for (const status of blockedWorkItemStatuses) {
+    if (!tgSnapshot.blockers.includes(`wi-${status}`)) {
+      output.push(`enum-check: blockers did not identify WorkItem in status ${status}`);
+    }
+  }
+  if (tgSnapshot.counters.blocked !== blockedWorkItemStatuses.length) {
+    output.push(`enum-check: counters.blocked ${tgSnapshot.counters.blocked} != ${blockedWorkItemStatuses.length}`);
+  }
 }
 
 function validateSchema(value, schema, path, output) {

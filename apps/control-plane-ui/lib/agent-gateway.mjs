@@ -675,14 +675,16 @@ function applyControlCommandPreEffects(state, node, command) {
   revokeDispatchMcpGrants(state, node.nodeId, dispatch.dispatchId, `control_${command.commandType}`);
   const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
   if (session) {
-    session.status = command.commandType === "pause_dispatch" ? "blocked" : command.commandType === "cancel_dispatch" ? "aborted" : "active";
+    session.status = command.commandType === "pause_dispatch" ? "needs_decision" : command.commandType === "cancel_dispatch" ? "aborted" : "active";
+    if (command.commandType === "pause_dispatch") session.blockedReason = "control_pause_requested";
+    else delete session.blockedReason;
     session.controlCommandRef = command.commandId;
     session.updatedAt = at;
   }
   const taskGroup = state.taskGroups.find((item) => item.id === dispatch.taskGroupId);
   const workItem = taskGroup?.workItems?.find((item) => item.id === dispatch.workItemId);
   if (workItem) {
-    workItem.status = command.commandType === "resume_dispatch" ? "ready" : "blocked";
+    workItem.status = command.commandType === "resume_dispatch" ? "ready" : "needs_decision";
     workItem.blockedReason = command.commandType === "pause_dispatch" ? "control_pause_requested" : command.commandType === "cancel_dispatch" ? "control_cancel_requested" : "control_resume_requested";
     workItem.updatedAt = at;
   }
@@ -1098,7 +1100,10 @@ function updateExecutionProgress(state, dispatch, event, at) {
   if (session) {
     session.lastExecutionEventRef = dispatch.lastExecutionEventRef;
     session.progressPercent = Math.max(Number(session.progressPercent || 0), event.progressPercent);
-    if (event.status === "attention" && session.status === "active") session.status = "monitor_attention";
+    // "monitor_attention" is not a legal WorkSession state; surface attention as a derived UI flag
+    // without leaving the "active" state, and clear it once normal progress resumes.
+    if (event.status === "attention") session.attentionFlag = true;
+    else if (event.status === "running" && session.attentionFlag) delete session.attentionFlag;
     session.updatedAt = at;
   }
   const taskGroup = state.taskGroups.find((item) => item.id === dispatch.taskGroupId);
