@@ -1217,6 +1217,19 @@ export function buildTaskContract(state, request = {}) {
   const taskGroup = state.taskGroups.find((item) => item.id === request.taskGroupId) || state.taskGroups[0];
   const workItem = request.workItem || findWorkItem(state, taskGroup?.id, request.workItemId) || taskGroup?.workItems?.[0];
   const project = state.projects.find((item) => item.id === taskGroup?.projectId) || state.projects[0];
+  // Idempotency guard: if a non-terminal dispatch already exists for this cell, return its contract
+  // instead of minting a new session/lease/worker-lane. Without this, a duplicate build (e.g. two
+  // MCP session.start calls, since enqueueAgentDispatch dedups only AFTER buildTaskContract has
+  // acquired resources) orphans an active session + busy worker lane that maintainWorkerLanes can
+  // never release. runAutonomousCycle already pre-guards via activeExecutionForWork, so this only
+  // affects the direct-call paths.
+  const existingDispatch = (state.agentDispatches || []).find((item) =>
+    item.taskGroupId === taskGroup?.id && item.workItemId === workItem?.id && !["completed", "failed", "cancelled"].includes(item.status));
+  if (existingDispatch) {
+    const existingContract = (state.agentTaskContracts || []).find((item) => item.sessionId === existingDispatch.sessionId && item.runId === existingDispatch.runId)
+      || (state.agentTaskContracts || []).find((item) => item.sessionId === existingDispatch.sessionId);
+    if (existingContract) return existingContract;
+  }
   const modelDecision = request.modelSelectionDecision || selectModel(state, {projectId: project?.id, taskGroupId: taskGroup?.id, workItemId: workItem?.id, roleId: workItem?.ownerRole || "orchestrator"});
   assertSelectedModelDecision(modelDecision);
   const placementDecision = request.placementDecision || decideSessionPlacement(state, {projectId: project?.id, taskGroupId: taskGroup?.id, workItemId: workItem?.id, workItem, modelSelectionDecision: modelDecision});
@@ -1352,7 +1365,7 @@ export function buildTaskContract(state, request = {}) {
     }];
   }
   state.agentTaskContracts.unshift(contract);
-  state.agentTaskContracts = state.agentTaskContracts.slice(0, 160);
+  state.agentTaskContracts = capTaskContracts(state.agentTaskContracts, state.agentDispatches, 160);
   // 持续型工作在建会话时获取并占用其角色的 worker lane（复用空闲/新建），回填具体载体到放置决策；subagent 无 lane
   let acquiredLaneId = null;
   if (placementDecision.workerCarrierDecision?.mode === "worker_lane") {
@@ -1704,6 +1717,28 @@ export function runAutonomousCycle(state, request = {}) {
           changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, progress: workItem.progress, awaiting: review.verdict === "passed" ? null : "independent_review", review});
           continue;
         }
+      }
+      // Held cells: a blocked cell must not be auto-resumed with fabricated gate evidence — hold it
+      // until its real precondition is satisfied, so dispatchWorkItem never fabricates the gate.
+      // - blocked_dependency: resume only when EVERY dependsOnWorkItemRefs target is verified/closed
+      //   (enforces analysis->implementation ordering from splitMixedWorkItemIfNeeded).
+      // - needs_decision: never auto-admit — it requires an external decision (human/decision-center)
+      //   to return to ready, so holding preserves the rework cap and the human-in-the-loop gate.
+      if (workItem.status === "blocked_dependency") {
+        const unmetDeps = (workItem.dependsOnWorkItemRefs || []).filter((depId) => {
+          const dependency = (taskGroup.workItems || []).find((item) => item.id === depId);
+          return !dependency || !["verified", "closed"].includes(dependency.status);
+        });
+        if (unmetDeps.length) {
+          recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "awaiting_dependency", whyThisCellNow: `awaiting dependencies ${unmetDeps.join(",")}`, cycleRef});
+          changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, reason: "awaiting_dependency", awaiting: "dependency", dependsOnWorkItemRefs: unmetDeps});
+          continue;
+        }
+      }
+      if (workItem.status === "needs_decision") {
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "awaiting_decision", whyThisCellNow: "cell_needs_external_decision", cycleRef});
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, reason: "awaiting_decision", awaiting: "decision"});
+        continue;
       }
       const missingDefinition = relatedSharedDefinitions(state, taskGroup, workItem).find((definition) => definition.status !== "active");
       if (missingDefinition) {
@@ -2544,6 +2579,19 @@ function capDispatchHistory(dispatches, limit) {
   return strandedActive.length ? [...kept, ...strandedActive] : kept;
 }
 
+// Symmetric with capDispatchHistory: never evict the task contract of a still-active dispatch, or
+// acceptAgentCheckpoint would reject its checkpoint forever (agent_dispatch_contract_mismatch) and
+// the dispatch could never terminalize — permanently wedging the task group's close barrier.
+export function capTaskContracts(contracts, dispatches, limit) {
+  if (contracts.length <= limit) return contracts;
+  const terminal = new Set(["completed", "failed", "cancelled"]);
+  const activeSessionIds = new Set((dispatches || []).filter((item) => !terminal.has(item.status)).map((item) => item.sessionId).filter(Boolean));
+  const kept = contracts.slice(0, limit);
+  const keptRefs = new Set(kept.map((item) => item.contractId));
+  const strandedActive = contracts.slice(limit).filter((item) => activeSessionIds.has(item.sessionId) && !keptRefs.has(item.contractId));
+  return strandedActive.length ? [...kept, ...strandedActive] : kept;
+}
+
 function enqueueAgentDispatch(state, contract, repositoryTarget) {
   if (!contract?.model?.modelId || !contract?.model?.modelDecision || !contract?.model?.modelSelectionDecisionRef) {
     throw new Error("agent_dispatch_requires_selected_model_decision");
@@ -2729,7 +2777,7 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     no_pending_permissions: forTaskGroup(state.permissionRequests).some((item) => pendingStatuses.includes(item.status)),
     no_pending_approvals: forTaskGroup(state.approvalRequests).some((item) => pendingStatuses.includes(item.status)),
     all_policy_decisions_terminal: false,
-    all_commands_terminal: (state.commands || []).some((command) => (command.taskGroupId === taskGroupId || String(command.subject || "").includes(taskGroupId)) && !COMMAND_TERMINAL.has(command.status)),
+    all_commands_terminal: (state.commands || []).some((command) => (command.taskGroupId === taskGroupId || command.subject === `TaskGroup:${taskGroupId}`) && !COMMAND_TERMINAL.has(command.status)),
     all_command_effects_terminal: forTaskGroup(state.commandEffects).some((item) => !COMMAND_EFFECT_TERMINAL.has(item.status)),
     no_active_dlq: forTaskGroup(state.dlqEntries).some((item) => !DLQ_ENTRY_TERMINAL.has(item.status)),
     all_leases_terminal: (state.leases || []).some((lease) => lease.status === "active" && leaseAppliesToTaskGroup(state, lease, taskGroupId)),

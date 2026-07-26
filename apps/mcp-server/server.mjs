@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredState, writeStoredState } from "../control-plane-ui/lib/state-store.mjs";
+import { isSafeGitRemoteUrl } from "../control-plane-ui/lib/agent-gateway.mjs";
 import {
   acceptAgentCheckpoint,
   buildTaskContract,
@@ -1189,7 +1190,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "scheduler-mcp.session_place":
       return decideSessionPlacement(state, args);
     case "scheduler-mcp.capacity_snapshot":
-      return capacitySnapshot(state);
+      return capacitySnapshot(state, principalProjectFilter(context));
     case "scheduler-mcp.execution_topology_plan":
       return createExecutionTopology(state, args);
     case "scheduler-mcp.derived_task_classify":
@@ -1298,9 +1299,9 @@ async function dispatchTool(state, name, args, context = {}) {
     case "ui-console-mcp.management_surface_get":
       return {managementSurfaces: state.managementSurfaces};
     case "ui-console-mcp.project_progress_get":
-      return progressGet(state, args, "project");
+      return progressGet(state, args, "project", principalProjectFilter(context));
     case "ui-console-mcp.task_group_progress_get":
-      return progressGet(state, args, "task_group");
+      return progressGet(state, args, "task_group", principalProjectFilter(context));
     case "ui-console-mcp.guarded_action_dispatch":
       return guardedActionDispatch(state, args);
     case "definition-mcp.shared_definition_create":
@@ -1747,13 +1748,19 @@ function sessionMutate(state, args, status) {
   return {session, controlCommands, directDispatches};
 }
 
-function capacitySnapshot(state) {
+function capacitySnapshot(state, filter) {
+  // A bounded principal only sees capacity for its own projects; a null filter (system_admin /
+  // wildcard) sees global aggregates. Prevents cross-tenant operational disclosure via this read.
+  const terminal = ["completed_objective", "failed", "closed", "recycled", "aborted", "cancelled"];
+  const inScope = (item) => !filter || (item.projectId && filter.has(item.projectId));
+  const sessions = state.workSessions.filter(inScope);
+  const dispatches = state.agentDispatches.filter(inScope);
   return {
-    activeSessions: state.workSessions.filter((item) => !["completed_objective", "failed", "closed", "recycled", "aborted", "cancelled"].includes(item.status)).length,
-    activeSubagents: state.workSessions.filter((item) => item.placement === "subagent" && !["completed_objective", "failed", "closed", "recycled", "aborted", "cancelled"].includes(item.status)).length,
-    dispatchQueueDepth: state.agentDispatches.filter((item) => ["queued", "blocked"].includes(item.status)).length,
-    agentCount: state.agents.length,
-    nodeCount: state.agentRuntimeNodes.length,
+    activeSessions: sessions.filter((item) => !terminal.includes(item.status)).length,
+    activeSubagents: sessions.filter((item) => item.placement === "subagent" && !terminal.includes(item.status)).length,
+    dispatchQueueDepth: dispatches.filter((item) => ["queued", "blocked"].includes(item.status)).length,
+    agentCount: filter ? state.agents.filter((item) => item.projectId && filter.has(item.projectId)).length : state.agents.length,
+    nodeCount: filter ? state.agentRuntimeNodes.filter((item) => item.projectId && filter.has(item.projectId)).length : state.agentRuntimeNodes.length,
     modelProviderCount: state.modelCapabilities.length
   };
 }
@@ -2064,9 +2071,16 @@ function runtimeHealthGet(state) {
   };
 }
 
-function progressGet(state, args, scopeType) {
+function progressGet(state, args, scopeType, filter) {
   computeProgressSnapshots(state);
   const scopeRef = scopeType === "project" ? args.projectId : args.taskGroupId;
+  // A bounded principal must address an in-scope ref; without one, returning the first snapshot of
+  // the scope type would disclose an arbitrary tenant's progress. Deny rather than guess.
+  if (filter) {
+    if (!scopeRef) return {progressSnapshot: null, error: "scope_ref_required_for_bounded_principal"};
+    const projectId = scopeType === "project" ? scopeRef : state.taskGroups.find((item) => item.id === scopeRef)?.projectId;
+    if (!projectId || !filter.has(projectId)) return {progressSnapshot: null, error: "out_of_scope"};
+  }
   return {
     progressSnapshot: state.progressSnapshots.find((snapshot) => snapshot.scopeType === scopeType && (!scopeRef || snapshot.scopeRef === scopeRef)) || null
   };
@@ -2205,6 +2219,9 @@ function repositoryOutputTargetSelect(state, args) {
   }
   if (!pathMatchesAllowlist(artifactManifestPath, pathAllowlist)) {
     return {ok: false, error: "artifact_manifest_outside_allowlist"};
+  }
+  if (args.repositoryUrl && !isSafeGitRemoteUrl(args.repositoryUrl)) {
+    return {ok: false, error: "repository_output_target_unsafe_repository_url"};
   }
   const target = {
     schemaVersion: "repository-output-target/v1",

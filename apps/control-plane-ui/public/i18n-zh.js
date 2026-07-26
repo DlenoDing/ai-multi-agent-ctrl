@@ -171,6 +171,12 @@
     /* ---------- 受阻 / 失败原因 ---------- */
     awaiting_human_confirmation: "等待人工确认",
     awaiting_existing_checkpoint: "等待既有检查点",
+    awaiting_analysis_output: "等待分析产出",
+    role_drift_guard_blocked: "角色偏移守卫阻断",
+    credential_required: "缺少凭证",
+    agent_runtime_executor_required: "需智能体运行时执行器",
+    awaiting_dependency: "等待依赖项完成",
+    awaiting_decision: "等待人工决策",
     control_pause_requested: "控制通道请求暂停",
     control_resume_requested: "控制通道请求恢复",
     control_cancel_requested: "控制通道请求取消",

@@ -97,15 +97,30 @@
     "workerCarrierDecision": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "roleId"],
+      "required": ["mode", "roleId", "carrier"],
       "properties": {
         "mode": {"type": "string", "enum": ["worker_lane", "subagent"]},
+        "carrier": {"type": "string", "enum": ["short_subagent", "reusable_top_level_lane", "new_top_level_lane", "integration_owner_direct"]},
         "roleId": {"type": "string", "minLength": 1},
         "laneFunction": {"type": "string"},
         "laneId": {"type": "string"},
         "acquireMode": {"type": "string", "enum": ["reuse_lane", "new_lane"]},
         "reuseGeneration": {"type": "integer", "minimum": 0},
-        "reusePrecheck": {"type": "object"}
+        "reusePrecheck": {"type": "object"},
+        "nonReuseReason": {"type": "string"},
+        "retireOrArchiveCondition": {"type": "string"},
+        "nonSelectedCarriers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["carrier", "reason"],
+            "properties": {
+              "carrier": {"type": "string", "enum": ["short_subagent", "reusable_top_level_lane", "new_top_level_lane", "integration_owner_direct"]},
+              "reason": {"type": "string"}
+            }
+          }
+        }
       }
     },
     "denialReason": {

@@ -26,6 +26,7 @@ import {
   cellAdmissionPriority,
   conditionWindowGate,
   admissibleCellClass,
+  capTaskContracts,
   decideSessionPlacement,
   roomSend,
   selectModel,
@@ -76,6 +77,7 @@ const skillWorksetSchema = loadJson("spec/agent-skill-workset.schema.json");
 const agentTaskContractSchema = loadJson("spec/agent-task-contract.schema.json");
 const effectiveInstructionPacketSchema = loadJson("spec/effective-instruction-packet.schema.json");
 const workerLaneSchema = loadJson("spec/worker-lane.schema.json");
+const sessionPlacementDecisionSchema = loadJson("spec/session-placement-decision.schema.json");
 const languagePolicySchema = loadJson("spec/language-policy.schema.json");
 const humanConfirmationSchema = loadJson("spec/human-confirmation-request.schema.json");
 const humanDirectiveSchema = loadJson("spec/human-directive.schema.json");
@@ -255,10 +257,54 @@ function verifyHumanAndOrganizationContracts(output) {
   if (admissibleCellClass("deferred", "awaiting_downstream_output", {}) !== "defer_downstream") output.push("non-window deferral misclassified as pending_window (A2)");
   if (admissibleCellClass("selected", "dispatched", {}) !== "ready_now") output.push("selected cell not classified ready_now (A2)");
 
-  // A7: carrier decision records the 4-way carrier + nonSelectedCarriers + nonReuseReason.
-  const carrierDecision = decideSessionPlacement(state, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", workSignals: ["expected_multi_turn", "role_owner_required"]}).workerCarrierDecision;
+  // A7: carrier decision records the 4-way carrier + nonSelectedCarriers + nonReuseReason, and the
+  // produced instance must validate against session-placement-decision.schema.json (no spec drift).
+  const carrierPlacement = decideSessionPlacement(state, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", workSignals: ["expected_multi_turn", "role_owner_required"]});
+  const carrierDecision = carrierPlacement.workerCarrierDecision;
   if (!carrierDecision.carrier || !Array.isArray(carrierDecision.nonSelectedCarriers) || carrierDecision.nonSelectedCarriers.length !== 3 || !carrierDecision.nonReuseReason || !carrierDecision.retireOrArchiveCondition) {
     output.push("carrier decision missing 4-way carrier / nonSelectedCarriers / nonReuseReason (A7)");
+  }
+  validateSchema(carrierPlacement, sessionPlacementDecisionSchema, "SessionPlacementDecision", output);
+  const subagentPlacement = decideSessionPlacement(state, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", workSignals: ["single_turn", "read_only_scan"]});
+  validateSchema(subagentPlacement, sessionPlacementDecisionSchema, "SessionPlacementDecision(subagent)", output);
+
+  // --- 2026-07-26 multi-dimension review fixes: behavioral tests ---
+  {
+    // buildTaskContract idempotency: a second build for an already-dispatched cell returns the
+    // existing contract (same runId) and mints no orphan session/lane.
+    const idemState = structuredClone(seedState);
+    ensureRuntimeCollections(idemState, {root});
+    runAutonomousCycle(idemState, {root, mode: "all", autoSyncSkills: false});
+    const activeDispatch = (idemState.agentDispatches || []).find((item) => ["queued", "running"].includes(item.status));
+    if (activeDispatch) {
+      const sessionsBefore = idemState.workSessions.length;
+      const rebuilt = buildTaskContract(idemState, {taskGroupId: activeDispatch.taskGroupId, workItemId: activeDispatch.workItemId, root});
+      if (rebuilt.runId !== activeDispatch.runId) output.push("buildTaskContract idempotency: rebuild did not return the active dispatch contract");
+      if (idemState.workSessions.length !== sessionsBefore) output.push("buildTaskContract idempotency: rebuild created an orphan session");
+    }
+    // capTaskContracts protects the contract of a non-terminal dispatch beyond the cap window.
+    const capped = capTaskContracts(
+      [{contractId: "c_new", sessionId: "s_new", runId: "r_new"}, {contractId: "c_old_active", sessionId: "s_active", runId: "r_active"}, {contractId: "c_old_done", sessionId: "s_done", runId: "r_done"}],
+      [{sessionId: "s_active", status: "running"}, {sessionId: "s_done", status: "completed"}],
+      1
+    );
+    if (!capped.some((item) => item.contractId === "c_old_active")) output.push("capTaskContracts evicted the contract of an active dispatch");
+    if (capped.some((item) => item.contractId === "c_old_done")) output.push("capTaskContracts retained a terminal dispatch contract beyond the cap");
+    // blocked_dependency hold: an implementation cell whose analysis dependency is unverified must
+    // not be dispatched; a held admission (awaiting_dependency) is recorded instead.
+    const holdState = structuredClone(seedState);
+    ensureRuntimeCollections(holdState, {root});
+    const holdTg = holdState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    // The analysis dep is itself held (unmet dep) so nothing dispatches; the point is only that the
+    // implementation cell is NOT auto-resumed while its analysis dependency is unverified.
+    holdTg.workItems = [
+      {id: "wi_analysis_hold", title: "分析", status: "blocked_dependency", ownerRole: "orchestrator", taskExecutionClass: "deep_analysis", dependsOnWorkItemRefs: ["wi_absent_dep"], progress: 0},
+      {id: "wi_impl_hold", title: "实现", status: "blocked_dependency", blockedReason: "awaiting_analysis_output", ownerRole: "agent-runtime", taskExecutionClass: "implementation", dependsOnWorkItemRefs: ["wi_analysis_hold"], progress: 0}
+    ];
+    runAutonomousCycle(holdState, {root, mode: "all", taskGroupId: "tg_runtime_management", autoSyncSkills: false});
+    if ((holdState.agentDispatches || []).some((item) => item.workItemId === "wi_impl_hold")) output.push("blocked_dependency hold: implementation cell dispatched before its analysis dependency was verified");
+    const heldAdmission = (holdState.admissionDecisions || []).find((item) => item.workItemId === "wi_impl_hold");
+    if (!heldAdmission || heldAdmission.reasonCode !== "awaiting_dependency") output.push("blocked_dependency hold: no awaiting_dependency admission recorded");
   }
 
   // §4.5 single-cell-block guard (gap #12): a blocked cell must not escalate the whole task

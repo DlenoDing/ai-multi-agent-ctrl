@@ -826,9 +826,13 @@ export function finishNodeDispatch(state, node, dispatchId, succeeded) {
   appendGatewayEvent(state, succeeded ? "dispatch_completed" : "dispatch_failed", dispatchId, {nodeId: node.nodeId});
 }
 
-function isSafeGitRemoteUrl(url) {
+export function isSafeGitRemoteUrl(url) {
   const value = String(url || "");
   if (!value || value.startsWith("-")) return false;
+  // Reject remote-helper transports (ext::, fd::, <anything>::) and ext:/fd: — these can execute
+  // arbitrary commands on the host. This is the primary RCE guard; callers also constrain git with
+  // GIT_ALLOW_PROTOCOL. http(s)/ssh/git/file and local filesystem paths are permitted (local repos
+  // are used by local deployments and the doctor, and cannot execute commands).
   if (/^[a-z0-9+.-]*::/iu.test(value)) return false;
   if (value.startsWith("ext:") || value.startsWith("fd:")) return false;
   // Reject a host segment that begins with '-' so git cannot pass it to ssh as an option (e.g. -oProxyCommand=...).
@@ -836,7 +840,9 @@ function isSafeGitRemoteUrl(url) {
   if (scp) return !scp[1].startsWith("-");
   const sshUrl = value.match(/^ssh:\/\/(?:[^@/\s]+@)?([^/:\s]+)/iu);
   if (sshUrl) return !sshUrl[1].startsWith("-");
-  return /^https?:\/\//iu.test(value) || /^git:\/\//iu.test(value);
+  if (/^(https?|git|file):\/\//iu.test(value)) return true;
+  // Local filesystem repository paths (absolute POSIX, Windows drive, or explicit ./ .. relative).
+  return value.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(value) || value.startsWith("./") || value.startsWith("../");
 }
 
 function gitTransferForBundle(config) {

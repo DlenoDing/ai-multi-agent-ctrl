@@ -523,7 +523,9 @@ function confirmDialog(options = {}) {
     };
     const onKey = (event) => {
       if (event.key === "Escape") done(false);
-      else if (event.key === "Enter") done(true);
+      // For destructive dialogs, Enter must not auto-trigger the irreversible action; require an
+      // explicit click on the danger button. Enter still confirms non-destructive dialogs.
+      else if (event.key === "Enter" && !danger) done(true);
     };
     mask.addEventListener("click", (event) => {
       const act = event.target.closest("[data-confirm]")?.dataset.confirm;
@@ -533,7 +535,8 @@ function confirmDialog(options = {}) {
     });
     document.addEventListener("keydown", onKey);
     document.body.appendChild(mask);
-    mask.querySelector('[data-confirm="ok"]').focus();
+    // Destructive dialogs focus Cancel (safer default); others focus the confirm button.
+    mask.querySelector(danger ? '[data-confirm="cancel"]' : '[data-confirm="ok"]').focus();
   });
 }
 
@@ -762,7 +765,10 @@ function startExecPolling() {
     }
     try {
       await loadExecEvents({longPoll: true});
-      if (!formTouched && !modalHtml) render();
+      const active = document.activeElement;
+      // Do not rebuild the DOM while the operator is typing in a filter box or has the scope select
+      // open — a full innerHTML render would drop focus/caret and close the dropdown every tick.
+      if (!formTouched && !modalHtml && !(active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName))) render();
     } catch {}
   }, 2500);
 }

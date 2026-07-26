@@ -21,6 +21,7 @@ import {
   getDispatchForNode,
   getSkillWorkset,
   heartbeatAgentNode,
+  isSafeGitRemoteUrl,
   listAgentControlCommands,
   listAgentJoinTokens,
   prepareAgentExecutionEvent,
@@ -1684,20 +1685,46 @@ function delay(ms) {
 }
 
 async function prepareRemoteGitVerification(target, checkpointInput) {
+  // Fail-closed on untrusted git input: a repository output target is tenant-controlled, so an
+  // unvalidated repositoryUrl reaching `git fetch` on the shared control-plane host is remote code
+  // execution (ext::/fd: transports) or SSRF. Mirror the agent-runtime hardening: validate the URL,
+  // restrict transports via GIT_ALLOW_PROTOCOL, disable prompts, constrain branch/commit and use a
+  // `--` end-of-options separator so no value can be parsed as a git option.
+  if (!isSafeGitRemoteUrl(target.repositoryUrl)) {
+    const error = new Error("repository_output_target_unsafe_repository_url");
+    error.status = 400;
+    throw error;
+  }
+  const branch = String(target.branch || "main");
+  if (!/^[A-Za-z0-9._\/-]+$/u.test(branch) || branch.startsWith("-") || branch.includes("..")) {
+    const error = new Error("repository_output_target_unsafe_branch");
+    error.status = 400;
+    throw error;
+  }
+  const remote = target.remote || "origin";
+  if (!/^[A-Za-z0-9._-]+$/u.test(remote)) {
+    const error = new Error("repository_output_target_unsafe_remote");
+    error.status = 400;
+    throw error;
+  }
+  const gitEnv = {...process.env, GIT_ALLOW_PROTOCOL: "file:https:ssh:git", GIT_TERMINAL_PROMPT: "0"};
+  const git = (args) => execFileAsync("git", args, {env: gitEnv});
   const safeTargetId = String(target.targetId).replace(/[^A-Za-z0-9._-]+/gu, "_");
   const verificationRoot = join(runtimeDir, "git-verification", `${safeTargetId}.git`);
   mkdirSync(dirname(verificationRoot), {recursive: true});
-  if (!existsSync(join(verificationRoot, "HEAD"))) await execFileAsync("git", ["init", "--bare", verificationRoot]);
-  const remote = target.remote || "origin";
-  const remotes = (await execFileAsync("git", ["-C", verificationRoot, "remote"])).stdout.trim().split("\n").filter(Boolean);
-  if (remotes.includes(remote)) await execFileAsync("git", ["-C", verificationRoot, "remote", "set-url", remote, target.repositoryUrl]);
-  else await execFileAsync("git", ["-C", verificationRoot, "remote", "add", remote, target.repositoryUrl]);
-  await execFileAsync("git", ["-C", verificationRoot, "fetch", "--force", "--no-tags", remote, `refs/heads/${target.branch}:refs/remotes/${remote}/${target.branch}`]);
+  if (!existsSync(join(verificationRoot, "HEAD"))) await git(["init", "--bare", verificationRoot]);
+  const remotes = (await git(["-C", verificationRoot, "remote"])).stdout.trim().split("\n").filter(Boolean);
+  if (remotes.includes(remote)) await git(["-C", verificationRoot, "remote", "set-url", remote, "--", target.repositoryUrl]);
+  else await git(["-C", verificationRoot, "remote", "add", remote, "--", target.repositoryUrl]);
+  await git(["-C", verificationRoot, "fetch", "--force", "--no-tags", remote, "--", `refs/heads/${branch}:refs/remotes/${remote}/${branch}`]);
   for (const commitRef of checkpointInput.commitRefs || []) {
+    const commit = String(commitRef.commit || "");
+    // Only accept hex commit ids; anything else could be a git option or a crafted ref.
+    if (!/^[0-9a-fA-F]{7,64}$/u.test(commit)) continue;
     try {
-      await execFileAsync("git", ["-C", verificationRoot, "cat-file", "-e", `${commitRef.commit}^{commit}`]);
+      await git(["-C", verificationRoot, "cat-file", "-e", `${commit}^{commit}`]);
     } catch {
-      await execFileAsync("git", ["-C", verificationRoot, "fetch", "--force", "--no-tags", remote, commitRef.commit]);
+      await git(["-C", verificationRoot, "fetch", "--force", "--no-tags", remote, "--", commit]);
     }
   }
   return verificationRoot;
@@ -2955,6 +2982,12 @@ async function handleApi(req, res) {
     const artifactManifestPath = body.artifactManifestPath || `docs/artifact-manifests/manifest.${Date.now()}.json`;
     if (!validPathAllowlist(pathAllowlist) || !gitTrackablePath(artifactManifestPath)) {
       json(res, 400, {error: "repository_output_target_must_use_git_trackable_paths"});
+      return;
+    }
+    // Fail-closed at write time on an unsafe git URL so a malicious remote can never be persisted
+    // (defense in depth alongside prepareRemoteGitVerification's read-time check).
+    if (body.repositoryUrl && !isSafeGitRemoteUrl(body.repositoryUrl)) {
+      json(res, 400, {error: "repository_output_target_unsafe_repository_url"});
       return;
     }
     const guard = beginGuardedWrite(req, state, "repository_output_target_select", "RepositoryOutputTarget:new", taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
