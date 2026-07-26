@@ -453,6 +453,7 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.reviewBundles ||= [];
   state.completionReadiness ||= [];
   state.closeBarriers ||= [];
+  state.admissionDecisions ||= [];
   state.runtimeIssuePatterns ||= [];
   state.systemUpgradeCandidates ||= [];
   state.runtimeIssueSamples ||= [];
@@ -1436,9 +1437,58 @@ function buildRoleDriftGuard(contract, guardId, at) {
   };
 }
 
+// §4.5 admission ledger: every per-cell scheduling verdict (dispatch / skip / wait / block)
+// produces one machine-readable admissionDecision. `outcome` is the single mutually-exclusive
+// verdict; the boolean flags are derived from it (exactly one is true) for machine consumers.
+// Consecutive identical verdicts for the same cell are collapsed to avoid audit churn.
+const ADMISSION_OUTCOMES = new Set([
+  "selected", "deferred", "blocked", "resource_queued",
+  "awaiting_review", "awaiting_checkpoint", "superseded", "skipped_terminal"
+]);
+
+function recordAdmissionDecision(state, input = {}) {
+  state.admissionDecisions ||= [];
+  const outcome = ADMISSION_OUTCOMES.has(input.outcome) ? input.outcome : "deferred";
+  const workItemId = input.workItem?.id || input.workItemId || "unknown";
+  const taskGroupId = input.taskGroup?.id || input.taskGroupId || null;
+  const reasonCode = input.reasonCode || null;
+  const previous = state.admissionDecisions.find((item) => item.workItemId === workItemId && item.taskGroupId === taskGroupId);
+  if (previous && previous.outcome === outcome && previous.reasonCode === reasonCode) return previous;
+  const decision = {
+    schemaVersion: "admission-decision/v1",
+    decisionId: createId("adm"),
+    projectId: input.taskGroup?.projectId || input.projectId || "prj_control_plane",
+    taskGroupId,
+    workItemId,
+    candidateRef: `WorkItem:${workItemId}`,
+    outcome,
+    selected: outcome === "selected",
+    deferred: outcome === "deferred",
+    blocked: outcome === "blocked",
+    resourceQueued: outcome === "resource_queued",
+    awaitingReview: outcome === "awaiting_review",
+    awaitingCheckpoint: outcome === "awaiting_checkpoint",
+    superseded: outcome === "superseded",
+    skippedTerminal: outcome === "skipped_terminal",
+    reasonCode,
+    whyThisCellNow: input.whyThisCellNow || null,
+    evidenceQualification: input.evidenceQualification || null,
+    workerCarrierDecision: input.workerCarrierDecision || null,
+    modelDecisionRef: input.modelDecisionRef || null,
+    sessionId: input.sessionId || null,
+    dispatchId: input.dispatchId || null,
+    cycleRef: input.cycleRef || null,
+    decidedAt: new Date().toISOString()
+  };
+  const cap = Math.max(50, Number(process.env.AIMAC_ADMISSION_DECISION_CAP || 400));
+  state.admissionDecisions = [decision, ...state.admissionDecisions].slice(0, cap);
+  return decision;
+}
+
 export function runAutonomousCycle(state, request = {}) {
   ensureRuntimeCollections(state, {root: request.root, endpoint: request.endpoint});
   const changed = [];
+  const cycleRef = createId("cycle");
   if (request.autoSyncSkills !== false) {
     for (const source of state.skillSources || []) {
       if (source.sourceId === "agency-agents-zh" && source.status !== "active") {
@@ -1478,6 +1528,7 @@ export function runAutonomousCycle(state, request = {}) {
       if (["checkpoint_submitted", "code_complete", "review_requested", "review_passed", "verification_ready"].includes(workItem.status)) {
         const review = performIndependentReview(state, taskGroup, workItem, request);
         if (review.reviewed !== false) {
+          recordAdmissionDecision(state, {taskGroup, workItem, outcome: "awaiting_review", reasonCode: `independent_review_${review.verdict || "pending"}`, whyThisCellNow: "cell_awaiting_independent_review", cycleRef});
           changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, progress: workItem.progress, awaiting: review.verdict === "passed" ? null : "independent_review", review});
           continue;
         }
@@ -1485,12 +1536,14 @@ export function runAutonomousCycle(state, request = {}) {
       const missingDefinition = relatedSharedDefinitions(state, taskGroup, workItem).find((definition) => definition.status !== "active");
       if (missingDefinition) {
         addBlocker(taskGroup, "S1", `共享定义 ${missingDefinition.contractId} 尚未对工作项 ${workItem.id} 生效。`);
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "shared_definition_not_active", whyThisCellNow: `awaiting SharedDefinitionContract:${missingDefinition.contractId}`, cycleRef});
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "blocked_dependency", reason: "shared_definition_not_active", sharedDefinitionRef: missingDefinition.contractId});
         if (request.mode !== "until_blocked" && request.mode !== "all") break;
         continue;
       }
       const active = activeExecutionForWork(state, taskGroup.id, workItem.id);
       if (active) {
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "awaiting_checkpoint", reasonCode: "existing_execution_active", whyThisCellNow: "cell_already_executing", cycleRef, sessionId: active.sessionId, dispatchId: active.dispatchId});
         changed.push({
           taskGroupId: taskGroup.id,
           workItemId: workItem.id,
@@ -1505,6 +1558,7 @@ export function runAutonomousCycle(state, request = {}) {
       }
       const split = splitMixedWorkItemIfNeeded(state, taskGroup, workItem);
       if (split) {
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "superseded", reasonCode: "mixed_analysis_implementation_split", whyThisCellNow: "cell_split_into_analysis_and_implementation", cycleRef});
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "superseded", reason: "mixed_analysis_implementation_split", derivedWorkItemIds: split.derivedWorkItemIds});
         if (request.mode !== "until_blocked" && request.mode !== "all") break;
         continue;
@@ -1518,6 +1572,7 @@ export function runAutonomousCycle(state, request = {}) {
         workItem.blockedReason = "model_selection_rejected";
         workItem.updatedAt = new Date().toISOString();
         addBlocker(taskGroup, "S1", `没有可运行的模型满足工作项 ${workItem.id} 的硬性约束。`);
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "model_selection_rejected", whyThisCellNow: "no_model_satisfies_hard_constraints", cycleRef, modelDecisionRef: error.decision?.decisionId || null});
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "blocked_resource", reason: "model_selection_rejected", modelSelectionDecisionRef: error.decision?.decisionId});
         continue;
       }
@@ -1527,10 +1582,22 @@ export function runAutonomousCycle(state, request = {}) {
         workItem.status = "needs_decision";
         workItem.blockedReason = "role_drift_guard_blocked";
         addBlocker(taskGroup, "S0", `角色偏移守卫拦截了工作项 ${workItem.id} 的派发。`);
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "role_drift_guard_blocked", whyThisCellNow: "role_drift_guard_intercepted_dispatch", cycleRef});
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "needs_decision", reason: "role_drift_guard_blocked"});
         continue;
       }
       const dispatch = dispatchWorkItem(state, taskGroup, workItem, contract, repositoryTarget);
+      const dispatchSession = state.workSessions.find((item) => item.sessionId === contract.sessionId);
+      recordAdmissionDecision(state, {
+        taskGroup, workItem, outcome: "selected", reasonCode: "dispatched",
+        whyThisCellNow: "executable_cell_admitted_this_cycle", cycleRef,
+        sessionId: contract.sessionId, dispatchId: dispatch.dispatchId,
+        modelDecisionRef: dispatchSession?.modelSelectionDecisionRef || null,
+        workerCarrierDecision: dispatchSession?.laneId
+          ? {mode: dispatchSession.placement, laneId: dispatchSession.laneId}
+          : (dispatchSession?.placement ? {mode: dispatchSession.placement} : null),
+        evidenceQualification: {contractDigest: contract.contractDigest || contract.contractId || null, placementDecisionRef: contract.placementDecisionRef || null}
+      });
       changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, progress: workItem.progress, sessionId: contract.sessionId, dispatchId: dispatch.dispatchId, awaiting: "agent_runtime_checkpoint"});
       if (request.mode !== "until_blocked" && request.mode !== "all") break;
     }
@@ -2899,10 +2966,23 @@ function ensureLease(state, repositoryTarget, holderRef = "orchestrator", taskCo
   return lease;
 }
 
-function recomputeTaskGroup(taskGroup) {
+export function recomputeTaskGroup(taskGroup) {
   const items = (taskGroup.workItems || []).filter((item) => item.status !== "superseded");
   taskGroup.progress = items.length ? Math.round(items.reduce((sum, item) => sum + Number(item.progress || 0), 0) / items.length) : 100;
-  taskGroup.health = items.some((item) => BLOCKED_OR_FAILED_WORKITEM_STATUSES.includes(item.status)) ? "blocked" : "ok";
+  const blockedItems = items.filter((item) => BLOCKED_OR_FAILED_WORKITEM_STATUSES.includes(item.status));
+  const executableCells = items.filter((item) => !BLOCKED_OR_FAILED_WORKITEM_STATUSES.includes(item.status) && !["verified", "closed"].includes(item.status));
+  // §4.5 single-cell-block guard: a blocked cell must not escalate the whole task group to a
+  // global block while at least one executable cell can still make progress. The group is only
+  // genuinely "blocked" when every non-terminal cell is blocked/failed; otherwise it stays
+  // "attention" (blocked cells present, progress still possible) or "ok".
+  taskGroup.singleCellEscalationGuard = {
+    executableCells: executableCells.map((item) => item.id),
+    blockedCells: blockedItems.map((item) => item.id),
+    overallBlockedPermitted: blockedItems.length > 0 && executableCells.length === 0
+  };
+  if (!blockedItems.length) taskGroup.health = "ok";
+  else if (executableCells.length) taskGroup.health = "attention";
+  else taskGroup.health = "blocked";
   taskGroup.blockers = taskGroup.health === "ok" ? [] : taskGroup.blockers || [];
   const allTerminal = items.length > 0 && items.every((item) => ["verified", "closed"].includes(item.status));
   if (allTerminal && taskGroup.health === "ok" && !["closed", "aborted"].includes(taskGroup.status)) taskGroup.status = "verification";

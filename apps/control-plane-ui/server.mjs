@@ -955,7 +955,7 @@ const SCOPED_ALLOWED_TOP_KEYS = new Set([
   "agentRuntimeNodes", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "agents",
   "agentTaskContracts", "effectiveInstructionPackets", "roleDriftGuards", "modelSelectionDecisions",
   "sessionPlacementDecisions", "roleSkillOverlays", "executionTopologies", "reviewPlans", "reviewBundles",
-  "checkpoints", "completionReadiness", "closeBarriers", "sharedDefinitions", "progressSnapshots", "leases",
+  "checkpoints", "completionReadiness", "closeBarriers", "admissionDecisions", "sharedDefinitions", "progressSnapshots", "leases",
   "accounts", "accessGrants", "auditLog", "policyDecisions", "commands", "decisionRecords", "commandEffects", "dlqEntries", "integrationBatches",
   "idempotencyRecords", "runtimeIssuePatterns", "runtimeIssueSamples", "systemUpgradeCandidates",
   "agentGatewayEvents", "mcpCalls", "mcpProbeNodes", "instructionMetrics", "organizations",
@@ -1010,6 +1010,7 @@ function scopedStateForAccount(state, account, session) {
   cloned.checkpoints = (state.checkpoints || []).filter((checkpoint) => visibleTaskGroupIds.has(checkpoint.taskGroupId));
   cloned.completionReadiness = (state.completionReadiness || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
   cloned.closeBarriers = (state.closeBarriers || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
+  cloned.admissionDecisions = (state.admissionDecisions || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId) || visibleProjectIds.has(item.projectId));
   cloned.sharedDefinitions = (state.sharedDefinitions || []).filter((definition) => visibleProjectIds.has(definition.projectId) || (definition.scopeRefs || []).some((ref) => visibleTaskGroupIds.has(String(ref).replace("TaskGroup:", ""))));
   cloned.progressSnapshots = (state.progressSnapshots || []).filter((snapshot) => snapshot.scopeType === "project" ? visibleProjectIds.has(snapshot.scopeRef) : visibleTaskGroupIds.has(snapshot.scopeRef));
   cloned.leases = (state.leases || []).filter((lease) => cloned.repositoryOutputs.some((target) => lease.resourceRef === `RepositoryOutputTarget:${target.targetId}`));

@@ -22,6 +22,7 @@ import {
   ensureRuntimeCollections,
   organizationQuotaCheck,
   runAutonomousCycle,
+  recomputeTaskGroup,
   selectModel,
   updateTaskGroupLanguagePolicy,
   createCommand,
@@ -206,6 +207,38 @@ function verifyHumanAndOrganizationContracts(output) {
 
   // Human confirmation forces a none option, requires input for none, and dedups pending.
   const cycle = runAutonomousCycle(state, {root, mode: "all"});
+
+  // §4.5 admission ledger (gap #11): every scheduling verdict persists a machine-readable
+  // admissionDecision whose orthogonal status flags are mutually exclusive (exactly one true).
+  if (!Array.isArray(state.admissionDecisions) || !state.admissionDecisions.length) {
+    output.push("runAutonomousCycle did not record any admissionDecision");
+  } else {
+    const orthogonalKeys = ["selected", "deferred", "blocked", "resourceQueued", "awaitingReview", "awaitingCheckpoint", "superseded", "skippedTerminal"];
+    for (const decision of state.admissionDecisions) {
+      const trueFlags = orthogonalKeys.filter((key) => decision[key] === true);
+      if (trueFlags.length !== 1) output.push(`admissionDecision ${decision.decisionId} orthogonal status flags are not mutually exclusive (got ${trueFlags.join(",") || "none"})`);
+      if (!decision.workItemId || !decision.outcome || !decision.candidateRef) output.push("admissionDecision missing candidate/outcome fields");
+    }
+    if (!state.admissionDecisions.some((decision) => decision.selected)) output.push("admissionDecision ledger recorded no selected dispatch");
+  }
+
+  // §4.5 single-cell-block guard (gap #12): a blocked cell must not escalate the whole task
+  // group to a global block while an executable cell can still make progress.
+  const mixedGuard = {status: "development", workItems: [
+    {id: "wi_blocked_guard", status: "blocked_dependency", blockedReason: "awaiting_dep", progress: 0},
+    {id: "wi_exec_guard", status: "assigned", progress: 20}
+  ]};
+  recomputeTaskGroup(mixedGuard);
+  if (mixedGuard.health === "blocked") output.push("single-cell-block guard escalated to blocked while an executable cell existed");
+  if (mixedGuard.health !== "attention") output.push(`single-cell-block guard did not mark a partially-blocked group as attention (got ${mixedGuard.health})`);
+  if (!mixedGuard.singleCellEscalationGuard || mixedGuard.singleCellEscalationGuard.overallBlockedPermitted !== false) output.push("single-cell-block guard did not forbid overall block with an executable cell");
+  const fullyBlockedGuard = {status: "development", workItems: [
+    {id: "wi_a_guard", status: "blocked_dependency", progress: 0},
+    {id: "wi_b_guard", status: "failed", progress: 0}
+  ]};
+  recomputeTaskGroup(fullyBlockedGuard);
+  if (fullyBlockedGuard.health !== "blocked") output.push("single-cell-block guard did not block a task group with no executable cell");
+  if (fullyBlockedGuard.singleCellEscalationGuard.overallBlockedPermitted !== true) output.push("single-cell-block guard did not permit overall block when every cell is blocked");
   const dispatch = (state.agentDispatches || []).find((item) => item.status === "queued" || item.status === "running");
   if (!dispatch) {
     output.push("No dispatch available to attach a human confirmation contract");
