@@ -264,7 +264,7 @@ const EXECUTION_PROFILE_LABELS = { verification: "验证档位", standard: "标�
 function executionProfileLabel(code) { return EXECUTION_PROFILE_LABELS[String(code || "")] || t(code); }
 
 // 任务执行类别 / 推理档 专用映射（避免 verification 与"验证中"等跨域冲突）
-const TASK_EXECUTION_CLASS_LABELS = { verification: "定向验证", short_execution: "短机械任务", deep_analysis: "深度分析", implementation: "实现" };
+const TASK_EXECUTION_CLASS_LABELS = { verification: "定向验证", short_execution: "短机械任务", deep_analysis: "深度分析", implementation: "实现", mixed_analysis_implementation: "分析并实现" };
 const REASONING_LEVEL_LABELS = { high: "高", medium: "中", standard: "标准", low: "低", minimal: "最简" };
 // 模型决策的中文可读摘要（原始 modelDecision 为机器契约技术串，此处从结构化字段生成人读版本）
 function modelDecisionSummaryZh(decision) {
@@ -1934,7 +1934,8 @@ function renderReview() {
   }
   const canReview = hasPerm("task_group:review");
   // 集中处理：汇总项目内全部任务组的人工确认（tasks 视角已按可见任务组下发），而非逐组切换
-  const allRequests = (state.humanConfirmationRequests || []).slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const projectTaskGroupIds = new Set(projectTaskGroups().map((taskGroup) => taskGroup.id));
+  const allRequests = (state.humanConfirmationRequests || []).filter((request) => projectTaskGroupIds.has(request.taskGroupId)).slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   const pending = allRequests.filter((request) => request.status === "pending");
   const answered = allRequests.filter((request) => request.status !== "pending");
 
@@ -2510,8 +2511,6 @@ document.addEventListener("change", async (event) => {
     }
   } catch (error) {
     showError(error);
-  } finally {
-    if (guardBtn) { guardBtn.disabled = false; guardBtn.classList.remove("is-loading"); }
   }
 });
 
@@ -2836,6 +2835,8 @@ document.addEventListener("click", async (event) => {
     }
   } catch (error) {
     showError(error);
+  } finally {
+    if (guardBtn) { guardBtn.disabled = false; guardBtn.classList.remove("is-loading"); }
   }
 });
 
