@@ -1337,7 +1337,7 @@ export function runAutonomousCycle(state, request = {}) {
       }
       const missingDefinition = relatedSharedDefinitions(state, taskGroup, workItem).find((definition) => definition.status !== "active");
       if (missingDefinition) {
-        addBlocker(taskGroup, "S1", `Shared definition ${missingDefinition.contractId} is not active for ${workItem.id}.`);
+        addBlocker(taskGroup, "S1", `共享定义 ${missingDefinition.contractId} 尚未对工作项 ${workItem.id} 生效。`);
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "blocked", reason: "shared_definition_not_active", sharedDefinitionRef: missingDefinition.contractId});
         if (request.mode !== "until_blocked" && request.mode !== "all") break;
         continue;
@@ -1370,7 +1370,7 @@ export function runAutonomousCycle(state, request = {}) {
         workItem.status = "blocked";
         workItem.blockedReason = "model_selection_rejected";
         workItem.updatedAt = new Date().toISOString();
-        addBlocker(taskGroup, "S1", `No runnable model satisfied hard constraints for ${workItem.id}.`);
+        addBlocker(taskGroup, "S1", `没有可运行的模型满足工作项 ${workItem.id} 的硬性约束。`);
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "blocked", reason: "model_selection_rejected", modelSelectionDecisionRef: error.decision?.decisionId});
         continue;
       }
@@ -1378,7 +1378,7 @@ export function runAutonomousCycle(state, request = {}) {
       const drift = evaluateRoleDrift(state, {sessionId: contract.sessionId, taskGroupId: taskGroup.id, actionScopeRefs: [`TaskGroup:${taskGroup.id}`, `RepositoryOutputTarget:${repositoryTarget.targetId}`]});
       if (!drift.allowed) {
         workItem.status = "blocked";
-        addBlocker(taskGroup, "S0", `Role drift guard blocked dispatch for ${workItem.id}.`);
+        addBlocker(taskGroup, "S0", `角色偏移守卫拦截了工作项 ${workItem.id} 的派发。`);
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "blocked", reason: "role_drift_guard_blocked"});
         continue;
       }
@@ -1644,7 +1644,7 @@ export function runAgentRuntimeWorker(state, request = {}) {
     const drift = evaluateRoleDrift(state, {sessionId: dispatch.sessionId, taskGroupId: dispatch.taskGroupId, actionScopeRefs: [`TaskGroup:${dispatch.taskGroupId}`, `RepositoryOutputTarget:${target.targetId}`]});
     if (!drift.allowed) {
       markDispatchFailed(state, dispatch, "role_drift_guard_blocked");
-      addBlocker(taskGroup, "S0", `Role drift guard blocked runtime worker for ${workItem.id}.`);
+      addBlocker(taskGroup, "S0", `角色偏移守卫拦截了工作项 ${workItem.id} 的运行时工作循环。`);
       results.push({dispatchId: dispatch.dispatchId, status: "failed", reason: "role_drift_guard_blocked"});
       continue;
     }
@@ -1655,14 +1655,14 @@ export function runAgentRuntimeWorker(state, request = {}) {
     if (!deterministicLocalWorker && !hasRuntimeCredential) {
       markDispatchBlocked(state, dispatch, "credential_required");
       workItem.status = "blocked";
-      addBlocker(taskGroup, "S1", `Agent runtime credential is required for ${dispatch.requiredCredentialEnvNames.join(" or ")}.`);
+      addBlocker(taskGroup, "S1", `执行需要智能体运行时凭据：${dispatch.requiredCredentialEnvNames.join(" 或 ")}。`);
       results.push({dispatchId: dispatch.dispatchId, status: "blocked", reason: "credential_required", requiredCredentialEnvNames: dispatch.requiredCredentialEnvNames});
       continue;
     }
     if (!deterministicLocalWorker && !process.env.AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND) {
       markDispatchBlocked(state, dispatch, "agent_runtime_executor_required");
       workItem.status = "blocked";
-      addBlocker(taskGroup, "S1", "Agent runtime executor command is required for provider-backed model execution.");
+      addBlocker(taskGroup, "S1", "由供应商模型执行需要配置智能体运行时执行器命令。");
       results.push({dispatchId: dispatch.dispatchId, status: "blocked", reason: "agent_runtime_executor_required"});
       continue;
     }
@@ -3459,7 +3459,7 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
         workItem.status = "blocked";
         workItem.blockedReason = "independent_review_changes_requested";
       }
-      addBlocker(taskGroup, "S1", `Independent review requested changes for ${workItem.id}: ${findings.join(",")}`);
+      addBlocker(taskGroup, "S1", `独立评审要求工作项 ${workItem.id} 返工：${findings.join("，")}`);
     } else {
       if (target && ["pushed", "committed"].includes(target.status)) {
         target.status = "superseded";
@@ -3468,7 +3468,7 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
       workItem.status = "ready";
       workItem.progress = Math.min(Number(workItem.progress || 0), 60);
       delete workItem.blockedReason;
-      addBlocker(taskGroup, "S2", `Independent review requeued ${workItem.id} for rework (attempt ${rejectionCount}/${maxReworkAttempts}): ${findings.join(",")}`);
+      addBlocker(taskGroup, "S2", `独立评审已将工作项 ${workItem.id} 重新排队返工（第 ${rejectionCount}/${maxReworkAttempts} 次）：${findings.join("，")}`);
     }
     if (!duplicateRejection) appendEvent(state, "review_result", "WorkItem", workItem.id, "reviewer", {verdict, findings, reviewBundleRef: bundle.bundleId});
     return {reviewed: true, verdict, reviewBundleRef: bundle.bundleId, findings};

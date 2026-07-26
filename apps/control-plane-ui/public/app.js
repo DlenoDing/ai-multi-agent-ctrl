@@ -263,6 +263,20 @@ function strengthLabel(code) { return STRENGTH_LABELS[String(code || "")] || t(c
 const EXECUTION_PROFILE_LABELS = { verification: "验证档位", standard: "标准档位", fast: "高速档位", full: "完整档位" };
 function executionProfileLabel(code) { return EXECUTION_PROFILE_LABELS[String(code || "")] || t(code); }
 
+// 任务执行类别 / 推理档 专用映射（避免 verification 与"验证中"等跨域冲突）
+const TASK_EXECUTION_CLASS_LABELS = { verification: "定向验证", short_execution: "短机械任务", deep_analysis: "深度分析", implementation: "实现" };
+const REASONING_LEVEL_LABELS = { high: "高", medium: "中", standard: "标准", low: "低", minimal: "最简" };
+// 模型决策的中文可读摘要（原始 modelDecision 为机器契约技术串，此处从结构化字段生成人读版本）
+function modelDecisionSummaryZh(decision) {
+  const parts = [];
+  if (decision.taskExecutionClass) parts.push(`任务类型：${TASK_EXECUTION_CLASS_LABELS[decision.taskExecutionClass] || decision.taskExecutionClass}`);
+  const model = decision.selectedModel?.modelId;
+  if (model) parts.push(`选定模型：${model}`);
+  const reasoning = decision.selectedModel?.reasoningLevel || decision.reasoningLevel;
+  if (reasoning) parts.push(`推理档：${REASONING_LEVEL_LABELS[reasoning] || reasoning}`);
+  return parts.length ? parts.join(" · ") : t(decision.selectionMode || "-");
+}
+
 function fmtTime(value) {
   if (!value) return "-";
   const date = new Date(value);
@@ -552,7 +566,7 @@ const SUBMIT_SUCCESS = {
   "project-rules": "已保存规则",
   "tg-rules": "已保存规则",
   "hcr-decide": "已提交人工确认",
-  "directive-create": "已下达人工指令"
+  "directive-create": "已下达人工指令，将在下一编排周期生效"
 };
 
 /* ---------------- 项目范围 ---------------- */
@@ -670,17 +684,8 @@ async function loadTaskGroupDetail(taskGroupId) {
 }
 
 async function loadReviewData() {
-  const groups = projectTaskGroups();
-  if (!groups.length) {
-    reviewTaskGroupId = "";
-    reviewRequests = [];
-    return;
-  }
-  if (!reviewTaskGroupId || !groups.some((taskGroup) => taskGroup.id === reviewTaskGroupId)) {
-    reviewTaskGroupId = groups[0].id;
-  }
-  const result = await api(`/api/task-groups/${encodeURIComponent(reviewTaskGroupId)}/human-confirmations`);
-  reviewRequests = result.humanConfirmationRequests || [];
+  // 人工确认由 tasks 视角随 state.humanConfirmationRequests 项目级下发，此处无需再逐组拉取
+  return;
 }
 
 async function loadDirectiveData() {
@@ -1928,8 +1933,10 @@ function renderReview() {
     return panel("人工审核", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true});
   }
   const canReview = hasPerm("task_group:review");
-  const pending = reviewRequests.filter((request) => request.status === "pending");
-  const answered = reviewRequests.filter((request) => request.status !== "pending");
+  // 集中处理：汇总项目内全部任务组的人工确认（tasks 视角已按可见任务组下发），而非逐组切换
+  const allRequests = (state.humanConfirmationRequests || []).slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const pending = allRequests.filter((request) => request.status === "pending");
+  const answered = allRequests.filter((request) => request.status !== "pending");
 
   const pendingHtml = pending.length ? pending.map((request) => `
     <div class="record">
@@ -1957,7 +1964,7 @@ function renderReview() {
         <button class="primary-button" type="submit">提交确认</button>
       </form>` : `<div class="notice warn-notice" style="margin-top:10px;">当前账号无“人工审核”权限，仅可查看待确认问题。</div>`}
     </div>
-  `).join("") : `<div class="notice">当前任务组没有待确认的问题。</div>`;
+  `).join("") : `<div class="notice">当前项目没有待确认的问题。</div>`;
 
   const answeredRows = answered.map((request) => row([
     {v: esc(request.question?.summary || "-"), c: "text-clip"},
@@ -1971,7 +1978,7 @@ function renderReview() {
   return [
     panel("待人工确认", `
       <div class="stack">
-        <div class="record-meta"><span>任务组：</span>${taskGroupSelector(reviewTaskGroupId, "review-tg")}</div>
+        <div class="record-meta"><span>共 ${pending.length} 条待确认，覆盖 ${new Set(pending.map((item) => item.taskGroupId)).size} 个任务组（按提交时间倒序）</span></div>
         ${pendingHtml}
       </div>
     `, {wide: true}),
@@ -2095,7 +2102,7 @@ function renderMonitor() {
     `<span class="mono">${esc(decision.workItemId || "-")}</span>`,
     `<span class="mono">${esc(decision.selectedModel?.modelId || "-")}</span>`,
     badge(decision.status),
-    {v: esc(decision.modelDecision || t(decision.selectionMode || "-")), c: "text-clip"}
+    {v: esc(modelDecisionSummaryZh(decision)), c: "text-clip"}
   ])).join("");
 
   const placements = (state.sessionPlacementDecisions || []).slice(0, 10).map((decision) => row([
@@ -2503,6 +2510,8 @@ document.addEventListener("change", async (event) => {
     }
   } catch (error) {
     showError(error);
+  } finally {
+    if (guardBtn) { guardBtn.disabled = false; guardBtn.classList.remove("is-loading"); }
   }
 });
 
@@ -2581,6 +2590,9 @@ document.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
+  const MUTATION_ACTIONS = new Set(["orchestrator-run", "decide-model", "sync-skill-source", "task-control", "agent-control", "toggle-agent", "revoke-grant", "revoke-join-token", "revoke-agent-node", "org-status", "member-status", "bootstrap-init", "tg-config-reset"]);
+  const guardBtn = MUTATION_ACTIONS.has(action) && target.tagName === "BUTTON" ? target : null;
+  if (guardBtn) { guardBtn.disabled = true; guardBtn.classList.add("is-loading"); }
   try {
     if (action === "modal-close") {
       await requestCloseModal();
