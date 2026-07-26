@@ -533,6 +533,9 @@
     terminology: "术语定义",
 
     /* ---------- 会话放置方式补充 ---------- */
+
+    /* ---------- worker lane 载体功能 ---------- */
+    general_execution: "通用执行",
   };
 
   const warned = new Set();

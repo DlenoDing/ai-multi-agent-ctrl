@@ -1103,7 +1103,11 @@ export function maintainWorkerLanes(state, options = {}) {
     if (WORKER_LANE_TERMINAL.has(lane.status)) continue;
     if (lane.currentSessionId) {
       const session = (state.workSessions || []).find((item) => item.sessionId === lane.currentSessionId);
-      if (!session || ["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status)) {
+      if (session && ["failed", "aborted"].includes(session.status)) {
+        // 承载过失败/中止会话的 lane 不静默复用，直接轮换归档，避免带过失败上下文
+        lane.currentSessionId = null;
+        rotateWorkerLane(state, lane.laneId, "carried_failed_session");
+      } else if (!session || ["completed_objective", "closed", "recycled"].includes(session.status)) {
         lane.status = "idle";
         lane.currentSessionId = null;
         lane.updatedAt = new Date().toISOString();

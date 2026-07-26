@@ -51,6 +51,7 @@ const runtimeNodeSchema = loadJson("spec/agent-runtime-node.schema.json");
 const skillWorksetSchema = loadJson("spec/agent-skill-workset.schema.json");
 const agentTaskContractSchema = loadJson("spec/agent-task-contract.schema.json");
 const effectiveInstructionPacketSchema = loadJson("spec/effective-instruction-packet.schema.json");
+const workerLaneSchema = loadJson("spec/worker-lane.schema.json");
 const languagePolicySchema = loadJson("spec/language-policy.schema.json");
 const humanConfirmationSchema = loadJson("spec/human-confirmation-request.schema.json");
 const humanDirectiveSchema = loadJson("spec/human-directive.schema.json");
@@ -153,6 +154,7 @@ function verifyHumanAndOrganizationContracts(output) {
   {
     const laneState = {};
     const laneA = acquireWorkerLane(laneState, {roleId: "reviewer", sessionId: "sess_a"});
+    validateSchema(laneA.lane, workerLaneSchema, "WorkerLane", output);
     const laneB = acquireWorkerLane(laneState, {roleId: "reviewer", sessionId: "sess_b"});
     if (laneA.lane.roleId !== "reviewer" || laneB.lane.roleId !== "reviewer") output.push("worker lane must belong to the requested role");
     if (laneA.lane.laneId === laneB.lane.laneId || laneState.workerLanes.filter((lane) => lane.roleId === "reviewer").length !== 2) {

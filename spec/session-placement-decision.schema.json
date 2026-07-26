@@ -94,6 +94,20 @@
         "subagentCapacityAvailable": {"type": "boolean"}
       }
     },
+    "workerCarrierDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "roleId"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["worker_lane", "subagent"]},
+        "roleId": {"type": "string", "minLength": 1},
+        "laneFunction": {"type": "string"},
+        "laneId": {"type": "string"},
+        "acquireMode": {"type": "string", "enum": ["reuse_lane", "new_lane"]},
+        "reuseGeneration": {"type": "integer", "minimum": 0},
+        "reusePrecheck": {"type": "object"}
+      }
+    },
     "denialReason": {
       "type": "string"
     },

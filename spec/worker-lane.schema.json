@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/worker-lane.schema.json",
+  "title": "WorkerLane",
+  "description": "Reusable top-level execution carrier owned by a role; a role can own multiple lanes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "laneId",
+    "roleId",
+    "laneFunction",
+    "reuseMode",
+    "status",
+    "reuseGeneration",
+    "reuseCount",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "worker-lane/v1"},
+    "laneId": {"type": "string", "minLength": 1},
+    "roleId": {"type": "string", "minLength": 1},
+    "laneFunction": {"type": "string", "minLength": 1},
+    "reuseMode": {"type": "string", "enum": ["reusable_top_level_lane"]},
+    "status": {"type": "string", "enum": ["idle", "busy", "retired"]},
+    "reuseGeneration": {"type": "integer", "minimum": 0},
+    "reuseCount": {"type": "integer", "minimum": 0},
+    "currentSessionId": {"type": ["string", "null"]},
+    "boundNodeId": {"type": ["string", "null"]},
+    "taskGroupId": {"type": ["string", "null"]},
+    "retireReason": {"type": "string"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  }
+}
