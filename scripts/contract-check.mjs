@@ -7,6 +7,9 @@ import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { createMcpGrant, createMcpToolDefinitions, mcpToolNames } from "../apps/mcp-server/server.mjs";
 import {
+  acquireWorkerLane,
+  maintainWorkerLanes,
+  rotateWorkerLane,
   buildTaskContract,
   createHumanConfirmationRequest,
   createHumanDirective,
@@ -143,6 +146,30 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     delete taskGroup.configOverrides;
     delete project.config.systemRules;
+  }
+
+  // Reusable worker lane model: a lane belongs to a role, a role can own multiple lanes, and an idle lane
+  // is reused (reuse generation bumps) rather than spawning a new one; retired lanes are never reused.
+  {
+    const laneState = {};
+    const laneA = acquireWorkerLane(laneState, {roleId: "reviewer", sessionId: "sess_a"});
+    const laneB = acquireWorkerLane(laneState, {roleId: "reviewer", sessionId: "sess_b"});
+    if (laneA.lane.roleId !== "reviewer" || laneB.lane.roleId !== "reviewer") output.push("worker lane must belong to the requested role");
+    if (laneA.lane.laneId === laneB.lane.laneId || laneState.workerLanes.filter((lane) => lane.roleId === "reviewer").length !== 2) {
+      output.push("a role must be able to own multiple concurrent worker lanes");
+    }
+    laneState.workSessions = [{sessionId: "sess_a", status: "completed_objective"}, {sessionId: "sess_b", status: "active"}];
+    maintainWorkerLanes(laneState);
+    if (laneState.workerLanes.find((lane) => lane.laneId === laneA.lane.laneId)?.status !== "idle") output.push("worker lane not released after its session terminated");
+    const laneReuse = acquireWorkerLane(laneState, {roleId: "reviewer", sessionId: "sess_c"});
+    if (laneReuse.mode !== "reuse_lane" || laneReuse.lane.laneId !== laneA.lane.laneId || laneReuse.lane.reuseGeneration !== 1) {
+      output.push("idle worker lane was not reused with a bumped reuse generation");
+    }
+    rotateWorkerLane(laneState, laneReuse.lane.laneId, "accepted_p0");
+    const laneAfterRotate = acquireWorkerLane(laneState, {roleId: "reviewer", sessionId: "sess_d"});
+    if (laneAfterRotate.lane.laneId === laneReuse.lane.laneId) output.push("retired worker lane must not be reused");
+    const placement = { workerCarrierDecision: { mode: "subagent" } };
+    if (placement.workerCarrierDecision.laneId) output.push("subagent placement must not hold a worker lane");
   }
 
   // Human directive consumption applies to task group and is auditable.

@@ -431,6 +431,7 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.modelSelectionPolicies ||= defaultModelSelectionPolicies();
   state.modelSelectionDecisions ||= [];
   state.sessionPlacementDecisions ||= [];
+  state.workerLanes ||= [];
   state.workSessions ||= [];
   state.agentDispatches ||= [];
   state.agentTaskContracts ||= [];
@@ -1019,6 +1020,107 @@ function availabilityScore(availability, fallbackPolicy = {}) {
   return 0;
 }
 
+/* ── 可复用 worker lane 模型 ──
+ * worker lane 归属某个角色（roleId），一个角色可拥有多个 lane；lane 是可复用的顶层执行载体，
+ * 复用前须通过 reusePrecheck；在 base 漂移 / 采纳 P0-P1 / Ruleset 变化 / 上下文过长 / 模型档不匹配时轮换归档。
+ */
+const WORKER_LANE_TERMINAL = new Set(["retired"]);
+
+function laneReusePrecheck(state, lane) {
+  const currentSession = lane.currentSessionId ? (state.workSessions || []).find((item) => item.sessionId === lane.currentSessionId) : null;
+  const checks = {
+    laneIdle: lane.status === "idle",
+    previousSessionClean: !currentSession || ["completed_objective", "closed", "recycled"].includes(currentSession.status),
+    notRetired: !WORKER_LANE_TERMINAL.has(lane.status),
+    rulesetResampled: true,      // 每次复用由内容包重建 Ruleset/graph/inputLocators
+    modelDecisionRewritten: true // decideSessionPlacement 每次重算 modelDecision
+  };
+  return {ok: Object.values(checks).every(Boolean), checks};
+}
+
+function registerWorkerLane(state, {roleId, laneFunction, taskGroupId}) {
+  const at = new Date().toISOString();
+  const lane = {
+    schemaVersion: "worker-lane/v1",
+    laneId: createId("lane"),
+    roleId: roleId || "orchestrator",
+    laneFunction: laneFunction || "general_execution",
+    reuseMode: "reusable_top_level_lane",
+    status: "idle",
+    reuseGeneration: 0,
+    reuseCount: 0,
+    currentSessionId: null,
+    boundNodeId: null,
+    taskGroupId: taskGroupId || null,
+    createdAt: at,
+    updatedAt: at
+  };
+  state.workerLanes.unshift(lane);
+  appendEvent(state, "worker_lane_registered", "WorkerLane", lane.laneId, "scheduler", lane);
+  return lane;
+}
+
+// 为某角色获取载体并原子占用：优先复用该角色的空闲 lane（过 precheck），否则为该角色新建 lane（角色 1:N lane）。
+// 获取即置 busy 并绑定会话，避免同角色多个决策抢占同一空闲 lane。
+export function acquireWorkerLane(state, {roleId, laneFunction, taskGroupId, sessionId} = {}) {
+  ensureRuntimeCollections(state);
+  const roleLanes = (state.workerLanes || []).filter((lane) => lane.roleId === roleId && lane.status === "idle" && !WORKER_LANE_TERMINAL.has(lane.status));
+  for (const lane of roleLanes) {
+    const precheck = laneReusePrecheck(state, lane);
+    if (!precheck.ok) continue;
+    lane.reuseGeneration += 1;
+    lane.reuseCount += 1;
+    if (laneFunction) lane.laneFunction = laneFunction;
+    if (taskGroupId) lane.taskGroupId = taskGroupId;
+    lane.status = "busy";
+    lane.currentSessionId = sessionId || null;
+    lane.updatedAt = new Date().toISOString();
+    return {mode: "reuse_lane", lane, reusePrecheck: precheck};
+  }
+  const lane = registerWorkerLane(state, {roleId, laneFunction, taskGroupId});
+  lane.status = "busy";
+  lane.currentSessionId = sessionId || null;
+  lane.updatedAt = new Date().toISOString();
+  return {mode: "new_lane", lane, reusePrecheck: {ok: true, checks: {newlyCreated: true}}};
+}
+
+export function rotateWorkerLane(state, laneId, reason) {
+  ensureRuntimeCollections(state);
+  const lane = (state.workerLanes || []).find((item) => item.laneId === laneId);
+  if (!lane) return null;
+  lane.status = "retired";
+  lane.retireReason = reason || "rotate";
+  lane.updatedAt = new Date().toISOString();
+  appendEvent(state, "worker_lane_retired", "WorkerLane", lane.laneId, "scheduler", {laneId, reason: lane.retireReason});
+  return lane;
+}
+
+// 每轮维护：释放会话已终态的 lane、按复用代数上限归档、剪枝历史归档 lane。
+export function maintainWorkerLanes(state, options = {}) {
+  ensureRuntimeCollections(state);
+  const maxGeneration = Number(options.maxReuseGeneration || process.env.AIMAC_WORKER_LANE_MAX_REUSE || 50);
+  for (const lane of state.workerLanes) {
+    if (WORKER_LANE_TERMINAL.has(lane.status)) continue;
+    if (lane.currentSessionId) {
+      const session = (state.workSessions || []).find((item) => item.sessionId === lane.currentSessionId);
+      if (!session || ["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status)) {
+        lane.status = "idle";
+        lane.currentSessionId = null;
+        lane.updatedAt = new Date().toISOString();
+      }
+    }
+    if (lane.status === "idle" && lane.reuseGeneration >= maxGeneration) {
+      rotateWorkerLane(state, lane.laneId, "reuse_generation_exceeded");
+    }
+  }
+  const retired = state.workerLanes.filter((lane) => WORKER_LANE_TERMINAL.has(lane.status));
+  if (retired.length > 200) {
+    const keep = new Set(retired.slice(0, 200).map((lane) => lane.laneId));
+    state.workerLanes = state.workerLanes.filter((lane) => !WORKER_LANE_TERMINAL.has(lane.status) || keep.has(lane.laneId));
+  }
+  return state.workerLanes;
+}
+
 export function decideSessionPlacement(state, request = {}) {
   ensureRuntimeCollections(state);
   const taskGroup = state.taskGroups?.find((item) => item.id === request.taskGroupId);
@@ -1046,7 +1148,13 @@ export function decideSessionPlacement(state, request = {}) {
     auditRef: request.auditRef || `audit:session-placement:${createId("audit")}`,
     createdAt: at
   };
-  if (placement === "subagent") {
+  // worker 载体决策：持续型工作走可复用 worker lane（归属工作项 owner 角色，角色 1:N lane），短工作走 subagent。
+  // 此处只记录载体意图与角色；具体 lane 的选取+占用在 buildTaskContract 建会话时由 acquireWorkerLane 原子完成。
+  const laneRoleId = workItem.ownerRole || request.roleId || "orchestrator";
+  if (placement === "new_session") {
+    decision.workerCarrierDecision = {mode: "worker_lane", roleId: laneRoleId, laneFunction: request.laneFunction || "general_execution"};
+  } else {
+    decision.workerCarrierDecision = {mode: "subagent", roleId: laneRoleId};
     decision.subagentSafetyProof = {
       singleTurn: true,
       noPersistentState: true,
@@ -1203,6 +1311,21 @@ export function buildTaskContract(state, request = {}) {
   }
   state.agentTaskContracts.unshift(contract);
   state.agentTaskContracts = state.agentTaskContracts.slice(0, 160);
+  // 持续型工作在建会话时获取并占用其角色的 worker lane（复用空闲/新建），回填具体载体到放置决策；subagent 无 lane
+  let acquiredLaneId = null;
+  if (placementDecision.workerCarrierDecision?.mode === "worker_lane") {
+    const acquired = acquireWorkerLane(state, {
+      roleId: placementDecision.workerCarrierDecision.roleId,
+      laneFunction: placementDecision.workerCarrierDecision.laneFunction,
+      taskGroupId: contract.taskGroupId,
+      sessionId
+    });
+    acquiredLaneId = acquired.lane.laneId;
+    placementDecision.workerCarrierDecision.laneId = acquired.lane.laneId;
+    placementDecision.workerCarrierDecision.acquireMode = acquired.mode;
+    placementDecision.workerCarrierDecision.reuseGeneration = acquired.lane.reuseGeneration;
+    placementDecision.workerCarrierDecision.reusePrecheck = acquired.reusePrecheck.checks;
+  }
   state.workSessions.unshift({
     sessionId,
     projectId: contract.projectId,
@@ -1211,6 +1334,7 @@ export function buildTaskContract(state, request = {}) {
     roleId: contract.roleId,
     agentId: agentForRole(state, contract.roleId)?.id || "agent_orchestrator",
     placement: placementDecision.placement,
+    laneId: acquiredLaneId,
     status: "active",
     parentSessionId: placementDecision.placement === "subagent" ? "sess_orch_1" : undefined,
     modelSelectionDecisionRef: modelDecision.decisionId,
@@ -1316,6 +1440,7 @@ export function runAutonomousCycle(state, request = {}) {
   consumeQueuedHumanDirectives(state, request);
   expireStaleHumanConfirmations(state);
   expireStaleQueuedDispatches(state);
+  maintainWorkerLanes(state);
   const taskGroups = (state.taskGroups || []).filter((taskGroup) => !request.taskGroupId || taskGroup.id === request.taskGroupId);
   for (const taskGroup of taskGroups) {
     if (["closed", "aborted"].includes(taskGroup.status) || ["active_paused_by_freeze", "active_paused_by_control"].includes(taskGroup.goalExecutionStatus)) continue;

@@ -926,6 +926,7 @@ function scopedStateForAccount(state, account, session) {
     target.taskGroupId ? visibleTaskGroupIds.has(target.taskGroupId) : visibleProjectIds.has(target.projectId)
   );
   cloned.workSessions = (state.workSessions || []).filter((sessionItem) => visibleTaskGroupIds.has(sessionItem.taskGroupId));
+  cloned.workerLanes = (state.workerLanes || []).filter((lane) => lane.taskGroupId && visibleTaskGroupIds.has(lane.taskGroupId));
   cloned.agentDispatches = (state.agentDispatches || []).filter((dispatch) => visibleTaskGroupIds.has(dispatch.taskGroupId));
   cloned.agentRuntimeNodes = (state.agentRuntimeNodes || []).filter((node) => (node.projectIds || []).some((projectId) => visibleProjectIds.has(projectId))).map(publicAgentNode);
   const visibleNodeIds = new Set(cloned.agentRuntimeNodes.map((node) => node.nodeId));
@@ -1054,7 +1055,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     users: ["accounts", "accessGrants", "projects", "agentJoinTokens"],
     projects: ["accounts", "accessGrants", "projects", "repositoryOutputs", "agentJoinTokens"],
     tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots", "humanConfirmationRequests", "humanDirectives"],
-    runtime: ["modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkills", "roleSkillOverlays"],
+    runtime: ["modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "workerLanes", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkills", "roleSkillOverlays"],
     instructions: ["instructionMetrics", "sharedDefinitions", "effectiveInstructionPackets", "roleDriftGuards"]
   };
   for (const field of viewFields[view] || []) {

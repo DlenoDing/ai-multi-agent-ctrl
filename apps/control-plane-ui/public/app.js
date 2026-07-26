@@ -2055,6 +2055,17 @@ function renderMonitor() {
     {v: fmtTime(event.createdAt), c: "nowrap"}
   ])).join("");
 
+  const LANE_STATUS = {idle: {label: "空闲", tone: "green"}, busy: {label: "占用中", tone: "blue"}, retired: {label: "已归档", tone: "gray"}};
+  const lanesAll = (state.workerLanes || []).filter((lane) => groups.some((taskGroup) => taskGroup.id === lane.taskGroupId));
+  const laneRows = lanesAll.slice(0, 20).map((lane) => row([
+    esc(t(lane.roleId)),
+    esc(lane.laneFunction || "-"),
+    customBadge((LANE_STATUS[lane.status] || {label: lane.status}).label, (LANE_STATUS[lane.status] || {}).tone || "gray"),
+    {v: String(lane.reuseGeneration ?? 0), c: "num"},
+    lane.currentSessionId ? {v: `<span class="mono">${esc(lane.currentSessionId)}</span>`, c: "nowrap"} : "-",
+    {v: fmtTime(lane.updatedAt), c: "nowrap"}
+  ])).join("");
+
   const sessionsAll = (state.workSessions || []).filter((session) => groups.some((taskGroup) => taskGroup.id === session.taskGroupId));
   const sessions = sessionsAll.slice(0, 20).map((session) => row([
     `<span class="mono">${esc(session.sessionId)}</span>`,
@@ -2132,6 +2143,7 @@ function renderMonitor() {
         ${table([{label: "序号", c: "num"}, "事件", {label: "进度", c: "num"}, "状态", {label: "摘要", c: "text-clip"}, {label: "时间", c: "nowrap"}], eventRows, {moreText: moreText(execEvents.length, 120)})}
       </div>
     `, {wide: true, headerSide: filterInput("按事件、摘要过滤…", "events")}),
+    panel("可复用执行载体（Worker Lane）", table(["角色", "功能", "状态", {label: "复用代数", c: "num"}, "当前会话", {label: "更新时间", c: "nowrap"}], laneRows, {moreText: moreText(lanesAll.length, 20)}), {wide: true, headerSide: filterInput("按角色、会话过滤…", "worker-lanes")}),
     panel("工作会话", table(["会话", "角色", "工作项", "放置方式", "状态", "详情"], sessions, {moreText: moreText(sessionsAll.length, 20)}), {wide: true, headerSide: filterInput("按会话、工作项过滤…", "sessions")}),
     panel("智能体派发", table(["派发", "工作项", "状态", {label: "进度", c: "num"}, "原因", "详情"], dispatches, {moreText: moreText(dispatchesAll.length, 20)}), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
     panel("控制通道", table([{label: "序号", c: "num"}, "节点", "命令", "作用对象", "状态", {label: "更新时间", c: "nowrap"}], commands, {moreText: moreText((state.agentControlCommands || []).length, 16)}), {wide: true}),
