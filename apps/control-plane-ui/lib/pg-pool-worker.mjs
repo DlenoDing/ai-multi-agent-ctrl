@@ -121,6 +121,9 @@ port.on("message", async (message) => {
   } catch (error) {
     response = {ok: false, error: String((error && error.message) || error), code: error && error.code};
   }
+  // Echo the request's correlation id so the main thread can detect and discard a stale response
+  // from a previously timed-out op instead of consuming it as the current op's result.
+  response.requestId = message.requestId;
   // Post the (structured-cloned, arbitrary-size) response first, THEN flip the
   // shared flag: the Atomics write happens-after the postMessage enqueue, so once
   // the main thread's Atomics.wait returns the message is already drainable via

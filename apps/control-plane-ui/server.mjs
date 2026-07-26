@@ -1014,7 +1014,10 @@ function scopedStateForAccount(state, account, session) {
   cloned.checkpoints = (state.checkpoints || []).filter((checkpoint) => visibleTaskGroupIds.has(checkpoint.taskGroupId));
   cloned.completionReadiness = (state.completionReadiness || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
   cloned.closeBarriers = (state.closeBarriers || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
-  cloned.admissionDecisions = (state.admissionDecisions || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId) || visibleProjectIds.has(item.projectId));
+  // Gate strictly on task-group visibility (like checkpoints/completionReadiness/closeBarriers);
+  // only fall back to project visibility for records that carry no taskGroupId. A plain project
+  // member without a task-group grant must not see a hidden task group's admission decisions.
+  cloned.admissionDecisions = (state.admissionDecisions || []).filter((item) => item.taskGroupId ? visibleTaskGroupIds.has(item.taskGroupId) : visibleProjectIds.has(item.projectId));
   cloned.sharedDefinitions = (state.sharedDefinitions || []).filter((definition) => visibleProjectIds.has(definition.projectId) || (definition.scopeRefs || []).some((ref) => visibleTaskGroupIds.has(String(ref).replace("TaskGroup:", ""))));
   cloned.progressSnapshots = (state.progressSnapshots || []).filter((snapshot) => snapshot.scopeType === "project" ? visibleProjectIds.has(snapshot.scopeRef) : visibleTaskGroupIds.has(snapshot.scopeRef));
   cloned.leases = (state.leases || []).filter((lease) => cloned.repositoryOutputs.some((target) => lease.resourceRef === `RepositoryOutputTarget:${target.targetId}`));
@@ -3825,20 +3828,25 @@ function handleRealtimeMessage(socket, data) {
 }
 
 server.on("upgrade", (req, socket, head) => {
-  let pathname;
+  // The whole body must be guarded: unlike the request path (createServer callback), a throw in a
+  // synchronously-emitted 'upgrade' listener becomes an uncaughtException and would exit the
+  // process. authorizeRealtime() calls readState(), which can throw (lock/pg-bridge timeout).
+  let principal;
   try {
-    pathname = new URL(req.url, "http://request.local").pathname;
+    const pathname = new URL(req.url, "http://request.local").pathname;
+    if (pathname !== "/api/realtime") {
+      socket.destroy();
+      return;
+    }
+    principal = authorizeRealtime(req);
   } catch {
     socket.destroy();
     return;
   }
-  if (pathname !== "/api/realtime") {
-    socket.destroy();
-    return;
-  }
-  const principal = authorizeRealtime(req);
   if (!principal) {
-    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+    try {
+      socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+    } catch { /* socket already gone */ }
     socket.destroy();
     return;
   }

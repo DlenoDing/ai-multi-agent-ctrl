@@ -28,7 +28,7 @@ function getBridge() {
     workerData: {sig: sig.buffer, port: channel.port2},
     transferList: [channel.port2]
   });
-  const state = {worker, port: channel.port1, sig, fatal: null};
+  const state = {worker, port: channel.port1, sig, fatal: null, seq: 0};
   // A worker-level crash (e.g. pg import failure) would otherwise deadlock the
   // next Atomics.wait; record it so the following call throws instead of hanging.
   worker.on("error", (error) => { state.fatal = error; });
@@ -40,26 +40,46 @@ function getBridge() {
   return bridge;
 }
 
+// On a query timeout the worker may still be mid-op and will later enqueue an orphaned response.
+// Tear the whole bridge down (terminate the worker, drop the port with its queue) so the next call
+// starts a fresh worker/pool and can never consume that stale message.
+function resetBridge() {
+  const active = bridge;
+  bridge = null;
+  if (!active) return;
+  try { active.worker.terminate(); } catch { /* already gone */ }
+  try { active.port.close(); } catch { /* already gone */ }
+}
+
 function call(op, args) {
   const active = getBridge();
-  if (active.fatal) throw active.fatal;
+  if (active.fatal) { resetBridge(); throw active.fatal; }
+  const requestId = (active.seq += 1);
   Atomics.store(active.sig, 0, 0);
-  active.port.postMessage({op, args});
+  active.port.postMessage({op, args, requestId});
   const waitResult = Atomics.wait(active.sig, 0, 0, queryTimeoutMs());
   if (waitResult === "timed-out") {
-    if (active.fatal) throw active.fatal;
+    const fatal = active.fatal;
+    resetBridge();
+    if (fatal) throw fatal;
     const error = new Error(`pg bridge timeout after ${queryTimeoutMs()}ms for op ${op}`);
     error.code = "AIMAC_PG_BRIDGE_TIMEOUT";
     throw error;
   }
-  let received = receiveMessageOnPort(active.port);
-  // Extremely rare: Atomics flag observed before the cross-thread message lands in
-  // this port's queue. Spin briefly rather than returning a spurious null.
-  for (let attempt = 0; attempt < 100000 && !received; attempt += 1) {
-    received = receiveMessageOnPort(active.port);
+  // Drain until the response correlated with THIS request. A message with an older requestId is a
+  // stale response from a prior (e.g. spuriously-recovered) op and must be discarded, never returned.
+  let received = null;
+  for (let attempt = 0; attempt < 100000; attempt += 1) {
+    const next = receiveMessageOnPort(active.port);
+    if (!next) {
+      if (received) break;
+      continue;
+    }
+    if (next.message?.requestId === requestId) { received = next; break; }
+    // else: stale/orphaned response — discard and keep draining.
   }
   if (!received) {
-    if (active.fatal) throw active.fatal;
+    if (active.fatal) { resetBridge(); throw active.fatal; }
     throw new Error(`pg bridge: no response for op ${op}`);
   }
   const response = received.message;
