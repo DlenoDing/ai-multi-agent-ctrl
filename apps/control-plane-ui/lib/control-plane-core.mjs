@@ -2910,7 +2910,10 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     ? cachedReadiness
     : computeCompletionReadiness(state, taskGroupId, request);
   const nowMs = Date.now();
-  const pendingStatuses = ["open", "pending", "requested", "submitted", "in_review", "waiting"];
+  // "quorum_collecting" is a NON-terminal approval state (a high-risk approval that has some but not all
+  // required approvers): it MUST count as pending so the no_pending_approvals close-barrier gate keeps
+  // blocking until the approver quorum is actually reached.
+  const pendingStatuses = ["open", "pending", "quorum_collecting", "requested", "submitted", "in_review", "waiting"];
   const forTaskGroup = (items) => (items || []).filter((item) => item.taskGroupId === taskGroupId);
   // A failed quality gate whose work item was abandoned (cancelled/aborted/superseded) or already closed
   // is moot — it must not block the task-group close forever with no operator remedy (the work will never
@@ -4768,7 +4771,8 @@ export function capRetainingOpen(items, terminalStatuses, limit) {
 
 // Statuses that make a close-barrier collection item still "open"/blocking. Single source of truth so
 // the cap below and computeCloseBarrier can never drift into evicting a gating item.
-const BARRIER_PENDING_STATUSES = ["open", "pending", "requested", "submitted", "in_review", "waiting"];
+// Includes "quorum_collecting" so a sub-quorum high-risk approval keeps blocking completion readiness.
+const BARRIER_PENDING_STATUSES = ["open", "pending", "quorum_collecting", "requested", "submitted", "in_review", "waiting"];
 
 // Like capRetainingOpen but with an explicit isOpen predicate, for barrier collections whose "open"
 // condition is a positive status match (candidate_created / conflict / pending) rather than the

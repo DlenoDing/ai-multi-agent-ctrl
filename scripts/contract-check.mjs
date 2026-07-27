@@ -515,6 +515,16 @@ function verifyHumanAndOrganizationContracts(output) {
     if (q2().status !== "quorum_collecting") output.push("H1: the same approver was double-counted toward quorum");
     approvalResolve(approvalHrState, {approvalId: "appr_q2", status: "approved", resolvedBy: "acct_carol"});
     if (q2().status !== "approved") output.push("H1: a quorum-2 request was not approved after two distinct approvers");
+    // CRITICAL: a quorum_collecting (sub-quorum) approval MUST keep blocking the close barrier — otherwise a
+    // partial approval lets a high-risk action close without its full approver quorum.
+    const quorumBlockState = structuredClone(seedState);
+    ensureRuntimeCollections(quorumBlockState, {root});
+    const qbTg = quorumBlockState.taskGroups.find((t) => t.id === "tg_runtime_management");
+    qbTg.workItems = [{id: "wi_qb", title: "完成项", status: "verified", ownerRole: "agent-runtime", progress: 100, reviewBundleRef: "rvb_qb"}];
+    quorumBlockState.approvalRequests = [{approvalId: "appr_qb", taskGroupId: "tg_runtime_management", status: "quorum_collecting", riskClass: "high", proposedBy: "acct_alice", quorum: 2, approvals: ["acct_bob"]}];
+    const qbReadiness = computeCompletionReadiness(quorumBlockState, "tg_runtime_management", {});
+    const qbBlocks = (qbReadiness.blockingObjects || []).some((b) => b.objectType === "PermissionOrApprovalRequest") || qbReadiness.status !== "clear";
+    if (!qbBlocks) output.push("H1 CRITICAL: a quorum_collecting (sub-quorum) high-risk approval did NOT block completion readiness (partial approval lets close bypass the quorum)");
 
     // human directives consumed oldest-first (FIFO): the newest adjust_priority must win.
     const fifoState = structuredClone(seedState);

@@ -701,6 +701,10 @@ errors << "high_risk_no_self_approval must be enforced in approvalResolve" unles
 errors << "approval must require a distinct-approver quorum before terminalizing" unless mcp_source.include?("request.approvals = [...new Set([...(request.approvals || []), resolver])]") && mcp_source.include?("request.approvals.length < quorum")
 errors << "approver/proposer identity must be the authenticated actor, not client input" unless server_source.include?("resolvedBy: guard.actor") && server_source.include?("proposedBy: guard.actor") && mcp_source.include?("proposedBy: context?.principal?.id")
 errors << "high_risk_no_self_approval / quorum need behavioral coverage" unless contract_check_source.include?("H1: a high-risk request was self-approved") && contract_check_source.include?("H1: a quorum-2 request terminalized on the first")
+# CRITICAL: quorum_collecting must be a barrier pending status (both barrier pending-sets) so a sub-quorum
+# high-risk approval keeps blocking close — and a behavioral test must assert it blocks.
+errors << "quorum_collecting must count as pending in both barrier pending-sets" unless core_source.scan(/"pending", "quorum_collecting"/).length >= 2
+errors << "quorum_collecting-blocks-close must have behavioral coverage" unless contract_check_source.include?("H1 CRITICAL: a quorum_collecting (sub-quorum) high-risk approval did NOT block")
 # M7: the repository output target denylist field must be the schema-declared pathDenylist (not the
 # non-schema forbiddenPathRules), enforced end-to-end (producer + runtime consumer), and instance-validated.
 errors << "repository output target must use the schema pathDenylist field" unless core_source.include?("pathDenylist: request.pathDenylist") && agent_runtime_source.include?("target.pathDenylist") && contract_check_source.include?("repository-output-target.schema.json")
