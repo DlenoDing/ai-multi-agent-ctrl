@@ -805,7 +805,10 @@ function applyControlCommandPreEffects(state, node, command) {
     workItem.blockedReason = command.commandType === "pause_dispatch" ? "control_pause_requested" : command.commandType === "cancel_dispatch" ? "control_cancel_requested" : "control_resume_requested";
     workItem.updatedAt = at;
   }
-  if (command.commandType === "resume_dispatch") node.activeDispatchIds = (node.activeDispatchIds || []).filter((id) => id !== dispatch.dispatchId);
+  // Detach from the node's active set for both resume (back to queued/unassigned) AND cancel (now
+  // terminal). Leaving a cancelled dispatch in activeDispatchIds let a later node revoke/shutdown
+  // finalizer treat it as "was active" and requeue it — resurrecting operator-cancelled work.
+  if (command.commandType === "resume_dispatch" || command.commandType === "cancel_dispatch") node.activeDispatchIds = (node.activeDispatchIds || []).filter((id) => id !== dispatch.dispatchId);
   if (taskGroup) {
     taskGroup.health = "attention";
     taskGroup.updatedAt = at;
@@ -858,8 +861,13 @@ function finalizeNodeRevocation(state, node, command) {
     if (dispatch.assignedNodeId !== node.nodeId) continue;
     const commandOwned = dispatch.controlCommandRef === command.commandId || dispatch.revocationPending;
     const wasActive = commandDispatchIds.has(dispatch.dispatchId) || (node.activeDispatchIds || []).includes(dispatch.dispatchId);
-    if (!commandOwned && !wasActive) continue;
-    if (!["running", "blocked", "cancelled", "failed"].includes(dispatch.status)) continue;
+    // In-flight work on the stopping node is requeued to a live node. A terminal (cancelled/failed)
+    // dispatch is requeued ONLY if THIS stop's own drain terminalized it (commandOwned) — never merely
+    // because it lingered in the node's active set, which would resurrect operator-cancelled or
+    // independently-failed work onto another node.
+    if (["running", "blocked"].includes(dispatch.status)) { if (!commandOwned && !wasActive) continue; }
+    else if (["cancelled", "failed"].includes(dispatch.status)) { if (!commandOwned) continue; }
+    else continue;
     dispatch.status = "queued";
     dispatch.blockedReason = "assigned_node_revocation_ack_requeued";
     delete dispatch.assignedNodeId;
@@ -884,8 +892,14 @@ function finalizeNodeShutdown(state, node, command) {
   const requeuedDispatchIds = [];
   for (const dispatch of state.agentDispatches || []) {
     if (dispatch.assignedNodeId !== node.nodeId) continue;
+    const commandOwned = dispatch.controlCommandRef === command.commandId || dispatch.shutdownPending;
     const wasActive = commandDispatchIds.has(dispatch.dispatchId) || (node.activeDispatchIds || []).includes(dispatch.dispatchId);
-    if (!wasActive || !["running", "blocked", "cancelled", "failed"].includes(dispatch.status)) continue;
+    // Same rule as revocation: requeue in-flight work, but only requeue a terminal dispatch if this
+    // stop's own drain produced it — never resurrect an operator-cancelled/failed dispatch that merely
+    // lingered in the node's active set.
+    if (["running", "blocked"].includes(dispatch.status)) { if (!wasActive) continue; }
+    else if (["cancelled", "failed"].includes(dispatch.status)) { if (!commandOwned) continue; }
+    else continue;
     dispatch.status = "queued";
     dispatch.blockedReason = "assigned_node_shutdown_ack_requeued";
     delete dispatch.assignedNodeId;
@@ -913,8 +927,14 @@ function handleStopControlFailure(state, node, command, status) {
   const affectedDispatchIds = [];
   for (const dispatch of state.agentDispatches || []) {
     if (dispatch.assignedNodeId !== node.nodeId) continue;
-    const commandOwned = dispatch.controlCommandRef === command.commandId || dispatch.revocationPending || (command.payload?.activeDispatchIds || []).includes(dispatch.dispatchId);
-    if (!commandOwned || !["running", "blocked", "cancelled", "failed"].includes(dispatch.status)) continue;
+    // trulyOwned == this stop's own drain touched it; payload membership alone is NOT ownership (an
+    // operator-cancelled dispatch can appear in the snapshot). Re-block in-flight drained work for
+    // retry, but never re-block a terminal dispatch this stop did not itself drain.
+    const trulyOwned = dispatch.controlCommandRef === command.commandId || dispatch.revocationPending || dispatch.shutdownPending;
+    const inSnapshot = (command.payload?.activeDispatchIds || []).includes(dispatch.dispatchId);
+    if (["running", "blocked"].includes(dispatch.status)) { if (!trulyOwned && !inSnapshot) continue; }
+    else if (["cancelled", "failed"].includes(dispatch.status)) { if (!trulyOwned) continue; }
+    else continue;
     dispatch.status = "blocked";
     // Static closed-set reason (commandType/status are carried in the emitted event payload) so the
     // Chinese console can localize it — a template literal would leak 4 raw-English variants.

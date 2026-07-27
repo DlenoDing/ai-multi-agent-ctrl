@@ -66,7 +66,9 @@ export function readProjectExecutionEvents(runtimeDir, projectId, filters = {}) 
     nextCursor: events.at(-1)?.sequence || afterSequence,
     storage: {
       ...storageInfo(projectId),
-      readMode: sources.some((item) => item.source.length < statSync(item.path).size) ? "tail-window" : "full"
+      // Compare BYTES to bytes: source.length is UTF-16 code units, so any multibyte content (the
+      // console is Chinese) would otherwise report a fully-read file as a truncated "tail-window".
+      readMode: sources.some((item) => Buffer.byteLength(item.source, "utf8") < statSync(item.path).size) ? "tail-window" : "full"
     }
   };
 }

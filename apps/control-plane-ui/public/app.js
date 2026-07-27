@@ -414,6 +414,28 @@ function applyFilterFor(inputEl) {
   });
 }
 
+// applyFilterFor only hides rows already in the DOM (≤ display cap). filterSource filters the FULL
+// source before the cap, but only runs on a render() — and the pollers skip render() while a filter
+// box is focused. So a keyword matching a row past the cap would show an empty panel until blur+poll.
+// Debounce a full render() on filter input, then restore focus+caret to the same box so typing isn't
+// interrupted and past-cap matches surface immediately.
+let __filterRerenderTimer = null;
+function scheduleFilterRerender(inputEl) {
+  const key = inputEl.dataset.filterKey;
+  if (!key) return; // keyless filters have no source array to re-slice; DOM-level applyFilterFor suffices
+  const caret = inputEl.selectionStart;
+  if (__filterRerenderTimer) clearTimeout(__filterRerenderTimer);
+  __filterRerenderTimer = setTimeout(() => {
+    __filterRerenderTimer = null;
+    render();
+    const again = document.querySelector(`[data-filter-input][data-filter-key="${CSS.escape(key)}"]`);
+    if (again) {
+      again.focus();
+      try { again.setSelectionRange(caret, caret); } catch { /* not a text input */ }
+    }
+  }, 250);
+}
+
 // render 后重新应用所有已保存的过滤词，避免自动刷新/轮询把用户的筛选抹掉
 function reapplyFilters() {
   document.querySelectorAll("[data-filter-input]").forEach((inputEl) => {
@@ -2764,7 +2786,8 @@ document.addEventListener("input", (event) => {
   const filter = event.target.closest("[data-filter-input]");
   if (filter) {
     if (filter.dataset.filterKey) filterState[filter.dataset.filterKey] = filter.value;
-    applyFilterFor(filter);
+    applyFilterFor(filter);           // immediate feedback on already-rendered rows
+    scheduleFilterRerender(filter);   // debounced full re-render so filterSource surfaces past-cap matches
     return;
   }
   const touchedForm = event.target.closest("form[data-form]");

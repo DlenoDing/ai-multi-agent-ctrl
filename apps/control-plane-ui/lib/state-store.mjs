@@ -325,7 +325,12 @@ const shardOpenPredicates = {
   humanDirectives: (item) => ["queued", "acknowledged"].includes(item.status), // core 2770
   repositoryOutputs: (item) => !["pushed", "committed", "rejected", "superseded"].includes(item.status), // core 2759
   effectiveInstructionPackets: (item) => !["consumed", "expired", "superseded"].includes(item.status), // core 2757 + live deref
-  checkpoints: (item) => Boolean(item.commitRefs?.length && item.pushRefs?.length && item.artifactManifestRefs?.length), // core 2761/2763 evidence
+  // core 2761/2763 evidence dimension. NOTE: all_required_validation_present (core 2826) and
+  // needsReviewBackfill (core 4514) also read checkpoints by workId regardless of evidence — those are
+  // inert today (every "verified" work item carries a reviewBundleRef, so their guard is dead), so this
+  // evidence-only predicate is safe. If a future path ever marks a work item verified WITHOUT a
+  // reviewBundleRef, extend this predicate to also retain any checkpoint referenced by an open workId.
+  checkpoints: (item) => Boolean(item.commitRefs?.length && item.pushRefs?.length && item.artifactManifestRefs?.length),
   // Defense-in-depth: these two are also open-item barriers; today their in-memory caps (capDispatchHistory
   // 240 / reconcileRoleDriftGuards open+200) keep them under the shard limit so the slice never runs, but
   // giving them predicates makes the persist layer independently barrier-safe if either in-memory cap changes.

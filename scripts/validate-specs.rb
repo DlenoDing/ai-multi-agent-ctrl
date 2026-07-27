@@ -646,6 +646,12 @@ nul_offenders = Dir.glob(File.join(ROOT, "**/*.{mjs,js,rb,html,css,md}")).reject
   File.binread(p).include?("\x00".b)
 end
 errors << "tracked text source(s) contain a raw NUL byte: #{nul_offenders.map { |p| p.sub(ROOT + '/', '') }.join(', ')}" unless nul_offenders.empty?
+# Cancel-resurrection guard: a node stop/revoke finalizer must NOT requeue a terminal (cancelled/failed)
+# dispatch it did not itself drain, and cancel_dispatch must detach the dispatch from the node's active set.
+errors << "cancel_dispatch must detach the dispatch from the node active set" unless agent_gateway_source.include?("command.commandType === \"resume_dispatch\" || command.commandType === \"cancel_dispatch\") node.activeDispatchIds")
+errors << "stop finalizers must not resurrect a terminal dispatch they did not drain" unless agent_gateway_source.scan(/\[\"cancelled\", \"failed\"\]\.includes\(dispatch\.status\)\) \{ if \(!commandOwned\) continue; \}/).length >= 2 && agent_gateway_source.include?("else if ([\"cancelled\", \"failed\"].includes(dispatch.status)) { if (!trulyOwned) continue; }")
+# UI: a keyword filter must surface matches past the display cap (debounced focus-preserving re-render).
+errors << "filter input must trigger a focus-preserving re-render so past-cap matches surface" unless public_app_source.include?("function scheduleFilterRerender") && public_app_source.include?("scheduleFilterRerender(filter)")
 # 2026-07-27 full-system review round 3. Isolation-1: MCP state_get full scope must be fail-closed —
 # both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
 # collections cross-project), and the agent_node full branch must be env-gated like its siblings.
