@@ -576,6 +576,15 @@ errors << "close-barrier all_commands_terminal must match the exact task-group s
 errors << "Postgres central+shards read must be transactionally consistent" unless pg_pool_worker_source.include?("readStateWithShards") && pg_pool_worker_source.include?("ISOLATION LEVEL REPEATABLE READ") && pg_sync_store_source.include?("pgReadStateWithShards") && state_store_source.include?("pgReadStateWithShards()")
 app_js_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
 i18n_zh_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/i18n-zh.js"))
+# The zh dictionary must not contain duplicate keys — JS last-wins would silently shadow the intended
+# value (a recurring defect this cycle when appending gate/objectType keys). Guard durably.
+i18n_dup_keys = i18n_zh_source.scan(/^\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:/).flatten.tally.select { |_k, count| count > 1 }.keys
+errors << "zh i18n dictionary has duplicate keys: #{i18n_dup_keys.join(', ')}" unless i18n_dup_keys.empty?
+# The blocking-detail panel renders every close-barrier gate name via t(); they must all be localized so
+# the all-Chinese diagnostic panel never shows a raw English gate name.
+%w[all_repository_output_targets_terminal all_leases_terminal no_active_dlq artifacts_verified all_rule_sources_resolved all_shared_definitions_active no_active_temp_grants completion_readiness_clear].each do |gate|
+  errors << "close-barrier gate name #{gate} must be localized in the console" unless i18n_zh_source.include?("#{gate}:")
+end
 errors << "Console must surface the admission ledger and single-cell escalation guard" unless server_source.include?("\"admissionDecisions\", \"workerLanes\"") && app_js_source.include?("singleCellEscalationGuard") && app_js_source.include?("准入决策") && app_js_source.include?("workerCarrierDecision?.carrier")
 # The monitor page merges the runtime view over the tasks view by hand; every runtime-only field that
 # renderMonitor reads must be carried in that merge or its panel renders permanently empty (regression
