@@ -550,14 +550,19 @@ i18n_zh_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/i18n-zh
 errors << "Console must surface the admission ledger and single-cell escalation guard" unless server_source.include?("\"admissionDecisions\", \"workerLanes\"") && app_js_source.include?("singleCellEscalationGuard") && app_js_source.include?("准入决策") && app_js_source.include?("workerCarrierDecision?.carrier")
 errors << "Console i18n must localize admission enums and blocked-reason codes" unless i18n_zh_source.include?("awaiting_analysis_output") && i18n_zh_source.include?("pending_window") && i18n_zh_source.include?("reusable_top_level_lane") && i18n_zh_source.include?("deferred:")
 errors << "Console must offer a resolve_decision actuator for needs_decision cells" unless app_js_source.include?("\"resolve_decision\"") && app_js_source.include?("resolution: data.resolution") && app_js_source.include?("admissionReasonLabel") && i18n_zh_source.include?("work_item_decision_reopen") && i18n_zh_source.include?("dependency_abandoned")
-# Durable i18n-completeness guard: every blockedReason literal set in core/gateway must have a
-# zh dictionary key, else the Chinese console renders raw English (a recurring defect class).
-blocked_reason_literals = (core_source + agent_gateway_source).scan(/blockedReason\s*[:=]\s*"([a-z_]+)"/).flatten.uniq
-missing_blocked_reasons = blocked_reason_literals.reject { |code| i18n_zh_source.include?("#{code}:") }
-errors << "Console i18n missing blockedReason keys: #{missing_blocked_reasons.join(', ')}" unless missing_blocked_reasons.empty?
+# Durable i18n-completeness guard: every static blockedReason / admission reasonCode literal set in
+# core/gateway must have a zh dictionary key, else the Chinese console renders raw English (a
+# recurring defect class). Also forbid TEMPLATE-LITERAL blockedReason (its interpolated variants can
+# never be localized — use a static closed-set reason instead).
+i18n_key = ->(code) { i18n_zh_source.match?(/^\s*#{Regexp.escape(code)}:/) }
+localized_literals = (core_source + agent_gateway_source).scan(/(?:blockedReason|reasonCode)\s*[:=]\s*"([a-z_]+)"/).flatten.uniq
+missing_localized = localized_literals.reject { |code| i18n_key.call(code) }
+errors << "Console i18n missing blockedReason/reasonCode keys: #{missing_localized.join(', ')}" unless missing_localized.empty?
+errors << "blockedReason must be a static string literal (not a template literal) for i18n" if (core_source + agent_gateway_source).match?(/blockedReason\s*[:=]\s*`/)
 # 2026-07-27 review round 6 residual (LOW security).
 errors << "MCP instruction stable_prefix_get must be principal-scoped" unless mcp_source.include?("stablePrefixGet(state, args, principalProjectFilter(context))")
 errors << "MCP permission_matrix_get must deny bounded principals" unless mcp_source.include?("permission_matrix_requires_unrestricted_principal")
+errors << "MCP permission_status must be scoped to the principal" unless mcp_source.include?("permissionRequestReadableByPrincipal") && mcp_source.include?("permissionStatus(state, args, context)")
 errors << "Skill-source git sync must restrict transports and validate inputs" unless core_source.include?("skill_source_unsafe_git_input") && core_source.include?("GIT_ALLOW_PROTOCOL")
 # 2026-07-26 review round 2 fixes.
 errors << "needs_decision cells must have a human resolution actuator" unless core_source.include?("resolve_decision") && core_source.include?("supersededByHumanDecision") && contract_check_source.include?("resolve_decision")

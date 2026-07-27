@@ -1224,7 +1224,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "permission-mcp.permission_request_submit":
       return permissionRequestSubmit(state, args);
     case "permission-mcp.permission_status":
-      return permissionStatus(state, args);
+      return permissionStatus(state, args, context);
     case "permission-mcp.permission_resolve":
       return permissionResolve(state, args);
     case "human-review-mcp.confirmation_request_submit":
@@ -1851,9 +1851,27 @@ function testResultSubmit(state, args) {
   return {testResult};
 }
 
-function permissionStatus(state, args) {
+// A permission request is readable by: system_admin; the agent node whose dispatch/session owns it;
+// or an account/service principal scoped to the request's task-group project. Without this a bounded
+// principal could read any tenant's permission request by (enumerable) requestId (cross-tenant IDOR).
+function permissionRequestReadableByPrincipal(state, request, context = {}) {
+  const principal = context.principal || {};
+  if (principal.kind === "system_admin") return true;
+  if (principal.kind === "agent_node") {
+    return Boolean(request.sessionId) && (state.agentDispatches || []).some((item) => item.sessionId === request.sessionId && item.assignedNodeId === principal.id);
+  }
+  if (Array.isArray(principal.projectIds)) {
+    if (principal.projectIds.includes("*")) return true;
+    const project = (state.taskGroups || []).find((item) => item.id === request.taskGroupId)?.projectId;
+    return Boolean(project) && principal.projectIds.includes(project);
+  }
+  return false;
+}
+
+function permissionStatus(state, args, context) {
   const request = state.permissionRequests.find((item) => item.requestId === args.requestId);
-  return {permissionRequest: request || null};
+  if (!request || !permissionRequestReadableByPrincipal(state, request, context)) return {permissionRequest: null, ok: false, error: "permission_request_not_found"};
+  return {permissionRequest: request};
 }
 
 export function permissionResolve(state, args) {

@@ -178,6 +178,10 @@
     awaiting_dependency: "等待依赖项完成",
     awaiting_decision: "等待人工决策",
     dependency_abandoned: "依赖已被放弃",
+    shared_definition_not_active: "共享定义未生效",
+    blocking_objects_present: "存在阻塞对象",
+    existing_execution_active: "已有执行进行中",
+    mixed_analysis_implementation_split: "分析与实现混合，已拆分",
     /* ---------- 人工指令：决策处置 ---------- */
     resolve_decision: "决策处置",
     work_item_decision_reopen: "工作项重开",
@@ -206,6 +210,7 @@
     control_cancel_requested: "控制通道请求取消",
     claim_expired_requeued: "认领超时重新入队",
     revocation_ack_timeout_requeued: "吊销确认超时重新入队",
+    assigned_node_stop_control_failed_retry_queued: "节点停止控制失败，重试入队",
     assigned_node_revocation_ack_requeued: "节点吊销确认后重新入队",
     assigned_node_shutdown_ack_requeued: "节点关停确认后重新入队",
     assigned_node_revocation_pending_stop: "节点吊销待停止",

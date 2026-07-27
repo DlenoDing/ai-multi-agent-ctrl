@@ -839,7 +839,9 @@ function handleStopControlFailure(state, node, command, status) {
     const commandOwned = dispatch.controlCommandRef === command.commandId || dispatch.revocationPending || (command.payload?.activeDispatchIds || []).includes(dispatch.dispatchId);
     if (!commandOwned || !["running", "blocked", "cancelled", "failed"].includes(dispatch.status)) continue;
     dispatch.status = "blocked";
-    dispatch.blockedReason = `assigned_node_${command.commandType}_${status}_retry_queued`;
+    // Static closed-set reason (commandType/status are carried in the emitted event payload) so the
+    // Chinese console can localize it — a template literal would leak 4 raw-English variants.
+    dispatch.blockedReason = "assigned_node_stop_control_failed_retry_queued";
     dispatch.controlCommandRef = command.commandId;
     if (command.commandType === "revoke" || dispatch.revocationPending) dispatch.revocationPending = true;
     else delete dispatch.revocationPending;
