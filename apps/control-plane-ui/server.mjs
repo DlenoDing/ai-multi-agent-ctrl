@@ -3146,9 +3146,15 @@ async function handleApi(req, res) {
       return;
     }
     if (req.method === "POST") {
-      const guard = beginGuardedWrite(req, state, "room_send", `Room:${roomId}`, taskGroupScope(state, body.taskGroupId || roomTaskGroupId));
+      // Scope authorization AND the write from the path room only. Trusting body.taskGroupId here
+      // would let an actor authorized on their own task group inject a message into another tenant's
+      // room (guard passes on the body scope while roomSend routes by the path roomId).
+      if (body.taskGroupId && body.taskGroupId !== roomTaskGroupId) {
+        return json(res, 400, {error: "room_task_group_mismatch"});
+      }
+      const guard = beginGuardedWrite(req, state, "room_send", `Room:${roomId}`, taskGroupScope(state, roomTaskGroupId));
       if (guard.status) return json(res, guard.status, guard.payload);
-      const result = roomSend(state, {...body, roomId});
+      const result = roomSend(state, {...body, roomId, taskGroupId: roomTaskGroupId});
       audit(state, "room-broker", "room_send", `Room:${roomId}`);
       finishGuardedWrite(state, guard, 201, result);
       writeState(state);

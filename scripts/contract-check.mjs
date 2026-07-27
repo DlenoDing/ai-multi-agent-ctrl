@@ -326,6 +326,25 @@ function verifyHumanAndOrganizationContracts(output) {
     createHumanDirective(abandonState, {taskGroupId: "tg_runtime_management", directiveType: "resolve_decision", workItemId: "wi_abandon", resolution: "abandon"}, {actor: "acct_ct"});
     consumeQueuedHumanDirectives(abandonState);
     if (abandonTg.workItems.find((item) => item.id === "wi_abandon").status !== "superseded") output.push("resolve_decision abandon did not supersede the needs_decision cell");
+
+    // close-barrier must ignore a stale (older stateVersion) cached readiness (else close_barrier_compute
+    // could satisfy/close a group with unfinished work).
+    const staleState = structuredClone(seedState);
+    ensureRuntimeCollections(staleState, {root});
+    const staleTg = staleState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    staleTg.workItems = [{id: "wi_incomplete", title: "未完成", status: "ready", ownerRole: "agent-runtime", progress: 0}];
+    staleState.stateVersion = 999;
+    staleState.completionReadiness = [{schemaVersion: "completion-readiness/v1", checkId: "stale", taskGroupId: "tg_runtime_management", status: "clear", stateVersion: 1, blockingObjects: [], checkResults: {}, requiredChecks: []}];
+    const staleBarrier = computeCloseBarrier(staleState, "tg_runtime_management", {mutate: false});
+    if (staleBarrier.satisfied) output.push("close-barrier trusted a stale readiness and reported satisfied with incomplete work");
+
+    // human directives consumed oldest-first (FIFO): the newest adjust_priority must win.
+    const fifoState = structuredClone(seedState);
+    ensureRuntimeCollections(fifoState, {root});
+    createHumanDirective(fifoState, {taskGroupId: "tg_runtime_management", directiveType: "adjust_priority", instruction: "first"}, {actor: "acct_ct"});
+    createHumanDirective(fifoState, {taskGroupId: "tg_runtime_management", directiveType: "adjust_priority", instruction: "second"}, {actor: "acct_ct"});
+    consumeQueuedHumanDirectives(fifoState);
+    if (fifoState.taskGroups.find((item) => item.id === "tg_runtime_management").priorityHint !== "second") output.push("directive FIFO: newest adjust_priority did not win (LIFO regression)");
   }
 
   // §4.5 single-cell-block guard (gap #12): a blocked cell must not escalate the whole task

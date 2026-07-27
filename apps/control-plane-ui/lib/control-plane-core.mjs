@@ -2763,7 +2763,13 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
 export function computeCloseBarrier(state, taskGroupId, request = {}) {
   ensureRuntimeCollections(state);
   const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
-  const readiness = state.completionReadiness.find((item) => item.taskGroupId === taskGroupId) || computeCompletionReadiness(state, taskGroupId, request);
+  // Only reuse a cached readiness computed against the CURRENT state version; a stale one (e.g. a
+  // WorkItem added or a role-drift guard opened since the last cycle) would let close_barrier_compute
+  // (esp. mutate:true) satisfy the barrier and close a task group with unfinished work.
+  const cachedReadiness = state.completionReadiness.find((item) => item.taskGroupId === taskGroupId);
+  const readiness = (cachedReadiness && cachedReadiness.stateVersion === state.stateVersion)
+    ? cachedReadiness
+    : computeCompletionReadiness(state, taskGroupId, request);
   const nowMs = Date.now();
   const pendingStatuses = ["open", "pending", "requested", "submitted", "in_review", "waiting"];
   const forTaskGroup = (items) => (items || []).filter((item) => item.taskGroupId === taskGroupId);
@@ -3874,7 +3880,10 @@ export function expireStaleHumanConfirmations(state) {
 
 export function consumeQueuedHumanDirectives(state, request = {}) {
   const applied = [];
-  for (const directive of (state.humanDirectives || []).filter((item) => item.status === "queued")) {
+  // Apply oldest-first (FIFO): humanDirectives is stored newest-first (unshift), so reverse the
+  // queued set — otherwise last-writer-wins fields (e.g. adjust_priority's priorityHint) would let an
+  // OLDER directive overwrite a newer one, silently dropping the user's most recent intent.
+  for (const directive of (state.humanDirectives || []).filter((item) => item.status === "queued").reverse()) {
     const at = new Date().toISOString();
     directive.status = "acknowledged";
     directive.updatedAt = at;

@@ -551,6 +551,12 @@ errors << "Console i18n must localize admission enums and blocked-reason codes" 
 # 2026-07-26 review round 2 fixes.
 errors << "needs_decision cells must have a human resolution actuator" unless core_source.include?("resolve_decision") && core_source.include?("supersededByHumanDecision") && contract_check_source.include?("resolve_decision")
 errors << "MCP readiness/close-barrier reads must guard bounded principals" unless mcp_source.include?("boundedTaskGroupGuard") && mcp_source.include?("boundedTaskGroupGuard(state, args, context) || computeCompletionReadiness") && mcp_source.include?("boundedTaskGroupGuard(state, args, context) || computeCloseBarrier")
+# 2026-07-27 review round 4 fixes.
+errors << "Dispatch-bound MCP grants must be refreshed on claim renewal" unless agent_gateway_source.include?("refreshDispatchGrantExpiry") && agent_gateway_source.include?("refreshDispatchGrantExpiry(state, dispatch, renewed, at)")
+errors << "Revocation must have a node-death ACK-timeout requeue backstop" unless agent_gateway_source.include?("revocation_ack_timeout_requeued") && agent_gateway_source.include?("AIMAC_REVOCATION_ACK_TIMEOUT_MS")
+errors << "Room send must scope authorization and routing from the path room only" unless server_source.include?("room_task_group_mismatch") && server_source.include?("roomSend(state, {...body, roomId, taskGroupId: roomTaskGroupId})")
+errors << "close-barrier must not trust a stale-version cached readiness" unless core_source.include?("cachedReadiness.stateVersion === state.stateVersion") && contract_check_source.include?("stale readiness")
+errors << "Human directives must be consumed oldest-first" unless core_source.include?("status === \"queued\").reverse()") && contract_check_source.include?("directive FIFO")
 errors << "Server must offer authenticated real-time WebSocket push over the long-poll channels" unless server_source.include?("WebSocketServer") && server_source.include?("/api/realtime") && server_source.include?("pushRealtime") && server_source.include?("authorizeRealtime") && server_source.include?("pushRealtime(key)") && doctor_source.include?("verifyRealtimeWebSocket")
 # The upgrade handler must guard authorizeRealtime() (which calls readState()) so a state-store throw
 # destroys the socket instead of becoming an uncaughtException that exits the process.

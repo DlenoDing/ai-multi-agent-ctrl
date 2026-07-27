@@ -271,6 +271,18 @@ export function heartbeatAgentNode(state, node, input = {}, options = {}) {
   return {ok: true, accepted: true, commandsAvailable: queuedCommands, node: publicAgentNode(node), serverTime: at, persistRequired, ...(rotatedNodeToken ? {nodeToken: rotatedNodeToken} : {})};
 }
 
+// Keep dispatch-bound MCP grants alive as long as the claim is renewed, so a long-running dispatch
+// never silently loses MCP access mid-execution when it outlives the initial claim TTL. Only
+// refreshes already-issued grants — it must never resurrect a revoked one.
+function refreshDispatchGrantExpiry(state, dispatch, expiresAt, at) {
+  for (const grant of state.mcpGrants || []) {
+    if (grant.dispatchId === dispatch.dispatchId && grant.grantStatus === "issued") {
+      grant.expiresAt = expiresAt;
+      grant.updatedAt = at;
+    }
+  }
+}
+
 function renewNodeDispatchClaims(state, node, at) {
   for (const dispatch of state.agentDispatches || []) {
     if (dispatch.assignedNodeId !== node.nodeId || dispatch.status !== "running" || !dispatch.claimExpiresAt) continue;
@@ -279,6 +291,7 @@ function renewNodeDispatchClaims(state, node, at) {
     if (renewed > dispatch.claimExpiresAt) {
       dispatch.claimExpiresAt = renewed;
       dispatch.updatedAt = at;
+      refreshDispatchGrantExpiry(state, dispatch, renewed, at);
     }
   }
 }
@@ -453,6 +466,32 @@ function recycleExpiredClaims(state) {
     if (previousNode) previousNode.activeDispatchIds = (previousNode.activeDispatchIds || []).filter((id) => id !== dispatch.dispatchId);
     revokeDispatchMcpGrants(state, previousNodeId, dispatch.dispatchId, "claim_expired_requeued");
     appendGatewayEvent(state, "dispatch_claim_expired", dispatch.dispatchId, {previousNodeId});
+  }
+  // Liveness backstop: a revoke/shutdown whose ACK never arrives leaves its dispatch blocked +
+  // revocationPending and the node draining forever. Force-requeue ONLY when the owning node is
+  // effectively dead (no heartbeat within the ACK timeout) — a live node would ACK, and requeuing a
+  // still-running node would risk double execution. This preserves the ACK-gated fencing invariant.
+  const ackTimeoutMs = boundedInteger(process.env.AIMAC_REVOCATION_ACK_TIMEOUT_MS, 60000, 3600000, 600000);
+  for (const dispatch of state.agentDispatches || []) {
+    if (!dispatch.revocationPending || dispatch.status !== "blocked") continue;
+    const node = state.agentRuntimeNodes.find((item) => item.nodeId === dispatch.assignedNodeId);
+    const lastBeat = node ? new Date(node.lastHeartbeatAt || 0).getTime() : 0;
+    if (node && at - lastBeat < ackTimeoutMs) continue; // node still alive; keep waiting for its ACK
+    const previousNodeId = dispatch.assignedNodeId;
+    dispatch.status = "queued";
+    dispatch.blockedReason = "revocation_ack_timeout_requeued";
+    delete dispatch.assignedNodeId;
+    delete dispatch.claimedAt;
+    delete dispatch.claimExpiresAt;
+    delete dispatch.revocationPending;
+    dispatch.updatedAt = new Date().toISOString();
+    if (node) {
+      node.activeDispatchIds = (node.activeDispatchIds || []).filter((id) => id !== dispatch.dispatchId);
+      node.status = "revoked";
+      node.admission = "revoked";
+    }
+    revokeDispatchMcpGrants(state, previousNodeId, dispatch.dispatchId, "revocation_ack_timeout");
+    appendGatewayEvent(state, "dispatch_revocation_ack_timeout", dispatch.dispatchId, {previousNodeId});
   }
 }
 
@@ -634,7 +673,10 @@ export function recordAgentExecutionEvent(state, node, event = {}, options = {})
   if (dispatch.status === "running" && dispatch.assignedNodeId === node.nodeId && dispatch.claimExpiresAt) {
     const ttlSeconds = boundedInteger(dispatch.claimTtlSeconds, 60, 21600, 1800);
     const renewed = new Date(Date.now() + ttlSeconds * 1000).toISOString();
-    if (renewed > dispatch.claimExpiresAt) dispatch.claimExpiresAt = renewed;
+    if (renewed > dispatch.claimExpiresAt) {
+      dispatch.claimExpiresAt = renewed;
+      refreshDispatchGrantExpiry(state, dispatch, renewed, at);
+    }
   }
   updateExecutionProgress(state, dispatch, event, at);
   appendGatewayEvent(state, "agent_execution_event", event.eventId, {nodeId: node.nodeId, dispatchId: event.dispatchId, eventType: event.eventType, progressPercent: event.progressPercent});
