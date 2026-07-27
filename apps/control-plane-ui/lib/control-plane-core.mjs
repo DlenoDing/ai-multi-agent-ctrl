@@ -1676,7 +1676,7 @@ export function conditionWindowGate(workItem, conditionSource) {
     environment,
     requiredWindowState: dependency.requiredWindowState,
     currentWindowState: current,
-    reasonCode: `condition_window_deferred_${environment}_${current}_awaiting_${dependency.requiredWindowState}`,
+    reasonCode: "condition_window_deferred",
     wakeTrigger: {
       environment,
       nextWindowState: dependency.requiredWindowState,
@@ -1739,7 +1739,7 @@ export function runAutonomousCycle(state, request = {}) {
       if (["checkpoint_submitted", "code_complete", "review_requested", "review_passed", "verification_ready"].includes(workItem.status)) {
         const review = performIndependentReview(state, taskGroup, workItem, request);
         if (review.reviewed !== false) {
-          recordAdmissionDecision(state, {taskGroup, workItem, outcome: "awaiting_review", reasonCode: `independent_review_${review.verdict || "pending"}`, whyThisCellNow: "cell_awaiting_independent_review", cycleRef});
+          recordAdmissionDecision(state, {taskGroup, workItem, outcome: "awaiting_review", reasonCode: "independent_review", whyThisCellNow: "cell_awaiting_independent_review", cycleRef});
           changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, progress: workItem.progress, awaiting: review.verdict === "passed" ? null : "independent_review", review});
           continue;
         }
@@ -1812,7 +1812,7 @@ export function runAutonomousCycle(state, request = {}) {
       const windowGate = conditionWindowGate(workItem, conditionSource);
       if (windowGate) {
         workItem.wakeTrigger = windowGate.wakeTrigger;
-        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "deferred", reasonCode: windowGate.reasonCode, whyThisCellNow: `condition window ${windowGate.environment}=${windowGate.currentWindowState}, awaiting ${windowGate.requiredWindowState}`, cycleRef, wakeTrigger: windowGate.wakeTrigger});
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "deferred", reasonCode: windowGate.reasonCode, whyThisCellNow: "cell_deferred_condition_window", cycleRef, wakeTrigger: windowGate.wakeTrigger});
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, awaiting: "condition_window", conditionWindow: windowGate});
         continue;
       }
@@ -2878,7 +2878,7 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     gateResults: Object.fromEntries(gates.map((gate) => [gate, {
       status: gateFailures[gate] ? "blocked" : "passed",
       evidenceRefs: [`close:${taskGroupId}:${gate}`],
-      ...(gateFailures[gate] ? {reasonCode: `gate_blocked:${gate}`} : {})
+      ...(gateFailures[gate] ? {reasonCode: "gate_blocked"} : {})
     }])),
     blockingObjects: blockers,
     // §4.5/§10 global judgment record: the close is an explicit reality-first judgment over the whole

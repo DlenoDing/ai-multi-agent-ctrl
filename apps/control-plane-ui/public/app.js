@@ -275,7 +275,8 @@ const WHY_THIS_CELL_LABELS = {
   cell_already_executing: "已在执行中",
   cell_split_into_analysis_and_implementation: "已拆分为分析与实现",
   no_model_satisfies_hard_constraints: "无模型满足硬约束",
-  role_drift_guard_intercepted_dispatch: "角色偏移守卫拦截派发"
+  role_drift_guard_intercepted_dispatch: "角色偏移守卫拦截派发",
+  cell_deferred_condition_window: "等待条件窗口（按环境独立延后）"
 };
 function admissionReasonLabel(decision) {
   const why = decision.whyThisCellNow;

@@ -184,6 +184,9 @@
     mixed_analysis_implementation_split: "分析与实现混合，已拆分",
     cell_processing_error: "工作项处理异常（已隔离待决策）",
     task_group_recompute_error: "任务组重算异常（已隔离）",
+    condition_window_deferred: "条件窗口未满足，已延后",
+    independent_review: "独立评审中",
+    gate_blocked: "门禁阻断",
     /* ---------- 人工指令：决策处置 ---------- */
     resolve_decision: "决策处置",
     work_item_decision_reopen: "工作项重开",

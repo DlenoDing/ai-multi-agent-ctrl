@@ -568,6 +568,9 @@ localized_literals = (core_source + agent_gateway_source).scan(/(?:blockedReason
 missing_localized = localized_literals.reject { |code| i18n_key.call(code) }
 errors << "Console i18n missing blockedReason/reasonCode keys: #{missing_localized.join(', ')}" unless missing_localized.empty?
 errors << "blockedReason must be a static string literal (not a template literal) for i18n" if (core_source + agent_gateway_source).match?(/blockedReason\s*[:=]\s*`/)
+# reasonCode must also be a static literal (a template reasonCode is equally un-localizable and leaks
+# raw English into the admission ledger via the t()/whyThisCellNow fallback).
+errors << "reasonCode must be a static string literal (not a template literal) for i18n" if (core_source + agent_gateway_source).match?(/reasonCode\s*[:=]\s*`/)
 # 2026-07-27 review round 6 residual (LOW security).
 errors << "MCP instruction stable_prefix_get must be principal-scoped" unless mcp_source.include?("stablePrefixGet(state, args, principalProjectFilter(context))")
 errors << "MCP permission_matrix_get must deny bounded principals" unless mcp_source.include?("permission_matrix_requires_unrestricted_principal")
