@@ -258,6 +258,8 @@
     active_supporting_group: "支援其他任务组中",
     independent_review_changes_requested: "独立评审要求返工",
     independent_review_backfill_failed: "补评审未通过待决策",
+    mcp_session_paused: "MCP 会话已暂停",
+    remote_mcp_principal_grant: "远程 MCP 主体授权",
     permission_request_denied: "权限被拒待决策",
 
     /* ---------- 账号 / 组织 ---------- */

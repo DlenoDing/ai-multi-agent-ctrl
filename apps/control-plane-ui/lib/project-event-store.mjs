@@ -480,7 +480,24 @@ function appendSafeJson(path, value) {
 
 function appendDurableLine(path, line) {
   mkdirSync(dirname(path), {recursive: true});
-  appendFileSync(path, line, {mode: 0o600});
+  // Self-heal a prior torn write: if the file's last byte isn't a newline (a previous append was cut off
+  // mid-line by a crash/power-loss), prepend one so this record starts fresh. Otherwise the two lines
+  // concatenate into one unparseable record and BOTH are dropped on rebuild (torn event + following one).
+  let prefix = "";
+  if (existsSync(path)) {
+    const size = statSync(path).size;
+    if (size > 0) {
+      const fd = openSync(path, "r");
+      try {
+        const tail = Buffer.alloc(1);
+        readSync(fd, tail, 0, 1, size - 1);
+        if (tail[0] !== 0x0a) prefix = "\n";
+      } finally {
+        closeSync(fd);
+      }
+    }
+  }
+  appendFileSync(path, prefix + line, {mode: 0o600});
   if (process.env.AIMAC_PROJECT_EVENT_FSYNC === "false") return;
   const fd = openSync(path, "r");
   try {

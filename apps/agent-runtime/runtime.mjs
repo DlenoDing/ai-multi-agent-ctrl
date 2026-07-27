@@ -962,6 +962,15 @@ function spawnAndCapture(commandName, commandArgs, options = {}) {
     options.control?.attachChild(child);
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
+    // Wall-clock guard: a hung/runaway model executor (network stall, interactive prompt, infinite loop)
+    // would otherwise pin the node forever — the control watcher's keep-alive keeps renewing the claim, so
+    // the server-side TTL never expires either. On expiry, group-kill the child and report a timeout so the
+    // dispatch fails and the node returns to the claim loop. Defaults to 2h (generous for heavy legit
+    // tasks, bounded enough to reap a hung one); AIMAC_AGENT_EXECUTION_TIMEOUT_MS overrides (0 disables).
+    const configuredTimeout = Number(process.env.AIMAC_AGENT_EXECUTION_TIMEOUT_MS);
+    const executionTimeoutMs = Math.max(0, options.timeoutMs != null ? Number(options.timeoutMs) : (Number.isFinite(configuredTimeout) ? configuredTimeout : 7200000));
+    const timer = executionTimeoutMs > 0 ? setTimeout(() => { timedOut = true; terminateChild(child).catch(() => {}); }, executionTimeoutMs) : null;
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString();
       stdout = boundedOutputAppend(stdout, text);
@@ -972,8 +981,10 @@ function spawnAndCapture(commandName, commandArgs, options = {}) {
       stderr = boundedOutputAppend(stderr, text);
       options.onOutput?.("stderr", text);
     });
-    child.on("error", reject);
+    child.on("error", (error) => { if (timer) clearTimeout(timer); reject(error); });
     child.on("close", (status, signal) => {
+      if (timer) clearTimeout(timer);
+      if (timedOut) return resolveResult({status: 124, signal, stdout, stderr: `${stderr}\n[agent-runtime] execution timed out after ${executionTimeoutMs}ms`, timedOut: true});
       resolveResult({status: status ?? (signal ? 143 : 1), signal, stdout, stderr});
     });
     if (options.input) child.stdin.end(options.input);
@@ -1277,7 +1288,17 @@ function configureGlobalRemoteMcpClients(config, profile) {
 }
 
 function mergeMcpJson(path, remote) {
-  const current = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
+  // Tolerate a malformed existing client config: a pre-existing, unrelated ~/.claude|.cursor/mcp.json
+  // with bad JSON must not throw out of the run loop and kill the agent. Skip the merge with a warning.
+  let current = {};
+  if (existsSync(path)) {
+    try {
+      current = JSON.parse(readFileSync(path, "utf8")) || {};
+    } catch (error) {
+      process.stderr.write(`[agent-runtime] skipping remote MCP merge — ${path} is not valid JSON: ${error.message}\n`);
+      return;
+    }
+  }
   current.mcpServers ||= {};
   current.mcpServers.ai_multi_agent_ctrl = remote;
   writeSecretJson(path, current);
@@ -1476,7 +1497,24 @@ function ensureCleanWorktree(root) {
 
 function gitStatusPaths(root) {
   const raw = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-  return raw.split("\0").filter(Boolean).map((entry) => entry.slice(3)).map((path) => path.includes(" -> ") ? path.split(" -> ").at(-1) : path).sort();
+  // -z porcelain: each record is "XY <path>"; a rename/copy (X or Y is R/C) is followed by a SEPARATE
+  // NUL-terminated field holding the (bare, prefix-less) source path. The non-z " -> " arrow never
+  // appears here, so the record must be walked field-by-field: take "XY <dest>" as the changed path, and
+  // for R/C also take the next field as the source (both endpoints must be inside the allowlist). The old
+  // code applied entry.slice(3) to the bare source field, corrupting it (e.g. "src/old.js" -> "/old.js").
+  const fields = raw.split("\0");
+  const paths = [];
+  for (let i = 0; i < fields.length; i += 1) {
+    const entry = fields[i];
+    if (!entry) continue;
+    paths.push(entry.slice(3));
+    if (/[RC]/.test(entry.slice(0, 2))) {
+      const source = fields[i + 1];
+      if (source) paths.push(source);
+      i += 1;
+    }
+  }
+  return [...new Set(paths)].sort();
 }
 
 function configureGitIdentity(root) {

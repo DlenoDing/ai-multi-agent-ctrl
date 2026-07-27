@@ -617,6 +617,21 @@ errors << "pg query timeout must be clamped to a finite positive value" unless p
 # or untracked files from a failed/cancelled dispatch permanently fail ensureCleanWorktree on every future
 # dispatch (persistent per-repository node wedge).
 errors << "agent runtime must git clean the persistent checkout before each dispatch" unless agent_runtime_source.include?("[\"clean\", \"-ffd\"]")
+# Cycle-4 resilience/runtime fixes.
+# H1: git status -z rename parsing must walk records (R/C source is a separate field), not slice(3)-map,
+# which corrupted the bare source path and failed every rename dispatch on the allowlist check.
+errors << "agent runtime must parse git -z rename records field-by-field (no corrupt slice-map)" unless agent_runtime_source.include?("if (/[RC]/.test(entry.slice(0, 2)))") && !agent_runtime_source.include?(".map((entry) => entry.slice(3)).map((path) => path.includes(\" -> \")")
+# H2: the model executor must have a wall-clock timeout (a hung executor otherwise pins the node forever).
+errors << "agent runtime model executor must have a wall-clock timeout" unless agent_runtime_source.include?("AIMAC_AGENT_EXECUTION_TIMEOUT_MS") && agent_runtime_source.include?("terminateChild(child)")
+# F1: the node heartbeat must NOT blanket-renew dispatch claims (only execution events renew) — else an
+# orphaned running dispatch is kept alive forever and wedges its close barrier.
+errors << "node heartbeat must not blanket-renew dispatch claims (orphan wedge)" unless !agent_gateway_source.include?("renewNodeDispatchClaims")
+# F2: durable JSONL append must self-heal a prior torn write (leading newline) so it doesn't lose the next event.
+errors << "durable event append must self-heal a torn prior write" unless project_event_store_source.include?("if (tail[0] !== 0x0a) prefix")
+# F3: the state-store GC must sweep stale write temporaries so they don't accumulate on write failures.
+errors << "state-store GC must sweep stale write temporaries" unless state_store_source.include?("function sweepStaleTempFiles")
+# M6: a malformed existing client MCP config must not crash the agent run loop.
+errors << "agent runtime must tolerate a malformed client MCP config" unless agent_runtime_source.include?("skipping remote MCP merge")
 # 2026-07-27 full-system review round 3. Isolation-1: MCP state_get full scope must be fail-closed —
 # both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
 # collections cross-project), and the agent_node full branch must be env-gated like its siblings.
@@ -730,10 +745,13 @@ errors << "Console must offer a resolve_decision actuator for needs_decision cel
 # recurring defect class). Also forbid TEMPLATE-LITERAL blockedReason (its interpolated variants can
 # never be localized — use a static closed-set reason instead).
 i18n_key = ->(code) { i18n_zh_source.match?(/^\s*#{Regexp.escape(code)}:/) }
-localized_literals = (core_source + agent_gateway_source).scan(/(?:blockedReason|reasonCode)\s*[:=]\s*"([a-z_]+)"/).flatten.uniq
+# Scan core + gateway + MCP server: the MCP server also sets dispatch.blockedReason literals that the
+# console renders via t(), so it must be covered or a raw-English reason (e.g. mcp_session_paused) leaks.
+i18n_reason_sources = core_source + agent_gateway_source + mcp_source
+localized_literals = i18n_reason_sources.scan(/(?:blockedReason|reasonCode)\s*[:=]\s*"([a-z_]+)"/).flatten.uniq
 missing_localized = localized_literals.reject { |code| i18n_key.call(code) }
 errors << "Console i18n missing blockedReason/reasonCode keys: #{missing_localized.join(', ')}" unless missing_localized.empty?
-errors << "blockedReason must be a static string literal (not a template literal) for i18n" if (core_source + agent_gateway_source).match?(/blockedReason\s*[:=]\s*`/)
+errors << "blockedReason must be a static string literal (not a template literal) for i18n" if i18n_reason_sources.match?(/blockedReason\s*[:=]\s*`/)
 # reasonCode must also be a static literal (a template reasonCode is equally un-localizable and leaks
 # raw English into the admission ledger via the t()/whyThisCellNow fallback).
 errors << "reasonCode must be a static string literal (not a template literal) for i18n" if (core_source + agent_gateway_source).match?(/reasonCode\s*[:=]\s*`/)

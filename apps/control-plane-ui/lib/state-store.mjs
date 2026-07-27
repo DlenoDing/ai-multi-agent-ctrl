@@ -469,8 +469,25 @@ function writeRuntimeJsonProjectShards(projectShards, options, unchangedProjectI
   return {activeNames};
 }
 
+// Reclaim leftover ".tmp-*" write temporaries (from an ENOSPC/crash between openSync and renameSync).
+// Readers ignore them so there is no corruption, but they accumulate unbounded under repeated write
+// failures. Only sweep ones older than 60s so a concurrent same-process in-flight write is never touched.
+function sweepStaleTempFiles(dir) {
+  if (!existsSync(dir)) return;
+  const cutoff = Date.now() - 60000;
+  for (const name of readdirSync(dir)) {
+    if (!name.includes(".tmp-")) continue;
+    const full = join(dir, name);
+    try {
+      if (statSync(full).mtimeMs < cutoff) unlinkSync(full);
+    } catch { /* raced with another sweep / already gone */ }
+  }
+}
+
 function gcRuntimeJsonProjectShards(options, activeNames) {
   const dir = join(options.runtimeDir, projectDbDirName);
+  sweepStaleTempFiles(dir);
+  sweepStaleTempFiles(dirname(options.statePath));
   if (!existsSync(dir)) return;
   for (const name of readdirSync(dir).filter((item) => item.endsWith(".state.json"))) {
     if (!activeNames.has(name)) unlinkSync(join(dir, name));

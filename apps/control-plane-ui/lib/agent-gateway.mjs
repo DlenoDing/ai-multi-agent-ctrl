@@ -263,7 +263,12 @@ export function heartbeatAgentNode(state, node, input = {}, options = {}) {
     node.credentialIssuedAt = at;
     node.credentialExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   }
-  renewNodeDispatchClaims(state, node, at);
+  // NOTE: the node heartbeat deliberately does NOT renew dispatch claims. Claim renewal comes only from
+  // dispatch-specific execution events (recordAgentExecutionEvent) — the agent emits a keepalive execution
+  // event ~every 60s while actually executing, far under the claim TTL. A blanket heartbeat renewal would
+  // keep an ORPHANED running dispatch (lost claim response / agent crashed mid-dispatch) alive forever
+  // (renewed but never executed), wedging its close barrier; without it the orphan's claim expires and
+  // recycleExpiredClaims requeues it, while a genuinely-executing dispatch stays renewed by its events.
   // Drive dead-node reconciliation from ANY heartbeat, not only from a claim poll: otherwise a stranded
   // dispatch (expired claim / ACK-timeout backstop) is recovered only when some other online+full node
   // happens to pull work — never on an idle/degraded/read_only fleet. This makes recovery elapsed-time
@@ -290,19 +295,6 @@ function refreshDispatchGrantExpiry(state, dispatch, expiresAt, at) {
     if (grant.dispatchId === dispatch.dispatchId && grant.grantStatus === "issued") {
       grant.expiresAt = expiresAt;
       grant.updatedAt = at;
-    }
-  }
-}
-
-function renewNodeDispatchClaims(state, node, at) {
-  for (const dispatch of state.agentDispatches || []) {
-    if (dispatch.assignedNodeId !== node.nodeId || dispatch.status !== "running" || !dispatch.claimExpiresAt) continue;
-    const ttlSeconds = boundedInteger(dispatch.claimTtlSeconds, 60, 21600, 1800);
-    const renewed = new Date(Date.now() + ttlSeconds * 1000).toISOString();
-    if (renewed > dispatch.claimExpiresAt) {
-      dispatch.claimExpiresAt = renewed;
-      dispatch.updatedAt = at;
-      refreshDispatchGrantExpiry(state, dispatch, renewed, at);
     }
   }
 }
