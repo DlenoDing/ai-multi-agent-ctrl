@@ -353,6 +353,22 @@ function verifyHumanAndOrganizationContracts(output) {
     createHumanDirective(fifoState, {taskGroupId: "tg_runtime_management", directiveType: "adjust_priority", instruction: "second"}, {actor: "acct_ct"});
     consumeQueuedHumanDirectives(fifoState);
     if (fifoState.taskGroups.find((item) => item.id === "tg_runtime_management").priorityHint !== "second") output.push("directive FIFO: newest adjust_priority did not win (LIFO regression)");
+
+    // Per-cell error isolation (global intelligent scheduling): a cell that throws during processing
+    // is quarantined to needs_decision/cell_processing_error and never aborts the whole cycle.
+    const isoState = structuredClone(seedState);
+    ensureRuntimeCollections(isoState, {root});
+    const isoTg = isoState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    isoTg.workItems = [{id: "wi_throw_iso", title: "异常项", status: "blocked_dependency", ownerRole: "agent-runtime", dependsOnWorkItemRefs: 7, progress: 0}];
+    let cycleAborted = false;
+    try {
+      runAutonomousCycle(isoState, {root, mode: "all", taskGroupId: "tg_runtime_management", autoSyncSkills: false});
+    } catch {
+      cycleAborted = true;
+    }
+    if (cycleAborted) output.push("per-cell isolation: an unexpected cell error aborted the whole cycle");
+    const isolatedCell = isoTg.workItems.find((item) => item.id === "wi_throw_iso");
+    if (!isolatedCell || isolatedCell.status !== "needs_decision" || isolatedCell.blockedReason !== "cell_processing_error") output.push("per-cell isolation: a throwing cell was not quarantined to needs_decision/cell_processing_error");
   }
 
   // §4.5 single-cell-block guard (gap #12): a blocked cell must not escalate the whole task

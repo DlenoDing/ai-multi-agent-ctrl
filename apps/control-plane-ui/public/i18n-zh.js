@@ -182,6 +182,8 @@
     blocking_objects_present: "存在阻塞对象",
     existing_execution_active: "已有执行进行中",
     mixed_analysis_implementation_split: "分析与实现混合，已拆分",
+    cell_processing_error: "工作项处理异常（已隔离待决策）",
+    task_group_recompute_error: "任务组重算异常（已隔离）",
     /* ---------- 人工指令：决策处置 ---------- */
     resolve_decision: "决策处置",
     work_item_decision_reopen: "工作项重开",

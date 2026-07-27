@@ -534,6 +534,12 @@ errors << "Condition-window admission must gate only condition-dependent cells a
 errors << "Overall block must obey the minimal-scope blocker allow-list" unless core_source.include?("NON_ESCALATING_WAIT_CLASSES") && core_source.include?("escalatableBlocked") && contract_check_source.include?("wait-only group")
 errors << "Worker carrier decision must record the 4-way carrier and justify non-selected carriers" unless core_source.include?("WORKER_CARRIER_MODES") && core_source.include?("nonSelectedCarriers") && core_source.include?("nonReuseReason") && core_source.include?("retireOrArchiveCondition") && contract_check_source.include?("nonReuseReason (A7)")
 errors << "Default system rules must include the layered-admission discipline" unless core_source.include?("sys.layered-admission")
+# 2026-07-27 core-init update absorption (problem-family / whole-surface / mainline-compat / global scheduling).
+errors << "Default system rules must include the core-init update disciplines" unless ["sys.problem-family-bundle", "sys.function-vs-sample-coverage", "sys.mainline-compatibility", "sys.resource-admission", "sys.readiness-provisioning"].all? { |rule| core_source.include?(rule) }
+errors << "root-cause-owner must include process root-cause dispositions" unless core_source.include?("rules_not_converted_to_executable_invariant_gate") && core_source.include?("symptom_split_without_cross_cutting_invariant_owner")
+errors << "layered-admission must promote a used deferred conclusion to must_reverify_now" unless core_source.include?("must_reverify_now")
+# A single problem cell / task group must never abort the whole cycle — remaining executable work continues.
+errors << "runAutonomousCycle must isolate per-cell and per-task-group failures" unless core_source.include?("cell_processing_error") && core_source.include?("Per-cell isolation") && core_source.include?("task_group_recompute_error")
 # 2026-07-26 multi-dimension review fixes.
 errors << "Remote git verification must validate the repository URL and restrict git transports" unless server_source.include?("prepareRemoteGitVerification") && server_source.include?("isSafeGitRemoteUrl(target.repositoryUrl)") && server_source.include?("GIT_ALLOW_PROTOCOL") && agent_gateway_source.include?("export function isSafeGitRemoteUrl")
 errors << "Repository output target selection must reject an unsafe git URL at write time" unless server_source.include?("repository_output_target_unsafe_repository_url") && mcp_source.include?("repository_output_target_unsafe_repository_url")
