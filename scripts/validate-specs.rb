@@ -640,6 +640,12 @@ errors << "checkpoint replay must bound retries to avoid wedging the node" unles
 errors << "agent runtime must reap executor children on signal" unless agent_runtime_source.include?("const activeChildProcesses = new Set()") && agent_runtime_source.include?("function installChildReaper")
 # perf: the per-rule content digest must be memoized (was re-hashed per dispatch over invariant rule bodies).
 errors << "per-rule content digest must be memoized" unless core_source.include?("const ruleContentDigestCache = new Map()") && core_source.include?("function ruleContentDigest")
+# Source hygiene: no tracked text source may embed a raw NUL byte (makes grep/git/editors treat it as
+# binary). Regressed once when a memo-key separator was written as a literal U+0000 instead of "\\u0000".
+nul_offenders = Dir.glob(File.join(ROOT, "**/*.{mjs,js,rb,html,css,md}")).reject { |p| p.include?("/node_modules/") }.select do |p|
+  File.binread(p).include?("\x00".b)
+end
+errors << "tracked text source(s) contain a raw NUL byte: #{nul_offenders.map { |p| p.sub(ROOT + '/', '') }.join(', ')}" unless nul_offenders.empty?
 # 2026-07-27 full-system review round 3. Isolation-1: MCP state_get full scope must be fail-closed —
 # both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
 # collections cross-project), and the agent_node full branch must be env-gated like its siblings.

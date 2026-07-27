@@ -3720,7 +3720,10 @@ function mergeRuleLayer(base, overlay, source, category) {
 // Cache is bounded by the number of distinct rule contents in the system (defaults + capped overrides).
 const ruleContentDigestCache = new Map();
 function ruleContentDigest(ruleId, category, content) {
-  const key = `${ruleId} ${category} ${content}`;
+  // Length-prefix the first two fields so no (ruleId, category, content) triple can alias another
+  // regardless of separator characters in the ids; content is last and needs no delimiter. (Plain
+  // ASCII only — an earlier revision used a raw NUL separator that made the source file read as binary.)
+  const key = `${ruleId.length}:${ruleId}|${category.length}:${category}|${content}`;
   const cached = ruleContentDigestCache.get(key);
   if (cached) return cached;
   const digest = digestOf({ruleId, category, content});
