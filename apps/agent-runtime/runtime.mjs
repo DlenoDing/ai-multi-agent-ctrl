@@ -1135,6 +1135,11 @@ function prepareRepository(config, target) {
     git(repositoryRoot, ["checkout", "-B", target.branch, target.baseRef]);
   }
   git(repositoryRoot, ["reset", "--hard", checkoutBase]);
+  // reset --hard only reverts TRACKED files; a prior failed/cancelled dispatch (out-of-allowlist file,
+  // mid-run pause/cancel/revoke) can leave untracked files that ensureCleanWorktree (--untracked-files=all)
+  // then rejects on EVERY future dispatch, permanently wedging this repository. Purge them so the
+  // persistent checkout starts pristine each dispatch.
+  git(repositoryRoot, ["clean", "-ffd"]);
   return repositoryRoot;
 }
 

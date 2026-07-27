@@ -15,7 +15,7 @@ random_token() {
     return
   fi
   if command -v node >/dev/null 2>&1; then
-    node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex") + "\\n")'
+    node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex") + "\n")'
     return
   fi
   printf '%s\n' 'secure random source required: install openssl or node' >&2

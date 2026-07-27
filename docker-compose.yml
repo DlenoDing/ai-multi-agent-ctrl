@@ -45,6 +45,10 @@ services:
       interval: 10s
       timeout: 3s
       retries: 12
+      # The official image runs a temporary init server on the unix socket before TCP is up; a
+      # start_period keeps early probes from marking the container healthy (and unblocking the gated
+      # control-plane) before the real listener accepts connections.
+      start_period: 10s
 
 volumes:
   aimac-runtime:

@@ -604,6 +604,10 @@ errors << "shutdown ACK timeout must be backstopped like revoke" unless agent_ga
 errors << "guarded pg write must UPDATE (no insert-on-absent bypass) and ensure tables outside the txn" unless pg_pool_worker_source.include?("UPDATE ${ident(table)} SET state = $2::jsonb") && pg_pool_worker_source.include?("Ensure tables OUTSIDE the write transaction")
 # State-1: the pg query timeout must be a finite positive number (NaN would deadlock Atomics.wait).
 errors << "pg query timeout must be clamped to a finite positive value" unless pg_sync_store_source.include?("Number.isFinite(n) && n > 0 ? n : 60000")
+# 2026-07-27 full-system review round 2. Runtime-1: prepareRepository must `git clean` after reset --hard,
+# or untracked files from a failed/cancelled dispatch permanently fail ensureCleanWorktree on every future
+# dispatch (persistent per-repository node wedge).
+errors << "agent runtime must git clean the persistent checkout before each dispatch" unless agent_runtime_source.include?("[\"clean\", \"-ffd\"]")
 errors << "Console must offer a resolve_decision actuator for needs_decision cells" unless app_js_source.include?("\"resolve_decision\"") && app_js_source.include?("resolution: data.resolution") && app_js_source.include?("admissionReasonLabel") && i18n_zh_source.include?("work_item_decision_reopen") && i18n_zh_source.include?("dependency_abandoned")
 # Durable i18n-completeness guard: every static blockedReason / admission reasonCode literal set in
 # core/gateway must have a zh dictionary key, else the Chinese console renders raw English (a
