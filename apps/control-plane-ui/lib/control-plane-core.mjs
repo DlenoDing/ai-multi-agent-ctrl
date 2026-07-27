@@ -3850,6 +3850,9 @@ function revokeDispatchNodeBinding(state, dispatch, reason) {
     }
     const previousNode = (state.agentRuntimeNodes || []).find((item) => item.nodeId === previousNodeId);
     if (previousNode) previousNode.activeDispatchIds = (previousNode.activeDispatchIds || []).filter((id) => id !== dispatch.dispatchId);
+    // Preserve the unbound node so the agent can still read its OWN terminal permission_status after the
+    // deny/abandon cascade revokes its grant + clears assignedNodeId (else it polls a 403 until timeout).
+    dispatch.previousNodeId = previousNodeId;
   }
   delete dispatch.assignedNodeId;
   delete dispatch.claimedAt;

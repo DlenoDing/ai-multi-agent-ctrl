@@ -783,6 +783,13 @@ function validateMcpGrant(state, toolName, args, argumentDigest, context = {}) {
     if (toolName === "evidence-mcp.checkpoint_submit") {
       return {allowed: false, error: "agent_checkpoint_must_use_gateway", required: "/api/agent/v1/dispatches/:dispatchId/checkpoint"};
     }
+    // Read-only self-status: a node must read the TERMINAL outcome of its own permission request even
+    // after a deny/abandon cascade revoked its dispatch-bound grant (else it polls a 403 until the ~4min
+    // timeout and never sees "denied"). permissionStatus scopes to the owner via
+    // permissionRequestReadableByPrincipal, so no active grant is required for this read-only self-read.
+    if (toolName === "permission-mcp.permission_status") {
+      return {allowed: true, grantRef: "self-permission-status", argumentDigest, readOnly: true};
+    }
     const activeGrants = activeAgentMcpGrants(state, principal, toolName);
     if (!activeGrants.length) return {allowed: false, error: "mcp_dispatch_bound_grant_required", required: toolName};
     const scopedGrants = activeGrants.filter((grant) => grantMatchesArgs(state, grant, args));
@@ -1989,7 +1996,9 @@ function permissionRequestReadableByPrincipal(state, request, context = {}) {
   const principal = context.principal || {};
   if (principal.kind === "system_admin") return true;
   if (principal.kind === "agent_node") {
-    return Boolean(request.sessionId) && (state.agentDispatches || []).some((item) => item.sessionId === request.sessionId && item.assignedNodeId === principal.id);
+    // Match the still-bound node OR the node it was bound to before a deny/abandon cascade unbound it,
+    // so a node can always read the terminal outcome of its own permission request.
+    return Boolean(request.sessionId) && (state.agentDispatches || []).some((item) => item.sessionId === request.sessionId && (item.assignedNodeId === principal.id || item.previousNodeId === principal.id));
   }
   if (Array.isArray(principal.projectIds)) {
     if (principal.projectIds.includes("*")) return true;
