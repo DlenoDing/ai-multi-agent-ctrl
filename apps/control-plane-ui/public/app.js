@@ -29,6 +29,9 @@ let lastError = "";
 let lastLoadErrorToast = "";
 let loading = false;
 let formTouched = false;
+// Which data-form kinds have unsaved edits. Submitting one form triggers a full loadPage() rebuild that
+// discards OTHER dirty forms on the same page; this set lets the submit handler warn before that loss.
+const dirtyFormKinds = new Set();
 let modalHtml = "";
 let modalProtected = false;
 
@@ -201,7 +204,11 @@ function accountName(accountId) {
   if (!accountId) return "-";
   const pool = [...(state.accounts || []), ...orgMembers];
   const found = pool.find((account) => account.accountId === accountId || account.email === accountId);
-  return found ? (found.displayName || found.email || accountId) : t(accountId);
+  if (found) return found.displayName || found.email || accountId;
+  // Fall back to the lightweight server-provided id->displayName directory (views like tasks don't
+  // carry the full accounts collection), then to the raw id — never the t() dictionary (an account id
+  // is never an i18n key, and t() would emit a console warning + the raw id anyway).
+  return (state.accountDirectory && state.accountDirectory[accountId]) || accountId;
 }
 
 function escapeHtml(value) {
@@ -637,6 +644,7 @@ function projectTaskGroups() {
 /* ---------------- 页面数据加载 ---------------- */
 
 async function loadPage() {
+  dirtyFormKinds.clear(); // a full page (re)load rebuilds the DOM, discarding any in-progress form edits
   if (!authToken) {
     render();
     return;
@@ -1879,12 +1887,13 @@ function ruleSourceBadge(source) {
   return customBadge("默认", "gray");
 }
 
-function ruleRow(rule, layer) {
+function ruleRow(rule, layer, readOnly = false) {
   const source = String(rule.source || "");
   const isDefault = source.split("+").includes("default");
   const owned = ruleOwnedAtLayer(source, layer);
   const enabled = rule.enabled !== false && (rule.status ? rule.status === "active" : true);
-  const canDelete = owned && !isDefault; // 本层新增（非默认）规则可删除
+  const canDelete = owned && !isDefault && !readOnly; // 本层新增（非默认）规则可删除
+  const ro = readOnly ? "readonly" : "";
   return `
     <div class="rule-row ${enabled ? "" : "disabled"}"
       data-rule-row
@@ -1895,12 +1904,12 @@ function ruleRow(rule, layer) {
       data-orig-content="${esc(rule.content || "")}"
       data-orig-title="${esc(rule.title || "")}">
       <div class="rule-head">
-        <input class="rule-title-input" name="ruleTitle" maxlength="256" value="${esc(rule.title || "")}" ${isDefault ? "readonly" : ""} placeholder="规则标题">
+        <input class="rule-title-input" name="ruleTitle" maxlength="256" value="${esc(rule.title || "")}" ${(isDefault || readOnly) ? "readonly" : ""} placeholder="规则标题">
         ${ruleSourceBadge(source)}
-        <label class="rule-toggle"><input type="checkbox" name="ruleEnabled" ${enabled ? "checked" : ""}> 启用</label>
+        <label class="rule-toggle"><input type="checkbox" name="ruleEnabled" ${enabled ? "checked" : ""} ${readOnly ? "disabled" : ""}> 启用</label>
         ${canDelete ? `<button type="button" class="danger-button" data-action="rule-del">删除</button>` : ""}
       </div>
-      <textarea name="ruleContent" maxlength="8192" placeholder="规则内容（可改写默认内容）">${esc(rule.content || "")}</textarea>
+      <textarea name="ruleContent" maxlength="8192" ${ro} placeholder="规则内容（可改写默认内容）">${esc(rule.content || "")}</textarea>
     </div>
   `;
 }
@@ -1930,7 +1939,7 @@ function ruleEditorForm(opts) {
     <form class="form-grid" ${formAttr} data-category="${esc(category)}" data-list="${esc(listId)}">
       ${opts.note ? `<div class="notice">${opts.note}</div>` : ""}
       <div class="rule-list" data-cfg-list="${esc(listId)}">
-        ${(rules || []).map((rule) => ruleRow(rule, layer)).join("") || `<div class="small muted">暂无规则。</div>`}
+        ${(rules || []).map((rule) => ruleRow(rule, layer, readOnly)).join("") || `<div class="small muted">暂无规则。</div>`}
       </div>
       <div class="button-row">
         <button type="button" class="secondary-button" data-action="rule-add" data-target="${esc(listId)}" data-category="${esc(category)}" ${disabled}>新增${catLabel}规则</button>
@@ -2078,7 +2087,7 @@ function renderReview() {
         </div>`).join("")}
       ${openFindings.map((item) => `
         <div class="record">
-          <div class="record-title"><strong>发现：${esc(item.summary || item.title || item.findingId)}</strong>${badge(item.status)}${item.severity ? customBadge(item.severity, "orange") : ""}</div>
+          <div class="record-title"><strong>发现：${esc(item.summary || item.title || item.findingId)}</strong>${badge(item.status)}${item.severity ? customBadge(t(item.severity), "orange") : ""}</div>
           <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>${fmtTime(item.createdAt)}</span></div>
           ${canReview ? `<form class="form-grid" data-form="finding-resolve" data-request="${esc(item.findingId)}" style="margin-top:8px;">
             <div class="form-row"><label>处置类别</label><select name="dispositionClass">${dispositionHtml}</select></div>
@@ -2271,7 +2280,7 @@ function renderMonitor() {
   }).join("");
   const qualityGateRows = filterSource((state.qualityGates || []).filter((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)), "quality-gates").slice(0, 20).map((qg) => row([
     esc(taskGroupNameOf(qg.taskGroupId)),
-    esc(qg.gateType || "-"),
+    esc(t(qg.gateType) || qg.gateType || "-"),
     `<span class="mono">${esc(qg.workItemId || "-")}</span>`,
     badge(qg.status),
     {v: fmtTime(qg.updatedAt || qg.createdAt), c: "nowrap"}
@@ -2364,6 +2373,10 @@ function renderProjectSettings() {
   const project = currentProject();
   if (!project) return panel("项目设置", `<div class="notice">当前账号暂无可见项目。</div>`, {wide: true});
   const config = project.config || {};
+  // projConfig===null means the config GET failed (effectiveProjectConfig always returns non-empty
+  // systemRules defaults on success). Rendering empty editable rule editors here and saving would post
+  // {systemRules:[]} and WIPE the project's rule overrides. Guard: show a notice instead of the editors.
+  const rulesLoaded = projConfig !== null;
   const resolved = projConfig || {};
   const canEdit = hasPerm("project:update");
   const editDisabled = canEdit ? "" : "disabled";
@@ -2388,24 +2401,28 @@ function renderProjectSettings() {
         <button class="primary-button" type="submit" ${editDisabled}>保存项目配置</button>
       </form>
     `, {wide: true}),
-    panel("系统规则", ruleEditorForm({
-      rules: resolved.systemRules || [],
-      listId: "proj-system-rules",
-      category: "system",
-      layer: "project",
-      project: project.id,
-      readOnly: !canEdit,
-      note: "内置默认系统规则可在项目层“停用”或“改写内容”，也可新增自定义系统规则。徽标标明来源：默认、项目。"
-    }), {wide: true}),
-    panel("业务规则", ruleEditorForm({
-      rules: resolved.businessRules || [],
-      listId: "proj-business-rules",
-      category: "business",
-      layer: "project",
-      project: project.id,
-      readOnly: !canEdit,
-      note: "业务规则通常在项目层定义，可新增、停用或改写。任务组可进一步覆盖。"
-    }), {wide: true})
+    !rulesLoaded
+      ? panel("规则配置", `<div class="notice warn-notice">暂时无法读取项目规则配置（配置接口加载失败），已隐藏规则编辑器以避免误保存清空规则。请点击右上角刷新重试。</div>`, {wide: true})
+      : [
+        panel("系统规则", ruleEditorForm({
+          rules: resolved.systemRules || [],
+          listId: "proj-system-rules",
+          category: "system",
+          layer: "project",
+          project: project.id,
+          readOnly: !canEdit,
+          note: "内置默认系统规则可在项目层“停用”或“改写内容”，也可新增自定义系统规则。徽标标明来源：默认、项目。"
+        }), {wide: true}),
+        panel("业务规则", ruleEditorForm({
+          rules: resolved.businessRules || [],
+          listId: "proj-business-rules",
+          category: "business",
+          layer: "project",
+          project: project.id,
+          readOnly: !canEdit,
+          note: "业务规则通常在项目层定义，可新增、停用或改写。任务组可进一步覆盖。"
+        }), {wide: true})
+      ].join("")
   ].join("");
 }
 
@@ -2416,11 +2433,21 @@ document.addEventListener("submit", async (event) => {
   if (!form) return;
   event.preventDefault();
   const kind = form.dataset.form;
+  // Saving one form triggers a full loadPage() rebuild that discards sibling forms' unsaved edits. Warn
+  // before that silent loss when another form on the page is dirty (e.g. edited system-rules then saved
+  // project-config on the same 项目设置 page).
+  if ([...dirtyFormKinds].some((other) => other !== kind)) {
+    if (!(await confirmDialog({title: "存在未保存的其他修改", message: "本页其他表单有未保存的修改，保存并刷新会丢弃它们。是否继续？", danger: true, confirmText: "继续保存"}))) return;
+  }
   // Include the submitter so a form with multiple submit buttons (e.g. 批准/拒绝 carrying name=status)
   // contributes the clicked button's name/value — without this, data.status is undefined and both
   // buttons fall through to the negative default (approve would silently deny).
   const data = Object.fromEntries(new FormData(form, event.submitter).entries());
   const submitBtn = form.querySelector("button[type='submit'], button:not([type='button'])");
+  // Disable EVERY submit button in the form during the request (a form with 批准/拒绝 has two) so the
+  // other button can't fire a second in-flight request; re-enabled on the next render/loadPage.
+  const allSubmitBtns = [...form.querySelectorAll("button[type='submit'], button:not([type='button'])")];
+  allSubmitBtns.forEach((btn) => { if (btn !== submitBtn) btn.disabled = true; });
   try {
     const submitOutcome = await withSubmitting(submitBtn, async () => {
     if (kind === "login") {
@@ -2669,7 +2696,7 @@ document.addEventListener("submit", async (event) => {
     });
     // Any successful data-form submit clears the dirty flag centrally, so navigating away afterwards
     // never fires a spurious "放弃未保存的修改" prompt (the create forms previously never reset it).
-    if (submitOutcome !== "__skip_success__") formTouched = false;
+    if (submitOutcome !== "__skip_success__") { formTouched = false; dirtyFormKinds.clear(); }
     if (SUBMIT_SUCCESS[kind] && submitOutcome !== "__skip_success__") toast.success(SUBMIT_SUCCESS[kind]);
   } catch (error) {
     showError(error);
@@ -2705,6 +2732,10 @@ document.addEventListener("change", async (event) => {
       return;
     }
     if (target.dataset.select === "directive-tg") {
+      if (target.value !== directiveTaskGroupId && formTouched && !(await confirmDialog({title: "放弃未保存的修改", message: "切换目标任务组将丢失已输入的指令内容，确认切换？", danger: true, confirmText: "放弃并切换"}))) {
+        target.value = directiveTaskGroupId; // revert the select
+        return;
+      }
       directiveTaskGroupId = target.value;
       await loadPage();
       return;
@@ -2731,7 +2762,8 @@ document.addEventListener("input", (event) => {
     applyFilterFor(filter);
     return;
   }
-  if (event.target.closest("form[data-form]")) formTouched = true;
+  const touchedForm = event.target.closest("form[data-form]");
+  if (touchedForm) { formTouched = true; dirtyFormKinds.add(touchedForm.dataset.form); }
 });
 
 /* 悬浮气泡 fixed 定位，避免被 .table-scroll 裁剪 */

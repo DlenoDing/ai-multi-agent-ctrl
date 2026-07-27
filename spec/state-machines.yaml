@@ -281,6 +281,16 @@ machines:
         to: "failed"
         actor: "agent-runtime"
         requires: ["failure_evidence"]
+      # Cell-runtime cascade termination (terminateCellRuntime): abandoning/denying a cell terminalizes
+      # its session from ANY live/blocked/waiting state so it stops gating the close barrier.
+      - from: "permission_required"
+        to: "failed"
+        actor: "orchestrator"
+        requires: ["cell_terminated_ref"]
+      - from: "needs_decision"
+        to: "failed"
+        actor: "orchestrator"
+        requires: ["cell_terminated_ref"]
       - from: "active"
         to: "aborted"
         actor: "orchestrator"

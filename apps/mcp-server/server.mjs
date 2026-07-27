@@ -2130,19 +2130,22 @@ function roleDriftGuardBind(state, args) {
 
 function systemUpgradeCandidateExport(state, args) {
   const candidates = state.systemUpgradeCandidates.filter((candidate) => !args.taskGroupId || candidate.taskGroupId === args.taskGroupId);
-  // Actually EXPORT: transition the handed-off candidates to a terminal "exported" status. Without this
-  // the runtime_issue_candidates_exported close-barrier gate (which blocks on status==="candidate_created")
-  // was structurally unsatisfiable — a candidate could be created (recurrence>=3) but never cleared, so
-  // the task-group close wedged with no lever. Export is the governance action that clears it.
+  // Actually EXPORT: transition handed-off candidates to the modeled terminal status
+  // exported_for_external_maintenance (schema/state-machine value) + set the required externalUpgradePackageRef.
+  // Without this the runtime_issue_candidates_exported close-barrier gate (blocks on status==="candidate_created")
+  // was structurally unsatisfiable — a candidate could be created (recurrence>=3) but never cleared, wedging
+  // close with no lever. Export is the governance action that clears it.
   const at = new Date().toISOString();
+  const exportId = createId("upgrade_export");
   for (const candidate of candidates) {
     if (candidate.status === "candidate_created") {
-      candidate.status = "exported";
-      candidate.exportedAt = at;
+      candidate.status = "exported_for_external_maintenance";
+      candidate.externalUpgradePackageRef = candidate.externalUpgradePackageRef || `upgrade-package:${exportId}`;
+      candidate.updatedAt = at;
     }
   }
   return {
-    exportId: createId("upgrade_export"),
+    exportId,
     mode: "external_maintenance_only",
     forbidsRuntimeAutoUpgrade: true,
     candidateCount: candidates.length,

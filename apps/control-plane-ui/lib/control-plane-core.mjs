@@ -2622,6 +2622,15 @@ export function terminateCellRuntime(state, taskGroupId, workItemId, reason) {
   for (const dispatch of state.agentDispatches || []) {
     if (dispatch.taskGroupId === taskGroupId && dispatch.workItemId === workItemId && !["completed", "failed", "cancelled"].includes(dispatch.status)) {
       markDispatchFailed(state, dispatch, reason);
+      // Mirror every other dispatch-terminalize path: cancel dispatch-bound pending confirmations and
+      // revoke the node binding + its issued MCP grants, then clear stop markers. Without this the failed
+      // dispatch's still-issued grants keep no_active_temp_grants blocked (re-wedging close), a dangling
+      // pending confirmation keeps no_pending_human_confirmations blocked, and the revoke-ack finalizer
+      // (which matches on assignedNodeId/revocationPending) resurrects the failed dispatch to queued.
+      cancelPendingConfirmationsForDispatch(state, dispatch.dispatchId, reason);
+      revokeDispatchNodeBinding(state, dispatch, reason);
+      delete dispatch.revocationPending;
+      delete dispatch.shutdownPending;
     }
   }
   const sessionIds = new Set();
@@ -4985,6 +4994,21 @@ export function permissionRequestSubmit(state, args) {
     createdAt: at,
     updatedAt: at
   };
+  // Confused-deputy guard (covers HTTP + MCP submit): the resource that approval will grant must live in
+  // the same project as the request's taskGroupId. Otherwise a principal authorized only for the task
+  // group's project could approve a grant over a resource in a DIFFERENT project (same org). Reject the
+  // mismatch at the source — in the legitimate flow the resource IS the task group, so no false reject.
+  const resourceProjectId = request.resource.resourceType === "project"
+    ? request.resource.resourceId
+    : (state.taskGroups || []).find((taskGroup) => taskGroup.id === request.resource.resourceId)?.projectId;
+  const requestTaskGroupProjectId = request.taskGroupId
+    ? (state.taskGroups || []).find((taskGroup) => taskGroup.id === request.taskGroupId)?.projectId
+    : null;
+  if (request.taskGroupId && resourceProjectId && requestTaskGroupProjectId && resourceProjectId !== requestTaskGroupProjectId) {
+    const error = new Error("permission_request_resource_project_mismatch");
+    error.status = 400;
+    throw error;
+  }
   state.permissionRequests = capRetainingOpen([request, ...state.permissionRequests], ["approved", "denied", "resolved", "revoked", "expired", "cancelled"], 2000);
   if (args.sessionId) {
     const session = state.workSessions.find((item) => item.sessionId === args.sessionId);

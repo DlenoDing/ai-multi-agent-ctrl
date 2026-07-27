@@ -1127,7 +1127,11 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     modelCapabilities: sliceItems(scoped.modelCapabilities, capped),
     agentRuntimeNodes: sliceItems(scoped.agentRuntimeNodes, capped),
     progressSnapshots: sliceItems(scoped.progressSnapshots, capped),
-    pendingHumanConfirmationTaskGroupIds: (scoped.humanConfirmationRequests || []).filter((item) => item.status === "pending").map((item) => item.taskGroupId)
+    pendingHumanConfirmationTaskGroupIds: (scoped.humanConfirmationRequests || []).filter((item) => item.status === "pending").map((item) => item.taskGroupId),
+    // Lightweight id->displayName directory (visible accounts only) so views that show a decidedBy/actor
+    // account (e.g. the review answered-history) render a name instead of a raw acct_ id. scoped.accounts
+    // is already filtered to visible accounts + redacted; we expose only id+displayName here.
+    accountDirectory: Object.fromEntries((scoped.accounts || []).map((item) => [item.accountId, item.displayName || item.accountId]))
   };
   const viewFields = {
     system: ["accounts", "auditLog", "policyDecisions", "commands", "decisionRecords"],
@@ -3259,9 +3263,17 @@ async function handleApi(req, res) {
   const permissionResolveMatch = url.pathname.match(/^\/api\/permission-requests\/([^/]+)\/resolve$/);
   if (req.method === "POST" && permissionResolveMatch) {
     const existingPermission = (state.permissionRequests || []).find((item) => item.requestId === permissionResolveMatch[1]);
-    const permissionResolveScope = existingPermission?.taskGroupId
-      ? taskGroupScope(state, existingPermission.taskGroupId)
-      : (existingPermission?.resource?.resourceType === "project" ? projectScope(existingPermission.resource.resourceId) : projectScope("prj_control_plane"));
+    // Confused-deputy fix: authorize on the RESOURCE that approval actually grants (request.resource,
+    // which ensurePermissionAccessGrant uses), NOT on taskGroupId. resource.resourceId can be set
+    // independently of taskGroupId at submit time, so guarding on taskGroupId let a project-lead of A
+    // approve a grant over project/task-group B (same org). In the legitimate flow resource is
+    // {task_group, taskGroupId}, so this does not change normal behavior.
+    const permissionResolveResource = existingPermission?.resource;
+    const permissionResolveScope =
+      permissionResolveResource?.resourceType === "task_group" ? taskGroupScope(state, permissionResolveResource.resourceId) :
+      permissionResolveResource?.resourceType === "project" ? projectScope(permissionResolveResource.resourceId) :
+      existingPermission?.taskGroupId ? taskGroupScope(state, existingPermission.taskGroupId) :
+      projectScope("prj_control_plane");
     const guard = beginGuardedWrite(req, state, "permission_resolve", `PermissionRequest:${permissionResolveMatch[1]}`, permissionResolveScope);
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = permissionResolve(state, {...body, requestId: permissionResolveMatch[1]});

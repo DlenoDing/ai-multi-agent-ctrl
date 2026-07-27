@@ -697,7 +697,22 @@ errors << "abandon/deny must cascade-terminalize the cell runtime (no orphaned c
 # Cycle-2 round-4: the runtime_issue_candidates_exported gate blocked on status "candidate_created" but the
 # export tool only READ candidates (never transitioned them), so the gate was structurally unsatisfiable —
 # a created candidate wedged the close forever. Export now terminalizes candidates to "exported".
-errors << "upgrade candidate export must terminalize candidates so its close gate is satisfiable" unless mcp_source.include?("candidate.status = \"exported\"") && core_source.include?("runtime_issue_candidates_exported")
+# Export must terminalize to the MODELED status (schema enum + state machine), not an invented value, and
+# set the schema-required externalUpgradePackageRef. Cross-check the status against the schema enum so a
+# future drift (code emitting a status the schema forbids) fails here.
+sysupgrade_schema = File.read(File.join(ROOT, "spec/system-upgrade-candidate.schema.json"))
+errors << "upgrade candidate export must terminalize to the modeled schema status + set externalUpgradePackageRef" unless mcp_source.include?("candidate.status = \"exported_for_external_maintenance\"") && mcp_source.include?("candidate.externalUpgradePackageRef =") && sysupgrade_schema.include?("\"exported_for_external_maintenance\"") && !mcp_source.include?("candidate.status = \"exported\"") && core_source.include?("runtime_issue_candidates_exported")
+# Cycle-3 fixes:
+# HIGH terminateCellRuntime must revoke the node binding + dispatch-bound grants + cancel confirmations
+# (not just fail the dispatch) or dangling issued grants re-wedge close and the revoke finalizer resurrects it.
+errors << "terminateCellRuntime must revoke node binding + grants + confirmations" unless core_source.include?("cancelPendingConfirmationsForDispatch(state, dispatch.dispatchId, reason)") && core_source.include?("revokeDispatchNodeBinding(state, dispatch, reason)")
+# HIGH permission_resolve confused deputy: authorize on the granted resource, and reject a submit whose
+# resource lives in a different project than the taskGroupId.
+errors << "permission resolve/submit must guard against the confused-deputy cross-project grant" unless server_source.include?("permissionResolveResource?.resourceType === \"task_group\"") && core_source.include?("permission_request_resource_project_mismatch")
+# MED proj-settings must not render empty editable rule editors on a config-GET failure (save would wipe).
+errors << "project settings must guard rule editors against a config load failure" unless app_js_source.include?("const rulesLoaded = projConfig !== null")
+# MED per-form dirty tracking so saving one form warns before discarding sibling forms' unsaved edits.
+errors << "multi-form pages must track per-form dirtiness to avoid silent edit loss" unless app_js_source.include?("const dirtyFormKinds = new Set()") && app_js_source.include?("dirtyFormKinds.add(touchedForm.dataset.form)")
 errors << "agentRuntimeNodes cap must retain live nodes and trim terminal first" unless agent_gateway_source.include?("function capAgentRuntimeNodes") && agent_gateway_source.include?("capAgentRuntimeNodes(state.agentRuntimeNodes)")
 # F2: mcpGrants cap must never evict a still-issued grant of a live dispatch (would deny it MCP access).
 errors << "mcpGrants cap must retain issued grants of live dispatches" unless agent_gateway_source.include?("function capMcpGrants") && agent_gateway_source.include?("capMcpGrants(state, state.mcpGrants)")
