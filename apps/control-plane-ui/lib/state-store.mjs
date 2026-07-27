@@ -313,16 +313,37 @@ function runtimeJsonShardNameFromIndexEntry(entry) {
   return null;
 }
 
+// Barrier-safe persist retention: these sharded collections gate the close/completion barrier (or are
+// dereferenced by a live runtime), so the persist cap must never evict an OPEN item. A blind
+// newest-by-time slice would drop an old-but-still-pending item and falsely satisfy the barrier
+// (premature close), or evict evidence the barrier needs (unsatisfiable). Predicates mirror
+// computeCompletionReadiness in control-plane-core.mjs — the barrier line is noted for each and the
+// terminal literals are asserted in sync by scripts/validate-specs.rb.
+const shardOpenPredicates = {
+  workSessions: (item) => !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(item.status), // core 2777
+  humanConfirmationRequests: (item) => item.status === "pending", // core 2769
+  humanDirectives: (item) => ["queued", "acknowledged"].includes(item.status), // core 2770
+  repositoryOutputs: (item) => !["pushed", "committed", "rejected", "superseded"].includes(item.status), // core 2759
+  effectiveInstructionPackets: (item) => !["consumed", "expired", "superseded"].includes(item.status), // core 2757 + live deref
+  checkpoints: (item) => Boolean(item.commitRefs?.length && item.pushRefs?.length && item.artifactManifestRefs?.length) // core 2761/2763 evidence
+};
+
 function capProjectShardCollections(shard) {
   for (const collection of projectShardCollections) {
     const items = shard.collections[collection];
     if (!Array.isArray(items)) continue;
     const limit = projectShardCollectionLimits[collection] || 5000;
     if (items.length <= limit) continue;
-    shard.collections[collection] = items
-      .slice()
-      .sort((left, right) => sortableTime(right) - sortableTime(left))
-      .slice(0, limit);
+    const sorted = items.slice().sort((left, right) => sortableTime(right) - sortableTime(left)); // newest first
+    const isOpen = shardOpenPredicates[collection];
+    if (!isOpen) {
+      shard.collections[collection] = sorted.slice(0, limit);
+      continue;
+    }
+    // Never evict an open/gating item; trim only the oldest non-open beyond the limit.
+    const open = sorted.filter(isOpen);
+    const closed = sorted.filter((item) => !isOpen(item)).slice(0, Math.max(0, limit - open.length));
+    shard.collections[collection] = [...open, ...closed];
   }
 }
 

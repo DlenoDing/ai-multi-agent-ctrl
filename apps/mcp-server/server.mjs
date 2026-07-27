@@ -2137,6 +2137,7 @@ function systemUpgradeExternalImport(state, args) {
     createdAt: at
   };
   state.externalUpgradeImports.unshift(imported);
+  state.externalUpgradeImports = state.externalUpgradeImports.slice(0, 2000);
   return {externalUpgradeImport: imported};
 }
 
@@ -2358,6 +2359,7 @@ function instructionEnvelopeCreate(state, args, sourceKind) {
     updatedAt: at
   };
   state.instructionMetrics.envelopes.unshift(envelope);
+  state.instructionMetrics.envelopes = state.instructionMetrics.envelopes.slice(0, 2000);
   return {instructionEnvelope: envelope};
 }
 

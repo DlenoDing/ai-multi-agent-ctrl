@@ -101,7 +101,7 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
     updatedAt: at
   };
   state.agentJoinTokens.unshift(record);
-  state.agentJoinTokens = state.agentJoinTokens.slice(0, 500);
+  state.agentJoinTokens = capAgentJoinTokens(state.agentJoinTokens);
   const serverUrl = trimTrailingSlash(options.publicUrl || "http://127.0.0.1:4317");
   const nodeNameArg = record.expectedNodeName ? ` --node-name ${shellArg(record.expectedNodeName)}` : "";
   const tokenFileCommand = `umask 077; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT HUP INT TERM; cat > "$tmp/aimac.join" <<'AIMAC_JOIN_TOKEN'\n${token}\nAIMAC_JOIN_TOKEN\ncurl -fsSL ${shellUrl(`${serverUrl}/install-agent.sh`)} | sh -s -- --server ${shellArg(serverUrl)} --join-token-file "$tmp/aimac.join"${nodeNameArg}`;
@@ -264,8 +264,14 @@ export function heartbeatAgentNode(state, node, input = {}, options = {}) {
     node.credentialExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   }
   renewNodeDispatchClaims(state, node, at);
+  // Drive dead-node reconciliation from ANY heartbeat, not only from a claim poll: otherwise a stranded
+  // dispatch (expired claim / ACK-timeout backstop) is recovered only when some other online+full node
+  // happens to pull work — never on an idle/degraded/read_only fleet. This makes recovery elapsed-time
+  // driven. A requeue here must force a persist even if this node's own fields are unchanged.
+  const reconciled = recycleExpiredClaims(state);
   const heartbeatPersistFloorMs = Math.max(30000, Number(process.env.AIMAC_HEARTBEAT_PERSIST_FLOOR_MS || 120000));
-  const persistRequired = Boolean(rotatedNodeToken) ||
+  const persistRequired = reconciled ||
+    Boolean(rotatedNodeToken) ||
     node.status !== previousStatus ||
     node.profileDigest !== previousProfileDigest ||
     !previousHeartbeatAt ||
@@ -479,6 +485,17 @@ export function claimNextDispatch(state, node, options = {}) {
 // accumulates full node records (profile.tools/models up to 100 each) forever, since revoke only flips
 // status (the record is never spliced) and frees the org quota. Keep all live nodes; trim oldest
 // terminal (revoked/retired/offline) first.
+// Never evict a still-redeemable join token (issued + unexpired): a blind slice would drop an
+// outstanding token and its one-command join would then fail token_not_found. Trim consumed/expired first.
+function capAgentJoinTokens(tokens, limit = 500) {
+  if (!Array.isArray(tokens) || tokens.length <= limit) return tokens;
+  const nowMs = Date.now();
+  const isLive = (token) => token.status === "issued" && new Date(token.expiresAt || 0).getTime() > nowMs;
+  const live = tokens.filter(isLive);
+  const rest = tokens.filter((token) => !isLive(token)).slice(0, Math.max(0, limit - live.length));
+  return [...live, ...rest];
+}
+
 // Never evict a still-active control command (queued/delivered/received): a later ackAgentControlCommand
 // would then throw agent_control_command_not_found, and a paired blocked dispatch (e.g. resume) would
 // never be acted on. Keep active commands; trim oldest acknowledged/terminal first.
@@ -500,8 +517,10 @@ function capAgentRuntimeNodes(nodes, limit = 2000) {
 
 function recycleExpiredClaims(state) {
   const at = Date.now();
+  let changed = false;
   for (const dispatch of state.agentDispatches || []) {
     if (dispatch.status !== "running" || !dispatch.claimExpiresAt || new Date(dispatch.claimExpiresAt).getTime() > at) continue;
+    changed = true;
     const previousNodeId = dispatch.assignedNodeId;
     dispatch.status = "queued";
     dispatch.blockedReason = "claim_expired_requeued";
@@ -524,13 +543,18 @@ function recycleExpiredClaims(state) {
     // blocked + the node draining; a revoke keeps revocationPending. Both must be backstopped, or a node
     // that dies mid-drain strands its dispatches forever. Select either shape.
     const shutdownPending = dispatch.shutdownPending || dispatch.blockedReason === "assigned_node_shutdown_pending_stop";
-    if ((!dispatch.revocationPending && !shutdownPending) || dispatch.status !== "blocked") continue;
+    // A paused dispatch has no pending-stop marker; if its node then dies it can never be resumed or
+    // cancelled (the control-command API rejects a dead node), wedging it + its close barrier forever.
+    // Back it up too — ONLY on a genuinely dead node (past ACK timeout), so a live-node hold is untouched.
+    const pausePending = dispatch.blockedReason === "control_pause_requested";
+    if ((!dispatch.revocationPending && !shutdownPending && !pausePending) || dispatch.status !== "blocked") continue;
     const node = state.agentRuntimeNodes.find((item) => item.nodeId === dispatch.assignedNodeId);
     const lastBeat = node ? new Date(node.lastHeartbeatAt || 0).getTime() : 0;
-    if (node && at - lastBeat < ackTimeoutMs) continue; // node still alive; keep waiting for its ACK
+    if (node && at - lastBeat < ackTimeoutMs) continue; // node still alive; keep waiting for its ACK / hold
+    changed = true;
     const previousNodeId = dispatch.assignedNodeId;
     dispatch.status = "queued";
-    dispatch.blockedReason = shutdownPending ? "shutdown_ack_timeout_requeued" : "revocation_ack_timeout_requeued";
+    dispatch.blockedReason = pausePending ? "paused_node_dead_requeued" : (shutdownPending ? "shutdown_ack_timeout_requeued" : "revocation_ack_timeout_requeued");
     delete dispatch.assignedNodeId;
     delete dispatch.claimedAt;
     delete dispatch.claimExpiresAt;
@@ -539,12 +563,14 @@ function recycleExpiredClaims(state) {
     dispatch.updatedAt = new Date().toISOString();
     if (node) {
       node.activeDispatchIds = (node.activeDispatchIds || []).filter((id) => id !== dispatch.dispatchId);
-      node.status = shutdownPending ? "offline" : "revoked";
+      node.status = shutdownPending || pausePending ? "offline" : "revoked";
       node.admission = "read_only";
     }
-    revokeDispatchMcpGrants(state, previousNodeId, dispatch.dispatchId, shutdownPending ? "shutdown_ack_timeout" : "revocation_ack_timeout");
-    appendGatewayEvent(state, shutdownPending ? "dispatch_shutdown_ack_timeout" : "dispatch_revocation_ack_timeout", dispatch.dispatchId, {previousNodeId});
+    const timeoutReason = pausePending ? "paused_node_dead" : (shutdownPending ? "shutdown_ack_timeout" : "revocation_ack_timeout");
+    revokeDispatchMcpGrants(state, previousNodeId, dispatch.dispatchId, timeoutReason);
+    appendGatewayEvent(state, pausePending ? "dispatch_paused_node_dead" : (shutdownPending ? "dispatch_shutdown_ack_timeout" : "dispatch_revocation_ack_timeout"), dispatch.dispatchId, {previousNodeId});
   }
+  return changed;
 }
 
 export function getDispatchForNode(state, node, dispatchId, options = {}) {

@@ -216,6 +216,7 @@
     claim_expired_requeued: "认领超时重新入队",
     revocation_ack_timeout_requeued: "吊销确认超时重新入队",
     shutdown_ack_timeout_requeued: "停机确认超时重新入队",
+    paused_node_dead_requeued: "暂停节点失联后重新入队",
     assigned_node_stop_control_failed_retry_queued: "节点停止控制失败，重试入队",
     assigned_node_revocation_ack_requeued: "节点吊销确认后重新入队",
     assigned_node_shutdown_ack_requeued: "节点关停确认后重新入队",

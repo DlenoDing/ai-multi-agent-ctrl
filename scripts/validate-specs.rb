@@ -641,6 +641,18 @@ errors << "agentControlCommands cap must retain active commands" unless agent_ga
 # Shutdown stop-control must carry a persistent shutdownPending marker so a retry-exhausted shutdown is
 # backstopped symmetrically with revoke (revocationPending) instead of wedging.
 errors << "shutdown stop-control must use a persistent shutdownPending backstop marker" unless agent_gateway_source.include?("dispatch.shutdownPending = true") && agent_gateway_source.include?("dispatch.shutdownPending || dispatch.blockedReason === \"assigned_node_shutdown_pending_stop\"")
+# 2026-07-27 full-system review round 7 (exhaustive class sweep). A1: the persistence-layer shard cap
+# must be barrier-safe (never evict an open/gating item) — a blind newest-by-time slice re-introduced the
+# barrier-unsafe class at the storage layer, so a barrier collection's persist cap uses shardOpenPredicates.
+errors << "persist-layer shard cap must retain open barrier items (shardOpenPredicates)" unless state_store_source.include?("const shardOpenPredicates") && state_store_source.include?("const open = sorted.filter(isOpen)") && ["workSessions", "humanConfirmationRequests", "humanDirectives", "repositoryOutputs", "effectiveInstructionPackets", "checkpoints"].all? { |c| state_store_source.include?("#{c}:") }
+# A2/A3: previously-unbounded central MCP collections must be capped.
+errors << "externalUpgradeImports and instructionMetrics.envelopes must be bounded" unless mcp_source.include?("state.externalUpgradeImports = state.externalUpgradeImports.slice(0, 2000)") && mcp_source.include?("state.instructionMetrics.envelopes = state.instructionMetrics.envelopes.slice(0, 2000)")
+# A4: join-token cap must retain still-redeemable (issued+unexpired) tokens.
+errors << "agentJoinTokens cap must retain redeemable tokens" unless agent_gateway_source.include?("function capAgentJoinTokens") && !agent_gateway_source.include?("state.agentJoinTokens.slice(0, 500)")
+# B1: dead-node reconciliation must be driven by heartbeats too (not only claim polls), elapsed-time based.
+errors << "heartbeat must drive dead-node reconciliation (recycleExpiredClaims)" unless agent_gateway_source.include?("const reconciled = recycleExpiredClaims(state)") && agent_gateway_source.include?("const persistRequired = reconciled ||")
+# B2: a paused dispatch on a dead node must be backstopped (else resume/cancel wedge on the dead node).
+errors << "paused dispatch on a dead node must be backstopped" unless agent_gateway_source.include?("const pausePending = dispatch.blockedReason === \"control_pause_requested\"") && i18n_zh_source.include?("paused_node_dead_requeued")
 errors << "agentRuntimeNodes cap must retain live nodes and trim terminal first" unless agent_gateway_source.include?("function capAgentRuntimeNodes") && agent_gateway_source.include?("capAgentRuntimeNodes(state.agentRuntimeNodes)")
 # F2: mcpGrants cap must never evict a still-issued grant of a live dispatch (would deny it MCP access).
 errors << "mcpGrants cap must retain issued grants of live dispatches" unless agent_gateway_source.include?("function capMcpGrants") && agent_gateway_source.include?("capMcpGrants(state, state.mcpGrants)")
