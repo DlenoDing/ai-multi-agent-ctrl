@@ -549,6 +549,18 @@ errors << "Default system rules must include the side-effect authorization / fai
 errors << "Default system rules must include the independent-review depth rule" unless core_source.include?("sys.independent-review-depth")
 errors << "mainline-compatibility must not forbid legitimate single-instance owner-path verification" unless core_source.include?("以单实例冒充多实例或 owner-rebalance 运行基线") && core_source.include?("单实例本身在不依赖多实例")
 errors << "layered-admission must delegate the defer escalation to evidence-qualification (no duplicate)" unless core_source.include?("升格规则见 sys.evidence-qualification") && core_source.include?("任一 defer_to_e2e 一旦被用作解锁依据须升格为 must_reverify_now")
+# 2026-07-27 tri-perspective rule re-audit corrections (round-2 of holistic audit):
+# side-effect-authorization must not sweep read-only idempotent owner-path warmup reads (C-1 too-wide),
+# must re-tie the probe carve-out to the exact-scope authorization gate (A-1 correctness) and cover the
+# observation-control reversible-mutation guard check (C-2 too-narrow); the P0 stabilize sequence must be
+# stated ONCE (root-cause-owner) and cross-referenced elsewhere (R-A dedup); evidence-qualification must be
+# disposition-driven not a blanket reverify (A-2); independent-review-depth must bind evidence quality (C-3).
+errors << "side-effect-authorization must exempt read-only owner-path warmup reads and re-tie probes to authorization" unless core_source.include?("不受本条 per-action 授权约束") && core_source.include?("未获授权时只允许在隔离/沙箱") && core_source.include?("可逆变异检验（见 sys.observation-control）")
+if core_source.scan("最小留证 + 止血 + 隔离 + 升级").length != 1
+  errors << "P0 stabilize sequence must be stated exactly once (root-cause-owner) and cross-referenced elsewhere"
+end
+errors << "evidence-qualification must be disposition-driven, not a blanket reverify" unless core_source.include?("already_service_verified 视为已服务内验证不重复复验")
+errors << "independent-review-depth must bind evidence quality (owner-path/freshness/method-strength)" unless core_source.include?("方法强度是否足以承载该结论")
 # A single problem cell / task group must never abort the whole cycle — remaining executable work continues.
 errors << "runAutonomousCycle must isolate per-cell and per-task-group failures" unless core_source.include?("cell_processing_error") && core_source.include?("Per-cell isolation") && core_source.include?("task_group_recompute_error")
 # 2026-07-26 multi-dimension review fixes.
