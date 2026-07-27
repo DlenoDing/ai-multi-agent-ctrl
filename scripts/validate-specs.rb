@@ -624,6 +624,15 @@ errors << "heartbeat profileDigest must exclude the per-beat observedAt timestam
 # closed when the central file is absent (parity with the Postgres backend).
 errors << "account creation must reject a duplicate email" unless server_source.include?("account_email_already_registered")
 errors << "runtime_json CAS must fail closed when the central state is absent" unless state_store_source.include?("central state absent")
+# 2026-07-27 full-system review round 5. F1: previously-uncapped central-state collections must be
+# bounded (unbounded growth degrades every request); agentRuntimeNodes cap must never drop a live node.
+errors << "previously-uncapped central collections must be bounded" unless ["executionTopologies", "reviewPlans", "runtimeIssueSamples", "runtimeIssuePatterns", "systemUpgradeCandidates", "ruleSourceResolutions", "derivedTaskRequests"].all? { |c| core_source.include?("state.#{c} = state.#{c}.slice(0, 2000)") }
+errors << "agentRuntimeNodes cap must retain live nodes and trim terminal first" unless agent_gateway_source.include?("function capAgentRuntimeNodes") && agent_gateway_source.include?("capAgentRuntimeNodes(state.agentRuntimeNodes)")
+# F2: mcpGrants cap must never evict a still-issued grant of a live dispatch (would deny it MCP access).
+errors << "mcpGrants cap must retain issued grants of live dispatches" unless agent_gateway_source.include?("function capMcpGrants") && agent_gateway_source.include?("capMcpGrants(state, state.mcpGrants)")
+# F3: permission DENIAL must release the blocked session symmetrically (approve/deny) and demote the
+# owning work item to needs_decision so the resolve_decision lever applies.
+errors << "permission denial must release the blocked session and demote the work item" unless mcp_source.include?("function releasePermissionDeniedSession") && mcp_source.include?("releasePermissionDeniedSession(state, request, at)") && i18n_zh_source.include?("permission_denied")
 errors << "MCP agent_node full state_get must be env-gated like system_service/admin" unless mcp_source.scan("AIMAC_MCP_ALLOW_FULL_STATE").length >= 3
 errors << "Console must offer a resolve_decision actuator for needs_decision cells" unless app_js_source.include?("\"resolve_decision\"") && app_js_source.include?("resolution: data.resolution") && app_js_source.include?("admissionReasonLabel") && i18n_zh_source.include?("work_item_decision_reopen") && i18n_zh_source.include?("dependency_abandoned")
 # Durable i18n-completeness guard: every static blockedReason / admission reasonCode literal set in

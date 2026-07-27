@@ -179,6 +179,7 @@ export function registerAgentNode(state, input = {}, options = {}) {
     updatedAt: at
   };
   state.agentRuntimeNodes.unshift(node);
+  state.agentRuntimeNodes = capAgentRuntimeNodes(state.agentRuntimeNodes);
   record.useCount += 1;
   record.status = record.useCount >= record.maxUses ? "consumed" : "issued";
   record.updatedAt = at;
@@ -388,7 +389,22 @@ function ensureDispatchMcpGrants(state, dispatch, node) {
       grantDigest: digestOf(grantSeed)
     });
   }
-  state.mcpGrants = state.mcpGrants.slice(0, 2000);
+  state.mcpGrants = capMcpGrants(state, state.mcpGrants);
+}
+
+// Never evict a still-issued grant of a live (running/blocked) dispatch: authorization reads
+// state.mcpGrants for grantStatus==="issued", so a blind slice would strip the oldest grants of the
+// LONGEST-running dispatches and deny them MCP access mid-execution. Keep all live-issued grants; trim
+// only terminal/revoked/expired grants (or grants of finished dispatches). Mirrors capLeaseHistory.
+function capMcpGrants(state, grants, limit = 4000) {
+  if (!Array.isArray(grants) || grants.length <= limit) return grants;
+  const liveDispatchIds = new Set((state.agentDispatches || [])
+    .filter((dispatch) => dispatch.status === "running" || dispatch.status === "blocked")
+    .map((dispatch) => dispatch.dispatchId));
+  const isLive = (grant) => grant.grantStatus === "issued" && liveDispatchIds.has(grant.dispatchId);
+  const live = grants.filter(isLive);
+  const rest = grants.filter((grant) => !isLive(grant)).slice(0, Math.max(0, limit - live.length));
+  return [...live, ...rest];
 }
 
 export function revokeDispatchMcpGrants(state, nodeId, dispatchId, reason) {
@@ -457,6 +473,18 @@ export function claimNextDispatch(state, node, options = {}) {
   ensureDispatchMcpGrants(state, dispatch, node);
   appendGatewayEvent(state, "dispatch_claimed", dispatch.dispatchId, {nodeId: node.nodeId});
   return {dispatch: buildDispatchPackage(state, dispatch, node, options)};
+}
+
+// Cap the node registry without ever dropping a live node: a register->revoke loop otherwise
+// accumulates full node records (profile.tools/models up to 100 each) forever, since revoke only flips
+// status (the record is never spliced) and frees the org quota. Keep all live nodes; trim oldest
+// terminal (revoked/retired/offline) first.
+function capAgentRuntimeNodes(nodes, limit = 2000) {
+  if (!Array.isArray(nodes) || nodes.length <= limit) return nodes;
+  const liveStatuses = new Set(["online", "draining", "initializing", "degraded"]);
+  const live = nodes.filter((node) => liveStatuses.has(node.status));
+  const dead = nodes.filter((node) => !liveStatuses.has(node.status)).slice(0, Math.max(0, limit - live.length));
+  return [...live, ...dead];
 }
 
 function recycleExpiredClaims(state) {

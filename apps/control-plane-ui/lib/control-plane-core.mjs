@@ -1954,6 +1954,7 @@ function splitMixedWorkItemIfNeeded(state, taskGroup, workItem) {
     createdAt: at,
     updatedAt: at
   });
+  state.derivedTaskRequests = state.derivedTaskRequests.slice(0, 2000);
   appendEvent(state, "derived_task_created", "WorkItem", workItem.id, "orchestrator", {derivedWorkItemRefs: [analysis.id, implementation.id], taskExecutionClass: taskExecution.taskExecutionClass});
   return {derivedWorkItemIds: [analysis.id, implementation.id]};
 }
@@ -2932,6 +2933,7 @@ export function collectRuntimeIssue(state, request = {}) {
         createdAt: at
       };
       state.runtimeIssueSamples.unshift(sample);
+      state.runtimeIssueSamples = state.runtimeIssueSamples.slice(0, 2000);
       return sample;
     }
     pattern = {
@@ -2952,6 +2954,7 @@ export function collectRuntimeIssue(state, request = {}) {
       updatedAt: at
     };
     state.runtimeIssuePatterns.unshift(pattern);
+    state.runtimeIssuePatterns = state.runtimeIssuePatterns.slice(0, 2000);
   } else {
     pattern.recurrenceCount += 1;
     pattern.status = pattern.recurrenceCount >= 2 ? "clustered" : "observed";
@@ -2983,6 +2986,7 @@ export function collectRuntimeIssue(state, request = {}) {
       updatedAt: at
     };
     state.systemUpgradeCandidates.unshift(candidate);
+    state.systemUpgradeCandidates = state.systemUpgradeCandidates.slice(0, 2000);
     pattern.status = "candidate_created";
     pattern.candidateRef = candidate.candidateId;
   }
@@ -3010,6 +3014,7 @@ export function registerRoleSkillOverlay(state, body = {}) {
     ...(body.scope === "task_group" || body.taskGroupId ? {taskGroupId: body.taskGroupId || "tg_runtime_management"} : {})
   };
   state.roleSkillOverlays.unshift(overlay);
+  state.roleSkillOverlays = state.roleSkillOverlays.slice(0, 2000);
   base.overlayRefs = unique([...(base.overlayRefs || []), overlay.overlayId]);
   appendEvent(state, "decision", "RoleSkillOverlay", overlay.overlayId, "skill-registry", overlay);
   return overlay;
@@ -4758,6 +4763,7 @@ export function createExecutionTopology(state, args) {
     updatedAt: at
   };
   state.executionTopologies.unshift(topology);
+  state.executionTopologies = state.executionTopologies.slice(0, 2000);
   return {topology};
 }
 
@@ -4889,6 +4895,7 @@ export function reviewPlanCreate(state, args) {
     updatedAt: at
   };
   state.reviewPlans.unshift(plan);
+  state.reviewPlans = state.reviewPlans.slice(0, 2000);
   return {reviewPlan: plan};
 }
 
@@ -5040,6 +5047,7 @@ export function ruleSourceResolve(state, args) {
     updatedAt: at
   };
   state.ruleSourceResolutions.unshift(resolution);
+  state.ruleSourceResolutions = state.ruleSourceResolutions.slice(0, 2000);
   return {ruleSourceResolution: resolution};
 }
 

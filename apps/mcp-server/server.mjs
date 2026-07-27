@@ -2019,6 +2019,8 @@ export function permissionResolve(state, args) {
   if (request.status === "approved") {
     accessGrant = ensurePermissionAccessGrant(state, request, args, decision, at);
     resumePermissionBlockedSession(state, request, at);
+  } else {
+    releasePermissionDeniedSession(state, request, at);
   }
   return {permissionRequest: request, accessGrant};
 }
@@ -2061,6 +2063,28 @@ function resumePermissionBlockedSession(state, request, at) {
   session.status = "active";
   session.permissionRequestRef = `PermissionRequest:${request.requestId}`;
   session.updatedAt = at;
+}
+
+// Symmetric with resumePermissionBlockedSession: on DENIAL the session must not be left in the
+// non-terminal permission_required state (it would block completion readiness forever with no lever).
+// Move it out and demote the owning work item to needs_decision so the operator's resolve_decision
+// actuator can reopen or abandon it.
+function releasePermissionDeniedSession(state, request, at) {
+  if (!request.sessionId) return;
+  const session = state.workSessions.find((item) => item.sessionId === request.sessionId);
+  if (!session || session.status !== "permission_required") return;
+  session.status = "needs_decision";
+  session.blockedReason = "permission_denied";
+  session.permissionRequestRef = `PermissionRequest:${request.requestId}`;
+  session.updatedAt = at;
+  const workItemId = request.workId || session.workItemId;
+  const taskGroup = (state.taskGroups || []).find((group) => group.id === (request.taskGroupId || session.taskGroupId));
+  const workItem = workItemId && taskGroup ? (taskGroup.workItems || []).find((item) => item.id === workItemId) : null;
+  if (workItem && !["done", "verified", "closed", "aborted", "cancelled"].includes(workItem.status)) {
+    workItem.status = "needs_decision";
+    workItem.blockedReason = "permission_denied";
+    workItem.updatedAt = at;
+  }
 }
 
 function reviewResultConsume(state, args) {

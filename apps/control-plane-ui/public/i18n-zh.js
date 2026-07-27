@@ -230,6 +230,7 @@
     active_supporting_group: "支援其他任务组中",
     independent_review_changes_requested: "独立评审要求返工",
     independent_review_backfill_failed: "补评审未通过待决策",
+    permission_denied: "权限被拒待决策",
 
     /* ---------- 账号 / 组织 ---------- */
     invited: "已邀请",
