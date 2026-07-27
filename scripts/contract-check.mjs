@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve } from "../apps/mcp-server/server.mjs";
+import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
   maintainWorkerLanes,
@@ -31,6 +31,8 @@ import {
   findPermissionBlockedDispatch,
   requeuePermissionApprovedDispatch,
   findingResolve,
+  reviewBundleRegister,
+  computeCompletionReadiness,
   decideSessionPlacement,
   roomSend,
   selectModel,
@@ -410,7 +412,8 @@ function verifyHumanAndOrganizationContracts(output) {
     const barrierTerminal = {
       WorkSession: ["completed_objective", "failed", "closed", "recycled", "aborted"],
       AgentDispatch: ["completed", "failed", "cancelled"],
-      RepositoryOutputTarget: ["pushed", "committed", "rejected", "superseded"]
+      RepositoryOutputTarget: ["pushed", "committed", "rejected", "superseded"],
+      ReviewBundle: ["consumed", "rejected"]
     };
     const machines = loadStateMachines(root).machines || {};
     const coreSourceText = readFileSync(resolve(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
@@ -472,6 +475,38 @@ function verifyHumanAndOrganizationContracts(output) {
     const findRe = findingResolve(findIdem, {findingId: "find_settled", status: "dismissed", dispositionClass: "not_applicable"});
     if (findIdem.findings[0].status !== "resolved" || findIdem.findings[0].dispositionClass !== "fixed_unverified") output.push("findingResolve: a terminal fixed_unverified finding was re-disposed into an accepted class (barrier bypass)");
     if (!findRe.alreadyResolved) output.push("findingResolve: re-resolving a terminal finding did not report alreadyResolved");
+
+    // M3/M4 ReviewBundle: register must create a MODELED "submitted" state (was the unmodeled "registered"
+    // that no path could clear -> permanent close-barrier wedge), and review_result_consume must
+    // terminalize the referenced bundle to a modeled terminal (consumed/rejected) so it stops blocking.
+    const rbState = structuredClone(seedState);
+    ensureRuntimeCollections(rbState, {root});
+    const rb = reviewBundleRegister(rbState, {taskGroupId: "tg_runtime_management", reviewBundleId: "rvb_ext", reviewMode: "external"}).reviewBundle;
+    if (rb.status !== "submitted") output.push("reviewBundleRegister: bundle not created in the modeled 'submitted' state (unmodeled status wedges the barrier)");
+    reviewResultConsume(rbState, {taskGroupId: "tg_runtime_management", reviewBundleId: "rvb_ext", summary: "ok"});
+    if (rbState.reviewBundles.find((b) => b.reviewBundleId === "rvb_ext").status !== "consumed") output.push("reviewResultConsume: submitted bundle not terminalized to consumed (permanent close-barrier wedge)");
+    const rbReject = structuredClone(rbState);
+    rbReject.reviewBundles = [reviewBundleRegister(rbReject, {taskGroupId: "tg_runtime_management", reviewBundleId: "rvb_rej"}).reviewBundle];
+    reviewResultConsume(rbReject, {taskGroupId: "tg_runtime_management", reviewBundleId: "rvb_rej", verdict: "rejected", summary: "no"});
+    if (rbReject.reviewBundles.find((b) => b.reviewBundleId === "rvb_rej").status !== "rejected") output.push("reviewResultConsume: a rejecting verdict did not land the bundle in the modeled terminal 'rejected'");
+
+    // H1 high_risk_no_self_approval + AI-quorum: the proposer of a high-risk action may not approve it, and
+    // approval only terminalizes to "approved" once a distinct-approver quorum is reached.
+    const approvalHrState = structuredClone(seedState);
+    ensureRuntimeCollections(approvalHrState, {root});
+    approvalHrState.approvalRequests = [{approvalId: "appr_hr", status: "pending", riskClass: "high", proposedBy: "acct_alice", quorum: 1, approvals: []}];
+    const selfAppr = approvalResolve(approvalHrState, {approvalId: "appr_hr", status: "approved", resolvedBy: "acct_alice"});
+    if (selfAppr.error !== "high_risk_no_self_approval" || approvalHrState.approvalRequests[0].status === "approved") output.push("H1: a high-risk request was self-approved by its proposer");
+    approvalResolve(approvalHrState, {approvalId: "appr_hr", status: "approved", resolvedBy: "acct_bob"});
+    if (approvalHrState.approvalRequests[0].status !== "approved") output.push("H1: a distinct approver could not approve a high-risk request");
+    approvalHrState.approvalRequests.push({approvalId: "appr_q2", status: "pending", riskClass: "medium", proposedBy: "acct_alice", quorum: 2, approvals: []});
+    const q2 = () => approvalHrState.approvalRequests.find((a) => a.approvalId === "appr_q2");
+    approvalResolve(approvalHrState, {approvalId: "appr_q2", status: "approved", resolvedBy: "acct_bob"});
+    if (q2().status !== "quorum_collecting") output.push("H1: a quorum-2 request terminalized on the first of two approvers");
+    approvalResolve(approvalHrState, {approvalId: "appr_q2", status: "approved", resolvedBy: "acct_bob"});
+    if (q2().status !== "quorum_collecting") output.push("H1: the same approver was double-counted toward quorum");
+    approvalResolve(approvalHrState, {approvalId: "appr_q2", status: "approved", resolvedBy: "acct_carol"});
+    if (q2().status !== "approved") output.push("H1: a quorum-2 request was not approved after two distinct approvers");
 
     // human directives consumed oldest-first (FIFO): the newest adjust_priority must win.
     const fifoState = structuredClone(seedState);

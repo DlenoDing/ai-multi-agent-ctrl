@@ -689,6 +689,18 @@ errors << "the run loop must survive a transient iteration error instead of exit
 errors << "a cancel after push must record the pushed checkpoint, not discard it" unless agent_runtime_source.include?("recording the pushed checkpoint rather than orphaning it")
 # F3: resume_dispatch may only revive a blocked dispatch (not a running one → double execution).
 errors << "resume_dispatch must only revive a blocked dispatch" unless server_source.include?("dispatch_not_resumable") && agent_gateway_source.include?("command.commandType === \"resume_dispatch\" && dispatch.status !== \"blocked\"")
+# M3/M4: ReviewBundle must use its MODELED terminal set (consumed/rejected, not the phantom "closed"), be
+# registered in a modeled state, and be terminalizable by review_result_consume (else it wedges close).
+errors << "ReviewBundle close-barrier checks must use the modeled terminal set (no phantom 'closed')" if core_source.include?("\"consumed\", \"closed\"")
+errors << "reviewBundleRegister must create a modeled (submitted) bundle, not the unmodeled 'registered'" unless core_source.include?("\"submitted\" is a MODELED ReviewBundle state")
+errors << "review_result_consume must terminalize the referenced review bundle" unless mcp_source.include?("state.reviewBundles || []).find((item) => item.reviewBundleId === args.reviewBundleId)") && contract_check_source.include?("reviewResultConsume: submitted bundle not terminalized")
+errors << "the terminal-set drift gate must also bind ReviewBundle" unless contract_check_source.include?("ReviewBundle: [\"consumed\", \"rejected\"]")
+# H1: the modeled non-negotiable high_risk_no_self_approval + AI-quorum must be enforced (was a single-call
+# pending->approved with no proposer check). Proposer/approver identity must come from the authenticated actor.
+errors << "high_risk_no_self_approval must be enforced in approvalResolve" unless mcp_source.include?("high_risk_no_self_approval") && mcp_source.include?("resolver === request.proposedBy")
+errors << "approval must require a distinct-approver quorum before terminalizing" unless mcp_source.include?("request.approvals = [...new Set([...(request.approvals || []), resolver])]") && mcp_source.include?("request.approvals.length < quorum")
+errors << "approver/proposer identity must be the authenticated actor, not client input" unless server_source.include?("resolvedBy: guard.actor") && server_source.include?("proposedBy: guard.actor") && mcp_source.include?("proposedBy: context?.principal?.id")
+errors << "high_risk_no_self_approval / quorum need behavioral coverage" unless contract_check_source.include?("H1: a high-risk request was self-approved") && contract_check_source.include?("H1: a quorum-2 request terminalized on the first")
 # 2026-07-27 full-system review round 3. Isolation-1: MCP state_get full scope must be fail-closed —
 # both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
 # collections cross-project), and the agent_node full branch must be env-gated like its siblings.
@@ -712,8 +724,9 @@ errors << "non-barrier central collections must be bounded" unless ["runtimeIssu
 # (never drop an OPEN gating item), NOT a blind slice — a blind slice can evict a still-open item and
 # falsely satisfy a barrier, prematurely closing the task group.
 errors << "barrier collections must cap without dropping open gating items" unless core_source.include?("function capRetainingPredicate") && ["executionTopologies", "reviewPlans", "systemUpgradeCandidates", "ruleSourceResolutions", "derivedTaskRequests"].all? { |c| core_source.include?("state.#{c} = capRetainingPredicate(state.#{c}") } && !core_source.include?("state.executionTopologies = state.executionTopologies.slice")
-# reviewBundles is also a barrier collection: cap retaining non-terminal (consumed/closed) bundles.
-errors << "reviewBundles must cap retaining open bundles (not a blind slice)" unless core_source.include?("capRetainingOpen(state.reviewBundles, [\"consumed\", \"closed\"], 160)") && !core_source.include?("state.reviewBundles.slice(0, 160)")
+# reviewBundles is also a barrier collection: cap retaining non-terminal bundles (terminal = consumed/rejected
+# per the ReviewBundle state machine; the phantom "closed" was corrected in M3).
+errors << "reviewBundles must cap retaining open bundles (not a blind slice)" unless core_source.include?("capRetainingOpen(state.reviewBundles, [\"consumed\", \"rejected\"], 160)") && !core_source.include?("state.reviewBundles.slice(0, 160)")
 # claimLease must bound state.leases like ensureLease does.
 errors << "claimLease must cap lease history" unless core_source.include?("state.leases = capLeaseHistory(state.leases)")
 # agentControlCommands cap must retain still-active (queued/delivered/received) commands so a later ack

@@ -1268,7 +1268,8 @@ async function dispatchTool(state, name, args, context = {}) {
     case "review-mcp.completion_readiness_compute":
       return boundedTaskGroupGuard(state, args, context) || computeCompletionReadiness(state, args.taskGroupId || "tg_runtime_management", args);
     case "governance-mcp.approval_request_create":
-      return approvalRequestCreate(state, args);
+      // Proposer identity is the authenticated MCP principal (for high_risk_no_self_approval), not client args.
+      return approvalRequestCreate(state, {...args, proposedBy: context?.principal?.id || args.proposedBy || null});
     case "governance-mcp.policy_decision_eval":
       return policyDecisionEval(state, args);
     case "governance-mcp.finding_submit":
@@ -1276,7 +1277,8 @@ async function dispatchTool(state, name, args, context = {}) {
     case "governance-mcp.finding_resolve":
       return findingResolve(state, args);
     case "governance-mcp.approval_resolve":
-      return approvalResolve(state, args);
+      // Approver identity is the authenticated MCP principal (high_risk_no_self_approval + quorum tally).
+      return approvalResolve(state, {...args, resolvedBy: context?.principal?.id || args.resolvedBy});
     case "governance-mcp.contract_publish":
       return contractPublish(state, args);
     case "governance-mcp.effective_instruction_create":
@@ -2125,8 +2127,17 @@ function releasePermissionDeniedSession(state, request, at) {
   }
 }
 
-function reviewResultConsume(state, args) {
+export function reviewResultConsume(state, args) {
   const finding = findingSubmit(state, {...args, findingType: args.findingType || "review", severity: args.severity || "info"});
+  // Terminalize the referenced external review bundle (submitted -> consumed / rejected). Without this a
+  // submitted bundle stays non-terminal forever and wedges the close-barrier no_pending_review_bundles gate.
+  if (args.reviewBundleId) {
+    const bundle = (state.reviewBundles || []).find((item) => item.reviewBundleId === args.reviewBundleId);
+    if (bundle && !["consumed", "rejected"].includes(bundle.status)) {
+      bundle.status = ["rejected", "changes_requested"].includes(args.verdict) || args.status === "rejected" ? "rejected" : "consumed";
+      bundle.updatedAt = new Date().toISOString();
+    }
+  }
   const readiness = computeCompletionReadiness(state, args.taskGroupId || "tg_runtime_management", args);
   return {finding: finding.finding, readiness};
 }
@@ -2138,13 +2149,33 @@ export function approvalResolve(state, args) {
   // exactly once. Without this, a fresh-idempotency-key re-call could flip a terminal rejected->approved
   // verdict and overwrite the audit fields (resolvedBy / decisionRecordRef). Return the settled request.
   if (["approved", "rejected", "expired", "cancelled"].includes(request.status)) return {approvalRequest: request, alreadyResolved: true};
-  const status = ["approved", "rejected", "cancelled"].includes(args.status)
+  const at = new Date().toISOString();
+  const resolver = args.resolvedBy || "policy-engine";
+  const decision = ["approved", "rejected", "cancelled"].includes(args.status)
     ? args.status
     : (args.allowed === false ? "rejected" : "approved");
-  request.status = status;
   request.decisionRecordRef = args.decisionRecordRef || request.decisionRecordRef;
-  request.resolvedBy = args.resolvedBy || "policy-engine";
-  request.updatedAt = new Date().toISOString();
+  request.updatedAt = at;
+  if (decision === "cancelled") { request.status = "cancelled"; request.resolvedBy = resolver; return {approvalRequest: request}; }
+  // A single rejection blocks immediately.
+  if (decision === "rejected") { request.status = "rejected"; request.resolvedBy = resolver; return {approvalRequest: request}; }
+  // high_risk_no_self_approval (spec/terminal-execution-manifest nonNegotiable): the proposer of a
+  // high-risk action may never be one of its approvers. resolver is the authenticated actor (the routes
+  // pass guard.actor / principal.id), not a client-supplied field.
+  if (request.riskClass === "high" && request.proposedBy && resolver === request.proposedBy) {
+    return {ok: false, error: "high_risk_no_self_approval"};
+  }
+  // AI-quorum: accumulate DISTINCT approvers; the verdict is "approved" only once quorum is reached,
+  // otherwise it stays in the modeled non-terminal quorum_collecting state (still blocks the close
+  // barrier's no_pending_approvals gate).
+  request.approvals = [...new Set([...(request.approvals || []), resolver])];
+  const quorum = Math.max(1, Number(request.quorum || 1));
+  if (request.approvals.length < quorum) {
+    request.status = "quorum_collecting";
+    return {approvalRequest: request, quorumRemaining: quorum - request.approvals.length};
+  }
+  request.status = "approved";
+  request.resolvedBy = resolver;
   return {approvalRequest: request};
 }
 

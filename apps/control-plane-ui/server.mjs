@@ -3155,7 +3155,8 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/approval-requests") {
     const guard = beginGuardedWrite(req, state, "approval_request_create", `ApprovalRequest:${body.approvalId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
-    const result = approvalRequestCreate(state, body);
+    // Record the proposer as the AUTHENTICATED actor (never client-supplied) for high_risk_no_self_approval.
+    const result = approvalRequestCreate(state, {...body, proposedBy: guard.actor});
     audit(state, "decision-center", "approval_request_create", `ApprovalRequest:${result.approvalRequest.approvalId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
@@ -3168,8 +3169,10 @@ async function handleApi(req, res) {
     const existingApproval = (state.approvalRequests || []).find((item) => item.approvalId === approvalResolveMatch[1]);
     const guard = beginGuardedWrite(req, state, "approval_resolve", `ApprovalRequest:${approvalResolveMatch[1]}`, taskGroupScope(state, existingApproval?.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
-    const result = approvalResolve(state, {...body, approvalId: approvalResolveMatch[1]});
-    if (result.ok === false) return json(res, 404, {error: result.error});
+    // The approver identity is the AUTHENTICATED actor, never a client-supplied resolvedBy — this is what
+    // high_risk_no_self_approval and the quorum tally key on.
+    const result = approvalResolve(state, {...body, approvalId: approvalResolveMatch[1], resolvedBy: guard.actor});
+    if (result.ok === false) return json(res, result.error === "high_risk_no_self_approval" ? 403 : 404, {error: result.error});
     recomputeBarrierAfterResolve(state, existingApproval?.taskGroupId);
     audit(state, "policy-engine", "approval_resolve", `ApprovalRequest:${result.approvalRequest.approvalId}`);
     finishGuardedWrite(state, guard, 200, result);

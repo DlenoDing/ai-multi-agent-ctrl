@@ -2814,9 +2814,9 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
   const checkFailures = {
     no_open_execution_topology: (state.executionTopologies || []).some((item) => item.taskGroupId === taskGroupId && !["closed", "completed", "superseded"].includes(item.status)),
     no_open_review_plan: (state.reviewPlans || []).some((item) => item.taskGroupId === taskGroupId && !["closed", "completed", "cancelled"].includes(item.status)),
-    no_pending_review_bundle: (state.reviewBundles || []).some((item) => item.taskGroupId === taskGroupId && !["consumed", "closed"].includes(item.status)),
+    no_pending_review_bundle: (state.reviewBundles || []).some((item) => item.taskGroupId === taskGroupId && !["consumed", "rejected"].includes(item.status)),
     no_blocking_derived_task_request: (state.derivedTaskRequests || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)),
-    no_pending_external_review: (state.reviewBundles || []).some((item) => item.taskGroupId === taskGroupId && item.reviewMode === "external" && !["consumed", "closed"].includes(item.status)),
+    no_pending_external_review: (state.reviewBundles || []).some((item) => item.taskGroupId === taskGroupId && item.reviewMode === "external" && !["consumed", "rejected"].includes(item.status)),
     no_active_role_drift_guard: (state.roleDriftGuards || []).some((guard) => guard.taskGroupId === taskGroupId && !["closed", "corrected"].includes(guard.status)),
     effective_instruction_packet_active: (state.effectiveInstructionPackets || []).some((packet) => packet.taskGroupId === taskGroupId && !["active", "consumed", "expired", "superseded"].includes(packet.status)),
     shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => definition.status !== "active"),
@@ -2922,7 +2922,7 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     no_open_execution_topologies: forTaskGroup(state.executionTopologies).some((item) => !["closed", "completed", "superseded"].includes(item.status)),
     no_blocking_derived_task_requests: forTaskGroup(state.derivedTaskRequests).some((item) => pendingStatuses.includes(item.status)),
     all_review_plans_closed: forTaskGroup(state.reviewPlans).some((item) => !["closed", "completed", "cancelled"].includes(item.status)),
-    no_pending_review_bundles: forTaskGroup(state.reviewBundles).some((item) => !["consumed", "closed"].includes(item.status)),
+    no_pending_review_bundles: forTaskGroup(state.reviewBundles).some((item) => !["consumed", "rejected"].includes(item.status)),
     all_rule_sources_resolved: (state.ruleSourceResolutions || []).some((item) => item.taskGroupId === taskGroupId && item.status === "conflict"),
     completion_readiness_clear: readiness.status !== "clear",
     no_pending_human_confirmations: forTaskGroup(state.humanConfirmationRequests).some((item) => item.status === "pending"),
@@ -4568,7 +4568,7 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
     state.reviewBundles.unshift(bundle);
     // capRetainingOpen (not a blind slice): a non-terminal (registered/pending/external) bundle gates
     // the close barrier (no_pending_review_bundle), so dropping it by recency would falsely pass close.
-    state.reviewBundles = capRetainingOpen(state.reviewBundles, ["consumed", "closed"], 160);
+    state.reviewBundles = capRetainingOpen(state.reviewBundles, ["consumed", "rejected"], 160);
   }
   if (verdict !== "passed") {
     workItem.reviewState = "changes_requested";
@@ -5105,7 +5105,10 @@ export function reviewBundleRegister(state, args) {
     reviewBundleId: args.reviewBundleId || createId("review_bundle"),
     projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
     taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
-    status: "registered",
+    // "submitted" is a MODELED ReviewBundle state (was the unmodeled "registered"). It is non-terminal, so
+    // it blocks the close barrier's no_pending_review_bundles gate until review_result_consume terminalizes
+    // it — that is the resolving lever, so this is a pending external review, not a permanent wedge.
+    status: "submitted",
     artifactRefs: args.artifactRefs || [],
     checkpointRefs: args.checkpointRefs || [],
     evidenceRefs: args.evidenceRefs || [],
@@ -5113,7 +5116,7 @@ export function reviewBundleRegister(state, args) {
     updatedAt: at
   };
   state.reviewBundles.unshift(bundle);
-  state.reviewBundles = capRetainingOpen(state.reviewBundles, ["consumed", "closed"], 160);
+  state.reviewBundles = capRetainingOpen(state.reviewBundles, ["consumed", "rejected"], 160);
   return {reviewBundle: bundle};
 }
 
@@ -5130,6 +5133,11 @@ export function approvalRequestCreate(state, args) {
     riskClass: args.riskClass || "medium",
     requiredApprovers: args.requiredApprovers || ["policy-engine", "security"],
     quorum: Number(args.quorum || 1),
+    // Proposer identity for high_risk_no_self_approval enforcement, and the running set of distinct
+    // approvers for the AI-quorum tally (approvalResolve). proposedBy is the authenticated actor that
+    // requested the guarded action — never a client-supplied field.
+    proposedBy: args.proposedBy || null,
+    approvals: [],
     expiresAt: args.expiresAt || new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     decisionRecordRef: args.decisionRecordRef || `decision:approval:${at}`,
     auditRef: args.auditRef || `audit:approval:${at}`,
