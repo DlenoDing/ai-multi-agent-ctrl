@@ -3335,6 +3335,16 @@ function ensureRepositoryTarget(state, project, taskGroup, workItem, request) {
     updatedAt: at
   };
   state.repositoryOutputs.push(target);
+  // State-machine fidelity: a target superseded during rework (independent review) requires a
+  // successor_output_target_ref. The successor is this freshly-created rework target, so back-link any
+  // superseded target for the same work item that is still missing its successor — closing the audit trail
+  // (superseded -> successor) that a bare status flip would otherwise leave dangling.
+  for (const prior of state.repositoryOutputs) {
+    if (prior !== target && prior.status === "superseded" && prior.taskGroupId === target.taskGroupId && prior.workItemId === target.workItemId && !prior.successorOutputTargetRef) {
+      prior.successorOutputTargetRef = target.targetId;
+      prior.updatedAt = at;
+    }
+  }
   return target;
 }
 
@@ -3573,6 +3583,7 @@ function appendEvent(state, type, subjectType, subjectId, actorId, payload) {
     stateVersion: state.stateVersion,
     idempotencyKey: payload?.idempotencyKey || createId("idem_event"),
     createdAt: new Date().toISOString(),
+    payloadSchemaRef: payload?.payloadSchemaRef || `control-event-payload:${type}/v1`,
     payloadDigest: digestOf(payload || {}),
     payloadRef: `state-event:${subjectType}:${subjectId}`
   };

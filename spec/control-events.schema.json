@@ -138,6 +138,9 @@
             "ExecutionTopology",
             "DerivedTaskRequest",
             "ReviewPlan",
+            "WorkerLane",
+            "HumanConfirmationRequest",
+            "HumanDirective",
             "ReviewBundle",
             "RuleSourceResolution",
             "CompletionReadinessCheck",
@@ -215,7 +218,16 @@
         "progress_snapshot",
         "instruction_envelope",
         "shared_definition_contract",
-        "repository_output_target"
+        "repository_output_target",
+        "command_admitted",
+        "command_effect_prepared",
+        "command_effect_verified",
+        "derived_task_created",
+        "dlq_entry_created",
+        "dlq_entry_replayed",
+        "task_group_language_policy_updated",
+        "worker_lane_registered",
+        "worker_lane_retired"
       ]
     },
     "priority": {

@@ -308,6 +308,10 @@ function verifyHumanAndOrganizationContracts(output) {
     // catches producer drift now that the schema validator enforces conditional clauses).
     const repoTarget = (idemState.repositoryOutputs || [])[0];
     if (repoTarget) validateSchema(repoTarget, loadJson("spec/repository-output-target.schema.json"), "RepositoryOutputTarget", output);
+    // Every produced control event must conform to control-events.schema.json — locks the event `type` and
+    // subject.type enums against producer drift (appendEvent emits many categories from across the core).
+    const controlEventSchema = loadJson("spec/control-events.schema.json");
+    for (const ev of (idemState.eventLog || []).slice(0, 40)) validateSchema(ev, controlEventSchema, `ControlEvent:${ev.type}`, output);
     const activeDispatch = (idemState.agentDispatches || []).find((item) => ["queued", "running"].includes(item.status));
     if (activeDispatch) {
       const sessionsBefore = idemState.workSessions.length;

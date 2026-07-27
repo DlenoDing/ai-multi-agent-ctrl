@@ -707,6 +707,12 @@ errors << "repository output target must use the schema pathDenylist field" unle
 # M6: role-drift signals stored on the guard must be values from the schema driftSignal enum (details kept
 # separately for observability), not free-form strings.
 errors << "role-drift signals must map to the schema driftSignal enum" unless core_source.include?("signalDetails.push(`scope_not_allowed:${ref}`)") && core_source.include?("signals.push(\"scope_expansion_without_decision\")")
+# M5: a target superseded during rework must record its successor (state-machine successor_output_target_ref).
+errors << "a superseded rework target must be back-linked to its successor" unless core_source.include?("prior.successorOutputTargetRef = target.targetId")
+# M2: control events must carry payloadSchemaRef (schema allOf requires it) and every produced event must
+# be instance-validated so the type/subject enums cannot drift from the emitting code.
+errors << "control events must set payloadSchemaRef" unless core_source.include?("payloadSchemaRef: payload?.payloadSchemaRef")
+errors << "produced control events must be instance-validated" unless contract_check_source.include?("validateSchema(ev, controlEventSchema")
 # 2026-07-27 full-system review round 3. Isolation-1: MCP state_get full scope must be fail-closed —
 # both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
 # collections cross-project), and the agent_node full branch must be env-gated like its siblings.
