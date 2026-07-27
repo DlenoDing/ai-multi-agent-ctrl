@@ -681,6 +681,14 @@ errors << "approvalResolve must guard against re-resolving a settled approval" u
 errors << "findingResolve must guard against re-resolving a terminal finding" unless core_source.include?("if (findingTerminalStatuses.includes(finding.status)) return {finding, alreadyResolved: true}")
 errors << "grantCreate must dedup an existing active grant" unless mcp_source.include?("if (existing) return {grant: existing, deduplicated: true}")
 errors << "sibling resolve terminal guards need behavioral coverage" unless contract_check_source.include?("approvalResolve: a settled rejected verdict was flipped") && contract_check_source.include?("findingResolve: a terminal fixed_unverified finding was re-disposed")
+# F1: a transient control-plane error on heartbeat/claim must not kill the daemon (retry classification
+# covers 5xx/timeout/network AND the run loop has an outer safety-net that continues on any iteration error).
+errors << "retryable classification must cover transient transport failures" unless agent_runtime_source.include?("status >= 500 && status <= 599") && agent_runtime_source.include?("ECONNREFUSED")
+errors << "the run loop must survive a transient iteration error instead of exiting" unless agent_runtime_source.include?("agent runtime loop iteration error (continuing)")
+# F2: a cancel landing AFTER the irreversible push must record the pushed checkpoint, not orphan it.
+errors << "a cancel after push must record the pushed checkpoint, not discard it" unless agent_runtime_source.include?("recording the pushed checkpoint rather than orphaning it")
+# F3: resume_dispatch may only revive a blocked dispatch (not a running one → double execution).
+errors << "resume_dispatch must only revive a blocked dispatch" unless server_source.include?("dispatch_not_resumable") && agent_gateway_source.include?("command.commandType === \"resume_dispatch\" && dispatch.status !== \"blocked\"")
 # 2026-07-27 full-system review round 3. Isolation-1: MCP state_get full scope must be fail-closed —
 # both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
 # collections cross-project), and the agent_node full branch must be env-gated like its siblings.

@@ -765,6 +765,10 @@ function applyControlCommandPreEffects(state, node, command) {
   if (!["pause_dispatch", "cancel_dispatch", "resume_dispatch"].includes(command.commandType)) return;
   const dispatch = findNodeDispatchForControl(state, node, command);
   if (!dispatch) throw gatewayError("control_dispatch_not_active", 409);
+  // Defense-in-depth (the HTTP route already rejects this): resume may only revive a BLOCKED dispatch.
+  // Requeuing a still-running dispatch would let a second node re-claim and re-run the same runId while
+  // the original node keeps executing → double execution + orphaned push.
+  if (command.commandType === "resume_dispatch" && dispatch.status !== "blocked") throw gatewayError("dispatch_not_resumable", 409);
   const at = command.createdAt;
   command.dispatchId = dispatch.dispatchId;
   command.projectId = dispatch.projectId;

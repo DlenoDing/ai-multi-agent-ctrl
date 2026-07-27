@@ -150,6 +150,7 @@ async function run(config) {
   let lastAdmissionSelfCheckAt = 0;
   const once = args.once === true || process.env.AIMAC_AGENT_ONCE === "true";
   for (;;) {
+   try {
     if (Date.now() - lastSweepAt >= sweepIntervalMs) {
       runSweeps();
       lastSweepAt = Date.now();
@@ -195,14 +196,17 @@ async function run(config) {
         } finally {
           await control.stop();
         }
-        // A cancel/pause that landed during or just after execution already emitted a failed/blocked event
-        // and ACKed the command; do not also persist+submit a checkpoint for it (that would contradict the
-        // cancellation and, if it slipped past the pre-push guard, submit a cancelled dispatch's result).
+        // executeDispatch returns a checkpoint ONLY after a verified `git push` (the push is the last
+        // irreversible step before the checkpoint is built), so reaching here means the commit is already
+        // durably on the remote branch. A cancel that lands AFTER that push (during the post-push events or
+        // the control.stop() drain) must NOT discard the pushed work — that would orphan a pushed commit
+        // with no control-plane record, and the next dispatch's `reset --hard origin/branch` would silently
+        // build on it. Persist + submit regardless; if the server has already finalized the cancel it
+        // rejects the submit and outbox replay routes it to recovery (operator-visible) rather than vanishing.
+        // (A cancel BEFORE the push is caught by control.throwIfCancelled() inside executeDispatch and lands
+        // in the catch below, so nothing is pushed in that case.)
         if (control.signal?.cancelled) {
-          process.stdout.write(`dispatch cancelled; checkpoint not submitted: ${claimed.dispatch.dispatch.dispatchId}\n`);
-          cleanupSessionDirectory(config, claimed.dispatch);
-          if (once) return;
-          continue;
+          process.stdout.write(`dispatch cancelled after push completed; recording the pushed checkpoint rather than orphaning it: ${claimed.dispatch.dispatch.dispatchId}\n`);
         }
         const outboxPath = persistCheckpointOutbox(config, claimed.dispatch, checkpoint);
         if (process.env.AIMAC_AGENT_VERIFICATION_DEFER_CHECKPOINT === "true") {
@@ -228,6 +232,16 @@ async function run(config) {
     }
     if (once) return;
     await delay(config.pollIntervalSeconds * 1000);
+   } catch (error) {
+    // Outer safety net: a transient failure on the bare heartbeat / claim / outbox-flush / control-poll
+    // calls (5xx, timeout, dropped connection) must NOT propagate out of run() and terminate the daemon
+    // (the installer runs it under a bare `nohup &` with no restart supervisor). Per-dispatch failures are
+    // already handled by the inner try/catch; this catches everything else — log and continue after a
+    // backoff so a control-plane blip degrades to a retry instead of killing the whole fleet.
+    process.stderr.write(`agent runtime loop iteration error (continuing): ${String(error?.message || error)}\n`);
+    if (once) return;
+    await delay(config.pollIntervalSeconds * 1000);
+   }
   }
 }
 
@@ -1513,7 +1527,12 @@ async function retryableAgentRequest(fn, label) {
 
 function retryableControlPlaneError(error) {
   const message = String(error?.message || error);
-  return /state_write_conflict|AIMAC_STATE_CONFLICT|409/u.test(message);
+  const status = Number(error?.status || 0);
+  // Retry state-write conflicts AND transient transport failures (5xx / 429 / request-timeout-abort /
+  // connection reset/refused/DNS): a momentary control-plane blip or rolling deploy must not surface to
+  // the caller as a permanent error (which, on the bare heartbeat/claim calls, would kill the daemon).
+  if (status === 409 || status === 429 || (status >= 500 && status <= 599)) return true;
+  return /state_write_conflict|AIMAC_STATE_CONFLICT|409|abort|timed?\s?out|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|fetch failed/iu.test(message);
 }
 
 function syncJson(url, token) {

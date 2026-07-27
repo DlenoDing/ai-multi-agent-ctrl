@@ -2216,6 +2216,12 @@ async function handleApi(req, res) {
     if (["pause_dispatch", "cancel_dispatch", "resume_dispatch"].includes(commandType) && targetDispatch && targetDispatch.assignedNodeId !== targetNode.nodeId) {
       return json(res, 409, {error: "dispatch_not_assigned_to_node"});
     }
+    // resume_dispatch may only revive a BLOCKED (paused / permission-held) dispatch. Resuming a dispatch
+    // that is still `running` would requeue it (assignment cleared) while the node keeps executing, so a
+    // second node re-claims and re-runs the same runId → double execution + an orphaned push. Reject it.
+    if (commandType === "resume_dispatch" && targetDispatch && targetDispatch.status !== "blocked") {
+      return json(res, 409, {error: "dispatch_not_resumable", reason: `cannot resume a ${targetDispatch.status} dispatch`});
+    }
     const taskScopedControl = ["pause_dispatch", "cancel_dispatch", "resume_dispatch"].includes(commandType) && targetDispatch;
     const projectId = targetNode.projectIds?.[0];
     const guard = taskScopedControl
