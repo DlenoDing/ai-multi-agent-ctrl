@@ -1034,12 +1034,13 @@ machines:
 
   Artifact:
     initial: "prepared"
-    terminal: ["rejected", "gc"]
+    terminal: ["verified", "registered", "rejected", "gc"]
     states:
       - "prepared"
       - "uploaded"
       - "redacted"
       - "verified"
+      - "registered"
       - "rejected"
       - "gc"
     transitions:

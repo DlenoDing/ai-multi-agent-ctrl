@@ -1954,14 +1954,25 @@ function splitMixedWorkItemIfNeeded(state, taskGroup, workItem) {
   workItem.progress = Math.max(Number(workItem.progress || 0), 1);
   workItem.updatedAt = at;
   state.derivedTaskRequests ||= [];
+  // Conforms to derived-task-request.schema.json. The mixed work item is absorbed in place into an
+  // analysis->implementation split (a topology replan); the implementation is linked via its
+  // dependsOnWorkItemRefs on the analysis item recorded in createdWorkItemRef.
   state.derivedTaskRequests.unshift({
+    schemaVersion: "derived-task-request/v1",
     requestId: createId("dtr"),
     projectId: taskGroup.projectId,
     taskGroupId: taskGroup.id,
-    sourceWorkItemId: workItem.id,
-    status: "accepted",
-    classification: "mixed_analysis_implementation_split",
-    derivedWorkItemRefs: [analysis.id, implementation.id],
+    sourceRef: `WorkItem:${workItem.id}`,
+    reason: "topology_replan",
+    proposedInsertionMode: "current_absorb",
+    topologyEffect: "requires_replan",
+    summary: `混合分析/实现工作项 ${workItem.id} 拆分为分析与实现子项`,
+    evidenceRef: `WorkItem:${workItem.id}`,
+    actionBasisRef: `decision:mixed-split:${workItem.id}`,
+    status: "absorbed",
+    decisionRecordRef: `decision:mixed-split:${workItem.id}`,
+    createdWorkItemRef: analysis.id,
+    auditRef: `audit:dtr:${workItem.id}`,
     createdAt: at,
     updatedAt: at
   });
@@ -4868,7 +4879,9 @@ export function roomSend(state, args) {
     senderRef: args.senderRef || args.roleId || "agent-runtime",
     payload: args.payload || {text: args.text || ""},
     payloadDigest: digestOf(args.payload || args.text || ""),
-    status: "sent",
+    // room_send persists a RoomMessage as an internal write with no external side effect; "delivered" is
+    // the modeled terminal RoomMessage state (was the unmodeled "sent").
+    status: "delivered",
     ...(idempotencyKey ? {idempotencyKey} : {}),
     createdAt: at
   };

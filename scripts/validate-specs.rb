@@ -713,6 +713,11 @@ errors << "a superseded rework target must be back-linked to its successor" unle
 # be instance-validated so the type/subject enums cannot drift from the emitting code.
 errors << "control events must set payloadSchemaRef" unless core_source.include?("payloadSchemaRef: payload?.payloadSchemaRef")
 errors << "produced control events must be instance-validated" unless contract_check_source.include?("validateSchema(ev, controlEventSchema")
+# H3: the derived-task-request producer must emit the schema-required fields with a modeled status.
+errors << "derived-task-request producer must conform to its schema" unless core_source.include?("schemaVersion: \"derived-task-request/v1\"") && core_source.include?("proposedInsertionMode: \"current_absorb\"") && core_source.include?("status: \"absorbed\"")
+# L2/L3: artifact "registered" and RoomMessage "delivered" must be modeled state-machine states.
+errors << "artifact 'registered' must be a modeled state" unless File.read(File.join(ROOT, "spec/state-machines.yaml")).include?("- \"registered\"")
+errors << "room_send must use the modeled 'delivered' state, not the unmodeled 'sent'" unless core_source.include?("status: \"delivered\"") && !core_source.include?("status: \"sent\"")
 # 2026-07-27 full-system review round 3. Isolation-1: MCP state_get full scope must be fail-closed —
 # both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
 # collections cross-project), and the agent_node full branch must be env-gated like its siblings.
