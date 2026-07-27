@@ -487,6 +487,7 @@
     dispatch_not_found: "未找到派发",
     owner_account_not_found: "未找到负责人账号",
     account_not_found: "未找到账号",
+    account_email_already_registered: "该邮箱已被注册",
     agent_not_found: "未找到智能体档案",
     agent_node_not_found: "未找到智能体节点",
     agent_node_auth_required: "智能体节点需要认证",

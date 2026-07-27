@@ -1587,6 +1587,7 @@ function finalizeScopedMcpState(scoped, projectIdSet, visibleTaskGroupIds) {
   };
   // Global / management collections: never visible to a scoped principal.
   scoped.agentJoinTokens = [];
+  scoped.authSessions = [];
   scoped.auditLog = [];
   scoped.policyDecisions = [];
   scoped.commands = [];
@@ -1669,6 +1670,13 @@ function scopeStateForAgentPrincipal(state, principal, grants = []) {
   scoped.roleSkillOverlays = [];
   scoped.accounts = [];
   scoped.accessGrants = [];
+  scoped.authSessions = [];
+  // Task-group-attributed events/commands gate on the agent's granted task groups; node-level records
+  // (no taskGroupId) only for this agent's own node. Mirrors the project path + UI scopedStateForAccount.
+  scoped.agentExecutionEvents = (scoped.agentExecutionEvents || []).filter((event) =>
+    (event.taskGroupId && visibleTaskGroupIds.has(event.taskGroupId)) || event.nodeId === principal.id);
+  scoped.agentControlCommands = (scoped.agentControlCommands || []).filter((command) =>
+    command.taskGroupId ? visibleTaskGroupIds.has(command.taskGroupId) : command.nodeId === principal.id);
   scoped.mcpGrants = (scoped.mcpGrants || []).filter((grant) => grant.agentNodeId === principal.id && grant.grantStatus === "issued");
   return finalizeScopedMcpState(scoped, projectIds, visibleTaskGroupIds);
 }

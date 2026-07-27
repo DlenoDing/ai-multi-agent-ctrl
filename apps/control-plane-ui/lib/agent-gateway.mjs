@@ -243,7 +243,11 @@ export function heartbeatAgentNode(state, node, input = {}, options = {}) {
   node.updatedAt = at;
   if (input.profile) {
     node.profile = sanitizeNodeProfile(input.profile);
-    node.profileDigest = digestOf(node.profile);
+    // Digest the STABLE profile fields only — observedAt is a fresh timestamp on every heartbeat, so
+    // including it would make profileDigest change every time and permanently defeat the
+    // AIMAC_HEARTBEAT_PERSIST_FLOOR_MS throttle (forcing a full central write on every heartbeat).
+    const {observedAt, ...stableProfile} = node.profile;
+    node.profileDigest = digestOf(stableProfile);
   }
   if (["initializing", "offline", "degraded"].includes(node.status)) node.status = "online";
   const presentedDigest = digestOf(`agent-node:${node.nodeId}:${String(options.presentedToken || "")}`);
@@ -405,7 +409,11 @@ function dispatchBoundRiskLevel(toolName) {
 export function selfCheckAgentNode(state, node, input = {}) {
   if (input.profile) {
     node.profile = sanitizeNodeProfile(input.profile);
-    node.profileDigest = digestOf(node.profile);
+    // Digest the STABLE profile fields only — observedAt is a fresh timestamp on every heartbeat, so
+    // including it would make profileDigest change every time and permanently defeat the
+    // AIMAC_HEARTBEAT_PERSIST_FLOOR_MS throttle (forcing a full central write on every heartbeat).
+    const {observedAt, ...stableProfile} = node.profile;
+    node.profileDigest = digestOf(stableProfile);
   }
   const checks = normalizeChecks(input.checks || []);
   const required = ["runtime", "gateway", "filesystem", "git", "remote_mcp", "model_executor"];
@@ -866,7 +874,11 @@ function handleStopControlFailure(state, node, command, status) {
 }
 
 export function finishNodeDispatch(state, node, dispatchId, succeeded) {
+  const wasActive = (node.activeDispatchIds || []).includes(dispatchId);
   node.activeDispatchIds = (node.activeDispatchIds || []).filter((id) => id !== dispatchId);
+  // Idempotent: a retried completion/failure whose dispatch was already finalized for this claim must
+  // not double-count completed/failedDispatchCount, re-revoke grants, or re-emit the gateway event.
+  if (!wasActive) return;
   if (succeeded) node.completedDispatchCount = Number(node.completedDispatchCount || 0) + 1;
   else node.failedDispatchCount = Number(node.failedDispatchCount || 0) + 1;
   node.updatedAt = new Date().toISOString();
@@ -1199,8 +1211,8 @@ function sanitizeNodeProfile(profile) {
     cpuCount: boundedInteger(profile.cpuCount, 0, 4096, 0),
     memoryBytes: boundedInteger(profile.memoryBytes, 0, Number.MAX_SAFE_INTEGER, 0),
     diskFreeBytes: boundedInteger(profile.diskFreeBytes, 0, Number.MAX_SAFE_INTEGER, 0),
-    tools: Array.isArray(profile.tools) ? profile.tools.slice(0, 100).map((item) => ({name: String(item.name || ""), version: String(item.version || "unknown"), available: item.available === true})) : [],
-    models: Array.isArray(profile.models) ? profile.models.slice(0, 100).map((item) => ({providerClass: String(item.providerClass || "custom"), adapter: String(item.adapter || "custom"), available: item.available !== false})) : [],
+    tools: Array.isArray(profile.tools) ? profile.tools.filter((item) => item && typeof item === "object").slice(0, 100).map((item) => ({name: String(item.name || ""), version: String(item.version || "unknown"), available: item.available === true})) : [],
+    models: Array.isArray(profile.models) ? profile.models.filter((item) => item && typeof item === "object").slice(0, 100).map((item) => ({providerClass: String(item.providerClass || "custom"), adapter: String(item.adapter || "custom"), available: item.available !== false})) : [],
     capabilityFlags: uniqueStrings(profile.capabilityFlags || []).slice(0, 100),
     ...(sanitizePermissionProbe(profile.permission) ? {permission: sanitizePermissionProbe(profile.permission)} : {}),
     ...(sanitizeIntegrityProbe(profile.integrity) ? {integrity: sanitizeIntegrityProbe(profile.integrity)} : {}),

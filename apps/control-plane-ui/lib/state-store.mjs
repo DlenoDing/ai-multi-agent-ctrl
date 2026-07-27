@@ -176,7 +176,13 @@ function readCentralStateIfPresent(statePath) {
 }
 
 function assertExpectedVersionFromCentral(central, expectedStateVersion) {
-  if (expectedStateVersion === undefined || expectedStateVersion === null || !central) return;
+  if (expectedStateVersion === undefined || expectedStateVersion === null) return;
+  // Fail CLOSED when the central file vanished between read and locked write (matches the Postgres CAS,
+  // which conflicts on rowCount 0). A non-null expectedStateVersion means the caller read an existing
+  // state; if it is now absent, silently succeeding would reset stateVersion and lose the guard.
+  if (!central) {
+    throwStateStoreConflict(`runtime_json state version conflict; expected ${expectedStateVersion}, central state absent`);
+  }
   if (Number(central.stateVersion || 0) !== Number(expectedStateVersion)) {
     throwStateStoreConflict(`runtime_json state version conflict; expected ${expectedStateVersion}, found ${central.stateVersion}`);
   }

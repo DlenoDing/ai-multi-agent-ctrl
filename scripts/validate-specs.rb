@@ -612,6 +612,18 @@ errors << "agent runtime must git clean the persistent checkout before each disp
 # both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
 # collections cross-project), and the agent_node full branch must be env-gated like its siblings.
 errors << "MCP scoped state must be fail-closed via finalizeScopedMcpState + allowlist" unless mcp_source.include?("function finalizeScopedMcpState") && mcp_source.include?("MCP_SCOPED_ALLOWED_TOP_KEYS.has(key)") && mcp_source.scan("return finalizeScopedMcpState(scoped,").length >= 2
+# The agent principal path must also filter node/task-group-attributed events + control commands +
+# empty authSessions (they are not covered by the shared finalizer, which lacks node context).
+errors << "MCP agent scope must filter execution events/control commands by node/task-group visibility" unless mcp_source.include?("event.nodeId === principal.id") && mcp_source.include?("command.nodeId === principal.id")
+# 2026-07-27 full-system review round 4. F1: the /fail route must guard terminal state (no corrupting a
+# completed dispatch) and finishNodeDispatch must be idempotent (no double-count on retry).
+errors << "dispatch /fail route must guard terminal state and finishNodeDispatch must be idempotent" unless server_source.include?("dispatch_already_completed") && agent_gateway_source.include?("if (!wasActive) return;")
+# F2: heartbeat profile digest must exclude observedAt or the persist-floor throttle is defeated.
+errors << "heartbeat profileDigest must exclude the per-beat observedAt timestamp" unless agent_gateway_source.include?("const {observedAt, ...stableProfile} = node.profile") && agent_gateway_source.include?("digestOf(stableProfile)")
+# LOW: account email must be unique (login resolves by first email match); runtime_json CAS must fail
+# closed when the central file is absent (parity with the Postgres backend).
+errors << "account creation must reject a duplicate email" unless server_source.include?("account_email_already_registered")
+errors << "runtime_json CAS must fail closed when the central state is absent" unless state_store_source.include?("central state absent")
 errors << "MCP agent_node full state_get must be env-gated like system_service/admin" unless mcp_source.scan("AIMAC_MCP_ALLOW_FULL_STATE").length >= 3
 errors << "Console must offer a resolve_decision actuator for needs_decision cells" unless app_js_source.include?("\"resolve_decision\"") && app_js_source.include?("resolution: data.resolution") && app_js_source.include?("admissionReasonLabel") && i18n_zh_source.include?("work_item_decision_reopen") && i18n_zh_source.include?("dependency_abandoned")
 # Durable i18n-completeness guard: every static blockedReason / admission reasonCode literal set in

@@ -1957,6 +1957,13 @@ async function handleApi(req, res) {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     const dispatch = state.agentDispatches.find((item) => item.dispatchId === nodeFailureMatch[1] && item.assignedNodeId === node.nodeId);
     if (!dispatch) return json(res, 404, {error: "dispatch_not_found"});
+    // Terminal-state guard (symmetric with the checkpoint route): a late/retried /fail must not corrupt
+    // an already-finished dispatch. A /fail against a COMPLETED (successfully checkpointed, possibly
+    // reviewed) dispatch is a real conflict; a repeat of the same non-success outcome acks idempotently.
+    if (["completed", "failed", "cancelled"].includes(dispatch.status)) {
+      if (dispatch.status === "completed") return json(res, 409, {error: "dispatch_already_completed"});
+      return json(res, 200, {ok: true, replayed: true, dispatchId: dispatch.dispatchId, status: dispatch.status});
+    }
     const reportedStatus = ["blocked", "cancelled"].includes(body.status) ? body.status : "failed";
     if (dispatch.blockedReason === "awaiting_human_confirmation" && reportedStatus !== "blocked") {
       cancelPendingConfirmationsForDispatch(state, dispatch.dispatchId, `dispatch_${reportedStatus}`);
@@ -2815,6 +2822,13 @@ async function handleApi(req, res) {
       json(res, 400, {error: error.message});
       return;
     }
+    // Email must be unique: /api/auth/login resolves an account by the FIRST email match, so a second
+    // account sharing an explicit email would be unreachable via the email+token flow the invite
+    // response hands back. Reject the collision (login-by-accountId is unaffected).
+    if (body.email && (state.accounts || []).some((item) => item.email === String(body.email))) {
+      json(res, 409, {error: "account_email_already_registered"});
+      return;
+    }
     const inviterAccount = state.accounts.find((item) => accountIdOf(item) === guard.actor);
     const inviteOrgId = invitedAccount.accountType === "system_admin"
       ? null
@@ -3309,6 +3323,10 @@ async function handleApi(req, res) {
       maxTaskGroups: boundedQuota(body.quotas?.maxTaskGroups, 200),
       maxAgents: boundedQuota(body.quotas?.maxAgents, 100)
     };
+    if (body.admin?.email && (state.accounts || []).some((item) => item.email === String(body.admin.email))) {
+      json(res, 409, {error: "account_email_already_registered"});
+      return;
+    }
     const adminAccountId = createId("acct");
     const adminToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
     const adminAccount = {
@@ -3454,6 +3472,9 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const quota = organizationQuotaCheck(state, orgId, "members");
     if (!quota.allowed) return json(res, 409, {error: quota.error, quota: quota.quota, usage: quota.usage});
+    if (body.email && (state.accounts || []).some((item) => item.email === String(body.email))) {
+      return json(res, 409, {error: "account_email_already_registered"});
+    }
     const at = now();
     const accountId = createId("acct");
     const memberToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
