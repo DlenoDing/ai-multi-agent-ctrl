@@ -2033,7 +2033,14 @@ async function handleApi(req, res) {
       createdAt: now(),
       updatedAt: now()
     });
-    state.authSessions = state.authSessions.slice(0, 80);
+    // Prune EXPIRED/non-active sessions first (never evict a live session — a flat count cap would
+    // force-logout an active session belonging to any other tenant/admin once concurrency exceeds it).
+    // Keep all still-active sessions; only if active sessions themselves exceed a high bound do we drop
+    // the oldest active ones (last resort against a runaway).
+    const nowMs = Date.now();
+    const liveSessions = state.authSessions.filter((item) => item.status === "active" && new Date(item.expiresAt || 0).getTime() > nowMs);
+    const activeCap = Math.max(200, Number(process.env.AIMAC_ACTIVE_SESSION_CAP || 5000));
+    state.authSessions = liveSessions.slice(0, activeCap);
     audit(state, "auth-service", "auth_login", `Account:${account.accountId}`);
     commitDirectStateWrite(state);
 	    json(res, 200, {sessionToken, expiresAt, account: {accountId: account.accountId, accountType: account.accountType, organizationId: account.organizationId || null, defaultProjectId: account.defaultProjectId || null, email: account.email, displayName: account.displayName, roles: account.roles, permissions: account.permissions, effectivePermissions: accountEffectivePermissions(state, account), passwordSet: Boolean(account.authPolicy?.passwordSet)}});

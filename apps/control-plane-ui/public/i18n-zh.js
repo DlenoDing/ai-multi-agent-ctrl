@@ -32,7 +32,7 @@
     expired: "已过期",
     ready: "就绪",
     draft: "草稿",
-    superseded: "已拆分替代",
+    superseded: "已被取代",
     archived: "已归档",
     paused: "已暂停",
     unknown: "未知",
@@ -177,6 +177,11 @@
     agent_runtime_executor_required: "需智能体运行时执行器",
     awaiting_dependency: "等待依赖项完成",
     awaiting_decision: "等待人工决策",
+    /* ---------- 人工指令：决策处置 ---------- */
+    resolve_decision: "决策处置",
+    work_item_decision_reopen: "工作项重开",
+    work_item_decision_abandon: "工作项放弃",
+    no_needs_decision_work_item: "无待决策工作项",
     /* ---------- 准入决策 outcome / cellClass / 载体（§4.5） ---------- */
     deferred: "已延后",
     resource_queued: "资源排队中",

@@ -78,6 +78,7 @@ const agentTaskContractSchema = loadJson("spec/agent-task-contract.schema.json")
 const effectiveInstructionPacketSchema = loadJson("spec/effective-instruction-packet.schema.json");
 const workerLaneSchema = loadJson("spec/worker-lane.schema.json");
 const sessionPlacementDecisionSchema = loadJson("spec/session-placement-decision.schema.json");
+const closeBarrierSchema = loadJson("spec/close-barrier.schema.json");
 const languagePolicySchema = loadJson("spec/language-policy.schema.json");
 const humanConfirmationSchema = loadJson("spec/human-confirmation-request.schema.json");
 const humanDirectiveSchema = loadJson("spec/human-directive.schema.json");
@@ -341,6 +342,9 @@ function verifyHumanAndOrganizationContracts(output) {
     if (!staleBarrier.holisticJudgment || staleBarrier.holisticJudgment.basis !== "reality_first_close_barrier") output.push("close-barrier missing holistic judgment record");
     if (staleBarrier.holisticJudgment.requiredCellsTerminal !== false || staleBarrier.holisticJudgment.conclusion !== "blocked_by_real_gate") output.push("close-barrier holistic judgment did not reflect the incomplete cell");
     if ("all_policy_decisions_terminal" in staleBarrier.gateResults || "release_manifest_ready" in staleBarrier.gateResults) output.push("close-barrier still emits vacuous always-pass stub gates");
+    // The produced close-barrier instance must validate against its schema (schema<->code drift guard;
+    // the core-init absorption removed 4 gates + added holisticJudgment).
+    validateSchema(staleBarrier, closeBarrierSchema, "CloseBarrier", output);
 
     // human directives consumed oldest-first (FIFO): the newest adjust_priority must win.
     const fifoState = structuredClone(seedState);

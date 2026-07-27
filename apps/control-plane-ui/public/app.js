@@ -267,6 +267,25 @@ function executionProfileLabel(code) { return EXECUTION_PROFILE_LABELS[String(co
 const TASK_EXECUTION_CLASS_LABELS = { verification: "定向验证", short_execution: "短机械任务", deep_analysis: "深度分析", implementation: "实现", mixed_analysis_implementation: "分析并实现" };
 const REASONING_LEVEL_LABELS = { high: "高", medium: "中", standard: "标准", low: "低", minimal: "最简" };
 const LANE_FUNCTION_LABELS = { ...TASK_EXECUTION_CLASS_LABELS, general_execution: "通用执行", review: "评审", analysis: "分析", short_execution: "短机械任务", implementation: "实现" };
+// §4.5 admission whyThisCellNow closed-set tokens → Chinese; dynamic reasons fall back to t(reasonCode).
+const WHY_THIS_CELL_LABELS = {
+  executable_cell_admitted_this_cycle: "本周期准入执行",
+  cell_awaiting_independent_review: "等待独立评审",
+  cell_needs_external_decision: "需人工决策处置",
+  cell_already_executing: "已在执行中",
+  cell_split_into_analysis_and_implementation: "已拆分为分析与实现",
+  no_model_satisfies_hard_constraints: "无模型满足硬约束",
+  role_drift_guard_intercepted_dispatch: "角色偏移守卫拦截派发"
+};
+function admissionReasonLabel(decision) {
+  const why = decision.whyThisCellNow;
+  if (why && WHY_THIS_CELL_LABELS[why]) return WHY_THIS_CELL_LABELS[why];
+  if (decision.reasonCode) {
+    const localized = t(decision.reasonCode);
+    if (localized && localized !== decision.reasonCode) return localized;
+  }
+  return why || decision.reasonCode || "-";
+}
 function laneFunctionLabel(value) { return value ? (LANE_FUNCTION_LABELS[value] || value) : "-"; }
 // 模型决策的中文可读摘要（原始 modelDecision 为机器契约技术串，此处从结构化字段生成人读版本）
 function modelDecisionSummaryZh(decision) {
@@ -2020,6 +2039,7 @@ const DIRECTIVE_TYPES = [
   ["cancel", "取消任务"],
   ["adjust_priority", "调整优先级"],
   ["add_requirement", "补充要求"],
+  ["resolve_decision", "决策处置（重开 / 放弃）"],
   ["free_text", "自由指令"]
 ];
 
@@ -2043,6 +2063,11 @@ function renderDirectives() {
           <div class="form-row"><label>指令类型</label>
             <select name="directiveType">${DIRECTIVE_TYPES.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("")}</select>
           </div>
+          <div class="form-row"><label>决策处置方式</label>
+            <select name="resolution"><option value="reopen">重开（返回就绪，重置返工计数）</option><option value="abandon">放弃（置为已替代，解除关闭阻塞）</option></select>
+            <span class="small muted">仅“决策处置”类型生效</span>
+          </div>
+          <div class="form-row"><label>目标工作项 ID</label><input name="workItemId" placeholder="仅“决策处置”可选：留空则处置该组全部待决策项" /></div>
           <div class="form-row"><label>指令内容</label><textarea name="instruction" placeholder="补充要求 / 自由指令必填，其余类型可选"></textarea></div>
           <button class="primary-button" type="submit">提交指令</button>
         </form>
@@ -2154,7 +2179,7 @@ function renderMonitor() {
     `<span class="mono">${esc(decision.workItemId || "-")}</span>`,
     badge(decision.outcome),
     badge(decision.cellClass || "-"),
-    {v: esc(decision.whyThisCellNow || decision.reasonCode || "-"), c: "text-clip"}
+    {v: esc(admissionReasonLabel(decision)), c: "text-clip"}
   ])).join("");
 
   const barriers = (state.closeBarriers || []).slice(0, 8).map((barrier) => row([
@@ -2494,7 +2519,8 @@ document.addEventListener("submit", async (event) => {
         projectId: currentProjectId,
         taskGroupId: directiveTaskGroupId,
         directiveType: data.directiveType,
-        instruction: data.instruction || ""
+        instruction: data.instruction || "",
+        ...(data.directiveType === "resolve_decision" ? {resolution: data.resolution || "reopen", ...(String(data.workItemId || "").trim() ? {workItemId: data.workItemId.trim()} : {})} : {})
       })});
       formTouched = false;
       await loadPage();

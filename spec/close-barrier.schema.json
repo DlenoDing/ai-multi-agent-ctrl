@@ -14,6 +14,7 @@
     "requiredGates",
     "gateResults",
     "blockingObjects",
+    "holisticJudgment",
     "evidenceRefs",
     "computedAt",
     "satisfied"
@@ -68,7 +69,7 @@
     },
     "requiredGates": {
       "type": "array",
-      "minItems": 31,
+      "minItems": 27,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/closeGate"
@@ -85,16 +86,12 @@
         "all_changes_integrated",
         "no_pending_permissions",
         "no_pending_approvals",
-        "all_policy_decisions_terminal",
         "all_commands_terminal",
         "all_command_effects_terminal",
         "no_active_dlq",
         "all_leases_terminal",
         "no_active_temp_grants",
-        "no_active_secret_leases",
-        "no_open_external_capability_boundaries",
         "artifacts_verified",
-        "release_manifest_ready",
         "rules_candidates_processed",
         "runtime_issue_candidates_exported",
         "no_open_execution_topologies",
@@ -132,9 +129,6 @@
         "no_pending_approvals": {
           "$ref": "#/$defs/gateResult"
         },
-        "all_policy_decisions_terminal": {
-          "$ref": "#/$defs/gateResult"
-        },
         "all_commands_terminal": {
           "$ref": "#/$defs/gateResult"
         },
@@ -150,16 +144,7 @@
         "no_active_temp_grants": {
           "$ref": "#/$defs/gateResult"
         },
-        "no_active_secret_leases": {
-          "$ref": "#/$defs/gateResult"
-        },
-        "no_open_external_capability_boundaries": {
-          "$ref": "#/$defs/gateResult"
-        },
         "artifacts_verified": {
-          "$ref": "#/$defs/gateResult"
-        },
-        "release_manifest_ready": {
           "$ref": "#/$defs/gateResult"
         },
         "rules_candidates_processed": {
@@ -219,44 +204,15 @@
         "properties": {
           "objectType": {
             "type": "string",
-            "enum": [
-              "WorkItem",
-              "Finding",
-              "QualityGate",
-              "Contract",
-              "IntegrationBatch",
-              "ReleaseManifest",
-              "PermissionRequest",
-              "ApprovalRequest",
-              "PolicyDecision",
-              "Command",
-              "CommandEffect",
-              "DLQEntry",
-              "Lease",
-              "TempGrant",
-              "SecretLease",
-              "SecretGrant",
-              "ExternalCapabilityBoundary",
-              "ExecutionTopology",
-              "DerivedTaskRequest",
-              "ReviewPlan",
-              "ReviewBundle",
-              "RuleSourceResolution",
-              "CompletionReadinessCheck",
-              "EffectiveInstructionPacket",
-              "RoleDriftGuard",
-              "Ruleset",
-              "RuntimeIssuePattern",
-              "SystemUpgradeCandidate",
-              "SharedDefinitionContract",
-              "RepositoryOutputTarget",
-              "Artifact"
-            ]
+            "minLength": 1
           },
           "objectId": {
             "type": "string"
           },
           "status": {
+            "type": "string"
+          },
+          "gate": {
             "type": "string"
           }
         }
@@ -287,6 +243,46 @@
         }
       },
       "default": []
+    },
+    "holisticJudgment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "basis",
+        "conclusion"
+      ],
+      "properties": {
+        "basis": {
+          "type": "string",
+          "const": "reality_first_close_barrier"
+        },
+        "requiredCellsTerminal": {
+          "type": "boolean"
+        },
+        "findingsDispositioned": {
+          "type": "boolean"
+        },
+        "independentReviewComplete": {
+          "type": "boolean"
+        },
+        "sideEffectsSettled": {
+          "type": "boolean"
+        },
+        "noLiveAuthorizationHold": {
+          "type": "boolean"
+        },
+        "realBlockerCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "conclusion": {
+          "type": "string",
+          "enum": [
+            "all_required_terminal_no_real_blocker",
+            "blocked_by_real_gate"
+          ]
+        }
+      }
     },
     "evidenceRefs": {
       "type": "array",
@@ -344,11 +340,6 @@
             },
             {
               "contains": {
-                "const": "all_policy_decisions_terminal"
-              }
-            },
-            {
-              "contains": {
                 "const": "all_commands_terminal"
               }
             },
@@ -374,22 +365,7 @@
             },
             {
               "contains": {
-                "const": "no_active_secret_leases"
-              }
-            },
-            {
-              "contains": {
-                "const": "no_open_external_capability_boundaries"
-              }
-            },
-            {
-              "contains": {
                 "const": "artifacts_verified"
-              }
-            },
-            {
-              "contains": {
-                "const": "release_manifest_ready"
               }
             },
             {
@@ -511,16 +487,12 @@
         "all_changes_integrated",
         "no_pending_permissions",
         "no_pending_approvals",
-        "all_policy_decisions_terminal",
         "all_commands_terminal",
         "all_command_effects_terminal",
         "no_active_dlq",
         "all_leases_terminal",
         "no_active_temp_grants",
-        "no_active_secret_leases",
-        "no_open_external_capability_boundaries",
         "artifacts_verified",
-        "release_manifest_ready",
         "rules_candidates_processed",
         "runtime_issue_candidates_exported",
         "no_open_execution_topologies",

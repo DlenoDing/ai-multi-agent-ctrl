@@ -1141,7 +1141,32 @@ export function maintainWorkerLanes(state, options = {}) {
     const keep = new Set(retired.slice(0, 200).map((lane) => lane.laneId));
     state.workerLanes = state.workerLanes.filter((lane) => !WORKER_LANE_TERMINAL.has(lane.status) || keep.has(lane.laneId));
   }
+  reconcileRoleDriftGuards(state);
   return state.workerLanes;
+}
+
+// acceptAgentCheckpoint is the only path that closes a role-drift guard (on a checkpointing session).
+// A session that terminalizes WITHOUT a checkpoint (cancel / claim-expiry recycle / fail / revoke)
+// would otherwise leave its guard "monitoring" forever, so no_active_role_drift_guard wedges the
+// close barrier and guards grow unbounded. Close any guard whose session is terminal or gone, and
+// cap the retained closed guards.
+function reconcileRoleDriftGuards(state) {
+  const terminalSessionStatuses = new Set(["failed", "aborted", "recycled", "closed", "completed_objective"]);
+  const at = new Date().toISOString();
+  for (const guard of state.roleDriftGuards || []) {
+    if (["closed", "corrected"].includes(guard.status)) continue;
+    const session = guard.sessionId ? (state.workSessions || []).find((item) => item.sessionId === guard.sessionId) : null;
+    if (!session || terminalSessionStatuses.has(session.status)) {
+      guard.status = "closed";
+      guard.closeReason = session ? `session_${session.status}` : "session_absent";
+      guard.updatedAt = at;
+    }
+  }
+  const closedGuards = (state.roleDriftGuards || []).filter((guard) => ["closed", "corrected"].includes(guard.status));
+  if (closedGuards.length > 200) {
+    const keep = new Set(closedGuards.slice(0, 200).map((guard) => guard.guardId));
+    state.roleDriftGuards = (state.roleDriftGuards || []).filter((guard) => !["closed", "corrected"].includes(guard.status) || keep.has(guard.guardId));
+  }
 }
 
 export function decideSessionPlacement(state, request = {}) {
@@ -1725,6 +1750,23 @@ export function runAutonomousCycle(state, request = {}) {
       // - needs_decision: never auto-admit — it requires an external decision (human/decision-center)
       //   to return to ready, so holding preserves the rework cap and the human-in-the-loop gate.
       if (workItem.status === "blocked_dependency") {
+        // A dependency that is superseded (e.g. an abandoned analysis child) can NEVER become
+        // verified, so the dependent would be stuck forever with no operator lever (it isn't
+        // needs_decision, so resolve_decision can't reach it). Escalate it to needs_decision so the
+        // operator can reopen it (with manual input) or abandon it via resolve_decision.
+        const abandonedDep = (workItem.dependsOnWorkItemRefs || []).find((depId) => {
+          const dependency = (taskGroup.workItems || []).find((item) => item.id === depId);
+          return dependency && dependency.status === "superseded";
+        });
+        if (abandonedDep) {
+          workItem.status = "needs_decision";
+          workItem.blockedReason = "dependency_abandoned";
+          workItem.updatedAt = new Date().toISOString();
+          recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "dependency_abandoned", whyThisCellNow: `dependency ${abandonedDep} was abandoned`, cycleRef});
+          addBlocker(taskGroup, "S1", `工作项 ${workItem.id} 的依赖 ${abandonedDep} 已被放弃，需人工决策。`);
+          changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "needs_decision", reason: "dependency_abandoned"});
+          continue;
+        }
         const unmetDeps = (workItem.dependsOnWorkItemRefs || []).filter((depId) => {
           const dependency = (taskGroup.workItems || []).find((item) => item.id === depId);
           return !dependency || !["verified", "closed"].includes(dependency.status);
@@ -4858,7 +4900,11 @@ export function policyDecisionEval(state, args) {
     evidenceRefs: args.evidenceRefs || [],
     createdAt: at
   };
-  state.policyDecisions.unshift(policyDecision);
+  // Cap at the source: policy decisions are point-in-time (immediately terminal) records emitted on
+  // EVERY guarded/MCP write, and this collection is central (not sharded). Without a source cap it
+  // grows unbounded in central state on the MCP-first path (the UI server's separate 120-cap does
+  // not cover MCP callers).
+  state.policyDecisions = [policyDecision, ...state.policyDecisions].slice(0, Math.max(100, Number(process.env.AIMAC_POLICY_DECISIONS_CAP || 500)));
   return {policyDecision};
 }
 

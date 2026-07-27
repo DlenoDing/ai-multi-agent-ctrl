@@ -1293,7 +1293,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "identity-mcp.grant_revoke":
       return grantRevoke(state, args);
     case "identity-mcp.permission_matrix_get":
-      return permissionMatrixGet(state);
+      return permissionMatrixGet(state, principalProjectFilter(context));
     case "ui-console-mcp.runtime_health_get":
       return runtimeHealthGet(state);
     case "ui-console-mcp.management_surface_get":
@@ -2054,7 +2054,13 @@ function grantRevoke(state, args) {
   return {grant};
 }
 
-function permissionMatrixGet(state) {
+function permissionMatrixGet(state, filter) {
+  // The account/role/grant matrix is a cross-tenant system view. A bounded principal (a project-
+  // scoped service token) must never read every tenant's accounts and grant edges through it — deny
+  // unless the principal is unrestricted (system_admin / wildcard, filter === null).
+  if (filter) {
+    return {ok: false, error: "permission_matrix_requires_unrestricted_principal"};
+  }
   return {
     accounts: state.accounts.map((account) => ({
       accountId: account.accountId,
