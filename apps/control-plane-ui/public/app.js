@@ -2075,7 +2075,7 @@ function renderReview() {
         </div>`).join("")}
       ${openFindings.map((item) => `
         <div class="record">
-          <div class="record-title"><strong>发现：${esc(item.summary || item.title || item.findingId)}</strong>${badge(item.status)}${item.severity ? customBadge(esc(item.severity), "orange") : ""}</div>
+          <div class="record-title"><strong>发现：${esc(item.summary || item.title || item.findingId)}</strong>${badge(item.status)}${item.severity ? customBadge(item.severity, "orange") : ""}</div>
           <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>${fmtTime(item.createdAt)}</span></div>
           ${canReview ? `<form class="form-grid" data-form="finding-resolve" data-request="${esc(item.findingId)}" style="margin-top:8px;">
             <div class="form-row"><label>处置类别</label><select name="dispositionClass">${dispositionHtml}</select></div>
@@ -2266,6 +2266,14 @@ function renderMonitor() {
       {v: fmtTime(cp.createdAt), c: "nowrap"}
     ]);
   }).join("");
+  const qualityGateRows = filterSource((state.qualityGates || []).filter((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)), "quality-gates").slice(0, 20).map((qg) => row([
+    esc(taskGroupNameOf(qg.taskGroupId)),
+    esc(qg.gateType || "-"),
+    `<span class="mono">${esc(qg.workItemId || "-")}</span>`,
+    badge(qg.status),
+    {v: fmtTime(qg.updatedAt || qg.createdAt), c: "nowrap"}
+  ])).join("");
+  const failingTests = (state.testResults || []).filter((tr) => groups.some((taskGroup) => taskGroup.id === tr.taskGroupId) && ["failed", "error"].includes(tr.status));
   const canCloseTaskGroup = hasPerm("task_group:control"); // endpoint maps task_group_* -> task_group:control
   const barriers = (state.closeBarriers || []).slice(0, 8).map((barrier) => row([
     esc(taskGroupNameOf(barrier.taskGroupId)),
@@ -2298,13 +2306,17 @@ function renderMonitor() {
     panel("模型选择记录", table(["角色", "工作项", "模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText((state.modelSelectionDecisions || []).length, 10)})),
     panel("会话放置记录", table(["工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态"], placements, {moreText: moreText((state.sessionPlacementDecisions || []).length, 10)})),
     panel("准入决策", table(["工作项", "判定", "分类", {label: "原因", c: "text-clip"}], admissions, {moreText: moreText((state.admissionDecisions || []).length, 12)}), {wide: true}),
-    panel("检查点（Git 证据）", table(["任务组", "工作项", "提交", "推送", {label: "产出清单", c: "text-clip"}, {label: "时间", c: "nowrap"}], checkpointRows, {moreText: moreText((state.checkpoints || []).filter((cp) => groups.some((taskGroup) => taskGroup.id === cp.taskGroupId)).length, 20)}), {wide: true, headerSide: filterInput("按工作项、提交过滤…", "checkpoints")}),
+    panel("检查点（Git 证据）", table(["任务组", "工作项", "提交", "推送", {label: "产出清单", c: "text-clip"}, {label: "时间", c: "nowrap"}], checkpointRows, {moreText: moreText(filterSource((state.checkpoints || []).filter((cp) => groups.some((taskGroup) => taskGroup.id === cp.taskGroupId)), "checkpoints").length, 20)}), {wide: true, headerSide: filterInput("按工作项、提交过滤…", "checkpoints")}),
+    (state.qualityGates || []).some((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)) ? panel("质量门禁 / 测试证据", `
+      ${failingTests.length ? `<div class="notice warn-notice">有 ${failingTests.length} 项失败测试，阻塞关闭门禁（gateType 对应门禁为 failed，需修复并重提通过测试，或取消对应工作项）。</div>` : ""}
+      ${table(["任务组", "门禁类型", "工作项", "状态", {label: "更新时间", c: "nowrap"}], qualityGateRows, {moreText: moreText((state.qualityGates || []).filter((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)).length, 20)})}
+    `, {wide: true, headerSide: filterInput("按门禁类型、工作项过滤…", "quality-gates")}) : "",
     panel("关闭门禁", `
       ${table(["任务组", "状态", {label: "阻塞对象数", c: "num"}, {label: "计算时间", c: "nowrap"}, "操作"], barriers, {moreText: moreText((state.closeBarriers || []).length, 8)})}
       ${(state.closeBarriers || []).filter((barrier) => !barrier.satisfied && (barrier.blockingObjects || []).length).slice(0, 8).map((barrier) => `
         <div class="record" style="margin-top:8px;">
           <div class="record-title"><strong>${esc(taskGroupNameOf(barrier.taskGroupId))}</strong> 阻塞明细</div>
-          <div class="chip-row">${(barrier.blockingObjects || []).map((obj) => customBadge(`${esc(t(obj.objectType) || obj.objectType)}：${esc(t(obj.status) || obj.status)}`, "red")).join(" ")}</div>
+          <div class="chip-row">${(barrier.blockingObjects || []).map((obj) => customBadge(`${t(obj.objectType) || obj.objectType}${obj.gate ? `·${t(obj.gate) || obj.gate}` : ""}：${t(obj.status) || obj.status}`, "red")).join(" ")}</div>
         </div>`).join("")}
     `, {wide: true})
   ].join("");
@@ -2401,7 +2413,10 @@ document.addEventListener("submit", async (event) => {
   if (!form) return;
   event.preventDefault();
   const kind = form.dataset.form;
-  const data = Object.fromEntries(new FormData(form).entries());
+  // Include the submitter so a form with multiple submit buttons (e.g. 批准/拒绝 carrying name=status)
+  // contributes the clicked button's name/value — without this, data.status is undefined and both
+  // buttons fall through to the negative default (approve would silently deny).
+  const data = Object.fromEntries(new FormData(form, event.submitter).entries());
   const submitBtn = form.querySelector("button[type='submit'], button:not([type='button'])");
   try {
     const submitOutcome = await withSubmitting(submitBtn, async () => {
@@ -2633,10 +2648,17 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     if (kind === "finding-resolve") {
+      const evidenceRefs = String(data.evidenceRefs || "").split(",").map((ref) => ref.trim()).filter(Boolean);
+      // fixed_verified / blocked_external without evidence are downgraded server-side to a non-closable
+      // class and would silently keep blocking the barrier — require evidence up front so the operator
+      // isn't misled by a success toast on a still-blocking disposition.
+      if (["fixed_verified", "blocked_external"].includes(data.dispositionClass || "fixed_verified") && !evidenceRefs.length) {
+        throw new Error("该处置类别需填写证据引用（evidence:...），否则将被降级为不可闭合并继续阻塞关闭门禁");
+      }
       await api(`/api/findings/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({
         status: data.status || "resolved",
         dispositionClass: data.dispositionClass || "fixed_verified",
-        evidenceRefs: String(data.evidenceRefs || "").split(",").map((ref) => ref.trim()).filter(Boolean)
+        evidenceRefs
       })});
       await loadPage();
       return;

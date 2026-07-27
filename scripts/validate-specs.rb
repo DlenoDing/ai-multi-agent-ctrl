@@ -672,6 +672,15 @@ errors << "close-barrier panel must show the blocking-object breakdown" unless a
 errors << "monitor must surface checkpoint Git evidence (commit/push refs)" unless app_js_source.include?("检查点（Git 证据）")
 errors << "keyword filters must filter the source before the display cap" unless app_js_source.include?("function filterSource") && app_js_source.include?("filterSource((state.workSessions")
 errors << "effective-instruction packet must carry the resolved effective-rules digest" unless core_source.include?("const effectiveRulesDigest = digestOf") && core_source.include?("effectiveRulesDigest: contract.effectiveRulesDigest")
+# Cycle-2 round-2 delta fixes:
+# F1 (shipping-blocker): a multi-submit-button form must capture the submitter, else approve silently denies.
+errors << "form submit must capture the submitter (approve must not silently deny)" unless app_js_source.include?("new FormData(form, event.submitter)")
+# A failed quality gate for an abandoned/closed work item must not deadlock the close barrier (no waive path).
+errors << "quality gate for an abandoned work item must not block close" unless core_source.include?("abandonedQualityGateWorkIds")
+# Resolving a blocker must recompute the barrier so the close action appears without a manual cycle.
+errors << "resolving a barrier blocker must recompute readiness + close barrier" unless server_source.include?("function recomputeBarrierAfterResolve") && server_source.scan("recomputeBarrierAfterResolve(state,").length >= 3
+# The quality-gate / test evidence that now gates close must be visible in the console.
+errors << "quality gates that gate close must be visible" unless server_source.include?("\"qualityGates\", \"testResults\"") && app_js_source.include?("质量门禁 / 测试证据")
 errors << "agentRuntimeNodes cap must retain live nodes and trim terminal first" unless agent_gateway_source.include?("function capAgentRuntimeNodes") && agent_gateway_source.include?("capAgentRuntimeNodes(state.agentRuntimeNodes)")
 # F2: mcpGrants cap must never evict a still-issued grant of a live dispatch (would deny it MCP access).
 errors << "mcpGrants cap must retain issued grants of live dispatches" unless agent_gateway_source.include?("function capMcpGrants") && agent_gateway_source.include?("capMcpGrants(state, state.mcpGrants)")

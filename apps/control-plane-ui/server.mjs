@@ -1133,7 +1133,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     system: ["accounts", "auditLog", "policyDecisions", "commands", "decisionRecords"],
     users: ["accounts", "accessGrants", "projects", "agentJoinTokens"],
     projects: ["accounts", "accessGrants", "projects", "repositoryOutputs", "agentJoinTokens"],
-    tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots", "humanConfirmationRequests", "humanDirectives", "permissionRequests", "approvalRequests", "findings", "qualityGates"],
+    tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots", "humanConfirmationRequests", "humanDirectives", "permissionRequests", "approvalRequests", "findings", "qualityGates", "testResults"],
     runtime: ["modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions", "workerLanes", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkills", "roleSkillOverlays"],
     instructions: ["instructionMetrics", "sharedDefinitions", "effectiveInstructionPackets", "roleDriftGuards"]
   };
@@ -1302,6 +1302,17 @@ function grantAppliesToResource(state, grant, resourceScope = {}) {
 function taskGroupScope(state, taskGroupId) {
   const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
   return {resourceType: "task_group", resourceId: taskGroupId, projectId: taskGroup?.projectId};
+}
+
+// After an operator resolves a close-barrier blocker (permission/approval/finding), refresh the stored
+// readiness + close barrier so the console reflects the unblock immediately (the "关闭任务组" button is
+// gated on the stored barrier.satisfied). Best-effort — the resolve itself already succeeded.
+function recomputeBarrierAfterResolve(state, taskGroupId) {
+  if (!taskGroupId) return;
+  try {
+    computeCompletionReadiness(state, taskGroupId, {root: repositoryRoot});
+    computeCloseBarrier(state, taskGroupId, {root: repositoryRoot, mutate: false});
+  } catch { /* recompute is advisory; do not fail the resolve on a recompute error */ }
 }
 
 function projectScope(projectId) {
@@ -2388,6 +2399,9 @@ async function handleApi(req, res) {
     }
     const readiness = computeCompletionReadiness(state, closeComputeMatch[1], {root: repositoryRoot});
     const closeBarrier = computeCloseBarrier(state, closeComputeMatch[1], {root: repositoryRoot, mutate: body.mutate === true});
+    // A real close mutates the task group to terminal; refresh the project/task-group progress rollup so
+    // the overview reflects it immediately instead of lagging until the next autonomy cycle.
+    if (body.mutate === true && closeBarrier.satisfied) computeProgressSnapshots(state);
     const result = {readiness, closeBarrier};
     audit(state, "orchestrator", "task_group_close_barrier_compute", `TaskGroup:${closeComputeMatch[1]}`);
     finishGuardedWrite(state, guard, 200, result);
@@ -3103,6 +3117,7 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = findingResolve(state, {...body, findingId: findingResolveMatch[1]});
     if (result.ok === false) return json(res, 404, {error: result.error});
+    recomputeBarrierAfterResolve(state, existingFinding?.taskGroupId);
     audit(state, "policy-engine", "finding_resolve", `Finding:${result.finding.findingId}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
@@ -3128,6 +3143,7 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = approvalResolve(state, {...body, approvalId: approvalResolveMatch[1]});
     if (result.ok === false) return json(res, 404, {error: result.error});
+    recomputeBarrierAfterResolve(state, existingApproval?.taskGroupId);
     audit(state, "policy-engine", "approval_resolve", `ApprovalRequest:${result.approvalRequest.approvalId}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
@@ -3250,6 +3266,7 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = permissionResolve(state, {...body, requestId: permissionResolveMatch[1]});
     if (result.ok === false) return json(res, 404, {error: result.error});
+    recomputeBarrierAfterResolve(state, existingPermission?.taskGroupId);
     audit(state, "permission-gateway", "permission_resolve", `PermissionRequest:${result.permissionRequest.requestId}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);

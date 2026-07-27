@@ -2844,10 +2844,16 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
   const nowMs = Date.now();
   const pendingStatuses = ["open", "pending", "requested", "submitted", "in_review", "waiting"];
   const forTaskGroup = (items) => (items || []).filter((item) => item.taskGroupId === taskGroupId);
+  // A failed quality gate whose work item was abandoned (cancelled/aborted/superseded) or already closed
+  // is moot — it must not block the task-group close forever with no operator remedy (the work will never
+  // be re-tested). Live/in-progress work items keep blocking; the operator re-tests or cancels the item.
+  const abandonedQualityGateWorkIds = new Set((taskGroup?.workItems || [])
+    .filter((workItem) => ["cancelled", "aborted", "superseded", "closed"].includes(workItem.status))
+    .map((workItem) => workItem.id));
   const gateFailures = {
     all_required_work_closed: readiness.blockingObjects.some((item) => item.objectType === "WorkItem"),
     all_findings_terminal: forTaskGroup(state.findings).some((item) => !(["resolved", "closed", "dismissed", "wontfix"].includes(item.status) && ["fixed_verified", "not_applicable", "scope_adjusted", "blocked_external"].includes(item.dispositionClass))),
-    all_quality_gates_passed: forTaskGroup(state.qualityGates).some((item) => !["passed", "waived"].includes(item.status)),
+    all_quality_gates_passed: forTaskGroup(state.qualityGates).some((item) => !["passed", "waived"].includes(item.status) && !(item.workItemId && abandonedQualityGateWorkIds.has(item.workItemId))),
     all_contracts_compatible: relatedSharedDefinitions(state, taskGroup).some((definition) => ["conflict", "blocked"].includes(definition.status)),
     all_changes_integrated: forTaskGroup(state.repositoryOutputs).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status)),
     no_pending_permissions: forTaskGroup(state.permissionRequests).some((item) => pendingStatuses.includes(item.status)),
