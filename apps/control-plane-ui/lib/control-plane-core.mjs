@@ -2610,6 +2610,50 @@ function progressSnapshot(scopeType, scopeRef, status, progress, health, counter
   };
 }
 
+// Terminalize a cell's runtime residue so an abandoned/denied cell can never wedge the close barrier.
+// Without this, denying a permission then abandoning the cell left the running dispatch + non-terminal
+// session + active lease + bound repo-output target + monitoring role-drift guard all blocking close,
+// with no operator lever (cancel only reaches queued/blocked dispatches, resolve_decision only the work
+// item). Cascades: dispatch+session -> failed, lease -> released, its bound target -> superseded, guard
+// -> closed. Idempotent (skips already-terminal objects).
+export function terminateCellRuntime(state, taskGroupId, workItemId, reason) {
+  if (!taskGroupId || !workItemId) return;
+  const at = new Date().toISOString();
+  for (const dispatch of state.agentDispatches || []) {
+    if (dispatch.taskGroupId === taskGroupId && dispatch.workItemId === workItemId && !["completed", "failed", "cancelled"].includes(dispatch.status)) {
+      markDispatchFailed(state, dispatch, reason);
+    }
+  }
+  const sessionIds = new Set();
+  for (const session of state.workSessions || []) {
+    if (session.taskGroupId !== taskGroupId || session.workItemId !== workItemId) continue;
+    sessionIds.add(session.sessionId);
+    if (!["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status)) {
+      session.status = "failed";
+      session.blockedReason = reason;
+      session.updatedAt = at;
+    }
+  }
+  for (const lease of state.leases || []) {
+    if (lease.status !== "active" || !sessionIds.has(String(lease.holderRef || "").replace("session:", ""))) continue;
+    lease.status = "released";
+    lease.updatedAt = at;
+    const targetId = String(lease.resourceRef || "").replace("RepositoryOutputTarget:", "");
+    const target = (state.repositoryOutputs || []).find((item) => item.targetId === targetId && item.leaseRef === lease.leaseId);
+    if (target && !["pushed", "committed", "rejected", "superseded"].includes(target.status)) {
+      target.status = "superseded";
+      target.updatedAt = at;
+      delete target.leaseRef;
+    }
+  }
+  for (const guard of state.roleDriftGuards || []) {
+    if (guard.sessionId && sessionIds.has(guard.sessionId) && !["closed", "corrected"].includes(guard.status)) {
+      guard.status = "closed";
+      guard.updatedAt = at;
+    }
+  }
+}
+
 function activeExecutionForWork(state, taskGroupId, workItemId) {
   const session = (state.workSessions || []).find((item) =>
     item.taskGroupId === taskGroupId &&
@@ -4056,6 +4100,9 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
             workItem.status = "superseded";
             workItem.splitStatus = workItem.splitStatus || "abandoned_by_human_decision";
             delete workItem.blockedReason;
+            // Terminalize the cell's runtime residue (dispatch/session/lease/target/guard) so the
+            // abandoned cell cannot keep blocking the close barrier with no operator lever.
+            terminateCellRuntime(state, taskGroup.id, workItem.id, "work_item_abandoned_by_human_decision");
           } else {
             for (const bundle of (state.reviewBundles || [])) {
               if (bundle.workItemId === workItem.id && bundle.verdict === "changes_requested") bundle.supersededByHumanDecision = true;

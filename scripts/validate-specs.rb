@@ -681,6 +681,10 @@ errors << "quality gate for an abandoned work item must not block close" unless 
 errors << "resolving a barrier blocker must recompute readiness + close barrier" unless server_source.include?("function recomputeBarrierAfterResolve") && server_source.scan("recomputeBarrierAfterResolve(state,").length >= 3
 # The quality-gate / test evidence that now gates close must be visible in the console.
 errors << "quality gates that gate close must be visible" unless server_source.include?("\"qualityGates\", \"testResults\"") && app_js_source.include?("质量门禁 / 测试证据")
+# Cycle-2 round-3: abandoning/denying a cell must terminalize its runtime residue (dispatch/session/lease/
+# target/guard) or those objects wedge the close barrier with no operator lever (same deadlock class as
+# the quality-gate one). terminateCellRuntime cascades, called from the abandon actuator + the deny handler.
+errors << "abandon/deny must cascade-terminalize the cell runtime (no orphaned close-barrier blocker)" unless core_source.include?("export function terminateCellRuntime") && core_source.include?("terminateCellRuntime(state, taskGroup.id, workItem.id") && mcp_source.include?("terminateCellRuntime(state, taskGroupId, workItemId")
 errors << "agentRuntimeNodes cap must retain live nodes and trim terminal first" unless agent_gateway_source.include?("function capAgentRuntimeNodes") && agent_gateway_source.include?("capAgentRuntimeNodes(state.agentRuntimeNodes)")
 # F2: mcpGrants cap must never evict a still-issued grant of a live dispatch (would deny it MCP access).
 errors << "mcpGrants cap must retain issued grants of live dispatches" unless agent_gateway_source.include?("function capMcpGrants") && agent_gateway_source.include?("capMcpGrants(state, state.mcpGrants)")

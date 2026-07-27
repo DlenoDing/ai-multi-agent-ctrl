@@ -217,7 +217,7 @@
     all_quality_gates_passed: "质量门禁全通过", all_findings_terminal: "发现全终态", all_required_work_closed: "工作项全关闭",
     no_pending_permissions: "无待处理授权", no_pending_approvals: "无待处理审批", all_changes_integrated: "变更全集成",
     all_required_evidence_present: "证据齐备", all_required_validation_present: "独立评审齐备", no_pending_human_confirmations: "无待人工确认",
-    all_commands_terminal: "命令全终态", all_command_effects_terminal: "命令副作用全终态", blocked: "受阻",
+    all_commands_terminal: "命令全终态", all_command_effects_terminal: "命令副作用全终态",
     blocked_by_exact_dependency: "精确依赖阻断",
     diagnostic_only_no_pass: "仅诊断（不判通过）",
     defer_downstream: "延后至下游",

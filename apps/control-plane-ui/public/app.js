@@ -2051,7 +2051,10 @@ function renderReview() {
   const pendingApprovals = (state.approvalRequests || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && item.status === "pending");
   const openFindings = (state.findings || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status));
   const canGrant = hasPerm("project:grant");
-  const dispositionHtml = ["fixed_verified", "not_applicable", "scope_adjusted", "blocked_external"]
+  // blocked_external is omitted: the console can't collect the rootCauseOwner/recoveryRef the server
+  // requires to keep it terminal, so it would always downgrade to a still-blocking class (use the
+  // governance MCP path for that disposition).
+  const dispositionHtml = ["fixed_verified", "not_applicable", "scope_adjusted"]
     .map((cls) => `<option value="${cls}">${esc(t(cls))}</option>`).join("");
   const authDispositionHtml = `
     <div class="stack">
@@ -2309,7 +2312,7 @@ function renderMonitor() {
     panel("检查点（Git 证据）", table(["任务组", "工作项", "提交", "推送", {label: "产出清单", c: "text-clip"}, {label: "时间", c: "nowrap"}], checkpointRows, {moreText: moreText(filterSource((state.checkpoints || []).filter((cp) => groups.some((taskGroup) => taskGroup.id === cp.taskGroupId)), "checkpoints").length, 20)}), {wide: true, headerSide: filterInput("按工作项、提交过滤…", "checkpoints")}),
     (state.qualityGates || []).some((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)) ? panel("质量门禁 / 测试证据", `
       ${failingTests.length ? `<div class="notice warn-notice">有 ${failingTests.length} 项失败测试，阻塞关闭门禁（gateType 对应门禁为 failed，需修复并重提通过测试，或取消对应工作项）。</div>` : ""}
-      ${table(["任务组", "门禁类型", "工作项", "状态", {label: "更新时间", c: "nowrap"}], qualityGateRows, {moreText: moreText((state.qualityGates || []).filter((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)).length, 20)})}
+      ${table(["任务组", "门禁类型", "工作项", "状态", {label: "更新时间", c: "nowrap"}], qualityGateRows, {moreText: moreText(filterSource((state.qualityGates || []).filter((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)), "quality-gates").length, 20)})}
     `, {wide: true, headerSide: filterInput("按门禁类型、工作项过滤…", "quality-gates")}) : "",
     panel("关闭门禁", `
       ${table(["任务组", "状态", {label: "阻塞对象数", c: "num"}, {label: "计算时间", c: "nowrap"}, "操作"], barriers, {moreText: moreText((state.closeBarriers || []).length, 8)})}
@@ -2649,11 +2652,11 @@ document.addEventListener("submit", async (event) => {
     }
     if (kind === "finding-resolve") {
       const evidenceRefs = String(data.evidenceRefs || "").split(",").map((ref) => ref.trim()).filter(Boolean);
-      // fixed_verified / blocked_external without evidence are downgraded server-side to a non-closable
-      // class and would silently keep blocking the barrier — require evidence up front so the operator
-      // isn't misled by a success toast on a still-blocking disposition.
-      if (["fixed_verified", "blocked_external"].includes(data.dispositionClass || "fixed_verified") && !evidenceRefs.length) {
-        throw new Error("该处置类别需填写证据引用（evidence:...），否则将被降级为不可闭合并继续阻塞关闭门禁");
+      // fixed_verified without evidence is downgraded server-side to fixed_unverified (still blocks) —
+      // require evidence up front so the operator isn't misled by a success toast on a still-blocking
+      // disposition. (not_applicable / scope_adjusted need no evidence.)
+      if ((data.dispositionClass || "fixed_verified") === "fixed_verified" && !evidenceRefs.length) {
+        throw new Error("“已修复并验证”需填写证据引用（evidence:...），否则将被降级为不可闭合并继续阻塞关闭门禁");
       }
       await api(`/api/findings/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({
         status: data.status || "resolved",

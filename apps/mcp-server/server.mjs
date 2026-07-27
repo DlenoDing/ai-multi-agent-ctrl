@@ -38,6 +38,7 @@ import {
   artifactRegister,
   capRetainingOpen,
   recordQualityGateFromTest,
+  terminateCellRuntime,
   claimLease,
   classifyDerivedTask,
   contractPublish,
@@ -2077,14 +2078,22 @@ function releasePermissionDeniedSession(state, request, at) {
   if (!request.sessionId) return;
   const session = state.workSessions.find((item) => item.sessionId === request.sessionId);
   if (!session || session.status !== "permission_required") return;
-  session.status = "needs_decision";
-  session.blockedReason = "permission_request_denied";
   session.permissionRequestRef = `PermissionRequest:${request.requestId}`;
-  session.updatedAt = at;
   const workItemId = request.workId || session.workItemId;
-  const taskGroup = (state.taskGroups || []).find((group) => group.id === (request.taskGroupId || session.taskGroupId));
+  const taskGroupId = request.taskGroupId || session.taskGroupId;
+  // The denied permission means the current execution cannot proceed — terminalize the cell's runtime
+  // residue (dispatch/session/lease/target/guard) so it does not wedge the close barrier, then demote the
+  // work item to needs_decision so the operator can reopen (fresh attempt) or abandon it via
+  // resolve_decision. (Session becomes failed via the cascade; a failed session is terminal + non-blocking.)
+  terminateCellRuntime(state, taskGroupId, workItemId, "permission_request_denied");
+  if (session.status === "permission_required") { // no dispatch cascade hit it (e.g. no live dispatch)
+    session.status = "failed";
+    session.blockedReason = "permission_request_denied";
+    session.updatedAt = at;
+  }
+  const taskGroup = (state.taskGroups || []).find((group) => group.id === taskGroupId);
   const workItem = workItemId && taskGroup ? (taskGroup.workItems || []).find((item) => item.id === workItemId) : null;
-  if (workItem && !["done", "verified", "closed", "aborted", "cancelled"].includes(workItem.status)) {
+  if (workItem && !["done", "verified", "closed", "aborted", "cancelled", "superseded"].includes(workItem.status)) {
     workItem.status = "needs_decision";
     workItem.blockedReason = "permission_request_denied";
     workItem.updatedAt = at;
