@@ -325,7 +325,12 @@ const shardOpenPredicates = {
   humanDirectives: (item) => ["queued", "acknowledged"].includes(item.status), // core 2770
   repositoryOutputs: (item) => !["pushed", "committed", "rejected", "superseded"].includes(item.status), // core 2759
   effectiveInstructionPackets: (item) => !["consumed", "expired", "superseded"].includes(item.status), // core 2757 + live deref
-  checkpoints: (item) => Boolean(item.commitRefs?.length && item.pushRefs?.length && item.artifactManifestRefs?.length) // core 2761/2763 evidence
+  checkpoints: (item) => Boolean(item.commitRefs?.length && item.pushRefs?.length && item.artifactManifestRefs?.length), // core 2761/2763 evidence
+  // Defense-in-depth: these two are also open-item barriers; today their in-memory caps (capDispatchHistory
+  // 240 / reconcileRoleDriftGuards open+200) keep them under the shard limit so the slice never runs, but
+  // giving them predicates makes the persist layer independently barrier-safe if either in-memory cap changes.
+  agentDispatches: (item) => !["completed", "failed", "cancelled"].includes(item.status), // core 2778
+  roleDriftGuards: (item) => !["closed", "corrected"].includes(item.status) // core 2756
 };
 
 function capProjectShardCollections(shard) {
