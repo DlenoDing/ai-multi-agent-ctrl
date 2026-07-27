@@ -26,6 +26,7 @@ let instructionState = null;
 let loginHint = null;
 
 let lastError = "";
+let lastLoadErrorToast = "";
 let loading = false;
 let formTouched = false;
 let modalHtml = "";
@@ -34,7 +35,6 @@ let modalProtected = false;
 let expandedTaskGroupId = "";
 let tgDetail = null;
 
-let reviewTaskGroupId = "";
 let reviewRequests = [];
 let directiveTaskGroupId = "";
 let directiveList = [];
@@ -593,7 +593,11 @@ const SUBMIT_SUCCESS = {
   "project-rules": "已保存规则",
   "tg-rules": "已保存规则",
   "hcr-decide": "已提交人工确认",
-  "directive-create": "已下达人工指令，将在下一编排周期生效"
+  "directive-create": "已下达人工指令，将在下一编排周期生效",
+  "perm-resolve": "已处理授权请求",
+  "approval-resolve": "已处理审批请求",
+  "finding-resolve": "已处置发现",
+  "close-task-group": "任务组已关闭"
 };
 
 /* ---------------- 项目范围 ---------------- */
@@ -697,8 +701,16 @@ async function loadPage() {
     }
     ensureProjectSelection();
     lastError = "";
+    lastLoadErrorToast = "";
   } catch (error) {
     lastError = error?.message || String(error);
+    // Surface authenticated page-load failures — previously the value was only rendered on the login
+    // screen, so a backend 500 / network blip left the operator on stale content with no signal. Dedupe
+    // so the 5s fallback poll and realtime wake don't spam the same transient error.
+    if (lastError && lastError !== lastLoadErrorToast) {
+      lastLoadErrorToast = lastError;
+      toast.error(`页面数据加载失败：${lastError}`);
+    }
   }
   loading = false;
   render();
@@ -924,7 +936,7 @@ function render() {
     ? `
       <div class="project-switch">
         <span>当前项目</span>
-        <select id="project-switcher">
+        <select id="project-switcher" aria-label="当前项目">
           ${visibleProjects().map((project) => `<option value="${esc(project.id)}" ${project.id === currentProjectId ? "selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}
         </select>
       </div>
@@ -1474,6 +1486,7 @@ function agentActions(node) {
   return [
     `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="pause_dispatch">暂停</button>`,
     `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="resume_dispatch">恢复</button>`,
+    `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="shutdown">关停</button>`,
     `<button class="danger-button" data-action="revoke-agent-node" data-node-id="${esc(node.nodeId)}">吊销</button>`
   ].join(" ");
 }
@@ -1605,6 +1618,9 @@ function renderProjectOverview() {
   ].join("");
 }
 
+function taskGroupById(taskGroupId) {
+  return (state.taskGroups || []).find((taskGroup) => taskGroup.id === taskGroupId) || null;
+}
 function taskGroupNameOf(taskGroupId) {
   return (state.taskGroups || []).find((taskGroup) => taskGroup.id === taskGroupId)?.name || taskGroupId || "-";
 }
@@ -2023,6 +2039,46 @@ function renderReview() {
     {v: fmtTime(request.decision?.decidedAt || request.updatedAt), c: "nowrap"}
   ])).join("");
 
+  const pendingPermissions = (state.permissionRequests || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && item.status === "pending");
+  const pendingApprovals = (state.approvalRequests || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && item.status === "pending");
+  const openFindings = (state.findings || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status));
+  const canGrant = hasPerm("project:grant");
+  const dispositionHtml = ["fixed_verified", "not_applicable", "scope_adjusted", "blocked_external"]
+    .map((cls) => `<option value="${cls}">${esc(t(cls))}</option>`).join("");
+  const authDispositionHtml = `
+    <div class="stack">
+      <div class="record-meta"><span>授权请求 ${pendingPermissions.length} · 审批请求 ${pendingApprovals.length} · 待处置发现 ${openFindings.length}（均阻塞关闭门禁）</span></div>
+      ${!canReview && !canGrant ? `<div class="notice warn-notice">当前账号无“人工审核 / 授权”权限，仅可查看。</div>` : ""}
+      ${pendingPermissions.map((item) => `
+        <div class="record">
+          <div class="record-title"><strong>授权请求：${esc(item.permission || "-")}</strong>${badge(item.status)}</div>
+          <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>主体：${esc(item.subjectId || "-")}</span><span>原因：${esc(item.reason || "-")}</span><span>${fmtTime(item.createdAt)}</span></div>
+          ${canGrant ? `<form class="form-grid" data-form="perm-resolve" data-request="${esc(item.requestId)}" style="margin-top:8px;">
+            <div class="btn-row"><button class="primary-button" type="submit" name="status" value="approved">批准</button><button class="ghost-button" type="submit" name="status" value="denied">拒绝</button></div>
+          </form>` : `<div class="notice">需“授权(project:grant)”权限处理。</div>`}
+        </div>`).join("")}
+      ${pendingApprovals.map((item) => `
+        <div class="record">
+          <div class="record-title"><strong>审批请求：${esc(item.summary || item.action || "-")}</strong>${badge(item.status)}</div>
+          <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>${fmtTime(item.createdAt)}</span></div>
+          ${canReview ? `<form class="form-grid" data-form="approval-resolve" data-request="${esc(item.approvalId)}" style="margin-top:8px;">
+            <div class="btn-row"><button class="primary-button" type="submit" name="status" value="approved">批准</button><button class="ghost-button" type="submit" name="status" value="rejected">驳回</button></div>
+          </form>` : ""}
+        </div>`).join("")}
+      ${openFindings.map((item) => `
+        <div class="record">
+          <div class="record-title"><strong>发现：${esc(item.summary || item.title || item.findingId)}</strong>${badge(item.status)}${item.severity ? customBadge(esc(item.severity), "orange") : ""}</div>
+          <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>${fmtTime(item.createdAt)}</span></div>
+          ${canReview ? `<form class="form-grid" data-form="finding-resolve" data-request="${esc(item.findingId)}" style="margin-top:8px;">
+            <div class="form-row"><label>处置类别</label><select name="dispositionClass">${dispositionHtml}</select></div>
+            <div class="form-row"><label>处置状态</label><select name="status"><option value="resolved">已解决</option><option value="closed">已关闭</option><option value="dismissed">已忽略</option><option value="wontfix">不修复</option></select></div>
+            <div class="form-row"><label>证据引用（可选，逗号分隔）</label><input name="evidenceRefs" placeholder="evidence:..."></div>
+            <button class="primary-button" type="submit">提交处置</button>
+          </form>` : ""}
+        </div>`).join("")}
+      ${!pendingPermissions.length && !pendingApprovals.length && !openFindings.length ? `<div class="notice">当前项目没有待处置的授权 / 审批 / 发现。</div>` : ""}
+    </div>`;
+
   return [
     panel("待人工确认", `
       <div class="stack">
@@ -2030,6 +2086,7 @@ function renderReview() {
         ${pendingHtml}
       </div>
     `, {wide: true}),
+    panel("授权与处置", authDispositionHtml, {wide: true}),
     panel("已答历史", table([{label: "问题", c: "text-clip"}, "状态", "所选选项", {label: "确认内容", c: "text-clip"}, "确认人", {label: "确认时间", c: "nowrap"}], answeredRows), {wide: true})
   ].join("");
 }
@@ -2185,11 +2242,15 @@ function renderMonitor() {
     {v: esc(admissionReasonLabel(decision)), c: "text-clip"}
   ])).join("");
 
+  const canCloseTaskGroup = hasPerm("task_group:control"); // endpoint maps task_group_* -> task_group:control
   const barriers = (state.closeBarriers || []).slice(0, 8).map((barrier) => row([
     esc(taskGroupNameOf(barrier.taskGroupId)),
     barrier.satisfied ? customBadge("可关闭", "green") : customBadge("存在阻塞", "red"),
     {v: String((barrier.blockingObjects || []).length), c: "num"},
-    {v: fmtTime(barrier.computedAt), c: "nowrap"}
+    {v: fmtTime(barrier.computedAt), c: "nowrap"},
+    (barrier.satisfied && canCloseTaskGroup && taskGroupById(barrier.taskGroupId)?.status !== "closed")
+      ? `<button class="primary-button" data-action="close-task-group" data-task="${esc(barrier.taskGroupId)}">关闭任务组</button>`
+      : (taskGroupById(barrier.taskGroupId)?.status === "closed" ? customBadge("已关闭", "gray") : "-")
   ])).join("");
 
   return [
@@ -2201,7 +2262,7 @@ function renderMonitor() {
     `) : "",
     panel("实时事件流", `
       <div class="stack">
-        <div class="record-meta"><span>监听范围：</span><select data-select="exec-scope">${scopeOptions.map((option) => `<option value="${esc(option.value)}" ${option.value === scopeValue ? "selected" : ""}>${esc(option.label)}</option>`).join("")}</select></div>
+        <div class="record-meta"><span>监听范围：</span><select data-select="exec-scope" aria-label="执行监听范围">${scopeOptions.map((option) => `<option value="${esc(option.value)}" ${option.value === scopeValue ? "selected" : ""}>${esc(option.label)}</option>`).join("")}</select></div>
         ${table([{label: "序号", c: "num"}, "事件", {label: "进度", c: "num"}, "状态", {label: "摘要", c: "text-clip"}, {label: "时间", c: "nowrap"}], eventRows, {moreText: moreText(execEvents.length, 120)})}
       </div>
     `, {wide: true, headerSide: filterInput("按事件、摘要过滤…", "events")}),
@@ -2213,7 +2274,7 @@ function renderMonitor() {
     panel("模型选择记录", table(["角色", "工作项", "模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText((state.modelSelectionDecisions || []).length, 10)})),
     panel("会话放置记录", table(["工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态"], placements, {moreText: moreText((state.sessionPlacementDecisions || []).length, 10)})),
     panel("准入决策", table(["工作项", "判定", "分类", {label: "原因", c: "text-clip"}], admissions, {moreText: moreText((state.admissionDecisions || []).length, 12)}), {wide: true}),
-    panel("关闭门禁", table(["任务组", "状态", {label: "阻塞对象数", c: "num"}, {label: "计算时间", c: "nowrap"}], barriers, {moreText: moreText((state.closeBarriers || []).length, 8)}), {wide: true})
+    panel("关闭门禁", table(["任务组", "状态", {label: "阻塞对象数", c: "num"}, {label: "计算时间", c: "nowrap"}, "操作"], barriers, {moreText: moreText((state.closeBarriers || []).length, 8)}), {wide: true})
   ].join("");
 }
 
@@ -2529,7 +2590,29 @@ document.addEventListener("submit", async (event) => {
       await loadPage();
       return;
     }
+    if (kind === "perm-resolve") {
+      await api(`/api/permission-requests/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "denied"})});
+      await loadPage();
+      return;
+    }
+    if (kind === "approval-resolve") {
+      await api(`/api/approval-requests/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "rejected"})});
+      await loadPage();
+      return;
+    }
+    if (kind === "finding-resolve") {
+      await api(`/api/findings/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({
+        status: data.status || "resolved",
+        dispositionClass: data.dispositionClass || "fixed_verified",
+        evidenceRefs: String(data.evidenceRefs || "").split(",").map((ref) => ref.trim()).filter(Boolean)
+      })});
+      await loadPage();
+      return;
+    }
     });
+    // Any successful data-form submit clears the dirty flag centrally, so navigating away afterwards
+    // never fires a spurious "放弃未保存的修改" prompt (the create forms previously never reset it).
+    if (submitOutcome !== "__skip_success__") formTouched = false;
     if (SUBMIT_SUCCESS[kind] && submitOutcome !== "__skip_success__") toast.success(SUBMIT_SUCCESS[kind]);
   } catch (error) {
     showError(error);
@@ -2557,16 +2640,10 @@ document.addEventListener("change", async (event) => {
       sessionStorage.setItem("aimac.projectId", currentProjectId);
       expandedTaskGroupId = "";
       tgDetail = null;
-      reviewTaskGroupId = "";
       directiveTaskGroupId = "";
       execScope = {type: "", id: ""};
       execEvents = [];
       execCursor = 0;
-      await loadPage();
-      return;
-    }
-    if (target.dataset.select === "review-tg") {
-      reviewTaskGroupId = target.value;
       await loadPage();
       return;
     }
@@ -2665,7 +2742,7 @@ document.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
-  const MUTATION_ACTIONS = new Set(["orchestrator-run", "decide-model", "sync-skill-source", "task-control", "agent-control", "toggle-agent", "revoke-grant", "revoke-join-token", "revoke-agent-node", "org-status", "member-status", "bootstrap-init", "tg-config-reset"]);
+  const MUTATION_ACTIONS = new Set(["orchestrator-run", "decide-model", "sync-skill-source", "task-control", "agent-control", "toggle-agent", "revoke-grant", "revoke-join-token", "revoke-agent-node", "org-status", "member-status", "bootstrap-init", "tg-config-reset", "close-task-group"]);
   const guardBtn = MUTATION_ACTIONS.has(action) && target.tagName === "BUTTON" ? target : null;
   if (guardBtn) { guardBtn.disabled = true; guardBtn.classList.add("is-loading"); }
   try {
@@ -2798,6 +2875,7 @@ document.addEventListener("click", async (event) => {
     if (action === "agent-control") {
       const command = target.dataset.command;
       if (command === "cancel_dispatch" && !(await confirmDialog({title: "取消派发", message: "确认取消该节点当前派发的任务？", danger: true, confirmText: "取消派发"}))) return;
+      if (command === "shutdown" && !(await confirmDialog({title: "关停节点", message: "确认优雅关停该节点？", sub: "节点将进入 draining，完成或围栏当前派发后离线（区别于硬吊销）。", confirmText: "关停"}))) return;
       const node = [...(state.agentRuntimeNodes || []), ...orgAgentNodes].find((item) => item.nodeId === target.dataset.nodeId);
       const dispatchId = (node?.activeDispatchIds || node?.display?.currentDispatchIds || [])[0] || "";
       await api(`/api/agent-nodes/${encodeURIComponent(target.dataset.nodeId)}/control`, {
@@ -2806,6 +2884,14 @@ document.addEventListener("click", async (event) => {
       });
       await loadPage();
       toast.success({pause_dispatch: "已暂停派发", resume_dispatch: "已恢复派发", cancel_dispatch: "已取消派发", refresh_profile: "已刷新节点档案", shutdown: "已关停节点"}[command] || "已下发控制指令");
+      return;
+    }
+    if (action === "close-task-group") {
+      if (!(await confirmDialog({title: "关闭任务组", message: "确认关闭该任务组？", sub: "关闭门禁已满足；关闭后任务组进入终态 closed。", confirmText: "关闭任务组"}))) return;
+      const result = await api(`/api/task-groups/${encodeURIComponent(target.dataset.task)}/close-barrier/compute`, {method: "POST", body: JSON.stringify({mutate: true})});
+      await loadPage();
+      if (result?.closeBarrier?.satisfied === false || result?.satisfied === false) toast.error("关闭门禁未满足，任务组未关闭");
+      else toast.success("任务组已关闭");
       return;
     }
     if (action === "task-control") {

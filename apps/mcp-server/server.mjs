@@ -37,6 +37,7 @@ import {
   approvalRequestCreate,
   artifactRegister,
   capRetainingOpen,
+  recordQualityGateFromTest,
   claimLease,
   classifyDerivedTask,
   contractPublish,
@@ -1968,13 +1969,16 @@ function testResultSubmit(state, args) {
     taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
     workItemId: args.workItemId || args.workId,
     status: args.status || "passed",
+    gateType: args.gateType || "test",
     command: args.command,
     summary: args.summary || "",
     evidenceRefs: args.evidenceRefs || [],
     createdAt: at
   };
   state.testResults = capRetainingOpen([testResult, ...state.testResults], ["passed", "failed", "skipped", "error"], 2000);
-  return {testResult};
+  // Derive a QualityGate so this evidence actually gates the close barrier (all_quality_gates_passed).
+  const qualityGate = recordQualityGateFromTest(state, testResult);
+  return {testResult, qualityGate};
 }
 
 // A permission request is readable by: system_admin; the agent node whose dispatch/session owns it;
@@ -2074,7 +2078,7 @@ function releasePermissionDeniedSession(state, request, at) {
   const session = state.workSessions.find((item) => item.sessionId === request.sessionId);
   if (!session || session.status !== "permission_required") return;
   session.status = "needs_decision";
-  session.blockedReason = "permission_denied";
+  session.blockedReason = "permission_request_denied";
   session.permissionRequestRef = `PermissionRequest:${request.requestId}`;
   session.updatedAt = at;
   const workItemId = request.workId || session.workItemId;
@@ -2082,7 +2086,7 @@ function releasePermissionDeniedSession(state, request, at) {
   const workItem = workItemId && taskGroup ? (taskGroup.workItems || []).find((item) => item.id === workItemId) : null;
   if (workItem && !["done", "verified", "closed", "aborted", "cancelled"].includes(workItem.status)) {
     workItem.status = "needs_decision";
-    workItem.blockedReason = "permission_denied";
+    workItem.blockedReason = "permission_request_denied";
     workItem.updatedAt = at;
   }
 }

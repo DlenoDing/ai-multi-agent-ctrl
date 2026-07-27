@@ -653,12 +653,24 @@ errors << "agentJoinTokens cap must retain redeemable tokens" unless agent_gatew
 errors << "heartbeat must drive dead-node reconciliation (recycleExpiredClaims)" unless agent_gateway_source.include?("const reconciled = recycleExpiredClaims(state)") && agent_gateway_source.include?("const persistRequired = reconciled ||")
 # B2: a paused dispatch on a dead node must be backstopped (else resume/cancel wedge on the dead node).
 errors << "paused dispatch on a dead node must be backstopped" unless agent_gateway_source.include?("const pausePending = dispatch.blockedReason === \"control_pause_requested\"") && i18n_zh_source.include?("paused_node_dead_requeued")
+# 2026-07-27 cycle-2: the evidence -> quality-gate -> close-barrier pipeline must be wired. test_result_submit
+# was filling a collection nothing read, and the all_quality_gates_passed gate had no writer (always-pass
+# no-op). testResultSubmit now derives a QualityGate so failing test evidence actually blocks close.
+errors << "test evidence must derive a quality gate that gates close" unless core_source.include?("export function recordQualityGateFromTest") && mcp_source.include?("recordQualityGateFromTest(state, testResult)") && core_source.include?("all_quality_gates_passed")
+# Cycle-2 operator surfaces: pending permission/approval/finding requests (which block the close barrier)
+# must be visible + resolvable in the console, the close-barrier panel must offer a close action, and the
+# graceful shutdown command must be reachable. All wire to endpoints that already existed.
+errors << "review console must surface + resolve permission/approval/finding requests" unless server_source.include?("\"permissionRequests\", \"approvalRequests\", \"findings\", \"qualityGates\"") && app_js_source.include?("data-form=\"perm-resolve\"") && app_js_source.include?("data-form=\"approval-resolve\"") && app_js_source.include?("data-form=\"finding-resolve\"")
+errors << "close-barrier panel must offer a close-task-group action" unless app_js_source.include?("data-action=\"close-task-group\"") && app_js_source.include?("close-barrier/compute") && app_js_source.include?("mutate: true")
+errors << "runtime nodes must offer the graceful shutdown command" unless app_js_source.include?("data-command=\"shutdown\"")
+# The permission-request resolve UI must gate on project:grant (the endpoint's permission), not review.
+errors << "permission-request resolve must gate on project:grant" unless app_js_source.include?("const canGrant = hasPerm(\"project:grant\")")
 errors << "agentRuntimeNodes cap must retain live nodes and trim terminal first" unless agent_gateway_source.include?("function capAgentRuntimeNodes") && agent_gateway_source.include?("capAgentRuntimeNodes(state.agentRuntimeNodes)")
 # F2: mcpGrants cap must never evict a still-issued grant of a live dispatch (would deny it MCP access).
 errors << "mcpGrants cap must retain issued grants of live dispatches" unless agent_gateway_source.include?("function capMcpGrants") && agent_gateway_source.include?("capMcpGrants(state, state.mcpGrants)")
 # F3: permission DENIAL must release the blocked session symmetrically (approve/deny) and demote the
 # owning work item to needs_decision so the resolve_decision lever applies.
-errors << "permission denial must release the blocked session and demote the work item" unless mcp_source.include?("function releasePermissionDeniedSession") && mcp_source.include?("releasePermissionDeniedSession(state, request, at)") && i18n_zh_source.include?("permission_denied")
+errors << "permission denial must release the blocked session and demote the work item" unless mcp_source.include?("function releasePermissionDeniedSession") && mcp_source.include?("releasePermissionDeniedSession(state, request, at)") && mcp_source.include?("permission_request_denied") && i18n_zh_source.include?("permission_request_denied")
 errors << "MCP agent_node full state_get must be env-gated like system_service/admin" unless mcp_source.scan("AIMAC_MCP_ALLOW_FULL_STATE").length >= 3
 errors << "Console must offer a resolve_decision actuator for needs_decision cells" unless app_js_source.include?("\"resolve_decision\"") && app_js_source.include?("resolution: data.resolution") && app_js_source.include?("admissionReasonLabel") && i18n_zh_source.include?("work_item_decision_reopen") && i18n_zh_source.include?("dependency_abandoned")
 # Durable i18n-completeness guard: every static blockedReason / admission reasonCode literal set in

@@ -1133,7 +1133,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     system: ["accounts", "auditLog", "policyDecisions", "commands", "decisionRecords"],
     users: ["accounts", "accessGrants", "projects", "agentJoinTokens"],
     projects: ["accounts", "accessGrants", "projects", "repositoryOutputs", "agentJoinTokens"],
-    tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots", "humanConfirmationRequests", "humanDirectives"],
+    tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots", "humanConfirmationRequests", "humanDirectives", "permissionRequests", "approvalRequests", "findings", "qualityGates"],
     runtime: ["modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions", "workerLanes", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkills", "roleSkillOverlays"],
     instructions: ["instructionMetrics", "sharedDefinitions", "effectiveInstructionPackets", "roleDriftGuards"]
   };

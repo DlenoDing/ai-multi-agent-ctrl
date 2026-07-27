@@ -4662,6 +4662,41 @@ function capRetainingPredicate(items, isOpen, limit) {
   return [...open, ...closed];
 }
 
+// Wire the evidence -> quality-gate -> close-barrier pipeline the design promises: test evidence is
+// recorded AND derived into a QualityGate so the close-barrier gate all_quality_gates_passed (which reads
+// state.qualityGates) actually reflects it. Without this, test_result_submit filled a collection nothing
+// read and the quality-gate collection had no writer, so both gates were no-ops. Upsert one gate per
+// (taskGroup, workItem, gateType): a passing/skipped test -> passed (terminal, trimmable); a failing/error
+// test -> failed (non-terminal, blocks close until the fix is re-verified).
+export function recordQualityGateFromTest(state, testResult) {
+  state.qualityGates ||= [];
+  const gateType = testResult.gateType || "test";
+  const gateId = `qg:${testResult.taskGroupId}:${testResult.workItemId || "tg"}:${gateType}`;
+  const passed = ["passed", "skipped"].includes(testResult.status);
+  const at = testResult.createdAt || new Date().toISOString();
+  const existing = state.qualityGates.find((gate) => gate.gateId === gateId);
+  if (existing) {
+    existing.status = passed ? "passed" : "failed";
+    existing.testResultRef = testResult.testResultId;
+    existing.updatedAt = at;
+    return existing;
+  }
+  const gate = {
+    schemaVersion: "quality-gate/v1",
+    gateId,
+    gateType,
+    projectId: testResult.projectId,
+    taskGroupId: testResult.taskGroupId,
+    workItemId: testResult.workItemId || null,
+    status: passed ? "passed" : "failed",
+    testResultRef: testResult.testResultId,
+    createdAt: at,
+    updatedAt: at
+  };
+  state.qualityGates = capRetainingOpen([gate, ...state.qualityGates], ["passed", "waived"], 2000);
+  return gate;
+}
+
 function normalizePermissionResource(args = {}) {
   const resource = args.resource && typeof args.resource === "object" ? args.resource : {};
   return {

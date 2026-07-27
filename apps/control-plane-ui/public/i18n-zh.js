@@ -203,6 +203,9 @@
     pending_window: "等待条件窗口",
     pending_data_volume: "等待数据量达标",
     blocked_external: "外部阻断",
+    fixed_verified: "已修复并验证",
+    not_applicable: "不适用",
+    scope_adjusted: "范围已调整",
     blocked_by_exact_dependency: "精确依赖阻断",
     diagnostic_only_no_pass: "仅诊断（不判通过）",
     defer_downstream: "延后至下游",
@@ -231,7 +234,7 @@
     active_supporting_group: "支援其他任务组中",
     independent_review_changes_requested: "独立评审要求返工",
     independent_review_backfill_failed: "补评审未通过待决策",
-    permission_denied: "权限被拒待决策",
+    permission_request_denied: "权限被拒待决策",
 
     /* ---------- 账号 / 组织 ---------- */
     invited: "已邀请",
