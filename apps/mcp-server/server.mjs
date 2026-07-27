@@ -2019,6 +2019,10 @@ function permissionStatus(state, args, context) {
 export function permissionResolve(state, args) {
   const request = state.permissionRequests.find((item) => item.requestId === args.requestId);
   if (!request) return {ok: false, error: "permission_request_not_found"};
+  // Idempotency / terminal guard (mirrors decideHumanConfirmation's pending check): a permission request
+  // resolves exactly once. Re-resolving — especially a deny->approve flip — would re-run the policy
+  // cascade and mint an access grant for an already-terminalized cell. Return the settled request as-is.
+  if (request.status !== "pending") return {permissionRequest: request, accessGrant: null, alreadyResolved: true};
   const at = new Date().toISOString();
   request.status = args.status || (args.allowed === false ? "denied" : "approved");
   const decision = policyDecisionEval(state, {

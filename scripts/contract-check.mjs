@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { createMcpGrant, createMcpToolDefinitions, mcpToolNames } from "../apps/mcp-server/server.mjs";
+import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
   maintainWorkerLanes,
@@ -445,6 +445,17 @@ function verifyHumanAndOrganizationContracts(output) {
     const denyState = mkPermTimedOut();
     terminateCellRuntime(denyState, "tg_runtime_management", "wi_perm", "permission_request_denied");
     if (!["failed", "cancelled"].includes(denyState.agentDispatches[0].status)) output.push("permission-timeout deny: dispatch not terminalized (wedges close barrier)");
+
+    // permissionResolve idempotency/terminal guard: a settled request must not re-resolve (a deny->approve
+    // flip would re-run the cascade and mint an access grant for an already-terminalized cell).
+    const permIdemState = structuredClone(seedState);
+    ensureRuntimeCollections(permIdemState, {root});
+    permIdemState.permissionRequests = [{requestId: "perm_settled", status: "denied", resource: {resourceType: "task_group", resourceId: "tg_runtime_management"}, permission: "task_group:write", subjectRef: {subjectType: "account", subjectId: "acct_x"}}];
+    const grantsBefore = (permIdemState.accessGrants || []).length;
+    const reResolve = permissionResolve(permIdemState, {requestId: "perm_settled", status: "approved"});
+    if (permIdemState.permissionRequests[0].status !== "denied") output.push("permissionResolve: a settled (denied) request was re-resolved (deny->approve flip)");
+    if (!reResolve.alreadyResolved || reResolve.accessGrant) output.push("permissionResolve: re-resolving a settled request minted a grant / did not report alreadyResolved");
+    if ((permIdemState.accessGrants || []).length !== grantsBefore) output.push("permissionResolve: re-resolving a settled request created an access grant for a terminalized cell");
 
     // human directives consumed oldest-first (FIFO): the newest adjust_priority must win.
     const fifoState = structuredClone(seedState);

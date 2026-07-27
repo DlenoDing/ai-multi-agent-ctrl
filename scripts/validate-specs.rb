@@ -673,6 +673,8 @@ errors << "permission denial must terminalize a timed-out orphaned dispatch" unl
 errors << "schema validator must error on an unresolved local $ref and bound recursion" unless contract_check_source.include?("unresolved local $ref") && contract_check_source.include?("$ref recursion too deep")
 # Permission-timeout requeue/terminalize must have behavioral coverage.
 errors << "permission-timeout requeue/terminalize must have a behavioral test" unless contract_check_source.include?("permission-timeout approve: dispatch not requeued") && contract_check_source.include?("permission-timeout deny: dispatch not terminalized")
+# permissionResolve must resolve exactly once (idempotency/terminal guard, like decideHumanConfirmation).
+errors << "permissionResolve must guard against re-resolving a settled request" unless mcp_source.include?("if (request.status !== \"pending\") return {permissionRequest: request, accessGrant: null, alreadyResolved: true}")
 # 2026-07-27 full-system review round 3. Isolation-1: MCP state_get full scope must be fail-closed —
 # both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
 # collections cross-project), and the agent_node full branch must be env-gated like its siblings.
