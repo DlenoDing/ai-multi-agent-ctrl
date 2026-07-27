@@ -57,6 +57,10 @@
       "type": "string",
       "pattern": "^sha256:[a-fA-F0-9]{64}$"
     },
+    "effectiveRulesDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
     "digestRefs": {
       "$ref": "#/$defs/refArray"
     },

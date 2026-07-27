@@ -665,6 +665,13 @@ errors << "close-barrier panel must offer a close-task-group action" unless app_
 errors << "runtime nodes must offer the graceful shutdown command" unless app_js_source.include?("data-command=\"shutdown\"")
 # The permission-request resolve UI must gate on project:grant (the endpoint's permission), not review.
 errors << "permission-request resolve must gate on project:grant" unless app_js_source.include?("const canGrant = hasPerm(\"project:grant\")")
+# C: the close-barrier panel must surface WHICH gates block (not just a count); E: checkpoint Git evidence
+# (commit/push refs) must be shown; U4: keyword filters must search the source before the display cap;
+# packet: the effective-instruction packet must carry the resolved effective-rules digest.
+errors << "close-barrier panel must show the blocking-object breakdown" unless app_js_source.include?("阻塞明细")
+errors << "monitor must surface checkpoint Git evidence (commit/push refs)" unless app_js_source.include?("检查点（Git 证据）")
+errors << "keyword filters must filter the source before the display cap" unless app_js_source.include?("function filterSource") && app_js_source.include?("filterSource((state.workSessions")
+errors << "effective-instruction packet must carry the resolved effective-rules digest" unless core_source.include?("const effectiveRulesDigest = digestOf") && core_source.include?("effectiveRulesDigest: contract.effectiveRulesDigest")
 errors << "agentRuntimeNodes cap must retain live nodes and trim terminal first" unless agent_gateway_source.include?("function capAgentRuntimeNodes") && agent_gateway_source.include?("capAgentRuntimeNodes(state.agentRuntimeNodes)")
 # F2: mcpGrants cap must never evict a still-issued grant of a live dispatch (would deny it MCP access).
 errors << "mcpGrants cap must retain issued grants of live dispatches" unless agent_gateway_source.include?("function capMcpGrants") && agent_gateway_source.include?("capMcpGrants(state, state.mcpGrants)")

@@ -1279,6 +1279,15 @@ export function buildTaskContract(state, request = {}) {
   const guardRef = createId("rdg");
   const packetRef = createId("eip");
   const grantsWriteScope = true;
+  // Fold the RESOLVED effective rules (default -> project -> task-group inheritance/override) into the
+  // contract digest so rulesetDigest / the effective-instruction packet actually reflect effective rule
+  // content and version. Previously rulesetDigest was a static constant, so any consumer treating it as
+  // the authoritative rule version would miss operator rule edits (which only changed the content bundle).
+  const effectiveRuleConfig = effectiveTaskGroupConfig(state, taskGroup);
+  const effectiveRulesDigest = digestOf([
+    ...(effectiveRuleConfig.activeSystemRules || []).map((rule) => [rule.ruleId, rule.contentDigest]),
+    ...(effectiveRuleConfig.activeBusinessRules || []).map((rule) => [rule.ruleId, rule.contentDigest])
+  ]);
   const contract = {
     contractVersion: "agent-task-contract/v1",
     projectId: project?.id || "prj_control_plane",
@@ -1309,9 +1318,10 @@ export function buildTaskContract(state, request = {}) {
     roomId: `room_${taskGroup?.id || "runtime"}`,
     placementDecisionRef: placementDecision.decisionId,
     stateVersion: state.stateVersion,
-    rulesetDigest: digestOf("ruleset:ai-native-control-plane:v1"),
+    rulesetDigest: digestOf(["ruleset:ai-native-control-plane:v1", effectiveRulesDigest]),
+    effectiveRulesDigest,
     effectiveInstructionPacketRef: packetRef,
-    digestRefs: ["ruleset:ai-native-control-plane:v1", `model-selection:${modelDecision.decisionId}`, `session-placement:${placementDecision.decisionId}`, `language-policy:${languagePolicyDigest}`],
+    digestRefs: ["ruleset:ai-native-control-plane:v1", `effective-ruleset:${effectiveRulesDigest}`, `model-selection:${modelDecision.decisionId}`, `session-placement:${placementDecision.decisionId}`, `language-policy:${languagePolicyDigest}`],
     languagePolicy,
     languagePolicyDigest,
     sharedDefinitionRefs,
@@ -1320,7 +1330,7 @@ export function buildTaskContract(state, request = {}) {
       sourceKind: "orchestrator_plan",
       sourceRef: `TaskGroup:${taskGroup?.id || "tg_runtime_management"}`,
       nextActionDraftDigest: digestOf({workItem, action: "execute"}),
-      activeRuleRefs: ["terminal-execution-manifest:v1", "state-machines:v1", "language-policy:v1"],
+      activeRuleRefs: ["terminal-execution-manifest:v1", "state-machines:v1", "language-policy:v1", `effective-ruleset:${effectiveRulesDigest}`],
       nonActiveMaterialRefs: [],
       contextIntakeRefs: [`Project:${project?.id || "prj_control_plane"}`, `TaskGroup:${taskGroup?.id || "tg_runtime_management"}`, `LanguagePolicy:${languagePolicyDigest}`],
       validationRequirements: ["schema_valid", "checkpoint_registered", "repository_output_target_selected", "language_policy_satisfied"],
@@ -1446,6 +1456,7 @@ function buildEffectiveInstructionPacket(contract, packetId, at) {
     workItemId: contract.workId,
     status: "active",
     objectiveBoundaryDigest: contract.roleFocus.objectiveBoundaryDigest,
+    effectiveRulesDigest: contract.effectiveRulesDigest,
     digestRefs: contract.digestRefs,
     languagePolicy: contract.languagePolicy,
     languagePolicyDigest: contract.languagePolicyDigest,

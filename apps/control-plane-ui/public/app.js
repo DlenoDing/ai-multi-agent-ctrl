@@ -379,6 +379,14 @@ function moreText(total, shown) {
 
 const filterState = {};
 
+// Filter the SOURCE array by the persisted query BEFORE the display cap, so a keyword filter finds
+// items past the cap (the DOM-level applyFilterFor only searched already-rendered rows).
+function filterSource(items, key) {
+  const query = String(filterState[key] || "").trim().toLowerCase();
+  if (!query) return items;
+  return (items || []).filter((item) => JSON.stringify(item).toLowerCase().includes(query));
+}
+
 function filterInput(placeholder = "关键字过滤…", key = "") {
   const value = key ? filterState[key] || "" : "";
   return `<input class="filter-input" data-filter-input aria-label="${esc(placeholder)}" ${key ? `data-filter-key="${esc(key)}"` : ""} value="${esc(value)}" placeholder="${esc(placeholder)}">`;
@@ -2156,7 +2164,8 @@ function renderMonitor() {
     scopeOptions.unshift({value: scopeValue, label: `${execScope.type === "dispatch" ? "派发" : execScope.type === "session" ? "会话" : "任务组"} · ${execScope.id}`});
   }
 
-  const eventRows = execEvents.slice().reverse().slice(0, 120).map((event) => row([
+  const eventsShown = filterSource(execEvents.slice().reverse(), "events");
+  const eventRows = eventsShown.slice(0, 120).map((event) => row([
     {v: esc(event.sequence), c: "num"},
     badge(event.eventType, "blue"),
     {v: `${esc(event.progressPercent ?? 0)}%`, c: "num"},
@@ -2166,7 +2175,7 @@ function renderMonitor() {
   ])).join("");
 
   const LANE_STATUS = {idle: {label: "空闲", tone: "green"}, busy: {label: "占用中", tone: "blue"}, retired: {label: "已归档", tone: "gray"}};
-  const lanesAll = (state.workerLanes || []).filter((lane) => groups.some((taskGroup) => taskGroup.id === lane.taskGroupId));
+  const lanesAll = filterSource((state.workerLanes || []).filter((lane) => groups.some((taskGroup) => taskGroup.id === lane.taskGroupId)), "worker-lanes");
   const laneRows = lanesAll.slice(0, 20).map((lane) => row([
     esc(t(lane.roleId)),
     esc(laneFunctionLabel(lane.laneFunction)),
@@ -2176,7 +2185,7 @@ function renderMonitor() {
     {v: fmtTime(lane.updatedAt), c: "nowrap"}
   ])).join("");
 
-  const sessionsAll = (state.workSessions || []).filter((session) => groups.some((taskGroup) => taskGroup.id === session.taskGroupId));
+  const sessionsAll = filterSource((state.workSessions || []).filter((session) => groups.some((taskGroup) => taskGroup.id === session.taskGroupId)), "sessions");
   const sessions = sessionsAll.slice(0, 20).map((session) => row([
     `<span class="mono">${esc(session.sessionId)}</span>`,
     esc(t(session.roleId)),
@@ -2187,7 +2196,7 @@ function renderMonitor() {
     `<button class="secondary-button" data-action="show-session-events" data-session-id="${esc(session.sessionId)}">事件</button>`
   ])).join("");
 
-  const dispatchesAll = (state.agentDispatches || []).filter((dispatch) => groups.some((taskGroup) => taskGroup.id === dispatch.taskGroupId));
+  const dispatchesAll = filterSource((state.agentDispatches || []).filter((dispatch) => groups.some((taskGroup) => taskGroup.id === dispatch.taskGroupId)), "dispatches");
   const dispatches = dispatchesAll.slice(0, 20).map((dispatch) => row([
     `<span class="mono">${esc(dispatch.dispatchId)}</span>`,
     `<span class="mono">${esc(dispatch.workItemId || "-")}</span>`,
@@ -2242,6 +2251,21 @@ function renderMonitor() {
     {v: esc(admissionReasonLabel(decision)), c: "text-clip"}
   ])).join("");
 
+  const checkpointRows = filterSource((state.checkpoints || []).filter((cp) => groups.some((taskGroup) => taskGroup.id === cp.taskGroupId)), "checkpoints").slice(0, 20).map((cp) => {
+    const lastCommit = cp.commitRefs?.at(-1);
+    const lastPush = cp.pushRefs?.at(-1);
+    const commitLabel = lastCommit ? esc(String(lastCommit.commit || lastCommit).slice(0, 12)) : "";
+    const commitExtra = (cp.commitRefs || []).length > 1 ? ` +${(cp.commitRefs || []).length - 1}` : "";
+    const pushLabel = lastPush ? esc(`${String(lastPush.remote || "")}/${String(lastPush.ref || lastPush.remoteSha || lastPush)}`) : "";
+    return row([
+      esc(taskGroupNameOf(cp.taskGroupId)),
+      `<span class="mono">${esc(cp.workId || "-")}</span>`,
+      lastCommit ? {v: `<span class="mono">${commitLabel}</span>${commitExtra}`, c: "nowrap"} : "-",
+      lastPush ? {v: `<span class="mono">${pushLabel}</span>`, c: "nowrap"} : "-",
+      {v: esc(cp.artifactManifestRefs?.[0] || "-"), c: "text-clip"},
+      {v: fmtTime(cp.createdAt), c: "nowrap"}
+    ]);
+  }).join("");
   const canCloseTaskGroup = hasPerm("task_group:control"); // endpoint maps task_group_* -> task_group:control
   const barriers = (state.closeBarriers || []).slice(0, 8).map((barrier) => row([
     esc(taskGroupNameOf(barrier.taskGroupId)),
@@ -2263,7 +2287,7 @@ function renderMonitor() {
     panel("实时事件流", `
       <div class="stack">
         <div class="record-meta"><span>监听范围：</span><select data-select="exec-scope" aria-label="执行监听范围">${scopeOptions.map((option) => `<option value="${esc(option.value)}" ${option.value === scopeValue ? "selected" : ""}>${esc(option.label)}</option>`).join("")}</select></div>
-        ${table([{label: "序号", c: "num"}, "事件", {label: "进度", c: "num"}, "状态", {label: "摘要", c: "text-clip"}, {label: "时间", c: "nowrap"}], eventRows, {moreText: moreText(execEvents.length, 120)})}
+        ${table([{label: "序号", c: "num"}, "事件", {label: "进度", c: "num"}, "状态", {label: "摘要", c: "text-clip"}, {label: "时间", c: "nowrap"}], eventRows, {moreText: moreText(eventsShown.length, 120)})}
       </div>
     `, {wide: true, headerSide: filterInput("按事件、摘要过滤…", "events")}),
     panel("可复用执行载体（Worker Lane）", table(["角色", "功能", "状态", {label: "复用代数", c: "num"}, "当前会话", {label: "更新时间", c: "nowrap"}], laneRows, {moreText: moreText(lanesAll.length, 20)}), {wide: true, headerSide: filterInput("按角色、会话过滤…", "worker-lanes")}),
@@ -2274,7 +2298,15 @@ function renderMonitor() {
     panel("模型选择记录", table(["角色", "工作项", "模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText((state.modelSelectionDecisions || []).length, 10)})),
     panel("会话放置记录", table(["工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态"], placements, {moreText: moreText((state.sessionPlacementDecisions || []).length, 10)})),
     panel("准入决策", table(["工作项", "判定", "分类", {label: "原因", c: "text-clip"}], admissions, {moreText: moreText((state.admissionDecisions || []).length, 12)}), {wide: true}),
-    panel("关闭门禁", table(["任务组", "状态", {label: "阻塞对象数", c: "num"}, {label: "计算时间", c: "nowrap"}, "操作"], barriers, {moreText: moreText((state.closeBarriers || []).length, 8)}), {wide: true})
+    panel("检查点（Git 证据）", table(["任务组", "工作项", "提交", "推送", {label: "产出清单", c: "text-clip"}, {label: "时间", c: "nowrap"}], checkpointRows, {moreText: moreText((state.checkpoints || []).filter((cp) => groups.some((taskGroup) => taskGroup.id === cp.taskGroupId)).length, 20)}), {wide: true, headerSide: filterInput("按工作项、提交过滤…", "checkpoints")}),
+    panel("关闭门禁", `
+      ${table(["任务组", "状态", {label: "阻塞对象数", c: "num"}, {label: "计算时间", c: "nowrap"}, "操作"], barriers, {moreText: moreText((state.closeBarriers || []).length, 8)})}
+      ${(state.closeBarriers || []).filter((barrier) => !barrier.satisfied && (barrier.blockingObjects || []).length).slice(0, 8).map((barrier) => `
+        <div class="record" style="margin-top:8px;">
+          <div class="record-title"><strong>${esc(taskGroupNameOf(barrier.taskGroupId))}</strong> 阻塞明细</div>
+          <div class="chip-row">${(barrier.blockingObjects || []).map((obj) => customBadge(`${esc(t(obj.objectType) || obj.objectType)}：${esc(t(obj.status) || obj.status)}`, "red")).join(" ")}</div>
+        </div>`).join("")}
+    `, {wide: true})
   ].join("");
 }
 
