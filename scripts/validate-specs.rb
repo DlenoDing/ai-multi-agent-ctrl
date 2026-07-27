@@ -541,6 +541,14 @@ errors << "Default system rules must include the core-init update disciplines" u
 errors << "Default system rules must include the product-intelligence-first governing doctrine" unless core_source.include?("sys.product-intelligence-first") && core_source.include?("upstreamSurface") && core_source.include?("peerSurface") && core_source.include?("downstreamSurface") && core_source.include?("本总纲统领其余系统规则")
 errors << "root-cause-owner must include process root-cause dispositions" unless core_source.include?("rules_not_converted_to_executable_invariant_gate") && core_source.include?("symptom_split_without_cross_cutting_invariant_owner")
 errors << "layered-admission must promote a used deferred conclusion to must_reverify_now" unless core_source.include?("must_reverify_now")
+# 2026-07-27 holistic system-rule audit corrections: add the side-effect authorization / fail-closed
+# safety rule (O-1) and the independent-review depth rule (O-2); fix the mainline-compatibility
+# single-instance overbreadth (C-1/W-1) so a legitimate single-instance owner-path run is not
+# wrongly downgraded; keep the defer-escalation authoritative in evidence-qualification only (R-1 dedup).
+errors << "Default system rules must include the side-effect authorization / fail-closed safety rule" unless core_source.include?("sys.side-effect-authorization") && core_source.include?("fail-closed")
+errors << "Default system rules must include the independent-review depth rule" unless core_source.include?("sys.independent-review-depth")
+errors << "mainline-compatibility must not forbid legitimate single-instance owner-path verification" unless core_source.include?("以单实例冒充多实例或 owner-rebalance 运行基线") && core_source.include?("单实例本身在不依赖多实例")
+errors << "layered-admission must delegate the defer escalation to evidence-qualification (no duplicate)" unless core_source.include?("升格规则见 sys.evidence-qualification") && core_source.include?("任一 defer_to_e2e 一旦被用作解锁依据须升格为 must_reverify_now")
 # A single problem cell / task group must never abort the whole cycle — remaining executable work continues.
 errors << "runAutonomousCycle must isolate per-cell and per-task-group failures" unless core_source.include?("cell_processing_error") && core_source.include?("Per-cell isolation") && core_source.include?("task_group_recompute_error")
 # 2026-07-26 multi-dimension review fixes.
