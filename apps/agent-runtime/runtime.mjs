@@ -18,13 +18,31 @@ function defaultDataRoot() {
 const workDir = resolve(args["work-dir"] || process.env.AIMAC_AGENT_DATA_ROOT || process.env.AIMAC_AGENT_WORK_DIR || defaultDataRoot());
 const configPath = join(workDir, "agent-config.json");
 
+// Registry of live executor children so a runtime SIGINT/SIGTERM/crash reaps their process GROUPS instead
+// of orphaning a detached model CLI that keeps holding the checkout and calling MCP/pushing.
+// Declared BEFORE the top-level `await main()` so installChildReaper() doesn't hit a temporal dead zone.
+const activeChildProcesses = new Set();
+let signalHandlersInstalled = false;
+function installChildReaper() {
+  if (signalHandlersInstalled) return;
+  signalHandlersInstalled = true;
+  const reap = (signal) => {
+    for (const child of activeChildProcesses) {
+      try { killChildProcessGroup(child, "SIGKILL"); } catch { /* already gone */ }
+    }
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.on("SIGINT", () => reap("SIGINT"));
+  process.on("SIGTERM", () => reap("SIGTERM"));
+}
+
 await main();
 
 async function main() {
   if (command === "bootstrap") return bootstrap();
   if (command === "self-check") return selfCheck(loadConfig());
   if (command === "status") return status(loadConfig());
-  if (command === "run") return run(loadConfig());
+  if (command === "run") { installChildReaper(); return run(loadConfig()); }
   throw new Error(`unknown command: ${command}`);
 }
 
@@ -176,6 +194,15 @@ async function run(config) {
           checkpoint = await executeDispatch(config, claimed.dispatch, control);
         } finally {
           await control.stop();
+        }
+        // A cancel/pause that landed during or just after execution already emitted a failed/blocked event
+        // and ACKed the command; do not also persist+submit a checkpoint for it (that would contradict the
+        // cancellation and, if it slipped past the pre-push guard, submit a cancelled dispatch's result).
+        if (control.signal?.cancelled) {
+          process.stdout.write(`dispatch cancelled; checkpoint not submitted: ${claimed.dispatch.dispatch.dispatchId}\n`);
+          cleanupSessionDirectory(config, claimed.dispatch);
+          if (once) return;
+          continue;
         }
         const outboxPath = persistCheckpointOutbox(config, claimed.dispatch, checkpoint);
         if (process.env.AIMAC_AGENT_VERIFICATION_DEFER_CHECKPOINT === "true") {
@@ -374,19 +401,28 @@ async function flushCheckpointOutbox(config) {
       unlinkSync(path);
       process.stdout.write(`checkpoint replayed: ${item.dispatchId}\n`);
     } catch (error) {
-      if (checkpointReplayErrorIsTerminal(error)) {
+      const attempts = Number(item.replayAttempts || 0) + 1;
+      const attemptCap = Math.max(3, Number(process.env.AIMAC_AGENT_REPLAY_MAX_ATTEMPTS || 30));
+      // Bound the retries even for "non-terminal" errors (network/5xx/state_write_conflict): otherwise a
+      // persistently-failing item (a poisoned 503, or a conflict that never clears) blocks EVERY new claim
+      // forever (run loop defers claims while outbox pending > 0), wedging the node out of all work. On cap
+      // exhaustion, escalate to recovery + /fail(blocked) exactly like a terminal error so the node is freed.
+      if (checkpointReplayErrorIsTerminal(error) || attempts >= attemptCap) {
         const recoverPath = `${path}.recover-${Date.now()}`;
         renameSync(path, recoverPath);
+        const reasonPrefix = checkpointReplayErrorIsTerminal(error) ? "checkpoint_replay_recover_required" : `checkpoint_replay_attempts_exhausted_after_${attempts}`;
         await jsonRequest(`${config.serverUrl}/api/agent/v1/dispatches/${encodeURIComponent(item.dispatchId)}/fail`, {
           method: "POST",
           token: config.nodeToken,
-          body: {status: "blocked", reason: `checkpoint_replay_recover_required: ${String(error.message).slice(0, 500)}`}
+          body: {status: "blocked", reason: `${reasonPrefix}: ${String(error.message).slice(0, 500)}`}
         }).catch(() => {});
         process.stderr.write(`checkpoint replay moved to recovery: ${item.dispatchId} -> ${recoverPath}\n`);
         continue;
       }
+      // Under the cap: persist the incremented attempt count so it survives an agent restart, then defer.
+      try { writeSecretJson(path, {...item, replayAttempts: attempts}); } catch { /* best-effort attempt-count persist */ }
       pending += 1;
-      process.stderr.write(`checkpoint replay deferred: ${item.dispatchId} ${error.message}\n`);
+      process.stderr.write(`checkpoint replay deferred (attempt ${attempts}/${attemptCap}): ${item.dispatchId} ${error.message}\n`);
     }
   }
   return pending;
@@ -844,6 +880,9 @@ async function executeDispatch(config, dispatchPackage, control) {
   }
   const branch = dispatchPackage.repositoryOutputTarget.branch;
   const remote = dispatchPackage.repositoryOutputTarget.remote || "origin";
+  // Final cancellation check immediately before the irreversible remote side effect: a cancel arriving
+  // after the last check must not push a cancelled dispatch's commits to the remote branch.
+  control?.throwIfCancelled();
   git(repositoryRoot, ["push", remote, `HEAD:refs/heads/${branch}`]);
   const remoteSha = gitLsRemote(repositoryRoot, remote, `refs/heads/${branch}`);
   if (remoteSha !== commit) throw new Error("remote push verification failed");
@@ -959,6 +998,7 @@ function createExecutorOutputReporter(config, dispatchPackage) {
 function spawnAndCapture(commandName, commandArgs, options = {}) {
   return new Promise((resolveResult, reject) => {
     const child = spawn(commandName, commandArgs, {cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32"});
+    activeChildProcesses.add(child);
     options.control?.attachChild(child);
     let stdout = "";
     let stderr = "";
@@ -981,9 +1021,10 @@ function spawnAndCapture(commandName, commandArgs, options = {}) {
       stderr = boundedOutputAppend(stderr, text);
       options.onOutput?.("stderr", text);
     });
-    child.on("error", (error) => { if (timer) clearTimeout(timer); reject(error); });
+    child.on("error", (error) => { if (timer) clearTimeout(timer); activeChildProcesses.delete(child); reject(error); });
     child.on("close", (status, signal) => {
       if (timer) clearTimeout(timer);
+      activeChildProcesses.delete(child);
       if (timedOut) return resolveResult({status: 124, signal, stdout, stderr: `${stderr}\n[agent-runtime] execution timed out after ${executionTimeoutMs}ms`, timedOut: true});
       resolveResult({status: status ?? (signal ? 143 : 1), signal, stdout, stderr});
     });

@@ -3715,10 +3715,24 @@ function mergeRuleLayer(base, overlay, source, category) {
   return [...byId.values()];
 }
 
+// Memoize the per-rule content digest: it's a pure function of (ruleId, category, content), and the ~25
+// invariant default-rule bodies (some multi-KB) were re-hashed on every buildTaskContract (every dispatch).
+// Cache is bounded by the number of distinct rule contents in the system (defaults + capped overrides).
+const ruleContentDigestCache = new Map();
+function ruleContentDigest(ruleId, category, content) {
+  const key = `${ruleId} ${category} ${content}`;
+  const cached = ruleContentDigestCache.get(key);
+  if (cached) return cached;
+  const digest = digestOf({ruleId, category, content});
+  if (ruleContentDigestCache.size >= 20000) ruleContentDigestCache.clear(); // backstop against unbounded growth
+  ruleContentDigestCache.set(key, digest);
+  return digest;
+}
+
 function resolveRuleCategory(defaults, projectRules, taskGroupRules, category) {
   const withProject = mergeRuleLayer(defaults, projectRules, "project", category);
   const withTaskGroup = mergeRuleLayer(withProject, taskGroupRules, "task_group", category);
-  return withTaskGroup.map((rule) => ({...rule, category, contentDigest: digestOf({ruleId: rule.ruleId, category, content: rule.content})}));
+  return withTaskGroup.map((rule) => ({...rule, category, contentDigest: ruleContentDigest(rule.ruleId, category, rule.content)}));
 }
 
 export function effectiveProjectConfig(project) {

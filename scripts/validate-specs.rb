@@ -632,6 +632,14 @@ errors << "durable event append must self-heal a torn prior write" unless projec
 errors << "state-store GC must sweep stale write temporaries" unless state_store_source.include?("function sweepStaleTempFiles")
 # M6: a malformed existing client MCP config must not crash the agent run loop.
 errors << "agent runtime must tolerate a malformed client MCP config" unless agent_runtime_source.include?("skipping remote MCP merge")
+# M1: a cancel landing before the push or before checkpoint submit must not push/submit a cancelled dispatch.
+errors << "cancelled dispatch must not push to remote or submit a checkpoint" unless agent_runtime_source.include?("Final cancellation check immediately before the irreversible remote side effect") && agent_runtime_source.include?("if (control.signal?.cancelled)")
+# M3: checkpoint replay must bound retries (even for non-terminal errors) so a poisoned item can't wedge all claims.
+errors << "checkpoint replay must bound retries to avoid wedging the node" unless agent_runtime_source.include?("AIMAC_AGENT_REPLAY_MAX_ATTEMPTS") && agent_runtime_source.include?("attempts >= attemptCap")
+# M5: the runtime must reap executor child process groups on SIGINT/SIGTERM (no orphaned model CLI).
+errors << "agent runtime must reap executor children on signal" unless agent_runtime_source.include?("const activeChildProcesses = new Set()") && agent_runtime_source.include?("function installChildReaper")
+# perf: the per-rule content digest must be memoized (was re-hashed per dispatch over invariant rule bodies).
+errors << "per-rule content digest must be memoized" unless core_source.include?("const ruleContentDigestCache = new Map()") && core_source.include?("function ruleContentDigest")
 # 2026-07-27 full-system review round 3. Isolation-1: MCP state_get full scope must be fail-closed —
 # both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
 # collections cross-project), and the agent_node full branch must be env-gated like its siblings.
