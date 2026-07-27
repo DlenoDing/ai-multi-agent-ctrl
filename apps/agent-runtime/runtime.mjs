@@ -1592,7 +1592,7 @@ function gitLsRemote(root, remote, ref) {
 
 function assertAllowedPaths(paths, target) {
   const allowlist = target.pathAllowlist || [];
-  const forbidden = target.forbiddenPathRules || [];
+  const forbidden = target.pathDenylist || target.forbiddenPathRules || [];
   for (const path of paths) {
     if (path.startsWith("/") || path.split("/").includes("..") || !allowlist.some((rule) => pathMatches(rule, path))) throw new Error(`repository path outside dispatch allowlist: ${path}`);
     if (forbidden.some((rule) => pathMatches(rule, path))) throw new Error(`repository path forbidden for runtime dispatch: ${path}`);

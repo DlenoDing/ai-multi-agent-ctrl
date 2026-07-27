@@ -701,6 +701,12 @@ errors << "high_risk_no_self_approval must be enforced in approvalResolve" unles
 errors << "approval must require a distinct-approver quorum before terminalizing" unless mcp_source.include?("request.approvals = [...new Set([...(request.approvals || []), resolver])]") && mcp_source.include?("request.approvals.length < quorum")
 errors << "approver/proposer identity must be the authenticated actor, not client input" unless server_source.include?("resolvedBy: guard.actor") && server_source.include?("proposedBy: guard.actor") && mcp_source.include?("proposedBy: context?.principal?.id")
 errors << "high_risk_no_self_approval / quorum need behavioral coverage" unless contract_check_source.include?("H1: a high-risk request was self-approved") && contract_check_source.include?("H1: a quorum-2 request terminalized on the first")
+# M7: the repository output target denylist field must be the schema-declared pathDenylist (not the
+# non-schema forbiddenPathRules), enforced end-to-end (producer + runtime consumer), and instance-validated.
+errors << "repository output target must use the schema pathDenylist field" unless core_source.include?("pathDenylist: request.pathDenylist") && agent_runtime_source.include?("target.pathDenylist") && contract_check_source.include?("repository-output-target.schema.json")
+# M6: role-drift signals stored on the guard must be values from the schema driftSignal enum (details kept
+# separately for observability), not free-form strings.
+errors << "role-drift signals must map to the schema driftSignal enum" unless core_source.include?("signalDetails.push(`scope_not_allowed:${ref}`)") && core_source.include?("signals.push(\"scope_expansion_without_decision\")")
 # 2026-07-27 full-system review round 3. Isolation-1: MCP state_get full scope must be fail-closed —
 # both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
 # collections cross-project), and the agent_node full branch must be env-gated like its siblings.

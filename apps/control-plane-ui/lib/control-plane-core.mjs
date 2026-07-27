@@ -2770,16 +2770,20 @@ export function evaluateRoleDrift(state, request = {}) {
     if (request.requireGuard === true) return {allowed: false, driftScore: 1, signals: ["role_drift_guard_missing"], guardRef: null};
     return {allowed: true, driftScore: 0, signals: []};
   }
+  // Signals stored on the guard MUST be values from the role-drift-guard.schema.json driftSignal enum.
+  // The specific offending refs are preserved in signalDetails (carried on the emitted event) so mapping
+  // to the enum doesn't lose observability.
   const signals = [];
+  const signalDetails = [];
   const taskGroup = state.taskGroups.find((item) => item.id === guard.taskGroupId);
   const workItem = taskGroup?.workItems?.find((item) => item.id === guard.workItemId);
-  if (taskGroup && digestOf(taskGroup.objective || "objective") !== guard.objectiveBoundaryDigest) signals.push("objective_boundary_mismatch");
-  if (workItem && digestOf(workItem.ownerRole || "role") !== guard.roleMissionDigest) signals.push("role_mission_mismatch");
+  if (taskGroup && digestOf(taskGroup.objective || "objective") !== guard.objectiveBoundaryDigest) { signals.push("goal_mismatch"); signalDetails.push("objective_boundary_mismatch"); }
+  if (workItem && digestOf(workItem.ownerRole || "role") !== guard.roleMissionDigest) { signals.push("goal_mismatch"); signalDetails.push("role_mission_mismatch"); }
   for (const ref of request.actionScopeRefs || []) {
-    if (!guard.allowedActionScopeRefs.includes(ref)) signals.push(`scope_not_allowed:${ref}`);
+    if (!guard.allowedActionScopeRefs.includes(ref)) { signals.push("scope_expansion_without_decision"); signalDetails.push(`scope_not_allowed:${ref}`); }
   }
   for (const ref of request.forbiddenActionScopeRefs || []) {
-    if (guard.forbiddenActionScopeRefs.includes(ref)) signals.push(`forbidden_scope:${ref}`);
+    if (guard.forbiddenActionScopeRefs.includes(ref)) { signals.push("forbidden_action_attempted"); signalDetails.push(`forbidden_scope:${ref}`); }
   }
   const driftScore = Math.min(1, signals.length * 0.1);
   guard.driftScore = driftScore;
@@ -2787,10 +2791,10 @@ export function evaluateRoleDrift(state, request = {}) {
   guard.updatedAt = new Date().toISOString();
   if (driftScore > guard.maxAllowedDriftScore) {
     guard.status = "correction_required";
-    appendEvent(state, "blocker", "RoleDriftGuard", guard.guardId, "monitor", {projectId: guard.projectId, taskGroupId: guard.taskGroupId, signals});
-    return {allowed: false, driftScore, signals, guardRef: guard.guardId};
+    appendEvent(state, "blocker", "RoleDriftGuard", guard.guardId, "monitor", {projectId: guard.projectId, taskGroupId: guard.taskGroupId, signals, signalDetails});
+    return {allowed: false, driftScore, signals, signalDetails, guardRef: guard.guardId};
   }
-  return {allowed: true, driftScore, signals, guardRef: guard.guardId};
+  return {allowed: true, driftScore, signals, signalDetails, guardRef: guard.guardId};
 }
 
 function countWork(workItems) {
@@ -3321,7 +3325,7 @@ function ensureRepositoryTarget(state, project, taskGroup, workItem, request) {
     branch: repository.defaultBranch || "main",
     baseRef: gitHead(request.root),
     pathAllowlist: request.pathAllowlist || ["apps/control-plane-ui/**", "spec/**", "docs/**", "scripts/**", "data/**", "package.json", "Dockerfile", "docker-compose.yml"],
-    forbiddenPathRules: request.forbiddenPathRules || [".runtime/**", ".git/**", "node_modules/**", ".env", ".env.local", ".env.production"],
+    pathDenylist: request.pathDenylist || request.forbiddenPathRules || [".runtime/**", ".git/**", "node_modules/**", ".env", ".env.local", ".env.production"],
     status: "selected",
     outputPolicy: "project_git_repository_only",
     decisionRecordRef: request.decisionRecordRef || `decision:repo-target:${workItem?.id || "work"}`,

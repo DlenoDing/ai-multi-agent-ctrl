@@ -102,6 +102,10 @@
       "type": "string",
       "pattern": "^sha256:[a-fA-F0-9]{64}$"
     },
+    "contentDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
     "createdAt": {
       "type": "string",
       "format": "date-time"

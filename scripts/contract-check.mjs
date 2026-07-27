@@ -304,6 +304,10 @@ function verifyHumanAndOrganizationContracts(output) {
     const idemState = structuredClone(seedState);
     ensureRuntimeCollections(idemState, {root});
     runAutonomousCycle(idemState, {root, mode: "all", autoSyncSkills: false});
+    // A produced RepositoryOutputTarget must conform to its schema (locks the pathDenylist field name and
+    // catches producer drift now that the schema validator enforces conditional clauses).
+    const repoTarget = (idemState.repositoryOutputs || [])[0];
+    if (repoTarget) validateSchema(repoTarget, loadJson("spec/repository-output-target.schema.json"), "RepositoryOutputTarget", output);
     const activeDispatch = (idemState.agentDispatches || []).find((item) => ["queued", "running"].includes(item.status));
     if (activeDispatch) {
       const sessionsBefore = idemState.workSessions.length;
