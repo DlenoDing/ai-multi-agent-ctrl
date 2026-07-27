@@ -1954,7 +1954,7 @@ function splitMixedWorkItemIfNeeded(state, taskGroup, workItem) {
     createdAt: at,
     updatedAt: at
   });
-  state.derivedTaskRequests = state.derivedTaskRequests.slice(0, 2000);
+  state.derivedTaskRequests = capRetainingPredicate(state.derivedTaskRequests, (item) => BARRIER_PENDING_STATUSES.includes(item.status), 2000);
   appendEvent(state, "derived_task_created", "WorkItem", workItem.id, "orchestrator", {derivedWorkItemRefs: [analysis.id, implementation.id], taskExecutionClass: taskExecution.taskExecutionClass});
   return {derivedWorkItemIds: [analysis.id, implementation.id]};
 }
@@ -2746,7 +2746,7 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
   const workItems = (taskGroup?.workItems || []).filter((item) => item.status !== "superseded");
   const verifiedItems = workItems.filter((item) => ["verified", "closed"].includes(item.status));
   const taskGroupCheckpoints = (state.checkpoints || []).filter((checkpoint) => checkpoint.taskGroupId === taskGroupId);
-  const pendingStatuses = ["open", "pending", "requested", "submitted", "in_review", "waiting"];
+  const pendingStatuses = BARRIER_PENDING_STATUSES;
   const checkFailures = {
     no_open_execution_topology: (state.executionTopologies || []).some((item) => item.taskGroupId === taskGroupId && !["closed", "completed", "superseded"].includes(item.status)),
     no_open_review_plan: (state.reviewPlans || []).some((item) => item.taskGroupId === taskGroupId && !["closed", "completed", "cancelled"].includes(item.status)),
@@ -2986,7 +2986,7 @@ export function collectRuntimeIssue(state, request = {}) {
       updatedAt: at
     };
     state.systemUpgradeCandidates.unshift(candidate);
-    state.systemUpgradeCandidates = state.systemUpgradeCandidates.slice(0, 2000);
+    state.systemUpgradeCandidates = capRetainingPredicate(state.systemUpgradeCandidates, (item) => item.status === "candidate_created", 2000);
     pattern.status = "candidate_created";
     pattern.candidateRef = candidate.candidateId;
   }
@@ -4473,7 +4473,9 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
       updatedAt: at
     };
     state.reviewBundles.unshift(bundle);
-    state.reviewBundles = state.reviewBundles.slice(0, 160);
+    // capRetainingOpen (not a blind slice): a non-terminal (registered/pending/external) bundle gates
+    // the close barrier (no_pending_review_bundle), so dropping it by recency would falsely pass close.
+    state.reviewBundles = capRetainingOpen(state.reviewBundles, ["consumed", "closed"], 160);
   }
   if (verdict !== "passed") {
     workItem.reviewState = "changes_requested";
@@ -4645,6 +4647,21 @@ export function capRetainingOpen(items, terminalStatuses, limit) {
   return [...open, ...closed];
 }
 
+// Statuses that make a close-barrier collection item still "open"/blocking. Single source of truth so
+// the cap below and computeCloseBarrier can never drift into evicting a gating item.
+const BARRIER_PENDING_STATUSES = ["open", "pending", "requested", "submitted", "in_review", "waiting"];
+
+// Like capRetainingOpen but with an explicit isOpen predicate, for barrier collections whose "open"
+// condition is a positive status match (candidate_created / conflict / pending) rather than the
+// negation of a terminal-status list. Never drops an item the predicate marks open (would falsely
+// satisfy a close/completion barrier and prematurely close the task group); trims oldest closed first.
+function capRetainingPredicate(items, isOpen, limit) {
+  if (items.length <= limit) return items;
+  const open = items.filter(isOpen);
+  const closed = items.filter((item) => !isOpen(item)).slice(0, Math.max(0, limit - open.length));
+  return [...open, ...closed];
+}
+
 function normalizePermissionResource(args = {}) {
   const resource = args.resource && typeof args.resource === "object" ? args.resource : {};
   return {
@@ -4763,7 +4780,7 @@ export function createExecutionTopology(state, args) {
     updatedAt: at
   };
   state.executionTopologies.unshift(topology);
-  state.executionTopologies = state.executionTopologies.slice(0, 2000);
+  state.executionTopologies = capRetainingPredicate(state.executionTopologies, (item) => !["closed", "completed", "superseded"].includes(item.status), 2000);
   return {topology};
 }
 
@@ -4802,6 +4819,7 @@ export function claimLease(state, args) {
     updatedAt: at
   };
   state.leases.unshift(lease);
+  state.leases = capLeaseHistory(state.leases);
   target.status = "lease_bound";
   target.leaseRef = lease.leaseId;
   target.updatedAt = at;
@@ -4895,7 +4913,7 @@ export function reviewPlanCreate(state, args) {
     updatedAt: at
   };
   state.reviewPlans.unshift(plan);
-  state.reviewPlans = state.reviewPlans.slice(0, 2000);
+  state.reviewPlans = capRetainingPredicate(state.reviewPlans, (item) => !["closed", "completed", "cancelled"].includes(item.status), 2000);
   return {reviewPlan: plan};
 }
 
@@ -4915,6 +4933,7 @@ export function reviewBundleRegister(state, args) {
     updatedAt: at
   };
   state.reviewBundles.unshift(bundle);
+  state.reviewBundles = capRetainingOpen(state.reviewBundles, ["consumed", "closed"], 160);
   return {reviewBundle: bundle};
 }
 
@@ -5047,7 +5066,7 @@ export function ruleSourceResolve(state, args) {
     updatedAt: at
   };
   state.ruleSourceResolutions.unshift(resolution);
-  state.ruleSourceResolutions = state.ruleSourceResolutions.slice(0, 2000);
+  state.ruleSourceResolutions = capRetainingPredicate(state.ruleSourceResolutions, (item) => BARRIER_PENDING_STATUSES.includes(item.status) || item.status === "conflict", 2000);
   return {ruleSourceResolution: resolution};
 }
 

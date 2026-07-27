@@ -626,7 +626,21 @@ errors << "account creation must reject a duplicate email" unless server_source.
 errors << "runtime_json CAS must fail closed when the central state is absent" unless state_store_source.include?("central state absent")
 # 2026-07-27 full-system review round 5. F1: previously-uncapped central-state collections must be
 # bounded (unbounded growth degrades every request); agentRuntimeNodes cap must never drop a live node.
-errors << "previously-uncapped central collections must be bounded" unless ["executionTopologies", "reviewPlans", "runtimeIssueSamples", "runtimeIssuePatterns", "systemUpgradeCandidates", "ruleSourceResolutions", "derivedTaskRequests"].all? { |c| core_source.include?("state.#{c} = state.#{c}.slice(0, 2000)") }
+errors << "non-barrier central collections must be bounded" unless ["runtimeIssueSamples", "runtimeIssuePatterns", "roleSkillOverlays"].all? { |c| core_source.include?("state.#{c} = state.#{c}.slice(0, 2000)") }
+# Round 6 correction: close/completion-barrier collections must be capped with capRetainingPredicate
+# (never drop an OPEN gating item), NOT a blind slice — a blind slice can evict a still-open item and
+# falsely satisfy a barrier, prematurely closing the task group.
+errors << "barrier collections must cap without dropping open gating items" unless core_source.include?("function capRetainingPredicate") && ["executionTopologies", "reviewPlans", "systemUpgradeCandidates", "ruleSourceResolutions", "derivedTaskRequests"].all? { |c| core_source.include?("state.#{c} = capRetainingPredicate(state.#{c}") } && !core_source.include?("state.executionTopologies = state.executionTopologies.slice")
+# reviewBundles is also a barrier collection: cap retaining non-terminal (consumed/closed) bundles.
+errors << "reviewBundles must cap retaining open bundles (not a blind slice)" unless core_source.include?("capRetainingOpen(state.reviewBundles, [\"consumed\", \"closed\"], 160)") && !core_source.include?("state.reviewBundles.slice(0, 160)")
+# claimLease must bound state.leases like ensureLease does.
+errors << "claimLease must cap lease history" unless core_source.include?("state.leases = capLeaseHistory(state.leases)")
+# agentControlCommands cap must retain still-active (queued/delivered/received) commands so a later ack
+# does not throw agent_control_command_not_found.
+errors << "agentControlCommands cap must retain active commands" unless agent_gateway_source.include?("function capAgentControlCommands") && !agent_gateway_source.include?("state.agentControlCommands.slice(0, 2000)")
+# Shutdown stop-control must carry a persistent shutdownPending marker so a retry-exhausted shutdown is
+# backstopped symmetrically with revoke (revocationPending) instead of wedging.
+errors << "shutdown stop-control must use a persistent shutdownPending backstop marker" unless agent_gateway_source.include?("dispatch.shutdownPending = true") && agent_gateway_source.include?("dispatch.shutdownPending || dispatch.blockedReason === \"assigned_node_shutdown_pending_stop\"")
 errors << "agentRuntimeNodes cap must retain live nodes and trim terminal first" unless agent_gateway_source.include?("function capAgentRuntimeNodes") && agent_gateway_source.include?("capAgentRuntimeNodes(state.agentRuntimeNodes)")
 # F2: mcpGrants cap must never evict a still-issued grant of a live dispatch (would deny it MCP access).
 errors << "mcpGrants cap must retain issued grants of live dispatches" unless agent_gateway_source.include?("function capMcpGrants") && agent_gateway_source.include?("capMcpGrants(state, state.mcpGrants)")

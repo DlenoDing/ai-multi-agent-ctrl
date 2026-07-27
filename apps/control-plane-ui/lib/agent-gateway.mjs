@@ -479,6 +479,17 @@ export function claimNextDispatch(state, node, options = {}) {
 // accumulates full node records (profile.tools/models up to 100 each) forever, since revoke only flips
 // status (the record is never spliced) and frees the org quota. Keep all live nodes; trim oldest
 // terminal (revoked/retired/offline) first.
+// Never evict a still-active control command (queued/delivered/received): a later ackAgentControlCommand
+// would then throw agent_control_command_not_found, and a paired blocked dispatch (e.g. resume) would
+// never be acted on. Keep active commands; trim oldest acknowledged/terminal first.
+function capAgentControlCommands(commands, limit = 2000) {
+  if (!Array.isArray(commands) || commands.length <= limit) return commands;
+  const activeStatuses = new Set(["queued", "delivered", "received"]);
+  const active = commands.filter((command) => activeStatuses.has(command.status));
+  const done = commands.filter((command) => !activeStatuses.has(command.status)).slice(0, Math.max(0, limit - active.length));
+  return [...active, ...done];
+}
+
 function capAgentRuntimeNodes(nodes, limit = 2000) {
   if (!Array.isArray(nodes) || nodes.length <= limit) return nodes;
   const liveStatuses = new Set(["online", "draining", "initializing", "degraded"]);
@@ -512,7 +523,7 @@ function recycleExpiredClaims(state) {
     // A shutdown pre-effect clears revocationPending (it is not a revoke) but still leaves the dispatch
     // blocked + the node draining; a revoke keeps revocationPending. Both must be backstopped, or a node
     // that dies mid-drain strands its dispatches forever. Select either shape.
-    const shutdownPending = dispatch.blockedReason === "assigned_node_shutdown_pending_stop";
+    const shutdownPending = dispatch.shutdownPending || dispatch.blockedReason === "assigned_node_shutdown_pending_stop";
     if ((!dispatch.revocationPending && !shutdownPending) || dispatch.status !== "blocked") continue;
     const node = state.agentRuntimeNodes.find((item) => item.nodeId === dispatch.assignedNodeId);
     const lastBeat = node ? new Date(node.lastHeartbeatAt || 0).getTime() : 0;
@@ -524,6 +535,7 @@ function recycleExpiredClaims(state) {
     delete dispatch.claimedAt;
     delete dispatch.claimExpiresAt;
     delete dispatch.revocationPending;
+    delete dispatch.shutdownPending;
     dispatch.updatedAt = new Date().toISOString();
     if (node) {
       node.activeDispatchIds = (node.activeDispatchIds || []).filter((id) => id !== dispatch.dispatchId);
@@ -570,7 +582,7 @@ export function createAgentControlCommand(state, node, input = {}, options = {})
   };
   applyControlCommandPreEffects(state, node, command);
   state.agentControlCommands.unshift(command);
-  state.agentControlCommands = state.agentControlCommands.slice(0, 2000);
+  state.agentControlCommands = capAgentControlCommands(state.agentControlCommands);
   appendGatewayEvent(state, "agent_control_command_queued", command.commandId, {nodeId: node.nodeId, commandType, dispatchId: command.dispatchId});
   return {command};
 }
@@ -752,6 +764,7 @@ function applyControlCommandPreEffects(state, node, command) {
     delete dispatch.claimedAt;
     delete dispatch.claimExpiresAt;
     delete dispatch.revocationPending;
+    delete dispatch.shutdownPending;
   }
   dispatch.updatedAt = at;
   revokeDispatchMcpGrants(state, node.nodeId, dispatch.dispatchId, `control_${command.commandType}`);
@@ -791,8 +804,8 @@ function applyNodeStopPreEffects(state, node, command) {
     dispatch.blockedReason = pendingReason;
     dispatch.controlCommandRef = command.commandId;
     dispatch.controlRequestedAt = at;
-    if (command.commandType === "revoke") dispatch.revocationPending = true;
-    else delete dispatch.revocationPending;
+    if (command.commandType === "revoke") { dispatch.revocationPending = true; delete dispatch.shutdownPending; }
+    else { dispatch.shutdownPending = true; delete dispatch.revocationPending; }
     dispatch.updatedAt = at;
     pendingDispatchIds.push(dispatch.dispatchId);
     revokeDispatchMcpGrants(state, node.nodeId, dispatch.dispatchId, pendingReason);
@@ -831,6 +844,7 @@ function finalizeNodeRevocation(state, node, command) {
     delete dispatch.claimedAt;
     delete dispatch.claimExpiresAt;
     delete dispatch.revocationPending;
+    delete dispatch.shutdownPending;
     dispatch.updatedAt = at;
     requeuedDispatchIds.push(dispatch.dispatchId);
   }
@@ -856,6 +870,7 @@ function finalizeNodeShutdown(state, node, command) {
     delete dispatch.claimedAt;
     delete dispatch.claimExpiresAt;
     delete dispatch.revocationPending;
+    delete dispatch.shutdownPending;
     dispatch.updatedAt = at;
     revokeDispatchMcpGrants(state, node.nodeId, dispatch.dispatchId, "assigned_node_shutdown_ack_requeued");
     requeuedDispatchIds.push(dispatch.dispatchId);
@@ -883,8 +898,11 @@ function handleStopControlFailure(state, node, command, status) {
     // Chinese console can localize it — a template literal would leak 4 raw-English variants.
     dispatch.blockedReason = "assigned_node_stop_control_failed_retry_queued";
     dispatch.controlCommandRef = command.commandId;
+    // Preserve a persistent pending-stop marker across retries AND retry exhaustion: revoke keeps
+    // revocationPending, shutdown keeps shutdownPending. Without this, an exhausted shutdown (no retry
+    // command re-stamps the pending blockedReason) would lose all backstop signal and wedge forever.
     if (command.commandType === "revoke" || dispatch.revocationPending) dispatch.revocationPending = true;
-    else delete dispatch.revocationPending;
+    else { delete dispatch.revocationPending; dispatch.shutdownPending = true; }
     dispatch.updatedAt = at;
     affectedDispatchIds.push(dispatch.dispatchId);
   }
