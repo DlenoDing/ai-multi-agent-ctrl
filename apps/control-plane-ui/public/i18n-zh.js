@@ -215,6 +215,7 @@
     control_cancel_requested: "控制通道请求取消",
     claim_expired_requeued: "认领超时重新入队",
     revocation_ack_timeout_requeued: "吊销确认超时重新入队",
+    shutdown_ack_timeout_requeued: "停机确认超时重新入队",
     assigned_node_stop_control_failed_retry_queued: "节点停止控制失败，重试入队",
     assigned_node_revocation_ack_requeued: "节点吊销确认后重新入队",
     assigned_node_shutdown_ack_requeued: "节点关停确认后重新入队",
@@ -228,6 +229,7 @@
     active_waiting_approval: "等待审批中",
     active_supporting_group: "支援其他任务组中",
     independent_review_changes_requested: "独立评审要求返工",
+    independent_review_backfill_failed: "补评审未通过待决策",
 
     /* ---------- 账号 / 组织 ---------- */
     invited: "已邀请",

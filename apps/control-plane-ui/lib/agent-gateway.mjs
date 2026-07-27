@@ -473,13 +473,17 @@ function recycleExpiredClaims(state) {
   // still-running node would risk double execution. This preserves the ACK-gated fencing invariant.
   const ackTimeoutMs = boundedInteger(process.env.AIMAC_REVOCATION_ACK_TIMEOUT_MS, 60000, 3600000, 600000);
   for (const dispatch of state.agentDispatches || []) {
-    if (!dispatch.revocationPending || dispatch.status !== "blocked") continue;
+    // A shutdown pre-effect clears revocationPending (it is not a revoke) but still leaves the dispatch
+    // blocked + the node draining; a revoke keeps revocationPending. Both must be backstopped, or a node
+    // that dies mid-drain strands its dispatches forever. Select either shape.
+    const shutdownPending = dispatch.blockedReason === "assigned_node_shutdown_pending_stop";
+    if ((!dispatch.revocationPending && !shutdownPending) || dispatch.status !== "blocked") continue;
     const node = state.agentRuntimeNodes.find((item) => item.nodeId === dispatch.assignedNodeId);
     const lastBeat = node ? new Date(node.lastHeartbeatAt || 0).getTime() : 0;
     if (node && at - lastBeat < ackTimeoutMs) continue; // node still alive; keep waiting for its ACK
     const previousNodeId = dispatch.assignedNodeId;
     dispatch.status = "queued";
-    dispatch.blockedReason = "revocation_ack_timeout_requeued";
+    dispatch.blockedReason = shutdownPending ? "shutdown_ack_timeout_requeued" : "revocation_ack_timeout_requeued";
     delete dispatch.assignedNodeId;
     delete dispatch.claimedAt;
     delete dispatch.claimExpiresAt;
@@ -487,11 +491,11 @@ function recycleExpiredClaims(state) {
     dispatch.updatedAt = new Date().toISOString();
     if (node) {
       node.activeDispatchIds = (node.activeDispatchIds || []).filter((id) => id !== dispatch.dispatchId);
-      node.status = "revoked";
+      node.status = shutdownPending ? "offline" : "revoked";
       node.admission = "read_only";
     }
-    revokeDispatchMcpGrants(state, previousNodeId, dispatch.dispatchId, "revocation_ack_timeout");
-    appendGatewayEvent(state, "dispatch_revocation_ack_timeout", dispatch.dispatchId, {previousNodeId});
+    revokeDispatchMcpGrants(state, previousNodeId, dispatch.dispatchId, shutdownPending ? "shutdown_ack_timeout" : "revocation_ack_timeout");
+    appendGatewayEvent(state, shutdownPending ? "dispatch_shutdown_ack_timeout" : "dispatch_revocation_ack_timeout", dispatch.dispatchId, {previousNodeId});
   }
 }
 

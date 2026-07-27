@@ -577,7 +577,33 @@ errors << "Postgres central+shards read must be transactionally consistent" unle
 app_js_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
 i18n_zh_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/i18n-zh.js"))
 errors << "Console must surface the admission ledger and single-cell escalation guard" unless server_source.include?("\"admissionDecisions\", \"workerLanes\"") && app_js_source.include?("singleCellEscalationGuard") && app_js_source.include?("准入决策") && app_js_source.include?("workerCarrierDecision?.carrier")
+# The monitor page merges the runtime view over the tasks view by hand; every runtime-only field that
+# renderMonitor reads must be carried in that merge or its panel renders permanently empty (regression
+# caught: admissionDecisions/workerLanes were dropped, blanking the ledger + worker-lane panels).
+errors << "Monitor merge must carry the runtime-only admissionDecisions/workerLanes that renderMonitor reads" unless app_js_source.include?("admissionDecisions: runtimeState.admissionDecisions") && app_js_source.include?("workerLanes: runtimeState.workerLanes")
 errors << "Console i18n must localize admission enums and blocked-reason codes" unless i18n_zh_source.include?("awaiting_analysis_output") && i18n_zh_source.include?("pending_window") && i18n_zh_source.include?("reusable_top_level_lane") && i18n_zh_source.include?("deferred:")
+# 2026-07-27 full-system multi-dimension review corrections (5-lens sweep). Each guards a fixed defect:
+# Core-1: a cell blocked on an inactive shared definition must `continue` the admission scan (never
+# break, even in single mode) or it permanently starves every executable cell behind it.
+errors << "shared_definition_not_active must not break the admission scan (global scheduling)" unless core_source.include?("Always `continue` (never `break`, even in single mode): a cell blocked on an inactive shared")
+# Core-2: a failed backfill review must demote the item to needs_decision (distinct reason) so it is not
+# left `verified` forever re-reviewing with no resolve_decision lever.
+errors << "backfill review failure must demote to needs_decision with a distinct reason" unless core_source.include?("independent_review_backfill_failed") && i18n_zh_source.include?("independent_review_backfill_failed")
+# Server-1: task-group-attributed execution events / control commands must be gated on task-group
+# visibility (not node visibility) so a project viewer cannot read a hidden task group's activity.
+errors << "agentExecutionEvents/agentControlCommands must gate on task-group visibility" unless server_source.include?("command.taskGroupId ? visibleTaskGroupIds.has(command.taskGroupId)") && server_source.include?("event.taskGroupId ? visibleTaskGroupIds.has(event.taskGroupId)")
+# Server-2: the git remote name must reject a leading dash (option-injection parity with branch).
+errors << "repository output target remote must reject a leading dash" unless server_source.include?("remote.startsWith(\"-\")")
+# MCP-1: room_wait (read-only) must apply a bounded-principal room guard so a project-scoped principal
+# cannot default to the control-plane management room.
+errors << "room_wait must guard bounded principals against the default control-plane room" unless mcp_source.include?("boundedRoomGuard") && mcp_source.include?("boundedRoomGuard(state, args, context) || roomWait")
+# MCP-2: a shutdown whose ACK never arrives must be backstopped (not only revoke); node -> offline.
+errors << "shutdown ACK timeout must be backstopped like revoke" unless agent_gateway_source.include?("assigned_node_shutdown_pending_stop") && agent_gateway_source.include?("shutdown_ack_timeout_requeued") && i18n_zh_source.include?("shutdown_ack_timeout_requeued")
+# State-2/4: the guarded write must be a plain UPDATE (an absent row must conflict, not silently insert),
+# and ensureTables must run OUTSIDE the write transaction (a DDL race must not poison BEGIN..COMMIT).
+errors << "guarded pg write must UPDATE (no insert-on-absent bypass) and ensure tables outside the txn" unless pg_pool_worker_source.include?("UPDATE ${ident(table)} SET state = $2::jsonb") && pg_pool_worker_source.include?("Ensure tables OUTSIDE the write transaction")
+# State-1: the pg query timeout must be a finite positive number (NaN would deadlock Atomics.wait).
+errors << "pg query timeout must be clamped to a finite positive value" unless pg_sync_store_source.include?("Number.isFinite(n) && n > 0 ? n : 60000")
 errors << "Console must offer a resolve_decision actuator for needs_decision cells" unless app_js_source.include?("\"resolve_decision\"") && app_js_source.include?("resolution: data.resolution") && app_js_source.include?("admissionReasonLabel") && i18n_zh_source.include?("work_item_decision_reopen") && i18n_zh_source.include?("dependency_abandoned")
 # Durable i18n-completeness guard: every static blockedReason / admission reasonCode literal set in
 # core/gateway must have a zh dictionary key, else the Chinese console renders raw English (a

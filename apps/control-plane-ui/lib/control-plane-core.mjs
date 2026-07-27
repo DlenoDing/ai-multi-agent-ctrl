@@ -1788,7 +1788,9 @@ export function runAutonomousCycle(state, request = {}) {
         addBlocker(taskGroup, "S1", `共享定义 ${missingDefinition.contractId} 尚未对工作项 ${workItem.id} 生效。`);
         recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "shared_definition_not_active", whyThisCellNow: `awaiting SharedDefinitionContract:${missingDefinition.contractId}`, cycleRef});
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "blocked_dependency", reason: "shared_definition_not_active", sharedDefinitionRef: missingDefinition.contractId});
-        if (request.mode !== "until_blocked" && request.mode !== "all") break;
+        // Always `continue` (never `break`, even in single mode): a cell blocked on an inactive shared
+        // definition stays blocked_dependency indefinitely, so breaking here would permanently starve
+        // every executable cell behind it. Matches the condition-window gate's per-cell isolation.
         continue;
       }
       const active = activeExecutionForWork(state, taskGroup.id, workItem.id);
@@ -4474,10 +4476,14 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
     const rejectionCount = previousRejections.length + (duplicateRejection ? 0 : 1);
     const maxReworkAttempts = Math.max(1, Number(process.env.AIMAC_REVIEW_MAX_REWORK_ATTEMPTS || 3));
     if (options.backfill || rejectionCount >= maxReworkAttempts) {
-      if (!options.backfill) {
-        workItem.status = "needs_decision";
-        workItem.blockedReason = "independent_review_changes_requested";
-      }
+      // Both the max-rework and the backfill failure paths must demote to needs_decision. A backfill
+      // review runs against an already-`verified` item that lost its review bundle; if it fails we must
+      // NOT leave it verified — that would keep needsReviewBackfill true forever (re-reviewing every
+      // cycle, never recording a passing bundle, wedging completion readiness) with no operator lever
+      // since resolve_decision only reaches needs_decision. Demote it (distinct reason) so it can be
+      // reopened/abandoned.
+      workItem.status = "needs_decision";
+      workItem.blockedReason = options.backfill ? "independent_review_backfill_failed" : "independent_review_changes_requested";
       addBlocker(taskGroup, "S1", `独立评审要求工作项 ${workItem.id} 返工：${findings.map(reviewFindingLabel).join("，")}`);
     } else {
       if (target && ["pushed", "committed"].includes(target.status)) {

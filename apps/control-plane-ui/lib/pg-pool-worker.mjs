@@ -35,17 +35,31 @@ function ident(value) {
   return value;
 }
 
+// CREATE TABLE IF NOT EXISTS is NOT concurrency-safe across processes: two instances can both pass
+// the catalog check and one raises duplicate_table(42P07)/unique_violation(23505) on pg_class. Swallow
+// those so a benign DDL race never surfaces as an error (and, when run inside a txn, never aborts it).
 async function ensureTables(p, table, shardTable) {
-  await p.query(`CREATE TABLE IF NOT EXISTS ${ident(table)} (id text PRIMARY KEY, state jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());`);
-  await p.query(`CREATE TABLE IF NOT EXISTS ${ident(shardTable)} (project_id text PRIMARY KEY, shard jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());`);
+  for (const sql of [
+    `CREATE TABLE IF NOT EXISTS ${ident(table)} (id text PRIMARY KEY, state jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());`,
+    `CREATE TABLE IF NOT EXISTS ${ident(shardTable)} (project_id text PRIMARY KEY, shard jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());`
+  ]) {
+    try {
+      await p.query(sql);
+    } catch (error) {
+      if (error && (error.code === "42P07" || error.code === "23505")) continue;
+      throw error;
+    }
+  }
 }
 
 async function writeStateWithShards(p, args) {
   const {table, shardTable, stateId, central, shards, expectedVersion} = args;
   const client = await p.connect();
   try {
-    await client.query("BEGIN");
+    // Ensure tables OUTSIDE the write transaction: a DDL error inside BEGIN..COMMIT would poison the
+    // whole transaction (aborted state) even though ensureTables swallows the benign duplicate race.
     await ensureTables(client, table, shardTable);
+    await client.query("BEGIN");
     let upsert;
     if (expectedVersion === null || expectedVersion === undefined) {
       upsert = await client.query(
@@ -55,10 +69,12 @@ async function writeStateWithShards(p, args) {
         [stateId, central]
       );
     } else {
+      // A non-null expectedVersion means the caller read an existing row at that version, so this must
+      // be a guarded UPDATE — never an INSERT. (INSERT..ON CONFLICT would silently create the row when
+      // it is absent, bypassing the guard.) rowCount 0 => row missing or version moved on => conflict.
       upsert = await client.query(
-        `INSERT INTO ${ident(table)} (id, state, updated_at) VALUES ($1, $2::jsonb, now())
-         ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = now()
-         WHERE COALESCE((${ident(table)}.state->>'stateVersion')::bigint, 0) = $3
+        `UPDATE ${ident(table)} SET state = $2::jsonb, updated_at = now()
+         WHERE id = $1 AND COALESCE((state->>'stateVersion')::bigint, 0) = $3
          RETURNING id`,
         [stateId, central, Number(expectedVersion)]
       );

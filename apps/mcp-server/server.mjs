@@ -1167,7 +1167,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "room-mcp.room_send":
       return roomSend(state, args);
     case "room-mcp.room_wait":
-      return roomWait(state, args);
+      return boundedRoomGuard(state, args, context) || roomWait(state, args);
     case "room-mcp.room_ack":
       return roomAck(state, args);
     case "agent-control-mcp.node_register":
@@ -1784,6 +1784,21 @@ function boundedTaskGroupGuard(state, args, context) {
   if (!filter) return null;
   if (!args.taskGroupId) return {ok: false, error: "task_group_id_required_for_bounded_principal"};
   const project = state.taskGroups.find((item) => item.id === args.taskGroupId)?.projectId;
+  if (!project || !filter.has(project)) return {ok: false, error: "out_of_scope"};
+  return null;
+}
+
+// room_wait is read-only, so the write default-deny does not cover it; roomWait defaults an omitted
+// selector to the control-plane room (room_tg_runtime_management). A bounded principal must therefore
+// name an in-scope room — deny the default and any room that cannot be tied to a project in its filter
+// (fail-closed), mirroring boundedTaskGroupGuard. Returns an error result to short-circuit, or null.
+function boundedRoomGuard(state, args, context) {
+  const filter = principalProjectFilter(context);
+  if (!filter) return null;
+  const roomId = args.roomId || (args.taskGroupId ? `room_${args.taskGroupId}` : null);
+  if (!roomId) return {ok: false, error: "room_id_required_for_bounded_principal"};
+  const taskGroupId = roomId.startsWith("room_") ? roomId.slice("room_".length) : roomId;
+  const project = state.taskGroups.find((item) => item.id === taskGroupId)?.projectId;
   if (!project || !filter.has(project)) return {ok: false, error: "out_of_scope"};
   return null;
 }

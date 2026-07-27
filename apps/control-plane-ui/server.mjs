@@ -994,8 +994,12 @@ function scopedStateForAccount(state, account, session) {
   cloned.agentDispatches = (state.agentDispatches || []).filter((dispatch) => visibleTaskGroupIds.has(dispatch.taskGroupId));
   cloned.agentRuntimeNodes = (state.agentRuntimeNodes || []).filter((node) => (node.projectIds || []).some((projectId) => visibleProjectIds.has(projectId))).map(publicAgentNode);
   const visibleNodeIds = new Set(cloned.agentRuntimeNodes.map((node) => node.nodeId));
-  cloned.agentControlCommands = (state.agentControlCommands || []).filter((command) => visibleNodeIds.has(command.nodeId));
-  cloned.agentExecutionEvents = (state.agentExecutionEvents || []).filter((event) => visibleTaskGroupIds.has(event.taskGroupId) || visibleNodeIds.has(event.nodeId));
+  // A task-group-attributed record must be gated on task-group visibility (same invariant as
+  // checkpoints/admissionDecisions): a plain project member without a task-group grant must not see a
+  // hidden task group's execution events or control commands. Fall back to node visibility ONLY for
+  // node-level records that carry no taskGroupId (e.g. refresh_profile control commands).
+  cloned.agentControlCommands = (state.agentControlCommands || []).filter((command) => command.taskGroupId ? visibleTaskGroupIds.has(command.taskGroupId) : visibleNodeIds.has(command.nodeId));
+  cloned.agentExecutionEvents = (state.agentExecutionEvents || []).filter((event) => event.taskGroupId ? visibleTaskGroupIds.has(event.taskGroupId) : visibleNodeIds.has(event.nodeId));
   cloned.agentJoinTokens = listAgentJoinTokens(state).filter((token) => visibleProjectIds.has(token.projectId));
   cloned.agents = (state.agents || []).filter((agent) =>
     (agent.organizationId || DEFAULT_ORGANIZATION_ID) === account.organizationId &&
@@ -1715,7 +1719,7 @@ async function prepareRemoteGitVerification(target, checkpointInput) {
     throw error;
   }
   const remote = target.remote || "origin";
-  if (!/^[A-Za-z0-9._-]+$/u.test(remote)) {
+  if (!/^[A-Za-z0-9._-]+$/u.test(remote) || remote.startsWith("-")) {
     const error = new Error("repository_output_target_unsafe_remote");
     error.status = 400;
     throw error;

@@ -677,6 +677,8 @@ async function loadPage() {
         ...tasksState,
         modelSelectionDecisions: runtimeState.modelSelectionDecisions || [],
         sessionPlacementDecisions: runtimeState.sessionPlacementDecisions || [],
+        admissionDecisions: runtimeState.admissionDecisions || [],
+        workerLanes: runtimeState.workerLanes || [],
         skillSources: runtimeState.skillSources || [],
         roleSkills: runtimeState.roleSkills || [],
         agentJoinTokens: runtimeState.agentJoinTokens || []

@@ -17,7 +17,10 @@ const stateId = "default";
 let bridge = null;
 
 function queryTimeoutMs() {
-  return Number(process.env.AIMAC_PG_QUERY_TIMEOUT_MS || 60000);
+  // Must be a finite positive millisecond count: a non-numeric env (NaN) would make Atomics.wait
+  // block forever (ToNumber(NaN) -> +Infinity), and "0" would time out every call and churn workers.
+  const n = Number(process.env.AIMAC_PG_QUERY_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : 60000;
 }
 
 function getBridge() {
@@ -29,8 +32,10 @@ function getBridge() {
     transferList: [channel.port2]
   });
   const state = {worker, port: channel.port1, sig, fatal: null, seq: 0};
-  // A worker-level crash (e.g. pg import failure) would otherwise deadlock the
-  // next Atomics.wait; record it so the following call throws instead of hanging.
+  // Record a worker-level crash (e.g. pg import failure) so the NEXT call throws immediately instead
+  // of hanging. Note: a crash DURING an in-flight call is not observable here — the error/exit event
+  // is queued and cannot run while the main thread is parked in Atomics.wait, so that call still waits
+  // out the full queryTimeoutMs before throwing a bridge timeout. That is inherent to the sync bridge.
   worker.on("error", (error) => { state.fatal = error; });
   worker.on("exit", (code) => { if (code !== 0 && !state.fatal) state.fatal = new Error(`pg worker exited with code ${code}`); });
   // Do not keep the process alive solely for the pool worker.
