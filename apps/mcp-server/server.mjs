@@ -2130,6 +2130,17 @@ function roleDriftGuardBind(state, args) {
 
 function systemUpgradeCandidateExport(state, args) {
   const candidates = state.systemUpgradeCandidates.filter((candidate) => !args.taskGroupId || candidate.taskGroupId === args.taskGroupId);
+  // Actually EXPORT: transition the handed-off candidates to a terminal "exported" status. Without this
+  // the runtime_issue_candidates_exported close-barrier gate (which blocks on status==="candidate_created")
+  // was structurally unsatisfiable — a candidate could be created (recurrence>=3) but never cleared, so
+  // the task-group close wedged with no lever. Export is the governance action that clears it.
+  const at = new Date().toISOString();
+  for (const candidate of candidates) {
+    if (candidate.status === "candidate_created") {
+      candidate.status = "exported";
+      candidate.exportedAt = at;
+    }
+  }
   return {
     exportId: createId("upgrade_export"),
     mode: "external_maintenance_only",
