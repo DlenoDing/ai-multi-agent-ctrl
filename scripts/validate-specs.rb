@@ -370,6 +370,7 @@ state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-
 # + receiveMessageOnPort). The JSONB DDL and version-guarded CAS therefore moved into those files;
 # tamper assertions read the combined source so they stay meaningful after the relocation.
 pg_pool_worker_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/pg-pool-worker.mjs"))
+transition_engine_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/transition-engine.mjs"))
 pg_sync_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/pg-sync-store.mjs"))
 postgres_backend_source = "#{state_store_source}\n#{pg_sync_store_source}\n#{pg_pool_worker_source}"
 project_event_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/project-event-store.mjs"))
@@ -557,6 +558,11 @@ errors << "Revocation must have a node-death ACK-timeout requeue backstop" unles
 errors << "Room send must scope authorization and routing from the path room only" unless server_source.include?("room_task_group_mismatch") && server_source.include?("roomSend(state, {...body, roomId, taskGroupId: roomTaskGroupId})")
 errors << "close-barrier must not trust a stale-version cached readiness" unless core_source.include?("cachedReadiness.stateVersion === state.stateVersion") && contract_check_source.include?("stale readiness")
 errors << "Human directives must be consumed oldest-first" unless core_source.include?("status === \"queued\").reverse()") && contract_check_source.include?("directive FIFO")
+# 2026-07-27 MGP core-init absorption: global intelligent judgment over mechanical/redundant/useless gates.
+errors << "Transitions must enforce state/actor legality but not ceremonial evidence tokens" unless transition_engine_source.include?("spec integrity: every required gate id must be modeled") && !transition_engine_source.include?("requires_evidence_missing") && transition_engine_source.include?("gate.unresolved")
+errors << "dispatchWorkItem must not fabricate per-gate transition evidence" unless core_source.include?("no ceremonial evidence") && !core_source.include?("redispatch:")
+errors << "close-barrier must drop vacuous always-pass stub gates" unless !core_source.include?("all_policy_decisions_terminal") && !core_source.include?("release_manifest_ready") && !core_source.include?("not_applicable_collection_not_modeled")
+errors << "close-barrier must record a reality-first holistic judgment" unless core_source.include?("holisticJudgment") && core_source.include?("reality_first_close_barrier") && contract_check_source.include?("holistic judgment")
 errors << "Server must offer authenticated real-time WebSocket push over the long-poll channels" unless server_source.include?("WebSocketServer") && server_source.include?("/api/realtime") && server_source.include?("pushRealtime") && server_source.include?("authorizeRealtime") && server_source.include?("pushRealtime(key)") && doctor_source.include?("verifyRealtimeWebSocket")
 # The upgrade handler must guard authorizeRealtime() (which calls readState()) so a state-store throw
 # destroys the socket instead of becoming an uncaughtException that exits the process.

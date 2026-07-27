@@ -1904,15 +1904,12 @@ function analysisRoleFor(roleId) {
 function dispatchWorkItem(state, taskGroup, workItem, contract, repositoryTarget) {
   const at = new Date().toISOString();
   if (BLOCKED_WORKITEM_STATUSES.includes(workItem.status)) {
-    // Each blocked status resumes to "ready" through its own modeled actor/gate (Gap #1):
-    // blocked_dependency->orchestrator, blocked_resource->scheduler,
-    // permission_required->permission-gateway, needs_decision->decision-center,
-    // stale_state->orchestrator.
+    // Resume to "ready" through the modeled actor for the blocked status. The precondition was
+    // already judged by runAutonomousCycle's reality-first admission (deps verified, model runnable,
+    // no active execution, needs_decision held) — so record only the real resume ref, not a
+    // synthesized per-gate "evidence" token (absorbed from MGP core-init: no ceremonial evidence).
     const modeled = canonicalTransition("WorkItem", workItem.status, "ready");
-    const evidence = `redispatch:${contract.sessionId}:${workItem.blockedReason || "unblocked"}`;
-    const requiresValues = {};
-    for (const gate of modeled?.requires || []) requiresValues[gate] = evidence;
-    recordTransition(state, "WorkItem", workItem.id, workItem.status, "ready", modeled?.actor || "orchestrator", requiresValues);
+    recordTransition(state, "WorkItem", workItem.id, workItem.status, "ready", modeled?.actor || "orchestrator", {resumed_from: workItem.blockedReason || "unblocked"});
     workItem.status = "ready";
     delete workItem.blockedReason;
   }
@@ -1925,23 +1922,22 @@ function dispatchWorkItem(state, taskGroup, workItem, contract, repositoryTarget
   }
   repositoryTarget.updatedAt = at;
   if (workItem.status === "draft") {
+    // Record only the genuine contract refs produced this dispatch; omit fabricated placeholders.
     recordTransition(state, "WorkItem", workItem.id, "draft", "ready", "orchestrator", {
-      task_contract_created: contract.contractDigest || contract.contractId || `contract:${workItem.id}`,
+      task_contract_created: contract.contractDigest || contract.contractId,
       effective_instruction_packet_ref: contract.effectiveInstructionPacketRef,
       repository_output_target_ref: contract.repositoryOutputTargetRef,
-      shared_definition_refs_resolved: contract.sharedDefinitionRefs?.length ? contract.sharedDefinitionRefs.join(",") : "none_resolved",
-      task_draft_review_passed: `task-draft-review:${workItem.id}`,
-      split_basis_digest: contract.splitBasisDigest || contract.contractDigest || specContentDigest("spec/agent-task-contract.schema.json"),
-      quality_surface_plan_ref: contract.qualitySurfacePlanRef || `quality-surface:${workItem.id}`
+      shared_definition_refs_resolved: contract.sharedDefinitionRefs?.length ? contract.sharedDefinitionRefs.join(",") : undefined,
+      split_basis_digest: contract.splitBasisDigest || undefined
     });
     workItem.status = "ready";
   }
   if (workItem.status === "ready") {
     recordTransition(state, "WorkItem", workItem.id, "ready", "assigned", "scheduler", {
-      agent_selected: contract.roleId || contract.sessionId || "agent_selected",
+      agent_selected: contract.roleId,
       model_selected: contract.modelSelectionDecisionRef,
       session_placement_selected: contract.placementDecisionRef,
-      lease_admitted: repositoryTarget.leaseRef || `lease:${contract.sessionId}`
+      lease_admitted: repositoryTarget.leaseRef || undefined
     });
     workItem.status = "assigned";
   }
@@ -2773,7 +2769,6 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
   const nowMs = Date.now();
   const pendingStatuses = ["open", "pending", "requested", "submitted", "in_review", "waiting"];
   const forTaskGroup = (items) => (items || []).filter((item) => item.taskGroupId === taskGroupId);
-  const notModeled = {status: "passed", reasonCode: "not_applicable_collection_not_modeled"};
   const gateFailures = {
     all_required_work_closed: readiness.blockingObjects.some((item) => item.objectType === "WorkItem"),
     all_findings_terminal: forTaskGroup(state.findings).some((item) => !(["resolved", "closed", "dismissed", "wontfix"].includes(item.status) && ["fixed_verified", "not_applicable", "scope_adjusted", "blocked_external"].includes(item.dispositionClass))),
@@ -2782,16 +2777,12 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     all_changes_integrated: forTaskGroup(state.repositoryOutputs).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status)),
     no_pending_permissions: forTaskGroup(state.permissionRequests).some((item) => pendingStatuses.includes(item.status)),
     no_pending_approvals: forTaskGroup(state.approvalRequests).some((item) => pendingStatuses.includes(item.status)),
-    all_policy_decisions_terminal: false,
     all_commands_terminal: (state.commands || []).some((command) => (command.taskGroupId === taskGroupId || command.subject === `TaskGroup:${taskGroupId}`) && !COMMAND_TERMINAL.has(command.status)),
     all_command_effects_terminal: forTaskGroup(state.commandEffects).some((item) => !COMMAND_EFFECT_TERMINAL.has(item.status)),
     no_active_dlq: forTaskGroup(state.dlqEntries).some((item) => !DLQ_ENTRY_TERMINAL.has(item.status)),
     all_leases_terminal: (state.leases || []).some((lease) => lease.status === "active" && leaseAppliesToTaskGroup(state, lease, taskGroupId)),
     no_active_temp_grants: (state.mcpGrants || []).some((grant) => grant.taskGroupId === taskGroupId && grant.grantStatus === "issued" && new Date(grant.expiresAt || 0).getTime() > nowMs),
-    no_active_secret_leases: false,
-    no_open_external_capability_boundaries: false,
     artifacts_verified: forTaskGroup(state.artifacts).some((item) => !["verified", "registered"].includes(item.status)),
-    release_manifest_ready: false,
     rules_candidates_processed: (state.ruleSourceResolutions || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)),
     runtime_issue_candidates_exported: forTaskGroup(state.systemUpgradeCandidates).some((item) => item.status === "candidate_created"),
     no_open_execution_topologies: forTaskGroup(state.executionTopologies).some((item) => !["closed", "completed", "superseded"].includes(item.status)),
@@ -2807,7 +2798,6 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     all_shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => definition.status !== "active"),
     all_repository_output_targets_terminal: forTaskGroup(state.repositoryOutputs).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status))
   };
-  const notModeledGates = new Set(["all_policy_decisions_terminal", "no_active_secret_leases", "no_open_external_capability_boundaries", "release_manifest_ready"]);
   const gates = Object.keys(gateFailures);
   const failedGates = gates.filter((gate) => gateFailures[gate]);
   const blockers = [...readiness.blockingObjects];
@@ -2827,10 +2817,24 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     gateResults: Object.fromEntries(gates.map((gate) => [gate, {
       status: gateFailures[gate] ? "blocked" : "passed",
       evidenceRefs: [`close:${taskGroupId}:${gate}`],
-      ...(gateFailures[gate] ? {reasonCode: `gate_blocked:${gate}`} : {}),
-      ...(notModeledGates.has(gate) && !gateFailures[gate] ? {reasonCode: notModeled.reasonCode} : {})
+      ...(gateFailures[gate] ? {reasonCode: `gate_blocked:${gate}`} : {})
     }])),
     blockingObjects: blockers,
+    // §4.5/§10 global judgment record: the close is an explicit reality-first judgment over the whole
+    // task group (required cells terminal + real findings dispositioned + independent review + side
+    // effects settled + no live authorization/human hold), not a mere mechanical AND of flags. All
+    // fields are derived from real state (not synthesized), so the terminal close carries an auditable
+    // holistic conclusion.
+    holisticJudgment: {
+      basis: "reality_first_close_barrier",
+      requiredCellsTerminal: !gateFailures.all_required_work_closed,
+      findingsDispositioned: !gateFailures.all_findings_terminal,
+      independentReviewComplete: readiness.checkResults?.all_required_validation_present?.status !== "blocked",
+      sideEffectsSettled: !gateFailures.all_commands_terminal && !gateFailures.all_command_effects_terminal && !gateFailures.no_active_dlq,
+      noLiveAuthorizationHold: !gateFailures.no_pending_permissions && !gateFailures.no_pending_approvals && !gateFailures.no_pending_human_confirmations,
+      realBlockerCount: blockers.length,
+      conclusion: satisfied ? "all_required_terminal_no_real_blocker" : "blocked_by_real_gate"
+    },
     evidenceRefs: [`close:${taskGroupId}`, readiness.checkId],
     computedAt: at,
     satisfied

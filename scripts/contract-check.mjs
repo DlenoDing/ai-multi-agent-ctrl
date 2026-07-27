@@ -337,6 +337,10 @@ function verifyHumanAndOrganizationContracts(output) {
     staleState.completionReadiness = [{schemaVersion: "completion-readiness/v1", checkId: "stale", taskGroupId: "tg_runtime_management", status: "clear", stateVersion: 1, blockingObjects: [], checkResults: {}, requiredChecks: []}];
     const staleBarrier = computeCloseBarrier(staleState, "tg_runtime_management", {mutate: false});
     if (staleBarrier.satisfied) output.push("close-barrier trusted a stale readiness and reported satisfied with incomplete work");
+    // core-init absorption: the barrier records a reality-first holistic judgment (not a bare flag AND).
+    if (!staleBarrier.holisticJudgment || staleBarrier.holisticJudgment.basis !== "reality_first_close_barrier") output.push("close-barrier missing holistic judgment record");
+    if (staleBarrier.holisticJudgment.requiredCellsTerminal !== false || staleBarrier.holisticJudgment.conclusion !== "blocked_by_real_gate") output.push("close-barrier holistic judgment did not reflect the incomplete cell");
+    if ("all_policy_decisions_terminal" in staleBarrier.gateResults || "release_manifest_ready" in staleBarrier.gateResults) output.push("close-barrier still emits vacuous always-pass stub gates");
 
     // human directives consumed oldest-first (FIFO): the newest adjust_priority must win.
     const fifoState = structuredClone(seedState);
@@ -1069,9 +1073,16 @@ function verifyTransitionEngine(output) {
   expectRejected("unauthorized actor", "transition.actor_not_authorized", () =>
     assertTransition({}, "WorkItem", "draft", "ready", "scheduler", legalEvidence)
   );
-  expectRejected("missing requires evidence", "gate.reference_unresolved", () =>
-    assertTransition({}, "WorkItem", "draft", "ready", "orchestrator", { task_contract_created: "contract:x" })
-  );
+  // Absorbed from MGP core-init: transitions are NOT gated on ceremonial "evidence" token presence
+  // (the caller always synthesizes them). A legal transition with NO evidence values must succeed;
+  // real evidence is validated at the producing boundary (acceptAgentCheckpoint), not here.
+  try {
+    assertTransition({}, "WorkItem", "draft", "ready", "orchestrator", {});
+  } catch (error) {
+    output.push(`transition-engine: legal draft->ready rejected for empty evidence (should be de-ceremonied): ${error.failureCode || error.code}`);
+  }
+  // But an unmodeled/unresolved required gate id is still a spec-integrity failure.
+  expectRejected("unresolved required gate id", "gate.unresolved", () => resolveGate("no_such_gate_zzz", catalog));
   expectRejected("unknown machine", "transition.unknown_machine", () =>
     assertTransition({}, "NoSuchMachine", "a", "b", "orchestrator", {})
   );

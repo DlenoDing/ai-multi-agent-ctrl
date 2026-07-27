@@ -230,29 +230,24 @@ export function canonicalTransition(machineName, from, to) {
   return (machine.transitions || []).find((transition) => transition.from === from && transition.to === to);
 }
 
-function normalizeRequiresValues(requiresValues, requires) {
-  if (requiresValues instanceof Map) return requiresValues;
-  if (Array.isArray(requiresValues)) {
-    return new Map(requires.map((gateId, position) => [gateId, requiresValues[position]]));
-  }
-  if (requiresValues && typeof requiresValues === "object") {
-    return new Map(Object.entries(requiresValues));
-  }
-  return new Map();
-}
-
 function isNonEmptyEvidence(value) {
   if (value === undefined || value === null) return false;
   if (Array.isArray(value)) return value.some((item) => isNonEmptyEvidence(item));
   return String(value).trim().length > 0;
 }
 
-// assertTransition enforces core-control-plane-spec §8 rule 6 at runtime:
+// assertTransition enforces STATE-MACHINE LEGALITY at runtime (spec integrity):
 //  (a) from/to must be declared states of the machine;
 //  (b) a modeled transition must exist for (from, to, actor);
-//  (c) every `requires` gate must resolve through the gate catalog and have non-empty
-//      corresponding evidence in requiresValues.
-// On failure it throws a TransitionError carrying a failureCode.
+//  (c) every `requires` gate id must resolve through the gate catalog (catches typos / unmodeled
+//      gate ids in the state machine).
+// It does NOT require non-empty "evidence" values for those gates. Absorbed from MGP core-init:
+// a gate that merely asserts "a token is present" is mechanical ceremony, not evidence — the caller
+// always synthesizes such tokens, so it catches nothing real while dressing synthesized strings as
+// evidence (OM §1.1 "Gate…是支撑判断…不是智能判断的替代"; MINIMAL-EFFECTIVE-EVIDENCE). Real evidence
+// is validated at the producing boundary (acceptAgentCheckpoint: git/manifest/digest). Illegal
+// transitions (unknown machine/state, not-modeled, unauthorized actor, unresolved gate id) are real
+// spec violations and still throw — those are not "redundant/useless" gates.
 export function assertTransition(state, machineName, from, to, actor, requiresValues = {}) {
   const machines = loadStateMachines().machines;
   const machine = machines[machineName];
@@ -280,16 +275,8 @@ export function assertTransition(state, machineName, from, to, actor, requiresVa
   }
   const catalog = loadGateCatalog();
   const requires = Array.isArray(modeled.requires) ? modeled.requires : [];
-  const values = normalizeRequiresValues(requiresValues, requires);
   for (const gateId of requires) {
-    const resolver = resolveGate(gateId, catalog); // throws gate.unresolved when unmatched
-    if (!isNonEmptyEvidence(values.get(gateId))) {
-      throw new TransitionError(
-        resolver.failureCode || "transition.requires_evidence_missing",
-        `${machineName}: transition ${from}->${to} is missing evidence for gate "${gateId}"`,
-        { machineName, from, to, gateId, failureCode: resolver.failureCode }
-      );
-    }
+    resolveGate(gateId, catalog); // spec integrity: every required gate id must be modeled (throws gate.unresolved)
   }
   return { machine: machineName, from, to, actor, requires };
 }
