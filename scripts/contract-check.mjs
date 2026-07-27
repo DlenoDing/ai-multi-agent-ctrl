@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve } from "../apps/mcp-server/server.mjs";
+import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
   maintainWorkerLanes,
@@ -30,6 +30,7 @@ import {
   terminateCellRuntime,
   findPermissionBlockedDispatch,
   requeuePermissionApprovedDispatch,
+  findingResolve,
   decideSessionPlacement,
   roomSend,
   selectModel,
@@ -456,6 +457,21 @@ function verifyHumanAndOrganizationContracts(output) {
     if (permIdemState.permissionRequests[0].status !== "denied") output.push("permissionResolve: a settled (denied) request was re-resolved (deny->approve flip)");
     if (!reResolve.alreadyResolved || reResolve.accessGrant) output.push("permissionResolve: re-resolving a settled request minted a grant / did not report alreadyResolved");
     if ((permIdemState.accessGrants || []).length !== grantsBefore) output.push("permissionResolve: re-resolving a settled request created an access grant for a terminalized cell");
+
+    // Same terminal-guard class: approvalResolve must not flip a settled governance verdict, and
+    // findingResolve must not re-dispose a terminalized finding into an accepted class.
+    const apprIdem = structuredClone(seedState);
+    ensureRuntimeCollections(apprIdem, {root});
+    apprIdem.approvalRequests = [{approvalId: "appr_settled", status: "rejected", resolvedBy: "security", decisionRecordRef: "dr_1"}];
+    const apprRe = approvalResolve(apprIdem, {approvalId: "appr_settled", status: "approved", resolvedBy: "attacker"});
+    if (apprIdem.approvalRequests[0].status !== "rejected") output.push("approvalResolve: a settled rejected verdict was flipped to approved");
+    if (apprIdem.approvalRequests[0].resolvedBy !== "security" || !apprRe.alreadyResolved) output.push("approvalResolve: re-resolving overwrote the audit trail / did not report alreadyResolved");
+    const findIdem = structuredClone(seedState);
+    ensureRuntimeCollections(findIdem, {root});
+    findIdem.findings = [{findingId: "find_settled", status: "resolved", dispositionClass: "fixed_unverified", taskGroupId: "tg_runtime_management"}];
+    const findRe = findingResolve(findIdem, {findingId: "find_settled", status: "dismissed", dispositionClass: "not_applicable"});
+    if (findIdem.findings[0].status !== "resolved" || findIdem.findings[0].dispositionClass !== "fixed_unverified") output.push("findingResolve: a terminal fixed_unverified finding was re-disposed into an accepted class (barrier bypass)");
+    if (!findRe.alreadyResolved) output.push("findingResolve: re-resolving a terminal finding did not report alreadyResolved");
 
     // human directives consumed oldest-first (FIFO): the newest adjust_priority must win.
     const fifoState = structuredClone(seedState);

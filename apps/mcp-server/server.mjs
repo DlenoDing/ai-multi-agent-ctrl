@@ -2134,6 +2134,10 @@ function reviewResultConsume(state, args) {
 export function approvalResolve(state, args) {
   const request = (state.approvalRequests || []).find((item) => item.approvalId === args.approvalId);
   if (!request) return {ok: false, error: "approval_request_not_found"};
+  // Terminal guard (mirrors permissionResolve / decideHumanConfirmation): a governance approval settles
+  // exactly once. Without this, a fresh-idempotency-key re-call could flip a terminal rejected->approved
+  // verdict and overwrite the audit fields (resolvedBy / decisionRecordRef). Return the settled request.
+  if (["approved", "rejected", "expired", "cancelled"].includes(request.status)) return {approvalRequest: request, alreadyResolved: true};
   const status = ["approved", "rejected", "cancelled"].includes(args.status)
     ? args.status
     : (args.allowed === false ? "rejected" : "approved");
@@ -2250,13 +2254,25 @@ function accountSuspend(state, args) {
 
 function grantCreate(state, args) {
   const at = new Date().toISOString();
+  const subjectRef = args.subjectRef || {subjectType: "account", subjectId: args.subjectId || args.accountId || "acct_agent_runtime"};
+  const resource = args.resource || {resourceType: args.resourceType || "task_group", resourceId: args.resourceId || args.taskGroupId || "tg_runtime_management"};
+  const permissions = args.permissions || ["task_group:read"];
+  // Idempotency dedup (mirrors ensurePermissionAccessGrant): a fresh-idempotency-key retry must not mint a
+  // duplicate active grant covering the same subject/resource/permissions.
+  const existing = state.accessGrants.find((item) =>
+    item.status === "active" &&
+    item.subjectRef?.subjectType === subjectRef.subjectType &&
+    item.subjectRef?.subjectId === subjectRef.subjectId &&
+    resourceMatches(item.resource, resource) &&
+    permissions.every((permission) => (item.permissions || []).includes(permission) || (item.permissions || []).includes("*")));
+  if (existing) return {grant: existing, deduplicated: true};
   const grant = {
     schemaVersion: "access-control-grant/v1",
     grantId: args.grantId || createId("grant"),
-    subjectRef: args.subjectRef || {subjectType: "account", subjectId: args.subjectId || args.accountId || "acct_agent_runtime"},
-    resource: args.resource || {resourceType: args.resourceType || "task_group", resourceId: args.resourceId || args.taskGroupId || "tg_runtime_management"},
+    subjectRef,
+    resource,
     role: args.role || "agent_operator",
-    permissions: args.permissions || ["task_group:read"],
+    permissions,
     status: "active",
     policyDecisionRef: args.policyDecisionRef || `policy:grant:${at}`,
     auditRef: args.auditRef || `audit:grant:${at}`,

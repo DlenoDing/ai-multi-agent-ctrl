@@ -675,6 +675,12 @@ errors << "schema validator must error on an unresolved local $ref and bound rec
 errors << "permission-timeout requeue/terminalize must have a behavioral test" unless contract_check_source.include?("permission-timeout approve: dispatch not requeued") && contract_check_source.include?("permission-timeout deny: dispatch not terminalized")
 # permissionResolve must resolve exactly once (idempotency/terminal guard, like decideHumanConfirmation).
 errors << "permissionResolve must guard against re-resolving a settled request" unless mcp_source.include?("if (request.status !== \"pending\") return {permissionRequest: request, accessGrant: null, alreadyResolved: true}")
+# Same terminal-guard class across the sibling resolve entrypoints (a fresh idempotency-key re-call must
+# not flip a settled verdict / re-dispose a terminal finding / mint a duplicate active grant).
+errors << "approvalResolve must guard against re-resolving a settled approval" unless mcp_source.include?("[\"approved\", \"rejected\", \"expired\", \"cancelled\"].includes(request.status)) return {approvalRequest: request, alreadyResolved: true}")
+errors << "findingResolve must guard against re-resolving a terminal finding" unless core_source.include?("if (findingTerminalStatuses.includes(finding.status)) return {finding, alreadyResolved: true}")
+errors << "grantCreate must dedup an existing active grant" unless mcp_source.include?("if (existing) return {grant: existing, deduplicated: true}")
+errors << "sibling resolve terminal guards need behavioral coverage" unless contract_check_source.include?("approvalResolve: a settled rejected verdict was flipped") && contract_check_source.include?("findingResolve: a terminal fixed_unverified finding was re-disposed")
 # 2026-07-27 full-system review round 3. Isolation-1: MCP state_get full scope must be fail-closed —
 # both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
 # collections cross-project), and the agent_node full branch must be env-gated like its siblings.

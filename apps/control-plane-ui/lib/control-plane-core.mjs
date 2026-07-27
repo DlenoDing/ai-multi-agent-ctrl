@@ -5207,6 +5207,11 @@ const VALID_FINDING_DISPOSITIONS = ["fixed_verified", "not_applicable", "scope_a
 export function findingResolve(state, args) {
   const finding = (state.findings || []).find((item) => item.findingId === args.findingId);
   if (!finding) return {ok: false, error: "finding_not_found"};
+  // Terminal guard: a finding is terminalized exactly once (only finding_resolve may terminalize it —
+  // separation of duties from finding_submit). Without this a fresh-idempotency-key re-call could
+  // re-dispose a settled fixed_unverified finding into an accepted class (dismissed/not_applicable),
+  // passing the close barrier's "no unfixed finding" gate with no new evidence. Return the settled finding.
+  if (findingTerminalStatuses.includes(finding.status)) return {finding, alreadyResolved: true};
   const terminal = ["resolved", "closed", "dismissed", "wontfix"];
   const status = terminal.includes(args.status) ? args.status : "resolved";
   const evidenceRefs = [...new Set([...(finding.evidenceRefs || []), ...(args.evidenceRefs || [])])];
