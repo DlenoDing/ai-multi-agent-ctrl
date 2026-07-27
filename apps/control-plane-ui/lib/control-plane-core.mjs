@@ -3003,11 +3003,24 @@ export function syncSkillSource(state, sourceId, options = {}) {
   const repoDir = join(sourceDir, "repo");
   mkdirSync(sourceDir, {recursive: true});
   source.status = "syncing";
-  if (!existsSync(join(repoDir, ".git"))) {
-    execFileSync("git", ["clone", source.repositoryUrl, repoDir], {stdio: "pipe"});
+  // Harden the skill-source git subprocess (same discipline as checkpoint verification): restrict
+  // transports (blocks ext::/fd:/remote-helper RCE), reject an unsafe URL / malformed ref / non-hex
+  // commit, and disable prompts. Skill sources are normally system-configured, but this is defense
+  // in depth against a tampered/typo'd source record.
+  const gitEnv = {...process.env, GIT_ALLOW_PROTOCOL: "https:ssh:git", GIT_TERMINAL_PROMPT: "0"};
+  const repoUrl = String(source.repositoryUrl || "");
+  const defaultRef = String(source.defaultRef || "");
+  const pinnedCommit = String(source.pinnedCommit || "");
+  if (!repoUrl || repoUrl.startsWith("-") || /^[a-z0-9+.-]*::/iu.test(repoUrl) || repoUrl.startsWith("ext:") || repoUrl.startsWith("fd:")
+      || !/^[A-Za-z0-9._\/-]+$/u.test(defaultRef) || !/^[0-9a-fA-F]{7,64}$/u.test(pinnedCommit)) {
+    source.status = "quarantined";
+    throw new Error("skill_source_unsafe_git_input");
   }
-  execFileSync("git", ["-C", repoDir, "fetch", "origin", source.defaultRef], {stdio: "pipe"});
-  execFileSync("git", ["-C", repoDir, "checkout", "--detach", source.pinnedCommit], {stdio: "pipe"});
+  if (!existsSync(join(repoDir, ".git"))) {
+    execFileSync("git", ["clone", "--", repoUrl, repoDir], {stdio: "pipe", env: gitEnv});
+  }
+  execFileSync("git", ["-C", repoDir, "fetch", "origin", "--", defaultRef], {stdio: "pipe", env: gitEnv});
+  execFileSync("git", ["-C", repoDir, "checkout", "--detach", pinnedCommit], {stdio: "pipe", env: gitEnv});
   const actualCommit = execFileSync("git", ["-C", repoDir, "rev-parse", "HEAD"], {encoding: "utf8"}).trim();
   if (source.trustPolicy.requirePinnedCommit && actualCommit !== source.pinnedCommit) {
     source.status = "quarantined";

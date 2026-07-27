@@ -1317,7 +1317,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "instruction-mcp.cache_key_index":
       return cacheKeyIndex(state, args, principalProjectFilter(context));
     case "instruction-mcp.stable_prefix_get":
-      return stablePrefixGet(state, args);
+      return stablePrefixGet(state, args, principalProjectFilter(context));
     case "instruction-mcp.delta_payload_compact":
       return deltaPayloadCompact(state, args);
     case "repository-mcp.repository_output_target_select":
@@ -2202,9 +2202,16 @@ function cacheKeyIndex(state, args, filter) {
   };
 }
 
-function stablePrefixGet(state, args) {
-  const envelope = state.instructionMetrics.envelopes.find((item) => item.envelopeId === args.envelopeId)
-    || state.instructionMetrics.envelopes.find((item) => !args.taskGroupId || item.taskGroupId === args.taskGroupId);
+function stablePrefixGet(state, args, filter) {
+  // Scope by the envelope's task-group project so a bounded principal cannot read another tenant's
+  // instruction-envelope digest by guessing an envelopeId (which is not a scope-addressing arg).
+  const inScope = (envelope) => {
+    if (!filter) return true;
+    const project = (state.taskGroups || []).find((item) => item.id === envelope.taskGroupId)?.projectId;
+    return Boolean(project && filter.has(project));
+  };
+  const envelope = (state.instructionMetrics.envelopes || []).find((item) => item.envelopeId === args.envelopeId && inScope(item))
+    || (state.instructionMetrics.envelopes || []).find((item) => (!args.taskGroupId || item.taskGroupId === args.taskGroupId) && inScope(item));
   return {
     stablePrefix: {
       envelopeId: envelope?.envelopeId,

@@ -550,6 +550,10 @@ i18n_zh_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/i18n-zh
 errors << "Console must surface the admission ledger and single-cell escalation guard" unless server_source.include?("\"admissionDecisions\", \"workerLanes\"") && app_js_source.include?("singleCellEscalationGuard") && app_js_source.include?("准入决策") && app_js_source.include?("workerCarrierDecision?.carrier")
 errors << "Console i18n must localize admission enums and blocked-reason codes" unless i18n_zh_source.include?("awaiting_analysis_output") && i18n_zh_source.include?("pending_window") && i18n_zh_source.include?("reusable_top_level_lane") && i18n_zh_source.include?("deferred:")
 errors << "Console must offer a resolve_decision actuator for needs_decision cells" unless app_js_source.include?("\"resolve_decision\"") && app_js_source.include?("resolution: data.resolution") && app_js_source.include?("admissionReasonLabel") && i18n_zh_source.include?("work_item_decision_reopen")
+# 2026-07-27 review round 6 residual (LOW security).
+errors << "MCP instruction stable_prefix_get must be principal-scoped" unless mcp_source.include?("stablePrefixGet(state, args, principalProjectFilter(context))")
+errors << "MCP permission_matrix_get must deny bounded principals" unless mcp_source.include?("permission_matrix_requires_unrestricted_principal")
+errors << "Skill-source git sync must restrict transports and validate inputs" unless core_source.include?("skill_source_unsafe_git_input") && core_source.include?("GIT_ALLOW_PROTOCOL")
 # 2026-07-26 review round 2 fixes.
 errors << "needs_decision cells must have a human resolution actuator" unless core_source.include?("resolve_decision") && core_source.include?("supersededByHumanDecision") && contract_check_source.include?("resolve_decision")
 errors << "MCP readiness/close-barrier reads must guard bounded principals" unless mcp_source.include?("boundedTaskGroupGuard") && mcp_source.include?("boundedTaskGroupGuard(state, args, context) || computeCompletionReadiness") && mcp_source.include?("boundedTaskGroupGuard(state, args, context) || computeCloseBarrier")
