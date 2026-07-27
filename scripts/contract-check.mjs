@@ -523,8 +523,11 @@ function verifyHumanAndOrganizationContracts(output) {
     qbTg.workItems = [{id: "wi_qb", title: "完成项", status: "verified", ownerRole: "agent-runtime", progress: 100, reviewBundleRef: "rvb_qb"}];
     quorumBlockState.approvalRequests = [{approvalId: "appr_qb", taskGroupId: "tg_runtime_management", status: "quorum_collecting", riskClass: "high", proposedBy: "acct_alice", quorum: 2, approvals: ["acct_bob"]}];
     const qbReadiness = computeCompletionReadiness(quorumBlockState, "tg_runtime_management", {});
-    const qbBlocks = (qbReadiness.blockingObjects || []).some((b) => b.objectType === "PermissionOrApprovalRequest") || qbReadiness.status !== "clear";
-    if (!qbBlocks) output.push("H1 CRITICAL: a quorum_collecting (sub-quorum) high-risk approval did NOT block completion readiness (partial approval lets close bypass the quorum)");
+    // Discriminating assertion: the seed blocks for other reasons too (repo-output target, checkpoint), so
+    // assert SPECIFICALLY that the quorum_collecting approval itself contributes a blocker — this fails if
+    // quorum_collecting is dropped from the barrier pending-set (the exact regression this locks).
+    const qbApprovalBlocks = (qbReadiness.blockingObjects || []).some((b) => b.objectType === "PermissionOrApprovalRequest");
+    if (!qbApprovalBlocks) output.push("H1 CRITICAL: a quorum_collecting (sub-quorum) high-risk approval did NOT block completion readiness (partial approval lets close bypass the quorum)");
 
     // human directives consumed oldest-first (FIFO): the newest adjust_priority must win.
     const fifoState = structuredClone(seedState);
