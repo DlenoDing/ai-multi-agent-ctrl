@@ -427,11 +427,22 @@ function scheduleFilterRerender(inputEl) {
   if (__filterRerenderTimer) clearTimeout(__filterRerenderTimer);
   __filterRerenderTimer = setTimeout(() => {
     __filterRerenderTimer = null;
+    // Honor the same guards as every other auto-render path: never rebuild over an in-progress form
+    // edit or an open modal. The one case the pollers can't cover is that we WANT to render while the
+    // filter box itself is focused (they skip on any focused input) — so allow it only when this filter
+    // box is still the active element (focus/caret restored below) or focus has settled somewhere safe.
+    const active = document.activeElement;
+    if (modalHtml || formTouched) return;
+    const filterStillFocused = active === inputEl;
+    const focusIsSafe = !(active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName));
+    if (!filterStillFocused && !focusIsSafe) return;
     render();
-    const again = document.querySelector(`[data-filter-input][data-filter-key="${CSS.escape(key)}"]`);
-    if (again) {
-      again.focus();
-      try { again.setSelectionRange(caret, caret); } catch { /* not a text input */ }
+    if (filterStillFocused) {
+      const again = document.querySelector(`[data-filter-input][data-filter-key="${CSS.escape(key)}"]`);
+      if (again) {
+        again.focus();
+        try { again.setSelectionRange(caret, caret); } catch { /* not a text input */ }
+      }
     }
   }, 250);
 }
