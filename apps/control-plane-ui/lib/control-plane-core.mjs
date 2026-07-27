@@ -5040,6 +5040,43 @@ export function permissionRequestSubmit(state, args) {
   return {permissionRequest: request};
 }
 
+// A permission request whose runtime poll timed out leaves a blocked, node-detached dispatch marked
+// "permission_request_pending" (stamped by the /fail(blocked) route). Locate it so the resolve levers can
+// act on the dispatch — the happy path keeps the dispatch running and needs no dispatch action, but the
+// timed-out dispatch is otherwise orphaned (non-terminal → wedges the close barrier with no lever).
+export function findPermissionBlockedDispatch(state, request) {
+  if (!request) return null;
+  return (state.agentDispatches || []).find((dispatch) =>
+    dispatch.status === "blocked" && dispatch.blockedReason === "permission_request_pending" &&
+    ((request.sessionId && dispatch.sessionId === request.sessionId) ||
+     (request.workId && dispatch.workItemId === request.workId && dispatch.taskGroupId === request.taskGroupId))) || null;
+}
+
+// On APPROVAL of a timed-out permission request, requeue the orphaned dispatch so a node re-claims and
+// re-executes it with the grant now in place (mirrors decideHumanConfirmation's blocked->queued requeue).
+export function requeuePermissionApprovedDispatch(state, request, at = new Date().toISOString()) {
+  const dispatch = findPermissionBlockedDispatch(state, request);
+  if (!dispatch) return null;
+  dispatch.status = "queued";
+  delete dispatch.blockedReason;
+  revokeDispatchNodeBinding(state, dispatch, "permission_request_approved_requeued");
+  dispatch.updatedAt = at;
+  const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
+  if (session && !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status)) {
+    session.status = "active";
+    delete session.blockedReason;
+    session.updatedAt = at;
+  }
+  const taskGroup = (state.taskGroups || []).find((group) => group.id === dispatch.taskGroupId);
+  const workItem = taskGroup?.workItems?.find((item) => item.id === dispatch.workItemId);
+  if (workItem && workItem.status === "needs_decision" && workItem.blockedReason === "permission_request_pending") {
+    workItem.status = "ready";
+    delete workItem.blockedReason;
+    workItem.updatedAt = at;
+  }
+  return dispatch;
+}
+
 export function reviewPlanCreate(state, args) {
   const taskGroup = taskGroupForRecord(state, args);
   const at = new Date().toISOString();

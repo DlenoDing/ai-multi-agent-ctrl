@@ -28,6 +28,8 @@ import {
   admissibleCellClass,
   capTaskContracts,
   terminateCellRuntime,
+  findPermissionBlockedDispatch,
+  requeuePermissionApprovedDispatch,
   decideSessionPlacement,
   roomSend,
   selectModel,
@@ -416,6 +418,33 @@ function verifyHumanAndOrganizationContracts(output) {
       const missing = ((machines[entity] || {}).terminal || []).filter((s) => !barrierSet.includes(s));
       if (missing.length) output.push(`terminal-set drift: ${entity} state-machine terminal(s) ${JSON.stringify(missing)} not treated as terminal by the close barrier (liveness wedge risk)`);
     }
+
+    // Permission-timeout deadlock fix (cross-subsystem seam): a permission request whose runtime poll timed
+    // out leaves a blocked, node-detached dispatch marked permission_request_pending. APPROVE must requeue
+    // it (not no-op) and DENY must terminalize it — otherwise the orphaned dispatch wedges the close barrier
+    // with the operator's resolve lever dead.
+    const mkPermTimedOut = () => {
+      const s = structuredClone(seedState);
+      ensureRuntimeCollections(s, {root});
+      s.agentDispatches = [{dispatchId: "disp_perm", taskGroupId: "tg_runtime_management", workItemId: "wi_perm", sessionId: "sess_perm", status: "blocked", blockedReason: "permission_request_pending", assignedNodeId: "node_perm", mcpGrants: []}];
+      s.workSessions = [{sessionId: "sess_perm", taskGroupId: "tg_runtime_management", workItemId: "wi_perm", status: "needs_decision", blockedReason: "permission_request_pending"}];
+      s.agentRuntimeNodes = [{nodeId: "node_perm", projectIds: ["prj_control_plane"], activeDispatchIds: ["disp_perm"], status: "active"}];
+      const tg = s.taskGroups.find((t) => t.id === "tg_runtime_management");
+      tg.workItems = [{id: "wi_perm", title: "待授权项", status: "needs_decision", blockedReason: "permission_request_pending", ownerRole: "agent-runtime", progress: 30}];
+      return s;
+    };
+    const permReq = {requestId: "perm_x", sessionId: "sess_perm", workId: "wi_perm", taskGroupId: "tg_runtime_management"};
+    const apprState = mkPermTimedOut();
+    if (!findPermissionBlockedDispatch(apprState, permReq)) output.push("permission-timeout: findPermissionBlockedDispatch did not locate the marked dispatch");
+    requeuePermissionApprovedDispatch(apprState, permReq);
+    const apprDisp = apprState.agentDispatches[0];
+    if (apprDisp.status !== "queued" || apprDisp.blockedReason) output.push("permission-timeout approve: dispatch not requeued (approval would be a no-op deadlock)");
+    if (apprDisp.assignedNodeId) output.push("permission-timeout approve: requeued dispatch still node-bound");
+    if (apprState.workSessions[0].status !== "active") output.push("permission-timeout approve: session not restored to active");
+    if (apprState.taskGroups.find((t) => t.id === "tg_runtime_management").workItems[0].status !== "ready") output.push("permission-timeout approve: work item not restored to ready");
+    const denyState = mkPermTimedOut();
+    terminateCellRuntime(denyState, "tg_runtime_management", "wi_perm", "permission_request_denied");
+    if (!["failed", "cancelled"].includes(denyState.agentDispatches[0].status)) output.push("permission-timeout deny: dispatch not terminalized (wedges close barrier)");
 
     // human directives consumed oldest-first (FIFO): the newest adjust_priority must win.
     const fifoState = structuredClone(seedState);
@@ -1199,9 +1228,9 @@ function resolveInternalRef(ref, root) {
 }
 
 // True iff `value` satisfies `schema` with zero errors — used to evaluate if/then/else, not, any/oneOf.
-function schemaMatches(value, schema, root) {
+function schemaMatches(value, schema, root, depth) {
   const scratch = [];
-  validateSchema(value, schema, "", scratch, root);
+  validateSchema(value, schema, "", scratch, root, depth);
   return scratch.length === 0;
 }
 
@@ -1211,16 +1240,22 @@ function schemaMatches(value, schema, root) {
 // the conditional guarantees (e.g. a subagent placement REQUIRING subagentSafetyProof with every safety
 // flag true, or CloseBarrier.satisfied implying all gates passed) live in allOf/if/then/$ref — a
 // validator that skipped those keywords validated nothing and let a regressed producer pass silently.
-function validateSchema(value, schema, path, output, root) {
+function validateSchema(value, schema, path, output, root, depth = 0) {
   if (!schema || typeof schema !== "object") return;
   if (root === undefined) root = schema;
+  // A $ref is the only unbounded-recursion vector; bound the follow depth so a (mistakenly) self- or
+  // cyclically-referential schema fails loudly instead of hanging the gate.
+  if (depth > 256) { output.push(`${path} $ref recursion too deep (possible schema cycle)`); return; }
   if (schema.$ref !== undefined) {
     if (schema.$ref.startsWith("#/")) {
       const resolved = resolveInternalRef(schema.$ref, root);
-      if (resolved) validateSchema(value, resolved, path, output, root);
+      // Unresolvable local $ref must ERROR, not silently pass — a typo'd pointer would otherwise validate
+      // nothing (re-introducing the vacuous-gate class this validator was completed to prevent).
+      if (resolved) validateSchema(value, resolved, path, output, root, depth + 1);
+      else output.push(`${path} unresolved local $ref ${schema.$ref}`);
       return;
     }
-    if (schema.$ref === "language-policy.schema.json") { validateSchema(value, languagePolicySchema, path, output, languagePolicySchema); return; }
+    if (schema.$ref === "language-policy.schema.json") { validateSchema(value, languagePolicySchema, path, output, languagePolicySchema, depth + 1); return; }
     return; // unknown external ref: not resolvable here, skip
   }
   if (schema.const !== undefined && value !== schema.const) output.push(`${path} expected const ${JSON.stringify(schema.const)}, got ${JSON.stringify(value)}`);
@@ -1234,8 +1269,8 @@ function validateSchema(value, schema, path, output, root) {
     if (schema.minItems !== undefined && value.length < schema.minItems) output.push(`${path} expected minItems ${schema.minItems}`);
     if (schema.maxItems !== undefined && value.length > schema.maxItems) output.push(`${path} expected maxItems ${schema.maxItems}, got ${value.length}`);
     if (schema.uniqueItems && new Set(value.map((item) => JSON.stringify(item))).size !== value.length) output.push(`${path} expected uniqueItems`);
-    if (schema.items) value.forEach((item, index) => validateSchema(item, schema.items, `${path}[${index}]`, output, root));
-    if (schema.contains && !value.some((item) => schemaMatches(item, schema.contains, root))) output.push(`${path} expected at least one item matching contains`);
+    if (schema.items) value.forEach((item, index) => validateSchema(item, schema.items, `${path}[${index}]`, output, root, depth));
+    if (schema.contains && !value.some((item) => schemaMatches(item, schema.contains, root, depth))) output.push(`${path} expected at least one item matching contains`);
   }
   // Object keywords apply to any object instance (an if/then subschema carries required/properties with
   // no declared type; gating on schema.type==="object" would make every if-condition vacuously match).
@@ -1253,26 +1288,26 @@ function validateSchema(value, schema, path, output, root) {
       }
     }
     for (const [key, childSchema] of Object.entries(properties)) {
-      if (value[key] !== undefined) validateSchema(value[key], childSchema, `${path}.${key}`, output, root);
+      if (value[key] !== undefined) validateSchema(value[key], childSchema, `${path}.${key}`, output, root, depth);
     }
     for (const [pattern, childSchema] of Object.entries(patternProperties)) {
       const re = new RegExp(pattern);
       for (const key of Object.keys(value)) {
-        if (re.test(key)) validateSchema(value[key], childSchema, `${path}.${key}`, output, root);
+        if (re.test(key)) validateSchema(value[key], childSchema, `${path}.${key}`, output, root, depth);
       }
     }
   }
-  if (Array.isArray(schema.allOf)) schema.allOf.forEach((sub, index) => validateSchema(value, sub, `${path}/allOf[${index}]`, output, root));
-  if (Array.isArray(schema.anyOf) && !schema.anyOf.some((sub) => schemaMatches(value, sub, root))) output.push(`${path} matched no anyOf branch`);
+  if (Array.isArray(schema.allOf)) schema.allOf.forEach((sub, index) => validateSchema(value, sub, `${path}/allOf[${index}]`, output, root, depth));
+  if (Array.isArray(schema.anyOf) && !schema.anyOf.some((sub) => schemaMatches(value, sub, root, depth))) output.push(`${path} matched no anyOf branch`);
   if (Array.isArray(schema.oneOf)) {
-    const matched = schema.oneOf.filter((sub) => schemaMatches(value, sub, root)).length;
+    const matched = schema.oneOf.filter((sub) => schemaMatches(value, sub, root, depth)).length;
     if (matched !== 1) output.push(`${path} expected exactly one oneOf match, got ${matched}`);
   }
   if (schema.if) {
-    if (schemaMatches(value, schema.if, root)) { if (schema.then) validateSchema(value, schema.then, path, output, root); }
-    else if (schema.else) validateSchema(value, schema.else, path, output, root);
+    if (schemaMatches(value, schema.if, root, depth)) { if (schema.then) validateSchema(value, schema.then, path, output, root, depth); }
+    else if (schema.else) validateSchema(value, schema.else, path, output, root, depth);
   }
-  if (schema.not && schemaMatches(value, schema.not, root)) output.push(`${path} must not match the not-subschema`);
+  if (schema.not && schemaMatches(value, schema.not, root, depth)) output.push(`${path} must not match the not-subschema`);
 }
 
 function validateType(value, type, path, output) {

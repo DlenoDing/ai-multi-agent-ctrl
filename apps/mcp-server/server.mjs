@@ -39,6 +39,8 @@ import {
   capRetainingOpen,
   recordQualityGateFromTest,
   terminateCellRuntime,
+  findPermissionBlockedDispatch,
+  requeuePermissionApprovedDispatch,
   claimLease,
   classifyDerivedTask,
   contractPublish,
@@ -2071,12 +2073,20 @@ function ensurePermissionAccessGrant(state, request, args, decision, at) {
 }
 
 function resumePermissionBlockedSession(state, request, at) {
-  if (!request.sessionId) return;
-  const session = state.workSessions.find((item) => item.sessionId === request.sessionId);
-  if (!session || session.status !== "permission_required") return;
-  session.status = "active";
-  session.permissionRequestRef = `PermissionRequest:${request.requestId}`;
-  session.updatedAt = at;
+  const session = request.sessionId ? state.workSessions.find((item) => item.sessionId === request.sessionId) : null;
+  // Happy path: the runtime is still polling permission_status on a live dispatch. Clearing the session's
+  // permission hold lets it resume in place; the running dispatch needs no action.
+  if (session && session.status === "permission_required") {
+    session.status = "active";
+    session.permissionRequestRef = `PermissionRequest:${request.requestId}`;
+    session.updatedAt = at;
+    return;
+  }
+  // Timeout path: the runtime already gave up (/fail(blocked) moved the session to needs_decision and left
+  // a blocked dispatch). Requeue that dispatch so it re-executes with the grant now in place — otherwise
+  // the approval is a no-op and the blocked dispatch wedges the close barrier with no lever.
+  if (session) session.permissionRequestRef = `PermissionRequest:${request.requestId}`;
+  requeuePermissionApprovedDispatch(state, request, at);
 }
 
 // Symmetric with resumePermissionBlockedSession: on DENIAL the session must not be left in the
@@ -2084,18 +2094,20 @@ function resumePermissionBlockedSession(state, request, at) {
 // Move it out and demote the owning work item to needs_decision so the operator's resolve_decision
 // actuator can reopen or abandon it.
 function releasePermissionDeniedSession(state, request, at) {
-  if (!request.sessionId) return;
-  const session = state.workSessions.find((item) => item.sessionId === request.sessionId);
-  if (!session || session.status !== "permission_required") return;
-  session.permissionRequestRef = `PermissionRequest:${request.requestId}`;
-  const workItemId = request.workId || session.workItemId;
-  const taskGroupId = request.taskGroupId || session.taskGroupId;
+  const session = request.sessionId ? state.workSessions.find((item) => item.sessionId === request.sessionId) : null;
+  // Also handle the timeout path: the session may already be needs_decision (post /fail(blocked)) with a
+  // blocked, orphaned dispatch. Denial must terminalize that dispatch too, else it wedges the barrier.
+  const timedOutDispatch = findPermissionBlockedDispatch(state, request);
+  if ((!session || session.status !== "permission_required") && !timedOutDispatch) return;
+  if (session) session.permissionRequestRef = `PermissionRequest:${request.requestId}`;
+  const workItemId = request.workId || session?.workItemId || timedOutDispatch?.workItemId;
+  const taskGroupId = request.taskGroupId || session?.taskGroupId || timedOutDispatch?.taskGroupId;
   // The denied permission means the current execution cannot proceed — terminalize the cell's runtime
   // residue (dispatch/session/lease/target/guard) so it does not wedge the close barrier, then demote the
   // work item to needs_decision so the operator can reopen (fresh attempt) or abandon it via
   // resolve_decision. (Session becomes failed via the cascade; a failed session is terminal + non-blocking.)
   terminateCellRuntime(state, taskGroupId, workItemId, "permission_request_denied");
-  if (session.status === "permission_required") { // no dispatch cascade hit it (e.g. no live dispatch)
+  if (session && session.status === "permission_required") { // no dispatch cascade hit it (e.g. no live dispatch)
     session.status = "failed";
     session.blockedReason = "permission_request_denied";
     session.updatedAt = at;

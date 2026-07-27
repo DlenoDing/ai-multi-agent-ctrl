@@ -261,6 +261,8 @@
     mcp_session_paused: "MCP 会话已暂停",
     remote_mcp_principal_grant: "远程 MCP 主体授权",
     permission_request_denied: "权限被拒待决策",
+    permission_request_pending: "等待授权审批（已超时挂起）",
+    permission_request_approved_requeued: "授权通过，已重新排队",
 
     /* ---------- 账号 / 组织 ---------- */
     invited: "已邀请",

@@ -1983,10 +1983,16 @@ async function handleApi(req, res) {
     if (dispatch.blockedReason === "awaiting_human_confirmation" && reportedStatus !== "blocked") {
       cancelPendingConfirmationsForDispatch(state, dispatch.dispatchId, `dispatch_${reportedStatus}`);
     }
+    const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
+    // A /fail(blocked) that arrives while the session is still permission_required is a permission-poll
+    // TIMEOUT: mark the dispatch so the (still-pending) permission-resolve lever can find and requeue or
+    // terminalize it later. Without a marker the blocked, node-detached dispatch is orphaned and wedges
+    // the close barrier — the operator's approval/denial would be a no-op.
+    const permissionTimedOut = reportedStatus === "blocked" && session?.status === "permission_required";
     dispatch.status = reportedStatus;
+    if (permissionTimedOut && !dispatch.blockedReason) dispatch.blockedReason = "permission_request_pending";
     dispatch.failureReason = String(body.reason || "agent_runtime_failure").slice(0, 2000);
     dispatch.updatedAt = now();
-    const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
     if (session) {
       session.status = reportedStatus === "blocked" ? "needs_decision" : reportedStatus === "cancelled" ? "aborted" : "failed";
       if (reportedStatus === "blocked") session.blockedReason = dispatch.blockedReason || session.blockedReason;

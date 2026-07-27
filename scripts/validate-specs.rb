@@ -664,6 +664,15 @@ errors << "contract-check must prove the schema validator rejects invalid condit
 errors << "terminateCellRuntime must have a behavioral cascade test" unless contract_check_source.include?("terminateCellRuntime cascade: dispatch not failed") && contract_check_source.include?("terminateCellRuntime cascade: bound repository target not superseded")
 # C3: a drift gate must bind state-machine terminal states to the close-barrier terminal set.
 errors << "a terminal-set drift gate must bind the state machine to the close barrier" unless contract_check_source.include?("terminal-set drift:") && contract_check_source.include?("loadStateMachines(root).machines")
+# Permission-timeout deadlock: a timed-out permission request must not orphan its dispatch. The /fail(blocked)
+# route marks it, and the approve/deny resolve levers must act on the marked dispatch (requeue / terminalize).
+errors << "permission-poll timeout must mark the dispatch so the resolve lever can find it" unless server_source.include?("permission_request_pending") && server_source.include?("session?.status === \"permission_required\"")
+errors << "permission approval must requeue a timed-out orphaned dispatch (no dead lever)" unless core_source.include?("export function requeuePermissionApprovedDispatch") && core_source.include?("export function findPermissionBlockedDispatch") && mcp_source.include?("requeuePermissionApprovedDispatch(state, request")
+errors << "permission denial must terminalize a timed-out orphaned dispatch" unless mcp_source.include?("findPermissionBlockedDispatch(state, request)") && mcp_source.include?("!session || session.status !== \"permission_required\") && !timedOutDispatch")
+# The completed contract-check schema validator must guard against silent-pass and $ref cycles.
+errors << "schema validator must error on an unresolved local $ref and bound recursion" unless contract_check_source.include?("unresolved local $ref") && contract_check_source.include?("$ref recursion too deep")
+# Permission-timeout requeue/terminalize must have behavioral coverage.
+errors << "permission-timeout requeue/terminalize must have a behavioral test" unless contract_check_source.include?("permission-timeout approve: dispatch not requeued") && contract_check_source.include?("permission-timeout deny: dispatch not terminalized")
 # 2026-07-27 full-system review round 3. Isolation-1: MCP state_get full scope must be fail-closed —
 # both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
 # collections cross-project), and the agent_node full branch must be env-gated like its siblings.
