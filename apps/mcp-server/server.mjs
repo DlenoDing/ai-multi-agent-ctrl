@@ -1485,7 +1485,15 @@ function stateGet(state, args, context = {}) {
   computeProgressSnapshots(state);
   if (context.principal?.kind === "agent_node") {
     const scoped = scopeStateForAgentPrincipal(state, context.principal, context.grantCheck?.grants || []);
-    if (scope === "full") return {state: redactStateForMcp(scoped)};
+    if (scope === "full") {
+      // Gate full state behind the same env flag as the system_service/admin branches (least privilege):
+      // even tenant-scoped, a full dump is far more than an agent needs. The agent runtime only ever
+      // reads summary scope, so this denies nothing it depends on.
+      if (process.env.AIMAC_MCP_ALLOW_FULL_STATE !== "true") {
+        return {ok: false, error: "full_state_scope_not_allowed", summary: summaryState(scoped)};
+      }
+      return {state: redactStateForMcp(scoped)};
+    }
     return summaryState(scoped);
   }
   if (context.principal?.kind === "system_service") {
@@ -1505,6 +1513,101 @@ function stateGet(state, args, context = {}) {
     return {state: redactStateForMcp(state)};
   }
   return summaryState(state);
+}
+
+// Fail-closed allowlist for MCP-scoped full state: any top-level key not listed is deleted, so a newly
+// added collection can never default to leaking cross-tenant (mirrors the UI SCOPED_ALLOWED_TOP_KEYS).
+const MCP_SCOPED_ALLOWED_TOP_KEYS = new Set([
+  "schemaVersion", "stateVersion", "orgMigrationVersion", "runtime", "managementSurfaces",
+  "modelProviders", "modelCapabilities", "modelSelectionPolicies", "skillSources", "roleSkills",
+  "agentControlSequence", "agentExecutionSequence", "leaseSequence",
+  "projects", "taskGroups", "repositoryOutputs", "workSessions", "workerLanes", "agentDispatches",
+  "agentRuntimeNodes", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "agents",
+  "agentTaskContracts", "effectiveInstructionPackets", "roleDriftGuards", "modelSelectionDecisions",
+  "sessionPlacementDecisions", "roleSkillOverlays", "executionTopologies", "reviewPlans", "reviewBundles",
+  "checkpoints", "completionReadiness", "closeBarriers", "admissionDecisions", "admissionScans", "sharedDefinitions", "progressSnapshots", "leases",
+  "accounts", "accessGrants", "auditLog", "policyDecisions", "commands", "decisionRecords", "commandEffects", "dlqEntries", "integrationBatches",
+  "idempotencyRecords", "runtimeIssuePatterns", "runtimeIssueSamples", "systemUpgradeCandidates",
+  "agentGatewayEvents", "mcpCalls", "mcpProbeNodes", "instructionMetrics", "organizations",
+  "humanConfirmationRequests", "humanDirectives", "transitionEvidence", "ruleSourceResolutions",
+  "externalUpgradeImports", "mcpGrants", "roomMessages", "roomParticipants", "roomAcks", "roomSequenceByRoom",
+  "permissionRequests", "approvalRequests", "artifacts", "testResults", "findings", "qualityGates",
+  "derivedTaskRequests", "eventLog", "authSessions"
+]);
+
+// Fail-closed finalizer applied AFTER each principal's specific filters: filter every remaining
+// tenant-attributed collection by the principal's visible task groups / projects, empty the global
+// management collections, and drop any non-whitelisted top-level key. Without this, scope:"full"
+// returned a deep clone minus only a handful of collections — leaking 20+ tenant collections
+// (findings/testResults/checkpoints/closeBarriers/roomMessages/reviewBundles/auditLog/...) cross-project.
+function finalizeScopedMcpState(scoped, projectIdSet, visibleTaskGroupIds) {
+  const tg = (item) => Boolean(item && item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId));
+  const tgOrProject = (item) => item && (item.taskGroupId ? visibleTaskGroupIds.has(item.taskGroupId) : projectIdSet.has(item.projectId));
+  scoped.agentTaskContracts = (scoped.agentTaskContracts || []).filter(tg);
+  scoped.effectiveInstructionPackets = (scoped.effectiveInstructionPackets || []).filter(tg);
+  scoped.roleDriftGuards = (scoped.roleDriftGuards || []).filter(tg);
+  scoped.modelSelectionDecisions = (scoped.modelSelectionDecisions || []).filter(tg);
+  scoped.sessionPlacementDecisions = (scoped.sessionPlacementDecisions || []).filter(tg);
+  scoped.executionTopologies = (scoped.executionTopologies || []).filter(tg);
+  scoped.reviewPlans = (scoped.reviewPlans || []).filter(tg);
+  scoped.reviewBundles = (scoped.reviewBundles || []).filter(tg);
+  scoped.checkpoints = (scoped.checkpoints || []).filter(tg);
+  scoped.completionReadiness = (scoped.completionReadiness || []).filter(tg);
+  scoped.closeBarriers = (scoped.closeBarriers || []).filter(tg);
+  scoped.admissionDecisions = (scoped.admissionDecisions || []).filter(tgOrProject);
+  scoped.admissionScans = (scoped.admissionScans || []).filter(tgOrProject);
+  scoped.permissionRequests = (scoped.permissionRequests || []).filter(tg);
+  scoped.approvalRequests = (scoped.approvalRequests || []).filter(tg);
+  scoped.artifacts = (scoped.artifacts || []).filter(tg);
+  scoped.testResults = (scoped.testResults || []).filter(tg);
+  scoped.findings = (scoped.findings || []).filter(tg);
+  scoped.qualityGates = (scoped.qualityGates || []).filter(tg);
+  scoped.derivedTaskRequests = (scoped.derivedTaskRequests || []).filter(tg);
+  scoped.humanConfirmationRequests = (scoped.humanConfirmationRequests || []).filter(tg);
+  scoped.humanDirectives = (scoped.humanDirectives || []).filter(tgOrProject);
+  scoped.eventLog = (scoped.eventLog || []).filter(tg);
+  scoped.roleSkillOverlays = (scoped.roleSkillOverlays || []).filter((overlay) =>
+    (overlay.taskGroupId && visibleTaskGroupIds.has(overlay.taskGroupId)) ||
+    (!overlay.taskGroupId && overlay.projectId && projectIdSet.has(overlay.projectId)));
+  scoped.sharedDefinitions = (scoped.sharedDefinitions || []).filter((definition) =>
+    projectIdSet.has(definition.projectId) ||
+    (definition.scopeRefs || []).some((ref) => visibleTaskGroupIds.has(String(ref).replace("TaskGroup:", ""))));
+  scoped.leases = (scoped.leases || []).filter((lease) =>
+    (scoped.repositoryOutputs || []).some((target) => lease.resourceRef === `RepositoryOutputTarget:${target.targetId}`));
+  const visibleRoomIds = new Set([...visibleTaskGroupIds].map((taskGroupId) => `room_${taskGroupId}`));
+  scoped.roomMessages = (scoped.roomMessages || []).filter((message) => visibleRoomIds.has(message.roomId));
+  scoped.roomParticipants = (scoped.roomParticipants || []).filter((participant) => visibleRoomIds.has(participant.roomId));
+  scoped.roomAcks = (scoped.roomAcks || []).filter((ack) => visibleRoomIds.has(ack.roomId));
+  scoped.roomSequenceByRoom = Object.fromEntries(Object.entries(scoped.roomSequenceByRoom || {}).filter(([roomId]) => visibleRoomIds.has(roomId)));
+  scoped.agentRuntimeNodes = (scoped.agentRuntimeNodes || []).filter((node) => (node.projectIds || []).some((projectId) => projectIdSet.has(projectId)));
+  scoped.agents = (scoped.agents || []).filter((agent) => !agent.projectId || projectIdSet.has(agent.projectId));
+  scoped.instructionMetrics = {
+    ...scoped.instructionMetrics,
+    envelopes: (scoped.instructionMetrics?.envelopes || []).filter((envelope) => envelope.taskGroupId && visibleTaskGroupIds.has(envelope.taskGroupId))
+  };
+  // Global / management collections: never visible to a scoped principal.
+  scoped.agentJoinTokens = [];
+  scoped.auditLog = [];
+  scoped.policyDecisions = [];
+  scoped.commands = [];
+  scoped.decisionRecords = [];
+  scoped.commandEffects = [];
+  scoped.dlqEntries = [];
+  scoped.integrationBatches = [];
+  scoped.idempotencyRecords = {};
+  scoped.runtimeIssuePatterns = [];
+  scoped.runtimeIssueSamples = [];
+  scoped.systemUpgradeCandidates = [];
+  scoped.agentGatewayEvents = [];
+  scoped.mcpCalls = [];
+  scoped.mcpProbeNodes = [];
+  scoped.transitionEvidence = [];
+  scoped.ruleSourceResolutions = [];
+  scoped.externalUpgradeImports = [];
+  for (const key of Object.keys(scoped)) {
+    if (!MCP_SCOPED_ALLOWED_TOP_KEYS.has(key)) delete scoped[key];
+  }
+  return scoped;
 }
 
 function scopeStateForProjectPrincipal(state, principal) {
@@ -1537,7 +1640,7 @@ function scopeStateForProjectPrincipal(state, principal) {
   scoped.accessGrants = [];
   scoped.agentJoinTokens = [];
   scoped.mcpGrants = (scoped.mcpGrants || []).filter((grant) => !grant.projectId || projectIds.has(grant.projectId));
-  return scoped;
+  return finalizeScopedMcpState(scoped, projectIds, visibleTaskGroupIds);
 }
 
 function scopeStateForAgentPrincipal(state, principal, grants = []) {
@@ -1567,7 +1670,7 @@ function scopeStateForAgentPrincipal(state, principal, grants = []) {
   scoped.accounts = [];
   scoped.accessGrants = [];
   scoped.mcpGrants = (scoped.mcpGrants || []).filter((grant) => grant.agentNodeId === principal.id && grant.grantStatus === "issued");
-  return scoped;
+  return finalizeScopedMcpState(scoped, projectIds, visibleTaskGroupIds);
 }
 
 function progressSnapshotVisibleForScope(snapshot, projectIds, visibleTaskGroupIds) {

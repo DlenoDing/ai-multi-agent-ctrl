@@ -608,6 +608,11 @@ errors << "pg query timeout must be clamped to a finite positive value" unless p
 # or untracked files from a failed/cancelled dispatch permanently fail ensureCleanWorktree on every future
 # dispatch (persistent per-repository node wedge).
 errors << "agent runtime must git clean the persistent checkout before each dispatch" unless agent_runtime_source.include?("[\"clean\", \"-ffd\"]")
+# 2026-07-27 full-system review round 3. Isolation-1: MCP state_get full scope must be fail-closed —
+# both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
+# collections cross-project), and the agent_node full branch must be env-gated like its siblings.
+errors << "MCP scoped state must be fail-closed via finalizeScopedMcpState + allowlist" unless mcp_source.include?("function finalizeScopedMcpState") && mcp_source.include?("MCP_SCOPED_ALLOWED_TOP_KEYS.has(key)") && mcp_source.scan("return finalizeScopedMcpState(scoped,").length >= 2
+errors << "MCP agent_node full state_get must be env-gated like system_service/admin" unless mcp_source.scan("AIMAC_MCP_ALLOW_FULL_STATE").length >= 3
 errors << "Console must offer a resolve_decision actuator for needs_decision cells" unless app_js_source.include?("\"resolve_decision\"") && app_js_source.include?("resolution: data.resolution") && app_js_source.include?("admissionReasonLabel") && i18n_zh_source.include?("work_item_decision_reopen") && i18n_zh_source.include?("dependency_abandoned")
 # Durable i18n-completeness guard: every static blockedReason / admission reasonCode literal set in
 # core/gateway must have a zh dictionary key, else the Chinese console renders raw English (a
