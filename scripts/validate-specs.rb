@@ -652,6 +652,18 @@ errors << "cancel_dispatch must detach the dispatch from the node active set" un
 errors << "stop finalizers must not resurrect a terminal dispatch they did not drain" unless agent_gateway_source.scan(/\[\"cancelled\", \"failed\"\]\.includes\(dispatch\.status\)\) \{ if \(!commandOwned\) continue; \}/).length >= 2 && agent_gateway_source.include?("else if ([\"cancelled\", \"failed\"].includes(dispatch.status)) { if (!trulyOwned) continue; }")
 # UI: a keyword filter must surface matches past the display cap (debounced focus-preserving re-render).
 errors << "filter input must trigger a focus-preserving re-render so past-cap matches surface" unless public_app_source.include?("function scheduleFilterRerender") && public_app_source.include?("scheduleFilterRerender(filter)")
+# B1: updating an existing finding must scope the guard on the finding's OWN task group (confused-deputy).
+errors << "finding_submit update must scope the guard on the existing finding's task group" unless server_source.include?("existingFinding?.taskGroupId || body.taskGroupId") && server_source.include?("const existingFinding = body.findingId ?")
+# B2: a dispatch-scoped node control command must target a dispatch actually bound to that node.
+errors << "dispatch-scoped node control must reject a dispatch not assigned to the node" unless server_source.include?("dispatch_not_assigned_to_node")
+# C1: the contract-check schema validator must enforce conditional keywords (allOf/if/then/not/$ref) and
+# be proven non-vacuous, else the subagent-safety and close-barrier gates validate nothing.
+errors << "contract-check schema validator must support conditional keywords" unless contract_check_source.include?("function schemaMatches") && contract_check_source.include?("resolveInternalRef") && contract_check_source.include?("schema.patternProperties")
+errors << "contract-check must prove the schema validator rejects invalid conditional instances" unless contract_check_source.include?("VACUOUS: validator accepted a subagent placement with no subagentSafetyProof") && contract_check_source.include?("VACUOUS: validator accepted a CloseBarrier with satisfied=true")
+# C2: terminateCellRuntime must have a behavioral cascade test (not just source-string presence).
+errors << "terminateCellRuntime must have a behavioral cascade test" unless contract_check_source.include?("terminateCellRuntime cascade: dispatch not failed") && contract_check_source.include?("terminateCellRuntime cascade: bound repository target not superseded")
+# C3: a drift gate must bind state-machine terminal states to the close-barrier terminal set.
+errors << "a terminal-set drift gate must bind the state machine to the close barrier" unless contract_check_source.include?("terminal-set drift:") && contract_check_source.include?("loadStateMachines(root).machines")
 # 2026-07-27 full-system review round 3. Isolation-1: MCP state_get full scope must be fail-closed —
 # both scope functions run the whitelist finalizer (a deep-clone-minus-a-few leaked 20+ tenant
 # collections cross-project), and the agent_node full branch must be env-gated like its siblings.

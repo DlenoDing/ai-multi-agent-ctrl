@@ -27,6 +27,7 @@ import {
   conditionWindowGate,
   admissibleCellClass,
   capTaskContracts,
+  terminateCellRuntime,
   decideSessionPlacement,
   roomSend,
   selectModel,
@@ -269,6 +270,28 @@ function verifyHumanAndOrganizationContracts(output) {
   const subagentPlacement = decideSessionPlacement(state, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", workSignals: ["single_turn", "read_only_scan"]});
   validateSchema(subagentPlacement, sessionPlacementDecisionSchema, "SessionPlacementDecision(subagent)", output);
 
+  // Efficacy guard for the completed validator: the whole point of C1 is that a REGRESSED producer must
+  // be caught. decideSessionPlacement emits new_session for the seed work item, so we exercise the
+  // subagent conditional branch with a hand-built canonical instance: assert the VALID one passes, then
+  // prove each corruption is rejected — so these conditional gates can never silently go vacuous again.
+  const rejectsSchema = (instance) => { const errs = []; validateSchema(instance, sessionPlacementDecisionSchema, "neg", errs, sessionPlacementDecisionSchema); return errs.length > 0; };
+  const validSubagent = {
+    schemaVersion: "session-placement-decision/v1", decisionId: "spd_probe", projectId: "prj_control_plane",
+    taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", status: "subagent_selected", placement: "subagent",
+    workSignals: ["single_turn", "read_only_scan"], capacitySnapshotRef: "cap_x", modelSelectionDecisionRef: "msd_x",
+    taskContractRef: "tc_x", rationaleRefs: ["rationale_x"], auditRef: "audit_x", createdAt: "2026-07-28T00:00:00Z",
+    subagentSafetyProof: {singleTurn: true, noPersistentState: true, noGlobalTaskOwnership: true, boundedRepositoryLeaseOnly: true, noExternalCapabilityFlow: true, subagentCapacityAvailable: true}
+  };
+  if (rejectsSchema(validSubagent)) output.push("efficacy-probe: the canonical valid subagent placement was wrongly rejected (probe instance is wrong)");
+  const noProof = structuredClone(validSubagent); delete noProof.subagentSafetyProof;
+  if (!rejectsSchema(noProof)) output.push("VACUOUS: validator accepted a subagent placement with no subagentSafetyProof (allOf/if/then not enforced)");
+  const unboundedProof = structuredClone(validSubagent); unboundedProof.subagentSafetyProof.boundedRepositoryLeaseOnly = false;
+  if (!rejectsSchema(unboundedProof)) output.push("VACUOUS: validator accepted boundedRepositoryLeaseOnly=false (const in then not enforced)");
+  const sustainedSubagent = structuredClone(validSubagent); sustainedSubagent.workSignals = ["single_turn", "long_running"];
+  if (!rejectsSchema(sustainedSubagent)) output.push("VACUOUS: validator accepted a subagent placement carrying a sustained work signal (not/contains not enforced)");
+  const wrongStatus = structuredClone(validSubagent); wrongStatus.placement = "new_session";
+  if (!rejectsSchema(wrongStatus)) output.push("VACUOUS: validator accepted new_session placement with subagent_selected status (if/then status const not enforced)");
+
   // --- 2026-07-26 multi-dimension review fixes: behavioral tests ---
   {
     // buildTaskContract idempotency: a second build for an already-dispatched cell returns the
@@ -345,6 +368,54 @@ function verifyHumanAndOrganizationContracts(output) {
     // The produced close-barrier instance must validate against its schema (schema<->code drift guard;
     // the core-init absorption removed 4 gates + added holisticJudgment).
     validateSchema(staleBarrier, closeBarrierSchema, "CloseBarrier", output);
+    // Efficacy guard: a barrier claiming satisfied:true while it still has blocking objects / non-passed
+    // gates must be REJECTED — this is the satisfied => all-gates-passed invariant that lived in an
+    // ignored allOf/if/then with patternProperties, previously validated by nothing.
+    const forgedSatisfied = structuredClone(staleBarrier); forgedSatisfied.satisfied = true;
+    const forgedErrors = [];
+    validateSchema(forgedSatisfied, closeBarrierSchema, "neg", forgedErrors, closeBarrierSchema);
+    if (forgedErrors.length === 0) output.push("VACUOUS: validator accepted a CloseBarrier with satisfied=true but unfinished gates/blocking objects (satisfied-implies-passed not enforced)");
+
+    // terminateCellRuntime cascade — BEHAVIORAL (not source-string) proof that abandoning a cell cleans
+    // every downstream reference, so gutting any cascade branch fails a gate. Covers the deadlock class
+    // the source-presence assertions in validate-specs can't catch.
+    const cascadeState = structuredClone(seedState);
+    ensureRuntimeCollections(cascadeState, {root});
+    cascadeState.agentDispatches = [{dispatchId: "disp_casc", taskGroupId: "tg_runtime_management", workItemId: "wi_casc", sessionId: "sess_casc", status: "running", assignedNodeId: "node_casc", revocationPending: true, mcpGrants: []}];
+    cascadeState.workSessions = [{sessionId: "sess_casc", taskGroupId: "tg_runtime_management", workItemId: "wi_casc", status: "active"}];
+    cascadeState.leases = [{leaseId: "lease_casc", status: "active", holderRef: "session:sess_casc", resourceRef: "RepositoryOutputTarget:tgt_casc"}];
+    cascadeState.repositoryOutputs = [{targetId: "tgt_casc", status: "leased", leaseRef: "lease_casc"}];
+    cascadeState.roleDriftGuards = [{guardId: "guard_casc", sessionId: "sess_casc", status: "open"}];
+    cascadeState.humanConfirmationRequests = [{requestId: "hcr_casc", dispatchId: "disp_casc", status: "pending"}];
+    cascadeState.agentRuntimeNodes = [{nodeId: "node_casc", projectIds: ["prj_control_plane"], activeDispatchIds: ["disp_casc"], status: "active"}];
+    terminateCellRuntime(cascadeState, "tg_runtime_management", "wi_casc", "cell_abandoned_test");
+    const cDisp = cascadeState.agentDispatches[0];
+    if (cDisp.status !== "failed") output.push("terminateCellRuntime cascade: dispatch not failed");
+    if (cDisp.assignedNodeId || cDisp.revocationPending) output.push("terminateCellRuntime cascade: dispatch node binding / revocationPending not cleared (revoke-ack could resurrect it)");
+    if ((cascadeState.agentRuntimeNodes[0].activeDispatchIds || []).includes("disp_casc")) output.push("terminateCellRuntime cascade: dispatch left in node.activeDispatchIds");
+    if (cascadeState.workSessions[0].status !== "failed") output.push("terminateCellRuntime cascade: session not failed");
+    if (cascadeState.leases[0].status !== "released") output.push("terminateCellRuntime cascade: active lease not released");
+    if (cascadeState.repositoryOutputs[0].status !== "superseded" || cascadeState.repositoryOutputs[0].leaseRef) output.push("terminateCellRuntime cascade: bound repository target not superseded / leaseRef not cleared");
+    if (cascadeState.roleDriftGuards[0].status !== "closed") output.push("terminateCellRuntime cascade: role drift guard not closed");
+    if (cascadeState.humanConfirmationRequests[0].status === "pending") output.push("terminateCellRuntime cascade: dispatch-bound pending confirmation not cancelled (keeps no_pending_human_confirmations blocked)");
+
+    // C3 drift gate: every state-machine-declared terminal state MUST be treated as terminal by the close
+    // barrier, else a record parked in a newly-added upstream terminal state is seen as active forever
+    // (barrier liveness wedge). The barrier set is intentionally a SUPERSET (it also treats success states
+    // completed_objective/committed as done), so this is a subset check. The mirror is bound to the real
+    // code literal (already pinned by validate-specs), transitively binding the state machine to the code.
+    const barrierTerminal = {
+      WorkSession: ["completed_objective", "failed", "closed", "recycled", "aborted"],
+      AgentDispatch: ["completed", "failed", "cancelled"],
+      RepositoryOutputTarget: ["pushed", "committed", "rejected", "superseded"]
+    };
+    const machines = loadStateMachines(root).machines || {};
+    const coreSourceText = readFileSync(resolve(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+    for (const [entity, barrierSet] of Object.entries(barrierTerminal)) {
+      if (!coreSourceText.includes(barrierSet.map((s) => `"${s}"`).join(", "))) output.push(`terminal-set drift gate: barrier ${entity} terminal literal not found in control-plane-core (update this mirror)`);
+      const missing = ((machines[entity] || {}).terminal || []).filter((s) => !barrierSet.includes(s));
+      if (missing.length) output.push(`terminal-set drift: ${entity} state-machine terminal(s) ${JSON.stringify(missing)} not treated as terminal by the close barrier (liveness wedge risk)`);
+    }
 
     // human directives consumed oldest-first (FIFO): the newest adjust_priority must win.
     const fifoState = structuredClone(seedState);
@@ -1115,33 +1186,93 @@ function verifyTransitionEngine(output) {
   );
 }
 
-function validateSchema(value, schema, path, output) {
+// Resolve a JSON-Pointer $ref (#/$defs/...) against the schema document root. Only local pointers are
+// supported; external file refs are handled by the caller (language-policy).
+function resolveInternalRef(ref, root) {
+  const parts = ref.slice(2).split("/");
+  let node = root;
+  for (const part of parts) {
+    if (node == null || typeof node !== "object") return null;
+    node = node[part.replace(/~1/g, "/").replace(/~0/g, "~")];
+  }
+  return node && typeof node === "object" ? node : null;
+}
+
+// True iff `value` satisfies `schema` with zero errors — used to evaluate if/then/else, not, any/oneOf.
+function schemaMatches(value, schema, root) {
+  const scratch = [];
+  validateSchema(value, schema, "", scratch, root);
+  return scratch.length === 0;
+}
+
+// A pragmatic JSON-Schema subset validator. Supports const/enum/type/minLength/minimum, array
+// items/minItems/uniqueItems/contains, object required/properties/additionalProperties, the
+// combinators allOf/anyOf/oneOf/if-then-else/not, and local $ref (#/$defs/...). This breadth matters:
+// the conditional guarantees (e.g. a subagent placement REQUIRING subagentSafetyProof with every safety
+// flag true, or CloseBarrier.satisfied implying all gates passed) live in allOf/if/then/$ref — a
+// validator that skipped those keywords validated nothing and let a regressed producer pass silently.
+function validateSchema(value, schema, path, output, root) {
   if (!schema || typeof schema !== "object") return;
-  if (schema.$ref === "language-policy.schema.json") return validateSchema(value, languagePolicySchema, path, output);
+  if (root === undefined) root = schema;
+  if (schema.$ref !== undefined) {
+    if (schema.$ref.startsWith("#/")) {
+      const resolved = resolveInternalRef(schema.$ref, root);
+      if (resolved) validateSchema(value, resolved, path, output, root);
+      return;
+    }
+    if (schema.$ref === "language-policy.schema.json") { validateSchema(value, languagePolicySchema, path, output, languagePolicySchema); return; }
+    return; // unknown external ref: not resolvable here, skip
+  }
   if (schema.const !== undefined && value !== schema.const) output.push(`${path} expected const ${JSON.stringify(schema.const)}, got ${JSON.stringify(value)}`);
   if (schema.enum && !schema.enum.includes(value)) output.push(`${path} expected enum ${schema.enum.join("|")}, got ${JSON.stringify(value)}`);
   if (schema.type) validateType(value, schema.type, path, output);
   if (schema.type === "string" && schema.minLength && String(value || "").length < schema.minLength) output.push(`${path} expected minLength ${schema.minLength}`);
   if ((schema.type === "integer" || schema.type === "number") && schema.minimum !== undefined && Number(value) < schema.minimum) output.push(`${path} expected minimum ${schema.minimum}`);
-  if (schema.type === "array" && Array.isArray(value)) {
+  // Array keywords apply to any array instance (not gated on a declared type — the `contains` subschema
+  // under the placement `not` clause declares no type).
+  if (Array.isArray(value)) {
     if (schema.minItems !== undefined && value.length < schema.minItems) output.push(`${path} expected minItems ${schema.minItems}`);
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) output.push(`${path} expected maxItems ${schema.maxItems}, got ${value.length}`);
     if (schema.uniqueItems && new Set(value.map((item) => JSON.stringify(item))).size !== value.length) output.push(`${path} expected uniqueItems`);
-    if (schema.items) value.forEach((item, index) => validateSchema(item, schema.items, `${path}[${index}]`, output));
+    if (schema.items) value.forEach((item, index) => validateSchema(item, schema.items, `${path}[${index}]`, output, root));
+    if (schema.contains && !value.some((item) => schemaMatches(item, schema.contains, root))) output.push(`${path} expected at least one item matching contains`);
   }
-  if (schema.type === "object" && value && typeof value === "object" && !Array.isArray(value)) {
+  // Object keywords apply to any object instance (an if/then subschema carries required/properties with
+  // no declared type; gating on schema.type==="object" would make every if-condition vacuously match).
+  if (value && typeof value === "object" && !Array.isArray(value)) {
     for (const key of schema.required || []) {
       if (value[key] === undefined) output.push(`${path}.${key} is required`);
     }
     const properties = schema.properties || {};
+    const patternProperties = schema.patternProperties || {};
+    const patternRegexes = Object.keys(patternProperties).map((pattern) => new RegExp(pattern));
     if (schema.additionalProperties === false) {
       for (const key of Object.keys(value)) {
-        if (!Object.prototype.hasOwnProperty.call(properties, key)) output.push(`${path}.${key} is not allowed by schema`);
+        const known = Object.prototype.hasOwnProperty.call(properties, key) || patternRegexes.some((re) => re.test(key));
+        if (!known) output.push(`${path}.${key} is not allowed by schema`);
       }
     }
     for (const [key, childSchema] of Object.entries(properties)) {
-      if (value[key] !== undefined) validateSchema(value[key], childSchema, `${path}.${key}`, output);
+      if (value[key] !== undefined) validateSchema(value[key], childSchema, `${path}.${key}`, output, root);
+    }
+    for (const [pattern, childSchema] of Object.entries(patternProperties)) {
+      const re = new RegExp(pattern);
+      for (const key of Object.keys(value)) {
+        if (re.test(key)) validateSchema(value[key], childSchema, `${path}.${key}`, output, root);
+      }
     }
   }
+  if (Array.isArray(schema.allOf)) schema.allOf.forEach((sub, index) => validateSchema(value, sub, `${path}/allOf[${index}]`, output, root));
+  if (Array.isArray(schema.anyOf) && !schema.anyOf.some((sub) => schemaMatches(value, sub, root))) output.push(`${path} matched no anyOf branch`);
+  if (Array.isArray(schema.oneOf)) {
+    const matched = schema.oneOf.filter((sub) => schemaMatches(value, sub, root)).length;
+    if (matched !== 1) output.push(`${path} expected exactly one oneOf match, got ${matched}`);
+  }
+  if (schema.if) {
+    if (schemaMatches(value, schema.if, root)) { if (schema.then) validateSchema(value, schema.then, path, output, root); }
+    else if (schema.else) validateSchema(value, schema.else, path, output, root);
+  }
+  if (schema.not && schemaMatches(value, schema.not, root)) output.push(`${path} must not match the not-subschema`);
 }
 
 function validateType(value, type, path, output) {

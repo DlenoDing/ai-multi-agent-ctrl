@@ -2204,6 +2204,12 @@ async function handleApi(req, res) {
     if (!targetNode) return json(res, 404, {error: "agent_node_not_found"});
     const commandType = String(body.commandType || body.action || "refresh_profile");
     const targetDispatch = body.dispatchId ? state.agentDispatches.find((dispatch) => dispatch.dispatchId === body.dispatchId) : null;
+    // A dispatch-scoped control command must target a dispatch actually bound to THIS node. Rejecting a
+    // mismatch both closes an intra-org scope-looseness (the guard is keyed on the dispatch's task group,
+    // so a foreign dispatch could authorize a command to an unrelated node) and prevents a no-op command.
+    if (["pause_dispatch", "cancel_dispatch", "resume_dispatch"].includes(commandType) && targetDispatch && targetDispatch.assignedNodeId !== targetNode.nodeId) {
+      return json(res, 409, {error: "dispatch_not_assigned_to_node"});
+    }
     const taskScopedControl = ["pause_dispatch", "cancel_dispatch", "resume_dispatch"].includes(commandType) && targetDispatch;
     const projectId = targetNode.projectIds?.[0];
     const guard = taskScopedControl
@@ -3104,7 +3110,12 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/findings") {
-    const guard = beginGuardedWrite(req, state, "finding_submit", `Finding:${body.findingId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    // Confused-deputy fix: when updating an existing finding, scope the guard on the finding's OWN task
+    // group, never on the caller-supplied body.taskGroupId — otherwise a reviewer scoped to their own
+    // task group could rewrite a finding owned by a different task group/tenant (matches finding_resolve).
+    const existingFinding = body.findingId ? (state.findings || []).find((item) => item.findingId === body.findingId) : null;
+    const scopeTaskGroupId = existingFinding?.taskGroupId || body.taskGroupId || "tg_runtime_management";
+    const guard = beginGuardedWrite(req, state, "finding_submit", `Finding:${body.findingId || "new"}`, taskGroupScope(state, scopeTaskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = findingSubmit(state, body);
     audit(state, "reviewer", "finding_submit", `Finding:${result.finding.findingId}`);
