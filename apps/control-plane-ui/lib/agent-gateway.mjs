@@ -488,7 +488,7 @@ function recycleExpiredClaims(state) {
     if (node) {
       node.activeDispatchIds = (node.activeDispatchIds || []).filter((id) => id !== dispatch.dispatchId);
       node.status = "revoked";
-      node.admission = "revoked";
+      node.admission = "read_only";
     }
     revokeDispatchMcpGrants(state, previousNodeId, dispatch.dispatchId, "revocation_ack_timeout");
     appendGatewayEvent(state, "dispatch_revocation_ack_timeout", dispatch.dispatchId, {previousNodeId});
