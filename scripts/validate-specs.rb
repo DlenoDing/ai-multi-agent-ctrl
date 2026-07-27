@@ -536,6 +536,9 @@ errors << "Worker carrier decision must record the 4-way carrier and justify non
 errors << "Default system rules must include the layered-admission discipline" unless core_source.include?("sys.layered-admission")
 # 2026-07-27 core-init update absorption (problem-family / whole-surface / mainline-compat / global scheduling).
 errors << "Default system rules must include the core-init update disciplines" unless ["sys.problem-family-bundle", "sys.function-vs-sample-coverage", "sys.mainline-compatibility", "sys.resource-admission", "sys.readiness-provisioning"].all? { |rule| core_source.include?(rule) }
+# The product-intelligence-first governing doctrine (three-way impact graph + hard close gates +
+# controller re-check) must be present as the umbrella system rule.
+errors << "Default system rules must include the product-intelligence-first governing doctrine" unless core_source.include?("sys.product-intelligence-first") && core_source.include?("upstreamSurface") && core_source.include?("peerSurface") && core_source.include?("downstreamSurface") && core_source.include?("本总纲统领其余系统规则")
 errors << "root-cause-owner must include process root-cause dispositions" unless core_source.include?("rules_not_converted_to_executable_invariant_gate") && core_source.include?("symptom_split_without_cross_cutting_invariant_owner")
 errors << "layered-admission must promote a used deferred conclusion to must_reverify_now" unless core_source.include?("must_reverify_now")
 # A single problem cell / task group must never abort the whole cycle — remaining executable work continues.
