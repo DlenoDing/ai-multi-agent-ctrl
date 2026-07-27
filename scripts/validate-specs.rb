@@ -712,7 +712,7 @@ errors << "permission resolve/submit must guard against the confused-deputy cros
 # MED proj-settings must not render empty editable rule editors on a config-GET failure (save would wipe).
 errors << "project settings must guard rule editors against a config load failure" unless app_js_source.include?("const rulesLoaded = projConfig !== null")
 # MED per-form dirty tracking so saving one form warns before discarding sibling forms' unsaved edits.
-errors << "multi-form pages must track per-form dirtiness to avoid silent edit loss" unless app_js_source.include?("const dirtyFormKinds = new Set()") && app_js_source.include?("dirtyFormKinds.add(touchedForm.dataset.form)")
+errors << "multi-form pages must track per-form dirtiness to avoid silent edit loss" unless app_js_source.include?("const dirtyFormKinds = new Set()") && app_js_source.include?("dirtyFormKinds.add(formDirtyKey(touchedForm))") && app_js_source.include?("function formDirtyKey")
 # MED: the deny/abandon cascade revokes the node's dispatch grant, but the agent polls permission_status
 # to learn the outcome — it must still be able to read its OWN request's terminal status (grant-exempt +
 # previousNodeId ownership) or it spins for ~4min instead of stopping promptly on a deny.

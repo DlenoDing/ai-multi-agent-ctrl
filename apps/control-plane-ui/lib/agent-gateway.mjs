@@ -469,6 +469,10 @@ export function claimNextDispatch(state, node, options = {}) {
   const at = new Date().toISOString();
   dispatch.status = "running";
   dispatch.assignedNodeId = node.nodeId;
+  // Clear the prior-owner marker on (re)claim: it exists only so a just-unbound node can read its own
+  // terminal permission_status. A live re-claim by a DIFFERENT node must not leave the former owner able
+  // to read the new owner's session permission requests.
+  delete dispatch.previousNodeId;
   dispatch.claimedAt = at;
   dispatch.claimTtlSeconds = boundedInteger(options.claimTtlSeconds, 60, 21600, 1800);
   dispatch.claimExpiresAt = new Date(Date.now() + dispatch.claimTtlSeconds * 1000).toISOString();

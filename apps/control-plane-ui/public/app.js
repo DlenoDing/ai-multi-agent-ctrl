@@ -29,9 +29,13 @@ let lastError = "";
 let lastLoadErrorToast = "";
 let loading = false;
 let formTouched = false;
-// Which data-form kinds have unsaved edits. Submitting one form triggers a full loadPage() rebuild that
-// discards OTHER dirty forms on the same page; this set lets the submit handler warn before that loss.
+// Which forms have unsaved edits. Submitting one form triggers a full loadPage() rebuild that discards
+// OTHER dirty forms on the same page; this set lets the submit handler warn before that loss. The key
+// includes data-category because two rule editors (system/business) on a page share the same data-form.
 const dirtyFormKinds = new Set();
+function formDirtyKey(formEl) {
+  return `${formEl?.dataset?.form || ""}:${formEl?.dataset?.category || ""}`;
+}
 let modalHtml = "";
 let modalProtected = false;
 
@@ -2436,7 +2440,8 @@ document.addEventListener("submit", async (event) => {
   // Saving one form triggers a full loadPage() rebuild that discards sibling forms' unsaved edits. Warn
   // before that silent loss when another form on the page is dirty (e.g. edited system-rules then saved
   // project-config on the same 项目设置 page).
-  if ([...dirtyFormKinds].some((other) => other !== kind)) {
+  const currentFormKey = formDirtyKey(form);
+  if ([...dirtyFormKinds].some((other) => other !== currentFormKey)) {
     if (!(await confirmDialog({title: "存在未保存的其他修改", message: "本页其他表单有未保存的修改，保存并刷新会丢弃它们。是否继续？", danger: true, confirmText: "继续保存"}))) return;
   }
   // Include the submitter so a form with multiple submit buttons (e.g. 批准/拒绝 carrying name=status)
@@ -2763,7 +2768,7 @@ document.addEventListener("input", (event) => {
     return;
   }
   const touchedForm = event.target.closest("form[data-form]");
-  if (touchedForm) { formTouched = true; dirtyFormKinds.add(touchedForm.dataset.form); }
+  if (touchedForm) { formTouched = true; dirtyFormKinds.add(formDirtyKey(touchedForm)); }
 });
 
 /* 悬浮气泡 fixed 定位，避免被 .table-scroll 裁剪 */
