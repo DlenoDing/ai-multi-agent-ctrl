@@ -2913,7 +2913,7 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
   // "quorum_collecting" is a NON-terminal approval state (a high-risk approval that has some but not all
   // required approvers): it MUST count as pending so the no_pending_approvals close-barrier gate keeps
   // blocking until the approver quorum is actually reached.
-  const pendingStatuses = ["open", "pending", "quorum_collecting", "requested", "submitted", "in_review", "waiting"];
+  const pendingStatuses = ["open", "pending", "pending_approval", "quorum_collecting", "requested", "submitted", "in_review", "waiting"];
   const forTaskGroup = (items) => (items || []).filter((item) => item.taskGroupId === taskGroupId);
   // A failed quality gate whose work item was abandoned (cancelled/aborted/superseded) or already closed
   // is moot — it must not block the task-group close forever with no operator remedy (the work will never
@@ -4775,7 +4775,7 @@ export function capRetainingOpen(items, terminalStatuses, limit) {
 // Statuses that make a close-barrier collection item still "open"/blocking. Single source of truth so
 // the cap below and computeCloseBarrier can never drift into evicting a gating item.
 // Includes "quorum_collecting" so a sub-quorum high-risk approval keeps blocking completion readiness.
-const BARRIER_PENDING_STATUSES = ["open", "pending", "quorum_collecting", "requested", "submitted", "in_review", "waiting"];
+const BARRIER_PENDING_STATUSES = ["open", "pending", "pending_approval", "quorum_collecting", "requested", "submitted", "in_review", "waiting"];
 
 // Like capRetainingOpen but with an explicit isOpen predicate, for barrier collections whose "open"
 // condition is a positive status match (candidate_created / conflict / pending) rather than the
@@ -5044,7 +5044,7 @@ export function permissionRequestSubmit(state, args) {
     sessionId: args.sessionId,
     taskGroupId: args.taskGroupId,
     workId: args.workId || args.workItemId,
-    status: "pending",
+    status: "pending_approval",
     reason: args.reason || args.actionReason || "machine permission request",
     createdAt: at,
     updatedAt: at
@@ -5064,7 +5064,7 @@ export function permissionRequestSubmit(state, args) {
     error.status = 400;
     throw error;
   }
-  state.permissionRequests = capRetainingOpen([request, ...state.permissionRequests], ["approved", "denied", "resolved", "revoked", "expired", "cancelled"], 2000);
+  state.permissionRequests = capRetainingOpen([request, ...state.permissionRequests], ["approved", "rejected", "resolved", "revoked", "expired", "cancelled"], 2000);
   if (args.sessionId) {
     const session = state.workSessions.find((item) => item.sessionId === args.sessionId);
     if (session) {

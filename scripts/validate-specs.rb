@@ -674,7 +674,13 @@ errors << "schema validator must error on an unresolved local $ref and bound rec
 # Permission-timeout requeue/terminalize must have behavioral coverage.
 errors << "permission-timeout requeue/terminalize must have a behavioral test" unless contract_check_source.include?("permission-timeout approve: dispatch not requeued") && contract_check_source.include?("permission-timeout deny: dispatch not terminalized")
 # permissionResolve must resolve exactly once (idempotency/terminal guard, like decideHumanConfirmation).
-errors << "permissionResolve must guard against re-resolving a settled request" unless mcp_source.include?("if (request.status !== \"pending\") return {permissionRequest: request, accessGrant: null, alreadyResolved: true}")
+errors << "permissionResolve must guard against re-resolving a settled request" unless mcp_source.include?("if (request.status !== \"pending_approval\") return {permissionRequest: request, accessGrant: null, alreadyResolved: true}")
+# L4: permission requests use the FSM vocab pending_approval / rejected (not pending / denied), and the
+# barrier pending-set must include pending_approval so a pending permission still blocks close.
+errors << "permission requests must use the FSM pending_approval / rejected vocab" unless core_source.include?("status: \"pending_approval\"") && core_source.include?("[\"approved\", \"rejected\", \"resolved\", \"revoked\", \"expired\", \"cancelled\"]") && core_source.scan(/"pending", "pending_approval"/).length >= 2
+# The runtime permission poll must treat pending_approval as still-awaiting (else it resolves on the first
+# poll before the operator decides and fails the dispatch).
+errors << "runtime permission poll must keep waiting on pending_approval" unless agent_runtime_source.include?("![\"pending\", \"pending_approval\"].includes(status)")
 # Same terminal-guard class across the sibling resolve entrypoints (a fresh idempotency-key re-call must
 # not flip a settled verdict / re-dispose a terminal finding / mint a duplicate active grant).
 errors << "approvalResolve must guard against re-resolving a settled approval" unless mcp_source.include?("[\"approved\", \"rejected\", \"expired\", \"cancelled\"].includes(request.status)) return {approvalRequest: request, alreadyResolved: true}")
@@ -703,7 +709,7 @@ errors << "approver/proposer identity must be the authenticated actor, not clien
 errors << "high_risk_no_self_approval / quorum need behavioral coverage" unless contract_check_source.include?("H1: a high-risk request was self-approved") && contract_check_source.include?("H1: a quorum-2 request terminalized on the first")
 # CRITICAL: quorum_collecting must be a barrier pending status (both barrier pending-sets) so a sub-quorum
 # high-risk approval keeps blocking close — and a behavioral test must assert it blocks.
-errors << "quorum_collecting must count as pending in both barrier pending-sets" unless core_source.scan(/"pending", "quorum_collecting"/).length >= 2
+errors << "quorum_collecting must count as pending in both barrier pending-sets" unless core_source.scan(/"quorum_collecting", "requested"/).length >= 2
 errors << "quorum_collecting-blocks-close must have behavioral coverage" unless contract_check_source.include?("H1 CRITICAL: a quorum_collecting (sub-quorum) high-risk approval did NOT block")
 # H2: internal independent-review records use a dedicated schema/version, not the external review-bundle/v1.
 errors << "internal review records must use their own schema version" unless core_source.include?("schemaVersion: \"internal-review-record/v1\"") && File.exist?(File.join(ROOT, "spec/internal-review-record.schema.json")) && contract_check_source.include?("internal-review-record.schema.json")

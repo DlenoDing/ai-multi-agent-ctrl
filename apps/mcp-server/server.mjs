@@ -2024,9 +2024,12 @@ export function permissionResolve(state, args) {
   // Idempotency / terminal guard (mirrors decideHumanConfirmation's pending check): a permission request
   // resolves exactly once. Re-resolving — especially a deny->approve flip — would re-run the policy
   // cascade and mint an access grant for an already-terminalized cell. Return the settled request as-is.
-  if (request.status !== "pending") return {permissionRequest: request, accessGrant: null, alreadyResolved: true};
+  if (request.status !== "pending_approval") return {permissionRequest: request, accessGrant: null, alreadyResolved: true};
   const at = new Date().toISOString();
-  request.status = args.status || (args.allowed === false ? "denied" : "approved");
+  // PermissionRequest FSM vocab: pending_approval -> approved / rejected. Accept a legacy "denied" from
+  // callers and normalize it to the modeled "rejected".
+  const rawStatus = args.status || (args.allowed === false ? "rejected" : "approved");
+  request.status = rawStatus === "denied" ? "rejected" : rawStatus;
   const decision = policyDecisionEval(state, {
     action: request.permission,
     resource: request.resource,

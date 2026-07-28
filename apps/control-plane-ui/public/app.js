@@ -2093,7 +2093,7 @@ function renderReview() {
     {v: fmtTime(request.decision?.decidedAt || request.updatedAt), c: "nowrap"}
   ])).join("");
 
-  const pendingPermissions = (state.permissionRequests || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && item.status === "pending");
+  const pendingPermissions = (state.permissionRequests || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && item.status === "pending_approval");
   const pendingApprovals = (state.approvalRequests || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && item.status === "pending");
   const openFindings = (state.findings || []).filter((item) => projectTaskGroupIds.has(item.taskGroupId) && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status));
   const canGrant = hasPerm("project:grant");
@@ -2111,7 +2111,7 @@ function renderReview() {
           <div class="record-title"><strong>授权请求：${esc(item.permission || "-")}</strong>${badge(item.status)}</div>
           <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>主体：${esc(item.subjectId || "-")}</span><span>原因：${esc(item.reason || "-")}</span><span>${fmtTime(item.createdAt)}</span></div>
           ${canGrant ? `<form class="form-grid" data-form="perm-resolve" data-request="${esc(item.requestId)}" style="margin-top:8px;">
-            <div class="btn-row"><button class="primary-button" type="submit" name="status" value="approved">批准</button><button class="ghost-button" type="submit" name="status" value="denied">拒绝</button></div>
+            <div class="button-row"><button class="primary-button" type="submit" name="status" value="approved">批准</button><button class="secondary-button" type="submit" name="status" value="rejected">拒绝</button></div>
           </form>` : `<div class="notice">需“授权(project:grant)”权限处理。</div>`}
         </div>`).join("")}
       ${pendingApprovals.map((item) => `
@@ -2706,7 +2706,7 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     if (kind === "perm-resolve") {
-      await api(`/api/permission-requests/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "denied"})});
+      await api(`/api/permission-requests/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "rejected"})});
       await loadPage();
       return;
     }

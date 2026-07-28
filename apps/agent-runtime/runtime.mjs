@@ -790,7 +790,9 @@ async function runPermissionReport(config, dispatchPackage, block, control) {
       return {};
     });
     const status = statusResult.permissionRequest?.status;
-    if (status && status !== "pending") {
+    // Keep polling while the request is still awaiting a decision. The PermissionRequest FSM pending state
+    // is "pending_approval" ("pending" kept for backward compatibility); any other status is a resolution.
+    if (status && !["pending", "pending_approval"].includes(status)) {
       return {requestId, status, permissionRequest: statusResult.permissionRequest, safeRetryPoint: report.safeRetryPoint};
     }
     await delay(intervalMs);

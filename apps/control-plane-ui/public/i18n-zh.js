@@ -15,6 +15,7 @@
     failed: "失败",
     cancelled: "已取消",
     pending: "待确认",
+    pending_approval: "待审批",
     quorum_collecting: "多方审批中（未达法定人数）",
     in_progress: "执行中",
     succeeded: "已成功",

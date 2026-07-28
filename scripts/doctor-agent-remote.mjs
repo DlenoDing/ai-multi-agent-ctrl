@@ -278,7 +278,7 @@ try {
   permissionChild.stdout.on("data", (chunk) => { permissionOut += chunk.toString(); });
   permissionChild.stderr.on("data", (chunk) => { permissionErr += chunk.toString(); });
   const pendingRequest = await waitForPendingPermissionRequest(login.sessionToken, "github_push");
-  if (pendingRequest.status !== "pending" || pendingRequest.permission !== "github_push" || !pendingRequest.reason) {
+  if (pendingRequest.status !== "pending_approval" || pendingRequest.permission !== "github_push" || !pendingRequest.reason) {
     throw new Error("permission report was not observed and classified as a pending permission request");
   }
   await json(`/api/permission-requests/${pendingRequest.requestId}/resolve`, {
@@ -412,7 +412,7 @@ async function waitForPendingPermissionRequest(sessionToken, permission) {
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
     const state = await json("/api/state", {token: sessionToken}).catch(() => null);
-    const request = (state?.permissionRequests || []).find((item) => item.permission === permission && item.status === "pending");
+    const request = (state?.permissionRequests || []).find((item) => item.permission === permission && item.status === "pending_approval");
     if (request) return request;
     await new Promise((resolveWait) => setTimeout(resolveWait, 200));
   }

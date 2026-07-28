@@ -462,10 +462,10 @@ function verifyHumanAndOrganizationContracts(output) {
     // flip would re-run the cascade and mint an access grant for an already-terminalized cell).
     const permIdemState = structuredClone(seedState);
     ensureRuntimeCollections(permIdemState, {root});
-    permIdemState.permissionRequests = [{requestId: "perm_settled", status: "denied", resource: {resourceType: "task_group", resourceId: "tg_runtime_management"}, permission: "task_group:write", subjectRef: {subjectType: "account", subjectId: "acct_x"}}];
+    permIdemState.permissionRequests = [{requestId: "perm_settled", status: "rejected", resource: {resourceType: "task_group", resourceId: "tg_runtime_management"}, permission: "task_group:write", subjectRef: {subjectType: "account", subjectId: "acct_x"}}];
     const grantsBefore = (permIdemState.accessGrants || []).length;
     const reResolve = permissionResolve(permIdemState, {requestId: "perm_settled", status: "approved"});
-    if (permIdemState.permissionRequests[0].status !== "denied") output.push("permissionResolve: a settled (denied) request was re-resolved (deny->approve flip)");
+    if (permIdemState.permissionRequests[0].status !== "rejected") output.push("permissionResolve: a settled (rejected) request was re-resolved (deny->approve flip)");
     if (!reResolve.alreadyResolved || reResolve.accessGrant) output.push("permissionResolve: re-resolving a settled request minted a grant / did not report alreadyResolved");
     if ((permIdemState.accessGrants || []).length !== grantsBefore) output.push("permissionResolve: re-resolving a settled request created an access grant for a terminalized cell");
 
