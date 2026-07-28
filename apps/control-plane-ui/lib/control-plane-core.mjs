@@ -4576,7 +4576,10 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
   let bundle = duplicateRejection || null;
   if (!bundle) {
     bundle = {
-      schemaVersion: "review-bundle/v1",
+      // Internal independent review — a DISTINCT concept from the external ReviewBundle (review-bundle/v1),
+      // which models a redacted payload for an external provider. Uses its own schema so the two aren't
+      // conflated (H2). The close barrier reads verdict/workItemId/reviewMode off this record.
+      schemaVersion: "internal-review-record/v1",
       bundleId: createId("rvb"),
       projectId: taskGroup.projectId,
       taskGroupId: taskGroup.id,

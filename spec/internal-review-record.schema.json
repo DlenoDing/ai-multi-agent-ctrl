@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/internal-review-record.schema.json",
+  "title": "InternalReviewRecord",
+  "description": "An independent control-plane review of a work item's checkpoint. Distinct from the external ReviewBundle (review-bundle.schema.json), which models a redacted payload submitted to an external review provider. Internal review records are produced and consumed inline by performIndependentReview and carry the verdict + findings the close barrier reads.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "bundleId",
+    "projectId",
+    "taskGroupId",
+    "workItemId",
+    "checkpointRef",
+    "reviewerRole",
+    "reviewMode",
+    "verdict",
+    "findings",
+    "evidenceRefs",
+    "status",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "internal-review-record/v1"},
+    "bundleId": {"type": "string", "minLength": 1},
+    "projectId": {"type": "string", "minLength": 1},
+    "taskGroupId": {"type": "string", "minLength": 1},
+    "workItemId": {"type": "string", "minLength": 1},
+    "checkpointRef": {"type": "string", "minLength": 1},
+    "reviewerRole": {"type": "string", "minLength": 1},
+    "reviewMode": {"type": "string", "enum": ["independent_control_plane_review"]},
+    "verdict": {"type": "string", "enum": ["passed", "changes_requested"]},
+    "findings": {"type": "array", "items": {"type": "string"}},
+    "evidenceRefs": {"type": "array", "items": {"type": "string"}},
+    "status": {"type": "string", "enum": ["consumed", "superseded"]},
+    "supersededByHumanDecision": {"type": "boolean"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  }
+}

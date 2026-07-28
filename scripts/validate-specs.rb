@@ -705,6 +705,8 @@ errors << "high_risk_no_self_approval / quorum need behavioral coverage" unless 
 # high-risk approval keeps blocking close — and a behavioral test must assert it blocks.
 errors << "quorum_collecting must count as pending in both barrier pending-sets" unless core_source.scan(/"pending", "quorum_collecting"/).length >= 2
 errors << "quorum_collecting-blocks-close must have behavioral coverage" unless contract_check_source.include?("H1 CRITICAL: a quorum_collecting (sub-quorum) high-risk approval did NOT block")
+# H2: internal independent-review records use a dedicated schema/version, not the external review-bundle/v1.
+errors << "internal review records must use their own schema version" unless core_source.include?("schemaVersion: \"internal-review-record/v1\"") && File.exist?(File.join(ROOT, "spec/internal-review-record.schema.json")) && contract_check_source.include?("internal-review-record.schema.json")
 # M7: the repository output target denylist field must be the schema-declared pathDenylist (not the
 # non-schema forbiddenPathRules), enforced end-to-end (producer + runtime consumer), and instance-validated.
 errors << "repository output target must use the schema pathDenylist field" unless core_source.include?("pathDenylist: request.pathDenylist") && agent_runtime_source.include?("target.pathDenylist") && contract_check_source.include?("repository-output-target.schema.json")

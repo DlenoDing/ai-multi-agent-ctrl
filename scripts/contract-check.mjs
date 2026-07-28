@@ -498,6 +498,16 @@ function verifyHumanAndOrganizationContracts(output) {
     reviewResultConsume(rbReject, {taskGroupId: "tg_runtime_management", reviewBundleId: "rvb_rej", verdict: "rejected", summary: "no"});
     if (rbReject.reviewBundles.find((b) => b.reviewBundleId === "rvb_rej").status !== "rejected") output.push("reviewResultConsume: a rejecting verdict did not land the bundle in the modeled terminal 'rejected'");
 
+    // H2: internal independent-review records use their own schema, distinct from the external ReviewBundle.
+    // Validate the exact shape performIndependentReview emits against internal-review-record.schema.json.
+    validateSchema({
+      schemaVersion: "internal-review-record/v1", bundleId: "rvb_int", projectId: "prj_control_plane",
+      taskGroupId: "tg_runtime_management", workItemId: "wi_int", checkpointRef: "checkpoint:run_int",
+      reviewerRole: "reviewer", reviewMode: "independent_control_plane_review", verdict: "changes_requested",
+      findings: ["push_evidence_missing"], evidenceRefs: ["review-evidence:commit:abc"], status: "consumed",
+      supersededByHumanDecision: false, createdAt: "2026-07-28T00:00:00Z", updatedAt: "2026-07-28T00:00:00Z"
+    }, loadJson("spec/internal-review-record.schema.json"), "InternalReviewRecord", output);
+
     // H1 high_risk_no_self_approval + AI-quorum: the proposer of a high-risk action may not approve it, and
     // approval only terminalizes to "approved" once a distinct-approver quorum is reached.
     const approvalHrState = structuredClone(seedState);
