@@ -482,9 +482,11 @@ try {
   // 原先这条守卫只在 task_group 作用域下生效，于是同一个权限被拿到 project 作用域比对时
   // 掉到"与是哪个项目无关"的兜底分支：持直接 task_group:review 的账号可以对组织内任意项目的
   // 评审计划动手。这里按真实 HTTP 路径复现那条越权，确保它保持被拒。
+  // 用 system 账号来铸这个探针身份：委派校验现在会挡住"邀请方自己都没有该权限"的邀请，
+  // 而这条探针要验的是【拿到直接权限之后】能不能跨项目动手，两件事要分开验。
   const crossScopeAccount = await jsonFetch(port, "/api/accounts", {
     method: "POST",
-    headers: {"Idempotency-Key": "doctor-cross-scope-direct-permission", authorization: auth},
+    headers: {"Idempotency-Key": "doctor-cross-scope-direct-permission", authorization: systemAuth},
     body: JSON.stringify({projectId: "prj_control_plane", displayName: "Cross Scope Probe", email: "cross-scope-probe@local", roles: "viewer", permissions: "task_group:review"})
   });
   if (!crossScopeAccount.response.ok) throw new Error("could not invite the cross-scope probe account");
@@ -503,6 +505,17 @@ try {
   });
   if (crossScopeResolve.response.status !== 403) {
     throw new Error(`a direct task_group: permission (bound to no resource) settled a review plan: expected 403, got ${crossScopeResolve.response.status}`);
+  }
+
+  // 邀请与授权都是"把权限交给另一个主体"。授权那条一直在检查"授权方自己有没有"，
+  // 邀请这条原先只过滤危险形状 —— 于是低权真人可以自造一个比自己权限更大的身份。
+  const undelegatableInvite = await jsonFetch(port, "/api/accounts", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-invite-not-delegable", authorization: auth},
+    body: JSON.stringify({projectId: "prj_control_plane", displayName: "Escalation Probe", email: "escalation-probe@local", roles: "viewer", permissions: "task_group:review"})
+  });
+  if (undelegatableInvite.response.status !== 403) {
+    throw new Error(`邀请方铸出了自己并不拥有的权限（应 403，得到 ${undelegatableInvite.response.status}）`);
   }
 
   const invitedAccount = await jsonFetch(port, "/api/accounts", {

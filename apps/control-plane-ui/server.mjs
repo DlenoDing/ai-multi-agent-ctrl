@@ -546,7 +546,11 @@ function sanitizeMemberPermissions(value, fallback = ["project:view"]) {
   return sanitized.length ? sanitized : fallback;
 }
 
-function normalizeInvitedAccount(input = {}, systemScoped = false) {
+// 邀请与授权是同一件事的两条路：都在把权限交给另一个主体。授权那条（sanitizeGrantRequest）
+// 会检查"授权方自己有没有这个权限"，邀请这条只过滤了危险的权限【形状】，从不看邀请方的实际权限 ——
+// 于是一个只有 project:create 的人可以铸出一个带 task_group:review 直接权限的账号，再用它去做
+// 自己做不到的事。同一间屋子两道门、其中一道没锁，这是本仓反复出现的形态。
+function normalizeInvitedAccount(input = {}, systemScoped = false, delegation = null) {
   const roles = normalizeStringList(input.roles, ["viewer"]);
   const permissions = normalizeStringList(input.permissions, ["project:view"]);
   if (systemScoped) {
@@ -557,14 +561,23 @@ function normalizeInvitedAccount(input = {}, systemScoped = false) {
     };
   }
   if (requestedSystemAccountInvite(input)) throw new Error("project_invite_cannot_grant_system_account_or_permission");
+  const shapeSafe = permissions.filter((permission) =>
+    !permission.startsWith("system:") &&
+    !permission.startsWith("org:") &&
+    !unsafeDelegatedGrantPermissions.has(permission) &&
+    !permission.endsWith(":*"));
+  if (delegation && !isSystemAccount(delegation.account)) {
+    const notDelegable = shapeSafe.filter((permission) => !hasPermission(delegation.state, delegation.actor, permission, delegation.resourceScope));
+    if (notDelegable.length) {
+      const error = new Error("invite_permission_not_delegable");
+      error.permissions = notDelegable;
+      throw error;
+    }
+  }
   return {
     accountType: "user_account",
     roles: roles.filter((role) => role !== "system_admin" && role !== "org_admin"),
-    permissions: permissions.filter((permission) =>
-      !permission.startsWith("system:") &&
-      !permission.startsWith("org:") &&
-      !unsafeDelegatedGrantPermissions.has(permission) &&
-      !permission.endsWith(":*"))
+    permissions: shapeSafe
   };
 }
 
@@ -2928,9 +2941,17 @@ async function handleApi(req, res) {
     }
     let invitedAccount;
     try {
-      invitedAccount = normalizeInvitedAccount(body, systemScopedInvite);
+      const inviteScope = systemScopedInvite
+        ? {resourceType: "system", resourceId: "accounts"}
+        : {resourceType: "project", resourceId: body.projectId || "prj_control_plane"};
+      invitedAccount = normalizeInvitedAccount(body, systemScopedInvite, {
+        state, actor: guard.actor, resourceScope: inviteScope,
+        account: state.accounts.find((item) => accountIdOf(item) === guard.actor)
+      });
     } catch (error) {
-      json(res, 400, {error: error.message});
+      // 不可委派是授权判定，不是入参格式问题 —— 与 sanitizeGrantRequest 的 403 保持同一口径。
+      const status = error.message === "invite_permission_not_delegable" ? 403 : 400;
+      json(res, status, {error: error.message, ...(error.permissions ? {permissions: error.permissions} : {})});
       return;
     }
     // Email must be unique: /api/auth/login resolves an account by the FIRST email match, so a second
