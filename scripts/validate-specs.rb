@@ -1082,7 +1082,11 @@ errors << "permission-request resolve must gate on project:grant" unless app_js_
 errors << "close-barrier panel must show the blocking-object breakdown" unless app_js_source.include?("阻塞明细")
 errors << "monitor must surface checkpoint Git evidence (commit/push refs)" unless app_js_source.include?("检查点（Git 证据）")
 errors << "keyword filters must filter the source before the display cap" unless app_js_source.include?("function filterSource") && app_js_source.include?("filterSource((state.workSessions")
-errors << "effective-instruction packet must carry the resolved effective-rules digest" unless core_source.include?("const effectiveRulesDigest = digestOf") && core_source.include?("effectiveRulesDigest: contract.effectiveRulesDigest")
+# 原先钉的是"这一行源码长什么样"（const effectiveRulesDigest = digestOf），把它抽成共享函数就误报。
+# 断言应当钉【性质】：摘要由已解析的有效规则算出、并被带进指令包；而且这个计算必须只有一处 ——
+# 契约侧与内容包侧各写一遍同样的算法，迟早漂移，那正是"规则换了而摘要没换"的成因。
+errors << "effective-instruction packet must carry the resolved effective-rules digest" unless core_source.include?("export function computeEffectiveRulesDigest") && core_source.include?("const effectiveRulesDigest = computeEffectiveRulesDigest(effectiveRuleConfig)") && core_source.include?("effectiveRulesDigest: contract.effectiveRulesDigest")
+errors << "有效规则摘要的计算必须只有一处实现（两侧各写一遍必然漂移）" if core_source.scan(/activeSystemRules \|\| \[\]\)\.map\(\(rule\) => \[rule\.ruleId/).length > 1
 # Cycle-2 round-2 delta fixes:
 # F1 (shipping-blocker): a multi-submit-button form must capture the submitter, else approve silently denies.
 errors << "form submit must capture the submitter (approve must not silently deny)" unless app_js_source.include?("new FormData(form, event.submitter)")
