@@ -66,7 +66,8 @@ import {
   taskGroupForRecord,
   reviewPlanRecordCoverage,
   isDelegatableGrantPermission,
-  WORK_SESSION_SETTLED_STATUSES
+  WORK_SESSION_SETTLED_STATUSES,
+  revokeAccountSessions
 } from "../control-plane-ui/lib/control-plane-core.mjs";
 import {
   createAgentControlCommand,
@@ -2385,6 +2386,9 @@ function accountSuspend(state, args) {
   if (!account) return {ok: false, error: "account_not_found"};
   account.status = "suspended";
   account.updatedAt = new Date().toISOString();
+  // 挂起必须同时撤销已签发的会话：只改 status 的话，锁定完全依赖每次请求现场检查，
+  // 而"重新激活"会把挂起前的全部旧令牌一次性复活。
+  revokeAccountSessions(state, account.accountId, "account_suspended");
   for (const grant of state.accessGrants.filter((item) => item.subjectRef?.subjectId === account.accountId && item.status === "active")) {
     grant.status = "revoked";
     grant.updatedAt = account.updatedAt;

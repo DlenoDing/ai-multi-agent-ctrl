@@ -89,7 +89,8 @@ import {
   updateTaskGroupLanguagePolicy,
   HUMAN_ACTOR_KEY,
   UNSAFE_DELEGATED_GRANT_PERMISSIONS,
-  refreshConfirmationsAfterHumanChange
+  refreshConfirmationsAfterHumanChange,
+  revokeAccountSessions
 } from "./lib/control-plane-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -1307,8 +1308,18 @@ function hasPermission(state, actor, requiredPermission, resourceScope) {
   const account = state.accounts.find((item) => accountIdOf(item) === actor);
   if (!account || account.status !== "active") return false;
   if (!isSystemAccount(account) && account.organizationId) {
+    // 组织被 suspended 时，全仓原先只有配额检查一处读 org.status —— 也就是说"暂停组织"的实际
+    // 语义仅仅是"不许再新建项目/任务组/成员/agent"：成员照常登录、照常读写，名下的任务组与
+    // agent 节点继续跑、继续烧模型额度。这与这个动作的名字和运维意图完全不符。
+    // hasPermission 是所有写入的必经之路，在这里挡住即覆盖全部路径；读取不受影响，
+    // 被暂停组织的人仍然看得到现状（否则连"为什么停了"都查不到）。
     const resourceOrg = resourceScopeOrganizationId(state, resourceScope);
     if (resourceOrg && resourceOrg !== account.organizationId) return false;
+    // 只需要这一条：上一行已经保证 resourceOrg 必等于 account.organizationId，所以"调用方所属组织
+    // 被暂停"与"目标资源所属组织被暂停"是同一件事。我起初写了两条，实测发现单独去掉任一条都
+    // 挡得住 —— 互为冗余的判据没法各自判别，也就没法保证它们各自还活着。
+    const scopedOrg = (state.organizations || []).find((item) => item.orgId === (resourceOrg || account.organizationId));
+    if (scopedOrg && scopedOrg.status === "suspended") return false;
   }
   const direct = (account.permissions || []).filter((permission) => directPermissionApplies(account, permission, requiredPermission, resourceScope));
   const grantPermissions = state.accessGrants
@@ -3919,6 +3930,10 @@ async function handleApi(req, res) {
       if (!currentOk) return json(res, 403, {error: "current_password_incorrect"});
     }
     account.passwordDigest = digestOf(`account-password:${account.accountId}:${newPassword}`);
+    // 改密码是"我怀疑被盗号"时唯一的自救手段，而它原先不动任何会话 —— 已泄露的令牌最长还能再用
+    // 8 小时，系统也没有"登出其他设备"的入口。改密即撤销该账号的全部会话（含当前这条，
+    // 调用方重新登录即可），否则这个动作对攻击者没有任何影响。
+    revokeAccountSessions(state, account.accountId, "password_changed");
     account.authPolicy = {...(account.authPolicy || {}), method: account.authPolicy?.method || "password", passwordSet: true};
     account.updatedAt = now();
     audit(state, account.accountId, "auth_change_password", `Account:${account.accountId}`);
@@ -3996,11 +4011,7 @@ async function handleApi(req, res) {
     if (!member) return json(res, 404, {error: "org_member_not_found"});
     member.status = body.status === "disabled" ? "disabled" : "active";
     member.updatedAt = now();
-    if (member.status === "disabled") {
-      for (const session of state.authSessions || []) {
-        if (session.accountId === member.accountId && session.status === "active") session.status = "revoked";
-      }
-    }
+    if (member.status === "disabled") revokeAccountSessions(state, member.accountId, "member_disabled");
     recomputeOrganizationUsage(state);
     audit(state, guard.actor, "org_member_status_update", `Account:${member.accountId}`, member.status);
     finishGuardedWrite(state, guard, 200, publicAccountRecord(member));
@@ -4369,7 +4380,9 @@ function authorizeRealtime(req) {
   const session = (state.authSessions || []).find((item) => item.tokenDigest === tokenDigest && item.status === "active" && new Date(item.expiresAt).getTime() > Date.now());
   if (session) {
     const account = (state.accounts || []).find((item) => item.accountId === session.accountId);
-    if (account) return {kind: "account", accountId: account.accountId};
+    // 全仓唯一不检查账号状态的认证路径：被挂起/停用的账号照样能建立 WebSocket，
+    // 而已建立的连接在会话被撤销之后也从不重新校验、永不断开。
+    if (account && account.status === "active") return {kind: "account", accountId: account.accountId};
   }
   const node = authenticateAgentNode(state, token);
   if (node) return {kind: "agent", nodeId: node.nodeId};
@@ -4446,7 +4459,20 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 const realtimeHeartbeat = setInterval(() => {
+  // 已建立的连接原先【从不重新校验】：账号被挂起、会话被撤销之后，那条 WebSocket 照旧活着并
+  // 继续收到唤醒通知，直到它自己断开为止。撤销只对新连接生效等于撤销了一半。
+  // 心跳本来就要遍历全部连接，在这里顺带复核主体是否仍然有效。
+  let revalidationState = null;
+  try { revalidationState = readState(); } catch { revalidationState = null; }
   for (const client of realtimeClients) {
+    if (revalidationState && client.principal?.kind === "account") {
+      const account = (revalidationState.accounts || []).find((item) => item.accountId === client.principal.accountId);
+      if (!account || account.status !== "active") {
+        realtimeClients.delete(client);
+        try { client.close(4401, "principal_no_longer_active"); } catch { try { client.terminate(); } catch {} }
+        continue;
+      }
+    }
     if (client.isAlive === false) {
       realtimeClients.delete(client);
       try { client.terminate(); } catch {}

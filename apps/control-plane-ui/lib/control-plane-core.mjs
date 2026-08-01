@@ -567,6 +567,26 @@ function ensureOrganizations(state) {
   state.orgMigrationVersion = 1;
 }
 
+// 账号状态一变，它已经签发的会话就必须失效。原先只有 REST 的"停用成员"这一条路做了撤销，
+// 而 MCP 的 account_suspend、改密码、以及"重新激活"三条都没有 —— 于是：
+//   · 挂起一个账号，它手里的 session token 最长还能再用 8 小时；
+//   · 挂起之后再置回 active，【挂起前签发的全部旧令牌一次性复活】（而被撤销的 grant 并不恢复，
+//     一撤一复不对称）；
+//   · 改密码 —— 怀疑被盗号时唯一的自救手段 —— 对已泄露的令牌完全无效。
+// 收敛成一个助手，凡是改变账号可登录性/凭据的地方都必须调用它。
+export function revokeAccountSessions(state, accountId, reason) {
+  const at = new Date().toISOString();
+  let revoked = 0;
+  for (const session of state.authSessions || []) {
+    if (session.accountId !== accountId || session.status !== "active") continue;
+    session.status = "revoked";
+    session.revokedReason = reason;
+    session.updatedAt = at;
+    revoked += 1;
+  }
+  return revoked;
+}
+
 export function recomputeOrganizationUsage(state) {
   const projectOrg = new Map((state.projects || []).map((project) => [project.id, project.organizationId || DEFAULT_ORGANIZATION_ID]));
   for (const org of state.organizations || []) {

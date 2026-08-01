@@ -768,7 +768,7 @@ try {
     throw new Error(`organization create failed: ${orgCreate.response.status}`);
   }
   const orgId = orgCreate.payload.organization.orgId;
-  const orgAdminAuth = await loginAs(port, "doctor.org.admin@local", orgCreate.payload.accountToken);
+  let orgAdminAuth = await loginAs(port, "doctor.org.admin@local", orgCreate.payload.accountToken);
   const changePassword = await jsonFetch(port, "/api/auth/change-password", {
     method: "POST",
     headers: {authorization: orgAdminAuth},
@@ -780,6 +780,18 @@ try {
     body: JSON.stringify({email: "doctor.org.admin@local", password: "doctor-org-admin-pass"})
   });
   if (!passwordLogin.response.ok || !passwordLogin.payload.sessionToken) throw new Error("org admin password login failed");
+  // 改密码必须撤销该账号已签发的全部会话 —— 它是"我怀疑被盗号"时唯一的自救手段，
+  // 而原先它不动任何会话，已泄露的令牌最长还能再用 8 小时。
+  const staleAfterPasswordChange = await jsonFetch(port, "/api/org/members", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-stale-session-after-pwchange", authorization: orgAdminAuth},
+    body: JSON.stringify({displayName: "不该成功", email: "doctor.should.not@local", permissions: ["project:view"]})
+  });
+  if (staleAfterPasswordChange.response.status !== 401) {
+    throw new Error(`改密码后旧会话仍然可用（应 401，得到 ${staleAfterPasswordChange.response.status}）—— 盗号者的令牌不受影响`);
+  }
+  // 改密之后必须用新会话继续
+  orgAdminAuth = `Bearer ${passwordLogin.payload.sessionToken}`;
   const memberCreate = await jsonFetch(port, "/api/org/members", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-org-member", authorization: orgAdminAuth},
@@ -828,6 +840,38 @@ try {
   if (orgProjectConfig.response.status !== 200) {
     throw new Error(`org_admin could not edit its own org project config, got ${orgProjectConfig.response.status}`);
   }
+  // 暂停组织此前【什么都不停】：全仓只有配额检查一处读 org.status，于是它的实际语义仅仅是
+  // "不许再新建"，成员照常登录、照常读写、名下的 agent 继续跑、继续烧模型额度。
+  const suspendOrg = await jsonFetch(port, `/api/orgs/${orgId}/status`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-org-suspend", authorization: systemAuth},
+    body: JSON.stringify({status: "suspended"})
+  });
+  if (suspendOrg.response.status !== 200) throw new Error(`org suspend failed: ${suspendOrg.response.status}`);
+  // 必须挑一个【不经配额检查】的写入动作：创建成员本来就会被配额那条 organization_suspended 挡下，
+  // 用它测不出"暂停是否真的停住了执行与配置变更"，断言会假绿。
+  // 用【它自己组织名下】的项目：上面 orgProjectConfig 刚验证过同一个动作在未暂停时是 200，
+  // 所以这里的差别只可能来自组织被暂停。换成别人的项目会被普通权限判定挡住，测不出新判据。
+  const configWhileSuspended = await jsonFetch(port, `/api/projects/${orgProject.payload.id}/config`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-suspended-config", authorization: orgAdminAuth},
+    body: JSON.stringify({baselineData: [{name: "暂停期间", locator: "git:docs/nope"}]})
+  });
+  if (configWhileSuspended.response.status === 200) {
+    throw new Error("组织被暂停后其管理员仍能改配置 —— 暂停组织实际上只挡住了新建，没有停住任何在跑的东西");
+  }
+  // 读取必须仍然可用，否则被暂停的组织连"为什么停了"都查不到
+  const readWhileSuspended = await jsonFetch(port, "/api/state?view=projects", {headers: {authorization: orgAdminAuth}});
+  if (!readWhileSuspended.response.ok) {
+    throw new Error(`组织被暂停后连读取都被挡住了（应仍可查看现状），got ${readWhileSuspended.response.status}`);
+  }
+  const resumeOrg = await jsonFetch(port, `/api/orgs/${orgId}/status`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-org-resume", authorization: systemAuth},
+    body: JSON.stringify({status: "active"})
+  });
+  if (resumeOrg.response.status !== 200) throw new Error(`org resume failed: ${resumeOrg.response.status}`);
+
   const orgReviewAuthority = await jsonFetch(port, "/api/human-confirmations/hcr_probe/decide", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-org-review-authority", authorization: orgAdminAuth},
