@@ -965,6 +965,17 @@ errors << "test evidence must derive a quality gate that gates close" unless cor
 errors << "互审边界声明必须与真正的替代方案考察区分（否则免责声明会被读成考察结论）" unless core_source.include?('scope: "control_plane_evidence_only"')
 errors << "没有任何方案级考察时，验收卡片必须明确提示人自行判断方向" unless app_js_source.include?("没有任何一方跳出当前方案考察过替代路径")
 
+# 代理端的本地关键文件（agent-config.json 里的 nodeToken、outbox 里已 push 成功的检查点）
+# 必须原子落盘。join token 是一次性的，配置一旦被截断，节点既加载不了凭据也无法重新注册 ——
+# 永久变砖。而它在执行期间每条执行事件之前都会被重写一次（约每 1.5 秒），裸 writeFileSync
+# 是截断覆盖，崩在写窗口里就正好毁掉它（实测：同一时刻被 SIGKILL，旧写法留下 0 字节文件）。
+runtime_source = File.read(File.join(ROOT, "apps/agent-runtime/runtime.mjs"))
+errors << "代理本地写必须走 tmp+fsync+rename（裸 writeFileSync 崩在写窗口里会把节点写成永久变砖）" unless runtime_source.include?("function writeDurableJson") && runtime_source.match?(/function writeSecretJson\(path, value\) \{\s*\n\s*writeDurableJson\(path, value\);/m)
+errors << "checkpoint outbox 必须与配置走同一条持久写路径" unless runtime_source.match?(/persistCheckpointOutbox[\s\S]{0,600}?writeDurableJson\(target,/m)
+# 控制面把 shutdown 当作可恢复的排空（finalizeNodeShutdown 只置 offline，心跳允许 offline->online），
+# 代理端若把 shutdownRequested 写死而不清除，两侧对同一件事的理解就不一致：节点再也回不来。
+errors << "代理重启后必须清除 shutdownRequested（否则控制面认为可恢复、代理端却不可逆）" unless runtime_source.include?("delete config.shutdownRequested")
+
 # 证据摘要是执行方自证的（内容不上传控制面，控制面无法核验摘要与内容是否相符）。
 # 字段名与卡片文案都必须说出这一点 —— 叫 contentVerifiable 会被读成"已核验"，
 # 而"证据已就绪"若不加说明，人会以为控制面替他检查过了。

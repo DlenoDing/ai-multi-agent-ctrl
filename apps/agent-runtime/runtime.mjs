@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir, hostname, platform, arch, cpus, totalmem, networkInterfaces } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -139,6 +139,16 @@ async function status(config) {
 }
 
 async function run(config) {
+  // 控制面把 shutdown 当作【可恢复的排空】：finalizeNodeShutdown 只把节点置为 offline，
+  // 而 heartbeatAgentNode 明确允许 offline -> online 复活。代理端却把 shutdownRequested 写死后
+  // 全仓没有任何一处清除它 —— 重启即立刻退出，运维想让这个节点回来只能手改 agent-config.json，
+  // 或重新签发 join token 重注册（旧节点记录还留在原地继续占配额）。两侧对同一件事的理解必须一致：
+  // 进程重新启动本身就是"我要回来"的意思，标志在此清除，能不能回来由控制面的心跳应答决定。
+  if (config.shutdownRequested) {
+    delete config.shutdownRequested;
+    writeSecretJson(configPath, config);
+    process.stdout.write("agent runtime restarting after a control-plane shutdown; rejoining\n");
+  }
   const sweepIntervalMs = Math.max(5 * 60 * 1000, Number(process.env.AIMAC_AGENT_SWEEP_INTERVAL_MS || 60 * 60 * 1000));
   const runSweeps = () => {
     sweepStaleSessionDirectories(config);
@@ -446,9 +456,9 @@ function persistCheckpointOutbox(config, dispatchPackage, checkpoint) {
   const outboxDir = config.outboxDir || join(config.workDir, "outbox");
   mkdirSync(outboxDir, {recursive: true});
   const target = join(outboxDir, `${safeName(dispatchPackage.dispatch.dispatchId)}.json`);
-  const temporary = `${target}.tmp-${process.pid}`;
-  writeFileSync(temporary, `${JSON.stringify({dispatchId: dispatchPackage.dispatch.dispatchId, checkpointPath: dispatchPackage.remoteServices.checkpointPath, repositoryOutputTarget: dispatchPackage.repositoryOutputTarget, checkpoint, createdAt: new Date().toISOString()}, null, 2)}\n`, {mode: 0o600});
-  renameSync(temporary, target);
+  // 原先是 tmp+rename 但没有 fsync：rename 本身原子，可内容还没落盘就断电的话，恢复后拿到的是
+  // 一个存在但内容不完整的 outbox 条目 —— 而它承载的是【已经 push 成功】的检查点。
+  writeDurableJson(target, {dispatchId: dispatchPackage.dispatch.dispatchId, checkpointPath: dispatchPackage.remoteServices.checkpointPath, repositoryOutputTarget: dispatchPackage.repositoryOutputTarget, checkpoint, createdAt: new Date().toISOString()});
   return target;
 }
 
@@ -1588,9 +1598,37 @@ function loadConfig() {
   return JSON.parse(readFileSync(configPath, "utf8"));
 }
 
+// agent-config.json 里存着 nodeToken，而 join token 是一次性的（maxUses: 1）——
+// 这个文件一旦被截断，节点就【永久变砖】：既加载不了自己的凭据，也无法重新注册。
+// 而它在执行期间每条执行事件之前都会被重写一次（约每 1.5 秒），裸 writeFileSync 是截断覆盖，
+// 崩在写窗口里就正好毁掉它。outbox 那边早就用了 tmp+rename，这里是遗漏。
+// 统一成先写临时文件 -> fsync 文件 -> rename -> fsync 目录：任意时刻崩溃，磁盘上要么是旧的完整内容，
+// 要么是新的完整内容，不会出现半截。
+function writeDurableJson(path, value, options = {}) {
+  const directory = dirname(path);
+  mkdirSync(directory, {recursive: true});
+  const temporary = `${path}.tmp-${process.pid}-${Date.now().toString(36)}`;
+  const payload = `${JSON.stringify(value, null, 2)}\n`;
+  const handle = openSync(temporary, "w", options.mode ?? 0o600);
+  try {
+    writeSync(handle, payload);
+    fsyncSync(handle);
+  } finally {
+    closeSync(handle);
+  }
+  renameSync(temporary, path);
+  // 目录项本身也要落盘，否则崩溃后 rename 可能丢失，留下的是旧文件或什么都没有。
+  let directoryHandle;
+  try {
+    directoryHandle = openSync(directory, "r");
+    fsyncSync(directoryHandle);
+  } catch { /* 某些平台不允许 fsync 目录：文件本身已 fsync，退化为尽力而为 */ } finally {
+    if (directoryHandle !== undefined) closeSync(directoryHandle);
+  }
+}
+
 function writeSecretJson(path, value) {
-  mkdirSync(dirname(path), {recursive: true});
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, {mode: 0o600});
+  writeDurableJson(path, value);
 }
 
 function ensureCleanWorktree(root) {
