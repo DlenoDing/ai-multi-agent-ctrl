@@ -768,7 +768,9 @@ const HUMAN_ONLY_ACTIONS = [
   // 重置/语言策略同样是规则变更 —— 重置会把人设定的 configOverrides 整个抹回默认值，
   // 只挡住 update 而放过 reset 等于没挡。
   "task_group_config_reset",
-  "task_group_language_policy_update"
+  "task_group_language_policy_update",
+  // 共享定义的状态推进是规则层决策，且它是这类楔死的唯一出路 —— 必须由真人掌握。
+  "shared_definition_resolve"
 ];
 const HUMAN_ACCOUNT_TYPES_FOR_ACTIONS = ["system_admin", "org_admin", "user_account"];
 
@@ -1223,6 +1225,7 @@ function permissionForAction(action) {
   if (action === "permission_resolve") return "project:grant";
   if (action === "contract_publish") return "project:*";
   if (action === "policy_decision_eval") return "system:*";
+  if (action === "shared_definition_resolve") return "project:update";
   if (action === "project_config_update") return "project:update";
   if (["org_create", "org_quota_update", "org_status_update"].includes(action)) return "system:*";
   if (["org_member_create", "org_member_permissions_update", "org_member_status_update"].includes(action)) return "org:member_admin";
@@ -3047,6 +3050,28 @@ async function handleApi(req, res) {
     return;
   }
 
+  // 人工杠杆：共享定义的状态原先【只有 AI 专属的 MCP 工具能改】——REST 无 PATCH、控制台是只读表格、
+  // contractPublish 只会新建、id 唯一性又挡住复用。于是任何一条处于阻塞态的契约都能把任务组永久钉死，
+  // 而人束手无策。这条路由把状态推进权交回真人（HUMAN_ONLY_ACTIONS 强制），是这类楔死的唯一出路。
+  const sharedDefinitionResolveMatch = url.pathname.match(/^\/api\/shared-definition-contracts\/([^/]+)\/resolve$/);
+  if (req.method === "POST" && sharedDefinitionResolveMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
+    const definition = (state.sharedDefinitions || []).find((item) => item.contractId === sharedDefinitionResolveMatch[1]);
+    if (!definition) return json(res, 404, {error: "shared_definition_not_found"});
+    const guard = beginGuardedWrite(req, state, "shared_definition_resolve", `SharedDefinitionContract:${definition.contractId}`, projectScope(definition.projectId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const nextStatus = ["active", "superseded", "retired", "rejected"].includes(body.status) ? body.status : null;
+    if (!nextStatus) return json(res, 400, {error: "shared_definition_status_invalid"});
+    definition.status = nextStatus;
+    definition.resolvedBy = guard.actor;
+    definition.updatedAt = now();
+    audit(state, guard.actor, "shared_definition_resolve", `SharedDefinitionContract:${definition.contractId}`, nextStatus);
+    finishGuardedWrite(state, guard, 200, definition);
+    writeState(state);
+    json(res, 200, definition);
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/shared-definition-contracts") {
     const guard = beginGuardedWrite(req, state, "shared_definition_contract_create", "SharedDefinitionContract:new", projectScope(body.projectId || "prj_control_plane"));
     if (guard.status) {
@@ -3077,7 +3102,9 @@ async function handleApi(req, res) {
       scopeRefs: sanitizedScopeRefs.length ? sanitizedScopeRefs : [defaultProjectScopeRef],
       canonicalOwnerRole: body.canonicalOwnerRole || "orchestrator",
       producerRole: body.producerRole || "decision-center",
-      status: body.status || "owner_assigned",
+      // 与 core 的创建路径同规：调用方不得自选"有实际效力"的状态。这条 REST 路径原先完全绕过了
+      // 那个枚举守卫（两条创建路径只守了一条），持 project:* 者可直接建出 conflicted 契约。
+      status: ["draft", "owner_assigned", "proposed", "reviewing"].includes(body.status) ? body.status : "draft",
       definitionDigest: body.definitionDigest || stableDigest("8"),
       consumerRefs: body.consumerRefs || [],
       repositoryOutputTargetRef: body.repositoryOutputTargetRef || "rot_runtime_management",

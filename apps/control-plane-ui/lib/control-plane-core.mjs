@@ -1794,7 +1794,10 @@ export function runAutonomousCycle(state, request = {}) {
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, reason: "awaiting_decision", awaiting: "decision"});
         continue;
       }
-      const missingDefinition = relatedSharedDefinitions(state, taskGroup, workItem).find((definition) => definition.status !== "active");
+      // 与另外两个调用点同规：只有【在流程中】的契约才算未就绪。上一轮只改了两处、漏了这处，
+      // 结果工作项照旧被饿死，而关闭门那边已经不再显示 SharedDefinitionContract 阻塞项 ——
+      // 楔死从"可见"变成了"不可见"，比原来更糟。
+      const missingDefinition = relatedSharedDefinitions(state, taskGroup, workItem).find((definition) => SHARED_DEFINITION_BLOCKING_STATUSES.includes(definition.status));
       if (missingDefinition) {
         addBlocker(taskGroup, "S1", `共享定义 ${missingDefinition.contractId} 尚未对工作项 ${workItem.id} 生效。`);
         recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "shared_definition_not_active", whyThisCellNow: `awaiting SharedDefinitionContract:${missingDefinition.contractId}`, cycleRef});

@@ -821,6 +821,14 @@ errors << "技能绑定测试必须双向断言" unless contract_check_source.in
 # 共享定义：状态不可由调用方直接声明为生效/冲突；空 scopeRefs 不得等于全项目；publish 不得铸造未知契约。
 errors << "共享定义状态必须限定在可创建枚举内" unless core_source.include?("SHARED_DEFINITION_CREATABLE_STATUSES")
 errors << "空 scopeRefs 不得被当成全项目作用域" unless core_source.include?("Array.isArray(args.scopeRefs) && args.scopeRefs.length")
+# 第八轮：修必须落在【类】上，不能只修被报告的那个点。
+#  · 阻塞态判定必须三个调用点一致（漏一个 => 工作项照旧饿死，但关闭门不再显示原因，楔死转入隐形）
+errors << "共享定义阻塞态判定必须所有调用点一致" if core_source.include?('definition.status !== "active"')
+#  · 两条创建路径都必须受枚举约束
+errors << "REST 创建共享定义也必须受状态枚举约束" unless server_source.include?('["draft", "owner_assigned", "proposed", "reviewing"].includes(body.status)')
+#  · 必须存在【真人可达】的状态推进杠杆，否则任何阻塞态都是永久拒绝服务
+errors << "共享定义必须有真人可达的状态推进杠杆" unless server_source.include?("sharedDefinitionResolveMatch") && server_source.include?("definition.status = nextStatus")
+errors << "共享定义状态推进必须限定真人" unless server_source.match?(/HUMAN_ONLY_ACTIONS = \[[^\]]*shared_definition_resolve/m)
 errors << "publish 不得铸造未知共享定义" unless mcp_source.include?("if (!definition) return {ok: false, error: \"shared_definition_not_found\"}")
 errors << "共享定义三项必须有防回归测试" unless contract_check_source.include?("人工闸门: publish 铸造并激活了一个未知契约")
 # 写入边界的第三个写入方（REST）必须同规，且越权访问必须被角色漂移门定性阻断。
