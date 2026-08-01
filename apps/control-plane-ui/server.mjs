@@ -87,7 +87,8 @@ import {
   syncSkillSource,
   updateTaskGroupLanguagePolicy,
   HUMAN_ACTOR_KEY,
-  UNSAFE_DELEGATED_GRANT_PERMISSIONS
+  UNSAFE_DELEGATED_GRANT_PERMISSIONS,
+  refreshConfirmationsAfterHumanChange
 } from "./lib/control-plane-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -3121,6 +3122,10 @@ async function handleApi(req, res) {
     gate.waivedBy = guard.actor;
     gate.waiveJustification = justification.slice(0, 2000);
     gate.updatedAt = now();
+    // 豁免恰好改变了验收卡片快照里的质量门状态。不同步刷新的话，人按下这个唯一的出路键之后，
+    // 那张卡的 finalize/reject/revise 会被快照校验全部拒掉 —— 人把自己钉死，只能等过期。
+    refreshConfirmationsAfterHumanChange(state, gate.taskGroupId, gate.workItemId,
+      {actor: guard.actor, summary: `已人工豁免质量门 ${gate.gateType}`});
     audit(state, guard.actor, "quality_gate_waive", `QualityGate:${gate.gateId}`, "waived");
     finishGuardedWrite(state, guard, 200, gate);
     writeState(state);

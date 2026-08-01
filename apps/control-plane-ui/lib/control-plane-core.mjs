@@ -4236,6 +4236,42 @@ export function createHumanConfirmationRequest(state, input = {}) {
   return request;
 }
 
+// 人自己做了一个合法动作（豁免一道质量门、放弃一个格子），而这个动作恰好改变了某张待定稿卡片
+// 的"被确认内容" —— 定稿时的快照比对随即把 finalize / reject / revise 三个动作全部拒掉，
+// 人按下唯一的出路键，反而把自己钉死，只能等 7 天过期。
+// 快照比对本身是对的（防的是 AI 在人点击前偷改），但它不该把【人自己的改动】也算成偷改。
+// 正确处理：内容确实变了，就推进轮次并刷新快照，让人重新看一眼最新状态再决定；
+// 若这个格子已经被放弃，那张卡就没有对象了，直接作废并留痕。
+export function refreshConfirmationsAfterHumanChange(state, taskGroupId, workItemId, reason) {
+  const at = new Date().toISOString();
+  const affected = [];
+  for (const request of state.humanConfirmationRequests || []) {
+    if (request.status !== "pending" || request.taskGroupId !== taskGroupId) continue;
+    if (workItemId && request.workItemId !== workItemId) continue;
+    const snapshot = subjectContentSnapshot(state, request);
+    if (snapshot === null) {
+      request.status = "cancelled";
+      request.cancelReason = reason;
+      request.updatedAt = at;
+      affected.push(request.requestId);
+      continue;
+    }
+    if (snapshot === undefined) continue;
+    const nextDigest = digestOf(snapshot);
+    if (nextDigest === request.subjectContentDigest) continue;
+    request.subjectContentDigest = nextDigest;
+    request.round = Number(request.round || 1) + 1;
+    request.awaitingAiAnalysis = false;
+    request.deliberation = [...(request.deliberation || []), {
+      round: request.round, actorKind: "human", actor: reason.actor || "human",
+      action: "propose", summary: `人工操作改变了被确认内容：${reason.summary || reason}`, at
+    }];
+    request.updatedAt = at;
+    affected.push(request.requestId);
+  }
+  return affected;
+}
+
 export function decideHumanConfirmation(state, requestId, decision = {}, options = {}) {
   ensureRuntimeCollections(state);
   const request = (state.humanConfirmationRequests || []).find((item) => item.requestId === requestId);
@@ -4677,6 +4713,11 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
             // Terminalize the cell's runtime residue (dispatch/session/lease/target/guard) so the
             // abandoned cell cannot keep blocking the close barrier with no operator lever.
             terminateCellRuntime(state, taskGroup.id, workItem.id, "work_item_abandoned_by_human_decision");
+            // 核心决策卡（验收/拆分/方案）不带 dispatchId，terminateCellRuntime 的
+            // cancelPendingConfirmationsForDispatch 够不到它们；不处理的话，格子已经没了，
+            // 卡片却仍 pending 且三个动作全被快照校验拒掉，只能等 7 天过期。
+            refreshConfirmationsAfterHumanChange(state, taskGroup.id, workItem.id,
+              {actor: directive.issuedBy || "human", summary: "工作项已由人工放弃"});
           } else {
             for (const bundle of (state.reviewBundles || [])) {
               if (bundle.workItemId === workItem.id && bundle.verdict === "changes_requested") bundle.supersededByHumanDecision = true;

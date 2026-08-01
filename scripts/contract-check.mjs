@@ -47,6 +47,7 @@ import {
   FINDING_TERMINAL_STATUSES,
   artifactRegister,
   expireStaleLeases,
+  refreshConfirmationsAfterHumanChange,
   HUMAN_ACTOR_KEY,
   reviewPlanCreate,
   reviewPlanRecordCoverage,
@@ -1107,6 +1108,57 @@ function verifyHumanAndOrganizationContracts(output) {
     });
     if (!snapCard?.subjectContentDigest) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
+    }
+
+    // 人自己的合法动作（豁免一道质量门 / 放弃一个格子）会改变待定稿卡片的"被确认内容"，
+    // 而定稿时的快照比对随即把 finalize/reject/revise 三个动作全部拒掉 —— 人按下唯一的出路键
+    // 反而把自己钉死，只能等 7 天过期。快照防的是 AI 偷改，不该把人自己的改动也算进去。
+    const wedgeCardState = structuredClone(seedState);
+    ensureRuntimeCollections(wedgeCardState, {root});
+    const wcTg = wedgeCardState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    // 必须挑一个尚未 verified 的工作项：拿已 verified 的去定稿会撞上 verified->verified
+    // 这个与本缺陷无关的状态机限制，那样测出来的红是假的。
+    const wcWork = wcTg.workItems.find((item) => item.status !== "verified") || wcTg.workItems[0];
+    wcWork.status = "verification_ready";
+    wedgeCardState.qualityGates = [{gateId: "qg_probe", taskGroupId: wcTg.id, workItemId: wcWork.id,
+      gateType: "test", status: "failed", evidenceRefs: ["run:1"]}];
+    const wcCard = createHumanConfirmationRequest(wedgeCardState, {
+      projectId: wcTg.projectId, taskGroupId: wcTg.id, workItemId: wcWork.id,
+      decisionType: "work_item_verification", subjectRef: `WorkItem:${wcWork.id}`,
+      question: {summary: "验收确认"}, options: [{optionId: "accept", label: "通过"}]
+    });
+    const wcRoundBefore = wcCard.round;
+    // 人豁免了那道失败的门
+    wedgeCardState.qualityGates[0].status = "waived";
+    wedgeCardState.qualityGates[0].waivedBy = "acct_alice";
+    refreshConfirmationsAfterHumanChange(wedgeCardState, wcTg.id, wcWork.id, {actor: "acct_alice", summary: "已人工豁免"});
+    if (wcCard.round === wcRoundBefore) {
+      output.push("卡片刷新: 人的操作改变了被确认内容，轮次却没有推进（人不会被提示重新查看）");
+    }
+    const wcHuman = (wedgeCardState.accounts.find((a) => ["system_admin", "org_admin", "user_account"].includes(a.accountType)) || {}).accountId;
+    let finalizeWorked = false;
+    try {
+      decideHumanConfirmation(wedgeCardState, wcCard.requestId,
+        {action: "finalize", selectedOptionId: "accept", expectedRound: wcCard.round}, {actor: wcHuman});
+      finalizeWorked = true;
+    } catch (error) { finalizeWorked = false; if (!/verified->verified/.test(error.message)) output.push(`卡片刷新: 定稿被拒（${error.message}）`); }
+    if (!finalizeWorked) {
+      output.push("卡片刷新: 人豁免质量门之后就再也无法对该验收卡片定稿（唯一的出路键把自己钉死，只能等过期）");
+    }
+    // 格子被放弃：卡片没有对象了，必须作废而不是留在 pending 挡着关闭门
+    const goneState = structuredClone(seedState);
+    ensureRuntimeCollections(goneState, {root});
+    const gnTg = goneState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const gnWork = gnTg.workItems[0];
+    const gnCard = createHumanConfirmationRequest(goneState, {
+      projectId: gnTg.projectId, taskGroupId: gnTg.id, workItemId: gnWork.id,
+      decisionType: "work_item_verification", subjectRef: `WorkItem:${gnWork.id}`,
+      question: {summary: "验收确认"}, options: [{optionId: "accept", label: "通过"}]
+    });
+    gnTg.workItems = gnTg.workItems.filter((item) => item.id !== gnWork.id);
+    refreshConfirmationsAfterHumanChange(goneState, gnTg.id, gnWork.id, {actor: "acct_alice", summary: "工作项已放弃"});
+    if (gnCard.status !== "cancelled") {
+      output.push("卡片刷新: 格子已被放弃，验收卡片仍停在 pending 且三个动作都会被快照校验拒掉（只能等 7 天过期）");
     }
 
     // 权限请求原样收下调用方给的 workId / sessionId，不校验它们属于声明的任务组。于是：
