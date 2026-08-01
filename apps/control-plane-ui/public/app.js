@@ -67,6 +67,49 @@ const PROJECT_MENU_TAIL = [
   {id: "proj-settings", label: "项目设置"}
 ];
 
+// "现在轮到我做什么" —— 此前控制台没有任何地方回答这个问题：菜单是写死的、没有计数，
+// 唯一的待办数字在项目概览里且不可点击、只统计当前项目；而等人拍板的东西被拆在两个页面上，
+// 其中一个还叫"执行监控"，名字完全不暗示"这里有等你签字的东西"。
+// 这里跨【全部可见项目】统计，且只统计"确实需要这个人动手"的项 —— 没权限处置的不算进来，
+// 否则计数会变成一个人永远清不掉的红点。
+function pendingForMe() {
+  const groups = (state.taskGroups || []);
+  const groupIds = new Set(groups.map((taskGroup) => taskGroup.id));
+  const inScope = (item) => item && groupIds.has(item.taskGroupId);
+  const canReview = hasPerm("task_group:review");
+  const canControl = hasPerm("task_group:control");
+  const canGrant = hasPerm("project:grant");
+  const canUpdateProject = hasPerm("project:update");
+  const buckets = [];
+  const add = (id, label, page, items, allowed) => {
+    if (!allowed || !items.length) return;
+    buckets.push({id, label, page, count: items.length, items: items.slice(0, 5)});
+  };
+  add("confirmations", "待你定稿的核心决策", "review",
+    (state.humanConfirmationRequests || []).filter((item) => inScope(item) && item.status === "pending"), canReview);
+  add("permissions", "待你批准的授权请求", "review",
+    (state.permissionRequests || []).filter((item) => inScope(item) && item.status === "pending_approval"), canGrant);
+  add("approvals", "待你处理的审批请求", "review",
+    (state.approvalRequests || []).filter((item) => inScope(item) && ["requested", "quorum_collecting"].includes(item.status)), canReview);
+  add("findings", "待你处置的发现项", "review",
+    (state.findings || []).filter((item) => inScope(item) && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status)), canReview);
+  add("qualityGates", "未通过、可由你豁免的质量门", "monitor",
+    (state.qualityGates || []).filter((item) => inScope(item) && !["passed", "waived"].includes(item.status)), canReview);
+  add("reviewPlans", "待你收尾的评审计划", "monitor",
+    (state.reviewPlans || []).filter((item) => inScope(item) && !["closed", "rejected", "superseded"].includes(item.status)), canReview);
+  add("reviewBundles", "待你收尾的评审包", "monitor",
+    (state.reviewBundles || []).filter((item) => inScope(item) && !["consumed", "rejected"].includes(item.status)), canReview);
+  add("ruleSources", "待你判定的规则来源", "monitor",
+    (state.ruleSourceResolutions || []).filter((item) => inScope(item) && !["reference_only", "quarantined", "rejected", "superseded", "active"].includes(item.status)), canControl);
+  add("upgradeCandidates", "待你判定的系统升级候选项", "monitor",
+    (state.systemUpgradeCandidates || []).filter((item) => inScope(item) && item.status === "candidate_created"), canControl);
+  const visibleProjectIds = new Set(groups.map((taskGroup) => taskGroup.projectId).filter(Boolean));
+  add("sharedDefinitions", "待你处置的共享定义契约", "monitor",
+    (state.sharedDefinitions || []).filter((item) => ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"].includes(item.status)
+      && (!item.projectId || visibleProjectIds.has(item.projectId))), canUpdateProject);
+  return {buckets, total: buckets.reduce((sum, bucket) => sum + bucket.count, 0)};
+}
+
 const MENUS = {
   system: [
     {id: "sys-overview", label: "系统概览"},
@@ -994,9 +1037,20 @@ function render() {
     page = defaultPageFor(perspective);
   }
   const [title, subtitle] = PAGE_META[page] || ["管理后台", ""];
+  // 菜单上直接带计数：否则"等你签字的东西"藏在一个叫"执行监控"的页面里，人根本不会去点。
+  const menuTodoCounts = (() => {
+    const counts = {};
+    try {
+      for (const bucket of pendingForMe().buckets) counts[bucket.page] = (counts[bucket.page] || 0) + bucket.count;
+    } catch { /* 计数是提示性的，任何异常都不该挡住导航渲染 */ }
+    return counts;
+  })();
   const menuHtml = MENUS[perspective].map((item) => item.divider
     ? `<div class="nav-divider">${esc(item.divider)}</div>`
-    : `<button class="nav-item ${item.id === page ? "active" : ""}" data-menu="${item.id}">${esc(item.label)}</button>`
+    : (() => {
+        const todo = menuTodoCounts[item.id] || 0;
+        return `<button class="nav-item ${item.id === page ? "active" : ""}" data-menu="${item.id}">${esc(item.label)}${todo ? `<span class="nav-badge">${todo}</span>` : ""}</button>`;
+      })()
   ).join("");
 
   const showSwitcher = PROJECT_PAGES.has(page) && visibleProjects().length > 0;
@@ -2237,7 +2291,23 @@ function renderReview() {
       ${!pendingPermissions.length && !pendingApprovals.length && !openFindings.length ? `<div class="notice">当前项目没有待处置的授权 / 审批 / 发现。</div>` : ""}
     </div>`;
 
+  const todo = pendingForMe();
+  const todoPanel = panel("待你处理", `
+    ${todo.total === 0
+      ? `<div class="notice">当前没有需要你处置的项。（只统计你有权处置的；别人负责的部分不会出现在这里。）</div>`
+      : `<div class="notice warn-notice">共 ${todo.total} 项等待你处理，跨你可见的全部项目统计。等人拍板的东西分布在两个页面上，这里是唯一的汇总入口。</div>
+         <div class="stack">
+           ${todo.buckets.map((bucket) => `
+             <div class="record">
+               <div class="record-title"><strong>${esc(bucket.label)}</strong> ${customBadge(String(bucket.count), "red")}</div>
+               <div class="record-meta"><span>处置入口：${esc(PAGE_META[bucket.page]?.[0] || bucket.page)}</span></div>
+               <div class="button-row"><button class="secondary-button" data-menu="${esc(bucket.page)}">前往处置</button></div>
+             </div>`).join("")}
+         </div>`}
+  `, {wide: true});
+
   return [
+    todoPanel,
     panel("待人工确认", `
       <div class="stack">
         <div class="record-meta"><span>共 ${pending.length} 条待确认，覆盖 ${new Set(pending.map((item) => item.taskGroupId)).size} 个任务组（按提交时间倒序）</span></div>

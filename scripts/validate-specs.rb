@@ -959,6 +959,13 @@ errors << "test evidence must derive a quality gate that gates close" unless cor
 # 真人专属杠杆若在控制台里没有入口，等于这个杠杆不存在 —— 人只会看到一个红色阻塞 chip，
 # 然后无从下手。本轮一次性发现三个这样的杠杆（质量门豁免/评审计划收尾/共享定义处置），
 # 全都只有裸 REST。故把"有杠杆必有入口"钉成结构约束。
+# 人打开控制台看不出"现在轮到我做什么"：菜单写死无计数，唯一的待办数字不可点击且只算当前项目，
+# 而等人拍板的东西被拆在两个页面上，其中一个还叫"执行监控" —— 名字完全不暗示这里有等你签字的东西。
+errors << %(控制台必须有跨项目的"待你处理"汇总，否则人工闸门存在但不可操作) unless app_js_source.include?("function pendingForMe()") && app_js_source.include?(%q{panel("待你处理"})
+errors << %(菜单必须带待办计数，否则等人签字的东西藏在别的页面里没人会去点) unless app_js_source.include?(%q{class="nav-badge">}) && app_js_source.include?("menuTodoCounts[item.id]")
+# 计数只能统计"这个人有权处置"的项：把别人负责的也算进来，红点就成了一个永远清不掉的东西。
+errors << %(待办统计必须按处置权限过滤（否则出现永远清不掉的红点）) unless app_js_source.match?(/const add = \(id, label, page, items, allowed\)/)
+
 # 豁免表单上明写"理由会随门一起留档并显示在验收卡片上"。而卡片正文是【创建那一刻】的快照，
 # 卡片挂起之后才做的豁免不会出现在里面 —— 界面许下的承诺必须在代码里兑现，否则人以为自己
 # 看到的是完整信息。同理：证据引用落在 question.evidenceRefs 里却从不渲染，人无法从卡片
