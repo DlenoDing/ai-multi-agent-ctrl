@@ -83,7 +83,6 @@
           "repository_output_target_terminal",
           "all_required_outputs_present",
           "all_required_evidence_present",
-          "all_required_validation_present",
           "no_pending_permission_or_approval",
           "no_unreconciled_command_effect",
           "no_pending_human_confirmations",
@@ -105,7 +104,6 @@
         "repository_output_target_terminal",
         "all_required_outputs_present",
         "all_required_evidence_present",
-        "all_required_validation_present",
         "no_pending_permission_or_approval",
         "no_unreconciled_command_effect",
         "no_pending_human_confirmations",
@@ -140,9 +138,6 @@
           "$ref": "#/$defs/checkResult"
         },
         "all_required_evidence_present": {
-          "$ref": "#/$defs/checkResult"
-        },
-        "all_required_validation_present": {
           "$ref": "#/$defs/checkResult"
         },
         "no_pending_permission_or_approval": {

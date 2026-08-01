@@ -1110,6 +1110,38 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
     }
 
+    // 租约的 holderRef 原先可自报：指向一个长期存活的【别处】会话，就造出一条永不过期的租约 ——
+    // expireStaleLeases 的"持有者已了结"判据恒为假，terminateCellRuntime 只匹配本工作项的会话，
+    // 两条回收路径同时失效，all_leases_terminal 从此永久被挡。
+    const holderState = structuredClone(seedState);
+    ensureRuntimeCollections(holderState, {root});
+    const hTg = holderState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    // 三个用例必须各用各的目标：共用一个的话，前一个申领成功就会让后面撞上 lease_already_active，
+    // 于是后面的断言无论被测代码对错都"通过"—— 这正是假绿。
+    holderState.repositoryOutputs = ["rot_a", "rot_b", "rot_c"].map((targetId) => ({
+      targetId, taskGroupId: hTg.id, workItemId: hTg.workItems[0].id,
+      projectId: hTg.projectId, status: "selected", pathAllowlist: ["**"]
+    }));
+    holderState.workSessions = [
+      {sessionId: "ws_elsewhere", taskGroupId: "tg_other_tenant", projectId: "prj_other", status: "active"},
+      {sessionId: "ws_settled", taskGroupId: hTg.id, projectId: hTg.projectId, status: "completed_objective"},
+      {sessionId: "ws_here", taskGroupId: hTg.id, projectId: hTg.projectId, status: "active"}
+    ];
+    holderState.leases = [];
+    const foreignHolder = claimLease(holderState, {leaseId: "lease_foreign", repositoryOutputTargetRef: "rot_a", holderRef: "session:ws_elsewhere"});
+    if (foreignHolder.ok !== false) {
+      output.push("租约持有者: 可以把租约的持有者指向别的任务组的会话（造出一条谁也回收不了的永久租约）");
+    }
+    const settledHolder = claimLease(holderState, {leaseId: "lease_settled", repositoryOutputTargetRef: "rot_b", holderRef: "session:ws_settled"});
+    if (settledHolder.ok !== false) {
+      output.push("租约持有者: 可以把租约挂在一个已了结的会话上，于是它永远不会被判为持有者已了结");
+    }
+    // 非空转自证：本任务组内的存活会话必须仍能正常申领
+    const legitLease = claimLease(holderState, {leaseId: "lease_ok", repositoryOutputTargetRef: "rot_c", holderRef: "session:ws_here"});
+    if (!legitLease?.lease) {
+      output.push("租约持有者: 本任务组内的存活会话也申领不到租约（正常写入路径被打断）");
+    }
+
     // 人自己的合法动作（豁免一道质量门 / 放弃一个格子）会改变待定稿卡片的"被确认内容"，
     // 而定稿时的快照比对随即把 finalize/reject/revise 三个动作全部拒掉 —— 人按下唯一的出路键
     // 反而把自己钉死，只能等 7 天过期。快照防的是 AI 偷改，不该把人自己的改动也算进去。

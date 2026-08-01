@@ -243,7 +243,7 @@
     HumanConfirmationRequest: "人工确认请求", HumanDirective: "人工指令", PermissionRequest: "授权请求",
     all_quality_gates_passed: "质量门禁全通过", all_findings_terminal: "发现全终态", all_required_work_closed: "工作项全关闭",
     no_pending_permissions: "无待处理授权", no_pending_approvals: "无待处理审批", all_changes_integrated: "变更全集成",
-    all_required_evidence_present: "证据齐备", all_required_validation_present: "独立评审齐备", no_pending_human_confirmations: "无待人工确认",
+    all_required_evidence_present: "证据齐备", no_pending_human_confirmations: "无待人工确认",
     all_commands_terminal: "命令全终态", all_command_effects_terminal: "命令副作用全终态",
     all_contracts_compatible: "契约全兼容", no_active_dlq: "无活跃死信", all_leases_terminal: "租约全终态",
     no_active_temp_grants: "无活跃临时授权", artifacts_verified: "产物全验证", rules_candidates_processed: "规则候选已处理",

@@ -2945,10 +2945,12 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
     all_required_evidence_present: verifiedItems.some((item) =>
       !taskGroupCheckpoints.some((checkpoint) => (checkpoint.workId === item.id || checkpoint.workItemId === item.id)
         && checkpoint.commitRefs?.length && checkpoint.pushRefs?.length && checkpoint.artifactManifestRefs?.length)),
-    all_required_validation_present: verifiedItems.some((item) =>
-      taskGroupCheckpoints.some((checkpoint) => checkpoint.workId === item.id) &&
-      !item.reviewBundleRef &&
-      !(state.reviewBundles || []).some((bundle) => bundle.workItemId === item.id && bundle.verdict === "passed")),
+    // 这里原先有 all_required_validation_present（"已验收的工作项必须有独立互审"），但它恒不触发：
+    // 能进 verifiedItems 的工作项必然经 performIndependentReview 写过 reviewBundleRef，
+    // 于是 !item.reviewBundleRef 永远为假。它要检查的性质在【写入点】就已经被强制 ——
+    // verified 只能由 work_item_verification 定稿卡片写出，而那张卡片只在互审通过后才挂起。
+    // 写入点的约束比事后再查一遍更强，留着一道永不触发的门只会让人以为这里额外把过关。
+    // （holisticJudgment.independentReviewComplete 同理改为直接引用这条结构性事实。）
     no_pending_permission_or_approval: (state.permissionRequests || []).some((item) => item.taskGroupId === taskGroupId && PERMISSION_REQUEST_PENDING_STATUSES.includes(item.status)) ||
       (state.approvalRequests || []).some((item) => item.taskGroupId === taskGroupId && APPROVAL_REQUEST_PENDING_STATUSES.includes(item.status)),
     no_unreconciled_command_effect: (state.commandEffects || []).some((item) => item.taskGroupId === taskGroupId && !COMMAND_EFFECT_TERMINAL.has(item.status)),
@@ -2964,7 +2966,6 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
   if ((state.agentDispatches || []).some((dispatch) => dispatch.taskGroupId === taskGroupId && !["completed", "failed", "cancelled"].includes(dispatch.status))) blockers.push({objectType: "AgentDispatch", objectId: taskGroupId, status: "active"});
   if ((state.leases || []).some((lease) => lease.status === "active" && leaseAppliesToTaskGroup(state, lease, taskGroupId))) blockers.push({objectType: "Lease", objectId: taskGroupId, status: "active"});
   if (checkFailures.all_required_evidence_present) blockers.push({objectType: "Checkpoint", objectId: taskGroupId, status: "missing_git_evidence"});
-  if (checkFailures.all_required_validation_present) blockers.push({objectType: "ReviewBundle", objectId: taskGroupId, status: "independent_review_missing"});
   if (checkFailures.no_pending_permission_or_approval) blockers.push({objectType: "PermissionOrApprovalRequest", objectId: taskGroupId, status: "pending"});
   if (checkFailures.no_open_execution_topology) blockers.push({objectType: "ExecutionTopology", objectId: taskGroupId, status: "open"});
   if (checkFailures.no_open_review_plan) blockers.push({objectType: "ReviewPlan", objectId: taskGroupId, status: "open"});
@@ -3026,7 +3027,7 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
   // is moot — it must not block the task-group close forever with no operator remedy (the work will never
   // be re-tested). Live/in-progress work items keep blocking; the operator re-tests or cancels the item.
   const abandonedQualityGateWorkIds = new Set((taskGroup?.workItems || [])
-    .filter((workItem) => ["cancelled", "aborted", "superseded", "closed"].includes(workItem.status))
+    .filter((workItem) => WORK_ITEM_SETTLED_STATUSES.includes(workItem.status) && workItem.status !== "verified")
     .map((workItem) => workItem.id));
   const gateFailures = {
     all_required_work_closed: readiness.blockingObjects.some((item) => item.objectType === "WorkItem"),
@@ -3093,7 +3094,10 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
       basis: "reality_first_close_barrier",
       requiredCellsTerminal: !gateFailures.all_required_work_closed,
       findingsDispositioned: !gateFailures.all_findings_terminal,
-      independentReviewComplete: readiness.checkResults?.all_required_validation_present?.status !== "blocked",
+      // verified 只能由人工定稿卡写出，而那张卡只在互审通过后才挂起 —— 这是结构性事实，
+      // 不再依赖一道恒不触发的门来"证明"它。
+      independentReviewComplete: (taskGroup?.workItems || []).filter((item) => item.status === "verified")
+        .every((item) => Boolean(item.reviewBundleRef)),
       sideEffectsSettled: !gateFailures.all_commands_terminal && !gateFailures.all_command_effects_terminal && !gateFailures.no_active_dlq,
       noLiveAuthorizationHold: !gateFailures.no_pending_permissions && !gateFailures.no_pending_approvals && !gateFailures.no_pending_human_confirmations,
       realBlockerCount: blockers.length,
@@ -5386,6 +5390,9 @@ export function capRetainingOpen(items, terminalStatuses, limit) {
 // 这里必须只用已登记状态 —— 原先混着 WorkSession 根本没有的 "closed"。
 // 工作项的"已了结"集：verified/closed 是交付了结，superseded/cancelled/aborted 是没有交付的了结
 // （被拆分取代、人工放弃、被取消）。两者都不该再挡住任务组关闭。
+// 注：closed / aborted 是 spec 登记的 WorkItem 终态，但目前全仓没有写入方（只有 verified 与
+// superseded 有）。留在集合里是为了"新增写入方时判据自动跟上"，而不是假装它们已经在用 ——
+// 若日后确定这两个终态不会实现，应当连同 spec 里的登记一起删掉。
 export const WORK_ITEM_SETTLED_STATUSES = ["verified", "closed", "superseded", "aborted"];
 export const WORK_SESSION_SETTLED_STATUSES = ["completed_objective", "recycled", "failed", "aborted"];
 const BARRIER_PENDING_STATUSES = ["open", "pending", "pending_approval", "quorum_collecting", "requested", "submitted", "in_review", "waiting"];
@@ -5921,7 +5928,12 @@ export function advanceExecutionTopology(state, args) {
     if (!ref) throw topologyError("execution_topology_cancel_requires_ref", 400);
     // 取消一个【已被人定稿】的方案，本身就是改变人的决定 —— 与降级同一条口径：AI 不得自行取消，
     // 必须回到人工确认；人自己来取消则直接生效并改写定稿记录。
+    // 与 downgradeApproved 保持同一形状：少一个 decisionType 过滤，就意味着别的类型的确认单
+    // 只要 subjectRef 撞上、选项 id 相同，也会被当成"人已同意取消"。当前带 subjectRef 的确认单
+    // 只由控制面内部产生（agent 通道两侧都做了白名单），不可利用 —— 但两处判据不对称，
+    // 正是下一轮容易被撬开的缝。
     const cancelApproved = (state.humanConfirmationRequests || []).some((item) =>
+      item.decisionType === "plan_topology" &&
       item.subjectRef === `ExecutionTopology:${topology.topologyId}` &&
       item.decision?.action === "finalize" &&
       item.decision?.selectedOptionId === "accept_cancel");
@@ -6016,6 +6028,21 @@ export function claimLease(state, args) {
   const at = new Date().toISOString();
   const resourceRef = `RepositoryOutputTarget:${target.targetId}`;
   const holderRef = args.holderRef || `session:${args.sessionId || createId("sess")}`;
+  // holderRef 原先原样收下，谁也不校验它指向的会话是否真的属于这个产出目标所在的任务组。
+  // 把它指向一个长期存活的别处会话，就造出一条【永不过期的租约】：expireStaleLeases 的
+  // "持有者已了结"判据恒为假，terminateCellRuntime 又只匹配本工作项的会话 —— 两条回收路径同时失效，
+  // all_leases_terminal 从此永久被挡，人只剩下一条要先从 state 里翻出 fencingToken 的隐蔽杠杆。
+  // 租约代表"谁有权写这个目标"，持有者必须是这个目标所属任务组里的一个存活会话。
+  const holderSessionId = String(holderRef).startsWith("session:") ? String(holderRef).slice("session:".length) : null;
+  if (holderSessionId) {
+    const holderSession = (state.workSessions || []).find((item) => item.sessionId === holderSessionId);
+    if (holderSession && target.taskGroupId && holderSession.taskGroupId !== target.taskGroupId) {
+      return {ok: false, error: "lease_holder_scope_mismatch", holderRef};
+    }
+    if (holderSession && WORK_SESSION_SETTLED_STATUSES.includes(holderSession.status)) {
+      return {ok: false, error: "lease_holder_session_settled", holderRef};
+    }
+  }
   const existing = state.leases.find((item) => item.resourceRef === resourceRef && item.status === "active");
   if (existing) {
     if (existing.holderRef === holderRef) return {lease: existing, repositoryOutputTarget: target, replayedActiveLease: true};
