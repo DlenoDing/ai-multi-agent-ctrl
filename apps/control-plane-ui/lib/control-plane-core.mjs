@@ -3327,9 +3327,13 @@ function strengthsFromCapabilities(capabilities) {
   return unique(mapped.length ? mapped : ["planning"]);
 }
 
-function resolveRoleSkill(state, roleId, request = {}) {
+export function resolveRoleSkill(state, roleId, request = {}) {
   const hint = roleCapabilityHints[roleId] || roleCapabilityHints.orchestrator;
-  const baseSkill = state.roleSkills.find((skill) => skill.roleSkillId === hint.skillRef || skill.roleSkillId.endsWith(hint.skillRef)) ||
+  // 后缀匹配必须锚在分隔符上：原先是任意 endsWith，造一个 `evil-<skillRef>` 的 id 就能顶替掉
+  // 真正该绑定的技能内容（技能内容会进任务契约，等于改写 agent 的行为准则）。
+  // 合法场景是同步来的技能带来源前缀（`<source>/<skillRef>`），所以只接受分隔符边界。
+  const matchesSkillRef = (id) => id === hint.skillRef || id.endsWith(`/${hint.skillRef}`) || id.endsWith(`:${hint.skillRef}`);
+  const baseSkill = state.roleSkills.find((skill) => matchesSkillRef(String(skill.roleSkillId || ""))) ||
     state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`) ||
     state.roleSkills[0];
   const overlay = selectRoleSkillOverlay(state, baseSkill?.roleSkillId, request);
@@ -6023,6 +6027,9 @@ export function ruleSourceResolve(state, args) {
 }
 
 export function sharedDefinitionCreate(state, args) {
+  // 与其它承载授权的记录同规:同 id 的冒名契约会顶替掉已生效的那份（目前 governance-mcp.* 对机器
+  // 主体禁用故不可达，但不依赖"暂时不可达"）。
+  assertUniqueRecordId(state.sharedDefinitions, "contractId", args.contractId, "shared_definition_id_conflict");
   const at = new Date().toISOString();
   const taskGroup = taskGroupForRecord(state, args);
   const projectId = taskGroup?.projectId || args.projectId || "prj_control_plane";

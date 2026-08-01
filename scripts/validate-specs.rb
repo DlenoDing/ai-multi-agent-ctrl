@@ -806,6 +806,11 @@ errors << "租约必须拒绝重复 leaseId" unless core_source.include?("lease_
 errors << "确认单去重键必须按决策类别隔离" unless core_source.include?("const dedupeKey = `${decisionType}:`")
 errors << "agent 通道不得透传 requestKey（去重键可被抢占）" if server_source.include?("requestKey: body.requestKey") || mcp_source.include?("requestKey: args.requestKey")
 errors << "第五轮三项必须有防回归测试" unless contract_check_source.include?("人工闸门: 同一工作项出现了多份生效的写入边界") && contract_check_source.include?("人工闸门: 允许重复 leaseId") && contract_check_source.include?("人工闸门: 运行时确认单顶掉了核心决策单")
+# 第五轮遗留线索：证据完整性与"绑定谁"的解析必须不可顶替。
+errors << "执行事件去重必须限定在本次派发内（否则可跨节点压制/读取证据）" unless agent_gateway_source.include?("item.eventKey === eventKey && item.dispatchId === dispatchId")
+errors << "技能绑定的后缀匹配必须锚在分隔符上" unless core_source.include?("id.endsWith(`/${hint.skillRef}`)")
+errors << "共享定义必须拒绝重复 contractId" unless core_source.include?("shared_definition_id_conflict")
+errors << "证据/技能绑定必须有防回归测试" unless contract_check_source.include?("人工闸门: 执行事件按全局 eventKey 去重") && contract_check_source.include?("人工闸门: 技能绑定被 evil-")
 # unblock 不得用子串匹配抹掉"越界写入"证据；分支 id 在拓扑内必须唯一（否则已定稿方案卡死）。
 errors << "unblock 必须按完整键精确匹配且保留越界写入证据" unless core_source.include?('blocker.startsWith("owned_paths_disjoint:") || (blocker !== targetBlocker && blocker !== ref)')
 errors << "block/unblock 与越界证据必须有行为测试覆盖" unless contract_check_source.include?("人工闸门: 正常的 block -> unblock 走不通") && contract_check_source.include?("人工闸门: 越界写入证据被 unblock 抹掉了")

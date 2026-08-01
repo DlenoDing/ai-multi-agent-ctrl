@@ -697,7 +697,10 @@ export function prepareAgentExecutionEvent(state, node, input = {}) {
   const eventKey = String(input.eventKey || "").slice(0, 240);
   if (!eventKey) throw gatewayError("execution_event_key_required", 400);
   if (eventKey) {
-    const existing = (state.agentExecutionEvents || []).find((item) => item.eventKey === eventKey);
+    // 幂等去重必须【限定在这次派发内】。原先是全局按 eventKey 匹配，而 eventKey 由调用方提供：
+    // 一个节点抢注另一个节点的 key，就能压制对方的执行证据（对方的上报被当成重复丢弃），
+    // 并且命中的事件会被原样返回，连带读到对方的 summary/sessionId。证据完整性是验收闸门的地基。
+    const existing = (state.agentExecutionEvents || []).find((item) => item.eventKey === eventKey && item.dispatchId === dispatchId);
     if (existing) return {event: existing, duplicate: true};
   }
   const at = new Date().toISOString();
@@ -737,7 +740,8 @@ export function recordAgentExecutionEvent(state, node, event = {}, options = {})
   );
   if (!dispatch) throw gatewayError("dispatch_not_found", 404);
   if (event.eventKey) {
-    const existing = (state.agentExecutionEvents || []).find((item) => item.eventKey === event.eventKey);
+    // 同上：按 (eventKey, dispatchId) 去重，跨派发的同名 key 互不影响。
+    const existing = (state.agentExecutionEvents || []).find((item) => item.eventKey === event.eventKey && item.dispatchId === event.dispatchId);
     if (existing) return {event: existing, duplicate: true};
   }
   if ((state.agentExecutionEvents || []).some((item) => item.eventId === event.eventId)) return {event, duplicate: true};

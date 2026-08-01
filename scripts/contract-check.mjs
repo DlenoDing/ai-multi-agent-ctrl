@@ -37,6 +37,7 @@ import {
   reviewBundleRegister,
   computeCompletionReadiness,
   createExecutionTopology,
+  resolveRoleSkill,
   claimLease,
   permissionRequestSubmit,
   approvalRequestCreate,
@@ -691,6 +692,31 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     if (!swapRejected) output.push("人工闸门: 方案在人点确认前被改掉，定稿却仍然生效（批准被算到没看过的内容上）");
     if (swapTopo.humanFinalization) output.push("人工闸门: 被掉包的方案拿到了定稿锁");
+
+    // 证据完整性：执行事件的幂等去重必须限定在本次派发内，否则一个节点抢注另一个节点的 eventKey
+    // 就能压制对方的执行证据（被当成重复丢弃），还能读回对方事件的内容。
+    const evState = structuredClone(seedState);
+    ensureRuntimeCollections(evState, {root});
+    evState.agentExecutionEvents = [{eventId: "aee_victim", eventKey: "k1", dispatchId: "disp_victim", nodeId: "node_victim",
+      summary: "受害者的证据", sequence: 1, createdAt: "2026-08-01T00:00:00Z"}];
+    evState.agentDispatches = [{dispatchId: "disp_attacker", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui",
+      sessionId: "s_a", runId: "r_a", status: "running", assignedNodeId: "node_attacker", projectId: "prj_control_plane"}];
+    const evResult = submitAgentExecutionEvent(evState, {nodeId: "node_attacker"}, {dispatchId: "disp_attacker", eventKey: "k1", eventType: "progress", summary: "攻击者的事件"});
+    if (evResult.duplicate || evResult.event?.eventId === "aee_victim") {
+      output.push("人工闸门: 执行事件按全局 eventKey 去重（一个节点可压制并读取另一个节点的证据）");
+    }
+    // 技能绑定的后缀匹配必须锚在分隔符上，否则 evil-<ref> 能顶替掉真正该绑定的技能内容。
+    const skState = structuredClone(seedState);
+    ensureRuntimeCollections(skState, {root});
+    const realSkill = (skState.roleSkills || []).find((x) => String(x.roleSkillId || "").startsWith("system-"));
+    if (realSkill) {
+      // 冒名技能：id 以真实 skillRef 结尾但带了任意前缀。锚定匹配后它不应被选中。
+      skState.roleSkills.unshift({...realSkill, roleSkillId: "evil-engineering-multi-agent-systems-architect", content: "EVIL"});
+      const bound = resolveRoleSkill(skState, "orchestrator");
+      if (String(bound?.roleSkillId || "").startsWith("evil-")) {
+        output.push("人工闸门: 技能绑定被 evil-<skillRef> 顶替（任意后缀匹配 => 可改写 agent 行为准则）");
+      }
+    }
 
     // 第五轮：守卫必须落在【真正被用来选中授权记录的那个查找条件】上，而不是某个字段。
     // 写入边界是按 (taskGroupId, workItemId, 非 superseded) 找的 —— 只守 targetId 唯一性，
