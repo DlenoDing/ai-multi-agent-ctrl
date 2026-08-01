@@ -923,7 +923,7 @@ errors << "shutdown stop-control must use a persistent shutdownPending backstop 
 # 2026-07-27 full-system review round 7 (exhaustive class sweep). A1: the persistence-layer shard cap
 # must be barrier-safe (never evict an open/gating item) — a blind newest-by-time slice re-introduced the
 # barrier-unsafe class at the storage layer, so a barrier collection's persist cap uses shardOpenPredicates.
-errors << "persist-layer shard cap must retain open barrier items (shardOpenPredicates)" unless state_store_source.include?("const shardOpenPredicates") && state_store_source.include?("const open = sorted.filter(isOpen)") && ["workSessions", "humanConfirmationRequests", "humanDirectives", "repositoryOutputs", "effectiveInstructionPackets", "checkpoints", "agentDispatches", "roleDriftGuards"].all? { |c| state_store_source.include?("#{c}:") }
+errors << "persist-layer shard cap must retain open barrier items (shardOpenPredicates)" unless state_store_source.include?("const shardOpenPredicates") && state_store_source.include?("const open = sorted.filter((item) => isOpen(item, shard))") && ["workSessions", "humanConfirmationRequests", "humanDirectives", "repositoryOutputs", "effectiveInstructionPackets", "checkpoints", "agentDispatches", "roleDriftGuards"].all? { |c| state_store_source.include?("#{c}:") }
 # A2/A3: previously-unbounded central MCP collections must be capped.
 errors << "externalUpgradeImports and instructionMetrics.envelopes must be bounded" unless mcp_source.include?("state.externalUpgradeImports = state.externalUpgradeImports.slice(0, 2000)") && mcp_source.include?("state.instructionMetrics.envelopes = state.instructionMetrics.envelopes.slice(0, 2000)")
 # A4: join-token cap must retain still-redeemable (issued+unexpired) tokens.

@@ -324,7 +324,12 @@ const shardOpenPredicates = {
   humanConfirmationRequests: (item) => item.status === "pending", // core 2769
   humanDirectives: (item) => ["queued", "acknowledged"].includes(item.status), // core 2770
   repositoryOutputs: (item) => !["pushed", "committed", "rejected", "superseded"].includes(item.status), // core 2759
-  effectiveInstructionPackets: (item) => !["consumed", "expired", "superseded"].includes(item.status), // core 2757 + live deref
+  // 谓词必须与 core 的门判据一致（core 2882/2997 现为 !["active","rejected","superseded"]），否则两边
+  // 对"还在阻塞吗"的理解不同。但仅镜像门是不够的：指令包会被存活派发经 agentTaskContracts 解引用，
+  // 淘汰掉一个仍被引用的包会让派发以 dispatch_package_incomplete(409) 失败（agent-gateway.mjs:1115）。
+  // 故：门认为仍未了结的要留，被存活派发引用的也要留。
+  effectiveInstructionPackets: (item, shard) => !["active", "rejected", "superseded"].includes(item.status)
+    || (shard?.collections?.agentTaskContracts || []).some((contract) => contract.effectiveInstructionPacketRef === item.packetId), // core 2882/2997 + live deref
   // core 2761/2763 evidence dimension. NOTE: all_required_validation_present (core 2826) and
   // needsReviewBackfill (core 4514) also read checkpoints by workId regardless of evidence — those are
   // inert today (every "verified" work item carries a reviewBundleRef, so their guard is dead), so this
@@ -338,7 +343,7 @@ const shardOpenPredicates = {
   roleDriftGuards: (item) => !["closed", "corrected"].includes(item.status) // core 2756
 };
 
-function capProjectShardCollections(shard) {
+export function capProjectShardCollections(shard) {
   for (const collection of projectShardCollections) {
     const items = shard.collections[collection];
     if (!Array.isArray(items)) continue;
@@ -351,8 +356,8 @@ function capProjectShardCollections(shard) {
       continue;
     }
     // Never evict an open/gating item; trim only the oldest non-open beyond the limit.
-    const open = sorted.filter(isOpen);
-    const closed = sorted.filter((item) => !isOpen(item)).slice(0, Math.max(0, limit - open.length));
+    const open = sorted.filter((item) => isOpen(item, shard));
+    const closed = sorted.filter((item) => !isOpen(item, shard)).slice(0, Math.max(0, limit - open.length));
     shard.collections[collection] = [...open, ...closed];
   }
 }

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { capProjectShardCollections } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
@@ -1026,6 +1027,29 @@ function verifyHumanAndOrganizationContracts(output) {
     const afterFresh = submitGate("passed", ["run:2"]);          // 带新证据
     if (afterFresh.status !== "passed") output.push("人工闸门: 带新证据的重报仍无法清除失败的质量门（正常流程被打断）");
     if (!afterFresh.previouslyFailed) output.push("人工闸门: 质量门被翻转却没有留下 previouslyFailed 痕迹（人看不到这条曾失败）");
+
+    // 持久层分片 cap 此前只有源码字符串断言，没有任何行为测试。它保护的正是"仍在阻塞的项被
+    // 容量淘汰 => 关闭门假满足"这一类。指令包还多一层：被存活任务契约引用的包一旦被淘汰，
+    // 派发会以 dispatch_package_incomplete 失败。
+    const shardLimit = 5000;
+    const shard = {collections: {
+      effectiveInstructionPackets: Array.from({length: shardLimit + 2}, (_, index) => ({
+        packetId: `eip_${index}`, status: "active",
+        updatedAt: new Date(Date.UTC(2020, 0, 1) + index * 60000).toISOString()   // index 越小越旧
+      })),
+      agentTaskContracts: [{effectiveInstructionPacketRef: "eip_0"}]              // 最旧的那个仍被引用
+    }};
+    capProjectShardCollections(shard);
+    const keptPackets = shard.collections.effectiveInstructionPackets;
+    if (keptPackets.length > shardLimit) {
+      output.push("分片 cap: 超出上限后没有实际裁剪（这个测试在空转，证明不了任何保留语义）");
+    }
+    if (!keptPackets.some((item) => item.packetId === "eip_0")) {
+      output.push("分片 cap: 被存活任务契约引用的指令包被容量淘汰（该派发将以 dispatch_package_incomplete 失败）");
+    }
+    if (keptPackets.some((item) => item.packetId === "eip_1")) {
+      output.push("分片 cap: 最旧的未被引用指令包没有被淘汰（保留谓词把一切都当作未了结，分片无界增长）");
+    }
 
     // 评审包终态化的作用域：按 id 全局查找意味着 A 组的调用方能替 B 组把评审包终态化，
     // 直接清掉 B 组 no_pending_review_bundles 那道阻塞（守卫作用域必须覆盖被改变的资源）。
