@@ -1914,7 +1914,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/agent/v1/register") {
-    const result = registerAgentNode(state, body, {joinToken: bearerToken(req), publicUrl: publicEndpoint(req)});
+    const result = registerAgentNode(state, body, {joinToken: bearerToken(req), publicUrl: publicEndpoint(req), idempotencyKey: req.headers["idempotency-key"]});
     audit(state, "agent-gateway", "agent_node_register", `AgentRuntimeNode:${result.node.nodeId}`);
     commitGatewayWrite(state);
     json(res, 201, result);

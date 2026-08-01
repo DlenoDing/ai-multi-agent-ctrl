@@ -1111,6 +1111,57 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
     }
 
+    // 注册没有幂等键：写入成功但响应在网络上丢失时，代理重试会拿到 409，留下一个 initializing 的
+    // 僵尸节点 —— 持有一个谁也不知道的 nodeToken、永远不心跳、并且永久占用组织配额。
+    // join token 是一次性的，代理无法重新注册，只能人工介入。
+    const regState = structuredClone(seedState);
+    ensureRuntimeCollections(regState, {root});
+    const joinToken = createAgentJoinToken(regState, {projectId: "prj_control_plane", allowedRoles: ["executor"], maxUses: 1}, {actor: "acct_workspace_owner"});
+    const rawJoin = joinToken.joinToken || joinToken.token;
+    const regKey = "idem-register-probe";
+    const first = registerAgentNode(regState, {nodeName: "node-probe", requestedRoles: ["executor"]}, {joinToken: rawJoin, idempotencyKey: regKey});
+    const nodeCountAfterFirst = regState.agentRuntimeNodes.length;
+    let replayResult = null; let replayError = null;
+    try {
+      replayResult = registerAgentNode(regState, {nodeName: "node-probe", requestedRoles: ["executor"]}, {joinToken: rawJoin, idempotencyKey: regKey});
+    } catch (error) { replayError = error.message; }
+    if (replayError) {
+      output.push(`注册幂等: 响应丢失后的重试被拒（${replayError}）—— 留下一个永远不心跳、永久占配额的僵尸节点，且 join token 已消耗无法重注册`);
+    } else {
+      if (replayResult?.node?.nodeId !== first.node.nodeId || replayResult?.nodeToken !== first.nodeToken) {
+        output.push("注册幂等: 重试拿到的不是同一份注册结果（代理会拿着一个与控制面记录不符的凭据）");
+      }
+      if (regState.agentRuntimeNodes.length !== nodeCountAfterFirst) {
+        output.push("注册幂等: 重试又造出了一个新节点记录");
+      }
+    }
+    let reuseRejected = false;
+    try {
+      registerAgentNode(regState, {nodeName: "node-probe", requestedRoles: ["executor"]}, {joinToken: rawJoin, idempotencyKey: "idem-someone-else"});
+    } catch { reuseRejected = true; }
+    if (!reuseRejected) {
+      output.push("注册幂等: 换一个幂等键仍能用同一个一次性 join token 再注册一台（重放判据把重试与重用混为一谈）");
+    }
+
+    // 长期不可达的节点必须退役以释放配额；但还挂着活儿的不能退
+    const retireState = structuredClone(seedState);
+    ensureRuntimeCollections(retireState, {root});
+    const longAgo = "2026-01-01T00:00:00Z";
+    const retireNow = Date.parse("2026-08-02T00:00:00Z");
+    retireState.agentRuntimeNodes = [
+      {nodeId: "node_gone", status: "initializing", lastHeartbeatAt: longAgo, activeDispatchIds: []},
+      {nodeId: "node_busy", status: "online", lastHeartbeatAt: longAgo, activeDispatchIds: ["dsp_x"]}
+    ];
+    sweepDeadAgentNodes(retireState, retireNow);
+    const retired = retireState.agentRuntimeNodes.find((item) => item.nodeId === "node_gone");
+    const busy = retireState.agentRuntimeNodes.find((item) => item.nodeId === "node_busy");
+    if (retired.status !== "revoked") {
+      output.push("节点退役: 长期不可达的节点没有被退役（它会永久占用组织 agents 配额，最终新节点接不进来）");
+    }
+    if (busy.status === "revoked") {
+      output.push("节点退役: 还挂着派发的节点被直接退役（应先由回收逻辑处理它的派发）");
+    }
+
     // claim 过期重排队原先不带任何代次：失联 30 分钟的节点恢复后既收不到取消、也不自检，
     // 会直接把提交 push 到远端分支；新持有者的 reset --hard origin/<branch> 再把它静默当作基线。
     // 两个节点的工作因此混在一起，而控制面对此毫无记录。

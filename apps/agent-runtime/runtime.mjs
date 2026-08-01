@@ -54,9 +54,14 @@ async function bootstrap() {
   requireSecureServerUrl(serverUrl);
   const configuredExecutor = args["executor-command"] || process.env.AIMAC_AGENT_EXECUTOR_COMMAND || "";
   const profile = probeProfile(configuredExecutor);
+  // 注册重试必须带一个【跨重试稳定】的幂等键：控制面据此把"响应丢了、我再问一次"与
+  // "有人拿着同一个 join token 想再注册一台"区分开。前者要拿回同一份结果，后者必须被拒 ——
+  // 只看 join token 是分不出这两件事的。
+  const registerIdempotencyKey = sha256(`register:${joinToken}:${args["node-name"] || process.env.AIMAC_AGENT_NODE_NAME || hostname()}`).slice(0, 48);
   const registration = await retryableAgentRequest(() => jsonRequest(`${serverUrl}/api/agent/v1/register`, {
     method: "POST",
     token: joinToken,
+    headers: {"idempotency-key": registerIdempotencyKey},
     body: {
       nodeName: args["node-name"] || process.env.AIMAC_AGENT_NODE_NAME || hostname(),
       requestedRoles: splitCsv(args.roles),

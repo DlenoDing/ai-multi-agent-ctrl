@@ -129,6 +129,23 @@ export function registerAgentNode(state, input = {}, options = {}) {
   const tokenDigest = digestOf(`agent-join:${rawToken}`);
   const record = state.agentJoinTokens.find((item) => item.tokenDigest === tokenDigest);
   if (!record) throw gatewayError("join_token_invalid", 401);
+  // 注册没有幂等键：写入成功但响应在网络上丢失时，代理会重试，而这时 token 已经是 consumed，
+  // 于是重试被拒，留下一个 initializing 的节点记录 —— 它持有一个谁也不知道的 nodeToken、
+  // 永远不心跳、并且按 status !== "revoked" 永久占用组织配额，最终新节点再也接不进来。
+  // join token 是一次性的，代理无法重新注册，只能人工介入。
+  // 重放判断必须【早于】所有"这个 token 已经用过了"的检查 —— 那些检查正是重试会撞上的。
+  // 它不会多授予任何东西：持有这个 token 的人本来就已经拿到过这份结果一次。
+  // 判别依据必须是幂等键，不能是 join token 本身 —— 只看 token 的话，"重试"和"有人拿着同一个
+  // token 想再注册一台"是同一件事，而后者正是一次性 token 要挡住的。
+  const idempotencyKey = String(options.idempotencyKey || "").trim();
+  const replay = record.registrationReplay;
+  if (replay && idempotencyKey && replay.idempotencyKey === idempotencyKey) {
+    const replayWindowMs = boundedInteger(process.env.AIMAC_REGISTER_REPLAY_WINDOW_MS, 60000, 3600000, 600000);
+    const existingNode = state.agentRuntimeNodes.find((item) => item.nodeId === replay.nodeId);
+    if (existingNode && Date.now() - new Date(replay.at || 0).getTime() <= replayWindowMs) {
+      return {...replay.result, node: publicAgentNode(existingNode), replayed: true};
+    }
+  }
   if (record.status !== "issued") throw gatewayError("join_token_not_active", 409);
   if (new Date(record.expiresAt).getTime() <= Date.now()) {
     record.status = "expired";
@@ -186,7 +203,7 @@ export function registerAgentNode(state, input = {}, options = {}) {
   record.updatedAt = at;
   appendGatewayEvent(state, "node_registered", nodeId, {projectId: record.projectId, profileDigest: node.profileDigest});
   const publicUrl = trimTrailingSlash(options.publicUrl || "http://127.0.0.1:4317");
-  return {
+  const registration = {
     node: publicAgentNode(node),
     nodeToken,
     gateway: {
@@ -203,6 +220,9 @@ export function registerAgentNode(state, input = {}, options = {}) {
     heartbeatIntervalSeconds: 30,
     pollIntervalSeconds: 5
   };
+  // 留下重放依据：同一个 join token 的重试要能拿回同一份结果，而不是新造一个僵尸节点。
+  record.registrationReplay = {nodeId, at, result: registration, idempotencyKey: String(options.idempotencyKey || "").trim() || null};
+  return registration;
 }
 
 const nodeTokenCache = new Map();
@@ -561,6 +581,22 @@ export function sweepDeadAgentNodes(state, nowMs = Date.now()) {
     }
     swept.push(node.nodeId);
     appendGatewayEvent(state, "agent_node_heartbeat_timeout", node.nodeId, {lastHeartbeatAt: node.lastHeartbeatAt || null});
+  }
+  // offline 仍按 status !== "revoked" 计入组织 agents 配额。一个再也不会回来的节点
+  //（例如注册响应丢失留下的 initializing 僵尸）会永久扣掉一个名额，最终新节点接不进来。
+  // 因此在一个【远长于】心跳宽限期的阈值之后退役它 —— 它随时可以用新的 join token 重新加入。
+  const retireMs = boundedInteger(process.env.AIMAC_NODE_RETIRE_TIMEOUT_MS, 3600000, 30 * 86400000, 7 * 86400000);
+  for (const node of state.agentRuntimeNodes || []) {
+    if (node.status === "revoked") continue;
+    const lastBeat = new Date(node.lastHeartbeatAt || node.registeredAt || 0).getTime();
+    if (!lastBeat || nowMs - lastBeat < retireMs) continue;
+    if ((node.activeDispatchIds || []).length) continue; // 还挂着活儿的不退役，先让回收逻辑处理
+    node.status = "revoked";
+    node.admission = "read_only";
+    node.revokedReason = "unreachable_beyond_retire_window";
+    node.updatedAt = new Date(nowMs).toISOString();
+    swept.push(node.nodeId);
+    appendGatewayEvent(state, "agent_node_retired_unreachable", node.nodeId, {lastHeartbeatAt: node.lastHeartbeatAt || null});
   }
   return swept;
 }
