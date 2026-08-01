@@ -44,6 +44,8 @@ import {
   ruleSourceSettle,
   isDelegatableGrantPermission,
   WORK_SESSION_SETTLED_STATUSES,
+  FINDING_TERMINAL_STATUSES,
+  artifactRegister,
   HUMAN_ACTOR_KEY,
   reviewPlanCreate,
   reviewPlanRecordCoverage,
@@ -1101,6 +1103,51 @@ function verifyHumanAndOrganizationContracts(output) {
     });
     if (!snapCard?.subjectContentDigest) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
+    }
+
+    // 制品门原先恒不触发（登记即在通过集里，"verified" 无人写入）。现在按"是否真的可验证"判定，
+    // 并且必须有出口 —— 把空转门改成真会阻塞的门却不给出口，就是把缺陷换成死锁。
+    const artState = structuredClone(seedState);
+    ensureRuntimeCollections(artState, {root});
+    const artTg = artState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const artWork = artTg.workItems[0];
+    artifactRegister(artState, {taskGroupId: artTg.id, workItemId: artWork.id, artifactManifestRef: "docs/x.json"});
+    if (computeCloseBarrier(artState, artTg.id).gateResults.artifacts_verified.status !== "blocked") {
+      output.push("制品门: 没有内容哈希的制品照样通过了制品已验证这道门（它从来没验证过任何东西）");
+    }
+    terminateCellRuntime(artState, artTg.id, artWork.id, "probe");
+    if (computeCloseBarrier(artState, artTg.id).gateResults.artifacts_verified.status === "blocked") {
+      output.push("制品门: 放弃工作项后不可验证的制品仍在阻塞（有牙齿却没有出口＝死锁）");
+    }
+    // 正常流程不得被打断：运行时算好的内容哈希应当直接通过
+    const artOkState = structuredClone(seedState);
+    ensureRuntimeCollections(artOkState, {root});
+    artifactRegister(artOkState, {taskGroupId: artTg.id, workItemId: artWork.id, artifactManifestRef: "docs/y.json",
+      payload: {digest: `sha256:${"a".repeat(64)}`}});
+    if (computeCloseBarrier(artOkState, artTg.id).gateResults.artifacts_verified.status === "blocked") {
+      output.push("制品门: 带真实内容哈希的制品也被挡住（正常证据登记流程被打断）");
+    }
+
+    // 发现项降级：证据不足时处置类被降为 fixed_unverified，但状态却被写成终态 —— 于是关闭门
+    // 因处置类不合格继续阻塞、一次性守卫拒绝再处置、控制台只列非终态所以人看不见它。
+    // 一个既挡路、又改不动、还看不到的东西。
+    const dgState = structuredClone(seedState);
+    ensureRuntimeCollections(dgState, {root});
+    dgState.findings = [{findingId: "fnd_dg", taskGroupId: "tg_runtime_management", projectId: "prj_control_plane",
+      status: "open", severity: "high", summary: "probe"}];
+    const dgFirst = findingResolve(dgState, {findingId: "fnd_dg", status: "resolved", evidenceRefs: []});
+    if (dgFirst.finding.dispositionClass !== "fixed_unverified") {
+      output.push("发现项降级: 无证据的已修复没有被降级（测试前置不成立）");
+    }
+    if (FINDING_TERMINAL_STATUSES.includes(dgState.findings[0].status)) {
+      output.push("发现项降级: 未能了结的处置却把发现项写成了终态（既挡关闭门、又拒绝再处置、还从界面上消失）");
+    }
+    if (!dgState.findings[0].lastResolutionAttempt) {
+      output.push("发现项降级: 没有记录上一次处置为何未能了结（人看到它还开着却不知道要补什么）");
+    }
+    const dgSecond = findingResolve(dgState, {findingId: "fnd_dg", status: "resolved", evidenceRefs: ["evidence:fix-run-2"]});
+    if (dgSecond.finding.dispositionClass !== "fixed_verified" || !FINDING_TERMINAL_STATUSES.includes(dgState.findings[0].status)) {
+      output.push("发现项降级: 补齐证据后仍无法了结该发现项（它将永久阻塞关闭门）");
     }
 
     // 仓库产出目标此前只能【经活跃租约】被级联收口。seed 里那条 rot_runtime_management 就是

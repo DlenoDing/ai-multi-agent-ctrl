@@ -2150,6 +2150,9 @@ function renderReview() {
         <div class="record">
           <div class="record-title"><strong>发现：${esc(item.summary || item.title || item.findingId)}</strong>${badge(item.status)}${item.severity ? customBadge(t(item.severity), "orange") : ""}</div>
           <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>${fmtTime(item.createdAt)}</span></div>
+          <!-- 曾被处置但因证据/归属不全而未能了结：不说明原因的话，人只看到它还开着，
+               不知道上一次处置是被什么挡下来的，也就不知道补什么才能过。 -->
+          ${item.lastResolutionAttempt ? `<div class="notice warn-notice">上一次处置未能了结它：判为 ${esc(t(item.lastResolutionAttempt.dispositionClass) || item.lastResolutionAttempt.dispositionClass)}（${esc(t(item.lastResolutionAttempt.reason) || item.lastResolutionAttempt.reason)}）。补齐后可再次处置。</div>` : ""}
           ${canReview ? `<form class="form-grid" data-form="finding-resolve" data-request="${esc(item.findingId)}" style="margin-top:8px;">
             <div class="form-row"><label>处置类别</label><select name="dispositionClass">${dispositionHtml}</select></div>
             <div class="form-row"><label>处置状态</label><select name="status"><option value="resolved">已解决</option><option value="closed">已关闭</option><option value="dismissed">已忽略</option><option value="wontfix">不修复</option></select></div>

@@ -2727,6 +2727,15 @@ export function terminateCellRuntime(state, taskGroupId, workItemId, reason) {
       delete target.leaseRef;
     }
   }
+  // 制品同理：放弃这个格子之后，它登记过的、不可验证的证据不能继续挡着关闭门。
+  for (const artifact of state.artifacts || []) {
+    if (artifact.taskGroupId !== taskGroupId || artifact.workItemId !== workItemId) continue;
+    if (["verified", "rejected"].includes(artifact.status)) continue;
+    if (artifact.status === "registered" && artifact.contentVerifiable === true) continue;
+    artifact.status = "rejected";
+    artifact.rejectedReason = reason;
+    artifact.updatedAt = at;
+  }
   // 目标此前【只能经活跃租约】被级联：从未绑定过租约的（停在 selected）、以及租约已被
   // releaseLease 单独释放过的目标，谁也够不到它 —— 于是它永远挡着 all_changes_integrated，
   // 而人没有任何杠杆。归属关系本来就是 (taskGroupId, workItemId)，按归属直接收口。
@@ -3014,7 +3023,15 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     no_active_dlq: forTaskGroup(state.dlqEntries).some((item) => !DLQ_ENTRY_TERMINAL.has(item.status)),
     all_leases_terminal: (state.leases || []).some((lease) => lease.status === "active" && leaseAppliesToTaskGroup(state, lease, taskGroupId)),
     no_active_temp_grants: (state.mcpGrants || []).some((grant) => grant.taskGroupId === taskGroupId && grant.grantStatus === "issued" && new Date(grant.expiresAt || 0).getTime() > nowMs),
-    artifacts_verified: forTaskGroup(state.artifacts).some((item) => !["verified", "registered"].includes(item.status)),
+    // 这道门原先恒不触发：artifactRegister 只会写 "registered"，而它本身就在通过集里，
+    // "verified" 则全仓无人写入 —— 一道名为"制品已验证"的门，从来没有验证过任何东西，
+    // 连没有内容哈希（contentVerifiable=false，摘要其实是请求参数的哈希）的制品也照样通过。
+    // 改为按【是否真的可验证】判定；出口是 terminateCellRuntime 的级联（放弃工作项即收口）。
+    // 已了结的三种：verified（真验过）、rejected/gc（明确作废，只有 terminateCellRuntime 能写）。
+    // 其余只有"registered 且确实带内容哈希"才算数 —— 摘要若来自请求参数，它什么都没证明。
+    artifacts_verified: forTaskGroup(state.artifacts).some((item) =>
+      !["verified", "rejected", "gc"].includes(item.status)
+      && !(item.status === "registered" && item.contentVerifiable === true)),
     rules_candidates_processed: (state.ruleSourceResolutions || []).some((item) => item.taskGroupId === taskGroupId && item.status === "discovered"),
     runtime_issue_candidates_exported: forTaskGroup(state.systemUpgradeCandidates).some((item) => item.status === "candidate_created"),
     no_open_execution_topologies: forTaskGroup(state.executionTopologies).some((item) => !TOPOLOGY_TERMINAL_STATUSES.includes(item.status)),
@@ -6223,6 +6240,9 @@ const VALID_FINDING_DISPOSITIONS = ["fixed_verified", "not_applicable", "scope_a
 
 // 不修即放行的处置类：缺陷仍然存在，只是被判定为不必修。这不是事实核验，是决定。
 export const NON_REMEDIATION_DISPOSITIONS = ["not_applicable", "scope_adjusted"];
+// 这两个是降级出来的处置类：它们表示这次处置没能了结该发现项，因此发现项必须保持 open —— 
+// 既让关闭门继续挡住，也让人还能看见它、还能再处置它。
+export const NON_CLOSING_FINDING_DISPOSITIONS = ["fixed_unverified", "blocked_external_incomplete"];
 
 // 真人处置身份用 Symbol 作键传递，而不是普通字段。MCP / REST 的入参都来自 JSON，
 // JSON 表达不出 Symbol 键 —— 于是"自报 humanActor"在结构上就不可能，不必依赖每个调用点
@@ -6253,15 +6273,29 @@ export function findingResolve(state, args) {
   if (NON_REMEDIATION_DISPOSITIONS.includes(disposition) && !humanActor) {
     return {ok: false, error: "finding_disposition_requires_human", dispositionClass: disposition};
   }
-  finding.status = status;
+  // 降级出来的两个处置类表示"这次处置【没有】把它了结掉"（证据不足 / 归属与恢复路径不全）。
+  // 原先仍然把 status 写成终态，后果是三重的：关闭门因处置类不合格继续阻塞、一次性守卫拒绝
+  // 再次处置、控制台只列非终态发现项所以人根本看不见它 —— 一个既挡路、又改不动、还看不到的东西。
+  // 没有了结，就不该写成已了结。
+  const closesFinding = !NON_CLOSING_FINDING_DISPOSITIONS.includes(disposition);
+  finding.status = closesFinding ? status : "open";
   finding.dispositionClass = disposition;
+  if (!closesFinding) {
+    finding.lastResolutionAttempt = {
+      attemptedStatus: status, dispositionClass: disposition,
+      reason: disposition === "fixed_unverified" ? "evidence_refs_missing" : "root_cause_owner_or_recovery_ref_missing",
+      at: new Date().toISOString()
+    };
+  } else {
+    delete finding.lastResolutionAttempt;
+  }
   if (humanActor) finding.dispositionedBy = humanActor;
   finding.resolutionRef = args.resolutionRef || `resolution:${status}`;
   if (args.rootCauseOwner) finding.rootCauseOwner = args.rootCauseOwner;
   if (args.recoveryRef) finding.recoveryRef = args.recoveryRef;
   finding.evidenceRefs = evidenceRefs;
   finding.updatedAt = new Date().toISOString();
-  return {finding};
+  return {finding, closed: closesFinding, ...(closesFinding ? {} : {downgraded: disposition})};
 }
 
 export function contractPublish(state, args) {

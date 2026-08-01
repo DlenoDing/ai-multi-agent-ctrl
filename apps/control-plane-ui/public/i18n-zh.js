@@ -172,6 +172,10 @@
 
     /* ---------- 受阻 / 失败原因 ---------- */
     awaiting_human_confirmation: "等待人工确认",
+    fixed_unverified: "已修复但无证据",
+    blocked_external_incomplete: "外部阻塞但信息不全",
+    evidence_refs_missing: "缺少证据引用",
+    root_cause_owner_or_recovery_ref_missing: "缺少根因归属或恢复路径",
     human_confirmation_round_stale: "方案已在你查看后被修订，请重新查看最新一轮再决定",
     quality_gate_waive_requires_justification: "豁免质量门必须填写理由",
     quality_gate_not_found: "质量门不存在",
