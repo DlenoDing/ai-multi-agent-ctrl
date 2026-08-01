@@ -349,6 +349,8 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 }
 .notice.error-notice { background: var(--red-bg); color: var(--red); }
 .notice.warn-notice { background: var(--orange-bg); color: var(--orange); }
+/* 用于正文里需要人停下来看一眼的短句（如"没有任何一方考察过替代路径"）。 */
+.warn-text { color: var(--orange); }
 
 .command-box {
   background: #10141f;

@@ -4203,6 +4203,7 @@ export function createHumanConfirmationRequest(state, input = {}) {
       // 否则只会看到"按当前方案审查通过"，而看不到方案本身可能就是错的。
       ...((input.peerReview.alternativesConsidered || []).length
         ? {alternativesConsidered: input.peerReview.alternativesConsidered.slice(0, 10).map((item) => ({
+            ...(item.scope ? {scope: String(item.scope)} : {}),
             alternative: String(item.alternative || "").slice(0, 300),
             assessment: String(item.assessment || "").slice(0, 500)
           }))}
@@ -5166,6 +5167,10 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
       // 判断有限，因此如实记录其考察边界，而不是编造一条替代方案充数——留空会被 schema 判为评审未完成，
       // 编造则会误导人的定稿判断。真正的方案级替代由执行 agent 通过 confirmation_analyze 提出。
       alternativesConsidered: [{
+        // 标记这条是【考察边界声明】而不是一条真的替代方案：界面把 alternativesConsidered 当作
+        // "考察过的其他方案"呈现，不加区分的话，一句免责声明会被人读成"AI 已经比较过别的路了"。
+        // 轨道二的本意是有人真的回到原始问题问"这个方案本身对不对"，而控制面结构上做不到这件事。
+        scope: "control_plane_evidence_only",
         alternative: "维持当前实现方案，仅核验其证据完整性",
         assessment: `控制面独立互审的考察边界为证据层（提交/推送/产物清单/变更路径合规），未评估方案层替代路径；方案是否为最优应由执行方在人工确认通道提出（本次证据结论：${verdict}）`
       }],

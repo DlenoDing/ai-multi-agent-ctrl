@@ -2076,7 +2076,23 @@ function renderReview() {
       ${request.peerReview ? `<div class="notice" style="margin-top:8px;">
         <strong>AI 互审结论（仅供参考，不构成确认）：</strong>${esc(t(request.peerReview.verdict) || request.peerReview.verdict)}
         ${(request.peerReview.findings || []).length ? `<br>发现事项：${esc((request.peerReview.findings || []).map((f) => t(f) || f).join("、"))}` : ""}
-        ${(request.peerReview.alternativesConsidered || []).length ? `<br><strong>考察过的其他方案：</strong>${(request.peerReview.alternativesConsidered || []).map((alt) => `<br>· ${esc(alt.alternative)} —— ${esc(alt.assessment)}`).join("")}` : `<br><em>（本次未记录其他候选方案）</em>`}
+        ${(() => {
+          // 轨道二（跳出方案另寻更优）与"考察边界声明"必须分开呈现：后者是一句免责声明
+          // （控制面只核验证据层，结构上评估不了方案本身），混在一起会被读成"AI 已经比较过别的路了"。
+          const all = request.peerReview.alternativesConsidered || [];
+          const planLevel = all.filter((alt) => alt.scope !== "control_plane_evidence_only");
+          const boundary = all.filter((alt) => alt.scope === "control_plane_evidence_only");
+          const parts = [];
+          if (planLevel.length) {
+            parts.push(`<br><strong>考察过的其他方案：</strong>${planLevel.map((alt) => `<br>· ${esc(alt.alternative)} —— ${esc(alt.assessment)}`).join("")}`);
+          } else {
+            parts.push(`<br><strong class="warn-text">⚠ 没有任何一方跳出当前方案考察过替代路径</strong><br><em>互审只沿着既定方案往下审，能发现"执行得不够好"，发现不了"方向本身就错了"。定稿前请自行判断这个方案是不是解决原问题的正确路径。</em>`);
+          }
+          if (boundary.length) {
+            parts.push(`<br><strong>互审的考察边界：</strong>${boundary.map((alt) => `<br>· ${esc(alt.assessment)}`).join("")}`);
+          }
+          return parts.join("");
+        })()}
       </div>` : ""}
       ${canReview ? `<form class="form-grid" data-form="hcr-decide" data-request="${esc(request.requestId)}" data-round="${esc(String(request.round || 1))}" style="margin-top:10px;">
         <div class="option-list">

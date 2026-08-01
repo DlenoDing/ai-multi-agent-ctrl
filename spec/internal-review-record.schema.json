@@ -113,6 +113,13 @@
           "assessment": {
             "type": "string",
             "minLength": 1
+          },
+          "scope": {
+            "description": "标记该条目是真正的替代方案考察，还是仅为考察边界声明（control_plane_evidence_only）。",
+            "enum": [
+              "control_plane_evidence_only",
+              "plan_level_alternative"
+            ]
           }
         }
       }
