@@ -363,6 +363,23 @@ end
 
 server_source = File.read(File.join(ROOT, "apps/control-plane-ui/server.mjs"))
 core_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/control-plane-core.mjs"))
+
+# schema 与代码的双向一致：上面几条只查了 schema 内部自洽（enum 与 required 互相覆盖），
+# 没查 schema 里的门是否真的存在于代码。我删掉两道恒不触发的指令包门时，schema 里的残留就是
+# 这样漏过去的 —— 只有在别处报错时才暴露出来。
+core_gate_block = core_source[/const gateFailures = \{(.*?)\n  \};/m, 1].to_s
+core_check_block = core_source[/const checkFailures = \{(.*?)\n  \};/m, 1].to_s
+code_gates = core_gate_block.scan(/^\s{4}([a-z_0-9]+):/).flatten
+code_checks = core_check_block.scan(/^\s{4}([a-z_0-9]+):/).flatten
+stale_schema_gates = close_gate_enum - code_gates
+missing_schema_gates = code_gates - close_gate_enum
+errors << "CloseBarrier schema 里的门在代码中不存在（schema 残留）: #{stale_schema_gates.sort.join(", ")}" unless stale_schema_gates.empty?
+errors << "代码里的关闭门没有登记进 CloseBarrier schema: #{missing_schema_gates.sort.join(", ")}" unless missing_schema_gates.empty?
+stale_schema_checks = readiness_check_enum - code_checks
+missing_schema_checks = code_checks - readiness_check_enum
+errors << "CompletionReadiness schema 里的检查在代码中不存在（schema 残留）: #{stale_schema_checks.sort.join(", ")}" unless stale_schema_checks.empty?
+errors << "代码里的就绪度检查没有登记进 CompletionReadiness schema: #{missing_schema_checks.sort.join(", ")}" unless missing_schema_checks.empty?
+
 state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs"))
 # The Postgres backend upgraded from per-query `psql` subprocesses to a pooled `pg` client.
 # Because Node has no synchronous Postgres driver, the async pool lives in a worker thread

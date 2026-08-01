@@ -79,7 +79,6 @@
           "no_blocking_derived_task_request",
           "no_pending_external_review",
           "no_active_role_drift_guard",
-          "effective_instruction_packet_active",
           "shared_definitions_active",
           "repository_output_target_terminal",
           "all_required_outputs_present",
@@ -102,7 +101,6 @@
         "no_blocking_derived_task_request",
         "no_pending_external_review",
         "no_active_role_drift_guard",
-        "effective_instruction_packet_active",
         "shared_definitions_active",
         "repository_output_target_terminal",
         "all_required_outputs_present",
@@ -130,9 +128,6 @@
           "$ref": "#/$defs/checkResult"
         },
         "no_active_role_drift_guard": {
-          "$ref": "#/$defs/checkResult"
-        },
-        "effective_instruction_packet_active": {
           "$ref": "#/$defs/checkResult"
         },
         "shared_definitions_active": {

@@ -2921,7 +2921,12 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
     no_blocking_derived_task_request: (state.derivedTaskRequests || []).some((item) => item.taskGroupId === taskGroupId && DERIVED_TASK_REQUEST_PENDING_STATUSES.includes(item.status)),
     no_pending_external_review: (state.reviewBundles || []).some((item) => item.taskGroupId === taskGroupId && item.reviewMode === "external" && !["consumed", "rejected"].includes(item.status)),
     no_active_role_drift_guard: (state.roleDriftGuards || []).some((guard) => guard.taskGroupId === taskGroupId && !["closed", "corrected"].includes(guard.status)),
-    effective_instruction_packet_active: (state.effectiveInstructionPackets || []).some((packet) => packet.taskGroupId === taskGroupId && !["active", "rejected", "superseded"].includes(packet.status)),
+    // 这里原先有两道关于指令包的门，但它们永远不会响：指令包是任务契约的纯投影，
+    // buildEffectiveInstructionPacket 直接写 "active"，spec 里 assembled/strengthened/validated
+    // 那条流水线在代码里根本不存在，没有任何一步会失败。给它硬造一个生产者只是为了让门"看起来
+    // 有事可做" —— 那是在糊弄检查而不是在检查。真正的保护也不在这里：包缺失时 buildDispatchPackage
+    // 会以 dispatch_package_incomplete 直接失败。若将来真的实现了分阶段的包构建，这道门连同它的
+    // 阶段一起加回来。
     // 只有【已经进入流程】的共享定义才阻塞关闭：草稿视为尚未提出。否则任何一条 AI 建的 draft 都能
     // 永久锁死关闭门，而控制台对共享定义是只读的、REST 也没有改状态的入口 —— 人将完全无法脱困。
     shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => SHARED_DEFINITION_BLOCKING_STATUSES.includes(definition.status)),
@@ -3044,7 +3049,6 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     no_pending_human_confirmations: forTaskGroup(state.humanConfirmationRequests).some((item) => item.status === "pending"),
     no_pending_human_directives: forTaskGroup(state.humanDirectives).some((item) => ["queued", "acknowledged"].includes(item.status)),
     no_active_role_drift_blockers: readiness.blockingObjects.some((item) => item.objectType === "RoleDriftGuard"),
-    all_effective_instruction_packets_terminal: forTaskGroup(state.effectiveInstructionPackets).some((packet) => !["active", "rejected", "superseded"].includes(packet.status)),
     all_shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => SHARED_DEFINITION_BLOCKING_STATUSES.includes(definition.status)),
     all_repository_output_targets_terminal: forTaskGroup(state.repositoryOutputs).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status))
   };

@@ -145,11 +145,14 @@ export function checkBarrierLiveness() {
     if (!literals.length) continue;
     checked += 1;
     const unique = [...new Set(literals)];
-    // 第二层：状态名登记了不代表它会出现。一个"已登记但全仓无任何写入方"的状态，
-    // 门照样永远不会因它触发（正向判据）或永远因它阻塞（反向判据）。故同时核对生产者。
-    const unproduced = unique.filter((literal) => machine.states.includes(literal) && !producedStatuses.has(literal));
-    if (unproduced.length === unique.length && unique.length) {
-      failures.push(`空转门检查: 门 ${gateName} 检查的状态 ${JSON.stringify(unproduced)} 已登记但全仓没有任何代码写入过 —— 拼写没错，门依然永远不会触发`);
+    // 第二层：状态名登记了不代表它会出现。真正要问的是 ——【什么状态会让这道门触发，
+    // 那些状态有没有生产者】。否定式判据（!TERMINAL.includes(status) 即阻塞）尤其容易漏：
+    // 门里写的字面量全都是终态、也都有生产者，可是能让它触发的那些非终态一个都没人写，
+    // 于是门照样永远不响。这一整类空转门都只有这样才查得出来。
+    const negated = /!\s*(?:\[|[A-Z_a-z]+(?:STATUSES|TERMINAL|Statuses))/.test(line);
+    const firingStates = negated ? machine.states.filter((st) => !unique.includes(st)) : unique;
+    if (firingStates.length && !firingStates.some((st) => producedStatuses.has(st))) {
+      failures.push(`空转门检查: 门 ${gateName} 只有当 ${entity} 处于 ${JSON.stringify(firingStates)} 之一时才会触发，而这些状态全仓没有任何代码写入过 —— 这道门永远不会响`);
     }
     const dead = unique.filter((literal) => !machine.states.includes(literal));
     if (dead.length === unique.length) {

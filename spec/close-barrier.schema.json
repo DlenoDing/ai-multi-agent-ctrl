@@ -69,7 +69,7 @@
     },
     "requiredGates": {
       "type": "array",
-      "minItems": 27,
+      "minItems": 26,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/closeGate"
@@ -101,7 +101,6 @@
         "all_rule_sources_resolved",
         "completion_readiness_clear",
         "no_active_role_drift_blockers",
-        "all_effective_instruction_packets_terminal",
         "all_shared_definitions_active",
         "all_repository_output_targets_terminal",
         "no_pending_human_confirmations",
@@ -172,9 +171,6 @@
           "$ref": "#/$defs/gateResult"
         },
         "no_active_role_drift_blockers": {
-          "$ref": "#/$defs/gateResult"
-        },
-        "all_effective_instruction_packets_terminal": {
           "$ref": "#/$defs/gateResult"
         },
         "all_shared_definitions_active": {
@@ -424,11 +420,6 @@
             },
             {
               "contains": {
-                "const": "all_effective_instruction_packets_terminal"
-              }
-            },
-            {
-              "contains": {
                 "const": "all_shared_definitions_active"
               }
             },
@@ -511,7 +502,6 @@
         "all_rule_sources_resolved",
         "completion_readiness_clear",
         "no_active_role_drift_blockers",
-        "all_effective_instruction_packets_terminal",
         "all_shared_definitions_active",
         "all_repository_output_targets_terminal",
         "no_pending_human_confirmations",
