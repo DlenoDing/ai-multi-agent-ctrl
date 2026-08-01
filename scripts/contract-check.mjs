@@ -1030,6 +1030,51 @@ function verifyHumanAndOrganizationContracts(output) {
     if (afterFresh.status !== "passed") output.push("人工闸门: 带新证据的重报仍无法清除失败的质量门（正常流程被打断）");
     if (!afterFresh.previouslyFailed) output.push("人工闸门: 质量门被翻转却没有留下 previouslyFailed 痕迹（人看不到这条曾失败）");
 
+    // 待人工定稿期间不得继续派发同一个工作项：否则人还在看"这份成果算不算通过"，
+    // AI 已经重新拿到写租约把对象改掉了，而定稿之后互审又会永久跳过它。
+    const hcHoldState = structuredClone(seedState);
+    ensureRuntimeCollections(hcHoldState, {root});
+    const hcHoldTg = hcHoldState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const hcHoldWork = hcHoldTg.workItems[0];
+    hcHoldWork.status = "ready";
+    hcHoldState.humanConfirmationRequests = [{
+      schemaVersion: "human-confirmation-request/v1", requestId: "hcr_hold", projectId: hcHoldTg.projectId,
+      taskGroupId: hcHoldTg.id, workItemId: hcHoldWork.id, decisionClass: "major", decisionType: "work_item_verification",
+      question: {summary: "这份成果算不算通过"}, options: [{optionId: "accept", label: "通过"}, {optionId: "none", label: "先不定"}],
+      blocking: true, status: "pending", round: 1, createdAt: "2026-08-02T00:00:00Z", updatedAt: "2026-08-02T00:00:00Z"
+    }];
+    // 断言必须精确到"这个工作项"：任务组里还有别的工作项会被正常派发，笼统断言"没有新派发"
+    // 既会误报，也会在拦截失效时因为别处的派发而恰好蒙对。
+    const dispatchedHold = () => (hcHoldState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === hcHoldWork.id);
+    if (dispatchedHold()) { output.push("人工闸门: 测试前置不成立（该工作项已有派发）"); }
+    runAutonomousCycle(hcHoldState, {taskGroupId: hcHoldTg.id}, {root});
+    if (dispatchedHold()) {
+      output.push("人工闸门: 工作项挂着待人工定稿的重大决策时仍被重新派发（人的定稿会落在一个正被改写的对象上）");
+    }
+    // 同时证明测试不空转：把卡片撤掉后，同一个工作项必须能被派发出去。
+    const hcFreeState = structuredClone(hcHoldState);
+    hcFreeState.humanConfirmationRequests = [];
+    const hcFreeWork = hcFreeState.taskGroups.find((item) => item.id === hcHoldTg.id).workItems.find((item) => item.id === hcHoldWork.id);
+    hcFreeWork.status = "ready";
+    runAutonomousCycle(hcFreeState, {taskGroupId: hcHoldTg.id}, {root});
+    if (!(hcFreeState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === hcHoldWork.id)) {
+      output.push("人工闸门: 没有待确认卡片时该工作项也派发不出去 —— 上面那条断言其实什么都没证明");
+    }
+
+    // 验收卡片必须带内容摘要，否则"你批准的必须还是你当时看到的"这道校验对最核心的决策整条跳过。
+    const snapState = structuredClone(seedState);
+    ensureRuntimeCollections(snapState, {root});
+    const snapTg = snapState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const snapWork = snapTg.workItems[0];
+    const snapCard = createHumanConfirmationRequest(snapState, {
+      projectId: snapTg.projectId, taskGroupId: snapTg.id, workItemId: snapWork.id,
+      decisionType: "work_item_verification", subjectRef: `WorkItem:${snapWork.id}`,
+      question: {summary: "验收确认"}, options: [{optionId: "accept", label: "通过"}]
+    });
+    if (!snapCard?.subjectContentDigest) {
+      output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
+    }
+
     // 提权链：执行方自选 resourceType/permission 申请 {system, accounts} 的 system:* ——
     // 批准通道原样铸造该权限（不做任何委派校验），拿到 system:account_admin 即可铸造 system_admin
     // 账号，登录后 isHumanConfirmationActor 就返回 true，于是所有核心决策的人工闸门被从旁边绕过。

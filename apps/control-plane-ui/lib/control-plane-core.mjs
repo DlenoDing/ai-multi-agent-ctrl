@@ -1833,6 +1833,19 @@ export function runAutonomousCycle(state, request = {}) {
         continue;
       }
       const split = splitMixedWorkItemIfNeeded(state, taskGroup, workItem);
+      // 任何针对这个工作项的重大决策只要还挂着待人工定稿，本轮就不得再派发它。
+      // 此前只有 task_split 这一种被拦下，验收/方案拓扑都没拦 —— 于是人还在看"要不要按这个方案跑"
+      // 或"这份成果算不算通过"，AI 已经重新拿到写租约把对象改掉了。人的定稿因此落在一个正在被
+      // 改写的东西上，而定稿之后互审又会永久跳过该工作项，后续改动再无人复核。
+      // 闸门要装在"这个工作项现在能不能被执行"上，而不是装在某一个 API 动作上。
+      const blockingMajorConfirmation = (state.humanConfirmationRequests || []).find((request) =>
+        request.status === "pending" && request.decisionClass === "major" && request.taskGroupId === taskGroup.id
+        && (request.workItemId === workItem.id || request.subjectRef === `WorkItem:${workItem.id}`));
+      if (blockingMajorConfirmation) {
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "deferred", reasonCode: "awaiting_human_confirmation", whyThisCellNow: "cell_held_for_human_confirmation", cycleRef});
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, awaiting: "human_confirmation", confirmationRef: blockingMajorConfirmation.requestId});
+        continue;
+      }
       if (split?.pendingHumanSplitConfirmation) {
         // 拆分方案待人工定稿：本轮不得继续派发这个工作项，否则等于按 AI 自己的方案执行下去。
         recordAdmissionDecision(state, {taskGroup, workItem, outcome: "deferred", reasonCode: "awaiting_human_split_confirmation", whyThisCellNow: "cell_held_for_human_plan_confirmation", cycleRef});
@@ -4289,7 +4302,36 @@ function subjectContentSnapshot(state, request) {
       })))
     };
   }
-  return undefined; // 该类型无需对象级快照（验收/关闭/拆分绑定的是确定的工作项/任务组本身）
+  if (request.decisionType === "work_item_verification") {
+    // 先前这里返回 undefined，理由是"验收绑定的是确定的工作项本身"。但 TOCTOU 防的不是【指向谁】
+    // 变了，而是【那个东西的内容】变了：人批准的是"这份成果通过验收"，而成果就是提交/推送/产出目标
+    // 与质量门这些证据。卡片挂着的时候若又跑了一轮，人的定稿就落在另一份成果上 —— 而定稿之后
+    // 互审会永久跳过该工作项，那些改动再也不会被复核。所以这里必须锁住证据面。
+    const workItemId = String(request.subjectRef || "").replace(/^WorkItem:/u, "") || request.workItemId;
+    const taskGroup = (state.taskGroups || []).find((item) => item.id === request.taskGroupId);
+    const workItem = (taskGroup?.workItems || []).find((item) => item.id === workItemId);
+    if (!workItem) return null;
+    const checkpoint = (state.checkpoints || [])
+      .filter((item) => item.taskGroupId === request.taskGroupId && (item.workId === workItemId || item.workItemId === workItemId))
+      .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))[0];
+    return {
+      workItemStatus: workItem.status,
+      reviewState: workItem.reviewState || null,
+      commitRefs: [...(checkpoint?.commitRefs || [])].map((ref) => ref.commit || ref).sort(),
+      pushRefs: [...(checkpoint?.pushRefs || [])].map((ref) => `${ref.remote || ""}:${ref.ref || ""}:${ref.remoteSha || ""}`).sort(),
+      artifactManifestRefs: [...(checkpoint?.artifactManifestRefs || [])].sort(),
+      repositoryOutputs: (state.repositoryOutputs || [])
+        .filter((target) => target.taskGroupId === request.taskGroupId && target.workItemId === workItemId)
+        .map((target) => `${target.targetId}:${target.status}`).sort(),
+      qualityGates: (state.qualityGates || [])
+        .filter((gate) => gate.taskGroupId === request.taskGroupId && gate.workItemId === workItemId)
+        .map((gate) => `${gate.gateType}:${gate.status}:${gate.previouslyFailed ? "prev_failed" : "clean"}`).sort()
+    };
+  }
+  // task_group_close 不走确认单：它是 computeCloseBarrier 里"算完当场落闸"的一次调用，
+  // 落闸前重算门禁并要求真人身份，中间没有 TOCTOU 窗口。这里不放分支，是为了不留一段
+  // 看着像防护、实际永不执行的代码。
+  return undefined; // 拆分绑定的是确定的工作项本身，且拆分方案本身就写在卡片正文里
 }
 
 // 人定稿后的落地 + 上锁。这里是**唯一**能把工作项推到 verified 的路径（AI 互审只能推到 verification_ready）。
