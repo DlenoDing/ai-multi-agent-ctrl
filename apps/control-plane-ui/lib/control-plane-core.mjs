@@ -2732,7 +2732,7 @@ export function terminateCellRuntime(state, taskGroupId, workItemId, reason) {
   for (const artifact of state.artifacts || []) {
     if (artifact.taskGroupId !== taskGroupId || artifact.workItemId !== workItemId) continue;
     if (["verified", "rejected"].includes(artifact.status)) continue;
-    if (artifact.status === "registered" && artifact.contentVerifiable === true) continue;
+    if (!artifactStillGating(artifact)) continue;
     artifact.status = "rejected";
     artifact.rejectedReason = reason;
     artifact.updatedAt = at;
@@ -3043,13 +3043,11 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     no_active_temp_grants: (state.mcpGrants || []).some((grant) => grant.taskGroupId === taskGroupId && grant.grantStatus === "issued" && new Date(grant.expiresAt || 0).getTime() > nowMs),
     // 这道门原先恒不触发：artifactRegister 只会写 "registered"，而它本身就在通过集里，
     // "verified" 则全仓无人写入 —— 一道名为"制品已验证"的门，从来没有验证过任何东西，
-    // 连没有内容哈希（contentVerifiable=false，摘要其实是请求参数的哈希）的制品也照样通过。
+    // 连没有任何摘要（原先那个 digest 其实是请求参数的哈希）的制品也照样通过。
     // 改为按【是否真的可验证】判定；出口是 terminateCellRuntime 的级联（放弃工作项即收口）。
     // 已了结的三种：verified（真验过）、rejected/gc（明确作废，只有 terminateCellRuntime 能写）。
     // 其余只有"registered 且确实带内容哈希"才算数 —— 摘要若来自请求参数，它什么都没证明。
-    artifacts_verified: forTaskGroup(state.artifacts).some((item) =>
-      !["verified", "rejected", "gc"].includes(item.status)
-      && !(item.status === "registered" && item.contentVerifiable === true)),
+    artifacts_verified: forTaskGroup(state.artifacts).some(artifactStillGating),
     rules_candidates_processed: (state.ruleSourceResolutions || []).some((item) => item.taskGroupId === taskGroupId && item.status === "discovered"),
     runtime_issue_candidates_exported: forTaskGroup(state.systemUpgradeCandidates).some((item) => item.status === "candidate_created"),
     no_open_execution_topologies: forTaskGroup(state.executionTopologies).some((item) => !TOPOLOGY_TERMINAL_STATUSES.includes(item.status)),
@@ -4659,10 +4657,18 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
         // reopen 仍然只对 needs_decision 生效（把已验收的工作项拉回 ready 会绕过人工定稿）；
         // 但 abandon 是"我决定不做了"，必须对任何还没了结的工作项都可用 —— 原先只能放弃
         // needs_decision 的格子，于是一个卡在别的状态上的工作项，人连放弃它的手段都没有。
-        const abandonable = (item) => !["verified", "closed", "superseded", "aborted", "cancelled"].includes(item.status);
-        const targets = (taskGroup.workItems || []).filter((item) =>
-          (directive.resolution === "abandon" ? abandonable(item) : item.status === "needs_decision")
-          && (!directive.workItemId || item.id === directive.workItemId));
+        // 放宽 abandon 的适用状态时，我把"不填 workItemId"的爆炸半径一起放大了：原先它只命中
+        // needs_decision 的格子，放宽后变成【整组所有未了结的工作项】—— 一条指令就能放弃整组，
+        // 顺带把产出目标置为 superseded、不可验证的制品置为 rejected、失败的质量门因工作项被放弃
+        // 而豁免，关闭门当场全绿。而控制台上那句提示写的仍是旧语义，人以为自己在"清掉卡住的格子"。
+        // 因此：不填 workItemId 时维持原语义（只处置 needs_decision），放宽出来的那部分能力
+        // 必须点名到具体工作项。
+        const abandonable = (item) => !WORK_ITEM_SETTLED_STATUSES.includes(item.status);
+        const targets = (taskGroup.workItems || []).filter((item) => {
+          if (directive.workItemId && item.id !== directive.workItemId) return false;
+          if (directive.resolution !== "abandon") return item.status === "needs_decision";
+          return directive.workItemId ? abandonable(item) : item.status === "needs_decision";
+        });
         for (const workItem of targets) {
           if (directive.resolution === "abandon") {
             workItem.status = "superseded";
@@ -5205,10 +5211,15 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
       (() => {
         const gates = (state.qualityGates || []).filter((gate) => gate.taskGroupId === taskGroup.id && gate.workItemId === workItem.id);
         const reversed = gates.filter((gate) => gate.previouslyFailed && gate.status === "passed");
+      // 证据摘要是执行方在自己机器上算的，内容从不上传，控制面无法核验它与内容是否相符。
+      // 卡片上必须说出这一点：否则"证据已就绪"会被读成"证据已被核验过"。
+      const attested = (state.artifacts || []).filter((item) => item.taskGroupId === taskGroup.id
+        && item.workItemId === workItem.id && item.contentDigestAttested === true);
         const waived = gates.filter((gate) => gate.status === "waived");
         const notes = [];
         if (reversed.length) notes.push(`\n⚠ 以下质量门曾判失败、后由执行方重报为通过（已附新证据）：${reversed.map((gate) => gate.gateType).join("、")}`);
         if (waived.length) notes.push(`\n⚠ 以下质量门为人工豁免：${waived.map((gate) => `${gate.gateType}（${gate.waivedBy || "?"}）`).join("、")}`);
+        if (attested.length) notes.push(`\n⚠ 本工作项的 ${attested.length} 项证据制品，其内容摘要由执行方自行计算并声明，证据内容不上传控制面，因此控制面【未能独立核验】摘要与内容是否相符。可独立核验的是检查点里的提交与推送记录。`);
         return notes.join("");
       })(),
     evidenceRefs: bundle.evidenceRefs,
@@ -6000,6 +6011,24 @@ export function releaseLease(state, args) {
   return {lease};
 }
 
+// 定位符里嵌着摘要的前 40 位（运行时就是这么拼的）。强制这条绑定，摘要就不能与定位符各说各话 ——
+// 这是控制面在【不接收内容】的前提下唯一能独立复核的一致性。它证明不了"摘要来自真实内容"，
+// 只证明"这两样是同一次登记里配套的"，所以下游必须按自证对待。
+// 门与淘汰谓词共用这一句：分成两处手写，就是刚被查出来的那种漂移。
+export function artifactStillGating(item) {
+  if (["verified", "rejected", "gc"].includes(item.status)) return false;
+  return !(item.status === "registered" && item.contentDigestAttested === true);
+}
+
+function attestedArtifactDigest(args) {
+  const digest = String(args.payload?.digest || "");
+  if (!/^sha256:[a-f0-9]{64}$/.test(digest)) return null;
+  const locators = [...(args.outputRefs || []), args.payload?.uri].filter(Boolean).map(String);
+  const shortDigest = digest.slice("sha256:".length, "sha256:".length + 40);
+  if (locators.length && !locators.some((ref) => ref.includes(shortDigest))) return null;
+  return digest;
+}
+
 export function artifactRegister(state, args) {
   const at = new Date().toISOString();
   const taskGroup = taskGroupForRecord(state, args);
@@ -6014,13 +6043,20 @@ export function artifactRegister(state, args) {
     // digestOf(args) 是【请求参数】的哈希：两次相同的请求得到相同的值，而它与文件内容毫无关系 ——
     // 一条"已按摘要登记"的证据其实什么都没有证明。运行时本来就在本地算好了内容哈希并放在
     // payload.digest 里，此前被整个丢掉。没有内容哈希的制品必须如实标注，不能借这个字段冒充可验证。
-    contentDigest: /^sha256:[a-f0-9]{64}$/.test(String(args.payload?.digest || "")) ? args.payload.digest : null,
-    contentVerifiable: /^sha256:[a-f0-9]{64}$/.test(String(args.payload?.digest || "")),
+    // 摘要是【执行方在自己机器上算的】，证据内容从不上传到控制面（那是日志/截图/HAR/数据库转储，
+    // 是全系统最敏感的数据；把它们收进控制面等于给自己造一个必须加密、必须管保留期的外泄目标）。
+    // 因此控制面【无法】核验摘要与内容是否相符 —— 字段名必须说出这一点，不能叫 contentVerifiable
+    // 那样暗示"已核验"。它的真实含义是：执行方声明了一个摘要，并且这个摘要与它给出的定位符自洽。
+    contentDigest: attestedArtifactDigest(args),
+    contentDigestAttested: Boolean(attestedArtifactDigest(args)),
     requestDigest: digestOf(args),
     status: "registered",
     createdAt: at
   };
-  state.artifacts = capRetainingOpen([artifact, ...state.artifacts], ["verified", "registered"], 2000);
+  // 门现在认为"registered 但没有自证摘要"是阻塞项，而这里的终态集还写着 registered ——
+  // 于是"正在挡门的东西"在淘汰逻辑眼里是可丢弃的终态，登记 2001 条就能把它挤掉。
+  // 淘汰谓词必须与门判据同一句话。
+  state.artifacts = capRetainingPredicate([artifact, ...state.artifacts], (item) => artifactStillGating(item), 2000);
   return {artifact};
 }
 

@@ -959,6 +959,12 @@ errors << "test evidence must derive a quality gate that gates close" unless cor
 # 真人专属杠杆若在控制台里没有入口，等于这个杠杆不存在 —— 人只会看到一个红色阻塞 chip，
 # 然后无从下手。本轮一次性发现三个这样的杠杆（质量门豁免/评审计划收尾/共享定义处置），
 # 全都只有裸 REST。故把"有杠杆必有入口"钉成结构约束。
+# 证据摘要是执行方自证的（内容不上传控制面，控制面无法核验摘要与内容是否相符）。
+# 字段名与卡片文案都必须说出这一点 —— 叫 contentVerifiable 会被读成"已核验"，
+# 而"证据已就绪"若不加说明，人会以为控制面替他检查过了。
+errors << "证据摘要字段不得暗示控制面已核验（应为自证语义）" if core_source.include?("contentVerifiable:")
+errors << "验收卡片必须说明证据摘要为执行方自证、控制面未独立核验" unless core_source.include?("未能独立核验") && core_source.include?("contentDigestAttested")
+
 ["account_invite", "system_account_invite"].each do |action|
   errors << "#{action} 必须是真人专属动作（机器主体铸造人类账号=绕过整道人工定稿闸门）" unless server_source.match?(/HUMAN_ONLY_ACTIONS\s*=\s*\[[^\]]*"#{action}"/m)
 end

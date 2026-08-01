@@ -230,7 +230,7 @@ try {
   const evidenceArtifact = (artifactState.artifacts || []).find((item) =>
     item.taskGroupId === completed.taskGroupId &&
     ["registered", "verified"].includes(item.status) &&
-    /^sha256:[0-9a-f]{64}$/u.test(String(item.contentDigest || "")) &&
+    /^sha256:[0-9a-f]{64}$/u.test(String(item.contentDigest || "")) && item.contentDigestAttested === true &&
     // 关键：摘要必须与运行时在本地对【证据内容】算出的哈希一致（定位符里带着它的前 40 位）。
     // 此前这里比对的是 digestOf(args) —— 请求参数的哈希，它必然长得像个 sha256，于是这条
     // 断言恒真，从来没有验证过任何内容。摘要与定位符互相印证才说明它确实来自内容本身。

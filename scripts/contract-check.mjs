@@ -1109,6 +1109,40 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
     }
 
+    // 放宽 abandon 的适用状态时，"不填 workItemId"的爆炸半径也被一起放大了：一条指令放弃整组、
+    // 顺带作废全部产出，关闭门当场全绿，而界面提示写的还是旧语义。不点名就只能处置待决策的格子。
+    const blastState = structuredClone(seedState);
+    ensureRuntimeCollections(blastState, {root});
+    const blastTg = blastState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    blastTg.workItems = [
+      {id: "wi_running", title: "正在做", status: "in_progress"},
+      {id: "wi_stuck", title: "待决策", status: "needs_decision"}
+    ];
+    blastState.humanDirectives = [{
+      schemaVersion: "human-directive/v1", directiveId: "hd_blast", projectId: blastTg.projectId,
+      taskGroupId: blastTg.id, directiveType: "resolve_decision", resolution: "abandon",
+      status: "queued", appliedActions: [], createdAt: "2026-08-02T00:00:00Z", updatedAt: "2026-08-02T00:00:00Z"
+    }];
+    consumeQueuedHumanDirectives(blastState, {});
+    const blastItem = (id) => blastTg.workItems.find((item) => item.id === id);
+    if (blastItem("wi_running").status === "superseded") {
+      output.push("放弃指令: 不点名工作项时把整组正在进行的工作也一并放弃了（一条指令清空关闭门，且界面提示与语义不符）");
+    }
+    if (blastItem("wi_stuck").status !== "superseded") {
+      output.push("放弃指令: 不点名时连待决策的格子也没处置（原有语义被打断）");
+    }
+    // 点名之后才应当能放弃非待决策状态的工作项
+    blastState.humanDirectives = [{
+      schemaVersion: "human-directive/v1", directiveId: "hd_named", projectId: blastTg.projectId,
+      taskGroupId: blastTg.id, directiveType: "resolve_decision", resolution: "abandon",
+      workItemId: "wi_running", status: "queued", appliedActions: [],
+      createdAt: "2026-08-02T00:00:00Z", updatedAt: "2026-08-02T00:00:00Z"
+    }];
+    consumeQueuedHumanDirectives(blastState, {});
+    if (blastItem("wi_running").status !== "superseded") {
+      output.push("放弃指令: 点名之后仍无法放弃一个卡在别的状态上的工作项（人还是没有杠杆）");
+    }
+
     // (a) 被拆分取代 / 人工放弃的工作项都是 superseded，而原判据只认 verified/closed ——
     //     拆分是系统自己会做的事，于是拆分过一次的任务组从此永远关不掉。
     // (b) 证据判据原先只要求全组【存在任意一个】带 git 证据的检查点：5 个已验收工作项配 1 个
@@ -1224,10 +1258,31 @@ function verifyHumanAndOrganizationContracts(output) {
     // 正常流程不得被打断：运行时算好的内容哈希应当直接通过
     const artOkState = structuredClone(seedState);
     ensureRuntimeCollections(artOkState, {root});
+    // 定位符必须与摘要自洽：这是控制面在不接收证据内容的前提下唯一能独立复核的一致性。
+    const okDigest = `sha256:${"a".repeat(64)}`;
     artifactRegister(artOkState, {taskGroupId: artTg.id, workItemId: artWork.id, artifactManifestRef: "docs/y.json",
-      payload: {digest: `sha256:${"a".repeat(64)}`}});
+      outputRefs: [`artifact://prj/tg/run/log/${okDigest.slice(7, 47)}`], payload: {digest: okDigest, uri: `artifact://prj/tg/run/log/${okDigest.slice(7, 47)}`}});
     if (computeCloseBarrier(artOkState, artTg.id).gateResults.artifacts_verified.status === "blocked") {
       output.push("制品门: 带真实内容哈希的制品也被挡住（正常证据登记流程被打断）");
+    }
+
+    // 摘要与定位符不自洽的登记不得算数（否则两者可以各说各话），以及：不能靠刷量把正在挡门的
+    // 制品挤出淘汰窗口 —— 门认为它在阻塞，淘汰逻辑却认为它是可丢弃的终态，就是这种漂移。
+    const artMismatch = structuredClone(seedState);
+    ensureRuntimeCollections(artMismatch, {root});
+    const amTg = artMismatch.taskGroups.find((item) => item.id === "tg_runtime_management");
+    artifactRegister(artMismatch, {taskGroupId: amTg.id, workItemId: amTg.workItems[0].id, artifactManifestRef: "docs/z.json",
+      outputRefs: ["artifact://prj/tg/run/log/deadbeef"], payload: {digest: `sha256:${"b".repeat(64)}`, uri: "artifact://prj/tg/run/log/deadbeef"}});
+    if (computeCloseBarrier(artMismatch, amTg.id).gateResults.artifacts_verified.status !== "blocked") {
+      output.push("制品门: 摘要与定位符不自洽的登记也算通过（两者可以各说各话，这条自洽性就没有意义）");
+    }
+    for (let index = 0; index < 2100; index += 1) {
+      const flood = `sha256:${String(index).padStart(64, "c")}`;
+      artifactRegister(artMismatch, {taskGroupId: amTg.id, workItemId: amTg.workItems[0].id, artifactManifestRef: `docs/f${index}.json`,
+        outputRefs: [`artifact://prj/tg/run/log/${flood.slice(7, 47)}`], payload: {digest: flood, uri: `artifact://prj/tg/run/log/${flood.slice(7, 47)}`}});
+    }
+    if (computeCloseBarrier(artMismatch, amTg.id).gateResults.artifacts_verified.status !== "blocked") {
+      output.push("制品门: 刷量登记即可把正在阻塞的制品挤出淘汰窗口（淘汰谓词与门判据漂移，等于自助放行）");
     }
 
     // 发现项降级：证据不足时处置类被降为 fixed_unverified，但状态却被写成终态 —— 于是关闭门

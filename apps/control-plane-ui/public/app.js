@@ -2213,7 +2213,7 @@ function renderDirectives() {
             <select name="resolution"><option value="reopen">重开（返回就绪，重置返工计数）</option><option value="abandon">放弃（置为已替代，解除关闭阻塞）</option></select>
             <span class="small muted">仅“决策处置”类型生效</span>
           </div>
-          <div class="form-row"><label>目标工作项 ID</label><input name="workItemId" placeholder="仅“决策处置”可选：留空则处置该组全部待决策项" /></div>
+          <div class="form-row"><label>目标工作项 ID</label><input name="workItemId" placeholder="留空只处置该组处于“待人工决策”的格子；要放弃其它状态的工作项必须点名填写它的 ID" /></div>
           <div class="form-row"><label>指令内容</label><textarea name="instruction" placeholder="补充要求 / 自由指令必填，其余类型可选"></textarea></div>
           <button class="primary-button" type="submit">提交指令</button>
         </form>
