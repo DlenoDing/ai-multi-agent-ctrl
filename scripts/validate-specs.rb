@@ -1015,6 +1015,16 @@ errors << %(验收卡片必须说明角色技能回退（否则人以为它按�
 # 过期会话原先只在有人登录时被顺带清理，无人登录期间长期滞留。
 errors << %(必须有独立的过期会话清扫（不能只依赖"下一次有人登录"）) unless server_source.include?("过期会话原先【只在有人登录时】被顺带清理")
 
+# 检查点是"这份工作到底有没有真的做出来"的最终判据，三条实质校验此前只在【被约束方自己】那里：
+#  ① "产出必须在清单之外" —— 只有 runtime.mjs 在查，服务端没有等价物，于是一份把自己列为自己产出的
+#     清单就能满足全部校验，零产出的提交被判为证据齐备；
+#  ② pathDenylist（.env/.git/**/node_modules/**）唯一的执行点也在执行方，而 allowlist 接受 "**"；
+#  ③ 网关路由按 dispatchId 认证到派发 A，却把整个 body 交给 core，后者按 body 另找派发 B —— 
+#     认证的和被操作的不是同一个对象。
+errors << %(服务端必须要求"清单之外还有真实产出"（被约束方自查等于没查）) unless core_source.include?("artifact_manifest_has_no_output_beyond_itself")
+errors << %(服务端必须执行 pathDenylist，不能只靠执行方自查) unless core_source.include?("changed_paths_inside_repository_target_denylist")
+errors << %(检查点路由必须用【认证到的那个派发】的身份，不接受 body 自报) unless server_source.include?("const boundBody = {...body,") && server_source.include?("repositoryOutputTargetRefs: [target.targetId]")
+
 # 证据摘要是执行方自证的（内容不上传控制面，控制面无法核验摘要与内容是否相符）。
 # 字段名与卡片文案都必须说出这一点 —— 叫 contentVerifiable 会被读成"已核验"，
 # 而"证据已就绪"若不加说明，人会以为控制面替他检查过了。

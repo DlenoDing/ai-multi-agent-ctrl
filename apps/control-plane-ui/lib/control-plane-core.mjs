@@ -2590,6 +2590,14 @@ function validateCheckpointGitEvidence(state, request) {
   if (!changedPaths.every((path) => canUseGitPath(path) && pathMatchesAllowlist(path, target.pathAllowlist || []))) {
     return {valid: false, status: 409, error: "changed_paths_outside_repository_target_allowlist"};
   }
+  // pathDenylist（.env / .git/** / node_modules/** 等）此前【全仓唯一的执行点在执行方自己那里】——
+  // 服务端只查 allowlist。而 allowlist 接受 "**"，于是一个宽 allowlist 加一个改过的运行时
+  // （或任何直接调这个接口的调用方）就能把 denylist 里的路径提交上来并被接受。
+  // 被约束方自查等于没查：禁区必须在服务端拦。
+  const denied = changedPaths.filter((path) => pathMatchesAllowlist(path, target.pathDenylist || []));
+  if (denied.length) {
+    return {valid: false, status: 409, error: "changed_paths_inside_repository_target_denylist", deniedPaths: denied.slice(0, 20)};
+  }
   for (const manifestPath of checkpointInput.artifactManifestRefs || []) {
     if (!changedPaths.includes(manifestPath)) {
       return {valid: false, status: 409, error: "artifact_manifest_not_changed_in_commit"};
@@ -2614,6 +2622,16 @@ function validateCheckpointGitEvidence(state, request) {
     const outputRefs = Array.isArray(manifest.outputRefs) ? manifest.outputRefs : [];
     if (!outputRefs.length) {
       return {valid: false, status: 409, error: "artifact_manifest_missing_output_refs"};
+    }
+    // "产出必须在清单之外"此前只有【执行方自己】在查（runtime.mjs 里 outputRefs = changed - manifest，
+    // 为空即抛错），服务端没有等价物 —— 于是一份把自己列为自己产出的清单能满足全部校验，
+    // 一次零产出的提交就被判为"证据齐备"。而互审的每一条判据都是这里已经强制过的结构性事实，
+    // 所以它对任何被接受的检查点恒为 passed，挡不住这个；验收卡片又不显示改了哪些路径。
+    // 被约束方自查等于没查：这条必须在服务端。
+    const manifestPaths = new Set((checkpointInput.artifactManifestRefs || []).map((ref) => String(ref)));
+    const substantiveOutputs = outputRefs.filter((ref) => !manifestPaths.has(String(ref)));
+    if (!substantiveOutputs.length) {
+      return {valid: false, status: 409, error: "artifact_manifest_has_no_output_beyond_itself"};
     }
     for (const outputRef of outputRefs) {
       if (!canUseGitPath(outputRef) || !pathMatchesAllowlist(outputRef, target.pathAllowlist || [])) {

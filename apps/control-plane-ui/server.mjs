@@ -2100,7 +2100,22 @@ async function handleApi(req, res) {
     const target = state.repositoryOutputs.find((item) => item.targetId === dispatch.repositoryOutputTargetRef);
     if (!target) return json(res, 409, {error: "repository_output_target_missing"});
     const verificationRoot = await prepareRemoteGitVerification(target, body);
-    const result = acceptAgentCheckpoint(state, body, {root: verificationRoot, repositoryRoot: verificationRoot});
+    // 路由按 dispatchId + assignedNodeId 认证到派发 A，然后把【整个 body】交给 acceptAgentCheckpoint —— 
+    // 而后者完全按 body 里的 taskGroupId/workId/sessionId/runId 另行查找派发 B，从不与 A 比对。
+    // 于是：一个曾经持有过 B（claim 过期被回收，runId/sessionId/targetId 全部保留）的节点，
+    // 只要再 claim 到同项目的任意派发 A，就能用 A 的身份替 B 提交检查点 —— B 被判完成、它的产出目标
+    // 置为 pushed，真正在执行 B 的那个节点之后永远提交不上去，而审计里记的是"这个节点完成了 A"。
+    // 认证到的是谁，就只能替谁提交：身份字段一律以 A 为准，不接受 body 自报。
+    const boundBody = {...body,
+      dispatchId: dispatch.dispatchId,
+      runId: dispatch.runId,
+      sessionId: dispatch.sessionId,
+      workId: dispatch.workItemId,
+      workItemId: dispatch.workItemId,
+      taskGroupId: dispatch.taskGroupId,
+      projectId: dispatch.projectId,
+      repositoryOutputTargetRefs: [target.targetId]};
+    const result = acceptAgentCheckpoint(state, boundBody, {root: verificationRoot, repositoryRoot: verificationRoot});
     if (!result.accepted) {
       commitGatewayWrite(state);
       json(res, result.status || 409, result);
