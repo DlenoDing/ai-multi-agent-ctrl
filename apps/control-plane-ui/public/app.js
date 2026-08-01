@@ -3454,6 +3454,8 @@ function realtimeWake() {
   }, 300);
 }
 
+let realtimeReconnectAttempts = 0;
+
 function connectRealtime() {
   if (!authToken || realtimeSocket) return;
   let socket;
@@ -3467,6 +3469,7 @@ function connectRealtime() {
   }
   realtimeSocket = socket;
   socket.addEventListener("open", () => {
+    realtimeReconnectAttempts = 0; // 连上了就把退避归零，否则一次抖动会让后续重连一直停在长间隔上
     try { socket.send(JSON.stringify({subscribe: ["state"]})); } catch { /* closing */ }
   });
   socket.addEventListener("message", (event) => {
@@ -3477,7 +3480,13 @@ function connectRealtime() {
   const scheduleReconnect = () => {
     if (realtimeSocket === socket) realtimeSocket = null;
     if (!authToken || realtimeReconnectTimer) return;
-    realtimeReconnectTimer = setTimeout(() => { realtimeReconnectTimer = null; connectRealtime(); }, 3000);
+    // 固定 3 秒重连、没有退避也没有抖动：服务重启时每个开着的控制台都会同步、持续地猛击它，
+    // 而 5 秒轮询兜底同时还在跑 —— 恰好在服务最脆弱的时候加载最重。
+    // 指数退避 + 随机抖动，上限 30 秒；连上之后归零。
+    realtimeReconnectAttempts = Math.min(realtimeReconnectAttempts + 1, 6);
+    const backoffMs = Math.min(30000, 1000 * (2 ** realtimeReconnectAttempts));
+    const jitterMs = Math.floor(Math.random() * Math.min(5000, backoffMs));
+    realtimeReconnectTimer = setTimeout(() => { realtimeReconnectTimer = null; connectRealtime(); }, backoffMs + jitterMs);
   };
   socket.addEventListener("close", scheduleReconnect);
   socket.addEventListener("error", () => { try { socket.close(); } catch { /* already closed */ } });
