@@ -591,7 +591,12 @@ export function recomputeOrganizationUsage(state) {
   const projectOrg = new Map((state.projects || []).map((project) => [project.id, project.organizationId || DEFAULT_ORGANIZATION_ID]));
   for (const org of state.organizations || []) {
     org.usage = {
-      members: (state.accounts || []).filter((account) => account.organizationId === org.orgId && account.status !== "disabled").length,
+      // 两处漏计：① 这是三行统计里唯一没有默认组织兜底的，于是不带 organizationId 的账号
+      //（历史上经 MCP 邀请创建的那批）不计入任何组织，maxMembers 形同虚设；
+      // ② 只排除 disabled，而 MCP 的 account_suspend 写的是 suspended —— 被挂起的账号继续占额，
+      //    若它还是 MCP 邀请出来的（够不着 /api/org/members/:id/status），就没有任何释放杠杆。
+      members: (state.accounts || []).filter((account) => (account.organizationId || DEFAULT_ORGANIZATION_ID) === org.orgId
+        && !["disabled", "suspended", "retired"].includes(account.status)).length,
       projects: (state.projects || []).filter((project) => (project.organizationId || DEFAULT_ORGANIZATION_ID) === org.orgId && project.status !== "deleted").length,
       taskGroups: (state.taskGroups || []).filter((taskGroup) => projectOrg.get(taskGroup.projectId) === org.orgId && !["closed", "aborted"].includes(taskGroup.status)).length,
       agents: (state.agentRuntimeNodes || []).filter((node) => (node.organizationId || DEFAULT_ORGANIZATION_ID) === org.orgId && node.status !== "revoked").length

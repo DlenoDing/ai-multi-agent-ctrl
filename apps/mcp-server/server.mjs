@@ -2338,14 +2338,23 @@ function systemUpgradeExternalImport(state, args) {
   return {externalUpgradeImport: imported};
 }
 
-function accountInvite(state, args) {
+export function accountInvite(state, args) {
   const at = new Date().toISOString();
+  // 这条通道创建的账号原先【完全不带 organizationId】，而三处跨组织边界闸门都写成
+  // `X.organizationId && ...` —— undefined 时整条判定被跳过。结果这类账号可被任意组织的管理员
+  // 拉进项目、授予 grant，且自身在 hasPermission 里不受任何组织约束；它也不计入任何组织的
+  // 成员配额（那条统计唯一没有默认组织兜底）。归属必须在创建时就定下来，不能事后靠迁移补。
+  assertUniqueRecordId(state.accounts, "accountId", args.accountId, "account_id_conflict");
   const accountId = args.accountId || createId("acct");
+  const organizationId = String(args.organizationId || "").trim()
+    || (state.organizations || []).find((item) => item.orgId === DEFAULT_ORGANIZATION_ID)?.orgId
+    || DEFAULT_ORGANIZATION_ID;
   const accountToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
   const account = {
     schemaVersion: "account/v1",
     accountId,
     accountType: "user_account",
+    organizationId,
     displayName: args.displayName || args.email || "Project User",
     email: args.email || `${createId("user")}@local`,
     status: "invited",

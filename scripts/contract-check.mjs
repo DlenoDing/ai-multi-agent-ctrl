@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
-import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate } from "../apps/mcp-server/server.mjs";
+import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
   maintainWorkerLanes,
@@ -44,6 +44,7 @@ import {
   ruleSourceResolve,
   ruleSourceSettle,
   isDelegatableGrantPermission,
+  recomputeOrganizationUsage,
   WORK_SESSION_SETTLED_STATUSES,
   FINDING_TERMINAL_STATUSES,
   artifactRegister,
@@ -1109,6 +1110,34 @@ function verifyHumanAndOrganizationContracts(output) {
     });
     if (!snapCard?.subjectContentDigest) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
+    }
+
+    // 跨租户边界：三处闸门都写成 `X.organizationId && ...`，遇到 undefined 就整条跳过。
+    // 供给侧是 MCP 的 account_invite —— 它创建的账号完全不带组织归属，于是这类账号
+    // 可被任意组织拉进项目、授予 grant，且自身不受任何组织约束、也不计入任何组织的成员配额。
+    const orgState = structuredClone(seedState);
+    ensureRuntimeCollections(orgState, {root});
+    const invited = accountInvite(orgState, {displayName: "无归属探针", email: "orgless@local"});
+    const invitedAccount = orgState.accounts.find((item) => item.accountId === invited.account.accountId);
+    if (!invitedAccount?.organizationId) {
+      output.push("跨租户: 经 MCP 邀请创建的账号不带组织归属（三处跨组织边界闸门对它整条跳过）");
+    }
+    // 配额：无归属账号必须计入某个组织；被挂起的账号必须释放名额
+    recomputeOrganizationUsage(orgState);
+    // 注意：配额统计现在有默认组织兜底，所以"是否计入配额"测不出归属缺失 —— 必须直接检查字段本身，
+    // 因为跨组织边界闸门比对的是这个字段，不是配额。
+    const defaultOrg = (orgState.organizations || []).find((item) => item.orgId === (invitedAccount?.organizationId || ""));
+    if (!defaultOrg) {
+      output.push("跨租户: 账号的组织归属指向一个不存在的组织（边界闸门比对时会落空）");
+    }
+    if (invitedAccount) {
+      const beforeSuspend = defaultOrg?.usage?.members || 0;
+      invitedAccount.status = "suspended";
+      recomputeOrganizationUsage(orgState);
+      const afterSuspend = (orgState.organizations || []).find((item) => item.orgId === invitedAccount.organizationId)?.usage?.members || 0;
+      if (afterSuspend >= beforeSuspend) {
+        output.push("跨租户: 被挂起的账号仍然占用成员配额（MCP 挂起写的是 suspended，而统计只排除 disabled）");
+      }
     }
 
     // 契约在入队时冻结规则摘要，而规则正文在 agent 领取时现算 —— 中间改了规则，agent 按新规则跑，

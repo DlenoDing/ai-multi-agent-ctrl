@@ -652,7 +652,10 @@ function sanitizeGrantRequest(state, actor, input = {}, resourceScope = {}) {
   }
   const subjectAccount = state.accounts.find((item) => accountIdOf(item) === (input.subjectId || "acct_workspace_owner"));
   const resourceOrg = resourceScopeOrganizationId(state, resource);
-  if (subjectAccount?.organizationId && resourceOrg && subjectAccount.organizationId !== resourceOrg) {
+  // 同上 fail closed；另外 subjectAccount 不存在时原先也整条跳过，而 accountId 是调用方可指定的 ——
+  // 可以先给一个"面向未来的 accountId"建 grant，再补建那个账号。授权对象必须已经存在。
+  if (!subjectAccount) return {ok: false, status: 400, error: "grant_subject_account_not_found"};
+  if (resourceOrg && (subjectAccount.organizationId || DEFAULT_ORGANIZATION_ID) !== resourceOrg) {
     return {ok: false, status: 400, error: "cross_org_grant_not_allowed"};
   }
   if (!isSystemAccount(account)) {
@@ -1307,18 +1310,20 @@ function hasPermission(state, actor, requiredPermission, resourceScope) {
   if (!requiredPermission) return true;
   const account = state.accounts.find((item) => accountIdOf(item) === actor);
   if (!account || account.status !== "active") return false;
-  if (!isSystemAccount(account) && account.organizationId) {
+  if (!isSystemAccount(account)) {
+    // 同上 fail closed：归属不明的账号按默认组织处理，而不是"不受任何组织约束"。
     // 组织被 suspended 时，全仓原先只有配额检查一处读 org.status —— 也就是说"暂停组织"的实际
     // 语义仅仅是"不许再新建项目/任务组/成员/agent"：成员照常登录、照常读写，名下的任务组与
     // agent 节点继续跑、继续烧模型额度。这与这个动作的名字和运维意图完全不符。
     // hasPermission 是所有写入的必经之路，在这里挡住即覆盖全部路径；读取不受影响，
     // 被暂停组织的人仍然看得到现状（否则连"为什么停了"都查不到）。
     const resourceOrg = resourceScopeOrganizationId(state, resourceScope);
-    if (resourceOrg && resourceOrg !== account.organizationId) return false;
+    if (resourceOrg && resourceOrg !== (account.organizationId || DEFAULT_ORGANIZATION_ID)) return false;
     // 只需要这一条：上一行已经保证 resourceOrg 必等于 account.organizationId，所以"调用方所属组织
     // 被暂停"与"目标资源所属组织被暂停"是同一件事。我起初写了两条，实测发现单独去掉任一条都
     // 挡得住 —— 互为冗余的判据没法各自判别，也就没法保证它们各自还活着。
-    const scopedOrg = (state.organizations || []).find((item) => item.orgId === (resourceOrg || account.organizationId));
+    const accountOrg = account.organizationId || DEFAULT_ORGANIZATION_ID;
+    const scopedOrg = (state.organizations || []).find((item) => item.orgId === (resourceOrg || accountOrg));
     if (scopedOrg && scopedOrg.status === "suspended") return false;
   }
   const direct = (account.permissions || []).filter((permission) => directPermissionApplies(account, permission, requiredPermission, resourceScope));
@@ -2825,7 +2830,10 @@ async function handleApi(req, res) {
       json(res, 400, {error: "account_not_found"});
       return;
     }
-    if (inviteeAccount.organizationId && (project.organizationId || DEFAULT_ORGANIZATION_ID) !== inviteeAccount.organizationId) {
+  // 无组织归属的账号（历史上经 MCP identity-mcp.account_invite 创建的那批）会让这条判定整个跳过 ——
+  // `X.organizationId && ...` 遇到 undefined 就当作"无从比较"放行。跨租户边界必须 fail closed：
+  // 归属不明就按"不属于本组织"处理，而不是按"属于任何组织"处理。
+    if ((inviteeAccount.organizationId || DEFAULT_ORGANIZATION_ID) !== (project.organizationId || DEFAULT_ORGANIZATION_ID)) {
       json(res, 400, {error: "cross_org_member_not_allowed"});
       return;
     }
