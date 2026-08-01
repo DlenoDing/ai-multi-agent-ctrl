@@ -5614,10 +5614,14 @@ export function advanceExecutionTopology(state, args) {
     expect("blocked");
     const ref = String(args.resolvedBlockerRef || args.blockingDerivedTaskRequestRef || "");
     if (!ref) throw topologyError("execution_topology_unblock_requires_resolved_ref", 400);
-    // 精确匹配单条 blocker，且【绝不】清除 owned_paths_disjoint 这类"分支写到了批准范围之外"的证据 ——
+    // 只清除【这一条】阻塞，且【绝不】清除 owned_paths_disjoint 这类"分支写到了批准范围之外"的证据 ——
     // 那是事后唯一能证明越界的记录。原先是 includes(ref) 子串匹配，传个 "_" 就能把它们全抹掉。
+    // 注意 block 存的是带前缀的 `blocking_derived_task_request:<ref>`，所以按这个完整键比对；
+    // 直接拿裸 ref 做精确比对会永远匹配不上 —— blocked 状态就此没有杠杆（我自己引入过这个死锁）。
+    const targetBlocker = `blocking_derived_task_request:${ref}`;
     const before = topology.blockers.length;
-    topology.blockers = topology.blockers.filter((blocker) => blocker !== ref || blocker.startsWith("owned_paths_disjoint:"));
+    topology.blockers = topology.blockers.filter((blocker) =>
+      blocker.startsWith("owned_paths_disjoint:") || (blocker !== targetBlocker && blocker !== ref));
     if (topology.blockers.length === before) throw topologyError("execution_topology_blocker_not_found", 409);
     topology.status = "integrating";
     transition("blocked", "integrating", "orchestrator", {topology_blocker_resolved: ref});

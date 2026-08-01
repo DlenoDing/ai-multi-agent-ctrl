@@ -691,6 +691,32 @@ function verifyHumanAndOrganizationContracts(output) {
     if (!swapRejected) output.push("人工闸门: 方案在人点确认前被改掉，定稿却仍然生效（批准被算到没看过的内容上）");
     if (swapTopo.humanFinalization) output.push("人工闸门: 被掉包的方案拿到了定稿锁");
 
+    // block -> unblock 必须走得通（block 存的是带前缀的键，拿裸 ref 精确比对会永远匹配不上 =>
+    // blocked 状态没有杠杆 = 死锁），同时"分支越界写入"的证据不得被 unblock 抹掉。
+    const blkState = structuredClone(seedState);
+    ensureRuntimeCollections(blkState, {root});
+    blkState.taskGroups.find((t) => t.id === "tg_runtime_management").workItems = [{id: "wi_blk", title: "blk", status: "ready", ownerRole: "agent-runtime", progress: 0}];
+    const blkTopo = createExecutionTopology(blkState, {taskGroupId: "tg_runtime_management", workItemId: "wi_blk", root,
+      branches: [{branchId: "b1", objective: "o", ownedPaths: ["docs/**"]}]}).topology;
+    advanceExecutionTopology(blkState, {topologyId: blkTopo.topologyId, action: "check_eligibility"});
+    const blkCard = (blkState.humanConfirmationRequests || []).find((item) => item.decisionType === "plan_topology" && item.status === "pending");
+    const blkHuman = (blkState.accounts.find((a) => ["system_admin", "org_admin", "user_account"].includes(a.accountType) && a.status === "active") || {}).accountId;
+    if (blkCard) decideHumanConfirmation(blkState, blkCard.requestId, {action: "finalize", selectedOptionId: "accept_plan", expectedRound: blkCard.round}, {actor: blkHuman});
+    advanceExecutionTopology(blkState, {topologyId: blkTopo.topologyId, action: "start"});
+    advanceExecutionTopology(blkState, {topologyId: blkTopo.topologyId, action: "report_branch", branchId: "b1", resultRef: "r", actualChangedPaths: ["apps/server.mjs"]});
+    const evidenceCount = blkTopo.blockers.filter((b) => b.startsWith("owned_paths_disjoint:")).length;
+    if (!evidenceCount) output.push("人工闸门: 分支写到批准范围之外却没有留下证据 blocker");
+    advanceExecutionTopology(blkState, {topologyId: blkTopo.topologyId, action: "block", blockingDerivedTaskRequestRef: "dtr_1"});
+    let unblockOk = true;
+    try { advanceExecutionTopology(blkState, {topologyId: blkTopo.topologyId, action: "unblock", resolvedBlockerRef: "dtr_1"}); }
+    catch { unblockOk = false; }
+    if (!unblockOk || blkTopo.status !== "integrating") output.push("人工闸门: 正常的 block -> unblock 走不通（blocked 状态没有杠杆 = 死锁）");
+    advanceExecutionTopology(blkState, {topologyId: blkTopo.topologyId, action: "block", blockingDerivedTaskRequestRef: "dtr_2"});
+    try { advanceExecutionTopology(blkState, {topologyId: blkTopo.topologyId, action: "unblock", resolvedBlockerRef: "_"}); } catch { /* 期望被拒 */ }
+    if (blkTopo.blockers.filter((b) => b.startsWith("owned_paths_disjoint:")).length !== evidenceCount) {
+      output.push("人工闸门: 越界写入证据被 unblock 抹掉了（事后唯一能证明越界的记录）");
+    }
+
     // 绕过复现防回归 #4：同一形状在多个承载授权的集合里都出现过 —— id 调用方自选 + 不校验唯一 +
     // unshift，冒名者顶替掉所有 find 的命中对象。这里逐个钉死（统一走 assertUniqueRecordId）。
     const uniqState = structuredClone(seedState);

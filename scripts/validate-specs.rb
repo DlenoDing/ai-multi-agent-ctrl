@@ -797,7 +797,8 @@ end
 errors << "仓库产出目标必须拒绝重复 targetId（它定义写入边界）" unless mcp_source.include?("repository_output_target_id_conflict")
 errors << "id 冒名必须有防回归测试" unless contract_check_source.include?("允许重复 id（冒名记录可顶替人批准的那一份）")
 # unblock 不得用子串匹配抹掉"越界写入"证据；分支 id 在拓扑内必须唯一（否则已定稿方案卡死）。
-errors << "unblock 必须精确匹配且保留越界写入证据" unless core_source.include?('blocker !== ref || blocker.startsWith("owned_paths_disjoint:")')
+errors << "unblock 必须按完整键精确匹配且保留越界写入证据" unless core_source.include?('blocker.startsWith("owned_paths_disjoint:") || (blocker !== targetBlocker && blocker !== ref)')
+errors << "block/unblock 与越界证据必须有行为测试覆盖" unless contract_check_source.include?("人工闸门: 正常的 block -> unblock 走不通") && contract_check_source.include?("人工闸门: 越界写入证据被 unblock 抹掉了")
 errors << "拓扑内分支 id 必须唯一" unless core_source.include?("execution_topology_duplicate_branch_id")
 #  · 语义选项归控制面所有：AI 候选进 ai: 命名空间、不得顶掉控制面选项；是否否决只由 action 决定
 errors << "AI 候选必须隔离到 ai: 命名空间且不得顶掉控制面选项" unless core_source.include?("optionId: `ai:${String(option.optionId") && core_source.include?("const controlPlaneOptions = (request.options || []).filter")
