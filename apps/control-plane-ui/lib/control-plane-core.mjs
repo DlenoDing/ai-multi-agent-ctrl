@@ -5253,6 +5253,21 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
   if (!finalCommit || !reviewRoots.some((reviewRoot) => git(reviewRoot, ["rev-parse", "--verify", `${finalCommit}^{commit}`], ""))) findings.push("final_commit_not_verifiable");
   const changedPaths = target?.changedPaths || [];
   if (target && changedPaths.some((path) => !pathMatchesAllowlist(path, target.pathAllowlist || []))) findings.push("changed_paths_outside_allowlist");
+  // 上面那几条判据【全部】是 acceptAgentCheckpoint 接受这份检查点时已经强制过的结构性事实 ——
+  // 所以对任何被接受的检查点，互审的结论恒为 passed。它不检查内容，也不可能不通过。
+  // 控制面判断不了代码对不对，但下面这些是它能【独立】查、而接受时不查的：
+  // 质量门是否真的都过了、工作项声明的需求有没有对应证据、以及这次交付的规模。
+  const workGates = (state.qualityGates || []).filter((gate) => gate.taskGroupId === taskGroup.id && gate.workItemId === workItem.id);
+  const failedGates = workGates.filter((gate) => !["passed", "waived"].includes(gate.status));
+  if (failedGates.length) findings.push(`quality_gates_not_passed:${failedGates.map((gate) => gate.gateType).join(",")}`);
+  const reassertedGates = workGates.filter((gate) => Number(gate.reassertedWithoutNewEvidenceCount) > 0);
+  if (reassertedGates.length) findings.push(`quality_gates_reasserted_without_new_evidence:${reassertedGates.map((gate) => gate.gateType).join(",")}`);
+  const declaredRequirements = (workItem.requirements || []).filter(Boolean);
+  const evidenceBlob = JSON.stringify([checkpoint.evidenceRefs || [], checkpoint.artifactManifestRefs || [], changedPaths]);
+  const uncoveredRequirements = declaredRequirements.filter((requirement) =>
+    !evidenceBlob.toLowerCase().includes(String(requirement).toLowerCase().slice(0, 24)));
+  // 需求覆盖只做【提示】不做否决：字面匹配判不了"这条需求到底满足没有"，用它来否决会制造大量假阴性。
+  // 但它必须出现在人看到的结论里 —— 那才是需要人判断的地方。
   const at = new Date().toISOString();
   const verdict = findings.length ? "changes_requested" : "passed";
   const checkpointRef = `checkpoint:${checkpoint.runId}`;
@@ -5382,6 +5397,18 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
         const notes = [];
         if (reversed.length) notes.push(`\n⚠ 以下质量门曾判失败、后由执行方重报为通过（已附新证据）：${reversed.map((gate) => gate.gateType).join("、")}`);
         if (waived.length) notes.push(`\n⚠ 以下质量门为人工豁免：${waived.map((gate) => `${gate.gateType}（${gate.waivedBy || "?"}）`).join("、")}`);
+        // "证据已就绪"不能掩盖"这次交付到底有多大"。卡片原先只列提交/推送/清单是否齐全，
+        // 不显示改了哪些路径、改了几个文件 —— 于是一次只动了一个清单文件的提交，
+        // 在人眼里与一次真实交付长得一模一样。
+        if (changedPaths.length) {
+          const shown = changedPaths.slice(0, 12).map((path) => `  · ${path}`).join("\n");
+          notes.push(`\n本次交付改动了 ${changedPaths.length} 个路径：\n${shown}${changedPaths.length > 12 ? `\n  · …另有 ${changedPaths.length - 12} 个` : ""}`);
+        } else {
+          notes.push(`\n⚠ 本次交付没有任何改动路径记录 —— 请确认它是否真的产出了东西。`);
+        }
+        if (uncoveredRequirements.length) {
+          notes.push(`\n⚠ 以下声明的需求，在证据里找不到对应痕迹（字面匹配，仅作提示，需要你判断）：\n${uncoveredRequirements.slice(0, 8).map((item) => `  · ${item}`).join("\n")}`);
+        }
         // 这个工作项的角色没有属于自己的技能，实际绑的是别人的（22 个已登记角色里只有 11 个
         // 有技能文件）。回退本身是必要的，但验收的人应当知道：这个 agent 依据的角色规则
         // 并不是它这个角色的。

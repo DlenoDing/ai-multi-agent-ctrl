@@ -1256,6 +1256,26 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("内容包: 定稿决策条目里没有那条实际的决策内容");
     }
 
+    // 互审此前是空转的：它能产出的每一条判据都是 acceptAgentCheckpoint 接受这份检查点时
+    // 已经强制过的结构性事实 —— 所以对任何被接受的检查点，结论恒为 passed。
+    // 控制面判断不了代码对不对，但质量门有没有过是它能独立查、而接受时不查的。
+    const pgState = structuredClone(seedState);
+    ensureRuntimeCollections(pgState, {root});
+    const pgTg = pgState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const pgWork = pgTg.workItems.find((item) => item.status !== "verified") || pgTg.workItems[0];
+    const pgHead = gitHead(root);
+    pgState.checkpoints = [{taskGroupId: pgTg.id, workId: pgWork.id, runId: "run_pg",
+      commitRefs: [{commit: pgHead}], pushRefs: [{remote: "origin", ref: "refs/heads/main", remoteSha: pgHead}],
+      artifactManifestRefs: ["docs/m.json"], repositoryOutputTargetRefs: ["tgt_pg"], changedPathEvidenceRefs: []}];
+    pgState.repositoryOutputs = [{targetId: "tgt_pg", status: "pushed", pathAllowlist: ["**"],
+      taskGroupId: pgTg.id, workItemId: pgWork.id, changedPaths: ["apps/x.mjs"]}];
+    pgState.qualityGates = [{gateId: "qg_pg", taskGroupId: pgTg.id, workItemId: pgWork.id,
+      gateType: "test", status: "failed", evidenceRefs: ["run:1"]}];
+    const pgOutcome = performIndependentReview(pgState, pgTg, pgWork, {root}, {});
+    if (pgOutcome.reviewed !== false && pgOutcome.verdict === "passed") {
+      output.push("互审空转: 该工作项有未通过的质量门，互审却仍然判为通过（它只复述了接受检查点时已强制过的事实）");
+    }
+
     // join token 的脱敏原先是"逐个剥掉已知敏感字段"的黑名单式，于是后加的 registrationReplay
     // 漏网 —— 它整份存着注册结果，含【明文 nodeToken】，而 join token 会随 state 下发给
     // 任何持 project:view 的项目成员。读的门槛比签发低一整级，拿到即可冒充节点。
