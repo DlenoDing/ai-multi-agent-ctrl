@@ -1681,6 +1681,22 @@ machines:
         to: "integrating"
         actor: "orchestrator"
         requires: ["topology_blocker_resolved"]
+      # integrating 此前是死角：分支报了 failed/rejected 照样进入 integrating，而 merge 只认
+      # accepted/reported、cancel 又只能从 running 走 —— 两头堵，拓扑永远挡着关闭门。
+      # 写到批准范围之外留下的 owned_paths_disjoint 证据同样会让 merge 永远失败，那时唯一
+      # 正确的出路就是取消（绝不是清掉那份证据然后合并）。
+      - from: "integrating"
+        to: "cancelled"
+        actor: "orchestrator"
+        requires: ["cancel_ref"]
+      - from: "blocked"
+        to: "cancelled"
+        actor: "orchestrator"
+        requires: ["cancel_ref"]
+      - from: "needs_reconcile"
+        to: "cancelled"
+        actor: "orchestrator"
+        requires: ["cancel_ref"]
       - from: "running"
         to: "cancelled"
         actor: "orchestrator"

@@ -1105,6 +1105,43 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
     }
 
+    // 拓扑的 integrating 死角：分支报了 failed/rejected 照样进入 integrating，而 merge 只认
+    // accepted/reported、cancel 又只能从 running 走 —— 两头堵，拓扑永远挡着关闭门。
+    const twWedgeState = structuredClone(seedState);
+    ensureRuntimeCollections(twWedgeState, {root});
+    const twWedgeTopo = createExecutionTopology(twWedgeState, {
+      taskGroupId: "tg_runtime_management", workItemId: "wi_wedge", root,
+      branches: [
+        {branchId: "b_a", objective: "A", ownedPaths: ["apps/a/**"], resourceScopes: ["db:a"]},
+        {branchId: "b_b", objective: "B", ownedPaths: ["apps/b/**"], resourceScopes: ["db:b"]}
+      ]
+    }).topology;
+    advanceExecutionTopology(twWedgeState, {topologyId: twWedgeTopo.topologyId, action: "check_eligibility"});
+    const twWedgeCard = (twWedgeState.humanConfirmationRequests || []).find((item) => item.decisionType === "plan_topology" && item.status === "pending" && item.subjectRef === `ExecutionTopology:${twWedgeTopo.topologyId}`);
+    const twWedgeHuman = (twWedgeState.accounts.find((a) => ["system_admin", "org_admin", "user_account"].includes(a.accountType)) || {}).accountId;
+    decideHumanConfirmation(twWedgeState, twWedgeCard.requestId, {action: "finalize", selectedOptionId: "accept_plan", expectedRound: twWedgeCard.round}, {actor: twWedgeHuman});
+    advanceExecutionTopology(twWedgeState, {topologyId: twWedgeTopo.topologyId, action: "start"});
+    advanceExecutionTopology(twWedgeState, {topologyId: twWedgeTopo.topologyId, action: "report_branch", branchId: "b_a", branchStatus: "failed", resultRef: "bundle:a"});
+    advanceExecutionTopology(twWedgeState, {topologyId: twWedgeTopo.topologyId, action: "report_branch", branchId: "b_b", branchStatus: "reported", resultRef: "bundle:b", actualChangedPaths: ["apps/b/y.mjs"], validationEvidenceRefs: ["test:b"]});
+    if (twWedgeTopo.status !== "integrating") output.push("拓扑死角: 测试前置不成立（分支报失败后没有进入 integrating）");
+    let twMergeBlocked = false;
+    try { advanceExecutionTopology(twWedgeState, {topologyId: twWedgeTopo.topologyId, action: "merge", finalValidationEvidenceRefs: ["test:all"]}); }
+    catch (error) { twMergeBlocked = true; }
+    if (!twMergeBlocked) output.push("拓扑死角: 有分支失败却仍然允许合并（人批准的方案并没有真的跑成）");
+    // AI 不得自行取消一个已定稿的方案：必须回到人工确认。
+    let twAiCancelBlocked = false;
+    try { advanceExecutionTopology(twWedgeState, {topologyId: twWedgeTopo.topologyId, action: "cancel", cancelRef: "branch_failed", actor: "acct_agent_runtime"}); }
+    catch (error) { twAiCancelBlocked = error.message === "human_finalized_decision_diverged"; }
+    if (!twAiCancelBlocked) output.push("拓扑死角: AI 可自行取消已被人定稿的执行方案（定稿之后 AI 仍能单方面改变它）");
+    if (twWedgeTopo.status !== "integrating") output.push("拓扑死角: AI 取消被拒后拓扑状态却已被改动");
+    // 人来取消：出口必须真的存在，否则这个拓扑永远挡着关闭门。
+    try {
+      advanceExecutionTopology(twWedgeState, {topologyId: twWedgeTopo.topologyId, action: "cancel", cancelRef: "branch_failed", actor: twWedgeHuman});
+    } catch (error) {
+      output.push(`拓扑死角: 人也无法终止一个卡在 integrating 的方案（${error.message}）—— 它将永久挡住关闭门`);
+    }
+    if (twWedgeTopo.status !== "cancelled") output.push("拓扑死角: 人也无法终止一个卡在 integrating 的方案（它将永久挡住关闭门）");
+
     // 制品门原先恒不触发（登记即在通过集里，"verified" 无人写入）。现在按"是否真的可验证"判定，
     // 并且必须有出口 —— 把空转门改成真会阻塞的门却不给出口，就是把缺陷换成死锁。
     const artState = structuredClone(seedState);

@@ -4717,9 +4717,12 @@ export function expireStaleQueuedDispatches(state) {
 // instead of vacuously true.
 
 function capCommandBus(state) {
-  if ((state.commands || []).length > 240) state.commands = state.commands.slice(0, 240);
-  if ((state.commandEffects || []).length > 240) state.commandEffects = state.commandEffects.slice(0, 240);
-  if ((state.dlqEntries || []).length > 240) state.dlqEntries = state.dlqEntries.slice(0, 240);
+  // 这三个集合都被关闭门读取（all_commands_terminal / all_command_effects_terminal / no_active_dlq），
+  // 而原先是盲 slice：旧但仍未了结的项会被新项挤出窗口，门随即"假满足"，任务组因此可能提前误关闭。
+  // 这正是本仓已经反复交过学费的 barrier-safe cap 那一类 —— 同文件里就有专门的助手，这里却没用。
+  state.commands = capRetainingPredicate(state.commands || [], (item) => !COMMAND_TERMINAL.has(item.status), 240);
+  state.commandEffects = capRetainingPredicate(state.commandEffects || [], (item) => !COMMAND_EFFECT_TERMINAL.has(item.status), 240);
+  state.dlqEntries = capRetainingPredicate(state.dlqEntries || [], (item) => !DLQ_ENTRY_TERMINAL.has(item.status), 240);
 }
 
 export function createCommand(state, input = {}) {
@@ -5834,12 +5837,49 @@ export function advanceExecutionTopology(state, args) {
       no_topology_blockers: "0"
     });
   } else if (action === "cancel") {
-    expect("running");
+    // 取消原先只能从 running 走，于是 integrating 是个死角：分支只要报了 failed/rejected，
+    // 拓扑照样进入 integrating，而 merge 只认 accepted/reported、cancel 又够不着 —— 两头堵，
+    // 并且 no_open_execution_topologies 会一直挡着关闭门。同理，写到批准范围之外留下的
+    // owned_paths_disjoint 证据（刻意永不清除）也会让 merge 永远失败，那时唯一正确的出路就是取消。
+    const cancellableFrom = ["running", "integrating", "blocked", "needs_reconcile"];
+    if (!cancellableFrom.includes(topology.status)) {
+      throw topologyError(`execution_topology_expected_${cancellableFrom.join("_or_")}`, 409);
+    }
     const ref = String(args.cancelRef || args.reason || "");
     if (!ref) throw topologyError("execution_topology_cancel_requires_ref", 400);
+    // 取消一个【已被人定稿】的方案，本身就是改变人的决定 —— 与降级同一条口径：AI 不得自行取消，
+    // 必须回到人工确认；人自己来取消则直接生效并改写定稿记录。
+    const cancelApproved = (state.humanConfirmationRequests || []).some((item) =>
+      item.subjectRef === `ExecutionTopology:${topology.topologyId}` &&
+      item.decision?.action === "finalize" &&
+      item.decision?.selectedOptionId === "accept_cancel");
+    if (topology.humanFinalization?.outcome === "confirmed" && !cancelApproved) {
+      if (isHumanConfirmationActor(state, args.actor)) {
+        topology.humanFinalization = {...topology.humanFinalization, finalizedBy: args.actor, finalizedAt: at,
+          contentDigest: decisionContentDigest({decisionType: "plan_topology", workItemId: topology.workItemId, taskGroupId: topology.taskGroupId, content: {mode: "cancelled", reason: ref}})};
+      } else {
+        createHumanConfirmationRequest(state, {
+          taskGroupId: topology.taskGroupId,
+          workItemId: topology.workItemId,
+          decisionType: "plan_topology",
+          subjectRef: `ExecutionTopology:${topology.topologyId}`,
+          requestKey: `plan_topology_cancel:${topology.topologyId}`,
+          summary: `已定稿方案申请取消：${topology.workItemId}`,
+          detail: `原因：${ref}。该方案已由人定稿，AI 不能自行取消；是否同意终止该执行方案，请人工决定。`,
+          peerReview: {verdict: "cancel_requested", findings: [ref]},
+          content: {mode: "cancelled", reason: ref},
+          options: [
+            {optionId: "accept_cancel", label: "同意终止该方案", description: "认可终止理由，取消这次执行方案。", recommended: true},
+            {optionId: "reject", label: "不同意终止", description: "维持原定稿方案，继续处理阻塞。"}
+          ]
+        });
+        throw topologyError("human_finalized_decision_diverged", 409);
+      }
+    }
+    const previousStatus = topology.status;
     topology.status = "cancelled";
     topology.cancelRef = ref;
-    transition("running", "cancelled", "orchestrator", {cancel_ref: ref});
+    transition(previousStatus, "cancelled", "orchestrator", {cancel_ref: ref});
   } else {
     return {ok: false, error: "execution_topology_unknown_action"};
   }
