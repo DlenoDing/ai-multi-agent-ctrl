@@ -16,7 +16,6 @@ import {
   createHumanConfirmationRequest,
   decideHumanConfirmation,
   submitAiConfirmationAnalysis,
-  assertHumanFinalization,
   performIndependentReview,
   gitHead,
   createHumanDirective,
@@ -610,16 +609,14 @@ function verifyHumanAndOrganizationContracts(output) {
     if (!(gate.deliberation || []).some((turn) => turn.actorKind === "ai" && turn.assessment === "better_alternative")) output.push("人工闸门: AI 的异议/更优方案没有进入协商记录");
     validateSchema(gate, hcrSchema, "HumanConfirmationRequest(deliberating)", output);
     // 人明确定稿 => 才真正验收，并写入定稿锁。
-    decideHumanConfirmation(gateState, gate.requestId, {action: "finalize", selectedOptionId: "parallel", expectedRound: gate.round}, {actor: humanActor});
+    // AI 提的选项被隔离进 ai: 命名空间，控制面自己的语义选项（accept/reject）不会被顶掉。
+    if (!(gate.options || []).some((o) => o.optionId === "ai:parallel")) output.push("人工闸门: AI 的候选未被隔离到 ai: 命名空间（AI 可占用语义选项 id）");
+    if (!(gate.options || []).some((o) => o.optionId === "accept") || !(gate.options || []).some((o) => o.optionId === "reject")) output.push("人工闸门: 控制面自己的语义选项被 AI 顶掉了（人以为在打回，实际可能是通过）");
+    decideHumanConfirmation(gateState, gate.requestId, {action: "finalize", selectedOptionId: "ai:parallel", expectedRound: gate.round}, {actor: humanActor});
     const gatedItem = gateTg.workItems[0];
     if (gate.status !== "answered" || gatedItem.status !== "verified") output.push("人工闸门: 人明确定稿后工作项未进入 verified");
     if (gatedItem.humanFinalization?.finalizedBy !== humanActor || gatedItem.humanFinalization?.outcome !== "confirmed") output.push("人工闸门: 定稿锁未写入（finalizedBy/outcome 缺失）");
     validateSchema(gate, hcrSchema, "HumanConfirmationRequest(finalized)", output);
-    // 定稿后 AI 不得再改：内容有分歧必须被拦下。
-    let divergenceBlocked = false;
-    try { assertHumanFinalization(gatedItem, {reviewBundleRef: "rvb_other", finalCommit: "deadbeef"}); }
-    catch (error) { divergenceBlocked = error.message === "human_finalized_decision_diverged"; }
-    if (!divergenceBlocked) output.push("人工闸门: 已定稿方案被 AI 改动却没有拦截（定稿后 AI 仍可静默更改）");
 
     // 任务组关闭是核心定稿动作：机器主体不得落闸，真人落闸要留下定稿记录。
     const closeState = structuredClone(seedState);
@@ -692,6 +689,25 @@ function verifyHumanAndOrganizationContracts(output) {
     if (!swapRejected) output.push("人工闸门: 方案在人点确认前被改掉，定稿却仍然生效（批准被算到没看过的内容上）");
     if (swapTopo.humanFinalization) output.push("人工闸门: 被掉包的方案拿到了定稿锁");
 
+    // 绕过复现防回归 #3：topologyId 由调用方自选，若不校验唯一性，AI 用同一个 id 再造一份就能
+    // 顶替掉所有 find 的命中对象 —— 人批准的方案 A 的锁会落到冒名的方案 B 上，且因 requestKey 去重
+    // 连新卡片都不会出现，人完全无从察觉。
+    const dupState = structuredClone(seedState);
+    ensureRuntimeCollections(dupState, {root});
+    dupState.taskGroups.find((t) => t.id === "tg_runtime_management").workItems = [{id: "wi_dup", title: "冒名", status: "ready", ownerRole: "agent-runtime", progress: 0}];
+    const original = createExecutionTopology(dupState, {taskGroupId: "tg_runtime_management", workItemId: "wi_dup", root,
+      topologyId: "topo_fixed", branches: [{branchId: "b_ok", objective: "安全", ownedPaths: ["apps/safe/**"]}]}).topology;
+    let dupRejected = false;
+    try {
+      createExecutionTopology(dupState, {taskGroupId: "tg_runtime_management", workItemId: "wi_dup", root,
+        topologyId: "topo_fixed", branches: [{branchId: "b_ok", objective: "安全", ownedPaths: ["apps/**", "scripts/**"]}]});
+    } catch (error) { dupRejected = error.message === "execution_topology_id_conflict"; }
+    if (!dupRejected) output.push("人工闸门: 允许用同一个 topologyId 再造一份拓扑（冒名对象可顶替人批准的方案）");
+    if ((dupState.executionTopologies || []).filter((item) => item.topologyId === "topo_fixed").length !== 1) {
+      output.push("人工闸门: 状态里出现了同 id 的多份拓扑");
+    }
+    if (!original) output.push("人工闸门: 原始拓扑丢失");
+
     // 绕过复现防回归：AI 抢先另建一份拓扑，不得把人对第一份方案的批准"洗"到第二份上。
     const raceState = structuredClone(seedState);
     ensureRuntimeCollections(raceState, {root});
@@ -745,7 +761,7 @@ function verifyHumanAndOrganizationContracts(output) {
       if (!livelockBlocked) output.push("人工闸门: AI 可连续刷新候选方案推进轮次，人永远定不了稿（活锁）");
       if (roundStaleReq.round === roundBefore) output.push("人工闸门: AI 修订候选方案后未推进轮次（轮次令牌失效，TOCTOU 仍成立）");
       let staleRejected = false;
-      try { decideHumanConfirmation(roundStaleState, roundStaleReq.requestId, {action: "finalize", selectedOptionId: "new_opt", expectedRound: roundBefore}, {actor: humanActor}); }
+      try { decideHumanConfirmation(roundStaleState, roundStaleReq.requestId, {action: "finalize", selectedOptionId: "ai:new_opt", expectedRound: roundBefore}, {actor: humanActor}); }
       catch (error) { staleRejected = error.message === "human_confirmation_round_stale"; }
       if (!staleRejected) output.push("人工闸门: 人拿着过期轮次仍可定稿（AI 可在点击前掉包方案）");
     }

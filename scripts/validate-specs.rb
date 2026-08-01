@@ -740,7 +740,10 @@ errors << "AI 再分析通道必须存在且不能终结决策" unless core_sour
 # 5. 人工确认超时【绝不】等于放行。
 errors << "人工确认超时不得自动放行，必须升级为人工决策" unless core_source.include?("human_confirmation_expired_needs_decision") && !core_source.include?("human_confirmation_expired_requeued")
 # 6. 定稿后 AI 不得静默更改，内容分歧必须被拦下。
-errors << "定稿后必须有分歧拦截（human_finalized_decision_diverged）" unless core_source.include?("export function assertHumanFinalization") && core_source.include?("human_finalized_decision_diverged")
+# 定稿后 AI 不得更改：由"定稿时存对象快照 + start/merge 前重新比对"强制。原先的 assertHumanFinalization
+# 是只有测试引用的空转导出（断言还名不副实：声称查生产调用点，实际查的是别的字符串），已删除。
+errors << "定稿后必须在执行前重新核对方案未被改动" unless core_source.include?("topology.humanFinalization?.subjectContentDigest") && core_source.include?("human_finalized_decision_diverged")
+errors << "assertHumanFinalization 空转导出必须已移除" if core_source.include?("export function assertHumanFinalization")
 # 7. 上述语义必须有行为测试覆盖（否则回归时门仍绿）。
 errors << "人工定稿闸门需要行为测试覆盖" unless contract_check_source.include?("人工闸门: 机器主体（service_account）竟然可以定稿核心决策") && contract_check_source.include?("人工闸门: AI 再分析竟然终结了决策") && contract_check_source.include?("人工闸门: AI 互审仍然直接把工作项标记为 verified")
 # 8. 审批终审必须有真人一票：AI 可以投互审票，但纯 AI 票凑够法定人数也不得通过。
@@ -766,7 +769,6 @@ errors << "互审跳过必须同时匹配 decisionType（避免方案定稿掐�
 # 14. 防 TOCTOU：AI 修订候选必须推进轮次，人带过期轮次定稿必须被拒。
 errors << "AI 修订候选必须推进协商轮次并支持轮次令牌校验" unless core_source.include?("human_confirmation_round_stale") && core_source.include?("request.round += 1")
 errors << "轮次令牌必须有防回归测试" unless contract_check_source.include?("人工闸门: 人拿着过期轮次仍可定稿")
-# 15. 定稿锁不得是空转门：assertHumanFinalization 必须有真实生产调用点。
 errors << "定稿分歧必须回到人工确认而不是死堵" unless core_source.include?("requestKey: `plan_topology_downgrade:${topology.topologyId}`") && core_source.include?("if (isHumanConfirmationActor(state, args.actor))")
 errors << "已定稿方案的降级出路必须有行为测试覆盖" unless contract_check_source.include?("人工闸门: 真人无法降级自己定稿的方案") && contract_check_source.include?("人工闸门: AI 的降级被拦下却没有挂出人工确认单")
 # 18. agent 通道只能提运行时确认，绝不能自选 decisionType/subjectRef 伪造核心决策单（洗白绕过 #2）。
@@ -785,6 +787,16 @@ errors << "同意降级必须真正生效" unless core_source.include?("selected
 #     前两轮的绕过都属"卡片说 X、锁绑 Y"这一类，逐字段设防不够，这里在定稿时按活对象重算比对。
 errors << "定稿必须重新核对被绑定对象未被掉包" unless core_source.include?("function subjectContentSnapshot") && core_source.include?("human_confirmation_subject_changed")
 errors << "对象掉包必须有防回归测试" unless contract_check_source.include?("人工闸门: 方案在人点确认前被改掉，定稿却仍然生效")
+# 24-27 第三轮复核修复：
+#  · id 可自选且不校验唯一 => 冒名对象顶替（第三个同类绕过）
+errors << "执行拓扑必须拒绝重复 topologyId" unless core_source.include?("execution_topology_id_conflict")
+#  · 语义选项归控制面所有：AI 候选进 ai: 命名空间、不得顶掉控制面选项；是否否决只由 action 决定
+errors << "AI 候选必须隔离到 ai: 命名空间且不得顶掉控制面选项" unless core_source.include?("optionId: `ai:${String(option.optionId") && core_source.include?("const controlPlaneOptions = (request.options || []).filter")
+errors << "是否否决只能由人点的动作决定" unless core_source.include?("const rejected = action === \"reject\";")
+#  · 快照必须覆盖真正的杀伤面（占用路径/验收条件），卡片也要让人看得见
+errors << "方案快照必须覆盖占用路径与验收条件" unless core_source.include?("ownedPaths: [...(branch.ownedPaths || [])].sort()") && core_source.include?("将改动 ")
+#  · 确认单去重必须限定同一任务组（键可猜 => 跨租户窃取）
+errors << "确认单去重必须限定同一任务组" unless core_source.include?("item.dedupeKey === dedupeKey && item.taskGroupId === taskGroup.id")
 # 16. 定稿主体必须是【生效中】的真人账号。
 errors << "定稿主体必须是生效中的账号" unless core_source.include?("if (account.status !== \"active\") return false")
 # 17. agent 必须能读到核心决策单才能做"再分析"，否则多轮协商无人应答（死锁）。

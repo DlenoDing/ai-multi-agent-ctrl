@@ -4045,7 +4045,11 @@ export function createHumanConfirmationRequest(state, input = {}) {
     .filter((option) => option.optionId !== "none");
   if (!aiOptions.length) throw Object.assign(new Error("human_confirmation_options_required"), {status: 400});
   const dedupeKey = String(input.requestKey || "").trim() || digestOf({dispatchId: dispatch?.dispatchId || null, workItemId: input.workItemId || dispatch?.workItemId || null, summary});
-  const existingPending = (state.humanConfirmationRequests || []).find((item) => item.status === "pending" && item.dedupeKey === dedupeKey);
+  // 去重必须限定在【同一个任务组】内。原先是全局按 dedupeKey 匹配并把命中的单子原样返回给调用方，
+  // 而 requestKey 由调用方提供且可预测（task_split:<workItemId> / plan_topology:<topologyId>）——
+  // 猜中就能拿到别的租户的确认单，连同人写的方案原文和协商记录一起泄露（已复现）。
+  const existingPending = (state.humanConfirmationRequests || []).find((item) =>
+    item.status === "pending" && item.dedupeKey === dedupeKey && item.taskGroupId === taskGroup.id);
   if (existingPending) return existingPending;
   const at = new Date().toISOString();
   const request = {
@@ -4207,11 +4211,20 @@ function subjectContentSnapshot(state, request) {
     const id = String(request.subjectRef || "").replace(/^ExecutionTopology:/u, "");
     const topology = (state.executionTopologies || []).find((item) => item.topologyId === id);
     if (!topology) return null;
+    // 必须覆盖真正的【杀伤面】：只锁 mode/载体/分支名的话，AI 把某分支的 ownedPaths 从 docs/** 改成
+    // apps/**、把 acceptanceChecks 改成恒真，摘要照样不变，人的批准就被套到一个大得多的授权上。
     return {
       mode: topology.mode,
       runnerKind: topology.runnerKind,
       isolation: topology.isolation,
-      branches: (topology.groups || []).flatMap((group) => (group.branches || []).map((branch) => branch.branchId))
+      branches: (topology.groups || []).flatMap((group) => (group.branches || []).map((branch) => ({
+        branchId: branch.branchId,
+        objective: branch.objective,
+        ownedPaths: [...(branch.ownedPaths || [])].sort(),
+        forbiddenPaths: [...(branch.forbiddenPaths || [])].sort(),
+        resourceScopes: [...(branch.resourceScopes || [])].sort(),
+        acceptanceChecks: [...(branch.acceptanceChecks || [])].sort()
+      })))
     };
   }
   return undefined; // 该类型无需对象级快照（验收/关闭/拆分绑定的是确定的工作项/任务组本身）
@@ -4219,7 +4232,9 @@ function subjectContentSnapshot(state, request) {
 
 // 人定稿后的落地 + 上锁。这里是**唯一**能把工作项推到 verified 的路径（AI 互审只能推到 verification_ready）。
 function applyHumanFinalization(state, request, actor, at, action = "finalize") {
-  const rejected = action === "reject" || request.decision?.selectedOptionId === "reject";
+  // 是否否决【只看人点的动作】。原先还看 selectedOptionId === "reject"，而选项 id 与文案都可能是 AI
+  // 写的：AI 把 id 为 accept 的选项文案改成"打回返工"，人以为在打回，实际触发的是通过（已复现）。
+  const rejected = action === "reject";
   const taskGroup = (state.taskGroups || []).find((item) => item.id === request.taskGroupId);
   const workItem = request.workItemId ? (taskGroup?.workItems || []).find((item) => item.id === request.workItemId) : null;
   const lock = {
@@ -4228,6 +4243,8 @@ function applyHumanFinalization(state, request, actor, at, action = "finalize") 
     confirmationRef: request.requestId,
     contentDigest: request.contentDigest,
     decisionType: request.decisionType,
+    // 定稿那一刻对象的实质内容摘要 —— 之后 start/merge 会拿它比对，AI 改了方案就走分歧拦截。
+    ...(request.subjectContentDigest ? {subjectContentDigest: request.subjectContentDigest} : {}),
     outcome: rejected ? "rejected" : "confirmed"
   };
   if (request.decisionType === "work_item_verification" && workItem) {
@@ -4312,17 +4329,21 @@ export function submitAiConfirmationAnalysis(state, requestId, input = {}, optio
   });
   // AI 可以在再分析后修订候选方案（例如把人提的方案补成可执行的版本，或加入它认为更优的选项），
   // 但系统的"自定义输入"选项恒在，人始终可以不采纳任何 AI 选项。
+  // AI 提的选项一律进 `ai:` 命名空间，且【只能追加】不能顶掉控制面自己的语义选项。
+  // 否则 AI 拥有了选项 id 与文案的全部所有权：它可以删掉"打回返工"、把 id=accept 的选项写成
+  // "打回返工：证据不足"，人点下去实际是通过（已复现）。语义选项的所有权必须留在控制面。
   const revised = (Array.isArray(input.options) ? input.options : [])
     .filter((option) => option && String(option.label || "").trim() && option.optionId !== "none")
     .slice(0, 8)
     .map((option, index) => ({
-      optionId: String(option.optionId || `r${request.round}_opt_${index + 1}`),
+      optionId: `ai:${String(option.optionId || `r${request.round}_opt_${index + 1}`).replace(/^ai:/u, "")}`,
       label: String(option.label).trim().slice(0, 200),
       description: String(option.description || "").slice(0, 1000),
       ...(option.recommended === true ? {recommended: true} : {})
     }));
   if (revised.length) {
-    request.options = [...revised, (request.options || []).find((option) => option.optionId === "none")
+    const controlPlaneOptions = (request.options || []).filter((option) => !String(option.optionId).startsWith("ai:") && option.optionId !== "none");
+    request.options = [...controlPlaneOptions, ...revised, (request.options || []).find((option) => option.optionId === "none")
       || {optionId: "none", label: "不选择（自定义输入）", description: "以上选项均不采用，由人工直接输入确认内容。", system: true}];
     // 候选方案变了就必须推进轮次：人手上那一版已经过期，带旧 expectedRound 的确认会被拒（防 TOCTOU）。
     request.round += 1;
@@ -4338,23 +4359,6 @@ export function submitAiConfirmationAnalysis(state, requestId, input = {}, optio
     taskGroupId: request.taskGroupId, action: "ai_analysis", assessment, round: request.round
   });
   return request;
-}
-
-// 分歧检测：AI 想改一个已被人定稿的对象时调用。内容摘要不一致 => 不允许静默改写，回到人工确认。
-// 返回 true 表示"已定稿且内容一致"（可继续）；抛错表示"有分歧，已拦下"。
-export function assertHumanFinalization(subject, nextContent) {
-  const lock = subject?.humanFinalization;
-  if (!lock || lock.outcome !== "confirmed") return false;
-  const nextDigest = decisionContentDigest({
-    decisionType: lock.decisionType,
-    workItemId: subject.id || subject.workItemId || null,
-    taskGroupId: subject.taskGroupId || null,
-    content: nextContent ?? null
-  });
-  if (nextDigest !== lock.contentDigest) {
-    throw Object.assign(new Error("human_finalized_decision_diverged"), {status: 409, finalization: lock, attemptedDigest: nextDigest});
-  }
-  return true;
 }
 
 export function consumeHumanConfirmation(state, requestId, options = {}) {
@@ -5389,6 +5393,12 @@ export function createExecutionTopology(state, args) {
     throw topologyError("execution_topology_external_runner_requires_grant_and_local_verification", 400);
   }
   const topologyId = args.topologyId || createId("topo");
+  // id 唯一性：topologyId 是调用方可自选的。若允许重复，AI 只要用同一个 id 再造一份，unshift 之后
+  // 所有 `find(topologyId===id)` 都会命中冒名的那份 —— 人批准的方案 A 的锁会落到方案 B 上，
+  // 且因 requestKey 去重连新卡片都不会出（已复现的第三个绕过）。工作项早有同类校验，这里补齐。
+  if ((state.executionTopologies || []).some((item) => item.topologyId === topologyId)) {
+    throw topologyError("execution_topology_id_conflict", 409);
+  }
   const topology = {
     schemaVersion: "execution-topology/v1",
     topologyId,
@@ -5432,6 +5442,14 @@ export function advanceExecutionTopology(state, args) {
   const action = String(args.action || "");
   const at = new Date().toISOString();
   const branches = (topology.groups || []).flatMap((group) => group.branches || []);
+  // 定稿后 AI 不得更改方案：任何"按已批准方案往下走"的动作之前，先核对方案实质内容仍与定稿时一致。
+  // （downgrade 有它自己的授权路径，report_branch 会写入执行结果因此不做此校验。）
+  if (["start", "merge"].includes(action) && topology.humanFinalization?.subjectContentDigest) {
+    const current = subjectContentSnapshot(state, {decisionType: "plan_topology", subjectRef: `ExecutionTopology:${topology.topologyId}`});
+    if (!current || digestOf(current) !== topology.humanFinalization.subjectContentDigest) {
+      throw topologyError("human_finalized_decision_diverged", 409);
+    }
+  }
   const expect = (status) => { if (topology.status !== status) throw topologyError(`execution_topology_expected_${status}_got_${topology.status}`); };
   const transition = (from, to, actor, requires) => recordTransition(state, "ExecutionTopology", topology.topologyId, from, to, actor, requires);
 
@@ -5451,7 +5469,10 @@ export function advanceExecutionTopology(state, args) {
         subjectRef: `ExecutionTopology:${topology.topologyId}`,
         requestKey: `plan_topology:${topology.topologyId}`,
         summary: `执行方案确认：${topology.mode === "serial" ? "串行" : "并行"}执行 ${topology.workItemId}`,
-        detail: `拟以 ${topology.mode} 模式执行，运行载体 ${topology.runnerKind}／隔离方式 ${topology.isolation}，共 ${branches.length} 个分支。方案需人工定稿后才会启动。`,
+        // 把每个分支【将要动哪些路径】直接写进卡片：这是这份授权真正的杀伤面，人必须看得见才谈得上知情同意。
+        detail: `拟以 ${topology.mode} 模式执行，运行载体 ${topology.runnerKind}／隔离方式 ${topology.isolation}，共 ${branches.length} 个分支。\n` +
+          branches.map((branch) => `· ${branch.branchId}：${branch.objective}｜将改动 ${(branch.ownedPaths || []).join("、") || "（未声明占用路径）"}｜验收 ${(branch.acceptanceChecks || []).join("、") || "（无）"}`).join("\n") +
+          `\n方案需人工定稿后才会启动；定稿后若内容被改动将拒绝生效并回到人工确认。`,
         peerReview: {verdict: "eligibility_passed", findings: []},
         content: {mode: topology.mode, runnerKind: topology.runnerKind, isolation: topology.isolation, branches: branches.map((branch) => branch.branchId)},
         options: [

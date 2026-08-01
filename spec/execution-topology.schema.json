@@ -339,6 +339,9 @@
             "confirmed",
             "rejected"
           ]
+        },
+        "subjectContentDigest": {
+          "type": "string"
         }
       }
     }
