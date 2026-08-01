@@ -1496,8 +1496,21 @@ function normalizeChecks(checks) {
   }));
 }
 
+// 原先是"逐个剥掉已知敏感字段"的黑名单式脱敏，于是我后来加的 registrationReplay 自然漏网 ——
+// 它整份存着注册结果，里面含【明文 nodeToken】，而 join token 会随 state 下发给任何持
+// project:view 的项目成员。读的门槛比签发（需要 agent:activate）低一整级，拿到明文令牌即可冒充节点：
+// 领派发、报执行事件、按 allowedMcpTools 调 MCP、拉取该租户数据；而令牌要到剩余不足 7 天才轮换，
+// 注册时给的是 30 天，也就是约 23 天内一直有效。
+// 改为白名单：只放行确定安全的字段，将来新增的字段默认不外泄 —— 这类泄露必须默认关闭。
+const PUBLIC_JOIN_TOKEN_FIELDS = ["schemaVersion", "joinTokenId", "projectId", "organizationId",
+  "expectedNodeName", "allowedRoles", "allowedMcpTools", "status", "maxUses", "useCount",
+  "expiresAt", "createdBy", "createdAt", "updatedAt", "consumedAt", "revokedAt", "revokedBy"];
+
 function publicJoinToken(record) {
-  const { tokenDigest: _tokenDigest, ...safe } = record;
+  const safe = {};
+  for (const field of PUBLIC_JOIN_TOKEN_FIELDS) {
+    if (record[field] !== undefined) safe[field] = record[field];
+  }
   return safe;
 }
 

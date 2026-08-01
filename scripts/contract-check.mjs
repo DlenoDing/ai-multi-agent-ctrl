@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
+import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
@@ -1254,6 +1254,25 @@ function verifyHumanAndOrganizationContracts(output) {
     const cbConfirmEntry = (cbBundle?.entries || []).find((entry) => entry.path === "task/confirmations.json");
     if (cbConfirmEntry && !String(cbConfirmEntry.content).includes("hcr_bundled")) {
       output.push("内容包: 定稿决策条目里没有那条实际的决策内容");
+    }
+
+    // join token 的脱敏原先是"逐个剥掉已知敏感字段"的黑名单式，于是后加的 registrationReplay
+    // 漏网 —— 它整份存着注册结果，含【明文 nodeToken】，而 join token 会随 state 下发给
+    // 任何持 project:view 的项目成员。读的门槛比签发低一整级，拿到即可冒充节点。
+    const jtLeakState = structuredClone(seedState);
+    ensureRuntimeCollections(jtLeakState, {root});
+    const jtLeakToken = createAgentJoinToken(jtLeakState, {projectId: "prj_control_plane", allowedRoles: ["executor"], maxUses: 1}, {actor: "acct_workspace_owner"});
+    registerAgentNode(jtLeakState, {nodeName: "leak-probe", requestedRoles: ["executor"]},
+      {joinToken: jtLeakToken.joinToken || jtLeakToken.token, idempotencyKey: "leak-probe-key"});
+    const jtPublished = JSON.stringify(listAgentJoinTokens(jtLeakState));
+    if (/aimac_node_/u.test(jtPublished)) {
+      output.push("凭据泄露: 下发给项目成员的 join token 里含明文 nodeToken（持 project:view 即可冒充该节点）");
+    }
+    if (jtPublished.includes("registrationReplay")) {
+      output.push("凭据泄露: 服务端内部的注册重放记录被下发出去了（脱敏应当是白名单式，新增字段默认不外泄）");
+    }
+    if (!jtPublished.includes("joinTokenId")) {
+      output.push("凭据泄露: 脱敏把必要字段也剥掉了（这条断言在测一个空对象，证明不了任何事）");
     }
 
     // 注册没有幂等键：写入成功但响应在网络上丢失时，代理重试会拿到 409，留下一个 initializing 的
