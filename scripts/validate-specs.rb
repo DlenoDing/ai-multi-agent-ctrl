@@ -754,6 +754,8 @@ errors << "任务拆分必须先人工定稿（AI 不得自批自拆）" unless 
 errors << "拆分待定期间必须拦住工作项，不得继续派发" unless core_source.include?("if (split?.pendingHumanSplitConfirmation)") && core_source.include?("cell_held_for_human_plan_confirmation")
 errors << "执行方案启动前必须人工定稿" unless core_source.include?("execution_topology_requires_human_plan_confirmation") && core_source.include?("decisionType: \"plan_topology\"")
 errors << "拆分/方案闸门必须有行为测试覆盖" unless contract_check_source.include?("人工闸门: 任务拆分未经人工定稿就被执行了") && contract_check_source.include?("人工闸门: 执行方案未经人工定稿就被启动了")
+# 11. 规则/配置变更影响后续所有执行，机器主体不得变更（走与人工定稿同一套 HUMAN_ONLY_ACTIONS 强制）。
+errors << "规则/配置变更必须限定真人主体" unless server_source.include?("\"project_config_update\",") && server_source.include?("\"task_group_config_update\"") && server_source.include?("HUMAN_ONLY_ACTIONS.includes(action)) return HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(account.accountType)")
 # M7: the repository output target denylist field must be the schema-declared pathDenylist (not the
 # non-schema forbiddenPathRules), enforced end-to-end (producer + runtime consumer), and instance-validated.
 errors << "repository output target must use the schema pathDenylist field" unless core_source.include?("pathDenylist: request.pathDenylist") && agent_runtime_source.include?("target.pathDenylist") && contract_check_source.include?("repository-output-target.schema.json")

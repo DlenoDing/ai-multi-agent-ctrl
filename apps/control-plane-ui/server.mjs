@@ -759,7 +759,13 @@ function createWorkItemRecord(state, taskGroupId, input = {}, options = {}) {
 
 // 只有真人账号能做的动作：核心方案的定稿与人工意图通道。机器主体（service_account / agent_identity）
 // 即使被授予了相应权限也一律拒绝 —— 否则 AI 拿到一个服务账号就能自我批准，人工闸门形同虚设。
-const HUMAN_ONLY_ACTIONS = ["human_confirmation_decide", "human_directive_create"];
+// 规则/配置变更会影响后续所有执行，属于核心决策：机器主体不得变更（AI 只能通过人工确认通道提议）。
+const HUMAN_ONLY_ACTIONS = [
+  "human_confirmation_decide",
+  "human_directive_create",
+  "project_config_update",
+  "task_group_config_update"
+];
 const HUMAN_ACCOUNT_TYPES_FOR_ACTIONS = ["system_admin", "org_admin", "user_account"];
 
 function principalAllowedForAction(account, action) {
