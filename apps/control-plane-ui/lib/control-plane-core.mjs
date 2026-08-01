@@ -6405,8 +6405,12 @@ export function contractPublish(state, args) {
 // 规则来源分流：discovered = 刚发现、还没判定它算不算本项目的规则，属于未了结，必须挡住关闭门；
 // resolved/active 表示已判定为规则并生效；reference_only/quarantined/rejected/superseded 为终态。
 // 建立时只能是 discovered（"发现了一份材料，还没人判定它算不算本项目的规则"）。
-// AI 可以把它判为【不采纳】的三个终态；判为 active（采纳为本项目规则）是规则层决策，必须真人 ——
-// 与共享定义契约同一条口径：AI 不得自行宣布什么是本项目的规范。
+// 判为 active（采纳为本项目规则）是规则层决策，必须真人 —— 与共享定义契约同一条口径：
+// AI 不得自行宣布什么是本项目的规范。
+// 关于下面那个 AI_SETTLEABLE 集：唯一的 settle 入口 /api/rule-source-resolutions/:id/settle 已是
+// 真人专属，所以【当前没有任何调用方会走到 AI 分支】。保留它不是装饰，而是因为这条函数级约束
+// 才是真正的判据：将来若接上 MCP 工具让执行方自行"判为不采纳"，AI 也绝不会顺手把它判成 active。
+// 若最终确定不接 MCP 入口，这个集合应当连同分支一起删掉，而不是留在这里看起来像一道保护。
 export const RULE_SOURCE_AI_SETTLEABLE_STATUSES = ["reference_only", "quarantined", "rejected"];
 export const RULE_SOURCE_HUMAN_ONLY_STATUSES = ["active"];
 export const RULE_SOURCE_TERMINAL_STATUSES = ["reference_only", "quarantined", "rejected", "superseded"];

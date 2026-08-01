@@ -770,6 +770,7 @@ const HUMAN_ONLY_ACTIONS = [
   "shared_definition_resolve",
   "review_plan_resolve",
   "review_bundle_resolve",
+  "rule_source_settle",
   "system_upgrade_candidate_resolve",
   // 豁免质量门是放行决定，必须由真人负责，不能由 AI 自我豁免。
   "quality_gate_waive",

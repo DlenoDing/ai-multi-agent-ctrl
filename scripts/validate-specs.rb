@@ -976,6 +976,9 @@ human_lever_forms = {
 human_lever_forms.each do |action, form_kind|
   next unless server_source.include?("\"#{action}\"")
   errors << "真人杠杆 #{action} 在控制台没有操作入口（data-form=\"#{form_kind}\"）——后端有杠杆而界面上按不到，等于没有" unless app_js_source.include?("data-form=\"#{form_kind}\"") && app_js_source.include?("kind === \"#{form_kind}\"")
+  # 光有入口不够：这些杠杆之所以是"真人杠杆"，靠的就是 HUMAN_ONLY_ACTIONS 这一条。
+  # 漏登记的话它会静默退化成"任何拿到对应权限的机器主体都能按"，而界面上看不出任何区别。
+  errors << "真人杠杆 #{action} 没有登记进 HUMAN_ONLY_ACTIONS（机器主体同样能调用，它就不再是真人专属）" unless server_source.match?(/HUMAN_ONLY_ACTIONS\s*=\s*\[[^\]]*"#{action}"/m)
 end
 
 errors << "review console must surface + resolve permission/approval/finding requests" unless server_source.include?("\"permissionRequests\", \"approvalRequests\", \"findings\", \"qualityGates\"") && app_js_source.include?("data-form=\"perm-resolve\"") && app_js_source.include?("data-form=\"approval-resolve\"") && app_js_source.include?("data-form=\"finding-resolve\"")
