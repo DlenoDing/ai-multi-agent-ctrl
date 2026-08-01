@@ -39,6 +39,10 @@ import {
   createExecutionTopology,
   recordQualityGateFromTest,
   cancelPendingConfirmationsForDispatch,
+  ruleSourceResolve,
+  reviewPlanCreate,
+  reviewPlanRecordCoverage,
+  REVIEW_PLAN_TERMINAL_STATUSES,
   relatedSharedDefinitionsForTest,
   contractPublish,
   digestOf,
@@ -1022,6 +1026,48 @@ function verifyHumanAndOrganizationContracts(output) {
     if (afterFresh.status !== "passed") output.push("人工闸门: 带新证据的重报仍无法清除失败的质量门（正常流程被打断）");
     if (!afterFresh.previouslyFailed) output.push("人工闸门: 质量门被翻转却没有留下 previouslyFailed 痕迹（人看不到这条曾失败）");
 
+    // 空转门的行为证明：静态检查只能保证状态名拼对，保证不了这道门真的会被触发 ——
+    // 比如 ruleSourceResolutions 的记录原先根本没有 taskGroupId 字段，状态名再对，
+    // 按 taskGroupId 过滤的门也是恒空的。所以这里用【真实产出函数】造对象，断言门确实变红。
+    const liveGateCases = [
+      {gate: "rules_candidates_processed", make: (st, tg) => ruleSourceResolve(st, {taskGroupId: tg.id, projectId: tg.projectId, sourceRef: "reference:probe"})},
+      {gate: "all_rule_sources_resolved", make: (st, tg) => ruleSourceResolve(st, {taskGroupId: tg.id, projectId: tg.projectId, sourceRef: "reference:probe2"})},
+      {gate: "all_review_plans_closed", make: (st, tg) => reviewPlanCreate(st, {taskGroupId: tg.id})},
+      {gate: "no_pending_approvals", make: (st, tg) => approvalRequestCreate(st, {taskGroupId: tg.id, action: "probe"})},
+      {gate: "all_contracts_compatible", make: (st, tg) => {
+        const def = relatedSharedDefinitionsForTest(st, tg)[0];
+        if (def) def.status = "conflicted";
+        return def;
+      }}
+    ];
+    for (const probe of liveGateCases) {
+      const gateState = structuredClone(seedState);
+      ensureRuntimeCollections(gateState, {root});
+      const gateTg = gateState.taskGroups.find((item) => item.id === "tg_runtime_management");
+      const before = computeCloseBarrier(gateState, gateTg.id).gateResults[probe.gate];
+      if (!before) { output.push(`空转门: 关闭门里不存在 ${probe.gate}（测试与实现脱节）`); continue; }
+      const made = probe.make(gateState, gateTg);
+      if (!made) { output.push(`空转门: ${probe.gate} 的探针没能造出被检查的对象（测试自身空转）`); continue; }
+      const after = computeCloseBarrier(gateState, gateTg.id).gateResults[probe.gate];
+      if (after.status !== "blocked") {
+        output.push(`空转门: 造出了本该被 ${probe.gate} 拦下的对象，这道门却仍然显示通过（它从来没有真正检查过任何东西）`);
+      }
+    }
+
+    // 评审计划此前只能创建、无法终结 —— 建过一次就永久卡死关闭门，且人没有任何杠杆。
+    const planState = structuredClone(seedState);
+    ensureRuntimeCollections(planState, {root});
+    const planTg = planState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const plan = reviewPlanCreate(planState, {taskGroupId: planTg.id, requiredReviewerRoles: ["reviewer", "qa"]}).reviewPlan;
+    reviewPlanRecordCoverage(planState, {reviewPlanId: plan.reviewPlanId, reviewerRole: "reviewer"});
+    if (REVIEW_PLAN_TERMINAL_STATUSES.includes(plan.status)) {
+      output.push("评审计划: 只到齐一个评审角色就闭合了（覆盖度要求形同虚设）");
+    }
+    reviewPlanRecordCoverage(planState, {reviewPlanId: plan.reviewPlanId, reviewerRole: "qa"});
+    if (!REVIEW_PLAN_TERMINAL_STATUSES.includes(plan.status)) {
+      output.push("评审计划: 要求的评审角色全部到齐后仍无法闭合（创建即永久阻塞关闭门，人无杠杆）");
+    }
+
     // D7：agent 只要上报一次"执行失败"，就能让它自己提出的、人正要回答的确认单作废，
     // 连带 no_pending_human_confirmations 这道阻塞一起清掉 —— 等于 AI 单方面撤掉了人的杠杆。
     // 作废可以，静默放行不行：必须升级为人工决策，人仍然要有一个可按的杠杆。
@@ -1077,12 +1123,12 @@ function verifyHumanAndOrganizationContracts(output) {
       {schemaVersion: "account/v1", accountId: "acct_ai_1", accountType: "service_account", displayName: "AI-1", status: "active"},
       {schemaVersion: "account/v1", accountId: "acct_ai_2", accountType: "service_account", displayName: "AI-2", status: "active"}
     ];
-    approvalHrState.approvalRequests = [{approvalId: "appr_hr", status: "pending", riskClass: "high", proposedBy: "acct_alice", quorum: 1, approvals: []}];
+    approvalHrState.approvalRequests = [{approvalId: "appr_hr", status: "requested", riskClass: "high", proposedBy: "acct_alice", quorum: 1, approvals: []}];
     const selfAppr = approvalResolve(approvalHrState, {approvalId: "appr_hr", status: "approved", resolvedBy: "acct_alice"});
     if (selfAppr.error !== "high_risk_no_self_approval" || approvalHrState.approvalRequests[0].status === "approved") output.push("H1: a high-risk request was self-approved by its proposer");
     approvalResolve(approvalHrState, {approvalId: "appr_hr", status: "approved", resolvedBy: "acct_bob"});
     if (approvalHrState.approvalRequests[0].status !== "approved") output.push("H1: a distinct approver could not approve a high-risk request");
-    approvalHrState.approvalRequests.push({approvalId: "appr_q2", status: "pending", riskClass: "medium", proposedBy: "acct_alice", quorum: 2, approvals: []});
+    approvalHrState.approvalRequests.push({approvalId: "appr_q2", status: "requested", riskClass: "medium", proposedBy: "acct_alice", quorum: 2, approvals: []});
     const q2 = () => approvalHrState.approvalRequests.find((a) => a.approvalId === "appr_q2");
     approvalResolve(approvalHrState, {approvalId: "appr_q2", status: "approved", resolvedBy: "acct_bob"});
     if (q2().status !== "quorum_collecting") output.push("H1: a quorum-2 request terminalized on the first of two approvers");
@@ -1091,7 +1137,7 @@ function verifyHumanAndOrganizationContracts(output) {
     approvalResolve(approvalHrState, {approvalId: "appr_q2", status: "approved", resolvedBy: "acct_carol"});
     if (q2().status !== "approved") output.push("H1: a quorum-2 request was not approved after two distinct approvers");
     // 终审必须有人：纯 AI（机器主体）票即使凑够法定人数也不得通过。
-    approvalHrState.approvalRequests.push({approvalId: "appr_ai", status: "pending", riskClass: "medium", proposedBy: "acct_alice", quorum: 2, approvals: []});
+    approvalHrState.approvalRequests.push({approvalId: "appr_ai", status: "requested", riskClass: "medium", proposedBy: "acct_alice", quorum: 2, approvals: []});
     const aiOnly = () => approvalHrState.approvalRequests.find((a) => a.approvalId === "appr_ai");
     approvalResolve(approvalHrState, {approvalId: "appr_ai", status: "approved", resolvedBy: "acct_ai_1"});
     const aiQuorumResult = approvalResolve(approvalHrState, {approvalId: "appr_ai", status: "approved", resolvedBy: "acct_ai_2"});

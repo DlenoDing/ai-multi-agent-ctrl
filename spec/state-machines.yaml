@@ -562,67 +562,36 @@ machines:
         requires: ["revocation_decision_ref"]
 
   Finding:
-    initial: "reported"
-    terminal: ["closed", "rejected", "duplicate"]
+    # 原先此处登记的是一套分诊生命周期（reported/triaged/accepted/root_cause_confirmed/...），
+    # 但全仓没有任何代码写入过其中任何一个值 —— 运行时与控制台实际使用的是下面这套。
+    # 一份描述不了任何真实对象的状态机，会让照它写判据的关闭门变成空转门（all_findings_terminal
+    # 曾因此把 resolved/dismissed/wontfix 当成"不存在的状态"）。故登记为实际实现的这套；
+    # 若日后要恢复分诊生命周期，必须连同它的写入方一起加，不能只登记不实现。
+    initial: "open"
+    terminal: ["resolved", "closed", "dismissed", "wontfix"]
     states:
-      - "reported"
-      - "triaged"
-      - "accepted"
-      - "rejected"
-      - "duplicate"
-      - "root_cause_confirmed"
-      - "impact_scanned"
-      - "fix_planned"
-      - "fixed"
-      - "reverify_requested"
-      - "reverified"
+      - "open"
+      - "resolved"
       - "closed"
+      - "dismissed"
+      - "wontfix"
     transitions:
-      - from: "reported"
-        to: "triaged"
-        actor: "reviewer"
-        requires: ["severity", "evidence_refs"]
-      - from: "triaged"
-        to: "accepted"
-        actor: "orchestrator"
-        requires: ["owner_role", "impact_scope"]
-      - from: "triaged"
-        to: "rejected"
-        actor: "orchestrator"
-        requires: ["rejection_reason"]
-      - from: "triaged"
-        to: "duplicate"
-        actor: "reviewer"
-        requires: ["duplicate_finding_ref"]
-      - from: "accepted"
-        to: "root_cause_confirmed"
-        actor: "work-session"
-        requires: ["root_cause_ref"]
-      - from: "root_cause_confirmed"
-        to: "impact_scanned"
-        actor: "reviewer"
-        requires: ["impact_scan_ref"]
-      - from: "impact_scanned"
-        to: "fix_planned"
-        actor: "orchestrator"
-        requires: ["fix_plan"]
-      - from: "fix_planned"
-        to: "fixed"
-        actor: "work-session"
-        requires: ["fix_checkpoint"]
-      - from: "fixed"
-        to: "reverify_requested"
-        actor: "orchestrator"
-        requires: ["fix_checkpoint"]
-      - from: "reverify_requested"
-        to: "reverified"
-        actor: "qa"
-        requires: ["independent_reverify_evidence"]
-      - from: "reverified"
+      - from: "open"
+        to: "resolved"
+        actor: "decision-center"
+        requires: ["disposition_classified", "resolution_ref", "fix_evidence_verified"]
+      - from: "open"
         to: "closed"
-        actor: "orchestrator"
-        requires: ["finding_close_evidence"]
-
+        actor: "decision-center"
+        requires: ["disposition_classified", "resolution_ref"]
+      - from: "open"
+        to: "dismissed"
+        actor: "decision-center"
+        requires: ["disposition_classified"]
+      - from: "open"
+        to: "wontfix"
+        actor: "decision-center"
+        requires: ["disposition_classified", "scope_adjustment_ref"]
   Contract:
     initial: "draft"
     terminal: ["superseded", "retired"]
@@ -2343,3 +2312,58 @@ machines:
         to: "superseded"
         actor: "orchestrator"
         requires: ["successor_output_target_ref"]
+
+  # 人工确认单：整个人工定稿闸门的核心对象。此前它从未进入状态机权威表，
+  # 意味着关闭门里 "pending" 这个判据没有任何东西保证它拼写正确 —— 拼错即空转。
+  HumanConfirmationRequest:
+    initial: "pending"
+    terminal: ["consumed", "expired", "cancelled"]
+    states:
+      - "pending"
+      - "answered"
+      - "consumed"
+      - "expired"
+      - "cancelled"
+    transitions:
+      - from: "pending"
+        to: "pending"
+        actor: "decision-center"
+        requires: ["expected_round_accepted", "subject_content_digest", "revision_decision"]
+      - from: "pending"
+        to: "answered"
+        actor: "decision-center"
+        requires: ["human_actor_verified", "expected_round_accepted", "subject_content_digest", "finalization_decision"]
+      - from: "answered"
+        to: "consumed"
+        actor: "orchestrator"
+        requires: ["decision_effect_recorded"]
+      - from: "pending"
+        to: "expired"
+        actor: "monitor"
+        requires: ["deadline_passed", "escalated_to_needs_decision"]
+      - from: "pending"
+        to: "cancelled"
+        actor: "monitor"
+        requires: ["dispatch_failure_recorded", "escalated_to_needs_decision"]
+
+  HumanDirective:
+    initial: "queued"
+    terminal: ["applied", "rejected"]
+    states:
+      - "queued"
+      - "acknowledged"
+      - "applied"
+      - "rejected"
+    transitions:
+      - from: "queued"
+        to: "acknowledged"
+        actor: "orchestrator"
+        requires: ["directive_delivered"]
+      - from: "acknowledged"
+        to: "applied"
+        actor: "orchestrator"
+        requires: ["effect_recorded"]
+      - from: "queued"
+        to: "rejected"
+        actor: "decision-center"
+        requires: ["rejection_reason"]

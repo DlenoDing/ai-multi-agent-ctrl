@@ -2016,7 +2016,7 @@ function splitMixedWorkItemIfNeeded(state, taskGroup, workItem) {
     createdAt: at,
     updatedAt: at
   });
-  state.derivedTaskRequests = capRetainingPredicate(state.derivedTaskRequests, (item) => BARRIER_PENDING_STATUSES.includes(item.status), 2000);
+  state.derivedTaskRequests = capRetainingPredicate(state.derivedTaskRequests, (item) => DERIVED_TASK_REQUEST_PENDING_STATUSES.includes(item.status), 2000);
   appendEvent(state, "derived_task_created", "WorkItem", workItem.id, "orchestrator", {derivedWorkItemRefs: [analysis.id, implementation.id], taskExecutionClass: taskExecution.taskExecutionClass});
   return {derivedWorkItemIds: [analysis.id, implementation.id]};
 }
@@ -2874,12 +2874,12 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
     // ExecutionTopology terminal states per spec/state-machines.yaml are merged/downgraded/cancelled (the
     // former closed/completed/superseded literals were not modeled states at all, so nothing could clear it).
     no_open_execution_topology: (state.executionTopologies || []).some((item) => item.taskGroupId === taskGroupId && !TOPOLOGY_TERMINAL_STATUSES.includes(item.status)),
-    no_open_review_plan: (state.reviewPlans || []).some((item) => item.taskGroupId === taskGroupId && !["closed", "completed", "cancelled"].includes(item.status)),
+    no_open_review_plan: (state.reviewPlans || []).some((item) => item.taskGroupId === taskGroupId && !REVIEW_PLAN_TERMINAL_STATUSES.includes(item.status)),
     no_pending_review_bundle: (state.reviewBundles || []).some((item) => item.taskGroupId === taskGroupId && !["consumed", "rejected"].includes(item.status)),
-    no_blocking_derived_task_request: (state.derivedTaskRequests || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)),
+    no_blocking_derived_task_request: (state.derivedTaskRequests || []).some((item) => item.taskGroupId === taskGroupId && DERIVED_TASK_REQUEST_PENDING_STATUSES.includes(item.status)),
     no_pending_external_review: (state.reviewBundles || []).some((item) => item.taskGroupId === taskGroupId && item.reviewMode === "external" && !["consumed", "rejected"].includes(item.status)),
     no_active_role_drift_guard: (state.roleDriftGuards || []).some((guard) => guard.taskGroupId === taskGroupId && !["closed", "corrected"].includes(guard.status)),
-    effective_instruction_packet_active: (state.effectiveInstructionPackets || []).some((packet) => packet.taskGroupId === taskGroupId && !["active", "consumed", "expired", "superseded"].includes(packet.status)),
+    effective_instruction_packet_active: (state.effectiveInstructionPackets || []).some((packet) => packet.taskGroupId === taskGroupId && !["active", "rejected", "superseded"].includes(packet.status)),
     // 只有【已经进入流程】的共享定义才阻塞关闭：草稿视为尚未提出。否则任何一条 AI 建的 draft 都能
     // 永久锁死关闭门，而控制台对共享定义是只读的、REST 也没有改状态的入口 —— 人将完全无法脱困。
     shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => SHARED_DEFINITION_BLOCKING_STATUSES.includes(definition.status)),
@@ -2890,8 +2890,8 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
       taskGroupCheckpoints.some((checkpoint) => checkpoint.workId === item.id) &&
       !item.reviewBundleRef &&
       !(state.reviewBundles || []).some((bundle) => bundle.workItemId === item.id && bundle.verdict === "passed")),
-    no_pending_permission_or_approval: (state.permissionRequests || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)) ||
-      (state.approvalRequests || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)),
+    no_pending_permission_or_approval: (state.permissionRequests || []).some((item) => item.taskGroupId === taskGroupId && PERMISSION_REQUEST_PENDING_STATUSES.includes(item.status)) ||
+      (state.approvalRequests || []).some((item) => item.taskGroupId === taskGroupId && APPROVAL_REQUEST_PENDING_STATUSES.includes(item.status)),
     no_unreconciled_command_effect: (state.commandEffects || []).some((item) => item.taskGroupId === taskGroupId && !COMMAND_EFFECT_TERMINAL.has(item.status)),
     no_pending_human_confirmations: (state.humanConfirmationRequests || []).some((item) => item.taskGroupId === taskGroupId && item.status === "pending"),
     no_pending_human_directives: (state.humanDirectives || []).some((item) => item.taskGroupId === taskGroupId && ["queued", "acknowledged"].includes(item.status))
@@ -2971,30 +2971,30 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     .map((workItem) => workItem.id));
   const gateFailures = {
     all_required_work_closed: readiness.blockingObjects.some((item) => item.objectType === "WorkItem"),
-    all_findings_terminal: forTaskGroup(state.findings).some((item) => !(["resolved", "closed", "dismissed", "wontfix"].includes(item.status) && ["fixed_verified", "not_applicable", "scope_adjusted", "blocked_external"].includes(item.dispositionClass))),
+    all_findings_terminal: forTaskGroup(state.findings).some((item) => !(FINDING_TERMINAL_STATUSES.includes(item.status) && ["fixed_verified", "not_applicable", "scope_adjusted", "blocked_external"].includes(item.dispositionClass))),
     all_quality_gates_passed: forTaskGroup(state.qualityGates).some((item) => !["passed", "waived"].includes(item.status) && !(item.workItemId && abandonedQualityGateWorkIds.has(item.workItemId))),
-    all_contracts_compatible: relatedSharedDefinitions(state, taskGroup).some((definition) => ["conflict", "blocked"].includes(definition.status)),
+    all_contracts_compatible: relatedSharedDefinitions(state, taskGroup).some((definition) => ["conflicted", "change_requested"].includes(definition.status)),
     all_changes_integrated: forTaskGroup(state.repositoryOutputs).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status)),
-    no_pending_permissions: forTaskGroup(state.permissionRequests).some((item) => pendingStatuses.includes(item.status)),
-    no_pending_approvals: forTaskGroup(state.approvalRequests).some((item) => pendingStatuses.includes(item.status)),
+    no_pending_permissions: forTaskGroup(state.permissionRequests).some((item) => PERMISSION_REQUEST_PENDING_STATUSES.includes(item.status)),
+    no_pending_approvals: forTaskGroup(state.approvalRequests).some((item) => APPROVAL_REQUEST_PENDING_STATUSES.includes(item.status)),
     all_commands_terminal: (state.commands || []).some((command) => (command.taskGroupId === taskGroupId || command.subject === `TaskGroup:${taskGroupId}`) && !COMMAND_TERMINAL.has(command.status)),
     all_command_effects_terminal: forTaskGroup(state.commandEffects).some((item) => !COMMAND_EFFECT_TERMINAL.has(item.status)),
     no_active_dlq: forTaskGroup(state.dlqEntries).some((item) => !DLQ_ENTRY_TERMINAL.has(item.status)),
     all_leases_terminal: (state.leases || []).some((lease) => lease.status === "active" && leaseAppliesToTaskGroup(state, lease, taskGroupId)),
     no_active_temp_grants: (state.mcpGrants || []).some((grant) => grant.taskGroupId === taskGroupId && grant.grantStatus === "issued" && new Date(grant.expiresAt || 0).getTime() > nowMs),
     artifacts_verified: forTaskGroup(state.artifacts).some((item) => !["verified", "registered"].includes(item.status)),
-    rules_candidates_processed: (state.ruleSourceResolutions || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)),
+    rules_candidates_processed: (state.ruleSourceResolutions || []).some((item) => item.taskGroupId === taskGroupId && item.status === "discovered"),
     runtime_issue_candidates_exported: forTaskGroup(state.systemUpgradeCandidates).some((item) => item.status === "candidate_created"),
     no_open_execution_topologies: forTaskGroup(state.executionTopologies).some((item) => !TOPOLOGY_TERMINAL_STATUSES.includes(item.status)),
-    no_blocking_derived_task_requests: forTaskGroup(state.derivedTaskRequests).some((item) => pendingStatuses.includes(item.status)),
-    all_review_plans_closed: forTaskGroup(state.reviewPlans).some((item) => !["closed", "completed", "cancelled"].includes(item.status)),
+    no_blocking_derived_task_requests: forTaskGroup(state.derivedTaskRequests).some((item) => ["candidate", "strengthened", "classified"].includes(item.status)),
+    all_review_plans_closed: forTaskGroup(state.reviewPlans).some((item) => !REVIEW_PLAN_TERMINAL_STATUSES.includes(item.status)),
     no_pending_review_bundles: forTaskGroup(state.reviewBundles).some((item) => !["consumed", "rejected"].includes(item.status)),
-    all_rule_sources_resolved: (state.ruleSourceResolutions || []).some((item) => item.taskGroupId === taskGroupId && item.status === "conflict"),
+    all_rule_sources_resolved: (state.ruleSourceResolutions || []).some((item) => item.taskGroupId === taskGroupId && !RULE_SOURCE_TERMINAL_STATUSES.includes(item.status) && item.status !== "active"),
     completion_readiness_clear: readiness.status !== "clear",
     no_pending_human_confirmations: forTaskGroup(state.humanConfirmationRequests).some((item) => item.status === "pending"),
     no_pending_human_directives: forTaskGroup(state.humanDirectives).some((item) => ["queued", "acknowledged"].includes(item.status)),
     no_active_role_drift_blockers: readiness.blockingObjects.some((item) => item.objectType === "RoleDriftGuard"),
-    all_effective_instruction_packets_terminal: forTaskGroup(state.effectiveInstructionPackets).some((packet) => !["active", "consumed", "expired", "superseded"].includes(packet.status)),
+    all_effective_instruction_packets_terminal: forTaskGroup(state.effectiveInstructionPackets).some((packet) => !["active", "rejected", "superseded"].includes(packet.status)),
     all_shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => SHARED_DEFINITION_BLOCKING_STATUSES.includes(definition.status)),
     all_repository_output_targets_terminal: forTaskGroup(state.repositoryOutputs).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status))
   };
@@ -5227,6 +5227,12 @@ export function capRetainingOpen(items, terminalStatuses, limit) {
 // the cap below and computeCloseBarrier can never drift into evicting a gating item.
 // Includes "quorum_collecting" so a sub-quorum high-risk approval keeps blocking completion readiness.
 const BARRIER_PENDING_STATUSES = ["open", "pending", "pending_approval", "quorum_collecting", "requested", "submitted", "in_review", "waiting"];
+// 一个横跨 5 类实体的通用"待处理"清单，对每一类都只是碰运气 —— 实测 8 个状态名里，
+// 对 RuleSourceResolution / DerivedTaskRequest 一个都不命中，那两道门从来没有触发过。
+// 因此改为按实体给出各自的未了结集，且每个值都必须是 state-machines.yaml 里已登记的状态。
+export const PERMISSION_REQUEST_PENDING_STATUSES = ["pending_approval"];
+export const APPROVAL_REQUEST_PENDING_STATUSES = ["requested", "quorum_collecting"];
+export const DERIVED_TASK_REQUEST_PENDING_STATUSES = ["candidate", "strengthened", "classified"];
 
 // Like capRetainingOpen but with an explicit isOpen predicate, for barrier collections whose "open"
 // condition is a positive status match (candidate_created / conflict / pending) rather than the
@@ -5929,6 +5935,30 @@ export function requeuePermissionApprovedDispatch(state, request, at = new Date(
   return dispatch;
 }
 
+// 评审计划此前是【只能创建、无法终结】的：创建时写死 "planned"，而关闭门要求它进入终态，
+// 全仓却没有任何迁移入口 —— 建过一次评审计划，这个任务组就永远关不掉，人也没有任何杠杆。
+// 这里补上它缺失的后半段生命周期：评审结论回流即累计覆盖度，要求的评审角色全部到齐即闭合。
+export const REVIEW_PLAN_TERMINAL_STATUSES = ["closed", "rejected", "superseded"];
+
+export function reviewPlanRecordCoverage(state, args) {
+  const plan = (state.reviewPlans || []).find((item) => args.reviewPlanId
+    ? item.reviewPlanId === args.reviewPlanId
+    : item.taskGroupId === args.taskGroupId && !REVIEW_PLAN_TERMINAL_STATUSES.includes(item.status));
+  if (!plan) return null;
+  if (REVIEW_PLAN_TERMINAL_STATUSES.includes(plan.status)) return plan;
+  const at = new Date().toISOString();
+  if (args.reviewerRole) plan.coveredReviewerRoles = [...new Set([...(plan.coveredReviewerRoles || []), args.reviewerRole])];
+  const required = plan.requiredReviewerRoles || [];
+  const covered = plan.coveredReviewerRoles || [];
+  const satisfied = required.length > 0 && required.every((role) => covered.includes(role));
+  // 覆盖度达成即闭合：评审计划本身不是"重大方案选择"，任务组关闭那道人工定稿闸门仍然在后面挡着，
+  // 所以这里自动推进不会绕过人工确认，只是不再把流程卡死。
+  plan.status = satisfied ? "closed" : "in_progress";
+  if (satisfied) plan.closedAt = at;
+  plan.updatedAt = at;
+  return plan;
+}
+
 export function reviewPlanCreate(state, args) {
   const taskGroup = taskGroupForRecord(state, args);
   const at = new Date().toISOString();
@@ -5937,15 +5967,16 @@ export function reviewPlanCreate(state, args) {
     reviewPlanId: args.reviewPlanId || createId("review_plan"),
     projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
     taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
-    status: "planned",
+    status: "ready",
     reviewScopeRefs: args.reviewScopeRefs || [`TaskGroup:${taskGroup?.id || "tg_runtime_management"}`],
     requiredReviewerRoles: args.requiredReviewerRoles || ["reviewer", "qa"],
+    coveredReviewerRoles: [],
     evidenceRefs: args.evidenceRefs || [],
     createdAt: at,
     updatedAt: at
   };
   state.reviewPlans.unshift(plan);
-  state.reviewPlans = capRetainingPredicate(state.reviewPlans, (item) => !["closed", "completed", "cancelled"].includes(item.status), 2000);
+  state.reviewPlans = capRetainingPredicate(state.reviewPlans, (item) => !REVIEW_PLAN_TERMINAL_STATUSES.includes(item.status), 2000);
   return {reviewPlan: plan};
 }
 
@@ -5983,7 +6014,9 @@ export function approvalRequestCreate(state, args) {
     taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
     action: args.action || "guarded_action",
     resource: args.resource || {},
-    status: "pending",
+    // "pending" 不在 ApprovalRequest 的已登记状态里 —— 按 schema 校验这条记录本身就是非法的，
+    // 而关闭门又照着已登记枚举去判，两边对不上。统一到已登记的初始态 requested。
+    status: "requested",
     riskClass: args.riskClass || "medium",
     requiredApprovers: args.requiredApprovers || ["policy-engine", "security"],
     quorum: Number(args.quorum || 1),
@@ -6030,6 +6063,9 @@ function nonTerminalFindingStatus(status, fallback) {
   return status && !findingTerminalStatuses.includes(status) ? status : fallback;
 }
 
+// Finding 的终态集：门与 findingResolve 必须用同一份，否则两边各自手打就会再次漂移。
+export const FINDING_TERMINAL_STATUSES = ["resolved", "closed", "dismissed", "wontfix"];
+
 export function findingSubmit(state, args) {
   const at = new Date().toISOString();
   if (args.findingId) {
@@ -6074,7 +6110,7 @@ export function findingResolve(state, args) {
   // re-dispose a settled fixed_unverified finding into an accepted class (dismissed/not_applicable),
   // passing the close barrier's "no unfixed finding" gate with no new evidence. Return the settled finding.
   if (findingTerminalStatuses.includes(finding.status)) return {finding, alreadyResolved: true};
-  const terminal = ["resolved", "closed", "dismissed", "wontfix"];
+  const terminal = FINDING_TERMINAL_STATUSES;
   const status = terminal.includes(args.status) ? args.status : "resolved";
   const evidenceRefs = [...new Set([...(finding.evidenceRefs || []), ...(args.evidenceRefs || [])])];
   // 处置类：显式指定优先，否则按状态派生；不足证据/归属者降级为不可闭合类，供 close-barrier 拦截"无修复即闭合"
@@ -6101,14 +6137,23 @@ export function contractPublish(state, args) {
   return {contract};
 }
 
+// 规则来源分流：discovered = 刚发现、还没判定它算不算本项目的规则，属于未了结，必须挡住关闭门；
+// resolved/active 表示已判定为规则并生效；reference_only/quarantined/rejected/superseded 为终态。
+export const RULE_SOURCE_CREATABLE_STATUSES = ["discovered", "resolved", "active", "reference_only", "quarantined", "rejected"];
+export const RULE_SOURCE_TERMINAL_STATUSES = ["reference_only", "quarantined", "rejected", "superseded"];
+
 export function ruleSourceResolve(state, args) {
   const at = new Date().toISOString();
   const resolution = {
     schemaVersion: "rule-source-resolution/v1",
     resolutionId: args.resolutionId || createId("rsr"),
+    // 此前这条记录不带 projectId/taskGroupId，而两道关闭门都按 taskGroupId 过滤 ——
+    // 就算状态名拼对了，过滤器也恒为空集，门照样是空转的。
+    projectId: args.projectId || "prj_control_plane",
+    taskGroupId: args.taskGroupId || "tg_runtime_management",
     sourceRef: args.sourceRef || "reference:unknown",
     sourceScope: args.sourceScope || "reference_material",
-    status: args.status || "classified",
+    status: RULE_SOURCE_CREATABLE_STATUSES.includes(args.status) ? args.status : "discovered",
     classification: args.classification || "reference_only",
     adoptionPolicy: args.classification === "generic_mechanism" ? "external_review_required" : "not_active_rule",
     evidenceRefs: args.evidenceRefs || [],
@@ -6116,7 +6161,7 @@ export function ruleSourceResolve(state, args) {
     updatedAt: at
   };
   state.ruleSourceResolutions.unshift(resolution);
-  state.ruleSourceResolutions = capRetainingPredicate(state.ruleSourceResolutions, (item) => BARRIER_PENDING_STATUSES.includes(item.status) || item.status === "conflict", 2000);
+  state.ruleSourceResolutions = capRetainingPredicate(state.ruleSourceResolutions, (item) => !RULE_SOURCE_TERMINAL_STATUSES.includes(item.status), 2000);
   return {ruleSourceResolution: resolution};
 }
 

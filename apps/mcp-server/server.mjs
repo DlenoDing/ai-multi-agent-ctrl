@@ -63,7 +63,8 @@ import {
   roomWait,
   ruleSourceResolve,
   sharedDefinitionCreate,
-  taskGroupForRecord
+  taskGroupForRecord,
+  reviewPlanRecordCoverage
 } from "../control-plane-ui/lib/control-plane-core.mjs";
 import {
   createAgentControlCommand,
@@ -2220,8 +2221,14 @@ export function reviewResultConsume(state, args) {
       bundle.updatedAt = new Date().toISOString();
     }
   }
+  // 评审结论回流 = 该角色的评审覆盖度已到位。不记这一笔，评审计划就永远停在未终结态，
+  // 把任务组关闭门卡死（与上面终态化 reviewBundle 是同一个道理）。
+  const reviewPlan = reviewPlanRecordCoverage(state, {
+    reviewPlanId: args.reviewPlanId, taskGroupId: args.taskGroupId || "tg_runtime_management",
+    reviewerRole: args.reviewerRole || args.role || "reviewer"
+  });
   const readiness = computeCompletionReadiness(state, args.taskGroupId || "tg_runtime_management", args);
-  return {finding: finding.finding, readiness};
+  return {finding: finding.finding, readiness, reviewPlan};
 }
 
 export function approvalResolve(state, args) {
@@ -2498,9 +2505,17 @@ export function sharedDefinitionPublish(state, args) {
   // 宣布"什么是本项目的规范"并自我批准，而它会流进每个派发 agent 的任务契约与指令包。
   const definition = state.sharedDefinitions.find((item) => item.contractId === args.contractId);
   if (!definition) return {ok: false, error: "shared_definition_not_found"};
-  definition.status = "active";
+  // 生效的共享定义会被分发进每个 agent 的任务契约和指令包 —— 它就是"本项目认什么规范"。
+  // 因此 publish 只能【提案】，不能自我激活：create(draft) + publish(active) 两步都在
+  // CONTROL_ROLE_MCP_TOOLS 里，AI 原本可以一口气自行宣布并自我批准一条全局规范，
+  // 这正是"核心方案不得由 AI 自动确认"要挡住的事。
+  // proposed 属于 SHARED_DEFINITION_BLOCKING_STATUSES，会挡住关闭门，并由真人专属的
+  // shared_definition_resolve 杠杆决定是否 active —— 阻塞有出口，不构成死锁。
+  if (definition.status === "active") return {sharedDefinition: definition};
+  definition.status = "proposed";
+  definition.proposedBy = args.actor || args.requestedBy || "agent";
   definition.updatedAt = new Date().toISOString();
-  return {sharedDefinition: definition};
+  return {sharedDefinition: definition, requiresHumanActivation: true};
 }
 
 function sharedDefinitionConsumerBind(state, args) {
@@ -2512,6 +2527,14 @@ function sharedDefinitionConsumerBind(state, args) {
 }
 
 function sharedDefinitionConflictReport(state, args) {
+  // 上报冲突原先只产出一条 Finding，契约本身状态不变 —— 于是 conflicted 这个"阻塞状态"
+  // 没有任何写入方，检查它的关闭门在生产上永远不会触发。冲突必须真的把契约打成 conflicted，
+  // 由真人专属的 shared_definition_resolve 决定怎么收（active/superseded/retired/rejected）。
+  const definition = (state.sharedDefinitions || []).find((item) => item.contractId === args.contractId);
+  if (definition && !["superseded", "retired", "rejected"].includes(definition.status)) {
+    definition.status = "conflicted";
+    definition.updatedAt = new Date().toISOString();
+  }
   const finding = findingSubmit(state, {
     ...args,
     findingType: "shared_definition_conflict",

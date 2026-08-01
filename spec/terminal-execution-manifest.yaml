@@ -632,7 +632,8 @@ requiredControlObjects:
   - "InstructionEnvelope"
   - "SharedDefinitionContract"
   - "RepositoryOutputTarget"
-
+  - "HumanConfirmationRequest"
+  - "HumanDirective"
 requiredMachineSpecs:
   - "spec/terminal-execution-manifest.yaml"
   - "spec/terminal-execution-manifest.schema.json"

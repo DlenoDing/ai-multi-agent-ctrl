@@ -771,6 +771,7 @@ const HUMAN_ONLY_ACTIONS = [
   "task_group_language_policy_update",
   // 共享定义的状态推进是规则层决策，且它是这类楔死的唯一出路 —— 必须由真人掌握。
   "shared_definition_resolve",
+  "review_plan_resolve",
   // 豁免质量门是放行决定，必须由真人负责，不能由 AI 自我豁免。
   "quality_gate_waive"
 ];
@@ -3076,6 +3077,31 @@ async function handleApi(req, res) {
     finishGuardedWrite(state, guard, 200, gate);
     writeState(state);
     json(res, 200, gate);
+    return;
+  }
+
+  // 评审计划的人工收尾杠杆：要求的评审角色可能永远到不齐（角色撤销、范围变更、外部评审方不再参与）。
+  // 没有这个杠杆，评审计划就是一个只能进不能出的阻塞项。真人专属，且必须写明理由。
+  const reviewPlanResolveMatch = url.pathname.match(/^\/api\/review-plans\/([^/]+)\/resolve$/);
+  if (req.method === "POST" && reviewPlanResolveMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
+    const plan = (state.reviewPlans || []).find((item) => item.reviewPlanId === reviewPlanResolveMatch[1]);
+    if (!plan) return json(res, 404, {error: "review_plan_not_found"});
+    const guard = beginGuardedWrite(req, state, "review_plan_resolve", `ReviewPlan:${plan.reviewPlanId}`, projectScope(plan.projectId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const nextStatus = ["closed", "rejected", "superseded"].includes(body.status) ? body.status : null;
+    if (!nextStatus) return json(res, 400, {error: "review_plan_status_invalid"});
+    const justification = String(body.justification || "").trim();
+    if (!justification) return json(res, 400, {error: "review_plan_resolution_justification_required"});
+    plan.status = nextStatus;
+    plan.resolvedBy = guard.actor;
+    plan.resolutionJustification = justification.slice(0, 2000);
+    plan.closedAt = now();
+    plan.updatedAt = now();
+    audit(state, guard.actor, "review_plan_resolve", `ReviewPlan:${plan.reviewPlanId}`, nextStatus);
+    finishGuardedWrite(state, guard, 200, plan);
+    writeState(state);
+    json(res, 200, plan);
     return;
   }
 
