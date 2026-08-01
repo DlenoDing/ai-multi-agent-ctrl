@@ -2833,7 +2833,11 @@ export function evaluateRoleDrift(state, request = {}) {
   for (const ref of request.forbiddenActionScopeRefs || []) {
     if (guard.forbiddenActionScopeRefs.includes(ref)) { signals.push("forbidden_action_attempted"); signalDetails.push(`forbidden_scope:${ref}`); }
   }
-  const driftScore = Math.min(1, signals.length * 0.1);
+  // 信号不能均一化打分：越权访问一个不在允许范围内的资源、或触碰明令禁止的范围，是【定性】违规，
+  // 与"目标摘要变了"这种提示性信号不同。原先每条一律 0.1 分，而阈值是 0.1/0.2 —— 单条越权永远
+  // 触发不了阻断，这道门对它恒定空转（正是它本该拦住的那种行为）。
+  const hardViolation = signals.some((signal) => ["scope_expansion_without_decision", "forbidden_action_attempted"].includes(signal));
+  const driftScore = hardViolation ? 1 : Math.min(1, signals.length * 0.1);
   guard.driftScore = driftScore;
   guard.driftSignals = unique([...(guard.driftSignals || []), ...signals]);
   guard.updatedAt = new Date().toISOString();
@@ -3329,11 +3333,20 @@ function strengthsFromCapabilities(capabilities) {
 
 export function resolveRoleSkill(state, roleId, request = {}) {
   const hint = roleCapabilityHints[roleId] || roleCapabilityHints.orchestrator;
-  // 后缀匹配必须锚在分隔符上：原先是任意 endsWith，造一个 `evil-<skillRef>` 的 id 就能顶替掉
-  // 真正该绑定的技能内容（技能内容会进任务契约，等于改写 agent 的行为准则）。
-  // 合法场景是同步来的技能带来源前缀（`<source>/<skillRef>`），所以只接受分隔符边界。
-  const matchesSkillRef = (id) => id === hint.skillRef || id.endsWith(`/${hint.skillRef}`) || id.endsWith(`:${hint.skillRef}`);
-  const baseSkill = state.roleSkills.find((skill) => matchesSkillRef(String(skill.roleSkillId || ""))) ||
+  // 技能内容会进任务契约，等于 agent 的行为准则，所以"绑定谁"必须不可顶替。
+  // 原先是任意 `endsWith(skillRef)`：造一个 `evil-<skillRef>` 的 id 就能顶替真技能。
+  // 但也不能拿 `-` 当锚点——roleSkillId 是 relativePath 把 `/` 换成 `-` 生成的（parseRoleSkillFile），
+  // 真实 id 里根本没有 `/`/`:`，按那两个字符锚定会让所有角色静默回退到种子占位技能（我犯过这个错）。
+  // 正确的锚点是 relativePath 的【文件名】：skillRef 指的就是它，且能天然区分
+  // security-architect 与 security-cloud-security-architect 这种前缀包含关系。
+  const skillBasename = (skill) => String(skill.relativePath || "").split("/").pop().replace(/\.md$/u, "");
+  const skillRefMatches = (skill) => String(skill.roleSkillId || "") === hint.skillRef || skillBasename(skill) === hint.skillRef;
+  const skillCandidates = state.roleSkills.filter(skillRefMatches);
+  // 歧义必须显式暴露，不能像 find 那样静默取数组里的第一个（那等于"谁先插入谁赢"）。
+  if (skillCandidates.length > 1) {
+    throw Object.assign(new Error("role_skill_reference_ambiguous"), {status: 409, skillRef: hint.skillRef, candidates: skillCandidates.map((skill) => skill.roleSkillId)});
+  }
+  const baseSkill = skillCandidates[0] ||
     state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`) ||
     state.roleSkills[0];
   const overlay = selectRoleSkillOverlay(state, baseSkill?.roleSkillId, request);
@@ -6026,6 +6039,9 @@ export function ruleSourceResolve(state, args) {
   return {ruleSourceResolution: resolution};
 }
 
+// 创建时允许声明的状态：只有推进流程的早期态。active/conflicted 等"有实际效力"的状态必须经受控路径。
+const SHARED_DEFINITION_CREATABLE_STATUSES = ["draft", "owner_assigned", "proposed", "reviewing"];
+
 export function sharedDefinitionCreate(state, args) {
   // 与其它承载授权的记录同规:同 id 的冒名契约会顶替掉已生效的那份（目前 governance-mcp.* 对机器
   // 主体禁用故不可达，但不依赖"暂时不可达"）。
@@ -6037,10 +6053,17 @@ export function sharedDefinitionCreate(state, args) {
   const definition = {
     schemaVersion: "shared-definition-contract/v1",
     contractId: args.contractId || createId("sdc"),
-    status: args.status || "draft",
+    // 状态必须落在建模枚举内，且【不能由调用方直接声明为生效/冲突】：
+    // 一个 AI 若能自选 status:"conflicted"，就能把整个项目的关闭门永久锁死（人没有任何杠杆可清）。
+    // 生效只能经 shared_definition_publish 这条受控路径。
+    status: SHARED_DEFINITION_CREATABLE_STATUSES.includes(args.status) ? args.status : "draft",
     projectId,
     definitionType: args.definitionType || "semantic_contract",
-    scopeRefs: args.scopeRefs || [scopedTaskGroupId ? `TaskGroup:${scopedTaskGroupId}` : `Project:${projectId}`],
+    // 空数组在 JS 里是真值：原先 `args.scopeRefs || [...]` 会让 scopeRefs:[] 存活，而
+    // sharedDefinitionAppliesToWork 把"空作用域"当成【适用于项目内所有任务组】—— 于是一条契约
+    // 就能横扫整个项目。空数组一律回落到本任务组作用域。
+    scopeRefs: (Array.isArray(args.scopeRefs) && args.scopeRefs.length ? args.scopeRefs : null)
+      || [scopedTaskGroupId ? `TaskGroup:${scopedTaskGroupId}` : `Project:${projectId}`],
     canonicalOwnerRole: args.canonicalOwnerRole || args.ownerRole || "orchestrator",
     producerRole: args.producerRole || args.ownerRole || "orchestrator",
     consumerRefs: args.consumerRefs || [],

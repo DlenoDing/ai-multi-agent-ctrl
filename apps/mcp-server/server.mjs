@@ -2492,8 +2492,12 @@ function guardedActionDispatch(state, args) {
   };
 }
 
-function sharedDefinitionPublish(state, args) {
-  const definition = state.sharedDefinitions.find((item) => item.contractId === args.contractId) || sharedDefinitionCreate(state, args).sharedDefinition;
+export function sharedDefinitionPublish(state, args) {
+  // publish 只能把【已存在的】契约推到生效。原先 `|| sharedDefinitionCreate(...)` 让一个未知 contractId
+  // 在同一次调用里被铸造并直接激活，绕过 create 的 draft 默认值和任何评审证据要求 —— 等于 AI 自行
+  // 宣布"什么是本项目的规范"并自我批准，而它会流进每个派发 agent 的任务契约与指令包。
+  const definition = state.sharedDefinitions.find((item) => item.contractId === args.contractId);
+  if (!definition) return {ok: false, error: "shared_definition_not_found"};
   definition.status = "active";
   definition.updatedAt = new Date().toISOString();
   return {sharedDefinition: definition};

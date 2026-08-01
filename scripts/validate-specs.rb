@@ -808,9 +808,22 @@ errors << "agent 通道不得透传 requestKey（去重键可被抢占）" if se
 errors << "第五轮三项必须有防回归测试" unless contract_check_source.include?("人工闸门: 同一工作项出现了多份生效的写入边界") && contract_check_source.include?("人工闸门: 允许重复 leaseId") && contract_check_source.include?("人工闸门: 运行时确认单顶掉了核心决策单")
 # 第五轮遗留线索：证据完整性与"绑定谁"的解析必须不可顶替。
 errors << "执行事件去重必须限定在本次派发内（否则可跨节点压制/读取证据）" unless agent_gateway_source.include?("item.eventKey === eventKey && item.dispatchId === dispatchId")
-errors << "技能绑定的后缀匹配必须锚在分隔符上" unless core_source.include?("id.endsWith(`/${hint.skillRef}`)")
+# （旧断言要求按 `/` 锚定 —— 那条规则本身是错的：roleSkillId 由 / 换 - 生成，按 / 锚定会让所有
+# 角色静默回退到占位技能。已由下面"按 relativePath 文件名锚定 + 显式报歧义"取代。）
 errors << "共享定义必须拒绝重复 contractId" unless core_source.include?("shared_definition_id_conflict")
 errors << "证据/技能绑定必须有防回归测试" unless contract_check_source.include?("人工闸门: 执行事件按全局 eventKey 去重") && contract_check_source.include?("人工闸门: 技能绑定被 evil-")
+# 技能绑定必须锚在 relativePath 的文件名上（roleSkillId 由 / 换 - 生成，按 / 锚定会打断全部正常绑定），
+# 并且歧义要显式报错；测试必须【双向】——只断言"没选到 evil-"会放过"全部回退到占位技能"的回归。
+errors << "技能绑定必须按 relativePath 文件名锚定并显式报歧义" unless core_source.include?("const skillBasename = (skill) =>") && core_source.include?("role_skill_reference_ambiguous")
+errors << "技能绑定测试必须双向断言" unless contract_check_source.include?("真实同步技能没有被绑定")
+# 共享定义：状态不可由调用方直接声明为生效/冲突；空 scopeRefs 不得等于全项目；publish 不得铸造未知契约。
+errors << "共享定义状态必须限定在可创建枚举内" unless core_source.include?("SHARED_DEFINITION_CREATABLE_STATUSES")
+errors << "空 scopeRefs 不得被当成全项目作用域" unless core_source.include?("Array.isArray(args.scopeRefs) && args.scopeRefs.length")
+errors << "publish 不得铸造未知共享定义" unless mcp_source.include?("if (!definition) return {ok: false, error: \"shared_definition_not_found\"}")
+errors << "共享定义三项必须有防回归测试" unless contract_check_source.include?("人工闸门: publish 铸造并激活了一个未知契约")
+# 写入边界的第三个写入方（REST）必须同规，且越权访问必须被角色漂移门定性阻断。
+errors << "REST 写入边界必须同样保证一个工作项只有一份生效目标" unless server_source.include?("const existingActiveTarget = (state.repositoryOutputs || []).find") && server_source.include?("if (existingActiveTarget) {")
+errors << "越权访问必须被角色漂移门定性阻断" unless core_source.include?("const hardViolation = signals.some") && contract_check_source.include?("人工闸门: 单条越权访问未被角色漂移门拦下")
 # unblock 不得用子串匹配抹掉"越界写入"证据；分支 id 在拓扑内必须唯一（否则已定稿方案卡死）。
 errors << "unblock 必须按完整键精确匹配且保留越界写入证据" unless core_source.include?('blocker.startsWith("owned_paths_disjoint:") || (blocker !== targetBlocker && blocker !== ref)')
 errors << "block/unblock 与越界证据必须有行为测试覆盖" unless contract_check_source.include?("人工闸门: 正常的 block -> unblock 走不通") && contract_check_source.include?("人工闸门: 越界写入证据被 unblock 抹掉了")

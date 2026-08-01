@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect } from "../apps/mcp-server/server.mjs";
+import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
   maintainWorkerLanes,
@@ -37,6 +37,9 @@ import {
   reviewBundleRegister,
   computeCompletionReadiness,
   createExecutionTopology,
+  digestOf,
+  evaluateRoleDrift,
+  sharedDefinitionCreate,
   resolveRoleSkill,
   claimLease,
   permissionRequestSubmit,
@@ -693,6 +696,36 @@ function verifyHumanAndOrganizationContracts(output) {
     if (!swapRejected) output.push("人工闸门: 方案在人点确认前被改掉，定稿却仍然生效（批准被算到没看过的内容上）");
     if (swapTopo.humanFinalization) output.push("人工闸门: 被掉包的方案拿到了定稿锁");
 
+    // 角色漂移门：单条越权访问必须被判为定性违规而阻断，否则这道门对它恒定空转。
+    const drState = structuredClone(seedState);
+    ensureRuntimeCollections(drState, {root});
+    // 关键：让其余信号都【不】触发，只留一条越权 —— 否则多条信号累加本来就超阈值，测不出这条门是否空转。
+    const drTg = drState.taskGroups.find((t) => t.id === "tg_runtime_management");
+    drState.roleDriftGuards = [{guardId: "rdg_t", taskGroupId: "tg_runtime_management", workItemId: "__none__",
+      sessionId: "sess_dr", status: "monitoring", maxAllowedDriftScore: 0.2, driftSignals: [], driftScore: 0,
+      allowedActionScopeRefs: ["TaskGroup:tg_runtime_management"], forbiddenActionScopeRefs: [],
+      objectiveBoundaryDigest: digestOf(drTg.objective || "objective"), roleMissionDigest: "unused"}];
+    const drResult = evaluateRoleDrift(drState, {sessionId: "sess_dr", taskGroupId: "tg_runtime_management",
+      actionScopeRefs: ["RepositoryOutputTarget:rot_foreign"]});
+    if (drResult.allowed) output.push("人工闸门: 单条越权访问未被角色漂移门拦下（该门对它恒定空转）");
+
+    // 共享定义是"本项目的规范"，会流进每个派发 agent 的任务契约：AI 不得自行宣布并自我批准，
+    // 也不得靠一条契约把整个项目的关闭门永久锁死（那等于让人工闸门本身失效，且人没有杠杆可清）。
+    const sdState = structuredClone(seedState);
+    ensureRuntimeCollections(sdState, {root});
+    const forgedStatus = sharedDefinitionCreate(sdState, {contractId: "sdc_hostage", projectId: "prj_control_plane",
+      taskGroupId: "tg_runtime_management", status: "conflicted", scopeRefs: []}).sharedDefinition;
+    if (forgedStatus.status === "conflicted" || forgedStatus.status === "active") {
+      output.push("人工闸门: 调用方可直接把共享定义声明为生效/冲突（AI 能把整个项目的关闭门锁死）");
+    }
+    if (!(forgedStatus.scopeRefs || []).length) {
+      output.push("人工闸门: 空 scopeRefs 存活（一条契约横扫整个项目的所有任务组）");
+    }
+    const publishUnknown = sharedDefinitionPublish(sdState, {contractId: "sdc_never_created"});
+    if (publishUnknown?.ok !== false) {
+      output.push("人工闸门: publish 铸造并激活了一个未知契约（AI 自行宣布规范并自我批准）");
+    }
+
     // 证据完整性：执行事件的幂等去重必须限定在本次派发内，否则一个节点抢注另一个节点的 eventKey
     // 就能压制对方的执行证据（被当成重复丢弃），还能读回对方事件的内容。
     const evState = structuredClone(seedState);
@@ -708,15 +741,28 @@ function verifyHumanAndOrganizationContracts(output) {
     // 技能绑定的后缀匹配必须锚在分隔符上，否则 evil-<ref> 能顶替掉真正该绑定的技能内容。
     const skState = structuredClone(seedState);
     ensureRuntimeCollections(skState, {root});
-    const realSkill = (skState.roleSkills || []).find((x) => String(x.roleSkillId || "").startsWith("system-"));
-    if (realSkill) {
-      // 冒名技能：id 以真实 skillRef 结尾但带了任意前缀。锚定匹配后它不应被选中。
-      skState.roleSkills.unshift({...realSkill, roleSkillId: "evil-engineering-multi-agent-systems-architect", content: "EVIL"});
-      const bound = resolveRoleSkill(skState, "orchestrator");
-      if (String(bound?.roleSkillId || "").startsWith("evil-")) {
-        output.push("人工闸门: 技能绑定被 evil-<skillRef> 顶替（任意后缀匹配 => 可改写 agent 行为准则）");
-      }
+    // 双向断言：既要拒绝冒名，也要确认【真技能确实被绑定】。只断言"没选到 evil-"是单向的，
+    // 会让"所有角色都静默回退到占位技能"这种功能回归照样通过（我就这样漏过一次）。
+    skState.roleSkills = [
+      {schemaVersion: "agent-role-skill/v1", roleSkillId: "system-orchestrator", sourceId: "seed", relativePath: "", content: "SEED"},
+      {schemaVersion: "agent-role-skill/v1", roleSkillId: "engineering-engineering-multi-agent-systems-architect",
+       sourceId: "src", relativePath: "engineering/engineering-multi-agent-systems-architect.md", content: "REAL"},
+      {schemaVersion: "agent-role-skill/v1", roleSkillId: "evil-engineering-multi-agent-systems-architect",
+       sourceId: "evil", relativePath: "evil/evil-engineering-multi-agent-systems-architect.md", content: "EVIL"}
+    ];
+    const boundSkill = resolveRoleSkill(skState, "orchestrator");
+    if (String(boundSkill?.roleSkillId || "").startsWith("evil-")) {
+      output.push("人工闸门: 技能绑定被 evil-<skillRef> 顶替（可改写 agent 行为准则）");
     }
+    if (boundSkill?.roleSkillId !== "engineering-engineering-multi-agent-systems-architect") {
+      output.push(`人工闸门: 真实同步技能没有被绑定（绑定回退到了 ${boundSkill?.roleSkillId}）——技能匹配规则把正常流程也打断了`);
+    }
+    // 同名歧义必须显式报错，不能静默取第一个。
+    skState.roleSkills.push({schemaVersion: "agent-role-skill/v1", roleSkillId: "other-engineering-multi-agent-systems-architect",
+      sourceId: "src2", relativePath: "other/engineering-multi-agent-systems-architect.md", content: "DUP"});
+    let ambiguousRejected = false;
+    try { resolveRoleSkill(skState, "orchestrator"); } catch (error) { ambiguousRejected = error.message === "role_skill_reference_ambiguous"; }
+    if (!ambiguousRejected) output.push("人工闸门: 技能引用有歧义时静默取了第一个（谁先插入谁赢）");
 
     // 第五轮：守卫必须落在【真正被用来选中授权记录的那个查找条件】上，而不是某个字段。
     // 写入边界是按 (taskGroupId, workItemId, 非 superseded) 找的 —— 只守 targetId 唯一性，
