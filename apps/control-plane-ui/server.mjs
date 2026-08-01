@@ -1131,7 +1131,10 @@ function scopedStateForAccount(state, account, session) {
   cloned.humanConfirmationRequests = (state.humanConfirmationRequests || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
   cloned.humanDirectives = (state.humanDirectives || []).filter((item) => (item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId)) || (!item.taskGroupId && visibleProjectIds.has(item.projectId)));
   cloned.transitionEvidence = [];
-  cloned.ruleSourceResolutions = [];
+  // 原先一律清空，而 rules_candidates_processed / all_rule_sources_resolved 两道门就是按它阻塞的：
+  // 人在关闭门禁上看到红 chip，处置它的表单却永远渲染不出来，因为数据根本没下发。
+  // 与 findings/qualityGates 同规按可见任务组过滤，跨租户仍然看不到。
+  cloned.ruleSourceResolutions = (state.ruleSourceResolutions || []).filter((item) => item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId));
   cloned.externalUpgradeImports = [];
   cloned.mcpGrants = (state.mcpGrants || []).filter((grant) => grant.taskGroupId && visibleTaskGroupIds.has(grant.taskGroupId));
   const visibleRoomIds = new Set([...visibleTaskGroupIds].map((taskGroupId) => `room_${taskGroupId}`));
@@ -1196,7 +1199,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     system: ["accounts", "auditLog", "policyDecisions", "commands", "decisionRecords"],
     users: ["accounts", "accessGrants", "projects", "agentJoinTokens"],
     projects: ["accounts", "accessGrants", "projects", "repositoryOutputs", "agentJoinTokens"],
-    tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots", "humanConfirmationRequests", "humanDirectives", "permissionRequests", "approvalRequests", "findings", "qualityGates", "testResults", "reviewPlans", "sharedDefinitions", "artifacts"],
+    tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots", "humanConfirmationRequests", "humanDirectives", "permissionRequests", "approvalRequests", "findings", "qualityGates", "testResults", "reviewPlans", "sharedDefinitions", "artifacts", "reviewBundles", "ruleSourceResolutions", "systemUpgradeCandidates"],
     runtime: ["modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions", "workerLanes", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkills", "roleSkillOverlays"],
     instructions: ["instructionMetrics", "sharedDefinitions", "effectiveInstructionPackets", "roleDriftGuards"]
   };
@@ -3137,6 +3140,10 @@ async function handleApi(req, res) {
     // 那张卡的 finalize/reject/revise 会被快照校验全部拒掉 —— 人把自己钉死，只能等过期。
     refreshConfirmationsAfterHumanChange(state, gate.taskGroupId, gate.workItemId,
       {actor: guard.actor, summary: `已人工豁免质量门 ${gate.gateType}`});
+    // 处置完一项就要刷新关闭门快照：控制台上"关闭任务组"按钮只在 barrier.satisfied 时出现，
+    // 而刷新那份快照的唯一入口原先就是那个按钮自己 —— 人处置掉最后一个阻塞项后，页面仍显示"存在阻塞"，
+    // 于是永远等不到那个按钮（循环依赖）。
+    recomputeBarrierAfterResolve(state, gate.taskGroupId);
     audit(state, guard.actor, "quality_gate_waive", `QualityGate:${gate.gateId}`, "waived");
     finishGuardedWrite(state, guard, 200, gate);
     writeState(state);
@@ -3171,6 +3178,10 @@ async function handleApi(req, res) {
     bundle.resolvedBy = guard.actor;
     bundle.resolutionJustification = justification.slice(0, 2000);
     bundle.updatedAt = now();
+    // 处置完一项就要刷新关闭门快照：控制台上"关闭任务组"按钮只在 barrier.satisfied 时出现，
+    // 而刷新那份快照的唯一入口原先就是那个按钮自己 —— 人处置掉最后一个阻塞项后，页面仍显示"存在阻塞"，
+    // 于是永远等不到那个按钮（循环依赖）。
+    recomputeBarrierAfterResolve(state, bundle.taskGroupId);
     audit(state, guard.actor, "review_bundle_resolve", `ReviewBundle:${bundle.reviewBundleId}`, nextStatus);
     finishGuardedWrite(state, guard, 200, bundle);
     writeState(state);
@@ -3207,6 +3218,10 @@ async function handleApi(req, res) {
     candidate.resolvedBy = guard.actor;
     candidate.resolutionJustification = justification.slice(0, 2000);
     candidate.updatedAt = now();
+    // 处置完一项就要刷新关闭门快照：控制台上"关闭任务组"按钮只在 barrier.satisfied 时出现，
+    // 而刷新那份快照的唯一入口原先就是那个按钮自己 —— 人处置掉最后一个阻塞项后，页面仍显示"存在阻塞"，
+    // 于是永远等不到那个按钮（循环依赖）。
+    recomputeBarrierAfterResolve(state, candidate.taskGroupId);
     audit(state, guard.actor, "system_upgrade_candidate_resolve", `SystemUpgradeCandidate:${candidate.candidateId}`, nextStatus);
     finishGuardedWrite(state, guard, 200, candidate);
     writeState(state);
@@ -3238,6 +3253,10 @@ async function handleApi(req, res) {
     }
     const result = ruleSourceSettle(state, settleArgs);
     if (result.ok === false) return json(res, result.error === "rule_source_resolution_not_found" ? 404 : 403, result);
+    // 处置完一项就要刷新关闭门快照：控制台上"关闭任务组"按钮只在 barrier.satisfied 时出现，
+    // 而刷新那份快照的唯一入口原先就是那个按钮自己 —— 人处置掉最后一个阻塞项后，页面仍显示"存在阻塞"，
+    // 于是永远等不到那个按钮（循环依赖）。
+    recomputeBarrierAfterResolve(state, resolution.taskGroupId);
     audit(state, guard.actor, "rule_source_settle", `RuleSourceResolution:${resolution.resolutionId}`, result.ruleSourceResolution.status);
     finishGuardedWrite(state, guard, 200, result.ruleSourceResolution);
     writeState(state);
@@ -3272,6 +3291,10 @@ async function handleApi(req, res) {
     plan.resolutionJustification = justification.slice(0, 2000);
     plan.closedAt = now();
     plan.updatedAt = now();
+    // 处置完一项就要刷新关闭门快照：控制台上"关闭任务组"按钮只在 barrier.satisfied 时出现，
+    // 而刷新那份快照的唯一入口原先就是那个按钮自己 —— 人处置掉最后一个阻塞项后，页面仍显示"存在阻塞"，
+    // 于是永远等不到那个按钮（循环依赖）。
+    recomputeBarrierAfterResolve(state, plan.taskGroupId);
     audit(state, guard.actor, "review_plan_resolve", `ReviewPlan:${plan.reviewPlanId}`, nextStatus);
     finishGuardedWrite(state, guard, 200, plan);
     writeState(state);
@@ -3307,6 +3330,10 @@ async function handleApi(req, res) {
     definition.resolutionJustification = definitionJustification.slice(0, 2000);
     definition.resolvedBy = guard.actor;
     definition.updatedAt = now();
+    // 处置完一项就要刷新关闭门快照：控制台上"关闭任务组"按钮只在 barrier.satisfied 时出现，
+    // 而刷新那份快照的唯一入口原先就是那个按钮自己 —— 人处置掉最后一个阻塞项后，页面仍显示"存在阻塞"，
+    // 于是永远等不到那个按钮（循环依赖）。
+    recomputeBarrierAfterResolve(state, definition.taskGroupId);
     audit(state, guard.actor, "shared_definition_resolve", `SharedDefinitionContract:${definition.contractId}`, nextStatus);
     finishGuardedWrite(state, guard, 200, definition);
     writeState(state);

@@ -481,14 +481,23 @@ async function api(path, options = {}) {
   const response = await fetch(path, {...options, headers});
   if (!response.ok) {
     let detail = "";
+    let hint = "";
     try {
-      detail = (await response.json()).error || "";
+      const payload = await response.json();
+      detail = payload.error || "";
+      // 服务端在 403 里已经写明了缺哪个权限、作用在哪个资源上，前端原先只取 error 字段丢掉其余，
+      // 于是人只看到"权限不足"，看不出该去要什么权限、找谁要 —— 报错指不到真正的原因。
+      if (payload.requiredPermission) {
+        const scope = payload.resourceScope ? `${payload.resourceScope.resourceType || "?"}:${payload.resourceScope.resourceId || "?"}` : "";
+        hint = `（需要 ${payload.requiredPermission}${scope ? ` @ ${scope}` : ""}${String(payload.requiredPermission).startsWith("task_group:") ? "；这类权限只能在「项目成员授权」里按角色授予，写在账号上的直接权限不生效" : ""}）`;
+      }
+      if (Array.isArray(payload.permissions) && payload.permissions.length) hint += `（涉及：${payload.permissions.join("、")}）`;
     } catch {}
     if (response.status === 401 && authToken) {
       clearSession();
       render();
     }
-    throw new Error(`${response.status} ${detail ? t(detail) : response.statusText}`);
+    throw new Error(`${response.status} ${detail ? t(detail) : response.statusText}${hint}`);
   }
   return response.json();
 }
@@ -1345,6 +1354,7 @@ function renderProjectMemberForm() {
           <option value="project_owner">项目负责人</option>
           <option value="project_admin">项目管理员</option>
           <option value="task_group_owner">任务组负责人</option>
+          <option value="reviewer">评审人（可做人工定稿/验收）</option>
           <option value="agent_operator">智能体操作员</option>
           <option value="viewer">观察者</option>
         </select>
@@ -1430,10 +1440,10 @@ function renderOrgOverview() {
 const MEMBER_PERMISSION_OPTIONS = [
   ["project:view", "查看项目"],
   ["project:grant", "项目授权管理"],
-  ["task_group:read", "查看任务组"],
-  ["task_group:review", "人工审核"],
-  ["task_group:control", "任务组控制与人工指令"],
-  ["task_group:monitor", "执行监控"],
+  // task_group:* 这一类权限【只认按具体资源落位的 grant】，写在账号上的直接权限一律不生效
+  // （直接权限不绑定任何资源，等于对所有资源生效，因此服务端一律拒绝）。
+  // 继续把它们摆在这里，人会勾上、看到按钮被渲染出来、点下去却必定 403 —— 界面在说谎。
+  // 要把"人工审核"交出去，请到「项目成员授权」里授予"评审人"角色。
   ["member:invite", "邀请成员"],
   ["agent:activate", "智能体管理"]
 ];
@@ -1464,6 +1474,7 @@ function resourceScopeLabel(resource) {
 
 function permissionCheckboxes(selected = ["project:view", "task_group:read"]) {
   return `
+    <div class="notice">「人工审核（验收定稿）」「任务组控制」这类任务组级权限不在这里授予 —— 它们必须按具体项目/任务组落位，请到「项目成员授权」里选择相应角色（例如"评审人"）。</div>
     <div class="checkbox-grid">
       ${MEMBER_PERMISSION_OPTIONS.map(([value, label]) => `
         <label><input type="checkbox" name="perm" value="${esc(value)}" ${selected.includes(value) ? "checked" : ""}> ${esc(label)}</label>
@@ -2380,7 +2391,12 @@ function renderMonitor() {
   const inScope = (item) => groups.some((taskGroup) => taskGroup.id === item.taskGroupId);
   const openReviewPlans = (state.reviewPlans || []).filter((plan) => inScope(plan) && !["closed", "rejected", "superseded"].includes(plan.status)).slice(0, 8);
   const openRuleSources = (state.ruleSourceResolutions || []).filter((item) => inScope(item) && !["reference_only", "quarantined", "rejected", "superseded", "active"].includes(item.status)).slice(0, 8);
-  const blockingDefinitions = (state.sharedDefinitions || []).filter((definition) => ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"].includes(definition.status)).slice(0, 8);
+  // 同段其余四处都按 inScope 过滤，唯独这里漏了 —— 于是在项目 A 的监控页上会列出项目 B 的契约。
+  // （跨租户仍然安全：服务端只下发可见项目的契约。但列在这里会让人以为它属于当前项目。）
+  const visibleProjectIds = new Set(groups.map((taskGroup) => taskGroup.projectId).filter(Boolean));
+  const blockingDefinitions = (state.sharedDefinitions || []).filter((definition) =>
+    ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"].includes(definition.status)
+    && (!definition.projectId || visibleProjectIds.has(definition.projectId))).slice(0, 8);
   const openReviewBundles = (state.reviewBundles || []).filter((item) => inScope(item) && !["consumed", "rejected"].includes(item.status)).slice(0, 8);
   const openUpgradeCandidates = (state.systemUpgradeCandidates || []).filter((item) => inScope(item) && item.status === "candidate_created").slice(0, 8);
   const canControlRules = hasPerm("task_group:control");   // rule_source_settle
@@ -2436,6 +2452,9 @@ function renderMonitor() {
     // 等于这个杠杆不存在 —— 人只会看到一个红 chip，然后无从下手。
     (openReviewPlans.length || openRuleSources.length || blockingDefinitions.length || openReviewBundles.length || openUpgradeCandidates.length) ? panel("阻塞项人工处置", `
       <div class="notice">下面这些阻塞只能由人来收尾：AI 要么不该有权决定（采纳规则、激活规范），要么已经无法推进（评审角色不再参与）。</div>
+      ${(!canReviewGates && (openReviewPlans.length || openReviewBundles.length)) || (!canControlRules && (openRuleSources.length || openUpgradeCandidates.length)) || (!canUpdateProject && blockingDefinitions.length)
+        ? `<div class="notice warn-notice">其中有些阻塞需要你没有的权限才能处置：评审计划/评审包需要「人工审核(task_group:review)」，规则来源/升级候选需要「任务组控制(task_group:control)」，共享定义契约需要「项目更新(project:update)」。这类权限只能在「项目成员授权」里按角色授予（例如"评审人"），请找项目负责人或组织管理员授予后再来。</div>`
+        : ""}
       ${canReviewGates && openReviewPlans.length ? `
         <div class="record" style="margin-top:8px;">
           <div class="record-title">评审计划（要求的评审角色到齐即自动闭合；到不齐时由你收尾）</div>

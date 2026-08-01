@@ -1003,6 +1003,32 @@ end
   errors << "人工处置杠杆缺少必填理由：#{code}" unless server_source.include?(code)
 end
 
+# 控制台的处置表单依赖对应集合被下发到前端。集合不在 view 白名单里（或被整体清空），
+# 表单就是永远渲染不出来的死代码 —— 后端有杠杆、前端有代码，中间断在数据下发上。
+["reviewBundles", "ruleSourceResolutions", "systemUpgradeCandidates", "reviewPlans", "sharedDefinitions"].each do |collection|
+  errors << "阻塞项处置依赖的 #{collection} 没有下发到 tasks 视图（表单永远渲染不出来）" unless server_source.match?(/tasks: \[[^\]]*"#{collection}"/m)
+end
+# 每一条人工处置都必须刷新关闭门快照：控制台的"关闭任务组"按钮只在 barrier.satisfied 时出现，
+# 而刷新快照的唯一入口原先就是那个按钮自己，人处置掉最后一个阻塞项后永远等不到它。
+["quality_gate_waive", "review_bundle_resolve", "system_upgrade_candidate_resolve",
+ "rule_source_settle", "review_plan_resolve", "shared_definition_resolve"].each do |action|
+  # 必须从【路由体】起算：直接找 "#{action}" 的第一次出现会命中 HUMAN_ONLY_ACTIONS 里的那个字符串，
+  # 提取到的块与路由无关，断言就成了空转（实测过：撤掉 recompute 也不报错）。
+  # 块终点用 finishGuardedWrite 而不是 json(res, 200)：后者在有些路由里落在窗口之外，
+  # 提取到空块 -> include? 恒为假 -> 断言反而变成"永远报错"或"永远不报错"，两种都不可信。
+  # 不能用 /m + (?:.*\n)：Ruby 的 /m 让 . 也匹配换行，一个 .* 就吃掉整个文件，
+  # 提取出来的"块"长达数万字符，于是断言对任何路由都恒真（实测：撤掉 recompute 也不报错）。
+  # 用 [^\n]* 显式逐行，并且不加 /m。
+  block = server_source[/beginGuardedWrite\(req, state, "#{action}"(?:[^\n]*\n){0,60}?[^\n]*finishGuardedWrite/].to_s
+  errors << %(真人杠杆 #{action} 的路由块提取不到（本断言已与代码脱节，不能据此下结论）) if block.empty?
+  errors << %(#{action} 处置后没有刷新关闭门快照（人处置完最后一个阻塞项也等不到「关闭任务组」按钮）) unless block.include?("recomputeBarrierAfterResolve")
+end
+# 任务组级权限只认按资源落位的 grant；把它们摆在"直接权限"勾选框里，人会勾上、看到按钮、点下去必 403。
+# 注意：不能用 [^\]]* 去跨过数组内容 —— 它在第一个内层数组的 ] 处就停了，根本到不了 task_group 条目。
+member_permission_block = app_js_source[/const MEMBER_PERMISSION_OPTIONS = \[(.*?)^\];/m, 1].to_s
+errors << %(成员权限勾选框不得提供 task_group:* 直接权限（服务端一律不认，界面在说谎）) if member_permission_block.include?('"task_group:')
+errors << %(项目成员授权必须能授予「评审人」角色，否则没有任何界面能把人工审核权交出去) unless app_js_source.include?(%q{<option value="reviewer">})
+
 human_lever_forms.each do |action, form_kind|
   next unless server_source.include?("\"#{action}\"")
   errors << "真人杠杆 #{action} 在控制台没有操作入口（data-form=\"#{form_kind}\"）——后端有杠杆而界面上按不到，等于没有" unless app_js_source.include?("data-form=\"#{form_kind}\"") && app_js_source.include?("kind === \"#{form_kind}\"")
