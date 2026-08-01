@@ -979,6 +979,24 @@ human_lever_forms = {
   "human_confirmation_decide" => "hcr-decide",
   "human_directive_create" => "directive-create"
 }
+# 处置理由只存在于记录上的那一个字段（审计条目只记 actor/action/subject/result，不含理由）。
+# 没有终态一次性守卫的话，后一位真人会无条件覆盖前一位的理由，且不可恢复。
+{
+  "quality_gate_already_settled" => "质量门豁免",
+  "review_bundle_already_resolved" => "评审包收尾",
+  "system_upgrade_candidate_already_resolved" => "系统升级候选项处置",
+  "review_plan_already_resolved" => "评审计划收尾",
+  "shared_definition_already_resolved" => "共享定义处置"
+}.each do |code, label|
+  errors << "#{label} 缺少终态一次性守卫（后一位真人会覆盖掉前一位的处置理由，且理由不可恢复）" unless server_source.include?(code)
+end
+# 每条人工处置都必须留下依据
+["quality_gate_waive_requires_justification", "review_plan_resolution_justification_required",
+ "review_bundle_resolution_justification_required", "system_upgrade_candidate_justification_required",
+ "shared_definition_resolution_justification_required"].each do |code|
+  errors << "人工处置杠杆缺少必填理由：#{code}" unless server_source.include?(code)
+end
+
 human_lever_forms.each do |action, form_kind|
   next unless server_source.include?("\"#{action}\"")
   errors << "真人杠杆 #{action} 在控制台没有操作入口（data-form=\"#{form_kind}\"）——后端有杠杆而界面上按不到，等于没有" unless app_js_source.include?("data-form=\"#{form_kind}\"") && app_js_source.include?("kind === \"#{form_kind}\"")

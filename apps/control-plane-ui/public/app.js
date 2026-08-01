@@ -2473,6 +2473,7 @@ function renderMonitor() {
             <form class="form-grid" data-form="shared-definition-resolve" data-request="${esc(definition.contractId)}" style="margin-top:8px;">
               <div class="record-meta"><span class="mono">${esc(definition.contractId)}</span> · ${esc(t(definition.definitionType) || definition.definitionType || "-")} · ${badge(definition.status)}${definition.proposedBy ? ` · 由 ${esc(definition.proposedBy)} 提议` : ""}</div>
               <div class="form-row"><label>处置</label><select name="status"><option value="active">激活为全局规范</option><option value="rejected">驳回</option><option value="superseded">被取代</option><option value="retired">退役</option></select></div>
+              <div class="form-row"><label>理由（必填）</label><input name="justification" placeholder="例如：已与相关方对齐，采纳为全局状态语义"></div>
               <button class="primary-button" type="submit">提交处置</button>
             </form>`).join("")}
         </div>` : ""}
@@ -2866,7 +2867,8 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     if (kind === "shared-definition-resolve") {
-      await api(`/api/shared-definition-contracts/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "active"})});
+      if (!String(data.justification || "").trim()) throw new Error("处置共享定义契约必须写明理由");
+      await api(`/api/shared-definition-contracts/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "active", justification: data.justification})});
       await loadPage();
       return;
     }

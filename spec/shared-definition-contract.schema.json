@@ -162,6 +162,13 @@
         "string",
         "null"
       ]
+    },
+    "resolutionJustification": {
+      "description": "处置理由（必填，留档）（人工处置留痕：这条理由只存在于这里，审计条目不含它）",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "allOf": [

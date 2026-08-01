@@ -24,21 +24,76 @@
     "updatedAt"
   ],
   "properties": {
-    "schemaVersion": {"type": "string", "const": "review-plan/v1"},
-    "reviewPlanId": {"type": "string", "minLength": 1},
-    "projectId": {"type": "string", "minLength": 1},
-    "taskGroupId": {"type": "string", "minLength": 1},
-    "sourceRef": {"type": "string", "minLength": 1},
-    "status": {"type": "string", "enum": ["draft", "ready", "in_progress", "blocked", "coverage_satisfied", "closed", "rejected", "superseded"]},
-    "objective": {"type": "string", "minLength": 1},
-    "trigger": {"type": "string", "enum": ["multi_issue_review", "multi_surface_review", "high_risk_surface", "reviewer_expansion", "user_requested_mutual_review", "close_gate"]},
+    "schemaVersion": {
+      "type": "string",
+      "const": "review-plan/v1"
+    },
+    "reviewPlanId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "ready",
+        "in_progress",
+        "blocked",
+        "coverage_satisfied",
+        "closed",
+        "rejected",
+        "superseded"
+      ]
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trigger": {
+      "type": "string",
+      "enum": [
+        "multi_issue_review",
+        "multi_surface_review",
+        "high_risk_surface",
+        "reviewer_expansion",
+        "user_requested_mutual_review",
+        "close_gate"
+      ]
+    },
     "batchingDecision": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["strategy", "reason"],
+      "required": [
+        "strategy",
+        "reason"
+      ],
       "properties": {
-        "strategy": {"type": "string", "enum": ["single_packet", "by_topic", "by_risk", "by_file_surface", "hybrid"]},
-        "reason": {"type": "string", "minLength": 1}
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "single_packet",
+            "by_topic",
+            "by_risk",
+            "by_file_surface",
+            "hybrid"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "reviewItems": {
@@ -47,19 +102,88 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["itemId", "source", "summary", "required", "riskLevel", "topic", "fileSurfaces", "authorityFiles", "reviewInvariants", "coveredByBatchIds", "status"],
+        "required": [
+          "itemId",
+          "source",
+          "summary",
+          "required",
+          "riskLevel",
+          "topic",
+          "fileSurfaces",
+          "authorityFiles",
+          "reviewInvariants",
+          "coveredByBatchIds",
+          "status"
+        ],
         "properties": {
-          "itemId": {"type": "string", "minLength": 1},
-          "source": {"type": "string", "enum": ["local_review", "validation", "changed_surface", "reviewer_feedback", "user_request", "system_gate"]},
-          "summary": {"type": "string", "minLength": 1},
-          "required": {"type": "boolean"},
-          "riskLevel": {"type": "string", "enum": ["S0", "S1", "S2", "S3"]},
-          "topic": {"type": "string", "minLength": 1},
-          "fileSurfaces": {"type": "array", "items": {"type": "string"}},
-          "authorityFiles": {"type": "array", "items": {"type": "string"}},
-          "reviewInvariants": {"type": "array", "items": {"type": "string"}},
-          "coveredByBatchIds": {"type": "array", "items": {"type": "string"}},
-          "status": {"type": "string", "enum": ["open", "covered", "deferred", "not_applicable"]}
+          "itemId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "local_review",
+              "validation",
+              "changed_surface",
+              "reviewer_feedback",
+              "user_request",
+              "system_gate"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "riskLevel": {
+            "type": "string",
+            "enum": [
+              "S0",
+              "S1",
+              "S2",
+              "S3"
+            ]
+          },
+          "topic": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fileSurfaces": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "authorityFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reviewInvariants": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "coveredByBatchIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "covered",
+              "deferred",
+              "not_applicable"
+            ]
+          }
         }
       }
     },
@@ -69,31 +193,100 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["batchId", "status", "focus", "coveredItemIds", "mustCompleteBeforeClose", "sufficiencyRequired", "expansionTriggers"],
+        "required": [
+          "batchId",
+          "status",
+          "focus",
+          "coveredItemIds",
+          "mustCompleteBeforeClose",
+          "sufficiencyRequired",
+          "expansionTriggers"
+        ],
         "properties": {
-          "batchId": {"type": "string", "minLength": 1},
-          "status": {"type": "string", "enum": ["planned", "packet_ready", "submitted", "consumed", "blocked", "skipped"]},
-          "focus": {"type": "string", "minLength": 1},
-          "coveredItemIds": {"type": "array", "items": {"type": "string"}},
-          "reviewBundleRef": {"type": "string"},
-          "dependsOn": {"type": "array", "items": {"type": "string"}},
-          "mustCompleteBeforeClose": {"type": "boolean"},
-          "sufficiencyRequired": {"type": "boolean"},
-          "expansionTriggers": {"type": "array", "items": {"type": "string"}}
+          "batchId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "planned",
+              "packet_ready",
+              "submitted",
+              "consumed",
+              "blocked",
+              "skipped"
+            ]
+          },
+          "focus": {
+            "type": "string",
+            "minLength": 1
+          },
+          "coveredItemIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reviewBundleRef": {
+            "type": "string"
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mustCompleteBeforeClose": {
+            "type": "boolean"
+          },
+          "sufficiencyRequired": {
+            "type": "boolean"
+          },
+          "expansionTriggers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         }
       }
     },
-    "coverageMatrix": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}},
+    "coverageMatrix": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
     "closureGate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["requiredItemsCovered", "requiredBatchesConsumed", "packetSufficiencyPassed", "noUnresolvedMustFix", "noUnprocessedExpansion"],
+      "required": [
+        "requiredItemsCovered",
+        "requiredBatchesConsumed",
+        "packetSufficiencyPassed",
+        "noUnresolvedMustFix",
+        "noUnprocessedExpansion"
+      ],
       "properties": {
-        "requiredItemsCovered": {"type": "boolean"},
-        "requiredBatchesConsumed": {"type": "boolean"},
-        "packetSufficiencyPassed": {"type": "boolean"},
-        "noUnresolvedMustFix": {"type": "boolean"},
-        "noUnprocessedExpansion": {"type": "boolean"}
+        "requiredItemsCovered": {
+          "type": "boolean"
+        },
+        "requiredBatchesConsumed": {
+          "type": "boolean"
+        },
+        "packetSufficiencyPassed": {
+          "type": "boolean"
+        },
+        "noUnresolvedMustFix": {
+          "type": "boolean"
+        },
+        "noUnprocessedExpansion": {
+          "type": "boolean"
+        }
       }
     },
     "history": {
@@ -101,33 +294,99 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["eventRef", "at", "digest"],
+        "required": [
+          "eventRef",
+          "at",
+          "digest"
+        ],
         "properties": {
-          "eventRef": {"type": "string", "minLength": 1},
-          "at": {"type": "string", "format": "date-time"},
-          "digest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"}
+          "eventRef": {
+            "type": "string",
+            "minLength": 1
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-fA-F0-9]{64}$"
+          }
         }
       }
     },
-    "auditRef": {"type": "string", "minLength": 1},
-    "createdAt": {"type": "string", "format": "date-time"},
-    "updatedAt": {"type": "string", "format": "date-time"}
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "resolvedBy": {
+      "description": "收尾该评审计划的真人账号（人工处置留痕：这条理由只存在于这里，审计条目不含它）",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "resolutionJustification": {
+      "description": "收尾理由（必填，留档）（人工处置留痕：这条理由只存在于这里，审计条目不含它）",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "closedAt": {
+      "description": "闭合时间（人工处置留痕：这条理由只存在于这里，审计条目不含它）",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "coveredReviewerRoles": {
+      "description": "已到位的评审角色",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
   },
   "allOf": [
     {
       "if": {
-        "properties": {"status": {"const": "closed"}},
-        "required": ["status"]
+        "properties": {
+          "status": {
+            "const": "closed"
+          }
+        },
+        "required": [
+          "status"
+        ]
       },
       "then": {
         "properties": {
           "closureGate": {
             "properties": {
-              "requiredItemsCovered": {"const": true},
-              "requiredBatchesConsumed": {"const": true},
-              "packetSufficiencyPassed": {"const": true},
-              "noUnresolvedMustFix": {"const": true},
-              "noUnprocessedExpansion": {"const": true}
+              "requiredItemsCovered": {
+                "const": true
+              },
+              "requiredBatchesConsumed": {
+                "const": true
+              },
+              "packetSufficiencyPassed": {
+                "const": true
+              },
+              "noUnresolvedMustFix": {
+                "const": true
+              },
+              "noUnprocessedExpansion": {
+                "const": true
+              }
             }
           }
         }

@@ -109,7 +109,11 @@
     "runtimeMutationPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "forbidActiveExecutionMutation", "forbiddenActions"],
+      "required": [
+        "mode",
+        "forbidActiveExecutionMutation",
+        "forbiddenActions"
+      ],
       "properties": {
         "mode": {
           "type": "string",
@@ -149,10 +153,22 @@
         "exportPackageRequired"
       ],
       "properties": {
-        "requiresExternalMaintenance": {"type": "boolean", "const": true},
-        "forbidsRuntimeAutoUpgrade": {"type": "boolean", "const": true},
-        "forbidsAutoUpgradeTaskGroup": {"type": "boolean", "const": true},
-        "exportPackageRequired": {"type": "boolean", "const": true}
+        "requiresExternalMaintenance": {
+          "type": "boolean",
+          "const": true
+        },
+        "forbidsRuntimeAutoUpgrade": {
+          "type": "boolean",
+          "const": true
+        },
+        "forbidsAutoUpgradeTaskGroup": {
+          "type": "boolean",
+          "const": true
+        },
+        "exportPackageRequired": {
+          "type": "boolean",
+          "const": true
+        }
       }
     },
     "externalUpgradePackageRef": {
@@ -174,6 +190,20 @@
     "updatedAt": {
       "type": "string",
       "format": "date-time"
+    },
+    "resolvedBy": {
+      "description": "处置该候选项的真人账号（人工处置留痕：这条理由只存在于这里，审计条目不含它）",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "resolutionJustification": {
+      "description": "处置理由（必填，留档）（人工处置留痕：这条理由只存在于这里，审计条目不含它）",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "allOf": [
@@ -189,23 +219,34 @@
             ]
           }
         },
-        "required": ["status"]
+        "required": [
+          "status"
+        ]
       },
       "then": {
-        "required": ["externalUpgradePackageRef"]
+        "required": [
+          "externalUpgradePackageRef"
+        ]
       }
     },
     {
       "if": {
         "properties": {
           "status": {
-            "enum": ["imported_after_external_upgrade", "closed"]
+            "enum": [
+              "imported_after_external_upgrade",
+              "closed"
+            ]
           }
         },
-        "required": ["status"]
+        "required": [
+          "status"
+        ]
       },
       "then": {
-        "required": ["externalUpgradeImportRef"]
+        "required": [
+          "externalUpgradeImportRef"
+        ]
       }
     }
   ]

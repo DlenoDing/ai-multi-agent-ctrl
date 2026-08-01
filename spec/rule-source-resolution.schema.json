@@ -23,43 +23,147 @@
     "updatedAt"
   ],
   "properties": {
-    "schemaVersion": {"type": "string", "const": "rule-source-resolution/v1"},
-    "resolutionId": {"type": "string", "minLength": 1},
-    "projectId": {"type": "string", "minLength": 1},
-    "taskGroupId": {"type": "string", "minLength": 1},
-    "status": {"type": "string", "enum": ["discovered", "resolved", "active", "reference_only", "quarantined", "superseded", "rejected"]},
-    "sourceLocator": {"type": "string", "minLength": 1},
-    "sourceScope": {"type": "string", "enum": ["system", "project", "task_group", "role_skill", "reference_material", "archive", "test_fixture"]},
-    "authorityLevel": {"type": "string", "enum": ["authoritative", "advisory", "reference_only", "excluded"]},
-    "sourceDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
-    "activeRuleRefs": {"type": "array", "items": {"type": "string"}},
-    "referenceOnlyRefs": {"type": "array", "items": {"type": "string"}},
-    "excludedSourceRefs": {"type": "array", "items": {"type": "string"}},
+    "schemaVersion": {
+      "type": "string",
+      "const": "rule-source-resolution/v1"
+    },
+    "resolutionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "discovered",
+        "resolved",
+        "active",
+        "reference_only",
+        "quarantined",
+        "superseded",
+        "rejected"
+      ]
+    },
+    "sourceLocator": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceScope": {
+      "type": "string",
+      "enum": [
+        "system",
+        "project",
+        "task_group",
+        "role_skill",
+        "reference_material",
+        "archive",
+        "test_fixture"
+      ]
+    },
+    "authorityLevel": {
+      "type": "string",
+      "enum": [
+        "authoritative",
+        "advisory",
+        "reference_only",
+        "excluded"
+      ]
+    },
+    "sourceDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "activeRuleRefs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "referenceOnlyRefs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "excludedSourceRefs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "conflictCheck": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["passed", "decisionRecordRef"],
+      "required": [
+        "passed",
+        "decisionRecordRef"
+      ],
       "properties": {
-        "passed": {"type": "boolean"},
-        "decisionRecordRef": {"type": "string", "minLength": 1}
+        "passed": {
+          "type": "boolean"
+        },
+        "decisionRecordRef": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
-    "auditRef": {"type": "string", "minLength": 1},
-    "createdAt": {"type": "string", "format": "date-time"},
-    "updatedAt": {"type": "string", "format": "date-time"}
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "settledBy": {
+      "description": "判定该规则来源的真人账号（人工处置留痕：这条理由只存在于这里，审计条目不含它）",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "settlementJustification": {
+      "description": "判定理由（人工处置留痕：这条理由只存在于这里，审计条目不含它）",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
   },
   "allOf": [
     {
       "if": {
-        "properties": {"status": {"const": "active"}},
-        "required": ["status"]
+        "properties": {
+          "status": {
+            "const": "active"
+          }
+        },
+        "required": [
+          "status"
+        ]
       },
       "then": {
         "properties": {
-          "authorityLevel": {"const": "authoritative"},
+          "authorityLevel": {
+            "const": "authoritative"
+          },
           "conflictCheck": {
             "properties": {
-              "passed": {"const": true}
+              "passed": {
+                "const": true
+              }
             }
           },
           "activeRuleRefs": {
@@ -70,12 +174,23 @@
     },
     {
       "if": {
-        "properties": {"status": {"const": "reference_only"}},
-        "required": ["status"]
+        "properties": {
+          "status": {
+            "const": "reference_only"
+          }
+        },
+        "required": [
+          "status"
+        ]
       },
       "then": {
         "properties": {
-          "authorityLevel": {"enum": ["advisory", "reference_only"]}
+          "authorityLevel": {
+            "enum": [
+              "advisory",
+              "reference_only"
+            ]
+          }
         }
       }
     }

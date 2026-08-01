@@ -3118,6 +3118,9 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const justification = String(body.justification || "").trim();
     if (!justification) return json(res, 400, {error: "quality_gate_waive_requires_justification"});
+    // 终态一次性守卫：这些字段是那位真人处置理由的【唯一】存放处（审计条目只记 actor/action/subject/
+    // result，不含理由），被后来者无条件覆写即不可恢复。与 findingResolve / ruleSourceSettle 同规。
+    if (["waived", "passed"].includes(gate.status)) return json(res, 409, {error: "quality_gate_already_settled", qualityGate: gate});
     gate.status = "waived";
     gate.waivedBy = guard.actor;
     gate.waiveJustification = justification.slice(0, 2000);
@@ -3147,6 +3150,7 @@ async function handleApi(req, res) {
     if (!nextStatus) return json(res, 400, {error: "review_bundle_status_invalid"});
     const justification = String(body.justification || "").trim();
     if (!justification) return json(res, 400, {error: "review_bundle_resolution_justification_required"});
+    if (["consumed", "rejected"].includes(bundle.status)) return json(res, 409, {error: "review_bundle_already_resolved", reviewBundle: bundle});
     bundle.status = nextStatus;
     bundle.resolvedBy = guard.actor;
     bundle.resolutionJustification = justification.slice(0, 2000);
@@ -3172,6 +3176,9 @@ async function handleApi(req, res) {
     if (!nextStatus) return json(res, 400, {error: "system_upgrade_candidate_status_invalid"});
     const justification = String(body.justification || "").trim();
     if (!justification) return json(res, 400, {error: "system_upgrade_candidate_justification_required"});
+    if (["external_maintenance_required", "dismissed", "superseded", "closed", "exported_for_external_maintenance"].includes(candidate.status)) {
+      return json(res, 409, {error: "system_upgrade_candidate_already_resolved", systemUpgradeCandidate: candidate});
+    }
     candidate.status = nextStatus;
     candidate.resolvedBy = guard.actor;
     candidate.resolutionJustification = justification.slice(0, 2000);
@@ -3221,6 +3228,7 @@ async function handleApi(req, res) {
     if (!nextStatus) return json(res, 400, {error: "review_plan_status_invalid"});
     const justification = String(body.justification || "").trim();
     if (!justification) return json(res, 400, {error: "review_plan_resolution_justification_required"});
+    if (["closed", "rejected", "superseded"].includes(plan.status)) return json(res, 409, {error: "review_plan_already_resolved", reviewPlan: plan});
     plan.status = nextStatus;
     plan.resolvedBy = guard.actor;
     plan.resolutionJustification = justification.slice(0, 2000);
@@ -3242,7 +3250,15 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const nextStatus = ["active", "superseded", "retired", "rejected"].includes(body.status) ? body.status : null;
     if (!nextStatus) return json(res, 400, {error: "shared_definition_status_invalid"});
+    // 与同批其余五条口径一致：人定稿必须留下依据。此前这是唯一一条不要求理由的杠杆，
+    // 而它恰恰能把一条契约直接推成全局生效的规范。
+    const definitionJustification = String(body.justification || "").trim();
+    if (!definitionJustification) return json(res, 400, {error: "shared_definition_resolution_justification_required"});
+    if (["superseded", "retired", "rejected"].includes(definition.status)) {
+      return json(res, 409, {error: "shared_definition_already_resolved", sharedDefinition: definition});
+    }
     definition.status = nextStatus;
+    definition.resolutionJustification = definitionJustification.slice(0, 2000);
     definition.resolvedBy = guard.actor;
     definition.updatedAt = now();
     audit(state, guard.actor, "shared_definition_resolve", `SharedDefinitionContract:${definition.contractId}`, nextStatus);
