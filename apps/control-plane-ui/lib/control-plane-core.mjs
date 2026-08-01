@@ -1175,7 +1175,7 @@ export function decideSessionPlacement(state, request = {}) {
   const workItem = request.workItem || findWorkItem(state, request.taskGroupId, request.workItemId) || {};
   const modelDecision = request.modelSelectionDecision || selectModel(state, request);
   const signals = unique([...(request.workSignals || []), ...inferWorkSignals(workItem, taskGroup)]);
-  const activeSubagents = state.workSessions.filter((session) => session.parentSessionId === "sess_orch_1" && session.placement === "subagent" && !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status)).length;
+  const activeSubagents = state.workSessions.filter((session) => session.parentSessionId === "sess_orch_1" && session.placement === "subagent" && !WORK_SESSION_SETTLED_STATUSES.includes(session.status)).length;
   if (activeSubagents >= 3 && !signals.includes("subagent_limit_approaching")) signals.push("subagent_limit_approaching");
   const sustained = signals.some((signal) => ["expected_multi_turn", "long_running", "stateful_context", "role_owner_required", "independent_work_owner", "write_scope_owner", "cross_file_or_cross_service_change", "external_capability_flow", "git_or_release_side_effect", "subagent_limit_approaching", "controller_context_pressure"].includes(signal));
   const placement = sustained ? "new_session" : "subagent";
@@ -2701,7 +2701,7 @@ export function terminateCellRuntime(state, taskGroupId, workItemId, reason) {
   for (const session of state.workSessions || []) {
     if (session.taskGroupId !== taskGroupId || session.workItemId !== workItemId) continue;
     sessionIds.add(session.sessionId);
-    if (!["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status)) {
+    if (!WORK_SESSION_SETTLED_STATUSES.includes(session.status)) {
       session.status = "failed";
       session.blockedReason = reason;
       session.updatedAt = at;
@@ -2731,7 +2731,7 @@ function activeExecutionForWork(state, taskGroupId, workItemId) {
   const session = (state.workSessions || []).find((item) =>
     item.taskGroupId === taskGroupId &&
     item.workItemId === workItemId &&
-    !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(item.status)
+    !WORK_SESSION_SETTLED_STATUSES.includes(item.status)
   );
   const dispatch = (state.agentDispatches || []).find((item) =>
     item.taskGroupId === taskGroupId &&
@@ -2914,7 +2914,7 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
   if (checkFailures.no_active_role_drift_guard) blockers.push({objectType: "RoleDriftGuard", objectId: taskGroupId, status: "active"});
   if (checkFailures.shared_definitions_active) blockers.push({objectType: "SharedDefinitionContract", objectId: taskGroupId, status: "not_active"});
   if (checkFailures.repository_output_target_terminal) blockers.push({objectType: "RepositoryOutputTarget", objectId: taskGroupId, status: "non_terminal"});
-  if ((state.workSessions || []).some((session) => session.taskGroupId === taskGroupId && !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status))) blockers.push({objectType: "WorkSession", objectId: taskGroupId, status: "active"});
+  if ((state.workSessions || []).some((session) => session.taskGroupId === taskGroupId && !WORK_SESSION_SETTLED_STATUSES.includes(session.status))) blockers.push({objectType: "WorkSession", objectId: taskGroupId, status: "active"});
   if ((state.agentDispatches || []).some((dispatch) => dispatch.taskGroupId === taskGroupId && !["completed", "failed", "cancelled"].includes(dispatch.status))) blockers.push({objectType: "AgentDispatch", objectId: taskGroupId, status: "active"});
   if ((state.leases || []).some((lease) => lease.status === "active" && leaseAppliesToTaskGroup(state, lease, taskGroupId))) blockers.push({objectType: "Lease", objectId: taskGroupId, status: "active"});
   if (checkFailures.all_required_evidence_present) blockers.push({objectType: "Checkpoint", objectId: taskGroupId, status: "missing_git_evidence"});
@@ -4173,7 +4173,7 @@ export function createHumanConfirmationRequest(state, input = {}) {
     dispatch.humanConfirmationRef = request.requestId;
     dispatch.updatedAt = at;
     const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
-    if (session && !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status)) {
+    if (session && !WORK_SESSION_SETTLED_STATUSES.includes(session.status)) {
       session.status = "needs_decision";
       session.blockedReason = "awaiting_human_confirmation";
       session.updatedAt = at;
@@ -4570,7 +4570,7 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
           revokeDispatchNodeBinding(state, dispatch, "human_directive_cancel");
           dispatch.updatedAt = at;
           const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
-          if (session && !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status)) {
+          if (session && !WORK_SESSION_SETTLED_STATUSES.includes(session.status)) {
             session.status = "aborted";
             delete session.blockedReason;
             session.updatedAt = at;
@@ -4656,7 +4656,7 @@ export function expireStaleQueuedDispatches(state) {
     dispatch.failureReason = contract ? "task_contract_expired" : "task_contract_missing";
     dispatch.updatedAt = at;
     const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
-    if (session && !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status)) {
+    if (session && !WORK_SESSION_SETTLED_STATUSES.includes(session.status)) {
       session.status = "recycled";
       session.updatedAt = at;
     }
@@ -5268,6 +5268,9 @@ export function capRetainingOpen(items, terminalStatuses, limit) {
 // Statuses that make a close-barrier collection item still "open"/blocking. Single source of truth so
 // the cap below and computeCloseBarrier can never drift into evicting a gating item.
 // Includes "quorum_collecting" so a sub-quorum high-risk approval keeps blocking completion readiness.
+// 会话的"已了结"集：completed_objective 之后即便还没回收，也不该再挡住任务组关闭。
+// 这里必须只用已登记状态 —— 原先混着 WorkSession 根本没有的 "closed"。
+export const WORK_SESSION_SETTLED_STATUSES = ["completed_objective", "recycled", "failed", "aborted"];
 const BARRIER_PENDING_STATUSES = ["open", "pending", "pending_approval", "quorum_collecting", "requested", "submitted", "in_review", "waiting"];
 // 一个横跨 5 类实体的通用"待处理"清单，对每一类都只是碰运气 —— 实测 8 个状态名里，
 // 对 RuleSourceResolution / DerivedTaskRequest 一个都不命中，那两道门从来没有触发过。
@@ -6009,7 +6012,7 @@ export function requeuePermissionApprovedDispatch(state, request, at = new Date(
   revokeDispatchNodeBinding(state, dispatch, "permission_request_approved_requeued");
   dispatch.updatedAt = at;
   const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
-  if (session && !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(session.status)) {
+  if (session && !WORK_SESSION_SETTLED_STATUSES.includes(session.status)) {
     session.status = "active";
     delete session.blockedReason;
     session.updatedAt = at;

@@ -25,7 +25,9 @@ function loadStateMachines() {
   const marks = [...source.matchAll(entityRe)];
   marks.forEach((mark, index) => {
     const body = source.slice(mark.index + mark[0].length, index + 1 < marks.length ? marks[index + 1].index : source.length);
-    const states = body.match(/^ {4}states:\s*\n((?: {6}- "[^"]+"\s*\n)+)/m);
+    // 状态列表里允许夹注释 —— 解析器必须容忍，否则一条说明就能让本门对整个实体失明
+    // （而失明的表现是"该实体的状态一个都不认识"，看起来像代码错了，其实是本门错了）。
+    const states = body.match(/^ {4}states:\s*\n((?:(?: {6}(?:- "[^"]+"|#[^\n]*)|\s*)\n)+)/m);
     const terminal = body.match(/^ {4}terminal:\s*\[(.*?)\]/m);
     if (states) {
       machines[mark[1]] = {
@@ -72,6 +74,7 @@ export function checkBarrierLiveness() {
   const machines = loadStateMachines();
   const source = read("apps/control-plane-ui/lib/control-plane-core.mjs");
   const failures = [];
+  const failuresBootstrap = failures;
 
   // 阻塞判据有两块：completion readiness 的 checkFailures 与关闭门的 gateFailures。
   // 只扫其中一块，本门自己就是半空转的 —— 另一块里同样有从不触发的判据。
@@ -81,11 +84,32 @@ export function checkBarrierLiveness() {
     if (!block) return [`空转门检查: 找不到 ${name} 块（阻塞判据结构已变，本门失效，必须同步更新）`];
     blocks.push(block[1]);
   }
+  // 阻塞判据并不都写在对象字面量里：WorkSession / AgentDispatch / Lease 三条是独立的
+  // `if (...) blockers.push(...)`。只扫对象字面量的话，本门对它们完全失明 —— 而实测那三条里
+  // 恰好就藏着未登记的状态漂移。凡是往 blockers 里 push 的判据都必须进入扫描范围。
+  const pushLines = [...source.matchAll(/^ {2}if \(\(state\.[\s\S]*?blockers\.push\(\{objectType: "([A-Za-z]+)".*$/gm)]
+    .map((match) => `blocker_${match[1]}: ${match[0].trim()}`);
+  if (pushLines.length < 3) failuresBootstrap.push(`空转门检查: 只识别到 ${pushLines.length} 条 blockers.push 判据（少于已知的 3 条，提取逻辑与代码脱节）`);
+  blocks.push(pushLines.join("\n"));
 
   // 具名状态常量（pendingStatuses / FOO_TERMINAL 之类）展开成字面量集合
   const namedSets = {};
   for (const match of source.matchAll(/const ([A-Z_a-z]+(?:STATUSES|TERMINAL|Statuses))\s*=\s*(?:new Set\()?\[(.*?)\]/gs)) {
     namedSets[match[1]] = [...match[2].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  }
+
+  // 全仓实际被写入过的 status 值（含 seed 与测试夹具外的生产代码）。
+  const producerSources = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
+    "apps/mcp-server/server.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/agent-runtime/runtime.mjs"];
+  const producedStatuses = new Set();
+  for (const rel of producerSources) {
+    let text = "";
+    try { text = read(rel); } catch { continue; }
+    // 写入形态不止 `x.status = "a"` 一种：对象字面量里的 `status:`、三元、嵌套三元都算写入。
+    // 提取不全会把"其实有生产者"的状态误判成空转 —— 本门自身的误报同样是要防的。
+    for (const match of text.matchAll(/(?:\.status\s*=|\bstatus:)\s*([^;\n]+)/g)) {
+      for (const literal of match[1].matchAll(/"([^"]+)"/g)) producedStatuses.add(literal[1]);
+    }
   }
 
   let checked = 0;
@@ -121,6 +145,12 @@ export function checkBarrierLiveness() {
     if (!literals.length) continue;
     checked += 1;
     const unique = [...new Set(literals)];
+    // 第二层：状态名登记了不代表它会出现。一个"已登记但全仓无任何写入方"的状态，
+    // 门照样永远不会因它触发（正向判据）或永远因它阻塞（反向判据）。故同时核对生产者。
+    const unproduced = unique.filter((literal) => machine.states.includes(literal) && !producedStatuses.has(literal));
+    if (unproduced.length === unique.length && unique.length) {
+      failures.push(`空转门检查: 门 ${gateName} 检查的状态 ${JSON.stringify(unproduced)} 已登记但全仓没有任何代码写入过 —— 拼写没错，门依然永远不会触发`);
+    }
     const dead = unique.filter((literal) => !machine.states.includes(literal));
     if (dead.length === unique.length) {
       failures.push(`空转门检查: 门 ${gateName} 是空转门 —— 它检查的状态 ${JSON.stringify(dead)} 没有一个是 ${entity} 的已登记状态（${machine.states.join("/")}），这道门永远不会触发，却在控制台上显示为已通过`);

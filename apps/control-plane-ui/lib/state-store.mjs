@@ -320,7 +320,9 @@ function runtimeJsonShardNameFromIndexEntry(entry) {
 // computeCompletionReadiness in control-plane-core.mjs — the barrier line is noted for each and the
 // terminal literals are asserted in sync by scripts/validate-specs.rb.
 const shardOpenPredicates = {
-  workSessions: (item) => !["completed_objective", "failed", "closed", "recycled", "aborted"].includes(item.status), // core 2777
+  // state-store 不导入 core（避免循环依赖），所以这里是一份镜像 —— 由 contract-check 的
+  // 终态漂移门钉住它与 core 的一致性，而不是靠人记得同步。
+  workSessions: (item) => !["completed_objective", "recycled", "failed", "aborted"].includes(item.status), // 镜像 WORK_SESSION_SETTLED_STATUSES
   humanConfirmationRequests: (item) => item.status === "pending", // core 2769
   humanDirectives: (item) => ["queued", "acknowledged"].includes(item.status), // core 2770
   repositoryOutputs: (item) => !["pushed", "committed", "rejected", "superseded"].includes(item.status), // core 2759

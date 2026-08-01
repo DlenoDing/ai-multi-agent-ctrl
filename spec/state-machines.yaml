@@ -248,6 +248,9 @@ machines:
       - "permission_required"
       - "needs_decision"
       - "stale_state"
+      # paused 是 session_pause 真实会写入的状态，此前从未登记：未登记的状态不在关闭门认可的
+      # 了结集里，也不在任何非终态集里，等于凭空多出一个谁也不认识的挂起态。
+      - "paused"
       - "completed_objective"
       - "recycled"
       - "failed"
@@ -323,7 +326,14 @@ machines:
         to: "recycled"
         actor: "orchestrator"
         requires: ["session_recycle_ack", "completion_readiness_passed", "role_drift_guard_clear"]
-
+      - from: "active"
+        to: "paused"
+        actor: "decision-center"
+        requires: ["pause_decision"]
+      - from: "paused"
+        to: "active"
+        actor: "orchestrator"
+        requires: ["resume_decision"]
   Command:
     initial: "created"
     terminal: ["succeeded", "cancelled", "timed_out", "compensated", "dlq"]

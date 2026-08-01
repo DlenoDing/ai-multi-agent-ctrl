@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish } from "../apps/mcp-server/server.mjs";
+import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
   maintainWorkerLanes,
@@ -43,6 +43,7 @@ import {
   ruleSourceResolve,
   ruleSourceSettle,
   isDelegatableGrantPermission,
+  WORK_SESSION_SETTLED_STATUSES,
   HUMAN_ACTOR_KEY,
   reviewPlanCreate,
   reviewPlanRecordCoverage,
@@ -442,7 +443,7 @@ function verifyHumanAndOrganizationContracts(output) {
     // completed_objective/committed as done), so this is a subset check. The mirror is bound to the real
     // code literal (already pinned by validate-specs), transitively binding the state machine to the code.
     const barrierTerminal = {
-      WorkSession: ["completed_objective", "failed", "closed", "recycled", "aborted"],
+      WorkSession: ["completed_objective", "recycled", "failed", "aborted"],
       AgentDispatch: ["completed", "failed", "cancelled"],
       RepositoryOutputTarget: ["pushed", "committed", "rejected", "superseded"],
       ReviewBundle: ["consumed", "rejected"]
@@ -451,6 +452,14 @@ function verifyHumanAndOrganizationContracts(output) {
     const coreSourceText = readFileSync(resolve(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
     for (const [entity, barrierSet] of Object.entries(barrierTerminal)) {
       if (!coreSourceText.includes(barrierSet.map((s) => `"${s}"`).join(", "))) output.push(`terminal-set drift gate: barrier ${entity} terminal literal not found in control-plane-core (update this mirror)`);
+      // state-store 的分片保留谓词是同一份集合的镜像，且它无法 import core（避免循环依赖）。
+      // 镜像不一致时，持久层与关闭门对"这条记录还算不算未了结"的判断会分叉。
+      if (entity === "WorkSession") {
+        const storeSource = readFileSync(resolve(root, "apps/control-plane-ui/lib/state-store.mjs"), "utf8");
+        if (!storeSource.includes(barrierSet.map((s) => `"${s}"`).join(", "))) {
+          output.push("terminal-set drift gate: state-store 的 WorkSession 保留谓词与关闭门的了结集已分叉");
+        }
+      }
       const missing = ((machines[entity] || {}).terminal || []).filter((s) => !barrierSet.includes(s));
       if (missing.length) output.push(`terminal-set drift: ${entity} state-machine terminal(s) ${JSON.stringify(missing)} not treated as terminal by the close barrier (liveness wedge risk)`);
     }
@@ -1051,6 +1060,25 @@ function verifyHumanAndOrganizationContracts(output) {
     if (dispatchedHold()) {
       output.push("人工闸门: 工作项挂着待人工定稿的重大决策时仍被重新派发（人的定稿会落在一个正被改写的对象上）");
     }
+    // 拦截是按"这个工作项挂着任何重大决策"写的，而不是逐个决策类型枚举。逐类型枚举必然会漏掉
+    // 下一个新类型 —— plan_topology 当初就是这么漏的。这里对每一种重大决策类型都验一遍。
+    for (const decisionType of ["work_item_verification", "plan_topology", "task_split", "rule_change"]) {
+      const typeState = structuredClone(hcHoldState);
+      typeState.agentDispatches = [];
+      const typeWork = typeState.taskGroups.find((item) => item.id === hcHoldTg.id).workItems.find((item) => item.id === hcHoldWork.id);
+      typeWork.status = "ready";
+      typeState.humanConfirmationRequests = [{
+        schemaVersion: "human-confirmation-request/v1", requestId: `hcr_${decisionType}`, projectId: hcHoldTg.projectId,
+        taskGroupId: hcHoldTg.id, workItemId: hcHoldWork.id, decisionClass: "major", decisionType,
+        question: {summary: "待定"}, options: [{optionId: "a", label: "A"}, {optionId: "none", label: "不选"}],
+        blocking: true, status: "pending", round: 1, createdAt: "2026-08-02T00:00:00Z", updatedAt: "2026-08-02T00:00:00Z"
+      }];
+      runAutonomousCycle(typeState, {taskGroupId: hcHoldTg.id}, {root});
+      if ((typeState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === hcHoldWork.id)) {
+        output.push(`人工闸门: ${decisionType} 待人工定稿期间该工作项仍被派发（拦截只覆盖了部分决策类型）`);
+      }
+    }
+
     // 同时证明测试不空转：把卡片撤掉后，同一个工作项必须能被派发出去。
     const hcFreeState = structuredClone(hcHoldState);
     hcFreeState.humanConfirmationRequests = [];
@@ -1073,6 +1101,20 @@ function verifyHumanAndOrganizationContracts(output) {
     });
     if (!snapCard?.subjectContentDigest) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
+    }
+
+    // 会话状态：cancelled/paused 曾被写入却从未登记 —— 未登记的状态不在门认可的了结集里，
+    // 取消一次会话就永久挡住任务组关闭，而人没有任何杠杆。
+    const sessState = structuredClone(seedState);
+    ensureRuntimeCollections(sessState, {root});
+    sessState.workSessions = [{sessionId: "ws_probe", taskGroupId: "tg_runtime_management", projectId: "prj_control_plane", status: "active"}];
+    // 走 MCP 那条真实路径：缺陷正是"MCP 写入了未登记的状态"，用手搓赋值测不出来。
+    sessionMutate(sessState, {sessionId: "ws_probe"}, "aborted");
+    if (!WORK_SESSION_SETTLED_STATUSES.includes(sessState.workSessions[0].status)) {
+      output.push(`会话状态: 取消后的状态 ${sessState.workSessions[0].status} 不在关闭门认可的了结集里（取消一次即永久挡住关闭，人无杠杆）`);
+    }
+    if (!((loadStateMachines(root).machines || {}).WorkSession?.states || []).includes(sessState.workSessions[0].status)) {
+      output.push("会话状态: 取消写入了未登记的状态（状态机与运行时再次分叉）");
     }
 
     // 提权链：执行方自选 resourceType/permission 申请 {system, accounts} 的 system:* ——

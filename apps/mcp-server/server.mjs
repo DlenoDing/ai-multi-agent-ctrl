@@ -65,7 +65,8 @@ import {
   sharedDefinitionCreate,
   taskGroupForRecord,
   reviewPlanRecordCoverage,
-  isDelegatableGrantPermission
+  isDelegatableGrantPermission,
+  WORK_SESSION_SETTLED_STATUSES
 } from "../control-plane-ui/lib/control-plane-core.mjs";
 import {
   createAgentControlCommand,
@@ -1245,7 +1246,9 @@ async function dispatchTool(state, name, args, context = {}) {
     case "agent-control-mcp.session_pause":
       return sessionMutate(state, args, "paused");
     case "agent-control-mcp.session_cancel":
-      return sessionMutate(state, args, "cancelled");
+      // "cancelled" 从来不是 WorkSession 的已登记状态，于是被取消的会话永远不在关闭门认可的
+      // 了结集里 —— 取消一次就永久挡住任务组关闭。语义上它就是 aborted，用已登记的那个。
+      return sessionMutate(state, args, "aborted");
     case "agent-control-mcp.session_recover":
       return sessionMutate(state, args, "active");
     case "agent-control-mcp.dispatch_status":
@@ -1907,7 +1910,7 @@ function sessionStart(state, args) {
   return {contract, session: state.workSessions.find((item) => item.sessionId === contract.sessionId)};
 }
 
-function sessionMutate(state, args, status) {
+export function sessionMutate(state, args, status) {
   const session = state.workSessions.find((item) => item.sessionId === args.sessionId);
   if (!session) return {ok: false, error: "session_not_found"};
   session.status = status;
@@ -1915,7 +1918,7 @@ function sessionMutate(state, args, status) {
   const controlCommands = [];
   const directDispatches = [];
   for (const dispatch of state.agentDispatches.filter((item) => item.sessionId === session.sessionId && !["completed", "failed", "cancelled"].includes(item.status))) {
-    const commandType = status === "cancelled" ? "cancel_dispatch" : status === "paused" ? "pause_dispatch" : null;
+    const commandType = status === "aborted" ? "cancel_dispatch" : status === "paused" ? "pause_dispatch" : null;
     const node = dispatch.assignedNodeId ? state.agentRuntimeNodes.find((item) => item.nodeId === dispatch.assignedNodeId) : null;
     if (commandType && node && ["running", "blocked"].includes(dispatch.status)) {
       const result = createAgentControlCommand(state, node, {
@@ -1957,7 +1960,8 @@ function sessionMutate(state, args, status) {
 function capacitySnapshot(state, filter) {
   // A bounded principal only sees capacity for its own projects; a null filter (system_admin /
   // wildcard) sees global aggregates. Prevents cross-tenant operational disclosure via this read.
-  const terminal = ["completed_objective", "failed", "closed", "recycled", "aborted", "cancelled"];
+  // 与 core 共用：手打第四份副本正是 cancelled/paused 这类未登记状态漂移进来的原因。
+  const terminal = WORK_SESSION_SETTLED_STATUSES;
   const inScope = (item) => !filter || (item.projectId && filter.has(item.projectId));
   const sessions = state.workSessions.filter(inScope);
   const dispatches = state.agentDispatches.filter(inScope);
