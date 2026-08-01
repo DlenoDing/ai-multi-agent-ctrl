@@ -3764,6 +3764,7 @@ function advanceWorkItemToReviewRequested(state, workItem, checkpoint) {
 
 const DEFAULT_SYSTEM_RULES = [
   {ruleId: "sys.product-intelligence-first", title: "产品智能优先总纲", content: "所有问题处理以 product-intelligence-first 为最高判断：目标是让正式产品在真实服务链路、真实数据、真实客户端、真实运行状态下正确/完整/可靠，而非让某样本/日志/字段/实例/页面/接口/gate 通过。任何问题不得把用户举例、单条日志、单字段、单实例、单页面、单接口或 raw 存储/传输/HTTP 观测当作天然边界，必须先提升到对应 problemFamily / 功能族 / 数据能力族 / 运行状态族 / 契约族，再决定修复与复验范围。每个非简单问题建三向影响图：upstreamSurface（producer/adapter/canonical owner/存储/缓存/消息队列/config-env overlay/scheduler/权限/数据预热补齐来源/runtime 拓扑）、peerSurface（同类接口/字段/页面、同端相邻模块、跨端对端、相邻环境/窗口/维度、同来源另一接口或腿、同 read model 其他消费者）、downstreamSurface（API/WS/read model/client store/各端展示交互刷新缓存/E2E/用户可见结果）。重大/重复/跨服务/数据/外部依赖/客户端主路径/多实例问题必须先做假设竞争：列出合理解释并用真实服务内链路逐一排除，不得一眼定案。根因修复必须落在被违反不变量的 canonical owner，不在 consumer/临时 env/清缓存/单实例 smoke/症状层掩盖上游。复验范围由 problemFamily + impactSurface 反推，而非由改了几个文件、用户举了哪个例、worker 自己修了哪里决定。关闭硬门（全满足才可关闭 finding；否则只能保持 open / repair_required / verification_incomplete / exact blocked_external|coverage_gap）：症状已提升为正确功能族；upstream/peer/downstream 已分析且未受影响部分有明确理由；rootCauseOwner 正确且未在 consumer/症状层掩盖上游；修复覆盖正常路径/旧状态/异常状态/跨端跨服务消费者/必要负向场景；复验范围由影响图决定并标注哪些已 pass、哪些仍是 exact gap。总控吸收 worker/review 结果时必须独立复核以上点——worker 只修症状、只测样本、只给局部 pass、只列证据不做语义判断、未说明同级面或上下游影响时，一律退回补充，不得吸收为完成。证据/gate/脚本/截图/日志只服务于智能判断，保持 MINIMAL-EFFECTIVE-EVIDENCE 不机械堆 raw dump，也不得用一句「AI 判断通过」替代上述分析。本总纲统领其余系统规则，冲突时以本总纲与最新 core-init 结论为准。"},
+  {ruleId: "sys.review-dual-track", title: "互审双轨：既审当前方案也另寻更优", content: "任何互审/评审都必须同时走两条轨道，缺一不可，只做其中一条即为不合格评审。轨道一（方案内审查）：按当前方案的目标、边界、验收标准审查其执行是否正确、完整、有证据。轨道二（方案外求优）：跳出当前方案本身，重新回到【原始问题与目标】，判断这个方案本身是不是解决该问题的正确/最优路径，并至少给出一个可比较的替代方案，或明确说明已考察过哪些替代路径、为何当前方案更优。设立轨道二的原因：只沿既定方案往下审，会把一个本来就错的方向越做越精细——评审越勤，偏差越大；必须周期性回到问题本身，才可能发现方向错了，而不只是执行得不够好。触发即强制：方案/拓扑选择、任务拆分、验收、规则变更等核心决策的互审，必须在结论里显式记录 alternativesConsidered（考察过的替代路径及取舍理由）；为空视为评审未完成，不得据此推进。与既有规则的关系：轨道二只产出【提案与意见】，不构成擅自改动。发现更优方案时，一律通过人工确认通道提出（confirmation_analyze 的 better_alternative / incorrect），由人决定是否改变方案；AI 不得据自己的更优判断绕过已定稿方案或自行扩大改动范围——那属于 sys.scope-convergence 与角色漂移守卫的管辖，仍然禁止。即：想得更宽是义务，做得更宽要授权。"},
   {ruleId: "sys.risk-grading", title: "行为语义风险分级", content: "按真实运行影响面（L0–L3）而非文件路径/类名/所在层级定级；动手前先明确「级别 + 影响面 + 允许动作 + 验证方式 + 互审要求」；同一任务命中多档按最高风险执行。"},
   {ruleId: "sys.interrupt-recovery", title: "中断恢复先校主线", content: "接手/压缩/恢复后执行任何新动作前，先重新确认用户最终目标与最新修正、当前权威规则与验收标准、已完成/未完成/阻断项、真实运行状态是否支持旧记录、主线是否偏离；发现走偏立即停止支线、保留证据、回主线；纠偏时冻结有争议的推导分支再继续。"},
   {ruleId: "sys.temp-instrumentation", title: "临时测试插桩生命周期", content: "临时 debug/插桩须分配唯一 temp_id + 成对 marker + 每 run 唯一 manifest 登记；默认关闭、有界激活、精确清理；active 临时 hunk 不进普通提交/推送/构建；正式复验前必须停用+移除+按污染范围重建 run 状态；不得整文件回退或按 TODO/test 泛词删除；改变被测行为的 run 只作 diagnostic evidence。"},
@@ -3776,7 +3777,7 @@ const DEFAULT_SYSTEM_RULES = [
   {ruleId: "sys.environment-by-config", title: "环境由配置表达", content: "环境统一枚举（项目定义，如 local/dev/test/pre/prod），差异只由配置表达，不用 hostname/IP/容器名/路径/git 分支/机器职责推断业务环境。"},
   {ruleId: "sys.side-effect-authorization", title: "副作用授权与 fail-closed", content: "对会造成不可逆、外部可见或跨环境副作用的动作（正式/生产写入、真实 Provider/支付/KYC/下单等会产生状态变更、计费或不可逆结果的外部调用、删除或清理已有数据/凭据/资源、对外通知）默认禁止；仅在用户对 exact environment/identity/scope/action 明确授权后执行。只读、幂等的 owner-path 预热/补齐读取不属副作用动作，按 sys.readiness-provisioning 的幂等/去重/限流纪律执行，不受本条 per-action 授权约束。为确证 adapter/契约、或为交付重要守卫做可逆变异检验（见 sys.observation-control）所必需且已就对应 exact scope 获授权时，才做最小、受控、幂等或可回滚的探针，并预先声明副作用边界与回滚方式；未获授权时只允许在隔离/沙箱、无外部可见副作用、可逆的探针，任何触达真实外部/生产的探针仍按默认禁止处理。无法正向确证正确性、授权或数据完整性时，对资金/安全/权限/数据破坏类动作一律 fail-closed（拒绝或阻断，而非放行、默认值或吞异常）；命中 P0/安全/资金/数据破坏/证据污染的止血与升级按 sys.root-cause-owner 处置。"},
   {ruleId: "sys.time-semantics", title: "五类时间语义分类", content: "比较时间前先分类 instant/civilTime/businessCalendar/elapsedDuration/logicalOrder 并声明字段语义，比较方法先定义 exact/resolution-aware/tolerance/window；不同 role 不因都能转 UTC 就互换；elapsed 同进程用 monotonic，跨主机 wall-clock 差值须有 skew bound；因果顺序用 sequence/version/offset 不用时间戳替代。"},
-  {ruleId: "sys.scope-convergence", title: "变更范围收敛", content: "变更图/范围冻结后仅「可定位真实引用 / 冻结契约新直接依赖 / P0安全数据破坏 / 已执行节点暴露的新 required 依赖」四类证据可扩范围，禁止「继续看看是否还有问题」式无界扫描；全量验证建版本化覆盖矩阵、按根因批量收敛，不以「无新增可疑点」为无限目标。"},
+  {ruleId: "sys.scope-convergence", title: "变更范围收敛", content: "本条约束的是【改动范围】，不约束【分析与提案范围】——按 sys.review-dual-track，互审必须跳出当前方案另寻更优解，那是义务而非违规；发现的更优方案通过人工确认通道提出，由人决定是否改变方案。变更图/范围冻结后仅「可定位真实引用 / 冻结契约新直接依赖 / P0安全数据破坏 / 已执行节点暴露的新 required 依赖」四类证据可扩【改动】范围，禁止「继续看看是否还有问题」式无界扫描；全量验证建版本化覆盖矩阵、按根因批量收敛，不以「无新增可疑点」为无限目标。"},
   {ruleId: "sys.full-chain-diagnosis", title: "运行事实全链路溯源", content: "把任何运行事实（键名/表名/前缀/头/序列化/时区/locale/env/命名空间等）判定为缺陷前，先沿全链路溯源：业务代码→helper/契约→framework/SDK/client adapter→依赖默认值→env/config overlay→容器/runtime→原始存储/传输观测→应用回读；任何 raw 外部观测须声明是否经 client/SDK 自动改写。若写入与回读走同一 canonical owner path 且回读通过，「物理名≠逻辑名」先归类为 evidence_probe_mismatch，不得据单点 raw 观测升级为 blocker 或擅改全局 prefix/config/key/schema；finding 只有溯源后才定性（source bug / config mismatch / runtime env mismatch / evidence probe mismatch / adapter bug / schema bug / true gap）。"},
   {ruleId: "sys.owner-path-verification", title: "服务内 owner-path 终判", content: "pass/fail、缺陷判定与修复验证必须在完整启动的服务实例内经真实程序路径（owner path / 应用 client / API / CLI / consumer / cron / WS / 框架配置的 SDK 路径）完成；raw 技术栈探针（如 redis-cli / 直连 DB / 队列 CLI / raw curl / grep 代码 / 单条日志 / 隔离 helper 单点等）只作定位、前后状态观测或负对照，非特殊情况不得单独作为最终 pass/fail 或修复方向依据；build/依赖安装/容器启动/HTTP 200/静态清单是前置条件而非验证。"},
   {ruleId: "sys.evidence-qualification", title: "弱证据结论重分类", content: "凡曾作为解锁/完成/正确性/资金安全 owner 判断依据、却主要基于 raw 探针或单点证据的历史结论，须按影响面重分类（must_reverify_now / defer_to_e2e / diagnostic_only_no_pass / already_service_verified）；分类即决定后续动作——must_reverify_now 立即经正确路径复验，defer_to_e2e 记待 E2E 复验，diagnostic_only_no_pass 降级为不承载 pass，already_service_verified 视为已服务内验证不重复复验；重分类是证据质量修正、不停止整体任务；任一 defer_to_e2e 一旦被用作解锁依据须升格为 must_reverify_now。证据的方法强度（不只是新鲜度）决定其可承载的结论范围。"},
@@ -4113,7 +4114,15 @@ export function createHumanConfirmationRequest(state, input = {}) {
     ...(input.peerReview ? {peerReview: {
       verdict: String(input.peerReview.verdict || "unknown"),
       findings: unique(input.peerReview.findings || []).slice(0, 50),
-      ...(input.peerReview.reviewRecordRef ? {reviewRecordRef: String(input.peerReview.reviewRecordRef)} : {})
+      ...(input.peerReview.reviewRecordRef ? {reviewRecordRef: String(input.peerReview.reviewRecordRef)} : {}),
+      // 互审双轨的轨道二随单呈现：人要看到"AI 有没有跳出这个方案想过别的路"，
+      // 否则只会看到"按当前方案审查通过"，而看不到方案本身可能就是错的。
+      ...((input.peerReview.alternativesConsidered || []).length
+        ? {alternativesConsidered: input.peerReview.alternativesConsidered.slice(0, 10).map((item) => ({
+            alternative: String(item.alternative || "").slice(0, 300),
+            assessment: String(item.assessment || "").slice(0, 500)
+          }))}
+        : {})
     }} : {}),
     // 定稿锁的基线：人确认的就是这份内容的摘要，后续 AI 改动与之不符即为分歧。
     contentDigest: decisionContentDigest({decisionType, workItemId: input.workItemId || dispatch?.workItemId || null, taskGroupId: taskGroup.id, content: input.content ?? null}),
@@ -4981,6 +4990,14 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
       checkpointRef,
       reviewerRole: "reviewer",
       reviewMode: "independent_control_plane_review",
+      // 互审双轨（sys.review-dual-track）轨道二：不只审"这个方案执行得对不对"，还要回到原始问题问
+      // "这个方案本身是不是解决它的正确路径"。控制面的独立互审是确定性证据核验，它能给出的替代路径
+      // 判断有限，因此如实记录其考察边界，而不是编造一条替代方案充数——留空会被 schema 判为评审未完成，
+      // 编造则会误导人的定稿判断。真正的方案级替代由执行 agent 通过 confirmation_analyze 提出。
+      alternativesConsidered: [{
+        alternative: "维持当前实现方案，仅核验其证据完整性",
+        assessment: `控制面独立互审的考察边界为证据层（提交/推送/产物清单/变更路径合规），未评估方案层替代路径；方案是否为最优应由执行方在人工确认通道提出（本次证据结论：${verdict}）`
+      }],
       verdict,
       findings,
       evidenceRefs: [
@@ -5064,7 +5081,7 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
     summary: `验收确认：${workItem.title || workItem.id}`,
     detail: `控制面独立互审结论：${verdict}。证据已就绪，等待人工定稿验收。互审只提供建议，不构成验收。`,
     evidenceRefs: bundle.evidenceRefs,
-    peerReview: {verdict, findings, reviewRecordRef: bundle.bundleId},
+    peerReview: {verdict, findings, reviewRecordRef: bundle.bundleId, alternativesConsidered: bundle.alternativesConsidered},
     content: {reviewBundleRef: bundle.bundleId, finalCommit: finalCommit || null},
     options: [
       {optionId: "accept", label: "确认验收（定稿）", description: "确认该工作项通过验收；定稿后 AI 不得再自动更改。", recommended: true},

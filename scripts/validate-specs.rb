@@ -829,6 +829,16 @@ errors << "REST 创建共享定义也必须受状态枚举约束" unless server_
 #  · 必须存在【真人可达】的状态推进杠杆，否则任何阻塞态都是永久拒绝服务
 errors << "共享定义必须有真人可达的状态推进杠杆" unless server_source.include?("sharedDefinitionResolveMatch") && server_source.include?("definition.status = nextStatus")
 errors << "共享定义状态推进必须限定真人" unless server_source.match?(/HUMAN_ONLY_ACTIONS = \[[^\]]*shared_definition_resolve/m)
+
+# ---------------------------------------------------------------------------------------------------
+# 互审双轨（sys.review-dual-track）：既审当前方案，也跳出方案另寻更优。
+# 只沿既定方案往下审，会把一个本来就错的方向越做越精细 —— 评审越勤，偏差越大。
+# ---------------------------------------------------------------------------------------------------
+errors << "必须存在互审双轨规则" unless core_source.include?('ruleId: "sys.review-dual-track"')
+errors << "范围收敛规则必须与互审双轨对齐（约束改动范围而非分析提案范围）" unless core_source.include?("本条约束的是【改动范围】，不约束【分析与提案范围】")
+errors << "互审结论必须记录考察过的替代路径" unless core_source.include?("alternativesConsidered: [{") && File.read(File.join(ROOT, "spec/internal-review-record.schema.json")).include?('"alternativesConsidered"')
+errors << "替代路径必须随人工确认单呈现给人" unless core_source.include?("alternativesConsidered: input.peerReview.alternativesConsidered") && app_js_source.include?("考察过的其他方案")
+errors << "互审双轨必须有行为断言" unless contract_check_source.include?("互审双轨: 互审结论没有记录考察过的替代路径")
 errors << "publish 不得铸造未知共享定义" unless mcp_source.include?("if (!definition) return {ok: false, error: \"shared_definition_not_found\"}")
 errors << "共享定义三项必须有防回归测试" unless contract_check_source.include?("人工闸门: publish 铸造并激活了一个未知契约")
 # 写入边界的第三个写入方（REST）必须同规，且越权访问必须被角色漂移门定性阻断。

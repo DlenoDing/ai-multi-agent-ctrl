@@ -129,7 +129,10 @@
     },
     "decisionClass": {
       "description": "major = 核心/重大决策，强制阻塞且只能由真人账号确认；operational = 运行时确认。",
-      "enum": ["major", "operational"]
+      "enum": [
+        "major",
+        "operational"
+      ]
     },
     "decisionType": {
       "enum": [
@@ -145,11 +148,43 @@
       "description": "AI 互审结论。仅作为建议随单附上，本身永远不构成确认。",
       "type": "object",
       "additionalProperties": false,
-      "required": ["verdict"],
+      "required": [
+        "verdict"
+      ],
       "properties": {
-        "verdict": {"type": "string", "minLength": 1},
-        "findings": {"type": "array", "items": {"type": "string"}},
-        "reviewRecordRef": {"type": "string"}
+        "verdict": {
+          "type": "string",
+          "minLength": 1
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reviewRecordRef": {
+          "type": "string"
+        },
+        "alternativesConsidered": {
+          "description": "互审双轨轨道二：跳出当前方案考察过的替代路径。人在定稿前必须看到它。",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "alternative",
+              "assessment"
+            ],
+            "properties": {
+              "alternative": {
+                "type": "string"
+              },
+              "assessment": {
+                "type": "string"
+              }
+            }
+          }
+        }
       }
     },
     "contentDigest": {
@@ -182,17 +217,64 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["round", "actorKind", "actor", "action", "summary", "at"],
+        "required": [
+          "round",
+          "actorKind",
+          "actor",
+          "action",
+          "summary",
+          "at"
+        ],
         "properties": {
-          "round": {"type": "integer", "minimum": 1},
-          "actorKind": {"enum": ["human", "ai"]},
-          "actor": {"type": "string", "minLength": 1},
-          "action": {"enum": ["propose", "analysis", "finalize", "reject"]},
-          "assessment": {"enum": ["agree", "concerns", "better_alternative", "incorrect"]},
-          "summary": {"type": "string", "minLength": 1, "maxLength": 300},
-          "detail": {"type": "string", "maxLength": 4000},
-          "concerns": {"type": "array", "items": {"type": "string"}},
-          "at": {"type": "string", "format": "date-time"}
+          "round": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "actorKind": {
+            "enum": [
+              "human",
+              "ai"
+            ]
+          },
+          "actor": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action": {
+            "enum": [
+              "propose",
+              "analysis",
+              "finalize",
+              "reject"
+            ]
+          },
+          "assessment": {
+            "enum": [
+              "agree",
+              "concerns",
+              "better_alternative",
+              "incorrect"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "concerns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       }
     },
@@ -235,7 +317,10 @@
         },
         "action": {
           "description": "finalize = 明确定稿（此后 AI 不得再改）；reject = 打回返工。",
-          "enum": ["finalize", "reject"]
+          "enum": [
+            "finalize",
+            "reject"
+          ]
         }
       }
     },

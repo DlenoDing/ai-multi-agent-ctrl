@@ -2070,6 +2070,7 @@ function renderReview() {
       ${request.peerReview ? `<div class="notice" style="margin-top:8px;">
         <strong>AI 互审结论（仅供参考，不构成确认）：</strong>${esc(t(request.peerReview.verdict) || request.peerReview.verdict)}
         ${(request.peerReview.findings || []).length ? `<br>发现事项：${esc((request.peerReview.findings || []).map((f) => t(f) || f).join("、"))}` : ""}
+        ${(request.peerReview.alternativesConsidered || []).length ? `<br><strong>考察过的其他方案：</strong>${(request.peerReview.alternativesConsidered || []).map((alt) => `<br>· ${esc(alt.alternative)} —— ${esc(alt.assessment)}`).join("")}` : `<br><em>（本次未记录其他候选方案）</em>`}
       </div>` : ""}
       ${canReview ? `<form class="form-grid" data-form="hcr-decide" data-request="${esc(request.requestId)}" data-round="${esc(String(request.round || 1))}" style="margin-top:10px;">
         <div class="option-list">

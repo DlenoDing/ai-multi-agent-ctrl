@@ -19,23 +19,103 @@
     "evidenceRefs",
     "status",
     "createdAt",
-    "updatedAt"
+    "updatedAt",
+    "alternativesConsidered"
   ],
   "properties": {
-    "schemaVersion": {"type": "string", "const": "internal-review-record/v1"},
-    "bundleId": {"type": "string", "minLength": 1},
-    "projectId": {"type": "string", "minLength": 1},
-    "taskGroupId": {"type": "string", "minLength": 1},
-    "workItemId": {"type": "string", "minLength": 1},
-    "checkpointRef": {"type": "string", "minLength": 1},
-    "reviewerRole": {"type": "string", "minLength": 1},
-    "reviewMode": {"type": "string", "enum": ["independent_control_plane_review"]},
-    "verdict": {"type": "string", "enum": ["passed", "changes_requested"]},
-    "findings": {"type": "array", "items": {"type": "string"}},
-    "evidenceRefs": {"type": "array", "items": {"type": "string"}},
-    "status": {"type": "string", "enum": ["consumed", "superseded"]},
-    "supersededByHumanDecision": {"type": "boolean"},
-    "createdAt": {"type": "string", "format": "date-time"},
-    "updatedAt": {"type": "string", "format": "date-time"}
+    "schemaVersion": {
+      "type": "string",
+      "const": "internal-review-record/v1"
+    },
+    "bundleId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workItemId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "checkpointRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reviewerRole": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reviewMode": {
+      "type": "string",
+      "enum": [
+        "independent_control_plane_review"
+      ]
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "changes_requested"
+      ]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "consumed",
+        "superseded"
+      ]
+    },
+    "supersededByHumanDecision": {
+      "type": "boolean"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "alternativesConsidered": {
+      "description": "互审双轨的轨道二：跳出当前方案考察过的替代路径及取舍理由。为空视为评审未完成（sys.review-dual-track）。",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "alternative",
+          "assessment"
+        ],
+        "properties": {
+          "alternative": {
+            "type": "string",
+            "minLength": 1
+          },
+          "assessment": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
   }
 }

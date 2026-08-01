@@ -999,6 +999,12 @@ function verifyHumanAndOrganizationContracts(output) {
     reviewState2.repositoryOutputs = [{targetId: "tgt_rev", status: "pushed", pathAllowlist: ["**"]}];
     const reviewOutcome = performIndependentReview(reviewState2, rTg, rTg.workItems[0], {root}, {});
     if (rTg.workItems[0].status === "verified") output.push("人工闸门: AI 互审仍然直接把工作项标记为 verified（自动确认未去除）");
+    // 互审双轨（sys.review-dual-track）：互审结论必须带上"跳出当前方案考察过哪些替代路径"。
+    // 规则不接门就是装饰 —— 这里让它成为可执行约束。
+    const producedReview = (reviewState2.reviewBundles || []).find((b) => b.reviewMode === "independent_control_plane_review");
+    if (producedReview && !(producedReview.alternativesConsidered || []).length) {
+      output.push("互审双轨: 互审结论没有记录考察过的替代路径（只沿既定方案往下审 => 会把错的方向越做越精细）");
+    }
     if (reviewOutcome.reviewed && !reviewOutcome.awaitingHumanConfirmation) output.push("人工闸门: AI 互审通过后没有发起人工定稿单");
 
     // H2: internal independent-review records use their own schema, distinct from the external ReviewBundle.
@@ -1008,6 +1014,7 @@ function verifyHumanAndOrganizationContracts(output) {
       taskGroupId: "tg_runtime_management", workItemId: "wi_int", checkpointRef: "checkpoint:run_int",
       reviewerRole: "reviewer", reviewMode: "independent_control_plane_review", verdict: "changes_requested",
       findings: ["push_evidence_missing"], evidenceRefs: ["review-evidence:commit:abc"], status: "consumed",
+      alternativesConsidered: [{alternative: "维持当前方案", assessment: "考察边界说明"}],
       supersededByHumanDecision: false, createdAt: "2026-07-28T00:00:00Z", updatedAt: "2026-07-28T00:00:00Z"
     }, loadJson("spec/internal-review-record.schema.json"), "InternalReviewRecord", output);
 
