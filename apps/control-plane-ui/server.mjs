@@ -4523,6 +4523,23 @@ const realtimeHeartbeat = setInterval(() => {
   // 心跳本来就要遍历全部连接，在这里顺带复核主体是否仍然有效。
   let revalidationState = null;
   try { revalidationState = readState(); } catch { revalidationState = null; }
+  // 过期会话原先【只在有人登录时】被顺带清理，没有独立扫描器 —— 无人登录期间，已过期的会话记录
+  // 长期滞留在 state 里。这里顺带扫一遍：心跳本来就在跑，且它读的就是同一份 state。
+  // 只标记已过期的，绝不碰仍然有效的（那会把正在用的人踢下线）。
+  if (revalidationState) {
+    const nowMs = Date.now();
+    let expiredCount = 0;
+    for (const session of revalidationState.authSessions || []) {
+      if (session.status !== "active") continue;
+      if (new Date(session.expiresAt || 0).getTime() > nowMs) continue;
+      session.status = "expired";
+      session.updatedAt = new Date(nowMs).toISOString();
+      expiredCount += 1;
+    }
+    if (expiredCount) {
+      try { writeState(revalidationState); } catch { /* 清扫是尽力而为，冲突时下一轮心跳再来 */ }
+    }
+  }
   for (const client of realtimeClients) {
     if (revalidationState && client.principal?.kind === "account") {
       const account = (revalidationState.accounts || []).find((item) => item.accountId === client.principal.accountId);

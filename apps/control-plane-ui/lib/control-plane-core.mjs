@@ -5345,6 +5345,15 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
         const notes = [];
         if (reversed.length) notes.push(`\n⚠ 以下质量门曾判失败、后由执行方重报为通过（已附新证据）：${reversed.map((gate) => gate.gateType).join("、")}`);
         if (waived.length) notes.push(`\n⚠ 以下质量门为人工豁免：${waived.map((gate) => `${gate.gateType}（${gate.waivedBy || "?"}）`).join("、")}`);
+        // 这个工作项的角色没有属于自己的技能，实际绑的是别人的（22 个已登记角色里只有 11 个
+        // 有技能文件）。回退本身是必要的，但验收的人应当知道：这个 agent 依据的角色规则
+        // 并不是它这个角色的。
+        const fallbackContracts = (state.agentTaskContracts || []).filter((item) => item.taskGroupId === taskGroup.id
+          && item.workId === workItem.id && item.roleSkill?.roleSkillFallback);
+        if (fallbackContracts.length) {
+          const info = fallbackContracts[0].roleSkill.roleSkillFallback;
+          notes.push(`\n⚠ 角色「${info.roleId}」没有属于自己的技能文件，本次实际绑定的是 ${info.boundTo} —— 执行方依据的角色规则并不是这个角色的。`);
+        }
         // 规则在这个工作项执行期间被改过：人正在验收的成果，是在一套【与立项时不同】的规则下做出来的。
         // 不说这一句，人会默认"它是按我当初定的规则做的"。
         const ruleChanged = (state.agentDispatches || []).some((item) => item.taskGroupId === taskGroup.id
