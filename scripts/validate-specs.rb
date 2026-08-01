@@ -959,6 +959,15 @@ errors << "test evidence must derive a quality gate that gates close" unless cor
 # 真人专属杠杆若在控制台里没有入口，等于这个杠杆不存在 —— 人只会看到一个红色阻塞 chip，
 # 然后无从下手。本轮一次性发现三个这样的杠杆（质量门豁免/评审计划收尾/共享定义处置），
 # 全都只有裸 REST。故把"有杠杆必有入口"钉成结构约束。
+# 豁免表单上明写"理由会随门一起留档并显示在验收卡片上"。而卡片正文是【创建那一刻】的快照，
+# 卡片挂起之后才做的豁免不会出现在里面 —— 界面许下的承诺必须在代码里兑现，否则人以为自己
+# 看到的是完整信息。同理：证据引用落在 question.evidenceRefs 里却从不渲染，人无法从卡片
+# 跳到检查点/提交记录去核对。两者都必须在【渲染时】从当前状态取。
+errors << %(验收卡片必须实时呈现质量门豁免理由（豁免表单已向人承诺过这件事）) unless app_js_source.include?(%q{gate.waiveJustification ? }) && app_js_source.include?(%q{gate.waivedBy || "?"})
+errors << %(验收卡片必须呈现证据引用，否则人无法核对它据以判断的东西) unless app_js_source.include?(%q{const evidence = request.question?.evidenceRefs || [];}) && app_js_source.include?(%q{证据引用：})
+# 任务组页原先只看提示型 blockers，与"能不能关闭"无关，于是显示"无阻塞"却关不掉 —— 与事实相反。
+errors << %(任务组页必须呈现关闭门禁的实际判定，而不是只看提示型阻塞) unless app_js_source.include?("关闭门禁：") && app_js_source.match?(/const groupBarrier = \(state\.closeBarriers/)
+
 # 轨道二（跳出方案另寻更优）与"互审的考察边界声明"必须在卡片上分开呈现。控制面的独立互审
 # 结构上只能核验证据层，它写进 alternativesConsidered 的是一句免责声明；不加区分地展示为
 # "考察过的其他方案"，人会读成"AI 已经比较过别的路了"，而实际上没有任何一方做过轨道二。

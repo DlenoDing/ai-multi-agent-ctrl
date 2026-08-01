@@ -1879,9 +1879,24 @@ function renderTaskGroupDetail(taskGroup) {
     `;
   }).join("");
 
-  const blockers = (progressData.blockers || taskGroup.blockers || []).map((blocker) => `
+  // 这一节原先只看提示型 blockers（S0/S1/S2），与"这个任务组能不能关闭"完全无关：
+  // 关闭门禁只存在于"执行监控"页。于是人在任务组页看到"无阻塞"，却关不掉它 ——
+  // 界面给出的是与事实相反的结论。把关闭门的判定接进来，并说清下一步该去哪。
+  const groupBarrier = (state.closeBarriers || []).find((item) => item.taskGroupId === taskGroup.id);
+  const barrierBlockers = groupBarrier && !groupBarrier.satisfied ? (groupBarrier.blockingObjects || []) : [];
+  const advisoryBlockers = (progressData.blockers || taskGroup.blockers || []).map((blocker) => `
     <div class="record"><div class="record-title">${badge(blocker.severity || "attention")} <span>${esc(blocker.summary)}</span></div></div>
-  `).join("") || `<div class="record">无阻塞</div>`;
+  `).join("");
+  const barrierSummary = !groupBarrier
+    ? `<div class="record"><div class="record-title">关闭门禁：<strong>尚未计算</strong></div><div class="record-meta">在「执行监控」页点一次"重算关闭门禁"，或等下一次编排周期，才会知道这个任务组能不能关闭。</div></div>`
+    : groupBarrier.satisfied
+      ? `<div class="record"><div class="record-title">关闭门禁：${customBadge("可关闭", "green")}</div></div>`
+      : `<div class="record">
+          <div class="record-title">关闭门禁：${customBadge("存在阻塞", "red")}（${barrierBlockers.length} 项）</div>
+          <div class="chip-row">${barrierBlockers.slice(0, 12).map((obj) => customBadge(`${t(obj.objectType) || obj.objectType}${obj.gate ? `·${t(obj.gate) || obj.gate}` : ""}`, "red")).join(" ")}</div>
+          <div class="record-meta">处置入口在「执行监控」页的"阻塞项人工处置"。</div>
+        </div>`;
+  const blockers = `${barrierSummary}${advisoryBlockers || (barrierBlockers.length ? "" : `<div class="record">无其它提示型阻塞</div>`)}`;
 
   const guard = taskGroup.singleCellEscalationGuard;
   const cellIds = (ids) => (ids || []).length ? (ids || []).map((id) => esc(id)).join("、") : "—";
@@ -2077,6 +2092,36 @@ function renderReview() {
     <div class="record">
       <div class="record-title"><strong>${esc(request.question?.summary || "-")}</strong>${badge(request.status)}${request.decisionClass === "major" ? customBadge("核心决策 · 必须人工定稿", "red") : ""}${request.blocking ? customBadge("阻塞执行", "orange") : ""}</div>
       ${request.question?.detail ? `<div class="record-meta"><span class="confirm-detail">${esc(request.question.detail)}</span></div>` : ""}
+      ${(() => {
+        // 卡片正文是【创建那一刻】的快照。质量门在卡片挂起之后被豁免时，正文里什么都不会出现，
+        // 而豁免表单上明写着"理由会随门一起留档并显示在验收卡片上" —— 界面许下的承诺没有兑现。
+        // 证据引用同理：落在 question.evidenceRefs 里却从不渲染，人无法从卡片跳到检查点/提交记录。
+        // 这两样都改成渲染时从当前状态实时取，而不是依赖创建瞬间的文本。
+        const gates = (state.qualityGates || []).filter((gate) => gate.taskGroupId === request.taskGroupId
+          && (!request.workItemId || gate.workItemId === request.workItemId));
+        const waived = gates.filter((gate) => gate.status === "waived");
+        const reversed = gates.filter((gate) => gate.previouslyFailed && gate.status === "passed");
+        const reasserted = gates.filter((gate) => Number(gate.reassertedWithoutNewEvidenceCount) > 0);
+        const evidence = request.question?.evidenceRefs || [];
+        const parts = [];
+        if (waived.length) {
+          parts.push(`<div class="notice warn-notice" style="margin-top:8px;"><strong>已被人工豁免的质量门：</strong>${waived.map((gate) =>
+            `<br>· ${esc(t(gate.gateType) || gate.gateType)} —— 由 ${esc(gate.waivedBy || "?")} 豁免${gate.waiveJustification ? `：${esc(gate.waiveJustification)}` : "（未填写理由）"}`).join("")}</div>`);
+        }
+        if (reversed.length || reasserted.length) {
+          parts.push(`<div class="notice warn-notice" style="margin-top:8px;">
+            ${reversed.length ? `<strong>曾判失败、后由执行方重报为通过：</strong>${esc(reversed.map((gate) => t(gate.gateType) || gate.gateType).join("、"))}` : ""}
+            ${reasserted.length ? `<br><strong>无新证据的重报次数：</strong>${esc(reasserted.map((gate) => `${t(gate.gateType) || gate.gateType}×${gate.reassertedWithoutNewEvidenceCount}`).join("、"))}` : ""}
+          </div>`);
+        }
+        if (evidence.length) {
+          parts.push(`<div class="record-meta"><span>证据引用：${evidence.slice(0, 12).map((ref) => `<span class="mono">${esc(ref)}</span>`).join("、")}</span></div>`);
+        }
+        if (gates.length) {
+          parts.push(`<div class="record-meta"><span>质量门：${gates.map((gate) => `${esc(t(gate.gateType) || gate.gateType)}${badge(gate.status)}`).join(" ")}</span></div>`);
+        }
+        return parts.join("");
+      })()}
       <div class="record-meta">
         <span>任务组：${esc(taskGroupNameOf(request.taskGroupId))}</span>
         ${request.decisionType ? `<span>决策类型：${esc(t(request.decisionType) || request.decisionType)}</span>` : ""}
