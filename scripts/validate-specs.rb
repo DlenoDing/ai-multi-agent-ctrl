@@ -749,6 +749,11 @@ errors << "审批终审需人一票必须有行为测试覆盖" unless contract_
 # 9. 关闭任务组必须由真人落闸，并留下定稿记录。
 errors << "关闭任务组必须由真人落闸" unless core_source.include?("task_group_close_requires_human_actor") && core_source.include?("decisionType: \"task_group_close\"") && server_source.include?("actor: guard.actor")
 errors << "关闭任务组的真人校验必须有行为测试覆盖" unless contract_check_source.include?("人工闸门: 机器主体竟然可以关闭任务组")
+# 10. 任务拆分与执行方案是核心方案决策：AI 只能提案，且提案期间必须拦住该工作项，人定稿后才执行。
+errors << "任务拆分必须先人工定稿（AI 不得自批自拆）" unless core_source.include?("decisionType: \"task_split\"") && core_source.include?("pendingHumanSplitConfirmation") && core_source.include?("awaiting_human_split_confirmation")
+errors << "拆分待定期间必须拦住工作项，不得继续派发" unless core_source.include?("if (split?.pendingHumanSplitConfirmation)") && core_source.include?("cell_held_for_human_plan_confirmation")
+errors << "执行方案启动前必须人工定稿" unless core_source.include?("execution_topology_requires_human_plan_confirmation") && core_source.include?("decisionType: \"plan_topology\"")
+errors << "拆分/方案闸门必须有行为测试覆盖" unless contract_check_source.include?("人工闸门: 任务拆分未经人工定稿就被执行了") && contract_check_source.include?("人工闸门: 执行方案未经人工定稿就被启动了")
 # M7: the repository output target denylist field must be the schema-declared pathDenylist (not the
 # non-schema forbiddenPathRules), enforced end-to-end (producer + runtime consumer), and instance-validated.
 errors << "repository output target must use the schema pathDenylist field" unless core_source.include?("pathDenylist: request.pathDenylist") && agent_runtime_source.include?("target.pathDenylist") && contract_check_source.include?("repository-output-target.schema.json")

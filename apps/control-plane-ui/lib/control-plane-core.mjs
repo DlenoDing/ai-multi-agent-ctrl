@@ -1830,6 +1830,12 @@ export function runAutonomousCycle(state, request = {}) {
         continue;
       }
       const split = splitMixedWorkItemIfNeeded(state, taskGroup, workItem);
+      if (split?.pendingHumanSplitConfirmation) {
+        // 拆分方案待人工定稿：本轮不得继续派发这个工作项，否则等于按 AI 自己的方案执行下去。
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "deferred", reasonCode: "awaiting_human_split_confirmation", whyThisCellNow: "cell_held_for_human_plan_confirmation", cycleRef});
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, awaiting: "human_split_confirmation", confirmationRef: split.confirmationRef});
+        continue;
+      }
       if (split) {
         recordAdmissionDecision(state, {taskGroup, workItem, outcome: "superseded", reasonCode: "mixed_analysis_implementation_split", whyThisCellNow: "cell_split_into_analysis_and_implementation", cycleRef});
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: "superseded", reason: "mixed_analysis_implementation_split", derivedWorkItemIds: split.derivedWorkItemIds});
@@ -1920,6 +1926,36 @@ function splitMixedWorkItemIfNeeded(state, taskGroup, workItem) {
   if (!taskExecution.splitRequired) return null;
   const existingChildren = (taskGroup.workItems || []).filter((item) => item.splitFrom === workItem.id);
   if (existingChildren.length) return {derivedWorkItemIds: existingChildren.map((item) => item.id), existing: true};
+  // 任务拆分是核心方案决策：AI 只能【提案】，必须由人定稿后才真正拆。原先这里是自批自吸收
+  // （直接改写工作项并写一条 status:"absorbed" 的派生请求），等于 AI 自己决定了"怎么干"。
+  const splitLock = workItem.humanFinalization;
+  const splitConfirmed = splitLock?.decisionType === "task_split" && splitLock.outcome === "confirmed";
+  if (!splitConfirmed) {
+    // 人已明确否决过就不再重复打扰；否则挂起一张人工定稿单（requestKey 去重，不会每轮刷屏）。
+    if (splitLock?.decisionType === "task_split" && splitLock.outcome === "rejected") return null;
+    const proposal = createHumanConfirmationRequest(state, {
+      taskGroupId: taskGroup.id,
+      workItemId: workItem.id,
+      decisionType: "task_split",
+      requestKey: `task_split:${workItem.id}`,
+      summary: `任务拆分方案确认：${workItem.title || workItem.id}`,
+      detail: `该工作项被判定为分析与实现混合（${taskExecution.taskExecutionClass || "mixed"}），建议拆分为「分析」与「实现」两个子项，实现子项依赖分析子项产出。拆分方案需人工定稿后才会执行。`,
+      peerReview: {verdict: "split_recommended", findings: [`taskExecutionClass:${taskExecution.taskExecutionClass || "mixed"}`]},
+      content: {analysisId: `${workItem.id}_analysis`, implementationId: `${workItem.id}_implementation`},
+      options: [
+        {optionId: "accept_split", label: "同意拆分为分析＋实现", description: "按建议拆分；定稿后执行且 AI 不再自行调整。", recommended: true},
+        {optionId: "reject", label: "不拆分", description: "保持为单个工作项，由人另行安排方案。"}
+      ]
+    });
+    // 方案待定期间必须【拦住】这个工作项：否则它会被照常派发，AI 等于仍在按自己的方案执行。
+    if (!["needs_decision", "superseded", "closed", "verified"].includes(workItem.status)) {
+      workItem.status = "needs_decision";
+      workItem.blockedReason = "awaiting_human_split_confirmation";
+      workItem.updatedAt = new Date().toISOString();
+    }
+    // 返回"已挂起"信号，调用方据此跳过本项（返回 null 会让编排继续往下派发，等于绕过了闸门）。
+    return {pendingHumanSplitConfirmation: true, confirmationRef: proposal.requestId};
+  }
   const at = new Date().toISOString();
   const baseRequirements = workItem.requirements || [];
   const analysis = {
@@ -1970,7 +2006,8 @@ function splitMixedWorkItemIfNeeded(state, taskGroup, workItem) {
     evidenceRef: `WorkItem:${workItem.id}`,
     actionBasisRef: `decision:mixed-split:${workItem.id}`,
     status: "absorbed",
-    decisionRecordRef: `decision:mixed-split:${workItem.id}`,
+    // 指向真实的人工定稿确认单（原先是自己拼的 decision:mixed-split:<id> 假引用，没有任何外部权威）。
+    decisionRecordRef: splitLock.confirmationRef || `decision:mixed-split:${workItem.id}`,
     createdWorkItemRef: analysis.id,
     auditRef: `audit:dtr:${workItem.id}`,
     createdAt: at,
@@ -4165,6 +4202,20 @@ function applyHumanFinalization(state, request, actor, at, action = "finalize") 
   } else if (request.decisionType === "task_group_close" && taskGroup) {
     taskGroup.humanFinalization = lock;
     taskGroup.updatedAt = at;
+  } else if (request.decisionType === "task_split" && workItem) {
+    // 拆分方案已定稿：把工作项从"待人工定稿"释放回 ready，下一轮编排器按定稿方案执行（或按否决不拆分）。
+    workItem.humanFinalization = lock;
+    if (workItem.status === "needs_decision" && workItem.blockedReason === "awaiting_human_split_confirmation") {
+      workItem.status = "ready";
+      delete workItem.blockedReason;
+    }
+    workItem.updatedAt = at;
+  } else if (request.decisionType === "plan_topology") {
+    // 方案定稿写在拓扑对象上（start 会校验它），同时也标在工作项上便于溯源。
+    const topology = (state.executionTopologies || []).find((item) =>
+      item.workItemId === request.workItemId && !["merged", "downgraded", "cancelled"].includes(item.status));
+    if (topology) { topology.humanFinalization = lock; topology.updatedAt = at; }
+    if (workItem) { workItem.humanFinalization = lock; workItem.updatedAt = at; }
   } else if (workItem) {
     workItem.humanFinalization = lock;
     workItem.updatedAt = at;
@@ -5324,6 +5375,24 @@ export function advanceExecutionTopology(state, args) {
     topology.blockers = evaluateTopologyEligibility(topology);
     topology.groups.forEach((group) => { group.blockers = topology.blockers.filter((blocker) => (group.branches || []).some((branch) => blocker.includes(branch.branchId))); });
     topology.status = "eligibility_checked";
+    // 资格通过 => 这是一份可执行的方案，但"要不要按这个方案跑"是核心方案决策：挂人工定稿单，
+    // 由人确认后才允许 start（见下方 start 分支的定稿校验）。资格不通过时不提案，先让人看到阻塞原因。
+    if (!topology.blockers.length) {
+      createHumanConfirmationRequest(state, {
+        taskGroupId: topology.taskGroupId,
+        workItemId: topology.workItemId,
+        decisionType: "plan_topology",
+        requestKey: `plan_topology:${topology.topologyId}`,
+        summary: `执行方案确认：${topology.mode === "serial" ? "串行" : "并行"}执行 ${topology.workItemId}`,
+        detail: `拟以 ${topology.mode} 模式执行，运行载体 ${topology.runnerKind}／隔离方式 ${topology.isolation}，共 ${branches.length} 个分支。方案需人工定稿后才会启动。`,
+        peerReview: {verdict: "eligibility_passed", findings: []},
+        content: {mode: topology.mode, runnerKind: topology.runnerKind, isolation: topology.isolation, branches: branches.map((branch) => branch.branchId)},
+        options: [
+          {optionId: "accept_plan", label: "同意按此方案执行", description: "定稿后启动；AI 不再自行更改该方案。", recommended: true},
+          {optionId: "reject", label: "不采用该方案", description: "退回，由人给出方案或要求降级为串行。"}
+        ]
+      });
+    }
     transition("planned", "eligibility_checked", "scheduler", {
       topology_plan_ref: `ExecutionTopology:${topology.topologyId}`,
       branch_boundaries_defined: String(branches.length),
@@ -5332,6 +5401,11 @@ export function advanceExecutionTopology(state, args) {
   } else if (action === "start") {
     expect("eligibility_checked");
     if (topology.blockers.length) throw topologyError("execution_topology_eligibility_blocked");
+    // 方案必须先由人定稿才能启动：AI 不得自己决定"按哪种方案跑"。
+    const planLock = topology.humanFinalization;
+    if (!(planLock?.decisionType === "plan_topology" && planLock.outcome === "confirmed")) {
+      throw topologyError("execution_topology_requires_human_plan_confirmation", 409);
+    }
     // Schema conditional for running/integrating/merged: a real runner and a real isolation boundary.
     if (topology.runnerKind === "none" || topology.isolation === "none") throw topologyError("execution_topology_requires_runner_and_isolation");
     topology.status = "running";

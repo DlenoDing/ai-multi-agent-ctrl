@@ -24,40 +24,119 @@
     "updatedAt"
   ],
   "properties": {
-    "schemaVersion": {"type": "string", "const": "execution-topology/v1"},
-    "topologyId": {"type": "string", "minLength": 1},
-    "projectId": {"type": "string", "minLength": 1},
-    "taskGroupId": {"type": "string", "minLength": 1},
-    "workItemId": {"type": "string", "minLength": 1},
+    "schemaVersion": {
+      "type": "string",
+      "const": "execution-topology/v1"
+    },
+    "topologyId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workItemId": {
+      "type": "string",
+      "minLength": 1
+    },
     "status": {
       "type": "string",
-      "enum": ["planned", "eligibility_checked", "running", "integrating", "merged", "blocked", "needs_reconcile", "downgraded", "cancelled"]
+      "enum": [
+        "planned",
+        "eligibility_checked",
+        "running",
+        "integrating",
+        "merged",
+        "blocked",
+        "needs_reconcile",
+        "downgraded",
+        "cancelled"
+      ]
     },
-    "mode": {"type": "string", "enum": ["serial", "parallel_active", "downgraded_serial"]},
-    "runnerKind": {"type": "string", "enum": ["work_session", "subagent", "git_worktree", "external_runner", "none"]},
-    "isolation": {"type": "string", "enum": ["new_work_session", "forked_workspace", "git_worktree", "equivalent", "none"]},
-    "runnerGrantRef": {"type": "string", "minLength": 1},
-    "localVerificationEvidenceRefs": {"type": "array", "items": {"type": "string"}},
+    "mode": {
+      "type": "string",
+      "enum": [
+        "serial",
+        "parallel_active",
+        "downgraded_serial"
+      ]
+    },
+    "runnerKind": {
+      "type": "string",
+      "enum": [
+        "work_session",
+        "subagent",
+        "git_worktree",
+        "external_runner",
+        "none"
+      ]
+    },
+    "isolation": {
+      "type": "string",
+      "enum": [
+        "new_work_session",
+        "forked_workspace",
+        "git_worktree",
+        "equivalent",
+        "none"
+      ]
+    },
+    "runnerGrantRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "localVerificationEvidenceRefs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "baseSnapshot": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["stateVersion", "gitHead", "dirtyDigest"],
+      "required": [
+        "stateVersion",
+        "gitHead",
+        "dirtyDigest"
+      ],
       "properties": {
-        "stateVersion": {"type": "integer", "minimum": 1},
-        "gitHead": {"type": "string"},
-        "dirtyDigest": {"type": "string"}
+        "stateVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "gitHead": {
+          "type": "string"
+        },
+        "dirtyDigest": {
+          "type": "string"
+        }
       }
     },
-    "mergePolicy": {"type": "string", "const": "parent_serial_after_all_required_reported"},
+    "mergePolicy": {
+      "type": "string",
+      "const": "parent_serial_after_all_required_reported"
+    },
     "groups": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["groupId", "branches", "blockers"],
+        "required": [
+          "groupId",
+          "branches",
+          "blockers"
+        ],
         "properties": {
-          "groupId": {"type": "string", "minLength": 1},
+          "groupId": {
+            "type": "string",
+            "minLength": 1
+          },
           "branches": {
             "type": "array",
             "minItems": 1,
@@ -76,35 +155,109 @@
                 "actualChangedPaths"
               ],
               "properties": {
-                "branchId": {"type": "string", "minLength": 1},
-                "runnerId": {"type": "string"},
+                "branchId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "runnerId": {
+                  "type": "string"
+                },
                 "status": {
                   "type": "string",
-                  "enum": ["queued", "running", "reported", "accepted", "rejected", "failed", "orphaned", "needs_reconcile", "blocked"]
+                  "enum": [
+                    "queued",
+                    "running",
+                    "reported",
+                    "accepted",
+                    "rejected",
+                    "failed",
+                    "orphaned",
+                    "needs_reconcile",
+                    "blocked"
+                  ]
                 },
-                "objective": {"type": "string", "minLength": 1},
-                "objectiveDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
-                "ownedPaths": {"type": "array", "items": {"type": "string"}},
-                "forbiddenPaths": {"type": "array", "items": {"type": "string"}},
-                "resourceScopes": {"type": "array", "items": {"type": "string"}},
-                "acceptanceChecks": {"type": "array", "items": {"type": "string"}},
+                "objective": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "objectiveDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-fA-F0-9]{64}$"
+                },
+                "ownedPaths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "forbiddenPaths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "resourceScopes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "acceptanceChecks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
                 "outputContract": {
                   "type": "array",
                   "minItems": 4,
                   "items": {
                     "type": "string",
-                    "enum": ["changedPaths", "resultRef", "validationEvidence", "unresolvedRisks", "derivedTaskRequests"]
+                    "enum": [
+                      "changedPaths",
+                      "resultRef",
+                      "validationEvidence",
+                      "unresolvedRisks",
+                      "derivedTaskRequests"
+                    ]
                   }
                 },
-                "actualChangedPaths": {"type": "array", "items": {"type": "string"}},
-                "resultRef": {"type": "string"},
-                "validationEvidenceRefs": {"type": "array", "items": {"type": "string"}},
-                "unresolvedRisks": {"type": "array", "items": {"type": "string"}},
-                "derivedTaskRequestRefs": {"type": "array", "items": {"type": "string"}}
+                "actualChangedPaths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "resultRef": {
+                  "type": "string"
+                },
+                "validationEvidenceRefs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "unresolvedRisks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "derivedTaskRequestRefs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
               }
             }
           },
-          "blockers": {"type": "array", "items": {"type": "string"}}
+          "blockers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         }
       }
     },
@@ -124,21 +277,89 @@
         ]
       }
     },
-    "blockers": {"type": "array", "items": {"type": "string"}},
-    "downgradeReason": {"type": "string", "minLength": 1},
-    "cancelRef": {"type": "string", "minLength": 1},
-    "auditRef": {"type": "string", "minLength": 1},
-    "createdAt": {"type": "string", "format": "date-time"},
-    "updatedAt": {"type": "string", "format": "date-time"}
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "downgradeReason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cancelRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "humanFinalization": {
+      "description": "人工定稿锁：该对象已由真人确认定稿，AI 不得静默更改（分歧须回到人工确认）。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "finalizedBy",
+        "finalizedAt",
+        "confirmationRef",
+        "decisionType",
+        "outcome"
+      ],
+      "properties": {
+        "finalizedBy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "finalizedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "confirmationRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentDigest": {
+          "type": "string"
+        },
+        "decisionType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "enum": [
+            "confirmed",
+            "rejected"
+          ]
+        }
+      }
+    }
   },
   "allOf": [
     {
       "if": {
-        "properties": {"runnerKind": {"const": "external_runner"}},
-        "required": ["runnerKind"]
+        "properties": {
+          "runnerKind": {
+            "const": "external_runner"
+          }
+        },
+        "required": [
+          "runnerKind"
+        ]
       },
       "then": {
-        "required": ["runnerGrantRef", "localVerificationEvidenceRefs"],
+        "required": [
+          "runnerGrantRef",
+          "localVerificationEvidenceRefs"
+        ],
         "properties": {
           "localVerificationEvidenceRefs": {
             "minItems": 1
@@ -148,16 +369,30 @@
     },
     {
       "if": {
-        "properties": {"status": {"enum": ["running", "integrating", "merged"]}},
-        "required": ["status"]
+        "properties": {
+          "status": {
+            "enum": [
+              "running",
+              "integrating",
+              "merged"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
       },
       "then": {
         "properties": {
           "runnerKind": {
-            "not": {"const": "none"}
+            "not": {
+              "const": "none"
+            }
           },
           "isolation": {
-            "not": {"const": "none"}
+            "not": {
+              "const": "none"
+            }
           }
         }
       }

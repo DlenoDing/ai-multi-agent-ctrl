@@ -527,6 +527,16 @@ function verifyHumanAndOrganizationContracts(output) {
     // Walk the full modeled lifecycle to a terminal state.
     advanceExecutionTopology(topoState, {topologyId: planned.topologyId, action: "check_eligibility"});
     if (planned.status !== "eligibility_checked" || planned.blockers.length) output.push(`M1: disjoint-path plan failed eligibility unexpectedly (${JSON.stringify(planned.blockers)})`);
+    // 方案是核心决策：未经人工定稿不得启动。
+    let planStartBlocked = false;
+    try { advanceExecutionTopology(topoState, {topologyId: planned.topologyId, action: "start"}); }
+    catch (error) { planStartBlocked = error.message === "execution_topology_requires_human_plan_confirmation"; }
+    if (!planStartBlocked) output.push("人工闸门: 执行方案未经人工定稿就被启动了");
+    // 资格通过时应自动挂起一张 plan_topology 人工定稿单，供人确认。
+    const planConfirmation = (topoState.humanConfirmationRequests || []).find((item) => item.decisionType === "plan_topology" && item.status === "pending");
+    if (!planConfirmation) output.push("人工闸门: 资格通过后没有挂起执行方案的人工定稿单");
+    const topoHuman = (topoState.accounts.find((a) => ["system_admin", "org_admin", "user_account"].includes(a.accountType)) || {}).accountId;
+    if (planConfirmation) decideHumanConfirmation(topoState, planConfirmation.requestId, {action: "finalize", selectedOptionId: "accept_plan"}, {actor: topoHuman});
     advanceExecutionTopology(topoState, {topologyId: planned.topologyId, action: "start"});
     if (planned.status !== "running") output.push("M1: eligible topology did not start");
     validateSchema(planned, topoSchema, "ExecutionTopology(running)", output);
@@ -1008,9 +1018,24 @@ function verifyAgentGatewayContracts(output) {
   ensureRuntimeCollections(mixedState, {root});
   const mixedTaskGroup = mixedState.taskGroups.find((item) => item.id === "tg_runtime_management");
   mixedTaskGroup.workItems.unshift({id: "work_mixed_model_split", title: "深度分析并开发实现完整代码", status: "ready", ownerRole: "agent-runtime", progress: 0, requirements: ["analysis", "implementation"]});
-  const splitResult = runAutonomousCycle(mixedState, {root, runtimeDir: join(root, ".runtime"), endpoint: "https://control.example.test", mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false});
-  if (!splitResult.changed.some((item) => item.reason === "mixed_analysis_implementation_split") || !mixedTaskGroup.workItems.some((item) => item.id === "work_mixed_model_split_analysis") || !mixedTaskGroup.workItems.some((item) => item.id === "work_mixed_model_split_implementation")) {
-    output.push("Orchestrator did not split mixed deep-analysis and implementation work before model assignment");
+  runAutonomousCycle(mixedState, {root, runtimeDir: join(root, ".runtime"), endpoint: "https://control.example.test", mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false});
+  // 任务拆分是核心方案决策：AI 只能提案，第一轮【不得】直接拆，而应挂起一张人工定稿单。
+  if (mixedTaskGroup.workItems.some((item) => item.id === "work_mixed_model_split_analysis")) {
+    output.push("人工闸门: 任务拆分未经人工定稿就被执行了（AI 自行决定了怎么干）");
+  }
+  const splitConfirmation = (mixedState.humanConfirmationRequests || []).find((item) => item.decisionType === "task_split" && item.workItemId === "work_mixed_model_split" && item.status === "pending");
+  if (!splitConfirmation) output.push("人工闸门: 判定需要拆分后没有挂起任务拆分的人工定稿单");
+  if (splitConfirmation && (splitConfirmation.decisionClass !== "major" || splitConfirmation.blocking !== true)) output.push("人工闸门: 任务拆分定稿单未被标记为核心决策/强制阻塞");
+  // 人定稿后，下一轮才真正拆分。
+  if (splitConfirmation) {
+    const splitHuman = (mixedState.accounts.find((a) => ["system_admin", "org_admin", "user_account"].includes(a.accountType)) || {}).accountId;
+    decideHumanConfirmation(mixedState, splitConfirmation.requestId, {action: "finalize", selectedOptionId: "accept_split"}, {actor: splitHuman});
+    const splitResult = runAutonomousCycle(mixedState, {root, runtimeDir: join(root, ".runtime"), endpoint: "https://control.example.test", mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false});
+    if (!splitResult.changed.some((item) => item.reason === "mixed_analysis_implementation_split") || !mixedTaskGroup.workItems.some((item) => item.id === "work_mixed_model_split_analysis") || !mixedTaskGroup.workItems.some((item) => item.id === "work_mixed_model_split_implementation")) {
+      output.push("人工闸门: 人已定稿同意拆分，编排器却仍未执行拆分");
+    }
+    const derived = (mixedState.derivedTaskRequests || []).find((item) => item.sourceRef === "WorkItem:work_mixed_model_split");
+    if (derived && !String(derived.decisionRecordRef || "").startsWith("hcr_")) output.push("人工闸门: 拆分派生请求的 decisionRecordRef 未指向真实的人工定稿单");
   }
   state.agentDispatches.unshift({
     schemaVersion: "agent-dispatch/v1",
