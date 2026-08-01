@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { sweepDeadAgentNodes } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
@@ -1108,6 +1109,49 @@ function verifyHumanAndOrganizationContracts(output) {
     });
     if (!snapCard?.subjectContentDigest) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
+    }
+
+    // 纯崩溃的节点原先【永远停在 online】：唯一会标死它的路径要求它恰好带着一个 pending stop
+    // 标记的派发。后果是连锁的 —— 节点集合永不裁剪、组织 agents 配额被永久占用（最终再也接不了
+    // 新节点）、给它排队的控制命令永远投不出去又永远算"活跃"。
+    const deadNodeState = structuredClone(seedState);
+    ensureRuntimeCollections(deadNodeState, {root});
+    const staleAt = "2026-07-01T00:00:00Z";
+    const nowMs = Date.parse("2026-08-02T00:00:00Z");
+    deadNodeState.agentRuntimeNodes = [
+      {nodeId: "node_dead", status: "online", admission: "admitted", lastHeartbeatAt: staleAt, activeDispatchIds: []},
+      {nodeId: "node_live", status: "online", admission: "admitted", lastHeartbeatAt: "2026-08-01T23:59:00Z", activeDispatchIds: []}
+    ];
+    deadNodeState.agentControlCommands = [
+      {commandId: "cmd_zombie", nodeId: "node_dead", status: "queued", updatedAt: staleAt},
+      {commandId: "cmd_live", nodeId: "node_live", status: "queued", updatedAt: staleAt}
+    ];
+    const sweptNodes = sweepDeadAgentNodes(deadNodeState, nowMs);
+    if (!sweptNodes.includes("node_dead")) {
+      output.push("死节点清扫: 长期无心跳的节点仍停在 online（节点集合永不裁剪，组织配额被永久占用）");
+    }
+    if (sweptNodes.includes("node_live")) {
+      output.push("死节点清扫: 仍在心跳的节点被误判为已死（会把正在干活的节点踢下线）");
+    }
+    if (deadNodeState.agentControlCommands[0].status === "queued") {
+      output.push("死节点清扫: 死节点名下的排队命令没有被终结（永远投不出去、永远算活跃，把持久层上限推过阈值）");
+    }
+    if (deadNodeState.agentControlCommands[1].status !== "queued") {
+      output.push("死节点清扫: 存活节点的排队命令被误终结");
+    }
+    // 持久层：活跃的控制命令绝不能因为容量被淘汰（内存层为正确性刻意让它突破上限）
+    const cmdShard = {collections: {agentControlCommands: [
+      ...Array.from({length: 5001}, (_, index) => ({commandId: `cmd_done_${index}`, status: "acked",
+        updatedAt: new Date(Date.UTC(2026, 0, 1) + index * 60000).toISOString()})),
+      {commandId: "cmd_oldest_active", status: "queued", updatedAt: "2019-01-01T00:00:00Z"}
+    ]}};
+    capProjectShardCollections(cmdShard);
+    const keptCommands = cmdShard.collections.agentControlCommands;
+    if (keptCommands.length > 5000) {
+      output.push("持久层命令上限: 超出上限后没有实际裁剪（这条断言在空转）");
+    }
+    if (!keptCommands.some((item) => item.commandId === "cmd_oldest_active")) {
+      output.push("持久层命令上限: 最老的【活跃】控制命令被容量淘汰（落地后 ack 会 404，配对的派发永远停在 blocked）");
     }
 
     // 租约的 holderRef 原先可自报：指向一个长期存活的【别处】会话，就造出一条永不过期的租约 ——

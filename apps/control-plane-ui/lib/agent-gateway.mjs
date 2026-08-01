@@ -512,9 +512,42 @@ function capAgentRuntimeNodes(nodes, limit = 2000) {
   return [...live, ...dead];
 }
 
+// 全仓唯一会把节点标成非活状态的地方，是 shutdown 完成、revoke 完成、以及 ACK 超时兜底 ——
+// 而 ACK 超时那条只在"该节点恰好带着一个 pending stop 标记的派发"时才走到。纯崩溃的节点
+// 因此【永远停在 online】，后果是连锁的：
+//   · capAgentRuntimeNodes 把 online 视为存活、永不裁剪 → 节点集合无界增长；
+//   · recomputeOrganizationUsage 按 status !== "revoked" 统计 agents 配额 → 崩过的节点永久占额，
+//     最终 createAgentJoinToken 报 org_quota_exceeded，再也接不了新节点；
+//   · 给它排队的控制命令永远投不出去、永远不会被 ack、永远算"活跃"，把持久层的分片上限推过阈值。
+// 判定用的是服务端时间与节点上报心跳的间隔，与代理端时钟无关。
+export function sweepDeadAgentNodes(state, nowMs = Date.now()) {
+  const graceMs = boundedInteger(process.env.AIMAC_NODE_HEARTBEAT_TIMEOUT_MS, 60000, 86400000, 900000);
+  const swept = [];
+  for (const node of state.agentRuntimeNodes || []) {
+    if (!["online", "degraded", "draining", "initializing"].includes(node.status)) continue;
+    const lastBeat = new Date(node.lastHeartbeatAt || node.registeredAt || 0).getTime();
+    if (!lastBeat || nowMs - lastBeat < graceMs) continue;
+    node.status = "offline";
+    node.admission = "read_only";
+    node.offlineReason = "heartbeat_timeout";
+    node.updatedAt = new Date(nowMs).toISOString();
+    // 它名下还排着的控制命令永远投不出去了：留着既不会被 ack，又会被 cap 当作活跃项一直保留。
+    for (const command of state.agentControlCommands || []) {
+      if (command.nodeId !== node.nodeId) continue;
+      if (!["queued", "delivered", "received"].includes(command.status)) continue;
+      command.status = "expired";
+      command.expiredReason = "node_heartbeat_timeout";
+      command.updatedAt = new Date(nowMs).toISOString();
+    }
+    swept.push(node.nodeId);
+    appendGatewayEvent(state, "agent_node_heartbeat_timeout", node.nodeId, {lastHeartbeatAt: node.lastHeartbeatAt || null});
+  }
+  return swept;
+}
+
 function recycleExpiredClaims(state) {
   const at = Date.now();
-  let changed = false;
+  let changed = sweepDeadAgentNodes(state, at).length > 0;
   for (const dispatch of state.agentDispatches || []) {
     if (dispatch.status !== "running" || !dispatch.claimExpiresAt || new Date(dispatch.claimExpiresAt).getTime() > at) continue;
     changed = true;

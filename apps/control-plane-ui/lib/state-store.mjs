@@ -341,6 +341,15 @@ const shardOpenPredicates = {
   // Defense-in-depth: these two are also open-item barriers; today their in-memory caps (capDispatchHistory
   // 240 / reconcileRoleDriftGuards open+200) keep them under the shard limit so the slice never runs, but
   // giving them predicates makes the persist layer independently barrier-safe if either in-memory cap changes.
+  // 内存层的 capAgentControlCommands 为了正确性【刻意】让 queued/delivered/received 突破 2000
+  // 上限（淘汰掉活跃命令会让后续 ack 报 404、配对的 blocked 派发永远不被处理）。而这里原先没有
+  // 对应谓词，走的是按 updatedAt 新→旧的盲切片，5000 处把最老的活跃命令直接扔掉 ——
+  // 内存层为正确性突破上限，持久层转手就把它删了。两层必须对同一件事有同一个判断。
+  agentControlCommands: (item) => ["queued", "delivered", "received"].includes(item.status),
+  // 同一形状：capTaskContracts 保留活跃会话的合同突破 160，这里也需要对应谓词。
+  agentTaskContracts: (item, shard) => (shard?.collections?.agentDispatches || [])
+    .some((dispatch) => !["completed", "failed", "cancelled"].includes(dispatch.status)
+      && dispatch.sessionId === item.sessionId && dispatch.runId === item.runId),
   agentDispatches: (item) => !["completed", "failed", "cancelled"].includes(item.status), // core 2778
   roleDriftGuards: (item) => !["closed", "corrected"].includes(item.status) // core 2756
 };
