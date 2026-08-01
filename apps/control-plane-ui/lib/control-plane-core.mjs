@@ -5314,6 +5314,21 @@ const TOPOLOGY_ELIGIBILITY_GATES = [
   "final_validation_available"
 ];
 
+// ---------------------------------------------------------------------------------------------------
+// 承载授权/定稿的记录必须 id 唯一。
+//
+// 这些集合都是"按 id find 出一个对象，然后据它决定谁被授权、写哪些路径、算不算通过"。而 id 往往是
+// 调用方可自选的，插入又是 unshift —— 于是用同一个 id 再造一份，就能让所有 find 命中冒名的那份：
+// 人批准的是卡片描述的 A，实际生效的是 B。这一类绕过在四轮复核里出现了四次（拓扑、仓库产出目标、
+// 授权请求、审批请求），每次都是同一个形状，所以这里做成统一的守卫，新增同类集合时直接复用。
+// ---------------------------------------------------------------------------------------------------
+export function assertUniqueRecordId(collection, idField, id, errorCode) {
+  if (!id) return;
+  if ((collection || []).some((item) => item?.[idField] === id)) {
+    throw Object.assign(new Error(errorCode), {status: 409, conflictingId: id});
+  }
+}
+
 function topologyError(code, status = 409) {
   const error = new Error(code);
   error.status = status;
@@ -5324,10 +5339,16 @@ function normalizeTopologyBranches(args, workItem) {
   const requested = Array.isArray(args.branches) && args.branches.length
     ? args.branches
     : [{branchId: `${workItem?.id || "work"}_serial`, objective: workItem?.title || args.objective || "串行执行"}];
+  const seenBranchIds = new Set();
   return requested.map((branch, index) => {
     const objective = String(branch.objective || workItem?.title || `分支 ${index + 1}`);
+    const branchId = String(branch.branchId || `${workItem?.id || "work"}_b${index + 1}`);
+    // 分支 id 在一份拓扑内必须唯一：重名会让 report_branch 只认第一份，第二份永远停在 running，
+    // 拓扑到不了 integrating，一份【已被人定稿】的方案就此永久卡死（只剩 cancel）。
+    if (seenBranchIds.has(branchId)) throw topologyError("execution_topology_duplicate_branch_id", 400);
+    seenBranchIds.add(branchId);
     return {
-      branchId: String(branch.branchId || `${workItem?.id || "work"}_b${index + 1}`),
+      branchId,
       ...(branch.runnerId ? {runnerId: String(branch.runnerId)} : {}),
       status: "queued",
       objective,
@@ -5396,9 +5417,7 @@ export function createExecutionTopology(state, args) {
   // id 唯一性：topologyId 是调用方可自选的。若允许重复，AI 只要用同一个 id 再造一份，unshift 之后
   // 所有 `find(topologyId===id)` 都会命中冒名的那份 —— 人批准的方案 A 的锁会落到方案 B 上，
   // 且因 requestKey 去重连新卡片都不会出（已复现的第三个绕过）。工作项早有同类校验，这里补齐。
-  if ((state.executionTopologies || []).some((item) => item.topologyId === topologyId)) {
-    throw topologyError("execution_topology_id_conflict", 409);
-  }
+  assertUniqueRecordId(state.executionTopologies, "topologyId", args.topologyId, "execution_topology_id_conflict");
   const topology = {
     schemaVersion: "execution-topology/v1",
     topologyId,
@@ -5595,7 +5614,11 @@ export function advanceExecutionTopology(state, args) {
     expect("blocked");
     const ref = String(args.resolvedBlockerRef || args.blockingDerivedTaskRequestRef || "");
     if (!ref) throw topologyError("execution_topology_unblock_requires_resolved_ref", 400);
-    topology.blockers = topology.blockers.filter((blocker) => !blocker.includes(ref));
+    // 精确匹配单条 blocker，且【绝不】清除 owned_paths_disjoint 这类"分支写到了批准范围之外"的证据 ——
+    // 那是事后唯一能证明越界的记录。原先是 includes(ref) 子串匹配，传个 "_" 就能把它们全抹掉。
+    const before = topology.blockers.length;
+    topology.blockers = topology.blockers.filter((blocker) => blocker !== ref || blocker.startsWith("owned_paths_disjoint:"));
+    if (topology.blockers.length === before) throw topologyError("execution_topology_blocker_not_found", 409);
     topology.status = "integrating";
     transition("blocked", "integrating", "orchestrator", {topology_blocker_resolved: ref});
   } else if (action === "merge") {
@@ -5719,6 +5742,8 @@ export function permissionProbe(state, args, filter) {
 }
 
 export function permissionRequestSubmit(state, args) {
+  // 冒名的授权请求会让"批准读权限"的点击铸出别的 grant（见 assertUniqueRecordId 注释）。
+  assertUniqueRecordId(state.permissionRequests, "requestId", args.requestId, "permission_request_id_conflict");
   const at = new Date().toISOString();
   const request = {
     requestId: args.requestId || createId("perm_req"),
@@ -5841,6 +5866,8 @@ export function reviewBundleRegister(state, args) {
 }
 
 export function approvalRequestCreate(state, args) {
+  // 冒名的审批请求可自带 quorum:1 / riskClass:low，让高危多方审批塌缩成一次点击。
+  assertUniqueRecordId(state.approvalRequests, "approvalId", args.approvalId, "approval_request_id_conflict");
   const at = new Date().toISOString();
   const taskGroup = taskGroupForRecord(state, args);
   const request = {

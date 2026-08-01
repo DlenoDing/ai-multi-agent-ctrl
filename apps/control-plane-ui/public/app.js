@@ -2059,7 +2059,7 @@ function renderReview() {
   const pendingHtml = pending.length ? pending.map((request) => `
     <div class="record">
       <div class="record-title"><strong>${esc(request.question?.summary || "-")}</strong>${badge(request.status)}${request.decisionClass === "major" ? customBadge("核心决策 · 必须人工定稿", "red") : ""}${request.blocking ? customBadge("阻塞执行", "orange") : ""}</div>
-      ${request.question?.detail ? `<div class="record-meta"><span>${esc(request.question.detail)}</span></div>` : ""}
+      ${request.question?.detail ? `<div class="record-meta"><span class="confirm-detail">${esc(request.question.detail)}</span></div>` : ""}
       <div class="record-meta">
         <span>任务组：${esc(taskGroupNameOf(request.taskGroupId))}</span>
         ${request.decisionType ? `<span>决策类型：${esc(t(request.decisionType) || request.decisionType)}</span>` : ""}

@@ -626,3 +626,7 @@ button.is-loading::after {
 
 /* 弹窗打开时锁定背景滚动 */
 body.modal-open { overflow: hidden; }
+
+/* 人工确认卡片正文：方案的杀伤面（每个分支将改动哪些路径）逐行列出，必须保留换行，
+   否则会被折叠成一行，人看不清自己在批准什么。 */
+.confirm-detail { white-space: pre-wrap; }

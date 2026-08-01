@@ -11,6 +11,7 @@ import {
   consumeHumanConfirmation,
   submitAiConfirmationAnalysis,
   isHumanConfirmationActor,
+  assertUniqueRecordId,
   createHumanConfirmationRequest,
   decideHumanConfirmation,
   collectRuntimeIssue,
@@ -2603,6 +2604,10 @@ function repositoryOutputTargetSelect(state, args) {
   if (args.repositoryUrl && !isSafeGitRemoteUrl(args.repositoryUrl)) {
     return {ok: false, error: "repository_output_target_unsafe_repository_url"};
   }
+  // 冒名的产出目标会顶替掉定义【写入边界】的那一份：AI 用同一个 targetId 造一份宽 allowlist 的，
+  // 独立互审就会拿它去判 changed_paths_outside_allowlist，于是改了 apps/** 的提交也判"通过"，
+  // 人看到的验收卡片却写着"只改文档"。（第四轮复核复现）
+  assertUniqueRecordId(state.repositoryOutputs, "targetId", args.targetId, "repository_output_target_id_conflict");
   const target = {
     schemaVersion: "repository-output-target/v1",
     targetId: args.targetId || createId("rot"),

@@ -37,6 +37,8 @@ import {
   reviewBundleRegister,
   computeCompletionReadiness,
   createExecutionTopology,
+  permissionRequestSubmit,
+  approvalRequestCreate,
   advanceExecutionTopology,
   decideSessionPlacement,
   roomSend,
@@ -688,6 +690,31 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     if (!swapRejected) output.push("人工闸门: 方案在人点确认前被改掉，定稿却仍然生效（批准被算到没看过的内容上）");
     if (swapTopo.humanFinalization) output.push("人工闸门: 被掉包的方案拿到了定稿锁");
+
+    // 绕过复现防回归 #4：同一形状在多个承载授权的集合里都出现过 —— id 调用方自选 + 不校验唯一 +
+    // unshift，冒名者顶替掉所有 find 的命中对象。这里逐个钉死（统一走 assertUniqueRecordId）。
+    const uniqState = structuredClone(seedState);
+    ensureRuntimeCollections(uniqState, {root});
+    const uniqChecks = [
+      ["permissionRequests", () => permissionRequestSubmit(uniqState, {requestId: "perm_dup", taskGroupId: "tg_runtime_management", permission: "task_group:read"}), "permission_request_id_conflict"],
+      ["approvalRequests", () => approvalRequestCreate(uniqState, {approvalId: "appr_dup", taskGroupId: "tg_runtime_management", riskClass: "high", quorum: 3}), "approval_request_id_conflict"]
+    ];
+    for (const [label, create, expectedError] of uniqChecks) {
+      create();
+      let rejected = false;
+      try { create(); } catch (error) { rejected = error.message === expectedError; }
+      if (!rejected) output.push(`人工闸门: ${label} 允许重复 id（冒名记录可顶替人批准的那一份）`);
+      if ((uniqState[label] || []).filter((item) => String(item.requestId || item.approvalId).includes("_dup")).length !== 1) {
+        output.push(`人工闸门: ${label} 里出现了同 id 的多条记录`);
+      }
+    }
+    // 分支 id 在一份拓扑内必须唯一，否则已定稿方案会永久卡在 running（到不了 integrating/merge）。
+    let dupBranchRejected = false;
+    try {
+      createExecutionTopology(uniqState, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", root,
+        branches: [{branchId: "same", objective: "一", ownedPaths: ["a/**"]}, {branchId: "same", objective: "二", ownedPaths: ["b/**"]}]});
+    } catch (error) { dupBranchRejected = error.message === "execution_topology_duplicate_branch_id"; }
+    if (!dupBranchRejected) output.push("人工闸门: 一份拓扑内允许重名分支（已定稿方案会卡死在 running）");
 
     // 绕过复现防回归 #3：topologyId 由调用方自选，若不校验唯一性，AI 用同一个 id 再造一份就能
     // 顶替掉所有 find 的命中对象 —— 人批准的方案 A 的锁会落到冒名的方案 B 上，且因 requestKey 去重

@@ -789,7 +789,16 @@ errors << "定稿必须重新核对被绑定对象未被掉包" unless core_sour
 errors << "对象掉包必须有防回归测试" unless contract_check_source.include?("人工闸门: 方案在人点确认前被改掉，定稿却仍然生效")
 # 24-27 第三轮复核修复：
 #  · id 可自选且不校验唯一 => 冒名对象顶替（第三个同类绕过）
-errors << "执行拓扑必须拒绝重复 topologyId" unless core_source.include?("execution_topology_id_conflict")
+# 第四轮：同一形状（id 可自选 + 不校验唯一 + unshift）在四个承载授权的集合里都出现过，统一守卫。
+errors << "承载授权的记录必须有统一的 id 唯一性守卫" unless core_source.include?("export function assertUniqueRecordId")
+%w[execution_topology_id_conflict permission_request_id_conflict approval_request_id_conflict].each do |code|
+  errors << "缺少 id 唯一性守卫: #{code}" unless core_source.include?(code)
+end
+errors << "仓库产出目标必须拒绝重复 targetId（它定义写入边界）" unless mcp_source.include?("repository_output_target_id_conflict")
+errors << "id 冒名必须有防回归测试" unless contract_check_source.include?("允许重复 id（冒名记录可顶替人批准的那一份）")
+# unblock 不得用子串匹配抹掉"越界写入"证据；分支 id 在拓扑内必须唯一（否则已定稿方案卡死）。
+errors << "unblock 必须精确匹配且保留越界写入证据" unless core_source.include?('blocker !== ref || blocker.startsWith("owned_paths_disjoint:")')
+errors << "拓扑内分支 id 必须唯一" unless core_source.include?("execution_topology_duplicate_branch_id")
 #  · 语义选项归控制面所有：AI 候选进 ai: 命名空间、不得顶掉控制面选项；是否否决只由 action 决定
 errors << "AI 候选必须隔离到 ai: 命名空间且不得顶掉控制面选项" unless core_source.include?("optionId: `ai:${String(option.optionId") && core_source.include?("const controlPlaneOptions = (request.options || []).filter")
 errors << "是否否决只能由人点的动作决定" unless core_source.include?("const rejected = action === \"reject\";")
