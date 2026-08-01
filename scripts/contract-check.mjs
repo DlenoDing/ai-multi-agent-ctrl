@@ -46,6 +46,7 @@ import {
   WORK_SESSION_SETTLED_STATUSES,
   FINDING_TERMINAL_STATUSES,
   artifactRegister,
+  expireStaleLeases,
   HUMAN_ACTOR_KEY,
   reviewPlanCreate,
   reviewPlanRecordCoverage,
@@ -911,14 +912,17 @@ function verifyHumanAndOrganizationContracts(output) {
     ensureRuntimeCollections(uniqState, {root});
     const uniqChecks = [
       ["permissionRequests", () => permissionRequestSubmit(uniqState, {requestId: "perm_dup", taskGroupId: "tg_runtime_management", permission: "task_group:read"}), "permission_request_id_conflict"],
-      ["approvalRequests", () => approvalRequestCreate(uniqState, {approvalId: "appr_dup", taskGroupId: "tg_runtime_management", riskClass: "high", quorum: 3}), "approval_request_id_conflict"]
+      ["approvalRequests", () => approvalRequestCreate(uniqState, {approvalId: "appr_dup", taskGroupId: "tg_runtime_management", riskClass: "high", quorum: 3}), "approval_request_id_conflict"],
+      // 评审包：同 id 注册两次会让 consume 的 find 只命中最新那份，旧副本永远停在 submitted
+      // 挡着关闭门，且没有第二条杠杆能碰到它。
+      ["reviewBundles", () => reviewBundleRegister(uniqState, {reviewBundleId: "rvb_dup", taskGroupId: "tg_runtime_management", workItemId: "wi_x"}), "review_bundle_id_conflict"]
     ];
     for (const [label, create, expectedError] of uniqChecks) {
       create();
       let rejected = false;
       try { create(); } catch (error) { rejected = error.message === expectedError; }
       if (!rejected) output.push(`人工闸门: ${label} 允许重复 id（冒名记录可顶替人批准的那一份）`);
-      if ((uniqState[label] || []).filter((item) => String(item.requestId || item.approvalId).includes("_dup")).length !== 1) {
+      if ((uniqState[label] || []).filter((item) => String(item.requestId || item.approvalId || item.reviewBundleId).includes("_dup")).length !== 1) {
         output.push(`人工闸门: ${label} 里出现了同 id 的多条记录`);
       }
     }
@@ -1103,6 +1107,31 @@ function verifyHumanAndOrganizationContracts(output) {
     });
     if (!snapCard?.subjectContentDigest) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
+    }
+
+    // 租约有 expiresAt，但全仓没有任何代码读它 —— 租约从来不会过期。持有者会话已经了结（或压根
+    // 不存在）时，这条 active 租约会永远挡住 all_leases_terminal，而 capLeaseHistory 还专门
+    // 保证 active 的绝不被淘汰。设了到期时间却没人执行，等于没有到期时间。
+    const leaseState = structuredClone(seedState);
+    ensureRuntimeCollections(leaseState, {root});
+    const leaseNow = Date.parse("2026-08-02T00:00:00Z");
+    leaseState.workSessions = [{sessionId: "ws_dead", taskGroupId: "tg_runtime_management", status: "failed"},
+      {sessionId: "ws_live", taskGroupId: "tg_runtime_management", status: "active"}];
+    leaseState.leases = [
+      {leaseId: "lease_expired_dead", resourceRef: "RepositoryOutputTarget:rot_x", holderRef: "session:ws_dead", status: "active", expiresAt: "2026-08-01T00:00:00Z"},
+      {leaseId: "lease_expired_live", resourceRef: "RepositoryOutputTarget:rot_y", holderRef: "session:ws_live", status: "active", expiresAt: "2026-08-01T00:00:00Z"},
+      {leaseId: "lease_future", resourceRef: "RepositoryOutputTarget:rot_z", holderRef: "session:ws_dead", status: "active", expiresAt: "2026-09-01T00:00:00Z"}
+    ];
+    expireStaleLeases(leaseState, leaseNow);
+    const leaseById = (id) => leaseState.leases.find((item) => item.leaseId === id);
+    if (leaseById("lease_expired_dead").status !== "expired") {
+      output.push("租约过期: 已过期且持有者已了结的租约没有被回收（它将永久挡住关闭门）");
+    }
+    if (leaseById("lease_expired_live").status !== "active") {
+      output.push("租约过期: 持有者仍然存活的租约被强行回收（会把别人正在写的产出目标抢掉）");
+    }
+    if (leaseById("lease_future").status !== "active") {
+      output.push("租约过期: 尚未到期的租约被回收（回收条件根本不是到期与否）");
     }
 
     // 拓扑的 integrating 死角：分支报了 failed/rejected 照样进入 integrating，而 merge 只认

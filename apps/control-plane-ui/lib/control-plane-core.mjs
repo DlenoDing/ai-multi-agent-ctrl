@@ -1732,6 +1732,7 @@ export function runAutonomousCycle(state, request = {}) {
   expireStaleHumanConfirmations(state);
   expireStaleQueuedDispatches(state);
   maintainWorkerLanes(state);
+  expireStaleLeases(state);
   sweepCommandBus(state);
   if (skillSyncBlocked) return {changed, progressSnapshots: computeProgressSnapshots(state).slice(0, 8)};
   const taskGroups = (state.taskGroups || []).filter((taskGroup) => !request.taskGroupId || taskGroup.id === request.taskGroupId);
@@ -5902,6 +5903,38 @@ export function classifyDerivedTask(state, args) {
   return {roleId, signals, modelDecision: selectModel(state, {...args, roleId})};
 }
 
+// 租约有 expiresAt，但全仓【没有任何代码读它】—— 也就是说租约从来不会过期。持有它的会话
+// 若已经了结（或压根不存在了），这条 active 租约会永远挡住 all_leases_terminal，而 capLeaseHistory
+// 还专门保证 active 的绝不被淘汰。设了到期时间却没人执行，等于没有到期时间。
+// 只回收【确实已经过期】且【持有者不再存活】的租约：持有者还活着说明它只是没续期，
+// 强行回收会把别人正在写的目标抢掉。
+export function expireStaleLeases(state, nowMs = Date.now()) {
+  const expired = [];
+  for (const lease of state.leases || []) {
+    if (lease.status !== "active") continue;
+    const expiresAtMs = new Date(lease.expiresAt || 0).getTime();
+    if (!expiresAtMs || expiresAtMs > nowMs) continue;
+    const holderSessionId = String(lease.holderRef || "").replace("session:", "");
+    const holder = (state.workSessions || []).find((item) => item.sessionId === holderSessionId);
+    const holderAlive = holder && !WORK_SESSION_SETTLED_STATUSES.includes(holder.status);
+    if (holderAlive) continue;
+    lease.status = "expired";
+    lease.expiredReason = holder ? "holder_session_settled" : "holder_missing";
+    lease.updatedAt = new Date(nowMs).toISOString();
+    // 租约走了，它绑定的产出目标也不能继续停在写入中的状态上没人管。
+    const targetId = String(lease.resourceRef || "").replace("RepositoryOutputTarget:", "");
+    const target = (state.repositoryOutputs || []).find((item) => item.targetId === targetId && item.leaseRef === lease.leaseId);
+    if (target && !["pushed", "committed", "rejected", "superseded"].includes(target.status)) {
+      target.status = "superseded";
+      target.supersededReason = "lease_expired";
+      target.updatedAt = lease.updatedAt;
+      delete target.leaseRef;
+    }
+    expired.push(lease.leaseId);
+  }
+  return expired;
+}
+
 export function claimLease(state, args) {
   // 租约决定谁有写权限：冒名的同 id 租约会让受害会话的 target.leaseRef 永远匹配不上，
   // 该工作项再也提交不了检查点、到不了验收，且没有任何杠杆可清（第五轮复现）。
@@ -6157,6 +6190,10 @@ export function reviewPlanCreate(state, args) {
 }
 
 export function reviewBundleRegister(state, args) {
+  // 同一个 id 注册两次会让 review_result_consume 的 find 只命中最新那份，旧副本永远停在
+  // submitted 上挡着 no_pending_review_bundles，而且没有第二条杠杆能碰到它。
+  // 这与 claimLease / permissionRequestSubmit 等处是同一条 id 唯一性纪律。
+  assertUniqueRecordId(state.reviewBundles, "reviewBundleId", args.reviewBundleId, "review_bundle_id_conflict");
   const at = new Date().toISOString();
   const taskGroup = taskGroupForRecord(state, args);
   const bundle = {
