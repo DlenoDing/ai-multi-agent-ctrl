@@ -1982,6 +1982,15 @@ async function handleApi(req, res) {
       ? {...projectExecutionEventStorageInfo(prepared.event.projectId), duplicate: true, replayedProjection: Boolean(prepared.historical), event: prepared.event}
       : appendProjectExecutionEvent(runtimeDir, prepared.event);
     if (storage.event && !storage.duplicate) notifyLongPollWaiters(`project-events:${storage.event.projectId}`);
+    // 持久层已经判定这条事件是重复的，就不该再走一遍投影：内存去重窗口只有 500 条，
+    // 一条落出窗口的旧事件重放时会被再插一次、再跑一次进度更新、再续一次 claim。
+    // 进度本身是 Math.max 幂等的，但控制台会多出重复条目，而无谓续租会推迟"这个节点其实已经不在了"
+    // 的判定 —— 那正是 claim 过期回收赖以生效的信号。submitAgentExecutionEvent 那条路径本来就是
+    // 这么短路的，只有 HTTP 这条漏了。
+    if (storage.duplicate && !prepared.historical) {
+      json(res, 202, {duplicate: true, storage, centralStateUpdated: false});
+      return;
+    }
     const result = recordAgentExecutionEvent(state, node, storage.event || prepared.event, {allowHistoricalNodeBinding: Boolean(prepared.historical || storage.duplicate)});
     try {
       commitGatewayWrite(state);

@@ -981,6 +981,11 @@ function finalizeNodeRevocation(state, node, command) {
     delete dispatch.revocationPending;
     delete dispatch.shutdownPending;
     dispatch.updatedAt = at;
+    // 与 finalizeNodeShutdown 对称：那边重排队每个派发时都会撤销它的 MCP 授权，这边漏了。
+    // 当前被两层兜住（下发 revoke 时的 pre-effect 已撤过一轮，且 revoked 节点的令牌一律不被接受），
+    // 所以不是可利用漏洞 —— 但只要将来出现一条能在 pre-effect 之后给该节点补发授权的路径就会漏。
+    // 两个同类收尾路径必须做同样的事，不能靠"别处恰好也挡了"。
+    revokeDispatchMcpGrants(state, node.nodeId, dispatch.dispatchId, "assigned_node_revocation_ack_requeued");
     requeuedDispatchIds.push(dispatch.dispatchId);
   }
   node.status = "revoked";
