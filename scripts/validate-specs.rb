@@ -939,6 +939,22 @@ errors << "test evidence must derive a quality gate that gates close" unless cor
 # Cycle-2 operator surfaces: pending permission/approval/finding requests (which block the close barrier)
 # must be visible + resolvable in the console, the close-barrier panel must offer a close action, and the
 # graceful shutdown command must be reachable. All wire to endpoints that already existed.
+# 真人专属杠杆若在控制台里没有入口，等于这个杠杆不存在 —— 人只会看到一个红色阻塞 chip，
+# 然后无从下手。本轮一次性发现三个这样的杠杆（质量门豁免/评审计划收尾/共享定义处置），
+# 全都只有裸 REST。故把"有杠杆必有入口"钉成结构约束。
+human_lever_forms = {
+  "quality_gate_waive" => "quality-gate-waive",
+  "review_plan_resolve" => "review-plan-resolve",
+  "shared_definition_resolve" => "shared-definition-resolve",
+  "rule_source_settle" => "rule-source-settle",
+  "human_confirmation_decide" => "hcr-decide",
+  "human_directive_create" => "directive-create"
+}
+human_lever_forms.each do |action, form_kind|
+  next unless server_source.include?("\"#{action}\"")
+  errors << "真人杠杆 #{action} 在控制台没有操作入口（data-form=\"#{form_kind}\"）——后端有杠杆而界面上按不到，等于没有" unless app_js_source.include?("data-form=\"#{form_kind}\"") && app_js_source.include?("kind === \"#{form_kind}\"")
+end
+
 errors << "review console must surface + resolve permission/approval/finding requests" unless server_source.include?("\"permissionRequests\", \"approvalRequests\", \"findings\", \"qualityGates\"") && app_js_source.include?("data-form=\"perm-resolve\"") && app_js_source.include?("data-form=\"approval-resolve\"") && app_js_source.include?("data-form=\"finding-resolve\"")
 errors << "close-barrier panel must offer a close-task-group action" unless app_js_source.include?("data-action=\"close-task-group\"") && app_js_source.include?("close-barrier/compute") && app_js_source.include?("mutate: true")
 errors << "runtime nodes must offer the graceful shutdown command" unless app_js_source.include?("data-command=\"shutdown\"")

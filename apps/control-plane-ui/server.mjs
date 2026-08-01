@@ -53,6 +53,7 @@ import {
   roomSend,
   roomWait,
   ruleSourceResolve,
+  ruleSourceSettle,
   collectRuntimeIssue,
   computeCloseBarrier,
   computeCompletionReadiness,
@@ -1171,7 +1172,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     system: ["accounts", "auditLog", "policyDecisions", "commands", "decisionRecords"],
     users: ["accounts", "accessGrants", "projects", "agentJoinTokens"],
     projects: ["accounts", "accessGrants", "projects", "repositoryOutputs", "agentJoinTokens"],
-    tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots", "humanConfirmationRequests", "humanDirectives", "permissionRequests", "approvalRequests", "findings", "qualityGates", "testResults"],
+    tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots", "humanConfirmationRequests", "humanDirectives", "permissionRequests", "approvalRequests", "findings", "qualityGates", "testResults", "reviewPlans", "sharedDefinitions", "artifacts"],
     runtime: ["modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions", "workerLanes", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkills", "roleSkillOverlays"],
     instructions: ["instructionMetrics", "sharedDefinitions", "effectiveInstructionPackets", "roleDriftGuards"]
   };
@@ -1230,6 +1231,10 @@ function permissionForAction(action) {
   if (action === "contract_publish") return "project:*";
   if (action === "policy_decision_eval") return "system:*";
   if (action === "quality_gate_waive") return "task_group:review";
+  // 收尾评审计划与豁免质量门同属评审裁决，此前漏了这条映射会落到兜底的 system:*，
+  // 结果只有系统管理员能解掉一个任务组层面的阻塞 —— 与同批杠杆口径不一致。
+  if (action === "review_plan_resolve") return "task_group:review";
+  if (action === "rule_source_settle") return "task_group:control";
   if (action === "shared_definition_resolve") return "project:update";
   if (action === "project_config_update") return "project:update";
   if (["org_create", "org_quota_update", "org_status_update"].includes(action)) return "system:*";
@@ -3078,6 +3083,29 @@ async function handleApi(req, res) {
     finishGuardedWrite(state, guard, 200, gate);
     writeState(state);
     json(res, 200, gate);
+    return;
+  }
+
+  // 规则来源分流的收尾杠杆：AI 只能判"不采纳"（reference_only/quarantined/rejected），
+  // 判为 active（采纳为本项目规则）必须真人 —— 与共享定义契约同一条口径。
+  const ruleSourceSettleMatch = url.pathname.match(/^\/api\/rule-source-resolutions\/([^/]+)\/settle$/);
+  if (req.method === "POST" && ruleSourceSettleMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
+    const resolution = (state.ruleSourceResolutions || []).find((item) => item.resolutionId === ruleSourceSettleMatch[1]);
+    if (!resolution) return json(res, 404, {error: "rule_source_resolution_not_found"});
+    const guard = beginGuardedWrite(req, state, "rule_source_settle", `RuleSourceResolution:${resolution.resolutionId}`, taskGroupScope(state, resolution.taskGroupId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const settleAccount = accountFromRequest(req, state);
+    const settleArgs = {resolutionId: resolution.resolutionId, taskGroupId: resolution.taskGroupId, status: body.status, justification: body.justification};
+    if (settleAccount && HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(settleAccount.accountType) && settleAccount.status === "active") {
+      settleArgs[HUMAN_ACTOR_KEY] = settleAccount.accountId;
+    }
+    const result = ruleSourceSettle(state, settleArgs);
+    if (result.ok === false) return json(res, result.error === "rule_source_resolution_not_found" ? 404 : 403, result);
+    audit(state, guard.actor, "rule_source_settle", `RuleSourceResolution:${resolution.resolutionId}`, result.ruleSourceResolution.status);
+    finishGuardedWrite(state, guard, 200, result.ruleSourceResolution);
+    writeState(state);
+    json(res, 200, result.ruleSourceResolution);
     return;
   }
 

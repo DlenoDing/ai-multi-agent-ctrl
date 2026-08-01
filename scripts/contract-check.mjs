@@ -41,6 +41,7 @@ import {
   recordQualityGateFromTest,
   cancelPendingConfirmationsForDispatch,
   ruleSourceResolve,
+  ruleSourceSettle,
   HUMAN_ACTOR_KEY,
   reviewPlanCreate,
   reviewPlanRecordCoverage,
@@ -1027,6 +1028,32 @@ function verifyHumanAndOrganizationContracts(output) {
     const afterFresh = submitGate("passed", ["run:2"]);          // 带新证据
     if (afterFresh.status !== "passed") output.push("人工闸门: 带新证据的重报仍无法清除失败的质量门（正常流程被打断）");
     if (!afterFresh.previouslyFailed) output.push("人工闸门: 质量门被翻转却没有留下 previouslyFailed 痕迹（人看不到这条曾失败）");
+
+    // 把一道空转门改成真会阻塞的门，就必须同时补上出口 —— 否则修复本身变成新的死锁。
+    // 规则来源分流此前建出来即 discovered 而全仓无迁移入口，正是这个错误。
+    const rsState = structuredClone(seedState);
+    ensureRuntimeCollections(rsState, {root});
+    const rsTg = rsState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const rsRecord = ruleSourceResolve(rsState, {taskGroupId: rsTg.id, projectId: rsTg.projectId, sourceRef: "reference:probe"}).ruleSourceResolution;
+    if (computeCloseBarrier(rsState, rsTg.id).gateResults.rules_candidates_processed.status !== "blocked") {
+      output.push("规则来源: 新分流记录没有挡住关闭门（这道门又空转了）");
+    }
+    const aiAdopt = ruleSourceSettle(rsState, {resolutionId: rsRecord.resolutionId, taskGroupId: rsTg.id, status: "active"});
+    if (aiAdopt.ok !== false || rsRecord.status === "active") {
+      output.push("规则来源: AI 可自行把一份材料采纳为本项目规则（自宣规范，与共享定义同一条口径被绕过）");
+    }
+    const aiDecline = ruleSourceSettle(rsState, {resolutionId: rsRecord.resolutionId, taskGroupId: rsTg.id, status: "reference_only"});
+    if (aiDecline.ok === false || computeCloseBarrier(rsState, rsTg.id).gateResults.rules_candidates_processed.status === "blocked") {
+      output.push("规则来源: 判为不采纳后仍无法解除阻塞（建一条就永久卡死关闭门，人也没有出口）");
+    }
+    const rsRecord2 = ruleSourceResolve(rsState, {taskGroupId: rsTg.id, projectId: rsTg.projectId, sourceRef: "reference:probe2"}).ruleSourceResolution;
+    const humanAdopt = ruleSourceSettle(rsState, {resolutionId: rsRecord2.resolutionId, taskGroupId: rsTg.id, status: "active", [HUMAN_ACTOR_KEY]: "acct_alice"});
+    if (humanAdopt.ok === false || rsRecord2.status !== "active" || rsRecord2.settledBy !== "acct_alice") {
+      output.push("规则来源: 真人也无法把材料采纳为规则（正常路径被打断）");
+    }
+    if (computeCloseBarrier(rsState, rsTg.id).gateResults.all_rule_sources_resolved.status === "blocked") {
+      output.push("规则来源: 已被真人采纳为 active 的规则仍在阻塞关闭门（无出口）");
+    }
 
     // 持久层分片 cap 此前只有源码字符串断言，没有任何行为测试。它保护的正是"仍在阻塞的项被
     // 容量淘汰 => 关闭门假满足"这一类。指令包还多一层：被存活任务契约引用的包一旦被淘汰，

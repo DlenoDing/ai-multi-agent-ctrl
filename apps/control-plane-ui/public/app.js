@@ -228,7 +228,7 @@ const esc = escapeHtml;
 
 const TONE_GREEN = new Set(["completed", "verified", "ok", "active", "online", "passed", "succeeded", "accepted", "applied", "answered", "consumed", "satisfied", "clear", "healthy", "available", "pushed", "committed", "merged", "full", "current", "resolved", "admitted", "acked", "indexed", "review_passed", "completed_objective", "closed", "fixed", "reverified", "code_complete", "corrected", "verification_ready"]);
 const TONE_BLUE = new Set(["running", "in_progress", "queued", "assigned", "delivered", "monitoring", "syncing", "starting", "development", "evaluating", "collecting", "dispatched", "ready", "selected", "acknowledged", "received", "intake", "discovery", "product_design", "solution_design", "ui_design", "global_development_review", "verification", "repair", "reverification", "integration", "release", "online_quality", "implementation", "governance_design", "protocol", "cache_indexed", "initialized", "configured", "prepared", "submitted", "new_session", "subagent", "issued", "bound", "planned", "integrating", "checkpointed", "checkpoint_submitted", "created", "executor_started", "executor_output", "git_committed", "git_pushed", "repository_changed", "skill_synced", "dispatch_received", "heartbeat", "progress", "writing", "lease_bound"]);
-const TONE_ORANGE = new Set(["attention", "pending", "review_requested", "paused", "draining", "degraded", "limited", "invited", "waiting_room_event", "waiting_dependency", "permission_required", "needs_decision", "stale_state", "reverify_required", "standby", "active_paused_by_control", "change_requested", "reopened", "requested", "reviewing", "candidate", "drift_signal", "monitor_attention", "needs_reconcile", "quota_limited", "awaiting_human_confirmation", "read_only", "close_candidate"]);
+const TONE_ORANGE = new Set(["attention", "pending", "review_requested", "paused", "draining", "degraded", "limited", "invited", "waiting_room_event", "waiting_dependency", "permission_required", "needs_decision", "stale_state", "reverify_required", "standby", "active_paused_by_control", "change_requested", "reopened", "requested", "reviewing", "candidate", "drift_signal", "monitor_attention", "needs_reconcile", "quota_limited", "awaiting_human_confirmation", "read_only", "close_candidate", "waived", "proposed", "conflicted", "change_requested", "discovered"]);
 const TONE_RED = new Set(["failed", "blocked", "rejected", "denied", "error", "aborted", "quarantined", "quarantine", "dlq", "correction_required", "drift_detected", "timed_out", "unavailable", "blocked_dependency", "blocked_resource", "conflicted", "merge_conflict", "rolled_back", "invalidated", "S0", "critical"]);
 
 /* 阻塞严重度着色：S0 阻断=红，S1 严重=橙，S2 一般=蓝 */
@@ -649,6 +649,10 @@ const SUBMIT_SUCCESS = {
   "perm-resolve": "已处理授权请求",
   "approval-resolve": "已处理审批请求",
   "finding-resolve": "已处置发现",
+  "quality-gate-waive": "已豁免该质量门（理由已留档）",
+  "review-plan-resolve": "已收尾评审计划",
+  "rule-source-settle": "已提交规则来源判定",
+  "shared-definition-resolve": "已处置共享定义契约",
   "close-task-group": "任务组已关闭"
 };
 
@@ -2125,6 +2129,11 @@ function renderReview() {
         <div class="record">
           <div class="record-title"><strong>授权请求：${esc(item.permission || "-")}</strong>${badge(item.status)}</div>
           <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>主体：${esc(item.subjectId || "-")}</span><span>原因：${esc(item.reason || "-")}</span><span>${fmtTime(item.createdAt)}</span></div>
+          <!-- 卡片此前不显示 resource：一条申请 system:* 的越权请求在批准人眼里与普通任务组授权毫无区别。
+               批准的是"给谁、什么权限、在什么资源上"，这三样必须同时可见，否则同意是盲签。 -->
+          <div class="record-meta"><span>作用资源：<span class="mono">${esc(item.resource?.resourceType || "-")}${item.resource?.resourceId ? `:${esc(item.resource.resourceId)}` : ""}</span></span>${
+            item.resource?.resourceType && item.resource.resourceType !== "task_group"
+              ? customBadge(`超出任务组范围（${t(item.resource.resourceType) || item.resource.resourceType}）`, "red") : ""}</div>
           ${canGrant ? `<form class="form-grid" data-form="perm-resolve" data-request="${esc(item.requestId)}" style="margin-top:8px;">
             <div class="button-row"><button class="primary-button" type="submit" name="status" value="approved">批准</button><button class="secondary-button" type="submit" name="status" value="rejected">拒绝</button></div>
           </form>` : `<div class="notice">需“授权(project:grant)”权限处理。</div>`}
@@ -2330,15 +2339,29 @@ function renderMonitor() {
       {v: fmtTime(cp.createdAt), c: "nowrap"}
     ]);
   }).join("");
+  // 一张只显示"已通过"的表会让人以为门都真过了。曾判失败后被执行方重报为通过、以及无新证据的
+  // 反复重报次数，都是"AI 在硬顶人工闸门"的信号，必须直接摆在这张表里。
   const qualityGateRows = filterSource((state.qualityGates || []).filter((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)), "quality-gates").slice(0, 20).map((qg) => row([
     esc(taskGroupNameOf(qg.taskGroupId)),
     esc(t(qg.gateType) || qg.gateType || "-"),
     `<span class="mono">${esc(qg.workItemId || "-")}</span>`,
-    badge(qg.status),
+    badge(qg.status) + (qg.previouslyFailed && qg.status === "passed" ? " " + customBadge("曾失败后被重报", "orange") : "")
+      + (Number(qg.reassertedWithoutNewEvidenceCount) ? " " + customBadge(`无新证据重报 ${qg.reassertedWithoutNewEvidenceCount} 次`, "red") : "")
+      + (qg.status === "waived" && qg.waivedBy ? ` <span class="record-meta">由 ${esc(qg.waivedBy)} 豁免</span>` : ""),
     {v: fmtTime(qg.updatedAt || qg.createdAt), c: "nowrap"}
   ])).join("");
+  const waivableGates = (state.qualityGates || [])
+    .filter((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId) && !["passed", "waived"].includes(qg.status))
+    .slice(0, 8);
   const failingTests = (state.testResults || []).filter((tr) => groups.some((taskGroup) => taskGroup.id === tr.taskGroupId) && ["failed", "error"].includes(tr.status));
   const canCloseTaskGroup = hasPerm("task_group:control"); // endpoint maps task_group_* -> task_group:control
+  const canReviewGates = hasPerm("task_group:review");     // quality_gate_waive / review_plan_resolve
+  const inScope = (item) => groups.some((taskGroup) => taskGroup.id === item.taskGroupId);
+  const openReviewPlans = (state.reviewPlans || []).filter((plan) => inScope(plan) && !["closed", "rejected", "superseded"].includes(plan.status)).slice(0, 8);
+  const openRuleSources = (state.ruleSourceResolutions || []).filter((item) => inScope(item) && !["reference_only", "quarantined", "rejected", "superseded", "active"].includes(item.status)).slice(0, 8);
+  const blockingDefinitions = (state.sharedDefinitions || []).filter((definition) => ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"].includes(definition.status)).slice(0, 8);
+  const canControlRules = hasPerm("task_group:control");   // rule_source_settle
+  const canUpdateProject = hasPerm("project:update");      // shared_definition_resolve
   const barriers = (state.closeBarriers || []).slice(0, 8).map((barrier) => row([
     esc(taskGroupNameOf(barrier.taskGroupId)),
     barrier.satisfied ? customBadge("可关闭", "green") : customBadge("存在阻塞", "red"),
@@ -2372,9 +2395,59 @@ function renderMonitor() {
     panel("准入决策", table(["工作项", "判定", "分类", {label: "原因", c: "text-clip"}], admissions, {moreText: moreText((state.admissionDecisions || []).length, 12)}), {wide: true}),
     panel("检查点（Git 证据）", table(["任务组", "工作项", "提交", "推送", {label: "产出清单", c: "text-clip"}, {label: "时间", c: "nowrap"}], checkpointRows, {moreText: moreText(filterSource((state.checkpoints || []).filter((cp) => groups.some((taskGroup) => taskGroup.id === cp.taskGroupId)), "checkpoints").length, 20)}), {wide: true, headerSide: filterInput("按工作项、提交过滤…", "checkpoints")}),
     (state.qualityGates || []).some((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)) ? panel("质量门禁 / 测试证据", `
-      ${failingTests.length ? `<div class="notice warn-notice">有 ${failingTests.length} 项失败测试，阻塞关闭门禁（gateType 对应门禁为 failed，需修复并重提通过测试，或取消对应工作项）。</div>` : ""}
+      ${failingTests.length ? `<div class="notice warn-notice">有 ${failingTests.length} 项失败测试，阻塞关闭门禁（gateType 对应门禁为 failed，需修复并重提通过测试、取消对应工作项，或由你判定该门不适用后豁免）。</div>` : ""}
       ${table(["任务组", "门禁类型", "工作项", "状态", {label: "更新时间", c: "nowrap"}], qualityGateRows, {moreText: moreText(filterSource((state.qualityGates || []).filter((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)), "quality-gates").length, 20)})}
+      ${canReviewGates && waivableGates.length ? `
+        <div class="record" style="margin-top:8px;">
+          <div class="record-title">豁免未通过的质量门</div>
+          <div class="record-meta">豁免是由你负责的放行决定：门仍未通过，只是你判定它在本次范围内不适用。执行方无法自行豁免，理由会随门一起留档并显示在验收卡片上。</div>
+          ${waivableGates.map((qg) => `
+            <form class="form-grid" data-form="quality-gate-waive" data-request="${esc(qg.gateId)}" style="margin-top:8px;">
+              <div class="record-meta"><span class="mono">${esc(qg.gateId)}</span> · ${esc(t(qg.gateType) || qg.gateType || "-")} · ${esc(qg.workItemId || "-")} · ${badge(qg.status)}</div>
+              <div class="form-row"><label>豁免理由（必填）</label><input name="justification" placeholder="例如：该门针对的能力不在本任务组范围内"></div>
+              <button class="primary-button" type="submit">豁免此门</button>
+            </form>`).join("")}
+        </div>` : ""}
     `, {wide: true, headerSide: filterInput("按门禁类型、工作项过滤…", "quality-gates")}) : "",
+    // 关闭门禁上每一个阻塞项都必须能在这里被人处理掉。后端有杠杆而界面上没有入口，
+    // 等于这个杠杆不存在 —— 人只会看到一个红 chip，然后无从下手。
+    (openReviewPlans.length || openRuleSources.length || blockingDefinitions.length) ? panel("阻塞项人工处置", `
+      <div class="notice">下面这些阻塞只能由人来收尾：AI 要么不该有权决定（采纳规则、激活规范），要么已经无法推进（评审角色不再参与）。</div>
+      ${canReviewGates && openReviewPlans.length ? `
+        <div class="record" style="margin-top:8px;">
+          <div class="record-title">评审计划（要求的评审角色到齐即自动闭合；到不齐时由你收尾）</div>
+          ${openReviewPlans.map((plan) => `
+            <form class="form-grid" data-form="review-plan-resolve" data-request="${esc(plan.reviewPlanId)}" style="margin-top:8px;">
+              <div class="record-meta"><span class="mono">${esc(plan.reviewPlanId)}</span> · ${esc(taskGroupNameOf(plan.taskGroupId))} · ${badge(plan.status)}
+                · 需要 ${esc((plan.requiredReviewerRoles || []).map((role) => t(role) || role).join("、") || "-")}
+                · 已到 ${esc((plan.coveredReviewerRoles || []).map((role) => t(role) || role).join("、") || "无")}</div>
+              <div class="form-row"><label>收尾方式</label><select name="status"><option value="closed">关闭（视为已完成评审）</option><option value="superseded">被取代</option><option value="rejected">驳回</option></select></div>
+              <div class="form-row"><label>理由（必填）</label><input name="justification" placeholder="例如：外部评审方不再参与，改由内部 QA 覆盖"></div>
+              <button class="primary-button" type="submit">收尾评审计划</button>
+            </form>`).join("")}
+        </div>` : ""}
+      ${canControlRules && openRuleSources.length ? `
+        <div class="record" style="margin-top:8px;">
+          <div class="record-title">规则来源分流（判为"采纳为本项目规则"只能由你做，AI 只能判不采纳）</div>
+          ${openRuleSources.map((item) => `
+            <form class="form-grid" data-form="rule-source-settle" data-request="${esc(item.resolutionId)}" style="margin-top:8px;">
+              <div class="record-meta"><span class="mono">${esc(item.sourceRef || item.resolutionId)}</span> · ${esc(taskGroupNameOf(item.taskGroupId))} · ${badge(item.status)}</div>
+              <div class="form-row"><label>判定</label><select name="status"><option value="active">采纳为本项目规则</option><option value="reference_only">仅作参考</option><option value="quarantined">隔离</option><option value="rejected">不采纳</option></select></div>
+              <div class="form-row"><label>理由（可选）</label><input name="justification" placeholder="判定依据"></div>
+              <button class="primary-button" type="submit">提交判定</button>
+            </form>`).join("")}
+        </div>` : ""}
+      ${canUpdateProject && blockingDefinitions.length ? `
+        <div class="record" style="margin-top:8px;">
+          <div class="record-title">共享定义契约（AI 只能提议，激活为全局规范由你决定）</div>
+          ${blockingDefinitions.map((definition) => `
+            <form class="form-grid" data-form="shared-definition-resolve" data-request="${esc(definition.contractId)}" style="margin-top:8px;">
+              <div class="record-meta"><span class="mono">${esc(definition.contractId)}</span> · ${esc(t(definition.definitionType) || definition.definitionType || "-")} · ${badge(definition.status)}${definition.proposedBy ? ` · 由 ${esc(definition.proposedBy)} 提议` : ""}</div>
+              <div class="form-row"><label>处置</label><select name="status"><option value="active">激活为全局规范</option><option value="rejected">驳回</option><option value="superseded">被取代</option><option value="retired">退役</option></select></div>
+              <button class="primary-button" type="submit">提交处置</button>
+            </form>`).join("")}
+        </div>` : ""}
+    `, {wide: true}) : "",
     panel("关闭门禁", `
       ${table(["任务组", "状态", {label: "阻塞对象数", c: "num"}, {label: "计算时间", c: "nowrap"}, "操作"], barriers, {moreText: moreText((state.closeBarriers || []).length, 8)})}
       ${(state.closeBarriers || []).filter((barrier) => !barrier.satisfied && (barrier.blockingObjects || []).length).slice(0, 8).map((barrier) => `
@@ -2731,6 +2804,28 @@ document.addEventListener("submit", async (event) => {
     }
     if (kind === "approval-resolve") {
       await api(`/api/approval-requests/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "rejected"})});
+      await loadPage();
+      return;
+    }
+    if (kind === "quality-gate-waive") {
+      if (!String(data.justification || "").trim()) throw new Error("豁免质量门必须写明理由：这是由你负责的放行决定，理由会随门留档并显示在验收卡片上");
+      await api(`/api/quality-gates/${encodeURIComponent(form.dataset.request)}/waive`, {method: "POST", body: JSON.stringify({justification: data.justification})});
+      await loadPage();
+      return;
+    }
+    if (kind === "review-plan-resolve") {
+      if (!String(data.justification || "").trim()) throw new Error("收尾评审计划必须写明理由（例如：外部评审方不再参与）");
+      await api(`/api/review-plans/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "closed", justification: data.justification})});
+      await loadPage();
+      return;
+    }
+    if (kind === "rule-source-settle") {
+      await api(`/api/rule-source-resolutions/${encodeURIComponent(form.dataset.request)}/settle`, {method: "POST", body: JSON.stringify({status: data.status || "reference_only", justification: data.justification || ""})});
+      await loadPage();
+      return;
+    }
+    if (kind === "shared-definition-resolve") {
+      await api(`/api/shared-definition-contracts/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "active"})});
       await loadPage();
       return;
     }

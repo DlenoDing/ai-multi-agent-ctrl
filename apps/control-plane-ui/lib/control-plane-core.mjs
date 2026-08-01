@@ -6162,7 +6162,11 @@ export function contractPublish(state, args) {
 
 // 规则来源分流：discovered = 刚发现、还没判定它算不算本项目的规则，属于未了结，必须挡住关闭门；
 // resolved/active 表示已判定为规则并生效；reference_only/quarantined/rejected/superseded 为终态。
-export const RULE_SOURCE_CREATABLE_STATUSES = ["discovered", "resolved", "active", "reference_only", "quarantined", "rejected"];
+// 建立时只能是 discovered（"发现了一份材料，还没人判定它算不算本项目的规则"）。
+// AI 可以把它判为【不采纳】的三个终态；判为 active（采纳为本项目规则）是规则层决策，必须真人 ——
+// 与共享定义契约同一条口径：AI 不得自行宣布什么是本项目的规范。
+export const RULE_SOURCE_AI_SETTLEABLE_STATUSES = ["reference_only", "quarantined", "rejected"];
+export const RULE_SOURCE_HUMAN_ONLY_STATUSES = ["active"];
 export const RULE_SOURCE_TERMINAL_STATUSES = ["reference_only", "quarantined", "rejected", "superseded"];
 
 export function ruleSourceResolve(state, args) {
@@ -6176,7 +6180,7 @@ export function ruleSourceResolve(state, args) {
     taskGroupId: args.taskGroupId || "tg_runtime_management",
     sourceRef: args.sourceRef || "reference:unknown",
     sourceScope: args.sourceScope || "reference_material",
-    status: RULE_SOURCE_CREATABLE_STATUSES.includes(args.status) ? args.status : "discovered",
+    status: "discovered",
     classification: args.classification || "reference_only",
     adoptionPolicy: args.classification === "generic_mechanism" ? "external_review_required" : "not_active_rule",
     evidenceRefs: args.evidenceRefs || [],
@@ -6185,6 +6189,27 @@ export function ruleSourceResolve(state, args) {
   };
   state.ruleSourceResolutions.unshift(resolution);
   state.ruleSourceResolutions = capRetainingPredicate(state.ruleSourceResolutions, (item) => !RULE_SOURCE_TERMINAL_STATUSES.includes(item.status), 2000);
+  return {ruleSourceResolution: resolution};
+}
+
+// 分流记录建出来是 discovered，而在此之前【全仓没有任何迁移入口】—— 建一条就永久挡住关闭门。
+// 这是把一道空转门改成阻塞门时漏掉的后半段：门有了牙齿，就必须同时有出口。
+export function ruleSourceSettle(state, args) {
+  const resolution = (state.ruleSourceResolutions || []).find((item) =>
+    item.resolutionId === args.resolutionId && item.taskGroupId === args.taskGroupId);
+  if (!resolution) return {ok: false, error: "rule_source_resolution_not_found"};
+  if (RULE_SOURCE_TERMINAL_STATUSES.includes(resolution.status)) return {ruleSourceResolution: resolution, alreadySettled: true};
+  const humanActor = args[HUMAN_ACTOR_KEY] || null;
+  const wantsAdoption = RULE_SOURCE_HUMAN_ONLY_STATUSES.includes(args.status);
+  if (wantsAdoption && !humanActor) return {ok: false, error: "rule_source_adoption_requires_human"};
+  if (!wantsAdoption && !RULE_SOURCE_AI_SETTLEABLE_STATUSES.includes(args.status)) {
+    return {ok: false, error: "rule_source_status_invalid"};
+  }
+  resolution.status = args.status;
+  resolution.adoptionPolicy = wantsAdoption ? "active_project_rule" : "not_active_rule";
+  if (humanActor) resolution.settledBy = humanActor;
+  if (args.justification) resolution.settlementJustification = String(args.justification).slice(0, 2000);
+  resolution.updatedAt = new Date().toISOString();
   return {ruleSourceResolution: resolution};
 }
 
