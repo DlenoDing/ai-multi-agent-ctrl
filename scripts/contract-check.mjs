@@ -1103,6 +1103,72 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
     }
 
+    // 仓库产出目标此前只能【经活跃租约】被级联收口。seed 里那条 rot_runtime_management 就是
+    // status=selected、leases 为空 —— 从未绑定过租约，于是谁也够不到它，它永远挡着
+    // all_changes_integrated，而人连"放弃这个工作项"都做不到（abandon 原先只对 needs_decision 生效）。
+    const orphanState = structuredClone(seedState);
+    ensureRuntimeCollections(orphanState, {root});
+    const orphanTg = orphanState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const orphanTarget = (orphanState.repositoryOutputs || []).find((item) => item.targetId === "rot_runtime_management");
+    if (!orphanTarget || orphanTarget.status !== "selected") {
+      output.push("产出目标: 测试前置不成立（seed 里那条 selected 目标已变，这条断言不再针对原缺陷）");
+    }
+    const orphanWork = (orphanTg.workItems || []).find((item) => item.id === orphanTarget?.workItemId);
+    if (orphanWork && orphanWork.status === "needs_decision") {
+      output.push("产出目标: 测试前置不成立（该工作项恰好是 needs_decision，测不出放宽后的杠杆）");
+    }
+    if (!(orphanState.leases || []).every((lease) => lease.status !== "active")) {
+      output.push("产出目标: 测试前置不成立（存在活跃租约，走的是原本就通的那条路）");
+    }
+    terminateCellRuntime(orphanState, orphanTg.id, orphanTarget?.workItemId, "probe");
+    if (!["pushed", "committed", "rejected", "superseded"].includes(orphanTarget?.status)) {
+      output.push("产出目标: 从未绑定租约的目标无法被收口（它将永久挡住关闭门，人没有任何杠杆）");
+    }
+    // 放弃杠杆必须对非 needs_decision 的工作项也生效
+    const rptAbandonState = structuredClone(seedState);
+    ensureRuntimeCollections(rptAbandonState, {root});
+    const rptAbandonTg = rptAbandonState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const rptAbandonWork = rptAbandonTg.workItems.find((item) => item.status !== "needs_decision") || rptAbandonTg.workItems[0];
+    rptAbandonWork.status = "in_progress";
+    rptAbandonState.humanDirectives = [{
+      schemaVersion: "human-directive/v1", directiveId: "hd_abandon", projectId: rptAbandonTg.projectId,
+      taskGroupId: rptAbandonTg.id, directiveType: "resolve_decision", resolution: "abandon",
+      workItemId: rptAbandonWork.id, status: "queued", appliedActions: [],
+      createdAt: "2026-08-02T00:00:00Z", updatedAt: "2026-08-02T00:00:00Z"
+    }];
+    consumeQueuedHumanDirectives(rptAbandonState, {});
+    if (rptAbandonWork.status !== "superseded") {
+      output.push("产出目标: 人无法放弃一个不处于 needs_decision 的工作项（它卡在哪里，人就只能干看着）");
+    }
+
+    // 技能源同步失败原先会在人工指令消费之前直接掐断整个编排周期 —— 一件无关的外部故障
+    // 让【人下达的指令再也不被消费】、确认单超时不再升级、命令总线不再清扫。
+    // 出故障之后，人还能不能介入，恰恰依赖这些自愈路径。
+    const freezeState = structuredClone(seedState);
+    ensureRuntimeCollections(freezeState, {root});
+    const freezeTg = freezeState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    // 让技能源同步必定失败：给一个被传输白名单拒绝的仓库地址（GIT_ALLOW_PROTOCOL 只放行 https/ssh/git）
+    for (const source of freezeState.skillSources || []) {
+      if (source.sourceId === "agency-agents-zh") {
+        source.status = "configured";
+        source.repositoryUrl = "ext::sh -c probe";
+      }
+    }
+    freezeState.humanDirectives = [{
+      schemaVersion: "human-directive/v1", directiveId: "hd_probe", projectId: freezeTg.projectId,
+      taskGroupId: freezeTg.id, directiveType: "adjust_priority", status: "queued",
+      createdAt: "2026-08-02T00:00:00Z", updatedAt: "2026-08-02T00:00:00Z"
+    }];
+    const freezeResult = runAutonomousCycle(freezeState, {taskGroupId: freezeTg.id, root});
+    // 先证明这条测试没有空转：必须真的走进了同步失败分支，否则"指令被消费"是理所当然的，
+    // 断言什么都没证明。
+    if (!(freezeResult.changed || []).some((item) => item.reason === "skill_source_sync_failed")) {
+      output.push("自愈冻结: 测试没有触发技能源同步失败（这条断言在空转，证明不了自愈路径仍会执行）");
+    }
+    if (freezeState.humanDirectives[0].status === "queued") {
+      output.push("自愈冻结: 技能源同步失败时人下达的指令没有被消费（一件无关故障就让人的杠杆停摆）");
+    }
+
     // 会话状态：cancelled/paused 曾被写入却从未登记 —— 未登记的状态不在门认可的了结集里，
     // 取消一次会话就永久挡住任务组关闭，而人没有任何杠杆。
     const sessState = structuredClone(seedState);

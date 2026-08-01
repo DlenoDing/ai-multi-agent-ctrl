@@ -1702,6 +1702,7 @@ export function runAutonomousCycle(state, request = {}) {
   ensureRuntimeCollections(state, {root: request.root, endpoint: request.endpoint});
   const changed = [];
   const cycleRef = createId("cycle");
+  let skillSyncBlocked = false;
   if (request.autoSyncSkills !== false) {
     for (const source of state.skillSources || []) {
       if (source.sourceId === "agency-agents-zh" && source.status !== "active") {
@@ -1716,16 +1717,23 @@ export function runAutonomousCycle(state, request = {}) {
             sampleRefs: [`skill-sync:${source.sourceId}:${Date.now()}`]
           });
           changed.push({status: "blocked_resource", reason: "skill_source_sync_failed", issueRef: issue.patternId || issue.sampleId});
-          return {changed, progressSnapshots: computeProgressSnapshots(state).slice(0, 8)};
+          // 技能源同步失败只应挡住【派发】，不该把整个周期掐断。原先这里直接 return，位置在
+          // consumeQueuedHumanDirectives / expireStaleHumanConfirmations / sweepCommandBus 之前 ——
+          // 于是一件无关的外部故障会让【人下达的指令再也不被消费】、确认单超时不再升级、命令总线不再清扫，
+          // 而同一次失败还会生成新的阻塞候选项。人的杠杆因此随着一次技能同步失败一起停摆。
+          skillSyncBlocked = true;
+          break;
         }
       }
     }
   }
+  // 自愈与人工通道无论如何都要跑：它们正是"出问题之后人还能不能介入"的依赖。
   consumeQueuedHumanDirectives(state, request);
   expireStaleHumanConfirmations(state);
   expireStaleQueuedDispatches(state);
   maintainWorkerLanes(state);
   sweepCommandBus(state);
+  if (skillSyncBlocked) return {changed, progressSnapshots: computeProgressSnapshots(state).slice(0, 8)};
   const taskGroups = (state.taskGroups || []).filter((taskGroup) => !request.taskGroupId || taskGroup.id === request.taskGroupId);
   // A9: resample the external condition source once per cycle from the request/state — never from a
   // local clock — so window-gated cells are admitted/deferred against a verifiable current baseline.
@@ -2718,6 +2726,17 @@ export function terminateCellRuntime(state, taskGroupId, workItemId, reason) {
       target.updatedAt = at;
       delete target.leaseRef;
     }
+  }
+  // 目标此前【只能经活跃租约】被级联：从未绑定过租约的（停在 selected）、以及租约已被
+  // releaseLease 单独释放过的目标，谁也够不到它 —— 于是它永远挡着 all_changes_integrated，
+  // 而人没有任何杠杆。归属关系本来就是 (taskGroupId, workItemId)，按归属直接收口。
+  for (const target of state.repositoryOutputs || []) {
+    if (target.taskGroupId !== taskGroupId || target.workItemId !== workItemId) continue;
+    if (["pushed", "committed", "rejected", "superseded"].includes(target.status)) continue;
+    target.status = "superseded";
+    target.supersededReason = reason;
+    target.updatedAt = at;
+    delete target.leaseRef;
   }
   for (const guard of state.roleDriftGuards || []) {
     if (guard.sessionId && sessionIds.has(guard.sessionId) && !["closed", "corrected"].includes(guard.status)) {
@@ -4603,7 +4622,13 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
         // reopen: return to ready for another genuine attempt (reset the rework count by superseding
         // the prior changes_requested review bundles); abandon: supersede the cell so it stops
         // blocking close. Without this a needs_decision cell would wedge the close barrier forever.
-        const targets = (taskGroup.workItems || []).filter((item) => item.status === "needs_decision" && (!directive.workItemId || item.id === directive.workItemId));
+        // reopen 仍然只对 needs_decision 生效（把已验收的工作项拉回 ready 会绕过人工定稿）；
+        // 但 abandon 是"我决定不做了"，必须对任何还没了结的工作项都可用 —— 原先只能放弃
+        // needs_decision 的格子，于是一个卡在别的状态上的工作项，人连放弃它的手段都没有。
+        const abandonable = (item) => !["verified", "closed", "superseded", "aborted", "cancelled"].includes(item.status);
+        const targets = (taskGroup.workItems || []).filter((item) =>
+          (directive.resolution === "abandon" ? abandonable(item) : item.status === "needs_decision")
+          && (!directive.workItemId || item.id === directive.workItemId));
         for (const workItem of targets) {
           if (directive.resolution === "abandon") {
             workItem.status = "superseded";
