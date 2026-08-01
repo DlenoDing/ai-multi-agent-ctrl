@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume } from "../apps/mcp-server/server.mjs";
+import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
   maintainWorkerLanes,
@@ -37,6 +37,7 @@ import {
   reviewBundleRegister,
   computeCompletionReadiness,
   createExecutionTopology,
+  claimLease,
   permissionRequestSubmit,
   approvalRequestCreate,
   advanceExecutionTopology,
@@ -690,6 +691,44 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     if (!swapRejected) output.push("人工闸门: 方案在人点确认前被改掉，定稿却仍然生效（批准被算到没看过的内容上）");
     if (swapTopo.humanFinalization) output.push("人工闸门: 被掉包的方案拿到了定稿锁");
+
+    // 第五轮：守卫必须落在【真正被用来选中授权记录的那个查找条件】上，而不是某个字段。
+    // 写入边界是按 (taskGroupId, workItemId, 非 superseded) 找的 —— 只守 targetId 唯一性，
+    // AI 换个新 id 就能再造一份宽 allowlist 顶替掉它（fail-open，第五轮复现）。
+    const boundaryState = structuredClone(seedState);
+    ensureRuntimeCollections(boundaryState, {root});
+    const activeTargets = () => (boundaryState.repositoryOutputs || []).filter((item) =>
+      item.taskGroupId === "tg_runtime_management" && item.workItemId === "work_management_ui" && item.status !== "superseded");
+    boundaryState.repositoryOutputs = [{targetId: "rot_legit", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui",
+      status: "selected", pathAllowlist: ["docs/**"], schemaVersion: "repository-output-target/v1"}];
+    const second = repositoryOutputTargetSelect(boundaryState, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui",
+      targetId: "rot_wide", pathAllowlist: ["apps/**", "scripts/**"], artifactManifestPath: "apps/m.json"});
+    if (second?.ok === false) output.push(`人工闸门: 写入边界测试没打到守卫就提前返回了（${second.error}）`);
+    if (activeTargets().length !== 1) output.push("人工闸门: 同一工作项出现了多份生效的写入边界（AI 可用新 id 顶替人批准的窄边界）");
+    if ((second?.repositoryOutputTarget?.pathAllowlist || []).includes("apps/**")) {
+      output.push("人工闸门: 第二次选择产出目标竟然放宽了写入边界（写入边界可被 AI 自行改写）");
+    }
+    // 租约 id 冒名会让受害会话永远提交不了检查点（fail-closed 但无杠杆的死锁）。
+    let leaseDupRejected = false;
+    boundaryState.leases = [{leaseId: "lease_x", status: "active", holderRef: "session:victim", resourceRef: "RepositoryOutputTarget:rot_legit"}];
+    try { claimLease(boundaryState, {leaseId: "lease_x", holderRef: "session:attacker", resourceRef: "RepositoryOutputTarget:rot_evil"}); }
+    catch (error) { leaseDupRejected = error.message === "lease_id_conflict"; }
+    if (!leaseDupRejected) output.push("人工闸门: 允许重复 leaseId（冒名租约会把受害工作项永久卡死）");
+    // 去重键必须按决策类别隔离：运行时单不得顶掉核心决策单。
+    const squatState = structuredClone(seedState);
+    ensureRuntimeCollections(squatState, {root});
+    squatState.agentDispatches = [{dispatchId: "d_sq", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", sessionId: "s_sq", status: "running", assignedNodeId: "n_sq", mcpGrants: []}];
+    squatState.agentRuntimeNodes = [{nodeId: "n_sq", projectIds: ["prj_control_plane"], activeDispatchIds: ["d_sq"], status: "active"}];
+    // 抢占者用与控制面完全相同的 requestKey —— 没有类别隔离时两者会撞键，红色核心决策卡片被去重掉。
+    const squatter = createHumanConfirmationRequest(squatState, {nodeId: "n_sq", dispatchId: "d_sq", workItemId: "work_management_ui",
+      requestKey: "task_split:work_management_ui",
+      summary: "是否继续执行当前步骤？", options: [{optionId: "go", label: "继续"}], decisionType: "runtime_execution"});
+    const majorCard = createHumanConfirmationRequest(squatState, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui",
+      decisionType: "task_split", requestKey: "task_split:work_management_ui", summary: "任务拆分方案确认",
+      options: [{optionId: "accept_split", label: "同意拆分"}, {optionId: "reject", label: "不拆分"}]});
+    if (majorCard.requestId === squatter.requestId || majorCard.decisionClass !== "major") {
+      output.push("人工闸门: 运行时确认单顶掉了核心决策单（AI 抢占去重键即可让红色定稿卡片不出现）");
+    }
 
     // block -> unblock 必须走得通（block 存的是带前缀的键，拿裸 ref 精确比对会永远匹配不上 =>
     // blocked 状态没有杠杆 = 死锁），同时"分支越界写入"的证据不得被 unblock 抹掉。

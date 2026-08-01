@@ -4044,7 +4044,12 @@ export function createHumanConfirmationRequest(state, input = {}) {
     }))
     .filter((option) => option.optionId !== "none");
   if (!aiOptions.length) throw Object.assign(new Error("human_confirmation_options_required"), {status: 400});
-  const dedupeKey = String(input.requestKey || "").trim() || digestOf({dispatchId: dispatch?.dispatchId || null, workItemId: input.workItemId || dispatch?.workItemId || null, summary});
+  // 去重键按【决策类别】加前缀隔离：运行时确认单与核心决策单永远不可能撞键。原先 agent 通道会
+  // 把调用方的 requestKey 原样透传，而控制面自己的键是可猜的（plan_topology:<id> / task_split:<id>），
+  // AI 抢先用同一个键提一张 operational 单，控制面那张红色核心决策卡片就直接被去重掉、根本不出现，
+  // 人看到的是 AI 自己写的运行时文案（第五轮复现）。现在通道不再透传 requestKey，键也带类别前缀。
+  const dedupeKey = `${decisionType}:` + (String(input.requestKey || "").trim()
+    || digestOf({dispatchId: dispatch?.dispatchId || null, workItemId: input.workItemId || dispatch?.workItemId || null, summary}));
   // 去重必须限定在【同一个任务组】内。原先是全局按 dedupeKey 匹配并把命中的单子原样返回给调用方，
   // 而 requestKey 由调用方提供且可预测（task_split:<workItemId> / plan_topology:<topologyId>）——
   // 猜中就能拿到别的租户的确认单，连同人写的方案原文和协商记录一起泄露（已复现）。
@@ -5670,6 +5675,9 @@ export function classifyDerivedTask(state, args) {
 }
 
 export function claimLease(state, args) {
+  // 租约决定谁有写权限：冒名的同 id 租约会让受害会话的 target.leaseRef 永远匹配不上，
+  // 该工作项再也提交不了检查点、到不了验收，且没有任何杠杆可清（第五轮复现）。
+  assertUniqueRecordId(state.leases, "leaseId", args.leaseId, "lease_id_conflict");
   const targetRef = args.repositoryOutputTargetRef || args.targetId;
   const target = state.repositoryOutputs.find((item) => item.targetId === targetRef);
   if (!target) return {ok: false, error: "repository_output_target_not_found", targetRef};

@@ -3908,7 +3908,6 @@ async function handleApi(req, res) {
         question: body.question,
         evidenceRefs: body.evidenceRefs,
         options: body.options,
-        requestKey: body.requestKey,
         blocking: body.blocking,
         decisionType: "runtime_execution"
       });

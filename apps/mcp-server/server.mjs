@@ -1306,7 +1306,6 @@ async function dispatchTool(state, name, args, context = {}) {
         question: args.question,
         evidenceRefs: args.evidenceRefs,
         options: args.options,
-        requestKey: args.requestKey,
         blocking: args.blocking,
         decisionType: "runtime_execution"
       })};
@@ -2371,6 +2370,9 @@ function accountSuspend(state, args) {
 }
 
 function grantCreate(state, args) {
+  // 目前 identity-mcp.* 对机器主体是禁用的，所以不可达；但一旦放开，冒名的同 id 授权会让"撤销"
+  // 打在冒名那份上而真授权存活。守住它比依赖"暂时不可达"可靠。
+  assertUniqueRecordId(state.accessGrants, "grantId", args.grantId, "access_grant_id_conflict");
   const at = new Date().toISOString();
   const subjectRef = args.subjectRef || {subjectType: "account", subjectId: args.subjectId || args.accountId || "acct_agent_runtime"};
   const resource = args.resource || {resourceType: args.resourceType || "task_group", resourceId: args.resourceId || args.taskGroupId || "tg_runtime_management"};
@@ -2589,7 +2591,7 @@ function deltaPayloadCompact(_state, args) {
   };
 }
 
-function repositoryOutputTargetSelect(state, args) {
+export function repositoryOutputTargetSelect(state, args) {
   const taskGroup = findTaskGroup(state, args.taskGroupId);
   const workItem = findWorkItem(state, taskGroup?.id, args.workItemId);
   const at = new Date().toISOString();
@@ -2604,10 +2606,18 @@ function repositoryOutputTargetSelect(state, args) {
   if (args.repositoryUrl && !isSafeGitRemoteUrl(args.repositoryUrl)) {
     return {ok: false, error: "repository_output_target_unsafe_repository_url"};
   }
-  // 冒名的产出目标会顶替掉定义【写入边界】的那一份：AI 用同一个 targetId 造一份宽 allowlist 的，
-  // 独立互审就会拿它去判 changed_paths_outside_allowlist，于是改了 apps/** 的提交也判"通过"，
-  // 人看到的验收卡片却写着"只改文档"。（第四轮复核复现）
+  // 这个对象【就是写入边界】。要守住它，必须守住真正被用来选中它的那个查找条件 ——
+  // control-plane-core 是按 (taskGroupId, workItemId, 非 superseded) 复合条件找的，不是按 targetId。
+  // 只守 targetId 唯一性没有用：AI 换个新 id 就能再造一份宽 allowlist 的，unshift 让它排在最前，
+  // 于是独立互审拿它去判 changed_paths_outside_allowlist，改了 apps/** 的提交也判"通过"，
+  // 而人看到的验收卡片仍写着"只改文档"。（第四、五轮各复现一次；第四轮我守错了字段。）
   assertUniqueRecordId(state.repositoryOutputs, "targetId", args.targetId, "repository_output_target_id_conflict");
+  const activeExisting = (state.repositoryOutputs || []).find((item) =>
+    item.taskGroupId === (args.taskGroupId || taskGroup?.id || "tg_runtime_management") &&
+    item.workItemId === (args.workItemId || workItem?.id || "work_unknown") &&
+    item.status !== "superseded");
+  // 一个工作项同时只能有一份生效的写入边界：已有就原样返回（幂等），要换边界必须先显式 supersede。
+  if (activeExisting) return {repositoryOutputTarget: activeExisting, deduplicated: true};
   const target = {
     schemaVersion: "repository-output-target/v1",
     targetId: args.targetId || createId("rot"),
@@ -2628,7 +2638,8 @@ function repositoryOutputTargetSelect(state, args) {
     createdAt: at,
     updatedAt: at
   };
-  state.repositoryOutputs.unshift(target);
+  // push，与 core/REST 两个写入方一致：避免"后插入者排在 find 最前"这一类顶替。
+  state.repositoryOutputs.push(target);
   return {repositoryOutputTarget: target};
 }
 
