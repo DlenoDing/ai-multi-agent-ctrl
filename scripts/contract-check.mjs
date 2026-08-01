@@ -1111,6 +1111,30 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
     }
 
+    // 契约在入队时冻结规则摘要，而规则正文在 agent 领取时现算 —— 中间改了规则，agent 按新规则跑，
+    // 而契约/指令包/检查点记的都还是旧摘要。这个摘要原先没有任何消费者，所以这件事完全不可见。
+    const rdDriftState = structuredClone(seedState);
+    ensureRuntimeCollections(rdDriftState, {root});
+    const rdDrTg = rdDriftState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const rdDrNode = {nodeId: "node_drift", organizationId: "org_default", status: "online", admission: "admitted", activeDispatchIds: []};
+    rdDriftState.agentRuntimeNodes = [rdDrNode];
+    const rdDrDispatch = {dispatchId: "dsp_drift", sessionId: "ws_drift", runId: "run_drift",
+      taskGroupId: rdDrTg.id, projectId: rdDrTg.projectId, workItemId: rdDrTg.workItems[0].id,
+      status: "running", assignedNodeId: rdDrNode.nodeId};
+    rdDriftState.agentDispatches = [rdDrDispatch];
+    const rdDrContract = {sessionId: "ws_drift", runId: "run_drift", projectId: rdDrTg.projectId,
+      taskGroupId: rdDrTg.id, workId: rdDrTg.workItems[0].id, roleId: "orchestrator", roleSkill: {}, actionBasis: {},
+      effectiveRulesDigest: "sha256:" + "0".repeat(64)};   // 冻结了一个与当前规则不同的摘要
+    rdDriftState.agentTaskContracts = [rdDrContract];
+    try { buildExecutionContentBundle(rdDriftState, rdDrNode, "ws_drift", {}); }
+    catch (error) { output.push(`规则漂移: 无法构建内容包（${error.message}）—— 这条断言无从验证`); }
+    if (rdDrContract.effectiveRulesDigest === "sha256:" + "0".repeat(64)) {
+      output.push("规则漂移: 下发的是当前规则，契约里记的却仍是旧摘要（证据链与实际执行不符）");
+    }
+    if (!rdDrDispatch.rulesChangedAfterContract) {
+      output.push("规则漂移: 规则在派发执行期间被改过，却没有留下任何痕迹（人无从知道这份成果不是按原规则做的）");
+    }
+
     // 内容包承载着人写下的三类规则、人已经拍板的定稿决策、以及人工补充要求。
     // 它一直被下载到磁盘，却从未出现在交给模型的提示里 —— 也就是说整套规则体系与人工定稿闸门，
     // 在执行这一端是装饰性的。这里验证：有已定稿决策时，它确实进了内容包。

@@ -1257,6 +1257,18 @@ export function decideSessionPlacement(state, request = {}) {
   return decision;
 }
 
+// 契约在【入队时】冻结这个摘要，而规则【正文】是在 agent 领取派发时现算的（buildExecutionContentBundle
+// 会重新调 effectiveTaskGroupConfig）。两者之间没有任何绑定，中间人改了规则，agent 就按新规则执行，
+// 而它随包收到的摘要、事后提交的检查点记的都还是旧值 —— 证据链在说谎，且这个摘要全仓原先没有
+// 任何消费者，所以谁也不会发现。
+// 抽成共享函数：两侧各写一遍同样的算法，迟早漂移。
+export function computeEffectiveRulesDigest(config) {
+  return digestOf([
+    ...(config?.activeSystemRules || []).map((rule) => [rule.ruleId, rule.contentDigest]),
+    ...(config?.activeBusinessRules || []).map((rule) => [rule.ruleId, rule.contentDigest])
+  ]);
+}
+
 export function buildTaskContract(state, request = {}) {
   ensureRuntimeCollections(state);
   const taskGroup = state.taskGroups.find((item) => item.id === request.taskGroupId) || state.taskGroups[0];
@@ -1304,10 +1316,7 @@ export function buildTaskContract(state, request = {}) {
   // content and version. Previously rulesetDigest was a static constant, so any consumer treating it as
   // the authoritative rule version would miss operator rule edits (which only changed the content bundle).
   const effectiveRuleConfig = effectiveTaskGroupConfig(state, taskGroup);
-  const effectiveRulesDigest = digestOf([
-    ...(effectiveRuleConfig.activeSystemRules || []).map((rule) => [rule.ruleId, rule.contentDigest]),
-    ...(effectiveRuleConfig.activeBusinessRules || []).map((rule) => [rule.ruleId, rule.contentDigest])
-  ]);
+  const effectiveRulesDigest = computeEffectiveRulesDigest(effectiveRuleConfig);
   const contract = {
     contractVersion: "agent-task-contract/v1",
     projectId: project?.id || "prj_control_plane",
@@ -5289,6 +5298,11 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
         const notes = [];
         if (reversed.length) notes.push(`\n⚠ 以下质量门曾判失败、后由执行方重报为通过（已附新证据）：${reversed.map((gate) => gate.gateType).join("、")}`);
         if (waived.length) notes.push(`\n⚠ 以下质量门为人工豁免：${waived.map((gate) => `${gate.gateType}（${gate.waivedBy || "?"}）`).join("、")}`);
+        // 规则在这个工作项执行期间被改过：人正在验收的成果，是在一套【与立项时不同】的规则下做出来的。
+        // 不说这一句，人会默认"它是按我当初定的规则做的"。
+        const ruleChanged = (state.agentDispatches || []).some((item) => item.taskGroupId === taskGroup.id
+          && item.workItemId === workItem.id && item.rulesChangedAfterContract === true);
+        if (ruleChanged) notes.push(`\n⚠ 本工作项的执行期间，生效规则发生过变更 —— 这份成果并不是完全在立项时那套规则下完成的，验收前请确认这一点是可接受的。`);
         if (attested.length) notes.push(`\n⚠ 本工作项的 ${attested.length} 项证据制品，其内容摘要由执行方自行计算并声明，证据内容不上传控制面，因此控制面【未能独立核验】摘要与内容是否相符。可独立核验的是检查点里的提交与推送记录。`);
         return notes.join("");
       })(),

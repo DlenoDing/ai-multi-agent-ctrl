@@ -1,7 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { normalize, resolve, sep } from "node:path";
-import { cancelPendingConfirmationsForDispatch, createId, digestOf, effectiveTaskGroupConfig, ensureRuntimeCollections, expireStaleQueuedDispatches, languagePolicyDirective, normalizeTaskGroupLanguagePolicy, organizationQuotaCheck } from "./control-plane-core.mjs";
+import { cancelPendingConfirmationsForDispatch, createId, digestOf, effectiveTaskGroupConfig, ensureRuntimeCollections, expireStaleQueuedDispatches, languagePolicyDirective, normalizeTaskGroupLanguagePolicy, organizationQuotaCheck,
+  computeEffectiveRulesDigest
+} from "./control-plane-core.mjs";
 
 const DEFAULT_AGENT_MCP_TOOLS = [
   "agent-control-mcp.node_probe",
@@ -1125,6 +1127,18 @@ export function buildExecutionContentBundle(state, node, sessionId, options = {}
   if (!contract || !taskGroup) throw gatewayError("content_bundle_context_missing", 409);
   const project = state.projects.find((item) => item.id === dispatch.projectId);
   const config = effectiveTaskGroupConfig(state, taskGroup);
+  // 契约冻结的规则摘要 vs 此刻真正要下发的规则。不一致意味着规则在这个派发排队/执行期间被改过 ——
+  // agent 会拿到新规则，而契约、指令包、事后的检查点记的都是旧摘要。原先这个摘要没有任何消费者，
+  // 所以这件事从头到尾不可见。这里把它变成一条有记录的事实：更新契约摘要（让证据链说实话），
+  // 并在派发上留痕 + 发事件，人能看到"这个派发中途换过规则"。
+  const currentRulesDigest = computeEffectiveRulesDigest(config);
+  if (contract.effectiveRulesDigest && contract.effectiveRulesDigest !== currentRulesDigest) {
+    const previousDigest = contract.effectiveRulesDigest;
+    contract.effectiveRulesDigest = currentRulesDigest;
+    contract.rulesChangedAfterContract = {previousDigest, currentDigest: currentRulesDigest, at: new Date().toISOString()};
+    dispatch.rulesChangedAfterContract = true;
+    appendGatewayEvent(state, "dispatch_rules_changed_after_contract", dispatch.dispatchId, {previousDigest, currentDigest: currentRulesDigest});
+  }
   let skillWorkset = options.skillWorkset || null;
   if (!skillWorkset) {
     try {
