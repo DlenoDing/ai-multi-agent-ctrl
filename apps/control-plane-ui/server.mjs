@@ -3358,7 +3358,7 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     let result;
     try {
-      result = advanceExecutionTopology(state, {...body, topologyId: topologyAdvanceMatch[1]});
+      result = advanceExecutionTopology(state, {...body, topologyId: topologyAdvanceMatch[1], actor: guard.actor});
     } catch (error) {
       return json(res, error.status || 409, {error: error.message});
     }

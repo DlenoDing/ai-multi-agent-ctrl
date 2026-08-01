@@ -5443,9 +5443,38 @@ export function advanceExecutionTopology(state, args) {
     expect("eligibility_checked");
     const reason = String(args.downgradeReason || args.reason || "");
     if (!reason) throw topologyError("execution_topology_downgrade_requires_reason", 400);
-    // 降级会改变已定稿方案的实质内容（mode/串并行）。人定过稿就不允许 AI 自行改：走分歧拦截，
-    // 由人重新确认。assertHumanFinalization 在内容摘要不一致时抛 human_finalized_decision_diverged。
-    assertHumanFinalization(topology, {mode: "downgraded_serial", runnerKind: topology.runnerKind, isolation: topology.isolation, branches: branches.map((branch) => branch.branchId)});
+    // 降级会改变已定稿方案的实质内容（并行→串行）。规则是"AI 不得自行改，有分歧回到人工确认"：
+    //   · 真人发起的降级 = 人自己改自己的定稿，直接放行并更新定稿记录；
+    //   · AI/机器发起的降级 = 拦下，并【挂一张新的人工确认单】说明为什么要降级，交回人定夺。
+    // 注意不能只拦不给出路：曾经这里只抛 human_finalized_decision_diverged，导致运行载体不可用时
+    // 已定稿方案既不能降级、又因未 running 而不能取消，永久卡在 eligibility_checked 阻塞关闭门。
+    if (topology.humanFinalization?.outcome === "confirmed") {
+      if (isHumanConfirmationActor(state, args.actor)) {
+        topology.humanFinalization = {
+          ...topology.humanFinalization,
+          finalizedBy: args.actor,
+          finalizedAt: at,
+          contentDigest: decisionContentDigest({decisionType: "plan_topology", workItemId: topology.workItemId, taskGroupId: topology.taskGroupId, content: {mode: "downgraded_serial", reason}})
+        };
+      } else {
+        createHumanConfirmationRequest(state, {
+          taskGroupId: topology.taskGroupId,
+          workItemId: topology.workItemId,
+          decisionType: "plan_topology",
+          subjectRef: `ExecutionTopology:${topology.topologyId}`,
+          requestKey: `plan_topology_downgrade:${topology.topologyId}`,
+          summary: `已定稿方案申请降级为串行：${topology.workItemId}`,
+          detail: `原因：${reason}。该方案已由人定稿，AI 不能自行更改；是否同意降级为串行执行，请人工决定。`,
+          peerReview: {verdict: "downgrade_requested", findings: [reason]},
+          content: {mode: "downgraded_serial", reason},
+          options: [
+            {optionId: "accept_downgrade", label: "同意降级为串行", description: "认可降级理由，改为串行执行。", recommended: true},
+            {optionId: "reject", label: "不同意降级", description: "维持原定稿方案。"}
+          ]
+        });
+        throw topologyError("human_finalized_decision_diverged", 409);
+      }
+    }
     topology.status = "downgraded";
     topology.mode = "downgraded_serial";
     topology.downgradeReason = reason;

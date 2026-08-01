@@ -676,10 +676,20 @@ function verifyHumanAndOrganizationContracts(output) {
     const raceItem = raceTg.workItems.find((i) => i.id === "wi_race");
     if (raceItem.humanFinalization?.decisionType === "plan_topology") output.push("人工闸门: 方案定稿锁被写到工作项上，会让验收永久无法进行（死锁）");
     // 已定稿的方案不得被 AI 自行降级（分歧必须被拦下）。
+    const raceMachine = (raceState.accounts.find((a) => a.accountType === "service_account") || {}).accountId;
     let downgradeBlocked = false;
-    try { advanceExecutionTopology(raceState, {topologyId: safePlan.topologyId, action: "downgrade", downgradeReason: "ai_decided"}); }
+    try { advanceExecutionTopology(raceState, {topologyId: safePlan.topologyId, action: "downgrade", downgradeReason: "ai_decided", actor: raceMachine}); }
     catch (error) { downgradeBlocked = error.message === "human_finalized_decision_diverged"; }
     if (!downgradeBlocked) output.push("人工闸门: 已定稿方案被 AI 自行降级（定稿后 AI 仍可改变方案）");
+    // 但不能只拦不给出路：AI 被拦下时必须挂出降级申请单，交回人定夺（"有分歧则回到人工确认"）。
+    if (!(raceState.humanConfirmationRequests || []).some((item) => String(item.question?.summary || "").includes("申请降级") && item.status === "pending")) {
+      output.push("人工闸门: AI 的降级被拦下却没有挂出人工确认单（分歧未回到人工，方案将永久卡住）");
+    }
+    // 真人自己改自己的定稿必须放行，否则运行载体不可用时方案既不能降级也不能取消 = 死锁。
+    let humanDowngradeOk = true;
+    try { advanceExecutionTopology(raceState, {topologyId: safePlan.topologyId, action: "downgrade", downgradeReason: "runner_unavailable", actor: raceHuman}); }
+    catch { humanDowngradeOk = false; }
+    if (!humanDowngradeOk || safePlan.status !== "downgraded") output.push("人工闸门: 真人无法降级自己定稿的方案（已定稿方案陷入无杠杆死锁）");
     // 轮次令牌：AI 修订候选后，人手里的旧轮次必须失效。
     const roundStaleState = structuredClone(gateState);
     const roundStaleReq = roundStaleState.humanConfirmationRequests.find((r) => r.decisionType === "work_item_verification");

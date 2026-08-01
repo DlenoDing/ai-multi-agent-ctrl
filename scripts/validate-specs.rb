@@ -767,7 +767,8 @@ errors << "互审跳过必须同时匹配 decisionType（避免方案定稿掐�
 errors << "AI 修订候选必须推进协商轮次并支持轮次令牌校验" unless core_source.include?("human_confirmation_round_stale") && core_source.include?("request.round += 1")
 errors << "轮次令牌必须有防回归测试" unless contract_check_source.include?("人工闸门: 人拿着过期轮次仍可定稿")
 # 15. 定稿锁不得是空转门：assertHumanFinalization 必须有真实生产调用点。
-errors << "assertHumanFinalization 必须被生产代码调用（不能只有测试引用）" unless core_source.include?("assertHumanFinalization(topology,")
+errors << "定稿分歧必须回到人工确认而不是死堵" unless core_source.include?("requestKey: `plan_topology_downgrade:${topology.topologyId}`") && core_source.include?("if (isHumanConfirmationActor(state, args.actor))")
+errors << "已定稿方案的降级出路必须有行为测试覆盖" unless contract_check_source.include?("人工闸门: 真人无法降级自己定稿的方案") && contract_check_source.include?("人工闸门: AI 的降级被拦下却没有挂出人工确认单")
 # 16. 定稿主体必须是【生效中】的真人账号。
 errors << "定稿主体必须是生效中的账号" unless core_source.include?("if (account.status !== \"active\") return false")
 # 17. agent 必须能读到核心决策单才能做"再分析"，否则多轮协商无人应答（死锁）。

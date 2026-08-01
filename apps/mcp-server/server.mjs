@@ -1250,7 +1250,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "scheduler-mcp.execution_topology_plan":
       return createExecutionTopology(state, args);
     case "scheduler-mcp.execution_topology_advance":
-      return advanceExecutionTopology(state, args);
+      return advanceExecutionTopology(state, {...args, actor: context?.principal?.id});
     case "scheduler-mcp.derived_task_classify":
       return classifyDerivedTask(state, args);
     case "resource-mcp.lease_claim":
