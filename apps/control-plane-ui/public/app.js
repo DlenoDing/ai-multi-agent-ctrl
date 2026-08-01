@@ -2058,14 +2058,19 @@ function renderReview() {
 
   const pendingHtml = pending.length ? pending.map((request) => `
     <div class="record">
-      <div class="record-title"><strong>${esc(request.question?.summary || "-")}</strong>${badge(request.status)}${request.blocking ? customBadge("阻塞执行", "orange") : ""}</div>
+      <div class="record-title"><strong>${esc(request.question?.summary || "-")}</strong>${badge(request.status)}${request.decisionClass === "major" ? customBadge("核心决策 · 必须人工定稿", "red") : ""}${request.blocking ? customBadge("阻塞执行", "orange") : ""}</div>
       ${request.question?.detail ? `<div class="record-meta"><span>${esc(request.question.detail)}</span></div>` : ""}
       <div class="record-meta">
         <span>任务组：${esc(taskGroupNameOf(request.taskGroupId))}</span>
+        ${request.decisionType ? `<span>决策类型：${esc(t(request.decisionType) || request.decisionType)}</span>` : ""}
         ${request.workItemId ? `<span>工作项：<span class="mono">${esc(request.workItemId)}</span></span>` : ""}
         <span>提交时间：${fmtTime(request.createdAt)}</span>
         <span>过期时间：${fmtTime(request.expiresAt)}</span>
       </div>
+      ${request.peerReview ? `<div class="notice" style="margin-top:8px;">
+        <strong>AI 互审结论（仅供参考，不构成确认）：</strong>${esc(t(request.peerReview.verdict) || request.peerReview.verdict)}
+        ${(request.peerReview.findings || []).length ? `<br>发现事项：${esc((request.peerReview.findings || []).map((f) => t(f) || f).join("、"))}` : ""}
+      </div>` : ""}
       ${canReview ? `<form class="form-grid" data-form="hcr-decide" data-request="${esc(request.requestId)}" style="margin-top:10px;">
         <div class="option-list">
           ${(request.options || []).map((option, index) => `
@@ -2078,9 +2083,18 @@ function renderReview() {
             </label>
           `).join("")}
         </div>
-        <div class="form-row"><label>确认内容（选择“不选择（自定义输入）”时必填）</label><textarea name="inputText" placeholder="补充说明或自定义决定"></textarea></div>
-        <button class="primary-button" type="submit">提交确认</button>
+        <div class="form-row"><label>你的意见 / 自己的方案（选择“不选择（自定义输入）”时必填）</label><textarea name="inputText" placeholder="可以直接提出你自己的方案；提交修改意见后由 AI 再分析是否可行、有无更优方式，你再决定是否定稿"></textarea></div>
+        <div class="button-row">
+          <button class="secondary-button" type="submit" name="action" value="revise">提交修改意见（交 AI 再分析）</button>
+          <button class="primary-button" type="submit" name="action" value="finalize">选择定稿（此后 AI 不再更改）</button>
+          <button class="danger-button" type="submit" name="action" value="reject">打回返工</button>
+        </div>
+        <div class="notice" style="margin-top:6px;">定稿前可与 AI 多轮协商：你提方案 → AI 再分析（可提出不合理之处或更优方式）→ 你再决定。只有点“选择定稿”才锁定。</div>
       </form>` : `<div class="notice warn-notice" style="margin-top:10px;">当前账号无“人工审核”权限，仅可查看待确认问题。</div>`}
+      ${(request.deliberation || []).length ? `<div class="record-meta" style="margin-top:8px;display:block;">
+        <strong>协商记录（第 ${esc(String(request.round || 1))} 轮${request.awaitingAiAnalysis ? "，等待 AI 再分析" : ""}）</strong>
+        ${(request.deliberation || []).map((turn) => `<div>· ${turn.actorKind === "ai" ? "AI" : esc(accountName(turn.actor))}｜${esc(t(turn.action) || turn.action)}${turn.assessment ? `（${esc(t(turn.assessment) || turn.assessment)}）` : ""}：${esc(turn.summary)}</div>`).join("")}
+      </div>` : ""}
     </div>
   `).join("") : `<div class="notice">当前项目没有待确认的问题。</div>`;
 
@@ -2685,7 +2699,10 @@ document.addEventListener("submit", async (event) => {
       const selectedOptionId = data.selectedOptionId;
       if (!selectedOptionId) throw new Error("请先选择一个选项");
       if (selectedOptionId === "none" && !String(data.inputText || "").trim()) throw new Error("选择“不选择（自定义输入）”时必须填写确认内容");
-      await api(`/api/human-confirmations/${encodeURIComponent(form.dataset.request)}/decide`, {method: "POST", body: JSON.stringify({selectedOptionId, inputText: data.inputText || ""})});
+      // action 来自被点击的按钮：revise（交 AI 再分析，不锁定）/ finalize（定稿并上锁）/ reject（打回）。
+      const action = ["revise", "finalize", "reject"].includes(data.action) ? data.action : "finalize";
+      if (action === "revise" && !String(data.inputText || "").trim()) throw new Error("提交修改意见时请填写你的方案或意见");
+      await api(`/api/human-confirmations/${encodeURIComponent(form.dataset.request)}/decide`, {method: "POST", body: JSON.stringify({action, selectedOptionId, inputText: data.inputText || ""})});
       formTouched = false;
       await loadPage();
       return;

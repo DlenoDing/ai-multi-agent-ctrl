@@ -3918,13 +3918,59 @@ export function cancelPendingConfirmationsForDispatch(state, dispatchId, reason)
   }
 }
 
+// ---------------------------------------------------------------------------------------------------
+// 人工定稿闸门 (human finalization gate)
+//
+// 系统不再有任何"AI 自动确认"路径。AI 可以提案、可以互审（peer review），但互审结论只是【建议】，
+// 永远不能自己把一个核心决策推到终态。核心决策一律由**真人账号**确认才生效；人确认过的定稿方案，
+// AI 不得默认自动改变，实质内容有分歧时必须回到人工确认。
+// ---------------------------------------------------------------------------------------------------
+
+// 核心/重大决策类别：这些一律强制阻塞 + 必须真人确认，没有任何配置可以关掉。
+export const MAJOR_DECISION_TYPES = [
+  "work_item_verification",   // 工作项验收（原先互审通过即自动 verified）
+  "task_group_close",         // 任务组关闭定稿
+  "plan_topology",            // 执行方案/拓扑选择
+  "task_split",               // 任务拆分
+  "rule_change"               // 规则/配置变更
+];
+
+// 只有真人账号可以定稿。service_account / agent_identity 一律不算"人"。
+const HUMAN_ACCOUNT_TYPES = ["system_admin", "org_admin", "user_account"];
+
+export function isHumanConfirmationActor(state, actorId) {
+  if (!actorId) return false;
+  const account = (state.accounts || []).find((item) => accountIdentity(item) === actorId);
+  if (!account) return false;
+  return HUMAN_ACCOUNT_TYPES.includes(account.accountType);
+}
+
+// Mirrors accountIdOf in server.mjs — the actor string carried on a guarded write is the account id.
+function accountIdentity(account) {
+  return account?.accountId || account?.id || null;
+}
+
+// 定稿内容摘要：只覆盖【实质内容】。AI 之后要改这些字段就是"分歧"，必须重新回到人工确认。
+export function decisionContentDigest(subject) {
+  return digestOf({
+    decisionType: subject.decisionType || null,
+    workItemId: subject.workItemId || null,
+    taskGroupId: subject.taskGroupId || null,
+    content: subject.content ?? null
+  });
+}
+
 export function createHumanConfirmationRequest(state, input = {}) {
   ensureRuntimeCollections(state);
-  const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === input.dispatchId);
-  if (!dispatch) throw Object.assign(new Error("dispatch_not_found"), {status: 404});
-  if (input.nodeId && dispatch.assignedNodeId !== input.nodeId) throw Object.assign(new Error("confirmation_dispatch_node_mismatch"), {status: 403});
-  if (input.taskGroupId && input.taskGroupId !== dispatch.taskGroupId) throw Object.assign(new Error("confirmation_task_group_mismatch"), {status: 409});
-  const taskGroup = (state.taskGroups || []).find((item) => item.id === dispatch.taskGroupId);
+  const decisionType = String(input.decisionType || "runtime_execution");
+  const isMajor = MAJOR_DECISION_TYPES.includes(decisionType);
+  // 核心决策（验收/关闭/方案/拆分/规则）可以没有在跑的 dispatch —— 它们是"方案定稿"而不是"运行时打断"。
+  // 非核心的运行时确认仍必须绑定一个真实 dispatch（保持原有的节点归属校验）。
+  const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === input.dispatchId) || null;
+  if (!dispatch && !isMajor) throw Object.assign(new Error("dispatch_not_found"), {status: 404});
+  if (dispatch && input.nodeId && dispatch.assignedNodeId !== input.nodeId) throw Object.assign(new Error("confirmation_dispatch_node_mismatch"), {status: 403});
+  if (dispatch && input.taskGroupId && input.taskGroupId !== dispatch.taskGroupId) throw Object.assign(new Error("confirmation_task_group_mismatch"), {status: 409});
+  const taskGroup = (state.taskGroups || []).find((item) => item.id === (dispatch?.taskGroupId || input.taskGroupId));
   if (!taskGroup) throw Object.assign(new Error("task_group_not_found"), {status: 404});
   const summary = String(input.question?.summary || input.summary || "").trim().slice(0, 300);
   if (!summary) throw Object.assign(new Error("human_confirmation_question_required"), {status: 400});
@@ -3958,7 +4004,19 @@ export function createHumanConfirmationRequest(state, input = {}) {
       evidenceRefs: unique(input.question?.evidenceRefs || input.evidenceRefs || []).slice(0, 20)
     },
     options: [...aiOptions, {optionId: "none", label: "不选择（自定义输入）", description: "以上选项均不采用，由人工直接输入确认内容。", system: true}],
-    blocking: input.blocking !== false,
+    // 核心决策强制阻塞：blocking 原本由发起方(AI)自己决定，传 blocking:false 就能绕开人工闸门。
+    // 对 MAJOR_DECISION_TYPES 一律忽略调用方的意见。
+    blocking: isMajor ? true : input.blocking !== false,
+    decisionClass: isMajor ? "major" : "operational",
+    decisionType,
+    // AI 互审结论只作为【建议】随单附上，供人参考；它本身永远不能定稿。
+    ...(input.peerReview ? {peerReview: {
+      verdict: String(input.peerReview.verdict || "unknown"),
+      findings: unique(input.peerReview.findings || []).slice(0, 50),
+      ...(input.peerReview.reviewRecordRef ? {reviewRecordRef: String(input.peerReview.reviewRecordRef)} : {})
+    }} : {}),
+    // 定稿锁的基线：人确认的就是这份内容的摘要，后续 AI 改动与之不符即为分歧。
+    contentDigest: decisionContentDigest({decisionType, workItemId: input.workItemId || dispatch?.workItemId || null, taskGroupId: taskGroup.id, content: input.content ?? null}),
     dedupeKey,
     status: "pending",
     expiresAt: input.expiresAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
@@ -3994,10 +4052,48 @@ export function decideHumanConfirmation(state, requestId, decision = {}, options
   if (!option) throw Object.assign(new Error("human_confirmation_option_invalid"), {status: 400});
   const inputText = String(decision.inputText || "").trim().slice(0, 4000);
   if (selectedOptionId === "none" && !inputText) throw Object.assign(new Error("human_confirmation_input_required_for_none"), {status: 400});
+  // 定稿权只属于真人。机器主体（service_account / agent_identity）即使被授予了权限也不能确认核心决策 ——
+  // 否则 AI 只要拿到一个服务账号就能自己批准自己的方案，闸门形同虚设。
+  if (request.decisionClass === "major" && !isHumanConfirmationActor(state, options.actor)) {
+    throw Object.assign(new Error("human_confirmation_requires_human_actor"), {status: 403});
+  }
   const at = new Date().toISOString();
+  const actor = options.actor || "unknown";
+  // 人工动作分三种。协商是多轮的：只有【定稿】这一步才终结并上锁，其余都让请求继续挂着（继续阻塞执行）。
+  //   revise   —— 人提出自己的方案/修改意见。**不直接生效**：转给 AI 再分析（AI 可指出不合理或给更优方案）。
+  //   reject   —— 打回返工。
+  //   finalize —— 明确选择定稿。到此为止 AI 不得再改（applyHumanFinalization 上锁）。
+  const action = ["revise", "reject", "finalize"].includes(decision.action)
+    ? decision.action
+    : (selectedOptionId === "none" ? "revise" : "finalize");
+  request.round = Number(request.round || 1);
+  request.deliberation ||= [];
+
+  if (action === "revise") {
+    request.deliberation.push({
+      round: request.round, actorKind: "human", actor, action: "propose",
+      summary: String(inputText || option.label).slice(0, 300), ...(inputText ? {detail: inputText} : {}), at
+    });
+    request.round += 1;
+    // 交回 AI 再分析：人提的方案不等于直接采纳，AI 仍要判断是否正确、有无更优解。
+    request.awaitingAiAnalysis = true;
+    request.updatedAt = at;
+    appendEvent(state, "decision_request", "HumanConfirmationRequest", request.requestId, actor, {
+      taskGroupId: request.taskGroupId, action: "human_revision_proposed", round: request.round
+    });
+    return request;
+  }
+
   request.status = "answered";
-  request.decision = {selectedOptionId, selectedLabel: option.label, inputText, decidedBy: options.actor || "unknown", decidedAt: at};
+  request.decision = {selectedOptionId, selectedLabel: option.label, inputText, decidedBy: actor, decidedAt: at, action};
+  request.deliberation.push({
+    round: request.round, actorKind: "human", actor, action,
+    summary: `${action === "finalize" ? "定稿" : "打回"}：${option.label}`.slice(0, 300), ...(inputText ? {detail: inputText} : {}), at
+  });
+  delete request.awaitingAiAnalysis;
   request.updatedAt = at;
+  // 人一旦定稿：把这次确认的内容摘要锁死。后续 AI 想改实质内容，必须重新走人工确认（见 assertHumanFinalization）。
+  if (request.decisionClass === "major") applyHumanFinalization(state, request, actor, at, action);
   if (request.dispatchId) {
     const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === request.dispatchId);
     if (dispatch && dispatch.status === "blocked" && dispatch.blockedReason === "awaiting_human_confirmation") {
@@ -4015,6 +4111,118 @@ export function decideHumanConfirmation(state, requestId, decision = {}, options
   }
   appendEvent(state, "decision", "HumanConfirmationRequest", request.requestId, options.actor || "human-reviewer", {selectedOptionId, hasInput: Boolean(inputText)});
   return request;
+}
+
+// 人定稿后的落地 + 上锁。这里是**唯一**能把工作项推到 verified 的路径（AI 互审只能推到 verification_ready）。
+function applyHumanFinalization(state, request, actor, at, action = "finalize") {
+  const rejected = action === "reject" || request.decision?.selectedOptionId === "reject";
+  const taskGroup = (state.taskGroups || []).find((item) => item.id === request.taskGroupId);
+  const workItem = request.workItemId ? (taskGroup?.workItems || []).find((item) => item.id === request.workItemId) : null;
+  const lock = {
+    finalizedBy: actor,
+    finalizedAt: at,
+    confirmationRef: request.requestId,
+    contentDigest: request.contentDigest,
+    decisionType: request.decisionType,
+    outcome: rejected ? "rejected" : "confirmed"
+  };
+  if (request.decisionType === "work_item_verification" && workItem) {
+    if (rejected) {
+      // 人否决 = 打回返工，交回人工决策通道（resolve_decision 可 reopen/abandon）。
+      workItem.status = "needs_decision";
+      workItem.blockedReason = "human_verification_rejected";
+    } else {
+      // 只有到这里才允许 verified —— 而且 actor 是真人，转移证据里留的是人的身份。
+      recordTransition(state, "WorkItem", workItem.id, workItem.status, "verified", "qa", {
+        verification_evidence: `human_confirmation:${request.requestId}:${actor}`
+      });
+      workItem.status = "verified";
+      workItem.progress = 100;
+      delete workItem.blockedReason;
+    }
+    workItem.humanFinalization = lock;
+    workItem.updatedAt = at;
+  } else if (request.decisionType === "task_group_close" && taskGroup) {
+    taskGroup.humanFinalization = lock;
+    taskGroup.updatedAt = at;
+  } else if (workItem) {
+    workItem.humanFinalization = lock;
+    workItem.updatedAt = at;
+  }
+  appendEvent(state, "decision", "HumanConfirmationRequest", request.requestId, actor, {
+    taskGroupId: request.taskGroupId, decisionType: request.decisionType, outcome: lock.outcome, humanFinalized: true
+  });
+  return lock;
+}
+
+// AI 的再分析通道。人提出自己的方案后（revise），AI 必须在这里给出判断：是否正确、有没有不合理之处、
+// 有没有更优方式，并可据此修订候选方案。**这是 AI 在确认流程里唯一能做的事** —— 它可以反对、可以给更好的
+// 方案，但永远不能把请求推到 answered/定稿；决定权始终在人手上。
+export function submitAiConfirmationAnalysis(state, requestId, input = {}, options = {}) {
+  ensureRuntimeCollections(state);
+  const request = (state.humanConfirmationRequests || []).find((item) => item.requestId === requestId);
+  if (!request) throw Object.assign(new Error("human_confirmation_not_found"), {status: 404});
+  if (request.status !== "pending") throw Object.assign(new Error("human_confirmation_not_pending"), {status: 409});
+  const assessment = ["agree", "concerns", "better_alternative", "incorrect"].includes(input.assessment) ? input.assessment : "concerns";
+  const summary = String(input.summary || "").trim().slice(0, 300);
+  if (!summary) throw Object.assign(new Error("ai_analysis_summary_required"), {status: 400});
+  const at = new Date().toISOString();
+  request.round = Number(request.round || 1);
+  request.deliberation ||= [];
+  request.deliberation.push({
+    round: request.round,
+    actorKind: "ai",
+    actor: options.actor || "agent-runtime",
+    action: "analysis",
+    assessment,
+    summary,
+    ...(input.detail ? {detail: String(input.detail).slice(0, 4000)} : {}),
+    ...(Array.isArray(input.concerns) && input.concerns.length ? {concerns: unique(input.concerns).slice(0, 20)} : {}),
+    at
+  });
+  // AI 可以在再分析后修订候选方案（例如把人提的方案补成可执行的版本，或加入它认为更优的选项），
+  // 但系统的"自定义输入"选项恒在，人始终可以不采纳任何 AI 选项。
+  const revised = (Array.isArray(input.options) ? input.options : [])
+    .filter((option) => option && String(option.label || "").trim() && option.optionId !== "none")
+    .slice(0, 8)
+    .map((option, index) => ({
+      optionId: String(option.optionId || `r${request.round}_opt_${index + 1}`),
+      label: String(option.label).trim().slice(0, 200),
+      description: String(option.description || "").slice(0, 1000),
+      ...(option.recommended === true ? {recommended: true} : {})
+    }));
+  if (revised.length) {
+    request.options = [...revised, (request.options || []).find((option) => option.optionId === "none")
+      || {optionId: "none", label: "不选择（自定义输入）", description: "以上选项均不采用，由人工直接输入确认内容。", system: true}];
+    // 方案有改动 => 定稿基线随之更新（人最终定稿时锁的是那一刻的内容）。
+    request.contentDigest = decisionContentDigest({
+      decisionType: request.decisionType, workItemId: request.workItemId, taskGroupId: request.taskGroupId,
+      content: {round: request.round, options: request.options.map((option) => option.optionId + ":" + option.label)}
+    });
+  }
+  delete request.awaitingAiAnalysis;
+  request.updatedAt = at;
+  appendEvent(state, "decision_request", "HumanConfirmationRequest", request.requestId, options.actor || "agent-runtime", {
+    taskGroupId: request.taskGroupId, action: "ai_analysis", assessment, round: request.round
+  });
+  return request;
+}
+
+// 分歧检测：AI 想改一个已被人定稿的对象时调用。内容摘要不一致 => 不允许静默改写，回到人工确认。
+// 返回 true 表示"已定稿且内容一致"（可继续）；抛错表示"有分歧，已拦下"。
+export function assertHumanFinalization(subject, nextContent) {
+  const lock = subject?.humanFinalization;
+  if (!lock || lock.outcome !== "confirmed") return false;
+  const nextDigest = decisionContentDigest({
+    decisionType: lock.decisionType,
+    workItemId: subject.id || subject.workItemId || null,
+    taskGroupId: subject.taskGroupId || null,
+    content: nextContent ?? null
+  });
+  if (nextDigest !== lock.contentDigest) {
+    throw Object.assign(new Error("human_finalized_decision_diverged"), {status: 409, finalization: lock, attemptedDigest: nextDigest});
+  }
+  return true;
 }
 
 export function consumeHumanConfirmation(state, requestId, options = {}) {
@@ -4069,23 +4277,24 @@ export function expireStaleHumanConfirmations(state) {
     if (!request.expiresAt || new Date(request.expiresAt).getTime() > nowMs) continue;
     request.status = "expired";
     request.updatedAt = at;
+    // 超时【绝不】等于放行。原先这里把 dispatch 从 blocked 改回 queued 让它继续跑，等于给每一道人工闸门
+    // 开了一条 7 天绕过通道；一个没人回答的问题会变成绿灯。现在改为升级为人工决策，仍然停住。
     if (request.dispatchId) {
       const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === request.dispatchId);
       if (dispatch && dispatch.status === "blocked" && dispatch.blockedReason === "awaiting_human_confirmation") {
-        dispatch.status = "queued";
-        delete dispatch.blockedReason;
-        revokeDispatchNodeBinding(state, dispatch, "human_confirmation_expired_requeued");
+        dispatch.blockedReason = "human_confirmation_expired_needs_decision";
         dispatch.updatedAt = at;
-        const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
-        if (session && session.status === "needs_decision" && session.blockedReason === "awaiting_human_confirmation") {
-          session.status = "active";
-          delete session.blockedReason;
-          session.updatedAt = at;
-        }
       }
     }
     const taskGroup = (state.taskGroups || []).find((item) => item.id === request.taskGroupId);
-    if (taskGroup) addBlocker(taskGroup, "S2", `人工确认请求超时未作答已过期：${request.question?.summary || request.requestId}`);
+    // 把对应工作项降级到 needs_decision，让 resolve_decision（人工指令通道）成为可达的杠杆。
+    const expiredWorkItem = request.workItemId ? (taskGroup?.workItems || []).find((item) => item.id === request.workItemId) : null;
+    if (expiredWorkItem && !["verified", "closed", "superseded", "needs_decision"].includes(expiredWorkItem.status)) {
+      expiredWorkItem.status = "needs_decision";
+      expiredWorkItem.blockedReason = "human_confirmation_expired";
+      expiredWorkItem.updatedAt = at;
+    }
+    if (taskGroup) addBlocker(taskGroup, "S2", `人工确认请求超时未作答，已升级为人工决策（不会自动放行）：${request.question?.summary || request.requestId}`);
     expired.push(request.requestId);
     appendEvent(state, "decision", "HumanConfirmationRequest", request.requestId, "monitor", {expired: true});
   }
@@ -4549,6 +4758,12 @@ export function needsReviewBackfill(state, taskGroup, workItem) {
 }
 
 export function performIndependentReview(state, taskGroup, workItem, request = {}, options = {}) {
+  // 人已定稿的工作项，AI 不得再自动改动（包括不能重新互审把它推回别的状态）。
+  if (workItem.humanFinalization?.outcome === "confirmed") return {reviewed: false, reason: "human_finalized"};
+  // 已经挂着待人工定稿单时不重复互审——决定权在人手上，重跑只会刷屏。
+  const awaitingHuman = (state.humanConfirmationRequests || []).some((item) =>
+    item.status === "pending" && item.decisionType === "work_item_verification" && item.workItemId === workItem.id);
+  if (awaitingHuman) return {reviewed: false, reason: "awaiting_human_confirmation"};
   const checkpoint = (state.checkpoints || []).find((item) => item.taskGroupId === taskGroup.id && item.workId === workItem.id);
   if (!checkpoint) return {reviewed: false, reason: "checkpoint_missing"};
   const target = (state.repositoryOutputs || []).find((item) => (checkpoint.repositoryOutputTargetRefs || []).includes(item.targetId));
@@ -4656,18 +4871,31 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
     });
     from = "verification_ready";
   }
-  if (from === "verification_ready") {
-    recordTransition(state, "WorkItem", workItem.id, "verification_ready", "verified", "qa", {
-      verification_evidence: `verification_evidence:push:${checkpoint.pushRefs?.at(-1)?.remoteSha || finalCommit}`
-    });
-  }
-  workItem.status = "verified";
-  workItem.reviewState = "review_passed";
+  // 互审通过 **不等于** 验收通过。AI 只能把工作项推进到 verification_ready（"证据齐了，可以验收"），
+  // verification_ready -> verified 这一步只能由真人在人工确认窗口里做（applyHumanFinalization）。
+  workItem.status = "verification_ready";
+  workItem.reviewState = "review_passed_awaiting_human_confirmation";
   workItem.reviewBundleRef = bundle.bundleId;
-  workItem.progress = 100;
+  workItem.progress = Math.min(99, Math.max(Number(workItem.progress || 0), 95));
   workItem.updatedAt = at;
-  appendEvent(state, "review_result", "WorkItem", workItem.id, "reviewer", {verdict, reviewBundleRef: bundle.bundleId});
-  return {reviewed: true, verdict, reviewBundleRef: bundle.bundleId};
+  // 发起人工定稿单，把互审结论作为【建议】附上（AI 推荐"确认验收"，但决定权在人）。
+  const confirmation = createHumanConfirmationRequest(state, {
+    taskGroupId: taskGroup.id,
+    workItemId: workItem.id,
+    decisionType: "work_item_verification",
+    requestKey: `work_item_verification:${workItem.id}:${bundle.bundleId}`,
+    summary: `验收确认：${workItem.title || workItem.id}`,
+    detail: `控制面独立互审结论：${verdict}。证据已就绪，等待人工定稿验收。互审只提供建议，不构成验收。`,
+    evidenceRefs: bundle.evidenceRefs,
+    peerReview: {verdict, findings, reviewRecordRef: bundle.bundleId},
+    content: {reviewBundleRef: bundle.bundleId, finalCommit: finalCommit || null},
+    options: [
+      {optionId: "accept", label: "确认验收（定稿）", description: "确认该工作项通过验收；定稿后 AI 不得再自动更改。", recommended: true},
+      {optionId: "reject", label: "打回返工", description: "不认可本次结果，工作项回到人工决策通道等待重开或废弃。"}
+    ]
+  });
+  appendEvent(state, "review_result", "WorkItem", workItem.id, "reviewer", {verdict, reviewBundleRef: bundle.bundleId, awaitingHumanConfirmation: confirmation.requestId});
+  return {reviewed: true, verdict, reviewBundleRef: bundle.bundleId, humanConfirmationRef: confirmation.requestId, awaitingHumanConfirmation: true};
 }
 
 function unique(items) {

@@ -14,9 +14,13 @@ import {
   computeCloseBarrier,
   computeProgressSnapshots,
   createHumanConfirmationRequest,
+  decideHumanConfirmation,
+  submitAiConfirmationAnalysis,
+  assertHumanFinalization,
+  performIndependentReview,
+  gitHead,
   createHumanDirective,
   consumeQueuedHumanDirectives,
-  decideHumanConfirmation,
   defaultSystemRules,
   effectiveTaskGroupConfig,
   ensureRuntimeCollections,
@@ -557,6 +561,70 @@ function verifyHumanAndOrganizationContracts(output) {
     advanceExecutionTopology(badState, {topologyId: bad.topologyId, action: "downgrade", downgradeReason: "owned_paths_overlap"});
     if (bad.status !== "downgraded" || bad.mode !== "downgraded_serial") output.push("M1: downgrade lever did not terminalize an ineligible topology");
     validateSchema(bad, topoSchema, "ExecutionTopology(downgraded)", output);
+
+    // ---------------------------------------------------------------------------------------------
+    // 人工定稿闸门：AI 只能提案+互审，核心决策必须真人定稿；定稿前可多轮协商，定稿后 AI 不得再改。
+    // ---------------------------------------------------------------------------------------------
+    const hcrSchema = loadJson("spec/human-confirmation-request.schema.json");
+    const gateState = structuredClone(seedState);
+    ensureRuntimeCollections(gateState, {root});
+    const gateTg = gateState.taskGroups.find((t) => t.id === "tg_runtime_management");
+    gateTg.workItems = [{id: "wi_gate", title: "待验收项", status: "verification_ready", ownerRole: "agent-runtime", progress: 90}];
+    const humanActor = (gateState.accounts.find((a) => ["system_admin", "org_admin", "user_account"].includes(a.accountType)) || {}).accountId;
+    const machineActor = (gateState.accounts.find((a) => a.accountType === "service_account") || {}).accountId;
+    if (!humanActor || !machineActor) output.push("人工闸门测试: 种子里缺少真人账号或服务账号，无法验证主体区分");
+    const gate = createHumanConfirmationRequest(gateState, {
+      taskGroupId: "tg_runtime_management", workItemId: "wi_gate", decisionType: "work_item_verification",
+      summary: "验收确认：待验收项", blocking: false, // 故意传 false —— 核心决策必须无视它
+      peerReview: {verdict: "passed", findings: []},
+      options: [{optionId: "accept", label: "确认验收（定稿）", recommended: true}, {optionId: "reject", label: "打回返工"}]
+    });
+    validateSchema(gate, hcrSchema, "HumanConfirmationRequest(major)", output);
+    if (gate.decisionClass !== "major" || gate.blocking !== true) output.push("人工闸门: 核心决策未被强制标记为 major/阻塞（AI 传 blocking:false 就能绕开闸门）");
+    // 机器主体不得定稿。
+    let machineBlocked = false;
+    try { decideHumanConfirmation(gateState, gate.requestId, {action: "finalize", selectedOptionId: "accept"}, {actor: machineActor}); }
+    catch (error) { machineBlocked = error.message === "human_confirmation_requires_human_actor"; }
+    if (!machineBlocked) output.push("人工闸门: 机器主体（service_account）竟然可以定稿核心决策");
+    // 人提出自己的方案 => 不定稿、不生效，转入下一轮等 AI 再分析。
+    decideHumanConfirmation(gateState, gate.requestId, {action: "revise", selectedOptionId: "none", inputText: "我有自己的方案：先补回归测试再验收"}, {actor: humanActor});
+    if (gate.status !== "pending" || gate.awaitingAiAnalysis !== true || gate.round !== 2) output.push("人工闸门: 人提出方案后应继续挂起并等待 AI 再分析，而不是直接生效");
+    if (gateTg.workItems[0].status === "verified") output.push("人工闸门: 人只是提了方案（未定稿），工作项就被验收了");
+    // AI 再分析：可以反对/给更优方案，但绝不能终结决策。
+    submitAiConfirmationAnalysis(gateState, gate.requestId, {
+      assessment: "better_alternative", summary: "回归测试可与验收并行，建议改为先验收再补测试",
+      options: [{optionId: "parallel", label: "并行：先验收并同步补测试", recommended: true}]
+    }, {actor: "agent-runtime"});
+    if (gate.status !== "pending") output.push("人工闸门: AI 再分析竟然终结了决策（AI 永远不能定稿）");
+    if (gate.awaitingAiAnalysis) output.push("人工闸门: AI 已再分析但仍标记为等待 AI");
+    if (!(gate.deliberation || []).some((turn) => turn.actorKind === "ai" && turn.assessment === "better_alternative")) output.push("人工闸门: AI 的异议/更优方案没有进入协商记录");
+    validateSchema(gate, hcrSchema, "HumanConfirmationRequest(deliberating)", output);
+    // 人明确定稿 => 才真正验收，并写入定稿锁。
+    decideHumanConfirmation(gateState, gate.requestId, {action: "finalize", selectedOptionId: "parallel"}, {actor: humanActor});
+    const gatedItem = gateTg.workItems[0];
+    if (gate.status !== "answered" || gatedItem.status !== "verified") output.push("人工闸门: 人明确定稿后工作项未进入 verified");
+    if (gatedItem.humanFinalization?.finalizedBy !== humanActor || gatedItem.humanFinalization?.outcome !== "confirmed") output.push("人工闸门: 定稿锁未写入（finalizedBy/outcome 缺失）");
+    validateSchema(gate, hcrSchema, "HumanConfirmationRequest(finalized)", output);
+    // 定稿后 AI 不得再改：内容有分歧必须被拦下。
+    let divergenceBlocked = false;
+    try { assertHumanFinalization(gatedItem, {reviewBundleRef: "rvb_other", finalCommit: "deadbeef"}); }
+    catch (error) { divergenceBlocked = error.message === "human_finalized_decision_diverged"; }
+    if (!divergenceBlocked) output.push("人工闸门: 已定稿方案被 AI 改动却没有拦截（定稿后 AI 仍可静默更改）");
+
+    // AI 互审本身绝不能把工作项推到 verified —— 它只能推进到 verification_ready 并挂起人工定稿单。
+    const reviewState2 = structuredClone(seedState);
+    ensureRuntimeCollections(reviewState2, {root});
+    const rTg = reviewState2.taskGroups.find((t) => t.id === "tg_runtime_management");
+    rTg.workItems = [{id: "wi_rev", title: "互审项", status: "checkpoint_submitted", ownerRole: "agent-runtime", progress: 80}];
+    // 用仓库真实 HEAD，否则 final_commit_not_verifiable 会让互审走返工分支而不是通过分支。
+    const headCommit = gitHead(root);
+    reviewState2.checkpoints = [{taskGroupId: "tg_runtime_management", workId: "wi_rev", runId: "run_rev",
+      commitRefs: [{commit: headCommit}], pushRefs: [{remote: "origin", ref: "refs/heads/main", remoteSha: headCommit}],
+      artifactManifestRefs: ["docs/m.json"], repositoryOutputTargetRefs: ["tgt_rev"], changedPathEvidenceRefs: []}];
+    reviewState2.repositoryOutputs = [{targetId: "tgt_rev", status: "pushed", pathAllowlist: ["**"]}];
+    const reviewOutcome = performIndependentReview(reviewState2, rTg, rTg.workItems[0], {root}, {});
+    if (rTg.workItems[0].status === "verified") output.push("人工闸门: AI 互审仍然直接把工作项标记为 verified（自动确认未去除）");
+    if (reviewOutcome.reviewed && !reviewOutcome.awaitingHumanConfirmation) output.push("人工闸门: AI 互审通过后没有发起人工定稿单");
 
     // H2: internal independent-review records use their own schema, distinct from the external ReviewBundle.
     // Validate the exact shape performIndependentReview emits against internal-review-record.schema.json.

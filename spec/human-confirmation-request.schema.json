@@ -127,6 +127,65 @@
     "blocking": {
       "type": "boolean"
     },
+    "decisionClass": {
+      "description": "major = 核心/重大决策，强制阻塞且只能由真人账号确认；operational = 运行时确认。",
+      "enum": ["major", "operational"]
+    },
+    "decisionType": {
+      "enum": [
+        "work_item_verification",
+        "task_group_close",
+        "plan_topology",
+        "task_split",
+        "rule_change",
+        "runtime_execution"
+      ]
+    },
+    "peerReview": {
+      "description": "AI 互审结论。仅作为建议随单附上，本身永远不构成确认。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verdict"],
+      "properties": {
+        "verdict": {"type": "string", "minLength": 1},
+        "findings": {"type": "array", "items": {"type": "string"}},
+        "reviewRecordRef": {"type": "string"}
+      }
+    },
+    "contentDigest": {
+      "description": "被确认内容的实质摘要；人定稿后即为不可静默变更的基线。",
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "round": {
+      "description": "协商轮次。人提出方案与 AI 再分析可以来回多轮，只有明确定稿才终结。",
+      "type": "integer",
+      "minimum": 1
+    },
+    "awaitingAiAnalysis": {
+      "description": "人刚提出自己的方案，等待 AI 再分析（AI 可指出不合理或给出更优方式）后再由人决定。",
+      "type": "boolean"
+    },
+    "deliberation": {
+      "description": "多轮协商记录：人的提案与 AI 的再分析交替出现；AI 永远不能在此终结决策。",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["round", "actorKind", "actor", "action", "summary", "at"],
+        "properties": {
+          "round": {"type": "integer", "minimum": 1},
+          "actorKind": {"enum": ["human", "ai"]},
+          "actor": {"type": "string", "minLength": 1},
+          "action": {"enum": ["propose", "analysis", "finalize", "reject"]},
+          "assessment": {"enum": ["agree", "concerns", "better_alternative", "incorrect"]},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 300},
+          "detail": {"type": "string", "maxLength": 4000},
+          "concerns": {"type": "array", "items": {"type": "string"}},
+          "at": {"type": "string", "format": "date-time"}
+        }
+      }
+    },
     "status": {
       "enum": [
         "pending",
@@ -163,6 +222,10 @@
         "decidedAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "action": {
+          "description": "finalize = 明确定稿（此后 AI 不得再改）；reject = 打回返工。",
+          "enum": ["finalize", "reject"]
         }
       }
     },

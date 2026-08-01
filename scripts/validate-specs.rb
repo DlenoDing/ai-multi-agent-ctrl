@@ -722,6 +722,27 @@ errors << "execution topology eligibility gates must be computed from the real p
 errors << "execution topology lifecycle needs schema + behavioral coverage" unless contract_check_source.include?("ExecutionTopology(merged)") && contract_check_source.include?("M1: topology could not reach the terminal 'merged' state") && contract_check_source.include?("M1: an open (planned) execution topology did NOT block the close barrier")
 # A bounded MCP principal must not drive another tenant's topology: topologyId resolves to its owning project.
 errors << "topologyId must resolve to its owning project for MCP scope checks" unless mcp_source.include?("args.topologyId") && mcp_source.include?("state.executionTopologies || []).find((item) => item.topologyId === args.topologyId)")
+
+# ---------------------------------------------------------------------------------------------------
+# 人工定稿闸门：系统内不得存在任何"AI 自动确认"路径。
+# ---------------------------------------------------------------------------------------------------
+# 1. AI 互审绝不能直接把工作项标记为 verified —— 只能推进到 verification_ready 并挂起人工定稿单。
+errors << "AI 互审不得自动验收（必须停在 verification_ready 并发起人工定稿单）" unless core_source.include?("workItem.status = \"verification_ready\"") && core_source.include?("decisionType: \"work_item_verification\"") && !core_source.include?("workItem.status = \"verified\";\n  workItem.reviewState = \"review_passed\";")
+# 2. 核心决策强制阻塞：发起方(AI)传 blocking:false 不得绕开闸门。
+errors << "核心决策必须强制阻塞，不受调用方 blocking 参数影响" unless core_source.include?("blocking: isMajor ? true : input.blocking !== false")
+# 3. 定稿权只属于真人：机器主体一律拒绝（core + REST 权限层 + MCP 通道三处）。
+errors << "核心决策定稿必须校验真人账号" unless core_source.include?("human_confirmation_requires_human_actor") && core_source.include?("const HUMAN_ACCOUNT_TYPES = [\"system_admin\", \"org_admin\", \"user_account\"]")
+errors << "REST 权限层必须声明仅真人可执行的动作" unless server_source.include?("HUMAN_ONLY_ACTIONS") && server_source.include?("human_confirmation_decide")
+errors << "MCP 通道必须拒绝机器主体代为定稿" unless mcp_source.include?("human_confirmation_decision_forbidden_for_machine_principal") && mcp_source.include?("context?.principal?.kind === \"system_service\"")
+# 4. 多轮协商：人提方案 -> AI 再分析 -> 人决定；只有 finalize 才终结并上锁，AI 永不能终结。
+errors << "人提出方案后必须转交 AI 再分析而不是直接生效" unless core_source.include?("request.awaitingAiAnalysis = true") && core_source.include?("action: \"human_revision_proposed\"")
+errors << "AI 再分析通道必须存在且不能终结决策" unless core_source.include?("export function submitAiConfirmationAnalysis") && mcp_source.include?("confirmation_analyze")
+# 5. 人工确认超时【绝不】等于放行。
+errors << "人工确认超时不得自动放行，必须升级为人工决策" unless core_source.include?("human_confirmation_expired_needs_decision") && !core_source.include?("human_confirmation_expired_requeued")
+# 6. 定稿后 AI 不得静默更改，内容分歧必须被拦下。
+errors << "定稿后必须有分歧拦截（human_finalized_decision_diverged）" unless core_source.include?("export function assertHumanFinalization") && core_source.include?("human_finalized_decision_diverged")
+# 7. 上述语义必须有行为测试覆盖（否则回归时门仍绿）。
+errors << "人工定稿闸门需要行为测试覆盖" unless contract_check_source.include?("人工闸门: 机器主体（service_account）竟然可以定稿核心决策") && contract_check_source.include?("人工闸门: AI 再分析竟然终结了决策") && contract_check_source.include?("人工闸门: AI 互审仍然直接把工作项标记为 verified")
 # M7: the repository output target denylist field must be the schema-declared pathDenylist (not the
 # non-schema forbiddenPathRules), enforced end-to-end (producer + runtime consumer), and instance-validated.
 errors << "repository output target must use the schema pathDenylist field" unless core_source.include?("pathDenylist: request.pathDenylist") && agent_runtime_source.include?("target.pathDenylist") && contract_check_source.include?("repository-output-target.schema.json")

@@ -757,11 +757,17 @@ function createWorkItemRecord(state, taskGroupId, input = {}, options = {}) {
   return {taskGroupId: taskGroup.id, workItem, taskGroup};
 }
 
+// 只有真人账号能做的动作：核心方案的定稿与人工意图通道。机器主体（service_account / agent_identity）
+// 即使被授予了相应权限也一律拒绝 —— 否则 AI 拿到一个服务账号就能自我批准，人工闸门形同虚设。
+const HUMAN_ONLY_ACTIONS = ["human_confirmation_decide", "human_directive_create"];
+const HUMAN_ACCOUNT_TYPES_FOR_ACTIONS = ["system_admin", "org_admin", "user_account"];
+
 function principalAllowedForAction(account, action) {
   if (!account) return false;
   if (["agent_runtime_worker_run", "checkpoint_submit"].includes(action)) {
     return account.accountType === "service_account" && (account.roles || []).includes("service_agent_runtime");
   }
+  if (HUMAN_ONLY_ACTIONS.includes(action)) return HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(account.accountType);
   return true;
 }
 

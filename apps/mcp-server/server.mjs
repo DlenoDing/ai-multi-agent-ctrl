@@ -9,6 +9,7 @@ import {
   acceptAgentCheckpoint,
   buildTaskContract,
   consumeHumanConfirmation,
+  submitAiConfirmationAnalysis,
   createHumanConfirmationRequest,
   decideHumanConfirmation,
   collectRuntimeIssue,
@@ -85,7 +86,7 @@ export const mcpToolGroups = {
   "skill-mcp": ["skill_source_sync", "role_skill_parse", "role_skill_overlay_validate", "role_skill_resolve"],
   "evidence-mcp": ["artifact_register", "checkpoint_submit", "test_result_submit"],
   "permission-mcp": ["permission_probe", "permission_request_submit", "permission_status", "permission_resolve"],
-  "human-review-mcp": ["confirmation_request_submit", "confirmation_status", "confirmation_consume", "confirmation_decide"],
+  "human-review-mcp": ["confirmation_request_submit", "confirmation_status", "confirmation_consume", "confirmation_analyze", "confirmation_decide"],
   "review-mcp": ["review_plan_create", "review_bundle_register", "review_result_consume", "completion_readiness_compute"],
   "governance-mcp": [
     "approval_request_create",
@@ -155,6 +156,7 @@ const toolDescriptions = {
   "human-review-mcp.confirmation_request_submit": "Submit a question that requires human confirmation with AI-provided options.",
   "human-review-mcp.confirmation_status": "Read the status and decision of a human confirmation request.",
   "human-review-mcp.confirmation_consume": "Mark an answered human confirmation as consumed by the executor.",
+  "human-review-mcp.confirmation_analyze": "Re-analyse a pending human confirmation after a human proposed their own plan: state whether it is correct, raise concerns or offer a better alternative, and optionally revise the candidate options. Never finalizes — only a human can.",
   "human-review-mcp.confirmation_decide": "Record the human decision for a pending confirmation request.",
   "permission-mcp.permission_status": "Read a permission request state.",
   "permission-mcp.permission_resolve": "Resolve a permission request and record the policy decision.",
@@ -328,6 +330,7 @@ function requiredInputPropertiesFor(name) {
     "human-review-mcp.confirmation_request_submit": ["dispatchId", "options"],
     "human-review-mcp.confirmation_status": ["requestId"],
     "human-review-mcp.confirmation_consume": ["requestId"],
+    "human-review-mcp.confirmation_analyze": ["requestId", "summary"],
     "human-review-mcp.confirmation_decide": ["requestId", "selectedOptionId"],
     "permission-mcp.permission_resolve": ["requestId"],
     "identity-mcp.account_suspend": ["accountId"],
@@ -493,6 +496,9 @@ function commonInputProperties() {
     workItem: object,
     workItemId: string,
     workSignals: array,
+    // AI 对人工确认的再分析 (human-review-mcp.confirmation_analyze)
+    assessment: string,
+    concerns: array,
     // ExecutionTopology plan + lifecycle (scheduler-mcp.execution_topology_plan / _advance)
     topologyId: string,
     groupId: string,
@@ -1283,12 +1289,22 @@ async function dispatchTool(state, name, args, context = {}) {
       if (!confirmation || !confirmationReadableByPrincipal(confirmation, context)) return {ok: false, error: "human_confirmation_not_found"};
       return {request: consumeHumanConfirmation(state, args.requestId, {actor: context?.principal?.id || "mcp-client"})};
     }
+    case "human-review-mcp.confirmation_analyze": {
+      const confirmation = (state.humanConfirmationRequests || []).find((item) => item.requestId === args.requestId);
+      if (!confirmation) return {ok: false, error: "human_confirmation_not_found"};
+      if (!confirmationReadableByPrincipal(confirmation, context)) return {ok: false, error: "human_confirmation_not_found"};
+      // 这是 AI 在确认流程里唯一的发言权：可以反对、可以给更优方案，但不会终结决策。
+      return {request: submitAiConfirmationAnalysis(state, args.requestId, args, {actor: context?.principal?.id || "agent-runtime"})};
+    }
     case "human-review-mcp.confirmation_decide": {
       const confirmation = (state.humanConfirmationRequests || []).find((item) => item.requestId === args.requestId);
       if (!confirmation) return {ok: false, error: "human_confirmation_not_found"};
-      // A human decision must never be proxied by an executing agent node; only human-operated
-      // principals (system admin, or a project-scoped service acting on the console's behalf) may decide.
-      if (context?.principal?.kind === "agent_node") return {ok: false, error: "human_confirmation_decision_forbidden_for_agent"};
+      // 定稿权只属于真人。MCP 通道上的主体都不是"人"：agent_node 是执行体，system_service 是机器服务
+      // 令牌（哪怕被 AIMAC_MCP_SERVICE_ALLOWED_TOOLS 放开了这个工具）。核心决策一律拒绝，只能走控制台
+      // 的人工确认窗口（REST + 真人账号会话）。system_admin 主体是控制台代表的真人会话，放行。
+      if (context?.principal?.kind === "agent_node" || context?.principal?.kind === "system_service") {
+        return {ok: false, error: "human_confirmation_decision_forbidden_for_machine_principal"};
+      }
       if (!confirmationReadableByPrincipal(confirmation, context)) return {ok: false, error: "human_confirmation_not_found"};
       return {request: decideHumanConfirmation(state, args.requestId, args, {actor: context?.principal?.id || "mcp-client"})};
     }

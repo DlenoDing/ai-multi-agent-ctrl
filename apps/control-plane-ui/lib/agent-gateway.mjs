@@ -25,6 +25,7 @@ const DEFAULT_AGENT_MCP_TOOLS = [
   "human-review-mcp.confirmation_request_submit",
   "human-review-mcp.confirmation_status",
   "human-review-mcp.confirmation_consume",
+  "human-review-mcp.confirmation_analyze",
   "ui-console-mcp.runtime_health_get",
   "ui-console-mcp.project_progress_get",
   "ui-console-mcp.task_group_progress_get",
