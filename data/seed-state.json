@@ -722,11 +722,7 @@
       "projectId": "prj_control_plane",
       "definitionType": "status_semantics",
       "scopeRefs": [
-        "Project",
-        "TaskGroup",
-        "WorkItem",
-        "WorkSession",
-        "ProgressSnapshot"
+        "Project:prj_control_plane"
       ],
       "canonicalOwnerRole": "orchestrator",
       "producerRole": "decision-center",

@@ -3517,6 +3517,11 @@ function activeSharedDefinitionRefs(state, request = {}) {
   }));
 }
 
+// 导出供契约测试断言作用域读写两侧一致 —— 这条链路曾整体失效而无人察觉。
+export function relatedSharedDefinitionsForTest(state, taskGroup, workItem) {
+  return relatedSharedDefinitions(state, taskGroup, workItem);
+}
+
 function relatedSharedDefinitions(state, taskGroup, workItem) {
   if (!taskGroup) return [];
   return (state.sharedDefinitions || []).filter((definition) => sharedDefinitionAppliesToWork(definition, taskGroup, workItem));

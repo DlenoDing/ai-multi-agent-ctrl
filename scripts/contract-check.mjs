@@ -37,6 +37,7 @@ import {
   reviewBundleRegister,
   computeCompletionReadiness,
   createExecutionTopology,
+  relatedSharedDefinitionsForTest,
   contractPublish,
   digestOf,
   evaluateRoleDrift,
@@ -728,6 +729,20 @@ function verifyHumanAndOrganizationContracts(output) {
     if (!(forgedStatus.scopeRefs || []).length) {
       output.push("人工闸门: 空 scopeRefs 存活（一条契约横扫整个项目的所有任务组）");
     }
+    // D1 防回归：种子里那份 active 的规范契约必须真的绑定到任务组并进入任务契约。
+    // 上一轮我只改了读取侧的作用域匹配、没改写入侧和种子，结果这份契约对【所有】任务组都失效了，
+    // 而当时没有任何测试会发现——把绑定函数改成恒 false 都是绿的。
+    const bindState = structuredClone(seedState);
+    ensureRuntimeCollections(bindState, {root});
+    const activeSeeded = (bindState.sharedDefinitions || []).filter((d) => d.status === "active");
+    if (activeSeeded.length) {
+      const bindTg = bindState.taskGroups.find((t) => t.id === "tg_runtime_management");
+      const bound = relatedSharedDefinitionsForTest(bindState, bindTg);
+      if (!bound.length) {
+        output.push("人工闸门: 生效中的共享定义契约没有绑定到任何任务组（作用域读写两侧不一致 => 规范根本没下发给 agent）");
+      }
+    }
+
     // 拒绝服务防回归。两条防线必须【各自独立】可测，否则会互相遮蔽（草稿不阻塞会让作用域那条无从体现）。
     // ① AI 能建出来的状态（draft）不得阻塞关闭门 —— 作用域同组，排除作用域因素。
     const wedgeState = structuredClone(seedState);

@@ -23,6 +23,7 @@ const TARGET = "apps/control-plane-ui/server.mjs";
 
 // 授权点：出现其中任意一个即视为"已鉴权"。
 const AUTH_MARKERS = [
+  "requireAuthenticated(",   // 前置认证：只验身份，具体权限仍由下游 beginGuardedWrite 判定
   "beginGuardedWrite(",
   "agent_node_auth_required",
   "requireRead(",
@@ -90,7 +91,11 @@ function run() {
         const isClientError = /json\(res,\s*4\d\d,/.test(payload);
         const hasInterpolation = /\$\{/.test(payload);
         const errorOnly = isClientError && !hasInterpolation;
-        const contentLeak = !errorOnly && !/\b(404|not_found)\b/.test(text);
+        // 纯输入校验：4xx 且响应体不含模板插值。其中带 not_found/404 的属存在性探测（需前置认证），
+        // 其余（400/409/422 + 固定说明字段）不接触状态，放行。
+        const existenceProbe = /\b(404|not_found)\b/.test(text);
+        if (errorOnly && !existenceProbe) continue;
+        const contentLeak = !errorOnly && !existenceProbe;
         violations.push({
           severity: contentLeak ? "content" : "existence",
           message: `${TARGET}:${entry.line} 在鉴权之前${contentLeak ? "返回了状态内容" : "做了存在性探测(404)"} —— 绕过 beginGuardedWrite（${block.header}）`
@@ -104,14 +109,11 @@ function run() {
 
   const contentLeaks = violations.filter((item) => item.severity === "content");
   const existenceProbes = violations.filter((item) => item.severity === "existence");
-  if (existenceProbes.length) {
-    // 存在性探测目前作为【已知项】列出而不直接失败：全仓多处同形态，统一整改需要单独一轮。
-    console.log(`auth placement gate: ${existenceProbes.length} 处鉴权前存在性探测（未鉴权即可区分"不存在"与"存在但无权"，属信息泄露，待统一整改）`);
-    for (const probe of existenceProbes) console.log(`  · ${probe.message}`);
-  }
-  if (contentLeaks.length) {
+  // 存在性探测现在也直接判失败：全仓已统一整改（需要先查对象才能算授权作用域的路由，一律加
+  // requireAuthenticated 前置认证）。留作宽容项只会让下一条新增路由重新打开这个口子。
+  if (existenceProbes.length || contentLeaks.length) {
     console.error("auth placement gate failed:");
-    for (const violation of contentLeaks) console.error(`- ${violation.message}`);
+    for (const violation of [...contentLeaks, ...existenceProbes]) console.error(`- ${violation.message}`);
     console.error("\n授权前只允许做纯输入校验（不读不改状态）。任何要返回状态内容或改状态的分支，都必须放在 beginGuardedWrite 之后。");
     process.exit(1);
   }

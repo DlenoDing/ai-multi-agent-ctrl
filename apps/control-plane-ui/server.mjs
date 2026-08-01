@@ -925,6 +925,16 @@ function forbiddenMcpServiceTool(tool) {
     (tool.startsWith("orchestration-mcp.") && tool !== "orchestration-mcp.state_get");
 }
 
+// 前置认证：有些路由必须先按 id 查出对象、才能算出授权作用域（例如按节点/派发所属任务组授权），
+// 于是"对象存不存在""是否绑定在这个节点上"这类判断天然跑在 beginGuardedWrite 之前。若不先验身份，
+// 这些分支就成了【无需任何凭证】的跨租户探测器：可枚举 id、区分"无此物"与"有但无权"、读出派发状态。
+// 这里只验"你是谁"（会话有效即可），具体权限仍由下游的 beginGuardedWrite 按真实作用域判定。
+function requireAuthenticated(req, state, res) {
+  if (accountFromRequest(req, state) || authenticateAgentNode(state, bearerToken(req))) return true;
+  json(res, 401, {error: "auth_required"});
+  return false;
+}
+
 function accountFromRequest(req, state) {
   const session = authenticateRequest(req, state);
   if (!session) return null;
@@ -2195,6 +2205,7 @@ async function handleApi(req, res) {
 
   const revokeJoinTokenMatch = url.pathname.match(/^\/api\/agent-join-tokens\/([^/]+)\/revoke$/);
   if (req.method === "POST" && revokeJoinTokenMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
     const record = state.agentJoinTokens.find((item) => item.joinTokenId === revokeJoinTokenMatch[1]);
     if (!record) return json(res, 404, {error: "agent_join_token_not_found"});
     const guard = beginGuardedWrite(req, state, "agent_join_token_revoke", `Project:${record.projectId}`, projectScope(record.projectId));
@@ -2210,6 +2221,7 @@ async function handleApi(req, res) {
 
   const revokeNodeMatch = url.pathname.match(/^\/api\/agent-nodes\/([^/]+)\/revoke$/);
   if (req.method === "POST" && revokeNodeMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
     const targetNode = state.agentRuntimeNodes.find((item) => item.nodeId === revokeNodeMatch[1]);
     if (!targetNode) return json(res, 404, {error: "agent_node_not_found"});
     const projectId = targetNode.projectIds?.[0];
@@ -2224,6 +2236,7 @@ async function handleApi(req, res) {
 
   const controlNodeMatch = url.pathname.match(/^\/api\/agent-nodes\/([^/]+)\/control$/);
   if (req.method === "POST" && controlNodeMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
     const targetNode = state.agentRuntimeNodes.find((item) => item.nodeId === controlNodeMatch[1]);
     if (!targetNode) return json(res, 404, {error: "agent_node_not_found"});
     const commandType = String(body.commandType || body.action || "refresh_profile");
@@ -2767,6 +2780,7 @@ async function handleApi(req, res) {
 
   const agentMatch = url.pathname.match(/^\/api\/agents\/([^/]+)\/(?:activate|activation)$/);
   if (req.method === "POST" && agentMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
     const agent = state.agents.find((item) => item.id === agentMatch[1]);
     if (!agent) {
       json(res, 404, {error: "agent_not_found"});
@@ -2839,6 +2853,7 @@ async function handleApi(req, res) {
 
   const taskGroupMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/control$/);
   if (req.method === "POST" && taskGroupMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupMatch[1]);
     if (!taskGroup) {
       json(res, 404, {error: "task_group_not_found"});
@@ -2973,6 +2988,7 @@ async function handleApi(req, res) {
 
   const revokeGrantMatch = url.pathname.match(/^\/api\/access-grants\/([^/]+)\/revoke$/);
   if (req.method === "POST" && revokeGrantMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
     const grant = state.accessGrants.find((item) => item.grantId === revokeGrantMatch[1]);
     if (!grant) {
       json(res, 404, {error: "access_grant_not_found"});
@@ -3043,7 +3059,11 @@ async function handleApi(req, res) {
     // Drop any TaskGroup scopeRef outside the definition's own organization: the write is guarded only on the
     // definition's project, and the console shows a shared definition to anyone who can see a scopeRef task
     // group (server.mjs ~953), so an unconstrained cross-org scopeRef would inject it into another tenant's view.
-    const sanitizedScopeRefs = (Array.isArray(body.scopeRefs) && body.scopeRefs.length ? body.scopeRefs : ["Project"]).filter((ref) => {
+    const defaultProjectScopeRef = `Project:${body.projectId || "prj_control_plane"}`;
+    // 显式写明项目 id：裸 "Project" 曾被当成"项目内所有任务组"的通配，任何调用方写一句就能
+    // 横扫全项目（并阻塞每个任务组的关闭门）。通配已从读取侧移除，写入侧必须同步给出具体 id，
+    // 否则契约会绑定不到任何任务组（我上一轮只改了读取侧，导致种子契约对所有组都失效）。
+    const sanitizedScopeRefs = (Array.isArray(body.scopeRefs) && body.scopeRefs.length ? body.scopeRefs : [defaultProjectScopeRef]).filter((ref) => {
       const value = String(ref);
       if (!value.startsWith("TaskGroup:")) return true;
       const taskGroup = state.taskGroups.find((item) => item.id === value.slice("TaskGroup:".length));
@@ -3054,7 +3074,7 @@ async function handleApi(req, res) {
       contractId: createId("sdc"),
       projectId: definitionProjectId,
       definitionType: body.definitionType || "terminology",
-      scopeRefs: sanitizedScopeRefs.length ? sanitizedScopeRefs : ["Project"],
+      scopeRefs: sanitizedScopeRefs.length ? sanitizedScopeRefs : [defaultProjectScopeRef],
       canonicalOwnerRole: body.canonicalOwnerRole || "orchestrator",
       producerRole: body.producerRole || "decision-center",
       status: body.status || "owner_assigned",
@@ -3362,6 +3382,7 @@ async function handleApi(req, res) {
 
   const topologyAdvanceMatch = url.pathname.match(/^\/api\/execution-topologies\/([^/]+)\/advance$/);
   if (req.method === "POST" && topologyAdvanceMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
     // The lever for the no_open_execution_topologies close-barrier gate: without a reachable transition
     // path a planned topology would block the barrier forever. Scope the guard on the topology's OWN task
     // group (never a caller-supplied id) so it can't be driven from another tenant's scope.
