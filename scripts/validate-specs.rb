@@ -1015,6 +1015,15 @@ errors << %(验收卡片必须说明角色技能回退（否则人以为它按�
 # 过期会话原先只在有人登录时被顺带清理，无人登录期间长期滞留。
 errors << %(必须有独立的过期会话清扫（不能只依赖"下一次有人登录"）) unless server_source.include?("过期会话原先【只在有人登录时】被顺带清理")
 
+# 证据不该由被证明的一方提供。检查点里若干字段原样落库并随检查点展示，看起来像完整性证据，
+# 实际是执行方自己填的：treeDigest 从不与 <commit>^{tree} 比对；changedPathEvidenceRefs 与真实
+# 改动毫无关系；createdAt 由调用方给，而验收卡片按它倒序挑"那一份检查点"——执行方因此能决定人看哪份。
+errors << %(treeDigest 必须与提交的实际 tree 比对（否则它是执行方自填的一串字符）) unless core_source.include?("commit_ref_tree_digest_mismatch")
+errors << %(改动路径证据必须由控制面从真实 diff 派生，不能原样收执行方自报的) unless core_source.include?("selfReportedChangedPathEvidenceRefs") && core_source.include?("...(evidence.changedPaths || []).slice(0, 200).map((path) => `git-path:${path}`)")
+errors << %(检查点落库时间必须由服务端定（验收卡片按它挑那一份检查点）) unless core_source.include?("reportedCreatedAt")
+# 组织通讯录：授权只比对"你属不属于这个组织"，任何普通成员都能拿到全组织的 email/roles/permissions。
+errors << %(组织成员清单必须按成员管理权限收窄（否则是一份现成的权限侦察清单）) unless server_source.include?("const canAdminMembers = isSystemAccount(reader.account)")
+
 # 检查点是"这份工作到底有没有真的做出来"的最终判据，三条实质校验此前只在【被约束方自己】那里：
 #  ① "产出必须在清单之外" —— 只有 runtime.mjs 在查，服务端没有等价物，于是一份把自己列为自己产出的
 #     清单就能满足全部校验，零产出的提交被判为证据齐备；

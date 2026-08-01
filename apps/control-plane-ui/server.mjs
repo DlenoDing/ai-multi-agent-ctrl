@@ -4102,9 +4102,26 @@ async function handleApi(req, res) {
     if (!isSystemAccount(reader.account) && !canReadResource(state, reader.account, {resourceType: "organization", resourceId: orgId})) {
       return json(res, 403, {error: "permission_denied"});
     }
+    // 授权只比对"你属不属于这个组织"，于是任何普通项目成员都能拿到全组织通讯录：
+    // email、roles、直接 permissions、authPolicy（是否设了密码/是否要 MFA）—— 一份现成的权限侦察清单。
+    // 而 /api/state 那条路径特意把 accounts 收窄成"自己 + 可见项目的成员"并把他人 permissions 清空。
+    // 同一份数据两道门，只锁了一道。这里与它同规：
+    // 只有确实负责成员管理的人（member:invite / org:member_admin）才看得到完整记录，
+    // 其余人看到的是不含权限与认证配置的最小视图。
+    const canAdminMembers = isSystemAccount(reader.account)
+      || reader.account.accountType === "org_admin"
+      || hasPermission(state, accountIdOf(reader.account), "member:invite", {resourceType: "organization", resourceId: orgId});
     const members = (state.accounts || [])
       .filter((item) => item.organizationId === orgId && item.accountType !== "service_account")
-      .map((item) => ({...publicAccountRecord(item), organizationId: item.organizationId, defaultProjectId: item.defaultProjectId || null}));
+      .map((item) => {
+        const isSelf = accountIdOf(item) === accountIdOf(reader.account);
+        if (canAdminMembers || isSelf) {
+          return {...publicAccountRecord(item), organizationId: item.organizationId, defaultProjectId: item.defaultProjectId || null};
+        }
+        // 最小视图：够用来"知道组织里有谁"，不够用来侦察谁有什么权限、谁还没设密码。
+        return {accountId: item.accountId, displayName: item.displayName, accountType: item.accountType,
+          status: item.status, organizationId: item.organizationId};
+      });
     json(res, 200, {orgId, members});
     return;
   }

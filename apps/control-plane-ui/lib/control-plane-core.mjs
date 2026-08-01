@@ -2227,11 +2227,20 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {})
     pushRefs: evidence.normalizedPushRefs,
     repositoryOutputTargetRefs: targetRefs,
     artifactManifestRefs: checkpointInput.artifactManifestRefs,
-    changedPathEvidenceRefs: checkpointInput.changedPathEvidenceRefs,
+    // 原先原样存下执行方自报的值 —— 实测存进去的是 "git-path:src/totally/unrelated/file.ts"
+    // 这类与真实改动毫无关系的字符串，而它随检查点展示、看起来像证据。
+    // 真实的改动路径控制面自己算得出（evidence.changedPaths，下面就用它更新 target），
+    // 那份才是可信的，直接用它派生 —— 证据不该由被证明的一方提供。
+    changedPathEvidenceRefs: [`git-diff:${target.baseRef || "HEAD~1"}:${evidence.finalCommit}`,
+      ...(evidence.changedPaths || []).slice(0, 200).map((path) => `git-path:${path}`)],
+    selfReportedChangedPathEvidenceRefs: checkpointInput.changedPathEvidenceRefs,
     evidenceRefs: unique([...(checkpointInput.evidenceRefs || ["evidence:agent-runtime-checkpoint"]), evidence.evidenceRef]),
     languagePolicyDigest: expectedLanguagePolicyDigest,
     outputContractDigest: checkpointInput.outputContractDigest || specContentDigest("spec/checkpoint.schema.json"),
-    createdAt: checkpointInput.createdAt || at
+    // createdAt 原先由调用方给，而验收卡片按它倒序挑"那一份检查点" —— 执行方因此能决定
+    // 人看到的是哪一份。落库时间由服务端定；执行方自报的时间另存，不参与排序。
+    createdAt: at,
+    ...(checkpointInput.createdAt ? {reportedCreatedAt: String(checkpointInput.createdAt)} : {})
   };
   state.checkpoints.unshift(checkpoint);
   target.status = "pushed";
@@ -2593,6 +2602,16 @@ function validateCheckpointGitEvidence(state, request) {
   // pathDenylist（.env / .git/** / node_modules/** 等）此前【全仓唯一的执行点在执行方自己那里】——
   // 服务端只查 allowlist。而 allowlist 接受 "**"，于是一个宽 allowlist 加一个改过的运行时
   // （或任何直接调这个接口的调用方）就能把 denylist 里的路径提交上来并被接受。
+  // commitRefs[].treeDigest 原样落库、随检查点展示，却从不与 `<commit>^{tree}` 比对 ——
+  // 它看起来是一条完整性证据，实际上是执行方自己填的一串字符（实测填 "git-tree:TOTALLY-MADE-UP"
+  // 照样被接受）。仓库此刻已经克隆在手，核对它几乎不花代价：要么核对，要么就别把它当证据展示。
+  for (const commitRef of checkpointInput.commitRefs || []) {
+    if (!commitRef?.treeDigest || !commitRef?.commit) continue;
+    const actualTree = git(root, ["rev-parse", `${commitRef.commit}^{tree}`], "");
+    if (!actualTree || `git-tree:${actualTree}` !== String(commitRef.treeDigest)) {
+      return {valid: false, status: 409, error: "commit_ref_tree_digest_mismatch", commit: commitRef.commit};
+    }
+  }
   // 被约束方自查等于没查：禁区必须在服务端拦。
   const denied = changedPaths.filter((path) => pathMatchesAllowlist(path, target.pathDenylist || []));
   if (denied.length) {
