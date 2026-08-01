@@ -4004,6 +4004,22 @@ export function cancelPendingConfirmationsForDispatch(state, dispatchId, reason)
       request.status = "cancelled";
       request.cancelReason = reason;
       request.updatedAt = at;
+      // 作废本身是合理的（派发已经没了，这张单再答也落不到任何执行上），但【不能就这样算了】：
+      // 这张单是 AI 自己提出的问题，而它只要上报一次失败就能让人正要回答的问题凭空消失，
+      // 同时 no_pending_human_confirmations 这道阻塞也一并清掉 —— 等于 AI 单方面撤掉了人的决策权。
+      // 因此把对应工作项升级为人工决策：人仍有 resolve_decision 杠杆，关闭门也仍然被挡住。
+      // （与"人工确认超时不得等于放行"是同一条原则。）
+      const taskGroup = (state.taskGroups || []).find((item) => item.id === request.taskGroupId);
+      const workItem = request.workItemId ? (taskGroup?.workItems || []).find((item) => item.id === request.workItemId) : null;
+      if (workItem && !["verified", "closed", "superseded", "needs_decision"].includes(workItem.status)) {
+        workItem.status = "needs_decision";
+        workItem.blockedReason = "human_confirmation_cancelled_by_dispatch_failure";
+        workItem.updatedAt = at;
+      }
+      if (taskGroup) addBlocker(taskGroup, "S2", `执行失败导致待人工确认的问题被作废，已升级为人工决策（不会静默放行）：${request.question?.summary || request.requestId}`);
+      appendEvent(state, "decision", "HumanConfirmationRequest", request.requestId, "monitor", {
+        taskGroupId: request.taskGroupId, cancelled: true, reason, escalatedToNeedsDecision: Boolean(workItem)
+      });
     }
   }
 }

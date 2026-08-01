@@ -38,6 +38,7 @@ import {
   computeCompletionReadiness,
   createExecutionTopology,
   recordQualityGateFromTest,
+  cancelPendingConfirmationsForDispatch,
   relatedSharedDefinitionsForTest,
   contractPublish,
   digestOf,
@@ -1020,6 +1021,29 @@ function verifyHumanAndOrganizationContracts(output) {
     const afterFresh = submitGate("passed", ["run:2"]);          // 带新证据
     if (afterFresh.status !== "passed") output.push("人工闸门: 带新证据的重报仍无法清除失败的质量门（正常流程被打断）");
     if (!afterFresh.previouslyFailed) output.push("人工闸门: 质量门被翻转却没有留下 previouslyFailed 痕迹（人看不到这条曾失败）");
+
+    // D7：agent 只要上报一次"执行失败"，就能让它自己提出的、人正要回答的确认单作废，
+    // 连带 no_pending_human_confirmations 这道阻塞一起清掉 —— 等于 AI 单方面撤掉了人的杠杆。
+    // 作废可以，静默放行不行：必须升级为人工决策，人仍然要有一个可按的杠杆。
+    const cancelState = structuredClone(seedState);
+    ensureRuntimeCollections(cancelState, {root});
+    const cTg = cancelState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const cWork = cTg.workItems[0];
+    cWork.status = "in_progress";
+    cancelState.humanConfirmationRequests = [{
+      schemaVersion: "human-confirmation-request/v1", requestId: "hcr_cancel_probe",
+      projectId: "prj_control_plane", taskGroupId: cTg.id, workItemId: cWork.id,
+      dispatchId: "dsp_cancel_probe", question: {summary: "选哪条实现路径"},
+      options: [{optionId: "a", label: "A"}, {optionId: "none", label: "不选"}],
+      blocking: true, status: "pending", createdAt: "2026-08-01T00:00:00Z", updatedAt: "2026-08-01T00:00:00Z"
+    }];
+    cancelPendingConfirmationsForDispatch(cancelState, "dsp_cancel_probe", "agent_runtime_failure");
+    if (cWork.status !== "needs_decision") {
+      output.push("人工闸门: agent 上报失败即可作废待人工确认单，且工作项未升级为人工决策（人的杠杆被 AI 单方面撤掉）");
+    }
+    if (!(cTg.blockers || []).some((b) => /人工确认/.test(b.summary || ""))) {
+      output.push("人工闸门: 待人工确认单被执行失败作废后没有留下阻塞项（关闭门被静默放行）");
+    }
 
     // 互审双轨（sys.review-dual-track）：互审结论必须带上"跳出当前方案考察过哪些替代路径"。
     // 规则不接门就是装饰 —— 这里让它成为可执行约束。

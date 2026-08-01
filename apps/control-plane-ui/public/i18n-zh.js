@@ -172,6 +172,7 @@
 
     /* ---------- 受阻 / 失败原因 ---------- */
     awaiting_human_confirmation: "等待人工确认",
+    human_confirmation_cancelled_by_dispatch_failure: "待人工确认因执行失败被作废·已升级人工决策",
     awaiting_existing_checkpoint: "等待既有检查点",
     awaiting_analysis_output: "等待分析产出",
     role_drift_guard_blocked: "角色偏移守卫阻断",
