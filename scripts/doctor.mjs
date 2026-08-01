@@ -840,6 +840,28 @@ try {
   if (orgProjectConfig.response.status !== 200) {
     throw new Error(`org_admin could not edit its own org project config, got ${orgProjectConfig.response.status}`);
   }
+  // 组织管理员离职后在控制台上下不了线（成员查找把 org_admin 整个排除在外），只能靠系统管理员
+  // 专属的 MCP 工具。允许停用，但不得把组织锁死。
+  const lastAdminDisable = await jsonFetch(port, `/api/org/members/${orgCreate.payload.organization.initialAdminAccountId}/status`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-last-admin-disable", authorization: orgAdminAuth},
+    body: JSON.stringify({status: "disabled"})
+  });
+  if (lastAdminDisable.response.status !== 409) {
+    throw new Error(`停用最后一个活跃组织管理员应被拒（409），得到 ${lastAdminDisable.response.status} —— 组织会被彻底锁死`);
+  }
+  // 把一个【尚未接受邀请】的成员置为 active 会让它两条登录路径全断且无法恢复：
+  // 邀请令牌分支要求 status === "invited"，密码分支要求 passwordDigest（邀请态没有），
+  // 而系统没有重发邀请或重置密码的接口。它还会继续占着成员配额。
+  const zombieActivate = await jsonFetch(port, `/api/org/members/${memberCreate.payload.account.accountId}/status`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-zombie-activate", authorization: orgAdminAuth},
+    body: JSON.stringify({status: "active"})
+  });
+  if (zombieActivate.response.status !== 409) {
+    throw new Error(`把未接受邀请的成员置为 active 应被拒（409），得到 ${zombieActivate.response.status} —— 会造出永远登不进来且仍占配额的僵尸账号`);
+  }
+
   // 暂停组织此前【什么都不停】：全仓只有配额检查一处读 org.status，于是它的实际语义仅仅是
   // "不许再新建"，成员照常登录、照常读写、名下的 agent 继续跑、继续烧模型额度。
   const suspendOrg = await jsonFetch(port, `/api/orgs/${orgId}/status`, {

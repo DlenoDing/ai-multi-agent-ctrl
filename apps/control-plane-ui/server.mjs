@@ -2201,7 +2201,14 @@ async function handleApi(req, res) {
       account.updatedAt = now();
     }
     const sessionToken = randomBytes(32).toString("base64url");
-    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
+    // authPolicy.sessionTtlSeconds 此前是纯装饰：账号上写着 3600 或 28800、还通过 publicAccountRecord
+    // 回显给控制台，而签发时固定 8 小时。运维给高权账号配了 1 小时会话，实得 8 小时 ——
+    // 一个安全相关的字段在对人说谎。夹在 [5 分钟, 24 小时] 之间，缺省仍是 8 小时。
+    const configuredTtl = Number(account.authPolicy?.sessionTtlSeconds);
+    const sessionTtlSeconds = Number.isFinite(configuredTtl) && configuredTtl > 0
+      ? Math.min(24 * 60 * 60, Math.max(300, Math.floor(configuredTtl)))
+      : 8 * 60 * 60;
+    const expiresAt = new Date(Date.now() + sessionTtlSeconds * 1000).toISOString();
     state.authSessions.unshift({
       sessionId: createId("authsess"),
       tokenDigest: digestOf(`session:${sessionToken}`),
@@ -4045,9 +4052,23 @@ async function handleApi(req, res) {
     const orgId = actorAccount?.organizationId;
     const guard = beginGuardedWrite(req, state, "org_member_status_update", `Account:${orgMemberStatusMatch[1]}`, {resourceType: "organization", resourceId: orgId});
     if (guard.status) return json(res, guard.status, guard.payload);
-    const member = state.accounts.find((item) => item.accountId === orgMemberStatusMatch[1] && item.organizationId === orgId && item.accountType !== "org_admin");
+    // 原先把 org_admin 整个排除在外：组织管理员离职之后，控制台上没有任何入口能让它下线，
+    // 只能靠系统管理员专属的 MCP 工具。现在允许停用，但不得把组织锁死 —— 至少要留一个活跃管理员。
+    const member = state.accounts.find((item) => item.accountId === orgMemberStatusMatch[1] && item.organizationId === orgId);
     if (!member) return json(res, 404, {error: "org_member_not_found"});
-    member.status = body.status === "disabled" ? "disabled" : "active";
+    const nextMemberStatus = body.status === "disabled" ? "disabled" : "active";
+    if (nextMemberStatus === "disabled" && member.accountType === "org_admin") {
+      const remainingAdmins = (state.accounts || []).filter((item) => item.organizationId === orgId
+        && item.accountType === "org_admin" && item.status === "active" && item.accountId !== member.accountId);
+      if (!remainingAdmins.length) return json(res, 409, {error: "org_last_admin_cannot_be_disabled"});
+    }
+    // 原先任何非 disabled 的入参一律置为 active。对一个【尚未接受邀请】的账号执行之后：
+    // 邀请令牌分支要求 status === "invited"（断了），密码分支要求 passwordDigest（邀请态没有，也断了），
+    // 而系统没有重发邀请或重置密码的接口 —— 两条登录路径全断、无法恢复，且仍占着成员配额。
+    if (nextMemberStatus === "active" && member.status === "invited") {
+      return json(res, 409, {error: "org_member_invitation_pending", message: "该成员尚未接受邀请，置为 active 会让它两条登录路径全断且无法恢复"});
+    }
+    member.status = nextMemberStatus;
     member.updatedAt = now();
     if (member.status === "disabled") revokeAccountSessions(state, member.accountId, "member_disabled");
     recomputeOrganizationUsage(state);
