@@ -965,8 +965,8 @@ errors << "test evidence must derive a quality gate that gates close" unless cor
 errors << "证据摘要字段不得暗示控制面已核验（应为自证语义）" if core_source.include?("contentVerifiable:")
 errors << "验收卡片必须说明证据摘要为执行方自证、控制面未独立核验" unless core_source.include?("未能独立核验") && core_source.include?("contentDigestAttested")
 
-["account_invite", "system_account_invite"].each do |action|
-  errors << "#{action} 必须是真人专属动作（机器主体铸造人类账号=绕过整道人工定稿闸门）" unless server_source.match?(/HUMAN_ONLY_ACTIONS\s*=\s*\[[^\]]*"#{action}"/m)
+["account_invite", "system_account_invite", "permission_resolve"].each do |action|
+  errors << "#{action} 必须是真人专属动作（铸造人类账号 / 授予被挡住的能力，机器主体自行完成即绕过人工闸门）" unless server_source.match?(/HUMAN_ONLY_ACTIONS\s*=\s*\[[^\]]*"#{action}"/m)
 end
 
 human_lever_forms = {

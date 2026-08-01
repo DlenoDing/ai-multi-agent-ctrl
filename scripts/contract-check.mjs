@@ -1109,6 +1109,40 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
     }
 
+    // 权限请求原样收下调用方给的 workId / sessionId，不校验它们属于声明的任务组。于是：
+    // (a) 把别的项目【已了结】的会话复活成 permission_required —— 对方关闭门就此永久被挡；
+    // (b) 给别的格子报一个权限请求再自己拒掉 —— releasePermissionDeniedSession 会拿 workId
+    //     去调 terminateCellRuntime，把那个格子的执行打断、产出目标与租约一并作废。全程无人工参与。
+    const prqScopeState = structuredClone(seedState);
+    ensureRuntimeCollections(prqScopeState, {root});
+    prqScopeState.workSessions = [
+      {sessionId: "ws_victim", taskGroupId: "tg_other_tenant", projectId: "prj_other", status: "completed_objective"},
+      {sessionId: "ws_mine", taskGroupId: "tg_runtime_management", projectId: "prj_control_plane", status: "active"}
+    ];
+    let prqForeignSessionBlocked = false;
+    try {
+      permissionRequestSubmit(prqScopeState, {taskGroupId: "tg_runtime_management", sessionId: "ws_victim",
+        resourceType: "task_group", resourceId: "tg_runtime_management", permission: "task_group:read"});
+    } catch (error) { prqForeignSessionBlocked = /session_scope_mismatch/.test(error.message); }
+    if (!prqForeignSessionBlocked || prqScopeState.workSessions[0].status !== "completed_objective") {
+      output.push("权限请求: 可以把别的任务组已了结的会话复活成 permission_required（对方关闭门就此永久被挡）");
+    }
+    let prqForeignWorkBlocked = false;
+    try {
+      permissionRequestSubmit(prqScopeState, {taskGroupId: "tg_runtime_management", workId: "wi_not_in_this_group",
+        resourceType: "task_group", resourceId: "tg_runtime_management", permission: "task_group:read"});
+    } catch (error) { prqForeignWorkBlocked = /work_item_scope_mismatch/.test(error.message); }
+    if (!prqForeignWorkBlocked) {
+      output.push("权限请求: 可以为不属于本任务组的工作项报权限请求（随后自行拒绝即可终结那个格子并作废其产出）");
+    }
+    // 非空转自证：本任务组内的正常请求必须仍然走得通
+    const prqLegitTg = prqScopeState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const prqLegitRequest = permissionRequestSubmit(prqScopeState, {taskGroupId: prqLegitTg.id, sessionId: "ws_mine",
+      workId: prqLegitTg.workItems[0].id, resourceType: "task_group", resourceId: prqLegitTg.id, permission: "task_group:read"});
+    if (!prqLegitRequest?.permissionRequest || prqScopeState.workSessions[1].status !== "permission_required") {
+      output.push("权限请求: 本任务组内的正常权限请求也被挡住（上面两条断言其实把一切都拒了）");
+    }
+
     // 放宽 abandon 的适用状态时，"不填 workItemId"的爆炸半径也被一起放大了：一条指令放弃整组、
     // 顺带作废全部产出，关闭门当场全绿，而界面提示写的还是旧语义。不点名就只能处置待决策的格子。
     const blastState = structuredClone(seedState);

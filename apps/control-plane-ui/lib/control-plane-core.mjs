@@ -6138,6 +6138,17 @@ export function permissionRequestSubmit(state, args) {
     error.status = 400;
     throw error;
   }
+  // workId 会在 permission 被拒时经 releasePermissionDeniedSession 传给 terminateCellRuntime，
+  // 于是"给别的格子报一个权限请求再自己拒掉"就能终结那个格子的执行、作废它的产出目标。
+  // 声明的工作项必须真的属于声明的任务组。
+  if (request.taskGroupId && request.workId) {
+    const owningGroup = (state.taskGroups || []).find((item) => item.id === request.taskGroupId);
+    if (!(owningGroup?.workItems || []).some((item) => item.id === request.workId)) {
+      const error = new Error("permission_request_work_item_scope_mismatch");
+      error.status = 400;
+      throw error;
+    }
+  }
   if (request.taskGroupId && request.resource.resourceType !== "external_capability" && !resourceProjectId) {
     // 控制面资源解析不出所属项目时必须 fail closed，而不是当作"无从比较"放行。
     const error = new Error("permission_request_resource_scope_unresolvable");
@@ -6151,7 +6162,22 @@ export function permissionRequestSubmit(state, args) {
   }
   state.permissionRequests = capRetainingOpen([request, ...state.permissionRequests], ["approved", "rejected", "resolved", "revoked", "expired", "cancelled"], 2000);
   if (args.sessionId) {
+    // 这里会把【任意】sessionId 的会话直接推到 permission_required：既能把别的格子、甚至
+    // 别的项目里【已经了结】的会话复活成非终态（对方的关闭门就此永久被挡），也能配合随后的
+    // permission "拒绝" 去调 terminateCellRuntime，把别人格子的产出目标与租约一并作废 ——
+    // 全程无人工参与。守卫作用域是按 taskGroupId 落的，而被改变的资源是那个会话，两者不一致。
+    // 会话必须属于本请求声明的任务组，且已了结的会话不得被复活。
     const session = state.workSessions.find((item) => item.sessionId === args.sessionId);
+    if (session && request.taskGroupId && session.taskGroupId !== request.taskGroupId) {
+      const error = new Error("permission_request_session_scope_mismatch");
+      error.status = 400;
+      throw error;
+    }
+    if (session && WORK_SESSION_SETTLED_STATUSES.includes(session.status)) {
+      const error = new Error("permission_request_session_already_settled");
+      error.status = 409;
+      throw error;
+    }
     if (session) {
       session.status = "permission_required";
       session.updatedAt = at;

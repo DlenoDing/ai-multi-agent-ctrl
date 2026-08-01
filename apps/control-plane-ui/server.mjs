@@ -771,6 +771,10 @@ const HUMAN_ONLY_ACTIONS = [
   "review_plan_resolve",
   "review_bundle_resolve",
   "rule_source_settle",
+  // 批准一条权限请求＝把它被挡住的那项能力交给执行方，同时它的"拒绝"分支会级联终结该格子的
+  // 执行、作废产出目标与租约。这既是治理决策也是破坏性操作，不该由机器主体自行完成 ——
+  // 此前那条提权链正是从这里穿过去的。两条 e2e 里做批准的本来就都是真人账号。
+  "permission_resolve",
   "system_upgrade_candidate_resolve",
   // 豁免质量门是放行决定，必须由真人负责，不能由 AI 自我豁免。
   "quality_gate_waive",
