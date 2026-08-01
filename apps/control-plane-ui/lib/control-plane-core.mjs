@@ -5832,7 +5832,12 @@ export function artifactRegister(state, args) {
     repositoryOutputTargetRef: args.repositoryOutputTargetRef,
     artifactManifestRef: args.artifactManifestRef || args.path,
     outputRefs: args.outputRefs || [],
-    digest: digestOf(args),
+    // digestOf(args) 是【请求参数】的哈希：两次相同的请求得到相同的值，而它与文件内容毫无关系 ——
+    // 一条"已按摘要登记"的证据其实什么都没有证明。运行时本来就在本地算好了内容哈希并放在
+    // payload.digest 里，此前被整个丢掉。没有内容哈希的制品必须如实标注，不能借这个字段冒充可验证。
+    contentDigest: /^sha256:[a-f0-9]{64}$/.test(String(args.payload?.digest || "")) ? args.payload.digest : null,
+    contentVerifiable: /^sha256:[a-f0-9]{64}$/.test(String(args.payload?.digest || "")),
+    requestDigest: digestOf(args),
     status: "registered",
     createdAt: at
   };
@@ -5941,9 +5946,11 @@ export function requeuePermissionApprovedDispatch(state, request, at = new Date(
 export const REVIEW_PLAN_TERMINAL_STATUSES = ["closed", "rejected", "superseded"];
 
 export function reviewPlanRecordCoverage(state, args) {
-  const plan = (state.reviewPlans || []).find((item) => args.reviewPlanId
+  // 同上：即使指定了 reviewPlanId，也必须落在调用方自己的任务组内，否则可以推进（乃至闭合）
+  // 别人的评审计划。
+  const plan = (state.reviewPlans || []).find((item) => item.taskGroupId === args.taskGroupId && (args.reviewPlanId
     ? item.reviewPlanId === args.reviewPlanId
-    : item.taskGroupId === args.taskGroupId && !REVIEW_PLAN_TERMINAL_STATUSES.includes(item.status));
+    : !REVIEW_PLAN_TERMINAL_STATUSES.includes(item.status)));
   if (!plan) return null;
   if (REVIEW_PLAN_TERMINAL_STATUSES.includes(plan.status)) return plan;
   const at = new Date().toISOString();
@@ -6102,6 +6109,14 @@ export function findingSubmit(state, args) {
 // 允许作为"已妥善闭合"的处置类（close-barrier 只认这些 + 相应证据/归属）
 const VALID_FINDING_DISPOSITIONS = ["fixed_verified", "not_applicable", "scope_adjusted", "blocked_external"];
 
+// 不修即放行的处置类：缺陷仍然存在，只是被判定为不必修。这不是事实核验，是决定。
+export const NON_REMEDIATION_DISPOSITIONS = ["not_applicable", "scope_adjusted"];
+
+// 真人处置身份用 Symbol 作键传递，而不是普通字段。MCP / REST 的入参都来自 JSON，
+// JSON 表达不出 Symbol 键 —— 于是"自报 humanActor"在结构上就不可能，不必依赖每个调用点
+// 记得剥离它（逐点剥离总会漏掉下一个新调用点，这一类漏洞我已经反复交过学费）。
+export const HUMAN_ACTOR_KEY = Symbol.for("dleno.control-plane.humanActor");
+
 export function findingResolve(state, args) {
   const finding = (state.findings || []).find((item) => item.findingId === args.findingId);
   if (!finding) return {ok: false, error: "finding_not_found"};
@@ -6119,8 +6134,16 @@ export function findingResolve(state, args) {
     : {resolved: "fixed_verified", closed: "fixed_verified", dismissed: "not_applicable", wontfix: "scope_adjusted"}[status];
   if (disposition === "fixed_verified" && evidenceRefs.length === 0) disposition = "fixed_unverified";
   if (disposition === "blocked_external" && !(args.rootCauseOwner && (args.recoveryRef || args.resolutionRef))) disposition = "blocked_external_incomplete";
+  // "已修复且有证据"是可核验的事实判断，AI 可以做；但 not_applicable / scope_adjusted 是
+  // 【不修就放行】的决定 —— 缺陷还在，只是被判定为不必修。这类判断由 AI 自己下，等于它可以
+  // 把自己造出来的问题一笔勾销，关闭门也随之通过。故这两类必须由真人处置。
+  const humanActor = args[HUMAN_ACTOR_KEY] || null;
+  if (NON_REMEDIATION_DISPOSITIONS.includes(disposition) && !humanActor) {
+    return {ok: false, error: "finding_disposition_requires_human", dispositionClass: disposition};
+  }
   finding.status = status;
   finding.dispositionClass = disposition;
+  if (humanActor) finding.dispositionedBy = humanActor;
   finding.resolutionRef = args.resolutionRef || `resolution:${status}`;
   if (args.rootCauseOwner) finding.rootCauseOwner = args.rootCauseOwner;
   if (args.recoveryRef) finding.recoveryRef = args.recoveryRef;

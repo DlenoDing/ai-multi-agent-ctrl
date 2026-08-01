@@ -40,6 +40,7 @@ import {
   recordQualityGateFromTest,
   cancelPendingConfirmationsForDispatch,
   ruleSourceResolve,
+  HUMAN_ACTOR_KEY,
   reviewPlanCreate,
   reviewPlanRecordCoverage,
   REVIEW_PLAN_TERMINAL_STATUSES,
@@ -1026,6 +1027,37 @@ function verifyHumanAndOrganizationContracts(output) {
     if (afterFresh.status !== "passed") output.push("人工闸门: 带新证据的重报仍无法清除失败的质量门（正常流程被打断）");
     if (!afterFresh.previouslyFailed) output.push("人工闸门: 质量门被翻转却没有留下 previouslyFailed 痕迹（人看不到这条曾失败）");
 
+    // 评审包终态化的作用域：按 id 全局查找意味着 A 组的调用方能替 B 组把评审包终态化，
+    // 直接清掉 B 组 no_pending_review_bundles 那道阻塞（守卫作用域必须覆盖被改变的资源）。
+    const bundleState = structuredClone(seedState);
+    ensureRuntimeCollections(bundleState, {root});
+    bundleState.reviewBundles = [{reviewBundleId: "rvb_foreign", taskGroupId: "tg_other_tenant",
+      projectId: "prj_other", status: "submitted"}];
+    reviewResultConsume(bundleState, {reviewBundleId: "rvb_foreign", taskGroupId: "tg_runtime_management", verdict: "passed"});
+    if (bundleState.reviewBundles[0].status !== "submitted") {
+      output.push("评审包: 报着自己的任务组即可把别的任务组的评审包终态化（替对方清掉关闭门阻塞）");
+    }
+
+    // 处置发现项：not_applicable / scope_adjusted 是"缺陷还在但不修了"的放行决定，
+    // 由 AI 自己下等于它能把自己造出来的问题一笔勾销。必须真人，且真人身份不可自报。
+    const findingState = structuredClone(seedState);
+    ensureRuntimeCollections(findingState, {root});
+    findingState.findings = [{findingId: "fnd_probe", taskGroupId: "tg_runtime_management", projectId: "prj_control_plane",
+      status: "open", severity: "high", summary: "probe"}];
+    const aiDismiss = findingResolve(findingState, {findingId: "fnd_probe", status: "dismissed", dispositionClass: "not_applicable"});
+    if (aiDismiss.ok !== false || findingState.findings[0].status !== "open") {
+      output.push("发现项处置: AI 无需真人即可把缺陷判为不适用并放行（自造问题自己勾销）");
+    }
+    // 自报的 humanActor 是普通 JSON 字段，必须完全无效（真人身份走 Symbol 键，入参表达不出来）
+    findingResolve(findingState, {findingId: "fnd_probe", status: "wontfix", dispositionClass: "scope_adjusted", humanActor: "acct_alice"});
+    if (findingState.findings[0].status !== "open") {
+      output.push("发现项处置: 参数里自报 humanActor 即可放行（真人身份可伪造，闸门形同虚设）");
+    }
+    const humanDismiss = findingResolve(findingState, {findingId: "fnd_probe", status: "dismissed", dispositionClass: "not_applicable", [HUMAN_ACTOR_KEY]: "acct_alice"});
+    if (humanDismiss.ok === false || findingState.findings[0].dispositionedBy !== "acct_alice") {
+      output.push("发现项处置: 真人处置也被挡住（正常路径被打断，缺陷将永久阻塞关闭门）");
+    }
+
     // D8/D10：共享定义是"本项目认什么规范"的载体，会被分发进每个 agent 的指令包。
     // (a) create+publish 两步都在控制角色工具集里，AI 原本可以自行宣布并自我激活一条全局规范；
     // (b) create 产出的对象本身不符合它自己的 schema —— 规范载体不守自己的契约。
@@ -1078,11 +1110,20 @@ function verifyHumanAndOrganizationContracts(output) {
     ensureRuntimeCollections(planState, {root});
     const planTg = planState.taskGroups.find((item) => item.id === "tg_runtime_management");
     const plan = reviewPlanCreate(planState, {taskGroupId: planTg.id, requiredReviewerRoles: ["reviewer", "qa"]}).reviewPlan;
-    reviewPlanRecordCoverage(planState, {reviewPlanId: plan.reviewPlanId, reviewerRole: "reviewer"});
+    reviewPlanRecordCoverage(planState, {reviewPlanId: plan.reviewPlanId, taskGroupId: planTg.id, reviewerRole: "reviewer"});
     if (REVIEW_PLAN_TERMINAL_STATUSES.includes(plan.status)) {
       output.push("评审计划: 只到齐一个评审角色就闭合了（覆盖度要求形同虚设）");
     }
-    reviewPlanRecordCoverage(planState, {reviewPlanId: plan.reviewPlanId, reviewerRole: "qa"});
+    reviewPlanRecordCoverage(planState, {reviewPlanId: plan.reviewPlanId, taskGroupId: planTg.id, reviewerRole: "qa"});
+    // 跨租户：拿着别人的 reviewPlanId、报自己的任务组，不得推进（乃至闭合）别人的评审计划。
+    const foreignPlanState = structuredClone(seedState);
+    ensureRuntimeCollections(foreignPlanState, {root});
+    const foreignTg = foreignPlanState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const foreignPlan = reviewPlanCreate(foreignPlanState, {taskGroupId: foreignTg.id, requiredReviewerRoles: ["reviewer"]}).reviewPlan;
+    reviewPlanRecordCoverage(foreignPlanState, {reviewPlanId: foreignPlan.reviewPlanId, taskGroupId: "tg_someone_else", reviewerRole: "reviewer"});
+    if (REVIEW_PLAN_TERMINAL_STATUSES.includes(foreignPlan.status)) {
+      output.push("评审计划: 报着别的任务组也能闭合本任务组的评审计划（作用域没有覆盖被改变的资源）");
+    }
     if (!REVIEW_PLAN_TERMINAL_STATUSES.includes(plan.status)) {
       output.push("评审计划: 要求的评审角色全部到齐后仍无法闭合（创建即永久阻塞关闭门，人无杠杆）");
     }

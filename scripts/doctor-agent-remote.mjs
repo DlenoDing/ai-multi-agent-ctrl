@@ -230,9 +230,13 @@ try {
   const evidenceArtifact = (artifactState.artifacts || []).find((item) =>
     item.taskGroupId === completed.taskGroupId &&
     ["registered", "verified"].includes(item.status) &&
-    /^sha256:[0-9a-f]{64}$/u.test(String(item.digest || "")) &&
-    (item.outputRefs || []).some((ref) => String(ref).startsWith("artifact://")));
-  if (!evidenceArtifact) throw new Error("two-step evidence artifact registration did not produce a registered artifact with a digest");
+    /^sha256:[0-9a-f]{64}$/u.test(String(item.contentDigest || "")) &&
+    // 关键：摘要必须与运行时在本地对【证据内容】算出的哈希一致（定位符里带着它的前 40 位）。
+    // 此前这里比对的是 digestOf(args) —— 请求参数的哈希，它必然长得像个 sha256，于是这条
+    // 断言恒真，从来没有验证过任何内容。摘要与定位符互相印证才说明它确实来自内容本身。
+    (item.outputRefs || []).some((ref) => String(ref).startsWith("artifact://")
+      && String(ref).includes(String(item.contentDigest).slice("sha256:".length, "sha256:".length + 40))));
+  if (!evidenceArtifact) throw new Error("two-step evidence artifact registration did not produce a registered artifact whose contentDigest matches the evidence locator");
 
   // Gap 5 §8: simulate a permission block, observe the structured PermissionRequest, resolve it, and verify the
   // runtime resumes from the safe retry point per the §8 resolution table and completes the dispatch.

@@ -1355,6 +1355,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "governance-mcp.finding_submit":
       return findingSubmit(state, args);
     case "governance-mcp.finding_resolve":
+      // 无需在这里剥离自报的 humanActor：真人身份走 Symbol 键，JSON 入参表达不出来。
       return findingResolve(state, args);
     case "governance-mcp.approval_resolve":
       // Approver identity is the authenticated MCP principal (high_risk_no_self_approval + quorum tally).
@@ -2215,7 +2216,10 @@ export function reviewResultConsume(state, args) {
   // Terminalize the referenced external review bundle (submitted -> consumed / rejected). Without this a
   // submitted bundle stays non-terminal forever and wedges the close-barrier no_pending_review_bundles gate.
   if (args.reviewBundleId) {
-    const bundle = (state.reviewBundles || []).find((item) => item.reviewBundleId === args.reviewBundleId);
+    // 作用域必须覆盖被改变的资源本身：按 id 全局查找意味着 A 任务组的调用方可以把 B 任务组的
+    // 评审包终态化，直接替 B 清掉 no_pending_review_bundles 这道阻塞（confused deputy）。
+    const scopedTaskGroupId = args.taskGroupId || "tg_runtime_management";
+    const bundle = (state.reviewBundles || []).find((item) => item.reviewBundleId === args.reviewBundleId && item.taskGroupId === scopedTaskGroupId);
     if (bundle && !["consumed", "rejected"].includes(bundle.status)) {
       bundle.status = ["rejected", "changes_requested"].includes(args.verdict) || args.status === "rejected" ? "rejected" : "consumed";
       bundle.updatedAt = new Date().toISOString();

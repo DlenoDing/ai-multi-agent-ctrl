@@ -84,7 +84,8 @@ import {
   runCommandLifecycle,
   selectModel,
   syncSkillSource,
-  updateTaskGroupLanguagePolicy
+  updateTaskGroupLanguagePolicy,
+  HUMAN_ACTOR_KEY
 } from "./lib/control-plane-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -3278,7 +3279,15 @@ async function handleApi(req, res) {
     const existingFinding = (state.findings || []).find((item) => item.findingId === findingResolveMatch[1]);
     const guard = beginGuardedWrite(req, state, "finding_resolve", `Finding:${findingResolveMatch[1]}`, taskGroupScope(state, existingFinding?.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
-    const result = findingResolve(state, {...body, findingId: findingResolveMatch[1]});
+    // 真人身份只能由已鉴权账号推导，并且经 Symbol 键传入 —— 请求体里写什么都进不来。
+    const resolvingAccount = accountFromRequest(req, state);
+    const humanActor = resolvingAccount && HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(resolvingAccount.accountType) && resolvingAccount.status === "active"
+      ? resolvingAccount.accountId
+      : null;
+    const findingArgs = {...(body || {}), findingId: findingResolveMatch[1]};
+    if (humanActor) findingArgs[HUMAN_ACTOR_KEY] = humanActor;
+    const result = findingResolve(state, findingArgs);
+    if (result.error === "finding_disposition_requires_human") return json(res, 403, result);
     if (result.ok === false) return json(res, 404, {error: result.error});
     recomputeBarrierAfterResolve(state, existingFinding?.taskGroupId);
     audit(state, "policy-engine", "finding_resolve", `Finding:${result.finding.findingId}`);

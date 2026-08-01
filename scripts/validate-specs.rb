@@ -699,7 +699,9 @@ errors << "resume_dispatch must only revive a blocked dispatch" unless server_so
 # registered in a modeled state, and be terminalizable by review_result_consume (else it wedges close).
 errors << "ReviewBundle close-barrier checks must use the modeled terminal set (no phantom 'closed')" if core_source.include?("\"consumed\", \"closed\"")
 errors << "reviewBundleRegister must create a modeled (submitted) bundle, not the unmodeled 'registered'" unless core_source.include?("\"submitted\" is a MODELED ReviewBundle state")
-errors << "review_result_consume must terminalize the referenced review bundle" unless mcp_source.include?("state.reviewBundles || []).find((item) => item.reviewBundleId === args.reviewBundleId)") && contract_check_source.include?("reviewResultConsume: submitted bundle not terminalized")
+# 终态化评审包必须【按调用方自己的任务组】收口：原断言钉的恰好是未加作用域的那行源码，
+# 于是它在钉住"要终态化"的同时，也把跨租户终态化一并钉死了。
+errors << "review_result_consume must terminalize the referenced review bundle within the caller's task group" unless mcp_source.include?("item.reviewBundleId === args.reviewBundleId && item.taskGroupId === scopedTaskGroupId") && contract_check_source.include?("reviewResultConsume: submitted bundle not terminalized")
 errors << "the terminal-set drift gate must also bind ReviewBundle" unless contract_check_source.include?("ReviewBundle: [\"consumed\", \"rejected\"]")
 # H1: the modeled non-negotiable high_risk_no_self_approval + AI-quorum must be enforced (was a single-call
 # pending->approved with no proposer check). Proposer/approver identity must come from the authenticated actor.
