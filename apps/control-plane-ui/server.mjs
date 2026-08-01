@@ -86,7 +86,8 @@ import {
   selectModel,
   syncSkillSource,
   updateTaskGroupLanguagePolicy,
-  HUMAN_ACTOR_KEY
+  HUMAN_ACTOR_KEY,
+  UNSAFE_DELEGATED_GRANT_PERMISSIONS
 } from "./lib/control-plane-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -585,14 +586,8 @@ const taskGroupGrantPermissionTemplates = Object.freeze({
   project_member: ["task_group:read"]
 });
 
-const unsafeDelegatedGrantPermissions = new Set([
-  "system:*",
-  "project:*",
-  "task_group:*",
-  "project:create",
-  "task_group:orchestrate",
-  "task_group:checkpoint_submit"
-]);
+// 与 core 共用同一份判据：两条铸造路径分别维护各自的清单，正是它们标准不一致的原因。
+const unsafeDelegatedGrantPermissions = UNSAFE_DELEGATED_GRANT_PERMISSIONS;
 
 function permissionsForRoleGrant(role, resourceType) {
   const templates = resourceType === "task_group" ? taskGroupGrantPermissionTemplates : roleGrantPermissionTemplates;
@@ -775,7 +770,12 @@ const HUMAN_ONLY_ACTIONS = [
   "shared_definition_resolve",
   "review_plan_resolve",
   // 豁免质量门是放行决定，必须由真人负责，不能由 AI 自我豁免。
-  "quality_gate_waive"
+  "quality_gate_waive",
+  // 铸造账号必须是真人动作。人工定稿闸门只认 account.accountType，而铸造该 accountType 的动作
+  // 原本不受同一条闸门保护 —— 机器主体铸一个"人"、再用返回的令牌登录，就成了合法的定稿人，
+  // 整道人工闸门被从旁边绕过去。account_invite 强制铸出的正是 user_account（"人"类型）。
+  "account_invite",
+  "system_account_invite"
 ];
 const HUMAN_ACCOUNT_TYPES_FOR_ACTIONS = ["system_admin", "org_admin", "user_account"];
 
@@ -1331,7 +1331,12 @@ function inferResourceScope(state, subject) {
 function grantAppliesToResource(state, grant, resourceScope = {}) {
   const grantResource = grant.resource || {resourceType: grant.resourceType, resourceId: grant.resourceId};
   if (!grantResource?.resourceType) return false;
-  if (grantResource.resourceType === "system") return resourceScope.resourceType === "system";
+  // system 型 grant 此前对任何 system 作用域生效、resourceId 完全被忽略：一条 {system, accounts}
+  // 的授权因此等价于整个系统的通行证。改为按 resourceId 精确匹配（"*" 仍表示全域，供受控路径使用）。
+  if (grantResource.resourceType === "system") {
+    return resourceScope.resourceType === "system"
+      && (grantResource.resourceId === "*" || grantResource.resourceId === resourceScope.resourceId);
+  }
   if (grantResource.resourceType === "project") {
     if (resourceScope.resourceType === "project") return grantResource.resourceId === resourceScope.resourceId;
     if (resourceScope.resourceType === "task_group") {

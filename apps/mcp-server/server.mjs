@@ -64,7 +64,8 @@ import {
   ruleSourceResolve,
   sharedDefinitionCreate,
   taskGroupForRecord,
-  reviewPlanRecordCoverage
+  reviewPlanRecordCoverage,
+  isDelegatableGrantPermission
 } from "../control-plane-ui/lib/control-plane-core.mjs";
 import {
   createAgentControlCommand,
@@ -2134,6 +2135,13 @@ export function permissionResolve(state, args) {
 function ensurePermissionAccessGrant(state, request, args, decision, at) {
   const subjectRef = request.subjectRef || {subjectType: "account", subjectId: request.subjectId};
   const permissions = [request.permission].filter(Boolean);
+  // 防御纵深：提交侧已经拦下不可委派的权限与非任务组资源，但请求也可能来自 REST 或历史遗留记录，
+  // 而这里是真正铸造 grant 的地方 —— 铸造点必须自己校验，不能依赖"上游应该已经挡过了"。
+  // 只有控制面资源才铸 grant；external_capability 走的是能力边界那条路，不该在这里产生授权。
+  if (!permissions.length || !permissions.every((permission) => isDelegatableGrantPermission(permission))
+    || !["task_group", "project"].includes(request.resource?.resourceType)) {
+    return null;
+  }
   const existing = state.accessGrants.find((grant) =>
     grant.status === "active" &&
     grant.subjectRef?.subjectType === subjectRef.subjectType &&

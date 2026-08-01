@@ -5859,6 +5859,24 @@ export function permissionProbe(state, args, filter) {
   return {subjectId, permission, resource, allowed, grants};
 }
 
+// 授权铸造有两道门：REST 的 sanitizeGrantRequest 做了完整委派校验（拒 system:/通配、拒批准人
+// 自己都没有的权限），而"申请-批准"这道门原样铸造申请人自选的权限，一道锁都没有。
+// 同一间屋子两道门、其中一道没锁，是本仓反复出现的形态，所以判据放在这里由两侧共用。
+export const UNSAFE_DELEGATED_GRANT_PERMISSIONS = new Set([
+  "system:*", "project:*", "task_group:*", "project:create", "task_group:orchestrate", "task_group:checkpoint_submit"
+]);
+// 外部能力申请（github_push、网络访问…）与控制面授权申请共用这条通道，但只有后者会被铸成 grant。
+export const PERMISSION_REQUEST_RESOURCE_TYPES = ["task_group", "project", "external_capability"];
+export function isDelegatableGrantPermission(permission) {
+  const value = String(permission || "");
+  if (!value) return false;
+  if (UNSAFE_DELEGATED_GRANT_PERMISSIONS.has(value)) return false;
+  // system: 前缀整体不可经此通道授予 —— 拿到 system:account_admin 就能铸造 system_admin 账号，
+  // 而人工定稿闸门只认 accountType，于是"铸造一个人"就等于摘掉整道闸门。
+  if (value.startsWith("system:")) return false;
+  return true;
+}
+
 export function permissionRequestSubmit(state, args) {
   // 冒名的授权请求会让"批准读权限"的点击铸出别的 grant（见 assertUniqueRecordId 注释）。
   assertUniqueRecordId(state.permissionRequests, "requestId", args.requestId, "permission_request_id_conflict");
@@ -5887,6 +5905,30 @@ export function permissionRequestSubmit(state, args) {
   const requestTaskGroupProjectId = request.taskGroupId
     ? (state.taskGroups || []).find((taskGroup) => taskGroup.id === request.taskGroupId)?.projectId
     : null;
+  // 这条通道有两种合法用途，判据不同，此前混作一谈：
+  //   (a) external_capability —— 执行方申请一项外部能力（github_push、网络访问…）。它不是控制面
+  //       授权，批准它不该铸出任何控制面权限。
+  //   (b) task_group / project —— 控制面授权。它会被原样铸成 grant。
+  // 危险的是自选出第三种：{system, accounts} 这样的资源配上 system:* 这样的权限。下面那道项目
+  // 对齐守卫对"解析不出项目"的资源会短路放行 —— 守卫按它预期的形状写，遇到别的形状就失效。
+  if (!PERMISSION_REQUEST_RESOURCE_TYPES.includes(request.resource.resourceType)) {
+    const error = new Error("permission_request_resource_type_not_allowed");
+    error.status = 400;
+    throw error;
+  }
+  // 无论哪种用途，都不得经这条通道铸出不可委派的权限（通配/system:）。REST 那道门一直这么拒，
+  // 这道门却原样放行 —— 同一间屋子两道门，其中一道没锁。
+  if (!isDelegatableGrantPermission(request.permission)) {
+    const error = new Error("permission_request_permission_not_delegable");
+    error.status = 400;
+    throw error;
+  }
+  if (request.taskGroupId && request.resource.resourceType !== "external_capability" && !resourceProjectId) {
+    // 控制面资源解析不出所属项目时必须 fail closed，而不是当作"无从比较"放行。
+    const error = new Error("permission_request_resource_scope_unresolvable");
+    error.status = 400;
+    throw error;
+  }
   if (request.taskGroupId && resourceProjectId && requestTaskGroupProjectId && resourceProjectId !== requestTaskGroupProjectId) {
     const error = new Error("permission_request_resource_project_mismatch");
     error.status = 400;

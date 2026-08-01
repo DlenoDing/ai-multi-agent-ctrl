@@ -942,6 +942,10 @@ errors << "test evidence must derive a quality gate that gates close" unless cor
 # 真人专属杠杆若在控制台里没有入口，等于这个杠杆不存在 —— 人只会看到一个红色阻塞 chip，
 # 然后无从下手。本轮一次性发现三个这样的杠杆（质量门豁免/评审计划收尾/共享定义处置），
 # 全都只有裸 REST。故把"有杠杆必有入口"钉成结构约束。
+["account_invite", "system_account_invite"].each do |action|
+  errors << "#{action} 必须是真人专属动作（机器主体铸造人类账号=绕过整道人工定稿闸门）" unless server_source.match?(/HUMAN_ONLY_ACTIONS\s*=\s*\[[^\]]*"#{action}"/m)
+end
+
 human_lever_forms = {
   "quality_gate_waive" => "quality-gate-waive",
   "review_plan_resolve" => "review-plan-resolve",

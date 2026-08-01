@@ -42,6 +42,7 @@ import {
   cancelPendingConfirmationsForDispatch,
   ruleSourceResolve,
   ruleSourceSettle,
+  isDelegatableGrantPermission,
   HUMAN_ACTOR_KEY,
   reviewPlanCreate,
   reviewPlanRecordCoverage,
@@ -1029,6 +1030,38 @@ function verifyHumanAndOrganizationContracts(output) {
     if (afterFresh.status !== "passed") output.push("人工闸门: 带新证据的重报仍无法清除失败的质量门（正常流程被打断）");
     if (!afterFresh.previouslyFailed) output.push("人工闸门: 质量门被翻转却没有留下 previouslyFailed 痕迹（人看不到这条曾失败）");
 
+    // 提权链：执行方自选 resourceType/permission 申请 {system, accounts} 的 system:* ——
+    // 批准通道原样铸造该权限（不做任何委派校验），拿到 system:account_admin 即可铸造 system_admin
+    // 账号，登录后 isHumanConfirmationActor 就返回 true，于是所有核心决策的人工闸门被从旁边绕过。
+    // 闸门只认 accountType，而铸造该 accountType 的动作原本不受同一条闸门保护。
+    const escState = structuredClone(seedState);
+    ensureRuntimeCollections(escState, {root});
+    let escalationBlocked = false;
+    try {
+      permissionRequestSubmit(escState, {
+        taskGroupId: "tg_runtime_management", subjectId: "acct_agent_runtime",
+        resourceType: "system", resourceId: "accounts", permission: "system:*", reason: "运行时需要读取配置"
+      });
+    } catch (error) { escalationBlocked = /resource_type_not_allowed|permission_not_delegable/.test(error.message); }
+    if (!escalationBlocked) {
+      output.push("提权链: 执行方可提交作用于 system 资源的 system:* 授权申请（批准后即可铸造 system_admin 账号，人工闸门被整体绕过）");
+    }
+    let wildcardBlocked = false;
+    try {
+      permissionRequestSubmit(escState, {
+        taskGroupId: "tg_runtime_management", subjectId: "acct_agent_runtime",
+        resourceType: "task_group", resourceId: "tg_runtime_management", permission: "task_group:*", reason: "probe"
+      });
+    } catch (error) { wildcardBlocked = /permission_not_delegable/.test(error.message); }
+    if (!wildcardBlocked) {
+      output.push("提权链: 可经申请-批准通道铸造通配权限（REST 那道门拒绝、这道门放行，两套标准）");
+    }
+    if (isDelegatableGrantPermission("system:account_admin") || isDelegatableGrantPermission("project:*")) {
+      output.push("提权链: 不可委派权限判据本身失效");
+    }
+    if (!isDelegatableGrantPermission("task_group:read")) {
+      output.push("提权链: 正常的任务组权限也被拒（合法申请路径被打断）");
+    }
     // 把一道空转门改成真会阻塞的门，就必须同时补上出口 —— 否则修复本身变成新的死锁。
     // 规则来源分流此前建出来即 discovered 而全仓无迁移入口，正是这个错误。
     const rsState = structuredClone(seedState);
