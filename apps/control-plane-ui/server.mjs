@@ -3113,9 +3113,17 @@ async function handleApi(req, res) {
   if (req.method === "POST" && qualityGateWaiveMatch) {
     if (!requireAuthenticated(req, state, res)) return;
     const gate = (state.qualityGates || []).find((item) => item.gateId === decodeURIComponent(qualityGateWaiveMatch[1]));
-    if (!gate) return json(res, 404, {error: "quality_gate_not_found"});
-    const guard = beginGuardedWrite(req, state, "quality_gate_waive", `QualityGate:${gate.gateId}`, taskGroupScope(state, gate.taskGroupId));
+    // 对象不存在时先前直接回 404，而那发生在守卫【之前】：任何已认证主体（含 agent 节点令牌）
+    // 都能靠 404 与 428 的差别静默枚举别的租户有哪些对象，且不产生 policyDecision、不写审计。
+    // 质量门尤其敏感 —— gateId 是 qg:<taskGroupId>:<workItemId>:<gateType> 这样可推算的确定性 id。
+    // 改为：先过守卫（对象不在时退回一个寻常主体满足不了的系统作用域），无权者与不存在对调用方
+    // 是同一个回答；只有能满足该作用域的主体才会看到 404。
+    // 评审计划这条还要注意：守卫必须按它自己的 taskGroupId 落位，用 projectScope 会掉到一条
+    // 与"是哪个项目"无关的判据上（见 directPermissionApplies）。
+    const guard = beginGuardedWrite(req, state, "quality_gate_waive", gate ? `QualityGate:${gate.gateId}` : "quality_gates:unknown",
+      gate ? taskGroupScope(state, gate.taskGroupId) : {resourceType: "system", resourceId: "quality_gates"});
     if (guard.status) return json(res, guard.status, guard.payload);
+    if (!gate) return json(res, 404, {error: "quality_gate_not_found"});
     const justification = String(body.justification || "").trim();
     if (!justification) return json(res, 400, {error: "quality_gate_waive_requires_justification"});
     // 终态一次性守卫：这些字段是那位真人处置理由的【唯一】存放处（审计条目只记 actor/action/subject/
@@ -3143,9 +3151,17 @@ async function handleApi(req, res) {
   if (req.method === "POST" && reviewBundleResolveMatch) {
     if (!requireAuthenticated(req, state, res)) return;
     const bundle = (state.reviewBundles || []).find((item) => item.reviewBundleId === reviewBundleResolveMatch[1]);
-    if (!bundle) return json(res, 404, {error: "review_bundle_not_found"});
-    const guard = beginGuardedWrite(req, state, "review_bundle_resolve", `ReviewBundle:${bundle.reviewBundleId}`, taskGroupScope(state, bundle.taskGroupId));
+    // 对象不存在时先前直接回 404，而那发生在守卫【之前】：任何已认证主体（含 agent 节点令牌）
+    // 都能靠 404 与 428 的差别静默枚举别的租户有哪些对象，且不产生 policyDecision、不写审计。
+    // 质量门尤其敏感 —— gateId 是 qg:<taskGroupId>:<workItemId>:<gateType> 这样可推算的确定性 id。
+    // 改为：先过守卫（对象不在时退回一个寻常主体满足不了的系统作用域），无权者与不存在对调用方
+    // 是同一个回答；只有能满足该作用域的主体才会看到 404。
+    // 评审计划这条还要注意：守卫必须按它自己的 taskGroupId 落位，用 projectScope 会掉到一条
+    // 与"是哪个项目"无关的判据上（见 directPermissionApplies）。
+    const guard = beginGuardedWrite(req, state, "review_bundle_resolve", bundle ? `ReviewBundle:${bundle.reviewBundleId}` : "review_bundles:unknown",
+      bundle ? taskGroupScope(state, bundle.taskGroupId) : {resourceType: "system", resourceId: "review_bundles"});
     if (guard.status) return json(res, guard.status, guard.payload);
+    if (!bundle) return json(res, 404, {error: "review_bundle_not_found"});
     const nextStatus = ["consumed", "rejected"].includes(body.status) ? body.status : null;
     if (!nextStatus) return json(res, 400, {error: "review_bundle_status_invalid"});
     const justification = String(body.justification || "").trim();
@@ -3169,9 +3185,17 @@ async function handleApi(req, res) {
   if (req.method === "POST" && upgradeCandidateResolveMatch) {
     if (!requireAuthenticated(req, state, res)) return;
     const candidate = (state.systemUpgradeCandidates || []).find((item) => item.candidateId === upgradeCandidateResolveMatch[1]);
-    if (!candidate) return json(res, 404, {error: "system_upgrade_candidate_not_found"});
-    const guard = beginGuardedWrite(req, state, "system_upgrade_candidate_resolve", `SystemUpgradeCandidate:${candidate.candidateId}`, taskGroupScope(state, candidate.taskGroupId));
+    // 对象不存在时先前直接回 404，而那发生在守卫【之前】：任何已认证主体（含 agent 节点令牌）
+    // 都能靠 404 与 428 的差别静默枚举别的租户有哪些对象，且不产生 policyDecision、不写审计。
+    // 质量门尤其敏感 —— gateId 是 qg:<taskGroupId>:<workItemId>:<gateType> 这样可推算的确定性 id。
+    // 改为：先过守卫（对象不在时退回一个寻常主体满足不了的系统作用域），无权者与不存在对调用方
+    // 是同一个回答；只有能满足该作用域的主体才会看到 404。
+    // 评审计划这条还要注意：守卫必须按它自己的 taskGroupId 落位，用 projectScope 会掉到一条
+    // 与"是哪个项目"无关的判据上（见 directPermissionApplies）。
+    const guard = beginGuardedWrite(req, state, "system_upgrade_candidate_resolve", candidate ? `SystemUpgradeCandidate:${candidate.candidateId}` : "system_upgrade_candidates:unknown",
+      candidate ? taskGroupScope(state, candidate.taskGroupId) : {resourceType: "system", resourceId: "system_upgrade_candidates"});
     if (guard.status) return json(res, guard.status, guard.payload);
+    if (!candidate) return json(res, 404, {error: "system_upgrade_candidate_not_found"});
     const nextStatus = ["exported_for_external_maintenance", "dismissed", "closed"].includes(body.status) ? body.status : null;
     if (!nextStatus) return json(res, 400, {error: "system_upgrade_candidate_status_invalid"});
     const justification = String(body.justification || "").trim();
@@ -3196,9 +3220,17 @@ async function handleApi(req, res) {
   if (req.method === "POST" && ruleSourceSettleMatch) {
     if (!requireAuthenticated(req, state, res)) return;
     const resolution = (state.ruleSourceResolutions || []).find((item) => item.resolutionId === ruleSourceSettleMatch[1]);
-    if (!resolution) return json(res, 404, {error: "rule_source_resolution_not_found"});
-    const guard = beginGuardedWrite(req, state, "rule_source_settle", `RuleSourceResolution:${resolution.resolutionId}`, taskGroupScope(state, resolution.taskGroupId));
+    // 对象不存在时先前直接回 404，而那发生在守卫【之前】：任何已认证主体（含 agent 节点令牌）
+    // 都能靠 404 与 428 的差别静默枚举别的租户有哪些对象，且不产生 policyDecision、不写审计。
+    // 质量门尤其敏感 —— gateId 是 qg:<taskGroupId>:<workItemId>:<gateType> 这样可推算的确定性 id。
+    // 改为：先过守卫（对象不在时退回一个寻常主体满足不了的系统作用域），无权者与不存在对调用方
+    // 是同一个回答；只有能满足该作用域的主体才会看到 404。
+    // 评审计划这条还要注意：守卫必须按它自己的 taskGroupId 落位，用 projectScope 会掉到一条
+    // 与"是哪个项目"无关的判据上（见 directPermissionApplies）。
+    const guard = beginGuardedWrite(req, state, "rule_source_settle", resolution ? `RuleSourceResolution:${resolution.resolutionId}` : "rule_source_resolutions:unknown",
+      resolution ? taskGroupScope(state, resolution.taskGroupId) : {resourceType: "system", resourceId: "rule_source_resolutions"});
     if (guard.status) return json(res, guard.status, guard.payload);
+    if (!resolution) return json(res, 404, {error: "rule_source_resolution_not_found"});
     const settleAccount = accountFromRequest(req, state);
     const settleArgs = {resolutionId: resolution.resolutionId, taskGroupId: resolution.taskGroupId, status: body.status, justification: body.justification};
     if (settleAccount && HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(settleAccount.accountType) && settleAccount.status === "active") {
@@ -3219,11 +3251,17 @@ async function handleApi(req, res) {
   if (req.method === "POST" && reviewPlanResolveMatch) {
     if (!requireAuthenticated(req, state, res)) return;
     const plan = (state.reviewPlans || []).find((item) => item.reviewPlanId === reviewPlanResolveMatch[1]);
-    if (!plan) return json(res, 404, {error: "review_plan_not_found"});
-    // 守卫作用域必须覆盖被改变的那个资源本身：评审计划带着 taskGroupId，用 projectScope 会让
-    // 判据落到一条与"是哪个项目"无关的路径上（见 directPermissionApplies）。
-    const guard = beginGuardedWrite(req, state, "review_plan_resolve", `ReviewPlan:${plan.reviewPlanId}`, taskGroupScope(state, plan.taskGroupId));
+    // 对象不存在时先前直接回 404，而那发生在守卫【之前】：任何已认证主体（含 agent 节点令牌）
+    // 都能靠 404 与 428 的差别静默枚举别的租户有哪些对象，且不产生 policyDecision、不写审计。
+    // 质量门尤其敏感 —— gateId 是 qg:<taskGroupId>:<workItemId>:<gateType> 这样可推算的确定性 id。
+    // 改为：先过守卫（对象不在时退回一个寻常主体满足不了的系统作用域），无权者与不存在对调用方
+    // 是同一个回答；只有能满足该作用域的主体才会看到 404。
+    // 评审计划这条还要注意：守卫必须按它自己的 taskGroupId 落位，用 projectScope 会掉到一条
+    // 与"是哪个项目"无关的判据上（见 directPermissionApplies）。
+    const guard = beginGuardedWrite(req, state, "review_plan_resolve", plan ? `ReviewPlan:${plan.reviewPlanId}` : "review_plans:unknown",
+      plan ? taskGroupScope(state, plan.taskGroupId) : {resourceType: "system", resourceId: "review_plans"});
     if (guard.status) return json(res, guard.status, guard.payload);
+    if (!plan) return json(res, 404, {error: "review_plan_not_found"});
     const nextStatus = ["closed", "rejected", "superseded"].includes(body.status) ? body.status : null;
     if (!nextStatus) return json(res, 400, {error: "review_plan_status_invalid"});
     const justification = String(body.justification || "").trim();
@@ -3245,9 +3283,17 @@ async function handleApi(req, res) {
   if (req.method === "POST" && sharedDefinitionResolveMatch) {
     if (!requireAuthenticated(req, state, res)) return;
     const definition = (state.sharedDefinitions || []).find((item) => item.contractId === sharedDefinitionResolveMatch[1]);
-    if (!definition) return json(res, 404, {error: "shared_definition_not_found"});
-    const guard = beginGuardedWrite(req, state, "shared_definition_resolve", `SharedDefinitionContract:${definition.contractId}`, projectScope(definition.projectId));
+    // 对象不存在时先前直接回 404，而那发生在守卫【之前】：任何已认证主体（含 agent 节点令牌）
+    // 都能靠 404 与 428 的差别静默枚举别的租户有哪些对象，且不产生 policyDecision、不写审计。
+    // 质量门尤其敏感 —— gateId 是 qg:<taskGroupId>:<workItemId>:<gateType> 这样可推算的确定性 id。
+    // 改为：先过守卫（对象不在时退回一个寻常主体满足不了的系统作用域），无权者与不存在对调用方
+    // 是同一个回答；只有能满足该作用域的主体才会看到 404。
+    // 评审计划这条还要注意：守卫必须按它自己的 taskGroupId 落位，用 projectScope 会掉到一条
+    // 与"是哪个项目"无关的判据上（见 directPermissionApplies）。
+    const guard = beginGuardedWrite(req, state, "shared_definition_resolve", definition ? `SharedDefinitionContract:${definition.contractId}` : "shared_definition_contracts:unknown",
+      definition ? projectScope(definition.projectId) : {resourceType: "system", resourceId: "shared_definition_contracts"});
     if (guard.status) return json(res, guard.status, guard.payload);
+    if (!definition) return json(res, 404, {error: "shared_definition_not_found"});
     const nextStatus = ["active", "superseded", "retired", "rejected"].includes(body.status) ? body.status : null;
     if (!nextStatus) return json(res, 400, {error: "shared_definition_status_invalid"});
     // 与同批其余五条口径一致：人定稿必须留下依据。此前这是唯一一条不要求理由的杠杆，

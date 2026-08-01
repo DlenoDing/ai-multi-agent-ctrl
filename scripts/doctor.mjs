@@ -507,6 +507,27 @@ try {
     throw new Error(`a direct task_group: permission (bound to no resource) settled a review plan: expected 403, got ${crossScopeResolve.response.status}`);
   }
 
+  // 鉴权前的存在性预言机：对象不存在时若先于守卫回 404，任何已认证主体都能靠 404 与 428/403
+  // 的差别静默枚举别的租户有哪些对象（不产生 policyDecision、不写审计）。质量门的 id 是
+  // qg:<taskGroupId>:<workItemId>:<gateType> 这种可推算的形式，尤其好枚举。
+  // 要求：无权主体对"存在的 id"与"不存在的 id"必须得到同一个回答。
+  const oracleProbeExisting = await jsonFetch(port, "/api/review-bundles/rvb_probe_exists/resolve", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-oracle-existing", authorization: agentAuth},
+    body: JSON.stringify({status: "consumed", justification: "probe"})
+  });
+  const oracleProbeMissing = await jsonFetch(port, "/api/review-bundles/rvb_definitely_missing/resolve", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-oracle-missing", authorization: agentAuth},
+    body: JSON.stringify({status: "consumed", justification: "probe"})
+  });
+  if (oracleProbeExisting.response.status === 404 || oracleProbeMissing.response.status === 404) {
+    throw new Error(`无权主体从人工杠杆上拿到了 404，可据此枚举其它租户的对象（existing=${oracleProbeExisting.response.status} missing=${oracleProbeMissing.response.status}）`);
+  }
+  if (oracleProbeExisting.response.status !== oracleProbeMissing.response.status) {
+    throw new Error(`存在与不存在的对象给了无权主体不同的回答：${oracleProbeExisting.response.status} vs ${oracleProbeMissing.response.status}`);
+  }
+
   // 邀请与授权都是"把权限交给另一个主体"。授权那条一直在检查"授权方自己有没有"，
   // 邀请这条原先只过滤危险形状 —— 于是低权真人可以自造一个比自己权限更大的身份。
   const undelegatableInvite = await jsonFetch(port, "/api/accounts", {
