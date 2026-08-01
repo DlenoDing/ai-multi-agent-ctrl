@@ -2877,7 +2877,9 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
     no_pending_external_review: (state.reviewBundles || []).some((item) => item.taskGroupId === taskGroupId && item.reviewMode === "external" && !["consumed", "rejected"].includes(item.status)),
     no_active_role_drift_guard: (state.roleDriftGuards || []).some((guard) => guard.taskGroupId === taskGroupId && !["closed", "corrected"].includes(guard.status)),
     effective_instruction_packet_active: (state.effectiveInstructionPackets || []).some((packet) => packet.taskGroupId === taskGroupId && !["active", "consumed", "expired", "superseded"].includes(packet.status)),
-    shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => definition.status !== "active"),
+    // 只有【已经进入流程】的共享定义才阻塞关闭：草稿视为尚未提出。否则任何一条 AI 建的 draft 都能
+    // 永久锁死关闭门，而控制台对共享定义是只读的、REST 也没有改状态的入口 —— 人将完全无法脱困。
+    shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => SHARED_DEFINITION_BLOCKING_STATUSES.includes(definition.status)),
     repository_output_target_terminal: (state.repositoryOutputs || []).filter((target) => target.taskGroupId === taskGroupId).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status)),
     all_required_outputs_present: workItems.length === 0 || workItems.some((item) => !["verified", "closed"].includes(item.status)),
     all_required_evidence_present: !taskGroupCheckpoints.some((checkpoint) => checkpoint.commitRefs?.length && checkpoint.pushRefs?.length && checkpoint.artifactManifestRefs?.length),
@@ -2990,7 +2992,7 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     no_pending_human_directives: forTaskGroup(state.humanDirectives).some((item) => ["queued", "acknowledged"].includes(item.status)),
     no_active_role_drift_blockers: readiness.blockingObjects.some((item) => item.objectType === "RoleDriftGuard"),
     all_effective_instruction_packets_terminal: forTaskGroup(state.effectiveInstructionPackets).some((packet) => !["active", "consumed", "expired", "superseded"].includes(packet.status)),
-    all_shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => definition.status !== "active"),
+    all_shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => SHARED_DEFINITION_BLOCKING_STATUSES.includes(definition.status)),
     all_repository_output_targets_terminal: forTaskGroup(state.repositoryOutputs).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status))
   };
   const gates = Object.keys(gateFailures);
@@ -3339,7 +3341,10 @@ export function resolveRoleSkill(state, roleId, request = {}) {
   // 真实 id 里根本没有 `/`/`:`，按那两个字符锚定会让所有角色静默回退到种子占位技能（我犯过这个错）。
   // 正确的锚点是 relativePath 的【文件名】：skillRef 指的就是它，且能天然区分
   // security-architect 与 security-cloud-security-architect 这种前缀包含关系。
-  const skillBasename = (skill) => String(skill.relativePath || "").split("/").pop().replace(/\.md$/u, "");
+  // 字段名是 sourcePath（parseRoleSkillFile 第 3271 行），不是 relativePath —— 后者只是那里的局部
+  // 变量名。我上一版读错字段，导致 basename 恒为空、匹配退化成精确 id、所有角色静默回退到占位技能，
+  // 而我那个"双向测试"用的 fixture 自造了一个生产中不存在的 relativePath 字段，所以照样全绿。
+  const skillBasename = (skill) => String(skill.sourcePath || "").split("/").pop().replace(/\.md$/u, "");
   const skillRefMatches = (skill) => String(skill.roleSkillId || "") === hint.skillRef || skillBasename(skill) === hint.skillRef;
   const skillCandidates = state.roleSkills.filter(skillRefMatches);
   // 歧义必须显式暴露，不能像 find 那样静默取数组里的第一个（那等于"谁先插入谁赢"）。
@@ -3521,7 +3526,9 @@ function sharedDefinitionAppliesToWork(definition, taskGroup, workItem) {
   if (!definition || !taskGroup) return false;
   if (definition.projectId && definition.projectId !== taskGroup.projectId) return false;
   const refs = new Set([...(definition.scopeRefs || []), ...(definition.consumerRefs || [])].filter(Boolean));
-  const projectRefs = [`Project:${taskGroup.projectId}`, taskGroup.projectId, "Project"];
+  // 去掉裸 "Project" 通配：它让任何调用方写一句 scopeRefs:["Project"] 就把契约作用到项目内的
+  // 每个任务组（进而阻塞每个任务组的关闭门）。项目级作用域必须写明具体项目 id。
+  const projectRefs = [`Project:${taskGroup.projectId}`, taskGroup.projectId];
   const taskGroupRefs = [`TaskGroup:${taskGroup.id}`, taskGroup.id];
   const workRefs = workItem ? [`WorkItem:${workItem.id}`, workItem.id] : [];
   if (!refs.size) return true;
@@ -6016,7 +6023,10 @@ export function findingResolve(state, args) {
 }
 
 export function contractPublish(state, args) {
-  const contract = sharedDefinitionCreate(state, {...args, status: "active"}).sharedDefinition;
+  // 这是受控的发布路径（REST 侧需 project:*）。sharedDefinitionCreate 的状态枚举守卫是用来挡
+  // "调用方自选状态"的，不该把这条合法的激活路径也降级成 draft —— 那会让每次发布都留下一条
+  // 永久阻塞关闭门、且人没有入口清除的记录（我上一版就是这样把修复变成了新的拒绝服务）。
+  const contract = sharedDefinitionCreate(state, {...args, status: "active", allowDirectActivation: true}).sharedDefinition;
   return {contract};
 }
 
@@ -6041,6 +6051,8 @@ export function ruleSourceResolve(state, args) {
 
 // 创建时允许声明的状态：只有推进流程的早期态。active/conflicted 等"有实际效力"的状态必须经受控路径。
 const SHARED_DEFINITION_CREATABLE_STATUSES = ["draft", "owner_assigned", "proposed", "reviewing"];
+// 真正构成"未完成、必须先处理掉"的状态。draft 不在内：它是"还没提出来"，不该阻塞任何人关闭任务组。
+const SHARED_DEFINITION_BLOCKING_STATUSES = ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"];
 
 export function sharedDefinitionCreate(state, args) {
   // 与其它承载授权的记录同规:同 id 的冒名契约会顶替掉已生效的那份（目前 governance-mcp.* 对机器
@@ -6056,7 +6068,9 @@ export function sharedDefinitionCreate(state, args) {
     // 状态必须落在建模枚举内，且【不能由调用方直接声明为生效/冲突】：
     // 一个 AI 若能自选 status:"conflicted"，就能把整个项目的关闭门永久锁死（人没有任何杠杆可清）。
     // 生效只能经 shared_definition_publish 这条受控路径。
-    status: SHARED_DEFINITION_CREATABLE_STATUSES.includes(args.status) ? args.status : "draft",
+    status: args.allowDirectActivation === true
+      ? (args.status || "active")
+      : (SHARED_DEFINITION_CREATABLE_STATUSES.includes(args.status) ? args.status : "draft"),
     projectId,
     definitionType: args.definitionType || "semantic_contract",
     // 空数组在 JS 里是真值：原先 `args.scopeRefs || [...]` 会让 scopeRefs:[] 存活，而

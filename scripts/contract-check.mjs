@@ -37,6 +37,7 @@ import {
   reviewBundleRegister,
   computeCompletionReadiness,
   createExecutionTopology,
+  contractPublish,
   digestOf,
   evaluateRoleDrift,
   sharedDefinitionCreate,
@@ -597,11 +598,17 @@ function verifyHumanAndOrganizationContracts(output) {
     });
     validateSchema(gate, hcrSchema, "HumanConfirmationRequest(major)", output);
     if (gate.decisionClass !== "major" || gate.blocking !== true) output.push("人工闸门: 核心决策未被强制标记为 major/阻塞（AI 传 blocking:false 就能绕开闸门）");
-    // 机器主体不得定稿。
+    // 机器主体不得定稿。用【独立的一张单】来验，否则守卫一旦失效，这次调用会真的把主流程那张单定稿掉，
+    // 后续步骤随即崩溃 —— 报出来的是异常而不是这条断言，这条守卫等于没有被自己的断言覆盖。
+    const machineProbeState = structuredClone(gateState);
+    const machineProbe = machineProbeState.humanConfirmationRequests.find((item) => item.requestId === gate.requestId);
     let machineBlocked = false;
-    try { decideHumanConfirmation(gateState, gate.requestId, {action: "finalize", selectedOptionId: "accept", expectedRound: gate.round}, {actor: machineActor}); }
+    try { decideHumanConfirmation(machineProbeState, machineProbe.requestId, {action: "finalize", selectedOptionId: "accept", expectedRound: machineProbe.round}, {actor: machineActor}); }
     catch (error) { machineBlocked = error.message === "human_confirmation_requires_human_actor"; }
     if (!machineBlocked) output.push("人工闸门: 机器主体（service_account）竟然可以定稿核心决策");
+    if (machineProbeState.taskGroups.find((t) => t.id === "tg_runtime_management")?.workItems?.[0]?.status === "verified") {
+      output.push("人工闸门: 机器主体的定稿尝试竟然把工作项推到了 verified");
+    }
     // 人提出自己的方案 => 不定稿、不生效，转入下一轮等 AI 再分析。
     decideHumanConfirmation(gateState, gate.requestId, {action: "revise", selectedOptionId: "none", inputText: "我有自己的方案：先补回归测试再验收", expectedRound: gate.round}, {actor: humanActor});
     if (gate.status !== "pending" || gate.awaitingAiAnalysis !== true || gate.round !== 2) output.push("人工闸门: 人提出方案后应继续挂起并等待 AI 再分析，而不是直接生效");
@@ -721,6 +728,31 @@ function verifyHumanAndOrganizationContracts(output) {
     if (!(forgedStatus.scopeRefs || []).length) {
       output.push("人工闸门: 空 scopeRefs 存活（一条契约横扫整个项目的所有任务组）");
     }
+    // 拒绝服务防回归。两条防线必须【各自独立】可测，否则会互相遮蔽（草稿不阻塞会让作用域那条无从体现）。
+    // ① AI 能建出来的状态（draft）不得阻塞关闭门 —— 作用域同组，排除作用域因素。
+    const wedgeState = structuredClone(seedState);
+    ensureRuntimeCollections(wedgeState, {root});
+    sharedDefinitionCreate(wedgeState, {contractId: "sdc_draft", projectId: "prj_control_plane",
+      taskGroupId: "tg_runtime_management", scopeRefs: ["TaskGroup:tg_runtime_management"]});
+    const sameBarrier = computeCloseBarrier(wedgeState, "tg_runtime_management", {mutate: false});
+    if ((sameBarrier.blockingObjects || []).some((b) => b.objectType === "SharedDefinitionContract")) {
+      output.push("人工闸门: AI 能建出的草稿契约就锁死了关闭门（人没有改状态的入口 => 无杠杆）");
+    }
+    // ② 处于阻塞态的契约不得靠裸 "Project" 通配横扫到别的任务组 —— 状态固定为阻塞态，排除状态因素。
+    const scopeState = structuredClone(seedState);
+    ensureRuntimeCollections(scopeState, {root});
+    scopeState.sharedDefinitions = [{schemaVersion: "shared-definition-contract/v1", contractId: "sdc_scope",
+      projectId: "prj_control_plane", status: "reviewing", scopeRefs: ["Project"], consumerRefs: []}];
+    const otherTg = (scopeState.taskGroups || []).find((t) => t.id !== "tg_runtime_management");
+    if (otherTg) {
+      const otherBarrier = computeCloseBarrier(scopeState, otherTg.id, {mutate: false});
+      if ((otherBarrier.blockingObjects || []).some((b) => b.objectType === "SharedDefinitionContract")) {
+        output.push("人工闸门: 一条契约用裸 Project 通配锁死了别的任务组的关闭门");
+      }
+    }
+    // ③ 合法的 publish 必须真的激活，而不是被降级成 draft。
+    const published = contractPublish(wedgeState, {contractId: "sdc_pub", projectId: "prj_control_plane", taskGroupId: "tg_runtime_management"}).contract;
+    if (published.status !== "active") output.push(`人工闸门: 合法发布未能激活（status=${published.status}）——发布路径被自己的守卫打断，且会留下永久阻塞`);
     const publishUnknown = sharedDefinitionPublish(sdState, {contractId: "sdc_never_created"});
     if (publishUnknown?.ok !== false) {
       output.push("人工闸门: publish 铸造并激活了一个未知契约（AI 自行宣布规范并自我批准）");
@@ -744,12 +776,21 @@ function verifyHumanAndOrganizationContracts(output) {
     // 双向断言：既要拒绝冒名，也要确认【真技能确实被绑定】。只断言"没选到 evil-"是单向的，
     // 会让"所有角色都静默回退到占位技能"这种功能回归照样通过（我就这样漏过一次）。
     skState.roleSkills = [
-      {schemaVersion: "agent-role-skill/v1", roleSkillId: "system-orchestrator", sourceId: "seed", relativePath: "", content: "SEED"},
+      {schemaVersion: "agent-role-skill/v1", roleSkillId: "system-orchestrator", sourceId: "seed", sourcePath: "runtime://system-role-skills/orchestrator", contentDigest: "sha256:seed"},
       {schemaVersion: "agent-role-skill/v1", roleSkillId: "engineering-engineering-multi-agent-systems-architect",
-       sourceId: "src", relativePath: "engineering/engineering-multi-agent-systems-architect.md", content: "REAL"},
+       sourceId: "src", sourcePath: "engineering/engineering-multi-agent-systems-architect.md", contentDigest: "sha256:real"},
       {schemaVersion: "agent-role-skill/v1", roleSkillId: "evil-engineering-multi-agent-systems-architect",
-       sourceId: "evil", relativePath: "evil/evil-engineering-multi-agent-systems-architect.md", content: "EVIL"}
+       sourceId: "evil", sourcePath: "evil/evil-engineering-multi-agent-systems-architect.md", contentDigest: "sha256:evil"}
     ];
+    // 反-假绿：fixture 的字段必须与【真实生产者】写出来的一致。上一版 fixture 自造了一个生产中
+    // 不存在的 relativePath 字段，于是测试测的是一个平行宇宙，真实绑定坏掉了却全绿。
+    const producedSkillFields = Object.keys((seedState.roleSkills || [])[0] || {});
+    for (const fixture of skState.roleSkills) {
+      const unknown = Object.keys(fixture).filter((key) => !producedSkillFields.includes(key));
+      if (producedSkillFields.length && unknown.length) {
+        output.push(`人工闸门: 技能 fixture 使用了生产者不会写入的字段 ${unknown.join(",")}（测试与生产脱节 => 假绿）`);
+      }
+    }
     const boundSkill = resolveRoleSkill(skState, "orchestrator");
     if (String(boundSkill?.roleSkillId || "").startsWith("evil-")) {
       output.push("人工闸门: 技能绑定被 evil-<skillRef> 顶替（可改写 agent 行为准则）");
@@ -759,7 +800,7 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     // 同名歧义必须显式报错，不能静默取第一个。
     skState.roleSkills.push({schemaVersion: "agent-role-skill/v1", roleSkillId: "other-engineering-multi-agent-systems-architect",
-      sourceId: "src2", relativePath: "other/engineering-multi-agent-systems-architect.md", content: "DUP"});
+      sourceId: "src2", sourcePath: "other/engineering-multi-agent-systems-architect.md", contentDigest: "sha256:dup"});
     let ambiguousRejected = false;
     try { resolveRoleSkill(skState, "orchestrator"); } catch (error) { ambiguousRejected = error.message === "role_skill_reference_ambiguous"; }
     if (!ambiguousRejected) output.push("人工闸门: 技能引用有歧义时静默取了第一个（谁先插入谁赢）");

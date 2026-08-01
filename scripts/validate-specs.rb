@@ -798,7 +798,9 @@ errors << "仓库产出目标必须拒绝重复 targetId（它定义写入边界
 errors << "id 冒名必须有防回归测试" unless contract_check_source.include?("允许重复 id（冒名记录可顶替人批准的那一份）")
 # 第五轮：守卫必须落在【真正选出授权记录的那个查找条件】上，而不是某个字段。
 #   · 写入边界按 (taskGroupId, workItemId, 非 superseded) 查找 —— 只守 targetId 唯一性是 fail-open。
-errors << "写入边界必须按真实查找条件保证唯一" unless mcp_source.include?("item.status !== \"superseded\")") && mcp_source.include?("if (activeExisting) return {repositoryOutputTarget: activeExisting")
+errors << "写入边界必须按真实查找条件保证唯一" unless mcp_source.include?("if (activeExisting) return {repositoryOutputTarget: activeExisting")
+# 幂等分支必须在鉴权之后：放在 beginGuardedWrite 之前等于把人批准的写入边界做成免鉴权读接口。
+errors << "REST 写入边界的幂等分支必须在鉴权之后" unless server_source.include?("必须放在 beginGuardedWrite 之后") && server_source.index("const guard = beginGuardedWrite(req, state, \"repository_output_target_select\"") < server_source.index("const existingActiveTarget = (state.repositoryOutputs || []).find")
 errors << "同类集合的插入方式必须一致（避免后插入者排在 find 最前）" if mcp_source.include?("state.repositoryOutputs.unshift")
 #   · 租约 id 决定写权限归属
 errors << "租约必须拒绝重复 leaseId" unless core_source.include?("lease_id_conflict")

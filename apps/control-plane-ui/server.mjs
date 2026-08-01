@@ -3076,18 +3076,6 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/repository-output-targets") {
-    // 与另外两个写入方同规：一个工作项同时只能有一份生效的写入边界，否则"谁排在 find 最前谁说了算"，
-    // 人批准的窄边界会被后建的宽边界顶替（第五轮已在 MCP 写入方修过，这里是第三个写入方）。
-    const existingActiveTarget = (state.repositoryOutputs || []).find((item) =>
-      item.taskGroupId === body.taskGroupId && item.workItemId === body.workItemId && item.status !== "superseded");
-    // 与 MCP 写入方保持一致：幂等返回已有的那一份，而不是报错。要换写入边界必须先显式 supersede，
-    // 但重复调用不应打断正常流程（doctor 的夹具就会为同一工作项再建一次）。
-    // 响应形状必须与下方正常分支一致（直接返回 target 本身），否则调用方读 payload.targetId 会拿到
-    // undefined —— 幂等返回反而变成了一个更难查的故障。
-    if (existingActiveTarget) {
-      json(res, 201, existingActiveTarget);
-      return;
-    }
     const pathAllowlist = body.pathAllowlist || ["docs/**", "spec/**"];
     const artifactManifestPath = body.artifactManifestPath || `docs/artifact-manifests/manifest.${Date.now()}.json`;
     if (!validPathAllowlist(pathAllowlist) || !gitTrackablePath(artifactManifestPath)) {
@@ -3103,6 +3091,17 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "repository_output_target_select", "RepositoryOutputTarget:new", taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) {
       json(res, guard.status, guard.payload);
+      return;
+    }
+    // 幂等：一个工作项同时只能有一份生效的写入边界（否则后建的宽边界会顶替人批准的窄边界）。
+    // 【必须放在 beginGuardedWrite 之后】—— 鉴权、权限、租户作用域全在守卫里；放在它之前等于把
+    // 人批准的写入边界（仓库地址/分支/基线/允许与禁止路径/活跃租约）做成了一个免鉴权的读接口。
+    const existingActiveTarget = (state.repositoryOutputs || []).find((item) =>
+      item.taskGroupId === body.taskGroupId && item.workItemId === body.workItemId && item.status !== "superseded");
+    if (existingActiveTarget) {
+      finishGuardedWrite(state, guard, 201, existingActiveTarget);
+      writeState(state);
+      json(res, 201, existingActiveTarget);
       return;
     }
     const at = now();

@@ -26,7 +26,8 @@
     "doctor": "npm run validate && node scripts/run-with-env.mjs scripts/doctor.mjs && npm run mcp:doctor && npm run agent:doctor && npm run docker:doctor",
     "docker:build": "docker build -t ai-multi-agent-ctrl:local .",
     "docker:up": "./scripts/docker-up.sh",
-    "docker:doctor": "node scripts/doctor-docker-compose.mjs"
+    "docker:doctor": "node scripts/doctor-docker-compose.mjs",
+    "mutation-gate": "node scripts/mutation-gate.mjs"
   },
   "dependencies": {
     "pg": "^8.22.0",
