@@ -6168,6 +6168,7 @@ export function ruleSourceResolve(state, args) {
 // 创建时允许声明的状态：只有推进流程的早期态。active/conflicted 等"有实际效力"的状态必须经受控路径。
 const SHARED_DEFINITION_CREATABLE_STATUSES = ["draft", "owner_assigned", "proposed", "reviewing"];
 // 真正构成"未完成、必须先处理掉"的状态。draft 不在内：它是"还没提出来"，不该阻塞任何人关闭任务组。
+const SHARED_DEFINITION_CONFLICT_POLICIES = ["block_and_request_canonical_decision", "owner_reconciles_then_republish"];
 const SHARED_DEFINITION_BLOCKING_STATUSES = ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"];
 
 export function sharedDefinitionCreate(state, args) {
@@ -6200,8 +6201,16 @@ export function sharedDefinitionCreate(state, args) {
     definitionDigest: digestOf(args.definition || args),
     repositoryOutputTargetRef: args.repositoryOutputTargetRef || "rot_shared_definition",
     repositoryOutputTargetDigest: digestOf(args.repositoryOutputTargetRef || "rot_shared_definition"),
-    conflictPolicy: args.conflictPolicy || {onConflict: "canonical_owner_decides"},
-    changePolicy: args.changePolicy || {requiresConsumersRebind: true},
+    // 这两个字段此前给的是随手写的对象（conflictPolicy schema 要字符串枚举，changePolicy 的三个
+    // 必填布尔一个都没有）—— 也就是说，分发给所有 agent 的"本项目规范"载体，自己不符合自己的契约。
+    // requiresDecisionRecord/consumerAckRequired 在 schema 里是 const true：规范变更必须有决策记录、
+    // 必须要消费方确认，不允许被创建方调低。
+    conflictPolicy: SHARED_DEFINITION_CONFLICT_POLICIES.includes(args.conflictPolicy) ? args.conflictPolicy : "block_and_request_canonical_decision",
+    changePolicy: {
+      requiresDecisionRecord: true,
+      invalidatesConsumers: args.changePolicy?.invalidatesConsumers !== false,
+      consumerAckRequired: true
+    },
     reviewEvidenceRefs: args.reviewEvidenceRefs || [],
     createdAt: at,
     updatedAt: at

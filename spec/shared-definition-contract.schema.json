@@ -4,7 +4,18 @@
   "title": "SharedDefinitionContract",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "contractId", "status", "projectId", "definitionType", "scopeRefs", "conflictPolicy", "changePolicy", "createdAt", "updatedAt"],
+  "required": [
+    "schemaVersion",
+    "contractId",
+    "status",
+    "projectId",
+    "definitionType",
+    "scopeRefs",
+    "conflictPolicy",
+    "changePolicy",
+    "createdAt",
+    "updatedAt"
+  ],
   "properties": {
     "schemaVersion": {
       "type": "string",
@@ -16,7 +27,18 @@
     },
     "status": {
       "type": "string",
-      "enum": ["draft", "owner_assigned", "proposed", "reviewing", "active", "change_requested", "conflicted", "superseded", "retired", "rejected"]
+      "enum": [
+        "draft",
+        "owner_assigned",
+        "proposed",
+        "reviewing",
+        "active",
+        "change_requested",
+        "conflicted",
+        "superseded",
+        "retired",
+        "rejected"
+      ]
     },
     "projectId": {
       "type": "string",
@@ -27,13 +49,26 @@
     },
     "definitionType": {
       "type": "string",
-      "enum": ["terminology", "api_contract", "data_model", "event_schema", "status_semantics", "error_code", "design_token", "quality_standard", "permission_semantics", "instruction_format"]
+      "enum": [
+        "terminology",
+        "api_contract",
+        "data_model",
+        "event_schema",
+        "status_semantics",
+        "error_code",
+        "design_token",
+        "quality_standard",
+        "permission_semantics",
+        "instruction_format"
+      ]
     },
     "scopeRefs": {
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": {"type": "string"}
+      "items": {
+        "type": "string"
+      }
     },
     "canonicalOwnerRole": {
       "type": "string"
@@ -43,11 +78,15 @@
     },
     "consumerRefs": {
       "type": "array",
-      "items": {"type": "string"}
+      "items": {
+        "type": "string"
+      }
     },
     "sourceRefs": {
       "type": "array",
-      "items": {"type": "string"}
+      "items": {
+        "type": "string"
+      }
     },
     "definitionDigest": {
       "type": "string",
@@ -66,21 +105,38 @@
     },
     "conflictPolicy": {
       "type": "string",
-      "enum": ["block_and_request_canonical_decision", "owner_reconciles_then_republish"]
+      "enum": [
+        "block_and_request_canonical_decision",
+        "owner_reconciles_then_republish"
+      ]
     },
     "changePolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["requiresDecisionRecord", "invalidatesConsumers", "consumerAckRequired"],
+      "required": [
+        "requiresDecisionRecord",
+        "invalidatesConsumers",
+        "consumerAckRequired"
+      ],
       "properties": {
-        "requiresDecisionRecord": {"type": "boolean", "const": true},
-        "invalidatesConsumers": {"type": "boolean"},
-        "consumerAckRequired": {"type": "boolean", "const": true}
+        "requiresDecisionRecord": {
+          "type": "boolean",
+          "const": true
+        },
+        "invalidatesConsumers": {
+          "type": "boolean"
+        },
+        "consumerAckRequired": {
+          "type": "boolean",
+          "const": true
+        }
       }
     },
     "reviewEvidenceRefs": {
       "type": "array",
-      "items": {"type": "string"}
+      "items": {
+        "type": "string"
+      }
     },
     "auditRef": {
       "type": "string"
@@ -92,17 +148,41 @@
     "updatedAt": {
       "type": "string",
       "format": "date-time"
+    },
+    "proposedBy": {
+      "description": "提出激活该契约的执行方。publish 只能提案，激活由真人 resolve 决定。",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "resolvedBy": {
+      "description": "决定该契约最终状态的真人账号。",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "allOf": [
     {
       "if": {
         "properties": {
-          "status": {"const": "active"}
+          "status": {
+            "const": "active"
+          }
         }
       },
       "then": {
-        "required": ["canonicalOwnerRole", "producerRole", "consumerRefs", "definitionDigest", "repositoryOutputTargetRef", "repositoryOutputTargetDigest", "reviewEvidenceRefs"]
+        "required": [
+          "canonicalOwnerRole",
+          "producerRole",
+          "consumerRefs",
+          "definitionDigest",
+          "repositoryOutputTargetRef",
+          "repositoryOutputTargetDigest",
+          "reviewEvidenceRefs"
+        ]
       }
     }
   ],
@@ -110,12 +190,29 @@
     "repositoryTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repositoryId", "branch", "path", "commitRef"],
+      "required": [
+        "repositoryId",
+        "branch",
+        "path",
+        "commitRef"
+      ],
       "properties": {
-        "repositoryId": {"type": "string", "minLength": 1},
-        "branch": {"type": "string", "minLength": 1},
-        "path": {"type": "string", "minLength": 1},
-        "commitRef": {"type": "string", "minLength": 1}
+        "repositoryId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commitRef": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     }
   }

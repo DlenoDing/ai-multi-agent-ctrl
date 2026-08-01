@@ -1026,6 +1026,25 @@ function verifyHumanAndOrganizationContracts(output) {
     if (afterFresh.status !== "passed") output.push("人工闸门: 带新证据的重报仍无法清除失败的质量门（正常流程被打断）");
     if (!afterFresh.previouslyFailed) output.push("人工闸门: 质量门被翻转却没有留下 previouslyFailed 痕迹（人看不到这条曾失败）");
 
+    // D8/D10：共享定义是"本项目认什么规范"的载体，会被分发进每个 agent 的指令包。
+    // (a) create+publish 两步都在控制角色工具集里，AI 原本可以自行宣布并自我激活一条全局规范；
+    // (b) create 产出的对象本身不符合它自己的 schema —— 规范载体不守自己的契约。
+    const defState = structuredClone(seedState);
+    ensureRuntimeCollections(defState, {root});
+    const createdDef = sharedDefinitionCreate(defState, {
+      taskGroupId: "tg_runtime_management", definitionType: "status_semantics",
+      contractId: "sdc_probe", sourceRefs: ["docs/x.md"]
+    }).sharedDefinition;
+    validateSchema(createdDef, loadJson("spec/shared-definition-contract.schema.json"), "SharedDefinitionContract(created)", output);
+    const probePublished = sharedDefinitionPublish(defState, {contractId: "sdc_probe"}).sharedDefinition;
+    if (probePublished.status === "active") {
+      output.push("共享定义: AI 调用 publish 即可把自己创建的契约激活为全局规范（自宣自批，人从未参与）");
+    }
+    if (!["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"].includes(probePublished.status)) {
+      output.push("共享定义: publish 后的状态不在阻塞集内 —— 既没生效也不挡关闭门，等于凭空消失");
+    }
+    validateSchema(probePublished, loadJson("spec/shared-definition-contract.schema.json"), "SharedDefinitionContract(published)", output);
+
     // 空转门的行为证明：静态检查只能保证状态名拼对，保证不了这道门真的会被触发 ——
     // 比如 ruleSourceResolutions 的记录原先根本没有 taskGroupId 字段，状态名再对，
     // 按 taskGroupId 过滤的门也是恒空的。所以这里用【真实产出函数】造对象，断言门确实变红。

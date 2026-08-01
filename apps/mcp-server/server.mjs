@@ -374,7 +374,7 @@ function commonInputProperties() {
     classification: string,
     command: string,
     commitRefs: array,
-    conflictPolicy: object,
+    conflictPolicy: {type: "string", enum: ["block_and_request_canonical_decision", "owner_reconciles_then_republish"]},
     consumerRef: string,
     consumerRefs: array,
     contractId: string,
