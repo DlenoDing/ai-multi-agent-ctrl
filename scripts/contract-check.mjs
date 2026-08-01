@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { sweepDeadAgentNodes } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
+import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
@@ -1109,6 +1109,34 @@ function verifyHumanAndOrganizationContracts(output) {
     });
     if (!snapCard?.subjectContentDigest) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
+    }
+
+    // claim 过期重排队原先不带任何代次：失联 30 分钟的节点恢复后既收不到取消、也不自检，
+    // 会直接把提交 push 到远端分支；新持有者的 reset --hard origin/<branch> 再把它静默当作基线。
+    // 两个节点的工作因此混在一起，而控制面对此毫无记录。
+    const fenceState = structuredClone(seedState);
+    ensureRuntimeCollections(fenceState, {root});
+    const nodeA = {nodeId: "node_a", status: "online", admission: "admitted", lastHeartbeatAt: "2026-08-02T00:00:00Z", activeDispatchIds: ["dsp_fence"]};
+    fenceState.agentRuntimeNodes = [nodeA];
+    fenceState.agentDispatches = [{dispatchId: "dsp_fence", taskGroupId: "tg_runtime_management", projectId: "prj_control_plane",
+      status: "running", assignedNodeId: "node_a", claimEpoch: 1,
+      claimedAt: "2026-08-01T00:00:00Z", claimExpiresAt: "2026-08-01T00:30:00Z"}];
+    const beforeRecycle = validateDispatchClaim(fenceState, nodeA, "dsp_fence", 1);
+    if (beforeRecycle.valid) {
+      output.push("claim 代次: 已过期的 claim 仍被判为有效（复核形同虚设）");
+    }
+    // 走真实的回收路径，再看旧持有者的复核结果
+    recycleExpiredClaims(fenceState);
+    const dispatchAfter = fenceState.agentDispatches.find((item) => item.dispatchId === "dsp_fence");
+    if (Number(dispatchAfter.claimEpoch || 0) <= 1) {
+      output.push("claim 代次: 重排队后代次没有前进（旧持有者复核照样通过，fencing 不成立）");
+    }
+    if (!dispatchAfter.previousHolderMayHavePushed) {
+      output.push("claim 代次: 回收时没有记下上一任可能已推送（新持有者会把它的提交静默当作基线）");
+    }
+    const staleCheck = validateDispatchClaim(fenceState, nodeA, "dsp_fence", 1);
+    if (staleCheck.valid || staleCheck.reason === undefined) {
+      output.push("claim 代次: 旧持有者拿着旧代次仍复核通过（它会继续把提交推上去）");
     }
 
     // 纯崩溃的节点原先【永远停在 online】：唯一会标死它的路径要求它恰好带着一个 pending stop

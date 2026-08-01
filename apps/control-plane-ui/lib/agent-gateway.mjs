@@ -467,6 +467,11 @@ export function claimNextDispatch(state, node, options = {}) {
   // to read the new owner's session permission requests.
   delete dispatch.previousNodeId;
   dispatch.claimedAt = at;
+  // claim 代次：每次因过期/撤销把派发收回并重排队时递增。旧持有者拿着的是旧代次，
+  // 于是它在做不可逆动作（push）之前复核时能自己发现"我已经不是持有者了"。
+  // 没有这个代次时，一个网络分区 30 分钟的节点恢复后会直接把提交 push 上去，
+  // 而新持有者的 reset --hard origin/<branch> 会把那些提交静默当作基线继续往上做。
+  dispatch.claimEpoch = Number(dispatch.claimEpoch || 0) + 1;
   dispatch.claimTtlSeconds = boundedInteger(options.claimTtlSeconds, 60, 21600, 1800);
   dispatch.claimExpiresAt = new Date(Date.now() + dispatch.claimTtlSeconds * 1000).toISOString();
   dispatch.attempts = Number(dispatch.attempts || 0) + 1;
@@ -520,6 +525,21 @@ function capAgentRuntimeNodes(nodes, limit = 2000) {
 //     最终 createAgentJoinToken 报 org_quota_exceeded，再也接不了新节点；
 //   · 给它排队的控制命令永远投不出去、永远不会被 ack、永远算"活跃"，把持久层的分片上限推过阈值。
 // 判定用的是服务端时间与节点上报心跳的间隔，与代理端时钟无关。
+// 不可逆动作（push）之前的 claim 复核。运行时在 push 前调用它；代次对不上就中止，
+// 而不是推完之后才在提交检查点时拿到一个 404 —— 那时提交已经在远端分支上了。
+export function validateDispatchClaim(state, node, dispatchId, claimEpoch) {
+  const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === dispatchId);
+  if (!dispatch) return {valid: false, reason: "dispatch_not_found"};
+  if (dispatch.assignedNodeId !== node.nodeId) return {valid: false, reason: "claim_reassigned", claimEpoch: Number(dispatch.claimEpoch || 0)};
+  if (dispatch.status !== "running") return {valid: false, reason: `dispatch_${dispatch.status}`, claimEpoch: Number(dispatch.claimEpoch || 0)};
+  if (claimEpoch !== undefined && Number(claimEpoch) !== Number(dispatch.claimEpoch || 0)) {
+    return {valid: false, reason: "claim_epoch_stale", claimEpoch: Number(dispatch.claimEpoch || 0)};
+  }
+  const expiresAt = new Date(dispatch.claimExpiresAt || 0).getTime();
+  if (!expiresAt || expiresAt <= Date.now()) return {valid: false, reason: "claim_expired", claimEpoch: Number(dispatch.claimEpoch || 0)};
+  return {valid: true, claimEpoch: Number(dispatch.claimEpoch || 0), claimExpiresAt: dispatch.claimExpiresAt};
+}
+
 export function sweepDeadAgentNodes(state, nowMs = Date.now()) {
   const graceMs = boundedInteger(process.env.AIMAC_NODE_HEARTBEAT_TIMEOUT_MS, 60000, 86400000, 900000);
   const swept = [];
@@ -545,7 +565,7 @@ export function sweepDeadAgentNodes(state, nowMs = Date.now()) {
   return swept;
 }
 
-function recycleExpiredClaims(state) {
+export function recycleExpiredClaims(state) {
   const at = Date.now();
   let changed = sweepDeadAgentNodes(state, at).length > 0;
   for (const dispatch of state.agentDispatches || []) {
@@ -557,6 +577,13 @@ function recycleExpiredClaims(state) {
     delete dispatch.assignedNodeId;
     delete dispatch.claimedAt;
     delete dispatch.claimExpiresAt;
+    // 代次前进：旧持有者从此复核不过，做不可逆动作前会自行中止。
+    dispatch.claimEpoch = Number(dispatch.claimEpoch || 0) + 1;
+    // 上一任是"失联"而不是"失败"——它可能已经把提交推到远端分支上了，而控制面对此没有任何记录。
+    // 新持有者的 reset --hard origin/<branch> 会把那些提交当作基线，于是它们被静默吸收进结果里。
+    // 这件事必须留痕并让人看到，而不是当作什么都没发生。
+    dispatch.previousHolderMayHavePushed = true;
+    dispatch.recycledFromNodeId = previousNodeId || null;
     dispatch.updatedAt = new Date().toISOString();
     const previousNode = state.agentRuntimeNodes.find((item) => item.nodeId === previousNodeId);
     if (previousNode) previousNode.activeDispatchIds = (previousNode.activeDispatchIds || []).filter((id) => id !== dispatch.dispatchId);

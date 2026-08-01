@@ -899,6 +899,11 @@ async function executeDispatch(config, dispatchPackage, control) {
   // Final cancellation check immediately before the irreversible remote side effect: a cancel arriving
   // after the last check must not push a cancelled dispatch's commits to the remote branch.
   control?.throwIfCancelled();
+  // 本地取消标志只覆盖"控制面成功把取消命令送到了我这里"这一种情况。网络分区时我什么都收不到，
+  // 而控制面那边 claim 一过期就会把这个派发重排给别的节点。此时若直接 push，提交会落在远端分支上，
+  // 新持有者的 reset --hard origin/<branch> 又会把它静默当作基线 —— 两个节点的工作混在一起，
+  // 而控制面对此毫无记录。所以在这一步之前必须向控制面复核"我还是不是持有者"。
+  await assertStillHoldsClaim(config, dispatchPackage);
   git(repositoryRoot, ["push", remote, `HEAD:refs/heads/${branch}`]);
   const remoteSha = gitLsRemote(repositoryRoot, remote, `refs/heads/${branch}`);
   if (remoteSha !== commit) throw new Error("remote push verification failed");
@@ -930,6 +935,37 @@ async function executeDispatch(config, dispatchPackage, control) {
   };
   await submitExecutionEvent(config, dispatchPackage, "checkpoint_prepared", {progressPercent: 95, summary: "Checkpoint prepared for local outbox and control-plane ACK.", evidenceRefs: checkpoint.evidenceRefs});
   return checkpoint;
+}
+
+// 向控制面复核当前节点是否仍持有该派发的 claim。这是 push 这类不可逆动作的前置条件。
+// 失效时抛一个【不可重试】的错误：重试只会让同一台机器反复尝试推送它已经无权推送的东西。
+async function assertStillHoldsClaim(config, dispatchPackage) {
+  const dispatchId = dispatchPackage.dispatch.dispatchId;
+  const claimEpoch = dispatchPackage.dispatch.claimEpoch;
+  // 基址从控制面下发的 dispatchUrl 派生，不在运行时里硬编码服务地址。
+  const base = String(config.gateway?.dispatchUrl || "").replace(/\/dispatches\/next$/u, "");
+  if (!base) {
+    const missing = new Error("claim_revalidation_unavailable: gateway dispatch url missing");
+    missing.nonRetryable = true;
+    throw missing;
+  }
+  const claimUrl = new URL(`${base}/dispatches/${encodeURIComponent(dispatchId)}/claim`);
+  if (claimEpoch !== undefined) claimUrl.searchParams.set("claimEpoch", String(claimEpoch));
+  let result;
+  try {
+    result = await jsonRequest(claimUrl.href, {token: config.nodeToken});
+  } catch (error) {
+    // 复核本身失败（网络仍然不通）时同样不能推送：无法确认自己仍是持有者，就必须当作已经不是。
+    // 这正是分区场景 —— 恰恰是最需要挡住的时候。
+    const blocked = new Error(`claim_revalidation_failed: ${error.message}`);
+    blocked.nonRetryable = true;
+    throw blocked;
+  }
+  if (!result?.valid) {
+    const lost = new Error(`claim_lost:${result?.reason || "unknown"}`);
+    lost.nonRetryable = true;
+    throw lost;
+  }
 }
 
 async function runModelExecutor(config, dispatchPackage, repositoryRoot, skillWorkset, packagePath, promptPath, control) {
@@ -1530,6 +1566,10 @@ async function retryableAgentRequest(fn, label) {
 function retryableControlPlaneError(error) {
   const message = String(error?.message || error);
   const status = Number(error?.status || 0);
+  // 显式标记为不可重试的一律不重试。claim 复核失败正是这一类：它返回 409，而 409 在下面被当作
+  // 可重试的写冲突 —— 那会让一个【已经失去 claim】的节点反复重试，直到耗尽次数才停，
+  // 期间它仍然认为自己该继续干活。失去持有权不是暂时性故障，重试改变不了它。
+  if (error?.nonRetryable === true) return false;
   // Retry state-write conflicts AND transient transport failures (5xx / 429 / request-timeout-abort /
   // connection reset/refused/DNS): a momentary control-plane blip or rolling deploy must not surface to
   // the caller as a permanent error (which, on the bare heartbeat/claim calls, would kill the daemon).

@@ -30,7 +30,8 @@ import {
   recordAgentExecutionEvent,
   requestAgentNodeRevocation,
   revokeDispatchMcpGrants,
-  selfCheckAgentNode
+  selfCheckAgentNode,
+  validateDispatchClaim
 } from "./lib/agent-gateway.mjs";
 import { approvalResolve, assignWorkItem, handleMcpJsonRpc, isWriteTool, permissionResolve } from "../mcp-server/server.mjs";
 import {
@@ -2005,6 +2006,17 @@ async function handleApi(req, res) {
   if (req.method === "GET" && nodeDispatchMatch) {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     json(res, 200, {dispatch: getDispatchForNode(state, node, nodeDispatchMatch[1], {runtimeDir})});
+    return;
+  }
+
+  // 不可逆动作（git push）之前的 claim 复核。没有它，一个失联后恢复的节点会直接把提交推上去，
+  // 而它的检查点提交要到推送之后才会被拒（404）—— 那时提交已经在远端分支上，且控制面毫无记录。
+  const claimCheckMatch = url.pathname.match(/^\/api\/agent\/v1\/dispatches\/([^/]+)\/claim$/);
+  if (req.method === "GET" && claimCheckMatch) {
+    if (!node) return json(res, 401, {error: "agent_node_auth_required"});
+    const epochParam = url.searchParams.get("claimEpoch");
+    const result = validateDispatchClaim(state, node, claimCheckMatch[1], epochParam === null ? undefined : Number(epochParam));
+    json(res, result.valid ? 200 : 409, result);
     return;
   }
 
