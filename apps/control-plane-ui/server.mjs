@@ -796,6 +796,14 @@ const HUMAN_ONLY_ACTIONS = [
   "permission_resolve",
   "system_upgrade_candidate_resolve",
   // 豁免质量门是放行决定，必须由真人负责，不能由 AI 自我豁免。
+  // 共享定义契约的激活有两条路：MCP 的 shared_definition_publish 已被限制为"只能提案"，
+  // 由真人专属的 shared_definition_resolve 决定是否 active。而 POST /api/contracts 这条
+  // 直接落 active，且原先不在真人专属集里 —— 同一件事两道门，只锁了一道。
+  // active 的契约会进入每个后续任务契约与指令包，且不在阻塞集里，不会留下任何可见阻塞。
+  "contract_publish",
+  // 与上面同因：改角色技能/技能源就是改规则层，必须真人。
+  "role_skill_overlay_create",
+  "skill_source_sync",
   "quality_gate_waive",
   // 铸造账号必须是真人动作。人工定稿闸门只认 account.accountType，而铸造该 accountType 的动作
   // 原本不受同一条闸门保护 —— 机器主体铸一个"人"、再用返回的令牌登录，就成了合法的定稿人，
@@ -955,6 +963,13 @@ function forbiddenMcpServiceTool(tool) {
     tool === "evidence-mcp.checkpoint_submit" ||
     tool.startsWith("identity-mcp.") ||
     tool.startsWith("governance-mcp.") ||
+    // 角色规则（"你是谁、职责边界、禁区"）是三类规则之一。skill_source_sync 会整体替换
+    // state.roleSkills（改掉所有 agent 收到的 SKILL.md 正文），role_skill_overlay_validate
+    // 直接创建 status:"active" 的 overlay 并立刻被下一次 buildTaskContract 选中。
+    // 两者原先都对 MCP 服务令牌开放，且都不是真人专属 —— 规则层被改了，而人工闸门在旁边看着。
+    // runtimeMutationPolicy 里那条 auto_publish_role_skill_overlay 是【声明了但从没有人执行】的禁令。
+    tool === "skill-mcp.skill_source_sync" ||
+    tool === "skill-mcp.role_skill_overlay_validate" ||
     (tool.startsWith("orchestration-mcp.") && tool !== "orchestration-mcp.state_get");
 }
 

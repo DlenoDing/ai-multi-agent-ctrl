@@ -999,13 +999,23 @@ errors << "checkpoint outbox 必须与配置走同一条持久写路径" unless 
 # 代理端若把 shutdownRequested 写死而不清除，两侧对同一件事的理解就不一致：节点再也回不来。
 errors << "代理重启后必须清除 shutdownRequested（否则控制面认为可恢复、代理端却不可逆）" unless runtime_source.include?("delete config.shutdownRequested")
 
+# 角色规则（"你是谁、职责边界、禁区"）是三类规则之一。改角色技能 overlay 或整体替换技能源，
+# 就是改规则层 —— 而这两条原先都对 MCP 服务令牌开放、且都不是真人专属。
+# runtimeMutationPolicy 里那条 auto_publish_role_skill_overlay 是声明了却从没有人执行的禁令。
+["skill-mcp.skill_source_sync", "skill-mcp.role_skill_overlay_validate"].each do |tool|
+  errors << %(#{tool} 必须对 MCP 服务令牌禁用（它改的是角色规则层，不能绕过人工闸门）) unless server_source.include?(%(tool === "#{tool}"))
+end
+["role_skill_overlay_create", "skill_source_sync"].each do |action|
+  errors << %(#{action} 必须是真人专属动作（改角色规则/技能源＝改规则层）) unless server_source.match?(/HUMAN_ONLY_ACTIONS\s*=\s*\[[^\]]*"#{action}"/m)
+end
+
 # 证据摘要是执行方自证的（内容不上传控制面，控制面无法核验摘要与内容是否相符）。
 # 字段名与卡片文案都必须说出这一点 —— 叫 contentVerifiable 会被读成"已核验"，
 # 而"证据已就绪"若不加说明，人会以为控制面替他检查过了。
 errors << "证据摘要字段不得暗示控制面已核验（应为自证语义）" if core_source.include?("contentVerifiable:")
 errors << "验收卡片必须说明证据摘要为执行方自证、控制面未独立核验" unless core_source.include?("未能独立核验") && core_source.include?("contentDigestAttested")
 
-["account_invite", "system_account_invite", "permission_resolve"].each do |action|
+["account_invite", "system_account_invite", "permission_resolve", "contract_publish"].each do |action|
   errors << "#{action} 必须是真人专属动作（铸造人类账号 / 授予被挡住的能力，机器主体自行完成即绕过人工闸门）" unless server_source.match?(/HUMAN_ONLY_ACTIONS\s*=\s*\[[^\]]*"#{action}"/m)
 end
 
