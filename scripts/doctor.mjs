@@ -478,6 +478,33 @@ try {
   if (ownerWorkerRunDenied.response.status !== 403) {
     throw new Error(`expected user account not to run agent runtime worker, got ${ownerWorkerRunDenied.response.status}`);
   }
+  // 直接权限（写在账号 permissions 上、不绑定任何具体资源）绝不能满足 task_group: 级授权。
+  // 原先这条守卫只在 task_group 作用域下生效，于是同一个权限被拿到 project 作用域比对时
+  // 掉到"与是哪个项目无关"的兜底分支：持直接 task_group:review 的账号可以对组织内任意项目的
+  // 评审计划动手。这里按真实 HTTP 路径复现那条越权，确保它保持被拒。
+  const crossScopeAccount = await jsonFetch(port, "/api/accounts", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-cross-scope-direct-permission", authorization: auth},
+    body: JSON.stringify({projectId: "prj_control_plane", displayName: "Cross Scope Probe", email: "cross-scope-probe@local", roles: "viewer", permissions: "task_group:review"})
+  });
+  if (!crossScopeAccount.response.ok) throw new Error("could not invite the cross-scope probe account");
+  const crossScopeAuth = await loginAs(port, "cross-scope-probe@local", crossScopeAccount.payload.accountToken);
+  const crossScopePlan = await jsonFetch(port, "/api/review-plans", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-cross-scope-plan", authorization: reviewerAuth},
+    body: JSON.stringify({taskGroupId: "tg_runtime_management", requiredReviewerRoles: ["reviewer"]})
+  });
+  const crossScopePlanId = crossScopePlan.payload?.reviewPlan?.reviewPlanId || crossScopePlan.payload?.reviewPlanId;
+  if (!crossScopePlanId) throw new Error("could not create a review plan for the cross-scope probe");
+  const crossScopeResolve = await jsonFetch(port, `/api/review-plans/${crossScopePlanId}/resolve`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-cross-scope-resolve", authorization: crossScopeAuth},
+    body: JSON.stringify({status: "closed", justification: "probe"})
+  });
+  if (crossScopeResolve.response.status !== 403) {
+    throw new Error(`a direct task_group: permission (bound to no resource) settled a review plan: expected 403, got ${crossScopeResolve.response.status}`);
+  }
+
   const invitedAccount = await jsonFetch(port, "/api/accounts", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-invited-account-login", authorization: auth},
@@ -757,8 +784,13 @@ try {
     headers: {"Idempotency-Key": "doctor-org-review-authority", authorization: orgAdminAuth},
     body: JSON.stringify({selectedOptionId: "none", inputText: "x"})
   });
-  if (orgReviewAuthority.response.status !== 404) {
-    throw new Error(`org_admin confirmation review authority check expected 404 (not 403 denial), got ${orgReviewAuthority.response.status}`);
+  // 确认单不存在时，守卫拿不到它的任务组，只能退回一个 {system, human_confirmations} 兜底作用域。
+  // 原先任何持直接 task_group:* 的账号都能穿过它拿到 404 —— 那既是越权放行（直接权限不绑定任何
+  // 具体资源，等于对所有资源生效），也是一个不留审计的存在性预言机。现在按"作用域不可解析即拒绝"
+  // 处理：不存在的 id 与无权限对调用方是同一个回答。确认单确实存在时，守卫按它的任务组落位，
+  // org_admin 在自己组织内的评审权限不受影响（下面 orgConfirmationDecide 正是走这条路）。
+  if (orgReviewAuthority.response.status !== 403) {
+    throw new Error(`未知确认单必须与无权限同样回答 403（不可解析的作用域应当拒绝，且不泄露存在性），got ${orgReviewAuthority.response.status}`);
   }
   // Cross-organization write isolation: an org_admin cannot create a task group in another org's project.
   const crossOrgTaskGroup = await jsonFetch(port, "/api/task-groups", {

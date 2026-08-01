@@ -1307,7 +1307,11 @@ function directPermissionApplies(account, permission, requiredPermission, resour
     return permission.startsWith("project:") || permission.startsWith("task_group:") || ["member:invite", "agent:activate"].includes(permission);
   }
   if (["member:invite", "agent:activate"].includes(permission) && ["project", "task_group"].includes(resourceScope.resourceType)) return false;
-  if (resourceScope.resourceType === "task_group" && permission.startsWith("task_group:")) return false;
+  // 原先这条只在 task_group 作用域下生效，于是一个 task_group: 权限被拿到【project 作用域】
+  // 比对时会掉到最后的 return true —— 而那句与"是哪个项目"完全无关。结果：任何持直接
+  // task_group:review 的账号，可以对组织内【任意】项目的评审计划动手（已由 HTTP 探针实测）。
+  // task_group 级授权必须始终来自 grant（grant 绑定了具体资源），直接权限一律不算。
+  if (permission.startsWith("task_group:")) return false;
   if (resourceScope.resourceType === "project" && permission.startsWith("project:") && requiredPermission !== "project:create") return false;
   return true;
 }
@@ -3179,7 +3183,9 @@ async function handleApi(req, res) {
     if (!requireAuthenticated(req, state, res)) return;
     const plan = (state.reviewPlans || []).find((item) => item.reviewPlanId === reviewPlanResolveMatch[1]);
     if (!plan) return json(res, 404, {error: "review_plan_not_found"});
-    const guard = beginGuardedWrite(req, state, "review_plan_resolve", `ReviewPlan:${plan.reviewPlanId}`, projectScope(plan.projectId));
+    // 守卫作用域必须覆盖被改变的那个资源本身：评审计划带着 taskGroupId，用 projectScope 会让
+    // 判据落到一条与"是哪个项目"无关的路径上（见 directPermissionApplies）。
+    const guard = beginGuardedWrite(req, state, "review_plan_resolve", `ReviewPlan:${plan.reviewPlanId}`, taskGroupScope(state, plan.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const nextStatus = ["closed", "rejected", "superseded"].includes(body.status) ? body.status : null;
     if (!nextStatus) return json(res, 400, {error: "review_plan_status_invalid"});
