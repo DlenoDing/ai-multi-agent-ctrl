@@ -4084,6 +4084,9 @@ export function createHumanConfirmationRequest(state, input = {}) {
     createdAt: at,
     updatedAt: at
   };
+  // 记下被确认对象在【出卡片这一刻】的实质内容快照，定稿时要重新核对（见 decideHumanConfirmation）。
+  const snapshot = subjectContentSnapshot(state, request);
+  if (snapshot !== undefined && snapshot !== null) request.subjectContentDigest = digestOf(snapshot);
   state.humanConfirmationRequests.unshift(request);
   if (request.blocking && dispatch && ["running", "queued"].includes(dispatch.status)) {
     dispatch.status = "blocked";
@@ -4121,6 +4124,16 @@ export function decideHumanConfirmation(state, requestId, decision = {}, options
   }
   if (decision.expectedRound !== undefined && Number(decision.expectedRound) !== Number(request.round || 1)) {
     throw Object.assign(new Error("human_confirmation_round_stale"), {status: 409, currentRound: Number(request.round || 1)});
+  }
+  // 通用不变式：定稿那一刻，被绑定的对象必须还是出卡片时的那个样子。对象在此期间被改过（AI 换了执行
+  // 模式/载体/分支），就不能把你的批准算到新内容上 —— 拒绝，让你重新看过。这是对"卡片说 X、锁绑 Y"
+  // 那一类绕过的结构性封堵（前两轮各被绕过一次，逐字段设防不够）。
+  if (request.subjectContentDigest) {
+    const currentSnapshot = subjectContentSnapshot(state, request);
+    if (currentSnapshot === null) throw Object.assign(new Error("human_finalization_subject_missing"), {status: 409, subjectRef: request.subjectRef || null});
+    if (digestOf(currentSnapshot) !== request.subjectContentDigest) {
+      throw Object.assign(new Error("human_confirmation_subject_changed"), {status: 409, subjectRef: request.subjectRef || null});
+    }
   }
   // 定稿权只属于真人。机器主体（service_account / agent_identity）即使被授予了权限也不能确认核心决策 ——
   // 否则 AI 只要拿到一个服务账号就能自己批准自己的方案，闸门形同虚设。
@@ -4183,6 +4196,25 @@ export function decideHumanConfirmation(state, requestId, decision = {}, options
   }
   appendEvent(state, "decision", "HumanConfirmationRequest", request.requestId, options.actor || "human-reviewer", {selectedOptionId, hasInput: Boolean(inputText)});
   return request;
+}
+
+// 把一个被确认对象的【实质内容】投影成可比对的快照。定稿单创建时记一份，定稿时再算一份，
+// 两者必须一致 —— 这条不变式的意思是"你批准的必须还是你当时看到的那个东西"。
+// 前两轮的绕过都属同一类：人看到的卡片描述 X，锁却绑到了对象 Y。逐个堵字段是打地鼠，
+// 这里改为在定稿那一刻按活对象重算，内容对不上就拒绝定稿，让人重新看过。
+function subjectContentSnapshot(state, request) {
+  if (request.decisionType === "plan_topology") {
+    const id = String(request.subjectRef || "").replace(/^ExecutionTopology:/u, "");
+    const topology = (state.executionTopologies || []).find((item) => item.topologyId === id);
+    if (!topology) return null;
+    return {
+      mode: topology.mode,
+      runnerKind: topology.runnerKind,
+      isolation: topology.isolation,
+      branches: (topology.groups || []).flatMap((group) => (group.branches || []).map((branch) => branch.branchId))
+    };
+  }
+  return undefined; // 该类型无需对象级快照（验收/关闭/拆分绑定的是确定的工作项/任务组本身）
 }
 
 // 人定稿后的落地 + 上锁。这里是**唯一**能把工作项推到 verified 的路径（AI 互审只能推到 verification_ready）。

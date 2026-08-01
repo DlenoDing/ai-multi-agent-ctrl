@@ -670,6 +670,28 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     if (forged.subjectRef) output.push("人工闸门: agent 通道创建的确认单带上了 subjectRef（可指向任意对象）");
 
+    // 结构性不变式：定稿那一刻被绑定的对象必须还是出卡片时的样子。AI 在人点确认前把方案内容改掉
+    // （串行→并行、换载体、加分支），必须拒绝定稿而不是把批准算到新内容上。
+    const swapState = structuredClone(seedState);
+    ensureRuntimeCollections(swapState, {root});
+    swapState.taskGroups.find((t) => t.id === "tg_runtime_management").workItems = [{id: "wi_swap", title: "掉包", status: "ready", ownerRole: "agent-runtime", progress: 0}];
+    const swapTopo = createExecutionTopology(swapState, {taskGroupId: "tg_runtime_management", workItemId: "wi_swap", root,
+      branches: [{branchId: "b_one", objective: "串行", ownedPaths: ["apps/one/**"]}]}).topology;
+    advanceExecutionTopology(swapState, {topologyId: swapTopo.topologyId, action: "check_eligibility"});
+    const swapConfirmation = (swapState.humanConfirmationRequests || []).find((item) => item.decisionType === "plan_topology" && item.status === "pending");
+    if (swapConfirmation && !swapConfirmation.subjectContentDigest) output.push("人工闸门: 方案确认单没有记录对象内容快照（无法察觉对象被掉包）");
+    // AI 在人点确认前改掉方案内容。
+    swapTopo.groups[0].branches.push({branchId: "b_two", status: "queued", objective: "偷加的分支", ownedPaths: ["apps/two/**"], forbiddenPaths: [], resourceScopes: [], acceptanceChecks: ["x"], outputContract: ["changedPaths", "resultRef", "validationEvidence", "unresolvedRisks"], actualChangedPaths: []});
+    swapTopo.mode = "parallel_active";
+    const swapHuman = (swapState.accounts.find((a) => ["system_admin", "org_admin", "user_account"].includes(a.accountType) && a.status === "active") || {}).accountId;
+    let swapRejected = false;
+    if (swapConfirmation) {
+      try { decideHumanConfirmation(swapState, swapConfirmation.requestId, {action: "finalize", selectedOptionId: "accept_plan", expectedRound: swapConfirmation.round}, {actor: swapHuman}); }
+      catch (error) { swapRejected = error.message === "human_confirmation_subject_changed"; }
+    }
+    if (!swapRejected) output.push("人工闸门: 方案在人点确认前被改掉，定稿却仍然生效（批准被算到没看过的内容上）");
+    if (swapTopo.humanFinalization) output.push("人工闸门: 被掉包的方案拿到了定稿锁");
+
     // 绕过复现防回归：AI 抢先另建一份拓扑，不得把人对第一份方案的批准"洗"到第二份上。
     const raceState = structuredClone(seedState);
     ensureRuntimeCollections(raceState, {root});

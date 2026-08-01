@@ -162,6 +162,11 @@
       "type": "string",
       "minLength": 1
     },
+    "subjectContentDigest": {
+      "description": "出卡片那一刻被确认对象的实质内容摘要。定稿时重新核对：对象变了就拒绝定稿，人必须重新看过。",
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
     "round": {
       "description": "协商轮次。人提出方案与 AI 再分析可以来回多轮，只有明确定稿才终结。",
       "type": "integer",

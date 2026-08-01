@@ -781,6 +781,10 @@ errors << "AI 再分析必须以 awaitingAiAnalysis 为前提（防活锁）" un
 errors << "核心决策定稿必须强制携带轮次令牌" unless core_source.include?("human_confirmation_expected_round_required") && mcp_source.include?("expectedRound: number")
 # 22. 「同意降级」必须真的授权降级，不能是死杠杆。
 errors << "同意降级必须真正生效" unless core_source.include?("selectedOptionId === \"accept_downgrade\"")
+# 23. 结构性不变式：定稿那一刻被绑定对象必须仍是出卡片时的样子（"你批准的必须还是你看到的那个东西"）。
+#     前两轮的绕过都属"卡片说 X、锁绑 Y"这一类，逐字段设防不够，这里在定稿时按活对象重算比对。
+errors << "定稿必须重新核对被绑定对象未被掉包" unless core_source.include?("function subjectContentSnapshot") && core_source.include?("human_confirmation_subject_changed")
+errors << "对象掉包必须有防回归测试" unless contract_check_source.include?("人工闸门: 方案在人点确认前被改掉，定稿却仍然生效")
 # 16. 定稿主体必须是【生效中】的真人账号。
 errors << "定稿主体必须是生效中的账号" unless core_source.include?("if (account.status !== \"active\") return false")
 # 17. agent 必须能读到核心决策单才能做"再分析"，否则多轮协商无人应答（死锁）。
