@@ -2238,7 +2238,9 @@ async function handleApi(req, res) {
     // that is still `running` would requeue it (assignment cleared) while the node keeps executing, so a
     // second node re-claims and re-runs the same runId → double execution + an orphaned push. Reject it.
     if (commandType === "resume_dispatch" && targetDispatch && targetDispatch.status !== "blocked") {
-      return json(res, 409, {error: "dispatch_not_resumable", reason: `cannot resume a ${targetDispatch.status} dispatch`});
+      // 不回显 dispatch.status：这段在 beginGuardedWrite 之前，把状态插进响应等于让未鉴权调用方
+      // 探测任意（含别的租户的）dispatch 处于什么状态。错误码本身已足够说明问题。
+      return json(res, 409, {error: "dispatch_not_resumable"});
     }
     const taskScopedControl = ["pause_dispatch", "cancel_dispatch", "resume_dispatch"].includes(commandType) && targetDispatch;
     const projectId = targetNode.projectIds?.[0];
