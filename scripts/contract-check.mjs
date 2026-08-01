@@ -45,6 +45,7 @@ import {
   ruleSourceSettle,
   isDelegatableGrantPermission,
   recomputeOrganizationUsage,
+  registerRoleSkillOverlay,
   WORK_SESSION_SETTLED_STATUSES,
   FINDING_TERMINAL_STATUSES,
   artifactRegister,
@@ -1110,6 +1111,35 @@ function verifyHumanAndOrganizationContracts(output) {
     });
     if (!snapCard?.subjectContentDigest) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
+    }
+
+    // 角色技能的静默错绑：未登记角色原先静默拿到 orchestrator 的技能，最终兜底取数组首元素
+    //（顺序由技能源同步的替换写法决定，实质上是任意的）—— agent 因此按【别人的角色规则】干活。
+    const skillState = structuredClone(seedState);
+    ensureRuntimeCollections(skillState, {root});
+    let unknownRoleRejected = false;
+    try { resolveRoleSkill(skillState, "definitely-not-a-role", {}); }
+    catch (error) { unknownRoleRejected = error.message === "role_skill_role_not_registered"; }
+    if (!unknownRoleRejected) {
+      output.push("角色技能: 未登记的角色没有被拒绝（它会静默绑上别人的技能，agent 按别人的角色规则干活）");
+    }
+    // 已登记但无专属技能的角色：回退是正当的（22 个已登记角色里只有一半有技能文件，
+    // 直接拒绝会让另一半的工作项一个都派发不了），但必须留痕。
+    const fallbackSkill = resolveRoleSkill(skillState, "decision-center", {});
+    if (!fallbackSkill?.roleSkillFallback) {
+      output.push("角色技能: 无专属技能的角色静默套用了别人的技能，没有任何标注");
+    }
+    // 有专属技能的角色不该被误标
+    const ownRoleSkill = resolveRoleSkill(skillState, "reviewer", {});
+    if (ownRoleSkill?.roleSkillFallback) {
+      output.push("角色技能: 有专属技能的角色被误标为回退（上面那条断言分不清两种情况）");
+    }
+    // overlay 打错引用不得静默挂到别的技能上
+    let overlayRejected = false;
+    try { registerRoleSkillOverlay(skillState, {roleSkillRef: "no-such-skill", patch: {}}); }
+    catch (error) { overlayRejected = error.message === "role_skill_overlay_base_not_found"; }
+    if (!overlayRejected) {
+      output.push("角色技能: overlay 引用打错也返回成功，定制被挂到了别的角色身上");
     }
 
     // 跨租户边界：三处闸门都写成 `X.organizationId && ...`，遇到 undefined 就整条跳过。

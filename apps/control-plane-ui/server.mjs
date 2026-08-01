@@ -90,7 +90,8 @@ import {
   HUMAN_ACTOR_KEY,
   UNSAFE_DELEGATED_GRANT_PERMISSIONS,
   refreshConfirmationsAfterHumanChange,
-  revokeAccountSessions
+  revokeAccountSessions,
+  REGISTERED_OWNER_ROLES
 } from "./lib/control-plane-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -553,6 +554,17 @@ function sanitizeMemberPermissions(value, fallback = ["project:view"]) {
 // 会检查"授权方自己有没有这个权限"，邀请这条只过滤了危险的权限【形状】，从不看邀请方的实际权限 ——
 // 于是一个只有 project:create 的人可以铸出一个带 task_group:review 直接权限的账号，再用它去做
 // 自己做不到的事。同一间屋子两道门、其中一道没锁，这是本仓反复出现的形态。
+function normalizeOwnerRole(value) {
+  const role = String(value || "").trim() || "orchestrator";
+  if (!REGISTERED_OWNER_ROLES.includes(role)) {
+    const error = new Error("work_item_owner_role_not_registered");
+    error.status = 400;
+    error.registeredRoles = REGISTERED_OWNER_ROLES;
+    throw error;
+  }
+  return role;
+}
+
 function normalizeInvitedAccount(input = {}, systemScoped = false, delegation = null) {
   const roles = normalizeStringList(input.roles, ["viewer"]);
   const permissions = normalizeStringList(input.permissions, ["project:view"]);
@@ -755,7 +767,10 @@ function createWorkItemRecord(state, taskGroupId, input = {}, options = {}) {
     id: workItemId,
     title: input.title || "AI-native work item",
     status: ["draft", "ready"].includes(input.status) ? input.status : "ready",
-    ownerRole: input.ownerRole || input.roleId || "orchestrator",
+    // 未登记的角色原先会被原样收下，然后在派发时静默绑上 orchestrator 的技能 ——
+    // agent 按别人的角色规则干活。要拒就在【创建这一刻】拒，那时人还知道自己填了什么；
+    // 等到派发再炸，人已经不知道问题出在哪。
+    ownerRole: normalizeOwnerRole(input.ownerRole || input.roleId),
     progress: 0,
     requirements: normalizeStringList(input.requirements, []),
     auditRef: options.auditRef,

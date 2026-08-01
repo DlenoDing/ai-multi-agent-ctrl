@@ -93,6 +93,16 @@ const modelProviderAdapters = providerClasses.map((providerClass) => ({
   status: "configured"
 }));
 
+// 两个清单是不同层面的东西，不能混为一谈：
+//   · REGISTERED_OWNER_ROLES —— manifest 里登记的系统角色，工作项的 ownerRole 必须是其中之一；
+//   · roleCapabilityHints —— 其中【有专属技能】的那几个。
+// 未登记的角色要在创建工作项时就拒绝；已登记但没有专属技能的角色（如 agent-runtime），
+// 回退到通用执行技能是正当的 —— 但必须是【显式的、留痕的】回退，而不是静默拿 orchestrator 的。
+export const REGISTERED_OWNER_ROLES = ["orchestrator", "decision-center", "scheduler", "work-session", "reviewer", "qa",
+  "security", "release", "rule-steward", "monitor", "agent-runtime", "command-bus", "permission-gateway", "policy-engine",
+  "mcp-proxy", "room-broker", "model-registry", "skill-registry", "identity-service", "ui-console-service",
+  "repository-router", "instruction-optimizer"];
+
 const roleCapabilityHints = {
   orchestrator: {
     category: "control",
@@ -3254,7 +3264,12 @@ export function collectRuntimeIssue(state, request = {}) {
 
 export function registerRoleSkillOverlay(state, body = {}) {
   ensureRuntimeCollections(state);
-  const base = state.roleSkills.find((skill) => skill.roleSkillId === body.roleSkillRef) || state.roleSkills[0];
+  // roleSkillRef 打错一个字，overlay 原先会静默挂到【数组第一个】技能上并返回 201 ——
+  // 角色定制打在了别人身上，而调用方看到的是成功。
+  const base = state.roleSkills.find((skill) => skill.roleSkillId === body.roleSkillRef);
+  if (!base) {
+    throw Object.assign(new Error("role_skill_overlay_base_not_found"), {status: 404, roleSkillRef: body.roleSkillRef || null});
+  }
   const at = new Date().toISOString();
   const overlay = {
     schemaVersion: "role-skill-overlay/v1",
@@ -3439,6 +3454,16 @@ function strengthsFromCapabilities(capabilities) {
 }
 
 export function resolveRoleSkill(state, roleId, request = {}) {
+  // 未登记的角色原先【静默回退到 orchestrator 的提示】，于是一个 ownerRole:"developer" 的工作项
+  // 会绑上 orchestrator 的技能 —— agent 按【别人的角色规则】干活，无告警、无事件。
+  // 而 ownerRole 完全不做枚举校验（server.mjs 接受任意值并把它加进 taskGroup.roles）。
+  // 绑错角色规则不是可以静默兜底的事：它决定这个 agent 认为自己是谁、边界在哪、什么不能碰。
+  if (!REGISTERED_OWNER_ROLES.includes(roleId)) {
+    throw Object.assign(new Error("role_skill_role_not_registered"), {status: 409, roleId, registeredRoles: REGISTERED_OWNER_ROLES});
+  }
+  // 已登记但没有专属技能的角色回退到通用执行技能。这是正当的，但必须【显式标注】：
+  // 原先是静默套用 orchestrator 的提示，于是 agent 拿到的是 orchestrator 的角色规则，
+  // 而没有任何地方说明它其实没有属于自己的技能。
   const hint = roleCapabilityHints[roleId] || roleCapabilityHints.orchestrator;
   // 技能内容会进任务契约，等于 agent 的行为准则，所以"绑定谁"必须不可顶替。
   // 原先是任意 `endsWith(skillRef)`：造一个 `evil-<skillRef>` 的 id 就能顶替真技能。
@@ -3456,14 +3481,23 @@ export function resolveRoleSkill(state, roleId, request = {}) {
   if (skillCandidates.length > 1) {
     throw Object.assign(new Error("role_skill_reference_ambiguous"), {status: 409, skillRef: hint.skillRef, candidates: skillCandidates.map((skill) => skill.roleSkillId)});
   }
-  const baseSkill = skillCandidates[0] ||
-    state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`) ||
-    state.roleSkills[0];
-  const overlay = selectRoleSkillOverlay(state, baseSkill?.roleSkillId, request);
-  if (overlay) {
-    return applyRoleSkillOverlay(baseSkill, overlay);
+  // 最终兜底原先是 state.roleSkills[0] —— 数组顺序由 syncSkillSource 的替换写法决定，实质上是任意的。
+  // "找不到这个角色的技能"是一个需要人处理的真实状况，而不是"随便给一个"。
+  // 22 个已登记角色里只有一半有技能文件。直接抛错会让另一半的工作项【一个都派发不了】——
+  // 那是把静默错绑换成了拒绝服务。回退本身是必要的，要修的是"回退得不声不响"：
+  // 回退到通用执行技能，但在返回值上留痕，让上游与人都能看到"这个角色没有属于自己的技能"。
+  const ownSkill = skillCandidates[0] || state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`);
+  const baseSkill = ownSkill || state.roleSkills.find((skill) => skill.roleSkillId === "system-orchestrator") || state.roleSkills[0];
+  if (!baseSkill) {
+    throw Object.assign(new Error("role_skill_registry_empty"), {status: 409, roleId});
   }
-  return baseSkill;
+  const overlay = selectRoleSkillOverlay(state, baseSkill?.roleSkillId, request);
+  const resolved = overlay ? applyRoleSkillOverlay(baseSkill, overlay) : baseSkill;
+  // 判据必须是"实际绑到了谁"，而不是"这个角色有没有提示项"：agent-runtime 没有专属提示，
+  // 但它确实有自己的 system-agent-runtime 技能 —— 按提示项判会把它误标成回退。
+  // 真正需要标注的只有一种情况：绑到的技能既不是按提示项匹配到的、也不是这个角色自己的
+  // system-<roleId>，也就是"套用了别人的技能"。
+  return ownSkill ? resolved : {...resolved, roleSkillFallback: {roleId, boundTo: baseSkill.roleSkillId, reason: "role_has_no_dedicated_skill"}};
 }
 
 function selectRoleSkillOverlay(state, roleSkillId, request = {}) {
