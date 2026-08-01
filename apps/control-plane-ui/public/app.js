@@ -3459,7 +3459,9 @@ function connectRealtime() {
   let socket;
   try {
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-    socket = new WebSocket(`${scheme}//${location.host}/api/realtime?token=${encodeURIComponent(authToken)}`);
+    // 令牌走子协议头而不是查询串：查询串会被反向代理访问日志、浏览器历史等原样记下来，
+    // 而浏览器的 WebSocket 又不允许设置 Authorization 头 —— 子协议是标准的替代位置。
+    socket = new WebSocket(`${scheme}//${location.host}/api/realtime`, ["aimac.bearer", authToken]);
   } catch {
     return;
   }

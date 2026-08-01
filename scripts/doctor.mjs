@@ -59,6 +59,21 @@ async function verifyRealtimeWebSocket(port, bearerAuth) {
     bad.on("error", () => { clearTimeout(timer); resolveProbe(); });
     bad.on("open", () => { clearTimeout(timer); bad.close(); rejectProbe(new Error("unauthenticated realtime WS was accepted")); });
   });
+  // 子协议携带令牌（控制台走的就是这条）：令牌不进 URL，也就不会被反向代理访问日志、
+  // 浏览器历史等记下来。浏览器要求服务端回显一个它提供过的子协议，否则会立刻断开 ——
+  // 这里连带验证握手确实回显了 aimac.bearer，且【没有】把令牌本身回显进响应头。
+  await new Promise((resolveProto, rejectProto) => {
+    const viaProtocol = new WebSocket(`ws://127.0.0.1:${port}/api/realtime`, ["aimac.bearer", token]);
+    const timer = setTimeout(() => { viaProtocol.terminate(); rejectProto(new Error("subprotocol-authenticated realtime WS did not open")); }, 5000);
+    viaProtocol.on("error", (error) => { clearTimeout(timer); rejectProto(error); });
+    viaProtocol.on("open", () => {
+      clearTimeout(timer);
+      const accepted = viaProtocol.protocol;
+      viaProtocol.close();
+      if (accepted !== "aimac.bearer") { rejectProto(new Error(`realtime handshake echoed an unexpected subprotocol: ${accepted}`)); return; }
+      resolveProto();
+    });
+  });
   // Authenticated: subscribe to state, trigger a scoped write, and expect a wake frame.
   const ws = new WebSocket(`ws://127.0.0.1:${port}/api/realtime?token=${encodeURIComponent(token)}`);
   try {

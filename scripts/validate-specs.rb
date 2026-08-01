@@ -959,6 +959,13 @@ errors << "test evidence must derive a quality gate that gates close" unless cor
 # 真人专属杠杆若在控制台里没有入口，等于这个杠杆不存在 —— 人只会看到一个红色阻塞 chip，
 # 然后无从下手。本轮一次性发现三个这样的杠杆（质量门豁免/评审计划收尾/共享定义处置），
 # 全都只有裸 REST。故把"有杠杆必有入口"钉成结构约束。
+# 会话令牌不得出现在 WebSocket 的 URL 里：查询串会被反向代理访问日志、浏览器历史等原样记下来。
+# 浏览器的 WebSocket 不允许设置 Authorization 头，标准替代位置是子协议头（它是请求头，不进 URL）。
+errors << %(控制台不得把会话令牌放进 WebSocket 查询串（会被访问日志与浏览器历史记录下来）) if app_js_source.match?(/new WebSocket\([^)]*realtime\?token=/m)
+errors << %(控制台必须用子协议头携带实时通道令牌) unless app_js_source.include?(%q{["aimac.bearer", authToken]})
+# 握手必须回显一个客户端提供过的子协议，否则浏览器立刻断开；且绝不能回显令牌本身（那等于换个地方泄露）。
+errors << %(实时通道握手必须回显 aimac.bearer 子协议，且不得回显令牌本身) unless server_source.include?("handleProtocols") && server_source.include?(%q{? "aimac.bearer" : false})
+
 # 人打开控制台看不出"现在轮到我做什么"：菜单写死无计数，唯一的待办数字不可点击且只算当前项目，
 # 而等人拍板的东西被拆在两个页面上，其中一个还叫"执行监控" —— 名字完全不暗示这里有等你签字的东西。
 errors << %(控制台必须有跨项目的"待你处理"汇总，否则人工闸门存在但不可操作) unless app_js_source.include?("function pendingForMe()") && app_js_source.include?(%q{panel("待你处理"})

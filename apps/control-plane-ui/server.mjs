@@ -4336,12 +4336,25 @@ function safeRequestPathname(req) {
 }
 
 // --- Real-time WebSocket push (additive over long-poll) --------------------------------------
-const realtimeServer = new WebSocketServer({noServer: true});
+const realtimeServer = new WebSocketServer({
+  noServer: true,
+  // 客户端用子协议头携带令牌（["aimac.bearer", "<token>"]）。握手必须回显【一个】它提供过的
+  // 子协议，否则浏览器会立刻断开。这里固定回显 aimac.bearer，绝不回显令牌本身 ——
+  // 回显令牌会把它写进响应头，等于换个地方继续泄露。
+  handleProtocols: (protocols) => (protocols.has?.("aimac.bearer") || [...protocols].includes("aimac.bearer")) ? "aimac.bearer" : false
+});
 
 function realtimeToken(req) {
   const header = req.headers.authorization || "";
   if (header.startsWith("Bearer ")) return header.slice("Bearer ".length).trim();
+  // 浏览器的 WebSocket 无法设置 Authorization 头，于是控制台原先把会话令牌放在查询串里 ——
+  // 而查询串会被反向代理的访问日志、浏览器历史、以及各种中间设施原样记录下来。
+  // 标准做法是借用子协议头：它是请求头，不进 URL，也就不会被这些地方记下来。
+  const protocols = String(req.headers["sec-websocket-protocol"] || "").split(",").map((item) => item.trim()).filter(Boolean);
+  const bearerIndex = protocols.indexOf("aimac.bearer");
+  if (bearerIndex >= 0 && protocols[bearerIndex + 1]) return protocols[bearerIndex + 1];
   try {
+    // 保留查询串作为兼容回退（非浏览器客户端、旧版控制台），但它不再是控制台使用的路径。
     return new URL(req.url, "http://request.local").searchParams.get("token") || "";
   } catch {
     return "";
