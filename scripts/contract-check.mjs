@@ -652,6 +652,48 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("人工闸门: 门禁未满足却把任务组关掉了");
     }
 
+    // 绕过复现防回归：AI 抢先另建一份拓扑，不得把人对第一份方案的批准"洗"到第二份上。
+    const raceState = structuredClone(seedState);
+    ensureRuntimeCollections(raceState, {root});
+    const raceTg = raceState.taskGroups.find((t) => t.id === "tg_runtime_management");
+    raceTg.workItems = [{id: "wi_race", title: "抢跑项", status: "ready", ownerRole: "agent-runtime", progress: 0}];
+    const safePlan = createExecutionTopology(raceState, {taskGroupId: "tg_runtime_management", workItemId: "wi_race", root,
+      branches: [{branchId: "b_safe", objective: "串行", ownedPaths: ["apps/safe/**"]}]}).topology;
+    advanceExecutionTopology(raceState, {topologyId: safePlan.topologyId, action: "check_eligibility"});
+    const raceConfirmation = (raceState.humanConfirmationRequests || []).find((item) => item.decisionType === "plan_topology" && item.status === "pending");
+    // AI 在人点确认前另建一份拓扑（同一个工作项）。
+    const evilPlan = createExecutionTopology(raceState, {taskGroupId: "tg_runtime_management", workItemId: "wi_race", root,
+      branches: [{branchId: "b_evil", objective: "并行", ownedPaths: ["apps/evil/**"]}, {branchId: "b_evil2", objective: "并行2", ownedPaths: ["apps/evil2/**"]}]}).topology;
+    const raceHuman = (raceState.accounts.find((a) => ["system_admin", "org_admin", "user_account"].includes(a.accountType) && a.status === "active") || {}).accountId;
+    decideHumanConfirmation(raceState, raceConfirmation.requestId, {action: "finalize", selectedOptionId: "accept_plan", expectedRound: raceConfirmation.round}, {actor: raceHuman});
+    if (evilPlan.humanFinalization) output.push("人工闸门: 人对方案A的批准被洗到了 AI 另建的方案B 上（定稿锁按 workItemId 而非具体拓扑落位）");
+    if (!safePlan.humanFinalization) output.push("人工闸门: 人批准的那份方案没有拿到定稿锁");
+    let evilStartBlocked = false;
+    try { advanceExecutionTopology(raceState, {topologyId: evilPlan.topologyId, action: "check_eligibility"}); advanceExecutionTopology(raceState, {topologyId: evilPlan.topologyId, action: "start"}); }
+    catch (error) { evilStartBlocked = error.message === "execution_topology_requires_human_plan_confirmation"; }
+    if (!evilStartBlocked) output.push("人工闸门: AI 另建的未获批方案竟然可以启动（绕过）");
+    // 方案定稿不得连带掐死该工作项的验收（plan_topology 的锁不应被当成验收已定稿）。
+    const raceItem = raceTg.workItems.find((i) => i.id === "wi_race");
+    if (raceItem.humanFinalization?.decisionType === "plan_topology") output.push("人工闸门: 方案定稿锁被写到工作项上，会让验收永久无法进行（死锁）");
+    // 已定稿的方案不得被 AI 自行降级（分歧必须被拦下）。
+    let downgradeBlocked = false;
+    try { advanceExecutionTopology(raceState, {topologyId: safePlan.topologyId, action: "downgrade", downgradeReason: "ai_decided"}); }
+    catch (error) { downgradeBlocked = error.message === "human_finalized_decision_diverged"; }
+    if (!downgradeBlocked) output.push("人工闸门: 已定稿方案被 AI 自行降级（定稿后 AI 仍可改变方案）");
+    // 轮次令牌：AI 修订候选后，人手里的旧轮次必须失效。
+    const roundStaleState = structuredClone(gateState);
+    const roundStaleReq = roundStaleState.humanConfirmationRequests.find((r) => r.decisionType === "work_item_verification");
+    if (roundStaleReq) {
+      roundStaleReq.status = "pending"; delete roundStaleReq.decision;
+      const roundBefore = roundStaleReq.round;
+      submitAiConfirmationAnalysis(roundStaleState, roundStaleReq.requestId, {assessment: "better_alternative", summary: "换个方案", options: [{optionId: "new_opt", label: "新方案"}]}, {actor: "agent-runtime"});
+      if (roundStaleReq.round === roundBefore) output.push("人工闸门: AI 修订候选方案后未推进轮次（轮次令牌失效，TOCTOU 仍成立）");
+      let staleRejected = false;
+      try { decideHumanConfirmation(roundStaleState, roundStaleReq.requestId, {action: "finalize", selectedOptionId: "new_opt", expectedRound: roundBefore}, {actor: humanActor}); }
+      catch (error) { staleRejected = error.message === "human_confirmation_round_stale"; }
+      if (!staleRejected) output.push("人工闸门: 人拿着过期轮次仍可定稿（AI 可在点击前掉包方案）");
+    }
+
     // AI 互审本身绝不能把工作项推到 verified —— 它只能推进到 verification_ready 并挂起人工定稿单。
     const reviewState2 = structuredClone(seedState);
     ensureRuntimeCollections(reviewState2, {root});

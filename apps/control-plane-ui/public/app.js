@@ -2071,7 +2071,7 @@ function renderReview() {
         <strong>AI 互审结论（仅供参考，不构成确认）：</strong>${esc(t(request.peerReview.verdict) || request.peerReview.verdict)}
         ${(request.peerReview.findings || []).length ? `<br>发现事项：${esc((request.peerReview.findings || []).map((f) => t(f) || f).join("、"))}` : ""}
       </div>` : ""}
-      ${canReview ? `<form class="form-grid" data-form="hcr-decide" data-request="${esc(request.requestId)}" style="margin-top:10px;">
+      ${canReview ? `<form class="form-grid" data-form="hcr-decide" data-request="${esc(request.requestId)}" data-round="${esc(String(request.round || 1))}" style="margin-top:10px;">
         <div class="option-list">
           ${(request.options || []).map((option, index) => `
             <label class="option-item">
@@ -2702,7 +2702,8 @@ document.addEventListener("submit", async (event) => {
       // action 来自被点击的按钮：revise（交 AI 再分析，不锁定）/ finalize（定稿并上锁）/ reject（打回）。
       const action = ["revise", "finalize", "reject"].includes(data.action) ? data.action : "finalize";
       if (action === "revise" && !String(data.inputText || "").trim()) throw new Error("提交修改意见时请填写你的方案或意见");
-      await api(`/api/human-confirmations/${encodeURIComponent(form.dataset.request)}/decide`, {method: "POST", body: JSON.stringify({action, selectedOptionId, inputText: data.inputText || ""})});
+      // expectedRound：如果 AI 在你看这一页之后修订了候选方案，服务端会拒绝并要求你重新看过（防 TOCTOU）。
+      await api(`/api/human-confirmations/${encodeURIComponent(form.dataset.request)}/decide`, {method: "POST", body: JSON.stringify({action, selectedOptionId, inputText: data.inputText || "", expectedRound: Number(form.dataset.round || 1)})});
       formTouched = false;
       await loadPage();
       return;

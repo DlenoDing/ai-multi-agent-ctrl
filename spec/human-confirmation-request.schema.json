@@ -157,6 +157,11 @@
       "type": "string",
       "pattern": "^sha256:[a-fA-F0-9]{64}$"
     },
+    "subjectRef": {
+      "description": "该确认单所针对的具体对象（如 ExecutionTopology:<id>）。定稿锁按它落位，避免被同类的其他对象顶替。",
+      "type": "string",
+      "minLength": 1
+    },
     "round": {
       "description": "协商轮次。人提出方案与 AI 再分析可以来回多轮，只有明确定稿才终结。",
       "type": "integer",

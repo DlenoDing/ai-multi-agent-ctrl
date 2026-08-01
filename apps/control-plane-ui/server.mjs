@@ -764,7 +764,11 @@ const HUMAN_ONLY_ACTIONS = [
   "human_confirmation_decide",
   "human_directive_create",
   "project_config_update",
-  "task_group_config_update"
+  "task_group_config_update",
+  // 重置/语言策略同样是规则变更 —— 重置会把人设定的 configOverrides 整个抹回默认值，
+  // 只挡住 update 而放过 reset 等于没挡。
+  "task_group_config_reset",
+  "task_group_language_policy_update"
 ];
 const HUMAN_ACCOUNT_TYPES_FOR_ACTIONS = ["system_admin", "org_admin", "user_account"];
 

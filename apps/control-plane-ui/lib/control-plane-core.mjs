@@ -3999,6 +3999,8 @@ export function isHumanConfirmationActor(state, actorId) {
   if (!actorId) return false;
   const account = (state.accounts || []).find((item) => accountIdentity(item) === actorId);
   if (!account) return false;
+  // 账号类型是人，还必须是【生效中】的账号：被停用/撤销/尚未接受邀请的账号不能拿来定稿。
+  if (account.status !== "active") return false;
   return HUMAN_ACCOUNT_TYPES.includes(account.accountType);
 }
 
@@ -4074,6 +4076,7 @@ export function createHumanConfirmationRequest(state, input = {}) {
     }} : {}),
     // 定稿锁的基线：人确认的就是这份内容的摘要，后续 AI 改动与之不符即为分歧。
     contentDigest: decisionContentDigest({decisionType, workItemId: input.workItemId || dispatch?.workItemId || null, taskGroupId: taskGroup.id, content: input.content ?? null}),
+    ...(input.subjectRef ? {subjectRef: String(input.subjectRef)} : {}),
     dedupeKey,
     status: "pending",
     expiresAt: input.expiresAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
@@ -4109,6 +4112,11 @@ export function decideHumanConfirmation(state, requestId, decision = {}, options
   if (!option) throw Object.assign(new Error("human_confirmation_option_invalid"), {status: 400});
   const inputText = String(decision.inputText || "").trim().slice(0, 4000);
   if (selectedOptionId === "none" && !inputText) throw Object.assign(new Error("human_confirmation_input_required_for_none"), {status: 400});
+  // 防 TOCTOU：AI 在人点击前修订了候选方案时，人看到的轮次已经过期。带上 expectedRound 的调用（控制台
+  // 总是带）必须与当前轮次一致，否则拒绝，让人重新看过修订后的方案再定。
+  if (decision.expectedRound !== undefined && Number(decision.expectedRound) !== Number(request.round || 1)) {
+    throw Object.assign(new Error("human_confirmation_round_stale"), {status: 409, currentRound: Number(request.round || 1)});
+  }
   // 定稿权只属于真人。机器主体（service_account / agent_identity）即使被授予了权限也不能确认核心决策 ——
   // 否则 AI 只要拿到一个服务账号就能自己批准自己的方案，闸门形同虚设。
   if (request.decisionClass === "major" && !isHumanConfirmationActor(state, options.actor)) {
@@ -4120,9 +4128,11 @@ export function decideHumanConfirmation(state, requestId, decision = {}, options
   //   revise   —— 人提出自己的方案/修改意见。**不直接生效**：转给 AI 再分析（AI 可指出不合理或给更优方案）。
   //   reject   —— 打回返工。
   //   finalize —— 明确选择定稿。到此为止 AI 不得再改（applyHumanFinalization 上锁）。
+  // 默认值必须 fail-safe：核心决策在动作缺失时按【revise】处理（不可逆的定稿绝不能靠默认值发生），
+  // 运行时确认单保留原有的 finalize 默认（它不锁定任何东西，只是回答一个执行期问题）。
   const action = ["revise", "reject", "finalize"].includes(decision.action)
     ? decision.action
-    : (selectedOptionId === "none" ? "revise" : "finalize");
+    : (selectedOptionId === "none" || request.decisionClass === "major" ? "revise" : "finalize");
   request.round = Number(request.round || 1);
   request.deliberation ||= [];
 
@@ -4211,11 +4221,15 @@ function applyHumanFinalization(state, request, actor, at, action = "finalize") 
     }
     workItem.updatedAt = at;
   } else if (request.decisionType === "plan_topology") {
-    // 方案定稿写在拓扑对象上（start 会校验它），同时也标在工作项上便于溯源。
-    const topology = (state.executionTopologies || []).find((item) =>
-      item.workItemId === request.workItemId && !["merged", "downgraded", "cancelled"].includes(item.status));
+    // 方案定稿必须落在【这张确认单所针对的那一份拓扑】上。原先按 workItemId 查最新非终态拓扑，
+    // AI 只要在人点确认前再建一份拓扑，就能把人的批准"洗"到自己那份上（已复现的绕过）。
+    const subjectId = String(request.subjectRef || "").startsWith("ExecutionTopology:")
+      ? String(request.subjectRef).slice("ExecutionTopology:".length)
+      : null;
+    const topology = subjectId ? (state.executionTopologies || []).find((item) => item.topologyId === subjectId) : null;
     if (topology) { topology.humanFinalization = lock; topology.updatedAt = at; }
-    if (workItem) { workItem.humanFinalization = lock; workItem.updatedAt = at; }
+    // 工作项上只记溯源引用，不写定稿锁：写了会被 performIndependentReview 误判为"已定稿"而永久跳过验收。
+    if (workItem) { workItem.planFinalizationRef = request.requestId; workItem.updatedAt = at; }
   } else if (workItem) {
     workItem.humanFinalization = lock;
     workItem.updatedAt = at;
@@ -4265,6 +4279,8 @@ export function submitAiConfirmationAnalysis(state, requestId, input = {}, optio
   if (revised.length) {
     request.options = [...revised, (request.options || []).find((option) => option.optionId === "none")
       || {optionId: "none", label: "不选择（自定义输入）", description: "以上选项均不采用，由人工直接输入确认内容。", system: true}];
+    // 候选方案变了就必须推进轮次：人手上那一版已经过期，带旧 expectedRound 的确认会被拒（防 TOCTOU）。
+    request.round += 1;
     // 方案有改动 => 定稿基线随之更新（人最终定稿时锁的是那一刻的内容）。
     request.contentDigest = decisionContentDigest({
       decisionType: request.decisionType, workItemId: request.workItemId, taskGroupId: request.taskGroupId,
@@ -4830,7 +4846,11 @@ export function needsReviewBackfill(state, taskGroup, workItem) {
 
 export function performIndependentReview(state, taskGroup, workItem, request = {}, options = {}) {
   // 人已定稿的工作项，AI 不得再自动改动（包括不能重新互审把它推回别的状态）。
-  if (workItem.humanFinalization?.outcome === "confirmed") return {reviewed: false, reason: "human_finalized"};
+  // 只有【验收】已定稿才不再互审。必须同时匹配 decisionType —— 否则一个 plan_topology / task_split 的
+  // 定稿锁会让这个工作项永远无法进入验收，任务组的关闭门也就永远不可满足（死锁）。
+  if (workItem.humanFinalization?.outcome === "confirmed" && workItem.humanFinalization?.decisionType === "work_item_verification") {
+    return {reviewed: false, reason: "human_finalized"};
+  }
   // 已经挂着待人工定稿单时不重复互审——决定权在人手上，重跑只会刷屏。
   const awaitingHuman = (state.humanConfirmationRequests || []).some((item) =>
     item.status === "pending" && item.decisionType === "work_item_verification" && item.workItemId === workItem.id);
@@ -5382,6 +5402,8 @@ export function advanceExecutionTopology(state, args) {
         taskGroupId: topology.taskGroupId,
         workItemId: topology.workItemId,
         decisionType: "plan_topology",
+        // 绑定到具体这一份拓扑，定稿锁按它落位（不能按 workItemId 找"最新的那份"）。
+        subjectRef: `ExecutionTopology:${topology.topologyId}`,
         requestKey: `plan_topology:${topology.topologyId}`,
         summary: `执行方案确认：${topology.mode === "serial" ? "串行" : "并行"}执行 ${topology.workItemId}`,
         detail: `拟以 ${topology.mode} 模式执行，运行载体 ${topology.runnerKind}／隔离方式 ${topology.isolation}，共 ${branches.length} 个分支。方案需人工定稿后才会启动。`,
@@ -5421,6 +5443,9 @@ export function advanceExecutionTopology(state, args) {
     expect("eligibility_checked");
     const reason = String(args.downgradeReason || args.reason || "");
     if (!reason) throw topologyError("execution_topology_downgrade_requires_reason", 400);
+    // 降级会改变已定稿方案的实质内容（mode/串并行）。人定过稿就不允许 AI 自行改：走分歧拦截，
+    // 由人重新确认。assertHumanFinalization 在内容摘要不一致时抛 human_finalized_decision_diverged。
+    assertHumanFinalization(topology, {mode: "downgraded_serial", runnerKind: topology.runnerKind, isolation: topology.isolation, branches: branches.map((branch) => branch.branchId)});
     topology.status = "downgraded";
     topology.mode = "downgraded_serial";
     topology.downgradeReason = reason;

@@ -756,6 +756,22 @@ errors << "执行方案启动前必须人工定稿" unless core_source.include?(
 errors << "拆分/方案闸门必须有行为测试覆盖" unless contract_check_source.include?("人工闸门: 任务拆分未经人工定稿就被执行了") && contract_check_source.include?("人工闸门: 执行方案未经人工定稿就被启动了")
 # 11. 规则/配置变更影响后续所有执行，机器主体不得变更（走与人工定稿同一套 HUMAN_ONLY_ACTIONS 强制）。
 errors << "规则/配置变更必须限定真人主体" unless server_source.include?("\"project_config_update\",") && server_source.include?("\"task_group_config_update\"") && server_source.include?("HUMAN_ONLY_ACTIONS.includes(action)) return HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(account.accountType)")
+# 规则变更的"重置/语言策略"同属一类，只挡 update 会被 reset 绕过。
+errors << "配置重置与语言策略变更同样必须限定真人主体" unless server_source.include?("\"task_group_config_reset\"") && server_source.include?("\"task_group_language_policy_update\"")
+# 12. 方案定稿锁必须绑定到具体对象（否则 AI 另建一份就能把人的批准洗过去 —— 已复现的绕过）。
+errors << "方案定稿锁必须按 subjectRef 绑定具体拓扑" unless core_source.include?("subjectRef: `ExecutionTopology:${topology.topologyId}`") && core_source.include?("item.topologyId === subjectId")
+errors << "定稿锁落位绕过必须有防回归测试" unless contract_check_source.include?("人工闸门: 人对方案A的批准被洗到了 AI 另建的方案B 上")
+# 13. 只有【验收】类定稿才跳过互审；否则方案定稿会让工作项永远无法验收（死锁）。
+errors << "互审跳过必须同时匹配 decisionType（避免方案定稿掐死验收）" unless core_source.include?("workItem.humanFinalization?.decisionType === \"work_item_verification\"")
+# 14. 防 TOCTOU：AI 修订候选必须推进轮次，人带过期轮次定稿必须被拒。
+errors << "AI 修订候选必须推进协商轮次并支持轮次令牌校验" unless core_source.include?("human_confirmation_round_stale") && core_source.include?("request.round += 1")
+errors << "轮次令牌必须有防回归测试" unless contract_check_source.include?("人工闸门: 人拿着过期轮次仍可定稿")
+# 15. 定稿锁不得是空转门：assertHumanFinalization 必须有真实生产调用点。
+errors << "assertHumanFinalization 必须被生产代码调用（不能只有测试引用）" unless core_source.include?("assertHumanFinalization(topology,")
+# 16. 定稿主体必须是【生效中】的真人账号。
+errors << "定稿主体必须是生效中的账号" unless core_source.include?("if (account.status !== \"active\") return false")
+# 17. agent 必须能读到核心决策单才能做"再分析"，否则多轮协商无人应答（死锁）。
+errors << "agent 必须能读到核心决策单以完成再分析" unless mcp_source.include?("confirmation.decisionClass === \"major\" && Array.isArray(principal.projectIds)")
 # M7: the repository output target denylist field must be the schema-declared pathDenylist (not the
 # non-schema forbiddenPathRules), enforced end-to-end (producer + runtime consumer), and instance-validated.
 errors << "repository output target must use the schema pathDenylist field" unless core_source.include?("pathDenylist: request.pathDenylist") && agent_runtime_source.include?("target.pathDenylist") && contract_check_source.include?("repository-output-target.schema.json")

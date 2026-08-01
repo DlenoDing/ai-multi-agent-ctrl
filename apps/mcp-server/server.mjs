@@ -530,7 +530,14 @@ function commonInputProperties() {
 // item is treated as "open" and never trimmed away from under a gate.
 function confirmationReadableByPrincipal(confirmation, context = {}) {
   const principal = context.principal || {};
-  if (principal.kind === "agent_node") return confirmation.nodeId === principal.id;
+  if (principal.kind === "agent_node") {
+    // 运行时确认单按节点归属可见（一个节点看不到别的节点的问题）。但核心决策单是"方案定稿"，
+    // 没有绑定 dispatch/nodeId：人提出自己的方案后要由 AI 再分析，如果 agent 读不到这张单，
+    // 「交 AI 再分析」就永远无人应答（多轮协商在默认部署下形同虚设）。按项目归属放开【只读/再分析】，
+    // 定稿权仍然被 confirmation_decide 的机器主体拦截挡在门外。
+    if (confirmation.nodeId) return confirmation.nodeId === principal.id;
+    return confirmation.decisionClass === "major" && Array.isArray(principal.projectIds) && principal.projectIds.includes(confirmation.projectId);
+  }
   if (principal.kind === "system_admin") return true;
   if (Array.isArray(principal.projectIds)) return principal.projectIds.includes(confirmation.projectId);
   return false;
