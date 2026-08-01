@@ -652,6 +652,8 @@ const SUBMIT_SUCCESS = {
   "quality-gate-waive": "已豁免该质量门（理由已留档）",
   "review-plan-resolve": "已收尾评审计划",
   "rule-source-settle": "已提交规则来源判定",
+  "review-bundle-resolve": "已收尾评审包",
+  "upgrade-candidate-resolve": "已处置系统升级候选项",
   "shared-definition-resolve": "已处置共享定义契约",
   "close-task-group": "任务组已关闭"
 };
@@ -2363,6 +2365,8 @@ function renderMonitor() {
   const openReviewPlans = (state.reviewPlans || []).filter((plan) => inScope(plan) && !["closed", "rejected", "superseded"].includes(plan.status)).slice(0, 8);
   const openRuleSources = (state.ruleSourceResolutions || []).filter((item) => inScope(item) && !["reference_only", "quarantined", "rejected", "superseded", "active"].includes(item.status)).slice(0, 8);
   const blockingDefinitions = (state.sharedDefinitions || []).filter((definition) => ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"].includes(definition.status)).slice(0, 8);
+  const openReviewBundles = (state.reviewBundles || []).filter((item) => inScope(item) && !["consumed", "rejected"].includes(item.status)).slice(0, 8);
+  const openUpgradeCandidates = (state.systemUpgradeCandidates || []).filter((item) => inScope(item) && item.status === "candidate_created").slice(0, 8);
   const canControlRules = hasPerm("task_group:control");   // rule_source_settle
   const canUpdateProject = hasPerm("project:update");      // shared_definition_resolve
   const barriers = (state.closeBarriers || []).slice(0, 8).map((barrier) => row([
@@ -2414,7 +2418,7 @@ function renderMonitor() {
     `, {wide: true, headerSide: filterInput("按门禁类型、工作项过滤…", "quality-gates")}) : "",
     // 关闭门禁上每一个阻塞项都必须能在这里被人处理掉。后端有杠杆而界面上没有入口，
     // 等于这个杠杆不存在 —— 人只会看到一个红 chip，然后无从下手。
-    (openReviewPlans.length || openRuleSources.length || blockingDefinitions.length) ? panel("阻塞项人工处置", `
+    (openReviewPlans.length || openRuleSources.length || blockingDefinitions.length || openReviewBundles.length || openUpgradeCandidates.length) ? panel("阻塞项人工处置", `
       <div class="notice">下面这些阻塞只能由人来收尾：AI 要么不该有权决定（采纳规则、激活规范），要么已经无法推进（评审角色不再参与）。</div>
       ${canReviewGates && openReviewPlans.length ? `
         <div class="record" style="margin-top:8px;">
@@ -2437,6 +2441,28 @@ function renderMonitor() {
               <div class="record-meta"><span class="mono">${esc(item.sourceRef || item.resolutionId)}</span> · ${esc(taskGroupNameOf(item.taskGroupId))} · ${badge(item.status)}</div>
               <div class="form-row"><label>判定</label><select name="status"><option value="active">采纳为本项目规则</option><option value="reference_only">仅作参考</option><option value="quarantined">隔离</option><option value="rejected">不采纳</option></select></div>
               <div class="form-row"><label>理由（可选）</label><input name="justification" placeholder="判定依据"></div>
+              <button class="primary-button" type="submit">提交判定</button>
+            </form>`).join("")}
+        </div>` : ""}
+      ${canReviewGates && openReviewBundles.length ? `
+        <div class="record" style="margin-top:8px;">
+          <div class="record-title">评审包（外部评审结论回流后自动终态化；回不来时由你收尾）</div>
+          ${openReviewBundles.map((bundle) => `
+            <form class="form-grid" data-form="review-bundle-resolve" data-request="${esc(bundle.reviewBundleId)}" style="margin-top:8px;">
+              <div class="record-meta"><span class="mono">${esc(bundle.reviewBundleId)}</span> · ${esc(taskGroupNameOf(bundle.taskGroupId))} · ${badge(bundle.status)}${bundle.workItemId ? ` · ${esc(bundle.workItemId)}` : ""}</div>
+              <div class="form-row"><label>收尾方式</label><select name="status"><option value="consumed">已采纳该评审结论</option><option value="rejected">驳回该评审包</option></select></div>
+              <div class="form-row"><label>理由（必填）</label><input name="justification" placeholder="例如：外部评审方未再回流，改由内部互审覆盖"></div>
+              <button class="primary-button" type="submit">收尾评审包</button>
+            </form>`).join("")}
+        </div>` : ""}
+      ${canControlRules && openUpgradeCandidates.length ? `
+        <div class="record" style="margin-top:8px;">
+          <div class="record-title">系统升级候选项（由运行时故障自动生成，需你判定后才不再阻塞）</div>
+          ${openUpgradeCandidates.map((item) => `
+            <form class="form-grid" data-form="upgrade-candidate-resolve" data-request="${esc(item.candidateId)}" style="margin-top:8px;">
+              <div class="record-meta"><span class="mono">${esc(item.candidateId)}</span> · ${esc(taskGroupNameOf(item.taskGroupId))} · ${esc(t(item.issueClass) || item.issueClass || "-")} · ${badge(item.status)}</div>
+              <div class="form-row"><label>判定</label><select name="status"><option value="exported_for_external_maintenance">已导出交外部维护</option><option value="dismissed">不予处理</option><option value="closed">已解决</option></select></div>
+              <div class="form-row"><label>理由（必填）</label><input name="justification" placeholder="判定依据"></div>
               <button class="primary-button" type="submit">提交判定</button>
             </form>`).join("")}
         </div>` : ""}
@@ -2819,6 +2845,18 @@ document.addEventListener("submit", async (event) => {
     if (kind === "review-plan-resolve") {
       if (!String(data.justification || "").trim()) throw new Error("收尾评审计划必须写明理由（例如：外部评审方不再参与）");
       await api(`/api/review-plans/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "closed", justification: data.justification})});
+      await loadPage();
+      return;
+    }
+    if (kind === "review-bundle-resolve") {
+      if (!String(data.justification || "").trim()) throw new Error("收尾评审包必须写明理由");
+      await api(`/api/review-bundles/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "consumed", justification: data.justification})});
+      await loadPage();
+      return;
+    }
+    if (kind === "upgrade-candidate-resolve") {
+      if (!String(data.justification || "").trim()) throw new Error("处置系统升级候选项必须写明理由");
+      await api(`/api/system-upgrade-candidates/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "dismissed", justification: data.justification})});
       await loadPage();
       return;
     }

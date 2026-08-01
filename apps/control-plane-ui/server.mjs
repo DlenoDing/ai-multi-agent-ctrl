@@ -769,6 +769,8 @@ const HUMAN_ONLY_ACTIONS = [
   // 共享定义的状态推进是规则层决策，且它是这类楔死的唯一出路 —— 必须由真人掌握。
   "shared_definition_resolve",
   "review_plan_resolve",
+  "review_bundle_resolve",
+  "system_upgrade_candidate_resolve",
   // 豁免质量门是放行决定，必须由真人负责，不能由 AI 自我豁免。
   "quality_gate_waive",
   // 铸造账号必须是真人动作。人工定稿闸门只认 account.accountType，而铸造该 accountType 的动作
@@ -1095,7 +1097,10 @@ function scopedStateForAccount(state, account, session) {
   cloned.idempotencyRecords = {};
   cloned.runtimeIssuePatterns = [];
   cloned.runtimeIssueSamples = [];
-  cloned.systemUpgradeCandidates = [];
+  // 原先一律清空：而 runtime_issue_candidates_exported 这道门就是按它阻塞的，
+  // 于是人在控制台上看到一个红色阻塞项，却连它指的是哪条记录都看不到，更别说处置。
+  // 按可见任务组下发（与 findings/qualityGates 同规），跨租户仍然看不到。
+  cloned.systemUpgradeCandidates = (state.systemUpgradeCandidates || []).filter((item) => item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId));
   cloned.agentGatewayEvents = [];
   cloned.mcpCalls = [];
   cloned.mcpProbeNodes = [];
@@ -1235,6 +1240,8 @@ function permissionForAction(action) {
   // 结果只有系统管理员能解掉一个任务组层面的阻塞 —— 与同批杠杆口径不一致。
   if (action === "review_plan_resolve") return "task_group:review";
   if (action === "rule_source_settle") return "task_group:control";
+  if (action === "review_bundle_resolve") return "task_group:review";
+  if (action === "system_upgrade_candidate_resolve") return "task_group:control";
   if (action === "shared_definition_resolve") return "project:update";
   if (action === "project_config_update") return "project:update";
   if (["org_create", "org_quota_update", "org_status_update"].includes(action)) return "system:*";
@@ -3088,6 +3095,56 @@ async function handleApi(req, res) {
     finishGuardedWrite(state, guard, 200, gate);
     writeState(state);
     json(res, 200, gate);
+    return;
+  }
+
+  // 评审包的人工收尾杠杆：POST /api/review-bundles 允许任务组层面的人建出一条 submitted 的
+  // 评审包，而终态化它此前只有 MCP review_result_consume 一条路 —— 那条路对真人只有 system_admin
+  // 走得通。建得出来、settle 不掉，等于自己给自己上了个锁。
+  const reviewBundleResolveMatch = url.pathname.match(/^\/api\/review-bundles\/([^/]+)\/resolve$/);
+  if (req.method === "POST" && reviewBundleResolveMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
+    const bundle = (state.reviewBundles || []).find((item) => item.reviewBundleId === reviewBundleResolveMatch[1]);
+    if (!bundle) return json(res, 404, {error: "review_bundle_not_found"});
+    const guard = beginGuardedWrite(req, state, "review_bundle_resolve", `ReviewBundle:${bundle.reviewBundleId}`, taskGroupScope(state, bundle.taskGroupId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const nextStatus = ["consumed", "rejected"].includes(body.status) ? body.status : null;
+    if (!nextStatus) return json(res, 400, {error: "review_bundle_status_invalid"});
+    const justification = String(body.justification || "").trim();
+    if (!justification) return json(res, 400, {error: "review_bundle_resolution_justification_required"});
+    bundle.status = nextStatus;
+    bundle.resolvedBy = guard.actor;
+    bundle.resolutionJustification = justification.slice(0, 2000);
+    bundle.updatedAt = now();
+    audit(state, guard.actor, "review_bundle_resolve", `ReviewBundle:${bundle.reviewBundleId}`, nextStatus);
+    finishGuardedWrite(state, guard, 200, bundle);
+    writeState(state);
+    json(res, 200, bundle);
+    return;
+  }
+
+  // 系统升级候选项的人工处置杠杆：candidate_created 是 collectRuntimeIssue 自动产生的（例如
+  // 一次技能源同步失败就会生成一条），它会挡住关闭门，而推进它此前只有 MCP 一条路，
+  // 且 AI 被双重挡住 —— 于是只剩 system_admin 手写 JSON-RPC。自动产生的阻塞必须有寻常的人工出口。
+  const upgradeCandidateResolveMatch = url.pathname.match(/^\/api\/system-upgrade-candidates\/([^/]+)\/resolve$/);
+  if (req.method === "POST" && upgradeCandidateResolveMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
+    const candidate = (state.systemUpgradeCandidates || []).find((item) => item.candidateId === upgradeCandidateResolveMatch[1]);
+    if (!candidate) return json(res, 404, {error: "system_upgrade_candidate_not_found"});
+    const guard = beginGuardedWrite(req, state, "system_upgrade_candidate_resolve", `SystemUpgradeCandidate:${candidate.candidateId}`, taskGroupScope(state, candidate.taskGroupId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const nextStatus = ["exported_for_external_maintenance", "dismissed", "closed"].includes(body.status) ? body.status : null;
+    if (!nextStatus) return json(res, 400, {error: "system_upgrade_candidate_status_invalid"});
+    const justification = String(body.justification || "").trim();
+    if (!justification) return json(res, 400, {error: "system_upgrade_candidate_justification_required"});
+    candidate.status = nextStatus;
+    candidate.resolvedBy = guard.actor;
+    candidate.resolutionJustification = justification.slice(0, 2000);
+    candidate.updatedAt = now();
+    audit(state, guard.actor, "system_upgrade_candidate_resolve", `SystemUpgradeCandidate:${candidate.candidateId}`, nextStatus);
+    finishGuardedWrite(state, guard, 200, candidate);
+    writeState(state);
+    json(res, 200, candidate);
     return;
   }
 

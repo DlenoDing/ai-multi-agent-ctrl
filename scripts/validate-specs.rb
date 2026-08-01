@@ -968,6 +968,8 @@ human_lever_forms = {
   "review_plan_resolve" => "review-plan-resolve",
   "shared_definition_resolve" => "shared-definition-resolve",
   "rule_source_settle" => "rule-source-settle",
+  "review_bundle_resolve" => "review-bundle-resolve",
+  "system_upgrade_candidate_resolve" => "upgrade-candidate-resolve",
   "human_confirmation_decide" => "hcr-decide",
   "human_directive_create" => "directive-create"
 }

@@ -172,6 +172,13 @@
 
     /* ---------- 受阻 / 失败原因 ---------- */
     awaiting_human_confirmation: "等待人工确认",
+    review_bundle_not_found: "评审包不存在",
+    review_bundle_status_invalid: "评审包收尾状态无效",
+    review_bundle_resolution_justification_required: "收尾评审包必须填写理由",
+    system_upgrade_candidate_not_found: "系统升级候选项不存在",
+    system_upgrade_candidate_status_invalid: "系统升级候选项状态无效",
+    system_upgrade_candidate_justification_required: "处置系统升级候选项必须填写理由",
+    repeated_integration_conflict: "反复集成冲突",
     fixed_unverified: "已修复但无证据",
     blocked_external_incomplete: "外部阻塞但信息不全",
     evidence_refs_missing: "缺少证据引用",
