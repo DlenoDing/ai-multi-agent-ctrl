@@ -1015,6 +1015,16 @@ errors << %(验收卡片必须说明角色技能回退（否则人以为它按�
 # 过期会话原先只在有人登录时被顺带清理，无人登录期间长期滞留。
 errors << %(必须有独立的过期会话清扫（不能只依赖"下一次有人登录"）) unless server_source.include?("过期会话原先【只在有人登录时】被顺带清理")
 
+# 控制台里唯一能一次性摧毁全部租户的按钮，原先与"刷新页面"是同一种交互成本：两次单击，
+# 文案只说"重置为种子数据"。有真实租户数据时必须显式带上要摧毁的规模。
+errors << %(重新初始化运行态在已有真实数据时必须要求显式确认规模) unless server_source.include?("bootstrap_init_requires_explicit_confirmation")
+errors << %(摧毁全部数据必须打字确认（单击式确认无法让人读到规模）) unless app_js_source.include?("function promptDialog(options =") && app_js_source.include?("确认抹掉全部数据")
+# confirmDialog 的安全语义（回车不触发、焦点落在"取消"）只对 danger:true 生效。
+# 关闭任务组是终态且无任何回退路径，必须标 danger，且必须指名关的是哪一个（按钮逐行渲染）。
+errors << %(关闭任务组的确认必须标 danger 且指名任务组) unless app_js_source.include?('message: `确认关闭任务组「${taskGroupNameOf(target.dataset.task)}」？`')
+# 定稿/打回都是一次性的，且与"提交修改意见"并排 —— 这是整套人工闸门的核心动作，不能零确认。
+errors << %(定稿与打回必须二次确认（一次性且不可修改）) unless app_js_source.include?('title: finalizing ? "确认定稿" : "确认打回返工"')
+
 # 互审此前是空转的：它能产出的每一条判据都是 acceptAgentCheckpoint 已经强制过的结构性事实，
 # 所以对任何被接受的检查点结论恒为 passed。控制面判断不了代码对不对，但质量门是否真的过了、
 # 声明的需求有没有对应证据、以及这次交付有多大，是它能独立查而接受时不查的。

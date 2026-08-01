@@ -625,6 +625,45 @@ toast.error = (message) => toast(message, "error", 4200);
 toast.info = (message) => toast(message, "info", 2600);
 
 // 一致的中文二次确认弹窗，替代浏览器原生 confirm()。返回 Promise<boolean>。
+// 打字确认：用于"点错一下就无法挽回、且影响面巨大"的操作。要求把提示里的那串字原样打一遍，
+// 目的不是防脚本，而是逼人真的读到那几个数字 —— 单击式确认在这种场景下只能确认"你想做这类事"，
+// 确认不了"你知道自己要毁掉多少东西"。返回 null 表示取消。
+function promptDialog(options = {}) {
+  const {title = "确认操作", message = "", sub = "", placeholder = "", danger = true, confirmText = "确定", cancelText = "取消"} = options;
+  return new Promise((resolve) => {
+    const mask = document.createElement("div");
+    mask.className = "modal-mask";
+    mask.style.zIndex = "350";
+    mask.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true" style="width:460px;">
+        <div class="modal-header"><h3>${esc(title)}</h3></div>
+        <div class="modal-body">
+          <div class="confirm-message">${esc(message)}${sub ? `<span class="confirm-sub">${esc(sub)}</span>` : ""}</div>
+          <div class="form-row" style="margin-top:10px;"><input data-prompt-input placeholder="${esc(placeholder)}" autocomplete="off"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="secondary-button" data-confirm="cancel">${esc(cancelText)}</button>
+          <button type="button" class="primary-button ${danger ? "danger" : ""}" data-confirm="ok">${esc(confirmText)}</button>
+        </div>
+      </div>`;
+    const input = () => mask.querySelector("[data-prompt-input]");
+    const done = (value) => {
+      document.removeEventListener("keydown", onKey);
+      mask.remove();
+      resolve(value);
+    };
+    const onKey = (event) => { if (event.key === "Escape") done(null); };
+    mask.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-confirm]");
+      if (!button) return;   // 点遮罩不关闭：与 confirmDialog 同规，避免误触
+      done(button.dataset.confirm === "ok" ? String(input()?.value || "") : null);
+    });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(mask);
+    setTimeout(() => input()?.focus(), 0);
+  });
+}
+
 function confirmDialog(options = {}) {
   const {title = "确认操作", message = "", sub = "", danger = false, confirmText = "确定", cancelText = "取消"} = options;
   return new Promise((resolve) => {
@@ -2956,6 +2995,21 @@ document.addEventListener("submit", async (event) => {
       // action 来自被点击的按钮：revise（交 AI 再分析，不锁定）/ finalize（定稿并上锁）/ reject（打回）。
       const action = ["revise", "finalize", "reject"].includes(data.action) ? data.action : "finalize";
       if (action === "revise" && !String(data.inputText || "").trim()) throw new Error("提交修改意见时请填写你的方案或意见");
+      // 定稿与打回都是一次性的：服务端对已非 pending 的确认单直接 409，点错不能改。而这三个按钮
+      // 并排在同一行里，一个是"再商量一轮"，另两个是"永久锁定"或"打回"，视觉差别只有按钮配色。
+      // 这是整套人工闸门的核心动作，此前却是唯一零确认的。
+      if (action !== "revise") {
+        const finalizing = action === "finalize";
+        if (!(await confirmDialog({
+          title: finalizing ? "确认定稿" : "确认打回返工",
+          message: finalizing
+            ? "定稿之后，AI 不得再自动更改这个方案；如需变更必须重新回到人工确认。"
+            : "打回之后，这个工作项回到人工决策通道，等待重开或废弃。",
+          sub: "该决定只能做一次，提交后无法修改。",
+          danger: true,
+          confirmText: finalizing ? "确认定稿" : "确认打回"
+        }))) return "__skip_success__";
+      }
       // expectedRound：如果 AI 在你看这一页之后修订了候选方案，服务端会拒绝并要求你重新看过（防 TOCTOU）。
       await api(`/api/human-confirmations/${encodeURIComponent(form.dataset.request)}/decide`, {method: "POST", body: JSON.stringify({action, selectedOptionId, inputText: data.inputText || "", expectedRound: Number(form.dataset.round || 1)})});
       formTouched = false;
@@ -3219,8 +3273,22 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "bootstrap-init") {
-      if (!(await confirmDialog({title: "重新初始化运行态", message: "确认重新初始化运行态？", sub: "该操作会重置为种子数据，仅用于本地排障。", danger: true, confirmText: "重新初始化"}))) return;
-      await api("/api/bootstrap/init", {method: "POST", body: "{}"});
+      // 这是控制台里唯一一个能一次性摧毁全部租户的按钮，而它原先的交互成本与"刷新页面"相同：
+      // 文案只说"重置为种子数据"，不会让人意识到自己名下所有组织、项目、账号、授权、审计链都会归零。
+      // 先把规模摆出来，再要求把这个规模【原样打一遍】—— 打字是为了让人真的读到那几个数字。
+      const scale = state.__bootstrapScale || {organizations: (state.organizations || []).length, projects: (state.projects || []).length, taskGroups: (state.taskGroups || []).length};
+      const confirmToken = `${Math.max(0, scale.organizations - 1)}/${scale.projects}/${scale.taskGroups}`;
+      const typed = await promptDialog({
+        title: "重新初始化运行态",
+        message: `这会抹掉当前运行态里的【全部】数据：${scale.organizations} 个组织、${scale.projects} 个项目、${scale.taskGroups} 个任务组，以及全部账号、访问授权与审计记录。此操作不可撤销、没有备份。`,
+        sub: `确认请在下方原样输入：${confirmToken}`,
+        placeholder: confirmToken,
+        danger: true,
+        confirmText: "确认抹掉全部数据"
+      });
+      if (typed === null) return;
+      if (String(typed).trim() !== confirmToken) { toast.error("输入与提示不一致，已取消"); return; }
+      await api("/api/bootstrap/init", {method: "POST", body: JSON.stringify({confirmDestroy: confirmToken})});
       await loadPage();
       toast.success("已重新初始化运行态");
       return;
@@ -3310,7 +3378,7 @@ document.addEventListener("click", async (event) => {
     if (action === "agent-control") {
       const command = target.dataset.command;
       if (command === "cancel_dispatch" && !(await confirmDialog({title: "取消派发", message: "确认取消该节点当前派发的任务？", danger: true, confirmText: "取消派发"}))) return;
-      if (command === "shutdown" && !(await confirmDialog({title: "关停节点", message: "确认优雅关停该节点？", sub: "节点将进入 draining，完成或围栏当前派发后离线（区别于硬吊销）。", confirmText: "关停"}))) return;
+      if (command === "shutdown" && !(await confirmDialog({title: "关停节点", message: "确认优雅关停该节点？", sub: "节点将进入 draining，完成或围栏当前派发后离线（区别于硬吊销）。", danger: true, confirmText: "关停"}))) return;
       const node = [...(state.agentRuntimeNodes || []), ...orgAgentNodes].find((item) => item.nodeId === target.dataset.nodeId);
       const dispatchId = (node?.activeDispatchIds || node?.display?.currentDispatchIds || [])[0] || "";
       await api(`/api/agent-nodes/${encodeURIComponent(target.dataset.nodeId)}/control`, {
@@ -3322,7 +3390,15 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "close-task-group") {
-      if (!(await confirmDialog({title: "关闭任务组", message: "确认关闭该任务组？", sub: "关闭门禁已满足；关闭后任务组进入终态 closed。", confirmText: "关闭任务组"}))) return;
+      // 原先漏了 danger:true —— 而 confirmDialog 的安全语义（回车不触发、焦点落在"取消"）只对 danger 生效。
+      // 于是控制台里最不可逆的操作用的是"回车即确认"的弹窗，而"停用成员"这种可逆操作反而受保护。
+      // 按钮逐行渲染、一屏可能八行，文案却不指名 —— 点错行时弹窗帮不了你，而关闭没有任何回退路径。
+      if (!(await confirmDialog({
+        title: "关闭任务组",
+        message: `确认关闭任务组「${taskGroupNameOf(target.dataset.task)}」？`,
+        sub: "关闭后进入终态 closed，系统没有任何重新打开的入口 —— 这一步不可撤销。",
+        danger: true, confirmText: "关闭任务组"
+      }))) return;
       const result = await api(`/api/task-groups/${encodeURIComponent(target.dataset.task)}/close-barrier/compute`, {method: "POST", body: JSON.stringify({mutate: true})});
       await loadPage();
       if (result?.closeBarrier?.satisfied === false || result?.satisfied === false) toast.error("关闭门禁未满足，任务组未关闭");

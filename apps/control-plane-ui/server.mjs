@@ -2533,6 +2533,21 @@ async function handleApi(req, res) {
       json(res, guard.status, guard.payload);
       return;
     }
+    // 这个端点整体替换 state —— 全部组织、账号、项目、任务组、访问授权、审计链一次归零，
+    // 且原先没有任何环境判据：生产环境同样可点，而按钮就在系统管理员的落地页上。
+    // 它的用途是本地排障，那就让它只在"还没有真实租户数据"时无条件可用；
+    // 一旦已经有了别的组织/项目，就必须显式带上要摧毁的规模，证明调用方知道自己在做什么。
+    const liveOrgs = (state.organizations || []).filter((item) => item.orgId !== DEFAULT_ORGANIZATION_ID).length;
+    const liveProjects = (state.projects || []).length;
+    const liveTaskGroups = (state.taskGroups || []).length;
+    const hasTenantData = liveOrgs > 0 || liveProjects > 1 || liveTaskGroups > 1;
+    if (hasTenantData && String(body.confirmDestroy || "") !== `${liveOrgs}/${liveProjects}/${liveTaskGroups}`) {
+      return json(res, 409, {
+        error: "bootstrap_init_requires_explicit_confirmation",
+        message: "运行态里已有真实数据，重新初始化会全部抹掉；请带上 confirmDestroy=<组织数>/<项目数>/<任务组数> 再调用",
+        organizations: liveOrgs, projects: liveProjects, taskGroups: liveTaskGroups
+      });
+    }
     const seed = JSON.parse(readFileSync(seedPath, "utf8"));
     seed.__loadedStateVersion = state.__loadedStateVersion;
     seed.runtime.updatedAt = now();
