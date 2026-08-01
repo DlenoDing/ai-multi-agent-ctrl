@@ -2994,12 +2994,32 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     satisfied
   };
   state.closeBarriers = [barrier, ...state.closeBarriers.filter((item) => item.taskGroupId !== taskGroupId)].slice(0, 80);
+  // 关闭任务组是核心定稿动作：只有真人账号可以落闸。机器主体即使拿到 task_group:control 也不行 ——
+  // 否则一个服务账号就能替 AI 把任务组关掉，人工闸门在最后一步被绕过。这里对**任何**落闸请求先行拒绝
+  // （而不是等门禁满足后才拒），机器主体的关闭意图应当被明确报错，而不是静默无效。
+  if (request.mutate === true && taskGroup && !isHumanConfirmationActor(state, request.actor)) {
+    throw Object.assign(new Error("task_group_close_requires_human_actor"), {status: 403});
+  }
   if (satisfied && request.mutate === true && taskGroup) {
     taskGroup.status = "closed";
     taskGroup.goalExecutionStatus = "closed";
     taskGroup.progress = 100;
     taskGroup.health = "ok";
+    // 记录人工定稿：谁、何时、依据哪一份门禁快照关闭的。这也是关闭后 AI 不得再改的基线。
+    taskGroup.humanFinalization = {
+      finalizedBy: request.actor,
+      finalizedAt: at,
+      confirmationRef: `close-barrier:${taskGroupId}:${barrier.stateVersion}`,
+      contentDigest: barrier.stateDigest,
+      decisionType: "task_group_close",
+      outcome: "confirmed"
+    };
     taskGroup.updatedAt = at;
+    barrier.confirmedBy = request.actor;
+    barrier.confirmedAt = at;
+    appendEvent(state, "decision", "TaskGroup", taskGroup.id, request.actor, {
+      taskGroupId: taskGroup.id, decisionType: "task_group_close", humanFinalized: true
+    });
   }
   return barrier;
 }

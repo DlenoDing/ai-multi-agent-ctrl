@@ -296,6 +296,15 @@
     },
     "satisfied": {
       "type": "boolean"
+    },
+    "confirmedBy": {
+      "description": "落闸关闭任务组的真人账号。关闭是核心定稿动作，机器主体不得执行。",
+      "type": "string",
+      "minLength": 1
+    },
+    "confirmedAt": {
+      "type": "string",
+      "format": "date-time"
     }
   },
   "allOf": [

@@ -10,6 +10,7 @@ import {
   buildTaskContract,
   consumeHumanConfirmation,
   submitAiConfirmationAnalysis,
+  isHumanConfirmationActor,
   createHumanConfirmationRequest,
   decideHumanConfirmation,
   collectRuntimeIssue,
@@ -2217,14 +2218,18 @@ export function approvalResolve(state, args) {
   if (request.riskClass === "high" && request.proposedBy && resolver === request.proposedBy) {
     return {ok: false, error: "high_risk_no_self_approval"};
   }
-  // AI-quorum: accumulate DISTINCT approvers; the verdict is "approved" only once quorum is reached,
-  // otherwise it stays in the modeled non-terminal quorum_collecting state (still blocks the close
-  // barrier's no_pending_approvals gate).
+  // 互审票可以由 AI 投，但**终审那一票必须是人**。累计不同主体的票；即使凑够法定人数，只要没有任何一票
+  // 来自真人账号，就停在非终态 quorum_collecting（继续阻塞 close barrier），绝不自动变成 approved。
   request.approvals = [...new Set([...(request.approvals || []), resolver])];
   const quorum = Math.max(1, Number(request.quorum || 1));
-  if (request.approvals.length < quorum) {
+  const hasHumanApprover = request.approvals.some((approver) => isHumanConfirmationActor(state, approver));
+  if (request.approvals.length < quorum || !hasHumanApprover) {
     request.status = "quorum_collecting";
-    return {approvalRequest: request, quorumRemaining: quorum - request.approvals.length};
+    return {
+      approvalRequest: request,
+      quorumRemaining: Math.max(0, quorum - request.approvals.length),
+      ...(hasHumanApprover ? {} : {awaitingHumanApprover: true})
+    };
   }
   request.status = "approved";
   request.resolvedBy = resolver;

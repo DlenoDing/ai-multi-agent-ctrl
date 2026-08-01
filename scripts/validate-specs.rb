@@ -743,6 +743,12 @@ errors << "人工确认超时不得自动放行，必须升级为人工决策" u
 errors << "定稿后必须有分歧拦截（human_finalized_decision_diverged）" unless core_source.include?("export function assertHumanFinalization") && core_source.include?("human_finalized_decision_diverged")
 # 7. 上述语义必须有行为测试覆盖（否则回归时门仍绿）。
 errors << "人工定稿闸门需要行为测试覆盖" unless contract_check_source.include?("人工闸门: 机器主体（service_account）竟然可以定稿核心决策") && contract_check_source.include?("人工闸门: AI 再分析竟然终结了决策") && contract_check_source.include?("人工闸门: AI 互审仍然直接把工作项标记为 verified")
+# 8. 审批终审必须有真人一票：AI 可以投互审票，但纯 AI 票凑够法定人数也不得通过。
+errors << "审批终审必须有真人一票（纯 AI quorum 不得通过）" unless mcp_source.include?("const hasHumanApprover = request.approvals.some((approver) => isHumanConfirmationActor(state, approver))") && mcp_source.include?("request.approvals.length < quorum || !hasHumanApprover")
+errors << "审批终审需人一票必须有行为测试覆盖" unless contract_check_source.include?("人工闸门: 纯 AI 票凑够法定人数就通过了审批")
+# 9. 关闭任务组必须由真人落闸，并留下定稿记录。
+errors << "关闭任务组必须由真人落闸" unless core_source.include?("task_group_close_requires_human_actor") && core_source.include?("decisionType: \"task_group_close\"") && server_source.include?("actor: guard.actor")
+errors << "关闭任务组的真人校验必须有行为测试覆盖" unless contract_check_source.include?("人工闸门: 机器主体竟然可以关闭任务组")
 # M7: the repository output target denylist field must be the schema-declared pathDenylist (not the
 # non-schema forbiddenPathRules), enforced end-to-end (producer + runtime consumer), and instance-validated.
 errors << "repository output target must use the schema pathDenylist field" unless core_source.include?("pathDenylist: request.pathDenylist") && agent_runtime_source.include?("target.pathDenylist") && contract_check_source.include?("repository-output-target.schema.json")

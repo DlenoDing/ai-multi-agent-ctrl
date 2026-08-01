@@ -2428,7 +2428,13 @@ async function handleApi(req, res) {
       return;
     }
     const readiness = computeCompletionReadiness(state, closeComputeMatch[1], {root: repositoryRoot});
-    const closeBarrier = computeCloseBarrier(state, closeComputeMatch[1], {root: repositoryRoot, mutate: body.mutate === true});
+    let closeBarrier;
+    try {
+      // actor 透传给 core：真正落闸（mutate:true）时 core 会校验必须是真人账号。
+      closeBarrier = computeCloseBarrier(state, closeComputeMatch[1], {root: repositoryRoot, mutate: body.mutate === true, actor: guard.actor});
+    } catch (error) {
+      return json(res, error.status || 500, {error: error.message});
+    }
     // A real close mutates the task group to terminal; refresh the project/task-group progress rollup so
     // the overview reflects it immediately instead of lagging until the next autonomy cycle.
     if (body.mutate === true && closeBarrier.satisfied) computeProgressSnapshots(state);

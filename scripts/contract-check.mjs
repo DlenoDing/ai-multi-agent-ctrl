@@ -611,6 +611,37 @@ function verifyHumanAndOrganizationContracts(output) {
     catch (error) { divergenceBlocked = error.message === "human_finalized_decision_diverged"; }
     if (!divergenceBlocked) output.push("人工闸门: 已定稿方案被 AI 改动却没有拦截（定稿后 AI 仍可静默更改）");
 
+    // 任务组关闭是核心定稿动作：机器主体不得落闸，真人落闸要留下定稿记录。
+    const closeState = structuredClone(seedState);
+    ensureRuntimeCollections(closeState, {root});
+    const closeTg = closeState.taskGroups.find((t) => t.id === "tg_runtime_management");
+    closeTg.workItems = [];
+    closeState.checkpoints = []; closeState.agentDispatches = []; closeState.workSessions = [];
+    closeState.repositoryOutputs = []; closeState.findings = []; closeState.permissionRequests = [];
+    closeState.approvalRequests = []; closeState.humanConfirmationRequests = []; closeState.humanDirectives = [];
+    const closeHuman = (closeState.accounts.find((a) => ["system_admin", "org_admin", "user_account"].includes(a.accountType)) || {}).accountId;
+    const closeMachine = (closeState.accounts.find((a) => a.accountType === "service_account") || {}).accountId;
+    // 机器主体的落闸请求必须被明确拒绝（与门禁是否满足无关），真人的请求必须被放行到门禁判定。
+    let machineCloseBlocked = false;
+    try { computeCloseBarrier(closeState, "tg_runtime_management", {root, mutate: true, actor: closeMachine}); }
+    catch (error) { machineCloseBlocked = error.message === "task_group_close_requires_human_actor"; }
+    if (!machineCloseBlocked) output.push("人工闸门: 机器主体竟然可以关闭任务组（关闭必须由真人落闸）");
+    if (closeTg.status === "closed") output.push("人工闸门: 机器主体的关闭尝试被拒后任务组仍被关闭");
+    let humanCloseAllowed = true;
+    let humanClosed = null;
+    closeState.stateVersion = Number(closeState.stateVersion || 1) + 1;
+    try { humanClosed = computeCloseBarrier(closeState, "tg_runtime_management", {root, mutate: true, actor: closeHuman}); }
+    catch { humanCloseAllowed = false; }
+    if (!humanCloseAllowed) output.push("人工闸门: 真人的关闭请求被主体校验错误地拒绝了");
+    // 若门禁确实满足，真人落闸必须留下定稿记录；否则（门禁未满足）不应关闭。
+    if (humanClosed?.satisfied) {
+      if (closeTg.status !== "closed") output.push("人工闸门: 门禁满足且由真人落闸，任务组却未关闭");
+      if (closeTg.humanFinalization?.finalizedBy !== closeHuman || humanClosed.confirmedBy !== closeHuman) output.push("人工闸门: 真人关闭未留下定稿记录（humanFinalization / confirmedBy）");
+      validateSchema(humanClosed, closeBarrierSchema, "CloseBarrier(humanConfirmed)", output);
+    } else if (closeTg.status === "closed") {
+      output.push("人工闸门: 门禁未满足却把任务组关掉了");
+    }
+
     // AI 互审本身绝不能把工作项推到 verified —— 它只能推进到 verification_ready 并挂起人工定稿单。
     const reviewState2 = structuredClone(seedState);
     ensureRuntimeCollections(reviewState2, {root});
@@ -640,6 +671,15 @@ function verifyHumanAndOrganizationContracts(output) {
     // approval only terminalizes to "approved" once a distinct-approver quorum is reached.
     const approvalHrState = structuredClone(seedState);
     ensureRuntimeCollections(approvalHrState, {root});
+    // 审批需要真人终审：给测试造三个真实的人类账号 + 一个机器账号。
+    approvalHrState.accounts = [
+      ...(approvalHrState.accounts || []),
+      {schemaVersion: "account/v1", accountId: "acct_alice", accountType: "user_account", displayName: "Alice", status: "active"},
+      {schemaVersion: "account/v1", accountId: "acct_bob", accountType: "user_account", displayName: "Bob", status: "active"},
+      {schemaVersion: "account/v1", accountId: "acct_carol", accountType: "user_account", displayName: "Carol", status: "active"},
+      {schemaVersion: "account/v1", accountId: "acct_ai_1", accountType: "service_account", displayName: "AI-1", status: "active"},
+      {schemaVersion: "account/v1", accountId: "acct_ai_2", accountType: "service_account", displayName: "AI-2", status: "active"}
+    ];
     approvalHrState.approvalRequests = [{approvalId: "appr_hr", status: "pending", riskClass: "high", proposedBy: "acct_alice", quorum: 1, approvals: []}];
     const selfAppr = approvalResolve(approvalHrState, {approvalId: "appr_hr", status: "approved", resolvedBy: "acct_alice"});
     if (selfAppr.error !== "high_risk_no_self_approval" || approvalHrState.approvalRequests[0].status === "approved") output.push("H1: a high-risk request was self-approved by its proposer");
@@ -653,6 +693,15 @@ function verifyHumanAndOrganizationContracts(output) {
     if (q2().status !== "quorum_collecting") output.push("H1: the same approver was double-counted toward quorum");
     approvalResolve(approvalHrState, {approvalId: "appr_q2", status: "approved", resolvedBy: "acct_carol"});
     if (q2().status !== "approved") output.push("H1: a quorum-2 request was not approved after two distinct approvers");
+    // 终审必须有人：纯 AI（机器主体）票即使凑够法定人数也不得通过。
+    approvalHrState.approvalRequests.push({approvalId: "appr_ai", status: "pending", riskClass: "medium", proposedBy: "acct_alice", quorum: 2, approvals: []});
+    const aiOnly = () => approvalHrState.approvalRequests.find((a) => a.approvalId === "appr_ai");
+    approvalResolve(approvalHrState, {approvalId: "appr_ai", status: "approved", resolvedBy: "acct_ai_1"});
+    const aiQuorumResult = approvalResolve(approvalHrState, {approvalId: "appr_ai", status: "approved", resolvedBy: "acct_ai_2"});
+    if (aiOnly().status === "approved") output.push("人工闸门: 纯 AI 票凑够法定人数就通过了审批（终审必须有真人一票）");
+    if (!aiQuorumResult.awaitingHumanApprover) output.push("人工闸门: AI 凑够票后未标记 awaitingHumanApprover（缺少待真人终审的信号）");
+    approvalResolve(approvalHrState, {approvalId: "appr_ai", status: "approved", resolvedBy: "acct_bob"});
+    if (aiOnly().status !== "approved") output.push("人工闸门: 真人补上终审票后审批仍未通过");
     // CRITICAL: a quorum_collecting (sub-quorum) approval MUST keep blocking the close barrier — otherwise a
     // partial approval lets a high-risk action close without its full approver quorum.
     const quorumBlockState = structuredClone(seedState);
