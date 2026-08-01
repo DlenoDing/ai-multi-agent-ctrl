@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
+import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
@@ -1111,6 +1111,29 @@ function verifyHumanAndOrganizationContracts(output) {
     });
     if (!snapCard?.subjectContentDigest) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
+    }
+
+    // overlay 声称是"项目级角色规则定制"，但它此前只改能力标签与摘要，下发的 SKILL.md 取的是
+    // base 正文，patch.instructionRef 全仓从未被解析 —— 这套定制一个字都到不了 agent。
+    const ovState = structuredClone(seedState);
+    ensureRuntimeCollections(ovState, {root});
+    const ovBase = ovState.roleSkills.find((item) => item.roleSkillId === "system-reviewer") || ovState.roleSkills[0];
+    const ovOverlay = registerRoleSkillOverlay(ovState, {roleSkillRef: ovBase.roleSkillId,
+      patch: {allowedCapabilityAdds: ["cap_extra"], forbiddenCapabilityAdds: ["cap_banned"],
+        instructionRef: "overlay:project-x", modelRequirementPatchRef: "overlay:model:none"}});
+    const ovContract = {roleId: "reviewer", languagePolicy: {}, roleSkill: {
+      roleSkillRef: `${ovBase.roleSkillId}+${ovOverlay.overlay?.overlayId || ovOverlay.overlayId}`,
+      overlayRefs: [ovOverlay.overlay?.overlayId || ovOverlay.overlayId]
+    }};
+    let ovWorkset = null;
+    try { ovWorkset = buildSkillWorkset(ovState, ovContract, {runtimeDir: ".runtime"}); }
+    catch (error) { output.push(`角色定制: 无法构建技能集（${error.message}）—— 这条断言无从验证`); }
+    const overlayFile = (ovWorkset?.files || []).find((file) => file.path === "SKILL.overlay.md");
+    if (!overlayFile) {
+      output.push("角色定制: overlay 的约束没有变成 agent 会读到的文件（契约说它生效了，执行方读到的却是未经修改的原文）");
+    }
+    if (overlayFile && !String(overlayFile.content).includes("cap_banned")) {
+      output.push("角色定制: overlay 里追加的禁止能力没有出现在下发内容里");
     }
 
     // 角色技能的静默错绑：未登记角色原先静默拿到 orchestrator 的技能，最终兜底取数组首元素

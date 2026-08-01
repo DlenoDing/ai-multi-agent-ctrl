@@ -1257,7 +1257,7 @@ function buildDispatchPackage(state, dispatch, node, options) {
   };
 }
 
-function buildSkillWorkset(state, contract, options) {
+export function buildSkillWorkset(state, contract, options) {
   const runtimeDir = resolve(options.runtimeDir || ".runtime");
   const effectiveRef = String(contract.roleSkill?.roleSkillRef || contract.roleSkill?.selectedAgentSkillRef || "");
   const baseRef = effectiveRef.split("+")[0];
@@ -1281,6 +1281,25 @@ function buildSkillWorkset(state, contract, options) {
     overlayDigest: overlay.overlayDigest,
     patch: overlay.patch
   }));
+  // overlay 声称是"项目级角色规则定制"，但它此前只改了能力标签与摘要 —— 下发给 agent 的
+  // SKILL.md 取的是 base 正文（effectiveRef.split("+")[0]），patch.instructionRef 全仓从未被解析。
+  // 也就是说这套定制【一个字都到不了 agent】：契约里写着它生效了，执行方读到的却是未经修改的原文。
+  // 把 overlay 的实际约束落成一份 agent 会读到的文件，定制才真的存在。
+  if (overlays.length) {
+    const overlayText = ["# 角色技能定制（项目级 overlay）", "",
+      "以下约束在本任务上【叠加于】SKILL.md，与之冲突时以本文件为准。", ""];
+    for (const overlay of overlays) {
+      const patch = overlay.patch || {};
+      overlayText.push(`## ${overlay.overlayId}`);
+      if ((patch.allowedCapabilityAdds || []).length) overlayText.push(`- 追加允许的能力：${patch.allowedCapabilityAdds.join("、")}`);
+      if ((patch.forbiddenCapabilityAdds || []).length) overlayText.push(`- 追加禁止的能力：${patch.forbiddenCapabilityAdds.join("、")}`);
+      if (patch.instructionRef && patch.instructionRef !== "overlay:empty") overlayText.push(`- 附加说明引用：${patch.instructionRef}`);
+      if (patch.modelRequirementPatchRef && patch.modelRequirementPatchRef !== "overlay:model:none") overlayText.push(`- 模型要求补丁：${patch.modelRequirementPatchRef}`);
+      overlayText.push("");
+    }
+    const overlayContent = overlayText.join("\n");
+    files.push({path: "SKILL.overlay.md", content: overlayContent, contentDigest: digestOf(overlayContent)});
+  }
   const languagePolicy = normalizeTaskGroupLanguagePolicy(contract.languagePolicy);
   const languagePolicyDigest = contract.languagePolicyDigest || digestOf(languagePolicy);
   const requiredSkillRefs = [effectiveRef];

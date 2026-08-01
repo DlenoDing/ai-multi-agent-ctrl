@@ -4174,7 +4174,15 @@ export const MAJOR_DECISION_TYPES = [
   "task_group_close",         // 任务组关闭定稿
   "plan_topology",            // 执行方案/拓扑选择
   "task_split",               // 任务拆分
-  "rule_change"               // 规则/配置变更
+  // rule_change 目前【没有任何生产者】：全仓没有一处 createHumanConfirmationRequest 用它。
+  // 这不是遗漏 —— 规则编辑本身已经是真人专属动作（project_config_update / task_group_config_update /
+  // shared_definition_resolve / contract_publish / role_skill_overlay_create / skill_source_sync
+  // 都在 HUMAN_ONLY_ACTIONS 里），而 AI 根本没有改规则的通道，所以不存在"AI 提出规则变更、
+  // 等人确认"这条路。这个成员是为将来可能出现的 AI 侧规则提案预留的入口。
+  // 保留而不删，是因为删掉要动 schema 与文案；但必须写清它现在是【预留】而不是【在用】——
+  // 否则它看起来像一道正在生效的闸门，而实际上没有任何东西会走到它。
+  // 若最终确定 AI 永远不会提出规则变更，应当连同 schema 枚举一起删掉。
+  "rule_change"               // 规则/配置变更（预留：当前无生产者，见上）
 ];
 
 // 只有真人账号可以定稿。service_account / agent_identity 一律不算"人"。
