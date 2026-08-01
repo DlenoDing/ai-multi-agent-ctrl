@@ -1109,6 +1109,42 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
     }
 
+    // (a) 被拆分取代 / 人工放弃的工作项都是 superseded，而原判据只认 verified/closed ——
+    //     拆分是系统自己会做的事，于是拆分过一次的任务组从此永远关不掉。
+    // (b) 证据判据原先只要求全组【存在任意一个】带 git 证据的检查点：5 个已验收工作项配 1 个
+    //     检查点也算通过。改为逐个要求后，既严格得多，也不再要求没有交付的东西拿出交付证据。
+    const dlEvState = structuredClone(seedState);
+    ensureRuntimeCollections(dlEvState, {root});
+    const dlEvTg = dlEvState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    dlEvTg.workItems = [
+      {id: "wi_parent", title: "被拆分取代", status: "superseded"},
+      {id: "wi_done_a", title: "已验收A", status: "verified"},
+      {id: "wi_done_b", title: "已验收B", status: "verified"}
+    ];
+    dlEvState.checkpoints = [{taskGroupId: dlEvTg.id, workId: "wi_done_a", runId: "r1",
+      commitRefs: [{commit: "a".repeat(40)}], pushRefs: [{remote: "origin", ref: "refs/heads/main"}], artifactManifestRefs: ["docs/m.json"]}];
+    const dlEvChecks = computeCompletionReadiness(dlEvState, dlEvTg.id, {}).checkResults || {};
+    if (dlEvChecks.all_required_outputs_present?.status === "blocked") {
+      output.push("交付判据: 被拆分取代或人工放弃的工作项仍被当作未交付挡住关闭（拆分过一次就永远关不掉）");
+    }
+    if (dlEvChecks.all_required_evidence_present?.status !== "blocked") {
+      output.push("交付判据: 有已验收工作项完全没有 git 证据却通过了证据判据（全组存在一个检查点就算数）");
+    }
+    // 补齐第二个工作项的证据后必须放行 —— 否则这道门就没有出口了
+    dlEvState.checkpoints.push({taskGroupId: dlEvTg.id, workId: "wi_done_b", runId: "r2",
+      commitRefs: [{commit: "b".repeat(40)}], pushRefs: [{remote: "origin", ref: "refs/heads/main"}], artifactManifestRefs: ["docs/m2.json"]});
+    if ((computeCompletionReadiness(dlEvState, dlEvTg.id, {}).checkResults || {}).all_required_evidence_present?.status === "blocked") {
+      output.push("交付判据: 每个已验收工作项都有证据后仍被阻塞（正常交付路径被打断）");
+    }
+    // 全部工作项都被放弃的任务组：没有交付，就不该被要求拿出交付证据
+    const dlAbandonedState = structuredClone(dlEvState);
+    dlAbandonedState.taskGroups.find((item) => item.id === dlEvTg.id).workItems = [{id: "wi_x", title: "全放弃", status: "superseded"}];
+    dlAbandonedState.checkpoints = [];
+    const dlAbChecks = computeCompletionReadiness(dlAbandonedState, dlEvTg.id, {}).checkResults || {};
+    if (dlAbChecks.all_required_evidence_present?.status === "blocked" || dlAbChecks.all_required_outputs_present?.status === "blocked") {
+      output.push("交付判据: 工作项全被放弃的任务组仍被要求拿出 git 证据（checkpoint_submit 是服务账号专属，人零杠杆）");
+    }
+
     // 租约有 expiresAt，但全仓没有任何代码读它 —— 租约从来不会过期。持有者会话已经了结（或压根
     // 不存在）时，这条 active 租约会永远挡住 all_leases_terminal，而 capLeaseHistory 还专门
     // 保证 active 的绝不被淘汰。设了到期时间却没人执行，等于没有到期时间。

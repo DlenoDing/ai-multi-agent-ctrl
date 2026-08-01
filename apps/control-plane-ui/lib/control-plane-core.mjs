@@ -2908,7 +2908,10 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
   ensureRuntimeCollections(state);
   const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
   const at = new Date().toISOString();
-  const workItems = (taskGroup?.workItems || []).filter((item) => item.status !== "superseded");
+  // 上游这份 workItems 会把 superseded 过滤掉，于是"工作项全被放弃/全被拆分取代"的任务组
+  // 看起来和"从来没有过工作项"一模一样 —— 而后者是要阻塞的。两件事必须分开看。
+  const allWorkItems = taskGroup?.workItems || [];
+  const workItems = allWorkItems.filter((item) => item.status !== "superseded");
   const verifiedItems = workItems.filter((item) => ["verified", "closed"].includes(item.status));
   const taskGroupCheckpoints = (state.checkpoints || []).filter((checkpoint) => checkpoint.taskGroupId === taskGroupId);
   const pendingStatuses = BARRIER_PENDING_STATUSES;
@@ -2931,8 +2934,17 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
     // 永久锁死关闭门，而控制台对共享定义是只读的、REST 也没有改状态的入口 —— 人将完全无法脱困。
     shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => SHARED_DEFINITION_BLOCKING_STATUSES.includes(definition.status)),
     repository_output_target_terminal: (state.repositoryOutputs || []).filter((target) => target.taskGroupId === taskGroupId).some((target) => !["pushed", "committed", "rejected", "superseded"].includes(target.status)),
-    all_required_outputs_present: workItems.length === 0 || workItems.some((item) => !["verified", "closed"].includes(item.status)),
-    all_required_evidence_present: !taskGroupCheckpoints.some((checkpoint) => checkpoint.commitRefs?.length && checkpoint.pushRefs?.length && checkpoint.artifactManifestRefs?.length),
+    // 原先只认 verified/closed，于是【被拆分掉的父工作项】和【人工放弃的工作项】（都是 superseded）
+    // 会永久挡住关闭 —— 拆分过一次的任务组从此关不掉，而拆分是系统自己会做的事。
+    // 已了结不等于已交付：放弃/取消/被取代都是了结，只是没有产出。
+    all_required_outputs_present: allWorkItems.length === 0 || allWorkItems.some((item) => !WORK_ITEM_SETTLED_STATUSES.includes(item.status)),
+    // 原先只要求全组【存在任意一个】带 git 证据的检查点：5 个已验收工作项配 1 个检查点也算通过，
+    // 太弱；反过来，agent 从未成功跑过（或工作项全被放弃）时又永远满足不了，人还没有任何杠杆，
+    // 因为 checkpoint_submit 被锁死为服务账号专属。改为按【已验收的工作项】逐个要求证据 ——
+    // 既严格得多，也不再要求"没有交付的东西"拿出交付证据。
+    all_required_evidence_present: verifiedItems.some((item) =>
+      !taskGroupCheckpoints.some((checkpoint) => (checkpoint.workId === item.id || checkpoint.workItemId === item.id)
+        && checkpoint.commitRefs?.length && checkpoint.pushRefs?.length && checkpoint.artifactManifestRefs?.length)),
     all_required_validation_present: verifiedItems.some((item) =>
       taskGroupCheckpoints.some((checkpoint) => checkpoint.workId === item.id) &&
       !item.reviewBundleRef &&
@@ -5320,6 +5332,9 @@ export function capRetainingOpen(items, terminalStatuses, limit) {
 // Includes "quorum_collecting" so a sub-quorum high-risk approval keeps blocking completion readiness.
 // 会话的"已了结"集：completed_objective 之后即便还没回收，也不该再挡住任务组关闭。
 // 这里必须只用已登记状态 —— 原先混着 WorkSession 根本没有的 "closed"。
+// 工作项的"已了结"集：verified/closed 是交付了结，superseded/cancelled/aborted 是没有交付的了结
+// （被拆分取代、人工放弃、被取消）。两者都不该再挡住任务组关闭。
+export const WORK_ITEM_SETTLED_STATUSES = ["verified", "closed", "superseded", "aborted"];
 export const WORK_SESSION_SETTLED_STATUSES = ["completed_objective", "recycled", "failed", "aborted"];
 const BARRIER_PENDING_STATUSES = ["open", "pending", "pending_approval", "quorum_collecting", "requested", "submitted", "in_review", "waiting"];
 // 一个横跨 5 类实体的通用"待处理"清单，对每一类都只是碰运气 —— 实测 8 个状态名里，

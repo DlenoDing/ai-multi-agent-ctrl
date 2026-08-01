@@ -42,6 +42,7 @@ function loadStateMachines() {
 // state.<集合> / 取集合的辅助函数 -> 状态机实体名。
 // 新增一个被关闭门检查的集合时必须在此登记，否则 unmappedCollections 会失败 —— 不允许悄悄绕过本门。
 const COLLECTION_ENTITY = {
+  allWorkItems: "WorkItem",
   workItems: "WorkItem",
   commands: "Command",
   readiness: "CompletionReadinessCheck",
