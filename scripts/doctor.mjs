@@ -890,7 +890,24 @@ try {
   expectStatus(await g2("/api/rule-source-resolutions", systemAuth, "g2b-rulesource-ok", {taskGroupId: "tg_runtime_management", sourceRef: "reference:doctor", classification: "reference_only"}), 201, "rule source resolve happy");
   expectStatus(await g2("/api/rule-source-resolutions", invitedAuth, "g2b-rulesource-deny", {taskGroupId: "tg_runtime_management", sourceRef: "reference:x"}), 403, "rule source resolve deny");
 
-  console.log("gap 2b §4 rest endpoints ok");
+  // 人工定稿闸门（HTTP 层真实校验）：机器主体【即使持有相应权限】也不得做核心决策。
+  // 关键：先把所需权限真授给服务账号，否则 403 只是普通权限不足，测不出真人守卫（曾经就是这样的假绿）。
+  const gateGrant = async (key, resourceType, resourceId, role, permissions) => expectStatus(await jsonFetch(port, "/api/access-grants", {
+    method: "POST",
+    headers: {authorization: systemAuth, "Idempotency-Key": key},
+    body: JSON.stringify({subjectId: "acct_agent_runtime", resourceType, resourceId, role, permissions})
+  }), 201, `授予服务账号 ${permissions.join(",")}`);
+  await gateGrant("gate-grant-tg", "task_group", "tg_runtime_management", "task_group_owner", ["task_group:configure", "task_group:control", "task_group:review"]);
+  await gateGrant("gate-grant-proj", "project", "prj_control_plane", "project_admin", ["project:update"]);
+  // 现在服务账号权限齐备，仍必须被真人守卫拒绝 —— 403 只可能来自 HUMAN_ONLY_ACTIONS。
+  expectStatus(await g2("/api/task-groups/tg_runtime_management/config", agentAuth, "gate-tgconfig-deny", {languagePolicy: {primaryLanguage: "zh-CN"}}), 403, "机器主体持权限仍不得变更任务组规则/配置");
+  expectStatus(await g2("/api/projects/prj_control_plane/config", agentAuth, "gate-projconfig-deny", {languagePolicy: {primaryLanguage: "zh-CN"}}), 403, "机器主体持权限仍不得变更项目规则/配置");
+  expectStatus(await g2("/api/human-directives", agentAuth, "gate-directive-deny", {taskGroupId: "tg_runtime_management", directiveType: "add_requirement", instruction: "doctor"}), 403, "机器主体持权限仍不得使用人工指令通道");
+  expectStatus(await g2("/api/task-groups/tg_runtime_management/close-barrier/compute", agentAuth, "gate-close-deny", {mutate: true}), 403, "机器主体持权限仍不得关闭任务组");
+  // 真人走同一条路径必须放行（证明拒绝确实是按主体类型，而不是端点本身坏了）。
+  expectStatus(await g2("/api/task-groups/tg_runtime_management/config", systemAuth, "gate-tgconfig-ok", {languagePolicy: {primaryLanguage: "zh-CN"}}), 200, "真人变更任务组配置应放行");
+
+  console.log("gap 2b §4 rest endpoints + human finalization gate ok");
   await verifyRealtimeWebSocket(port, auth);
   console.log("realtime websocket ok");
   console.log("ai-native control flow ok");
