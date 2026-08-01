@@ -125,6 +125,8 @@
       }
     },
     "blockers": {"type": "array", "items": {"type": "string"}},
+    "downgradeReason": {"type": "string", "minLength": 1},
+    "cancelRef": {"type": "string", "minLength": 1},
     "auditRef": {"type": "string", "minLength": 1},
     "createdAt": {"type": "string", "format": "date-time"},
     "updatedAt": {"type": "string", "format": "date-time"}

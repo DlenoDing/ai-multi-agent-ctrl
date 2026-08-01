@@ -45,6 +45,7 @@ import {
   classifyDerivedTask,
   contractPublish,
   createExecutionTopology,
+  advanceExecutionTopology,
   findTaskGroup,
   findingResolve,
   findingSubmit,
@@ -78,7 +79,7 @@ export const mcpToolGroups = {
   "orchestration-mcp": ["project_create", "task_group_create", "work_item_create", "work_assign", "orchestrator_run", "state_get"],
   "room-mcp": ["room_join", "room_send", "room_wait", "room_ack"],
   "agent-control-mcp": ["node_register", "node_probe", "session_start", "session_pause", "session_cancel", "session_recover", "dispatch_status"],
-  "scheduler-mcp": ["model_select", "session_place", "work_assign", "capacity_snapshot", "execution_topology_plan", "derived_task_classify"],
+  "scheduler-mcp": ["model_select", "session_place", "work_assign", "capacity_snapshot", "execution_topology_plan", "execution_topology_advance", "derived_task_classify"],
   "resource-mcp": ["lease_claim", "lease_release", "resource_snapshot"],
   "model-mcp": ["model_capabilities", "model_policy_get", "model_select"],
   "skill-mcp": ["skill_source_sync", "role_skill_parse", "role_skill_overlay_validate", "role_skill_resolve"],
@@ -134,6 +135,7 @@ const toolDescriptions = {
   "scheduler-mcp.work_assign": "Assign a role to a work item using the scheduler policy surface.",
   "scheduler-mcp.capacity_snapshot": "Return scheduler-visible session and agent capacity.",
   "scheduler-mcp.execution_topology_plan": "Create an execution topology plan for a task group.",
+  "scheduler-mcp.execution_topology_advance": "Advance an execution topology along its modeled lifecycle (check_eligibility, start, downgrade, report_branch, reconcile_required, reconcile, block, unblock, merge, cancel).",
   "scheduler-mcp.derived_task_classify": "Classify a derived task request without running it.",
   "resource-mcp.lease_claim": "Claim a bounded resource lease for a repository output target.",
   "resource-mcp.lease_release": "Release a resource lease and unblock follow-on dispatches.",
@@ -315,6 +317,7 @@ function requiredInputPropertiesFor(name) {
     "scheduler-mcp.session_place": ["taskGroupId", "workItemId", "roleId"],
     "scheduler-mcp.work_assign": ["taskGroupId", "workItemId", "roleId"],
     "scheduler-mcp.execution_topology_plan": ["taskGroupId"],
+    "scheduler-mcp.execution_topology_advance": ["topologyId", "action"],
     "model-mcp.model_select": ["taskGroupId", "workItemId", "roleId"],
     "resource-mcp.lease_release": ["leaseId", "holderRef", "fencingToken"],
     "skill-mcp.role_skill_overlay_validate": ["roleSkillRef"],
@@ -489,7 +492,29 @@ function commonInputProperties() {
     workId: string,
     workItem: object,
     workItemId: string,
-    workSignals: array
+    workSignals: array,
+    // ExecutionTopology plan + lifecycle (scheduler-mcp.execution_topology_plan / _advance)
+    topologyId: string,
+    groupId: string,
+    branches: array,
+    branchId: string,
+    branchStatus: string,
+    runnerKind: string,
+    runnerId: string,
+    isolation: string,
+    runnerGrantRef: string,
+    localVerificationEvidenceRefs: array,
+    actualChangedPaths: array,
+    validationEvidenceRefs: array,
+    unresolvedRisks: array,
+    derivedTaskRequestRefs: array,
+    resultRef: string,
+    downgradeReason: string,
+    reconcileEvidenceRef: string,
+    blockingDerivedTaskRequestRef: string,
+    resolvedBlockerRef: string,
+    finalValidationEvidenceRefs: array,
+    cancelRef: string
   };
 }
 
@@ -989,6 +1014,12 @@ function inferMcpArgumentProjectIds(state, args = {}) {
     const definition = (state.sharedDefinitions || []).find((item) => item.contractId === args.contractId);
     if (definition?.projectId) projectIds.add(definition.projectId);
   }
+  if (args.topologyId) {
+    // execution_topology_advance is addressed solely by topologyId; resolve it to the owning project so a
+    // bounded principal cannot drive another tenant's topology through its lifecycle.
+    const topology = (state.executionTopologies || []).find((item) => item.topologyId === args.topologyId);
+    if (topology?.projectId) projectIds.add(topology.projectId);
+  }
   const workItemId = args.workItemId || args.workId;
   if (workItemId) {
     // A bare workItemId resolves through its owning task group to a project (mirrors validateExplicitMcpScopeExists),
@@ -1204,6 +1235,8 @@ async function dispatchTool(state, name, args, context = {}) {
       return capacitySnapshot(state, principalProjectFilter(context));
     case "scheduler-mcp.execution_topology_plan":
       return createExecutionTopology(state, args);
+    case "scheduler-mcp.execution_topology_advance":
+      return advanceExecutionTopology(state, args);
     case "scheduler-mcp.derived_task_classify":
       return classifyDerivedTask(state, args);
     case "resource-mcp.lease_claim":

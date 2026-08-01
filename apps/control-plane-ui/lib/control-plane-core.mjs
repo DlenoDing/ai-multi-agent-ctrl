@@ -2827,7 +2827,9 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
   const taskGroupCheckpoints = (state.checkpoints || []).filter((checkpoint) => checkpoint.taskGroupId === taskGroupId);
   const pendingStatuses = BARRIER_PENDING_STATUSES;
   const checkFailures = {
-    no_open_execution_topology: (state.executionTopologies || []).some((item) => item.taskGroupId === taskGroupId && !["closed", "completed", "superseded"].includes(item.status)),
+    // ExecutionTopology terminal states per spec/state-machines.yaml are merged/downgraded/cancelled (the
+    // former closed/completed/superseded literals were not modeled states at all, so nothing could clear it).
+    no_open_execution_topology: (state.executionTopologies || []).some((item) => item.taskGroupId === taskGroupId && !TOPOLOGY_TERMINAL_STATUSES.includes(item.status)),
     no_open_review_plan: (state.reviewPlans || []).some((item) => item.taskGroupId === taskGroupId && !["closed", "completed", "cancelled"].includes(item.status)),
     no_pending_review_bundle: (state.reviewBundles || []).some((item) => item.taskGroupId === taskGroupId && !["consumed", "rejected"].includes(item.status)),
     no_blocking_derived_task_request: (state.derivedTaskRequests || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)),
@@ -2937,7 +2939,7 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     artifacts_verified: forTaskGroup(state.artifacts).some((item) => !["verified", "registered"].includes(item.status)),
     rules_candidates_processed: (state.ruleSourceResolutions || []).some((item) => item.taskGroupId === taskGroupId && pendingStatuses.includes(item.status)),
     runtime_issue_candidates_exported: forTaskGroup(state.systemUpgradeCandidates).some((item) => item.status === "candidate_created"),
-    no_open_execution_topologies: forTaskGroup(state.executionTopologies).some((item) => !["closed", "completed", "superseded"].includes(item.status)),
+    no_open_execution_topologies: forTaskGroup(state.executionTopologies).some((item) => !TOPOLOGY_TERMINAL_STATUSES.includes(item.status)),
     no_blocking_derived_task_requests: forTaskGroup(state.derivedTaskRequests).some((item) => pendingStatuses.includes(item.status)),
     all_review_plans_closed: forTaskGroup(state.reviewPlans).some((item) => !["closed", "completed", "cancelled"].includes(item.status)),
     no_pending_review_bundles: forTaskGroup(state.reviewBundles).some((item) => !["consumed", "rejected"].includes(item.status)),
@@ -4928,22 +4930,256 @@ export function roomWait(state, args) {
   return {roomId, messages, nextCursor: messages.at(-1)?.sequence || afterSequence};
 }
 
+// ExecutionTopology — plans how ONE work item is executed: serially, or fanned out across isolated
+// branches that a parent serially merges. Terminal states are the modeled ones (merged/downgraded/
+// cancelled); everything else gates the close barrier, and advanceExecutionTopology is the lever that
+// walks the modeled transitions. Records conform to spec/execution-topology.schema.json.
+const TOPOLOGY_TERMINAL_STATUSES = ["merged", "downgraded", "cancelled"];
+const TOPOLOGY_BRANCH_OUTPUT_CONTRACT = ["changedPaths", "resultRef", "validationEvidence", "unresolvedRisks", "derivedTaskRequests"];
+const TOPOLOGY_ELIGIBILITY_GATES = [
+  "independent_deliverables",
+  "owned_paths_disjoint",
+  "resource_scopes_disjoint",
+  "runner_isolated",
+  "result_bundle_contract",
+  "parent_serial_merge_owner",
+  "final_validation_available"
+];
+
+function topologyError(code, status = 409) {
+  const error = new Error(code);
+  error.status = status;
+  return error;
+}
+
+function normalizeTopologyBranches(args, workItem) {
+  const requested = Array.isArray(args.branches) && args.branches.length
+    ? args.branches
+    : [{branchId: `${workItem?.id || "work"}_serial`, objective: workItem?.title || args.objective || "串行执行"}];
+  return requested.map((branch, index) => {
+    const objective = String(branch.objective || workItem?.title || `分支 ${index + 1}`);
+    return {
+      branchId: String(branch.branchId || `${workItem?.id || "work"}_b${index + 1}`),
+      ...(branch.runnerId ? {runnerId: String(branch.runnerId)} : {}),
+      status: "queued",
+      objective,
+      objectiveDigest: digestOf(objective),
+      ownedPaths: unique(branch.ownedPaths || []),
+      forbiddenPaths: unique(branch.forbiddenPaths || [".runtime/**", ".git/**"]),
+      resourceScopes: unique(branch.resourceScopes || []),
+      acceptanceChecks: unique(branch.acceptanceChecks || ["npm run validate"]),
+      outputContract: [...TOPOLOGY_BRANCH_OUTPUT_CONTRACT],
+      actualChangedPaths: []
+    };
+  });
+}
+
+// Evaluate the modeled eligibility gates against the ACTUAL branch definitions — a gate that cannot fail
+// is a vacuous gate, so every one of these is computed from real plan data, and each failure becomes a
+// blocker that forbids `start` (leaving `downgrade` as the lever).
+function evaluateTopologyEligibility(topology) {
+  const branches = (topology.groups || []).flatMap((group) => group.branches || []);
+  const blockers = [];
+  const seenPaths = new Map();
+  const seenScopes = new Map();
+  for (const branch of branches) {
+    for (const path of branch.ownedPaths || []) {
+      if (seenPaths.has(path)) blockers.push(`owned_paths_disjoint:${path}:${seenPaths.get(path)}|${branch.branchId}`);
+      else seenPaths.set(path, branch.branchId);
+    }
+    for (const scope of branch.resourceScopes || []) {
+      if (seenScopes.has(scope)) blockers.push(`resource_scopes_disjoint:${scope}:${seenScopes.get(scope)}|${branch.branchId}`);
+      else seenScopes.set(scope, branch.branchId);
+    }
+    if (!branch.objective) blockers.push(`independent_deliverables:${branch.branchId}:missing_objective`);
+    if (!(branch.acceptanceChecks || []).length) blockers.push(`final_validation_available:${branch.branchId}:no_acceptance_checks`);
+    if ((branch.outputContract || []).length < 4) blockers.push(`result_bundle_contract:${branch.branchId}:incomplete`);
+  }
+  // Parallel execution requires a real isolation boundary; a serial single-branch plan does not.
+  if (branches.length > 1 && (topology.runnerKind === "none" || topology.isolation === "none")) {
+    blockers.push(`runner_isolated:${topology.topologyId}:runner_or_isolation_none`);
+  }
+  if (branches.length > 1 && (topology.ownedPathsRequired !== false) && branches.some((branch) => !(branch.ownedPaths || []).length)) {
+    blockers.push("owned_paths_disjoint:branch_without_owned_paths");
+  }
+  if (topology.mergePolicy !== "parent_serial_after_all_required_reported") blockers.push("parent_serial_merge_owner:missing");
+  return unique(blockers);
+}
+
 export function createExecutionTopology(state, args) {
   const taskGroup = findTaskGroup(state, args.taskGroupId);
+  const workItem = (taskGroup?.workItems || []).find((item) => item.id === (args.workItemId || args.workId))
+    || (taskGroup?.workItems || []).find((item) => !["superseded", "closed"].includes(item.status))
+    || null;
+  const workItemId = args.workItemId || args.workId || workItem?.id;
+  if (!workItemId) throw topologyError("execution_topology_requires_work_item", 400);
   const at = new Date().toISOString();
+  const root = args.root || args.repositoryRoot || process.cwd();
+  const branches = normalizeTopologyBranches(args, workItem);
+  const mode = args.mode || (branches.length > 1 ? "parallel_active" : "serial");
+  const runnerKind = args.runnerKind || (branches.length > 1 ? "git_worktree" : "work_session");
+  const isolation = args.isolation || (branches.length > 1 ? "git_worktree" : "new_work_session");
+  // Schema conditional: an external runner must carry its grant plus local verification evidence — the
+  // control plane never trusts an external result without locally verifiable evidence.
+  if (runnerKind === "external_runner" && !(args.runnerGrantRef && (args.localVerificationEvidenceRefs || []).length)) {
+    throw topologyError("execution_topology_external_runner_requires_grant_and_local_verification", 400);
+  }
+  const topologyId = args.topologyId || createId("topo");
   const topology = {
     schemaVersion: "execution-topology/v1",
-    topologyId: args.topologyId || createId("topo"),
+    topologyId,
     projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
     taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
+    workItemId,
     status: "planned",
-    nodes: (taskGroup?.workItems || []).map((item) => ({workItemId: item.id, roleId: item.ownerRole, status: item.status})),
-    edges: args.edges || [],
+    mode,
+    runnerKind,
+    isolation,
+    ...(args.runnerGrantRef ? {runnerGrantRef: String(args.runnerGrantRef)} : {}),
+    ...((args.localVerificationEvidenceRefs || []).length ? {localVerificationEvidenceRefs: unique(args.localVerificationEvidenceRefs)} : {}),
+    baseSnapshot: {
+      stateVersion: Math.max(1, Number(state.stateVersion || 1)),
+      gitHead: gitHead(root),
+      dirtyDigest: digestOf(gitStatusPaths(root))
+    },
+    mergePolicy: "parent_serial_after_all_required_reported",
+    groups: [{groupId: args.groupId || `${workItemId}_g1`, branches, blockers: []}],
+    eligibilityGates: [...TOPOLOGY_ELIGIBILITY_GATES],
+    blockers: [],
+    auditRef: args.auditRef || `audit:execution-topology:${topologyId}`,
     createdAt: at,
     updatedAt: at
   };
   state.executionTopologies.unshift(topology);
-  state.executionTopologies = capRetainingPredicate(state.executionTopologies, (item) => !["closed", "completed", "superseded"].includes(item.status), 2000);
+  state.executionTopologies = capRetainingPredicate(state.executionTopologies, (item) => !TOPOLOGY_TERMINAL_STATUSES.includes(item.status), 2000);
+  appendEvent(state, "execution_topology", "ExecutionTopology", topology.topologyId, "scheduler", {
+    projectId: topology.projectId, taskGroupId: topology.taskGroupId, workItemId, mode, branchCount: branches.length
+  });
+  return {topology};
+}
+
+// The lever that walks the modeled ExecutionTopology transitions. Every action asserts the object's ACTUAL
+// current status (not just machine legality) so a replayed/out-of-order call cannot skip a state, and each
+// transition is recorded with the evidence the state machine's `requires` names.
+export function advanceExecutionTopology(state, args) {
+  const topology = (state.executionTopologies || []).find((item) => item.topologyId === args.topologyId);
+  if (!topology) return {ok: false, error: "execution_topology_not_found"};
+  if (TOPOLOGY_TERMINAL_STATUSES.includes(topology.status)) return {topology, alreadyTerminal: true};
+  const action = String(args.action || "");
+  const at = new Date().toISOString();
+  const branches = (topology.groups || []).flatMap((group) => group.branches || []);
+  const expect = (status) => { if (topology.status !== status) throw topologyError(`execution_topology_expected_${status}_got_${topology.status}`); };
+  const transition = (from, to, actor, requires) => recordTransition(state, "ExecutionTopology", topology.topologyId, from, to, actor, requires);
+
+  if (action === "check_eligibility") {
+    expect("planned");
+    topology.blockers = evaluateTopologyEligibility(topology);
+    topology.groups.forEach((group) => { group.blockers = topology.blockers.filter((blocker) => (group.branches || []).some((branch) => blocker.includes(branch.branchId))); });
+    topology.status = "eligibility_checked";
+    transition("planned", "eligibility_checked", "scheduler", {
+      topology_plan_ref: `ExecutionTopology:${topology.topologyId}`,
+      branch_boundaries_defined: String(branches.length),
+      base_snapshot_ref: `state:${topology.baseSnapshot.stateVersion}:${topology.baseSnapshot.gitHead}`
+    });
+  } else if (action === "start") {
+    expect("eligibility_checked");
+    if (topology.blockers.length) throw topologyError("execution_topology_eligibility_blocked");
+    // Schema conditional for running/integrating/merged: a real runner and a real isolation boundary.
+    if (topology.runnerKind === "none" || topology.isolation === "none") throw topologyError("execution_topology_requires_runner_and_isolation");
+    topology.status = "running";
+    branches.forEach((branch) => { if (branch.status === "queued") branch.status = "running"; });
+    transition("eligibility_checked", "running", "scheduler", {
+      runner_gate_passed: topology.runnerKind,
+      isolation_available: topology.isolation,
+      owned_paths_disjoint: "verified",
+      resource_scopes_disjoint: "verified",
+      result_bundle_contract: TOPOLOGY_BRANCH_OUTPUT_CONTRACT.join(",")
+    });
+  } else if (action === "downgrade") {
+    expect("eligibility_checked");
+    const reason = String(args.downgradeReason || args.reason || "");
+    if (!reason) throw topologyError("execution_topology_downgrade_requires_reason", 400);
+    topology.status = "downgraded";
+    topology.mode = "downgraded_serial";
+    topology.downgradeReason = reason;
+    transition("eligibility_checked", "downgraded", "scheduler", {downgrade_reason: reason});
+  } else if (action === "report_branch") {
+    expect("running");
+    const branch = branches.find((item) => item.branchId === args.branchId);
+    if (!branch) return {ok: false, error: "execution_topology_branch_not_found"};
+    branch.status = ["reported", "failed", "rejected", "blocked"].includes(args.branchStatus) ? args.branchStatus : "reported";
+    if (args.resultRef) branch.resultRef = String(args.resultRef);
+    branch.actualChangedPaths = unique([...(branch.actualChangedPaths || []), ...(args.actualChangedPaths || [])]);
+    branch.validationEvidenceRefs = unique([...(branch.validationEvidenceRefs || []), ...(args.validationEvidenceRefs || [])]);
+    if ((args.unresolvedRisks || []).length) branch.unresolvedRisks = unique([...(branch.unresolvedRisks || []), ...args.unresolvedRisks]);
+    if ((args.derivedTaskRequestRefs || []).length) branch.derivedTaskRequestRefs = unique([...(branch.derivedTaskRequestRefs || []), ...args.derivedTaskRequestRefs]);
+    // A branch that wrote outside the paths it owns breaks the disjointness the plan was admitted on.
+    const strayPaths = (branch.actualChangedPaths || []).filter((path) => (branch.ownedPaths || []).length && !branch.ownedPaths.some((owned) => path === owned || path.startsWith(owned.replace(/\*+$/u, ""))));
+    if (strayPaths.length) topology.blockers = unique([...topology.blockers, ...strayPaths.map((path) => `owned_paths_disjoint:${branch.branchId}:wrote_${path}`)]);
+    if (branches.every((item) => ["reported", "accepted", "failed", "rejected"].includes(item.status))) {
+      topology.status = "integrating";
+      transition("running", "integrating", "orchestrator", {
+        all_required_branches_reported: String(branches.length),
+        branch_result_bundles_ref: branches.map((item) => item.resultRef || `branch:${item.branchId}`).join(",")
+      });
+    }
+  } else if (action === "reconcile_required") {
+    expect("running");
+    topology.status = "needs_reconcile";
+    topology.blockers = unique([...topology.blockers, `runner_handle_uncertain:${args.runnerId || "unknown"}`]);
+    transition("running", "needs_reconcile", "monitor", {runner_handle_uncertain: String(args.runnerId || "unknown")});
+  } else if (action === "reconcile") {
+    expect("needs_reconcile");
+    const evidence = String(args.reconcileEvidenceRef || "");
+    if (!evidence) throw topologyError("execution_topology_reconcile_requires_evidence", 400);
+    topology.blockers = topology.blockers.filter((blocker) => !blocker.startsWith("runner_handle_uncertain:"));
+    topology.status = "integrating";
+    transition("needs_reconcile", "integrating", "orchestrator", {runner_reconcile_evidence: evidence});
+  } else if (action === "block") {
+    expect("integrating");
+    const ref = String(args.blockingDerivedTaskRequestRef || "");
+    if (!ref) throw topologyError("execution_topology_block_requires_derived_task_request_ref", 400);
+    topology.status = "blocked";
+    topology.blockers = unique([...topology.blockers, `blocking_derived_task_request:${ref}`]);
+    transition("integrating", "blocked", "orchestrator", {blocking_derived_task_request_ref: ref});
+  } else if (action === "unblock") {
+    expect("blocked");
+    const ref = String(args.resolvedBlockerRef || args.blockingDerivedTaskRequestRef || "");
+    if (!ref) throw topologyError("execution_topology_unblock_requires_resolved_ref", 400);
+    topology.blockers = topology.blockers.filter((blocker) => !blocker.includes(ref));
+    topology.status = "integrating";
+    transition("blocked", "integrating", "orchestrator", {topology_blocker_resolved: ref});
+  } else if (action === "merge") {
+    expect("integrating");
+    const validation = unique(args.finalValidationEvidenceRefs || []);
+    if (!validation.length) throw topologyError("execution_topology_merge_requires_final_validation_evidence", 400);
+    if (topology.blockers.length) throw topologyError("execution_topology_merge_blocked_by_topology_blockers");
+    const unfinished = branches.filter((branch) => !["accepted", "reported"].includes(branch.status));
+    if (unfinished.length) throw topologyError("execution_topology_merge_requires_all_branches_reported");
+    branches.forEach((branch) => { branch.status = "accepted"; });
+    topology.localVerificationEvidenceRefs = unique([...(topology.localVerificationEvidenceRefs || []), ...validation]);
+    topology.status = "merged";
+    transition("integrating", "merged", "orchestrator", {
+      serial_integration_verified: topology.mergePolicy,
+      final_validation_evidence: validation.join(","),
+      no_topology_blockers: "0"
+    });
+  } else if (action === "cancel") {
+    expect("running");
+    const ref = String(args.cancelRef || args.reason || "");
+    if (!ref) throw topologyError("execution_topology_cancel_requires_ref", 400);
+    topology.status = "cancelled";
+    topology.cancelRef = ref;
+    transition("running", "cancelled", "orchestrator", {cancel_ref: ref});
+  } else {
+    return {ok: false, error: "execution_topology_unknown_action"};
+  }
+
+  topology.updatedAt = at;
+  state.executionTopologies = capRetainingPredicate(state.executionTopologies, (item) => !TOPOLOGY_TERMINAL_STATUSES.includes(item.status), 2000);
+  appendEvent(state, "execution_topology", "ExecutionTopology", topology.topologyId, "orchestrator", {
+    projectId: topology.projectId, taskGroupId: topology.taskGroupId, action, status: topology.status, blockerCount: topology.blockers.length
+  });
   return {topology};
 }
 

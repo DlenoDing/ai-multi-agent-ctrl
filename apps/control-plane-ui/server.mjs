@@ -42,6 +42,7 @@ import {
   classifyDerivedTask,
   contractPublish,
   createExecutionTopology,
+  advanceExecutionTopology,
   findingResolve,
   findingSubmit,
   policyDecisionEval,
@@ -129,6 +130,7 @@ const defaultMcpServiceToolAllowlist = [
   "scheduler-mcp.session_place",
   "scheduler-mcp.capacity_snapshot",
   "scheduler-mcp.execution_topology_plan",
+  "scheduler-mcp.execution_topology_advance",
   "scheduler-mcp.derived_task_classify",
   "resource-mcp.lease_claim",
   "resource-mcp.lease_release",
@@ -1189,7 +1191,7 @@ function permissionForAction(action) {
   if (action === "runtime_issue_collect") return "task_group:monitor";
   // Gap 2B: §4 REST endpoints over shared core mutators.
   if (["finding_submit", "finding_resolve", "approval_request_create", "approval_resolve", "review_plan_create", "review_bundle_register"].includes(action)) return "task_group:review";
-  if (["work_assign", "lease_claim", "lease_release", "execution_topology_plan", "derived_task_classify"].includes(action)) return "task_group:orchestrate";
+  if (["work_assign", "lease_claim", "lease_release", "execution_topology_plan", "execution_topology_advance", "derived_task_classify"].includes(action)) return "task_group:orchestrate";
   if (["artifact_register", "permission_request_submit"].includes(action)) return "task_group:checkpoint_submit";
   if (["room_send", "rule_source_resolve"].includes(action)) return "task_group:control";
   if (action === "permission_resolve") return "project:grant";
@@ -3320,6 +3322,30 @@ async function handleApi(req, res) {
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
+    return;
+  }
+
+  const topologyAdvanceMatch = url.pathname.match(/^\/api\/execution-topologies\/([^/]+)\/advance$/);
+  if (req.method === "POST" && topologyAdvanceMatch) {
+    // The lever for the no_open_execution_topologies close-barrier gate: without a reachable transition
+    // path a planned topology would block the barrier forever. Scope the guard on the topology's OWN task
+    // group (never a caller-supplied id) so it can't be driven from another tenant's scope.
+    const existingTopology = (state.executionTopologies || []).find((item) => item.topologyId === topologyAdvanceMatch[1]);
+    if (!existingTopology) return json(res, 404, {error: "execution_topology_not_found"});
+    const guard = beginGuardedWrite(req, state, "execution_topology_advance", `ExecutionTopology:${topologyAdvanceMatch[1]}`, taskGroupScope(state, existingTopology.taskGroupId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    let result;
+    try {
+      result = advanceExecutionTopology(state, {...body, topologyId: topologyAdvanceMatch[1]});
+    } catch (error) {
+      return json(res, error.status || 409, {error: error.message});
+    }
+    if (result.ok === false) return json(res, 404, {error: result.error});
+    recomputeBarrierAfterResolve(state, existingTopology.taskGroupId);
+    audit(state, "orchestrator", "execution_topology_advance", `ExecutionTopology:${result.topology.topologyId}`, result.topology.status);
+    finishGuardedWrite(state, guard, 200, result);
+    writeState(state);
+    json(res, 200, result);
     return;
   }
 

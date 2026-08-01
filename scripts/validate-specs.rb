@@ -427,7 +427,7 @@ expected_mcp_tools = {
   "orchestration-mcp" => %w[project_create task_group_create work_item_create work_assign orchestrator_run state_get],
   "room-mcp" => %w[room_join room_send room_wait room_ack],
   "agent-control-mcp" => %w[node_register node_probe session_start session_pause session_cancel session_recover dispatch_status],
-  "scheduler-mcp" => %w[model_select session_place work_assign capacity_snapshot execution_topology_plan derived_task_classify],
+  "scheduler-mcp" => %w[model_select session_place work_assign capacity_snapshot execution_topology_plan execution_topology_advance derived_task_classify],
   "resource-mcp" => %w[lease_claim lease_release resource_snapshot],
   "model-mcp" => %w[model_capabilities model_policy_get model_select],
   "skill-mcp" => %w[skill_source_sync role_skill_parse role_skill_overlay_validate role_skill_resolve],
@@ -713,6 +713,15 @@ errors << "quorum_collecting must count as pending in both barrier pending-sets"
 errors << "quorum_collecting-blocks-close must have behavioral coverage" unless contract_check_source.include?("H1 CRITICAL: a quorum_collecting (sub-quorum) high-risk approval did NOT block")
 # H2: internal independent-review records use a dedicated schema/version, not the external review-bundle/v1.
 errors << "internal review records must use their own schema version" unless core_source.include?("schemaVersion: \"internal-review-record/v1\"") && File.exist?(File.join(ROOT, "spec/internal-review-record.schema.json")) && contract_check_source.include?("internal-review-record.schema.json")
+# M1: ExecutionTopology is a fully wired feature — schema-conforming producer, the MODELED terminal set
+# (merged/downgraded/cancelled, not the unmodeled closed/completed/superseded), a reachable lifecycle lever
+# (advanceExecutionTopology, exposed over MCP + HTTP), non-vacuous eligibility gates, and instance validation.
+errors << "execution topology must use its modeled terminal set" unless core_source.include?("const TOPOLOGY_TERMINAL_STATUSES = [\"merged\", \"downgraded\", \"cancelled\"]") && !core_source.include?("[\"closed\", \"completed\", \"superseded\"]")
+errors << "execution topology must have a reachable lifecycle lever" unless core_source.include?("export function advanceExecutionTopology") && mcp_source.include?("scheduler-mcp.execution_topology_advance") && server_source.include?("execution_topology_advance")
+errors << "execution topology eligibility gates must be computed from the real plan" unless core_source.include?("function evaluateTopologyEligibility") && core_source.include?("owned_paths_disjoint:") && core_source.include?("resource_scopes_disjoint:")
+errors << "execution topology lifecycle needs schema + behavioral coverage" unless contract_check_source.include?("ExecutionTopology(merged)") && contract_check_source.include?("M1: topology could not reach the terminal 'merged' state") && contract_check_source.include?("M1: an open (planned) execution topology did NOT block the close barrier")
+# A bounded MCP principal must not drive another tenant's topology: topologyId resolves to its owning project.
+errors << "topologyId must resolve to its owning project for MCP scope checks" unless mcp_source.include?("args.topologyId") && mcp_source.include?("state.executionTopologies || []).find((item) => item.topologyId === args.topologyId)")
 # M7: the repository output target denylist field must be the schema-declared pathDenylist (not the
 # non-schema forbiddenPathRules), enforced end-to-end (producer + runtime consumer), and instance-validated.
 errors << "repository output target must use the schema pathDenylist field" unless core_source.include?("pathDenylist: request.pathDenylist") && agent_runtime_source.include?("target.pathDenylist") && contract_check_source.include?("repository-output-target.schema.json")

@@ -33,6 +33,8 @@ import {
   findingResolve,
   reviewBundleRegister,
   computeCompletionReadiness,
+  createExecutionTopology,
+  advanceExecutionTopology,
   decideSessionPlacement,
   roomSend,
   selectModel,
@@ -497,6 +499,64 @@ function verifyHumanAndOrganizationContracts(output) {
     rbReject.reviewBundles = [reviewBundleRegister(rbReject, {taskGroupId: "tg_runtime_management", reviewBundleId: "rvb_rej"}).reviewBundle];
     reviewResultConsume(rbReject, {taskGroupId: "tg_runtime_management", reviewBundleId: "rvb_rej", verdict: "rejected", summary: "no"});
     if (rbReject.reviewBundles.find((b) => b.reviewBundleId === "rvb_rej").status !== "rejected") output.push("reviewResultConsume: a rejecting verdict did not land the bundle in the modeled terminal 'rejected'");
+
+    // M1 ExecutionTopology: the producer must conform to execution-topology.schema.json AND the modeled
+    // lifecycle must be walkable to a terminal state — a topology with no reachable terminal would block
+    // the no_open_execution_topologies close-barrier gate forever (structural deadlock).
+    const topoSchema = loadJson("spec/execution-topology.schema.json");
+    const topoState = structuredClone(seedState);
+    ensureRuntimeCollections(topoState, {root});
+    const topoTg = topoState.taskGroups.find((t) => t.id === "tg_runtime_management");
+    topoTg.workItems = [{id: "wi_topo", title: "并行拓扑项", status: "ready", ownerRole: "agent-runtime", progress: 0}];
+    const planned = createExecutionTopology(topoState, {
+      taskGroupId: "tg_runtime_management", workItemId: "wi_topo", root,
+      branches: [
+        {branchId: "b_api", objective: "API 分支", ownedPaths: ["apps/api/**"], resourceScopes: ["db:api"]},
+        {branchId: "b_ui", objective: "UI 分支", ownedPaths: ["apps/ui/**"], resourceScopes: ["db:ui"]}
+      ]
+    }).topology;
+    validateSchema(planned, topoSchema, "ExecutionTopology(planned)", output);
+    if (planned.status !== "planned" || planned.mode !== "parallel_active") output.push("M1: a multi-branch topology was not planned as parallel_active");
+    // A non-terminal topology MUST gate the close barrier (discriminating: assert the specific blocker).
+    const openReadiness = computeCloseBarrier(topoState, "tg_runtime_management", {mutate: false});
+    if (!(openReadiness.blockingObjects || []).some((b) => b.objectType === "ExecutionTopology")) output.push("M1: an open (planned) execution topology did NOT block the close barrier");
+    // Walk the full modeled lifecycle to a terminal state.
+    advanceExecutionTopology(topoState, {topologyId: planned.topologyId, action: "check_eligibility"});
+    if (planned.status !== "eligibility_checked" || planned.blockers.length) output.push(`M1: disjoint-path plan failed eligibility unexpectedly (${JSON.stringify(planned.blockers)})`);
+    advanceExecutionTopology(topoState, {topologyId: planned.topologyId, action: "start"});
+    if (planned.status !== "running") output.push("M1: eligible topology did not start");
+    validateSchema(planned, topoSchema, "ExecutionTopology(running)", output);
+    advanceExecutionTopology(topoState, {topologyId: planned.topologyId, action: "report_branch", branchId: "b_api", resultRef: "bundle:api", actualChangedPaths: ["apps/api/x.mjs"], validationEvidenceRefs: ["test:api"]});
+    if (planned.status !== "running") output.push("M1: topology left running before all branches reported");
+    advanceExecutionTopology(topoState, {topologyId: planned.topologyId, action: "report_branch", branchId: "b_ui", resultRef: "bundle:ui", actualChangedPaths: ["apps/ui/y.mjs"], validationEvidenceRefs: ["test:ui"]});
+    if (planned.status !== "integrating") output.push("M1: topology did not reach integrating after all branches reported");
+    advanceExecutionTopology(topoState, {topologyId: planned.topologyId, action: "merge", finalValidationEvidenceRefs: ["npm run validate:ok"]});
+    if (planned.status !== "merged") output.push("M1: topology could not reach the terminal 'merged' state (close-barrier deadlock)");
+    validateSchema(planned, topoSchema, "ExecutionTopology(merged)", output);
+    // Every guarded write bumps stateVersion in production, which is what invalidates the cached readiness;
+    // mirror that here so the barrier is genuinely recomputed against the merged topology.
+    topoState.stateVersion = Number(topoState.stateVersion || 1) + 1;
+    const mergedBarrier = computeCloseBarrier(topoState, "tg_runtime_management", {mutate: false});
+    if ((mergedBarrier.blockingObjects || []).some((b) => b.objectType === "ExecutionTopology")) output.push("M1: a merged (terminal) topology still blocked the close barrier");
+    // Ineligible plan (overlapping owned paths) must be blocked from starting, with downgrade as the lever.
+    const badState = structuredClone(seedState);
+    ensureRuntimeCollections(badState, {root});
+    badState.taskGroups.find((t) => t.id === "tg_runtime_management").workItems = [{id: "wi_bad", title: "冲突拓扑", status: "ready", ownerRole: "agent-runtime", progress: 0}];
+    const bad = createExecutionTopology(badState, {
+      taskGroupId: "tg_runtime_management", workItemId: "wi_bad", root,
+      branches: [
+        {branchId: "b1", objective: "分支1", ownedPaths: ["apps/shared/**"]},
+        {branchId: "b2", objective: "分支2", ownedPaths: ["apps/shared/**"]}
+      ]
+    }).topology;
+    advanceExecutionTopology(badState, {topologyId: bad.topologyId, action: "check_eligibility"});
+    if (!bad.blockers.some((b) => b.startsWith("owned_paths_disjoint:"))) output.push("M1: overlapping owned paths did not fail the owned_paths_disjoint eligibility gate (vacuous gate)");
+    let startRejected = false;
+    try { advanceExecutionTopology(badState, {topologyId: bad.topologyId, action: "start"}); } catch { startRejected = true; }
+    if (!startRejected) output.push("M1: an ineligible topology was allowed to start");
+    advanceExecutionTopology(badState, {topologyId: bad.topologyId, action: "downgrade", downgradeReason: "owned_paths_overlap"});
+    if (bad.status !== "downgraded" || bad.mode !== "downgraded_serial") output.push("M1: downgrade lever did not terminalize an ineligible topology");
+    validateSchema(bad, topoSchema, "ExecutionTopology(downgraded)", output);
 
     // H2: internal independent-review records use their own schema, distinct from the external ReviewBundle.
     // Validate the exact shape performIndependentReview emits against internal-review-record.schema.json.

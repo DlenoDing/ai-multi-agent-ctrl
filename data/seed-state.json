@@ -46,7 +46,7 @@
         "skill-mcp",
         "ui-console-mcp"
       ],
-      "toolCount": 77,
+      "toolCount": 78,
       "endpointPath": "/mcp",
       "hostedBy": "control-plane",
       "startupCommand": "npm start",
