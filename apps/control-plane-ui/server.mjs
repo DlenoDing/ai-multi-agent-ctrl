@@ -770,7 +770,9 @@ const HUMAN_ONLY_ACTIONS = [
   "task_group_config_reset",
   "task_group_language_policy_update",
   // 共享定义的状态推进是规则层决策，且它是这类楔死的唯一出路 —— 必须由真人掌握。
-  "shared_definition_resolve"
+  "shared_definition_resolve",
+  // 豁免质量门是放行决定，必须由真人负责，不能由 AI 自我豁免。
+  "quality_gate_waive"
 ];
 const HUMAN_ACCOUNT_TYPES_FOR_ACTIONS = ["system_admin", "org_admin", "user_account"];
 
@@ -1225,6 +1227,7 @@ function permissionForAction(action) {
   if (action === "permission_resolve") return "project:grant";
   if (action === "contract_publish") return "project:*";
   if (action === "policy_decision_eval") return "system:*";
+  if (action === "quality_gate_waive") return "task_group:review";
   if (action === "shared_definition_resolve") return "project:update";
   if (action === "project_config_update") return "project:update";
   if (["org_create", "org_quota_update", "org_status_update"].includes(action)) return "system:*";
@@ -3053,6 +3056,29 @@ async function handleApi(req, res) {
   // 人工杠杆：共享定义的状态原先【只有 AI 专属的 MCP 工具能改】——REST 无 PATCH、控制台是只读表格、
   // contractPublish 只会新建、id 唯一性又挡住复用。于是任何一条处于阻塞态的契约都能把任务组永久钉死，
   // 而人束手无策。这条路由把状态推进权交回真人（HUMAN_ONLY_ACTIONS 强制），是这类楔死的唯一出路。
+  // 人工豁免质量门。"waived" 此前是死状态：close barrier 接受它，却没有任何代码路径能写入 ——
+  // 于是唯一能把门判失败的和唯一能把门清掉的都是同一个 AI。这条把"豁免"这一决定交回真人，
+  // 并强制留下理由（人自己也要为放行负责，不能无声豁免）。
+  const qualityGateWaiveMatch = url.pathname.match(/^\/api\/quality-gates\/([^/]+)\/waive$/);
+  if (req.method === "POST" && qualityGateWaiveMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
+    const gate = (state.qualityGates || []).find((item) => item.gateId === decodeURIComponent(qualityGateWaiveMatch[1]));
+    if (!gate) return json(res, 404, {error: "quality_gate_not_found"});
+    const guard = beginGuardedWrite(req, state, "quality_gate_waive", `QualityGate:${gate.gateId}`, taskGroupScope(state, gate.taskGroupId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const justification = String(body.justification || "").trim();
+    if (!justification) return json(res, 400, {error: "quality_gate_waive_requires_justification"});
+    gate.status = "waived";
+    gate.waivedBy = guard.actor;
+    gate.waiveJustification = justification.slice(0, 2000);
+    gate.updatedAt = now();
+    audit(state, guard.actor, "quality_gate_waive", `QualityGate:${gate.gateId}`, "waived");
+    finishGuardedWrite(state, guard, 200, gate);
+    writeState(state);
+    json(res, 200, gate);
+    return;
+  }
+
   const sharedDefinitionResolveMatch = url.pathname.match(/^\/api\/shared-definition-contracts\/([^/]+)\/resolve$/);
   if (req.method === "POST" && sharedDefinitionResolveMatch) {
     if (!requireAuthenticated(req, state, res)) return;

@@ -37,6 +37,7 @@ import {
   reviewBundleRegister,
   computeCompletionReadiness,
   createExecutionTopology,
+  recordQualityGateFromTest,
   relatedSharedDefinitionsForTest,
   contractPublish,
   digestOf,
@@ -999,6 +1000,27 @@ function verifyHumanAndOrganizationContracts(output) {
     reviewState2.repositoryOutputs = [{targetId: "tgt_rev", status: "pushed", pathAllowlist: ["**"]}];
     const reviewOutcome = performIndependentReview(reviewState2, rTg, rTg.workItems[0], {root}, {});
     if (rTg.workItems[0].status === "verified") output.push("人工闸门: AI 互审仍然直接把工作项标记为 verified（自动确认未去除）");
+    // D6：质量门是人看到"全通过"时的唯一依据，而它完全由 agent 自报。失败必须留痕，
+    // 且没有新证据不得被同一个 AI 重报翻转 —— 否则判失败的和清失败的是同一方，知情同意是空的。
+    const qgState = structuredClone(seedState);
+    ensureRuntimeCollections(qgState, {root});
+    const submitGate = (status, evidenceRefs) => recordQualityGateFromTest(qgState, {
+      testResultId: `tr_${status}_${(evidenceRefs || []).join("_") || "none"}`,
+      projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui",
+      gateType: "test", status, evidenceRefs, createdAt: "2026-08-01T00:00:00Z"
+    });
+    submitGate("failed", ["run:1"]);
+    const afterReassert = submitGate("passed", []);            // 无新证据的重报
+    if (afterReassert.status === "passed") {
+      output.push("人工闸门: 失败的质量门被无新证据的重报直接翻成通过（判失败与清失败是同一个 AI）");
+    }
+    if (!afterReassert.reassertedWithoutNewEvidenceCount) {
+      output.push("人工闸门: 无证据重报没有留下任何痕迹");
+    }
+    const afterFresh = submitGate("passed", ["run:2"]);          // 带新证据
+    if (afterFresh.status !== "passed") output.push("人工闸门: 带新证据的重报仍无法清除失败的质量门（正常流程被打断）");
+    if (!afterFresh.previouslyFailed) output.push("人工闸门: 质量门被翻转却没有留下 previouslyFailed 痕迹（人看不到这条曾失败）");
+
     // 互审双轨（sys.review-dual-track）：互审结论必须带上"跳出当前方案考察过哪些替代路径"。
     // 规则不接门就是装饰 —— 这里让它成为可执行约束。
     const producedReview = (reviewState2.reviewBundles || []).find((b) => b.reviewMode === "independent_control_plane_review");

@@ -839,6 +839,14 @@ errors << "范围收敛规则必须与互审双轨对齐（约束改动范围而
 errors << "互审结论必须记录考察过的替代路径" unless core_source.include?("alternativesConsidered: [{") && File.read(File.join(ROOT, "spec/internal-review-record.schema.json")).include?('"alternativesConsidered"')
 errors << "替代路径必须随人工确认单呈现给人" unless core_source.include?("alternativesConsidered: input.peerReview.alternativesConsidered") && app_js_source.include?("考察过的其他方案")
 errors << "互审双轨必须有行为断言" unless contract_check_source.include?("互审双轨: 互审结论没有记录考察过的替代路径")
+
+# D6：质量门是人看到"全通过"时的唯一依据，却完全由 agent 自报（提交测试结果零必填参数、命令从不执行）。
+# 失败必须留痕，无新证据不得翻转，且必须存在【真人】豁免杠杆——否则判失败与清失败是同一个 AI。
+errors << "失败的质量门不得被无新证据的重报翻转" unless core_source.include?("reassertedWithoutNewEvidenceCount") && core_source.include?("existing.status === \"failed\" && passed")
+errors << "质量门翻转必须留痕并对人可见" unless core_source.include?("existing.previouslyFailed = true") && core_source.include?("曾判失败、后由执行方重报为通过")
+errors << "质量门必须有真人豁免杠杆" unless server_source.include?("qualityGateWaiveMatch") && server_source.include?("quality_gate_waive_requires_justification")
+errors << "质量门豁免必须限定真人" unless server_source.match?(/HUMAN_ONLY_ACTIONS = \[[^\]]*quality_gate_waive/m)
+errors << "质量门完整性必须有行为断言" unless contract_check_source.include?("判失败与清失败是同一个 AI")
 errors << "publish 不得铸造未知共享定义" unless mcp_source.include?("if (!definition) return {ok: false, error: \"shared_definition_not_found\"}")
 errors << "共享定义三项必须有防回归测试" unless contract_check_source.include?("人工闸门: publish 铸造并激活了一个未知契约")
 # 写入边界的第三个写入方（REST）必须同规，且越权访问必须被角色漂移门定性阻断。

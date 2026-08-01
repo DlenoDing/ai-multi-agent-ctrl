@@ -5079,7 +5079,18 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
     decisionType: "work_item_verification",
     requestKey: `work_item_verification:${workItem.id}:${bundle.bundleId}`,
     summary: `验收确认：${workItem.title || workItem.id}`,
-    detail: `控制面独立互审结论：${verdict}。证据已就绪，等待人工定稿验收。互审只提供建议，不构成验收。`,
+    detail: `控制面独立互审结论：${verdict}。证据已就绪，等待人工定稿验收。互审只提供建议，不构成验收。` +
+      // 让"曾经失败、后被重报为通过"的质量门对人可见：否则人看到的只是"质量门全通过"，
+      // 看不到其中哪一条是被同一个 AI 重报翻过来的，知情同意就名不副实。
+      (() => {
+        const gates = (state.qualityGates || []).filter((gate) => gate.taskGroupId === taskGroup.id && gate.workItemId === workItem.id);
+        const reversed = gates.filter((gate) => gate.previouslyFailed && gate.status === "passed");
+        const waived = gates.filter((gate) => gate.status === "waived");
+        const notes = [];
+        if (reversed.length) notes.push(`\n⚠ 以下质量门曾判失败、后由执行方重报为通过（已附新证据）：${reversed.map((gate) => gate.gateType).join("、")}`);
+        if (waived.length) notes.push(`\n⚠ 以下质量门为人工豁免：${waived.map((gate) => `${gate.gateType}（${gate.waivedBy || "?"}）`).join("、")}`);
+        return notes.join("");
+      })(),
     evidenceRefs: bundle.evidenceRefs,
     peerReview: {verdict, findings, reviewRecordRef: bundle.bundleId, alternativesConsidered: bundle.alternativesConsidered},
     content: {reviewBundleRef: bundle.bundleId, finalCommit: finalCommit || null},
@@ -5226,8 +5237,27 @@ export function recordQualityGateFromTest(state, testResult) {
   const at = testResult.createdAt || new Date().toISOString();
   const existing = state.qualityGates.find((gate) => gate.gateId === gateId);
   if (existing) {
+    // 失败过的门不能被同一个 AI 用一次"我又跑了一遍、这次过了"悄悄抹平。
+    // 这里是【人看到"质量门全通过"时所依据的唯一来源】，而它完全由 agent 自报：
+    // 提交测试结果不需要任何参数、命令从不真正执行、证据可以为空。若允许无条件覆写，
+    // 那么"能把门判失败的"和"能把门清掉的"是同一个 AI —— 人的知情同意就是空的。
+    if (existing.status === "failed" && passed) {
+      const priorEvidence = new Set([...(existing.evidenceRefs || []), ...(existing.clearedEvidenceRefs || [])]);
+      const freshEvidence = (testResult.evidenceRefs || []).filter((ref) => ref && !priorEvidence.has(ref));
+      if (!freshEvidence.length) {
+        // 没有任何新证据 => 不改判，只记一次尝试。人工豁免走 quality_gate_waive（真人专属）。
+        existing.reassertedWithoutNewEvidenceCount = Number(existing.reassertedWithoutNewEvidenceCount || 0) + 1;
+        existing.updatedAt = at;
+        return existing;
+      }
+      existing.clearedEvidenceRefs = [...priorEvidence, ...freshEvidence];
+      // 留痕：这道门曾经失败过。close barrier 与人工确认卡片都要让人看见，
+      // 否则人看到的只是"全通过"，而看不到"其中一条是被重报翻过来的"。
+      existing.previouslyFailed = true;
+    }
     existing.status = passed ? "passed" : "failed";
     existing.testResultRef = testResult.testResultId;
+    if ((testResult.evidenceRefs || []).length) existing.evidenceRefs = unique([...(existing.evidenceRefs || []), ...testResult.evidenceRefs]);
     existing.updatedAt = at;
     return existing;
   }
