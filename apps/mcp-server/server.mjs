@@ -499,6 +499,8 @@ function commonInputProperties() {
     workSignals: array,
     // AI 对人工确认的再分析 (human-review-mcp.confirmation_analyze)
     assessment: string,
+    // 人在 MCP 上定稿核心决策时的轮次令牌（防 AI 在点击前掉包候选方案）
+    expectedRound: number,
     concerns: array,
     // ExecutionTopology plan + lifecycle (scheduler-mcp.execution_topology_plan / _advance)
     topologyId: string,
@@ -536,7 +538,12 @@ function confirmationReadableByPrincipal(confirmation, context = {}) {
     // 「交 AI 再分析」就永远无人应答（多轮协商在默认部署下形同虚设）。按项目归属放开【只读/再分析】，
     // 定稿权仍然被 confirmation_decide 的机器主体拦截挡在门外。
     if (confirmation.nodeId) return confirmation.nodeId === principal.id;
-    return confirmation.decisionClass === "major" && Array.isArray(principal.projectIds) && principal.projectIds.includes(confirmation.projectId);
+    // 只放开到这个节点【实际被授权的任务组】。按 projectId 放开会比它自己的 state_get 视图还宽
+    // （scopeStateForAgentPrincipal 是按 mcpGrants 的任务组过滤的），等于从确认单这条缝里泄露
+    // 它本来看不到的任务组内容，还能对不相干的决策注入候选方案。
+    // 用与 state_get 完全同一份授权（context.grantCheck.grants），确保这条缝不会比它的状态视图更宽。
+    const grantedTaskGroupIds = new Set((context.grantCheck?.grants || []).map((grant) => grant.taskGroupId).filter(Boolean));
+    return confirmation.decisionClass === "major" && grantedTaskGroupIds.has(confirmation.taskGroupId);
   }
   if (principal.kind === "system_admin") return true;
   if (Array.isArray(principal.projectIds)) return principal.projectIds.includes(confirmation.projectId);
@@ -1286,7 +1293,22 @@ async function dispatchTool(state, name, args, context = {}) {
     case "permission-mcp.permission_resolve":
       return permissionResolve(state, args);
     case "human-review-mcp.confirmation_request_submit":
-      return {request: createHumanConfirmationRequest(state, {...args, nodeId: context?.principal?.kind === "agent_node" ? context.principal.id : args.nodeId})};
+      // 与 REST 的 agent 通道同样收紧：MCP 主体只能提运行时执行确认，不得自选 decisionType/subjectRef/content
+      // 来伪造核心决策单（那会让人的批准落到人没看过的对象上）。核心决策单只由控制面内部生成。
+      return {request: createHumanConfirmationRequest(state, {
+        nodeId: context?.principal?.kind === "agent_node" ? context.principal.id : args.nodeId,
+        dispatchId: args.dispatchId,
+        workItemId: args.workItemId,
+        sessionId: args.sessionId,
+        summary: args.summary,
+        detail: args.detail,
+        question: args.question,
+        evidenceRefs: args.evidenceRefs,
+        options: args.options,
+        requestKey: args.requestKey,
+        blocking: args.blocking,
+        decisionType: "runtime_execution"
+      })};
     case "human-review-mcp.confirmation_status": {
       const confirmation = (state.humanConfirmationRequests || []).find((item) => item.requestId === args.requestId);
       if (!confirmation || !confirmationReadableByPrincipal(confirmation, context)) return {ok: false, error: "human_confirmation_not_found"};

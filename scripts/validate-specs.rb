@@ -769,10 +769,22 @@ errors << "轮次令牌必须有防回归测试" unless contract_check_source.in
 # 15. 定稿锁不得是空转门：assertHumanFinalization 必须有真实生产调用点。
 errors << "定稿分歧必须回到人工确认而不是死堵" unless core_source.include?("requestKey: `plan_topology_downgrade:${topology.topologyId}`") && core_source.include?("if (isHumanConfirmationActor(state, args.actor))")
 errors << "已定稿方案的降级出路必须有行为测试覆盖" unless contract_check_source.include?("人工闸门: 真人无法降级自己定稿的方案") && contract_check_source.include?("人工闸门: AI 的降级被拦下却没有挂出人工确认单")
+# 18. agent 通道只能提运行时确认，绝不能自选 decisionType/subjectRef 伪造核心决策单（洗白绕过 #2）。
+errors << "agent 确认通道必须白名单且恒定为运行时类" unless server_source.include?("decisionType: \"runtime_execution\"") && mcp_source.include?("decisionType: \"runtime_execution\"") && !server_source.include?("createHumanConfirmationRequest(state, {...body")
+errors << "agent 通道伪造核心决策单必须有防回归测试" unless contract_check_source.include?("人工闸门: agent 通道创建的确认单不是运行时类")
+# 19. 定稿落不到对象上必须 fail-closed（否则升级路径静默丢失已批准的方案）。
+errors << "定稿落空必须 fail-closed" unless core_source.include?("human_finalization_subject_missing")
+# 20. agent 可读范围不得宽于其 state 视图；再分析必须确实被"踢回球"（防活锁）。
+errors << "agent 可读确认单必须限于其授权任务组" unless mcp_source.include?("context.grantCheck?.grants || []).map((grant) => grant.taskGroupId)")
+errors << "AI 再分析必须以 awaitingAiAnalysis 为前提（防活锁）" unless core_source.include?("human_confirmation_not_awaiting_ai_analysis") && contract_check_source.include?("人工闸门: AI 可连续刷新候选方案推进轮次")
+# 21. 核心决策必须强制携带轮次令牌（可选校验等于没校验）。
+errors << "核心决策定稿必须强制携带轮次令牌" unless core_source.include?("human_confirmation_expected_round_required") && mcp_source.include?("expectedRound: number")
+# 22. 「同意降级」必须真的授权降级，不能是死杠杆。
+errors << "同意降级必须真正生效" unless core_source.include?("selectedOptionId === \"accept_downgrade\"")
 # 16. 定稿主体必须是【生效中】的真人账号。
 errors << "定稿主体必须是生效中的账号" unless core_source.include?("if (account.status !== \"active\") return false")
 # 17. agent 必须能读到核心决策单才能做"再分析"，否则多轮协商无人应答（死锁）。
-errors << "agent 必须能读到核心决策单以完成再分析" unless mcp_source.include?("confirmation.decisionClass === \"major\" && Array.isArray(principal.projectIds)")
+errors << "agent 必须能读到核心决策单以完成再分析" unless mcp_source.include?("confirmation.decisionClass === \"major\" && grantedTaskGroupIds.has(confirmation.taskGroupId)")
 # M7: the repository output target denylist field must be the schema-declared pathDenylist (not the
 # non-schema forbiddenPathRules), enforced end-to-end (producer + runtime consumer), and instance-validated.
 errors << "repository output target must use the schema pathDenylist field" unless core_source.include?("pathDenylist: request.pathDenylist") && agent_runtime_source.include?("target.pathDenylist") && contract_check_source.include?("repository-output-target.schema.json")

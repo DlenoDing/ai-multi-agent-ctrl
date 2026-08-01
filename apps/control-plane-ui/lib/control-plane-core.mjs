@@ -4077,6 +4077,7 @@ export function createHumanConfirmationRequest(state, input = {}) {
     // 定稿锁的基线：人确认的就是这份内容的摘要，后续 AI 改动与之不符即为分歧。
     contentDigest: decisionContentDigest({decisionType, workItemId: input.workItemId || dispatch?.workItemId || null, taskGroupId: taskGroup.id, content: input.content ?? null}),
     ...(input.subjectRef ? {subjectRef: String(input.subjectRef)} : {}),
+    round: 1,
     dedupeKey,
     status: "pending",
     expiresAt: input.expiresAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
@@ -4114,6 +4115,10 @@ export function decideHumanConfirmation(state, requestId, decision = {}, options
   if (selectedOptionId === "none" && !inputText) throw Object.assign(new Error("human_confirmation_input_required_for_none"), {status: 400});
   // 防 TOCTOU：AI 在人点击前修订了候选方案时，人看到的轮次已经过期。带上 expectedRound 的调用（控制台
   // 总是带）必须与当前轮次一致，否则拒绝，让人重新看过修订后的方案再定。
+  // 核心决策【必须】带轮次令牌：可选校验等于没校验（省略即跳过，任何非控制台客户端都能绕开）。
+  if (request.decisionClass === "major" && decision.expectedRound === undefined) {
+    throw Object.assign(new Error("human_confirmation_expected_round_required"), {status: 400, currentRound: Number(request.round || 1)});
+  }
   if (decision.expectedRound !== undefined && Number(decision.expectedRound) !== Number(request.round || 1)) {
     throw Object.assign(new Error("human_confirmation_round_stale"), {status: 409, currentRound: Number(request.round || 1)});
   }
@@ -4227,7 +4232,10 @@ function applyHumanFinalization(state, request, actor, at, action = "finalize") 
       ? String(request.subjectRef).slice("ExecutionTopology:".length)
       : null;
     const topology = subjectId ? (state.executionTopologies || []).find((item) => item.topologyId === subjectId) : null;
-    if (topology) { topology.humanFinalization = lock; topology.updatedAt = at; }
+    // Fail closed：定稿必须落到确定的对象上。落不到（缺 subjectRef 的历史遗留单、或拓扑已被替换/清理）
+    // 时绝不能静默返回 200 —— 那样控制台显示"已定稿"，而 start 会永远报缺少人工方案确认。
+    if (!topology) throw Object.assign(new Error("human_finalization_subject_missing"), {status: 409, subjectRef: request.subjectRef || null});
+    topology.humanFinalization = lock; topology.updatedAt = at;
     // 工作项上只记溯源引用，不写定稿锁：写了会被 performIndependentReview 误判为"已定稿"而永久跳过验收。
     if (workItem) { workItem.planFinalizationRef = request.requestId; workItem.updatedAt = at; }
   } else if (workItem) {
@@ -4248,6 +4256,11 @@ export function submitAiConfirmationAnalysis(state, requestId, input = {}, optio
   const request = (state.humanConfirmationRequests || []).find((item) => item.requestId === requestId);
   if (!request) throw Object.assign(new Error("human_confirmation_not_found"), {status: 404});
   if (request.status !== "pending") throw Object.assign(new Error("human_confirmation_not_pending"), {status: 409});
+  // 只能在【人确实把球踢回给 AI】时再分析。否则 AI 可以不停调用它推进轮次，让人手里的 expectedRound
+  // 永远过期，核心决策再也定不了稿（活锁）。首轮（AI 自己发起的提案）也允许一次，供它补充分析。
+  if (!request.awaitingAiAnalysis && Number(request.round || 1) > 1) {
+    throw Object.assign(new Error("human_confirmation_not_awaiting_ai_analysis"), {status: 409});
+  }
   const assessment = ["agree", "concerns", "better_alternative", "incorrect"].includes(input.assessment) ? input.assessment : "concerns";
   const summary = String(input.summary || "").trim().slice(0, 300);
   if (!summary) throw Object.assign(new Error("ai_analysis_summary_required"), {status: 400});
@@ -5448,7 +5461,14 @@ export function advanceExecutionTopology(state, args) {
     //   · AI/机器发起的降级 = 拦下，并【挂一张新的人工确认单】说明为什么要降级，交回人定夺。
     // 注意不能只拦不给出路：曾经这里只抛 human_finalized_decision_diverged，导致运行载体不可用时
     // 已定稿方案既不能降级、又因未 running 而不能取消，永久卡在 eligibility_checked 阻塞关闭门。
-    if (topology.humanFinalization?.outcome === "confirmed") {
+    // 人已经在降级申请单上批过"同意降级" => 授权已经拿到，机器据此执行即可（否则那个选项是死杠杆：
+    // 批了不生效，AI 重试又被拒并再挂一张单，无限 approve→refuse→re-ask，拓扑与确认单一起卡死关闭门）。
+    const downgradeApproved = (state.humanConfirmationRequests || []).some((item) =>
+      item.decisionType === "plan_topology" &&
+      item.subjectRef === `ExecutionTopology:${topology.topologyId}` &&
+      item.decision?.action === "finalize" &&
+      item.decision?.selectedOptionId === "accept_downgrade");
+    if (topology.humanFinalization?.outcome === "confirmed" && !downgradeApproved) {
       if (isHumanConfirmationActor(state, args.actor)) {
         topology.humanFinalization = {
           ...topology.humanFinalization,

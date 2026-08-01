@@ -536,7 +536,7 @@ function verifyHumanAndOrganizationContracts(output) {
     const planConfirmation = (topoState.humanConfirmationRequests || []).find((item) => item.decisionType === "plan_topology" && item.status === "pending");
     if (!planConfirmation) output.push("人工闸门: 资格通过后没有挂起执行方案的人工定稿单");
     const topoHuman = (topoState.accounts.find((a) => ["system_admin", "org_admin", "user_account"].includes(a.accountType)) || {}).accountId;
-    if (planConfirmation) decideHumanConfirmation(topoState, planConfirmation.requestId, {action: "finalize", selectedOptionId: "accept_plan"}, {actor: topoHuman});
+    if (planConfirmation) decideHumanConfirmation(topoState, planConfirmation.requestId, {action: "finalize", selectedOptionId: "accept_plan", expectedRound: planConfirmation.round}, {actor: topoHuman});
     advanceExecutionTopology(topoState, {topologyId: planned.topologyId, action: "start"});
     if (planned.status !== "running") output.push("M1: eligible topology did not start");
     validateSchema(planned, topoSchema, "ExecutionTopology(running)", output);
@@ -593,11 +593,11 @@ function verifyHumanAndOrganizationContracts(output) {
     if (gate.decisionClass !== "major" || gate.blocking !== true) output.push("人工闸门: 核心决策未被强制标记为 major/阻塞（AI 传 blocking:false 就能绕开闸门）");
     // 机器主体不得定稿。
     let machineBlocked = false;
-    try { decideHumanConfirmation(gateState, gate.requestId, {action: "finalize", selectedOptionId: "accept"}, {actor: machineActor}); }
+    try { decideHumanConfirmation(gateState, gate.requestId, {action: "finalize", selectedOptionId: "accept", expectedRound: gate.round}, {actor: machineActor}); }
     catch (error) { machineBlocked = error.message === "human_confirmation_requires_human_actor"; }
     if (!machineBlocked) output.push("人工闸门: 机器主体（service_account）竟然可以定稿核心决策");
     // 人提出自己的方案 => 不定稿、不生效，转入下一轮等 AI 再分析。
-    decideHumanConfirmation(gateState, gate.requestId, {action: "revise", selectedOptionId: "none", inputText: "我有自己的方案：先补回归测试再验收"}, {actor: humanActor});
+    decideHumanConfirmation(gateState, gate.requestId, {action: "revise", selectedOptionId: "none", inputText: "我有自己的方案：先补回归测试再验收", expectedRound: gate.round}, {actor: humanActor});
     if (gate.status !== "pending" || gate.awaitingAiAnalysis !== true || gate.round !== 2) output.push("人工闸门: 人提出方案后应继续挂起并等待 AI 再分析，而不是直接生效");
     if (gateTg.workItems[0].status === "verified") output.push("人工闸门: 人只是提了方案（未定稿），工作项就被验收了");
     // AI 再分析：可以反对/给更优方案，但绝不能终结决策。
@@ -610,7 +610,7 @@ function verifyHumanAndOrganizationContracts(output) {
     if (!(gate.deliberation || []).some((turn) => turn.actorKind === "ai" && turn.assessment === "better_alternative")) output.push("人工闸门: AI 的异议/更优方案没有进入协商记录");
     validateSchema(gate, hcrSchema, "HumanConfirmationRequest(deliberating)", output);
     // 人明确定稿 => 才真正验收，并写入定稿锁。
-    decideHumanConfirmation(gateState, gate.requestId, {action: "finalize", selectedOptionId: "parallel"}, {actor: humanActor});
+    decideHumanConfirmation(gateState, gate.requestId, {action: "finalize", selectedOptionId: "parallel", expectedRound: gate.round}, {actor: humanActor});
     const gatedItem = gateTg.workItems[0];
     if (gate.status !== "answered" || gatedItem.status !== "verified") output.push("人工闸门: 人明确定稿后工作项未进入 verified");
     if (gatedItem.humanFinalization?.finalizedBy !== humanActor || gatedItem.humanFinalization?.outcome !== "confirmed") output.push("人工闸门: 定稿锁未写入（finalizedBy/outcome 缺失）");
@@ -651,6 +651,24 @@ function verifyHumanAndOrganizationContracts(output) {
     } else if (closeTg.status === "closed") {
       output.push("人工闸门: 门禁未满足却把任务组关掉了");
     }
+
+    // 绕过复现防回归 #2：agent 通道不得自选 decisionType/subjectRef —— 否则 AI 能伪造一张文案无害的
+    // "方案确认"卡片，而 subjectRef 指向它想跑的另一份拓扑，人一点确认锁就落到没人看过的对象上。
+    const forgeState = structuredClone(seedState);
+    ensureRuntimeCollections(forgeState, {root});
+    forgeState.taskGroups.find((t) => t.id === "tg_runtime_management").workItems = [{id: "wi_forge", title: "伪造", status: "ready", ownerRole: "agent-runtime", progress: 0}];
+    forgeState.agentDispatches = [{dispatchId: "disp_forge", taskGroupId: "tg_runtime_management", workItemId: "wi_forge", sessionId: "sess_forge", status: "running", assignedNodeId: "node_forge", mcpGrants: []}];
+    forgeState.agentRuntimeNodes = [{nodeId: "node_forge", projectIds: ["prj_control_plane"], activeDispatchIds: ["disp_forge"], status: "active"}];
+    // 模拟服务端白名单后的调用：agent 提交的字段里即便带了 decisionType/subjectRef 也不会被采纳。
+    const forged = createHumanConfirmationRequest(forgeState, {
+      nodeId: "node_forge", dispatchId: "disp_forge", workItemId: "wi_forge",
+      summary: "看起来无害的问题", options: [{optionId: "yes", label: "继续"}],
+      decisionType: "runtime_execution" // 通道恒定注入这个值
+    });
+    if (forged.decisionClass !== "operational" || forged.decisionType !== "runtime_execution") {
+      output.push("人工闸门: agent 通道创建的确认单不是运行时类（agent 可自造核心决策单 => 洗白绕过）");
+    }
+    if (forged.subjectRef) output.push("人工闸门: agent 通道创建的确认单带上了 subjectRef（可指向任意对象）");
 
     // 绕过复现防回归：AI 抢先另建一份拓扑，不得把人对第一份方案的批准"洗"到第二份上。
     const raceState = structuredClone(seedState);
@@ -694,9 +712,15 @@ function verifyHumanAndOrganizationContracts(output) {
     const roundStaleState = structuredClone(gateState);
     const roundStaleReq = roundStaleState.humanConfirmationRequests.find((r) => r.decisionType === "work_item_verification");
     if (roundStaleReq) {
-      roundStaleReq.status = "pending"; delete roundStaleReq.decision;
+      // 走真实路径：人先"提交修改意见"把球踢回 AI（awaitingAiAnalysis），AI 才有资格再分析。
+      roundStaleReq.status = "pending"; delete roundStaleReq.decision; roundStaleReq.awaitingAiAnalysis = true;
       const roundBefore = roundStaleReq.round;
       submitAiConfirmationAnalysis(roundStaleState, roundStaleReq.requestId, {assessment: "better_alternative", summary: "换个方案", options: [{optionId: "new_opt", label: "新方案"}]}, {actor: "agent-runtime"});
+      // AI 不能连续刷轮次把人锁在门外：球已经踢回给人，第二次再分析必须被拒（防活锁）。
+      let livelockBlocked = false;
+      try { submitAiConfirmationAnalysis(roundStaleState, roundStaleReq.requestId, {assessment: "concerns", summary: "再改一次", options: [{optionId: "again", label: "又一个方案"}]}, {actor: "agent-runtime"}); }
+      catch (error) { livelockBlocked = error.message === "human_confirmation_not_awaiting_ai_analysis"; }
+      if (!livelockBlocked) output.push("人工闸门: AI 可连续刷新候选方案推进轮次，人永远定不了稿（活锁）");
       if (roundStaleReq.round === roundBefore) output.push("人工闸门: AI 修订候选方案后未推进轮次（轮次令牌失效，TOCTOU 仍成立）");
       let staleRejected = false;
       try { decideHumanConfirmation(roundStaleState, roundStaleReq.requestId, {action: "finalize", selectedOptionId: "new_opt", expectedRound: roundBefore}, {actor: humanActor}); }
@@ -1081,7 +1105,7 @@ function verifyAgentGatewayContracts(output) {
   // 人定稿后，下一轮才真正拆分。
   if (splitConfirmation) {
     const splitHuman = (mixedState.accounts.find((a) => ["system_admin", "org_admin", "user_account"].includes(a.accountType)) || {}).accountId;
-    decideHumanConfirmation(mixedState, splitConfirmation.requestId, {action: "finalize", selectedOptionId: "accept_split"}, {actor: splitHuman});
+    decideHumanConfirmation(mixedState, splitConfirmation.requestId, {action: "finalize", selectedOptionId: "accept_split", expectedRound: splitConfirmation.round}, {actor: splitHuman});
     const splitResult = runAutonomousCycle(mixedState, {root, runtimeDir: join(root, ".runtime"), endpoint: "https://control.example.test", mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false});
     if (!splitResult.changed.some((item) => item.reason === "mixed_analysis_implementation_split") || !mixedTaskGroup.workItems.some((item) => item.id === "work_mixed_model_split_analysis") || !mixedTaskGroup.workItems.some((item) => item.id === "work_mixed_model_split_implementation")) {
       output.push("人工闸门: 人已定稿同意拆分，编排器却仍未执行拆分");

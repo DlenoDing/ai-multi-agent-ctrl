@@ -3893,7 +3893,25 @@ async function handleApi(req, res) {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     let request;
     try {
-      request = createHumanConfirmationRequest(state, {...body, nodeId: node.nodeId});
+      // 严格白名单：agent 节点只能提【运行时执行确认】（"这一步要不要做"），不得自行构造核心决策单。
+      // 原先这里 {...body} 原样透传，agent 可以自选 decisionType / subjectRef / content —— 于是它能
+      // 伪造一张文案无害的"方案确认"卡片，而 subjectRef 指向另一份它想跑的拓扑；人一点确认，
+      // 定稿锁就落到了没人真正看过的那个对象上（已复现的洗白绕过）。
+      // 核心决策单一律由控制面内部按真实对象生成（互审 / 拆分 / 方案资格通过时），不经这条通道。
+      request = createHumanConfirmationRequest(state, {
+        nodeId: node.nodeId,
+        dispatchId: body.dispatchId,
+        workItemId: body.workItemId,
+        sessionId: body.sessionId,
+        summary: body.summary,
+        detail: body.detail,
+        question: body.question,
+        evidenceRefs: body.evidenceRefs,
+        options: body.options,
+        requestKey: body.requestKey,
+        blocking: body.blocking,
+        decisionType: "runtime_execution"
+      });
     } catch (error) {
       return json(res, error.status || 500, {error: error.message});
     }
