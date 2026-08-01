@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
+import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
@@ -1109,6 +1109,45 @@ function verifyHumanAndOrganizationContracts(output) {
     });
     if (!snapCard?.subjectContentDigest) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
+    }
+
+    // 内容包承载着人写下的三类规则、人已经拍板的定稿决策、以及人工补充要求。
+    // 它一直被下载到磁盘，却从未出现在交给模型的提示里 —— 也就是说整套规则体系与人工定稿闸门，
+    // 在执行这一端是装饰性的。这里验证：有已定稿决策时，它确实进了内容包。
+    const cbBundleState = structuredClone(seedState);
+    ensureRuntimeCollections(cbBundleState, {root});
+    const cbBTg = cbBundleState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    cbBundleState.humanConfirmationRequests = [{
+      schemaVersion: "human-confirmation-request/v1", requestId: "hcr_bundled", projectId: cbBTg.projectId,
+      taskGroupId: cbBTg.id, workItemId: cbBTg.workItems[0].id, decisionClass: "major",
+      decisionType: "work_item_verification", question: {summary: "验收确认"},
+      options: [{optionId: "accept", label: "通过"}, {optionId: "none", label: "不选"}],
+      blocking: true, status: "answered", round: 1,
+      decision: {selectedOptionId: "accept", selectedLabel: "通过", decidedBy: "acct_alice", decidedAt: "2026-08-02T00:00:00Z", action: "finalize"},
+      createdAt: "2026-08-02T00:00:00Z", updatedAt: "2026-08-02T00:00:00Z"
+    }];
+    cbBTg.humanGuidance = [{text: "优先保证向后兼容"}];
+    // 用真实签名构建：内容包只在"该节点确有一个 running 派发"时才产出，手搓夹具会绕开真实路径。
+    const cbBNode = {nodeId: "node_bundle", organizationId: "org_default", status: "online", admission: "admitted", activeDispatchIds: []};
+    cbBundleState.agentRuntimeNodes = [cbBNode];
+    cbBundleState.agentDispatches = [{dispatchId: "dsp_bundle", sessionId: "ws_bundle", runId: "run_bundle",
+      taskGroupId: cbBTg.id, projectId: cbBTg.projectId, workItemId: cbBTg.workItems[0].id,
+      status: "running", assignedNodeId: cbBNode.nodeId}];
+    cbBundleState.agentTaskContracts = [{sessionId: "ws_bundle", runId: "run_bundle", projectId: cbBTg.projectId,
+      taskGroupId: cbBTg.id, workId: cbBTg.workItems[0].id, roleId: "orchestrator", roleSkill: {}, actionBasis: {}}];
+    let cbBundle = null;
+    try { cbBundle = buildExecutionContentBundle(cbBundleState, cbBNode, "ws_bundle", {}); }
+    catch (error) { output.push(`内容包: 无法构建内容包（${error.message}）—— 这条断言无从验证`); }
+    const cbBundlePaths = (cbBundle?.entries || []).map((entry) => entry.path);
+    if (!cbBundlePaths.includes("task/confirmations.json")) {
+      output.push("内容包: 人已经拍板的定稿决策没有进入下发给 agent 的内容包（执行方无从知道人决定了什么）");
+    }
+    if (!cbBundlePaths.includes("task/context.md")) {
+      output.push("内容包: 人工补充要求没有进入下发给 agent 的内容包");
+    }
+    const cbConfirmEntry = (cbBundle?.entries || []).find((entry) => entry.path === "task/confirmations.json");
+    if (cbConfirmEntry && !String(cbConfirmEntry.content).includes("hcr_bundled")) {
+      output.push("内容包: 定稿决策条目里没有那条实际的决策内容");
     }
 
     // 注册没有幂等键：写入成功但响应在网络上丢失时，代理重试会拿到 409，留下一个 initializing 的

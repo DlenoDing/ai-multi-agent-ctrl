@@ -1,6 +1,6 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -33,6 +33,10 @@ writeFileSync(join(input.repositoryRoot, outputPath), [
 ].join("\\n"));
 console.log(JSON.stringify({summary: "Remote Agent Runtime executed the assigned model task with a server-issued skill workset.", verificationRefs: ["doctor:executor-ok"]}));
 `);
+
+// 保留会话目录：下面要读回真实执行时写下的那份提示，确认人写的规则与人拍板的决策
+// 确实到达了模型。派发结束后目录会被清理，不打开这个开关就无从验证。
+process.env.AIMAC_AGENT_KEEP_SESSION_DIRS = "true";
 
 const server = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
   cwd: root,
@@ -220,6 +224,23 @@ try {
   }
   if (eventLog.storage?.storageKind !== "project-jsonl" || !eventLog.storage?.storageRef?.includes("project-db/")) throw new Error("Agent execution events were not read from the project-level event store");
   const sessionEventLog = await json(`/api/work-sessions/${completed.sessionId}/execution-events?limit=80`, {token: login.sessionToken});
+  // 人在控制台写下的三类规则、以及人已经拍板的定稿决策，都随内容包下载到磁盘 ——
+  // 但它们此前【一次都没有出现在交给模型的提示里】。技能集有一句显式的 "load skill workset"，
+  // 规则一句都没有。也就是说整套规则体系与人工定稿闸门，在执行这一端是装饰性的。
+  // 执行事件现在带上"这份提示实际包含了哪些规则文件"，这里据此验证它们确实到达了模型。
+  const promptEvidence = (sessionEventLog.events || [])
+    .filter((event) => event.eventType === "executor_started")
+    .flatMap((event) => event.evidenceRefs || []);
+  if (!promptEvidence.some((ref) => ref.startsWith("prompt-includes:system/rules.md"))) {
+    throw new Error("交给模型的提示里没有系统规则：人在控制台写的规则不会被模型读到");
+  }
+  // task/confirmations.json 只在【确实有已答复的确认单】时才进包（空内容不入包），
+  // 本次端到端里没有，所以这里只能验证到"任务上下文"这一项 —— 它同样承载人工补充要求。
+  // 定稿决策必须到达模型这条，由 contract-check 用真实内容包直接验证。
+  if (!promptEvidence.some((ref) => ref.startsWith("prompt-includes:task/context.md"))) {
+    throw new Error("交给模型的提示里没有任务上下文与人工补充要求");
+  }
+
   if (!(sessionEventLog.events || []).some((event) => event.dispatchId === completed.dispatchId)) throw new Error("WorkSession execution event stream did not return dispatch events");
   const remoteTree = execFileSync("git", ["--git-dir", remote, "ls-tree", "-r", "--name-only", "refs/heads/main"], {encoding: "utf8"});
   if (!remoteTree.includes("docs/agent-runtime-output/") || !remoteTree.includes("docs/artifact-manifests/")) throw new Error("Agent outputs were not committed and pushed to the project Git repository");

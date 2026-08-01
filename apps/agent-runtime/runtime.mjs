@@ -560,7 +560,10 @@ async function syncContentBundle(config, dispatchPackage, taskRoot) {
     }
   }
   const gitTransfer = syncContentBundleGitTransfer(config, bundle, bundleDir);
-  return {directory: bundleDir, bundleDigest: bundle.bundleDigest, gitTransfer};
+  // 把落盘的相对路径带出去：提示里要逐个列出这些文件，并给出"必须遵守"的指令。
+  // 只列目录不够 —— 模型不会自己去遍历一个没被要求读的目录。
+  return {directory: bundleDir, bundleDigest: bundle.bundleDigest, gitTransfer,
+    entries: (bundle.entries || []).map((entry) => entry.path).filter(Boolean)};
 }
 
 function isSafeGitRemoteUrl(url) {
@@ -863,6 +866,7 @@ async function executeDispatch(config, dispatchPackage, control) {
   const contentBundle = await syncContentBundle(config, dispatchPackage, taskRoot);
   if (contentBundle) {
     dispatchPackage.__contentBundleDir = contentBundle.directory;
+    dispatchPackage.__contentBundleEntries = contentBundle.entries || [];
     dispatchPackage.__contentBundleGitDir = contentBundle.gitTransfer?.directory || "";
     const gitNote = contentBundle.gitTransfer ? ` git-transfer(${contentBundle.gitTransfer.ref})` : "";
     await submitExecutionEvent(config, dispatchPackage, "skill_synced", {progressPercent: 18, summary: `Execution content bundle synchronized and verified.${gitNote}`, evidenceRefs: [`content-bundle:${contentBundle.bundleDigest}`]}).catch(() => {});
@@ -873,7 +877,11 @@ async function executeDispatch(config, dispatchPackage, control) {
   writeFileSync(promptPath, buildExecutionPrompt(config, dispatchPackage, skillWorkset, packagePath), {mode: 0o600});
   ensureCleanWorktree(repositoryRoot);
   const before = git(repositoryRoot, ["rev-parse", "HEAD"]);
-  await submitExecutionEvent(config, dispatchPackage, "executor_started", {progressPercent: 25, summary: "Model executor started.", evidenceRefs: [`prompt:${sha256(readFileSync(promptPath, "utf8"))}`]});
+  // 证据里带上"这份提示到底把哪些规则文件交给了模型"。规则与人的定稿决策是否真的到达模型，
+  // 此前在控制面这一侧完全不可见 —— 只能看到一个提示摘要，看不出它里面有没有规则。
+  const promptText = readFileSync(promptPath, "utf8");
+  const bundledRuleFiles = (dispatchPackage.__contentBundleEntries || []).filter((entry) => promptText.includes(entry));
+  await submitExecutionEvent(config, dispatchPackage, "executor_started", {progressPercent: 25, summary: `Model executor started with ${bundledRuleFiles.length} rule/context file(s) in the prompt.`, evidenceRefs: [`prompt:${sha256(promptText)}`, ...bundledRuleFiles.map((file) => `prompt-includes:${file}`)]});
   const output = await runModelExecutor(config, dispatchPackage, repositoryRoot, skillWorkset, packagePath, promptPath, control);
   control?.throwIfCancelled();
   const changedBeforeManifest = gitStatusPaths(repositoryRoot);
@@ -1272,11 +1280,18 @@ function buildExecutionPrompt(config, dispatchPackage, workset, packagePath) {
   const languageTag = languagePolicy.languageTag || "zh-CN";
   const languageName = languagePolicy.languageName || languageTag;
   const repositoryTarget = dispatchPackage.repositoryOutputTarget || {};
+  // 内容包承载着【人写下的三类规则正文】、【人已经做出的定稿决策】与【人工补充要求】，
+  // 它一直被下载到磁盘，却从来没有出现在提示里 —— 技能集有一句显式的 "load skill workset"，
+  // 规则一句都没有。也就是说：人在控制台写的规则、人拍板的结论，模型根本不会去读。
+  // 那意味着整套规则体系与人工定稿闸门，在执行这一端是装饰性的。
+  const bundleDir = dispatchPackage.__contentBundleDir || "";
+  const bundleFiles = (dispatchPackage.__contentBundleEntries || []).map((entry) => `${bundleDir}/${entry}`);
   const readLocators = uniqueStrings([
     "AGENTS.md",
     ...(contract.inputLocators || []),
     `package:${packagePath}`,
-    `skill-manifest:${workset.manifestPath}`
+    `skill-manifest:${workset.manifestPath}`,
+    ...bundleFiles.map((file) => `rules:${file}`)
   ]);
   const writeSet = repositoryTarget.pathAllowlist?.length ? repositoryTarget.pathAllowlist : ["<repositoryOutputTarget.pathAllowlist>"];
   const gates = contract.actionBasis?.validationRequirements?.length ? contract.actionBasis.validationRequirements : ["schema_valid", "checkpoint_registered", "repository_output_target_selected"];
@@ -1304,6 +1319,13 @@ function buildExecutionPrompt(config, dispatchPackage, workset, packagePath) {
     "- run stated focused gates",
     "- commit/push task-owned checkpoint when stable",
     `- load skill workset ${workset.manifestPath}`,
+    ...(bundleFiles.length ? [
+      // 与技能集同规的强制指令。没有这一句，上面 read: 里列出的文件只是"可以看看"，
+      // 而这些是【必须遵守】的规则与【人已经拍过板】的决定。
+      `- read and apply EVERY file under ${bundleDir}: the role/system/business rules there are binding constraints on this task`,
+      `- honour every decision recorded in ${bundleDir}/task/confirmations.json — those are human finalizations and must not be re-litigated or silently changed`,
+      `- follow the human guidance in ${bundleDir}/task/context.md`
+    ] : []),
     `- use only the centralized remote MCP ${config.gateway.mcpUrl || `${config.serverUrl}${dispatchPackage.remoteServices.mcpPath}`}`,
     `- keep all task-facing output in ${languageTag}`,
     "",
