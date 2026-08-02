@@ -1358,6 +1358,14 @@ unless undocumented_env.empty?
   errors << "these switches change a safety guarantee and are not documented in .env.example: #{undocumented_env.sort.join(", ")}"
 end
 
+# 设计文档不得声称一个不存在的保护。有人会据它做决定 —— 这与代码里"看着像门、实际空转"是同一类，
+# 只是长在文档层，而文档层没有任何测试会失败。
+room_design_doc = File.read(File.join(ROOT, "docs/multi-agent-project-orchestration-system-design.md"))
+apps_sources = Dir[File.join(ROOT, "apps/**/*.mjs")].map { |path| File.read(path) }.join("\n")
+if room_design_doc.include?("hopCount") && !room_design_doc.include?("`hopCount` 未实现") && !apps_sources.include?("hopCount")
+  errors << "the design doc credits hopCount with preventing agent reply loops while no such field exists in the code"
+end
+
 errors << "re-baselining the effective-rules digest must rewrite every field derived from it (one shared helper, not a bare assignment)" unless core_source.include?("export function applyEffectiveRulesDigest") && agent_gateway_source.include?("applyEffectiveRulesDigest(contract, currentRulesDigest)") && !agent_gateway_source.include?("contract.effectiveRulesDigest = currentRulesDigest")
 errors << "the rule digest must cover the title (it is delivered to the model verbatim)" unless core_source.include?("digestOf({ruleId, category, title, content})")
 # 判别力门必须真的在跑。它把"改坏守卫→测试必须变红"这套纪律固化成脚本，而它此前有 npm 脚本

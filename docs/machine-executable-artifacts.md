@@ -64,7 +64,10 @@
 1. Orchestrator 创建任务前必须读取 manifest。
 2. Scheduler 派发 session 前必须校验 task contract。
 3. Agent Runtime 收到任务后必须先校验 schema，再启动 WorkSession。
-4. Room Broker 写入消息前必须校验 event envelope。
+4. Room Broker 写入消息时产出的 `room_message` 控制事件必须符合 `spec/control-events.schema.json`
+   （2026-08-02 起：该事件走统一的 appendEvent，带 roomId/sequence/sender，并由 contract-check 逐条校验）。
+   **消息 payload 本身仍然零校验** —— `payload` 是任意对象，没有子结构约束。当前不构成漏洞的原因是
+   没有任何门在读房间内容；一旦有判定依赖它，必须先补 payload 校验。
 5. Control Plane 状态流转前必须校验 state machine，并用 gate catalog 解析每个 `requires`。
 6. 未匹配 gate resolver 的状态转移必须拒绝，不能由 Agent 自然语言解释通过。
 7. Skill Registry 必须从 `agency-agents-zh` pinned commit 加载默认角色 skill，并按 taskGroup overlay、project overlay、upstream default 的顺序解析。
