@@ -2211,6 +2211,10 @@ async function handleApi(req, res) {
       tokenHintsExposed: true,
       tokenSource: process.env.AIMAC_BOOTSTRAP_TOKEN ? "environment" : "runtime-local-config",
       tokenHint: config.localBootstrapToken ? `${config.localBootstrapToken.slice(0, 4)}...${config.localBootstrapToken.slice(-4)}` : null,
+      // 登录要【身份 + 令牌】两样。原先只提示令牌，人拿着一串 token 面对"登录账号"输入框无从下手 ——
+      // 而这个值只写在 .env.example 与种子数据里。放在这条已有的门内（仅回环 + 非生产）：
+      // 在公开的登录页上说出管理员账号叫什么，等于把凭据的一半送出去。
+      systemAdminLogin: (state.accounts || []).find((item) => item.accountType === "system_admin")?.email || null,
       localAccountTokenHints: Object.fromEntries(Object.entries(config.localAccountTokens || {}).map(([accountId, token]) => [accountId, `${token.slice(0, 4)}...${token.slice(-4)}`]))
     });
     return;

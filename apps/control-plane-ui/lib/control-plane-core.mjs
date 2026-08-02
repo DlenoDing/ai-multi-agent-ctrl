@@ -1934,6 +1934,18 @@ export function runAutonomousCycle(state, request = {}) {
       // 有一份【人已定稿且尚未了结】的拓扑时，这个工作项只能经该拓扑执行，不走普通派发通道。
       // 真人明确指定"这个工作项必须先有人工定稿的执行方案才能开跑"时，分类器怎么判都不算数。
       // 这条杠杆存在的理由是：分类器判不出架构与选型这类决策，而判不出的时候，判断权归人。
+      // 项目没有登记仓库时，ensureRepositoryTarget 会静默兜底到控制面自己那个仓库
+      // （git@github.com:dleno/ai-multi-agent-ctrl.git，或服务器这份 checkout 的 origin）——
+      // 于是人在项目概览里看到一个自己从没配过的仓库，而 agent 的产出会被推到那里。
+      // 这不该靠兜底，该在派发前挡住并说清楚：先去项目设置里登记仓库。
+      // 控制面自举项目除外：它就是以这份仓库为工作对象的。
+      const cellProject = (state.projects || []).find((item) => item.id === taskGroup.projectId);
+      if (cellProject && cellProject.id !== "prj_control_plane" && !(cellProject.repositories || []).length) {
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "project_repository_not_registered",
+          whyThisCellNow: "the project has no registered repository, so there is nowhere for this work to be written", cycleRef});
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, awaiting: "project_repository"});
+        continue;
+      }
       if (workItem.requiresPlanFinalization === true) {
         const finalizedPlan = (state.executionTopologies || []).some((topology) =>
           topology.taskGroupId === taskGroup.id && topology.workItemId === workItem.id

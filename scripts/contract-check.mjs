@@ -2377,6 +2377,37 @@ function verifyHumanAndOrganizationContracts(output) {
     }
   }
 
+  // 项目没登记仓库时，产出目标会静默兜底到控制面自己那个仓库 —— 人在项目概览里看到一个从没配过的
+  // 仓库，而 agent 的产出会被推到那里。派发前必须挡住并说清原因，而不是替他挑一个。
+  {
+    const repoState = structuredClone(seedState);
+    ensureRuntimeCollections(repoState, {root});
+    const bareProject = {id: "prj_no_repo", name: "no repo", organizationId: (repoState.projects || [])[0]?.organizationId, repositories: []};
+    repoState.projects = [...(repoState.projects || []), bareProject];
+    const sourceGroup = (repoState.taskGroups || []).find((group) => (group.workItems || []).length);
+    if (!sourceGroup) {
+      output.push("no task group with work items available to assert the unregistered-repository admission block");
+    } else {
+      const bareGroup = {...structuredClone(sourceGroup), id: "tg_no_repo", projectId: bareProject.id, status: "development"};
+      for (const item of bareGroup.workItems) item.status = "ready";
+      repoState.taskGroups = [...repoState.taskGroups, bareGroup];
+      runAutonomousCycle(repoState, {root, mode: "all", autoSyncSkills: false});
+      const blocked = (repoState.admissionDecisions || []).some((decision) =>
+        decision.taskGroupId === "tg_no_repo" && decision.reasonCode === "project_repository_not_registered");
+      if (!blocked) {
+        output.push("a project with no registered repository still dispatched work — its output silently falls back to the control plane's own repository, which the person never configured");
+      }
+      // 反向：登记了仓库就必须能派发，否则这条判据是把项目整个卡死。
+      bareProject.repositories = [{id: "repo_x", url: "git@example.com:acme/app.git", defaultBranch: "main"}];
+      repoState.admissionDecisions = [];
+      runAutonomousCycle(repoState, {root, mode: "all", autoSyncSkills: false});
+      if ((repoState.admissionDecisions || []).some((decision) =>
+        decision.taskGroupId === "tg_no_repo" && decision.reasonCode === "project_repository_not_registered")) {
+        output.push("a project with a registered repository was still blocked as unregistered — the check became a permanent wedge");
+      }
+    }
+  }
+
   // 幂等记录同时承担两件事，时限差了几个数量级：重放（客户端几秒到几分钟内的重试）与按键复用
   // 冲突检测（要覆盖整个上限窗口）。响应体原先跟着记录一起长期保留 —— 单条实测 8KB，上限 5000 条
   // 就是中央文档里 ~40MB，而中央文档每一次任意写入都要整份重写。响应体按重放窗口清、判据字段留。

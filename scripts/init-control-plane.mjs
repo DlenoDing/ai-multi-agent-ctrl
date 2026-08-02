@@ -108,8 +108,12 @@ writeJson(configPath, {
 console.log("next: npm start");
 console.log("mcp: hosted by npm start at $AIMAC_PUBLIC_URL/mcp");
 console.log("agent: log in to the management console, open the target project, generate a one-time join command, then run that command on the Agent host");
+// 登录同时需要【身份】和【令牌】：系统管理员的 authPolicy.method 是 bootstrap_token，
+// 登录时要填邮箱/账号 ID 再配上这个令牌。原先只打印令牌，从不打印身份 —— 而那个值只存在于
+// .env.example 与种子数据里，人拿着一串 token 面对"登录账号"输入框无从下手。
+console.log(`system admin login: ${process.env.AIMAC_SYSTEM_ADMIN_EMAIL || "system.admin@local"}  (在登录页「登录账号」处填它)`);
 if (!process.env.AIMAC_BOOTSTRAP_TOKEN) {
-  console.log(`local bootstrap token: ${bootstrapToken}`);
+  console.log(`local bootstrap token: ${bootstrapToken}  (与上面的登录账号配合使用)`);
 }
 if (!workspaceOwnerTokenEnv) {
   console.log(`local seed workspace owner token: ${workspaceOwnerToken}`);
