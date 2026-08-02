@@ -3450,6 +3450,10 @@ async function handleApi(req, res) {
       settleArgs[HUMAN_ACTOR_KEY] = settleAccount.accountId;
     }
     const result = ruleSourceSettle(state, settleArgs);
+    // 已被处置时必须回 409 而不是 200：后到者的决定被丢弃了，而 200 会让他确信自己成功了。
+    // 权限那条最重 —— 拒绝方拿到 200，而权限其实已经授出。仓里另有五条处置路径本来就这么做
+    // （质量门/评审计划/评审包/升级候选/共享定义），i18n 里也有现成的"可能是另一个人刚处理完"。
+    if (result.alreadySettled) return json(res, 409, {error: "rule_source_already_settled", ruleSourceResolution: result.ruleSourceResolution});
     if (result.ok === false) return json(res, result.error === "rule_source_resolution_not_found" ? 404 : 403, result);
     // 处置完一项就要刷新关闭门快照：控制台上"关闭任务组"按钮只在 barrier.satisfied 时出现，
     // 而刷新那份快照的唯一入口原先就是那个按钮自己 —— 人处置掉最后一个阻塞项后，页面仍显示"存在阻塞"，
@@ -3715,6 +3719,10 @@ async function handleApi(req, res) {
     if (humanActor) findingArgs[HUMAN_ACTOR_KEY] = humanActor;
     const result = findingResolve(state, findingArgs);
     if (result.error === "finding_disposition_requires_human") return json(res, 403, result);
+    // 已被处置时必须回 409 而不是 200：后到者的决定被丢弃了，而 200 会让他确信自己成功了。
+    // 权限那条最重 —— 拒绝方拿到 200，而权限其实已经授出。仓里另有五条处置路径本来就这么做
+    // （质量门/评审计划/评审包/升级候选/共享定义），i18n 里也有现成的"可能是另一个人刚处理完"。
+    if (result.alreadyResolved) return json(res, 409, {error: "finding_already_resolved", finding: result.finding});
     if (result.ok === false) return json(res, 404, {error: result.error});
     recomputeBarrierAfterResolve(state, existingFinding?.taskGroupId);
     audit(state, "policy-engine", "finding_resolve", `Finding:${result.finding.findingId}`);
@@ -3744,6 +3752,10 @@ async function handleApi(req, res) {
     // The approver identity is the AUTHENTICATED actor, never a client-supplied resolvedBy — this is what
     // high_risk_no_self_approval and the quorum tally key on.
     const result = approvalResolve(state, {...body, approvalId: approvalResolveMatch[1], resolvedBy: guard.actor});
+    // 已被处置时必须回 409 而不是 200：后到者的决定被丢弃了，而 200 会让他确信自己成功了。
+    // 权限那条最重 —— 拒绝方拿到 200，而权限其实已经授出。仓里另有五条处置路径本来就这么做
+    // （质量门/评审计划/评审包/升级候选/共享定义），i18n 里也有现成的"可能是另一个人刚处理完"。
+    if (result.alreadyResolved) return json(res, 409, {error: "approval_already_resolved", approvalRequest: result.approvalRequest});
     if (result.ok === false) return json(res, result.error === "high_risk_no_self_approval" ? 403 : 404, {error: result.error});
     recomputeBarrierAfterResolve(state, existingApproval?.taskGroupId);
     audit(state, "policy-engine", "approval_resolve", `ApprovalRequest:${result.approvalRequest.approvalId}`);
@@ -3886,6 +3898,10 @@ async function handleApi(req, res) {
     // 无法识别的处置结果是调用方的错，不是"找不到这条请求" —— 一律回 404 会让调用方去查 id，
     // 而真正的原因是它送了一个不属于 approved/rejected 的状态。
     if (result.error === "permission_request_status_invalid") return json(res, 400, {error: result.error});
+    // 已被处置时必须回 409 而不是 200：后到者的决定被丢弃了，而 200 会让他确信自己成功了。
+    // 权限那条最重 —— 拒绝方拿到 200，而权限其实已经授出。仓里另有五条处置路径本来就这么做
+    // （质量门/评审计划/评审包/升级候选/共享定义），i18n 里也有现成的"可能是另一个人刚处理完"。
+    if (result.alreadyResolved) return json(res, 409, {error: "permission_request_already_resolved", permissionRequest: result.permissionRequest});
     if (result.ok === false) return json(res, 404, {error: result.error});
     recomputeBarrierAfterResolve(state, existingPermission?.taskGroupId);
     audit(state, "permission-gateway", "permission_resolve", `PermissionRequest:${result.permissionRequest.requestId}`);
@@ -3923,6 +3939,8 @@ async function handleApi(req, res) {
       return json(res, error.status || 409, {error: error.message});
     }
     if (result.ok === false) return json(res, 404, {error: result.error});
+    // 同上：拓扑已到终态时回 409，而不是回 200 让后到者以为自己推进了它。
+    if (result.alreadyTerminal) return json(res, 409, {error: "execution_topology_already_terminal", topology: result.topology});
     recomputeBarrierAfterResolve(state, existingTopology.taskGroupId);
     audit(state, "orchestrator", "execution_topology_advance", `ExecutionTopology:${result.topology.topologyId}`, result.topology.status);
     finishGuardedWrite(state, guard, 200, result);

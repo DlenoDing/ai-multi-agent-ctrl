@@ -1067,6 +1067,10 @@ try {
   const permOk = expectStatus(await g2("/api/permission-requests", agentAuth, "g2b-perm-ok", {taskGroupId: "tg_runtime_management", permission: "task_group:read", subjectId: "acct_agent_runtime"}), 201, "permission request happy");
   expectStatus(await g2("/api/permission-requests", invitedAuth, "g2b-perm-deny", {taskGroupId: "tg_runtime_management", permission: "task_group:read"}), 403, "permission request deny");
   expectStatus(await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-resolve-ok", {status: "approved"}), 200, "permission resolve happy");
+  // 两个人同时处置同一条授权请求：后到的那个必须拿到 409，而不是 200。
+  // 回 200 的后果是【拒绝方被告知成功，而权限其实已经授出】—— 他不会再去看结果。
+  expectStatus(await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-resolve-again", {status: "rejected"}), 409, "已被处置的授权请求必须回 409（否则拒绝方以为自己成功了，而权限已授出）");
+  expectStatus(await g2(`/api/approval-requests/${approvalOk.payload.approvalRequest.approvalId}/resolve`, reviewerAuth, "g2b-approval-resolve-again", {status: "rejected"}), 409, "已被处置的审批请求必须回 409");
 
   // execution-topologies → task_group:orchestrate
   expectStatus(await g2("/api/execution-topologies", systemAuth, "g2b-topo-ok", {taskGroupId: "tg_runtime_management"}), 201, "execution topology happy");

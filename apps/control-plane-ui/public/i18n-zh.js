@@ -14,6 +14,11 @@
     // 是别人先处置了"，而不是一串英文。
     rule_fragments_must_be_an_array: "规则必须以列表提交：传成其它形式会把该层规则整层清空，已拒绝",
     project_has_open_task_groups: "该项目还有未终结的任务组：请先逐个关闭或中止，归档不会替你处置它们",
+    finding_already_resolved: "该发现项已被处置过（可能是另一个人刚处理完）：刷新后查看当前处置结果",
+    approval_already_resolved: "该审批请求已被处置过（可能是另一个人刚处理完）：刷新后查看当前结论",
+    permission_request_already_resolved: "该授权请求已被处置过（可能是另一个人刚处理完）：你的这次处置未生效，刷新后查看实际结果",
+    rule_source_already_settled: "该规则来源已被判定过（可能是另一个人刚处理完）：刷新后查看当前判定",
+    execution_topology_already_terminal: "该执行拓扑已到终态，无法再推进：刷新后查看当前状态",
     quality_gate_already_settled: "该质量门已被处置过（可能是另一个人刚处理完）：刷新后查看当前状态",
     review_plan_already_resolved: "该评审计划已被收尾过：刷新后查看当前状态",
     review_bundle_already_resolved: "该评审包已被收尾过：刷新后查看当前状态",
