@@ -743,6 +743,7 @@ const SUBMIT_SUCCESS = {
   "quality-gate-waive": "已豁免该质量门（理由已留档）",
   "review-plan-resolve": "已收尾评审计划",
   "rule-source-settle": "已提交规则来源判定",
+  "plan-finalization": "已更新该工作项的方案定稿要求",
   "review-bundle-resolve": "已收尾评审包",
   "upgrade-candidate-resolve": "已处置系统升级候选项",
   "shared-definition-resolve": "已处置共享定义契约",
@@ -1902,6 +1903,7 @@ function renderTaskGroupDetail(taskGroup) {
 
   const config = tgDetail.config;
   const canControl = hasPerm("task_group:control");
+  const canReviewWork = hasPerm("task_group:review");
   const editDisabled = canControl ? "" : "disabled";
   const configHtml = config ? `
     <div class="stack">
@@ -1964,6 +1966,22 @@ function renderTaskGroupDetail(taskGroup) {
         <div class="record-title"><strong>${esc(workItem.title)}</strong>${badge(workItem.status)}</div>
         ${progressLine(workItem.progress)}
         <div class="record-meta"><span>执行角色：${esc(t(workItem.ownerRole))}</span>${workItem.blockedReason ? `<span>受阻原因：${esc(t(workItem.blockedReason))}</span>` : ""}</div>
+        <!-- 决定"这件事算不算需要人定稿的方案"的分类器是字面匹配：它认不出架构与选型这类决策。
+             机器判不了的事，判断权归人 —— 这里给出那个杠杆，并说清分类器的局限，
+             免得"没被要求定稿"被读成"系统判断过、认为不必"。 -->
+        ${workItem.requiresPlanFinalization === true
+          ? `<div class="notice warn-notice">已由 ${esc(workItem.planFinalizationDecidedBy || "?")} 指定：必须先有人工定稿的执行方案才能开跑${workItem.planFinalizationJustification ? `（${esc(workItem.planFinalizationJustification)}）` : ""}</div>`
+          : ""}
+        ${canReviewWork ? `
+          <form class="form-grid" data-form="plan-finalization" data-task="${esc(taskGroup.id)}" data-work="${esc(workItem.id)}" style="margin-top:8px;">
+            <div class="record-meta"><span>系统靠关键词判断这件事要不要人工定稿方案，它认不出架构选型这类决策 —— 你可以直接指定。</span></div>
+            <div class="form-row"><label>是否必须先定稿执行方案</label><select name="requiresPlanFinalization">
+              <option value="false"${workItem.requiresPlanFinalization === true ? "" : " selected"}>不强制（按系统判断）</option>
+              <option value="true"${workItem.requiresPlanFinalization === true ? " selected" : ""}>必须先由人定稿方案</option>
+            </select></div>
+            <div class="form-row"><label>理由（必填）</label><input name="justification" placeholder="例如：这涉及存储选型，做错了后面全要返工"></div>
+            <button class="secondary-button" type="submit">保存</button>
+          </form>` : ""}
         ${dispatch ? `
           <div class="record-meta"><span>派发：<span class="mono">${esc(dispatch.dispatchId)}</span></span><span>${badge(dispatch.status)} ${esc(dispatch.progressPercent || 0)}%</span></div>
           <div class="button-row"><button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${esc(dispatch.dispatchId)}">实时事件</button></div>
@@ -3062,6 +3080,13 @@ document.addEventListener("submit", async (event) => {
     if (kind === "upgrade-candidate-resolve") {
       if (!String(data.justification || "").trim()) throw new Error("处置系统升级候选项必须写明理由");
       await api(`/api/system-upgrade-candidates/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "dismissed", justification: data.justification})});
+      await loadPage();
+      return;
+    }
+    if (kind === "plan-finalization") {
+      if (!String(data.justification || "").trim()) throw new Error("指定是否需要人工定稿执行方案时必须写明理由");
+      await api(`/api/task-groups/${encodeURIComponent(form.dataset.task)}/work-items/${encodeURIComponent(form.dataset.work)}/plan-finalization`,
+        {method: "POST", body: JSON.stringify({requiresPlanFinalization: data.requiresPlanFinalization === "true", justification: data.justification})});
       await loadPage();
       return;
     }

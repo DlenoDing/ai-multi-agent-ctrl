@@ -1932,6 +1932,19 @@ export function runAutonomousCycle(state, request = {}) {
       // 派发】—— runAutonomousCycle 全文不读 executionTopologies，于是"人批准了按这个方案跑"
       // 与"实际怎么跑"是两件互不相干的事。批准过的方案必须真的管住这个工作项：
       // 有一份【人已定稿且尚未了结】的拓扑时，这个工作项只能经该拓扑执行，不走普通派发通道。
+      // 真人明确指定"这个工作项必须先有人工定稿的执行方案才能开跑"时，分类器怎么判都不算数。
+      // 这条杠杆存在的理由是：分类器判不出架构与选型这类决策，而判不出的时候，判断权归人。
+      if (workItem.requiresPlanFinalization === true) {
+        const finalizedPlan = (state.executionTopologies || []).some((topology) =>
+          topology.taskGroupId === taskGroup.id && topology.workItemId === workItem.id
+          && topology.humanFinalization?.outcome === "confirmed");
+        if (!finalizedPlan) {
+          recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "awaiting_plan_finalization",
+            whyThisCellNow: `human marked this cell as requiring a finalized execution plan: ${workItem.planFinalizationJustification || ""}`, cycleRef});
+          changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, awaiting: "plan_finalization"});
+          continue;
+        }
+      }
       const governingTopology = (state.executionTopologies || []).find((topology) =>
         topology.taskGroupId === taskGroup.id && topology.workItemId === workItem.id
         && !TOPOLOGY_TERMINAL_STATUSES.includes(topology.status)

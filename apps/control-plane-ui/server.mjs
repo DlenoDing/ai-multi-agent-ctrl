@@ -805,6 +805,8 @@ const HUMAN_ONLY_ACTIONS = [
   "review_plan_resolve",
   "review_bundle_resolve",
   "rule_source_settle",
+  // 判"这件事算不算重大决策"是人的事，不是分类器的事。
+  "work_item_plan_finalization_set",
   // 批准一条权限请求＝把它被挡住的那项能力交给执行方，同时它的"拒绝"分支会级联终结该格子的
   // 执行、作废产出目标与租约。这既是治理决策也是破坏性操作，不该由机器主体自行完成 ——
   // 此前那条提权链正是从这里穿过去的。两条 e2e 里做批准的本来就都是真人账号。
@@ -1297,6 +1299,7 @@ function permissionForAction(action) {
   // 结果只有系统管理员能解掉一个任务组层面的阻塞 —— 与同批杠杆口径不一致。
   if (action === "review_plan_resolve") return "task_group:review";
   if (action === "rule_source_settle") return "task_group:control";
+  if (action === "work_item_plan_finalization_set") return "task_group:review";
   if (action === "review_bundle_resolve") return "task_group:review";
   if (action === "system_upgrade_candidate_resolve") return "task_group:control";
   if (action === "shared_definition_resolve") return "project:update";
@@ -3333,6 +3336,35 @@ async function handleApi(req, res) {
     finishGuardedWrite(state, guard, 200, candidate);
     writeState(state);
     json(res, 200, candidate);
+    return;
+  }
+
+  // 决定"这件事算不算需要人定稿的方案"的分类器，是几条字面匹配 —— 它认不出
+  //「把订单状态机换成事件溯源」这类真正的架构决策，也会因为角色名之类的巧合误判。
+  // 让它 fail-safe（判不准一律要人确认）不是答案：字面匹配对几乎所有任务都不确定，
+  // 那会把确认流量堆到没人看的程度，而总在响的门等于没有门。
+  // 机器判不了的事，判断权应当明确地交给人：这条杠杆让真人直接指定某个工作项是否必须先有
+  // 人工定稿的执行方案才能开跑，覆盖分类器的结论（两个方向都能覆盖）。
+  const planFinalizationMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/work-items\/([^/]+)\/plan-finalization$/);
+  if (req.method === "POST" && planFinalizationMatch) {
+    if (!requireAuthenticated(req, state, res)) return;
+    const planTaskGroup = (state.taskGroups || []).find((item) => item.id === planFinalizationMatch[1]);
+    const planWorkItem = (planTaskGroup?.workItems || []).find((item) => item.id === decodeURIComponent(planFinalizationMatch[2]));
+    const guard = beginGuardedWrite(req, state, "work_item_plan_finalization_set",
+      `WorkItem:${planFinalizationMatch[1]}:${planFinalizationMatch[2]}`, taskGroupScope(state, planFinalizationMatch[1]));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    if (!planWorkItem) return json(res, 404, {error: "work_item_not_found"});
+    const required = body.requiresPlanFinalization === true;
+    const justification = String(body.justification || "").trim();
+    if (!justification) return json(res, 400, {error: "plan_finalization_justification_required"});
+    planWorkItem.requiresPlanFinalization = required;
+    planWorkItem.planFinalizationDecidedBy = guard.actor;
+    planWorkItem.planFinalizationJustification = justification.slice(0, 2000);
+    planWorkItem.updatedAt = now();
+    audit(state, guard.actor, "work_item_plan_finalization_set", `WorkItem:${planWorkItem.id}`, String(required));
+    finishGuardedWrite(state, guard, 200, planWorkItem);
+    writeState(state);
+    json(res, 200, planWorkItem);
     return;
   }
 

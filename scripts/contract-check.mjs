@@ -1256,6 +1256,32 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("内容包: 定稿决策条目里没有那条实际的决策内容");
     }
 
+    // 分类器判不出架构与选型这类决策，而让它 fail-safe 会把确认流量堆到没人看的程度。
+    // 机器判不了的事，判断权归人：真人可以直接指定某个工作项必须先有定稿方案才能开跑。
+    const pfState = structuredClone(seedState);
+    ensureRuntimeCollections(pfState, {root});
+    const pfTg = pfState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const pfWork = pfTg.workItems[0];
+    pfWork.status = "ready";
+    pfWork.requiresPlanFinalization = true;
+    pfWork.planFinalizationJustification = "涉及存储选型";
+    pfState.agentDispatches = [];
+    pfState.executionTopologies = [];
+    runAutonomousCycle(pfState, {taskGroupId: pfTg.id}, {root});
+    if ((pfState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === pfWork.id)) {
+      output.push("方案定稿指定: 人明确要求先定稿方案，工作项却照样被派发（这条杠杆等于不存在）");
+    }
+    // 有了人定稿的方案之后必须能开跑，否则这个杠杆就是个死锁
+    pfState.executionTopologies = [{topologyId: "topo_pf", taskGroupId: pfTg.id, workItemId: pfWork.id,
+      projectId: pfTg.projectId, status: "merged",
+      humanFinalization: {outcome: "confirmed", decisionType: "plan_topology", finalizedBy: "acct_alice"}}];
+    pfState.agentDispatches = [];
+    pfWork.status = "ready";
+    runAutonomousCycle(pfState, {taskGroupId: pfTg.id}, {root});
+    if (!(pfState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === pfWork.id)) {
+      output.push("方案定稿指定: 人已经定稿了方案，工作项仍然开不了跑（杠杆变成了死锁）");
+    }
+
     // 人在拓扑卡上批准的执行方案，此前从未作用于真正的派发（runAutonomousCycle 全文不读
     // executionTopologies）——"人批准了按这个方案跑"与"实际怎么跑"是两件互不相干的事。
     const govState = structuredClone(seedState);

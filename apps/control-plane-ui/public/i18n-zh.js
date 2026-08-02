@@ -172,6 +172,8 @@
 
     /* ---------- 受阻 / 失败原因 ---------- */
     awaiting_human_confirmation: "等待人工确认",
+    awaiting_plan_finalization: "等待人工定稿执行方案",
+    plan_finalization_justification_required: "指定是否需要人工定稿执行方案时必须填写理由",
     governed_by_finalized_topology: "按人已定稿的执行方案推进",
     review_bundle_not_found: "评审包不存在",
     review_bundle_status_invalid: "评审包收尾状态无效",

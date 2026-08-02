@@ -1038,6 +1038,11 @@ errors << %(任务性质判定不得把 ownerRole 拼进匹配文本（角色是
 # 人在拓扑卡上批准的执行方案必须真的管住派发，否则"批准了按这个方案跑"与"实际怎么跑"互不相干。
 errors << %(人已定稿的执行拓扑必须约束派发通道) unless core_source.include?("governed_by_finalized_topology")
 
+# 分类器判不出架构与选型这类决策，而让它 fail-safe（判不准一律要人确认）会把确认流量堆到
+# 没人看的程度 —— 总在响的门等于没有门。机器判不了的事，判断权必须明确地交给人。
+errors << %(必须给人一条直接指定"这个工作项要不要先定稿方案"的杠杆（分类器判不了架构决策）) unless server_source.include?("work_item_plan_finalization_set")
+errors << %(派发必须尊重人的指定（标记了却没定稿方案时不得开跑）) unless core_source.include?("awaiting_plan_finalization")
+
 # 互审此前是空转的：它能产出的每一条判据都是 acceptAgentCheckpoint 已经强制过的结构性事实，
 # 所以对任何被接受的检查点结论恒为 passed。控制面判断不了代码对不对，但质量门是否真的过了、
 # 声明的需求有没有对应证据、以及这次交付有多大，是它能独立查而接受时不查的。
@@ -1078,6 +1083,7 @@ human_lever_forms = {
   "review_plan_resolve" => "review-plan-resolve",
   "shared_definition_resolve" => "shared-definition-resolve",
   "rule_source_settle" => "rule-source-settle",
+  "work_item_plan_finalization_set" => "plan-finalization",
   "review_bundle_resolve" => "review-bundle-resolve",
   "system_upgrade_candidate_resolve" => "upgrade-candidate-resolve",
   "human_confirmation_decide" => "hcr-decide",
