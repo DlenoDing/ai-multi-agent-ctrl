@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
+import { publicAgentNode } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite } from "../apps/mcp-server/server.mjs";
 import {
@@ -2376,6 +2377,26 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     if (!claudeAfter.mcpServers?.unrelated_server) {
       output.push("cleaning the claude MCP config removed an unrelated server the operator configured");
+    }
+  }
+
+  // 节点对外投影必须是白名单。本仓为"黑名单投影"交过一次学费：publicJoinToken 当初逐个剔除敏感字段，
+  // 于是后加的 registrationReplay（内含明文 nodeToken）直接漏出去。节点记录同样在长新字段。
+  {
+    const leaky = publicAgentNode({
+      nodeId: "node_leak_probe", nodeName: "probe", status: "online",
+      credentialDigest: "d1", previousCredentialDigest: "d2", previousCredentialExpiresAt: "t",
+      // 一个"将来才会被加进来"的字段：白名单下它默认不外泄，黑名单下它默认外泄。
+      futureSecretField: "plaintext-secret-that-nobody-remembered-to-strip"
+    });
+    for (const field of ["credentialDigest", "previousCredentialDigest", "previousCredentialExpiresAt", "futureSecretField"]) {
+      if (field in leaky) {
+        output.push(`publicAgentNode leaked ${field} — a projection that removes known-sensitive fields exposes every field added afterwards by default, which is exactly how the plaintext node token leaked through publicJoinToken`);
+      }
+    }
+    // 反向：该给的必须给，否则控制台与运行时会静默拿到 undefined。
+    for (const field of ["nodeId", "nodeName", "status"]) {
+      if (!(field in leaky)) output.push(`publicAgentNode dropped ${field} — the console and the runtime both read it`);
     }
   }
 

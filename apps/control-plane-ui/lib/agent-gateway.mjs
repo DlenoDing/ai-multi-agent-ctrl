@@ -1315,13 +1315,26 @@ export function getSkillWorkset(state, node, worksetId, options = {}) {
   return buildSkillWorkset(state, contract, options);
 }
 
+// 白名单式投影。原先是"剔除已知敏感字段"，而本仓已经为这个形状交过一次学费：publicJoinToken
+// 当初也是逐个剔除，于是后加的 registrationReplay（内含明文 nodeToken）直接漏了出去。
+// 节点记录同样会长出新字段（这次会话里我自己就加了三个），黑名单只保护它列举过的那些，
+// 而新字段默认外泄；白名单反过来 —— 新字段默认不外泄，忘了加只是"界面上少一格"，看得见、改得动。
+const PUBLIC_AGENT_NODE_FIELDS = [
+  "schemaVersion", "nodeId", "nodeName", "organizationId", "projectIds",
+  "allowedRoles", "allowedMcpTools", "status", "admission",
+  "profile", "profileDigest", "runtimeVersion",
+  "lastHeartbeatAt", "lastSelfCheckAt", "selfCheckDigest", "selfCheckMissing",
+  "activeDispatchIds", "completedDispatchCount", "failedDispatchCount",
+  "lastClaimMiss", "offlineReason", "revokedReason",
+  "revocationDeadlineAt", "revocationFinalizedAt", "revocationFinalizedReason",
+  "createdAt", "updatedAt"
+];
+
 export function publicAgentNode(node) {
-  const {
-    credentialDigest: _credentialDigest,
-    previousCredentialDigest: _previousCredentialDigest,
-    previousCredentialExpiresAt: _previousCredentialExpiresAt,
-    ...safe
-  } = node;
+  const safe = {};
+  for (const field of PUBLIC_AGENT_NODE_FIELDS) {
+    if (node[field] !== undefined) safe[field] = node[field];
+  }
   return safe;
 }
 
