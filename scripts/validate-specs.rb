@@ -891,15 +891,55 @@ errors << "必须存在互审双轨规则" unless core_source.include?('ruleId: 
 errors << "范围收敛规则必须与互审双轨对齐（约束改动范围而非分析提案范围）" unless core_source.include?("本条约束的是【改动范围】，不约束【分析与提案范围】")
 errors << "互审结论必须记录考察过的替代路径" unless core_source.include?("alternativesConsidered: [{") && File.read(File.join(ROOT, "spec/internal-review-record.schema.json")).include?('"alternativesConsidered"')
 errors << "替代路径必须随人工确认单呈现给人" unless core_source.include?("alternativesConsidered: input.peerReview.alternativesConsidered") && app_js_source.include?("考察过的其他方案")
-# 最终方案的判准：简单、高性能、稳定，三者都要。写进双轨规则，并要求逐条替代路径给出这三项取舍 ——
-# 只谈其中一项就下结论，是这类评审最常见的失效（尤其是拿"简单"去换尚未发生的通用性）。
-errors << "互审双轨必须写明最终方案的三项判准（简单/高性能/稳定，三者都要）" unless core_source.include?("最终方案的判准（三者都要，缺一即为不合格评审）：简单、高性能、稳定")
-errors << "三项判准必须落到每条替代路径的取舍上，而不只是一句口号" unless core_source.include?("alternativesConsidered 的每一条都要写明它在这三项上相对当前方案的取舍")
-errors << "三项判准必须给出冲突时的排序，否则等于没有判准" unless core_source.include?("三者冲突时的排序")
+# 最终方案的判准共六项（真实功能/数据正确性/已证实适用的外部使用边界/简单/高性能/稳定）。
+# 只写后三项是【语义过窄】：那会允许用降低真实覆盖、频率或正确性去换"高性能"，而这恰恰是最常见的失效。
+# 前三项是底线，必须写明后三项不得以牺牲它们换取，并给出冲突排序——没有排序的判准等于没有判准。
+errors << "互审双轨必须写明六项判准（真实功能/数据正确性/外部使用边界/简单/高性能/稳定）" unless core_source.include?("真实功能、数据正确性、已证实适用的外部使用边界、简单、高性能、稳定")
+errors << "六项判准必须写明前三项是底线、不得被后三项换取" unless core_source.include?("前三项是底线，后三项不得以牺牲前三项换取")
+errors << "六项判准必须落到每条替代路径的取舍上，而不只是一句口号" unless core_source.include?("alternativesConsidered 的每一条都要写明它在这六项上相对当前方案的取舍")
+errors << "六项判准必须给出冲突时的排序，否则等于没有判准" unless core_source.include?("六者冲突时的排序")
+# 两轨深度必须分层：要求每一次定向 diff 复核都做开放式替代方案头脑风暴是【语义过宽】，
+# 会把小复核变成无边界发散；但"缺轨"永远不合格——分层的是深度，不是有无。
+errors << "两轨要求必须按评审类型分层深度（否则定向复核被迫做开放式发散）" unless core_source.include?("深度按评审类型分层") && core_source.include?("不得扩成开放式 brainstorm")
+errors << "互审结论必须被定性为输入而非裁决（须逐条复核后采纳）" unless core_source.include?("互审结论是【输入】不是【裁决】")
+errors << "互审必须有闭环要求（finding 落到改动或文档，驳回须有证据）" unless core_source.include?("闭环要求")
+# 单一权威副本：判准细节只允许存在于 review-dual-track 一处，其余条目只作交叉引用。
+# 复制出来的副本迟早与权威那份漂移，而漂移的两份都会被当成规则引用。
+errors << "independent-review-depth 不得复制判准细节，只能交叉引用" unless core_source.include?("本条不复制其内容，只声明触发")
 # 互审要求本身必须点名双轨：否则"双轨"只是一条孤立规则，评审者按 independent-review-depth 走完
 # 也不会去做轨道二。
 errors << "独立评审/互审要求必须明确要求走双轨" unless core_source.include?("必须同时走 sys.review-dual-track 的两条轨道")
 errors << "互审双轨必须有行为断言" unless contract_check_source.include?("互审双轨: 互审结论没有记录考察过的替代路径")
+
+# ---------------------------------------------------------------------------------------------------
+# 2026-08-03 第五轮 MGP 吸收：六条通用执行规则。它们都不是本仓已有机制能强制的行为纪律，
+# 必须作为默认系统规则随内容包下发，因此逐条钉住存在性——漏掉任一条，下发给会话的规则集就少一条。
+# ---------------------------------------------------------------------------------------------------
+absorbed_2026_08_03 = {
+  "sys.optimal-end-state-first" => "先问它该不该存在（症状级修复的共同特征是让错误的事情做得更好）",
+  "sys.falsifiable-design-gate" => "核心机制定案顺序与可证伪断言",
+  "sys.prior-art-required" => "核心机制须先查证业界标准做法",
+  "sys.admission-predicate-shape" => "准入判据形态：必需存在+形态正确，非集合精确相等",
+  "sys.reject-disposition" => "拒绝后的归宿逐目标判定，运行状态不得决定是否处理",
+  "sys.oracle-independence" => "判据独立性：不要用同一个误解验证自己"
+}
+missing_absorbed = absorbed_2026_08_03.reject { |rule_id, _| core_source.include?(%(ruleId: "#{rule_id}")) }
+unless missing_absorbed.empty?
+  errors << "these absorbed universal rules are missing from defaultSystemRules: #{missing_absorbed.map { |k, v| "#{k}(#{v})" }.join(", ")}"
+end
+# 最优终态优先必须先于根因定位使用：否则会先讨论"在哪一层修"，而跳过"它该不该存在"。
+errors << "最优终态优先必须声明它先于 root-cause-owner 使用" unless core_source.include?("本条先于 sys.root-cause-owner 使用")
+# 完成边界必须区分"已实现"与"已生效"：编译通过/注册声明了不等于运行时真的接上了。
+errors << "完成边界必须区分已实现与已生效（注册声明不等于运行接线）" unless core_source.include?("不等于【运行时真的接上了】")
+# 可逆变异不得用整文件还原：那会连带销毁其他会话未提交的改动（本仓实测发生过多次）。
+errors << "可逆变异必须禁止共享文件整文件还原" unless core_source.include?("不在其他会话可能同时编辑的共享文件上做整文件变异或整文件还原")
+# 新规则之间、以及新旧规则之间的边界必须写明，否则同一份规则集会给出互相矛盾的指令：
+#   · fail-closed（拒绝不可信【动作/副作用】）vs 不停链路（【处理流】照常走）——不写边界就会互相套用；
+#   · 判据放宽只适用【数据契约准入】，授权/签名/身份这类安全判据放宽即为漏洞；
+#   · "它不该存在"是判断与提案，不是就地删除的授权。
+errors << "拒绝归宿必须写明与 side-effect-authorization 的 fail-closed 边界" unless core_source.include?("与 sys.side-effect-authorization 的边界")
+errors << "判据形态规则必须写明不适用于授权/签名类安全判据" unless core_source.include?("授权、权限范围、签名与完整性校验、幂等键、身份匹配这类安全判据不适用本条")
+errors << "最优终态优先必须写明它只产出判断与提案，不构成动手授权" unless core_source.include?("本条产出的是【判断与提案】，不是动手授权")
 
 # D6：质量门是人看到"全通过"时的唯一依据，却完全由 agent 自报（提交测试结果零必填参数、命令从不执行）。
 # 失败必须留痕，无新证据不得翻转，且必须存在【真人】豁免杠杆——否则判失败与清失败是同一个 AI。
@@ -1382,6 +1422,7 @@ safety_relevant_env_vars = %w[
   AIMAC_IDEMPOTENCY_PAYLOAD_TTL_MS AIMAC_NODE_HEARTBEAT_TIMEOUT_MS
   AIMAC_ROOM_MESSAGE_MAX_BYTES AIMAC_MCP_SERVICE_ALLOWED_TOOLS
   AIMAC_RUNTIME_JSON_FSYNC AIMAC_EXPOSE_BOOTSTRAP_HINT AIMAC_ALLOW_LOCAL_GIT_REMOTE
+  AIMAC_TRUST_PROXY AIMAC_LOGIN_ATTEMPTS_PER_MINUTE
 ]
 env_example = File.read(File.join(ROOT, ".env.example"))
 undocumented_env = safety_relevant_env_vars.reject { |name| env_example.include?(name) }

@@ -63,3 +63,38 @@
 从 development-verification-operating-model.md §2.2/§4.5/§4.6.0 通用化吸收（市场/session→条件窗口，Provider 额度→外部资源）：A1 优先级排序、A2/A5 cellClass+正交维度、A3/A4/A9 条件窗口准入（`conditionWindowGate`，按 environment 独立、每周期重采样、defer 记 wakeTrigger、恒 continue）、A6 最小作用域 blocker 白名单、A7 载体 4 选1+nonSelectedCarriers/nonReuseReason/retireOrArchiveCondition、A8 周期级 admissionScan、A10 规则 `sys.layered-admission`（分层准入+最小复验+禁混用 gating 状态）。全部 work-item 描述符可选，缺省=旧行为。
 
 > 说明：默认系统规则可被项目/任务组按 §4.4 三级机制启用/停用/改写单条。控制面对 A 类规则已有硬约束；B 类规则通过内容包硬性下发（不靠指令措辞），会话开始前摘要校验不符即拒绝执行。
+
+### 2026-08-03 第五轮吸收（MGP 规则源 8/2–8/3 更新后复读）
+
+来源：`agent-rules/00-common.md`（[C04]/[C05]/[C10]/[C11]）、`agent-rules/40-testing-and-evidence.md`（[T01]/[T02]/[T07]/[T10]）、
+`agent-rules/60-git-docs-and-review.md`（[G06]/[G07]/[G08]）。上一轮吸收是 2026-07-27，这三册在 8/2–8/3 有实质更新。
+
+**新增 6 条默认系统规则（26 → 32）**：
+
+| 规则 | 来源 | 为什么必须下发（本仓机制无法强制） |
+|---|---|---|
+| `sys.optimal-end-state-first` | [C04] 最优终态三问 | 先问"该不该存在"再问"在哪修"；症状级修复的共同特征是让错误的事情做得更好 |
+| `sys.falsifiable-design-gate` | [C05] 定案顺序 | 推演→可证伪断言→互审→定案→才发指令；推演五问针对正式环境触发条件 |
+| `sys.prior-art-required` | [C05] 业界依据 | 核心机制先查标准做法并写可追溯依据；查不到须标注"无外部先例，本地推导" |
+| `sys.admission-predicate-shape` | [C11] 判据形态 | required-present + shape-valid；补白名单属症状级修复，须改判据形态本身 |
+| `sys.reject-disposition` | [C11] 四种归宿 | 逐写入目标判定；运行状态不得决定"是否处理"；负载指标不得成为丢弃触发 |
+| `sys.oracle-independence` | [T07] 验证方法纪律 | 期望值须独立于被测实现；不复制会静默过期的样例；扫描断言须有命中下限 |
+
+**对既有规则的修正（语义过窄 / 过宽 / 冲突）**：
+
+- `sys.review-dual-track`（**过窄**）：判准由三项扩为**六项**——真实功能、数据正确性、已证实适用的外部使用边界、简单、高性能、稳定（含恢复与 SLO）。
+  前三项是底线，明确禁止用降低真实覆盖/频率/正确性冒充高性能、用阻断/降级/人工看护冒充稳定。来源 [C05]/[G06]。
+- `sys.review-dual-track`（**过宽**）：原文要求每次互审都完整走轨道二并给替代方案，会把定向 diff 复核变成开放式发散。
+  按 [G06] 改为**深度按评审类型分层**：定稿类完整比较；定向/只读/范围冻结的复验仍须回到原始问题，但未发现更优路径时写明考察项与不展开原因即可。**缺轨仍永远不合格**。
+- `sys.review-dual-track`（**补漏**）：新增"互审结论是输入不是裁决"（须逐条复核后采纳）与闭环要求（finding 落到改动或文档、驳回须有证据）。来源 [C05]/[G08]。
+- `sys.independent-review-depth`（**冲突/重复**）：与 review-dual-track 重复定义判准。按 [C09]"每条长期规则只在一个 owner 分册完整定义"收编为**交叉引用**。
+- `sys.product-intelligence-first`（**悬空引用**）：原文"冲突时以最新 core-init 结论为准"引用的是**未随内容包下发的外部文档**——会话拿不到的东西不能充当判据。改为以本规则集内部可判定的表述裁决。
+- `sys.completion-boundary`（**过窄**）：补 [T07]"lint/编译/容器启动/类存在/配置声明 ≠ 运行时真的接上了"，新增注册须由真实调用或 smoke 证明命中。
+- `sys.observation-control`（**过窄**）：补 [T07] 两条——不在共享文件上做整文件变异/还原（本仓实测多次因此销毁未提交改动）；两个配置来源恰好同值时须刻意造不同值证明读的是正确 owner。
+- `sys.root-cause-owner`（**过窄**）：补 [C04] 链路修复自上游向下游逐层推进、每层改完验一层，且不为迁就而在任一端造第二套事实。
+- `sys.guard-reuse`（**过窄**）：补 [T07] 例外清单纪律——每项写明理由、缺陷修复后必须删除、过期例外必须报错。
+- `sys.evidence-qualification`（**过窄**）：补 [T07] 指标语义与口径一致；不得用一个维度的观测推另一个维度的结论。
+- `sys.scope-convergence`（**权威副本**）：收编 [C11] 末条"不做过度兼容"，review-dual-track 交叉引用不再重复定义。
+
+**未吸收及理由**：MGP 的市场/行情/K线/KYC/支付/Provider/Kafka-topic/DcsLock/MySQL 权限矩阵等属领域细节；
+`agent-sync` 目录结构、`MGP-LIFECYCLE` 标记格式、Ruleset-Version 治理属该仓工程约定，本仓已有等价机制（项目事件存储、状态机终态、规则三级继承）。

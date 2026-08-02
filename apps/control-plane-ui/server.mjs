@@ -976,6 +976,10 @@ function loginRateLimited(req) {
   return entry.count >= maxAttempts;
 }
 
+function clearFailedLogins(req) {
+  loginAttempts.delete(loginClientIp(req));
+}
+
 function recordFailedLogin(req) {
   const ip = loginClientIp(req);
   const nowMs = Date.now();
@@ -2317,6 +2321,9 @@ async function handleApi(req, res) {
       delete account.credentialDigest;
       account.updatedAt = now();
     }
+    // 登录成功要清零该 IP 的失败计数：否则输错几次再登进去，之后一次手误就撞上 429 ——
+    // 节流本是拦暴力破解的，不该反过来把已经证明自己是本人的人挡在外面。
+    clearFailedLogins(req);
     const sessionToken = randomBytes(32).toString("base64url");
     // authPolicy.sessionTtlSeconds 此前是纯装饰：账号上写着 3600 或 28800、还通过 publicAccountRecord
     // 回显给控制台，而签发时固定 8 小时。运维给高权账号配了 1 小时会话，实得 8 小时 ——
