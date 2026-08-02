@@ -972,6 +972,11 @@ machines:
         actor: "monitor"
         requires: ["node_retire_timeout_elapsed"]
   Room:
+    # 房间没有自己的对象：没有 state.rooms，没有房间注册表，roomId 由 room_<taskGroupId> 隐式确定。
+    # 它的生命周期挂在任务组上 —— 任务组未终结即 active，终结（closed/aborted）即 closed，
+    # 由 roomSend 的 room_task_group_settled 判据落实（2026-08-02 之前这条判据不存在，
+    # 于是"关闭的房间"根本不存在，本机器整台是死规格）。
+    # 这里写明，是为了让日后的人不要照着这台机器去补一个多余的 rooms 集合。
     initial: "active"
     terminal: ["closed"]
     states:

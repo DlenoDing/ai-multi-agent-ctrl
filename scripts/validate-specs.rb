@@ -1256,6 +1256,9 @@ errors << "Room send must scope authorization and routing from the path room onl
 # 署名必须由服务端从已认证主体派生。报文里的 senderRef 若被采信，任何能发消息的 agent 都能
 # 署名成业主 —— 而这个值直接进 eventLog 的 actor，伪造的署名同时污染了用来核对它的审计。
 errors << "Room message sender must be derived from the authenticated principal, never from the request body" unless core_source.include?("ROOM_SENDER_KEY") && core_source.include?("senderRef: args[ROOM_SENDER_KEY]") && !mcp_source.include?("senderRef: string")
+# 参与者名单按 participantId 替换：自报 id 就等于可以覆盖别人的记录（改其 roleId/cursor/sessionId）。
+# 名单不参与授权判定，所以这不是提权 —— 但一张能被任意改写的名单一旦被呈现或被采信，就是错的来源。
+errors << "Room participant identity must be derived from the authenticated principal, never from the request body" unless mcp_source.include?("ROOM_PARTICIPANT_KEY") && mcp_source.include?("participantId: args[ROOM_PARTICIPANT_KEY]") && !mcp_source.include?("participantId: string")
 errors << "close-barrier must not trust a stale-version cached readiness" unless core_source.include?("cachedReadiness.stateVersion === state.stateVersion") && contract_check_source.include?("stale readiness")
 errors << "Human directives must be consumed oldest-first" unless core_source.include?("status === \"queued\").reverse()") && contract_check_source.include?("directive FIFO")
 # 2026-07-27 MGP core-init absorption: global intelligent judgment over mechanical/redundant/useless gates.

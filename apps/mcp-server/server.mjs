@@ -61,6 +61,7 @@ import {
   reviewPlanCreate,
   roomSend,
   ROOM_SENDER_KEY,
+  ROOM_PARTICIPANT_KEY,
   roomWait,
   ruleSourceResolve,
   sharedDefinitionCreate,
@@ -436,7 +437,6 @@ function commonInputProperties() {
     ownerAccountId: string,
     ownerRole: string,
     packageRef: string,
-    participantId: string,
     patch: object,
     path: string,
     pathAllowlist: array,
@@ -1231,7 +1231,9 @@ async function dispatchTool(state, name, args, context = {}) {
     case "orchestration-mcp.state_get":
       return stateGet(state, args, context);
     case "room-mcp.room_join":
-      return roomJoin(state, args);
+      // 参与者身份与消息署名同源：服务端从已认证主体派生，不采信报文里的 participantId。
+      return roomJoin(state, {...args, [ROOM_PARTICIPANT_KEY]: context?.principal?.kind
+        ? `${context.principal.kind}:${context.principal.id}:${args.roomId || args.taskGroupId || "room"}` : undefined});
     case "room-mcp.room_send":
       // 同 REST：署名由已认证主体派生。报文里的 senderRef 已从输入白名单里去掉，会被直接拒绝，
       // 而不是悄悄忽略 —— 悄悄忽略会让调用方以为自己署上了名。
@@ -1867,7 +1869,11 @@ function redactStateForMcp(state) {
 function roomJoin(state, args) {
   const at = new Date().toISOString();
   const participant = {
-    participantId: args.participantId || createId("room_participant"),
+    // participantId 原先取自调用方，而这张表是按 participantId 替换的 —— 传别人的 id 就能覆盖
+    // 别人的记录（改掉它的 roleId/cursor/sessionId）。名单不参与授权判定，所以这不是提权；
+    // 但一张能被任意改写的名单，一旦将来被呈现给人或被拿来判断，就是错的来源。
+    // 与房间消息署名同一处理：身份由已认证主体派生，报文里的自报值不采信。
+    participantId: args[ROOM_PARTICIPANT_KEY] || createId("room_participant"),
     roomId: args.roomId || `room_${args.taskGroupId || "tg_runtime_management"}`,
     sessionId: args.sessionId,
     roleId: args.roleId || "agent-runtime",

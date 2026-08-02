@@ -6856,6 +6856,9 @@ export const HUMAN_ACTOR_KEY = Symbol.for("dleno.control-plane.humanActor");
 // 调用方报文里的 senderRef 一律不采信。
 export const ROOM_SENDER_KEY = Symbol.for("dleno.control-plane.roomSender");
 
+// 同因：房间参与者身份。这张表按 participantId 替换，调用方自报就等于可以覆盖别人的记录。
+export const ROOM_PARTICIPANT_KEY = Symbol.for("dleno.control-plane.roomParticipant");
+
 export function findingResolve(state, args) {
   const finding = (state.findings || []).find((item) => item.findingId === args.findingId);
   if (!finding) return {ok: false, error: "finding_not_found"};
