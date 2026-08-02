@@ -1713,6 +1713,7 @@ function agentActions(node) {
     `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="resume_dispatch">恢复</button>`,
     `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="shutdown">关停</button>`,
     `<button class="danger-button" data-action="revoke-agent-node" data-node-id="${esc(node.nodeId)}">吊销</button>`
+    + `<button class="danger-button" data-action="force-revoke-agent-node" data-node-id="${esc(node.nodeId)}" title="不等节点确认，当场作废其凭据">立即切断</button>`
   ].join(" ");
 }
 
@@ -3360,7 +3361,7 @@ document.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
-  const MUTATION_ACTIONS = new Set(["orchestrator-run", "decide-model", "sync-skill-source", "task-control", "agent-control", "toggle-agent", "revoke-grant", "revoke-join-token", "revoke-agent-node", "org-status", "member-status", "bootstrap-init", "tg-config-reset", "close-task-group"]);
+  const MUTATION_ACTIONS = new Set(["orchestrator-run", "decide-model", "sync-skill-source", "task-control", "agent-control", "toggle-agent", "revoke-grant", "revoke-join-token", "revoke-agent-node", "force-revoke-agent-node", "org-status", "member-status", "bootstrap-init", "tg-config-reset", "close-task-group"]);
   const guardBtn = MUTATION_ACTIONS.has(action) && target.tagName === "BUTTON" ? target : null;
   if (guardBtn) { guardBtn.disabled = true; guardBtn.classList.add("is-loading"); }
   try {
@@ -3498,10 +3499,30 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "revoke-agent-node") {
-      if (!(await confirmDialog({title: "吊销智能体节点", message: "确认吊销该智能体节点？", sub: "节点上运行中的任务将被围栏并重新排队。", danger: true, confirmText: "吊销"}))) return;
+      // 原先这里写着"运行中的任务将被围栏并重新排队"、成功提示写着"已吊销" —— 而实际发生的只是
+      // 排了一条撤销命令，节点在 ACK 之前仍然通过认证。界面报告了比实际更强的结果，运维会以为
+      // 已经断开。文案必须说出真实发生的事，以及它什么时候才会真的生效。
+      if (!(await confirmDialog({
+        title: "吊销智能体节点",
+        message: "确认吊销该智能体节点？",
+        sub: "节点会收到撤销指令，交回运行中的任务后离线。它的凭据在此期间仍然有效（它需要凭据才能确认这条指令）；若在期限内没有确认，凭据会被自动作废。已知节点失陷时请改用「立即切断」。",
+        danger: true, confirmText: "吊销"
+      }))) return;
       await api(`/api/agent-nodes/${encodeURIComponent(target.dataset.nodeId)}/revoke`, {method: "POST", body: "{}"});
       await loadPage();
-      toast.success("已吊销智能体节点");
+      toast.success("已下发吊销指令：节点确认后离线，超期未确认则自动作废其凭据");
+      return;
+    }
+    if (action === "force-revoke-agent-node") {
+      if (!(await confirmDialog({
+        title: "立即切断该节点",
+        message: "确认立即作废该节点的凭据？",
+        sub: "凭据当场失效，不等节点确认 —— 用于已知失陷的节点。代价：它手上的任务不是被交回的，要等租约到期才回收，且会被标记为「上一任可能已推送」，需要人核对。",
+        danger: true, confirmText: "立即切断"
+      }))) return;
+      await api(`/api/agent-nodes/${encodeURIComponent(target.dataset.nodeId)}/revoke`, {method: "POST", body: JSON.stringify({force: true})});
+      await loadPage();
+      toast.success("已立即作废该节点凭据");
       return;
     }
     if (action === "agent-control") {

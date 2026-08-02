@@ -100,6 +100,7 @@ import {
   listAgentControlCommands,
   registerAgentNode,
   requestAgentNodeRevocation,
+  finalizeOverdueRevocations,
   selfCheckAgentNode,
   submitAgentExecutionEvent
 } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
@@ -2883,6 +2884,42 @@ function verifyAgentGatewayContracts(output) {
   const claimedDispatchId = claimed.dispatch?.dispatch.dispatchId;
   if (claimedDispatchId) {
     const revokeRequest = requestAgentNodeRevocation(state, node, {ttlSeconds: 300}, {actor: "contract-check", idempotencyKey: "contract-node-revoke"});
+    // 撤销必须有尽头。原先撤销只排一条控制命令，而 nodeAcceptsToken 只在 revoked 时拒绝：
+    // 被入侵的节点不 ACK、继续心跳，就永远停在 draining，令牌无限期有效 —— 而控制台显示"已请求撤销"。
+    if (!node.revocationDeadlineAt) {
+      output.push("requesting revocation set no deadline — a node that never ACKs keeps a valid credential forever while the console reports the revocation as requested");
+    }
+    {
+      const overdue = structuredClone(state);
+      const overdueNode = (overdue.agentRuntimeNodes || []).find((item) => item.nodeId === node.nodeId);
+      overdueNode.revocationDeadlineAt = new Date(Date.now() - 1000).toISOString();
+      overdueNode.lastHeartbeatAt = new Date().toISOString(); // 仍在心跳：被入侵节点的典型表现
+      finalizeOverdueRevocations(overdue);
+      if (overdueNode.status !== "revoked") {
+        output.push(`a revocation past its deadline did not invalidate the node credential (status ${overdueNode.status}) — a node that refuses to ACK but keeps heartbeating stays authenticated indefinitely`);
+      }
+    }
+    {
+      const forced = structuredClone(state);
+      const forcedNode = (forced.agentRuntimeNodes || []).find((item) => item.nodeId === node.nodeId);
+      forcedNode.status = "online";
+      delete forcedNode.revocationDeadlineAt;
+      requestAgentNodeRevocation(forced, forcedNode, {force: true}, {actor: "contract-check", idempotencyKey: "contract-node-revoke-force"});
+      if (forcedNode.status !== "revoked") {
+        output.push("a forced revocation did not immediately invalidate the node credential — an operator who knows a node is compromised has no way to cut it off now");
+      }
+    }
+    // 反向：没有撤销请求的健康节点不得被这条清扫误伤。
+    {
+      const healthy = structuredClone(state);
+      const healthyNode = (healthy.agentRuntimeNodes || []).find((item) => item.nodeId === node.nodeId);
+      healthyNode.status = "online";
+      delete healthyNode.revocationDeadlineAt;
+      finalizeOverdueRevocations(healthy);
+      if (healthyNode.status !== "online") {
+        output.push(`the revocation deadline sweep revoked a node that had no pending revocation (status ${healthyNode.status})`);
+      }
+    }
     const pending = state.agentDispatches.find((dispatch) => dispatch.dispatchId === claimedDispatchId);
     if (!revokeRequest.pendingDispatchIds.includes(claimedDispatchId) || pending?.status !== "blocked" || pending.assignedNodeId !== node.nodeId || node.status !== "draining") {
       output.push("Agent node revocation request did not fence its running dispatch until runtime ACK");

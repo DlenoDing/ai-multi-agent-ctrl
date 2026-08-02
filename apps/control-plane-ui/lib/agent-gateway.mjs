@@ -339,15 +339,58 @@ export function revokeAgentNode(state, node) {
   return {nodeId: node.nodeId, status: node.status, requeuedDispatchIds: []};
 }
 
+// 吊销【凭据】与重排【派发】是两件事，原先被绑在一起。重排派发确有重复执行风险，所以要等 ACK
+// 或等节点确实死掉；但吊销凭据没有这个风险，它纯粹是栅栏。绑在一起的后果是：一个被入侵的节点
+// 只要不 ACK、继续心跳，就永远不会被置为 revoked —— 而 nodeAcceptsToken 只在 revoked 时拒绝，
+// 于是它的令牌无限期有效。空闲节点更糟：ACK 超时兜底遍历的是派发，它根本不在循环里。
+// 而控制台显示的是"已请求撤销"，运维会认为已经断开。
+//
+// 派发不在这里重排：凭据一死，它做不了 claim/续约/push，租约到期由 recycleExpiredClaims 回收，
+// 那条路径会推进 claimEpoch 并标记 previousHolderMayHavePushed —— 该有的痕迹一样不少。
+export function finalizeNodeCredentialRevocation(state, node, reason) {
+  if (node.status === "revoked") return false;
+  node.status = "revoked";
+  node.admission = "read_only";
+  node.revocationFinalizedAt = new Date().toISOString();
+  node.revocationFinalizedReason = reason;
+  delete node.revocationDeadlineAt;
+  for (const dispatchId of node.activeDispatchIds || []) {
+    revokeDispatchMcpGrants(state, node.nodeId, dispatchId, reason);
+  }
+  appendGatewayEvent(state, "node_credential_revoked", node.nodeId, {reason});
+  return true;
+}
+
+// 到了截止期还没 ACK 的撤销，一律落实为凭据吊销 —— 不问节点是否还在心跳、是否还挂着派发。
+// 撤销是运维已经做出的决定，节点合不合作不该决定它生不生效。
+export function finalizeOverdueRevocations(state, at = Date.now()) {
+  let changed = false;
+  for (const node of state.agentRuntimeNodes || []) {
+    if (!node.revocationDeadlineAt || node.status === "revoked") continue;
+    if (new Date(node.revocationDeadlineAt).getTime() > at) continue;
+    changed = finalizeNodeCredentialRevocation(state, node, "revocation_ack_deadline_elapsed") || changed;
+  }
+  return changed;
+}
+
 export function requestAgentNodeRevocation(state, node, input = {}, options = {}) {
   ensureAgentGatewayCollections(state);
+  // 立即切断：已知失陷时，十分钟也太久。凭据当场作废，派发交给租约到期回收。
+  if (input.force === true) {
+    finalizeNodeCredentialRevocation(state, node, "operator_forced_revocation");
+    appendGatewayEvent(state, "node_revocation_forced", node.nodeId, {actor: options.actor || null});
+    return {nodeId: node.nodeId, status: node.status, command: null, pendingDispatchIds: [], requeuedDispatchIds: [], forced: true};
+  }
   const result = createAgentControlCommand(state, node, {
     ...input,
     commandType: "revoke",
     payload: {...(input.payload || {})}
   }, options);
   const pendingDispatchIds = [...(result.command.payload?.activeDispatchIds || [])];
-  appendGatewayEvent(state, "node_revocation_requested", node.nodeId, {commandId: result.command.commandId, pendingDispatchIds});
+  // 截止期：优雅撤销要给节点时间把派发交回来（它还需要有效令牌才能 ACK），但这段时间必须有尽头。
+  const ackTimeoutMs = boundedInteger(process.env.AIMAC_REVOCATION_ACK_TIMEOUT_MS, 60000, 3600000, 600000);
+  node.revocationDeadlineAt = new Date(Date.now() + ackTimeoutMs).toISOString();
+  appendGatewayEvent(state, "node_revocation_requested", node.nodeId, {commandId: result.command.commandId, pendingDispatchIds, deadlineAt: node.revocationDeadlineAt});
   return {nodeId: node.nodeId, status: node.status, command: result.command, pendingDispatchIds, requeuedDispatchIds: []};
 }
 
@@ -606,6 +649,7 @@ export function sweepDeadAgentNodes(state, nowMs = Date.now()) {
 export function recycleExpiredClaims(state) {
   const at = Date.now();
   let changed = sweepDeadAgentNodes(state, at).length > 0;
+  changed = finalizeOverdueRevocations(state, at) || changed;
   for (const dispatch of state.agentDispatches || []) {
     if (dispatch.status !== "running" || !dispatch.claimExpiresAt || new Date(dispatch.claimExpiresAt).getTime() > at) continue;
     changed = true;
