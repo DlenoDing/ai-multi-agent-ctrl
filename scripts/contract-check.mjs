@@ -3127,6 +3127,31 @@ function verifyRuntimeJsonConflict(output) {
       } catch (error) {
         if (!/shard_missing/u.test(error.message)) output.push(`missing shard raised the wrong error: ${error.message}`);
       }
+      // 兼容层必须有退役条件，否则它会无界存在（sys.scope-convergence「不做过度兼容」）。
+      // 这里的兼容是【读取时接受旧格式摘要】，它的退役条件是"下一次写入会把该分片规范化"——
+      // 因为复用判定比对的是【规范序】摘要，旧格式必然不匹配，因而必然被重写。
+      // 这个条件此前只存在于代码推理里，没有任何东西守着它：一旦复用判定改成也接受旧格式摘要，
+      // 兼容路径就变成永久的，而那正是"长期双路径"。这条断言把退役条件钉死。
+      {
+        const legacyShard = {schemaVersion: "project-state-shard/v1", projectId: "prj_legacy_digest",
+          collections: {taskGroups: [{id: "tg_legacy"}]}};
+        const canonicalDigest = digestProjectShardPayload(legacyShard);
+        const legacyPayload = {...legacyShard};
+        delete legacyPayload.storagePayloadDigest;
+        delete legacyPayload.storagePayloadBytes;
+        const legacyDigest = `sha256:${createHash("sha256").update(JSON.stringify(legacyPayload)).digest("hex")}`;
+        if (legacyDigest === canonicalDigest) {
+          output.push("分片兼容: 旧格式与规范序摘要恰好相同，这条断言无从验证（夹具需要一个键序不同的分片）");
+        } else {
+          legacyShard.storagePayloadDigest = legacyDigest;
+          try {
+            assertProjectShardsMatchCentralIndex([legacyShard], {projectStateShards: {projects: [{projectId: "prj_legacy_digest", storagePayloadDigest: legacyDigest}]}});
+          } catch (error) {
+            output.push(`分片兼容: 旧格式摘要在读取时被拒（${error.message}）—— 升级后第一次读取就起不来`);
+          }
+        }
+      }
+
       // 引导期中央索引尚未建立时不得凭空报错，否则第一次启动就起不来。
       try {
         assertProjectShardsMatchCentralIndex([shard], {});

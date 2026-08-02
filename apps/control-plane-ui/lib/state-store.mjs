@@ -283,6 +283,13 @@ export function assertProjectShardsMatchCentralIndex(shards, centralState) {
     if (entry.storagePayloadBytes && Number(entry.storagePayloadBytes) !== Number(shard.storagePayloadBytes || 0)) {
       throw new Error(`project_state_shard_payload_size_mismatch:${shard.projectId}`);
     }
+    // 三路接受是【升级兼容】：插入序与旧版摘要来自本模块早期的两种写法，用于让升级后的第一次读取
+    // 不至于把自己的存量存储判成被篡改。它有明确的退役条件，不是长期双路径：
+    // externalizeProjectState 的复用判定比对的是【规范序】摘要（digestProjectShardPayload），
+    // 旧格式必然不匹配 -> 该分片不可复用 -> 下一次写入必被重写为规范序。因此升级后完成一次写入周期，
+    // 下面两条兼容分支即成为不可达代码，可以连同 insertionOrderDigest*/legacyDigest* 一并删除。
+    // 【若有人把复用判定改成也接受旧格式摘要，这个退役条件当场失效、兼容路径变成永久的】——
+    // 那属于 sys.scope-convergence 禁止的长期双路径，改动复用判定时必须同时处置这里。
     if (entry.storagePayloadDigest && entry.storagePayloadDigest !== digestProjectShardPayload(shard)
       && entry.storagePayloadDigest !== insertionOrderDigestProjectShardPayload(shard)
       && entry.storagePayloadDigest !== legacyDigestProjectShardPayload(shard)) {
