@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload, canonicalJson } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
 import { publicAgentNode } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
@@ -2459,6 +2459,20 @@ function verifyHumanAndOrganizationContracts(output) {
     const shardB = {collections: {taskGroups: [{name: "x", id: "tg1"}]}, projectId: "prj_order", schemaVersion: "project-state-shard/v1"};
     if (digestProjectShardPayload(shardA) !== digestProjectShardPayload(shardB)) {
       output.push("the project-shard digest depends on key order — a Postgres round-trip reorders jsonb keys, so the integrity check reports tampering on data it wrote itself");
+    }
+    // 光比"同内容不同键序"是不够的：第一版规范化正是通过了那条，却在真实往返上失败 ——
+    // 它与真正落盘用的 JSON.stringify 在 undefined 键上语义不同（它输出 null，后者跳过），
+    // 于是字节数与摘要算在一份"从未被写下"的载荷上。这里直接钉住那条性质。
+    // （我先写过一条走真实写读往返的断言，但夹具到不了那条路径、去掉修复也不会变红 ——
+    //  抓不到缺陷的断言不该留下，它只会让人以为这里被守住了。）
+    for (const probe of [{a: 1, b: undefined}, {nested: {x: undefined, y: 2}}, {list: [1, undefined, 3]}]) {
+      const canonical = canonicalJson(probe);
+      const stringified = JSON.stringify(probe);
+      const canonicalKeys = (canonical.match(/"[a-z]+":/gu) || []).sort().join(",");
+      const stringifiedKeys = (stringified.match(/"[a-z]+":/gu) || []).sort().join(",");
+      if (canonicalKeys !== stringifiedKeys) {
+        output.push(`canonicalJson and JSON.stringify disagree on which keys exist for ${JSON.stringify(probe)} (${canonicalKeys} vs ${stringifiedKeys}) — the digest would then be computed over a payload the serialiser never writes, and the store reports tampering on data it produced itself`);
+      }
     }
     // 反向：内容真的不同时必须仍然不同，否则这个摘要就不再是完整性校验了。
     const shardC = {...shardA, collections: {taskGroups: [{id: "tg1", name: "y"}]}};

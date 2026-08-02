@@ -668,7 +668,7 @@ function runtimeJsonShardMetadataFromCentral(centralState = {}) {
 // **不保留键序**（存储时会规范化重排）。于是同一份分片写进 PG 再读回来，序列化结果不同、摘要对不上，
 // 完整性校验把一次正常的往返判成篡改。runtime_json 是普通文件、键序原样保留，所以本地一直是绿的 ——
 // 这个缺陷只有跑 PostgreSQL 的那条端到端能发现。
-function canonicalJson(value) {
+export function canonicalJson(value) {
   // 数组里的 undefined 与 JSON.stringify 一致：变成 null。
   if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item === undefined ? null : item)).join(",")}]`;
   if (value && typeof value === "object") {
