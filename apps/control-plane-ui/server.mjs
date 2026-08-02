@@ -11,6 +11,7 @@ import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStored
 import { appendProjectExecutionEvent, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
 import {
   authenticateAgentNode,
+  authenticateExecutorPrincipal,
   ackAgentControlCommand,
   buildExecutionContentBundle,
   claimNextDispatch,
@@ -961,6 +962,16 @@ function mcpContextFromRequest(req, state) {
     return {
       principal: {kind: "agent_node", id: node.nodeId, projectIds: node.projectIds, allowedMcpTools: node.allowedMcpTools},
       allowedMcpTools: node.allowedMcpTools
+    };
+  }
+  // 执行器凭据只在这里被接受 —— 网关端点走 authenticateAgentNode，认不出它。
+  // 主体仍报成 agent_node（授权与 mcpGrants 的匹配逻辑一律不变），额外带上它被绑定的那条派发。
+  const executor = authenticateExecutorPrincipal(state, token);
+  if (executor) {
+    return {
+      principal: {kind: "agent_node", id: executor.node.nodeId, projectIds: executor.node.projectIds,
+        allowedMcpTools: executor.node.allowedMcpTools, dispatchId: executor.dispatch.dispatchId, credentialKind: "executor"},
+      allowedMcpTools: executor.node.allowedMcpTools
     };
   }
   const accountContext = accountFromRequest(req, state);

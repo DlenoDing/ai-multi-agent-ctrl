@@ -1287,6 +1287,11 @@ errors << "the repository-output-target route must reject a repository url not r
 # 界面必须说出这条边界，否则运维会把它读成"能防服务器被篡改"，而那正是它防不了的。
 errors << "the verified-install command must state that its checksum does not protect against a tampered control plane" unless public_app_source.include?("不能") && public_app_source.match?(/checksum 与安装脚本来自同一个控制面地址/)
 # 接线：清理必须挂在每次写入都会经过的淘汰路径上；重放读取必须区分"响应体过期"与"成功但空"。
+# 交给宿主机上那个 AI CLI 的必须是按派发签发、只对 MCP 有效的凭据，不是节点令牌 ——
+# 节点令牌同时开着心跳、领派发、报事件这些网关端点。
+runtime_source = File.read(File.join(ROOT, "apps/agent-runtime/runtime.mjs"))
+errors << "the executor must receive a dispatch-scoped MCP credential, never the node token" unless runtime_source.include?("AIMAC_MCP_BEARER_TOKEN: dispatchPackage.executorToken") && !runtime_source.include?("AIMAC_MCP_BEARER_TOKEN: config.nodeToken")
+errors << "the executor credential must be accepted only on the MCP path" unless server_source.include?("authenticateExecutorPrincipal(state, token)") && !server_source.match?(/requireAuthenticated[\s\S]{0,400}?authenticateExecutorPrincipal/)
 errors << "idempotency payload purge must run on the eviction path taken by every write" unless server_source.include?("purgeExpiredIdempotencyPayloads(state);")
 errors << "an expired idempotency replay must not be returned as an empty success" unless server_source.include?("idempotent_result_expired")
 errors << "postgres project shards must carry a payload digest in the central index (it is computed outside the runtime_json generation branch)" unless File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).include?("if (!nextGeneration) {") && File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).match?(/if \(!nextGeneration\) \{[\s\S]{0,900}?shard\.storagePayloadDigest = digestProjectShardPayload\(shard\);/)

@@ -94,6 +94,7 @@ import {
 import {
   ackAgentControlCommand,
   authenticateAgentNode,
+  authenticateExecutorPrincipal,
   claimNextDispatch,
   createAgentControlCommand,
   createAgentJoinToken,
@@ -2910,6 +2911,42 @@ function verifyAgentGatewayContracts(output) {
     }
     const issuedGrant = state.mcpGrants.find((grant) => grant.agentNodeId === node.nodeId && grant.dispatchId === claimed.dispatch.dispatch.dispatchId && grant.grantStatus === "issued");
     if (!issuedGrant) output.push("Agent Gateway did not issue dispatch-bound MCP grants after claim");
+
+    // 执行器（宿主机上那个 AI CLI）此前拿到的是节点令牌 —— 与网关端点同一份凭据。被提示注入的模型
+    // 因此不只是能用 MCP：能心跳、能领取本项目内的其他派发、能报执行事件。改为按派发签发、只对
+    // MCP 有效的凭据。
+    const executorToken = claimed.dispatch.executorToken;
+    if (!executorToken) {
+      output.push("claiming a dispatch issued no executor credential — the runtime would have to hand the model the node token, which also opens every gateway endpoint");
+    } else {
+      if (authenticateAgentNode(state, executorToken)) {
+        output.push("the executor credential authenticates as the node itself — it opens heartbeat, dispatch claiming and event reporting, which is exactly what it exists to close off");
+      }
+      if (!authenticateExecutorPrincipal(state, executorToken)) {
+        output.push("the executor credential does not authenticate on the MCP path — the model cannot call MCP at all");
+      }
+      // 有效性必须从活的状态派生：派发一被收回，旧令牌立刻失效，不依赖任何一条回收路径记得清字段。
+      const requeued = structuredClone(state);
+      const requeuedDispatch = requeued.agentDispatches.find((item) => item.dispatchId === claimed.dispatch.dispatch.dispatchId);
+      requeuedDispatch.status = "queued";
+      if (authenticateExecutorPrincipal(requeued, executorToken)) {
+        output.push("the executor credential still works after its dispatch was requeued — a previous holder keeps MCP access to work it no longer owns");
+      }
+      // 换代次（被回收后重新认领）之后旧令牌也必须失效。
+      const reclaimed = structuredClone(state);
+      const reclaimedDispatch = reclaimed.agentDispatches.find((item) => item.dispatchId === claimed.dispatch.dispatch.dispatchId);
+      reclaimedDispatch.claimEpoch = Number(reclaimedDispatch.claimEpoch || 0) + 1;
+      if (authenticateExecutorPrincipal(reclaimed, executorToken)) {
+        output.push("the executor credential survived a claim-epoch bump — the previous holder keeps access after the work was reassigned");
+      }
+      // 认领过期后同样失效。
+      const expired = structuredClone(state);
+      const expiredDispatch = expired.agentDispatches.find((item) => item.dispatchId === claimed.dispatch.dispatch.dispatchId);
+      expiredDispatch.claimExpiresAt = new Date(Date.now() - 1000).toISOString();
+      if (authenticateExecutorPrincipal(expired, executorToken)) {
+        output.push("the executor credential outlived its claim — it is no longer bounded by anything");
+      }
+    }
     if (state.mcpGrants.some((grant) => grant.agentNodeId === node.nodeId && grant.toolName === "evidence-mcp.checkpoint_submit" && grant.grantStatus === "issued")) {
       output.push("Agent Gateway issued checkpoint_submit as an Agent MCP grant instead of forcing Gateway checkpoint path");
     }

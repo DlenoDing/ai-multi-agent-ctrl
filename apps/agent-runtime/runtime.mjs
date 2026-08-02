@@ -999,7 +999,10 @@ async function runModelExecutor(config, dispatchPackage, repositoryRoot, skillWo
     ...process.env,
     AIMAC_SERVER_URL: config.serverUrl,
     AIMAC_MCP_URL: config.gateway.mcpUrl,
-    AIMAC_MCP_BEARER_TOKEN: config.nodeToken,
+    // 交给模型的是【按派发签发、只对 MCP 有效】的凭据，不是节点令牌。节点令牌能心跳、能领取
+    // 本项目内的其他派发、能报执行事件 —— 那些不该落到一个可能被提示注入的模型手里。
+    // 拿不到执行器凭据时不回落到节点令牌：宁可让 MCP 调用失败，也不把更大的凭据递出去。
+    AIMAC_MCP_BEARER_TOKEN: dispatchPackage.executorToken || "",
     AIMAC_AGENT_NODE_ID: config.nodeId,
     AIMAC_DISPATCH_PACKAGE_FILE: packagePath,
     AIMAC_TASK_CONTRACT_FILE: packagePath,

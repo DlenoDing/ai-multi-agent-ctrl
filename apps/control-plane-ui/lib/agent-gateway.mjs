@@ -531,6 +531,22 @@ export function selfCheckAgentNode(state, node, input = {}) {
   return {ok: missing.length === 0, admission: node.admission, missingChecks: missing, node: publicAgentNode(node)};
 }
 
+// 只对 /mcp 有效的执行器凭据。刻意不复用 authenticateAgentNode：那一条同时给网关端点放行，
+// 而这份凭据的全部意义就是【不能】做那些事。
+export function authenticateExecutorPrincipal(state, token) {
+  const presented = String(token || "");
+  if (!presented) return null;
+  for (const dispatch of state.agentDispatches || []) {
+    if (dispatch.status !== "running" || !dispatch.executorTokenDigest || !dispatch.assignedNodeId) continue;
+    if (!dispatch.claimExpiresAt || new Date(dispatch.claimExpiresAt).getTime() <= Date.now()) continue;
+    if (dispatch.executorTokenDigest !== digestOf(`executor:${dispatch.dispatchId}:${dispatch.claimEpoch}:${presented}`)) continue;
+    const node = (state.agentRuntimeNodes || []).find((item) => item.nodeId === dispatch.assignedNodeId);
+    if (!node || node.status === "revoked") return null;
+    return {node, dispatch};
+  }
+  return null;
+}
+
 export function claimNextDispatch(state, node, options = {}) {
   ensureAgentGatewayCollections(state);
   if (node.status !== "online" || node.admission !== "full") return {dispatch: null, reason: "node_not_admitted"};
@@ -565,8 +581,15 @@ export function claimNextDispatch(state, node, options = {}) {
   node.activeDispatchIds = uniqueStrings([...(node.activeDispatchIds || []), dispatch.dispatchId]);
   node.updatedAt = at;
   ensureDispatchMcpGrants(state, dispatch, node);
+  // 执行器（宿主机上跑的那个 AI CLI）此前拿到的是【节点令牌】—— 与网关端点用的是同一份凭据。
+  // 于是一个被提示注入的模型不只是能用 MCP：它能心跳、能领取本项目内的其他派发、能报执行事件。
+  // 改为按派发签发一份只对 /mcp 有效的凭据，网关端点一律不认它。
+  // 有效性从活的状态派生（派发仍在运行、认领未过期、代次匹配），而不是靠记得在每条回收路径上
+  // 清字段 —— 重排/撤销/换持有者时旧令牌自动失效，少一处忘记就少一个洞。
+  const executorToken = randomBytes(32).toString("hex");
+  dispatch.executorTokenDigest = digestOf(`executor:${dispatch.dispatchId}:${dispatch.claimEpoch}:${executorToken}`);
   appendGatewayEvent(state, "dispatch_claimed", dispatch.dispatchId, {nodeId: node.nodeId});
-  return {dispatch: buildDispatchPackage(state, dispatch, node, options)};
+  return {dispatch: {...buildDispatchPackage(state, dispatch, node, options), executorToken}};
 }
 
 // Cap the node registry without ever dropping a live node: a register->revoke loop otherwise
