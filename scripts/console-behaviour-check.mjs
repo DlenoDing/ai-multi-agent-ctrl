@@ -396,7 +396,38 @@ function runHeartbeatHintCase() {
     "已撤销的节点还在提示心跳陈旧 —— 它本来就不该再有心跳");
 }
 
+// 规则编辑器每一行都用同样的 name。回填若按 name 找元素（querySelector 永远取第一个），
+// N 行的内容会全部写进第一行 —— 第一行变成最后一行的内容，还被标成"未保存"，人再点保存就把它存下去。
+function runMultiRowRestoreCase() {
+  const buildRuleForm = () => el("form", {dataset: {form: "project-rules", project: "prj_x", category: "business"}}, [
+    el("input", {name: "ruleTitle", value: ""}),
+    el("textarea", {name: "ruleContent", value: ""}),
+    el("input", {name: "ruleTitle", value: ""}),
+    el("textarea", {name: "ruleContent", value: ""}),
+    el("input", {name: "ruleTitle", value: ""}),
+    el("textarea", {name: "ruleContent", value: ""})
+  ]);
+  const submitted = buildRuleForm();
+  const titles = ["第一条规则", "第二条规则", "第三条规则"];
+  const bodies = ["正文一", "正文二", "正文三"];
+  submitted.querySelectorAll('[name="ruleTitle"]').forEach((node, index) => { node.value = titles[index]; });
+  submitted.querySelectorAll('[name="ruleContent"]').forEach((node, index) => { node.value = bodies[index]; });
+
+  const rerendered = buildRuleForm();
+  const probe = loadConsole(el("div", {}, [rerendered]));
+  probe.setFormTouched(false);
+  probe.setPending(probe.snapshotFormValues(submitted));
+  probe.restorePendingForm();
+
+  const restoredTitles = rerendered.querySelectorAll('[name="ruleTitle"]').map((node) => node.value);
+  const restoredBodies = rerendered.querySelectorAll('[name="ruleContent"]').map((node) => node.value);
+  check("多行表单逐行回填",
+    JSON.stringify(restoredTitles) === JSON.stringify(titles) && JSON.stringify(restoredBodies) === JSON.stringify(bodies),
+    `同名多行的回填串行了（标题 ${JSON.stringify(restoredTitles)}，正文 ${JSON.stringify(restoredBodies)}）—— 第一行会变成最后一行的内容，而人再点一次保存就把它存下去`);
+}
+
 runFormRestoreCase();
+runMultiRowRestoreCase();
 runHeartbeatHintCase();
 runClaimMissCase();
 runRuleLengthCase();

@@ -49,13 +49,17 @@ function formIdentity(formEl) {
   return JSON.stringify(Object.keys(formEl.dataset).sort().map((key) => [key, formEl.dataset[key]]));
 }
 
+// 快照按【字段在表单里的位置】记录，不只按 name。规则编辑器每一行都有 name="ruleTitle"/"ruleContent"，
+// 而回填原先用 querySelector 按 name 找元素 —— 它永远返回第一个匹配，于是 N 行的快照全写进第一行，
+// 第一行最终变成最后一行的内容，而且被标成"未保存的修改"；人若直接再点保存，就把这份污染存了下去。
+// 这是我为单字段表单（定稿理由、豁免理由）写的功能，没考虑同名多行 —— 而规则编辑器正是同名多行。
 function snapshotFormValues(formEl) {
   const fields = [];
-  for (const el of formEl.querySelectorAll("input, textarea, select")) {
-    if (!el.name || el.type === "password") continue; // 口令不进快照：内容留存的价值不值得让它多活一轮
-    if (el.type === "checkbox" || el.type === "radio") fields.push([el.name, el.value, el.checked ? "checked" : "unchecked"]);
-    else fields.push([el.name, el.value, "value"]);
-  }
+  [...formEl.querySelectorAll("input, textarea, select")].forEach((el, index) => {
+    if (!el.name || el.type === "password") return; // 口令不进快照：内容留存的价值不值得让它多活一轮
+    if (el.type === "checkbox" || el.type === "radio") fields.push([index, el.name, el.value, el.checked ? "checked" : "unchecked"]);
+    else fields.push([index, el.name, el.value, "value"]);
+  });
   return {identity: formIdentity(formEl), fields};
 }
 
@@ -66,15 +70,16 @@ function restorePendingForm() {
   const formEl = [...document.querySelectorAll("form[data-form]")].find((el) => formIdentity(el) === snapshot.identity);
   if (!formEl) return;
   let restored = false;
-  for (const [name, value, mode] of snapshot.fields) {
+  const targets = [...formEl.querySelectorAll("input, textarea, select")];
+  for (const [index, name, value, mode] of snapshot.fields) {
+    const el = targets[index];
+    // 位置对上还要名字也对上：重渲染后行数或顺序可能变了，名字不符就说明这不是同一个字段，
+    // 宁可不补也不能把内容写到别的格子里 —— 写错格比空着更难被发现。
+    if (!el || el.name !== name) continue;
     if (mode === "value") {
-      const el = formEl.querySelector(`[name="${CSS.escape(name)}"]`);
-      if (!el) continue;
       el.value = value;
       restored = restored || value !== "";
     } else {
-      const el = [...formEl.querySelectorAll(`[name="${CSS.escape(name)}"]`)].find((candidate) => candidate.value === value);
-      if (!el) continue;
       el.checked = mode === "checked";
     }
   }
