@@ -93,7 +93,7 @@ function loadProducedStatuses() {
 // 所以终态这条按【赋值目标变量】归属：lane.status 只算 WorkerLane 的，不算 AgentNode 的。
 // 变量名有歧义的（request 可能是四种请求之一）映射成一个集合，宁可放宽也不误报。
 const VAR_MACHINES = {
-  workItem: ["WorkItem"], expiredWorkItem: ["WorkItem"], blockedItem: ["WorkItem"],
+  workItem: ["WorkItem"], expiredWorkItem: ["WorkItem"], blockedItem: ["WorkItem"], project: ["Project"],
   dispatch: ["AgentDispatch"], session: ["WorkSession"], command: ["Command"], effect: ["CommandEffect"],
   topology: ["ExecutionTopology"], node: ["AgentNode"], taskGroup: ["TaskGroup"], account: ["Account"],
   request: ["PermissionRequest", "ApprovalRequest", "HumanConfirmationRequest", "DerivedTaskRequest"],
@@ -157,7 +157,6 @@ function loadTerminalProducers() {
 const MODELED_AHEAD_OF_IMPLEMENTATION = {
   AuditLog: "审计走的是 runtime/audit-log.jsonl 追加文件，不是 state 里的状态机对象",
   Alert: "告警子系统尚未实现，没有任何代码产生 Alert 对象",
-  Project: "项目没有归档/删除路径（产品缺口，非疏漏）—— maxProjects 只增不减这件事同源",
   ProgressSnapshot: "进度快照是被裁剪掉的，不走 archived 终态",
   // 下面三台是【真的缺一条路】，不是建模错误 —— 登记在这里是为了让缺口有名有姓，而不是让门闭嘴。
   Account: "账号只有 active/suspended，没有退役路径（与项目无归档、maxProjects 只增不减同源的产品缺口）",
@@ -198,7 +197,11 @@ export function checkMachineLiveness() {
         + "这类对象在生产中永远无法终结（AgentNode 此前正是如此：建模的终态无人写入，真正的终态没进模型）");
     }
     // 登记表本身也会过期：实现补上之后要把它从登记表里拿掉，否则它会继续替将来的漂移打掩护。
-    if (registered && anyProduced && anyTerminalProduced) {
+    // 但"过期"必须以【可归属的证据】为准，不能用全局池 —— 实测：给 Project 加了 archived 的写入之后，
+    // ProgressSnapshot（没有可归属的赋值目标、退回全局池）也被判成"终态可达了"，而它其实一步没动。
+    // 用全局池去要求别人撤销登记，等于让一个实体的实现去注销另一个实体的缺口登记。
+    const terminalProducedByOwnWrites = Boolean(own) && terminals.some((state) => own.has(state));
+    if (registered && anyProduced && terminalProducedByOwnWrites) {
       failures.push(`机器活性检查: ${name} 已登记为"建模先于实现"，但它现在已有生产者且终态可达 —— `
         + "请把它从 MODELED_AHEAD_OF_IMPLEMENTATION 里移除，否则这条登记会替以后的漂移打掩护");
     }

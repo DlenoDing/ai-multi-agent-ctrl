@@ -810,6 +810,8 @@ const HUMAN_ONLY_ACTIONS = [
   "human_confirmation_decide",
   "human_directive_create",
   "project_config_update",
+  // 归档一个项目是组织层面的决定（它会释放配额、把项目移出可建工作的范围），不该由机器主体做。
+  "project_archive",
   "task_group_config_update",
   // 重置/语言策略同样是规则变更 —— 重置会把人设定的 configOverrides 整个抹回默认值，
   // 只挡住 update 而放过 reset 等于没挡。
@@ -1337,6 +1339,7 @@ function permissionForAction(action) {
   if (action === "system_upgrade_candidate_resolve") return "task_group:control";
   if (action === "shared_definition_resolve") return "project:update";
   if (action === "project_config_update") return "project:update";
+  if (action === "project_archive") return "project:update";
   if (["org_create", "org_quota_update", "org_status_update"].includes(action)) return "system:*";
   if (["org_member_create", "org_member_permissions_update", "org_member_status_update", "org_member_invite_reissue"].includes(action)) return "org:member_admin";
   if (action === "org_project_create") return "org:project_admin";
@@ -4406,6 +4409,43 @@ async function handleApi(req, res) {
     const reader = requireRead(req, state, taskGroupScope(state, humanDirectiveListMatch[1]));
     if (reader.status) return json(res, reader.status, reader.payload);
     json(res, 200, {humanDirectives: (state.humanDirectives || []).filter((item) => item.taskGroupId === humanDirectiveListMatch[1])});
+    return;
+  }
+
+  // 项目此前【没有任何终结路径】：project.status 在全仓一个写入点都没有，而配额统计排除的是
+  // status !== "deleted" —— 那个状态既不在模型里（模型是 active → archived）、也没有任何代码写它，
+  // 于是那条排除永远为真。结果：maxProjects 只增不减，一个组织把项目建满之后再也建不了新的，
+  // 而它手上没有任何杠杆。这是空转判据长在配额统计里的一例。
+  // 白名单式投影：项目记录目前没有敏感字段，但这次会话里已经见过两次"黑名单投影随着新字段一起漏"。
+  const projectSummary = (project) => ({
+    id: project.id, name: project.name, status: project.status || "active",
+    organizationId: project.organizationId || null, archivedAt: project.archivedAt || null,
+    updatedAt: project.updatedAt || null
+  });
+  const projectArchiveMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/archive$/);
+  if (req.method === "POST" && projectArchiveMatch) {
+    const guard = beginGuardedWrite(req, state, "project_archive", `Project:${projectArchiveMatch[1]}`, projectScope(projectArchiveMatch[1]));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const project = state.projects.find((item) => item.id === projectArchiveMatch[1]);
+    if (!project) return json(res, 404, {error: "project_not_found"});
+    if (project.status === "archived") return json(res, 200, projectSummary(project));
+    // 不级联终结：把一个还有活干的项目归档掉，等于替人把那些工作组一并处置了，而人并没有做这个判断。
+    // 说清还剩哪些，让他自己收尾。
+    const openGroups = (state.taskGroups || []).filter((item) => item.projectId === project.id
+      && !["closed", "aborted"].includes(item.status));
+    if (openGroups.length) {
+      return json(res, 409, {error: "project_has_open_task_groups",
+        message: `该项目还有 ${openGroups.length} 个未终结的任务组，请先逐个关闭或中止它们；归档不会替你处置它们`,
+        openTaskGroupIds: openGroups.map((item) => item.id).slice(0, 20)});
+    }
+    project.status = "archived";
+    project.archivedAt = now();
+    project.updatedAt = now();
+    recomputeOrganizationUsage(state);
+    audit(state, guard.actor, "project_archive", `Project:${project.id}`);
+    finishGuardedWrite(state, guard, 200, projectSummary(project));
+    writeState(state);
+    json(res, 200, projectSummary(project));
     return;
   }
 

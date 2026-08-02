@@ -1821,7 +1821,11 @@ function renderOrgProjects() {
     progressLine(project.progress?.percent),
     badge(project.progress?.phase),
     badge(project.progress?.health),
-    esc((project.members || []).map((member) => `${accountName(member.accountId)}（${t(member.role)}）`).join("、"))
+    esc((project.members || []).map((member) => `${accountName(member.accountId)}（${t(member.role)}）`).join("、")),
+    // 项目此前没有任何终结路径，于是组织的项目配额只增不减、建满之后再也建不了新的。
+    hasPerm("project:update") && project.status !== "archived"
+      ? `<button class="secondary-button" data-action="project-archive" data-project="${esc(project.id)}">归档</button>`
+      : project.status === "archived" ? `<span class="small muted">已归档</span>` : "-"
   ])).join("");
 
   return [
@@ -1833,7 +1837,7 @@ function renderOrgProjects() {
       </form>
     `),
     panel("项目成员授权", renderProjectMemberForm()),
-    panel("项目列表", table(["项目", "状态", "进度", "阶段", "健康度", "成员"], projectRows), {wide: true})
+    panel("项目列表", table(["项目", "状态", "进度", "阶段", "健康度", "成员", "操作"], projectRows), {wide: true})
   ].join("");
 }
 
@@ -3446,7 +3450,7 @@ document.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
-  const MUTATION_ACTIONS = new Set(["orchestrator-run", "decide-model", "sync-skill-source", "task-control", "agent-control", "toggle-agent", "revoke-grant", "revoke-join-token", "revoke-agent-node", "force-revoke-agent-node", "org-status", "member-status", "member-reissue-invite", "bootstrap-init", "tg-config-reset", "close-task-group"]);
+  const MUTATION_ACTIONS = new Set(["orchestrator-run", "decide-model", "sync-skill-source", "task-control", "agent-control", "toggle-agent", "revoke-grant", "revoke-join-token", "revoke-agent-node", "force-revoke-agent-node", "org-status", "member-status", "member-reissue-invite", "project-archive", "bootstrap-init", "tg-config-reset", "close-task-group"]);
   const guardBtn = MUTATION_ACTIONS.has(action) && target.tagName === "BUTTON" ? target : null;
   if (guardBtn) { guardBtn.disabled = true; guardBtn.classList.add("is-loading"); }
   try {
@@ -3548,6 +3552,18 @@ document.addEventListener("click", async (event) => {
       await api(`/api/org/members/${encodeURIComponent(target.dataset.account)}/status`, {method: "POST", body: JSON.stringify({status})});
       await loadPage();
       toast.success(status === "disabled" ? "已停用成员" : "已启用成员");
+      return;
+    }
+    if (action === "project-archive") {
+      if (!(await confirmDialog({
+        title: "归档项目",
+        message: "确认归档该项目？",
+        sub: "归档只做一件事：把它移出可建新工作的范围，并把它占的项目配额释放出来。历史记录保留，内容不会被删除。项目下若还有未终结的任务组，会被拒绝并列出它们 —— 归档不替你处置它们。",
+        danger: true, confirmText: "归档"
+      }))) return;
+      await api(`/api/projects/${encodeURIComponent(target.dataset.project)}/archive`, {method: "POST", body: "{}"});
+      await loadPage();
+      toast.success("项目已归档，配额已释放");
       return;
     }
     if (action === "member-reissue-invite") {

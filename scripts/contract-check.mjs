@@ -2379,6 +2379,34 @@ function verifyHumanAndOrganizationContracts(output) {
     }
   }
 
+  // 项目此前没有任何终结路径：project.status 全仓零写入点，而配额排除的是 status !== "deleted" ——
+  // 那个状态既不在模型里（active → archived）也没人写，于是排除永远为真、maxProjects 只增不减。
+  {
+    const quotaState = structuredClone(seedState);
+    ensureRuntimeCollections(quotaState, {root});
+    const org = (quotaState.organizations || [])[0];
+    if (!org) {
+      output.push("no organization available to assert project quota accounting");
+    } else {
+      quotaState.projects = [
+        {id: "prj_live", name: "live", organizationId: org.orgId, status: "active"},
+        {id: "prj_done", name: "done", organizationId: org.orgId, status: "archived"}
+      ];
+      quotaState.taskGroups = [];
+      recomputeOrganizationUsage(quotaState);
+      const counted = (quotaState.organizations || []).find((item) => item.orgId === org.orgId)?.usage?.projects;
+      if (counted !== 1) {
+        output.push(`archived projects still count against the organization's project quota (counted ${counted} of 2) — an organization that fills its quota can never create another project and has no lever at all`);
+      }
+      // 反向：活着的项目必须照常计数，否则配额就形同虚设。
+      quotaState.projects[1].status = "active";
+      recomputeOrganizationUsage(quotaState);
+      if ((quotaState.organizations || []).find((item) => item.orgId === org.orgId)?.usage?.projects !== 2) {
+        output.push("live projects stopped counting against the quota — the limit no longer limits anything");
+      }
+    }
+  }
+
   // "在线但不领活"原先在服务端也不留痕：no_compatible_dispatch 只回给 agent。控制面在筛的时候
   // 就知道是角色不匹配还是模型不可用，必须把它留下来，否则控制台上这两种长得一模一样。
   {

@@ -1331,6 +1331,9 @@ unless stale_machine_facing.empty?
   errors << "these codes are registered as machine-facing but have Chinese renderings: #{stale_machine_facing.sort.join(", ")} — remove the registration or the translation"
 end
 
+# 项目必须有终结路径：没有它，组织的项目配额只增不减，建满之后再也建不了新的，而它手上没有任何杠杆。
+errors << "a project must have a way to be archived (otherwise the project quota only ever grows)" unless server_source.include?("project_archive") && server_source.include?('project.status = "archived"')
+errors << "archiving must refuse a project that still has open task groups instead of settling them for the person" unless server_source.include?("project_has_open_task_groups")
 errors << "a successful claim must clear the stale cannot-claim diagnosis" unless agent_gateway_source.match?(/return \{dispatch: null, reason: "no_compatible_dispatch"\};\s*\}\s*delete node\.lastClaimMiss;/)
 errors << "the console must surface previousHolderMayHavePushed (an unreviewed push becomes the next holder's baseline)" unless public_app_source.include?("dispatch.previousHolderMayHavePushed")
 errors << "the console must surface which self-check items failed, not just the degraded badge" unless public_app_source.include?("node.selfCheckMissing") && agent_gateway_source.include?("node.selfCheckMissing = missing")

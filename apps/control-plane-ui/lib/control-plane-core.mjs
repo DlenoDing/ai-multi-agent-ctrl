@@ -607,7 +607,9 @@ export function recomputeOrganizationUsage(state) {
       //    若它还是 MCP 邀请出来的（够不着 /api/org/members/:id/status），就没有任何释放杠杆。
       members: (state.accounts || []).filter((account) => (account.organizationId || DEFAULT_ORGANIZATION_ID) === org.orgId
         && !["disabled", "suspended", "retired"].includes(account.status)).length,
-      projects: (state.projects || []).filter((project) => (project.organizationId || DEFAULT_ORGANIZATION_ID) === org.orgId && project.status !== "deleted").length,
+      // 原先排除的是 status !== "deleted" —— 那个状态既不在 Project 的模型里（active → archived），
+      // 全仓也没有任何代码写它，于是这条排除永远为真、项目配额只增不减。按建模的终态算。
+      projects: (state.projects || []).filter((project) => (project.organizationId || DEFAULT_ORGANIZATION_ID) === org.orgId && project.status !== "archived").length,
       taskGroups: (state.taskGroups || []).filter((taskGroup) => projectOrg.get(taskGroup.projectId) === org.orgId && !["closed", "aborted"].includes(taskGroup.status)).length,
       agents: (state.agentRuntimeNodes || []).filter((node) => (node.organizationId || DEFAULT_ORGANIZATION_ID) === org.orgId && node.status !== "revoked").length
     };
