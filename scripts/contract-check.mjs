@@ -1399,6 +1399,26 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("内容包: 定稿决策条目里没有那条实际的决策内容");
     }
 
+    // 规则体系的全部意义在于它到得了执行方。此前只验证了"提示里包含 system/rules.md 这个文件"
+    // （doctor-agent-remote），没有任何地方验证【那份文件里确实是当前生效的规则正文】——
+    // renderRules 若截断、若漏掉某一类、若把标题渲染成空，文件照样存在，断言照样绿。
+    const cbRulesEntry = (cbBundle?.entries || []).find((entry) => entry.path === "system/rules.md");
+    const cbDefaultRules = defaultSystemRules();
+    if (!cbRulesEntry) {
+      output.push("内容包: 系统规则没有进入下发给 agent 的内容包 —— 人在控制台写的规则不会被模型读到");
+    } else {
+      const cbRulesText = String(cbRulesEntry.content || "");
+      const cbMissing = cbDefaultRules.filter((rule) => rule.enabled && rule.status === "active")
+        .filter((rule) => !cbRulesText.includes(rule.title) || !cbRulesText.includes(rule.content));
+      if (cbMissing.length) {
+        output.push(`内容包: 这些生效的系统规则没有完整出现在下发正文里：${cbMissing.map((rule) => rule.ruleId).join("、")}`
+          + " —— 规则被截断或漏发时，文件仍然存在，只验证文件存在的断言照样是绿的");
+      }
+      if (cbRulesEntry.contentDigest !== digestOf(cbRulesText)) {
+        output.push("内容包: 系统规则条目的摘要与正文不符 —— 执行方按摘要校验会拒绝，或按错误摘要接受被改过的规则");
+      }
+    }
+
     // 分类器判不出架构与选型这类决策，而让它 fail-safe 会把确认流量堆到没人看的程度。
     // 机器判不了的事，判断权归人：真人可以直接指定某个工作项必须先有定稿方案才能开跑。
     const pfState = structuredClone(seedState);
