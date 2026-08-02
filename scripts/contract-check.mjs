@@ -70,6 +70,8 @@ import {
   decideSessionPlacement,
   roomSend,
   effectivePathDenylist,
+  computeEffectiveRulesDigest,
+  effectiveProjectConfig,
   recordCheckpointRejection,
   routeBlockedDispatchToHumanDecision,
   purgeExpiredIdempotencyPayloads,
@@ -2377,6 +2379,30 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     if (!claudeAfter.mcpServers?.unrelated_server) {
       output.push("cleaning the claude MCP config removed an unrelated server the operator configured");
+    }
+  }
+
+  // 规则标题会原样下发给模型（内容包里拼成 `## <title>` + 正文），所以改标题就改了模型读到的东西。
+  // 而摘要原先只哈希 (ruleId, category, content) —— 于是"契约签发之后规则变过"那道检测对整整一类
+  // 改动失明，而它正是用来保证"人写下的那份就是模型读到的那份"。
+  {
+    const ruleState = structuredClone(seedState);
+    ensureRuntimeCollections(ruleState, {root});
+    const ruleProject = (ruleState.projects || [])[0];
+    // 规则住在 project.config.systemRules（不是 project.systemRules）—— 放错位置时探针会安静地
+    // 什么都测不到，而失败信息看起来像代码有问题。
+    ruleProject.config = {...(ruleProject.config || {}),
+      systemRules: [{ruleId: "probe.rule", title: "精确暂存禁止 add .", content: "只暂存本次改动涉及的文件", enabled: true}]};
+    const before = computeEffectiveRulesDigest(effectiveProjectConfig(ruleProject));
+    ruleProject.config.systemRules[0].title = "随便写点别的";
+    const afterTitle = computeEffectiveRulesDigest(effectiveProjectConfig(ruleProject));
+    if (before === afterTitle) {
+      output.push("changing a rule's title left the effective-rules digest unchanged — the title is delivered to the model verbatim, so the drift check is blind to a whole class of edits to what the model actually reads");
+    }
+    // 反向：什么都不改时摘要必须稳定，否则每次派发都会误报"规则变过"，那个警告很快就没人看。
+    const again = computeEffectiveRulesDigest(effectiveProjectConfig(ruleProject));
+    if (again !== afterTitle) {
+      output.push("the effective-rules digest is unstable across identical inputs — every dispatch would falsely report that the rules changed");
     }
   }
 

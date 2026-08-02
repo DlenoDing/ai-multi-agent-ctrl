@@ -4177,14 +4177,19 @@ function mergeRuleLayer(base, overlay, source, category) {
 // invariant default-rule bodies (some multi-KB) were re-hashed on every buildTaskContract (every dispatch).
 // Cache is bounded by the number of distinct rule contents in the system (defaults + capped overrides).
 const ruleContentDigestCache = new Map();
-function ruleContentDigest(ruleId, category, content) {
-  // Length-prefix the first two fields so no (ruleId, category, content) triple can alias another
-  // regardless of separator characters in the ids; content is last and needs no delimiter. (Plain
-  // ASCII only — an earlier revision used a raw NUL separator that made the source file read as binary.)
-  const key = `${ruleId.length}:${ruleId}|${category.length}:${category}|${content}`;
+function ruleContentDigest(ruleId, category, content, title = "") {
+  // 标题必须进摘要：下发给模型的正文是 `## ${title}` + 正文（agent-gateway 的 renderRules），
+  // 而摘要原先只哈希 (ruleId, category, content)。于是把一条规则的标题从「精确暂存禁止 add .」
+  // 改成任意文字，模型读到的 system/rules.md 就变了，effectiveRulesDigest 却一位不变 ——
+  // "契约签发之后规则变过"那道检测对整整一类改动失明，而它正是用来保证"人写的那份就是模型读的那份"。
+  //
+  // Length-prefix the first three fields so no tuple can alias another regardless of separator
+  // characters in the ids; content is last and needs no delimiter. (Plain ASCII only — an earlier
+  // revision used a raw NUL separator that made the source file read as binary.)
+  const key = `${ruleId.length}:${ruleId}|${category.length}:${category}|${title.length}:${title}|${content}`;
   const cached = ruleContentDigestCache.get(key);
   if (cached) return cached;
-  const digest = digestOf({ruleId, category, content});
+  const digest = digestOf({ruleId, category, title, content});
   if (ruleContentDigestCache.size >= 20000) ruleContentDigestCache.clear(); // backstop against unbounded growth
   ruleContentDigestCache.set(key, digest);
   return digest;
@@ -4193,7 +4198,8 @@ function ruleContentDigest(ruleId, category, content) {
 function resolveRuleCategory(defaults, projectRules, taskGroupRules, category) {
   const withProject = mergeRuleLayer(defaults, projectRules, "project", category);
   const withTaskGroup = mergeRuleLayer(withProject, taskGroupRules, "task_group", category);
-  return withTaskGroup.map((rule) => ({...rule, category, contentDigest: ruleContentDigest(rule.ruleId, category, rule.content)}));
+  return withTaskGroup.map((rule) => ({...rule, category,
+    contentDigest: ruleContentDigest(rule.ruleId, category, rule.content, rule.title || "")}));
 }
 
 export function effectiveProjectConfig(project) {

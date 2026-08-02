@@ -532,7 +532,10 @@ function boundedQuota(value, fallback) {
 // quietly weaken its semantics). Returns an error code string, or null when the payload is within limits.
 function ruleFragmentsRejection(value) {
   if (value === undefined) return null;
-  if (!Array.isArray(value)) return null;
+  // 非数组原先直接放行，随后 sanitizeRuleFragments 对非数组返回 [] —— 于是
+  // POST {"systemRules":"..."} 会把该层规则【静默清空】并回 200。而这个函数存在的全部理由
+  // 就是"绝不静默改变一条安全规则"，把它整层抹掉显然更严重。
+  if (!Array.isArray(value)) return "rule_fragments_must_be_an_array";
   if (value.length > 200) return "too_many_rules";
   for (const rule of value) {
     if (!rule || typeof rule !== "object") continue;

@@ -89,8 +89,16 @@ const MUTATIONS = [
   {
     name: "草稿契约不得锁死关闭门（人无杠杆）",
     file: CORE,
-    from: "SHARED_DEFINITION_BLOCKING_STATUSES.includes(definition.status)",
-    to: 'definition.status !== "active"',
+    // 必须唯一匹配：这个片段在 core 里出现三次（派发循环 / completion readiness / close barrier），
+    // 而被测的是 computeCloseBarrier 那一处。只写片段会改坏派发循环，于是本门报出"你的测试是假绿"，
+    // 而那条测试其实好好的 —— 一个把人派去删掉有用断言的假阳性。连上下文一起写。
+    // 瞄准 computeCompletionReadiness 里那一处：带 objectType:"SharedDefinitionContract" 的阻塞对象
+    // 由它产出（checkFailures.shared_definitions_active → blockers.push），而断言检查的正是那些对象。
+    // 关闭门里同名的 all_shared_definitions_active 是另一条腿，改它不会影响这条断言。
+    // 我为这条 mutation 瞄错过两次（先是派发循环，再是关闭门），两次的症状都是"你的测试是假绿" ——
+    // 用代码片段钉住突变本身就容易瞄错，而它的误报方向恰好是最会误导人的那个。
+    from: 'shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => SHARED_DEFINITION_BLOCKING_STATUSES.includes(definition.status)),\n    repository_output_target_terminal',
+    to: 'shared_definitions_active: relatedSharedDefinitions(state, taskGroup).some((definition) => definition.status !== "active"),\n    repository_output_target_terminal',
     expect: "AI 能建出的草稿契约就锁死了关闭门"
   },
   {
@@ -142,10 +150,22 @@ const MUTATIONS = [
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
 // 工作树里就会留下【闸门守卫被禁用】的代码 —— 那比它要防的问题更危险。所以把待还原的内容
 // 登记在进程级，并在所有退出路径上还原。
+// 记的是「原内容」与「我写下的那份改坏内容」两样。还原前必须确认磁盘上仍是后者 ——
+// 否则就是别人在这期间改了这个文件，把它覆盖回去等于销毁别人未提交的改动。
+// 本次会话真的发生过：这道门在后台跑，我同时在改同一个文件，跑完它把我的改动抹掉了。
+// 这与用 git checkout 撤销临时改动是同一类事故，只是这次是我自己的工具做的。
 const pendingRestores = new Map();
 function restoreAll() {
-  for (const [path, content] of pendingRestores) {
-    try { writeFileSync(path, content); } catch { /* 尽力而为 */ }
+  for (const [path, {original, mutated}] of pendingRestores) {
+    try {
+      const onDisk = readFileSync(path, "utf8");
+      if (onDisk !== mutated) {
+        process.stderr.write(`mutation gate: ${path} 在本门运行期间被改动过，已放弃还原以免覆盖它。\n`
+          + "  若这不是你的改动，请对照 git diff 手工确认；本门不再自动写回。\n");
+        continue;
+      }
+      writeFileSync(path, original);
+    } catch { /* 尽力而为 */ }
   }
   pendingRestores.clear();
 }
@@ -166,10 +186,21 @@ function run() {
       failures.push(`${mutation.name}: 找不到要改坏的代码片段 —— 守卫可能已被重写，mutation 需同步更新`);
       continue;
     }
+    // 目标不唯一必须报错，不能默默改第一处。实测踩到过：SHARED_DEFINITION_BLOCKING_STATUSES.includes(...)
+    // 后来在派发循环里也出现了一次、且在文件更靠前，于是这条 mutation 改坏的是另一条路径，
+    // 被测的关闭门毫发无损 —— 本门于是报出"你的测试是假绿"。而那条测试其实是好的。
+    // 一个把人派去修好测试的假阳性，比漏报更糟：它会让人删掉真正有用的断言。
+    const occurrences = original.split(mutation.from).length - 1;
+    if (occurrences !== 1) {
+      failures.push(`${mutation.name}: 要改坏的代码片段在 ${mutation.file} 里出现了 ${occurrences} 次 —— `
+        + "无法确定改的是被测的那一处，mutation 必须写成唯一匹配（连上下文一起写）");
+      continue;
+    }
     // 【必须先登记再改】——否则上面那套退出钩子拿不到要还原的内容，看着有崩溃安全实则空转
     // （我第一版就是这样：pendingRestores 从没被填充过）。
-    pendingRestores.set(path, original);
-    writeFileSync(path, original.replace(mutation.from, mutation.to));
+    const mutated = original.replace(mutation.from, mutation.to);
+    pendingRestores.set(path, {original, mutated});
+    writeFileSync(path, mutated);
     let output = "";
     let passed = false;
     try {
@@ -178,7 +209,11 @@ function run() {
     } catch (error) {
       output = `${error.stdout || ""}${error.stderr || ""}`;
     } finally {
-      writeFileSync(path, original);
+      // 同上：只在磁盘内容仍是自己写下的那份时才写回。
+      let onDisk = "";
+      try { onDisk = readFileSync(path, "utf8"); } catch { onDisk = mutated; }
+      if (onDisk === mutated) writeFileSync(path, original);
+      else process.stderr.write(`mutation gate: ${path} 期间被改动过，已放弃还原以免覆盖它。\n`);
       pendingRestores.delete(path);
     }
     process.stdout.write(`  · ${mutation.name} …\n`);

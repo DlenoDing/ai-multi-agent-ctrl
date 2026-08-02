@@ -121,6 +121,20 @@ const PROJECT_MENU_TAIL = [
 // 而人此刻正想知道的就是"它是不是已经没了"。这里只做客户端提示，不改判定：真正的下线由服务端对账决定。
 // "在线但一直不领活"是最容易让人干瞪眼的一种：节点绿着、派发排着，两种原因（角色不匹配 /
 // 模型不可用）在界面上长得一模一样。控制面在筛的时候就知道答案，这里把它说出来。
+// 执行事件带着的证据引用。规则文件那几条单独提出来放前面：它们回答的是"这次实际下发了哪几份规则"，
+// 而其余引用（提交、检查点、指令）对人的价值低得多。
+function evidenceRefsHint(event) {
+  const refs = Array.isArray(event.evidenceRefs) ? event.evidenceRefs : [];
+  if (!refs.length) return "";
+  const ruleFiles = refs.filter((ref) => String(ref).startsWith("prompt-includes:"))
+    .map((ref) => String(ref).slice("prompt-includes:".length));
+  const others = refs.filter((ref) => !String(ref).startsWith("prompt-includes:"));
+  return [
+    ruleFiles.length ? `<div class="small muted">提示词实际包含：${ruleFiles.map((file) => esc(file)).join("、")}</div>` : "",
+    others.length ? `<div class="small muted mono">${others.slice(0, 4).map((ref) => esc(String(ref).slice(0, 60))).join(" ")}</div>` : ""
+  ].filter(Boolean).join("");
+}
+
 function claimMissHint(node) {
   const miss = node.lastClaimMiss;
   if (!miss || !miss.queuedCount) return "";
@@ -2242,12 +2256,12 @@ function ruleRow(rule, layer, readOnly = false) {
       data-orig-content="${esc(rule.content || "")}"
       data-orig-title="${esc(rule.title || "")}">
       <div class="rule-head">
-        <input class="rule-title-input" name="ruleTitle" maxlength="256" value="${esc(rule.title || "")}" ${(isDefault || readOnly) ? "readonly" : ""} placeholder="规则标题">
+        <input class="rule-title-input" name="ruleTitle" value="${esc(rule.title || "")}" ${(isDefault || readOnly) ? "readonly" : ""} placeholder="规则标题">
         ${ruleSourceBadge(source)}
         <label class="rule-toggle"><input type="checkbox" name="ruleEnabled" ${enabled ? "checked" : ""} ${readOnly ? "disabled" : ""}> 启用</label>
         ${canDelete ? `<button type="button" class="danger-button" data-action="rule-del">删除</button>` : ""}
       </div>
-      <textarea name="ruleContent" maxlength="8192" ${ro} placeholder="规则内容（可改写默认内容）">${esc(rule.content || "")}</textarea>
+      <textarea name="ruleContent" ${ro} placeholder="规则内容（可改写默认内容）">${esc(rule.content || "")}</textarea>
     </div>
   `;
 }
@@ -2257,11 +2271,11 @@ function ruleRowNew(category) {
     <div class="rule-row" data-rule-row data-rule-category="${esc(category)}" data-rule-source="" data-orig-enabled="1" data-orig-content="" data-orig-title="">
       <div class="rule-head">
         <input class="rule-id-input" name="ruleId" maxlength="128" placeholder="规则 ID（可留空自动生成）">
-        <input class="rule-title-input" name="ruleTitle" maxlength="256" placeholder="规则标题">
+        <input class="rule-title-input" name="ruleTitle" placeholder="规则标题">
         <label class="rule-toggle"><input type="checkbox" name="ruleEnabled" checked> 启用</label>
         <button type="button" class="danger-button" data-action="rule-del">删除</button>
       </div>
-      <textarea name="ruleContent" maxlength="8192" placeholder="规则内容"></textarea>
+      <textarea name="ruleContent" placeholder="规则内容"></textarea>
     </div>
   `;
 }
@@ -2285,6 +2299,23 @@ function ruleEditorForm(opts) {
       </div>
     </form>
   `;
+}
+
+// 服务端特意对超长规则回 422 而不是截断（它的注释写着"绝不静默削弱一条安全规则的语义"）——
+// 而 textarea 的 maxlength 在请求发出之前就把超出部分丢掉了，于是那道 422 永远不会被人看到：
+// 人写了一万字，存下的是前 8192 字，界面一声不吭。maxlength 已移除，改为提交时明确拒绝并说清超了多少。
+const RULE_LIMITS = {title: 256, content: 8192};
+
+function assertRuleFragmentLengths(fragments) {
+  for (const fragment of fragments) {
+    if (String(fragment.title || "").length > RULE_LIMITS.title) {
+      throw new Error(`规则标题超长（${String(fragment.title).length} / 上限 ${RULE_LIMITS.title} 字）：${String(fragment.title).slice(0, 20)}… —— 请自行精简，系统不会替你截断`);
+    }
+    if (String(fragment.content || "").length > RULE_LIMITS.content) {
+      throw new Error(`规则「${String(fragment.title || fragment.ruleId || "未命名")}」正文超长（${String(fragment.content).length} / 上限 ${RULE_LIMITS.content} 字）—— 请自行精简或拆成两条，系统不会替你截断（截断会悄悄改变这条规则的含义）`);
+    }
+  }
+  return fragments;
 }
 
 function collectRuleFragments(form, layer) {
@@ -2618,7 +2649,10 @@ function renderMonitor() {
     badge(event.eventType, "blue"),
     {v: `${esc(event.progressPercent ?? 0)}%`, c: "num"},
     badge(event.status),
-    {v: esc(event.summary || "-"), c: "text-clip"},
+    // 证据引用此前从不渲染，而执行方恰恰在这里上报了"这次提示词里实际包含了哪几份规则文件"
+    // （prompt-includes:system/rules.md 之类）。人在控制台上只看得到 summary 里那句"含 N 个规则文件"，
+    // 看不到是哪几个 —— 而"人写下的那份规则有没有真的到达模型"正是要从这里回答的。
+    {v: `${esc(event.summary || "-")}${evidenceRefsHint(event)}`, c: "text-clip"},
     {v: fmtTime(event.createdAt), c: "nowrap"}
   ])).join("");
 
@@ -3184,7 +3218,7 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     if (kind === "project-rules") {
-      const fragments = collectRuleFragments(form, "project");
+      const fragments = assertRuleFragmentLengths(collectRuleFragments(form, "project"));
       const payload = form.dataset.category === "system" ? {systemRules: fragments} : {businessRules: fragments};
       await api(`/api/projects/${encodeURIComponent(form.dataset.project)}/config`, {method: "POST", body: JSON.stringify(payload)});
       formTouched = false;
@@ -3192,7 +3226,7 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     if (kind === "tg-rules") {
-      const fragments = collectRuleFragments(form, "task_group");
+      const fragments = assertRuleFragmentLengths(collectRuleFragments(form, "task_group"));
       const payload = form.dataset.category === "system" ? {systemRules: fragments} : {businessRules: fragments};
       await api(`/api/task-groups/${encodeURIComponent(form.dataset.task)}/config`, {method: "POST", body: JSON.stringify(payload)});
       formTouched = false;

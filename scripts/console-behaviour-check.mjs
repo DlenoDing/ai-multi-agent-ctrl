@@ -114,6 +114,8 @@ globalThis.__probe = {
   decisionSelect: (...args) => decisionSelect(...args),
   heartbeatStaleHint: (node) => heartbeatStaleHint(node),
   claimMissHint: (node) => claimMissHint(node),
+  assertRuleFragmentLengths: (fragments) => assertRuleFragmentLengths(fragments),
+  evidenceRefsHint: (event) => evidenceRefsHint(event),
   setFetch: (fn) => { globalThis.fetch = fn; },
   api: (path, options) => api(path, options)
 };
@@ -323,6 +325,42 @@ async function runErrorGuidanceCase() {
 
 // 控制面把失联节点扫下线要等超时；在那之前它照旧显示"在线"，而人此刻正想知道的就是"它是不是已经没了"。
 // "在线但一直不领活"：节点绿着、派发排着，而角色不匹配与模型不可用在界面上原先长得一模一样。
+// 服务端对超长规则回 422 而不是截断（"绝不静默削弱一条安全规则的语义"），而 textarea 的 maxlength
+// 在请求发出之前就把超出部分丢掉了 —— 人写了一万字，存下的是前 8192 字，一声不吭。
+// "人写下的那份规则有没有真的到达模型"，唯一能回答它的证据就在执行事件的 evidenceRefs 里，
+// 而事件表此前只渲染 summary。人只看到"含 3 个规则文件"，看不到是哪三个。
+function runEvidenceRefsCase() {
+  const probe = loadConsole(el("div"));
+  const shown = probe.evidenceRefsHint({evidenceRefs: [
+    "prompt:sha256abc", "prompt-includes:system/rules.md", "prompt-includes:business/rules.md"
+  ]});
+  check("说得出下发了哪几份规则",
+    shown.includes("system/rules.md") && shown.includes("business/rules.md"),
+    `执行事件没有说出提示词里实际包含了哪几份规则文件（${JSON.stringify(shown.slice(0, 100))}）`);
+  check("没有证据时不占地方",
+    probe.evidenceRefsHint({}) === "" && probe.evidenceRefsHint({evidenceRefs: []}) === "",
+    "没有证据引用时仍然渲染了一块空内容");
+}
+
+function runRuleLengthCase() {
+  const probe = loadConsole(el("div"));
+  let threw = null;
+  try { probe.assertRuleFragmentLengths([{ruleId: "r1", title: "t", content: "x".repeat(8193)}]); }
+  catch (error) { threw = error; }
+  check("超长规则被拒而不是截断",
+    threw !== null && /8193/.test(String(threw.message)),
+    `超长规则没有被拒绝（${threw ? JSON.stringify(String(threw.message).slice(0, 80)) : "未抛错"}）—— 浏览器会静默丢弃超出部分，而人以为整条都存下了`);
+  check("拒绝时说清超了多少",
+    threw !== null && /8192/.test(String(threw.message)),
+    "拒绝信息里没有说出上限，人不知道该精简到多少");
+  let ok = null;
+  try { probe.assertRuleFragmentLengths([{ruleId: "r2", title: "t", content: "x".repeat(8192)}]); }
+  catch (error) { ok = error; }
+  check("恰好到上限必须放行",
+    ok === null,
+    `正好等于上限的规则被拒（${ok && ok.message}）—— 判据把边界算错了一位`);
+}
+
 function runClaimMissCase() {
   const probe = loadConsole(el("div"));
   const roleMiss = probe.claimMissHint({lastClaimMiss: {queuedCount: 2, reasons: [
@@ -361,6 +399,8 @@ function runHeartbeatHintCase() {
 runFormRestoreCase();
 runHeartbeatHintCase();
 runClaimMissCase();
+runRuleLengthCase();
+runEvidenceRefsCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();

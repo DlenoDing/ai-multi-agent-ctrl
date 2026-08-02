@@ -1332,6 +1332,12 @@ unless stale_machine_facing.empty?
 end
 
 # 项目必须有终结路径：没有它，组织的项目配额只增不减，建满之后再也建不了新的，而它手上没有任何杠杆。
+# 规则标题会原样下发给模型（renderRules 拼成 `## <title>`），所以它必须进摘要 —— 否则改标题
+# 就改了模型读到的内容，而"契约签发后规则变过"的检测一位都不动。
+errors << "the rule digest must cover the title (it is delivered to the model verbatim)" unless core_source.include?("digestOf({ruleId, category, title, content})")
+# 判别力门必须真的在跑。它把"改坏守卫→测试必须变红"这套纪律固化成脚本，而它此前有 npm 脚本
+# 却不在任何链路上 —— 用来强制"断言必须有判别力"的机制自己没在跑，是本仓最讽刺的一处空转。
+errors << "the mutation gate must be wired into the doctor chain" unless File.read(File.join(ROOT, "package.json")).include?("npm run -s mutation-gate")
 errors << "a project must have a way to be archived (otherwise the project quota only ever grows)" unless server_source.include?("project_archive") && server_source.include?('project.status = "archived"')
 errors << "archiving must refuse a project that still has open task groups instead of settling them for the person" unless server_source.include?("project_has_open_task_groups")
 errors << "a successful claim must clear the stale cannot-claim diagnosis" unless agent_gateway_source.match?(/return \{dispatch: null, reason: "no_compatible_dispatch"\};\s*\}\s*delete node\.lastClaimMiss;/)

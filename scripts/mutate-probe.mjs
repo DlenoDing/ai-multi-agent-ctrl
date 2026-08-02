@@ -31,6 +31,14 @@ if (!original.includes(search)) {
   console.error(`突变探针: 在 ${file} 里找不到要替换的内容 —— 探针本身已与代码脱节，不能据此下结论`);
   process.exit(2);
 }
+// 目标不唯一就停手。只替换第一处会静默改坏另一条路径，然后把"测试没有判别力"这个结论
+// 安到一条其实好好的断言头上 —— 本次会话里判别力门与我自己各踩过一次。
+const occurrences = original.split(search).length - 1;
+if (occurrences !== 1) {
+  console.error(`突变探针: 要替换的内容在 ${file} 里出现了 ${occurrences} 次 —— 无法确定改的是哪一处；`
+    + "把上下文一起写进搜索串，使它唯一匹配（若确实要改全部，请分次执行）");
+  process.exit(2);
+}
 
 let status = 2;
 try {
