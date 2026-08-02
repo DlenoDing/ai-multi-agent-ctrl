@@ -6868,6 +6868,24 @@ export const MANDATORY_PATH_DENYLIST = Object.freeze([
 
 // 使用点求取：已经落库的旧目标（含那些完全没有该字段的）也要拿到这个下限，
 // 只在生产者补齐是不够的 —— 生产者可以再多一个，而判据只有这一处。
+// 产出目标指向的仓库必须是【本项目登记过的】那一个。原先 repositoryUrl 直接取调用方入参，
+// 覆盖项目登记的地址，没有任何交叉校验 —— 而写入只被授权在任务组作用域上。于是一个对任务组
+// 有写权限的人可以把目标指向宿主机上另一个仓库（isSafeGitRemoteUrl 放行 file:// 与裸本地路径），
+// agent 在其中改动并 push，写进一个与本任务毫无关系的仓库。
+// 这是"守卫作用域没有覆盖实际被变更的资源"那一类：授权针对 A，改动落在 B。
+export function normalizeRepositoryUrl(url) {
+  // 先剥尾斜杠再剥 .git —— 反过来的话 "…/repo.git/" 里的 .git 剥不掉（它不在结尾），
+  // 于是同一个仓库的两种写法被判成两个仓库。顺序错了不会报错，只会静默拒绝合法地址。
+  return String(url || "").trim().replace(/\/+$/u, "").replace(/\.git$/u, "").replace(/\/+$/u, "").toLowerCase();
+}
+
+export function repositoryUrlRegisteredForProject(project, url) {
+  const registered = (project?.repositories || []).map((item) => normalizeRepositoryUrl(item.url)).filter(Boolean);
+  // 项目一个仓库都没登记时不拦（本地部署/引导期），此时地址由服务端从工作区推导，不是调用方给的。
+  if (!registered.length) return true;
+  return registered.includes(normalizeRepositoryUrl(url));
+}
+
 export function effectivePathDenylist(target) {
   const declared = Array.isArray(target?.pathDenylist) ? target.pathDenylist
     : Array.isArray(target?.forbiddenPathRules) ? target.forbiddenPathRules : [];

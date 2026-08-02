@@ -1278,6 +1278,7 @@ errors << "the REST repository-output-target producer must set pathDenylist thro
 # 接线：抹除必须挂在真正会被周期性调用的那条路上（心跳驱动的 recycleExpiredClaims），
 # 否则函数写好了没人调用，明文令牌照样永久留着。
 errors << "expired registration replays must be redacted from the heartbeat-driven reconciliation path" unless agent_gateway_source.include?("changed = redactExpiredRegistrationReplays(state, at) || changed;")
+errors << "the repository-output-target route must reject a repository url not registered for the project" unless server_source.include?("repository_output_target_repository_not_registered_for_project") && server_source.include?("repositoryUrlRegisteredForProject(urlProject, body.repositoryUrl)")
 errors << "Room participant identity must be derived from the authenticated principal, never from the request body" unless mcp_source.include?("ROOM_PARTICIPANT_KEY") && mcp_source.include?("participantId: args[ROOM_PARTICIPANT_KEY]") && !mcp_source.include?("participantId: string")
 errors << "close-barrier must not trust a stale-version cached readiness" unless core_source.include?("cachedReadiness.stateVersion === state.stateVersion") && contract_check_source.include?("stale readiness")
 errors << "Human directives must be consumed oldest-first" unless core_source.include?("status === \"queued\").reverse()") && contract_check_source.include?("directive FIFO")

@@ -68,6 +68,7 @@ import {
   decideSessionPlacement,
   roomSend,
   effectivePathDenylist,
+  repositoryUrlRegisteredForProject,
   MANDATORY_PATH_DENYLIST,
   advanceWorkItemToReviewRequested,
   ROOM_SENDER_KEY,
@@ -2349,6 +2350,37 @@ function verifyHumanAndOrganizationContracts(output) {
   }
   if (!effectivePathDenylist({pathDenylist: ["docs/**"]}).includes("docs/**")) {
     output.push("the mandatory floor discarded the caller's own denylist entries (the floor must add, not replace)");
+  }
+
+  // 产出目标指向的仓库必须是本项目登记过的那一个。写入只被授权在任务组作用域上，而仓库地址决定
+  // 改动最终落到哪里 —— 少了这条交叉校验，授权针对的是 A、改动可以落在 B（而 isSafeGitRemoteUrl
+  // 放行 file:// 与裸本地路径，"B"可以是宿主机上另一个私有仓库）。
+  {
+    const registeredProject = (state.projects || []).find((item) => (item.repositories || []).length);
+    if (!registeredProject) {
+      output.push("no project has a registered repository — the repository-binding assertion is vacuous here");
+    } else {
+      const registeredUrl = registeredProject.repositories[0].url;
+      if (!repositoryUrlRegisteredForProject(registeredProject, registeredUrl)) {
+        output.push("a project's own registered repository url was rejected as unregistered (the check became a blanket block)");
+      }
+      // .git 后缀与结尾斜杠不该造成差异，否则人会以为自己填的是同一个仓库却被拒。
+      // （登记地址本身可能已带 .git —— 判据要两种写法都认，不能只测其中一种。）
+      for (const variant of [registeredUrl.replace(/\.git$/u, ""), `${registeredUrl.replace(/\.git$/u, "")}.git`, `${registeredUrl}/`]) {
+        if (!repositoryUrlRegisteredForProject(registeredProject, variant)) {
+          output.push(`the repository binding check treats ${JSON.stringify(variant)} as a different repository from the registered ${JSON.stringify(registeredUrl)}`);
+        }
+      }
+      for (const foreign of ["/home/ops/other-private-repo", "file:///tmp/elsewhere", "git@github.com:someone/else.git"]) {
+        if (repositoryUrlRegisteredForProject(registeredProject, foreign)) {
+          output.push(`a repository url not registered for the project was accepted (${foreign}) — a task-group write scope becomes a write into an unrelated repository`);
+        }
+      }
+    }
+    // 未登记任何仓库的项目不拦（引导期地址由服务端从工作区推导，不是调用方给的）。
+    if (!repositoryUrlRegisteredForProject({repositories: []}, "/anything")) {
+      output.push("a project with no registered repositories was blocked — bootstrap and local deployments cannot create an output target at all");
+    }
   }
 
   // 任务组终结后它的房间必须停止收消息：关闭门已经过了，此后的写入不受任何门约束，却照样长在

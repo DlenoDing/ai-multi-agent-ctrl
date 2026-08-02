@@ -89,6 +89,7 @@ import {
   updateTaskGroupLanguagePolicy,
   HUMAN_ACTOR_KEY,
   effectivePathDenylist,
+  repositoryUrlRegisteredForProject,
   ROOM_SENDER_KEY,
   UNSAFE_DELEGATED_GRANT_PERMISSIONS,
   refreshConfirmationsAfterHumanChange,
@@ -3552,6 +3553,16 @@ async function handleApi(req, res) {
     if (body.repositoryUrl && !isSafeGitRemoteUrl(body.repositoryUrl)) {
       json(res, 400, {error: "repository_output_target_unsafe_repository_url"});
       return;
+    }
+    // 调用方给的仓库地址必须是本项目登记过的那一个。写入只被授权在任务组作用域上，而地址
+    // 决定了改动最终落在哪个仓库 —— 不做这条交叉校验，授权针对的是 A、改动可以落在 B。
+    if (body.repositoryUrl) {
+      const urlTaskGroup = state.taskGroups.find((item) => item.id === (body.taskGroupId || "tg_runtime_management"));
+      const urlProject = state.projects.find((item) => item.id === (urlTaskGroup?.projectId || body.projectId));
+      if (!repositoryUrlRegisteredForProject(urlProject, body.repositoryUrl)) {
+        json(res, 400, {error: "repository_output_target_repository_not_registered_for_project"});
+        return;
+      }
     }
     const guard = beginGuardedWrite(req, state, "repository_output_target_select", "RepositoryOutputTarget:new", taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) {
