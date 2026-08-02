@@ -1270,8 +1270,13 @@ function verifyHumanAndOrganizationContracts(output) {
       status: "running", assignedNodeId: rdDrNode.nodeId};
     rdDriftState.agentDispatches = [rdDrDispatch];
     const rdDrContract = {sessionId: "ws_drift", runId: "run_drift", projectId: rdDrTg.projectId,
-      taskGroupId: rdDrTg.id, workId: rdDrTg.workItems[0].id, roleId: "orchestrator", roleSkill: {}, actionBasis: {},
-      effectiveRulesDigest: "sha256:" + "0".repeat(64)};   // 冻结了一个与当前规则不同的摘要
+      taskGroupId: rdDrTg.id, workId: rdDrTg.workItems[0].id, roleId: "orchestrator", roleSkill: {},
+      // 夹具要带上真实契约里那几处【由规则摘要派生】的字段，否则"它们有没有跟着一起动"这条断言
+      // 是在测一个不存在的东西 —— 空夹具下它必然通过，而那正是假绿。
+      effectiveRulesDigest: "sha256:" + "0".repeat(64),   // 冻结了一个与当前规则不同的摘要
+      rulesetDigest: digestOf(["ruleset:ai-native-control-plane:v1", "sha256:" + "0".repeat(64)]),
+      digestRefs: ["ruleset:ai-native-control-plane:v1", `effective-ruleset:sha256:${"0".repeat(64)}`, "model-selection:msd_x"],
+      actionBasis: {activeRuleRefs: ["state-machines:v1", `effective-ruleset:sha256:${"0".repeat(64)}`]}};
     rdDriftState.agentTaskContracts = [rdDrContract];
     try { buildExecutionContentBundle(rdDriftState, rdDrNode, "ws_drift", {}); }
     catch (error) { output.push(`规则漂移: 无法构建内容包（${error.message}）—— 这条断言无从验证`); }
@@ -1280,6 +1285,23 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     if (!rdDrDispatch.rulesChangedAfterContract) {
       output.push("规则漂移: 规则在派发执行期间被改过，却没有留下任何痕迹（人无从知道这份成果不是按原规则做的）");
+    }
+    // 重新定基线时，从这个摘要派生出来的三处必须一起动 —— 否则同一份契约里一个字段说规则是新的、
+    // 三个字段说是旧的，而这份契约会被整份交给 agent 并被提示词要求当作权威读取。
+    {
+      const staleDigest = "sha256:" + "0".repeat(64);
+      const stillStale = [
+        rdDrContract.rulesetDigest === digestOf(["ruleset:ai-native-control-plane:v1", staleDigest]) ? "rulesetDigest" : "",
+        (rdDrContract.digestRefs || []).some((ref) => String(ref) === `effective-ruleset:${staleDigest}`) ? "digestRefs" : "",
+        (rdDrContract.actionBasis?.activeRuleRefs || []).some((ref) => String(ref) === `effective-ruleset:${staleDigest}`) ? "actionBasis.activeRuleRefs" : ""
+      ].filter(Boolean);
+      if (stillStale.length) {
+        output.push(`规则漂移: 重新定基线之后这些字段仍指向旧摘要（${stillStale.join("、")}）—— 同一份契约自相矛盾，而它会整份交给 agent`);
+      }
+      // 反向：与规则无关的引用不得被改写，否则这个函数会顺手抹掉别的证据链。
+      if (!(rdDrContract.digestRefs || []).some((ref) => String(ref).startsWith("model-selection:"))) {
+        output.push("规则漂移: 重新定基线把与规则无关的引用（model-selection）一并改掉了");
+      }
     }
 
     // 内容包承载着人写下的三类规则、人已经拍板的定稿决策、以及人工补充要求。

@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { normalize, resolve, sep } from "node:path";
 import { cancelPendingConfirmationsForDispatch, createId, digestOf, effectiveTaskGroupConfig, ensureRuntimeCollections, expireStaleQueuedDispatches, languagePolicyDirective, normalizeTaskGroupLanguagePolicy, organizationQuotaCheck,
-  computeEffectiveRulesDigest
+  computeEffectiveRulesDigest, applyEffectiveRulesDigest
 } from "./control-plane-core.mjs";
 
 const DEFAULT_AGENT_MCP_TOOLS = [
@@ -1236,7 +1236,9 @@ export function buildExecutionContentBundle(state, node, sessionId, options = {}
   const currentRulesDigest = computeEffectiveRulesDigest(config);
   if (contract.effectiveRulesDigest && contract.effectiveRulesDigest !== currentRulesDigest) {
     const previousDigest = contract.effectiveRulesDigest;
-    contract.effectiveRulesDigest = currentRulesDigest;
+    // 只改 effectiveRulesDigest 会让同一份契约自相矛盾：rulesetDigest / digestRefs /
+    // actionBasis.activeRuleRefs 三处都由它派生，此前全部留在旧值上，而这份契约会整份交给 agent。
+    applyEffectiveRulesDigest(contract, currentRulesDigest);
     contract.rulesChangedAfterContract = {previousDigest, currentDigest: currentRulesDigest, at: new Date().toISOString()};
     dispatch.rulesChangedAfterContract = true;
     appendGatewayEvent(state, "dispatch_rules_changed_after_contract", dispatch.dispatchId, {previousDigest, currentDigest: currentRulesDigest});

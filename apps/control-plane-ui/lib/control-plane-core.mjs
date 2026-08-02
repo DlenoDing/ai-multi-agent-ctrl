@@ -1293,6 +1293,23 @@ export function decideSessionPlacement(state, request = {}) {
 // 而它随包收到的摘要、事后提交的检查点记的都还是旧值 —— 证据链在说谎，且这个摘要全仓原先没有
 // 任何消费者，所以谁也不会发现。
 // 抽成共享函数：两侧各写一遍同样的算法，迟早漂移。
+// 重新定基线时，从规则摘要派生出来的几个字段必须一起动。契约里有四处引用同一个摘要：
+// effectiveRulesDigest、rulesetDigest、digestRefs 里的 effective-ruleset:…、以及
+// actionBasis.activeRuleRefs 里的同名项。漂移处理原先只改第一个 —— 于是同一份契约里
+// 一个字段说规则是新的、三个字段说是旧的，而这份契约会被整份交给 agent。
+// 抽成一处：签发与重定基线走同一段代码，两边各写一遍派生公式正是这类不一致最初的来源。
+export function applyEffectiveRulesDigest(contract, nextDigest) {
+  if (!contract || !nextDigest) return contract;
+  const rewriteRef = (ref) => (String(ref).startsWith("effective-ruleset:") ? `effective-ruleset:${nextDigest}` : ref);
+  contract.effectiveRulesDigest = nextDigest;
+  contract.rulesetDigest = digestOf(["ruleset:ai-native-control-plane:v1", nextDigest]);
+  if (Array.isArray(contract.digestRefs)) contract.digestRefs = contract.digestRefs.map(rewriteRef);
+  if (Array.isArray(contract.actionBasis?.activeRuleRefs)) {
+    contract.actionBasis.activeRuleRefs = contract.actionBasis.activeRuleRefs.map(rewriteRef);
+  }
+  return contract;
+}
+
 export function computeEffectiveRulesDigest(config) {
   return digestOf([
     ...(config?.activeSystemRules || []).map((rule) => [rule.ruleId, rule.contentDigest]),

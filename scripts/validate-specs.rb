@@ -1340,6 +1340,9 @@ errors << "the content bundle directory must be cleared before it is written (a 
 # 提示词不得把"这个目录下的每一个文件"都宣布为规则：git-transfer 在同一目录下，内容来自项目仓库，
 # 任何能往仓库写文件的人都能让一段文字变成"必须遵守的规则"。
 errors << "the prompt must name the delivered rule files instead of declaring every file in the bundle directory binding" unless runtime_source.include?("these rule files, which are binding constraints") && !runtime_source.include?("read and apply EVERY file under")
+# 重新定基线必须走共用函数：契约里有四处引用同一个规则摘要，只改其中一个会让同一份契约自相矛盾，
+# 而它会被整份交给 agent。两处各写一遍派生公式正是这类不一致最初的来源。
+errors << "re-baselining the effective-rules digest must rewrite every field derived from it (one shared helper, not a bare assignment)" unless core_source.include?("export function applyEffectiveRulesDigest") && agent_gateway_source.include?("applyEffectiveRulesDigest(contract, currentRulesDigest)") && !agent_gateway_source.include?("contract.effectiveRulesDigest = currentRulesDigest")
 errors << "the rule digest must cover the title (it is delivered to the model verbatim)" unless core_source.include?("digestOf({ruleId, category, title, content})")
 # 判别力门必须真的在跑。它把"改坏守卫→测试必须变红"这套纪律固化成脚本，而它此前有 npm 脚本
 # 却不在任何链路上 —— 用来强制"断言必须有判别力"的机制自己没在跑，是本仓最讽刺的一处空转。
