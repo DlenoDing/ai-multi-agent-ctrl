@@ -913,11 +913,21 @@ async function loadPage() {
 }
 
 async function loadTaskGroupDetail(taskGroupId) {
-  const [progressResult, configResult] = await Promise.all([
+  // 房间消息是 agent 之间实际说过的话。它此前在控制台上完全没有入口：人只看得到最后送上来的
+  // 那一个提案，看不到它是怎么谈出来的。而人工定稿这道闸门的前提恰恰是「人能看见 AI 的推理过程
+  // 再决定」—— 看不见协商过程，定稿就退化成对结论点头。读取失败不阻断详情页：房间是旁证，
+  // 不该让它的问题挡住主干信息。
+  const [progressResult, configResult, roomResult] = await Promise.all([
     api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/progress`),
-    api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/config`).catch(() => null)
+    api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/config`).catch(() => null),
+    api(`/api/rooms/${encodeURIComponent(`room_${taskGroupId}`)}/messages?limit=50`).catch(() => null)
   ]);
-  tgDetail = {taskGroupId, progress: progressResult, config: configResult?.config || null};
+  tgDetail = {
+    taskGroupId,
+    progress: progressResult,
+    config: configResult?.config || null,
+    roomMessages: roomResult?.messages || null
+  };
 }
 
 async function loadReviewData() {
@@ -2069,6 +2079,33 @@ function renderTaskGroupDetail(taskGroup) {
       <div class="small muted">真实阻断：${cellIds(guard.escalatableBlockedCells)}</div>
     ` : `<div class="notice">暂无准入分类（编排运行后自动生成）。</div>`;
 
+  // 署名由服务端从已认证主体派生（account:… / agent_node:…），报文里自报的发送者一律不采信 ——
+  // 否则这块面板会把 agent 自己署的名当成人说的话展示给人看，比不展示更糟。
+  const roomMessages = tgDetail.roomMessages;
+  const roomHtml = roomMessages === null
+    ? `<div class="notice">协作记录读取失败或当前账号无权查看该任务组的房间。</div>`
+    : !roomMessages.length
+      ? `<div class="notice">暂无协作记录。agent 之间若通过房间协商方案，过程会显示在这里。</div>`
+      : `<div class="stack">
+          <div class="small muted">这些是 agent 之间实际交换的消息。送到你面前的方案可能是在这里谈成的 ——
+            定稿前值得看一眼过程，而不只是结论。发送者由服务端按已认证身份署名，不是消息自报的。</div>
+          ${roomMessages.map((message) => {
+            const payload = message.payload && typeof message.payload === "object" ? message.payload : {};
+            const text = typeof payload.text === "string" && payload.text ? payload.text : JSON.stringify(payload, null, 2);
+            return `
+              <div class="record">
+                <div class="record-title">
+                  <span class="mono small">#${esc(String(message.sequence ?? ""))}</span>
+                  <strong>${esc(String(message.senderRef || "unattributed"))}</strong>
+                  ${message.senderRef === "unattributed" ? customBadge("无署名", "orange") : ""}
+                </div>
+                <div class="record-meta"><span>${fmtTime(message.createdAt)}</span></div>
+                <pre class="small" style="white-space:pre-wrap;word-break:break-word;margin:6px 0 0;">${esc(String(text).slice(0, 4000))}</pre>
+              </div>
+            `;
+          }).join("")}
+        </div>`;
+
   return `
     <div class="stack" style="margin-top:8px;">
       ${sectionBlock("事项清单", analysisHtml)}
@@ -2078,6 +2115,7 @@ function renderTaskGroupDetail(taskGroup) {
       ${sectionBlock("工作项", `<div class="stack">${workItems || `<div class="notice">暂无工作项。</div>`}</div>`)}
       ${sectionBlock("准入与阻断分类", admissionHtml)}
       ${sectionBlock("阻塞", `<div class="stack">${blockers}</div>`)}
+      ${sectionBlock("协作记录（agent 之间的房间消息）", roomHtml)}
     </div>
   `;
 }

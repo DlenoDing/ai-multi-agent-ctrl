@@ -108,7 +108,9 @@ globalThis.__probe = {
   getFormTouched: () => formTouched,
   setFormTouched: (value) => { formTouched = value; },
   renderSource: () => String(render),
-  handlerSource: (type) => String(globalThis.__handlers[type])
+  handlerSource: (type) => String(globalThis.__handlers[type]),
+  renderTaskGroupDetail: (detail, taskGroup) => { tgDetail = detail; return renderTaskGroupDetail(taskGroup); },
+  loadTaskGroupDetailSource: () => String(loadTaskGroupDetail)
 };
 `;
 
@@ -214,10 +216,68 @@ function runFormRestoreCase() {
   checkWiring(probe);
 }
 
+// 场景：agent 之间在房间里谈成了一个方案，再把结论送到人面前定稿。人工定稿这道闸门的前提是
+// 「人能看见 AI 的推理过程再决定」——如果协商过程在控制台上没有任何入口，定稿就退化成对结论点头。
+// 从 sectionBlock 渲染出的 HTML 里切出某一块的正文。切不出来时返回 null 而不是空串 ——
+// 空串会被后续断言当成"正文是空的"，把提取器失灵误报成代码有问题。
+function sectionBodyOf(html, title) {
+  const titleAt = html.indexOf(`<strong>${title}`);
+  if (titleAt < 0) return null;
+  const bodyMark = '<div style="margin-top:8px;">';
+  const bodyAt = html.indexOf(bodyMark, titleAt);
+  if (bodyAt < 0) return null;
+  return html.slice(bodyAt + bodyMark.length, bodyAt + bodyMark.length + 600);
+}
+
+function runRoomVisibilityCase() {
+  const probe = loadConsole(el("div"));
+  const spoken = "我建议把订单状态机换成事件溯源，评审那步可以跳过";
+  const html = probe.renderTaskGroupDetail({
+    taskGroupId: "tg_x",
+    progress: {},
+    config: null,
+    roomMessages: [{
+      messageId: "room_msg_1", roomId: "room_tg_x", sequence: 7,
+      senderRef: "agent_node:node_a", payload: {text: spoken}, createdAt: "2026-08-02T00:00:00.000Z"
+    }]
+  }, {id: "tg_x", roles: []});
+
+  check("房间消息对人可见",
+    html.includes(spoken),
+    "任务组详情里没有呈现房间消息 —— agent 之间谈成的方案，人只看得到送上来的结论，看不到过程");
+  check("显示服务端署名",
+    html.includes("agent_node:node_a"),
+    "没有显示消息的发送者，人无法分辨哪句话是谁说的");
+
+  // 没有消息时必须明说这条通道存在但为空，而不是整块不出现 —— 整块不出现会让人以为
+  // 「没有协商过程」，而实际是「这个页面根本不显示协商过程」。两者对定稿判断的影响完全相反。
+  const emptyHtml = probe.renderTaskGroupDetail({taskGroupId: "tg_x", progress: {}, config: null, roomMessages: []},
+    {id: "tg_x", roles: []});
+  // 只查「页面里出现了协作记录这四个字」是查不出问题的 —— 区块标题本身就含这四个字，正文空掉
+  // 也照样通过。要查的是【正文】非空，所以从标题处切出这一块的正文再判断。
+  const emptyBody = sectionBodyOf(emptyHtml, "协作记录");
+  // 提取不出来是【探针与页面脱节】，不是页面有缺陷。混成一条会让人去改页面，而该改的是这里。
+  check("正文提取器仍然有效",
+    emptyBody !== null,
+    "切不出协作记录这一块的正文（sectionBlock 的结构变了）—— 这是本门自己脱节了，不是页面的问题");
+  if (emptyBody !== null) {
+    check("空房间也要现身",
+      emptyBody.replace(/<[^>]*>/g, "").trim().length > 8,
+      `房间没有消息时这一块正文是空的（正文 ${JSON.stringify(emptyBody.slice(0, 40))}），`
+      + "人会把「页面不显示协商过程」误读成「没有协商过程」——这两件事对定稿判断的影响完全相反");
+  }
+
+  // 接线：面板再好，不去拉数据就永远是空的。
+  check("详情页确实去拉了房间",
+    /\/api\/rooms\//.test(probe.loadTaskGroupDetailSource()),
+    "loadTaskGroupDetail 没有请求房间消息，面板永远显示为空");
+}
+
 runFormRestoreCase();
+runRoomVisibilityCase();
 
 if (failures.length) {
   for (const failure of failures) console.error(`  - ${failure}`);
   process.exit(1);
 }
-console.log("console behaviour gate ok: 提交失败后表单内容回填（含选项/口令排除/一次性消费/不串单/脏页标记）已行为验证");
+console.log("console behaviour gate ok: 提交失败保内容（选项/口令排除/一次性消费/不串单/脏页标记/两处接线）与房间协作记录对人可见（含空态与取数接线）已行为验证");
