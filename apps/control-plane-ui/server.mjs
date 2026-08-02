@@ -89,6 +89,7 @@ import {
   updateTaskGroupLanguagePolicy,
   HUMAN_ACTOR_KEY,
   effectivePathDenylist,
+  purgeExpiredIdempotencyPayloads,
   repositoryUrlRegisteredForProject,
   ROOM_SENDER_KEY,
   UNSAFE_DELEGATED_GRANT_PERMISSIONS,
@@ -368,6 +369,12 @@ function beginGuardedWrite(req, state, action, subject, resourceScope = inferRes
     if (existingRecord.actor !== actor || existingRecord.action !== action || existingRecord.bodyDigest !== bodyDigest) {
       return {status: 409, payload: {error: "idempotency_key_reuse_conflict"}};
     }
+    // 响应体已过重放窗口时不能返回一个空的成功响应 —— 那看起来像原来那次调用的结果，
+    // 而它什么内容都没有。明确告诉调用方：那次写入确实发生过，但结果已经不能再重放了。
+    if (existingRecord.payload === undefined) {
+      return {status: 409, payload: {error: "idempotent_result_expired", idempotencyKey,
+        originalStatus: existingRecord.status, completedAt: existingRecord.createdAt}};
+    }
     return {status: existingRecord.status, payload: existingRecord.payload};
   }
   const drift = writeDriftCheck(state, action, resourceScope);
@@ -411,6 +418,7 @@ function beginGuardedWrite(req, state, action, subject, resourceScope = inferRes
 
 // 幂等记录按数量淘汰最旧项，界住 state.json 无限增长（保留近期重放正确性；幂等键本就是近期重试语义）。
 function evictIdempotencyRecords(state) {
+  purgeExpiredIdempotencyPayloads(state);
   const cap = Number(process.env.AIMAC_IDEMPOTENCY_RECORD_CAP || 5000);
   const keys = Object.keys(state.idempotencyRecords || {});
   if (keys.length <= cap) return;

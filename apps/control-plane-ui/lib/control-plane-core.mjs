@@ -6886,6 +6886,22 @@ export function repositoryUrlRegisteredForProject(project, url) {
   return registered.includes(normalizeRepositoryUrl(url));
 }
 
+// 一条幂等记录同时承担两件事，而两件事的时限差了几个数量级：
+//   1) 重放 —— 同一个键的重试要拿回同一份响应体。客户端的重试发生在几秒到几分钟内。
+//   2) 按键复用冲突检测 —— 同一个键配上不同 actor/动作/请求体必须 409。这条要保留整个上限窗口。
+// 原先响应体跟着记录一起留到被淘汰为止：单条实测 8KB（orchestrator_run 的完整返回），上限 5000 条
+// 就是中央文档里 ~40MB，而中央文档【每一次任意写入都要整份重写】—— 一次失败登录的审计写也要。
+// 所以响应体按重放窗口清掉，判据字段照旧长期保留。
+export function purgeExpiredIdempotencyPayloads(state, at = Date.now()) {
+  const ttlMs = Math.max(60000, Number(process.env.AIMAC_IDEMPOTENCY_PAYLOAD_TTL_MS || 600000));
+  for (const record of Object.values(state.idempotencyRecords || {})) {
+    if (record.payload === undefined || record.payloadExpiredAt) continue;
+    if (at - new Date(record.createdAt || 0).getTime() <= ttlMs) continue;
+    delete record.payload;
+    record.payloadExpiredAt = new Date(at).toISOString();
+  }
+}
+
 export function effectivePathDenylist(target) {
   const declared = Array.isArray(target?.pathDenylist) ? target.pathDenylist
     : Array.isArray(target?.forbiddenPathRules) ? target.forbiddenPathRules : [];

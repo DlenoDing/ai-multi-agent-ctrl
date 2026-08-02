@@ -68,6 +68,7 @@ import {
   decideSessionPlacement,
   roomSend,
   effectivePathDenylist,
+  purgeExpiredIdempotencyPayloads,
   repositoryUrlRegisteredForProject,
   MANDATORY_PATH_DENYLIST,
   advanceWorkItemToReviewRequested,
@@ -2333,6 +2334,31 @@ function verifyHumanAndOrganizationContracts(output) {
   }
   if (state.roomSequenceByRoom?.room_forge_ct !== roomSeqBefore) {
     output.push("room_send consumed a sequence number for a rejected message — the room sequence now has a permanent hole no reader can detect");
+  }
+
+  // 幂等记录同时承担两件事，时限差了几个数量级：重放（客户端几秒到几分钟内的重试）与按键复用
+  // 冲突检测（要覆盖整个上限窗口）。响应体原先跟着记录一起长期保留 —— 单条实测 8KB，上限 5000 条
+  // 就是中央文档里 ~40MB，而中央文档每一次任意写入都要整份重写。响应体按重放窗口清、判据字段留。
+  {
+    const idemState = {idempotencyRecords: {
+      fresh: {status: 200, payload: {big: "x".repeat(4096)}, actor: "a", action: "act", bodyDigest: "d", createdAt: new Date().toISOString()},
+      stale: {status: 200, payload: {big: "x".repeat(4096)}, actor: "a", action: "act", bodyDigest: "d", createdAt: new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString()}
+    }};
+    purgeExpiredIdempotencyPayloads(idemState);
+    if (idemState.idempotencyRecords.fresh.payload === undefined) {
+      output.push("an idempotency payload inside the replay window was purged — a client retrying seconds later would not get its result back");
+    }
+    if (idemState.idempotencyRecords.stale.payload !== undefined) {
+      output.push("an idempotency response body outlived its replay window — every write rewrites the whole central document, so this grows the cost of every unrelated write");
+    }
+    if (!idemState.idempotencyRecords.stale.payloadExpiredAt) {
+      output.push("the purged record does not record that its payload expired — a replay cannot tell an expired result from one that never had a body");
+    }
+    for (const field of ["actor", "action", "bodyDigest", "status"]) {
+      if (idemState.idempotencyRecords.stale[field] === undefined) {
+        output.push(`purging the payload also dropped ${field} — key-reuse conflict detection needs it for the whole retention window, and without it a reused key silently replays`);
+      }
+    }
   }
 
   // 写入禁区必须是【下限】而不是默认值。原先每个生产者各写一份 `request.pathDenylist || [...]`：

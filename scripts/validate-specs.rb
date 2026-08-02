@@ -1286,6 +1286,9 @@ errors << "the repository-output-target route must reject a repository url not r
 # "校验安装"只防传输损坏：checksum 与被校验物同源、同进程实时生成，没有离线签名。
 # 界面必须说出这条边界，否则运维会把它读成"能防服务器被篡改"，而那正是它防不了的。
 errors << "the verified-install command must state that its checksum does not protect against a tampered control plane" unless public_app_source.include?("不能") && public_app_source.match?(/checksum 与安装脚本来自同一个控制面地址/)
+# 接线：清理必须挂在每次写入都会经过的淘汰路径上；重放读取必须区分"响应体过期"与"成功但空"。
+errors << "idempotency payload purge must run on the eviction path taken by every write" unless server_source.include?("purgeExpiredIdempotencyPayloads(state);")
+errors << "an expired idempotency replay must not be returned as an empty success" unless server_source.include?("idempotent_result_expired")
 errors << "postgres project shards must carry a payload digest in the central index (it is computed outside the runtime_json generation branch)" unless File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).include?("if (!nextGeneration) {") && File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).match?(/if \(!nextGeneration\) \{[\s\S]{0,900}?shard\.storagePayloadDigest = digestProjectShardPayload\(shard\);/)
 errors << "postgres project shards must be integrity-checked where they are merged, not in a read helper the main path skips" unless File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).include?('if (stateStoreKind() === "postgresql") assertProjectShardsMatchCentralIndex(shards, centralState);')
 errors << "Room participant identity must be derived from the authenticated principal, never from the request body" unless mcp_source.include?("ROOM_PARTICIPANT_KEY") && mcp_source.include?("participantId: args[ROOM_PARTICIPANT_KEY]") && !mcp_source.include?("participantId: string")
