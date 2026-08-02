@@ -1414,7 +1414,10 @@ function verifyHumanAndOrganizationContracts(output) {
         output.push(`内容包: 这些生效的系统规则没有完整出现在下发正文里：${cbMissing.map((rule) => rule.ruleId).join("、")}`
           + " —— 规则被截断或漏发时，文件仍然存在，只验证文件存在的断言照样是绿的");
       }
-      if (cbRulesEntry.contentDigest !== digestOf(cbRulesText)) {
+      // 用被测模块自己的 digestOf 去验它自己算出的摘要，等于用同一个误解验证自己（sys.oracle-independence）：
+      // digestOf 若改错了输入，两边会一起错、断言照样绿。这里独立算一次 sha256 作为期望值。
+      const cbExpectedDigest = `sha256:${createHash("sha256").update(cbRulesText).digest("hex")}`;
+      if (cbRulesEntry.contentDigest !== cbExpectedDigest) {
         output.push("内容包: 系统规则条目的摘要与正文不符 —— 执行方按摘要校验会拒绝，或按错误摘要接受被改过的规则");
       }
     }
