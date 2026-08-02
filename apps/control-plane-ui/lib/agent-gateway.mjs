@@ -1278,6 +1278,21 @@ export function buildExecutionContentBundle(state, node, sessionId, options = {}
   pushEntry("task/context.md", "task", "task", contextText, `TaskGroup:${taskGroup.id}`);
   if (!entries.length) pushEntry("task/context.md", "task", "task", `# 任务上下文\n任务组：${taskGroup.id}`, `TaskGroup:${taskGroup.id}`);
   const bundleDigest = digestOf(entries.map((entry) => `${entry.path}:${entry.contentDigest}`));
+  // 控制台的「稳定前缀」一直显示 instructionMetrics.stablePrefixTokens，而那是初始化时写死的 1800，
+  // 从来没有任何生产者更新过它 —— 人看到的是一个常量，被当成测量结果。实测系统规则正文已 15000+ 字符，
+  // 差了 8 倍以上，而这个数字正是回答"每次派发要烧多少上下文"的那一个。
+  // 这里如实记录【最近一次真实构建】的稳定前缀体积（durable 类条目：角色技能/系统规则/业务规则/基线），
+  // 并带上观测时刻与来源任务组；覆盖而非 ||=，因为它是"最近一次实测"，持久化旧值只会越来越不准。
+  const stablePrefixChars = entries
+    .filter((entry) => entry.retention === "durable")
+    .reduce((total, entry) => total + String(entry.content || "").length, 0);
+  state.instructionMetrics ||= {};
+  state.instructionMetrics.stablePrefixMeasured = {
+    chars: stablePrefixChars,
+    entryCount: entries.filter((entry) => entry.retention === "durable").length,
+    taskGroupId: taskGroup.id,
+    observedAt: new Date().toISOString()
+  };
   return {
     schemaVersion: "execution-content-bundle/v1",
     bundleId: `ecb_${bundleDigest.slice("sha256:".length, "sha256:".length + 20)}`,

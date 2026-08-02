@@ -1507,7 +1507,21 @@ function renderSysSettings() {
     panel("模型能力注册（只读）", table(["供应商", "模型", "能力", {label: "上下文窗口", c: "num"}, "可用性"], models, {moreText: moreText((state.modelCapabilities || []).length, 40)}), {wide: true}),
     panel("指令压缩指标", `
       <div class="metric-grid">
-        <div class="metric"><span>稳定前缀 Token 数</span><strong>${esc(metrics.stablePrefixTokens)}</strong></div>
+        <div class="metric"><span>稳定前缀预算（配置值）</span><strong>${esc(metrics.stablePrefixTokens)}</strong></div>
+        ${(() => {
+          // 这一栏原先只显示上面那个【配置的预算值】，却写着"稳定前缀 Token 数"，被读成实测结果。
+          // 实测与预算是两件事：预算是想要多少，实测是真的下发了多少。两个都显示，并且实测缺席时
+          // 明说"尚未测量"，而不是拿预算值冒充。
+          const measured = metrics.stablePrefixMeasured;
+          if (!measured) {
+            return `<div class="metric"><span>稳定前缀实测</span><strong class="warn-text">尚未测量</strong>
+              <span class="small muted">还没有构建过内容包；下一次派发后这里会显示真实体积</span></div>`;
+          }
+          const over = Number(measured.chars) > Number(metrics.stablePrefixTokens || 0) * 2;
+          return `<div class="metric"><span>稳定前缀实测（最近一次构建）</span>
+            <strong class="${over ? "warn-text" : ""}">${esc(measured.chars)} 字符 / ${esc(measured.entryCount)} 份</strong>
+            <span class="small muted">${esc(taskGroupNameOf(measured.taskGroupId))} · ${fmtTime(measured.observedAt)}${over ? " · 已显著超出预算" : ""}</span></div>`;
+        })()}
         <div class="metric"><span>增量消息目标 Token 数</span><strong>${esc(metrics.deltaMessageTargetTokens)}</strong></div>
         <div class="metric"><span>缓存命中目标</span><strong>${Math.round((metrics.cacheHitTarget || 0) * 100)}%</strong></div>
       </div>

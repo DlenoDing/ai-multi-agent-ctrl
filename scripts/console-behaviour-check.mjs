@@ -124,7 +124,7 @@ globalThis.__probe = {
   renderPendingPanelWith: (nextState, account) => { state = nextState; currentAccount = account; return renderPendingForMePanel(); },
   todoCountsWith: (nextState, account) => { state = nextState; currentAccount = account; return todoCountsByPage(); },
   moreTextWith: (nextState, total, shown, field) => { state = nextState; return moreText(total, shown, field); },
-  renderSysSettingsWith: (nextState) => { state = nextState; return renderSysSettings(); },
+  renderSysSettingsWith: (nextState, instructions) => { state = nextState; if (instructions !== undefined) instructionState = instructions; return renderSysSettings(); },
   renderSysAccountsWith: (nextState, account) => { state = nextState; currentAccount = account; return renderSysAccounts(); },
   blockerGuide: (type) => blockerGuide(type),
   renderMonitorWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; return renderMonitor(); },
@@ -600,6 +600,29 @@ function runStuckTopologyLeverCase() {
     "把别的项目的执行方案列进了本项目的阻塞处置 —— 会在错误的项目抬头下终止别人的方案");
 }
 
+// 「稳定前缀 Token 数」一直显示初始化时写死的 1800，从来没有生产者更新过它 —— 人看到的是常量，
+// 却被当成测量结果（实测系统规则正文已 15000+ 字符，差 8 倍以上）。预算与实测必须分开显示，
+// 且实测缺席时要明说"尚未测量"，不能拿预算值冒充。
+function runStablePrefixMeasurementCase() {
+  const probe = loadConsole(el("div"));
+  const withMetrics = (metrics) => probe.renderSysSettingsWith({
+    runtime: {transitionEnforcement: "strict"},
+    taskGroups: [{id: "tg1", projectId: "p1", name: "甲组"}]
+  }, {instructionMetrics: metrics});
+  const notMeasured = withMetrics({stablePrefixTokens: 1800, deltaMessageTargetTokens: 420, cacheHitTarget: 0.7, envelopes: []});
+  check("没有实测时明说尚未测量",
+    notMeasured.includes("尚未测量"),
+    "从未构建过内容包时，界面用配置的预算值冒充实测结果 —— 人会以为那就是真实下发体积");
+  const measured = withMetrics({stablePrefixTokens: 1800, deltaMessageTargetTokens: 420, cacheHitTarget: 0.7, envelopes: [],
+    stablePrefixMeasured: {chars: 15383, entryCount: 4, taskGroupId: "tg1", observedAt: "2026-08-03T00:00:00Z"}});
+  check("有实测时显示真实体积",
+    measured.includes("15383"),
+    "有实测值却不显示 —— 这个数字正是回答「每次派发烧多少上下文」的那一个");
+  check("实测显著超预算时要标出来",
+    /warn-text/.test(measured) && measured.includes("已显著超出预算"),
+    "实测远超预算却与正常值长得一样 —— 预算形同虚设");
+}
+
 function runTransitionModeVisibilityCase() {
   const probe = loadConsole(el("div"));
   const strictHtml = probe.renderSysSettingsWith({runtime: {transitionEnforcement: "strict"}});
@@ -813,6 +836,7 @@ runReviewAxisCase();
 runPendingTruncationCase();
 runCloseBarrierScopeCase();
 runTransitionModeVisibilityCase();
+runStablePrefixMeasurementCase();
 runWholeListCapCase();
 runStuckTopologyLeverCase();
 runBlockerGuideCase();
