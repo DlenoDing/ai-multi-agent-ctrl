@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload, canonicalJson } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps/control-plane-ui/lib/pg-sync-store.mjs";
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
 import { publicAgentNode } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
@@ -3107,6 +3108,44 @@ function verifyRuntimeJsonConflict(output) {
         assertProjectShardsMatchCentralIndex([shard], {});
       } catch (error) {
         output.push(`shard integrity check failed with no central index present (bootstrap would never start): ${error.message}`);
+      }
+
+      // PostgreSQL 写入把"分片不是数组"静默当成空数组，而空数组的语义是 DELETE 掉整张分片表
+      // （零个项目时这是对的）。于是一次漏传就等于把全部项目分片连同中心状态一起提交掉。
+      // 同一个错误在 runtime_json 那边是 for...of undefined 当场抛错 —— 安全的行为落在
+      // 没人在生产上跑的那个后端上。两个后端对同一个错误必须给出同一种反应。
+      for (const [label, value] of [["undefined", undefined], ["null", null], ["对象", {}], ["字符串", "[]"]]) {
+        let rejected = false;
+        try { assertProjectShardsArray(value); }
+        catch (error) { rejected = error.code === "AIMAC_PG_SHARDS_NOT_ARRAY"; }
+        if (!rejected) {
+          output.push(`PostgreSQL 写入接受了非数组的分片（${label}）—— 它会被当成空数组，把全部项目分片删掉并与中心状态一起提交`);
+        }
+      }
+      try {
+        assertProjectShardsArray([]);
+      } catch (error) {
+        output.push(`空分片数组被拒（${error.message}）—— 零个项目是合法状态，拒绝它会让全新安装写不进任何东西`);
+      }
+      // 上面几条只证明判据本身对，证明不了它被接在写入路径上 —— 把调用换回静默强转，那几条照样全绿。
+      // 这里直接走真正的写入入口：参数在 call() 之前求值，所以守卫生效时根本碰不到数据库连接。
+      // 守卫若被摘掉，就会真的去连库，返回的绝不会是 AIMAC_PG_SHARDS_NOT_ARRAY。
+      // 守卫在位时参数求值阶段就抛错，根本碰不到数据库。但守卫若被摘掉，这一行就会真的发起写入 ——
+      // 而这次写入的语义正是"删光整张分片表"。所以先把连接钉死在不可达端口：这条断言在任何情况下
+      // 都不能成为破坏源，它要验的是"守卫接没接上"，不是"数据库能不能连"。
+      const savedPgTimeout = process.env.AIMAC_PG_QUERY_TIMEOUT_MS;
+      const savedDatabaseUrl = process.env.DATABASE_URL;
+      process.env.AIMAC_PG_QUERY_TIMEOUT_MS = "800";
+      process.env.DATABASE_URL = "postgresql://probe:probe@127.0.0.1:1/aimac_unreachable_probe";
+      let writePathCode = null;
+      try { pgWriteStateWithProjectShards({stateVersion: 1}, undefined, null); }
+      catch (error) { writePathCode = error.code || error.message; }
+      if (savedPgTimeout === undefined) delete process.env.AIMAC_PG_QUERY_TIMEOUT_MS;
+      else process.env.AIMAC_PG_QUERY_TIMEOUT_MS = savedPgTimeout;
+      if (savedDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = savedDatabaseUrl;
+      if (writePathCode !== "AIMAC_PG_SHARDS_NOT_ARRAY") {
+        output.push(`分片数组守卫没有接在 PostgreSQL 写入路径上（实际 ${writePathCode}）—— 判据写好了却没人调用，漏传分片照样会删光整张分片表`);
       }
     }
 

@@ -20,6 +20,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CORE = "apps/control-plane-ui/lib/control-plane-core.mjs";
 const MCP = "apps/mcp-server/server.mjs";
 const GATEWAY = "apps/control-plane-ui/lib/agent-gateway.mjs";
+const PGSTORE = "apps/control-plane-ui/lib/pg-sync-store.mjs";
 
 // 每条 mutation：把守卫改坏，期望 contract-check 失败且输出里出现 expect 片段。
 const MUTATIONS = [
@@ -98,6 +99,15 @@ const MUTATIONS = [
   // 「人确认的定稿方案，AI 不会再默认自动改变；有分歧则回到人工确认」是这套系统的立身规则，
   // 它落在这三处：AI 不得自行降级、不得自行取消、不得在方案实质变过之后照常往下执行。
   // 三处此前都只有 contract-check 断言，没有一条被判别力验证过——而这正是最不该假绿的地方。
+  {
+    // 同一个漏传，在 runtime_json 上是当场抛错、零损失，在 PostgreSQL 上是删光整张分片表并提交。
+    // 安全的那个行为落在没人在生产上跑的后端上，所以这条必须钉死。
+    name: "漏传分片不得被当成空分片（PG 上等于删光）",
+    file: PGSTORE,
+    from: "    shards: assertProjectShardsArray(projectShards),",
+    to: "    shards: Array.isArray(projectShards) ? projectShards : [],",
+    expect: "没有接在 PostgreSQL 写入路径上"
+  },
   {
     name: "被降级的状态机保证不得对人隐身",
     file: CORE,

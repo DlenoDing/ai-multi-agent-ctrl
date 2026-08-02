@@ -114,13 +114,27 @@ export function pgReadStateWithShards() {
   return call("readStateWithShards", {table: tableName, shardTable: projectShardTableName, stateId}).value || {central: null, shards: []};
 }
 
+// 分片必须是数组，"没传"绝不能被当成"一个都没有"。worker 对空数组的处理是 DELETE 掉整张分片表
+// （零个项目时这是对的），于是一次静默强转就等于把全部项目分片连同中心状态一起提交掉。
+// 同一个错误在 runtime_json 那边是 `for...of undefined` 当场抛错、零损失 —— 安全的那个行为
+// 恰好落在没人在生产上跑的后端上。这里改成拒绝，让两个后端对同一个错误给出同一种反应。
+export function assertProjectShardsArray(projectShards) {
+  if (!Array.isArray(projectShards)) {
+    throw Object.assign(
+      new Error(`pg_write_requires_project_shard_array:${projectShards === undefined ? "undefined" : typeof projectShards}`),
+      {code: "AIMAC_PG_SHARDS_NOT_ARRAY"}
+    );
+  }
+  return projectShards;
+}
+
 export function pgWriteStateWithProjectShards(centralState, projectShards, expectedStateVersion) {
   const response = call("writeStateWithShards", {
     table: tableName,
     shardTable: projectShardTableName,
     stateId,
     central: JSON.stringify(centralState),
-    shards: Array.isArray(projectShards) ? projectShards : [],
+    shards: assertProjectShardsArray(projectShards),
     expectedVersion: expectedStateVersion === undefined ? null : expectedStateVersion
   });
   if (response.conflict) {
