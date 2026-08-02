@@ -892,69 +892,81 @@ machines:
         requires: ["close_barrier_satisfied", "audit_ref"]
 
   AgentNode:
-    initial: "joining"
-    terminal: ["retired"]
+    # 2026-08-02：本机器原先建模的是 joining/read_only/quarantine/retired，与运行时实际写入的状态
+    # 几乎不相交 —— 交集只有 online/offline，唯一的终态 retired 没有任何生产者，13 条转移没有一条
+    # 能匹配上真实数据。之所以一直没被发现：状态漂移检查按 schema title 与机器名相等来配对，而
+    # 本机器叫 AgentNode、schema 叫 AgentRuntimeNode，于是被静默跳过。
+    # 现按 agent-gateway.mjs 里实际可达的转移重写；schema 的 status enum 是同一套词表。
+    initial: "initializing"
+    terminal: ["revoked"]
     states:
-      - "joining"
+      - "initializing"
       - "online"
+      - "degraded"
+      - "draining"
       - "offline"
-      - "read_only"
-      - "quarantine"
-      - "retired"
+      - "revoked"
     transitions:
-      - from: "joining"
+      - from: "initializing"
         to: "online"
         actor: "agent-runtime"
-        requires: ["runtime_integrity_verified", "scheduler_admission"]
-      - from: "joining"
+        requires: ["runtime_integrity_verified"]
+      - from: "initializing"
+        to: "offline"
+        actor: "monitor"
+        requires: ["heartbeat_timeout_elapsed"]
+      - from: "initializing"
+        to: "revoked"
+        actor: "orchestrator"
+        requires: ["node_revocation_decision"]
+      - from: "online"
         to: "offline"
         actor: "monitor"
         requires: ["heartbeat_timeout_elapsed"]
       - from: "online"
+        to: "degraded"
+        actor: "monitor"
+        requires: ["control_command_failure"]
+      - from: "online"
+        to: "draining"
+        actor: "orchestrator"
+        requires: ["node_revocation_decision", "active_dispatch_ack_required"]
+      - from: "online"
+        to: "revoked"
+        actor: "orchestrator"
+        requires: ["node_revocation_decision"]
+      - from: "degraded"
+        to: "online"
+        actor: "agent-runtime"
+        requires: ["runtime_integrity_verified", "state_rebound"]
+      - from: "degraded"
         to: "offline"
         actor: "monitor"
         requires: ["heartbeat_timeout_elapsed"]
-      - from: "online"
-        to: "read_only"
+      - from: "degraded"
+        to: "revoked"
+        actor: "orchestrator"
+        requires: ["node_revocation_decision"]
+      - from: "draining"
+        to: "offline"
+        actor: "agent-runtime"
+        requires: ["node_shutdown_ack"]
+      - from: "draining"
+        to: "degraded"
         actor: "monitor"
-        requires: ["trust_score_reduced"]
-      - from: "online"
-        to: "quarantine"
-        actor: "security"
-        requires: ["security_finding_ref"]
+        requires: ["control_command_failure"]
+      - from: "draining"
+        to: "revoked"
+        actor: "agent-runtime"
+        requires: ["node_revocation_ack"]
       - from: "offline"
         to: "online"
         actor: "agent-runtime"
         requires: ["runtime_integrity_verified", "state_rebound"]
-      - from: "read_only"
-        to: "online"
-        actor: "scheduler"
-        requires: ["trust_score_recovered"]
-      - from: "read_only"
-        to: "quarantine"
-        actor: "security"
-        requires: ["security_finding_ref"]
-      - from: "quarantine"
-        to: "read_only"
-        actor: "security"
-        requires: ["remediation_evidence"]
-      - from: "online"
-        to: "retired"
-        actor: "orchestrator"
-        requires: ["retire_decision_ref"]
       - from: "offline"
-        to: "retired"
-        actor: "orchestrator"
-        requires: ["retire_decision_ref"]
-      - from: "read_only"
-        to: "retired"
-        actor: "orchestrator"
-        requires: ["retire_decision_ref"]
-      - from: "quarantine"
-        to: "retired"
-        actor: "orchestrator"
-        requires: ["retire_decision_ref"]
-
+        to: "revoked"
+        actor: "monitor"
+        requires: ["node_retire_timeout_elapsed"]
   Room:
     initial: "active"
     terminal: ["closed"]

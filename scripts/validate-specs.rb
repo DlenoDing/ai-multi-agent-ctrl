@@ -238,18 +238,40 @@ schema_titles = Set.new(Dir[File.join(ROOT, "spec/*.schema.json")].map { |path| 
 missing_critical_schemas = critical_schema_titles - schema_titles
 errors << "critical schema titles missing: #{missing_critical_schemas.to_a.sort.join(", ")}" unless missing_critical_schemas.empty?
 
+# schema title 与状态机名的对应关系必须显式登记。原先是 `next unless machines[title]` —— 名字对不上
+# 就静默跳过，于是 AgentRuntimeNode（对应机器 AgentNode）整台机器从未被核对过：spec 里建模的
+# joining/read_only/quarantine/retired 与运行时实际写入的状态几乎不相交，唯一的终态没有任何生产者，
+# 而这道检查一声不吭。"跳过"必须是有人写下来的决定，不能是拼写巧合的副产品。
+schema_machine_aliases = {
+  "AgentRuntimeNode" => "AgentNode"
+}
+# 这些 schema 有 status 枚举但确实没有状态机（它们的状态不构成生命周期，或生命周期在别处建模）。
+# 新增一个带 status 枚举的 schema 时，要么建机器、要么登记到这里说明为什么不需要。
+schemas_without_state_machine = Set.new(%w[
+  AgentControlCommand AgentExecutionEvent AgentJoinToken InternalReviewRecord Organization WorkerLane
+])
+
 Dir[File.join(ROOT, "spec/*.schema.json")].sort.each do |path|
   schema = JSON.parse(File.read(path))
   title = schema["title"]
   status_enum = schema.dig("properties", "status", "enum")
-  next unless title && status_enum && state_machines["machines"][title]
+  next unless title && status_enum
+
+  machine_name = schema_machine_aliases[title] || title
+  machine = state_machines["machines"][machine_name]
+  unless machine
+    unless schemas_without_state_machine.include?(title)
+      errors << "#{title} has a status enum but no state machine and is not registered as intentionally unmodeled (register an alias or add it to schemas_without_state_machine — a silent skip means this schema's states are never cross-checked against anything)"
+    end
+    next
+  end
 
   schema_statuses = Set.new(status_enum)
-  machine_states = Set.new(state_machines["machines"][title]["states"])
+  machine_states = Set.new(machine["states"])
   missing_in_schema = machine_states - schema_statuses
   missing_in_machine = schema_statuses - machine_states
   unless missing_in_schema.empty? && missing_in_machine.empty?
-    errors << "#{title} status enum/state machine mismatch; missing in schema: #{missing_in_schema.to_a.sort.join(", ")}; missing in state machine: #{missing_in_machine.to_a.sort.join(", ")}"
+    errors << "#{machine_name} status enum/state machine mismatch; missing in schema: #{missing_in_schema.to_a.sort.join(", ")}; missing in state machine: #{missing_in_machine.to_a.sort.join(", ")}"
   end
 end
 
