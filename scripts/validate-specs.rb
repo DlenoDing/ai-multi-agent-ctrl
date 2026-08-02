@@ -879,6 +879,14 @@ errors << "必须存在互审双轨规则" unless core_source.include?('ruleId: 
 errors << "范围收敛规则必须与互审双轨对齐（约束改动范围而非分析提案范围）" unless core_source.include?("本条约束的是【改动范围】，不约束【分析与提案范围】")
 errors << "互审结论必须记录考察过的替代路径" unless core_source.include?("alternativesConsidered: [{") && File.read(File.join(ROOT, "spec/internal-review-record.schema.json")).include?('"alternativesConsidered"')
 errors << "替代路径必须随人工确认单呈现给人" unless core_source.include?("alternativesConsidered: input.peerReview.alternativesConsidered") && app_js_source.include?("考察过的其他方案")
+# 最终方案的判准：简单、高性能、稳定，三者都要。写进双轨规则，并要求逐条替代路径给出这三项取舍 ——
+# 只谈其中一项就下结论，是这类评审最常见的失效（尤其是拿"简单"去换尚未发生的通用性）。
+errors << "互审双轨必须写明最终方案的三项判准（简单/高性能/稳定，三者都要）" unless core_source.include?("最终方案的判准（三者都要，缺一即为不合格评审）：简单、高性能、稳定")
+errors << "三项判准必须落到每条替代路径的取舍上，而不只是一句口号" unless core_source.include?("alternativesConsidered 的每一条都要写明它在这三项上相对当前方案的取舍")
+errors << "三项判准必须给出冲突时的排序，否则等于没有判准" unless core_source.include?("三者冲突时的排序")
+# 互审要求本身必须点名双轨：否则"双轨"只是一条孤立规则，评审者按 independent-review-depth 走完
+# 也不会去做轨道二。
+errors << "独立评审/互审要求必须明确要求走双轨" unless core_source.include?("必须同时走 sys.review-dual-track 的两条轨道")
 errors << "互审双轨必须有行为断言" unless contract_check_source.include?("互审双轨: 互审结论没有记录考察过的替代路径")
 
 # D6：质量门是人看到"全通过"时的唯一依据，却完全由 agent 自报（提交测试结果零必填参数、命令从不执行）。
