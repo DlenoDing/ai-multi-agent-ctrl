@@ -117,6 +117,16 @@ const PROJECT_MENU_TAIL = [
 // 其中一个还叫"执行监控"，名字完全不暗示"这里有等你签字的东西"。
 // 这里跨【全部可见项目】统计，且只统计"确实需要这个人动手"的项 —— 没权限处置的不算进来，
 // 否则计数会变成一个人永远清不掉的红点。
+// 心跳有多旧要一眼看得出来。控制面把节点扫下线要等超时（默认 15 分钟），在那之前它照旧显示"在线" ——
+// 而人此刻正想知道的就是"它是不是已经没了"。这里只做客户端提示，不改判定：真正的下线由服务端对账决定。
+function heartbeatStaleHint(node) {
+  if (!node.lastHeartbeatAt || ["revoked", "offline"].includes(node.status)) return "";
+  const ageMs = Date.now() - new Date(node.lastHeartbeatAt).getTime();
+  if (!Number.isFinite(ageMs) || ageMs < 3 * 60 * 1000) return "";
+  const minutes = Math.floor(ageMs / 60000);
+  return `<div class="small warn-text">⚠ 已 ${minutes} 分钟没有心跳</div>`;
+}
+
 function pendingForMe() {
   const groups = (state.taskGroups || []);
   const groupIds = new Set(groups.map((taskGroup) => taskGroup.id));
@@ -2619,7 +2629,18 @@ function renderMonitor() {
     `<span class="mono">${esc(dispatch.workItemId || "-")}</span>`,
     badge(dispatch.status),
     {v: `${esc(dispatch.progressPercent || 0)}%`, c: "num"},
-    esc(dispatch.blockedReason || dispatch.failureReason ? t(dispatch.blockedReason || dispatch.failureReason) : "-"),
+    // 这两个标记控制面早就在写了（写它们的注释里明写着"必须留痕并让人看到"），而控制台从来没有
+    // 渲染过它们 —— 于是人只看到"认领超时重新入队"，看不到最要紧的那句：上一任可能已经把提交推上去了。
+    // 新持有者的 reset --hard origin/<branch> 会把那些提交当作基线继续往上做，而没有任何人复核过它们。
+    [
+      esc(dispatch.blockedReason || dispatch.failureReason ? t(dispatch.blockedReason || dispatch.failureReason) : "-"),
+      dispatch.previousHolderMayHavePushed
+        ? `<div class="small warn-text">⚠ 上一任持有者${dispatch.recycledFromNodeId ? `（${esc(dispatch.recycledFromNodeId)}）` : ""}可能已经推送过提交：新持有者会把它们当作基线，需人工核对该分支</div>`
+        : "",
+      dispatch.rulesChangedAfterContract
+        ? `<div class="small warn-text">⚠ 契约签发之后规则发生过变更：这次执行遵循的可能不是当前生效的规则</div>`
+        : ""
+    ].filter(Boolean).join(""),
     `<button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${esc(dispatch.dispatchId)}">事件</button>`
   ])).join("");
 
@@ -2636,9 +2657,13 @@ function renderMonitor() {
   const canOrchestrate = hasPerm("task_group:orchestrate");
   const nodes = (state.agentRuntimeNodes || []).map((node) => row([
     `<strong>${esc(node.nodeName || node.nodeId)}</strong><div class="small muted mono">${esc(node.nodeId)}</div>`,
-    badge(node.status),
+    // "降级/只读"此前不说原因：缺哪几项自检只进网关事件负载，而那条流没有任何界面。
+    // 人看到一个黄色徽标，然后无从下手。
+    `${badge(node.status)}${(node.selfCheckMissing || []).length
+      ? `<div class="small warn-text">自检未通过：${(node.selfCheckMissing || []).map((item) => esc(t(item))).join("、")}</div>` : ""}`,
     badge(node.admission),
-    {v: fmtTime(node.lastHeartbeatAt), c: "nowrap"},
+    // 心跳时间戳原先只是一个时间：人得自己算它有多旧，而"节点其实已经死了"正是最该一眼看出来的。
+    {v: `${fmtTime(node.lastHeartbeatAt)}${heartbeatStaleHint(node)}`, c: "nowrap"},
     node.status !== "revoked" && canControlNodes ? [
       `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="refresh_profile">刷新</button>`,
       `<button class="secondary-button" data-action="agent-control" data-node-id="${esc(node.nodeId)}" data-command="pause_dispatch">暂停</button>`,

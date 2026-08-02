@@ -112,6 +112,7 @@ globalThis.__probe = {
   renderTaskGroupDetail: (detail, taskGroup) => { tgDetail = detail; return renderTaskGroupDetail(taskGroup); },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
+  heartbeatStaleHint: (node) => heartbeatStaleHint(node),
   setFetch: (fn) => { globalThis.fetch = fn; },
   api: (path, options) => api(path, options)
 };
@@ -319,7 +320,22 @@ async function runErrorGuidanceCase() {
   }
 }
 
+// 控制面把失联节点扫下线要等超时；在那之前它照旧显示"在线"，而人此刻正想知道的就是"它是不是已经没了"。
+function runHeartbeatHintCase() {
+  const probe = loadConsole(el("div"));
+  const fresh = probe.heartbeatStaleHint({status: "online", lastHeartbeatAt: new Date(Date.now() - 30 * 1000).toISOString()});
+  check("刚心跳过不报警", fresh === "",
+    `刚心跳过的节点被标成失联（${JSON.stringify(fresh)}）—— 一直在响的警告，人很快就不看了`);
+  const stale = probe.heartbeatStaleHint({status: "online", lastHeartbeatAt: new Date(Date.now() - 42 * 60 * 1000).toISOString()});
+  check("久未心跳要报警", /42/.test(stale) && stale.includes("没有心跳"),
+    `一个 42 分钟没心跳的节点仍显示为健康（${JSON.stringify(stale)}）—— 控制台上看不出它已经没了`);
+  const revoked = probe.heartbeatStaleHint({status: "revoked", lastHeartbeatAt: new Date(Date.now() - 42 * 60 * 1000).toISOString()});
+  check("已终态的不重复报警", revoked === "",
+    "已撤销的节点还在提示心跳陈旧 —— 它本来就不该再有心跳");
+}
+
 runFormRestoreCase();
+runHeartbeatHintCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();

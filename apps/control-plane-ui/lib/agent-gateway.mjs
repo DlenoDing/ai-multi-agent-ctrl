@@ -522,6 +522,10 @@ export function selfCheckAgentNode(state, node, input = {}) {
   const at = new Date().toISOString();
   node.lastSelfCheckAt = at;
   node.selfCheckDigest = digestOf(checks);
+  // 缺哪几项原先只进网关事件的负载（那条流没有任何界面）与给 agent 的响应，节点记录上只留一个摘要 ——
+  // 于是人在控制台看到"降级 / 只读"，而"为什么降级"没有答案。落在节点上，它才跟着节点一起被人看见。
+  if (missing.length) node.selfCheckMissing = missing;
+  else delete node.selfCheckMissing;
   if (node.status !== "draining") {
     node.status = missing.length ? "degraded" : "online";
     node.admission = missing.length ? "read_only" : "full";

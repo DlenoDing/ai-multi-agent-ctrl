@@ -1305,6 +1305,10 @@ state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-
 # 系统自己也不动，于是"编排启动后自动生成"这句话永远不会成真。
 # 对账（死节点清扫、认领过期回收、撤销截止期、注册重放明文令牌抹除）原先只挂在需要活节点发起的
 # 路径上。服务端周期必须自己也跑一遍，且不受"有没有在跑的任务组"影响 —— 否则全队崩掉时它正好不跑。
+# 这两个标记控制面早就在写（写它们的注释明写"必须留痕并让人看到"），而控制台从来没有渲染过 ——
+# 人只看到"认领超时重新入队"，看不到最要紧的那句：上一任可能已经把提交推上去了。
+errors << "the console must surface previousHolderMayHavePushed (an unreviewed push becomes the next holder's baseline)" unless public_app_source.include?("dispatch.previousHolderMayHavePushed")
+errors << "the console must surface which self-check items failed, not just the degraded badge" unless public_app_source.include?("node.selfCheckMissing") && agent_gateway_source.include?("node.selfCheckMissing = missing")
 errors << "the server-side tick must reconcile regardless of whether any task group is open (dead-node sweep cannot depend on a live node)" unless server_source.match?(/const reconciled = recycleExpiredClaims\(state\);[\s\S]{0,400}?const pending = /)
 errors << "the autonomous cycle must have something driving it (no scheduler means a task group never starts)" unless server_source.include?("export function runOrchestratorTick()") && server_source.match?(/setInterval\(runOrchestratorTick/)
 errors << "postgres DDL must be memoized per process (every bridge call blocks the event loop)" unless state_store_source.include?("if (postgresTablesEnsured) return;")
