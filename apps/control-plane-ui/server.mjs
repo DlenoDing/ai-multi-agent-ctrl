@@ -4689,6 +4689,37 @@ const realtimeHeartbeat = setInterval(() => {
     try { client.ping(); } catch { realtimeClients.delete(client); }
   }
 }, Math.max(10000, Number(process.env.AIMAC_REALTIME_HEARTBEAT_MS || 30000)));
+
+// 自治循环此前【没有任何东西驱动它】：runAutonomousCycle 的入口只有 POST /api/orchestrator/run
+// 与一个 MCP 工具，server.mjs 里没有任何定时器调用它。而 task_group:orchestrate 不在任何项目角色
+// 模板里、且在不可委派清单里 —— 也就是说除了系统管理员，没有任何人能点那个按钮，而系统自己也不动。
+// 于是一个项目负责人建完任务组会看到「事项清单尚未生成（编排启动后自动生成）」然后一直等下去。
+//
+// 权限这一侧是对的、不该放宽：编排权限由服务账号持有、明确不可委派，说明设计意图是"编排是系统的
+// 职责而不是某个人的"。缺的不是授权，是那份职责从来没有人履行。补的是运行时，不是权限。
+export function runOrchestratorTick() {
+  let state = null;
+  try { state = readState(); } catch { return {skipped: "state_unavailable"}; }
+  const pending = (state.taskGroups || []).some((group) => !["closed", "aborted"].includes(group.status));
+  if (!pending) return {skipped: "no_open_task_group"};
+  try {
+    const result = runAutonomousCycle(state, {root: repositoryRoot, runtimeDir, mode: "all", autoSyncSkills: false});
+    state.stateVersion = Number(state.stateVersion || 0) + 1;
+    writeState(state);
+    return {ran: true, changed: result?.changed?.length || 0};
+  } catch (error) {
+    // 与心跳里的清扫同规：冲突/失败都是尽力而为，下一拍再来。一次失败不该让循环整个停摆。
+    return {skipped: "cycle_error", error: String(error?.message || error).slice(0, 200)};
+  }
+}
+
+// 间隔设为 0 即关闭 —— 端到端脚本用它把周期关掉，避免后台推进打乱被断言的状态序列。
+const orchestratorIntervalMs = Number(process.env.AIMAC_ORCHESTRATOR_INTERVAL_MS ?? 60000);
+if (orchestratorIntervalMs > 0) {
+  const orchestratorTimer = setInterval(runOrchestratorTick, Math.max(5000, orchestratorIntervalMs));
+  // 不要让这个定时器把进程钉住：它是后台推进，不是进程存在的理由。
+  orchestratorTimer.unref?.();
+}
 realtimeHeartbeat.unref();
 
 function respondApiError(res, error) {

@@ -1300,6 +1300,10 @@ errors << "the executor credential must be accepted only on the MCP path" unless
 # docker compose 的 PG 端到端覆盖）：建表每进程只跑一次；读状态只读一次中央文档，
 # 不再先经 ensureStoredState 把整份文档读出来【只为判断这一行存不存在】。
 state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs"))
+# 自治循环必须有东西驱动它。此前 runAutonomousCycle 的入口只有一个 HTTP 路由和一个 MCP 工具，
+# 而 task_group:orchestrate 不在任何项目角色模板里、且不可委派 —— 除系统管理员外无人能点那个按钮，
+# 系统自己也不动，于是"编排启动后自动生成"这句话永远不会成真。
+errors << "the autonomous cycle must have something driving it (no scheduler means a task group never starts)" unless server_source.include?("export function runOrchestratorTick()") && server_source.match?(/setInterval\(runOrchestratorTick/)
 errors << "postgres DDL must be memoized per process (every bridge call blocks the event loop)" unless state_store_source.include?("if (postgresTablesEnsured) return;")
 errors << "the postgres read path must not pay for a full central read just to probe existence" unless state_store_source.match?(/export function readStoredState\(options\) \{\s*\n\s*if \(stateStoreKind\(\) === "postgresql"\) \{/)
 errors << "idempotency payload purge must run on the eviction path taken by every write" unless server_source.include?("purgeExpiredIdempotencyPayloads(state);")

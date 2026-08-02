@@ -780,7 +780,9 @@ const SUBMIT_SUCCESS = {
   "project-config": "已保存项目配置",
   "project-rules": "已保存规则",
   "tg-rules": "已保存规则",
-  "hcr-decide": "已提交人工确认",
+  // 定稿之后不会当场发生什么：被挂起的执行要等下一次编排周期才放行。原先只说"已提交"，
+  // 人会盯着页面等一个不会立刻到来的变化。说出它什么时候生效。
+  "hcr-decide": "已提交人工确认：被它挂起的执行将在下一次编排周期（约一分钟内）继续",
   "directive-create": "已下达人工指令，将在下一编排周期生效",
   "perm-resolve": "已处理授权请求",
   "approval-resolve": "已处理审批请求",
@@ -1950,7 +1952,9 @@ function renderTaskGroupDetail(taskGroup) {
           `).join("")}</div>` : ""}
         </div>
       `).join("")}</div>`
-    : `<div class="notice">事项清单尚未生成（编排启动后自动生成）。</div>`;
+    : `<div class="notice">事项清单尚未生成。控制面会按固定周期自动跑编排（默认每分钟一次），
+        生成后会出现在这里 —— 你不需要点任何按钮。若长时间没有变化，多半是这个任务组还缺前置条件
+        （例如项目尚未登记仓库、或角色技能未同步），到「执行监控」页看阻塞项。</div>`;
 
   const roles = (progressData.roles || taskGroup.roles || []).map((role) => `
     <div class="record">

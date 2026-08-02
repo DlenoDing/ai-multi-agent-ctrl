@@ -43,6 +43,8 @@ const server = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
   env: {
     ...process.env,
     AIMAC_HOST: "127.0.0.1",
+    // 关掉后台自治周期：端到端断言的是一段确定的状态序列，后台推进会把它打乱。
+    AIMAC_ORCHESTRATOR_INTERVAL_MS: "0",
     AIMAC_PORT: String(port),
     AIMAC_PUBLIC_URL: baseUrl,
     AIMAC_RUNTIME_DIR: runtimeDir,

@@ -189,6 +189,8 @@ const child = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
   env: {
     ...process.env,
     AIMAC_HOST: "127.0.0.1",
+    // 关掉后台自治周期：端到端断言的是一段确定的状态序列，后台推进会把它打乱。
+    AIMAC_ORCHESTRATOR_INTERVAL_MS: "0",
     AIMAC_PORT: String(port),
     AIMAC_RUNTIME_DIR: doctorRuntimeDir,
     AIMAC_REPOSITORY_ROOT: doctorRepo.work,
@@ -1062,6 +1064,43 @@ try {
   console.log("ai-native control flow ok");
 } finally {
   child.kill("SIGTERM");
+}
+
+// 后台自治周期：上面那台服务把它关掉了（端到端断言的是一段确定的状态序列）。可关掉就等于没验证过，
+// 而"这个特性根本没被跑过"正是本仓反复出现的形态。这里另起一台短周期的服务，**不发任何请求**，
+// 只看状态会不会自己往前走 —— 那才是"人建完任务组之后不必点任何东西"这句话的实际含义。
+{
+  const tickPort = port + 1;
+  const tickChild = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
+    cwd: root,
+    env: {
+      ...process.env,
+      AIMAC_HOST: "127.0.0.1",
+      AIMAC_PORT: String(tickPort),
+      AIMAC_RUNTIME_DIR: doctorRuntimeDir,
+      AIMAC_ORCHESTRATOR_INTERVAL_MS: "5000"
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let tickStderr = "";
+  tickChild.stderr.on("data", (chunk) => { tickStderr += String(chunk); });
+  try {
+    const statePath = join(root, doctorRuntimeDir, "control-plane-state.json");
+    const versionOf = () => { try { return Number(JSON.parse(readFileSync(statePath, "utf8")).stateVersion || 0); } catch { return 0; } };
+    const before = versionOf();
+    let advanced = false;
+    for (let attempt = 0; attempt < 40 && !advanced; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      advanced = versionOf() > before;
+    }
+    if (!advanced) {
+      throw new Error(`autonomous orchestrator tick never advanced state on its own (stateVersion stayed ${before}) — a person who creates a task group would wait forever, because nothing drives the cycle: ${tickStderr.slice(0, 400)}`);
+    }
+    console.log("autonomous orchestrator tick ok: state advanced with no request made");
+  } finally {
+    tickChild.kill("SIGTERM");
+    await new Promise((resolve) => tickChild.on("exit", resolve));
+  }
 }
 
 const [code, signal] = await exitPromise;
