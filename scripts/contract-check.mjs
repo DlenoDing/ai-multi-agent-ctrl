@@ -101,6 +101,7 @@ import {
   registerAgentNode,
   requestAgentNodeRevocation,
   finalizeOverdueRevocations,
+  redactExpiredRegistrationReplays,
   selfCheckAgentNode,
   submitAgentExecutionEvent
 } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
@@ -2884,6 +2885,36 @@ function verifyAgentGatewayContracts(output) {
   const claimedDispatchId = claimed.dispatch?.dispatch.dispatchId;
   if (claimedDispatchId) {
     const revokeRequest = requestAgentNodeRevocation(state, node, {ttlSeconds: 300}, {actor: "contract-check", idempotencyKey: "contract-node-revoke"});
+    // 注册重放里存着明文 nodeToken（30 天有效），它随 state 落盘。用途只有一个：同一幂等键的重试
+    // 拿回同一份结果 —— 而读取侧只在重放窗口内认它。窗口过后它必须消失，否则一份长期凭据永久留在
+    // 状态库与每一份备份里，拿到备份的人可以直接冒充节点。
+    //
+    // 样本自建而不是从夹具里捞：夹具在此之前已经被清扫过一轮，捞不到样本时这条断言只会报"空转"，
+    // 而真正的失败原因（抹得太早，正常重试拿不到令牌）就被那句话盖住了。
+    {
+      const replayState = structuredClone(state);
+      const mk = (ageMs) => ({
+        joinTokenId: `jt_replay_probe_${ageMs}`, status: "consumed", projectId: "prj_control_plane",
+        registrationReplay: {
+          nodeId: "node_replay_probe", at: new Date(Date.now() - ageMs).toISOString(), idempotencyKey: "k",
+          result: {nodeToken: "plaintext-node-token", node: {nodeId: "node_replay_probe"}}
+        }
+      });
+      const fresh = mk(1000);
+      const stale = mk(7 * 24 * 3600 * 1000);
+      replayState.agentJoinTokens = [fresh, stale, ...(replayState.agentJoinTokens || [])];
+      redactExpiredRegistrationReplays(replayState);
+      if (!fresh.registrationReplay.result.nodeToken) {
+        output.push("the registration replay token was redacted while still inside the replay window — a legitimate retry would get a response with no credential in it");
+      }
+      if (stale.registrationReplay.result.nodeToken) {
+        output.push("a plaintext long-lived node token survived past the replay window in persisted state — anyone with a state backup can impersonate the node");
+      }
+      if (!stale.registrationReplay.tokenRedactedAt) {
+        output.push("the replay record does not record that its token was redacted — an auditor cannot tell an emptied record from one that never had a token");
+      }
+    }
+
     // 撤销必须有尽头。原先撤销只排一条控制命令，而 nodeAcceptsToken 只在 revoked 时拒绝：
     // 被入侵的节点不 ACK、继续心跳，就永远停在 draining，令牌无限期有效 —— 而控制台显示"已请求撤销"。
     if (!node.revocationDeadlineAt) {

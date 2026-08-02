@@ -144,7 +144,9 @@ export function registerAgentNode(state, input = {}, options = {}) {
   if (replay && idempotencyKey && replay.idempotencyKey === idempotencyKey) {
     const replayWindowMs = boundedInteger(process.env.AIMAC_REGISTER_REPLAY_WINDOW_MS, 60000, 3600000, 600000);
     const existingNode = state.agentRuntimeNodes.find((item) => item.nodeId === replay.nodeId);
-    if (existingNode && Date.now() - new Date(replay.at || 0).getTime() <= replayWindowMs) {
+    // 正文被抹掉之后不能再当作可重放：返回一份没有 nodeToken 的注册结果，节点会拿到一个
+    // 看起来成功、实际无法认证的响应，而它已经把这次注册当成完成了。宁可让它显式失败。
+    if (existingNode && replay.result?.nodeToken && Date.now() - new Date(replay.at || 0).getTime() <= replayWindowMs) {
       return {...replay.result, node: publicAgentNode(existingNode), replayed: true};
     }
   }
@@ -363,6 +365,25 @@ export function finalizeNodeCredentialRevocation(state, node, reason) {
 
 // 到了截止期还没 ACK 的撤销，一律落实为凭据吊销 —— 不问节点是否还在心跳、是否还挂着派发。
 // 撤销是运维已经做出的决定，节点合不合作不该决定它生不生效。
+// 注册重放里存着明文 nodeToken（30 天有效），随 state 落盘 / 进 Postgres。它的用途只有一个：
+// 同一个幂等键的重试要能拿回同一份结果 —— 而读取侧本来就只在重放窗口内认它（默认 10 分钟）。
+// 可原先窗口过后没有任何地方清除它，于是一份长期凭据永久留在状态库与每一份备份里。
+// 拿到状态库的人可以直接冒充节点，而节点凭据的设计本是"只存 credentialDigest"。
+// 窗口一过就抹掉正文，留下时间戳 —— 谁都能看出这里曾经有过什么、什么时候没的。
+export function redactExpiredRegistrationReplays(state, at = Date.now()) {
+  const replayWindowMs = boundedInteger(process.env.AIMAC_REGISTER_REPLAY_WINDOW_MS, 60000, 3600000, 600000);
+  let changed = false;
+  for (const record of state.agentJoinTokens || []) {
+    const replay = record.registrationReplay;
+    if (!replay?.result || replay.tokenRedactedAt) continue;
+    if (at - new Date(replay.at || 0).getTime() <= replayWindowMs) continue;
+    delete replay.result.nodeToken;
+    replay.tokenRedactedAt = new Date(at).toISOString();
+    changed = true;
+  }
+  return changed;
+}
+
 export function finalizeOverdueRevocations(state, at = Date.now()) {
   let changed = false;
   for (const node of state.agentRuntimeNodes || []) {
@@ -650,6 +671,7 @@ export function recycleExpiredClaims(state) {
   const at = Date.now();
   let changed = sweepDeadAgentNodes(state, at).length > 0;
   changed = finalizeOverdueRevocations(state, at) || changed;
+  changed = redactExpiredRegistrationReplays(state, at) || changed;
   for (const dispatch of state.agentDispatches || []) {
     if (dispatch.status !== "running" || !dispatch.claimExpiresAt || new Date(dispatch.claimExpiresAt).getTime() > at) continue;
     changed = true;

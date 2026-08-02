@@ -1275,6 +1275,9 @@ errors << "the REST repository-output-target producer must set pathDenylist thro
 # 旧目标（含那些完全没有该字段的）拿不到下限；只在判据处兜底也不够 —— 执行侧读的是存下来的值。
 errors << "checkpoint denylist check must apply the mandatory floor (effectivePathDenylist), not the target's raw field" unless core_source.include?("pathMatchesAllowlist(path, effectivePathDenylist(target))")
 errors << "the REST repository-output-target producer must set pathDenylist through the mandatory floor" unless server_source.include?("pathDenylist: effectivePathDenylist(")
+# 接线：抹除必须挂在真正会被周期性调用的那条路上（心跳驱动的 recycleExpiredClaims），
+# 否则函数写好了没人调用，明文令牌照样永久留着。
+errors << "expired registration replays must be redacted from the heartbeat-driven reconciliation path" unless agent_gateway_source.include?("changed = redactExpiredRegistrationReplays(state, at) || changed;")
 errors << "Room participant identity must be derived from the authenticated principal, never from the request body" unless mcp_source.include?("ROOM_PARTICIPANT_KEY") && mcp_source.include?("participantId: args[ROOM_PARTICIPANT_KEY]") && !mcp_source.include?("participantId: string")
 errors << "close-barrier must not trust a stale-version cached readiness" unless core_source.include?("cachedReadiness.stateVersion === state.stateVersion") && contract_check_source.include?("stale readiness")
 errors << "Human directives must be consumed oldest-first" unless core_source.include?("status === \"queued\").reverse()") && contract_check_source.include?("directive FIFO")
