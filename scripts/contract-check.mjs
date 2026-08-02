@@ -2450,6 +2450,23 @@ function verifyHumanAndOrganizationContracts(output) {
     }
   }
 
+  // 分片摘要必须与键序无关。JSON.stringify 的键序取决于插入顺序，而 PostgreSQL 的 jsonb 不保留键序 ——
+  // 同一份分片存进去再读回来，序列化结果不同、摘要对不上，完整性校验把一次正常往返判成篡改。
+  // 这个缺陷只有跑 PostgreSQL 的那条端到端能发现，本地 runtime_json 永远是绿的。
+  {
+    const shardA = {schemaVersion: "project-state-shard/v1", projectId: "prj_order", collections: {taskGroups: [{id: "tg1", name: "x"}]}};
+    // 同样的内容，键序不同（模拟 jsonb 规范化之后读回来的样子）
+    const shardB = {collections: {taskGroups: [{name: "x", id: "tg1"}]}, projectId: "prj_order", schemaVersion: "project-state-shard/v1"};
+    if (digestProjectShardPayload(shardA) !== digestProjectShardPayload(shardB)) {
+      output.push("the project-shard digest depends on key order — a Postgres round-trip reorders jsonb keys, so the integrity check reports tampering on data it wrote itself");
+    }
+    // 反向：内容真的不同时必须仍然不同，否则这个摘要就不再是完整性校验了。
+    const shardC = {...shardA, collections: {taskGroups: [{id: "tg1", name: "y"}]}};
+    if (digestProjectShardPayload(shardA) === digestProjectShardPayload(shardC)) {
+      output.push("the project-shard digest ignores a real content change — normalising key order must not normalise away the content");
+    }
+  }
+
   // 节点对外投影必须是白名单。本仓为"黑名单投影"交过一次学费：publicJoinToken 当初逐个剔除敏感字段，
   // 于是后加的 registrationReplay（内含明文 nodeToken）直接漏出去。节点记录同样在长新字段。
   {
