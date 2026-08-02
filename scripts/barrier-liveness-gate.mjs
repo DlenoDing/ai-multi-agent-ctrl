@@ -93,7 +93,7 @@ function loadProducedStatuses() {
 // 所以终态这条按【赋值目标变量】归属：lane.status 只算 WorkerLane 的，不算 AgentNode 的。
 // 变量名有歧义的（request 可能是四种请求之一）映射成一个集合，宁可放宽也不误报。
 const VAR_MACHINES = {
-  workItem: ["WorkItem"], expiredWorkItem: ["WorkItem"],
+  workItem: ["WorkItem"], expiredWorkItem: ["WorkItem"], blockedItem: ["WorkItem"],
   dispatch: ["AgentDispatch"], session: ["WorkSession"], command: ["Command"], effect: ["CommandEffect"],
   topology: ["ExecutionTopology"], node: ["AgentNode"], taskGroup: ["TaskGroup"], account: ["Account"],
   request: ["PermissionRequest", "ApprovalRequest", "HumanConfirmationRequest", "DerivedTaskRequest"],

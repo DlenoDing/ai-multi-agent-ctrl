@@ -3840,6 +3840,29 @@ export function recordCheckpointRejection(state, request, result) {
   return summary;
 }
 
+// blocked 是唯一"进得去出不来"的派发状态：它不在活跃执行的排除集里（completed/failed/cancelled），
+// 于是工作项被判为"仍在执行"、永不重派，同时它阻塞关闭门；而上报失败时派发刚被从
+// node.activeDispatchIds 里摘掉，界面上那个「恢复」按钮取到的 dispatchId 是空的、必定 409。
+// 人在控制台上没有任何一条能走的路。
+//
+// 不新造机制：系统已经有"交回人工决策通道"这条路（needs_decision → 指令通道的重开/放弃），
+// 控制台也已经渲染它。把执行方自己报上来的阻塞接进去。
+// 【等人批权限】与【等人定稿】两种除外：它们各自有专门的恢复路径（批准即重排、定稿即放行），
+// 劫持过来反而会打断那条已经在走的路。
+const DISPATCH_BLOCKED_WAITING_ON_HUMAN = ["permission_request_pending", "awaiting_human_confirmation"];
+
+export function routeBlockedDispatchToHumanDecision(state, dispatch) {
+  if (dispatch?.status !== "blocked") return null;
+  if (DISPATCH_BLOCKED_WAITING_ON_HUMAN.includes(dispatch.blockedReason)) return null;
+  const taskGroup = (state.taskGroups || []).find((item) => item.id === dispatch.taskGroupId);
+  const blockedItem = (taskGroup?.workItems || []).find((item) => item.id === dispatch.workItemId);
+  if (!blockedItem || ["needs_decision", "superseded", "verified"].includes(blockedItem.status)) return null;
+  blockedItem.status = "needs_decision";
+  blockedItem.blockedReason = "agent_reported_blocked";
+  blockedItem.updatedAt = new Date().toISOString();
+  return blockedItem;
+}
+
 function findWorkItem(state, taskGroupId, workItemId) {
   const taskGroup = state.taskGroups?.find((item) => item.id === taskGroupId);
   const workItem = taskGroup?.workItems?.find((item) => item.id === workItemId);

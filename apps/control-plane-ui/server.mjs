@@ -93,6 +93,7 @@ import {
   effectivePathDenylist,
   purgeExpiredIdempotencyPayloads,
   recordCheckpointRejection,
+  routeBlockedDispatchToHumanDecision,
   repositoryUrlRegisteredForProject,
   ROOM_SENDER_KEY,
   UNSAFE_DELEGATED_GRANT_PERMISSIONS,
@@ -2194,6 +2195,7 @@ async function handleApi(req, res) {
       if (reportedStatus === "blocked") session.blockedReason = dispatch.blockedReason || session.blockedReason;
       session.updatedAt = now();
     }
+    routeBlockedDispatchToHumanDecision(state, dispatch);
     finishNodeDispatch(state, node, dispatch.dispatchId, false);
     audit(state, `agent-node:${node.nodeId}`, `dispatch_${reportedStatus}`, `AgentDispatch:${dispatch.dispatchId}`, reportedStatus);
     commitGatewayWrite(state);

@@ -70,6 +70,7 @@ import {
   roomSend,
   effectivePathDenylist,
   recordCheckpointRejection,
+  routeBlockedDispatchToHumanDecision,
   purgeExpiredIdempotencyPayloads,
   repositoryUrlRegisteredForProject,
   MANDATORY_PATH_DENYLIST,
@@ -2375,6 +2376,40 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     if (!claudeAfter.mcpServers?.unrelated_server) {
       output.push("cleaning the claude MCP config removed an unrelated server the operator configured");
+    }
+  }
+
+  // blocked 派发是唯一"进得去出不来"的：不在活跃执行的排除集里 → 工作项被判为仍在执行、永不重派，
+  // 同时阻塞关闭门；而界面上那个「恢复」按钮取的 dispatchId 刚被清空、必定 409。
+  {
+    const blockedState = structuredClone(seedState);
+    ensureRuntimeCollections(blockedState, {root});
+    const blockedGroup = (blockedState.taskGroups || []).find((group) => (group.workItems || []).length);
+    const blockedWork = blockedGroup.workItems[0];
+    blockedWork.status = "in_progress";
+    const mkDispatch = (reason) => ({dispatchId: "adp_blocked_probe", status: "blocked", blockedReason: reason,
+      taskGroupId: blockedGroup.id, workItemId: blockedWork.id});
+    routeBlockedDispatchToHumanDecision(blockedState, mkDispatch(undefined));
+    if (blockedWork.status !== "needs_decision") {
+      output.push(`an agent-reported block left the work item in ${blockedWork.status} — it still counts as actively executing, so it is never re-dispatched and it holds the close barrier, with no lever anywhere in the console`);
+    }
+    if (blockedWork.blockedReason !== "agent_reported_blocked") {
+      output.push("the routed work item carries no reason — the person is asked to decide without being told what happened");
+    }
+    // 等人批权限 / 等人定稿这两种不得被劫持：它们各自有专门的恢复路径，改成 needs_decision 会打断。
+    for (const waiting of ["permission_request_pending", "awaiting_human_confirmation"]) {
+      blockedWork.status = "in_progress";
+      delete blockedWork.blockedReason;
+      routeBlockedDispatchToHumanDecision(blockedState, mkDispatch(waiting));
+      if (blockedWork.status !== "in_progress") {
+        output.push(`a dispatch blocked on ${waiting} was rerouted to human decision — that interrupts the recovery path it was already on (approval requeues it; finalization releases it)`);
+      }
+    }
+    // 非 blocked 的派发不得被这条路径碰到。
+    blockedWork.status = "in_progress";
+    routeBlockedDispatchToHumanDecision(blockedState, {...mkDispatch(undefined), status: "running"});
+    if (blockedWork.status !== "in_progress") {
+      output.push("a running dispatch was rerouted to human decision — the check fires on states it has no business touching");
     }
   }
 
