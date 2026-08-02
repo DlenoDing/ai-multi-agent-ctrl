@@ -3639,8 +3639,11 @@ document.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
-  const MUTATION_ACTIONS = new Set(["orchestrator-run", "decide-model", "sync-skill-source", "task-control", "agent-control", "toggle-agent", "revoke-grant", "revoke-join-token", "revoke-agent-node", "force-revoke-agent-node", "org-status", "member-status", "member-reissue-invite", "project-archive", "bootstrap-init", "tg-config-reset", "close-task-group"]);
-  const guardBtn = MUTATION_ACTIONS.has(action) && target.tagName === "BUTTON" ? target : null;
+  // 防重提交原先靠一份手工维护的"会改状态的动作"清单，而清单必然漂移：新增一个会改状态的按钮
+  // 忘了登记，防重就静默失效（实测 logout 就漏在外面）。下一个漏掉的可能是不可逆操作。
+  // 导航走的是 data-menu 而不是 data-action，所以对每个动作按钮一律加防重不会误伤导航；
+  // 同步动作只是在极短时间内禁用一次，代价可忽略。清单删掉，漂移这一类也就没了。
+  const guardBtn = target.tagName === "BUTTON" ? target : null;
   if (guardBtn) { guardBtn.disabled = true; guardBtn.classList.add("is-loading"); }
   try {
     if (action === "modal-close") {

@@ -109,6 +109,8 @@ globalThis.__probe = {
   setFormTouched: (value) => { formTouched = value; },
   renderSource: () => String(render),
   handlerSource: (type) => String(globalThis.__handlers[type]),
+  click: (event) => globalThis.__handlers.click(event),
+  stubNavigation: () => { render = () => {}; loadPage = async () => {}; toast = {success: () => {}, error: () => {}, info: () => {}}; },
   renderTaskGroupDetail: (detail, taskGroup) => { tgDetail = detail; return renderTaskGroupDetail(taskGroup); },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
@@ -639,6 +641,33 @@ function runRuleLengthCase() {
 // 它渲染的错误横幅任何人都看不到）。这类东西读代码时看着一切都有，跑起来什么都没有。
 // 这里只做一件事：每个顶层函数至少要被调用或引用一次。引用式用法（const esc = escapeHtml、
 // .map(cell)）同样算数，所以判据是"标识符在定义之外还出现过"，而不是"有没有括号调用"。
+// 防重提交此前靠一份手工维护的动作清单，清单必然漂移（实测 logout 就漏在外面，下一个漏掉的
+// 可能是不可逆操作）。现在对每个动作按钮一律生效 —— 这条断言直接驱动真实的点击处理器，
+// 断言请求进行中按钮确实被禁用，而不是去文件里找那份清单还在不在。
+async function runDoubleSubmitGuardCase() {
+  const probe = loadConsole(el("div"));
+  probe.stubNavigation(); // 断言的是防重，不是渲染；渲染与取数在这里不该被牵扯进来
+  const button = el("button", {dataset: {action: "orchestrator-run"}});
+  button.closest = (selector) => (selector === "[data-action]" ? button : null);
+  button.classList = {add: () => {}, remove: () => {}};
+  let disabledDuringRequest = null;
+  let release = null;
+  probe.setFetch(() => new Promise((resolve) => {
+    disabledDuringRequest = button.disabled;
+    release = () => resolve({ok: true, status: 200, json: async () => ({ok: true})});
+  }));
+  const clicked = probe.click({target: button, preventDefault: () => {}});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (release) release();
+  await clicked;
+  check("动作进行中按钮被禁用",
+    disabledDuringRequest === true,
+    "动作按钮在请求进行中没有被禁用 —— 人连点两下就会发出两次不可逆操作");
+  check("请求结束后按钮恢复可用",
+    button.disabled === false,
+    "请求结束后按钮仍然禁用 —— 人再也点不了它，只能刷新页面");
+}
+
 function runNoDeadHelperCase() {
   const source = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const names = [...source.matchAll(/^function ([A-Za-z0-9_]+)\(/gmu)].map((match) => match[1]);
@@ -765,6 +794,7 @@ runWholeListCapCase();
 runStuckTopologyLeverCase();
 runBlockerGuideCase();
 runSelfCheckReasonCase();
+await runDoubleSubmitGuardCase();
 runNoDeadHelperCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
