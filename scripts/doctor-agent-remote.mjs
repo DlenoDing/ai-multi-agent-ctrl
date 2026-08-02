@@ -258,6 +258,17 @@ try {
     if (stalePayload.error !== "checkpoint_claim_epoch_stale") {
       throw new Error(`过期代次被拒但错误码不对（${stalePayload.error}）—— 说明拦下它的是别的守卫，这条断言没有覆盖 fencing`);
     }
+    // /fail 是同一批写入点里危害更直接的一个：旧执行器超时后调 /fail(blocked)，会把当前这一轮
+    // 正在跑的活标记为阻塞。发现一处漏了 fence，修复范围是"还有谁也该有"。
+    const staleFail = await fetch(`${baseUrl}/api/agent/v1/dispatches/${encodeURIComponent(anyDispatch.dispatchId)}/fail`, {
+      method: "POST",
+      headers: {"content-type": "application/json", authorization: `Bearer ${JSON.parse(readFileSync(agentConfigPath, "utf8")).nodeToken}`},
+      body: JSON.stringify({status: "blocked", claimEpoch: staleEpoch, reason: "stale-epoch probe"})
+    });
+    const staleFailPayload = await staleFail.json().catch(() => ({}));
+    if (staleFail.status !== 409 || staleFailPayload.error !== "dispatch_fail_claim_epoch_stale") {
+      throw new Error(`带着过期 claim 代次的失败上报没有被拒（HTTP ${staleFail.status} / ${staleFailPayload.error}）—— 上一次认领的执行器能把当前这一轮标记为阻塞`);
+    }
   }
 
   const state = await json("/api/state", {token: login.sessionToken});

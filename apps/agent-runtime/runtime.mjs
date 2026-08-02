@@ -479,7 +479,10 @@ async function flushCheckpointOutbox(config) {
         await jsonRequest(`${config.serverUrl}/api/agent/v1/dispatches/${encodeURIComponent(item.dispatchId)}/fail`, {
           method: "POST",
           token: config.nodeToken,
-          body: {status: "blocked", reason: `${reasonPrefix}: ${String(error.message).slice(0, 500)}`}
+          // 带上这份 outbox 条目所属的认领代次：控制面据此拒绝把【当前这一轮】误标为阻塞。
+          // 上面损坏隔离那一处拿不到代次（条目内容本就不可解析），因此 /fail 只做"带了就比较"，
+          // 不强制要求 —— 强制会把那条恢复路径一起拖垮。
+          body: {status: "blocked", claimEpoch: item.claimEpoch, reason: `${reasonPrefix}: ${String(error.message).slice(0, 500)}`}
         }).catch(() => {});
         process.stderr.write(`checkpoint replay moved to recovery: ${item.dispatchId} -> ${recoverPath}\n`);
         continue;

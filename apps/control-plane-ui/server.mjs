@@ -2245,6 +2245,16 @@ async function handleApi(req, res) {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     const dispatch = state.agentDispatches.find((item) => item.dispatchId === nodeFailureMatch[1] && item.assignedNodeId === node.nodeId);
     if (!dispatch) return json(res, 404, {error: "dispatch_not_found"});
+    // 与 /checkpoint 同一道 fence，而且这一侧更直接：旧执行器超时后调 /fail(blocked)，
+    // 会把【当前这一轮正在跑的活】标记为阻塞 —— 认领被回收再分回同一节点时 assignedNodeId 照样匹配。
+    // 这里只做「带了就比较」而不强制要求：outbox 条目内容损坏时 agent 拿不到代次（那份条目本就不可解析），
+    // 强制会把损坏隔离这条恢复路径一起拖垮 —— 而那条路径存在的意义正是让丢失的证据被人看见。
+    const failClaimEpoch = Number(dispatch.claimEpoch || 0);
+    if (body.claimEpoch !== undefined && Number(body.claimEpoch) !== failClaimEpoch) {
+      return json(res, 409, {error: "dispatch_fail_claim_epoch_stale", claimEpoch: failClaimEpoch,
+        presented: Number(body.claimEpoch),
+        message: "这条失败上报来自该派发的上一次认领；当前持有者已经换了一代，不能用它把正在跑的这一轮标记为失败或阻塞"});
+    }
     // Terminal-state guard (symmetric with the checkpoint route): a late/retried /fail must not corrupt
     // an already-finished dispatch. A /fail against a COMPLETED (successfully checkpointed, possibly
     // reviewed) dispatch is a real conflict; a repeat of the same non-success outcome acks idempotently.
