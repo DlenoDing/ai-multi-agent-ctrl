@@ -36,6 +36,51 @@ const dirtyFormKinds = new Set();
 function formDirtyKey(formEl) {
   return `${formEl?.dataset?.form || ""}:${formEl?.dataset?.category || ""}`;
 }
+
+// 提交失败后 showError() 会整页重渲染，把人刚填的内容一起冲掉。最需要保住内容的恰恰是这一刻：
+// expectedRound 409 不是故障，而是服务端在说「你看这页之后方案又改了，请重新看过再提交」——
+// 人本来就要带着自己写的几百字理由回去比对。内容被清空会让人要么放弃、要么草草重写一句敷衍的
+// 理由，而这些理由是要随决定留档的。这里按表单身份（data-form 及其全部 dataset）快照字段值，
+// 重渲染之后原样填回。formDirtyKey 太粗（同类逐行表单共用一个 key），不能当身份用。
+let pendingFormRestore = null;
+
+function formIdentity(formEl) {
+  return JSON.stringify(Object.keys(formEl.dataset).sort().map((key) => [key, formEl.dataset[key]]));
+}
+
+function snapshotFormValues(formEl) {
+  const fields = [];
+  for (const el of formEl.querySelectorAll("input, textarea, select")) {
+    if (!el.name || el.type === "password") continue; // 口令不进快照：内容留存的价值不值得让它多活一轮
+    if (el.type === "checkbox" || el.type === "radio") fields.push([el.name, el.value, el.checked ? "checked" : "unchecked"]);
+    else fields.push([el.name, el.value, "value"]);
+  }
+  return {identity: formIdentity(formEl), fields};
+}
+
+function restorePendingForm() {
+  const snapshot = pendingFormRestore;
+  pendingFormRestore = null; // 只补一次：过期的快照回填到别的表单上比清空更糟
+  if (!snapshot) return;
+  const formEl = [...document.querySelectorAll("form[data-form]")].find((el) => formIdentity(el) === snapshot.identity);
+  if (!formEl) return;
+  let restored = false;
+  for (const [name, value, mode] of snapshot.fields) {
+    if (mode === "value") {
+      const el = formEl.querySelector(`[name="${CSS.escape(name)}"]`);
+      if (!el) continue;
+      el.value = value;
+      restored = restored || value !== "";
+    } else {
+      const el = [...formEl.querySelectorAll(`[name="${CSS.escape(name)}"]`)].find((candidate) => candidate.value === value);
+      if (!el) continue;
+      el.checked = mode === "checked";
+    }
+  }
+  // 回填进来的是未保存内容，离开本页必须照样警告；提交失败时 formTouched 未被清掉，这里只是不让
+  // 后续的重渲染把它当成干净页面。
+  if (restored) { formTouched = true; dirtyFormKinds.add(formDirtyKey(formEl)); }
+}
 let modalHtml = "";
 let modalProtected = false;
 
@@ -1148,6 +1193,7 @@ function render() {
   });
   reapplyFilters();
   associateFormLabels();
+  restorePendingForm();
 }
 
 function renderContent() {
@@ -3123,6 +3169,7 @@ document.addEventListener("submit", async (event) => {
     if (submitOutcome !== "__skip_success__") { formTouched = false; dirtyFormKinds.clear(); }
     if (SUBMIT_SUCCESS[kind] && submitOutcome !== "__skip_success__") toast.success(SUBMIT_SUCCESS[kind]);
   } catch (error) {
+    pendingFormRestore = snapshotFormValues(form); // 必须在 showError 触发重渲染之前取
     showError(error);
   }
 });
