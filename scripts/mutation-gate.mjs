@@ -95,6 +95,37 @@ const MUTATIONS = [
     to: "if (false) {",
     expect: "already-closed"
   },
+  // 「人确认的定稿方案，AI 不会再默认自动改变；有分歧则回到人工确认」是这套系统的立身规则，
+  // 它落在这三处：AI 不得自行降级、不得自行取消、不得在方案实质变过之后照常往下执行。
+  // 三处此前都只有 contract-check 断言，没有一条被判别力验证过——而这正是最不该假绿的地方。
+  {
+    name: "被降级的状态机保证不得对人隐身",
+    file: CORE,
+    from: "  state.runtime.transitionEnforcement = transitionEnforcementMode(state);",
+    to: "  state.runtime.transitionEnforcement ||= transitionEnforcementMode(state);",
+    expect: "没有被重算覆盖"
+  },
+  {
+    name: "定稿后方案实质变过就不得照常执行",
+    file: CORE,
+    from: 'if (["start", "merge"].includes(action) && topology.humanFinalization?.subjectContentDigest) {',
+    to: "if (false) {",
+    expect: "实质内容被改动"
+  },
+  {
+    name: "AI 不得自行降级已定稿方案",
+    file: CORE,
+    from: 'if (topology.humanFinalization?.outcome === "confirmed" && !downgradeApproved) {',
+    to: "if (false) {",
+    expect: "自行降级"
+  },
+  {
+    name: "AI 不得自行取消已定稿方案",
+    file: CORE,
+    from: 'if (topology.humanFinalization?.outcome === "confirmed" && !cancelApproved) {',
+    to: "if (false) {",
+    expect: "自行取消"
+  },
   {
     name: "人要据以定稿的文本被截断时必须留痕",
     file: CORE,

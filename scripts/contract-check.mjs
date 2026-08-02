@@ -1020,6 +1020,24 @@ function verifyHumanAndOrganizationContracts(output) {
     try { advanceExecutionTopology(raceState, {topologyId: evilPlan.topologyId, action: "check_eligibility"}); advanceExecutionTopology(raceState, {topologyId: evilPlan.topologyId, action: "start"}); }
     catch (error) { evilStartBlocked = error.message === "execution_topology_requires_human_plan_confirmation"; }
     if (!evilStartBlocked) output.push("人工闸门: AI 另建的未获批方案竟然可以启动（绕过）");
+
+    // 定稿之后 AI 把方案的实质内容改掉，再照常往下执行 —— 这是"人确认的方案 AI 不得自动改变"
+    // 被绕开的最直接方式：人批的是 apps/safe/**，执行的却是 apps/**，而摘要一个字没变。
+    // 此前控制面确有这道守卫（start/merge 前重算摘要），但把它整个关掉契约检查照样通过：
+    // 唯一守着它的是 validate-specs 的源码字符串断言，改个写法就失效。
+    const divergedBranch = (safePlan.groups || []).flatMap((group) => group.branches || [])[0];
+    if (!divergedBranch) {
+      output.push("人工闸门: 定稿方案里找不到分支 —— 这条断言无从验证");
+    } else {
+      divergedBranch.ownedPaths = ["apps/**"]; // AI 定稿后把授权面从 apps/safe/** 扩大到全仓
+      let divergedStartBlocked = false;
+      try { advanceExecutionTopology(raceState, {topologyId: safePlan.topologyId, action: "start"}); }
+      catch (error) { divergedStartBlocked = error.message === "human_finalized_decision_diverged"; }
+      if (!divergedStartBlocked) {
+        output.push("人工闸门: 定稿后方案的实质内容被改动（授权路径扩大），仍然照常启动执行 —— 人批准的授权被套到了一个大得多的改动面上");
+      }
+      divergedBranch.ownedPaths = ["apps/safe/**"];
+    }
     // 方案定稿不得连带掐死该工作项的验收（plan_topology 的锁不应被当成验收已定稿）。
     const raceItem = raceTg.workItems.find((i) => i.id === "wi_race");
     if (raceItem.humanFinalization?.decisionType === "plan_topology") output.push("人工闸门: 方案定稿锁被写到工作项上，会让验收永久无法进行（死锁）");
@@ -2891,8 +2909,24 @@ function verifyHumanAndOrganizationContracts(output) {
         output.push("warn-mode recorded an illegal transition as if it were legal — the on-disk forensic record cannot distinguish an allowed transition from one that violated the model");
       }
     }
+    // 这条保证被关掉时，界面上必须看得出来。控制台只显示执行档位，而状态机执行模式由另一个
+    // 环境变量独立控制 —— 被放行的非法转移只进 transitionEvidence，而那个集合任何视角都不下发。
+    // 所以运行参数里要如实公布当前实际生效的模式，且必须每次装载重算：持久化下来的旧值会过期，
+    // 让人看着"严格"而实际是宽松（或反过来）。
+    const warnRuntime = {}; ensureRuntimeCollections(warnRuntime, {root});
+    if (warnRuntime.runtime?.transitionEnforcement !== "warn") {
+      output.push(`状态机执行模式没有如实公布（AIMAC_TRANSITION_STRICT=warn 时报告 ${warnRuntime.runtime?.transitionEnforcement}）—— "流程不得跳步"被关掉了，而控制台上一切如常`);
+    }
+    const staleRuntime = {runtime: {transitionEnforcement: "strict"}}; ensureRuntimeCollections(staleRuntime, {root});
+    if (staleRuntime.runtime?.transitionEnforcement !== "warn") {
+      output.push("持久化下来的旧执行模式没有被重算覆盖 —— 界面会一直显示上一次的模式，越是改过配置越不准");
+    }
     if (savedMode === undefined) delete process.env.AIMAC_TRANSITION_STRICT;
     else process.env.AIMAC_TRANSITION_STRICT = savedMode;
+    const strictRuntime = {runtime: {transitionEnforcement: "warn"}}; ensureRuntimeCollections(strictRuntime, {root});
+    if (strictRuntime.runtime?.transitionEnforcement !== "strict") {
+      output.push("恢复默认后仍报告宽松模式 —— 反过来的假象：保证是开的，界面却说它关着");
+    }
 
     const chains = new Map();
     for (const item of [...(state.transitionEvidence || [])].reverse()) {

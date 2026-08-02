@@ -117,10 +117,13 @@ globalThis.__probe = {
   assertRuleFragmentLengths: (fragments) => assertRuleFragmentLengths(fragments),
   evidenceRefsHint: (event) => evidenceRefsHint(event),
   alternativeAxisGaps: (assessment) => alternativeAxisGaps(assessment),
-  renderReviewWith: (nextState) => { state = nextState; return renderReview(); },
+  renderReviewWith: (nextState, account) => { state = nextState; currentAccount = account || null; return renderReview(); },
   renderPendingPanelWith: (nextState, account) => { state = nextState; currentAccount = account; return renderPendingForMePanel(); },
   todoCountsWith: (nextState, account) => { state = nextState; currentAccount = account; return todoCountsByPage(); },
   moreTextWith: (nextState, total, shown, field) => { state = nextState; return moreText(total, shown, field); },
+  renderSysSettingsWith: (nextState) => { state = nextState; return renderSysSettings(); },
+  renderSysAccountsWith: (nextState, account) => { state = nextState; currentAccount = account; return renderSysAccounts(); },
+  blockerGuide: (type) => blockerGuide(type),
   renderMonitorWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; return renderMonitor(); },
   setFetch: (fn) => { globalThis.fetch = fn; },
   api: (path, options) => api(path, options)
@@ -376,6 +379,30 @@ function runReviewAxisCase() {
     /共 1\+ 条待确认/.test(cappedList),
     "确认列表按截断后的长度报「共 N 条」，与面板的 N+ 口径不一致");
 
+  // 核心决策不得预选：AI 推荐被预先勾上时，"点一下定稿"就是最省力的路径，人工闸门退化成
+//  一次点击确认。运行级决策保留预选（低风险、高频）。
+  const majorState = (decisionClass, options) => ({
+    taskGroups: [{id: "tg1", projectId: null, name: "组一"}],
+    humanConfirmationRequests: [{
+      requestId: "hcr1", taskGroupId: "tg1", status: "pending", decisionClass,
+      question: {summary: "选拓扑"}, options
+    }],
+    qualityGates: []
+  });
+  const reviewer = {accountId: "acct_r", accountType: "org_admin"};
+  const opts = [{optionId: "a", label: "方案A", recommended: true}, {optionId: "b", label: "方案B"}];
+  const majorHtml = probe.renderReviewWith(majorState("major", opts), reviewer);
+  check("核心决策不预选任何选项",
+    !/checked/.test(majorHtml),
+    "核心决策卡片预先勾选了 AI 推荐的选项 —— 人只要点一下定稿就等于采纳了 AI 的判断");
+  check("并且说明为什么没有预选",
+    majorHtml.includes("必须由你主动勾选"),
+    "没有预选却不解释，人会以为界面坏了或漏渲染");
+  const opHtml = probe.renderReviewWith(majorState("operational", opts), reviewer);
+  check("运行级决策仍然预选推荐项",
+    /checked/.test(opHtml),
+    "把低风险的运行级决策也改成必须手动勾选 —— 高频操作上增加无谓负担");
+
   const missing = probe.renderReviewWith(stateWith("吞吐更高"));
   check("确认卡片上标出该条漏了哪项",
     missing.includes("这条没说明") && missing.includes("简单") && missing.includes("稳定"),
@@ -499,6 +526,92 @@ function runCloseBarrierScopeCase() {
     "给出了关闭当前项目之外任务组的按钮 —— 关闭不可逆，且会写下定稿归属");
 }
 
+// 状态机执行模式可以被环境变量整个降级成"记一笔然后放行"，而被放行的非法转移只进
+// transitionEvidence（任何视角都不下发）。控制台上必须看得出这条保证当前是开还是关。
+// 有些表把整个集合原样铺开，没有"当前展示 N 条"的页脚 —— 视图截断在这些页上连痕迹都没有，
+// 而人正是照着账号/授权名单判断"谁有权限"。少列一条就是漏掉一个人。
+function runWholeListCapCase() {
+  const probe = loadConsole(el("div"));
+  const admin = {accountId: "acct_a", accountType: "system_admin"};
+  const base = {accounts: [{accountId: "acct_x", displayName: "某人", accountType: "user_account", status: "active"}], accessGrants: [], agents: []};
+  const full = probe.renderSysAccountsWith({...base}, admin);
+  check("名单完整时不加多余提示",
+    !full.includes("不要据此判断"),
+    "名单没有被截断也提示了不完整 —— 误报会让人不再相信这个提示");
+  const capped = probe.renderSysAccountsWith({...base, truncatedCollections: ["accounts"]}, admin);
+  check("整表铺开的名单被截断时必须说出来",
+    capped.includes("不要据此判断"),
+    "账号名单被视图截断了，页面上却没有任何痕迹 —— 人会把它当成完整名单，据此判断谁有权限");
+}
+
+// 卡住的执行方案会永久挡住关闭门，而"人来取消"这条杠杆后端一直有、界面上却没有入口。
+// 后端有杠杆而界面没有入口，等于这个杠杆不存在。
+// 关闭门阻塞类型有 16 种，而"阻塞项人工处置"只处理其中 6 种。指引必须按类型说清去哪；
+// 对系统自行清除的那几类，必须明说"不用你动手"——否则人会守着一个不该他管的红点。
+function runBlockerGuideCase() {
+  const probe = loadConsole(el("div"));
+  const covered = ["HumanConfirmationRequest", "PermissionOrApprovalRequest", "HumanDirective", "ReviewPlan",
+    "ReviewBundle", "SharedDefinitionContract", "ExecutionTopology", "WorkSession", "AgentDispatch", "Lease",
+    "RoleDriftGuard", "CommandEffect", "DerivedTaskRequest", "WorkItem", "Checkpoint", "RepositoryOutputTarget"];
+  const missing = covered.filter((type) => !probe.blockerGuide(type));
+  check("每一种阻塞类型都说得出下一步",
+    missing.length === 0,
+    `这些阻塞类型没有任何处置指引：${missing.join("、")} —— 人看到红 chip 却不知道该去哪`);
+  check("系统自行清除的类型要明说不用管",
+    /无需你动手/.test(probe.blockerGuide("CommandEffect")) && /无需单独操作/.test(probe.blockerGuide("Lease")),
+    "对系统会自行清除的阻塞没有明说不用人管 —— 人会守着一个他做不了任何事的红点");
+  check("需要人处理的类型要指到具体页面",
+    /人工审核/.test(probe.blockerGuide("HumanConfirmationRequest")) && /人工指令/.test(probe.blockerGuide("HumanDirective")),
+    "把所有类型都指向同一个面板，而那个面板不处理它们 —— 人走过去是一片空白");
+}
+
+function runStuckTopologyLeverCase() {
+  const probe = loadConsole(el("div"));
+  const orchestrator = {accountId: "acct_o", accountType: "org_admin"};
+  const withTopologies = (topologies) => ({
+    taskGroups: [{id: "tg_a", projectId: "p_a", name: "甲组", status: "active"}],
+    executionTopologies: topologies,
+    closeBarriers: [], agentRuntimeNodes: [], qualityGates: [], testResults: [], checkpoints: []
+  });
+  const stuck = probe.renderMonitorWith(withTopologies([
+    {topologyId: "topo_stuck", taskGroupId: "tg_a", workItemId: "wi_1", status: "integrating"}
+  ]), orchestrator, "p_a");
+  check("卡住的执行方案给得出终止入口",
+    stuck.includes("topo_stuck") && stuck.includes('data-form="topology-cancel"'),
+    "执行方案卡在 integrating（merge 走不通）却没有任何界面入口 —— 它会永久挡着关闭门，人只看到一个红 chip");
+  check("并说明不终止的后果",
+    /挡着关闭门/.test(stuck),
+    "给了按钮却没说为什么要按 —— 人不知道不处理会怎样");
+  const terminal = probe.renderMonitorWith(withTopologies([
+    {topologyId: "topo_done", taskGroupId: "tg_a", workItemId: "wi_1", status: "merged"}
+  ]), orchestrator, "p_a");
+  check("已终态的方案不再给终止入口",
+    !terminal.includes('data-form="topology-cancel"'),
+    "已经 merged/cancelled 的方案还给终止按钮 —— 点下去只会撞 409，且让人以为它还阻塞着");
+  const otherProject = probe.renderMonitorWith({
+    ...withTopologies([{topologyId: "topo_other", taskGroupId: "tg_b", workItemId: "wi_1", status: "integrating"}]),
+    taskGroups: [{id: "tg_a", projectId: "p_a", name: "甲组"}, {id: "tg_b", projectId: "p_b", name: "乙组"}]
+  }, orchestrator, "p_a");
+  check("别的项目的方案不出现在本项目",
+    !otherProject.includes("topo_other"),
+    "把别的项目的执行方案列进了本项目的阻塞处置 —— 会在错误的项目抬头下终止别人的方案");
+}
+
+function runTransitionModeVisibilityCase() {
+  const probe = loadConsole(el("div"));
+  const strictHtml = probe.renderSysSettingsWith({runtime: {transitionEnforcement: "strict"}});
+  check("严格模式如实显示",
+    strictHtml.includes("状态机执行") && strictHtml.includes("严格"),
+    "运行参数里根本没有状态机执行模式这一项 —— 人无从判断这条保证是开是关");
+  const warnHtml = probe.renderSysSettingsWith({runtime: {transitionEnforcement: "warn"}});
+  check("宽松模式必须显眼地说明后果",
+    warnHtml.includes("warn-text") && /流程不得跳步/.test(warnHtml),
+    "宽松模式没有被标红、也没说清后果 —— 只写一个模式名，人不会意识到保证已经关了");
+  check("两种模式长得不一样",
+    strictHtml !== warnHtml,
+    "严格与宽松渲染成了同一段文字 —— 人分不出来");
+}
+
 function runRuleLengthCase() {
   const probe = loadConsole(el("div"));
   let threw = null;
@@ -592,6 +705,10 @@ runEvidenceRefsCase();
 runReviewAxisCase();
 runPendingTruncationCase();
 runCloseBarrierScopeCase();
+runTransitionModeVisibilityCase();
+runWholeListCapCase();
+runStuckTopologyLeverCase();
+runBlockerGuideCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();

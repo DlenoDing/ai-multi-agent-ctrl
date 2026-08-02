@@ -511,6 +511,12 @@ export function ensureRuntimeCollections(state, options = {}) {
   state.auditLog ||= [];
   state.runtime ||= {};
   state.runtime.executionProfile ||= options.executionProfile || process.env.AIMAC_EXECUTION_PROFILE || "production";
+  // AIMAC_TRANSITION_STRICT 能把"非法状态转移一律拒绝"整个降级成"记一笔然后放行"，而控制台上
+  // 只看得到执行档位 —— 于是"流程不得跳步"这条保证被关掉之后，界面一切如常（被放行的转移记进
+  // transitionEvidence，而那个集合任何视角都不下发，没有界面读它）。这里如实公布当前实际生效的模式。
+  // 用引擎自己那个函数算，不另写一份判据：复制出来的判据迟早与真正生效的那份漂移。
+  // 每次装载都重算（不用 ||=）：它取自环境变量，持久化下来会过期。
+  state.runtime.transitionEnforcement = transitionEnforcementMode(state);
 	  state.runtime.commands ||= {};
 	  state.runtime.commands.mcpStart ||= "npm start";
 	  delete state.runtime.commands.mcpRegister;

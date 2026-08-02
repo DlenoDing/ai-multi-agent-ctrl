@@ -882,6 +882,7 @@ const SUBMIT_SUCCESS = {
   "review-bundle-resolve": "已收尾评审包",
   "upgrade-candidate-resolve": "已处置系统升级候选项",
   "shared-definition-resolve": "已处置共享定义契约",
+  "topology-cancel": "已终止该执行方案：关闭门禁将在下一次重算时不再被它阻塞",
   "close-task-group": "任务组已关闭"
 };
 
@@ -1479,12 +1480,15 @@ function renderSysSettings() {
         <dt>运行档案</dt><dd class="mono">${esc(runtime.profileId || "-")}</dd>
         <dt>运行状态</dt><dd>${badge(runtime.status)}</dd>
         <dt>执行档位</dt><dd>${esc(executionProfileLabel(runtime.executionProfile || "-"))}</dd>
+        <dt>状态机执行</dt><dd>${runtime.transitionEnforcement === "strict"
+          ? "严格（非法状态转移一律拒绝）"
+          : `<span class="warn-text">宽松：非法状态转移只记一笔就放行（${esc(runtime.transitionEnforcement || "未知")}）—— 流程不得跳步这条保证当前是关的</span>`}</dd>
         <dt>启动方式</dt><dd>${esc((runtime.launchModes || []).join("、") || "-")}</dd>
         <dt>MCP 工具数</dt><dd>${esc(runtime.mcp?.toolCount ?? "-")}</dd>
         <dt>更新时间</dt><dd>${fmtTime(runtime.updatedAt)}</dd>
       </dl>
     `),
-    panel("技能源", table(["技能源", "状态", "固定提交", {label: "角色数", c: "num"}, "操作"], sources)),
+    panel("技能源", capNotice("skillSources") + table(["技能源", "状态", "固定提交", {label: "角色数", c: "num"}, "操作"], sources)),
     panel("模型能力注册（只读）", table(["供应商", "模型", "能力", {label: "上下文窗口", c: "num"}, "可用性"], models, {moreText: moreText((state.modelCapabilities || []).length, 40)}), {wide: true}),
     panel("指令压缩指标", `
       <div class="metric-grid">
@@ -1566,9 +1570,9 @@ function renderSysAccounts() {
     `),
     panel("项目成员授权", renderProjectMemberForm()),
     panel("智能体入网令牌", renderJoinTokenSection(), {wide: true}),
-    panel("账号列表", table(["账号", "邮箱", "类型", "状态", "角色"], accounts), {wide: true}),
-    panel("访问授权列表", table(["主体", "资源", "角色", "状态", "权限", "操作"], grants), {wide: true}),
-    panel("编排智能体档案", table(["名称", "角色", "模型策略", "状态", "操作"], agents) + `
+    panel("账号列表", capNotice("accounts") + table(["账号", "邮箱", "类型", "状态", "角色"], accounts), {wide: true}),
+    panel("访问授权列表", capNotice("accessGrants") + table(["主体", "资源", "角色", "状态", "权限", "操作"], grants), {wide: true}),
+    panel("编排智能体档案", capNotice("agents") + table(["名称", "角色", "模型策略", "状态", "操作"], agents) + `
       <form class="form-grid" data-form="agent-create" style="margin-top:12px;">
         <div class="form-row-inline">
           <div class="form-row"><label>名称</label><input name="name" required></div>
@@ -1885,7 +1889,7 @@ function renderOrgProjects() {
       </form>
     `),
     panel("项目成员授权", renderProjectMemberForm()),
-    panel("项目列表", table(["项目", "状态", "进度", "阶段", "健康度", "成员", "操作"], projectRows), {wide: true})
+    panel("项目列表", capNotice("projects") + table(["项目", "状态", "进度", "阶段", "健康度", "成员", "操作"], projectRows), {wide: true})
   ].join("");
 }
 
@@ -2171,7 +2175,10 @@ function renderTaskGroupDetail(taskGroup) {
       : `<div class="record">
           <div class="record-title">关闭门禁：${customBadge("存在阻塞", "red")}（${barrierBlockers.length} 项）</div>
           <div class="chip-row">${barrierBlockers.slice(0, 12).map((obj) => customBadge(`${t(obj.objectType) || obj.objectType}${obj.gate ? `·${t(obj.gate) || obj.gate}` : ""}`, "red")).join(" ")}</div>
-          <div class="record-meta">处置入口在「执行监控」页的"阻塞项人工处置"。</div>
+          ${[...new Set(barrierBlockers.slice(0, 12).map((obj) => obj.objectType))].map((type) => {
+            const guide = blockerGuide(type);
+            return guide ? `<div class="record-meta"><span>${esc(t(type) || type)}：${esc(guide)}</span></div>` : "";
+          }).join("")}
         </div>`;
   const blockers = `${barrierSummary}${advisoryBlockers || (barrierBlockers.length ? "" : `<div class="record">无其它提示型阻塞</div>`)}`;
 
@@ -2415,8 +2422,44 @@ function taskGroupSelector(selectedId, selectName) {
 // 「待你处理」是等人拍板的东西的唯一汇总入口，所以它不能依赖"当前选中的是哪个项目"。
 // 视图接口按 limit 截断每个集合，因此数组长度不是总数。凡是把长度当成"共 N 项"呈现的地方，
 // 数不全时都要带上 +，否则人会以为处置完眼前这些就清空了。
+// 关闭门的阻塞类型有 16 种，而"执行监控页的阻塞项人工处置"只处理其中 6 种。其余 11 种的人
+// 照着指引走过去是一片空白 —— 有出口却指错门，和没有出口一样让人卡住。按类型说清去哪、
+// 或者说清"这一类不需要你动手，系统会自行清除"，后者同样重要：人不该守着一个不用他管的红点。
+const BLOCKER_GUIDE = {
+  HumanConfirmationRequest: "到「人工审核」页定稿或打回",
+  PermissionOrApprovalRequest: "到「人工审核」页批准或驳回",
+  HumanDirective: "到「人工指令」页确认该指令已被消费",
+  ReviewPlan: "在本页下方「阻塞项人工处置」收尾评审计划",
+  ReviewBundle: "在本页下方「阻塞项人工处置」收尾评审包",
+  SharedDefinitionContract: "在本页下方「阻塞项人工处置」处置共享定义契约",
+  ExecutionTopology: "在本页下方「阻塞项人工处置」终止卡住的执行方案",
+  WorkSession: "执行中的会话：等它结束，或在「运行时节点」上取消对应派发",
+  AgentDispatch: "执行中的派发：等它结束，或在「运行时节点」上取消它",
+  Lease: "随持有它的会话一起释放：处理掉那个会话即可，无需单独操作",
+  RoleDriftGuard: "随对应会话终结自动关闭：处理掉那个会话即可，无需单独操作",
+
+  CommandEffect: "由编排周期自行和解，无需你动手",
+  DerivedTaskRequest: "由编排周期分类后自行清除，无需你动手",
+  WorkItem: "还有工作项没有交付所需产出：等执行完成，或取消对应工作项",
+  Checkpoint: "缺少 Git 证据（提交/推送）：等执行方补齐，或取消对应工作项",
+  RepositoryOutputTarget: "仓库产出目标尚未终态：等推送完成，或取消对应工作项"
+};
+
+function blockerGuide(objectType) {
+  return BLOCKER_GUIDE[objectType] || "";
+}
+
 function countSuffix(field) {
   return (state.truncatedCollections || []).includes(field) ? "+" : "";
+}
+
+// 有些表把整个集合原样铺开（没有"当前展示 N 条"的页脚），于是视图截断在这些页上连一点痕迹都没有：
+// 人看到的是一份自称完整的名单。账号、授权、智能体、项目这几张尤其要紧 —— 人正是照着它们
+// 判断"谁有权限"、"有哪些项目"，少列一条就是漏掉一个人或一个项目。
+function capNotice(field) {
+  return (state.truncatedCollections || []).includes(field)
+    ? `<div class="notice warn-notice">这份名单只加载了前若干条，实际条目更多 —— 不要据此判断"没有别的了"。</div>`
+    : "";
 }
 
 // 菜单红点的数字来源。独立成函数而不是内联在 render 里：内联的话，"红点与面板口径一致"这条
@@ -2535,10 +2578,11 @@ function renderReview() {
         })()}
       </div>` : ""}
       ${canReview ? `<form class="form-grid" data-form="hcr-decide" data-request="${esc(request.requestId)}" data-round="${esc(String(request.round || 1))}" style="margin-top:10px;">
+        ${request.decisionClass === "major" ? `<div class="notice">核心决策不预选任何选项：这一栏必须由你主动勾选。AI 的推荐只是建议，预先替你选好会让"点一下定稿"成为最省力的路径，而这套闸门存在的理由正是不让 AI 的判断顺着惯性变成结论。</div>` : ""}
         <div class="option-list">
           ${(request.options || []).map((option, index) => `
             <label class="option-item">
-              <input type="radio" name="selectedOptionId" value="${esc(option.optionId)}" ${option.recommended || (index === 0 && !(request.options || []).some((item) => item.recommended)) ? "checked" : ""}>
+              <input type="radio" name="selectedOptionId" value="${esc(option.optionId)}" ${request.decisionClass !== "major" && (option.recommended || (index === 0 && !(request.options || []).some((item) => item.recommended))) ? "checked" : ""}>
               <span class="option-text">
                 <strong>${esc(option.label)} ${option.recommended ? customBadge("AI 推荐", "blue") : ""} ${option.optionId === "none" ? customBadge("自定义", "gray") : ""}</strong>
                 ${option.description ? `<span>${esc(option.description)}</span>` : ""}
@@ -2857,6 +2901,13 @@ function renderMonitor() {
     && (!definition.projectId || visibleProjectIds.has(definition.projectId))).slice(0, 8);
   const openReviewBundles = (state.reviewBundles || []).filter((item) => inScope(item) && !["consumed", "rejected"].includes(item.status)).slice(0, 8);
   const openUpgradeCandidates = (state.systemUpgradeCandidates || []).filter((item) => inScope(item) && item.status === "candidate_created").slice(0, 8);
+  // 卡住的执行方案会永久挡住关闭门：分支报了 failed 之后拓扑照样进 integrating，merge 只认
+  // accepted、cancel 又只有人能做。后端一直有"人来取消"这条杠杆（契约检查专门断言过它必须存在），
+  // 但 executionTopologies 根本不在下发字段里，界面上也没有入口 —— 后端有杠杆而界面没有入口，
+  // 等于这个杠杆不存在：人只看到"存在阻塞 · N 项"里的一个红 chip，然后无从下手。
+  const TOPOLOGY_CANCELLABLE = ["running", "integrating", "blocked", "needs_reconcile"];
+  const stuckTopologies = (state.executionTopologies || [])
+    .filter((item) => inScope(item) && TOPOLOGY_CANCELLABLE.includes(item.status)).slice(0, 8);
   const canControlRules = hasPerm("task_group:control");   // rule_source_settle
   const canUpdateProject = hasPerm("project:update");      // shared_definition_resolve
   // 同段其余六处都按 inScope 过滤，唯独关闭门禁没有 —— 于是在项目 A 的监控页上会列出项目 B 的
@@ -2912,7 +2963,7 @@ function renderMonitor() {
     `, {wide: true, headerSide: filterInput("按门禁类型、工作项过滤…", "quality-gates")}) : "",
     // 关闭门禁上每一个阻塞项都必须能在这里被人处理掉。后端有杠杆而界面上没有入口，
     // 等于这个杠杆不存在 —— 人只会看到一个红 chip，然后无从下手。
-    (openReviewPlans.length || openRuleSources.length || blockingDefinitions.length || openReviewBundles.length || openUpgradeCandidates.length) ? panel("阻塞项人工处置", `
+    (openReviewPlans.length || openRuleSources.length || blockingDefinitions.length || openReviewBundles.length || openUpgradeCandidates.length || stuckTopologies.length) ? panel("阻塞项人工处置", `
       <div class="notice">下面这些阻塞只能由人来收尾：AI 要么不该有权决定（采纳规则、激活规范），要么已经无法推进（评审角色不再参与）。</div>
       ${(!canReviewGates && (openReviewPlans.length || openReviewBundles.length)) || (!canControlRules && (openRuleSources.length || openUpgradeCandidates.length)) || (!canUpdateProject && blockingDefinitions.length)
         ? `<div class="notice warn-notice">其中有些阻塞需要你没有的权限才能处置：评审计划/评审包需要「人工审核(task_group:review)」，规则来源/升级候选需要「任务组控制(task_group:control)」，共享定义契约需要「项目更新(project:update)」。这类权限只能在「项目成员授权」里按角色授予（例如"评审人"），请找项目负责人或组织管理员授予后再来。</div>`
@@ -2972,6 +3023,18 @@ function renderMonitor() {
               <div class="form-row"><label>处置</label>${decisionSelect("status", [["active", "激活为全局规范"], ["rejected", "驳回"], ["superseded", "被取代"], ["retired", "退役"]], "请选择处置…")}</div>
               <div class="form-row"><label>理由（必填）</label><input name="justification" placeholder="例如：已与相关方对齐，采纳为全局状态语义"></div>
               <button class="primary-button" type="submit">提交处置</button>
+            </form>`).join("")}
+        </div>` : ""}
+      ${canOrchestrate && stuckTopologies.length ? `
+        <div class="record" style="margin-top:8px;">
+          <div class="record-title">卡住的执行方案（分支报失败后 merge 走不通，只有人能终止；不终止会一直挡着关闭门）</div>
+          ${stuckTopologies.map((topology) => `
+            <form class="form-grid" data-form="topology-cancel" data-request="${esc(topology.topologyId)}" style="margin-top:8px;">
+              <div class="record-meta"><span class="mono">${esc(topology.topologyId)}</span> · ${esc(taskGroupNameOf(topology.taskGroupId))} · ${badge(topology.status)}
+                · 工作项 <span class="mono">${esc(topology.workItemId || "-")}</span>
+                ${topology.humanFinalization?.outcome === "confirmed" ? " · " + customBadge("已由人定稿", "blue") : ""}</div>
+              <div class="form-row"><label>终止理由（必填，会写进定稿记录）</label><input name="cancelRef" placeholder="例如：分支 b_api 报失败且无法修复，改由串行方案重做"></div>
+              <button class="danger-button" type="submit">终止该执行方案</button>
             </form>`).join("")}
         </div>` : ""}
     `, {wide: true}) : "",
@@ -3391,6 +3454,21 @@ document.addEventListener("submit", async (event) => {
     }
     if (kind === "rule-source-settle") {
       await api(`/api/rule-source-resolutions/${encodeURIComponent(form.dataset.request)}/settle`, {method: "POST", body: JSON.stringify({status: data.status || "reference_only", justification: data.justification || ""})});
+      await loadPage();
+      return;
+    }
+    if (kind === "topology-cancel") {
+      const cancelRef = String(data.cancelRef || "").trim();
+      if (!cancelRef) throw new Error("终止执行方案必须写明理由（它会写进定稿记录）");
+      // 终止是不可逆的终态转移，且当方案已被人定稿时会改写那条定稿记录（谁终止的、因为什么）。
+      if (!(await confirmDialog({
+        title: "确认终止该执行方案",
+        message: "终止之后这个方案进入终态，不能再启动或合并；若它已由人定稿，定稿记录会被改写为本次终止。",
+        sub: "这一步不可撤销。若只是想换一种执行方式，请先确认原方案确实走不通。",
+        danger: true,
+        confirmText: "确认终止"
+      }))) return "__skip_success__";
+      await api(`/api/execution-topologies/${encodeURIComponent(form.dataset.request)}/advance`, {method: "POST", body: JSON.stringify({action: "cancel", cancelRef})});
       await loadPage();
       return;
     }
