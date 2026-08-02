@@ -1342,6 +1342,22 @@ errors << "the content bundle directory must be cleared before it is written (a 
 errors << "the prompt must name the delivered rule files instead of declaring every file in the bundle directory binding" unless runtime_source.include?("these rule files, which are binding constraints") && !runtime_source.include?("read and apply EVERY file under")
 # 重新定基线必须走共用函数：契约里有四处引用同一个规则摘要，只改其中一个会让同一份契约自相矛盾，
 # 而它会被整份交给 agent。两处各写一遍派生公式正是这类不一致最初的来源。
+# 配错会削弱某条保证的开关必须在 .env.example 里有名有姓地写明【默认值】与【调错的后果】。
+# 只钉这一类：内部容量上限与 agent 侧测试钩子刻意不列 —— 文档里的噪声会让要紧的条目不再被阅读。
+# 新增一个这类开关而不写文档，运维就只能从源码里发现它，或者根本发现不了。
+safety_relevant_env_vars = %w[
+  AIMAC_TRANSITION_STRICT AIMAC_ORCHESTRATOR_INTERVAL_MS
+  AIMAC_REVOCATION_ACK_TIMEOUT_MS AIMAC_REGISTER_REPLAY_WINDOW_MS
+  AIMAC_IDEMPOTENCY_PAYLOAD_TTL_MS AIMAC_NODE_HEARTBEAT_TIMEOUT_MS
+  AIMAC_ROOM_MESSAGE_MAX_BYTES AIMAC_MCP_SERVICE_ALLOWED_TOOLS
+  AIMAC_RUNTIME_JSON_FSYNC AIMAC_EXPOSE_BOOTSTRAP_HINT AIMAC_ALLOW_LOCAL_GIT_REMOTE
+]
+env_example = File.read(File.join(ROOT, ".env.example"))
+undocumented_env = safety_relevant_env_vars.reject { |name| env_example.include?(name) }
+unless undocumented_env.empty?
+  errors << "these switches change a safety guarantee and are not documented in .env.example: #{undocumented_env.sort.join(", ")}"
+end
+
 errors << "re-baselining the effective-rules digest must rewrite every field derived from it (one shared helper, not a bare assignment)" unless core_source.include?("export function applyEffectiveRulesDigest") && agent_gateway_source.include?("applyEffectiveRulesDigest(contract, currentRulesDigest)") && !agent_gateway_source.include?("contract.effectiveRulesDigest = currentRulesDigest")
 errors << "the rule digest must cover the title (it is delivered to the model verbatim)" unless core_source.include?("digestOf({ruleId, category, title, content})")
 # 判别力门必须真的在跑。它把"改坏守卫→测试必须变红"这套纪律固化成脚本，而它此前有 npm 脚本
