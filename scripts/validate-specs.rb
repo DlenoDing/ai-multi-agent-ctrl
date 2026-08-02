@@ -1303,6 +1303,9 @@ state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-
 # 自治循环必须有东西驱动它。此前 runAutonomousCycle 的入口只有一个 HTTP 路由和一个 MCP 工具，
 # 而 task_group:orchestrate 不在任何项目角色模板里、且不可委派 —— 除系统管理员外无人能点那个按钮，
 # 系统自己也不动，于是"编排启动后自动生成"这句话永远不会成真。
+# 对账（死节点清扫、认领过期回收、撤销截止期、注册重放明文令牌抹除）原先只挂在需要活节点发起的
+# 路径上。服务端周期必须自己也跑一遍，且不受"有没有在跑的任务组"影响 —— 否则全队崩掉时它正好不跑。
+errors << "the server-side tick must reconcile regardless of whether any task group is open (dead-node sweep cannot depend on a live node)" unless server_source.match?(/const reconciled = recycleExpiredClaims\(state\);[\s\S]{0,400}?const pending = /)
 errors << "the autonomous cycle must have something driving it (no scheduler means a task group never starts)" unless server_source.include?("export function runOrchestratorTick()") && server_source.match?(/setInterval\(runOrchestratorTick/)
 errors << "postgres DDL must be memoized per process (every bridge call blocks the event loop)" unless state_store_source.include?("if (postgresTablesEnsured) return;")
 errors << "the postgres read path must not pay for a full central read just to probe existence" unless state_store_source.match?(/export function readStoredState\(options\) \{\s*\n\s*if \(stateStoreKind\(\) === "postgresql"\) \{/)

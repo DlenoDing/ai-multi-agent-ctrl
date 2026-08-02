@@ -12,6 +12,7 @@ import { appendProjectExecutionEvent, projectExecutionEventStorageInfo, readProj
 import {
   authenticateAgentNode,
   authenticateExecutorPrincipal,
+  recycleExpiredClaims,
   ackAgentControlCommand,
   buildExecutionContentBundle,
   claimNextDispatch,
@@ -91,6 +92,7 @@ import {
   HUMAN_ACTOR_KEY,
   effectivePathDenylist,
   purgeExpiredIdempotencyPayloads,
+  recordCheckpointRejection,
   repositoryUrlRegisteredForProject,
   ROOM_SENDER_KEY,
   UNSAFE_DELEGATED_GRANT_PERMISSIONS,
@@ -2671,7 +2673,22 @@ async function handleApi(req, res) {
     }
     const result = acceptAgentCheckpoint(state, body, {root: repositoryRoot});
     if (!result.accepted) {
-      json(res, result.status || 409, {error: result.error});
+      // 拒绝时原先只回一个错误码，而服务端**已经算出来**的细节（命中禁区的具体路径、tree 摘要
+      // 对不上的那个 commit）被丢在这里 —— 人拿到的是"改动路径命中禁区"，不知道是哪条路径。
+      // 同时控制面上不留任何痕迹：不写审计、不留事件，于是在 agent 的重放把它判定为终态之前，
+      // 控制台上一个字都不会变，人只会觉得"提交上去了，然后没动静"。
+      audit(state, "agent-runtime", "checkpoint_rejected", `Checkpoint:${body.taskGroupId || "unknown"}:${body.workId || "unknown"}`, result.error);
+      recordCheckpointRejection(state, body, result);
+      // 走直写提交：这条路径没有 finishGuardedWrite，而裸 writeState 会被"未推进版本号"的守卫拦下
+      // （它就是为了拦住这种写法而存在的）。
+      commitDirectStateWrite(state);
+      json(res, result.status || 409, {
+        error: result.error,
+        ...(result.deniedPaths ? {deniedPaths: result.deniedPaths} : {}),
+        ...(result.commit ? {commit: result.commit} : {}),
+        ...(result.expected ? {expected: result.expected} : {}),
+        ...(result.actual ? {actual: result.actual} : {})
+      });
       return;
     }
     audit(state, "agent-runtime", "checkpoint_submit", `Checkpoint:${result.checkpoint.taskGroupId}:${result.checkpoint.workId}`);
@@ -4741,9 +4758,20 @@ const realtimeHeartbeat = setInterval(() => {
 export function runOrchestratorTick() {
   let state = null;
   try { state = readState(); } catch { return {skipped: "state_unavailable"}; }
-  const pending = (state.taskGroups || []).some((group) => !["closed", "aborted"].includes(group.status));
-  if (!pending) return {skipped: "no_open_task_group"};
   try {
+    // 对账必须先跑，而且【不受"有没有在跑的任务组"影响】。
+    // recycleExpiredClaims 此前只有两个调用点：heartbeatAgentNode 与 claimNextDispatch —— 两个都要
+    // 活着的节点来发起。于是全队节点崩掉之后：它们永远显示"在线"、running 派发的认领永不过期、
+    // 永不重排队；而挂在这条路上的撤销截止期与注册重放明文令牌抹除也一并停摆。
+    // 一个只有在系统健康时才会运行的对账，恰好在最需要它的时候不运行。
+    const reconciled = recycleExpiredClaims(state);
+    const pending = (state.taskGroups || []).some((group) => !["closed", "aborted"].includes(group.status));
+    if (!pending) {
+      if (!reconciled) return {skipped: "no_open_task_group"};
+      state.stateVersion = Number(state.stateVersion || 0) + 1;
+      writeState(state);
+      return {ran: true, reconciledOnly: true};
+    }
     const result = runAutonomousCycle(state, {root: repositoryRoot, runtimeDir, mode: "all", autoSyncSkills: false});
     state.stateVersion = Number(state.stateVersion || 0) + 1;
     writeState(state);

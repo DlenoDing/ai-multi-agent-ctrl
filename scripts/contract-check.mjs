@@ -69,6 +69,7 @@ import {
   decideSessionPlacement,
   roomSend,
   effectivePathDenylist,
+  recordCheckpointRejection,
   purgeExpiredIdempotencyPayloads,
   repositoryUrlRegisteredForProject,
   MANDATORY_PATH_DENYLIST,
@@ -2374,6 +2375,59 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     if (!claudeAfter.mcpServers?.unrelated_server) {
       output.push("cleaning the claude MCP config removed an unrelated server the operator configured");
+    }
+  }
+
+  // 检查点被拒时控制面上原先不留任何痕迹（不写审计、不留事件、不落阻塞项）。在 agent 的重放把它
+  // 判成终态之前，控制台上一个字都不会变，人只会觉得"提交上去了，然后没动静" —— 而这恰是最该让人
+  // 知道的一刻。服务端已经算出来的细节（哪条路径命中禁区、哪个 commit 对不上）也必须一起留下。
+  {
+    const rejectState = structuredClone(seedState);
+    ensureRuntimeCollections(rejectState, {root});
+    const rejectGroup = (rejectState.taskGroups || [])[0];
+    const before = (rejectGroup.blockers || []).length;
+    recordCheckpointRejection(rejectState, {taskGroupId: rejectGroup.id, workId: "work_probe"},
+      {error: "changed_paths_inside_repository_target_denylist", deniedPaths: [".github/workflows/ci.yml"], commit: "abc123def456"});
+    const added = (rejectGroup.blockers || []).slice(before);
+    if (!added.length) {
+      output.push("a rejected checkpoint left no blocker on the task group — nothing on the console changes until the agent's replay gives up minutes later");
+    } else {
+      const summary = added[0].summary || "";
+      if (!summary.includes("changed_paths_inside_repository_target_denylist")) {
+        output.push("the checkpoint rejection blocker does not name which check failed");
+      }
+      if (!summary.includes(".github/workflows/ci.yml")) {
+        output.push("the checkpoint rejection blocker omits the offending path the server had already computed — the person is told a path was denied without being told which one");
+      }
+      if (!summary.includes("abc123def456".slice(0, 12))) {
+        output.push("the checkpoint rejection blocker omits the commit the server had already identified");
+      }
+    }
+    if (!(rejectState.eventLog || []).some((event) => event.type === "blocker"
+      && event.subject?.type === "Checkpoint" && String(event.subject?.id || "").includes("work_probe"))) {
+      output.push("a rejected checkpoint produced no control event — the rejection exists only in the HTTP response the agent received");
+    }
+  }
+
+  // 死节点对账原先只有两个调用点，都要活着的节点来发起（心跳、领派发）。全队崩掉之后节点永远
+  // 显示"在线"、running 派发的认领永不过期 —— 一个只有在系统健康时才运行的对账，恰好在最需要它的
+  // 时候不运行。这里断言的是：不经任何节点动作，单独调用对账就能把失联节点扫下线并把派发收回。
+  {
+    const deadState = structuredClone(seedState);
+    ensureRuntimeCollections(deadState, {root});
+    const staleAt = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+    deadState.agentRuntimeNodes = [{nodeId: "node_dead_probe", status: "online", admission: "full",
+      projectIds: ["prj_control_plane"], lastHeartbeatAt: staleAt, registeredAt: staleAt, activeDispatchIds: ["adp_dead_probe"]}];
+    deadState.agentDispatches = [{dispatchId: "adp_dead_probe", status: "running", assignedNodeId: "node_dead_probe",
+      projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", claimEpoch: 1,
+      claimedAt: staleAt, claimExpiresAt: staleAt, updatedAt: staleAt}];
+    recycleExpiredClaims(deadState);
+    const deadNode = deadState.agentRuntimeNodes[0];
+    if (deadNode.status === "online") {
+      output.push("reconciliation left a node that has not heartbeated in weeks marked online — with every node down nothing else ever calls this, so the console keeps showing a healthy fleet");
+    }
+    if (deadState.agentDispatches[0].status === "running") {
+      output.push("reconciliation left an expired claim running — the work is held by a node that is gone and will never be re-dispatched");
     }
   }
 

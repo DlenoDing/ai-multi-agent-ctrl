@@ -3818,6 +3818,28 @@ function addBlocker(taskGroup, severity, summary) {
   taskGroup.health = "blocked";
 }
 
+// 检查点被拒时在控制面上留痕。原先这条路径不写审计、不留事件、不落阻塞项 —— 于是在 agent 的
+// outbox 重放把它判成终态之前（可能是几分钟后），控制台上一个字都不会变，人只会觉得
+// "提交上去了，然后没动静"。而这恰恰是最需要人知道的一刻：产出被判定为不可接受。
+// 阻塞项写在任务组上，因为那正是人已经在看阻塞的地方；细节（哪条路径、哪个 commit）一并写进去。
+export function recordCheckpointRejection(state, request, result) {
+  const taskGroup = (state.taskGroups || []).find((item) => item.id === request?.taskGroupId);
+  if (!taskGroup) return null;
+  const detail = [
+    result?.deniedPaths?.length ? `路径：${result.deniedPaths.slice(0, 5).join("、")}` : "",
+    result?.commit ? `提交：${String(result.commit).slice(0, 12)}` : ""
+  ].filter(Boolean).join("；");
+  const summary = `检查点被拒（${request?.workId || "未知工作项"}）：${result?.error || "unknown"}${detail ? `｜${detail}` : ""}`;
+  addBlocker(taskGroup, "S2", summary);
+  // 事件类型用 blocker 而不是 checkpoint：控制事件 schema 是 additionalProperties:false，
+  // 塞不进"rejected"这类自造字段，而"这次提交产生了一条阻塞"本来就是它的真实语义。
+  appendEvent(state, "blocker", "Checkpoint", `${request?.taskGroupId}:${request?.workId}`, "agent-runtime", {
+    taskGroupId: request?.taskGroupId, projectId: taskGroup.projectId, reason: result?.error
+  });
+  taskGroup.updatedAt = new Date().toISOString();
+  return summary;
+}
+
 function findWorkItem(state, taskGroupId, workItemId) {
   const taskGroup = state.taskGroups?.find((item) => item.id === taskGroupId);
   const workItem = taskGroup?.workItems?.find((item) => item.id === workItemId);
