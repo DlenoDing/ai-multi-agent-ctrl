@@ -19,10 +19,15 @@
   ],
   "anyOf": [
     {
-      "required": ["payload"]
+      "required": [
+        "payload"
+      ]
     },
     {
-      "required": ["payloadRef", "payloadDigest"]
+      "required": [
+        "payloadRef",
+        "payloadDigest"
+      ]
     }
   ],
   "properties": {
@@ -74,11 +79,19 @@
     "actor": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["actorType", "actorId"],
+      "required": [
+        "actorType",
+        "actorId"
+      ],
       "properties": {
         "actorType": {
           "type": "string",
-          "enum": ["role", "session", "agent_node", "service"]
+          "enum": [
+            "role",
+            "session",
+            "agent_node",
+            "service"
+          ]
         },
         "actorId": {
           "type": "string"
@@ -88,7 +101,10 @@
     "subject": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "id"],
+      "required": [
+        "type",
+        "id"
+      ],
       "properties": {
         "type": {
           "type": "string",
@@ -186,6 +202,7 @@
         "review_request",
         "review_result",
         "handoff",
+        "room_message",
         "blocker",
         "progress",
         "wake",
@@ -232,7 +249,11 @@
     },
     "priority": {
       "type": "string",
-      "enum": ["normal", "important", "p0"],
+      "enum": [
+        "normal",
+        "important",
+        "p0"
+      ],
       "default": "normal"
     },
     "stateVersion": {
@@ -275,7 +296,14 @@
     "stateTransition": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["machine", "fromState", "toState", "stateVersionBefore", "stateVersionAfter", "transitionId"],
+      "required": [
+        "machine",
+        "fromState",
+        "toState",
+        "stateVersionBefore",
+        "stateVersionAfter",
+        "transitionId"
+      ],
       "properties": {
         "machine": {
           "type": "string"
@@ -311,19 +339,30 @@
     {
       "anyOf": [
         {
-          "required": ["payloadSchemaRef", "payload"]
+          "required": [
+            "payloadSchemaRef",
+            "payload"
+          ]
         },
         {
-          "required": ["payloadSchemaRef", "payloadRef", "payloadDigest"]
+          "required": [
+            "payloadSchemaRef",
+            "payloadRef",
+            "payloadDigest"
+          ]
         }
       ]
     },
     {
       "if": {
-        "required": ["stateTransition"]
+        "required": [
+          "stateTransition"
+        ]
       },
       "then": {
-        "required": ["guardEvidenceRefs"],
+        "required": [
+          "guardEvidenceRefs"
+        ],
         "properties": {
           "guardEvidenceRefs": {
             "minItems": 1

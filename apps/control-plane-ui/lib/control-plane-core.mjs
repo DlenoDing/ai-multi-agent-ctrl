@@ -3912,7 +3912,7 @@ function credentialEnvNames(providerClass) {
   }[providerClass] || [];
 }
 
-function appendEvent(state, type, subjectType, subjectId, actorId, payload) {
+function appendEvent(state, type, subjectType, subjectId, actorId, payload, extra = {}) {
   const event = {
     schemaVersion: "control-event/v1",
     protocolVersion: "control-plane/v1",
@@ -3928,11 +3928,41 @@ function appendEvent(state, type, subjectType, subjectId, actorId, payload) {
     createdAt: new Date().toISOString(),
     payloadSchemaRef: payload?.payloadSchemaRef || `control-event-payload:${type}/v1`,
     payloadDigest: digestOf(payload || {}),
-    payloadRef: `state-event:${subjectType}:${subjectId}`
+    payloadRef: `state-event:${subjectType}:${subjectId}`,
+    // extra 用于 schema 里为特定事件预留的字段（例如房间事件的 roomId/sequence/sender），
+    // 以及需要覆盖 actor 类型的场合。control-events.schema.json 是 additionalProperties:false，
+    // 所以这里放进来的字段必须是 schema 认识的 —— contract-check 会逐条校验。
+    ...extra
   };
   state.eventLog.unshift(event);
-  state.eventLog = state.eventLog.slice(0, 240);
+  state.eventLog = trimEventLog(state.eventLog);
   return event;
+}
+
+export const EVENT_LOG_MAX = 240;
+
+// 高频例行事件：agent 每发一条房间消息就产生 3 条（room_message + 命令总线的 admitted/succeeded），
+// 而 room_send 是每个 agent 默认就有的工具、没有速率限制。实测 100 条房间消息把审计环里 200 条
+// 人工确认事件全部挤了出去 —— 一个执行体就能把控制事件历史冲干净。
+//
+// 登记的是【例行】而不是【重要】：新增一个未登记的事件类型时，默认落到受保护那一侧。
+// 反过来列重要类型的话，将来加的关键事件会静默失去保护，而这种"忘了登记"不会有任何提示。
+// 代价是新的高频类型若忘了登记会占满环并退回今天的行为 —— 那是可见的、可修的，方向正确。
+const ROUTINE_EVENT_TYPES = new Set(["room_message", "command_admitted", "command_succeeded", "command_dispatched", "command_running"]);
+
+function trimEventLog(events, max = EVENT_LOG_MAX) {
+  if (events.length <= max) return events;
+  const dropped = new Set();
+  let excess = events.length - max;
+  // 先从最旧的例行事件开始丢
+  for (let index = events.length - 1; index >= 0 && excess > 0; index -= 1) {
+    if (ROUTINE_EVENT_TYPES.has(events[index]?.type)) { dropped.add(index); excess -= 1; }
+  }
+  // 环里全是受保护事件时才动它们，同样从最旧的开始 —— 这时丢弃是容量所迫，不是被噪声挤掉的。
+  for (let index = events.length - 1; index >= 0 && excess > 0; index -= 1) {
+    if (!dropped.has(index)) { dropped.add(index); excess -= 1; }
+  }
+  return events.filter((_, index) => !dropped.has(index));
 }
 
 // Gap #1: resolve the effective enforcement mode for the runtime gate/transition engine.
@@ -5853,16 +5883,30 @@ export function roomSend(state, args) {
     idempotencyKey: args.idempotencyKey || `cmd:room:${message.messageId}`,
     resultRef: `RoomMessage:${message.messageId}`
   });
-  state.eventLog.unshift({
-    id: createId("evt_room"),
-    at,
-    type: "room_message",
-    subject: {type: "RoomMessage", id: message.messageId},
-    actor: message.senderRef,
+  // 原先这条事件是手工 unshift 的：用 id/at 而非 eventId/createdAt，actor 是字符串而非
+  // {actorType, actorId}，还漏掉了 schema 专为房间预留的 roomId/sequence/sender —— 也就是说，
+  // 审计时无法从事件日志复原"这条消息属于哪个房间、第几号"，而那恰恰是署名可信之后最该能交叉核对的
+  // 两项。它同时绕过了环的截断（实测环长会变成 241）。现在走同一条 appendEvent。
+  appendEvent(state, "room_message", "RoomMessage", message.messageId, message.senderRef, {
+    projectId: args.projectId,
     taskGroupId: args.taskGroupId,
-    payloadDigest: message.payloadDigest
+    idempotencyKey: `evt:room:${message.messageId}`
+  }, {
+    actor: roomEventActor(message.senderRef),
+    roomId,
+    sequence: message.sequence,
+    ...(message.senderRef.startsWith("agent_node:") ? {sender: {agentNodeId: message.senderRef.slice("agent_node:".length)}} : {})
   });
   return {message};
+}
+
+// senderRef 形如 agent_node:<id> / account:<id> / unattributed。schema 的 actorType 枚举里没有
+// account 这一项，所以真人发的消息记为 service 类型，而完整署名原样保留在 actorId 里 ——
+// 宁可类型粗一点，也不要为了凑枚举把身份改写掉。
+function roomEventActor(senderRef) {
+  return senderRef.startsWith("agent_node:")
+    ? {actorType: "agent_node", actorId: senderRef.slice("agent_node:".length)}
+    : {actorType: "service", actorId: senderRef};
 }
 
 export function roomWait(state, args) {

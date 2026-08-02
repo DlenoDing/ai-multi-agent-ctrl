@@ -2351,6 +2351,40 @@ function verifyHumanAndOrganizationContracts(output) {
     }
   }
 
+  // 审计环是定长的，而 room_send 是每个 agent 默认就有的工具、无速率限制、每条产生 3 条事件。
+  // 若按纯时间顺序淘汰，一个执行体就能把人工确认这类治理事件从环里冲干净 —— 审计被噪声抹掉，
+  // 而且看起来一切正常。治理事件必须在容量竞争中优先于例行事件保留。
+  const floodState = structuredClone(seedState);
+  ensureRuntimeCollections(floodState, {root});
+  floodState.eventLog = [];
+  const floodTg = (floodState.taskGroups || [])[0];
+  for (let index = 0; index < 200; index += 1) {
+    floodState.eventLog.unshift({schemaVersion: "control-event/v1", eventId: `evt_gov_${index}`, type: "human_confirmation_decided",
+      createdAt: new Date().toISOString()});
+  }
+  const governanceBefore = floodState.eventLog.filter((item) => item.type === "human_confirmation_decided").length;
+  for (let index = 0; index < 120; index += 1) {
+    roomSend(floodState, {roomId: `room_${floodTg.id}`, idempotencyKey: `flood-${index}`,
+      payload: {text: "chatter"}, [ROOM_SENDER_KEY]: "agent_node:node_ct"});
+  }
+  const governanceAfter = floodState.eventLog.filter((item) => item.type === "human_confirmation_decided").length;
+  if (governanceAfter < governanceBefore) {
+    output.push(`room message flood evicted governance events from the audit ring (${governanceBefore} -> ${governanceAfter}) — an agent can erase the control-event history by chatting`);
+  }
+  if (floodState.eventLog.length > 240) {
+    output.push(`audit ring grew past its cap (${floodState.eventLog.length}) — a producer is bypassing the trim`);
+  }
+  // 房间事件必须符合控制事件信封：署名可信之后，审计要能复原"哪个房间、第几号"才有交叉核对的余地。
+  const roomEvent = floodState.eventLog.find((item) => item.type === "room_message");
+  if (!roomEvent) {
+    output.push("no room_message control event was produced (the audit trail for room traffic is missing entirely)");
+  } else {
+    validateSchema(roomEvent, loadJson("spec/control-events.schema.json"), "ControlEvent:room_message", output);
+    if (!roomEvent.roomId || !roomEvent.sequence) {
+      output.push("room_message control event omits roomId/sequence — an audit cannot tell which room or which message it refers to");
+    }
+  }
+
   const dispatch = (state.agentDispatches || []).find((item) => item.status === "queued" || item.status === "running");
   if (!dispatch) {
     output.push("No dispatch available to attach a human confirmation contract");
