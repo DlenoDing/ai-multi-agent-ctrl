@@ -429,6 +429,23 @@ async function flushCheckpointOutbox(config) {
       const corruptPath = `${path}.corrupt-${Date.now()}`;
       try { renameSync(path, corruptPath); } catch {}
       process.stderr.write(`checkpoint outbox item corrupt, quarantined: ${filename} -> ${corruptPath} (${error.message})\n`);
+      // 这条 outbox 承载的是【提交已经推送成功】的检查点。只往本机 stderr 写一行，控制面就永远
+      // 不知道那份证据没了：派发挂在 running 上直到认领过期，人在控制台看到的是"还在跑"，
+      // 而实际上分支上已经有了没人复核过的提交。文件名就是 safeName(dispatchId).json，
+      // 内容坏了不代表身份没了 —— 据此把派发标记为 blocked，让它出现在人的待处理面前。
+      const corruptDispatchId = filename.replace(/\.json$/u, "");
+      if (corruptDispatchId) {
+        await jsonRequest(`${config.serverUrl}/api/agent/v1/dispatches/${encodeURIComponent(corruptDispatchId)}/fail`, {
+          method: "POST",
+          token: config.nodeToken,
+          body: {status: "blocked", reason: `checkpoint_outbox_item_corrupt: 检查点证据文件损坏已隔离到 ${corruptPath}；该派发的提交可能已经推送，需人工核对该分支`}
+        }).then(
+          () => process.stdout.write(`checkpoint outbox corruption reported: ${corruptDispatchId}\n`),
+          // 上报失败不能拖垮持久化循环，但也不能悄悄咽下去：本机日志必须留下"报了但没报成"，
+          // 否则事后无从区分"没坏过"和"坏了却没人知道"。
+          (reportError) => process.stderr.write(`checkpoint outbox corruption report failed: ${corruptDispatchId} (${reportError?.message || reportError})\n`)
+        );
+      }
       continue;
     }
     try {

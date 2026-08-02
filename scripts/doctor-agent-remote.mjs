@@ -213,6 +213,31 @@ try {
   });
   if (replay.status !== 0 || !replay.stdout.includes("checkpoint replayed")) throw new Error(`Agent checkpoint outbox replay failed: ${replay.stderr || replay.stdout}`);
 
+  // outbox 里一条【内容损坏】的条目承载的是提交已经推送成功的检查点。原先只往本机 stderr 写一行，
+  // 控制面永远不知道那份证据没了：派发挂在 running 上直到认领过期，人看到的是"还在跑"，
+  // 而分支上已经有了没人复核过的提交。文件名就是 safeName(dispatchId).json —— 内容坏了不代表
+  // 身份没了，必须据此上报，让它出现在人的待处理面前。
+  const corruptOutboxDir = join(agentWorkDir, "outbox");
+  const corruptDispatchId = "d_corrupt_probe";
+  mkdirSync(corruptOutboxDir, {recursive: true});
+  writeFileSync(join(corruptOutboxDir, `${corruptDispatchId}.json`), "{ 这不是合法 JSON");
+  const corruptRun = spawnSync(process.execPath, [runtimePath, "run", "--work-dir", agentWorkDir, "--once"], {
+    env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false"},
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024
+  });
+  const corruptOutput = `${corruptRun.stdout || ""}${corruptRun.stderr || ""}`;
+  if (!corruptOutput.includes("quarantined")) {
+    throw new Error(`corrupt outbox item was not quarantined: ${corruptOutput.slice(-800)}`);
+  }
+  if (!corruptOutput.includes(`corruption reported: ${corruptDispatchId}`)
+    && !corruptOutput.includes(`corruption report failed: ${corruptDispatchId}`)) {
+    throw new Error(`corrupt outbox item was quarantined without telling the control plane (${corruptDispatchId}) — 证据没了而控制面上一切如常: ${corruptOutput.slice(-800)}`);
+  }
+  if (corruptRun.status !== 0) {
+    throw new Error(`一条损坏的 outbox 条目让整个持久化循环退出失败（${corruptRun.status}）—— 它只应被隔离: ${corruptOutput.slice(-800)}`);
+  }
+
   const state = await json("/api/state", {token: login.sessionToken});
   const completed = state.agentDispatches.find((dispatch) => dispatch.status === "completed" && dispatch.assignedNodeId);
   const node = state.agentRuntimeNodes.find((item) => item.nodeId === completed?.assignedNodeId);
