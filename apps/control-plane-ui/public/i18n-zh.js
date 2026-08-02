@@ -10,6 +10,20 @@
     /* ---------- 错误码：直接抛给人看的那些 ---------- */
     // 这些码会经 api() 的 t(detail) 渲染成红色提示。未翻译时人看到的是一串英文枚举，
     // 而它们出现的时机恰恰是人最需要看懂的时候（节点没接上、成员停不掉、写请求被重放拦下）。
+    // 「已被处置过」这一族：两个人同时在处置同一项时必然撞到。人此刻需要知道的是"不是你操作错了，
+    // 是别人先处置了"，而不是一串英文。
+    quality_gate_already_settled: "该质量门已被处置过（可能是另一个人刚处理完）：刷新后查看当前状态",
+    review_plan_already_resolved: "该评审计划已被收尾过：刷新后查看当前状态",
+    review_bundle_already_resolved: "该评审包已被收尾过：刷新后查看当前状态",
+    shared_definition_already_resolved: "该共享定义已被处置过：刷新后查看当前状态",
+    system_upgrade_candidate_already_resolved: "该升级候选已被处置过：刷新后查看当前状态",
+    shared_definition_resolution_justification_required: "处置共享定义必须写明理由：它会随决定一起留档",
+    dispatch_already_completed: "该派发已经结束，无法再对它下达控制指令",
+    dispatch_not_resumable: "该派发当前不可恢复：它既不在暂停中，也没有等待恢复的标记",
+    execution_topology_not_found: "找不到对应的执行拓扑：它可能已被取代或所属任务组已终结",
+    org_last_admin_cannot_be_disabled: "这是本组织最后一个在用的管理员：停用它之后没有人能再管理该组织",
+    org_member_invite_reissue_not_applicable: "只有尚未接受邀请的成员可以重发邀请",
+    bootstrap_init_requires_explicit_confirmation: "重新初始化必须原样输入确认串：这一步会重置控制面数据",
     role_not_allowed_on_node: "该节点的角色范围不含这个派发所需的角色",
     model_not_runnable_on_node: "该节点没有这个派发所需的模型",
     agent_reported_blocked: "执行方报告被阻塞：已交回人工决策，可在「人工指令」里重开或放弃该工作项",

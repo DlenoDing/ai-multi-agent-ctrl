@@ -1308,6 +1308,29 @@ state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-
 # 这两个标记控制面早就在写（写它们的注释明写"必须留痕并让人看到"），而控制台从来没有渲染过 ——
 # 人只看到"认领超时重新入队"，看不到最要紧的那句：上一任可能已经把提交推上去了。
 # 领到派发之后必须清掉"接不了"的诊断，否则它会一直挂着、告诉人一件已经不成立的事。
+# 会到人眼前的错误码必须有中文。词表自己的头注释就写着：未翻译时人看到的是一串英文枚举，而它们
+# 出现的时机恰恰是人最需要看懂的时候。逐批补翻译治不了本 —— 下一个新错误码照样会漏。
+# 登记的是【发给机器的那一侧】而不是【给人看的那一侧】：新增一个未登记的错误码默认要求翻译，
+# 忘了登记的代价是被门拦下（看得见），反过来则是人某天撞上一串英文（看不见）。
+machine_facing_error_codes = %w[
+  mcp_streamable_http_requires_post mcp_auth_required
+  event_node_binding_mismatch execution_event_key_required
+  checkpoint_replay_binding_mismatch dispatch_not_assigned_to_node
+  room_task_group_mismatch
+].to_set
+server_error_codes = server_source.scan(/error:\s*"([a-z0-9_]+)"/).flatten.uniq
+untranslated = server_error_codes.reject do |code|
+  machine_facing_error_codes.include?(code) || i18n_zh_source.match?(/\n\s*#{Regexp.escape(code)}:/)
+end
+unless untranslated.empty?
+  errors << "these error codes reach a person with no Chinese rendering: #{untranslated.sort.join(", ")} (translate them, or register them as machine-facing)"
+end
+# 登记表本身也会过期：一个已经翻译了的机器面错误码说明它其实会到人眼前，登记就该撤掉。
+stale_machine_facing = machine_facing_error_codes.select { |code| i18n_zh_source.match?(/\n\s*#{Regexp.escape(code)}:/) }
+unless stale_machine_facing.empty?
+  errors << "these codes are registered as machine-facing but have Chinese renderings: #{stale_machine_facing.sort.join(", ")} — remove the registration or the translation"
+end
+
 errors << "a successful claim must clear the stale cannot-claim diagnosis" unless agent_gateway_source.match?(/return \{dispatch: null, reason: "no_compatible_dispatch"\};\s*\}\s*delete node\.lastClaimMiss;/)
 errors << "the console must surface previousHolderMayHavePushed (an unreviewed push becomes the next holder's baseline)" unless public_app_source.include?("dispatch.previousHolderMayHavePushed")
 errors << "the console must surface which self-check items failed, not just the degraded badge" unless public_app_source.include?("node.selfCheckMissing") && agent_gateway_source.include?("node.selfCheckMissing = missing")
