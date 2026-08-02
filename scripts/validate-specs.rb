@@ -1290,6 +1290,9 @@ errors << "the verified-install command must state that its checksum does not pr
 # 交给宿主机上那个 AI CLI 的必须是按派发签发、只对 MCP 有效的凭据，不是节点令牌 ——
 # 节点令牌同时开着心跳、领派发、报事件这些网关端点。
 runtime_source = File.read(File.join(ROOT, "apps/agent-runtime/runtime.mjs"))
+# 撤销必须把写进用户全局 AI 客户端配置的那份凭据也清掉 —— 两条 revoke 分支都要，
+# 否则"空闲时被撤销"这条路上凭据照样留在配置里。shutdown 不清（节点还会回来）。
+errors << "revoking a node must clean the credential it wrote into the operator's global MCP client configs (both revoke branches)" unless runtime_source.scan(/if \(command\.commandType === "revoke"\) removeGlobalRemoteMcpClients\(\);/).size == 2
 errors << "the executor must receive a dispatch-scoped MCP credential, never the node token" unless runtime_source.include?("AIMAC_MCP_BEARER_TOKEN: dispatchPackage.executorToken") && !runtime_source.include?("AIMAC_MCP_BEARER_TOKEN: config.nodeToken")
 errors << "the executor credential must be accepted only on the MCP path" unless server_source.include?("authenticateExecutorPrincipal(state, token)") && !server_source.match?(/requireAuthenticated[\s\S]{0,400}?authenticateExecutorPrincipal/)
 errors << "idempotency payload purge must run on the eviction path taken by every write" unless server_source.include?("purgeExpiredIdempotencyPayloads(state);")

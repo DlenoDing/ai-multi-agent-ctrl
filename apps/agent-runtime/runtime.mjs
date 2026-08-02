@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir, hostname, platform, arch, cpus, totalmem, networkInterfaces } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,7 +36,13 @@ function installChildReaper() {
   process.on("SIGTERM", () => reap("SIGTERM"));
 }
 
-await main();
+// 只有被直接执行时才跑。被 import 时（例如测试要验证撤销后清理全局 MCP 配置的行为）不能自动执行，
+// 否则一 import 就报"agent 未初始化"。
+// 比对的是【解析后的真实路径】而不是 `file://${process.argv[1]}`：import.meta.url 是百分号编码的
+// URL，argv[1] 是普通路径，安装目录里只要有空格或非 ASCII 就对不上 —— 那样 bootstrap 会静默地
+// 什么都不做，而安装脚本看起来一切正常。这一条是被远程 agent 端到端跑出来的。
+const invokedPath = process.argv[1] ? (() => { try { return realpathSync(process.argv[1]); } catch { return process.argv[1]; } })() : "";
+if (invokedPath && invokedPath === realpathSync(fileURLToPath(import.meta.url))) await main();
 
 async function main() {
   if (command === "bootstrap") return bootstrap();
@@ -378,6 +384,7 @@ async function handleControlCommand(config, command, options = {}) {
         config.shutdownRequested = true;
         writeSecretJson(configPath, config);
       }
+      if (command.commandType === "revoke") removeGlobalRemoteMcpClients();
       await submitExecutionEvent(config, dispatchPackage, command.commandType === "pause_dispatch" ? "blocked" : "failed", {
         status: command.commandType === "pause_dispatch" ? "attention" : "failed",
         summary: controlState.reason,
@@ -390,6 +397,7 @@ async function handleControlCommand(config, command, options = {}) {
     if (["revoke", "shutdown"].includes(command.commandType)) {
       config.shutdownRequested = true;
       writeSecretJson(configPath, config);
+      if (command.commandType === "revoke") removeGlobalRemoteMcpClients();
       await ackControlCommand(config, command, "completed", {reason: "node-level shutdown accepted while idle"});
       return;
     }
@@ -1418,6 +1426,45 @@ function configureGlobalRemoteMcpClients(config, profile) {
   }
   if (clients.has("claude")) mergeMcpJson(join(homedir(), ".claude", "mcp.json"), remote);
   if (clients.has("cursor")) mergeMcpJson(join(homedir(), ".cursor", "mcp.json"), remote);
+}
+
+// 撤销时清掉写进用户全局 AI 客户端配置的那份凭据。--configure-global-clients 会把
+// `Bearer <节点令牌>` 写进 ~/.codex/config.toml、~/.claude/mcp.json、~/.cursor/mcp.json ——
+// 此后这台机器上【任何无关项目】里开 Claude/Codex/Cursor，都带着这份凭据连控制面。
+// 原先没有任何移除路径：节点被撤销之后，配置里那份凭据照样留着，而运维以为撤销就是撤销了。
+// 只在 revoke（终态）时清，shutdown 是优雅停机、节点还会回来。
+// 路径可注入：不注入就用真实的用户目录（生产行为不变），注入是为了能在测试里验证它 ——
+// 一个会去改运维真实 ~/.claude 的测试，本身就是不能跑的测试。
+export function removeGlobalRemoteMcpClients(paths = {}) {
+  const codexPath = paths.codex || join(process.env.CODEX_HOME || join(homedir(), ".codex"), "config.toml");
+  const jsonPaths = paths.json || [join(homedir(), ".claude", "mcp.json"), join(homedir(), ".cursor", "mcp.json")];
+  try {
+    const path = codexPath;
+    if (existsSync(path)) {
+      const previous = readFileSync(path, "utf8");
+      const start = previous.indexOf("# BEGIN ai-multi-agent-ctrl REMOTE MCP");
+      const endMark = "# END ai-multi-agent-ctrl REMOTE MCP";
+      const end = previous.indexOf(endMark);
+      if (start >= 0 && end > start) {
+        const next = `${previous.slice(0, start).trimEnd()}\n${previous.slice(end + endMark.length).trimStart()}`.trim();
+        writeFileSync(path, next ? `${next}\n` : "", {mode: 0o600});
+      }
+    }
+  } catch (error) {
+    process.stderr.write(`[agent-runtime] could not clean codex MCP config: ${error.message}\n`);
+  }
+  for (const path of jsonPaths) {
+    try {
+      if (!existsSync(path)) continue;
+      const current = JSON.parse(readFileSync(path, "utf8")) || {};
+      if (!current.mcpServers?.ai_multi_agent_ctrl) continue;
+      delete current.mcpServers.ai_multi_agent_ctrl;
+      writeSecretJson(path, current);
+    } catch (error) {
+      // 别人的配置文件坏了不是我们的事，但也不能因此把清理整条中断 —— 剩下的还要清。
+      process.stderr.write(`[agent-runtime] could not clean ${path}: ${error.message}\n`);
+    }
+  }
 }
 
 function mergeMcpJson(path, remote) {

@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite } from "../apps/mcp-server/server.mjs";
 import {
@@ -2335,6 +2336,45 @@ function verifyHumanAndOrganizationContracts(output) {
   }
   if (state.roomSequenceByRoom?.room_forge_ct !== roomSeqBefore) {
     output.push("room_send consumed a sequence number for a rejected message — the room sequence now has a permanent hole no reader can detect");
+  }
+
+  // --configure-global-clients 会把 `Bearer <节点令牌>` 写进 ~/.codex/config.toml、~/.claude/mcp.json、
+  // ~/.cursor/mcp.json —— 此后这台机器上任何无关项目里开 Claude/Codex/Cursor，都带着这份凭据连控制面。
+  // 原先没有任何移除路径：节点被撤销之后配置里那份凭据照样留着，而运维以为撤销就是撤销了。
+  // （服务端的撤销截止期会让那份凭据失效；这里清的是"它还躺在别处配置里"这件事本身。）
+  {
+    const cleanupDir = mkdtempSync(join(tmpdir(), "aimac-mcp-cleanup-"));
+    const codexPath = join(cleanupDir, "config.toml");
+    const claudePath = join(cleanupDir, "claude-mcp.json");
+    writeFileSync(codexPath, [
+      "[some_other_server]",
+      'url = "https://unrelated.example"',
+      "",
+      "# BEGIN ai-multi-agent-ctrl REMOTE MCP",
+      "[mcp_servers.ai_multi_agent_ctrl]",
+      'http_headers = { Authorization = "Bearer node-token-secret" }',
+      "# END ai-multi-agent-ctrl REMOTE MCP",
+      ""
+    ].join("\n"));
+    writeFileSync(claudePath, JSON.stringify({mcpServers: {
+      ai_multi_agent_ctrl: {url: "https://cp.example/mcp", headers: {Authorization: "Bearer node-token-secret"}},
+      unrelated_server: {url: "https://other.example"}
+    }}));
+    removeGlobalRemoteMcpClients({codex: codexPath, json: [claudePath]});
+    const codexAfter = readFileSync(codexPath, "utf8");
+    if (codexAfter.includes("node-token-secret")) {
+      output.push("revoking a node left its credential in the operator's global codex MCP config — every unrelated project on that host keeps connecting to the control plane as the revoked node");
+    }
+    if (!codexAfter.includes("some_other_server")) {
+      output.push("cleaning the codex MCP config removed unrelated configuration the operator owns");
+    }
+    const claudeAfter = JSON.parse(readFileSync(claudePath, "utf8"));
+    if (claudeAfter.mcpServers?.ai_multi_agent_ctrl) {
+      output.push("revoking a node left its credential in the operator's global claude MCP config");
+    }
+    if (!claudeAfter.mcpServers?.unrelated_server) {
+      output.push("cleaning the claude MCP config removed an unrelated server the operator configured");
+    }
   }
 
   // 幂等记录同时承担两件事，时限差了几个数量级：重放（客户端几秒到几分钟内的重试）与按键复用
