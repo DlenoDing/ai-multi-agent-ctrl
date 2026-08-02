@@ -669,9 +669,16 @@ function runtimeJsonShardMetadataFromCentral(centralState = {}) {
 // 完整性校验把一次正常的往返判成篡改。runtime_json 是普通文件、键序原样保留，所以本地一直是绿的 ——
 // 这个缺陷只有跑 PostgreSQL 的那条端到端能发现。
 function canonicalJson(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  // 数组里的 undefined 与 JSON.stringify 一致：变成 null。
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item === undefined ? null : item)).join(",")}]`;
   if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+    // 【必须与 JSON.stringify 对齐】：它会【跳过】值为 undefined 的键，而落盘走的正是 JSON.stringify。
+    // 第一版把这些键输出成 null，于是写入时按 canonical 记的字节数偏大，落盘后那些键消失，
+    // 读回来重算自然对不上 —— 表现为分片"被篡改"。实测差 69 字节，就是这么来的。
+    // 教训：一个"规范化"函数若与真正的序列化函数在任何一处语义不同，它规范化的就不是被存下来的东西。
+    return `{${Object.keys(value).sort()
+      .filter((key) => value[key] !== undefined && typeof value[key] !== "function" && typeof value[key] !== "symbol")
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
   }
   return JSON.stringify(value === undefined ? null : value);
 }
