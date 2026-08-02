@@ -1025,6 +1025,19 @@ errors << %(关闭任务组的确认必须标 danger 且指名任务组) unless 
 # 定稿/打回都是一次性的，且与"提交修改意见"并排 —— 这是整套人工闸门的核心动作，不能零确认。
 errors << %(定稿与打回必须二次确认（一次性且不可修改）) unless app_js_source.include?('title: finalizing ? "确认定稿" : "确认打回返工"')
 
+# 模型是执行体的一部分：换了模型，这份成果就是另一个东西做出来的。而 buildTaskContract 每次派发
+# 都重新 selectModel，定稿锁的内容摘要原先不含 modelId —— 改一次能力表，后续派发静默换执行体。
+errors << %(验收快照必须包含实际执行模型（否则已定稿方案可被静默换执行体）) unless core_source.include?("executedModels:")
+# 角色是"谁来做"，不是"这件事是什么"：ownerRole 参与任务性质判定会让角色名本身命中判据。
+# 注意只看 classifyTaskExecution 这一个函数：inferWorkSignals 里有一个同名变量也拼了 ownerRole，
+# 但它判的是"载体放置"而不是"这件事算不算重大决策"，不在本条约束范围内。
+# 用逐行提取而不是 [\s\S]{0,N}?：函数体超过那个上限时匹配为空，断言就恒不触发（实测过）。
+classify_body = core_source[/function classifyTaskExecution\((?:[^\n]*\n){0,60}?\}\n/].to_s
+errors << %(classifyTaskExecution 函数体提取不到（本断言已与代码脱节，不能据此下结论）) if classify_body.empty?
+errors << %(任务性质判定不得把 ownerRole 拼进匹配文本（角色是"谁来做"，不是"这件事是什么"）) if classify_body.include?("workItem.ownerRole")
+# 人在拓扑卡上批准的执行方案必须真的管住派发，否则"批准了按这个方案跑"与"实际怎么跑"互不相干。
+errors << %(人已定稿的执行拓扑必须约束派发通道) unless core_source.include?("governed_by_finalized_topology")
+
 # 互审此前是空转的：它能产出的每一条判据都是 acceptAgentCheckpoint 已经强制过的结构性事实，
 # 所以对任何被接受的检查点结论恒为 passed。控制面判断不了代码对不对，但质量门是否真的过了、
 # 声明的需求有没有对应证据、以及这次交付有多大，是它能独立查而接受时不查的。

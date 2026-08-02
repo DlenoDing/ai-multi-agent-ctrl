@@ -1256,6 +1256,44 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("内容包: 定稿决策条目里没有那条实际的决策内容");
     }
 
+    // 人在拓扑卡上批准的执行方案，此前从未作用于真正的派发（runAutonomousCycle 全文不读
+    // executionTopologies）——"人批准了按这个方案跑"与"实际怎么跑"是两件互不相干的事。
+    const govState = structuredClone(seedState);
+    ensureRuntimeCollections(govState, {root});
+    const govTg = govState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const govWork = govTg.workItems[0];
+    govWork.status = "ready";
+    govState.agentDispatches = [];
+    govState.executionTopologies = [{topologyId: "topo_gov", taskGroupId: govTg.id, workItemId: govWork.id,
+      projectId: govTg.projectId, status: "running", mode: "parallel_active",
+      humanFinalization: {outcome: "confirmed", decisionType: "plan_topology", finalizedBy: "acct_alice"}}];
+    runAutonomousCycle(govState, {taskGroupId: govTg.id}, {root});
+    if ((govState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === govWork.id)) {
+      output.push("定稿方案失效: 工作项有一份人已定稿的执行拓扑，却仍走普通派发通道（人批准的边界从未管住实际执行）");
+    }
+    // 没有定稿拓扑时必须照常派发，否则上面那条断言只是把一切都挡住了
+    const freeState = structuredClone(govState);
+    freeState.executionTopologies = [];
+    freeState.agentDispatches = [];
+    const freeWork = freeState.taskGroups.find((item) => item.id === govTg.id).workItems.find((item) => item.id === govWork.id);
+    freeWork.status = "ready";
+    runAutonomousCycle(freeState, {taskGroupId: govTg.id}, {root});
+    if (!(freeState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === govWork.id)) {
+      output.push("定稿方案失效: 没有定稿拓扑时该工作项也派发不出去（上面那条断言什么都没证明）");
+    }
+
+    // 角色名原先被拼进任务性质的匹配文本：ownerRole=reviewer 让「修复登录按钮文案」命中 /review/，
+    // 被判成混合任务并直接打成 needs_decision 挂人工卡。角色是"谁来做"，不是"这件事是什么"。
+    const clsState = structuredClone(seedState);
+    ensureRuntimeCollections(clsState, {root});
+    const clsTg = clsState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    clsTg.workItems = [{id: "wi_copy", title: "修复登录按钮文案", status: "ready", ownerRole: "reviewer", requirements: []}];
+    clsState.agentDispatches = [];
+    runAutonomousCycle(clsState, {taskGroupId: clsTg.id}, {root});
+    if (clsTg.workItems[0].status === "needs_decision") {
+      output.push("分类误判: 角色名参与了任务性质判定（reviewer 让一个文案修改被判成需要拆分的混合任务）");
+    }
+
     // 依赖判定原先整段被 status === "blocked_dependency" 包住，而离开这个状态有三条路
     //（派发时改写、互审返工、异常后被人 reopen）。一旦离开，依赖就永久失效 ——
     // 拆分建立的"分析→实现"顺序、以及人对分析结论的定稿权，在第一次异常之后就没了。

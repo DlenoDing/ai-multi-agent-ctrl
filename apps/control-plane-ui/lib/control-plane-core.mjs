@@ -964,7 +964,10 @@ function rankModel(candidateModel, roleSkill, requiredCapabilities, hardConstrai
 }
 
 function classifyTaskExecution(workItem = {}, request = {}) {
-  const text = `${workItem.title || ""} ${workItem.ownerRole || ""} ${(workItem.requirements || []).join(" ")} ${request.taskPrompt || ""}`.toLowerCase();
+  // ownerRole 原先被拼进匹配文本 —— 于是角色名本身会命中判据：一个 ownerRole 为 reviewer 的
+  // 「修复登录按钮文案」命中 /review/ 被判成混合任务、直接打成 needs_decision 挂人工卡。
+  // 角色是"谁来做"，不是"这件事是什么"，不该参与任务性质的判定。
+  const text = `${workItem.title || ""} ${(workItem.requirements || []).join(" ")} ${request.taskPrompt || ""}`.toLowerCase();
   const analysis = /分析|深度|调研|架构|设计|方案|复验|审查|review|audit|research|architecture|design|planning/u.test(text);
   const implementation = /代码|开发|实现|修复|改造|构建|提交|push|docker|npm|shell|code|implement|build|fix|patch|commit/u.test(text);
   const verification = /测试|验证|自检|doctor|e2e|复测|test|verify|validation/u.test(text);
@@ -974,8 +977,19 @@ function classifyTaskExecution(workItem = {}, request = {}) {
   else if (verification && !implementation) taskExecutionClass = "verification";
   else if (analysis && implementation) taskExecutionClass = "mixed_analysis_implementation";
   else if (/小任务|短任务|quick|minor/u.test(text)) taskExecutionClass = "short_execution";
+  // 这个判定决定了一个工作项会不会走人工闸门，而它本身只是几条字面匹配 —— 它判不出
+  //「把订单状态机换成事件溯源」「选择消息队列并接入」这类真正的方案决策（实测：均被判为普通实现，
+  // 不上闸门）。判据本身的局限必须留在记录里，否则"没上闸门"看起来像是"系统判断过、认为不必"，
+  // 而实际上是"系统没有能力判断"。
+  const classifierBasis = {
+    method: "keyword_match",
+    matchedSignals: unique([...(analysis ? ["analysis"] : []), ...(implementation ? ["implementation"] : []),
+      ...(verification ? ["verification"] : []), ...(special ? ["special_escalation_signal"] : [])]),
+    limitation: "字面匹配：未出现分析/设计/方案类字样的架构与选型决策不会被识别为需要人工定稿"
+  };
   return {
     taskExecutionClass,
+    classifierBasis,
     splitRequired: taskExecutionClass === "mixed_analysis_implementation",
     specialEscalationSignal: special,
     signals: unique([
@@ -1914,6 +1928,21 @@ export function runAutonomousCycle(state, request = {}) {
       // 或"这份成果算不算通过"，AI 已经重新拿到写租约把对象改掉了。人的定稿因此落在一个正在被
       // 改写的东西上，而定稿之后互审又会永久跳过该工作项，后续改动再无人复核。
       // 闸门要装在"这个工作项现在能不能被执行"上，而不是装在某一个 API 动作上。
+      // 人在拓扑卡上批准的那套执行方案（分支划分、各自的 ownedPaths 边界），此前【从未作用于真正的
+      // 派发】—— runAutonomousCycle 全文不读 executionTopologies，于是"人批准了按这个方案跑"
+      // 与"实际怎么跑"是两件互不相干的事。批准过的方案必须真的管住这个工作项：
+      // 有一份【人已定稿且尚未了结】的拓扑时，这个工作项只能经该拓扑执行，不走普通派发通道。
+      const governingTopology = (state.executionTopologies || []).find((topology) =>
+        topology.taskGroupId === taskGroup.id && topology.workItemId === workItem.id
+        && !TOPOLOGY_TERMINAL_STATUSES.includes(topology.status)
+        && topology.humanFinalization?.outcome === "confirmed");
+      if (governingTopology) {
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "deferred", reasonCode: "governed_by_finalized_topology",
+          whyThisCellNow: `execution governed by human-finalized topology ${governingTopology.topologyId} (${governingTopology.status})`, cycleRef});
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status,
+          awaiting: "execution_topology", topologyId: governingTopology.topologyId, topologyStatus: governingTopology.status});
+        continue;
+      }
       const blockingMajorConfirmation = (state.humanConfirmationRequests || []).find((request) =>
         request.status === "pending" && request.decisionClass === "major" && request.taskGroupId === taskGroup.id
         && (request.workItemId === workItem.id || request.subjectRef === `WorkItem:${workItem.id}`));
@@ -4553,7 +4582,13 @@ function subjectContentSnapshot(state, request) {
         .map((target) => `${target.targetId}:${target.status}`).sort(),
       qualityGates: (state.qualityGates || [])
         .filter((gate) => gate.taskGroupId === request.taskGroupId && gate.workItemId === workItemId)
-        .map((gate) => `${gate.gateType}:${gate.status}:${gate.previouslyFailed ? "prev_failed" : "clean"}`).sort()
+        .map((gate) => `${gate.gateType}:${gate.status}:${gate.previouslyFailed ? "prev_failed" : "clean"}`).sort(),
+      // 模型是执行体的一部分：换了模型，这份成果就是另一个东西做出来的。而 buildTaskContract 每次
+      // 派发都重新 selectModel，三种定稿锁的内容摘要原先都不含 modelId —— 于是改一次模型能力表，
+      // 后续所有派发（含已定稿方案返工重派）静默换执行体，不触发"你批准的东西变了"。
+      executedModels: [...new Set((state.agentTaskContracts || [])
+        .filter((contract) => contract.taskGroupId === request.taskGroupId && contract.workId === workItemId)
+        .map((contract) => `${contract.model?.provider || "?"}:${contract.model?.model || contract.model?.modelId || "?"}`))].sort()
     };
   }
   // task_group_close 不走确认单：它是 computeCloseBarrier 里"算完当场落闸"的一次调用，
