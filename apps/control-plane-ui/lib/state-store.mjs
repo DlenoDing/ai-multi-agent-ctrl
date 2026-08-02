@@ -150,8 +150,24 @@ export function readStoredCentralState(options) {
   return central;
 }
 
+// 带着 expectedStateVersion 却没有推进版本号的写入，本身就是错的：CAS 断言的是"中央还停在我读到的
+// 那个版本"，而如果我自己也不推进，那么在我之后写入的人拿着同一个期望值照样成立 —— 它会把我的改动
+// 整份覆盖掉，而 CAS 全程什么都没察觉。scripts/sync-agent-skills.mjs 正是这样：技能同步结果会被
+// 控制面的下一次写入静默丢弃，而且两个按 stateVersion 做键的缓存会继续返回同步前的旧视图。
+//
+// 拦在写入层而不是逐个脚本补递增：下一个新脚本会再忘一次，而这种丢失不报错、不留痕。
+function assertStateVersionAdvanced(state, expectedStateVersion) {
+  if (expectedStateVersion === undefined || expectedStateVersion === null) return;
+  if (Number(state?.stateVersion || 0) > Number(expectedStateVersion)) return;
+  const error = new Error(`state write did not advance stateVersion (still ${state?.stateVersion}) while asserting expected ${expectedStateVersion}`
+    + " — a concurrent writer holding the same expected version would silently overwrite this change");
+  error.code = "AIMAC_STATE_VERSION_NOT_ADVANCED";
+  throw error;
+}
+
 export function writeStoredState(state, options) {
   mkdirSync(options.runtimeDir, {recursive: true});
+  assertStateVersionAdvanced(state, options.expectedStateVersion);
   if (stateStoreKind() === "postgresql") {
     const {centralState, projectShards} = externalizeProjectState(withoutInternalStateFields(state));
     writePostgresStateWithProjectShards(centralState, projectShards, options, options.expectedStateVersion);

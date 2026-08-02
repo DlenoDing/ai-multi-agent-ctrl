@@ -2614,6 +2614,32 @@ function verifyRuntimeJsonConflict(output) {
     } catch (error) {
       if (!isStateStoreConflict(error)) output.push(`runtime_json state-store stale write raised wrong error: ${error.message}`);
     }
+
+    // CAS 断言的是"中央还停在我读到的版本"。如果写入方自己不推进版本号，那么在它之后、拿着同一个
+    // 期望值写入的人照样成立 —— 会把它的改动整份覆盖，而 CAS 全程什么都没察觉。这不是冲突，是丢更新。
+    // scripts/sync-agent-skills.mjs 原先正是这样：技能同步结果被控制面下一次写入静默丢弃。
+    // 用独立的状态路径：这些用例共享一份 central，探针若推进了版本号，后面那些拿固定期望值写入的
+    // 用例就会撞冲突 —— 一条断言不该靠扰动别人来成立。
+    const advanceDir = mkdtempSync(join(tmpdir(), "aimac-contract-advance-"));
+    const advanceOptions = {...options, runtimeDir: advanceDir, statePath: join(advanceDir, "control-plane-state.json")};
+    writeStoredState({stateVersion: 1, runtime: {}}, advanceOptions);
+    const stale = readStoredState(advanceOptions);
+    try {
+      writeStoredState({...stale, runtime: {probe: true}}, {...advanceOptions, expectedStateVersion: stale.__loadedStateVersion});
+      output.push("the state store accepted a write that did not advance stateVersion — the next writer holding the same expected version silently overwrites it, and version-keyed view caches keep serving the pre-write state");
+    } catch (error) {
+      if (error.code !== "AIMAC_STATE_VERSION_NOT_ADVANCED") {
+        output.push(`a non-advancing write raised the wrong error: ${error.code || error.message}`);
+      }
+    }
+    // 反向：正常推进的写入必须照常通过，否则这道拦截就是把所有写入都堵死了。
+    const advancing = readStoredState(advanceOptions);
+    advancing.stateVersion = Number(advancing.stateVersion || 0) + 1;
+    try {
+      writeStoredState(advancing, {...advanceOptions, expectedStateVersion: advancing.__loadedStateVersion});
+    } catch (error) {
+      output.push(`a correctly advancing write was rejected (${error.code || error.message}) — the guard became a blanket block`);
+    }
     writeStoredState({
       stateVersion: 3,
       runtime: {},

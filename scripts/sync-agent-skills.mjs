@@ -45,6 +45,9 @@ state.auditLog.unshift({
   subject: `AgentSkillSource:${sourceId}`,
   result: "succeeded"
 });
+// 版本号必须自己推进：CAS 只断言"中央还是我读到的那个版本"，不推进的话，之后拿着同一个期望值
+// 写入的人照样成立，会把这次同步整份覆盖掉 —— 而且按 stateVersion 做键的视图缓存不会失效。
+state.stateVersion = Number(state.stateVersion || 0) + 1;
 writeStoredState(state, stateStoreOptions(state));
 
 console.log(`skill source synced: ${sourceId}`);
