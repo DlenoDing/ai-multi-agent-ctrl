@@ -164,6 +164,7 @@ for (const tool of toolDefs) {
 }
 
 verifyRuntimeJsonConflict(errors);
+verifySeedRecordsMatchTheirDeclaredSchemas(errors);
 verifyWorkStatusEnumConvergence(errors);
 verifyTransitionEngine(errors);
 verifyCommandBusLifecycle(errors);
@@ -3751,6 +3752,40 @@ function extractMachineStates(yamlText, machine) {
 // Gap #4: WorkItem/WorkSession status must stay within the legal state-machine enums; there is no
 // "blocked"/"monitor_attention" state. Also confirm the converged blocked enums are recognized by
 // the derived blockers/counters logic.
+// 53 个 schema 里有 26 个没有任何实例被按其校验过 —— 一半的规范是装饰性的，代码可以自由漂移
+// 而无人发现。而每条记录自己就带着权威映射：schemaVersion "account/v1" → spec/account.schema.json。
+// 不用猜名字、不用维护对照表：凡是带 schemaVersion 的记录，一律按它自己声明的那份规范校验。
+function verifySeedRecordsMatchTheirDeclaredSchemas(output) {
+  const cache = new Map();
+  let validated = 0;
+  const declaredSchemaFor = (record) => {
+    const declared = String(record?.schemaVersion || "");
+    const name = declared.replace(/\/v\d+$/u, "");
+    if (!name || name === declared) return null; // 没有 "<名>/vN" 形状就不是可定位的规范
+    if (cache.has(name)) return cache.get(name);
+    const file = resolve(root, `spec/${name}.schema.json`);
+    const schema = existsSync(file) ? loadJson(`spec/${name}.schema.json`) : null;
+    cache.set(name, schema);
+    return schema;
+  };
+  for (const [collection, items] of Object.entries(seedState)) {
+    if (!Array.isArray(items)) continue;
+    for (const [index, item] of items.entries()) {
+      if (!item || typeof item !== "object" || !item.schemaVersion) continue;
+      const schema = declaredSchemaFor(item);
+      if (!schema) {
+        output.push(`种子数据 ${collection}[${index}] 声明 schemaVersion "${item.schemaVersion}"，但 spec 下没有对应的规范文件 —— 这条记录声称遵守一份不存在的契约`);
+        continue;
+      }
+      validated += 1;
+      validateSchema(item, schema, `seed.${collection}[${index}]`, output);
+    }
+  }
+  if (validated < 20) {
+    output.push(`种子数据规范核对只校验到 ${validated} 条记录，远少于预期 —— 提取逻辑已与数据结构脱节，本条可能在空转`);
+  }
+}
+
 function verifyWorkStatusEnumConvergence(output) {
   const smText = readFileSync(resolve(root, "spec/state-machines.yaml"), "utf8");
   const workItemSet = new Set(extractMachineStates(smText, "WorkItem"));

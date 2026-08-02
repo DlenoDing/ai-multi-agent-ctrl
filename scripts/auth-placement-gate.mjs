@@ -117,7 +117,45 @@ function run() {
     console.error("\n授权前只允许做纯输入校验（不读不改状态）。任何要返回状态内容或改状态的分支，都必须放在 beginGuardedWrite 之后。");
     process.exit(1);
   }
-  console.log(`auth placement gate ok: ${blocks.length} 条改状态路由，鉴权之前均无状态内容泄露与状态写入`);
+  const unmapped = checkEveryGuardedActionIsMapped();
+  if (unmapped.length) {
+    console.error("auth placement gate failed:");
+    for (const message of unmapped) console.error(`- ${message}`);
+    process.exit(1);
+  }
+  console.log(`auth placement gate ok: ${blocks.length} 条改状态路由鉴权之前无泄露无写入，且每个受守卫动作都有显式权限映射`);
+}
+
+// permissionForAction 的兜底是 system:*。漏一条映射不会报错，只会让那条杠杆【只有系统管理员
+// 够得到】—— 本仓已经踩过一次：review_plan_resolve 漏了映射，于是收尾一个任务组层面的阻塞
+// 需要系统管理员，与同批杠杆口径完全不一致，而界面上没有任何迹象。
+// 受守卫动作是可枚举的，就不该靠"想到哪条写哪条"来守。
+function checkEveryGuardedActionIsMapped() {
+  const source = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const start = source.indexOf("function permissionForAction(action) {");
+  if (start < 0) return ["权限映射检查: 找不到 permissionForAction —— 判据已与代码脱节，本条在空转"];
+  let index = source.indexOf("{", start);
+  let depth = 0;
+  while (index < source.length) {
+    if (source[index] === "{") depth += 1;
+    else if (source[index] === "}") { depth -= 1; if (!depth) break; }
+    index += 1;
+  }
+  const body = source.slice(start, index);
+  const actions = [...source.matchAll(/beginGuardedWrite\([^,]+,[^,]+,\s*"([a-z_0-9]+)"/gu)].map((match) => match[1]);
+  const unique = [...new Set(actions)];
+  const failures = [];
+  for (const action of unique) {
+    // task_group_* 由前缀分支统一映射，不需要逐条列举。
+    if (action.startsWith("task_group_")) continue;
+    if (body.includes(`"${action}"`)) continue;
+    failures.push(`权限映射检查: 动作 ${action} 没有显式的权限映射，会落到兜底的 system:* ——`
+      + "这条杠杆将只有系统管理员够得到，而界面上不会有任何迹象");
+  }
+  if (unique.length < 40) {
+    failures.push(`权限映射检查: 只提取到 ${unique.length} 个受守卫动作，远少于预期 —— 提取逻辑已与代码脱节，本条可能在空转`);
+  }
+  return failures;
 }
 
 run();
