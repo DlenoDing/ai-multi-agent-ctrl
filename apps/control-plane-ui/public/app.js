@@ -3013,8 +3013,15 @@ document.addEventListener("submit", async (event) => {
           <div class="notice warn-notice">以下注册命令仅显示一次，请立即复制到目标主机执行。</div>
           <div class="command-box"><strong>直接安装</strong><pre id="join-install">${esc(result.installCommand || "-")}</pre></div>
           <div class="button-row"><button type="button" class="secondary-button" data-action="copy-el" data-copy-target="#join-install">复制直接安装命令</button></div>
-          <div class="command-box"><strong>校验安装（推荐）</strong><pre id="join-verified">${esc(result.verifiedInstallCommand || "-")}</pre></div>
-          <div class="button-row"><button type="button" class="secondary-button" data-action="copy-el" data-copy-target="#join-verified">复制校验安装命令</button></div>
+          <div class="command-box"><strong>带完整性校验的安装（推荐）</strong><pre id="join-verified">${esc(result.verifiedInstallCommand || "-")}</pre></div>
+          <div class="button-row"><button type="button" class="secondary-button" data-action="copy-el" data-copy-target="#join-verified">复制该命令</button></div>
+          ${/* 原先这里叫"校验安装（推荐）"，运维会读成"这条命令能防服务器被篡改"。实际不能：
+                checksum 与安装脚本来自同一个地址、由同一个进程当场算出，没有离线签名。
+                它防的是传输损坏与半截下载，不是有人换掉了产物。把这一点说清楚，
+                否则这条命令给的是安全感而不是安全。 */ ""}
+          <div class="notice">校验的是下载是否完整：checksum 与安装脚本来自同一个控制面地址、由同一个进程实时计算，
+            因此它能发现传输损坏或下载不全，<strong>不能</strong>发现控制面本身被篡改或被中间人替换。
+            要防住后者需要发布时离线签名、安装脚本内置公钥 —— 当前版本没有这一步。</div>
         </div>
       `, {protected: true});
       return;
