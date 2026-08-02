@@ -111,7 +111,9 @@ globalThis.__probe = {
   handlerSource: (type) => String(globalThis.__handlers[type]),
   renderTaskGroupDetail: (detail, taskGroup) => { tgDetail = detail; return renderTaskGroupDetail(taskGroup); },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
-  decisionSelect: (...args) => decisionSelect(...args)
+  decisionSelect: (...args) => decisionSelect(...args),
+  setFetch: (fn) => { globalThis.fetch = fn; },
+  api: (path, options) => api(path, options)
 };
 `;
 
@@ -294,9 +296,33 @@ function runDecisionSelectCase() {
     "占位项把实质选项挤掉了");
 }
 
+// 服务端在不少错误里写了给人看的说明（message / reason / required）。前端原先只取 error 一个字段，
+// 于是一条本来解释清楚了"为什么、接下来怎么办"的 409，到人眼前只剩一串英文枚举。
+async function runErrorGuidanceCase() {
+  const probe = loadConsole(el("div"));
+  const cases = [
+    {payload: {error: "org_member_invitation_pending", message: "该成员尚未接受邀请，不能启用"}, expect: "该成员尚未接受邀请"},
+    {payload: {error: "policy_denied", reason: "组织已被暂停"}, expect: "组织已被暂停"},
+    {payload: {error: "server_side_agent_execution_forbidden", required: ["请先注册一个 Agent Runtime 节点"]}, expect: "请先注册一个 Agent Runtime 节点"}
+  ];
+  for (const item of cases) {
+    probe.setFetch(async () => ({ok: false, status: 409, statusText: "Conflict", json: async () => item.payload}));
+    let thrown = null;
+    try { await probe.api("/api/probe", {method: "POST"}); } catch (error) { thrown = error; }
+    if (!thrown) {
+      check(`错误说明可见:${item.payload.error}`, false, "失败响应没有抛出错误");
+      continue;
+    }
+    check(`错误说明可见:${item.payload.error}`,
+      String(thrown.message).includes(item.expect),
+      `服务端写的说明没有到达人（实际提示：${JSON.stringify(String(thrown.message).slice(0, 120))}）—— 人只看到一串英文错误码，而说明就在同一个响应里`);
+  }
+}
+
 runFormRestoreCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
+await runErrorGuidanceCase();
 
 if (failures.length) {
   for (const failure of failures) console.error(`  - ${failure}`);

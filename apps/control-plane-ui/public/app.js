@@ -152,7 +152,11 @@ function pendingForMe() {
   add("sharedDefinitions", "待你处置的共享定义契约", "monitor",
     (state.sharedDefinitions || []).filter((item) => ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"].includes(item.status)
       && (!item.projectId || visibleProjectIds.has(item.projectId))), canUpdateProject);
-  return {buckets, total: buckets.reduce((sum, bucket) => sum + bucket.count, 0)};
+  // "看不到"不等于"没有"。这些待办的来源集合只在 tasks 视角下发；在组织/系统/运行时视角里它们
+  // 根本不存在，而 `|| []` 会把"这一页没加载"渲染成 0 —— 人在概览看到"3"，点进成员管理变成没有，
+  // 会读成"已经处理掉了"。显式区分：不知道就别报数。
+  const known = Array.isArray(state.taskGroups);
+  return {buckets, total: buckets.reduce((sum, bucket) => sum + bucket.count, 0), known};
 }
 
 const MENUS = {
@@ -580,6 +584,15 @@ async function api(path, options = {}) {
         hint = `（需要 ${payload.requiredPermission}${scope ? ` @ ${scope}` : ""}${String(payload.requiredPermission).startsWith("task_group:") ? "；这类权限只能在「项目成员授权」里按角色授予，写在账号上的直接权限不生效" : ""}）`;
       }
       if (Array.isArray(payload.permissions) && payload.permissions.length) hint += `（涉及：${payload.permissions.join("、")}）`;
+      // 服务端在不少错误里写了给人看的说明（message / reason / required），前端原先只取 error 一个字段，
+      // 把它们全丢了 —— 于是一条本来说清了"为什么、接下来怎么办"的 409，到人眼前只剩一串英文枚举。
+      // 典型：停用一个还没接受邀请的成员 → 服务端解释了原因，人看到的是 `409 org_member_invitation_pending`。
+      const guidance = [
+        payload.message,
+        payload.reason,
+        Array.isArray(payload.required) ? payload.required.join("；") : payload.required
+      ].map((item) => String(item || "").trim()).filter(Boolean);
+      if (guidance.length) hint += `：${[...new Set(guidance)].join("；")}`;
     } catch {}
     if (response.status === 401 && authToken) {
       clearSession();
@@ -1138,7 +1151,9 @@ function render() {
   const menuTodoCounts = (() => {
     const counts = {};
     try {
-      for (const bucket of pendingForMe().buckets) counts[bucket.page] = (counts[bucket.page] || 0) + bucket.count;
+      const todo = pendingForMe();
+      // 数据没下发到这一页时不出红点：0 与"未知"在红点上长得一模一样，而它们的含义相反。
+      if (todo.known) for (const bucket of todo.buckets) counts[bucket.page] = (counts[bucket.page] || 0) + bucket.count;
     } catch { /* 计数是提示性的，任何异常都不该挡住导航渲染 */ }
     return counts;
   })();
@@ -2294,9 +2309,33 @@ function taskGroupSelector(selectedId, selectName) {
   `;
 }
 
+
+// 「待你处理」是等人拍板的东西的唯一汇总入口，所以它不能依赖"当前选中的是哪个项目"。
+function renderPendingForMePanel() {
+  const todo = pendingForMe();
+  return panel("待你处理", `
+    ${!todo.known
+      ? `<div class="notice">这一页没有加载待办所需的数据，因此这里不做统计（这不表示没有待办）。到「人工审核」或「执行监控」页查看。</div>`
+      : todo.total === 0
+      ? `<div class="notice">当前没有需要你处置的项。（只统计你有权处置的；别人负责的部分不会出现在这里。）</div>`
+      : `<div class="notice warn-notice">共 ${todo.total} 项等待你处理，跨你可见的全部项目统计。等人拍板的东西分布在两个页面上，这里是唯一的汇总入口。</div>
+         <div class="stack">
+           ${todo.buckets.map((bucket) => `
+             <div class="record">
+               <div class="record-title"><strong>${esc(bucket.label)}</strong> ${customBadge(String(bucket.count), "red")}</div>
+               <div class="record-meta"><span>处置入口：${esc(PAGE_META[bucket.page]?.[0] || bucket.page)}</span></div>
+               <div class="button-row"><button class="secondary-button" data-menu="${esc(bucket.page)}">前往处置</button></div>
+             </div>`).join("")}
+         </div>`}
+  `, {wide: true});
+}
+
 function renderReview() {
   if (!projectTaskGroups().length) {
-    return panel("人工审核", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true});
+    // 「待你处理」自称是跨全部可见项目的唯一汇总入口，却被"当前项目有没有任务组"这个不相干的条件
+    // 挡在提前返回之后 —— 人切到一个空项目，"3 项等你处理"整块消失，会被读成"已经处理完了"。
+    return panel("人工审核", `<div class="notice">当前项目暂无任务组。下面的汇总仍覆盖你可见的全部项目。</div>`, {wide: true})
+      + renderPendingForMePanel();
   }
   const canReview = hasPerm("task_group:review");
   // 集中处理：汇总项目内全部任务组的人工确认（tasks 视角已按可见任务组下发），而非逐组切换
@@ -2456,20 +2495,7 @@ function renderReview() {
       ${!pendingPermissions.length && !pendingApprovals.length && !openFindings.length ? `<div class="notice">当前项目没有待处置的授权 / 审批 / 发现。</div>` : ""}
     </div>`;
 
-  const todo = pendingForMe();
-  const todoPanel = panel("待你处理", `
-    ${todo.total === 0
-      ? `<div class="notice">当前没有需要你处置的项。（只统计你有权处置的；别人负责的部分不会出现在这里。）</div>`
-      : `<div class="notice warn-notice">共 ${todo.total} 项等待你处理，跨你可见的全部项目统计。等人拍板的东西分布在两个页面上，这里是唯一的汇总入口。</div>
-         <div class="stack">
-           ${todo.buckets.map((bucket) => `
-             <div class="record">
-               <div class="record-title"><strong>${esc(bucket.label)}</strong> ${customBadge(String(bucket.count), "red")}</div>
-               <div class="record-meta"><span>处置入口：${esc(PAGE_META[bucket.page]?.[0] || bucket.page)}</span></div>
-               <div class="button-row"><button class="secondary-button" data-menu="${esc(bucket.page)}">前往处置</button></div>
-             </div>`).join("")}
-         </div>`}
-  `, {wide: true});
+  const todoPanel = renderPendingForMePanel();
 
   return [
     todoPanel,

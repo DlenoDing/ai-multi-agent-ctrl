@@ -7,6 +7,20 @@
   "use strict";
 
   const dict = {
+    /* ---------- 错误码：直接抛给人看的那些 ---------- */
+    // 这些码会经 api() 的 t(detail) 渲染成红色提示。未翻译时人看到的是一串英文枚举，
+    // 而它们出现的时机恰恰是人最需要看懂的时候（节点没接上、成员停不掉、写请求被重放拦下）。
+    org_member_invitation_pending: "该成员尚未接受邀请，不能启用；请重新发出邀请或让对方先用一次性令牌登录",
+    task_contract_expired: "任务契约已过期：没有节点在有效期内领取这次派发，多半是节点未接入或角色不匹配",
+    task_contract_missing: "找不到对应的任务契约：该派发已失去依据，通常发生在任务组配置被改动之后",
+    work_item_owner_role_not_registered: "填写的负责角色未在本任务组登记：先在任务组里加上这个角色，或改选已登记的角色",
+    idempotent_result_expired: "这次写入早已完成，但它的结果已过可重放期；请刷新页面查看当前状态，不要重复提交",
+    grant_subject_account_not_found: "找不到要授权的账号：请先创建该成员，再授予角色",
+    room_task_group_settled: "该任务组已终结，它的协作房间不再接收消息",
+    room_message_payload_too_large: "协作消息过大，已拒绝：请改为提交产出物并在消息里引用它",
+    permission_request_status_invalid: "无法识别的处置结果：授权请求只能被批准或拒绝",
+    repository_output_target_repository_not_registered_for_project: "该仓库地址不属于本项目已登记的仓库：请先在项目设置里登记它",
+    repository_output_target_unsafe_repository_url: "仓库地址不安全，已拒绝：不接受可执行任意命令的传输方式",
     /* ---------- 通用执行状态 ---------- */
     queued: "排队中",
     running: "执行中",
