@@ -4518,8 +4518,10 @@ export function createHumanConfirmationRequest(state, input = {}) {
       ...((input.peerReview.alternativesConsidered || []).length
         ? {alternativesConsidered: input.peerReview.alternativesConsidered.slice(0, 10).map((item) => ({
             ...(item.scope ? {scope: String(item.scope)} : {}),
-            alternative: String(item.alternative || "").slice(0, 300),
-            assessment: String(item.assessment || "").slice(0, 500)
+            alternative: clampVisibleText(item.alternative, 300),
+            // sys.review-dual-track 要求每条替代方案逐条给出简单/高性能/稳定三项取舍，500 字放不下，
+            // 因此放宽到 1000；上限仍然保留（防无界负载），但截断必须留痕，见 clampVisibleText。
+            assessment: clampVisibleText(item.assessment, 1000)
           }))}
         : {})
     }} : {}),
@@ -5658,6 +5660,17 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
   });
   appendEvent(state, "review_result", "WorkItem", workItem.id, "reviewer", {verdict, reviewBundleRef: bundle.bundleId, awaitingHumanConfirmation: confirmation.requestId});
   return {reviewed: true, verdict, reviewBundleRef: bundle.bundleId, humanConfirmationRef: confirmation.requestId, awaitingHumanConfirmation: true};
+}
+
+// 人要据以定稿的文本被静默截断，读起来仍然完整，人却在对着半句话拍板 —— 而这里没有任何地方
+// 保留全文（不像 question.summary 还有 detail 兜底），截断后的这一份就是记录本身。
+// 上限保留（防无界负载），但截断必须留痕：宁可让人看到"这里被切掉了"，也不能让人误以为读完了。
+// 不改成超长即拒（规则编辑器那套）：那会让一次完整的互审因为超长整个丢掉，代价比截断更大。
+function clampVisibleText(value, max) {
+  const text = String(value || "");
+  if (text.length <= max) return text;
+  const marker = "…（已截断）";
+  return `${text.slice(0, Math.max(0, max - marker.length))}${marker}`;
 }
 
 function unique(items) {

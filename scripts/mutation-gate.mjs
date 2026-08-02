@@ -12,7 +12,7 @@
  * 这是把"还原修复→确认测试失败"这套一直靠手工执行的纪律固化成 CI 可执行的检查。
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -86,6 +86,36 @@ const MUTATIONS = [
     to: 'String(skill.roleSkillId || "").endsWith("/" + hint.skillRef)',
     expect: "真实同步技能没有被绑定"
   },
+  // 本次会话新增的守卫。它们的判别力当时都手工验过，但手工验证不可重复 —— 而"守卫在，
+  // 而它的测试是假绿"正是本门存在的理由。只收有 contract-check 断言的那几条（本门只跑它）。
+  {
+    name: "已关闭的任务组不得被再关一次（覆盖定稿归属）",
+    file: CORE,
+    from: 'if (request.mutate === true && taskGroup && ["closed", "aborted"].includes(taskGroup.status)) {',
+    to: "if (false) {",
+    expect: "already-closed"
+  },
+  {
+    name: "人要据以定稿的文本被截断时必须留痕",
+    file: CORE,
+    from: "return `${text.slice(0, Math.max(0, max - marker.length))}${marker}`;",
+    to: "return text.slice(0, max);",
+    expect: "静默截断"
+  },
+  {
+    name: "执行器凭据不得等同于节点令牌",
+    file: GATEWAY,
+    from: 'if (dispatch.status !== "running" || !dispatch.executorTokenDigest || !dispatch.assignedNodeId) continue;',
+    to: "if (!dispatch.executorTokenDigest || !dispatch.assignedNodeId) continue;",
+    expect: "executor credential"
+  },
+  {
+    name: "规则标题必须进摘要（否则改标题＝改模型读到的内容而漂移检测失明）",
+    file: CORE,
+    from: "const digest = digestOf({ruleId, category, title, content});",
+    to: "const digest = digestOf({ruleId, category, content});",
+    expect: "effective-rules digest"
+  },
   {
     name: "草稿契约不得锁死关闭门（人无杠杆）",
     file: CORE,
@@ -154,6 +184,77 @@ const MUTATIONS = [
 // 否则就是别人在这期间改了这个文件，把它覆盖回去等于销毁别人未提交的改动。
 // 本次会话真的发生过：这道门在后台跑，我同时在改同一个文件，跑完它把我的改动抹掉了。
 // 这与用 git checkout 撤销临时改动是同一类事故，只是这次是我自己的工具做的。
+// 被硬杀时也要能恢复。退出钩子挂在信号上，而 execFileSync 会阻塞事件循环 ——
+// 超时被 SIGKILL 时处理器根本来不及跑，源码就留在改坏状态里（实测发生过：一次超时之后
+// control-plane-core.mjs 带着 `status: false` 留在工作区）。所以把"我正在改坏哪个文件"
+// 落到磁盘上：下次启动先看这张便条，能恢复就恢复，恢复不了就拒绝运行而不是继续改坏别的。
+const pendingNotePath = join(root, ".runtime", "mutation-gate-pending.json");
+
+function writePendingNote(path, original, mutated) {
+  try {
+    mkdirSync(dirname(pendingNotePath), {recursive: true});
+    writeFileSync(pendingNotePath, JSON.stringify({path, original, mutated}));
+  } catch { /* 便条写不成不该挡住本门；它只是恢复用的兜底 */ }
+}
+
+function clearPendingNote() {
+  try { rmSync(pendingNotePath, {force: true}); } catch { /* 尽力而为 */ }
+}
+
+// 两个本门实例同时跑，会互相覆盖对方改坏/还原到一半的源码：A 改坏文件、B 读到这份坏内容当作
+// "原内容"、A 还原、B 再还原成那份坏的 —— 源码就永久留在改坏状态。实测发生过（一次误启的实例
+// 与正常运行的实例并发，防覆盖检查连续拒绝还原）。所以同一时刻只允许一个实例。
+const lockPath = join(root, ".runtime", "mutation-gate.lock");
+let lockHeld = false;
+
+function processAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (error) { return error?.code === "EPERM"; }
+}
+
+function acquireLock() {
+  let holder = null;
+  try { holder = JSON.parse(readFileSync(lockPath, "utf8")); } catch { holder = null; }
+  if (holder?.pid && holder.pid !== process.pid && processAlive(holder.pid)) {
+    console.error(`mutation gate: 另一个实例正在运行（pid ${holder.pid}，起于 ${holder.startedAt || "未知"}）。`
+      + "\n  两个实例会互相覆盖对方改坏的源码，因此本次拒绝启动。"
+      + `\n  若确认那个进程已死，删除 ${lockPath} 后重试。`);
+    process.exit(1);
+  }
+  try {
+    mkdirSync(dirname(lockPath), {recursive: true});
+    writeFileSync(lockPath, JSON.stringify({pid: process.pid, startedAt: new Date().toISOString()}));
+    lockHeld = true;
+  } catch (error) {
+    // 锁写不成就无法排除并发，而并发的代价是源码被永久改坏 —— 宁可不跑。
+    console.error(`mutation gate: 无法写入互斥锁 ${lockPath}：${error?.message || error}`);
+    process.exit(1);
+  }
+}
+
+function releaseLock() {
+  if (!lockHeld) return;
+  lockHeld = false;
+  try { rmSync(lockPath, {force: true}); } catch { /* 尽力而为；下次靠 pid 存活判断兜底 */ }
+}
+
+function recoverFromPreviousRun() {
+  let note = null;
+  try { note = JSON.parse(readFileSync(pendingNotePath, "utf8")); } catch { return; }
+  if (!note?.path) { clearPendingNote(); return; }
+  let onDisk = "";
+  try { onDisk = readFileSync(note.path, "utf8"); } catch { clearPendingNote(); return; }
+  if (onDisk === note.original) { clearPendingNote(); return; } // 已经是好的，便条过期
+  if (onDisk !== note.mutated) {
+    // 磁盘上既不是原样也不是我改坏的那份 —— 有人在这中间改过它，绝不覆盖。
+    console.error(`mutation gate: 上一轮被中断，${note.path} 现在既不是原内容也不是它改坏的那份 —— `
+      + "已放弃自动恢复以免覆盖你的改动。请对照 git diff 手工确认后删除 .runtime/mutation-gate-pending.json");
+    process.exit(1);
+  }
+  writeFileSync(note.path, note.original);
+  clearPendingNote();
+  console.error(`mutation gate: 上一轮被中断，已把 ${note.path} 恢复为原内容。`);
+}
+
 const pendingRestores = new Map();
 function restoreAll() {
   for (const [path, {original, mutated}] of pendingRestores) {
@@ -168,6 +269,7 @@ function restoreAll() {
     } catch { /* 尽力而为 */ }
   }
   pendingRestores.clear();
+  releaseLock();
 }
 process.on("exit", restoreAll);
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
@@ -176,6 +278,8 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 process.on("uncaughtException", (error) => { restoreAll(); console.error(error); process.exit(1); });
 
 function run() {
+  acquireLock();            // 先排除并发实例，否则"恢复"可能覆盖另一个实例正在用的内容
+  recoverFromPreviousRun(); // 再收拾上一轮被中断留下的残局，然后才开始改坏任何东西
   const failures = [];
   const checked = [];
   for (const mutation of MUTATIONS) {
@@ -200,6 +304,7 @@ function run() {
     // （我第一版就是这样：pendingRestores 从没被填充过）。
     const mutated = original.replace(mutation.from, mutation.to);
     pendingRestores.set(path, {original, mutated});
+    writePendingNote(path, original, mutated); // 先落便条再改坏：反过来的话，两者之间被杀就没人知道
     writeFileSync(path, mutated);
     let output = "";
     let passed = false;
@@ -215,6 +320,7 @@ function run() {
       if (onDisk === mutated) writeFileSync(path, original);
       else process.stderr.write(`mutation gate: ${path} 期间被改动过，已放弃还原以免覆盖它。\n`);
       pendingRestores.delete(path);
+      clearPendingNote();
     }
     process.stdout.write(`  · ${mutation.name} …\n`);
     if (passed) {

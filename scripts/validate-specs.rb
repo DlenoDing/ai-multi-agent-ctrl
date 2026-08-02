@@ -1001,7 +1001,9 @@ errors << %(实时通道握手必须回显 aimac.bearer 子协议，且不得回
 errors << %(控制台必须有跨项目的"待你处理"汇总，否则人工闸门存在但不可操作) unless app_js_source.include?("function pendingForMe()") && app_js_source.include?(%q{panel("待你处理"})
 errors << %(菜单必须带待办计数，否则等人签字的东西藏在别的页面里没人会去点) unless app_js_source.include?(%q{class="nav-badge">}) && app_js_source.include?("menuTodoCounts[item.id]")
 # 计数只能统计"这个人有权处置"的项：把别人负责的也算进来，红点就成了一个永远清不掉的东西。
-errors << %(待办统计必须按处置权限过滤（否则出现永远清不掉的红点）) unless app_js_source.match?(/const add = \(id, label, page, items, allowed\)/)
+# 只查"有没有 allowed 这个入参"，不锁死整个签名：签名多一个参数就假红，而真正的过滤逻辑坏掉时
+# 它照样绿（字符串还在）。真正的不变式"无权的类别不进统计"由控制台行为门断言。
+errors << %(待办统计必须按处置权限过滤（否则出现永远清不掉的红点）) unless app_js_source.match?(/const add = \(id, label, page, items, allowed[,)]/)
 
 # 豁免表单上明写"理由会随门一起留档并显示在验收卡片上"。而卡片正文是【创建那一刻】的快照，
 # 卡片挂起之后才做的豁免不会出现在里面 —— 界面许下的承诺必须在代码里兑现，否则人以为自己

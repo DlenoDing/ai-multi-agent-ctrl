@@ -116,6 +116,10 @@ globalThis.__probe = {
   claimMissHint: (node) => claimMissHint(node),
   assertRuleFragmentLengths: (fragments) => assertRuleFragmentLengths(fragments),
   evidenceRefsHint: (event) => evidenceRefsHint(event),
+  alternativeAxisGaps: (assessment) => alternativeAxisGaps(assessment),
+  renderReviewWith: (nextState) => { state = nextState; return renderReview(); },
+  renderPendingPanelWith: (nextState, account) => { state = nextState; currentAccount = account; return renderPendingForMePanel(); },
+  todoCountsWith: (nextState, account) => { state = nextState; currentAccount = account; return todoCountsByPage(); },
   setFetch: (fn) => { globalThis.fetch = fn; },
   api: (path, options) => api(path, options)
 };
@@ -342,6 +346,89 @@ function runEvidenceRefsCase() {
     "没有证据引用时仍然渲染了一块空内容");
 }
 
+function runReviewAxisCase() {
+  const probe = loadConsole(el("div"));
+  check("三项都谈到就不打扰",
+    probe.alternativeAxisGaps("比当前方案更简单，性能相当，稳定性略差").length === 0,
+    "三项判准都写清楚了却仍被标为缺失 —— 误报会让人学会无视这个提示");
+  check("漏掉的项要点名",
+    JSON.stringify(probe.alternativeAxisGaps("吞吐更高")) === JSON.stringify(["简单", "稳定"]),
+    `只谈了性能却没被指出漏掉简单与稳定（${JSON.stringify(probe.alternativeAxisGaps("吞吐更高"))}）`);
+
+  // 光有判据不够：它必须真的长在人会看到的那块渲染上。此前多次出现"守卫写了但没接到链路上"。
+  const stateWith = (assessment) => ({
+    taskGroups: [{id: "tg1", projectId: null, name: "组一"}],
+    humanConfirmationRequests: [{
+      requestId: "hcr1", taskGroupId: "tg1", status: "pending", decisionClass: "major",
+      question: {summary: "选拓扑"}, options: [],
+      peerReview: {verdict: "pass", findings: [], alternativesConsidered: [{alternative: "方案B", assessment}]}
+    }],
+    qualityGates: []
+  });
+  // 同一份数据在两个地方报数：面板说"2+"、列表标题说"2"，人不知道该信哪个。
+  const cappedList = probe.renderReviewWith({
+    ...stateWith("更简单，性能相当，稳定性略差"),
+    truncatedCollections: ["humanConfirmationRequests"]
+  });
+  check("待确认列表标题也跟随截断口径",
+    /共 1\+ 条待确认/.test(cappedList),
+    "确认列表按截断后的长度报「共 N 条」，与面板的 N+ 口径不一致");
+
+  const missing = probe.renderReviewWith(stateWith("吞吐更高"));
+  check("确认卡片上标出该条漏了哪项",
+    missing.includes("这条没说明") && missing.includes("简单") && missing.includes("稳定"),
+    "人工确认卡片渲染了替代方案，却没有标出它漏掉的判准 —— 判据没接到人看得见的地方");
+  const complete = probe.renderReviewWith(stateWith("更简单，性能相当，稳定性略差"));
+  check("三项齐全的条目不加警告",
+    !complete.includes("这条没说明"),
+    "三项都写清楚的替代方案仍被加了缺失警告");
+}
+
+function runPendingTruncationCase() {
+  const probe = loadConsole(el("div"));
+  const admin = {accountId: "acct_a", accountType: "org_admin"};
+  const stateWith = (truncatedCollections) => ({
+    taskGroups: [{id: "tg1", projectId: "p1"}],
+    humanConfirmationRequests: [
+      {requestId: "h1", taskGroupId: "tg1", status: "pending"},
+      {requestId: "h2", taskGroupId: "tg1", status: "pending"}
+    ],
+    ...(truncatedCollections ? {truncatedCollections} : {})
+  });
+  const exact = probe.renderPendingPanelWith(stateWith(null), admin);
+  check("数得全时就报准确数",
+    exact.includes("共 2 项") && !exact.includes("2+"),
+    "没有截断时也把总数说成了约数 —— 会让人对准确的数字也不敢信");
+  const capped = probe.renderPendingPanelWith(stateWith(["humanConfirmationRequests"]), admin);
+  check("数不全时不得报成准确数",
+    capped.includes("共 2+ 项"),
+    "来源集合被视图截断了，汇总仍按准确总数呈现 —— 人处置完这几项会以为清空了，实际还有没加载出来的");
+  check("说清楚哪一类没数全",
+    capped.includes("2+") && /只多不少/.test(capped),
+    "只改了总数却没说明是哪一类被截断、也没说明数字的方向");
+
+  // 红点只能统计"这个人有权处置"的项。把别人负责的也算进来，那个数字就永远清不掉 ——
+  // 人每次打开都看到"还有 N 项等你处理"，点进去无事可做，最后学会无视它。
+  // 决定"哪些项算数"的 taskGroups 自己也会被截断：超出上限的任务组下的待办连桶都进不去。
+  // 只看桶自身的集合有没有被截，会漏掉这一整类丢失，而界面照样报一个精确数字。
+  const scopeCapped = probe.renderPendingPanelWith(stateWith(["taskGroups"]), admin);
+  check("可见范围本身没数全时也不得报准确数",
+    scopeCapped.includes("共 2+ 项"),
+    "taskGroups 被截断（超出上限的任务组下的待办一条都没算进来），汇总仍按准确数呈现");
+
+  // 红点与面板必须同一口径，否则同一屏上出现两个数字，人不知道该信哪个。
+  const badgeExact = probe.todoCountsWith(stateWith(null), admin);
+  const badgeCapped = probe.todoCountsWith(stateWith(["humanConfirmationRequests"]), admin);
+  check("红点数不全时同样带 +",
+    badgeCapped.review?.capped === true && badgeExact.review?.capped === false,
+    `菜单红点没有跟随面板改口径（准确=${JSON.stringify(badgeExact.review)} 截断=${JSON.stringify(badgeCapped.review)}）—— 面板写 2+、徽标写 2`);
+
+  const noPerm = probe.renderPendingPanelWith(stateWith(null), {accountId: "acct_b", accountType: "user_account", permissions: []});
+  check("无权处置的类别不进统计",
+    noPerm.includes("当前没有需要你处置的项"),
+    "把这个人无权处置的项也算进了待办 —— 红点永远清不掉，人点进去什么也做不了");
+}
+
 function runRuleLengthCase() {
   const probe = loadConsole(el("div"));
   let threw = null;
@@ -432,6 +519,8 @@ runHeartbeatHintCase();
 runClaimMissCase();
 runRuleLengthCase();
 runEvidenceRefsCase();
+runReviewAxisCase();
+runPendingTruncationCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();

@@ -1282,6 +1282,16 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     const value = scoped[field];
     base[field] = Array.isArray(value) ? sliceItems(value, capped) : value;
   }
+  // 视角为了体积把每个集合截到 capped 条，而界面拿这些数组直接报数（「共 N 项等待你处理，跨你
+  // 可见的全部项目统计」）——超过上限时那个 N 是错的，且错得毫无痕迹：人以为处置完这 N 项就清空了。
+  // 这里如实告诉界面哪些集合被截断过，界面据此改口径，而不是把截断后的长度当成总数。
+  const truncatedCollections = [];
+  for (const [field, value] of Object.entries(base)) {
+    if (Array.isArray(value) && Array.isArray(scoped[field]) && scoped[field].length > value.length) {
+      truncatedCollections.push(field);
+    }
+  }
+  if (truncatedCollections.length) base.truncatedCollections = truncatedCollections;
   return base;
 }
 

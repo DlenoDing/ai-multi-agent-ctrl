@@ -1156,6 +1156,42 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
     }
 
+    // 轨道二的评估文字是人定稿时读的东西，且这里没有全文兜底 —— 落库那份就是记录本身。
+    // 超长必须留痕：静默截断会让人对着半句话拍板，而且看起来完整。
+    const longCard = createHumanConfirmationRequest(structuredClone(snapState), {
+      projectId: snapTg.projectId, taskGroupId: snapTg.id, workItemId: snapWork.id,
+      decisionType: "work_item_verification", subjectRef: `WorkItem:${snapWork.id}`,
+      question: {summary: "拓扑选择"}, options: [{optionId: "a", label: "方案A"}],
+      peerReview: {verdict: "pass", findings: [], alternativesConsidered: [
+        {alternative: "乙".repeat(400), assessment: "甲".repeat(1400)}
+      ]}
+    });
+    const longAlt = (longCard?.peerReview?.alternativesConsidered || [])[0];
+    if (!longAlt) {
+      output.push("互审双轨: 带替代方案的确认单没有留下 alternativesConsidered —— 这条断言无从验证");
+    } else {
+      if (!String(longAlt.assessment || "").endsWith("…（已截断）")) {
+        output.push("互审双轨: 超长的替代方案评估被静默截断 —— 人读到的是半句话却以为读完了，并据此定稿");
+      }
+      if (!String(longAlt.alternative || "").endsWith("…（已截断）")) {
+        output.push("互审双轨: 超长的替代方案名称被静默截断 —— 同上");
+      }
+      if (String(longAlt.assessment || "").length > 1000) {
+        output.push("互审双轨: 替代方案评估超出了上限 —— 上限形同虚设，负载不再有界");
+      }
+    }
+    const shortCard = createHumanConfirmationRequest(structuredClone(snapState), {
+      projectId: snapTg.projectId, taskGroupId: snapTg.id, workItemId: snapWork.id,
+      decisionType: "work_item_verification", subjectRef: `WorkItem:${snapWork.id}`,
+      question: {summary: "拓扑选择二"}, options: [{optionId: "a", label: "方案A"}],
+      peerReview: {verdict: "pass", findings: [], alternativesConsidered: [
+        {alternative: "方案B", assessment: "更简单，性能相当，稳定性略差"}
+      ]}
+    });
+    if (/已截断/.test((shortCard?.peerReview?.alternativesConsidered || [])[0]?.assessment || "")) {
+      output.push("互审双轨: 没有超长的评估也被标成了截断 —— 误报会让人不再相信这个标记");
+    }
+
     // overlay 声称是"项目级角色规则定制"，但它此前只改能力标签与摘要，下发的 SKILL.md 取的是
     // base 正文，patch.instructionRef 全仓从未被解析 —— 这套定制一个字都到不了 agent。
     const ovState = structuredClone(seedState);

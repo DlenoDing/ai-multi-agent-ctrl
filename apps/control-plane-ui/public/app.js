@@ -141,6 +141,21 @@ function evidenceRefsHint(event) {
   ].filter(Boolean).join("");
 }
 
+// sys.review-dual-track 要求轨道二比较替代方案时逐条给出【简单 / 高性能 / 稳定】三项取舍，
+// 三项缺任一项即为评审未完成。但这条要求此前只写在规则正文里，没有任何东西能发现它被漏掉——
+// 人看到的是一段读起来很完整的评估文字，看不出它其实只谈了性能。这里不拦截（关键词判断做不了
+// 语义判断，拦错了会把合格评审挡在门外），只把"这条没提到哪一项"摆到人眼前，由人自己判断。
+const REVIEW_AXES = [
+  {label: "简单", pattern: /简单|简洁|复杂度|复杂性/},
+  {label: "性能", pattern: /性能|吞吐|延迟|耗时|开销|QPS|qps/},
+  {label: "稳定", pattern: /稳定|可靠|正确性|可恢复|健壮|容错/}
+];
+
+function alternativeAxisGaps(assessment) {
+  const text = String(assessment || "");
+  return REVIEW_AXES.filter((axis) => !axis.pattern.test(text)).map((axis) => axis.label);
+}
+
 function claimMissHint(node) {
   const miss = node.lastClaimMiss;
   if (!miss || !miss.queuedCount) return "";
@@ -173,37 +188,44 @@ function pendingForMe() {
   const canGrant = hasPerm("project:grant");
   const canUpdateProject = hasPerm("project:update");
   const buckets = [];
-  const add = (id, label, page, items, allowed) => {
+  // 视角接口为了体积把每个集合截到上限。截断后的数组长度不是总数，而这块面板恰恰以"总数"的口径
+  // 说话（"共 N 项等待你处理"）——数据一多，人处置完 N 项会以为清空了。被截断的桶改报"N+"。
+  const truncated = new Set(state.truncatedCollections || []);
+  // taskGroups 自己也会被截断，而它决定了 inScope —— 超出上限的任务组下的待办连桶都进不去，
+  // 一条都不会被算到。所以它一旦被截，所有桶的数字都只是下限，而不只是某一类不准。
+  const scopeTruncated = truncated.has("taskGroups");
+  const add = (id, label, page, items, allowed, sourceField) => {
     if (!allowed || !items.length) return;
-    buckets.push({id, label, page, count: items.length, items: items.slice(0, 5)});
+    buckets.push({id, label, page, count: items.length, capped: scopeTruncated || truncated.has(sourceField), items: items.slice(0, 5)});
   };
   add("confirmations", "待你定稿的核心决策", "review",
-    (state.humanConfirmationRequests || []).filter((item) => inScope(item) && item.status === "pending"), canReview);
+    (state.humanConfirmationRequests || []).filter((item) => inScope(item) && item.status === "pending"), canReview, "humanConfirmationRequests");
   add("permissions", "待你批准的授权请求", "review",
-    (state.permissionRequests || []).filter((item) => inScope(item) && item.status === "pending_approval"), canGrant);
+    (state.permissionRequests || []).filter((item) => inScope(item) && item.status === "pending_approval"), canGrant, "permissionRequests");
   add("approvals", "待你处理的审批请求", "review",
-    (state.approvalRequests || []).filter((item) => inScope(item) && ["requested", "quorum_collecting"].includes(item.status)), canReview);
+    (state.approvalRequests || []).filter((item) => inScope(item) && ["requested", "quorum_collecting"].includes(item.status)), canReview, "approvalRequests");
   add("findings", "待你处置的发现项", "review",
-    (state.findings || []).filter((item) => inScope(item) && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status)), canReview);
+    (state.findings || []).filter((item) => inScope(item) && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status)), canReview, "findings");
   add("qualityGates", "未通过、可由你豁免的质量门", "monitor",
-    (state.qualityGates || []).filter((item) => inScope(item) && !["passed", "waived"].includes(item.status)), canReview);
+    (state.qualityGates || []).filter((item) => inScope(item) && !["passed", "waived"].includes(item.status)), canReview, "qualityGates");
   add("reviewPlans", "待你收尾的评审计划", "monitor",
-    (state.reviewPlans || []).filter((item) => inScope(item) && !["closed", "rejected", "superseded"].includes(item.status)), canReview);
+    (state.reviewPlans || []).filter((item) => inScope(item) && !["closed", "rejected", "superseded"].includes(item.status)), canReview, "reviewPlans");
   add("reviewBundles", "待你收尾的评审包", "monitor",
-    (state.reviewBundles || []).filter((item) => inScope(item) && !["consumed", "rejected"].includes(item.status)), canReview);
+    (state.reviewBundles || []).filter((item) => inScope(item) && !["consumed", "rejected"].includes(item.status)), canReview, "reviewBundles");
   add("ruleSources", "待你判定的规则来源", "monitor",
-    (state.ruleSourceResolutions || []).filter((item) => inScope(item) && !["reference_only", "quarantined", "rejected", "superseded", "active"].includes(item.status)), canControl);
+    (state.ruleSourceResolutions || []).filter((item) => inScope(item) && !["reference_only", "quarantined", "rejected", "superseded", "active"].includes(item.status)), canControl, "ruleSourceResolutions");
   add("upgradeCandidates", "待你判定的系统升级候选项", "monitor",
-    (state.systemUpgradeCandidates || []).filter((item) => inScope(item) && item.status === "candidate_created"), canControl);
+    (state.systemUpgradeCandidates || []).filter((item) => inScope(item) && item.status === "candidate_created"), canControl, "systemUpgradeCandidates");
   const visibleProjectIds = new Set(groups.map((taskGroup) => taskGroup.projectId).filter(Boolean));
   add("sharedDefinitions", "待你处置的共享定义契约", "monitor",
     (state.sharedDefinitions || []).filter((item) => ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"].includes(item.status)
-      && (!item.projectId || visibleProjectIds.has(item.projectId))), canUpdateProject);
+      && (!item.projectId || visibleProjectIds.has(item.projectId))), canUpdateProject, "sharedDefinitions");
   // "看不到"不等于"没有"。这些待办的来源集合只在 tasks 视角下发；在组织/系统/运行时视角里它们
   // 根本不存在，而 `|| []` 会把"这一页没加载"渲染成 0 —— 人在概览看到"3"，点进成员管理变成没有，
   // 会读成"已经处理掉了"。显式区分：不知道就别报数。
   const known = Array.isArray(state.taskGroups);
-  return {buckets, total: buckets.reduce((sum, bucket) => sum + bucket.count, 0), known};
+  const partial = buckets.some((bucket) => bucket.capped);
+  return {buckets, total: buckets.reduce((sum, bucket) => sum + bucket.count, 0), known, partial};
 }
 
 const MENUS = {
@@ -1200,20 +1222,12 @@ function render() {
   }
   const [title, subtitle] = PAGE_META[page] || ["管理后台", ""];
   // 菜单上直接带计数：否则"等你签字的东西"藏在一个叫"执行监控"的页面里，人根本不会去点。
-  const menuTodoCounts = (() => {
-    const counts = {};
-    try {
-      const todo = pendingForMe();
-      // 数据没下发到这一页时不出红点：0 与"未知"在红点上长得一模一样，而它们的含义相反。
-      if (todo.known) for (const bucket of todo.buckets) counts[bucket.page] = (counts[bucket.page] || 0) + bucket.count;
-    } catch { /* 计数是提示性的，任何异常都不该挡住导航渲染 */ }
-    return counts;
-  })();
+  const menuTodoCounts = todoCountsByPage();
   const menuHtml = MENUS[perspective].map((item) => item.divider
     ? `<div class="nav-divider">${esc(item.divider)}</div>`
     : (() => {
-        const todo = menuTodoCounts[item.id] || 0;
-        return `<button class="nav-item ${item.id === page ? "active" : ""}" data-menu="${item.id}">${esc(item.label)}${todo ? `<span class="nav-badge">${todo}</span>` : ""}</button>`;
+        const todo = menuTodoCounts[item.id] || {count: 0, capped: false};
+        return `<button class="nav-item ${item.id === page ? "active" : ""}" data-menu="${item.id}">${esc(item.label)}${todo.count ? `<span class="nav-badge">${todo.count}${todo.capped ? "+" : ""}</span>` : ""}</button>`;
       })()
   ).join("");
 
@@ -2389,6 +2403,28 @@ function taskGroupSelector(selectedId, selectName) {
 
 
 // 「待你处理」是等人拍板的东西的唯一汇总入口，所以它不能依赖"当前选中的是哪个项目"。
+// 视图接口按 limit 截断每个集合，因此数组长度不是总数。凡是把长度当成"共 N 项"呈现的地方，
+// 数不全时都要带上 +，否则人会以为处置完眼前这些就清空了。
+function countSuffix(field) {
+  return (state.truncatedCollections || []).includes(field) ? "+" : "";
+}
+
+// 菜单红点的数字来源。独立成函数而不是内联在 render 里：内联的话，"红点与面板口径一致"这条
+// 不变式只能靠源码字符串断言来守，而那类断言改个写法就假红、行为坏了却照样绿。
+function todoCountsByPage() {
+  const counts = {};
+  try {
+    const todo = pendingForMe();
+    // 数据没下发到这一页时不出红点：0 与"未知"在红点上长得一模一样，而它们的含义相反。
+    // 数不全时红点也要跟着改口径，否则同一件事在同一屏上出现两个数字：面板写"2+"，徽标写"2"。
+    if (todo.known) for (const bucket of todo.buckets) {
+      const prev = counts[bucket.page] || {count: 0, capped: false};
+      counts[bucket.page] = {count: prev.count + bucket.count, capped: prev.capped || bucket.capped};
+    }
+  } catch { /* 计数是提示性的，任何异常都不该挡住导航渲染 */ }
+  return counts;
+}
+
 function renderPendingForMePanel() {
   const todo = pendingForMe();
   return panel("待你处理", `
@@ -2396,11 +2432,11 @@ function renderPendingForMePanel() {
       ? `<div class="notice">这一页没有加载待办所需的数据，因此这里不做统计（这不表示没有待办）。到「人工审核」或「执行监控」页查看。</div>`
       : todo.total === 0
       ? `<div class="notice">当前没有需要你处置的项。（只统计你有权处置的；别人负责的部分不会出现在这里。）</div>`
-      : `<div class="notice warn-notice">共 ${todo.total} 项等待你处理，跨你可见的全部项目统计。等人拍板的东西分布在两个页面上，这里是唯一的汇总入口。</div>
+      : `<div class="notice warn-notice">共 ${todo.total}${todo.partial ? "+" : ""} 项等待你处理，跨你可见的全部项目统计。等人拍板的东西分布在两个页面上，这里是唯一的汇总入口。${todo.partial ? "<br><strong>带 + 的类别数据量超过本页加载上限，实际项数只多不少 —— 处置完这里列出的也未必清空。</strong>" : ""}</div>
          <div class="stack">
            ${todo.buckets.map((bucket) => `
              <div class="record">
-               <div class="record-title"><strong>${esc(bucket.label)}</strong> ${customBadge(String(bucket.count), "red")}</div>
+               <div class="record-title"><strong>${esc(bucket.label)}</strong> ${customBadge(`${bucket.count}${bucket.capped ? "+" : ""}`, "red")}</div>
                <div class="record-meta"><span>处置入口：${esc(PAGE_META[bucket.page]?.[0] || bucket.page)}</span></div>
                <div class="button-row"><button class="secondary-button" data-menu="${esc(bucket.page)}">前往处置</button></div>
              </div>`).join("")}
@@ -2474,7 +2510,11 @@ function renderReview() {
           const boundary = all.filter((alt) => alt.scope === "control_plane_evidence_only");
           const parts = [];
           if (planLevel.length) {
-            parts.push(`<br><strong>考察过的其他方案：</strong>${planLevel.map((alt) => `<br>· ${esc(alt.alternative)} —— ${esc(alt.assessment)}`).join("")}`);
+            parts.push(`<br><strong>考察过的其他方案：</strong>${planLevel.map((alt) => {
+              const gaps = alternativeAxisGaps(alt.assessment);
+              return `<br>· ${esc(alt.alternative)} —— ${esc(alt.assessment)}`
+                + (gaps.length ? `<br><span class="warn-text">　⚠ 这条没说明：${esc(gaps.join(" / "))}（三项判准要求逐条给出取舍）</span>` : "");
+            }).join("")}`);
           } else {
             parts.push(`<br><strong class="warn-text">⚠ 没有任何一方跳出当前方案考察过替代路径</strong><br><em>互审只沿着既定方案往下审，能发现"执行得不够好"，发现不了"方向本身就错了"。定稿前请自行判断这个方案是不是解决原问题的正确路径。</em>`);
           }
@@ -2579,7 +2619,7 @@ function renderReview() {
     todoPanel,
     panel("待人工确认", `
       <div class="stack">
-        <div class="record-meta"><span>共 ${pending.length} 条待确认，覆盖 ${new Set(pending.map((item) => item.taskGroupId)).size} 个任务组（按提交时间倒序）</span></div>
+        <div class="record-meta"><span>共 ${pending.length}${countSuffix("humanConfirmationRequests")} 条待确认，覆盖 ${new Set(pending.map((item) => item.taskGroupId)).size} 个任务组（按提交时间倒序）</span></div>
         ${pendingHtml}
       </div>
     `, {wide: true}),
@@ -2836,7 +2876,7 @@ function renderMonitor() {
     panel("准入决策", table(["工作项", "判定", "分类", {label: "原因", c: "text-clip"}], admissions, {moreText: moreText((state.admissionDecisions || []).length, 12)}), {wide: true}),
     panel("检查点（Git 证据）", table(["任务组", "工作项", "提交", "推送", {label: "产出清单", c: "text-clip"}, {label: "时间", c: "nowrap"}], checkpointRows, {moreText: moreText(filterSource((state.checkpoints || []).filter((cp) => groups.some((taskGroup) => taskGroup.id === cp.taskGroupId)), "checkpoints").length, 20)}), {wide: true, headerSide: filterInput("按工作项、提交过滤…", "checkpoints")}),
     (state.qualityGates || []).some((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)) ? panel("质量门禁 / 测试证据", `
-      ${failingTests.length ? `<div class="notice warn-notice">有 ${failingTests.length} 项失败测试，阻塞关闭门禁（gateType 对应门禁为 failed，需修复并重提通过测试、取消对应工作项，或由你判定该门不适用后豁免）。</div>` : ""}
+      ${failingTests.length ? `<div class="notice warn-notice">有 ${failingTests.length}${countSuffix("testResults")} 项失败测试，阻塞关闭门禁（gateType 对应门禁为 failed，需修复并重提通过测试、取消对应工作项，或由你判定该门不适用后豁免）。</div>` : ""}
       ${table(["任务组", "门禁类型", "工作项", "状态", {label: "更新时间", c: "nowrap"}], qualityGateRows, {moreText: moreText(filterSource((state.qualityGates || []).filter((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)), "quality-gates").length, 20)})}
       ${canReviewGates && waivableGates.length ? `
         <div class="record" style="margin-top:8px;">
