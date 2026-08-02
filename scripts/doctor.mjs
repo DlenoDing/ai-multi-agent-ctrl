@@ -777,11 +777,55 @@ try {
     body: JSON.stringify({newPassword: "doctor-org-admin-pass"})
   });
   if (!changePassword.response.ok) throw new Error("org admin change-password failed");
+  // 这条断言必须在下面那次登录【之前】：旧格式口令登录成功会就地升级为 scrypt，放在登录之后就
+  // 分不清"改密写的就是 scrypt"和"改密写了弱摘要、被登录顺手补救了"——那是一条永远为真的断言。
+  {
+    const afterChange = JSON.parse(readFileSync(join(root, doctorRuntimeDir, "control-plane-state.json"), "utf8"));
+    const changed = (afterChange.accounts || []).find((item) => item.email === "doctor.org.admin@local");
+    if (!String(changed?.passwordDigest || "").startsWith("scrypt$")) {
+      throw new Error(`改密落盘的不是 scrypt 而是 ${String(changed?.passwordDigest).slice(0, 24)}… —— 无密钥拉伸的摘要可被离线极快暴力破解`);
+    }
+  }
   const passwordLogin = await jsonFetch(port, "/api/auth/login", {
     method: "POST",
     body: JSON.stringify({email: "doctor.org.admin@local", password: "doctor-org-admin-pass"})
   });
   if (!passwordLogin.response.ok || !passwordLogin.payload.sessionToken) throw new Error("org admin password login failed");
+
+  // 口令原先是纯 SHA-256（无密钥拉伸）：拿到状态文件即可离线极快暴力破解，而状态文件里本来就有
+  // 节点令牌这类东西。改成 scrypt + 每账号随机盐 + 定时安全比较之后，必须钉住三件事：
+  // 落盘的确实是 scrypt 而不是又一个裸摘要、错口令仍被拒、以及【旧格式口令还能登录并就地升级】——
+  // 少了最后一条，这次升级就等于把所有已设过密码的人锁在门外。
+  {
+    const authStatePath = join(root, doctorRuntimeDir, "control-plane-state.json");
+    const stored = JSON.parse(readFileSync(authStatePath, "utf8"));
+    const orgAdmin = (stored.accounts || []).find((item) => item.email === "doctor.org.admin@local");
+    if (!orgAdmin?.passwordDigest) throw new Error("改密之后账号上没有口令摘要");
+    const wrongPassword = await jsonFetch(port, "/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({email: "doctor.org.admin@local", password: "doctor-org-admin-pass-wrong"})
+    });
+    if (wrongPassword.response.ok) throw new Error("错误口令竟然登录成功");
+
+    // 旧格式兼容：直接把摘要改回纯 SHA-256 的老形状，再登录一次。
+    const legacyPassword = "legacy-format-pass";
+    const legacyDigest = `sha256:${createHash("sha256").update(`account-password:${orgAdmin.accountId}:${legacyPassword}`).digest("hex")}`;
+    const beforeLegacy = JSON.parse(readFileSync(authStatePath, "utf8"));
+    const legacyAccount = beforeLegacy.accounts.find((item) => item.accountId === orgAdmin.accountId);
+    legacyAccount.passwordDigest = legacyDigest;
+    beforeLegacy.stateVersion = Number(beforeLegacy.stateVersion || 1) + 1;
+    writeFileSync(authStatePath, `${JSON.stringify(beforeLegacy, null, 2)}\n`);
+    const legacyLogin = await jsonFetch(port, "/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({email: "doctor.org.admin@local", password: legacyPassword})
+    });
+    if (!legacyLogin.response.ok) throw new Error("旧格式口令无法登录 —— 这次升级会把所有已设过密码的人锁在门外");
+    const afterLegacy = JSON.parse(readFileSync(authStatePath, "utf8"));
+    const upgraded = afterLegacy.accounts.find((item) => item.accountId === orgAdmin.accountId);
+    if (!String(upgraded.passwordDigest || "").startsWith("scrypt$")) {
+      throw new Error("旧格式口令登录成功后没有就地升级为 scrypt —— 弱摘要会一直留在盘上");
+    }
+  }
 
   // 一次性邀请令牌只显示一次。它一丢，账号此前就报废了：没有重发路径，邮箱唯一性又拦住重建，
   // 于是只能换邮箱新建，旧账号变僵尸并继续占配额。重发必须同时做到两件事，缺一不可：

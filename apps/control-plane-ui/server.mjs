@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node:os";
 import { dirname, extname, join, normalize, resolve } from "node:path";
@@ -350,6 +350,44 @@ function flushPendingAuditAppends(state) {
 function ensureControlState(state) {
   ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: process.env.AIMAC_PUBLIC_URL || localEndpoint(), executionProfile});
   ensureAgentGatewayCollections(state);
+}
+
+// 口令原先用纯 SHA-256 存（digestOf("account-password:<id>:<明文>")）：没有任何密钥拉伸，
+// 拿到状态文件就能离线极快地暴力破解，而状态文件里本来就有节点令牌这类东西，被读到并非天方夜谭。
+// 改成 scrypt + 每账号随机盐 + 定时安全比较。旧摘要必须继续可验证，否则升级即等于把所有人锁在门外；
+// 验证成功时就地升级为 scrypt，不需要任何人重设密码。
+const PASSWORD_SCRYPT = {N: 16384, r: 8, p: 1, keyLength: 32};
+
+function scryptPasswordDigest(password, salt) {
+  const derived = scryptSync(String(password), salt, PASSWORD_SCRYPT.keyLength, {
+    N: PASSWORD_SCRYPT.N, r: PASSWORD_SCRYPT.r, p: PASSWORD_SCRYPT.p
+  });
+  return `scrypt$${PASSWORD_SCRYPT.N}$${PASSWORD_SCRYPT.r}$${PASSWORD_SCRYPT.p}$${salt}$${derived.toString("base64url")}`;
+}
+
+function newPasswordDigest(password) {
+  return scryptPasswordDigest(password, randomBytes(16).toString("base64url"));
+}
+
+// 常数时间比较：长度不同的两个 Buffer 会让 timingSafeEqual 抛错，先按长度短路（长度本身不是秘密）。
+function digestsEqual(left, right) {
+  const a = Buffer.from(String(left || ""), "utf8");
+  const b = Buffer.from(String(right || ""), "utf8");
+  if (a.length !== b.length || !a.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+// 返回 {ok, needsUpgrade}：ok 表示口令正确；needsUpgrade 表示它是旧格式，调用方应就地换成 scrypt。
+function verifyAccountPassword(account, password) {
+  const stored = String(account?.passwordDigest || "");
+  if (!stored || !password) return {ok: false, needsUpgrade: false};
+  if (stored.startsWith("scrypt$")) {
+    const salt = stored.split("$")[4];
+    if (!salt) return {ok: false, needsUpgrade: false};
+    return {ok: digestsEqual(stored, scryptPasswordDigest(password, salt)), needsUpgrade: false};
+  }
+  const legacy = digestOf(`account-password:${account.accountId}:${password}`);
+  return {ok: digestsEqual(stored, legacy), needsUpgrade: true};
 }
 
 function beginGuardedWrite(req, state, action, subject, resourceScope = inferResourceScope(state, subject)) {
@@ -2255,7 +2293,8 @@ async function handleApi(req, res) {
     const bootstrapOk = method === "bootstrap_token" && digestOf(`bootstrap:${token}`) === config.bootstrapTokenHash;
     const localAccountOk = Boolean(account && config.localAccountTokenHashes?.[account.accountId] === digestOf(`account:${account.accountId}:${token}`));
     const issuedAccountOk = Boolean(account?.status === "invited" && account?.credentialDigest && account.credentialDigest === digestOf(`account-invite:${account.accountId}:${token}`) && (!account.credentialExpiresAt || new Date(account.credentialExpiresAt).getTime() > Date.now()));
-    const passwordOk = Boolean(account?.passwordDigest && body.password && account.passwordDigest === digestOf(`account-password:${account.accountId}:${body.password}`));
+    const passwordCheck = account && body.password ? verifyAccountPassword(account, body.password) : {ok: false, needsUpgrade: false};
+    const passwordOk = passwordCheck.ok;
     const tokenOk = bootstrapOk || localAccountOk || issuedAccountOk || passwordOk;
     if (!tokenOk || !account || !["active", "invited"].includes(account.status)) {
       audit(state, "auth-service", "auth_login", `Account:${email}`, "denied");
@@ -2263,6 +2302,12 @@ async function handleApi(req, res) {
       recordFailedLogin(req);
       json(res, 401, {error: "invalid_credentials"});
       return;
+    }
+    // 旧格式口令验证成功后就地升级为 scrypt：不需要任何人重设密码，也不会有人被锁在门外。
+    // 放在这里（认证已通过、状态写入之前），因为只有此刻我们手里同时有明文和"它确实正确"这个结论。
+    if (passwordCheck.ok && passwordCheck.needsUpgrade) {
+      account.passwordDigest = newPasswordDigest(body.password);
+      account.updatedAt = now();
     }
     if (account.status === "invited" && issuedAccountOk) {
       account.status = "active";
@@ -4150,10 +4195,10 @@ async function handleApi(req, res) {
     if (newPassword.length < 8) return json(res, 400, {error: "password_too_short", minLength: 8});
     const account = authenticated.account;
     if (account.passwordDigest) {
-      const currentOk = body.currentPassword && account.passwordDigest === digestOf(`account-password:${account.accountId}:${body.currentPassword}`);
+      const currentOk = Boolean(body.currentPassword) && verifyAccountPassword(account, body.currentPassword).ok;
       if (!currentOk) return json(res, 403, {error: "current_password_incorrect"});
     }
-    account.passwordDigest = digestOf(`account-password:${account.accountId}:${newPassword}`);
+    account.passwordDigest = newPasswordDigest(newPassword);
     // 改密码是"我怀疑被盗号"时唯一的自救手段，而它原先不动任何会话 —— 已泄露的令牌最长还能再用
     // 8 小时，系统也没有"登出其他设备"的入口。改密即撤销该账号的全部会话（含当前这条，
     // 调用方重新登录即可），否则这个动作对攻击者没有任何影响。
