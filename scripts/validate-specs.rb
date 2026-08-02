@@ -1340,7 +1340,16 @@ machine_facing_error_codes = %w[
   checkpoint_replay_binding_mismatch dispatch_not_assigned_to_node
   room_task_group_mismatch
 ].to_set
-server_error_codes = server_source.scan(/error:\s*"([a-z0-9_]+)"/).flatten.uniq
+# 核心与网关抛出的错误码同样会到人眼前：respondApiError 把它们原样回给控制台，而失败原因还会
+# 落在派发记录上（监控页按 t(blockedReason || failureReason) 渲染）。只扫 server.mjs 会漏掉
+# 这一整片 —— 实测扩进来时有 114 个静态码没有中文。
+core_error_codes = (core_source.scan(/new Error\("([a-z0-9_]{5,})"\)/) +
+                    core_source.scan(/topologyError\("([a-z0-9_]{5,})"/) +
+                    agent_gateway_source.scan(/new Error\("([a-z0-9_]{5,})"\)/) +
+                    agent_gateway_source.scan(/gatewayError\("([a-z0-9_]{5,})"/)).flatten.uniq
+server_error_codes = (server_source.scan(/error:\s*"([a-z0-9_]+)"/).flatten + core_error_codes).uniq
+# 本条同样不得空转：错误码总数远少于预期即说明提取逻辑与代码脱节。
+errors << "error-code i18n coverage check only found #{server_error_codes.size} codes — extraction has drifted" if server_error_codes.size < 150
 untranslated = server_error_codes.reject do |code|
   machine_facing_error_codes.include?(code) || i18n_zh_source.match?(/\n\s*#{Regexp.escape(code)}:/)
 end
