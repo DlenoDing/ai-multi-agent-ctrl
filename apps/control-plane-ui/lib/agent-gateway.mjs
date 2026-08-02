@@ -526,6 +526,15 @@ export function selfCheckAgentNode(state, node, input = {}) {
   // 于是人在控制台看到"降级 / 只读"，而"为什么降级"没有答案。落在节点上，它才跟着节点一起被人看见。
   if (missing.length) node.selfCheckMissing = missing;
   else delete node.selfCheckMissing;
+  // 缺哪几项已经落到节点上了，但【为什么缺】还留在 checks 里没人读：人看到"自检未通过：gateway"，
+  // 分不清是 DNS、TLS、401 还是服务端没起，只能上那台机器翻日志。agent 那一侧知道确切原因，
+  // 这里把失败项的 detail 一并留下（限长，且只留失败的那几条）。
+  const failureDetails = checks
+    .filter((check) => check.status !== "ok" && missing.includes(check.checkId) && String(check.detail || "").trim())
+    .slice(0, required.length)
+    .map((check) => ({checkId: check.checkId, detail: String(check.detail).slice(0, 300)}));
+  if (failureDetails.length) node.selfCheckFailures = failureDetails;
+  else delete node.selfCheckFailures;
   if (node.status !== "draining") {
     node.status = missing.length ? "degraded" : "online";
     node.admission = missing.length ? "read_only" : "full";
@@ -1325,7 +1334,7 @@ const PUBLIC_AGENT_NODE_FIELDS = [
   "schemaVersion", "nodeId", "nodeName", "organizationId", "projectIds",
   "allowedRoles", "allowedMcpTools", "status", "admission",
   "profile", "profileDigest", "runtimeVersion",
-  "lastHeartbeatAt", "lastSelfCheckAt", "selfCheckDigest", "selfCheckMissing",
+  "lastHeartbeatAt", "lastSelfCheckAt", "selfCheckDigest", "selfCheckMissing", "selfCheckFailures",
   "activeDispatchIds", "completedDispatchCount", "failedDispatchCount",
   "lastClaimMiss", "offlineReason", "revokedReason",
   "revocationDeadlineAt", "revocationFinalizedAt", "revocationFinalizedReason",

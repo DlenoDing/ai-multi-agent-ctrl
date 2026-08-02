@@ -114,6 +114,7 @@ globalThis.__probe = {
   decisionSelect: (...args) => decisionSelect(...args),
   heartbeatStaleHint: (node) => heartbeatStaleHint(node),
   claimMissHint: (node) => claimMissHint(node),
+  selfCheckFailureHint: (node) => selfCheckFailureHint(node),
   assertRuleFragmentLengths: (fragments) => assertRuleFragmentLengths(fragments),
   evidenceRefsHint: (event) => evidenceRefsHint(event),
   alternativeAxisGaps: (assessment) => alternativeAxisGaps(assessment),
@@ -631,6 +632,60 @@ function runRuleLengthCase() {
     `正好等于上限的规则被拒（${ok && ok.message}）—— 判据把边界算错了一位`);
 }
 
+// "自检未通过：gateway" 只说了缺哪一项。原因在 agent 那一侧是知道的，被 catch {} 吞掉过一次，
+// 现在一路带到控制面 —— 界面必须把它显示出来，否则人只能上那台机器翻日志。
+// "建好了却从没被调用"是本仓反复出现的形状：后端有杠杆而界面没入口、判据写好却没接上、
+// 提示函数留在文件里而渲染早就不走它了（errorBanner 就是 toast 化改造后遗留的死代码，
+// 它渲染的错误横幅任何人都看不到）。这类东西读代码时看着一切都有，跑起来什么都没有。
+// 这里只做一件事：每个顶层函数至少要被调用或引用一次。引用式用法（const esc = escapeHtml、
+// .map(cell)）同样算数，所以判据是"标识符在定义之外还出现过"，而不是"有没有括号调用"。
+function runNoDeadHelperCase() {
+  const source = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const names = [...source.matchAll(/^function ([A-Za-z0-9_]+)\(/gmu)].map((match) => match[1]);
+  // 判据要排除属性访问（obj.fn），但展开语法 ...fn(config) 前面也是点 —— 不先去掉这三个点，
+  // 一个真的在用的函数会被判成死代码。假红比漏报更坏：它会把人派去删掉有用的东西。
+  const scanSource = source.replace(/\.\.\./gu, " ");
+  if (names.length < 50) {
+    check("扫得到函数定义", false, `只扫到 ${names.length} 个顶层函数 —— 判据与文件结构脱节，这条检查等于空转`);
+    return;
+  }
+  const dead = names.filter((name) => {
+    const uses = scanSource.match(new RegExp(`(^|[^A-Za-z0-9_.])${name}(?![A-Za-z0-9_])`, "gu")) || [];
+    return uses.length <= 1; // 只有定义那一处
+  });
+  check("没有定义了却从没人用的界面函数",
+    dead.length === 0,
+    `这些函数定义了却没有任何地方调用或引用：${dead.join("、")} —— 读代码时看着功能都在，跑起来人什么也看不到`);
+}
+
+function runSelfCheckReasonCase() {
+  const probe = loadConsole(el("div"));
+  const shown = probe.selfCheckFailureHint({
+    selfCheckMissing: ["gateway"],
+    selfCheckFailures: [{checkId: "gateway", detail: "http://ctl.example — connect ECONNREFUSED 10.0.0.9:443"}]
+  });
+  check("说得出自检为什么没过",
+    shown.includes("ECONNREFUSED"),
+    `节点自检失败的原因没有显示出来（${JSON.stringify(shown.slice(0, 120))}）—— 人分不清是 DNS、TLS、401 还是服务端没起`);
+  check("没有原因时不占地方",
+    probe.selfCheckFailureHint({selfCheckMissing: ["gateway"]}) === ""
+      && probe.selfCheckFailureHint({selfCheckMissing: ["gateway"], selfCheckFailures: [{checkId: "gateway", detail: "  "}]}) === "",
+    "没有原因可说时仍然渲染了一块空内容");
+
+  // 上面两条只证明判据本身对，证明不了它长在人看得见的那一行上 —— 把渲染里那次调用删掉，
+  // 它们照样全绿。运行时节点表才是人真正看这件事的地方。
+  const html = probe.renderMonitorWith({
+    taskGroups: [{id: "tg_a", projectId: "p_a", name: "甲组"}],
+    agentRuntimeNodes: [{nodeId: "n1", nodeName: "节点一", status: "degraded", admission: "read_only",
+      selfCheckMissing: ["gateway"],
+      selfCheckFailures: [{checkId: "gateway", detail: "http://ctl.example — connect ECONNREFUSED 10.0.0.9:443"}]}],
+    closeBarriers: [], qualityGates: [], testResults: [], checkpoints: [], executionTopologies: []
+  }, {accountId: "acct_a", accountType: "org_admin"}, "p_a");
+  check("原因长在运行时节点表上",
+    html.includes("自检未通过") && html.includes("ECONNREFUSED"),
+    "节点表上只写了自检未通过、没写原因 —— 判据写好了却没接到人看得见的地方");
+}
+
 function runClaimMissCase() {
   const probe = loadConsole(el("div"));
   const roleMiss = probe.claimMissHint({lastClaimMiss: {queuedCount: 2, reasons: [
@@ -709,6 +764,8 @@ runTransitionModeVisibilityCase();
 runWholeListCapCase();
 runStuckTopologyLeverCase();
 runBlockerGuideCase();
+runSelfCheckReasonCase();
+runNoDeadHelperCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();

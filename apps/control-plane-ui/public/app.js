@@ -159,6 +159,14 @@ function alternativeAxisGaps(assessment) {
   return REVIEW_AXES.filter((axis) => !axis.pattern.test(text)).map((axis) => axis.label);
 }
 
+// "自检未通过：gateway" 只说了缺哪一项，没说为什么 —— 人分不清是 DNS、TLS、401 还是服务端
+// 没起，只能上那台机器翻日志。agent 那一侧知道确切原因，控制面也存了下来，这里必须显示出来。
+function selfCheckFailureHint(node) {
+  const failures = (node.selfCheckFailures || []).filter((item) => String(item?.detail || "").trim());
+  if (!failures.length) return "";
+  return failures.map((item) => `<div class="small muted">${esc(t(item.checkId) || item.checkId)}：${esc(item.detail)}</div>`).join("");
+}
+
 function claimMissHint(node) {
   const miss = node.lastClaimMiss;
   if (!miss || !miss.queuedCount) return "";
@@ -632,10 +640,6 @@ function associateFormLabels() {
     if (!control.id) control.id = `fld-${++__labelSeq}`;
     label.setAttribute("for", control.id);
   });
-}
-
-function errorBanner() {
-  return lastError ? `<article class="panel wide"><div class="panel-body"><div class="notice error-notice">操作失败：${esc(lastError)}</div></div></article>` : "";
 }
 
 /* ---------------- API 封装 ---------------- */
@@ -2823,7 +2827,8 @@ function renderMonitor() {
     // "降级/只读"此前不说原因：缺哪几项自检只进网关事件负载，而那条流没有任何界面。
     // 人看到一个黄色徽标，然后无从下手。
     `${badge(node.status)}${claimMissHint(node)}${(node.selfCheckMissing || []).length
-      ? `<div class="small warn-text">自检未通过：${(node.selfCheckMissing || []).map((item) => esc(t(item))).join("、")}</div>` : ""}`,
+      ? `<div class="small warn-text">自检未通过：${(node.selfCheckMissing || []).map((item) => esc(t(item))).join("、")}</div>`
+        + selfCheckFailureHint(node) : ""}`,
     badge(node.admission),
     // 心跳时间戳原先只是一个时间：人得自己算它有多旧，而"节点其实已经死了"正是最该一眼看出来的。
     {v: `${fmtTime(node.lastHeartbeatAt)}${heartbeatStaleHint(node)}`, c: "nowrap"},

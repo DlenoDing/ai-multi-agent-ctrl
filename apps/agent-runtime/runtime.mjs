@@ -122,13 +122,21 @@ async function selfCheck(config) {
   checks.push(check("filesystem", writableDirectory(config.workDir), config.workDir));
   checks.push(check("git", executableVersion("git", ["--version"]).available, executableVersion("git", ["--version"]).version));
   checks.push(check("model_executor", profile.models.some((item) => item.available === true), modelExecutorDetail(profile)));
+  // 失败原因原先被 catch {} 整个吞掉，上报的 detail 只有一个 URL —— 人在控制台看到
+  // "自检未通过：gateway"，分不清是 DNS、TLS、401 还是服务端根本没起，只能上机器翻日志。
+  // 这一侧知道确切原因，就必须把它带上去。
   let gatewayOk = false;
+  let gatewayDetail = config.serverUrl;
   try {
     const health = await jsonRequest(`${config.serverUrl}/api/health`);
     gatewayOk = health.status === "ok";
-  } catch {}
-  checks.push(check("gateway", gatewayOk, config.serverUrl));
+    if (!gatewayOk) gatewayDetail = `${config.serverUrl} — 健康检查返回 status=${health.status || "（缺失）"}`;
+  } catch (error) {
+    gatewayDetail = `${config.serverUrl} — ${String(error?.message || error).slice(0, 200)}`;
+  }
+  checks.push(check("gateway", gatewayOk, gatewayDetail));
   let mcpOk = false;
+  let mcpDetail = config.gateway.mcpUrl;
   try {
     const initialized = await jsonRequest(config.gateway.mcpUrl, {
       method: "POST",
@@ -137,8 +145,11 @@ async function selfCheck(config) {
       body: {jsonrpc: "2.0", id: "agent-self-check", method: "initialize", params: {protocolVersion: "2025-06-18", capabilities: {}, clientInfo: {name: "aimac-agent-runtime", version: RUNTIME_VERSION}}}
     });
     mcpOk = initialized.result?.serverInfo?.name === "ai-multi-agent-ctrl";
-  } catch {}
-  checks.push(check("remote_mcp", mcpOk, config.gateway.mcpUrl));
+    if (!mcpOk) mcpDetail = `${config.gateway.mcpUrl} — 握手返回的服务名是 ${initialized.result?.serverInfo?.name || "（缺失）"}`;
+  } catch (error) {
+    mcpDetail = `${config.gateway.mcpUrl} — ${String(error?.message || error).slice(0, 200)}`;
+  }
+  checks.push(check("remote_mcp", mcpOk, mcpDetail));
   const result = await jsonRequest(config.gateway.selfCheckUrl, {method: "POST", token: config.nodeToken, body: {checks, runtimeVersion: RUNTIME_VERSION, profile}});
   process.stdout.write(`agent self-check: ${result.ok ? "ok" : "failed"}\n`);
   return result;
