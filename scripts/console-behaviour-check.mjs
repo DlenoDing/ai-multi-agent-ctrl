@@ -110,7 +110,8 @@ globalThis.__probe = {
   renderSource: () => String(render),
   handlerSource: (type) => String(globalThis.__handlers[type]),
   renderTaskGroupDetail: (detail, taskGroup) => { tgDetail = detail; return renderTaskGroupDetail(taskGroup); },
-  loadTaskGroupDetailSource: () => String(loadTaskGroupDetail)
+  loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
+  decisionSelect: (...args) => decisionSelect(...args)
 };
 `;
 
@@ -273,8 +274,29 @@ function runRoomVisibilityCase() {
     "loadTaskGroupDetail 没有请求房间消息，面板永远显示为空");
 }
 
+// 处置类下拉的第一项恰好都是后果最重的那个（已解决 / 关闭 / 采纳为本项目规则 / 激活为全局规范），
+// 而 select 默认选中第一项 —— 人点开表单直接提交，拿到的就是最重的处置，而他没做过这个判断。
+function runDecisionSelectCase() {
+  const probe = loadConsole(el("div"));
+  const html = probe.decisionSelect("status", [["active", "采纳为本项目规则"], ["rejected", "不采纳"]], "请选择判定…");
+  const firstOption = html.slice(html.indexOf("<option"), html.indexOf("</option>"));
+  check("默认不是任何一个实质选项",
+    /value=""/.test(firstOption) && /\bselected\b/.test(firstOption),
+    `处置下拉默认选中的是一个实质选项（首项：${firstOption}）—— 人不做选择直接提交就会拿到它`);
+  check("占位项不可被选中提交",
+    /\bdisabled\b/.test(firstOption),
+    "占位项没有 disabled，人可以把「请选择」本身提交上去");
+  check("未选择时提交被拦下",
+    /<select[^>]*\brequired\b/.test(html),
+    "处置下拉没有 required，浏览器不会在提交前拦下未做选择的表单，而服务端对空值的兜底各不相同");
+  check("实质选项仍在",
+    html.includes(">采纳为本项目规则<") && html.includes(">不采纳<"),
+    "占位项把实质选项挤掉了");
+}
+
 runFormRestoreCase();
 runRoomVisibilityCase();
+runDecisionSelectCase();
 
 if (failures.length) {
   for (const failure of failures) console.error(`  - ${failure}`);

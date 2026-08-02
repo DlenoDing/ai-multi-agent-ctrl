@@ -1153,7 +1153,9 @@ end
 # 注意：不能用 [^\]]* 去跨过数组内容 —— 它在第一个内层数组的 ] 处就停了，根本到不了 task_group 条目。
 member_permission_block = app_js_source[/const MEMBER_PERMISSION_OPTIONS = \[(.*?)^\];/m, 1].to_s
 errors << %(成员权限勾选框不得提供 task_group:* 直接权限（服务端一律不认，界面在说谎）) if member_permission_block.include?('"task_group:')
-errors << %(项目成员授权必须能授予「评审人」角色，否则没有任何界面能把人工审核权交出去) unless app_js_source.include?(%q{<option value="reviewer">})
+# 钉的是「授权表单的角色候选里有 reviewer」这个属性，不是它当年那一段标记。原先钉 `<option value="reviewer">`
+# 整串，把角色下拉改成经 decisionSelect 渲染就会假红 —— 而"能不能把人工审核权交出去"一点没变。
+errors << %(项目成员授权必须能授予「评审人」角色，否则没有任何界面能把人工审核权交出去) unless app_js_source.match?(/\["reviewer",\s*"评审人/)
 
 human_lever_forms.each do |action, form_kind|
   next unless server_source.include?("\"#{action}\"")
@@ -1258,6 +1260,13 @@ errors << "Room send must scope authorization and routing from the path room onl
 errors << "Room message sender must be derived from the authenticated principal, never from the request body" unless core_source.include?("ROOM_SENDER_KEY") && core_source.include?("senderRef: args[ROOM_SENDER_KEY]") && !mcp_source.include?("senderRef: string")
 # 参与者名单按 participantId 替换：自报 id 就等于可以覆盖别人的记录（改其 roleId/cursor/sessionId）。
 # 名单不参与授权判定，所以这不是提权 —— 但一张能被任意改写的名单一旦被呈现或被采信，就是错的来源。
+# 处置/授权类下拉一律经 decisionSelect：它的第一项恰好都是后果最重的那个（已解决 / 采纳为本项目规则 /
+# 激活为全局规范 / project_owner），而 select 默认选中第一项 —— 人不做选择直接提交就会拿到它。
+# 钉的是"没有绕过助手的裸下拉"这个结构，不是某一段具体文案。
+raw_decision_selects = public_app_source.scan(/<select name="(status|resolution|dispositionClass|role)"[^>]*>\s*<option/)
+errors << "console decision dropdowns must go through decisionSelect (found raw: #{raw_decision_selects.flatten.uniq.join(", ")})" unless raw_decision_selects.empty?
+errors << "console decisionSelect must render a disabled, selected, empty-valued placeholder and mark the select required" unless public_app_source.include?('<option value="" selected disabled>') && public_app_source.include?('<select name="${esc(name)}" required>')
+
 errors << "Room participant identity must be derived from the authenticated principal, never from the request body" unless mcp_source.include?("ROOM_PARTICIPANT_KEY") && mcp_source.include?("participantId: args[ROOM_PARTICIPANT_KEY]") && !mcp_source.include?("participantId: string")
 errors << "close-barrier must not trust a stale-version cached readiness" unless core_source.include?("cachedReadiness.stateVersion === state.stateVersion") && contract_check_source.include?("stale readiness")
 errors << "Human directives must be consumed oldest-first" unless core_source.include?("status === \"queued\").reverse()") && contract_check_source.include?("directive FIFO")

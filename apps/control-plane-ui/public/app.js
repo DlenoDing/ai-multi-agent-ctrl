@@ -1497,17 +1497,22 @@ function renderProjectMemberForm() {
         <select name="projectId">${(state.projects || []).map((project) => `<option value="${esc(project.id)}">${esc(project.name || project.id)}</option>`).join("")}</select>
       </div>
       <div class="form-row"><label>账号</label>
-        <select name="accountId">${((orgMembers && orgMembers.length ? orgMembers : (state.accounts || [])).map((account) => `<option value="${esc(account.accountId)}">${esc(account.displayName || account.accountId)}</option>`)).join("")}</select>
+        ${decisionSelect("accountId",
+          (orgMembers && orgMembers.length ? orgMembers : (state.accounts || []))
+            .map((account) => [account.accountId, account.displayName || account.accountId]),
+          "请选择授权对象…")}
       </div>
       <div class="form-row"><label>项目角色</label>
-        <select name="role">
-          <option value="project_owner">项目负责人</option>
-          <option value="project_admin">项目管理员</option>
-          <option value="task_group_owner">任务组负责人</option>
-          <option value="reviewer">评审人（可做人工定稿/验收）</option>
-          <option value="agent_operator">智能体操作员</option>
-          <option value="viewer">观察者</option>
-        </select>
+        ${/* 默认停在 project_owner 上：不读就提交，等于把最高权限授予名单里排第一的人。
+              授权对象与角色两个下拉都必须显式选择 —— 少了任一个，误授都能一次点击完成。 */ ""}
+        ${decisionSelect("role", [
+          ["project_owner", "项目负责人"],
+          ["project_admin", "项目管理员"],
+          ["task_group_owner", "任务组负责人"],
+          ["reviewer", "评审人（可做人工定稿/验收）"],
+          ["agent_operator", "智能体操作员"],
+          ["viewer", "观察者"]
+        ], "请选择项目角色…")}
       </div>
       <button class="primary-button" type="submit">授权</button>
     </form>
@@ -2120,6 +2125,18 @@ function renderTaskGroupDetail(taskGroup) {
   `;
 }
 
+// 决策类下拉：默认必须是"尚未选择"。
+// 这些下拉的第一项恰好都是后果最重的那一个（"已解决""关闭""采纳为本项目规则""激活为全局规范"），
+// 而 select 默认选中第一项 —— 于是一个人点开表单直接提交，拿到的就是最重的处置，而他并没有做过
+// 这个判断。规则源与共享定义那两条尤其要命：默认值等于"规则层变更默认发生"。
+// 用禁用的占位项 + required：浏览器会在提交前拦下，人必须说出他决定的是什么。
+function decisionSelect(name, options, placeholder = "请选择处置方式…") {
+  return `<select name="${esc(name)}" required>`
+    + `<option value="" selected disabled>${esc(placeholder)}</option>`
+    + options.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("")
+    + `</select>`;
+}
+
 function sectionBlock(title, body) {
   return `<div class="record" style="background:#fff;"><div class="record-title"><strong>${esc(title)}</strong></div><div style="margin-top:8px;">${body}</div></div>`;
 }
@@ -2388,8 +2405,10 @@ function renderReview() {
   // blocked_external is omitted: the console can't collect the rootCauseOwner/recoveryRef the server
   // requires to keep it terminal, so it would always downgrade to a still-blocking class (use the
   // governance MCP path for that disposition).
-  const dispositionHtml = ["fixed_verified", "not_applicable", "scope_adjusted"]
-    .map((cls) => `<option value="${cls}">${esc(t(cls))}</option>`).join("");
+  // 同因：首项 fixed_verified 是唯一需要证据、也是唯一会被降级并继续阻塞的那一项，
+  // 默认选中它等于替人做了最重的判断。
+  const dispositionSelectHtml = decisionSelect("dispositionClass",
+    ["fixed_verified", "not_applicable", "scope_adjusted"].map((cls) => [cls, t(cls)]), "请选择处置类别…");
   const authDispositionHtml = `
     <div class="stack">
       <div class="record-meta"><span>授权请求 ${pendingPermissions.length} · 审批请求 ${pendingApprovals.length} · 待处置发现 ${openFindings.length}（均阻塞关闭门禁）</span></div>
@@ -2423,8 +2442,8 @@ function renderReview() {
                不知道上一次处置是被什么挡下来的，也就不知道补什么才能过。 -->
           ${item.lastResolutionAttempt ? `<div class="notice warn-notice">上一次处置未能了结它：判为 ${esc(t(item.lastResolutionAttempt.dispositionClass) || item.lastResolutionAttempt.dispositionClass)}（${esc(t(item.lastResolutionAttempt.reason) || item.lastResolutionAttempt.reason)}）。补齐后可再次处置。</div>` : ""}
           ${canReview ? `<form class="form-grid" data-form="finding-resolve" data-request="${esc(item.findingId)}" style="margin-top:8px;">
-            <div class="form-row"><label>处置类别</label><select name="dispositionClass">${dispositionHtml}</select></div>
-            <div class="form-row"><label>处置状态</label><select name="status"><option value="resolved">已解决</option><option value="closed">已关闭</option><option value="dismissed">已忽略</option><option value="wontfix">不修复</option></select></div>
+            <div class="form-row"><label>处置类别</label>${dispositionSelectHtml}</div>
+            <div class="form-row"><label>处置状态</label>${decisionSelect("status", [["resolved", "已解决"], ["closed", "已关闭"], ["dismissed", "已忽略"], ["wontfix", "不修复"]])}</div>
             <div class="form-row"><label>证据引用（可选，逗号分隔）</label><input name="evidenceRefs" placeholder="evidence:..."></div>
             <button class="primary-button" type="submit">提交处置</button>
           </form>` : ""}
@@ -2493,7 +2512,7 @@ function renderDirectives() {
             <select name="directiveType">${DIRECTIVE_TYPES.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("")}</select>
           </div>
           <div class="form-row"><label>决策处置方式</label>
-            <select name="resolution"><option value="reopen">重开（返回就绪，重置返工计数）</option><option value="abandon">放弃（置为已替代，解除关闭阻塞）</option></select>
+            ${decisionSelect("resolution", [["reopen", "重开（返回就绪，重置返工计数）"], ["abandon", "放弃（置为已替代，解除关闭阻塞）"]])}
             <span class="small muted">仅“决策处置”类型生效</span>
           </div>
           <div class="form-row"><label>目标工作项 ID</label><input name="workItemId" placeholder="留空只处置该组处于“待人工决策”的格子；要放弃其它状态的工作项必须点名填写它的 ID" /></div>
@@ -2719,7 +2738,7 @@ function renderMonitor() {
               <div class="record-meta"><span class="mono">${esc(plan.reviewPlanId)}</span> · ${esc(taskGroupNameOf(plan.taskGroupId))} · ${badge(plan.status)}
                 · 需要 ${esc((plan.requiredReviewerRoles || []).map((role) => t(role) || role).join("、") || "-")}
                 · 已到 ${esc((plan.coveredReviewerRoles || []).map((role) => t(role) || role).join("、") || "无")}</div>
-              <div class="form-row"><label>收尾方式</label><select name="status"><option value="closed">关闭（视为已完成评审）</option><option value="superseded">被取代</option><option value="rejected">驳回</option></select></div>
+              <div class="form-row"><label>收尾方式</label>${decisionSelect("status", [["closed", "关闭（视为已完成评审）"], ["superseded", "被取代"], ["rejected", "驳回"]], "请选择收尾方式…")}</div>
               <div class="form-row"><label>理由（必填）</label><input name="justification" placeholder="例如：外部评审方不再参与，改由内部 QA 覆盖"></div>
               <button class="primary-button" type="submit">收尾评审计划</button>
             </form>`).join("")}
@@ -2730,7 +2749,7 @@ function renderMonitor() {
           ${openRuleSources.map((item) => `
             <form class="form-grid" data-form="rule-source-settle" data-request="${esc(item.resolutionId)}" style="margin-top:8px;">
               <div class="record-meta"><span class="mono">${esc(item.sourceRef || item.resolutionId)}</span> · ${esc(taskGroupNameOf(item.taskGroupId))} · ${badge(item.status)}</div>
-              <div class="form-row"><label>判定</label><select name="status"><option value="active">采纳为本项目规则</option><option value="reference_only">仅作参考</option><option value="quarantined">隔离</option><option value="rejected">不采纳</option></select></div>
+              <div class="form-row"><label>判定</label>${decisionSelect("status", [["active", "采纳为本项目规则"], ["reference_only", "仅作参考"], ["quarantined", "隔离"], ["rejected", "不采纳"]], "请选择判定…")}</div>
               <div class="form-row"><label>理由（可选）</label><input name="justification" placeholder="判定依据"></div>
               <button class="primary-button" type="submit">提交判定</button>
             </form>`).join("")}
@@ -2741,7 +2760,7 @@ function renderMonitor() {
           ${openReviewBundles.map((bundle) => `
             <form class="form-grid" data-form="review-bundle-resolve" data-request="${esc(bundle.reviewBundleId)}" style="margin-top:8px;">
               <div class="record-meta"><span class="mono">${esc(bundle.reviewBundleId)}</span> · ${esc(taskGroupNameOf(bundle.taskGroupId))} · ${badge(bundle.status)}${bundle.workItemId ? ` · ${esc(bundle.workItemId)}` : ""}</div>
-              <div class="form-row"><label>收尾方式</label><select name="status"><option value="consumed">已采纳该评审结论</option><option value="rejected">驳回该评审包</option></select></div>
+              <div class="form-row"><label>收尾方式</label>${decisionSelect("status", [["consumed", "已采纳该评审结论"], ["rejected", "驳回该评审包"]], "请选择收尾方式…")}</div>
               <div class="form-row"><label>理由（必填）</label><input name="justification" placeholder="例如：外部评审方未再回流，改由内部互审覆盖"></div>
               <button class="primary-button" type="submit">收尾评审包</button>
             </form>`).join("")}
@@ -2752,7 +2771,7 @@ function renderMonitor() {
           ${openUpgradeCandidates.map((item) => `
             <form class="form-grid" data-form="upgrade-candidate-resolve" data-request="${esc(item.candidateId)}" style="margin-top:8px;">
               <div class="record-meta"><span class="mono">${esc(item.candidateId)}</span> · ${esc(taskGroupNameOf(item.taskGroupId))} · ${esc(t(item.issueClass) || item.issueClass || "-")} · ${badge(item.status)}</div>
-              <div class="form-row"><label>判定</label><select name="status"><option value="exported_for_external_maintenance">已导出交外部维护</option><option value="dismissed">不予处理</option><option value="closed">已解决</option></select></div>
+              <div class="form-row"><label>判定</label>${decisionSelect("status", [["exported_for_external_maintenance", "已导出交外部维护"], ["dismissed", "不予处理"], ["closed", "已解决"]], "请选择判定…")}</div>
               <div class="form-row"><label>理由（必填）</label><input name="justification" placeholder="判定依据"></div>
               <button class="primary-button" type="submit">提交判定</button>
             </form>`).join("")}
@@ -2763,7 +2782,7 @@ function renderMonitor() {
           ${blockingDefinitions.map((definition) => `
             <form class="form-grid" data-form="shared-definition-resolve" data-request="${esc(definition.contractId)}" style="margin-top:8px;">
               <div class="record-meta"><span class="mono">${esc(definition.contractId)}</span> · ${esc(t(definition.definitionType) || definition.definitionType || "-")} · ${badge(definition.status)}${definition.proposedBy ? ` · 由 ${esc(definition.proposedBy)} 提议` : ""}</div>
-              <div class="form-row"><label>处置</label><select name="status"><option value="active">激活为全局规范</option><option value="rejected">驳回</option><option value="superseded">被取代</option><option value="retired">退役</option></select></div>
+              <div class="form-row"><label>处置</label>${decisionSelect("status", [["active", "激活为全局规范"], ["rejected", "驳回"], ["superseded", "被取代"], ["retired", "退役"]], "请选择处置…")}</div>
               <div class="form-row"><label>理由（必填）</label><input name="justification" placeholder="例如：已与相关方对齐，采纳为全局状态语义"></div>
               <button class="primary-button" type="submit">提交处置</button>
             </form>`).join("")}
