@@ -284,7 +284,6 @@ export function assertProjectShardsMatchCentralIndex(shards, centralState) {
       throw new Error(`project_state_shard_payload_size_mismatch:${shard.projectId}`);
     }
     if (entry.storagePayloadDigest && entry.storagePayloadDigest !== digestProjectShardPayload(shard)
-      && entry.storagePayloadDigest !== insertionOrderDigestProjectShardPayload(shard)
       && entry.storagePayloadDigest !== legacyDigestProjectShardPayload(shard)) {
       throw new Error(`project_state_shard_payload_digest_mismatch:${shard.projectId}`);
     }
@@ -543,7 +542,6 @@ function readRuntimeJsonProjectShards(options, centralState = {}) {
         }
         if (indexedEntry?.storagePayloadDigest &&
             indexedEntry.storagePayloadDigest !== digestProjectShardPayload(shard) &&
-            indexedEntry.storagePayloadDigest !== insertionOrderDigestProjectShardPayload(shard) &&
             indexedEntry.storagePayloadDigest !== legacyDigestProjectShardPayload(shard)) {
           throw new Error(`project_state_shard_digest_mismatch:${name}`);
         }
@@ -664,18 +662,6 @@ function runtimeJsonShardMetadataFromCentral(centralState = {}) {
   return names;
 }
 
-// 键序无关的规范化序列化。JSON.stringify 的键序取决于对象的插入顺序，而 PostgreSQL 的 jsonb
-// **不保留键序**（存储时会规范化重排）。于是同一份分片写进 PG 再读回来，序列化结果不同、摘要对不上，
-// 完整性校验把一次正常的往返判成篡改。runtime_json 是普通文件、键序原样保留，所以本地一直是绿的 ——
-// 这个缺陷只有跑 PostgreSQL 的那条端到端能发现。
-function canonicalJson(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value === undefined ? null : value);
-}
-
 function projectShardPayloadText(shard = {}) {
   const payload = {...shard};
   delete payload.storagePayloadDigest;
@@ -683,23 +669,7 @@ function projectShardPayloadText(shard = {}) {
   delete payload.storageGeneration;
   delete payload.storageName;
   delete payload.updatedAt;
-  return canonicalJson(payload);
-}
-
-// 规范化之前写下的摘要（插入顺序序列化）。读取侧继续接受它，否则升级到规范化那一刻，
-// 所有既有分片都会被判成被篡改 —— 一个把正常数据锁在门外的完整性校验，比没有更糟。
-function insertionOrderProjectShardPayloadText(shard = {}) {
-  const payload = {...shard};
-  delete payload.storagePayloadDigest;
-  delete payload.storagePayloadBytes;
-  delete payload.storageGeneration;
-  delete payload.storageName;
-  delete payload.updatedAt;
   return JSON.stringify(payload);
-}
-
-function insertionOrderDigestProjectShardPayload(shard = {}) {
-  return `sha256:${createHash("sha256").update(insertionOrderProjectShardPayloadText(shard)).digest("hex")}`;
 }
 
 function legacyProjectShardPayloadText(shard = {}) {
