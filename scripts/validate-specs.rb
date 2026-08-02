@@ -1295,6 +1295,13 @@ runtime_source = File.read(File.join(ROOT, "apps/agent-runtime/runtime.mjs"))
 errors << "revoking a node must clean the credential it wrote into the operator's global MCP client configs (both revoke branches)" unless runtime_source.scan(/if \(command\.commandType === "revoke"\) removeGlobalRemoteMcpClients\(\);/).size == 2
 errors << "the executor must receive a dispatch-scoped MCP credential, never the node token" unless runtime_source.include?("AIMAC_MCP_BEARER_TOKEN: dispatchPackage.executorToken") && !runtime_source.include?("AIMAC_MCP_BEARER_TOKEN: config.nodeToken")
 errors << "the executor credential must be accepted only on the MCP path" unless server_source.include?("authenticateExecutorPrincipal(state, token)") && !server_source.match?(/requireAuthenticated[\s\S]{0,400}?authenticateExecutorPrincipal/)
+# PG 桥用 Atomics.wait 在主线程上等回复：每一次桥调用都会冻住定时器、WebSocket 心跳和其他请求的
+# I/O 回调，所以"每请求几次往返"直接就是可用性问题。两条属性必须钉住（接线检查，正确性由
+# docker compose 的 PG 端到端覆盖）：建表每进程只跑一次；读状态只读一次中央文档，
+# 不再先经 ensureStoredState 把整份文档读出来【只为判断这一行存不存在】。
+state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs"))
+errors << "postgres DDL must be memoized per process (every bridge call blocks the event loop)" unless state_store_source.include?("if (postgresTablesEnsured) return;")
+errors << "the postgres read path must not pay for a full central read just to probe existence" unless state_store_source.match?(/export function readStoredState\(options\) \{\s*\n\s*if \(stateStoreKind\(\) === "postgresql"\) \{/)
 errors << "idempotency payload purge must run on the eviction path taken by every write" unless server_source.include?("purgeExpiredIdempotencyPayloads(state);")
 errors << "an expired idempotency replay must not be returned as an empty success" unless server_source.include?("idempotent_result_expired")
 errors << "postgres project shards must carry a payload digest in the central index (it is computed outside the runtime_json generation branch)" unless File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).include?("if (!nextGeneration) {") && File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).match?(/if \(!nextGeneration\) \{[\s\S]{0,900}?shard\.storagePayloadDigest = digestProjectShardPayload\(shard\);/)

@@ -112,7 +112,13 @@ export function storedStateExists(options) {
 }
 
 export function readStoredState(options) {
-  ensureStoredState(options);
+  if (stateStoreKind() === "postgresql") {
+    // PG 分支自己做建表 + 一次读；不再走 ensureStoredState 里那次"只为判断存在性"的全量读。
+    mkdirSync(options.runtimeDir, {recursive: true});
+    ensurePostgresTable(options);
+  } else {
+    ensureStoredState(options);
+  }
   if (stateStoreKind() !== "postgresql") {
     const cached = cachedStoredState(hydratedStateCache, options.statePath, (value) => runtimeJsonStateCacheKey(options, value));
     if (cached) {
@@ -127,8 +133,19 @@ export function readStoredState(options) {
       return state;
     });
   }
-  const {central, shards} = pgReadStateWithShards();
-  const state = hydrateProjectState(central, options, shards);
+  // 一次读，不是两次。原先这里先经 ensureStoredState 把整份中央文档读出来【只为判断这一行存不存在】，
+  // 再由 pgReadStateWithShards 把同一行连同全部分片重新读一遍。中央文档实测已有 436KB，
+  // 而每个 /api/* 请求（含 GET）都走这条路，一次 MCP 写工具调用还要再走两遍。
+  // 行不存在这件事，读一次就知道了。
+  const first = pgReadStateWithShards();
+  if (!first.central) {
+    writeStoredState(options.buildInitialState(), options);
+    const seeded = pgReadStateWithShards();
+    const seededState = hydrateProjectState(seeded.central, options, seeded.shards);
+    seededState.__loadedStateVersion = Number(seededState.stateVersion || 0);
+    return seededState;
+  }
+  const state = hydrateProjectState(first.central, options, first.shards);
   state.__loadedStateVersion = Number(state.stateVersion || 0);
   return state;
 }
@@ -228,8 +245,15 @@ export function markRuntimeStorage(state, statePath = ".runtime/control-plane-st
   else delete state.runtime.storage.databaseUrlSecretRef;
 }
 
+// 建表语句每进程只需要跑一次。原先每一次 readStoredState 都跑两条 CREATE TABLE IF NOT EXISTS，
+// 而 PG 桥用 Atomics.wait 在主线程上等回复 —— 每一次桥调用都会冻住定时器、WebSocket 心跳和
+// 其他请求的 I/O 回调。每请求省下的往返，直接就是主线程少冻住的时间。
+let postgresTablesEnsured = false;
+
 function ensurePostgresTable() {
+  if (postgresTablesEnsured) return;
   pgEnsureTables();
+  postgresTablesEnsured = true;
 }
 
 // Returns the parsed central-state object (jsonb decodes to a JS object) or null.
