@@ -67,6 +67,8 @@ import {
   advanceExecutionTopology,
   decideSessionPlacement,
   roomSend,
+  effectivePathDenylist,
+  MANDATORY_PATH_DENYLIST,
   advanceWorkItemToReviewRequested,
   ROOM_SENDER_KEY,
   selectModel,
@@ -2328,6 +2330,23 @@ function verifyHumanAndOrganizationContracts(output) {
   }
   if (state.roomSequenceByRoom?.room_forge_ct !== roomSeqBefore) {
     output.push("room_send consumed a sequence number for a rejected message — the room sequence now has a permanent hole no reader can detect");
+  }
+
+  // 写入禁区必须是【下限】而不是默认值。原先每个生产者各写一份 `request.pathDenylist || [...]`：
+  // 调用方传个空数组就抹掉整个禁区，而 REST 那条创建路径根本没写这个字段 —— 服务端与执行侧的
+  // 禁区判据同时对着空集，允许集里写上 CI 目录就能改流水线配置并推上去，CI 再拿仓库凭据执行。
+  if (!MANDATORY_PATH_DENYLIST.includes(".github/workflows/**")) {
+    output.push("mandatory path denylist does not cover CI configuration — allowing an agent to edit it upgrades write access into execution with the repository's credentials");
+  }
+  for (const probe of [{}, {pathDenylist: []}, {pathDenylist: ["docs/**"]}, {forbiddenPathRules: []}]) {
+    const effective = effectivePathDenylist(probe);
+    const missing = MANDATORY_PATH_DENYLIST.filter((rule) => !effective.includes(rule));
+    if (missing.length) {
+      output.push(`a caller-supplied denylist (${JSON.stringify(probe)}) lowered the mandatory floor — missing ${JSON.stringify(missing)}`);
+    }
+  }
+  if (!effectivePathDenylist({pathDenylist: ["docs/**"]}).includes("docs/**")) {
+    output.push("the mandatory floor discarded the caller's own denylist entries (the floor must add, not replace)");
   }
 
   // 任务组终结后它的房间必须停止收消息：关闭门已经过了，此后的写入不受任何门约束，却照样长在

@@ -88,6 +88,7 @@ import {
   syncSkillSource,
   updateTaskGroupLanguagePolicy,
   HUMAN_ACTOR_KEY,
+  effectivePathDenylist,
   ROOM_SENDER_KEY,
   UNSAFE_DELEGATED_GRANT_PERMISSIONS,
   refreshConfirmationsAfterHumanChange,
@@ -3589,6 +3590,9 @@ async function handleApi(req, res) {
       branch: body.branch || "main",
       baseRef: body.baseRef || gitHead(repositoryRoot),
       pathAllowlist,
+      // 这条创建路径原先【根本没有 pathDenylist】—— 于是服务端判据与执行侧判据同时对着空集，
+      // 允许集里写上 ".github/workflows/**" 就能改 CI 配置并推上去。禁区下限由 core 统一给。
+      pathDenylist: effectivePathDenylist({pathDenylist: body.pathDenylist, forbiddenPathRules: body.forbiddenPathRules}),
       status: "selected",
       outputPolicy: "project_git_repository_only",
       decisionRecordRef: body.decisionRecordRef || guard.policyDecision.id,

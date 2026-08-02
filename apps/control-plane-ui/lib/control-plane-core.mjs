@@ -2678,7 +2678,7 @@ function validateCheckpointGitEvidence(state, request) {
     }
   }
   // 被约束方自查等于没查：禁区必须在服务端拦。
-  const denied = changedPaths.filter((path) => pathMatchesAllowlist(path, target.pathDenylist || []));
+  const denied = changedPaths.filter((path) => pathMatchesAllowlist(path, effectivePathDenylist(target)));
   if (denied.length) {
     return {valid: false, status: 409, error: "changed_paths_inside_repository_target_denylist", deniedPaths: denied.slice(0, 20)};
   }
@@ -3661,7 +3661,7 @@ function ensureRepositoryTarget(state, project, taskGroup, workItem, request) {
     branch: repository.defaultBranch || "main",
     baseRef: gitHead(request.root),
     pathAllowlist: request.pathAllowlist || ["apps/control-plane-ui/**", "spec/**", "docs/**", "scripts/**", "data/**", "package.json", "Dockerfile", "docker-compose.yml"],
-    pathDenylist: request.pathDenylist || request.forbiddenPathRules || [".runtime/**", ".git/**", "node_modules/**", ".env", ".env.local", ".env.production"],
+    pathDenylist: effectivePathDenylist({pathDenylist: request.pathDenylist, forbiddenPathRules: request.forbiddenPathRules}),
     status: "selected",
     outputPolicy: "project_git_repository_only",
     decisionRecordRef: request.decisionRecordRef || `decision:repo-target:${workItem?.id || "work"}`,
@@ -6854,6 +6854,26 @@ export const HUMAN_ACTOR_KEY = Symbol.for("dleno.control-plane.humanActor");
 
 // 同因：房间消息的发送者署名。传输层从已认证主体派生后用这个键交给 roomSend，
 // 调用方报文里的 senderRef 一律不采信。
+// 写入禁区的**下限**：任何产出目标都至少禁掉这些路径，调用方只能往上加，不能往下减。
+// 原先每个生产者各写一份默认值（`request.pathDenylist || [...]`），于是两件事同时成立：
+// 调用方传个空数组就能把禁区整个抹掉；而 REST 那条创建路径【根本没有写这个字段】——
+// 服务端的禁区判据 `target.pathDenylist || []` 随之恒为空集，执行侧同理。
+// 结果是一个具备任务组写作用域的用户可以建一个 pathAllowlist 含 ".github/workflows/**" 的目标，
+// agent 改掉 CI 配置、推上去，CI 拿仓库凭据执行 —— 两侧都没有禁区。
+export const MANDATORY_PATH_DENYLIST = Object.freeze([
+  ".runtime/**", ".git/**", "node_modules/**", ".env", ".env.local", ".env.production",
+  // CI 配置等于"仓库凭据可执行的代码"：允许改它，等于把写代码的权限升级成执行权限。
+  ".github/workflows/**", ".github/actions/**", ".gitlab-ci.yml", "Jenkinsfile"
+]);
+
+// 使用点求取：已经落库的旧目标（含那些完全没有该字段的）也要拿到这个下限，
+// 只在生产者补齐是不够的 —— 生产者可以再多一个，而判据只有这一处。
+export function effectivePathDenylist(target) {
+  const declared = Array.isArray(target?.pathDenylist) ? target.pathDenylist
+    : Array.isArray(target?.forbiddenPathRules) ? target.forbiddenPathRules : [];
+  return [...new Set([...MANDATORY_PATH_DENYLIST, ...declared])];
+}
+
 export const ROOM_SENDER_KEY = Symbol.for("dleno.control-plane.roomSender");
 
 // 同因：房间参与者身份。这张表按 participantId 替换，调用方自报就等于可以覆盖别人的记录。
