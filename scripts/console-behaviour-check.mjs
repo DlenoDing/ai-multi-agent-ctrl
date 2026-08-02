@@ -644,6 +644,29 @@ function runRuleLengthCase() {
 // 防重提交此前靠一份手工维护的动作清单，清单必然漂移（实测 logout 就漏在外面，下一个漏掉的
 // 可能是不可逆操作）。现在对每个动作按钮一律生效 —— 这条断言直接驱动真实的点击处理器，
 // 断言请求进行中按钮确实被禁用，而不是去文件里找那份清单还在不在。
+// 服务端答"不行"和"根本没答上话"，对人是两件完全不同的事：前者可以放心重试，后者操作可能
+// 已经生效，而控制台每次请求都换一个幂等键 —— 重试等于再做一次。
+async function runNoResponseGuidanceCase() {
+  const probe = loadConsole(el("div"));
+  probe.setFetch(() => Promise.reject(new TypeError("Failed to fetch")));
+  let writeError = null;
+  try { await probe.api("/api/projects", {method: "POST", body: "{}"}); }
+  catch (error) { writeError = String(error?.message || error); }
+  check("写操作没得到回应时说清可能已生效",
+    /可能已经生效/.test(writeError || "") && /不要直接重试/.test(writeError || ""),
+    `写请求没有收到响应时，界面没有说清"操作可能已经生效、不要直接重试"（${JSON.stringify(String(writeError).slice(0, 120))}）—— 人会再点一次，而那是新的幂等键`);
+  check("不是把浏览器的英文原样抛给人",
+    /^[^A-Za-z]/.test(String(writeError || "").trim()),
+    `没有收到响应时抛出的是浏览器原文（${JSON.stringify(String(writeError).slice(0, 60))}）—— 中文控制台里的一句英文，且不说明后果`);
+
+  let readError = null;
+  try { await probe.api("/api/state"); }
+  catch (error) { readError = String(error?.message || error); }
+  check("只读请求不吓唬人",
+    /加载失败/.test(readError || "") && !/可能已经生效/.test(readError || ""),
+    `只读请求也提示"操作可能已经生效"（${JSON.stringify(String(readError).slice(0, 80))}）—— 读取不会改变任何东西，这种提示只会让人不敢刷新`);
+}
+
 async function runDoubleSubmitGuardCase() {
   const probe = loadConsole(el("div"));
   probe.stubNavigation(); // 断言的是防重，不是渲染；渲染与取数在这里不该被牵扯进来
@@ -794,6 +817,7 @@ runWholeListCapCase();
 runStuckTopologyLeverCase();
 runBlockerGuideCase();
 runSelfCheckReasonCase();
+await runNoResponseGuidanceCase();
 await runDoubleSubmitGuardCase();
 runNoDeadHelperCase();
 runRoomVisibilityCase();

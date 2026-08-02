@@ -649,7 +649,18 @@ async function api(path, options = {}) {
   const headers = {"content-type": "application/json", ...(options.headers || {})};
   if (authToken) headers.authorization = `Bearer ${authToken}`;
   if (method !== "GET") headers["Idempotency-Key"] = uuid();
-  const response = await fetch(path, {...options, headers});
+  // 服务端答了"不行"和"根本没答上话"，对人来说是两件完全不同的事：前者可以放心重试，
+  // 后者【操作可能已经生效】—— 而控制台每次请求都换一个幂等键，重试等于再做一次。
+  // 原先 fetch 自身失败时异常原样冒到界面：人看到一句浏览器的英文，且看不出这两者的区别。
+  let response;
+  try {
+    response = await fetch(path, {...options, headers});
+  } catch (networkError) {
+    if (method === "GET") throw new Error(`加载失败：没有收到服务端响应（${String(networkError?.message || networkError).slice(0, 120)}）`);
+    throw new Error("这次操作没有收到服务端的回应（网络中断或服务未响应）。"
+      + "它可能已经生效，也可能没有 —— 请先刷新页面确认结果，不要直接重试："
+      + `重试会以新的幂等键再做一次。（${String(networkError?.message || networkError).slice(0, 120)}）`);
+  }
   if (!response.ok) {
     let detail = "";
     let hint = "";
