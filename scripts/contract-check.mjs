@@ -1195,6 +1195,28 @@ function verifyHumanAndOrganizationContracts(output) {
     if (!fallbackSkill?.roleSkillFallback) {
       output.push("角色技能: 无专属技能的角色静默套用了别人的技能，没有任何标注");
     }
+    // 留痕必须【过契约边界】才有意义：契约的 roleSkill 是白名单式字段集，此前把 roleSkillFallback
+    // 丢掉了，而唯一的消费者（验收卡片上那句"执行方依据的角色规则并不是这个角色的"）正是查它 ——
+    // 于是那句话永远不会出现。只测 resolveRoleSkill 的返回值测不到这一段。
+    {
+      const boundaryState = structuredClone(seedState);
+      ensureRuntimeCollections(boundaryState, {root});
+      const boundaryGroup = (boundaryState.taskGroups || []).find((group) => (group.workItems || []).length);
+      const boundaryItem = boundaryGroup.workItems[0];
+      boundaryItem.ownerRole = "decision-center";
+      const boundaryContract = buildTaskContract(boundaryState,
+        {taskGroupId: boundaryGroup.id, workItemId: boundaryItem.id, root});
+      if (!boundaryContract?.roleSkill?.roleSkillFallback) {
+        output.push("角色技能: 回退标记没有过契约边界 —— 验收卡片上那句「执行方依据的角色规则并不是这个角色的」永远不会出现，而人正是靠它知道这件事");
+      }
+      // 反向：有专属技能的角色不得被标成回退，否则那句警告会出现在每一张卡片上，很快没人看。
+      boundaryItem.ownerRole = "reviewer";
+      const cleanContract = buildTaskContract(boundaryState,
+        {taskGroupId: boundaryGroup.id, workItemId: boundaryItem.id, root});
+      if (cleanContract?.roleSkill?.roleSkillFallback) {
+        output.push("角色技能: 有专属技能的角色也被标成了回退 —— 这句警告会出现在每一张卡片上，随即失去意义");
+      }
+    }
     // 有专属技能的角色不该被误标
     const ownRoleSkill = resolveRoleSkill(skillState, "reviewer", {});
     if (ownRoleSkill?.roleSkillFallback) {

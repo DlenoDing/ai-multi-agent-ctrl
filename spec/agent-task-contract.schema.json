@@ -158,6 +158,26 @@
         "modelSelectionDecisionRef": {
           "type": "string",
           "minLength": 1
+        },
+        "roleSkillFallback": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "roleId",
+            "boundTo",
+            "reason"
+          ],
+          "properties": {
+            "roleId": {
+              "type": "string"
+            },
+            "boundTo": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
         }
       }
     },
@@ -224,7 +244,14 @@
         },
         "sourceKind": {
           "type": "string",
-          "enum": ["user_objective", "orchestrator_plan", "decision_record", "review_advisory", "tool_result", "rule_source_resolution"]
+          "enum": [
+            "user_objective",
+            "orchestrator_plan",
+            "decision_record",
+            "review_advisory",
+            "tool_result",
+            "rule_source_resolution"
+          ]
         },
         "sourceRef": {
           "type": "string",
@@ -243,7 +270,10 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["materialRef", "classification"],
+            "required": [
+              "materialRef",
+              "classification"
+            ],
             "properties": {
               "materialRef": {
                 "type": "string",
@@ -251,7 +281,13 @@
               },
               "classification": {
                 "type": "string",
-                "enum": ["reference_only", "advisory", "history", "test_fixture", "excluded"]
+                "enum": [
+                  "reference_only",
+                  "advisory",
+                  "history",
+                  "test_fixture",
+                  "excluded"
+                ]
               }
             }
           }
@@ -346,7 +382,15 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["resourceType", "resourceKey", "access", "leaseId", "fencingToken", "leaseExpiresAt", "resourceDigestBefore"],
+        "required": [
+          "resourceType",
+          "resourceKey",
+          "access",
+          "leaseId",
+          "fencingToken",
+          "leaseExpiresAt",
+          "resourceDigestBefore"
+        ],
         "properties": {
           "access": {
             "type": "string",
@@ -405,7 +449,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["resourceType", "resourceKey", "access"],
+        "required": [
+          "resourceType",
+          "resourceKey",
+          "access"
+        ],
         "properties": {
           "access": {
             "type": "string",
@@ -428,7 +476,15 @@
     "model": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["model", "modelId", "reasoning", "reasoningLevel", "modelDecision", "selectionMode", "modelSelectionDecisionRef"],
+      "required": [
+        "model",
+        "modelId",
+        "reasoning",
+        "reasoningLevel",
+        "modelDecision",
+        "selectionMode",
+        "modelSelectionDecisionRef"
+      ],
       "properties": {
         "model": {
           "type": "string",
@@ -446,15 +502,31 @@
         },
         "modelTier": {
           "type": "string",
-          "enum": ["standard", "frontier_economy", "frontier_standard", "frontier_plus"]
+          "enum": [
+            "standard",
+            "frontier_economy",
+            "frontier_standard",
+            "frontier_plus"
+          ]
         },
         "maxModelTier": {
           "type": "string",
-          "enum": ["standard", "frontier_economy", "frontier_standard", "frontier_plus"]
+          "enum": [
+            "standard",
+            "frontier_economy",
+            "frontier_standard",
+            "frontier_plus"
+          ]
         },
         "taskExecutionClass": {
           "type": "string",
-          "enum": ["deep_analysis", "implementation", "verification", "short_execution", "mixed_analysis_implementation"]
+          "enum": [
+            "deep_analysis",
+            "implementation",
+            "verification",
+            "short_execution",
+            "mixed_analysis_implementation"
+          ]
         },
         "reasoningLevel": {
           "type": "string"
@@ -473,7 +545,12 @@
         },
         "selectionMode": {
           "type": "string",
-          "enum": ["dynamic_context", "auto_best", "auto_fast", "cost_aware"]
+          "enum": [
+            "dynamic_context",
+            "auto_best",
+            "auto_fast",
+            "cost_aware"
+          ]
         },
         "modelSelectionDecisionRef": {
           "type": "string",
@@ -578,7 +655,12 @@
           },
           "riskLevel": {
             "type": "string",
-            "enum": ["L0", "L1", "L2", "L3"]
+            "enum": [
+              "L0",
+              "L1",
+              "L2",
+              "L3"
+            ]
           },
           "issuedAt": {
             "type": "string",
@@ -593,7 +675,11 @@
           },
           "grantStatus": {
             "type": "string",
-            "enum": ["issued", "revoked", "expired"]
+            "enum": [
+              "issued",
+              "revoked",
+              "expired"
+            ]
           },
           "revocationRef": {
             "type": "string"
@@ -612,17 +698,31 @@
     "permissionPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["onMissing", "autoAllowPromptTypes", "denyPromptTypes", "policyDecisionRef"],
+      "required": [
+        "onMissing",
+        "autoAllowPromptTypes",
+        "denyPromptTypes",
+        "policyDecisionRef"
+      ],
       "properties": {
         "onMissing": {
           "type": "string",
-          "enum": ["permission_request", "reassign", "scope_reduce", "abort"]
+          "enum": [
+            "permission_request",
+            "reassign",
+            "scope_reduce",
+            "abort"
+          ]
         },
         "autoAllowPromptTypes": {
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["browser_download", "local_file_picker_read_only", "dev_server_open"]
+            "enum": [
+              "browser_download",
+              "local_file_picker_read_only",
+              "dev_server_open"
+            ]
           },
           "default": []
         },
@@ -676,7 +776,16 @@
     "outputContract": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["requiredOutputs", "evidenceRequired", "checkpointRequired", "independentReviewRequired", "pushRefRequired", "requiredLanguage", "languagePolicyDigest", "languagePolicyRef"],
+      "required": [
+        "requiredOutputs",
+        "evidenceRequired",
+        "checkpointRequired",
+        "independentReviewRequired",
+        "pushRefRequired",
+        "requiredLanguage",
+        "languagePolicyDigest",
+        "languagePolicyRef"
+      ],
       "properties": {
         "requiredOutputs": {
           "type": "array",
@@ -684,7 +793,13 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["checkpoint", "commitRef", "pushRef", "evidenceRefs", "verificationRefs"]
+            "enum": [
+              "checkpoint",
+              "commitRef",
+              "pushRef",
+              "evidenceRefs",
+              "verificationRefs"
+            ]
           }
         },
         "evidenceRequired": {
@@ -772,17 +887,30 @@
               "type": "object",
               "properties": {
                 "resourceType": {
-                  "enum": ["git_repo", "git_worktree", "file_path", "dir_path"]
+                  "enum": [
+                    "git_repo",
+                    "git_worktree",
+                    "file_path",
+                    "dir_path"
+                  ]
                 }
               },
-              "required": ["resourceType"]
+              "required": [
+                "resourceType"
+              ]
             }
           }
         },
-        "required": ["writeScope"]
+        "required": [
+          "writeScope"
+        ]
       },
       "then": {
-        "required": ["repositoryOutputTargetRef", "repositoryOutputTargetDigest", "artifactManifestPath"]
+        "required": [
+          "repositoryOutputTargetRef",
+          "repositoryOutputTargetDigest",
+          "artifactManifestPath"
+        ]
       }
     }
   ],
@@ -799,7 +927,11 @@
     "sharedDefinitionRef": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["contractRef", "definitionDigest", "status"],
+      "required": [
+        "contractRef",
+        "definitionDigest",
+        "status"
+      ],
       "properties": {
         "contractRef": {
           "type": "string",

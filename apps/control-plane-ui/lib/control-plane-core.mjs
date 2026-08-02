@@ -1370,6 +1370,11 @@ export function buildTaskContract(state, request = {}) {
       selectedAgentSkillRef: roleSkill.roleSkillId,
       sourceId: roleSkill.sourceId,
       overlayRefs: roleSkill.overlayRefs || [],
+      // 回退留痕必须过契约边界。resolveRoleSkill 在"这个角色没有自己的技能文件"时会带上
+      // roleSkillFallback，而契约的 roleSkill 是白名单式字段集、把它丢掉了 —— 于是唯一的消费者
+      // （验收卡片上那句"执行方依据的角色规则并不是这个角色的"）永远不会触发。
+      // 回退本身是必要的（22 个已登记角色只有 11 个有技能文件），但验收的人有权知道这件事。
+      ...(roleSkill.roleSkillFallback ? {roleSkillFallback: roleSkill.roleSkillFallback} : {}),
       worksetId: skillWorksetId,
       synchronizationMode: "server_managed_on_demand",
       usageDirective: `The ${workItem?.ownerRole || "orchestrator"} agent must load this exact skill workset before execution and must explicitly bind a separate server-issued workset for every child role. ${languagePolicyDirective(languagePolicy)}`,
