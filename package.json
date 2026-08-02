@@ -22,7 +22,7 @@
     "agent:doctor": "node scripts/run-with-env.mjs scripts/doctor-agent-remote.mjs",
     "skills:sync": "node scripts/run-with-env.mjs scripts/sync-agent-skills.mjs",
     "contract:check": "node scripts/run-with-env.mjs scripts/contract-check.mjs",
-    "validate": "ruby scripts/validate-specs.rb && npm run contract:check && npm run -s auth-placement-gate && npm run -s barrier-liveness-gate && npm run -s console-behaviour-gate",
+    "validate": "ruby scripts/validate-specs.rb && npm run contract:check && npm run -s auth-placement-gate && npm run -s barrier-liveness-gate && npm run -s console-behaviour-gate && npm run -s human-only-parity-gate",
     "doctor": "npm run validate && node scripts/run-with-env.mjs scripts/doctor.mjs && npm run mcp:doctor && npm run agent:doctor && npm run docker:doctor",
     "docker:build": "docker build -t ai-multi-agent-ctrl:local .",
     "docker:up": "./scripts/docker-up.sh",
@@ -30,7 +30,8 @@
     "mutation-gate": "node scripts/mutation-gate.mjs",
     "auth-placement-gate": "node scripts/auth-placement-gate.mjs",
     "barrier-liveness-gate": "node scripts/barrier-liveness-gate.mjs",
-    "console-behaviour-gate": "node scripts/console-behaviour-check.mjs"
+    "console-behaviour-gate": "node scripts/console-behaviour-check.mjs",
+    "human-only-parity-gate": "node scripts/human-only-parity-gate.mjs"
   },
   "dependencies": {
     "pg": "^8.22.0",

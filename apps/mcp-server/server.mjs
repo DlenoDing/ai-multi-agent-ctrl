@@ -60,6 +60,7 @@ import {
   reviewBundleRegister,
   reviewPlanCreate,
   roomSend,
+  ROOM_SENDER_KEY,
   roomWait,
   ruleSourceResolve,
   sharedDefinitionCreate,
@@ -478,7 +479,6 @@ function commonInputProperties() {
     scope: string,
     scopeRefs: array,
     selectionMode: string,
-    senderRef: string,
     sessionId: string,
     severity: string,
     sourceId: string,
@@ -1233,7 +1233,10 @@ async function dispatchTool(state, name, args, context = {}) {
     case "room-mcp.room_join":
       return roomJoin(state, args);
     case "room-mcp.room_send":
-      return roomSend(state, args);
+      // 同 REST：署名由已认证主体派生。报文里的 senderRef 已从输入白名单里去掉，会被直接拒绝，
+      // 而不是悄悄忽略 —— 悄悄忽略会让调用方以为自己署上了名。
+      return roomSend(state, {...args, [ROOM_SENDER_KEY]: context?.principal?.kind
+        ? `${context.principal.kind}:${context.principal.id}` : "unattributed"});
     case "room-mcp.room_wait":
       return boundedRoomGuard(state, args, context) || roomWait(state, args);
     case "room-mcp.room_ack":
@@ -1278,10 +1281,22 @@ async function dispatchTool(state, name, args, context = {}) {
     case "model-mcp.model_policy_get":
       return modelPolicyGet(state, args);
     case "skill-mcp.skill_source_sync":
+      // 规则层（角色 SKILL.md 正文 / 覆盖层）不该由机器主体改：syncSkillSource 会整体替换
+      // state.roleSkills，registerRoleSkillOverlay 直接产出 active 覆盖层并被下一次 buildTaskContract
+      // 选中。REST 侧已把两者定为真人专属，配置面也挡了服务令牌 —— 但配置是配置，锁要落在决策点上。
+      if (context?.principal?.kind === "agent_node" || context?.principal?.kind === "system_service") {
+        return {ok: false, error: "rule_layer_mutation_forbidden_for_machine_principal"};
+      }
       return syncSkillSource(state, args.sourceId || "agency-agents-zh", {root, runtimeDir});
     case "skill-mcp.role_skill_parse":
       return roleSkillParse(state, args);
     case "skill-mcp.role_skill_overlay_validate":
+      // 规则层（角色 SKILL.md 正文 / 覆盖层）不该由机器主体改：syncSkillSource 会整体替换
+      // state.roleSkills，registerRoleSkillOverlay 直接产出 active 覆盖层并被下一次 buildTaskContract
+      // 选中。REST 侧已把两者定为真人专属，配置面也挡了服务令牌 —— 但配置是配置，锁要落在决策点上。
+      if (context?.principal?.kind === "agent_node" || context?.principal?.kind === "system_service") {
+        return {ok: false, error: "rule_layer_mutation_forbidden_for_machine_principal"};
+      }
       return registerRoleSkillOverlay(state, args);
     case "skill-mcp.role_skill_resolve":
       return resolveRoleSkillView(state, args);
@@ -1298,6 +1313,14 @@ async function dispatchTool(state, name, args, context = {}) {
     case "permission-mcp.permission_status":
       return permissionStatus(state, args, context);
     case "permission-mcp.permission_resolve":
+      // 与 confirmation_decide 同因：REST 侧把 permission_resolve 列为真人专属（批准一条权限请求
+      // ＝把被挡住的那项能力交出去，拒绝分支还会级联终结执行），而这里是通向同一个函数的第二道门。
+      // 它今天不在 agent 节点的工具集、也不在服务令牌默认白名单里，可一旦运维在
+      // AIMAC_MCP_SERVICE_ALLOWED_TOOLS 里配上它，真人专属就被一个环境变量悄悄取消了 ——
+      // 挡在决策点上，才与"谁能拿到这个工具"无关。
+      if (context?.principal?.kind === "agent_node" || context?.principal?.kind === "system_service") {
+        return {ok: false, error: "permission_resolution_forbidden_for_machine_principal"};
+      }
       return permissionResolve(state, args);
     case "human-review-mcp.confirmation_request_submit":
       // 与 REST 的 agent 通道同样收紧：MCP 主体只能提运行时执行确认，不得自选 decisionType/subjectRef/content
@@ -1366,6 +1389,11 @@ async function dispatchTool(state, name, args, context = {}) {
       // Approver identity is the authenticated MCP principal (high_risk_no_self_approval + quorum tally).
       return approvalResolve(state, {...args, resolvedBy: context?.principal?.id || args.resolvedBy});
     case "governance-mcp.contract_publish":
+      // 共享定义契约一旦 active 就进入每个后续任务契约与指令包，且不在阻塞集里，不会留下可见阻塞。
+      // REST 的 contract_publish 是真人专属，这里是同一个函数的第二道门。
+      if (context?.principal?.kind === "agent_node" || context?.principal?.kind === "system_service") {
+        return {ok: false, error: "contract_publish_forbidden_for_machine_principal"};
+      }
       return contractPublish(state, args);
     case "governance-mcp.effective_instruction_create":
       return instructionEnvelopeCreate(state, args, "effective_instruction_packet");
@@ -2115,8 +2143,20 @@ export function permissionResolve(state, args) {
   const at = new Date().toISOString();
   // PermissionRequest FSM vocab: pending_approval -> approved / rejected. Accept a legacy "denied" from
   // callers and normalize it to the modeled "rejected".
+  //
+  // The status must be whitelisted, not merely normalized. Without this, any other string was written
+  // through verbatim, and the result was silently wrong in both directions at once: the close barrier
+  // only treats "pending_approval" as pending (PERMISSION_REQUEST_PENDING_STATUSES), so the request
+  // stopped blocking the gate, while never being "approved" it also minted no grant — and the
+  // resolve-once guard above then made it permanently unresolvable. A blocked cell would be waiting on
+  // a permission that no longer blocks anything and can no longer be granted, with the close gate
+  // reporting green. Fail loudly instead; an unrecognised outcome is a caller bug, not a decision.
   const rawStatus = args.status || (args.allowed === false ? "rejected" : "approved");
-  request.status = rawStatus === "denied" ? "rejected" : rawStatus;
+  const resolvedStatus = rawStatus === "denied" ? "rejected" : rawStatus;
+  if (!["approved", "rejected"].includes(resolvedStatus)) {
+    return {ok: false, error: "permission_request_status_invalid"};
+  }
+  request.status = resolvedStatus;
   const decision = policyDecisionEval(state, {
     action: request.permission,
     resource: request.resource,

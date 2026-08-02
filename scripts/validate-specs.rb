@@ -1227,7 +1227,13 @@ errors << "MCP readiness/close-barrier reads must guard bounded principals" unle
 # 2026-07-27 review round 4 fixes.
 errors << "Dispatch-bound MCP grants must be refreshed on claim renewal" unless agent_gateway_source.include?("refreshDispatchGrantExpiry") && agent_gateway_source.include?("refreshDispatchGrantExpiry(state, dispatch, renewed, at)")
 errors << "Revocation must have a node-death ACK-timeout requeue backstop" unless agent_gateway_source.include?("revocation_ack_timeout_requeued") && agent_gateway_source.include?("AIMAC_REVOCATION_ACK_TIMEOUT_MS")
-errors << "Room send must scope authorization and routing from the path room only" unless server_source.include?("room_task_group_mismatch") && server_source.include?("roomSend(state, {...body, roomId, taskGroupId: roomTaskGroupId})")
+# 钉的是属性而不是那一行源码：授权与路由都必须取自路径上的房间。原先直接钉
+# `roomSend(state, {...body, roomId, taskGroupId: roomTaskGroupId})` 整串，把调用改成先构造入参变量
+# 就会假红 —— 而属性一点没变。
+errors << "Room send must scope authorization and routing from the path room only" unless server_source.include?("room_task_group_mismatch") && server_source.include?("{...body, roomId, taskGroupId: roomTaskGroupId}")
+# 署名必须由服务端从已认证主体派生。报文里的 senderRef 若被采信，任何能发消息的 agent 都能
+# 署名成业主 —— 而这个值直接进 eventLog 的 actor，伪造的署名同时污染了用来核对它的审计。
+errors << "Room message sender must be derived from the authenticated principal, never from the request body" unless core_source.include?("ROOM_SENDER_KEY") && core_source.include?("senderRef: args[ROOM_SENDER_KEY]") && !mcp_source.include?("senderRef: string")
 errors << "close-barrier must not trust a stale-version cached readiness" unless core_source.include?("cachedReadiness.stateVersion === state.stateVersion") && contract_check_source.include?("stale readiness")
 errors << "Human directives must be consumed oldest-first" unless core_source.include?("status === \"queued\").reverse()") && contract_check_source.include?("directive FIFO")
 # 2026-07-27 MGP core-init absorption: global intelligent judgment over mechanical/redundant/useless gates.

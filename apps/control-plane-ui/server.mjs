@@ -88,6 +88,7 @@ import {
   syncSkillSource,
   updateTaskGroupLanguagePolicy,
   HUMAN_ACTOR_KEY,
+  ROOM_SENDER_KEY,
   UNSAFE_DELEGATED_GRANT_PERMISSIONS,
   refreshConfirmationsAfterHumanChange,
   revokeAccountSessions,
@@ -987,6 +988,9 @@ function forbiddenMcpServiceTool(tool) {
     // runtimeMutationPolicy 里那条 auto_publish_role_skill_overlay 是【声明了但从没有人执行】的禁令。
     tool === "skill-mcp.skill_source_sync" ||
     tool === "skill-mcp.role_skill_overlay_validate" ||
+    // 真人专属动作的 MCP 孪生：批准权限请求。决策点上已经挡了机器主体，这里同时关掉配置面，
+    // 免得运维以为"配上就能用"而实际收到一串拒绝。
+    tool === "permission-mcp.permission_resolve" ||
     (tool.startsWith("orchestration-mcp.") && tool !== "orchestration-mcp.state_get");
 }
 
@@ -3725,7 +3729,14 @@ async function handleApi(req, res) {
       }
       const guard = beginGuardedWrite(req, state, "room_send", `Room:${roomId}`, taskGroupScope(state, roomTaskGroupId));
       if (guard.status) return json(res, guard.status, guard.payload);
-      const result = roomSend(state, {...body, roomId, taskGroupId: roomTaskGroupId});
+      // 署名取已认证主体，不取报文。REST 这条路上可能是真人账号会话，也可能是 agent 节点令牌。
+      const roomSendArgs = {...body, roomId, taskGroupId: roomTaskGroupId};
+      const roomSendAccount = accountFromRequest(req, state);
+      const roomSendNode = roomSendAccount ? null : authenticateAgentNode(state, bearerToken(req));
+      roomSendArgs[ROOM_SENDER_KEY] = roomSendAccount ? `account:${roomSendAccount.accountId}`
+        : roomSendNode ? `agent_node:${roomSendNode.nodeId}` : "unattributed";
+      const result = roomSend(state, roomSendArgs);
+      if (result.ok === false) return json(res, 413, {error: result.error, maxBytes: result.maxBytes});
       audit(state, "room-broker", "room_send", `Room:${roomId}`);
       finishGuardedWrite(state, guard, 201, result);
       writeState(state);
@@ -3803,6 +3814,9 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "permission_resolve", `PermissionRequest:${permissionResolveMatch[1]}`, permissionResolveScope);
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = permissionResolve(state, {...body, requestId: permissionResolveMatch[1]});
+    // 无法识别的处置结果是调用方的错，不是"找不到这条请求" —— 一律回 404 会让调用方去查 id，
+    // 而真正的原因是它送了一个不属于 approved/rejected 的状态。
+    if (result.error === "permission_request_status_invalid") return json(res, 400, {error: result.error});
     if (result.ok === false) return json(res, 404, {error: result.error});
     recomputeBarrierAfterResolve(state, existingPermission?.taskGroupId);
     audit(state, "permission-gateway", "permission_resolve", `PermissionRequest:${result.permissionRequest.requestId}`);

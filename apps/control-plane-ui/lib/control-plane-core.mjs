@@ -5731,17 +5731,37 @@ function grantResourceProjectId(state, grant = {}) {
   return undefined;
 }
 
+// 单条消息的字节数。用序列化后的长度而不是 payload 的字段数 —— 撑爆中央 state 的是序列化结果。
+// 上限在调用时读环境变量，与同一块里的条数/TTL 上限一致 —— 若在模块加载时读，
+// 部署方在启动后设置的值会静默失效，而这种"设了没生效"最难被发现。
+export function roomMessageMaxBytes() {
+  return Math.max(1024, Number(process.env.AIMAC_ROOM_MESSAGE_MAX_BYTES || 32 * 1024));
+}
+
+function roomMessageBytes(message) {
+  try { return Buffer.byteLength(JSON.stringify(message ?? null) || "", "utf8"); } catch { return roomMessageMaxBytes(); }
+}
+
 function pruneRoomMessages(state) {
   const maxTotal = Math.max(1000, Number(process.env.AIMAC_ROOM_MESSAGES_MAX_TOTAL || 10000));
   const maxPerRoom = Math.max(100, Number(process.env.AIMAC_ROOM_MESSAGES_MAX_PER_ROOM || 1000));
   const ttlMs = Math.max(60 * 1000, Number(process.env.AIMAC_ROOM_MESSAGES_TTL_MS || 7 * 24 * 60 * 60 * 1000));
+  // 条数上限管不住体积。roomMessages 不在 projectShardCollections 里，整批驻留在中央 state 文档，
+  // 而中央 state 在**每一次任意写入**时被整体序列化落盘 —— 只限条数的话，10000 条 × 单条 2MB
+  // （HTTP body 上限）就是 20GB 常驻，此后每一次无关的写操作都要序列化这 20GB。
+  // 所以再加一道总字节预算：单条上限挡住门口，总量预算兜住无论怎么组合的结果。
+  const maxTotalBytes = Math.max(1024 * 1024, Number(process.env.AIMAC_ROOM_MESSAGES_MAX_TOTAL_BYTES || 64 * 1024 * 1024));
   const cutoff = Date.now() - ttlMs;
   const perRoom = new Map();
   const kept = [];
+  let bytes = 0;
   for (const message of [...(state.roomMessages || [])].reverse()) {
     if (new Date(message.createdAt || 0).getTime() < cutoff) continue;
     const count = perRoom.get(message.roomId) || 0;
     if (count >= maxPerRoom) continue;
+    // 从新到旧累计：预算耗尽时丢掉的是最旧的，与条数上限的方向一致。
+    bytes += roomMessageBytes(message);
+    if (bytes > maxTotalBytes && kept.length) break;
     perRoom.set(message.roomId, count + 1);
     kept.push(message);
     if (kept.length >= maxTotal) break;
@@ -5764,12 +5784,18 @@ export function roomSend(state, args) {
   }
   const retainedMax = Math.max(0, ...state.roomMessages.filter((item) => item.roomId === roomId).map((item) => Number(item.sequence || 0)));
   const nextSequence = Math.max(Number(state.roomSequenceByRoom[roomId] || 0), retainedMax) + 1;
-  state.roomSequenceByRoom[roomId] = nextSequence;
+  // 序号在消息确定要落库之后才消费。若先占号再因超限拒绝，房间序列上就留下一个永久空洞，
+  // 而 roomWait 只按 sequence > afterSequence 推进、读者无从察觉少了什么。
   const message = {
     messageId: args.messageId || createId("room_msg"),
     roomId,
     sequence: nextSequence,
-    senderRef: args.senderRef || args.roleId || "agent-runtime",
+    // 发送者身份由服务端从已认证主体派生，**绝不取调用方入参**。原先是 args.senderRef，于是任何
+    // 能发消息的 agent 都可以把自己署名成 "human-owner" 之类，而这个值还会直接进 eventLog 的 actor：
+    // 伪造的署名同时污染了本该用来交叉验证它的那份审计。房间里没有任何门在读它，所以这不是一条
+    // 提权路径，但它是**给别的 agent 看的**——一句署名为业主的"已同意跳过评审"足以把后续推理带偏，
+    // 而人在控制台看不到房间。用 Symbol.for 承载：JSON 报文里不可能出现符号键，因此无法伪造。
+    senderRef: args[ROOM_SENDER_KEY] || "unattributed",
     payload: args.payload || {text: args.text || ""},
     payloadDigest: digestOf(args.payload || args.text || ""),
     // room_send persists a RoomMessage as an internal write with no external side effect; "delivered" is
@@ -5778,6 +5804,12 @@ export function roomSend(state, args) {
     ...(idempotencyKey ? {idempotencyKey} : {}),
     createdAt: at
   };
+  // 超限一律拒绝，不截断。截断会把一条被砍掉一半的内容交给读者，而读者无从分辨 ——
+  // 房间承载的是 delta / finding / 结论这类东西，半条比没有更危险。
+  if (roomMessageBytes(message) > roomMessageMaxBytes()) {
+    return {ok: false, error: "room_message_payload_too_large", maxBytes: roomMessageMaxBytes()};
+  }
+  state.roomSequenceByRoom[roomId] = nextSequence;
   state.roomMessages.push(message);
   pruneRoomMessages(state);
   // room_send persists a RoomMessage (an internal write, no external side effect) — run it
@@ -6731,6 +6763,10 @@ export const NON_CLOSING_FINDING_DISPOSITIONS = ["fixed_unverified", "blocked_ex
 // JSON 表达不出 Symbol 键 —— 于是"自报 humanActor"在结构上就不可能，不必依赖每个调用点
 // 记得剥离它（逐点剥离总会漏掉下一个新调用点，这一类漏洞我已经反复交过学费）。
 export const HUMAN_ACTOR_KEY = Symbol.for("dleno.control-plane.humanActor");
+
+// 同因：房间消息的发送者署名。传输层从已认证主体派生后用这个键交给 roomSend，
+// 调用方报文里的 senderRef 一律不采信。
+export const ROOM_SENDER_KEY = Symbol.for("dleno.control-plane.roomSender");
 
 export function findingResolve(state, args) {
   const finding = (state.findings || []).find((item) => item.findingId === args.findingId);
