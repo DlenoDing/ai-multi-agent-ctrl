@@ -1171,6 +1171,9 @@ function scopedStateForAccount(state, account, session) {
   cloned.organizations = (state.organizations || []).filter((org) => org.orgId === account.organizationId);
   cloned.humanConfirmationRequests = (state.humanConfirmationRequests || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));
   cloned.humanDirectives = (state.humanDirectives || []).filter((item) => (item.taskGroupId && visibleTaskGroupIds.has(item.taskGroupId)) || (!item.taskGroupId && visibleProjectIds.has(item.projectId)));
+  // 转移证据不出 API，任何视角都不给 —— 它的记录里没有 projectId/taskGroupId，放出去就是把别的租户的
+  // 对象 id 与状态流转一起交出去。它是给事故时直接看磁盘 state 的人用的取证记录。
+  // 想把它接进控制台的话，先给 recordTransition 补上租户归属再谈，别只改这一行。
   cloned.transitionEvidence = [];
   // 原先一律清空，而 rules_candidates_processed / all_rule_sources_resolved 两道门就是按它阻塞的：
   // 人在关闭门禁上看到红 chip，处置它的表单却永远渲染不出来，因为数据根本没下发。

@@ -67,6 +67,7 @@ import {
   advanceExecutionTopology,
   decideSessionPlacement,
   roomSend,
+  advanceWorkItemToReviewRequested,
   ROOM_SENDER_KEY,
   selectModel,
   updateTaskGroupLanguagePolicy,
@@ -2348,6 +2349,90 @@ function verifyHumanAndOrganizationContracts(output) {
       payload: {text: "still working"}, [ROOM_SENDER_KEY]: "agent_node:node_ct"});
     if (roomBeforeClose.ok === false) {
       output.push(`room_send refused a message for a live task group (${roomBeforeClose.error}) — the settled-group check became a blanket block`);
+    }
+  }
+
+  // 取证记录必须与对象真实经历一致。原先 advanceWorkItemToReviewRequested 为路径上每一段都记一条
+  // 转移，却只在最后把 status 拍成 review_requested —— 记录里写着它经过了 checkpoint_submitted，
+  // 而它一刻也没持有过。transitionEvidence 不出 API，唯一的读者是事故时直接看磁盘 state 的人，
+  // 也就是最不该被一段编造的状态史误导的那个人。
+  //
+  // 判据用【链条连续性】而不是比对某一条具体路径：同一对象相邻两段必须首尾相接。断链就说明中间
+  // 有一段是对象没走过的，而这条判据不必知道业务上应该走哪条路。
+  {
+    // 真实流程里这段链只在 acceptAgentCheckpoint 内部产生，而这里没有可用的检查点夹具。
+    // 直接驱动同一个函数：断言的是它记录的链条，夹具再省也不能换成另一份实现。
+    const evidenceTg = (state.taskGroups || []).find((group) => (group.workItems || []).length);
+    const evidenceItem = evidenceTg?.workItems?.[0];
+    if (!evidenceItem) {
+      output.push("no work item available to assert transition-evidence truthfulness");
+    } else {
+      const savedStatus = evidenceItem.status;
+      evidenceItem.status = "assigned";
+      // 记录之间首尾相接是不够的：from 是循环变量，无论对象有没有真的走过去，链条都连续。
+      // 要判别的是【对象是否真的持有过记录里那些状态】，所以用代理把每一次 status 写入记下来，
+      // 再与记录声称的路径逐一对齐。第一版漏了这一层，突变"只记录不落状态"照样全绿。
+      const observed = [];
+      const probe = new Proxy(evidenceItem, {
+        set(target, key, value) {
+          if (key === "status") observed.push(value);
+          target[key] = value;
+          return true;
+        }
+      });
+      evidenceTg.workItems[0] = probe;
+      advanceWorkItemToReviewRequested(state, probe, {runId: "run_evidence_ct"});
+      evidenceTg.workItems[0] = evidenceItem;
+      const claimed = [...(state.transitionEvidence || [])]
+        .filter((item) => item.machine === "WorkItem" && item.objectId === evidenceItem.id)
+        .reverse().map((item) => item.to);
+      for (const claimedState of claimed) {
+        if (!observed.includes(claimedState)) {
+          output.push(`transition evidence claims the work item reached ${claimedState}, but it never actually held that status (observed: ${JSON.stringify(observed)}) — the forensic record on disk describes a history that did not happen`);
+        }
+      }
+      if (evidenceItem.status !== "review_requested") {
+        output.push(`advancing to review_requested left the work item in ${evidenceItem.status}`);
+      }
+      evidenceItem.status = savedStatus;
+    }
+    // warn 模式下非法转移【照样发生】。原先它只进 console.warn，state 里不留痕迹 —— 而 stdout
+    // 在事后排查时通常早就没了，留下的恰恰是最该被看见的那一条。它必须落在转移记录上。
+    const savedMode = process.env.AIMAC_TRANSITION_STRICT;
+    process.env.AIMAC_TRANSITION_STRICT = "warn";
+    const warnItem = evidenceTg?.workItems?.[0];
+    if (warnItem) {
+      advanceWorkItemToReviewRequested(state, {...warnItem, id: "wi_warn_probe", status: "verified"}, {runId: "run_warn_ct"});
+      // transitionEvidence 是 unshift + 240 截断的，按下标切片会取错；而这次调用记了不止一段，
+      // 其中【只有第一段是非法的】—— 用 find 会拿到后记录的那段合法转移，判据就永远为假。
+      // 要问的是"这个对象的记录里有没有留下那次非法转移"。
+      const warnRecords = (state.transitionEvidence || []).filter((item) => item.objectId === "wi_warn_probe");
+      if (!warnRecords.length) {
+        output.push("warn-mode illegal transition recorded nothing at all");
+      } else if (!warnRecords.some((item) => item.rejected?.failureCode)) {
+        output.push("warn-mode recorded an illegal transition as if it were legal — the on-disk forensic record cannot distinguish an allowed transition from one that violated the model");
+      }
+    }
+    if (savedMode === undefined) delete process.env.AIMAC_TRANSITION_STRICT;
+    else process.env.AIMAC_TRANSITION_STRICT = savedMode;
+
+    const chains = new Map();
+    for (const item of [...(state.transitionEvidence || [])].reverse()) {
+      if (item.machine !== "WorkItem") continue;
+      if (!chains.has(item.objectId)) chains.set(item.objectId, []);
+      chains.get(item.objectId).push(item);
+    }
+    const multiHop = [...chains.values()].filter((chain) => chain.length >= 2);
+    if (!multiHop.length) {
+      output.push("transition-evidence continuity check found no multi-hop WorkItem chain — the assertion is vacuous here and needs a flow that produces one");
+    }
+    for (const chain of multiHop) {
+      for (let index = 1; index < chain.length; index += 1) {
+        if (chain[index].from !== chain[index - 1].to) {
+          output.push(`transition evidence for ${chain[index].objectId} is discontinuous (${chain[index - 1].to} -> ${chain[index].from}) — it records a state history the object never had`);
+          break;
+        }
+      }
     }
   }
 

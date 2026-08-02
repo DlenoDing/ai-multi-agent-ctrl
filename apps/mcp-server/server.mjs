@@ -1729,6 +1729,9 @@ function finalizeScopedMcpState(scoped, projectIdSet, visibleTaskGroupIds) {
   scoped.agentGatewayEvents = [];
   scoped.mcpCalls = [];
   scoped.mcpProbeNodes = [];
+  // 转移证据不出 API，任何视角都不给 —— 它的记录里没有 projectId/taskGroupId，放出去就是把别的租户的
+  // 对象 id 与状态流转一起交出去。它是给事故时直接看磁盘 state 的人用的取证记录。
+  // 想把它接进控制台的话，先给 recordTransition 补上租户归属再谈，别只改这一行。
   scoped.transitionEvidence = [];
   scoped.ruleSourceResolutions = [];
   scoped.externalUpgradeImports = [];

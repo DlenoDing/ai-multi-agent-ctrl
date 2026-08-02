@@ -3985,11 +3985,15 @@ function transitionEnforcementMode(state) {
 // before appending transitionEvidence. `requiresValues` maps each `requires` gate id of the
 // modeled transition to its non-empty evidence value.
 function recordTransition(state, machine, objectId, from, to, actor, requiresValues = {}) {
+  let rejection = null;
   try {
     assertTransition(state, machine, from, to, actor, requiresValues);
   } catch (error) {
     if (transitionEnforcementMode(state) === "strict") throw error;
-    console.warn(`[transition-engine] rejected ${machine} ${from}->${to} by ${actor}: ${error.failureCode || error.code || error.message} (warn mode; transition still recorded)`);
+    // warn 模式下这条转移是【非法但照样发生了】。原先它只进 console.warn，state 里不留任何痕迹 ——
+    // 而 stdout 在事后排查时通常已经没了，留下的恰恰是最该被看见的那一条。记在转移记录上。
+    rejection = {failureCode: error.failureCode || error.code || "transition.rejected", message: String(error.message || "").slice(0, 300)};
+    console.warn(`[transition-engine] rejected ${machine} ${from}->${to} by ${actor}: ${rejection.failureCode} (warn mode; transition still recorded)`);
   }
   const transition = {
     transitionId: createId("trn"),
@@ -3999,6 +4003,7 @@ function recordTransition(state, machine, objectId, from, to, actor, requiresVal
     to,
     actor,
     evidenceRefs: requiresValuesToEvidenceRefs(requiresValues),
+    ...(rejection ? {rejected: rejection} : {}),
     createdAt: new Date().toISOString()
   };
   state.transitionEvidence ||= [];
@@ -4007,7 +4012,7 @@ function recordTransition(state, machine, objectId, from, to, actor, requiresVal
   return transition;
 }
 
-function advanceWorkItemToReviewRequested(state, workItem, checkpoint) {
+export function advanceWorkItemToReviewRequested(state, workItem, checkpoint) {
   const pathByStatus = {
     assigned: ["in_progress", "checkpoint_submitted", "review_requested"],
     in_progress: ["checkpoint_submitted", "review_requested"],
@@ -4024,6 +4029,11 @@ function advanceWorkItemToReviewRequested(state, workItem, checkpoint) {
     const requiresValues = {};
     for (const gate of modeled?.requires || []) requiresValues[gate] = `checkpoint:${checkpoint.runId}:${gate}`;
     recordTransition(state, "WorkItem", workItem.id, from, to, modeled?.actor || "orchestrator", requiresValues);
+    // 记完就真的走过去。原先这里只记录不落状态，最后直接把 status 拍成 review_requested ——
+    // 于是取证记录里写着这个工作项经过了 checkpoint_submitted / code_complete，而它一刻也没有持有过。
+    // transitionEvidence 不出 API（两处投影都清空，因为它没有租户字段），唯一的读者是事故时直接看
+    // 磁盘 state 的人 —— 正是最不该被一段编造的状态史误导的那个人。
+    workItem.status = to;
     from = to;
   }
   workItem.status = "review_requested";
