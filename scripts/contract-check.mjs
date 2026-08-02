@@ -2501,6 +2501,27 @@ function verifyHumanAndOrganizationContracts(output) {
     }
   }
 
+  // 关闭不产生新阻塞项，所以门在关闭之后仍然 satisfied —— 两张各自过时的页面都会显示"关闭任务组"，
+  // 第二个人点下去原先会把 humanFinalization 整个盖掉（finalizedBy/contentDigest/confirmationRef），
+  // 而那份记录是"关闭之后 AI 不得再改"的基线，也是事后回答"这是谁拍的板"的唯一对象级依据。
+  {
+    const closeState = structuredClone(seedState);
+    ensureRuntimeCollections(closeState, {root});
+    const closeTg = (closeState.taskGroups || [])[0];
+    closeTg.status = "closed";
+    closeTg.humanFinalization = {finalizedBy: "acct_alice", finalizedAt: "2026-01-01T00:00:00.000Z",
+      decisionType: "task_group_close", outcome: "confirmed", contentDigest: "sha256:alice"};
+    // actor 必须是种子里真实存在的真人账号：关闭有一道"必须真人"的守卫排在前面，
+    // 用一个不存在的 id 会先被它挡下，于是这条断言测的是另一件事。
+    const second = computeCloseBarrier(closeState, closeTg.id, {mutate: true, actor: "acct_workspace_owner"});
+    if (!second?.alreadyClosed) {
+      output.push("closing an already-closed task group was accepted again — the second person is told they closed it while the first person's finalization record is overwritten");
+    }
+    if (closeTg.humanFinalization?.finalizedBy !== "acct_alice") {
+      output.push(`a second close overwrote who finalized the task group (now ${closeTg.humanFinalization?.finalizedBy}) — the object-level record of who signed off is gone`);
+    }
+  }
+
   // 项目此前没有任何终结路径：project.status 全仓零写入点，而配额排除的是 status !== "deleted" ——
   // 那个状态既不在模型里（active → archived）也没人写，于是排除永远为真、maxProjects 只增不减。
   {

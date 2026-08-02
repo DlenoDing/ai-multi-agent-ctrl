@@ -2662,6 +2662,12 @@ async function handleApi(req, res) {
     } catch (error) {
       return json(res, error.status || 500, {error: error.message});
     }
+    // 已关闭的任务组被再次关闭时回 409，与其余处置路径同规：回 200 会让第二个人以为是他关的，
+    // 而对象上留下的定稿归属其实是第一个人的（现在也不再被覆盖）。
+    if (body.mutate === true && closeBarrier.alreadyClosed) {
+      return json(res, 409, {error: "task_group_already_closed",
+        closedBy: closeBarrier.closedBy, closedAt: closeBarrier.closedAt});
+    }
     // A real close mutates the task group to terminal; refresh the project/task-group progress rollup so
     // the overview reflects it immediately instead of lagging until the next autonomy cycle.
     if (body.mutate === true && closeBarrier.satisfied) computeProgressSnapshots(state);

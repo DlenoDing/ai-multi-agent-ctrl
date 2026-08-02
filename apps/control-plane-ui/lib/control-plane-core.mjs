@@ -3296,6 +3296,15 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
   if (request.mutate === true && taskGroup && !isHumanConfirmationActor(state, request.actor)) {
     throw Object.assign(new Error("task_group_close_requires_human_actor"), {status: 403});
   }
+  // 已关闭的任务组不得被再关一次。关闭不产生新的阻塞项，所以门在关闭之后仍然 satisfied ——
+  // 而两张各自过时的页面都会显示"关闭任务组"按钮，第二个人点下去会把 humanFinalization 整个盖掉：
+  // finalizedBy / contentDigest / confirmationRef 全变成他的。而那份记录正是"关闭之后 AI 不得再改"
+  // 的基线，也是事后回答"这是谁拍的板"的唯一对象级依据（审计日志里两条都在，但对象上只剩一条）。
+  // 其余所有处置路径都有这道一次性守卫，唯独最不可逆的这一条没有。
+  if (request.mutate === true && taskGroup && ["closed", "aborted"].includes(taskGroup.status)) {
+    return {...barrier, alreadyClosed: true, closedBy: taskGroup.humanFinalization?.finalizedBy || null,
+      closedAt: taskGroup.humanFinalization?.finalizedAt || null};
+  }
   if (satisfied && request.mutate === true && taskGroup) {
     taskGroup.status = "closed";
     taskGroup.goalExecutionStatus = "closed";
