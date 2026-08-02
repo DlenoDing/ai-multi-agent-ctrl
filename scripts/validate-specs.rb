@@ -939,6 +939,9 @@ errors << "可逆变异必须禁止共享文件整文件还原" unless core_sour
 #   · "它不该存在"是判断与提案，不是就地删除的授权。
 errors << "拒绝归宿必须写明与 side-effect-authorization 的 fail-closed 边界" unless core_source.include?("与 sys.side-effect-authorization 的边界")
 errors << "判据形态规则必须写明不适用于授权/签名类安全判据" unless core_source.include?("授权、权限范围、签名与完整性校验、幂等键、身份匹配这类安全判据不适用本条")
+# 把规则用在控制面自己身上时发现的第二条边界：MCP 工具入参拒绝未知属性，照字面套用"不得整体拒绝"
+# 会削弱一个真正的安全校验——拼错的参数可能正是携带作用域的那个，静默忽略会让动作在缺少作用域时执行。
+errors << "判据形态规则必须写明命令/工具调用接口不适用本条" unless core_source.include?("命令/工具调用接口不适用本条") && core_source.include?("谁拥有这个字段的新增权")
 errors << "最优终态优先必须写明它只产出判断与提案，不构成动手授权" unless core_source.include?("本条产出的是【判断与提案】，不是动手授权")
 
 # D6：质量门是人看到"全通过"时的唯一依据，却完全由 agent 自报（提交测试结果零必填参数、命令从不执行）。
