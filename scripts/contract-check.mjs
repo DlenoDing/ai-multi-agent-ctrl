@@ -1643,7 +1643,7 @@ function verifyHumanAndOrganizationContracts(output) {
     const nodeA = {nodeId: "node_a", status: "online", admission: "admitted", lastHeartbeatAt: "2026-08-02T00:00:00Z", activeDispatchIds: ["dsp_fence"]};
     fenceState.agentRuntimeNodes = [nodeA];
     fenceState.agentDispatches = [{dispatchId: "dsp_fence", taskGroupId: "tg_runtime_management", projectId: "prj_control_plane",
-      status: "running", assignedNodeId: "node_a", claimEpoch: 1,
+      status: "running", assignedNodeId: "node_a", claimEpoch: 1, progressPercent: 90,
       claimedAt: "2026-08-01T00:00:00Z", claimExpiresAt: "2026-08-01T00:30:00Z"}];
     const beforeRecycle = validateDispatchClaim(fenceState, nodeA, "dsp_fence", 1);
     if (beforeRecycle.valid) {
@@ -1657,6 +1657,12 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     if (!dispatchAfter.previousHolderMayHavePushed) {
       output.push("claim 代次: 回收时没有记下上一任可能已推送（新持有者会把它的提交静默当作基线）");
+    }
+    // 事件写入点用 Math.max 抵抗【同一次尝试内】的乱序，跨尝试保留就成了谎报：
+    // 上一次跑到 90%，重排后新持有者从头开始上报 5%，Math.max 让控制台一直显示 90%。
+    if (Number(dispatchAfter.progressPercent || 0) !== 0) {
+      output.push(`claim 代次: 重排队后进度没有归零（仍是 ${dispatchAfter.progressPercent}%）—— 新持有者从头开始，`
+        + "而 Math.max 会让控制台一直显示上一次的进度，人看到「快完成了」而活刚重新开始");
     }
     const staleCheck = validateDispatchClaim(fenceState, nodeA, "dsp_fence", 1);
     if (staleCheck.valid || staleCheck.reason === undefined) {

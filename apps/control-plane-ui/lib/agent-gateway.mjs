@@ -711,6 +711,11 @@ export function recycleExpiredClaims(state) {
     delete dispatch.claimExpiresAt;
     // 代次前进：旧持有者从此复核不过，做不可逆动作前会自行中止。
     dispatch.claimEpoch = Number(dispatch.claimEpoch || 0) + 1;
+    // 进度必须跟着代次归零。事件写入点用的是 Math.max（为的是抵抗【同一次尝试内】的乱序事件），
+    // 跨尝试保留就成了谎报：上一次跑到 90%，认领过期重排后新持有者从头开始上报 5%、10%，
+    // Math.max 让控制台一直显示 90% —— 人看到"快完成了"，而活刚重新开始。
+    // 归零之后 Math.max 在本次尝试内仍然成立，这是它原本要解决的问题。
+    dispatch.progressPercent = 0;
     // 上一任是"失联"而不是"失败"——它可能已经把提交推到远端分支上了，而控制面对此没有任何记录。
     // 新持有者的 reset --hard origin/<branch> 会把那些提交当作基线，于是它们被静默吸收进结果里。
     // 这件事必须留痕并让人看到，而不是当作什么都没发生。
