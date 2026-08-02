@@ -822,6 +822,8 @@ const HUMAN_ONLY_ACTIONS = [
   // 批准一条权限请求＝把它被挡住的那项能力交给执行方，同时它的"拒绝"分支会级联终结该格子的
   // 执行、作废产出目标与租约。这既是治理决策也是破坏性操作，不该由机器主体自行完成 ——
   // 此前那条提权链正是从这里穿过去的。两条 e2e 里做批准的本来就都是真人账号。
+  // 重发邀请＝铸一份新的登录凭据。这不该由机器主体完成。
+  "org_member_invite_reissue",
   "permission_resolve",
   "system_upgrade_candidate_resolve",
   // 豁免质量门是放行决定，必须由真人负责，不能由 AI 自我豁免。
@@ -1333,7 +1335,7 @@ function permissionForAction(action) {
   if (action === "shared_definition_resolve") return "project:update";
   if (action === "project_config_update") return "project:update";
   if (["org_create", "org_quota_update", "org_status_update"].includes(action)) return "system:*";
-  if (["org_member_create", "org_member_permissions_update", "org_member_status_update"].includes(action)) return "org:member_admin";
+  if (["org_member_create", "org_member_permissions_update", "org_member_status_update", "org_member_invite_reissue"].includes(action)) return "org:member_admin";
   if (action === "org_project_create") return "org:project_admin";
   if (action === "human_confirmation_decide") return "task_group:review";
   if (action === "human_directive_create") return "task_group:control";
@@ -4161,6 +4163,41 @@ async function handleApi(req, res) {
     finishGuardedWrite(state, guard, 200, publicAccountRecord(member));
     writeState(state);
     json(res, 200, publicAccountRecord(member));
+    return;
+  }
+
+  // 一次性邀请令牌只显示一次。原先它一丢，账号就报废：没有重发路径，邮箱唯一性又拦住重建，
+  // 于是只能换个邮箱新建，旧账号变成僵尸并继续占着组织成员配额。而它的两条登录路径此时都是断的
+  // （邀请分支要 status==="invited" 且凭据未消费，密码分支要 passwordDigest，邀请态没有）。
+  // 这里补上唯一缺的那一环：重新铸一份一次性凭据。旧的当场失效 —— 重发不是"再给一份"，
+  // 是"作废旧的、换一份"，否则丢在聊天记录里的那一份仍然能用。
+  const orgMemberReissueMatch = url.pathname.match(/^\/api\/org\/members\/([^/]+)\/reissue-invite$/);
+  if (req.method === "POST" && orgMemberReissueMatch) {
+    const reissueActor = accountFromRequest(req, state)?.account;
+    const reissueOrgId = reissueActor?.organizationId;
+    const guard = beginGuardedWrite(req, state, "org_member_invite_reissue", `Account:${orgMemberReissueMatch[1]}`,
+      {resourceType: "organization", resourceId: reissueOrgId});
+    if (guard.status) return json(res, guard.status, guard.payload);
+    const member = state.accounts.find((item) => item.accountId === orgMemberReissueMatch[1] && item.organizationId === reissueOrgId);
+    if (!member) return json(res, 404, {error: "org_member_not_found"});
+    if (member.status !== "invited") {
+      return json(res, 409, {error: "org_member_invite_reissue_not_applicable",
+        message: "只有尚未接受邀请的成员可以重发邀请；已激活的账号请让本人用「修改密码」自行设置，或先停用再重新邀请"});
+    }
+    const reissuedToken = randomBytes(24).toString("base64url");
+    const reissuedAt = now();
+    member.credentialDigest = digestOf(`account-invite:${member.accountId}:${reissuedToken}`);
+    member.credentialIssuedAt = reissuedAt;
+    member.credentialExpiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+    delete member.credentialConsumedAt;
+    member.updatedAt = reissuedAt;
+    revokeAccountSessions(state, member.accountId, "invite_reissued");
+    audit(state, guard.actor, "org_member_invite_reissue", `Account:${member.accountId}`);
+    const reissuePayload = {account: publicAccountRecord(member), accountToken: reissuedToken,
+      login: {email: member.email, tokenField: "accountToken"}};
+    finishGuardedWrite(state, guard, 200, reissuePayload);
+    writeState(state);
+    json(res, 200, reissuePayload);
     return;
   }
 

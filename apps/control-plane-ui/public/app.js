@@ -1669,10 +1669,15 @@ function renderOrgMembers() {
       esc((account.roles || []).map((role) => t(role)).join("、")),
       manageable ? [
         `<button class="secondary-button" data-action="member-perms" data-account="${esc(account.accountId)}">权限</button>`,
+        // 邀请令牌只显示一次。丢了之后这一行原先只有「停用」——点它再点「启用」会撞 409，
+        // 人会以为自己把账号弄坏了。真正需要的是重发。
+        account.status === "invited"
+          ? `<button class="secondary-button" data-action="member-reissue-invite" data-account="${esc(account.accountId)}">重发邀请</button>`
+          : "",
         account.status === "disabled"
           ? `<button class="secondary-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="active">启用</button>`
           : `<button class="danger-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="disabled">停用</button>`
-      ].join(" ") : "-"
+      ].filter(Boolean).join(" ") : "-"
     ]);
   }).join("");
 
@@ -3399,7 +3404,7 @@ document.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
-  const MUTATION_ACTIONS = new Set(["orchestrator-run", "decide-model", "sync-skill-source", "task-control", "agent-control", "toggle-agent", "revoke-grant", "revoke-join-token", "revoke-agent-node", "force-revoke-agent-node", "org-status", "member-status", "bootstrap-init", "tg-config-reset", "close-task-group"]);
+  const MUTATION_ACTIONS = new Set(["orchestrator-run", "decide-model", "sync-skill-source", "task-control", "agent-control", "toggle-agent", "revoke-grant", "revoke-join-token", "revoke-agent-node", "force-revoke-agent-node", "org-status", "member-status", "member-reissue-invite", "bootstrap-init", "tg-config-reset", "close-task-group"]);
   const guardBtn = MUTATION_ACTIONS.has(action) && target.tagName === "BUTTON" ? target : null;
   if (guardBtn) { guardBtn.disabled = true; guardBtn.classList.add("is-loading"); }
   try {
@@ -3501,6 +3506,25 @@ document.addEventListener("click", async (event) => {
       await api(`/api/org/members/${encodeURIComponent(target.dataset.account)}/status`, {method: "POST", body: JSON.stringify({status})});
       await loadPage();
       toast.success(status === "disabled" ? "已停用成员" : "已启用成员");
+      return;
+    }
+    if (action === "member-reissue-invite") {
+      if (!(await confirmDialog({
+        title: "重发邀请",
+        message: "确认为该成员重新签发一次性登录凭据？",
+        sub: "旧的邀请令牌会当场失效 —— 重发不是再给一份，而是作废旧的、换一份，否则散落在聊天记录里的那一份仍然可用。新令牌同样只显示一次。",
+        confirmText: "重发"
+      }))) return;
+      const reissued = await api(`/api/org/members/${encodeURIComponent(target.dataset.account)}/reissue-invite`, {method: "POST", body: "{}"});
+      await loadPage();
+      openModal("成员一次性登录凭据（重发）", `
+        <div class="stack">
+          <div class="notice warn-notice">以下凭据仅显示一次，请立即转交本人。旧的邀请令牌已失效。</div>
+          <div class="command-box"><strong>登录账号</strong><pre>${esc(reissued.login?.email || "")}</pre></div>
+          <div class="command-box"><strong>一次性令牌</strong><pre id="reissued-token">${esc(reissued.accountToken || "")}</pre></div>
+          <div class="button-row"><button type="button" class="secondary-button" data-action="copy-el" data-copy-target="#reissued-token">复制令牌</button></div>
+        </div>
+      `, {protected: true});
       return;
     }
     if (action === "agent-view-mode") {

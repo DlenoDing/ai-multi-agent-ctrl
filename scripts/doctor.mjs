@@ -782,6 +782,53 @@ try {
     body: JSON.stringify({email: "doctor.org.admin@local", password: "doctor-org-admin-pass"})
   });
   if (!passwordLogin.response.ok || !passwordLogin.payload.sessionToken) throw new Error("org admin password login failed");
+
+  // 一次性邀请令牌只显示一次。它一丢，账号此前就报废了：没有重发路径，邮箱唯一性又拦住重建，
+  // 于是只能换邮箱新建，旧账号变僵尸并继续占配额。重发必须同时做到两件事，缺一不可：
+  // 新令牌能登录，且【旧令牌当场失效】—— 否则"重发"只是又发了一份，散落在聊天记录里的那份仍可用。
+  // 自带一个组织：借用上面那个会撞它的成员配额，而一条断言不该靠扰动邻居来成立。
+  const reissueOrg = await jsonFetch(port, "/api/orgs", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-reissue-org", authorization: systemAuth},
+    body: JSON.stringify({name: "重发探针组织", quotas: {maxMembers: 3, maxProjects: 1, maxTaskGroups: 1, maxAgents: 1},
+      admin: {displayName: "重发组织超管", email: "doctor.reissue.admin@local"}})
+  });
+  if (reissueOrg.response.status !== 201 || !reissueOrg.payload.accountToken) {
+    throw new Error(`重发探针组织创建失败：${reissueOrg.response.status}`);
+  }
+  const reissueAdminAuth = await loginAs(port, "doctor.reissue.admin@local", reissueOrg.payload.accountToken);
+  const reissueTarget = await jsonFetch(port, "/api/org/members", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-reissue-member", authorization: reissueAdminAuth},
+    body: JSON.stringify({displayName: "Reissue Probe", email: "reissue-probe@local", roles: "member"})
+  });
+  if (!reissueTarget.response.ok || !reissueTarget.payload.accountToken) {
+    throw new Error(`创建待重发成员失败：${reissueTarget.response.status} ${JSON.stringify(reissueTarget.payload).slice(0, 200)}`);
+  }
+  const staleInviteToken = reissueTarget.payload.accountToken;
+  const reissued = await jsonFetch(port, `/api/org/members/${encodeURIComponent(reissueTarget.payload.account.accountId)}/reissue-invite`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-reissue-member-token", authorization: reissueAdminAuth},
+    body: "{}"
+  });
+  if (!reissued.response.ok || !reissued.payload.accountToken) {
+    throw new Error(`重发邀请失败：${reissued.response.status} ${JSON.stringify(reissued.payload).slice(0, 200)}`);
+  }
+  if (reissued.payload.accountToken === staleInviteToken) {
+    throw new Error("重发邀请返回了同一份令牌 —— 那不是重发，只是把旧令牌又显示了一次");
+  }
+  const staleInviteDenied = await jsonFetch(port, "/api/auth/login", {
+    method: "POST", body: JSON.stringify({email: "reissue-probe@local", token: staleInviteToken})
+  });
+  if (staleInviteDenied.response.status !== 401) {
+    throw new Error(`重发之后旧邀请令牌仍能登录（${staleInviteDenied.response.status}）—— 散落在聊天记录里的那一份还活着`);
+  }
+  const reissuedLogin = await jsonFetch(port, "/api/auth/login", {
+    method: "POST", body: JSON.stringify({email: "reissue-probe@local", token: reissued.payload.accountToken})
+  });
+  if (!reissuedLogin.response.ok) {
+    throw new Error(`重发出来的令牌登录不了（${reissuedLogin.response.status}）—— 重发只是换了种方式把账号弄坏`);
+  }
   // 改密码必须撤销该账号已签发的全部会话 —— 它是"我怀疑被盗号"时唯一的自救手段，
   // 而原先它不动任何会话，已泄露的令牌最长还能再用 8 小时。
   const staleAfterPasswordChange = await jsonFetch(port, "/api/org/members", {
