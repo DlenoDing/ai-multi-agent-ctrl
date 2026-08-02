@@ -619,6 +619,18 @@ i18n_zh_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/i18n-zh
 # value (a recurring defect this cycle when appending gate/objectType keys). Guard durably.
 i18n_dup_keys = i18n_zh_source.scan(/^\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:/).flatten.tally.select { |_k, count| count > 1 }.keys
 errors << "zh i18n dictionary has duplicate keys: #{i18n_dup_keys.join(', ')}" unless i18n_dup_keys.empty?
+# 规范里建模过的每一个状态都必须有中文。t() 未命中时回退成原始英文键，并只往【浏览器控制台】
+# 打一条警告 —— 而真正的用户不会去看那里。于是人批准一个授权请求之后，中文界面上的徽标写着
+# "approved"（补这条检查时实测缺 32 个键，覆盖 14 台机器，其中就有 approved / wontfix 这种
+# 每天都会看到的）。此前只有逐条写死的"某某必须本地化"，那种写法只能守住有人想到的那几条；
+# 按 state-machines.yaml 全量核对才守得住这一类。
+modeled_states = state_machines.fetch("machines", {}).values.flat_map { |m| m["states"] || [] }.uniq
+missing_zh_states = modeled_states.reject { |st| i18n_zh_source.match?(/(^|[^A-Za-z0-9_])#{Regexp.escape(st)}\s*:/) }
+unless missing_zh_states.empty?
+  errors << "these modeled states have no Chinese label (the console will show the raw English enum): #{missing_zh_states.sort.join(', ')}"
+end
+# 本条自身不得空转：状态总数远少于预期就说明提取逻辑与规范结构脱节。
+errors << "modeled-state i18n coverage check only found #{modeled_states.size} distinct states — extraction has drifted from the spec shape" if modeled_states.size < 150
 # The blocking-detail panel renders every close-barrier gate name via t(); they must all be localized so
 # the all-Chinese diagnostic panel never shows a raw English gate name.
 %w[all_repository_output_targets_terminal all_leases_terminal no_active_dlq artifacts_verified all_rule_sources_resolved all_shared_definitions_active no_active_temp_grants completion_readiness_clear].each do |gate|

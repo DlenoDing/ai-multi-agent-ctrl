@@ -324,23 +324,6 @@ function refreshDispatchGrantExpiry(state, dispatch, expiresAt, at) {
   }
 }
 
-export function revokeAgentNode(state, node) {
-  ensureAgentGatewayCollections(state);
-  const at = new Date().toISOString();
-  const activeDispatchIds = (state.agentDispatches || [])
-    .filter((dispatch) => dispatch.assignedNodeId === node.nodeId && ["running", "blocked"].includes(dispatch.status))
-    .map((dispatch) => dispatch.dispatchId);
-  if (activeDispatchIds.length) {
-    throw gatewayError("active_node_revocation_requires_control_ack", 409);
-  }
-  node.status = "revoked";
-  node.admission = "read_only";
-  node.activeDispatchIds = [];
-  node.updatedAt = at;
-  appendGatewayEvent(state, "node_revoked", node.nodeId, {requeuedDispatchIds: []});
-  return {nodeId: node.nodeId, status: node.status, requeuedDispatchIds: []};
-}
-
 // 吊销【凭据】与重排【派发】是两件事，原先被绑在一起。重排派发确有重复执行风险，所以要等 ACK
 // 或等节点确实死掉；但吊销凭据没有这个风险，它纯粹是栅栏。绑在一起的后果是：一个被入侵的节点
 // 只要不 ACK、继续心跳，就永远不会被置为 revoked —— 而 nodeAcceptsToken 只在 revoked 时拒绝，

@@ -305,11 +305,76 @@ export function checkBarrierLiveness() {
   return failures;
 }
 
+// 导出了却没有任何地方调用的函数，就是一条【够不到的杠杆】。本仓已经为这个形状交过学费：
+// 后端有取消执行方案的能力而界面没入口、恢复钩子挂在跑不到的退出路径上、判据写好却没接在
+// 写入路径上。共同点是读代码时看着能力都在，跑起来那条路根本不存在。
+// 更危险的一种是【被替换掉的旧实现还留着导出】：revokeAgentNode 把吊销凭据与重排派发绑在
+// 一起，正是后来被拆开修掉的缺陷，谁把它接上去就会把已修的问题重新引回来。
+//
+// 例外必须有名有姓地登记，并写清为什么 —— 登记是为了让缺口可见，不是为了让门闭嘴。
+const DEAD_EXPORT_ACCEPTED = {
+  cancelCommand: "命令总线的失败分支：生产上只走 runCommandLifecycle 的成功路径，failCommand/retryCommand 无人调用，因此 running->cancelled 不可达",
+  compensateCommand: "同上：failed->compensated 依赖命令先失败，而生产上命令不会失败",
+  discardDlqEntry: "同上：死信条目只由 retryCommand 超限产生，生产上从不产生，因此 assigned->discarded 不可达"
+};
+
+const DEAD_EXPORT_FILES = [
+  "apps/control-plane-ui/lib/control-plane-core.mjs",
+  "apps/control-plane-ui/lib/agent-gateway.mjs",
+  "apps/control-plane-ui/lib/state-store.mjs",
+  "apps/control-plane-ui/server.mjs",
+  "apps/mcp-server/server.mjs",
+  "apps/agent-runtime/runtime.mjs"
+];
+
+function sourceCorpus() {
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
+      if ([".git", "node_modules", ".runtime"].includes(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      // 排除本门自身：例外登记表里就写着这些函数名，把自己算进去会让每一条登记都被判成"已接上"。
+      else if (/\.(mjs|js)$/u.test(entry.name) && full !== fileURLToPath(import.meta.url)) files.push(full);
+    }
+  };
+  walk(root);
+  // 展开语法 ...fn(x) 前面也是点号，不去掉就会把真的在用的函数判成死代码 —— 而假红会把人
+  // 派去删掉有用的东西，比漏报更坏（这条判据第一版就栽在这里）。
+  return files.map((file) => fs.readFileSync(file, "utf8")).join("\n").replace(/\.\.\./gu, " ");
+}
+
+export function checkNoDeadExports() {
+  const failures = [];
+  const corpus = sourceCorpus();
+  let scanned = 0;
+  for (const relative of DEAD_EXPORT_FILES) {
+    const source = fs.readFileSync(path.join(root, relative), "utf8");
+    const names = [...source.matchAll(/^export function ([A-Za-z0-9_]+)\(/gmu)].map((match) => match[1]);
+    scanned += names.length;
+    for (const name of names) {
+      const uses = corpus.match(new RegExp(`(^|[^A-Za-z0-9_.])${name}(?![A-Za-z0-9_])`, "gu")) || [];
+      if (uses.length > 1) continue;
+      if (Object.prototype.hasOwnProperty.call(DEAD_EXPORT_ACCEPTED, name)) continue;
+      failures.push(`死导出检查: ${relative} 导出的 ${name} 没有任何地方调用或引用 —— 这是一条够不到的杠杆；`
+        + "要么接上它，要么删掉它，要么在 DEAD_EXPORT_ACCEPTED 里写明为什么它现在到不了");
+    }
+  }
+  for (const name of Object.keys(DEAD_EXPORT_ACCEPTED)) {
+    const uses = corpus.match(new RegExp(`(^|[^A-Za-z0-9_.])${name}(?![A-Za-z0-9_])`, "gu")) || [];
+    if (uses.length > 1) {
+      failures.push(`死导出检查: ${name} 已经被接上了，但仍登记在 DEAD_EXPORT_ACCEPTED 里 —— 过期的例外会掩护掉下一个真的死导出`);
+    }
+  }
+  if (scanned < 150) failures.push(`死导出检查: 仅扫到 ${scanned} 个导出函数，远少于预期 —— 提取逻辑已与代码脱节，本条可能在空转`);
+  return failures;
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const failures = [...checkBarrierLiveness(), ...checkMachineLiveness()];
+  const failures = [...checkBarrierLiveness(), ...checkMachineLiveness(), ...checkNoDeadExports()];
   if (failures.length) {
     for (const failure of failures) console.error(failure);
     process.exit(1);
   }
-  console.log("barrier liveness gate ok: 关闭门无空转，且每台状态机都有活的状态与可达的终态");
+  console.log("barrier liveness gate ok: 关闭门无空转、每台状态机都有活的状态与可达的终态、且没有够不到的导出杠杆");
 }

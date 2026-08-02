@@ -3932,26 +3932,6 @@ export function gitRemoteUrl(root = process.cwd(), remote = "origin") {
   return git(root, ["remote", "get-url", remote], "");
 }
 
-function gitSnapshot(root = process.cwd()) {
-  const run = (args, fallback) => {
-    try {
-      return execFileSync("git", ["-C", root, ...args], {encoding: "utf8"}).trim();
-    } catch {
-      return fallback;
-    }
-  };
-  const head = run(["rev-parse", "--short=12", "HEAD"], "000000000000");
-  const branch = run(["branch", "--show-current"], "main") || "main";
-  const remoteSha = run(["rev-parse", "--short=12", `origin/${branch}`], head);
-  const status = run(["status", "--short"], "");
-  return {
-    head,
-    branch,
-    remoteSha,
-    treeDigest: digestOf({head, status})
-  };
-}
-
 function gitIsAncestor(root, ancestor, descendant) {
   try {
     execFileSync("git", ["-C", root, "merge-base", "--is-ancestor", ancestor, descendant], {stdio: ["ignore", "pipe", "pipe"]});
@@ -5749,10 +5729,6 @@ function globSegmentMatches(patternSegment, pathSegment) {
   }
   while (patternIndex < patternSegment.length && patternSegment[patternIndex] === "*") patternIndex += 1;
   return patternIndex === patternSegment.length;
-}
-
-export function defaultSourceConfig() {
-  return clone(defaultSkillSource);
 }
 
 // --- Gap 2A: shared governance mutators lifted from mcp-server (behavior-neutral) ---
