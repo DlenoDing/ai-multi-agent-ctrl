@@ -49,73 +49,148 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["sourceId", "repositoryUrl", "defaultRef", "pinnedCommit", "catalogFiles", "roleFileGlobs", "trustPolicy", "syncPolicy", "overlayPolicy"],
+        "required": [
+          "sourceId",
+          "repositoryUrl",
+          "defaultRef",
+          "pinnedCommit",
+          "catalogFiles",
+          "roleFileGlobs",
+          "trustPolicy",
+          "syncPolicy",
+          "overlayPolicy"
+        ],
         "properties": {
-          "sourceId": {"type": "string", "minLength": 1},
-          "repositoryUrl": {"type": "string"},
-          "defaultRef": {"type": "string", "minLength": 1},
-          "pinnedCommit": {"type": "string", "pattern": "^[a-fA-F0-9]{40}$"},
+          "sourceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "repositoryUrl": {
+            "type": "string"
+          },
+          "defaultRef": {
+            "type": "string",
+            "minLength": 1
+          },
+          "pinnedCommit": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{40}$"
+          },
           "catalogFiles": {
             "type": "array",
             "minItems": 1,
-            "items": {"type": "string"}
+            "items": {
+              "type": "string"
+            }
           },
           "roleFileGlobs": {
             "type": "array",
             "minItems": 1,
-            "items": {"type": "string"}
+            "items": {
+              "type": "string"
+            }
           },
           "trustPolicy": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["requirePinnedCommit", "requireFrontmatter", "requireDigestIndex", "allowUnsignedContent"],
+            "required": [
+              "requirePinnedCommit",
+              "requireFrontmatter",
+              "requireDigestIndex",
+              "allowUnsignedContent"
+            ],
             "properties": {
-              "requirePinnedCommit": {"type": "boolean", "const": true},
-              "requireFrontmatter": {"type": "boolean", "const": true},
-              "requireDigestIndex": {"type": "boolean", "const": true},
-              "allowUnsignedContent": {"type": "boolean", "const": false}
+              "requirePinnedCommit": {
+                "type": "boolean",
+                "const": true
+              },
+              "requireFrontmatter": {
+                "type": "boolean",
+                "const": true
+              },
+              "requireDigestIndex": {
+                "type": "boolean",
+                "const": true
+              },
+              "allowUnsignedContent": {
+                "type": "boolean",
+                "const": false
+              }
             }
           },
           "syncPolicy": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["mode", "refreshTrigger", "onUpstreamChange"],
+            "required": [
+              "mode",
+              "refreshTrigger",
+              "onUpstreamChange"
+            ],
             "properties": {
               "mode": {
                 "type": "string",
-                "enum": ["pinned_snapshot", "tracked_ref_with_digest_gate"]
+                "enum": [
+                  "pinned_snapshot",
+                  "tracked_ref_with_digest_gate"
+                ]
               },
               "refreshTrigger": {
                 "type": "string",
-                "enum": ["scheduled_probe", "admin_config_change", "orchestrator_need"]
+                "enum": [
+                  "scheduled_probe",
+                  "admin_config_change",
+                  "orchestrator_need"
+                ]
               },
               "onUpstreamChange": {
                 "type": "string",
-                "enum": ["create_system_upgrade_candidate", "quarantine_until_verified", "keep_pinned_snapshot"]
+                "enum": [
+                  "create_system_upgrade_candidate",
+                  "quarantine_until_verified",
+                  "keep_pinned_snapshot"
+                ]
               }
             }
           },
           "overlayPolicy": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["defaultPrecedence", "allowedScopes", "requiresDecisionRecord", "requiresDigest"],
+            "required": [
+              "defaultPrecedence",
+              "allowedScopes",
+              "requiresDecisionRecord",
+              "requiresDigest"
+            ],
             "properties": {
               "defaultPrecedence": {
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "enum": ["task_group_overlay", "project_overlay", "upstream_default"]
+                  "enum": [
+                    "task_group_overlay",
+                    "project_overlay",
+                    "upstream_default"
+                  ]
                 }
               },
               "allowedScopes": {
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "enum": ["project", "task_group"]
+                  "enum": [
+                    "project",
+                    "task_group"
+                  ]
                 }
               },
-              "requiresDecisionRecord": {"type": "boolean", "const": true},
-              "requiresDigest": {"type": "boolean", "const": true}
+              "requiresDecisionRecord": {
+                "type": "boolean",
+                "const": true
+              },
+              "requiresDigest": {
+                "type": "boolean",
+                "const": true
+              }
             }
           }
         }
@@ -124,7 +199,12 @@
     "modelProviderPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["registryMode", "providerClasses", "selectionBasis", "decisionObject"],
+      "required": [
+        "registryMode",
+        "providerClasses",
+        "selectionBasis",
+        "decisionObject"
+      ],
       "properties": {
         "registryMode": {
           "type": "string",
@@ -173,23 +253,36 @@
         "capacityPolicy": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["maxSubagentsPerControllerSession", "onSubagentLimitApproach"],
+          "required": [
+            "maxSubagentsPerControllerSession",
+            "onSubagentLimitApproach"
+          ],
           "properties": {
-            "maxSubagentsPerControllerSession": {"type": "integer", "minimum": 1},
-            "onSubagentLimitApproach": {"type": "string", "const": "start_new_session"}
+            "maxSubagentsPerControllerSession": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "onSubagentLimitApproach": {
+              "type": "string",
+              "const": "start_new_session"
+            }
           }
         },
         "sustainedWorkSignals": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": {"$ref": "#/$defs/workSignal"}
+          "items": {
+            "$ref": "#/$defs/workSignal"
+          }
         },
         "shortTaskSignals": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": {"$ref": "#/$defs/workSignal"}
+          "items": {
+            "$ref": "#/$defs/workSignal"
+          }
         },
         "placementRules": {
           "type": "array",
@@ -197,26 +290,50 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["ruleId", "placement"],
+            "required": [
+              "ruleId",
+              "placement"
+            ],
             "properties": {
-              "ruleId": {"type": "string", "minLength": 1},
-              "placement": {"type": "string", "enum": ["new_session", "subagent"]},
+              "ruleId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "placement": {
+                "type": "string",
+                "enum": [
+                  "new_session",
+                  "subagent"
+                ]
+              },
               "whenAny": {
                 "type": "array",
                 "minItems": 1,
                 "uniqueItems": true,
-                "items": {"$ref": "#/$defs/workSignal"}
+                "items": {
+                  "$ref": "#/$defs/workSignal"
+                }
               },
               "whenAll": {
                 "type": "array",
                 "minItems": 1,
                 "uniqueItems": true,
-                "items": {"$ref": "#/$defs/workSignal"}
+                "items": {
+                  "$ref": "#/$defs/workSignal"
+                }
               }
             },
             "anyOf": [
-              {"required": ["whenAny"]},
-              {"required": ["whenAll"]}
+              {
+                "required": [
+                  "whenAny"
+                ]
+              },
+              {
+                "required": [
+                  "whenAll"
+                ]
+              }
             ]
           }
         }
@@ -326,7 +443,11 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["meta_control", "control", "monitor"]
+            "enum": [
+              "meta_control",
+              "control",
+              "monitor"
+            ]
           }
         },
         "requiredFocusLocks": {
@@ -395,7 +516,12 @@
     "genericMechanismAssimilationPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sourceClasses", "absorbOnly", "rejectSourceClasses", "decisionObject"],
+      "required": [
+        "sourceClasses",
+        "absorbOnly",
+        "rejectSourceClasses",
+        "decisionObject"
+      ],
       "properties": {
         "sourceClasses": {
           "type": "array",
@@ -403,7 +529,11 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["mgp_project_experience", "ai_skills_reference", "external_review_result"]
+            "enum": [
+              "mgp_project_experience",
+              "ai_skills_reference",
+              "external_review_result"
+            ]
           }
         },
         "absorbOnly": {
@@ -446,11 +576,26 @@
     "parallelExecutionPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["topologyObject", "derivedTaskObject", "defaultMergePolicy", "requiredEligibilityGates", "fallbackMode"],
+      "required": [
+        "topologyObject",
+        "derivedTaskObject",
+        "defaultMergePolicy",
+        "requiredEligibilityGates",
+        "fallbackMode"
+      ],
       "properties": {
-        "topologyObject": {"type": "string", "const": "ExecutionTopology"},
-        "derivedTaskObject": {"type": "string", "const": "DerivedTaskRequest"},
-        "defaultMergePolicy": {"type": "string", "const": "parent_serial_after_all_required_reported"},
+        "topologyObject": {
+          "type": "string",
+          "const": "ExecutionTopology"
+        },
+        "derivedTaskObject": {
+          "type": "string",
+          "const": "DerivedTaskRequest"
+        },
+        "defaultMergePolicy": {
+          "type": "string",
+          "const": "parent_serial_after_all_required_reported"
+        },
         "requiredEligibilityGates": {
           "type": "array",
           "minItems": 1,
@@ -468,17 +613,35 @@
             ]
           }
         },
-        "fallbackMode": {"type": "string", "const": "downgraded_serial"}
+        "fallbackMode": {
+          "type": "string",
+          "const": "downgraded_serial"
+        }
       }
     },
     "reviewPlanningPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["planObject", "bundleObject", "completionObject", "createPlanWhen", "bundlePolicy"],
+      "required": [
+        "planObject",
+        "bundleObject",
+        "completionObject",
+        "createPlanWhen",
+        "bundlePolicy"
+      ],
       "properties": {
-        "planObject": {"type": "string", "const": "ReviewPlan"},
-        "bundleObject": {"type": "string", "const": "ReviewBundle"},
-        "completionObject": {"type": "string", "const": "CompletionReadinessCheck"},
+        "planObject": {
+          "type": "string",
+          "const": "ReviewPlan"
+        },
+        "bundleObject": {
+          "type": "string",
+          "const": "ReviewBundle"
+        },
+        "completionObject": {
+          "type": "string",
+          "const": "CompletionReadinessCheck"
+        },
         "createPlanWhen": {
           "type": "array",
           "minItems": 1,
@@ -498,11 +661,24 @@
         "bundlePolicy": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["requireRedaction", "resultIsAdvisory", "requireLocalVerification"],
+          "required": [
+            "requireRedaction",
+            "resultIsAdvisory",
+            "requireLocalVerification"
+          ],
           "properties": {
-            "requireRedaction": {"type": "boolean", "const": true},
-            "resultIsAdvisory": {"type": "boolean", "const": true},
-            "requireLocalVerification": {"type": "boolean", "const": true}
+            "requireRedaction": {
+              "type": "boolean",
+              "const": true
+            },
+            "resultIsAdvisory": {
+              "type": "boolean",
+              "const": true
+            },
+            "requireLocalVerification": {
+              "type": "boolean",
+              "const": true
+            }
           }
         }
       }
@@ -510,14 +686,31 @@
     "runtimeOperationsPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["bootstrapObject", "launchModes", "requiredEntrypoints", "initCommand", "startCommand", "doctorCommand"],
+      "required": [
+        "bootstrapObject",
+        "launchModes",
+        "requiredEntrypoints",
+        "initCommand",
+        "startCommand",
+        "doctorCommand"
+      ],
       "properties": {
-        "bootstrapObject": {"type": "string", "const": "RuntimeBootstrapProfile"},
+        "bootstrapObject": {
+          "type": "string",
+          "const": "RuntimeBootstrapProfile"
+        },
         "launchModes": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": {"type": "string", "enum": ["npm", "docker", "shell"]}
+          "items": {
+            "type": "string",
+            "enum": [
+              "npm",
+              "docker",
+              "shell"
+            ]
+          }
         },
         "requiredEntrypoints": {
           "type": "array",
@@ -525,30 +718,70 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["package.json", "Dockerfile", "docker-compose.yml", "scripts/start.sh"]
+            "enum": [
+              "package.json",
+              "Dockerfile",
+              "docker-compose.yml",
+              "scripts/start.sh"
+            ]
           }
         },
-        "initCommand": {"type": "string", "const": "npm run init"},
-        "startCommand": {"type": "string", "const": "npm start"},
-        "doctorCommand": {"type": "string", "const": "npm run doctor"}
+        "initCommand": {
+          "type": "string",
+          "const": "npm run init"
+        },
+        "startCommand": {
+          "type": "string",
+          "const": "npm start"
+        },
+        "doctorCommand": {
+          "type": "string",
+          "const": "npm run doctor"
+        }
       }
     },
     "managementConsolePolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["consoleObject", "accountObject", "accessGrantObject", "progressObject", "systemManagementScopes", "userManagementScopes", "guardedActions"],
+      "required": [
+        "consoleObject",
+        "accountObject",
+        "accessGrantObject",
+        "progressObject",
+        "systemManagementScopes",
+        "userManagementScopes",
+        "guardedActions"
+      ],
       "properties": {
-        "consoleObject": {"type": "string", "const": "ManagementConsoleSurface"},
-        "accountObject": {"type": "string", "const": "Account"},
-        "accessGrantObject": {"type": "string", "const": "AccessControlGrant"},
-        "progressObject": {"type": "string", "const": "ProgressSnapshot"},
+        "consoleObject": {
+          "type": "string",
+          "const": "ManagementConsoleSurface"
+        },
+        "accountObject": {
+          "type": "string",
+          "const": "Account"
+        },
+        "accessGrantObject": {
+          "type": "string",
+          "const": "AccessControlGrant"
+        },
+        "progressObject": {
+          "type": "string",
+          "const": "ProgressSnapshot"
+        },
         "systemManagementScopes": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["runtime_bootstrap", "system_accounts", "policy_import", "audit_inspection", "external_system_upgrade_import"]
+            "enum": [
+              "runtime_bootstrap",
+              "system_accounts",
+              "policy_import",
+              "audit_inspection",
+              "external_system_upgrade_import"
+            ]
           }
         },
         "userManagementScopes": {
@@ -557,7 +790,14 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["project_create", "project_membership", "task_group_control", "agent_activation", "project_progress", "task_group_progress"]
+            "enum": [
+              "project_create",
+              "project_membership",
+              "task_group_control",
+              "agent_activation",
+              "project_progress",
+              "task_group_progress"
+            ]
           }
         },
         "guardedActions": {
@@ -584,16 +824,30 @@
     "instructionEfficiencyPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["envelopeObject", "requiredFormatElements", "compressionRules"],
+      "required": [
+        "envelopeObject",
+        "requiredFormatElements",
+        "compressionRules"
+      ],
       "properties": {
-        "envelopeObject": {"type": "string", "const": "InstructionEnvelope"},
+        "envelopeObject": {
+          "type": "string",
+          "const": "InstructionEnvelope"
+        },
         "requiredFormatElements": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["stable_prefix_digest", "digest_refs", "delta_payload", "output_contract_ref", "cache_key", "token_budget"]
+            "enum": [
+              "stable_prefix_digest",
+              "digest_refs",
+              "delta_payload",
+              "output_contract_ref",
+              "cache_key",
+              "token_budget"
+            ]
           }
         },
         "compressionRules": {
@@ -616,40 +870,96 @@
     "sharedDefinitionPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["definitionObject", "definitionTypes", "ownerRequiredBeforeWork", "producerRequiredBeforePublish", "consumersMustReferenceDigest", "divergenceHandling"],
+      "required": [
+        "definitionObject",
+        "definitionTypes",
+        "ownerRequiredBeforeWork",
+        "producerRequiredBeforePublish",
+        "consumersMustReferenceDigest",
+        "divergenceHandling"
+      ],
       "properties": {
-        "definitionObject": {"type": "string", "const": "SharedDefinitionContract"},
+        "definitionObject": {
+          "type": "string",
+          "const": "SharedDefinitionContract"
+        },
         "definitionTypes": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["terminology", "api_contract", "data_model", "event_schema", "status_semantics", "error_code", "design_token", "quality_standard", "permission_semantics", "instruction_format"]
+            "enum": [
+              "terminology",
+              "api_contract",
+              "data_model",
+              "event_schema",
+              "status_semantics",
+              "error_code",
+              "design_token",
+              "quality_standard",
+              "permission_semantics",
+              "instruction_format"
+            ]
           }
         },
-        "ownerRequiredBeforeWork": {"type": "boolean", "const": true},
-        "producerRequiredBeforePublish": {"type": "boolean", "const": true},
-        "consumersMustReferenceDigest": {"type": "boolean", "const": true},
-        "divergenceHandling": {"type": "string", "const": "block_and_request_canonical_decision"}
+        "ownerRequiredBeforeWork": {
+          "type": "boolean",
+          "const": true
+        },
+        "producerRequiredBeforePublish": {
+          "type": "boolean",
+          "const": true
+        },
+        "consumersMustReferenceDigest": {
+          "type": "boolean",
+          "const": true
+        },
+        "divergenceHandling": {
+          "type": "string",
+          "const": "block_and_request_canonical_decision"
+        }
       }
     },
     "repositoryOutputPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetObject", "outputPolicy", "targetDecisionOwner", "multiRepositoryDecision", "forbiddenStores", "requiredRefs"],
+      "required": [
+        "targetObject",
+        "outputPolicy",
+        "targetDecisionOwner",
+        "multiRepositoryDecision",
+        "forbiddenStores",
+        "requiredRefs"
+      ],
       "properties": {
-        "targetObject": {"type": "string", "const": "RepositoryOutputTarget"},
-        "outputPolicy": {"type": "string", "const": "project_git_repository_only"},
-        "targetDecisionOwner": {"type": "string", "const": "orchestrator"},
-        "multiRepositoryDecision": {"type": "string", "const": "orchestrator_selects_repository_per_work_item"},
+        "targetObject": {
+          "type": "string",
+          "const": "RepositoryOutputTarget"
+        },
+        "outputPolicy": {
+          "type": "string",
+          "const": "project_git_repository_only"
+        },
+        "targetDecisionOwner": {
+          "type": "string",
+          "const": "orchestrator"
+        },
+        "multiRepositoryDecision": {
+          "type": "string",
+          "const": "orchestrator_selects_repository_per_work_item"
+        },
         "forbiddenStores": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["separate_file_management_system", "control_plane_blob_store_for_project_outputs", "untracked_local_workspace_as_deliverable"]
+            "enum": [
+              "separate_file_management_system",
+              "control_plane_blob_store_for_project_outputs",
+              "untracked_local_workspace_as_deliverable"
+            ]
           }
         },
         "requiredRefs": {
@@ -658,7 +968,14 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["repository_id", "branch", "path_allowlist", "commit_ref", "push_ref_when_remote_required", "artifact_manifest_path"]
+            "enum": [
+              "repository_id",
+              "branch",
+              "path_allowlist",
+              "commit_ref",
+              "push_ref_when_remote_required",
+              "artifact_manifest_path"
+            ]
           }
         }
       }
@@ -666,12 +983,22 @@
     "authorityModel": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["entryControllerSession", "adminConsole", "orchestrator", "decisionCenter", "policyEngine"],
+      "required": [
+        "entryControllerSession",
+        "adminConsole",
+        "orchestrator",
+        "decisionCenter",
+        "policyEngine"
+      ],
       "properties": {
         "entryControllerSession": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["role", "allowedActions", "forbiddenAsExecutionDependency"],
+          "required": [
+            "role",
+            "allowedActions",
+            "forbiddenAsExecutionDependency"
+          ],
           "properties": {
             "role": {
               "type": "string",
@@ -681,7 +1008,11 @@
               "type": "array",
               "items": {
                 "type": "string",
-                  "enum": ["submit_objective", "define_boundary", "provide_external_capability_signal"]
+                "enum": [
+                  "submit_objective",
+                  "define_boundary",
+                  "provide_external_capability_signal"
+                ]
               }
             },
             "forbiddenAsExecutionDependency": {
@@ -693,7 +1024,11 @@
         "adminConsole": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["role", "allowedActions", "forbiddenAsExecutionDependency"],
+          "required": [
+            "role",
+            "allowedActions",
+            "forbiddenAsExecutionDependency"
+          ],
           "properties": {
             "role": {
               "type": "string",
@@ -703,7 +1038,12 @@
               "type": "array",
               "items": {
                 "type": "string",
-                  "enum": ["observe_state", "configure_capability_registry", "inspect_audit", "import_external_system_upgrade"]
+                "enum": [
+                  "observe_state",
+                  "configure_capability_registry",
+                  "inspect_audit",
+                  "import_external_system_upgrade"
+                ]
               }
             },
             "forbiddenAsExecutionDependency": {
@@ -715,7 +1055,11 @@
         "orchestrator": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["role", "closesTaskGroups", "ownsStateVersion"],
+          "required": [
+            "role",
+            "closesTaskGroups",
+            "ownsStateVersion"
+          ],
           "properties": {
             "role": {
               "type": "string",
@@ -734,7 +1078,10 @@
         "decisionCenter": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["role", "emits"],
+          "required": [
+            "role",
+            "emits"
+          ],
           "properties": {
             "role": {
               "type": "string",
@@ -749,7 +1096,10 @@
         "policyEngine": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["role", "blocksUnauthorizedSideEffects"],
+          "required": [
+            "role",
+            "blocksUnauthorizedSideEffects"
+          ],
           "properties": {
             "role": {
               "type": "string",
@@ -769,7 +1119,10 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "rule"],
+        "required": [
+          "id",
+          "rule"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -790,7 +1143,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "kind", "responsibilities"],
+        "required": [
+          "id",
+          "kind",
+          "responsibilities"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -804,7 +1161,8 @@
               "deterministic_service_with_ai_planner",
               "ai_agent_session",
               "autonomous_service_agent",
-              "system_service"
+              "system_service",
+              "human_finalizer"
             ]
           },
           "responsibilities": {
@@ -837,7 +1195,9 @@
     "qualityGates": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["required"],
+      "required": [
+        "required"
+      ],
       "properties": {
         "required": {
           "type": "array",
@@ -852,7 +1212,11 @@
     "autoGitPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["commitWhen", "pushWhen", "forbidden"],
+      "required": [
+        "commitWhen",
+        "pushWhen",
+        "forbidden"
+      ],
       "properties": {
         "commitWhen": {
           "type": "array",
@@ -877,7 +1241,10 @@
     "completionContract": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["requiredFields", "forbiddenPhrases"],
+      "required": [
+        "requiredFields",
+        "forbiddenPhrases"
+      ],
       "properties": {
         "requiredFields": {
           "type": "array",
@@ -903,7 +1270,11 @@
         "skillRoleSources": {
           "contains": {
             "type": "object",
-            "required": ["sourceId", "repositoryUrl", "pinnedCommit"],
+            "required": [
+              "sourceId",
+              "repositoryUrl",
+              "pinnedCommit"
+            ],
             "properties": {
               "sourceId": {
                 "const": "agency-agents-zh"

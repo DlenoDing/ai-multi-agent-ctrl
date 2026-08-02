@@ -4664,8 +4664,12 @@ function applyHumanFinalization(state, request, actor, at, action = "finalize") 
       workItem.blockedReason = "human_verification_rejected";
     } else {
       // 只有到这里才允许 verified —— 而且 actor 是真人，转移证据里留的是人的身份。
-      recordTransition(state, "WorkItem", workItem.id, workItem.status, "verified", "qa", {
-        verification_evidence: `human_confirmation:${request.requestId}:${actor}`
+      // actor 传的是"人工定稿"这条通道本身，不是某个账号 id —— 账号 id 无法被建模校验（任何调用方
+      // 都能编一个），而通道可以：状态机只为这条边登记了 human-finalizer，任何机器 actor 走它都会抛。
+      // 具体是谁定的稿留在 humanFinalization.finalizedBy 与证据串里。
+      recordTransition(state, "WorkItem", workItem.id, workItem.status, "verified", "human-finalizer", {
+        verification_evidence: `human_confirmation:${request.requestId}:${actor}`,
+        human_finalization_decision: `HumanConfirmationRequest:${request.requestId}`
       });
       workItem.status = "verified";
       workItem.progress = 100;

@@ -176,10 +176,14 @@ machines:
         to: "verification_ready"
         actor: "orchestrator"
         requires: ["verification_plan"]
+      # 定稿只属于真人。原先这条边的 actor 写的是 "qa"，而实际走它的是人工确认通道，
+      # 人的身份被塞进 verification_evidence 那段自由文本里 —— 于是这条边既没有声明"只有人能走"，
+      # 校验也永远不可能失败。改成人这个 actor 之后，将来若有人加一条自动验证路径按 "qa" 推进，
+      # 严格模式会直接抛，而不是悄悄把 AI 的自我验收记成人的定稿。
       - from: "verification_ready"
         to: "verified"
-        actor: "qa"
-        requires: ["verification_evidence"]
+        actor: "human-finalizer"
+        requires: ["verification_evidence", "human_finalization_decision"]
       - from: "verified"
         to: "close_candidate"
         actor: "qa"

@@ -3065,6 +3065,25 @@ function verifyTransitionEngine(output) {
     output.push(`transition-engine: legal draft->ready rejected: ${error.failureCode || error.code}`);
   }
 
+  // 工作项只能由人定稿为 verified。这条边原先建模的 actor 是 "qa"，而实际走它的是人工确认通道 ——
+  // 于是模型既没有声明"只有人能走"，actor 校验也不可能失败（调用方把 spec 里的 actor 读回来再传进去）。
+  // 现在它有牙齿：任何 AI 角色按这条边推进都会被引擎否决，AI 无法把自我验收记成人的定稿。
+  expectRejected("AI 角色自行把工作项验收为 verified", "transition.actor_not_authorized", () =>
+    assertTransition({}, "WorkItem", "verification_ready", "verified", "qa",
+      {verification_evidence: "x", human_finalization_decision: "y"})
+  );
+  expectRejected("编排器自行把工作项验收为 verified", "transition.actor_not_authorized", () =>
+    assertTransition({}, "WorkItem", "verification_ready", "verified", "orchestrator",
+      {verification_evidence: "x", human_finalization_decision: "y"})
+  );
+  // 反向：人工定稿这条路必须仍然走得通，否则上面那条就是把验收整个锁死了。
+  try {
+    assertTransition({}, "WorkItem", "verification_ready", "verified", "human-finalizer",
+      {verification_evidence: "x", human_finalization_decision: "y"});
+  } catch (error) {
+    output.push(`transition-engine: the human finalization path itself was rejected (${error.failureCode || error.code}) — verification is now impossible for anyone`);
+  }
+
   // Gate resolution: exact ids win over patterns; unknown gates fail closed.
   if (resolveGate("checkpoint", catalog).id !== "checkpoint_literal") {
     output.push("transition-engine: exact-id gate 'checkpoint' did not resolve to checkpoint_literal");

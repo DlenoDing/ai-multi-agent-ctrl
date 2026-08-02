@@ -459,6 +459,16 @@ roles:
       - "review_plan_coverage"
       - "finding_submit"
       - "reverify"
+  # 定稿是人的角色，不是某个 AI 会话的职责。这套角色表原本全是 AI/服务角色 —— 而系统里已经有
+  # HumanConfirmationRequest / HumanDirective 这两个控制对象，缺的只是承载它们的那个角色。
+  # 有了它，状态机才能把"这条边只有人能走"表达出来，而不是把人工定稿记成某个 AI 角色做的事。
+  - id: "human-finalizer"
+    kind: "human_finalizer"
+    responsibilities:
+      - "major_decision_finalization"
+      - "work_item_verification_finalization"
+      - "plan_finalization"
+      - "rejection_and_rework_routing"
   - id: "qa"
     kind: "ai_agent_session"
     responsibilities:
