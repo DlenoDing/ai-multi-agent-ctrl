@@ -238,6 +238,28 @@ try {
     throw new Error(`一条损坏的 outbox 条目让整个持久化循环退出失败（${corruptRun.status}）—— 它只应被隔离: ${corruptOutput.slice(-800)}`);
   }
 
+  // claim 代次此前只被【客户端自查】和【执行器凭据】读取，检查点这个真正的写入点从不比较它。
+  // 认领被回收后重新分配给同一个节点时 assignedNodeId 照样匹配，于是上一次尝试的检查点
+  // （尤其是 outbox 重放）会被当作本轮成果接受。fencing 必须在写入点拒绝过期写入。
+  {
+    const staleState = await json("/api/state", {token: login.sessionToken});
+    const anyDispatch = (staleState.agentDispatches || []).find((item) => item.assignedNodeId);
+    if (!anyDispatch) throw new Error("没有可用于代次探针的派发 —— 这条断言无从验证");
+    const staleEpoch = Number(anyDispatch.claimEpoch || 0) - 1;
+    const staleSubmit = await fetch(`${baseUrl}/api/agent/v1/dispatches/${encodeURIComponent(anyDispatch.dispatchId)}/checkpoint`, {
+      method: "POST",
+      headers: {"content-type": "application/json", authorization: `Bearer ${JSON.parse(readFileSync(agentConfigPath, "utf8")).nodeToken}`},
+      body: JSON.stringify({claimEpoch: staleEpoch, runId: anyDispatch.runId, sessionId: anyDispatch.sessionId})
+    });
+    if (staleSubmit.status !== 409) {
+      throw new Error(`带着过期 claim 代次的检查点没有被拒（HTTP ${staleSubmit.status}）—— 上一次认领遗留的提交会被当作本轮成果`);
+    }
+    const stalePayload = await staleSubmit.json().catch(() => ({}));
+    if (stalePayload.error !== "checkpoint_claim_epoch_stale") {
+      throw new Error(`过期代次被拒但错误码不对（${stalePayload.error}）—— 说明拦下它的是别的守卫，这条断言没有覆盖 fencing`);
+    }
+  }
+
   const state = await json("/api/state", {token: login.sessionToken});
   const completed = state.agentDispatches.find((dispatch) => dispatch.status === "completed" && dispatch.assignedNodeId);
   const node = state.agentRuntimeNodes.find((item) => item.nodeId === completed?.assignedNodeId);

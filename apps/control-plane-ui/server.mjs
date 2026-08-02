@@ -2181,6 +2181,18 @@ async function handleApi(req, res) {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     const dispatch = state.agentDispatches.find((item) => item.dispatchId === nodeCheckpointMatch[1] && item.assignedNodeId === node.nodeId);
     if (!dispatch) return json(res, 404, {error: "dispatch_not_found"});
+    // claim 代次此前只在【客户端自查】（/claim 复核）与【执行器凭据】里被读，检查点这个真正的
+    // 写入点从不比较它 —— 而认领被回收后重新分配给【同一个节点】时，assignedNodeId 照样匹配。
+    // 于是旧执行器（或它的 outbox 重放）提交的检查点会被当作当前这一轮的成果接受：
+    // 派发判完成、产出目标置为 pushed，而那些提交属于上一次尝试。
+    // fencing 必须在写入点拒绝过期写入，靠调用方自觉复核不算 fence（陈旧的调用方恰恰不会自觉）。
+    const presentedClaimEpoch = body.claimEpoch;
+    const currentClaimEpoch = Number(dispatch.claimEpoch || 0);
+    if (presentedClaimEpoch !== undefined && Number(presentedClaimEpoch) !== currentClaimEpoch) {
+      return json(res, 409, {error: "checkpoint_claim_epoch_stale", claimEpoch: currentClaimEpoch,
+        presented: Number(presentedClaimEpoch),
+        message: "这份检查点来自该派发的上一次认领，当前持有者已经换了一代；它的提交属于上一次尝试，不能算作本轮成果"});
+    }
     if (dispatch.status === "completed") {
       const existingCheckpoint = state.checkpoints.find((item) => item.runId === dispatch.runId && item.sessionId === dispatch.sessionId && item.workId === dispatch.workItemId);
       const submittedCommit = body.commitRefs?.at(-1)?.commit;
@@ -2190,6 +2202,12 @@ async function handleApi(req, res) {
       }
       json(res, 200, {accepted: true, replayed: true, checkpoint: existingCheckpoint});
       return;
+    }
+    // 只在【这个派发被认领过不止一次】时强制要求带代次：首次认领不存在更早的持有者，
+    // 缺代次也掩盖不了陈旧写入；这样既补上 fence，又不会因为旧版 agent 缺字段而拒掉常规路径。
+    if (presentedClaimEpoch === undefined && Number(dispatch.attempts || 0) > 1) {
+      return json(res, 409, {error: "checkpoint_claim_epoch_required", claimEpoch: currentClaimEpoch,
+        message: "该派发被重新认领过，提交检查点必须带上你持有的 claimEpoch，否则无法区分它来自哪一次尝试"});
     }
     const target = state.repositoryOutputs.find((item) => item.targetId === dispatch.repositoryOutputTargetRef);
     if (!target) return json(res, 409, {error: "repository_output_target_missing"});

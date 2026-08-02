@@ -135,6 +135,8 @@
     join_token_node_name_mismatch: "节点名与入网令牌登记的不一致",
     join_token_not_active: "入网令牌不处于可用状态",
     join_token_project_not_found: "入网令牌指向的项目不存在",
+    checkpoint_claim_epoch_stale: "这份检查点来自该派发的上一次认领，当前持有者已换代 —— 它的提交属于上一次尝试，不能算作本轮成果",
+    checkpoint_claim_epoch_required: "该派发被重新认领过，提交检查点必须带上持有的认领代次，否则无法区分它来自哪一次尝试",
     join_token_role_scope_mismatch: "申请的角色超出入网令牌的授权范围",
     lease_already_active: "该资源已有生效租约",
     lease_fencing_token_mismatch: "租约栅栏令牌不匹配（可能有更晚的持有者）",

@@ -245,7 +245,7 @@ async function run(config) {
           process.stdout.write(`checkpoint intentionally deferred for verification: ${claimed.dispatch.dispatch.dispatchId}\n`);
         } else {
           try {
-            const result = await submitCheckpoint(config, claimed.dispatch.remoteServices.checkpointPath, checkpoint);
+            const result = await submitCheckpoint(config, claimed.dispatch.remoteServices.checkpointPath, checkpoint, claimed.dispatch.dispatch?.claimEpoch);
             unlinkSync(outboxPath);
             await submitExecutionEvent(config, claimed.dispatch, "checkpoint_submitted", {progressPercent: 100, summary: "Checkpoint accepted by control plane.", evidenceRefs: [`checkpoint:${result.checkpoint?.runId || "accepted"}`]}).catch(() => {});
             process.stdout.write(`dispatch completed: ${claimed.dispatch.dispatch.dispatchId} checkpoint=${result.checkpoint?.runId || "accepted"}\n`);
@@ -461,7 +461,7 @@ async function flushCheckpointOutbox(config) {
     }
     try {
       verifyCheckpointReplayRemote(config, item);
-      await submitCheckpoint(config, item.checkpointPath, item.checkpoint);
+      await submitCheckpoint(config, item.checkpointPath, item.checkpoint, item.claimEpoch);
       await submitExecutionEventForDispatch(config, item.dispatchId, "checkpoint_submitted", {progressPercent: 100, summary: "Checkpoint replay accepted by control plane.", evidenceRefs: [`checkpoint:${item.checkpoint?.runId || "accepted"}`]}).catch(() => {});
       unlinkSync(path);
       process.stdout.write(`checkpoint replayed: ${item.dispatchId}\n`);
@@ -499,7 +499,7 @@ function persistCheckpointOutbox(config, dispatchPackage, checkpoint) {
   const target = join(outboxDir, `${safeName(dispatchPackage.dispatch.dispatchId)}.json`);
   // 原先是 tmp+rename 但没有 fsync：rename 本身原子，可内容还没落盘就断电的话，恢复后拿到的是
   // 一个存在但内容不完整的 outbox 条目 —— 而它承载的是【已经 push 成功】的检查点。
-  writeDurableJson(target, {dispatchId: dispatchPackage.dispatch.dispatchId, checkpointPath: dispatchPackage.remoteServices.checkpointPath, repositoryOutputTarget: dispatchPackage.repositoryOutputTarget, checkpoint, createdAt: new Date().toISOString()});
+  writeDurableJson(target, {dispatchId: dispatchPackage.dispatch.dispatchId, claimEpoch: dispatchPackage.dispatch.claimEpoch, checkpointPath: dispatchPackage.remoteServices.checkpointPath, repositoryOutputTarget: dispatchPackage.repositoryOutputTarget, checkpoint, createdAt: new Date().toISOString()});
   return target;
 }
 
@@ -684,8 +684,11 @@ function verifyCheckpointReplayRemote(config, item) {
   }
 }
 
-function submitCheckpoint(config, checkpointPath, checkpoint) {
-  return jsonRequest(`${config.serverUrl}${checkpointPath}`, {method: "POST", token: config.nodeToken, body: checkpoint});
+// 带上本次认领的代次：控制面在写入点用它拒绝上一次认领遗留下来的提交。
+// outbox 重放尤其需要 —— 一份断电前存下的检查点可能在认领早已被回收、重新分配之后才补交上去。
+function submitCheckpoint(config, checkpointPath, checkpoint, claimEpoch) {
+  const body = claimEpoch === undefined || claimEpoch === null ? checkpoint : {...checkpoint, claimEpoch};
+  return jsonRequest(`${config.serverUrl}${checkpointPath}`, {method: "POST", token: config.nodeToken, body});
 }
 
 function submitExecutionEvent(config, dispatchPackage, eventType, payload = {}) {
