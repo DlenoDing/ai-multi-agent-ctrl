@@ -1643,8 +1643,9 @@ function verifyHumanAndOrganizationContracts(output) {
     const nodeA = {nodeId: "node_a", status: "online", admission: "admitted", lastHeartbeatAt: "2026-08-02T00:00:00Z", activeDispatchIds: ["dsp_fence"]};
     fenceState.agentRuntimeNodes = [nodeA];
     fenceState.agentDispatches = [{dispatchId: "dsp_fence", taskGroupId: "tg_runtime_management", projectId: "prj_control_plane",
-      status: "running", assignedNodeId: "node_a", claimEpoch: 1, progressPercent: 90,
+      status: "running", assignedNodeId: "node_a", claimEpoch: 1, progressPercent: 90, sessionId: "ws_fence",
       claimedAt: "2026-08-01T00:00:00Z", claimExpiresAt: "2026-08-01T00:30:00Z"}];
+    fenceState.workSessions = [...(fenceState.workSessions || []), {sessionId: "ws_fence", status: "active", progressPercent: 90}];
     const beforeRecycle = validateDispatchClaim(fenceState, nodeA, "dsp_fence", 1);
     if (beforeRecycle.valid) {
       output.push("claim 代次: 已过期的 claim 仍被判为有效（复核形同虚设）");
@@ -1660,6 +1661,10 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     // 事件写入点用 Math.max 抵抗【同一次尝试内】的乱序，跨尝试保留就成了谎报：
     // 上一次跑到 90%，重排后新持有者从头开始上报 5%，Math.max 让控制台一直显示 90%。
+    const sessionAfter = (fenceState.workSessions || []).find((item) => item.sessionId === "ws_fence");
+    if (sessionAfter && Number(sessionAfter.progressPercent || 0) !== 0) {
+      output.push(`claim 代次: 重排队后会话进度没有归零（仍是 ${sessionAfter.progressPercent}%）—— 与派发进度同源同理由，留在不同状态就是给将来展示它的人留一个谎`);
+    }
     if (Number(dispatchAfter.progressPercent || 0) !== 0) {
       output.push(`claim 代次: 重排队后进度没有归零（仍是 ${dispatchAfter.progressPercent}%）—— 新持有者从头开始，`
         + "而 Math.max 会让控制台一直显示上一次的进度，人看到「快完成了」而活刚重新开始");

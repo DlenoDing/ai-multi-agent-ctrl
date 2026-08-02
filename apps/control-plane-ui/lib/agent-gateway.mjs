@@ -716,6 +716,10 @@ export function recycleExpiredClaims(state) {
     // Math.max 让控制台一直显示 90% —— 人看到"快完成了"，而活刚重新开始。
     // 归零之后 Math.max 在本次尝试内仍然成立，这是它原本要解决的问题。
     dispatch.progressPercent = 0;
+    // 会话与派发一一对应且跨尝试复用，进度同源同理由。当前控制台没有展示会话进度，
+    // 但把两个字段留在不同状态，等于给将来展示它的人留一个同样的谎。
+    const requeuedSession = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
+    if (requeuedSession) requeuedSession.progressPercent = 0;
     // 上一任是"失联"而不是"失败"——它可能已经把提交推到远端分支上了，而控制面对此没有任何记录。
     // 新持有者的 reset --hard origin/<branch> 会把那些提交当作基线，于是它们被静默吸收进结果里。
     // 这件事必须留痕并让人看到，而不是当作什么都没发生。
