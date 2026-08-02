@@ -1279,6 +1279,12 @@ errors << "the REST repository-output-target producer must set pathDenylist thro
 # 否则函数写好了没人调用，明文令牌照样永久留着。
 errors << "expired registration replays must be redacted from the heartbeat-driven reconciliation path" unless agent_gateway_source.include?("changed = redactExpiredRegistrationReplays(state, at) || changed;")
 errors << "the repository-output-target route must reject a repository url not registered for the project" unless server_source.include?("repository_output_target_repository_not_registered_for_project") && server_source.include?("repositoryUrlRegisteredForProject(urlProject, body.repositoryUrl)")
+# 接线：PG 的主读路径走 pgReadStateWithShards() 再把分片当 preReadShards 传进合并处，根本不经过
+# readPostgresProjectShards —— 校验写在读取函数里等于没写，必须落在合并处。
+# 写入侧同样要钉：摘要原先只在 runtime_json 分支里算（那段同时负责 generation 与文件名），
+# PG 整段跳过。读取侧再严，索引里没有摘要也就无从核对。
+errors << "postgres project shards must carry a payload digest in the central index (it is computed outside the runtime_json generation branch)" unless File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).include?("if (!nextGeneration) {") && File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).match?(/if \(!nextGeneration\) \{[\s\S]{0,900}?shard\.storagePayloadDigest = digestProjectShardPayload\(shard\);/)
+errors << "postgres project shards must be integrity-checked where they are merged, not in a read helper the main path skips" unless File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).include?('if (stateStoreKind() === "postgresql") assertProjectShardsMatchCentralIndex(shards, centralState);')
 errors << "Room participant identity must be derived from the authenticated principal, never from the request body" unless mcp_source.include?("ROOM_PARTICIPANT_KEY") && mcp_source.include?("participantId: args[ROOM_PARTICIPANT_KEY]") && !mcp_source.include?("participantId: string")
 errors << "close-barrier must not trust a stale-version cached readiness" unless core_source.include?("cachedReadiness.stateVersion === state.stateVersion") && contract_check_source.include?("stale readiness")
 errors << "Human directives must be consumed oldest-first" unless core_source.include?("status === \"queued\").reverse()") && contract_check_source.include?("directive FIFO")

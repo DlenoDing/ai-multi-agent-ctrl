@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { capProjectShardCollections } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite } from "../apps/mcp-server/server.mjs";
 import {
@@ -2618,6 +2618,39 @@ function verifyRuntimeJsonConflict(output) {
     // CAS 断言的是"中央还停在我读到的版本"。如果写入方自己不推进版本号，那么在它之后、拿着同一个
     // 期望值写入的人照样成立 —— 会把它的改动整份覆盖，而 CAS 全程什么都没察觉。这不是冲突，是丢更新。
     // scripts/sync-agent-skills.mjs 原先正是这样：技能同步结果被控制面下一次写入静默丢弃。
+    // PostgreSQL 分片原先【零完整性校验】：摘要与字节数只在 runtime_json 分支里写（那段代码同时负责
+    // generation 与文件名，PG 用不上，于是整段被跳过），读取侧也就无从核对。而 PG 才是生产配置 ——
+    // 有 DB 写权限的人可以直接改分片行，注入或删掉任务组、派发、人工确认单，控制面读出来完全无感。
+    {
+      const shard = {schemaVersion: "project-state-shard/v1", projectId: "prj_tamper", collections: {taskGroups: [{id: "tg_ok"}]}};
+      shard.storagePayloadDigest = digestProjectShardPayload(shard);
+      const central = {projectStateShards: {projects: [{projectId: "prj_tamper", storagePayloadDigest: shard.storagePayloadDigest}]}};
+      try {
+        assertProjectShardsMatchCentralIndex([shard], central);
+      } catch (error) {
+        output.push(`an untampered project shard was rejected by the integrity check: ${error.message}`);
+      }
+      const tampered = {...shard, collections: {taskGroups: [{id: "tg_ok"}, {id: "tg_injected"}]}};
+      try {
+        assertProjectShardsMatchCentralIndex([tampered], central);
+        output.push("a project shard whose contents no longer match the central index was accepted — anyone with write access to the shard table can inject or delete task groups, dispatches and human confirmation requests invisibly");
+      } catch (error) {
+        if (!/digest_mismatch/u.test(error.message)) output.push(`tampered shard raised the wrong error: ${error.message}`);
+      }
+      try {
+        assertProjectShardsMatchCentralIndex([], central);
+        output.push("a project shard listed in the central index but absent from storage was accepted — deleting a shard is as invisible as rewriting it");
+      } catch (error) {
+        if (!/shard_missing/u.test(error.message)) output.push(`missing shard raised the wrong error: ${error.message}`);
+      }
+      // 引导期中央索引尚未建立时不得凭空报错，否则第一次启动就起不来。
+      try {
+        assertProjectShardsMatchCentralIndex([shard], {});
+      } catch (error) {
+        output.push(`shard integrity check failed with no central index present (bootstrap would never start): ${error.message}`);
+      }
+    }
+
     // 用独立的状态路径：这些用例共享一份 central，探针若推进了版本号，后面那些拿固定期望值写入的
     // 用例就会撞冲突 —— 一条断言不该靠扰动别人来成立。
     const advanceDir = mkdtempSync(join(tmpdir(), "aimac-contract-advance-"));

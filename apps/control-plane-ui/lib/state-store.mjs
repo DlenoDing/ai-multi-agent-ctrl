@@ -246,6 +246,34 @@ function readPostgresProjectShards() {
   return pgReadProjectShards();
 }
 
+// 与 runtime_json 那三道校验同一意图：中央索引记着每个分片的摘要与字节数，读出来的分片必须对得上。
+// 失败一律抛错（fail-closed）—— 分片被改过而控制面照常运行，比读不出来危险得多。
+export function assertProjectShardsMatchCentralIndex(shards, centralState) {
+  const indexed = new Map((centralState?.projectStateShards?.projects || []).map((entry) => [entry.projectId, entry]));
+  // 引导期中央索引为空时无需特判：下面两个循环都以索引为准，空索引自然什么都不查。
+  // 原先这里有一句提前返回，突变测试证明它去掉之后行为完全不变 —— 一条无法被单独验证的守卫，
+  // 留着只会让人以为这里有两道保护。
+  for (const shard of shards) {
+    const entry = indexed.get(shard.projectId);
+    if (!entry) continue; // 索引里没有这个项目：由上层的可见性/租户过滤处理，不在完整性校验范围内
+    if (entry.storagePayloadBytes && Number(entry.storagePayloadBytes) !== Number(shard.storagePayloadBytes || 0)) {
+      throw new Error(`project_state_shard_payload_size_mismatch:${shard.projectId}`);
+    }
+    if (entry.storagePayloadDigest && entry.storagePayloadDigest !== digestProjectShardPayload(shard)
+      && entry.storagePayloadDigest !== legacyDigestProjectShardPayload(shard)) {
+      throw new Error(`project_state_shard_payload_digest_mismatch:${shard.projectId}`);
+    }
+  }
+  // 索引里有、却一个分片都没读到：这是"分片被删掉"的形态，必须与被改写同等对待。
+  const present = new Set(shards.map((shard) => shard.projectId));
+  for (const [projectId, entry] of indexed) {
+    if (entry.storagePayloadDigest && !present.has(projectId)) {
+      throw new Error(`project_state_shard_missing:${projectId}`);
+    }
+  }
+  return shards;
+}
+
 function withoutInternalStateFields(state) {
   const clean = {...state};
   for (const key of Object.keys(clean)) {
@@ -298,6 +326,15 @@ function externalizeProjectState(state, previousShardIndex = null, options = nul
         shard.storageName = runtimeJsonProjectShardName(shard.projectId, nextGeneration);
       }
       shard.storagePayloadDigest = payloadDigest;
+      shard.storagePayloadBytes = Buffer.byteLength(projectShardPayloadText(shard));
+    }
+    if (!nextGeneration) {
+      // PostgreSQL 后端原先整段跳过（generation/文件名是 runtime_json 专有的），连带把摘要也跳过了 ——
+      // 于是中央索引里没有任何可核对的东西，读取侧也就无从校验。runtime_json 有三道防篡改校验、
+      // 还被 contract-check 钉着，而 PG 才是生产配置：有 DB 写权限的人可以直接改分片行，
+      // 注入或删掉 taskGroup / dispatch / 人工确认单，控制面读出来完全无感。
+      // generation 与文件名与它无关，摘要与字节数与后端无关。
+      shard.storagePayloadDigest = digestProjectShardPayload(shard);
       shard.storagePayloadBytes = Buffer.byteLength(projectShardPayloadText(shard));
     }
     const collectionCounts = Object.fromEntries(projectShardCollections.map((collection) => [collection, shard.collections[collection]?.length || 0]));
@@ -401,8 +438,12 @@ function hydrateProjectState(centralState, options, preReadShards) {
   const shards = preReadShards !== undefined
     ? preReadShards
     : (stateStoreKind() === "postgresql"
-      ? readPostgresProjectShards(options)
+      ? readPostgresProjectShards()
       : readRuntimeJsonProjectShards(options, centralState));
+  // 校验放在【合并处】而不是读取函数里：PG 的主读路径走 pgReadStateWithShards() 再把分片当
+  // preReadShards 传进来，根本不经过 readPostgresProjectShards —— 校验写在那里等于没写。
+  // runtime_json 的三道校验在它自己的读取函数里完成，这里不重复。
+  if (stateStoreKind() === "postgresql") assertProjectShardsMatchCentralIndex(shards, centralState);
   for (const shard of shards) {
     for (const collection of projectShardCollections) {
       const items = Array.isArray(shard.collections?.[collection]) ? shard.collections[collection] : [];
@@ -614,7 +655,7 @@ function legacyProjectShardPayloadText(shard = {}) {
   return JSON.stringify(payload);
 }
 
-function digestProjectShardPayload(shard = {}) {
+export function digestProjectShardPayload(shard = {}) {
   return `sha256:${createHash("sha256").update(projectShardPayloadText(shard)).digest("hex")}`;
 }
 
