@@ -1842,6 +1842,29 @@ export function runAutonomousCycle(state, request = {}) {
           continue;
         }
       }
+      // 上面那段依赖判定整段被 `status === "blocked_dependency"` 包住，而离开这个状态有三条路：
+      // dispatchWorkItem 会把它直接改写成 ready、互审返工改成 ready、任何一次异常经 needs_decision
+      // 再被人 reopen 也变 ready。一旦离开，依赖就【永久失效】——
+      // 于是拆分建立的"分析→实现"顺序、以及人对分析结论的定稿权，在第一次异常之后就没了：
+      // 人把分析子项打回，实现子项照样会被重新派发。
+      // 依赖满没满足与它当前处于哪个状态无关，必须在派发之前无条件重查。
+      const blockingDeps = (workItem.dependsOnWorkItemRefs || []).filter((depId) => {
+        const dependency = (taskGroup.workItems || []).find((item) => item.id === depId);
+        return !dependency || !["verified", "closed"].includes(dependency.status);
+      });
+      if (blockingDeps.length) {
+        const abandoned = blockingDeps.some((depId) => {
+          const dependency = (taskGroup.workItems || []).find((item) => item.id === depId);
+          return dependency && ["superseded", "aborted"].includes(dependency.status);
+        });
+        // 依赖被放弃/取代时不能只是"等着"——它永远不会 verified，那样这个格子会无声地卡死。
+        workItem.status = abandoned ? "needs_decision" : "blocked_dependency";
+        workItem.blockedReason = abandoned ? "dependency_abandoned" : "awaiting_dependency";
+        workItem.updatedAt = new Date().toISOString();
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: abandoned ? "dependency_abandoned" : "awaiting_dependency", whyThisCellNow: `dependencies not settled: ${blockingDeps.join(",")}`, cycleRef});
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, awaiting: "dependency", dependsOnWorkItemRefs: blockingDeps});
+        continue;
+      }
       if (workItem.status === "needs_decision") {
         recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "awaiting_decision", whyThisCellNow: "cell_needs_external_decision", cycleRef});
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, reason: "awaiting_decision", awaiting: "decision"});
@@ -4799,9 +4822,20 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
           directive.appliedActions.push({action: "task_group_requirement_appended", ref: `TaskGroup:${taskGroup.id}`});
         }
       } else if (directive.directiveType === "adjust_priority" && taskGroup) {
-        taskGroup.priorityHint = directive.instruction || taskGroup.priorityHint || "elevated";
+        // 人写的是 taskGroup.priorityHint，而调度器读的是 workItem.priorityHint（cellAdmissionPriority）——
+        // 写的和读的不是同一个对象，于是"调整优先级"这个杠杆除了往 humanGuidance 追加一行文字，
+        // 对执行顺序零影响。指令要落到真正被读的地方去。
+        const priorityHint = directive.instruction || "elevated";
+        taskGroup.priorityHint = priorityHint;
+        const priorityTargets = (taskGroup.workItems || []).filter((item) =>
+          (!directive.workItemId || item.id === directive.workItemId)
+          && !WORK_ITEM_SETTLED_STATUSES.includes(item.status));
+        for (const workItem of priorityTargets) {
+          workItem.priorityHint = priorityHint;
+          workItem.updatedAt = at;
+        }
         taskGroup.humanGuidance = [...(taskGroup.humanGuidance || []), {directiveRef: directive.directiveId, text: `优先级调整：${directive.instruction}`, addedAt: at}];
-        directive.appliedActions.push({action: "task_group_priority_adjusted", ref: `TaskGroup:${taskGroup.id}`});
+        directive.appliedActions.push({action: "task_group_priority_adjusted", ref: `TaskGroup:${taskGroup.id}`, workItemCount: priorityTargets.length});
       } else if (directive.directiveType === "resolve_decision" && taskGroup) {
         // The operator's decision on a needs_decision cell — the actuator that resolves the
         // rework-cap / role-drift escalation the autonomous cycle deliberately will not auto-resume.
@@ -5807,7 +5841,12 @@ function evaluateTopologyEligibility(topology) {
   const seenScopes = new Map();
   for (const branch of branches) {
     for (const path of branch.ownedPaths || []) {
-      if (seenPaths.has(path)) blockers.push(`owned_paths_disjoint:${path}:${seenPaths.get(path)}|${branch.branchId}`);
+      // 原先是精确字符串比较：`apps/**` 与 `apps/control-plane-ui/**` 被判为不相交，
+      // 于是一份实际重叠的边界通过了资格门、被原样列进人工确认卡 —— 人批准的是"边界不相交的
+      // 并行方案"，实际是两个分支同时拥有同一批文件，写了也不会留下越界证据。
+      // 前缀包含即重叠：一方的范围盖住另一方时，两者不可能各写各的。
+      const overlapping = [...seenPaths.keys()].find((seen) => globScopesOverlap(seen, path));
+      if (overlapping) blockers.push(`owned_paths_disjoint:${path}:${seenPaths.get(overlapping)}|${branch.branchId}`);
       else seenPaths.set(path, branch.branchId);
     }
     for (const scope of branch.resourceScopes || []) {
@@ -5827,6 +5866,17 @@ function evaluateTopologyEligibility(topology) {
   }
   if (topology.mergePolicy !== "parent_serial_after_all_required_reported") blockers.push("parent_serial_merge_owner:missing");
   return unique(blockers);
+}
+
+// 两个 glob 范围是否重叠。精确相等只是其中一种情况 —— `apps/**` 盖住 `apps/x/**`，
+// 它们不可能被两个分支各写各的。把尾部通配去掉后比前缀即可覆盖本仓用到的全部形态。
+function globScopesOverlap(left, right) {
+  const normalize = (value) => String(value || "").replace(/\*+$/u, "").replace(/\/+$/u, "");
+  const a = normalize(left);
+  const b = normalize(right);
+  if (!a || !b) return true;              // 空范围等于"全部"，与任何范围都重叠
+  if (a === b) return true;
+  return a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
 export function createExecutionTopology(state, args) {

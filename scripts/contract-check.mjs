@@ -1256,6 +1256,65 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("内容包: 定稿决策条目里没有那条实际的决策内容");
     }
 
+    // 依赖判定原先整段被 status === "blocked_dependency" 包住，而离开这个状态有三条路
+    //（派发时改写、互审返工、异常后被人 reopen）。一旦离开，依赖就永久失效 ——
+    // 拆分建立的"分析→实现"顺序、以及人对分析结论的定稿权，在第一次异常之后就没了。
+    const depState = structuredClone(seedState);
+    ensureRuntimeCollections(depState, {root});
+    const depTg = depState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    // 依赖项必须处于"不会被本轮派发"的状态，否则第一个工作项被派发后循环就 break 了，
+    // 待测的那个这一轮根本轮不到 —— 断言会因为"没被派发"而假绿。
+    depTg.workItems = [
+      {id: "wi_analysis", title: "分析", status: "needs_decision"},
+      {id: "wi_impl", title: "实现", status: "ready", dependsOnWorkItemRefs: ["wi_analysis"]}
+    ];
+    depState.agentDispatches = [];
+    runAutonomousCycle(depState, {taskGroupId: depTg.id}, {root});
+    const implItem = depTg.workItems.find((item) => item.id === "wi_impl");
+    if ((depState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === "wi_impl")) {
+      output.push("依赖失效: 依赖尚未完成的工作项仍被派发（拆分建立的分析→实现顺序在第一次异常后就没了）");
+    }
+    if (implItem.status === "ready") {
+      output.push("依赖失效: 依赖未满足却没有把工作项挡回 blocked_dependency");
+    }
+    // 依赖被放弃时不能只是"等着"——它永远不会 verified，格子会无声卡死
+    depTg.workItems.find((item) => item.id === "wi_analysis").status = "superseded";
+    implItem.status = "ready";
+    runAutonomousCycle(depState, {taskGroupId: depTg.id}, {root});
+    if (implItem.status !== "needs_decision") {
+      output.push("依赖失效: 依赖已被放弃时没有升级为人工决策（它永远不会 verified，格子会无声卡死）");
+    }
+
+    // 边界不相交原先是精确字符串比较：apps/** 与 apps/control-plane-ui/** 被判为不相交，
+    // 人批准的"并行不冲突"实际是两个分支同时拥有同一批文件。
+    const tpOvState = structuredClone(seedState);
+    ensureRuntimeCollections(tpOvState, {root});
+    const tpOvTopo = createExecutionTopology(tpOvState, {
+      taskGroupId: "tg_runtime_management", workItemId: "wi_overlap", root,
+      branches: [
+        {branchId: "b_wide", objective: "宽", ownedPaths: ["apps/**"], resourceScopes: ["db:a"]},
+        {branchId: "b_narrow", objective: "窄", ownedPaths: ["apps/control-plane-ui/**"], resourceScopes: ["db:b"]}
+      ]
+    }).topology;
+    advanceExecutionTopology(tpOvState, {topologyId: tpOvTopo.topologyId, action: "check_eligibility"});
+    if (!(tpOvTopo.blockers || []).some((item) => String(item).startsWith("owned_paths_disjoint:"))) {
+      output.push("边界重叠: 嵌套重叠的 ownedPaths 通过了资格门（人批准的边界不相交实际是重叠写）");
+    }
+
+    // 人的"调整优先级"杠杆：写 taskGroup.priorityHint、读 workItem.priorityHint —— 写读不是同一个对象
+    const prioState = structuredClone(seedState);
+    ensureRuntimeCollections(prioState, {root});
+    const prioTg = prioState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const prioWork = prioTg.workItems.find((item) => !["verified", "closed", "superseded"].includes(item.status)) || prioTg.workItems[0];
+    prioWork.status = "ready";
+    prioState.humanDirectives = [{schemaVersion: "human-directive/v1", directiveId: "hd_prio", projectId: prioTg.projectId,
+      taskGroupId: prioTg.id, directiveType: "adjust_priority", instruction: "p0 safety",
+      status: "queued", appliedActions: [], createdAt: "2026-08-02T00:00:00Z", updatedAt: "2026-08-02T00:00:00Z"}];
+    consumeQueuedHumanDirectives(prioState, {});
+    if (cellAdmissionPriority(prioWork) !== 0) {
+      output.push("优先级杠杆: 人调整优先级之后调度器读到的仍是默认档（写的和读的不是同一个对象）");
+    }
+
     // 互审此前是空转的：它能产出的每一条判据都是 acceptAgentCheckpoint 接受这份检查点时
     // 已经强制过的结构性事实 —— 所以对任何被接受的检查点，结论恒为 passed。
     // 控制面判断不了代码对不对，但质量门有没有过是它能独立查、而接受时不查的。
