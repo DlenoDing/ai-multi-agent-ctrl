@@ -22,6 +22,7 @@ let organizations = [];
 let orgAgentNodes = [];
 let orgMembers = [];
 let projConfig = null;
+let projConfigVersion = null;
 let instructionState = null;
 let loginHint = null;
 
@@ -947,6 +948,9 @@ async function loadPage() {
       if (currentProjectId) {
         const configResult = await api(`/api/projects/${encodeURIComponent(currentProjectId)}/config`).catch(() => null);
         projConfig = configResult?.config || null;
+        // 记住"我读到的是哪一版"。保存时带回去，服务端据此判断这层配置在我打开之后有没有被别人改过 ——
+        // 规则保存是整份替换，没有这个前提，后保存的人会静默删掉先保存的人新增的规则，两人都拿到 200。
+        projConfigVersion = configResult?.configVersion || null;
       } else {
         projConfig = null;
       }
@@ -982,6 +986,7 @@ async function loadTaskGroupDetail(taskGroupId) {
     taskGroupId,
     progress: progressResult,
     config: configResult?.config || null,
+    configVersion: configResult?.configVersion || null,
     roomMessages: roomResult?.messages || null
   };
 }
@@ -3191,7 +3196,7 @@ document.addEventListener("submit", async (event) => {
       const changed = String(data.defaultRoles || "").trim() !== String(origRoles).trim();
       if (!changed) { formTouched = false; toast.info("默认角色未改动，任务组仍继承项目配置"); return "__skip_success__"; }
       const defaultRoles = String(data.defaultRoles || "").split(",").map((item) => item.trim()).filter(Boolean).map((roleId) => ({roleId}));
-      await api(`/api/task-groups/${encodeURIComponent(form.dataset.task)}/config`, {method: "POST", body: JSON.stringify({defaultRoles})});
+      await api(`/api/task-groups/${encodeURIComponent(form.dataset.task)}/config`, {method: "POST", body: JSON.stringify({defaultRoles, expectedConfigVersion: tgDetail?.configVersion || null})});
       formTouched = false;
       await loadPage();
       return;
@@ -3212,7 +3217,7 @@ document.addEventListener("submit", async (event) => {
         roleId: rowEl.querySelector("input[name='roleId']")?.value?.trim() || "",
         roleSkillRef: rowEl.querySelector("input[name='roleSkillRef']")?.value?.trim() || ""
       })).filter((role) => role.roleId);
-      await api(`/api/projects/${encodeURIComponent(form.dataset.project)}/config`, {method: "POST", body: JSON.stringify({repositories, baselineData, defaultRoles})});
+      await api(`/api/projects/${encodeURIComponent(form.dataset.project)}/config`, {method: "POST", body: JSON.stringify({repositories, baselineData, defaultRoles, expectedConfigVersion: projConfigVersion})});
       formTouched = false;
       await loadPage();
       return;
@@ -3220,6 +3225,7 @@ document.addEventListener("submit", async (event) => {
     if (kind === "project-rules") {
       const fragments = assertRuleFragmentLengths(collectRuleFragments(form, "project"));
       const payload = form.dataset.category === "system" ? {systemRules: fragments} : {businessRules: fragments};
+      payload.expectedConfigVersion = projConfigVersion;
       await api(`/api/projects/${encodeURIComponent(form.dataset.project)}/config`, {method: "POST", body: JSON.stringify(payload)});
       formTouched = false;
       await loadPage();
@@ -3228,6 +3234,7 @@ document.addEventListener("submit", async (event) => {
     if (kind === "tg-rules") {
       const fragments = assertRuleFragmentLengths(collectRuleFragments(form, "task_group"));
       const payload = form.dataset.category === "system" ? {systemRules: fragments} : {businessRules: fragments};
+      payload.expectedConfigVersion = tgDetail?.configVersion || null;
       await api(`/api/task-groups/${encodeURIComponent(form.dataset.task)}/config`, {method: "POST", body: JSON.stringify(payload)});
       formTouched = false;
       await loadPage();

@@ -881,10 +881,13 @@ try {
     throw new Error(`org_admin could not control its own org project's task group, got ${orgControl.response.status}`);
   }
   // org_admin has full org resource management: project-level config edit and confirmation review authority.
+  // 整份替换类字段必须先读版本再写 —— 这正是真实客户端要做的事（不先读就写，等于愿意覆盖别人）。
+  const orgProjectConfigRead = await jsonFetch(port, `/api/projects/${orgProject.payload.id}/config`, {headers: {authorization: orgAdminAuth}});
   const orgProjectConfig = await jsonFetch(port, `/api/projects/${orgProject.payload.id}/config`, {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-org-proj-config", authorization: orgAdminAuth},
-    body: JSON.stringify({baselineData: [{name: "基线", locator: "git:docs/baseline"}]})
+    body: JSON.stringify({baselineData: [{name: "基线", locator: "git:docs/baseline"}],
+      expectedConfigVersion: orgProjectConfigRead.payload.configVersion})
   });
   if (orgProjectConfig.response.status !== 200) {
     throw new Error(`org_admin could not edit its own org project config, got ${orgProjectConfig.response.status}`);
@@ -996,8 +999,11 @@ try {
   const cfgCustom = await jsonFetch(port, "/api/task-groups/tg_runtime_management/config", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-config-set", authorization: systemAuth},
-    body: JSON.stringify({businessRules: [{ruleId: "br_doctor", title: "验收规范", content: "必须包含测试"}]})
+    // 整份替换必须带上读到的那一版；cfgInherited 就是刚读的那次。
+    body: JSON.stringify({businessRules: [{ruleId: "br_doctor", title: "验收规范", content: "必须包含测试"}],
+      expectedConfigVersion: cfgInherited.payload.configVersion})
   });
+  if (cfgCustom.response.status !== 200) throw new Error(`带正确版本的任务组规则保存被拒：${cfgCustom.response.status} ${JSON.stringify(cfgCustom.payload).slice(0, 200)}`);
   if (cfgCustom.payload.config.configSource !== "customized") throw new Error("task group config override did not customize");
   const cfgReset = await jsonFetch(port, "/api/task-groups/tg_runtime_management/config/reset", {
     method: "POST",
@@ -1066,6 +1072,28 @@ try {
   // permission-requests submit/resolve → checkpoint_submit (runtime allowed) / project:grant
   const permOk = expectStatus(await g2("/api/permission-requests", agentAuth, "g2b-perm-ok", {taskGroupId: "tg_runtime_management", permission: "task_group:read", subjectId: "acct_agent_runtime"}), 201, "permission request happy");
   expectStatus(await g2("/api/permission-requests", invitedAuth, "g2b-perm-deny", {taskGroupId: "tg_runtime_management", permission: "task_group:read"}), 403, "permission request deny");
+  // 两个人同时编辑同一层规则：后保存者原先会静默删掉前保存者新增的规则，两人都拿到 200。
+  // 丢的正是安全规则本身，而且不留痕。现在保存必须带上"我读到的是哪一版"。
+  {
+    const readCfg = await jsonFetch(port, "/api/projects/prj_control_plane/config", {headers: {authorization: auth}});
+    if (!readCfg.payload.configVersion) throw new Error("项目配置未返回 configVersion，前端无从带回，前提形同虚设");
+    const stale = readCfg.payload.configVersion;
+    const first = await g2("/api/projects/prj_control_plane/config", auth, "cfg-first",
+      {businessRules: [{ruleId: "biz.concurrent.a", title: "A 的规则", content: "A", enabled: true}], expectedConfigVersion: stale});
+    expectStatus(first, 200, "带着正确版本的规则保存应通过");
+    // B 拿着同一份旧版本保存：必须被拒，而不是把 A 刚加的那条删掉。
+    expectStatus(await g2("/api/projects/prj_control_plane/config", auth, "cfg-second",
+      {businessRules: [{ruleId: "biz.concurrent.b", title: "B 的规则", content: "B", enabled: true}], expectedConfigVersion: stale}),
+      409, "拿着过期版本保存规则必须被拒（否则会静默删掉别人刚写下的规则）");
+    // 不带版本同样必须被拒 —— 否则任何忘了带的调用方都能绕过这道前提。
+    expectStatus(await g2("/api/projects/prj_control_plane/config", auth, "cfg-noversion",
+      {businessRules: []}), 409, "不带版本保存整份规则必须被拒");
+    const afterCfg = await jsonFetch(port, "/api/projects/prj_control_plane/config", {headers: {authorization: auth}});
+    if (!(afterCfg.payload.config.businessRules || []).some((rule) => rule.ruleId === "biz.concurrent.a")) {
+      throw new Error("A 写下的规则在并发保存之后消失了");
+    }
+  }
+
   expectStatus(await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-resolve-ok", {status: "approved"}), 200, "permission resolve happy");
   // 两个人同时处置同一条授权请求：后到的那个必须拿到 409，而不是 200。
   // 回 200 的后果是【拒绝方被告知成功，而权限其实已经授出】—— 他不会再去看结果。

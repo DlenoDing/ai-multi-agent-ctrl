@@ -4476,13 +4476,39 @@ async function handleApi(req, res) {
     return;
   }
 
+  // 配置层的版本 = 被覆盖的那一层的内容摘要。取的是【存储层】而不是合并后的有效视图 ——
+  // 前提要挡的是"我覆盖的东西在我读到之后被别人改过"，与继承来的默认值无关。
+  //
+  // 为什么需要它：规则保存是整数组替换，而全局 stateVersion 的 CAS 只覆盖服务端读到写的亚秒窗口，
+  // 覆盖不了人类的编辑会话。两个人先后保存，后者会静默删掉前者新增的规则，两人都拿到 200。
+  // 丢的正是安全规则与业务规则本身，而且不留痕（审计只记"配置已更新"，不记内容差异）。
+  const configLayerVersion = (layer) => digestOf(layer || {}).slice(7, 23);
+  // 只有这些字段是"整份替换"的，丢数据的风险在它们身上；只改语言策略之类的不受影响。
+  const REPLACING_CONFIG_FIELDS = ["systemRules", "businessRules", "repositories", "baselineData", "defaultRoles"];
+  const configPreconditionFailure = (body, layer) => {
+    if (!REPLACING_CONFIG_FIELDS.some((field) => body[field] !== undefined)) return null;
+    const current = configLayerVersion(layer);
+    if (body.expectedConfigVersion === undefined) {
+      return {error: "config_version_required",
+        message: "保存整份规则/配置必须带上你读到的那一版的 expectedConfigVersion，否则会静默覆盖别人在此期间的改动",
+        currentConfigVersion: current};
+    }
+    if (String(body.expectedConfigVersion) !== current) {
+      return {error: "config_version_stale",
+        message: "这一层配置在你打开之后被改过了：直接保存会删掉对方的改动。请刷新后把你的修改重做一遍",
+        currentConfigVersion: current};
+    }
+    return null;
+  };
+
   const projectConfigMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/config$/);
   if (req.method === "GET" && projectConfigMatch) {
     const reader = requireRead(req, state, projectScope(projectConfigMatch[1]));
     if (reader.status) return json(res, reader.status, reader.payload);
     const project = state.projects.find((item) => item.id === projectConfigMatch[1]);
     if (!project) return json(res, 404, {error: "project_not_found"});
-    json(res, 200, {projectId: project.id, config: effectiveProjectConfig(project)});
+    json(res, 200, {projectId: project.id, config: effectiveProjectConfig(project),
+      configVersion: configLayerVersion(project.config)});
     return;
   }
   if (req.method === "POST" && projectConfigMatch) {
@@ -4492,6 +4518,8 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const project = state.projects.find((item) => item.id === projectConfigMatch[1]);
     if (!project) return json(res, 404, {error: "project_not_found"});
+    const projectPrecondition = configPreconditionFailure(body, project.config);
+    if (projectPrecondition) return json(res, 409, projectPrecondition);
     project.config = {
       ...(project.config || {}),
       ...(body.repositories !== undefined ? {repositories: Array.isArray(body.repositories) ? body.repositories : []} : {}),
@@ -4504,7 +4532,7 @@ async function handleApi(req, res) {
     audit(state, guard.actor, "project_config_update", `Project:${project.id}`);
     finishGuardedWrite(state, guard, 200, project.config);
     writeState(state);
-    json(res, 200, {projectId: project.id, config: project.config});
+    json(res, 200, {projectId: project.id, config: project.config, configVersion: configLayerVersion(project.config)});
     return;
   }
 
@@ -4514,7 +4542,8 @@ async function handleApi(req, res) {
     if (reader.status) return json(res, reader.status, reader.payload);
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupConfigMatch[1]);
     if (!taskGroup) return json(res, 404, {error: "task_group_not_found"});
-    json(res, 200, {taskGroupId: taskGroup.id, config: effectiveTaskGroupConfig(state, taskGroup)});
+    json(res, 200, {taskGroupId: taskGroup.id, config: effectiveTaskGroupConfig(state, taskGroup),
+      configVersion: configLayerVersion(taskGroup.configOverrides)});
     return;
   }
   if (req.method === "POST" && taskGroupConfigMatch) {
@@ -4524,6 +4553,8 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupConfigMatch[1]);
     if (!taskGroup) return json(res, 404, {error: "task_group_not_found"});
+    const taskGroupPrecondition = configPreconditionFailure(body, taskGroup.configOverrides);
+    if (taskGroupPrecondition) return json(res, 409, taskGroupPrecondition);
     const mergedOverrides = {
       ...(taskGroup.configOverrides || {}),
       ...(body.repositories !== undefined ? {repositories: Array.isArray(body.repositories) ? body.repositories : []} : {}),
@@ -4544,7 +4575,7 @@ async function handleApi(req, res) {
     const effective = effectiveTaskGroupConfig(state, taskGroup);
     finishGuardedWrite(state, guard, 200, effective);
     writeState(state);
-    json(res, 200, {taskGroupId: taskGroup.id, config: effective});
+    json(res, 200, {taskGroupId: taskGroup.id, config: effective, configVersion: configLayerVersion(taskGroup.configOverrides)});
     return;
   }
 
@@ -4560,7 +4591,7 @@ async function handleApi(req, res) {
     const effective = effectiveTaskGroupConfig(state, taskGroup);
     finishGuardedWrite(state, guard, 200, effective);
     writeState(state);
-    json(res, 200, {taskGroupId: taskGroup.id, config: effective});
+    json(res, 200, {taskGroupId: taskGroup.id, config: effective, configVersion: configLayerVersion(taskGroup.configOverrides)});
     return;
   }
 
