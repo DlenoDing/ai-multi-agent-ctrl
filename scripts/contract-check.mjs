@@ -2379,6 +2379,37 @@ function verifyHumanAndOrganizationContracts(output) {
     }
   }
 
+  // "在线但不领活"原先在服务端也不留痕：no_compatible_dispatch 只回给 agent。控制面在筛的时候
+  // 就知道是角色不匹配还是模型不可用，必须把它留下来，否则控制台上这两种长得一模一样。
+  {
+    const missState = structuredClone(seedState);
+    ensureRuntimeCollections(missState, {root});
+    const missNode = {nodeId: "node_claim_miss", status: "online", admission: "full", projectIds: ["prj_control_plane"],
+      allowedRoles: ["orchestrator"], allowedMcpTools: [], activeDispatchIds: [],
+      profile: {models: [{providerClass: "openai", available: true}]}, lastHeartbeatAt: new Date().toISOString()};
+    missState.agentRuntimeNodes = [missNode];
+    missState.agentDispatches = [{dispatchId: "adp_role_miss", status: "queued", projectId: "prj_control_plane",
+      taskGroupId: "tg_runtime_management", sessionId: "sess_miss", runId: "run_miss", updatedAt: new Date().toISOString()}];
+    missState.agentTaskContracts = [{sessionId: "sess_miss", runId: "run_miss", roleId: "reviewer",
+      model: {providerClass: "openai"}, expiresAt: new Date(Date.now() + 3600000).toISOString()}];
+    claimNextDispatch(missState, missNode, {runtimeDir: join(root, ".runtime"), claimTtlSeconds: 300});
+    const roleReason = (missNode.lastClaimMiss?.reasons || [])[0];
+    if (roleReason?.reason !== "role_not_allowed_on_node" || roleReason?.requiredRole !== "reviewer") {
+      output.push(`a node that cannot claim because of its role range recorded ${JSON.stringify(roleReason)} — the console cannot tell this apart from a model mismatch, and the person has no way to find out`);
+    }
+    // 换成角色匹配、模型不匹配：必须报出另一种原因，而不是同一句。
+    missState.agentTaskContracts[0].roleId = "orchestrator";
+    missState.agentTaskContracts[0].model = {providerClass: "anthropic"};
+    claimNextDispatch(missState, missNode, {runtimeDir: join(root, ".runtime"), claimTtlSeconds: 300});
+    const modelReason = (missNode.lastClaimMiss?.reasons || [])[0];
+    if (modelReason?.reason !== "model_not_runnable_on_node") {
+      output.push(`a node that cannot claim because the model is unavailable recorded ${JSON.stringify(modelReason)} — indistinguishable from the role case`);
+    }
+    // "领到之后必须清掉旧诊断"这条没有在这里断言：构造一个能通过 buildDispatchPackage 的完整派发包
+    // （产出目标、技能集、内容包……）会让这个探针变成另一个东西。它由 validate-specs 的接线断言覆盖，
+    // 那条钉的是"找到派发之后紧接着就 delete"。说明白它是接线检查，不假装它是行为验证。
+  }
+
   // blocked 派发是唯一"进得去出不来"的：不在活跃执行的排除集里 → 工作项被判为仍在执行、永不重派，
   // 同时阻塞关闭门；而界面上那个「恢复」按钮取的 dispatchId 刚被清空、必定 409。
   {

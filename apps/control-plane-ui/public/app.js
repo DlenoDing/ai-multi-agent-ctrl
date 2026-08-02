@@ -119,6 +119,23 @@ const PROJECT_MENU_TAIL = [
 // 否则计数会变成一个人永远清不掉的红点。
 // 心跳有多旧要一眼看得出来。控制面把节点扫下线要等超时（默认 15 分钟），在那之前它照旧显示"在线" ——
 // 而人此刻正想知道的就是"它是不是已经没了"。这里只做客户端提示，不改判定：真正的下线由服务端对账决定。
+// "在线但一直不领活"是最容易让人干瞪眼的一种：节点绿着、派发排着，两种原因（角色不匹配 /
+// 模型不可用）在界面上长得一模一样。控制面在筛的时候就知道答案，这里把它说出来。
+function claimMissHint(node) {
+  const miss = node.lastClaimMiss;
+  if (!miss || !miss.queuedCount) return "";
+  const lines = (miss.reasons || []).slice(0, 3).map((item) => {
+    if (item.reason === "role_not_allowed_on_node") {
+      return `需要角色 ${esc(t(item.requiredRole) || item.requiredRole)}，本节点仅允许 ${esc((item.nodeRoles || []).map((role) => t(role) || role).join("、") || "无")}`;
+    }
+    if (item.reason === "model_not_runnable_on_node") {
+      return `需要模型 ${esc(item.requiredModel)}，本节点可用 ${esc((item.nodeProviders || []).join("、") || "无")}`;
+    }
+    return esc(t(item.reason) || item.reason);
+  });
+  return `<div class="small warn-text">⚠ 有 ${miss.queuedCount} 个排队派发接不了：${lines.join("；")}</div>`;
+}
+
 function heartbeatStaleHint(node) {
   if (!node.lastHeartbeatAt || ["revoked", "offline"].includes(node.status)) return "";
   const ageMs = Date.now() - new Date(node.lastHeartbeatAt).getTime();
@@ -2659,7 +2676,7 @@ function renderMonitor() {
     `<strong>${esc(node.nodeName || node.nodeId)}</strong><div class="small muted mono">${esc(node.nodeId)}</div>`,
     // "降级/只读"此前不说原因：缺哪几项自检只进网关事件负载，而那条流没有任何界面。
     // 人看到一个黄色徽标，然后无从下手。
-    `${badge(node.status)}${(node.selfCheckMissing || []).length
+    `${badge(node.status)}${claimMissHint(node)}${(node.selfCheckMissing || []).length
       ? `<div class="small warn-text">自检未通过：${(node.selfCheckMissing || []).map((item) => esc(t(item))).join("、")}</div>` : ""}`,
     badge(node.admission),
     // 心跳时间戳原先只是一个时间：人得自己算它有多旧，而"节点其实已经死了"正是最该一眼看出来的。

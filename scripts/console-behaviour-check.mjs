@@ -113,6 +113,7 @@ globalThis.__probe = {
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
   heartbeatStaleHint: (node) => heartbeatStaleHint(node),
+  claimMissHint: (node) => claimMissHint(node),
   setFetch: (fn) => { globalThis.fetch = fn; },
   api: (path, options) => api(path, options)
 };
@@ -321,6 +322,29 @@ async function runErrorGuidanceCase() {
 }
 
 // 控制面把失联节点扫下线要等超时；在那之前它照旧显示"在线"，而人此刻正想知道的就是"它是不是已经没了"。
+// "在线但一直不领活"：节点绿着、派发排着，而角色不匹配与模型不可用在界面上原先长得一模一样。
+function runClaimMissCase() {
+  const probe = loadConsole(el("div"));
+  const roleMiss = probe.claimMissHint({lastClaimMiss: {queuedCount: 2, reasons: [
+    {dispatchId: "d1", reason: "role_not_allowed_on_node", requiredRole: "reviewer", nodeRoles: ["orchestrator"]}
+  ]}});
+  check("说得出是角色不匹配",
+    roleMiss.includes("reviewer") || roleMiss.includes("评审"),
+    `角色不匹配时没有说出需要哪个角色（${JSON.stringify(roleMiss.slice(0, 120))}）—— 人只能猜`);
+  const modelMiss = probe.claimMissHint({lastClaimMiss: {queuedCount: 1, reasons: [
+    {dispatchId: "d2", reason: "model_not_runnable_on_node", requiredModel: "anthropic", nodeProviders: ["openai"]}
+  ]}});
+  check("说得出是模型不可用",
+    modelMiss.includes("anthropic") && modelMiss.includes("openai"),
+    `模型不可用时没有说出需要什么、本机有什么（${JSON.stringify(modelMiss.slice(0, 120))}）`);
+  check("两种原因不再长得一样",
+    roleMiss !== modelMiss,
+    "角色不匹配与模型不可用渲染成了同一段文字 —— 人还是分不出来");
+  check("没有排队派发时不打扰",
+    probe.claimMissHint({lastClaimMiss: {queuedCount: 0, reasons: []}}) === "" && probe.claimMissHint({}) === "",
+    "没有排队派发时仍然报警 —— 一直在响的警告没人看");
+}
+
 function runHeartbeatHintCase() {
   const probe = loadConsole(el("div"));
   const fresh = probe.heartbeatStaleHint({status: "online", lastHeartbeatAt: new Date(Date.now() - 30 * 1000).toISOString()});
@@ -336,6 +360,7 @@ function runHeartbeatHintCase() {
 
 runFormRestoreCase();
 runHeartbeatHintCase();
+runClaimMissCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();

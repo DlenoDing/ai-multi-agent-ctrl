@@ -564,7 +564,16 @@ export function claimNextDispatch(state, node, options = {}) {
     if (!contract || (contract.expiresAt && new Date(contract.expiresAt).getTime() <= Date.now())) return false;
     return roleAllowed(contract.roleId, node.allowedRoles) && modelRunnable(contract.model, node.profile);
   });
-  if (!dispatch) return {dispatch: null, reason: "no_compatible_dispatch"};
+  if (!dispatch) {
+    // "在线但不领活"此前在控制台上完全不可诊断：no_compatible_dispatch 只回给 agent，不落库；
+    // 而派发需要什么角色/什么模型根本不在任何视图里（agentTaskContracts 不下发）。人看到的是一个
+    // 绿色"在线/完全准入"的节点加一条"排队中"的派发，两种原因（角色不匹配 / 模型不可用）
+    // 在界面上长得一模一样。控制面在筛的时候就知道答案，只是没把它留下来。
+    node.lastClaimMiss = summarizeClaimMiss(state, node);
+    node.updatedAt = new Date().toISOString();
+    return {dispatch: null, reason: "no_compatible_dispatch"};
+  }
+  delete node.lastClaimMiss;
   const at = new Date().toISOString();
   dispatch.status = "running";
   dispatch.assignedNodeId = node.nodeId;
@@ -1511,6 +1520,37 @@ function sanitizeAckResult(value) {
   const text = JSON.stringify(value);
   if (text.length > 10000) return {truncated: true, resultDigest: digestOf(text)};
   return JSON.parse(text);
+}
+
+// 逐条说清"这个排队中的派发为什么这个节点接不了"。只留前几条：人要的是原因，不是清单。
+function summarizeClaimMiss(state, node) {
+  const queued = (state.agentDispatches || []).filter((item) => item.status === "queued"
+    && node.projectIds.includes(item.projectId)
+    && (!item.assignedNodeId || item.assignedNodeId === node.nodeId));
+  const reasons = [];
+  for (const item of queued.slice(0, 5)) {
+    const contract = (state.agentTaskContracts || []).find((candidate) =>
+      candidate.sessionId === item.sessionId && candidate.runId === item.runId);
+    if (!contract) { reasons.push({dispatchId: item.dispatchId, reason: "task_contract_missing"}); continue; }
+    if (contract.expiresAt && new Date(contract.expiresAt).getTime() <= Date.now()) {
+      reasons.push({dispatchId: item.dispatchId, reason: "task_contract_expired"});
+      continue;
+    }
+    if (!roleAllowed(contract.roleId, node.allowedRoles)) {
+      reasons.push({dispatchId: item.dispatchId, reason: "role_not_allowed_on_node",
+        requiredRole: contract.roleId, nodeRoles: node.allowedRoles});
+      continue;
+    }
+    if (!modelRunnable(contract.model, node.profile)) {
+      reasons.push({dispatchId: item.dispatchId, reason: "model_not_runnable_on_node",
+        requiredModel: contract.model?.providerClass || contract.model?.alias || contract.model?.model || "unknown",
+        nodeProviders: [...new Set((node.profile?.models || []).filter((m) => m.available !== false)
+          .map((m) => m.providerClass || m.provider).filter(Boolean))]});
+      continue;
+    }
+    reasons.push({dispatchId: item.dispatchId, reason: "unknown"});
+  }
+  return {at: new Date().toISOString(), queuedCount: queued.length, reasons};
 }
 
 function roleAllowed(role, allowedRoles) {
