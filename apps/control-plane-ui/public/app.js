@@ -102,6 +102,9 @@ let agentViewMode = "table";
 
 let execScope = {type: "", id: ""};
 let execEvents = [];
+// 事件流是客户端的滚动窗口（只留最近 300 条）。丢弃发生过之后，页脚再报"共 N 条"就等于说
+// "总共只发生过这些"，而人正是在这张表上排查"那一步到底做了什么"。丢过就改口径。
+let execEventsDropped = false;
 let execCursor = 0;
 let execTimer = null;
 
@@ -545,8 +548,11 @@ function table(headers, bodyRows, options = {}) {
 }
 
 // 截断提示：数据超过展示上限时给出中性文案（不区分前/最新，避免与实际排序不符）
-function moreText(total, shown) {
-  return total > shown ? `共 ${total} 条，当前展示 ${shown} 条` : "";
+// total 来自 state 里的数组，而那个数组是视图按 limit 截过的 —— 直接写"共 200 条"是在报一个
+// 被截出来的数字。传 field 时带上 +，口径与待办面板、菜单红点一致。
+function moreText(total, shown, field) {
+  const suffix = field === true ? "+" : (field ? countSuffix(field) : "");
+  return total > shown ? `共 ${total}${suffix} 条，当前展示 ${shown} 条` : "";
 }
 
 const filterState = {};
@@ -1068,11 +1074,15 @@ async function loadExecEvents(options = {}) {
   const waitMs = options.longPoll ? 2000 : 0;
   const result = await api(`${execEventsPath(execScope)}?afterSequence=${after}&limit=200&waitMs=${waitMs}`);
   if (options.reset) execEvents = [];
+  if (options.reset) execEventsDropped = false;
   const known = new Set(execEvents.map((event) => event.eventId));
   for (const event of result.events || []) {
     if (!known.has(event.eventId)) execEvents.push(event);
   }
-  execEvents = execEvents.slice(-300);
+  if (execEvents.length > 300) {
+    execEventsDropped = true;
+    execEvents = execEvents.slice(-300);
+  }
   execCursor = Number(result.nextCursor || execCursor || 0);
 }
 
@@ -2685,6 +2695,9 @@ function renderDirectives() {
 
 function renderMonitor() {
   const groups = projectTaskGroups();
+  // 这一页整体以"当前项目"为抬头，因此页内每张表都必须按它过滤。
+  // 此前七张表里有五张漏了，最严重的一张还挂着"关闭任务组"按钮。
+  const inScope = (item) => groups.some((taskGroup) => taskGroup.id === item.taskGroupId);
   const scopeOptions = [
     ...groups.map((taskGroup) => ({value: `taskGroup:${taskGroup.id}`, label: `任务组 · ${taskGroup.name || taskGroup.id}`}))
   ];
@@ -2749,7 +2762,8 @@ function renderMonitor() {
     `<button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${esc(dispatch.dispatchId)}">事件</button>`
   ])).join("");
 
-  const commands = (state.agentControlCommands || []).slice(0, 16).map((command) => row([
+  const commandsInScope = (state.agentControlCommands || []).filter(inScope);
+  const commands = commandsInScope.slice(0, 16).map((command) => row([
     {v: esc(command.sequence), c: "num"},
     `<span class="mono">${esc(command.nodeId)}</span>`,
     badge(command.commandType, "blue"),
@@ -2776,7 +2790,8 @@ function renderMonitor() {
     ].join(" ") : "-"
   ])).join("");
 
-  const decisions = (state.modelSelectionDecisions || []).slice(0, 10).map((decision) => row([
+  const decisionsInScope = (state.modelSelectionDecisions || []).filter(inScope);
+  const decisions = decisionsInScope.slice(0, 10).map((decision) => row([
     esc(t(decision.roleId)),
     `<span class="mono">${esc(decision.workItemId || "-")}</span>`,
     `<span class="mono">${esc(decision.selectedModel?.modelId || "-")}</span>`,
@@ -2784,14 +2799,16 @@ function renderMonitor() {
     {v: esc(modelDecisionSummaryZh(decision)), c: "text-clip"}
   ])).join("");
 
-  const placements = (state.sessionPlacementDecisions || []).slice(0, 10).map((decision) => row([
+  const placementsInScope = (state.sessionPlacementDecisions || []).filter(inScope);
+  const placements = placementsInScope.slice(0, 10).map((decision) => row([
     `<span class="mono">${esc(decision.workItemId || "-")}</span>`,
     badge(decision.placement),
     badge(decision.workerCarrierDecision?.carrier || "-"),
     badge(decision.status)
   ])).join("");
 
-  const admissions = (state.admissionDecisions || []).slice(0, 12).map((decision) => row([
+  const admissionsInScope = (state.admissionDecisions || []).filter(inScope);
+  const admissions = admissionsInScope.slice(0, 12).map((decision) => row([
     `<span class="mono">${esc(decision.workItemId || "-")}</span>`,
     badge(decision.outcome),
     badge(decision.cellClass || "-"),
@@ -2830,7 +2847,6 @@ function renderMonitor() {
   const failingTests = (state.testResults || []).filter((tr) => groups.some((taskGroup) => taskGroup.id === tr.taskGroupId) && ["failed", "error"].includes(tr.status));
   const canCloseTaskGroup = hasPerm("task_group:control"); // endpoint maps task_group_* -> task_group:control
   const canReviewGates = hasPerm("task_group:review");     // quality_gate_waive / review_plan_resolve
-  const inScope = (item) => groups.some((taskGroup) => taskGroup.id === item.taskGroupId);
   const openReviewPlans = (state.reviewPlans || []).filter((plan) => inScope(plan) && !["closed", "rejected", "superseded"].includes(plan.status)).slice(0, 8);
   const openRuleSources = (state.ruleSourceResolutions || []).filter((item) => inScope(item) && !["reference_only", "quarantined", "rejected", "superseded", "active"].includes(item.status)).slice(0, 8);
   // 同段其余四处都按 inScope 过滤，唯独这里漏了 —— 于是在项目 A 的监控页上会列出项目 B 的契约。
@@ -2843,7 +2859,11 @@ function renderMonitor() {
   const openUpgradeCandidates = (state.systemUpgradeCandidates || []).filter((item) => inScope(item) && item.status === "candidate_created").slice(0, 8);
   const canControlRules = hasPerm("task_group:control");   // rule_source_settle
   const canUpdateProject = hasPerm("project:update");      // shared_definition_resolve
-  const barriers = (state.closeBarriers || []).slice(0, 8).map((barrier) => row([
+  // 同段其余六处都按 inScope 过滤，唯独关闭门禁没有 —— 于是在项目 A 的监控页上会列出项目 B 的
+  // 门禁，并且直接给出"关闭任务组"按钮。关闭是最不可逆的一步（写 humanFinalization 且只能关一次），
+  // 在错误的项目抬头下点它，人以为关的是 A 的任务组。
+  const barriersInScope = (state.closeBarriers || []).filter(inScope);
+  const barriers = barriersInScope.slice(0, 8).map((barrier) => row([
     esc(taskGroupNameOf(barrier.taskGroupId)),
     barrier.satisfied ? customBadge("可关闭", "green") : customBadge("存在阻塞", "red"),
     {v: String((barrier.blockingObjects || []).length), c: "num"},
@@ -2863,21 +2883,21 @@ function renderMonitor() {
     panel("实时事件流", `
       <div class="stack">
         <div class="record-meta"><span>监听范围：</span><select data-select="exec-scope" aria-label="执行监听范围">${scopeOptions.map((option) => `<option value="${esc(option.value)}" ${option.value === scopeValue ? "selected" : ""}>${esc(option.label)}</option>`).join("")}</select></div>
-        ${table([{label: "序号", c: "num"}, "事件", {label: "进度", c: "num"}, "状态", {label: "摘要", c: "text-clip"}, {label: "时间", c: "nowrap"}], eventRows, {moreText: moreText(eventsShown.length, 120)})}
+        ${table([{label: "序号", c: "num"}, "事件", {label: "进度", c: "num"}, "状态", {label: "摘要", c: "text-clip"}, {label: "时间", c: "nowrap"}], eventRows, {moreText: moreText(eventsShown.length, 120, execEventsDropped)})}
       </div>
     `, {wide: true, headerSide: filterInput("按事件、摘要过滤…", "events")}),
-    panel("可复用执行载体（Worker Lane）", table(["角色", "功能", "状态", {label: "复用代数", c: "num"}, "当前会话", {label: "更新时间", c: "nowrap"}], laneRows, {moreText: moreText(lanesAll.length, 20)}), {wide: true, headerSide: filterInput("按角色、会话过滤…", "worker-lanes")}),
-    panel("工作会话", table(["会话", "角色", "工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态", "详情"], sessions, {moreText: moreText(sessionsAll.length, 20)}), {wide: true, headerSide: filterInput("按会话、工作项过滤…", "sessions")}),
-    panel("智能体派发", table(["派发", "工作项", "状态", {label: "进度", c: "num"}, "原因", "详情"], dispatches, {moreText: moreText(dispatchesAll.length, 20)}), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
-    panel("控制通道", table([{label: "序号", c: "num"}, "节点", "命令", "作用对象", "状态", {label: "更新时间", c: "nowrap"}], commands, {moreText: moreText((state.agentControlCommands || []).length, 16)}), {wide: true}),
+    panel("可复用执行载体（Worker Lane）", table(["角色", "功能", "状态", {label: "复用代数", c: "num"}, "当前会话", {label: "更新时间", c: "nowrap"}], laneRows, {moreText: moreText(lanesAll.length, 20, "workerLanes")}), {wide: true, headerSide: filterInput("按角色、会话过滤…", "worker-lanes")}),
+    panel("工作会话", table(["会话", "角色", "工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态", "详情"], sessions, {moreText: moreText(sessionsAll.length, 20, "workSessions")}), {wide: true, headerSide: filterInput("按会话、工作项过滤…", "sessions")}),
+    panel("智能体派发", table(["派发", "工作项", "状态", {label: "进度", c: "num"}, "原因", "详情"], dispatches, {moreText: moreText(dispatchesAll.length, 20, "agentDispatches")}), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
+    panel("控制通道", table([{label: "序号", c: "num"}, "节点", "命令", "作用对象", "状态", {label: "更新时间", c: "nowrap"}], commands, {moreText: moreText(commandsInScope.length, 16, "agentControlCommands")}), {wide: true}),
     panel("运行时节点", table(["节点", "状态", "准入", {label: "最近心跳", c: "nowrap"}, "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
-    panel("模型选择记录", table(["角色", "工作项", "模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText((state.modelSelectionDecisions || []).length, 10)})),
-    panel("会话放置记录", table(["工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态"], placements, {moreText: moreText((state.sessionPlacementDecisions || []).length, 10)})),
-    panel("准入决策", table(["工作项", "判定", "分类", {label: "原因", c: "text-clip"}], admissions, {moreText: moreText((state.admissionDecisions || []).length, 12)}), {wide: true}),
-    panel("检查点（Git 证据）", table(["任务组", "工作项", "提交", "推送", {label: "产出清单", c: "text-clip"}, {label: "时间", c: "nowrap"}], checkpointRows, {moreText: moreText(filterSource((state.checkpoints || []).filter((cp) => groups.some((taskGroup) => taskGroup.id === cp.taskGroupId)), "checkpoints").length, 20)}), {wide: true, headerSide: filterInput("按工作项、提交过滤…", "checkpoints")}),
+    panel("模型选择记录", table(["角色", "工作项", "模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText(decisionsInScope.length, 10, "modelSelectionDecisions")})),
+    panel("会话放置记录", table(["工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态"], placements, {moreText: moreText(placementsInScope.length, 10, "sessionPlacementDecisions")})),
+    panel("准入决策", table(["工作项", "判定", "分类", {label: "原因", c: "text-clip"}], admissions, {moreText: moreText(admissionsInScope.length, 12, "admissionDecisions")}), {wide: true}),
+    panel("检查点（Git 证据）", table(["任务组", "工作项", "提交", "推送", {label: "产出清单", c: "text-clip"}, {label: "时间", c: "nowrap"}], checkpointRows, {moreText: moreText(filterSource((state.checkpoints || []).filter((cp) => groups.some((taskGroup) => taskGroup.id === cp.taskGroupId)), "checkpoints").length, 20, "checkpoints")}), {wide: true, headerSide: filterInput("按工作项、提交过滤…", "checkpoints")}),
     (state.qualityGates || []).some((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)) ? panel("质量门禁 / 测试证据", `
       ${failingTests.length ? `<div class="notice warn-notice">有 ${failingTests.length}${countSuffix("testResults")} 项失败测试，阻塞关闭门禁（gateType 对应门禁为 failed，需修复并重提通过测试、取消对应工作项，或由你判定该门不适用后豁免）。</div>` : ""}
-      ${table(["任务组", "门禁类型", "工作项", "状态", {label: "更新时间", c: "nowrap"}], qualityGateRows, {moreText: moreText(filterSource((state.qualityGates || []).filter((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)), "quality-gates").length, 20)})}
+      ${table(["任务组", "门禁类型", "工作项", "状态", {label: "更新时间", c: "nowrap"}], qualityGateRows, {moreText: moreText(filterSource((state.qualityGates || []).filter((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId)), "quality-gates").length, 20, "qualityGates")})}
       ${canReviewGates && waivableGates.length ? `
         <div class="record" style="margin-top:8px;">
           <div class="record-title">豁免未通过的质量门</div>
@@ -2956,7 +2976,7 @@ function renderMonitor() {
         </div>` : ""}
     `, {wide: true}) : "",
     panel("关闭门禁", `
-      ${table(["任务组", "状态", {label: "阻塞对象数", c: "num"}, {label: "计算时间", c: "nowrap"}, "操作"], barriers, {moreText: moreText((state.closeBarriers || []).length, 8)})}
+      ${table(["任务组", "状态", {label: "阻塞对象数", c: "num"}, {label: "计算时间", c: "nowrap"}, "操作"], barriers, {moreText: moreText(barriersInScope.length, 8, "closeBarriers")})}
       ${(state.closeBarriers || []).filter((barrier) => !barrier.satisfied && (barrier.blockingObjects || []).length).slice(0, 8).map((barrier) => `
         <div class="record" style="margin-top:8px;">
           <div class="record-title"><strong>${esc(taskGroupNameOf(barrier.taskGroupId))}</strong> 阻塞明细</div>

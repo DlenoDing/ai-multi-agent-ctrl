@@ -120,6 +120,8 @@ globalThis.__probe = {
   renderReviewWith: (nextState) => { state = nextState; return renderReview(); },
   renderPendingPanelWith: (nextState, account) => { state = nextState; currentAccount = account; return renderPendingForMePanel(); },
   todoCountsWith: (nextState, account) => { state = nextState; currentAccount = account; return todoCountsByPage(); },
+  moreTextWith: (nextState, total, shown, field) => { state = nextState; return moreText(total, shown, field); },
+  renderMonitorWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; return renderMonitor(); },
   setFetch: (fn) => { globalThis.fetch = fn; },
   api: (path, options) => api(path, options)
 };
@@ -423,10 +425,78 @@ function runPendingTruncationCase() {
     badgeCapped.review?.capped === true && badgeExact.review?.capped === false,
     `菜单红点没有跟随面板改口径（准确=${JSON.stringify(badgeExact.review)} 截断=${JSON.stringify(badgeCapped.review)}）—— 面板写 2+、徽标写 2`);
 
+  // 表格页脚的"共 N 条"同样取自被视图截过的数组；事件流则是客户端只留最近 300 条的滚动窗口。
+  // 两者都会把一个被截出来的数字说成总数，而人正是据此判断"是不是就这些了"。
+  const plain = probe.moreTextWith({}, 200, 20);
+  check("没被截断时页脚仍报准确数",
+    plain.includes("共 200 条"),
+    `没有截断也把页脚总数说成了约数（${JSON.stringify(plain)}）`);
+  const viewCapped = probe.moreTextWith({truncatedCollections: ["workSessions"]}, 200, 20, "workSessions");
+  check("视图截断时页脚带 +",
+    viewCapped.includes("共 200+ 条"),
+    `集合被视图截断了，表格页脚仍把截断后的长度报成总数（${JSON.stringify(viewCapped)}）`);
+  const rolled = probe.moreTextWith({}, 300, 120, true);
+  check("事件流丢过旧事件时页脚带 +",
+    rolled.includes("共 300+ 条"),
+    `滚动窗口丢弃过旧事件，页脚仍说"共 300 条" —— 人会读成总共只发生过这些（${JSON.stringify(rolled)}）`);
+
   const noPerm = probe.renderPendingPanelWith(stateWith(null), {accountId: "acct_b", accountType: "user_account", permissions: []});
   check("无权处置的类别不进统计",
     noPerm.includes("当前没有需要你处置的项"),
     "把这个人无权处置的项也算进了待办 —— 红点永远清不掉，人点进去什么也做不了");
+}
+
+// 关闭任务组是最不可逆的一步（写定稿归属且只能关一次）。监控页按当前项目呈现，若关闭门禁没有
+// 按项目过滤，人会在项目 A 的抬头下看到并点掉项目 B 的任务组。
+function runCloseBarrierScopeCase() {
+  const probe = loadConsole(el("div"));
+  const admin = {accountId: "acct_a", accountType: "org_admin"};
+  const monitorState = {
+    taskGroups: [
+      {id: "tg_a", projectId: "p_a", name: "甲组", status: "active"},
+      {id: "tg_b", projectId: "p_b", name: "乙组", status: "active"}
+    ],
+    closeBarriers: [
+      {taskGroupId: "tg_a", satisfied: true, blockingObjects: [], computedAt: "2026-08-02T00:00:00Z"},
+      {taskGroupId: "tg_b", satisfied: true, blockingObjects: [], computedAt: "2026-08-02T00:00:00Z"}
+    ],
+    // 这一页整体以"当前项目"为抬头，页内每张表都必须按它过滤。逐张放入一条属于别的项目的记录：
+    // 只要有一张漏了过滤，别的项目的运行时痕迹就会挂在本项目的抬头下。
+    agentControlCommands: [
+      {sequence: 1, nodeId: "n1", taskGroupId: "tg_a", commandType: "pause_dispatch", status: "acked", dispatchId: "d_own"},
+      {sequence: 2, nodeId: "n1", taskGroupId: "tg_b", commandType: "pause_dispatch", status: "acked", dispatchId: "d_other"}
+    ],
+    modelSelectionDecisions: [
+      {roleId: "r", taskGroupId: "tg_a", workItemId: "wi_own", selectedModel: {modelId: "m1"}, status: "active"},
+      {roleId: "r", taskGroupId: "tg_b", workItemId: "wi_other", selectedModel: {modelId: "m1"}, status: "active"}
+    ],
+    sessionPlacementDecisions: [
+      {taskGroupId: "tg_a", workItemId: "wi_own_p", placement: "local", status: "active"},
+      {taskGroupId: "tg_b", workItemId: "wi_other_p", placement: "local", status: "active"}
+    ],
+    admissionDecisions: [
+      {taskGroupId: "tg_a", workItemId: "wi_own_a", outcome: "admitted"},
+      {taskGroupId: "tg_b", workItemId: "wi_other_a", outcome: "admitted"}
+    ],
+    agentRuntimeNodes: [], qualityGates: [], testResults: [], checkpoints: []
+  };
+  const html = probe.renderMonitorWith(monitorState, admin, "p_a");
+  for (const [label, own, other] of [
+    ["控制通道", "d_own", "d_other"],
+    ["模型选择记录", "wi_own", "wi_other"],
+    ["会话放置记录", "wi_own_p", "wi_other_p"],
+    ["准入决策", "wi_own_a", "wi_other_a"]
+  ]) {
+    check(`${label}只列当前项目`,
+      html.includes(own) && !html.includes(`>${other}<`),
+      `${label}列出了别的项目的记录 —— 这一页以当前项目为抬头，人会把它读成本项目的运行痕迹`);
+  }
+  check("别的项目的关闭门禁不出现在本项目监控页",
+    html.includes("甲组") && !html.includes("乙组"),
+    "监控页列出了当前项目之外的任务组关闭门禁 —— 人会在错误的项目抬头下按掉别人的关闭按钮");
+  check("别的项目的任务组不给关闭按钮",
+    !html.includes('data-task="tg_b"'),
+    "给出了关闭当前项目之外任务组的按钮 —— 关闭不可逆，且会写下定稿归属");
 }
 
 function runRuleLengthCase() {
@@ -521,6 +591,7 @@ runRuleLengthCase();
 runEvidenceRefsCase();
 runReviewAxisCase();
 runPendingTruncationCase();
+runCloseBarrierScopeCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();
