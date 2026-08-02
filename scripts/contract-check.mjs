@@ -2329,6 +2329,28 @@ function verifyHumanAndOrganizationContracts(output) {
     output.push("room_send consumed a sequence number for a rejected message — the room sequence now has a permanent hole no reader can detect");
   }
 
+  // 任务组终结后它的房间必须停止收消息：关闭门已经过了，此后的写入不受任何门约束，却照样长在
+  // 中央 state 里。判据放在核心函数上，两条入口都得到同样的行为。
+  const settledTg = (state.taskGroups || [])[0];
+  if (!settledTg) {
+    output.push("no task group available to assert that a settled group's room stops accepting messages");
+  } else {
+    const settledStatus = settledTg.status;
+    settledTg.status = "closed";
+    const roomAfterClose = roomSend(state, {roomId: `room_${settledTg.id}`, idempotencyKey: "room-settled-1",
+      payload: {text: "still talking"}, [ROOM_SENDER_KEY]: "agent_node:node_ct"});
+    if (roomAfterClose.ok !== false || roomAfterClose.error !== "room_task_group_settled") {
+      output.push("room_send still accepted a message for a closed task group (an ungated write path that outlives the close barrier)");
+    }
+    settledTg.status = settledStatus;
+    // 反向：没终结的任务组必须照常能发，否则这道判据就是把房间整个关死了。
+    const roomBeforeClose = roomSend(state, {roomId: `room_${settledTg.id}`, idempotencyKey: "room-settled-2",
+      payload: {text: "still working"}, [ROOM_SENDER_KEY]: "agent_node:node_ct"});
+    if (roomBeforeClose.ok === false) {
+      output.push(`room_send refused a message for a live task group (${roomBeforeClose.error}) — the settled-group check became a blanket block`);
+    }
+  }
+
   const dispatch = (state.agentDispatches || []).find((item) => item.status === "queued" || item.status === "running");
   if (!dispatch) {
     output.push("No dispatch available to attach a human confirmation contract");

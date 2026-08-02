@@ -3736,6 +3736,7 @@ async function handleApi(req, res) {
       roomSendArgs[ROOM_SENDER_KEY] = roomSendAccount ? `account:${roomSendAccount.accountId}`
         : roomSendNode ? `agent_node:${roomSendNode.nodeId}` : "unattributed";
       const result = roomSend(state, roomSendArgs);
+      if (result.error === "room_task_group_settled") return json(res, 409, {error: result.error, taskGroupStatus: result.taskGroupStatus});
       if (result.ok === false) return json(res, 413, {error: result.error, maxBytes: result.maxBytes});
       audit(state, "room-broker", "room_send", `Room:${roomId}`);
       finishGuardedWrite(state, guard, 201, result);

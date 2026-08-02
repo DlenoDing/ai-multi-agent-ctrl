@@ -1873,7 +1873,11 @@ function roomJoin(state, args) {
     joinedAt: at,
     updatedAt: at
   };
-  state.roomParticipants = [participant, ...state.roomParticipants.filter((item) => item.participantId !== participant.participantId)];
+  // 与同文件里 roomAcks 的 5000 上限同因：participantId 缺省时每次 join 都生成新 id，所以这张表
+  // 是按调用次数增长的。参与者名单不参与任何授权判定（roomSend/roomWait 从不查询它），也没有任何
+  // 门在读它，因此按最近使用截断不会摘掉任何门依赖的东西。
+  state.roomParticipants = [participant, ...state.roomParticipants.filter((item) => item.participantId !== participant.participantId)]
+    .slice(0, Math.max(100, Number(process.env.AIMAC_ROOM_PARTICIPANTS_MAX || 5000)));
   return {participant};
 }
 

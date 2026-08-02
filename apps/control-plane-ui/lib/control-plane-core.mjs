@@ -5742,6 +5742,26 @@ function roomMessageBytes(message) {
   try { return Buffer.byteLength(JSON.stringify(message ?? null) || "", "utf8"); } catch { return roomMessageMaxBytes(); }
 }
 
+// roomSequenceByRoom 原先只增不减：roomId 由调用方控制、房间是隐式创建的（没有房间注册表），
+// 所以这张表的键可以被无限扩张，而且永久留在中央 state 里。
+//
+// 但淘汰键有个真实危险：序号是靠它保证单调的。把一个房间的键删掉，下一条消息又从 1 开始，
+// 而持着 cursor=500 的读者会永远收不到新消息 —— 它只按 sequence > cursor 推进。所以只淘汰
+// 【已经没有任何留存消息】的房间：消息全部过了 7 天 TTL 才会走到这一步，那时不可能还有读者
+// 挂在它的游标上。仍有留存消息的房间一律不动，序号的单调性由 retainedMax 继续兜住。
+function pruneRoomSequenceKeys(state) {
+  const maxRooms = Math.max(100, Number(process.env.AIMAC_ROOM_SEQUENCE_MAX_ROOMS || 5000));
+  const keys = Object.keys(state.roomSequenceByRoom || {});
+  if (keys.length <= maxRooms) return;
+  const roomsWithMessages = new Set((state.roomMessages || []).map((item) => item.roomId));
+  // 插入序即最近使用序（roomSend 每次写入前会重新插入），从最旧的开始淘汰。
+  for (const roomId of keys) {
+    if (Object.keys(state.roomSequenceByRoom).length <= maxRooms) break;
+    if (roomsWithMessages.has(roomId)) continue;
+    delete state.roomSequenceByRoom[roomId];
+  }
+}
+
 function pruneRoomMessages(state) {
   const maxTotal = Math.max(1000, Number(process.env.AIMAC_ROOM_MESSAGES_MAX_TOTAL || 10000));
   const maxPerRoom = Math.max(100, Number(process.env.AIMAC_ROOM_MESSAGES_MAX_PER_ROOM || 1000));
@@ -5782,6 +5802,13 @@ export function roomSend(state, args) {
     const existing = state.roomMessages.find((item) => item.roomId === roomId && item.idempotencyKey === idempotencyKey);
     if (existing) return {message: existing, duplicate: true};
   }
+  // 任务组已终结，它的房间就不该再收消息：关闭门已经过了，协作已经结束，此后的写入不受任何门约束，
+  // 却照样长在中央 state 里、照样冲刷审计环。放在核心函数里而不是某一条路由上 —— 只锁一道门是本仓
+  // 反复出现的形态。房间对应的任务组不存在时不拦（例如控制面自用的房间），那条路已由授权侧兜住。
+  const roomTaskGroup = (state.taskGroups || []).find((item) => item.id === roomId.replace(/^room_/, ""));
+  if (roomTaskGroup && ["closed", "aborted"].includes(roomTaskGroup.status)) {
+    return {ok: false, error: "room_task_group_settled", taskGroupStatus: roomTaskGroup.status};
+  }
   const retainedMax = Math.max(0, ...state.roomMessages.filter((item) => item.roomId === roomId).map((item) => Number(item.sequence || 0)));
   const nextSequence = Math.max(Number(state.roomSequenceByRoom[roomId] || 0), retainedMax) + 1;
   // 序号在消息确定要落库之后才消费。若先占号再因超限拒绝，房间序列上就留下一个永久空洞，
@@ -5809,9 +5836,12 @@ export function roomSend(state, args) {
   if (roomMessageBytes(message) > roomMessageMaxBytes()) {
     return {ok: false, error: "room_message_payload_too_large", maxBytes: roomMessageMaxBytes()};
   }
+  // 重新插入（先 delete 再 set）让键的插入序变成最近使用序，供下面按 LRU 淘汰。
+  delete state.roomSequenceByRoom[roomId];
   state.roomSequenceByRoom[roomId] = nextSequence;
   state.roomMessages.push(message);
   pruneRoomMessages(state);
+  pruneRoomSequenceKeys(state);
   // room_send persists a RoomMessage (an internal write, no external side effect) — run it
   // through the real command bus lifecycle so it reaches a terminal `succeeded` command
   // without emitting a CommandEffect.
