@@ -4589,7 +4589,19 @@ export function decideHumanConfirmation(state, requestId, decision = {}, options
   ensureRuntimeCollections(state);
   const request = (state.humanConfirmationRequests || []).find((item) => item.requestId === requestId);
   if (!request) throw Object.assign(new Error("human_confirmation_not_found"), {status: 404});
-  if (request.status !== "pending") throw Object.assign(new Error("human_confirmation_not_pending"), {status: 409});
+  if (request.status !== "pending") {
+    // 两个人同时打开同一张确认单，各自点定稿：CAS 只让一个写成，另一个先看到"状态写入冲突，请重试"，
+    // 重试后变成"已不在待处理状态" —— 他【始终不知道是谁、定了什么】，只能自己去翻记录。
+    // 这是核心决策闸门上最容易并发的一步，输的那一方需要的正是这几个字段。
+    throw Object.assign(new Error("human_confirmation_not_pending"), {
+      status: 409,
+      currentStatus: request.status,
+      decidedBy: request.decision?.decidedBy || null,
+      decidedAt: request.decision?.decidedAt || null,
+      decidedAction: request.decision?.action || null,
+      decidedOption: request.decision?.selectedLabel || request.decision?.selectedOptionId || null
+    });
+  }
   const selectedOptionId = String(decision.selectedOptionId || "");
   const option = (request.options || []).find((item) => item.optionId === selectedOptionId);
   if (!option) throw Object.assign(new Error("human_confirmation_option_invalid"), {status: 400});

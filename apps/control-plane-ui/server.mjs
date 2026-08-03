@@ -4477,7 +4477,16 @@ async function handleApi(req, res) {
     try {
       decided = decideHumanConfirmation(state, humanConfirmationDecideMatch[1], body, {actor: guard.actor});
     } catch (error) {
-      return json(res, error.status || 500, {error: error.message});
+      // 这条路由原先只回传 error.message，把核心函数特意附带的字段全丢了：轮次过期时人拿不到
+      // 当前轮次，被别人抢先定稿时拿不到"是谁、定了什么"。这些字段正是这两种冲突下人唯一需要的东西。
+      return json(res, error.status || 500, {error: error.message,
+        ...(error.currentRound !== undefined ? {currentRound: error.currentRound} : {}),
+        ...(error.currentStatus !== undefined ? {currentStatus: error.currentStatus} : {}),
+        ...(error.decidedBy ? {decidedBy: error.decidedBy} : {}),
+        ...(error.decidedAt ? {decidedAt: error.decidedAt} : {}),
+        ...(error.decidedAction ? {decidedAction: error.decidedAction} : {}),
+        ...(error.decidedOption ? {decidedOption: error.decidedOption} : {}),
+        ...(error.subjectRef ? {subjectRef: error.subjectRef} : {})});
     }
     audit(state, guard.actor, "human_confirmation_decide", `HumanConfirmationRequest:${decided.requestId}`);
     finishGuardedWrite(state, guard, 200, decided);

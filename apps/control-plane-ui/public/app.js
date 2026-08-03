@@ -674,6 +674,15 @@ async function api(path, options = {}) {
         hint = `（需要 ${payload.requiredPermission}${scope ? ` @ ${scope}` : ""}${String(payload.requiredPermission).startsWith("task_group:") ? "；这类权限只能在「项目成员授权」里按角色授予，写在账号上的直接权限不生效" : ""}）`;
       }
       if (Array.isArray(payload.permissions) && payload.permissions.length) hint += `（涉及：${payload.permissions.join("、")}）`;
+      // 核心决策闸门上最容易并发的一步：两个人同时打开同一张确认单各自点定稿。CAS 只让一个写成，
+      // 输的那一方原先只看到"该确认单已不在待处理状态"，不知道是谁、定了什么，只能自己去翻记录。
+      if (payload.decidedBy || payload.decidedAction) {
+        const who = payload.decidedBy ? accountName(payload.decidedBy) : "另一个人";
+        const what = payload.decidedAction === "finalize" ? "定稿" : payload.decidedAction === "reject" ? "打回返工" : payload.decidedAction === "revise" ? "提交了修改意见" : "处理";
+        hint += `（${esc(who)} 已在 ${fmtTime(payload.decidedAt)} ${what}${payload.decidedOption ? `：${esc(payload.decidedOption)}` : ""}；刷新即可看到结果，重复提交不会生效）`;
+      } else if (payload.currentRound !== undefined) {
+        hint += `（当前轮次已是第 ${esc(payload.currentRound)} 轮，你看到的是更早的一轮 —— AI 在你点击前修订过候选方案，请刷新后重新查看再决定）`;
+      }
       // 服务端在不少错误里写了给人看的说明（message / reason / required），前端原先只取 error 一个字段，
       // 把它们全丢了 —— 于是一条本来说清了"为什么、接下来怎么办"的 409，到人眼前只剩一串英文枚举。
       // 典型：停用一个还没接受邀请的成员 → 服务端解释了原因，人看到的是 `409 org_member_invitation_pending`。

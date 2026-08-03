@@ -1172,6 +1172,33 @@ function verifyHumanAndOrganizationContracts(output) {
       decisionType: "work_item_verification", subjectRef: `WorkItem:${snapWork.id}`,
       question: {summary: "验收确认"}, options: [{optionId: "accept", label: "通过"}]
     });
+    // 核心决策闸门上最容易并发的一步：两个人同时打开同一张确认单各自点定稿。CAS 只让一个写成
+    // （那一层由状态存储的版本冲突覆盖），输的那一方需要知道"是谁、定了什么"，否则只看到
+    // "已不在待处理状态"，只能自己去翻记录。这里验的正是冲突时带不带出那几个字段。
+    {
+      const raceState = structuredClone(snapState);
+      const raceCard = createHumanConfirmationRequest(raceState, {
+        projectId: snapTg.projectId, taskGroupId: snapTg.id, workItemId: snapWork.id,
+        decisionType: "work_item_verification", subjectRef: `WorkItem:${snapWork.id}`,
+        question: {summary: "并发定稿探针"}, options: [{optionId: "accept", label: "通过"}]
+      });
+      // 直接构造"已被别人定稿"的前态：要验的是冲突响应的内容，不是状态机迁移本身。
+      const raced = raceState.humanConfirmationRequests.find((item) => item.requestId === raceCard.requestId);
+      raced.status = "answered";
+      raced.decision = {selectedOptionId: "accept", selectedLabel: "通过", action: "finalize",
+        decidedBy: "acct_first_writer", decidedAt: "2026-08-03T01:00:00Z"};
+      let raceError = null;
+      try {
+        decideHumanConfirmation(raceState, raceCard.requestId,
+          {action: "finalize", selectedOptionId: "accept", expectedRound: raceCard.round}, {actor: "acct_second_writer"});
+      } catch (error) { raceError = error; }
+      if (!raceError) {
+        output.push("人工闸门: 已被定稿的确认单竟然可以再定稿一次");
+      } else if (raceError.decidedBy !== "acct_first_writer" || !raceError.decidedAt || raceError.decidedAction !== "finalize") {
+        output.push("人工闸门: 被抢先定稿时没有带出是谁、何时、定了什么 —— 输的那一方只看到「已不在待处理状态」，只能自己去翻记录");
+      }
+    }
+
     if (!snapCard?.subjectContentDigest) {
       output.push("人工闸门: 验收卡片没有内容摘要 —— 定稿时的 TOCTOU 校验对最核心的决策形同不存在");
     }
