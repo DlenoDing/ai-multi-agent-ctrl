@@ -2321,6 +2321,14 @@ export function approvalResolve(state, args) {
   if (["approved", "rejected", "expired", "cancelled"].includes(request.status)) return {approvalRequest: request, alreadyResolved: true};
   const at = new Date().toISOString();
   const resolver = args.resolvedBy || "policy-engine";
+  // 既不给 status 也不给 allowed 时原先默认【批准】—— 治理审批上"没说"绝不能变成"批准"：
+  // 这是高风险动作的闸门（法定人数、禁止自批都建立在它之上），而一次漏填参数就能放行。
+  // 与 test_result_submit 的"缺省即通过"同形，同样按命令接口处理：拒绝并报出可选值。
+  if (!["approved", "rejected", "cancelled"].includes(args.status) && args.allowed === undefined) {
+    return {ok: false, error: "approval_decision_required",
+      required: ["approved", "rejected", "cancelled"],
+      message: "处理审批必须显式给出 status（approved/rejected/cancelled）或 allowed —— 缺省不会被当作批准"};
+  }
   const decision = ["approved", "rejected", "cancelled"].includes(args.status)
     ? args.status
     : (args.allowed === false ? "rejected" : "approved");

@@ -166,6 +166,7 @@ for (const tool of toolDefs) {
 verifyRuntimeJsonConflict(errors);
 verifySeedRecordsMatchTheirDeclaredSchemas(errors);
 verifyTestResultStatusRequired(errors);
+verifyApprovalDecisionRequired(errors);
 verifyWorkStatusEnumConvergence(errors);
 verifyTransitionEngine(errors);
 verifyCommandBusLifecycle(errors);
@@ -3897,6 +3898,26 @@ function verifyTestResultStatusRequired(output) {
   const ok = testResultSubmit(state, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", status: "failed", summary: "显式失败"});
   if (!ok?.qualityGate || ok.qualityGate.status !== "failed") {
     output.push("质量门: 显式给出 failed 时没有产出失败的质量门 —— 拒绝缺省不能连正常路径一起挡掉");
+  }
+}
+
+// 治理审批是高风险动作的闸门（法定人数、禁止自批都建立在它之上），而原先既不给 status
+// 也不给 allowed 时默认【批准】—— 一次漏填参数就能放行。与测试结果"缺省即通过"同形。
+function verifyApprovalDecisionRequired(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  state.approvalRequests = [{approvalId: "appr_default_probe", status: "requested", riskClass: "low",
+    proposedBy: "acct_a", quorum: 1, approvals: []}];
+  const missing = approvalResolve(state, {approvalId: "appr_default_probe", resolvedBy: "acct_b"});
+  if (missing?.ok !== false || missing.error !== "approval_decision_required") {
+    output.push("治理审批: 不给结论的调用没有被拒 —— 缺省被当成了批准，而法定人数与禁止自批都建立在这道闸门上");
+  }
+  if (state.approvalRequests[0].status !== "requested") {
+    output.push("治理审批: 被拒的调用仍然改动了审批状态 —— 拒绝必须是不落库的");
+  }
+  const rejected = approvalResolve(state, {approvalId: "appr_default_probe", status: "rejected", resolvedBy: "acct_b"});
+  if (state.approvalRequests[0].status !== "rejected" || rejected?.ok === false) {
+    output.push("治理审批: 显式给出 rejected 时没有正常处理 —— 拒绝缺省不能连正常路径一起挡掉");
   }
 }
 
