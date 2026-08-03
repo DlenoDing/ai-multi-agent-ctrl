@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.dev/ai-multi-agent-ctrl/spec/quality-gate.schema.json",
+  "title": "QualityGate",
+  "description": "质量门的判定记录。它是人在验收时看到「全通过」的唯一依据，且完全由执行方自报的测试结果派生，因此 testResultRef 必填 —— 一道没有来源的门等于没有门。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "gateId",
+    "gateType",
+    "projectId",
+    "taskGroupId",
+    "status",
+    "testResultRef",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "quality-gate/v1"
+    },
+    "gateId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "gateType": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workItemId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "passed",
+        "failed",
+        "waived"
+      ]
+    },
+    "testResultRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "waivedBy": {
+      "type": "string"
+    },
+    "waiveJustification": {
+      "type": "string"
+    },
+    "waivedAt": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    },
+    "updatedAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    }
+  }
+}

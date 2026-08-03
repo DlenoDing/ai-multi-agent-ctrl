@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.dev/ai-multi-agent-ctrl/spec/command-effect.schema.json",
+  "title": "CommandEffect",
+  "description": "命令的外部副作用记录。fencingToken 与 externalOperationId 是「同一个副作用不会被重复施加」的依据，beforeDigest/afterDigest 是它真的发生过的证据 —— 少了任一项，回滚与对账都无从判断。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "effectId",
+    "commandId",
+    "projectId",
+    "status",
+    "externalOperationId",
+    "fencingToken",
+    "beforeDigest",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "command-effect/v1"
+    },
+    "effectId": {
+      "type": "string",
+      "pattern": "^cef_[a-z0-9_]+$"
+    },
+    "commandId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "prepared",
+        "applied",
+        "verifying",
+        "verified",
+        "rollback_required",
+        "rolled_back",
+        "abandoned"
+      ]
+    },
+    "externalOperationId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fencingToken": {
+      "type": "string",
+      "minLength": 1
+    },
+    "beforeDigest": {
+      "type": "string",
+      "minLength": 1
+    },
+    "afterDigest": {
+      "type": "string"
+    },
+    "resultRef": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    },
+    "updatedAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    }
+  }
+}

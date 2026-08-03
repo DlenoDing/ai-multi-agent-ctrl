@@ -96,6 +96,14 @@
     "organizationId": {
       "type": "string",
       "minLength": 1
+    },
+    "registrationReplay": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true,
+      "description": "一次性加入令牌的注册重放记录（nodeId/at/result/idempotencyKey）。安装脚本重试时按它原样回放上次结果，而不是再消耗一次令牌。"
     }
   }
 }

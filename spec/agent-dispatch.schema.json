@@ -33,44 +33,192 @@
     "updatedAt"
   ],
   "properties": {
-    "schemaVersion": {"type": "string", "const": "agent-dispatch/v1"},
-    "dispatchId": {"type": "string", "minLength": 1},
-    "projectId": {"type": "string", "minLength": 1},
-    "taskGroupId": {"type": "string", "minLength": 1},
-    "workItemId": {"type": "string", "minLength": 1},
-    "sessionId": {"type": "string", "minLength": 1},
-    "runId": {"type": "string", "minLength": 1},
-    "status": {"type": "string", "enum": ["queued", "running", "blocked", "completed", "failed", "cancelled"]},
-    "deliveryMode": {"type": "string", "enum": ["new_session", "subagent"]},
-    "model": {"type": "string", "minLength": 1},
-    "reasoning": {"type": "string", "minLength": 1},
-    "modelDecision": {"type": "string", "minLength": 1, "maxLength": 240},
-    "modelSelectionDecisionRef": {"type": "string", "minLength": 1},
-    "language": {"type": "string", "minLength": 1},
-    "languagePolicyDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
-    "taskContractDigest": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
-    "taskContractRef": {"type": "string", "minLength": 1},
-    "repositoryOutputTargetRef": {"type": "string", "minLength": 1},
-    "roleId": {"type": "string", "minLength": 1},
-    "skillWorksetId": {"type": "string", "pattern": "^skillset_[a-fA-F0-9]{24}$"},
-    "requiredCredentialEnvNames": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-    "workerKind": {"type": "string", "enum": ["model_agent_runtime", "local_deterministic_worker"]},
-    "attempts": {"type": "integer", "minimum": 0},
-    "checkpointRequired": {"type": "boolean", "const": true},
-    "blockedReason": {"type": "string"},
-    "failureReason": {"type": "string"},
-    "checkpointRef": {"type": "string"},
-    "assignedNodeId": {"type": "string", "minLength": 1},
-    "claimedAt": {"type": "string", "format": "date-time"},
-    "claimExpiresAt": {"type": "string", "format": "date-time"},
-    "controlCommandRef": {"type": "string", "minLength": 1},
-    "revocationPending": {"type": "boolean"},
-    "controlRequestedAt": {"type": "string", "format": "date-time"},
-    "progressPercent": {"type": "integer", "minimum": 0, "maximum": 100},
-    "lastExecutionEventRef": {"type": "string", "minLength": 1},
-    "lastExecutionEventAt": {"type": "string", "format": "date-time"},
-    "createdAt": {"type": "string", "format": "date-time"},
-    "updatedAt": {"type": "string", "format": "date-time"},
-    "completedAt": {"type": "string", "format": "date-time"}
+    "schemaVersion": {
+      "type": "string",
+      "const": "agent-dispatch/v1"
+    },
+    "dispatchId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workItemId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "blocked",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "deliveryMode": {
+      "type": "string",
+      "enum": [
+        "new_session",
+        "subagent"
+      ]
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reasoning": {
+      "type": "string",
+      "minLength": 1
+    },
+    "modelDecision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
+    "modelSelectionDecisionRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "language": {
+      "type": "string",
+      "minLength": 1
+    },
+    "languagePolicyDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "taskContractDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "taskContractRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repositoryOutputTargetRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roleId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "skillWorksetId": {
+      "type": "string",
+      "pattern": "^skillset_[a-fA-F0-9]{24}$"
+    },
+    "requiredCredentialEnvNames": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "workerKind": {
+      "type": "string",
+      "enum": [
+        "model_agent_runtime",
+        "local_deterministic_worker"
+      ]
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "checkpointRequired": {
+      "type": "boolean",
+      "const": true
+    },
+    "blockedReason": {
+      "type": "string"
+    },
+    "failureReason": {
+      "type": "string"
+    },
+    "checkpointRef": {
+      "type": "string"
+    },
+    "assignedNodeId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "claimedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "claimExpiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "controlCommandRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revocationPending": {
+      "type": "boolean"
+    },
+    "controlRequestedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "progressPercent": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "lastExecutionEventRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lastExecutionEventAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "claimTtlSeconds": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 21600,
+      "description": "本次 claim 的有效期（秒，服务端夹到 60..21600）。过期后 recycleExpiredClaims 会把派发收回重排，因此它决定「节点失联多久算掉线」。"
+    },
+    "executorTokenDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$",
+      "description": "执行器令牌的摘要，绑定 dispatchId 与 claimEpoch。只存摘要不存令牌；claimEpoch 变化后旧令牌自动失效，这是「上一任持有者不能再写」的围栏。"
+    },
+    "claimEpoch": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "每次被 claim 递增的纪元号。checkpoint/fail 都按它比对：上一任持有者带着旧 epoch 回来写，会被当场拒绝 —— 这是派发被重排后「两个节点同时写同一个工作项」的围栏。"
+    }
   }
 }

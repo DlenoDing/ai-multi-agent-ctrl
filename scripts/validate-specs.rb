@@ -429,6 +429,9 @@ mcp_register_source = File.read(File.join(ROOT, "scripts/register-mcp-client.mjs
 skill_sync_source = File.read(File.join(ROOT, "scripts/sync-agent-skills.mjs"))
 run_with_env_source = File.read(File.join(ROOT, "scripts/run-with-env.mjs"))
 contract_check_source = File.read(File.join(ROOT, "scripts/contract-check.mjs"))
+# 规范校验器本体已抽到 scripts/lib/schema-validate.mjs（e2e 那一侧也要用同一份）。
+# 针对校验器行为的源码断言必须跟着走 —— 否则它会去 contract-check 里找一段已经不在那儿的代码。
+schema_validator_source = File.read(File.join(ROOT, "scripts/lib/schema-validate.mjs"))
 docker_up_source = File.read(File.join(ROOT, "scripts/docker-up.sh"))
 env_example_source = File.read(File.join(ROOT, ".env.example"))
 {
@@ -709,7 +712,7 @@ errors << "finding_submit update must scope the guard on the existing finding's 
 errors << "dispatch-scoped node control must reject a dispatch not assigned to the node" unless server_source.include?("dispatch_not_assigned_to_node")
 # C1: the contract-check schema validator must enforce conditional keywords (allOf/if/then/not/$ref) and
 # be proven non-vacuous, else the subagent-safety and close-barrier gates validate nothing.
-errors << "contract-check schema validator must support conditional keywords" unless contract_check_source.include?("function schemaMatches") && contract_check_source.include?("resolveInternalRef") && contract_check_source.include?("schema.patternProperties")
+errors << "contract-check schema validator must support conditional keywords" unless schema_validator_source.include?("function schemaMatches") && schema_validator_source.include?("resolveInternalRef") && schema_validator_source.include?("schema.patternProperties")
 errors << "contract-check must prove the schema validator rejects invalid conditional instances" unless contract_check_source.include?("VACUOUS: validator accepted a subagent placement with no subagentSafetyProof") && contract_check_source.include?("VACUOUS: validator accepted a CloseBarrier with satisfied=true")
 # C2: terminateCellRuntime must have a behavioral cascade test (not just source-string presence).
 errors << "terminateCellRuntime must have a behavioral cascade test" unless contract_check_source.include?("terminateCellRuntime cascade: dispatch not failed") && contract_check_source.include?("terminateCellRuntime cascade: bound repository target not superseded")
@@ -721,7 +724,7 @@ errors << "permission-poll timeout must mark the dispatch so the resolve lever c
 errors << "permission approval must requeue a timed-out orphaned dispatch (no dead lever)" unless core_source.include?("export function requeuePermissionApprovedDispatch") && core_source.include?("export function findPermissionBlockedDispatch") && mcp_source.include?("requeuePermissionApprovedDispatch(state, request")
 errors << "permission denial must terminalize a timed-out orphaned dispatch" unless mcp_source.include?("findPermissionBlockedDispatch(state, request)") && mcp_source.include?("!session || session.status !== \"permission_required\") && !timedOutDispatch")
 # The completed contract-check schema validator must guard against silent-pass and $ref cycles.
-errors << "schema validator must error on an unresolved local $ref and bound recursion" unless contract_check_source.include?("unresolved local $ref") && contract_check_source.include?("$ref recursion too deep")
+errors << "schema validator must error on an unresolved local $ref and bound recursion" unless schema_validator_source.include?("unresolved local $ref") && schema_validator_source.include?("$ref recursion too deep")
 # Permission-timeout requeue/terminalize must have behavioral coverage.
 errors << "permission-timeout requeue/terminalize must have a behavioral test" unless contract_check_source.include?("permission-timeout approve: dispatch not requeued") && contract_check_source.include?("permission-timeout deny: dispatch not terminalized")
 # permissionResolve must resolve exactly once (idempotency/terminal guard, like decideHumanConfirmation).

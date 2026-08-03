@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.dev/ai-multi-agent-ctrl/spec/command.schema.json",
+  "title": "Command",
+  "description": "命令总线上的一条命令。状态取值域与 spec/state-machines.yaml 的 Command 机器同源；attempts/maxAttempts 是重试上限的依据，缺任一项就无法判断一条命令该不该进 DLQ。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "type",
+    "subject",
+    "projectId",
+    "status",
+    "idempotencyKey",
+    "policyDecisionRef",
+    "attempts",
+    "maxAttempts",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "command/v1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^cmd_[a-z0-9_]+$"
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "created",
+        "admitted",
+        "dispatched",
+        "running",
+        "checkpointed",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out",
+        "compensated",
+        "dlq"
+      ]
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "policyDecisionRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "maxAttempts": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "timeoutAt": {
+      "type": "string"
+    },
+    "targetRef": {
+      "type": [
+        "string",
+        "object"
+      ]
+    },
+    "createdAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    },
+    "updatedAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    },
+    "resultRef": {
+      "type": "string",
+      "description": "命令成功后的结果引用。"
+    },
+    "failureRef": {
+      "type": "string",
+      "description": "命令失败的原因引用；进 DLQ 时人靠它定位。"
+    },
+    "commandEffectRef": {
+      "type": "string",
+      "description": "这条命令产生的外部副作用记录，指向 CommandEffect.effectId —— 补偿与回滚按它找对象。"
+    }
+  }
+}

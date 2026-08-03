@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const sandbox = mkdtempSync(join(tmpdir(), "aimac-agent-doctor-"));
@@ -454,6 +456,30 @@ try {
 	  if (requeuedDispatch?.status !== "queued" || requeuedDispatch.assignedNodeId) {
 	    throw new Error("Agent node revocation ACK did not requeue the fenced dispatch");
 	  }
+	  // 到这里，这一轮 e2e 已经真的派发、真的 commit、真的 push、真的提交过 checkpoint。
+	  // 契约门那一侧只能校验它自己造的记录，够不到这些 —— 而 checkpoint 的 commitRefs/pushRefs
+	  // 正是关闭门赖以判定的证据面，此前没有任何实例被按规范校验过。
+	  // 读磁盘上的完整水合状态而不是 /api/state：后者按 limit 截断，拿截断结果做全量核对
+	  // 等于把截断当全文，漏掉的记录不会有任何提示。
+	  const producedState = readStoredState({
+	    root,
+	    runtimeDir,
+	    statePath: join(runtimeDir, "control-plane-state.json"),
+	    seedPath: join(root, "data/seed-state.json"),
+	    // 状态此刻必定已存在。若真走到"新建初始状态"，说明读的根本不是这一轮跑出来的东西 ——
+	    // 那时校验一份崭新的种子会得到一个毫无意义的绿，必须当场炸掉。
+	    buildInitialState: () => { throw new Error("agent remote doctor: 期望读到本轮跑出的状态，却触发了初始状态创建"); }
+	  });
+	  const sweep = sweepRecordsAgainstDeclaredSchemas(producedState, {
+	    specDir: join(root, "spec"), label: "e2e 产出", minValidated: 30
+	  });
+	  if (!(producedState.checkpoints || []).some((item) => item.schemaVersion)) {
+	    throw new Error("agent remote doctor: 本轮没有产出任何带 schemaVersion 的 checkpoint —— 这道规范核对在空转，commit/push 证据面依旧无人校验");
+	  }
+	  if (sweep.errors.length) {
+	    throw new Error(`agent remote doctor: e2e 真实产出的记录不符合它们自己声明的规范：\n- ${sweep.errors.slice(0, 200).join("\n- ")}`);
+	  }
+	  console.log(`e2e 产出规范核对 ok: ${sweep.validated} 条记录符合各自声明的 schema（含 checkpoint 的 commit/push 证据）`);
 		  console.log("agent remote doctor ok: one-command join, checksum install, credential rotation, initialization, self-check (permission+integrity probe), remote MCP, control command ACK, project/session-level execution event stream, on-demand skill workset, dispatch, commit, push and checkpoint outbox replay, two-step evidence artifact registration, permission_report loop with safe-retry-point recovery, revoke pending+ACK requeue verified");
 } finally {
   server.kill("SIGTERM");

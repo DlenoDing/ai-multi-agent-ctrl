@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { SCHEMA_FILE_ALIASES, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -135,15 +136,8 @@ const workerLaneSchema = loadJson("spec/worker-lane.schema.json");
 const sessionPlacementDecisionSchema = loadJson("spec/session-placement-decision.schema.json");
 const closeBarrierSchema = loadJson("spec/close-barrier.schema.json");
 const languagePolicySchema = loadJson("spec/language-policy.schema.json");
-// 外部 $ref 的解析表：schema 之间互相引用时，被引用的那份必须真的参与校验。
-const siblingSchemaCache = new Map();
-function siblingSchema(fileName) {
-  if (siblingSchemaCache.has(fileName)) return siblingSchemaCache.get(fileName);
-  let loaded = null;
-  try { loaded = loadJson(`spec/${fileName}`); } catch { loaded = null; }
-  siblingSchemaCache.set(fileName, loaded);
-  return loaded;
-}
+// 校验器本体在 scripts/lib/schema-validate.mjs —— e2e 那一侧也要用同一份，不能各留一个副本。
+const {validateSchema, schemaMatches} = createSchemaValidator(resolve(root, "spec"));
 const humanConfirmationSchema = loadJson("spec/human-confirmation-request.schema.json");
 const humanDirectiveSchema = loadJson("spec/human-directive.schema.json");
 const organizationSchema = loadJson("spec/organization.schema.json");
@@ -175,6 +169,7 @@ for (const tool of toolDefs) {
 
 verifyRuntimeJsonConflict(errors);
 verifySeedRecordsMatchTheirDeclaredSchemas(errors);
+verifyEverySchemaVersionHasASpec(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
 verifyWorkStatusEnumConvergence(errors);
@@ -4037,38 +4032,57 @@ function extractMachineStates(yamlText, machine) {
 // 同一套核对必须也作用在【系统跑起来之后产出的记录】上。只验种子数据的话，验的是我手写的夹具，
 // 而不是生产者的行为：checkpoint、评审包、进度快照、漂移守卫这些全部由代码在运行期造出来，
 // 它们漂离自己声明的规范时，只验种子的那道门一声不吭。映射依然取自记录自身，不需要维护对照表。
-function verifySeedRecordsMatchTheirDeclaredSchemas(output, sourceState = seedState, label = "种子数据", minValidated = 20) {
-  const cache = new Map();
-  let validated = 0;
-  // 记录自报的名字与规范文件名不一致时，必须显式登记 —— 不登记就当"找不到规范"报错。
-  // 靠拼写巧合去匹配的话，一个改名就会让整类记录悄悄退出校验。
-  const SCHEMA_FILE_ALIASES = {"control-event": "control-events"};
-  const declaredSchemaFor = (record) => {
-    const declared = String(record?.schemaVersion || "");
-    const name = SCHEMA_FILE_ALIASES[declared.replace(/\/v\d+$/u, "")] || declared.replace(/\/v\d+$/u, "");
-    if (!name || name === declared) return null; // 没有 "<名>/vN" 形状就不是可定位的规范
-    if (cache.has(name)) return cache.get(name);
-    const file = resolve(root, `spec/${name}.schema.json`);
-    const schema = existsSync(file) ? loadJson(`spec/${name}.schema.json`) : null;
-    cache.set(name, schema);
-    return schema;
+// 上面那套只验"实际出现过的记录"。没被任何一轮跑到的记录类型，照样可以声称一份不存在的契约 ——
+// 直到某天它第一次出现在生产状态里，而那时没有任何门会说话。这里按代码里的 schemaVersion
+// 字面量全量核对：每一类要么有规范文件，要么在下面写明它为什么不需要（磁盘配置/索引格式，
+// 不是控制面状态里的记录）。默认放过是不允许的 —— 新增一类记录时必须二选一。
+function verifyEverySchemaVersionHasASpec(output) {
+  const SCHEMA_VERSION_WITHOUT_SPEC = {
+    "aimac-agent-local-config": "agent 节点自己磁盘上的配置文件，不是控制面状态里的记录",
+    "aimac-agent-remote-mcp-config": "同上：写给 MCP 客户端的本地配置文件",
+    "runtime-local-config": "控制面进程自己的本地运行配置文件",
+    "agent-bootstrap-manifest": "安装脚本下发的引导清单，随 HTTP 响应即时生成，不落状态",
+    "agent-dispatch-package": "派发时打给 agent 的一次性投递包，落在 agent 的工作目录而非控制面状态",
+    "agent-runtime-executor-input": "喂给模型执行器进程的 stdin 结构，进程结束即消失",
+    "agent-role-skill-index": "技能同步产出的磁盘索引文件",
+    "artifact-manifest": "写进 git 仓库的产出清单文件（证据留在提交里，不入控制面状态）",
+    "evidence-artifact": "登记证据时的请求体形状，落库后按 artifact.schema.json 存",
+    "mcp-probe-node": "自检探针的临时结构，不落状态",
+    "project-execution-event-index": "执行事件的磁盘索引文件",
+    "project-execution-event-key": "执行事件的磁盘索引键",
+    "project-execution-event-manifest": "执行事件的磁盘清单文件",
+    "project-state-shard": "持久层分片文件格式（由 assertProjectShardsMatchCentralIndex 与摘要校验守住）",
+    "project-state-shards": "分片索引文件格式，同上",
+    "rule": "规则片段内嵌在项目/任务组配置里，由 ruleFragmentsRejection 与三级继承逻辑校验，不是独立记录"
   };
-  for (const [collection, items] of Object.entries(sourceState)) {
-    if (!Array.isArray(items)) continue;
-    for (const [index, item] of items.entries()) {
-      if (!item || typeof item !== "object" || !item.schemaVersion) continue;
-      const schema = declaredSchemaFor(item);
-      if (!schema) {
-        output.push(`${label} ${collection}[${index}] 声明 schemaVersion "${item.schemaVersion}"，但 spec 下没有对应的规范文件 —— 这条记录声称遵守一份不存在的契约`);
-        continue;
+  const sources = execFileSync("grep", ["-rl", "schemaVersion", join(root, "apps"), "--include=*.mjs"], {encoding: "utf8"})
+    .trim().split("\n").filter(Boolean);
+  const declared = new Set();
+  for (const file of sources) {
+    for (const match of readFileSync(file, "utf8").matchAll(/schemaVersion:\s*"([a-z0-9-]+)\/v\d+"/gu)) declared.add(match[1]);
+  }
+  if (declared.size < 40) {
+    output.push(`schemaVersion 全量核对只提取到 ${declared.size} 种，远少于预期 —— 提取逻辑已失效，本条在空转`);
+    return;
+  }
+  for (const name of [...declared].sort()) {
+    const file = `spec/${SCHEMA_FILE_ALIASES[name] || name}.schema.json`;
+    if (existsSync(resolve(root, file))) {
+      if (SCHEMA_VERSION_WITHOUT_SPEC[name]) {
+        output.push(`schemaVersion 全量核对: ${name} 既有规范文件 ${file}，又被登记为"不需要规范" —— 登记已过时，会让人以为它没有契约`);
       }
-      validated += 1;
-      validateSchema(item, schema, `${label}.${collection}[${index}]`, output);
+      continue;
+    }
+    if (!SCHEMA_VERSION_WITHOUT_SPEC[name]) {
+      output.push(`schemaVersion 全量核对: 代码产出的记录声称遵守 "${name}/vN"，但 ${file} 不存在，也没有登记它为什么不需要`
+        + " —— 这类记录第一次真正出现时，没有任何门会发现它不符合任何契约");
     }
   }
-  if (validated < minValidated) {
-    output.push(`${label}规范核对只校验到 ${validated} 条记录，远少于预期的 ${minValidated} —— 提取逻辑已与数据结构脱节，本条可能在空转`);
-  }
+}
+
+function verifySeedRecordsMatchTheirDeclaredSchemas(output, sourceState = seedState, label = "种子数据", minValidated = 20) {
+  const {errors: found} = sweepRecordsAgainstDeclaredSchemas(sourceState, {specDir: resolve(root, "spec"), label, minValidated});
+  output.push(...found);
 }
 
 // 质量门是人看到"全通过"时的唯一依据，且完全由 agent 自报。此前 test_result_submit 的
@@ -4316,126 +4330,6 @@ function verifyTransitionEngine(output) {
 
 // Resolve a JSON-Pointer $ref (#/$defs/...) against the schema document root. Only local pointers are
 // supported; external file refs are handled by the caller (language-policy).
-function resolveInternalRef(ref, root) {
-  const parts = ref.slice(2).split("/");
-  let node = root;
-  for (const part of parts) {
-    if (node == null || typeof node !== "object") return null;
-    node = node[part.replace(/~1/g, "/").replace(/~0/g, "~")];
-  }
-  return node && typeof node === "object" ? node : null;
-}
-
-// True iff `value` satisfies `schema` with zero errors — used to evaluate if/then/else, not, any/oneOf.
-function schemaMatches(value, schema, root, depth) {
-  const scratch = [];
-  validateSchema(value, schema, "", scratch, root, depth);
-  return scratch.length === 0;
-}
-
-// A pragmatic JSON-Schema subset validator. Supports const/enum/type/minLength/minimum, array
-// items/minItems/uniqueItems/contains, object required/properties/additionalProperties, the
-// combinators allOf/anyOf/oneOf/if-then-else/not, and local $ref (#/$defs/...). This breadth matters:
-// the conditional guarantees (e.g. a subagent placement REQUIRING subagentSafetyProof with every safety
-// flag true, or CloseBarrier.satisfied implying all gates passed) live in allOf/if/then/$ref — a
-// validator that skipped those keywords validated nothing and let a regressed producer pass silently.
-function validateSchema(value, schema, path, output, root, depth = 0) {
-  if (!schema || typeof schema !== "object") return;
-  if (root === undefined) root = schema;
-  // A $ref is the only unbounded-recursion vector; bound the follow depth so a (mistakenly) self- or
-  // cyclically-referential schema fails loudly instead of hanging the gate.
-  if (depth > 256) { output.push(`${path} $ref recursion too deep (possible schema cycle)`); return; }
-  if (schema.$ref !== undefined) {
-    if (schema.$ref.startsWith("#/")) {
-      const resolved = resolveInternalRef(schema.$ref, root);
-      // Unresolvable local $ref must ERROR, not silently pass — a typo'd pointer would otherwise validate
-      // nothing (re-introducing the vacuous-gate class this validator was completed to prevent).
-      if (resolved) validateSchema(value, resolved, path, output, root, depth + 1);
-      else output.push(`${path} unresolved local $ref ${schema.$ref}`);
-      return;
-    }
-    // 同目录的 schema 一律真去加载。原先只特例了 language-policy，其余外部 $ref 静默跳过 ——
-    // 于是 checkpoint 的 commitRefs / pushRefs（关闭门赖以判定的提交与推送证据）整块没人校验：
-    // 引用写在那里，看上去有约束，实际什么都不验。"解析不了就跳过"必须是解析不了才跳过，
-    // 而不是"没写特例就跳过"；同目录文件明明加载得到。
-    if (/^[a-z0-9-]+\.schema\.json$/u.test(schema.$ref)) {
-      const sibling = siblingSchema(schema.$ref);
-      if (sibling) { validateSchema(value, sibling, path, output, sibling, depth + 1); return; }
-      output.push(`${path} 引用了不存在的同目录 schema ${schema.$ref}`);
-      return;
-    }
-    return; // unknown external ref: not resolvable here, skip
-  }
-  if (schema.const !== undefined && value !== schema.const) output.push(`${path} expected const ${JSON.stringify(schema.const)}, got ${JSON.stringify(value)}`);
-  if (schema.enum && !schema.enum.includes(value)) output.push(`${path} expected enum ${schema.enum.join("|")}, got ${JSON.stringify(value)}`);
-  if (schema.type) validateType(value, schema.type, path, output);
-  if (schema.type === "string" && schema.minLength && String(value || "").length < schema.minLength) output.push(`${path} expected minLength ${schema.minLength}`);
-  // pattern 此前完全没有实现，而 spec 里 37 份 schema 用了它、共 93 处 —— 那些约束一直在验空气：
-  // 产出方写出格式不合法的 id / 摘要 / 引用，这道门照样是绿的。反向更隐蔽：{not: {pattern}} 的
-  // 内层因为没有任何可判定关键字而恒为"匹配"，于是每一个合法值都被判成违规（假红）。
-  // 不认识的关键字必须要么实现、要么显式报错，不能当成"通过"。
-  if (schema.pattern !== undefined && typeof value === "string") {
-    let regex = null;
-    try { regex = new RegExp(schema.pattern, "u"); }
-    catch { try { regex = new RegExp(schema.pattern); } catch { output.push(`${path} schema 的 pattern 不是合法正则：${schema.pattern}`); } }
-    if (regex && !regex.test(value)) output.push(`${path} 不匹配 pattern ${schema.pattern}（实得 ${JSON.stringify(String(value).slice(0, 80))}）`);
-  }
-  if ((schema.type === "integer" || schema.type === "number") && schema.minimum !== undefined && Number(value) < schema.minimum) output.push(`${path} expected minimum ${schema.minimum}`);
-  // Array keywords apply to any array instance (not gated on a declared type — the `contains` subschema
-  // under the placement `not` clause declares no type).
-  if (Array.isArray(value)) {
-    if (schema.minItems !== undefined && value.length < schema.minItems) output.push(`${path} expected minItems ${schema.minItems}`);
-    if (schema.maxItems !== undefined && value.length > schema.maxItems) output.push(`${path} expected maxItems ${schema.maxItems}, got ${value.length}`);
-    if (schema.uniqueItems && new Set(value.map((item) => JSON.stringify(item))).size !== value.length) output.push(`${path} expected uniqueItems`);
-    if (schema.items) value.forEach((item, index) => validateSchema(item, schema.items, `${path}[${index}]`, output, root, depth));
-    if (schema.contains && !value.some((item) => schemaMatches(item, schema.contains, root, depth))) output.push(`${path} expected at least one item matching contains`);
-  }
-  // Object keywords apply to any object instance (an if/then subschema carries required/properties with
-  // no declared type; gating on schema.type==="object" would make every if-condition vacuously match).
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    for (const key of schema.required || []) {
-      if (value[key] === undefined) output.push(`${path}.${key} is required`);
-    }
-    const properties = schema.properties || {};
-    const patternProperties = schema.patternProperties || {};
-    const patternRegexes = Object.keys(patternProperties).map((pattern) => new RegExp(pattern));
-    if (schema.additionalProperties === false) {
-      for (const key of Object.keys(value)) {
-        const known = Object.prototype.hasOwnProperty.call(properties, key) || patternRegexes.some((re) => re.test(key));
-        if (!known) output.push(`${path}.${key} is not allowed by schema`);
-      }
-    }
-    for (const [key, childSchema] of Object.entries(properties)) {
-      if (value[key] !== undefined) validateSchema(value[key], childSchema, `${path}.${key}`, output, root, depth);
-    }
-    for (const [pattern, childSchema] of Object.entries(patternProperties)) {
-      const re = new RegExp(pattern);
-      for (const key of Object.keys(value)) {
-        if (re.test(key)) validateSchema(value[key], childSchema, `${path}.${key}`, output, root, depth);
-      }
-    }
-  }
-  if (Array.isArray(schema.allOf)) schema.allOf.forEach((sub, index) => validateSchema(value, sub, `${path}/allOf[${index}]`, output, root, depth));
-  if (Array.isArray(schema.anyOf) && !schema.anyOf.some((sub) => schemaMatches(value, sub, root, depth))) output.push(`${path} matched no anyOf branch`);
-  if (Array.isArray(schema.oneOf)) {
-    const matched = schema.oneOf.filter((sub) => schemaMatches(value, sub, root, depth)).length;
-    if (matched !== 1) output.push(`${path} expected exactly one oneOf match, got ${matched}`);
-  }
-  if (schema.if) {
-    if (schemaMatches(value, schema.if, root, depth)) { if (schema.then) validateSchema(value, schema.then, path, output, root, depth); }
-    else if (schema.else) validateSchema(value, schema.else, path, output, root, depth);
-  }
-  if (schema.not && schemaMatches(value, schema.not, root, depth)) output.push(`${path} must not match the not-subschema`);
-}
-
-function validateType(value, type, path, output) {
-  if (type === "object" && (!value || typeof value !== "object" || Array.isArray(value))) output.push(`${path} expected object`);
-  if (type === "array" && !Array.isArray(value)) output.push(`${path} expected array`);
-  if (type === "string" && typeof value !== "string") output.push(`${path} expected string`);
-  if (type === "boolean" && typeof value !== "boolean") output.push(`${path} expected boolean`);
-  if (type === "integer" && !Number.isInteger(value)) output.push(`${path} expected integer`);
-  if (type === "number" && typeof value !== "number") output.push(`${path} expected number`);
-}
 
 function safeProjectIdForContract(projectId) {
   return `p_${createHash("sha256").update(String(projectId || "unknown")).digest("hex").slice(0, 24)}`;
