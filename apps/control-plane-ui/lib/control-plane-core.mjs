@@ -1837,7 +1837,13 @@ export function runAutonomousCycle(state, request = {}) {
       try {
       if (workItem.status === "superseded") continue;
       if (!["verified", "closed"].includes(workItem.status)) cycleCandidates.push(workItem.id);
-      if (["verified", "closed"].includes(workItem.status) && workItem.progress >= 100) {
+      // 终态判定只看状态。原先还要求 progress >= 100，于是"人已验收定稿"这条保证实际挂在一个
+      // 展示用数值上：verified 且 progress < 100 的工作项会掉出这道 continue 被重新派发，
+      // 而 performIndependentReview 对已定稿项永久返回 human_finalized —— 之后落进去的改动
+      // 再也不会被任何人复核，人的验收就盖在了一份它没看过的成果上（已行为复现）。
+      // 今天 progress 的写入全是 Math.max（单调不减）所以撞不上，但那是【另一处代码的性质】，
+      // 不是这道闸门自己的性质；承重的判据不该依赖它。
+      if (["verified", "closed"].includes(workItem.status)) {
         if (workItem.status === "verified" && needsReviewBackfill(state, taskGroup, workItem)) {
           const backfill = performIndependentReview(state, taskGroup, workItem, request, {backfill: true});
           changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, progress: workItem.progress, awaiting: backfill.verdict === "passed" ? null : "independent_review_backfill", review: backfill});

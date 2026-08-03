@@ -273,6 +273,31 @@ function verifyHumanAndOrganizationContracts(output) {
   // Human confirmation forces a none option, requires input for none, and dedups pending.
   const cycle = runAutonomousCycle(state, {root, mode: "all"});
 
+  // 人一旦验收定稿，这个工作项就不能再被派发 —— 因为 performIndependentReview 对已定稿项永久
+  // 返回 human_finalized，之后落进去的任何改动都不会再被复核，人的验收会盖在它没看过的成果上。
+  // 这道闸门原先的判据是 status 终态【且 progress >= 100】，也就是把一条核心保证挂在一个展示用
+  // 数值上。这里刻意用一个 progress 不满 100 的已定稿工作项来验：判据若退回去看 progress，
+  // 这条断言立刻报红。
+  {
+    const finState = structuredClone(seedState);
+    ensureRuntimeCollections(finState, {root});
+    const finTg = finState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const finWork = finTg.workItems[0];
+    finWork.status = "verified";
+    finWork.progress = 50;
+    finWork.humanFinalization = {outcome: "confirmed", decisionType: "work_item_verification",
+      finalizedBy: "acct_alice", finalizedAt: "2026-08-03T00:00:00Z", confirmationRef: "hcr_finalized"};
+    finState.agentDispatches = [];
+    for (let round = 0; round < 3; round += 1) runAutonomousCycle(finState, {root, mode: "all"});
+    if ((finState.agentDispatches || []).some((dispatch) => dispatch.workItemId === finWork.id)) {
+      output.push("人工定稿锁: 已被人验收定稿的工作项又被派发出去了"
+        + " —— 互审对它永久跳过，之后 AI 落进去的改动再没有任何人复核，人的验收盖在了它没看过的成果上");
+    }
+    if (finWork.status !== "verified") {
+      output.push(`人工定稿锁: 已定稿工作项的状态被编排改成了 ${finWork.status} —— AI 不得自行改变人定稿的结论`);
+    }
+  }
+
   // §4.5 admission ledger (gap #11): every scheduling verdict persists a machine-readable
   // admissionDecision whose orthogonal status flags are mutually exclusive (exactly one true).
   if (!Array.isArray(state.admissionDecisions) || !state.admissionDecisions.length) {
