@@ -187,6 +187,7 @@ verifyEveryProjectScopedIdIsScopeChecked(errors);
 verifyEveryStateCollectionIsTenantScoped(errors);
 verifyExpiredConfirmationRetargetsTheWorkItem(errors);
 verifyExpiredConfirmationLeavesNoStaleParking(errors);
+verifyPermissionOutcomeReleasesTheSession(errors);
 verifyIdempotencyReplayIsPrincipalBound(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
@@ -4140,6 +4141,34 @@ console.log(JSON.stringify({first: {ok: first.ok, error: first.result?.error},
 // 了结集里，这个会话会永远算活跃，活跃会话是关闭门实打实的阻塞项。
 // 这条门不逐个记住"哪三处"，而是核对一条不变量：卡进入终态后，不得再有任何记录还停在
 // awaiting_human_confirmation —— 将来若又多标记一处而忘了回收，同样会被抓住。
+// 与人工确认那两处同形，只是这条目前是【对的】—— 锁住它，免得下次改动把它退化成刚修过的那种：
+// 权限申请会把会话推到 permission_required；两条出路都必须把会话带走，否则会话永远算活跃，
+// 而活跃会话是关闭门实打实的阻塞项，人却只看到一个已经处置完的权限申请。
+function verifyPermissionOutcomeReleasesTheSession(output) {
+  for (const [decision, expectation] of [["approved", "不得再停在 permission_required"], ["rejected", "不得再停在 permission_required"]]) {
+    const probe = structuredClone(seedState);
+    ensureRuntimeCollections(probe, {root});
+    const taskGroup = probe.taskGroups.find((item) => item.id === "tg_runtime_management");
+    probe.workSessions = [{schemaVersion: "work-session/v1", sessionId: "ws_perm_probe", projectId: taskGroup.projectId,
+      taskGroupId: taskGroup.id, workItemId: taskGroup.workItems[0].id, status: "active", placement: "subagent",
+      createdAt: "2026-08-01T00:00:00Z", updatedAt: "2026-08-01T00:00:00Z"}];
+    const submitted = permissionRequestSubmit(probe, {
+      taskGroupId: taskGroup.id, sessionId: "ws_perm_probe",
+      resource: {resourceType: "task_group", resourceId: taskGroup.id}, action: "write", justification: "门探针"
+    });
+    if (probe.workSessions[0].status !== "permission_required") {
+      output.push(`权限出路释放会话：提交申请后会话没有被停放（实得 ${probe.workSessions[0].status}）—— 这条断言在空转`);
+      return;
+    }
+    permissionResolve(probe, {requestId: submitted.permissionRequest.requestId, status: decision,
+      resolvedBy: "acct_alice", justification: "门探针"});
+    if (probe.workSessions[0].status === "permission_required") {
+      output.push(`权限出路释放会话：申请已 ${decision}，会话${expectation} —— 它会一直算作活跃，把关闭门挡住，`
+        + "而人看到的是一个已经处置完的权限申请，找不到还卡在哪里");
+    }
+  }
+}
+
 function verifyExpiredConfirmationLeavesNoStaleParking(output) {
   const probe = structuredClone(seedState);
   ensureRuntimeCollections(probe, {root});
