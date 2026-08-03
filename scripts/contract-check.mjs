@@ -515,6 +515,53 @@ function verifyHumanAndOrganizationContracts(output) {
       if (missing.length) output.push(`terminal-set drift: ${entity} state-machine terminal(s) ${JSON.stringify(missing)} not treated as terminal by the close barrier (liveness wedge risk)`);
     }
 
+    // 上面只钉住 WorkSession 一条镜像，而持久层现在有 8 条判据都在镜像状态机的终态集 ——
+    // 逐条钉的老问题：新增一条没人会想起来补。这里按状态机全量核对，判据【驱动真实的 cap 函数】
+    // 而不是读源码字面量：对每个状态造一条"最老的记录"，看它会不会被容量淘汰。
+    // 被淘汰 = 持久层认为它已了结。凡是状态机说【非终态】却被淘汰的，就是持久层会删掉活的记录。
+    const SHARD_STATE_MIRRORS = {
+      taskGroups: {entity: "TaskGroup", idField: "id"},
+      workSessions: {entity: "WorkSession", idField: "sessionId"},
+      humanConfirmationRequests: {entity: "HumanConfirmationRequest", idField: "requestId"},
+      humanDirectives: {entity: "HumanDirective", idField: "directiveId"},
+      repositoryOutputs: {entity: "RepositoryOutputTarget", idField: "targetId"},
+      effectiveInstructionPackets: {entity: "EffectiveInstructionPacket", idField: "packetId"},
+      agentDispatches: {entity: "AgentDispatch", idField: "dispatchId"},
+      roleDriftGuards: {entity: "RoleDriftGuard", idField: "guardId"}
+    };
+    // 非终态却允许淘汰的，必须逐条写明理由 —— 不留"默认放过"。
+    const SHARD_EVICTABLE_EXEMPT = {
+      "WorkSession:completed_objective": "成功终局，关闭门同样视其为已了结（与 barrierTerminal 一致）",
+      "RepositoryOutputTarget:committed": "成功终局，关闭门同样视其为已了结（与 barrierTerminal 一致）",
+      "RoleDriftGuard:corrected": "全仓无任何代码写入该状态（只读不写），core 亦一致视为已了结"
+    };
+    for (const [collection, mirror] of Object.entries(SHARD_STATE_MIRRORS)) {
+      const machine = machines[mirror.entity];
+      if (!machine || !(machine.states || []).length) {
+        output.push(`持久层终态镜像: 状态机里找不到 ${mirror.entity} —— 这一组核对在空转`);
+        continue;
+      }
+      const terminal = new Set(machine.terminal || []);
+      for (const status of machine.states) {
+        const probeShard = {collections: {[collection]: [
+          ...Array.from({length: 5200}, (_, index) => ({[mirror.idField]: `filler_${index}`,
+            status: [...terminal][0], updatedAt: new Date(Date.UTC(2026, 0, 1) + index * 60000).toISOString()})),
+          {[mirror.idField]: "probe_oldest", status, updatedAt: "2019-01-01T00:00:00Z"}
+        ]}};
+        capProjectShardCollections(probeShard);
+        const kept = probeShard.collections[collection];
+        if (kept.length >= 5201) {
+          output.push(`持久层终态镜像: ${collection} 在 5201 条时没有裁剪 —— 这一轮核对在空转`);
+          break;
+        }
+        const evicted = !kept.some((item) => item[mirror.idField] === "probe_oldest");
+        if (evicted && !terminal.has(status) && !SHARD_EVICTABLE_EXEMPT[`${mirror.entity}:${status}`]) {
+          output.push(`持久层终态镜像: ${collection} 把【非终态】${mirror.entity}.${status} 当成可淘汰的历史`
+            + " —— 状态机说这条记录还活着，持久层却会在容量到顶时把它删掉（落盘即永久丢失）");
+        }
+      }
+    }
+
     // Permission-timeout deadlock fix (cross-subsystem seam): a permission request whose runtime poll timed
     // out leaves a blocked, node-detached dispatch marked permission_request_pending. APPROVE must requeue
     // it (not no-op) and DENY must terminalize it — otherwise the orphaned dispatch wedges the close barrier

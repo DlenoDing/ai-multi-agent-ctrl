@@ -408,7 +408,11 @@ const shardOpenPredicates = {
   // state-store 不导入 core（避免循环依赖），所以这里是一份镜像 —— 由 contract-check 的
   // 终态漂移门钉住它与 core 的一致性，而不是靠人记得同步。
   workSessions: (item) => !["completed_objective", "recycled", "failed", "aborted"].includes(item.status), // 镜像 WORK_SESSION_SETTLED_STATUSES
-  humanConfirmationRequests: (item) => item.status === "pending", // core 2769
+  // 判据是"未到终态"，不是"还没人答"。answered = 人已经作出、尚未被消费的决定：
+  // 执行方要靠它拿到人决定了什么（agent-gateway 把 answered/consumed 一起打进内容包），
+  // 消费还要走 ?consume=true 那一步。原先只保 pending，等于把人已经拍的板当成可淘汰的历史。
+  // 终态镜像 spec/state-machines.yaml 的 HumanConfirmationRequest.terminal。
+  humanConfirmationRequests: (item) => !["consumed", "expired", "cancelled"].includes(item.status),
   humanDirectives: (item) => ["queued", "acknowledged"].includes(item.status), // core 2770
   repositoryOutputs: (item) => !["pushed", "committed", "rejected", "superseded"].includes(item.status), // core 2759
   // 谓词必须与 core 的门判据一致（core 2882/2997 现为 !["active","rejected","superseded"]），否则两边
