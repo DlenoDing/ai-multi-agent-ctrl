@@ -21,6 +21,8 @@ const CORE = "apps/control-plane-ui/lib/control-plane-core.mjs";
 const MCP = "apps/mcp-server/server.mjs";
 const GATEWAY = "apps/control-plane-ui/lib/agent-gateway.mjs";
 const PGSTORE = "apps/control-plane-ui/lib/pg-sync-store.mjs";
+const STORE = "apps/control-plane-ui/lib/state-store.mjs";
+const SERVER = "apps/control-plane-ui/server.mjs";
 
 // 每条 mutation：把守卫改坏，期望 contract-check 失败且输出里出现 expect 片段。
 const MUTATIONS = [
@@ -215,7 +217,59 @@ const MUTATIONS = [
     from: "const hardViolation = signals.some",
     to: "const hardViolation = [].some",
     expect: "单条越权访问未被角色漂移门拦下"
-  }
+  },
+  // ── 2026-08-03 本轮新增的守卫。它们的判别力都在加入时手工验过一次，但手工验证不可重复：
+  // 一次重构悄悄让某道门失效，不会有任何东西发现。这七条都护着【安全边界】或【不可逆的数据损失】，
+  // 所以必须把"改坏它会红"这件事变成可重复的记录。
+  {
+    name: "人工定稿锁只看状态，不得挂在展示用数值上",
+    file: CORE,
+    from: '      if (["verified", "closed"].includes(workItem.status)) {',
+    to: '      if (["verified", "closed"].includes(workItem.status) && workItem.progress >= 100) {',
+    expect: "已被人验收定稿的工作项又被派发出去了"
+  },
+  {
+    name: "容量淘汰不得删掉还开着的任务组",
+    file: STORE,
+    from: '  taskGroups: (item) => !["closed", "aborted"].includes(item.status)',
+    to: "  taskGroups: () => false",
+    expect: "里最老的【未了结】记录被容量淘汰"
+  },
+  {
+    name: "容量淘汰不得删掉人已经作出的决定",
+    file: STORE,
+    from: '  humanConfirmationRequests: (item) => !["consumed", "expired", "cancelled"].includes(item.status),',
+    to: '  humanConfirmationRequests: (item) => item.status === "pending",',
+    expect: "把【非终态】HumanConfirmationRequest.answered 当成可淘汰的历史"
+  },
+  {
+    name: "MCP 租户边界必须覆盖每一个对象地址",
+    file: MCP,
+    from: '  "envelopeId", "grantId", "nodeId", "reviewBundleId", "reviewPlanId", "topologyId"',
+    to: '  "envelopeId", "grantId", "nodeId", "reviewBundleId", "reviewPlanId"',
+    expect: "topologyId 是一个项目级对象地址"
+  },
+  {
+    name: "读侧每个集合都要么被过滤、要么登记为全局",
+    file: SERVER,
+    from: "  cloned.reviewBundles = (state.reviewBundles || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));\n",
+    to: "",
+    expect: "既没有在 scopedStateForAccount 里按可见性过滤"
+  },
+  {
+    name: "幂等重放必须绑定到当初那个调用方",
+    file: MCP,
+    from: "        || existingRecord.principalRef !== principalRef))",
+    to: "))",
+    expect: "另一个主体用同一把幂等键拿到了上一个主体的执行结果"
+  },
+  {
+    name: "分片拆合不得丢字段",
+    file: STORE,
+    from: "      shard.collections[collection].push(item);",
+    to: "      const {updatedAt, ...rest} = item;\n      shard.collections[collection].push(rest);",
+    expect: "落盘再读回后对不上"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
