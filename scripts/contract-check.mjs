@@ -1458,6 +1458,51 @@ function verifyHumanAndOrganizationContracts(output) {
       }
     }
 
+    // 内容包每个条目都带一条 sourceRef，随包交给 agent，声称这份内容出自哪一层配置。
+    // 它原先是写死的（规则永远声称 TaskGroup、基线永远声称 Project），而这两项的实际来源
+    // 都由三级配置决定：规则按 ruleId 跨三层【合并】，基线由最具体的非空层【整体取胜】。
+    // 出处说错了，人顺着它去改配置会改到不生效的那一层，而下发正文一动不动。
+    const srState = structuredClone(cbBundleState);
+    const srTg = srState.taskGroups.find((item) => item.id === cbBTg.id);
+    const srProject = srState.projects.find((item) => item.id === srTg.projectId);
+    srProject.config = {...(srProject.config || {}), baselineData: [{name: "项目基线", locator: "db://proj"}]};
+    srTg.configOverrides = {...(srTg.configOverrides || {}), baselineData: [{name: "任务组基线", locator: "db://tg"}]};
+    let srBundle = null;
+    try { srBundle = buildExecutionContentBundle(srState, cbBNode, "ws_bundle", {}); }
+    catch (error) { output.push(`内容包出处: 无法构建内容包（${error.message}）—— 这条断言无从验证`); }
+    const srEntryOf = (path) => (srBundle?.entries || []).find((entry) => entry.path === path);
+    const srBaseline = srEntryOf("business/baseline.md");
+    if (!srBaseline || !String(srBaseline.content).includes("任务组基线")) {
+      output.push("内容包出处: 任务组覆盖后的基线数据没有进入下发正文 —— 出处断言无从验证");
+    } else if (srBaseline.sourceRef !== `TaskGroup:${srTg.id}`) {
+      output.push(`内容包出处: 基线数据实际取自任务组覆盖，出处却标成 ${srBaseline.sourceRef}`
+        + " —— 人会照着它去改项目级基线，改完下发内容纹丝不动");
+    }
+    const srRules = srEntryOf("system/rules.md");
+    if (!srRules) {
+      output.push("内容包出处: 系统规则条目缺失 —— 出处断言无从验证");
+    } else if (String(srRules.sourceRef || "").includes("TaskGroup:")) {
+      output.push(`内容包出处: 任务组没有覆盖过任何系统规则，出处却声称来自任务组（${srRules.sourceRef}）`
+        + " —— 这份正文实际来自默认规则，改任务组不会改变它");
+    } else if (!String(srRules.sourceRef || "").includes("Defaults")) {
+      output.push(`内容包出处: 系统规则正文含默认规则，出处却没有列出默认层（${srRules.sourceRef}）`);
+    }
+    // 反向：任务组确实覆盖了规则时，出处必须承认这一层，否则人查不到是谁改写了正文。
+    const srState2 = structuredClone(srState);
+    const srTg2 = srState2.taskGroups.find((item) => item.id === cbBTg.id);
+    srTg2.configOverrides = {...srTg2.configOverrides,
+      systemRules: [{ruleId: "sys.tg-only", title: "任务组自有规则", content: "仅任务组生效", enabled: true, status: "active"}]};
+    let srBundle2 = null;
+    try { srBundle2 = buildExecutionContentBundle(srState2, cbBNode, "ws_bundle", {}); }
+    catch { srBundle2 = null; }
+    const srRules2 = (srBundle2?.entries || []).find((entry) => entry.path === "system/rules.md");
+    if (srRules2 && !String(srRules2.sourceRef || "").includes(`TaskGroup:${srTg2.id}`)) {
+      output.push(`内容包出处: 任务组已覆盖系统规则，出处却没有列出任务组（${srRules2.sourceRef}）`);
+    }
+    if (srRules2 && !String(srRules2.content || "").includes("任务组自有规则")) {
+      output.push("内容包出处: 任务组新增的系统规则没有进入下发正文");
+    }
+
     // 分类器判不出架构与选型这类决策，而让它 fail-safe 会把确认流量堆到没人看的程度。
     // 机器判不了的事，判断权归人：真人可以直接指定某个工作项必须先有定稿方案才能开跑。
     const pfState = structuredClone(seedState);

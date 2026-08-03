@@ -1266,12 +1266,22 @@ export function buildExecutionContentBundle(state, node, sessionId, options = {}
   const renderRules = (rules, label) => (rules || [])
     .map((rule, index) => `## ${rule.title || `${label} ${index + 1}`}\n\n${rule.content || ""}`)
     .join("\n\n");
+  // sourceRef 是随包交给 agent 的出处声明。这三项都来自三级配置，写死一层就会说假话：
+  // 规则按 ruleId 跨三层【合并】，所以如实列出真正贡献过内容的层；
+  // 基线数据由"最具体的非空那层"【整体取胜】，所以只标那一层。
+  const projectConfigBase = ((state.projects || []).find((item) => item.id === taskGroup.projectId) || {}).config || {};
+  const layerNonEmpty = (value) => Array.isArray(value) && value.length > 0;
+  const mergedLayersRef = (key) => ["Defaults",
+    layerNonEmpty(projectConfigBase[key]) ? `Project:${taskGroup.projectId}` : null,
+    layerNonEmpty(taskGroup.configOverrides?.[key]) ? `TaskGroup:${taskGroup.id}` : null].filter(Boolean).join("+");
+  const winningLayerRef = (key) => (layerNonEmpty(taskGroup.configOverrides?.[key]) ? `TaskGroup:${taskGroup.id}`
+    : layerNonEmpty(projectConfigBase[key]) ? `Project:${taskGroup.projectId}` : "Defaults");
   const systemRulesText = renderRules(config.activeSystemRules, "系统规则");
-  pushEntry("system/rules.md", "system", "durable", systemRulesText, `TaskGroup:${taskGroup.id}`);
+  pushEntry("system/rules.md", "system", "durable", systemRulesText, mergedLayersRef("systemRules"));
   const businessRulesText = renderRules(config.activeBusinessRules, "业务规则");
-  pushEntry("business/rules.md", "business", "durable", businessRulesText, `TaskGroup:${taskGroup.id}`);
+  pushEntry("business/rules.md", "business", "durable", businessRulesText, mergedLayersRef("businessRules"));
   const baselineText = (config.baselineData || []).map((item) => `- ${item.name || item.locator}: ${item.locator || ""} ${item.digest || ""}`).join("\n");
-  pushEntry("business/baseline.md", "business", "durable", baselineText, `Project:${dispatch.projectId}`);
+  pushEntry("business/baseline.md", "business", "durable", baselineText, winningLayerRef("baselineData"));
   const answeredConfirmations = (state.humanConfirmationRequests || [])
     .filter((item) => item.taskGroupId === taskGroup.id && ["answered", "consumed"].includes(item.status))
     .map((item) => ({requestId: item.requestId, question: item.question?.summary, selectedOptionId: item.decision?.selectedOptionId, selectedLabel: item.decision?.selectedLabel, inputText: item.decision?.inputText}));
