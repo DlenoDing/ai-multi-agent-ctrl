@@ -436,7 +436,13 @@ const shardOpenPredicates = {
     .some((dispatch) => !["completed", "failed", "cancelled"].includes(dispatch.status)
       && dispatch.sessionId === item.sessionId && dispatch.runId === item.runId),
   agentDispatches: (item) => !["completed", "failed", "cancelled"].includes(item.status), // core 2778
-  roleDriftGuards: (item) => !["closed", "corrected"].includes(item.status) // core 2756
+  roleDriftGuards: (item) => !["closed", "corrected"].includes(item.status), // core 2756
+  // 任务组是主实体，工作项内嵌在它里面 —— 淘汰一个任务组等于连同它的全部工作项一起删掉，
+  // 而且它是【唯一】一个内存层完全不封顶的分片集合：其余集合都有 core 里的 cap 先行收口，
+  // 只有任务组由人不断新建、从不收口，这道 2000 是它遇到的第一道也是唯一一道上限。
+  // 原先走的是按 updatedAt 新→旧的盲切片，被删的正是"还开着但最久没动"的那批 ——
+  // 也就是人正在等的那些。终态镜像 spec/state-machines.yaml 的 TaskGroup.terminal。
+  taskGroups: (item) => !["closed", "aborted"].includes(item.status)
 };
 
 export function capProjectShardCollections(shard) {

@@ -1798,6 +1798,59 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("持久层命令上限: 最老的【活跃】控制命令被容量淘汰（落地后 ack 会 404，配对的派发永远停在 blocked）");
     }
 
+    // 上面那条只钉住一个集合。逐条补断言的问题是：新增一个分片集合时没人会想起来补 ——
+    // 于是按权威来源（state-store 的分片集合清单）全量核对：凡是"还开着的记录被淘汰会造成
+    // 不可恢复损失"的集合，都必须在超限时把最老的活跃项留下。派生记录与纯历史日志不在此列，
+    // 它们被裁掉可以重算或本就是有意的滚动窗口，这里逐个写明豁免理由，不留"默认放过"。
+    const SHARD_CAP_EXEMPT = {
+      closeBarriers: "每次评估重算覆盖（core 3298），淘汰后下次评估即恢复",
+      completionReadiness: "同上，派生记录",
+      progressSnapshots: "进度历史快照，滚动窗口即预期语义",
+      agentExecutionEvents: "执行事件日志，滚动窗口即预期语义（界面已带截断提示）"
+    };
+    const shardCapProbe = {
+      taskGroups: {open: {id: "tg_open_oldest", status: "development"}, done: (i) => ({id: `tg_done_${i}`, status: "closed"})},
+      workSessions: {open: {sessionId: "ws_open_oldest", status: "active"}, done: (i) => ({sessionId: `ws_${i}`, status: "recycled"})},
+      humanConfirmationRequests: {open: {requestId: "hcr_open_oldest", status: "pending"}, done: (i) => ({requestId: `hcr_${i}`, status: "consumed"})},
+      humanDirectives: {open: {directiveId: "hd_open_oldest", status: "queued"}, done: (i) => ({directiveId: `hd_${i}`, status: "applied"})},
+      repositoryOutputs: {open: {targetId: "rot_open_oldest", status: "pending"}, done: (i) => ({targetId: `rot_${i}`, status: "pushed"})},
+      effectiveInstructionPackets: {open: {packetId: "eip_open_oldest", status: "draft"}, done: (i) => ({packetId: `eip_${i}`, status: "superseded"})},
+      checkpoints: {open: {checkpointId: "cp_open_oldest", commitRefs: ["c"], pushRefs: ["p"], artifactManifestRefs: ["a"]}, done: (i) => ({checkpointId: `cp_${i}`})},
+      agentControlCommands: {open: {commandId: "acc_open_oldest", status: "queued"}, done: (i) => ({commandId: `acc_${i}`, status: "acked"})},
+      agentDispatches: {open: {dispatchId: "dsp_open_oldest", status: "running"}, done: (i) => ({dispatchId: `dsp_${i}`, status: "completed"})},
+      roleDriftGuards: {open: {guardId: "rdg_open_oldest", status: "open"}, done: (i) => ({guardId: `rdg_${i}`, status: "closed"})},
+      agentTaskContracts: {open: {contractId: "atc_open_oldest", sessionId: "ws_live", runId: "run_live"}, done: (i) => ({contractId: `atc_${i}`, sessionId: `ws_${i}`, runId: `run_${i}`})}
+    };
+    const idOf = (item) => item.id || item.sessionId || item.requestId || item.directiveId || item.targetId
+      || item.packetId || item.checkpointId || item.commandId || item.dispatchId || item.guardId || item.contractId;
+    const shardCollections = JSON.parse(readFileSync(join(root, "apps/control-plane-ui/lib/state-store.mjs"), "utf8")
+      .match(/const projectShardCollections = (\[[\s\S]*?\]);/)[1].replace(/'/g, '"').replace(/,(\s*])/g, "$1"));
+    for (const collection of shardCollections) {
+      if (SHARD_CAP_EXEMPT[collection]) continue;
+      const probe = shardCapProbe[collection];
+      if (!probe) {
+        output.push(`持久层上限: 分片集合 ${collection} 既没有被这里核对，也没有写明豁免理由`
+          + " —— 新增分片集合时必须二选一，否则它默认走盲切片，活跃记录会被容量淘汰");
+        continue;
+      }
+      const shard = {collections: {
+        agentDispatches: [{dispatchId: "dsp_live", sessionId: "ws_live", runId: "run_live", status: "running"}],
+        [collection]: [
+          ...Array.from({length: 5100}, (_, index) => ({...probe.done(index),
+            updatedAt: new Date(Date.UTC(2026, 0, 1) + index * 60000).toISOString()})),
+          {...probe.open, updatedAt: "2019-01-01T00:00:00Z"}
+        ]
+      }};
+      capProjectShardCollections(shard);
+      const kept = shard.collections[collection];
+      if (kept.length >= 5101) {
+        output.push(`持久层上限: ${collection} 超出上限后没有实际裁剪 —— 这一轮断言在空转`);
+      } else if (!kept.some((item) => idOf(item) === idOf(probe.open))) {
+        output.push(`持久层上限: ${collection} 里最老的【未了结】记录被容量淘汰`
+          + " —— 落盘后这条记录从此不存在，它挡着的门再也不会被满足");
+      }
+    }
+
     // 租约的 holderRef 原先可自报：指向一个长期存活的【别处】会话，就造出一条永不过期的租约 ——
     // expireStaleLeases 的"持有者已了结"判据恒为假，terminateCellRuntime 只匹配本工作项的会话，
     // 两条回收路径同时失效，all_leases_terminal 从此永久被挡。
