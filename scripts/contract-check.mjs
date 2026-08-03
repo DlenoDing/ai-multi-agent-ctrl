@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -4186,6 +4187,41 @@ function verifyTransitionEngine(output) {
     return;
   }
 
+  // 上面那句"必须与 validate-specs 解析出的形状一致"此前只验到【WorkItem 这个键存在】。
+  // 而运行期读规格用的是 transition-engine 自己手写的 YAML 子集解析器（parseYamlSubset），
+  // 人、validate-specs.rb 读的是真正的 YAML。两者一旦分叉，运行时强制的状态机就不再是规格里那一份，
+  // 而两边都不会报错 —— 文件照样读得进去，只是读出来的东西不一样：加一个子集解析器不支持的构造
+  // （锚点、多行标量、流式映射）就足以让某台机器少几个状态或少几条转移，然后非法转移被静默放行。
+  // 这里用真 YAML 解析器重新解析同一份文件并逐字段比对。ruby 是本仓硬依赖（validate-specs.rb 就靠它），
+  // 取不到时必须报错而不是跳过 —— 跳过会让这道门在最需要它的环境里悄悄消失。
+  const rubyYamlJson = (relativePath) => JSON.parse(execFileSync("ruby",
+    ["-ryaml", "-rjson", "-e", "puts YAML.load_file(ARGV[0]).to_json", resolve(root, relativePath)],
+    {encoding: "utf8"}));
+  try {
+    // 自证非空转：解析结果必须足够大，否则"两个空对象相等"也会是绿的。
+    if (Object.keys(machines).length < 40) {
+      output.push(`spec 解析一致性: 只解析出 ${Object.keys(machines).length} 台状态机 —— 低于下限，这组比对在空转`);
+    }
+    for (const [relativePath, jsDoc] of [["spec/state-machines.yaml", loadStateMachines()], ["spec/gates.yaml", catalog]]) {
+      if (canonicalJson(jsDoc) !== canonicalJson(rubyYamlJson(relativePath))) {
+        output.push(`spec 解析一致性: ${relativePath} 经运行期的 YAML 子集解析器读出的内容，与真正的 YAML 解析结果不一致`
+          + " —— 运行时正在按一份和规格不同的状态机执行，而两边都不会报错");
+      }
+    }
+    // 这三份规格文件各自都有 JSON Schema，但此前【从未被拿来校验过】：schema 摆在那里，
+    // 谁改坏了规格文件也没有任何东西会发现。有 schema 却不校验，等于没有 schema。
+    for (const [relativePath, schemaPath] of [
+      ["spec/state-machines.yaml", "spec/state-machines.schema.json"],
+      ["spec/gates.yaml", "spec/gate-catalog.schema.json"],
+      ["spec/terminal-execution-manifest.yaml", "spec/terminal-execution-manifest.schema.json"]
+    ]) {
+      // 第 5 个形参是【schema 根】（供 #/$defs 解析），不是仓库目录 —— 传错会让每个本地 $ref 都解析失败。
+      validateSchema(rubyYamlJson(relativePath), JSON.parse(readFileSync(resolve(root, schemaPath), "utf8")), relativePath, output);
+    }
+  } catch (error) {
+    output.push(`spec 解析一致性: 无法用真 YAML 解析器复核规格文件（${error.message}）—— 这组断言无从验证，不得视为通过`);
+  }
+
   // Legal, fully-evidenced transition must pass.
   const legalEvidence = {
     task_contract_created: "contract:x",
@@ -4306,6 +4342,16 @@ function validateSchema(value, schema, path, output, root, depth = 0) {
   if (schema.enum && !schema.enum.includes(value)) output.push(`${path} expected enum ${schema.enum.join("|")}, got ${JSON.stringify(value)}`);
   if (schema.type) validateType(value, schema.type, path, output);
   if (schema.type === "string" && schema.minLength && String(value || "").length < schema.minLength) output.push(`${path} expected minLength ${schema.minLength}`);
+  // pattern 此前完全没有实现，而 spec 里 37 份 schema 用了它、共 93 处 —— 那些约束一直在验空气：
+  // 产出方写出格式不合法的 id / 摘要 / 引用，这道门照样是绿的。反向更隐蔽：{not: {pattern}} 的
+  // 内层因为没有任何可判定关键字而恒为"匹配"，于是每一个合法值都被判成违规（假红）。
+  // 不认识的关键字必须要么实现、要么显式报错，不能当成"通过"。
+  if (schema.pattern !== undefined && typeof value === "string") {
+    let regex = null;
+    try { regex = new RegExp(schema.pattern, "u"); }
+    catch { try { regex = new RegExp(schema.pattern); } catch { output.push(`${path} schema 的 pattern 不是合法正则：${schema.pattern}`); } }
+    if (regex && !regex.test(value)) output.push(`${path} 不匹配 pattern ${schema.pattern}（实得 ${JSON.stringify(String(value).slice(0, 80))}）`);
+  }
   if ((schema.type === "integer" || schema.type === "number") && schema.minimum !== undefined && Number(value) < schema.minimum) output.push(`${path} expected minimum ${schema.minimum}`);
   // Array keywords apply to any array instance (not gated on a declared type — the `contains` subschema
   // under the placement `not` clause declares no type).
