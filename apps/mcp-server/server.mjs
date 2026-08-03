@@ -611,8 +611,20 @@ export async function callTool(name, args = {}, context = {}) {
     } else {
       effectiveArgs = applyAgentGrantScopeArgs(name, rawArgs, grantCheck);
       argumentDigest = digestOf(effectiveArgs);
+      // 幂等键的命名空间是全局的、内容由调用方自己给。REST 那一侧命中时要求 actor 相等，
+      // MCP 这一侧原先只比对工具名与参数摘要，【不看是谁在调】—— 于是另一个主体拿同样的键和
+      // 同样的参数调用，会直接拿到上一个主体那次执行的结果（replayed），而工具根本没有被执行、
+      // 也没有为这次调用产生新的策略判定。两侧对同一件事必须有同一个判断。
+      const principalRef = `${context.principal?.kind || "unknown"}:${context.principal?.id || "unknown"}`;
       const existingRecord = isWriteTool(name) ? state.idempotencyRecords[idempotencyKey] : null;
-      if (existingRecord && (existingRecord.action !== name || existingRecord.argumentDigest !== argumentDigest)) {
+      // 记录【没有】principalRef 时不能当成"通过"：那是本次改动之前写下的旧记录，无从判断是谁写的，
+      // 而"判断不了就放行"正是这条漏洞本身。改用一个独立错误码，不与真正的键冲突混为一谈：
+      // 旧记录在 TTL 内最多让重放明确失败一次，而不是把别人的结果悄悄返回。
+      if (existingRecord && !existingRecord.principalRef) {
+        result = {ok: false, error: "idempotency_record_principal_unknown", idempotencyKey,
+          detail: "这条幂等记录早于主体绑定，无法确认它属于哪个调用方；请换一个幂等键重试"};
+      } else if (existingRecord && (existingRecord.action !== name || existingRecord.argumentDigest !== argumentDigest
+        || existingRecord.principalRef !== principalRef)) {
         result = {ok: false, error: "idempotency_key_reuse_conflict", idempotencyKey};
       } else if (existingRecord) {
         result = {ok: true, replayed: true, idempotencyRecord: existingRecord, payload: existingRecord.payload};
@@ -636,6 +648,8 @@ export async function callTool(name, args = {}, context = {}) {
           state.idempotencyRecords[idempotencyKey] = {
             status: 200,
             action: name,
+            // 谁写下的这条记录。重放时必须是同一个主体 —— 否则另一个主体拿同样的键就能取走结果。
+            principalRef,
             argumentDigest,
             resultDigest: digestOf(result),
             payload: redactMcpPayload(result),

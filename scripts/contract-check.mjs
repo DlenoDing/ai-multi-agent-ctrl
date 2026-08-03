@@ -12,7 +12,7 @@ import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
 import { publicAgentNode } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
-import { RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit } from "../apps/mcp-server/server.mjs";
+import { RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
   maintainWorkerLanes,
@@ -172,6 +172,7 @@ verifySeedRecordsMatchTheirDeclaredSchemas(errors);
 verifyEverySchemaVersionHasASpec(errors);
 verifyEveryProjectScopedIdIsScopeChecked(errors);
 verifyEveryStateCollectionIsTenantScoped(errors);
+verifyIdempotencyReplayIsPrincipalBound(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
 verifyWorkStatusEnumConvergence(errors);
@@ -4050,6 +4051,60 @@ function extractMachineStates(yamlText, machine) {
 // 加一个带 projectId 的集合、忘了在那里加一行 filter，跨租户就能读到，而且毫无痕迹。
 // 改成白名单是大手术且回归面很大，所以这里用门顶住：每个集合要么被过滤，要么登记为全局注册表。
 // 反向也要核：登记为"全局"的集合一旦长出 projectId/taskGroupId，它就是租户数据了，登记随即失效。
+// 幂等键的命名空间是全局的，键值完全由调用方自己给。REST 那一侧命中时要求 actor 相等；
+// MCP 这一侧原先只比对工具名与参数摘要，不看是谁在调 —— 另一个主体用同一把键和同样的参数，
+// 会直接拿到上一个主体那次执行的结果（replayed:true），工具根本没被执行。已行为复现。
+//
+// 必须在【子进程】里验：handleMcpJsonRpc 内部走 loadState() 读真实运行态，而运行目录在模块
+// 加载时就由 AIMAC_RUNTIME_DIR 定死了 —— 直接在本进程调用会把探针记录写进开发者的 .runtime，
+// 而且第二次跑会命中上一次留下的记录，这道门就成了看执行顺序的假绿/假红。（我第一版就是这样写的。）
+function verifyIdempotencyReplayIsPrincipalBound(output) {
+  const probeDir = mkdtempSync(join(tmpdir(), "aimac-idem-probe-"));
+  const probeFile = join(probeDir, "probe.mjs");
+  writeFileSync(probeFile, `
+import { handleMcpJsonRpc } from ${JSON.stringify(resolve(root, "apps/mcp-server/server.mjs"))};
+const call = (principalId) => handleMcpJsonRpc({
+  jsonrpc: "2.0", id: 1, method: "tools/call",
+  params: {name: "review-mcp.review_plan_create", arguments: {
+    projectId: "prj_control_plane", taskGroupId: "tg_runtime_management",
+    requiredReviewerRoles: ["reviewer"], idempotencyKey: "idem-principal-probe"}}
+}, {principal: {kind: "system_admin", id: principalId, allowedMcpTools: ["*"]}});
+const unwrap = (response) => { try { return JSON.parse(response?.result?.content?.[0]?.text || "{}"); } catch { return {}; } };
+const first = unwrap(await call("acct_idem_a"));
+const own = unwrap(await call("acct_idem_a"));
+const other = unwrap(await call("acct_idem_b"));
+console.log(JSON.stringify({first: {ok: first.ok, error: first.result?.error},
+  own: {replayed: own.result?.replayed}, other: {ok: other.ok, replayed: other.result?.replayed, error: other.result?.error}}));
+`);
+  let probe = null;
+  try {
+    const stdout = execFileSync(process.execPath, [probeFile], {
+      encoding: "utf8",
+      env: {...process.env, AIMAC_RUNTIME_DIR: join(probeDir, "runtime"), AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: ""}
+    });
+    probe = JSON.parse(stdout.trim().split("\n").at(-1));
+  } catch (error) {
+    output.push(`幂等重放主体绑定：探针进程失败（${String(error.message).slice(0, 200)}）—— 这条断言无从验证`);
+    return;
+  } finally {
+    try { rmSync(probeDir, {recursive: true, force: true}); } catch { /* best effort */ }
+  }
+  if (probe.first.ok !== true) {
+    output.push(`幂等重放主体绑定：首次调用就失败（${probe.first.error || "未知"}）—— 这条断言无从验证`);
+    return;
+  }
+  if (probe.own.replayed !== true) {
+    output.push("幂等重放主体绑定：同一主体用同一把键重放没有命中幂等记录 —— 幂等本身失效了");
+  }
+  if (probe.other.replayed === true || probe.other.ok === true) {
+    output.push("幂等重放主体绑定：另一个主体用同一把幂等键拿到了上一个主体的执行结果"
+      + " —— 幂等记录命中时不看是谁在调，等于把别人那次调用的返回值交了出去");
+  }
+  if (probe.other.error !== "idempotency_key_reuse_conflict") {
+    output.push(`幂等重放主体绑定：另一个主体应当拿到 idempotency_key_reuse_conflict，实得 ${probe.other.error || "无错误"}`);
+  }
+}
+
 function verifyEveryStateCollectionIsTenantScoped(output) {
   const GLOBAL_REGISTRY_COLLECTIONS = {
     managementSurfaces: "控制台面目录：系统级清单，与租户无关",
