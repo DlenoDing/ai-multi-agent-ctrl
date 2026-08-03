@@ -3456,7 +3456,11 @@ export function syncSkillSource(state, sourceId, options = {}) {
   ensureRuntimeCollections(state);
   const source = state.skillSources.find((item) => item.sourceId === sourceId);
   if (!source) throw new Error("skill_source_not_found");
-  const runtimeDir = options.runtimeDir || join(options.root || process.cwd(), ".runtime");
+  // 缺省推导原先是 join(options.root, ".runtime")，而编排路径传进来的 options.root 是【用户仓库的根】
+  // （server.mjs 传的是 repositoryRoot）—— 一旦哪条调用没显式给 runtimeDir，技能源的 git 克隆就会
+  // 落进用户仓库里。改为与全仓其它模块同一套推导：以控制面自身的根为基准，并认 AIMAC_RUNTIME_DIR
+  // （此前这里是唯一不认它的地方，运维把运行目录配到别处时，技能源仍会写回 <cwd>/.runtime）。
+  const runtimeDir = options.runtimeDir || resolvePath(controlPlaneRoot, process.env.AIMAC_RUNTIME_DIR || ".runtime");
   const sourceDir = join(runtimeDir, "skill-sources", source.sourceId);
   const repoDir = join(sourceDir, "repo");
   mkdirSync(sourceDir, {recursive: true});

@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { SCHEMA_FILE_ALIASES, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -141,6 +141,19 @@ const {validateSchema, schemaMatches} = createSchemaValidator(resolve(root, "spe
 const humanConfirmationSchema = loadJson("spec/human-confirmation-request.schema.json");
 const humanDirectiveSchema = loadJson("spec/human-directive.schema.json");
 const organizationSchema = loadJson("spec/organization.schema.json");
+// 这道门里的编排探针大多只传 {root}，而技能源同步在没给 runtimeDir 时会按 AIMAC_RUNTIME_DIR
+// 落盘 —— 不设它的话，每跑一次门就往【开发者真实的 .runtime】里重建一次技能索引。
+// 那既是弄脏别人的状态，更要紧的是让门的结果依赖那份 git 克隆在不在：同一份代码在不同机器上
+// 可能走不同分支。指到临时目录，让这道门只依赖它自己造的东西。
+// 自查用：跑之前先记下开发者真实运行态的指纹。这道门自己就犯过——探针以为在用自造的 state，
+// 实际写进了真实 .runtime，于是第二次跑会撞上自己上一次的残留，绿得毫无意义。
+const developerStatePath = resolve(root, ".runtime", "control-plane-state.json");
+const developerStateBefore = existsSync(developerStatePath)
+  ? `${statSync(developerStatePath).size}:${statSync(developerStatePath).mtimeMs}` : "(不存在)";
+const probeRuntimeDir = mkdtempSync(join(tmpdir(), "aimac-contract-runtime-"));
+process.env.AIMAC_RUNTIME_DIR = probeRuntimeDir;
+process.on("exit", () => { try { rmSync(probeRuntimeDir, {recursive: true, force: true}); } catch { /* best effort */ } });
+
 const errors = [];
 
 validateSchema(seedState.runtime, runtimeSchema, "seed.runtime", errors);
@@ -3999,6 +4012,17 @@ function verifyCommandBusLifecycle(output) {
   if (cmd6.status !== "timed_out") {
     output.push("command-bus: sweepCommandBus did not time out a running command past its timeoutAt");
   }
+}
+
+// 门跑完了才有资格说这句：整轮下来没有碰过开发者的真实运行态。碰了就说明某条探针没有隔离，
+// 它的结果会依赖上一次运行留下的东西 —— 那样的绿不能算数。
+const developerStateAfter = existsSync(developerStatePath)
+  ? `${statSync(developerStatePath).size}:${statSync(developerStatePath).mtimeMs}` : "(不存在)";
+if (developerStateBefore !== developerStateAfter) {
+  console.error("contract check failed:");
+  console.error("- 这轮契约门改动了开发者真实的 .runtime/control-plane-state.json —— 说明有探针没有隔离，"
+    + "它读写的是真实运行态而不是自己造的夹具；这类断言的结果取决于上一次运行留下了什么，绿了也不能算数");
+  process.exit(1);
 }
 
 console.log("contract check ok");
