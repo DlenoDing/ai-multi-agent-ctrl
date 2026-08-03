@@ -948,6 +948,23 @@ errors << "判据形态规则必须写明命令/工具调用接口不适用本�
 state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs"))
 # 后台自治周期设为 0 时什么都不推进（指令停在待处理、派发不被领走、关闭门不重算），
 # 而控制台上一切如常。与状态机执行模式同形：能悄悄关掉保证的开关必须如实公布。
+# 由 AI 自报、且直接喂给门的字段，缺省不得等于有利结果。这一类已经在两处真实发生过：
+#   · test_result_submit 的 status 缺省即 "passed"（零参数调用造出一道通过的质量门）
+#   · approvalResolve 无结论即 "approved"（法定人数与禁止自批都建立在这道闸门上）
+# 两处都改成"拒绝并报出可选值"。这里钉住不再复发：写路径里不允许把结论字段缺省成字面量，
+# 唯一例外是受控授权分支（allowDirectActivation），它自身另有两条判别力门守着。
+mcp_source_status_defaults = mcp_source.scan(/args\.(?:status|verdict|outcome|allowed)\s*\|\|\s*"[a-z_]+"/)
+unless mcp_source_status_defaults.empty?
+  errors << "MCP 写路径把结论字段缺省成了字面量（缺省不得等于有利结果）：#{mcp_source_status_defaults.uniq.join(', ')}"
+end
+core_status_defaults = core_source.scan(/args\.(?:status|verdict|outcome|allowed)\s*\|\|\s*"[a-z_]+"/)
+unexpected_core_defaults = core_status_defaults.reject { |snippet| snippet.include?('"active"') } # 见上：受控授权分支
+unless unexpected_core_defaults.empty?
+  errors << "核心写路径把结论字段缺省成了字面量（缺省不得等于有利结果）：#{unexpected_core_defaults.uniq.join(', ')}"
+end
+errors << "测试结果必须显式给出状态（缺省不得当作通过）" unless mcp_source.include?("test_result_status_required")
+errors << "审批必须显式给出结论（缺省不得当作批准）" unless mcp_source.include?("approval_decision_required")
+
 errors << "后台自治的开关状态必须如实公布给人" unless server_source.include?("state.runtime.autonomousOrchestrator = runtimeOrchestratorStatus") && app_js_source.include?("指令会一直停在待处理")
 errors << "分片摘要的兼容接受必须写明退役条件" unless state_store_source.include?("它有明确的退役条件，不是长期双路径") && state_store_source.include?("下一次写入必被重写为规范序")
 errors << "最优终态优先必须写明它只产出判断与提案，不构成动手授权" unless core_source.include?("本条产出的是【判断与提案】，不是动手授权")
