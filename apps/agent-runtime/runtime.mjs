@@ -589,6 +589,16 @@ async function syncContentBundle(config, dispatchPackage, taskRoot) {
   // 只清 bundle 目录：git-transfer 与工作副本不在其下（见下方对 transferDir 的处理）。
   try { rmSync(bundleDir, {recursive: true, force: true}); } catch { /* 首次执行时它本就不存在 */ }
   mkdirSync(bundleDir, {recursive: true});
+  // 逐条摘要能发现【条目被改过】，发现不了【条目被整个丢掉】—— 而丢掉的可能正是 system/rules.md，
+  // 那意味着人写下的规则一句都没到模型手里，且没有任何迹象。整包聚合摘要是这一情形的唯一信号：
+  // 控制面按 entries 的 path:contentDigest 序列算出 bundleDigest，这里独立重算一遍并比对。
+  // 不匹配即拒绝执行：拿不准手里这份内容包是不是控制面构建的那一份，就不能据它开工。
+  if (bundle.bundleDigest) {
+    const recomputed = sha256(JSON.stringify((bundle.entries || []).map((entry) => `${entry.path}:${entry.contentDigest}`)));
+    if (recomputed !== bundle.bundleDigest) {
+      throw new Error(`content_bundle_manifest_mismatch: 整包摘要对不上（收到 ${bundle.bundleDigest}，重算 ${recomputed}）—— 可能有条目在传输中丢失或被替换`);
+    }
+  }
   for (const entry of bundle.entries || []) {
     const content = String(entry.content ?? "");
     if (sha256(content) !== entry.contentDigest) throw new Error(`content_bundle_digest_mismatch: ${entry.path}`);

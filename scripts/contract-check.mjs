@@ -1402,6 +1402,13 @@ function verifyHumanAndOrganizationContracts(output) {
     // 规则体系的全部意义在于它到得了执行方。此前只验证了"提示里包含 system/rules.md 这个文件"
     // （doctor-agent-remote），没有任何地方验证【那份文件里确实是当前生效的规则正文】——
     // renderRules 若截断、若漏掉某一类、若把标题渲染成空，文件照样存在，断言照样绿。
+    // agent 侧按 path:contentDigest 序列独立重算整包摘要并比对（发现"条目被整个丢掉"）。
+    // 两侧公式必须一致，否则那道校验会把每一份正常内容包都判成被篡改。这里独立算一次钉住公式：
+    // 谁改了服务端的算法，必须同时改 agent 侧那一处，否则这条断言当场报红。
+    const cbManifestDigest = `sha256:${createHash("sha256").update(JSON.stringify((cbBundle?.entries || []).map((entry) => `${entry.path}:${entry.contentDigest}`))).digest("hex")}`;
+    if (cbBundle && cbBundle.bundleDigest !== cbManifestDigest) {
+      output.push("内容包: 整包摘要的算法与 agent 侧重算方式不一致 —— agent 会把每一份正常内容包都判成被篡改而拒绝执行");
+    }
     const cbRulesEntry = (cbBundle?.entries || []).find((entry) => entry.path === "system/rules.md");
     const cbDefaultRules = defaultSystemRules();
     if (!cbRulesEntry) {
