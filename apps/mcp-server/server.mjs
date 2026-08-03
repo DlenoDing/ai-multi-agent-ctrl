@@ -961,9 +961,15 @@ function explicitMcpResourceScope(args = {}) {
 // roomId is intentionally excluded: an unresolvable room (room_<non-existent-tg> or an ad-hoc room) is not a
 // project-scoped object, so fail-closing on it would wrongly deny legitimate room traffic; a room backed by a
 // real task group is still scope-enforced because inferMcpArgumentProjectIds resolves room_<tgId> to its project.
-const RESOURCE_ADDRESSING_ARG_KEYS = [
+// 出现其中任一个键、却推断不出所属项目时，有界主体一律拒绝（fail closed）。
+// 这份清单必须覆盖【所有能单独定位一条项目级记录的 id】：漏掉一个，有界主体就能只带那个 id
+// 去操作别的租户的对象 —— 推断不出项目，而这条键又不在清单里，校验会一路走到 allowed。
+// 覆盖面由 contract-check 按 spec 里带 projectId/taskGroupId 的规范全量核对，不靠人记得补。
+export const RESOURCE_ADDRESSING_ARG_KEYS = [
   "projectId", "taskGroupId", "workId", "workItemId", "dispatchId", "sessionId", "requestId",
-  "contractId", "leaseId", "findingId", "approvalId", "repositoryOutputTargetRef", "targetId"
+  "contractId", "leaseId", "findingId", "approvalId", "repositoryOutputTargetRef", "targetId",
+  // 以下六个同样是"单独一个就能指到一条项目级记录"的地址，原先不在清单里。
+  "envelopeId", "grantId", "nodeId", "reviewBundleId", "reviewPlanId", "topologyId"
 ];
 // Handlers that receive no explicit resource default their write to this project; a bounded principal not
 // scoped to it must not perform such an unscoped write into the control-plane tenant's default project.

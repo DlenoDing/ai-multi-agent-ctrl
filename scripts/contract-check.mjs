@@ -12,7 +12,7 @@ import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
 import { publicAgentNode } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
-import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit } from "../apps/mcp-server/server.mjs";
+import { RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
   maintainWorkerLanes,
@@ -170,6 +170,7 @@ for (const tool of toolDefs) {
 verifyRuntimeJsonConflict(errors);
 verifySeedRecordsMatchTheirDeclaredSchemas(errors);
 verifyEverySchemaVersionHasASpec(errors);
+verifyEveryProjectScopedIdIsScopeChecked(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
 verifyWorkStatusEnumConvergence(errors);
@@ -4036,6 +4037,51 @@ function extractMachineStates(yamlText, machine) {
 // 直到某天它第一次出现在生产状态里，而那时没有任何门会说话。这里按代码里的 schemaVersion
 // 字面量全量核对：每一类要么有规范文件，要么在下面写明它为什么不需要（磁盘配置/索引格式，
 // 不是控制面状态里的记录）。默认放过是不允许的 —— 新增一类记录时必须二选一。
+// MCP 的租户隔离最终落在一份清单上：RESOURCE_ADDRESSING_ARG_KEYS —— "出现这个键却推断不出项目，
+// 有界主体一律拒"。漏一个键，有界主体只带那个 id 就能操作别的租户的对象：推断不出项目，
+// 而这条键又不在清单里，校验会一路走到 allowed。清单是人手写的，所以必须有东西核对它的覆盖面。
+// 权威来源：spec 里凡是带 projectId/taskGroupId 的规范，它的 id 字段就是一个项目级对象地址；
+// 与 MCP 参数词表取交集即为"必须被拦截的键"。不是对象地址的（角色名、须配对的从属 id、
+// 记录的属性字段）逐条写明理由 —— 默认放过不允许。
+function verifyEveryProjectScopedIdIsScopeChecked(output) {
+  const NOT_AN_OBJECT_ADDRESS = {
+    roleId: "角色名，不是记录 id（同一个 roleId 在每个任务组里都存在）",
+    runId: "派发的运行序号，必须与 sessionId 配对才能定位；sessionId 已在清单里",
+    repositoryId: "RepositoryOutputTarget 的属性（哪个仓库），定位目标用的是 targetId，已在清单里"
+  };
+  const vocabulary = new Set(Object.keys(createMcpToolDefinitions()[0]?.inputSchema?.properties || {}));
+  if (vocabulary.size < 100) {
+    output.push(`MCP 作用域覆盖核对：参数词表只取到 ${vocabulary.size} 个键，远少于预期 —— 提取逻辑失效，本条在空转`);
+    return;
+  }
+  const guarded = new Set(RESOURCE_ADDRESSING_ARG_KEYS);
+  const inferable = new Set(["projectId", "taskGroupId", "dispatchId", "leaseId", "repositoryOutputTargetRef", "targetId", "roomId"]);
+  const specDir = resolve(root, "spec");
+  let scanned = 0;
+  for (const file of readdirSync(specDir).filter((name) => name.endsWith(".schema.json"))) {
+    const schema = JSON.parse(readFileSync(join(specDir, file), "utf8"));
+    const props = schema.properties || {};
+    if (!("projectId" in props) && !("taskGroupId" in props)) continue;
+    scanned += 1;
+    for (const key of Object.keys(props)) {
+      if (!/Id$/u.test(key) || key === "projectId" || key === "taskGroupId") continue;
+      if (!vocabulary.has(key)) continue;
+      if (guarded.has(key) || inferable.has(key)) {
+        if (NOT_AN_OBJECT_ADDRESS[key]) {
+          output.push(`MCP 作用域覆盖核对：${key} 已被当作对象地址拦截，却又被登记为"不是对象地址" —— 登记已过时`);
+        }
+        continue;
+      }
+      if (!NOT_AN_OBJECT_ADDRESS[key]) {
+        output.push(`MCP 作用域覆盖核对：${schema.title} 的 ${key} 是一个项目级对象地址，且是 MCP 可接受的参数，`
+          + "但它既不能被 inferMcpArgumentProjectIds 推断出项目，也不在 RESOURCE_ADDRESSING_ARG_KEYS 里"
+          + " —— 有界主体只带这一个 id 调用，就能越过租户边界操作别人的对象");
+      }
+    }
+  }
+  if (scanned < 15) output.push(`MCP 作用域覆盖核对：只扫到 ${scanned} 份项目级规范，远少于预期 —— 本条在空转`);
+}
+
 function verifyEverySchemaVersionHasASpec(output) {
   const SCHEMA_VERSION_WITHOUT_SPEC = {
     "aimac-agent-local-config": "agent 节点自己磁盘上的配置文件，不是控制面状态里的记录",
