@@ -20,11 +20,11 @@
 | `spec/model-capability.schema.json` | Model Registry、Scheduler、Agent Runtime | 校验市面常用模型供应商和模型能力画像 |
 | `spec/model-selection-policy.schema.json` | Scheduler、Model Registry、Decision Center | 校验角色/任务驱动的模型与 Agent 自动选择策略 |
 | `spec/model-selection-decision.schema.json` | Model Registry、Scheduler、Agent Runtime | 校验每次模型/Agent 选择的候选排序、硬约束、score、选中模型和审计 |
-| `spec/session-placement-policy.schema.json` | Scheduler、Orchestrator、Agent Runtime | 校验长任务新会话、小短任务子 agent 的 placement 策略 |
+| `spec/session-placement-policy.schema.json` | （当前无消费者） | 策略正文实际在 `spec/terminal-execution-manifest.yaml` 的 `sessionPlacementPolicy` 段（由 manifest schema 校验），判定实现在 `decideSessionPlacement`；这份独立 schema 没有任何代码引用 |
 | `spec/session-placement-decision.schema.json` | Scheduler、Agent Runtime | 校验每次新 WorkSession/subagent 放置决策和 subagent 安全证明 |
 | `spec/effective-instruction-packet.schema.json` | Orchestrator、Policy Engine、Agent Runtime | 校验强化后的有效指令包、来源分类、active rule 和 forbidden action |
 | `spec/role-drift-guard.schema.json` | Orchestrator、Scheduler、Monitor Agent | 校验角色任务焦点锁、漂移信号、纠偏动作和元控制角色保护 |
-| `spec/external-capability-boundary.schema.json` | Permission Gateway、Policy Engine、Agent Runtime | 校验外部能力边界、不可 AI 批准范围、可接受 resolution mode 和证据 |
+| `spec/external-capability-boundary.schema.json` | （当前无消费者） | 外部能力实际以 `PermissionRequest.resourceType = external_capability` 落地并走人工审批通道；这份独立 schema 没有任何代码引用 |
 | `spec/execution-topology.schema.json` | Scheduler、Orchestrator、Agent Runtime | 校验并行拓扑、branch 隔离、owned path、result bundle 和父级串行合并 |
 | `spec/derived-task-request.schema.json` | Orchestrator、Scheduler、Reviewer Agent、Monitor Agent | 校验派生任务请求、插入模式、拓扑影响和审计证据 |
 | `spec/review-plan.schema.json` | Reviewer Agent、Orchestrator、QA Agent | 校验互审计划、batch、coverage matrix 和 closure gate |
@@ -37,11 +37,11 @@
 | `spec/agent-task-contract.schema.json` | Orchestrator、Agent Runtime、WorkSession | 校验每次 session_start 的任务契约 |
 | `spec/control-events.schema.json` | Room Broker、Command Bus、MCP Proxy | 校验 room event、command event、checkpoint event 和 permission event envelope |
 | `spec/checkpoint.schema.json` | Evidence MCP、Agent Runtime、Close Barrier | 校验 checkpoint、commitRefs、pushRefs 和 evidenceRefs |
-| `spec/commit-ref.schema.json` | Git Command、Evidence MCP | 校验 commit ref 证据 |
-| `spec/push-ref.schema.json` | Git Command、Evidence MCP | 校验 push ref 和远端 SHA 证据 |
+| `spec/commit-ref.schema.json` | （当前无消费者） | 由 `checkpoint.schema.json` 以外部 `$ref` 引用，contract-check 已能真正解析该引用；但目前没有任何 checkpoint 实例被按 schema 校验，因此这份约束实际尚未生效 |
+| `spec/push-ref.schema.json` | （当前无消费者） | 同 `commit-ref`：引用已能解析，但没有 checkpoint 实例被校验，约束实际尚未生效 |
 | `spec/mcp-grant.schema.json` | MCP Proxy、Permission Gateway、Security Agent | 校验 MCP tool grant 的参数策略、结果过滤、风险和过期 |
-| `spec/git-automation-policy.schema.json` | Agent Runtime、Command Bus、Release Agent | 校验自动 commit/push 凭据、分支、路径范围和远端 SHA |
-| `spec/git-command.schema.json` | Agent Runtime、Command Bus、Release Agent | 校验 Git status/commit/push 命令 payload、路径匹配和证据输出 |
+| `spec/git-automation-policy.schema.json` | （当前无消费者） | git 自动化实际由 RepositoryOutputTarget（分支/远端）＋租约＋push 前 claim 复核＋`assertAllowedPaths`（路径范围）管住，不读这份策略记录 |
+| `spec/git-command.schema.json` | （当前无消费者） | 同上：运行时直接执行 git 并以 checkpoint 的 commit/push 证据留档，不经过 GitCommand 记录 |
 | `spec/close-barrier.schema.json` | Orchestrator、Monitor Agent、Release Agent | 校验 TaskGroup 关闭屏障、质量门结果和阻断对象 |
 | `spec/runtime-bootstrap.schema.json` | Agent Runtime、UI Console Service、Spec Validator | 校验 npm/Docker/Shell 启动、初始化、自检和文件产出策略 |
 | `spec/account.schema.json` | Identity Service、Policy Engine、UI Console Service | 校验系统管理员、用户账号、服务账号和 Agent identity |

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.dev/ai-multi-agent-ctrl/spec/admission-decision.schema.json",
+  "title": "AdmissionDecision",
+  "description": "§4.5 准入台账的单条判决：每一次调度裁定都要留下机器可读的记录，说明这个 cell 本轮为什么跑或为什么不跑。八个正交标志位恰有一个为真，且必须与 outcome 一致 —— 否则「为什么没跑」会被糅进一个字段里，事后无法归因。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "decisionId",
+    "projectId",
+    "workItemId",
+    "candidateRef",
+    "outcome",
+    "selected",
+    "deferred",
+    "blocked",
+    "resourceQueued",
+    "awaitingReview",
+    "awaitingCheckpoint",
+    "superseded",
+    "skippedTerminal",
+    "cellClass",
+    "dimensions",
+    "decidedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "admission-decision/v1"},
+    "decisionId": {"type": "string", "pattern": "^adm_[a-z0-9_]+$"},
+    "projectId": {"type": "string", "minLength": 1},
+    "taskGroupId": {"type": ["string", "null"]},
+    "workItemId": {"type": "string", "minLength": 1},
+    "candidateRef": {"type": "string", "pattern": "^WorkItem:.+$"},
+    "outcome": {
+      "type": "string",
+      "enum": ["selected", "deferred", "blocked", "resource_queued", "awaiting_review", "awaiting_checkpoint", "superseded", "skipped_terminal"]
+    },
+    "selected": {"type": "boolean"},
+    "deferred": {"type": "boolean"},
+    "blocked": {"type": "boolean"},
+    "resourceQueued": {"type": "boolean"},
+    "awaitingReview": {"type": "boolean"},
+    "awaitingCheckpoint": {"type": "boolean"},
+    "superseded": {"type": "boolean"},
+    "skippedTerminal": {"type": "boolean"},
+    "cellClass": {
+      "type": "string",
+      "enum": ["ready_now", "ready_after_resource_admission", "pending_window", "pending_data_volume", "blocked_external", "blocked_by_exact_dependency", "diagnostic_only_no_pass", "defer_downstream"]
+    },
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conditionDimension", "functionDimension", "resourceDimension", "evidenceQualificationDimension"],
+      "description": "A5 正交维度：条件窗口 / 功能分类 / 共享资源 / 证据资格分开记录，任一为空也要显式写 null，不得省略。",
+      "properties": {
+        "conditionDimension": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "source": {"type": ["string", "null"]},
+            "requiredWindowState": {"type": ["string", "null"]},
+            "environment": {"type": ["string", "null"]}
+          }
+        },
+        "functionDimension": {"type": ["string", "null"]},
+        "resourceDimension": {
+          "type": "string",
+          "enum": ["external_quota_account", "mutable_shared_store", "read_only_preflight"]
+        },
+        "evidenceQualificationDimension": {
+          "type": "string",
+          "enum": ["pass", "resource_queued", "verification_incomplete", "blocked_external", "deferred_condition_mismatch", "pending_window"]
+        }
+      }
+    },
+    "reasonCode": {"type": ["string", "null"]},
+    "whyThisCellNow": {"type": ["string", "null"]},
+    "evidenceQualification": {"type": ["object", "null"]},
+    "workerCarrierDecision": {"type": ["object", "null"]},
+    "modelDecisionRef": {"type": ["string", "null"]},
+    "wakeTrigger": {"type": ["string", "object", "null"]},
+    "sessionId": {"type": ["string", "null"]},
+    "dispatchId": {"type": ["string", "null"]},
+    "cycleRef": {"type": ["string", "null"]},
+    "decidedAt": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T"}
+  },
+  "oneOf": [
+    {"properties": {"outcome": {"const": "selected"}, "selected": {"const": true}, "deferred": {"const": false}, "blocked": {"const": false}, "resourceQueued": {"const": false}, "awaitingReview": {"const": false}, "awaitingCheckpoint": {"const": false}, "superseded": {"const": false}, "skippedTerminal": {"const": false}}},
+    {"properties": {"outcome": {"const": "deferred"}, "selected": {"const": false}, "deferred": {"const": true}, "blocked": {"const": false}, "resourceQueued": {"const": false}, "awaitingReview": {"const": false}, "awaitingCheckpoint": {"const": false}, "superseded": {"const": false}, "skippedTerminal": {"const": false}}},
+    {"properties": {"outcome": {"const": "blocked"}, "selected": {"const": false}, "deferred": {"const": false}, "blocked": {"const": true}, "resourceQueued": {"const": false}, "awaitingReview": {"const": false}, "awaitingCheckpoint": {"const": false}, "superseded": {"const": false}, "skippedTerminal": {"const": false}}},
+    {"properties": {"outcome": {"const": "resource_queued"}, "selected": {"const": false}, "deferred": {"const": false}, "blocked": {"const": false}, "resourceQueued": {"const": true}, "awaitingReview": {"const": false}, "awaitingCheckpoint": {"const": false}, "superseded": {"const": false}, "skippedTerminal": {"const": false}}},
+    {"properties": {"outcome": {"const": "awaiting_review"}, "selected": {"const": false}, "deferred": {"const": false}, "blocked": {"const": false}, "resourceQueued": {"const": false}, "awaitingReview": {"const": true}, "awaitingCheckpoint": {"const": false}, "superseded": {"const": false}, "skippedTerminal": {"const": false}}},
+    {"properties": {"outcome": {"const": "awaiting_checkpoint"}, "selected": {"const": false}, "deferred": {"const": false}, "blocked": {"const": false}, "resourceQueued": {"const": false}, "awaitingReview": {"const": false}, "awaitingCheckpoint": {"const": true}, "superseded": {"const": false}, "skippedTerminal": {"const": false}}},
+    {"properties": {"outcome": {"const": "superseded"}, "selected": {"const": false}, "deferred": {"const": false}, "blocked": {"const": false}, "resourceQueued": {"const": false}, "awaitingReview": {"const": false}, "awaitingCheckpoint": {"const": false}, "superseded": {"const": true}, "skippedTerminal": {"const": false}}},
+    {"properties": {"outcome": {"const": "skipped_terminal"}, "selected": {"const": false}, "deferred": {"const": false}, "blocked": {"const": false}, "resourceQueued": {"const": false}, "awaitingReview": {"const": false}, "awaitingCheckpoint": {"const": false}, "superseded": {"const": false}, "skippedTerminal": {"const": true}}}
+  ]
+}

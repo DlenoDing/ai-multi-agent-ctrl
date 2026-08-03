@@ -135,6 +135,15 @@ const workerLaneSchema = loadJson("spec/worker-lane.schema.json");
 const sessionPlacementDecisionSchema = loadJson("spec/session-placement-decision.schema.json");
 const closeBarrierSchema = loadJson("spec/close-barrier.schema.json");
 const languagePolicySchema = loadJson("spec/language-policy.schema.json");
+// 外部 $ref 的解析表：schema 之间互相引用时，被引用的那份必须真的参与校验。
+const siblingSchemaCache = new Map();
+function siblingSchema(fileName) {
+  if (siblingSchemaCache.has(fileName)) return siblingSchemaCache.get(fileName);
+  let loaded = null;
+  try { loaded = loadJson(`spec/${fileName}`); } catch { loaded = null; }
+  siblingSchemaCache.set(fileName, loaded);
+  return loaded;
+}
 const humanConfirmationSchema = loadJson("spec/human-confirmation-request.schema.json");
 const humanDirectiveSchema = loadJson("spec/human-directive.schema.json");
 const organizationSchema = loadJson("spec/organization.schema.json");
@@ -273,6 +282,10 @@ function verifyHumanAndOrganizationContracts(output) {
 
   // Human confirmation forces a none option, requires input for none, and dedups pending.
   const cycle = runAutonomousCycle(state, {root, mode: "all"});
+
+  // 编排跑完之后，state 里已经是【生产者真造出来的】记录。拿同一套"按记录自报的 schemaVersion
+  // 找规范"的核对压一遍：只验种子的话，验的是夹具而不是生产者。
+  verifySeedRecordsMatchTheirDeclaredSchemas(output, state, "编排产出", 30);
 
   // 人一旦验收定稿，这个工作项就不能再被派发 —— 因为 performIndependentReview 对已定稿项永久
   // 返回 human_finalized，之后落进去的任何改动都不会再被复核，人的验收会盖在它没看过的成果上。
@@ -4021,12 +4034,18 @@ function extractMachineStates(yamlText, machine) {
 // 53 个 schema 里有 26 个没有任何实例被按其校验过 —— 一半的规范是装饰性的，代码可以自由漂移
 // 而无人发现。而每条记录自己就带着权威映射：schemaVersion "account/v1" → spec/account.schema.json。
 // 不用猜名字、不用维护对照表：凡是带 schemaVersion 的记录，一律按它自己声明的那份规范校验。
-function verifySeedRecordsMatchTheirDeclaredSchemas(output) {
+// 同一套核对必须也作用在【系统跑起来之后产出的记录】上。只验种子数据的话，验的是我手写的夹具，
+// 而不是生产者的行为：checkpoint、评审包、进度快照、漂移守卫这些全部由代码在运行期造出来，
+// 它们漂离自己声明的规范时，只验种子的那道门一声不吭。映射依然取自记录自身，不需要维护对照表。
+function verifySeedRecordsMatchTheirDeclaredSchemas(output, sourceState = seedState, label = "种子数据", minValidated = 20) {
   const cache = new Map();
   let validated = 0;
+  // 记录自报的名字与规范文件名不一致时，必须显式登记 —— 不登记就当"找不到规范"报错。
+  // 靠拼写巧合去匹配的话，一个改名就会让整类记录悄悄退出校验。
+  const SCHEMA_FILE_ALIASES = {"control-event": "control-events"};
   const declaredSchemaFor = (record) => {
     const declared = String(record?.schemaVersion || "");
-    const name = declared.replace(/\/v\d+$/u, "");
+    const name = SCHEMA_FILE_ALIASES[declared.replace(/\/v\d+$/u, "")] || declared.replace(/\/v\d+$/u, "");
     if (!name || name === declared) return null; // 没有 "<名>/vN" 形状就不是可定位的规范
     if (cache.has(name)) return cache.get(name);
     const file = resolve(root, `spec/${name}.schema.json`);
@@ -4034,21 +4053,21 @@ function verifySeedRecordsMatchTheirDeclaredSchemas(output) {
     cache.set(name, schema);
     return schema;
   };
-  for (const [collection, items] of Object.entries(seedState)) {
+  for (const [collection, items] of Object.entries(sourceState)) {
     if (!Array.isArray(items)) continue;
     for (const [index, item] of items.entries()) {
       if (!item || typeof item !== "object" || !item.schemaVersion) continue;
       const schema = declaredSchemaFor(item);
       if (!schema) {
-        output.push(`种子数据 ${collection}[${index}] 声明 schemaVersion "${item.schemaVersion}"，但 spec 下没有对应的规范文件 —— 这条记录声称遵守一份不存在的契约`);
+        output.push(`${label} ${collection}[${index}] 声明 schemaVersion "${item.schemaVersion}"，但 spec 下没有对应的规范文件 —— 这条记录声称遵守一份不存在的契约`);
         continue;
       }
       validated += 1;
-      validateSchema(item, schema, `seed.${collection}[${index}]`, output);
+      validateSchema(item, schema, `${label}.${collection}[${index}]`, output);
     }
   }
-  if (validated < 20) {
-    output.push(`种子数据规范核对只校验到 ${validated} 条记录，远少于预期 —— 提取逻辑已与数据结构脱节，本条可能在空转`);
+  if (validated < minValidated) {
+    output.push(`${label}规范核对只校验到 ${validated} 条记录，远少于预期的 ${minValidated} —— 提取逻辑已与数据结构脱节，本条可能在空转`);
   }
 }
 
@@ -4335,7 +4354,16 @@ function validateSchema(value, schema, path, output, root, depth = 0) {
       else output.push(`${path} unresolved local $ref ${schema.$ref}`);
       return;
     }
-    if (schema.$ref === "language-policy.schema.json") { validateSchema(value, languagePolicySchema, path, output, languagePolicySchema, depth + 1); return; }
+    // 同目录的 schema 一律真去加载。原先只特例了 language-policy，其余外部 $ref 静默跳过 ——
+    // 于是 checkpoint 的 commitRefs / pushRefs（关闭门赖以判定的提交与推送证据）整块没人校验：
+    // 引用写在那里，看上去有约束，实际什么都不验。"解析不了就跳过"必须是解析不了才跳过，
+    // 而不是"没写特例就跳过"；同目录文件明明加载得到。
+    if (/^[a-z0-9-]+\.schema\.json$/u.test(schema.$ref)) {
+      const sibling = siblingSchema(schema.$ref);
+      if (sibling) { validateSchema(value, sibling, path, output, sibling, depth + 1); return; }
+      output.push(`${path} 引用了不存在的同目录 schema ${schema.$ref}`);
+      return;
+    }
     return; // unknown external ref: not resolvable here, skip
   }
   if (schema.const !== undefined && value !== schema.const) output.push(`${path} expected const ${JSON.stringify(schema.const)}, got ${JSON.stringify(value)}`);

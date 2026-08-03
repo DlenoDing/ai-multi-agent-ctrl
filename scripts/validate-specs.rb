@@ -1609,6 +1609,43 @@ seed_state.dig("instructionMetrics", "envelopes").to_a.each do |envelope|
   errors << "seed instruction envelope #{envelope["envelopeId"]} uses deprecated id field" if envelope.key?("id")
 end
 
+# docs/machine-executable-artifacts.md 那张表逐行声称每份规格制品「由谁消费」。它是这份仓库里
+# 唯一说明「哪些规格是真的被机器强制的」的地方 —— 而它此前没有任何东西核对过。
+# 实测发现 4 行声称的消费者在代码里对该文件零引用（git-automation-policy / git-command /
+# session-placement-policy / external-capability-boundary）：设计已被别的机制取代，表还在说它管用。
+# 两个方向都要核：标了「当前无消费者」的必须真的没人引用（否则是过时的悲观标注，会让人以为
+# 一条真在生效的约束不存在），没标的必须真有引用（否则是不实的声称）。
+artifact_doc_path = File.join(ROOT, "docs/machine-executable-artifacts.md")
+if File.exist?(artifact_doc_path)
+  artifact_doc = File.read(artifact_doc_path)
+  code_corpus = Dir[File.join(ROOT, "{apps,scripts}/**/*.{mjs,js,rb}")].map { |f| File.read(f) }.join("\n")
+  rows = artifact_doc.scan(/^\| `(spec\/[^`]+)` \| ([^|]+) \|/)
+  errors << "制品清单表没有解析到任何行 —— 这道核对在空转" if rows.length < 40
+  rows.each do |file, consumers|
+    path = File.join(ROOT, file)
+    unless File.exist?(path)
+      errors << "制品清单: #{file} 在表里列着，但文件不存在"
+      next
+    end
+    base = File.basename(file)
+    schema_version = nil
+    if file.end_with?(".json")
+      begin
+        schema_version = JSON.parse(File.read(path)).dig("properties", "schemaVersion", "const")
+      rescue StandardError
+        schema_version = nil
+      end
+    end
+    referenced = code_corpus.include?(base) || (schema_version && code_corpus.include?(schema_version))
+    declared_unused = consumers.include?("当前无消费者")
+    if referenced && declared_unused
+      errors << "制品清单: #{file} 标着「当前无消费者」，但代码里确实引用了它 —— 过时的标注会让人以为一条正在生效的约束不存在"
+    elsif !referenced && !declared_unused
+      errors << "制品清单: #{file} 声称消费者是「#{consumers.strip}」，但全仓代码对它零引用 —— 这张表是判断「哪些规格真被机器强制」的唯一依据，说错了比不说更糟"
+    end
+  end
+end
+
 fail_with(errors)
 
 puts "spec validation ok"
