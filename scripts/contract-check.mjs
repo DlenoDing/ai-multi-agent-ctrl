@@ -10,7 +10,7 @@ import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
 import { publicAgentNode } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
-import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite } from "../apps/mcp-server/server.mjs";
+import { createMcpGrant, createMcpToolDefinitions, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit } from "../apps/mcp-server/server.mjs";
 import {
   acquireWorkerLane,
   maintainWorkerLanes,
@@ -165,6 +165,7 @@ for (const tool of toolDefs) {
 
 verifyRuntimeJsonConflict(errors);
 verifySeedRecordsMatchTheirDeclaredSchemas(errors);
+verifyTestResultStatusRequired(errors);
 verifyWorkStatusEnumConvergence(errors);
 verifyTransitionEngine(errors);
 verifyCommandBusLifecycle(errors);
@@ -3876,6 +3877,26 @@ function verifySeedRecordsMatchTheirDeclaredSchemas(output) {
   }
   if (validated < 20) {
     output.push(`种子数据规范核对只校验到 ${validated} 条记录，远少于预期 —— 提取逻辑已与数据结构脱节，本条可能在空转`);
+  }
+}
+
+// 质量门是人看到"全通过"时的唯一依据，且完全由 agent 自报。此前 test_result_submit 的
+// status 缺省即 "passed"：一次不带任何参数的调用就能造出一道通过的门，直接喂给关闭门。
+// 已有的防护只覆盖"失败门被无证据翻案"，覆盖不到【首次提交就是通过】这一形态。
+function verifyTestResultStatusRequired(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const before = (state.qualityGates || []).length;
+  const missing = testResultSubmit(state, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", summary: "没带状态"});
+  if (missing?.ok !== false || missing.error !== "test_result_status_required") {
+    output.push("质量门: 不带 status 的测试结果没有被拒 —— 缺信息被当成了通过，而质量门正是人看到「全通过」时的唯一依据");
+  }
+  if ((state.qualityGates || []).length !== before) {
+    output.push("质量门: 被拒的提交仍然写出了质量门 —— 拒绝必须是不落库的");
+  }
+  const ok = testResultSubmit(state, {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", status: "failed", summary: "显式失败"});
+  if (!ok?.qualityGate || ok.qualityGate.status !== "failed") {
+    output.push("质量门: 显式给出 failed 时没有产出失败的质量门 —— 拒绝缺省不能连正常路径一起挡掉");
   }
 }
 

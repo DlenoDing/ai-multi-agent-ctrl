@@ -2100,15 +2100,26 @@ function resolveRoleSkillView(state, args) {
   return {roleSkill, overlays, precedence: ["task_group_overlay", "project_overlay", "upstream_default"]};
 }
 
-function testResultSubmit(state, args) {
+const TEST_RESULT_STATUSES = ["passed", "failed", "skipped", "error"];
+
+export function testResultSubmit(state, args) {
   const at = new Date().toISOString();
   const taskGroup = taskGroupForRecord(state, args);
+  // status 原先缺省即 "passed"：一次不带任何参数的调用就能造出一道【通过】的质量门，
+  // 而质量门正是人看到"全通过"时的唯一依据、并直接喂给关闭门。
+  // 缺信息永远不该变成通过 —— 误差不对称：错记一次通过，比错记一次未通过危险得多。
+  // 这是命令接口（调用方发起的动作请求），因此按"拒绝并报出"处理，而不是替它猜一个。
+  if (!TEST_RESULT_STATUSES.includes(String(args.status || ""))) {
+    return {ok: false, error: "test_result_status_required",
+      required: TEST_RESULT_STATUSES,
+      message: "提交测试结果必须显式给出 status（passed/failed/skipped/error）：缺省不会被当作通过"};
+  }
   const testResult = {
     testResultId: args.testResultId || createId("test_result"),
     projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
     taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
     workItemId: args.workItemId || args.workId,
-    status: args.status || "passed",
+    status: args.status,
     gateType: args.gateType || "test",
     command: args.command,
     summary: args.summary || "",
