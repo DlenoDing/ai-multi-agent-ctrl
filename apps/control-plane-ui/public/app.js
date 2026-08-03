@@ -1504,6 +1504,9 @@ function renderSysSettings() {
         <dt>运行档案</dt><dd class="mono">${esc(runtime.profileId || "-")}</dd>
         <dt>运行状态</dt><dd>${badge(runtime.status)}</dd>
         <dt>执行档位</dt><dd>${esc(executionProfileLabel(runtime.executionProfile || "-"))}</dd>
+        <dt>后台自治</dt><dd>${runtime.autonomousOrchestrator?.enabled
+          ? `每 ${esc(Math.round((runtime.autonomousOrchestrator.intervalMs || 0) / 1000))} 秒推进一次`
+          : `<span class="warn-text">已关闭：后台不推进任何东西 —— 人提交的指令会一直停在待处理，派发不会被领走，关闭门不会重算</span>`}</dd>
         <dt>状态机执行</dt><dd>${runtime.transitionEnforcement === "strict"
           ? "严格（非法状态转移一律拒绝）"
           : `<span class="warn-text">宽松：非法状态转移只记一笔就放行（${esc(runtime.transitionEnforcement || "未知")}）—— 流程不得跳步这条保证当前是关的</span>`}</dd>

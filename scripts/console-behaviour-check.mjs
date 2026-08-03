@@ -603,6 +603,20 @@ function runStuckTopologyLeverCase() {
 // 「稳定前缀 Token 数」一直显示初始化时写死的 1800，从来没有生产者更新过它 —— 人看到的是常量，
 // 却被当成测量结果（实测系统规则正文已 15000+ 字符，差 8 倍以上）。预算与实测必须分开显示，
 // 且实测缺席时要明说"尚未测量"，不能拿预算值冒充。
+// 编排周期设成 0 时后台什么都不推进：人提交的指令一直停在"待处理"，派发不会被领走，
+// 关闭门不会重算 —— 而控制台上一切如常。与状态机执行模式同形，必须如实公布。
+function runOrchestratorVisibilityCase() {
+  const probe = loadConsole(el("div"));
+  const on = probe.renderSysSettingsWith({runtime: {transitionEnforcement: "strict", autonomousOrchestrator: {enabled: true, intervalMs: 60000}}});
+  check("自治开启时说得出多久一次",
+    on.includes("后台自治") && on.includes("60"),
+    "运行参数里看不到后台自治的周期 —— 人无从判断系统到底在不在推进");
+  const off = probe.renderSysSettingsWith({runtime: {transitionEnforcement: "strict", autonomousOrchestrator: {enabled: false, intervalMs: 0}}});
+  check("自治关闭时必须显眼并说清后果",
+    off.includes("warn-text") && /指令会一直停在待处理/.test(off),
+    "后台自治被关掉却与正常状态长得一样 —— 人会一直等一个永远不会发生的推进");
+}
+
 function runStablePrefixMeasurementCase() {
   const probe = loadConsole(el("div"));
   const withMetrics = (metrics) => probe.renderSysSettingsWith({
@@ -837,6 +851,7 @@ runPendingTruncationCase();
 runCloseBarrierScopeCase();
 runTransitionModeVisibilityCase();
 runStablePrefixMeasurementCase();
+runOrchestratorVisibilityCase();
 runWholeListCapCase();
 runStuckTopologyLeverCase();
 runBlockerGuideCase();

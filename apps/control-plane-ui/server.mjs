@@ -294,6 +294,7 @@ function readState() {
   const state = readStoredState({root, runtimeDir, statePath, seedPath, buildInitialState});
   ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: process.env.AIMAC_PUBLIC_URL || localEndpoint(), executionProfile});
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
+  state.runtime.autonomousOrchestrator = runtimeOrchestratorStatus;
   return state;
 }
 
@@ -304,6 +305,8 @@ function readHealthState() {
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
   return state;
 }
+
+let runtimeOrchestratorStatus = {intervalMs: 0, enabled: false};
 
 function writeState(state) {
   stateViewCache.clear();
@@ -4988,6 +4991,13 @@ export function runOrchestratorTick() {
 
 // 间隔设为 0 即关闭 —— 端到端脚本用它把周期关掉，避免后台推进打乱被断言的状态序列。
 const orchestratorIntervalMs = Number(process.env.AIMAC_ORCHESTRATOR_INTERVAL_MS ?? 60000);
+// 关掉它，后台就没有任何东西推进：人提交的指令一直停在"待处理"，派发不会被领走，
+// 关闭门不会重算 —— 而控制台上一切如常，人会以为系统在跑。这与状态机执行模式同形，
+// 所以同样如实公布：它是"想要多久跑一次"，不是猜的。
+runtimeOrchestratorStatus = {
+  intervalMs: orchestratorIntervalMs > 0 ? Math.max(5000, orchestratorIntervalMs) : 0,
+  enabled: orchestratorIntervalMs > 0
+};
 if (orchestratorIntervalMs > 0) {
   const orchestratorTimer = setInterval(runOrchestratorTick, Math.max(5000, orchestratorIntervalMs));
   // 不要让这个定时器把进程钉住：它是后台推进，不是进程存在的理由。

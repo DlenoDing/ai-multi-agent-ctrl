@@ -946,6 +946,9 @@ errors << "判据形态规则必须写明命令/工具调用接口不适用本�
 # "复用判定按规范序摘要比对，旧格式必被重写"——这个条件只存在于代码推理里时，谁改了复用判定
 # 都不会意识到自己把兼容路径变成了永久的。要求它写在判据旁边。
 state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs"))
+# 后台自治周期设为 0 时什么都不推进（指令停在待处理、派发不被领走、关闭门不重算），
+# 而控制台上一切如常。与状态机执行模式同形：能悄悄关掉保证的开关必须如实公布。
+errors << "后台自治的开关状态必须如实公布给人" unless server_source.include?("state.runtime.autonomousOrchestrator = runtimeOrchestratorStatus") && app_js_source.include?("指令会一直停在待处理")
 errors << "分片摘要的兼容接受必须写明退役条件" unless state_store_source.include?("它有明确的退役条件，不是长期双路径") && state_store_source.include?("下一次写入必被重写为规范序")
 errors << "最优终态优先必须写明它只产出判断与提案，不构成动手授权" unless core_source.include?("本条产出的是【判断与提案】，不是动手授权")
 
