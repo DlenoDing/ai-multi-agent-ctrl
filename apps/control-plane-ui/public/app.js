@@ -2864,7 +2864,9 @@ function renderMonitor() {
     `<strong>${esc(node.nodeName || node.nodeId)}</strong><div class="small muted mono">${esc(node.nodeId)}</div>`,
     // "降级/只读"此前不说原因：缺哪几项自检只进网关事件负载，而那条流没有任何界面。
     // 人看到一个黄色徽标，然后无从下手。
-    `${badge(node.status)}${claimMissHint(node)}${(node.selfCheckMissing || []).length
+    `${badge(node.status)}${claimMissHint(node)}${node.runtimeOutdated
+      ? `<div class="small warn-text">运行时版本过旧（${esc(node.runtimeVersion || "未知")}）：它不发送认领代次，一旦这台机器上的派发被重新认领，提交就会被拒。请在该主机上重新执行入网安装命令升级。</div>`
+      : ""}${(node.selfCheckMissing || []).length
       ? `<div class="small warn-text">自检未通过：${(node.selfCheckMissing || []).map((item) => esc(t(item))).join("、")}</div>`
         + selfCheckFailureHint(node) : ""}`,
     badge(node.admission),

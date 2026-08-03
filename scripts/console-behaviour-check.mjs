@@ -608,6 +608,31 @@ function runStuckTopologyLeverCase() {
 // 关闭门不会重算 —— 而控制台上一切如常。与状态机执行模式同形，必须如实公布。
 // 生产模式下登录页刻意不显示管理员账号（说出来等于把凭据的一半送出去），但那样一来
 // 第一次上手的人拿着令牌面对"登录账号"输入框无从下手。不泄漏，但要告诉他去哪儿找。
+// 带认领代次提交是 0.3.0 引入的契约。低于它的节点，其派发一旦被重认领就会卡住 ——
+// 控制面本来就知道每个节点的运行时版本，就该在卡住【之前】把它摆出来。
+function runOutdatedRuntimeVisibilityCase() {
+  const probe = loadConsole(el("div"));
+  const admin = {accountId: "acct_a", accountType: "org_admin"};
+  const withNode = (node) => probe.renderMonitorWith({
+    taskGroups: [{id: "tg_a", projectId: "p_a", name: "甲组"}],
+    agentRuntimeNodes: [node],
+    closeBarriers: [], qualityGates: [], testResults: [], checkpoints: [], executionTopologies: []
+  }, admin, "p_a");
+  const old = withNode({nodeId: "n_old", nodeName: "旧节点", status: "online", admission: "full",
+    runtimeVersion: "0.2.0", runtimeOutdated: true});
+  check("运行时过旧要在卡住之前就标出来",
+    /运行时版本过旧/.test(old) && old.includes("0.2.0"),
+    "节点用的是不发认领代次的旧运行时，控制台却看不出来 —— 只有等派发被重认领卡住才会浮现");
+  check("并说清该怎么办",
+    /重新执行入网安装命令/.test(old),
+    "标了过旧却不说怎么升级 —— 人看到一个红字，然后无从下手");
+  const fresh = withNode({nodeId: "n_new", nodeName: "新节点", status: "online", admission: "full",
+    runtimeVersion: "0.3.0", runtimeOutdated: false});
+  check("版本达标的节点不打扰",
+    !/运行时版本过旧/.test(fresh),
+    "版本已达标却仍被标成过旧 —— 误报会让人不再相信这个提示");
+}
+
 function runFirstRunGuidanceCase() {
   const probe = loadConsole(el("div"));
   const prod = probe.renderLoginWith({bootstrapTokenConfigured: true, tokenHintsExposed: false});
@@ -871,6 +896,7 @@ runTransitionModeVisibilityCase();
 runStablePrefixMeasurementCase();
 runOrchestratorVisibilityCase();
 runFirstRunGuidanceCase();
+runOutdatedRuntimeVisibilityCase();
 runWholeListCapCase();
 runStuckTopologyLeverCase();
 runBlockerGuideCase();

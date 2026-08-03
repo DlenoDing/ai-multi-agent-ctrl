@@ -1337,10 +1337,31 @@ export function getSkillWorkset(state, node, worksetId, options = {}) {
 // 当初也是逐个剔除，于是后加的 registrationReplay（内含明文 nodeToken）直接漏了出去。
 // 节点记录同样会长出新字段（这次会话里我自己就加了三个），黑名单只保护它列举过的那些，
 // 而新字段默认外泄；白名单反过来 —— 新字段默认不外泄，忘了加只是"界面上少一格"，看得见、改得动。
+// 带认领代次提交是 0.3.0 引入的 agent↔控制面契约。低于它的节点，其派发一旦被重新认领就会
+// 卡在 checkpoint_claim_epoch_required —— 而这件事此前只有在卡住那一刻才浮现。
+// 控制面本来就知道每个节点的运行时版本，就该在卡住【之前】把它摆出来。
+export const REQUIRED_AGENT_RUNTIME_VERSION = "0.3.0";
+
+function versionBelow(actual, required) {
+  const parse = (value) => String(value || "").split(".").map((part) => Number.parseInt(part, 10));
+  const a = parse(actual);
+  const b = parse(required);
+  if (a.some((part) => !Number.isFinite(part)) || a.length < b.length) return true; // 版本号读不出来，按过旧处理
+  for (let index = 0; index < b.length; index += 1) {
+    if ((a[index] || 0) < b[index]) return true;
+    if ((a[index] || 0) > b[index]) return false;
+  }
+  return false;
+}
+
+export function agentRuntimeOutdated(node) {
+  return versionBelow(node?.runtimeVersion, REQUIRED_AGENT_RUNTIME_VERSION);
+}
+
 const PUBLIC_AGENT_NODE_FIELDS = [
   "schemaVersion", "nodeId", "nodeName", "organizationId", "projectIds",
   "allowedRoles", "allowedMcpTools", "status", "admission",
-  "profile", "profileDigest", "runtimeVersion",
+  "profile", "profileDigest", "runtimeVersion", "runtimeOutdated",
   "lastHeartbeatAt", "lastSelfCheckAt", "selfCheckDigest", "selfCheckMissing", "selfCheckFailures",
   "activeDispatchIds", "completedDispatchCount", "failedDispatchCount",
   "lastClaimMiss", "offlineReason", "revokedReason",
@@ -1353,6 +1374,8 @@ export function publicAgentNode(node) {
   for (const field of PUBLIC_AGENT_NODE_FIELDS) {
     if (node[field] !== undefined) safe[field] = node[field];
   }
+  // 派生字段：每次投影时算，不落库 —— 要求版本会随契约变化，持久化下来的判定必然过期。
+  safe.runtimeOutdated = agentRuntimeOutdated(node);
   return safe;
 }
 
