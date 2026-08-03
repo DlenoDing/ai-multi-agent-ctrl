@@ -171,6 +171,7 @@ verifyRuntimeJsonConflict(errors);
 verifySeedRecordsMatchTheirDeclaredSchemas(errors);
 verifyEverySchemaVersionHasASpec(errors);
 verifyEveryProjectScopedIdIsScopeChecked(errors);
+verifyEveryStateCollectionIsTenantScoped(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
 verifyWorkStatusEnumConvergence(errors);
@@ -4043,6 +4044,58 @@ function extractMachineStates(yamlText, machine) {
 // 权威来源：spec 里凡是带 projectId/taskGroupId 的规范，它的 id 字段就是一个项目级对象地址；
 // 与 MCP 参数词表取交集即为"必须被拦截的键"。不是对象地址的（角色名、须配对的从属 id、
 // 记录的属性字段）逐条写明理由 —— 默认放过不允许。
+// 读侧的租户隔离是【黑名单】形态：scopedStateForAccount 做的是 `{...state}` 浅拷贝再逐个覆盖，
+// 没被显式过滤的集合原样透给非系统账号。今天透出去的六个都是全局注册表（无 projectId/
+// taskGroupId），所以没有泄露；但这个形状意味着【下一个新增的集合默认是泄露的】——
+// 加一个带 projectId 的集合、忘了在那里加一行 filter，跨租户就能读到，而且毫无痕迹。
+// 改成白名单是大手术且回归面很大，所以这里用门顶住：每个集合要么被过滤，要么登记为全局注册表。
+// 反向也要核：登记为"全局"的集合一旦长出 projectId/taskGroupId，它就是租户数据了，登记随即失效。
+function verifyEveryStateCollectionIsTenantScoped(output) {
+  const GLOBAL_REGISTRY_COLLECTIONS = {
+    managementSurfaces: "控制台面目录：系统级清单，与租户无关",
+    modelCapabilities: "模型能力画像：全局注册表",
+    modelProviders: "模型供应商：全局注册表",
+    modelSelectionPolicies: "选型策略：按 taskType/roleId 而非项目组织，全局共享",
+    roleSkills: "角色技能目录：由技能源同步而来，全局共享",
+    skillSources: "技能源：全局配置（仓库地址与信任策略，不含凭据）"
+  };
+  const serverSource = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const begin = serverSource.indexOf("function scopedStateForAccount");
+  const finish = serverSource.indexOf("\nfunction ", begin + 10);
+  if (begin < 0 || finish < 0) {
+    output.push("读侧租户隔离核对：找不到 scopedStateForAccount —— 本条在空转");
+    return;
+  }
+  const scoped = new Set([...serverSource.slice(begin, finish).matchAll(/cloned\.([a-zA-Z]+)\s*=/gu)].map((match) => match[1]));
+  const probeState = structuredClone(seedState);
+  ensureRuntimeCollections(probeState, {root});
+  runAutonomousCycle(probeState, {root, mode: "all"});
+  const collections = Object.entries(probeState).filter(([, value]) => Array.isArray(value)).map(([key]) => key);
+  if (collections.length < 50) {
+    output.push(`读侧租户隔离核对：只枚举到 ${collections.length} 个集合，远少于预期 —— 本条在空转`);
+    return;
+  }
+  for (const collection of collections) {
+    const carriesTenantField = (probeState[collection] || []).some((item) =>
+      item && typeof item === "object" && ("projectId" in item || "taskGroupId" in item));
+    if (scoped.has(collection)) {
+      if (GLOBAL_REGISTRY_COLLECTIONS[collection]) {
+        output.push(`读侧租户隔离核对：${collection} 已在 scopedStateForAccount 里按作用域过滤，却又被登记为"全局注册表" —— 登记已过时`);
+      }
+      continue;
+    }
+    if (!GLOBAL_REGISTRY_COLLECTIONS[collection]) {
+      output.push(`读侧租户隔离核对：${collection} 既没有在 scopedStateForAccount 里按可见性过滤，也没有登记为全局注册表`
+        + " —— `{...state}` 会把它原样透给非系统账号；若它带租户归属，就是一处静默的跨租户读取");
+      continue;
+    }
+    if (carriesTenantField) {
+      output.push(`读侧租户隔离核对：${collection} 登记为"全局注册表"，但它的记录带有 projectId/taskGroupId`
+        + " —— 它已经是租户数据了，必须在 scopedStateForAccount 里按可见性过滤");
+    }
+  }
+}
+
 function verifyEveryProjectScopedIdIsScopeChecked(output) {
   const NOT_AN_OBJECT_ADDRESS = {
     roleId: "角色名，不是记录 id（同一个 roleId 在每个任务组里都存在）",
