@@ -4958,6 +4958,22 @@ export function expireStaleHumanConfirmations(state) {
         dispatch.updatedAt = at;
       }
     }
+    // 挂卡时被标记的是【三处】：派发、会话、工作项（见 createHumanConfirmationRequest）。
+    // 过期回收原先只更新派发与工作项，会话被漏下 —— 于是它一直写着"等待人工确认"，
+    // 指向一张已经不存在的卡。而 needs_decision 不在会话的了结集里：这个会话会永远算活跃，
+    // 而活跃会话是关闭门实打实的阻塞项。这里不擅自把它了结（决策确实没有做出，门本就该继续挡着），
+    // 只把原因改成与事实一致的那个 —— 人要放弃或重开，走的仍是 resolve_decision。
+    if (request.dispatchId) {
+      const blockedDispatch = (state.agentDispatches || []).find((item) => item.dispatchId === request.dispatchId);
+      const parkedSession = blockedDispatch
+        ? (state.workSessions || []).find((item) => item.sessionId === blockedDispatch.sessionId)
+        : null;
+      if (parkedSession && !WORK_SESSION_SETTLED_STATUSES.includes(parkedSession.status)
+        && parkedSession.blockedReason === "awaiting_human_confirmation") {
+        parkedSession.blockedReason = "human_confirmation_expired";
+        parkedSession.updatedAt = at;
+      }
+    }
     const taskGroup = (state.taskGroups || []).find((item) => item.id === request.taskGroupId);
     // 把对应工作项降级到 needs_decision，让 resolve_decision（人工指令通道）成为可达的杠杆。
     const expiredWorkItem = request.workItemId ? (taskGroup?.workItems || []).find((item) => item.id === request.workItemId) : null;

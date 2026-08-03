@@ -186,6 +186,7 @@ verifyEverySchemaVersionHasASpec(errors);
 verifyEveryProjectScopedIdIsScopeChecked(errors);
 verifyEveryStateCollectionIsTenantScoped(errors);
 verifyExpiredConfirmationRetargetsTheWorkItem(errors);
+verifyExpiredConfirmationLeavesNoStaleParking(errors);
 verifyIdempotencyReplayIsPrincipalBound(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
@@ -4134,6 +4135,48 @@ console.log(JSON.stringify({first: {ok: first.ok, error: first.result?.error},
 // 原先的回收逻辑对"已经是 needs_decision"的工作项整个跳过 —— 于是它仍写着"等待人工确认"，
 // 而那张卡已经不存在、也不会再挂出来（needs_decision 的单元每轮直接被跳过，走不到提案那一步）。
 // 任务组上的 S2 阻塞项说的是实话，工作项自己却在说另一回事：人打开它，被告知等一个永远不来的确认。
+// 挂一张阻塞卡时被标记的是【三处】：派发、会话、工作项。过期回收原先只更新了派发与工作项，
+// 会话被漏下 —— 它一直写着"等待人工确认"，指向一张已经不存在的卡；而 needs_decision 不在会话的
+// 了结集里，这个会话会永远算活跃，活跃会话是关闭门实打实的阻塞项。
+// 这条门不逐个记住"哪三处"，而是核对一条不变量：卡进入终态后，不得再有任何记录还停在
+// awaiting_human_confirmation —— 将来若又多标记一处而忘了回收，同样会被抓住。
+function verifyExpiredConfirmationLeavesNoStaleParking(output) {
+  const probe = structuredClone(seedState);
+  ensureRuntimeCollections(probe, {root});
+  const taskGroup = probe.taskGroups.find((item) => item.id === "tg_runtime_management");
+  const workItem = taskGroup.workItems[0];
+  probe.workSessions = [{schemaVersion: "work-session/v1", sessionId: "ws_expiry_probe", projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id, workItemId: workItem.id, status: "active", placement: "subagent",
+    createdAt: "2026-08-01T00:00:00Z", updatedAt: "2026-08-01T00:00:00Z"}];
+  probe.agentDispatches = [{dispatchId: "dsp_expiry_probe", sessionId: "ws_expiry_probe", runId: "run_expiry_probe",
+    projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workItemId: workItem.id, status: "running",
+    createdAt: "2026-08-01T00:00:00Z", updatedAt: "2026-08-01T00:00:00Z"}];
+  const request = createHumanConfirmationRequest(probe, {
+    taskGroupId: taskGroup.id, workItemId: workItem.id, dispatchId: "dsp_expiry_probe",
+    decisionType: "work_item_verification", summary: "验收确认", blocking: true,
+    options: [{optionId: "accept", label: "通过"}, {optionId: "reject", label: "打回"}]
+  });
+  const parkedBefore = [...probe.workSessions, ...probe.agentDispatches, ...taskGroup.workItems]
+    .filter((item) => item.blockedReason === "awaiting_human_confirmation").length;
+  if (parkedBefore < 2) {
+    output.push(`过期确认单的停放清理：挂卡后只有 ${parkedBefore} 处被标记为等待确认，少于预期 —— 这条断言在空转`);
+    return;
+  }
+  request.expiresAt = "2020-01-01T00:00:00Z";
+  runAutonomousCycle(probe, {root, mode: "all"});
+  if (probe.humanConfirmationRequests.find((item) => item.requestId === request.requestId)?.status !== "expired") {
+    output.push("过期确认单的停放清理：卡没有被判过期 —— 这条断言无从验证");
+    return;
+  }
+  const settledTaskGroup = probe.taskGroups.find((item) => item.id === taskGroup.id);
+  const stillParked = [...probe.workSessions, ...probe.agentDispatches, ...settledTaskGroup.workItems]
+    .filter((item) => item.blockedReason === "awaiting_human_confirmation");
+  if (stillParked.length) {
+    output.push(`过期确认单的停放清理：卡已进入终态，仍有 ${stillParked.length} 处记录停在 awaiting_human_confirmation`
+      + " —— 它们指向一张不存在的卡；其中未了结的会话还会一直算作活跃，把关闭门永久挡住");
+  }
+}
+
 function verifyExpiredConfirmationRetargetsTheWorkItem(output) {
   const expState = structuredClone(seedState);
   ensureRuntimeCollections(expState, {root});
