@@ -6,7 +6,10 @@ import { homedir, hostname, platform, arch, cpus, totalmem, networkInterfaces } 
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const RUNTIME_VERSION = "0.2.0";
+// 0.3.0：提交检查点/失败上报时带上认领代次（claimEpoch）。控制面在写入点用它拒绝上一次认领
+// 遗留的提交，因此这是 agent 与控制面之间的【契约变更】——版本号必须跟着走，否则运维无从判断
+// 手上这台节点是不是还在用不发代次的旧运行时。
+const RUNTIME_VERSION = "0.3.0";
 const runtimeFilePath = fileURLToPath(import.meta.url);
 const args = parseArgs(process.argv.slice(2));
 const command = args._[0] || "run";

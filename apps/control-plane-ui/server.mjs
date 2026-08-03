@@ -2209,8 +2209,14 @@ async function handleApi(req, res) {
     // 只在【这个派发被认领过不止一次】时强制要求带代次：首次认领不存在更早的持有者，
     // 缺代次也掩盖不了陈旧写入；这样既补上 fence，又不会因为旧版 agent 缺字段而拒掉常规路径。
     if (presentedClaimEpoch === undefined && Number(dispatch.attempts || 0) > 1) {
+      // 缺字段即可绕过的 fence 不算 fence，所以这里必须强制。但在役的旧版运行时（0.3.0 之前）
+      // 不发送代次，一旦其派发被重新认领就会卡在这里 —— 因此把"该怎么办"直接写进拒绝信息，
+      // 而不是让运维面对一个只说"必须带上"的错误码。运行时版本已随该契约变更提升到 0.3.0。
       return json(res, 409, {error: "checkpoint_claim_epoch_required", claimEpoch: currentClaimEpoch,
-        message: "该派发被重新认领过，提交检查点必须带上你持有的 claimEpoch，否则无法区分它来自哪一次尝试"});
+        requiredRuntimeVersion: "0.3.0",
+        nodeRuntimeVersion: node.runtimeVersion || null,
+        message: "该派发被重新认领过，提交检查点必须带上你持有的 claimEpoch，否则无法区分它来自哪一次尝试。"
+          + "若该节点的 agent 运行时早于 0.3.0（不发送认领代次），请在该主机上重新执行入网安装命令升级后重试"});
     }
     const target = state.repositoryOutputs.find((item) => item.targetId === dispatch.repositoryOutputTargetRef);
     if (!target) return json(res, 409, {error: "repository_output_target_missing"});

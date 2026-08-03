@@ -266,6 +266,22 @@ try {
       body: JSON.stringify({status: "blocked", claimEpoch: staleEpoch, reason: "stale-epoch probe"})
     });
     const staleFailPayload = await staleFail.json().catch(() => ({}));
+    // 缺字段即可绕过的 fence 不算 fence，所以 /checkpoint 在"该派发被重新认领过"时强制要求代次。
+    // 但在役的旧版运行时不发送它，一旦其派发被重认领就会卡住 —— 拒绝信息必须直接给出该怎么办，
+    // 否则运维面对的是一个只说"必须带上"的错误码。
+    const reclaimed = (staleState.agentDispatches || []).find((item) => Number(item.attempts || 0) > 1);
+    if (reclaimed) {
+      const noEpoch = await fetch(`${baseUrl}/api/agent/v1/dispatches/${encodeURIComponent(reclaimed.dispatchId)}/checkpoint`, {
+        method: "POST",
+        headers: {"content-type": "application/json", authorization: `Bearer ${JSON.parse(readFileSync(agentConfigPath, "utf8")).nodeToken}`},
+        body: JSON.stringify({runId: reclaimed.runId, sessionId: reclaimed.sessionId})
+      });
+      const noEpochPayload = await noEpoch.json().catch(() => ({}));
+      if (noEpoch.status === 409 && noEpochPayload.error === "checkpoint_claim_epoch_required"
+        && !String(noEpochPayload.message || "").includes("重新执行入网安装命令")) {
+        throw new Error("被重认领的派发拒绝了缺代次的提交，但没有告诉运维该怎么办 —— 旧版运行时会卡在这里而看不出原因");
+      }
+    }
     if (staleFail.status !== 409 || staleFailPayload.error !== "dispatch_fail_claim_epoch_stale") {
       throw new Error(`带着过期 claim 代次的失败上报没有被拒（HTTP ${staleFail.status} / ${staleFailPayload.error}）—— 上一次认领的执行器能把当前这一轮标记为阻塞`);
     }
