@@ -1,7 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://dleno.local/spec/rule-source-resolution.schema.json",
+  "$id": "https://dleno.dev/ai-multi-agent-ctrl/spec/rule-source-resolution.schema.json",
   "title": "RuleSourceResolution",
+  "description": "外部规则来源的采纳判定：某份外部材料算「生效规则」还是「仅供参考」。classification 决定 adoptionPolicy，未settle 前挡住关闭门。本规范此前描述的是一套更大的设计（sourceLocator / authorityLevel / sourceDigest / activeRuleRefs / referenceOnlyRefs / excludedSourceRefs / conflictCheck / auditRef），而实现从未产出过那些字段 —— 规范没被拿去校验过任何真实记录，两边就一直各说各的。现按【实际产出】收窄。收窄的依据是：当前实现的判定粒度是「整份来源」而不是「逐条规则」，因此逐条的 active/reference/excluded 三分与冲突检查没有产出者；承重的是 classification→adoptionPolicy 这条推导，以及 settledBy/settlementJustification 这份人工留痕。",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -9,22 +10,16 @@
     "resolutionId",
     "projectId",
     "taskGroupId",
-    "status",
-    "sourceLocator",
+    "sourceRef",
     "sourceScope",
-    "authorityLevel",
-    "sourceDigest",
-    "activeRuleRefs",
-    "referenceOnlyRefs",
-    "excludedSourceRefs",
-    "conflictCheck",
-    "auditRef",
+    "status",
+    "classification",
+    "adoptionPolicy",
     "createdAt",
     "updatedAt"
   ],
   "properties": {
     "schemaVersion": {
-      "type": "string",
       "const": "rule-source-resolution/v1"
     },
     "resolutionId": {
@@ -39,6 +34,14 @@
       "type": "string",
       "minLength": 1
     },
+    "sourceRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceScope": {
+      "type": "string",
+      "minLength": 1
+    },
     "status": {
       "type": "string",
       "enum": [
@@ -47,152 +50,38 @@
         "active",
         "reference_only",
         "quarantined",
-        "superseded",
-        "rejected"
+        "rejected",
+        "superseded"
       ]
     },
-    "sourceLocator": {
+    "classification": {
       "type": "string",
       "minLength": 1
     },
-    "sourceScope": {
+    "adoptionPolicy": {
       "type": "string",
-      "enum": [
-        "system",
-        "project",
-        "task_group",
-        "role_skill",
-        "reference_material",
-        "archive",
-        "test_fixture"
-      ]
+      "minLength": 1,
+      "description": "由 classification 推导：generic_mechanism → external_review_required，其余 → not_active_rule。缺省不得等于「已采纳」。"
     },
-    "authorityLevel": {
-      "type": "string",
-      "enum": [
-        "authoritative",
-        "advisory",
-        "reference_only",
-        "excluded"
-      ]
-    },
-    "sourceDigest": {
-      "type": "string",
-      "pattern": "^sha256:[a-fA-F0-9]{64}$"
-    },
-    "activeRuleRefs": {
+    "evidenceRefs": {
       "type": "array",
       "items": {
         "type": "string"
       }
     },
-    "referenceOnlyRefs": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
+    "settledBy": {
+      "type": "string"
     },
-    "excludedSourceRefs": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "conflictCheck": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "passed",
-        "decisionRecordRef"
-      ],
-      "properties": {
-        "passed": {
-          "type": "boolean"
-        },
-        "decisionRecordRef": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "auditRef": {
-      "type": "string",
-      "minLength": 1
+    "settlementJustification": {
+      "type": "string"
     },
     "createdAt": {
       "type": "string",
-      "format": "date-time"
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
     },
     "updatedAt": {
       "type": "string",
-      "format": "date-time"
-    },
-    "settledBy": {
-      "description": "判定该规则来源的真人账号（人工处置留痕：这条理由只存在于这里，审计条目不含它）",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "settlementJustification": {
-      "description": "判定理由（人工处置留痕：这条理由只存在于这里，审计条目不含它）",
-      "type": [
-        "string",
-        "null"
-      ]
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
     }
-  },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "status": {
-            "const": "active"
-          }
-        },
-        "required": [
-          "status"
-        ]
-      },
-      "then": {
-        "properties": {
-          "authorityLevel": {
-            "const": "authoritative"
-          },
-          "conflictCheck": {
-            "properties": {
-              "passed": {
-                "const": true
-              }
-            }
-          },
-          "activeRuleRefs": {
-            "minItems": 1
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "status": {
-            "const": "reference_only"
-          }
-        },
-        "required": [
-          "status"
-        ]
-      },
-      "then": {
-        "properties": {
-          "authorityLevel": {
-            "enum": [
-              "advisory",
-              "reference_only"
-            ]
-          }
-        }
-      }
-    }
-  ]
+  }
 }

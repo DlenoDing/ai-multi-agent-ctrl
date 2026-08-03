@@ -59,7 +59,8 @@
         "design_token",
         "quality_standard",
         "permission_semantics",
-        "instruction_format"
+        "instruction_format",
+        "semantic_contract"
       ]
     },
     "scopeRefs": {

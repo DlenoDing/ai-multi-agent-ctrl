@@ -6,6 +6,8 @@ import WebSocket from "ws";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
+import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 
 async function getFreePort() {
   const server = createServer();
@@ -1225,6 +1227,29 @@ try {
     await new Promise((resolve) => tickChild.on("exit", resolve));
   }
 }
+
+// 这一轮 e2e 走过的是另一批路径：人工确认与定稿、权限与审批、评审计划、房间、组织、质量门。
+// 它们产出的记录同样从来没有被自己声明的规范压过 —— 而"没被真实记录压过的规范一定会漂移"
+// 这件事，上一轮已经在 agent e2e 那边逐条证实了。
+// 服务端此刻已退出，磁盘上就是这一轮真实跑完的状态。
+const doctorProducedState = readStoredState({
+  root,
+  runtimeDir: join(root, doctorRuntimeDir),
+  statePath: join(root, doctorRuntimeDir, "control-plane-state.json"),
+  seedPath: join(root, "data/seed-state.json"),
+  // 走到"新建初始状态"说明读的不是本轮跑出来的东西；那样校验一份崭新的种子会得到毫无意义的绿。
+  buildInitialState: () => { throw new Error("doctor: 期望读到本轮跑出的状态，却触发了初始状态创建"); }
+});
+const doctorSweep = sweepRecordsAgainstDeclaredSchemas(doctorProducedState, {
+  specDir: join(root, "spec"), label: "控制面 e2e 产出", minValidated: 50
+});
+if (!(doctorProducedState.humanConfirmationRequests || []).some((item) => item.schemaVersion)) {
+  throw new Error("doctor: 本轮没有产出任何带 schemaVersion 的人工确认单 —— 这道规范核对在空转，人工定稿闸门的记录面依旧无人校验");
+}
+if (doctorSweep.errors.length) {
+  throw new Error(`doctor: e2e 真实产出的记录不符合它们自己声明的规范：\n- ${doctorSweep.errors.slice(0, 200).join("\n- ")}`);
+}
+console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条记录符合各自声明的 schema（含人工确认与定稿记录）`);
 
 const [code, signal] = await exitPromise;
 try { rmSync(doctorRepo.base, {recursive: true, force: true}); } catch {}

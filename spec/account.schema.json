@@ -69,8 +69,11 @@
           "agent_operator",
           "service_agent_runtime",
           "reviewer",
-          "viewer"
-        ]
+          "viewer",
+          "org_admin",
+          "member"
+        ],
+        "description": "含组织化改造引入的 org_admin 与 member（受邀成员的默认角色）。"
       }
     },
     "permissions": {
@@ -140,7 +143,27 @@
     },
     "passwordDigest": {
       "type": "string",
-      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+      "pattern": "^(scrypt\\$\\d+\\$\\d+\\$\\d+\\$[A-Za-z0-9_-]+\\$[A-Za-z0-9_-]+|sha256:[a-fA-F0-9]{64})$",
+      "description": "口令摘要。当前为 scrypt$N$r$p$salt$hash；历史 sha256 格式仍可校验，并在下次登录成功时就地升级 —— 两种都合法，否则升级期间的账号会被判为不合规。"
+    },
+    "activatedAt": {
+      "type": "string",
+      "description": "账号被激活的时间。"
+    },
+    "credentialDigest": {
+      "type": "string",
+      "description": "一次性开通凭据的摘要（只存摘要）。"
+    },
+    "credentialIssuedAt": {
+      "type": "string"
+    },
+    "credentialExpiresAt": {
+      "type": "string",
+      "description": "开通凭据的到期时间：过期后必须重新签发，不能无限期可用。"
+    },
+    "credentialConsumedAt": {
+      "type": "string",
+      "description": "凭据被消费的时间；已消费即不可重放。"
     }
   }
 }
