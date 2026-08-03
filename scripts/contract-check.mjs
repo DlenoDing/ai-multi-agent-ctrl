@@ -188,6 +188,7 @@ verifyEveryStateCollectionIsTenantScoped(errors);
 verifyExpiredConfirmationRetargetsTheWorkItem(errors);
 verifyExpiredConfirmationLeavesNoStaleParking(errors);
 verifyPermissionOutcomeReleasesTheSession(errors);
+verifyShardRoundTripKeepsEveryRecord(errors);
 verifyIdempotencyReplayIsPrincipalBound(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
@@ -4144,6 +4145,95 @@ console.log(JSON.stringify({first: {ok: first.ok, error: first.result?.error},
 // 与人工确认那两处同形，只是这条目前是【对的】—— 锁住它，免得下次改动把它退化成刚修过的那种：
 // 权限申请会把会话推到 permission_required；两条出路都必须把会话带走，否则会话永远算活跃，
 // 而活跃会话是关闭门实打实的阻塞项，人却只看到一个已经处置完的权限申请。
+// 分片拆合是 PostgreSQL（生产存储）与 runtime_json 共用的那一段：写盘时按项目拆成分片，
+// 读回时再合起来。此前没有任何东西验过【拆开再合起来是不是同一份数据】——
+// 少一个字段、少一条记录、把 undefined 落成 null，都不会有人发现，而生产上那就是数据损坏。
+// 只有 docker:doctor 会跑真正的 PG，跑一次要几分钟；这条纯函数往返几十毫秒就能守住同一段逻辑。
+function verifyShardRoundTripKeepsEveryRecord(output) {
+  const roundTripDir = mkdtempSync(join(tmpdir(), "aimac-shard-roundtrip-"));
+  try {
+    // 必须【跨进程】：readStoredState 会命中写入时填下的内存缓存，同进程里"写完再读"拿回的是
+    // 同一个对象，根本没有经过分片拆合 —— 我第一版就是这么写的，把合并逻辑改坏都不报红。
+    // 子进程负责造夹具并落盘，父进程这边缓存是冷的，读回来的才是真的从分片合出来的那份。
+    const fixtureFile = join(roundTripDir, "write-fixture.mjs");
+    writeFileSync(fixtureFile, `
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const root = ${JSON.stringify(root)};
+const dir = ${JSON.stringify(roundTripDir)};
+const store = await import(join(root, "apps/control-plane-ui/lib/state-store.mjs"));
+const core = await import(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"));
+const probe = JSON.parse(readFileSync(join(root, "data/seed-state.json"), "utf8"));
+core.ensureRuntimeCollections(probe, {root});
+core.runAutonomousCycle(probe, {root, mode: "all"});
+// 只比对"夹具恰好填了的集合"会给出一半的虚假信心：编排周期不产出 checkpoints 这类集合，
+// 空集合被整个跳过，合并时漏掉它也不会有人发现。按分片清单给每个空集合补一条最小记录。
+const shardCollections = JSON.parse(readFileSync(join(root, "apps/control-plane-ui/lib/state-store.mjs"), "utf8")
+  .match(/const projectShardCollections = (\\[[\\s\\S]*?\\]);/u)[1].replace(/,(\\s*\\])/gu, "$1"));
+const anchor = probe.taskGroups[0];
+shardCollections.forEach((collection, index) => {
+  probe[collection] ||= [];
+  if (probe[collection].length) return;
+  probe[collection].push({schemaVersion: collection + "-roundtrip-probe/v1", probeId: "rt_" + index,
+    projectId: anchor.projectId, taskGroupId: anchor.id, nested: {list: [1, "two", null], flag: false},
+    createdAt: "2026-08-01T00:00:00Z"});
+});
+writeFileSync(join(dir, "expected.json"), JSON.stringify(probe));
+store.writeStoredState(probe, {root, runtimeDir: dir, statePath: join(dir, "control-plane-state.json"),
+  seedPath: join(root, "data/seed-state.json"), buildInitialState: () => ({stateVersion: 1, runtime: {}})});
+console.log(String(shardCollections.length));
+`);
+    let shardCollectionCount = 0;
+    try {
+      shardCollectionCount = Number(execFileSync(process.execPath, [fixtureFile], {
+        encoding: "utf8", env: {...process.env, AIMAC_RUNTIME_DIR: roundTripDir, AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: ""}
+      }).trim().split("\n").at(-1));
+    } catch (error) {
+      output.push(`分片往返保真：夹具进程失败（${String(error.message).slice(0, 200)}）—— 这条断言无从验证`);
+      return;
+    }
+    if (!(shardCollectionCount >= 10)) {
+      output.push(`分片往返保真：只覆盖到 ${shardCollectionCount} 个分片集合 —— 覆盖不全，本条给出的是虚假信心`);
+      return;
+    }
+    const before = JSON.parse(readFileSync(join(roundTripDir, "expected.json"), "utf8"));
+    const after = readStoredState({root, runtimeDir: roundTripDir,
+      statePath: join(roundTripDir, "control-plane-state.json"),
+      seedPath: resolve(root, "data", "seed-state.json"),
+      buildInitialState: () => ({stateVersion: 1, runtime: {}})});
+    const canon = (value) => {
+      if (Array.isArray(value)) return value.map(canon);
+      if (value && typeof value === "object") {
+        return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canon(value[key])]));
+      }
+      return value;
+    };
+    let compared = 0;
+    for (const [name, items] of Object.entries(before)) {
+      if (!Array.isArray(items) || !items.length) continue;
+      compared += items.length;
+      const back = after[name];
+      if (!Array.isArray(back)) {
+        output.push(`分片往返保真：集合 ${name} 往返后不再是数组（${typeof back}）—— 落盘再读回就丢了整个集合`);
+        continue;
+      }
+      const left = items.map((item) => JSON.stringify(canon(item))).sort();
+      const right = back.map((item) => JSON.stringify(canon(item))).sort();
+      const lost = left.filter((item) => !right.includes(item));
+      const gained = right.filter((item) => !left.includes(item));
+      if (lost.length || gained.length) {
+        output.push(`分片往返保真：${name} 落盘再读回后对不上（${items.length} → ${back.length} 条，丢失 ${lost.length}，变化 ${gained.length}）`
+          + `；样例：${(lost[0] || gained[0] || "").slice(0, 200)}`);
+      }
+    }
+    if (compared < 200) {
+      output.push(`分片往返保真：只比对到 ${compared} 条记录，远少于预期 —— 夹具没造出足够数据，本条在空转`);
+    }
+  } finally {
+    try { rmSync(roundTripDir, {recursive: true, force: true}); } catch { /* best effort */ }
+  }
+}
+
 function verifyPermissionOutcomeReleasesTheSession(output) {
   for (const [decision, expectation] of [["approved", "不得再停在 permission_required"], ["rejected", "不得再停在 permission_required"]]) {
     const probe = structuredClone(seedState);
