@@ -6074,9 +6074,18 @@ export function assertUniqueRecordId(collection, idField, id, errorCode) {
   }
 }
 
-function topologyError(code, status = 409) {
+// 拼接出来的动态码（execution_topology_expected_running_or_...）到人眼前就是一串英文：
+// 它说了"应该处于哪些状态"，唯独不说【现在是什么状态】—— 而那是人唯一需要知道的。
+// 控制台上已经有真人可点的"终止执行方案"按钮，过时页面上点一下就会撞到这里。
+function topologyError(code, status = 409, details = {}) {
   const error = new Error(code);
   error.status = status;
+  // 注意：绝不能让 details 覆盖 error.message —— 那正是错误码本身，响应里的 error 字段取的就是它，
+  // 覆盖掉会让 i18n 映射和按码分支同时失效（写这段时差点这么干）。给人看的话放在 hint 里。
+  for (const [key, value] of Object.entries(details)) {
+    if (key === "message" || key === "name" || key === "stack") continue;
+    error[key] = value;
+  }
   return error;
 }
 
@@ -6408,7 +6417,9 @@ export function advanceExecutionTopology(state, args) {
     // owned_paths_disjoint 证据（刻意永不清除）也会让 merge 永远失败，那时唯一正确的出路就是取消。
     const cancellableFrom = ["running", "integrating", "blocked", "needs_reconcile"];
     if (!cancellableFrom.includes(topology.status)) {
-      throw topologyError(`execution_topology_expected_${cancellableFrom.join("_or_")}`, 409);
+      throw topologyError(`execution_topology_expected_${cancellableFrom.join("_or_")}`, 409,
+        {currentStatus: topology.status, allowedStatuses: cancellableFrom,
+          hint: `该执行方案当前是「${topology.status}」，只有处于 ${cancellableFrom.join("/")} 时才能终止 —— 很可能已经有人终止或合并过它，刷新后即可看到当前状态`});
     }
     const ref = String(args.cancelRef || args.reason || "");
     if (!ref) throw topologyError("execution_topology_cancel_requires_ref", 400);

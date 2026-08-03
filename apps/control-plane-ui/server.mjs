@@ -4032,7 +4032,12 @@ async function handleApi(req, res) {
     try {
       result = advanceExecutionTopology(state, {...body, topologyId: topologyAdvanceMatch[1], actor: guard.actor});
     } catch (error) {
-      return json(res, error.status || 409, {error: error.message});
+      // 与人工定稿那条路由同理：核心函数特意附带的字段不能在这里被丢掉。
+      // 控制台上有真人可点的"终止执行方案"，过时页面点一下就会撞到这里，而他需要的正是"现在是什么状态"。
+      return json(res, error.status || 409, {error: error.message,
+        ...(error.currentStatus ? {currentStatus: error.currentStatus} : {}),
+        ...(error.allowedStatuses ? {allowedStatuses: error.allowedStatuses} : {}),
+        ...(error.hint ? {message: error.hint} : {})});
     }
     if (result.ok === false) return json(res, 404, {error: result.error});
     // 同上：拓扑已到终态时回 409，而不是回 200 让后到者以为自己推进了它。
