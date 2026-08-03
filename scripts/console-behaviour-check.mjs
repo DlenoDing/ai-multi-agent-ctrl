@@ -124,6 +124,7 @@ globalThis.__probe = {
   renderPendingPanelWith: (nextState, account) => { state = nextState; currentAccount = account; return renderPendingForMePanel(); },
   todoCountsWith: (nextState, account) => { state = nextState; currentAccount = account; return todoCountsByPage(); },
   moreTextWith: (nextState, total, shown, field) => { state = nextState; return moreText(total, shown, field); },
+  renderLoginWith: (hint) => { loginHint = hint; renderLogin(); return document.querySelector("#app").innerHTML || ""; },
   renderSysSettingsWith: (nextState, instructions) => { state = nextState; if (instructions !== undefined) instructionState = instructions; return renderSysSettings(); },
   renderSysAccountsWith: (nextState, account) => { state = nextState; currentAccount = account; return renderSysAccounts(); },
   blockerGuide: (type) => blockerGuide(type),
@@ -605,6 +606,23 @@ function runStuckTopologyLeverCase() {
 // 且实测缺席时要明说"尚未测量"，不能拿预算值冒充。
 // 编排周期设成 0 时后台什么都不推进：人提交的指令一直停在"待处理"，派发不会被领走，
 // 关闭门不会重算 —— 而控制台上一切如常。与状态机执行模式同形，必须如实公布。
+// 生产模式下登录页刻意不显示管理员账号（说出来等于把凭据的一半送出去），但那样一来
+// 第一次上手的人拿着令牌面对"登录账号"输入框无从下手。不泄漏，但要告诉他去哪儿找。
+function runFirstRunGuidanceCase() {
+  const probe = loadConsole(el("div"));
+  const prod = probe.renderLoginWith({bootstrapTokenConfigured: true, tokenHintsExposed: false});
+  check("生产模式下不泄漏管理员账号",
+    !prod.includes("系统管理员登录账号"),
+    "公开登录页上显示了管理员账号 —— 等于把凭据的一半送出去");
+  check("但要告诉人去哪儿找账号",
+    prod.includes("npm run init"),
+    "只说令牌已配置却不说登录账号从哪来 —— 第一次上手的人拿着令牌面对输入框无从下手");
+  const dev = probe.renderLoginWith({bootstrapTokenConfigured: true, tokenHintsExposed: true, systemAdminLogin: "system.admin@local"});
+  check("开发模式下直接给出账号",
+    dev.includes("system.admin@local") && !dev.includes("npm run init"),
+    "本机开发时既不显示账号也不给指引，等于两头落空");
+}
+
 function runOrchestratorVisibilityCase() {
   const probe = loadConsole(el("div"));
   const on = probe.renderSysSettingsWith({runtime: {transitionEnforcement: "strict", autonomousOrchestrator: {enabled: true, intervalMs: 60000}}});
@@ -852,6 +870,7 @@ runCloseBarrierScopeCase();
 runTransitionModeVisibilityCase();
 runStablePrefixMeasurementCase();
 runOrchestratorVisibilityCase();
+runFirstRunGuidanceCase();
 runWholeListCapCase();
 runStuckTopologyLeverCase();
 runBlockerGuideCase();

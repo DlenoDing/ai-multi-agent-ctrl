@@ -1216,6 +1216,7 @@ function renderLogin() {
     ? `
       <div class="login-hint">
         <div>初始化令牌：${loginHint.bootstrapTokenConfigured ? "已配置（系统管理员可用初始化令牌登录）" : "未配置"}</div>
+        ${!loginHint.tokenHintsExposed && loginHint.bootstrapTokenConfigured ? `<div class="small muted">登录账号是哪一个：见 <span class="mono">npm run init</span> 的输出或 README —— 生产环境不在公开登录页上显示它，那等于把凭据的一半送出去。</div>` : ""}
         ${loginHint.tokenHintsExposed && loginHint.systemAdminLogin ? `<div>系统管理员登录账号：<span class="mono">${esc(loginHint.systemAdminLogin)}</span>（填在上面的「登录账号」处，令牌填初始化令牌）</div>` : ""}
         ${loginHint.tokenHintsExposed && loginHint.tokenHint ? `<div>本机令牌提示：<span class="mono">${esc(loginHint.tokenHint)}</span></div>` : ""}
         ${loginHint.tokenHintsExposed && loginHint.localAccountTokenHints ? Object.entries(loginHint.localAccountTokenHints).map(([accountId, hint]) => `<div>${esc(accountId)}：<span class="mono">${esc(hint)}</span></div>`).join("") : ""}
