@@ -185,6 +185,7 @@ verifySeedRecordsMatchTheirDeclaredSchemas(errors);
 verifyEverySchemaVersionHasASpec(errors);
 verifyEveryProjectScopedIdIsScopeChecked(errors);
 verifyEveryStateCollectionIsTenantScoped(errors);
+verifyExpiredConfirmationRetargetsTheWorkItem(errors);
 verifyIdempotencyReplayIsPrincipalBound(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
@@ -4126,6 +4127,43 @@ console.log(JSON.stringify({first: {ok: first.ok, error: first.result?.error},
   }
   if (probe.other.error !== "idempotency_key_reuse_conflict") {
     output.push(`幂等重放主体绑定：另一个主体应当拿到 idempotency_key_reuse_conflict，实得 ${probe.other.error || "无错误"}`);
+  }
+}
+
+// 提案挂卡时会先把工作项停在 needs_decision（awaiting_human_split_confirmation）。卡过期后，
+// 原先的回收逻辑对"已经是 needs_decision"的工作项整个跳过 —— 于是它仍写着"等待人工确认"，
+// 而那张卡已经不存在、也不会再挂出来（needs_decision 的单元每轮直接被跳过，走不到提案那一步）。
+// 任务组上的 S2 阻塞项说的是实话，工作项自己却在说另一回事：人打开它，被告知等一个永远不来的确认。
+function verifyExpiredConfirmationRetargetsTheWorkItem(output) {
+  const expState = structuredClone(seedState);
+  ensureRuntimeCollections(expState, {root});
+  const taskGroup = expState.taskGroups.find((item) => item.id === "tg_runtime_management");
+  const workItem = taskGroup.workItems[0];
+  workItem.status = "needs_decision";
+  workItem.blockedReason = "awaiting_human_split_confirmation";
+  expState.humanConfirmationRequests = [{
+    schemaVersion: "human-confirmation-request/v1", requestId: "hcr_expiry_probe", projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id, workItemId: workItem.id, decisionClass: "major", decisionType: "task_split",
+    dedupeKey: `task_split:task_split:${workItem.id}`, requestKey: `task_split:${workItem.id}`,
+    question: {summary: "拆分方案确认"},
+    options: [{optionId: "accept_split", label: "同意"}, {optionId: "reject", label: "不拆分"}],
+    blocking: true, round: 1, status: "pending",
+    expiresAt: "2020-01-01T00:00:00Z", createdAt: "2019-12-01T00:00:00Z", updatedAt: "2019-12-01T00:00:00Z"
+  }];
+  runAutonomousCycle(expState, {root, mode: "all"});
+  const settled = expState.humanConfirmationRequests.find((item) => item.requestId === "hcr_expiry_probe");
+  if (settled?.status !== "expired") {
+    output.push(`过期确认单的工作项指向：确认单没有被判过期（实得 ${settled?.status || "缺失"}）—— 这条断言无从验证`);
+    return;
+  }
+  const settledWork = expState.taskGroups.find((item) => item.id === taskGroup.id).workItems.find((item) => item.id === workItem.id);
+  if (String(settledWork.blockedReason || "").startsWith("awaiting_human")) {
+    output.push(`过期确认单的工作项指向：卡已过期，工作项却仍写着 ${settledWork.blockedReason}`
+      + " —— 它指向一张不存在也不会再挂出来的确认卡；人打开这个工作项，被告知等一个永远不来的确认");
+  }
+  if ((expState.humanConfirmationRequests || []).some((item) => item.status === "pending" && item.workItemId === workItem.id)) {
+    // 若将来改成"过期后重新挂卡"，上面那条就不再是缺陷 —— 但那时这条会提醒我这里的前提变了。
+    output.push("过期确认单的工作项指向：出现了新的待确认卡 —— 前提已变，请重新审视这条断言的判据");
   }
 }
 

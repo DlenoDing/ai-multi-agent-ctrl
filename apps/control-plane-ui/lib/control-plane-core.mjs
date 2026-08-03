@@ -4965,6 +4965,16 @@ export function expireStaleHumanConfirmations(state) {
       expiredWorkItem.status = "needs_decision";
       expiredWorkItem.blockedReason = "human_confirmation_expired";
       expiredWorkItem.updatedAt = at;
+    } else if (expiredWorkItem && expiredWorkItem.status === "needs_decision"
+      && String(expiredWorkItem.blockedReason || "").startsWith("awaiting_human")) {
+      // 提案挂卡时会先把工作项停在 needs_decision（例如 awaiting_human_split_confirmation）。
+      // 上面那个判据把"已经是 needs_decision"整个跳过，于是卡过期后，工作项仍写着"等待人工确认"——
+      // 而那张卡已经不存在了，也不会再挂出来（needs_decision 的单元每轮直接被跳过，走不到提案那一步）。
+      // 任务组上的 S2 阻塞项说的是实话，工作项自己却在说另一回事：人打开它，被告知等一个永远不来的确认。
+      // 这里把原因改成与事实一致的 human_confirmation_expired —— 杠杆（resolve_decision）本来就在，
+      // 缺的只是"告诉人该走哪条路"。
+      expiredWorkItem.blockedReason = "human_confirmation_expired";
+      expiredWorkItem.updatedAt = at;
     }
     if (taskGroup) addBlocker(taskGroup, "S2", `人工确认请求超时未作答，已升级为人工决策（不会自动放行）：${request.question?.summary || request.requestId}`);
     expired.push(request.requestId);
