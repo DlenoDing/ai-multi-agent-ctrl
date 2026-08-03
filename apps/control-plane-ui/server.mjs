@@ -3934,7 +3934,13 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/leases/claim") {
     const claimTargetId = body.repositoryOutputTargetRef || body.targetId;
     const claimTarget = claimTargetId ? (state.repositoryOutputs || []).find((item) => item.targetId === claimTargetId) : null;
-    const guard = beginGuardedWrite(req, state, "lease_claim", `Lease:${claimTargetId || "new"}`, taskGroupScope(state, claimTarget?.taskGroupId || body.taskGroupId || "tg_runtime_management"));
+    // 同 lease_release：claimLease 按 body 里的产出目标定位，作用域就必须由那个目标派生。
+    // 目标查不到时 claimLease 一定回 repository_output_target_not_found，此处不必也不该
+    // 拿调用方自报的任务组去判权 —— fail closed 同时消掉了"用 404/403 试探目标是否存在"。
+    const leaseClaimScope = claimTarget?.taskGroupId
+      ? taskGroupScope(state, claimTarget.taskGroupId)
+      : {resourceType: "system", resourceId: "leases"};
+    const guard = beginGuardedWrite(req, state, "lease_claim", `Lease:${claimTargetId || "new"}`, leaseClaimScope);
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = claimLease(state, body);
     if (result.ok === false) return json(res, result.error === "repository_output_target_not_found" ? 404 : 409, result);
@@ -3950,7 +3956,17 @@ async function handleApi(req, res) {
     const lease = (state.leases || []).find((item) => item.leaseId === leaseReleaseMatch[1]);
     const leaseTargetId = lease?.resourceRef?.startsWith("RepositoryOutputTarget:") ? lease.resourceRef.slice("RepositoryOutputTarget:".length) : null;
     const leaseTarget = leaseTargetId ? (state.repositoryOutputs || []).find((item) => item.targetId === leaseTargetId) : null;
-    const guard = beginGuardedWrite(req, state, "lease_release", `Lease:${leaseReleaseMatch[1]}`, taskGroupScope(state, leaseTarget?.taskGroupId || body.taskGroupId || "tg_runtime_management"));
+    // 授权作用域必须由【真正被改的那个对象】派生。原先推导不出时回落到 body.taskGroupId ——
+    // 而 releaseLease 纯按路径里的 leaseId 定位，根本不看 taskGroupId：调用方报一个自己有权的
+    // 任务组就能过守卫，被释放的却是别人的租约。释放租约＝解开对方产出目标的写锁，
+    // 另一个会话随即可以抢占。（今天还有 fencingToken 兜着，但那是纵深防御，不是授权。）
+    // 租约的 resourceRef 由 claimLease 恒定构造为一个存在的 RepositoryOutputTarget，
+    // 所以推导不出只可能是"租约不存在"或"目标已消失"——两种都不该用调用方自报的作用域，
+    // 改为按系统级资源判权（fail closed），随后 releaseLease 自然回 404，也不构成存在性预言。
+    const leaseReleaseScope = leaseTarget?.taskGroupId
+      ? taskGroupScope(state, leaseTarget.taskGroupId)
+      : {resourceType: "system", resourceId: "leases"};
+    const guard = beginGuardedWrite(req, state, "lease_release", `Lease:${leaseReleaseMatch[1]}`, leaseReleaseScope);
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = releaseLease(state, {...body, leaseId: leaseReleaseMatch[1]});
     if (result.ok === false) return json(res, result.error === "lease_not_found" ? 404 : 409, result);

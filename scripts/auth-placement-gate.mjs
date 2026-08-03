@@ -117,19 +117,69 @@ function run() {
     console.error("\n授权前只允许做纯输入校验（不读不改状态）。任何要返回状态内容或改状态的分支，都必须放在 beginGuardedWrite 之后。");
     process.exit(1);
   }
+  const misscoped = checkGuardScopeMatchesMutatedObject();
+  if (misscoped.length) {
+    console.error("auth placement gate failed:");
+    for (const message of misscoped) console.error(`- ${message}`);
+    process.exit(1);
+  }
   const unmapped = checkEveryGuardedActionIsMapped();
   if (unmapped.length) {
     console.error("auth placement gate failed:");
     for (const message of unmapped) console.error(`- ${message}`);
     process.exit(1);
   }
-  console.log(`auth placement gate ok: ${blocks.length} 条改状态路由鉴权之前无泄露无写入，且每个受守卫动作都有显式权限映射`);
+  console.log(`auth placement gate ok: ${blocks.length} 条改状态路由鉴权之前无泄露无写入、每个受守卫动作都有显式权限映射，且按路径定位的对象其授权作用域不取自请求体`);
 }
 
 // permissionForAction 的兜底是 system:*。漏一条映射不会报错，只会让那条杠杆【只有系统管理员
 // 够得到】—— 本仓已经踩过一次：review_plan_resolve 漏了映射，于是收尾一个任务组层面的阻塞
 // 需要系统管理员，与同批杠杆口径完全不一致，而界面上没有任何迹象。
 // 受守卫动作是可枚举的，就不该靠"想到哪条写哪条"来守。
+// ── 授权作用域必须指向真正被改的那个对象（confused deputy） ──────────────────────────
+//
+// 鉴权【位置】对了，不等于鉴权【对象】对了。lease_release 曾经是这样：租约按路径里的 leaseId
+// 定位，而守卫的作用域是 `leaseTarget?.taskGroupId || body.taskGroupId || 缺省` —— 调用方报一个
+// 自己有权的任务组就能过守卫，释放的却是别人的租约（＝解开对方产出目标的写锁）。
+//
+// "变更函数是否也按同一作用域定位对象"静态判不出来（work_assign 就是合法的：assignWorkItem
+// 是在 body.taskGroupId 这个任务组【里面】找工作项，守卫与变更用的是同一个标识）。
+// 所以这里只做一件静态能做准的事：把"对象按路径定位、作用域却取自请求体"这个形态全部揪出来，
+// 合法的必须逐条写明理由。写不出理由的，就是下一个 lease_release。
+const BODY_SCOPED_PATH_ROUTES = {
+  work_assign: "assignWorkItem 是在 body.taskGroupId 这个任务组【内部】按 workItemId 查找并改写；"
+    + "查不到即 work_item_not_found，跨任务组够不着 —— 守卫作用域与变更定位是同一个标识。"
+};
+function checkGuardScopeMatchesMutatedObject() {
+  const source = readFileSync(join(root, TARGET), "utf8");
+  const problems = [];
+  let found = 0;
+  for (const line of source.split(/\r?\n/)) {
+    const call = line.match(/beginGuardedWrite\(req, state, "([a-z_]+)", (.+)\);\s*$/);
+    if (!call) continue;
+    const [, action, rest] = call;
+    // 主体里带 Match[ 表示这个对象是按路径参数定位的
+    if (!/Match\[/.test(rest)) continue;
+    found += 1;
+    // 作用域是最后一个实参；粗略取"最后一个逗号之后"不可靠（含嵌套调用），改为整体判断：
+    // 主体之后的部分若出现 body.，即为"用请求体派生作用域"。
+    const scopePart = rest.slice(rest.indexOf(",") + 1);
+    if (!/\bbody\./.test(scopePart)) {
+      if (BODY_SCOPED_PATH_ROUTES[action]) {
+        problems.push(`${action}: 已登记为"作用域取自请求体且合法"，但它现在并不从 body 取作用域 —— 登记已过时，删掉它`);
+      }
+      continue;
+    }
+    if (!BODY_SCOPED_PATH_ROUTES[action]) {
+      problems.push(`${action}: 对象按路径参数定位，授权作用域却取自请求体（body.*）`
+        + " —— 调用方报一个自己有权的作用域就能过守卫，而被改的是路径指定的那个对象。"
+        + "若变更函数确实也在这个作用域内定位对象，请登记到 BODY_SCOPED_PATH_ROUTES 并写明依据。");
+    }
+  }
+  if (found < 10) problems.push(`授权作用域核对只找到 ${found} 条按路径定位的受守卫路由，远少于预期 —— 提取逻辑已失效，本条在空转`);
+  return problems;
+}
+
 function checkEveryGuardedActionIsMapped() {
   const source = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
   const start = source.indexOf("function permissionForAction(action) {");
