@@ -5806,7 +5806,12 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
       // reopened/abandoned.
       workItem.status = "needs_decision";
       workItem.blockedReason = options.backfill ? "independent_review_backfill_failed" : "independent_review_changes_requested";
-      addBlocker(taskGroup, "S1", `独立评审要求工作项 ${workItem.id} 返工：${findings.map(reviewFindingLabel).join("，")}`);
+      // 这条与上面"重新排队返工（第 N/M 次）"必须说得不一样：那条是【系统还会再试】，
+      // 这条是【系统已经放手，等你决定】。两句都写成"要求返工"的话，人分不出自己此刻要不要动手 ——
+      // 而这正是自动化停下来、责任交回人手上的那一刻。
+      addBlocker(taskGroup, "S1", options.backfill
+        ? `工作项 ${workItem.id} 的评审记录缺失、补做互审未通过，已停止自动推进，需要人工决策处置（重开 / 放弃）：${findings.map(reviewFindingLabel).join("，")}`
+        : `工作项 ${workItem.id} 已达返工上限（第 ${rejectionCount}/${maxReworkAttempts} 次），不再自动重排，需要人工决策处置（重开 / 放弃）：${findings.map(reviewFindingLabel).join("，")}`);
     } else {
       if (target && ["pushed", "committed"].includes(target.status)) {
         target.status = "superseded";

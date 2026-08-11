@@ -1774,6 +1774,45 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("互审空转: 该工作项有未通过的质量门，互审却仍然判为通过（它只复述了接受检查点时已强制过的事实）");
     }
 
+    // 返工有上限：达到上限之后系统不再自动重排，责任回到人手上。那一刻的提示必须与
+    // "还会再试"明确区分 —— 两句都写成"要求返工"，人分不出自己此刻要不要动手。
+    {
+      const reworkState = structuredClone(pgState);
+      const reworkTg = reworkState.taskGroups.find((item) => item.id === pgTg.id);
+      const reworkCheckpoint = (reworkState.checkpoints || [])[0];
+      const reworkWork = reworkTg.workItems.find((item) => item.id === reworkCheckpoint?.workId);
+      if (!reworkWork) {
+        output.push("返工上限断言找不到检查点对应的工作项 —— 本条在空转");
+      } else {
+        const attempts = Math.max(1, Number(process.env.AIMAC_REVIEW_MAX_REWORK_ATTEMPTS || 3));
+        const summariesAt = [];
+        for (let round = 0; round < attempts; round += 1) {
+          reworkWork.status = "checkpoint_submitted";
+          delete reworkWork.blockedReason;
+          reworkTg.blockers = [];
+          for (const outputTarget of reworkState.repositoryOutputs || []) {
+            if ((reworkCheckpoint?.repositoryOutputTargetRefs || []).includes(outputTarget.targetId)) outputTarget.status = "pushed";
+          }
+          // 每轮换一个失败原因，避免被"同一份重复驳回"的去重逻辑合并掉
+          reworkState.qualityGates = [{gateId: `qg_rework_${round}`, taskGroupId: reworkTg.id, workItemId: reworkWork.id,
+            gateType: `test_${round}`, status: "failed", evidenceRefs: [`run:${round}`]}];
+          performIndependentReview(reworkState, reworkTg, reworkWork, {root}, {});
+          summariesAt.push((reworkTg.blockers || []).map((item) => item.summary).join(" | "));
+        }
+        const finalSummary = summariesAt.at(-1) || "";
+        if (reworkWork.status !== "needs_decision") {
+          output.push(`返工达到上限后工作项仍是 ${reworkWork.status} —— 系统还会继续自动重排，没人知道它其实修不好`);
+        }
+        if (!/返工上限|不再自动重排/.test(finalSummary)) {
+          output.push("返工达到上限、系统已经放手，提示却仍与还会再试同一句话 —— "
+            + `人分不出此刻要不要动手（末轮提示：${finalSummary.slice(0, 120)}）`);
+        }
+        if (!/人工决策处置/.test(finalSummary)) {
+          output.push("返工达到上限的提示没有说出口在哪 —— 人知道停了，却不知道该去做什么");
+        }
+      }
+    }
+
     // 翻案过的质量门要在【人做决定的那张卡上】说清新增证据是什么。
     // 上面已经验了留痕落库；这里走真实入口 performIndependentReview 生成验收卡，读卡片正文。
     {
