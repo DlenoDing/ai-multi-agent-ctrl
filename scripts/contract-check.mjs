@@ -4170,7 +4170,9 @@ function verifyActiveDispatchesKeepTheirContracts(output) {
   ensureRuntimeCollections(probe, {root});
   const template = probe.taskGroups[0];
   probe.taskGroups = [];
-  const GROUPS = 60, ITEMS = 5; // 300 个单元：足以让契约越过 160 的上限
+  // 400 个单元：既越过契约上限 160+64，也越过派发上限 240+64 —— 两个 cap 都必须真的跑到，
+  // 否则下面那些断言只是在看一份从没被裁剪过的数据（300 个单元时派发那道就是这样空转的）。
+  const GROUPS = 80, ITEMS = 5;
   for (let group = 0; group < GROUPS; group += 1) {
     const taskGroup = structuredClone(template);
     taskGroup.id = `tg_contract_probe_${group}`;
@@ -4180,19 +4182,62 @@ function verifyActiveDispatchesKeepTheirContracts(output) {
     }
     probe.taskGroups.push(taskGroup);
   }
-  runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+  // 台账自己也有上限（默认 400），本轮正好 400 个单元会顶到上限而使基准失真；探针内调高它。
+  const previousAdmissionCap = process.env.AIMAC_ADMISSION_DECISION_CAP;
+  process.env.AIMAC_ADMISSION_DECISION_CAP = "100000";
+  try {
+    runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+  } finally {
+    if (previousAdmissionCap === undefined) delete process.env.AIMAC_ADMISSION_DECISION_CAP;
+    else process.env.AIMAC_ADMISSION_DECISION_CAP = previousAdmissionCap;
+  }
+
   const terminal = new Set(["completed", "failed", "cancelled"]);
+  const settledSession = new Set(["completed_objective", "recycled", "failed", "aborted"]);
   const activeDispatches = (probe.agentDispatches || []).filter((item) => !terminal.has(item.status));
   if (activeDispatches.length <= 160) {
-    output.push(`活跃派发必须留着它的契约：只产生了 ${activeDispatches.length} 个活跃派发，没越过 160 的契约上限 —— 这条断言在空转`);
+    output.push(`规模化引用完整性：只产生了 ${activeDispatches.length} 个活跃派发，没越过 160 的契约上限 —— 这条断言在空转`);
     return;
   }
-  const contractKeys = new Set((probe.agentTaskContracts || []).map((item) => `${item.sessionId}\u0000${item.runId}`));
-  const orphaned = activeDispatches.filter((item) => !contractKeys.has(`${item.sessionId}\u0000${item.runId}`));
-  if (orphaned.length) {
-    output.push(`活跃派发必须留着它的契约：${activeDispatches.length} 个活跃派发里有 ${orphaned.length} 个的契约已被容量淘汰`
-      + " —— acceptAgentCheckpoint 按 sessionId+runId 找契约，找不到就永远报 agent_dispatch_contract_mismatch；"
-      + "这些派发再也终结不了，任务组的关闭门永久不可满足");
+  // 上面那些查的是"幸存记录之间对不对得上"，测不到"活跃记录被整个删掉"——淘汰掉之后，
+  // 剩下的自然彼此自洽。所以先查存活：capDispatchHistory 的契约是绝不淘汰非终态派发，
+  // 本轮 300 个单元全是非终态，数量必须越过 240 这个上限；被削到上限就说明保活分支失效了。
+  // 基准取【独立来源】：准入台账里"被选中派发"的条数。不能拿"最终数量是否越过 240"当判据 ——
+  // 裁剪发生在循环中途，之后还会继续插入，最终数量照样能越过上限（这条我第一版就写错了）。
+  const selectedCount = (probe.admissionDecisions || []).filter((item) => item.selected).length;
+  if (selectedCount < 300) {
+    output.push(`规模化引用完整性：准入台账只记到 ${selectedCount} 次派发选中，太少 —— 容量裁剪没被触发，本条在空转`);
+  } else if ((probe.agentDispatches || []).length < selectedCount) {
+    output.push(`规模化引用完整性：本轮选中派发 ${selectedCount} 次，最终只剩 ${(probe.agentDispatches || []).length} 个派发`
+      + " —— 非终态派发被容量淘汰了；它们的检查点无处落地，而剩下的记录彼此仍然自洽，光查引用看不出来");
+  }
+  const contractKeys = new Set((probe.agentTaskContracts || []).map((item) => `${item.sessionId} ${item.runId}`));
+  const sessions = new Map((probe.workSessions || []).map((item) => [item.sessionId, item]));
+  const targetIds = new Set((probe.repositoryOutputs || []).map((item) => item.targetId));
+  const leaseIds = new Set((probe.leases || []).map((item) => item.leaseId));
+  const workItemIds = new Set((probe.taskGroups || []).flatMap((group) => (group.workItems || []).map((item) => item.id)));
+
+  // 这六条都是"容量淘汰把引用打断"会踩的地方 —— 上一轮就是契约那条真的断了，而当时唯一的
+  // 断言只把 cap 当函数测（三条手写记录），测不到接线。规模化跑一轮真实编排再逐条核对。
+  const checks = [
+    ["活跃派发缺契约", activeDispatches.filter((item) => !contractKeys.has(`${item.sessionId} ${item.runId}`)),
+      "acceptAgentCheckpoint 按 sessionId+runId 找契约，找不到就永远报 agent_dispatch_contract_mismatch；派发再也终结不了，关闭门永久不可满足"],
+    ["活跃派发的会话不存在", activeDispatches.filter((item) => item.sessionId && !sessions.has(item.sessionId)),
+      "派发挂在一个不存在的会话上，任何按会话回收的路径都够不到它"],
+    ["活跃派发的会话已了结", activeDispatches.filter((item) => settledSession.has(sessions.get(item.sessionId)?.status)),
+      "会话已了结而派发还活着：会话侧的回收不会再来，派发只能靠人手动清"],
+    ["活跃派发指向不存在的工作项", activeDispatches.filter((item) => item.workItemId && !workItemIds.has(item.workItemId)),
+      "派发指向一个已经不在的工作项，它的产出无处归属"],
+    ["活跃租约指向不存在的产出目标", (probe.leases || []).filter((item) => item.status === "active"
+      && !targetIds.has(String(item.resourceRef || "").split(":")[1])),
+      "租约挡着 all_leases_terminal，而它保护的目标已经不在 —— 没有任何杠杆能了结它"],
+    ["产出目标的 leaseRef 指向不存在的租约", (probe.repositoryOutputs || []).filter((item) => item.leaseRef && !leaseIds.has(item.leaseRef)),
+      "目标以为自己被锁着，而那把锁已经不存在：写入边界的判定从此读到的是一个幻影"]
+  ];
+  for (const [label, broken, consequence] of checks) {
+    if (broken.length) {
+      output.push(`规模化引用完整性：${label} —— ${broken.length} 处（活跃派发 ${activeDispatches.length}）。${consequence}`);
+    }
   }
 }
 
