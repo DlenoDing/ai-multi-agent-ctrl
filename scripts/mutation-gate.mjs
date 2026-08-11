@@ -270,6 +270,56 @@ const MUTATIONS = [
     to: "      const {updatedAt, ...rest} = item;\n      shard.collections[collection].push(rest);",
     expect: "落盘再读回后对不上"
   },
+  // ↓ 本会话新增的守卫。它们此前只被手工变异验证过一次，而"验证过一次"与"以后一直有效"是两件事。
+  {
+    name: "控制命令重试用尽后不得还说「进行中」",
+    file: GATEWAY,
+    from: "      dispatch.blockedReason = rejectedReason;",
+    to: '      dispatch.blockedReason = "control_pause_requested";',
+    expect: "重试用尽后，派发原因仍是"
+  },
+  {
+    name: "人批准的路径边界必须压在 git 算出的真实变更上",
+    file: CORE,
+    from: "  if (approvedPaths.length) {",
+    to: "  if (false) {",
+    expect: "人批的边界只由 agent 自报来守"
+  },
+  {
+    name: "人在方案里划的禁区必须被强制",
+    file: CORE,
+    from: "  if (forbiddenApproved.length) {",
+    to: "  if (false) {",
+    expect: "禁区只是记录里的一行字"
+  },
+  {
+    name: "人批准时看到的验收项必须有证据",
+    file: CORE,
+    from: "      && (branch.acceptanceChecks || []).length && !(branch.validationEvidenceRefs || []).length) {",
+    to: "      && false) {",
+    expect: "跑没跑从来没有人对账"
+  },
+  {
+    name: "任务组读摘要的记忆化必须按 stateVersion 失效",
+    file: CORE,
+    from: "  if (!perState || perState.stateVersion !== stateVersion) {",
+    to: "  if (!perState) {",
+    expect: "记忆化把变化盖住了"
+  },
+  {
+    name: "一轮结束必须补上被推迟的历史裁剪",
+    file: CORE,
+    from: "    try { capBoundedHistories(state); } catch { /* 裁剪失败不该掩盖本轮真正的异常 */ }",
+    to: "",
+    expect: "没有被裁回上限"
+  },
+  {
+    name: "租约索引必须核对状态，不得把已释放的租约当成活的",
+    file: CORE,
+    from: '  if (cached && cached.status === "active" && cached.resourceRef === resourceRef) return cached;',
+    to: "  if (cached) return cached;",
+    expect: "写锁形同虚设"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
