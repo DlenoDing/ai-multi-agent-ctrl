@@ -526,6 +526,37 @@ try {
     throw new Error(`a direct task_group: permission (bound to no resource) settled a review plan: expected 403, got ${crossScopeResolve.response.status}`);
   }
 
+  // 处置杠杆必须真的清得掉它挡住的那一项。此前只验过"界面上有没有指引文案"和"无权主体会不会被拒"，
+  // 从没验过【有权处置一次之后，关闭门里那条阻塞项是否消失】—— 一个清不掉阻塞项的杠杆，
+  // 与没有杠杆是同一回事：人照着指引点完，门还挡着，而且看不出为什么。
+  const barrierBlockers = async (label) => {
+    const barrier = await jsonFetch(port, "/api/task-groups/tg_runtime_management/close-barrier/compute", {
+      method: "POST",
+      headers: {"Idempotency-Key": `doctor-barrier-${label}`, authorization: reviewerAuth},
+      body: JSON.stringify({})
+    });
+    if (!barrier.response.ok) throw new Error(`could not compute the close barrier (${label}): ${barrier.response.status}`);
+    const objects = barrier.payload?.closeBarrier?.blockingObjects || barrier.payload?.blockingObjects || [];
+    return objects.map((item) => item.objectType);
+  };
+  const blockersBeforeResolve = await barrierBlockers("before");
+  if (!blockersBeforeResolve.includes("ReviewPlan")) {
+    throw new Error(`未决的评审计划没有出现在关闭门的阻塞项里（实得 ${[...new Set(blockersBeforeResolve)].join(",") || "空"}）—— 下面那条断言无从验证`);
+  }
+  const settleReviewPlan = await jsonFetch(port, `/api/review-plans/${crossScopePlanId}/resolve`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-plan-settle", authorization: reviewerAuth},
+    body: JSON.stringify({status: "closed", justification: "外部评审方不再参与，改由内部 QA 覆盖"})
+  });
+  if (!settleReviewPlan.response.ok) {
+    throw new Error(`有权主体处置评审计划失败：${settleReviewPlan.response.status} ${JSON.stringify(settleReviewPlan.payload).slice(0, 160)}`);
+  }
+  const blockersAfterResolve = await barrierBlockers("after");
+  if (blockersAfterResolve.includes("ReviewPlan")) {
+    throw new Error("评审计划已被处置，关闭门里仍然挂着 ReviewPlan 阻塞项 —— 人照着指引处置完，门还是挡着，而且看不出为什么");
+  }
+  console.log("人工处置杠杆 ok: 评审计划处置后关闭门的对应阻塞项确实消失");
+
   // 鉴权前的存在性预言机：对象不存在时若先于守卫回 404，任何已认证主体都能靠 404 与 428/403
   // 的差别静默枚举别的租户有哪些对象（不产生 policyDecision、不写审计）。质量门的 id 是
   // qg:<taskGroupId>:<workItemId>:<gateType> 这种可推算的形式，尤其好枚举。
