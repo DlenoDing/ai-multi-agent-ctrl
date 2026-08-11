@@ -1523,7 +1523,7 @@ function renderSysSettings() {
         <dt>运行状态</dt><dd>${badge(runtime.status)}</dd>
         <dt>执行档位</dt><dd>${esc(executionProfileLabel(runtime.executionProfile || "-"))}</dd>
         <dt>后台自治</dt><dd>${runtime.autonomousOrchestrator?.enabled
-          ? `每 ${esc(Math.round((runtime.autonomousOrchestrator.intervalMs || 0) / 1000))} 秒推进一次`
+          ? `每 ${esc(Math.round((runtime.autonomousOrchestrator.intervalMs || 0) / 1000))} 秒推进一次${orchestratorHealthText(runtime.autonomousOrchestrator)}`
           : `<span class="warn-text">已关闭：后台不推进任何东西 —— 人提交的指令会一直停在待处理，派发不会被领走，关闭门不会重算</span>`}</dd>
         <dt>状态机执行</dt><dd>${runtime.transitionEnforcement === "strict"
           ? "严格（非法状态转移一律拒绝）"
@@ -2605,6 +2605,31 @@ const CLOSE_GATE_GUIDE = {
   all_contracts_compatible: "契约不兼容：需要重新签发契约，通常伴随规则变更 —— 看规则页的变更记录"
 };
 
+
+// "已启用 · 每 60 秒"说的是【意图】。周期每一拍都抛异常时，整套自动化已经停摆，
+// 而这句话照写不误 —— 人要等到发现"什么都没动"才会怀疑，通常是几小时之后。
+// 所以状态里带上上一拍的结果，界面据此说真话。
+function orchestratorHealthText(status) {
+  if (!status) return "";
+  const failures = Number(status.consecutiveErrors || 0);
+  if (failures >= 1) {
+    return `<span class="warn-text">（连续 ${esc(failures)} 拍失败，最近一次：${esc(status.lastError || "未记录")}）</span>`;
+  }
+  return status.lastTickAt ? `（上一拍 ${esc(t(status.lastTickResult) || status.lastTickResult || "ran")}）` : "";
+}
+
+// 连续失败就不只是"参数里的一行小字"了：它意味着此刻没有任何东西在推进，
+// 而人正在等系统自己往下走。放在监控页顶部。
+function orchestratorStalledNotice() {
+  const status = (state.runtime || {}).autonomousOrchestrator;
+  const failures = Number(status?.consecutiveErrors || 0);
+  if (!status?.enabled || failures < 2) return "";
+  return `<div class="notice warn-notice">自治循环已连续 ${esc(failures)} 拍失败，当前【没有任何东西在自行推进】：`
+    + `派发不会被领走、关闭门不会重算、人工指令会一直停在待处理。最近一次失败：${esc(status.lastError || "未记录")}`
+    + `（最后一次成功推进：${status.lastSuccessAt ? esc(fmtTime(status.lastSuccessAt)) : "无记录"}）。`
+    + `请先看服务端日志定位原因；恢复之前，需要人推进的事只能手动来。</div>`;
+}
+
 function blockerGuide(objectType, gate) {
   if (objectType === "CloseBarrierGate" && gate) return CLOSE_GATE_GUIDE[gate] || "";
   return BLOCKER_GUIDE[objectType] || "";
@@ -3091,6 +3116,7 @@ function renderMonitor() {
   ])).join("");
 
   return [
+    orchestratorStalledNotice(),
     canOrchestrate ? panel("自治控制", `
       <div class="button-row">
         <button class="primary-button" data-action="orchestrator-run">运行自治循环</button>

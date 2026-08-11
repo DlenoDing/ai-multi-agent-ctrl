@@ -445,6 +445,35 @@ function runPendingTruncationCase() {
   // 人每次打开都看到"还有 N 项等你处理"，点进去无事可做，最后学会无视它。
   // 决定"哪些项算数"的 taskGroups 自己也会被截断：超出上限的任务组下的待办连桶都进不去。
   // 只看桶自身的集合有没有被截，会漏掉这一整类丢失，而界面照样报一个精确数字。
+  // 自治循环连续失败＝此刻没有任何东西在自行推进，而人正在等系统往下走。
+  // 这必须在监控页上说出来，而不是只在"运行参数"里留一行小字。
+  {
+    const stalled = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1,
+      runtime: {autonomousOrchestrator: {enabled: true, intervalMs: 60000, consecutiveErrors: 3,
+        lastError: "boom", lastSuccessAt: "2026-08-01T00:00:00Z", lastTickResult: "error"}},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: []}],
+      agentDispatches: [], workSessions: [], workerLanes: [], agentRuntimeNodes: [], qualityGates: [],
+      testResults: [], checkpoints: [], admissionDecisions: [], modelSelectionDecisions: [],
+      sessionPlacementDecisions: [], closeBarriers: [], truncatedCollections: []
+    };
+    const stalledView = probe.renderMonitorWith(stalled, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    check("自治循环连续失败要在监控页上说出来",
+      /连续 3 拍失败|没有任何东西在自行推进/.test(stalledView),
+      "自治循环已经连续失败、系统实际停摆，监控页却一个字都不说 —— 人会一直以为它在跑");
+    check("停摆提示要带上失败原因与最后一次成功时间",
+      stalledView.includes("boom") && /最后一次成功推进/.test(stalledView),
+      "只说停了，不说为什么、也不说停了多久 —— 人无从判断严重程度");
+    const healthy = structuredClone(stalled);
+    healthy.runtime.autonomousOrchestrator = {enabled: true, intervalMs: 60000, consecutiveErrors: 0,
+      lastTickResult: "ran", lastSuccessAt: "2026-08-01T00:05:00Z"};
+    const healthyView = probe.renderMonitorWith(healthy, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    check("正常时不得挂着停摆告警",
+      !/没有任何东西在自行推进/.test(healthyView),
+      "自治循环正常，监控页却仍挂着停摆告警 —— 常亮的告警等于没有告警");
+  }
+
   // 关闭门会因为"卡住的执行方案"和"未被消费的人工指令"挡住任务组，而这两类【只有人能了结】。
   // 它们此前不在待办聚合里：人看到"0 待处理"，任务组却正等着他去终止一个方案、确认一条指令。
   // 判据落在【关闭门认定的阻塞状态】上，与 computeCloseBarrier 同口径。

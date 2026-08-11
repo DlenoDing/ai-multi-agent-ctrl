@@ -37,6 +37,7 @@ import {
 } from "./lib/agent-gateway.mjs";
 import { approvalResolve, assignWorkItem, handleMcpJsonRpc, isWriteTool, permissionResolve } from "../mcp-server/server.mjs";
 import {
+  recordOrchestratorTickOutcome,
   canUseGitPath,
   acceptAgentCheckpoint,
   approvalRequestCreate,
@@ -5146,8 +5147,12 @@ const realtimeHeartbeat = setInterval(() => {
 // 权限这一侧是对的、不该放宽：编排权限由服务账号持有、明确不可委派，说明设计意图是"编排是系统的
 // 职责而不是某个人的"。缺的不是授权，是那份职责从来没有人履行。补的是运行时，不是权限。
 export function runOrchestratorTick() {
+  const finish = (outcome) => {
+    runtimeOrchestratorStatus = recordOrchestratorTickOutcome(runtimeOrchestratorStatus, outcome);
+    return outcome;
+  };
   let state = null;
-  try { state = readState(); } catch { return {skipped: "state_unavailable"}; }
+  try { state = readState(); } catch (error) { return finish({skipped: "state_unavailable", error: String(error?.message || error)}); }
   try {
     // 对账必须先跑，而且【不受"有没有在跑的任务组"影响】。
     // recycleExpiredClaims 此前只有两个调用点：heartbeatAgentNode 与 claimNextDispatch —— 两个都要
@@ -5157,18 +5162,18 @@ export function runOrchestratorTick() {
     const reconciled = recycleExpiredClaims(state);
     const pending = (state.taskGroups || []).some((group) => !["closed", "aborted"].includes(group.status));
     if (!pending) {
-      if (!reconciled) return {skipped: "no_open_task_group"};
+      if (!reconciled) return finish({skipped: "no_open_task_group"});
       state.stateVersion = Number(state.stateVersion || 0) + 1;
       writeState(state);
-      return {ran: true, reconciledOnly: true};
+      return finish({ran: true, reconciledOnly: true});
     }
     const result = runAutonomousCycle(state, {root: repositoryRoot, runtimeDir, mode: "all", autoSyncSkills: false});
     state.stateVersion = Number(state.stateVersion || 0) + 1;
     writeState(state);
-    return {ran: true, changed: result?.changed?.length || 0};
+    return finish({ran: true, changed: result?.changed?.length || 0});
   } catch (error) {
     // 与心跳里的清扫同规：冲突/失败都是尽力而为，下一拍再来。一次失败不该让循环整个停摆。
-    return {skipped: "cycle_error", error: String(error?.message || error).slice(0, 200)};
+    return finish({skipped: "cycle_error", error: String(error?.message || error).slice(0, 200)});
   }
 }
 

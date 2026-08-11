@@ -2916,6 +2916,25 @@ function markDispatchFailed(state, dispatch, reason) {
   appendEvent(state, "command_failed", "AgentDispatch", dispatch.dispatchId, "agent-runtime", {projectId: dispatch.projectId, taskGroupId: dispatch.taskGroupId, reason});
 }
 
+// 自治循环的状态此前只报【意图】（启用了吗、想多久跑一次），不报【结果】。
+// 而 runOrchestratorTick 的返回值被 setInterval 丢掉：周期每一拍都抛异常时，
+// 整套自动化已经停摆，控制台却仍显示"已启用 · 每 60 秒"——人要等到发现"什么都没动"
+// 才会怀疑，而那通常是几小时之后。
+// 这里只做一件纯粹的事：把上一拍的结果并进状态对象（内存里的，不写盘、不放大写入）。
+export function recordOrchestratorTickOutcome(previous = {}, outcome = {}) {
+  const at = outcome.at || new Date().toISOString();
+  const failed = Boolean(outcome.error);
+  return {
+    ...previous,
+    lastTickAt: at,
+    lastTickResult: failed ? "error" : (outcome.skipped || "ran"),
+    ...(failed ? {lastError: String(outcome.error).slice(0, 200), lastErrorAt: at} : {}),
+    // 连续失败次数才是"要不要现在管它"的判据：偶发一次没关系，连着失败就是停摆。
+    consecutiveErrors: failed ? Number(previous.consecutiveErrors || 0) + 1 : 0,
+    ...(failed ? {} : {lastSuccessAt: outcome.skipped ? previous.lastSuccessAt : at})
+  };
+}
+
 export function computeProgressSnapshots(state) {
   const at = new Date().toISOString();
   const snapshots = [];

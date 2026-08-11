@@ -14,6 +14,7 @@ import { publicAgentNode } from "../apps/control-plane-ui/lib/agent-gateway.mjs"
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit } from "../apps/mcp-server/server.mjs";
 import {
+  recordOrchestratorTickOutcome,
   acceptAgentCheckpoint,
   acquireWorkerLane,
   maintainWorkerLanes,
@@ -199,6 +200,7 @@ verifyHumanApprovedPathsBindTheCommit(errors);
 verifyApprovedAcceptanceChecksHaveEvidence(errors);
 verifyPerformanceCachesStayCorrect(errors);
 verifyRepeatedExecutionFailureStops(errors);
+verifyOrchestratorReportsItsOwnOutcome(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4524,6 +4526,35 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 执行反复失败的工作项此前会被【无限重派】：markDispatchFailed 只把派发与会话标失败，
 // 不加阻塞、不动工作项、也没有次数上限。实测 8 轮编排为同一个单元造了 8 个派发，
 // 而控制台上 0 条提示 —— 每一轮都在真实烧模型额度，人却完全看不到。
+
+// 自治循环的状态此前只报【意图】（启用了吗、多久一拍），不报【结果】：
+// runOrchestratorTick 的返回值被 setInterval 丢掉，于是每一拍都抛异常时，
+// 整套自动化已经停摆，而控制台仍显示"已启用 · 每 60 秒"。
+function verifyOrchestratorReportsItsOwnOutcome(output) {
+  let status = {enabled: true, intervalMs: 60000};
+  status = recordOrchestratorTickOutcome(status, {ran: true, at: "2026-08-01T00:00:00Z"});
+  if (status.consecutiveErrors !== 0 || status.lastSuccessAt !== "2026-08-01T00:00:00Z") {
+    output.push("成功推进的一拍没有被记成成功 —— 控制台无从判断它还活着");
+  }
+  status = recordOrchestratorTickOutcome(status, {skipped: "cycle_error", error: "boom", at: "2026-08-01T00:01:00Z"});
+  status = recordOrchestratorTickOutcome(status, {skipped: "cycle_error", error: "boom", at: "2026-08-01T00:02:00Z"});
+  if (status.consecutiveErrors !== 2) {
+    output.push(`连续两拍失败却只记了 ${status.consecutiveErrors} 次 —— "连续失败"正是"要不要现在管它"的判据`);
+  }
+  if (status.lastError !== "boom") output.push("失败了却没记下原因 —— 人只知道停了，不知道为什么");
+  if (status.lastSuccessAt !== "2026-08-01T00:00:00Z") {
+    output.push("失败把【最后一次成功推进】覆盖掉了 —— 人无从判断已经停了多久");
+  }
+  status = recordOrchestratorTickOutcome(status, {ran: true, at: "2026-08-01T00:03:00Z"});
+  if (status.consecutiveErrors !== 0) output.push("恢复之后连续失败数没有清零 —— 告警会一直挂着说一件不再成立的事");
+  // 跳过（没有进行中的任务组）不是失败，也不该被当成"成功推进"
+  const skipped = recordOrchestratorTickOutcome({enabled: true, lastSuccessAt: "2026-08-01T00:03:00Z"},
+    {skipped: "no_open_task_group", at: "2026-08-01T00:04:00Z"});
+  if (skipped.consecutiveErrors !== 0 || skipped.lastSuccessAt !== "2026-08-01T00:03:00Z") {
+    output.push("空转一拍（没有进行中的任务组）被记成了成功推进 —— 那会把【多久没真的动过】这个判断带偏");
+  }
+}
+
 function verifyRepeatedExecutionFailureStops(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});

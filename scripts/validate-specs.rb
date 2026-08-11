@@ -1821,6 +1821,17 @@ app_js = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
 errors << "控制台没有审计归档的入口 —— 80 条之前的记录对人不可达" unless app_js.include?("/api/audit-archive")
 errors << "审计面板没有说清它只显示最近若干条 —— 人会把这一屏当成全部历史" unless app_js.include?("更早的记录在归档文件里")
 errors << "服务端没有把归档写失败暴露出来 —— 记录丢了没人知道" unless server_source.include?("auditArchiveFault")
+# 自治循环每一拍的结果必须被记回状态：setInterval 会把返回值丢掉，不主动记就等于没有 ——
+# 周期每一拍都抛异常时，整套自动化已经停摆，而控制台仍显示"已启用 · 每 60 秒"。
+# 三个出口（读不到状态 / 周期抛错 / 正常推进）都要经过它，漏一个就会把"停摆"记成"没跑过"。
+errors << "自治循环没有把每一拍的结果记回状态（setInterval 丢掉返回值，人看不到它是否还活着）" unless
+  server_source.include?("recordOrchestratorTickOutcome(runtimeOrchestratorStatus, outcome)")
+%w[state_unavailable cycle_error].each do |exit_name|
+  errors << "自治循环的 #{exit_name} 出口没有走 finish()，这一拍的失败不会被记下" unless
+    server_source.match?(/finish\(\{skipped: "#{exit_name}"/)
+end
+errors << "自治循环正常推进的一拍没有走 finish()，连续失败数永远清不掉" unless
+  server_source.match?(/finish\(\{ran: true/)
 # 拓扑阻塞项挡得住 merge，却曾经在界面上一个字都不显示：人只看到"方案卡住了"，
 # 不知道卡在哪、更不知道是不是自己批准的验收项没证据。
 app_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
