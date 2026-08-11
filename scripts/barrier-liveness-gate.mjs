@@ -102,6 +102,8 @@ const VAR_MACHINES = {
   entry: ["DLQEntry"], directive: ["HumanDirective"], grant: ["TempGrant", "AccessControlGrant"],
   definition: ["SharedDefinitionContract"], pattern: ["RuntimeIssuePattern"], gate: ["QualityGate"],
   artifact: ["Artifact"], candidate: ["SystemUpgradeCandidate"],
+  // 人工指令的暂停/恢复分支里，被停住与被放回的都是派发。
+  running: ["AgentDispatch"], parked: ["AgentDispatch"],
   // 不是控制对象：branch 是 git 分支名，record/entry 之类若指向无状态机的对象则映射为空集。
   branch: [], record: [],
   bundle: ["ReviewBundle"], plan: ["ReviewPlan"], finding: ["Finding"],

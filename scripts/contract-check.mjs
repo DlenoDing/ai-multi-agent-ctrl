@@ -195,6 +195,7 @@ verifySuspendedOrganizationHaltsExecution(errors);
 verifyHaltedTaskGroupsAreNotClaimable(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
+verifyPauseDirectiveIsReversible(errors);
 verifyIdempotencyReplayIsPrincipalBound(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
@@ -4189,6 +4190,49 @@ console.log(JSON.stringify({first: {ok: first.ok, error: first.result?.error},
 // 解绑节点与吊销 MCP 授权（revokeDispatchNodeBinding）是同一路径上的纵深防御，不是唯一依据。
 // 所以这条不只断言"状态变成 cancelled"，还要断言【那条复核确实会失败】：状态改了而复核照过，
 // 等于取消只停在控制面自己的账面上。
+// 人工指令「暂停」同样要覆盖【正在跑的】那一段（与 HTTP 上同名动作对齐），而且必须【成对】：
+// 只修"停不住"会换来一个更难发现的"再也起不来" —— 暂停一次就永久卡住，而界面上只是个 blocked。
+// 所以这条门一次验两半：暂停后在跑的派发被停住，恢复后它回到队列。
+function verifyPauseDirectiveIsReversible(output) {
+  const probe = structuredClone(seedState);
+  ensureRuntimeCollections(probe, {root});
+  const taskGroup = probe.taskGroups.find((item) => item.id === "tg_runtime_management");
+  taskGroup.workItems = [{id: "w_pause_probe", title: "在跑", status: "draft", ownerRole: "agent-runtime", progress: 0}];
+  probe.taskGroups = [taskGroup];
+  probe.agentDispatches = [];
+  runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+  const dispatch = (probe.agentDispatches || [])[0];
+  if (!dispatch) {
+    output.push("暂停指令必须可逆：没造出派发 —— 这条断言在空转");
+    return;
+  }
+  dispatch.status = "running";
+  dispatch.assignedNodeId = "node_pause_probe";
+  probe.agentRuntimeNodes = [{nodeId: "node_pause_probe", organizationId: "org_default", status: "online",
+    admission: "full", projectIds: [dispatch.projectId], allowedRoles: ["*"],
+    activeDispatchIds: [dispatch.dispatchId], profile: {models: []}}];
+  createHumanDirective(probe, {taskGroupId: taskGroup.id, directiveType: "pause", instruction: "先停一下"}, {actor: "acct_alice"});
+  runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+  const pauseDirective = (probe.humanDirectives || []).find((item) => item.directiveType === "pause");
+  if (pauseDirective?.status !== "applied") {
+    output.push(`暂停指令必须可逆：暂停指令没有被应用（${pauseDirective?.status || "缺失"}：${pauseDirective?.rejectReason || "无原因"}）—— 这条断言在空转`);
+    return;
+  }
+  const paused = (probe.agentDispatches || []).find((item) => item.dispatchId === dispatch.dispatchId);
+  if (paused?.status === "running") {
+    output.push("暂停指令必须可逆：人下了暂停，在跑的派发仍是 running —— agent 会跑完、推 git，"
+      + "而 HTTP 上同名的暂停动作一直会停住它");
+  }
+  // 停住之后必须能起来：只验前一半的话，修好"停不住"会换成"再也起不来"。
+  createHumanDirective(probe, {taskGroupId: taskGroup.id, directiveType: "resume", instruction: "继续"}, {actor: "acct_alice"});
+  runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+  const resumed = (probe.agentDispatches || []).find((item) => item.dispatchId === dispatch.dispatchId);
+  if (resumed && !["queued", "running"].includes(resumed.status)) {
+    output.push(`暂停指令必须可逆：恢复之后派发仍是 ${resumed.status}/${resumed.blockedReason || "-"}`
+      + " —— 暂停一次就永久卡住了，而界面上只是一个 blocked，没人看得出它再也不会自己起来");
+  }
+}
+
 function verifyCancelDirectiveStopsRunningWork(output) {
   const probe = structuredClone(seedState);
   ensureRuntimeCollections(probe, {root});

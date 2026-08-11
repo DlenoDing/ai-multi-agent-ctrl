@@ -5101,11 +5101,29 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
       if (directive.directiveType === "pause" && taskGroup) {
         taskGroup.goalExecutionStatus = "active_paused_by_freeze";
         taskGroup.pauseReason = "human_directive";
-        directive.appliedActions.push({action: "task_group_pause", ref: `TaskGroup:${taskGroup.id}`});
+        // 暂停必须覆盖【正在跑的】那一段：此前这里只翻一个标志，于是人下了暂停之后在跑的 agent
+        // 照样跑完、推 git —— 而 HTTP 上同名的暂停动作一直会停住它们。同一个意图两条路径两种语义。
+        // 停手靠的是状态本身：agent 在 push 前复核持有权，validateDispatchClaim 见到非 running 即拒。
+        // 与 cancel 不同，这里【不解绑节点】—— 暂停是可恢复的，解绑会让它再也回不到原来的执行者。
+        for (const running of (state.agentDispatches || []).filter((item) => item.taskGroupId === taskGroup.id && item.status === "running")) {
+          running.status = "blocked";
+          running.blockedReason = "task_group_pause";
+          running.updatedAt = at;
+          directive.appliedActions.push({action: "pause_running_dispatch", ref: `AgentDispatch:${running.dispatchId}`});
+        }
       } else if (directive.directiveType === "resume" && taskGroup) {
         taskGroup.goalExecutionStatus = "active";
         delete taskGroup.pauseReason;
-        directive.appliedActions.push({action: "task_group_resume", ref: `TaskGroup:${taskGroup.id}`});
+        // set-clear 必须成对：暂停把在跑的派发停成 blocked，恢复就要把它们放回队列，
+        // 否则暂停一次就永久卡住 —— 那是把一个"停不住"换成一个更难发现的"再也起不来"。
+        // 判据与 HTTP 恢复一致：只放回因暂停而停的那些，不碰其它原因阻塞的。
+        for (const parked of (state.agentDispatches || []).filter((item) => item.taskGroupId === taskGroup.id && item.status === "blocked")) {
+          if (!["control_pause_requested", "task_group_pause", "task_group_rebound_drift"].includes(parked.blockedReason)) continue;
+          parked.status = "queued";
+          delete parked.blockedReason;
+          parked.updatedAt = at;
+          directive.appliedActions.push({action: "resume_paused_dispatch", ref: `AgentDispatch:${parked.dispatchId}`});
+        }
       } else if (directive.directiveType === "cancel" && taskGroup) {
         taskGroup.goalExecutionStatus = "active_paused_by_freeze";
         taskGroup.pauseReason = "human_directive_cancel";
