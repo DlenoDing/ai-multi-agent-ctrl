@@ -3066,33 +3066,16 @@ function progressSnapshot(scopeType, scopeRef, status, progress, health, counter
 // with no operator lever (cancel only reaches queued/blocked dispatches, resolve_decision only the work
 // item). Cascades: dispatch+session -> failed, lease -> released, its bound target -> superseded, guard
 // -> closed. Idempotent (skips already-terminal objects).
-export function terminateCellRuntime(state, taskGroupId, workItemId, reason) {
+// 一个格子被放弃/被取消之后，它【名下的资源】必须一起了结：租约、输出目标、制品、角色漂移守卫。
+// 抽成独立函数是因为取消走的是另一条路（不经 terminateCellRuntime）：实测人取消一个任务组的派发后，
+// 它的输出目标永远停在非终态，而关闭门恒把它列为阻塞物 —— 任务组从此关不掉，且人没有任何杠杆。
+// 只了结资源、不动派发/会话的状态，所以取消路径可以照自己的语义把它们标成 cancelled/aborted。
+export function settleCellOwnedResources(state, taskGroupId, workItemId, reason) {
   if (!taskGroupId || !workItemId) return;
   const at = new Date().toISOString();
-  for (const dispatch of state.agentDispatches || []) {
-    if (dispatch.taskGroupId === taskGroupId && dispatch.workItemId === workItemId && !["completed", "failed", "cancelled"].includes(dispatch.status)) {
-      markDispatchFailed(state, dispatch, reason);
-      // Mirror every other dispatch-terminalize path: cancel dispatch-bound pending confirmations and
-      // revoke the node binding + its issued MCP grants, then clear stop markers. Without this the failed
-      // dispatch's still-issued grants keep no_active_temp_grants blocked (re-wedging close), a dangling
-      // pending confirmation keeps no_pending_human_confirmations blocked, and the revoke-ack finalizer
-      // (which matches on assignedNodeId/revocationPending) resurrects the failed dispatch to queued.
-      cancelPendingConfirmationsForDispatch(state, dispatch.dispatchId, reason);
-      revokeDispatchNodeBinding(state, dispatch, reason);
-      delete dispatch.revocationPending;
-      delete dispatch.shutdownPending;
-    }
-  }
-  const sessionIds = new Set();
-  for (const session of state.workSessions || []) {
-    if (session.taskGroupId !== taskGroupId || session.workItemId !== workItemId) continue;
-    sessionIds.add(session.sessionId);
-    if (!WORK_SESSION_SETTLED_STATUSES.includes(session.status)) {
-      session.status = "failed";
-      session.blockedReason = reason;
-      session.updatedAt = at;
-    }
-  }
+  const sessionIds = new Set((state.workSessions || [])
+    .filter((session) => session.taskGroupId === taskGroupId && session.workItemId === workItemId)
+    .map((session) => session.sessionId));
   for (const lease of state.leases || []) {
     if (lease.status !== "active" || !sessionIds.has(String(lease.holderRef || "").replace("session:", ""))) continue;
     lease.status = "released";
@@ -3131,6 +3114,36 @@ export function terminateCellRuntime(state, taskGroupId, workItemId, reason) {
       guard.updatedAt = at;
     }
   }
+}
+
+export function terminateCellRuntime(state, taskGroupId, workItemId, reason) {
+  if (!taskGroupId || !workItemId) return;
+  const at = new Date().toISOString();
+  for (const dispatch of state.agentDispatches || []) {
+    if (dispatch.taskGroupId === taskGroupId && dispatch.workItemId === workItemId && !["completed", "failed", "cancelled"].includes(dispatch.status)) {
+      markDispatchFailed(state, dispatch, reason);
+      // Mirror every other dispatch-terminalize path: cancel dispatch-bound pending confirmations and
+      // revoke the node binding + its issued MCP grants, then clear stop markers. Without this the failed
+      // dispatch's still-issued grants keep no_active_temp_grants blocked (re-wedging close), a dangling
+      // pending confirmation keeps no_pending_human_confirmations blocked, and the revoke-ack finalizer
+      // (which matches on assignedNodeId/revocationPending) resurrects the failed dispatch to queued.
+      cancelPendingConfirmationsForDispatch(state, dispatch.dispatchId, reason);
+      revokeDispatchNodeBinding(state, dispatch, reason);
+      delete dispatch.revocationPending;
+      delete dispatch.shutdownPending;
+    }
+  }
+  const sessionIds = new Set();
+  for (const session of state.workSessions || []) {
+    if (session.taskGroupId !== taskGroupId || session.workItemId !== workItemId) continue;
+    sessionIds.add(session.sessionId);
+    if (!WORK_SESSION_SETTLED_STATUSES.includes(session.status)) {
+      session.status = "failed";
+      session.blockedReason = reason;
+      session.updatedAt = at;
+    }
+  }
+  settleCellOwnedResources(state, taskGroupId, workItemId, reason);
 }
 
 function activeExecutionForWork(state, taskGroupId, workItemId) {

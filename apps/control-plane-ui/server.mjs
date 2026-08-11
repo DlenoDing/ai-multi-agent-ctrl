@@ -86,6 +86,7 @@ import {
   projectOwnerGrantPermissions,
   runAgentRuntimeWorker,
   runAutonomousCycle,
+  settleCellOwnedResources,
   runCommandLifecycle,
   selectModel,
   syncSkillSource,
@@ -2069,6 +2070,10 @@ function applyDirectDispatchControl(state, dispatch, commandType, reason, at) {
   if (commandType === "cancel_dispatch") {
     dispatch.status = "cancelled";
     dispatch.failureReason = reason;
+    // 取消要连它名下的资源一起了结：输出目标、租约、制品、角色漂移守卫。
+    // 不了结的话，输出目标永远停在非终态，关闭门恒把它列为阻塞物 —— 任务组从此关不掉，
+    // 而人没有任何杠杆（lane 与守卫有自清逻辑，目标没有）。暂停不能走这条：它是可恢复的。
+    settleCellOwnedResources(state, dispatch.taskGroupId, dispatch.workItemId, reason);
   } else {
     dispatch.status = "blocked";
     dispatch.blockedReason = reason;

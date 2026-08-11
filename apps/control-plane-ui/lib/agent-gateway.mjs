@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { normalize, resolve, sep } from "node:path";
 import { cancelPendingConfirmationsForDispatch, createId, digestOf, effectiveTaskGroupConfig, ensureRuntimeCollections, expireStaleQueuedDispatches, languagePolicyDirective, normalizeTaskGroupLanguagePolicy, organizationQuotaCheck,
-  computeEffectiveRulesDigest, applyEffectiveRulesDigest
+  computeEffectiveRulesDigest, applyEffectiveRulesDigest, settleCellOwnedResources
 } from "./control-plane-core.mjs";
 
 const DEFAULT_AGENT_MCP_TOOLS = [
@@ -1061,6 +1061,8 @@ function applyControlCommandPreEffects(state, node, command) {
   } else if (command.commandType === "cancel_dispatch") {
     dispatch.status = "cancelled";
     dispatch.failureReason = "control_cancel_requested";
+    // 与控制台那条直接取消同规：取消要连它名下的资源一起了结，否则输出目标永远挡着关闭门。
+    settleCellOwnedResources(state, dispatch.taskGroupId, dispatch.workItemId, "control_cancel_requested");
   } else {
     dispatch.status = "queued";
     dispatch.blockedReason = "control_resume_requested";

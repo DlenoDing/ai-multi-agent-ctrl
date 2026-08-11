@@ -35,6 +35,7 @@ import {
   ensureRuntimeCollections,
   organizationQuotaCheck,
   runAutonomousCycle,
+  settleCellOwnedResources,
   recomputeTaskGroup,
   cellAdmissionPriority,
   conditionWindowGate,
@@ -207,6 +208,7 @@ verifyMcpSummaryIsActuallyASummary(errors);
 verifyHeartbeatDoesNotHideFailedSelfCheck(errors);
 verifyTaskGroupBlockersStayBounded(errors);
 verifyPerScopeRecordsSurviveTheirCap(errors);
+verifyCancelSettlesTheCellsResources(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4648,6 +4650,75 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 重算一份全新的、再把别人挤掉 —— 每拍全量重写，而账本永远只覆盖一个轮转的子集。
 // 实测 102 个任务组时，每一拍都要重写 80 条关闭门 + 80 条完成度，落盘、ETag 作废、
 // 所有控制台重新拉取重建 DOM 全被它带动；2000 单元时一拍卡死整个服务 2.3 秒。
+// 取消一个格子之后，它【名下的资源】必须一起了结 —— 否则输出目标永远停在非终态，
+// 关闭门恒把它列为阻塞物：人取消了活，却再也关不掉这个任务组，而且没有任何杠杆。
+// （lane 与角色漂移守卫有自清逻辑，输出目标没有 —— 实测跑 3 轮之后它还在那儿挡着。）
+function verifyCancelSettlesTheCellsResources(output) {
+  const build = () => {
+    const state = structuredClone(seedState);
+    ensureRuntimeCollections(state, {root});
+    const taskGroup = state.taskGroups.find((item) => item.id === "tg_runtime_management");
+    taskGroup.workItems = [{id: "w_cancel_probe", title: "会被取消的单元", status: "draft", progress: 0, ownerRole: "agent-runtime"}];
+    runAutonomousCycle(state, {root, mode: "all"});
+    // 再挂一个【从未绑定过租约】的输出目标：租约级联够不到它，只有按归属那条路能了结。
+    // 不造这一个的话，把归属级联删掉门照样绿 —— 两道保护会互相遮蔽。
+    (state.repositoryOutputs || []).push({
+      schemaVersion: "repository-output-target/v1", targetId: "rot_no_lease_probe",
+      projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workItemId: "w_cancel_probe",
+      repositoryId: "repo_probe", branch: "probe/no-lease", status: "selected",
+      commitRefs: [], pushRefs: [], updatedAt: new Date().toISOString()
+    });
+    return {state, taskGroup};
+  };
+  const cellTargets = (state) => (state.repositoryOutputs || [])
+    .filter((item) => item.workItemId === "w_cancel_probe" && !["pushed", "committed", "rejected", "superseded"].includes(item.status));
+
+  const {state} = build();
+  if (!cellTargets(state).length) {
+    output.push("取消清理自检：这个单元压根没有未了结的输出目标，本段没有被真正检验");
+    return;
+  }
+  settleCellOwnedResources(state, "tg_runtime_management", "w_cancel_probe", "task_group_cancel");
+  if (cellTargets(state).length) {
+    output.push("取消之后这个单元的输出目标仍是非终态 —— 关闭门会一直把它列为阻塞物，任务组再也关不掉，而人没有任何杠杆");
+  }
+  const openGuards = (state.roleDriftGuards || []).filter((guard) =>
+    (state.workSessions || []).some((session) => session.sessionId === guard.sessionId && session.workItemId === "w_cancel_probe")
+    && !["closed", "corrected"].includes(guard.status));
+  if (openGuards.length) output.push("取消之后这个单元的角色漂移守卫仍未闭合 —— 它同样挡着关闭门");
+
+  // 反向一：不能顺手把【别的格子】的资源也了结掉。
+  const other = build().state;
+  const otherTargetsBefore = (other.repositoryOutputs || []).filter((item) => !["pushed", "committed", "rejected", "superseded"].includes(item.status)).length;
+  settleCellOwnedResources(other, "tg_runtime_management", "w_not_a_real_cell", "task_group_cancel");
+  const otherTargetsAfter = (other.repositoryOutputs || []).filter((item) => !["pushed", "committed", "rejected", "superseded"].includes(item.status)).length;
+  if (otherTargetsAfter !== otherTargetsBefore) {
+    output.push(`了结一个不存在的格子却动了别人的资源（未了结目标 ${otherTargetsBefore} → ${otherTargetsAfter}）—— 取消一个格子不该波及其它格子`);
+  }
+
+  // 反向二：暂停是可恢复的，它【不得】了结资源。判据落在真实的取消/暂停路径上，
+  // 而不是只验刚抽出来的那个函数 —— 否则两条取消路径谁都没接上它也照样绿。
+  const serverSource = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const gatewaySource = readFileSync(resolve(root, "apps/control-plane-ui/lib/agent-gateway.mjs"), "utf8");
+  const cancelBranch = (source) => {
+    const at = source.indexOf('commandType === "cancel_dispatch"');
+    return at < 0 ? "" : source.slice(at, at + 700);
+  };
+  if (!cancelBranch(serverSource).includes("settleCellOwnedResources")) {
+    output.push("控制台那条直接取消没有了结这个格子名下的资源 —— 输出目标会永远挡着关闭门");
+  }
+  if (!cancelBranch(gatewaySource).includes("settleCellOwnedResources")) {
+    output.push("agent 回执那条取消没有了结这个格子名下的资源 —— 同一个坑换一条路径照样存在");
+  }
+  const pauseBranch = (source) => {
+    const at = source.indexOf('commandType === "pause_dispatch"');
+    return at < 0 ? "" : source.slice(at, at + 400);
+  };
+  if (pauseBranch(serverSource).includes("settleCellOwnedResources") || pauseBranch(gatewaySource).includes("settleCellOwnedResources")) {
+    output.push("暂停也了结了资源 —— 暂停是可恢复的，把输出目标作废掉就恢复不回来了");
+  }
+}
+
 function verifyPerScopeRecordsSurviveTheirCap(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});
