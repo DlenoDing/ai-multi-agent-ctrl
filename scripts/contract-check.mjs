@@ -197,6 +197,7 @@ verifyHaltedTaskGroupsAreNotClaimable(errors);
 verifyExhaustedControlRetriesTellTheTruth(errors);
 verifyHumanApprovedPathsBindTheCommit(errors);
 verifyApprovedAcceptanceChecksHaveEvidence(errors);
+verifyPerformanceCachesStayCorrect(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4425,6 +4426,90 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 
 // 人在方案卡上看到的是"这个分支会跑这几项验收"，据此决定批不批。acceptanceChecks 此前只在
 // 规划时被查过【非空】—— 跑没跑、过没过从来没人对账：分支交一份空证据照样能推进到 merge。
+
+// 这一轮为了把 4000 单元一轮编排从 19.1 秒压到 1.9 秒，加了三处"少算一次"：
+// 任务组读摘要按 state 记忆化、租约按资源建索引、历史裁剪按轮次去重。
+// 每一处都可能把缺陷掩盖成"看起来对"，所以各自的失效条件必须能被验出来。
+function verifyPerformanceCachesStayCorrect(output) {
+  const load = () => {
+    const state = structuredClone(seedState);
+    ensureRuntimeCollections(state, {root});
+    return state;
+  };
+  const digestFor = (state, workId) => (state.agentTaskContracts || [])
+    .find((item) => item.workId === workId)?.readScope?.[0]?.resourceDigest;
+
+  // ① 内容变了、版本推进了，读摘要必须重算；不同 state 之间不得互相串用。
+  const first = load();
+  const firstGroup = first.taskGroups.find((item) => item.id === "tg_runtime_management");
+  firstGroup.workItems = [{id: "w_cache_1", title: "一", status: "draft", ownerRole: "agent-runtime", progress: 0}];
+  runAutonomousCycle(first, {root, mode: "all", autoSyncSkills: false});
+  const beforeDigest = digestFor(first, "w_cache_1");
+  // 跨 state 串用要在【同一个 stateVersion】上比：等 first 推进版本之后再比，
+  // 全局缓存自己就会因版本不符而重算，串用也就验不出来了。
+  const other = load();
+  const otherGroup = other.taskGroups.find((item) => item.id === "tg_runtime_management");
+  otherGroup.workItems = [{id: "w_cache_1", title: "一", status: "draft", ownerRole: "agent-runtime", progress: 0}];
+  otherGroup.objective = "另一个 state 的目标";
+  runAutonomousCycle(other, {root, mode: "all", autoSyncSkills: false});
+  if (digestFor(other, "w_cache_1") === beforeDigest) {
+    output.push("两份不同的 state 得到了同一个任务组读摘要 —— 缓存跨 state 串用了");
+  }
+  firstGroup.objective = "改过的目标";
+  first.stateVersion = Number(first.stateVersion || 0) + 1;
+  firstGroup.workItems.push({id: "w_cache_2", title: "二", status: "draft", ownerRole: "agent-runtime", progress: 0});
+  runAutonomousCycle(first, {root, mode: "all", autoSyncSkills: false});
+  const afterDigest = digestFor(first, "w_cache_2");
+  if (!beforeDigest || !afterDigest || beforeDigest === afterDigest) {
+    output.push("任务组内容变了、版本也推进了，契约里记的读摘要却没变 —— 记忆化把变化盖住了");
+  }
+
+
+  // ② 裁剪：活跃记录终结后必须能把历史压回上限附近（试过"记住上次裁到多少当地板"，
+  //    实测它把这一步也一起挡住了，高水位再不下降）。
+  const capState = load();
+  const capGroup = capState.taskGroups.find((item) => item.id === "tg_runtime_management");
+  capGroup.workItems = Array.from({length: 400}, (_, index) => ({
+    id: `w_capcheck_${index}`, title: `单元${index}`, status: "draft", ownerRole: "agent-runtime", progress: 0}));
+  runAutonomousCycle(capState, {root, mode: "all", autoSyncSkills: false});
+  if ((capState.agentDispatches || []).length <= 240) {
+    output.push("裁剪断言的夹具没有越过派发上限 —— 本条在空转");
+  } else {
+    for (const dispatch of capState.agentDispatches) dispatch.status = "completed";
+    capGroup.workItems.push({id: "w_capcheck_extra", title: "再来一个", status: "draft", ownerRole: "agent-runtime", progress: 0});
+    capState.stateVersion = Number(capState.stateVersion || 0) + 1;
+    runAutonomousCycle(capState, {root, mode: "all", autoSyncSkills: false});
+    if ((capState.agentDispatches || []).length > 240 + 64 + 5) {
+      output.push(`活跃派发全部终结之后，历史仍有 ${(capState.agentDispatches || []).length} 条没有被裁回上限`
+        + " —— 高水位再也不下降，内存只涨不落");
+    }
+  }
+
+  // ③ 租约索引：同一个写入目标的租约被释放之后，再取一次必须铸出【新的活跃租约】，
+  //    而不是把已释放的那份从索引里原样递回来（那等于写锁失效）。
+  const leaseState = load();
+  const leaseGroup = leaseState.taskGroups.find((item) => item.id === "tg_runtime_management");
+  leaseGroup.workItems = [{id: "w_lease_1", title: "一", status: "draft", ownerRole: "agent-runtime", progress: 0}];
+  runAutonomousCycle(leaseState, {root, mode: "all", autoSyncSkills: false});
+  const activeLease = (leaseState.leases || []).find((item) => item.status === "active");
+  const leaseTarget = (leaseState.repositoryOutputs || []).find((item) => item.leaseRef === activeLease?.leaseId);
+  if (!activeLease || !leaseTarget) {
+    output.push("租约断言没有造出活跃租约与对应写入目标 —— 本条在空转");
+  } else {
+    // 租约过期回收会把租约释放，而写入目标仍要继续写 —— 这正是索引会被问到同一把键的时刻。
+    activeLease.status = "released";
+    for (const dispatch of leaseState.agentDispatches || []) dispatch.status = "completed";
+    leaseState.stateVersion = Number(leaseState.stateVersion || 0) + 1;
+    buildTaskContract(leaseState, {taskGroupId: leaseGroup.id, workItemId: "w_lease_1"});
+    const targetNow = (leaseState.repositoryOutputs || []).find((item) => item.targetId === leaseTarget.targetId);
+    const leaseNow = (leaseState.leases || []).find((item) => item.leaseId === targetNow?.leaseRef);
+    if (!leaseNow || leaseNow.status !== "active") {
+      output.push(`租约释放后重新取用，写入目标手里仍是一份 ${leaseNow?.status || "不存在"} 的租约`
+        + " —— 索引把已释放的租约当成活的递了回来，写锁形同虚设");
+    }
+  }
+}
+
 function verifyApprovedAcceptanceChecksHaveEvidence(output) {
   const build = (evidenceRefs) => {
     const state = structuredClone(seedState);

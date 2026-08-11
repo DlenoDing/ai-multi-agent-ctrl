@@ -1323,6 +1323,28 @@ export function computeEffectiveRulesDigest(config) {
   ]);
 }
 
+// 这份摘要记的是"本次读到的任务组内容"，而它此前是【每个工作单元都把整个任务组重算一遍】——
+// 任务组里装着全部工作单元，于是单轮编排的哈希量是 O(单元数²)：实测 4000 单元一轮 19.1 秒，
+// 其中 CPU 采样里一半以上落在 stableJson，平均每次输入随规模线性增长（500 单元 6.1KB →
+// 1500 单元 17.7KB）。同一个 stateVersion 下这份内容不变，按 state 记忆化即可。
+// 用 WeakMap 挂在 state 上：不同 state（探针、克隆、并发请求）各算各的，state 被回收即释放。
+const taskGroupReadDigests = new WeakMap();
+
+function taskGroupReadDigest(state, taskGroup) {
+  if (!taskGroup) return digestOf({});
+  let perState = taskGroupReadDigests.get(state);
+  const stateVersion = Number(state?.stateVersion || 0);
+  if (!perState || perState.stateVersion !== stateVersion) {
+    perState = {stateVersion, byTaskGroup: new Map()};
+    taskGroupReadDigests.set(state, perState);
+  }
+  const cached = perState.byTaskGroup.get(taskGroup.id);
+  if (cached) return cached;
+  const digest = digestOf(taskGroup);
+  perState.byTaskGroup.set(taskGroup.id, digest);
+  return digest;
+}
+
 export function buildTaskContract(state, request = {}) {
   ensureRuntimeCollections(state);
   const taskGroup = state.taskGroups.find((item) => item.id === request.taskGroupId) || state.taskGroups[0];
@@ -1440,7 +1462,7 @@ export function buildTaskContract(state, request = {}) {
     repositoryOutputTargetRef: repositoryTarget.targetId,
     repositoryOutputTargetDigest: digestOf(repositoryTarget),
     artifactManifestPath: repositoryTarget.artifactManifestPath || `docs/artifact-manifests/${workItem?.id || "work"}.json`,
-    readScope: [{resourceType: "state", resourceKey: `TaskGroup:${taskGroup?.id || "tg_runtime_management"}`, access: "read", resourceDigest: digestOf(taskGroup || {})}],
+    readScope: [{resourceType: "state", resourceKey: `TaskGroup:${taskGroup?.id || "tg_runtime_management"}`, access: "read", resourceDigest: taskGroupReadDigest(state, taskGroup)}],
     model: {
       model: modelDecision.selectedModel.modelId,
       modelId: modelDecision.selectedModel.modelId,
@@ -1488,7 +1510,9 @@ export function buildTaskContract(state, request = {}) {
     }];
   }
   state.agentTaskContracts.unshift(contract);
-  if (shouldCap(state.agentTaskContracts, 160)) state.agentTaskContracts = capTaskContracts(state.agentTaskContracts, state.agentDispatches, 160);
+  if (!capsDeferredToCycleEnd && shouldCap(state.agentTaskContracts, 160)) {
+    state.agentTaskContracts = capTaskContracts(state.agentTaskContracts, state.agentDispatches, 160);
+  }
   // 持续型工作在建会话时获取并占用其角色的 worker lane（复用空闲/新建），回填具体载体到放置决策；subagent 无 lane
   let acquiredLaneId = null;
   if (placementDecision.workerCarrierDecision?.mode === "worker_lane") {
@@ -1790,10 +1814,14 @@ export function runAutonomousCycle(state, request = {}) {
   // HEAD 备忘录只在这一轮内有效。finally 保证抛异常时也会清掉 —— 否则一次失败的编排会把
   // 那一刻的 HEAD 永久留给后续的请求路径，而请求路径本来是要实时取的。
   orchestrationGitFacts = new Map();
+  capsDeferredToCycleEnd = true;
   try {
     return runAutonomousCycleBody(state, request);
   } finally {
     orchestrationGitFacts = null;
+    capsDeferredToCycleEnd = false;
+    // 一轮之内攒下来的历史在这里一次性裁掉。放在 finally 里：抛异常的那一轮也不能把上界丢掉。
+    try { capBoundedHistories(state); } catch { /* 裁剪失败不该掩盖本轮真正的异常 */ }
   }
 }
 
@@ -3048,6 +3076,23 @@ function shouldCap(items, limit) {
   return items.length > limit + CAP_SLACK;
 }
 
+// 这些 cap 都是"绝不淘汰仍然活跃的记录"。当活跃记录本身就超过上限时（4000 个单元全部排队中，
+// 它们的契约与派发都活着），裁剪什么也裁不掉，数组长度纹丝不动 —— 而 `length > limit + 余量`
+// 恒为真，于是【每个单元都把全量重跑一遍】：实测这是 4000 单元一轮里的第二个平方项。
+//
+// 试过"记住上次裁到多少当地板"，实测它把【活跃记录终结之后本该缩回去】也一起挡住了：
+// 高水位再不下降。所以改成按轮次去重：一轮编排里只在结束时裁一次，单次调用（MCP 起会话
+// 那种）照旧当场裁。上界不变，仍然是常数；变的只是一轮之内不重复做同一件事。
+let capsDeferredToCycleEnd = false;
+
+function capBoundedHistories(state) {
+  if (shouldCap(state.agentTaskContracts, 160)) {
+    state.agentTaskContracts = capTaskContracts(state.agentTaskContracts, state.agentDispatches, 160);
+  }
+  if (shouldCap(state.agentDispatches, 240)) state.agentDispatches = capDispatchHistory(state.agentDispatches, 240);
+  if (shouldCap(state.leases, 2000)) state.leases = capLeaseHistory(state.leases);
+}
+
 function capLeaseHistory(leases, limit = 2000) {
   if (leases.length <= limit) return leases;
   // Never drop an active lease (fencing / holder authority still matters); trim oldest released history.
@@ -3130,7 +3175,9 @@ function enqueueAgentDispatch(state, contract, repositoryTarget) {
     updatedAt: at
   };
   state.agentDispatches.unshift(dispatch);
-  if (shouldCap(state.agentDispatches, 240)) state.agentDispatches = capDispatchHistory(state.agentDispatches, 240);
+  if (!capsDeferredToCycleEnd && shouldCap(state.agentDispatches, 240)) {
+    state.agentDispatches = capDispatchHistory(state.agentDispatches, 240);
+  }
   return dispatch;
 }
 
@@ -3834,8 +3881,23 @@ function ensureRepositoryTarget(state, project, taskGroup, workItem, request) {
   return target;
 }
 
+// 每个工作单元都在整张租约表上线性找一遍自己的租约，而租约表随单元数增长 —— 又一个平方项。
+// 建一层"资源 → 活跃租约"的索引挂在 state 上；命中后仍然核对 status/resourceRef，
+// 所以租约被释放或被换掉时索引自动失效（回落到全表扫描并重建），不会把已释放的租约当成活的。
+const activeLeaseIndexes = new WeakMap();
+
+function activeLeaseFor(state, resourceRef) {
+  let index = activeLeaseIndexes.get(state);
+  if (!index) { index = new Map(); activeLeaseIndexes.set(state, index); }
+  const cached = index.get(resourceRef);
+  if (cached && cached.status === "active" && cached.resourceRef === resourceRef) return cached;
+  const found = state.leases.find((item) => item.resourceRef === resourceRef && item.status === "active");
+  if (found) index.set(resourceRef, found); else index.delete(resourceRef);
+  return found;
+}
+
 function ensureLease(state, repositoryTarget, holderRef = "orchestrator", taskContractDigest) {
-  let lease = state.leases.find((item) => item.resourceRef === `RepositoryOutputTarget:${repositoryTarget.targetId}` && item.status === "active");
+  let lease = activeLeaseFor(state, `RepositoryOutputTarget:${repositoryTarget.targetId}`);
   const at = new Date().toISOString();
   if (!lease) {
     state.leaseSequence = Number(state.leaseSequence || 0) + 1;
@@ -3852,7 +3914,7 @@ function ensureLease(state, repositoryTarget, holderRef = "orchestrator", taskCo
       updatedAt: at
     };
     state.leases.push(lease);
-    if (shouldCap(state.leases, 2000)) state.leases = capLeaseHistory(state.leases);
+    if (!capsDeferredToCycleEnd && shouldCap(state.leases, 2000)) state.leases = capLeaseHistory(state.leases);
   } else if (holderRef && lease.holderRef !== holderRef) {
     state.leaseSequence = Number(state.leaseSequence || 0) + 1;
     lease.transferEvidenceRefs = unique([...(lease.transferEvidenceRefs || []), `lease-transfer:${lease.holderRef}->${holderRef}:fence:${state.leaseSequence}`]);
