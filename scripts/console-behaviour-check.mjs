@@ -1225,6 +1225,52 @@ await runErrorGuidanceCase();
   }
 }
 
+// 控制台读的每一个顶层字段，都必须真的有视图会下发它。
+//
+// 读一个从不下发的字段【不会报错】：它只是永远是 undefined，界面永远显示空或 0，
+// 而人以为那里本来就没东西。这一类在这套系统里反复出现过（视图裁字段、新页面忘了加字段、
+// 新加的字段只写了渲染没写投影），逐个页面盯是盯不过来的，所以按两侧的权威来源全量对一遍。
+{
+  const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const serverSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  // 提取要认得住实际写法：控制台里既有 state.x，也有 (state || {}).x。
+  // 只认字面 state.x 的话，用后一种写法的读取会静默逃逸 —— 第一版就是这样，
+  // 把服务端的 fleet 删掉，门照样是绿的。
+  const readFields = new Set([...appSource.matchAll(/state\s*(?:\|\|\s*\{\})?\s*\)?\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)/gu)]
+    .map((match) => match[1]));
+  const guardedReads = (appSource.match(/\(state\s*\|\|\s*\{\}\)\s*\./gu) || []).length;
+  if (guardedReads > 0 && ![...readFields].some((field) => new RegExp(`\\(state\\s*\\|\\|\\s*\\{\\}\\)\\.${field}\\b`, "u").test(appSource))) {
+    failures.push(`视图接线: 源码里有 ${guardedReads} 处 (state || {}).x 写法，但提取一个都没认出来 —— 提取器与代码脱节`);
+  }
+  // 控制台自己合成进 state 的字段（monitor 页会把两个视图拼起来）
+  const assigned = new Set();
+  for (const block of appSource.matchAll(/state\s*=\s*\{([\s\S]{0,1600}?)\n\s*\};/gu)) {
+    for (const key of block[1].matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:/gmu)) assigned.add(key[1]);
+  }
+  const sliceAfter = (marker, length) => {
+    const at = serverSource.indexOf(marker);
+    return at < 0 ? "" : serverSource.slice(at, at + length);
+  };
+  const baseBlock = sliceAfter("const base = {", 2500);
+  const viewBlock = sliceAfter("const viewFields = {", 3000);
+  const delivered = new Set([
+    ...[...baseBlock.matchAll(/^\s{4}([A-Za-z_][A-Za-z0-9_]*):/gmu)].map((match) => match[1]),
+    ...[...viewBlock.matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"/gu)].map((match) => match[1]),
+    ...[...serverSource.matchAll(/scoped\.([A-Za-z_][A-Za-z0-9_]*)/gu)].map((match) => match[1]),
+    ...[...serverSource.matchAll(/\bbase\.([A-Za-z_][A-Za-z0-9_]*)\s*=/gu)].map((match) => match[1]),
+    ...[...serverSource.matchAll(/\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\s*:/gu)].map((match) => match[1]),
+    ...assigned
+  ]);
+  if (readFields.size < 20 || delivered.size < 20) {
+    failures.push(`视图接线: 只解析到 ${readFields.size} 个读取字段 / ${delivered.size} 个下发字段 —— 提取逻辑与代码脱节，本条在空转`);
+  }
+  const undelivered = [...readFields].filter((field) => !delivered.has(field)).sort();
+  if (undelivered.length) {
+    failures.push(`视图接线: 控制台读了 ${undelivered.join("、")}，但 server.mjs 的任何视图都不下发它 ——`
+      + " 读一个从不下发的字段不会报错，只会让界面永远显示空，人以为那里本来就没东西");
+  }
+}
+
 // 工作项的阻塞状态是可枚举的（core 的 BLOCKED_WORKITEM_STATUSES 五种）。人在任务组页看到
 // 一个被阻塞的工作项时，屏幕上要么给出【出口】，要么明说【系统会自清】—— 只写一句"受阻原因"
 // 等于把人留在原地。后端有杠杆而界面没入口，等于这个杠杆不存在；系统自清的也必须说出来，
