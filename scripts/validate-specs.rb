@@ -1649,6 +1649,32 @@ if File.exist?(artifact_doc_path)
   end
 end
 
+# 「凡是改变账号可登录性/凭据的地方都必须回收它已有的会话」——这条不变量写在 revokeAccountSessions
+# 的注释里，此前没有任何东西强制它。少一次的后果很具体：被停用的人继续读租户数据；改了密码
+# 而泄露的令牌照样能用（而改密码正是怀疑被盗号时唯一的自救手段）。
+#
+# 这条门钉的是【四条已知路径都还在】。它挡得住"回收被删掉/改名"这种回归，挡不住"新增一条
+# 改凭据的路径却忘了回收"——后者需要在语法上枚举"哪些写入降低可登录性"，而停用那处写的是变量
+# （member.status = nextMemberStatus），硬要囊括就会把"激活"也算进来，判据越做越绕、假红风险更大。
+# 与其造一个自己都说不清边界的判据，不如把能判准的那部分判死，并在这里写明它的边界。
+account_session_revocations = {
+  "member_disabled" => "组织成员被停用",
+  "account_suspended" => "MCP 侧挂起账号",
+  "password_changed" => "改密码（怀疑被盗号时唯一的自救手段）",
+  "invite_reissued" => "重发邀请＝铸一份新凭据"
+}
+revocation_sources = ["apps/control-plane-ui/server.mjs", "apps/mcp-server/server.mjs"]
+  .map { |file| File.read(File.join(ROOT, file)) }.join("\n")
+revocation_lines = revocation_sources.lines.select { |line| line.include?("revokeAccountSessions(") }
+account_session_revocations.each do |reason, description|
+  next if revocation_lines.any? { |line| line.include?(reason) }
+  errors << "#{description}后没有回收该账号已有的会话（缺 revokeAccountSessions 的 #{reason}）—— " \
+            "被停用的人仍能继续读，改过的密码对已泄露的令牌仍然无效"
+end
+if revocation_lines.length < account_session_revocations.length
+  errors << "只找到 #{revocation_lines.length} 处 revokeAccountSessions 调用，少于已知的 #{account_session_revocations.length} 处 —— 提取逻辑与代码脱节"
+end
+
 fail_with(errors)
 
 puts "spec validation ok"
