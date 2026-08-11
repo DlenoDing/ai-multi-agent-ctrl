@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { SCHEMA_FILE_ALIASES, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -189,6 +189,7 @@ verifyExpiredConfirmationRetargetsTheWorkItem(errors);
 verifyExpiredConfirmationLeavesNoStaleParking(errors);
 verifyPermissionOutcomeReleasesTheSession(errors);
 verifyShardRoundTripKeepsEveryRecord(errors);
+verifyOrchestrationDoesNotShellOutPerCell(errors);
 verifyIdempotencyReplayIsPrincipalBound(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
@@ -4149,6 +4150,77 @@ console.log(JSON.stringify({first: {ok: first.ok, error: first.result?.error},
 // 读回时再合起来。此前没有任何东西验过【拆开再合起来是不是同一份数据】——
 // 少一个字段、少一条记录、把 undefined 落成 null，都不会有人发现，而生产上那就是数据损坏。
 // 只有 docker:doctor 会跑真正的 PG，跑一次要几分钟；这条纯函数往返几十毫秒就能守住同一段逻辑。
+// 编排周期是同步跑在主线程上的：它跑多久，控制面就有多久不响应。而 gitHead/gitRemoteUrl 原先
+// 落在【每个工作项】都会走的路径上，每次一个 git 子进程 ≈ 40ms —— 2000 个单元实测 83 秒，
+// 96.6% 的 CPU 时间在 spawnSync。这类退化不会有任何功能测试发现：结果全对，只是慢到不可用。
+// 这条门量的是【每单元的子进程数】而不是墙钟时间：墙钟随机器波动，会变成一条时灵时不灵的门。
+function verifyOrchestrationDoesNotShellOutPerCell(output) {
+  const probeDir = mkdtempSync(join(tmpdir(), "aimac-percell-probe-"));
+  try {
+    // 怎么数子进程：在 PATH 最前面放一个 git 垫片，每次调用记一行再转交真 git。
+    // 不能在进程里替换 child_process 的导出 —— core 用的是具名导入，它内部走的是模块私有的
+    // spawnSync，换命名空间上的函数换不到（我第一版就是这么写的，改坏了也不报红）。
+    const realGit = execFileSync("sh", ["-c", "command -v git"], {encoding: "utf8"}).trim();
+    if (!realGit) {
+      output.push("编排不得按单元起子进程：找不到 git，这条断言无从验证");
+      return;
+    }
+    const binDir = join(probeDir, "bin");
+    const callLog = join(probeDir, "git-calls.log");
+    mkdirSync(binDir, {recursive: true});
+    writeFileSync(join(binDir, "git"), `#!/bin/sh\necho call >> ${JSON.stringify(callLog)}\nexec ${JSON.stringify(realGit)} "$@"\n`, {mode: 0o755});
+    writeFileSync(callLog, "");
+    const probeFile = join(probeDir, "probe.mjs");
+    writeFileSync(probeFile, `
+import { readFileSync } from "node:fs";
+const root = ${JSON.stringify(root)};
+const core = await import(root + "/apps/control-plane-ui/lib/control-plane-core.mjs");
+const state = JSON.parse(readFileSync(root + "/data/seed-state.json", "utf8"));
+core.ensureRuntimeCollections(state, {root});
+const template = state.taskGroups[0];
+state.taskGroups = [];
+const GROUPS = 40, ITEMS = 5;
+for (let g = 0; g < GROUPS; g += 1) {
+  const taskGroup = structuredClone(template);
+  taskGroup.id = "tg_perf_" + g;
+  taskGroup.workItems = [];
+  for (let i = 0; i < ITEMS; i += 1) {
+    taskGroup.workItems.push({id: "w_" + g + "_" + i, title: "t" + i, status: "draft", ownerRole: "agent-runtime", progress: 0});
+  }
+  state.taskGroups.push(taskGroup);
+}
+core.runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
+console.log(String(GROUPS * ITEMS));
+`);
+    const cells = Number(execFileSync(process.execPath, [probeFile], {
+      encoding: "utf8",
+      env: {...process.env, PATH: `${binDir}:${process.env.PATH}`,
+        AIMAC_RUNTIME_DIR: join(probeDir, "runtime"), AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: ""}
+    }).trim().split("\n").at(-1));
+    const gitCalls = readFileSync(callLog, "utf8").split("\n").filter(Boolean).length;
+    if (!(cells >= 100)) {
+      output.push(`编排不得按单元起子进程：夹具只造出 ${cells} 个单元 —— 测不出按单元增长，本条在空转`);
+      return;
+    }
+    if (gitCalls === 0) {
+      output.push("编排不得按单元起子进程：一次编排一个 git 都没调到 —— 垫片没有生效，这条断言在空转");
+      return;
+    }
+    // 一轮里合理的 git 用量是【常数级】：HEAD 与 remote url 各一次，外加少量一次性调用。
+    // 阈值取单元数的十分之一：真按单元调时这个比例在 1 以上，差一个数量级，不会误报。
+    const budget = Math.floor(cells / 10);
+    if (gitCalls > budget) {
+      output.push(`编排不得按单元起子进程：${cells} 个单元的一轮编排调了 ${gitCalls} 次 git（上限 ${budget}）`
+        + " —— 每个 git 子进程约 40ms，而编排同步占着主线程，规模一上来控制面就整段不响应；"
+        + "若确实需要新的 git 调用，应按【一轮一次】备忘（见 memoizedGitFact），而不是每个单元都调");
+    }
+  } catch (error) {
+    output.push(`编排不得按单元起子进程：探针失败（${String(error.message).slice(0, 200)}）—— 这条断言无从验证`);
+  } finally {
+    try { rmSync(probeDir, {recursive: true, force: true}); } catch { /* best effort */ }
+  }
+}
+
 function verifyShardRoundTripKeepsEveryRecord(output) {
   const roundTripDir = mkdtempSync(join(tmpdir(), "aimac-shard-roundtrip-"));
   try {

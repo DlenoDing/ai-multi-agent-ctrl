@@ -1787,6 +1787,17 @@ export function conditionWindowGate(workItem, conditionSource) {
 }
 
 export function runAutonomousCycle(state, request = {}) {
+  // HEAD 备忘录只在这一轮内有效。finally 保证抛异常时也会清掉 —— 否则一次失败的编排会把
+  // 那一刻的 HEAD 永久留给后续的请求路径，而请求路径本来是要实时取的。
+  orchestrationGitFacts = new Map();
+  try {
+    return runAutonomousCycleBody(state, request);
+  } finally {
+    orchestrationGitFacts = null;
+  }
+}
+
+function runAutonomousCycleBody(state, request = {}) {
   ensureRuntimeCollections(state, {root: request.root, endpoint: request.endpoint});
   const changed = [];
   const cycleRef = createId("cycle");
@@ -3934,12 +3945,29 @@ function gitStrict(root = process.cwd(), args = []) {
   return execFileSync("git", ["-C", root, ...args], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}).trim();
 }
 
+// 一次编排周期内的"仓库事实"备忘录。为什么需要：gitHead 与 gitRemoteUrl 都落在【每个工作项】
+// 都会走的路径上（准备产出目标、写契约的 resourceDigestBefore），每次都是一个 git 子进程 ≈ 40ms。
+// 实测 2000 个单元的一轮编排 83 秒，其中 96.6% 的 CPU 时间在 spawnSync —— 而编排是同步跑在
+// 主线程上的，这段时间整个控制面不响应。这两样在一轮里都不会变，那些子进程算的是同一个值。
+//
+// 只收"一轮内不变的只读事实"：HEAD 与 remote url。像 diff --cached 这类会被同一轮里的写入
+// 改变的查询绝不能进来 —— 它们在检查点受理路径上，那条路径确实会改仓库。
+// 作用域刻意只到"一次周期"，不做 TTL：TTL 会让同一轮里的两次调用横跨过期点而读到两个值，
+// 反而不如现在一致。周期之外备忘录为 null，行为与改动前完全相同（请求路径仍然实时取）。
+let orchestrationGitFacts = null;
+function memoizedGitFact(key, compute) {
+  if (orchestrationGitFacts?.has(key)) return orchestrationGitFacts.get(key);
+  const value = compute();
+  orchestrationGitFacts?.set(key, value);
+  return value;
+}
+
 export function gitHead(root = process.cwd()) {
-  return git(root, ["rev-parse", "--short=12", "HEAD"], "000000000000");
+  return memoizedGitFact(`head\u0000${root}`, () => git(root, ["rev-parse", "--short=12", "HEAD"], "000000000000"));
 }
 
 export function gitRemoteUrl(root = process.cwd(), remote = "origin") {
-  return git(root, ["remote", "get-url", remote], "");
+  return memoizedGitFact(`remote\u0000${root}\u0000${remote}`, () => git(root, ["remote", "get-url", remote], ""));
 }
 
 function gitIsAncestor(root, ancestor, descendant) {
