@@ -558,7 +558,7 @@ try {
   // 同一判据推到其余人工专属杠杆上：逐个造出阻塞项 → 用有权主体处置 → 那一项必须消失。
   // 逐条写而不是抽象成循环，是因为每类的创建载荷与终态各不相同；共同的判据由 settleAndExpectCleared 保证，
   // 其中"处置前必须真的在阻塞"这一步同样不能省 —— 少了它，任何一条都可能是在清一个本来就不存在的阻塞。
-  const settleAndExpectCleared = async ({label, objectType, create, resolvePath, resolveBody}) => {
+  const settleAndExpectCleared = async ({label, objectType, create, resolvePath, resolveBody, settleAuth}) => {
     const created = await create();
     if (!created.response.ok) throw new Error(`${label}: 造不出阻塞项（${created.response.status} ${JSON.stringify(created.payload).slice(0, 140)}）`);
     const before = await barrierBlockers(`${label}-before`);
@@ -567,7 +567,9 @@ try {
     }
     const settled = await jsonFetch(port, resolvePath(created), {
       method: "POST",
-      headers: {"Idempotency-Key": `doctor-settle-${label}`, authorization: reviewerAuth},
+      // 各类处置要求的权限不同（评审计划/评审包是 task_group:review，共享定义是 project:update）——
+      // 这条门验的是"杠杆能不能清掉阻塞"，谁持有它由各自的权限映射决定，这里按类取对应的主体。
+      headers: {"Idempotency-Key": `doctor-settle-${label}`, authorization: settleAuth || reviewerAuth},
       body: JSON.stringify(resolveBody)
     });
     if (!settled.response.ok) throw new Error(`${label}: 有权主体处置失败（${settled.response.status} ${JSON.stringify(settled.payload).slice(0, 160)}）`);
@@ -588,7 +590,35 @@ try {
     resolvePath: (created) => `/api/review-bundles/${created.payload?.reviewBundle?.reviewBundleId || created.payload?.reviewBundleId}/resolve`,
     resolveBody: {status: "consumed", justification: "已人工复核该证据包"}
   });
-  console.log("人工处置杠杆 ok: 评审计划与评审包处置后，关闭门的对应阻塞项确实消失");
+  await settleAndExpectCleared({
+    label: "shared-definition",
+    objectType: "SharedDefinitionContract",
+    // 共享定义只能经 MCP 创建（REST 上的 /api/contracts 走的是 contractPublish，是另一种记录），
+    // 而处置只在 REST 上 —— 两端入口不同，所以这一条要跨两个协议才能验完整。
+    create: async () => {
+      const rpc = await jsonFetch(port, "/mcp", {
+        method: "POST",
+        headers: {authorization: systemAuth},
+        body: JSON.stringify({jsonrpc: "2.0", id: 1, method: "tools/call", params: {
+          name: "definition-mcp.shared_definition_create",
+          arguments: {taskGroupId: "tg_runtime_management", projectId: "prj_control_plane",
+            name: "杠杆探针术语", definitionType: "semantic_contract", status: "proposed",
+            scopeRefs: ["TaskGroup:tg_runtime_management"], idempotencyKey: "doctor-definition-create"}
+        }})
+      });
+      let contractId = null;
+      try {
+        const text = rpc.payload?.result?.content?.[0]?.text;
+        contractId = JSON.parse(text || "{}")?.result?.sharedDefinition?.contractId || null;
+      } catch { contractId = null; }
+      return {response: {ok: Boolean(contractId), status: contractId ? 200 : (rpc.response?.status || 500)},
+        payload: {contractId, raw: rpc.payload}};
+    },
+    resolvePath: (created) => `/api/shared-definition-contracts/${created.payload?.sharedDefinition?.contractId || created.payload?.contractId}/resolve`,
+    resolveBody: {status: "active", justification: "人工确认该术语可生效"},
+    settleAuth: auth
+  });
+  console.log("人工处置杠杆 ok: 评审计划、评审包、共享定义契约处置后，关闭门的对应阻塞项确实消失");
 
   // 鉴权前的存在性预言机：对象不存在时若先于守卫回 404，任何已认证主体都能靠 404 与 428/403
   // 的差别静默枚举别的租户有哪些对象（不产生 policyDecision、不写审计）。质量门的 id 是
