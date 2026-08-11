@@ -527,9 +527,61 @@ async function runParallel(mutations) {
   return {failures, checked, workers};
 }
 
+// 只跑名字里含某个片段的那几条。调单条变异时不必陪跑全量（本机全量并行约 24 分钟），
+// 也让"把 expect 改成绝不会出现的串、它必须报失败"这类自证做得起。
+// 筛不到任何一条时必须报错退出：静悄悄地跑了 0 条然后打印"全绿"，正是本门最该防的那种绿。
+function selectedMutations() {
+  const filter = String(process.env.AIMAC_MUTATION_ONLY || "").trim();
+  if (!filter) return MUTATIONS;
+  const selected = MUTATIONS.filter((mutation) => mutation.name.includes(filter));
+  if (!selected.length) {
+    console.error(`mutation gate: AIMAC_MUTATION_ONLY="${filter}" 没有匹配到任何一条变异 —— 拒绝把"跑了 0 条"报成通过。`);
+    process.exit(1);
+  }
+  console.error(`mutation gate: 只跑名字含「${filter}」的 ${selected.length} 条（AIMAC_MUTATION_ONLY）。`);
+  return selected;
+}
+
+// 门自证：本门的判据是"改坏守卫后 contract-check 必须失败【且报的是那一条】"。
+// 后半句很容易退化成只看退出码 —— 那样任何一处偶然失败都会被当成"守卫有效"。
+// 这里拿一条真实变异跑两遍：期望片段写成绝不会出现的串时必须被判失败，写成真实片段时必须通过。
+// 它验的是本门自己，所以不该藏在文档里靠人记得跑：AIMAC_MUTATION_SELFTEST=1 随时可验。
+async function runSelfTest() {
+  const sample = MUTATIONS.find((mutation) => !mutation.skip);
+  if (!sample) { console.error("mutation gate 自证: 没有可用的变异条目"); process.exit(1); }
+  pruneStaleWorktrees();
+  const dir = join(tmpdir(), `${WORKTREE_PREFIX}${process.pid}-selftest`);
+  try { rmSync(dir, {recursive: true, force: true}); } catch { /* 尽力而为 */ }
+  execFileSync("git", ["worktree", "add", "--detach", "--quiet", dir, "HEAD"], {cwd: root, stdio: "ignore"});
+  process.on("exit", () => removeWorktrees([dir]));
+  const problems = [];
+  const impossible = await judgeMutation({...sample, expect: "这句话不会出现在任何输出里-selftest"}, dir);
+  if (!impossible || !impossible.includes("不是因为预期断言")) {
+    problems.push(`期望片段写成绝不会出现的串时，本门没有把它判成失败（得到：${impossible || "通过"}）—— 它只看了退出码`);
+  }
+  const real = await judgeMutation(sample, dir);
+  if (real) problems.push(`同一条变异用真实期望片段却被判失败（${real}）—— 自证的对照组不成立`);
+  removeWorktrees([dir]);
+  if (problems.length) {
+    console.error("mutation gate 自证失败:");
+    for (const problem of problems) console.error(`- ${problem}`);
+    process.exit(1);
+  }
+  console.log(`mutation gate 自证 ok: 以「${sample.name}」为样本，期望片段对不上时会被判失败，对得上时通过`);
+}
+
 async function run() {
+  if (process.env.AIMAC_MUTATION_SELFTEST === "1") {
+    if (!workingTreeIsClean()) {
+      console.error("mutation gate 自证: 工作区不干净（自证要在 worktree 里跑，取的是 HEAD）");
+      process.exit(1);
+    }
+    await runSelfTest();
+    return;
+  }
+  const mutations = selectedMutations();
   if (workingTreeIsClean()) {
-    const {failures, checked, workers} = await runParallel(MUTATIONS);
+    const {failures, checked, workers} = await runParallel(mutations);
     if (failures.length) {
       console.error("mutation gate failed:");
       for (const failure of failures) console.error(`- ${failure}`);
@@ -541,15 +593,15 @@ async function run() {
   }
   console.error("mutation gate: 工作区不干净，改用串行模式（worktree 取的是 HEAD，带不上未提交改动，"
     + "并行会测到与本地不同的代码）。");
-  runSerial();
+  runSerial(mutations);
 }
 
-function runSerial() {
+function runSerial(mutations = MUTATIONS) {
   acquireLock();            // 先排除并发实例，否则"恢复"可能覆盖另一个实例正在用的内容
   recoverFromPreviousRun(); // 再收拾上一轮被中断留下的残局，然后才开始改坏任何东西
   const failures = [];
   const checked = [];
-  for (const mutation of MUTATIONS) {
+  for (const mutation of mutations) {
     if (mutation.skip) { checked.push(`- ${mutation.name}（跳过：${mutation.skip}）`); continue; }
     const path = join(root, mutation.file);
     const original = readFileSync(path, "utf8");

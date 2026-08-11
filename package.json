@@ -28,6 +28,7 @@
     "docker:up": "./scripts/docker-up.sh",
     "docker:doctor": "node scripts/doctor-docker-compose.mjs",
     "mutation-gate": "node scripts/mutation-gate.mjs",
+    "mutation-gate:one": "AIMAC_MUTATION_ONLY=\"${AIMAC_MUTATION_ONLY:?用法：AIMAC_MUTATION_ONLY='名字片段' npm run mutation-gate:one}\" node scripts/mutation-gate.mjs",
     "auth-placement-gate": "node scripts/auth-placement-gate.mjs",
     "barrier-liveness-gate": "node scripts/barrier-liveness-gate.mjs",
     "console-behaviour-gate": "node scripts/console-behaviour-check.mjs",
