@@ -1378,7 +1378,10 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     taskGroups: sliceItems(scoped.taskGroups, capped),
     modelCapabilities: sliceItems(scoped.modelCapabilities, capped),
     agentRuntimeNodes: sliceItems(scoped.agentRuntimeNodes, capped),
-    progressSnapshots: sliceItems(scoped.progressSnapshots, capped),
+    // progressSnapshots 不进视图基底：控制台的进度数据走专用端点 /api/task-groups/:id/progress
+    // 按需取，全站没有一处读 state.progressSnapshots。而单条快照把 repositoryOutputs 与 workItems
+    // 整份嵌了进去（实测 300 单元时 97KB/条），基底又意味着【每个视图、每次请求】都带上 ——
+    // 实测每次响应白白多 191KB。MCP 那一侧照常下发（doctor-mcp 在验它的租户隔离），view=full 也照旧。
     pendingHumanConfirmationTaskGroupIds: (scoped.humanConfirmationRequests || []).filter((item) => item.status === "pending").map((item) => item.taskGroupId),
     // Lightweight id->displayName directory (visible accounts only) so views that show a decidedBy/actor
     // account (e.g. the review answered-history) render a name instead of a raw acct_ id. scoped.accounts
@@ -1387,12 +1390,15 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     ...faultField
   };
   const viewFields = {
-    system: ["accounts", "auditLog", "policyDecisions", "commands", "decisionRecords"],
+    // policyDecisions / commands / decisionRecords 控制台一处都没读 —— 需要时从 view=full 取。
+    system: ["accounts", "auditLog"],
     users: ["accounts", "accessGrants", "projects", "agentJoinTokens"],
     projects: ["accounts", "accessGrants", "projects", "repositoryOutputs", "agentJoinTokens"],
-    tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots", "humanConfirmationRequests", "humanDirectives", "permissionRequests", "approvalRequests", "findings", "qualityGates", "testResults", "reviewPlans", "sharedDefinitions", "artifacts", "reviewBundles", "ruleSourceResolutions", "systemUpgradeCandidates", "executionTopologies"],
+    tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "closeBarriers", "humanConfirmationRequests", "humanDirectives", "permissionRequests", "approvalRequests", "findings", "qualityGates", "testResults", "reviewPlans", "sharedDefinitions", "reviewBundles", "ruleSourceResolutions", "systemUpgradeCandidates", "executionTopologies"],
     runtime: ["modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions", "workerLanes", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkills", "roleSkillOverlays"],
-    instructions: ["instructionMetrics", "sharedDefinitions", "effectiveInstructionPackets", "roleDriftGuards"],
+    // effectiveInstructionPackets / roleDriftGuards 控制台一处都没读（实测这一视图 608KB 里
+    // 它们占 303KB）。需要时可从 view=full 或专用接口取，不该让每次打开这一页都付这笔钱。
+    instructions: ["instructionMetrics", "sharedDefinitions"],
     // 组织概览此前只能取 view=full —— 因为没有任何视图带 organizations，而 full 是【不切片】的：
     // 实测 1000 个单元时它返回 16.9MB、单次请求同步占用主线程 149ms，且随部署规模无界增长。
     // 这一页真正要的只有 organizations（projects/taskGroups 本就在视图基底里）。

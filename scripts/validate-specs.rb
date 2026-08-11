@@ -357,8 +357,25 @@ management_surface_types = seed_state.fetch("managementSurfaces", []).map { |sur
 %w[system_management user_management].each do |console_type|
   errors << "seed managementSurfaces missing #{console_type}" unless management_surface_types.include?(console_type)
 end
+# 种子里要有进度快照 —— 但理由不是"给界面用"：控制台的进度走专用端点
+# /api/task-groups/:id/progress 按需取，全站没有一处读 state.progressSnapshots。
+# 真正需要它的是 MCP（它把 progressSnapshots 下发给远端调用方，doctor-mcp 在验它的租户隔离）。
+# 理由写错的断言比没有断言更糟：它会让人照着一个不存在的消费方去改代码。
 if seed_state.fetch("progressSnapshots", []).empty?
-  errors << "seed progressSnapshots must be precomputed for UI consumption"
+  errors << "seed progressSnapshots must be precomputed for MCP delivery (doctor-mcp asserts its tenant scoping)"
+end
+
+# 视图下发的每个集合都要有人读。控制台是轮询的，多发一个集合就是每次请求都多付一笔 ——
+# progressSnapshots 曾经在基底里，单条 97KB（它把 repositoryOutputs 与 workItems 整份嵌了进去），
+# 每个视图每次响应白白多 191KB，而全站没有一处读它。
+view_block = File.read(File.join(ROOT, "apps/control-plane-ui/server.mjs"))[/const viewFields = \{(.*?)\n  \};/m].to_s
+view_collections = view_block.scan(/"([a-zA-Z]+)"/).flatten.uniq
+errors << "视图字段一个都没提取到 —— 本条在空转" if view_collections.length < 20
+console_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+unread_by_console = view_collections.reject { |name| console_source.include?("state.#{name}") || console_source.include?("#{name}:") }
+unless unread_by_console.empty?
+  errors << "这些集合下发给了控制台却没有一处读：#{unread_by_console.sort.join(", ")} —— " \
+            "控制台是轮询的，多发一个集合就是每次请求都多付一笔；要么渲染它，要么从视图里去掉"
 end
 errors << "seed must include agentDispatches durable outbox collection" unless seed_state.key?("agentDispatches") && seed_state["agentDispatches"].is_a?(Array)
 errors << "seed must include transitionEvidence collection for state-machine proof" unless seed_state.key?("transitionEvidence") && seed_state["transitionEvidence"].is_a?(Array)
