@@ -1209,22 +1209,37 @@ function pruneMcpAuditRotations() {
   for (const item of rotated.slice(keep)) unlinkSync(join(dir, item.name));
 }
 
+// 持锁进程已死 => 立刻可破。判不出持有者（锁刚建好、pid 还没落盘的毫秒级窗口，或进程死在那个
+// 窗口里）时给一个短宽限期，而不是让 30 秒的阈值把写工具堵在门外。
+function mcpAuditLockIsStale(lockPath) {
+  let owner = null;
+  try { owner = JSON.parse(readFileSync(join(lockPath, "owner.json"), "utf8")); } catch { owner = null; }
+  const pid = Number(owner?.pid || 0);
+  if (pid && pid !== process.pid) {
+    try { process.kill(pid, 0); return false; } catch (error) { if (error?.code !== "EPERM") return true; return false; }
+  }
+  if (pid === process.pid) return false;
+  try { return Date.now() - statSync(lockPath).mtimeMs > 2000; } catch { return false; }
+}
+
 function withMcpAuditLock(fn) {
   const lockPath = `${mcpAuditPath}.lock`;
   const deadline = Date.now() + 10000;
   for (;;) {
     try {
       mkdirSync(lockPath);
+      // 与状态库那把锁同规：把持锁者写进锁里。进程被硬杀时锁会留下，而"谁持有它、它还活着吗"
+      // 是唯一能安全破锁的依据。只按时间兜底的话（阈值 30s > 获取超时 10s），
+      // 崩溃后约 30 秒内每个写工具调用都要么直接失败、要么白等 10 秒才通过。
+      try { writeFileSync(join(lockPath, "owner.json"), JSON.stringify({pid: process.pid, at: new Date().toISOString()})); } catch { /* 锁已拿到，记不上持有者不该让写入失败 */ }
       break;
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
+      if (mcpAuditLockIsStale(lockPath)) {
+        rmSync(lockPath, {recursive: true, force: true});
+        continue;
+      }
       if (Date.now() > deadline) throw new Error("mcp_audit_lock_timeout");
-      try {
-        if (Date.now() - statSync(lockPath).mtimeMs > 30000) {
-          rmSync(lockPath, {recursive: true, force: true});
-          continue;
-        }
-      } catch {}
       sleepSync(25);
     }
   }

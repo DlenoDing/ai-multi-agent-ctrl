@@ -401,6 +401,23 @@ unless stale_more_text_exempt.empty?
   errors << "这些 moreText 例外已经没有对应调用了：#{stale_more_text_exempt.join(", ")} —— 删掉登记"
 end
 
+# 目录锁的两个数字必须配套：清理陈旧锁的阈值不能比获取锁的超时还长 ——
+# 否则清理永远等不到就先超时了，那段代码在实际中是死的（实测过后果：进程被硬杀之后，
+# 约 30 秒内每次写入要么直接失败、要么白等 10 秒才通过，而登录本身就是一次写入）。
+# 正确做法是按【持锁进程是否还活着】判，时间只作兜底；这里钉住"两把锁都这么做了"。
+# 判据要落在【获取锁的那个循环里真的调了它】上：只查函数是否存在的话，
+# 把调用点改成 if (false) 它照样绿（第一版就是这样）。
+[["apps/control-plane-ui/lib/state-store.mjs", /function withRuntimeJsonLock\(.*?\n\}/m, "clearStaleLock(lockDir)"],
+ ["apps/mcp-server/server.mjs", /function withMcpAuditLock\(.*?\n\}/m, "mcpAuditLockIsStale(lockPath)"]].each do |file, body_pattern, call|
+  source = File.read(File.join(ROOT, file))
+  body = source[body_pattern].to_s
+  errors << "#{file} 里找不到获取目录锁的那段循环 —— 本条在空转" if body.empty?
+  errors << "#{file} 的目录锁没有在获取时判陈旧（#{call} 没被调用）：只靠时间兜底会让崩溃后约 30 秒写不进去" unless
+    body.include?(call)
+  errors << "#{file} 的锁里没有记下持锁者 pid —— 破锁就只能靠时间" unless
+    body.match?(/owner\.json.*JSON\.stringify\(\{pid: process\.pid/m)
+end
+
 # 视图下发的每个集合都要有人读。控制台是轮询的，多发一个集合就是每次请求都多付一笔 ——
 # progressSnapshots 曾经在基底里，单条 97KB（它把 repositoryOutputs 与 workItems 整份嵌了进去），
 # 每个视图每次响应白白多 191KB，而全站没有一处读它。
