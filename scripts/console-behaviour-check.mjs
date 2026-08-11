@@ -929,32 +929,65 @@ await runErrorGuidanceCase();
   }
 }
 
-// 停在 needs_decision 的工作项，编排器每轮都会直接跳过它：不会再有确认卡挂出来，也不会自己恢复，
-// 只能由人处置。而处置杠杆（resolve_decision 重开/放弃）在另一页的下拉里 —— 卡片上若只写
-// "受阻原因"，人就被留在原地。后端有杠杆而界面没入口，等于这个杠杆不存在。
-// 断言落在【真实渲染出来的 HTML】上，不是源码里有没有那段字符串。
+// 工作项的阻塞状态是可枚举的（core 的 BLOCKED_WORKITEM_STATUSES 五种）。人在任务组页看到
+// 一个被阻塞的工作项时，屏幕上要么给出【出口】，要么明说【系统会自清】—— 只写一句"受阻原因"
+// 等于把人留在原地。后端有杠杆而界面没入口，等于这个杠杆不存在；系统自清的也必须说出来，
+// 否则人会去找一个并不需要的操作。
+// 逐条写死只守得住写它的人当时想到的那一种，所以按 core 的清单全量核对。
 {
   const probe = loadConsole(el("div"));
   const account = {accountId: "acct_admin", accountType: "system_admin", organizationId: "org_default",
     permissions: ["*"], roles: ["system_admin"]};
-  const stateWithParkedCell = {
-    schemaVersion: "runtime-state/v1", stateVersion: 1,
-    projects: [{id: "p_park", name: "项目", organizationId: "org_default", status: "active", members: []}],
-    taskGroups: [{id: "tg_park", projectId: "p_park", name: "任务组", status: "development", health: "attention",
-      workItems: [{id: "w_park", title: "被停住的工作项", status: "needs_decision",
-        blockedReason: "human_confirmation_expired", ownerRole: "agent-runtime", progress: 40}]}],
-    truncatedCollections: []
+  const coreSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const declared = coreSource.match(/BLOCKED_WORKITEM_STATUSES = \[([^\]]*)\]/u);
+  const blockedStatuses = declared ? [...declared[1].matchAll(/"([a-z_]+)"/gu)].map((match) => match[1]) : [];
+  if (blockedStatuses.length < 4) {
+    failures.push(`阻塞状态出口: 只从 core 提取到 ${blockedStatuses.length} 个阻塞状态 —— 提取逻辑与代码脱节，本条在空转`);
+  }
+  // 明说"系统会自清"的状态：这里登记的是【为什么人不需要动手】，写不出理由的就该给出口。
+  // 只有【真的会自清】的才登记在这里 —— 我第一版把 blocked_resource 也写了进来，
+  // 而它来自"没有可运行的模型满足硬性约束"，不动手永远不会好。写一条不存在的"会自动恢复"
+  // 比什么都不写更糟：人会一直等下去。
+  const SELF_CLEARING = {
+    blocked_dependency: "依赖的工作项通过验收后，下一轮编排自动放行"
   };
-  const html = probe.renderTaskGroupsWith(stateWithParkedCell, account, "p_park", "tg_park", {
-    taskGroupId: "tg_park", progress: {}, config: null, roomMessages: []
-  });
-  if (!html.includes("被停住的工作项")) {
-    failures.push("停滞工作项出口: 渲染里根本没有这个工作项 —— 这条断言在空转");
-  } else if (!/人工指令/.test(html) || !/重开|放弃/.test(html)) {
-    failures.push("停滞工作项出口: 工作项停在 needs_decision，卡片上没有告诉人该去哪处置 —— "
-      + "编排每轮都会跳过它，确认卡也不会再挂出来，人只看到一句「受阻原因」就没有下文了");
+  // stale_state 在全仓没有任何产生者（不可达状态）。登记在此，免得下次有人为它编一段界面文案；
+  // 一旦将来有代码真的写它，这里的登记就该连同出口一起补。
+  const NO_PRODUCER = {stale_state: "全仓无任何代码把工作项置为该状态"};
+  for (const status of blockedStatuses) {
+    const stateWithParkedCell = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1,
+      projects: [{id: "p_park", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg_park", projectId: "p_park", name: "任务组", status: "development", health: "attention",
+        workItems: [{id: "w_park", title: "被停住的工作项", status, blockedReason: status,
+          ownerRole: "agent-runtime", progress: 40}]}],
+      truncatedCollections: []
+    };
+    const html = probe.renderTaskGroupsWith(stateWithParkedCell, account, "p_park", "tg_park", {
+      taskGroupId: "tg_park", progress: {}, config: null, roomMessages: []
+    });
+    if (!html.includes("被停住的工作项")) {
+      failures.push(`阻塞状态出口: ${status} 的工作项根本没被渲染出来 —— 这一轮断言在空转`);
+      continue;
+    }
+    // 判据必须收窄到【这张卡片】：拿整页去匹配的话，页面别处本来就有"人工指令/人工审核"这些词，
+    // 判据恒为真 —— 我第一版就是这样，把出口整段删掉它照样绿。
+    // 先剥掉 HTML 注释再匹配：模板里那段解释性注释本身就含"自动放行""人工指令"这些词，
+    // 它会原样出现在渲染结果里 —— 我第一版匹配到的正是自己写的注释，把出口整段删掉照样绿。
+    const visible = html.replace(/<!--[\s\S]*?-->/gu, "");
+    const cardStart = visible.indexOf("被停住的工作项");
+    const card = visible.slice(cardStart, cardStart + 900);
+    const hasExit = /人工指令|人工审核|运行时」页|agent 节点/.test(card);
+    const saysSelfClearing = /自动放行|无需操作/.test(card);
+    if (NO_PRODUCER[status]) continue;
+    if (!hasExit && !saysSelfClearing) {
+      failures.push(`阻塞状态出口: 工作项停在 ${status}，卡片上既没有告诉人去哪处置，也没说系统会自清`
+        + (SELF_CLEARING[status] ? `（这一种应当明说：${SELF_CLEARING[status]}）` : "（这一种需要一个人工出口）")
+        + " —— 人只看到一句「受阻原因」就没有下文了");
+    }
   }
 }
+
 
 if (failures.length) {
   for (const failure of failures) console.error(`  - ${failure}`);

@@ -2178,13 +2178,11 @@ function renderTaskGroupDetail(taskGroup) {
         <div class="record-title"><strong>${esc(workItem.title)}</strong>${badge(workItem.status)}</div>
         ${progressLine(workItem.progress)}
         <div class="record-meta"><span>执行角色：${esc(t(workItem.ownerRole))}</span>${workItem.blockedReason ? `<span>受阻原因：${esc(t(workItem.blockedReason))}</span>` : ""}</div>
-        <!-- 停在 needs_decision 的工作项，编排器【每轮都会直接跳过】它：不会再有卡片挂出来，
-             也不会自己恢复，只能由人处置。而处置杠杆（resolve_decision 重开/放弃）在另一页的
-             下拉里 —— 卡片上只写"受阻原因"，等于把人留在原地。这里给出出口。
-             后端有杠杆而界面没入口，等于这个杠杆不存在。 -->
-        ${workItem.status === "needs_decision"
-          ? `<div class="notice warn-notice">编排不会再自动推进它：到「人工指令」页用「${esc(t("resolve_decision") || "决策处置（重开 / 放弃）")}」重开或放弃${workItem.id ? `（工作项 ${esc(workItem.id)}）` : ""}。</div>`
-          : ""}
+        <!-- 被阻塞的工作项：屏幕上要么给出【出口】，要么明说【系统会自清】。只写一句"受阻原因"
+             等于把人留在原地 —— 后端有杠杆而界面没入口，等于这个杠杆不存在；而系统自清的也必须
+             说出来，否则人会去找一个并不需要的操作。每一条都按代码里真实的清除路径写：
+             blocked_dependency 由下一轮编排自动放行，其余两种都要人先动手（已核实过产生它们的分支）。 -->
+        ${workItemExitHint(workItem)}
         <!-- 决定"这件事算不算需要人定稿的方案"的分类器是字面匹配：它认不出架构与选型这类决策。
              机器判不了的事，判断权归人 —— 这里给出那个杠杆，并说清分类器的局限，
              免得"没被要求定稿"被读成"系统判断过、认为不必"。 -->
@@ -2493,6 +2491,21 @@ const BLOCKER_GUIDE = {
   Checkpoint: "缺少 Git 证据（提交/推送）：等执行方补齐，或取消对应工作项",
   RepositoryOutputTarget: "仓库产出目标尚未终态：等推送完成，或取消对应工作项"
 };
+
+// 被阻塞工作项的出口提示。键优先看 blockedReason（更具体），退回到 status。
+// 每一条都对应代码里真实的清除路径：写一条并不存在的"会自动恢复"，比什么都不写更糟。
+const WORK_ITEM_EXIT_HINT = {
+  needs_decision: "编排不会再自动推进它：到「人工指令」页用「决策处置（重开 / 放弃）」处置。",
+  blocked_dependency: "无需操作：它依赖的工作项通过验收后，下一轮编排会自动放行。",
+  model_selection_rejected: "没有可运行的模型满足它的硬性约束：到「运行时」页核对模型能力注册，或放宽该工作项的模型约束。",
+  blocked_resource: "它等待的资源尚未就绪：到「运行时」页核对模型与技能源状态。",
+  credential_required: "执行需要智能体运行时凭据：在承接它的 agent 节点上配置所需的凭据环境变量后重试。",
+  permission_required: "需要先获得授权：到「人工审核」页批准对应的权限申请。"
+};
+function workItemExitHint(workItem) {
+  const hint = WORK_ITEM_EXIT_HINT[workItem.blockedReason] || WORK_ITEM_EXIT_HINT[workItem.status];
+  return hint ? `<div class="notice warn-notice">${esc(hint)}</div>` : "";
+}
 
 function blockerGuide(objectType) {
   return BLOCKER_GUIDE[objectType] || "";
