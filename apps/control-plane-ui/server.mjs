@@ -1401,6 +1401,13 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     schemaVersion: scoped.schemaVersion,
     stateVersion: scoped.stateVersion,
     runtime: liveRuntime,
+    // 舰队计数（只有数字，几十字节）。没有它，界面就无从知道"活挂着但没有任何 agent 能接"——
+    // 实测零节点时循环照样造出成千上万个 active 会话与租约，控制台看上去一片繁忙，
+    // 而真相是没有任何东西在跑。节点明细只在 agent 页下发，这里不带。
+    fleet: {
+      online: (scoped.agentRuntimeNodes || []).filter((node) => node.status === "online").length,
+      total: (scoped.agentRuntimeNodes || []).length
+    },
     agents: sliceItems(scoped.agents, capped),
     projects: sliceItems(scoped.projects, capped),
     // 任务组把全部工作单元嵌在里面，而它在【基底】里 —— 每个视图、每次请求都带上。

@@ -2697,6 +2697,25 @@ function orchestratorHealthText(status) {
   return status.lastTickAt ? `（上一拍 ${esc(t(status.lastTickResult) || status.lastTickResult || "ran")}）` : "";
 }
 
+// 派发排着队、会话挂着 active，但一个能干活的 agent 都没有 —— 这时控制台看上去一片繁忙，
+// 而真相是没有任何东西在跑。系统自己知道（节点数它有），此前却从不说。
+// 判据用"在线"而不是"存在"：降级节点领不到活，把它算进去等于报喜不报忧。
+function fleetOfflineNotice() {
+  const fleet = (state || {}).fleet;
+  if (!fleet) return "";                       // 这一视图没下发计数就不猜
+  if (Number(fleet.online || 0) > 0) return "";
+  const groups = projectTaskGroups();
+  const inScope = (item) => groups.some((taskGroup) => taskGroup.id === item.taskGroupId);
+  const waiting = (state.agentDispatches || []).filter((item) =>
+    inScope(item) && !["completed", "failed", "cancelled"].includes(item.status)).length;
+  if (!waiting) return "";                     // 没有活在等，就不必吓人
+  const total = Number(fleet.total || 0);
+  return `<div class="notice warn-notice">这个项目有 ${esc(waiting)} 个派发在排队或执行中，`
+    + `但【没有任何在线的 agent 节点】${total ? `（已注册 ${esc(total)} 个，此刻都不在线或已降级）` : "（一个都还没注册）"}：`
+    + `这些活现在不会有任何进展，界面上的"执行中"只是挂着。`
+    + `先到 agent 页确认节点状态与自检结果${total ? "，把降级的那台修好或重启" : "，按安装指引接入一台"}。</div>`;
+}
+
 // 连续失败就不只是"参数里的一行小字"了：它意味着此刻没有任何东西在推进，
 // 而人正在等系统自己往下走。放在监控页顶部。
 function orchestratorStalledNotice() {
@@ -3208,6 +3227,7 @@ function renderMonitor() {
 
   return [
     orchestratorStalledNotice(),
+    fleetOfflineNotice(),
     canOrchestrate ? panel("自治控制", `
       <div class="button-row">
         <button class="primary-button" data-action="orchestrator-run">运行自治循环</button>

@@ -543,6 +543,47 @@ function runPendingTruncationCase() {
       "退出再登录后界面没有被重建 —— 人会一直停在登录页上");
   }
 
+  // 零在线 agent 时，循环照样会造出成千上万个 active 会话与租约：控制台一片"执行中"，
+  // 而真相是没有任何东西在跑。系统自己有节点计数，此前从不说。
+  {
+    const base = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1,
+      runtime: {autonomousOrchestrator: {enabled: true, intervalMs: 60000, consecutiveErrors: 0, lastTickResult: "ran", lastTickAt: "2026-08-12T00:00:00Z"}},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: []}],
+      agentDispatches: [{dispatchId: "adp1", taskGroupId: "tg1", workItemId: "w1", status: "queued"}],
+      workSessions: [], workerLanes: [], agentRuntimeNodes: [], qualityGates: [],
+      testResults: [], checkpoints: [], admissionDecisions: [], modelSelectionDecisions: [],
+      sessionPlacementDecisions: [], closeBarriers: [], truncatedCollections: [],
+      fleet: {online: 0, total: 2}
+    };
+    const offlineView = probe.renderMonitorWith(structuredClone(base), admin, "p1");
+    check("有活在排队却没有在线 agent 时要在监控页上说出来",
+      /没有任何在线的 agent 节点/.test(offlineView),
+      "一个能干活的节点都没有，界面却只显示'执行中' —— 人会一直等一件永远不会发生的事");
+    check("提示要说清已注册几个、以及该去哪儿看",
+      /已注册 2 个/.test(offlineView) && /agent 页/.test(offlineView),
+      "只说没有在线节点，不说是一台都没装还是装了都挂了，人不知道下一步做什么");
+
+    const withNode = structuredClone(base);
+    withNode.fleet = {online: 1, total: 2};
+    check("有在线节点时不挂这条提示",
+      !/没有任何在线的 agent 节点/.test(probe.renderMonitorWith(withNode, admin, "p1")),
+      "有节点在线还提示没有 —— 常亮的告警等于没有告警");
+
+    const noWork = structuredClone(base);
+    noWork.agentDispatches = [];
+    check("没有活在等时不挂这条提示",
+      !/没有任何在线的 agent 节点/.test(probe.renderMonitorWith(noWork, admin, "p1")),
+      "没有任何活在等却提示节点掉线 —— 项目还没开工就先吓人一跳");
+
+    const otherProject = structuredClone(base);
+    otherProject.agentDispatches = [{dispatchId: "adp9", taskGroupId: "tg_other", workItemId: "w9", status: "queued"}];
+    check("只统计当前项目范围内的活",
+      !/没有任何在线的 agent 节点/.test(probe.renderMonitorWith(otherProject, admin, "p1")),
+      "拿别的项目的派发在这个项目上报警 —— 这一页整体以当前项目为抬头");
+  }
+
   // 明细页的工作项来自专用端点，它现在也有上限（4000 单元时曾是约 1.1MB 载荷 + 4000 个 DOM 节点）。
   // 截断了就必须说清"共多少、当前展示多少"，并且要告诉人筛选只覆盖已加载的这些。
   {
