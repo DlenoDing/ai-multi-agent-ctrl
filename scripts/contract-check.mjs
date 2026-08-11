@@ -4700,15 +4700,27 @@ function verifyCancelSettlesTheCellsResources(output) {
   // 而不是只验刚抽出来的那个函数 —— 否则两条取消路径谁都没接上它也照样绿。
   const serverSource = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
   const gatewaySource = readFileSync(resolve(root, "apps/control-plane-ui/lib/agent-gateway.mjs"), "utf8");
-  const cancelBranch = (source) => {
-    const at = source.indexOf('commandType === "cancel_dispatch"');
-    return at < 0 ? "" : source.slice(at, at + 700);
-  };
-  if (!cancelBranch(serverSource).includes("settleCellOwnedResources")) {
-    output.push("控制台那条直接取消没有了结这个格子名下的资源 —— 输出目标会永远挡着关闭门");
+  // 逐条写死只守得住我这次找到的那几条。取消这件事有【四条】路径（控制台直接取消、agent 回执、
+  // 人工指令、契约过期回收），我第一轮只找到两条，另外两条是按这个清单全量核对时才露出来的。
+  // 所以判据落在"每一处把派发置为 cancelled 的地方"上：新增第五条路径照样会被抓住。
+  const coreSourceForCancel = readFileSync(resolve(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const cancelSites = [];
+  for (const [label, source] of [["server.mjs", serverSource], ["agent-gateway.mjs", gatewaySource], ["control-plane-core.mjs", coreSourceForCancel]]) {
+    for (const match of source.matchAll(/dispatch\.status = "cancelled";/gu)) {
+      const line = source.slice(0, match.index).split("\n").length;
+      // 了结调用允许出现在这一处前后 24 行内（各条路径的写法不同：有的先改状态再级联，有的相反）
+      const lines = source.split("\n");
+      const window = lines.slice(Math.max(0, line - 25), line + 24).join("\n");
+      cancelSites.push({label, line, settled: window.includes("settleCellOwnedResources") || window.includes("terminateCellRuntime")});
+    }
   }
-  if (!cancelBranch(gatewaySource).includes("settleCellOwnedResources")) {
-    output.push("agent 回执那条取消没有了结这个格子名下的资源 —— 同一个坑换一条路径照样存在");
+  if (cancelSites.length < 4) {
+    output.push(`取消清理自检：只找到 ${cancelSites.length} 处取消写入点（应有 4 处以上）—— 提取逻辑与代码脱节，本条在空转`);
+  }
+  const unsettled = cancelSites.filter((site) => !site.settled);
+  if (unsettled.length) {
+    output.push(`这些取消路径没有了结格子名下的资源：${unsettled.map((site) => `${site.label}:${site.line}`).join("、")}`
+      + " —— 输出目标会永远停在非终态并挡住关闭门，人取消了活却再也关不掉任务组");
   }
   const pauseBranch = (source) => {
     const at = source.indexOf('commandType === "pause_dispatch"');

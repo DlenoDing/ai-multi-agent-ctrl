@@ -5398,6 +5398,8 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
         for (const dispatch of (state.agentDispatches || []).filter((item) => item.taskGroupId === taskGroup.id && ["queued", "blocked", "running"].includes(item.status))) {
           dispatch.status = "cancelled";
           dispatch.failureReason = "human_directive_cancel";
+          // 与其它取消路径同规：连这个格子名下的资源一起了结，否则输出目标永远挡着关闭门。
+          settleCellOwnedResources(state, dispatch.taskGroupId, dispatch.workItemId, "human_directive_cancel");
           cancelPendingConfirmationsForDispatch(state, dispatch.dispatchId, "human_directive_cancel");
           revokeDispatchNodeBinding(state, dispatch, "human_directive_cancel");
           dispatch.updatedAt = at;
@@ -5517,6 +5519,8 @@ export function expireStaleQueuedDispatches(state) {
     dispatch.status = "cancelled";
     dispatch.failureReason = contract ? "task_contract_expired" : "task_contract_missing";
     dispatch.updatedAt = at;
+    // 这个格子稍后会被重新派发，届时会建新的输出目标；旧的不了结就永远悬在那里挡着关闭门。
+    settleCellOwnedResources(state, dispatch.taskGroupId, dispatch.workItemId, dispatch.failureReason);
     const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
     if (session && !WORK_SESSION_SETTLED_STATUSES.includes(session.status)) {
       session.status = "recycled";
