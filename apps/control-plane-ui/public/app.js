@@ -720,8 +720,30 @@ async function api(path, options = {}) {
   return response.json();
 }
 
+// 控制台每 5 秒轮询一次当前页的视图。内容没变时服务端回 304、不传载荷 ——
+// 这里保留上一次的结果直接复用（连解析都省了）。ETag 里带了不写盘的运行时事实，
+// 所以自治循环停摆这类变化不会被 304 挡住。
+const stateEtags = new Map();
+const stateCache = new Map();
+
 async function fetchState(view) {
-  return {...emptyState(), ...(await api(`/api/state?view=${encodeURIComponent(view)}&limit=200`))};
+  const path = `/api/state?view=${encodeURIComponent(view)}&limit=200`;
+  const headers = {"content-type": "application/json"};
+  if (authToken) headers.authorization = `Bearer ${authToken}`;
+  const etag = stateEtags.get(view);
+  const cached = stateCache.get(view);
+  if (etag && cached) headers["if-none-match"] = etag;
+  const response = await fetch(path, {headers});
+  if (response.status === 304 && cached) return cached;
+  if (!response.ok) {
+    // 走回统一的错误处理（401 清会话、把服务端写的说明带给人）
+    return {...emptyState(), ...(await api(path))};
+  }
+  const payload = {...emptyState(), ...(await response.json())};
+  const nextEtag = response.headers.get("etag");
+  if (nextEtag) { stateEtags.set(view, nextEtag); stateCache.set(view, payload); }
+  else { stateEtags.delete(view); stateCache.delete(view); }
+  return payload;
 }
 
 function saveSession(sessionToken, account) {

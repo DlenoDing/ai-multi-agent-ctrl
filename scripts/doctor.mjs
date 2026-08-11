@@ -1361,6 +1361,34 @@ try {
     if (tenantRead.status !== 403) {
       throw new Error(`doctor: 组织管理员读到了跨全部组织的审计归档（HTTP ${tenantRead.status}）`);
     }
+    // 控制台每 5 秒轮询一次当前页视图。内容没变时必须回 304、不传载荷；
+    // 而"变了却还回 304"会让人一直看着旧状态 —— 这两面都要验。
+    {
+      const etagUrl = `http://127.0.0.1:${port}/api/state?view=orgs&limit=200`;
+      const firstResponse = await fetch(etagUrl, {headers: {authorization: systemAuth}});
+      const stateEtag = firstResponse.headers.get("etag");
+      const firstBody = await firstResponse.text();
+      if (!stateEtag) throw new Error("doctor: 状态视图响应没有 ETag —— 控制台每 5 秒的轮询只能整份重传");
+      const notModified = await fetch(etagUrl, {headers: {authorization: systemAuth, "if-none-match": stateEtag}});
+      const notModifiedBody = await notModified.text();
+      if (notModified.status !== 304 || notModifiedBody.length !== 0) {
+        throw new Error(`doctor: 内容没变时没有回 304（HTTP ${notModified.status}，载荷 ${notModifiedBody.length} 字节，`
+          + `首次 ${firstBody.length} 字节）`);
+      }
+      const etagOrgId = (await jsonFetch(port, "/api/state?view=orgs", {headers: {authorization: systemAuth}}))
+        .payload.organizations?.[0]?.orgId;
+      if (!etagOrgId) throw new Error("doctor: ETag 断言拿不到组织 —— 本条在空转");
+      const quotaBump = await jsonFetch(port, `/api/orgs/${etagOrgId}/quotas`, {method: "POST",
+        headers: {"Idempotency-Key": "doctor-etag-bump", authorization: systemAuth},
+        body: JSON.stringify({quotas: {maxMembers: 71}})});
+      if (!quotaBump.response.ok) throw new Error("doctor: ETag 断言的写入没成功");
+      const afterWrite = await fetch(etagUrl, {headers: {authorization: systemAuth, "if-none-match": stateEtag}});
+      if (afterWrite.status !== 200) {
+        throw new Error(`doctor: 写入之后旧 ETag 仍被判为未变化（HTTP ${afterWrite.status}）—— 人会一直看着旧状态`);
+      }
+      console.log("状态视图 ETag ok: 没变回 304 零载荷、变了立刻回 200");
+    }
+
     console.log(`审计归档 ok: ${archive.payload.entries.length} 条可读、哈希链逐条校验、改动能被发现、非系统账号 403`);
   }
   console.log("ai-native control flow ok");

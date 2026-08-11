@@ -1465,6 +1465,18 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
   return base;
 }
 
+// ETag = 视图缓存键 + 那些不进 stateVersion 的运行时事实。后者不带上的话，
+// 自治循环停摆告警、审计归档故障这类只活在内存里的变化会被 304 一直挡在门外。
+function stateViewEtag(cacheKey, central) {
+  const runtimeSignature = [
+    runtimeOrchestratorStatus?.lastTickAt || "",
+    runtimeOrchestratorStatus?.consecutiveErrors || 0,
+    runtimeOrchestratorStatus?.enabled ? 1 : 0,
+    auditArchiveFault?.at || ""
+  ].join("|");
+  return `W/"${digestOf(`${cacheKey}\u0000${central?.stateVersion || 0}\u0000${runtimeSignature}`).slice(7, 39)}"`;
+}
+
 function stateViewCacheKey(account, session, stateVersion, view, limit) {
   return `${account.accountId}:${session.sessionId}:${stateVersion}:${view || "full"}:${limit || "default"}`;
 }
@@ -1714,8 +1726,9 @@ function json(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function jsonString(res, status, payload) {
-  res.writeHead(status, {"content-type": "application/json; charset=utf-8", "cache-control": "no-store"});
+function jsonString(res, status, payload, extraHeaders) {
+  res.writeHead(status, {"content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store", ...(extraHeaders || {})});
   res.end(payload);
 }
 
@@ -2180,13 +2193,25 @@ async function handleApi(req, res) {
     const central = readStoredCentralState({root, runtimeDir, statePath, seedPath, buildInitialState});
     const peeker = central && accountFromRequest(req, central);
     if (peeker) {
-      const peekKey = stateViewCacheKey(peeker.account, peeker.session, central.stateVersion,
-        url.searchParams.get("view") || "full", Number(url.searchParams.get("limit") || 80));
-      const peeked = stateViewCache.get(peekKey);
-      if (peeked && peeked.expiresAt > Date.now()) {
-        jsonString(res, 200, peeked.payload);
+      const view = url.searchParams.get("view") || "full";
+      const limit = Number(url.searchParams.get("limit") || 80);
+      const peekKey = stateViewCacheKey(peeker.account, peeker.session, central.stateVersion, view, limit);
+      // 控制台每 5 秒轮询一次当前页视图（WebSocket 的兜底）。内容没变时，最省的做法不是
+      // "更快地把它发一遍"，而是【根本不发】：ETag 对上就回 304，一个字节的载荷都不用付。
+      // 签名里除了 stateVersion，还要带上不写盘的运行时事实（自治循环健康度、归档故障）——
+      // 它们会变而 stateVersion 不变，只按版本号做 ETag 会让那条停摆告警迟迟不出现。
+      const etag = stateViewEtag(peekKey, central);
+      if (req.headers["if-none-match"] === etag) {
+        res.writeHead(304, {etag, "cache-control": "no-cache"});
+        res.end();
         return;
       }
+      const peeked = stateViewCache.get(peekKey);
+      if (peeked && peeked.expiresAt > Date.now()) {
+        jsonString(res, 200, peeked.payload, {etag, "cache-control": "no-cache"});
+        return;
+      }
+      req.stateViewEtag = etag;
     }
   }
 
@@ -2567,7 +2592,8 @@ async function handleApi(req, res) {
     }
     const view = url.searchParams.get("view") || "full";
     const limit = Number(url.searchParams.get("limit") || 80);
-    jsonString(res, 200, cachedStateView(state, reader.account, reader.session, view, limit));
+    jsonString(res, 200, cachedStateView(state, reader.account, reader.session, view, limit),
+      req.stateViewEtag ? {etag: req.stateViewEtag, "cache-control": "no-cache"} : undefined);
     return;
   }
 
