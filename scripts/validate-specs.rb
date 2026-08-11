@@ -1752,8 +1752,23 @@ human_only_actions = human_only_list.to_s.scan(/"([a-z_]+)"/).flatten.uniq
 errors << "真人专属动作清单没有解析到内容 —— 本条在空转" if human_only_actions.length < 10
 # 取到整个调用（到收尾分号为止），而不是只取第一行 —— 参数换行的调用会被"只看一行"的取法
 # 误判成缺参数，门就会在正确的代码上报红。
-audit_calls = server_source.scan(/audit\(state, ([^,]+), "([a-z_]+)"(.*?)\);$/m)
+# 动作名不一定是字面量：系统级邀请写成三元表达式（systemScopedInvite ? A : B），
+# 只认字面量的取法会把整条调用漏掉 —— 它于是同时躲开执行者检查和结果检查。
+# 改成先取动作实参的整个表达式，再从里面抽出所有动作名，逐个判。
+raw_audit_calls = server_source.scan(/audit\(state, ([^,]+), ((?:[^,]|\?[^:]*:)+?), (.*?)\);$/m)
+audit_calls = raw_audit_calls.reject { |actor, _, _| actor.strip == "actor" }.flat_map do |actor, action_expr, rest|
+  action_expr.scan(/"([a-z_]+)"/).flatten.map { |action| [actor, action, rest] }
+end
+# "带了结果吗"的判据：把字符串和模板串整体挖掉，看 subject 之后还有没有逗号。
+# 上一版要求 subject 必须是模板串（`…`,），于是 subject 写成普通字符串或变量的调用
+# 一律被判成"没带结果"—— 判据的形状不该取决于另一个参数怎么写。
+has_result = lambda do |rest|
+  rest.gsub(/`[^`]*`/, "T").gsub(/"[^"]*"/, "S").include?(",")
+end
 errors << "审计调用没有解析到内容 —— 本条在空转" if audit_calls.length < 30
+# 真人专属动作必须留痕：没有审计的那一条，事后连"发生过"都无从查起。
+unaudited = human_only_actions - audit_calls.map { |_, action, _| action }
+errors << "这些真人专属动作没有任何审计记录：#{unaudited.sort.join(", ")}" unless unaudited.empty?
 audit_calls.each do |actor, action, rest|
   if human_only_actions.include?(action) && actor.strip.start_with?('"')
     errors << %(真人专属动作 #{action} 的审计把执行者写成了字面量 #{actor.strip} —— ) +
@@ -1763,7 +1778,7 @@ audit_calls.each do |actor, action, rest|
             %(既没有中文也说不清它是什么为真) if rest =~ /String\((?!.*\?)/
   next unless human_only_actions.include?(action)
   next unless action =~ /decide|resolve|status_update|waive/
-  next if rest =~ /`,\s*\S/m
+  next if has_result.call(rest)
   errors << %(决策类动作 #{action} 的审计没有记下结果 —— 事后只知道有人处置过，) +
             %(答不出他定的是什么；audit 的第五个参数应带上结果)
 end
@@ -1772,7 +1787,7 @@ end
 # rest 里还含着 subject 参数，所以取的是【最后一个】实参 —— 第一版从 rest 开头匹配，
 # 一个字面量都没提取到，整条门是空的（把结果值改成没译文的词，它照样绿）。
 audit_result_literals = audit_calls.map { |_, _, rest| rest[/,\s*"([a-z0-9_]+)"\s*\z/m, 1] }.compact.uniq
-audit_with_result = audit_calls.count { |_, _, rest| rest =~ /`,\s*\S/m }
+audit_with_result = audit_calls.count { |_, _, rest| has_result.call(rest) }
 errors << "带结果的审计调用一个都没提取到 —— 本条在空转" if audit_with_result < 10
 errors << "审计结果字面量一个都没提取到 —— 本条在空转" if audit_result_literals.empty?
 audit_result_literals.each do |value|
