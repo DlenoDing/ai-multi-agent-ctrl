@@ -4661,17 +4661,41 @@ function verifyPerScopeRecordsSurviveTheirCap(output) {
   }))];
   runAutonomousCycle(state, {root, mode: "all"});
   runAutonomousCycle(state, {root, mode: "all"});
-  const snapshot = () => ({
-    readiness: JSON.stringify(state.completionReadiness),
-    barriers: JSON.stringify(state.closeBarriers),
-    decisions: JSON.stringify(state.admissionDecisions)
-  });
-  const before = snapshot();
-  runAutonomousCycle(state, {root, mode: "all"});
-  const after = snapshot();
-  if (after.readiness !== before.readiness) output.push("任务组数超过上限时，完成度记录每拍被全量重写 —— 上限抖动");
-  if (after.barriers !== before.barriers) output.push("任务组数超过上限时，关闭门记录每拍被全量重写 —— 上限抖动");
-  if (after.decisions !== before.decisions) output.push("单元数超过上限时，准入决策每拍被全量重写 —— 上限抖动");
+  // 判据要系统性，不能只盯着我碰巧观察到的那几个集合：同一形状在这套系统里已经撞过三次
+  // （完成度、关闭门、准入决策），下一个是哪个集合无法预先知道。
+  // 所以直接问【整份状态】：跑到收敛之后再跑一拍，任何一个集合都不许变。
+  const wholeDigest = () => {
+    const {runtime, ...rest} = state;   // runtime 里有注入的心跳，不属于循环产出
+    return JSON.stringify(rest);
+  };
+  let converged = false;
+  let previousDigest = wholeDigest();
+  for (let round = 0; round < 8; round += 1) {
+    runAutonomousCycle(state, {root, mode: "all"});
+    const nextDigest = wholeDigest();
+    if (nextDigest === previousDigest) { converged = true; break; }
+    previousDigest = nextDigest;
+  }
+  if (!converged) {
+    // 收敛不了就要说清是谁在变 —— 这正是"哪个集合还在抖"的答案
+    const before = JSON.parse(previousDigest);
+    runAutonomousCycle(state, {root, mode: "all"});
+    const after = JSON.parse(wholeDigest());
+    const churning = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+      .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]))
+      .map((key) => Array.isArray(before[key]) ? `${key}[${before[key].length}→${(after[key] || []).length}]` : key);
+    output.push(`规模下的编排循环停不下来：连跑 8 拍仍在改状态，还在变的是 ${churning.join("、") || "（说不出是谁，判据本身有问题）"}`
+      + " —— 上限小于对象数时直接 slice 就会这样：每拍全量重写，落盘、ETag 作废、所有控制台重拉重渲染全被带动");
+  }
+
+  // 这道门只能覆盖它真正压过的那些上限 —— 没压过的集合，这一轮等于没验，要说出来。
+  const capsUnderTest = {completionReadiness: 80, closeBarriers: 80, admissionScans: 200,
+    admissionDecisions: 400, modelSelectionDecisions: 160, sessionPlacementDecisions: 160,
+    transitionEvidence: 240, agentTaskContracts: 160, agentDispatches: 240};
+  const exercised = Object.entries(capsUnderTest).filter(([key, cap]) => (state[key] || []).length >= cap).map(([key]) => key);
+  const untouched = Object.keys(capsUnderTest).filter((key) => !exercised.includes(key));
+  console.log(`上限抖动门覆盖：压过上限的集合 ${exercised.join("、") || "无"}`
+    + `｜这一轮没压到上限、因而未被检验的：${untouched.join("、") || "无"}`);
 
   // 活着的对象一条都不能少：否则"没被重写"可能只是因为它们压根没被记。
   const liveGroupIds = (state.taskGroups || []).filter((group) => !["closed", "aborted"].includes(group.status)).map((group) => group.id);

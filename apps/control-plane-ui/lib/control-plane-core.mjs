@@ -1825,7 +1825,7 @@ function recordAdmissionScan(state, input = {}) {
   const sameScan = previousScan && digestOf({...previousScan, scanId: null, sampledAt: null, cycleRef: null})
     === digestOf({...scan, scanId: null, sampledAt: null, cycleRef: null});
   if (sameScan) return previousScan;
-  state.admissionScans = [scan, ...state.admissionScans].slice(0, cap);
+  state.admissionScans = capPerTaskGroupRecords([scan, ...state.admissionScans], state, cap);
   return scan;
 }
 
@@ -3186,6 +3186,8 @@ function capBoundedHistories(state) {
   // 于是任务组一旦关闭，它那些记录就再也没有任何代码会去回收，上限形同虚设。
   if (shouldCap(state.completionReadiness, 80)) state.completionReadiness = capPerTaskGroupRecords(state.completionReadiness, state, 80);
   if (shouldCap(state.closeBarriers, 80)) state.closeBarriers = capPerTaskGroupRecords(state.closeBarriers, state, 80);
+  const scanCap = Math.max(20, Number(process.env.AIMAC_ADMISSION_SCAN_CAP || 200));
+  if (shouldCap(state.admissionScans, scanCap)) state.admissionScans = capPerTaskGroupRecords(state.admissionScans, state, scanCap);
   const admissionCap = Math.max(50, Number(process.env.AIMAC_ADMISSION_DECISION_CAP || 400));
   if (shouldCap(state.admissionDecisions, admissionCap)) {
     state.admissionDecisions = capAdmissionDecisions(state.admissionDecisions, state, admissionCap);
