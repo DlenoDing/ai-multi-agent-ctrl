@@ -192,6 +192,7 @@ verifyShardRoundTripKeepsEveryRecord(errors);
 verifyOrchestrationDoesNotShellOutPerCell(errors);
 verifyActiveDispatchesKeepTheirContracts(errors);
 verifySuspendedOrganizationHaltsExecution(errors);
+verifyHaltedTaskGroupsAreNotClaimable(errors);
 verifyIdempotencyReplayIsPrincipalBound(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
@@ -4170,6 +4171,57 @@ console.log(JSON.stringify({first: {ok: first.ok, error: first.result?.error},
 // 此前"停用"只挡住人工写入（经 hasPermission），而编排周期是系统驱动的、从不读组织状态 ——
 // 于是名下任务组照常派发、agent 照常执行、模型额度照常消耗，而运维在界面上看到的是"已停用"。
 // 这条只能行为验证：源码断言看不出"这一轮到底派没派"。
+// 治理动作必须同时挡住【已经排队】的派发。
+// 编排周期跳过被暂停/被停用的任务组，那只防住"再造新的"；已经在队列里的派发照样会被节点领走，
+// 于是暂停一个任务组、停用一个组织之后 agent 仍在跑、模型额度仍在烧，而控制台写着"已暂停/已停用"。
+// （上一条门只覆盖了新建那一半 —— 这正是它漏掉的另一半。）
+function verifyHaltedTaskGroupsAreNotClaimable(output) {
+  const buildClaimProbe = (halt) => {
+    const probe = structuredClone(seedState);
+    ensureRuntimeCollections(probe, {root});
+    const taskGroup = probe.taskGroups.find((item) => item.id === "tg_runtime_management");
+    taskGroup.workItems = [{id: "w_claim_probe", title: "待派发", status: "draft", ownerRole: "agent-runtime", progress: 0}];
+    probe.taskGroups = [taskGroup];
+    probe.agentDispatches = [];
+    runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+    const dispatch = (probe.agentDispatches || [])[0];
+    if (!dispatch) return null;
+    // 治理动作施加在【派发已经排队之后】：正是这一刻决定了"暂停"是不是只停在纸面上。
+    if (halt === "paused") taskGroup.goalExecutionStatus = "active_paused_by_control";
+    if (halt === "suspended") {
+      const project = probe.projects.find((item) => item.id === taskGroup.projectId);
+      const organization = probe.organizations.find((item) => item.orgId === (project.organizationId || "org_default"));
+      if (!organization) return null;
+      organization.status = "suspended";
+    }
+    const contract = probe.agentTaskContracts.find((item) => item.sessionId === dispatch.sessionId && item.runId === dispatch.runId);
+    probe.agentRuntimeNodes = [{nodeId: "node_claim_probe", organizationId: "org_default", status: "online",
+      admission: "full", projectIds: [dispatch.projectId], allowedRoles: ["*"], activeDispatchIds: [],
+      profile: {models: [{providerClass: contract?.model?.providerClass || "anthropic", adapter: "cli",
+        available: true, modelId: contract?.model?.modelId}]}}];
+    return {probe, claim: claimNextDispatch(probe, probe.agentRuntimeNodes[0], {claimTtlSeconds: 900})};
+  };
+  const normal = buildClaimProbe("none");
+  if (!normal || !normal.claim.dispatch) {
+    output.push(`治理动作必须挡住已排队的派发：正常情况下节点都领不到活（${normal?.claim?.reason || "没有排队派发"}）—— 对照组不成立，本条在空转`);
+    return;
+  }
+  for (const halt of ["paused", "suspended"]) {
+    const probed = buildClaimProbe(halt);
+    if (!probed) {
+      output.push(`治理动作必须挡住已排队的派发：${halt} 场景没造出排队派发 —— 这一轮在空转`);
+      continue;
+    }
+    if (probed.claim.dispatch) {
+      output.push(`治理动作必须挡住已排队的派发：任务组已 ${halt}，节点仍把排队中的派发领走了`
+        + " —— agent 照常执行、模型额度照常消耗，而控制台上写着已暂停/已停用");
+    } else if (probed.claim.reason !== "execution_halted") {
+      output.push(`治理动作必须挡住已排队的派发：${halt} 时拒绝的理由是 ${probed.claim.reason}，不是 execution_halted`
+        + " —— 它与「没有匹配的活」长得一样，会把人引去查角色/模型为什么不匹配");
+    }
+  }
+}
+
 function verifySuspendedOrganizationHaltsExecution(output) {
   const buildProbe = (suspend) => {
     const probe = structuredClone(seedState);

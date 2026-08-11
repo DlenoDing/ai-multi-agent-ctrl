@@ -548,8 +548,27 @@ export function claimNextDispatch(state, node, options = {}) {
   if (node.status !== "online" || node.admission !== "full") return {dispatch: null, reason: "node_not_admitted"};
   recycleExpiredClaims(state);
   expireStaleQueuedDispatches(state);
+  // 治理动作必须挡住【已经排队】的派发，不只是挡住新建。
+  //
+  // 编排周期跳过被暂停的任务组、也跳过被停用组织名下的任务组 —— 但那只防住"再造新的"。
+  // 已经在队列里的派发，此前照样会被节点领走执行：暂停一个任务组、停用一个组织之后，
+  // agent 仍在跑、模型额度仍在烧，而控制台上写着"已暂停/已停用"。（我上一轮只修了新建那一半。）
+  // 两张小表在这里各建一次（认领是低频调用，不在每单元的热路径上），单条判定是 O(1)。
+  const suspendedOrgIds = new Set((state.organizations || [])
+    .filter((organization) => organization.status === "suspended").map((organization) => organization.orgId));
+  const projectOrgId = suspendedOrgIds.size
+    ? new Map((state.projects || []).map((project) => [project.id, project.organizationId || "org_default"]))
+    : null;
+  const haltedTaskGroupIds = new Set();
+  for (const taskGroup of state.taskGroups || []) {
+    const paused = ["active_paused_by_freeze", "active_paused_by_control"].includes(taskGroup.goalExecutionStatus);
+    const orgHalted = projectOrgId && suspendedOrgIds.has(projectOrgId.get(taskGroup.projectId));
+    if (paused || orgHalted) haltedTaskGroupIds.add(taskGroup.id);
+  }
+  let haltedCandidates = 0;
   const dispatch = state.agentDispatches.find((item) => {
     if (item.status !== "queued") return false;
+    if (haltedTaskGroupIds.has(item.taskGroupId)) { haltedCandidates += 1; return false; }
     if (!node.projectIds.includes(item.projectId)) return false;
     if (item.assignedNodeId && item.assignedNodeId !== node.nodeId) return false;
     const contract = state.agentTaskContracts.find((candidate) => candidate.sessionId === item.sessionId && candidate.runId === item.runId);
@@ -561,6 +580,16 @@ export function claimNextDispatch(state, node, options = {}) {
     // 而派发需要什么角色/什么模型根本不在任何视图里（agentTaskContracts 不下发）。人看到的是一个
     // 绿色"在线/完全准入"的节点加一条"排队中"的派发，两种原因（角色不匹配 / 模型不可用）
     // 在界面上长得一模一样。控制面在筛的时候就知道答案，只是没把它留下来。
+    // 区分"没有匹配的活"与"活被治理动作挡住了"：两者在界面上原本长得一模一样，
+    // 而后者会让人去查角色/模型为什么不匹配 —— 那是一条完全找错方向的排查路径。
+    if (haltedCandidates > 0) {
+      // 沿用界面既有的形状（queuedCount + reasons[]）：claimMissHint 缺 queuedCount 会整条不渲染 ——
+      // 那样这条诊断只存在于返回值里，控制台上依旧什么都看不到。
+      node.lastClaimMiss = {queuedCount: haltedCandidates, at: new Date().toISOString(),
+        reasons: [{reason: "execution_halted"}]};
+      node.updatedAt = new Date().toISOString();
+      return {dispatch: null, reason: "execution_halted"};
+    }
     node.lastClaimMiss = summarizeClaimMiss(state, node);
     node.updatedAt = new Date().toISOString();
     return {dispatch: null, reason: "no_compatible_dispatch"};

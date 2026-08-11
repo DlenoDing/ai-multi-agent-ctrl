@@ -502,6 +502,7 @@
     runtime_execution: "运行时执行确认",
     review_passed_awaiting_human_confirmation: "互审通过·待人工定稿",
     human_verification_rejected: "人工验收未通过·待返工决策",
+    execution_halted: "执行已被治理动作挡住（任务组暂停或组织停用）",
     human_confirmation_expired: "人工确认已超时·待人工决策",
     awaiting_human_split_confirmation: "等待人工确认拆分方案",
     cell_held_for_human_plan_confirmation: "方案待人工定稿，暂缓执行",
