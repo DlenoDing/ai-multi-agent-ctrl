@@ -365,6 +365,20 @@ if seed_state.fetch("progressSnapshots", []).empty?
   errors << "seed progressSnapshots must be precomputed for MCP delivery (doctor-mcp asserts its tenant scoping)"
 end
 
+# 视图里裁掉的字段，控制台就【不该再引用】—— 引用了就会拿到 undefined，而且那种坏法很隐蔽：
+# 页面不报错，只是永远显示"-"。想渲染它，就先把裁剪去掉。
+# 判据同时防空转：裁剪表为空说明这条配置已经失效（比如字段改了名），也要报出来。
+view_server_source = File.read(File.join(ROOT, "apps/control-plane-ui/server.mjs"))
+dropped_block = view_server_source[/const viewDroppedFields = \{(.*?)\n  \};/m].to_s
+dropped_fields = dropped_block.scan(/"([a-zA-Z]+)"/).flatten.uniq - dropped_block.scan(/^\s{4}([a-zA-Z]+):/).flatten
+errors << "视图字段裁剪表是空的 —— 要么删掉这套机制，要么它已经失效" if dropped_fields.empty?
+console_for_dropped = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+dropped_fields.each do |field|
+  next unless console_for_dropped.include?(".#{field}")
+  errors << "字段 #{field} 已在视图里被裁掉，控制台却仍在引用它 —— 页面不会报错，只会永远显示空值。" \
+            "要渲染它就先把它从 viewDroppedFields 里去掉"
+end
+
 # 视图下发的每个集合都要有人读。控制台是轮询的，多发一个集合就是每次请求都多付一笔 ——
 # progressSnapshots 曾经在基底里，单条 97KB（它把 repositoryOutputs 与 workItems 整份嵌了进去），
 # 每个视图每次响应白白多 191KB，而全站没有一处读它。

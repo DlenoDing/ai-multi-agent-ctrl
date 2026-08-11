@@ -1389,6 +1389,14 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     accountDirectory: Object.fromEntries((scoped.accounts || []).map((item) => [item.accountId, item.displayName || item.accountId])),
     ...faultField
   };
+  // 记录里有些字段【控制台一个都不读】，而它们占了大头：单条模型选择决策 3989 字节，
+  // 其中 candidateRankings 1869、hardConstraintResults 550 —— 视图一次发 80 条，
+  // 光这两项就是约 190KB，而界面只显示角色、工作项、选定模型、状态和一句摘要。
+  // 只在【视图】里裁掉：state 本身、view=full、MCP 下发都不受影响，需要细节时从那里取。
+  // 判据由 validate-specs 守着：被裁掉的字段不得在控制台被引用（想渲染它就先把裁剪去掉）。
+  const viewDroppedFields = {
+    modelSelectionDecisions: ["candidateRankings", "hardConstraintResults"]
+  };
   const viewFields = {
     // policyDecisions / commands / decisionRecords 控制台一处都没读 —— 需要时从 view=full 取。
     system: ["accounts", "auditLog"],
@@ -1407,6 +1415,15 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
   for (const field of viewFields[view] || []) {
     const value = scoped[field];
     base[field] = Array.isArray(value) ? sliceItems(value, capped) : value;
+    const dropped = viewDroppedFields[field];
+    if (dropped && Array.isArray(base[field])) {
+      base[field] = base[field].map((item) => {
+        if (!item || typeof item !== "object") return item;
+        const trimmed = {...item};
+        for (const key of dropped) delete trimmed[key];
+        return trimmed;
+      });
+    }
   }
   // 视角为了体积把每个集合截到 capped 条，而界面拿这些数组直接报数（「共 N 项等待你处理，跨你
   // 可见的全部项目统计」）——超过上限时那个 N 是错的，且错得毫无痕迹：人以为处置完这 N 项就清空了。
