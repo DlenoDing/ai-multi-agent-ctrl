@@ -5109,7 +5109,14 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
       } else if (directive.directiveType === "cancel" && taskGroup) {
         taskGroup.goalExecutionStatus = "active_paused_by_freeze";
         taskGroup.pauseReason = "human_directive_cancel";
-        for (const dispatch of (state.agentDispatches || []).filter((item) => item.taskGroupId === taskGroup.id && ["queued", "blocked"].includes(item.status))) {
+        // 「取消」必须覆盖【正在跑的】那一段。此前这个筛选只有 queued/blocked，于是人下了取消之后，
+        // 在跑的 agent 照样跑完、推 git、交检查点 —— 而 HTTP 上同名的取消动作一直是会停的：
+        // 同一个操作意图，两条路径两种语义。
+        // 停住在跑的那一步靠的是下面本来就在调的 revokeDispatchNodeBinding：它吊销该派发的 MCP 授权
+        // 并解绑节点，而 agent 在 push 之前会向控制面复核持有权（assertStillHoldsClaim），复核失败即
+        // 在不可逆副作用之前停手。这与 deny/abandon 级联停住在跑工作用的是同一套机制，
+        // 不需要 core 去调住在 agent-gateway 里的命令构造器（那会形成模块循环）。
+        for (const dispatch of (state.agentDispatches || []).filter((item) => item.taskGroupId === taskGroup.id && ["queued", "blocked", "running"].includes(item.status))) {
           dispatch.status = "cancelled";
           dispatch.failureReason = "human_directive_cancel";
           cancelPendingConfirmationsForDispatch(state, dispatch.dispatchId, "human_directive_cancel");

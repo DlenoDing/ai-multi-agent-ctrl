@@ -194,6 +194,7 @@ verifyActiveDispatchesKeepTheirContracts(errors);
 verifySuspendedOrganizationHaltsExecution(errors);
 verifyHaltedTaskGroupsAreNotClaimable(errors);
 verifySuspendHaltsRunningWork(errors);
+verifyCancelDirectiveStopsRunningWork(errors);
 verifyIdempotencyReplayIsPrincipalBound(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
@@ -4180,6 +4181,52 @@ console.log(JSON.stringify({first: {ok: first.ok, error: first.result?.error},
 // 任务组"暂停"一直会向在跑的 agent 下 pause_dispatch，而组织"停用"此前只翻一个字段 ——
 // 名下已经在跑的 agent 继续跑到底、继续推 git、继续烧额度，而控制台上写着"已停用"。
 // 这条只能行为验证：源码断言看不出"那条在跑的派发到底有没有被叫停"。
+// 人工指令「取消」必须覆盖【正在跑的】那一段。
+// 此前它只处理 queued/blocked：人下了取消，在跑的 agent 照样跑完、推 git、交检查点 ——
+// 而 HTTP 上同名的取消动作一直是会停的，同一个操作意图两条路径两种语义。
+// 停手的实际机制：agent 在 push 之前会向控制面复核持有权（assertStillHoldsClaim →
+// validateDispatchClaim），而那条复核同时看 assignedNodeId 与 status —— 派发一被标成 cancelled 就失败。
+// 解绑节点与吊销 MCP 授权（revokeDispatchNodeBinding）是同一路径上的纵深防御，不是唯一依据。
+// 所以这条不只断言"状态变成 cancelled"，还要断言【那条复核确实会失败】：状态改了而复核照过，
+// 等于取消只停在控制面自己的账面上。
+function verifyCancelDirectiveStopsRunningWork(output) {
+  const probe = structuredClone(seedState);
+  ensureRuntimeCollections(probe, {root});
+  const taskGroup = probe.taskGroups.find((item) => item.id === "tg_runtime_management");
+  taskGroup.workItems = [{id: "w_cancel_probe", title: "在跑", status: "draft", ownerRole: "agent-runtime", progress: 0}];
+  probe.taskGroups = [taskGroup];
+  probe.agentDispatches = [];
+  runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+  const dispatch = (probe.agentDispatches || [])[0];
+  if (!dispatch) {
+    output.push("取消指令必须停住在跑的执行：没造出派发 —— 这条断言在空转");
+    return;
+  }
+  dispatch.status = "running";
+  dispatch.assignedNodeId = "node_cancel_probe";
+  probe.agentRuntimeNodes = [{nodeId: "node_cancel_probe", organizationId: "org_default", status: "online",
+    admission: "full", projectIds: [dispatch.projectId], allowedRoles: ["*"],
+    activeDispatchIds: [dispatch.dispatchId], profile: {models: []}}];
+  createHumanDirective(probe, {taskGroupId: taskGroup.id, directiveType: "cancel", instruction: "停下"}, {actor: "acct_alice"});
+  runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+  const directive = (probe.humanDirectives || []).find((item) => item.directiveType === "cancel");
+  if (directive?.status !== "applied") {
+    output.push(`取消指令必须停住在跑的执行：指令没有被应用（${directive?.status || "缺失"}：${directive?.rejectReason || "无原因"}）—— 这条断言在空转`);
+    return;
+  }
+  const settled = (probe.agentDispatches || []).find((item) => item.dispatchId === dispatch.dispatchId);
+  if (settled?.status !== "cancelled") {
+    output.push(`取消指令必须停住在跑的执行：在跑的派发仍是 ${settled?.status} —— agent 会跑完、推 git、交检查点`);
+  }
+  // 状态改了还不够：真正让 agent 停手的是"push 前复核持有权会失败"。
+  // 第四个形参是 claimEpoch 的【值】，不是对象：传对象会让它恒判 claim_epoch_stale，断言就成了摆设。
+  const claim = validateDispatchClaim(probe, probe.agentRuntimeNodes[0], dispatch.dispatchId, dispatch.claimEpoch);
+  if (claim.valid) {
+    output.push("取消指令必须停住在跑的执行：派发标成了 cancelled，但 agent 复核持有权仍然通过"
+      + " —— 它会照常推到远端，取消只停在控制面自己的账面上");
+  }
+}
+
 function verifySuspendHaltsRunningWork(output) {
   const probe = structuredClone(seedState);
   ensureRuntimeCollections(probe, {root});
