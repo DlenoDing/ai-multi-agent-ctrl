@@ -1362,6 +1362,20 @@ function cachedScopedState(state, account, session) {
   return scoped;
 }
 
+// 列表视图里每个任务组最多嵌这么多工作单元；真实总数另给 workItemCount。
+const embeddedWorkItemCap = Math.max(5, Number(process.env.AIMAC_VIEW_EMBEDDED_WORK_ITEM_CAP || 20));
+
+// 只写一处：视图基底与各视角的字段清单都会产出 taskGroups，分别写一遍的话，
+// 后写的那次会把前一次的截断【覆盖掉】——实测就是这么漏的（tasks 视角照旧 89KB）。
+function projectTaskGroupsForView(taskGroups) {
+  return taskGroups.map((taskGroup) => {
+    const items = Array.isArray(taskGroup.workItems) ? taskGroup.workItems : [];
+    if (items.length <= embeddedWorkItemCap) return {...taskGroup, workItemCount: items.length};
+    return {...taskGroup, workItems: items.slice(0, embeddedWorkItemCap),
+      workItemCount: items.length, workItemsTruncated: true};
+  });
+}
+
 function stateViewForAccount(state, account, session, view = "full", limit = 80) {
   const scoped = cachedScopedState(state, account, session);
   // 归档故障的错误文本里会带运行目录路径，且它是系统级运维事实 —— 只给系统账号。
@@ -1375,7 +1389,11 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     runtime: scoped.runtime,
     agents: sliceItems(scoped.agents, capped),
     projects: sliceItems(scoped.projects, capped),
-    taskGroups: sliceItems(scoped.taskGroups, capped),
+    // 任务组把全部工作单元嵌在里面，而它在【基底】里 —— 每个视图、每次请求都带上。
+    // 实测 3000 单元时仅这一项就 276KB，且随规模线性涨。控制台在列表页只用它做一个计数，
+    // 明细页的工作项另有专用端点 /api/task-groups/:id/progress。
+    // 所以这里截断，但必须【同时给出真实总数】：把截断后的长度当总数，正是这套系统反复栽过的坑。
+    taskGroups: projectTaskGroupsForView(sliceItems(scoped.taskGroups, capped)),
     modelCapabilities: sliceItems(scoped.modelCapabilities, capped),
     agentRuntimeNodes: sliceItems(scoped.agentRuntimeNodes, capped),
     // progressSnapshots 不进视图基底：控制台的进度数据走专用端点 /api/task-groups/:id/progress
@@ -1414,7 +1432,9 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
   };
   for (const field of viewFields[view] || []) {
     const value = scoped[field];
-    base[field] = Array.isArray(value) ? sliceItems(value, capped) : value;
+    base[field] = Array.isArray(value)
+      ? (field === "taskGroups" ? projectTaskGroupsForView(sliceItems(value, capped)) : sliceItems(value, capped))
+      : value;
     const dropped = viewDroppedFields[field];
     if (dropped && Array.isArray(base[field])) {
       base[field] = base[field].map((item) => {

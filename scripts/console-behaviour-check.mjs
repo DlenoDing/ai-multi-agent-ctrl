@@ -479,6 +479,38 @@ function runPendingTruncationCase() {
       "体积明明量到了，界面却说量不到 —— 那条提示会变成常亮的噪音");
   }
 
+  // 视图里嵌的工作项是截断过的（真实总数在 workItemCount）。把截断后的长度当总数，
+  // 正是这套系统反复栽过的坑：人看到"工作项：20"，实际有 300 个。
+  {
+    const truncatedState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development",
+        workItems: Array.from({length: 20}, (_, index) => ({id: `w${index}`, title: `单元${index}`, status: "draft"})),
+        workItemCount: 300, workItemsTruncated: true}],
+      agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], findings: [],
+      humanConfirmationRequests: [], truncatedCollections: []
+    };
+    const listView = probe.renderTaskGroupsWith(truncatedState, admin, "p1");
+    check("列表页的工作项数要报真实总数",
+      /工作项：300/.test(listView),
+      `嵌入的工作项被截断到 20 条，列表页却按截断后的长度报数 —— 人看到的是一个假数字（片段：${
+        (listView.match(/工作项：\d+/) || ["无"])[0]}）`);
+    // 明细页的 tgDetail 要给全形状（taskGroupId/progress/config/roomMessages），
+    // 只传 {} 的话渲染根本走不到工作项那一段 —— 断言就成了在看一个没渲染出来的页面。
+    const detailView = probe.renderTaskGroupsWith(truncatedState, admin, "p1", "tg1",
+      {taskGroupId: "tg1", progress: {}, config: null, roomMessages: []});
+    check("回落到截断列表时必须说清不是全部",
+      /不要据此判断/.test(detailView) && /共 300 个/.test(detailView),
+      "进度接口没加载出来、明细页回落到截断过的那份，却不说这只是前若干个 —— 人会据此判断只有这些");
+    const fullState = structuredClone(truncatedState);
+    fullState.taskGroups[0] = {...fullState.taskGroups[0], workItemCount: 20, workItemsTruncated: false};
+    check("没有截断时不得挂着那条提示",
+      !/不要据此判断/.test(probe.renderTaskGroupsWith(fullState, admin, "p1", "tg1",
+        {taskGroupId: "tg1", progress: {}, config: null, roomMessages: []})),
+      "没有截断却仍提示这不是全部 —— 常亮的提示等于没有提示");
+  }
+
   // 角色技能叠加会改掉 agent 实际拥有的能力（含禁用某些能力），数据一直下发到系统设置页，
   // 却从没被渲染过 —— 人看不到某个项目/任务组的角色规则被谁改过、改成了什么。
   {

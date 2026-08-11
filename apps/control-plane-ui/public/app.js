@@ -2106,7 +2106,7 @@ function renderTaskGroups() {
         <div class="record-meta">
           <span>语言：${esc(taskGroup.languagePolicy?.languageName || taskGroup.languagePolicy?.languageTag || "中文")}</span>
           <span>角色数：${(taskGroup.roles || []).length}</span>
-          <span>工作项：${(taskGroup.workItems || []).length}</span>
+          <span>工作项：${esc(taskGroup.workItemCount ?? (taskGroup.workItems || []).length)}</span>
           <span>更新时间：${fmtTime(taskGroup.updatedAt)}</span>
         </div>
         <div class="button-row">
@@ -2218,6 +2218,9 @@ function renderTaskGroupDetail(taskGroup) {
     </div>
   ` : `<div class="notice">当前账号无“任务组控制”权限，仅可查看。当前统一语言：${esc(languagePolicy.languageName || languagePolicy.languageTag || "中文")}。</div>`;
 
+  // 视图里嵌的工作项是截断过的（真实总数在 workItemCount）。明细页优先用专用端点的完整列表；
+  // 只有它没加载出来时才回落到这份截断的，而那时必须说清楚"这不是全部"。
+  const embeddedTruncated = !progressData.workItems && taskGroup.workItemsTruncated === true;
   const workItems = (progressData.workItems || taskGroup.workItems || []).map((workItem) => {
     const dispatch = findWorkItemDispatch(taskGroup.id, workItem.id);
     return `
@@ -2325,7 +2328,9 @@ function renderTaskGroupDetail(taskGroup) {
       ${sectionBlock("角色列表", `<div class="stack">${roles}</div>`)}
       ${sectionBlock("配置（继承 / 自定义）", configHtml)}
       ${sectionBlock("执行控制", controlHtml)}
-      ${sectionBlock("工作项", `<div class="stack">${workItems || `<div class="notice">暂无工作项。</div>`}</div>`)}
+      ${sectionBlock("工作项", `<div class="stack">${embeddedTruncated
+        ? `<div class="notice warn-notice">进度接口没有加载出来，这里回落到列表视图里嵌的前 ${(taskGroup.workItems || []).length} 个（共 ${esc(taskGroup.workItemCount ?? "?")} 个）—— 不要据此判断"只有这些"。请刷新重试。</div>`
+        : ""}${workItems || `<div class="notice">暂无工作项。</div>`}</div>`)}
       ${sectionBlock("准入与阻断分类", admissionHtml)}
       ${sectionBlock("阻塞", `<div class="stack">${blockers}</div>`)}
       ${sectionBlock("协作记录（agent 之间的房间消息）", roomHtml)}
