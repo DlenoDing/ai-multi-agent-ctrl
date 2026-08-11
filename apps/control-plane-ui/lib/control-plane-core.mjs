@@ -5870,7 +5870,13 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
         && item.workItemId === workItem.id && item.contentDigestAttested === true);
         const waived = gates.filter((gate) => gate.status === "waived");
         const notes = [];
-        if (reversed.length) notes.push(`\n⚠ 以下质量门曾判失败、后由执行方重报为通过（已附新证据）：${reversed.map((gate) => gate.gateType).join("、")}`);
+        if (reversed.length) {
+          notes.push(`\n⚠ 以下质量门曾判失败、后由执行方重报为通过 —— 新增的证据是什么，人必须自己看：${
+            reversed.map((gate) => {
+              const fresh = (gate.reversals || []).flatMap((item) => item.freshEvidenceRefs || []);
+              return `${gate.gateType}（新增证据：${fresh.length ? fresh.slice(0, 4).join("、") : "未记录"}）`;
+            }).join("；")}`);
+        }
         if (waived.length) notes.push(`\n⚠ 以下质量门为人工豁免：${waived.map((gate) => `${gate.gateType}（${gate.waivedBy || "?"}）`).join("、")}`);
         // "证据已就绪"不能掩盖"这次交付到底有多大"。卡片原先只列提交/推送/清单是否齐全，
         // 不显示改了哪些路径、改了几个文件 —— 于是一次只动了一个清单文件的提交，
@@ -6086,6 +6092,12 @@ export function recordQualityGateFromTest(state, testResult) {
       // 留痕：这道门曾经失败过。close barrier 与人工确认卡片都要让人看见，
       // 否则人看到的只是"全通过"，而看不到"其中一条是被重报翻过来的"。
       existing.previouslyFailed = true;
+      // 光说"已附新证据"等于没说：人要判断的正是【那份证据是什么】。
+      // clearedEvidenceRefs 把新旧证据并在一起（它的用途是去重），事后分不清这次翻案新增了哪几条，
+      // 所以单独记一笔：什么时候、凭哪个测试结果、新增了哪几条证据。
+      existing.reversals = [...(existing.reversals || []), {
+        at, testResultRef: testResult.testResultId, freshEvidenceRefs: freshEvidence.slice(0, 8)
+      }].slice(-5);
     }
     existing.status = passed ? "passed" : "failed";
     existing.testResultRef = testResult.testResultId;

@@ -72,6 +72,34 @@
     "updatedAt": {
       "type": "string",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    },
+    "reversals": {
+      "description": "这道门每一次曾判失败、后被重报为通过的留痕：什么时候、凭哪个测试结果、新增了哪几条证据。人工确认卡片要把它原样摆给人看 —— 只说已附新证据，人无从判断。",
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "testResultRef": {
+            "type": "string"
+          },
+          "freshEvidenceRefs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8
+          }
+        }
+      }
     }
   }
 }

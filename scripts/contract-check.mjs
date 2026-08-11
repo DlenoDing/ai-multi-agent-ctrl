@@ -1231,6 +1231,16 @@ function verifyHumanAndOrganizationContracts(output) {
     const afterFresh = submitGate("passed", ["run:2"]);          // 带新证据
     if (afterFresh.status !== "passed") output.push("人工闸门: 带新证据的重报仍无法清除失败的质量门（正常流程被打断）");
     if (!afterFresh.previouslyFailed) output.push("人工闸门: 质量门被翻转却没有留下 previouslyFailed 痕迹（人看不到这条曾失败）");
+    // "已附新证据"这句话本身不构成判断依据 —— 人要判断的正是【那份证据是什么】。
+    // clearedEvidenceRefs 把新旧并在一起（它的用途是去重），事后分不清这次新增了哪几条。
+    const reversalTrace = (afterFresh.reversals || []).at(-1);
+    if (!reversalTrace || !(reversalTrace.freshEvidenceRefs || []).includes("run:2")) {
+      output.push("人工闸门: 质量门被翻转，却没有单独记下【这次新增的是哪几条证据】 —— "
+        + `人只被告知"已附新证据"，无从判断（reversals=${JSON.stringify(afterFresh.reversals || [])}）`);
+    }
+    if ((reversalTrace?.freshEvidenceRefs || []).includes("run:1")) {
+      output.push("人工闸门: 翻案留痕把【旧证据】也算成了这次的新增 —— 那份留痕会让人以为证据比实际更多");
+    }
 
     // 待人工定稿期间不得继续派发同一个工作项：否则人还在看"这份成果算不算通过"，
     // AI 已经重新拿到写租约把对象改掉了，而定稿之后互审又会永久跳过它。
@@ -1762,6 +1772,46 @@ function verifyHumanAndOrganizationContracts(output) {
     const pgOutcome = performIndependentReview(pgState, pgTg, pgWork, {root}, {});
     if (pgOutcome.reviewed !== false && pgOutcome.verdict === "passed") {
       output.push("互审空转: 该工作项有未通过的质量门，互审却仍然判为通过（它只复述了接受检查点时已强制过的事实）");
+    }
+
+    // 翻案过的质量门要在【人做决定的那张卡上】说清新增证据是什么。
+    // 上面已经验了留痕落库；这里走真实入口 performIndependentReview 生成验收卡，读卡片正文。
+    {
+      // pgState 跑过一轮互审之后工作项已是 verified、检查点也被消费掉了，
+      // 直接复用会得到 checkpoint_missing —— 那样断言看的是"卡没生成"，而不是卡里写了什么。
+      // 所以重新造一份：工作项回到待验收，检查点齐备。
+      const cardState = structuredClone(pgState);
+      const cardTg = cardState.taskGroups.find((item) => item.id === pgTg.id);
+      // 工作项要从【检查点实际挂在谁身上】反查，不能想当然取 workItems[0] ——
+      // 取错了只会得到 checkpoint_missing，断言看的就成了"卡没生成"，而不是卡里写了什么。
+      const cardCheckpoint = (cardState.checkpoints || [])[0];
+      const cardWork = cardTg.workItems.find((item) => item.id === cardCheckpoint?.workId) || cardTg.workItems[0];
+      cardWork.status = "checkpoint_submitted";
+      // 上一轮互审把写入目标推进过，克隆过来已不是 pushed —— 显式摆回前置态，
+      // 否则互审会因为"目标未到终态"判 changes_requested，而那与本条要验的事无关。
+      for (const outputTarget of cardState.repositoryOutputs || []) {
+        if ((cardCheckpoint?.repositoryOutputTargetRefs || []).includes(outputTarget.targetId)) outputTarget.status = "pushed";
+      }
+      cardState.humanConfirmationRequests = [];
+      cardState.checkpoints = structuredClone(pgState.checkpoints || []);
+      cardState.qualityGates = [{gateId: "qg_card", taskGroupId: cardTg.id, workItemId: cardWork.id,
+        gateType: "test", status: "passed", previouslyFailed: true, evidenceRefs: ["run:1", "run:2"],
+        reversals: [{at: "2026-08-01T00:00:00Z", testResultRef: "tr_2", freshEvidenceRefs: ["run:2"]}]}];
+      const cardOutcome = performIndependentReview(cardState, cardTg, cardWork, {root}, {});
+      if (!(cardState.humanConfirmationRequests || []).length) {
+        output.push(`翻案证据断言没有生成验收卡（${JSON.stringify(cardOutcome).slice(0, 400)}）—— 本条在空转`);
+      }
+      const card = (cardState.humanConfirmationRequests || [])
+        .find((item) => item.decisionType === "work_item_verification" && item.workItemId === cardWork.id);
+      if (card) {
+        // 判据落在【人真正读到的那段正文】上（question.summary/detail），
+        // 不是整份 JSON —— 后者会因为证据出现在别的字段里而恒为真。
+        const text = `${card.question?.summary || ""}\n${card.question?.detail || ""}`;
+        if (!text.includes("run:2")) {
+          output.push("质量门被翻案过，验收卡却没有写出【新增的证据是什么】 —— "
+            + `人只被告知"已附新证据"，无从判断（卡片正文：${text.slice(0, 160)}）`);
+        }
+      }
     }
 
     // join token 的脱敏原先是"逐个剥掉已知敏感字段"的黑名单式，于是后加的 registrationReplay
