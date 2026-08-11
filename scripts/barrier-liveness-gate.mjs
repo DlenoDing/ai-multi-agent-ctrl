@@ -237,8 +237,16 @@ export function checkBarrierLiveness() {
 
   // 具名状态常量（pendingStatuses / FOO_TERMINAL 之类）展开成字面量集合
   const namedSets = {};
-  for (const match of source.matchAll(/const ([A-Z_a-z]+(?:STATUSES|TERMINAL|Statuses))\s*=\s*(?:new Set\()?\[(.*?)\]/gs)) {
+  // 字面量数组：const X = [...] / new Set([...]) / Object.freeze([...])
+  for (const match of source.matchAll(/const ([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:Object\.freeze\(|new Set\(|)+\s*\[(.*?)\]/gs)) {
     namedSets[match[1]] = [...match[2].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  }
+  // 再解一层别名：const COMMAND_TERMINAL = new Set(COMMAND_TERMINAL_STATES);
+  // 不解这一层的话，凡是这样写的门在本门眼里"一个状态字面量都没有"，于是被静默跳过 ——
+  // 实测正是这样：all_commands_terminal / all_command_effects_terminal / no_active_dlq /
+  // no_unreconciled_command_effect 四道门从来没有被空转检查覆盖过，而本门存在的全部意义就是覆盖它们。
+  for (const match of source.matchAll(/const ([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new Set\(([A-Za-z_][A-Za-z0-9_]*)\)/gu)) {
+    if (namedSets[match[2]] && !namedSets[match[1]]) namedSets[match[1]] = namedSets[match[2]];
   }
 
   // 全仓实际被写入过的 status 值（含 seed 与测试夹具外的生产代码）。
@@ -255,21 +263,60 @@ export function checkBarrierLiveness() {
     }
   }
 
+  // 按【条目】切，不按行切。逐行分析有个潜伏盲区：一道门只要换行写，
+  // 带门名的那一行就看不到 .status、带 .status 的那一行又没有门名 —— 这道门于是被静默跳过，
+  // 而 checked 只少 1，固定阈值那条自检根本发现不了。今天恰好没有跨行条目，
+  // 但"今天恰好没有"不是判据。（本会话已经两次栽在"提取认不全真实写法"上。）
+  const allLines = blocks.join("\n").split("\n");
+  const entries = [];
+  for (let index = 0; index < allLines.length; index += 1) {
+    const head = allLines[index].trim();
+    if (!head || !head.includes(":")) continue;
+    const name = head.slice(0, head.indexOf(":")).trim();
+    if (!/^[a-z_]+$/.test(name) && !name.startsWith("blocker_")) continue;
+    let end = index + 1;
+    while (end < allLines.length) {
+      const next = allLines[end].trim();
+      const nextName = next.includes(":") ? next.slice(0, next.indexOf(":")).trim() : "";
+      if (next && (/^[a-z_]+$/.test(nextName) || nextName.startsWith("blocker_"))) break;
+      end += 1;
+    }
+    entries.push({name, text: allLines.slice(index, end).join("\n")});
+  }
+  const statusEntries = entries.filter((entry) => /\.status\b/.test(entry.text));
+
   let checked = 0;
-  for (const line of blocks.join("\n").split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || !trimmed.includes(":")) continue;
-    const gateName = trimmed.slice(0, trimmed.indexOf(":"));
-    // 只看确实在比较 status 的门；比较其它字段的（如 grantStatus、dispositionClass）不在本门范围内
-    if (!/\.status\b/.test(line)) continue;
-    const collection = Object.keys(COLLECTION_ENTITY).find((name) => new RegExp(`\\b${name}\\b`).test(line));
+  const skipped = [];
+  // 一个条目可能同时比较【两个集合】（如 no_pending_permission_or_approval 同时看授权与审批）。
+  // 整段按一个实体去核对会把另一个实体的合法状态误判成"凭印象拼写"。所以按集合出现处分段：
+  // 每一段从一个已登记集合名开始，到下一个集合名为止，各自用自己的实体核对。
+  const segments = [];
+  for (const entry of statusEntries) {
+    const hits = [];
+    for (const name of Object.keys(COLLECTION_ENTITY)) {
+      for (const match of entry.text.matchAll(new RegExp(`\\b${name}\\b`, "gu"))) hits.push({name, at: match.index});
+    }
+    hits.sort((left, right) => left.at - right.at);
+    if (!hits.length) { segments.push({name: entry.name, text: entry.text, collection: null}); continue; }
+    hits.forEach((hit, index) => {
+      const end = index + 1 < hits.length ? hits[index + 1].at : entry.text.length;
+      const text = entry.text.slice(hit.at, end);
+      if (/\.status\b/.test(text)) segments.push({name: entry.name, text, collection: hit.name});
+    });
+  }
+  for (const entry of segments) {
+    const line = entry.text;
+    const gateName = entry.name;
+    const collection = entry.collection;
     if (!collection) {
+      skipped.push(`${gateName}(集合未登记)`);
       failures.push(`空转门检查: 门 ${gateName} 检查了 .status 但集合未登记到 COLLECTION_ENTITY（无法核对，等于绕过本门）`);
       continue;
     }
     const entity = COLLECTION_ENTITY[collection];
     const machine = machines[entity];
     if (!machine) {
+      skipped.push(`${gateName}/${entity}(未登记状态机)`);
       failures.push(`空转门检查: 实体 ${entity} 未在 spec/state-machines.yaml 登记状态集（门 ${gateName} 的状态名无从核对）`);
       continue;
     }
@@ -285,7 +332,9 @@ export function checkBarrierLiveness() {
     for (const named of line.matchAll(/([A-Z_a-z]+(?:STATUSES|TERMINAL|Statuses))\.includes\(/g)) {
       if (namedSets[named[1]] && /\.status/.test(line)) literals.push(...namedSets[named[1]]);
     }
-    if (!literals.length) continue;
+    // 段里比较了 status，却一个状态字面量都没提取到 —— 那不是"没什么可查"，
+    // 是提取没认出这里的写法（变量、模板串、具名常量换了命名规则都会这样）。要说出来。
+    if (!literals.length) { skipped.push(`${gateName}/${collection}(没提取到状态字面量)`); continue; }
     checked += 1;
     const unique = [...new Set(literals)];
     // 第二层：状态名登记了不代表它会出现。真正要问的是 ——【什么状态会让这道门触发，
@@ -305,6 +354,19 @@ export function checkBarrierLiveness() {
     }
   }
 
+  // 自检从"魔数下限"改成【精确相等】：凡是文本里比较过 status 的条目，都必须被核对过。
+  // 少一个就说明切分或登记出了问题，而不是"还在阈值以上所以没事"。下限那条保留，防两侧一起塌。
+  // 每一个"比较了 status 的段"都必须被核对过。少一个就是有东西被静默跳过，
+  // 而不是"还在阈值以上所以没事"。同时要求每个条目至少产出一段，否则条目整个消失也发现不了。
+  if (checked !== segments.length) {
+    failures.push(`空转门检查: 切出 ${segments.length} 段比较 status 的判据，却只核对了 ${checked} 段 —— 有判据被静默跳过`
+      + `（跳过的：${skipped.join("、") || "未记录，说明还有一条没走 skipped"}）`);
+  }
+  const coveredEntries = new Set(segments.map((segment) => segment.name));
+  const droppedEntries = statusEntries.filter((entry) => !coveredEntries.has(entry.name)).map((entry) => entry.name);
+  if (droppedEntries.length) {
+    failures.push(`空转门检查: 这些判据比较了 status 却一段都没切出来：${droppedEntries.join("、")} —— 切分逻辑与代码脱节`);
+  }
   if (checked < 20) failures.push(`空转门检查: 仅核对到 ${checked} 道涉及 status 的关闭门，远少于预期 —— 提取逻辑已与代码脱节，本门可能在空转（本门自身也不许空转）`);
   return failures;
 }
