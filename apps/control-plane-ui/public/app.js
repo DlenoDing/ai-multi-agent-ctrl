@@ -2286,7 +2286,10 @@ function renderTaskGroupDetail(taskGroup) {
   const barrierBlockers = groupBarrier && !groupBarrier.satisfied ? (groupBarrier.blockingObjects || []) : [];
   const advisoryBlockers = (progressData.blockers || taskGroup.blockers || []).map((blocker) => `
     <div class="record"><div class="record-title">${badge(blocker.severity || "attention")} <span>${esc(blocker.summary)}</span></div></div>
-  `).join("");
+  `).join("") + (Number(taskGroup.blockersDroppedCount || 0) > 0
+    // 提示有上限，超出的会被丢掉。悄悄丢等于让人以为问题只有屏幕上这几个。
+    ? `<div class="record"><div class="record-title">${badge("attention")} <span>另有 ${esc(taskGroup.blockersDroppedCount)} 条较早的提示因数量上限已不再保留 —— 不要据此认为问题只有上面这些</span></div></div>`
+    : "");
   const barrierSummary = !groupBarrier
     ? `<div class="record"><div class="record-title">关闭门禁：<strong>尚未计算</strong></div><div class="record-meta">在「执行监控」页点一次"重算关闭门禁"，或等下一次编排周期，才会知道这个任务组能不能关闭。</div></div>`
     : groupBarrier.satisfied

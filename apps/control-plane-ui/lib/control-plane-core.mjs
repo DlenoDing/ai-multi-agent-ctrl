@@ -3993,6 +3993,8 @@ export function recomputeTaskGroup(taskGroup) {
   else if (overallBlockedPermitted) taskGroup.health = "blocked";
   else taskGroup.health = "attention";
   taskGroup.blockers = taskGroup.health === "ok" ? [] : taskGroup.blockers || [];
+  // 提示清空了，"还有多少条没显示"也要一起清 —— 否则它会一直说一件不再成立的事。
+  if (taskGroup.health === "ok") delete taskGroup.blockersDroppedCount;
   const allTerminal = items.length > 0 && items.every((item) => ["verified", "closed"].includes(item.status));
   if (allTerminal && taskGroup.health === "ok" && !["closed", "aborted"].includes(taskGroup.status)) taskGroup.status = "verification";
   taskGroup.updatedAt = new Date().toISOString();
@@ -4063,10 +4065,20 @@ const REVIEW_FINDING_LABELS = {
 };
 function reviewFindingLabel(code) { return REVIEW_FINDING_LABELS[code] || code; }
 
+// 提示按 summary 去重，但每个工作项/派发都会产生自己的一条 —— 实测 60 个单元反复失败就是
+// 60 条，按规模线性涨，而它嵌在任务组里、每个视图每次请求都带上（4000 单元约 800KB）。
+// 加上限：保留最近的若干条，并【记下丢了多少】—— 悄悄丢掉等于让人以为问题只有这几个。
+const TASK_GROUP_BLOCKER_CAP = Math.max(10, Number(process.env.AIMAC_TASK_GROUP_BLOCKER_CAP || 50));
+
 function addBlocker(taskGroup, severity, summary) {
   taskGroup.blockers ||= [];
   if (!taskGroup.blockers.some((blocker) => blocker.summary === summary)) {
     taskGroup.blockers.push({id: createId("blk"), severity, summary});
+    if (taskGroup.blockers.length > TASK_GROUP_BLOCKER_CAP) {
+      const dropped = taskGroup.blockers.length - TASK_GROUP_BLOCKER_CAP;
+      taskGroup.blockers = taskGroup.blockers.slice(dropped);
+      taskGroup.blockersDroppedCount = Number(taskGroup.blockersDroppedCount || 0) + dropped;
+    }
   }
   taskGroup.health = "blocked";
 }

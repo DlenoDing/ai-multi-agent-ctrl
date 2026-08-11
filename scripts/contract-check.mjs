@@ -205,6 +205,7 @@ verifyOrchestratorReportsItsOwnOutcome(errors);
 verifyDegradedContentBundleIsVisible(errors);
 verifyMcpSummaryIsActuallyASummary(errors);
 verifyHeartbeatDoesNotHideFailedSelfCheck(errors);
+verifyTaskGroupBlockersStayBounded(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4548,6 +4549,47 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 心跳此前会把 degraded 直接改回 online，而它【不重做自检】：于是界面上出现
 // "在线 + 自检未通过：模型执行器 + 只读"这种自相矛盾的一行 —— 人看到在线，
 // 却不明白它为什么领不到活。degraded 是自检的结论，只有自检能撤销它。
+
+// taskGroup.blockers 按 summary 去重，但每个工作项/派发都会产生自己的一条 ——
+// 实测 60 个单元反复失败就是 60 条，按规模线性涨；而它嵌在任务组里，每个视图每次请求都带上。
+// 加了上限就必须【说出丢了多少】：悄悄丢等于让人以为问题只有屏幕上这几个。
+function verifyTaskGroupBlockersStayBounded(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const taskGroup = state.taskGroups.find((item) => item.id === "tg_runtime_management");
+  const cap = Math.max(10, Number(process.env.AIMAC_TASK_GROUP_BLOCKER_CAP || 50));
+  taskGroup.workItems = Array.from({length: cap + 20}, (_, index) => ({
+    id: `w_blk_${index}`, title: `单元${index}`, status: "draft", ownerRole: "agent-runtime", progress: 0}));
+  for (let round = 0; round < 6; round += 1) {
+    runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
+    for (const dispatch of state.agentDispatches || []) {
+      if (!["running", "assigned", "queued"].includes(dispatch.status)) continue;
+      dispatch.status = "failed";
+      dispatch.failureReason = "executor_crashed";
+      const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
+      if (session) session.status = "failed";
+    }
+  }
+  const blockers = taskGroup.blockers || [];
+  if (blockers.length <= cap - 10) {
+    output.push(`阻塞提示上限断言没有造出足够多的提示（${blockers.length} 条）—— 本条在空转`);
+    return;
+  }
+  if (blockers.length > cap) {
+    output.push(`任务组阻塞提示涨到 ${blockers.length} 条（上限 ${cap}）—— 它嵌在任务组里，`
+      + "每个视图每次请求都要带上，按单元数线性涨");
+  }
+  if (!Number(taskGroup.blockersDroppedCount || 0)) {
+    output.push("提示到了上限被丢弃，却没有记下丢了多少 —— 人会以为问题只有列出来的这些");
+  }
+  // 反面：问题都清掉之后，"还有 N 条"不能一直挂着说一件不再成立的事
+  for (const item of taskGroup.workItems) { item.status = "verified"; delete item.blockedReason; }
+  recomputeTaskGroup(taskGroup);
+  if (taskGroup.health === "ok" && Number(taskGroup.blockersDroppedCount || 0)) {
+    output.push("任务组已经回到健康状态，【另有 N 条提示未保留】却还挂着 —— 常亮的提示等于没有提示");
+  }
+}
+
 function verifyHeartbeatDoesNotHideFailedSelfCheck(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});
