@@ -94,6 +94,7 @@
     artifact_output_ref_outside_allowlist: "产出引用落在允许路径之外",
     changed_paths_inside_repository_target_denylist: "改动路径落进了写入边界的禁止清单",
     changed_paths_outside_repository_target_allowlist: "改动路径落在写入边界的允许清单之外",
+    changed_paths_outside_human_approved_plan: "改动路径超出人已定稿的执行方案所批准的范围",
     checkpoint_commit_has_no_changed_paths: "检查点提交没有任何改动路径",
     checkpoint_language_policy_digest_mismatch: "检查点的语言策略摘要与契约不一致",
     checkpoint_language_policy_digest_required: "检查点必须带上语言策略摘要",

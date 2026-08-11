@@ -2351,7 +2351,11 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {})
   }
   const evidence = validateCheckpointGitEvidence(state, {taskGroup, workItem, session, dispatch, target, checkpointInput, root: request.root || request.repositoryRoot || process.cwd()});
   if (!evidence.valid) {
-    return {accepted: false, status: evidence.status || 409, error: evidence.error};
+    // 只透传 status/error 的话，服务端【已经算出来的】细节（哪几条路径越界、哪个 commit 对不上）
+    // 在这里就没了：控制台上的阻塞条只会写"某某检查失败"，人还得自己去猜是哪条路径。
+    // 契约门里那条"阻塞必须点名路径"的断言之所以一直绿，是因为它自己手工构造了 result。
+    const {valid, ...evidenceDetails} = evidence;
+    return {accepted: false, ...evidenceDetails, status: evidence.status || 409, error: evidence.error};
   }
   const at = new Date().toISOString();
   const checkpoint = {
@@ -2754,6 +2758,23 @@ function validateCheckpointGitEvidence(state, request) {
     const actualTree = git(root, ["rev-parse", `${commitRef.commit}^{tree}`], "");
     if (!actualTree || `git-tree:${actualTree}` !== String(commitRef.treeDigest)) {
       return {valid: false, status: 409, error: "commit_ref_tree_digest_mismatch", commit: commitRef.commit};
+    }
+  }
+  // 人在方案卡上批准的那套边界（各分支的 ownedPaths），此前【只跟 agent 自报的 actualChangedPaths
+  // 比】—— 自报接口里少填一条就等于没越界，而"被约束方自查等于没查"这句话下面这行自己就写着。
+  // 真实的改动路径控制面此刻已经从 git 算出来了，核对它不花任何代价：人批的是 docs/**，
+  // 提交里出现 apps/**，就该在这里拦下，而不是等 agent 自己承认。
+  // 只在【人已定稿且分支声明了 ownedPaths】时生效：没声明边界＝人没有在这一维上做过约束。
+  const finalizedTopology = (state.executionTopologies || []).find((topology) =>
+    topology.workItemId === workItem.id && topology.taskGroupId === taskGroup.id
+    && topology.humanFinalization?.outcome === "confirmed");
+  const approvedPaths = unique((finalizedTopology?.groups || [])
+    .flatMap((group) => (group.branches || []).flatMap((branch) => branch.ownedPaths || [])));
+  if (approvedPaths.length) {
+    const outside = changedPaths.filter((path) => !pathMatchesAllowlist(path, approvedPaths));
+    if (outside.length) {
+      return {valid: false, status: 409, error: "changed_paths_outside_human_approved_plan",
+        approvedPaths: approvedPaths.slice(0, 20), outsidePaths: outside.slice(0, 20)};
     }
   }
   // 被约束方自查等于没查：禁区必须在服务端拦。
@@ -3947,6 +3968,8 @@ export function recordCheckpointRejection(state, request, result) {
   if (!taskGroup) return null;
   const detail = [
     result?.deniedPaths?.length ? `路径：${result.deniedPaths.slice(0, 5).join("、")}` : "",
+    result?.outsidePaths?.length ? `越界路径：${result.outsidePaths.slice(0, 5).join("、")}` : "",
+    result?.approvedPaths?.length ? `人批准的范围：${result.approvedPaths.slice(0, 5).join("、")}` : "",
     result?.commit ? `提交：${String(result.commit).slice(0, 12)}` : ""
   ].filter(Boolean).join("；");
   const summary = `检查点被拒（${request?.workId || "未知工作项"}）：${result?.error || "unknown"}${detail ? `｜${detail}` : ""}`;

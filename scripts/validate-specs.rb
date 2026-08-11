@@ -1789,6 +1789,27 @@ unless unbounded.empty?
             "cap/trim/prune/retain 开头命名，本条按这个约定识别）、放进分片集合、" \
             "或登记到 ENTITY_BOUNDED_COLLECTIONS 并写明凭什么有界"
 end
+# 映射型容器同样会无界增长，而按数组写的判据看不见它们（这道门刚写完时就漏掉了这一类）。
+# 它们的回收有两种形态：按键 delete，或整体重建/裁剪；另有一类是固定字段的配置对象。
+MAP_BOUNDED_CONTAINERS = {
+  "runtime" => "固定字段的运行配置对象，键集由代码写死，不随活动增长"
+}.freeze
+declared_maps = all_state_source.scan(/state\.([a-zA-Z]+)\s*\|\|=\s*\{\}/).flatten.uniq.sort
+errors << "映射型状态容器一个都没提取到 —— 本条在空转" if declared_maps.length < 3
+unbounded_maps = declared_maps.reject do |name|
+  MAP_BOUNDED_CONTAINERS.key?(name) ||
+    all_state_source.match?(/delete state\.#{name}\[/) ||
+    all_state_source.match?(/state\.#{name}\s*=\s*[^;\n]*(slice\(|cap[A-Z]|trim[A-Z]|prune[A-Z]|filter\()/) ||
+    all_state_source.match?(/state\.#{name}\.[a-zA-Z]+\s*=\s*[^;\n]*slice\(/) ||
+    trimming_function_bodies.any? { |body| body.match?(/state\.#{name}\b/) }
+end
+unless unbounded_maps.empty?
+  errors << "这些映射型状态容器只增不减：#{unbounded_maps.join(", ")} —— 键会一直堆积；" \
+            "按键 delete、整体裁剪，或登记到 MAP_BOUNDED_CONTAINERS 并写明凭什么有界"
+end
+stale_map_bounded = MAP_BOUNDED_CONTAINERS.keys.reject { |name| declared_maps.include?(name) }
+errors << "这些映射登记已过期：#{stale_map_bounded.join(", ")}" unless stale_map_bounded.empty?
+
 stale_entity_bounded = ENTITY_BOUNDED_COLLECTIONS.keys.reject { |name| declared_collections.include?(name) }
 unless stale_entity_bounded.empty?
   errors << "这些集合登记为随实体增长，但状态里已经没有它们了：#{stale_entity_bounded.join(", ")} —— 删掉登记"

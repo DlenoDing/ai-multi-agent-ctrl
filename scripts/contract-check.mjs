@@ -14,6 +14,7 @@ import { publicAgentNode } from "../apps/control-plane-ui/lib/agent-gateway.mjs"
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit } from "../apps/mcp-server/server.mjs";
 import {
+  acceptAgentCheckpoint,
   acquireWorkerLane,
   maintainWorkerLanes,
   rotateWorkerLane,
@@ -194,6 +195,7 @@ verifyActiveDispatchesKeepTheirContracts(errors);
 verifySuspendedOrganizationHaltsExecution(errors);
 verifyHaltedTaskGroupsAreNotClaimable(errors);
 verifyExhaustedControlRetriesTellTheTruth(errors);
+verifyHumanApprovedPathsBindTheCommit(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4411,6 +4413,117 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
     if (fenced.blockedReason !== "assigned_node_stop_control_failed_retries_exhausted") {
       output.push(`停止控制重试用尽后原因仍是 ${fenced.blockedReason} —— 它写着"重试入队"，而不会再有任何重试`);
     }
+  }
+}
+
+
+// 人在方案卡上批准的那套边界（各分支 ownedPaths）此前只跟 agent 【自报】的 actualChangedPaths 比：
+// 自报接口里少填一条就等于没越界。而控制面在受理检查点时【已经用 git 算出了真实变更路径】，
+// 只是拿它核对仓库目标的 allowlist（通常宽得多），从没核对过人批准的那套边界。
+// 这条断言走真实入口：临时仓库 + bare 远端 + 真实 commit/push，再调 acceptAgentCheckpoint。
+function verifyHumanApprovedPathsBindTheCommit(output) {
+  const runCase = ({stray, finalized}) => {
+    const repo = mkdtempSync(join(tmpdir(), "cc-owned-"));
+    const remote = mkdtempSync(join(tmpdir(), "cc-owned-remote-"));
+    const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
+    execFileSync("git", ["init", "--bare", "-q", remote]);
+    git("init", "-q");
+    git("config", "user.email", "contract@local");
+    git("config", "user.name", "contract");
+    mkdirSync(join(repo, "docs"), {recursive: true});
+    writeFileSync(join(repo, "docs/readme.md"), "base\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    const baseRef = git("rev-parse", "HEAD");
+    git("remote", "add", "origin", remote);
+    git("push", "-q", "origin", "HEAD:refs/heads/main");
+
+    const state = structuredClone(seedState);
+    ensureRuntimeCollections(state, {root});
+    runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
+    const dispatch = (state.agentDispatches || [])[0];
+    if (!dispatch) return {skipped: "编排没有产出派发"};
+    dispatch.status = "running";
+    const taskGroup = state.taskGroups.find((item) => item.id === dispatch.taskGroupId);
+    const workItem = taskGroup?.workItems?.find((item) => item.id === dispatch.workItemId);
+    const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
+    const target = (state.repositoryOutputs || []).find((item) => item.workItemId === dispatch.workItemId)
+      || (state.repositoryOutputs || [])[0];
+    if (!workItem || !session || !target) return {skipped: "夹具缺工作项/会话/写入目标"};
+    Object.assign(target, {projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workItemId: workItem.id,
+      baseRef, branch: "main", remote: "origin", repositoryUrl: remote, status: "pending",
+      pathAllowlist: ["**"]}); // 仓库层放开，才看得出"人批的方案"这一层有没有生效
+    const lease = {leaseId: `lease_cc_${state.leases.length}`, resourceRef: `RepositoryOutputTarget:${target.targetId}`,
+      holderRef: `session:${session.sessionId}`, status: "active", acquiredAt: new Date().toISOString()};
+    state.leases.push(lease);
+    target.leaseRef = lease.leaseId;
+
+    // 两种情况都要造出拓扑：对照组要验的是【AI 提了方案但人没定稿】，
+    // 而不是"根本没有方案"—— 后者两条分支都找不到拓扑，判据怎么改都不会红。
+    const created = createExecutionTopology(state, {taskGroupId: taskGroup.id, projectId: taskGroup.projectId,
+      workItemId: workItem.id, mode: "parallel_branches", runnerKind: "local", isolation: "worktree",
+      branches: [{branchId: "b_docs", objective: "只改文档", ownedPaths: ["docs/**"], forbiddenPaths: [],
+        resourceScopes: [], acceptanceChecks: ["docs_lint"]}]});
+    const topology = created.topology || created;
+    if (finalized) {
+      topology.humanFinalization = {outcome: "confirmed", finalizedBy: "acct_workspace_owner",
+        finalizedAt: new Date().toISOString()};
+    }
+
+    if (stray) {
+      mkdirSync(join(repo, "apps"), {recursive: true});
+      writeFileSync(join(repo, "apps/server.mjs"), "// 越界改动\n");
+    }
+    writeFileSync(join(repo, "docs/manifest.json"), JSON.stringify({outputs: ["docs/readme.md"]}));
+    git("add", "-A");
+    git("commit", "-q", "-m", "改动");
+    const commit = git("rev-parse", "HEAD");
+    git("push", "-q", "origin", "HEAD:refs/heads/main");
+    const remoteSha = execFileSync("git", ["ls-remote", remote, "refs/heads/main"], {encoding: "utf8"}).trim().split(/\s+/)[0];
+    const contract = (state.agentTaskContracts || []).find((item) => item.sessionId === session.sessionId);
+    const result = acceptAgentCheckpoint(state, {
+      projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workId: workItem.id,
+      sessionId: session.sessionId, runId: dispatch.runId, taskContractDigest: contract?.contractDigest,
+      languagePolicyDigest: contract?.languagePolicyDigest, summary: "契约门",
+      commitRefs: [{repo: target.repositoryId, branch: "main", commit,
+        treeDigest: `git-tree:${git("rev-parse", `${commit}^{tree}`)}`, createdAt: new Date().toISOString()}],
+      pushRefs: [{repo: target.repositoryId, remote: "origin", ref: "refs/heads/main", sourceCommit: commit,
+        remoteSha, providerOperationId: `git-push:cc:${remoteSha}`, verifiedAt: new Date().toISOString(),
+        rewriteRelation: "same_commit"}],
+      repositoryOutputTargetRefs: [target.targetId],
+      artifactManifestRefs: ["docs/manifest.json"],
+      changedPathEvidenceRefs: [`git-diff:${baseRef}:${commit}`, "git-path:docs/manifest.json"]
+    }, {root: repo, actor: "agent-runtime"});
+    rmSync(repo, {recursive: true, force: true});
+    rmSync(remote, {recursive: true, force: true});
+    return {result, state, taskGroup, workItem};
+  };
+
+  const violating = runCase({stray: true, finalized: true});
+  if (violating.skipped) { output.push(`人批边界断言无从验证：${violating.skipped}`); return; }
+  if (violating.result.error !== "changed_paths_outside_human_approved_plan") {
+    output.push(`提交改到人没批准的路径（apps/**，人批的是 docs/**），检查点却没有被这条判据拦下`
+      + `（实际：${violating.result.error || "已受理"}）—— 人批的边界只由 agent 自报来守`);
+  } else {
+    if (!(violating.result.outsidePaths || []).includes("apps/server.mjs")) {
+      output.push("越界被拦下了，但没有点名是哪条路径 —— 服务端已经算出来的细节不能丢");
+    }
+    // 细节还必须真的落到人看得见的地方（阻塞条），而不是只在返回值里。
+    recordCheckpointRejection(violating.state, {taskGroupId: violating.taskGroup.id, workId: violating.workItem.id}, violating.result);
+    const blocker = (violating.taskGroup.blockers || []).slice(-1)[0];
+    if (!String(blocker?.summary || "").includes("apps/server.mjs")) {
+      output.push("检查点拒绝的阻塞条没有点名越界路径 —— 人只被告知某某检查失败，还得自己去猜是哪条路径");
+    }
+  }
+  // 对照一：同一套夹具，只改 docs/** 时不得被这条判据拦下（否则守卫会误伤合规提交）。
+  const compliant = runCase({stray: false, finalized: true});
+  if (!compliant.skipped && compliant.result.error === "changed_paths_outside_human_approved_plan") {
+    output.push("只改了人批准范围内的路径，却仍被判越界 —— 这条守卫会误伤合规提交");
+  }
+  // 对照二：没有人定稿的方案时，这条判据不该生效（人没有在这一维上做过约束）。
+  const notFinalized = runCase({stray: true, finalized: false});
+  if (!notFinalized.skipped && notFinalized.result.error === "changed_paths_outside_human_approved_plan") {
+    output.push("方案还没有经人定稿，却按人批准的范围拦下了提交 —— AI 自己提的边界被当成了人的批准");
   }
 }
 
