@@ -1449,6 +1449,12 @@ async function dispatchTool(state, name, args, context = {}) {
     case "governance-mcp.close_barrier_compute":
       return boundedTaskGroupGuard(state, args, context) || computeCloseBarrier(state, args.taskGroupId || "tg_runtime_management", args);
     case "identity-mcp.account_invite":
+      // 建账号是治理决策：REST 侧把 account_invite / system_account_invite 都定为真人专属，
+      // 而这一侧此前直接落到实现上。两侧各写了一份实现（REST 是内联的），所以"同一个核心函数"
+      // 那条对等检查结构上连不起来 —— 锁必须落在决策点本身，工具清单只是配置。
+      if (context?.principal?.kind === "agent_node" || context?.principal?.kind === "system_service") {
+        return {ok: false, error: "account_invite_forbidden_for_machine_principal"};
+      }
       return accountInvite(state, args);
     case "identity-mcp.account_suspend":
       return accountSuspend(state, args);

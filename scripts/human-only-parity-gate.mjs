@@ -27,7 +27,11 @@ const callsIn = (text) => new Set([...text.matchAll(CORE_CALL)].map((m) => m[1])
 // 与授权/记账有关的通用函数不是"这道门在做的那件事"，两侧都会出现，纳入比对只会制造噪声。
 const NEUTRAL = new Set(["beginGuardedWrite", "finishGuardedWrite", "writeState", "audit", "ensureAgentGatewayCollections",
   "ensureRuntimeCollections", "scopeStateForAgentPrincipal", "hasPermission", "accountFromRequest", "resourceScopeOrganizationId",
-  "taskGroupScope", "projectScope", "recomputeBarrierAfterResolve", "appendEvent", "createId", "principalProjectFilter"]);
+  "taskGroupScope", "projectScope", "recomputeBarrierAfterResolve", "appendEvent", "createId", "principalProjectFilter",
+  // 只读校验/查询助手：它们到处都在被调用，不构成"这件事被做了"。把它们当决策函数会造成误报，
+  // 而误报和漏报一样会让人不再信这道门。（account_invite 那条路由此前从没被扫描到，
+  // 一旦扫描到，organizationQuotaCheck 立刻把不相干的 MCP 工具牵连进来。）
+  "organizationQuotaCheck", "assertUniqueRecordId", "publicAccountRecord", "requestedSystemAccountInvite"]);
 
 export function checkHumanOnlyParity() {
   const srv = read("apps/control-plane-ui/server.mjs");
@@ -36,15 +40,30 @@ export function checkHumanOnlyParity() {
 
   const actionsBlock = srv.match(/const HUMAN_ONLY_ACTIONS = \[([\s\S]*?)\n\];/);
   if (!actionsBlock) return ["真人专属对等门: 找不到 HUMAN_ONLY_ACTIONS —— 本门失效，必须同步更新"];
-  const humanOnlyActions = new Set([...actionsBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]));
+  // 注释行里的引号词（"人"、"只能提案"…）不是动作名。混进来虽然不会误报，
+  // 但会让"每个真人专属动作都要能定位到守卫"这类核对失去意义。
+  const actionsText = actionsBlock[1].split("\n").filter((line) => !line.trim().startsWith("//")).join("\n");
+  const humanOnlyActions = new Set([...actionsText.matchAll(/"([a-z_0-9]+)"/g)].map((m) => m[1]));
 
   // REST：真人专属动作 -> 它真正调用的核心函数。窗口取到下一个 beginGuardedWrite 为止，
   // 固定行数会串到相邻路由上，把无关函数算成这道门的。
   const srvLines = srv.split("\n");
   const humanOnlyFunctions = new Map(); // fn -> action
+  const locatedActions = new Set();
   for (let i = 0; i < srvLines.length; i += 1) {
-    const guard = srvLines[i].match(/beginGuardedWrite\(req, state, "([a-z_]+)"/);
-    if (!guard || !humanOnlyActions.has(guard[1])) continue;
+    // 动作名不一定是个字面量：account_invite / system_account_invite 就写成三元
+    // （systemScopedInvite ? "system_account_invite" : "account_invite"）。只认字面量的话，
+    // 这两个真人专属动作的核心函数【永远进不了清单】，它们的 MCP 平权也就从来没有被检查过 ——
+    // 实测 identity-mcp.account_invite 正是这样直接落到核心函数上、不拒绝机器主体。
+    const guardLine = /beginGuardedWrite\(\s*$|beginGuardedWrite\(req, state/.test(srvLines[i])
+      ? srvLines.slice(i, i + 4).join(" ")
+      : srvLines[i];
+    if (!/beginGuardedWrite\(/.test(srvLines[i])) continue;
+    const names = [...guardLine.matchAll(/"([a-z_0-9]+)"/gu)].map((match) => match[1])
+      .filter((name) => humanOnlyActions.has(name));
+    if (!names.length) continue;
+    const guard = [null, names[0]];
+    for (const name of names) locatedActions.add(name);
     // 边界必须同时认「下一个 beginGuardedWrite」和「下一条路由的 pathname.match」：只认前者时，
     // 不走 beginGuardedWrite 的路由会让窗口一路串下去，把隔壁路由的函数算成这道门的
     // （实测把 roomWait 算成了 contract_publish 的）。误报和漏报一样会让人不再信这道门。
@@ -59,11 +78,36 @@ export function checkHumanOnlyParity() {
   if (humanOnlyFunctions.size < 5) {
     failures.push(`真人专属对等门: 只从 REST 侧提取到 ${humanOnlyFunctions.size} 个真人专属核心函数，提取逻辑已与代码脱节`);
   }
+  // 每一个真人专属动作都必须能在 REST 侧定位到它的守卫调用。定位不到就等于这个动作
+  // 整个跳出了本门的视野 —— 而"跳出视野"与"检查通过"在门的输出上长得一模一样。
+  const unlocated = [...humanOnlyActions].filter((action) => !locatedActions.has(action));
+  if (unlocated.length) {
+    failures.push(`真人专属对等门: 这些真人专属动作在 REST 侧找不到对应的守卫调用：${unlocated.join("、")} ——`
+      + " 它们的核心函数进不了清单，MCP 那一侧的平权检查对它们完全失明");
+  }
 
   // MCP：工具 -> case 体（到下一个同级 case 为止）。
   const caseRe = /^ {4}case "([a-z-]+-mcp\.[a-z_]+)":/gm;
   const marks = [...mcp.matchAll(caseRe)];
   if (marks.length < 40) failures.push(`真人专属对等门: 只识别到 ${marks.length} 个 MCP 工具分发点，提取逻辑已与代码脱节`);
+
+  // 第二条链路：按【动作名】对等。上面那条靠"两侧共用同一个核心函数"，而 account_invite
+  // 恰恰是两侧各写一份实现（REST 内联、MCP 有自己的 accountInvite），函数名对不上，
+  // 结构上就连不起来 —— 实测 identity-mcp.account_invite 因此从未被检查，
+  // 而它直接创建账号且不拒绝机器主体。所以再加一条不依赖实现的判据：
+  // MCP 工具名的后半段若正好是某个真人专属动作，这个 case 同样必须拒绝机器主体。
+  let nameChecked = 0;
+  for (const [index, mark] of marks.entries()) {
+    const action = mark[1].split(".")[1];
+    if (!humanOnlyActions.has(action)) continue;
+    nameChecked += 1;
+    const body = mcp.slice(mark.index, index + 1 < marks.length ? marks[index + 1].index : mark.index + 2000);
+    const blocksMachine = /principal\?\.kind === "agent_node"/.test(body) && /principal\?\.kind === "system_service"/.test(body);
+    if (!blocksMachine) {
+      failures.push(`真人专属对等门: MCP 工具 ${mark[1]} 与 REST 侧的真人专属动作 ${action} 同名，`
+        + "但这个 case 没有拒绝机器主体 —— 同一件事两侧各实现一份，函数名对不上，只能按动作名认");
+    }
+  }
 
   let checked = 0;
   marks.forEach((mark, index) => {
