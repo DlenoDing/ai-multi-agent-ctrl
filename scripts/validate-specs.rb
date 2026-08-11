@@ -1189,6 +1189,29 @@ errors << "checkpoint outbox 必须与配置走同一条持久写路径" unless 
 # 代理端若把 shutdownRequested 写死而不清除，两侧对同一件事的理解就不一致：节点再也回不来。
 errors << "代理重启后必须清除 shutdownRequested（否则控制面认为可恢复、代理端却不可逆）" unless runtime_source.include?("delete config.shutdownRequested")
 
+# 取消一个【正在跑的】派发，最后一道防线在代理这一侧：push 之前必须向控制面复核"我还是不是持有者"。
+# 控制面那边只做到"把派发标成 cancelled 并吊销授权"，而 push 是不可逆副作用 ——
+# 复核一旦被挪到 push 之后、或被去掉，取消就只停在控制面自己的账面上：提交照样落到远端分支，
+# 新持有者 reset --hard 会把它静默当成基线，两个节点的工作混在一起且控制面毫无记录。
+# 这条链路此前【没有任何门守着】：控制面侧断言了"复核会失败"，却没人断言代理真的会去复核。
+push_sites = runtime_source.enum_for(:scan, /git\([^,]+, \["push"/).map { Regexp.last_match.begin(0) }
+errors << "代理源码里找不到 git push 调用 —— 提取逻辑与代码脱节，本条在空转" if push_sites.empty?
+push_sites.each do |at|
+  # 取 push 之前同一个函数体内的文本：向上找到最近的 `async function` 起点
+  fn_start = runtime_source.rindex(/^async function /m, at) || 0
+  before = runtime_source[fn_start...at]
+  # 安全关键的那条判据落在【紧挨着 push 的那一段】，不是"函数里出现过就算"：
+  # 复核与不可逆副作用之间不该隔着别的事，挪远了就有窗口。
+  window = before.split("\n").last(6).join("\n")
+  errors << "代理必须在 git push 【紧邻之前】复核持有权（assertStillHoldsClaim）—— 少了它或挪远了，取消一个在跑的派发就只停在控制面账面上" unless window.include?("assertStillHoldsClaim(")
+  # 本地取消标志是纵深，不是最后防线（复核失败照样会挡住 push），所以这条只按函数级判：
+  # push 前那一段里本来就有两处 throwIfCancelled，用紧邻窗口去卡它只会在无害的重排上误报。
+  errors << "代理在 git push 之前必须检查本地取消标志（throwIfCancelled）—— 与持有权复核互为纵深" unless before.include?("throwIfCancelled()")
+end
+# 复核本身必须 fail-closed：网络不通时确认不了自己仍是持有者，就必须当作已经不是。
+revalidate = runtime_source[/async function assertStillHoldsClaim[\s\S]*?\n\}/m].to_s
+errors << "持有权复核必须 fail-closed（复核失败时抛错阻止 push），否则分区时它等于不存在" unless revalidate.include?("claim_revalidation_failed") && revalidate.scan(/throw /).size >= 2
+
 # 角色规则（"你是谁、职责边界、禁区"）是三类规则之一。改角色技能 overlay 或整体替换技能源，
 # 就是改规则层 —— 而这两条原先都对 MCP 服务令牌开放、且都不是真人专属。
 # runtimeMutationPolicy 里那条 auto_publish_role_skill_overlay 是声明了却从没有人执行的禁令。
