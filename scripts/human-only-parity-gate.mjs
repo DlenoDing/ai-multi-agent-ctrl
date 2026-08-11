@@ -98,8 +98,12 @@ export function checkHumanOnlyParity() {
   // MCP 工具名的后半段若正好是某个真人专属动作，这个 case 同样必须拒绝机器主体。
   let nameChecked = 0;
   for (const [index, mark] of marks.entries()) {
-    const action = mark[1].split(".")[1];
-    if (!humanOnlyActions.has(action)) continue;
+    // 后缀也算：human_confirmation_decide 对应的工具叫 confirmation_decide，
+    // 严格同名就接不上。放宽成"动作名等于工具后半段，或以 _后半段 结尾"。
+    const suffix = mark[1].split(".")[1];
+    const matched = [...humanOnlyActions].filter((name) => name === suffix || name.endsWith(`_${suffix}`));
+    if (!matched.length) continue;
+    const action = matched.join("/");
     nameChecked += 1;
     const body = mcp.slice(mark.index, index + 1 < marks.length ? marks[index + 1].index : mark.index + 2000);
     const blocksMachine = /principal\?\.kind === "agent_node"/.test(body) && /principal\?\.kind === "system_service"/.test(body);
@@ -107,6 +111,11 @@ export function checkHumanOnlyParity() {
       failures.push(`真人专属对等门: MCP 工具 ${mark[1]} 与 REST 侧的真人专属动作 ${action} 同名，`
         + "但这个 case 没有拒绝机器主体 —— 同一件事两侧各实现一份，函数名对不上，只能按动作名认");
     }
+  }
+
+  // 这条链路必须真的匹配上过东西，否则它只是一段永远不执行的代码。
+  if (nameChecked < 3) {
+    failures.push(`真人专属对等门: 按名字只匹配到 ${nameChecked} 个 MCP 工具，远少于预期 —— 命名规则已变，这条链路在空转`);
   }
 
   let checked = 0;
