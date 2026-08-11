@@ -190,6 +190,7 @@ verifyExpiredConfirmationLeavesNoStaleParking(errors);
 verifyPermissionOutcomeReleasesTheSession(errors);
 verifyShardRoundTripKeepsEveryRecord(errors);
 verifyOrchestrationDoesNotShellOutPerCell(errors);
+verifyActiveDispatchesKeepTheirContracts(errors);
 verifyIdempotencyReplayIsPrincipalBound(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
@@ -426,13 +427,18 @@ function verifyHumanAndOrganizationContracts(output) {
       if (idemState.workSessions.length !== sessionsBefore) output.push("buildTaskContract idempotency: rebuild created an orphan session");
     }
     // capTaskContracts protects the contract of a non-terminal dispatch beyond the cap window.
+    // 夹具必须用【生产者真实产出的字段】：原先它手写了一个 contractId，而真实契约没有这个字段
+    // （它叫 contractDigest）。于是这条断言常绿，而生产里 keptRefs 是 Set{undefined}，
+    // 保活分支恒为空 —— 门测的是它自己造的形状，不是系统的行为。
     const capped = capTaskContracts(
-      [{contractId: "c_new", sessionId: "s_new", runId: "r_new"}, {contractId: "c_old_active", sessionId: "s_active", runId: "r_active"}, {contractId: "c_old_done", sessionId: "s_done", runId: "r_done"}],
+      [{sessionId: "s_new", runId: "r_new", contractDigest: "sha256:new"},
+        {sessionId: "s_active", runId: "r_active", contractDigest: "sha256:active"},
+        {sessionId: "s_done", runId: "r_done", contractDigest: "sha256:done"}],
       [{sessionId: "s_active", status: "running"}, {sessionId: "s_done", status: "completed"}],
       1
     );
-    if (!capped.some((item) => item.contractId === "c_old_active")) output.push("capTaskContracts evicted the contract of an active dispatch");
-    if (capped.some((item) => item.contractId === "c_old_done")) output.push("capTaskContracts retained a terminal dispatch contract beyond the cap");
+    if (!capped.some((item) => item.sessionId === "s_active")) output.push("capTaskContracts evicted the contract of an active dispatch");
+    if (capped.some((item) => item.sessionId === "s_done")) output.push("capTaskContracts retained a terminal dispatch contract beyond the cap");
     // blocked_dependency hold: an implementation cell whose analysis dependency is unverified must
     // not be dispatched; a held admission (awaiting_dependency) is recorded instead.
     const holdState = structuredClone(seedState);
@@ -4154,6 +4160,42 @@ console.log(JSON.stringify({first: {ok: first.ok, error: first.result?.error},
 // 落在【每个工作项】都会走的路径上，每次一个 git 子进程 ≈ 40ms —— 2000 个单元实测 83 秒，
 // 96.6% 的 CPU 时间在 spawnSync。这类退化不会有任何功能测试发现：结果全对，只是慢到不可用。
 // 这条门量的是【每单元的子进程数】而不是墙钟时间：墙钟随机器波动，会变成一条时灵时不灵的门。
+// 上面那条只把 capTaskContracts 当函数测（三条手写记录、limit=1）。而它真正要守的东西只有
+// 【接线】才测得出来：跑一轮真实编排，让契约涨过上限，再问每个还活着的派发是不是仍找得到它的契约。
+// 这条不变量断了就是永久楔死：acceptAgentCheckpoint 按 sessionId+runId 找契约，找不到就一直报
+// agent_dispatch_contract_mismatch，派发终结不了，任务组的关闭门再也不可满足。
+// 实测发现过一次：真实契约没有 contractId 字段，保活分支因此恒为空 —— 而那道函数级的断言全绿。
+function verifyActiveDispatchesKeepTheirContracts(output) {
+  const probe = structuredClone(seedState);
+  ensureRuntimeCollections(probe, {root});
+  const template = probe.taskGroups[0];
+  probe.taskGroups = [];
+  const GROUPS = 60, ITEMS = 5; // 300 个单元：足以让契约越过 160 的上限
+  for (let group = 0; group < GROUPS; group += 1) {
+    const taskGroup = structuredClone(template);
+    taskGroup.id = `tg_contract_probe_${group}`;
+    taskGroup.workItems = [];
+    for (let index = 0; index < ITEMS; index += 1) {
+      taskGroup.workItems.push({id: `w_cp_${group}_${index}`, title: `t${index}`, status: "draft", ownerRole: "agent-runtime", progress: 0});
+    }
+    probe.taskGroups.push(taskGroup);
+  }
+  runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+  const terminal = new Set(["completed", "failed", "cancelled"]);
+  const activeDispatches = (probe.agentDispatches || []).filter((item) => !terminal.has(item.status));
+  if (activeDispatches.length <= 160) {
+    output.push(`活跃派发必须留着它的契约：只产生了 ${activeDispatches.length} 个活跃派发，没越过 160 的契约上限 —— 这条断言在空转`);
+    return;
+  }
+  const contractKeys = new Set((probe.agentTaskContracts || []).map((item) => `${item.sessionId}\u0000${item.runId}`));
+  const orphaned = activeDispatches.filter((item) => !contractKeys.has(`${item.sessionId}\u0000${item.runId}`));
+  if (orphaned.length) {
+    output.push(`活跃派发必须留着它的契约：${activeDispatches.length} 个活跃派发里有 ${orphaned.length} 个的契约已被容量淘汰`
+      + " —— acceptAgentCheckpoint 按 sessionId+runId 找契约，找不到就永远报 agent_dispatch_contract_mismatch；"
+      + "这些派发再也终结不了，任务组的关闭门永久不可满足");
+  }
+}
+
 function verifyOrchestrationDoesNotShellOutPerCell(output) {
   const probeDir = mkdtempSync(join(tmpdir(), "aimac-percell-probe-"));
   try {

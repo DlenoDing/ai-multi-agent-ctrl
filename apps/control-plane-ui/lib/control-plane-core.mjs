@@ -1488,7 +1488,7 @@ export function buildTaskContract(state, request = {}) {
     }];
   }
   state.agentTaskContracts.unshift(contract);
-  state.agentTaskContracts = capTaskContracts(state.agentTaskContracts, state.agentDispatches, 160);
+  if (shouldCap(state.agentTaskContracts, 160)) state.agentTaskContracts = capTaskContracts(state.agentTaskContracts, state.agentDispatches, 160);
   // 持续型工作在建会话时获取并占用其角色的 worker lane（复用空闲/新建），回填具体载体到放置决策；subagent 无 lane
   let acquiredLaneId = null;
   if (placementDecision.workerCarrierDecision?.mode === "worker_lane") {
@@ -2980,6 +2980,21 @@ function activeExecutionForWork(state, taskGroupId, workItemId) {
   };
 }
 
+// 裁剪要摊薄，不能每插入一条就对全表重算一次。
+//
+// 这三个 cap 各自的契约是"裁到 limit"，门也是按这个钉的，所以【不改函数语义】，只改调用频率：
+// 数组涨过 limit + CAP_SLACK 才裁一次，仍然裁回 limit。原先是每插入一条就跑一遍，而它们内部要
+// 遍历全部派发/租约 —— 每单元一次 O(n) 的扫描，累计就是 O(n²)。实测 4000 单元时这三处合计约
+// 占一轮编排 14% 的 CPU。
+//
+// 余量为什么安全：这些 cap 的作用是给内存里的历史设上界，以及"绝不淘汰仍然活跃的记录"（后者由
+// 函数自身保证，与调用频率无关）。上界从 limit 放宽到 limit + CAP_SLACK，仍然是常数上界；
+// 而持久层另有自己的分片上限，不依赖这里。
+const CAP_SLACK = 64;
+function shouldCap(items, limit) {
+  return items.length > limit + CAP_SLACK;
+}
+
 function capLeaseHistory(leases, limit = 2000) {
   if (leases.length <= limit) return leases;
   // Never drop an active lease (fencing / holder authority still matters); trim oldest released history.
@@ -3009,8 +3024,15 @@ export function capTaskContracts(contracts, dispatches, limit) {
   const terminal = new Set(["completed", "failed", "cancelled"]);
   const activeSessionIds = new Set((dispatches || []).filter((item) => !terminal.has(item.status)).map((item) => item.sessionId).filter(Boolean));
   const kept = contracts.slice(0, limit);
-  const keptRefs = new Set(kept.map((item) => item.contractId));
-  const strandedActive = contracts.slice(limit).filter((item) => activeSessionIds.has(item.sessionId) && !keptRefs.has(item.contractId));
+  // 去重键必须用记录【真实具备】的身份。原先用的是 item.contractId —— 而真实契约根本没有这个
+  // 字段（它叫 contractDigest），于是 keptRefs 是 Set{undefined}，每条 stranded 的
+  // keptRefs.has(undefined) 都为真而被滤掉：strandedActive 在生产里恒为空，这个函数存在的理由
+  // （绝不淘汰活跃派发的契约）从来没有生效过。契约一过上限，最老那批活跃派发的契约就被删掉，
+  // 它们的检查点此后永远报 agent_dispatch_contract_mismatch，派发无法终结，关闭门被永久挡住。
+  // sessionId+runId 正是 acceptAgentCheckpoint 查契约用的那把键。
+  const contractKey = (item) => `${item.sessionId}\u0000${item.runId}`;
+  const keptRefs = new Set(kept.map(contractKey));
+  const strandedActive = contracts.slice(limit).filter((item) => activeSessionIds.has(item.sessionId) && !keptRefs.has(contractKey(item)));
   return strandedActive.length ? [...kept, ...strandedActive] : kept;
 }
 
@@ -3055,7 +3077,7 @@ function enqueueAgentDispatch(state, contract, repositoryTarget) {
     updatedAt: at
   };
   state.agentDispatches.unshift(dispatch);
-  state.agentDispatches = capDispatchHistory(state.agentDispatches, 240);
+  if (shouldCap(state.agentDispatches, 240)) state.agentDispatches = capDispatchHistory(state.agentDispatches, 240);
   return dispatch;
 }
 
@@ -3777,7 +3799,7 @@ function ensureLease(state, repositoryTarget, holderRef = "orchestrator", taskCo
       updatedAt: at
     };
     state.leases.push(lease);
-    state.leases = capLeaseHistory(state.leases);
+    if (shouldCap(state.leases, 2000)) state.leases = capLeaseHistory(state.leases);
   } else if (holderRef && lease.holderRef !== holderRef) {
     state.leaseSequence = Number(state.leaseSequence || 0) + 1;
     lease.transferEvidenceRefs = unique([...(lease.transferEvidenceRefs || []), `lease-transfer:${lease.holderRef}->${holderRef}:fence:${state.leaseSequence}`]);
