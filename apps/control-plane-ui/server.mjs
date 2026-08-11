@@ -2823,7 +2823,7 @@ async function handleApi(req, res) {
       return;
     }
     const result = syncSkillSource(state, skillSyncMatch[1], {root, runtimeDir});
-    audit(state, "skill-registry", "skill_source_sync", `AgentSkillSource:${skillSyncMatch[1]}`);
+    audit(state, guard.actor, "skill_source_sync", `AgentSkillSource:${skillSyncMatch[1]}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
     json(res, 200, result);
@@ -2910,7 +2910,7 @@ async function handleApi(req, res) {
       return;
     }
     const overlay = registerRoleSkillOverlay(state, body);
-    audit(state, "skill-registry", "role_skill_overlay_create", `RoleSkillOverlay:${overlay.overlayId}`);
+    audit(state, guard.actor, "role_skill_overlay_create", `RoleSkillOverlay:${overlay.overlayId}`);
     finishGuardedWrite(state, guard, 201, overlay);
     writeState(state);
     json(res, 201, overlay);
@@ -3533,7 +3533,8 @@ async function handleApi(req, res) {
     planWorkItem.planFinalizationDecidedBy = guard.actor;
     planWorkItem.planFinalizationJustification = justification.slice(0, 2000);
     planWorkItem.updatedAt = now();
-    audit(state, guard.actor, "work_item_plan_finalization_set", `WorkItem:${planWorkItem.id}`, String(required));
+    audit(state, guard.actor, "work_item_plan_finalization_set", `WorkItem:${planWorkItem.id}`,
+      required ? "plan_finalization_required" : "plan_finalization_cleared");
     finishGuardedWrite(state, guard, 200, planWorkItem);
     writeState(state);
     json(res, 200, planWorkItem);
@@ -3895,7 +3896,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "contract_publish", `Contract:${body.contractId || "new"}`, projectScope(contractProjectId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = contractPublish(state, {...body, projectId: contractProjectId});
-    audit(state, "orchestrator", "contract_publish", `Contract:${result.contract.contractId}`);
+    audit(state, guard.actor, "contract_publish", `Contract:${result.contract.contractId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
@@ -4033,7 +4034,7 @@ async function handleApi(req, res) {
     if (result.alreadyResolved) return json(res, 409, {error: "permission_request_already_resolved", permissionRequest: result.permissionRequest});
     if (result.ok === false) return json(res, 404, {error: result.error});
     recomputeBarrierAfterResolve(state, existingPermission?.taskGroupId);
-    audit(state, "permission-gateway", "permission_resolve", `PermissionRequest:${result.permissionRequest.requestId}`);
+    audit(state, guard.actor, "permission_resolve", `PermissionRequest:${result.permissionRequest.requestId}`, result.permissionRequest.status);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
     json(res, 200, result);
@@ -4547,7 +4548,10 @@ async function handleApi(req, res) {
         ...(error.decidedOption ? {decidedOption: error.decidedOption} : {}),
         ...(error.subjectRef ? {subjectRef: error.subjectRef} : {})});
     }
-    audit(state, guard.actor, "human_confirmation_decide", `HumanConfirmationRequest:${decided.requestId}`);
+    // 定稿是这套系统的立身动作：审计不只要记"谁决定了"，还要记【决定是什么】——
+    // 否则事后只知道有人处置过这张卡，答不出他是定稿、打回、还是选了哪个方案。
+    audit(state, guard.actor, "human_confirmation_decide", `HumanConfirmationRequest:${decided.requestId}`,
+      decided.decision?.action || decided.status);
     finishGuardedWrite(state, guard, 200, decided);
     writeState(state);
     json(res, 200, decided);

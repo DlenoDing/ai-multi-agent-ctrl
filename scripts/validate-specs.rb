@@ -1737,19 +1737,47 @@ prose_only_assertions.each do |detail|
 end
 
 
-# 真人专属动作的审计必须记下【是谁做的】。
+# 真人专属动作的审计必须记下【是谁做的】，决策类还必须记下【决定是什么】。
 #
-# 这类动作的全部意义是"由人负责"，而事后唯一能回答"是谁批的/是谁铸的"的地方就是审计记录。
-# 把执行者写成服务名（audit(state, "ui-console-service", ...)）等于把责任人抹掉 —— 实测抓到两处：
-# 铸造账号与变更语言策略。前者还顺带把【系统级邀请】记成了普通成员邀请，两者分量完全不同。
-# 服务发起的动作（建任务组、发资源授权之类）不在此列，它们本来就没有"某个人"。
+# 这类动作的全部意义是"由人负责"，而事后唯一能回答"是谁批的/是谁定的"的地方就是审计记录。
+# 判据是【执行者不得是字符串字面量】，而不是"不得等于某个服务名"—— 第一版只搜了
+# "ui-console-service"，于是 "permission-gateway"、"policy-engine"、"skill-registry"、"orchestrator"
+# 这几个同样把责任人抹掉的写法全部漏过：同一个缺陷换个服务名就躲开了门。
+# 服务自己发起的动作（编排、回收之类）本来就没有"某个人"，它们不在这份清单里。
+#
+# audit 的第五个参数默认是 "succeeded"，所以"处置过"和"批准了"在日志里长得一模一样 ——
+# 缺省值落在了有利的一侧。决策类动作必须显式写出结果。
 human_only_list = server_source[/const HUMAN_ONLY_ACTIONS = \[(.*?)\n\];/m]
 human_only_actions = human_only_list.to_s.scan(/"([a-z_]+)"/).flatten.uniq
 errors << "真人专属动作清单没有解析到内容 —— 本条在空转" if human_only_actions.length < 10
-service_audited = server_source.scan(/audit\(state, "ui-console-service", "([a-z_]+)"/).flatten.uniq
-(service_audited & human_only_actions).each do |action|
-  errors << %(真人专属动作 #{action} 的审计把执行者记成了服务名 —— 事后无法回答"是谁做的"；) +
-            %(应记 guard.actor)
+# 取到整个调用（到收尾分号为止），而不是只取第一行 —— 参数换行的调用会被"只看一行"的取法
+# 误判成缺参数，门就会在正确的代码上报红。
+audit_calls = server_source.scan(/audit\(state, ([^,]+), "([a-z_]+)"(.*?)\);$/m)
+errors << "审计调用没有解析到内容 —— 本条在空转" if audit_calls.length < 30
+audit_calls.each do |actor, action, rest|
+  if human_only_actions.include?(action) && actor.strip.start_with?('"')
+    errors << %(真人专属动作 #{action} 的审计把执行者写成了字面量 #{actor.strip} —— ) +
+              %(事后无法回答"是谁做的"；应记 guard.actor)
+  end
+  errors << %(#{action} 的审计把布尔当结果记（#{rest.strip[-40..] || rest.strip}）—— ) +
+            %(既没有中文也说不清它是什么为真) if rest =~ /String\((?!.*\?)/
+  next unless human_only_actions.include?(action)
+  next unless action =~ /decide|resolve|status_update|waive/
+  next if rest =~ /`,\s*\S/m
+  errors << %(决策类动作 #{action} 的审计没有记下结果 —— 事后只知道有人处置过，) +
+            %(答不出他定的是什么；audit 的第五个参数应带上结果)
+end
+# 审计结果走 t() 渲染（控制台按徽章显示），写成字面量的结果值同样必须有中文，判据与上面的
+# 错误码同源：漏了译文，人在最需要看懂的那一栏看到一串英文。
+# rest 里还含着 subject 参数，所以取的是【最后一个】实参 —— 第一版从 rest 开头匹配，
+# 一个字面量都没提取到，整条门是空的（把结果值改成没译文的词，它照样绿）。
+audit_result_literals = audit_calls.map { |_, _, rest| rest[/,\s*"([a-z0-9_]+)"\s*\z/m, 1] }.compact.uniq
+audit_with_result = audit_calls.count { |_, _, rest| rest =~ /`,\s*\S/m }
+errors << "带结果的审计调用一个都没提取到 —— 本条在空转" if audit_with_result < 10
+errors << "审计结果字面量一个都没提取到 —— 本条在空转" if audit_result_literals.empty?
+audit_result_literals.each do |value|
+  next if i18n_zh_source.match?(/\n\s*#{Regexp.escape(value)}:/)
+  errors << %(审计结果 "#{value}" 没有中文 —— 控制台审计日志会显示英文原值)
 end
 
 fail_with(errors)

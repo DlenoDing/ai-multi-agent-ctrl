@@ -1358,7 +1358,7 @@ function renderSysOverview() {
     esc(accountName(entry.actor)),
     esc(t(entry.action)),
     {v: esc(entry.subject), c: "text-clip"},
-    badge(entry.result || "ok")
+    badge(t(entry.result || "ok"))
   ])).join("");
 
   const overviewPanels = overview ? [
