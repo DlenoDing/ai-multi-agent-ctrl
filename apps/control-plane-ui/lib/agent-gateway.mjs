@@ -903,6 +903,42 @@ function handleDispatchControlFailure(state, node, command, status) {
       ttlSeconds: 300
     }, {actor: "agent-gateway", idempotencyKey: `control-retry:${command.commandId}:${retryAttempt}`}).command;
     command.retryCommandId = retry.commandId;
+  } else {
+    // 不再重试了。此前这一支什么都不做，于是派发停在下发暂停那一刻写下的 control_pause_requested
+    // ——「控制通道请求暂停」。而真相是：节点连拒了 4 次、不会再有第 5 次，**agent 仍在跑**。
+    // 控制台显示"已暂停"而世界上没有暂停，这比看不见更糟：人以为处置完了。
+    // 换成说真话的终态原因，并记下试了几次、最后一次报了什么，人才判断得了下一步。
+    const rejectedReason = command.commandType === "pause_dispatch"
+      ? "control_pause_rejected_by_node"
+      : "control_cancel_rejected_by_node";
+    dispatch.controlFailure = {
+      commandType: command.commandType,
+      attempts: retryAttempt,
+      lastStatus: status,
+      lastError: String(command.result?.error || command.failureReason || "").slice(0, 200) || undefined,
+      at
+    };
+    // 取消在下发那一刻就把派发写成了终态 cancelled；把它翻回 blocked 是让终态复活，
+    // 编排会把它当活的重新处理。终态就留在终态，只把【失败原因】改成说真话的那一条。
+    if (["completed", "failed", "cancelled"].includes(dispatch.status)) {
+      if (dispatch.status === "cancelled") dispatch.failureReason = rejectedReason;
+    } else {
+      dispatch.status = "blocked";
+      dispatch.blockedReason = rejectedReason;
+      const failedSession = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
+      if (failedSession && !["completed_objective", "recycled", "failed", "aborted"].includes(failedSession.status)) {
+        failedSession.status = "needs_decision";
+        failedSession.blockedReason = rejectedReason;
+        failedSession.updatedAt = at;
+      }
+      const failedTaskGroup = state.taskGroups.find((item) => item.id === dispatch.taskGroupId);
+      const failedWorkItem = failedTaskGroup?.workItems?.find((item) => item.id === dispatch.workItemId);
+      if (failedWorkItem && !["verified", "closed"].includes(failedWorkItem.status)) {
+        failedWorkItem.status = "needs_decision";
+        failedWorkItem.blockedReason = rejectedReason;
+        failedWorkItem.updatedAt = at;
+      }
+    }
   }
   const taskGroup = state.taskGroups.find((item) => item.id === dispatch.taskGroupId);
   if (taskGroup) {
@@ -1200,6 +1236,16 @@ function handleStopControlFailure(state, node, command, status) {
       ttlSeconds: 300
     }, {actor: "agent-gateway", idempotencyKey: `control-retry:${command.commandId}:${retryAttempt}`}).command;
     command.retryCommandId = retry.commandId;
+  } else {
+    // 重试用尽：原因不能再写 *_retry_queued（「重试入队」）—— 没有任何重试在队列里，
+    // 而人会照着那句话干等。换成终态原因，出口是强制吊销（不需要节点配合）。
+    for (const dispatchId of affectedDispatchIds) {
+      const stuck = (state.agentDispatches || []).find((item) => item.dispatchId === dispatchId);
+      if (!stuck) continue;
+      stuck.blockedReason = "assigned_node_stop_control_failed_retries_exhausted";
+      stuck.controlFailure = {commandType: command.commandType, attempts: retryAttempt, lastStatus: status, at};
+      stuck.updatedAt = at;
+    }
   }
   command.failureHandledAt = at;
   appendGatewayEvent(state, "agent_stop_control_retry_queued", command.commandId, {nodeId: node.nodeId, commandType: command.commandType, status, affectedDispatchIds, retryCommandId: command.retryCommandId || null});

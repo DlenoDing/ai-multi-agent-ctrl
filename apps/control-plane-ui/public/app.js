@@ -2507,7 +2507,17 @@ const STUCK_EXIT_HINT = {
   human_confirmation_expired_needs_decision: "确认卡已超时：到「人工指令」页用「决策处置（重开 / 放弃）」处置",
   permission_request_pending: "到「人工审核」页批准或驳回对应的权限申请",
   credential_required: "在承接它的 agent 节点上配置所需的凭据环境变量",
-  agent_runtime_executor_required: "该节点没有可用的模型执行器：到「运行时」页核对节点自检结果"
+  agent_runtime_executor_required: "该节点没有可用的模型执行器：到「运行时」页核对节点自检结果",
+  // 下面三条是【节点拒绝了人的控制指令且重试已用尽】。它们不会自己好，而且最要紧的一点是：
+  // 控制面这边已经停了，那台机器上的 agent 可能还在跑 —— 出口是绕开节点配合的强制吊销。
+  control_pause_rejected_by_node: "节点拒绝了暂停且重试已用尽：到「运行时」页对该节点点「立即切断」，再确认它确实停了",
+  control_cancel_rejected_by_node: "节点拒绝了取消且重试已用尽：到「运行时」页对该节点点「立即切断」，再确认它确实停了",
+  assigned_node_stop_control_failed_retries_exhausted: "节点停止控制重试已用尽：到「运行时」页对该节点点「立即切断」（不需要节点配合）",
+  // 这两条只在【节点失联超时】后才会被自动重排；节点若还在心跳却始终不 ACK，它会一直等下去。
+  // 所以不能登记成"会自己好"，出口是不需要节点配合的立即切断。
+  assigned_node_revocation_pending_stop: "正在等节点确认吊销：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，到「运行时」页点「立即切断」",
+  assigned_node_shutdown_pending_stop: "正在等节点确认下线：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，到「运行时」页点「立即切断」",
+  task_group_pause: "整个任务组被人暂停了：到该任务组页点「恢复执行」"
 };
 // 提示只在【当前真的有派发卡在这些原因上】时出现，且按出现过的原因去重 —— 逐行重复同一句话
 // 会把表格淹掉，而人需要的是"现在卡在哪几件事上、各自去哪处理"。

@@ -104,6 +104,8 @@ const VAR_MACHINES = {
   artifact: ["Artifact"], candidate: ["SystemUpgradeCandidate"],
   // 人工指令的暂停/恢复分支里，被停住与被放回的都是派发。
   running: ["AgentDispatch"], parked: ["AgentDispatch"],
+  // 控制命令被节点连续拒绝、重试用尽时改写的那两个对象。
+  failedSession: ["WorkSession"], failedWorkItem: ["WorkItem"], stuck: ["AgentDispatch"],
   // 不是控制对象：branch 是 git 分支名，record/entry 之类若指向无状态机的对象则映射为空集。
   branch: [], record: [],
   bundle: ["ReviewBundle"], plan: ["ReviewPlan"], finding: ["Finding"],

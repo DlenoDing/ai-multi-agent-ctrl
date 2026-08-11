@@ -1003,10 +1003,36 @@ await runErrorGuidanceCase();
   ].join("\n");
   // 会话侧的阻塞原因一并纳入：会话可能在【派发已经终结之后】仍被停住（确认卡超时那条链），
   // 那时只看派发是看不见的，而会话仍算活跃、仍挡着关闭门。
+  // 提取要认得【表达式化的赋值】：只认 `dispatch.blockedReason = "字面量"` 的写法，会漏掉
+  //   stuck.blockedReason = "..."（换个变量名）
+  //   dispatch.blockedReason = rejectedReason（先算好再赋值）
+  // 而漏掉的原因不会有出口提示、也不会有人发现 —— 门在自己看不见的地方失效。
+  // 做法：取每一处 *.blockedReason 赋值的右侧表达式；是字面量就直接收，是标识符就回到
+  // 它的 const 声明里取字面量（三元的两支都收）。
+  // 只取【赋值真正的取值】：三元的分支，或整个右侧就是一个字面量。条件里的操作数不算 ——
+  // 第一版把 `command.commandType === "pause_dispatch" ? ...` 里的 commandType 也收成了阻塞原因，
+  // 于是门去要一个根本不存在的原因的出口提示（提取放得太松，制造的是假活）。
+  const literalsIn = (text) => text
+    .split(/\?|:/u)
+    .map((part) => part.trim().match(/^"([a-z_]{4,})"$/u)?.[1])
+    .filter(Boolean);
+  // 按赋值目标分面：工作项那一面在界面上有 needs_decision 兜底出口（WORK_ITEM_EXIT_HINT），
+  // 派发/会话这一面走 STUCK_EXIT_HINT。混在一起要求同一张表，会去要一个本来就不该在那儿的出口。
+  const isWorkItemTarget = (name) => /item$/iu.test(name) || /work[_]?item/iu.test(name);
+  const reasonsFromAssignments = [];
+  for (const match of producerSource.matchAll(/\b(\w+)\.blockedReason\s*=\s*([^;]+);/gu)) {
+    const [, target, rhs] = match;
+    if (isWorkItemTarget(target)) continue;
+    let values = literalsIn(rhs);
+    if (!values.length && /^[A-Za-z_$][\w$]*$/u.test(rhs.trim())) {
+      const declaration = producerSource.match(new RegExp(`const ${rhs.trim()}\\s*=\\s*([^;]+);`, "u"));
+      if (declaration) values = literalsIn(declaration[1]);
+    }
+    reasonsFromAssignments.push(...values);
+  }
   const reasons = [...new Set([
-    ...[...producerSource.matchAll(/dispatch\.blockedReason = "([a-z_]+)"/gu)].map((match) => match[1]),
-    ...[...producerSource.matchAll(/markDispatchBlocked\([^,]+, [^,]+, "([a-z_]+)"/gu)].map((match) => match[1]),
-    ...[...producerSource.matchAll(/[a-zA-Z]*[Ss]ession\.blockedReason = "([a-z_]+)"/gu)].map((match) => match[1])
+    ...reasonsFromAssignments,
+    ...[...producerSource.matchAll(/markDispatchBlocked\([^,]+, [^,]+, "([a-z_]+)"/gu)].map((match) => match[1])
   ])];
   if (reasons.length < 8) {
     failures.push(`派发出口: 只从生产者提取到 ${reasons.length} 种派发阻塞原因 —— 提取逻辑与代码脱节，本条在空转`);
@@ -1017,6 +1043,10 @@ await runErrorGuidanceCase();
     assigned_node_revocation_ack_requeued: "节点吊销 ACK 后已重排回队列",
     assigned_node_shutdown_ack_requeued: "节点下线 ACK 后已重排回队列",
     assigned_node_stop_control_failed_retry_queued: "停止控制失败后已重排重试",
+    // 与 revocation_ack_timeout_requeued 同源：死节点兜底已经把派发写回 queued，人不用动手。
+    // 它们此前只是没被提取到，不是被判过瞬态 —— 提取一收紧就露出来了。
+    paused_node_dead_requeued: "承接节点已失联，派发被兜底重排回队列",
+    shutdown_ack_timeout_requeued: "节点下线确认超时，派发被兜底重排回队列",
     control_pause_requested: "操作员刚下达的暂停，恢复即可继续",
     control_resume_requested: "操作员刚下达的恢复，下一轮即生效"
   };

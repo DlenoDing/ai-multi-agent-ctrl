@@ -193,6 +193,7 @@ verifyOrchestrationDoesNotShellOutPerCell(errors);
 verifyActiveDispatchesKeepTheirContracts(errors);
 verifySuspendedOrganizationHaltsExecution(errors);
 verifyHaltedTaskGroupsAreNotClaimable(errors);
+verifyExhaustedControlRetriesTellTheTruth(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4315,6 +4316,100 @@ function applyTaskGroupRuntimeControlProbe(state, taskGroup) {
       {actor: "acct_probe", idempotencyKey: `org-suspend-probe:${dispatch.dispatchId}`});
       dispatch.status = "blocked";
       dispatch.blockedReason = "control_pause_requested";
+    }
+  }
+}
+
+
+// 控制命令重试用尽之后，状态不能还在说"进行中"。
+// 实测过的原点：人点暂停 → 节点连拒 4 次 → 不再重试，而派发停在下发那一刻写的
+// control_pause_requested（「控制通道请求暂停」）。控制台显示已暂停，而那台机器上的 agent
+// 仍在跑 —— 人以为处置完了。停止类同理：原因写着"重试入队"，而队列里没有任何重试。
+function verifyExhaustedControlRetriesTellTheTruth(output) {
+  const build = () => {
+    const probe = structuredClone(seedState);
+    ensureRuntimeCollections(probe, {root});
+    const issued = createAgentJoinToken(probe, {projectId: "prj_control_plane", nodeName: "exhaust-node", allowedRoles: ["*"]},
+      {publicUrl: "https://control.example.test"});
+    registerAgentNode(probe, {nodeName: "exhaust-node", requestedRoles: ["*"], runtimeVersion: "contract",
+      profile: {platform: "test", arch: "test", tools: [], models: [{providerClass: "custom", available: true}]}},
+      {joinToken: issued.joinToken, publicUrl: "https://control.example.test"});
+    const node = probe.agentRuntimeNodes.find((item) => item.nodeName === "exhaust-node");
+    selfCheckAgentNode(probe, node, {checks: ["runtime", "gateway", "filesystem", "git", "remote_mcp", "model_executor"]
+      .map((checkId) => ({checkId, status: "ok"}))});
+    runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+    const claimed = claimNextDispatch(probe, node, {});
+    const dispatch = claimed.dispatch?.dispatch;
+    return {probe, node, dispatch};
+  };
+  // 连续失败直到网关不再排重试；返回实际下发过的命令条数。
+  const failUntilExhausted = (probe, node, first, limit = 8) => {
+    let command = first;
+    let issuedCount = 1;
+    for (let round = 0; round < limit; round += 1) {
+      ackAgentControlCommand(probe, node, command.commandId, {status: "failed", result: {error: "node busy"}});
+      const nextId = command.retryCommandId;
+      if (!nextId) return issuedCount;
+      command = probe.agentControlCommands.find((item) => item.commandId === nextId);
+      issuedCount += 1;
+    }
+    return issuedCount;
+  };
+
+  {
+    const {probe, node, dispatch} = build();
+    if (!dispatch) { output.push("控制重试用尽断言拿不到派发 —— 本条在空转"); return; }
+    const pause = createAgentControlCommand(probe, node, {commandType: "pause_dispatch", dispatchId: dispatch.dispatchId},
+      {actor: "acct_probe", idempotencyKey: "exhaust-pause"}).command;
+    // 对照组：只失败一次时仍在重试，状态就该保持"已请求暂停"，不得提前宣告终态。
+    ackAgentControlCommand(probe, node, pause.commandId, {status: "failed", result: {error: "busy"}});
+    const midway = probe.agentDispatches.find((item) => item.dispatchId === dispatch.dispatchId);
+    if (!pause.retryCommandId || midway.blockedReason !== "control_pause_requested") {
+      output.push(`第一次失败后还该继续重试，派发原因却已是 ${midway.blockedReason}（retry=${pause.retryCommandId || "无"}）`);
+    }
+    // 没排上重试就直接往下走会抛在 failUntilExhausted 里，而崩溃会把上面那条已经记下的
+    // 诊断一起吞掉 —— 人看到的是一段栈，不是"第一次失败就宣告了终态"。
+    const retryCommand = probe.agentControlCommands.find((item) => item.commandId === pause.retryCommandId);
+    if (!retryCommand) return;
+    failUntilExhausted(probe, node, retryCommand);
+    const stuck = probe.agentDispatches.find((item) => item.dispatchId === dispatch.dispatchId);
+    if (stuck.blockedReason !== "control_pause_rejected_by_node") {
+      output.push(`节点连续拒绝暂停、重试用尽后，派发原因仍是 ${stuck.blockedReason} —— 控制台会显示"已请求暂停"，`
+        + "而那台机器上的 agent 还在跑，人以为处置完了");
+    }
+    if (!stuck.controlFailure?.attempts) {
+      output.push("暂停被拒到用尽后没有留下试了几次、最后一次什么错 —— 人无从判断下一步");
+    }
+    const session = probe.workSessions.find((item) => item.sessionId === stuck.sessionId);
+    if (session && session.blockedReason !== "control_pause_rejected_by_node") {
+      output.push(`暂停被拒到用尽后，会话原因仍是 ${session.blockedReason} —— 会话仍算活跃、仍挡着关闭门`);
+    }
+  }
+  {
+    // 取消在下发那一刻就把派发写成终态 cancelled：用尽重试后不得把它翻回活的（终态复活），
+    // 但失败原因必须换成说真话的那一条。
+    const {probe, node, dispatch} = build();
+    if (!dispatch) return;
+    const cancel = createAgentControlCommand(probe, node, {commandType: "cancel_dispatch", dispatchId: dispatch.dispatchId},
+      {actor: "acct_probe", idempotencyKey: "exhaust-cancel"}).command;
+    failUntilExhausted(probe, node, cancel);
+    const cancelled = probe.agentDispatches.find((item) => item.dispatchId === dispatch.dispatchId);
+    if (cancelled.status !== "cancelled") {
+      output.push(`取消被拒到用尽后派发变成了 ${cancelled.status} —— 终态被复活，编排会重新处理它`);
+    }
+    if (cancelled.failureReason !== "control_cancel_rejected_by_node") {
+      output.push(`取消被拒到用尽后失败原因仍是 ${cancelled.failureReason} —— 人看不出节点其实没有停`);
+    }
+  }
+  {
+    // 停止类（吊销）：用尽后原因不能还写着"重试入队"，队列里没有任何重试。
+    const {probe, node, dispatch} = build();
+    if (!dispatch) return;
+    const revoke = requestAgentNodeRevocation(probe, node, {}, {actor: "acct_probe", idempotencyKey: "exhaust-revoke"});
+    failUntilExhausted(probe, node, revoke.command);
+    const fenced = probe.agentDispatches.find((item) => item.dispatchId === dispatch.dispatchId);
+    if (fenced.blockedReason !== "assigned_node_stop_control_failed_retries_exhausted") {
+      output.push(`停止控制重试用尽后原因仍是 ${fenced.blockedReason} —— 它写着"重试入队"，而不会再有任何重试`);
     }
   }
 }
