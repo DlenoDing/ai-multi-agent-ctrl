@@ -1780,6 +1780,16 @@ function recordAdmissionScan(state, input = {}) {
     sampledAt: new Date().toISOString()
   };
   const cap = Math.max(20, Number(process.env.AIMAC_ADMISSION_SCAN_CAP || 200));
+  // 空转的一拍也会为每个任务组记一条扫描，一天 1440 拍就是几千条"什么都没扫到"的记录。
+  // 它们不只是浪费：这份历史是有上限的，噪声会把【真实的准入判断】挤出窗口 ——
+  // 等于系统自己把自己的证据删了。同一任务组连着两次扫描结果一模一样时，不再记新的一条，
+  // 同一任务组连着两次扫描结果一模一样时，不再记新的一条，也不续写采样时刻 ——
+  // sampledAt 说的是"这个结论是什么时候第一次观察到的"，那是它该说的话；
+  // "系统还在不在扫"由自治循环的心跳回答，控制台上本来就单独显示。
+  const previousScan = state.admissionScans.find((item) => item.taskGroupId === scan.taskGroupId);
+  const sameScan = previousScan && digestOf({...previousScan, scanId: null, sampledAt: null, cycleRef: null})
+    === digestOf({...scan, scanId: null, sampledAt: null, cycleRef: null});
+  if (sameScan) return previousScan;
   state.admissionScans = [scan, ...state.admissionScans].slice(0, cap);
   return scan;
 }
@@ -2175,8 +2185,16 @@ function runAutonomousCycleBody(state, request = {}) {
       changed.push({taskGroupId: taskGroup.id, status: "attention", reason: "task_group_recompute_error", error: groupError.message});
     }
   }
+  // 进度事件此前每拍都记一条。它不在"例行事件"集合里，也就是说裁剪时它和真实决策同级 ——
+  // 一天 1440 条"进度没动"的心跳会把阻塞、定稿这些真事件挤出事件环。系统自己把自己的证据删了。
+  // computeProgressSnapshots 内容一致时会原样复用旧对象，所以用引用相等就能判出"进度真没动"。
+  const snapshotsBefore = state.progressSnapshots || [];
   computeProgressSnapshots(state);
-  appendEvent(state, "progress", "ProgressSnapshot", `cycle:${Date.now()}`, "orchestrator", {changed});
+  const progressMoved = state.progressSnapshots.length !== snapshotsBefore.length
+    || state.progressSnapshots.some((snapshot, index) => snapshot !== snapshotsBefore[index]);
+  if (progressMoved) {
+    appendEvent(state, "progress", "ProgressSnapshot", `cycle:${Date.now()}`, "orchestrator", {changed});
+  }
   return {changed, progressSnapshots: state.progressSnapshots.slice(0, 8)};
 }
 
@@ -3369,6 +3387,20 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
     evidenceRefs: [`readiness:${taskGroupId}`],
     computedAt: at
   };
+  // 同一个结论不该每拍换一次身份。此前每拍都生成新的 checkId + computedAt，于是：
+  // 关闭门的 evidenceRefs 跟着变、状态每分钟都"变了"、所有客户端的 ETag 每分钟作废一次。
+  // 内容摘要一致就原样沿用旧记录（身份、计算时刻、核对版本全都不动）。
+  // 不能"顺手把 stateVersion 续到当前"：那会让状态每拍都变 → 落盘 → 版本再 +1 →
+  // 下一拍又不一致，churn 变成永动机。代价是 computeCloseBarrier 那条
+  // "版本一致才复用缓存"的快路径不再命中，改为每次重算 —— 重算是幂等的，只是慢一点，
+  // 而那道校验本来就是为了不误用陈旧结论，总是重算只会更安全。
+  const previousReadiness = state.completionReadiness.find((item) => item.taskGroupId === taskGroupId);
+  const sameConclusion = previousReadiness
+    && previousReadiness.stateDigest === readiness.stateDigest
+    && previousReadiness.status === readiness.status
+    && digestOf(previousReadiness.checkResults) === digestOf(readiness.checkResults)
+    && digestOf(previousReadiness.blockingObjects) === digestOf(readiness.blockingObjects);
+  if (sameConclusion) return previousReadiness;
   state.completionReadiness = [readiness, ...state.completionReadiness.filter((item) => item.taskGroupId !== taskGroupId)].slice(0, 80);
   return readiness;
 }
@@ -3439,7 +3471,7 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
   }
   const satisfied = failedGates.length === 0 && readiness.status === "clear";
   const at = new Date().toISOString();
-  const barrier = {
+  let barrier = {
     schemaVersion: "close-barrier/v1",
     projectId: taskGroup?.projectId || request.projectId || "prj_control_plane",
     taskGroupId,
@@ -3475,6 +3507,18 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     computedAt: at,
     satisfied
   };
+  // 与完成度检查同理：结论没变就不该换一份记录。这里的判据是内容摘要 + 结论 + 各门结果 + 阻塞物，
+  // 身份（computedAt/evidenceRefs/stateVersion）整份沿用旧的，一个字段都不续写。
+  const previousBarrier = state.closeBarriers.find((item) => item.taskGroupId === taskGroupId);
+  const sameBarrier = previousBarrier
+    && previousBarrier.stateDigest === barrier.stateDigest
+    && previousBarrier.satisfied === barrier.satisfied
+    && digestOf(previousBarrier.gateResults) === digestOf(barrier.gateResults)
+    && digestOf(previousBarrier.blockingObjects) === digestOf(barrier.blockingObjects)
+    && digestOf(previousBarrier.holisticJudgment) === digestOf(barrier.holisticJudgment);
+  // 必须让 barrier 指向【存在状态里的那一个对象】，不能 Object.assign 出一份副本：
+  // 下面 mutate 路径会往 barrier 上写 confirmedBy/confirmedAt，写在副本上等于人工确认没进账本。
+  if (sameBarrier) barrier = previousBarrier;
   state.closeBarriers = [barrier, ...state.closeBarriers.filter((item) => item.taskGroupId !== taskGroupId)].slice(0, 80);
   // 关闭任务组是核心定稿动作：只有真人账号可以落闸。机器主体即使拿到 task_group:control 也不行 ——
   // 否则一个服务账号就能替 AI 把任务组关掉，人工闸门在最后一步被绕过。这里对**任何**落闸请求先行拒绝
@@ -3970,6 +4014,13 @@ function ensureLease(state, repositoryTarget, holderRef = "orchestrator", taskCo
 }
 
 export function recomputeTaskGroup(taskGroup) {
+  // 重算每拍都跑。它此前无条件刷新 updatedAt，于是【什么都没发生】的一拍也把所有任务组标成"刚更新"：
+  // 人按最近更新排序看到的全是噪声，真正动过的那个反而认不出来。
+  // 重算只拥有下面这几个字段，算出来一样就不该动时间戳。
+  const ownedBefore = digestOf({
+    progress: taskGroup.progress, health: taskGroup.health, status: taskGroup.status,
+    blockers: taskGroup.blockers, blockersDroppedCount: taskGroup.blockersDroppedCount
+  });
   const items = (taskGroup.workItems || []).filter((item) => item.status !== "superseded");
   taskGroup.progress = items.length ? Math.round(items.reduce((sum, item) => sum + Number(item.progress || 0), 0) / items.length) : 100;
   const blockedItems = items.filter((item) => BLOCKED_OR_FAILED_WORKITEM_STATUSES.includes(item.status));
@@ -3997,7 +4048,11 @@ export function recomputeTaskGroup(taskGroup) {
   if (taskGroup.health === "ok") delete taskGroup.blockersDroppedCount;
   const allTerminal = items.length > 0 && items.every((item) => ["verified", "closed"].includes(item.status));
   if (allTerminal && taskGroup.health === "ok" && !["closed", "aborted"].includes(taskGroup.status)) taskGroup.status = "verification";
-  taskGroup.updatedAt = new Date().toISOString();
+  const ownedAfter = digestOf({
+    progress: taskGroup.progress, health: taskGroup.health, status: taskGroup.status,
+    blockers: taskGroup.blockers, blockersDroppedCount: taskGroup.blockersDroppedCount
+  });
+  if (ownedAfter !== ownedBefore) taskGroup.updatedAt = new Date().toISOString();
 }
 
 function activeSharedDefinitionRefs(state, request = {}) {

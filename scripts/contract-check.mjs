@@ -365,6 +365,51 @@ function verifyHumanAndOrganizationContracts(output) {
       if (!decision.dimensions || !decision.dimensions.evidenceQualificationDimension) output.push("admissionDecision missing orthogonal dimensions (A5)");
     }
   }
+  // 空转的一拍不得改动状态。这不是纯性能问题：此前每拍都会刷新每个任务组的 updatedAt
+  // （人按"最近更新"排序看到的全是噪声）、给同一个结论换一个新的 checkId、追加一条内容重复的
+  // 准入扫描、再记一条进度事件 —— 后两者的历史都是有上限的，噪声会把真实记录挤出窗口，
+  // 等于系统自己删掉了自己的证据。顺带每分钟作废一次所有客户端的 ETag。
+  {
+    const idle = JSON.parse(JSON.stringify(state));
+    ensureRuntimeCollections(idle, {root});
+    runAutonomousCycle(idle, {root, mode: "all"});           // 先跑一拍，让它把该做的做完
+    const snapshot = () => ({
+      updatedAt: (idle.taskGroups || []).map((group) => group.updatedAt).join("|"),
+      checkIds: (idle.completionReadiness || []).map((item) => item.checkId).join("|"),
+      barrierComputedAt: (idle.closeBarriers || []).map((item) => item.computedAt).join("|"),
+      scans: (idle.admissionScans || []).length,
+      events: (idle.eventLog || []).length
+    });
+    const before = snapshot();
+    runAutonomousCycle(idle, {root, mode: "all"});           // 再跑一拍：这一拍什么都没发生
+    const after = snapshot();
+    if (after.updatedAt !== before.updatedAt) output.push("空转一拍刷新了任务组的 updatedAt —— 人按最近更新排序会看到全是噪声，真正动过的那个反而认不出来");
+    if (after.checkIds !== before.checkIds) output.push("空转一拍给同一个完成度结论换了新的 checkId —— 同一个结论不该每分钟换一次身份");
+    if (after.barrierComputedAt !== before.barrierComputedAt) output.push("空转一拍重算出一份新的关闭门记录 —— 结论没变就不该换记录");
+    if (after.scans !== before.scans) output.push("空转一拍追加了内容重复的准入扫描 —— 这份历史有上限，噪声会把真实的准入判断挤出窗口");
+    if (after.events !== before.events) output.push("空转一拍追加了进度事件 —— 事件环有上限，每分钟一条心跳会把阻塞、定稿这些真事件挤掉");
+
+    // 反向：真有变化时这些必须动。少了这一条，"永远不记"也能让上面五条全绿。
+    const busy = JSON.parse(JSON.stringify(idle));
+    const movedItem = (busy.taskGroups || []).flatMap((group) => group.workItems || [])
+      .find((item) => !["verified", "closed"].includes(item.status));
+    if (!movedItem) output.push("空转门自检：找不到可推进的工作项，这一段没有被真正检验");
+    else {
+      movedItem.progress = Math.min(100, Number(movedItem.progress || 0) + 7);
+      const beforeBusy = {
+        updatedAt: (busy.taskGroups || []).map((group) => group.updatedAt).join("|"),
+        events: (busy.eventLog || []).length
+      };
+      runAutonomousCycle(busy, {root, mode: "all"});
+      if ((busy.taskGroups || []).map((group) => group.updatedAt).join("|") === beforeBusy.updatedAt) {
+        output.push("真的有变化时任务组的 updatedAt 却没动 —— 跳过写入不能把真实变化一起挡住");
+      }
+      if ((busy.eventLog || []).length === beforeBusy.events) {
+        output.push("真的有进度变化时却没记进度事件 —— 那是把审计一起省掉了");
+      }
+    }
+  }
+
   // A8: a cycle-level admission scan holds the candidate set + per-cell classification.
   if (!Array.isArray(state.admissionScans) || !state.admissionScans.length) {
     output.push("runAutonomousCycle did not record an admissionScan (A8)");
@@ -836,8 +881,19 @@ function verifyHumanAndOrganizationContracts(output) {
     const closeState = structuredClone(seedState);
     ensureRuntimeCollections(closeState, {root});
     const closeTg = closeState.taskGroups.find((t) => t.id === "tg_runtime_management");
-    closeTg.workItems = [];
+    // 夹具此前把工作项清空，而"所有必需工作已关闭"这道门对空列表判为不通过 ——
+    // 于是门禁永远不满足，下面"真人落闸必须留痕/必须落进账本"那几条断言一次都没跑过。
+    // 给它一个真正处于终态的工作项，让门禁能够满足，那几条才谈得上被检验。
+    closeTg.workItems = [{
+      id: "work_close_ready", title: "已完成并通过独立评审的工作项", status: "verified", progress: 100,
+      ownerRole: "agent-runtime", reviewBundleRef: "rvb_close_ready"
+    }];
     closeState.checkpoints = []; closeState.agentDispatches = []; closeState.workSessions = [];
+    // 已验收的工作项必须有带 git 证据的检查点，否则完成度检查一直判"证据缺失"。
+    closeState.checkpoints = [{
+      checkpointId: "ckpt_close_ready", taskGroupId: "tg_runtime_management", workId: "work_close_ready",
+      commitRefs: ["commit:abc1234"], pushRefs: ["push:origin/main"], artifactManifestRefs: ["manifest:close-ready"]
+    }];
     closeState.repositoryOutputs = []; closeState.findings = []; closeState.permissionRequests = [];
     closeState.approvalRequests = []; closeState.humanConfirmationRequests = []; closeState.humanDirectives = [];
     const closeHuman = (closeState.accounts.find((a) => ["system_admin", "org_admin", "user_account"].includes(a.accountType)) || {}).accountId;
@@ -858,9 +914,42 @@ function verifyHumanAndOrganizationContracts(output) {
     if (humanClosed?.satisfied) {
       if (closeTg.status !== "closed") output.push("人工闸门: 门禁满足且由真人落闸，任务组却未关闭");
       if (closeTg.humanFinalization?.finalizedBy !== closeHuman || humanClosed.confirmedBy !== closeHuman) output.push("人工闸门: 真人关闭未留下定稿记录（humanFinalization / confirmedBy）");
+      // 审计读的是【账本里的那条记录】，不是函数返回值。两者一旦不是同一个对象
+      // （比如"结论没变就沿用旧记录"时不小心把返回值做成了副本），确认就只写在副本上：
+      // 返回值看着有人确认过，账本里那条永远是没人确认过 —— 而事后没人会去看返回值。
+      const ledgerBarrier = (closeState.closeBarriers || []).find((item) => item.taskGroupId === "tg_runtime_management");
+      if (ledgerBarrier?.confirmedBy !== closeHuman) {
+        output.push("人工闸门: 关闭确认没有落进账本里的那条关闭门记录 —— 审计看到的是没人确认过");
+      }
       validateSchema(humanClosed, closeBarrierSchema, "CloseBarrier(humanConfirmed)", output);
     } else if (closeTg.status === "closed") {
       output.push("人工闸门: 门禁未满足却把任务组关掉了");
+    }
+    // 上面那一整段只有在门禁真的满足时才跑。它是否跑过必须说出来 ——
+    // 否则"真人落闸留下定稿记录"这几条断言可能一次都没被检验过，而门照样是绿的。
+    // 门禁满足是上面那几条断言的前提。它一旦不满足，那几条就一条都没跑过而门照样绿 ——
+    // 所以把"这一轮到底检验没检验"直接说出来，并把挡路的门列清楚。
+    if (!humanClosed?.satisfied) {
+      output.push("人工闸门自检: 关闭门禁未满足，'真人落闸必须留痕/必须落进账本'这几条这一轮没有被检验"
+        + "｜未过的门：" + Object.entries(humanClosed?.gateResults || {}).filter(([, r]) => r.status !== "passed").map(([g]) => g).join(",")
+        + "｜阻塞物：" + JSON.stringify(humanClosed?.blockingObjects || []).slice(0, 300));
+    }
+
+    // 门禁满足这一侧验完了，未满足那一侧也要验：真人身份不是万能钥匙，工作没做完就不能关。
+    // 一个夹具只能落在一侧，所以另造一份。
+    {
+      const unmetState = structuredClone(closeState);
+      const unmetTg = unmetState.taskGroups.find((t) => t.id === "tg_runtime_management");
+      unmetTg.status = "development";
+      delete unmetTg.humanFinalization;
+      unmetTg.workItems = [{id: "work_still_open", title: "还没做完的工作项", status: "in_progress", progress: 40, ownerRole: "agent-runtime"}];
+      unmetState.closeBarriers = []; unmetState.completionReadiness = [];
+      unmetState.stateVersion = Number(unmetState.stateVersion || 1) + 1;
+      let unmetBarrier = null;
+      try { unmetBarrier = computeCloseBarrier(unmetState, "tg_runtime_management", {root, mutate: true, actor: closeHuman}); } catch { /* 不该抛，抛了下面会报 */ }
+      if (unmetBarrier?.satisfied) output.push("人工闸门: 工作项还在进行中，关闭门禁却判为满足");
+      if (unmetTg.status === "closed") output.push("人工闸门: 工作没做完，真人落闸却把任务组关掉了 —— 真人身份不是万能钥匙");
+      if (unmetTg.humanFinalization) output.push("人工闸门: 门禁未满足却写下了定稿记录 —— 账本会显示这次关闭被人确认过");
     }
 
     // 绕过复现防回归 #2：agent 通道不得自选 decisionType/subjectRef —— 否则 AI 能伪造一张文案无害的
