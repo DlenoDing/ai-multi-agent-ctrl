@@ -204,6 +204,7 @@ verifyRepeatedExecutionFailureStops(errors);
 verifyOrchestratorReportsItsOwnOutcome(errors);
 verifyDegradedContentBundleIsVisible(errors);
 verifyMcpSummaryIsActuallyASummary(errors);
+verifyHeartbeatDoesNotHideFailedSelfCheck(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4543,6 +4544,42 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 这份东西是发给 AI agent 的工具输出：直接占它的上下文、按 token 计费；
 // 而"full 需要开关才允许"那道最小权限门，在体积上因此什么也没省下。
 // 截断可以，但 agent 会拿"列表里没有"当成"不存在"，所以必须带上真实总数。
+
+// 心跳此前会把 degraded 直接改回 online，而它【不重做自检】：于是界面上出现
+// "在线 + 自检未通过：模型执行器 + 只读"这种自相矛盾的一行 —— 人看到在线，
+// 却不明白它为什么领不到活。degraded 是自检的结论，只有自检能撤销它。
+function verifyHeartbeatDoesNotHideFailedSelfCheck(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const taskGroup = state.taskGroups[0];
+  const issued = createAgentJoinToken(state, {projectId: taskGroup.projectId, nodeName: "cc-degraded-node", allowedRoles: ["*"]},
+    {publicUrl: "https://control.example.test"});
+  registerAgentNode(state, {nodeName: "cc-degraded-node", requestedRoles: ["*"], runtimeVersion: "contract",
+    profile: {platform: "test", arch: "test", tools: [], models: [{providerClass: "custom", available: true}]}},
+    {joinToken: issued.joinToken, publicUrl: "https://control.example.test"});
+  const node = state.agentRuntimeNodes.find((item) => item.nodeName === "cc-degraded-node");
+  const allChecks = ["runtime", "gateway", "filesystem", "git", "remote_mcp", "model_executor"];
+  // 缺一项自检 => 降级 + 只读
+  selfCheckAgentNode(state, node, {checks: allChecks.filter((item) => item !== "model_executor")
+    .map((checkId) => ({checkId, status: "ok"}))});
+  if (node.status !== "degraded" || node.admission !== "read_only") {
+    output.push(`自检缺项后节点没有降级（status=${node.status} admission=${node.admission}）—— 本条在空转`);
+    return;
+  }
+  heartbeatAgentNode(state, node, {status: "online", runtimeVersion: "contract"});
+  if (node.status === "online") {
+    output.push("一次心跳就把自检失败的节点改回了在线，而心跳并不重做自检 —— "
+      + `界面上会出现"在线 + 自检未通过：${(node.selfCheckMissing || []).join("、")} + 只读"这种自相矛盾的一行，`
+      + "人看到在线，却不明白它为什么领不到活");
+  }
+  // 反面同样要成立：问题修好、自检重做之后必须能恢复，否则就是把节点永久钉死。
+  selfCheckAgentNode(state, node, {checks: allChecks.map((checkId) => ({checkId, status: "ok"}))});
+  if (node.status !== "online" || node.admission !== "full") {
+    output.push(`自检重新全过之后节点没有恢复（status=${node.status} admission=${node.admission}）—— `
+      + "那等于一次自检失败就把节点永久钉死");
+  }
+}
+
 function verifyMcpSummaryIsActuallyASummary(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});

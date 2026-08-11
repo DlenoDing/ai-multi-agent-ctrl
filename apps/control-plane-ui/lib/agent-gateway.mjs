@@ -275,7 +275,14 @@ export function heartbeatAgentNode(state, node, input = {}, options = {}) {
     const {observedAt, ...stableProfile} = node.profile;
     node.profileDigest = digestOf(stableProfile);
   }
-  if (["initializing", "offline", "degraded"].includes(node.status)) node.status = "online";
+  // 心跳只能清掉"我们一段时间没听到它"这类状态（initializing/offline）。
+  // degraded 是自检给出的结论，而心跳【不重做自检】：把它改回 online，界面上就会出现
+  // "在线 + 自检未通过 + 只读"这种自相矛盾的一行 —— 人看到在线，却不明白为什么它领不到活。
+  // 执行方拿不到派发时每 5 分钟会重做一次自检（runtime 的 re-admission 自检），
+  // 问题修好后状态自己会恢复，不需要靠心跳把它抹平。
+  const selfCheckStillFailing = Array.isArray(node.selfCheckMissing) && node.selfCheckMissing.length > 0;
+  if (["initializing", "offline"].includes(node.status)) node.status = "online";
+  else if (node.status === "degraded" && !selfCheckStillFailing) node.status = "online";
   const presentedDigest = digestOf(`agent-node:${node.nodeId}:${String(options.presentedToken || "")}`);
   const usingPreviousCredential = node.previousCredentialDigest === presentedDigest
     && new Date(node.previousCredentialExpiresAt || 0).getTime() > Date.now();
