@@ -5257,11 +5257,18 @@ const realtimeHeartbeat = setInterval(() => {
 // 序列化 30MB 状态约 100ms，而一次落盘约 800ms，且落盘还会推进版本号、作废所有客户端的 ETag，
 // 让每个控制台都重新拉一遍视图、重建一次 DOM。所以这笔比对是划算的。
 function tickContentDigest(state) {
-  // 排除 runtime.autonomousOrchestrator：它是 readState 每次注入的内存心跳，不是循环的产出。
-  // 不排除的话，上一拍缓存的指纹里是注入【之前】的心跳，这一拍读到的是注入之后的，
-  // 每拍都判成"变了" —— 跳过永远不会发生（第一版就是这样，实测版本号照涨不误）。
+  // 排除三样东西，都不是"循环改了什么"的一部分：
+  // 1. runtime.autonomousOrchestrator —— readState 每次注入的内存心跳。不排除的话，上一拍缓存的
+  //    指纹里是注入【之前】的值，这一拍读到的是注入之后的，每拍都判成"变了"，跳过永远不发生。
+  // 2. stateVersion —— 循环从不改它，只有落盘时 +1。排除之后，落盘前后的指纹相同，
+  //    于是可以把这一拍算出的指纹直接缓存给下一拍，【任何一拍都只需序列化一次】而不是两次。
+  // 3. __ 开头的内部字段（如 __loadedStateVersion）—— 它们随每次读取变化，会让缓存永远落空。
+  // 4. projectStateShards —— 分片索引（代号、载荷摘要、更新时刻）是【落盘时存储层自己写的】，
+  //    内存里那份永远是上一代。数据真变了的话，分片里的集合本身也变了，照样检得出来。
   const {autonomousOrchestrator, ...runtimeRest} = state.runtime || {};
-  return digestOf(JSON.stringify({...state, runtime: runtimeRest}));
+  const comparable = {...state, stateVersion: 0, runtime: runtimeRest, projectStateShards: null};
+  for (const key of Object.keys(comparable)) if (key.startsWith("__")) delete comparable[key];
+  return digestOf(JSON.stringify(comparable));
 }
 // 上一拍算出的指纹。只有在"从那以后没有别的写入者动过状态"时才可复用（用加载版本号判定），
 // 于是稳态空转每拍只需序列化一次而不是两次。落盘之后不缓存：writeState 可能会裁剪状态，
@@ -5301,12 +5308,16 @@ export function runOrchestratorTick() {
       lastTickContentDigest = {stateVersion: loadedVersion, digest: digestAfter};
       return finish({ran: true, changed: 0, unchanged: true});
     }
-    lastTickContentDigest = null;
     state.stateVersion = Number(state.stateVersion || 0) + 1;
     writeState(state);
+    // 指纹里不含版本号，所以落盘后无需重算：这一拍的产物就是下一拍的基准。
+    // 写入失败会抛到下面的 catch，那里把缓存作废 —— 盘上没写成功时不能拿内存里的当基准。
+    lastTickContentDigest = {stateVersion: state.stateVersion, digest: digestAfter};
     return finish({ran: true, changed: result?.changed?.length || 0});
   } catch (error) {
     // 与心跳里的清扫同规：冲突/失败都是尽力而为，下一拍再来。一次失败不该让循环整个停摆。
+    // 缓存必须作废：这一拍可能已经改了内存里的状态却没写成功，拿它当下一拍的基准会把真实变化判成"没变"。
+    lastTickContentDigest = null;
     return finish({skipped: "cycle_error", error: String(error?.message || error).slice(0, 200)});
   }
 }
