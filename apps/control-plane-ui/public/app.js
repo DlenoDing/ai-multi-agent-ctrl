@@ -2494,8 +2494,9 @@ const BLOCKER_GUIDE = {
 
 // 派发卡住时的出口。只收【不动手就不会好】的那几种：*_requeued 与 control_* 是自愈或
 // 操作员刚下达的瞬态，给它们写"出口"等于教人去做无用功。每条都对应代码里真实的解阻路径。
-const DISPATCH_EXIT_HINT = {
+const STUCK_EXIT_HINT = {
   awaiting_human_confirmation: "到「人工审核」页定稿或打回对应的确认卡",
+  human_confirmation_expired: "确认卡已超时：到「人工指令」页用「决策处置（重开 / 放弃）」处置",
   human_confirmation_expired_needs_decision: "确认卡已超时：到「人工指令」页用「决策处置（重开 / 放弃）」处置",
   permission_request_pending: "到「人工审核」页批准或驳回对应的权限申请",
   credential_required: "在承接它的 agent 节点上配置所需的凭据环境变量",
@@ -2503,14 +2504,18 @@ const DISPATCH_EXIT_HINT = {
 };
 // 提示只在【当前真的有派发卡在这些原因上】时出现，且按出现过的原因去重 —— 逐行重复同一句话
 // 会把表格淹掉，而人需要的是"现在卡在哪几件事上、各自去哪处理"。
-function dispatchExitNotice(dispatches) {
-  const stuck = [...new Set((dispatches || [])
-    .filter((dispatch) => dispatch.status === "blocked")
-    .map((dispatch) => dispatch.blockedReason)
-    .filter((reason) => DISPATCH_EXIT_HINT[reason]))];
+// 会话也会被停住，而且可能在【派发已经终结之后】仍然停着（确认卡超时那条链就是这样）——
+// 那时只扫派发的话，这条提示不会出现，而会话仍然算活跃、仍然挡着关闭门。两边一起扫，一条提示。
+const SESSION_SETTLED_STATUSES = ["completed_objective", "recycled", "failed", "aborted"];
+function stuckExitNotice(dispatches, sessions) {
+  const reasons = [
+    ...(dispatches || []).filter((dispatch) => dispatch.status === "blocked").map((dispatch) => dispatch.blockedReason),
+    ...(sessions || []).filter((session) => !SESSION_SETTLED_STATUSES.includes(session.status)).map((session) => session.blockedReason)
+  ];
+  const stuck = [...new Set(reasons.filter((reason) => STUCK_EXIT_HINT[reason]))];
   if (!stuck.length) return "";
-  return `<div class="notice warn-notice">有派发被挡住，需要人处理：${stuck
-    .map((reason) => `<br>· ${esc(t(reason) || reason)} —— ${esc(DISPATCH_EXIT_HINT[reason])}`).join("")}</div>`;
+  return `<div class="notice warn-notice">有执行被挡住，需要人处理：${stuck
+    .map((reason) => `<br>· ${esc(t(reason) || reason)} —— ${esc(STUCK_EXIT_HINT[reason])}`).join("")}</div>`;
 }
 
 // 被阻塞工作项的出口提示。键优先看 blockedReason（更具体），退回到 status。
@@ -2865,6 +2870,8 @@ function renderMonitor() {
     badge(session.placement),
     session.laneId ? {v: `<span class="mono">${esc(session.laneId)}</span>`, c: "nowrap"} : "-",
     badge(session.status),
+    // 会话的阻塞原因此前只写在记录里、从不渲染：人看到一个 needs_decision 的徽标，看不出为什么。
+    esc(session.blockedReason ? (t(session.blockedReason) || session.blockedReason) : "-"),
     `<button class="secondary-button" data-action="show-session-events" data-session-id="${esc(session.sessionId)}">事件</button>`
   ])).join("");
 
@@ -3024,8 +3031,8 @@ function renderMonitor() {
       </div>
     `, {wide: true, headerSide: filterInput("按事件、摘要过滤…", "events")}),
     panel("可复用执行载体（Worker Lane）", table(["角色", "功能", "状态", {label: "复用代数", c: "num"}, "当前会话", {label: "更新时间", c: "nowrap"}], laneRows, {moreText: moreText(lanesAll.length, 20, "workerLanes")}), {wide: true, headerSide: filterInput("按角色、会话过滤…", "worker-lanes")}),
-    panel("工作会话", table(["会话", "角色", "工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态", "详情"], sessions, {moreText: moreText(sessionsAll.length, 20, "workSessions")}), {wide: true, headerSide: filterInput("按会话、工作项过滤…", "sessions")}),
-    panel("智能体派发", dispatchExitNotice(dispatchesAll) + table(["派发", "工作项", "状态", {label: "进度", c: "num"}, "原因", "详情"], dispatches, {moreText: moreText(dispatchesAll.length, 20, "agentDispatches")}), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
+    panel("工作会话", table(["会话", "角色", "工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态", "原因", "详情"], sessions, {moreText: moreText(sessionsAll.length, 20, "workSessions")}), {wide: true, headerSide: filterInput("按会话、工作项过滤…", "sessions")}),
+    panel("智能体派发", stuckExitNotice(dispatchesAll, sessionsAll) + table(["派发", "工作项", "状态", {label: "进度", c: "num"}, "原因", "详情"], dispatches, {moreText: moreText(dispatchesAll.length, 20, "agentDispatches")}), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
     panel("控制通道", table([{label: "序号", c: "num"}, "节点", "命令", "作用对象", "状态", {label: "更新时间", c: "nowrap"}], commands, {moreText: moreText(commandsInScope.length, 16, "agentControlCommands")}), {wide: true}),
     panel("运行时节点", table(["节点", "状态", "准入", {label: "最近心跳", c: "nowrap"}, "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
     panel("模型选择记录", table(["角色", "工作项", "模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText(decisionsInScope.length, 10, "modelSelectionDecisions")})),

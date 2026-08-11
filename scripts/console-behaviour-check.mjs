@@ -1001,9 +1001,12 @@ await runErrorGuidanceCase();
     fs.readFileSync(path.join(root, "apps/control-plane-ui/lib/agent-gateway.mjs"), "utf8"),
     fs.readFileSync(path.join(root, "apps/control-plane-ui/server.mjs"), "utf8")
   ].join("\n");
+  // 会话侧的阻塞原因一并纳入：会话可能在【派发已经终结之后】仍被停住（确认卡超时那条链），
+  // 那时只看派发是看不见的，而会话仍算活跃、仍挡着关闭门。
   const reasons = [...new Set([
     ...[...producerSource.matchAll(/dispatch\.blockedReason = "([a-z_]+)"/gu)].map((match) => match[1]),
-    ...[...producerSource.matchAll(/markDispatchBlocked\([^,]+, [^,]+, "([a-z_]+)"/gu)].map((match) => match[1])
+    ...[...producerSource.matchAll(/markDispatchBlocked\([^,]+, [^,]+, "([a-z_]+)"/gu)].map((match) => match[1]),
+    ...[...producerSource.matchAll(/[a-zA-Z]*[Ss]ession\.blockedReason = "([a-z_]+)"/gu)].map((match) => match[1])
   ])];
   if (reasons.length < 8) {
     failures.push(`派发出口: 只从生产者提取到 ${reasons.length} 种派发阻塞原因 —— 提取逻辑与代码脱节，本条在空转`);
@@ -1031,6 +1034,29 @@ await runErrorGuidanceCase();
     };
     const rendered = probe.renderMonitorWith(stateWithStuckDispatch, account, "p_d")
       .replace(/<!--[\s\S]*?-->/gu, "");
+    // 同一原因换成"只有会话被停住、派发已终结"再验一次：合并这条提示的全部理由就在这里。
+    const sessionOnly = {...stateWithStuckDispatch,
+      agentDispatches: [{dispatchId: "dsp_done", taskGroupId: "tg_d", workItemId: "w_d", status: "completed"}],
+      workSessions: [{sessionId: "ws_stuck", taskGroupId: "tg_d", workItemId: "w_d", roleId: "agent-runtime",
+        status: "needs_decision", blockedReason: reason, placement: "subagent"}]};
+    const sessionRendered = probe.renderMonitorWith(sessionOnly, account, "p_d").replace(/<!--[\s\S]*?-->/gu, "");
+    if (sessionRendered.includes("ws_stuck") && !/需要人处理/.test(sessionRendered)) {
+      failures.push(`派发出口: 只有会话卡在 ${reason}（派发已终结）时，监控页没有任何出口提示`
+        + " —— 这个会话仍算活跃、仍挡着关闭门，而人看不到该去哪处理");
+    }
+    // 提示之外，会话那一行自己也要显示原因：记录里有而界面不渲染，人看到的只是一个状态徽标。
+    // 判据收窄到这一行 —— 上面那条提示里也含同样的词，拿整页匹配会恒为真。
+    if (sessionRendered.includes("ws_stuck")) {
+      const rowStart = sessionRendered.indexOf("ws_stuck");
+      const rowRegion = sessionRendered.slice(rowStart, rowStart + 500);
+      if (!rowRegion.includes(reason) && !rowRegion.includes(String(reason).replace(/_/gu, " "))) {
+        const translated = rowRegion.match(/受阻|超时|确认|凭据|权限|暂停/u);
+        if (!translated) {
+          failures.push(`派发出口: 会话卡在 ${reason}，但会话那一行没有显示原因`
+            + " —— 原因记录在状态里却从不渲染，人只看到一个状态徽标，看不出为什么");
+        }
+      }
+    }
     if (!rendered.includes("dsp_stuck")) {
       failures.push(`派发出口: ${reason} 的派发没被渲染出来 —— 这一轮断言在空转`);
       continue;
