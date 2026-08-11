@@ -1564,7 +1564,7 @@ function renderSysSettings() {
         : ""}${table(["被改的角色技能", "作用范围", "改了什么", {label: "创建时间", c: "nowrap"}], rows,
         {emptyText: "没有生效中的叠加：agent 用的就是技能源里的原始角色规则", moreText: moreText(overlays.length, 20, "roleSkillOverlays")})}`;
     })(), {wide: true}),
-    panel("模型能力注册（只读）", table(["供应商", "模型", "能力", {label: "上下文窗口", c: "num"}, "可用性"], models, {moreText: moreText((state.modelCapabilities || []).length, 40)}), {wide: true}),
+    panel("模型能力注册（只读）", table(["供应商", "模型", "能力", {label: "上下文窗口", c: "num"}, "可用性"], models, {moreText: moreText((state.modelCapabilities || []).length, 40, "modelCapabilities")}), {wide: true}),
     panel("指令压缩指标", `
       <div class="metric-grid">
         <div class="metric"><span>稳定前缀预算（配置值）</span><strong>${esc(metrics.stablePrefixTokens)}</strong></div>
@@ -1728,7 +1728,7 @@ function renderJoinTokenSection() {
         </div>
         <button class="primary-button" type="submit">签发一次性加入令牌</button>
       </form>
-      ${table(["令牌", "项目", "角色范围", "状态", {label: "已用次数", c: "num"}, {label: "过期时间", c: "nowrap"}, "操作"], tokens, {moreText: moreText((state.agentJoinTokens || []).length, 20)})}
+      ${table(["令牌", "项目", "角色范围", "状态", {label: "已用次数", c: "num"}, {label: "过期时间", c: "nowrap"}, "操作"], tokens, {moreText: moreText((state.agentJoinTokens || []).length, 20, "agentJoinTokens")})}
     </div>
   `;
 }

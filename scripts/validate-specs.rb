@@ -379,6 +379,28 @@ dropped_fields.each do |field|
             "要渲染它就先把它从 viewDroppedFields 里去掉"
 end
 
+# moreText(total, shown, field) 的第三个参数决定了"数不全时要不要加 +"。漏传它，
+# 集合被视图截断之后界面照样报一个精确数字 —— 人处置完那几条会以为清空了。
+# 判据：凡是拿 state.<集合>.length 当 total 的调用，都必须把那个集合名传进去。
+console_more_text = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+more_text_calls = console_more_text.scan(/moreText\(\(?state\.(\w+)[^)]*\)?\.length,\s*\d+([^)]*)\)/)
+errors << "moreText 的调用一处都没提取到 —— 本条在空转" if more_text_calls.length < 2
+# 例外要登记并写明理由：auditLog 的 80 条是 audit() 自己的内存环（不是视图截断），
+# 而它旁边那行已经写明"更早的记录在归档文件里"，再加一个 + 反而是错的。
+MORE_TEXT_EXEMPT = {
+  "auditLog" => "80 条上限来自 audit() 的内存环而非视图截断；旁边已明写更早记录在归档文件里，并有「查看审计归档」入口"
+}.freeze
+more_text_calls.each do |collection, rest|
+  next if rest.include?(collection)
+  next if MORE_TEXT_EXEMPT.key?(collection)
+  errors << "moreText 报的是 state.#{collection} 的长度却没传集合名 —— " \
+            "这个集合被视图截断时不会加 +，人会把截断后的数字当成总数"
+end
+stale_more_text_exempt = MORE_TEXT_EXEMPT.keys.reject { |name| more_text_calls.any? { |collection, _| collection == name } }
+unless stale_more_text_exempt.empty?
+  errors << "这些 moreText 例外已经没有对应调用了：#{stale_more_text_exempt.join(", ")} —— 删掉登记"
+end
+
 # 视图下发的每个集合都要有人读。控制台是轮询的，多发一个集合就是每次请求都多付一笔 ——
 # progressSnapshots 曾经在基底里，单条 97KB（它把 repositoryOutputs 与 workItems 整份嵌了进去），
 # 每个视图每次响应白白多 191KB，而全站没有一处读它。
