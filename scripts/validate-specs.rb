@@ -1737,6 +1737,63 @@ prose_only_assertions.each do |detail|
 end
 
 
+# ── 每个状态集合都必须有界 ────────────────────────────────────────────────────
+#
+# 中央状态是【整份 JSON 一起读写】的：任何一个数组只增不减，都会让每次写盘的序列化成本
+# 随运行时长线性上涨，最终把系统压垮，而且过程中没有任何征兆。
+# 本轮排查时我三次靠 grep 得出"这个没有上限"的错误结论（eventLog 走 trimEventLog、
+# roomMessages 走 pruneRoomMessages、admissionScans 写成 `[新, ...旧].slice(0, 200)`、
+# mcpCalls/roomAcks/testResults 的上限在 mcp-server 里）——【判据必须覆盖全部产生源，
+# 并认得多种写法】，否则得到的是随机答案。
+#
+# 三条出路，缺一即红：分片（分片层有 5000 兜底）／有裁剪机制／登记为随实体增长且不可裁剪。
+state_sources = {
+  "core" => core_source, "gateway" => agent_gateway_source,
+  "server" => server_source, "mcp" => mcp_source,
+  "store" => File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs"))
+}
+all_state_source = state_sources.values.join("\n")
+declared_collections = all_state_source.scan(/state\.([a-zA-Z]+)\s*\|\|=\s*\[\]/).flatten.uniq.sort
+errors << "状态集合一个都没提取到 —— 本条在空转" if declared_collections.length < 40
+sharded_collections = state_sources["store"][/const projectShardCollections = \[(.*?)\];/m].to_s
+  .scan(/"([a-zA-Z]+)"/).flatten.to_set
+# 随实体增长、裁了就是丢数据的那几张。数量由配额封顶，不是随活动无限涨。
+# 登记要写清凭什么有界 —— 写不出来的，就该有裁剪。
+ENTITY_BOUNDED_COLLECTIONS = {
+  "accounts" => "账号数由组织配额 maxMembers 封顶；裁掉一个账号＝这个人从系统里消失",
+  "accessGrants" => "授权随账号×资源增长，同样受配额约束；裁掉一条＝有人莫名其妙没了权限",
+  "agents" => "智能体数由配额 maxAgents 封顶",
+  "organizations" => "组织由系统管理员创建，数量级远小于活动量",
+  "sharedDefinitions" => "共享定义是治理对象，人显式创建与终结；它还会成为关闭门的阻塞项，裁掉即丢阻塞",
+  "roomParticipants" => "参与者随房间×成员增长，受成员配额约束（房间消息自身另有体积预算裁剪）",
+  "integrationBatches" => "只声明未写入：当前没有任何生产路径产生它"
+}.freeze
+# 裁剪函数体：函数名以 cap/trim/prune/retain 开头的那些，取到下一处顶格 } 为止。
+trimming_function_bodies = all_state_source.scan(/^(?:export )?function (?:cap|trim|prune|retain)[A-Za-z]*\([^\n]*\n(.*?)^\}/m).flatten
+errors << "裁剪函数一个都没提取到 —— 本条在空转" if trimming_function_bodies.length < 3
+unbounded = []
+declared_collections.each do |name|
+  next if sharded_collections.include?(name)
+  next if ENTITY_BOUNDED_COLLECTIONS.key?(name)
+  # 判据不追【写法】：一是赋值右侧带裁剪调用/切片，二是它在某个 cap*/trim*/prune*/retain* 函数
+  # 体内被整体重建（pruneRoomMessages 写的是 `state.roomMessages = kept.reverse()` ——
+  # 追写法的话，每加一种新写法就漏一个集合，本轮我已经在这上面栽了三次）。
+  bounded = all_state_source.match?(/state\.#{name}\s*=\s*[^;\n]*(slice\(|cap[A-Z]|trim[A-Z]|prune[A-Z]|filter\()/) ||
+            all_state_source.match?(/state\.#{name}\s*=\s*(cap|trim|prune|retain)[A-Za-z]*\(/) ||
+            trimming_function_bodies.any? { |body| body.match?(/state\.#{name}\s*=/) }
+  unbounded << name unless bounded
+end
+unless unbounded.empty?
+  errors << "这些状态集合只增不减：#{unbounded.sort.join(", ")} —— 中央状态整份读写，" \
+            "任何一个无界数组都会让每次写盘越来越慢。三条出路：给它加裁剪（裁剪函数请以 " \
+            "cap/trim/prune/retain 开头命名，本条按这个约定识别）、放进分片集合、" \
+            "或登记到 ENTITY_BOUNDED_COLLECTIONS 并写明凭什么有界"
+end
+stale_entity_bounded = ENTITY_BOUNDED_COLLECTIONS.keys.reject { |name| declared_collections.include?(name) }
+unless stale_entity_bounded.empty?
+  errors << "这些集合登记为随实体增长，但状态里已经没有它们了：#{stale_entity_bounded.join(", ")} —— 删掉登记"
+end
+
 # 后端有归档而界面没入口＝归档不存在。审计归档只对系统账号开放，控制台必须给出那个入口，
 # 并且不能把内存里那 80 条说成全部。
 app_js = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
