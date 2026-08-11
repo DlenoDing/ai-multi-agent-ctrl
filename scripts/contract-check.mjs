@@ -196,6 +196,7 @@ verifySuspendedOrganizationHaltsExecution(errors);
 verifyHaltedTaskGroupsAreNotClaimable(errors);
 verifyExhaustedControlRetriesTellTheTruth(errors);
 verifyHumanApprovedPathsBindTheCommit(errors);
+verifyApprovedAcceptanceChecksHaveEvidence(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4421,8 +4422,61 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 自报接口里少填一条就等于没越界。而控制面在受理检查点时【已经用 git 算出了真实变更路径】，
 // 只是拿它核对仓库目标的 allowlist（通常宽得多），从没核对过人批准的那套边界。
 // 这条断言走真实入口：临时仓库 + bare 远端 + 真实 commit/push，再调 acceptAgentCheckpoint。
+
+// 人在方案卡上看到的是"这个分支会跑这几项验收"，据此决定批不批。acceptanceChecks 此前只在
+// 规划时被查过【非空】—— 跑没跑、过没过从来没人对账：分支交一份空证据照样能推进到 merge。
+function verifyApprovedAcceptanceChecksHaveEvidence(output) {
+  const build = (evidenceRefs) => {
+    const state = structuredClone(seedState);
+    ensureRuntimeCollections(state, {root});
+    const taskGroup = state.taskGroups[0];
+    const workItem = (taskGroup.workItems || [])[0];
+    const created = createExecutionTopology(state, {taskGroupId: taskGroup.id, projectId: taskGroup.projectId,
+      workItemId: workItem.id, mode: "serial", runnerKind: "local", isolation: "worktree",
+      branches: [{branchId: "b_one", objective: "做一件事", ownedPaths: ["docs/**"], forbiddenPaths: [],
+        resourceScopes: [], acceptanceChecks: ["docs_lint", "npm run validate"]}]});
+    const topology = created.topology || created;
+    topology.humanFinalization = {outcome: "confirmed", finalizedBy: "acct_workspace_owner",
+      finalizedAt: new Date().toISOString()};
+    topology.status = "running";
+    advanceExecutionTopology(state, {topologyId: topology.topologyId, action: "report_branch",
+      branchId: "b_one", branchStatus: "reported", resultRef: "bundle:1",
+      validationEvidenceRefs: evidenceRefs, actor: "agent-runtime"});
+    return {state, topology: state.executionTopologies.find((item) => item.topologyId === topology.topologyId)};
+  };
+
+  const noEvidence = build([]);
+  const missingBlockers = (noEvidence.topology.blockers || []).filter((blocker) => blocker.startsWith("acceptance_check_evidence_missing:"));
+  if (missingBlockers.length !== 2) {
+    output.push(`分支交了一份空证据，人批准时看到的两项验收却只留下 ${missingBlockers.length} 条缺证据阻塞`
+      + " —— 人批的是会跑这几项验收，而跑没跑从来没有人对账");
+  } else if (!missingBlockers.some((blocker) => blocker.includes("docs_lint"))) {
+    output.push("缺证据的阻塞项没有点名是哪一项验收 —— 人还得自己去比对方案卡");
+  }
+  // 阻塞项必须真的挡住合并，否则它只是一行字。
+  if (missingBlockers.length) {
+    const merged = (() => {
+      try {
+        advanceExecutionTopology(noEvidence.state, {topologyId: noEvidence.topology.topologyId, action: "merge",
+          finalValidationEvidenceRefs: ["final:1"], actor: "orchestrator"});
+        return "合并成功";
+      } catch (error) { return error.message; }
+    })();
+    if (merged === "合并成功") {
+      output.push("验收项没有证据，方案却仍然合并成功 —— 那条阻塞挡不住任何东西");
+    }
+  }
+  // 对照：证据覆盖了每一项验收时不得留下缺证据阻塞（否则守卫会误伤正常上报）。
+  // 证据引用是自由文本，判据只要求"交了证据"，所以对照组用真实形状的引用即可。
+  const withEvidence = build(["test:docs", "test:validate"]);
+  const falsePositives = (withEvidence.topology.blockers || []).filter((blocker) => blocker.startsWith("acceptance_check_evidence_missing:"));
+  if (falsePositives.length) {
+    output.push(`每一项验收都有对应证据，却仍被判缺证据（${falsePositives.join("、")}）—— 这条守卫会误伤正常上报`);
+  }
+}
+
 function verifyHumanApprovedPathsBindTheCommit(output) {
-  const runCase = ({stray, finalized}) => {
+  const runCase = ({stray, finalized, trespass, writeForbidden}) => {
     const repo = mkdtempSync(join(tmpdir(), "cc-owned-"));
     const remote = mkdtempSync(join(tmpdir(), "cc-owned-remote-"));
     const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
@@ -4462,7 +4516,11 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     // 而不是"根本没有方案"—— 后者两条分支都找不到拓扑，判据怎么改都不会红。
     const created = createExecutionTopology(state, {taskGroupId: taskGroup.id, projectId: taskGroup.projectId,
       workItemId: workItem.id, mode: "parallel_branches", runnerKind: "local", isolation: "worktree",
-      branches: [{branchId: "b_docs", objective: "只改文档", ownedPaths: ["docs/**"], forbiddenPaths: [],
+      branches: [{branchId: "b_docs", objective: "只改文档",
+        // 禁区用例故意把 ownedPaths 放宽到全仓：禁区与"只能动这些"是两件事，
+        // 宽 ownedPaths + 一条禁区正是常见写法，必须能单独把禁区那一条验出来。
+        ownedPaths: trespass ? ["**"] : ["docs/**"],
+        forbiddenPaths: trespass ? ["infra/**"] : [],
         resourceScopes: [], acceptanceChecks: ["docs_lint"]}]});
     const topology = created.topology || created;
     if (finalized) {
@@ -4473,6 +4531,10 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     if (stray) {
       mkdirSync(join(repo, "apps"), {recursive: true});
       writeFileSync(join(repo, "apps/server.mjs"), "// 越界改动\n");
+    }
+    if (writeForbidden) {
+      mkdirSync(join(repo, "infra"), {recursive: true});
+      writeFileSync(join(repo, "infra/deploy.yaml"), "# 踩禁区\n");
     }
     writeFileSync(join(repo, "docs/manifest.json"), JSON.stringify({outputs: ["docs/readme.md"]}));
     git("add", "-A");
@@ -4521,6 +4583,22 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     output.push("只改了人批准范围内的路径，却仍被判越界 —— 这条守卫会误伤合规提交");
   }
   // 对照二：没有人定稿的方案时，这条判据不该生效（人没有在这一维上做过约束）。
+  // 禁区：人在方案里划的"这些绝对不能动"，此前全仓没有任何强制点。
+  const trespassing = runCase({stray: false, finalized: true, trespass: true, writeForbidden: true});
+  if (!trespassing.skipped) {
+    if (trespassing.result.error !== "changed_paths_inside_human_forbidden_plan_paths") {
+      output.push(`提交改到了人已定稿方案划出的禁区（infra/**），却没有被拦下`
+        + `（实际：${trespassing.result.error || "已受理"}）—— 禁区只是记录里的一行字`);
+    } else if (!(trespassing.result.trespassedPaths || []).includes("infra/deploy.yaml")) {
+      output.push("踩禁区被拦下了，但没有点名是哪条路径");
+    }
+  }
+  // 对照：声明了禁区但没踩到时不得被拦 —— 少了这一组，"判据写反"（把没踩禁区的全判成踩了）
+  // 不会被任何用例发现：合规那组的禁区列表是空的，反过来的判据根本走不到。
+  const forbidDeclaredOnly = runCase({stray: false, finalized: true, trespass: true, writeForbidden: false});
+  if (!forbidDeclaredOnly.skipped && forbidDeclaredOnly.result.error === "changed_paths_inside_human_forbidden_plan_paths") {
+    output.push("方案里声明了禁区但这次提交没有踩到，却仍被判踩禁区 —— 这条守卫会误伤合规提交");
+  }
   const notFinalized = runCase({stray: true, finalized: false});
   if (!notFinalized.skipped && notFinalized.result.error === "changed_paths_outside_human_approved_plan") {
     output.push("方案还没有经人定稿，却按人批准的范围拦下了提交 —— AI 自己提的边界被当成了人的批准");

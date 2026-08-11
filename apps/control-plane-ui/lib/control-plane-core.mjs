@@ -2777,6 +2777,18 @@ function validateCheckpointGitEvidence(state, request) {
         approvedPaths: approvedPaths.slice(0, 20), outsidePaths: outside.slice(0, 20)};
     }
   }
+  // 禁区（forbiddenPaths）同样是人批准方案的一部分，而它此前【全仓没有任何强制点】：
+  // 只在创建时写进记录、进定稿摘要，之后谁也不看。它与 ownedPaths 是两件事 ——
+  // 一个说"只能动这些"，一个说"这些绝对不能动"，宽 ownedPaths 加一条禁区正是常见写法。
+  const forbiddenApproved = unique((finalizedTopology?.groups || [])
+    .flatMap((group) => (group.branches || []).flatMap((branch) => branch.forbiddenPaths || [])));
+  if (forbiddenApproved.length) {
+    const trespassed = changedPaths.filter((path) => pathMatchesAllowlist(path, forbiddenApproved));
+    if (trespassed.length) {
+      return {valid: false, status: 409, error: "changed_paths_inside_human_forbidden_plan_paths",
+        forbiddenPaths: forbiddenApproved.slice(0, 20), trespassedPaths: trespassed.slice(0, 20)};
+    }
+  }
   // 被约束方自查等于没查：禁区必须在服务端拦。
   const denied = changedPaths.filter((path) => pathMatchesAllowlist(path, effectivePathDenylist(target)));
   if (denied.length) {
@@ -3969,6 +3981,7 @@ export function recordCheckpointRejection(state, request, result) {
   const detail = [
     result?.deniedPaths?.length ? `路径：${result.deniedPaths.slice(0, 5).join("、")}` : "",
     result?.outsidePaths?.length ? `越界路径：${result.outsidePaths.slice(0, 5).join("、")}` : "",
+    result?.trespassedPaths?.length ? `踩到禁区的路径：${result.trespassedPaths.slice(0, 5).join("、")}` : "",
     result?.approvedPaths?.length ? `人批准的范围：${result.approvedPaths.slice(0, 5).join("、")}` : "",
     result?.commit ? `提交：${String(result.commit).slice(0, 12)}` : ""
   ].filter(Boolean).join("；");
@@ -6526,6 +6539,18 @@ export function advanceExecutionTopology(state, args) {
     // A branch that wrote outside the paths it owns breaks the disjointness the plan was admitted on.
     const strayPaths = (branch.actualChangedPaths || []).filter((path) => (branch.ownedPaths || []).length && !branch.ownedPaths.some((owned) => path === owned || path.startsWith(owned.replace(/\*+$/u, ""))));
     if (strayPaths.length) topology.blockers = unique([...topology.blockers, ...strayPaths.map((path) => `owned_paths_disjoint:${branch.branchId}:wrote_${path}`)]);
+    // 人在方案卡上看到的是"这个分支会跑这几项验收"，据此决定批不批。而 acceptanceChecks 此前
+    // 只在规划时被查过【非空】—— 跑没跑、过没过，从来没有人对账：分支交一份空证据照样能推进到合并。
+    // 这里按人定稿过的那份方案逐项核对上报的证据；缺哪一项就点名哪一项（阻塞项会挡住 merge）。
+    // 判据只落在【不可争议的那一半】：声明了验收项却一条证据都没交。
+    // 想逐项核对"哪一项跑了"，需要上报侧给出结构化的 {验收项 → 证据} 对应关系；
+    // 而证据引用今天是自由文本（test:api 这种），按名字子串去匹配是我凭空造的命名约定，
+    // 会把合规上报误伤成缺证据 —— 判据不该建立在被测方并不遵守的约定上。
+    if (topology.humanFinalization?.outcome === "confirmed"
+      && (branch.acceptanceChecks || []).length && !(branch.validationEvidenceRefs || []).length) {
+      topology.blockers = unique([...topology.blockers,
+        ...(branch.acceptanceChecks || []).map((check) => `acceptance_check_evidence_missing:${branch.branchId}:${check}`)]);
+    }
     if (branches.every((item) => ["reported", "accepted", "failed", "rejected"].includes(item.status))) {
       topology.status = "integrating";
       transition("running", "integrating", "orchestrator", {

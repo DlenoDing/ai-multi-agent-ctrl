@@ -1821,6 +1821,11 @@ app_js = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
 errors << "控制台没有审计归档的入口 —— 80 条之前的记录对人不可达" unless app_js.include?("/api/audit-archive")
 errors << "审计面板没有说清它只显示最近若干条 —— 人会把这一屏当成全部历史" unless app_js.include?("更早的记录在归档文件里")
 errors << "服务端没有把归档写失败暴露出来 —— 记录丢了没人知道" unless server_source.include?("auditArchiveFault")
+# 拓扑阻塞项挡得住 merge，却曾经在界面上一个字都不显示：人只看到"方案卡住了"，
+# 不知道卡在哪、更不知道是不是自己批准的验收项没证据。
+app_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+errors << "卡住的执行方案没有显示它卡在哪几项 —— 人无从下手" unless app_source.include?("卡在这几项")
+errors << "拓扑阻塞项没有翻成中文（topologyBlockerText 缺失）" unless app_source.include?("topologyBlockerText")
 
 # 真人专属动作的审计必须记下【是谁做的】，决策类还必须记下【决定是什么】。
 #

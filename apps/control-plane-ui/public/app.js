@@ -2550,6 +2550,16 @@ function workItemExitHint(workItem) {
   return hint ? `<div class="notice warn-notice">${esc(hint)}</div>` : "";
 }
 
+
+// 拓扑阻塞项是 `种类:分支:细节` 这种结构串。原样铺出来人读不懂，而只显示"存在阻塞"
+// 又等于没说 —— 按种类翻成中文，后面跟上分支与细节（它们是 id 与路径，本来就该原样给）。
+function topologyBlockerText(blocker) {
+  const [kind, ...rest] = String(blocker).split(":");
+  const detail = rest.filter(Boolean).join(" · ");
+  const label = t(kind);
+  return detail ? `${label}（${detail}）` : label;
+}
+
 function blockerGuide(objectType) {
   return BLOCKER_GUIDE[objectType] || "";
 }
@@ -3143,6 +3153,8 @@ function renderMonitor() {
               <div class="record-meta"><span class="mono">${esc(topology.topologyId)}</span> · ${esc(taskGroupNameOf(topology.taskGroupId))} · ${badge(topology.status)}
                 · 工作项 <span class="mono">${esc(topology.workItemId || "-")}</span>
                 ${topology.humanFinalization?.outcome === "confirmed" ? " · " + customBadge("已由人定稿", "blue") : ""}</div>
+              ${(topology.blockers || []).length ? `<div class="small muted">卡在这几项：${(topology.blockers || [])
+                .slice(0, 6).map((blocker) => esc(topologyBlockerText(blocker))).join("；")}</div>` : ""}
               <div class="form-row"><label>终止理由（必填，会写进定稿记录）</label><input name="cancelRef" placeholder="例如：分支 b_api 报失败且无法修复，改由串行方案重做"></div>
               <button class="danger-button" type="submit">终止该执行方案</button>
             </form>`).join("")}
