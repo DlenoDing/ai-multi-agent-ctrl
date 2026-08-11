@@ -227,6 +227,16 @@ function pendingForMe() {
     (state.ruleSourceResolutions || []).filter((item) => inScope(item) && !["reference_only", "quarantined", "rejected", "superseded", "active"].includes(item.status)), canControl, "ruleSourceResolutions");
   add("upgradeCandidates", "待你判定的系统升级候选项", "monitor",
     (state.systemUpgradeCandidates || []).filter((item) => inScope(item) && item.status === "candidate_created"), canControl, "systemUpgradeCandidates");
+  // 这两类同样【只有人能了结】，而且都在关闭门的阻塞清单里 —— 之前却不在待办里：
+  // 人看到"0 待处理"，任务组却因为等他终止一个卡住的方案、或确认一条指令已被消费而关不掉。
+  // 状态集与 computeCloseBarrier 的判据对齐（拓扑终态 merged/downgraded/cancelled；
+  // 指令 queued/acknowledged 才算未消费），不另立一套 —— 两套口径迟早分叉，而分叉那天没人会发现。
+  add("topologies", "待你终止的卡住执行方案", "monitor",
+    (state.executionTopologies || []).filter((item) => inScope(item)
+      && ["blocked", "needs_reconcile"].includes(item.status)), canControl, "executionTopologies");
+  add("directives", "待你确认已被消费的人工指令", "directives",
+    (state.humanDirectives || []).filter((item) => inScope(item)
+      && ["queued", "acknowledged"].includes(item.status)), canControl, "humanDirectives");
   const visibleProjectIds = new Set(groups.map((taskGroup) => taskGroup.projectId).filter(Boolean));
   add("sharedDefinitions", "待你处置的共享定义契约", "monitor",
     (state.sharedDefinitions || []).filter((item) => ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"].includes(item.status)

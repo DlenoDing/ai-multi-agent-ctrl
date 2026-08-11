@@ -445,6 +445,41 @@ function runPendingTruncationCase() {
   // 人每次打开都看到"还有 N 项等你处理"，点进去无事可做，最后学会无视它。
   // 决定"哪些项算数"的 taskGroups 自己也会被截断：超出上限的任务组下的待办连桶都进不去。
   // 只看桶自身的集合有没有被截，会漏掉这一整类丢失，而界面照样报一个精确数字。
+  // 关闭门会因为"卡住的执行方案"和"未被消费的人工指令"挡住任务组，而这两类【只有人能了结】。
+  // 它们此前不在待办聚合里：人看到"0 待处理"，任务组却正等着他去终止一个方案、确认一条指令。
+  // 判据落在【关闭门认定的阻塞状态】上，与 computeCloseBarrier 同口径。
+  {
+    const withBlockers = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1,
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: []}],
+      executionTopologies: [{topologyId: "topo_stuck", taskGroupId: "tg1", workItemId: "w1", status: "blocked"},
+        {topologyId: "topo_running", taskGroupId: "tg1", workItemId: "w2", status: "running"},
+        {topologyId: "topo_done", taskGroupId: "tg1", workItemId: "w3", status: "merged"}],
+      humanDirectives: [{directiveId: "hd_open", taskGroupId: "tg1", status: "queued"},
+        {directiveId: "hd_done", taskGroupId: "tg1", status: "consumed"}],
+      humanConfirmationRequests: [], permissionRequests: [], approvalRequests: [], findings: [],
+      qualityGates: [], reviewPlans: [], reviewBundles: [], ruleSourceResolutions: [],
+      systemUpgradeCandidates: [], sharedDefinitions: [], truncatedCollections: []
+    };
+    const panel = probe.renderPendingPanelWith(withBlockers, admin);
+    check("卡住的执行方案要进待办",
+      /待你终止的卡住执行方案/.test(panel),
+      "关闭门因为一个卡住的执行方案挡着，而待办里一个字都没有 —— 人看到 0 待处理，任务组却关不掉");
+    check("未被消费的人工指令要进待办",
+      /待你确认已被消费的人工指令/.test(panel),
+      "关闭门因为一条未消费的人工指令挡着，而待办里看不到它");
+    // 判据必须落在【数字】上：面板不打印对象 id，按 id 找"有没有混进来"恒为真（第一版就是这样，
+    // 把过滤条件整个删掉它照样绿）。夹具里只有 topo_stuck 与 hd_open 该算，合计 2 项。
+    check("已了结的不得混进待办",
+      /共 2 项/.test(panel),
+      "已合并的方案或已消费的指令被算成了待办 —— 那个数字永远清不掉，人最后会学会无视它");
+    const counts = probe.todoCountsWith(withBlockers, admin);
+    check("红点口径与面板一致",
+      (counts.monitor?.count || 0) >= 1 && (counts.directives?.count || 0) >= 1,
+      "面板里列出来了，菜单红点却不算 —— 同一件事在同一屏上给出两个数字");
+  }
+
   const scopeCapped = probe.renderPendingPanelWith(stateWith(["taskGroups"]), admin);
   check("可见范围本身没数全时也不得报准确数",
     scopeCapped.includes("共 2+ 项"),
