@@ -1414,8 +1414,12 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
   return base;
 }
 
+function stateViewCacheKey(account, session, stateVersion, view, limit) {
+  return `${account.accountId}:${session.sessionId}:${stateVersion}:${view || "full"}:${limit || "default"}`;
+}
+
 function cachedStateView(state, account, session, view, limit) {
-  const key = `${account.accountId}:${session.sessionId}:${state.stateVersion}:${view || "full"}:${limit || "default"}`;
+  const key = stateViewCacheKey(account, session, state.stateVersion, view, limit);
   const cached = stateViewCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.payload;
   const payload = JSON.stringify(stateViewForAccount(state, account, session, view, limit));
@@ -2114,6 +2118,25 @@ async function handleApi(req, res) {
       at: now()
     });
     return;
+  }
+
+  // 控制台是轮询的，GET /api/state 是全仓最频繁的请求。它此前一律先把整份状态水合并深拷贝一遍
+  // （2000 单元实测 180ms、4000 单元 351ms），然后才去查视图缓存 —— 命中时那份拷贝全白付。
+  // 视图缓存的键里只有账号、会话、stateVersion、视角与上限，而这几样【中央状态里就有】
+  // （分片里装的是任务组/派发那些集合，账号与会话不在其中），只读中央状态实测 19ms。
+  // 未命中则原样落回下面的正常路径，语义完全不变。
+  if (req.method === "GET" && url.pathname === "/api/state") {
+    const central = readStoredCentralState({root, runtimeDir, statePath, seedPath, buildInitialState});
+    const peeker = central && accountFromRequest(req, central);
+    if (peeker) {
+      const peekKey = stateViewCacheKey(peeker.account, peeker.session, central.stateVersion,
+        url.searchParams.get("view") || "full", Number(url.searchParams.get("limit") || 80));
+      const peeked = stateViewCache.get(peekKey);
+      if (peeked && peeked.expiresAt > Date.now()) {
+        jsonString(res, 200, peeked.payload);
+        return;
+      }
+    }
   }
 
   const state = readState();

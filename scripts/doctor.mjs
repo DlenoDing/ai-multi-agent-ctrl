@@ -1303,6 +1303,30 @@ try {
   expectStatus(await g2("/api/task-groups/tg_runtime_management/config", systemAuth, "gate-tgconfig-ok", {languagePolicy: {primaryLanguage: "zh-CN"}}), 200, "真人变更任务组配置应放行");
 
   console.log("gap 2b §4 rest endpoints + human finalization gate ok");
+
+  // GET /api/state 走了一条快路径：命中视图缓存时只读中央状态（拿 stateVersion 与账号会话），
+  // 不水合整份状态（2000 单元实测轮询 108ms → 15ms）。它必须在两件事上与慢路径完全一致：
+  // 写入之后立刻看得到新值（不能按旧版本命中缓存），以及鉴权一分不少。
+  {
+    const orgsBefore = await jsonFetch(port, "/api/state?view=orgs", {headers: {authorization: systemAuth}});
+    const probeOrgId = orgsBefore.payload.organizations?.[0]?.orgId;
+    if (!probeOrgId) throw new Error("doctor: 状态视图里没有组织 —— 快路径断言无从验证");
+    // 先打一次让缓存热起来，再写入，再读 —— 快路径若按旧 stateVersion 命中，这里会读回旧值。
+    await jsonFetch(port, "/api/state?view=orgs", {headers: {authorization: systemAuth}});
+    const quotaWrite = await jsonFetch(port, `/api/orgs/${probeOrgId}/quotas`, {method: "POST",
+      headers: {"Idempotency-Key": "doctor-fastpath-quota", authorization: systemAuth},
+      body: JSON.stringify({quotas: {maxMembers: 73}})});
+    if (!quotaWrite.response.ok) throw new Error(`doctor: 快路径断言的写入没成功（HTTP ${quotaWrite.response.status}）`);
+    const orgsAfter = await jsonFetch(port, "/api/state?view=orgs", {headers: {authorization: systemAuth}});
+    if (orgsAfter.payload.organizations?.find((item) => item.orgId === probeOrgId)?.quotas?.maxMembers !== 73) {
+      throw new Error("doctor: 写入之后 GET /api/state 仍返回旧值 —— 视图快路径按过期的 stateVersion 命中了缓存");
+    }
+    const anonView = await fetch(`http://127.0.0.1:${port}/api/state?view=orgs`);
+    if (anonView.status !== 401) throw new Error(`doctor: 未认证读状态视图返回了 ${anonView.status}`);
+    const bogusView = await fetch(`http://127.0.0.1:${port}/api/state?view=orgs`, {headers: {authorization: "Bearer bogus-token"}});
+    if (bogusView.status !== 401) throw new Error(`doctor: 坏令牌读状态视图返回了 ${bogusView.status}`);
+    console.log("状态视图快路径 ok: 写入后立刻可见、未认证与坏令牌仍被拒");
+  }
   await verifyRealtimeWebSocket(port, auth);
   console.log("realtime websocket ok");
 
