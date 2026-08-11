@@ -125,6 +125,7 @@ globalThis.__probe = {
   todoCountsWith: (nextState, account) => { state = nextState; currentAccount = account; return todoCountsByPage(); },
   moreTextWith: (nextState, total, shown, field) => { state = nextState; return moreText(total, shown, field); },
   renderLoginWith: (hint) => { loginHint = hint; renderLogin(); return document.querySelector("#app").innerHTML || ""; },
+  renderSysOverviewWith: (nextState, account, overviewData) => { state = nextState; currentAccount = account; systemOverview = overviewData; return renderSysOverview(); },
   renderSysSettingsWith: (nextState, instructions) => { state = nextState; if (instructions !== undefined) instructionState = instructions; return renderSysSettings(); },
   renderSysAccountsWith: (nextState, account) => { state = nextState; currentAccount = account; return renderSysAccounts(); },
   blockerGuide: (type) => blockerGuide(type),
@@ -445,6 +446,34 @@ function runPendingTruncationCase() {
   // 人每次打开都看到"还有 N 项等你处理"，点进去无事可做，最后学会无视它。
   // 决定"哪些项算数"的 taskGroups 自己也会被截断：超出上限的任务组下的待办连桶都进不去。
   // 只看桶自身的集合有没有被截，会漏掉这一整类丢失，而界面照样报一个精确数字。
+  // 量不到的体积不能显示成 0：人据此判断容量，"0 字节"看起来完全正常，实际是错的。
+  {
+    const baseState = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {}, projects: [],
+      taskGroups: [], accounts: [], organizations: [], auditLog: []};
+    const unknown = probe.renderSysOverviewWith(baseState, admin,
+      {storage: {centralStateBytes: null, projectDbBytes: null, stateStore: "runtime_json", partial: true},
+       server: {}, resources: {}, energy: {}, runtime: {}});
+    // 判据只看【中央状态库那一行】：整页还有内存占用等别的字节字段，
+    // 拿整页去找 "0 B" 会被它们带偏（第一版就是这样，断言恒不成立）。
+    // 窗口要在本行结束处收住：取固定字数会把【下一行】也框进来，
+    // 而下一行还留着同样的提示 —— 那样把本行改坏它也照样绿（第一版就是这样）。
+    const storageLine = (html) => {
+      const start = html.indexOf("中央状态库");
+      if (start < 0) return "";
+      const end = html.indexOf("</dd>", start);
+      return html.slice(start, end < 0 ? start + 200 : end);
+    };
+    check("存储体积量不到时不得显示成 0",
+      /量不到/.test(storageLine(unknown)),
+      `statSync 失败时体积回落成 0，界面照样把它渲染成 0 B —— 人据此判断容量，而那是个假数字（那一行：${storageLine(unknown).slice(0, 120)}）`);
+    const known = probe.renderSysOverviewWith(baseState, admin,
+      {storage: {centralStateBytes: 2048, projectDbBytes: 4096, stateStore: "runtime_json"},
+       server: {}, resources: {}, energy: {}, runtime: {}});
+    check("量得到时照常显示数字",
+      !/量不到（不是 0）/.test(known),
+      "体积明明量到了，界面却说量不到 —— 那条提示会变成常亮的噪音");
+  }
+
   // 自治循环连续失败＝此刻没有任何东西在自行推进，而人正在等系统往下走。
   // 这必须在监控页上说出来，而不是只在"运行参数"里留一行小字。
   {

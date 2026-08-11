@@ -4359,23 +4359,29 @@ async function handleApi(req, res) {
     const cpu = process.cpuUsage();
     const cpuSeconds = (cpu.user + cpu.system) / 1e6;
     const wattsPerCpu = Number(process.env.AIMAC_ENERGY_WATTS_PER_CPU || 15);
-    let stateBytes = 0;
-    let projectDbBytes = 0;
-    try { stateBytes = statSync(statePath).size; } catch {}
+    // 量不到的时候要回 null，不能回 0：界面会把 0 原样显示成"0 B"，
+    // 而"存储占用 0 字节"是个看起来很正常、实际完全错误的数字 —— 人据此判断容量。
+    // 分片目录里个别文件量不到，也要如实标出"这个数是不完整的"。
+    let stateBytes = null;
+    let projectDbBytes = null;
+    let storagePartial = false;
+    try { stateBytes = statSync(statePath).size; } catch { storagePartial = true; }
     try {
       const projectDbDir = join(runtimeDir, "project-db");
       if (existsSync(projectDbDir)) {
+        projectDbBytes = 0;
         for (const name of readdirSync(projectDbDir)) {
-          try { projectDbBytes += statSync(join(projectDbDir, name)).size; } catch {}
+          try { projectDbBytes += statSync(join(projectDbDir, name)).size; } catch { storagePartial = true; }
         }
       }
-    } catch {}
+    } catch { storagePartial = true; }
     recomputeOrganizationUsage(state);
     json(res, 200, {
       server: {platform: platform(), arch: arch(), hostname: hostname(), nodeVersion: process.version, uptimeSeconds: Math.round(process.uptime()), pid: process.pid},
       resources: {rssBytes: memory.rss, heapUsedBytes: memory.heapUsed, cpuSeconds: Math.round(cpuSeconds), loadAverage: loadavg(), totalMemoryBytes: totalmem(), freeMemoryBytes: freemem(), cpuCount: cpus().length},
       energy: {estimatedWattHours: Math.round(cpuSeconds / 3600 * wattsPerCpu * 100) / 100, wattsPerCpuCoefficient: wattsPerCpu},
-      storage: {centralStateBytes: stateBytes, projectDbBytes, stateStore: stateStoreKind()},
+      storage: {centralStateBytes: stateBytes, projectDbBytes, stateStore: stateStoreKind(),
+        ...(storagePartial ? {partial: true} : {})},
       runtime: {
         onlineNodes: (state.agentRuntimeNodes || []).filter((node) => node.status === "online").length,
         totalNodes: (state.agentRuntimeNodes || []).length,

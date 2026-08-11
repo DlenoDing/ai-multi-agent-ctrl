@@ -1409,8 +1409,11 @@ function renderSysOverview() {
     `),
     panel("存储体量", `
       <dl class="kv-list">
-        <dt>中央状态库</dt><dd>${fmtBytes(overview.storage.centralStateBytes)}</dd>
-        <dt>项目事件库</dt><dd>${fmtBytes(overview.storage.projectDbBytes)}</dd>
+        <dt>中央状态库</dt><dd>${overview.storage.centralStateBytes === null || overview.storage.centralStateBytes === undefined
+          ? `<span class="warn-text">量不到（不是 0）</span>` : fmtBytes(overview.storage.centralStateBytes)}</dd>
+        <dt>项目事件库</dt><dd>${overview.storage.projectDbBytes === null || overview.storage.projectDbBytes === undefined
+          ? `<span class="warn-text">量不到（不是 0）</span>` : fmtBytes(overview.storage.projectDbBytes)}${
+          overview.storage.partial ? `<span class="warn-text"> · 有文件量不到，这个数偏小</span>` : ""}</dd>
         <dt>状态存储引擎</dt><dd>${esc(t(overview.storage.stateStore))}</dd>
       </dl>
     `)

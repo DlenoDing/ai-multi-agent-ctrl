@@ -771,7 +771,12 @@ function fsyncDirectory(path) {
     } finally {
       closeSync(fd);
     }
-  } catch {}
+  } catch (error) {
+    // fsync 失败意味着这次写入【可能没有真的落到盘上】：机器一断电就丢。
+    // 静默吞掉的话，系统会带着"以为已持久化"的假设继续跑，事后连线索都没有。
+    // 不抛出（写入本身已经成功、抛出会把一次正常操作变成失败），但必须留下痕迹。
+    process.stderr.write(`[state-store] fsync 失败，本次写入可能未真正落盘：${path}：${String(error?.message || error).slice(0, 200)}\n`);
+  }
 }
 
 function withRuntimeJsonLock(options, fn) {
