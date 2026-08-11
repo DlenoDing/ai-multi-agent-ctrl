@@ -4682,6 +4682,27 @@ function verifyEveryCloseGateHasHumanGuidance(output) {
   if (stale.length) {
     output.push(`界面还留着已经不存在的关闭门指引：${stale.join("、")} —— 它永远不会被显示，只会误导下一个改这里的人`);
   }
+
+  // 门名本身也要有中文：阻塞详情面板整块是中文，里面夹一个 all_leases_terminal 这种原始英文枚举，
+  // 人读不懂也搜不到。validate-specs 里本来有这条，但它是【写死的八条】，
+  // 而同一处的注释正是在说"逐条写死只守得住有人想到的那几条"。这里按真实门数全量核对。
+  const i18nSource = readFileSync(resolve(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
+  const localized = (key) => new RegExp(`(^|[^A-Za-z0-9_])${key}\\s*:`, "mu").test(i18nSource);
+  const rawGateNames = gates.filter((gate) => !localized(gate));
+  if (rawGateNames.length) {
+    output.push(`这些关闭门在中文界面上显示的是原始英文枚举：${rawGateNames.join("、")} —— 人读不懂也搜不到`);
+  }
+
+  // 准入结论的 reasonCode 同样直接进徽标。它是可枚举的，按 core 里真实出现的取值全量核对。
+  const coreSourceForCodes = readFileSync(resolve(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const reasonCodes = [...new Set([...coreSourceForCodes.matchAll(/reasonCode: "([a-z_]+)"/gu)].map((match) => match[1]))];
+  if (reasonCodes.length < 10) {
+    output.push(`准入 reasonCode 中文覆盖自检：只提取到 ${reasonCodes.length} 个取值 —— 提取逻辑与代码脱节，本条在空转`);
+  }
+  const rawCodes = reasonCodes.filter((code) => !localized(code));
+  if (rawCodes.length) {
+    output.push(`这些准入结论在中文界面上显示的是原始英文枚举：${rawCodes.join("、")}`);
+  }
 }
 
 function verifyCancelSettlesTheCellsResources(output) {

@@ -690,7 +690,12 @@ app_js_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js")
 i18n_zh_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/i18n-zh.js"))
 # The zh dictionary must not contain duplicate keys — JS last-wins would silently shadow the intended
 # value (a recurring defect this cycle when appending gate/objectType keys). Guard durably.
-i18n_dup_keys = i18n_zh_source.scan(/^\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:/).flatten.tally.select { |_k, count| count > 1 }.keys
+# 提取必须认得住实际写法：这份字典里既有独占一行的键，也有一行写多个的（`a: "x", b: "y",`）。
+# 只认行首键的话，行内那些重复【看不见】—— 实测正是这样：15 个关闭门名各被定义了两次、
+# 两套不同的中文，后定义的静默覆盖前一套，而这条守卫的全部意义就是防这个。
+i18n_dup_keys = i18n_zh_source.scan(/(?:^|[,{]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/).flatten.tally.select { |_k, count| count > 1 }.keys
+# 本条不得空转：这份字典有几百个键，提取不到就说明写法又变了。
+errors << "zh i18n duplicate-key check only saw #{i18n_zh_source.scan(/(?:^|[,{]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/).size} keys — extraction has drifted from the file's actual shape" if i18n_zh_source.scan(/(?:^|[,{]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/).size < 300
 errors << "zh i18n dictionary has duplicate keys: #{i18n_dup_keys.join(', ')}" unless i18n_dup_keys.empty?
 # 规范里建模过的每一个状态都必须有中文。t() 未命中时回退成原始英文键，并只往【浏览器控制台】
 # 打一条警告 —— 而真正的用户不会去看那里。于是人批准一个授权请求之后，中文界面上的徽标写着
