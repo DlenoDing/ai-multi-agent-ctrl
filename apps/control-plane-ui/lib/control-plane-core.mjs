@@ -3169,7 +3169,8 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
   if (checkFailures.repository_output_target_terminal) blockers.push({objectType: "RepositoryOutputTarget", objectId: taskGroupId, status: "non_terminal"});
   if ((state.workSessions || []).some((session) => session.taskGroupId === taskGroupId && !WORK_SESSION_SETTLED_STATUSES.includes(session.status))) blockers.push({objectType: "WorkSession", objectId: taskGroupId, status: "active"});
   if ((state.agentDispatches || []).some((dispatch) => dispatch.taskGroupId === taskGroupId && !["completed", "failed", "cancelled"].includes(dispatch.status))) blockers.push({objectType: "AgentDispatch", objectId: taskGroupId, status: "active"});
-  if ((state.leases || []).some((lease) => lease.status === "active" && leaseAppliesToTaskGroup(state, lease, taskGroupId))) blockers.push({objectType: "Lease", objectId: taskGroupId, status: "active"});
+  const leaseTargetIds = taskGroupTargetIds(state, taskGroupId);
+  if ((state.leases || []).some((lease) => lease.status === "active" && leaseTargetIds.has(leaseTargetId(lease)))) blockers.push({objectType: "Lease", objectId: taskGroupId, status: "active"});
   if (checkFailures.all_required_evidence_present) blockers.push({objectType: "Checkpoint", objectId: taskGroupId, status: "missing_git_evidence"});
   if (checkFailures.no_pending_permission_or_approval) blockers.push({objectType: "PermissionOrApprovalRequest", objectId: taskGroupId, status: "pending"});
   if (checkFailures.no_open_execution_topology) blockers.push({objectType: "ExecutionTopology", objectId: taskGroupId, status: "open"});
@@ -3234,6 +3235,8 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
   const abandonedQualityGateWorkIds = new Set((taskGroup?.workItems || [])
     .filter((workItem) => WORK_ITEM_SETTLED_STATUSES.includes(workItem.status) && workItem.status !== "verified")
     .map((workItem) => workItem.id));
+  // 先取一次这个任务组的产出目标集合：下面的租约判据要用它，不能对每条租约再扫一遍全表。
+  const barrierLeaseTargetIds = taskGroupTargetIds(state, taskGroupId);
   const gateFailures = {
     all_required_work_closed: readiness.blockingObjects.some((item) => item.objectType === "WorkItem"),
     all_findings_terminal: forTaskGroup(state.findings).some((item) => !(FINDING_TERMINAL_STATUSES.includes(item.status) && ["fixed_verified", "not_applicable", "scope_adjusted", "blocked_external"].includes(item.dispositionClass))),
@@ -3245,7 +3248,7 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
     all_commands_terminal: (state.commands || []).some((command) => (command.taskGroupId === taskGroupId || command.subject === `TaskGroup:${taskGroupId}`) && !COMMAND_TERMINAL.has(command.status)),
     all_command_effects_terminal: forTaskGroup(state.commandEffects).some((item) => !COMMAND_EFFECT_TERMINAL.has(item.status)),
     no_active_dlq: forTaskGroup(state.dlqEntries).some((item) => !DLQ_ENTRY_TERMINAL.has(item.status)),
-    all_leases_terminal: (state.leases || []).some((lease) => lease.status === "active" && leaseAppliesToTaskGroup(state, lease, taskGroupId)),
+    all_leases_terminal: (state.leases || []).some((lease) => lease.status === "active" && barrierLeaseTargetIds.has(leaseTargetId(lease))),
     no_active_temp_grants: (state.mcpGrants || []).some((grant) => grant.taskGroupId === taskGroupId && grant.grantStatus === "issued" && new Date(grant.expiresAt || 0).getTime() > nowMs),
     // 这道门原先恒不触发：artifactRegister 只会写 "registered"，而它本身就在通过集里，
     // "verified" 则全仓无人写入 —— 一道名为"制品已验证"的门，从来没有验证过任何东西，
@@ -3855,10 +3858,25 @@ function sharedDefinitionAppliesToWork(definition, taskGroup, workItem) {
   return projectRefs.some((ref) => refs.has(ref));
 }
 
-function leaseAppliesToTaskGroup(state, lease, taskGroupId) {
-  const targetId = String(lease.resourceRef || "").split(":")[1];
-  const target = (state.repositoryOutputs || []).find((item) => item.targetId === targetId);
-  return target?.taskGroupId === taskGroupId;
+// 这个任务组名下的产出目标 id 集合。
+//
+// 为什么要单独提出来：关闭门与就绪度各有一处"这个任务组还有没有活跃租约"的判据，原先的写法是
+// 遍历所有租约、对每一条再线性扫一遍 repositoryOutputs 反查它属于哪个任务组，而这两处判据又在
+// 【每个任务组】上各跑一次 —— 三层相乘，且租约数与目标数都随单元数增长。实测 2000 单元时它占了
+// 一次编排 62.7% 的 CPU。先取一次集合，判据就从 O(L×R) 降到 O(L+R)。
+//
+// 刻意不跨周期缓存：目标是在同一轮里被逐个单元创建出来的，缓存必然过期，而这个判据挡着关闭门 ——
+// 宁可每次重算，也不能让它读到一份旧的"没有活跃租约"。
+function taskGroupTargetIds(state, taskGroupId) {
+  const owned = new Set();
+  for (const target of state.repositoryOutputs || []) {
+    if (target.taskGroupId === taskGroupId) owned.add(target.targetId);
+  }
+  return owned;
+}
+
+function leaseTargetId(lease) {
+  return String(lease.resourceRef || "").split(":")[1];
 }
 
 const REVIEW_FINDING_LABELS = {
