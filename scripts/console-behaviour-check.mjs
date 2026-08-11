@@ -322,7 +322,12 @@ async function runErrorGuidanceCase() {
   const cases = [
     {payload: {error: "org_member_invitation_pending", message: "该成员尚未接受邀请，不能启用"}, expect: "该成员尚未接受邀请"},
     {payload: {error: "policy_denied", reason: "组织已被暂停"}, expect: "组织已被暂停"},
-    {payload: {error: "server_side_agent_execution_forbidden", required: ["请先注册一个 Agent Runtime 节点"]}, expect: "请先注册一个 Agent Runtime 节点"}
+    {payload: {error: "server_side_agent_execution_forbidden", required: ["请先注册一个 Agent Runtime 节点"]}, expect: "请先注册一个 Agent Runtime 节点"},
+    // 配额超限时服务端已经算出了"哪一类、用了多少、上限多少"。只报"组织配额已超限"，
+    // 人不知道是成员还是任务组、差多少，也不知道下一步去哪 —— 而这三样都在同一个响应里。
+    {payload: {error: "org_quota_exceeded", quota: 200, usage: 200, kind: "taskGroups"}, expect: "任务组 200/200"},
+    {payload: {error: "org_quota_exceeded", quota: 50, usage: 50, kind: "members"}, expect: "成员 50/50"},
+    {payload: {error: "org_quota_exceeded", quota: 20, usage: 20, kind: "projects"}, expect: "组织管理"}
   ];
   for (const item of cases) {
     probe.setFetch(async () => ({ok: false, status: 409, statusText: "Conflict", json: async () => item.payload}));

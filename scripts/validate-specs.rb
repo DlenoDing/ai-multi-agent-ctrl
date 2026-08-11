@@ -1821,6 +1821,18 @@ app_js = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
 errors << "控制台没有审计归档的入口 —— 80 条之前的记录对人不可达" unless app_js.include?("/api/audit-archive")
 errors << "审计面板没有说清它只显示最近若干条 —— 人会把这一屏当成全部历史" unless app_js.include?("更早的记录在归档文件里")
 errors << "服务端没有把归档写失败暴露出来 —— 记录丢了没人知道" unless server_source.include?("auditArchiveFault")
+# 配额超限时服务端已经算出了"哪一类、用了多少、上限多少"，前端据此告诉人差多少、去哪调。
+# 少发一个字段，人看到的就退回成一句"组织配额已超限"——而这三样都在同一次判定里现成拿着。
+quota_responses = server_source.scan(/json\(res, 409, \{error: (\w+)\.error[^}]*\}\)/)
+errors << "配额超限的回传一处都没提取到 —— 本条在空转" if quota_responses.length < 4
+server_source.scan(/json\(res, 409, \{error: \w+\.error[^}]*\}\)/).each do |response|
+  next unless response.include?("quota:")
+  missing = %w[usage: kind:].reject { |field| response.include?(field) }
+  next if missing.empty?
+  errors << "配额超限的回传少了 #{missing.join("、")}：#{response[0, 90]} —— " \
+            "人只会看到一句\"组织配额已超限\"，不知道是哪一类、差多少"
+end
+
 # 自治循环每一拍的结果必须被记回状态：setInterval 会把返回值丢掉，不主动记就等于没有 ——
 # 周期每一拍都抛异常时，整套自动化已经停摆，而控制台仍显示"已启用 · 每 60 秒"。
 # 三个出口（读不到状态 / 周期抛错 / 正常推进）都要经过它，漏一个就会把"停摆"记成"没跑过"。

@@ -693,6 +693,14 @@ async function api(path, options = {}) {
       } else if (payload.currentRound !== undefined) {
         hint += `（当前轮次已是第 ${esc(payload.currentRound)} 轮，你看到的是更早的一轮 —— AI 在你点击前修订过候选方案，请刷新后重新查看再决定）`;
       }
+      // 配额超限时服务端已经算出了【哪一类、用了多少、上限多少】，前端原先只取 error ——
+      // 人看到"组织配额已超限"，不知道是成员、项目、任务组还是智能体，也不知道差多少，
+      // 更不知道下一步该去哪。这三样都在手上，不给出来没有任何理由。
+      if (payload.quota !== undefined && payload.usage !== undefined) {
+        const kindLabel = {members: "成员", projects: "项目", taskGroups: "任务组", agents: "智能体"}[payload.kind] || "该资源";
+        hint += `（${kindLabel} ${esc(payload.usage)}/${esc(payload.quota)} 已满：到「组织管理」页调高这一项配额，`
+          + "或先关掉/归档不再需要的，再重试）";
+      }
       // 服务端在不少错误里写了给人看的说明（message / reason / required），前端原先只取 error 一个字段，
       // 把它们全丢了 —— 于是一条本来说清了"为什么、接下来怎么办"的 409，到人眼前只剩一串英文枚举。
       // 典型：停用一个还没接受邀请的成员 → 服务端解释了原因，人看到的是 `409 org_member_invitation_pending`。

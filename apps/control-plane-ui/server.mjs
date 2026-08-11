@@ -3045,7 +3045,7 @@ async function handleApi(req, res) {
     const projectOrgId = ownerAccount.organizationId || authenticated.account.organizationId || DEFAULT_ORGANIZATION_ID;
     const projectQuota = organizationQuotaCheck(state, projectOrgId, "projects");
     if (!projectQuota.allowed) {
-      json(res, 409, {error: projectQuota.error, quota: projectQuota.quota, usage: projectQuota.usage});
+      json(res, 409, {error: projectQuota.error, quota: projectQuota.quota, usage: projectQuota.usage, kind: projectQuota.kind});
       return;
     }
     const id = createId("prj");
@@ -3097,7 +3097,7 @@ async function handleApi(req, res) {
     const taskGroupProject = state.projects.find((item) => item.id === projectId);
     const taskGroupQuota = organizationQuotaCheck(state, taskGroupProject?.organizationId || DEFAULT_ORGANIZATION_ID, "taskGroups");
     if (!taskGroupQuota.allowed) {
-      json(res, 409, {error: taskGroupQuota.error, quota: taskGroupQuota.quota, usage: taskGroupQuota.usage});
+      json(res, 409, {error: taskGroupQuota.error, quota: taskGroupQuota.quota, usage: taskGroupQuota.usage, kind: taskGroupQuota.kind});
       return;
     }
     const result = createTaskGroupRecord(state, body, {auditRef: `audit:${guard.idempotencyKey}`});
@@ -3358,7 +3358,7 @@ async function handleApi(req, res) {
     if (inviteOrgId) {
       const inviteQuota = organizationQuotaCheck(state, inviteOrgId, "members");
       if (!inviteQuota.allowed) {
-        json(res, 409, {error: inviteQuota.error, quota: inviteQuota.quota, usage: inviteQuota.usage});
+        json(res, 409, {error: inviteQuota.error, quota: inviteQuota.quota, usage: inviteQuota.usage, kind: inviteQuota.kind});
         return;
       }
     }
@@ -4447,7 +4447,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "org_member_create", `Organization:${orgId || "unknown"}`, {resourceType: "organization", resourceId: orgId});
     if (guard.status) return json(res, guard.status, guard.payload);
     const quota = organizationQuotaCheck(state, orgId, "members");
-    if (!quota.allowed) return json(res, 409, {error: quota.error, quota: quota.quota, usage: quota.usage});
+    if (!quota.allowed) return json(res, 409, {error: quota.error, quota: quota.quota, usage: quota.usage, kind: quota.kind});
     if (body.email && (state.accounts || []).some((item) => item.email === String(body.email))) {
       return json(res, 409, {error: "account_email_already_registered"});
     }
@@ -4629,7 +4629,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "org_project_create", `Organization:${orgId || "unknown"}`, {resourceType: "organization", resourceId: orgId});
     if (guard.status) return json(res, guard.status, guard.payload);
     const quota = organizationQuotaCheck(state, orgId, "projects");
-    if (!quota.allowed) return json(res, 409, {error: quota.error, quota: quota.quota, usage: quota.usage});
+    if (!quota.allowed) return json(res, 409, {error: quota.error, quota: quota.quota, usage: quota.usage, kind: quota.kind});
     const id = createId("prj");
     state.projects.push({
       id,
