@@ -1251,6 +1251,9 @@ async function loadLoginHint() {
   if (!authToken) render();
 }
 
+// 上一次真正写进 DOM 的整页 HTML；任何绕过 render 的写入都必须把它作废
+let lastRenderedHtml = null;
+
 function renderLogin() {
   const hintBlock = loginHint
     ? `
@@ -1282,6 +1285,9 @@ function renderLogin() {
       </div>
     </div>
   `;
+  // 登录页绕过了 render 的写入路径。不在这里作废缓存的话，退出再登录时 render 会算出
+  // 与上次登录后【一模一样】的整页 HTML，于是被跳过 —— 人就永远停在登录页上。
+  lastRenderedHtml = null;
   loadLoginHint();
 }
 
@@ -1319,10 +1325,7 @@ function render() {
     `
     : "";
 
-  const prevScrollY = window.scrollY;
-  const prevTableScroll = [...document.querySelectorAll(".table-scroll")].map((el) => el.scrollLeft);
-
-  app.innerHTML = `
+  const html = `
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -1353,6 +1356,18 @@ function render() {
     </div>
     ${modalHtml}
   `;
+
+  // 5 秒轮询一次，绝大多数时候数据一个字节没变（服务端已经用 ETag 回 304 了），
+  // 但界面此前照样把整页 DOM 拆了重建：4000 单元时是 292KB 反复解析 + 重排，
+  // 而且【每次都会清掉用户的文字选区】—— 想复制一个 ID 都复制不完。
+  // 时间都渲染成绝对值，同一份数据两次渲染逐字节相同，直接比字符串即可。
+  // 命令式改过的地方（防重按钮、悬浮卡、筛选行）全都自己在 finally 里复原，
+  // 不依赖重渲染兜底，所以跳过不会让它们卡住。
+  if (html === lastRenderedHtml) return;
+  const prevScrollY = window.scrollY;
+  const prevTableScroll = [...document.querySelectorAll(".table-scroll")].map((el) => el.scrollLeft);
+  app.innerHTML = html;
+  lastRenderedHtml = html;
 
   // 轮询/局部刷新后恢复滚动位置，避免整页 render 抖动
   window.scrollTo(0, prevScrollY);

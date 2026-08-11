@@ -41,6 +41,9 @@ class StubElement {
     if (tagList.every((part) => /^[a-z]+$/.test(part))) {
       return tagList.some((tag) => this.tagName === tag.toUpperCase());
     }
+    // 类选择器：桩里没有真实子树，一律空集。整页 render 会查 .table-scroll 之类，
+    // 不认它就只能整个 render 都测不了。
+    if (/^\.[a-zA-Z0-9_-]+$/.test(selector)) return false;
     const named = selector.match(/^\[name="(.*)"\]$/s);
     if (named) return this.name === named[1].replace(/\\(.)/g, "$1");
     const formSel = selector.match(/^form\[data-form\]$/);
@@ -131,6 +134,8 @@ globalThis.__probe = {
   renderSysAccountsWith: (nextState, account) => { state = nextState; currentAccount = account; return renderSysAccounts(); },
   blockerGuide: (type) => blockerGuide(type),
   renderMonitorWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; return renderMonitor(); },
+  setAuth: (token, account) => { authToken = token; currentAccount = account; },
+  renderFullPageWith: (nextState, account, projectId, pageId) => { state = nextState; currentAccount = account; currentProjectId = projectId; page = pageId; render(); },
   renderTaskGroupsWith: (nextState, account, projectId, detailId, detail) => { state = nextState; currentAccount = account; currentProjectId = projectId; expandedTaskGroupId = detailId; if (detail !== undefined) tgDetail = detail; return renderTaskGroups(); },
   setFetch: (fn) => { globalThis.fetch = fn; },
   api: (path, options) => api(path, options)
@@ -497,6 +502,45 @@ function runPendingTruncationCase() {
     check("拿不到规模时不执行重置",
       /bootstrapScaleFrom\(systemOverview\)/.test(handler) && /if \(!scale\)/.test(handler),
       "重置流程没有在拿不到真实规模时中止");
+  }
+
+  // 控制台每 5 秒轮询一次。数据没变时（服务端已按 ETag 回 304）整页 DOM 还要拆了重建，
+  // 4000 单元时是 292KB 反复解析 + 重排，而且每次都清掉用户的文字选区。
+  // 这里验两件事，缺任何一件这个优化都是错的：没变时不重建，变了必须重建。
+  {
+    const root = el("div");
+    let writes = 0;
+    let value = "";
+    Object.defineProperty(root, "innerHTML", {get: () => value, set: (next) => { value = next; writes += 1; }});
+    const probe = loadConsole(root);
+    writes = 0; // app.js 加载时自己会渲染一次登录页，不算在这一段里
+    const account = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+    const makeState = (groupName) => ({schemaVersion: "runtime-state/v1", stateVersion: 3, runtime: {},
+      organizations: [{orgId: "org_default", name: "组织", status: "active"}],
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: groupName, status: "development", health: "ok", workItems: [], blockers: []}],
+      agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], findings: [],
+      humanConfirmationRequests: [], truncatedCollections: [], users: [account]});
+    probe.setAuth("probe-token", account);
+    probe.renderFullPageWith(makeState("任务组"), account, "p1", "tg");
+    const afterFirst = writes;
+    check("整页渲染确实写了 DOM（否则下面的判据全是空转）", afterFirst === 1, `写入次数 ${afterFirst}`);
+    probe.renderFullPageWith(makeState("任务组"), account, "p1", "tg");
+    check("数据没变时不重建整页 DOM",
+      writes === afterFirst,
+      `同一份数据渲染两次写了 ${writes} 次 DOM —— 每 5 秒清一次用户选区，还要白解析几百 KB`);
+    probe.renderFullPageWith(makeState("改过名的任务组"), account, "p1", "tg");
+    check("数据变了必须重建（跳过不能把真实变化一起挡住）",
+      writes === afterFirst + 1 && /改过名的任务组/.test(value),
+      `写入次数 ${writes}，界面上${/改过名的任务组/.test(value) ? "有" : "没有"}新名字`);
+    // 登录页绕过 render 自己写 DOM。缓存不作废的话，退出再登录会算出和上次一模一样的整页 HTML
+    // 而被跳过，人就卡在登录页上 —— 这是本次改动最容易造出来的新故障。
+    probe.renderLoginWith(null);
+    const afterLogin = writes;
+    probe.renderFullPageWith(makeState("改过名的任务组"), account, "p1", "tg");
+    check("从登录页回到控制台一定要重建（哪怕内容和上次登录前一样）",
+      writes === afterLogin + 1,
+      "退出再登录后界面没有被重建 —— 人会一直停在登录页上");
   }
 
   // 明细页的工作项来自专用端点，它现在也有上限（4000 单元时曾是约 1.1MB 载荷 + 4000 个 DOM 节点）。
