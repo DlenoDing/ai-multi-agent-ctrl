@@ -210,6 +210,7 @@ verifyHeartbeatDoesNotHideFailedSelfCheck(errors);
 verifyTaskGroupBlockersStayBounded(errors);
 verifyPerScopeRecordsSurviveTheirCap(errors);
 verifyCancelSettlesTheCellsResources(errors);
+verifyEveryCloseGateHasHumanGuidance(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4654,6 +4655,35 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 取消一个格子之后，它【名下的资源】必须一起了结 —— 否则输出目标永远停在非终态，
 // 关闭门恒把它列为阻塞物：人取消了活，却再也关不掉这个任务组，而且没有任何杠杆。
 // （lane 与角色漂移守卫有自清逻辑，输出目标没有 —— 实测跑 3 轮之后它还在那儿挡着。）
+// 关闭门有 26 道。人打不开任务组时，最需要的就是"哪一道没过、我该做什么"，
+// 而界面的 CLOSE_GATE_GUIDE 是一张手写表 —— 手写表必然漂：新增第 27 道门时，
+// 界面会安静地对它显示空白，人看到一个没过的门却得不到任何指引。
+// 今天两边是吻合的，但此前没有任何东西守着这份吻合。判据按【真实产出的 requiredGates】来，
+// 不按源码里的字面清单：门是从 gateFailures 的键推出来的，字面提取会跟不上。
+function verifyEveryCloseGateHasHumanGuidance(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  runAutonomousCycle(state, {root, mode: "all"});
+  const gates = computeCloseBarrier(state, "tg_runtime_management", {root}).requiredGates || [];
+  const appSource = readFileSync(resolve(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const at = appSource.indexOf("const CLOSE_GATE_GUIDE = {");
+  const block = at < 0 ? "" : appSource.slice(at, appSource.indexOf("\n};", at));
+  const guide = new Set([...block.matchAll(/^\s{2}([a-z_]+):/gmu)].map((match) => match[1]));
+  if (gates.length < 10 || guide.size < 10) {
+    output.push(`关闭门指引自检：真实门 ${gates.length} 道、界面指引 ${guide.size} 条 —— 有一侧没解析出来，本条在空转`);
+    return;
+  }
+  const missing = gates.filter((gate) => !guide.has(gate));
+  if (missing.length) {
+    output.push(`这些关闭门在界面上没有任何指引：${missing.join("、")} ——`
+      + " 人看到一道打不开的门，却不知道该做什么，而这正是他来看这一页的原因");
+  }
+  const stale = [...guide].filter((gate) => !gates.includes(gate));
+  if (stale.length) {
+    output.push(`界面还留着已经不存在的关闭门指引：${stale.join("、")} —— 它永远不会被显示，只会误导下一个改这里的人`);
+  }
+}
+
 function verifyCancelSettlesTheCellsResources(output) {
   const build = () => {
     const state = structuredClone(seedState);
