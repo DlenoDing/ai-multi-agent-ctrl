@@ -206,6 +206,7 @@ verifyDegradedContentBundleIsVisible(errors);
 verifyMcpSummaryIsActuallyASummary(errors);
 verifyHeartbeatDoesNotHideFailedSelfCheck(errors);
 verifyTaskGroupBlockersStayBounded(errors);
+verifyPerScopeRecordsSurviveTheirCap(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4642,6 +4643,60 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // taskGroup.blockers 按 summary 去重，但每个工作项/派发都会产生自己的一条 ——
 // 实测 60 个单元反复失败就是 60 条，按规模线性涨；而它嵌在任务组里，每个视图每次请求都带上。
 // 加了上限就必须【说出丢了多少】：悄悄丢等于让人以为问题只有屏幕上这几个。
+// 每个任务组/每个单元一条的派生记录（完成度检查、关闭门、准入决策）都有上限。
+// 上限一旦小于对象数，直接 slice 会造成【上限抖动】：被挤掉的那个下一拍找不到自己的旧记录，
+// 重算一份全新的、再把别人挤掉 —— 每拍全量重写，而账本永远只覆盖一个轮转的子集。
+// 实测 102 个任务组时，每一拍都要重写 80 条关闭门 + 80 条完成度，落盘、ETag 作废、
+// 所有控制台重新拉取重建 DOM 全被它带动；2000 单元时一拍卡死整个服务 2.3 秒。
+function verifyPerScopeRecordsSurviveTheirCap(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const template = state.taskGroups[0];
+  const extra = 200; // 要压过 80 这个上限 + 64 的裁剪余量，否则裁剪根本不会触发
+  state.taskGroups = [...state.taskGroups, ...Array.from({length: extra}, (_, index) => ({
+    id: `tg_cap_${index}`, projectId: template.projectId, name: `压测任务组${index}`, status: "development",
+    requiredRoles: template.requiredRoles, languagePolicy: template.languagePolicy,
+    // 单元数还要压过准入决策那道上限（400 + 64 余量），否则那一条断言是空转的
+    workItems: Array.from({length: 3}, (_, cell) => ({id: `w_cap_${index}_${cell}`, title: `单元${index}-${cell}`, status: "draft", progress: 0, ownerRole: "agent-runtime"}))
+  }))];
+  runAutonomousCycle(state, {root, mode: "all"});
+  runAutonomousCycle(state, {root, mode: "all"});
+  const snapshot = () => ({
+    readiness: JSON.stringify(state.completionReadiness),
+    barriers: JSON.stringify(state.closeBarriers),
+    decisions: JSON.stringify(state.admissionDecisions)
+  });
+  const before = snapshot();
+  runAutonomousCycle(state, {root, mode: "all"});
+  const after = snapshot();
+  if (after.readiness !== before.readiness) output.push("任务组数超过上限时，完成度记录每拍被全量重写 —— 上限抖动");
+  if (after.barriers !== before.barriers) output.push("任务组数超过上限时，关闭门记录每拍被全量重写 —— 上限抖动");
+  if (after.decisions !== before.decisions) output.push("单元数超过上限时，准入决策每拍被全量重写 —— 上限抖动");
+
+  // 活着的对象一条都不能少：否则"没被重写"可能只是因为它们压根没被记。
+  const liveGroupIds = (state.taskGroups || []).filter((group) => !["closed", "aborted"].includes(group.status)).map((group) => group.id);
+  const coveredByReadiness = new Set((state.completionReadiness || []).map((item) => item.taskGroupId));
+  const missing = liveGroupIds.filter((id) => !coveredByReadiness.has(id));
+  if (missing.length) output.push(`有 ${missing.length} 个还活着的任务组没有完成度记录 —— 上限把活的裁掉了（如 ${missing.slice(0, 2).join("、")}）`);
+  if (liveGroupIds.length <= 144) output.push("上限抖动自检：造出来的任务组没有压过上限+裁剪余量，任务组这一侧没有被真正检验");
+  const liveCellCount = (state.taskGroups || []).flatMap((group) => group.workItems || [])
+    .filter((item) => !["verified", "closed", "superseded", "cancelled", "aborted"].includes(item.status)).length;
+  const admissionCap = Math.max(50, Number(process.env.AIMAC_ADMISSION_DECISION_CAP || 400));
+  if (liveCellCount <= admissionCap + 64) {
+    output.push(`上限抖动自检：活单元只有 ${liveCellCount} 个，没有压过准入决策上限 ${admissionCap}+64，准入这一侧没有被真正检验`);
+  }
+
+  // 反向：关闭掉的任务组必须可以被裁掉，否则"活的一条都不裁"会滑成"什么都不裁"，上限形同虚设。
+  for (const group of state.taskGroups) if (group.id.startsWith("tg_cap_")) group.status = "closed";
+  runAutonomousCycle(state, {root, mode: "all"});
+  if ((state.completionReadiness || []).length > 144) {
+    output.push(`任务组全部关闭之后，完成度记录仍有 ${state.completionReadiness.length} 条（上限 80 + 余量 64）—— 死记录没有被回收，内存无界`);
+  }
+  if ((state.closeBarriers || []).length > 144) {
+    output.push(`任务组全部关闭之后，关闭门记录仍有 ${state.closeBarriers.length} 条 —— 死记录没有被回收`);
+  }
+}
+
 function verifyTaskGroupBlockersStayBounded(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});

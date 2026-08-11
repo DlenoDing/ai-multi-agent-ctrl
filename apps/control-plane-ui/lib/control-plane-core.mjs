@@ -1751,8 +1751,43 @@ function recordAdmissionDecision(state, input = {}) {
     decidedAt: new Date().toISOString()
   };
   const cap = Math.max(50, Number(process.env.AIMAC_ADMISSION_DECISION_CAP || 400));
-  state.admissionDecisions = [decision, ...state.admissionDecisions].slice(0, cap);
+  state.admissionDecisions = capAdmissionDecisions([decision, ...state.admissionDecisions], state, cap);
   return decision;
+}
+
+// 每个任务组一条的派生记录（完成度检查、关闭门）。上限小于任务组数时，直接 slice 会造成上限抖动：
+// 被挤掉的任务组下一拍重算出一份全新记录，再把别人挤掉 —— 每拍全量重写，而账本永远只覆盖一部分。
+// 与 capDispatchHistory 同规：还活着（未关闭/未中止）的任务组，它那条一律不裁。
+const CLOSED_TASK_GROUP_STATUSES = new Set(["closed", "aborted"]);
+function capPerTaskGroupRecords(records, state, limit) {
+  if (records.length <= limit) return records;
+  const liveGroupIds = new Set((state.taskGroups || [])
+    .filter((group) => !CLOSED_TASK_GROUP_STATUSES.has(group.status))
+    .map((group) => group.id));
+  const kept = records.slice(0, limit);
+  const keptGroupIds = new Set(kept.map((item) => item.taskGroupId));
+  const strandedLive = records.slice(limit)
+    .filter((item) => liveGroupIds.has(item.taskGroupId) && !keptGroupIds.has(item.taskGroupId));
+  return strandedLive.length ? [...kept, ...strandedLive] : kept;
+}
+
+// 判"这个单元还活着吗"。宁可判成活的：判活只是多留一条记录，判死会让抖动重新出现。
+const DEAD_CELL_STATUSES = new Set(["verified", "closed", "superseded", "cancelled", "aborted"]);
+
+// 与 capDispatchHistory/capLeaseHistory 同规：【还活着的记录一条都不裁】。
+// 直接 slice 会在"单元数 > 上限"时形成上限抖动：被挤掉的单元下一拍找不到自己的旧决策，
+// 于是重记一条、再把别人挤掉 —— 账本每拍全量重写（2000 单元时每分钟 400 条），
+// 落盘、ETag、控制台重渲染跟着全被带动，而账本本身永远只是一个轮转的子集，谁也查不到自己要的那条。
+function capAdmissionDecisions(decisions, state, limit) {
+  if (decisions.length <= limit) return decisions;
+  const liveCellIds = new Set((state.taskGroups || []).flatMap((group) => (group.workItems || [])
+    .filter((item) => !DEAD_CELL_STATUSES.has(item.status))
+    .map((item) => item.id)));
+  const kept = decisions.slice(0, limit);
+  const keptIds = new Set(kept.map((item) => item.decisionId));
+  const strandedLive = decisions.slice(limit)
+    .filter((item) => liveCellIds.has(item.workItemId) && !keptIds.has(item.decisionId));
+  return strandedLive.length ? [...kept, ...strandedLive] : kept;
 }
 
 // A8: one cycle-level admission scan per task group per cycle, holding the whole candidate set and
@@ -3147,6 +3182,14 @@ function capBoundedHistories(state) {
   }
   if (shouldCap(state.agentDispatches, 240)) state.agentDispatches = capDispatchHistory(state.agentDispatches, 240);
   if (shouldCap(state.leases, 2000)) state.leases = capLeaseHistory(state.leases);
+  // 这三样必须在这里【每轮统一裁一次】，不能只在插入点裁：结论没变时插入点会提前 return，
+  // 于是任务组一旦关闭，它那些记录就再也没有任何代码会去回收，上限形同虚设。
+  if (shouldCap(state.completionReadiness, 80)) state.completionReadiness = capPerTaskGroupRecords(state.completionReadiness, state, 80);
+  if (shouldCap(state.closeBarriers, 80)) state.closeBarriers = capPerTaskGroupRecords(state.closeBarriers, state, 80);
+  const admissionCap = Math.max(50, Number(process.env.AIMAC_ADMISSION_DECISION_CAP || 400));
+  if (shouldCap(state.admissionDecisions, admissionCap)) {
+    state.admissionDecisions = capAdmissionDecisions(state.admissionDecisions, state, admissionCap);
+  }
 }
 
 function capLeaseHistory(leases, limit = 2000) {
@@ -3401,7 +3444,7 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
     && digestOf(previousReadiness.checkResults) === digestOf(readiness.checkResults)
     && digestOf(previousReadiness.blockingObjects) === digestOf(readiness.blockingObjects);
   if (sameConclusion) return previousReadiness;
-  state.completionReadiness = [readiness, ...state.completionReadiness.filter((item) => item.taskGroupId !== taskGroupId)].slice(0, 80);
+  state.completionReadiness = capPerTaskGroupRecords([readiness, ...state.completionReadiness.filter((item) => item.taskGroupId !== taskGroupId)], state, 80);
   return readiness;
 }
 
@@ -3519,7 +3562,7 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
   // 必须让 barrier 指向【存在状态里的那一个对象】，不能 Object.assign 出一份副本：
   // 下面 mutate 路径会往 barrier 上写 confirmedBy/confirmedAt，写在副本上等于人工确认没进账本。
   if (sameBarrier) barrier = previousBarrier;
-  state.closeBarriers = [barrier, ...state.closeBarriers.filter((item) => item.taskGroupId !== taskGroupId)].slice(0, 80);
+  state.closeBarriers = capPerTaskGroupRecords([barrier, ...state.closeBarriers.filter((item) => item.taskGroupId !== taskGroupId)], state, 80);
   // 关闭任务组是核心定稿动作：只有真人账号可以落闸。机器主体即使拿到 task_group:control 也不行 ——
   // 否则一个服务账号就能替 AI 把任务组关掉，人工闸门在最后一步被绕过。这里对**任何**落闸请求先行拒绝
   // （而不是等门禁满足后才拒），机器主体的关闭意图应当被明确报错，而不是静默无效。

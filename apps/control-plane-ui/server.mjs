@@ -1390,12 +1390,17 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
   // 归档故障的错误文本里会带运行目录路径，且它是系统级运维事实 —— 只给系统账号。
   // 不写进 scoped：那份对象带缓存且跨请求复用，改它会把故障粘在缓存里。
   const faultField = auditArchiveFault && isSystemAccount(account) ? {auditArchiveFault} : {};
-  if (!view || view === "full") return auditArchiveFault && isSystemAccount(account) ? {...scoped, ...faultField} : scoped;
+  // 自治循环心跳同理：它在 state.runtime 里，而 scoped 那份对象【按 stateVersion 缓存并跨请求复用】。
+  // 空转不再落盘之后版本号不动，于是整份 scoped（含心跳）被复用到过期为止 ——
+  // 控制台上"上次推进时间"冻住，看起来像自治循环死了。所以在出口处用内存里的实时值覆盖，
+  // 与上面那条归档故障同规：易变的运行时事实不进缓存对象。
+  const liveRuntime = {...scoped.runtime, autonomousOrchestrator: runtimeOrchestratorStatus};
+  if (!view || view === "full") return {...scoped, runtime: liveRuntime, ...faultField};
   const capped = Math.max(10, Math.min(500, Number(limit || 80)));
   const base = {
     schemaVersion: scoped.schemaVersion,
     stateVersion: scoped.stateVersion,
-    runtime: scoped.runtime,
+    runtime: liveRuntime,
     agents: sliceItems(scoped.agents, capped),
     projects: sliceItems(scoped.projects, capped),
     // 任务组把全部工作单元嵌在里面，而它在【基底】里 —— 每个视图、每次请求都带上。
@@ -1469,18 +1474,26 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
 
 // ETag = 视图缓存键 + 那些不进 stateVersion 的运行时事实。后者不带上的话，
 // 自治循环停摆告警、审计归档故障这类只活在内存里的变化会被 304 一直挡在门外。
-function stateViewEtag(cacheKey, central) {
-  const runtimeSignature = [
+// 不进 stateVersion、只活在内存里的运行时事实：自治循环心跳与归档故障。
+// 它们既要进 ETag，也要进【视图缓存的键】—— 只进 ETag 的话，304 判对了，
+// 但 200 那一路会从缓存里拿出一份旧载荷。此前 stateVersion 每拍都涨掩盖了这一点；
+// 空转不再落盘之后，控制台上的"上次推进时间"就冻住了，看起来像自治循环死了。
+function runtimeFactsSignature() {
+  return [
     runtimeOrchestratorStatus?.lastTickAt || "",
     runtimeOrchestratorStatus?.consecutiveErrors || 0,
     runtimeOrchestratorStatus?.enabled ? 1 : 0,
     auditArchiveFault?.at || ""
   ].join("|");
-  return `W/"${digestOf(`${cacheKey}\u0000${central?.stateVersion || 0}\u0000${runtimeSignature}`).slice(7, 39)}"`;
+}
+
+function stateViewEtag(cacheKey, central) {
+  return `W/"${digestOf(`${cacheKey}\u0000${central?.stateVersion || 0}\u0000${runtimeFactsSignature()}`).slice(7, 39)}"`;
 }
 
 function stateViewCacheKey(account, session, stateVersion, view, limit) {
-  return `${account.accountId}:${session.sessionId}:${stateVersion}:${view || "full"}:${limit || "default"}`;
+  return `${account.accountId}:${session.sessionId}:${stateVersion}:${view || "full"}:${limit || "default"}`
+    + `:${digestOf(runtimeFactsSignature()).slice(7, 23)}`;
 }
 
 function cachedStateView(state, account, session, view, limit) {
@@ -5239,6 +5252,22 @@ const realtimeHeartbeat = setInterval(() => {
 //
 // 权限这一侧是对的、不该放宽：编排权限由服务账号持有、明确不可委派，说明设计意图是"编排是系统的
 // 职责而不是某个人的"。缺的不是授权，是那份职责从来没有人履行。补的是运行时，不是权限。
+// 一拍跑完到底改没改东西，只能靠比对内容 —— 循环返回的 changed 里装的是"这一拍看过的单元"
+// （awaiting_existing_checkpoint 之类），不是改过的，拿它当判据会把空转当成有变化。
+// 序列化 30MB 状态约 100ms，而一次落盘约 800ms，且落盘还会推进版本号、作废所有客户端的 ETag，
+// 让每个控制台都重新拉一遍视图、重建一次 DOM。所以这笔比对是划算的。
+function tickContentDigest(state) {
+  // 排除 runtime.autonomousOrchestrator：它是 readState 每次注入的内存心跳，不是循环的产出。
+  // 不排除的话，上一拍缓存的指纹里是注入【之前】的心跳，这一拍读到的是注入之后的，
+  // 每拍都判成"变了" —— 跳过永远不会发生（第一版就是这样，实测版本号照涨不误）。
+  const {autonomousOrchestrator, ...runtimeRest} = state.runtime || {};
+  return digestOf(JSON.stringify({...state, runtime: runtimeRest}));
+}
+// 上一拍算出的指纹。只有在"从那以后没有别的写入者动过状态"时才可复用（用加载版本号判定），
+// 于是稳态空转每拍只需序列化一次而不是两次。落盘之后不缓存：writeState 可能会裁剪状态，
+// 缓存下落盘前的指纹会让下一拍永远判为"变了"，churn 反而变成常态。
+let lastTickContentDigest = null;
+
 export function runOrchestratorTick() {
   const finish = (outcome) => {
     runtimeOrchestratorStatus = recordOrchestratorTickOutcome(runtimeOrchestratorStatus, outcome);
@@ -5246,6 +5275,10 @@ export function runOrchestratorTick() {
   };
   let state = null;
   try { state = readState(); } catch (error) { return finish({skipped: "state_unavailable", error: String(error?.message || error)}); }
+  const loadedVersion = state.__loadedStateVersion;
+  const digestBefore = (lastTickContentDigest && lastTickContentDigest.stateVersion === loadedVersion)
+    ? lastTickContentDigest.digest
+    : tickContentDigest(state);
   try {
     // 对账必须先跑，而且【不受"有没有在跑的任务组"影响】。
     // recycleExpiredClaims 此前只有两个调用点：heartbeatAgentNode 与 claimNextDispatch —— 两个都要
@@ -5261,6 +5294,14 @@ export function runOrchestratorTick() {
       return finish({ran: true, reconciledOnly: true});
     }
     const result = runAutonomousCycle(state, {root: repositoryRoot, runtimeDir, mode: "all", autoSyncSkills: false});
+    const digestAfter = tickContentDigest(state);
+    if (digestAfter === digestBefore) {
+      // 什么都没变还落盘，代价不只是那 800ms：版本号一推进，所有客户端的 ETag 全作废，
+      // 每个控制台都要重新拉一遍视图、重建一次 DOM —— 每分钟一次，永远。
+      lastTickContentDigest = {stateVersion: loadedVersion, digest: digestAfter};
+      return finish({ran: true, changed: 0, unchanged: true});
+    }
+    lastTickContentDigest = null;
     state.stateVersion = Number(state.stateVersion || 0) + 1;
     writeState(state);
     return finish({ran: true, changed: result?.changed?.length || 0});
