@@ -6562,7 +6562,11 @@ export function advanceExecutionTopology(state, args) {
         summary: `执行方案确认：${topology.mode === "serial" ? "串行" : "并行"}执行 ${topology.workItemId}`,
         // 把每个分支【将要动哪些路径】直接写进卡片：这是这份授权真正的杀伤面，人必须看得见才谈得上知情同意。
         detail: `拟以 ${topology.mode} 模式执行，运行载体 ${topology.runnerKind}／隔离方式 ${topology.isolation}，共 ${branches.length} 个分支。\n` +
-          branches.map((branch) => `· ${branch.branchId}：${branch.objective}｜将改动 ${(branch.ownedPaths || []).join("、") || "（未声明占用路径）"}｜验收 ${(branch.acceptanceChecks || []).join("、") || "（无）"}`).join("\n") +
+          // 禁区也要写出来：它现在是【服务端按 git 算出的真实变更强制】的边界之一，
+          // 人批的却是一份自己看不到的东西 —— 卡片上只写"将改动哪些路径"，等于只给了一半授权面。
+          branches.map((branch) => `· ${branch.branchId}：${branch.objective}｜将改动 ${(branch.ownedPaths || []).join("、") || "（未声明占用路径）"}`
+            + `｜禁区 ${(branch.forbiddenPaths || []).join("、") || "（未声明）"}`
+            + `｜验收 ${(branch.acceptanceChecks || []).join("、") || "（无）"}`).join("\n") +
           `\n方案需人工定稿后才会启动；定稿后若内容被改动将拒绝生效并回到人工确认。`,
         peerReview: {verdict: "eligibility_passed", findings: []},
         content: {mode: topology.mode, runnerKind: topology.runnerKind, isolation: topology.isolation, branches: branches.map((branch) => branch.branchId)},

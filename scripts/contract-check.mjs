@@ -4876,6 +4876,34 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     output.push("只改了人批准范围内的路径，却仍被判越界 —— 这条守卫会误伤合规提交");
   }
   // 对照二：没有人定稿的方案时，这条判据不该生效（人没有在这一维上做过约束）。
+  // 卡片是人做决定时唯一看到的东西。禁区现在是服务端强制的边界之一，卡上却曾经不写 ——
+  // 人批的是一份自己看不到的授权面。
+  {
+    const cardState = structuredClone(seedState);
+    ensureRuntimeCollections(cardState, {root});
+    const cardTg = cardState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const cardWork = cardTg.workItems[0];
+    const created = createExecutionTopology(cardState, {taskGroupId: cardTg.id, projectId: cardTg.projectId,
+      workItemId: cardWork.id, mode: "parallel_branches", runnerKind: "local", isolation: "worktree",
+      branches: [{branchId: "b_card", objective: "只改文档", ownedPaths: ["docs/**"],
+        forbiddenPaths: ["infra/**"], resourceScopes: [], acceptanceChecks: ["docs_lint"]}]});
+    const topology = created.topology || created;
+    advanceExecutionTopology(cardState, {topologyId: topology.topologyId, action: "check_eligibility"});
+    const planCard = (cardState.humanConfirmationRequests || [])
+      .find((item) => item.decisionType === "plan_topology" && item.subjectRef === `ExecutionTopology:${topology.topologyId}`);
+    if (!planCard) {
+      output.push("方案定稿卡没有挂起 —— 本条在空转");
+    } else {
+      const text = `${planCard.question?.summary || ""}\n${planCard.question?.detail || ""}`;
+      if (!text.includes("infra/**")) {
+        output.push(`方案定稿卡上没有写出禁区（人批的是自己看不到的边界）：${text.slice(0, 160)}`);
+      }
+      if (!text.includes("docs/**")) {
+        output.push("方案定稿卡上没有写出各分支将改动哪些路径 —— 那是这份授权真正的杀伤面");
+      }
+    }
+  }
+
   // 禁区：人在方案里划的"这些绝对不能动"，此前全仓没有任何强制点。
   const trespassing = runCase({stray: false, finalized: true, trespass: true, writeForbidden: true});
   if (!trespassing.skipped) {

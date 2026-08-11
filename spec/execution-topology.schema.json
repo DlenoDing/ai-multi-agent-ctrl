@@ -200,7 +200,8 @@
                   "type": "array",
                   "items": {
                     "type": "string"
-                  }
+                  },
+                  "description": "分支各自声明要动的资源，仅用于【规划时】核对分支之间互不重叠（owned_paths_disjoint 那一类判据）。它没有受控词表，运行时也不做任何强制 —— 不要读成「这个分支只能碰这些资源」。真正被强制的边界是 ownedPaths 与 forbiddenPaths：控制面按 git 算出的真实变更逐条核对。"
                 },
                 "acceptanceChecks": {
                   "type": "array",
