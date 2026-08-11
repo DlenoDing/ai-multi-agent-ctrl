@@ -1737,6 +1737,21 @@ prose_only_assertions.each do |detail|
 end
 
 
+# 真人专属动作的审计必须记下【是谁做的】。
+#
+# 这类动作的全部意义是"由人负责"，而事后唯一能回答"是谁批的/是谁铸的"的地方就是审计记录。
+# 把执行者写成服务名（audit(state, "ui-console-service", ...)）等于把责任人抹掉 —— 实测抓到两处：
+# 铸造账号与变更语言策略。前者还顺带把【系统级邀请】记成了普通成员邀请，两者分量完全不同。
+# 服务发起的动作（建任务组、发资源授权之类）不在此列，它们本来就没有"某个人"。
+human_only_list = server_source[/const HUMAN_ONLY_ACTIONS = \[(.*?)\n\];/m]
+human_only_actions = human_only_list.to_s.scan(/"([a-z_]+)"/).flatten.uniq
+errors << "真人专属动作清单没有解析到内容 —— 本条在空转" if human_only_actions.length < 10
+service_audited = server_source.scan(/audit\(state, "ui-console-service", "([a-z_]+)"/).flatten.uniq
+(service_audited & human_only_actions).each do |action|
+  errors << %(真人专属动作 #{action} 的审计把执行者记成了服务名 —— 事后无法回答"是谁做的"；) +
+            %(应记 guard.actor)
+end
+
 fail_with(errors)
 
 puts "spec validation ok"

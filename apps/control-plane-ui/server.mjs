@@ -3173,7 +3173,8 @@ async function handleApi(req, res) {
       return;
     }
     const result = updateTaskGroupLanguagePolicy(state, taskGroup.id, body, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});
-    audit(state, "ui-console-service", "task_group_language_policy_update", `TaskGroup:${taskGroup.id}`);
+    // 同上：语言策略变更是真人专属动作，审计要记下是谁改的。
+    audit(state, guard.actor, "task_group_language_policy_update", `TaskGroup:${taskGroup.id}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
     json(res, 200, result);
@@ -3276,7 +3277,10 @@ async function handleApi(req, res) {
       updatedAt: at
     };
     state.accounts.push(account);
-    audit(state, "ui-console-service", "account_invite", `Account:${account.accountId}`);
+    // 执行者记 guard.actor 而不是服务名：这是真人专属动作，事后要回答"是谁铸的这个账号"。
+    // 动作名也必须是【实际发生的那个】—— 系统级邀请此前被记成普通的 account_invite，
+    // 而两者的分量完全不同（一个铸的是系统级账号），审计里却分不出来。
+    audit(state, guard.actor, systemScopedInvite ? "system_account_invite" : "account_invite", `Account:${account.accountId}`);
     const publicAccount = publicAccountRecord(account);
     finishGuardedWrite(state, guard, 201, publicAccount);
     writeState(state);
