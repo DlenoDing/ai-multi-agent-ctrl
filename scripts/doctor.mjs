@@ -1295,6 +1295,40 @@ try {
   console.log("gap 2b §4 rest endpoints + human finalization gate ok");
   await verifyRealtimeWebSocket(port, auth);
   console.log("realtime websocket ok");
+
+  // 审计归档：内存只留最近 80 条，更早的操作只在归档文件里。归档若没有读取入口、
+  // 哈希链若从没被校验过、写失败若无声无息 —— "事后查得到"这句话就是假的。
+  {
+    const archivePath = join(root, doctorRuntimeDir, "audit-log.jsonl");
+    const readArchive = async (as = systemAuth, query = "?limit=200") =>
+      jsonFetch(port, `/api/audit-archive${query}`, {headers: {authorization: as}});
+    const archive = await readArchive();
+    if (!archive.response.ok || !(archive.payload.entries || []).length) {
+      throw new Error(`doctor: 审计归档读不出记录（HTTP ${archive.response.status}）—— 80 条之前的操作事后无从查起`);
+    }
+    const chain = archive.payload.chain || {};
+    if (chain.verified !== archive.payload.entries.length || (chain.breaks || []).length) {
+      throw new Error(`doctor: 归档哈希链校验异常 verified=${chain.verified} breaks=${JSON.stringify(chain.breaks)}`);
+    }
+    // 链校验必须真的能发现改动：改掉归档里的一条执行者，它必须报出来。
+    const originalArchive = readFileSync(archivePath, "utf8");
+    const archiveLines = originalArchive.trim().split("\n");
+    const victim = JSON.parse(archiveLines[archiveLines.length - 2]);
+    victim.actor = "someone-else";
+    archiveLines[archiveLines.length - 2] = JSON.stringify(victim);
+    writeFileSync(archivePath, `${archiveLines.join("\n")}\n`);
+    const tampered = await readArchive(systemAuth, "?limit=20");
+    writeFileSync(archivePath, originalArchive);
+    if (!((tampered.payload.chain || {}).breaks || []).length) {
+      throw new Error("doctor: 改掉归档里一条记录的执行者，哈希链校验没有报出来 —— 这条链是装饰");
+    }
+    // 归档跨全部组织，只对系统账号开放。
+    const tenantRead = await fetch(`http://127.0.0.1:${port}/api/audit-archive`, {headers: {authorization: orgAdminAuth}});
+    if (tenantRead.status !== 403) {
+      throw new Error(`doctor: 组织管理员读到了跨全部组织的审计归档（HTTP ${tenantRead.status}）`);
+    }
+    console.log(`审计归档 ok: ${archive.payload.entries.length} 条可读、哈希链逐条校验、改动能被发现、非系统账号 403`);
+  }
   console.log("ai-native control flow ok");
 } finally {
   child.kill("SIGTERM");

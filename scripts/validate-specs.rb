@@ -1737,6 +1737,13 @@ prose_only_assertions.each do |detail|
 end
 
 
+# 后端有归档而界面没入口＝归档不存在。审计归档只对系统账号开放，控制台必须给出那个入口，
+# 并且不能把内存里那 80 条说成全部。
+app_js = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+errors << "控制台没有审计归档的入口 —— 80 条之前的记录对人不可达" unless app_js.include?("/api/audit-archive")
+errors << "审计面板没有说清它只显示最近若干条 —— 人会把这一屏当成全部历史" unless app_js.include?("更早的记录在归档文件里")
+errors << "服务端没有把归档写失败暴露出来 —— 记录丢了没人知道" unless server_source.include?("auditArchiveFault")
+
 # 真人专属动作的审计必须记下【是谁做的】，决策类还必须记下【决定是什么】。
 #
 # 这类动作的全部意义是"由人负责"，而事后唯一能回答"是谁批的/是谁定的"的地方就是审计记录。

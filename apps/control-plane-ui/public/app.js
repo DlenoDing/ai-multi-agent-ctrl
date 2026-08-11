@@ -1414,7 +1414,14 @@ function renderSysOverview() {
         <div class="button-row"><button class="danger-button" data-action="bootstrap-init">重新初始化运行态</button></div>
       </div>
     `),
-    panel("审计日志", table(["时间", "操作者", "动作", {label: "对象", c: "text-clip"}, "结果"], audit, {moreText: moreText((state.auditLog || []).length, 15)}), {wide: true})
+    panel("审计日志", `
+      <div class="stack">
+        ${state.auditArchiveFault ? `<div class="notice warn-notice">审计归档写入失败，已有 ${esc(state.auditArchiveFault.lostEntries)} 条记录没能落盘（${esc(state.auditArchiveFault.error)}）—— 这段时间的操作事后查不到，请先修复磁盘或权限。</div>` : ""}
+        ${table(["时间", "操作者", "动作", {label: "对象", c: "text-clip"}, "结果"], audit, {moreText: moreText((state.auditLog || []).length, 15)})}
+        <div class="small muted">这里只保留最近 ${(state.auditLog || []).length} 条；更早的记录在归档文件里，不在这一屏内。</div>
+        <div class="button-row"><button class="ghost-button" data-action="open-audit-archive">查看审计归档</button></div>
+      </div>
+    `, {wide: true})
   ].join("");
 }
 
@@ -3768,6 +3775,29 @@ document.addEventListener("click", async (event) => {
           <div class="form-row"><label>确认新密码</label><input name="confirmPassword" type="password" required minlength="8" autocomplete="new-password"></div>
           <button class="primary-button" type="submit">保存新密码</button>
         </form>
+      `);
+      return;
+    }
+    if (action === "open-audit-archive") {
+      // 归档此前只写不读：文件在磁盘上，而控制台没有任何入口 —— 对人来说等于不存在。
+      const archive = await api("/api/audit-archive?limit=200");
+      const rows = (archive.entries || []).map((entry) => row([
+        fmtTime(entry.at),
+        esc(accountName(entry.actor)),
+        esc(t(entry.action)),
+        {v: esc(entry.subject), c: "text-clip"},
+        badge(t(entry.result || "ok"))
+      ])).join("");
+      const chain = archive.chain || {verified: 0, breaks: []};
+      const chainNotice = chain.breaks?.length
+        ? `<div class="notice warn-notice">哈希链校验发现 ${chain.breaks.length} 处不一致（${esc(chain.breaks.slice(0, 3).map((item) => `${item.id}:${item.reason}`).join("、"))}）—— 归档可能被改动过。</div>`
+        : `<div class="notice">已按哈希链逐条校验本屏 ${chain.verified} 条记录，未发现改动。</div>`;
+      openModal("审计归档", `
+        <div class="stack">
+          ${chainNotice}
+          ${archive.windowTruncated ? `<div class="small muted">归档文件共 ${Math.round((archive.fileBytes || 0) / 1024)} KB，这里只读了末尾 ${Math.round((archive.bytesScanned || 0) / 1024)} KB —— 更早的记录需要直接查归档文件。</div>` : ""}
+          ${table(["时间", "操作者", "动作", {label: "对象", c: "text-clip"}, "结果"], rows, {emptyText: "归档里还没有记录"})}
+        </div>
       `);
       return;
     }

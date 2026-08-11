@@ -3,7 +3,7 @@ import { WebSocketServer } from "ws";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node:os";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -341,13 +341,79 @@ function audit(state, actor, action, subject, result = "succeeded") {
   state.__pendingAuditAppends = [...(state.__pendingAuditAppends || []), entry];
 }
 
+const AUDIT_ARCHIVE_PATH = () => join(runtimeDir, "audit-log.jsonl");
+
+// 归档故障是【本进程本地文件】的事实，不放进共享状态：状态在每次写盘后才更新故障标记，
+// 于是标记永远赶不上那一次持久化，下一个请求从存储重新载入时它已经不存在了（实测为 null）。
+let auditArchiveFault = null;
+
 function flushPendingAuditAppends(state) {
   const pending = state.__pendingAuditAppends || [];
   delete state.__pendingAuditAppends;
   if (!pending.length) return;
   try {
-    appendFileSync(join(runtimeDir, "audit-log.jsonl"), pending.map((entry) => `${JSON.stringify(entry)}\n`).join(""), {mode: 0o600});
-  } catch {}
+    appendFileSync(AUDIT_ARCHIVE_PATH(), pending.map((entry) => `${JSON.stringify(entry)}\n`).join(""), {mode: 0o600});
+    auditArchiveFault = null;
+  } catch (error) {
+    // 内存里只留最近 80 条，归档才是问责的凭据。这里原先是 `catch {}`：磁盘满了、权限变了，
+    // 记录就这么没了，而且【没有任何人会知道】—— 出事时人以为查得到，实际早就断了。
+    // 失败必须同时落在两处：日志（运维看得见）和状态（控制台看得见），且要记下丢了几条。
+    auditArchiveFault = {
+      at: now(),
+      lostEntries: Number(auditArchiveFault?.lostEntries || 0) + pending.length,
+      error: String(error?.message || error).slice(0, 200)
+    };
+    console.error(`[audit] 归档写入失败，${pending.length} 条记录未落盘：${auditArchiveFault.error}`);
+  }
+}
+
+// 归档只能追加、且要能被人读到 —— 有归档而没有读取入口，等于没有归档。
+// 尾部读取：只读最后 AUDIT_TAIL_BYTES 字节，避免文件长到几百 MB 时把整份读进内存。
+const AUDIT_TAIL_BYTES = 512 * 1024;
+
+function readAuditArchiveTail(limit) {
+  const path = AUDIT_ARCHIVE_PATH();
+  if (!existsSync(path)) return {entries: [], truncated: false, bytesScanned: 0, fileBytes: 0};
+  const fileBytes = statSync(path).size;
+  const start = Math.max(0, fileBytes - AUDIT_TAIL_BYTES);
+  const handle = openSync(path, "r");
+  let text;
+  try {
+    const buffer = Buffer.allocUnsafe(fileBytes - start);
+    readSync(handle, buffer, 0, buffer.length, start);
+    text = buffer.toString("utf8");
+  } finally {
+    closeSync(handle);
+  }
+  // 从中间切进去的第一行多半是半行，丢掉它，否则会解析出一条残缺记录。
+  const lines = text.split("\n").filter((line) => line.trim());
+  if (start > 0 && lines.length) lines.shift();
+  const parsed = [];
+  for (const line of lines) {
+    try { parsed.push(JSON.parse(line)); } catch { /* 半行或损坏行：跳过，下面按链校验会暴露缺口 */ }
+  }
+  const selected = parsed.slice(Math.max(0, parsed.length - limit));
+  return {
+    entries: selected.reverse(),
+    // 窗口之外还有更早的记录：如实说出来，而不是让人以为这就是全部。
+    truncated: start > 0 || parsed.length > selected.length,
+    bytesScanned: fileBytes - start,
+    fileBytes
+  };
+}
+
+// 每条记录都带 prevHash + rowHash，但此前没有任何地方校验过 —— 一条从没被验过的哈希链
+// 只是装饰。这里按返回窗口逐条重算：改过的记录、被删掉的记录都会在这里露出来。
+function verifyAuditChain(entriesNewestFirst) {
+  const ordered = [...entriesNewestFirst].reverse();
+  const breaks = [];
+  for (let index = 0; index < ordered.length; index += 1) {
+    const entry = ordered[index];
+    const {rowHash, ...body} = entry;
+    if (digestOf(body) !== rowHash) breaks.push({id: entry.id, reason: "row_hash_mismatch"});
+    else if (index > 0 && entry.prevHash !== ordered[index - 1].rowHash) breaks.push({id: entry.id, reason: "prev_hash_mismatch"});
+  }
+  return {verified: ordered.length, breaks};
 }
 
 function ensureControlState(state) {
@@ -1297,7 +1363,10 @@ function cachedScopedState(state, account, session) {
 
 function stateViewForAccount(state, account, session, view = "full", limit = 80) {
   const scoped = cachedScopedState(state, account, session);
-  if (!view || view === "full") return scoped;
+  // 归档故障的错误文本里会带运行目录路径，且它是系统级运维事实 —— 只给系统账号。
+  // 不写进 scoped：那份对象带缓存且跨请求复用，改它会把故障粘在缓存里。
+  const faultField = auditArchiveFault && isSystemAccount(account) ? {auditArchiveFault} : {};
+  if (!view || view === "full") return auditArchiveFault && isSystemAccount(account) ? {...scoped, ...faultField} : scoped;
   const capped = Math.max(10, Math.min(500, Number(limit || 80)));
   const base = {
     schemaVersion: scoped.schemaVersion,
@@ -1313,7 +1382,8 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     // Lightweight id->displayName directory (visible accounts only) so views that show a decidedBy/actor
     // account (e.g. the review answered-history) render a name instead of a raw acct_ id. scoped.accounts
     // is already filtered to visible accounts + redacted; we expose only id+displayName here.
-    accountDirectory: Object.fromEntries((scoped.accounts || []).map((item) => [item.accountId, item.displayName || item.accountId]))
+    accountDirectory: Object.fromEntries((scoped.accounts || []).map((item) => [item.accountId, item.displayName || item.accountId])),
+    ...faultField
   };
   const viewFields = {
     system: ["accounts", "auditLog", "policyDecisions", "commands", "decisionRecords"],
@@ -4278,6 +4348,28 @@ async function handleApi(req, res) {
         stateVersion: state.stateVersion,
         auditChainHead: state.auditChainHead || null
       },
+      at: now()
+    });
+    return;
+  }
+
+  // 审计归档的读取入口。内存里只留最近 80 条，更早的记录只在这份追加文件里 ——
+  // 没有这个入口，"事后查得到"对 80 条之前的事就是假的。
+  // 归档跨全部组织与项目，因此只对系统账号开放（canReadResource 对 system 作用域即此语义）。
+  if (req.method === "GET" && url.pathname === "/api/audit-archive") {
+    const reader = requireRead(req, state, {resourceType: "system", resourceId: "audit_archive"});
+    if (reader.status) return json(res, reader.status, reader.payload);
+    const requested = Number(url.searchParams.get("limit") || 200);
+    const limit = Math.min(Math.max(Number.isFinite(requested) ? requested : 200, 1), 1000);
+    const tail = readAuditArchiveTail(limit);
+    json(res, 200, {
+      entries: tail.entries,
+      // 没读到的部分要说清楚，否则人会把这一屏当成全部历史。
+      windowTruncated: tail.truncated,
+      fileBytes: tail.fileBytes,
+      bytesScanned: tail.bytesScanned,
+      chain: verifyAuditChain(tail.entries),
+      archiveFault: state.auditArchiveFault || null,
       at: now()
     });
     return;
