@@ -555,7 +555,40 @@ try {
   if (blockersAfterResolve.includes("ReviewPlan")) {
     throw new Error("评审计划已被处置，关闭门里仍然挂着 ReviewPlan 阻塞项 —— 人照着指引处置完，门还是挡着，而且看不出为什么");
   }
-  console.log("人工处置杠杆 ok: 评审计划处置后关闭门的对应阻塞项确实消失");
+  // 同一判据推到其余人工专属杠杆上：逐个造出阻塞项 → 用有权主体处置 → 那一项必须消失。
+  // 逐条写而不是抽象成循环，是因为每类的创建载荷与终态各不相同；共同的判据由 settleAndExpectCleared 保证，
+  // 其中"处置前必须真的在阻塞"这一步同样不能省 —— 少了它，任何一条都可能是在清一个本来就不存在的阻塞。
+  const settleAndExpectCleared = async ({label, objectType, create, resolvePath, resolveBody}) => {
+    const created = await create();
+    if (!created.response.ok) throw new Error(`${label}: 造不出阻塞项（${created.response.status} ${JSON.stringify(created.payload).slice(0, 140)}）`);
+    const before = await barrierBlockers(`${label}-before`);
+    if (!before.includes(objectType)) {
+      throw new Error(`${label}: 造出来之后并没有成为阻塞项（实得 ${[...new Set(before)].join(",") || "空"}）—— 这条断言无从验证`);
+    }
+    const settled = await jsonFetch(port, resolvePath(created), {
+      method: "POST",
+      headers: {"Idempotency-Key": `doctor-settle-${label}`, authorization: reviewerAuth},
+      body: JSON.stringify(resolveBody)
+    });
+    if (!settled.response.ok) throw new Error(`${label}: 有权主体处置失败（${settled.response.status} ${JSON.stringify(settled.payload).slice(0, 160)}）`);
+    const after = await barrierBlockers(`${label}-after`);
+    if (after.includes(objectType)) {
+      throw new Error(`${label}: 处置成功了，关闭门里仍然挂着 ${objectType} —— 人照着指引处置完，门还是挡着，而且看不出为什么`);
+    }
+  };
+
+  await settleAndExpectCleared({
+    label: "review-bundle",
+    objectType: "ReviewBundle",
+    create: () => jsonFetch(port, "/api/review-bundles", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-bundle-create", authorization: reviewerAuth},
+      body: JSON.stringify({taskGroupId: "tg_runtime_management", evidenceRefs: ["evidence:doctor-lever"]})
+    }),
+    resolvePath: (created) => `/api/review-bundles/${created.payload?.reviewBundle?.reviewBundleId || created.payload?.reviewBundleId}/resolve`,
+    resolveBody: {status: "consumed", justification: "已人工复核该证据包"}
+  });
+  console.log("人工处置杠杆 ok: 评审计划与评审包处置后，关闭门的对应阻塞项确实消失");
 
   // 鉴权前的存在性预言机：对象不存在时若先于守卫回 404，任何已认证主体都能靠 404 与 428/403
   // 的差别静默枚举别的租户有哪些对象（不产生 policyDecision、不写审计）。质量门的 id 是
