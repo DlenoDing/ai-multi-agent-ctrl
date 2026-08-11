@@ -36,6 +36,7 @@ import {
   organizationQuotaCheck,
   runAutonomousCycle,
   settleCellOwnedResources,
+  expireStaleQueuedDispatches,
   recomputeTaskGroup,
   cellAdmissionPriority,
   conditionWindowGate,
@@ -4686,6 +4687,26 @@ function verifyCancelSettlesTheCellsResources(output) {
     (state.workSessions || []).some((session) => session.sessionId === guard.sessionId && session.workItemId === "w_cancel_probe")
     && !["closed", "corrected"].includes(guard.status));
   if (openGuards.length) output.push("取消之后这个单元的角色漂移守卫仍未闭合 —— 它同样挡着关闭门");
+
+  // 契约过期这条要额外验一个来回：了结不能把重试一起断掉。
+  // 过期时把目标作废掉是对的（那个格子稍后会被重新派发、届时建新目标），
+  // 但如果作废之后它再也拿不到可用目标，那就是把"清理"做成了"报废"。
+  {
+    const {state: expiring} = build();
+    for (const contract of expiring.agentTaskContracts || []) {
+      contract.expiresAt = new Date(Date.now() - 1000).toISOString();
+    }
+    expireStaleQueuedDispatches(expiring);
+    const usable = () => (expiring.repositoryOutputs || [])
+      .filter((item) => item.workItemId === "w_cancel_probe" && !["rejected", "superseded"].includes(item.status)).length;
+    const live = () => (expiring.agentDispatches || [])
+      .filter((item) => item.workItemId === "w_cancel_probe" && !["completed", "failed", "cancelled"].includes(item.status)).length;
+    if (usable()) output.push("契约过期回收之后，这个格子的旧输出目标仍然可用 —— 它会一直挡着关闭门");
+    runAutonomousCycle(expiring, {root, mode: "all"});
+    if (!usable() || !live()) {
+      output.push(`契约过期回收之后这个格子再也跑不起来了（可用目标 ${usable()}、在途派发 ${live()}）—— 清理被做成了报废`);
+    }
+  }
 
   // 反向一：不能顺手把【别的格子】的资源也了结掉。
   const other = build().state;
