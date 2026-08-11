@@ -1545,6 +1545,25 @@ function renderSysSettings() {
       </dl>
     `),
     panel("技能源", capNotice("skillSources") + table(["技能源", "状态", "固定提交", {label: "角色数", c: "num"}, "操作"], sources)),
+    // 角色技能叠加会【改掉 agent 实际拥有的能力】（含 forbiddenCapabilityAdds），它是真人专属动作，
+    // 数据也一直下发到这一页 —— 却从没有被渲染过：人看不到某个项目/任务组的角色规则被谁改过、改成了什么。
+    // 创建仍走 API（补丁结构复杂，不值得为它在这里造一个编辑器），但"存在且生效"这件事必须看得见。
+    panel("角色技能叠加（改动 agent 能力，只读）", (() => {
+      const overlays = (state.roleSkillOverlays || []).filter((item) => item.status === "active");
+      const rows = overlays.slice(0, 20).map((overlay) => row([
+        `<span class="mono">${esc(overlay.roleSkillRef || "-")}</span>`,
+        esc(overlay.taskGroupId ? `任务组 ${taskGroupNameOf(overlay.taskGroupId)}` : `项目 ${projectNameOf(overlay.projectId)}`),
+        esc([
+          (overlay.patch?.allowedCapabilityAdds || []).length ? `放开 ${(overlay.patch.allowedCapabilityAdds || []).join("、")}` : "",
+          (overlay.patch?.forbiddenCapabilityAdds || []).length ? `禁掉 ${(overlay.patch.forbiddenCapabilityAdds || []).join("、")}` : ""
+        ].filter(Boolean).join("；") || "只改了指令/模型要求"),
+        {v: fmtTime(overlay.createdAt), c: "nowrap"}
+      ])).join("");
+      return `${overlays.length
+        ? `<div class="notice">下面这些叠加正在改动 agent 实际拥有的能力。它们由人经 API 创建，控制台只读。</div>`
+        : ""}${table(["被改的角色技能", "作用范围", "改了什么", {label: "创建时间", c: "nowrap"}], rows,
+        {emptyText: "没有生效中的叠加：agent 用的就是技能源里的原始角色规则", moreText: moreText(overlays.length, 20, "roleSkillOverlays")})}`;
+    })(), {wide: true}),
     panel("模型能力注册（只读）", table(["供应商", "模型", "能力", {label: "上下文窗口", c: "num"}, "可用性"], models, {moreText: moreText((state.modelCapabilities || []).length, 40)}), {wide: true}),
     panel("指令压缩指标", `
       <div class="metric-grid">

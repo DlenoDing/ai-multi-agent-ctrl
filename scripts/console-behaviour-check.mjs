@@ -479,6 +479,35 @@ function runPendingTruncationCase() {
       "体积明明量到了，界面却说量不到 —— 那条提示会变成常亮的噪音");
   }
 
+  // 角色技能叠加会改掉 agent 实际拥有的能力（含禁用某些能力），数据一直下发到系统设置页，
+  // 却从没被渲染过 —— 人看不到某个项目/任务组的角色规则被谁改过、改成了什么。
+  {
+    const withOverlay = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1,
+      runtime: {}, projects: [{id: "p1", name: "示例项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "示例任务组", status: "development", workItems: []}],
+      skillSources: [], roleSkills: [], modelCapabilities: [], accounts: [], organizations: [],
+      roleSkillOverlays: [
+        {overlayId: "rso_1", status: "active", roleSkillRef: "rsk_reviewer", projectId: "p1",
+         patch: {allowedCapabilityAdds: [], forbiddenCapabilityAdds: ["repo_write"]}, createdAt: "2026-08-01T00:00:00Z"},
+        {overlayId: "rso_old", status: "superseded", roleSkillRef: "rsk_old", projectId: "p1",
+         patch: {forbiddenCapabilityAdds: ["mcp_call"]}, createdAt: "2026-07-01T00:00:00Z"}
+      ],
+      truncatedCollections: []
+    };
+    const view = probe.renderSysSettingsWith(withOverlay);
+    check("生效中的角色技能叠加要看得见",
+      view.includes("rsk_reviewer") && /禁掉 repo_write/.test(view),
+      "叠加正在改动 agent 的能力，界面上却一个字都没有 —— 人不知道这个项目的角色规则被改过");
+    check("已失效的叠加不得混进来",
+      !view.includes("rsk_old"),
+      "已被取代的叠加仍显示成生效中 —— 人会以为一条早就不作数的限制还在起作用");
+    const noOverlay = {...withOverlay, roleSkillOverlays: []};
+    check("没有叠加时明说 agent 用的是原始规则",
+      /没有生效中的叠加/.test(probe.renderSysSettingsWith(noOverlay)),
+      "空态什么都不说，人分不清是没有叠加、还是这一页没加载出来");
+  }
+
   // 自治循环连续失败＝此刻没有任何东西在自行推进，而人正在等系统往下走。
   // 这必须在监控页上说出来，而不是只在"运行参数"里留一行小字。
   {
