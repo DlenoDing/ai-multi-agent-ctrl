@@ -1675,6 +1675,21 @@ if revocation_lines.length < account_session_revocations.length
   errors << "只找到 #{revocation_lines.length} 处 revokeAccountSessions 调用，少于已知的 #{account_session_revocations.length} 处 —— 提取逻辑与代码脱节"
 end
 
+# 组织"停用"必须叫停【已经在跑的】执行，而不只是挡住新建与认领。
+# 任务组"暂停"一直会向在跑的 agent 下 pause_dispatch（applyTaskGroupRuntimeControl）；组织停用
+# 此前只翻一个字段，名下已经在跑的 agent 继续跑到底、继续推 git、继续烧额度。
+# 行为那一半由 contract-check 验（暂停执行器的语义），这一半钉住"停用路由确实调用了它"——
+# 执行器住在 HTTP 层，契约门不启服务，只有源码断言够得着。
+# 匹配前先剥掉注释：这段处理的注释里就提到了这个函数名，不剥的话门匹配的是我自己写的说明，
+# 把调用整个删掉照样绿（这一处我已经踩到过一次）。
+org_suspend_route = server_source[/orgStatusMatch = url\.pathname\.match.*?\n  \}/m]
+if org_suspend_route.nil?
+  errors << "找不到组织状态路由，无法核对停用是否叫停在跑的执行"
+elsif !org_suspend_route.lines.reject { |line| line.strip.start_with?("//") }.join.include?("applyTaskGroupRuntimeControl(")
+  errors << "停用组织没有叫停它名下正在跑的派发（缺 applyTaskGroupRuntimeControl）—— " \
+            "agent 会跑到底、把产出推上 git、把额度烧完，而控制台上写着已停用"
+end
+
 fail_with(errors)
 
 puts "spec validation ok"

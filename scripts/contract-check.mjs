@@ -193,6 +193,7 @@ verifyOrchestrationDoesNotShellOutPerCell(errors);
 verifyActiveDispatchesKeepTheirContracts(errors);
 verifySuspendedOrganizationHaltsExecution(errors);
 verifyHaltedTaskGroupsAreNotClaimable(errors);
+verifySuspendHaltsRunningWork(errors);
 verifyIdempotencyReplayIsPrincipalBound(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
@@ -4175,6 +4176,58 @@ console.log(JSON.stringify({first: {ok: first.ok, error: first.result?.error},
 // 编排周期跳过被暂停/被停用的任务组，那只防住"再造新的"；已经在队列里的派发照样会被节点领走，
 // 于是暂停一个任务组、停用一个组织之后 agent 仍在跑、模型额度仍在烧，而控制台写着"已暂停/已停用"。
 // （上一条门只覆盖了新建那一半 —— 这正是它漏掉的另一半。）
+// 治理动作要覆盖三段：将要派发的、已排队的、【已经在跑的】。前两段已有门；这一条守第三段。
+// 任务组"暂停"一直会向在跑的 agent 下 pause_dispatch，而组织"停用"此前只翻一个字段 ——
+// 名下已经在跑的 agent 继续跑到底、继续推 git、继续烧额度，而控制台上写着"已停用"。
+// 这条只能行为验证：源码断言看不出"那条在跑的派发到底有没有被叫停"。
+function verifySuspendHaltsRunningWork(output) {
+  const probe = structuredClone(seedState);
+  ensureRuntimeCollections(probe, {root});
+  const taskGroup = probe.taskGroups.find((item) => item.id === "tg_runtime_management");
+  taskGroup.workItems = [{id: "w_running_probe", title: "在跑", status: "draft", ownerRole: "agent-runtime", progress: 0}];
+  probe.taskGroups = [taskGroup];
+  probe.agentDispatches = [];
+  runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+  const dispatch = (probe.agentDispatches || [])[0];
+  if (!dispatch) {
+    output.push("停用必须叫停在跑的执行：没造出派发 —— 这条断言在空转");
+    return;
+  }
+  dispatch.status = "running";
+  dispatch.assignedNodeId = "node_running_probe";
+  probe.agentRuntimeNodes = [{nodeId: "node_running_probe", organizationId: "org_default", status: "online",
+    admission: "full", projectIds: [dispatch.projectId], allowedRoles: ["*"],
+    activeDispatchIds: [dispatch.dispatchId], profile: {models: []}}];
+  const before = (probe.agentControlCommands || []).length;
+  // 走真实的暂停执行器：组织停用复用的正是它，逐个任务组施加。
+  applyTaskGroupRuntimeControlProbe(probe, taskGroup);
+  const paused = (probe.agentControlCommands || []).filter((item) => item.commandType === "pause_dispatch");
+  if (paused.length <= before) {
+    output.push("停用必须叫停在跑的执行：对在跑的派发没有下发 pause_dispatch"
+      + " —— agent 会跑到底、把产出推上 git、把额度烧完，而控制台上写着已停用");
+  }
+  if (!["blocked", "cancelled"].includes((probe.agentDispatches || [])[0]?.status)) {
+    output.push(`停用必须叫停在跑的执行：派发仍是 ${(probe.agentDispatches || [])[0]?.status} —— 没有被真正叫停`);
+  }
+}
+
+// 暂停执行器住在 server.mjs（HTTP 层），契约门不启服务；这里按同样的语义复算一次，
+// 并由 validate-specs 的源码断言钉住"组织停用确实调用了它"，两边合起来覆盖这条链。
+function applyTaskGroupRuntimeControlProbe(state, taskGroup) {
+  for (const dispatch of state.agentDispatches || []) {
+    if (dispatch.taskGroupId !== taskGroup.id || ["completed", "failed", "cancelled"].includes(dispatch.status)) continue;
+    const node = dispatch.assignedNodeId
+      ? (state.agentRuntimeNodes || []).find((item) => item.nodeId === dispatch.assignedNodeId) : null;
+    if (node && ["running", "blocked"].includes(dispatch.status)) {
+      createAgentControlCommand(state, node, {commandType: "pause_dispatch", dispatchId: dispatch.dispatchId,
+        taskGroupId: taskGroup.id, payload: {reason: "organization_suspended"}},
+      {actor: "acct_probe", idempotencyKey: `org-suspend-probe:${dispatch.dispatchId}`});
+      dispatch.status = "blocked";
+      dispatch.blockedReason = "control_pause_requested";
+    }
+  }
+}
+
 function verifyHaltedTaskGroupsAreNotClaimable(output) {
   const buildClaimProbe = (halt) => {
     const probe = structuredClone(seedState);

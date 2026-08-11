@@ -4210,12 +4210,33 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const organization = organizationOf(state, orgStatusMatch[1]);
     if (!organization) return json(res, 404, {error: "organization_not_found"});
+    const previousOrgStatus = organization.status;
     organization.status = body.status === "suspended" ? "suspended" : "active";
     organization.updatedAt = now();
+    // 停用要覆盖【正在执行】的那一段，不能只挡住新建与认领。
+    // 任务组"暂停"早就会向在跑的 agent 下 pause_dispatch（applyTaskGroupRuntimeControl），
+    // 而组织停用此前只翻了一个字段：名下已经在跑的 agent 继续跑到底、继续推 git、继续烧额度，
+    // 而控制台上写着"已停用"。这里复用同一套机制，逐个任务组施加，语义与暂停一致。
+    const orgRuntimeControl = [];
+    if (organization.status === "suspended" && previousOrgStatus !== "suspended") {
+      const orgProjectIds = new Set((state.projects || [])
+        .filter((project) => (project.organizationId || DEFAULT_ORGANIZATION_ID) === organization.orgId)
+        .map((project) => project.id));
+      for (const taskGroup of state.taskGroups || []) {
+        if (!orgProjectIds.has(taskGroup.projectId)) continue;
+        if (["closed", "aborted"].includes(taskGroup.status)) continue;
+        const control = applyTaskGroupRuntimeControl(state, taskGroup, "pause",
+          {actor: guard.actor, idempotencyKey: `${guard.idempotencyKey || "org-suspend"}:${taskGroup.id}`});
+        if ((control.controlCommands || []).length || (control.directDispatches || []).length) {
+          orgRuntimeControl.push({taskGroupId: taskGroup.id, ...control});
+        }
+      }
+    }
     audit(state, guard.actor, "org_status_update", `Organization:${organization.orgId}`, organization.status);
-    finishGuardedWrite(state, guard, 200, organization);
+    const orgStatusPayload = {...organization, ...(orgRuntimeControl.length ? {runtimeControl: orgRuntimeControl} : {})};
+    finishGuardedWrite(state, guard, 200, orgStatusPayload);
     writeState(state);
-    json(res, 200, organization);
+    json(res, 200, orgStatusPayload);
     return;
   }
 
