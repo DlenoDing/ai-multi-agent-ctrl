@@ -1433,6 +1433,11 @@ function sliceItems(items, limit) {
   return Array.isArray(items) ? items.slice(0, limit) : [];
 }
 
+// 任务组运行时控制的闭集。守卫与审计的动作名都由它拼出，所以它必须是【服务端定死的】：
+// 一旦允许请求体带任意后缀，权限映射（task_group_* → task_group:control）就成了万能钥匙，
+// 审计日志也成了可写入的留言板。
+const TASK_GROUP_CONTROL_ACTIONS = ["recompute_readiness", "pause", "resume", "request_review", "rebound_drift", "cancel", "abort"];
+
 function permissionForAction(action) {
   if (action === "bootstrap_init") return "system:bootstrap";
   if (action === "system_account_invite") return "system:account_admin";
@@ -3259,19 +3264,27 @@ async function handleApi(req, res) {
       json(res, 404, {error: "task_group_not_found"});
       return;
     }
-    const guard = beginGuardedWrite(req, state, `task_group_${body.action || "recompute_readiness"}`, `TaskGroup:${taskGroup.id}`, taskGroupScope(state, taskGroup.id));
+    // 动作名此前直接由请求体拼成守卫动作名与审计动作名，而权限映射对 task_group_* 一律放行
+    // task_group:control —— 实测 {"action":"approved_by_security_review"} 返回 200，并原样落进
+    // 审计日志。问责记录成了谁都能写的留言板，而它恰恰是事后唯一的凭据。
+    // 认不出来的动作也不能当成"照默认那个跑"：人得到 200 却什么都没发生。
+    const action = String(body.action || "recompute_readiness");
+    if (!TASK_GROUP_CONTROL_ACTIONS.includes(action)) {
+      json(res, 400, {error: "unsupported_task_group_control_action", supported: TASK_GROUP_CONTROL_ACTIONS});
+      return;
+    }
+    const guard = beginGuardedWrite(req, state, `task_group_${action}`, `TaskGroup:${taskGroup.id}`, taskGroupScope(state, taskGroup.id));
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
     }
-    const action = body.action || "recompute_readiness";
     if (action === "pause") taskGroup.goalExecutionStatus = "active_paused_by_control";
     if (action === "resume") taskGroup.goalExecutionStatus = "active";
     if (action === "request_review") taskGroup.reviewState = "review_requested";
     if (action === "rebound_drift") taskGroup.health = "attention";
     const runtimeControl = applyTaskGroupRuntimeControl(state, taskGroup, action, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});
     taskGroup.updatedAt = now();
-    audit(state, "ui-console-service", `task_group_${action}`, `TaskGroup:${taskGroup.id}`);
+    audit(state, guard.actor, `task_group_${action}`, `TaskGroup:${taskGroup.id}`);
     const payload = {taskGroup, runtimeControl};
     finishGuardedWrite(state, guard, 200, payload);
     writeState(state);

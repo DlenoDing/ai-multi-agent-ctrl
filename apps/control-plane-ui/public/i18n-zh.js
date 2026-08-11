@@ -781,6 +781,7 @@
     cross_org_grant_not_allowed: "不允许跨组织授权",
     project_id_required: "缺少项目 ID",
     task_group_not_found: "未找到任务组",
+    unsupported_task_group_control_action: "不支持的任务组控制动作",
     task_group_id_conflict: "任务组 ID 冲突",
     work_item_not_found: "未找到工作项",
     work_item_id_conflict: "工作项 ID 冲突",

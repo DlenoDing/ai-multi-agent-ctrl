@@ -1032,6 +1032,16 @@ try {
     headers: {"Idempotency-Key": "doctor-org-tg-control", authorization: orgAdminAuth},
     body: JSON.stringify({action: "pause"})
   });
+  // 认不出来的控制动作必须当场拒绝：此前它返回 200（照默认那条跑），并把请求体里的名字
+  // 原样写进审计日志 —— 谁都能往问责记录里写一条自己编的动作。
+  const bogusControl = await jsonFetch(port, `/api/task-groups/${orgTaskGroup.payload.taskGroup.id}/control`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-org-tg-control-bogus", authorization: orgAdminAuth},
+    body: JSON.stringify({action: "approved_by_security_review"})
+  });
+  if (bogusControl.response.status !== 400) {
+    throw new Error(`未登记的任务组控制动作返回了 ${bogusControl.response.status} —— 人得到成功回执却什么都没发生，且这个名字会进审计`);
+  }
   if (orgControl.response.status !== 200) {
     throw new Error(`org_admin could not control its own org project's task group, got ${orgControl.response.status}`);
   }

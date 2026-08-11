@@ -129,7 +129,13 @@ function run() {
     for (const message of unmapped) console.error(`- ${message}`);
     process.exit(1);
   }
-  console.log(`auth placement gate ok: ${blocks.length} 条改状态路由鉴权之前无泄露无写入、每个受守卫动作都有显式权限映射，且按路径定位的对象其授权作用域不取自请求体`);
+  const clientSuppliedActions = checkGuardedActionNamesAreNotClientSupplied();
+  if (clientSuppliedActions.length) {
+    console.error("auth placement gate failed:");
+    for (const message of clientSuppliedActions) console.error(`- ${message}`);
+    process.exit(1);
+  }
+  console.log(`auth placement gate ok: ${blocks.length} 条改状态路由鉴权之前无泄露无写入、每个受守卫动作都有显式权限映射、动作名不取自请求体，且按路径定位的对象其授权作用域不取自请求体`);
 }
 
 // permissionForAction 的兜底是 system:*。漏一条映射不会报错，只会让那条杠杆【只有系统管理员
@@ -177,6 +183,31 @@ function checkGuardScopeMatchesMutatedObject() {
     }
   }
   if (found < 10) problems.push(`授权作用域核对只找到 ${found} 条按路径定位的受守卫路由，远少于预期 —— 提取逻辑已失效，本条在空转`);
+  return problems;
+}
+
+// ── 受守卫动作名不得由请求体拼出 ────────────────────────────────────────────────
+//
+// 实测过的原点：任务组控制路由把动作名写成 `task_group_${body.action}`，而权限映射对
+// task_group_* 一律给 task_group:control。于是 {"action":"approved_by_security_review"}
+// 返回 200，并把这个名字原样写进审计日志 —— 问责记录成了谁都能写的留言板。
+// 同时这类写法对上面那条"每个受守卫动作都有显式映射"完全隐形：它只认字面量动作名。
+// 判据：beginGuardedWrite / audit 的动作名实参里不得出现 body.（模板串里也不行）。
+function checkGuardedActionNamesAreNotClientSupplied() {
+  const source = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const problems = [];
+  let scanned = 0;
+  for (const match of source.matchAll(/\b(beginGuardedWrite|audit)\(([^;]{0,240}?)\)[,;]/gu)) {
+    const args = match[2].split(",");
+    // beginGuardedWrite(req, state, 动作名, ...) / audit(state, 执行者, 动作名, ...)
+    const actionArg = args[2];
+    if (actionArg === undefined) continue;
+    scanned += 1;
+    if (!/\bbody\./u.test(actionArg)) continue;
+    problems.push(`${match[1]} 的动作名由请求体拼成（${actionArg.trim().slice(0, 60)}）`
+      + " —— 权限映射与审计动作名都会跟着客户端走；先按服务端定死的闭集校验 body.action，再用校验过的值拼名字");
+  }
+  if (scanned < 40) problems.push(`动作名来源核对只扫到 ${scanned} 处调用 —— 提取逻辑已失效，本条在空转`);
   return problems;
 }
 
