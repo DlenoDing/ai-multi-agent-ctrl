@@ -1208,6 +1208,35 @@ push_sites.each do |at|
   # push 前那一段里本来就有两处 throwIfCancelled，用紧邻窗口去卡它只会在无害的重排上误报。
   errors << "代理在 git push 之前必须检查本地取消标志（throwIfCancelled）—— 与持有权复核互为纵深" unless before.include?("throwIfCancelled()")
 end
+# 取消要能【停住正在烧的那一步】，而不只是挡住 push。机制是：每个执行器子进程都交给控制监视器
+# （attachChild），监视器收到取消就 terminateChild；附加时若已经取消，立刻就杀（这条覆盖了
+# "取消先到、子进程后起"的竞态）。所以每一处 spawnAndCapture 都必须把 control 传下去 ——
+# 新加一个模型 CLI 分支忘了传，取消就退化成"只挡 push"：模型照跑到底，钱照烧，而界面上看不出差别。
+spawn_sites = runtime_source.enum_for(:scan, /spawnAndCapture\(/).map { Regexp.last_match.begin(0) }
+  .reject { |at| runtime_source[0...at].end_with?("function ") }   # 定义处不算调用处
+errors << "代理源码里找不到 spawnAndCapture 调用 —— 提取逻辑与代码脱节，本条在空转" if spawn_sites.size < 3
+# 只取这一处调用【自己的实参】：按括号配对切。第一版用固定 400 字符窗口，
+# 结果溢到相邻分支上（那里有 control），把某个分支漏传 control 的变异照样判成绿。
+def call_arguments(source, at)
+  index = source.index("(", at) + 1
+  depth = 1
+  start = index
+  while index < source.length && depth > 0
+    depth += 1 if source[index] == "("
+    depth -= 1 if source[index] == ")"
+    index += 1
+  end
+  source[start...(index - 1)]
+end
+spawn_sites.each do |at|
+  call = call_arguments(runtime_source, at)
+  next if call.include?("control")
+  line_no = runtime_source[0...at].count("\n") + 1
+  errors << "代理第 #{line_no} 行的 spawnAndCapture 没有把 control 传下去 —— 取消将杀不掉这个子进程，模型会一直跑到底"
+end
+errors << "spawnAndCapture 必须把子进程交给控制监视器（attachChild），否则取消只能挡住 push、停不下正在烧的那一步" unless runtime_source.match?(/function spawnAndCapture[\s\S]{0,400}?attachChild\(child\)/m)
+errors << "控制监视器附加子进程时若已处于取消态，必须当场终止（覆盖'取消先到、子进程后起'的竞态）" unless runtime_source.match?(/attachChild\(child\)\s*\{[\s\S]{0,300}?state\.cancelled && child[\s\S]{0,120}?terminateChild/m)
+
 # 复核本身必须 fail-closed：网络不通时确认不了自己仍是持有者，就必须当作已经不是。
 revalidate = runtime_source[/async function assertStillHoldsClaim[\s\S]*?\n\}/m].to_s
 errors << "持有权复核必须 fail-closed（复核失败时抛错阻止 push），否则分区时它等于不存在" unless revalidate.include?("claim_revalidation_failed") && revalidate.scan(/throw /).size >= 2
