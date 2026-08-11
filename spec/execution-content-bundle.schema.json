@@ -112,6 +112,30 @@
     "createdAt": {
       "type": "string",
       "format": "date-time"
+    },
+    "degradations": {
+      "description": "这份内容包相对完整形态缺了什么，以及为什么。缺角色技能文件时 agent 仍会执行（不让技能源故障拖垮全部执行），但它和人都必须知道这次是降级跑的。",
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "what"
+        ],
+        "properties": {
+          "what": {
+            "type": "string",
+            "enum": [
+              "skill_workset"
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 200
+          }
+        }
+      }
     }
   }
 }

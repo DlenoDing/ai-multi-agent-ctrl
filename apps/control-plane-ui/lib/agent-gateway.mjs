@@ -1320,11 +1320,30 @@ export function buildExecutionContentBundle(state, node, sessionId, options = {}
     appendGatewayEvent(state, "dispatch_rules_changed_after_contract", dispatch.dispatchId, {previousDigest, currentDigest: currentRulesDigest});
   }
   let skillWorkset = options.skillWorkset || null;
+  // 技能集构造失败此前被吞成 null：内容包照发，只是【没有角色技能文件】——
+  // agent 于是拿着一份缺了角色规则的包去执行，产出质量下降，而全系统没有一处记录过这件事。
+  // 降级本身是对的（不该因为技能源出问题就让所有执行停摆），但必须留痕、必须让人看见。
+  let skillWorksetFailure = null;
   if (!skillWorkset) {
     try {
       skillWorkset = buildSkillWorkset(state, contract, options);
-    } catch {
+    } catch (error) {
       skillWorkset = null;
+      skillWorksetFailure = String(error?.message || error).slice(0, 200);
+    }
+  }
+  if (skillWorksetFailure) {
+    appendGatewayEvent(state, "content_bundle_skill_workset_unavailable", dispatch.dispatchId,
+      {nodeId: node.nodeId, sessionId: dispatch.sessionId, detail: skillWorksetFailure});
+    dispatch.contentDegradation = {what: "skill_workset", detail: skillWorksetFailure, at: new Date().toISOString()};
+    const degradedGroup = (state.taskGroups || []).find((item) => item.id === dispatch.taskGroupId);
+    if (degradedGroup) {
+      degradedGroup.blockers = degradedGroup.blockers || [];
+      const summary = `派发 ${dispatch.dispatchId} 下发的内容包缺少角色技能文件（${skillWorksetFailure}）：`
+        + "执行方是在没有角色规则的情况下干活的，产出质量会打折 —— 先到「运行时」页核对技能源，再决定这次产出要不要采信";
+      if (!degradedGroup.blockers.some((item) => item.summary === summary)) {
+        degradedGroup.blockers.push({id: `blk_skill_${dispatch.dispatchId}`, severity: "S2", summary});
+      }
     }
   }
   const entries = [];
@@ -1397,6 +1416,8 @@ export function buildExecutionContentBundle(state, node, sessionId, options = {}
     sessionId: dispatch.sessionId,
     dispatchId: dispatch.dispatchId,
     entries,
+    // 降级要跟着内容包一起走：agent 拿到的是一份缺了角色技能的包，它自己也该知道。
+    ...(skillWorksetFailure ? {degradations: [{what: "skill_workset", detail: skillWorksetFailure}]} : {}),
     ...gitTransferForBundle(config),
     createdAt: new Date().toISOString()
   };

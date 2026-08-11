@@ -201,6 +201,7 @@ verifyApprovedAcceptanceChecksHaveEvidence(errors);
 verifyPerformanceCachesStayCorrect(errors);
 verifyRepeatedExecutionFailureStops(errors);
 verifyOrchestratorReportsItsOwnOutcome(errors);
+verifyDegradedContentBundleIsVisible(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4530,6 +4531,49 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 自治循环的状态此前只报【意图】（启用了吗、多久一拍），不报【结果】：
 // runOrchestratorTick 的返回值被 setInterval 丢掉，于是每一拍都抛异常时，
 // 整套自动化已经停摆，而控制台仍显示"已启用 · 每 60 秒"。
+
+// 技能集构造失败此前被吞成 null：内容包照发，只是【缺了角色技能文件】——
+// agent 拿着一份没有角色规则的包去干活，产出质量打折，而全系统没有一处记录过。
+// 降级本身是对的（不该因为技能源出问题就让所有执行停摆），但必须留痕、必须让人看见。
+function verifyDegradedContentBundleIsVisible(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const taskGroup = state.taskGroups.find((item) => item.id === "tg_runtime_management");
+  taskGroup.workItems = [{id: "w_skill_degrade", title: "单元", status: "draft", ownerRole: "agent-runtime", progress: 0}];
+  const issued = createAgentJoinToken(state, {projectId: taskGroup.projectId, nodeName: "cc-skill-node", allowedRoles: ["*"]},
+    {publicUrl: "https://control.example.test"});
+  registerAgentNode(state, {nodeName: "cc-skill-node", requestedRoles: ["*"], runtimeVersion: "contract",
+    profile: {platform: "test", arch: "test", tools: [], models: [{providerClass: "custom", available: true}]}},
+    {joinToken: issued.joinToken, publicUrl: "https://control.example.test"});
+  const node = state.agentRuntimeNodes.find((item) => item.nodeName === "cc-skill-node");
+  selfCheckAgentNode(state, node, {checks: ["runtime", "gateway", "filesystem", "git", "remote_mcp", "model_executor"]
+    .map((checkId) => ({checkId, status: "ok"}))});
+  runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
+  const claimed = claimNextDispatch(state, node, {});
+  const dispatch = claimed.dispatch?.dispatch;
+  if (!dispatch) { output.push("降级留痕断言拿不到派发 —— 本条在空转"); return; }
+  // 真实故障形状之一：技能源同步失败或记录被裁剪，角色技能查不到
+  state.roleSkills = [];
+  state.roleSkillOverlays = [];
+  const bundle = buildExecutionContentBundle(state, node, dispatch.sessionId, {root});
+  if ((bundle.degradations || []).every((item) => item.what !== "skill_workset")) {
+    output.push("内容包缺了角色技能文件，包里却没有任何说明 —— 执行方不知道自己是在没有角色规则的情况下干活");
+  }
+  const live = (state.agentDispatches || []).find((item) => item.dispatchId === dispatch.dispatchId);
+  if (live?.contentDegradation?.what !== "skill_workset") {
+    output.push("内容包降级没有留在派发上 —— 事后查不到这次执行是降级跑的");
+  }
+  if (!(state.agentGatewayEvents || []).some((item) => item.eventType === "content_bundle_skill_workset_unavailable")) {
+    output.push("内容包降级没有产生网关事件 —— 运维侧看不到技能源出了问题");
+  }
+  const group = state.taskGroups.find((item) => item.id === dispatch.taskGroupId);
+  const summary = (group?.blockers || []).map((item) => item.summary).join(" | ");
+  if (!/缺少角色技能文件/.test(summary)) {
+    output.push(`内容包降级在控制台上一个字都没有（阻塞项：${summary.slice(0, 100) || "无"}）—— `
+      + "人会把这次产出当成正常产出来验收");
+  }
+}
+
 function verifyOrchestratorReportsItsOwnOutcome(output) {
   let status = {enabled: true, intervalMs: 60000};
   status = recordOrchestratorTickOutcome(status, {ran: true, at: "2026-08-01T00:00:00Z"});

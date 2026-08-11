@@ -592,7 +592,9 @@ async function run() {
     return;
   }
   console.error("mutation gate: 工作区不干净，改用串行模式（worktree 取的是 HEAD，带不上未提交改动，"
-    + "并行会测到与本地不同的代码）。");
+    + "并行会测到与本地不同的代码）。"
+    + "\n  ⚠ 串行模式会【逐条改写工作区里的真实源文件】再还原：运行期间不要编辑这些文件，"
+    + "否则会读到改坏的那份、或被它的还原覆盖掉。想边跑边改就先提交，让它走并行 worktree。");
   runSerial(mutations);
 }
 

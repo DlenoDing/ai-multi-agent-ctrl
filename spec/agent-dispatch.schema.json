@@ -249,6 +249,28 @@
           "format": "date-time"
         }
       }
+    },
+    "contentDegradation": {
+      "description": "这次下发的内容包缺了什么（目前只有 skill_workset）。留在派发上，人在监控页看得到这次执行是降级跑的。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "what",
+        "at"
+      ],
+      "properties": {
+        "what": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
     }
   }
 }
