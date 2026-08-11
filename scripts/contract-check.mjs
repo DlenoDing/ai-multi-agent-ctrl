@@ -191,6 +191,7 @@ verifyPermissionOutcomeReleasesTheSession(errors);
 verifyShardRoundTripKeepsEveryRecord(errors);
 verifyOrchestrationDoesNotShellOutPerCell(errors);
 verifyActiveDispatchesKeepTheirContracts(errors);
+verifySuspendedOrganizationHaltsExecution(errors);
 verifyIdempotencyReplayIsPrincipalBound(errors);
 verifyTestResultStatusRequired(errors);
 verifyApprovalDecisionRequired(errors);
@@ -4165,6 +4166,49 @@ console.log(JSON.stringify({first: {ok: first.ok, error: first.result?.error},
 // 这条不变量断了就是永久楔死：acceptAgentCheckpoint 按 sessionId+runId 找契约，找不到就一直报
 // agent_dispatch_contract_mismatch，派发终结不了，任务组的关闭门再也不可满足。
 // 实测发现过一次：真实契约没有 contractId 字段，保活分支因此恒为空 —— 而那道函数级的断言全绿。
+// 停用一个组织，必须连它的【自治执行】一起停住。
+// 此前"停用"只挡住人工写入（经 hasPermission），而编排周期是系统驱动的、从不读组织状态 ——
+// 于是名下任务组照常派发、agent 照常执行、模型额度照常消耗，而运维在界面上看到的是"已停用"。
+// 这条只能行为验证：源码断言看不出"这一轮到底派没派"。
+function verifySuspendedOrganizationHaltsExecution(output) {
+  const buildProbe = (suspend) => {
+    const probe = structuredClone(seedState);
+    ensureRuntimeCollections(probe, {root});
+    const taskGroup = probe.taskGroups.find((item) => item.id === "tg_runtime_management");
+    taskGroup.workItems = [{id: "w_susp_probe", title: "待派发", status: "draft", ownerRole: "agent-runtime", progress: 0}];
+    probe.taskGroups = [taskGroup];
+    probe.agentDispatches = [];
+    if (suspend) {
+      const project = probe.projects.find((item) => item.id === taskGroup.projectId);
+      const orgId = project.organizationId || "org_default";
+      const organization = probe.organizations.find((item) => item.orgId === orgId);
+      if (!organization) return null;
+      organization.status = "suspended";
+    }
+    runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+    return probe;
+  };
+  const active = buildProbe(false);
+  if (!active || !(active.agentDispatches || []).length) {
+    output.push("停用组织必须停住执行：正常组织这一轮压根没派发出去 —— 这条断言在空转（对照组不成立）");
+    return;
+  }
+  const suspended = buildProbe(true);
+  if (!suspended) {
+    output.push("停用组织必须停住执行：种子里找不到该项目所属的组织 —— 这条断言无从验证");
+    return;
+  }
+  if ((suspended.agentDispatches || []).length) {
+    output.push(`停用组织必须停住执行：组织已 suspended，这一轮仍派发了 ${(suspended.agentDispatches || []).length} 个`
+      + " —— 界面上写着「已停用」，而 agent 照常执行、模型额度照常消耗");
+  }
+  // 不能静默跳过：否则界面上只是"什么都没发生"，人无从判断是停用生效了还是编排坏了。
+  if (!(suspended.admissionDecisions || []).some((item) => item.reasonCode === "organization_suspended")) {
+    output.push("停用组织必须停住执行：停手了却没有留下任何准入判决 —— 人看到的是「什么都没发生」，"
+      + "无从判断是停用生效了、还是编排出了故障");
+  }
+}
+
 function verifyActiveDispatchesKeepTheirContracts(output) {
   const probe = structuredClone(seedState);
   ensureRuntimeCollections(probe, {root});

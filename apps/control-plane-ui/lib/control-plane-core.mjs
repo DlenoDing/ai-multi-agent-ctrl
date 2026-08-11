@@ -1838,8 +1838,28 @@ function runAutonomousCycleBody(state, request = {}) {
   // A9: resample the external condition source once per cycle from the request/state — never from a
   // local clock — so window-gated cells are admitted/deferred against a verifiable current baseline.
   const conditionSource = request.conditionSource || state.conditionSource || null;
+  // 组织被停用时，自治编排必须停手。此前"停用组织"只挡住了【人工写入】（经 hasPermission），
+  // 而这个周期是系统驱动的、从不读组织状态 —— 于是名下的任务组照常派发、agent 照常执行、
+  // 模型额度照常消耗。运维在界面上看到"已停用"，以为工作停了，实际只是没人能新建东西。
+  // 一次性建两张表（组织数、项目数各扫一遍），组内判定是 O(1)，不给热路径加每单元的开销。
+  const suspendedOrgIds = new Set((state.organizations || [])
+    .filter((organization) => organization.status === "suspended").map((organization) => organization.orgId));
+  const projectOrgId = suspendedOrgIds.size
+    ? new Map((state.projects || []).map((project) => [project.id, project.organizationId || DEFAULT_ORGANIZATION_ID]))
+    : null;
   for (const taskGroup of taskGroups) {
     if (["closed", "aborted"].includes(taskGroup.status) || ["active_paused_by_freeze", "active_paused_by_control"].includes(taskGroup.goalExecutionStatus)) continue;
+    if (projectOrgId && suspendedOrgIds.has(projectOrgId.get(taskGroup.projectId))) {
+      // 记一条准入判决而不是静默跳过：否则界面上只是"什么都没发生"，人无从判断是停用生效了、
+      // 还是编排坏了。恢复组织即自动继续，无需人再做别的动作。
+      for (const workItem of taskGroup.workItems || []) {
+        if (["verified", "closed", "superseded"].includes(workItem.status)) continue;
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "organization_suspended",
+          whyThisCellNow: "owning organization is suspended; autonomous execution is halted until it is reactivated", cycleRef});
+      }
+      changed.push({taskGroupId: taskGroup.id, status: taskGroup.status, reason: "organization_suspended", awaiting: "organization_reactivation"});
+      continue;
+    }
     const cycleCandidates = [];
     // A1: admit cells in priority order (a stable sort keeps declared order within a tier). Iterating
     // a snapshot means cells created mid-cycle (e.g. by a split) are picked up on the next cycle.
