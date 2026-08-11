@@ -156,20 +156,44 @@ const BODY_SCOPED_PATH_ROUTES = {
   work_assign: "assignWorkItem 是在 body.taskGroupId 这个任务组【内部】按 workItemId 查找并改写；"
     + "查不到即 work_item_not_found，跨任务组够不着 —— 守卫作用域与变更定位是同一个标识。"
 };
+// 取出每一处调用的【完整实参文本】：从左括号起按括号配对到匹配的右括号，跨行也能取全。
+// 用行末正则（`...\);$`）会漏掉换行写的调用 —— 实测 71 处里有 9 处是跨行写的，
+// 而本门查的恰好是"对象按路径定位、作用域却取自请求体"这类越权：漏一处就是一个看不见的洞。
+function callArguments(source, callee) {
+  const calls = [];
+  for (const match of source.matchAll(new RegExp(`\\b${callee}\\(`, "gu"))) {
+    let index = match.index + match[0].length;
+    let depth = 1;
+    while (index < source.length && depth > 0) {
+      if (source[index] === "(") depth += 1;
+      else if (source[index] === ")") depth -= 1;
+      index += 1;
+    }
+    calls.push({args: source.slice(match.index + match[0].length, index - 1), line: source.slice(0, match.index).split("\n").length});
+  }
+  return calls;
+}
+
 function checkGuardScopeMatchesMutatedObject() {
   const source = readFileSync(join(root, TARGET), "utf8");
   const problems = [];
   let found = 0;
-  for (const line of source.split(/\r?\n/)) {
-    const call = line.match(/beginGuardedWrite\(req, state, "([a-z_]+)", (.+)\);\s*$/);
-    if (!call) continue;
-    const [, action, rest] = call;
+  const guardedCalls = callArguments(source, "beginGuardedWrite");
+  if (guardedCalls.length < 40) {
+    problems.push(`授权作用域核对只取到 ${guardedCalls.length} 处 beginGuardedWrite 调用，远少于预期 —— 提取逻辑已失效`);
+  }
+  let pathScoped = 0;
+  for (const call of guardedCalls) {
+    const parts = call.args.split(",");
+    const action = (parts[2] || "").trim().replace(/^"|"$/gu, "");
+    const rest = parts.slice(3).join(",");
     // 主体里带 Match[ 表示这个对象是按路径参数定位的
-    if (!/Match\[/.test(rest)) continue;
+    if (!/Match\[/.test(call.args)) continue;
+    pathScoped += 1;
     found += 1;
     // 作用域是最后一个实参；粗略取"最后一个逗号之后"不可靠（含嵌套调用），改为整体判断：
     // 主体之后的部分若出现 body.，即为"用请求体派生作用域"。
-    const scopePart = rest.slice(rest.indexOf(",") + 1);
+    const scopePart = rest;
     if (!/\bbody\./.test(scopePart)) {
       if (BODY_SCOPED_PATH_ROUTES[action]) {
         problems.push(`${action}: 已登记为"作用域取自请求体且合法"，但它现在并不从 body 取作用域 —— 登记已过时，删掉它`);
@@ -182,6 +206,8 @@ function checkGuardScopeMatchesMutatedObject() {
         + "若变更函数确实也在这个作用域内定位对象，请登记到 BODY_SCOPED_PATH_ROUTES 并写明依据。");
     }
   }
+  // 自检用精确相等：取到多少条"按路径定位"的调用，就必须核对多少条。
+  if (found !== pathScoped) problems.push(`授权作用域核对取到 ${pathScoped} 条按路径定位的路由，却只核对了 ${found} 条 —— 有路由被静默跳过`);
   if (found < 10) problems.push(`授权作用域核对只找到 ${found} 条按路径定位的受守卫路由，远少于预期 —— 提取逻辑已失效，本条在空转`);
   return problems;
 }
