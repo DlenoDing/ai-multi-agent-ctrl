@@ -2239,9 +2239,11 @@ function renderTaskGroupDetail(taskGroup) {
       : `<div class="record">
           <div class="record-title">关闭门禁：${customBadge("存在阻塞", "red")}（${barrierBlockers.length} 项）</div>
           <div class="chip-row">${barrierBlockers.slice(0, 12).map((obj) => customBadge(`${t(obj.objectType) || obj.objectType}${obj.gate ? `·${t(obj.gate) || obj.gate}` : ""}`, "red")).join(" ")}</div>
-          ${[...new Set(barrierBlockers.slice(0, 12).map((obj) => obj.objectType))].map((type) => {
-            const guide = blockerGuide(type);
-            return guide ? `<div class="record-meta"><span>${esc(t(type) || type)}：${esc(guide)}</span></div>` : "";
+          ${[...new Map(barrierBlockers.slice(0, 12)
+            .map((obj) => [`${obj.objectType}:${obj.gate || ""}`, obj])).values()].map((obj) => {
+            const guide = blockerGuide(obj.objectType, obj.gate);
+            const label = obj.gate ? `${t(obj.gate) || obj.gate}` : `${t(obj.objectType) || obj.objectType}`;
+            return guide ? `<div class="record-meta"><span>${esc(label)}：${esc(guide)}</span></div>` : "";
           }).join("")}
         </div>`;
   const blockers = `${barrierSummary}${advisoryBlockers || (barrierBlockers.length ? "" : `<div class="record">无其它提示型阻塞</div>`)}`;
@@ -2570,7 +2572,40 @@ function topologyBlockerText(blocker) {
   return detail ? `${label}（${detail}）` : label;
 }
 
-function blockerGuide(objectType) {
+// 关闭门自己那一类阻塞（CloseBarrierGate）带的是【哪道门没过】，而指引按 objectType 查，
+// 于是这一类永远查不到 —— 人看到一个红名词，没有下一步。指引因此要按门名给。
+// 每条都对应代码里真实的解阻路径；不需要人动手的，就明说它会自己好，而不是编一个出口。
+const CLOSE_GATE_GUIDE = {
+  all_required_work_closed: "还有工作项没收口：到任务组页看它们卡在哪，或取消不再需要的那些",
+  all_findings_terminal: "到「人工审核」页把未处置的发现项处置掉",
+  all_quality_gates_passed: "到「执行监控」页处理未通过的质量门（可豁免，需填理由）",
+  all_changes_integrated: "还有改动没合入：等执行方推完，或终止对应的执行方案",
+  no_pending_permissions: "到「人工审核」页批准或驳回待处理的授权申请",
+  no_pending_approvals: "到「人工审核」页处理待处理的审批请求",
+  no_pending_human_confirmations: "到「人工审核」页定稿或打回待确认的卡",
+  no_pending_human_directives: "到「人工指令」页确认那些指令已被消费",
+  no_open_execution_topologies: "在「执行监控」页下方「阻塞项人工处置」终止卡住的执行方案",
+  all_review_plans_closed: "在「执行监控」页下方「阻塞项人工处置」收尾评审计划",
+  no_pending_review_bundles: "在「执行监控」页下方「阻塞项人工处置」收尾评审包",
+  all_rule_sources_resolved: "在「执行监控」页下方「阻塞项人工处置」判定规则来源",
+  all_shared_definitions_active: "在「执行监控」页下方「阻塞项人工处置」处置共享定义契约",
+  rules_candidates_processed: "在「执行监控」页下方「阻塞项人工处置」判定系统升级候选项",
+  artifacts_verified: "还有产物没核验：等执行方补齐证据，或取消对应工作项",
+  all_repository_output_targets_terminal: "还有写入目标没终结：等对应会话结束，或取消它的派发",
+  all_leases_terminal: "写锁随持有它的会话一起释放：处理掉那个会话即可",
+  all_commands_terminal: "无需操作：命令总线会自行推进到终态",
+  all_command_effects_terminal: "无需操作：编排周期会自行和解命令效果",
+  no_blocking_derived_task_requests: "无需操作：编排周期分类后会自行清除",
+  no_active_dlq: "死信条目只在命令重试超限时产生：到「执行监控」页核对命令总线",
+  no_active_temp_grants: "临时授权到期自动回收；要立刻收回就到「账号与授权」页撤销",
+  completion_readiness_clear: "完成度尚未就绪：看上面列出的其它阻塞项，它们清完这条自然就过",
+  no_active_role_drift_blockers: "角色漂移守卫随对应会话终结自动关闭：处理掉那个会话即可",
+  runtime_issue_candidates_exported: "到「执行监控」页把运行时问题候选导出/处置掉",
+  all_contracts_compatible: "契约不兼容：需要重新签发契约，通常伴随规则变更 —— 看规则页的变更记录"
+};
+
+function blockerGuide(objectType, gate) {
+  if (objectType === "CloseBarrierGate" && gate) return CLOSE_GATE_GUIDE[gate] || "";
   return BLOCKER_GUIDE[objectType] || "";
 }
 

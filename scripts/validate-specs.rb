@@ -1827,6 +1827,30 @@ app_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
 errors << "卡住的执行方案没有显示它卡在哪几项 —— 人无从下手" unless app_source.include?("卡在这几项")
 errors << "拓扑阻塞项没有翻成中文（topologyBlockerText 缺失）" unless app_source.include?("topologyBlockerText")
 
+# 关闭门的每一道门都会以红徽章出现在人眼前（objectType·gate），并且是他最需要看懂的一刻。
+# 权威来源是 core 里 gateFailures 的键：新增一道门却不给中文、不给出口，人看到的就是
+# no_pending_human_confirmations 这样一串英文，且不知道该去哪。
+close_gate_names = core_source[/const gateFailures = \{(.*?)\n  \};/m].to_s
+  .scan(/^\s{4}([a-z_]+):/).flatten.uniq
+errors << "关闭门的门名一个都没提取到 —— 本条在空转" if close_gate_names.length < 20
+gates_without_chinese = close_gate_names.reject { |gate| i18n_zh_source.match?(/\n\s*#{Regexp.escape(gate)}:/) }
+unless gates_without_chinese.empty?
+  errors << "这些关闭门在界面上没有中文：#{gates_without_chinese.sort.join(", ")} —— " \
+            "人看到的是一串英文枚举，而这正是他最需要看懂的一刻"
+end
+close_gate_guide = app_source[/const CLOSE_GATE_GUIDE = \{(.*?)\n\};/m].to_s
+  .scan(/^\s{2}([a-z_]+):/).flatten.to_set
+errors << "关闭门出口指引表没有解析到内容 —— 本条在空转" if close_gate_guide.length < 20
+gates_without_guide = close_gate_names.reject { |gate| close_gate_guide.include?(gate) }
+unless gates_without_guide.empty?
+  errors << "这些关闭门没有出口指引：#{gates_without_guide.sort.join(", ")} —— " \
+            "人看到一个红名词却不知道下一步该去哪（不需要人动手的，也要明说它会自己好）"
+end
+stale_gate_guide = close_gate_guide.reject { |gate| close_gate_names.include?(gate) }
+unless stale_gate_guide.empty?
+  errors << "这些出口指引对应的关闭门已经不存在了：#{stale_gate_guide.sort.join(", ")} —— 删掉它们"
+end
+
 # 真人专属动作的审计必须记下【是谁做的】，决策类还必须记下【决定是什么】。
 #
 # 这类动作的全部意义是"由人负责"，而事后唯一能回答"是谁批的/是谁定的"的地方就是审计记录。
