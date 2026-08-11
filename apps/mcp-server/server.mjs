@@ -1847,16 +1847,54 @@ function scopedDispatch(state, dispatchId, context = {}) {
   return dispatch.assignedNodeId === context.principal.id || grantDispatchIds.has(dispatch.dispatchId) ? dispatch : null;
 }
 
-function summaryState(state) {
+// "summary" 此前把全部任务组（含全部工作单元）、全部进度快照、全部派发原样塞了进去 ——
+// 实测 1500 单元时它和 full 一样大（3MB），full 需要开关才允许的那道最小权限门因此在体积上
+// 什么也没省下。而这份东西是发给 AI agent 的工具输出：它直接占 agent 的上下文、按 token 计费。
+// 截断可以，但 agent 会据此判断"是不是全部"，所以每一处截断都要带上真实总数与标记。
+const MCP_SUMMARY_CAP = Math.max(5, Number(process.env.AIMAC_MCP_SUMMARY_CAP || 25));
+const MCP_SUMMARY_WORK_ITEM_CAP = Math.max(5, Number(process.env.AIMAC_MCP_SUMMARY_WORK_ITEM_CAP || 20));
+
+function summarizeList(items, cap) {
+  const list = Array.isArray(items) ? items : [];
+  if (list.length <= cap) return {list, total: list.length, truncated: false};
+  return {list: list.slice(0, cap), total: list.length, truncated: true};
+}
+
+export function summaryState(state) {
+  const truncated = {};
+  const take = (name, items, cap) => {
+    const {list, total, truncated: cut} = summarizeList(items, cap);
+    if (cut) truncated[name] = {returned: list.length, total};
+    return list;
+  };
+  const taskGroups = take("taskGroups", state.taskGroups, MCP_SUMMARY_CAP).map((taskGroup) => {
+    const items = Array.isArray(taskGroup.workItems) ? taskGroup.workItems : [];
+    if (items.length <= MCP_SUMMARY_WORK_ITEM_CAP) return {...taskGroup, workItemCount: items.length};
+    truncated[`taskGroups.${taskGroup.id}.workItems`] = {returned: MCP_SUMMARY_WORK_ITEM_CAP, total: items.length};
+    return {...taskGroup, workItems: items.slice(0, MCP_SUMMARY_WORK_ITEM_CAP),
+      workItemCount: items.length, workItemsTruncated: true};
+  }).map((taskGroup) => {
+    // taskAnalysis.items 每个工作单元一条：摘要里只留条数，需要明细走专用工具或 full 作用域。
+    const analysis = taskGroup.taskAnalysis;
+    if (!analysis || !Array.isArray(analysis.items)) return taskGroup;
+    truncated[`taskGroups.${taskGroup.id}.taskAnalysis.items`] = {returned: 0, total: analysis.items.length};
+    return {...taskGroup, taskAnalysis: {...analysis, items: undefined, itemCount: analysis.items.length}};
+  });
+  // 进度快照单条把 repositoryOutputs 与 workItems 整份嵌了进去（实测 97KB/条）。
+  // 摘要里只留标识与汇总字段：需要明细的走对应的专用工具或 full 作用域。
+  const progressSnapshots = take("progressSnapshots", state.progressSnapshots, MCP_SUMMARY_CAP)
+    .map(({workItems, repositoryOutputs, ...rest}) => rest);
   return {
     runtime: state.runtime,
-    projects: state.projects,
-    taskGroups: state.taskGroups,
-    progressSnapshots: state.progressSnapshots,
-    modelCapabilities: state.modelCapabilities,
-    skillSources: state.skillSources,
+    projects: take("projects", state.projects, MCP_SUMMARY_CAP),
+    taskGroups,
+    progressSnapshots,
+    modelCapabilities: take("modelCapabilities", state.modelCapabilities, MCP_SUMMARY_CAP),
+    skillSources: take("skillSources", state.skillSources, MCP_SUMMARY_CAP),
     roleSkillCount: state.roleSkills.length,
-    agentDispatches: state.agentDispatches
+    agentDispatches: take("agentDispatches", state.agentDispatches, MCP_SUMMARY_CAP),
+    // 截断了什么、少了多少，必须明说：agent 会拿"列表里没有"当成"不存在"。
+    ...(Object.keys(truncated).length ? {truncated} : {})
   };
 }
 

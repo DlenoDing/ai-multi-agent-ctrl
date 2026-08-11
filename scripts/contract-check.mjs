@@ -12,7 +12,8 @@ import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
 import { publicAgentNode } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
-import { RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit } from "../apps/mcp-server/server.mjs";
+import {
+  summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit } from "../apps/mcp-server/server.mjs";
 import {
   recordOrchestratorTickOutcome,
   acceptAgentCheckpoint,
@@ -202,6 +203,7 @@ verifyPerformanceCachesStayCorrect(errors);
 verifyRepeatedExecutionFailureStops(errors);
 verifyOrchestratorReportsItsOwnOutcome(errors);
 verifyDegradedContentBundleIsVisible(errors);
+verifyMcpSummaryIsActuallyASummary(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4535,6 +4537,48 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 技能集构造失败此前被吞成 null：内容包照发，只是【缺了角色技能文件】——
 // agent 拿着一份没有角色规则的包去干活，产出质量打折，而全系统没有一处记录过。
 // 降级本身是对的（不该因为技能源出问题就让所有执行停摆），但必须留痕、必须让人看见。
+
+// MCP 的 "summary" 作用域此前把全部任务组（含全部工作单元与 taskAnalysis.items）、
+// 全部进度快照、全部派发原样塞了进去 —— 实测 1500 单元时它和 full 一样大（3MB）。
+// 这份东西是发给 AI agent 的工具输出：直接占它的上下文、按 token 计费；
+// 而"full 需要开关才允许"那道最小权限门，在体积上因此什么也没省下。
+// 截断可以，但 agent 会拿"列表里没有"当成"不存在"，所以必须带上真实总数。
+function verifyMcpSummaryIsActuallyASummary(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const taskGroup = state.taskGroups.find((item) => item.id === "tg_runtime_management");
+  const cells = 200;
+  taskGroup.workItems = Array.from({length: cells}, (_, index) => ({
+    id: `w_sum_${index}`, title: `单元${index}`, status: "draft", ownerRole: "agent-runtime", progress: 0}));
+  runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
+  const summary = mcpSummaryState(state);
+  const summaryBytes = Buffer.byteLength(JSON.stringify(summary));
+  const stateBytes = Buffer.byteLength(JSON.stringify(state));
+  if (summaryBytes > stateBytes / 3) {
+    output.push(`MCP 摘要 ${Math.round(summaryBytes / 1024)}KB，而整份状态才 ${Math.round(stateBytes / 1024)}KB —— `
+      + "这不是摘要，是全量转储；它直接占 agent 的上下文并按 token 计费");
+  }
+  const summarized = (summary.taskGroups || []).find((item) => item.id === taskGroup.id);
+  if (!summarized) { output.push("MCP 摘要里没有任务组 —— 本条在空转"); return; }
+  if ((summarized.workItems || []).length >= cells) {
+    output.push("MCP 摘要把全部工作单元都带上了 —— 单元一多，agent 的上下文就被它占满");
+  }
+  if (summarized.workItemCount !== cells) {
+    output.push(`MCP 摘要截断了工作单元却没给真实总数（workItemCount=${summarized.workItemCount}，实际 ${cells}）`
+      + " —— agent 会把列表里没有当成不存在");
+  }
+  if (Array.isArray(summarized.taskAnalysis?.items)) {
+    output.push("MCP 摘要里还带着 taskAnalysis.items（每个单元一条）—— 它随规模线性涨");
+  }
+  if (!summary.truncated || !Object.keys(summary.truncated).length) {
+    output.push("MCP 摘要做了截断却没有 truncated 标记 —— agent 无从知道自己看到的不是全部");
+  }
+  const snapshot = (summary.progressSnapshots || [])[0];
+  if (snapshot && (snapshot.workItems || snapshot.repositoryOutputs)) {
+    output.push("MCP 摘要的进度快照里仍嵌着 workItems/repositoryOutputs（实测 97KB/条）");
+  }
+}
+
 function verifyDegradedContentBundleIsVisible(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});

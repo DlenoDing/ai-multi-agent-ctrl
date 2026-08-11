@@ -1369,9 +1369,16 @@ const embeddedWorkItemCap = Math.max(5, Number(process.env.AIMAC_VIEW_EMBEDDED_W
 // 后写的那次会把前一次的截断【覆盖掉】——实测就是这么漏的（tasks 视角照旧 89KB）。
 function projectTaskGroupsForView(taskGroups) {
   return taskGroups.map((taskGroup) => {
+    // taskAnalysis.items 每个工作单元一条（实测 1500 单元时这一项 206KB），而控制台读的是
+    // 进度接口给的那份（progressData.taskAnalysis），从不读状态里的这份 —— 只留汇总标识。
+    const analysis = taskGroup.taskAnalysis;
+    const slimAnalysis = analysis && Array.isArray(analysis.items)
+      ? {...analysis, items: undefined, itemCount: analysis.items.length}
+      : analysis;
     const items = Array.isArray(taskGroup.workItems) ? taskGroup.workItems : [];
-    if (items.length <= embeddedWorkItemCap) return {...taskGroup, workItemCount: items.length};
-    return {...taskGroup, workItems: items.slice(0, embeddedWorkItemCap),
+    const projected = slimAnalysis === analysis ? {...taskGroup} : {...taskGroup, taskAnalysis: slimAnalysis};
+    if (items.length <= embeddedWorkItemCap) return {...projected, workItemCount: items.length};
+    return {...projected, workItems: items.slice(0, embeddedWorkItemCap),
       workItemCount: items.length, workItemsTruncated: true};
   });
 }
