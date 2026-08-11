@@ -618,7 +618,22 @@ try {
     resolveBody: {status: "active", justification: "人工确认该术语可生效"},
     settleAuth: auth
   });
-  console.log("人工处置杠杆 ok: 评审计划、评审包、共享定义契约处置后，关闭门的对应阻塞项确实消失");
+  await settleAndExpectCleared({
+    label: "permission-request",
+    objectType: "PermissionOrApprovalRequest",
+    // 待批的权限申请挡着关闭门。批准是把一项能力真的交出去，所以它是真人专属杠杆
+    // （permission_resolve → project:grant），机器主体拿到权限也不行。
+    create: () => jsonFetch(port, "/api/permission-requests", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-permreq-create", authorization: agentAuth},
+      body: JSON.stringify({taskGroupId: "tg_runtime_management", permission: "task_group:read",
+        subjectId: "acct_agent_runtime", justification: "杠杆探针"})
+    }),
+    resolvePath: (created) => `/api/permission-requests/${created.payload?.permissionRequest?.requestId || created.payload?.requestId}/resolve`,
+    resolveBody: {status: "rejected", justification: "探针申请，不予授权"},
+    settleAuth: auth
+  });
+  console.log("人工处置杠杆 ok: 评审计划、评审包、共享定义契约、权限申请处置后，关闭门的对应阻塞项确实消失");
 
   // 鉴权前的存在性预言机：对象不存在时若先于守卫回 404，任何已认证主体都能靠 404 与 428/403
   // 的差别静默枚举别的租户有哪些对象（不产生 policyDecision、不写审计）。质量门的 id 是
