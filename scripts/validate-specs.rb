@@ -1846,6 +1846,33 @@ unless gates_without_guide.empty?
   errors << "这些关闭门没有出口指引：#{gates_without_guide.sort.join(", ")} —— " \
             "人看到一个红名词却不知道下一步该去哪（不需要人动手的，也要明说它会自己好）"
 end
+# 状态类枚举会被控制台原样渲染成徽章（badge(item.status)）。权威来源是 spec 里声明在
+# status/verdict/outcome/health 这类属性下的 enum —— 新增一个状态却不给中文，人看到的
+# 就是一串英文。逐条断言治不了本：下一个新状态照样漏，所以按权威来源全量核对。
+spec_status_values = []
+Dir.glob(File.join(ROOT, "spec", "*.schema.json")).each do |file|
+  document = JSON.parse(File.read(file))
+  collect = lambda do |node, key|
+    return unless node.is_a?(Hash) || node.is_a?(Array)
+    if node.is_a?(Hash)
+      if node["enum"].is_a?(Array) && key.to_s.match?(/\A(status|.*Status|state|verdict|outcome|health)\z/)
+        node["enum"].each { |value| spec_status_values << value if value.is_a?(String) && value.match?(/\A[a-z][a-z0-9_]*\z/) }
+      end
+      node.each { |child_key, child| collect.call(child, child_key) }
+    else
+      node.each { |child| collect.call(child, key) }
+    end
+  end
+  collect.call(document, nil)
+end
+spec_status_values = spec_status_values.uniq
+errors << "spec 里的状态枚举一个都没提取到 —— 本条在空转" if spec_status_values.length < 100
+statuses_without_chinese = spec_status_values.reject { |value| i18n_zh_source.match?(/\n\s*#{Regexp.escape(value)}:/) }
+unless statuses_without_chinese.empty?
+  errors << "这些状态没有中文：#{statuses_without_chinese.sort.join(", ")} —— " \
+            "控制台按 badge(status) 原样渲染，人看到的是一串英文枚举"
+end
+
 stale_gate_guide = close_gate_guide.reject { |gate| close_gate_names.include?(gate) }
 unless stale_gate_guide.empty?
   errors << "这些出口指引对应的关闭门已经不存在了：#{stale_gate_guide.sort.join(", ")} —— 删掉它们"
