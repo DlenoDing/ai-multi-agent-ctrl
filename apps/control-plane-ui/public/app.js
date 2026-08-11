@@ -2178,6 +2178,13 @@ function renderTaskGroupDetail(taskGroup) {
         <div class="record-title"><strong>${esc(workItem.title)}</strong>${badge(workItem.status)}</div>
         ${progressLine(workItem.progress)}
         <div class="record-meta"><span>执行角色：${esc(t(workItem.ownerRole))}</span>${workItem.blockedReason ? `<span>受阻原因：${esc(t(workItem.blockedReason))}</span>` : ""}</div>
+        <!-- 停在 needs_decision 的工作项，编排器【每轮都会直接跳过】它：不会再有卡片挂出来，
+             也不会自己恢复，只能由人处置。而处置杠杆（resolve_decision 重开/放弃）在另一页的
+             下拉里 —— 卡片上只写"受阻原因"，等于把人留在原地。这里给出出口。
+             后端有杠杆而界面没入口，等于这个杠杆不存在。 -->
+        ${workItem.status === "needs_decision"
+          ? `<div class="notice warn-notice">编排不会再自动推进它：到「人工指令」页用「${esc(t("resolve_decision") || "决策处置（重开 / 放弃）")}」重开或放弃${workItem.id ? `（工作项 ${esc(workItem.id)}）` : ""}。</div>`
+          : ""}
         <!-- 决定"这件事算不算需要人定稿的方案"的分类器是字面匹配：它认不出架构与选型这类决策。
              机器判不了的事，判断权归人 —— 这里给出那个杠杆，并说清分类器的局限，
              免得"没被要求定稿"被读成"系统判断过、认为不必"。 -->

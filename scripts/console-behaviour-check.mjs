@@ -129,6 +129,7 @@ globalThis.__probe = {
   renderSysAccountsWith: (nextState, account) => { state = nextState; currentAccount = account; return renderSysAccounts(); },
   blockerGuide: (type) => blockerGuide(type),
   renderMonitorWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; return renderMonitor(); },
+  renderTaskGroupsWith: (nextState, account, projectId, detailId, detail) => { state = nextState; currentAccount = account; currentProjectId = projectId; expandedTaskGroupId = detailId; if (detail !== undefined) tgDetail = detail; return renderTaskGroups(); },
   setFetch: (fn) => { globalThis.fetch = fn; },
   api: (path, options) => api(path, options)
 };
@@ -925,6 +926,33 @@ await runErrorGuidanceCase();
   if (unbounded.length) {
     failures.push("视图规模: 控制台仍有页面取 view=full —— 该视图不切片，载荷与序列化耗时随部署规模无界增长；"
       + "请为这一页新增一个只含它真正要用的集合的视图（见 server.mjs 的 viewFields）");
+  }
+}
+
+// 停在 needs_decision 的工作项，编排器每轮都会直接跳过它：不会再有确认卡挂出来，也不会自己恢复，
+// 只能由人处置。而处置杠杆（resolve_decision 重开/放弃）在另一页的下拉里 —— 卡片上若只写
+// "受阻原因"，人就被留在原地。后端有杠杆而界面没入口，等于这个杠杆不存在。
+// 断言落在【真实渲染出来的 HTML】上，不是源码里有没有那段字符串。
+{
+  const probe = loadConsole(el("div"));
+  const account = {accountId: "acct_admin", accountType: "system_admin", organizationId: "org_default",
+    permissions: ["*"], roles: ["system_admin"]};
+  const stateWithParkedCell = {
+    schemaVersion: "runtime-state/v1", stateVersion: 1,
+    projects: [{id: "p_park", name: "项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [{id: "tg_park", projectId: "p_park", name: "任务组", status: "development", health: "attention",
+      workItems: [{id: "w_park", title: "被停住的工作项", status: "needs_decision",
+        blockedReason: "human_confirmation_expired", ownerRole: "agent-runtime", progress: 40}]}],
+    truncatedCollections: []
+  };
+  const html = probe.renderTaskGroupsWith(stateWithParkedCell, account, "p_park", "tg_park", {
+    taskGroupId: "tg_park", progress: {}, config: null, roomMessages: []
+  });
+  if (!html.includes("被停住的工作项")) {
+    failures.push("停滞工作项出口: 渲染里根本没有这个工作项 —— 这条断言在空转");
+  } else if (!/人工指令/.test(html) || !/重开|放弃/.test(html)) {
+    failures.push("停滞工作项出口: 工作项停在 needs_decision，卡片上没有告诉人该去哪处置 —— "
+      + "编排每轮都会跳过它，确认卡也不会再挂出来，人只看到一句「受阻原因」就没有下文了");
   }
 }
 
