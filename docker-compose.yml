@@ -11,6 +11,9 @@ services:
       AIMAC_RUNTIME_DIR: "/app/.runtime"
       AIMAC_REPOSITORY_ROOT: "/app"
       AIMAC_STATE_STORE: "postgresql"
+      # 自治循环间隔：容器里此前完全不可配 —— 既调不了频率，出事时也关不掉。
+      # 设为 0 即关闭（关闭后后台不推进任何东西，控制台会明说）。
+      AIMAC_ORCHESTRATOR_INTERVAL_MS: "${AIMAC_ORCHESTRATOR_INTERVAL_MS:-60000}"
       AIMAC_SYSTEM_ADMIN_EMAIL: "${AIMAC_SYSTEM_ADMIN_EMAIL:-system.admin@local}"
       AIMAC_SYSTEM_ADMIN_NAME: "${AIMAC_SYSTEM_ADMIN_NAME:-System Owner}"
       AIMAC_BOOTSTRAP_TOKEN: "${AIMAC_BOOTSTRAP_TOKEN:?AIMAC_BOOTSTRAP_TOKEN is required}"

@@ -534,6 +534,7 @@
     analysis: "AI 再分析",
     finalize: "定稿",
     ran: "已推进",
+    unchanged: "已运行，无变化",
     cycle_error: "周期出错",
     state_unavailable: "读不到状态",
     no_open_task_group: "没有进行中的任务组",

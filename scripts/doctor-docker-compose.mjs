@@ -10,7 +10,9 @@ const composeEnv = {
   AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN: "doctor-workspace-owner-token-0123456789",
   AIMAC_LOCAL_SEED_REVIEWER_TOKEN: "doctor-reviewer-token-0123456789",
   AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN: "doctor-agent-runtime-token-0123456789",
-  POSTGRES_PASSWORD: "doctor-postgres-password-0123456789"
+  POSTGRES_PASSWORD: "doctor-postgres-password-0123456789",
+  // 把自治循环调快，才验得动"空转不落盘"这条 —— 默认 60 秒一拍，等三拍要三分钟。
+  AIMAC_ORCHESTRATOR_INTERVAL_MS: "5000"
 };
 
 run("docker", ["compose", "config"]);
@@ -33,6 +35,38 @@ try {
   // 两个都成功就意味着后写的把先写的整份覆盖掉了，而谁也不会察觉。
   const pgEnv = {...composeEnv, AIMAC_STATE_STORE: "postgresql",
     DATABASE_URL: `postgres://aimac:${composeEnv.POSTGRES_PASSWORD}@127.0.0.1:55432/aimac`};
+  // 空转不落盘这条此前只在 runtime_json 后端上量过。PG 这一侧的读路径不同（分片按 project_id
+  // 排序读回、再水合），指纹只要有一处不稳定，跳过就永远不会发生，而外面完全看不出来 ——
+  // 系统照常工作，只是每分钟白写一次整份状态、并作废所有客户端的 ETag。
+  {
+    const pgStateVersion = () => Number(execFileSync("docker", ["compose", "exec", "-T", "postgres", "psql", "-U", "aimac",
+      "-d", "aimac", "-t", "-A", "-c", "select state->>'stateVersion' from aimac_control_plane_state where id = 'default'"],
+      {cwd: root, env: composeEnv, encoding: "utf8"}).trim());
+    const settleDeadline = Date.now() + 90000;
+    let previous = pgStateVersion();
+    let stableSince = Date.now();
+    while (Date.now() < settleDeadline) {
+      execFileSync("sleep", ["2"]);
+      const current = pgStateVersion();
+      if (current !== previous) { previous = current; stableSince = Date.now(); }
+      else if (Date.now() - stableSince > 16000) break;   // 连续 3 拍以上没动
+    }
+    if (Date.now() - stableSince <= 16000) {
+      throw new Error(`PostgreSQL 后端上空转仍在每拍落盘：观察 90 秒版本号一直在涨（最后 ${previous}）—— 跳过在这个后端没生效`);
+    }
+    const login = json(execFileSync("curl", ["-fsSL", "-X", "POST", "-H", "content-type: application/json",
+      "-d", JSON.stringify({email: "system.admin@local", token: composeEnv.AIMAC_BOOTSTRAP_TOKEN}),
+      "http://127.0.0.1:4317/api/auth/login"], {cwd: root, encoding: "utf8"}));
+    if (!login.sessionToken) throw new Error("compose 登录失败，拿不到会话令牌，无法核对自治循环状态");
+    const tick = json(execFileSync("curl", ["-fsSL", "-H", `authorization: Bearer ${login.sessionToken}`,
+      "http://127.0.0.1:4317/api/state?view=runtime"], {cwd: root, encoding: "utf8"}))?.runtime?.autonomousOrchestrator;
+    if (!tick?.lastTickAt) throw new Error("PostgreSQL 后端上读不到自治循环心跳，无法判断它是不是根本没在跑");
+    if (tick.lastTickResult !== "unchanged") {
+      throw new Error(`PostgreSQL 后端上自治循环最后一拍报的是 ${tick.lastTickResult}，期望 unchanged —— 版本号不涨可能只是因为循环停了`);
+    }
+    console.log(`  PostgreSQL 空转不落盘 ok: 版本号停在 ${previous}，而循环仍在跑（最后一拍 ${tick.lastTickResult}）`);
+  }
+
   // 版本读一次、两个探针共用：各自去读会变成顺序执行（先读先写、后读后写），
   // 那样两个都成功是正常的，测的就不是 CAS 了。
   const casVersionRaw = execFileSync("docker", ["compose", "exec", "-T", "postgres", "psql", "-U", "aimac", "-d", "aimac",

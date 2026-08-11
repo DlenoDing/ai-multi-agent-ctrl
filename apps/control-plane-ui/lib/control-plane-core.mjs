@@ -2980,7 +2980,10 @@ export function recordOrchestratorTickOutcome(previous = {}, outcome = {}) {
   return {
     ...previous,
     lastTickAt: at,
-    lastTickResult: failed ? "error" : (outcome.skipped || "ran"),
+    // "跑了但什么都没变"与"跑了并推进了"对运维是两件事：前者说明系统健康且无事可做，
+    // 后者说明它在干活。此前两者都报 ran，于是"跳过落盘"这个优化在生产上是否真的生效，
+    // 从外面完全看不出来（尤其是换一个存储后端之后）。
+    lastTickResult: failed ? "error" : (outcome.skipped || (outcome.unchanged ? "unchanged" : "ran")),
     ...(failed ? {lastError: String(outcome.error).slice(0, 200), lastErrorAt: at} : {}),
     // 连续失败次数才是"要不要现在管它"的判据：偶发一次没关系，连着失败就是停摆。
     consecutiveErrors: failed ? Number(previous.consecutiveErrors || 0) + 1 : 0,
