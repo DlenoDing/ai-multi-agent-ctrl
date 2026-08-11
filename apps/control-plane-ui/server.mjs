@@ -1321,7 +1321,11 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
     projects: ["accounts", "accessGrants", "projects", "repositoryOutputs", "agentJoinTokens"],
     tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "completionReadiness", "closeBarriers", "progressSnapshots", "humanConfirmationRequests", "humanDirectives", "permissionRequests", "approvalRequests", "findings", "qualityGates", "testResults", "reviewPlans", "sharedDefinitions", "artifacts", "reviewBundles", "ruleSourceResolutions", "systemUpgradeCandidates", "executionTopologies"],
     runtime: ["modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions", "workerLanes", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkills", "roleSkillOverlays"],
-    instructions: ["instructionMetrics", "sharedDefinitions", "effectiveInstructionPackets", "roleDriftGuards"]
+    instructions: ["instructionMetrics", "sharedDefinitions", "effectiveInstructionPackets", "roleDriftGuards"],
+    // 组织概览此前只能取 view=full —— 因为没有任何视图带 organizations，而 full 是【不切片】的：
+    // 实测 1000 个单元时它返回 16.9MB、单次请求同步占用主线程 149ms，且随部署规模无界增长。
+    // 这一页真正要的只有 organizations（projects/taskGroups 本就在视图基底里）。
+    orgs: ["organizations", "accessGrants"]
   };
   for (const field of viewFields[view] || []) {
     const value = scoped[field];

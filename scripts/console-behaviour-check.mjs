@@ -908,6 +908,26 @@ runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();
 
+// 控制台不得再走 view=full。
+//
+// full 视图【不切片】：实测 1000 个单元时它返回 16.9MB、单次请求同步占用服务端主线程 149ms，
+// 而且随部署规模无界增长（组织概览页原先就取它，只因为没有哪个视图带 organizations）。
+// 受限视图同样规模只有 1.2MB / 59ms。这类退化没有任何功能测试会发现：页面显示完全正确，
+// 只是每开一次就让服务端停顿一次，规模越大停得越久。
+// 判据落在【控制台的取数调用】上，而不是某个页面名 —— 换个页面犯同样的错照样会被抓住。
+{
+  const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const fetched = [...appSource.matchAll(/fetchState\("([a-z]+)"\)/gu)].map((match) => match[1]);
+  if (fetched.length < 5) {
+    failures.push(`视图规模: 只解析到 ${fetched.length} 处 fetchState 调用 —— 提取逻辑与代码脱节，本条在空转`);
+  }
+  const unbounded = [...new Set(fetched)].filter((view) => view === "full");
+  if (unbounded.length) {
+    failures.push("视图规模: 控制台仍有页面取 view=full —— 该视图不切片，载荷与序列化耗时随部署规模无界增长；"
+      + "请为这一页新增一个只含它真正要用的集合的视图（见 server.mjs 的 viewFields）");
+  }
+}
+
 if (failures.length) {
   for (const failure of failures) console.error(`  - ${failure}`);
   process.exit(1);

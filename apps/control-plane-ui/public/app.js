@@ -955,7 +955,7 @@ async function loadPage() {
     } else if (page === "sys-accounts") {
       state = await fetchState("users");
     } else if (page === "org-overview") {
-      const [fullState, agentsResult] = await Promise.all([fetchState("full"), api("/api/org/agents")]);
+      const [fullState, agentsResult] = await Promise.all([fetchState("orgs"), api("/api/org/agents")]);
       state = fullState;
       orgAgentNodes = agentsResult.agentRuntimeNodes || [];
     } else if (page === "org-members") {
@@ -1719,8 +1719,8 @@ function renderOrgOverview() {
     quotaPanel,
     panel("组织运行统计", `
       <div class="metric-grid">
-        <div class="metric"><span>项目总数</span><strong>${projects.length}</strong></div>
-        <div class="metric"><span>进行中的任务组</span><strong>${openTaskGroups.length}</strong></div>
+        <div class="metric"><span>项目总数</span><strong>${projects.length}${countSuffix("projects")}</strong></div>
+        <div class="metric"><span>进行中的任务组</span><strong>${openTaskGroups.length}${countSuffix("taskGroups")}</strong></div>
         <div class="metric"><span>在线智能体节点</span><strong>${(orgAgentNodes || []).filter((node) => node.status === "online").length}/${(orgAgentNodes || []).length}</strong></div>
         <div class="metric"><span>受阻项</span><strong>${(state.taskGroups || []).flatMap((taskGroup) => taskGroup.blockers || []).length}</strong></div>
       </div>
