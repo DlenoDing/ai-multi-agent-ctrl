@@ -989,6 +989,59 @@ await runErrorGuidanceCase();
 }
 
 
+// 派发也会卡住，而它显示在监控页的表格里 —— 一列"原因"，没有下文。
+// 与工作项那条同形：按【代码里真实产生的】阻塞原因全量核对，每种要么给出口，要么登记为瞬态
+// 并写明为什么人不需要动手。逐条写死只守得住写它的人当时想到的那几种。
+{
+  const probe = loadConsole(el("div"));
+  const account = {accountId: "acct_admin", accountType: "system_admin", organizationId: "org_default",
+    permissions: ["*"], roles: ["system_admin"]};
+  const producerSource = [
+    fs.readFileSync(path.join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8"),
+    fs.readFileSync(path.join(root, "apps/control-plane-ui/lib/agent-gateway.mjs"), "utf8"),
+    fs.readFileSync(path.join(root, "apps/control-plane-ui/server.mjs"), "utf8")
+  ].join("\n");
+  const reasons = [...new Set([
+    ...[...producerSource.matchAll(/dispatch\.blockedReason = "([a-z_]+)"/gu)].map((match) => match[1]),
+    ...[...producerSource.matchAll(/markDispatchBlocked\([^,]+, [^,]+, "([a-z_]+)"/gu)].map((match) => match[1])
+  ])];
+  if (reasons.length < 8) {
+    failures.push(`派发出口: 只从生产者提取到 ${reasons.length} 种派发阻塞原因 —— 提取逻辑与代码脱节，本条在空转`);
+  }
+  // 瞬态：不需要人动手，写"出口"反而是教人做无用功。登记的是【为什么它会自己好】。
+  const TRANSIENT = {
+    claim_expired_requeued: "claim 过期后派发已被重排回队列，下一个节点会认领",
+    assigned_node_revocation_ack_requeued: "节点吊销 ACK 后已重排回队列",
+    assigned_node_shutdown_ack_requeued: "节点下线 ACK 后已重排回队列",
+    assigned_node_stop_control_failed_retry_queued: "停止控制失败后已重排重试",
+    control_pause_requested: "操作员刚下达的暂停，恢复即可继续",
+    control_resume_requested: "操作员刚下达的恢复，下一轮即生效"
+  };
+  for (const reason of reasons) {
+    if (TRANSIENT[reason]) continue;
+    const stateWithStuckDispatch = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1,
+      projects: [{id: "p_d", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg_d", projectId: "p_d", name: "任务组", status: "development", workItems: []}],
+      agentDispatches: [{dispatchId: "dsp_stuck", taskGroupId: "tg_d", workItemId: "w_d",
+        status: "blocked", blockedReason: reason, progressPercent: 10}],
+      workSessions: [], workerLanes: [], agentRuntimeNodes: [], qualityGates: [], testResults: [],
+      checkpoints: [], admissionDecisions: [], modelSelectionDecisions: [], sessionPlacementDecisions: [],
+      truncatedCollections: []
+    };
+    const rendered = probe.renderMonitorWith(stateWithStuckDispatch, account, "p_d")
+      .replace(/<!--[\s\S]*?-->/gu, "");
+    if (!rendered.includes("dsp_stuck")) {
+      failures.push(`派发出口: ${reason} 的派发没被渲染出来 —— 这一轮断言在空转`);
+      continue;
+    }
+    if (!/需要人处理/.test(rendered)) {
+      failures.push(`派发出口: 派发卡在 ${reason}，监控页只显示一列"原因"，没有告诉人该去哪处理`
+        + " —— 它不会自己好；若它其实是瞬态，请登记到 TRANSIENT 并写明为什么");
+    }
+  }
+}
+
 if (failures.length) {
   for (const failure of failures) console.error(`  - ${failure}`);
   process.exit(1);
