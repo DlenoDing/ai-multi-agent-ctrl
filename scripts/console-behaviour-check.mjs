@@ -499,6 +499,38 @@ function runPendingTruncationCase() {
       "重置流程没有在拿不到真实规模时中止");
   }
 
+  // 明细页的工作项来自专用端点，它现在也有上限（4000 单元时曾是约 1.1MB 载荷 + 4000 个 DOM 节点）。
+  // 截断了就必须说清"共多少、当前展示多少"，并且要告诉人筛选只覆盖已加载的这些。
+  {
+    const baseGroup = {id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: []};
+    const detailState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [baseGroup], agentDispatches: [], workSessions: [], closeBarriers: [],
+      qualityGates: [], findings: [], humanConfirmationRequests: [], truncatedCollections: []
+    };
+    const truncatedProgress = {taskGroupId: "tg1", progress: {}, config: null, roomMessages: [],
+      progress: {workItems: Array.from({length: 300}, (_, index) => ({id: `w${index}`, title: `单元${index}`, status: "draft"})),
+        workItemCount: 4000, workItemsTruncated: true, blockers: []}};
+    const detailHtml = probe.renderTaskGroupsWith(detailState, admin, "p1", "tg1", truncatedProgress);
+    // 判据要各自独立：标题与提示里都写着"共 4000 个"，用同一个模式匹配的话，
+    // 删掉标题那一处它照样绿（第一版就是这样）。
+    check("明细页的小节标题要带上真实总数",
+      /工作项（共 4000 个，当前展示 300 个）/.test(detailHtml),
+      "工作项被截断到 300 条，小节标题却没说共有多少 —— 人一眼看到的就是那个假数字");
+    check("提示里要写清只加载了前多少个",
+      /只加载了前 300 个/.test(detailHtml),
+      "截断了却没说只加载了一部分 —— 人会以为只有这些");
+    check("要说清筛选只覆盖已加载的部分",
+      /筛选只在已加载的这些里找/.test(detailHtml),
+      "截断之后没说筛选范围 —— 人筛不到就会以为那个工作项不存在");
+    const fullProgress = {taskGroupId: "tg1", progress: {}, config: null, roomMessages: [],
+      progress: {workItems: [{id: "w0", title: "单元0", status: "draft"}], workItemCount: 1, blockers: []}};
+    check("没有截断时不挂那条提示",
+      !/筛选只在已加载的这些里找/.test(probe.renderTaskGroupsWith(detailState, admin, "p1", "tg1", fullProgress)),
+      "没有截断却仍提示只加载了一部分 —— 常亮的提示等于没有提示");
+  }
+
   // 视图里嵌的工作项是截断过的（真实总数在 workItemCount）。把截断后的长度当总数，
   // 正是这套系统反复栽过的坑：人看到"工作项：20"，实际有 300 个。
   {

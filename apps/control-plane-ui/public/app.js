@@ -2353,7 +2353,11 @@ function renderTaskGroupDetail(taskGroup) {
       ${sectionBlock("角色列表", `<div class="stack">${roles}</div>`)}
       ${sectionBlock("配置（继承 / 自定义）", configHtml)}
       ${sectionBlock("执行控制", controlHtml)}
-      ${sectionBlock("工作项", `<div class="stack">${embeddedTruncated
+      ${sectionBlock(`工作项${progressData.workItemsTruncated
+        ? `（共 ${esc(progressData.workItemCount)} 个，当前展示 ${(progressData.workItems || []).length} 个）` : ""}`,
+        `<div class="stack">${progressData.workItemsTruncated
+        ? `<div class="notice">工作项很多，这里只加载了前 ${(progressData.workItems || []).length} 个（共 ${esc(progressData.workItemCount)} 个）—— 下面的筛选只在已加载的这些里找。</div>`
+        : ""}${embeddedTruncated
         ? `<div class="notice warn-notice">进度接口没有加载出来，这里回落到列表视图里嵌的前 ${(taskGroup.workItems || []).length} 个（共 ${esc(taskGroup.workItemCount ?? "?")} 个）—— 不要据此判断"只有这些"。请刷新重试。</div>`
         : ""}${workItems || `<div class="notice">暂无工作项。</div>`}</div>`)}
       ${sectionBlock("准入与阻断分类", admissionHtml)}

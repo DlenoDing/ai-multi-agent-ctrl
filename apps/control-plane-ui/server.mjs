@@ -1364,6 +1364,8 @@ function cachedScopedState(state, account, session) {
 
 // 列表视图里每个任务组最多嵌这么多工作单元；真实总数另给 workItemCount。
 const embeddedWorkItemCap = Math.max(5, Number(process.env.AIMAC_VIEW_EMBEDDED_WORK_ITEM_CAP || 20));
+// 明细页（/api/task-groups/:id/progress）比列表视图需要多得多的工作项，但也不能不设上限。
+const progressWorkItemCap = Math.max(20, Number(process.env.AIMAC_PROGRESS_WORK_ITEM_CAP || 300));
 
 // 只写一处：视图基底与各视角的字段清单都会产出 taskGroups，分别写一遍的话，
 // 后写的那次会把前一次的截断【覆盖掉】——实测就是这么漏的（tasks 视角照旧 89KB）。
@@ -2796,8 +2798,14 @@ async function handleApi(req, res) {
       languagePolicy: taskGroup.languagePolicy,
       roles: taskGroup.roles,
       taskAnalysis: taskGroup.taskAnalysis || null,
-      workItems: taskGroup.workItems,
+      // 明细页此前把【全部】工作项一次发下来，而界面把每一条都渲染成一行、每 5 秒轮询重建一次：
+      // 4000 单元时是约 1.1MB 载荷 + 4000 个 DOM 节点。给上限，并把真实总数一起给出去 ——
+      // 截断后的长度当总数，是这套系统反复栽过的坑。
+      workItems: (taskGroup.workItems || []).slice(0, progressWorkItemCap),
+      workItemCount: (taskGroup.workItems || []).length,
+      ...((taskGroup.workItems || []).length > progressWorkItemCap ? {workItemsTruncated: true} : {}),
       blockers: taskGroup.blockers,
+      ...(Number(taskGroup.blockersDroppedCount || 0) ? {blockersDroppedCount: taskGroup.blockersDroppedCount} : {}),
       repositoryOutputs: (state.repositoryOutputs || []).filter((target) => target.taskGroupId === taskGroup.id)
     });
     return;
