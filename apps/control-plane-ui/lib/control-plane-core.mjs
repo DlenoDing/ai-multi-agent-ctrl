@@ -1785,8 +1785,19 @@ function capAdmissionDecisions(decisions, state, limit) {
     .map((item) => item.id)));
   const kept = decisions.slice(0, limit);
   const keptIds = new Set(kept.map((item) => item.decisionId));
-  const strandedLive = decisions.slice(limit)
-    .filter((item) => liveCellIds.has(item.workItemId) && !keptIds.has(item.decisionId));
+  // 超出上限之后，活单元【只保留最新的那一条】。
+  // "活的一条都不裁"能防上限抖动，但同一个单元每换一次结论就多一条记录：
+  // 实测让单元在受阻/可跑之间反复翻转，24 轮就是每单元 24 条，随时间线性无界涨
+  // （现实里就是一个依赖时好时坏的单元，每分钟给自己记一条）。
+  // 保留最新那条既守住了"每个活单元都查得到它当前的准入结论"，也把总量压回 上限+活单元数。
+  const seenCells = new Set(kept.map((item) => item.workItemId));
+  const strandedLive = [];
+  for (const item of decisions.slice(limit)) {
+    if (!liveCellIds.has(item.workItemId) || keptIds.has(item.decisionId)) continue;
+    if (seenCells.has(item.workItemId)) continue;
+    seenCells.add(item.workItemId);
+    strandedLive.push(item);
+  }
   return strandedLive.length ? [...kept, ...strandedLive] : kept;
 }
 

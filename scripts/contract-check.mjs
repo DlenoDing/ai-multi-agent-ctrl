@@ -210,6 +210,7 @@ verifyHeartbeatDoesNotHideFailedSelfCheck(errors);
 verifyTaskGroupBlockersStayBounded(errors);
 verifyPerScopeRecordsSurviveTheirCap(errors);
 verifyCancelSettlesTheCellsResources(errors);
+verifyAdmissionLedgerDoesNotGrowWithFlapping(errors);
 verifyEveryCloseGateHasHumanGuidance(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
@@ -4702,6 +4703,57 @@ function verifyEveryCloseGateHasHumanGuidance(output) {
   const rawCodes = reasonCodes.filter((code) => !localized(code));
   if (rawCodes.length) {
     output.push(`这些准入结论在中文界面上显示的是原始英文枚举：${rawCodes.join("、")}`);
+  }
+}
+
+// 一个依赖时好时坏的单元会在"受阻"与"可跑"之间反复翻转，而每翻一次准入结论就变一次。
+// "活单元的记录一条都不裁"（防上限抖动用的）如果不加限制，这里就变成按时间线性无界涨：
+// 实测 30 个单元翻转 24 轮＝每单元 24 条。判据不写死某个数字，而是【翻更多轮不许再涨】。
+function verifyAdmissionLedgerDoesNotGrowWithFlapping(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const taskGroup = state.taskGroups.find((item) => item.id === "tg_runtime_management");
+  const cells = 480;   // 要压过准入决策的上限（400）+ 裁剪余量（64），裁剪路径才会真的被走到
+  taskGroup.workItems = Array.from({length: cells}, (_, index) => ({
+    id: `w_flap_${index}`, title: `会反复受阻的单元${index}`, status: "draft", progress: 0, ownerRole: "agent-runtime"
+  }));
+  const flap = (rounds) => {
+    for (let round = 0; round < rounds; round += 1) {
+      runAutonomousCycle(state, {root, mode: "all"});
+      for (const item of taskGroup.workItems) {
+        if (item.status === "needs_decision" && item.blockedReason === "flap_probe") {
+          item.status = "ready";
+          delete item.blockedReason;
+        } else {
+          item.status = "needs_decision";
+          item.blockedReason = "flap_probe";
+        }
+      }
+    }
+  };
+  flap(8);
+  const afterFirst = (state.admissionDecisions || []).length;
+  flap(16);
+  const afterSecond = (state.admissionDecisions || []).length;
+  const admissionCap = Math.max(50, Number(process.env.AIMAC_ADMISSION_DECISION_CAP || 400));
+  if (afterSecond <= admissionCap + 64) {
+    output.push(`准入账本自检：总量 ${afterSecond} 条没有压过上限 ${admissionCap}+64，裁剪路径根本没被走到，`
+      + "下面那条'不许把活单元裁光'在空转");
+  }
+  if (afterFirst < cells) {
+    output.push(`准入账本自检：翻转 8 轮后只有 ${afterFirst} 条决策（少于 ${cells} 个单元），夹具没造出该造的东西，本条在空转`);
+    return;
+  }
+  // 允许一点点抖动（不同轮次活单元集合略有出入），但不允许"翻得越多、涨得越多"。
+  if (afterSecond > afterFirst + cells) {
+    output.push(`准入账本随反复受阻线性增长：8 轮后 ${afterFirst} 条，再翻 16 轮涨到 ${afterSecond} 条 ——`
+      + " 一个依赖时好时坏的单元会每分钟给自己记一条，这份账本会一直涨下去");
+  }
+  const liveCells = new Set(taskGroup.workItems.map((item) => item.id));
+  const covered = new Set((state.admissionDecisions || []).map((item) => item.workItemId));
+  const uncovered = [...liveCells].filter((id) => !covered.has(id));
+  if (uncovered.length) {
+    output.push(`压住增长的同时把 ${uncovered.length} 个活单元的准入结论也裁掉了 —— 人查不到它当前为什么没被选中`);
   }
 }
 
