@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { pgEnsureTables, pgReadProjectShards, pgReadState, pgReadStateWithShards, pgWriteStateWithProjectShards } from "./pg-sync-store.mjs";
 
@@ -805,7 +806,10 @@ function withRuntimeJsonLock(options, fn) {
       // 把持锁者写进锁里：进程被硬杀时锁目录会留下，而"谁持有它、它还活着吗"是唯一能
       // 安全破锁的依据。实测过后果 —— SIGKILL 之后重启的服务【再也写不进去】：
       // 连登录（它要写会话）都报 state_store_lock_timeout，系统等于废了，得有人手工删目录。
-      try { writeFileSync(join(lockDir, "owner.json"), JSON.stringify({pid: process.pid, at: new Date().toISOString()})); } catch { /* 锁已拿到，记不上持有者也不该让写入失败 */ }
+      try {
+        writeFileSync(join(lockDir, "owner.json"),
+          JSON.stringify({pid: process.pid, host: hostname(), at: new Date().toISOString()}));
+      } catch { /* 锁已拿到，记不上持有者也不该让写入失败 */ }
       break;
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
@@ -826,6 +830,10 @@ function lockOwnerAlive(lockDir) {
   try { owner = JSON.parse(readFileSync(join(lockDir, "owner.json"), "utf8")); } catch { return null; }
   const pid = Number(owner?.pid || 0);
   if (!pid) return null;
+  // pid 只在本机有意义。运行目录若被两台机器共享（NFS 之类），拿本机的 pid 去判别人机器上的
+  // 持有者，会把一把【活着的】锁判成死锁并破掉 —— 那正是这套锁要防的事。
+  // 主机对不上就退回时间兜底：宁可等，也不能在另一台机器正在写的时候闯进去。
+  if (owner.host && owner.host !== hostname()) return null;
   if (pid === process.pid) return true;
   try { process.kill(pid, 0); return true; } catch (error) { return error?.code === "EPERM"; }
 }
@@ -844,7 +852,11 @@ function clearStaleLock(lockDir) {
     // 或者创建它的进程正好死在这个窗口里。后者若只靠 30 秒的时间兜底，
     // 而获取锁的超时是 10 秒 —— 系统照样被锁死。给一个短宽限期：活着的持有者会在建好目录后
     // 立刻写下自己的 pid，宽限期一过还没有，就当它死在窗口里了。
-    const graceMs = Math.min(2000, lockTtlMs);
+    // 有 owner.json 但主机对不上 => 判不了，只能按完整的时间阈值等；
+    // 没有 owner.json => 大概率是死在"建目录到写 pid"那个毫秒级窗口里，给短宽限期。
+    let hasOwnerRecord = false;
+    try { hasOwnerRecord = Boolean(JSON.parse(readFileSync(join(lockDir, "owner.json"), "utf8"))?.pid); } catch { hasOwnerRecord = false; }
+    const graceMs = hasOwnerRecord ? lockTtlMs : Math.min(2000, lockTtlMs);
     if (alive === null && Date.now() - statSync(lockDir).mtimeMs > graceMs) {
       rmSync(lockDir, {recursive: true, force: true});
     }
