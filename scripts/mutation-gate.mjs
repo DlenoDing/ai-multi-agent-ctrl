@@ -11,7 +11,8 @@
  *
  * 这是把"还原修复→确认测试失败"这套一直靠手工执行的纪律固化成 CI 可执行的检查。
  */
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { cpus, tmpdir } from "node:os";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -422,7 +423,128 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 }
 process.on("uncaughtException", (error) => { restoreAll(); console.error(error); process.exit(1); });
 
-function run() {
+// ── 并行执行 ────────────────────────────────────────────────────────────────
+//
+// 每条变异都要完整跑一遍 contract-check（本机 58s）。39 条串行 ≈ 78 分钟，而且【全程独占源码】：
+// 它逐条改坏真实文件再还原，期间任何别的检查或编辑都会读到、或被覆盖掉。
+//
+// 用 git worktree 而不是复制目录：contract-check 里有一批断言依赖 git（gitHead、
+// 每单元子进程计数的 PATH shim、真实临时仓库+bare 远端的检查点证据），复制到没有 .git 的
+// 目录里它们会以【另一种理由】通过 —— 那是最坏的绿。
+//
+// 前置条件：工作区必须干净。worktree 检出的是 HEAD，带不上未提交改动；脏的时候并行测到的
+// 不是本地这份代码，所以此时明说原因并退回串行，而不是"尽量并行"。
+const WORKTREE_PREFIX = "aimac-mutation-w";
+
+function workingTreeIsClean() {
+  try {
+    return execFileSync("git", ["status", "--porcelain"], {cwd: root, encoding: "utf8"}).trim() === "";
+  } catch {
+    return false;
+  }
+}
+
+// 残留清理按 git 自己的 worktree 列表扫前缀，不依赖本进程记得什么 —— 被 SIGKILL 时它什么也记不住。
+function pruneStaleWorktrees() {
+  let listing = "";
+  try { listing = execFileSync("git", ["worktree", "list", "--porcelain"], {cwd: root, encoding: "utf8"}); } catch { return; }
+  for (const line of listing.split("\n")) {
+    if (!line.startsWith("worktree ")) continue;
+    const dir = line.slice("worktree ".length).trim();
+    if (!dir.includes(WORKTREE_PREFIX)) continue;
+    const owner = Number(dir.split(WORKTREE_PREFIX)[1]?.split("-")[0] || 0);
+    if (owner === process.pid || processAlive(owner)) continue;
+    try { execFileSync("git", ["worktree", "remove", "--force", dir], {cwd: root, stdio: "ignore"}); } catch { /* 尽力而为 */ }
+  }
+  try { execFileSync("git", ["worktree", "prune"], {cwd: root, stdio: "ignore"}); } catch { /* 尽力而为 */ }
+}
+
+function removeWorktrees(dirs) {
+  for (const dir of dirs) {
+    try { execFileSync("git", ["worktree", "remove", "--force", dir], {cwd: root, stdio: "ignore"}); } catch { /* 尽力而为 */ }
+  }
+}
+
+// 必须是异步子进程：execFileSync 会阻塞整个进程，用它做"池"等于串行。
+function runContractCheck(workdir) {
+  return new Promise((resolve) => {
+    execFile("node", [join(workdir, "scripts/contract-check.mjs")], {cwd: workdir, maxBuffer: 64 * 1024 * 1024},
+      (error, stdout, stderr) => resolve({failed: Boolean(error), output: `${stdout || ""}${stderr || ""}`}));
+  });
+}
+
+// 判据与串行逐字相同：必须失败，且失败信息里出现这条守卫对应的断言。
+async function judgeMutation(mutation, workdir) {
+  const target = join(workdir, mutation.file);
+  const original = readFileSync(target, "utf8");
+  if (!original.includes(mutation.from)) {
+    return `${mutation.name}: 找不到要改坏的代码片段 —— 守卫可能已被重写，mutation 需同步更新`;
+  }
+  const occurrences = original.split(mutation.from).length - 1;
+  if (occurrences !== 1) {
+    return `${mutation.name}: 要改坏的代码片段在 ${mutation.file} 里出现了 ${occurrences} 次 —— `
+      + "无法确定改的是被测的那一处，mutation 必须写成唯一匹配（连上下文一起写）";
+  }
+  writeFileSync(target, original.replace(mutation.from, mutation.to));
+  let result = {failed: false, output: ""};
+  try {
+    result = await runContractCheck(workdir);
+  } finally {
+    writeFileSync(target, original); // 只动副本，真实工作区全程未被触碰
+  }
+  if (!result.failed) return `${mutation.name}: 守卫被改坏后 contract-check 仍然通过 —— 该守卫的测试是假绿，没有判别力`;
+  if (!result.output.includes(mutation.expect)) {
+    return `${mutation.name}: 失败了但不是因为预期断言（期望出现「${mutation.expect}」）—— 测试可能在别处偶然失败，并未真正覆盖这条守卫`;
+  }
+  return null;
+}
+
+async function runParallel(mutations) {
+  const workers = Math.max(1, Math.min(4, cpus().length - 2));
+  pruneStaleWorktrees();
+  const dirs = [];
+  for (let index = 0; index < workers; index += 1) {
+    const dir = join(tmpdir(), `${WORKTREE_PREFIX}${process.pid}-${index}`);
+    try { rmSync(dir, {recursive: true, force: true}); } catch { /* 尽力而为 */ }
+    execFileSync("git", ["worktree", "add", "--detach", "--quiet", dir, "HEAD"], {cwd: root, stdio: "ignore"});
+    dirs.push(dir);
+  }
+  process.on("exit", () => removeWorktrees(dirs));
+  const queue = [...mutations];
+  const failures = [];
+  const checked = [];
+  await Promise.all(dirs.map(async (dir) => {
+    for (;;) {
+      const mutation = queue.shift();
+      if (!mutation) return;
+      if (mutation.skip) { checked.push(`- ${mutation.name}（跳过：${mutation.skip}）`); continue; }
+      const failure = await judgeMutation(mutation, dir);
+      process.stdout.write(`  · ${mutation.name} …\n`);
+      if (failure) failures.push(failure); else checked.push(`- ${mutation.name}`);
+    }
+  }));
+  removeWorktrees(dirs);
+  return {failures, checked, workers};
+}
+
+async function run() {
+  if (workingTreeIsClean()) {
+    const {failures, checked, workers} = await runParallel(MUTATIONS);
+    if (failures.length) {
+      console.error("mutation gate failed:");
+      for (const failure of failures) console.error(`- ${failure}`);
+      process.exit(1);
+    }
+    console.log(`mutation gate ok（并行 ${workers} 路 worktree）: ${checked.length} 条守卫均已证明其测试具备判别力`);
+    for (const line of checked) console.log(line);
+    return;
+  }
+  console.error("mutation gate: 工作区不干净，改用串行模式（worktree 取的是 HEAD，带不上未提交改动，"
+    + "并行会测到与本地不同的代码）。");
+  runSerial();
+}
+
+function runSerial() {
   acquireLock();            // 先排除并发实例，否则"恢复"可能覆盖另一个实例正在用的内容
   recoverFromPreviousRun(); // 再收拾上一轮被中断留下的残局，然后才开始改坏任何东西
   const failures = [];
@@ -485,4 +607,4 @@ function run() {
   for (const line of checked) console.log(line);
 }
 
-run();
+await run();
