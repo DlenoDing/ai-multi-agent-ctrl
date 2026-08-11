@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { pgEnsureTables, pgReadProjectShards, pgReadState, pgReadStateWithShards, pgWriteStateWithProjectShards } from "./pg-sync-store.mjs";
 
 const tableName = "aimac_control_plane_state";
@@ -631,7 +631,24 @@ function assertUniqueSafeProjectIds(projectShards) {
   }
 }
 
+// 进程被硬杀时，写到一半的临时文件会永远留在盘上 —— 一次崩溃攒一个，没人会去删。
+// 每次写入顺手清掉【属于已死进程】的那些：名字里带着写入者的 pid，判据是现成的。
+function sweepOrphanTempFiles(statePath) {
+  const directory = dirname(statePath);
+  const prefix = `${basename(statePath)}.tmp-`;
+  let names = [];
+  try { names = readdirSync(directory); } catch { return; }
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue;
+    const pid = Number(name.slice(prefix.length).split("-")[0] || 0);
+    if (!pid || pid === process.pid) continue;
+    try { process.kill(pid, 0); continue; } catch (error) { if (error?.code === "EPERM") continue; }
+    try { rmSync(join(directory, name), {force: true}); } catch { /* 尽力而为 */ }
+  }
+}
+
 function writeRuntimeJsonCentralState(centralState, options) {
+  sweepOrphanTempFiles(options.statePath);
   const temporary = `${options.statePath}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
   mkdirSync(dirname(options.statePath), {recursive: true});
   const pretty = process.env.AIMAC_RUNTIME_JSON_PRETTY === "true";
@@ -785,6 +802,10 @@ function withRuntimeJsonLock(options, fn) {
   while (true) {
     try {
       mkdirSync(lockDir);
+      // 把持锁者写进锁里：进程被硬杀时锁目录会留下，而"谁持有它、它还活着吗"是唯一能
+      // 安全破锁的依据。实测过后果 —— SIGKILL 之后重启的服务【再也写不进去】：
+      // 连登录（它要写会话）都报 state_store_lock_timeout，系统等于废了，得有人手工删目录。
+      try { writeFileSync(join(lockDir, "owner.json"), JSON.stringify({pid: process.pid, at: new Date().toISOString()})); } catch { /* 锁已拿到，记不上持有者也不该让写入失败 */ }
       break;
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
@@ -800,9 +821,31 @@ function withRuntimeJsonLock(options, fn) {
   }
 }
 
+function lockOwnerAlive(lockDir) {
+  let owner = null;
+  try { owner = JSON.parse(readFileSync(join(lockDir, "owner.json"), "utf8")); } catch { return null; }
+  const pid = Number(owner?.pid || 0);
+  if (!pid) return null;
+  if (pid === process.pid) return true;
+  try { process.kill(pid, 0); return true; } catch (error) { return error?.code === "EPERM"; }
+}
+
 function clearStaleLock(lockDir) {
   try {
-    if (Date.now() - statSync(lockDir).mtimeMs > lockTtlMs) {
+    // 时间兜底原先是唯一判据，而它的阈值（30s）比获取锁的超时（10s）还长 ——
+    // 清理永远等不到就先超时了，那段代码在实际中是死的。先按持锁进程是否还活着判：
+    // 进程已死，锁就不可能还有人在用，立刻破。活着就老老实实等（真并发不该被破坏）。
+    const alive = lockOwnerAlive(lockDir);
+    if (alive === false) {
+      rmSync(lockDir, {recursive: true, force: true});
+      return;
+    }
+    // 判不出持有者，只可能是两种情况：锁刚被创建、owner.json 还没落盘（毫秒级窗口），
+    // 或者创建它的进程正好死在这个窗口里。后者若只靠 30 秒的时间兜底，
+    // 而获取锁的超时是 10 秒 —— 系统照样被锁死。给一个短宽限期：活着的持有者会在建好目录后
+    // 立刻写下自己的 pid，宽限期一过还没有，就当它死在窗口里了。
+    const graceMs = Math.min(2000, lockTtlMs);
+    if (alive === null && Date.now() - statSync(lockDir).mtimeMs > graceMs) {
       rmSync(lockDir, {recursive: true, force: true});
     }
   } catch (error) {
