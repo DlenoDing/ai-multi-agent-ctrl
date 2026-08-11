@@ -2665,6 +2665,18 @@ function orchestratorStalledNotice() {
     + `请先看服务端日志定位原因；恢复之前，需要人推进的事只能手动来。</div>`;
 }
 
+
+// 重置运行态要毁掉多少东西，只能用【服务端给的真实总数】。视图里的数组是截断过的，
+// 而 organizations 在系统页那个视角里根本不下发 —— 拿它们算出来的是一个偏小甚至为 0 的数字。
+// 拿不到就返回 null，让调用方拒绝执行，而不是拿假数字去换人的同意。
+function bootstrapScaleFrom(overview) {
+  const runtime = overview?.runtime;
+  if (!runtime) return null;
+  const {organizations, projects, taskGroups} = runtime;
+  if ([organizations, projects, taskGroups].some((value) => typeof value !== "number")) return null;
+  return {organizations, projects, taskGroups};
+}
+
 function blockerGuide(objectType, gate) {
   if (objectType === "CloseBarrierGate" && gate) return CLOSE_GATE_GUIDE[gate] || "";
   return BLOCKER_GUIDE[objectType] || "";
@@ -3934,7 +3946,14 @@ document.addEventListener("click", async (event) => {
       // 这是控制台里唯一一个能一次性摧毁全部租户的按钮，而它原先的交互成本与"刷新页面"相同：
       // 文案只说"重置为种子数据"，不会让人意识到自己名下所有组织、项目、账号、授权、审计链都会归零。
       // 先把规模摆出来，再要求把这个规模【原样打一遍】—— 打字是为了让人真的读到那几个数字。
-      const scale = state.__bootstrapScale || {organizations: (state.organizations || []).length, projects: (state.projects || []).length, taskGroups: (state.taskGroups || []).length};
+      // 规模数字原先从【视图里的数组】算：而视图是按上限截断过的，organizations 在系统页
+      // 这个视角里【压根不下发】—— 于是这个框会说"0 个组织、0 个项目"，人以为没什么可毁的，
+      // 然后抹掉一切。这是全系统最不可逆的一步，宁可不做，也不能拿一个假数字换人的同意。
+      const scale = bootstrapScaleFrom(systemOverview);
+      if (!scale) {
+        toast.error("拿不到当前运行态的真实规模（系统概览未加载）。不能在不知道会毁掉多少东西的情况下确认 —— 请刷新后重试。");
+        return;
+      }
       const confirmToken = `${Math.max(0, scale.organizations - 1)}/${scale.projects}/${scale.taskGroups}`;
       const typed = await promptDialog({
         title: "重新初始化运行态",

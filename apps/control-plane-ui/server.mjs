@@ -4430,6 +4430,9 @@ async function handleApi(req, res) {
         totalNodes: (state.agentRuntimeNodes || []).length,
         organizations: state.organizations.length,
         projects: (state.projects || []).length,
+        // 总数与"进行中"要分开给：重置运行态那个确认框问的是【会毁掉多少】，
+        // 而它此前只能拿到进行中的数量（甚至拿不到，见控制台那一侧的注释）。
+        taskGroups: (state.taskGroups || []).length,
         activeTaskGroups: (state.taskGroups || []).filter((taskGroup) => !["closed", "aborted"].includes(taskGroup.status)).length,
         stateVersion: state.stateVersion,
         auditChainHead: state.auditChainHead || null

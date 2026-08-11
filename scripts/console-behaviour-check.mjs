@@ -125,6 +125,7 @@ globalThis.__probe = {
   todoCountsWith: (nextState, account) => { state = nextState; currentAccount = account; return todoCountsByPage(); },
   moreTextWith: (nextState, total, shown, field) => { state = nextState; return moreText(total, shown, field); },
   renderLoginWith: (hint) => { loginHint = hint; renderLogin(); return document.querySelector("#app").innerHTML || ""; },
+  bootstrapScaleFrom: (overview) => bootstrapScaleFrom(overview),
   renderSysOverviewWith: (nextState, account, overviewData) => { state = nextState; currentAccount = account; systemOverview = overviewData; return renderSysOverview(); },
   renderSysSettingsWith: (nextState, instructions) => { state = nextState; if (instructions !== undefined) instructionState = instructions; return renderSysSettings(); },
   renderSysAccountsWith: (nextState, account) => { state = nextState; currentAccount = account; return renderSysAccounts(); },
@@ -477,6 +478,25 @@ function runPendingTruncationCase() {
     check("量得到时照常显示数字",
       !/量不到（不是 0）/.test(known),
       "体积明明量到了，界面却说量不到 —— 那条提示会变成常亮的噪音");
+  }
+
+  // 重置运行态是全系统最不可逆的一步。它的确认框要人照着规模数字原样打一遍 ——
+  // 而那几个数字此前是从【截断过的视图数组】算的，organizations 在系统页那个视角里
+  // 根本不下发，于是框里会写"0 个组织、0 个项目"：人以为没什么可毁的，然后抹掉一切。
+  {
+    const real = probe.bootstrapScaleFrom({runtime: {organizations: 3, projects: 12, taskGroups: 240}});
+    check("重置确认用服务端给的真实总数",
+      real && real.organizations === 3 && real.projects === 12 && real.taskGroups === 240,
+      `拿到的规模不是服务端的真实总数：${JSON.stringify(real)}`);
+    check("拿不到规模时必须返回空（由调用方拒绝执行）",
+      probe.bootstrapScaleFrom(null) === null
+        && probe.bootstrapScaleFrom({}) === null
+        && probe.bootstrapScaleFrom({runtime: {organizations: 3, projects: 12}}) === null,
+      "系统概览没加载出来时仍算出一个数字 —— 那个数字必然是偏小的，而人会照着它同意抹掉一切");
+    const handler = probe.handlerSource("click");
+    check("拿不到规模时不执行重置",
+      /bootstrapScaleFrom\(systemOverview\)/.test(handler) && /if \(!scale\)/.test(handler),
+      "重置流程没有在拿不到真实规模时中止");
   }
 
   // 视图里嵌的工作项是截断过的（真实总数在 workItemCount）。把截断后的长度当总数，
