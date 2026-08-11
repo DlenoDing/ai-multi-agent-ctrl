@@ -198,6 +198,7 @@ verifyExhaustedControlRetriesTellTheTruth(errors);
 verifyHumanApprovedPathsBindTheCommit(errors);
 verifyApprovedAcceptanceChecksHaveEvidence(errors);
 verifyPerformanceCachesStayCorrect(errors);
+verifyRepeatedExecutionFailureStops(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4519,6 +4520,49 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 这一轮为了把 4000 单元一轮编排从 19.1 秒压到 1.9 秒，加了三处"少算一次"：
 // 任务组读摘要按 state 记忆化、租约按资源建索引、历史裁剪按轮次去重。
 // 每一处都可能把缺陷掩盖成"看起来对"，所以各自的失效条件必须能被验出来。
+
+// 执行反复失败的工作项此前会被【无限重派】：markDispatchFailed 只把派发与会话标失败，
+// 不加阻塞、不动工作项、也没有次数上限。实测 8 轮编排为同一个单元造了 8 个派发，
+// 而控制台上 0 条提示 —— 每一轮都在真实烧模型额度，人却完全看不到。
+function verifyRepeatedExecutionFailureStops(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const taskGroup = state.taskGroups.find((item) => item.id === "tg_runtime_management");
+  taskGroup.workItems = [{id: "w_always_fail", title: "总是失败的单元", status: "draft", ownerRole: "agent-runtime", progress: 0}];
+  const rounds = 8;
+  for (let round = 0; round < rounds; round += 1) {
+    runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
+    for (const dispatch of state.agentDispatches || []) {
+      if (!["running", "assigned", "queued"].includes(dispatch.status)) continue;
+      dispatch.status = "failed";
+      dispatch.failureReason = "executor_crashed";
+      const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
+      if (session) session.status = "failed";
+    }
+  }
+  const dispatches = (state.agentDispatches || []).filter((item) => item.workItemId === "w_always_fail");
+  const maxAttempts = Math.max(1, Number(process.env.AIMAC_MAX_EXECUTION_ATTEMPTS || 3));
+  if (dispatches.length > maxAttempts + 1) {
+    output.push(`同一个工作项连续失败，${rounds} 轮编排仍为它造了 ${dispatches.length} 个派发 —— `
+      + "没有上限就是无限重试，每一轮都在真实烧模型额度");
+  }
+  const workItem = taskGroup.workItems[0];
+  if (workItem.status !== "needs_decision" || workItem.blockedReason !== "execution_failed_repeatedly") {
+    output.push(`连续失败到上限后工作项仍是 ${workItem.status}/${workItem.blockedReason || "无原因"} —— `
+      + "编排会继续把它当成待办往下派");
+  }
+  const summary = (taskGroup.blockers || []).map((item) => item.summary).join(" | ");
+  if (!/连续 \d+ 次执行失败/.test(summary)) {
+    output.push(`连续失败停下来了，控制台上却没有提示（阻塞项：${summary.slice(0, 120) || "无"}）—— 人不知道有东西停在这里`);
+  }
+  if (!/executor_crashed/.test(summary)) {
+    output.push("停下来的提示没有带上最近一次的失败原因 —— 人要决定重开还是放弃，正需要这个");
+  }
+  if (!(state.admissionDecisions || []).some((item) => item.workItemId === "w_always_fail" && item.reasonCode === "execution_failed_repeatedly")) {
+    output.push("准入台账里没有记下【因连续失败而不再派发】—— 事后查不到它为什么停了");
+  }
+}
+
 function verifyPerformanceCachesStayCorrect(output) {
   const load = () => {
     const state = structuredClone(seedState);

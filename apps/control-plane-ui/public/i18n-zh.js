@@ -533,6 +533,7 @@
     propose: "提出方案",
     analysis: "AI 再分析",
     finalize: "定稿",
+    execution_failed_repeatedly: "连续多次执行失败，已停止自动重派",
     idle: "空闲",
     busy: "忙碌",
     confirmed: "已确认",

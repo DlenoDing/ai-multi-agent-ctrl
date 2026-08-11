@@ -2041,6 +2041,25 @@ function runAutonomousCycleBody(state, request = {}) {
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, awaiting: "project_repository"});
         continue;
       }
+      // 执行反复失败的工作项此前会被【无限重派】：markDispatchFailed 只把派发与会话标失败，
+      // 不加阻塞、不动工作项、也没有任何次数上限。实测 8 轮编排为同一个单元造了 8 个派发，
+      // 而控制台上 0 条提示 —— 每一轮都在真实烧模型额度，人却完全看不到。
+      // 与独立评审的返工上限同理：到点就停下来，把责任明确交回人手上，并说清楚为什么。
+      const failedRuns = (state.agentDispatches || []).filter((item) =>
+        item.taskGroupId === taskGroup.id && item.workItemId === workItem.id && item.status === "failed");
+      const maxExecutionAttempts = Math.max(1, Number(process.env.AIMAC_MAX_EXECUTION_ATTEMPTS || 3));
+      if (failedRuns.length >= maxExecutionAttempts && !["verified", "closed"].includes(workItem.status)) {
+        const lastFailure = failedRuns.at(-1)?.failureReason || "unknown";
+        workItem.status = "needs_decision";
+        workItem.blockedReason = "execution_failed_repeatedly";
+        workItem.updatedAt = new Date().toISOString();
+        addBlocker(taskGroup, "S1", `工作项 ${workItem.id} 连续 ${failedRuns.length} 次执行失败（最近一次：${String(lastFailure).slice(0, 120)}），`
+          + "已停止自动重派，需要人工决策处置（重开 / 放弃）");
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "execution_failed_repeatedly",
+          whyThisCellNow: `execution failed ${failedRuns.length} times in a row; automatic re-dispatch stopped so a person can decide`, cycleRef});
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, reason: "execution_failed_repeatedly"});
+        continue;
+      }
       if (workItem.requiresPlanFinalization === true) {
         const finalizedPlan = (state.executionTopologies || []).some((topology) =>
           topology.taskGroupId === taskGroup.id && topology.workItemId === workItem.id

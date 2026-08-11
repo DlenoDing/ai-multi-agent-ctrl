@@ -2555,7 +2555,8 @@ const WORK_ITEM_EXIT_HINT = {
   model_selection_rejected: "没有可运行的模型满足它的硬性约束：到「运行时」页核对模型能力注册，或放宽该工作项的模型约束。",
   blocked_resource: "它等待的资源尚未就绪：到「运行时」页核对模型与技能源状态。",
   credential_required: "执行需要智能体运行时凭据：在承接它的 agent 节点上配置所需的凭据环境变量后重试。",
-  permission_required: "需要先获得授权：到「人工审核」页批准对应的权限申请。"
+  permission_required: "需要先获得授权：到「人工审核」页批准对应的权限申请。",
+  execution_failed_repeatedly: "同一个工作项连续多次执行失败，系统已停止自动重派（否则会一直空烧模型额度）：到「人工指令」页用「决策处置（重开 / 放弃）」处置，重开前先看阻塞提示里最近一次的失败原因。"
 };
 function workItemExitHint(workItem) {
   const hint = WORK_ITEM_EXIT_HINT[workItem.blockedReason] || WORK_ITEM_EXIT_HINT[workItem.status];
