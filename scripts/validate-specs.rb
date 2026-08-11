@@ -604,7 +604,7 @@ end
 errors << "evidence-qualification must be disposition-driven, not a blanket reverify" unless core_source.include?("already_service_verified 视为已服务内验证不重复复验")
 errors << "independent-review-depth must bind evidence quality (owner-path/freshness/method-strength)" unless core_source.include?("方法强度是否足以承载该结论")
 # A single problem cell / task group must never abort the whole cycle — remaining executable work continues.
-errors << "runAutonomousCycle must isolate per-cell and per-task-group failures" unless core_source.include?("cell_processing_error") && core_source.include?("Per-cell isolation") && core_source.include?("task_group_recompute_error")
+errors << "runAutonomousCycle must isolate per-cell and per-task-group failures" unless core_source.include?("cell_processing_error") && core_source.include?("task_group_recompute_error")
 # 2026-07-26 multi-dimension review fixes.
 errors << "Remote git verification must validate the repository URL and restrict git transports" unless server_source.include?("prepareRemoteGitVerification") && server_source.include?("isSafeGitRemoteUrl(target.repositoryUrl)") && server_source.include?("GIT_ALLOW_PROTOCOL") && agent_gateway_source.include?("export function isSafeGitRemoteUrl")
 errors << "Repository output target selection must reject an unsafe git URL at write time" unless server_source.include?("repository_output_target_unsafe_repository_url") && mcp_source.include?("repository_output_target_unsafe_repository_url")
@@ -613,7 +613,7 @@ errors << "Hosted deployments must be able to forbid local git remotes" unless s
 errors << "MCP progress/capacity reads must be scoped by the principal project filter" unless mcp_source.include?("progressGet(state, args, \"project\", principalProjectFilter(context))") && mcp_source.include?("capacitySnapshot(state, principalProjectFilter(context))")
 errors << "Blocked cells must not be auto-resumed with fabricated evidence" unless core_source.include?("awaiting_dependency") && core_source.include?("awaiting_decision") && core_source.include?("dependsOnWorkItemRefs || []).filter") && contract_check_source.include?("blocked_dependency hold")
 errors << "Task contracts of active dispatches must not be evicted" unless core_source.include?("capTaskContracts") && contract_check_source.include?("capTaskContracts")
-errors << "buildTaskContract must be idempotent against an existing active dispatch" unless core_source.include?("Idempotency guard: if a non-terminal dispatch already exists") && contract_check_source.include?("buildTaskContract idempotency")
+errors << "buildTaskContract must be idempotent against an existing active dispatch" unless core_source.include?("const existingDispatch = (state.agentDispatches || []).find(") && core_source.include?("if (existingContract) return existingContract;") && contract_check_source.include?("buildTaskContract idempotency")
 errors << "close-barrier all_commands_terminal must match the exact task-group subject" unless core_source.include?("command.subject === `TaskGroup:${taskGroupId}`")
 errors << "Postgres central+shards read must be transactionally consistent" unless pg_pool_worker_source.include?("readStateWithShards") && pg_pool_worker_source.include?("ISOLATION LEVEL REPEATABLE READ") && pg_sync_store_source.include?("pgReadStateWithShards") && state_store_source.include?("pgReadStateWithShards()")
 app_js_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
@@ -648,7 +648,7 @@ errors << "Console i18n must localize admission enums and blocked-reason codes" 
 # 2026-07-27 full-system multi-dimension review corrections (5-lens sweep). Each guards a fixed defect:
 # Core-1: a cell blocked on an inactive shared definition must `continue` the admission scan (never
 # break, even in single mode) or it permanently starves every executable cell behind it.
-errors << "shared_definition_not_active must not break the admission scan (global scheduling)" unless core_source.include?("Always `continue` (never `break`, even in single mode): a cell blocked on an inactive shared")
+errors << "shared_definition_not_active must not break the admission scan (global scheduling)" unless core_source[/shared_definition_not_active.*?\n(?:.*\n){0,6}?\s*continue;/m] && !core_source[/shared_definition_not_active.*?\n(?:.*\n){0,6}?\s*break;/m]
 # Core-2: a failed backfill review must demote the item to needs_decision (distinct reason) so it is not
 # left `verified` forever re-reviewing with no resolve_decision lever.
 errors << "backfill review failure must demote to needs_decision with a distinct reason" unless core_source.include?("independent_review_backfill_failed") && i18n_zh_source.include?("independent_review_backfill_failed")
@@ -752,7 +752,7 @@ errors << "resume_dispatch must only revive a blocked dispatch" unless server_so
 # M3/M4: ReviewBundle must use its MODELED terminal set (consumed/rejected, not the phantom "closed"), be
 # registered in a modeled state, and be terminalizable by review_result_consume (else it wedges close).
 errors << "ReviewBundle close-barrier checks must use the modeled terminal set (no phantom 'closed')" if core_source.include?("\"consumed\", \"closed\"")
-errors << "reviewBundleRegister must create a modeled (submitted) bundle, not the unmodeled 'registered'" unless core_source.include?("\"submitted\" is a MODELED ReviewBundle state")
+errors << "reviewBundleRegister must create a modeled (submitted) bundle, not the unmodeled 'registered'" unless core_source[/function reviewBundleRegister[\s\S]{0,1200}?status: "submitted"/] && !core_source[/function reviewBundleRegister[\s\S]{0,1200}?status: "registered"/]
 # 终态化评审包必须【按调用方自己的任务组】收口：原断言钉的恰好是未加作用域的那行源码，
 # 于是它在钉住"要终态化"的同时，也把跨租户终态化一并钉死了。
 errors << "review_result_consume must terminalize the referenced review bundle within the caller's task group" unless mcp_source.include?("item.reviewBundleId === args.reviewBundleId && item.taskGroupId === scopedTaskGroupId") && contract_check_source.include?("reviewResultConsume: submitted bundle not terminalized")
@@ -856,7 +856,7 @@ errors << "id 冒名必须有防回归测试" unless contract_check_source.inclu
 #   · 写入边界按 (taskGroupId, workItemId, 非 superseded) 查找 —— 只守 targetId 唯一性是 fail-open。
 errors << "写入边界必须按真实查找条件保证唯一" unless mcp_source.include?("if (activeExisting) return {repositoryOutputTarget: activeExisting")
 # 幂等分支必须在鉴权之后：放在 beginGuardedWrite 之前等于把人批准的写入边界做成免鉴权读接口。
-errors << "REST 写入边界的幂等分支必须在鉴权之后" unless server_source.include?("必须放在 beginGuardedWrite 之后") && server_source.index("const guard = beginGuardedWrite(req, state, \"repository_output_target_select\"") < server_source.index("const existingActiveTarget = (state.repositoryOutputs || []).find")
+errors << "REST 写入边界的幂等分支必须在鉴权之后" unless server_source.index("const guard = beginGuardedWrite(req, state, \"repository_output_target_select\"") < server_source.index("const existingActiveTarget = (state.repositoryOutputs || []).find")
 errors << "同类集合的插入方式必须一致（避免后插入者排在 find 最前）" if mcp_source.include?("state.repositoryOutputs.unshift")
 #   · 租约 id 决定写权限归属
 errors << "租约必须拒绝重复 leaseId" unless core_source.include?("lease_id_conflict")
@@ -1128,7 +1128,7 @@ end
 # 的工作项一个都派发不了），但验收的人必须知道"执行方依据的角色规则并不是这个角色的"。
 errors << %(验收卡片必须说明角色技能回退（否则人以为它按自己角色的规则做事）) unless core_source.include?("没有属于自己的技能文件，本次实际绑定的是")
 # 过期会话原先只在有人登录时被顺带清理，无人登录期间长期滞留。
-errors << %(必须有独立的过期会话清扫（不能只依赖"下一次有人登录"）) unless server_source.include?("过期会话原先【只在有人登录时】被顺带清理")
+errors << %(必须有独立的过期会话清扫（不能只依赖"下一次有人登录"）) unless server_source.include?("for (const session of revalidationState.authSessions || [])") && server_source.include?("session.status = \"expired\"")
 
 # 控制台里唯一能一次性摧毁全部租户的按钮，原先与"刷新页面"是同一种交互成本：两次单击，
 # 文案只说"重置为种子数据"。有真实租户数据时必须显式带上要摧毁的规模。
@@ -1493,7 +1493,7 @@ errors << "close-barrier must not trust a stale-version cached readiness" unless
 errors << "Human directives must be consumed oldest-first" unless core_source.include?("status === \"queued\").reverse()") && contract_check_source.include?("directive FIFO")
 # 2026-07-27 MGP core-init absorption: global intelligent judgment over mechanical/redundant/useless gates.
 errors << "Transitions must enforce state/actor legality but not ceremonial evidence tokens" unless transition_engine_source.include?("spec integrity: every required gate id must be modeled") && !transition_engine_source.include?("requires_evidence_missing") && transition_engine_source.include?("gate.unresolved")
-errors << "dispatchWorkItem must not fabricate per-gate transition evidence" unless core_source.include?("no ceremonial evidence") && !core_source.include?("redispatch:")
+errors << "dispatchWorkItem must not fabricate per-gate transition evidence" unless !core_source.include?("redispatch:")
 errors << "close-barrier must drop vacuous always-pass stub gates" unless !core_source.include?("all_policy_decisions_terminal") && !core_source.include?("release_manifest_ready") && !core_source.include?("not_applicable_collection_not_modeled")
 errors << "close-barrier must record a reality-first holistic judgment" unless core_source.include?("holisticJudgment") && core_source.include?("reality_first_close_barrier") && contract_check_source.include?("holistic judgment")
 errors << "Server must offer authenticated real-time WebSocket push over the long-poll channels" unless server_source.include?("WebSocketServer") && server_source.include?("/api/realtime") && server_source.include?("pushRealtime") && server_source.include?("authorizeRealtime") && server_source.include?("pushRealtime(key)") && doctor_source.include?("verifyRealtimeWebSocket")
@@ -1689,6 +1689,53 @@ elsif !org_suspend_route.lines.reject { |line| line.strip.start_with?("//") }.jo
   errors << "停用组织没有叫停它名下正在跑的派发（缺 applyTaskGroupRuntimeControl）—— " \
             "agent 会跑到底、把产出推上 git、把额度烧完，而控制台上写着已停用"
 end
+
+# 源码字符串断言不得靠【注释】成立。
+#
+# 本门有 479 条 `xxx_source.include?("字面量")` 形式的断言。若那个字面量在目标文件里只出现在注释中，
+# 这条断言守的就是一段说明而不是代码：把真实实现删掉、注释留着，它照样绿。实测抓到 3 条完全如此
+# （shared_definition 的 continue、评审包的 submitted、过期会话扫描器），另有 4 条是"散文合取项 +
+# 真实合取项"的组合——前者不守任何东西，还会因为改一句注释而假红。
+# 这个坑我在两道新门上各踩过一次（HTML 注释、处理函数里的说明），所以做成常驻核对。
+prose_only_assertions = []
+prose_scan_sources = {
+  "core_source" => "apps/control-plane-ui/lib/control-plane-core.mjs",
+  "server_source" => "apps/control-plane-ui/server.mjs",
+  "gateway_source" => "apps/control-plane-ui/lib/agent-gateway.mjs",
+  "mcp_source" => "apps/mcp-server/server.mjs",
+  "app_js_source" => "apps/control-plane-ui/public/app.js",
+  "contract_check_source" => "scripts/contract-check.mjs",
+  "schema_validator_source" => "scripts/lib/schema-validate.mjs"
+}
+# 登记：确实在要求"这段说明必须在"的断言（文档性要求），而不是在验代码行为。
+prose_assertion_exemptions = ["admission ledger"]
+prose_scan_cache = {}
+prose_scanned = 0
+File.read(File.join(ROOT, "scripts/validate-specs.rb")).scan(/([a-z_]+_source)\.include\?\("((?:[^"\\]|\\.)*)"\)/) do |var, literal|
+  file = prose_scan_sources[var]
+  next unless file
+  path = File.join(ROOT, file)
+  next unless File.exist?(path)
+  prose_scan_cache[file] ||= begin
+    raw = File.read(path)
+    [raw, raw.lines.reject { |line| line.strip.start_with?("//") }.join]
+  end
+  needle = literal.gsub('\\"', '"').gsub("\\\\", "\\")
+  raw, stripped = prose_scan_cache[file]
+  next unless raw.include?(needle)
+  prose_scanned += 1
+  next if stripped.include?(needle)
+  next if prose_assertion_exemptions.any? { |allowed| needle.include?(allowed) }
+  prose_only_assertions << "#{file}: #{needle[0, 70]}"
+end
+if prose_scanned < 300
+  errors << "源码字符串断言核对只扫到 #{prose_scanned} 条，远少于预期 —— 提取逻辑与本文件脱节，本条在空转"
+end
+prose_only_assertions.each do |detail|
+  errors << "源码字符串断言只靠注释成立（#{detail}）—— 把真实实现删掉、注释留着，这条断言照样绿；" \
+            "请改成指向真实代码，或登记到 prose_assertion_exemptions 说明它要求的确实是那段说明"
+end
+
 
 fail_with(errors)
 
