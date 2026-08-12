@@ -679,6 +679,15 @@ const MUTATIONS = [
     expect: "直接起 git 子进程却不取失败原因"
   },
   {
+    // 面向人的错误码漏了中文，人在屏幕上看到的就是英文键。摘掉一条登记即等价于新增一个漏译。
+    name: "面向人的 API 错误码必须有中文",
+    file: "scripts/contract-check.mjs",
+    check: "verifyEveryCloseGateHasHumanGuidance",
+    from: "    room_task_group_mismatch: \"只在房间 POST 上返回",
+    to: "    room_task_group_mismatchX: \"只在房间 POST 上返回",
+    expect: "room_task_group_mismatch"
+  },
+  {
     name: "技能源同步失败要写清为什么",
     file: CORE,
     check: "verifySkillSourceSyncFailureIsVisible",

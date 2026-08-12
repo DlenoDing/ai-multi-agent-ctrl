@@ -5389,6 +5389,35 @@ function verifyEveryCloseGateHasHumanGuidance(output) {
   if (rawCodes.length) {
     output.push(`这些准入结论在中文界面上显示的是原始英文枚举：${rawCodes.join("、")}`);
   }
+
+  // API 错误码同样会原样显示给人（前端对 error 走 t()，命中不了就把英文键摆在屏幕上），
+  // 而它们只在出错那一刻才出现 —— 渲染扫描永远碰不到，得按权威来源（server.mjs 自己返回的
+  // 那些字符串）全量核对。只登记【纯机器面】的例外：agent 网关与 MCP 的报文读者是程序。
+  const MACHINE_FACING_ERRORS = {
+    mcp_streamable_http_requires_post: "MCP 传输层协议错误，读它的是 MCP 客户端",
+    mcp_auth_required: "同上",
+    event_node_binding_mismatch: "agent 网关：执行事件与节点绑定不符，读它的是 agent 运行时",
+    execution_event_key_required: "agent 网关：缺幂等键，读它的是 agent 运行时",
+    checkpoint_replay_binding_mismatch: "agent 网关：检查点重放绑定不符，读它的是 agent 运行时",
+    dispatch_not_assigned_to_node: "agent 网关：派发不属于这个节点，读它的是 agent 运行时",
+    room_task_group_mismatch: "只在房间 POST 上返回，控制台对房间只读（GET），发消息的是 agent"
+  };
+  const serverSourceForErrors = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const errorCodes = [...new Set([...serverSourceForErrors.matchAll(/error:\s*"([a-z0-9_]+)"/gu)].map((match) => match[1]))];
+  if (errorCodes.length < 60) {
+    output.push(`API 错误码中文覆盖自检：只提取到 ${errorCodes.length} 个 —— 提取逻辑与代码脱节，本条在空转`);
+  }
+  const rawErrors = errorCodes.filter((code) => !localized(code) && !MACHINE_FACING_ERRORS[code]);
+  if (rawErrors.length) {
+    output.push(`这些 API 错误码在中文界面上会原样显示英文：${rawErrors.join("、")} —— `
+      + "要么补中文，要么登记为纯机器面并写明读它的是谁");
+  }
+  const goneErrors = Object.keys(MACHINE_FACING_ERRORS).filter((code) => !errorCodes.includes(code));
+  if (goneErrors.length) {
+    output.push(`MACHINE_FACING_ERRORS 里这些错误码服务端已经不返回了：${goneErrors.join("、")} —— 过时的例外会掩护掉下一个漏译`);
+  }
+  console.log(`API 错误码中文覆盖：${errorCodes.length} 个里 ${errorCodes.length - Object.keys(MACHINE_FACING_ERRORS).length} 个面向人的都有中文；`
+    + `${Object.keys(MACHINE_FACING_ERRORS).length} 个登记为纯机器面（MCP 服务器与 agent 网关自身的报文不在此列，读者整体是程序）`);
 }
 
 // 一个依赖时好时坏的单元会在"受阻"与"可跑"之间反复翻转，而每翻一次准入结论就变一次。
