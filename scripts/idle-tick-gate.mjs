@@ -59,6 +59,12 @@ async function verifyFirstRunPath() {
 const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-idle-"));
 const fails = [];
 const check = (ok, label, detail = "") => {
+  // 参数自检：写反顺序时当场报错，而不是静默恒真（本仓库有两种顺序，我照错了一次，
+  // 四条断言全成了"非空字符串即真"，门与变异一起全绿）。
+  if (typeof ok !== "boolean" || typeof label !== "string") {
+    throw new Error(`check(ok, label, detail) 参数错位：收到 ok=${typeof ok}、label=${typeof label}`
+      + "（本门的顺序是【条件在前、名称在后】）");
+  }
   console.log(`${ok ? "  ok " : "FAIL"} ${label}${detail ? ` — ${detail}` : ""}`);
   if (!ok) fails.push(label);
 };

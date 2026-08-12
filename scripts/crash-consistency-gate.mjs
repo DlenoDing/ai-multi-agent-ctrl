@@ -13,7 +13,15 @@ import {fileURLToPath} from "node:url";
 const root = process.argv[2] || resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-crash-"));
 const fails = [];
-const check = (ok, label, detail = "") => { console.log(`${ok ? "  ok " : "FAIL"} ${label}${detail ? ` — ${detail}` : ""}`); if (!ok) fails.push(label); };
+const check = (ok, label, detail = "") => {
+  // 参数自检：布尔与标签写反时当场报错，而不是静默恒真。
+  // 本仓库四道门里三道是 (ok, label)，控制台门是 (label, ok) —— 我照着另一道的顺序写过一次，
+  // 结果四条断言全成了"非空字符串即真"，门全绿、变异也全绿，只有变异跑不出红才暴露。
+  if (typeof ok !== "boolean" || typeof label !== "string") {
+    throw new Error(`check(ok, label, detail) 参数错位：收到 ok=${typeof ok}、label=${typeof label}`
+      + "（本门的顺序是【条件在前、名称在后】）");
+  }
+  console.log(`${ok ? "  ok " : "FAIL"} ${label}${detail ? ` — ${detail}` : ""}`); if (!ok) fails.push(label); };
 
 const freePort = async () => {
   const listener = createServer();

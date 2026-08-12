@@ -207,6 +207,13 @@ function checkWiring(probe) {
 
 const failures = [];
 function check(name, condition, detail) {
+  // 参数自检：本门的顺序与另外三道门【相反】（那三道是 ok 在前）。写反时布尔落进 name、
+  // 字符串落进 condition，非空字符串恒真 —— 断言永远通过，门绿、变异也绿，等于没写。
+  // 真发生过一次，四条断言一起空转，只有"变异跑不出红"才暴露。
+  if (typeof name !== "string" || typeof condition !== "boolean") {
+    throw new Error(`check(name, condition, detail) 参数错位：收到 name=${typeof name}、condition=${typeof condition}`
+      + "（本门的顺序是【名称在前、条件在后】）");
+  }
   if (!condition) failures.push(`${name}: ${detail}`);
 }
 
