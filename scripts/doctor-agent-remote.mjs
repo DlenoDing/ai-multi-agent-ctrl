@@ -311,6 +311,22 @@ try {
         && !String(noEpochPayload.message || "").includes("重新执行入网安装命令")) {
         throw new Error("被重认领的派发拒绝了缺代次的提交，但没有告诉运维该怎么办 —— 旧版运行时会卡在这里而看不出原因");
       }
+      // /fail 此前只比对过期代次，缺字段照样放行 —— 而这条路径的危害更直接：
+      // 旧执行器超时后 /fail(blocked) 会把当前这一轮正在跑的活标成阻塞。
+      // "发现一处漏了 fence，修复范围是还有谁也该有"——这里就是那个"还有谁"。
+      const failNoEpoch = await fetch(`${baseUrl}/api/agent/v1/dispatches/${encodeURIComponent(reclaimed.dispatchId)}/fail`, {
+        method: "POST",
+        headers: {"content-type": "application/json", authorization: `Bearer ${JSON.parse(readFileSync(agentConfigPath, "utf8")).nodeToken}`},
+        body: JSON.stringify({status: "blocked", reason: "no-epoch probe"})
+      });
+      const failNoEpochPayload = await failNoEpoch.json().catch(() => ({}));
+      if (failNoEpoch.status !== 409 || failNoEpochPayload.error !== "dispatch_fail_claim_epoch_required") {
+        throw new Error(`被重认领的派发接受了缺代次的失败上报（HTTP ${failNoEpoch.status} / ${failNoEpochPayload.error}）——`
+          + " 上一轮的执行器可以把这一轮正在跑的活标记为阻塞");
+      }
+      if (!String(failNoEpochPayload.message || "").includes("重新执行入网安装命令")) {
+        throw new Error("失败上报拒绝了缺代次，但没告诉运维该怎么办 —— 与检查点那条同规，旧版运行时会卡在这里");
+      }
     }
     if (staleFail.status !== 409 || staleFailPayload.error !== "dispatch_fail_claim_epoch_stale") {
       throw new Error(`带着过期 claim 代次的失败上报没有被拒（HTTP ${staleFail.status} / ${staleFailPayload.error}）—— 上一次认领的执行器能把当前这一轮标记为阻塞`);

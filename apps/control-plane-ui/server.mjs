@@ -2539,6 +2539,18 @@ async function handleApi(req, res) {
     // 这里只做「带了就比较」而不强制要求：outbox 条目内容损坏时 agent 拿不到代次（那份条目本就不可解析），
     // 强制会把损坏隔离这条恢复路径一起拖垮 —— 而那条路径存在的意义正是让丢失的证据被人看见。
     const failClaimEpoch = Number(dispatch.claimEpoch || 0);
+    // 与 /checkpoint 同规（那边已经这么做了，这边一直没有）：派发被认领过不止一次时，
+    // 缺代次就不能放行 —— 缺字段即可绕过的 fence 不算 fence。
+    // 这条路径的危害比检查点更直接：旧执行器超时后调 /fail(blocked)，
+    // 会把【当前这一轮正在跑的活】标记为阻塞，而 assignedNodeId 在重认领回同一节点时照样匹配。
+    // 判据仍限定在 attempts > 1：首次认领不存在更早的持有者，强制它只会拒掉旧版 agent 的常规路径。
+    if (body.claimEpoch === undefined && Number(dispatch.attempts || 0) > 1) {
+      return json(res, 409, {error: "dispatch_fail_claim_epoch_required", claimEpoch: failClaimEpoch,
+        requiredRuntimeVersion: "0.3.0",
+        nodeRuntimeVersion: node.runtimeVersion || null,
+        message: "该派发被重新认领过，上报失败/阻塞必须带上你持有的 claimEpoch，否则无法区分它来自哪一次尝试。"
+          + "若该节点的 agent 运行时早于 0.3.0（不发送认领代次），请在该主机上重新执行入网安装命令升级后重试"});
+    }
     if (body.claimEpoch !== undefined && Number(body.claimEpoch) !== failClaimEpoch) {
       return json(res, 409, {error: "dispatch_fail_claim_epoch_stale", claimEpoch: failClaimEpoch,
         presented: Number(body.claimEpoch),
