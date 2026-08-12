@@ -496,6 +496,14 @@ const MUTATIONS = [
     expect: "没有拒绝机器主体"
   },
   {
+    name: "路径定位的对象，作用域不得取自操作者自己",
+    file: SERVER,
+    gate: "auth",
+    from: '"org_member_status_update", `Account:${orgMemberStatusMatch[1]}`, target.scope)',
+    to: '"org_member_status_update", `Account:${orgMemberStatusMatch[1]}`, {resourceType: "organization", resourceId: actorAccount?.organizationId})',
+    expect: "授权作用域却取自操作者自己"
+  },
+  {
     name: "审计必须记真人（服务名会把责任人抹掉）",
     file: SERVER,
     gate: "auth",

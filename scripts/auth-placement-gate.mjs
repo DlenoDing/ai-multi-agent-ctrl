@@ -127,6 +127,12 @@ function run() {
     for (const message of misscoped) console.error(`- ${message}`);
     process.exit(1);
   }
+  const actorScoped = checkGuardScopeIsNotActorDerived();
+  if (actorScoped.length) {
+    console.error("auth placement gate failed:");
+    for (const message of actorScoped) console.error(`- ${message}`);
+    process.exit(1);
+  }
   const unmapped = checkEveryGuardedActionIsMapped();
   if (unmapped.length) {
     console.error("auth placement gate failed:");
@@ -187,7 +193,7 @@ function run() {
     process.exit(1);
   }
   console.log(`auth placement gate ok: ${blocks.length} 条改状态路由鉴权之前无泄露无写入、每个受守卫动作都有显式权限映射、`
-    + `动作名不取自请求体、按路径定位的对象其授权作用域不取自请求体，且 ${blocks.filter((block) => block.body.some((row) => row.text.includes("beginGuardedWrite("))).length} 条受守卫写路由都在审计里记了真人`);
+    + `动作名不取自请求体、按路径定位的对象其授权作用域既不取自请求体也不取自操作者自己，且 ${blocks.filter((block) => block.body.some((row) => row.text.includes("beginGuardedWrite("))).length} 条受守卫写路由都在审计里记了真人`);
 }
 
 // permissionForAction 的兜底是 system:*。漏一条映射不会报错，只会让那条杠杆【只有系统管理员
@@ -261,6 +267,43 @@ function checkGuardScopeMatchesMutatedObject() {
   // 自检用精确相等：取到多少条"按路径定位"的调用，就必须核对多少条。
   if (found !== pathScoped) problems.push(`授权作用域核对取到 ${pathScoped} 条按路径定位的路由，却只核对了 ${found} 条 —— 有路由被静默跳过`);
   if (found < 10) problems.push(`授权作用域核对只找到 ${found} 条按路径定位的受守卫路由，远少于预期 —— 提取逻辑已失效，本条在空转`);
+  return problems;
+}
+
+// ── 路径定位的对象，作用域也不得取自【操作者自己】 ──────────────────────────────
+//
+// 上一条只查了越权那个方向（作用域取自请求体）。反方向同样是缺陷，而且门此前看不见它：
+// 实测过的原点是成员管理三条路由（status / permissions / reissue-invite）都用
+// `actorAccount?.organizationId` 去定位路径里那个账号 —— 系统管理员的 organizationId 是 null，
+// 于是它在成员管理页列得出某组织的全部成员、按下每一个按钮都回 org_member_not_found：
+// 界面上那一行三个按钮全是坏的，而报的是"这个成员不存在"。
+// 对象既然由路径指定，作用域就该由【解析出来的那个对象】决定；操作者是谁，是守卫要回答的问题，
+// 不是用来找对象的线索。这条判据不需要例外表：路径定位 + 作用域取自操作者，至今没有合法用例。
+function checkGuardScopeIsNotActorDerived() {
+  const source = readFileSync(join(root, TARGET), "utf8");
+  const problems = [];
+  // 先收集"操作者派生"的变量名：直接取自 accountFromRequest 的，以及从它再取一层字段的。
+  const actorNames = new Set();
+  for (const match of source.matchAll(/\bconst\s+(\w+)\s*=\s*accountFromRequest\(/gu)) actorNames.add(match[1]);
+  for (const name of [...actorNames]) {
+    for (const match of source.matchAll(new RegExp(`\\bconst\\s+(\\w+)\\s*=\\s*${name}[?.]`, "gu"))) actorNames.add(match[1]);
+  }
+  if (actorNames.size < 2) return ["操作者派生变量一个都没认出来 —— 提取逻辑已失效，本条在空转"];
+  let checked = 0;
+  for (const call of callArguments(source, "beginGuardedWrite")) {
+    if (!/Match\[/.test(call.args)) continue;
+    const parts = call.args.split(",");
+    const action = (parts[1 + 1] || "").trim().replace(/^"|"$/gu, "");
+    const scopePart = parts.slice(4).join(",");
+    checked += 1;
+    const leaked = [...actorNames].filter((name) => new RegExp(`\\b${name}\\b`, "u").test(scopePart));
+    if (leaked.length) {
+      problems.push(`${action}: 对象按路径参数定位，授权作用域却取自操作者自己（${leaked.join("、")}）`
+        + " —— 操作者与目标不在同一作用域时（典型：系统管理员的 organizationId 是 null），"
+        + "这条路由会对界面上明明列得出来的对象回“找不到”。作用域应由解析出的目标对象决定。");
+    }
+  }
+  if (checked < 10) problems.push(`操作者派生作用域核对只扫到 ${checked} 条按路径定位的路由 —— 提取逻辑已失效，本条在空转`);
   return problems;
 }
 
