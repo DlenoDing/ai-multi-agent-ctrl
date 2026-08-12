@@ -1948,12 +1948,16 @@ function renderOrgMembers() {
         `<button class="secondary-button" data-action="member-perms" data-account="${esc(account.accountId)}">权限</button>`,
         // 邀请令牌只显示一次。丢了之后这一行原先只有「停用」——点它再点「启用」会撞 409，
         // 人会以为自己把账号弄坏了。真正需要的是重发。
-        account.status === "invited"
+        // 邀请被撤回（invited→停用）的账号同样从没接受过邀请：它唯一的出路也是重发，
+        // 而「启用」对它必然 409 —— 所以这一行给的是重发，不是启用。
+        account.status === "invited" || account.invitationWithdrawn
           ? `<button class="secondary-button" data-action="member-reissue-invite" data-account="${esc(account.accountId)}">重发邀请</button>`
           : "",
-        account.status === "disabled"
-          ? `<button class="secondary-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="active">启用</button>`
-          : `<button class="danger-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="disabled">停用</button>`
+        account.invitationWithdrawn
+          ? ""
+          : account.status === "disabled"
+            ? `<button class="secondary-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="active">启用</button>`
+            : `<button class="danger-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="disabled">停用</button>`
       ].filter(Boolean).join(" ") : "-"
     ]);
   }).join("");

@@ -1091,6 +1091,69 @@ try {
   if (zombieActivate.response.status !== 409) {
     throw new Error(`把未接受邀请的成员置为 active 应被拒（409），得到 ${zombieActivate.response.status} —— 会造出永远登不进来且仍占配额的僵尸账号`);
   }
+  // 而这条判据不能只看【当前是不是 invited】：先停用再启用，两步就把同一个僵尸洗成 active。
+  const zombieLaunderDisable = await jsonFetch(port, `/api/org/members/${memberCreate.payload.account.accountId}/status`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-zombie-withdraw", authorization: orgAdminAuth},
+    body: JSON.stringify({status: "disabled"})
+  });
+  if (zombieLaunderDisable.response.status !== 200) throw new Error(`withdrawing an invitation failed: ${zombieLaunderDisable.response.status}`);
+  const zombieLaunder = await jsonFetch(port, `/api/org/members/${memberCreate.payload.account.accountId}/status`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-zombie-launder", authorization: orgAdminAuth},
+    body: JSON.stringify({status: "active"})
+  });
+  if (zombieLaunder.response.status !== 409 || zombieLaunder.payload.error !== "org_member_invitation_pending") {
+    throw new Error(`先停用再启用把未接受邀请的成员洗成了 active（应 409，得到 ${zombieLaunder.response.status}）—— 两步绕过了上一条守卫`);
+  }
+  // 撤回之后必须还有出路：重发邀请要能把它放回 invited，且新令牌真的登得进来，否则这个账号
+  // 永远占着配额、邮箱唯一性又拦住重建。
+  const withdrawnReissue = await jsonFetch(port, `/api/org/members/${memberCreate.payload.account.accountId}/reissue-invite`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-withdrawn-reissue", authorization: orgAdminAuth}
+  });
+  if (withdrawnReissue.response.status !== 200 || withdrawnReissue.payload.account.status !== "invited") {
+    throw new Error(`被撤回的邀请无法重发（${withdrawnReissue.response.status}:${withdrawnReissue.payload.error}）—— 该账号再也回不来，还占着成员配额`);
+  }
+  const withdrawnLogin = await jsonFetch(port, "/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({email: "doctor.member1@local", token: withdrawnReissue.payload.accountToken})
+  });
+  if (!withdrawnLogin.payload.sessionToken) throw new Error(`重发之后仍然登不进来：${withdrawnLogin.response.status}:${withdrawnLogin.payload.error}`);
+  // 系统管理员在成员管理页看得到某组织的成员，就必须动得了 —— 原先这条路由按【操作者自己】的
+  // 组织匹配，系统管理员的 organizationId 是 null，于是列表里每一个成员按下停用都回
+  // org_member_not_found："这个成员不存在"，而它就在上面那张表里。
+  const memberAccountId = orgMembers.payload.members.find((member) => member.email === "doctor.member1@local")?.accountId;
+  const systemActsOnMember = await jsonFetch(port, `/api/org/members/${encodeURIComponent(memberAccountId)}/status`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-system-member-status", authorization: systemAuth},
+    body: JSON.stringify({status: "disabled"})
+  });
+  if (systemActsOnMember.response.status !== 200 || systemActsOnMember.payload.status !== "disabled") {
+    throw new Error(`系统管理员动不了它列得出来的组织成员（应 200 disabled，得到 ${systemActsOnMember.response.status}:${systemActsOnMember.payload.error}）—— 界面上的停用按钮按下去必然失败`);
+  }
+  const systemRestoresMember = await jsonFetch(port, `/api/org/members/${encodeURIComponent(memberAccountId)}/status`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-system-member-restore", authorization: systemAuth},
+    body: JSON.stringify({status: "active"})
+  });
+  if (systemRestoresMember.response.status !== 200) throw new Error(`system admin could not re-enable the member: ${systemRestoresMember.response.status}`);
+  // 而放开这条口子不得让"别的组织有没有这个账号"漏出去：存在但不属于我 与 根本不存在，
+  // 对组织管理员必须是同一个回答，否则这条路由就成了跨租户的存在性探针。
+  const foreignTarget = await jsonFetch(port, "/api/org/members/acct_system_owner/status", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-foreign-member", authorization: orgAdminAuth},
+    body: JSON.stringify({status: "disabled"})
+  });
+  const absentTarget = await jsonFetch(port, "/api/org/members/acct_no_such_account/status", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-absent-member", authorization: orgAdminAuth},
+    body: JSON.stringify({status: "disabled"})
+  });
+  if (foreignTarget.response.status !== 404 || absentTarget.response.status !== 404
+    || foreignTarget.payload.error !== absentTarget.payload.error) {
+    throw new Error(`组织外账号与不存在账号的回答不一致（${foreignTarget.response.status}:${foreignTarget.payload.error} vs ${absentTarget.response.status}:${absentTarget.payload.error}）—— 可以拿它探测别的组织有哪些账号`);
+  }
 
   // 暂停组织此前【什么都不停】：全仓只有配额检查一处读 org.status，于是它的实际语义仅仅是
   // "不许再新建"，成员照常登录、照常读写、名下的 agent 继续跑、继续烧模型额度。
