@@ -1413,10 +1413,13 @@ async function dispatchTool(state, name, args, context = {}) {
     case "human-review-mcp.confirmation_decide": {
       const confirmation = (state.humanConfirmationRequests || []).find((item) => item.requestId === args.requestId);
       if (!confirmation) return {ok: false, error: "human_confirmation_not_found"};
-      // 定稿权只属于真人。MCP 通道上的主体都不是"人"：agent_node 是执行体，system_service 是机器服务
-      // 令牌（哪怕被 AIMAC_MCP_SERVICE_ALLOWED_TOOLS 放开了这个工具）。核心决策一律拒绝，只能走控制台
-      // 的人工确认窗口（REST + 真人账号会话）。system_admin 主体是控制台代表的真人会话，放行。
-      if (context?.principal?.kind === "agent_node" || context?.principal?.kind === "system_service") {
+      // 定稿权只属于真人，而这是整套系统"人工定稿"这条不变式的最后一道闸。
+      // 判据必须是【白名单】：原先写的是"拒绝 agent_node 与 system_service"，今天恰好完整
+      //（/mcp 上只构造这三种主体，普通人类账号走 MCP 直接是 null），但黑名单的语义是
+      // "没列到的一律放行"—— 以后新增任何机器主体，默认就能替人定稿，而且不会有任何东西报警。
+      // 这条不变式不能靠"新增主体时记得回来改这里"。
+      // system_admin 是控制台代表的真人会话（REST + 真人账号），只放行它。
+      if (context?.principal?.kind !== "system_admin") {
         return {ok: false, error: "human_confirmation_decision_forbidden_for_machine_principal"};
       }
       if (!confirmationReadableByPrincipal(confirmation, context)) return {ok: false, error: "human_confirmation_not_found"};

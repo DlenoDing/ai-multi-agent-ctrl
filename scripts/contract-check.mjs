@@ -258,6 +258,7 @@ run(verifyEveryCloseGateHasHumanGuidance);
 run(verifyGrantScopeCoversObjectsNamedOnlyById);
 run(verifyLongRunningWorkKeepsItsClaim);
 run(verifyCentralOnlyStateCannotBeWritten);
+run(verifyOnlyHumanSessionsCanFinalize);
 run(verifyUnknownStateSchemaIsRefused);
 run(verifySuspendHaltsRunningWork);
 run(verifyCancelDirectiveStopsRunningWork);
@@ -4737,6 +4738,42 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 后果只在版本真的变了那天出现，而那天恰恰最不能容忍沉默：旧构建会把新格式当成自己认识的
 // 东西照读照写，把它认不出来的语义悄悄改掉，且是就地覆盖、没有回头路。
 // 所以读取点认不出来就拒绝，并给出一句能照着做的话。
+// 人工定稿是"AI 不得替人拍板"这条不变式的最后一道闸，MCP 侧确实暴露了这个能力
+//（human-review-mcp.confirmation_decide 在工具表里），所以真正在挡的就是那个 case 里的主体判据。
+// 我起初查错了工具名（identity-mcp.human_confirmation_decide 是 REST 侧的动作名，不是 MCP 工具），
+// 据此得出"能力未暴露"，还写了一条"工具表里不许出现定稿类工具"的断言 —— 前提是错的，
+// 而且它的正则匹配不到真正暴露的那个名字：一条永远为真、又指着错误对象的断言。
+// 判据改成【按调用图】找：凡是通向 decideHumanConfirmation 的 MCP case，都必须只放行真人会话。
+// 这与 human-only-parity-gate 是同一条不变式的两个角度（那道门从 REST 侧的真人专属动作出发，
+// 这里从核心函数出发），重叠是有意的：这条线一旦破，后果是整套人机协同失效。
+function verifyOnlyHumanSessionsCanFinalize(output) {
+  const mcpSource = readFileSync(resolve(root, "apps/mcp-server/server.mjs"), "utf8");
+  // 按"下一个 case 标记"切体，不按花括号配对：case 体里既有带 {} 的也有不带的，
+  // 只认带花括号那种会漏掉一多半（第一版只切出 4 个）。这与 human-only-parity-gate 的切法一致。
+  const marks = [...mcpSource.matchAll(/case "([a-z-]+-mcp\.[a-z_0-9]+)":/gu)];
+  if (marks.length < 40) {
+    output.push(`人工定稿闸门：只切出 ${marks.length} 个 MCP case —— 提取逻辑与代码脱节，本条在空转`);
+    return;
+  }
+  const cases = marks.map((mark, index) => [null, mark[1],
+    mcpSource.slice(mark.index, index + 1 < marks.length ? marks[index + 1].index : mark.index + 2000)]);
+  const finalizing = cases.filter(([, , body]) => /decideHumanConfirmation\(/u.test(body));
+  if (!finalizing.length) {
+    output.push("人工定稿闸门：没有任何 MCP case 通向 decideHumanConfirmation —— "
+      + "要么调用图变了、要么提取失效；这条断言此刻没有在守任何东西");
+    return;
+  }
+  for (const [, name, body] of finalizing) {
+    if (!/principal\?\.kind !== "system_admin"/u.test(body)) {
+      output.push(`人工定稿闸门：MCP 工具 ${name} 能走到 decideHumanConfirmation，`
+        + "但它的主体判据不是白名单（'不是真人会话就拒'）—— 黑名单会在新增机器主体那天默认放行");
+    }
+  }
+  const exposed = finalizing.filter(([, name]) => mcpToolNames.includes(name));
+  console.log(`人工定稿闸门：${finalizing.length} 个通向定稿的 MCP case（其中 ${exposed.length} 个真的在工具表里：`
+    + `${exposed.map(([, name]) => name).join("、") || "无"}），主体判据均为白名单`);
+}
+
 function verifyUnknownStateSchemaIsRefused(output) {
   const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-schema-"));
   const statePath = join(runtimeDir, "control-plane-state.json");

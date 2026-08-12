@@ -106,7 +106,14 @@ export function checkHumanOnlyParity() {
     const action = matched.join("/");
     nameChecked += 1;
     const body = mcp.slice(mark.index, index + 1 < marks.length ? marks[index + 1].index : mark.index + 2000);
-    const blocksMachine = /principal\?\.kind === "agent_node"/.test(body) && /principal\?\.kind === "system_service"/.test(body);
+    // 两种合格写法：
+    // （甲）白名单——"不是真人会话就拒"。更强：以后新增任何机器主体，默认就被挡住。
+    // （乙）黑名单——同时点名 agent_node 与 system_service。只挡 agent_node 会放过服务令牌，
+    //       而服务令牌恰恰是那条能被一个环境变量打开的路。
+    // 原先只认（乙）：把判据升级成（甲）这种严格更安全的改法，反而让这道门报红，
+    // 而且报的是"这个 case 没有拒绝机器主体"——与事实相反。判据锁死写法就会挡住正确的改进。
+    const blocksMachine = /principal\?\.kind !== "system_admin"/.test(body)
+      || (/principal\?\.kind === "agent_node"/.test(body) && /principal\?\.kind === "system_service"/.test(body));
     if (!blocksMachine) {
       failures.push(`真人专属对等门: MCP 工具 ${mark[1]} 与 REST 侧的真人专属动作 ${action} 同名，`
         + "但这个 case 没有拒绝机器主体 —— 同一件事两侧各实现一份，函数名对不上，只能按动作名认");
@@ -126,7 +133,14 @@ export function checkHumanOnlyParity() {
     checked += 1;
     // 挡住机器主体的写法必须同时点名两类主体：只挡 agent_node 会放过服务令牌，
     // 而服务令牌恰恰是那条能被一个环境变量打开的路。
-    const blocksMachine = /principal\?\.kind === "agent_node"/.test(body) && /principal\?\.kind === "system_service"/.test(body);
+    // 两种合格写法：
+    // （甲）白名单——"不是真人会话就拒"。更强：以后新增任何机器主体，默认就被挡住。
+    // （乙）黑名单——同时点名 agent_node 与 system_service。只挡 agent_node 会放过服务令牌，
+    //       而服务令牌恰恰是那条能被一个环境变量打开的路。
+    // 原先只认（乙）：把判据升级成（甲）这种严格更安全的改法，反而让这道门报红，
+    // 而且报的是"这个 case 没有拒绝机器主体"——与事实相反。判据锁死写法就会挡住正确的改进。
+    const blocksMachine = /principal\?\.kind !== "system_admin"/.test(body)
+      || (/principal\?\.kind === "agent_node"/.test(body) && /principal\?\.kind === "system_service"/.test(body));
     if (!blocksMachine) {
       failures.push(`真人专属对等门: MCP 工具 ${mark[1]} 通向 ${shared.join("/")}，而 REST 侧把它定为真人专属`
         + `（${shared.map((fn) => humanOnlyFunctions.get(fn)).join("/")}），但这个 case 没有拒绝机器主体 —— `
