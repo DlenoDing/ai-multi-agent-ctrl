@@ -65,6 +65,10 @@ function extractRouteBlocks(source) {
 }
 
 function run() {
+  // 声明必须在【所有 push 之前】：原先它在 150 行之后才声明，而 150/156 行就在 push。
+  // 那两条判据从来没触发过，所以没人发现——一旦触发，门是崩在 TDZ 上（栈里写着
+  // failures is not defined，指向门自己），而不是报出"这条路由少了审计"。
+  const failures = [];
   const source = readFileSync(join(root, TARGET), "utf8");
   const blocks = extractRouteBlocks(source);
   const violations = [];
@@ -173,7 +177,17 @@ function run() {
     }
   }
 
-  console.log(`auth placement gate ok: ${blocks.length} 条改状态路由鉴权之前无泄露无写入、每个受守卫动作都有显式权限映射、动作名不取自请求体，且按路径定位的对象其授权作用域不取自请求体`);
+  // failures 此前【一次都没有被读过】：上面三条判据把消息 push 进去，紧接着就无条件打印 ok。
+  // 它们之所以看起来"有效"，只是因为 failures 那时根本没声明——push 会抛 ReferenceError，
+  // 门崩在自己身上、退出码非零，栈里写的是 "failures is not defined"，而不是"这条路由少了审计"。
+  // 崩溃当红用，是最容易被当成"门在工作"的假象：错的位置、错的原因，且没人会去修它。
+  if (failures.length) {
+    console.error("auth placement gate failed:");
+    for (const message of failures) console.error(`- ${message}`);
+    process.exit(1);
+  }
+  console.log(`auth placement gate ok: ${blocks.length} 条改状态路由鉴权之前无泄露无写入、每个受守卫动作都有显式权限映射、`
+    + `动作名不取自请求体、按路径定位的对象其授权作用域不取自请求体，且 ${blocks.filter((block) => block.body.some((row) => row.text.includes("beginGuardedWrite("))).length} 条受守卫写路由都在审计里记了真人`);
 }
 
 // permissionForAction 的兜底是 system:*。漏一条映射不会报错，只会让那条杠杆【只有系统管理员

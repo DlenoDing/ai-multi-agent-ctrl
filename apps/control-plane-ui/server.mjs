@@ -3007,7 +3007,7 @@ async function handleApi(req, res) {
       return;
     }
     const result = runAutonomousCycle(state, {root: repositoryRoot, runtimeDir, endpoint: publicEndpoint(req), mode: body.mode || "all", taskGroupId: body.taskGroupId, autoSyncSkills: body.autoSyncSkills !== false});
-    audit(state, "orchestrator", "orchestrator_run", `TaskGroup:${body.taskGroupId || "all"}`);
+    audit(state, guard.actor, "orchestrator_run", `TaskGroup:${body.taskGroupId || "all"}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
     json(res, 200, result);
@@ -3033,7 +3033,7 @@ async function handleApi(req, res) {
       maxJobs: body.maxJobs || 1,
       allowDeterministicLocalWorker: body.allowDeterministicLocalWorker === true && process.env.AIMAC_ALLOW_LOCAL_DETERMINISTIC_WORKER === "true"
     });
-    audit(state, "agent-runtime", "agent_runtime_worker_run", `TaskGroup:${body.taskGroupId || "all"}`);
+    audit(state, guard.actor, "agent_runtime_worker_run", `TaskGroup:${body.taskGroupId || "all"}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
     json(res, 200, result);
@@ -3065,7 +3065,7 @@ async function handleApi(req, res) {
     // the overview reflects it immediately instead of lagging until the next autonomy cycle.
     if (body.mutate === true && closeBarrier.satisfied) computeProgressSnapshots(state);
     const result = {readiness, closeBarrier};
-    audit(state, "orchestrator", "task_group_close_barrier_compute", `TaskGroup:${closeComputeMatch[1]}`);
+    audit(state, guard.actor, "task_group_close_barrier_compute", `TaskGroup:${closeComputeMatch[1]}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
     json(res, 200, result);
@@ -3084,7 +3084,7 @@ async function handleApi(req, res) {
       // 对不上的那个 commit）被丢在这里 —— 人拿到的是"改动路径命中禁区"，不知道是哪条路径。
       // 同时控制面上不留任何痕迹：不写审计、不留事件，于是在 agent 的重放把它判定为终态之前，
       // 控制台上一个字都不会变，人只会觉得"提交上去了，然后没动静"。
-      audit(state, "agent-runtime", "checkpoint_rejected", `Checkpoint:${body.taskGroupId || "unknown"}:${body.workId || "unknown"}`, result.error);
+      audit(state, guard.actor, "checkpoint_rejected", `Checkpoint:${body.taskGroupId || "unknown"}:${body.workId || "unknown"}`, result.error);
       recordCheckpointRejection(state, body, result);
       // 走直写提交：这条路径没有 finishGuardedWrite，而裸 writeState 会被"未推进版本号"的守卫拦下
       // （它就是为了拦住这种写法而存在的）。
@@ -3098,7 +3098,7 @@ async function handleApi(req, res) {
       });
       return;
     }
-    audit(state, "agent-runtime", "checkpoint_submit", `Checkpoint:${result.checkpoint.taskGroupId}:${result.checkpoint.workId}`);
+    audit(state, guard.actor, "checkpoint_submit", `Checkpoint:${result.checkpoint.taskGroupId}:${result.checkpoint.workId}`);
     finishGuardedWrite(state, guard, 201, result.checkpoint);
     writeState(state);
     json(res, 201, result.checkpoint);
@@ -3135,7 +3135,7 @@ async function handleApi(req, res) {
     };
     state.modelCapabilities = state.modelCapabilities.filter((item) => !(item.providerId === profile.providerId && item.modelId === profile.modelId));
     state.modelCapabilities.unshift(profile);
-    audit(state, "model-registry", "model_capability_register", `ModelCapabilityProfile:${profile.providerId}/${profile.modelId}`);
+    audit(state, guard.actor, "model_capability_register", `ModelCapabilityProfile:${profile.providerId}/${profile.modelId}`);
     finishGuardedWrite(state, guard, 201, profile);
     writeState(state);
     json(res, 201, profile);
@@ -3149,7 +3149,7 @@ async function handleApi(req, res) {
       return;
     }
     const decision = selectModel(state, {...body, policyDecisionRef: guard.policyDecision.id, auditRef: `audit:${guard.idempotencyKey}`});
-    audit(state, "scheduler", "model_selection_decide", `ModelSelectionDecision:${decision.decisionId}`);
+    audit(state, guard.actor, "model_selection_decide", `ModelSelectionDecision:${decision.decisionId}`);
     finishGuardedWrite(state, guard, 201, decision);
     writeState(state);
     json(res, 201, decision);
@@ -3163,7 +3163,7 @@ async function handleApi(req, res) {
       return;
     }
     const decision = decideSessionPlacement(state, {...body, auditRef: `audit:${guard.idempotencyKey}`});
-    audit(state, "scheduler", "session_placement_decide", `SessionPlacementDecision:${decision.decisionId}`);
+    audit(state, guard.actor, "session_placement_decide", `SessionPlacementDecision:${decision.decisionId}`);
     finishGuardedWrite(state, guard, 201, decision);
     writeState(state);
     json(res, 201, decision);
@@ -3178,7 +3178,7 @@ async function handleApi(req, res) {
     }
     const issue = collectRuntimeIssue(state, body);
     const issueRef = issue.patternId ? `RuntimeIssuePattern:${issue.patternId}` : `RuntimeIssueSample:${issue.sampleId}`;
-    audit(state, "monitor", "runtime_issue_collect", issueRef);
+    audit(state, guard.actor, "runtime_issue_collect", issueRef);
     finishGuardedWrite(state, guard, 201, issue);
     writeState(state);
     json(res, 201, issue);
@@ -3679,7 +3679,7 @@ async function handleApi(req, res) {
       updatedAt: at
     };
     state.instructionMetrics.envelopes.push(envelope);
-    audit(state, "instruction-optimizer", "instruction_envelope_create", `InstructionEnvelope:${envelope.envelopeId}`);
+    audit(state, guard.actor, "instruction_envelope_create", `InstructionEnvelope:${envelope.envelopeId}`);
     finishGuardedWrite(state, guard, 201, envelope);
     writeState(state);
     json(res, 201, envelope);
@@ -4000,7 +4000,7 @@ async function handleApi(req, res) {
       updatedAt: at
     };
     state.sharedDefinitions.push(definition);
-    audit(state, "orchestrator", "shared_definition_contract_create", `SharedDefinitionContract:${definition.contractId}`);
+    audit(state, guard.actor, "shared_definition_contract_create", `SharedDefinitionContract:${definition.contractId}`);
     finishGuardedWrite(state, guard, 201, definition);
     writeState(state);
     json(res, 201, definition);
@@ -4080,7 +4080,7 @@ async function handleApi(req, res) {
     };
     state.repositoryOutputs ||= [];
     state.repositoryOutputs.push(target);
-    audit(state, "repository-router", "repository_output_target_select", `RepositoryOutputTarget:${target.targetId}`);
+    audit(state, guard.actor, "repository_output_target_select", `RepositoryOutputTarget:${target.targetId}`);
     finishGuardedWrite(state, guard, 201, target);
     writeState(state);
     json(res, 201, target);
@@ -4094,7 +4094,7 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = assignWorkItem(state, {...body, workItemId: workItemAssignMatch[1]});
     if (result.ok === false) return json(res, 404, {error: result.error});
-    audit(state, "scheduler", "work_assign", `WorkItem:${result.workItem.id}`);
+    audit(state, guard.actor, "work_assign", `WorkItem:${result.workItem.id}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
@@ -4110,7 +4110,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "finding_submit", `Finding:${body.findingId || "new"}`, taskGroupScope(state, scopeTaskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = findingSubmit(state, body);
-    audit(state, "reviewer", "finding_submit", `Finding:${result.finding.findingId}`);
+    audit(state, guard.actor, "finding_submit", `Finding:${result.finding.findingId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
@@ -4137,7 +4137,7 @@ async function handleApi(req, res) {
     if (result.alreadyResolved) return json(res, 409, {error: "finding_already_resolved", finding: result.finding});
     if (result.ok === false) return json(res, 404, {error: result.error});
     recomputeBarrierAfterResolve(state, existingFinding?.taskGroupId);
-    audit(state, "policy-engine", "finding_resolve", `Finding:${result.finding.findingId}`);
+    audit(state, guard.actor, "finding_resolve", `Finding:${result.finding.findingId}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
     json(res, 200, result);
@@ -4149,7 +4149,7 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     // Record the proposer as the AUTHENTICATED actor (never client-supplied) for high_risk_no_self_approval.
     const result = approvalRequestCreate(state, {...body, proposedBy: guard.actor});
-    audit(state, "decision-center", "approval_request_create", `ApprovalRequest:${result.approvalRequest.approvalId}`);
+    audit(state, guard.actor, "approval_request_create", `ApprovalRequest:${result.approvalRequest.approvalId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
@@ -4170,7 +4170,7 @@ async function handleApi(req, res) {
     if (result.alreadyResolved) return json(res, 409, {error: "approval_already_resolved", approvalRequest: result.approvalRequest});
     if (result.ok === false) return json(res, result.error === "high_risk_no_self_approval" ? 403 : 404, {error: result.error});
     recomputeBarrierAfterResolve(state, existingApproval?.taskGroupId);
-    audit(state, "policy-engine", "approval_resolve", `ApprovalRequest:${result.approvalRequest.approvalId}`);
+    audit(state, guard.actor, "approval_resolve", `ApprovalRequest:${result.approvalRequest.approvalId}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
     json(res, 200, result);
@@ -4181,7 +4181,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "policy_decision_eval", `PolicyDecision:${body.decisionId || "new"}`, {resourceType: "system", resourceId: "policy_engine"});
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = policyDecisionEval(state, body);
-    audit(state, "policy-engine", "policy_decision_eval", `PolicyDecision:${result.policyDecision.decisionId}`);
+    audit(state, guard.actor, "policy_decision_eval", `PolicyDecision:${result.policyDecision.decisionId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
@@ -4230,7 +4230,7 @@ async function handleApi(req, res) {
       const result = roomSend(state, roomSendArgs);
       if (result.error === "room_task_group_settled") return json(res, 409, {error: result.error, taskGroupStatus: result.taskGroupStatus});
       if (result.ok === false) return json(res, 413, {error: result.error, maxBytes: result.maxBytes});
-      audit(state, "room-broker", "room_send", `Room:${roomId}`);
+      audit(state, guard.actor, "room_send", `Room:${roomId}`);
       finishGuardedWrite(state, guard, 201, result);
       writeState(state);
       json(res, 201, result);
@@ -4251,7 +4251,7 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = claimLease(state, body);
     if (result.ok === false) return json(res, result.error === "repository_output_target_not_found" ? 404 : 409, result);
-    audit(state, "resource-broker", "lease_claim", `Lease:${result.lease.leaseId}`);
+    audit(state, guard.actor, "lease_claim", `Lease:${result.lease.leaseId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
@@ -4277,7 +4277,7 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = releaseLease(state, {...body, leaseId: leaseReleaseMatch[1]});
     if (result.ok === false) return json(res, result.error === "lease_not_found" ? 404 : 409, result);
-    audit(state, "resource-broker", "lease_release", `Lease:${result.lease.leaseId}`);
+    audit(state, guard.actor, "lease_release", `Lease:${result.lease.leaseId}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
     json(res, 200, result);
@@ -4288,7 +4288,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "artifact_register", `Artifact:${body.artifactId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = artifactRegister(state, body);
-    audit(state, "agent-runtime", "artifact_register", `Artifact:${result.artifact.artifactId}`);
+    audit(state, guard.actor, "artifact_register", `Artifact:${result.artifact.artifactId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
@@ -4299,7 +4299,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "permission_request_submit", `PermissionRequest:${body.requestId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = permissionRequestSubmit(state, body);
-    audit(state, "permission-gateway", "permission_request_submit", `PermissionRequest:${result.permissionRequest.requestId}`);
+    audit(state, guard.actor, "permission_request_submit", `PermissionRequest:${result.permissionRequest.requestId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
@@ -4343,7 +4343,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "execution_topology_plan", `ExecutionTopology:${body.topologyId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = createExecutionTopology(state, body);
-    audit(state, "scheduler", "execution_topology_plan", `ExecutionTopology:${result.topology.topologyId}`);
+    audit(state, guard.actor, "execution_topology_plan", `ExecutionTopology:${result.topology.topologyId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
@@ -4375,7 +4375,7 @@ async function handleApi(req, res) {
     // 同上：拓扑已到终态时回 409，而不是回 200 让后到者以为自己推进了它。
     if (result.alreadyTerminal) return json(res, 409, {error: "execution_topology_already_terminal", topology: result.topology});
     recomputeBarrierAfterResolve(state, existingTopology.taskGroupId);
-    audit(state, "orchestrator", "execution_topology_advance", `ExecutionTopology:${result.topology.topologyId}`, result.topology.status);
+    audit(state, guard.actor, "execution_topology_advance", `ExecutionTopology:${result.topology.topologyId}`, result.topology.status);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
     json(res, 200, result);
@@ -4386,7 +4386,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "derived_task_classify", `DerivedTaskRequest:${body.taskGroupId || "tg_runtime_management"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = classifyDerivedTask(state, body);
-    audit(state, "scheduler", "derived_task_classify", `DerivedTaskRequest:${result.roleId}`);
+    audit(state, guard.actor, "derived_task_classify", `DerivedTaskRequest:${result.roleId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
@@ -4397,7 +4397,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "review_plan_create", `ReviewPlan:${body.reviewPlanId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = reviewPlanCreate(state, body);
-    audit(state, "reviewer", "review_plan_create", `ReviewPlan:${result.reviewPlan.reviewPlanId}`);
+    audit(state, guard.actor, "review_plan_create", `ReviewPlan:${result.reviewPlan.reviewPlanId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
@@ -4408,7 +4408,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "review_bundle_register", `ReviewBundle:${body.reviewBundleId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = reviewBundleRegister(state, body);
-    audit(state, "reviewer", "review_bundle_register", `ReviewBundle:${result.reviewBundle.reviewBundleId}`);
+    audit(state, guard.actor, "review_bundle_register", `ReviewBundle:${result.reviewBundle.reviewBundleId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
@@ -4419,7 +4419,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "rule_source_resolve", `RuleSourceResolution:${body.resolutionId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = ruleSourceResolve(state, body);
-    audit(state, "rule-steward", "rule_source_resolve", `RuleSourceResolution:${result.ruleSourceResolution.resolutionId}`);
+    audit(state, guard.actor, "rule_source_resolve", `RuleSourceResolution:${result.ruleSourceResolution.resolutionId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
