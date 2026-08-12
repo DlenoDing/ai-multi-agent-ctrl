@@ -2303,6 +2303,34 @@ audit_result_literals.each do |value|
   errors << %(审计结果 "#{value}" 没有中文 —— 控制台审计日志会显示英文原值)
 end
 
+# 准入判决在控制台上的可读性：每个 whyThisCellNow 闭集 token，要么在 WHY_THIS_CELL_LABELS 里
+# 有中文，要么它同一处调用里的 reasonCode 已本地化（界面按这个顺序兜底）。两条都不满足 =
+# 人在台账里看到一串英文 token，而那一栏正是回答"我这个单元为什么不动"的地方。
+# 现有的出口完整性门只覆盖【派发的 blockedReason】，准入这一面一直没人守；
+# 这一段新加的两个 token（等额度 / 让路给更高优先级）正好落在这个缺口里。
+why_labels = app_js_source[/const WHY_THIS_CELL_LABELS = \{(.*?)\n\};/m, 1].to_s
+labelled = why_labels.scan(/^\s*([a-z_]+):/).flatten.to_set
+errors << "取不到 WHY_THIS_CELL_LABELS —— 下面这条在空转" if labelled.size < 5
+# 逐个 recordAdmissionDecision 调用取出这一处的 whyThisCellNow 与 reasonCode（三元两支都收）。
+admission_calls = core_source.scan(/recordAdmissionDecision\(state, \{(.*?)\}\);/m).flatten
+errors << "一个 recordAdmissionDecision 调用都没提取到 —— 本条在空转" if admission_calls.length < 10
+unreadable = []
+admission_calls.each do |call|
+  tokens = call.scan(/whyThisCellNow:\s*([^,]*(?:\?[^,]*:[^,]*)?)/).flatten.join(" ").scan(/"([a-z_]+)"/).flatten
+  next if tokens.empty?
+  # 第一版这里还接受"同一处的 reasonCode 已本地化"作为兜底 —— 而每一处的 reasonCode 都是
+  # 本地化的，于是这条判据【按构造永远为真】：删掉任何一个 token 的中文，门照样绿（变异验出来的）。
+  # 兜底在界面上确实存在，但那是退化显示：reasonCode 标签讲的是"哪一类原因"，
+  # token 讲的是"这个单元此刻卡在哪"，前者盖不住后者。判据因此只认 token 自己的中文。
+  tokens.each { |token| unreadable << token unless labelled.include?(token) }
+end
+unless unreadable.uniq.empty?
+  errors << %(准入判决 whyThisCellNow #{unreadable.uniq.join("、")} 既没有中文标签，) +
+            "同一处的 reasonCode 也没有本地化 —— 台账里那一栏会显示英文 token，" \
+            "而它正是回答\"我这个单元为什么不动\"的地方"
+end
+puts "准入判决可读性：#{admission_calls.length} 处调用、#{labelled.size} 个中文标签，逐个核对通过"
+
 # 手写的状态集合常量与 state-machines.yaml 是两个真相源，必然漂。判据：常量里的每个状态字面量
 # 都要在某台状态机里登记过；不在的必须逐个写明凭什么（登记制）。
 # 这一类本会话咬过三次：控制台提示里筛 "dispatched"（WorkItem 没有这个状态，那条分支永不成立）、

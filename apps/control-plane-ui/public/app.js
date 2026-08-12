@@ -471,7 +471,10 @@ const WHY_THIS_CELL_LABELS = {
   role_drift_guard_intercepted_dispatch: "角色偏移守卫拦截派发",
   cell_deferred_condition_window: "等待条件窗口（按环境独立延后）",
   cell_waiting_for_wip_capacity: "等在制品额度",
-  cell_yielding_to_higher_priority: "让路给更高优先级的单元"
+  cell_yielding_to_higher_priority: "让路给更高优先级的单元",
+  cell_held_for_human_confirmation: "等你在确认卡上定稿",
+  cell_held_for_human_plan_confirmation: "等你为拆分方案定稿",
+  cell_processing_error: "处理这个单元时出错（详见运行时问题）"
 };
 function admissionReasonLabel(decision) {
   const why = decision.whyThisCellNow;

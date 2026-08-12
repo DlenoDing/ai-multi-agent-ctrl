@@ -24,6 +24,7 @@ const GATEWAY = "apps/control-plane-ui/lib/agent-gateway.mjs";
 const PGSTORE = "apps/control-plane-ui/lib/pg-sync-store.mjs";
 const STORE = "apps/control-plane-ui/lib/state-store.mjs";
 const SERVER = "apps/control-plane-ui/server.mjs";
+const APP = "apps/control-plane-ui/public/app.js";
 
 // 每条 mutation：把守卫改坏，期望 contract-check 失败且输出里出现 expect 片段。
 const MUTATIONS = [
@@ -413,6 +414,48 @@ const MUTATIONS = [
     to: "",
     expect: "没有被裁回上限"
   },
+  // ── 非契约门的守卫。它们此前只在写下的当天被手工变异过一次，之后再没有任何东西
+  //    证明它们仍有判别力 —— 而本会话两次写出"按构造永远为真"的断言，都是靠变异才发现的。
+  {
+    name: "准入判决 token 必须有中文（台账里那一栏就是回答'为什么不动'的）",
+    file: APP,
+    gate: "specs",
+    from: '  cell_yielding_to_higher_priority: "让路给更高优先级的单元",',
+    to: '  ignored_key: "x",',
+    expect: "cell_yielding_to_higher_priority"
+  },
+  {
+    name: "状态集合常量不得含状态机查无此名的状态",
+    file: CORE,
+    gate: "specs",
+    from: 'export const RETIRED_NODE_STATUSES = new Set(["revoked"]);',
+    to: 'export const RETIRED_NODE_STATUSES = new Set(["revoked", "decommissioned"]);',
+    expect: "查无此名的状态：decommissioned"
+  },
+  {
+    name: "项目切换器必须能选到下发上限之外的项目",
+    file: APP,
+    gate: "console",
+    from: "return (state.projectIndex && state.projectIndex.length) ? state.projectIndex : visibleProjects();",
+    to: "return visibleProjects();",
+    expect: "静默切走"
+  },
+  {
+    name: "占额度的活自己卡在等人时，不许说会自动继续",
+    file: APP,
+    gate: "console",
+    from: "  const blocked = Number(wip.blocked || 0);",
+    to: "  const blocked = 0;",
+    expect: "不许说会自动继续"
+  },
+  {
+    name: "视图基底也要按项目过滤（否则监控页拿到全部项目的任务组）",
+    file: SERVER,
+    gate: "idle",
+    from: "projectTaskGroupsForView(sliceItems(scopeCollection(scoped.taskGroups), capped))",
+    to: "projectTaskGroupsForView(sliceItems(scoped.taskGroups, capped))",
+    expect: "混进来："
+  },
   {
     name: "集合 schema 覆盖：记录不得悄悄丢掉 schemaVersion",
     file: CORE,
@@ -678,10 +721,32 @@ function removeWorktrees(dirs) {
 // mutation.check 指名"该抓它的那条检查"时，只跑那一条。契约门的固定开销实测 0.1s，
 // 完整一遍 41.3s —— 另外 44 条检查对这条变异毫无判别力，只是陪跑，而守卫每加一条就更贵。
 // 没指名的条目照旧跑全量：这是能力，不是义务，漏填只是慢，不会让判据失真。
-function runContractCheck(workdir, only) {
+// 本门原先只驱动 contract-check，于是 validate-specs / 控制台门 / 空转门里的断言
+// 【从来没有自动化的判别力证明】——全靠人每次手工变异一次。而本会话两次写出"按构造永远为真"的
+// 断言（check 参数顺序写反、把一个恒真的兜底当成满足条件），两次都是靠"变异跑不出红"才发现的。
+// 手工验过一次不等于以后还成立：判据会随代码漂，而漂之后它只是安静地不再报红。
+// mutation.gate 指定要跑哪道门（默认契约门）；AIMAC_CONTRACT_ONLY 只对契约门有意义。
+const GATE_COMMANDS = {
+  contract: "scripts/contract-check.mjs",
+  console: "scripts/console-behaviour-check.mjs",
+  idle: "scripts/idle-tick-gate.mjs",
+  specs: "scripts/validate-specs.rb"
+};
+function gateInvocation(mutation, workdir) {
+  const key = mutation.gate || "contract";
+  const script = GATE_COMMANDS[key];
+  if (!script) throw new Error(`mutation ${mutation.name}: 未知的 gate "${key}"（可选：${Object.keys(GATE_COMMANDS).join("、")}）`);
+  const command = script.endsWith(".rb") ? "ruby" : "node";
+  const env = key === "contract" && mutation.check
+    ? {...process.env, AIMAC_CONTRACT_ONLY: mutation.check}
+    : process.env;
+  return {command, args: [join(workdir, script)], env};
+}
+
+function runContractCheck(workdir, mutation) {
+  const {command, args, env} = gateInvocation(mutation, workdir);
   return new Promise((resolve) => {
-    execFile("node", [join(workdir, "scripts/contract-check.mjs")],
-      {cwd: workdir, maxBuffer: 64 * 1024 * 1024, env: only ? {...process.env, AIMAC_CONTRACT_ONLY: only} : process.env},
+    execFile(command, args, {cwd: workdir, maxBuffer: 64 * 1024 * 1024, env},
       (error, stdout, stderr) => resolve({failed: Boolean(error), output: `${stdout || ""}${stderr || ""}`}));
   });
 }
@@ -715,7 +780,7 @@ async function judgeMutation(mutation, workdir) {
   writeFileSync(target, original.replace(mutation.from, mutation.to));
   let result = {failed: false, output: ""};
   try {
-    result = await runContractCheck(workdir, mutation.check);
+    result = await runContractCheck(workdir, mutation);
   } finally {
     writeFileSync(target, original); // 只动副本，真实工作区全程未被触碰
   }
@@ -741,7 +806,14 @@ async function runParallel(mutations) {
     dirs.push(dir);
   }
   process.on("exit", () => removeWorktrees(dirs));
-  const queue = [...mutations];
+  // 并行的前提是这道门【纯 CPU】。会起服务、并且带固定等待超时的门（空转门、崩溃门、并发写入门）
+  // 在 4 路并发下会因为资源竞争超时 —— 表现为"失败了但不是预期断言"，看起来像守卫失效，
+  // 实际是把测试环境本身压垮了。实测过一次：同一条变异单独跑是红在正确的断言上，并行跑就变了理由。
+  // 所以按门分两拨：契约门（纯 CPU）照旧并行，起服务的那几道排在最后串行跑，一次一个。
+  const SERIAL_GATES = new Set(["idle", "console", "specs"]);
+  const parallelQueue = mutations.filter((mutation) => !SERIAL_GATES.has(mutation.gate || "contract"));
+  const serialQueue = mutations.filter((mutation) => SERIAL_GATES.has(mutation.gate || "contract"));
+  const queue = [...parallelQueue];
   const failures = [];
   const checked = [];
   await Promise.all(dirs.map(async (dir) => {
@@ -754,6 +826,15 @@ async function runParallel(mutations) {
       if (failure) failures.push(failure); else checked.push(`- ${mutation.name}`);
     }
   }));
+  if (serialQueue.length) {
+    process.stdout.write(`mutation gate: ${serialQueue.length} 条走会起服务的门，改为串行（并行会把它们压超时）。\n`);
+    for (const mutation of serialQueue) {
+      if (mutation.skip) { checked.push(`- ${mutation.name}（跳过：${mutation.skip}）`); continue; }
+      const failure = await judgeMutation(mutation, dirs[0]);
+      process.stdout.write(`  · ${mutation.name} …\n`);
+      if (failure) failures.push(failure); else checked.push(`- ${mutation.name}`);
+    }
+  }
   removeWorktrees(dirs);
   return {failures, checked, workers};
 }
@@ -790,6 +871,14 @@ function checkAnchorsOnly() {
         + (occurrences ? "改不准被测的那一处" : "守卫已被改写而变异没跟上，这条守卫目前没有任何判别力证明"));
     }
     if (mutation.from === mutation.to) failures.push(`${mutation.name}: from 与 to 相同 —— 这条变异什么也没改坏`);
+    // 门名写错时，真跑起来会表现为"失败了但不是预期断言"——红是红了，但指向的方向完全不对。
+    // 在毫秒级的锚点体检里直接拦住，说清可选值。
+    if (mutation.gate && !GATE_COMMANDS[mutation.gate]) {
+      failures.push(`${mutation.name}: gate "${mutation.gate}" 不存在（可选：${Object.keys(GATE_COMMANDS).join("、")}）`);
+    }
+    if (mutation.check && (mutation.gate || "contract") !== "contract") {
+      failures.push(`${mutation.name}: check 只对契约门有意义，而这条指向 ${mutation.gate} 门 —— 它不会生效，留着会让人以为已经收窄了范围`);
+    }
     if (!mutation.expect) failures.push(`${mutation.name}: 没有 expect —— 只看退出码的话，任何一处偶然失败都会被当成"守卫有效"`);
   }
   if (failures.length) {
@@ -909,8 +998,8 @@ function runSerial(mutations = MUTATIONS) {
     let output = "";
     let passed = false;
     try {
-      execFileSync("node", [join(root, "scripts/contract-check.mjs")], {cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
-        env: mutation.check ? {...process.env, AIMAC_CONTRACT_ONLY: mutation.check} : process.env});
+      const invocation = gateInvocation(mutation, root);
+      execFileSync(invocation.command, invocation.args, {cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: invocation.env});
       passed = true; // 改坏了却还通过 => 测试没有判别力
     } catch (error) {
       output = `${error.stdout || ""}${error.stderr || ""}`;
