@@ -207,6 +207,9 @@ function checkWiring(probe) {
 /* ---------------- 断言 ---------------- */
 
 const failures = [];
+// 漏译扫描要用【这道门已经在用的】那几份状态，而不是我另编一份 —— 编出来的夹具只会覆盖
+// 我碰巧想到的那些枚举值。各段在构造好自己的状态之后往这里登记一条。
+const i18nScanStates = [];
 let checkCount = 0;
 function check(name, condition, detail) {
   checkCount += 1;
@@ -236,6 +239,7 @@ function check(name, condition, detail) {
     workSessions: [], closeBarriers: [], qualityGates: [], findings: [], humanConfirmationRequests: [],
     humanDirectives: [], truncatedCollections: [], fleet: {online: 0, total: 0}};
   const renderFor = (accountType) => {
+    i18nScanStates.push(["空部署", emptyState, {accountId: "u1", email: "a@b.c", accountType, displayName: "某人", organizationId: "org_default"}, null]);
     emptyProbe.renderFullPageWith(emptyState,
       {accountId: "u1", email: "a@b.c", accountType, displayName: "某人", organizationId: "org_default"},
       "", "proj-overview");
@@ -271,6 +275,7 @@ function check(name, condition, detail) {
   const admin = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
   const settingsText = (status) => {
     settingsProbe.setProjConfigStatus(status);
+    i18nScanStates.push(["新建项目", withProject, admin, "p1"]);
     settingsProbe.renderFullPageWith(withProject, admin, "p1", "proj-settings");
     return String(settingsRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
   };
@@ -311,6 +316,7 @@ function check(name, condition, detail) {
     truncatedCollections: [], fleet: {online: 0, total: 0}};
   const admin = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
   const overviewText = (fleet) => {
+    i18nScanStates.push(["有活没人干", {...stalled, fleet}, admin, "p1"]);
     overviewProbe.renderFullPageWith({...stalled, fleet}, admin, "p1", "proj-overview");
     return String(overviewRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
   };
@@ -760,6 +766,7 @@ function runPendingTruncationCase() {
     // 于是下了取消的人看到的字样和别人按的暂停完全一样，而这两种停能不能恢复并不相同。
     const pausedState = {...detailState,
       taskGroups: [{...baseGroup, goalExecutionStatus: "active_paused_by_freeze", pauseReason: "human_directive_cancel"}]};
+    i18nScanStates.push(["冻结暂停的任务组", pausedState, admin, "p1"]);
     const pausedHtml = probe.renderTaskGroupsWith(pausedState, admin, "p1", "tg1", fullProgress);
     check("冻结暂停要说清是什么原因停的",
       /human_directive_cancel/.test(pausedHtml),
@@ -1957,6 +1964,9 @@ await runErrorGuidanceCase();
       checkpoints: [], admissionDecisions: [], modelSelectionDecisions: [], sessionPlacementDecisions: [],
       truncatedCollections: []
     };
+    // 每种阻塞原因各登记一份：这一段本来就要逐个原因构造状态，正好是漏译扫描最需要的
+    // 那种"枚举值真的出现在某一屏上"的样本。
+    i18nScanStates.push([`阻塞:${reason}`, stateWithStuckDispatch, account, "p_d"]);
     const rendered = probe.renderMonitorWith(stateWithStuckDispatch, account, "p_d")
       .replace(/<!--[\s\S]*?-->/gu, "");
     // 同一原因换成"只有会话被停住、派发已终结"再验一次：合并这条提示的全部理由就在这里。
@@ -1991,6 +2001,61 @@ await runErrorGuidanceCase();
         + " —— 它不会自己好；若它其实是瞬态，请登记到 TRANSIENT 并写明为什么");
     }
   }
+}
+
+// ── 中文界面上不许出现英文枚举（用【真的】那份 t 渲染一遍） ──────────────────────────
+//
+// 这道门其余部分把 t 桩成恒等函数（断言按英文键匹配），于是它的一百多条断言【一次都没跑过
+// 真的翻译】。而漏译只在真的 t 上才看得见：i18n-zh 的 t 命中不了就原样返回英文键，
+// 只往浏览器控制台 warn 一条 —— 真正的用户不会去看那里。
+// 词表类的门（状态/错误码/原因码/审计动作/权限码）各自按权威来源核对，但它们都答不了
+// "这个值到底会不会出现在某一屏上"。这里换个方向：把页面渲染出来，把 t 的每一次未命中收下来。
+// 实测这套办法在真实数据上找出过授权列表里的四个英文权限码。
+{
+  const i18nSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
+  const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  // 生成的 id 也会被 t() 碰到（末段带数字），它们本来就没有中文，不算漏译。
+  const looksGenerated = (value) => /\d/u.test(String(value).split("_").pop() || "");
+  const misses = new Map();
+  // 一份状态建一次上下文、在里面把所有页面渲一遍：每页都新建的话，app.js 要被重新解析上百次。
+  const scanState = (label, state, account, projectId, pages) => {
+    const context = vm.createContext(makeContext(el("div")));
+    context.window = {scrollTo: () => {}, addEventListener: () => {}, removeEventListener: () => {}};
+    context.scrollTo = () => {};
+    vm.runInContext(i18nSource, context, {filename: "i18n-zh.js"});
+    const real = context.window.AIMAC_I18N;
+    if (!real || typeof real.t !== "function") throw new Error("漏译扫描: 没能加载真的 i18n —— 本段在空转");
+    context.t = real.t;
+    let pageId = "?";
+    context.console = {log: () => {}, error: () => {}, warn: (message) => {
+      const hit = /未映射的枚举值：(.+)$/u.exec(String(message));
+      if (!hit || looksGenerated(hit[1])) return;
+      if (!misses.has(hit[1])) misses.set(hit[1], new Set());
+      misses.get(hit[1]).add(`${label}/${pageId}`);
+    }};
+    vm.runInContext(appSource + PROBE_EPILOGUE, context, {filename: "app.js"});
+    const done = [];
+    for (const page of pages) {
+      pageId = page;
+      // 同一个上下文里 t 对每个未命中只 warn 一次，所以一条漏译只会记在最先碰到它的那一页上 ——
+      // 页面名只是线索，判据是"有没有漏译"，不是"漏在哪几页"。
+      context.__probe.renderFullPageWith(state, account, projectId, page);
+      done.push(`${label}/${page}`);
+    }
+    return done;
+  };
+  const scanned = [];
+  const pages = ["sys-overview", "sys-orgs", "sys-settings", "sys-accounts", "org-overview", "org-members",
+    "org-agents", "org-projects", "proj-overview", "tg", "review", "directives", "monitor", "proj-settings"];
+  for (const [label, state, account, projectId] of i18nScanStates) {
+    scanned.push(...scanState(label, state, account, projectId, pages));
+  }
+  if (scanned.length < 14) failures.push(`漏译扫描: 只渲染了 ${scanned.length} 个页面 —— 本段在空转`);
+  for (const [value, where] of misses) {
+    failures.push(`漏译扫描: 中文界面上会显示英文枚举「${value}」（出现在 ${[...where].slice(0, 3).join("、")}）`
+      + " —— 给它补中文，或者别把这个值直接交给 t()");
+  }
+  console.log(`漏译扫描：用真的 t 渲染了 ${scanned.length} 个页面，未命中 ${misses.size} 个`);
 }
 
 if (failures.length) {

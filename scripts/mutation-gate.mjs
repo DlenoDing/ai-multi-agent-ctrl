@@ -427,6 +427,24 @@ const MUTATIONS = [
     expect: "没有先 recycleExpiredClaims"
   },
   {
+    name: "漏译扫描：真的 t 渲染一遍，界面上不许出现英文枚举",
+    file: I18N,
+    gate: "console",
+    from: '    active_paused_by_freeze: "已被冻结暂停",',
+    to: "",
+    expect: "中文界面上会显示英文枚举"
+  },
+  {
+    // 词表类的门各自按权威来源核对，但答不了"这个值会不会出现在某一屏上"。这一段是唯一
+    // 从渲染结果反向看的判据，它自己空转了就没有任何东西能发现 —— 所以空转必须报红。
+    name: "漏译扫描：加载不到真的 i18n 时必须报空转",
+    file: CONSOLE_GATE,
+    gate: "console",
+    from: "    const real = context.window.AIMAC_I18N;",
+    to: "    const real = null;",
+    expect: "本段在空转"
+  },
+  {
     name: "权限码本地化：授权列表里的权限码要有中文",
     file: APP,
     gate: "specs",

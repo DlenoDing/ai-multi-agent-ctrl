@@ -1643,7 +1643,10 @@ function renderSysSettings() {
       <dl class="kv-list">
         <dt>运行档案</dt><dd class="mono">${esc(runtime.profileId || "-")}</dd>
         <dt>运行状态</dt><dd>${badge(runtime.status)}</dd>
-        <dt>执行档位</dt><dd>${esc(executionProfileLabel(runtime.executionProfile || "-"))}</dd>
+        ${/* 兜一个 "-" 进 executionProfileLabel，它会拿这个显示文本去查词条、查不到再原样吐出来：
+              结果看着对，代价是开发期的"未映射枚举值"告警里多一条噪声，把真正漏译的埋掉。
+              没有取值时让标签函数自己走 t(undefined)，它本来就渲染成 "-"。 */""}
+        <dt>执行档位</dt><dd>${esc(executionProfileLabel(runtime.executionProfile))}</dd>
         <dt>后台自治</dt><dd>${runtime.autonomousOrchestrator?.enabled
           ? `每 ${esc(Math.round((runtime.autonomousOrchestrator.intervalMs || 0) / 1000))} 秒推进一次${orchestratorHealthText(runtime.autonomousOrchestrator)}`
           : `<span class="warn-text">已关闭：后台不推进任何东西 —— 人提交的指令会一直停在待处理，派发不会被领走，关闭门不会重算</span>`}</dd>
