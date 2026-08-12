@@ -1299,6 +1299,44 @@ await runErrorGuidanceCase();
   }
 }
 
+// 人把方案「交回 AI 再分析」之后，如果一个在线 agent 都没有，这个等待永远不会结束。
+// 而人工确认页上此前只写着"等待 AI 再分析"—— 人就坐在那儿等一件不会发生的事。
+// （舰队掉线的提示原先只挂在监控页，而这一页才是他等的地方。）
+{
+  const account = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const baseState = () => ({
+    schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    organizations: [{orgId: "org_default", name: "组织", status: "active"}],
+    projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: []}],
+    humanConfirmationRequests: [{requestId: "hcr1", projectId: "p1", taskGroupId: "tg1", status: "pending",
+      decisionType: "task_split", decisionClass: "major", round: 2, awaitingAiAnalysis: true,
+      summary: "交回 AI 再分析的卡", options: [{optionId: "a", label: "方案甲"}], createdAt: "2026-08-12T00:00:00Z"}],
+    agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], findings: [],
+    humanDirectives: [], truncatedCollections: [], fleet: {online: 0, total: 1}
+  });
+  const probe = loadConsole(el("div"));
+  const stalled = probe.renderReviewWith(baseState(), account);
+  check("等 AI 再分析而没有在线 agent 时，要在人工确认页上说出来",
+    /没有任何在线的 agent 节点/.test(stalled),
+    "卡片停在'等待 AI 再分析'，而没有任何 agent 能回答 —— 人会一直等下去");
+  check("要给出不必干等的出路",
+    /直接在这里定稿或打回/.test(stalled),
+    "只说没人回答，不说人现在能做什么 —— 等于把他留在原地");
+
+  const online = baseState();
+  online.fleet = {online: 1, total: 1};
+  check("有在线 agent 时不挂这条提示",
+    !/没有任何在线的 agent 节点/.test(probe.renderReviewWith(online, account)),
+    "有 agent 在线还说没有 —— 常亮的告警等于没有告警");
+
+  const notWaiting = baseState();
+  notWaiting.humanConfirmationRequests[0].awaitingAiAnalysis = false;
+  check("没有卡在等 AI 时不挂这条提示",
+    !/没有任何在线的 agent 节点/.test(probe.renderReviewWith(notWaiting, account)),
+    "没有人在等 AI 却提示 agent 掉线 —— 这一页不该替监控页操心");
+}
+
 // 会话过期不该让人丢掉正在写的东西。
 //
 // 会话是【绝对过期】的（登录时定死一小时，不续期），而人在打字时轮询是暂停的 ——
