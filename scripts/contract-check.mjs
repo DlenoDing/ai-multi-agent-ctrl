@@ -4815,7 +4815,9 @@ function verifyGrantScopeCoversObjectsNamedOnlyById(output) {
 function verifyEveryCloseGateHasHumanGuidance(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});
-  runAutonomousCycle(state, {root, mode: "all"});
+  // 门的清单来自 gateFailures 的键，与"跑没跑过编排"无关 —— 实测跑一轮和不跑得到的是同样 26 道。
+  // 这里原先跑了一整轮，纯属多余。（去掉之后本门总时长没变：那 20 秒是【进程级一次性】的
+  // 技能源同步，谁先跑第一个编排谁背 —— 我一开始按"谁耗时长"归因，归错了对象。）
   const gates = computeCloseBarrier(state, "tg_runtime_management", {root}).requiredGates || [];
   const appSource = readFileSync(resolve(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const at = appSource.indexOf("const CLOSE_GATE_GUIDE = {");
