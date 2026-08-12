@@ -1453,7 +1453,23 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
            dispatch.projectId === scopeProjectId && dispatch.status === "blocked").length}
       : null,
     agents: sliceItems(scoped.agents, capped),
-    projects: sliceItems(scoped.projects, capped),
+    // 项目列表被上限截断时，窗口之外的项目在界面上【完全选不到】：切换器就是拿这个列表渲染的
+    // <select>。而且更糟 —— 控制台发现自己保存的项目不在列表里，会静默切到第一个项目，
+    // 于是一个在第 95 个项目上工作的人，刷新之后人就在第 1 个项目里，没有任何提示。
+    // 服务端这边其实是对的：带上 projectId 时它照样按那个项目切数据。缺的只是"选得到"。
+    // 两件事分开办：
+    // 1) 当前请求的这个项目，它的完整记录一定要在（否则页面拿不到名称/进度）；
+    // 2) 额外给一份只有 id/名称/状态的全量索引，供切换器列出全部项目。
+    //    只在真的被截断时才带上 —— 项目数不到上限的部署一分钱都不用付。
+    projects: (() => {
+      const window = sliceItems(scoped.projects, capped);
+      if (!scopeProjectId || window.some((project) => project.id === scopeProjectId)) return window;
+      const requested = (scoped.projects || []).find((project) => project.id === scopeProjectId);
+      return requested ? [requested, ...window.slice(0, Math.max(0, window.length - 1))] : window;
+    })(),
+    ...((scoped.projects || []).length > capped
+      ? {projectIndex: (scoped.projects || []).map((project) => ({id: project.id, name: project.name, status: project.status}))}
+      : {}),
     // 任务组把全部工作单元嵌在里面，而它在【基底】里 —— 每个视图、每次请求都带上。
     // 实测 3000 单元时仅这一项就 276KB，且随规模线性涨。控制台在列表页只用它做一个计数，
     // 明细页的工作项另有专用端点 /api/task-groups/:id/progress。

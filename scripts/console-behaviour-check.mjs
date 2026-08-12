@@ -162,6 +162,11 @@ globalThis.__probe = {
   restoreDraft: () => { const ok = restoreDraftAfterRelogin(); return {ok, page, projectId: currentProjectId, pending: pendingFormRestore}; },
   renderFullPageWith: (nextState, account, projectId, pageId) => { state = nextState; currentAccount = account; currentProjectId = projectId; page = pageId; render(); },
   renderTaskGroupsWith: (nextState, account, projectId, detailId, detail) => { state = nextState; currentAccount = account; currentProjectId = projectId; expandedTaskGroupId = detailId; if (detail !== undefined) tgDetail = detail; return renderTaskGroups(); },
+  selectProjectWith: (nextState, account, projectId) => {
+    state = nextState; currentAccount = account; currentProjectId = projectId;
+    ensureProjectSelection();
+    return {kept: currentProjectId, options: selectableProjects().map((item) => item.id)};
+  },
   setFetch: (fn) => { globalThis.fetch = fn; },
   api: (path, options) => api(path, options)
 };
@@ -1404,6 +1409,42 @@ await runErrorGuidanceCase();
     "两条提示同时出现，人会以为是两个毛病 —— 零节点时的真正出口是接节点，不是等额度");
 }
 
+// 项目多到超过下发上限时，窗口之外的项目在界面上必须仍然选得到。
+// 切换器是拿下发的项目列表直接渲染的 <select>：没有额外的索引，第 81 个之后的项目
+// 就只能在后端存在而在界面上不存在 —— 而后端明明支持按它取数（实测带上它的 projectId
+// 照样正确返回它的任务组）。更糟的是控制台发现"保存的项目不在列表里"会静默切到第一个，
+// 于是一个在第 95 个项目上工作的人刷新之后人在第 1 个项目里，一句提示都没有。
+{
+  const account = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const probe = loadConsole(el("div"));
+  const many = (count, indexed) => {
+    const projects = [];
+    for (let i = 0; i < count; i += 1) projects.push({id: `p${i}`, name: `项目${i}`, organizationId: "org_default", status: "active", members: []});
+    return {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {}, organizations: [],
+      projects: projects.slice(0, 80),
+      ...(indexed ? {projectIndex: projects.map((x) => ({id: x.id, name: x.name, status: x.status}))} : {}),
+      taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], findings: [],
+      humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: ["projects"], fleet: {online: 1, total: 1}
+    };
+  };
+  const withIndex = probe.selectProjectWith(many(100, true), account, "p95");
+  check("项目多到超过下发上限时，窗口之外的项目仍然选得到（不许把人静默切走）",
+    withIndex.kept === "p95",
+    `选中 p95 后停在 ${withIndex.kept}｜可选项目 ${withIndex.options.length} 个`);
+  check("切换器要列出全部项目，而不只是下发了完整记录的那一批",
+    withIndex.options.length === 100,
+    `切换器里有 ${withIndex.options.length} 个项目（共 100 个）`);
+  const withoutIndex = probe.selectProjectWith(many(100, false), account, "p95");
+  check("没有索引时才允许回退到第一个项目（说明这条断言测的是索引本身，不是恒真）",
+    withoutIndex.kept === "p0",
+    `没有 projectIndex 时停在 ${withoutIndex.kept}`);
+  const small = probe.selectProjectWith({...many(5, false), projects: [{id: "p3", name: "三", status: "active"}]}, account, "p3");
+  check("项目数没到上限时不需要索引，行为不变",
+    small.kept === "p3" && small.options.length === 1,
+    `停在 ${small.kept}｜可选 ${small.options.length} 个`);
+}
+
 // 人把方案「交回 AI 再分析」之后，如果一个在线 agent 都没有，这个等待永远不会结束。
 // 而人工确认页上此前只写着"等待 AI 再分析"—— 人就坐在那儿等一件不会发生的事。
 // （舰队掉线的提示原先只挂在监控页，而这一页才是他等的地方。）
@@ -1640,6 +1681,10 @@ await runErrorGuidanceCase();
   }
   const delivered = new Set([
     ...[...baseBlock.matchAll(/^\s{4}([A-Za-z_][A-Za-z0-9_]*):/gmu)].map((match) => match[1]),
+    // 条件展开也是下发：...(cond ? {projectIndex: ...} : {})。只认行首缩进的键会把这一整类
+    // 判成"从不下发"，于是一个真的在下发的字段被报成假红。只匹配 `? {键:`，
+    // 不泛化到所有嵌套对象 —— 那会把 fleet:{online} 里的 online 也算成下发，反过来遮住真缺口。
+    ...[...baseBlock.matchAll(/\?\s*\{([A-Za-z_][A-Za-z0-9_]*):/gu)].map((match) => match[1]),
     ...[...viewBlock.matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"/gu)].map((match) => match[1]),
     ...[...serverSource.matchAll(/scoped\.([A-Za-z_][A-Za-z0-9_]*)/gu)].map((match) => match[1]),
     ...[...serverSource.matchAll(/\bbase\.([A-Za-z_][A-Za-z0-9_]*)\s*=/gu)].map((match) => match[1]),

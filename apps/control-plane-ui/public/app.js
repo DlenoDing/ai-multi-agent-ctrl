@@ -1006,12 +1006,21 @@ function visibleProjects() {
   return state.projects || [];
 }
 
+// 切换器要能列出【全部】项目。完整记录有上限（每条 583 字节，全量下发会很贵），
+// 所以超过上限时服务端另给一份只有 id/名称/状态的索引 —— 没有它，窗口之外的项目
+// 在界面上根本选不到，而后端明明支持按它取数。
+function selectableProjects() {
+  return (state.projectIndex && state.projectIndex.length) ? state.projectIndex : visibleProjects();
+}
+
 function currentProject() {
   return visibleProjects().find((project) => project.id === currentProjectId) || null;
 }
 
 function ensureProjectSelection() {
-  const projects = visibleProjects();
+  // 按【可选集合】判断，不按下发的完整记录：否则保存的项目一旦落在窗口之外，
+  // 这里会认为它不存在，把人静默切到第一个项目 —— 人只会觉得"我的项目怎么变了"。
+  const projects = selectableProjects();
   if (!projects.length) {
     currentProjectId = "";
     return;
@@ -1366,13 +1375,13 @@ function render() {
       })()
   ).join("");
 
-  const showSwitcher = PROJECT_PAGES.has(page) && visibleProjects().length > 0;
+  const showSwitcher = PROJECT_PAGES.has(page) && selectableProjects().length > 0;
   const switcherHtml = showSwitcher
     ? `
       <div class="project-switch">
         <span>当前项目</span>
         <select id="project-switcher" aria-label="当前项目">
-          ${visibleProjects().map((project) => `<option value="${esc(project.id)}" ${project.id === currentProjectId ? "selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}
+          ${selectableProjects().map((project) => `<option value="${esc(project.id)}" ${project.id === currentProjectId ? "selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}
         </select>
       </div>
     `
