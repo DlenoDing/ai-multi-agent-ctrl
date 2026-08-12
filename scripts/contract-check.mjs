@@ -111,6 +111,7 @@ import {
   replayDlqEntry,
   sweepCommandBus,
   commitWithRuntimeIdentity,
+  appendHumanGuidance,
 } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import {
   ackAgentControlCommand,
@@ -244,6 +245,7 @@ run(verifyExpiredConfirmationLeavesNoStaleParking);
 run(verifyPermissionOutcomeReleasesTheSession);
 run(verifyShardRoundTripKeepsEveryRecord);
 run(verifyCommitWorksWithoutConfiguredIdentity);
+run(verifyHumanGuidanceIsBoundedAndHonest);
 run(verifyOrchestrationDoesNotShellOutPerCell);
 run(verifyWipCapacityBackpressure);
 run(verifyHighPriorityCellsAreNotStarvedByEarlierGroups);
@@ -306,6 +308,26 @@ if (errors.length) {
 // 永久写进那个仓库 —— 在别人的仓库里留配置是我们不该做的事，而且常见路径上白付两次子进程。
 // 判据落在"能测得到"的那个性质上：本机 git 在没有配置身份时会自动推导（user@hostname），
 // 所以"提交会失败"造不出来；但"仓库的 local 配置多了两条"是原写法必然留下的痕迹。
+// 人工补充要求只增不减：三处指令都往 humanGuidance 追加，全仓没有一处删除，而它会原样进
+// 【每一次派发】的内容包。既不能无界增长（几个月前的一句话永远在指挥今天的 agent，
+// 而且每次派发都要背着它），也不能悄悄丢掉人下达的要求 —— 所以留最近的若干条 + 丢掉的记个数。
+function verifyHumanGuidanceIsBoundedAndHonest(output) {
+  const taskGroup = {id: "tg_guidance", humanGuidance: []};
+  for (let index = 0; index < 250; index += 1) {
+    appendHumanGuidance(taskGroup, {directiveRef: `hd_${index}`, text: `要求 ${index}`, addedAt: "2026-08-01T00:00:00.000Z"});
+  }
+  if (taskGroup.humanGuidance.length > 200) {
+    output.push(`人工补充要求没有上限（${taskGroup.humanGuidance.length} 条）—— 它会进入每一次派发，无界增长等于每个 agent 每次都要背着它`);
+  }
+  if (Number(taskGroup.humanGuidanceDroppedCount || 0) !== 50) {
+    output.push(`补充要求被丢掉了 ${250 - taskGroup.humanGuidance.length} 条，报数却是 ${taskGroup.humanGuidanceDroppedCount ?? "无"} —— 悄悄丢掉人下达的要求`);
+  }
+  // 留下来的必须是【最近的】：丢早的留晚的，反过来就是"新要求进不去"。
+  if (taskGroup.humanGuidance[taskGroup.humanGuidance.length - 1]?.text !== "要求 249") {
+    output.push(`补充要求超上限后保留的不是最近的那些（末条为 ${taskGroup.humanGuidance[taskGroup.humanGuidance.length - 1]?.text}）`);
+  }
+}
+
 function verifyCommitWorksWithoutConfiguredIdentity(output) {
   const repo = mkdtempSync(join(tmpdir(), "aimac-noident-"));
   const env = {...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null"};

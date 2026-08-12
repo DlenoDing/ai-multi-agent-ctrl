@@ -2258,6 +2258,16 @@ function renderTaskGroups() {
           <span>工作项：${esc(taskGroup.workItemCount ?? (taskGroup.workItems || []).length)}</span>
           <span>更新时间：${fmtTime(taskGroup.updatedAt)}</span>
         </div>
+        ${/* 人工补充要求会原样进【每一次派发】的内容包，一直指挥后续所有 agent，而此前界面上
+              一处都不渲染：人既看不到自己（或同事）当初加了什么，也就无从判断该不该再加一条。
+              超出保留上限而丢掉的条数也要一并说出来。 */""}
+        ${(taskGroup.humanGuidance || []).length ? `
+        <details class="record">
+          <summary>人工补充要求（${(taskGroup.humanGuidance || []).length} 条${Number(taskGroup.humanGuidanceDroppedCount || 0) ? `，另有 ${esc(taskGroup.humanGuidanceDroppedCount)} 条更早的已超出保留上限` : ""}）—— 它们会进入之后每一次派发</summary>
+          ${(taskGroup.humanGuidance || []).slice(-20).reverse().map((item) => `
+            <div class="record-meta"><span>${fmtTime(item.addedAt)}</span><span>${esc(item.text || "")}</span></div>
+          `).join("")}
+        </details>` : ""}
         <div class="button-row">
           <button class="secondary-button" data-action="tg-detail" data-task="${esc(taskGroup.id)}">${expanded ? "收起详情" : "查看详情"}</button>
           ${canControl ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="pause">暂停</button>

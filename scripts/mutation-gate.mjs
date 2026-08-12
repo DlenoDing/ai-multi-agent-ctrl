@@ -427,6 +427,30 @@ const MUTATIONS = [
     expect: "没有先 recycleExpiredClaims"
   },
   {
+    name: "人工补充要求要有上限（否则每次派发都背着它）",
+    check: "verifyHumanGuidanceIsBoundedAndHonest",
+    file: CORE,
+    from: "  taskGroup.humanGuidance = next.slice(-HUMAN_GUIDANCE_LIMIT);",
+    to: "  taskGroup.humanGuidance = next;",
+    expect: "没有上限"
+  },
+  {
+    name: "补充要求被丢掉就必须报数",
+    check: "verifyHumanGuidanceIsBoundedAndHonest",
+    file: CORE,
+    from: "    taskGroup.humanGuidanceDroppedCount = Number(taskGroup.humanGuidanceDroppedCount || 0) + (next.length - HUMAN_GUIDANCE_LIMIT);",
+    to: "",
+    expect: "悄悄丢掉人下达的要求"
+  },
+  {
+    name: "人工补充要求要在任务组页看得见",
+    file: APP,
+    gate: "console",
+    from: "        ${(taskGroup.humanGuidance || []).length ? `",
+    to: "        ${false ? `",
+    expect: "任务组页不显示人工补充要求"
+  },
+  {
     name: "运行时提交不得改用户仓库的 git 配置",
     check: "verifyCommitWorksWithoutConfiguredIdentity",
     file: CORE,

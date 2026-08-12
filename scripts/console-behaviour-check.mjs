@@ -771,6 +771,21 @@ function runPendingTruncationCase() {
     check("冻结暂停要说清是什么原因停的",
       /human_directive_cancel/.test(pausedHtml),
       "任务组被冻结却不说停因 —— 人工指令的暂停与取消停在同一个状态上，界面上分不出是哪一种");
+    // 人工补充要求会进入之后每一次派发、一直指挥所有 agent，而此前界面上一处都不渲染：
+    // 人看不到自己（或同事）当初加了什么，也就无从判断该不该再加一条、或者为什么 agent 一直
+    // 绕开某件事。超出保留上限而被丢掉的条数也要说出来 —— 悄悄丢掉人下达的要求是不能接受的。
+    const guidanceState = {...detailState, taskGroups: [{...baseGroup,
+      humanGuidance: [{text: "先不要动数据库结构", addedAt: "2026-08-01T00:00:00.000Z"}], humanGuidanceDroppedCount: 3}]};
+    const guidanceHtml = probe.renderTaskGroupsWith(guidanceState, admin, "p1", "tg1", fullProgress);
+    check("人工补充要求要看得见",
+      /先不要动数据库结构/.test(guidanceHtml),
+      "任务组页不显示人工补充要求 —— 它会进入之后每一次派发，人却看不到自己当初加了什么");
+    check("被丢掉的补充要求要报数",
+      /另有 3 条更早的/.test(guidanceHtml),
+      "补充要求超出上限被丢掉了却不报数 —— 人以为自己下达的要求都还在");
+    check("没有补充要求时不挂这一块",
+      !/人工补充要求/.test(probe.renderTaskGroupsWith(detailState, admin, "p1", "tg1", fullProgress)),
+      "没有补充要求也渲染那一块 —— 常亮的区块等于没有区块");
     check("没有停因时不挂那个标记",
       !/停因/.test(probe.renderTaskGroupsWith(detailState, admin, "p1", "tg1", fullProgress)),
       "没有 pauseReason 也挂停因标记 —— 常亮的标记等于没有标记");

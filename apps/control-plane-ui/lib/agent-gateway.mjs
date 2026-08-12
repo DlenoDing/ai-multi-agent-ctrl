@@ -1389,7 +1389,13 @@ export function buildExecutionContentBundle(state, node, sessionId, options = {}
     .filter((item) => item.taskGroupId === taskGroup.id && ["answered", "consumed"].includes(item.status))
     .map((item) => ({requestId: item.requestId, question: item.question?.summary, selectedOptionId: item.decision?.selectedOptionId, selectedLabel: item.decision?.selectedLabel, inputText: item.decision?.inputText}));
   pushEntry("task/confirmations.json", "task", "task", answeredConfirmations.length ? JSON.stringify(answeredConfirmations, null, 2) : "", `TaskGroup:${taskGroup.id}`);
-  const guidance = (taskGroup.humanGuidance || []).map((item) => `- ${item.text}`).join("\n");
+  // 补充要求有上限（见 core 的 appendHumanGuidance）。丢掉过就必须在包里说出来 ——
+  // agent 拿到的是一份"人的全部要求"，少了几条而不作声，它会按不完整的要求去做。
+  const guidanceDropped = Number(taskGroup.humanGuidanceDroppedCount || 0);
+  const guidance = [
+    ...(taskGroup.humanGuidance || []).map((item) => `- ${item.text}`),
+    ...(guidanceDropped ? [`- （另有 ${guidanceDropped} 条更早的补充要求已超出保留上限，不在本包内；需要时到任务组页查看历史指令）`] : [])
+  ].join("\n");
   const contextText = [
     `# 任务上下文`,
     `任务组：${taskGroup.id}（${taskGroup.phase || taskGroup.status || ""}）`,

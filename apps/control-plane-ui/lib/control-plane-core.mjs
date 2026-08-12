@@ -4227,6 +4227,20 @@ function ensureLease(state, repositoryTarget, holderRef = "orchestrator", taskCo
   return lease;
 }
 
+// 人工补充要求是【只增不减】的：三处指令都往这里追加，全仓没有任何一处删除。
+// 它会原样进【每一次派发】的内容包，所以它既是状态体积，也是每个 agent 每次都要读的上下文。
+// 与 blockers 同规：留住最近的若干条，丢掉的记个数 —— 悄悄丢掉人下达的要求是不能接受的，
+// 但让它无界增长同样不行（那等于几个月前的一句话永远在指挥今天的 agent）。
+const HUMAN_GUIDANCE_LIMIT = 200;
+export function appendHumanGuidance(taskGroup, entry) {
+  const next = [...(taskGroup.humanGuidance || []), entry];
+  if (next.length > HUMAN_GUIDANCE_LIMIT) {
+    taskGroup.humanGuidanceDroppedCount = Number(taskGroup.humanGuidanceDroppedCount || 0) + (next.length - HUMAN_GUIDANCE_LIMIT);
+  }
+  taskGroup.humanGuidance = next.slice(-HUMAN_GUIDANCE_LIMIT);
+  return taskGroup.humanGuidance;
+}
+
 export function recomputeTaskGroup(taskGroup) {
   // 重算每拍都跑。它此前无条件刷新 updatedAt，于是【什么都没发生】的一拍也把所有任务组标成"刚更新"：
   // 人按最近更新排序看到的全是噪声，真正动过的那个反而认不出来。
@@ -5596,7 +5610,7 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
         }
         directive.appliedActions.push({action: "task_group_cancel_pending_dispatches", ref: `TaskGroup:${taskGroup.id}`});
       } else if (directive.directiveType === "add_requirement" && taskGroup) {
-        taskGroup.humanGuidance = [...(taskGroup.humanGuidance || []), {directiveRef: directive.directiveId, text: directive.instruction, addedAt: at}];
+        appendHumanGuidance(taskGroup, {directiveRef: directive.directiveId, text: directive.instruction, addedAt: at});
         const openWorkItem = (taskGroup.workItems || []).find((item) => !["verified", "closed", "superseded"].includes(item.status));
         if (openWorkItem && directive.instruction) {
           openWorkItem.requirements = unique([...(openWorkItem.requirements || []), directive.instruction]);
@@ -5618,7 +5632,7 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
           workItem.priorityHint = priorityHint;
           workItem.updatedAt = at;
         }
-        taskGroup.humanGuidance = [...(taskGroup.humanGuidance || []), {directiveRef: directive.directiveId, text: `优先级调整：${directive.instruction}`, addedAt: at}];
+        appendHumanGuidance(taskGroup, {directiveRef: directive.directiveId, text: `优先级调整：${directive.instruction}`, addedAt: at});
         directive.appliedActions.push({action: "task_group_priority_adjusted", ref: `TaskGroup:${taskGroup.id}`, workItemCount: priorityTargets.length});
       } else if (directive.directiveType === "resolve_decision" && taskGroup) {
         // The operator's decision on a needs_decision cell — the actuator that resolves the
@@ -5669,7 +5683,7 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
         }
         if (!targets.length) directive.appliedActions.push({action: "no_needs_decision_work_item", ref: `TaskGroup:${taskGroup.id}`});
       } else if (taskGroup) {
-        taskGroup.humanGuidance = [...(taskGroup.humanGuidance || []), {directiveRef: directive.directiveId, text: directive.instruction, addedAt: at}];
+        appendHumanGuidance(taskGroup, {directiveRef: directive.directiveId, text: directive.instruction, addedAt: at});
         directive.appliedActions.push({action: "task_group_guidance_appended", ref: `TaskGroup:${taskGroup.id}`});
       } else {
         directive.appliedActions.push({action: "recorded_without_task_group", ref: `Project:${directive.projectId}`});
