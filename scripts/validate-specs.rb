@@ -2317,6 +2317,18 @@ audit_result_literals.each do |value|
   errors << %(审计结果 "#{value}" 没有中文 —— 控制台审计日志会显示英文原值)
 end
 
+# 控制命令的责任人不能靠兜底猜。applyTaskGroupRuntimeControl 里有个
+# `options.actor || "ui-console-service"`：现有两处调用都传了 guard.actor，所以它今天不可达，
+# 但它正是"下一个调用方忘了传"时的静默出口 —— 命令会记在一个服务名下，问责链断在这里。
+# 我试过把兜底改成抛错，但那条分支要"派发正被某节点执行"才走得到，e2e 一次都没经过 ——
+# 未经验证的抛错比静默兜底更危险（用潜在的错记，换来潜在的崩溃）。所以改成静态判据：
+# 每一处调用都必须显式传 actor。这条不需要运行到那个分支就能守住。
+control_calls = server_source.scan(/applyTaskGroupRuntimeControl\(state, [^;]*?\{([^}]*)\}/m).flatten
+errors << "找不到 applyTaskGroupRuntimeControl 的调用 —— 本条在空转" if control_calls.length < 2
+control_calls.each_with_index do |args, index|
+  errors << "applyTaskGroupRuntimeControl 第 #{index + 1} 处调用没有显式传 actor —— 控制命令会记在服务名下，问责链断在这里" unless args.include?("actor:")
+end
+
 # 版本冲突这条消息必须与产品的真实行为一致。原文是"请刷新后把你的修改重做一遍" ——
 # 而提交失败时表单内容是被回填保住的（多行规则编辑器也有专门的门守着），不必重打；
 # 但只说"内容还在"同样不够：版本号仍是旧的，不刷新就再点保存，还是同一个 409。
