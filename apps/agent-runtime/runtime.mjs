@@ -45,7 +45,43 @@ function installChildReaper() {
 // URL，argv[1] 是普通路径，安装目录里只要有空格或非 ASCII 就对不上 —— 那样 bootstrap 会静默地
 // 什么都不做，而安装脚本看起来一切正常。这一条是被远程 agent 端到端跑出来的。
 const invokedPath = process.argv[1] ? (() => { try { return realpathSync(process.argv[1]); } catch { return process.argv[1]; } })() : "";
-if (invokedPath && invokedPath === realpathSync(fileURLToPath(import.meta.url))) await main();
+if (invokedPath && invokedPath === realpathSync(fileURLToPath(import.meta.url))) {
+  // 装 agent 的人是在【自己的机器上】跑一条命令。失败时原样抛出去，他看到的是一段 Node 崩溃栈
+  // 加一句 "status: 401" —— 实测入网票写错就是这样。这里把控制面已经说清楚的话翻出来，
+  // 崩溃栈留给 AIMAC_AGENT_DEBUG=1。控制面的报文本身是带信息的（join_token_role_scope_mismatch
+  // 会附上 allowedRoles / rejected），所以这里只做"翻译 + 指路"，不重新发明理由。
+  try {
+    await main();
+  } catch (error) {
+    console.error(`\n安装/接入失败：${explainAgentFailure(error)}`);
+    if (process.env.AIMAC_AGENT_DEBUG === "1") console.error(error);
+    else console.error("（要看完整堆栈：AIMAC_AGENT_DEBUG=1 重跑一次）");
+    process.exit(1);
+  }
+}
+
+// 把控制面回的错误码翻成一句人话 + 下一步。认不出的照原样带出来，不吞。
+function explainAgentFailure(error) {
+  const code = String(error?.message || "").split(":")[0].trim();
+  const status = error?.status;
+  const detail = String(error?.message || error || "").slice(0, 200);
+  const known = {
+    join_token_invalid: "这张入网票不对（或已经不在服务端了）—— 找控制面管理员在「AI 智能体」页重新签发一张",
+    join_token_expired: "这张入网票已经过期 —— 找控制面管理员重新签发",
+    join_token_consumed: "这张入网票已经被用过了（一次性）—— 重新签发一张，别复用",
+    join_token_not_active: "这张入网票已被吊销 —— 找控制面管理员确认后重新签发",
+    join_token_must_be_one_time: "这张票不是一次性票，服务端拒绝用它注册 —— 重新签发",
+    join_token_node_name_mismatch: "节点名与签发这张票时指定的不一致 —— 用 --node-name 改成票上那个名字",
+    join_token_role_scope_mismatch: "要的角色超出了这张票允许的范围 —— 报文里的 allowedRoles 是可选集，用 --roles 改到它之内",
+    node_name_required: "缺节点名 —— 加 --node-name",
+    agent_node_not_active: "这个节点在控制面上已经不是可用状态（可能被吊销）—— 找管理员确认",
+    ECONNREFUSED: "连不上控制面 —— 确认 --server 的地址和端口，以及控制面确实在跑"
+  };
+  const hit = known[code] || known[error?.code];
+  if (hit) return `${hit}\n（服务端原话：${detail}）`;
+  if (status === 401 || status === 403) return `控制面拒绝了这次接入（HTTP ${status}）：${detail}`;
+  return detail;
+}
 
 async function main() {
   if (command === "bootstrap") return bootstrap();

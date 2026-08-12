@@ -110,6 +110,26 @@ try {
   if (joinResult.installCommand.includes("--join-token ") || !joinResult.installCommand.includes("--join-token-file")) throw new Error("join token install command exposed token in argv");
   if (!joinResult.verifiedInstallCommand.includes("( if command -v sha256sum") || !joinResult.verifiedInstallCommand.includes("elif command -v shasum")) throw new Error("join token did not produce a portable checksum-verified install command");
 
+  // 装 agent 的人是在自己的机器上跑一条命令：失败时不能只丢一段 Node 崩溃栈。
+  // 实测入网票写错时，原先看到的就是 "status: 401" 加一串 at ... 的堆栈。
+  {
+    const badTokenScript = join(sandbox, "install-agent-badtoken.sh");
+    writeFileSync(badTokenScript, await (await fetch(`${baseUrl}/install-agent.sh`)).text(), {mode: 0o755});
+    const badTokenInstall = spawnSync("sh", [badTokenScript, "--server", baseUrl,
+      "--join-token", "aimac_join_totally_bogus_token", "--work-dir", join(sandbox, "bad-token-agent")],
+      {encoding: "utf8", env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true"}, timeout: 120000});
+    const said = `${badTokenInstall.stdout || ""}${badTokenInstall.stderr || ""}`;
+    if (badTokenInstall.status === 0) {
+      throw new Error("用一张无效入网票也装成功了 —— 失败必须以非零退出码收场");
+    }
+    if (!/入网票不对|入网票已过期|入网票已经被用过/u.test(said)) {
+      throw new Error(`入网票无效时没有给出人话（实得：${said.split("\n").filter(Boolean).slice(-3).join(" | ").slice(0, 160)}）—— 装 agent 的人只看到一段崩溃栈`);
+    }
+    if (/ {4}at .*runtime\.mjs:/u.test(said)) {
+      throw new Error("入网失败时把 Node 崩溃栈直接吐给了装机的人（堆栈应当留给 AIMAC_AGENT_DEBUG=1）");
+    }
+  }
+
   // 角色越界被拒时，只回一个码等于让接入方去猜：它要了什么、这张票允许什么、被挡的是哪几个，
   // 都是它自己改请求所必需的。这条同时保证那份 details 真的能穿过 HTTP 出来（服务端要展开 error.details）。
   const scopedJoin = await json("/api/agent-join-tokens", {
