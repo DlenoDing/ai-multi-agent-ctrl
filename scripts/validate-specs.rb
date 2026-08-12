@@ -1208,6 +1208,35 @@ push_sites.each do |at|
   # push 前那一段里本来就有两处 throwIfCancelled，用紧邻窗口去卡它只会在无害的重排上误报。
   errors << "代理在 git push 之前必须检查本地取消标志（throwIfCancelled）—— 与持有权复核互为纵深" unless before.include?("throwIfCancelled()")
 end
+# 缺省作用域不得等于放行。MCP 的多个实现在 taskGroupId/roomId 缺省时会落到控制面自己的
+# 任务组（tg_runtime_management）/房间，而 grantMatchesArgs 只校验【报文里出现过的】参数 ——
+# 缺省意味着一条检查都不触发。受限主体（agent 节点）因此可以不点名作用域，
+# 把写入落到它本来看不到的那个任务组里（提交发现项、终态化评审包、绑定共享定义…）。
+# 同形状的工具本来就有守卫（close_barrier_compute / completion_readiness_compute / room_wait），
+# 缺的只是对称性 —— 而"有的有、有的没有"正是这类洞的常态。
+mcp_source = File.read(File.join(ROOT, "apps/mcp-server/server.mjs"))
+gateway_source_for_tools = File.read(File.join(ROOT, "apps/control-plane-ui/lib/agent-gateway.mjs"))
+agent_tools = %w[DEFAULT_AGENT_MCP_TOOLS CONTROL_ROLE_MCP_TOOLS].flat_map do |const|
+  block = gateway_source_for_tools[/const #{const} = \[([\s\S]*?)\];/m, 1].to_s
+  block.scan(/"([a-z-]+-mcp\.[a-z_0-9]+)"/).flatten
+end
+errors << "MCP 缺省作用域门: 取不到 agent 可用工具清单 —— 提取逻辑与代码脱节" if agent_tools.size < 20
+case_marks = mcp_source.enum_for(:scan, /^ {4}case "([a-z-]+-mcp\.[a-z_]+)":/).map { [Regexp.last_match(1), Regexp.last_match.begin(0)] }
+case_marks.each_with_index do |(tool, at), index|
+  next unless agent_tools.include?(tool)
+  finish = index + 1 < case_marks.size ? case_marks[index + 1][1] : at + 1200
+  body = mcp_source[at...finish]
+  # 这个 case 会不会落到缺省作用域？直接写在 case 里，或写在它调用的实现函数里
+  defaults = body.include?("tg_runtime_management")
+  body.scan(/\b([a-zA-Z_][A-Za-z0-9_]*)\(state,/).flatten.uniq.each do |fn|
+    impl = mcp_source[/function #{fn}\(state[\s\S]{0,3000}?\n\}/m].to_s
+    defaults ||= impl.include?(%(taskGroupId || "tg_runtime_management")) || impl.include?(%(roomId || `room_))
+  end
+  next unless defaults
+  guarded = body.include?("boundedTaskGroupGuard") || body.include?("boundedRoomGuard") || body.include?("principalProjectFilter")
+  errors << "MCP 工具 #{tool} 在作用域参数缺省时会落到控制面自己的任务组/房间，却没有受限主体守卫 —— 缺省不得等于放行" unless guarded
+end
+
 # 关掉 fsync 是"这道门不验耐久性"的声明，不是"这套系统不需要耐久性"。
 # 它一旦出现在【专门验耐久性的门】里，那些门就会在一个不落盘的世界里全绿 ——
 # 崩溃一致性、并发写、空转不落盘这三道验的都是真实落盘行为。

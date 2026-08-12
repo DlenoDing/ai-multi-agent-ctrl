@@ -1266,8 +1266,11 @@ async function dispatchTool(state, name, args, context = {}) {
     case "orchestration-mcp.state_get":
       return stateGet(state, args, context);
     case "room-mcp.room_join":
+      // 缺省作用域不得等于放行：这些实现在 taskGroupId/roomId 缺省时会落到控制面自己的
+      // 任务组（tg_runtime_management）。受限主体必须显式点名一个它有权的作用域，
+      // 与 close_barrier_compute / room_wait 同规 —— 同一形状不该有的有守卫、有的没有。
       // 参与者身份与消息署名同源：服务端从已认证主体派生，不采信报文里的 participantId。
-      return roomJoin(state, {...args, [ROOM_PARTICIPANT_KEY]: context?.principal?.kind
+      return boundedRoomGuard(state, args, context) || roomJoin(state, {...args, [ROOM_PARTICIPANT_KEY]: context?.principal?.kind
         ? `${context.principal.kind}:${context.principal.id}:${args.roomId || args.taskGroupId || "room"}` : undefined});
     case "room-mcp.room_send":
       // 同 REST：署名由已认证主体派生。报文里的 senderRef 已从输入白名单里去掉，会被直接拒绝，
@@ -1277,7 +1280,10 @@ async function dispatchTool(state, name, args, context = {}) {
     case "room-mcp.room_wait":
       return boundedRoomGuard(state, args, context) || roomWait(state, args);
     case "room-mcp.room_ack":
-      return roomAck(state, args);
+      // 缺省作用域不得等于放行：这些实现在 taskGroupId/roomId 缺省时会落到控制面自己的
+      // 任务组（tg_runtime_management）。受限主体必须显式点名一个它有权的作用域，
+      // 与 close_barrier_compute / room_wait 同规 —— 同一形状不该有的有守卫、有的没有。
+      return boundedRoomGuard(state, args, context) || roomAck(state, args);
     case "agent-control-mcp.node_register":
       return nodeRegister(state, args);
     case "agent-control-mcp.node_probe":
@@ -1342,7 +1348,10 @@ async function dispatchTool(state, name, args, context = {}) {
     case "evidence-mcp.checkpoint_submit":
       return acceptAgentCheckpoint(state, args, {root: args.repositoryRoot || repositoryRoot});
     case "evidence-mcp.test_result_submit":
-      return testResultSubmit(state, args);
+      // 缺省作用域不得等于放行：这些实现在 taskGroupId/roomId 缺省时会落到控制面自己的
+      // 任务组（tg_runtime_management）。受限主体必须显式点名一个它有权的作用域，
+      // 与 close_barrier_compute / room_wait 同规 —— 同一形状不该有的有守卫、有的没有。
+      return boundedTaskGroupGuard(state, args, context) || testResultSubmit(state, args);
     case "permission-mcp.permission_probe":
       return permissionProbe(state, args, principalProjectFilter(context));
     case "permission-mcp.permission_request_submit":
@@ -1409,7 +1418,10 @@ async function dispatchTool(state, name, args, context = {}) {
     case "review-mcp.review_bundle_register":
       return reviewBundleRegister(state, args);
     case "review-mcp.review_result_consume":
-      return reviewResultConsume(state, args);
+      // 缺省作用域不得等于放行：这些实现在 taskGroupId/roomId 缺省时会落到控制面自己的
+      // 任务组（tg_runtime_management）。受限主体必须显式点名一个它有权的作用域，
+      // 与 close_barrier_compute / room_wait 同规 —— 同一形状不该有的有守卫、有的没有。
+      return boundedTaskGroupGuard(state, args, context) || reviewResultConsume(state, args);
     case "review-mcp.completion_readiness_compute":
       return boundedTaskGroupGuard(state, args, context) || computeCompletionReadiness(state, args.taskGroupId || "tg_runtime_management", args);
     case "governance-mcp.approval_request_create":
@@ -1479,7 +1491,10 @@ async function dispatchTool(state, name, args, context = {}) {
     case "definition-mcp.shared_definition_publish":
       return sharedDefinitionPublish(state, args);
     case "definition-mcp.shared_definition_consumer_bind":
-      return sharedDefinitionConsumerBind(state, args);
+      // 缺省作用域不得等于放行：这些实现在 taskGroupId/roomId 缺省时会落到控制面自己的
+      // 任务组（tg_runtime_management）。受限主体必须显式点名一个它有权的作用域，
+      // 与 close_barrier_compute / room_wait 同规 —— 同一形状不该有的有守卫、有的没有。
+      return boundedTaskGroupGuard(state, args, context) || sharedDefinitionConsumerBind(state, args);
     case "definition-mcp.shared_definition_conflict_report":
       return sharedDefinitionConflictReport(state, args);
     case "instruction-mcp.instruction_envelope_create":
