@@ -165,7 +165,12 @@ export function registerAgentNode(state, input = {}, options = {}) {
   if (!nodeName) throw gatewayError("node_name_required", 400);
   if (record.expectedNodeName && record.expectedNodeName !== nodeName) throw gatewayError("join_token_node_name_mismatch", 403);
   const requestedRoles = uniqueStrings(input.requestedRoles || record.allowedRoles);
-  if (!rolesAllowed(requestedRoles, record.allowedRoles)) throw gatewayError("join_token_role_scope_mismatch", 403);
+  if (!rolesAllowed(requestedRoles, record.allowedRoles)) {
+    // 只给一个码，接入方无从知道该改成什么：把要了什么、这张票允许什么一并说出来。
+    // 读这条报文的是 agent（或正在接节点的人），它需要的恰好是这两个集合的差。
+    throw gatewayError("join_token_role_scope_mismatch", 403,
+      {requestedRoles, allowedRoles: record.allowedRoles, rejected: requestedRoles.filter((role) => !rolesAllowed([role], record.allowedRoles))});
+  }
   const registerOrgId = record.organizationId || "org_default";
   const registerQuota = organizationQuotaCheck(state, registerOrgId, "agents");
   if (!registerQuota.allowed) {
@@ -1515,7 +1520,14 @@ function buildDispatchPackage(state, dispatch, node, options) {
   const contract = state.agentTaskContracts.find((item) => item.sessionId === dispatch.sessionId && item.runId === dispatch.runId);
   const repositoryOutputTarget = state.repositoryOutputs.find((item) => item.targetId === dispatch.repositoryOutputTargetRef);
   const instructionPacket = state.effectiveInstructionPackets.find((item) => item.packetId === contract?.effectiveInstructionPacketRef);
-  if (!contract || !repositoryOutputTarget || !instructionPacket) throw gatewayError("dispatch_package_incomplete", 409);
+  if (!contract || !repositoryOutputTarget || !instructionPacket) {
+    // 三样缺哪一样，决定了该去查哪条链路（契约没建 / 写入边界没建 / 指令包没生成）。
+    throw gatewayError("dispatch_package_incomplete", 409, {missing: [
+      ...(contract ? [] : ["agentTaskContract"]),
+      ...(repositoryOutputTarget ? [] : ["repositoryOutputTarget"]),
+      ...(instructionPacket ? [] : ["effectiveInstructionPacket"])
+    ], dispatchId: dispatch.dispatchId, sessionId: dispatch.sessionId});
+  }
   const skillWorkset = buildSkillWorkset(state, contract, options);
   return {
     schemaVersion: "agent-dispatch-package/v1",
@@ -1557,7 +1569,11 @@ export function buildSkillWorkset(state, contract, options) {
     const target = resolve(sourceRoot, normalize(skill.sourcePath));
     if (!inside(sourceRoot, target) || !existsSync(target)) throw gatewayError("role_skill_source_missing", 409);
     const content = readFileSync(target, "utf8");
-    if (digestOf(content) !== skill.contentDigest) throw gatewayError("role_skill_digest_mismatch", 409);
+    if (digestOf(content) !== skill.contentDigest) {
+      // 技能文件与登记的摘要对不上：不说清是哪一份、盘上算出来是多少，运维只能逐个文件去猜。
+      throw gatewayError("role_skill_digest_mismatch", 409,
+        {roleSkillId: skill.roleSkillId, sourcePath: skill.sourcePath, expected: skill.contentDigest, actual: digestOf(content)});
+    }
     files.push({path: "SKILL.md", content, contentDigest: skill.contentDigest, sourcePath: skill.sourcePath});
   } else {
     const content = [`# ${skill.name}`, "", skill.description, "", `Capabilities: ${(skill.capabilities || []).join(", ")}`, ""].join("\n");

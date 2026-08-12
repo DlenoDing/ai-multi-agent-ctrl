@@ -110,6 +110,24 @@ try {
   if (joinResult.installCommand.includes("--join-token ") || !joinResult.installCommand.includes("--join-token-file")) throw new Error("join token install command exposed token in argv");
   if (!joinResult.verifiedInstallCommand.includes("( if command -v sha256sum") || !joinResult.verifiedInstallCommand.includes("elif command -v shasum")) throw new Error("join token did not produce a portable checksum-verified install command");
 
+  // 角色越界被拒时，只回一个码等于让接入方去猜：它要了什么、这张票允许什么、被挡的是哪几个，
+  // 都是它自己改请求所必需的。这条同时保证那份 details 真的能穿过 HTTP 出来（服务端要展开 error.details）。
+  const scopedJoin = await json("/api/agent-join-tokens", {
+    method: "POST", token: login.sessionToken, idempotencyKey: "doctor-agent-scoped-token",
+    body: {projectId: "prj_control_plane", nodeName: "scoped-node", allowedRoles: ["reviewer"], ttlSeconds: 1800, maxUses: 1}
+  });
+  const overreach = await jsonRaw("/api/agent/v1/register", {
+    method: "POST", token: scopedJoin.joinToken,
+    body: {nodeName: "scoped-node", requestedRoles: ["implementer"], runtimeVersion: "doctor",
+      profile: {tools: [], models: [{providerClass: "custom", adapter: "doctor", available: true}]}}
+  });
+  if (overreach.response.status !== 403 || overreach.payload.error !== "join_token_role_scope_mismatch") {
+    throw new Error(`角色越界注册没有被拒（应 403 join_token_role_scope_mismatch，得到 ${overreach.response.status}:${overreach.payload.error}）`);
+  }
+  if (!(overreach.payload.allowedRoles || []).includes("reviewer") || !(overreach.payload.rejected || []).includes("implementer")) {
+    throw new Error(`角色越界的报文没说清差在哪（allowedRoles=${JSON.stringify(overreach.payload.allowedRoles)} rejected=${JSON.stringify(overreach.payload.rejected)}）—— 接入方只能靠猜`);
+  }
+
   const noExecutorJoin = await json("/api/agent-join-tokens", {
     method: "POST",
     token: login.sessionToken,
