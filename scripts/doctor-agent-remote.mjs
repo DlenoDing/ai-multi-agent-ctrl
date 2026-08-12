@@ -72,6 +72,34 @@ try {
   if (!installerText.includes(baseUrl) || installerText.includes("__AIMAC_SERVER_URL__")) throw new Error("Agent installer was not bound to the public server URL");
 
   const login = await json("/api/auth/login", {method: "POST", body: {email: "system.admin@local", token: "doctor-bootstrap-token"}});
+
+  // 运维接入一台机器走的是 agentctl，不是直接调 API。这三个子命令此前只有 doctor 被覆盖
+  // （在 docker 那道门里），join-token create 与 nodes list 一个门都没有 ——
+  // 而它们正是"把机器接进来"和"看看接进来没有"这两件事。CLI 坏了，界面上只会显示
+  // "没有任何在线 agent"，而人照着 README 敲命令却接不进来，两头都不知道问题在哪。
+  {
+    const cliEnv = {...process.env, AIMAC_PUBLIC_URL: baseUrl, AIMAC_BOOTSTRAP_TOKEN: "doctor-bootstrap-token",
+      AIMAC_SYSTEM_ADMIN_EMAIL: "system.admin@local"};
+    const runCli = (argv) => spawnSync(process.execPath, [join(root, "scripts/agentctl.mjs"), ...argv, `--server=${baseUrl}`],
+      {cwd: root, env: cliEnv, encoding: "utf8"});
+    const listed = runCli(["nodes", "list"]);
+    if (listed.status !== 0 || !String(listed.stdout).includes("agentRuntimeNodes")) {
+      throw new Error(`agentctl nodes list 不可用（退出码 ${listed.status}）：${String(listed.stdout || listed.stderr).slice(0, 200)}`);
+    }
+    const issued = runCli(["join-token", "create", "--project=prj_control_plane", "--name=cli-probe-node"]);
+    if (issued.status !== 0) {
+      throw new Error(`agentctl join-token create 不可用（退出码 ${issued.status}）：${String(issued.stderr || issued.stdout).slice(0, 200)}`);
+    }
+    // 输出必须是能直接粘到目标机器上跑的那条命令，而且令牌【不能出现在命令行参数里】
+    // （命令行在 ps 里对同机所有用户可见 —— 这正是 --join-token-file 存在的原因）。
+    const command = String(issued.stdout);
+    if (!command.includes("install-agent.sh") || !command.includes("--join-token-file")) {
+      throw new Error(`agentctl 给出的接入命令不对：${command.slice(0, 200)}`);
+    }
+    if (/--join-token[ =][^-]/u.test(command)) {
+      throw new Error("agentctl 把接入令牌放进了命令行参数 —— 同机任何用户 ps 一下就能拿走");
+    }
+  }
   const joinResult = await json("/api/agent-join-tokens", {
     method: "POST",
     token: login.sessionToken,
