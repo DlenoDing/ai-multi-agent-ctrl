@@ -2303,6 +2303,40 @@ audit_result_literals.each do |value|
   errors << %(审计结果 "#{value}" 没有中文 —— 控制台审计日志会显示英文原值)
 end
 
+# 手写的状态集合常量与 state-machines.yaml 是两个真相源，必然漂。判据：常量里的每个状态字面量
+# 都要在某台状态机里登记过；不在的必须逐个写明凭什么（登记制）。
+# 这一类本会话咬过三次：控制台提示里筛 "dispatched"（WorkItem 没有这个状态，那条分支永不成立）、
+# 关闭门清单里的 in_review / waiting（连同整份清单都是没人读的死代码，而两道 CRITICAL 门在守它）。
+# 名字对不上 = 那段判定永远不成立，而它看起来和"判定过了、没命中"一模一样。
+STATUS_CONSTANTS_WITHOUT_STATE_MACHINE = {
+  "TEST_RESULT_STATUSES" => "测试结果既没有状态机也没有 schema，这个常量自己就是真相源（MCP 入参校验用）"
+}.freeze
+# 机器挂在 machines 键下面。直接 each_value 顶层会遍历到 schemaVersion 这种字符串，
+# 一个状态都取不到 —— 而那样的话下面每条常量都会被误报成"状态查无此名"（第一版就是这样）。
+declared_states = Set.new
+(state_machines["machines"] || {}).each_value do |machine|
+  next unless machine.is_a?(Hash)
+  Array(machine["states"]).each { |st| declared_states << st.to_s }
+end
+errors << "状态机里一个状态都没提取到 —— 下面这条在空转" if declared_states.size < 50
+status_constant_sources = core_source + agent_gateway_source + mcp_source + server_source
+status_constants = status_constant_sources.scan(/(?:export )?const ([A-Z_]*(?:STATUS|STATUSES|STATES)[A-Z_]*) = (?:new Set\()?\[([^\]]*)\]/)
+errors << "状态集合常量一个都没提取到 —— 提取逻辑与代码脱节，本条在空转" if status_constants.length < 10
+status_constants.each do |name, body|
+  literals = body.scan(/"([a-z][a-z_]*)"/).flatten
+  missing = literals.reject { |lit| declared_states.include?(lit) }
+  next if missing.empty? || STATUS_CONSTANTS_WITHOUT_STATE_MACHINE.key?(name)
+  errors << %(状态集合 #{name} 含 state-machines.yaml 里查无此名的状态：#{missing.join("、")} —— ) +
+            "要么改成已登记的状态名，要么在 STATUS_CONSTANTS_WITHOUT_STATE_MACHINE 里写明它凭什么自成真相源"
+end
+STATUS_CONSTANTS_WITHOUT_STATE_MACHINE.each_key do |name|
+  entry = status_constants.find { |const_name, _| const_name == name }
+  next unless entry
+  next unless entry[1].scan(/"([a-z][a-z_]*)"/).flatten.all? { |lit| declared_states.include?(lit) }
+  errors << "登记表已过时：#{name} 里的状态现在都能在状态机里查到，登记该撤掉"
+end
+puts "状态集合常量：核对了 #{status_constants.length} 个，对着 #{declared_states.size} 个已登记状态" \
+     "（#{STATUS_CONSTANTS_WITHOUT_STATE_MACHINE.size} 个已登记为自成真相源）"
 fail_with(errors)
 
 puts "错误码本地化：只有表达式提取才看得见的有 #{expression_only_error_codes.length} 个" \
