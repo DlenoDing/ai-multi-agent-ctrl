@@ -2800,9 +2800,19 @@ function wipCapacityNotice(groups) {
     .filter((item) => ["draft", "ready"].includes(item.status)).length;
   const online = Number(((state || {}).fleet || {}).online || 0);
   if (!online) return "";
-  return `<div class="notice">这个项目的在制品已经达到上限（在飞 ${esc(wip.inFlight)} / 上限 ${esc(wip.capacity)}）：`
+  // 占着名额的活自己也卡在等人时，"跑完就会自动继续"是假的：它们不会自己跑完。
+  // 说错这一句的代价不是措辞问题 —— 人会照着它去干等，而实际上唯一能解开的人就是他。
+  const blocked = Number(wip.blocked || 0);
+  const stalled = blocked >= Number(wip.inFlight);
+  const outlook = blocked
+    ? `而占着名额的活里有 ${esc(blocked)} 个自己也卡住了（等你批权限、等你定稿、或被暂停）：`
+      + `${stalled ? "名额全被它们占着，这个项目现在一步也走不动，" : ""}`
+      + `这部分不会自己好，先到「人工审核」「人工指令」两页把它们处置掉，名额才腾得出来。`
+    : "这是有意的背压，防止一次把成千上万个会话和租约摊开 —— 在飞的活跑完就会自动继续，不需要你动手。";
+  return `<div class="notice${blocked ? " warn-notice" : ""}">这个项目的在制品已经达到上限`
+    + `（在飞 ${esc(wip.inFlight)} / 上限 ${esc(wip.capacity)}）：`
     + `${queued ? `还有 ${esc(queued)} 个单元` : "后续单元"}会等额度，不会立刻派发。`
-    + `这是有意的背压，防止一次把成千上万个会话和租约摊开 —— 在飞的活跑完就会自动继续，不需要你动手。`
+    + outlook
     + `想让它跑得更宽，就到 agent 页多接入几台节点（每多一台在线节点，额度自动上调）。</div>`;
 }
 

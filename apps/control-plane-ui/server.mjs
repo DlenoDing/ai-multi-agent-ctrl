@@ -1437,9 +1437,13 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     // 在制品额度（两个数字）。编排周期一旦按这个额度把单元判成 resource_queued，界面必须能说出
     // "为什么我的单元不动" —— 后端有闸而界面没有出口，等于这个闸对使用者不存在。
     // 现算而不是复用周期里的那份：周期里的数是那一拍的快照，请求到达时早就过期了。
+    // blocked 是【在飞但自己也卡住了】的那部分（等权限、等定稿、被暂停）。没有这个数，界面只能说
+    // "等在飞的活跑完就会自动继续" —— 而这些活恰恰不会自己跑完，那句话把人支到一边干等。
     wip: scopeProjectId
       ? {inFlight: countInFlightDispatchesByProject(scoped).get(scopeProjectId) || 0,
-         capacity: wipCapacityForProject(scoped, scopeProjectId)}
+         capacity: wipCapacityForProject(scoped, scopeProjectId),
+         blocked: (scoped.agentDispatches || []).filter((dispatch) =>
+           dispatch.projectId === scopeProjectId && dispatch.status === "blocked").length}
       : null,
     agents: sliceItems(scoped.agents, capped),
     projects: sliceItems(scoped.projects, capped),

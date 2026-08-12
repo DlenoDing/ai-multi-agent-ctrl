@@ -1384,6 +1384,21 @@ await runErrorGuidanceCase();
   check("额度没用满时不挂这条提示",
     !/在制品已经达到上限/.test(probe.renderTaskGroupsWith(withWip({inFlight: 3, capacity: 8}, {online: 2, total: 2}), account, "p1", null, {})),
     "没到上限也提示背压 —— 常亮的提示等于没有提示");
+  // 占着名额的活自己也在等人时，"跑完就会自动继续"是一句假话 —— 它们不会自己跑完。
+  const wipStalled = probe.renderTaskGroupsWith(withWip({inFlight: 8, capacity: 8, blocked: 8}, {online: 2, total: 2}), account, "p1", null, {});
+  check("占额度的活自己卡在等人时，不许说会自动继续",
+    !/不需要你动手/.test(wipStalled),
+    "这些活在等人批权限或定稿，永远不会自己跑完 —— 照这句话去等，唯一能解开它的人正在干等");
+  check("要说清是它们卡住了、以及去哪儿处置",
+    /自己也卡住了/.test(wipStalled) && /人工审核/.test(wipStalled),
+    "只说达到上限，人会去加节点 —— 而加多少台都没用，卡的是待处置的那几件");
+  check("名额被卡住的活全占满时，要说明项目走不动了",
+    /一步也走不动/.test(wipStalled),
+    "部分卡住和全卡住对人的紧迫程度完全不同，界面不该让他自己去算");
+  check("在飞的活都在正常跑时，仍按背压说明（不误报成卡住）",
+    /不需要你动手/.test(probe.renderTaskGroupsWith(withWip({inFlight: 8, capacity: 8, blocked: 0}, {online: 2, total: 2}), account, "p1", null, {})),
+    "正常背压被说成等人处置 —— 人会去翻一堆并不存在的待办");
+
   check("一个 agent 都没在线时，只说没节点，不叠加背压提示",
     !/在制品已经达到上限/.test(probe.renderTaskGroupsWith(withWip({inFlight: 8, capacity: 8}, {online: 0, total: 2}, "assigned"), account, "p1", null, {})),
     "两条提示同时出现，人会以为是两个毛病 —— 零节点时的真正出口是接节点，不是等额度");
