@@ -105,7 +105,9 @@ checksum_block = installer_source[/checksum verification failed.*?exit 1/m].to_s
 if checksum_block.empty?
   errors << "安装脚本里找不到校验和失败那一段 —— 下面几条在空转"
 else
-  errors << "校验和失败时必须给出期望值与实到值（否则人无从判断是下载坏了还是产物被换了）" unless checksum_block.include?("$EXPECTED_HASH") && checksum_block.include?("$ACTUAL_HASH")
+  # 变量在脚本里写成 ${EXPECTED_HASH:-…}（带默认值），只找 "$EXPECTED_HASH" 会漏 ——
+  # 判据按变量名找，不按某一种展开写法找。
+  errors << "校验和失败时必须给出期望值与实到值（否则人无从判断是下载坏了还是产物被换了）" unless checksum_block.include?("EXPECTED_HASH") && checksum_block.include?("ACTUAL_HASH")
   errors << "校验和失败时必须明说不要运行这份产物" unless checksum_block.include?("不要运行它")
 end
 # 路径类失败要说出找的是哪个路径：人多半是整条命令复制过来的，只有脚本知道路径错在哪儿。
@@ -2323,7 +2325,10 @@ end
 # 我试过把兜底改成抛错，但那条分支要"派发正被某节点执行"才走得到，e2e 一次都没经过 ——
 # 未经验证的抛错比静默兜底更危险（用潜在的错记，换来潜在的崩溃）。所以改成静态判据：
 # 每一处调用都必须显式传 actor。这条不需要运行到那个分支就能守住。
-control_calls = server_source.scan(/applyTaskGroupRuntimeControl\(state, [^;]*?\{([^}]*)\}/m).flatten
+# 只取【调用】，排除函数定义本身（`function applyTaskGroupRuntimeControl(state, taskGroup, action, options = {})`
+# 会被当成一处"没传 actor 的调用"——第一版就是这样，而我用 tail -1 看 validate 输出，没看见这条失败。
+# 判据取"前面不是 function 的那些"。
+control_calls = server_source.scan(/(?<!function )applyTaskGroupRuntimeControl\(state, (?!taskGroup, action, options)[^;]*?\{([^}]*)\}/m).flatten
 errors << "找不到 applyTaskGroupRuntimeControl 的调用 —— 本条在空转" if control_calls.length < 2
 control_calls.each_with_index do |args, index|
   errors << "applyTaskGroupRuntimeControl 第 #{index + 1} 处调用没有显式传 actor —— 控制命令会记在服务名下，问责链断在这里" unless args.include?("actor:")
