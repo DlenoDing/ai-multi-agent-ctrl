@@ -1406,6 +1406,25 @@ function projectTaskGroupsForView(taskGroups) {
   });
 }
 
+// 组织用量是【派生量】，而它此前只在写入端点和 GET /api/orgs 上重算。组织管理员自己的概览页
+// 走的是 GET /api/state?view=orgs，读到的是上一次写入时存下来的那份快照 —— 于是同一个数字
+// 两页不一致，而人自己那页是旧的：实测任务组配额 1/1 已满、建第二个被 409 拒（usage=1），
+// 概览却显示 0。人会以为还有名额，点下去必然失败。
+// 在出口处按当前状态重算，并且【不写回】那份跨请求复用的 scoped 缓存对象（与同一函数里
+// 归档故障、自治心跳两条同规：易变或派生的事实不进缓存）。计数规则不在这里重写一遍，
+// 仍然交给 recomputeOrganizationUsage —— 两处口径必须是同一份代码。
+function organizationsWithFreshUsage(state, organizations) {
+  if (!Array.isArray(organizations) || !organizations.length) return organizations;
+  const probe = {
+    organizations: organizations.map((org) => ({orgId: org.orgId})),
+    accounts: state.accounts, projects: state.projects,
+    taskGroups: state.taskGroups, agentRuntimeNodes: state.agentRuntimeNodes
+  };
+  recomputeOrganizationUsage(probe);
+  const fresh = new Map(probe.organizations.map((org) => [org.orgId, org.usage]));
+  return organizations.map((org) => ({...org, usage: fresh.get(org.orgId) || org.usage}));
+}
+
 function stateViewForAccount(state, account, session, view = "full", limit = 80, requestedProjectId = null) {
   const scoped = cachedScopedState(state, account, session);
   // 归档故障的错误文本里会带运行目录路径，且它是系统级运维事实 —— 只给系统账号。
@@ -1416,7 +1435,10 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
   // 控制台上"上次推进时间"冻住，看起来像自治循环死了。所以在出口处用内存里的实时值覆盖，
   // 与上面那条归档故障同规：易变的运行时事实不进缓存对象。
   const liveRuntime = {...scoped.runtime, autonomousOrchestrator: runtimeOrchestratorStatus};
-  if (!view || view === "full") return {...scoped, runtime: liveRuntime, ...faultField};
+  if (!view || view === "full") {
+    return {...scoped, organizations: organizationsWithFreshUsage(state, scoped.organizations),
+      runtime: liveRuntime, ...faultField};
+  }
   const capped = Math.max(10, Math.min(500, Number(limit || 80)));
   // 项目视角的页面（任务/监控/项目设置）本来就只看当前项目，而视图此前是【按账号可见范围取最新 N 条】，
   // 再由控制台自己过滤。后果有两条：一是载荷按整个账号的规模走（实测 400 单元时监控页一次轮询 1.78MB，
@@ -1545,7 +1567,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
       details: {view, supported: ["full", ...Object.keys(viewFields)]}});
   }
   for (const field of viewFields[view] || []) {
-    const value = scoped[field];
+    const value = field === "organizations" ? organizationsWithFreshUsage(state, scoped.organizations) : scoped[field];
     const scopedValue = scopeCollection(value);
     base[field] = Array.isArray(scopedValue)
       ? (field === "taskGroups" ? projectTaskGroupsForView(sliceItems(scopedValue, limitFor(field))) : sliceItems(scopedValue, limitFor(field)))

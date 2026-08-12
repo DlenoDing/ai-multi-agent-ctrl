@@ -1082,6 +1082,19 @@ try {
     body: JSON.stringify({projectId: orgProject.payload.id, title: "组织任务组"})
   });
   if (orgTaskGroup.response.status !== 201) throw new Error(`org task group create failed: ${orgTaskGroup.response.status}`);
+  // 组织用量是派生量，而两条路径各自算各自的：GET /api/orgs 当场重算，
+  // GET /api/state?view=orgs（组织管理员自己的概览页）此前读的是上一次写入时存下的快照。
+  // 任务组创建那条路由不重算用量，于是刚建完就差一个 —— 实测配额 1/1 已满而概览显示 0，
+  // 人以为还有名额，点下去必然失败。判据是"两条独立路径必须给出同一份用量"，
+  // 不跟任何写死的期望值比：写死的那种在计数规则改动时会一起错。
+  const usageFromOrgsApi = await jsonFetch(port, "/api/orgs", {headers: {authorization: systemAuth}});
+  const usageFromStateView = await jsonFetch(port, "/api/state?view=orgs&limit=50", {headers: {authorization: systemAuth}});
+  const orgFromApi = (usageFromOrgsApi.payload.organizations || usageFromOrgsApi.payload || []).find((item) => item.orgId === orgId);
+  const orgFromView = (usageFromStateView.payload.organizations || []).find((item) => item.orgId === orgId);
+  if (!orgFromApi || !orgFromView) throw new Error(`用量对照取不到组织 ${orgId} —— 判据在空转`);
+  if (JSON.stringify(orgFromApi.usage) !== JSON.stringify(orgFromView.usage)) {
+    throw new Error(`同一个组织的用量两条路径不一致：/api/orgs ${JSON.stringify(orgFromApi.usage)} vs 概览页 ${JSON.stringify(orgFromView.usage)} —— 人看到的是旧的那一份`);
+  }
   const orgControl = await jsonFetch(port, `/api/task-groups/${orgTaskGroup.payload.taskGroup.id}/control`, {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-org-tg-control", authorization: orgAdminAuth},
