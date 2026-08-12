@@ -1014,6 +1014,19 @@ try {
   if (!orgMembers.response.ok || !orgMembers.payload.members.some((member) => member.email === "doctor.member1@local")) {
     throw new Error("org member list did not return the created member");
   }
+  // 全新部署只有一个系统管理员，而它的 organizationId 是 null —— 与它自己调用这条路由时的 orgId
+  // 恰好相等，所以它够得着自己。停用会当场吊销会话、登录被拒，而铸一个新的系统管理员又要
+  // system:account_admin：整个部署永久失去系统层控制权。这里只验拒绝的那一支（放行支会把本次
+  // e2e 后面的所有系统级动作一起废掉），实测过的放行条件是"存在另一个 status=active 的系统管理员"，
+  // 仅仅"已邀请未接受"不算数 —— 那种账号还登不进来，算进去等于放行锁死。
+  const lastSystemAdmin = await jsonFetch(port, "/api/org/members/acct_system_owner/status", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-last-system-admin", authorization: systemAuth},
+    body: JSON.stringify({status: "disabled"})
+  });
+  if (lastSystemAdmin.response.status !== 409 || lastSystemAdmin.payload.error !== "system_last_admin_cannot_be_disabled") {
+    throw new Error(`最后一个系统管理员被允许停用（应 409 system_last_admin_cannot_be_disabled，得到 ${lastSystemAdmin.response.status}:${lastSystemAdmin.payload.error}）—— 部署会永久失去系统层控制权`);
+  }
   // Org-created project must let its org_admin owner control its task groups end-to-end.
   const orgProject = await jsonFetch(port, "/api/org/projects", {
     method: "POST",

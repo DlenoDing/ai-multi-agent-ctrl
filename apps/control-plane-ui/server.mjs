@@ -4752,10 +4752,18 @@ async function handleApi(req, res) {
     const member = state.accounts.find((item) => item.accountId === orgMemberStatusMatch[1] && item.organizationId === orgId);
     if (!member) return json(res, 404, {error: "org_member_not_found"});
     const nextMemberStatus = body.status === "disabled" ? "disabled" : "active";
-    if (nextMemberStatus === "disabled" && member.accountType === "org_admin") {
-      const remainingAdmins = (state.accounts || []).filter((item) => item.organizationId === orgId
-        && item.accountType === "org_admin" && item.status === "active" && item.accountId !== member.accountId);
-      if (!remainingAdmins.length) return json(res, 409, {error: "org_last_admin_cannot_be_disabled"});
+    // 治理主体不能被停到零。原先只写了 org_admin 这一支，而系统管理员的 organizationId 是 null、
+    // 与它自己调用时的 orgId 恰好相等，所以这条路由够得着它 —— 全新部署里唯一的系统管理员可以把
+    // 自己停掉：会话当场吊销、无法登录，而铸一个新的系统管理员要 system:account_admin，
+    // 于是整个部署永久失去系统层控制权。作用域按治理层级取：组织管理员按本组织算，系统管理员按全局算。
+    if (nextMemberStatus === "disabled" && ["org_admin", "system_admin"].includes(member.accountType)) {
+      const systemScoped = member.accountType === "system_admin";
+      const remainingAdmins = (state.accounts || []).filter((item) => item.accountType === member.accountType
+        && item.status === "active" && item.accountId !== member.accountId
+        && (systemScoped || item.organizationId === orgId));
+      if (!remainingAdmins.length) {
+        return json(res, 409, {error: systemScoped ? "system_last_admin_cannot_be_disabled" : "org_last_admin_cannot_be_disabled"});
+      }
     }
     // 原先任何非 disabled 的入参一律置为 active。对一个【尚未接受邀请】的账号执行之后：
     // 邀请令牌分支要求 status === "invited"（断了），密码分支要求 passwordDigest（邀请态没有，也断了），

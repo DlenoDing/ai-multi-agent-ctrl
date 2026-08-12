@@ -32,6 +32,7 @@
     dispatch_not_resumable: "该派发当前不可恢复：它既不在暂停中，也没有等待恢复的标记",
     execution_topology_not_found: "找不到对应的执行拓扑：它可能已被取代或所属任务组已终结",
     org_last_admin_cannot_be_disabled: "这是本组织最后一个在用的管理员：停用它之后没有人能再管理该组织",
+    system_last_admin_cannot_be_disabled: "这是全系统最后一个在用的系统管理员：停用它之后没有人能登录、也没有人能再铸一个，请先邀请另一位系统管理员并让它接受邀请",
     org_member_invite_reissue_not_applicable: "只有尚未接受邀请的成员可以重发邀请",
     bootstrap_init_requires_explicit_confirmation: "重新初始化必须原样输入确认串：这一步会重置控制面数据",
     role_not_allowed_on_node: "该节点的角色范围不含这个派发所需的角色",
