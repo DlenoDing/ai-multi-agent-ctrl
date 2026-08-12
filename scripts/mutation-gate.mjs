@@ -27,6 +27,62 @@ const SERVER = "apps/control-plane-ui/server.mjs";
 
 // 每条 mutation：把守卫改坏，期望 contract-check 失败且输出里出现 expect 片段。
 const MUTATIONS = [
+  // ── 本段会话新加的守卫：手工变异验过一次不算数，要每次全量 doctor 都重验 ─────────────
+  {
+    name: "取消/回收必须了结格子名下的资源",
+    file: CORE,
+    from: "    settleCellOwnedResources(state, dispatch.taskGroupId, dispatch.workItemId, dispatch.failureReason);",
+    to: "",
+    expect: "旧输出目标仍然可用"
+  },
+  {
+    name: "每个对象一条的派生记录不得上限抖动",
+    file: CORE,
+    from: "  state.completionReadiness = capPerTaskGroupRecords([readiness, ...state.completionReadiness.filter((item) => item.taskGroupId !== taskGroupId)], state, 80);",
+    to: "  state.completionReadiness = [readiness, ...state.completionReadiness.filter((item) => item.taskGroupId !== taskGroupId)].slice(0, 80);",
+    expect: "规模下的编排循环停不下来"
+  },
+  {
+    name: "准入账本不得随反复受阻线性增长",
+    from: `    if (seenCells.has(item.workItemId)) continue;
+    seenCells.add(item.workItemId);`,
+    file: CORE,
+    to: "",
+    expect: "准入账本随反复受阻线性增长"
+  },
+  {
+    name: "执行事件必须续上认领（长任务不得白干）",
+    file: GATEWAY,
+    from: "      dispatch.claimExpiresAt = renewed;",
+    to: "",
+    expect: "没有续上认领"
+  },
+  {
+    name: "中央态不得当成完整状态写回",
+    file: STORE,
+    from: `  if (state && state.__centralOnly) {
+    throw Object.assign(new Error("refusing_to_write_central_only_state"), {code: "AIMAC_CENTRAL_ONLY_WRITE"});
+  }`,
+    to: "",
+    expect: "竟然被接受了"
+  },
+  {
+    name: "认不出的状态版本必须拒读",
+    file: STORE,
+    from: "  if (!declared || SUPPORTED_STATE_SCHEMA_VERSIONS.has(declared)) return state;",
+    to: "  return state;",
+    expect: "竟然照读不误"
+  },
+  {
+    name: "报文只给对象 id 时也要核对归属",
+    file: MCP,
+    from: `  if (args.contractId) {
+    const definition = (state.sharedDefinitions || []).find((item) => item.contractId === args.contractId);
+    if (definition && definition.projectId && definition.projectId !== grant.projectId) return false;
+  }`,
+    to: "",
+    expect: "MCP 授权匹配"
+  },
   {
     name: "核心决策必须真人定稿",
     file: CORE,
