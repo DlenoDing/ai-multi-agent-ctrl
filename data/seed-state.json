@@ -2363,7 +2363,7 @@
         "minReliabilityScore": 0.75
       },
       "fallbackPolicy": {
-        "onNoModel": "split_task",
+        "onNoModel": "request_decision",
         "onQuotaLimited": "select_next_ranked",
         "onProviderDegraded": "select_next_ranked"
       },
@@ -2399,7 +2399,7 @@
         "minReliabilityScore": 0.75
       },
       "fallbackPolicy": {
-        "onNoModel": "split_task",
+        "onNoModel": "request_decision",
         "onQuotaLimited": "select_next_ranked",
         "onProviderDegraded": "select_next_ranked"
       },
@@ -2434,7 +2434,7 @@
         "minReliabilityScore": 0.75
       },
       "fallbackPolicy": {
-        "onNoModel": "split_task",
+        "onNoModel": "request_decision",
         "onQuotaLimited": "select_next_ranked",
         "onProviderDegraded": "select_next_ranked"
       },
@@ -2469,7 +2469,7 @@
         "minReliabilityScore": 0.75
       },
       "fallbackPolicy": {
-        "onNoModel": "split_task",
+        "onNoModel": "request_decision",
         "onQuotaLimited": "select_next_ranked",
         "onProviderDegraded": "select_next_ranked"
       },
@@ -2503,7 +2503,7 @@
         "minReliabilityScore": 0.75
       },
       "fallbackPolicy": {
-        "onNoModel": "split_task",
+        "onNoModel": "request_decision",
         "onQuotaLimited": "select_next_ranked",
         "onProviderDegraded": "select_next_ranked"
       },
@@ -2537,7 +2537,7 @@
         "minReliabilityScore": 0.75
       },
       "fallbackPolicy": {
-        "onNoModel": "split_task",
+        "onNoModel": "request_decision",
         "onQuotaLimited": "select_next_ranked",
         "onProviderDegraded": "select_next_ranked"
       },
@@ -2572,7 +2572,7 @@
         "minReliabilityScore": 0.75
       },
       "fallbackPolicy": {
-        "onNoModel": "split_task",
+        "onNoModel": "request_decision",
         "onQuotaLimited": "select_next_ranked",
         "onProviderDegraded": "select_next_ranked"
       },
@@ -2606,7 +2606,7 @@
         "minReliabilityScore": 0.75
       },
       "fallbackPolicy": {
-        "onNoModel": "split_task",
+        "onNoModel": "request_decision",
         "onQuotaLimited": "select_next_ranked",
         "onProviderDegraded": "select_next_ranked"
       },
@@ -2640,7 +2640,7 @@
         "minReliabilityScore": 0.75
       },
       "fallbackPolicy": {
-        "onNoModel": "split_task",
+        "onNoModel": "request_decision",
         "onQuotaLimited": "select_next_ranked",
         "onProviderDegraded": "select_next_ranked"
       },
@@ -2674,7 +2674,7 @@
         "minReliabilityScore": 0.75
       },
       "fallbackPolicy": {
-        "onNoModel": "split_task",
+        "onNoModel": "request_decision",
         "onQuotaLimited": "select_next_ranked",
         "onProviderDegraded": "select_next_ranked"
       },
@@ -2708,7 +2708,7 @@
         "minReliabilityScore": 0.75
       },
       "fallbackPolicy": {
-        "onNoModel": "split_task",
+        "onNoModel": "request_decision",
         "onQuotaLimited": "select_next_ranked",
         "onProviderDegraded": "select_next_ranked"
       },
@@ -2742,7 +2742,7 @@
         "minReliabilityScore": 0.75
       },
       "fallbackPolicy": {
-        "onNoModel": "split_task",
+        "onNoModel": "request_decision",
         "onQuotaLimited": "select_next_ranked",
         "onProviderDegraded": "select_next_ranked"
       },

@@ -427,6 +427,22 @@ const MUTATIONS = [
     expect: "没有先 recycleExpiredClaims"
   },
   {
+    name: "没有可用模型时要给人挂 S1 阻塞",
+    check: "verifyNoModelFallbackMatchesWhatEngineDoes",
+    file: CORE,
+    from: '        addBlocker(taskGroup, "S1", `没有可运行的模型满足工作项 ${workItem.id} 的硬性约束。`);',
+    to: "",
+    expect: "没有给人挂 S1 阻塞"
+  },
+  {
+    name: "模型选择策略的声明必须与引擎实际做的一致",
+    check: "verifyNoModelFallbackMatchesWhatEngineDoes",
+    file: CORE,
+    from: 'fallbackPolicy: {onNoModel: "request_decision"',
+    to: 'fallbackPolicy: {onNoModel: "split_task"',
+    expect: "声明与实现不一致"
+  },
+  {
     name: "人工补充要求要有上限（否则每次派发都背着它）",
     check: "verifyHumanGuidanceIsBoundedAndHonest",
     file: CORE,

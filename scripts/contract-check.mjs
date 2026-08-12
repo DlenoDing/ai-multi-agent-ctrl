@@ -246,6 +246,7 @@ run(verifyPermissionOutcomeReleasesTheSession);
 run(verifyShardRoundTripKeepsEveryRecord);
 run(verifyCommitWorksWithoutConfiguredIdentity);
 run(verifyHumanGuidanceIsBoundedAndHonest);
+run(verifyNoModelFallbackMatchesWhatEngineDoes);
 run(verifyOrchestrationDoesNotShellOutPerCell);
 run(verifyWipCapacityBackpressure);
 run(verifyHighPriorityCellsAreNotStarvedByEarlierGroups);
@@ -311,6 +312,59 @@ if (errors.length) {
 // 人工补充要求只增不减：三处指令都往 humanGuidance 追加，全仓没有一处删除，而它会原样进
 // 【每一次派发】的内容包。既不能无界增长（几个月前的一句话永远在指挥今天的 agent，
 // 而且每次派发都要背着它），也不能悄悄丢掉人下达的要求 —— 所以留最近的若干条 + 丢掉的记个数。
+// 没有模型满足硬性约束时会发生什么 —— 这条路此前【一个测试都没有】，而策略里声明的
+// onNoModel 写着 split_task，引擎却从不拆任务。声明与实现不一致比没有声明更糟：
+// 读策略的人以为系统会自己拆任务，于是不去管那条 S1 阻塞。
+// 这条检查把两头钉在一起：声明的值必须是引擎真的做的那件事，而那件事必须真的发生。
+function verifyNoModelFallbackMatchesWhatEngineDoes(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const policy = (state.modelSelectionPolicies || [])[0];
+  const declared = policy?.fallbackPolicy?.onNoModel;
+  if (!declared) {
+    output.push("模型选择策略里没有 onNoModel —— 本条在空转");
+    return;
+  }
+  // 把模型能力清空：任何硬性约束都不可能被满足。
+  state.modelCapabilities = [];
+  const before = new Set((state.taskGroups || []).flatMap((group) => (group.workItems || []).map((item) => item.id)));
+  if (!before.size) {
+    output.push("无模型场景夹具里没有任何工作项 —— 本条在空转");
+    return;
+  }
+  runAutonomousCycle(state, {root, reason: "no-model-fallback-probe"});
+  const blocked = (state.taskGroups || []).flatMap((group) => (group.workItems || [])
+    .filter((item) => item.blockedReason === "model_selection_rejected"));
+  if (!blocked.length) {
+    output.push("清空模型能力之后没有任何工作项因 model_selection_rejected 停下 —— 要么引擎换了行为，要么这条夹具没触发到那一支");
+    return;
+  }
+  if (blocked.some((item) => item.status !== "blocked_resource")) {
+    output.push(`没有可用模型时工作项没有停在 blocked_resource（实得 ${[...new Set(blocked.map((item) => item.status))].join("/")}）`);
+  }
+  // 人必须看得见：S1 阻塞 + 一条准入决策，否则这件事只存在于字段里。
+  const group = (state.taskGroups || []).find((item) => (item.workItems || []).some((cell) => cell.blockedReason === "model_selection_rejected"));
+  if (!(group?.blockers || []).some((blocker) => blocker.severity === "S1" && /模型/u.test(blocker.summary || ""))) {
+    output.push("没有可用模型时没有给人挂 S1 阻塞 —— 工作项停了而任务组页上看不出为什么");
+  }
+  if (!(state.admissionDecisions || []).some((decision) => decision.reasonCode === "model_selection_rejected")) {
+    output.push("没有可用模型时没有记准入决策 —— 事后查不出这一轮为什么没派发");
+  }
+  // 同一个策略有两份声明：种子数据里一份、core 的默认值里一份。两份必须一致，
+  // 否则新建的部署与种子部署行为口径不同，而这种差别没有任何东西会报出来。
+  const coreDefault = readFileSync(resolve(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8")
+    .match(/fallbackPolicy:\s*\{onNoModel:\s*"([a-z_]+)"/u)?.[1];
+  if (!coreDefault) {
+    output.push("取不到 core 里的 fallbackPolicy 默认值 —— 本条在空转");
+  } else if (coreDefault !== declared) {
+    output.push(`模型选择策略的 onNoModel 两处不一致：种子里是 ${declared}，core 默认值是 ${coreDefault}`);
+  }
+  // 引擎做的是"停下来交给人"，声明就必须是这个值，而不是它并不会做的 split_task。
+  if (declared !== "request_decision" || coreDefault !== "request_decision") {
+    output.push(`策略声明 onNoModel=${declared === "request_decision" ? coreDefault : declared}，而引擎实际做的是"停成 blocked_resource 并挂 S1 交给人"（request_decision）—— 声明与实现不一致`);
+  }
+}
+
 function verifyHumanGuidanceIsBoundedAndHonest(output) {
   const taskGroup = {id: "tg_guidance", humanGuidance: []};
   for (let index = 0; index < 250; index += 1) {

@@ -855,7 +855,11 @@ function defaultModelSelectionPolicies() {
     taskType: "ai_native_work_item",
     scoringWeights: {capabilityFit: 2, roleSkillFit: 2, quality: 2, latency: 1, cost: 1, quota: 1, reliability: 2, risk: 1},
     hardConstraints: {minContextWindowTokens: 32000, requiresStructuredOutput: true, requiresToolUse: true, minReliabilityScore: 0.75},
-    fallbackPolicy: {onNoModel: "split_task", onQuotaLimited: "select_next_ranked", onProviderDegraded: "select_next_ranked"},
+    // onNoModel 原先写的是 split_task，而引擎从来不拆任务：没有模型满足硬性约束时，它把工作项
+    // 停成 blocked_resource、挂一条 S1 阻塞、记一条准入决策，交给人处置 —— 那正是 request_decision。
+    // 另两个键（onQuotaLimited / onProviderDegraded）是真的被读的，只有这一个是空头声明。
+    // 声明与实现不一致比没有声明更糟：读策略的人会以为系统会自己拆任务，于是不去管那条 S1。
+    fallbackPolicy: {onNoModel: "request_decision", onQuotaLimited: "select_next_ranked", onProviderDegraded: "select_next_ranked"},
     decisionSchemaRef: "spec/model-selection-decision.schema.json"
   };
   return Object.keys(roleCapabilityHints).map((roleId) => ({
