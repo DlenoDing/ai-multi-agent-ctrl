@@ -459,6 +459,38 @@ const MUTATIONS = [
     expect: "参数错位"
   },
   {
+    name: "关闭门里不得混入状态机没有的状态名",
+    file: CORE,
+    gate: "barrier",
+    from: 'no_pending_review_bundle: (state.reviewBundles || []).some((item) => item.taskGroupId === taskGroupId && !["consumed", "rejected"].includes(item.status)),',
+    to: 'no_pending_review_bundle: (state.reviewBundles || []).some((item) => item.taskGroupId === taskGroupId && !["consumed", "rejected", "nonexistent_state"].includes(item.status)),',
+    expect: "不存在的状态"
+  },
+  {
+    name: "真人专属动作在 MCP 侧必须拒绝机器主体",
+    file: MCP,
+    gate: "parity",
+    from: 'if (context?.principal?.kind !== "system_admin") {',
+    to: "if (false) {",
+    expect: "没有拒绝机器主体"
+  },
+  {
+    name: "审计必须记真人（服务名会把责任人抹掉）",
+    file: SERVER,
+    gate: "auth",
+    from: 'audit(state, guard.actor, "access_grant_create"',
+    to: 'audit(state, "ui-console-service", "access_grant_create"',
+    expect: "记成了服务名"
+  },
+  {
+    name: "受守卫写路由必须在审计里留痕",
+    file: SERVER,
+    gate: "auth",
+    from: '    audit(state, guard.actor, "task_group_create"',
+    to: "    void 0; //",
+    expect: "没有在 auditLog 里留痕"
+  },
+  {
     name: "准入判决 token 必须有中文（台账里那一栏就是回答'为什么不动'的）",
     file: APP,
     gate: "specs",
@@ -772,6 +804,10 @@ function removeWorktrees(dirs) {
 // mutation.gate 指定要跑哪道门（默认契约门）；AIMAC_CONTRACT_ONLY 只对契约门有意义。
 const GATE_COMMANDS = {
   contract: "scripts/contract-check.mjs",
+  auth: "scripts/auth-placement-gate.mjs",
+  parity: "scripts/human-only-parity-gate.mjs",
+  barrier: "scripts/barrier-liveness-gate.mjs",
+  invariants: "scripts/system-invariants-gate.mjs",
   console: "scripts/console-behaviour-check.mjs",
   idle: "scripts/idle-tick-gate.mjs",
   specs: "scripts/validate-specs.rb"
