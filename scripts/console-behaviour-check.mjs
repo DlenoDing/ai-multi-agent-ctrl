@@ -1348,6 +1348,40 @@ await runErrorGuidanceCase();
     "半小时前的草稿仍被填回表单 —— 人多半已经在做别的事了，这比空着更危险");
 }
 
+// 被限流的账本集合，界面渲染的行数不得超过它取到的条数。
+//
+// 服务端给账本类集合单独设了一个更小的上限（省载荷：取 200 条渲染 10 行是纯浪费）。
+// 但"少取"的前提是【少取的那部分没人看】—— 哪天某张表改成渲染 120 行，
+// 它就会安静地只显示 60 行，人以为那就是全部。判据按服务端的登记表全量核对。
+{
+  const serverSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const setAt = serverSource.indexOf("const LEDGER_COLLECTIONS = new Set([");
+  const setBlock = setAt < 0 ? "" : serverSource.slice(setAt, serverSource.indexOf("]);", setAt));
+  const ledgers = [...setBlock.matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"/gu)].map((match) => match[1]);
+  const limitMatch = serverSource.match(/const ledgerLimit = Math\.min\(capped, (\d+)\)/u);
+  const ledgerLimit = limitMatch ? Number(limitMatch[1]) : 0;
+  if (!ledgers.length || !ledgerLimit) {
+    failures.push("账本限流: 解析不到 LEDGER_COLLECTIONS 或 ledgerLimit —— 提取逻辑与代码脱节，本条在空转");
+  }
+  for (const collection of ledgers) {
+    for (const use of appSource.matchAll(new RegExp(`state\\.${collection}\\b`, "gu"))) {
+      const window = appSource.slice(use.index, use.index + 400);
+      const cap = window.match(/\.slice\(0, (\d+)\)/u);
+      // 取不到显式截断说明这张表可能整表铺开 —— 那更危险，必须说出来而不是放过
+      if (!cap) {
+        failures.push(`账本限流: 控制台用了 ${collection} 却看不到显式的渲染上限 ——`
+          + ` 服务端只给它 ${ledgerLimit} 条，整表铺开的话人会以为这就是全部`);
+        continue;
+      }
+      if (Number(cap[1]) > ledgerLimit) {
+        failures.push(`账本限流: ${collection} 在界面上渲染 ${cap[1]} 行，而服务端只给 ${ledgerLimit} 条 ——`
+          + " 少取的前提是少取的那部分没人看，现在有人看了");
+      }
+    }
+  }
+}
+
 // 按项目取数：项目视角的页面必须带上当前项目，系统级页面必须【不带】。
 //
 // 服务端在截断之前按 projectId 过滤，所以带不带决定了取到的是什么：
