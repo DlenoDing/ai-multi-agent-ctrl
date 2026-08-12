@@ -48,6 +48,17 @@ async function verifyFirstRunPath() {
   const bootstrapToken = (init.stdout.match(/local bootstrap token:\s*(\S+)/u) || [])[1];
   check(Boolean(email && bootstrapToken), "init 会把登录账号与令牌一起打印出来",
     `账号 ${email || "（没打印）"}｜令牌 ${bootstrapToken ? "已打印" : "（没打印）"}`);
+  // init 的输出是新部署者看到的第一屏，里面每一行都要能照着做。
+  // 这条原先打印的是字面量 `$AIMAC_PUBLIC_URL/mcp` —— 照抄就是个坏地址，
+  // 而且看不出是占位符还是真值。判据：必须是真地址，且不带未展开的变量名。
+  const mcpLine = (init.stdout.match(/^mcp: (.+)$/mu) || [])[1] || "";
+  check(/^https?:\/\/\S+\/mcp/u.test(mcpLine) && !mcpLine.includes("$AIMAC"),
+    "init 打印的 MCP 地址必须是能直接用的真地址（不是未展开的变量名）",
+    `打印的是：${mcpLine || "（这一行没打印）"}`);
+  // 默认是回环地址，别的机器连不上 —— 这件事要现在说，而不是等远程客户端连不上再回来查。
+  check(!/127\.0\.0\.1|localhost/u.test(mcpLine) || /回环地址/u.test(mcpLine),
+    "默认回环地址时要说清'别的机器连不上、先设 AIMAC_PUBLIC_URL'",
+    `打印的是：${mcpLine}`);
   if (!email || !bootstrapToken) return;
 
   const firstRunPort = await freePort();

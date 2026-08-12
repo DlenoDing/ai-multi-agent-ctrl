@@ -106,7 +106,15 @@ writeJson(configPath, {
 });
 
 console.log("next: npm start");
-console.log("mcp: hosted by npm start at $AIMAC_PUBLIC_URL/mcp");
+// 这里原先原样打印 `$AIMAC_PUBLIC_URL/mcp` —— 一个操作者照抄就用不了的地址，
+// 而且看不出它是占位符还是真值。第 42 行本来就算出了有效地址，打印它。
+// 没设 AIMAC_PUBLIC_URL 时那是个回环地址：本机的 MCP 客户端能连，别的机器连不上 ——
+// 这正是人需要提前知道的一件事，而不是等远程客户端连不上再回来查。
+const mcpEndpoint = process.env.AIMAC_PUBLIC_URL
+  || `http://${process.env.AIMAC_HOST || "127.0.0.1"}:${Number(process.env.AIMAC_PORT || 4317)}`;
+console.log(`mcp: ${mcpEndpoint}/mcp` + (process.env.AIMAC_PUBLIC_URL
+  ? ""
+  : "  (回环地址，只有本机的 MCP 客户端连得上；要给别的机器用，先设 AIMAC_PUBLIC_URL 再重跑)"));
 console.log("agent: log in to the management console, open the target project, generate a one-time join command, then run that command on the Agent host");
 // 登录同时需要【身份】和【令牌】：系统管理员的 authPolicy.method 是 bootstrap_token，
 // 登录时要填邮箱/账号 ID 再配上这个令牌。原先只打印令牌，从不打印身份 —— 而那个值只存在于
