@@ -507,6 +507,17 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    // crash 这道门此前只有一条登记变异。它最要紧的那条"硬杀之后仍是完整 JSON"其实是抽查：
+    // 实测把原子替换整个拿掉、连跑五次仍然全绿（文件小、写得快，SIGKILL 撞不进写窗口）。
+    // 所以原子性改用结构判据来钉，而这一条是确定性的 —— 连跑两次都稳定报红。
+    name: "持久写入必须写临时文件再 rename（不得就地改目标文件）",
+    file: STORE,
+    gate: "crash",
+    from: '  const temporary = `${options.statePath}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;',
+    to: "  const temporary = options.statePath;",
+    expect: "临时路径必须是另一条路径"
+  },
+  {
     // writer 这道门此前也只有一条登记变异（丢更新）。并发下"同一张定稿卡恰好一个人定成"
     // 是人工闸门在多进程部署下的立足点，而它从没被人看着红过：拿掉"已非待确认"这道守卫，
     // 两个进程会各自定稿成功，两份都写进磁盘 —— 谁批的、批了哪一版，从此说不清。

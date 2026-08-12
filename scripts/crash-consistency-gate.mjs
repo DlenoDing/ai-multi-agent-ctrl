@@ -107,6 +107,33 @@ await inflight;
 const statePath = join(runtimeDir, "control-plane-state.json");
 let parsed = null;
 try { parsed = JSON.parse(readFileSync(statePath, "utf8")); } catch (error) { parsed = null; }
+// 上面那条"硬杀之后仍是完整 JSON"只有在 SIGKILL 恰好落进写窗口时才会红：实测把原子替换整个
+// 拿掉、连跑五次仍然全绿（中央状态文件小、写得快，撞不上）。它证不了原子性，只能算个抽查。
+// 原子性该按【结构】证：每一处持久写入都必须写临时文件、再 rename 到目标路径。
+// 这条是确定性的 —— 把 temp 换成目标路径当场就红，不看运气。
+{
+  const storeSource = readFileSync(new URL("../apps/control-plane-ui/lib/state-store.mjs", import.meta.url), "utf8");
+  const writeSites = [...storeSource.matchAll(/writeDurableFile\(([^,]+),/gu)]
+    .map((match) => match[1].trim())
+    .filter((target) => target !== "path"); // 定义处本身不算调用点
+  check(writeSites.length >= 2, "取到了持久写入点（否则这条结构判据在空转）", `${writeSites.length} 处`);
+  const nonAtomic = writeSites.filter((target) => target !== "temporary");
+  check(nonAtomic.length === 0,
+    "每一处持久写入都先写临时文件再 rename（原子替换，不就地改目标文件）",
+    nonAtomic.length ? `这些写入直接落在目标路径上：${nonAtomic.join("、")}` : `${writeSites.length} 处都走临时文件`);
+  const renames = [...storeSource.matchAll(/renameSync\(temporary,\s*([^)]+)\)/gu)].length;
+  check(renames >= writeSites.length,
+    "每一处临时文件都有对应的 rename（写了不改名等于没写进去）", `rename ${renames} 处 / 写入 ${writeSites.length} 处`);
+  // 只看"实参叫 temporary"是看不住的：把 temporary 本身赋成目标路径，上面两条照样绿
+  // （实测如此）。判据要落在【它到底指向哪】—— 必须是一条带 .tmp- 的独立路径。
+  const temporaryBindings = [...storeSource.matchAll(/const temporary = ([^;]+);/gu)].map((match) => match[1]);
+  check(temporaryBindings.length >= 2, "取到了临时路径的赋值（否则这条在空转）", `${temporaryBindings.length} 处`);
+  const notTemp = temporaryBindings.filter((expression) => !expression.includes(".tmp-"));
+  check(notTemp.length === 0,
+    "临时路径必须是另一条路径（带 .tmp- 后缀），不能就是目标文件本身",
+    notTemp.length ? `这些赋值直接指向目标文件：${notTemp.join("｜")}` : `${temporaryBindings.length} 处都带 .tmp-`);
+}
+
 check(Boolean(parsed), "硬杀之后中央状态文件仍是完整 JSON", parsed ? `stateVersion=${parsed.stateVersion}` : "解析失败");
 // 硬杀那一刻盘上留下临时文件与锁目录是必然的（进程没机会收尾）。要验的是【它们会不会自愈】：
 // 锁必须不挡住后续写入，临时文件必须被下一次写入清掉 —— 否则一次崩溃攒一个，没人会去删。
