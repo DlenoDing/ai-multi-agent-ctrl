@@ -7,7 +7,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node:os";
 import { basename, dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertStateStoreConfig, ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
+import { assertStateStoreConfig, consumeStateRebuildSignal, ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
 import { appendProjectExecutionEvent, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
 import {
   authenticateAgentNode,
@@ -2350,11 +2350,26 @@ async function handleApi(req, res) {
     let state;
     try { state = readHealthState(); }
     catch (error) {
+      // 兜底：读不出状态就是 degraded，不管是哪种原因。只认几种已知形态的话，
+      // 生产上 PostgreSQL 中途掉线、文件权限被改这类照样会让健康检查报 ok，
+      // 而那正是最需要它说实话的时刻。原因归类只用于把话说清楚，不作为"算不算故障"的判据。
       const hit = /^(control_plane_state_corrupt|project_state_shard_corrupt|project_state_shard_missing):(.+)$/u.exec(String(error?.message || ""));
-      if (!hit) throw error;
-      lastStorageFault = {kind: hit[1], file: hit[2], at: now()};
+      lastStorageFault = hit
+        ? {kind: hit[1], file: hit[2], at: now()}
+        : {kind: "state_unreadable", code: error?.code || null, at: now()};
+      console.error(`[state-store] health: ${error?.code || ""} ${String(error?.message || error).slice(0, 200)}`);
       json(res, 503, {status: "degraded", storageFault: lastStorageFault,
-        hint: "状态文件读不出来：按 file 指出的那一份恢复或从备份还原，恢复后本接口自动转回 ok"});
+        hint: "状态读不出来：按 file/code 指出的线索恢复（文件损坏就还原那一份，数据库掉线就把它接回来），恢复后本接口自动转回 ok"});
+      return;
+    }
+    // 状态在【跑着的时候】被按种子重建过：首次部署时这是正常的，之后发生就意味着数据没了，
+    // 而系统会带着一份空状态继续服务 —— 登录全失败，这里却照样 ok。启动之后的重建一律算故障。
+    // 必须放在 readHealthState【之后】：重建正是它内部触发的，放前面读到的永远是上一拍的信号。
+    const rebuiltAt = consumeStateRebuildSignal();
+    if (rebuiltAt && rebuiltAt > serverStartedAt) {
+      lastStorageFault = {kind: "state_rebuilt_from_seed", file: basename(statePath), at: rebuiltAt};
+      json(res, 503, {status: "degraded", storageFault: lastStorageFault,
+        hint: "状态在运行中被重建成了空的（原文件消失）：先确认运行目录没被清、挂载还在，再从备份还原"});
       return;
     }
     json(res, 200, {
@@ -5627,6 +5642,7 @@ ensureState();
 // 运行目录的身份（设备+inode）在启动时记一次：目录被清掉又重建时它会变。
 // 不能记【状态文件】的 inode —— 原子写每次 rename 都会换掉那个文件的 inode，
 // 那样第一次写入之后系统就会被判成 degraded（实测把 agent e2e 打挂了）。
+const serverStartedAt = new Date().toISOString();
 let runtimeDirIdentity = null;
 try { const stat = statSync(runtimeDir); runtimeDirIdentity = `${stat.dev}:${stat.ino}`; } catch { runtimeDirIdentity = null; }
 

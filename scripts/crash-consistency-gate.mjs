@@ -167,6 +167,39 @@ try { parsed = JSON.parse(readFileSync(statePath, "utf8")); } catch (error) { pa
   }
 }
 
+// 只把状态文件删掉（目录还在）：存储层会按种子重建一份空的，登录全失败，而健康检查照样 ok。
+// 目录 inode 那条判据认不出这种 —— 目录没变。所以让存储层把"我刚重建过"说出来，
+// 启动之后的重建一律算故障（首次部署时的重建是正常的，靠时间戳区分）。
+{
+  const seedDir = mkdtempSync(join(tmpdir(), "aimac-crash-seed-"));
+  spawnSync(process.execPath, ["scripts/init-control-plane.mjs"], {cwd: root, encoding: "utf8",
+    env: {...process.env, AIMAC_RUNTIME_DIR: seedDir, AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: "",
+      AIMAC_BOOTSTRAP_TOKEN: "crash-seed-token-0123456789ab"}});
+  const seedPort = await freePort();
+  const seedChild = trackChild(spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
+    cwd: root,
+    env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(seedPort), AIMAC_RUNTIME_DIR: seedDir,
+      AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: ""},
+    stdio: ["ignore", "pipe", "pipe"]
+  }));
+  const seedBase = `http://127.0.0.1:${seedPort}`;
+  try {
+    const readyBy = Date.now() + 20000;
+    while (Date.now() < readyBy) {
+      try { if ((await fetch(`${seedBase}/api/health`)).ok) break; } catch { /* 等它起来 */ }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    rmSync(join(seedDir, "control-plane-state.json"), {force: true});
+    const after = await fetch(`${seedBase}/api/health`);
+    const payload = await after.json().catch(() => ({}));
+    check(after.status === 503 && payload.storageFault?.kind === "state_rebuilt_from_seed",
+      "状态文件被删后按种子重建，健康检查要认这是故障（不能一边空着一边报 ok）",
+      `HTTP ${after.status} ${JSON.stringify(payload.storageFault || payload).slice(0, 80)}`);
+  } finally {
+    seedChild.kill("SIGKILL");
+  }
+}
+
 // 运行目录在跑着的时候被清掉（有人清 /tmp、挂载掉了）：存储层会静默重建一份空状态 ——
 // 登录全失败、数据全没了，而 /api/health 照样 200。只查"文件在不在"是没用的：请求管线里的
 // ensureState 已经把它重建出来了。按 inode 认：重建出来的是另一个文件。

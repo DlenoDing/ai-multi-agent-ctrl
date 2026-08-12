@@ -528,6 +528,16 @@ const MUTATIONS = [
     expect: "被默默接受了"
   },
   {
+    // 只删状态文件（目录还在）：存储层按种子重建一份空的，登录全失败而健康检查照样 ok。
+    // 目录 inode 那条判据认不出这种，所以要靠存储层把"我刚重建过"说出来。
+    name: "状态被按种子重建过要算故障",
+    file: STORE,
+    gate: "crash",
+    from: "  if (!existsSync(options.statePath)) {\n    lastRebuiltFromSeedAt = new Date().toISOString();",
+    to: "  if (!existsSync(options.statePath)) {\n    lastRebuiltFromSeedAt = null;",
+    expect: "健康检查要认这是故障"
+  },
+  {
     // 运行目录被清掉时，存储层会静默重建一份空状态：登录全失败、数据全没了，而健康检查照样 200。
     // 只查"文件在不在"没用（请求管线里的 ensureState 已经把它重建出来了），所以按 inode 认。
     name: "运行目录被清掉之后健康检查必须转 degraded",

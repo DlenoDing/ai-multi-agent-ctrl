@@ -112,15 +112,31 @@ export function assertStateStoreConfig(env = process.env) {
   return configured;
 }
 
+// 状态不存在时按种子建一份 —— 首次部署要的就是这个。但【跑着的时候】它消失再被重建，
+// 意思完全不同：那是数据没了，系统却带着一份空状态继续服务，登录全失败而健康检查照样 ok。
+// 两种情形在这个函数里长得一模一样，所以把"我刚重建过"记下来，交给调用方去判断严重性。
+let lastRebuiltFromSeedAt = null;
+export function consumeStateRebuildSignal() {
+  const at = lastRebuiltFromSeedAt;
+  lastRebuiltFromSeedAt = null;
+  return at;
+}
+
 export function ensureStoredState(options) {
   mkdirSync(options.runtimeDir, {recursive: true});
   if (stateStoreKind() === "postgresql") {
     ensurePostgresTable(options);
     const row = readPostgresState(options);
-    if (!row) writeStoredState(options.buildInitialState(), options);
+    if (!row) {
+      lastRebuiltFromSeedAt = new Date().toISOString();
+      writeStoredState(options.buildInitialState(), options);
+    }
     return;
   }
-  if (!existsSync(options.statePath)) writeStoredState(options.buildInitialState(), options);
+  if (!existsSync(options.statePath)) {
+    lastRebuiltFromSeedAt = new Date().toISOString();
+    writeStoredState(options.buildInitialState(), options);
+  }
 }
 
 export function storedStateExists(options) {
