@@ -210,6 +210,7 @@ verifyShardRoundTripKeepsEveryRecord(errors);
 verifyOrchestrationDoesNotShellOutPerCell(errors);
 verifyWipCapacityBackpressure(errors);
 verifyHighPriorityCellsAreNotStarvedByEarlierGroups(errors);
+verifyWipCapacityIsPerProject(errors);
 verifyActiveDispatchesKeepTheirContracts(errors);
 verifySuspendedOrganizationHaltsExecution(errors);
 verifyHaltedTaskGroupsAreNotClaimable(errors);
@@ -5748,6 +5749,60 @@ function verifyWipCapacityBackpressure(output) {
 
 // 名额有限之后，顺序就是策略。P0（安全/资金/数据破坏）如果排在靠后的任务组里，
 // 不能被靠前那个组的普通活把名额吃光 —— 那不是"晚一点跑"，是每一拍顺序都一样、永远轮不上。
+// 额度与预留都以 projectId 为键。这类"看着对"的作用域是这套系统反复出问题的地方，
+// 所以用行为验而不是读代码：两个项目各自跑满，谁也不许吃掉谁的名额、谁的 P0 也不许
+// 在另一个项目里预留名额（那会让一个安静项目的额度被隔壁的紧急活白白扣住）。
+function verifyWipCapacityIsPerProject(output) {
+  const CAP = 3;
+  const previous = process.env.AIMAC_WIP_QUEUE_HEAD;
+  process.env.AIMAC_WIP_QUEUE_HEAD = String(CAP);
+  let probe;
+  try {
+    probe = structuredClone(seedState);
+    ensureRuntimeCollections(probe, {root});
+    const template = probe.taskGroups[0];
+    const homeProject = probe.projects[0];
+    probe.projects = [homeProject, {...homeProject, id: "prj_neighbour", name: "邻居项目"}];
+    probe.taskGroups = [];
+    for (const [projectId, prefix] of [[homeProject.id, "home"], ["prj_neighbour", "neighbour"]]) {
+      const taskGroup = structuredClone(template);
+      taskGroup.id = `tg_${prefix}`;
+      taskGroup.projectId = projectId;
+      taskGroup.workItems = [];
+      // 每个项目都放一个 P0 加一堆普通活：足够把自己的名额吃满，也足够产生预留。
+      taskGroup.workItems.push({id: `w_${prefix}_p0`, title: "P0", status: "draft",
+        ownerRole: "agent-runtime", progress: 0, admissionPriorityClass: "p0_safety"});
+      for (let index = 0; index < CAP * 3; index += 1) {
+        taskGroup.workItems.push({id: `w_${prefix}_${index}`, title: `c${index}`, status: "draft", ownerRole: "agent-runtime", progress: 0});
+      }
+      probe.taskGroups.push(taskGroup);
+    }
+    runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+  } finally {
+    if (previous === undefined) delete process.env.AIMAC_WIP_QUEUE_HEAD;
+    else process.env.AIMAC_WIP_QUEUE_HEAD = previous;
+  }
+  const selectedIn = (projectId) => (probe.admissionDecisions || [])
+    .filter((item) => item.outcome === "selected" && item.projectId === projectId).length;
+  for (const projectId of [probe.projects[0].id, "prj_neighbour"]) {
+    const selected = selectedIn(projectId);
+    if (selected !== CAP) {
+      output.push(`在制品上限按项目：项目 ${projectId} 拿到 ${selected} 个名额，应当是各自的 ${CAP} 个 —— `
+        + "额度或预留被算成了跨项目共享，一个项目的活会吃掉、或白白扣住另一个租户的名额");
+    }
+  }
+  const p0Blocked = ["w_home_p0", "w_neighbour_p0"].filter((workItemId) => {
+    const decision = (probe.admissionDecisions || []).find((item) => item.workItemId === workItemId);
+    return !decision || decision.outcome !== "selected";
+  });
+  if (p0Blocked.length) {
+    output.push(`在制品上限按项目：${p0Blocked.join("、")} 这些 P0 没能派发 —— `
+      + "每个项目的 P0 都该在自己的额度里排第一，不该被另一个项目的活挤掉");
+  }
+  console.log(`在制品上限按项目：两个项目各自额度 ${CAP}，实派 `
+    + `${selectedIn(probe.projects[0].id)} / ${selectedIn("prj_neighbour")}，两边 P0 均已派发`);
+}
+
 function verifyHighPriorityCellsAreNotStarvedByEarlierGroups(output) {
   const CAP = 3;
   const previous = process.env.AIMAC_WIP_QUEUE_HEAD;

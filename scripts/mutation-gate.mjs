@@ -371,6 +371,13 @@ const MUTATIONS = [
     expect: "没有被裁回上限"
   },
   {
+    name: "在制品上限：额度必须按项目算，不得跨项目共享",
+    file: CORE,
+    from: "const wipNow = wipInFlight.get(taskGroup.projectId) || 0;",
+    to: "const wipNow = [...wipInFlight.values()].reduce((sum, value) => sum + value, 0);",
+    expect: "跨项目共享"
+  },
+  {
     name: "优先级预留：靠后组的 P0 不得被靠前组的普通活饿死",
     file: CORE,
     from: "if (wipNow + wipReserved >= wipCap) {",
