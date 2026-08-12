@@ -2103,7 +2103,8 @@ await runErrorGuidanceCase();
     projects: [], taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
     findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: [],
     skillSources: [{sourceId: "agency-agents-zh", repositoryUrl: "https://example.invalid/skills.git",
-      defaultRef: "main", pinnedCommit: "abc1234567", status: "stale"}],
+      defaultRef: "main", pinnedCommit: "abc1234567", status: "stale",
+      lastSyncError: "同步失败（退出码 128：fatal: Authentication failed，凭据被拒）"}],
     roleSkills: [], roleSkillOverlays: [], modelCapabilities: []};
   probe.renderFullPageWith(withSource, admin, null, "sys-settings");
   const html = String(skillRoot.innerHTML || "");
@@ -2113,6 +2114,20 @@ await runErrorGuidanceCase();
   check("同步失败的技能源要能在表上看出来",
     /没能刷新|stale|已过期|陈旧/.test(html),
     "同步失败之后状态没有呈现出来 —— 人点完同步只看到一条会消失的 toast");
+  // stale 只说了"没同步上"。为什么没上（要认证 / 仓库不在了 / ref 写错了）此前只在服务端日志里，
+  // 而技能源决定 agent 会做什么 —— 人得能在这张表上直接读到原因。
+  check("同步失败要在表上写出原因",
+    /Authentication failed/.test(html),
+    "技能源同步失败的原因没有出现在表上 —— 人只看到 stale，得去翻服务端日志才知道是要认证还是仓库不在了");
+  // 同步成功后原因不该继续显示：产品那边会清掉 lastSyncError，但本行不依赖它被清掉，
+  // 而是核对"只在 stale 时显示" —— 两道保险里这一道是造得出来的那道。
+  const recovered = structuredClone(withSource);
+  recovered.skillSources[0].status = "active";
+  const recoveredRoot = el("div");
+  loadConsole(recoveredRoot).renderFullPageWith(recovered, admin, null, "sys-settings");
+  check("同步恢复之后不再显示上一次的失败原因",
+    !/Authentication failed/.test(String(recoveredRoot.innerHTML || "")),
+    "技能源已经同步成功了，表上还挂着上一次的失败原因 —— 人会去追一个已经解决的故障");
 }
 
 // 控制面挂掉时，这一屏此前只弹一次 toast：toast 消失之后，画面还挂着上一次成功时的数据，

@@ -1627,7 +1627,9 @@ function renderSysSettings() {
   const sources = (state.skillSources || []).map((source) => row([
     // 仓库地址此前一处都不显示：人看不出这个源钉的到底是什么，而"钉住哪一份"正是它存在的理由。
     `<span class="mono">${esc(source.sourceId)}</span><div class="small muted mono">${esc(source.repositoryUrl || "-")}${source.defaultRef ? ` @${esc(source.defaultRef)}` : ""}</div>`,
-    badge(source.status),
+    // 同步失败时光显示 stale 说不出为什么；原因此前只在服务端日志里。
+    badge(source.status) + (source.status === "stale" && source.lastSyncError
+      ? `<div class="small warn-text">${esc(source.lastSyncError)}</div>` : ""),
     `<span class="mono">${esc(String(source.pinnedCommit || "").slice(0, 10))}</span>`,
     {v: String((state.roleSkills || []).filter((skill) => skill.sourceId === source.sourceId).length), c: "num"},
     `<button class="secondary-button" data-action="sync-skill-source" data-source="${esc(source.sourceId)}">同步</button>`

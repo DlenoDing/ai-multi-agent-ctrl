@@ -3929,8 +3929,14 @@ export function syncSkillSource(state, sourceId, options = {}) {
   } catch (error) {
     source.status = "stale";
     source.updatedAt = new Date().toISOString();
-    throw new Error(`skill_source_sync_failed:${source.sourceId}`, {cause: error});
+    // 光有 stale 只说了"没同步上"，说不出【为什么】：要认证？仓库不在了？ref 写错了？
+    // 原因原先只留在 cause 里，人在界面上一个字都看不到，只能去翻服务端日志。
+    source.lastSyncError = `同步失败（${gitFailureDetail(error)}）`;
+    source.lastSyncFailedAt = source.updatedAt;
+    throw Object.assign(new Error(`skill_source_sync_failed:${source.sourceId}：${source.lastSyncError}`), {cause: error});
   }
+  delete source.lastSyncError;
+  delete source.lastSyncFailedAt;
   if (source.trustPolicy.requirePinnedCommit && actualCommit !== source.pinnedCommit) {
     source.status = "quarantined";
     throw new Error(`pinned_commit_mismatch:${actualCommit}`);
@@ -4460,12 +4466,21 @@ function gitStrict(root = process.cwd(), args = []) {
   }
 }
 
-// 只保留命令与 git 自己说的原因，不带 -C 后面的路径。取末尾几行是因为 git 把结论写在最后
-// （前面往往是 "Enumerating objects" 之类的进度）。
+// git 自己说的原因。只取它的结论行（fatal/error/remote/warning 开头的那些）：其余是进度输出，
+// 而进度里恰恰带着本机路径 —— "Cloning into '/var/folders/…'" 就会把服务器目录塞进给人看的报文。
+// 一条结论行都没有时才退回末尾几行，并把这种情况如实说成"只有进度输出"。
+function gitFailureDetail(error) {
+  const lines = String(error?.stderr || error?.stdout || "").trim().split("\n")
+    .map((line) => line.trim()).filter(Boolean);
+  const conclusions = lines.filter((line) => /^(fatal|error|remote|warning):/iu.test(line));
+  const detail = (conclusions.length ? conclusions : lines).slice(-3).join("；").slice(0, 400);
+  const prefix = conclusions.length || !detail ? "" : "只有进度输出：";
+  return `退出码 ${error?.status ?? "?"}${detail ? `：${prefix}${detail}` : "，且没有任何输出"}`;
+}
+
+// 只保留命令与原因，不带 -C 后面的路径。
 function gitFailureText(args, error) {
-  const detail = String(error?.stderr || error?.stdout || "").trim().split("\n")
-    .map((line) => line.trim()).filter(Boolean).slice(-3).join("；").slice(0, 400);
-  return `git ${args.join(" ")}（退出码 ${error?.status ?? "?"}）${detail ? `：${detail}` : "，且没有任何输出"}`;
+  return `git ${args.join(" ")}（${gitFailureDetail(error)}）`;
 }
 
 // 一次编排周期内的"仓库事实"备忘录。为什么需要：gitHead 与 gitRemoteUrl 都落在【每个工作项】

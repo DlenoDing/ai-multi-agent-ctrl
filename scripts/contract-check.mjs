@@ -358,6 +358,22 @@ function verifySkillSourceSyncFailureIsVisible(output) {
   } else if (source.status !== "stale") {
     output.push(`技能源同步失败之后状态成了 ${source.status}（应为 stale：内容还在，只是没能刷新）`);
   }
+  // stale 只说了"没同步上"，说不出为什么。原因要落在记录上，人才看得到（界面渲染由控制台门核对）。
+  if (!source.lastSyncError) {
+    output.push("技能源同步失败之后记录上没有 lastSyncError —— 人只看到 stale，看不出是要认证、仓库不在了还是 ref 写错了");
+  } else if (!/does not exist|not a git repository|Could not read from remote|repository/iu.test(source.lastSyncError)) {
+    output.push(`技能源的 lastSyncError 没带上 git 给的原因（拿到 "${source.lastSyncError.slice(0, 120)}"）`);
+  }
+  // 泄露判据只能盯【服务端内部目录】：报文里出现的仓库地址是人自己配的那一个（生产上是远端 URL），
+  // 该显示；不该出现的是 runtimeDir 下的工作目录（"Cloning into '<runtimeDir>/skill-sources/…'"）。
+  if (source.lastSyncError && source.lastSyncError.includes(runtimeDir)) {
+    output.push(`技能源的 lastSyncError 里带着服务端的工作目录（${source.lastSyncError.slice(0, 140)}）—— 这句话直接显示在控制台上`);
+  }
+  // "同步成功后清掉这条痕迹"验不到：产品只允许 https/ssh/git 协议（GIT_ALLOW_PROTOCOL，
+  // 防的是 ext:: 之类的远程助手 RCE），本地仓库夹具一律被拒，成功路径在这里造不出来。
+  // 所以界面那边不靠"痕迹被清掉"，而是只在 status 仍为 stale 时才显示它 —— 那条由控制台门核对。
+  console.log("技能源同步失败核对：失败原因入库与不泄露服务端目录已用真实 git 失败验过；"
+    + "同步成功后清痕迹造不出来（本地协议被产品拒绝），改由界面「只在 stale 时显示」兜底");
 }
 
 function verifyStateStoreConfigIsNotSilentlyDowngraded(output) {

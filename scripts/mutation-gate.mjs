@@ -553,7 +553,7 @@ const MUTATIONS = [
     name: "技能源同步失败要在状态上留下痕迹",
     file: CORE,
     check: "verifySkillSourceSyncFailureIsVisible",
-    from: '    source.status = "stale";\n    source.updatedAt = new Date().toISOString();\n    throw new Error(`skill_source_sync_failed:${source.sourceId}`, {cause: error});',
+    from: '    throw Object.assign(new Error(`skill_source_sync_failed:${source.sourceId}：${source.lastSyncError}`), {cause: error});',
     to: "    throw error;",
     expect: "原始 git 报错"
   },
@@ -674,9 +674,25 @@ const MUTATIONS = [
     name: "agent 运行时的 git 失败也要带上原因",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyGitFailureSaysWhyWithoutLeakingPaths",
-    from: '    const detail = String(error?.stderr || error?.stdout || "").trim().split("\\n")',
-    to: '    const detail = String("").trim().split("\\n")',
+    from: '    const lines = String(error?.stderr || error?.stdout || "").trim().split("\\n")',
+    to: '    const lines = String("").trim().split("\\n")',
     expect: "没有把 stderr 带进报文"
+  },
+  {
+    name: "技能源同步失败要写清为什么",
+    file: CORE,
+    check: "verifySkillSourceSyncFailureIsVisible",
+    from: "    source.lastSyncError = `同步失败（${gitFailureDetail(error)}）`;",
+    to: '    source.lastSyncError = "";',
+    expect: "记录上没有 lastSyncError"
+  },
+  {
+    name: "技能源失败原因要出现在表上",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '    badge(source.status) + (source.status === "stale" && source.lastSyncError',
+    to: "    badge(source.status) + (false",
+    expect: "原因没有出现在表上"
   },
   {
     // 退回 execFileSync 原样抛出：报文会变回 "Command failed: git -C <服务器绝对路径> …"，

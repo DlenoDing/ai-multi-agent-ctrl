@@ -1849,8 +1849,11 @@ function git(root, gitArgs) {
   try {
     return execFileSync("git", ["-C", root, ...gitArgs], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 32 * 1024 * 1024}).trim();
   } catch (error) {
-    const detail = String(error?.stderr || error?.stdout || "").trim().split("\n")
-      .map((line) => line.trim()).filter(Boolean).slice(-3).join("；").slice(0, 400);
+    // 只取 git 的结论行：进度输出里带着本机路径（"Cloning into '/Users/…'"），不该进给人看的报文。
+    const lines = String(error?.stderr || error?.stdout || "").trim().split("\n")
+      .map((line) => line.trim()).filter(Boolean);
+    const conclusions = lines.filter((line) => /^(fatal|error|remote|warning):/iu.test(line));
+    const detail = (conclusions.length ? conclusions : lines).slice(-3).join("；").slice(0, 400);
     throw Object.assign(new Error(`git_command_failed:git ${gitArgs.join(" ")}（退出码 ${error?.status ?? "?"}）`
       + (detail ? `：${detail}` : "，且没有任何输出")), {cause: error});
   }
