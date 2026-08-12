@@ -1106,6 +1106,50 @@ try {
     body: JSON.stringify({projectId: orgProject.payload.id, title: "组织任务组"})
   });
   if (orgTaskGroup.response.status !== 201) throw new Error(`org task group create failed: ${orgTaskGroup.response.status}`);
+  // 跨租户隔离：不逐条枚举字段，而是把【别的租户的 id】收集起来，在组织管理员拿到的整份载荷里
+  // 全文搜。逐条断言只能覆盖"我想到的那些集合"，而本仓这类漏洞恰恰出在没想到的那一个上
+  //（视图基底不过滤 taskGroups、按 taskGroupId 归属的 worker lane、用复数 projectIds 的节点，
+  // 三次都是这么漏的）。这条判据对【将来新增的集合】自动生效。
+  const systemWide = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: systemAuth}});
+  if (!systemWide.response.ok) throw new Error("跨租户扫描取不到系统侧全量视图 —— 本条在空转");
+  const mine = new Set([orgId, orgProject.payload.id, orgTaskGroup.payload.taskGroup.id]);
+  for (const account of systemWide.payload.accounts || []) if (account.organizationId === orgId) mine.add(account.accountId);
+  const foreignIds = [];
+  for (const [collection, idField] of [["projects", "id"], ["taskGroups", "id"], ["organizations", "orgId"],
+    ["accounts", "accountId"], ["agentRuntimeNodes", "nodeId"]]) {
+    for (const item of systemWide.payload[collection] || []) {
+      const id = item[idField];
+      if (!id || mine.has(id)) continue;
+      // 组织管理员本人和它自己组织里的对象不算外租户
+      if (item.organizationId === orgId) continue;
+      foreignIds.push(`${collection}.${id}`);
+    }
+  }
+  const foreignIdValues = new Set(foreignIds.map((entry) => entry.split(".").slice(1).join(".")));
+  if (foreignIds.length < 3) throw new Error(`跨租户扫描只收集到 ${foreignIds.length} 个外租户 id —— 夹具太干净，本条在空转`);
+  const asOrgAdmin = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: orgAdminAuth}});
+  // 外租户 id 出现在【引用字段】上（谁创建的、谁裁决的）与【对象本身被发出来】不是一回事。
+  // 判据做成登记制：引用位置要逐个写明理由，其余一律报红 —— 这样将来多出一处引用会被看见，
+  // 而不是被一句宽泛的例外悄悄放过。
+  const ALLOWED_FOREIGN_REFERENCE_FIELDS = {
+    createdBy: "组织记录上的创建者是系统账号；这是【自己组织】的元数据，不是别的租户的对象"
+  };
+  const foreignHits = [];
+  const locateForeign = (node, path) => {
+    if (Array.isArray(node)) { node.forEach((item, index) => locateForeign(item, `${path}[${index}]`)); return; }
+    if (node && typeof node === "object") { for (const [key, value] of Object.entries(node)) locateForeign(value, `${path}.${key}`); return; }
+    const text = String(node);
+    if (!foreignIdValues.has(text)) return;
+    const field = path.split(".").pop().replace(/\[\d+\]$/u, "");
+    if (ALLOWED_FOREIGN_REFERENCE_FIELDS[field]) return;
+    foreignHits.push(`${path}=${text}`);
+  };
+  locateForeign(asOrgAdmin.payload, "");
+  if (foreignHits.length) {
+    throw new Error(`组织管理员的整份状态载荷里出现了别的租户的对象：${foreignHits.slice(0, 6).join("、")}`
+      + `${foreignHits.length > 6 ? ` 等 ${foreignHits.length} 处` : ""} —— 若确属合法引用，登记到 ALLOWED_FOREIGN_REFERENCE_FIELDS 并写明理由`);
+  }
+
   // 组织用量是派生量，而两条路径各自算各自的：GET /api/orgs 当场重算，
   // GET /api/state?view=orgs（组织管理员自己的概览页）此前读的是上一次写入时存下的快照。
   // 任务组创建那条路由不重算用量，于是刚建完就差一个 —— 实测配额 1/1 已满而概览显示 0，
