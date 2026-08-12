@@ -3,9 +3,9 @@
 import {spawn} from "node:child_process";
 import {createServer} from "node:net";
 import {once} from "node:events";
-import {mkdtempSync, readFileSync, existsSync, readdirSync} from "node:fs";
+import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync} from "node:fs";
 import {join} from "node:path";
-import {tmpdir} from "node:os";
+import {hostname, tmpdir} from "node:os";
 
 import {dirname, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
@@ -156,6 +156,33 @@ check(full.ok, "重启后能正常读出任务视图（分片摘要校验通过�
 const resumed = await fetch(`${base}/api/orgs/${orgId}/quotas`, {method: "POST",
   headers: {...auth, "idempotency-key": "crash-resume"}, body: JSON.stringify({quotas: {maxMembers: 55}})});
 check(resumed.ok, "重启后还能继续写入（残留的锁没有把系统锁死）", `HTTP ${resumed.status}`);
+// 上面那条"崩溃后立刻恢复"只有在 SIGKILL 恰好落在【owner 记录写完之后】才验得到 ——
+// 落在建目录与写 owner 之间就只能走时间兜底，这一轮就整条跳过了。也就是说"按持锁进程存活破锁"
+// 这条性质是否被检验取决于运气：实测把它改坏，变异门时红时绿。
+// 所以这里直接造出确定的场景：留一把 owner 指向【已死进程】的锁，再做一次真实写入。
+{
+  const deadLockDir = `${statePath}.lock`;
+  const deadPid = 2147480000; // 远超真实 pid 范围，必定不存在
+  let staged = false;
+  try {
+    mkdirSync(deadLockDir, {recursive: true});
+    writeFileSync(join(deadLockDir, "owner.json"),
+      JSON.stringify({pid: deadPid, host: hostname(), at: new Date(0).toISOString()}));
+    staged = existsSync(join(deadLockDir, "owner.json"));
+  } catch { staged = false; }
+  if (!staged) {
+    console.log("  --  造不出'持有者已死'的锁，锁自愈这条未被检验");
+  } else {
+    const deadLockStarted = Date.now();
+    const afterDeadLock = await fetch(`${base}/api/auth/login`, {method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({email: "system.admin@local", token: "crash-probe-token-0123456789ab"})});
+    const deadLockMs = Date.now() - deadLockStarted;
+    check(afterDeadLock.ok && deadLockMs < 3000,
+      "持锁进程已死时立刻破锁（不是干等宽限期）",
+      `HTTP ${afterDeadLock.status}，用时 ${deadLockMs}ms —— 只靠时间兜底会等满宽限期`);
+  }
+}
 const leftoversAfterWrite = readdirSync(runtimeDir).filter((name) => name.includes(".tmp-"));
 // 这一轮若没撞上写入中途，清理逻辑根本没被检验 —— 报成 ok 就是假绿，必须自己说出来。
 if (!leftoversAtKill.length) console.log("  --  本轮 SIGKILL 没有落在写入中途（盘上没有残留临时文件），清理这条未被检验");
@@ -164,6 +191,7 @@ if (leftoversAtKill.length) check(leftoversAfterWrite.length === 0, "崩溃留�
   `杀时 ${leftoversAtKill.length} 个 → 现在 ${leftoversAfterWrite.length} 个${leftoversAfterWrite.length ? "：" + leftoversAfterWrite.join(", ") : ""}`);
 
 child.kill("SIGTERM");
+
 await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000))]);
 console.log(fails.length
   ? `crash consistency gate failed: ${fails.join("；")}`
