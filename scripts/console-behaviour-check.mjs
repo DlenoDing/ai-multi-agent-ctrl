@@ -74,7 +74,13 @@ function makeContext(documentRoot) {
     fetch: async () => { throw new Error("行为门不应发起网络请求"); },
     WebSocket: class { constructor() { this.close = noop; } },
     location: {origin: "http://localhost", protocol: "http:", host: "localhost", href: "http://localhost/"},
-    sessionStorage: {getItem: () => null, setItem: noop, removeItem: noop},
+    // 会话存储要是【真的能存】的桩：草稿跨过会话过期这条路径全靠它，
+    // 用只读空桩的话，那几条断言测的是"什么都没发生"。
+    sessionStorage: (() => {
+      const box = new Map();
+      return {getItem: (k) => (box.has(k) ? box.get(k) : null), setItem: (k, v) => box.set(k, String(v)),
+        removeItem: (k) => box.delete(k), __box: box};
+    })(),
     localStorage: {getItem: () => null, setItem: noop, removeItem: noop},
     navigator: {clipboard: {writeText: async () => {}}},
     t: (key) => key,
@@ -135,6 +141,25 @@ globalThis.__probe = {
   blockerGuide: (type) => blockerGuide(type),
   renderMonitorWith: (nextState, account, projectId) => { state = nextState; currentAccount = account; currentProjectId = projectId; return renderMonitor(); },
   setAuth: (token, account) => { authToken = token; currentAccount = account; },
+  stashDraft: (pageId, projectId) => { page = pageId; currentProjectId = projectId; stashDraftForExpiredSession(); },
+  peekDraft: () => sessionStorage.getItem("aimac.expiredDraft"),
+  setDraftRaw: (raw) => sessionStorage.setItem("aimac.expiredDraft", raw),
+  // 401 那条【接线】要单独验：光验函数本身，把 api() 里的调用删掉照样绿。
+  expireViaApi: async (pageId, projectId) => {
+    // 先清干净：不清的话读到的是上一次直接调函数留下的那份，
+    // 把 401 分支的调用删掉照样"有草稿"，断言等于没验（第一版就是这样）。
+    sessionStorage.removeItem("aimac.expiredDraft");
+    page = pageId; currentProjectId = projectId; authToken = "probe-token";
+    globalThis.fetch = async () => ({ok: false, status: 401, statusText: "Unauthorized",
+      headers: {get: () => null}, json: async () => ({error: "auth_required"}), text: async () => "{}"});
+    try { await api("/api/state?view=tasks"); } catch { /* 401 必然抛 */ }
+    return sessionStorage.getItem("aimac.expiredDraft");
+  },
+  ageDraft: (ms) => {
+    const saved = JSON.parse(sessionStorage.getItem("aimac.expiredDraft") || "null");
+    if (saved) { saved.at = Date.now() - ms; sessionStorage.setItem("aimac.expiredDraft", JSON.stringify(saved)); }
+  },
+  restoreDraft: () => { const ok = restoreDraftAfterRelogin(); return {ok, page, projectId: currentProjectId, pending: pendingFormRestore}; },
   renderFullPageWith: (nextState, account, projectId, pageId) => { state = nextState; currentAccount = account; currentProjectId = projectId; page = pageId; render(); },
   renderTaskGroupsWith: (nextState, account, projectId, detailId, detail) => { state = nextState; currentAccount = account; currentProjectId = projectId; expandedTaskGroupId = detailId; if (detail !== undefined) tgDetail = detail; return renderTaskGroups(); },
   setFetch: (fn) => { globalThis.fetch = fn; },
@@ -1272,6 +1297,55 @@ await runErrorGuidanceCase();
         + "你的定稿会落在一个你没看过的版本上");
     }
   }
+}
+
+// 会话过期不该让人丢掉正在写的东西。
+//
+// 会话是【绝对过期】的（登录时定死一小时，不续期），而人在打字时轮询是暂停的 ——
+// 于是典型路径是：写了一大段说明、点提交，才发现会话早就过期了。此前这一刻直接跳回登录页，
+// 内容、所在页面、所选项目一起没了，人只能凭记忆重写一遍（而这段话往往是定稿理由）。
+{
+  const documentRoot = el("div");
+  const form = el("form", {dataset: {form: "confirmation-decide"}}, [
+    el("textarea", {name: "justification", value: "这是我写了很久的定稿理由"}),
+    el("input", {name: "password", type: "password", value: "不该被存下来"})
+  ]);
+  documentRoot.children = [form];
+  const probe = loadConsole(documentRoot);
+  probe.stashDraft("tg", "prj_alpha");
+  const stashed = probe.peekDraft();
+  check("会话过期时把正在填的内容留下来", Boolean(stashed) && stashed.includes("定稿理由"),
+    "过期这一刻直接跳登录页，人写的东西没有任何地方留存 —— 只能凭记忆重写");
+  // 接线：真的走一次 401，而不是直接调那个函数
+  const viaApi = await probe.expireViaApi("tg", "prj_alpha");
+  check("401 这条路径上真的会去留存（不是只有函数写对了）",
+    Boolean(viaApi) && viaApi.includes("定稿理由"),
+    "函数写对了但 401 分支没调用它 —— 人遇到的正是 401 这条路径");
+  check("留存的内容里不含口令", Boolean(stashed) && !stashed.includes("不该被存下来"),
+    "口令进了会话存储 —— 保内容的价值不值得让它多活一轮");
+
+  // 模拟"登录后落在默认页"：不先挪开的话，页面本来就还停在 tg，
+  // 恢复与否都长一样 —— 断言等于没验（第一版就是这样）。
+  probe.stashDraft("sys-overview", "");
+  probe.setDraftRaw(stashed);
+  const resumed = probe.restoreDraft();
+  check("重新登录后回到过期前的页面与项目",
+    resumed.ok && resumed.page === "tg" && resumed.projectId === "prj_alpha",
+    `恢复结果 page=${resumed.page} project=${resumed.projectId} —— 落回默认页的话，草稿也补不回那张表单`);
+  check("内容交回既有的一次性回填机制", Boolean(resumed.pending),
+    "页面回去了，内容却没有交给回填 —— 人看到的还是一张空表");
+
+  // 隔太久不许回填：那时人多半在做别的事，把一份陈旧草稿填进去比空着更容易让人误交。
+  const stale = loadConsole((() => {
+    const rootEl = el("div");
+    rootEl.children = [el("form", {dataset: {form: "confirmation-decide"}}, [el("textarea", {name: "justification", value: "很久以前的草稿"})])];
+    return rootEl;
+  })());
+  stale.stashDraft("tg", "prj_alpha");
+  stale.ageDraft(31 * 60 * 1000);
+  const staleResult = stale.restoreDraft();
+  check("隔了太久的草稿不再回填", !staleResult.ok && !staleResult.pending,
+    "半小时前的草稿仍被填回表单 —— 人多半已经在做别的事了，这比空着更危险");
 }
 
 // 按项目取数：项目视角的页面必须带上当前项目，系统级页面必须【不带】。

@@ -712,8 +712,13 @@ async function api(path, options = {}) {
       if (guidance.length) hint += `：${[...new Set(guidance)].join("；")}`;
     } catch {}
     if (response.status === 401 && authToken) {
+      // 会话是【绝对过期】的（登录时定死，不续期）。而人在打字时轮询是暂停的，
+      // 于是典型路径是：写了一大段说明、点提交，才发现会话早就过期了 ——
+      // 此前这一刻会直接跳回登录页，内容、所在页面、所选项目一起没了，人只能凭记忆重写。
+      stashDraftForExpiredSession();
       clearSession();
       render();
+      toast.error("会话已过期，请重新登录 —— 你刚填写的内容已经保留，登录后会回到原处");
     }
     throw new Error(`${response.status} ${detail ? t(detail) : response.statusText}${hint}`);
   }
@@ -760,7 +765,41 @@ function saveSession(sessionToken, account) {
   currentAccount = account;
   sessionStorage.setItem("aimac.sessionToken", sessionToken);
   sessionStorage.setItem("aimac.account", JSON.stringify(account));
+  // 会话过期前留下的草稿：回到原页面原项目，并把内容交给既有的一次性回填。
+  // 放在这里而不是登录表单的处理里 —— 所有登录路径都经过 saveSession。
+  const resumed = restoreDraftAfterRelogin();
+  if (resumed) toast.success("已回到会话过期前的位置，并恢复了你当时填写的内容 —— 请确认无误后再提交");
   connectRealtime();
+  return resumed;
+}
+
+const EXPIRED_DRAFT_KEY = "aimac.expiredDraft";
+
+// 会话过期这一刻，把"人正在填的东西"连同他所在的位置一起留下来。
+// 只存一份、且带时间戳：隔了很久再登录时，回填一份陈旧草稿比空着更容易让人误交。
+function stashDraftForExpiredSession() {
+  try {
+    const forms = [...document.querySelectorAll("form[data-form]")];
+    const dirty = forms.find((form) => dirtyFormKinds.has(form.dataset.form)) || forms.find((form) =>
+      [...form.querySelectorAll("input, textarea")].some((el) => el.type !== "password" && String(el.value || "").trim()));
+    if (!dirty) return;
+    sessionStorage.setItem(EXPIRED_DRAFT_KEY, JSON.stringify({
+      page, projectId: currentProjectId || "", at: Date.now(), snapshot: snapshotFormValues(dirty)
+    }));
+  } catch { /* 存不下就算了：这是尽力而为的挽救，不能反过来把提交流程搞挂 */ }
+}
+
+// 重新登录之后：回到原来的页面与项目，并把草稿交给既有的一次性回填机制。
+// 超过 30 分钟就丢掉 —— 那时人多半已经在做别的事，回填反而危险。
+function restoreDraftAfterRelogin() {
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem(EXPIRED_DRAFT_KEY) || "null"); } catch { saved = null; }
+  sessionStorage.removeItem(EXPIRED_DRAFT_KEY);
+  if (!saved?.snapshot || Date.now() - Number(saved.at || 0) > 30 * 60 * 1000) return false;
+  if (saved.page) page = saved.page;
+  if (saved.projectId) currentProjectId = saved.projectId;
+  pendingFormRestore = saved.snapshot;
+  return true;
 }
 
 function clearSession() {
@@ -3486,9 +3525,11 @@ document.addEventListener("submit", async (event) => {
     if (kind === "login") {
       const secret = String(data.secret || "");
       const result = await api("/api/auth/login", {method: "POST", body: JSON.stringify({email: data.email, token: secret, password: secret})});
-      saveSession(result.sessionToken, result.account);
+      const resumedFromDraft = saveSession(result.sessionToken, result.account);
       lastError = "";
-      page = defaultPageFor(perspectiveOf(currentAccount));
+      // 会话过期前留下过草稿时，saveSession 已经把页面/项目恢复成当时那一处；
+      // 这里不能再把它覆盖成默认页，否则人登录后落在别处，草稿也就补不回那张表单了。
+      if (!resumedFromDraft) page = defaultPageFor(perspectiveOf(currentAccount));
       sessionStorage.setItem("aimac.page", page);
       await loadPage();
       return;
