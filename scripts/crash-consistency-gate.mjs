@@ -167,6 +167,48 @@ try { parsed = JSON.parse(readFileSync(statePath, "utf8")); } catch (error) { pa
   }
 }
 
+// 状态文件损坏（截断 / 半份 / 被别的东西覆盖）是崩溃与坏盘之后的常见残局。此前两种都很难处置：
+// 中央文件坏了，服务照样打印启动横幅，只有 /api/health 回 500 加一句 "Unterminated string in JSON
+// at position 31584"；分片坏了更糟 —— 服务起来了、健康检查一路 200，而读数据全 500，监控是绿的。
+// 现在两种都给带文件名的稳定码，且存储故障会把健康检查压成 degraded。
+{
+  const corruptDir = mkdtempSync(join(tmpdir(), "aimac-crash-corrupt-"));
+  spawnSync(process.execPath, ["scripts/init-control-plane.mjs"], {cwd: root, encoding: "utf8",
+    env: {...process.env, AIMAC_RUNTIME_DIR: corruptDir, AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: "",
+      AIMAC_BOOTSTRAP_TOKEN: "crash-corrupt-token-0123456789ab"}});
+  const corruptStatePath = join(corruptDir, "control-plane-state.json");
+  writeFileSync(corruptStatePath, readFileSync(corruptStatePath, "utf8").slice(0, 200));
+  const corruptPort = await freePort();
+  const corruptChild = trackChild(spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
+    cwd: root,
+    env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(corruptPort), AIMAC_RUNTIME_DIR: corruptDir,
+      AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: ""},
+    stdio: ["ignore", "pipe", "pipe"]
+  }));
+  try {
+    let health = {status: 0, payload: {}};
+    const deadline = Date.now() + 20000;
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(`http://127.0.0.1:${corruptPort}/api/health`);
+        health = {status: response.status, payload: await response.json().catch(() => ({}))};
+        break;
+      } catch { await new Promise((resolve) => setTimeout(resolve, 150)); }
+    }
+    check(health.status === 503 && health.payload.status === "degraded",
+      "中央状态文件损坏时健康检查报 degraded（不是 200，也不是一句原始解析错误）",
+      `HTTP ${health.status} ${JSON.stringify(health.payload).slice(0, 80)}`);
+    check(health.payload.storageFault?.kind === "control_plane_state_corrupt"
+      && Boolean(health.payload.storageFault?.file),
+      "损坏报文说得出是哪一份文件（否则运维不知道该恢复哪个）",
+      JSON.stringify(health.payload.storageFault || null));
+    check(!JSON.stringify(health.payload).includes(corruptDir),
+      "损坏报文里不带服务器的绝对路径", JSON.stringify(health.payload).slice(0, 90));
+  } finally {
+    corruptChild.kill("SIGKILL");
+  }
+}
+
 // 上面那条"硬杀之后仍是完整 JSON"只有在 SIGKILL 恰好落进写窗口时才会红：实测把原子替换整个
 // 拿掉、连跑五次仍然全绿（中央状态文件小、写得快，撞不上）。它证不了原子性，只能算个抽查。
 // 原子性该按【结构】证：每一处持久写入都必须写临时文件、再 rename 到目标路径。

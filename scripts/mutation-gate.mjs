@@ -518,6 +518,16 @@ const MUTATIONS = [
     expect: "仍在每拍推进"
   },
   {
+    // 状态文件损坏时若原样抛 SyntaxError：中央文件坏了只看到 "Unterminated string in JSON at
+    // position 31584"，分片坏了更糟 —— 服务照常起、健康检查一路 200，监控绿着而读数据全挂。
+    name: "状态文件损坏要说清是哪一份，并把健康检查压成 degraded",
+    file: STORE,
+    gate: "crash",
+    from: "  catch { throw new Error(`control_plane_state_corrupt:${basename(path)}`); }",
+    to: "  catch (error) { throw error; }",
+    expect: "健康检查报 degraded"
+  },
+  {
     // 盘写不进去是真实运维故障（满盘 / 只读挂载 / 权限 / 配额）。此前回的是 500 加一句 Node 的
     // 原始英文错误，报文里还带着服务器的绝对路径：中文界面上看不懂，运维不知道该查什么。
     name: "盘写不进去要给稳定错误码，且不回服务器路径",

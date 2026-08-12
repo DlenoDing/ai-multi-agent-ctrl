@@ -2329,7 +2329,23 @@ const execFileAsync = promisify(execFile);
 async function handleApi(req, res) {
   const url = new URL(req.url, "http://request.local");
   if (req.method === "GET" && ["/api/health", "/api/runtime/health"].includes(url.pathname)) {
-    const state = readHealthState();
+    // 存储坏过一次就不能再报 ok：分片损坏时服务照常起、这里照常 200，监控绿着而读数据全 503。
+    // healthy 的定义得包含"状态读得出来"。
+    if (lastStorageFault) {
+      json(res, 503, {status: "degraded", storageFault: lastStorageFault,
+        hint: "状态文件读不出来：按 file 指出的那一份恢复或从备份还原，恢复后本接口自动转回 ok"});
+      return;
+    }
+    let state;
+    try { state = readHealthState(); }
+    catch (error) {
+      const hit = /^(control_plane_state_corrupt|project_state_shard_corrupt|project_state_shard_missing):(.+)$/u.exec(String(error?.message || ""));
+      if (!hit) throw error;
+      lastStorageFault = {kind: hit[1], file: hit[2], at: now()};
+      json(res, 503, {status: "degraded", storageFault: lastStorageFault,
+        hint: "状态文件读不出来：按 file 指出的那一份恢复或从备份还原，恢复后本接口自动转回 ok"});
+      return;
+    }
     json(res, 200, {
       status: "ok",
       runtime: state.runtime.status,
@@ -5554,6 +5570,8 @@ if (orchestratorIntervalMs > 0) {
 }
 realtimeHeartbeat.unref();
 
+let lastStorageFault = null;
+
 function respondApiError(res, error) {
   if (res.headersSent) {
     res.end();
@@ -5571,6 +5589,16 @@ function respondApiError(res, error) {
   // 中文界面上出现一句英文 EACCES，而且报文里带着服务器的绝对路径。
   // 实测把运行目录改成不可写：写入回 500 + "EACCES: permission denied, mkdir '/var/folders/…'"。
   // 这一类要给一个稳定的错误码，让人知道该去查什么；路径留在服务端日志里，不回给调用方。
+  // 状态文件损坏：与上面的写失败同规 —— 稳定错误码 + 说清是哪一份，路径不回给调用方。
+  // 而且要【记下来】：分片坏掉时服务照常起、/api/health 仍然 200，监控是绿的而数据面已经不可用。
+  const corrupt = /^(control_plane_state_corrupt|project_state_shard_corrupt|project_state_shard_missing):(.+)$/u
+    .exec(String(error?.message || ""));
+  if (corrupt) {
+    lastStorageFault = {kind: corrupt[1], file: corrupt[2], at: now()};
+    console.error(`[state-store] ${corrupt[1]}: ${corrupt[2]}`);
+    json(res, 503, {error: "state_storage_corrupt", kind: corrupt[1], file: corrupt[2], retryable: false});
+    return;
+  }
   if (["EACCES", "EPERM", "ENOSPC", "EROFS", "EDQUOT", "EMFILE", "ENFILE"].includes(error?.code)) {
     console.error(`[state-write] ${error.code}: ${error.message}`);
     json(res, 503, {error: "state_storage_unavailable", code: error.code, retryable: true});

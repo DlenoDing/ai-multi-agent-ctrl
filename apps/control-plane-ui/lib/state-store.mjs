@@ -127,7 +127,7 @@ export function readStoredState(options) {
       return cached;
     }
     return withRuntimeJsonLock(options, () => {
-      const central = JSON.parse(readFileSync(options.statePath, "utf8"));
+      const central = parseStateFile(options.statePath);
       assertStateSchemaSupported(central);
       const state = hydrateProjectState(central, options);
       cacheStoredState(hydratedStateCache, options.statePath, state, runtimeJsonStateCacheKey(options, central));
@@ -185,7 +185,7 @@ export function readStoredCentralState(options) {
   }
   const central = stateStoreKind() === "postgresql"
     ? readPostgresState()
-    : JSON.parse(readFileSync(options.statePath, "utf8"));
+    : parseStateFile(options.statePath);
   if (stateStoreKind() !== "postgresql") cacheStoredState(centralStateCache, options.statePath, central, statCacheKey(options.statePath));
   assertStateSchemaSupported(central);
   central.__loadedStateVersion = Number(central.stateVersion || 0);
@@ -240,7 +240,7 @@ export function writeStoredState(state, options) {
 
 function readCentralStateIfPresent(statePath) {
   if (!existsSync(statePath)) return null;
-  return JSON.parse(readFileSync(statePath, "utf8"));
+  return parseStateFile(statePath);
 }
 
 function assertExpectedVersionFromCentral(central, expectedStateVersion) {
@@ -590,7 +590,12 @@ function readRuntimeJsonProjectShards(options, centralState = {}) {
           return null;
         }
         const source = readFileSync(path, "utf8");
-        const shard = JSON.parse(source);
+        // 解析失败要带上是【哪一个分片】：原样抛 SyntaxError 的话，调用方拿到的是一句
+        // "Unexpected end of JSON input"，既不知道坏的是哪份，也不知道该去恢复哪个文件。
+        // 同目录下已有 project_state_shard_missing:<name> 这种带名字的稳定码，这里对齐它。
+        let shard;
+        try { shard = JSON.parse(source); }
+        catch { throw new Error(`project_state_shard_corrupt:${name}`); }
         const currentName = runtimeJsonProjectShardName(shard.projectId, shard.storageGeneration || "legacy");
         const stableName = `${safeProjectId(shard.projectId)}.state.json`;
         const legacyName = `${legacySafeProjectId(shard.projectId)}.state.json`;
@@ -802,6 +807,15 @@ export function digestOfProjectShardPayloadText(payloadText) {
 
 function legacyDigestProjectShardPayload(shard = {}) {
   return `sha256:${createHash("sha256").update(legacyProjectShardPayloadText(shard)).digest("hex")}`;
+}
+
+// 中央状态文件解析失败时，原样抛 SyntaxError 会让调用方只看到一句
+// "Unterminated string in JSON at position 31584"：不知道坏的是哪个文件、也不知道下一步做什么。
+// 给一个带文件名的稳定码，与分片那边 project_state_shard_corrupt:<name> 同规。
+function parseStateFile(path) {
+  const source = readFileSync(path, "utf8");
+  try { return JSON.parse(source); }
+  catch { throw new Error(`control_plane_state_corrupt:${basename(path)}`); }
 }
 
 function writeDurableFile(path, data) {
