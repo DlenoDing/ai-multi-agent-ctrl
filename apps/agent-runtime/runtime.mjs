@@ -1842,8 +1842,18 @@ function configureGitIdentity(root) {
   try { git(root, ["config", "user.name"]); } catch { git(root, ["config", "user.name", "AI Multi-Agent Runtime"]); }
 }
 
+// 同 control-plane-core 的 gitStrict：execFileSync 的 message 只有 "Command failed: git -C <路径> …"，
+// 真正的原因在 stderr 里。这条 message 会作为失败摘要上报给控制面（见派发的 catch 分支），
+// 运维在控制台看到的就是它 —— 必须带上 git 说的原因，且不带本机绝对路径。
 function git(root, gitArgs) {
-  return execFileSync("git", ["-C", root, ...gitArgs], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 32 * 1024 * 1024}).trim();
+  try {
+    return execFileSync("git", ["-C", root, ...gitArgs], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 32 * 1024 * 1024}).trim();
+  } catch (error) {
+    const detail = String(error?.stderr || error?.stdout || "").trim().split("\n")
+      .map((line) => line.trim()).filter(Boolean).slice(-3).join("；").slice(0, 400);
+    throw Object.assign(new Error(`git_command_failed:git ${gitArgs.join(" ")}（退出码 ${error?.status ?? "?"}）`
+      + (detail ? `：${detail}` : "，且没有任何输出")), {cause: error});
+  }
 }
 
 function gitLsRemote(root, remote, ref) {

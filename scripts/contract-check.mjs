@@ -247,6 +247,7 @@ run(verifyExpiredConfirmationLeavesNoStaleParking);
 run(verifyPermissionOutcomeReleasesTheSession);
 run(verifyShardRoundTripKeepsEveryRecord);
 run(verifyCommitWorksWithoutConfiguredIdentity);
+run(verifyGitFailureSaysWhyWithoutLeakingPaths);
 run(verifyHumanGuidanceIsBoundedAndHonest);
 run(verifyNoModelFallbackMatchesWhatEngineDoes);
 run(verifyRoomWaitTailAndTruncationHonesty);
@@ -469,6 +470,46 @@ function verifyHumanGuidanceIsBoundedAndHonest(output) {
   if (taskGroup.humanGuidance[taskGroup.humanGuidance.length - 1]?.text !== "要求 249") {
     output.push(`补充要求超上限后保留的不是最近的那些（末条为 ${taskGroup.humanGuidance[taskGroup.humanGuidance.length - 1]?.text}）`);
   }
+}
+
+// git 失败时运维看到的那句话：worker 里 `gitStrict(root, ["push", ...])` 一旦失败，
+// error.message 会被 markDispatchFailed 原样写进派发的失败原因，直接显示在控制台上。
+// execFileSync 给的 message 是 "Command failed: git -C <服务器绝对路径> push origin …" ——
+// 没说为什么（真实原因在 stderr 里），还把服务器路径给了出去。这里用真实仓库跑一次真实失败。
+function verifyGitFailureSaysWhyWithoutLeakingPaths(output) {
+  const repo = mkdtempSync(join(tmpdir(), "aimac-gitfail-"));
+  try {
+    execFileSync("git", ["init", "-q", "-b", "main"], {cwd: repo, stdio: ["ignore", "pipe", "pipe"]});
+    let message = "";
+    try {
+      commitWithRuntimeIdentity(repo, "没有任何暂存内容，这次提交必然失败");
+      output.push("git 失败报文核对: 空仓库里的提交竟然成功了 —— 这次没有造出失败，本条在空转");
+      return;
+    } catch (error) { message = String(error?.message || ""); }
+    if (!message.startsWith("git_command_failed:")) {
+      output.push(`git 失败报文核对: 失败没有被归类（拿到 "${message.slice(0, 120)}"）`);
+    }
+    if (!/nothing to commit|no changes added|initial commit/iu.test(message)) {
+      output.push(`git 失败报文核对: 报文里没有 git 自己给的原因，运维读不出为什么失败（拿到 "${message.slice(0, 160)}"）`);
+    }
+    if (message.includes(repo)) {
+      output.push(`git 失败报文核对: 报文里带着服务器的绝对路径（${repo}）—— 这句话会直接显示在控制台上`);
+    }
+  } finally {
+    try { rmSync(repo, {recursive: true, force: true}); } catch { /* 尽力而为 */ }
+  }
+  // Agent 侧那半只能结构性核对：它的 git 包装同样会把 message 上报成失败摘要（派发的 catch
+  // 分支里 String(error.message)），但真实的 push 失败要动 e2e 夹具才造得出来，这里如实说明。
+  const runtimeSource = readFileSync(resolve(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const wrapper = runtimeSource.slice(runtimeSource.indexOf("function git(root, gitArgs) {"));
+  const body = wrapper.slice(0, wrapper.indexOf("\nfunction "));
+  if (!body.includes("function git(root, gitArgs) {")) {
+    output.push("git 失败报文核对: 没在 agent 运行时里找到 git 包装 —— 结构判据已与代码脱节");
+  } else if (!body.includes("error?.stderr") || !body.includes("git_command_failed:")) {
+    output.push("git 失败报文核对: agent 运行时的 git 包装没有把 stderr 带进报文 —— "
+      + "派发失败在控制台上会变成一句 \"Command failed: git -C <agent 本机路径> …\"");
+  }
+  console.log("git 失败报文核对：控制面侧用真实仓库跑过一次真实失败；agent 运行时侧只做结构核对（真实 push 失败要动 e2e 夹具）");
 }
 
 function verifyCommitWorksWithoutConfiguredIdentity(output) {

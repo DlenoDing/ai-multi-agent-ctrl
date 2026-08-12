@@ -670,6 +670,26 @@ const MUTATIONS = [
     expect: "failCommand 已经被接上了，但仍登记"
   },
   {
+    // agent 侧那半是结构判据，同样要能被改坏后报红。
+    name: "agent 运行时的 git 失败也要带上原因",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyGitFailureSaysWhyWithoutLeakingPaths",
+    from: '    const detail = String(error?.stderr || error?.stdout || "").trim().split("\\n")',
+    to: '    const detail = String("").trim().split("\\n")',
+    expect: "没有把 stderr 带进报文"
+  },
+  {
+    // 退回 execFileSync 原样抛出：报文会变回 "Command failed: git -C <服务器绝对路径> …"，
+    // 既不说原因、又泄露路径，而它会原样显示在控制台的失败原因里。
+    name: "git 失败要说原因且不带服务器路径",
+    file: CORE,
+    check: "verifyGitFailureSaysWhyWithoutLeakingPaths",
+    from: `    throw Object.assign(new Error(\`git_command_failed:\${gitFailureText(args, error)}\`),
+      {cause: error, stderr: error?.stderr, status: error?.status});`,
+    to: "    throw error;",
+    expect: "报文里带着服务器的绝对路径"
+  },
+  {
     // "有规范却没人声明"这条在当前数据上为空，靠契约门里的注入自证。把判据关掉，
     // 那次注入必须报出"这道判据不会响"——否则自证本身也是摆设。
     name: "整个集合退出规范校验必须被点名",

@@ -4447,8 +4447,25 @@ function git(root = process.cwd(), args = [], fallback = "") {
   }
 }
 
+// execFileSync 抛出来的 message 是 "Command failed: git -C <本机绝对路径> push origin …"：
+// 【真正的原因在 stderr 里】（被拒的非快进、认证失败、连不上远端），而这条 message 会原样
+// 变成运维在控制台看到的那句失败摘要 —— 既没说为什么，又把服务器的绝对路径给了出去。
 function gitStrict(root = process.cwd(), args = []) {
-  return execFileSync("git", ["-C", root, ...args], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}).trim();
+  try {
+    return execFileSync("git", ["-C", root, ...args], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}).trim();
+  } catch (error) {
+    // stderr/status 原样带上：commitWithRuntimeIdentity 这类调用方要靠它认出"缺身份"那一种失败。
+    throw Object.assign(new Error(`git_command_failed:${gitFailureText(args, error)}`),
+      {cause: error, stderr: error?.stderr, status: error?.status});
+  }
+}
+
+// 只保留命令与 git 自己说的原因，不带 -C 后面的路径。取末尾几行是因为 git 把结论写在最后
+// （前面往往是 "Enumerating objects" 之类的进度）。
+function gitFailureText(args, error) {
+  const detail = String(error?.stderr || error?.stdout || "").trim().split("\n")
+    .map((line) => line.trim()).filter(Boolean).slice(-3).join("；").slice(0, 400);
+  return `git ${args.join(" ")}（退出码 ${error?.status ?? "?"}）${detail ? `：${detail}` : "，且没有任何输出"}`;
 }
 
 // 一次编排周期内的"仓库事实"备忘录。为什么需要：gitHead 与 gitRemoteUrl 都落在【每个工作项】
