@@ -313,6 +313,24 @@ try {
     const staleState = await json("/api/state", {token: login.sessionToken});
     const anyDispatch = (staleState.agentDispatches || []).find((item) => item.assignedNodeId);
     if (!anyDispatch) throw new Error("没有可用于代次探针的派发 —— 这条断言无从验证");
+    // 跨节点围栏：甲节点的活，乙节点不得替它汇报。检查点路由是按 dispatchId + assignedNodeId
+    // 一起找的，别的节点只会得到 404 —— 这是多节点部署的完整性底线，而它此前没有反面用例。
+    // （用的是本轮已注册的另一个真实节点，不是编的令牌：编的会先被 401 挡住，
+    // 那样测到的是认证、不是围栏。）
+    const foreignSubmit = await fetch(`${baseUrl}/api/agent/v1/dispatches/${encodeURIComponent(anyDispatch.dispatchId)}/checkpoint`, {
+      method: "POST",
+      headers: {"content-type": "application/json", authorization: `Bearer ${noExecutorRegistration.nodeToken}`},
+      body: JSON.stringify({runId: anyDispatch.runId, sessionId: anyDispatch.sessionId,
+        claimEpoch: anyDispatch.claimEpoch, summary: "别人的活"})
+    });
+    if (foreignSubmit.ok) {
+      throw new Error("另一个节点替别人的派发交了检查点 —— 多节点部署里谁都能替谁汇报");
+    }
+    const foreignPayload = await foreignSubmit.json().catch(() => ({}));
+    if (foreignSubmit.status !== 404 || foreignPayload.error !== "dispatch_not_found") {
+      throw new Error(`跨节点提交被拒了，但不是因为围栏（${foreignSubmit.status}:${foreignPayload.error}）—— 要确认拦住它的是节点绑定，不是别的偶然原因`);
+    }
+
     const staleEpoch = Number(anyDispatch.claimEpoch || 0) - 1;
     const staleSubmit = await fetch(`${baseUrl}/api/agent/v1/dispatches/${encodeURIComponent(anyDispatch.dispatchId)}/checkpoint`, {
       method: "POST",
