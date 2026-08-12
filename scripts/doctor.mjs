@@ -1559,7 +1559,18 @@ try {
       if (afterWrite.status !== 200) {
         throw new Error(`doctor: 写入之后旧 ETag 仍被判为未变化（HTTP ${afterWrite.status}）—— 人会一直看着旧状态`);
       }
-      console.log("状态视图 ETag ok: 没变回 304 零载荷、变了立刻回 200");
+      // 第三面：ETag 不许跨视图串用。缓存键里少写一个维度（视图名 / 上限 / 项目 / 账号）时，
+      // 前两条断言照样全绿 —— 而人切到另一页会拿到 304，界面显示的是上一页的数据，
+      // 且它会一直"没变化"下去。这一面比前两面更难发现，因为它看起来只是"数据没刷新"。
+      const freshEtag = afterWrite.headers.get("etag");
+      for (const [label, url] of [["换视图", `http://127.0.0.1:${port}/api/state?view=system&limit=200`],
+        ["换上限", `http://127.0.0.1:${port}/api/state?view=orgs&limit=199`]]) {
+        const crossed = await fetch(url, {headers: {authorization: systemAuth, "if-none-match": freshEtag}});
+        if (crossed.status !== 200) {
+          throw new Error(`doctor: ${label}之后旧 ETag 仍被判为未变化（HTTP ${crossed.status}）—— 缓存键少了一个维度，人会在这一页上看到另一页的数据`);
+        }
+      }
+      console.log("状态视图 ETag ok: 没变回 304 零载荷、变了立刻回 200、且不跨视图/上限串用");
     }
 
     console.log(`审计归档 ok: ${archive.payload.entries.length} 条可读、哈希链逐条校验、改动能被发现、非系统账号 403`);
