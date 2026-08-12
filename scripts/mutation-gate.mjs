@@ -518,6 +518,16 @@ const MUTATIONS = [
     expect: "仍在每拍推进"
   },
   {
+    // 盘写不进去是真实运维故障（满盘 / 只读挂载 / 权限 / 配额）。此前回的是 500 加一句 Node 的
+    // 原始英文错误，报文里还带着服务器的绝对路径：中文界面上看不懂，运维不知道该查什么。
+    name: "盘写不进去要给稳定错误码，且不回服务器路径",
+    file: SERVER,
+    gate: "crash",
+    from: '  if (["EACCES", "EPERM", "ENOSPC", "EROFS", "EDQUOT", "EMFILE", "ENFILE"].includes(error?.code)) {',
+    to: "  if (false) {",
+    expect: "给的是稳定错误码"
+  },
+  {
     // crash 这道门此前只有一条登记变异。它最要紧的那条"硬杀之后仍是完整 JSON"其实是抽查：
     // 实测把原子替换整个拿掉、连跑五次仍然全绿（文件小、写得快，SIGKILL 撞不进写窗口）。
     // 所以原子性改用结构判据来钉，而这一条是确定性的 —— 连跑两次都稳定报红。

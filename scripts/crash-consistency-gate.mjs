@@ -1,9 +1,9 @@
 // 写入过程中被 SIGKILL：状态必须要么是写入前那份、要么是写入后那份，不能是半份。
 // 做法：真实服务端持续写入，在写入密集时硬杀，重启后读回并核对完整性（含分片摘要）。
-import {spawn} from "node:child_process";
+import {spawn, spawnSync} from "node:child_process";
 import {createServer} from "node:net";
 import {once} from "node:events";
-import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync} from "node:fs";
+import {chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync} from "node:fs";
 import {join} from "node:path";
 import {hostname, tmpdir} from "node:os";
 
@@ -107,6 +107,66 @@ await inflight;
 const statePath = join(runtimeDir, "control-plane-state.json");
 let parsed = null;
 try { parsed = JSON.parse(readFileSync(statePath, "utf8")); } catch (error) { parsed = null; }
+// 盘写不进去（满盘 / 只读挂载 / 权限 / 配额）是真实的运维故障，而它此前回的是 500 加一句
+// Node 的原始英文错误，报文里还带着服务器的绝对路径：中文界面上看不懂，运维也不知道该查什么。
+// 这里把运行目录改成不可写走一遍真实写入路径：必须是稳定错误码 + 不带路径；
+// 读要照常（只读操作不该被写故障拖下水）；恢复可写之后不重启也能继续写。
+{
+  // startServer 固定用本门自己的 runtimeDir，这里要的是另一个目录，所以自己起一个。
+  const roDir = mkdtempSync(join(tmpdir(), "aimac-crash-ro-"));
+  spawnSync(process.execPath, ["scripts/init-control-plane.mjs"], {cwd: root, encoding: "utf8",
+    env: {...process.env, AIMAC_RUNTIME_DIR: roDir, AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: "",
+      AIMAC_BOOTSTRAP_TOKEN: "crash-ro-token-0123456789ab"}});
+  const roPort = await freePort();
+  const roChild = trackChild(spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
+    cwd: root,
+    env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(roPort), AIMAC_RUNTIME_DIR: roDir,
+      AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_STATE_STORE: "runtime_json",
+      AIMAC_BOOTSTRAP_TOKEN: "crash-ro-token-0123456789ab", DATABASE_URL: ""},
+    stdio: ["ignore", "pipe", "pipe"]
+  }));
+  const roBase = `http://127.0.0.1:${roPort}`;
+  const roDeadline = Date.now() + 25000;
+  while (Date.now() < roDeadline) {
+    try { const probe = await fetch(`${roBase}/api/health`); if (probe.ok) break; } catch { /* 等它起来 */ }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  const call = async (path, options = {}) => {
+    const response = await fetch(`${roBase}${path}`, {
+      method: options.method || "GET",
+      headers: {"content-type": "application/json", ...(options.headers || {})},
+      ...(options.body ? {body: JSON.stringify(options.body)} : {})
+    });
+    let payload = {};
+    try { payload = await response.json(); } catch { /* 空体 */ }
+    return {status: response.status, payload};
+  };
+  try {
+    const session = await call("/api/auth/login", {method: "POST",
+      body: {email: "system.admin@local", token: "crash-ro-token-0123456789ab"}});
+    const auth = {authorization: `Bearer ${session.payload.sessionToken}`};
+    chmodSync(roDir, 0o500);
+    const blocked = await call("/api/task-groups", {method: "POST",
+      headers: {...auth, "idempotency-key": "crash-ro-1"},
+      body: {projectId: "prj_control_plane", title: "只读盘上的任务组"}});
+    check(blocked.status === 503 && blocked.payload.error === "state_storage_unavailable",
+      "盘写不进去时给的是稳定错误码，不是 500 加一句原始报错",
+      `HTTP ${blocked.status} ${blocked.payload.error || ""}`);
+    check(!JSON.stringify(blocked.payload).includes(roDir),
+      "写失败的报文里不带服务器的绝对路径", JSON.stringify(blocked.payload).slice(0, 90));
+    const stillReads = await call("/api/state?view=tasks&limit=10", {headers: auth});
+    check(stillReads.status === 200, "盘不可写时读操作照常（不该被写故障拖下水）", `HTTP ${stillReads.status}`);
+    chmodSync(roDir, 0o700);
+    const recovered = await call("/api/task-groups", {method: "POST",
+      headers: {...auth, "idempotency-key": "crash-ro-2"},
+      body: {projectId: "prj_control_plane", title: "恢复之后"}});
+    check(recovered.status === 201, "盘恢复可写之后不重启也能继续写", `HTTP ${recovered.status}`);
+  } finally {
+    try { chmodSync(roDir, 0o700); } catch { /* 尽力而为 */ }
+    roChild.kill("SIGKILL");
+  }
+}
+
 // 上面那条"硬杀之后仍是完整 JSON"只有在 SIGKILL 恰好落进写窗口时才会红：实测把原子替换整个
 // 拿掉、连跑五次仍然全绿（中央状态文件小、写得快，撞不上）。它证不了原子性，只能算个抽查。
 // 原子性该按【结构】证：每一处持久写入都必须写临时文件、再 rename 到目标路径。

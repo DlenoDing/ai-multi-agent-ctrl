@@ -5567,6 +5567,15 @@ function respondApiError(res, error) {
     json(res, error.status, {error: error.message, ...(error.details || {})});
     return;
   }
+  // 盘写不进去（满盘 / 只读挂载 / 权限 / 配额）：原样把 Node 的错误抛回去有两处不妥 ——
+  // 中文界面上出现一句英文 EACCES，而且报文里带着服务器的绝对路径。
+  // 实测把运行目录改成不可写：写入回 500 + "EACCES: permission denied, mkdir '/var/folders/…'"。
+  // 这一类要给一个稳定的错误码，让人知道该去查什么；路径留在服务端日志里，不回给调用方。
+  if (["EACCES", "EPERM", "ENOSPC", "EROFS", "EDQUOT", "EMFILE", "ENFILE"].includes(error?.code)) {
+    console.error(`[state-write] ${error.code}: ${error.message}`);
+    json(res, 503, {error: "state_storage_unavailable", code: error.code, retryable: true});
+    return;
+  }
   json(res, error.status || 500, {error: "server_error", message: error.message});
 }
 
