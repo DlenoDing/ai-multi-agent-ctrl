@@ -660,6 +660,26 @@ const MUTATIONS = [
     expect: "恰好一个成功"
   },
   {
+    // 上一条验的是"没登记会被点名"，这条验的是【排除验证代码这一步本身是承重的】：
+    // 把它去掉，整族登记会立刻被判成"已接上"，也就是收紧之前那种隐身状态。
+    name: "死导出语料必须排除验证代码",
+    file: "scripts/barrier-liveness-gate.mjs",
+    gate: "barrier",
+    from: "        && !verification.has(full)) files.push(full);",
+    to: "        ) files.push(full);",
+    expect: "failCommand 已经被接上了，但仍登记"
+  },
+  {
+    // 死导出检查此前把 scripts/ 也算成调用方，于是"只有门在调"的整族机制隐身。
+    // 收紧之后要能认出来：摘掉一条登记，那个函数必须当场被点名。
+    name: "只有门在调的导出不算接上了",
+    file: "scripts/barrier-liveness-gate.mjs",
+    gate: "barrier",
+    from: '  toDlq: "只有契约门在调',
+    to: '  toDlqRenamed: "只有契约门在调',
+    expect: "导出的 toDlq 没有任何地方调用或引用"
+  },
+  {
     // 这道门此前也只有一条登记变异。它真正要防的是"某类对象在生产中永远无法终结"，
     // 而那条判据依赖状态生产者的提取 —— 提取一旦失效，门会一片绿地放过所有状态机。
     name: "机器活性检查：状态生产者提取失效必须报出来",

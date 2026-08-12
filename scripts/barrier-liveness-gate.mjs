@@ -381,27 +381,82 @@ export function checkBarrierLiveness() {
 const DEAD_EXPORT_ACCEPTED = {
   cancelCommand: "命令总线的失败分支：生产上只走 runCommandLifecycle 的成功路径，failCommand/retryCommand 无人调用，因此 running->cancelled 不可达",
   compensateCommand: "同上：failed->compensated 依赖命令先失败，而生产上命令不会失败",
-  discardDlqEntry: "同上：死信条目只由 retryCommand 超限产生，生产上从不产生，因此 assigned->discarded 不可达"
+  discardDlqEntry: "同上：死信条目只由 retryCommand 超限产生，生产上从不产生，因此 assigned->discarded 不可达",
+  // 下面这些【有人调，但只有门在调】。整族凑齐才看得清全貌：命令总线的失败-重试-死信这一层
+  // 代码齐全、spec 建了模、关闭屏障有判据、界面有指引，而产品的写入路径一次都到不了它。
+  // 之前只登记了三个"零引用"的，另外六个因为门里调过就被算成"接上了" —— 同一族里
+  // 一半可见一半隐身，看代码的人会以为这套东西在跑。
+  failCommand: "只有契约门在调：生产上 runCommandLifecycle 一路走到 succeeded，没有产生 failed 的路径",
+  retryCommand: "只有契约门在调：没有失败就没有重试",
+  toDlq: "只有契约门在调：要先 failed 才进死信，而 failed 到不了",
+  classifyDlqEntry: "只有契约门在调：死信条目产生不出来，处置动作自然也到不了",
+  assignDlqEntry: "同上",
+  replayDlqEntry: "同上",
+  relatedSharedDefinitionsForTest: "名字里就写明是测试辅助，专为门导出",
+  // 这一条不是"暂时没接上"，是【生产上根本没有这种对象】：真实授权是 state.accessGrants
+  // （subjectRef/resource/role/permissions，由 server.mjs 三处与 core 一处 push 出来），
+  // 而 spec/mcp-grant.schema.json 描述的 MCP 调用信封没有任何生产者。于是契约门那条
+  // schema 校验校的是本函数造出来的夹具，不是真实产出 —— 记在这里免得它被当成覆盖率。
+  // 也别顺手把它接上：它默认发 workId:"*"、30 天有效期、只读工具直接 approval:not-required。
+  createMcpGrant: "MCP 授权信封在生产上没有产生者：只有契约门拿它造夹具校 schema"
 };
 
-const DEAD_EXPORT_FILES = [
-  "apps/control-plane-ui/lib/control-plane-core.mjs",
-  "apps/control-plane-ui/lib/agent-gateway.mjs",
-  "apps/control-plane-ui/lib/state-store.mjs",
-  "apps/control-plane-ui/server.mjs",
-  "apps/mcp-server/server.mjs",
-  "apps/agent-runtime/runtime.mjs"
-];
+// 扫哪些文件也不手维护：apps/ 下每个带导出函数的模块都算。手列的那份漏了三个
+// （pg-sync-store / project-event-store / transition-engine），而漏掉的模块等于没在看。
+function deadExportFiles() {
+  const found = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
+      if (entry.name === "node_modules") continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".mjs") && /^export function /mu.test(fs.readFileSync(full, "utf8"))) {
+        found.push(path.relative(root, full));
+      }
+    }
+  };
+  walk(path.join(root, "apps"));
+  if (found.length < 6) throw new Error(`只扫到 ${found.length} 个带导出的产品模块 —— 与目录结构脱节，死导出检查在少看`);
+  return found.sort();
+}
+
+// 哪些是"验证代码"不能手维护 —— 清单一漂，被漏掉的门就重新变成合法调用方。
+// 按 package.json 推导：凡被 doctor 的 npm-run 闭包引用过的脚本都算验证代码。
+// 反过来按"两边都引用就算产品"会漏：mutation-gate.mjs 同时挂在 mutation-anchors（在闭包里）
+// 和 mutation-gate（不在）名下，于是被判成产品，它那份变异清单里的函数名就成了合法调用方。
+// 唯一两边都用的包装器 run-with-env.mjs 只做 import(argv[2])，不引用任何产品导出，排除它无害。
+function verificationScripts() {
+  const scripts = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts || {};
+  const filesOf = (command) => [...command.matchAll(/scripts\/([\w.-]+\.mjs)/gu)].map((match) => match[1]);
+  const reachable = new Set();
+  const walkCommand = (name) => {
+    if (reachable.has(name) || !scripts[name]) return;
+    reachable.add(name);
+    for (const match of scripts[name].matchAll(/npm run (?:-s )?([\w:-]+)/gu)) walkCommand(match[1]);
+  };
+  walkCommand("doctor");
+  const result = new Set();
+  for (const [name, command] of Object.entries(scripts)) {
+    if (!reachable.has(name)) continue;
+    for (const file of filesOf(command)) result.add(path.join(root, "scripts", file));
+  }
+  if (result.size < 8) throw new Error(`验证脚本只推导出 ${result.size} 个 —— 与 package.json 脱节，死导出检查会把门算成调用方`);
+  return result;
+}
 
 function sourceCorpus() {
   const files = [];
+  const verification = verificationScripts();
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
       if ([".git", "node_modules", ".runtime"].includes(entry.name)) continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
       // 排除本门自身：例外登记表里就写着这些函数名，把自己算进去会让每一条登记都被判成"已接上"。
-      else if (/\.(mjs|js)$/u.test(entry.name) && full !== fileURLToPath(import.meta.url)) files.push(full);
+      // 也排除验证代码：门调过不等于产品到得了。把门算成调用方，会让"只有门在调"的
+      // 整族机制隐身 —— 这正是死信那一层此前只露出三分之一的原因。
+      else if (/\.(mjs|js)$/u.test(entry.name) && full !== fileURLToPath(import.meta.url)
+        && !verification.has(full)) files.push(full);
     }
   };
   walk(root);
@@ -414,7 +469,7 @@ export function checkNoDeadExports() {
   const failures = [];
   const corpus = sourceCorpus();
   let scanned = 0;
-  for (const relative of DEAD_EXPORT_FILES) {
+  for (const relative of deadExportFiles()) {
     const source = fs.readFileSync(path.join(root, relative), "utf8");
     const names = [...source.matchAll(/^export function ([A-Za-z0-9_]+)\(/gmu)].map((match) => match[1]);
     scanned += names.length;
