@@ -103,6 +103,25 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 
 常规 Agent Runtime 必须具备选中模型 provider 的凭证。Runtime 会优先调用已探测到的 Codex、Claude 或 Gemini CLI，也可在安装时用 `--executor-command` 绑定其他模型/Agent 适配器；executor 接收 task contract、有效指令包、远程 MCP 和 Skill 工作集路径。`AIMAC_EXECUTION_PROFILE=verification` 才能使用服务器内的确定性验证 worker；生产 profile 永远由远程注册节点执行，缺少模型适配器或凭证时只能上报失败，不能在服务器伪造完成。
 
+## 出事的时候它怎么说话
+
+这些是运维真会碰到、且【不看文档就会误判】的几条：
+
+- **存储配置写错会拒绝启动，不会退回默认值。** `AIMAC_STATE_STORE` 只认 `runtime_json` 与
+  `postgresql`；写成 `postgres`、或 `postgresql` 却没给 `DATABASE_URL`，进程会打印原因并退出 1。
+  这是有意的：静默退回本地 JSON 会让你接在一个空存储上，而控制台一切看起来都正常，
+  在上面建的东西等你改回来之后全都不见。
+- **`/api/health` 的 ok 包含"状态读得出来"，不只是"进程还活着"。** 状态文件损坏、
+  运行目录被清掉、状态被按种子重建、数据库中途掉线，都会让它回 503 `degraded`（`status` 字段）
+  并指出是哪一份文件出了问题。文件损坏后还原回去，它会自己转回 ok；
+  而目录被换 / 状态被重建这两种【必须重启进程】——当前进程已经接在另一份数据上，
+  光把数据恢复回去救不了它，报文里会明说。
+- **盘写不进去（满盘 / 只读挂载 / 权限 / 配额）回 503 `state_storage_unavailable`，读不受影响。**
+  报文里不带服务器路径（原始报错在服务端日志里），恢复可写之后不必重启。
+- **端口被占、缺权限、地址不存在**，启动时会按具体原因给一句人话（含该查什么），退出码 1。
+- **装 Agent 时入网票不对/过期/已用过/角色越界**，安装命令会给出人话与下一步，
+  而不是一段 Node 崩溃栈；要看完整堆栈用 `AIMAC_AGENT_DEBUG=1` 重跑。
+
 ## 机器可执行规格
 
 | 文件 | 用途 |

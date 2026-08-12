@@ -730,6 +730,16 @@ const MUTATIONS = [
     expect: "本段在空转"
   },
   {
+    // README 那节写的是"出事的时候它怎么说话"（存储配置写错会退出、健康检查报 degraded、
+    // 盘写不进去回哪个码、入网失败给人话）。这类描述最容易随代码漂，而运维照着它判断会判错。
+    name: "README 运维一节点名的东西必须还在代码里",
+    file: "README.md",
+    gate: "specs",
+    from: "`state_storage_unavailable`",
+    to: "`state_storage_gone`",
+    expect: "代码里已经没有了"
+  },
+  {
     name: "权限码本地化：授权列表里的权限码要有中文",
     file: APP,
     gate: "specs",

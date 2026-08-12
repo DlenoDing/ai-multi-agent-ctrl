@@ -1284,6 +1284,26 @@ else
   end
 end
 
+# 【README 里承诺的运维行为必须还在】。这一节写的是"出事的时候它怎么说话"——存储配置写错会退出、
+# 健康检查会报 degraded、盘写不进去回 state_storage_unavailable、入网失败给人话。
+# 这类描述最容易随代码漂：改了行为、忘了文档，运维照着文档判断就会判错。
+# 判据只钉可机器核对的那部分：文档里点名的标识符必须在代码里真的存在。
+readme_source = File.read(File.join(ROOT, "README.md"))
+ops_section = readme_source[/## 出事的时候它怎么说话.*?(?=\n## )/m]
+if ops_section.nil?
+  errors << "README 少了「出事的时候它怎么说话」一节 —— 那几条运维行为没有任何地方成文"
+else
+  ops_identifiers = ops_section.scan(/`([a-z_]{6,})`/).flatten.uniq
+  errors << "README 运维一节里没有点名任何标识符 —— 提取逻辑与文档脱节，本条在空转" if ops_identifiers.size < 2
+  ops_sources = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/state-store.mjs",
+    "apps/agent-runtime/runtime.mjs"].map { |rel| File.read(File.join(ROOT, rel)) }.join("\n")
+  stale_ops = ops_identifiers.reject { |name| ops_sources.include?(name) }
+  unless stale_ops.empty?
+    errors << "README 运维一节里点名的这些东西代码里已经没有了：#{stale_ops.join(', ')} —— " \
+      "运维照着它判断会判错"
+  end
+end
+
 # 【权限码本地化】。「账号与授权」页把授权里的每个权限码交给 permLabel 显示，它兜底到 t()，
 # 而 i18n 字典里一个带冒号的权限码都没有 —— 于是 PERMISSION_LABELS 漏掉的那些直接显示英文码。
 # 实测用真实数据整页渲染时露出过四条（task_group:read/control/review/monitor）。
