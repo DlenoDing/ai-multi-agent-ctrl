@@ -10,6 +10,7 @@ import { ensureStoredState, isStateStoreConflict, readStoredCentralState, readSt
 import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload, canonicalJson } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps/control-plane-ui/lib/pg-sync-store.mjs";
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
+import { buildExecutionContentBundle as buildBundleForCheck } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { publicAgentNode } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import {
@@ -268,6 +269,7 @@ run(verifyEveryCloseGateHasHumanGuidance);
 run(verifyGrantScopeCoversObjectsNamedOnlyById);
 run(verifyLongRunningWorkKeepsItsClaim);
 run(verifyCentralOnlyStateCannotBeWritten);
+run(verifyContentBundleNamesTheDispatchedItem);
 run(verifyMcpToolListCostStaysVisible);
 run(verifyMcpEnvelopeNeverCallsAnErrorSuccess);
 run(verifyOnlyHumanSessionsCanFinalize);
@@ -4758,6 +4760,42 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 判据改成【按调用图】找：凡是通向 decideHumanConfirmation 的 MCP case，都必须只放行真人会话。
 // 这与 human-only-parity-gate 是同一条不变式的两个角度（那道门从 REST 侧的真人专属动作出发，
 // 这里从核心函数出发），重叠是有意的：这条线一旦破，后果是整套人机协同失效。
+// agent 真正读到的是执行内容包。运行时给模型的指令里只有工作项 id（`implement only work_x`），
+// 而包里的事项清单只有标题 —— 实测同一个任务组里三项同时 in_progress，agent 得自己把 id 映射到标题。
+// 猜错就是改错文件，而这一步本来不需要存在。所以包里必须能直接读出"这次做的是哪一项"。
+function verifyContentBundleNamesTheDispatchedItem(output) {
+  const probe = structuredClone(seedState);
+  ensureRuntimeCollections(probe, {root});
+  runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+  const dispatch = (probe.agentDispatches || [])[0];
+  const contract = (probe.agentTaskContracts || []).find((item) => item.sessionId === dispatch?.sessionId);
+  if (!dispatch || !contract) {
+    output.push("内容包点名：这一轮没造出派发与契约 —— 本条在空转");
+    return;
+  }
+  dispatch.status = "running";
+  dispatch.assignedNodeId = "node_bundle_probe";
+  const node = {nodeId: "node_bundle_probe", projectIds: [dispatch.projectId], allowedRoles: ["*"],
+    status: "online", admission: "full", profile: {}};
+  let bundle = null;
+  try {
+    bundle = buildBundleForCheck(probe, node, dispatch.sessionId, {root});
+  } catch (error) {
+    output.push(`内容包点名：构建失败（${String(error.message).slice(0, 120)}）—— 本条在空转`);
+    return;
+  }
+  const context = (bundle.entries || []).map((entry) => String(entry.content || "")).join("\n");
+  if (!context.includes(contract.workId)) {
+    output.push(`内容包点名：整包里找不到本次的工作项 ${contract.workId} —— `
+      + "agent 只能从'implement only <id>'和一份只有标题的清单里自己对应，对错了就是改错东西");
+  }
+  // 从【拼好的正文】里数，不要在对象数组上做正则：join 出来是 [object Object]，永远数到 0，
+  // 而这个数字正是"为什么需要点名"的依据。报错数字的自证比不报还糟。
+  const inProgress = (context.match(/\[in_progress\]/gu) || []).length;
+  console.log(`内容包点名：包内点名了本次工作项 ${contract.workId}`
+    + `（同组同时 in_progress 的事项 ${inProgress} 条，正是需要点名的原因）`);
+}
+
 // tools/list 是远程 MCP 客户端每次会话都要吞下去的一份东西：实测 85 个工具 498KB、
 // 约 12.7 万 token，其中 93% 是 inputSchema —— 而每个工具公布的 properties 是【全仓参数名的并集】
 // （168 个），不是它自己的参数。"撤销一个授权"这种工具也带着 168 个属性。

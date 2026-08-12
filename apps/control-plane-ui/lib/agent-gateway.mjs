@@ -1395,7 +1395,18 @@ export function buildExecutionContentBundle(state, node, sessionId, options = {}
     `任务组：${taskGroup.id}（${taskGroup.phase || taskGroup.status || ""}）`,
     taskGroup.objective ? `目标：${taskGroup.objective}` : "",
     guidance ? `\n## 人工补充要求\n${guidance}` : "",
-    taskGroup.taskAnalysis ? `\n## 事项清单\n${taskGroup.taskAnalysis.items.map((item) => `- [${item.status}] ${item.title}`).join("\n")}` : ""
+    // 清单要标出【这次派发做的是哪一项】。运行时给模型的指令里只有 id（`implement only work_x`），
+    // 而这份清单只有标题 —— 实测同一个任务组里三项同时 in_progress，agent 得自己把 id 映射到标题。
+    // 让它猜，猜错就是改错文件；而这一步本来不需要存在。
+    taskGroup.taskAnalysis ? `\n## 事项清单\n${taskGroup.taskAnalysis.items.map((item) => {
+      const isTarget = item.id && contract.workId && item.id === contract.workId;
+      return `- [${item.status}] ${item.title}${item.id ? `（${item.id}）` : ""}${isTarget ? "  ← 本次派发就是这一项" : ""}`;
+    }).join("\n")}` : "",
+    // 兜底：清单里若没有与 workId 对得上的条目（分析项与工作项不同源时会这样），
+    // 也要把本次的工作项单独说清楚，而不是让 agent 在一份对不上的清单里找。
+    contract.workId ? `\n## 本次派发\n工作项：${contract.workId}${
+      (taskGroup.workItems || []).find((item) => item.id === contract.workId)?.title
+        ? `（${(taskGroup.workItems || []).find((item) => item.id === contract.workId).title}）` : ""}` : ""
   ].filter(Boolean).join("\n");
   pushEntry("task/context.md", "task", "task", contextText, `TaskGroup:${taskGroup.id}`);
   if (!entries.length) pushEntry("task/context.md", "task", "task", `# 任务上下文\n任务组：${taskGroup.id}`, `TaskGroup:${taskGroup.id}`);
