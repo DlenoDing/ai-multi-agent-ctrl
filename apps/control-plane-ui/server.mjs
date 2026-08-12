@@ -1451,7 +1451,11 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     // 实测 3000 单元时仅这一项就 276KB，且随规模线性涨。控制台在列表页只用它做一个计数，
     // 明细页的工作项另有专用端点 /api/task-groups/:id/progress。
     // 所以这里截断，但必须【同时给出真实总数】：把截断后的长度当总数，正是这套系统反复栽过的坑。
-    taskGroups: projectTaskGroupsForView(sliceItems(scoped.taskGroups, capped)),
+    // 基底里的集合同样要按项目过滤。此前只有把 taskGroups 列进 viewFields 的视图（tasks）
+    // 才拿得到过滤版，runtime 视图没列它 —— 于是选中一个项目打开监控页，下发的是【全部项目】
+    // 的任务组（实测 100 个项目时 235KB / 每 5 秒一次，而这一页只关心选中的那个）。
+    // 同一个集合在一个视图里按项目切、在另一个视图里不切，是"有的有、有的没有"的又一例。
+    taskGroups: projectTaskGroupsForView(sliceItems(scopeCollection(scoped.taskGroups), capped)),
     modelCapabilities: sliceItems(scoped.modelCapabilities, capped),
     agentRuntimeNodes: sliceItems(scoped.agentRuntimeNodes, capped),
     // progressSnapshots 不进视图基底：控制台的进度数据走专用端点 /api/task-groups/:id/progress

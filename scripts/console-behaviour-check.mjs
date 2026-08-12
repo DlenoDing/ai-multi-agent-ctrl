@@ -1619,12 +1619,25 @@ await runErrorGuidanceCase();
   for (const block of appSource.matchAll(/state\s*=\s*\{([\s\S]{0,1600}?)\n\s*\};/gu)) {
     for (const key of block[1].matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:/gmu)) assigned.add(key[1]);
   }
-  const sliceAfter = (marker, length) => {
+  // 按花括号配对切出整个对象字面量，不按字符数猜窗口。
+  // 原先是 slice(at, at + 2500)：给 base 里某一项加了 4 行注释之后，后面的 accountDirectory
+  // 被挤出窗口，门当场报"控制台读了一个没有任何视图下发的字段"——一个纯属排版造成的假红，
+  // 而它指向的位置离真正的改动十万八千里。距离窗口迟早会这样咬人。
+  const blockAfter = (marker) => {
     const at = serverSource.indexOf(marker);
-    return at < 0 ? "" : serverSource.slice(at, at + length);
+    if (at < 0) return "";
+    let depth = 0;
+    for (let index = serverSource.indexOf("{", at); index < serverSource.length; index += 1) {
+      if (serverSource[index] === "{") depth += 1;
+      else if (serverSource[index] === "}") { depth -= 1; if (!depth) return serverSource.slice(at, index + 1); }
+    }
+    return "";
   };
-  const baseBlock = sliceAfter("const base = {", 2500);
-  const viewBlock = sliceAfter("const viewFields = {", 3000);
+  const baseBlock = blockAfter("const base = {");
+  const viewBlock = blockAfter("const viewFields = {");
+  if (!baseBlock.trimEnd().endsWith("}") || !viewBlock.trimEnd().endsWith("}")) {
+    failures.push("视图接线: 没能按花括号配对切出 base / viewFields 对象 —— 提取逻辑与代码脱节，下面几条全在空转");
+  }
   const delivered = new Set([
     ...[...baseBlock.matchAll(/^\s{4}([A-Za-z_][A-Za-z0-9_]*):/gmu)].map((match) => match[1]),
     ...[...viewBlock.matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"/gu)].map((match) => match[1]),

@@ -180,13 +180,33 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
   await seed(quietId, 12, "quiet");
   const fetchScopedFull = async (projectId) => (await (await fetch(
     `${base}/api/state?view=tasks&limit=200&projectId=${encodeURIComponent(projectId)}`, {headers: auth})).json());
-  const fetchScoped = async (projectId) => (await (await fetch(
-    `${base}/api/state?view=tasks&limit=10${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ""}`,
+  const fetchScoped = async (projectId, view = "tasks") => (await (await fetch(
+    `${base}/api/state?view=${view}&limit=10${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ""}`,
     {headers: auth})).json());
   const unscoped = await fetchScoped(null);
   const scoped = await fetchScoped(quietId);
   const own = (list) => (list || []).filter((item) => item.projectId === quietId).length;
-  const others = (scoped.taskGroups || []).filter((item) => item.projectId !== quietId).length;
+  // 逐个字段核对，不只盯 taskGroups：这条断言原先只验了 tasks 视图里的 taskGroups 一个字段，
+  // 而基底里的 taskGroups 走的是另一条路、根本没过滤 —— runtime 视图因此长期下发全部项目的
+  // 任务组，门却是绿的。可枚举的面就要全量核对。
+  // 视图也要枚举。这条断言原先只探 view=tasks，而 tasks 恰好把 taskGroups 列进了 viewFields、
+  // 用过滤版【覆盖】了基底 —— 基底那份没过滤的 taskGroups 在这个视图里根本看不见。
+  // 于是 runtime 视图长期下发全部项目的任务组（实测 100 个项目 235KB/次），门却一直是绿的。
+  // 一个字段在某个视图里是对的，不代表它在别的视图里也对。
+  const foreignByField = [];
+  let collectionsChecked = 0;
+  for (const view of ["tasks", "runtime", "projects", "users", "instructions", "orgs"]) {
+    const body = await fetchScoped(quietId, view);
+    for (const [field, value] of Object.entries(body)) {
+      if (!Array.isArray(value)) continue;
+      if (field === "projects") continue; // 项目切换器要看到全部项目，它本来就不该被切
+      collectionsChecked += 1;
+      const foreign = value.filter((item) => item && typeof item === "object"
+        && item.projectId !== undefined && item.projectId !== null && item.projectId !== quietId).length;
+      if (foreign) foreignByField.push(`${view} 视图的 ${field} ${foreign} 条`);
+    }
+  }
+  const others = foreignByField.length;
   // 判据不依赖"谁先谁后被挤掉"：任务组在视图里的顺序由分片按 projectId 合并决定，
   // 哪个项目落在窗口里是随机的（第一版按创建顺序猜方向，两个方向都没验到东西）。
   // 稳的判据是：全局取数确实被上限截断了，而按项目取数把这个项目的全部取到了。
@@ -254,8 +274,8 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
     }
   }
 
-  check(others === 0, "带上 projectId 时不夹带别的项目的记录",
-    `混进来 ${others} 个别的项目的任务组`);
+  check(others === 0, "带上 projectId 时，视图里【任何】集合都不许夹带别的项目的记录",
+    others ? `混进来：${foreignByField.join("、")}` : `6 个视图共 ${collectionsChecked} 个集合逐个核对，无一夹带`);
 }
 
 child.kill("SIGTERM");
