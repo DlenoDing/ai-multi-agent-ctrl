@@ -1274,6 +1274,41 @@ await runErrorGuidanceCase();
   }
 }
 
+// 按项目取数：项目视角的页面必须带上当前项目，系统级页面必须【不带】。
+//
+// 服务端在截断之前按 projectId 过滤，所以带不带决定了取到的是什么：
+// 项目页不带 → 别的项目更新的记录把窗口占满，本项目的表是空的（人以为"没有记录"）；
+// 系统页带了 → 系统管理员只看得到当前项目的角色技能叠加，以为别的项目没改过角色规则。
+// 这两种错都不会报错，只会让人看到一份自称完整的名单。判据落在取数调用的实参上。
+{
+  const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const loadAt = appSource.indexOf("async function loadPage()");
+  const loadBody = loadAt < 0 ? "" : appSource.slice(loadAt, appSource.indexOf("\nasync function loadTaskGroupDetail", loadAt));
+  const projectScopedPages = new Set(["proj-overview", "tg", "review", "directives", "monitor", "proj-settings"]);
+  const calls = [];
+  let currentPage = null;
+  for (const line of loadBody.split("\n")) {
+    const pageMatch = line.match(/page === "([a-z-]+)"/u);
+    if (pageMatch) currentPage = pageMatch[1];
+    for (const call of line.matchAll(/fetchState\("(tasks|runtime)"(,\s*\{[^}]*\})?\)/gu)) {
+      calls.push({page: currentPage, view: call[1], scoped: /projectId/u.test(call[2] || "")});
+    }
+  }
+  if (calls.length < 5) {
+    failures.push(`按项目取数: 只解析到 ${calls.length} 处 tasks/runtime 取数调用 —— 提取逻辑与代码脱节，本条在空转`);
+  }
+  for (const call of calls) {
+    if (projectScopedPages.has(call.page) && !call.scoped) {
+      failures.push(`按项目取数: ${call.page} 页取 ${call.view} 视图时没有带上当前项目 ——`
+        + " 别的项目更新的记录会把窗口占满，这一页会显示成'本项目没有记录'");
+    }
+    if (!projectScopedPages.has(call.page) && call.scoped) {
+      failures.push(`按项目取数: ${call.page} 是系统级页面，却按当前项目过滤了 ${call.view} 视图 ——`
+        + " 系统管理员会只看到当前项目的记录（如角色技能叠加），以为别的项目没有改过");
+    }
+  }
+}
+
 // 视图里被裁掉的字段，控制台一处都不许读。
 //
 // 裁字段是为了省载荷（关闭门记录单条 5.6KB，而控制台只读其中四个小字段），

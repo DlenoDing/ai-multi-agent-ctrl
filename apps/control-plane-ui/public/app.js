@@ -728,10 +728,12 @@ const stateCache = new Map();
 
 // 项目视角的页面要带上当前项目：服务端据此在【截断之前】过滤，
 // 既把载荷压回这个项目的规模，也避免"别的项目更新的记录把窗口占满、本项目的表是空的"。
-const PROJECT_SCOPED_VIEWS = new Set(["tasks", "runtime"]);
-
-async function fetchState(view) {
-  const scopeProjectId = PROJECT_SCOPED_VIEWS.has(view) && currentProjectId ? currentProjectId : "";
+//
+// 作用域由【调用点】声明，不按视图名推断：runtime 视图既被项目视角的监控页用，
+// 也被系统设置页用，而后者要看的是【全部项目】的角色技能叠加（叠加记录带 projectId）。
+// 按视图名一刀切会让系统管理员只看得到当前项目的叠加，还以为别的项目没有改过角色规则。
+async function fetchState(view, options = {}) {
+  const scopeProjectId = options.projectId || "";
   const path = `/api/state?view=${encodeURIComponent(view)}&limit=200`
     + (scopeProjectId ? `&projectId=${encodeURIComponent(scopeProjectId)}` : "");
   const headers = {"content-type": "application/json"};
@@ -1018,23 +1020,26 @@ async function loadPage() {
       state = projectState;
       orgMembers = membersResult.members || [];
     } else if (page === "proj-overview") {
-      state = await fetchState("tasks");
+      state = await fetchState("tasks", {projectId: currentProjectId});
       ensureProjectSelection();
       loadPendingConfirmCount();
     } else if (page === "tg") {
-      state = await fetchState("tasks");
+      state = await fetchState("tasks", {projectId: currentProjectId});
       ensureProjectSelection();
       if (expandedTaskGroupId) await loadTaskGroupDetail(expandedTaskGroupId);
     } else if (page === "review") {
-      state = await fetchState("tasks");
+      state = await fetchState("tasks", {projectId: currentProjectId});
       ensureProjectSelection();
       await loadReviewData();
     } else if (page === "directives") {
-      state = await fetchState("tasks");
+      state = await fetchState("tasks", {projectId: currentProjectId});
       ensureProjectSelection();
       await loadDirectiveData();
     } else if (page === "monitor") {
-      const [tasksState, runtimeState] = await Promise.all([fetchState("tasks"), fetchState("runtime")]);
+      const [tasksState, runtimeState] = await Promise.all([
+        fetchState("tasks", {projectId: currentProjectId}),
+        fetchState("runtime", {projectId: currentProjectId})
+      ]);
       state = {
         ...tasksState,
         modelSelectionDecisions: runtimeState.modelSelectionDecisions || [],
@@ -1048,7 +1053,7 @@ async function loadPage() {
       ensureProjectSelection();
       ensureExecScope();
     } else if (page === "proj-settings") {
-      state = await fetchState("tasks");
+      state = await fetchState("tasks", {projectId: currentProjectId});
       ensureProjectSelection();
       if (currentProjectId) {
         const configResult = await api(`/api/projects/${encodeURIComponent(currentProjectId)}/config`).catch(() => null);
