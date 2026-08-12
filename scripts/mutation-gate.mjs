@@ -671,12 +671,12 @@ const MUTATIONS = [
   },
   {
     // agent 侧那半是结构判据，同样要能被改坏后报红。
-    name: "agent 运行时的 git 失败也要带上原因",
+    name: "agent 运行时每处起 git 子进程的地方都要取失败原因",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyGitFailureSaysWhyWithoutLeakingPaths",
-    from: '    const lines = String(error?.stderr || error?.stdout || "").trim().split("\\n")',
-    to: '    const lines = String("").trim().split("\\n")',
-    expect: "没有把 stderr 带进报文"
+    from: 'new Error(`git_command_failed:git clone（${gitFailureDetail(error)}）`)',
+    to: 'new Error(`git_command_failed:git clone`)',
+    expect: "直接起 git 子进程却不取失败原因"
   },
   {
     name: "技能源同步失败要写清为什么",

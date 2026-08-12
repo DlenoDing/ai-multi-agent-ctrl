@@ -712,7 +712,7 @@ function syncContentBundleGitTransfer(config, bundle, bundleDir) {
     execFileSync("git", ["-C", transferDir, "checkout", "-q", "FETCH_HEAD"], gitOpts);
     return {directory: transferDir, ref, paths};
   } catch (error) {
-    throw new Error(`content_bundle_git_transfer_failed: ${error.message}`);
+    throw Object.assign(new Error(`content_bundle_git_transfer_failed:（${gitFailureDetail(error)}）`), {cause: error});
   }
 }
 
@@ -1356,7 +1356,13 @@ function prepareRepository(config, target) {
     if (!target.repositoryUrl || target.repositoryUrl.startsWith("git:unknown")) throw new Error("dispatch repository URL is not cloneable");
     if (!isSafeCloneUrl(target.repositoryUrl)) throw new Error("dispatch repository URL uses an unsafe git transport");
     mkdirSync(dirname(repositoryRoot), {recursive: true});
-    execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe", env: {...process.env, GIT_ALLOW_PROTOCOL: "file:https:ssh:git"}});
+    // 克隆失败（认证被拒 / 仓库不在 / 连不上）此前抛的是 "Command failed: git clone <url> <本机路径>"：
+    // 它会作为失败摘要上报，直接显示在控制台上 —— 没说原因，还带着 agent 本机的目录。
+    try {
+      execFileSync("git", ["clone", target.repositoryUrl, repositoryRoot], {stdio: "pipe", env: {...process.env, GIT_ALLOW_PROTOCOL: "file:https:ssh:git"}});
+    } catch (error) {
+      throw Object.assign(new Error(`git_command_failed:git clone（${gitFailureDetail(error)}）`), {cause: error});
+    }
   }
   const remote = target.remote || "origin";
   const configuredUrl = git(repositoryRoot, ["remote", "get-url", remote]);
@@ -1849,14 +1855,18 @@ function git(root, gitArgs) {
   try {
     return execFileSync("git", ["-C", root, ...gitArgs], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 32 * 1024 * 1024}).trim();
   } catch (error) {
-    // 只取 git 的结论行：进度输出里带着本机路径（"Cloning into '/Users/…'"），不该进给人看的报文。
-    const lines = String(error?.stderr || error?.stdout || "").trim().split("\n")
-      .map((line) => line.trim()).filter(Boolean);
-    const conclusions = lines.filter((line) => /^(fatal|error|remote|warning):/iu.test(line));
-    const detail = (conclusions.length ? conclusions : lines).slice(-3).join("；").slice(0, 400);
-    throw Object.assign(new Error(`git_command_failed:git ${gitArgs.join(" ")}（退出码 ${error?.status ?? "?"}）`
-      + (detail ? `：${detail}` : "，且没有任何输出")), {cause: error});
+    throw Object.assign(new Error(`git_command_failed:git ${gitArgs.join(" ")}（${gitFailureDetail(error)}）`),
+      {cause: error, stderr: error?.stderr, status: error?.status});
   }
+}
+
+// 只取 git 的结论行：进度输出里带着本机路径（"Cloning into '/Users/…'"），不该进给人看的报文。
+function gitFailureDetail(error) {
+  const lines = String(error?.stderr || error?.stdout || "").trim().split("\n")
+    .map((line) => line.trim()).filter(Boolean);
+  const conclusions = lines.filter((line) => /^(fatal|error|remote|warning):/iu.test(line));
+  const detail = (conclusions.length ? conclusions : lines).slice(-3).join("；").slice(0, 400);
+  return `退出码 ${error?.status ?? "?"}${detail ? `：${detail}` : "，且没有任何输出"}`;
 }
 
 function gitLsRemote(root, remote, ref) {

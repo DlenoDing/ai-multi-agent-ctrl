@@ -516,16 +516,31 @@ function verifyGitFailureSaysWhyWithoutLeakingPaths(output) {
   }
   // Agent 侧那半只能结构性核对：它的 git 包装同样会把 message 上报成失败摘要（派发的 catch
   // 分支里 String(error.message)），但真实的 push 失败要动 e2e 夹具才造得出来，这里如实说明。
+  // 不是只看那一个包装：要按【每一处起 git 子进程的地方】枚举，否则绕过包装的裸调用会静默漏网
+  // （clone 与内容传输此前就是裸的，各自抛着 "Command failed: git … <本机路径>"）。
   const runtimeSource = readFileSync(resolve(root, "apps/agent-runtime/runtime.mjs"), "utf8");
-  const wrapper = runtimeSource.slice(runtimeSource.indexOf("function git(root, gitArgs) {"));
-  const body = wrapper.slice(0, wrapper.indexOf("\nfunction "));
-  if (!body.includes("function git(root, gitArgs) {")) {
-    output.push("git 失败报文核对: 没在 agent 运行时里找到 git 包装 —— 结构判据已与代码脱节");
-  } else if (!body.includes("error?.stderr") || !body.includes("git_command_failed:")) {
-    output.push("git 失败报文核对: agent 运行时的 git 包装没有把 stderr 带进报文 —— "
-      + "派发失败在控制台上会变成一句 \"Command failed: git -C <agent 本机路径> …\"");
+  if (!runtimeSource.includes("function gitFailureDetail(")) {
+    output.push("git 失败报文核对: agent 运行时里没有取 git 原因的那一步 —— 结构判据已与代码脱节");
   }
-  console.log("git 失败报文核对：控制面侧用真实仓库跑过一次真实失败；agent 运行时侧只做结构核对（真实 push 失败要动 e2e 夹具）");
+  const rawSites = [...runtimeSource.matchAll(/execFileSync\("git"/gu)].map((match) => match.index);
+  if (rawSites.length < 3) {
+    output.push(`git 失败报文核对: 只找到 ${rawSites.length} 处 git 子进程调用，远少于预期 —— 本条在空转`);
+  }
+  const uncovered = new Set();
+  for (const at of rawSites) {
+    const start = runtimeSource.lastIndexOf("\nfunction ", at);
+    const block = runtimeSource.slice(start < 0 ? 0 : start, at);
+    const enclosing = /\nfunction ([A-Za-z0-9_]+)/u.exec(block)?.[1] || "?";
+    const end = runtimeSource.indexOf("\nfunction ", at);
+    const whole = runtimeSource.slice(start < 0 ? 0 : start, end < 0 ? runtimeSource.length : end);
+    if (!whole.includes("gitFailureDetail(")) uncovered.add(enclosing);
+  }
+  if (uncovered.size) {
+    output.push(`git 失败报文核对: agent 运行时里这些函数直接起 git 子进程却不取失败原因：${[...uncovered].join("、")}`
+      + " —— 它们的失败会以 \"Command failed: git … <agent 本机路径>\" 的形式显示在控制台上");
+  }
+  console.log(`git 失败报文核对：控制面侧用真实仓库跑过一次真实失败；agent 运行时侧按 ${rawSites.length} 处 git 子进程`
+    + "逐个结构核对（真实 push/clone 失败要动 e2e 夹具，造不出来）");
 }
 
 function verifyCommitWorksWithoutConfiguredIdentity(output) {
