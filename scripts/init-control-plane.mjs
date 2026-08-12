@@ -123,9 +123,14 @@ console.log(`system admin login: ${process.env.AIMAC_SYSTEM_ADMIN_EMAIL || "syst
 if (!process.env.AIMAC_BOOTSTRAP_TOKEN) {
   console.log(`local bootstrap token: ${bootstrapToken}  (与上面的登录账号配合使用)`);
 }
+// 上面那个管理员令牌写了"配合登录账号使用"，下面两个此前只有一串 base64 —— 人拿到手不知道
+// 往哪儿填。三个令牌打印在同一屏，用途却只标了一个，剩下两个只能去翻代码。
 if (!workspaceOwnerTokenEnv) {
-  console.log(`local seed workspace owner token: ${workspaceOwnerToken}`);
+  console.log(`local seed workspace owner token: ${workspaceOwnerToken}`
+    + "  (种子里的普通成员账号 owner@local，用来验非管理员视角；登录方式与上面相同)");
 }
 if (!process.env.AIMAC_MCP_SERVICE_TOKEN) {
-  console.log(`central MCP service token: ${mcpServiceToken}`);
+  console.log(`central MCP service token: ${mcpServiceToken}`
+    + `  (远程 MCP 客户端连 ${mcpEndpoint}/mcp 时作 Bearer 令牌；`
+    + "默认可见全部工具，一次 tools/list 约 128k token，用 AIMAC_MCP_SERVICE_ALLOWED_TOOLS 收窄)");
 }

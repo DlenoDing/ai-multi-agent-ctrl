@@ -55,6 +55,15 @@ async function verifyFirstRunPath() {
   check(/^https?:\/\/\S+\/mcp/u.test(mcpLine) && !mcpLine.includes("$AIMAC"),
     "init 打印的 MCP 地址必须是能直接用的真地址（不是未展开的变量名）",
     `打印的是：${mcpLine || "（这一行没打印）"}`);
+  // 打印出来的每一个令牌都要写明用途。三个令牌挤在同一屏，此前只有管理员那个标了怎么用，
+  // 另外两个是光秃秃的 base64 —— 人拿到手只能去翻代码才知道往哪儿填。
+  // 判据按"每一行 token 都要带括号说明"来核，而不是逐个写死名字（新增令牌时会自动被要求）。
+  const tokenLines = init.stdout.split("\n").filter((line) => /token: \S+/u.test(line));
+  const unexplained = tokenLines.filter((line) => !/\(.+\)/u.test(line));
+  check(tokenLines.length >= 3 && !unexplained.length,
+    "init 打印的每个令牌都要写明用途（拿到一串 base64 却不知道往哪儿填等于没给）",
+    tokenLines.length < 3 ? `只认出 ${tokenLines.length} 行令牌 —— 提取与输出脱节，本条在空转`
+      : `没写用途的：${unexplained.map((line) => line.split(":")[0]).join("、")}`);
   // 默认是回环地址，别的机器连不上 —— 这件事要现在说，而不是等远程客户端连不上再回来查。
   check(!/127\.0\.0\.1|localhost/u.test(mcpLine) || /回环地址/u.test(mcpLine),
     "默认回环地址时要说清'别的机器连不上、先设 AIMAC_PUBLIC_URL'",
