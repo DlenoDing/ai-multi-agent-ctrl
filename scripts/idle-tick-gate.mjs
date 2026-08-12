@@ -228,7 +228,24 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
   const foreignByField = [];
   let collectionsChecked = 0;
   let resolvedByGroup = 0;
-  for (const view of ["tasks", "runtime", "projects", "users", "instructions", "orgs"]) {
+  // 视图清单必须与服务端的 viewFields 一致。写死一份手抄清单，漏掉哪个就等于那个入口没被核对
+  //（这一版就漏了 system —— 而"枚举要连入口一起枚举"正是这条断言存在的理由）。
+  // 所以清单从服务端源码里取，取不到就报红而不是退回一份猜的。
+  const declaredViews = (() => {
+    const source = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+    const at = source.indexOf("const viewFields = {");
+    if (at < 0) return [];
+    let depth = 0;
+    let end = at;
+    for (let index = source.indexOf("{", at); index < source.length; index += 1) {
+      if (source[index] === "{") depth += 1;
+      else if (source[index] === "}") { depth -= 1; if (!depth) { end = index; break; } }
+    }
+    return [...source.slice(at, end).matchAll(/^\s{4}([a-z]+):/gmu)].map((match) => match[1]);
+  })();
+  check(declaredViews.length >= 6, "能从服务端取到视图清单（取不到就说明下面的逐视图核对在空转）",
+    `取到 ${declaredViews.length} 个视图：${declaredViews.join("、") || "无"}`);
+  for (const view of declaredViews) {
     const body = await fetchScoped(quietId, view);
     for (const [field, value] of Object.entries(body)) {
       if (!Array.isArray(value)) continue;
@@ -305,7 +322,7 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
   }
 
   check(others === 0, "带上 projectId 时，视图里【任何】集合都不许夹带别的项目的记录",
-    others ? `混进来：${foreignByField.join("、")}` : `6 个视图共 ${collectionsChecked} 个集合逐个核对`
+    others ? `混进来：${foreignByField.join("、")}` : `${declaredViews.length} 个视图共 ${collectionsChecked} 个集合逐个核对`
       + `（其中 ${resolvedByGroup} 条记录不带 projectId、按 taskGroupId 反查归属），无一夹带`);
 }
 
