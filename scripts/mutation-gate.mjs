@@ -518,6 +518,17 @@ const MUTATIONS = [
     expect: "仍在每拍推进"
   },
   {
+    // "AI 给自己判分"的核心边界：控制面自己去 git 里查这个 commit 在不在，不信 agent 自报。
+    // 塌了就等于关闭门可以拿凭空的提交过。注意不能变异那句 if (!fullCommit) ——
+    // 同一个错误码有两道守卫接着，关掉一道错误码不变，看起来像"改坏了也没事"。
+    name: "凭空的 commit 不得被当成检查点证据",
+    file: CORE,
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: '    const fullCommit = git(root, ["rev-parse", "--verify", `${commitRef.commit}^{commit}`], "");',
+    to: "    const fullCommit = commitRef.commit;",
+    expect: "拿凭空的提交过关闭门"
+  },
+  {
     // 技能源取不下来时只抛 git 原始报错、状态一动不动：人点完同步只看到一条会消失的 toast，
     // 那张表还写着 configured —— 看不出这个源从来没同步成功过，而它决定 agent 会做什么。
     name: "技能源同步失败要在状态上留下痕迹",

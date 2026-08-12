@@ -5865,7 +5865,7 @@ function verifyApprovedAcceptanceChecksHaveEvidence(output) {
 }
 
 function verifyHumanApprovedPathsBindTheCommit(output) {
-  const runCase = ({stray, finalized, trespass, writeForbidden}) => {
+  const runCase = ({stray, finalized, trespass, writeForbidden, forgeCommit}) => {
     const repo = mkdtempSync(join(tmpdir(), "cc-owned-"));
     const remote = mkdtempSync(join(tmpdir(), "cc-owned-remote-"));
     const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
@@ -5937,7 +5937,10 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workId: workItem.id,
       sessionId: session.sessionId, runId: dispatch.runId, taskContractDigest: contract?.contractDigest,
       languagePolicyDigest: contract?.languagePolicyDigest, summary: "契约门",
-      commitRefs: [{repo: target.repositoryId, branch: "main", commit,
+      // forgeCommit：交一个仓库里【根本不存在】的 40 位哈希。这是"AI 给自己判分"的核心边界 ——
+      // 控制面若信了 agent 自报的提交，它就能拿凭空的证据过关闭门。
+      commitRefs: [{repo: target.repositoryId, branch: "main",
+        commit: forgeCommit ? "0123456789abcdef0123456789abcdef01234567" : commit,
         treeDigest: `git-tree:${git("rev-parse", `${commit}^{tree}`)}`, createdAt: new Date().toISOString()}],
       pushRefs: [{repo: target.repositoryId, remote: "origin", ref: "refs/heads/main", sourceCommit: commit,
         remoteSha, providerOperationId: `git-push:cc:${remoteSha}`, verifiedAt: new Date().toISOString(),
@@ -5950,6 +5953,15 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     rmSync(remote, {recursive: true, force: true});
     return {result, state, taskGroup, workItem};
   };
+
+  // 凭空的提交必须被拒。控制面自己去 git 里查（rev-parse --verify），不信 agent 自报 ——
+  // 这条此前没有任何用例走过，而它塌了就等于关闭门可以拿伪造证据过。
+  const forged = runCase({forgeCommit: true});
+  if (forged.skipped) { output.push(`假提交断言无从验证：${forged.skipped}`); }
+  else if (forged.result.accepted !== false || forged.result.error !== "commit_ref_not_found") {
+    output.push(`交了一个仓库里不存在的 commit，检查点却没被拦下（实际：${forged.result.error || "已受理"}）`
+      + " —— agent 可以拿凭空的提交过关闭门");
+  }
 
   const violating = runCase({stray: true, finalized: true});
   if (violating.skipped) { output.push(`人批边界断言无从验证：${violating.skipped}`); return; }
