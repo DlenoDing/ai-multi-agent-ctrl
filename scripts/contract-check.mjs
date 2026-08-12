@@ -6976,8 +6976,24 @@ function verifyEverySchemaVersionHasASpec(output) {
 }
 
 function verifySeedRecordsMatchTheirDeclaredSchemas(output, sourceState = seedState, label = "种子数据", minValidated = 20) {
-  const {errors: found} = sweepRecordsAgainstDeclaredSchemas(sourceState, {specDir: resolve(root, "spec"), label, minValidated});
+  const {errors: found, validated, uncoveredNote} = sweepRecordsAgainstDeclaredSchemas(sourceState, {specDir: resolve(root, "spec"), label, minValidated});
   output.push(...found);
+  // 报数要自己说清没看过什么：只报"多少条合规"会被读成全覆盖。
+  console.log(`${label}规范核对：${validated} 条记录按自己声明的规范验过；${uncoveredNote}`);
+  // "有规范却没人声明"这条在当前数据上恰好为空 —— 空着的判据和不存在的判据长得一样，
+  // 所以当场注入一次破坏：把某个本来验得了的集合的 schemaVersion 抹掉，它必须被点名。
+  const damaged = structuredClone(sourceState);
+  const victim = (damaged.modelCapabilities || []);
+  if (!victim.length || !victim.every((item) => item.schemaVersion)) {
+    output.push(`${label}规范核对自证: modelCapabilities 不再是"全部声明规范"的样子，这次注入证明不了什么`);
+    return;
+  }
+  for (const item of victim) delete item.schemaVersion;
+  const injected = sweepRecordsAgainstDeclaredSchemas(damaged, {specDir: resolve(root, "spec"), label});
+  if (!injected.errors.some((line) => line.includes("modelCapabilities") && line.includes("接线断了"))) {
+    output.push(`${label}规范核对自证: 抹掉 modelCapabilities 的 schemaVersion 之后，扫描没有报出"整个集合退出了校验" —— `
+      + "这道判据不会响，等于不存在");
+  }
 }
 
 // 质量门是人看到"全通过"时的唯一依据，且完全由 agent 自报。此前 test_result_submit 的

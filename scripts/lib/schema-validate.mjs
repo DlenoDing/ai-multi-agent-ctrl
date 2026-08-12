@@ -4,7 +4,7 @@
 //
 // 不认识的关键字要么实现、要么显式报错 —— 静默跳过会让一份看上去有约束的 schema 什么都不验。
 // 同目录 $ref 一律真去加载（原先只硬编码特例了 language-policy，其余静默跳过）。
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export function createSchemaValidator(specDir) {
@@ -163,10 +163,17 @@ export function sweepRecordsAgainstDeclaredSchemas(state, options = {}) {
     cache.set(name, schema);
     return schema;
   };
+  // 不带 schemaVersion 的记录会被静默跳过 —— 于是"N 条全部符合规范"读起来像全覆盖，
+  // 而整整一个集合可能一条都没被看过。所以按集合记下"看没看过"，并把没看过的点名报出来。
+  const uncovered = [];
   for (const [collection, items] of Object.entries(state || {})) {
     if (!Array.isArray(items)) continue;
+    let objects = 0, declaring = 0;
     for (const [index, item] of items.entries()) {
-      if (!item || typeof item !== "object" || !item.schemaVersion) continue;
+      if (!item || typeof item !== "object") continue;
+      objects += 1;
+      if (!item.schemaVersion) continue;
+      declaring += 1;
       const schema = declaredSchemaFor(item);
       if (!schema) {
         output.push(`${label} ${collection}[${index}] 声明 schemaVersion "${item.schemaVersion}"，但 spec 下没有对应的规范文件 —— 这条记录声称遵守一份不存在的契约`);
@@ -175,9 +182,43 @@ export function sweepRecordsAgainstDeclaredSchemas(state, options = {}) {
       validated += 1;
       validateSchema(item, schema, `${label}.${collection}[${index}]`, output);
     }
+    if (objects && !declaring) uncovered.push({collection, count: objects, spec: specFileFor(collection, specDir)});
+  }
+  // 规范存在、记录却不声明它 = 接线断了：这类记录本来验得了，现在一条都不验，而门照样绿。
+  // （少一个 schemaVersion 赋值就会变成这样，minValidated 只在总量掉很多时才拦得住。）
+  for (const {collection, count, spec} of uncovered) {
+    if (spec) {
+      output.push(`${label} ${collection}（${count} 条）没有任何记录声明 schemaVersion，而 spec/${spec}.schema.json 是存在的`
+        + " —— 这一整个集合因此退出了规范校验，接线断了");
+    }
   }
   if (validated < minValidated) {
     output.push(`${label}规范核对只校验到 ${validated} 条记录，远少于预期的 ${minValidated} —— 提取逻辑已与数据结构脱节，本条可能在空转`);
   }
-  return {errors: output, validated};
+  return {errors: output, validated, uncovered, uncoveredNote: uncoveredNote(uncovered)};
+}
+
+// 集合名 → 规范文件名：taskGroups→task-group、policies→policy。只用来回答"这个集合本来验得了吗"。
+// 判据不是"规范文件存不存在"，而是【那份规范自己用不用 schemaVersion 自识别】：
+// agent-task-contract 就是 additionalProperties:false 且根本没有 schemaVersion 字段
+// （它用 contractVersion），按"文件存在就该声明"去要求，等于要求记录违反自己的规范 ——
+// 我第一版就是这么写的，当场造出一条假红。
+function specFileFor(collection, specDir) {
+  const kebab = collection.replace(/([a-z0-9])([A-Z])/gu, "$1-$2").toLowerCase();
+  for (const candidate of [kebab.replace(/ies$/u, "y"), kebab.replace(/s$/u, ""), kebab]) {
+    const file = join(specDir, `${candidate}.schema.json`);
+    if (!existsSync(file)) continue;
+    try {
+      if (JSON.parse(readFileSync(file, "utf8"))?.properties?.schemaVersion) return candidate;
+    } catch { /* 规范读不出来就当它不适用，坏文件由别的门去报 */ }
+    return null;
+  }
+  return null;
+}
+
+// 报数必须自己说清没看过什么，否则"0 条不符"和"查过了"长得一样。
+function uncoveredNote(uncovered) {
+  if (!uncovered.length) return "所有非空集合都至少有记录声明了规范";
+  const names = uncovered.map(({collection, count}) => `${collection}(${count})`).join("、");
+  return `另有 ${uncovered.length} 个集合没有任何记录声明规范（要么没有规范文件，要么那份规范本就不用 schemaVersion 自识别），本次未核对：${names}`;
 }

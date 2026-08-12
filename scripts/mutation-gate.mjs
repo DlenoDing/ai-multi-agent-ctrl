@@ -670,6 +670,16 @@ const MUTATIONS = [
     expect: "failCommand 已经被接上了，但仍登记"
   },
   {
+    // "有规范却没人声明"这条在当前数据上为空，靠契约门里的注入自证。把判据关掉，
+    // 那次注入必须报出"这道判据不会响"——否则自证本身也是摆设。
+    name: "整个集合退出规范校验必须被点名",
+    file: "scripts/lib/schema-validate.mjs",
+    check: "verifySeedRecordsMatchTheirDeclaredSchemas",
+    from: "    if (spec) {",
+    to: "    if (false) {",
+    expect: "这道判据不会响"
+  },
+  {
     // 死导出检查此前把 scripts/ 也算成调用方，于是"只有门在调"的整族机制隐身。
     // 收紧之后要能认出来：摘掉一条登记，那个函数必须当场被点名。
     name: "只有门在调的导出不算接上了",

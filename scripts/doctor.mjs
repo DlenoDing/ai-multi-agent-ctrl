@@ -1682,7 +1682,7 @@ if (!(doctorProducedState.humanConfirmationRequests || []).some((item) => item.s
 if (doctorSweep.errors.length) {
   throw new Error(`doctor: e2e 真实产出的记录不符合它们自己声明的规范：\n- ${doctorSweep.errors.slice(0, 200).join("\n- ")}`);
 }
-console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条记录符合各自声明的 schema（含人工确认与定稿记录）`);
+console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条记录符合各自声明的 schema（含人工确认与定稿记录）；${doctorSweep.uncoveredNote}`);
 
 const [code, signal] = await exitPromise;
 try { rmSync(doctorRepo.base, {recursive: true, force: true}); } catch {}

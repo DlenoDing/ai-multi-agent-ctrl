@@ -639,7 +639,7 @@ try {
 	  if (sweep.errors.length) {
 	    throw new Error(`agent remote doctor: e2e 真实产出的记录不符合它们自己声明的规范：\n- ${sweep.errors.slice(0, 200).join("\n- ")}`);
 	  }
-	  console.log(`e2e 产出规范核对 ok: ${sweep.validated} 条记录符合各自声明的 schema（含 checkpoint 的 commit/push 证据）`);
+	  console.log(`e2e 产出规范核对 ok: ${sweep.validated} 条记录符合各自声明的 schema（含 checkpoint 的 commit/push 证据）；${sweep.uncoveredNote}`);
 		  console.log("agent remote doctor ok: one-command join, checksum install, credential rotation, initialization, self-check (permission+integrity probe), remote MCP, control command ACK, project/session-level execution event stream, on-demand skill workset, dispatch, commit, push and checkpoint outbox replay, two-step evidence artifact registration, permission_report loop with safe-retry-point recovery, revoke pending+ACK requeue verified");
 } finally {
   server.kill("SIGTERM");
