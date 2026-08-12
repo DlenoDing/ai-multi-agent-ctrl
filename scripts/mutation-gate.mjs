@@ -414,6 +414,14 @@ const MUTATIONS = [
     expect: "没有被裁回上限"
   },
   {
+    name: "视图作用域：不带 projectId 的记录要按 taskGroupId 反查归属",
+    file: CORE,
+    check: "verifyProjectScopePredicateResolvesOwnership",
+    from: "      return projectIdOf.get(item.taskGroupId) === scopeProjectId;",
+    to: "      return true;",
+    expect: "别的项目的记录会出现在这个项目的页面上"
+  },
+  {
     name: "在制品上限：已吊销的节点不得继续撑着队头",
     file: CORE,
     check: "verifyQuietProjectsDoNotHoardSlots",

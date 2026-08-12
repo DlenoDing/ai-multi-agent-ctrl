@@ -1727,6 +1727,24 @@ function admissionDimensions(workItem, outcome) {
 // 与状态机的一致由 contract-check 核对，不靠这条注释。
 export const RETIRED_NODE_STATUSES = new Set(["revoked"]);
 
+// 视图按项目切分时"这条记录属不属于当前项目"的判据。放在这里而不是内联在 server.mjs 里，
+// 是为了能直接造入参单测两条分支 —— 靠 taskGroupId 归属的那条在 e2e 夹具里造不出来
+//（要先给探针项目登记仓库、才有派发、才有 worker lane），于是它长期一次都没被走到。
+// 把逻辑挪到测得动的地方，比把夹具扭成需要的形状简单。
+export function makeProjectScopePredicate(taskGroups, scopeProjectId) {
+  const projectIdOf = new Map((taskGroups || []).map((taskGroup) => [taskGroup.id, taskGroup.projectId]));
+  return (item) => {
+    if (!item || typeof item !== "object") return true;
+    if (item.projectId !== undefined && item.projectId !== null) return item.projectId === scopeProjectId;
+    // 不带 projectId、但带 taskGroupId 的记录（worker lane / 指令信封 / 任务分析）靠任务组归属。
+    // 查不到归属就判作【不属于】：缺省不得等于放行，否则一条查无归属的记录就能穿过作用域。
+    if (item.taskGroupId !== undefined && item.taskGroupId !== null) {
+      return projectIdOf.get(item.taskGroupId) === scopeProjectId;
+    }
+    return true;
+  };
+}
+
 export function wipCapacityForProject(state, projectId) {
   const perNode = Math.max(1, Number(process.env.AIMAC_WIP_PER_NODE || 2));
   let online = 0;

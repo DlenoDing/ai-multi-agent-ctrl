@@ -38,6 +38,7 @@ import {
   runAutonomousCycle,
   WIP_ACTIVE_DISPATCH_STATUSES,
   wipCapacityForProject,
+  makeProjectScopePredicate,
   RETIRED_NODE_STATUSES,
   settleCellOwnedResources,
   expireStaleQueuedDispatches,
@@ -234,6 +235,7 @@ run(verifyWipCapacityBackpressure);
 run(verifyHighPriorityCellsAreNotStarvedByEarlierGroups);
 run(verifyWipCapacityIsPerProject);
 run(verifyQuietProjectsDoNotHoardSlots);
+run(verifyProjectScopePredicateResolvesOwnership);
 run(verifyActiveDispatchesKeepTheirContracts);
 run(verifySuspendedOrganizationHaltsExecution);
 run(verifyHaltedTaskGroupsAreNotClaimable);
@@ -5789,6 +5791,29 @@ function verifyWipCapacityBackpressure(output) {
 // 队头是给"活要能被立刻领走"留的余量，而额度按项目算 —— 项目一多，全局在制品又回到无界。
 // 从未注册过节点的项目，队头买不到任何东西，只留一个很小的头；注册过（哪怕此刻离线）就给全额，
 // 因为掉线是常态，那时队列恰恰该留着等它回来。三种情形逐一验，别只验中间那种。
+// 视图按项目切分的判据。四种入参形态逐一验 —— 靠 taskGroupId 归属的那条分支在 e2e 夹具里
+// 走不到（要先给探针项目登记仓库才有 worker lane），而 worker lane 恰恰是唯一会下发到视图里的
+// "不带 projectId、靠任务组归属"的记录：真出过越界（选中 A 项目，监控页给的是 B 项目的全部 lane）。
+function verifyProjectScopePredicateResolvesOwnership(output) {
+  const groups = [{id: "tg_mine", projectId: "prj_mine"}, {id: "tg_theirs", projectId: "prj_theirs"}];
+  const belongs = makeProjectScopePredicate(groups, "prj_mine");
+  const cases = [
+    ["带 projectId 且是本项目", {projectId: "prj_mine"}, true],
+    ["带 projectId 但是别人的", {projectId: "prj_theirs"}, false],
+    ["不带 projectId、靠 taskGroupId 归本项目", {taskGroupId: "tg_mine"}, true],
+    ["不带 projectId、靠 taskGroupId 归别人", {taskGroupId: "tg_theirs"}, false],
+    ["任务组查不到归属（不在可见范围内）", {taskGroupId: "tg_unknown"}, false],
+    ["两个归属字段都没有（全局配置）", {roleId: "reviewer"}, true]
+  ];
+  for (const [label, item, expected] of cases) {
+    if (belongs(item) !== expected) {
+      output.push(`视图项目作用域判据：${label} —— 期望 ${expected ? "属于" : "不属于"}本项目，实际相反`
+        + (expected ? "（本项目自己的记录被滤掉，界面上是空表）" : "（别的项目的记录会出现在这个项目的页面上）"));
+    }
+  }
+  console.log(`视图项目作用域判据：${cases.length} 种入参形态逐一核对（含靠 taskGroupId 归属与查无归属）`);
+}
+
 function verifyQuietProjectsDoNotHoardSlots(output) {
   const saved = process.env.AIMAC_WIP_QUEUE_HEAD;
   delete process.env.AIMAC_WIP_QUEUE_HEAD; // 本门顶上把它调得很大，这里要看默认行为

@@ -63,6 +63,7 @@ import {
   computeCompletionReadiness,
   computeProgressSnapshots,
   countInFlightDispatchesByProject,
+  makeProjectScopePredicate,
   wipCapacityForProject,
   cancelPendingConfirmationsForDispatch,
   consumeHumanConfirmation,
@@ -1410,8 +1411,13 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
   // 判据由【数据自身】决定：记录上带 projectId 且不等于当前项目的就滤掉，其余一律保留。
   // 不维护"哪些集合属于项目"的清单 —— 第一版拿存储层的分片清单来当这个清单，结果漏掉了
   // modelSelectionDecisions 这类中央集合（分片是按存储布局切的，不是按归属切的），过滤等于没生效。
-  const inRequestedProject = (item) => !item || typeof item !== "object"
-    || item.projectId === undefined || item.projectId === null || item.projectId === scopeProjectId;
+  // 有些记录不带 projectId，靠 taskGroupId 归属项目（按 schema 全量核对是三种：worker lane、
+  // 指令信封、任务分析；其中 worker lane 就在 runtime 视图里下发）。只看 projectId 的判据会把
+  // 它们当成"公共记录"整份放行 —— 实测选中 A 项目时，监控页拿到的是 B 项目的全部 lane。
+  // 而账本上限只留 60 条，本项目自己的 lane 完全可能被别的项目挤出窗口，
+  // 那正是当初做项目过滤要解决的毛病（"安静项目看不到自己的记录"）。
+  // 判据本身在 control-plane-core 里，那里造得出入参、两条分支都单测得到。
+  const inRequestedProject = makeProjectScopePredicate(scoped.taskGroups, scopeProjectId);
   const scopeCollection = (value) => (scopeProjectId && Array.isArray(value) ? value.filter(inRequestedProject) : value);
   // 账本类集合：控制台每张表最多渲染 10~20 行，却按整页上限（200）取 —— 实测 400 单元时
   // 监控页一次轮询 1.1MB，绝大多数记录从没被显示过。给它们单独设一个更小的上限；

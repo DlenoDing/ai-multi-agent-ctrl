@@ -193,16 +193,29 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
   // 用过滤版【覆盖】了基底 —— 基底那份没过滤的 taskGroups 在这个视图里根本看不见。
   // 于是 runtime 视图长期下发全部项目的任务组（实测 100 个项目 235KB/次），门却一直是绿的。
   // 一个字段在某个视图里是对的，不代表它在别的视图里也对。
+  // 判据不能和实现共用同一个盲点：只看 projectId 的话，靠 taskGroupId 归属的记录
+  //（worker lane 就是一例，它在 runtime 视图里下发）永远查不出越界。
+  // 归属表从【不带项目作用域】的取数建，否则拿到的只有本项目的组，别的组一律"查无此组"。
+  const allGroups = await fetchScoped(null, "tasks");
+  const groupProject = new Map((allGroups.taskGroups || []).map((group) => [group.id, group.projectId]));
   const foreignByField = [];
   let collectionsChecked = 0;
+  let resolvedByGroup = 0;
   for (const view of ["tasks", "runtime", "projects", "users", "instructions", "orgs"]) {
     const body = await fetchScoped(quietId, view);
     for (const [field, value] of Object.entries(body)) {
       if (!Array.isArray(value)) continue;
       if (field === "projects") continue; // 项目切换器要看到全部项目，它本来就不该被切
       collectionsChecked += 1;
-      const foreign = value.filter((item) => item && typeof item === "object"
-        && item.projectId !== undefined && item.projectId !== null && item.projectId !== quietId).length;
+      const foreign = value.filter((item) => {
+        if (!item || typeof item !== "object") return false;
+        if (item.projectId !== undefined && item.projectId !== null) return item.projectId !== quietId;
+        if (item.taskGroupId !== undefined && item.taskGroupId !== null && groupProject.has(item.taskGroupId)) {
+          resolvedByGroup += 1;
+          return groupProject.get(item.taskGroupId) !== quietId;
+        }
+        return false;
+      }).length;
       if (foreign) foreignByField.push(`${view} 视图的 ${field} ${foreign} 条`);
     }
   }
@@ -226,56 +239,47 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
     "按项目取全时不得再标成截断（否则界面把'就这么多'说成'还有更多'）",
     `取到本项目 ${ownComplete} 个任务组（共 12 个）｜截断标记 ${markedTruncated ? "有" : "无"}`);
 
-  // 两处改动的交叉点：按项目过滤 + 账本类集合的更小上限。
-  // 本项目自己的账本超过那个上限时，截断标记必须仍然为真 —— 否则界面会把 60 条说成全部，
-  // 而这正是"少取"这个优化最容易踩的坑：省了载荷，却顺手把报数变成了谎话。
+  // 截断标记：判据取最一般的形式 —— 只要【下发数 < 真实条数】，就必须标；相等则不许标。
+  // 不再绑定"哪个集合""哪个上限"。此前绑在账本集合上，而 worker lane 一旦按 taskGroupId
+  // 正确归属，这个安静项目一条账本记录都没有了，那条断言只能永远自报"未被检验"。
+  // 标记逻辑本来就是各集合共用的一段，用任何一个真被截断的集合都验得到它。
   {
-    const ledger = await (await fetch(`${base}/api/state?view=runtime&limit=200&projectId=${encodeURIComponent(quietId)}`,
+    const view = await (await fetch(`${base}/api/state?view=runtime&limit=10&projectId=${encodeURIComponent(quietId)}`,
       {headers: auth})).json();
-    // 挑一个这一轮真的有记录的账本集合来验（哪个有取决于编排跑了什么，不写死）。
-    const ledgerNames = ["admissionDecisions", "modelSelectionDecisions", "sessionPlacementDecisions",
-      "workerLanes", "agentExecutionEvents", "agentControlCommands", "transitionEvidence"];
-    // 判据必须落在【真实总数】上，不能拿"下发数正好等于上限"当截断发生了：
-    // 集合总共就 gateLedgerLimit 条时，下发数同样等于上限，而这时【不该】有截断标记。
-    // 第一版就是这么写的，于是上游一个把在制品压小的改动让记录数正好落到 2，
-    // 断言当场要求一个不该存在的标记 —— 一条本该"未被检验"的路走成了假红。
-    // 真实总数从盘上的状态取（门自己起的服务，运行目录是自己的）。
     const stored = JSON.parse(readFileSync(join(runtimeDir, "control-plane-state.json"), "utf8"));
-    const shardDir = join(runtimeDir, "project-state-shards");
+    // 目录名以 state-store.mjs 里的常量为准（project-db）。写错名字不会报错，
+    // 只会让真实条数少算 —— 上一版就是这样把分片里的任务组数成 0 的。
+    const shardDir = join(runtimeDir, "project-db");
     const shards = existsSync(shardDir)
       ? readdirSync(shardDir).map((name) => JSON.parse(readFileSync(join(shardDir, name), "utf8")))
       : [];
-    // 总数要和视图【同一个作用域】：视图是按这个项目过滤过的，拿全局总数去比，
-    // 会挑中一个本项目一条都没有的集合，然后要求它有截断标记 —— 又是一条假红。
-    // 归属判据与服务端一致：没有 projectId 的记录属于所有人（中央集合）。
-    const mine = (item) => item.projectId === undefined || item.projectId === null || item.projectId === quietId;
-    const trueCount = (name) => (stored[name] || []).filter(mine).length
-      + shards.reduce((sum, shard) => sum + ((shard.collections || {})[name] || []).filter(mine).length, 0);
-    // 还要求这个集合【确实在这个视图里下发】：view=runtime 并不带全部账本集合，
-    // 挑中一个根本不在视图里的（下发 undefined），同样是在要求一个不存在的标记。
-    const picked = ledgerNames.find((name) => Array.isArray(ledger[name]) && trueCount(name) > gateLedgerLimit);
+    // 真实条数要与服务端【同一套归属判据】：只看 projectId 会把别的项目靠 taskGroupId 归属的
+    // 记录算成本项目的（worker lane 就是这么骗过上一版的：实有算成 2、实际下发 0，假红）。
+    const ownsIt = (item) => {
+      if (!item || typeof item !== "object") return true;
+      if (item.projectId !== undefined && item.projectId !== null) return item.projectId === quietId;
+      if (item.taskGroupId !== undefined && item.taskGroupId !== null) return groupProject.get(item.taskGroupId) === quietId;
+      return true;
+    };
+    const trueCount = (name) => (stored[name] || []).filter(ownsIt).length
+      + shards.reduce((sum, shard) => sum + ((shard.collections || {})[name] || []).filter(ownsIt).length, 0);
+    const candidates = ["admissionDecisions", "modelSelectionDecisions", "sessionPlacementDecisions", "workerLanes",
+      "agentExecutionEvents", "agentControlCommands", "taskGroups", "workSessions", "agentDispatches"];
+    const picked = candidates.find((name) => Array.isArray(view[name]) && view[name].length < trueCount(name));
     if (picked) {
-      const shipped = (ledger[picked] || []).length;
-      const marked = (ledger.truncatedCollections || []).includes(picked);
-      // 下发数超过配置的上限 = 服务端根本没认这个旋钮。这时照样要红（旋钮不生效，这道门就没有意义），
-      // 但标题不能说成"标记没打"—— 那会把人支到渲染那边去查，而问题在读取环境变量那一行。
-      if (shipped > gateLedgerLimit) {
-        check(false, "账本上限旋钮必须生效（否则'截断仍要标记'无从检验）",
-          `${picked} 实有 ${trueCount(picked)} 条，配置上限 ${gateLedgerLimit} 却下发了 ${shipped} 条 ——`
-          + " 服务端没有认 AIMAC_VIEW_LEDGER_LIMIT，不是标记坏了");
-      } else {
-        check(marked, "账本被账本上限截断时，仍要如实标记（界面才会显示'共 N+ 条'）",
-          `${picked} 实有 ${trueCount(picked)} 条、下发 ${shipped} 条（上限 ${gateLedgerLimit}），截断标记 ${marked ? "有" : "无"}`);
-      }
+      const marked = (view.truncatedCollections || []).includes(picked);
+      check(marked, "被上限截断的集合必须如实标记（界面才会显示'共 N+ 条'）",
+        `${picked} 实有 ${trueCount(picked)} 条、下发 ${view[picked].length} 条，截断标记 ${marked ? "有" : "无"}`);
     } else {
-      console.log(`  --  这一轮没有任何账本集合的真实条数超过上限 ${gateLedgerLimit}`
-        + `（各集合实有：${ledgerNames.map((name) => `${name} ${trueCount(name)}`).join("、")}）——`
-        + ` 没有发生截断，"截断仍要标记"这条未被检验`);
+      console.log(`  --  这一轮这个项目没有任何集合被截断（各集合实有/下发：`
+        + `${candidates.filter((name) => Array.isArray(view[name])).map((name) => `${name} ${trueCount(name)}/${view[name].length}`).join("、")}）`
+        + ` —— "截断仍要标记"这条未被检验`);
     }
   }
 
   check(others === 0, "带上 projectId 时，视图里【任何】集合都不许夹带别的项目的记录",
-    others ? `混进来：${foreignByField.join("、")}` : `6 个视图共 ${collectionsChecked} 个集合逐个核对，无一夹带`);
+    others ? `混进来：${foreignByField.join("、")}` : `6 个视图共 ${collectionsChecked} 个集合逐个核对`
+      + `（其中 ${resolvedByGroup} 条记录不带 projectId、按 taskGroupId 反查归属），无一夹带`);
 }
 
 child.kill("SIGTERM");
