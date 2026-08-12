@@ -1237,6 +1237,35 @@ case_marks.each_with_index do |(tool, at), index|
   errors << "MCP 工具 #{tool} 在作用域参数缺省时会落到控制面自己的任务组/房间，却没有受限主体守卫 —— 缺省不得等于放行" unless guarded
 end
 
+# 【错误码本地化】。人撞上错误的那一刻，最需要看懂的就是这一行。控制台把服务端返回的 error
+# 原样交给 t() 显示，没有中文就直接把英文枚举摆在中文界面上 —— 看不懂，也搜不到。
+# 今天 203 种错误码里只有 7 种没有中文，而那 7 种全是机器面的（agent 网关 / MCP 传输层）。
+# 所以做成登记制：新增的错误码要么给中文，要么写明它只发给机器、人看不到。
+MACHINE_FACING_ERRORS = {
+  "checkpoint_replay_binding_mismatch" => "agent 网关回给代理的，控制台不显示",
+  "dispatch_not_assigned_to_node" => "同上",
+  "event_node_binding_mismatch" => "同上",
+  "execution_event_key_required" => "同上",
+  "room_task_group_mismatch" => "同上（房间接口的机器侧调用）",
+  "mcp_auth_required" => "MCP 传输层，回给 MCP 客户端",
+  "mcp_streamable_http_requires_post" => "同上"
+}.freeze
+error_codes = [server_source, core_source, agent_gateway_source].flat_map do |src|
+  src.scan(/error:\s*"([a-z_0-9]+)"/).flatten + src.scan(/new Error\("([a-z_0-9]+)"\)/).flatten
+end.uniq
+errors << "错误码本地化门: 只提取到 #{error_codes.size} 个错误码 —— 提取逻辑与代码脱节" if error_codes.size < 100
+unlocalized = error_codes.reject { |code| i18n_zh_source.match?(/(^|[^A-Za-z0-9_])#{Regexp.escape(code)}\s*:/) }
+unregistered = unlocalized.reject { |code| MACHINE_FACING_ERRORS.key?(code) }
+unless unregistered.empty?
+  errors << "这些错误码在中文界面上会显示成原始英文：#{unregistered.sort.join(', ')} —— " \
+    "要么给它中文，要么在 MACHINE_FACING_ERRORS 里写明它只发给机器、人看不到"
+end
+# 登记表也不许留着已经不存在或已经本地化的条目：那会让下一个人以为某个错误码还没中文。
+stale_machine_errors = MACHINE_FACING_ERRORS.keys.reject { |code| unlocalized.include?(code) }
+unless stale_machine_errors.empty?
+  errors << "MACHINE_FACING_ERRORS 里这些条目已经过时（错误码不存在了，或已经有中文）：#{stale_machine_errors.join(', ')}"
+end
+
 # 【对象命名参数登记表】。这一类洞已经在本会话里出现两次（缺省作用域 5 处、共享定义契约 1 处），
 # 共同形状是：报文里出现一个指向既有对象的 id，而没有任何东西核对"这个对象是不是你的"。
 # 所以把它变成登记制：agent 可用工具里出现的每一个 id 类参数，都必须在下表里写明它凭什么安全。
