@@ -507,6 +507,14 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "定稿页的协商记录也要在漏译扫描的覆盖里",
+    file: I18N,
+    gate: "console",
+    from: '    revise: "提交修改意见",',
+    to: "",
+    expect: "「revise」（出现在 待定稿的核心决策/review）"
+  },
+  {
     name: "漏译扫描：真的 t 渲染一遍，界面上不许出现英文枚举",
     file: I18N,
     gate: "console",

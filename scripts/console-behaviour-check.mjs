@@ -2082,6 +2082,29 @@ await runErrorGuidanceCase();
     }
     return done;
   };
+  // 定稿页上的协商记录此前没有任何一份登记状态覆盖到：三份基础状态里都没有待确认单，
+  // 于是 t(turn.action) / t(turn.assessment) 这一族值从没被渲染过 —— 实测漏了 revise。
+  // 判据要覆盖【人真正读来做决定的那一屏】，而不只是列表页。
+  i18nScanStates.push(["待定稿的核心决策", {
+    schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: []}],
+    humanConfirmationRequests: [{
+      requestId: "hcr_scan", projectId: "p1", taskGroupId: "tg1", workItemId: "w1", status: "pending",
+      decisionClass: "major", decisionType: "work_item_verification", blocking: true, round: 2,
+      question: {summary: "问题", detail: "细节"},
+      options: [{optionId: "a", label: "甲"}, {optionId: "none", label: "不选择（自定义输入）"}],
+      deliberation: [
+        {round: 1, actorKind: "human", actor: "u1", action: "revise", summary: "人的意见", at: "2026-08-10T02:00:00.000Z"},
+        {round: 1, actorKind: "ai", actor: "agent", action: "analysis", assessment: "concerns", summary: "AI 的意见", at: "2026-08-10T02:05:00.000Z"},
+        {round: 1, actorKind: "human", actor: "u1", action: "finalize", summary: "定了", at: "2026-08-10T03:00:00.000Z"},
+        {round: 1, actorKind: "human", actor: "u1", action: "reject", summary: "打回", at: "2026-08-10T03:10:00.000Z"},
+        {round: 1, actorKind: "human", actor: "u1", action: "propose", summary: "提案", at: "2026-08-10T03:20:00.000Z"}
+      ]
+    }],
+    humanDirectives: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
+    findings: [], permissionRequests: [], approvalRequests: [], truncatedCollections: []
+  }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"}, "p1"]);
   const scanned = [];
   const pages = ["sys-overview", "sys-orgs", "sys-settings", "sys-accounts", "org-overview", "org-members",
     "org-agents", "org-projects", "proj-overview", "tg", "review", "directives", "monitor", "proj-settings"];

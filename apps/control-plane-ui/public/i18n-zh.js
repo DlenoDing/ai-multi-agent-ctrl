@@ -539,6 +539,9 @@
     human_finalized_decision_diverged: "该方案已由人工定稿，AI 变更与定稿内容不一致，已拦下并需重新人工确认",
     propose: "提出方案",
     analysis: "AI 再分析",
+    // 协商记录里人这一侧的动作名直接进那一行：finalize/reject 都有中文，唯独 revise 漏了，
+    // 于是"提交修改意见"那一轮在定稿页上显示成英文 revise —— 恰恰是人回看自己说过什么的地方。
+    revise: "提交修改意见",
     finalize: "定稿",
     ran: "已推进",
     unchanged: "已运行，无变化",
