@@ -371,6 +371,27 @@ const MUTATIONS = [
     expect: "没有被裁回上限"
   },
   {
+    name: "优先级预留：靠后组的 P0 不得被靠前组的普通活饿死",
+    file: CORE,
+    from: "if (wipNow + wipReserved >= wipCap) {",
+    to: "if (wipNow >= wipCap) {",
+    expect: "永远轮不上"
+  },
+  {
+    name: "优先级预留：扫到之后必须把名额还回去",
+    file: CORE,
+    from: "        consumePending(taskGroup.projectId, cellAdmissionPriority(workItem));",
+    to: "        void 0;",
+    expect: "扣住了没还回来"
+  },
+  {
+    name: "优先级预留：让路与额度真满不得记成同一件事",
+    file: CORE,
+    from: 'whyThisCellNow: wipNow >= wipCap ? "cell_waiting_for_wip_capacity" : "cell_yielding_to_higher_priority"',
+    to: 'whyThisCellNow: "cell_waiting_for_wip_capacity"',
+    expect: "人无从分辨"
+  },
+  {
     name: "在制品上限：闸必须真的挡住",
     file: CORE,
     from: "      if (wipNow >= wipCap) {",

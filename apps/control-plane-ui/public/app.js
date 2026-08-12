@@ -470,7 +470,8 @@ const WHY_THIS_CELL_LABELS = {
   no_model_satisfies_hard_constraints: "无模型满足硬约束",
   role_drift_guard_intercepted_dispatch: "角色偏移守卫拦截派发",
   cell_deferred_condition_window: "等待条件窗口（按环境独立延后）",
-  cell_waiting_for_wip_capacity: "等在制品额度"
+  cell_waiting_for_wip_capacity: "等在制品额度",
+  cell_yielding_to_higher_priority: "让路给更高优先级的单元"
 };
 function admissionReasonLabel(decision) {
   const why = decision.whyThisCellNow;

@@ -209,6 +209,7 @@ verifyPermissionOutcomeReleasesTheSession(errors);
 verifyShardRoundTripKeepsEveryRecord(errors);
 verifyOrchestrationDoesNotShellOutPerCell(errors);
 verifyWipCapacityBackpressure(errors);
+verifyHighPriorityCellsAreNotStarvedByEarlierGroups(errors);
 verifyActiveDispatchesKeepTheirContracts(errors);
 verifySuspendedOrganizationHaltsExecution(errors);
 verifyHaltedTaskGroupsAreNotClaimable(errors);
@@ -5743,6 +5744,66 @@ function verifyWipCapacityBackpressure(output) {
     console.log(`在制品上限：额度 ${CAP} 时在飞 ${active.length} 个、等额度 ${queued.length} 条判决，`
       + `在飞状态集合已对着状态机的 ${nonTerminal.length} 个非终态（${nonTerminal.join("、")}）核对`);
   }
+}
+
+// 名额有限之后，顺序就是策略。P0（安全/资金/数据破坏）如果排在靠后的任务组里，
+// 不能被靠前那个组的普通活把名额吃光 —— 那不是"晚一点跑"，是每一拍顺序都一样、永远轮不上。
+function verifyHighPriorityCellsAreNotStarvedByEarlierGroups(output) {
+  const CAP = 3;
+  const previous = process.env.AIMAC_WIP_QUEUE_HEAD;
+  process.env.AIMAC_WIP_QUEUE_HEAD = String(CAP);
+  let probe;
+  try {
+    probe = structuredClone(seedState);
+    ensureRuntimeCollections(probe, {root});
+    const template = probe.taskGroups[0];
+    probe.taskGroups = [];
+    // 靠前的组：够把名额吃光的普通活，外加一个 P0。
+    // 这个前置 P0 不是凑数：预留必须在单元被扫到之后【还回去】，否则它一直被当成"后面还会来"，
+    // 名额被永久扣住、上限等于被悄悄调小。少了它，预留不释放这个缺陷在本夹具里正好观察不到
+    // （更高优先级只有一个，扣住的那个名额恰好被它自己用掉了）。
+    const ordinary = structuredClone(template);
+    ordinary.id = "tg_prio_ordinary";
+    ordinary.workItems = [{id: "w_p0_early", title: "前置安全修复", status: "draft",
+      ownerRole: "agent-runtime", progress: 0, admissionPriorityClass: "p0_safety"}];
+    for (let index = 0; index < CAP * 4; index += 1) {
+      ordinary.workItems.push({id: `w_ord_${index}`, title: `o${index}`, status: "draft", ownerRole: "agent-runtime", progress: 0});
+    }
+    // 靠后的组：P0。数组顺序在后，优先级在前。
+    const urgent = structuredClone(template);
+    urgent.id = "tg_prio_urgent";
+    urgent.workItems = [{id: "w_p0", title: "安全修复", status: "draft", ownerRole: "agent-runtime",
+      progress: 0, admissionPriorityClass: "p0_safety"}];
+    probe.taskGroups.push(ordinary, urgent);
+    runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+  } finally {
+    if (previous === undefined) delete process.env.AIMAC_WIP_QUEUE_HEAD;
+    else process.env.AIMAC_WIP_QUEUE_HEAD = previous;
+  }
+  const decisionFor = (workItemId) => (probe.admissionDecisions || []).find((item) => item.workItemId === workItemId);
+  const p0 = decisionFor("w_p0");
+  if (!p0) {
+    output.push("优先级预留：P0 单元连一条准入判决都没有 —— 夹具没跑到该跑的地方，本条在空转");
+    return;
+  }
+  if (p0.outcome !== "selected") {
+    output.push(`优先级预留：P0 单元被判成 ${p0.outcome}（${p0.reasonCode || "无原因"}）而不是派发 —— `
+      + "靠前那个组的普通活把名额吃光了，而每一拍的顺序都一样，这个 P0 永远轮不上");
+  }
+  const yielded = (probe.admissionDecisions || []).filter((item) =>
+    item.whyThisCellNow === "cell_yielding_to_higher_priority");
+  if (!yielded.length) {
+    output.push("优先级预留：没有任何一条判决说自己是在给更高优先级让路 —— "
+      + "要么预留没生效，要么让路和额度真满被记成了同一件事，人无从分辨");
+  }
+  // 反向：预留不能把名额白白扣住。P0 只有一个，其余名额必须真的派出去。
+  const selected = (probe.admissionDecisions || []).filter((item) => item.outcome === "selected").length;
+  if (selected < CAP) {
+    output.push(`优先级预留：额度 ${CAP} 却只派出 ${selected} 个 —— `
+      + "预留把名额扣住了没还回来，等于把上限又调小了一截");
+  }
+  console.log(`优先级预留：额度 ${CAP}，靠后组的 P0 判定 ${p0.outcome}，`
+    + `让路判决 ${yielded.length} 条，本轮实派 ${selected} 个`);
 }
 
 function verifyActiveDispatchesKeepTheirContracts(output) {

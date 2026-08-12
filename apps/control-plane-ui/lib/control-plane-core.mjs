@@ -1970,6 +1970,36 @@ function runAutonomousCycleBody(state, request = {}) {
     : null;
   // 在制品：本周期开始时扫一遍派发表，之后随每次派发递增 —— 每单元重算是平方项。
   const wipInFlight = countInFlightDispatchesByProject(state);
+  // 名额是有限的之后，【顺序】就决定了谁跑得上。优先级此前只在组内成立（组内按 tier 排过序），
+  // 组之间是数组顺序 —— 于是靠后的组里的 P0 会被靠前的组的普通活挤掉名额，而每一拍顺序都一样，
+  // 靠前的组只要还有活，靠后的 P0 就永远轮不上。在制品无上限时这不要紧（反正都派得出去），
+  // 加了上限之后它是持续饿死安全档。
+  // 做法：给"还没扫到的、更高优先级的单元"预留名额，低档单元只有在预留之外还有余量时才占位。
+  // 只统计【本轮还可能真派得出去】的单元：已经落在阻塞类状态上的不算，
+  // 否则一个永远解不开的 P0 会把一个名额永久扣住，整个项目的额度被慢慢蚕食。
+  const settledBlocked = new Set(BLOCKED_WORKITEM_STATUSES);
+  const pendingByTier = new Map();
+  for (const taskGroup of taskGroups) {
+    if (["closed", "aborted"].includes(taskGroup.status) || ["active_paused_by_freeze", "active_paused_by_control"].includes(taskGroup.goalExecutionStatus)) continue;
+    for (const workItem of taskGroup.workItems || []) {
+      if (["verified", "closed", "superseded"].includes(workItem.status) || settledBlocked.has(workItem.status)) continue;
+      const tiers = pendingByTier.get(taskGroup.projectId)
+        || pendingByTier.set(taskGroup.projectId, new Array(ADMISSION_PRIORITY_TIERS.length).fill(0)).get(taskGroup.projectId);
+      tiers[cellAdmissionPriority(workItem)] += 1;
+    }
+  }
+  // 扫到一个就把它从"还没扫到"里划掉；这样任何时刻读到的都只是【后面还会来的】更高优先级单元。
+  const consumePending = (projectId, tier) => {
+    const tiers = pendingByTier.get(projectId);
+    if (tiers && tiers[tier] > 0) tiers[tier] -= 1;
+  };
+  const reservedForBetterTiers = (projectId, tier) => {
+    const tiers = pendingByTier.get(projectId);
+    if (!tiers) return 0;
+    let total = 0;
+    for (let index = 0; index < tier; index += 1) total += tiers[index];
+    return total;
+  };
   const wipCapacityByProject = new Map();
   const wipCapacityFor = (projectId) => {
     if (!wipCapacityByProject.has(projectId)) wipCapacityByProject.set(projectId, wipCapacityForProject(state, projectId));
@@ -1996,6 +2026,10 @@ function runAutonomousCycleBody(state, request = {}) {
       try {
       if (workItem.status === "superseded") continue;
       if (!["verified", "closed"].includes(workItem.status)) cycleCandidates.push(workItem.id);
+      // 无论这个单元走哪条分支出去，它都已经被"扫到"了，不该再被后面的单元当成预留对象。
+      if (!["verified", "closed"].includes(workItem.status) && !settledBlocked.has(workItem.status)) {
+        consumePending(taskGroup.projectId, cellAdmissionPriority(workItem));
+      }
       // 终态判定只看状态。原先还要求 progress >= 100，于是"人已验收定稿"这条保证实际挂在一个
       // 展示用数值上：verified 且 progress < 100 的工作项会掉出这道 continue 被重新派发，
       // 而 performIndependentReview 对已定稿项永久返回 human_finalized —— 之后落进去的改动
@@ -2204,12 +2238,14 @@ function runAutonomousCycleBody(state, request = {}) {
       }
       const wipCap = wipCapacityFor(taskGroup.projectId);
       const wipNow = wipInFlight.get(taskGroup.projectId) || 0;
-      if (wipNow >= wipCap) {
+      const wipTier = cellAdmissionPriority(workItem);
+      const wipReserved = reservedForBetterTiers(taskGroup.projectId, wipTier);
+      if (wipNow + wipReserved >= wipCap) {
         // resource_queued 是模型里已有的合法结论，且在 NON_ESCALATING_WAIT_CLASSES 里：
         // 等额度是暂时性等待，不能把任务组整体升级成 blocked。也不要写成 blocked_resource ——
         // 那是要人来解的阻塞状态，而这里的出口是"等在飞的活跑完"或"上线更多 agent"，系统会自己恢复。
         recordAdmissionDecision(state, {taskGroup, workItem, outcome: "resource_queued", reasonCode: "wip_capacity_reached",
-          whyThisCellNow: "cell_waiting_for_wip_capacity", cycleRef});
+          whyThisCellNow: wipNow >= wipCap ? "cell_waiting_for_wip_capacity" : "cell_yielding_to_higher_priority", cycleRef});
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status,
           awaiting: "wip_capacity", wipInFlight: wipNow, wipCapacity: wipCap});
         continue;
