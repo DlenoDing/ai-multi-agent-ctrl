@@ -806,7 +806,12 @@ errors << "permission-timeout requeue/terminalize must have a behavioral test" u
 errors << "permissionResolve must guard against re-resolving a settled request" unless mcp_source.include?("if (request.status !== \"pending_approval\") return {permissionRequest: request, accessGrant: null, alreadyResolved: true}")
 # L4: permission requests use the FSM vocab pending_approval / rejected (not pending / denied), and the
 # barrier pending-set must include pending_approval so a pending permission still blocks close.
-errors << "permission requests must use the FSM pending_approval / rejected vocab" unless core_source.include?("status: \"pending_approval\"") && core_source.include?("[\"approved\", \"rejected\", \"resolved\", \"revoked\", \"expired\", \"cancelled\"]") && core_source.scan(/"pending", "pending_approval"/).length >= 2
+# 后半段原先同样是数 `"pending", "pending_approval"` 出现两次 —— 匹配的还是那两份死清单
+# （与上面 quorum_collecting 那条同一形状、同一个来源）。改成守真正在用的集合与它的消费点。
+permission_pending_set = core_source[/export const PERMISSION_REQUEST_PENDING_STATUSES = \[([^\]]*)\]/, 1].to_s
+errors << "permission requests must use the FSM pending_approval / rejected vocab" unless core_source.include?("status: \"pending_approval\"") && core_source.include?("[\"approved\", \"rejected\", \"resolved\", \"revoked\", \"expired\", \"cancelled\"]")
+errors << "PERMISSION_REQUEST_PENDING_STATUSES 必须含 pending_approval（否则待批权限不再挡住关闭）" unless permission_pending_set.include?("pending_approval")
+errors << "两处关闭门判定都必须走 PERMISSION_REQUEST_PENDING_STATUSES" unless core_source.scan(/PERMISSION_REQUEST_PENDING_STATUSES\.includes\(item\.status\)/).length >= 2
 # The runtime permission poll must treat pending_approval as still-awaiting (else it resolves on the first
 # poll before the operator decides and fails the dispatch).
 errors << "runtime permission poll must keep waiting on pending_approval" unless agent_runtime_source.include?("![\"pending\", \"pending_approval\"].includes(status)")
@@ -838,9 +843,15 @@ errors << "high_risk_no_self_approval must be enforced in approvalResolve" unles
 errors << "approval must require a distinct-approver quorum before terminalizing" unless mcp_source.include?("request.approvals = [...new Set([...(request.approvals || []), resolver])]") && mcp_source.include?("request.approvals.length < quorum")
 errors << "approver/proposer identity must be the authenticated actor, not client input" unless server_source.include?("resolvedBy: guard.actor") && server_source.include?("proposedBy: guard.actor") && mcp_source.include?("proposedBy: context?.principal?.id")
 errors << "high_risk_no_self_approval / quorum need behavioral coverage" unless contract_check_source.include?("H1: a high-risk request was self-approved") && contract_check_source.include?("H1: a quorum-2 request terminalized on the first")
-# CRITICAL: quorum_collecting must be a barrier pending status (both barrier pending-sets) so a sub-quorum
-# high-risk approval keeps blocking close — and a behavioral test must assert it blocks.
-errors << "quorum_collecting must count as pending in both barrier pending-sets" unless core_source.scan(/"quorum_collecting", "requested"/).length >= 2
+# CRITICAL: 未达法定人数的高风险审批必须继续挡住关闭门。
+# 这条原先断言的是字面串 `"quorum_collecting", "requested"` 至少出现两次 —— 而它匹配到的
+# 恰恰是两份【只赋值、从没被读过】的遗留清单；真正在用的 APPROVAL_REQUEST_PENDING_STATUSES
+# 是相反的顺序，根本不匹配。也就是说这道标着 CRITICAL 的门，守的一直是死代码：
+# 把那两份清单删掉它才第一次报红，而删掉它们对运行时行为没有任何影响。
+# 改成守【真正的接线】：两处关闭门判定都必须走同一个集合，且那个集合含 quorum_collecting。
+approval_pending_set = core_source[/export const APPROVAL_REQUEST_PENDING_STATUSES = \[([^\]]*)\]/, 1].to_s
+errors << "APPROVAL_REQUEST_PENDING_STATUSES 必须含 quorum_collecting（否则未达法定人数的审批不再挡住关闭）" unless approval_pending_set.include?("quorum_collecting") && approval_pending_set.include?("requested")
+errors << "两处关闭门判定都必须走 APPROVAL_REQUEST_PENDING_STATUSES（各写各的清单必然漂）" unless core_source.scan(/APPROVAL_REQUEST_PENDING_STATUSES\.includes\(item\.status\)/).length >= 2
 errors << "quorum_collecting-blocks-close must have behavioral coverage" unless contract_check_source.include?("H1 CRITICAL: a quorum_collecting (sub-quorum) high-risk approval did NOT block")
 # H2: internal independent-review records use a dedicated schema/version, not the external review-bundle/v1.
 errors << "internal review records must use their own schema version" unless core_source.include?("schemaVersion: \"internal-review-record/v1\"") && File.exist?(File.join(ROOT, "spec/internal-review-record.schema.json")) && contract_check_source.include?("internal-review-record.schema.json")

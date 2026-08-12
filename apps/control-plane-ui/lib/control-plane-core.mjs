@@ -3498,7 +3498,6 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
   const workItems = allWorkItems.filter((item) => item.status !== "superseded");
   const verifiedItems = workItems.filter((item) => ["verified", "closed"].includes(item.status));
   const taskGroupCheckpoints = (state.checkpoints || []).filter((checkpoint) => checkpoint.taskGroupId === taskGroupId);
-  const pendingStatuses = BARRIER_PENDING_STATUSES;
   const checkFailures = {
     // ExecutionTopology terminal states per spec/state-machines.yaml are merged/downgraded/cancelled (the
     // former closed/completed/superseded literals were not modeled states at all, so nothing could clear it).
@@ -3620,7 +3619,6 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
   // "quorum_collecting" is a NON-terminal approval state (a high-risk approval that has some but not all
   // required approvers): it MUST count as pending so the no_pending_approvals close-barrier gate keeps
   // blocking until the approver quorum is actually reached.
-  const pendingStatuses = ["open", "pending", "pending_approval", "quorum_collecting", "requested", "submitted", "in_review", "waiting"];
   const forTaskGroup = (items) => (items || []).filter((item) => item.taskGroupId === taskGroupId);
   // A failed quality gate whose work item was abandoned (cancelled/aborted/superseded) or already closed
   // is moot — it must not block the task-group close forever with no operator remedy (the work will never
@@ -6361,10 +6359,10 @@ export function capRetainingOpen(items, terminalStatuses, limit) {
 // 若日后确定这两个终态不会实现，应当连同 spec 里的登记一起删掉。
 export const WORK_ITEM_SETTLED_STATUSES = ["verified", "closed", "superseded", "aborted"];
 export const WORK_SESSION_SETTLED_STATUSES = ["completed_objective", "recycled", "failed", "aborted"];
-const BARRIER_PENDING_STATUSES = ["open", "pending", "pending_approval", "quorum_collecting", "requested", "submitted", "in_review", "waiting"];
-// 一个横跨 5 类实体的通用"待处理"清单，对每一类都只是碰运气 —— 实测 8 个状态名里，
-// 对 RuleSourceResolution / DerivedTaskRequest 一个都不命中，那两道门从来没有触发过。
-// 因此改为按实体给出各自的未了结集，且每个值都必须是 state-machines.yaml 里已登记的状态。
+// 那份"横跨 5 类实体的通用待处理清单"已经按实体拆成下面几个集合。它本体连同两处
+// 只赋值不读取的 pendingStatuses 一起删掉了：8 个状态名里有 2 个（in_review / waiting）
+// 在 61 台状态机、全部 schema 里都查无此名 —— 一份既没人读、名字又对不上任何实体的清单，
+// 留着只会让下一个人以为改它能改变行为。
 export const PERMISSION_REQUEST_PENDING_STATUSES = ["pending_approval"];
 export const APPROVAL_REQUEST_PENDING_STATUSES = ["requested", "quorum_collecting"];
 export const DERIVED_TASK_REQUEST_PENDING_STATUSES = ["candidate", "strengthened", "classified"];
