@@ -528,6 +528,16 @@ const MUTATIONS = [
     expect: "被默默接受了"
   },
   {
+    // 控制面挂掉时这一屏此前只弹一次 toast：toast 消失之后，画面还挂着上一次成功时的数据，
+    // 而屏幕上没有任何迹象说"这已经不是现在的样子了"。监控台最要紧的恰恰是这一刻。
+    name: "加载失败要常驻说明这是旧数据",
+    file: APP,
+    gate: "console",
+    from: "        ${lastError ? `<div class=\"notice warn-notice\">连不上控制面或这一页加载失败，下面显示的是",
+    to: "        ${false ? `<div class=\"notice warn-notice\">连不上控制面或这一页加载失败，下面显示的是",
+    expect: "人对着一屏冻住的数据看不出任何异常"
+  },
+  {
     // 故障标记只置不清：修好之后还一直报 degraded，人很快就会开始无视这个信号 ——
     // 而提示里还写着"恢复之后会自动转回 ok"，那句话就成了假的。
     name: "存储故障修好之后健康检查要自己转回 ok",

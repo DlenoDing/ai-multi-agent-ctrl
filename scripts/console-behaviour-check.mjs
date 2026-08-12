@@ -32,6 +32,17 @@ class StubElement {
     this.children = children;
   }
 
+  // toast 会给容器设 role/aria-live 之类：桩里少了这些方法，任何走到 toast 的路径都会
+  // 以 "setAttribute is not a function" 收场 —— 那是桩的故障，不是被测代码的。
+  setAttribute(name, value) { this.attributes = {...(this.attributes || {}), [name]: value}; }
+  appendChild(child) { this.children.push(child); return child; }
+  insertBefore(child) { this.children.unshift(child); return child; }
+  getAttribute(name) { return (this.attributes || {})[name] ?? null; }
+  removeAttribute(name) { if (this.attributes) delete this.attributes[name]; }
+  addEventListener() {}
+  removeEventListener() {}
+  remove() {}
+
   #descendants() {
     return this.children.flatMap((child) => [child, ...child.#descendants()]);
   }
@@ -48,6 +59,14 @@ class StubElement {
     if (named) return this.name === named[1].replace(/\\(.)/g, "$1");
     const formSel = selector.match(/^form\[data-form\]$/);
     if (formSel) return this.tagName === "FORM" && this.dataset.form !== undefined;
+    // 纯 data 属性选择器（render 之后的 restoreFilters 会查 [data-filter-input]）：
+    // 桩里没有真实表单子树，按 dataset 判断即可 —— 没有就是空集，这是诚实的答案，
+    // 不像未知选择器那样需要拦下来（拦的是"桩会给出一个看似合理其实错的答案"）。
+    const dataSel = selector.match(/^\[data-([a-z-]+)\]$/);
+    if (dataSel) {
+      const key = dataSel[1].replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+      return this.dataset[key] !== undefined;
+    }
     throw new Error(`DOM 桩不认识选择器 ${JSON.stringify(selector)} —— 桩已与被测代码脱节，不能据此下结论`);
   }
 
@@ -169,6 +188,15 @@ globalThis.__probe = {
   },
   setProjConfigStatus: (status) => { projConfigStatus = status; projConfig = null; },
   setFetch: (fn) => { globalThis.fetch = fn; },
+  // 断连横幅要按【真实加载路径】验：直接改 lastError 只能证明模板会渲染，
+  // 证不了加载失败真的会把它设上、也证不了下一次成功真的会把它清掉。
+  loadWithFetch: async (nextState, account, projectId, pageId, fetchStub) => {
+    state = nextState; currentAccount = account; currentProjectId = projectId; page = pageId;
+    authToken = "probe-token";
+    globalThis.fetch = fetchStub;
+    await loadPage();
+    return document.body.innerHTML;
+  },
   // 漏译扫描要覆盖【数据不在 state 里】的那几页（人工指令 / 成员 / 智能体 / 项目设置）：
   // 它们各自另走接口取数，只喂 state 渲染出来的永远是空壳。走真实的 loadPage 让那些
   // 模块级变量被填上，再渲染 —— 与其给探针加一堆 setter，不如让它跑真实加载路径。
@@ -2066,6 +2094,32 @@ await runErrorGuidanceCase();
   const looksGenerated = (value) => /\d/u.test(String(value).split("_").pop() || "");
   const misses = new Map();
   // 一份状态建一次上下文、在里面把所有页面渲一遍：每页都新建的话，app.js 要被重新解析上百次。
+// 控制面挂掉时，这一屏此前只弹一次 toast：toast 消失之后，画面还挂着上一次成功时的数据，
+// 而屏幕上没有任何迹象说"这已经不是现在的样子了"。监控台最要紧的恰恰是这一刻。
+{
+  const probe = loadConsole(el("div"));
+  const admin = {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const baseState = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
+    findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []};
+  const okFetch = async () => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+    json: async () => baseState, text: async () => JSON.stringify(baseState)});
+  const deadFetch = async () => { throw new Error("fetch failed"); };
+  await probe.loadWithFetch(baseState, admin, "p1", "directives", okFetch);
+  const healthy = probe.renderFullPageWith(baseState, admin, "p1", "directives");
+  check("连得上时不挂断连横幅", !/旧数据/.test(healthy), "常亮的横幅等于没有横幅");
+  const brokenHtml = await probe.loadWithFetch(baseState, admin, "p1", "directives", deadFetch);
+  check("加载失败时要常驻说明这是旧数据",
+    /旧数据/.test(brokenHtml),
+    "控制面连不上时只弹了一次 toast —— 它消失之后，人对着一屏冻住的数据看不出任何异常");
+  check("要说清旧到什么程度",
+    /(秒前|分钟前|小时前|一直没能加载成功)/.test(brokenHtml),
+    "只说加载失败，人不知道该不该继续照着这一屏做决定");
+  const recoveredHtml = await probe.loadWithFetch(baseState, admin, "p1", "directives", okFetch);
+  check("恢复之后横幅要自己消失", !/旧数据/.test(recoveredHtml), "只置不清的提示，人很快就会开始无视它");
+}
+
   const pageTouchCounts = new Map();
   const scanState = (label, state, account, projectId, pages) => {
     const tCalls = new Map();

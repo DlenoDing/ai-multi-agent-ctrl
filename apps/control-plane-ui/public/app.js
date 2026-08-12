@@ -30,6 +30,7 @@ let instructionState = null;
 let loginHint = null;
 
 let lastError = "";
+let lastLoadedAt = null;
 let lastLoadErrorToast = "";
 let loading = false;
 let formTouched = false;
@@ -1130,6 +1131,7 @@ async function loadPage() {
     ensureProjectSelection();
     lastError = "";
     lastLoadErrorToast = "";
+    lastLoadedAt = Date.now();
   } catch (error) {
     lastError = error?.message || String(error);
     // Surface authenticated page-load failures — previously the value was only rendered on the login
@@ -1427,6 +1429,11 @@ function render() {
             <button class="secondary-button" data-action="logout">退出登录</button>
           </div>
         </header>
+        ${/* 加载失败此前只弹一次 toast。toast 会消失，而这一屏还挂着上一次成功时的数据 ——
+              盯着执行监控页的人看到的是冻住的画面，屏幕上没有任何迹象说"这已经不是现在的样子了"。
+              对一个监控台来说这是最要紧的那一刻，所以给一条常驻横幅，下一次加载成功自动消失。 */""}
+        ${lastError ? `<div class="notice warn-notice">连不上控制面或这一页加载失败，下面显示的是
+          ${esc(lastLoadedAgo())}的旧数据：${esc(lastError)}</div>` : ""}
         <section class="content">${renderContent()}</section>
       </main>
     </div>
@@ -2934,6 +2941,15 @@ function bootstrapScaleFrom(overview) {
 function blockerGuide(objectType, gate) {
   if (objectType === "CloseBarrierGate" && gate) return CLOSE_GATE_GUIDE[gate] || "";
   return BLOCKER_GUIDE[objectType] || "";
+}
+
+// 旧数据到底旧到什么程度，人得看得见 —— 只说"加载失败"，他不知道该不该继续照着这屏做决定。
+function lastLoadedAgo() {
+  if (!lastLoadedAt) return "登录以来一直没能加载成功的";
+  const seconds = Math.max(0, Math.round((Date.now() - lastLoadedAt) / 1000));
+  if (seconds < 60) return `${seconds} 秒前`;
+  const minutes = Math.round(seconds / 60);
+  return minutes < 60 ? `${minutes} 分钟前` : `${Math.round(minutes / 60)} 小时前`;
 }
 
 function countSuffix(field) {
