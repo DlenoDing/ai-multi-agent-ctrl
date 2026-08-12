@@ -62,6 +62,8 @@ import {
   computeCloseBarrier,
   computeCompletionReadiness,
   computeProgressSnapshots,
+  countInFlightDispatchesByProject,
+  wipCapacityForProject,
   cancelPendingConfirmationsForDispatch,
   consumeHumanConfirmation,
   createHumanConfirmationRequest,
@@ -1432,6 +1434,13 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
       online: (scoped.agentRuntimeNodes || []).filter((node) => node.status === "online").length,
       total: (scoped.agentRuntimeNodes || []).length
     },
+    // 在制品额度（两个数字）。编排周期一旦按这个额度把单元判成 resource_queued，界面必须能说出
+    // "为什么我的单元不动" —— 后端有闸而界面没有出口，等于这个闸对使用者不存在。
+    // 现算而不是复用周期里的那份：周期里的数是那一拍的快照，请求到达时早就过期了。
+    wip: scopeProjectId
+      ? {inFlight: countInFlightDispatchesByProject(scoped).get(scopeProjectId) || 0,
+         capacity: wipCapacityForProject(scoped, scopeProjectId)}
+      : null,
     agents: sliceItems(scoped.agents, capped),
     projects: sliceItems(scoped.projects, capped),
     // 任务组把全部工作单元嵌在里面，而它在【基底】里 —— 每个视图、每次请求都带上。

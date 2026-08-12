@@ -36,6 +36,7 @@ import {
   ensureRuntimeCollections,
   organizationQuotaCheck,
   runAutonomousCycle,
+  WIP_ACTIVE_DISPATCH_STATUSES,
   settleCellOwnedResources,
   expireStaleQueuedDispatches,
   recomputeTaskGroup,
@@ -133,6 +134,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // 耐久性由 crash-consistency-gate 专门验（那道门必须在 fsync 开着的前提下跑，
 // validate-specs 里有一条守着"耐久性门不得关掉 fsync"）。
 process.env.AIMAC_PROJECT_EVENT_FSYNC = "false";
+// 在制品上限默认 16（零 agent 时的队头），而本门有好几条断言要造出几百个派发才压得到
+// 【别的】上限（契约 160、派发裁剪、阻塞提示）—— 默认额度会把它们压成空转。
+// 这里整体放开，在制品上限本身由下面 wipCapacityContract() 单独把额度调小来验，
+// 不是把它关掉了事。
+process.env.AIMAC_WIP_QUEUE_HEAD = "100000";
 const seedState = loadJson("data/seed-state.json");
 const runtimeSchema = loadJson("spec/runtime-bootstrap.schema.json");
 const mcpGrantSchema = loadJson("spec/mcp-grant.schema.json");
@@ -202,6 +208,7 @@ verifyExpiredConfirmationLeavesNoStaleParking(errors);
 verifyPermissionOutcomeReleasesTheSession(errors);
 verifyShardRoundTripKeepsEveryRecord(errors);
 verifyOrchestrationDoesNotShellOutPerCell(errors);
+verifyWipCapacityBackpressure(errors);
 verifyActiveDispatchesKeepTheirContracts(errors);
 verifySuspendedOrganizationHaltsExecution(errors);
 verifyHaltedTaskGroupsAreNotClaimable(errors);
@@ -5660,6 +5667,81 @@ function verifySuspendedOrganizationHaltsExecution(output) {
   if (!(suspended.admissionDecisions || []).some((item) => item.reasonCode === "organization_suspended")) {
     output.push("停用组织必须停住执行：停手了却没有留下任何准入判决 —— 人看到的是「什么都没发生」，"
       + "无从判断是停用生效了、还是编排出了故障");
+  }
+}
+
+// 在制品上限。这是一道【背压】闸：额度满时不再建会话/契约/租约/派发，多出来的单元记
+// resource_queued。它最容易坏成两种样子，两种都要验：
+//   1. 闸没生效 —— 一个 agent 都没上线也能把成千上万个单元全摊开（实测 34MB 那个数字就是这么来的）；
+//   2. 闸太狠 —— 额度算成 0，于是永远派不出第一个活，队列空着、agent 上线也没东西可领。
+function verifyWipCapacityBackpressure(output) {
+  const CAP = 5;
+  const previous = process.env.AIMAC_WIP_QUEUE_HEAD;
+  process.env.AIMAC_WIP_QUEUE_HEAD = String(CAP);
+  let probe;
+  try {
+    probe = structuredClone(seedState);
+    ensureRuntimeCollections(probe, {root});
+    const template = probe.taskGroups[0];
+    probe.taskGroups = [];
+    const taskGroup = structuredClone(template);
+    taskGroup.id = "tg_wip_probe";
+    taskGroup.workItems = [];
+    // 单元数远多于额度，才验得到"多出来的怎么办"。
+    for (let index = 0; index < CAP * 6; index += 1) {
+      taskGroup.workItems.push({id: `w_wip_${index}`, title: `w${index}`, status: "draft", ownerRole: "agent-runtime", progress: 0});
+    }
+    probe.taskGroups.push(taskGroup);
+    runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+  } finally {
+    if (previous === undefined) delete process.env.AIMAC_WIP_QUEUE_HEAD;
+    else process.env.AIMAC_WIP_QUEUE_HEAD = previous;
+  }
+
+  const active = (probe.agentDispatches || []).filter((item) => WIP_ACTIVE_DISPATCH_STATUSES.has(item.status));
+  if (active.length > CAP) {
+    output.push(`在制品上限：额度 ${CAP}，却派出了 ${active.length} 个在飞派发 —— 闸没生效，`
+      + "零 agent 场景会把成千上万个会话/契约/租约一次摊开");
+  }
+  // 反向：闸不能把系统卡死。额度以内必须真的派出活，否则 agent 上线后队列是空的。
+  if (!active.length) {
+    output.push("在制品上限：一个在飞派发都没有 —— 额度算成了 0，队列永远空着，"
+      + "新上线的节点无活可领（队头下限就是为了防这个）");
+  }
+  const queued = (probe.admissionDecisions || []).filter((item) =>
+    item.outcome === "resource_queued" && item.reasonCode === "wip_capacity_reached");
+  if (!queued.length) {
+    output.push("在制品上限：被额度挡下的单元没有留下 resource_queued 判决 —— "
+      + "人在界面上只会看到单元一动不动，而系统其实知道原因");
+  }
+  // 挡下来的必须是【暂时等待】，不能升级成任务组整体阻塞：等额度是背压，不是故障。
+  const escalated = queued.filter((item) => item.blocked === true || item.cellClass === "blocked_by_exact_dependency");
+  if (escalated.length) {
+    output.push(`在制品上限：${escalated.length} 条等额度的判决被记成了 blocked —— `
+      + "背压不该升级成阻塞，否则任务组会被判成需要人来解");
+  }
+  // 状态集合必须与状态机对齐：这个集合是手写的，漏一个在飞状态就是上限偏松、
+  // 多写一个不存在的名字则那部分永远数不到。按 spec 全量核对，不靠注释。
+  const yamlText = readFileSync(resolve(root, "spec/state-machines.yaml"), "utf8");
+  const states = extractMachineStates(yamlText, "AgentDispatch");
+  const terminalLine = yamlText.split(/\r?\n/).find((line, index, lines) =>
+    /^\s+terminal:/.test(line) && lines.slice(0, index).reverse().find((candidate) => /^  \S/.test(candidate)) === "  AgentDispatch:");
+  const terminal = [...String(terminalLine || "").matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
+  if (!states.length || !terminal.length) {
+    output.push("在制品上限：没能从 spec/state-machines.yaml 取到 AgentDispatch 的状态或终态 —— "
+      + "提取逻辑与规范脱节，在飞状态集合这条在空转");
+  } else {
+    const nonTerminal = states.filter((name) => !terminal.includes(name));
+    const missing = nonTerminal.filter((name) => !WIP_ACTIVE_DISPATCH_STATUSES.has(name));
+    const unknown = [...WIP_ACTIVE_DISPATCH_STATUSES].filter((name) => !states.includes(name));
+    if (missing.length || unknown.length) {
+      output.push("在制品上限：在飞状态集合与 AgentDispatch 状态机不一致 —— "
+        + `${missing.length ? `漏了非终态 ${missing.join("、")}（上限会偏松）` : ""}`
+        + `${missing.length && unknown.length ? "；" : ""}`
+        + `${unknown.length ? `写了状态机里没有的 ${unknown.join("、")}（这部分永远数不到）` : ""}`);
+    }
+    console.log(`在制品上限：额度 ${CAP} 时在飞 ${active.length} 个、等额度 ${queued.length} 条判决，`
+      + `在飞状态集合已对着状态机的 ${nonTerminal.length} 个非终态（${nonTerminal.join("、")}）核对`);
   }
 }
 

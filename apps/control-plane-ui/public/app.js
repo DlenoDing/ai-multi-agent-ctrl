@@ -469,7 +469,8 @@ const WHY_THIS_CELL_LABELS = {
   cell_split_into_analysis_and_implementation: "已拆分为分析与实现",
   no_model_satisfies_hard_constraints: "无模型满足硬约束",
   role_drift_guard_intercepted_dispatch: "角色偏移守卫拦截派发",
-  cell_deferred_condition_window: "等待条件窗口（按环境独立延后）"
+  cell_deferred_condition_window: "等待条件窗口（按环境独立延后）",
+  cell_waiting_for_wip_capacity: "等在制品额度"
 };
 function admissionReasonLabel(decision) {
   const why = decision.whyThisCellNow;
@@ -2210,7 +2211,7 @@ function renderTaskGroups() {
     return panel(taskGroup.name || taskGroup.id, head, {wide: true});
   }).join("");
 
-  return cellsWaitingWithNoAgentNotice(groups) + createPanels.join("") + (groupPanels || panel("任务组", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true}));
+  return cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups) + createPanels.join("") + (groupPanels || panel("任务组", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true}));
 }
 
 function renderTaskGroupDetail(taskGroup) {
@@ -2777,7 +2778,7 @@ function fleetOfflineNotice() {
 function cellsWaitingWithNoAgentNotice(groups) {
   const fleet = (state || {}).fleet;
   if (!fleet || Number(fleet.online || 0) > 0) return "";
-  const waitingStatuses = new Set(["assigned", "dispatched", "in_progress", "checkpoint_submitted"]);
+  const waitingStatuses = new Set(["assigned", "in_progress", "checkpoint_submitted"]);
   const waiting = (groups || []).flatMap((group) => (group.workItems || []))
     .filter((item) => waitingStatuses.has(item.status)).length;
   if (!waiting) return "";
@@ -2785,6 +2786,23 @@ function cellsWaitingWithNoAgentNotice(groups) {
   return `<div class="notice warn-notice">这个项目有 ${esc(waiting)} 个单元已经交给执行方，`
     + `而当前【没有任何在线的 agent 节点】${total ? `（已注册 ${esc(total)} 个，此刻都不在线或已降级）` : "（一个都还没注册）"}：`
     + `它们不会有任何进展，进度条也不会再动。先到 agent 页确认节点状态${total ? "，把降级的那台修好或重启" : "，按安装指引接入一台"}。</div>`;
+}
+
+// 在制品额度用满时的出口。这条与"没有在线 agent"那条是两回事，不能合并：
+// 额度满而【有】agent 在线是正常的背压，等在飞的活跑完就自己恢复，不需要人动手；
+// 额度满而【没有】agent 在线才是死等 —— 那一条由 cellsWaitingWithNoAgentNotice 负责说，
+// 这里不重复喊，否则两条提示同时出现，人会以为是两个毛病。
+function wipCapacityNotice(groups) {
+  const wip = (state || {}).wip;
+  if (!wip || !Number(wip.capacity) || Number(wip.inFlight || 0) < Number(wip.capacity)) return "";
+  const queued = (groups || []).flatMap((group) => (group.workItems || []))
+    .filter((item) => ["draft", "ready"].includes(item.status)).length;
+  const online = Number(((state || {}).fleet || {}).online || 0);
+  if (!online) return "";
+  return `<div class="notice">这个项目的在制品已经达到上限（在飞 ${esc(wip.inFlight)} / 上限 ${esc(wip.capacity)}）：`
+    + `${queued ? `还有 ${esc(queued)} 个单元` : "后续单元"}会等额度，不会立刻派发。`
+    + `这是有意的背压，防止一次把成千上万个会话和租约摊开 —— 在飞的活跑完就会自动继续，不需要你动手。`
+    + `想让它跑得更宽，就到 agent 页多接入几台节点（每多一台在线节点，额度自动上调）。</div>`;
 }
 
 function aiAnalysisStalledNotice(requests) {

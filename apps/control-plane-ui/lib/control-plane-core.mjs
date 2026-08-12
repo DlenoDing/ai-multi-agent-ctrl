@@ -1713,6 +1713,43 @@ function admissionDimensions(workItem, outcome) {
   };
 }
 
+// 在制品上限。模型里 worker lane 是"角色 1:N"的有限资源，但 N 从来不存在：
+// acquireWorkerLane 找不到空闲 lane 就无条件新建，于是一个 agent 都没上线时，2000 个单元
+// 照样能造出 2004 个排队派发 + 2004 个 active 会话 + 2004 个 active 租约（实测 0.3MB → 34MB）。
+//
+// 额度按【项目】算，不按全局：全局上限会让一个项目的洪水把别的租户饿死。
+// 额度 = 队头 + 该项目在线且完全准入的节点数 × 每节点并发。队头不能省 ——
+// 一个节点都没注册时额度会变成 0，那样新上线的节点第一拍无活可领，
+// 控制面 e2e 的"编排跑完必须有排队派发"也会整片打红。
+export function wipCapacityForProject(state, projectId) {
+  const queueHead = Math.max(1, Number(process.env.AIMAC_WIP_QUEUE_HEAD || 16));
+  const perNode = Math.max(1, Number(process.env.AIMAC_WIP_PER_NODE || 2));
+  let online = 0;
+  for (const node of state.agentRuntimeNodes || []) {
+    if (node.status !== "online" || node.admission !== "full") continue;
+    if (!(node.projectIds || []).includes(projectId)) continue;
+    online += 1;
+  }
+  return queueHead + online * perNode;
+}
+
+// 在飞派发按项目计数。这里列的是 spec/state-machines.yaml 里 AgentDispatch 的【非终态】
+// （queued/running/blocked；终态是 completed/failed/cancelled）。blocked 也算在飞 ——
+// 它在等权限，会话、契约、租约都还占着，正是这道闸要拦的那部分内存。
+// 正面列举而不是"非终态取反"：漏掉一个终态名会让额度永不释放、整个项目再也派不出活，
+// 而漏掉一个在飞状态只是上限偏松、退回今天的行为。失败要往可恢复的那一侧倒。
+// 这个集合与状态机的一致由 contract-check 里的门保证，不靠这条注释。
+export const WIP_ACTIVE_DISPATCH_STATUSES = new Set(["queued", "running", "blocked"]);
+
+export function countInFlightDispatchesByProject(state) {
+  const byProject = new Map();
+  for (const dispatch of state.agentDispatches || []) {
+    if (!WIP_ACTIVE_DISPATCH_STATUSES.has(dispatch.status)) continue;
+    byProject.set(dispatch.projectId, (byProject.get(dispatch.projectId) || 0) + 1);
+  }
+  return byProject;
+}
+
 function recordAdmissionDecision(state, input = {}) {
   state.admissionDecisions ||= [];
   const outcome = ADMISSION_OUTCOMES.has(input.outcome) ? input.outcome : "deferred";
@@ -1931,6 +1968,13 @@ function runAutonomousCycleBody(state, request = {}) {
   const projectOrgId = suspendedOrgIds.size
     ? new Map((state.projects || []).map((project) => [project.id, project.organizationId || DEFAULT_ORGANIZATION_ID]))
     : null;
+  // 在制品：本周期开始时扫一遍派发表，之后随每次派发递增 —— 每单元重算是平方项。
+  const wipInFlight = countInFlightDispatchesByProject(state);
+  const wipCapacityByProject = new Map();
+  const wipCapacityFor = (projectId) => {
+    if (!wipCapacityByProject.has(projectId)) wipCapacityByProject.set(projectId, wipCapacityForProject(state, projectId));
+    return wipCapacityByProject.get(projectId);
+  };
   for (const taskGroup of taskGroups) {
     if (["closed", "aborted"].includes(taskGroup.status) || ["active_paused_by_freeze", "active_paused_by_control"].includes(taskGroup.goalExecutionStatus)) continue;
     if (projectOrgId && suspendedOrgIds.has(projectOrgId.get(taskGroup.projectId))) {
@@ -2158,6 +2202,18 @@ function runAutonomousCycleBody(state, request = {}) {
         if (request.mode !== "until_blocked" && request.mode !== "all") break;
         continue;
       }
+      const wipCap = wipCapacityFor(taskGroup.projectId);
+      const wipNow = wipInFlight.get(taskGroup.projectId) || 0;
+      if (wipNow >= wipCap) {
+        // resource_queued 是模型里已有的合法结论，且在 NON_ESCALATING_WAIT_CLASSES 里：
+        // 等额度是暂时性等待，不能把任务组整体升级成 blocked。也不要写成 blocked_resource ——
+        // 那是要人来解的阻塞状态，而这里的出口是"等在飞的活跑完"或"上线更多 agent"，系统会自己恢复。
+        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "resource_queued", reasonCode: "wip_capacity_reached",
+          whyThisCellNow: "cell_waiting_for_wip_capacity", cycleRef});
+        changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status,
+          awaiting: "wip_capacity", wipInFlight: wipNow, wipCapacity: wipCap});
+        continue;
+      }
       let contract;
       try {
         contract = buildTaskContract(state, {projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workItemId: workItem.id, workItem, root: request.root});
@@ -2183,6 +2239,7 @@ function runAutonomousCycleBody(state, request = {}) {
       }
       const dispatch = dispatchWorkItem(state, taskGroup, workItem, contract, repositoryTarget);
       const dispatchSession = state.workSessions.find((item) => item.sessionId === contract.sessionId);
+      wipInFlight.set(taskGroup.projectId, wipNow + 1);
       recordAdmissionDecision(state, {
         taskGroup, workItem, outcome: "selected", reasonCode: "dispatched",
         whyThisCellNow: "executable_cell_admitted_this_cycle", cycleRef,

@@ -793,6 +793,8 @@
     cross_org_member_not_allowed: "不允许跨组织添加成员",
     project_invite_cannot_grant_system_account_or_permission: "项目邀请不能授予系统级账号或权限",
 
+    wip_capacity_reached: "在制品已达上限",
+
     org_quota_exceeded: "组织配额已超限",
     organization_not_found: "未找到组织",
     organization_suspended: "组织已停用",

@@ -1314,7 +1314,7 @@ await runErrorGuidanceCase();
     humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: [], fleet
   });
   const probe = loadConsole(el("div"));
-  const stalled = probe.renderTaskGroupsWith(withCells("dispatched", {online: 0, total: 2}), account, "p1", null, {});
+  const stalled = probe.renderTaskGroupsWith(withCells("assigned", {online: 0, total: 2}), account, "p1", null, {});
   check("单元已交给执行方而没有在线 agent 时，要在任务组页上说出来",
     /没有任何在线的 agent 节点/.test(stalled),
     "进度条不会再动，而这一页一个字都不说 —— 人会一直等，并且会以为是 agent 在慢慢做");
@@ -1322,11 +1322,71 @@ await runErrorGuidanceCase();
     /不会有任何进展/.test(stalled) && /agent 页/.test(stalled),
     "只说没节点，不说这对他意味着什么、下一步做什么");
   check("有在线 agent 时不挂这条提示",
-    !/没有任何在线的 agent 节点/.test(probe.renderTaskGroupsWith(withCells("dispatched", {online: 1, total: 2}), account, "p1", null, {})),
+    !/没有任何在线的 agent 节点/.test(probe.renderTaskGroupsWith(withCells("assigned", {online: 1, total: 2}), account, "p1", null, {})),
     "有节点在线还提示 —— 常亮的告警等于没有告警");
   check("单元还没交出去时不挂这条提示",
     !/没有任何在线的 agent 节点/.test(probe.renderTaskGroupsWith(withCells("draft", {online: 0, total: 2}), account, "p1", null, {})),
     "单元还在 draft 就提示 agent 掉线 —— 这时它本来也不该动");
+
+  // 提示里筛的状态名必须是状态机登记过的。这条不是洁癖：上一版这里写的是 "dispatched"，
+  // 而 WorkItem 根本没有这个状态（那是 command.status 的值）—— 代码和夹具共用同一个假名字，
+  // 断言绿了整整一轮，实际上一次都没验到真实状态。字面量对不上状态机 = 那个分支永远不成立。
+  const machineText = fs.readFileSync(path.join(root, "spec/state-machines.yaml"), "utf8");
+  const workItemStates = (() => {
+    const lines = machineText.split(/\r?\n/);
+    let index = lines.findIndex((line) => line === "  WorkItem:");
+    const states = [];
+    let inStates = false;
+    for (index += 1; index >= 1 && index < lines.length; index += 1) {
+      if (/^  \S/.test(lines[index])) break;
+      if (/^    states:\s*$/.test(lines[index])) { inStates = true; continue; }
+      if (!inStates) continue;
+      const item = lines[index].match(/^      - "([^"]+)"\s*$/u);
+      if (item) { states.push(item[1]); continue; }
+      if (/^    \S/.test(lines[index])) break;
+    }
+    return states;
+  })();
+  const noticeSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const noticeLiterals = [];
+  for (const fnName of ["cellsWaitingWithNoAgentNotice", "wipCapacityNotice"]) {
+    const start = noticeSource.indexOf(`function ${fnName}(`);
+    if (start < 0) { noticeLiterals.push({fnName, missing: true}); continue; }
+    // 按花括号配对切出函数体，不按字符数猜窗口（窗口溢到隔壁函数是这套门反复栽过的坑）。
+    let depth = 0, end = start;
+    for (let index = noticeSource.indexOf("{", start); index < noticeSource.length; index += 1) {
+      if (noticeSource[index] === "{") depth += 1;
+      else if (noticeSource[index] === "}") { depth -= 1; if (!depth) { end = index; break; } }
+    }
+    const body = noticeSource.slice(start, end);
+    for (const match of body.matchAll(/\.includes\(item\.status\)|has\(item\.status\)/gu)) void match;
+    for (const list of body.matchAll(/\[((?:\s*"[a-z_]+"\s*,?)+)\]|new Set\(\[((?:\s*"[a-z_]+"\s*,?)+)\]\)/gu)) {
+      for (const literal of String(list[1] || list[2]).matchAll(/"([a-z_]+)"/gu)) noticeLiterals.push({fnName, status: literal[1]});
+    }
+  }
+  const unknownLiterals = noticeLiterals.filter((entry) => entry.missing || !workItemStates.includes(entry.status));
+  check("提示里筛的工作项状态必须是状态机登记过的",
+    workItemStates.length > 5 && noticeLiterals.length >= 5 && !unknownLiterals.length,
+    workItemStates.length <= 5 ? "没能从 spec 取到 WorkItem 状态集，本条在空转"
+      : (noticeLiterals.length < 5 ? `只提取到 ${noticeLiterals.length} 个状态字面量 —— 提取逻辑与代码脱节，本条在空转`
+        : `${unknownLiterals.map((entry) => entry.missing ? `${entry.fnName} 找不到` : `${entry.fnName} 用了 ${entry.status}`).join("；")}`
+          + " —— 状态机里没有这个名字，这个筛选分支永远不成立，提示永远不出现"));
+
+  // 在制品额度用满：这是背压不是故障，提示要说清"会自己恢复"和"想更宽就加节点"。
+  const withWip = (wip, fleet, status = "ready") => ({...withCells(status, fleet), wip});
+  const wipFull = probe.renderTaskGroupsWith(withWip({inFlight: 8, capacity: 8}, {online: 2, total: 2}), account, "p1", null, {});
+  check("在制品额度用满时，任务组页要说出来",
+    /在制品已经达到上限/.test(wipFull) && /8/.test(wipFull),
+    "后端按额度把单元判成 resource_queued，界面却什么都不说 —— 人只看到单元不动，无从判断是背压还是坏了");
+  check("要说清这是背压、会自己恢复，以及想更宽怎么做",
+    /不需要你动手/.test(wipFull) && /agent 页/.test(wipFull),
+    "只说达到上限，不说会不会自己好、也不说怎么调宽 —— 人会去找一个并不存在的故障");
+  check("额度没用满时不挂这条提示",
+    !/在制品已经达到上限/.test(probe.renderTaskGroupsWith(withWip({inFlight: 3, capacity: 8}, {online: 2, total: 2}), account, "p1", null, {})),
+    "没到上限也提示背压 —— 常亮的提示等于没有提示");
+  check("一个 agent 都没在线时，只说没节点，不叠加背压提示",
+    !/在制品已经达到上限/.test(probe.renderTaskGroupsWith(withWip({inFlight: 8, capacity: 8}, {online: 0, total: 2}, "assigned"), account, "p1", null, {})),
+    "两条提示同时出现，人会以为是两个毛病 —— 零节点时的真正出口是接节点，不是等额度");
 }
 
 // 人把方案「交回 AI 再分析」之后，如果一个在线 agent 都没有，这个等待永远不会结束。

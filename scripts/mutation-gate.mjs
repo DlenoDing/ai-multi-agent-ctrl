@@ -371,6 +371,34 @@ const MUTATIONS = [
     expect: "没有被裁回上限"
   },
   {
+    name: "在制品上限：闸必须真的挡住",
+    file: CORE,
+    from: "      if (wipNow >= wipCap) {",
+    to: "      if (false) {",
+    expect: "闸没生效"
+  },
+  {
+    name: "在制品上限：额度不得算成 0（否则永远派不出第一个活）",
+    file: CORE,
+    from: "  return queueHead + online * perNode;",
+    to: "  return 0;",
+    expect: "额度算成了 0"
+  },
+  {
+    name: "在制品上限：等额度是背压，不得记成 blocked",
+    file: CORE,
+    from: 'outcome: "resource_queued", reasonCode: "wip_capacity_reached"',
+    to: 'outcome: "blocked", reasonCode: "wip_capacity_reached"',
+    expect: "resource_queued"
+  },
+  {
+    name: "在制品上限：在飞状态集合必须与 AgentDispatch 状态机一致",
+    file: CORE,
+    from: '["queued", "running", "blocked"]',
+    to: '["queued", "running"]',
+    expect: "漏了非终态"
+  },
+  {
     name: "租约索引必须核对状态，不得把已释放的租约当成活的",
     file: CORE,
     from: '  if (cached && cached.status === "active" && cached.resourceRef === resourceRef) return cached;',
