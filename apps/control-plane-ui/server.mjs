@@ -2653,6 +2653,16 @@ async function handleApi(req, res) {
       json(res, 401, {error: "invalid_credentials"});
       return;
     }
+    // account.schema.json 把 authPolicy.mfaRequired 列为必填，publicAccountRecord 也把它回给调用方 ——
+    // 但全仓没有任何一处读它：口令/令牌验过就发会话。今天它处处写死 false，所以看不出问题；
+    // 一旦有任何路径（导入、直接改库、以后的管理入口）把它置为 true，这里会一声不吭地照发会话，
+    // 那时"声明了 MFA"与"实际没有 MFA"的差别只存在于一个没人读的字段里。
+    // 在补上真正的 MFA 之前，声明了就必须拒绝发会话 —— 做不到的安全策略要停在门口，不能默认放行。
+    if (account.authPolicy?.mfaRequired) {
+      json(res, 403, {error: "mfa_required_but_unavailable",
+        message: "该账号声明必须二次验证，而本部署尚未实现二次验证；在实现之前不会为它签发会话"});
+      return;
+    }
     // 旧格式口令验证成功后就地升级为 scrypt：不需要任何人重设密码，也不会有人被锁在门外。
     // 放在这里（认证已通过、状态写入之前），因为只有此刻我们手里同时有明文和"它确实正确"这个结论。
     if (passwordCheck.ok && passwordCheck.needsUpgrade) {

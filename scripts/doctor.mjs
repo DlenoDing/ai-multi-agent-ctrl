@@ -1014,6 +1014,31 @@ try {
   if (!orgMembers.response.ok || !orgMembers.payload.members.some((member) => member.email === "doctor.member1@local")) {
     throw new Error("org member list did not return the created member");
   }
+  // authPolicy.mfaRequired 是 account.schema.json 的必填字段、也回显给调用方，但全仓没有一处读它。
+  // 今天它处处写死 false，所以看不出问题 —— 一旦有任何路径把它置为 true，登录会一声不吭地照发会话。
+  // 这里直接改盘上的账号记录把它置为 true（本阶段编排间隔是 0，没有后台写在抢），再走真实登录：
+  // 做不到的安全策略必须停在门口。验完改回去，并确认改回去之后登录恢复正常。
+  const mfaStatePath = join(root, doctorRuntimeDir, "control-plane-state.json");
+  const flipMfa = (required) => {
+    const snapshot = JSON.parse(readFileSync(mfaStatePath, "utf8"));
+    const owner = snapshot.accounts.find((item) => item.accountId === "acct_system_owner");
+    owner.authPolicy = {...owner.authPolicy, mfaRequired: required};
+    writeFileSync(mfaStatePath, JSON.stringify(snapshot, null, 2));
+  };
+  flipMfa(true);
+  const mfaLogin = await jsonFetch(port, "/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({email: "system.admin@local", token: "doctor-bootstrap-token"})
+  });
+  flipMfa(false);
+  if (mfaLogin.response.status !== 403 || mfaLogin.payload.error !== "mfa_required_but_unavailable") {
+    throw new Error(`账号声明必须二次验证，登录却照发会话（应 403 mfa_required_but_unavailable，得到 ${mfaLogin.response.status}:${mfaLogin.payload.error}）—— 声明了做不到的安全策略等于没有`);
+  }
+  const mfaRestored = await jsonFetch(port, "/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({email: "system.admin@local", token: "doctor-bootstrap-token"})
+  });
+  if (!mfaRestored.payload.sessionToken) throw new Error(`把 mfaRequired 改回 false 之后仍然登不进来：${mfaRestored.response.status}:${mfaRestored.payload.error}`);
   // 全新部署只有一个系统管理员，而它的 organizationId 是 null —— 与它自己调用这条路由时的 orgId
   // 恰好相等，所以它够得着自己。停用会当场吊销会话、登录被拒，而铸一个新的系统管理员又要
   // system:account_admin：整个部署永久失去系统层控制权。这里只验拒绝的那一支（放行支会把本次
