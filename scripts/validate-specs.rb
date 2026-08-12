@@ -1264,6 +1264,50 @@ case_marks.each_with_index do |(tool, at), index|
   errors << "MCP 工具 #{tool} 在作用域参数缺省时会落到控制面自己的任务组/房间，却没有受限主体守卫 —— 缺省不得等于放行" unless guarded
 end
 
+# 【审计动作名本地化】。审计页那一列直接把 audit() 的动作名交给 t() 显示 —— 没有中文就是
+# 一屏中英混排：human_confirmation_decide 显示"决策人工确认"，紧挨着的 agent_node_revoke
+# 显示英文原名。这条查出来时 75 个动作名里有 31 个没有中文，其中包括"吊销节点""吊销加入令牌"
+# "豁免质量门"——恰恰是特意放进台账让人能看懂的那批安全动作。
+# 与错误码同规做成登记制：新增动作要么给中文，要么写明它不出现在给人看的那本账里。
+NON_HUMAN_AUDIT_ACTIONS = {}.freeze
+audit_actions = [server_source, core_source, agent_gateway_source].flat_map do |src|
+  src.scan(/\baudit\(\s*state\s*,[^,]+,\s*"([a-z0-9_]+)"/).flatten
+end.uniq
+# 三处动作名不是字面量，是按闭集拼出来的。只数字面量的门看不见它们 —— 本仓踩过同一形状：
+# 字面量提取会让三元/变量/模板串写法静默逃逸。这里把闭集从源码里取出来展开，
+# 并要求"模板写法"与"闭集来源"都还在，任一变形就报红而不是悄悄少检几条。
+composed_audit_actions = []
+{
+  "task_group_" => [server_source[/const TASK_GROUP_CONTROL_ACTIONS = \[([^\]]+)\]/, 1], 'audit(state, guard.actor, `task_group_${action}`'],
+  "agent_control_" => [File.read(File.join(ROOT, "spec/agent-control-command.schema.json"))[/"commandType":\s*\{[^}]*"enum":\s*\[([^\]]+)\]/m, 1], 'audit(state, guard.actor, `agent_control_${result.command.commandType}`'],
+  "dispatch_" => [server_source[/const reportedStatus = \[([^\]]+)\]/, 1], 'audit(state, `agent-node:${node.nodeId}`, `dispatch_${reportedStatus}`']
+}.each do |prefix, (closed_set, call_shape)|
+  if closed_set.nil?
+    errors << "审计动作本地化门: 取不到 #{prefix}* 的闭集 —— 提取逻辑与代码脱节，这一族在空转"
+    next
+  end
+  unless [server_source, core_source, agent_gateway_source].any? { |src| src.include?(call_shape) }
+    errors << "审计动作本地化门: 找不到 #{prefix}* 的拼接写法（#{call_shape}）—— 它改了形状，这一族在空转"
+    next
+  end
+  values = closed_set.scan(/"([a-z0-9_]+)"/).flatten
+  # reportedStatus 的三元还带一个兜底分支，闭集里没有它
+  values << "failed" if prefix == "dispatch_"
+  composed_audit_actions.concat(values.map { |value| prefix + value })
+end
+audit_actions = (audit_actions + composed_audit_actions).uniq
+errors << "审计动作本地化门: 只提取到 #{audit_actions.size} 个动作名 —— 提取逻辑与代码脱节" if audit_actions.size < 40
+unlocalized_actions = audit_actions.reject { |name| i18n_zh_source.match?(/(^|[^A-Za-z0-9_])#{Regexp.escape(name)}\s*:/) }
+unregistered_actions = unlocalized_actions.reject { |name| NON_HUMAN_AUDIT_ACTIONS.key?(name) }
+unless unregistered_actions.empty?
+  errors << "这些审计动作名在中文审计页上会显示成原始英文：#{unregistered_actions.sort.join(', ')} —— " \
+    "要么给它中文，要么在 NON_HUMAN_AUDIT_ACTIONS 里写明它不出现在给人看的那本账里"
+end
+stale_audit_actions = NON_HUMAN_AUDIT_ACTIONS.keys.reject { |name| unlocalized_actions.include?(name) }
+unless stale_audit_actions.empty?
+  errors << "NON_HUMAN_AUDIT_ACTIONS 里这些条目已经过时（动作名不存在了，或已经有中文）：#{stale_audit_actions.join(', ')}"
+end
+
 # 【错误码本地化】。人撞上错误的那一刻，最需要看懂的就是这一行。控制台把服务端返回的 error
 # 原样交给 t() 显示，没有中文就直接把英文枚举摆在中文界面上 —— 看不懂，也搜不到。
 # 今天 203 种错误码里只有 7 种没有中文，而那 7 种全是机器面的（agent 网关 / MCP 传输层）。
@@ -2414,6 +2458,8 @@ fail_with(errors)
 puts "错误码本地化：只有表达式提取才看得见的有 #{expression_only_error_codes.length} 个" \
      "#{expression_only_error_codes.empty? ? '' : '（' + expression_only_error_codes.sort.join('、') + '）'}；" \
      "另有 #{expression_error_opaque.length} 处取值来自变量，未被检验"
+puts "审计动作本地化：核对了 #{audit_actions.length} 个动作名（其中 #{composed_audit_actions.uniq.length} 个是按闭集拼出来的，不是字面量），全部有中文" \
+     "#{NON_HUMAN_AUDIT_ACTIONS.empty? ? '' : '（另有 ' + NON_HUMAN_AUDIT_ACTIONS.length.to_s + ' 个登记为不给人看）'}"
 puts "原因码本地化：核对了 #{localized_literals.length} 个字面量（含三元/|| 兜底里的）；" \
      "另有 #{opaque_reason_sites.length} 处取值来自变量，本门看不到它们的取值，未被检验" \
      "#{opaque_reason_sites.empty? ? '' : '：' + opaque_reason_sites.join('、')}"

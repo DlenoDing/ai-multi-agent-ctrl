@@ -419,6 +419,24 @@ const MUTATIONS = [
   // ── 非契约门的守卫。它们此前只在写下的当天被手工变异过一次，之后再没有任何东西
   //    证明它们仍有判别力 —— 而本会话两次写出"按构造永远为真"的断言，都是靠变异才发现的。
   {
+    name: "审计动作本地化：拼接出来的动作名也要有中文",
+    file: I18N,
+    gate: "specs",
+    from: '    agent_control_shutdown: "下发关停节点",',
+    to: "",
+    expect: "agent_control_shutdown"
+  },
+  {
+    // 这一条防的不是"少了个中文"，而是"这一族从此不被检验了"——闭集换个名字，
+    // 门就再也展开不出 task_group_*，而它仍然一片绿。空转的门比没有门更糟。
+    name: "审计动作本地化：闭集取不到时必须报空转",
+    file: SERVER,
+    gate: "specs",
+    from: "const TASK_GROUP_CONTROL_ACTIONS = [",
+    to: "const TASK_GROUP_CONTROL_ACTION_LIST = [",
+    expect: "这一族在空转"
+  },
+  {
     name: "本地化门必须看得见三元写法里的原因码",
     file: I18N,
     gate: "specs",
