@@ -92,6 +92,26 @@ export function stateStoreKind() {
   return process.env.AIMAC_STATE_STORE === "postgresql" && Boolean(process.env.DATABASE_URL) ? "postgresql" : "runtime_json";
 }
 
+// 认不出的存储名会被上面那行静默当成 runtime_json —— 而 postgres / postgresql 恰好是最容易
+// 写错的一对。后果不是启动失败，是【启动成功但接在另一个存储上】：运维得到一个看起来正常、
+// 实则空的控制面，在上面建的项目与账号，等他改回来之后全都不见，两份状态从此分叉。
+// 同理 postgresql 但没给 DATABASE_URL 也会静默降级。
+// 显式指定了什么就必须用什么，用不了就当场停 —— 与本仓其它地方一致：缺省不得等于有利结果。
+const KNOWN_STATE_STORES = ["runtime_json", "postgresql"];
+export function assertStateStoreConfig(env = process.env) {
+  const configured = String(env.AIMAC_STATE_STORE || "").trim();
+  if (!configured) return "runtime_json";
+  if (!KNOWN_STATE_STORES.includes(configured)) {
+    throw new Error(`AIMAC_STATE_STORE=${configured} 认不出来（可选：${KNOWN_STATE_STORES.join(" / ")}）`
+      + " —— 拒绝按默认的 runtime_json 起来：那会让你接在另一个存储上，而一切看起来都正常");
+  }
+  if (configured === "postgresql" && !env.DATABASE_URL) {
+    throw new Error("AIMAC_STATE_STORE=postgresql 但没有给 DATABASE_URL —— 拒绝退回本地 runtime_json："
+      + "那会让你在一份空状态上工作，等配好数据库之后这段时间的改动全都不在里面");
+  }
+  return configured;
+}
+
 export function ensureStoredState(options) {
   mkdirSync(options.runtimeDir, {recursive: true});
   if (stateStoreKind() === "postgresql") {

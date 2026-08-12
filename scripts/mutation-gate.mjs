@@ -518,6 +518,16 @@ const MUTATIONS = [
     expect: "仍在每拍推进"
   },
   {
+    // 认不出的存储名会被静默当成 runtime_json（postgres / postgresql 是最容易写错的一对）。
+    // 后果不是启动失败，而是【启动成功但接在另一个存储上】：一切看起来正常，人却在空状态上工作。
+    name: "认不出的存储名不得静默退回本地 JSON",
+    file: STORE,
+    from: "  if (!KNOWN_STATE_STORES.includes(configured)) {",
+    to: "  if (false) {",
+    check: "verifyStateStoreConfigIsNotSilentlyDowngraded",
+    expect: "被默默接受了"
+  },
+  {
     // 状态文件损坏时若原样抛 SyntaxError：中央文件坏了只看到 "Unterminated string in JSON at
     // position 31584"，分片坏了更糟 —— 服务照常起、健康检查一路 200，监控绿着而读数据全挂。
     name: "状态文件损坏要说清是哪一份，并把健康检查压成 degraded",

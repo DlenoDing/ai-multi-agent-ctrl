@@ -7,7 +7,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node:os";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
+import { assertStateStoreConfig, ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
 import { appendProjectExecutionEvent, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
 import {
   authenticateAgentNode,
@@ -5613,6 +5613,15 @@ server.requestTimeout = Math.max(server.headersTimeout, Number(process.env.AIMAC
 
 assertRuntimeSecurity();
 ensureState();
+// 存储配置在【监听之前】就要认账：认不出的名字、或 postgresql 少了 DATABASE_URL，
+// 此前都会静默退回本地 runtime_json —— 服务照常起、健康检查照常 ok，而它接的是另一个存储。
+try {
+  assertStateStoreConfig();
+} catch (error) {
+  console.error(`[state-store] ${error.message}`);
+  process.exit(1);
+}
+
 server.listen(port, host, () => {
   console.log(`AI Multi-Agent Ctrl console: http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`);
   console.log(`Centralized MCP endpoint: ${publicEndpoint()}/mcp`);

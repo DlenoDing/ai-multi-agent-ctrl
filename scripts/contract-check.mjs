@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureStoredState, isStateStoreConflict, readStoredCentralState, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { assertStateStoreConfig, ensureStoredState, isStateStoreConflict, readStoredCentralState, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload, canonicalJson } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps/control-plane-ui/lib/pg-sync-store.mjs";
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
@@ -249,6 +249,7 @@ run(verifyCommitWorksWithoutConfiguredIdentity);
 run(verifyHumanGuidanceIsBoundedAndHonest);
 run(verifyNoModelFallbackMatchesWhatEngineDoes);
 run(verifyRoomWaitTailAndTruncationHonesty);
+run(verifyStateStoreConfigIsNotSilentlyDowngraded);
 run(verifyOrchestrationDoesNotShellOutPerCell);
 run(verifyWipCapacityBackpressure);
 run(verifyHighPriorityCellsAreNotStarvedByEarlierGroups);
@@ -321,6 +322,31 @@ if (errors.length) {
 // 房间消息给【人】看的那一屏要的是最近的几条：按游标从头取会正好错过谈成结论的那一段，
 // 而人打开它就是为了"定稿前看一眼是怎么谈成的"。同时截断必须报数 ——
 // 50 条和"只有 50 条"在报文里长得一模一样。agent 侧按游标顺序消费的读法不变。
+// 显式指定了存储后端，就不许静默换成另一个。认不出的名字（postgres / postgresql 是最容易
+// 写错的一对）与"postgresql 但没给 DATABASE_URL"此前都会退回本地 runtime_json：
+// 服务照常起、健康检查照常 ok，而它接的是一份空状态 —— 运维在上面建的东西，等配好之后全不见。
+function verifyStateStoreConfigIsNotSilentlyDowngraded(output) {
+  const cases = [
+    [{AIMAC_STATE_STORE: "postgres"}, "认不出来"],
+    [{AIMAC_STATE_STORE: "postgresql"}, "没有给 DATABASE_URL"],
+    [{AIMAC_STATE_STORE: "postgresql", DATABASE_URL: ""}, "没有给 DATABASE_URL"]
+  ];
+  for (const [env, expected] of cases) {
+    let message = "";
+    try { assertStateStoreConfig(env); } catch (error) { message = String(error?.message || error); }
+    if (!message) {
+      output.push(`存储配置 ${JSON.stringify(env)} 被默默接受了 —— 它会退回 runtime_json，而一切看起来都正常`);
+    } else if (!message.includes(expected)) {
+      output.push(`存储配置 ${JSON.stringify(env)} 的拒绝理由没说清（${message.slice(0, 80)}）`);
+    }
+  }
+  // 合法配置不得误伤
+  for (const env of [{}, {AIMAC_STATE_STORE: "runtime_json"}, {AIMAC_STATE_STORE: "postgresql", DATABASE_URL: "postgres://x/y"}]) {
+    try { assertStateStoreConfig(env); }
+    catch (error) { output.push(`合法的存储配置被拒了：${JSON.stringify(env)} -> ${String(error?.message || error).slice(0, 70)}`); }
+  }
+}
+
 function verifyRoomWaitTailAndTruncationHonesty(output) {
   const state = {roomMessages: []};
   for (let index = 1; index <= 120; index += 1) {
