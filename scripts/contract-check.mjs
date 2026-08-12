@@ -224,6 +224,7 @@ for (const tool of toolDefs) {
 run(verifyRuntimeJsonConflict);
 run(verifySeedRecordsMatchTheirDeclaredSchemas);
 run(verifyEverySchemaVersionHasASpec);
+run(verifyEveryStateCollectionIsSchemaChecked);
 run(verifyEveryProjectScopedIdIsScopeChecked);
 run(verifyEveryStateCollectionIsTenantScoped);
 run(verifyExpiredConfirmationRetargetsTheWorkItem);
@@ -6420,6 +6421,66 @@ function verifyEveryProjectScopedIdIsScopeChecked(output) {
     }
   }
   if (scanned < 15) output.push(`MCP 作用域覆盖核对：只扫到 ${scanned} 份项目级规范，远少于预期 —— 本条在空转`);
+}
+
+// 反方向的核对：上面那条问"每种 schemaVersion 有没有规范文件"，这条问"每个集合的记录带不带
+// schemaVersion"。不带的那些【落在所有 schema 核对之外】—— 按记录自身 schemaVersion 派发校验的
+// 那套机制对它们一声不吭，而"没有报错"看起来和"检查过了"一模一样。
+// 实际后果刚撞过一次：agents 没有 schema，于是"按 item.projectId 过滤但 schema 里没有这个字段"
+// 的全量扫描把它静默跳过了，一个恒为 0 的容量计数因此躲过一轮。
+// 所以改成登记制：不带 schemaVersion 的集合必须逐个写明凭什么可以不带；写不出理由的就是下一个洞。
+function verifyEveryStateCollectionIsSchemaChecked(output) {
+  const COLLECTIONS_WITHOUT_SCHEMA_VERSION = {
+    projects: "项目实体本身没有独立规范：它的可变部分（config/repositories/rules）各有专门校验，"
+      + "而 id/名称/成员这些由租户接口的入参校验守住",
+    taskGroups: "任务组同上；它内部的工作项状态由 spec/state-machines.yaml 的 WorkItem 枚举守住"
+      + "（verifyTransitionEngine 会压过真实产出）",
+    agents: "逻辑 agent 注册表（角色/模型/容量），不是租户数据，也不参与任何按 schemaVersion 的派发校验",
+    modelProviders: "模型供应商目录，与 modelCapabilities 同源，由模型选择策略的校验覆盖",
+    // 下面三个是运行时创建的，种子里没有 —— 我先前按种子做的同类扫描因此完全看不到它们。
+    agentTaskContracts: "有 spec/agent-task-contract.schema.json，但记录用 contractVersion 而非 schemaVersion；"
+      + "本门第 3813 行对造出来的契约逐条 validateSchema，覆盖没有落空",
+    workSessions: "没有独立规范；状态取值由 spec/state-machines.yaml 的 WorkSession 枚举守住"
+      + "（verifyTransitionEngine 压过真实产出），归属字段由租户作用域核对覆盖",
+    leases: "没有独立规范；租约的性质（互斥、fencing token 单调、过期回收）由行为断言守住，"
+      + "结构校验给不出这些保证"
+  };
+  const probe = structuredClone(seedState);
+  ensureRuntimeCollections(probe, {root});
+  runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
+  const untagged = [];
+  let tagged = 0;
+  for (const [name, value] of Object.entries(probe)) {
+    if (!Array.isArray(value)) continue;
+    const records = value.filter((item) => item && typeof item === "object");
+    if (!records.length) continue;
+    if (records.some((item) => item.schemaVersion)) {
+      tagged += 1;
+      // 部分带、部分不带最危险：按 schemaVersion 派发的校验会把不带的那些静默跳过。
+      const missing = records.filter((item) => !item.schemaVersion).length;
+      if (missing) {
+        output.push(`集合 ${name}: ${records.length} 条里有 ${missing} 条没有 schemaVersion —— `
+          + "按记录自身规范派发的校验会把这几条静默跳过，而它们恰恰是最可能漂了的那几条");
+      }
+      continue;
+    }
+    untagged.push(name);
+  }
+  const unregistered = untagged.filter((name) => !COLLECTIONS_WITHOUT_SCHEMA_VERSION[name]);
+  if (unregistered.length) {
+    output.push(`这些集合的记录一条都不带 schemaVersion，因而不在任何 schema 核对的覆盖面内：`
+      + `${unregistered.join("、")} —— 要么给它们一份规范，要么在登记表里写明凭什么可以没有`);
+  }
+  const stale = Object.keys(COLLECTIONS_WITHOUT_SCHEMA_VERSION).filter((name) => !untagged.includes(name));
+  if (stale.length) {
+    output.push(`登记表已过时：${stale.join("、")} 已经带上 schemaVersion（或已不存在），`
+      + "登记留着会让人以为它们仍在覆盖面外");
+  }
+  if (tagged < 10) {
+    output.push(`只认出 ${tagged} 个带 schemaVersion 的集合 —— 提取逻辑与状态结构脱节，本条在空转`);
+  }
+  console.log(`集合 schema 覆盖：${tagged} 个集合的记录带 schemaVersion；`
+    + `${untagged.length} 个不带且已逐个登记（${untagged.join("、")}）`);
 }
 
 function verifyEverySchemaVersionHasASpec(output) {

@@ -414,6 +414,14 @@ const MUTATIONS = [
     expect: "没有被裁回上限"
   },
   {
+    name: "集合 schema 覆盖：记录不得悄悄丢掉 schemaVersion",
+    file: CORE,
+    check: "verifyEveryStateCollectionIsSchemaChecked",
+    from: '    schemaVersion: "worker-lane/v1",',
+    to: "",
+    expect: "schemaVersion"
+  },
+  {
     name: "容量快照：节点计数不得按不存在的字段过滤（那会恒为 0）",
     file: MCP,
     check: "verifyCapacitySnapshotCountsAreNotAlwaysZero",
