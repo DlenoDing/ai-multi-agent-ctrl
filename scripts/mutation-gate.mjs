@@ -518,6 +518,15 @@ const MUTATIONS = [
     expect: "仍在每拍推进"
   },
   {
+    // 树摘要标的是"这次提交到底改出了什么内容"。谎报能过的话，提交里的东西就与它自称的无关了。
+    name: "提交的树摘要必须与真实提交对得上",
+    file: CORE,
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: '    if (!actualTree || `git-tree:${actualTree}` !== String(commitRef.treeDigest)) {',
+    to: "    if (false) {",
+    expect: "内容摘要可以随便写"
+  },
+  {
     // "AI 给自己判分"的核心边界：控制面自己去 git 里查这个 commit 在不在，不信 agent 自报。
     // 塌了就等于关闭门可以拿凭空的提交过。注意不能变异那句 if (!fullCommit) ——
     // 同一个错误码有两道守卫接着，关掉一道错误码不变，看起来像"改坏了也没事"。

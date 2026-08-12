@@ -5865,7 +5865,7 @@ function verifyApprovedAcceptanceChecksHaveEvidence(output) {
 }
 
 function verifyHumanApprovedPathsBindTheCommit(output) {
-  const runCase = ({stray, finalized, trespass, writeForbidden, forgeCommit}) => {
+  const runCase = ({stray, finalized, trespass, writeForbidden, forgeCommit, forgePush, forgeTree}) => {
     const repo = mkdtempSync(join(tmpdir(), "cc-owned-"));
     const remote = mkdtempSync(join(tmpdir(), "cc-owned-remote-"));
     const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
@@ -5941,9 +5941,15 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       // 控制面若信了 agent 自报的提交，它就能拿凭空的证据过关闭门。
       commitRefs: [{repo: target.repositoryId, branch: "main",
         commit: forgeCommit ? "0123456789abcdef0123456789abcdef01234567" : commit,
-        treeDigest: `git-tree:${git("rev-parse", `${commit}^{tree}`)}`, createdAt: new Date().toISOString()}],
+        // forgeTree：树摘要谎报。它标的是"这次提交到底改出了什么内容"，
+        // 控制面拿它和真实提交对照 —— 谎报能过的话，提交里的内容就与它自称的无关了。
+        treeDigest: forgeTree ? "git-tree:0000000000000000000000000000000000000000"
+          : `git-tree:${git("rev-parse", `${commit}^{tree}`)}`, createdAt: new Date().toISOString()}],
+      // forgePush：声称推上去了，而远端根本没有那个提交。这与"凭空的 commit"是一对 ——
+      // 前者问"这次提交存不存在"，这条问"它到底有没有真的交出去"。控制面自己 ls-remote 对照。
       pushRefs: [{repo: target.repositoryId, remote: "origin", ref: "refs/heads/main", sourceCommit: commit,
-        remoteSha, providerOperationId: `git-push:cc:${remoteSha}`, verifiedAt: new Date().toISOString(),
+        remoteSha: forgePush ? "0123456789abcdef0123456789abcdef01234567" : remoteSha,
+        providerOperationId: `git-push:cc:${remoteSha}`, verifiedAt: new Date().toISOString(),
         rewriteRelation: "same_commit"}],
       repositoryOutputTargetRefs: [target.targetId],
       artifactManifestRefs: ["docs/manifest.json"],
@@ -5961,6 +5967,22 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
   else if (forged.result.accepted !== false || forged.result.error !== "commit_ref_not_found") {
     output.push(`交了一个仓库里不存在的 commit，检查点却没被拦下（实际：${forged.result.error || "已受理"}）`
       + " —— agent 可以拿凭空的提交过关闭门");
+  }
+
+  // 声称推送了、而远端没有那个提交：这条决定"活到底有没有真的交出去"。
+  // 这一条【没有登记变异】，因为它是双重守卫（先 ls-remote 查活的、再查本地存不存在），
+  // 单点改坏另一道会接住、错误码不变 —— 看起来像"改坏了也没事"。断言本身不空：
+  // 同一套夹具下伪造 remoteSha 会被拒、真实 remoteSha 会被受理，两者是分得开的。
+  const forgedPush = runCase({forgePush: true});
+  if (!forgedPush.skipped && forgedPush.result.error !== "push_ref_remote_sha_mismatch") {
+    output.push(`声称推送的提交在远端根本不存在，检查点却没被拦下（实际：${forgedPush.result.error || "已受理"}）`
+      + " —— agent 只要本地提交、不真的 push，也能过关闭门");
+  }
+  // 树摘要谎报：它标的是"这次提交改出了什么内容"，谎报能过的话，提交内容就与自称的无关了。
+  const forgedTree = runCase({forgeTree: true});
+  if (!forgedTree.skipped && forgedTree.result.error !== "commit_ref_tree_digest_mismatch") {
+    output.push(`提交的树摘要与真实提交对不上，检查点却没被拦下（实际：${forgedTree.result.error || "已受理"}）`
+      + " —— 交上来的内容摘要可以随便写");
   }
 
   const violating = runCase({stray: true, finalized: true});
