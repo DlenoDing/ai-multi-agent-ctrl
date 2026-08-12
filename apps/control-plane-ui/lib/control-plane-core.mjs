@@ -3914,12 +3914,23 @@ export function syncSkillSource(state, sourceId, options = {}) {
     source.status = "quarantined";
     throw new Error("skill_source_unsafe_git_input");
   }
-  if (!existsSync(join(repoDir, ".git"))) {
-    execFileSync("git", ["clone", "--", repoUrl, repoDir], {stdio: "pipe", env: gitEnv});
+  // 取不下来（仓库不在了 / 要认证 / ref 没有 / 网络不通）此前是把 git 的原始报错直接抛出去，
+  // 而 source.status 一动不动 —— 人点完同步只看到一条会消失的 toast，技能源那张表还写着
+  // configured，看不出这个源【从来没同步成功过】。而技能源决定 agent 会做什么：
+  // 它一直没更新，是要被人看见的事。模型里 stale 正是这个意思（内容还在，只是没能刷新）。
+  let actualCommit;
+  try {
+    if (!existsSync(join(repoDir, ".git"))) {
+      execFileSync("git", ["clone", "--", repoUrl, repoDir], {stdio: "pipe", env: gitEnv});
+    }
+    execFileSync("git", ["-C", repoDir, "fetch", "origin", "--", defaultRef], {stdio: "pipe", env: gitEnv});
+    execFileSync("git", ["-C", repoDir, "checkout", "--detach", pinnedCommit], {stdio: "pipe", env: gitEnv});
+    actualCommit = execFileSync("git", ["-C", repoDir, "rev-parse", "HEAD"], {encoding: "utf8"}).trim();
+  } catch (error) {
+    source.status = "stale";
+    source.updatedAt = new Date().toISOString();
+    throw new Error(`skill_source_sync_failed:${source.sourceId}`, {cause: error});
   }
-  execFileSync("git", ["-C", repoDir, "fetch", "origin", "--", defaultRef], {stdio: "pipe", env: gitEnv});
-  execFileSync("git", ["-C", repoDir, "checkout", "--detach", pinnedCommit], {stdio: "pipe", env: gitEnv});
-  const actualCommit = execFileSync("git", ["-C", repoDir, "rev-parse", "HEAD"], {encoding: "utf8"}).trim();
   if (source.trustPolicy.requirePinnedCommit && actualCommit !== source.pinnedCommit) {
     source.status = "quarantined";
     throw new Error(`pinned_commit_mismatch:${actualCommit}`);

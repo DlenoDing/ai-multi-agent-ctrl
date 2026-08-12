@@ -2094,6 +2094,27 @@ await runErrorGuidanceCase();
   const looksGenerated = (value) => /\d/u.test(String(value).split("_").pop() || "");
   const misses = new Map();
   // 一份状态建一次上下文、在里面把所有页面渲一遍：每页都新建的话，app.js 要被重新解析上百次。
+// 技能源那张表此前不显示仓库地址：人看不出这个源钉的到底是什么，而"钉住哪一份"正是它存在的理由。
+{
+  const skillRoot = el("div");
+  const probe = loadConsole(skillRoot);
+  const admin = {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const withSource = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    projects: [], taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
+    findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: [],
+    skillSources: [{sourceId: "agency-agents-zh", repositoryUrl: "https://example.invalid/skills.git",
+      defaultRef: "main", pinnedCommit: "abc1234567", status: "stale"}],
+    roleSkills: [], roleSkillOverlays: [], modelCapabilities: []};
+  probe.renderFullPageWith(withSource, admin, null, "sys-settings");
+  const html = String(skillRoot.innerHTML || "");
+  check("技能源要显示仓库地址",
+    /example\.invalid\/skills\.git/.test(html),
+    "技能源那张表不显示仓库地址 —— 人看不出这个源钉的到底是什么");
+  check("同步失败的技能源要能在表上看出来",
+    /没能刷新|stale|已过期|陈旧/.test(html),
+    "同步失败之后状态没有呈现出来 —— 人点完同步只看到一条会消失的 toast");
+}
+
 // 控制面挂掉时，这一屏此前只弹一次 toast：toast 消失之后，画面还挂着上一次成功时的数据，
 // 而屏幕上没有任何迹象说"这已经不是现在的样子了"。监控台最要紧的恰恰是这一刻。
 {

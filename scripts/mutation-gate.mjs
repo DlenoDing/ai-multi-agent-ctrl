@@ -518,6 +518,16 @@ const MUTATIONS = [
     expect: "仍在每拍推进"
   },
   {
+    // 技能源取不下来时只抛 git 原始报错、状态一动不动：人点完同步只看到一条会消失的 toast，
+    // 那张表还写着 configured —— 看不出这个源从来没同步成功过，而它决定 agent 会做什么。
+    name: "技能源同步失败要在状态上留下痕迹",
+    file: CORE,
+    check: "verifySkillSourceSyncFailureIsVisible",
+    from: '    source.status = "stale";\n    source.updatedAt = new Date().toISOString();\n    throw new Error(`skill_source_sync_failed:${source.sourceId}`, {cause: error});',
+    to: "    throw error;",
+    expect: "原始 git 报错"
+  },
+  {
     // 认不出的存储名会被静默当成 runtime_json（postgres / postgresql 是最容易写错的一对）。
     // 后果不是启动失败，而是【启动成功但接在另一个存储上】：一切看起来正常，人却在空状态上工作。
     name: "认不出的存储名不得静默退回本地 JSON",
@@ -526,6 +536,16 @@ const MUTATIONS = [
     to: "  if (false) {",
     check: "verifyStateStoreConfigIsNotSilentlyDowngraded",
     expect: "被默默接受了"
+  },
+  {
+    // 技能源那张表此前不显示仓库地址：人看不出这个源钉的到底是什么，
+    // 而"钉住哪一份"正是它存在的理由。
+    name: "技能源要显示它钉的是哪个仓库",
+    file: APP,
+    gate: "console",
+    from: '<div class="small muted mono">${esc(source.repositoryUrl || "-")}',
+    to: '<div class="small muted mono">${esc("")}',
+    expect: "不显示仓库地址"
   },
   {
     // 控制面挂掉时这一屏此前只弹一次 toast：toast 消失之后，画面还挂着上一次成功时的数据，

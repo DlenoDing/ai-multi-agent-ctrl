@@ -113,6 +113,7 @@ import {
   commitWithRuntimeIdentity,
   appendHumanGuidance,
   roomWait,
+  syncSkillSource,
 } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import {
   ackAgentControlCommand,
@@ -250,6 +251,7 @@ run(verifyHumanGuidanceIsBoundedAndHonest);
 run(verifyNoModelFallbackMatchesWhatEngineDoes);
 run(verifyRoomWaitTailAndTruncationHonesty);
 run(verifyStateStoreConfigIsNotSilentlyDowngraded);
+run(verifySkillSourceSyncFailureIsVisible);
 run(verifyOrchestrationDoesNotShellOutPerCell);
 run(verifyWipCapacityBackpressure);
 run(verifyHighPriorityCellsAreNotStarvedByEarlierGroups);
@@ -325,6 +327,38 @@ if (errors.length) {
 // 显式指定了存储后端，就不许静默换成另一个。认不出的名字（postgres / postgresql 是最容易
 // 写错的一对）与"postgresql 但没给 DATABASE_URL"此前都会退回本地 runtime_json：
 // 服务照常起、健康检查照常 ok，而它接的是一份空状态 —— 运维在上面建的东西，等配好之后全不见。
+// 技能源取不下来（仓库不在了 / 要认证 / ref 没有 / 网络不通）此前只抛 git 的原始报错，
+// 而 source.status 一动不动：人点完同步只看到一条会消失的 toast，那张表还写着 configured，
+// 看不出这个源【从来没同步成功过】—— 而技能源决定 agent 会做什么。
+function verifySkillSourceSyncFailureIsVisible(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const source = (state.skillSources || [])[0];
+  if (!source) {
+    output.push("技能源同步检查：种子里没有技能源 —— 本条在空转");
+    return;
+  }
+  const before = source.status;
+  source.repositoryUrl = join(tmpdir(), `aimac-no-such-repo-${Date.now()}`);
+  const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-skill-sync-"));
+  let thrown = "";
+  try { syncSkillSource(state, source.sourceId, {root, runtimeDir}); }
+  catch (error) { thrown = String(error?.message || error); }
+  finally { rmSync(runtimeDir, {recursive: true, force: true}); }
+  if (!thrown) {
+    output.push("技能源指向一个不存在的仓库，同步却成功了 —— 这条夹具没触发到失败路径");
+    return;
+  }
+  if (!thrown.startsWith("skill_source_sync_failed:")) {
+    output.push(`技能源同步失败抛的是原始 git 报错（${thrown.slice(0, 80)}）—— 调用方拿不到稳定的错误码`);
+  }
+  if (source.status === before) {
+    output.push(`技能源同步失败之后状态还是 ${before} —— 那张表上看不出这个源从来没同步成功过`);
+  } else if (source.status !== "stale") {
+    output.push(`技能源同步失败之后状态成了 ${source.status}（应为 stale：内容还在，只是没能刷新）`);
+  }
+}
+
 function verifyStateStoreConfigIsNotSilentlyDowngraded(output) {
   const cases = [
     [{AIMAC_STATE_STORE: "postgres"}, "认不出来"],

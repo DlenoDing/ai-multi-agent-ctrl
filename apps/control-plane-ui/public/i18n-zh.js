@@ -32,6 +32,7 @@
     dispatch_not_resumable: "该派发当前不可恢复：它既不在暂停中，也没有等待恢复的标记",
     execution_topology_not_found: "找不到对应的执行拓扑：它可能已被取代或所属任务组已终结",
     org_last_admin_cannot_be_disabled: "这是本组织最后一个在用的管理员：停用它之后没有人能再管理该组织",
+    skill_source_sync_failed: "技能源同步失败（仓库取不下来：地址不对 / 需要认证 / 指定的分支不存在 / 网络不通）：该源已标记为 stale，agent 用的还是上一次同步下来的技能",
     state_storage_corrupt: "状态文件读不出来（内容已损坏或缺失）：报文里的 file 指出是哪一份，按它恢复或从备份还原；在那之前写操作一律会被拒绝，以免把损坏覆盖成既成事实",
     state_storage_unavailable: "控制面写不进磁盘：请检查运行目录的剩余空间、挂载是否只读、以及进程对它的写权限（读操作不受影响，恢复可写后无需重启）",
     state_view_unknown: "认不出这个视图名：请求里的 view 参数不在支持的取值里（返回体的 supported 列出了全部可选值）",

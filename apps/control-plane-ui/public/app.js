@@ -1625,7 +1625,8 @@ function renderSysSettings() {
     badge(profile.availability)
   ])).join("");
   const sources = (state.skillSources || []).map((source) => row([
-    `<span class="mono">${esc(source.sourceId)}</span>`,
+    // 仓库地址此前一处都不显示：人看不出这个源钉的到底是什么，而"钉住哪一份"正是它存在的理由。
+    `<span class="mono">${esc(source.sourceId)}</span><div class="small muted mono">${esc(source.repositoryUrl || "-")}${source.defaultRef ? ` @${esc(source.defaultRef)}` : ""}</div>`,
     badge(source.status),
     `<span class="mono">${esc(String(source.pinnedCommit || "").slice(0, 10))}</span>`,
     {v: String((state.roleSkills || []).filter((skill) => skill.sourceId === source.sourceId).length), c: "num"},
@@ -1667,7 +1668,7 @@ function renderSysSettings() {
         <dt>更新时间</dt><dd>${fmtTime(runtime.updatedAt)}</dd>
       </dl>
     `),
-    panel("技能源", capNotice("skillSources") + table(["技能源", "状态", "固定提交", {label: "角色数", c: "num"}, "操作"], sources)),
+    panel("技能源", capNotice("skillSources") + table(["技能源 / 仓库", "状态", "固定提交", {label: "角色数", c: "num"}, "操作"], sources)),
     // 角色技能叠加会【改掉 agent 实际拥有的能力】（含 forbiddenCapabilityAdds），它是真人专属动作，
     // 数据也一直下发到这一页 —— 却从没有被渲染过：人看不到某个项目/任务组的角色规则被谁改过、改成了什么。
     // 创建仍走 API（补丁结构复杂，不值得为它在这里造一个编辑器），但"存在且生效"这件事必须看得见。
