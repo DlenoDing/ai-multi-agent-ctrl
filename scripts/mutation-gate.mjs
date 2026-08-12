@@ -888,6 +888,13 @@ async function judgeMutation(mutation, workdir) {
     writeFileSync(target, original); // 只动副本，真实工作区全程未被触碰
   }
   recordDiscovery(mutation, result.output);
+  // 门跑完却一个字都没输出 = 它根本没执行（本仓库真发生过：入口判断按 `file://${argv[1]}` 比较，
+  // 而 worktree 在 /var/folders/... 这条符号链接下，主块一次都不跑，静默退出 0）。
+  // 这种"通过"必须与真的通过区分开，否则变异门会替一个从不运行的门作证。
+  if (!String(result.output || "").trim()) {
+    return `${mutation.name}: 门跑完没有任何输出 —— 它多半根本没执行（入口判断/路径解析问题），`
+      + "这不是'守卫通过'，而是没人检查过";
+  }
   if (!result.failed) {
     return `${mutation.name}: 守卫被改坏后 contract-check 仍然通过 —— 该守卫的测试是假绿，没有判别力`
       + (mutation.check ? `（本条只跑了 ${mutation.check}；若这条守卫其实由别的检查覆盖，改正 check 字段而不是删掉它）` : "");

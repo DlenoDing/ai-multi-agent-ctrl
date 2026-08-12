@@ -436,7 +436,11 @@ export function checkNoDeadExports() {
   return failures;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// 入口判断按【真实路径】比较：原先是 import.meta.url === `file://${process.argv[1]}`，
+// 而 macOS 上 /var/folders/... 是指向 /private/var/... 的符号链接 —— import.meta.url 解析成真实路径、
+// argv[1] 保持原样，两者对不上，于是从 worktree 里运行时整个主块【一次都不执行】：
+// 门静默退出 0、什么都不打印，而变异门把这读成"守卫通过"。实测两条已登记的变异因此假绿。
+if (fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(process.argv[1])) {
   const failures = [...checkBarrierLiveness(), ...checkMachineLiveness(), ...checkNoDeadExports()];
   if (failures.length) {
     for (const failure of failures) console.error(failure);
