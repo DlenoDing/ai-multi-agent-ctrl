@@ -679,6 +679,14 @@ const MUTATIONS = [
     expect: "直接起 git 子进程却不取失败原因"
   },
   {
+    name: "带细节的失败原因要拆开翻译",
+    file: APP,
+    gate: "console",
+    from: "  if (prefix && Object.prototype.hasOwnProperty.call(dict, prefix)) return `${t(prefix)}：${text.slice(at + 1)}`;",
+    to: "  if (false) return text;",
+    expect: "屏幕上摆着一串英文键"
+  },
+  {
     // 面向人的错误码漏了中文，人在屏幕上看到的就是英文键。摘掉一条登记即等价于新增一个漏译。
     name: "面向人的 API 错误码必须有中文",
     file: "scripts/contract-check.mjs",

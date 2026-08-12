@@ -7,6 +7,20 @@
 const I18N = window.AIMAC_I18N || {t: (value) => String(value ?? "-")};
 const t = (value) => I18N.t(value);
 
+// 失败原因常常是 "code:detail" 形态（git_command_failed:… / skill_source_sync_failed:… /
+// agent_runtime_executor_failed:…）：t() 拿到的是整串，词表里永远命中不了，于是屏幕上
+// 摆着一串英文键加一段细节。这里先整串查词表，查不到就把冒号前那段翻译出来、细节原样接在后面。
+function explainCoded(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const text = String(value);
+  const dict = I18N.dict || {};
+  if (Object.prototype.hasOwnProperty.call(dict, text)) return t(text);
+  const at = text.indexOf(":");
+  const prefix = at > 0 ? text.slice(0, at) : "";
+  if (prefix && Object.prototype.hasOwnProperty.call(dict, prefix)) return `${t(prefix)}：${text.slice(at + 1)}`;
+  return t(text);
+}
+
 const app = document.querySelector("#app");
 
 /* ---------------- 会话与全局状态 ---------------- */
@@ -2398,7 +2412,7 @@ function renderTaskGroupDetail(taskGroup) {
       <div class="record">
         <div class="record-title"><strong>${esc(workItem.title)}</strong>${badge(workItem.status)}</div>
         ${progressLine(workItem.progress)}
-        <div class="record-meta"><span>执行角色：${esc(t(workItem.ownerRole))}</span>${workItem.blockedReason ? `<span>受阻原因：${esc(t(workItem.blockedReason))}</span>` : ""}</div>
+        <div class="record-meta"><span>执行角色：${esc(t(workItem.ownerRole))}</span>${workItem.blockedReason ? `<span>受阻原因：${esc(explainCoded(workItem.blockedReason))}</span>` : ""}</div>
         <!-- 被阻塞的工作项：屏幕上要么给出【出口】，要么明说【系统会自清】。只写一句"受阻原因"
              等于把人留在原地 —— 后端有杠杆而界面没入口，等于这个杠杆不存在；而系统自清的也必须
              说出来，否则人会去找一个并不需要的操作。每一条都按代码里真实的清除路径写：
@@ -3290,7 +3304,7 @@ function renderMonitor() {
     session.laneId ? {v: `<span class="mono">${esc(session.laneId)}</span>`, c: "nowrap"} : "-",
     badge(session.status),
     // 会话的阻塞原因此前只写在记录里、从不渲染：人看到一个 needs_decision 的徽标，看不出为什么。
-    esc(session.blockedReason ? (t(session.blockedReason) || session.blockedReason) : "-"),
+    esc(explainCoded(session.blockedReason)),
     `<button class="secondary-button" data-action="show-session-events" data-session-id="${esc(session.sessionId)}">事件</button>`
   ])).join("");
 
@@ -3304,7 +3318,7 @@ function renderMonitor() {
     // 渲染过它们 —— 于是人只看到"认领超时重新入队"，看不到最要紧的那句：上一任可能已经把提交推上去了。
     // 新持有者的 reset --hard origin/<branch> 会把那些提交当作基线继续往上做，而没有任何人复核过它们。
     [
-      esc(dispatch.blockedReason || dispatch.failureReason ? t(dispatch.blockedReason || dispatch.failureReason) : "-"),
+      esc(explainCoded(dispatch.blockedReason || dispatch.failureReason)),
       dispatch.previousHolderMayHavePushed
         ? `<div class="small warn-text">⚠ 上一任持有者${dispatch.recycledFromNodeId ? `（${esc(dispatch.recycledFromNodeId)}）` : ""}可能已经推送过提交：新持有者会把它们当作基线，需人工核对该分支</div>`
         : "",

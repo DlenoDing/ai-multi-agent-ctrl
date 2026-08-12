@@ -980,6 +980,14 @@
 
     /* ---------- 会话放置方式补充 ---------- */
 
+    /* ---------- 失败原因里 "code:detail" 的那一段前缀（由 explainCoded 取用） ---------- */
+    git_command_failed: "git 命令失败",
+    content_bundle_git_transfer_failed: "内容包大文件拉取失败",
+    agent_runtime_executor_failed: "执行器没能跑完",
+    agent_runtime_executor_undeclared_changes: "执行器改了没申报的文件",
+    agent_runtime_executor_declared_unchanged_paths: "执行器申报了却没改的文件",
+    pinned_commit_mismatch: "取到的提交与固定提交对不上",
+
     /* ---------- worker lane 载体功能 ---------- */
     general_execution: "通用执行",
   };

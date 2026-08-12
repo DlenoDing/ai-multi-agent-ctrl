@@ -211,9 +211,18 @@ globalThis.__probe = {
 };
 `;
 
-function loadConsole(documentRoot) {
+// realI18n：本门其余部分把 t 桩成恒等函数（断言按英文键匹配），但有些行为只有【真词表】在场时
+// 才看得见 —— 比如 "code:detail" 形态的失败原因要不要拆开翻译。需要时按这个开关加载真的 i18n。
+function loadConsole(documentRoot, options = {}) {
   const source = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const context = vm.createContext(makeContext(documentRoot));
+  if (options.realI18n) {
+    vm.runInContext(fs.readFileSync(path.join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8"),
+      context, {filename: "i18n-zh.js"});
+    if (typeof context.window?.AIMAC_I18N?.t !== "function") {
+      throw new Error("控制台行为门: 要求真词表却没加载上 —— 相关断言会在空转");
+    }
+  }
   vm.runInContext(source + PROBE_EPILOGUE, context, {filename: "app.js"});
   if (!context.__probe) throw new Error("控制台行为门: 尾插探针未生效，本门无法断言任何东西");
   return context.__probe;
@@ -2128,6 +2137,38 @@ await runErrorGuidanceCase();
   check("同步恢复之后不再显示上一次的失败原因",
     !/Authentication failed/.test(String(recoveredRoot.innerHTML || "")),
     "技能源已经同步成功了，表上还挂着上一次的失败原因 —— 人会去追一个已经解决的故障");
+}
+
+// 失败原因常常带着细节（"git_command_failed:git push …（退出码 128：fatal: …）"）。
+// 词表按整串查永远命中不了，于是屏幕上摆着英文键 + 细节 —— 而细节恰恰是唯一有用的部分。
+{
+  const probe = loadConsole(el("div"), {realI18n: true});
+  const account = {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const withCodedFailure = {
+    schemaVersion: "runtime-state/v1", stateVersion: 1,
+    projects: [{id: "p_d", name: "项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [{id: "tg_d", projectId: "p_d", name: "任务组", status: "development", workItems: []}],
+    agentDispatches: [{dispatchId: "dsp_failed", taskGroupId: "tg_d", workItemId: "w_d", status: "failed",
+      failureReason: "git_command_failed:git push origin HEAD:refs/heads/main（退出码 128：fatal: 凭据被拒）"}],
+    workSessions: [], workerLanes: [], agentRuntimeNodes: [], qualityGates: [], testResults: [],
+    checkpoints: [], admissionDecisions: [], modelSelectionDecisions: [], sessionPlacementDecisions: [],
+    truncatedCollections: []
+  };
+  const rendered = probe.renderMonitorWith(withCodedFailure, account, "p_d").replace(/<!--[\s\S]*?-->/gu, "");
+  check("带细节的失败原因要翻成中文",
+    /git 命令失败/.test(rendered),
+    "失败原因是 code:detail 形态，词表按整串查命中不了 —— 屏幕上摆着一串英文键");
+  check("翻译之后细节不能丢",
+    /凭据被拒/.test(rendered),
+    "只显示了翻译过的前缀，git 自己说的原因没了 —— 而那才是唯一有用的部分");
+  check("认不出的前缀要原样显示，不能变成占位符",
+    (() => {
+      const unknown = structuredClone(withCodedFailure);
+      unknown.agentDispatches[0].failureReason = "some_brand_new_code:细节还在";
+      const html = probe.renderMonitorWith(unknown, account, "p_d");
+      return /some_brand_new_code/.test(html) && /细节还在/.test(html);
+    })(),
+    "词表里没有的前缀被吃掉了 —— 人连原始错误码都拿不到，没法搜也没法上报");
 }
 
 // 控制面挂掉时，这一屏此前只弹一次 toast：toast 消失之后，画面还挂着上一次成功时的数据，

@@ -5412,11 +5412,25 @@ function verifyEveryCloseGateHasHumanGuidance(output) {
     output.push(`这些 API 错误码在中文界面上会原样显示英文：${rawErrors.join("、")} —— `
       + "要么补中文，要么登记为纯机器面并写明读它的是谁");
   }
+  // core 抛出的错误码走的是另一条路：markDispatchFailed 把 error.message 原样写进派发的失败原因，
+  // 界面按 "code:detail" 拆开翻译前缀。所以它们同样是面向人的，同样要有中文。
+  const coreThrown = [...new Set([
+    ...[...coreSourceForCodes.matchAll(/throw new Error\("([a-z0-9_]+)"\)/gu)].map((match) => match[1]),
+    ...[...coreSourceForCodes.matchAll(/throw new Error\(`([a-z0-9_]+):/gu)].map((match) => match[1])
+  ])];
+  if (coreThrown.length < 15) {
+    output.push(`core 错误码中文覆盖自检：只提取到 ${coreThrown.length} 个 —— 提取逻辑与代码脱节，本条在空转`);
+  }
+  const rawCoreThrown = coreThrown.filter((code) => !localized(code));
+  if (rawCoreThrown.length) {
+    output.push(`这些 core 抛出的错误码会原样显示在派发失败原因里：${rawCoreThrown.join("、")} —— 补中文（界面会把冒号前那段翻出来）`);
+  }
   const goneErrors = Object.keys(MACHINE_FACING_ERRORS).filter((code) => !errorCodes.includes(code));
   if (goneErrors.length) {
     output.push(`MACHINE_FACING_ERRORS 里这些错误码服务端已经不返回了：${goneErrors.join("、")} —— 过时的例外会掩护掉下一个漏译`);
   }
-  console.log(`API 错误码中文覆盖：${errorCodes.length} 个里 ${errorCodes.length - Object.keys(MACHINE_FACING_ERRORS).length} 个面向人的都有中文；`
+  console.log(`API 错误码中文覆盖：${errorCodes.length} 个里 ${errorCodes.length - Object.keys(MACHINE_FACING_ERRORS).length} 个面向人的都有中文，`
+    + `另有 core 抛出的 ${coreThrown.length} 个（走派发失败原因那条路）也逐个核对过；`
     + `${Object.keys(MACHINE_FACING_ERRORS).length} 个登记为纯机器面（MCP 服务器与 agent 网关自身的报文不在此列，读者整体是程序）`);
 }
 
