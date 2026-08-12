@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node:os";
-import { dirname, extname, join, normalize, resolve } from "node:path";
+import { basename, dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertStateStoreConfig, ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
 import { appendProjectExecutionEvent, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
@@ -2331,6 +2331,17 @@ async function handleApi(req, res) {
   if (req.method === "GET" && ["/api/health", "/api/runtime/health"].includes(url.pathname)) {
     // 存储坏过一次就不能再报 ok：分片损坏时服务照常起、这里照常 200，监控绿着而读数据全 503。
     // healthy 的定义得包含"状态读得出来"。
+    // 运行目录被清掉（有人清 /tmp、挂载掉了）时，存储层会【静默重建一份空状态】：登录全失败、
+    // 数据全没了，而这里照样 200。只查"文件在不在"没用 —— 请求管线里的 ensureState 已经把它
+    // 重建出来了。按 inode 认：重建出来的是另一个文件，认得出来。
+    if (!lastStorageFault && stateStoreKind() === "runtime_json" && runtimeDirIdentity) {
+      let nowIdentity = null;
+      try { const stat = statSync(runtimeDir); nowIdentity = `${stat.dev}:${stat.ino}`; } catch { nowIdentity = null; }
+      if (nowIdentity !== runtimeDirIdentity) {
+        lastStorageFault = {kind: nowIdentity ? "runtime_dir_replaced" : "runtime_dir_missing",
+          file: basename(statePath), at: now()};
+      }
+    }
     if (lastStorageFault) {
       json(res, 503, {status: "degraded", storageFault: lastStorageFault,
         hint: "状态文件读不出来：按 file 指出的那一份恢复或从备份还原，恢复后本接口自动转回 ok"});
@@ -5613,6 +5624,12 @@ server.requestTimeout = Math.max(server.headersTimeout, Number(process.env.AIMAC
 
 assertRuntimeSecurity();
 ensureState();
+// 运行目录的身份（设备+inode）在启动时记一次：目录被清掉又重建时它会变。
+// 不能记【状态文件】的 inode —— 原子写每次 rename 都会换掉那个文件的 inode，
+// 那样第一次写入之后系统就会被判成 degraded（实测把 agent e2e 打挂了）。
+let runtimeDirIdentity = null;
+try { const stat = statSync(runtimeDir); runtimeDirIdentity = `${stat.dev}:${stat.ino}`; } catch { runtimeDirIdentity = null; }
+
 // 存储配置在【监听之前】就要认账：认不出的名字、或 postgresql 少了 DATABASE_URL，
 // 此前都会静默退回本地 runtime_json —— 服务照常起、健康检查照常 ok，而它接的是另一个存储。
 try {
@@ -5621,6 +5638,22 @@ try {
   console.error(`[state-store] ${error.message}`);
   process.exit(1);
 }
+
+// 端口被占是重启时最常见的失误（旧进程还没退就起了新的），而 Node 默认吐的是一段
+// "Unhandled 'error' event" 崩溃栈，一句人话都没有。这里按 errno 说清楚，并保持退出码 1。
+server.on("error", (error) => {
+  if (error?.code === "EADDRINUSE") {
+    console.error(`[startup] ${host}:${port} 已经被占用 —— 多半是上一个实例还没退（用 lsof -i :${port} 看是谁），`
+      + "或者改用 AIMAC_PORT 换一个端口");
+  } else if (error?.code === "EACCES") {
+    console.error(`[startup] 没有权限监听 ${host}:${port} —— 1024 以下的端口需要特权，换一个高位端口或授权`);
+  } else if (error?.code === "EADDRNOTAVAIL") {
+    console.error(`[startup] 这台机器上没有 ${host} 这个地址 —— 检查 AIMAC_HOST（想对外监听用 0.0.0.0）`);
+  } else {
+    console.error(`[startup] 监听 ${host}:${port} 失败：${error?.code || ""} ${error?.message || error}`);
+  }
+  process.exit(1);
+});
 
 server.listen(port, host, () => {
   console.log(`AI Multi-Agent Ctrl console: http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`);

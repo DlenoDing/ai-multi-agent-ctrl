@@ -528,6 +528,16 @@ const MUTATIONS = [
     expect: "被默默接受了"
   },
   {
+    // 运行目录被清掉时，存储层会静默重建一份空状态：登录全失败、数据全没了，而健康检查照样 200。
+    // 只查"文件在不在"没用（请求管线里的 ensureState 已经把它重建出来了），所以按 inode 认。
+    name: "运行目录被清掉之后健康检查必须转 degraded",
+    file: SERVER,
+    gate: "crash",
+    from: '    if (!lastStorageFault && stateStoreKind() === "runtime_json" && runtimeDirIdentity) {',
+    to: "    if (false) {",
+    expect: "健康检查转成 degraded"
+  },
+  {
     // 状态文件损坏时若原样抛 SyntaxError：中央文件坏了只看到 "Unterminated string in JSON at
     // position 31584"，分片坏了更糟 —— 服务照常起、健康检查一路 200，监控绿着而读数据全挂。
     name: "状态文件损坏要说清是哪一份，并把健康检查压成 degraded",

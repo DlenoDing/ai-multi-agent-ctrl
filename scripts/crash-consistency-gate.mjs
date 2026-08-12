@@ -3,7 +3,7 @@
 import {spawn, spawnSync} from "node:child_process";
 import {createServer} from "node:net";
 import {once} from "node:events";
-import {chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync} from "node:fs";
+import {chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, readdirSync} from "node:fs";
 import {join} from "node:path";
 import {hostname, tmpdir} from "node:os";
 
@@ -164,6 +164,45 @@ try { parsed = JSON.parse(readFileSync(statePath, "utf8")); } catch (error) { pa
   } finally {
     try { chmodSync(roDir, 0o700); } catch { /* 尽力而为 */ }
     roChild.kill("SIGKILL");
+  }
+}
+
+// 运行目录在跑着的时候被清掉（有人清 /tmp、挂载掉了）：存储层会静默重建一份空状态 ——
+// 登录全失败、数据全没了，而 /api/health 照样 200。只查"文件在不在"是没用的：请求管线里的
+// ensureState 已经把它重建出来了。按 inode 认：重建出来的是另一个文件。
+{
+  const wipeDir = mkdtempSync(join(tmpdir(), "aimac-crash-wipe-"));
+  spawnSync(process.execPath, ["scripts/init-control-plane.mjs"], {cwd: root, encoding: "utf8",
+    env: {...process.env, AIMAC_RUNTIME_DIR: wipeDir, AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: "",
+      AIMAC_BOOTSTRAP_TOKEN: "crash-wipe-token-0123456789ab"}});
+  const wipePort = await freePort();
+  const wipeChild = trackChild(spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
+    cwd: root,
+    env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(wipePort), AIMAC_RUNTIME_DIR: wipeDir,
+      AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: ""},
+    stdio: ["ignore", "pipe", "pipe"]
+  }));
+  const wipeBase = `http://127.0.0.1:${wipePort}`;
+  try {
+    const readyBy = Date.now() + 20000;
+    let healthy = false;
+    while (Date.now() < readyBy) {
+      try { if ((await fetch(`${wipeBase}/api/health`)).ok) { healthy = true; break; } } catch { /* 等它起来 */ }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    check(healthy, "清目录之前健康检查是 ok（否则下面那条无从对比）", String(healthy));
+    rmSync(wipeDir, {recursive: true, force: true});
+    // 触发一次请求，让存储层把空状态重建出来（真实场景里下一个请求就会这么做）
+    await fetch(`${wipeBase}/api/state?view=tasks&limit=5`).catch(() => null);
+    const after = await fetch(`${wipeBase}/api/health`);
+    const payload = await after.json().catch(() => ({}));
+    check(after.status === 503 && payload.status === "degraded",
+      "运行目录被清掉之后健康检查转成 degraded（不能一边失忆一边报 ok）",
+      `HTTP ${after.status} ${JSON.stringify(payload).slice(0, 80)}`);
+    check(["runtime_dir_missing", "runtime_dir_replaced"].includes(payload.storageFault?.kind),
+      "说得出是运行目录没了/被换了", JSON.stringify(payload.storageFault || null));
+  } finally {
+    wipeChild.kill("SIGKILL");
   }
 }
 
