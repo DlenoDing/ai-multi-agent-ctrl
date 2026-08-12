@@ -2,7 +2,7 @@
 // 实测背景：空转一拍会重写一堆派生记录并全量落盘，2000 单元时一拍卡死整个服务 2.3 秒，
 // 而且每分钟作废一次所有客户端的 ETag，让每个控制台重新拉视图、重建 DOM。
 // 这道门用真实服务端验三件事：空转会收敛到不落盘；空转期间系统仍自报"还活着"；有真活时照样推进。
-import {spawn} from "node:child_process";
+import {spawn, spawnSync} from "node:child_process";
 import {createServer} from "node:net";
 import {once} from "node:events";
 import {mkdtempSync} from "node:fs";
@@ -11,6 +11,51 @@ import {fileURLToPath} from "node:url";
 import {tmpdir} from "node:os";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+// ── 新部署的第一条路径：npm run init 打印账号与令牌 → npm start → 照着它登录 ──────────
+// 这条路此前没有任何门走过，而它一旦断了，人连门都进不去（README 的前两条命令就是它）。
+// 必须走【真实启动路径】：npm start 经 run-with-env.mjs 加载 init 写下的运行配置；
+// 直接起 server.mjs 会绕过那一层，测的就是另一件事。
+async function verifyFirstRunPath() {
+  const firstRunDir = mkdtempSync(join(tmpdir(), "aimac-first-run-"));
+  const initEnv = {...process.env, AIMAC_RUNTIME_DIR: firstRunDir, AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: ""};
+  const init = spawnSync(process.execPath, ["scripts/init-control-plane.mjs"], {cwd: root, env: initEnv, encoding: "utf8"});
+  check(init.status === 0, "npm run init 能跑通（新部署的第一条命令）",
+    init.status === 0 ? "ok" : String(init.stderr || init.stdout).slice(0, 160));
+  if (init.status !== 0) return;
+  const email = (init.stdout.match(/system admin login:\s*(\S+)/u) || [])[1];
+  const bootstrapToken = (init.stdout.match(/local bootstrap token:\s*(\S+)/u) || [])[1];
+  check(Boolean(email && bootstrapToken), "init 会把登录账号与令牌一起打印出来",
+    `账号 ${email || "（没打印）"}｜令牌 ${bootstrapToken ? "已打印" : "（没打印）"}`);
+  if (!email || !bootstrapToken) return;
+
+  const firstRunPort = await freePort();
+  const firstRunChild = spawn(process.execPath, ["scripts/run-with-env.mjs", "apps/control-plane-ui/server.mjs"], {
+    cwd: root,
+    env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(firstRunPort), AIMAC_RUNTIME_DIR: firstRunDir,
+      AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: "",
+      AIMAC_BOOTSTRAP_TOKEN: undefined, AIMAC_MCP_SERVICE_TOKEN: undefined},
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const firstRunBase = `http://127.0.0.1:${firstRunPort}`;
+  const upDeadline = Date.now() + 30000;
+  let up = false;
+  while (Date.now() < upDeadline) {
+    try { if ((await fetch(`${firstRunBase}/api/health`)).ok) { up = true; break; } } catch { /* 还没起来 */ }
+    if (firstRunChild.exitCode !== null) break;
+    await new Promise((resolve2) => setTimeout(resolve2, 150));
+  }
+  check(up, "init 之后 npm start 能直接起来（不必再手工设环境变量）",
+    up ? "ok" : "服务没起来 —— 人照着 README 的前两条命令做就卡在这里");
+  if (up) {
+    const login = await (await fetch(`${firstRunBase}/api/auth/login`, {method: "POST",
+      headers: {"content-type": "application/json"}, body: JSON.stringify({email, token: bootstrapToken})})).json();
+    check(Boolean(login.sessionToken), "照 init 打印的账号与令牌能登进去",
+      login.sessionToken ? "ok" : JSON.stringify(login).slice(0, 160));
+  }
+  firstRunChild.kill("SIGTERM");
+  await Promise.race([once(firstRunChild, "exit"), new Promise((resolve2) => setTimeout(resolve2, 3000))]);
+}
 const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-idle-"));
 const fails = [];
 const check = (ok, label, detail = "") => {
@@ -27,6 +72,8 @@ const freePort = async () => {
   await once(listener, "close");
   return port;
 };
+
+await verifyFirstRunPath();
 
 const tickMs = 3000;
 const port = await freePort();
