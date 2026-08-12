@@ -2088,7 +2088,18 @@ function renderOrgProjects() {
 
 function renderProjectOverview() {
   const project = currentProject();
-  if (!project) return panel("项目概览", `<div class="notice">当前账号暂无可见项目，请联系组织管理员分配。</div>`, {wide: true});
+  if (!project) {
+    // 空态要按【这个人能做什么】说话。原先一律是"请联系组织管理员分配" —— 而系统管理员
+    // 正是那个该去建项目的人，组织管理员也是；把他们支去找别人，是新部署第一步就撞上的死胡同。
+    // （实测：全新部署、以系统管理员登录、打开项目概览，看到的就是这句。）
+    const perspective = perspectiveOf(currentAccount);
+    const next = perspective === "system"
+      ? "到「账号与授权」页用「创建项目（系统级）」新建一个，或把已有项目授权给某个账号。"
+      : perspective === "org"
+        ? "到「项目管理」页创建项目，或把已有项目授权给成员。"
+        : "请联系组织管理员为你分配项目。";
+    return panel("项目概览", `<div class="notice">当前账号暂无可见项目。${esc(next)}</div>`, {wide: true});
+  }
   const groups = projectTaskGroups();
   const openGroups = groups.filter((taskGroup) => !["closed", "aborted"].includes(taskGroup.status));
   const blockers = groups.flatMap((taskGroup) => taskGroup.blockers || []);

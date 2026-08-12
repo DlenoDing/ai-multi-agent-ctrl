@@ -160,7 +160,7 @@ globalThis.__probe = {
     if (saved) { saved.at = Date.now() - ms; sessionStorage.setItem("aimac.expiredDraft", JSON.stringify(saved)); }
   },
   restoreDraft: () => { const ok = restoreDraftAfterRelogin(); return {ok, page, projectId: currentProjectId, pending: pendingFormRestore}; },
-  renderFullPageWith: (nextState, account, projectId, pageId) => { state = nextState; currentAccount = account; currentProjectId = projectId; page = pageId; render(); },
+  renderFullPageWith: (nextState, account, projectId, pageId) => { state = nextState; currentAccount = account; currentProjectId = projectId; page = pageId; authToken = authToken || "probe-token"; render(); },
   renderTaskGroupsWith: (nextState, account, projectId, detailId, detail) => { state = nextState; currentAccount = account; currentProjectId = projectId; expandedTaskGroupId = detailId; if (detail !== undefined) tgDetail = detail; return renderTaskGroups(); },
   selectProjectWith: (nextState, account, projectId) => {
     state = nextState; currentAccount = account; currentProjectId = projectId;
@@ -221,6 +221,39 @@ function check(name, condition, detail) {
 
 // 场景：人在「打回并要求重做」表单里写了一大段理由，提交时撞上 expectedRound 409
 // （并发下的正常回答，不是故障）。整页重渲染之后，那段理由必须还在。
+
+// 全新部署的第一步：以系统管理员登录、打开项目概览，此时一个项目都没有。
+// 空态原先一律说"请联系组织管理员分配" —— 而系统管理员和组织管理员正是能建项目的人，
+// 把他们支去找别人是个死胡同，且出现在人第一次用这套系统的那一刻。
+// 空态必须按【这个人能做什么】说话，所以三种视角逐一验，不是验"有没有提示"。
+{
+  const emptyRoot = el("div");
+  const emptyProbe = loadConsole(emptyRoot);
+  const emptyState = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    projects: [], taskGroups: [], agentRuntimeNodes: [], agents: [], agentDispatches: [],
+    workSessions: [], closeBarriers: [], qualityGates: [], findings: [], humanConfirmationRequests: [],
+    humanDirectives: [], truncatedCollections: [], fleet: {online: 0, total: 0}};
+  const renderFor = (accountType) => {
+    emptyProbe.renderFullPageWith(emptyState,
+      {accountId: "u1", email: "a@b.c", accountType, displayName: "某人", organizationId: "org_default"},
+      "", "proj-overview");
+    return String(emptyRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+  };
+  const asSystem = renderFor("system_admin");
+  check("全新部署时，系统管理员看到的是他自己能做的下一步（而不是去找别人）",
+    /创建项目（系统级）/.test(asSystem) && !/请联系组织管理员/.test(asSystem),
+    `系统管理员看到：${(asSystem.match(/当前账号暂无可见项目。[^ ]*/u) || ["（没有空态提示）"])[0]}`);
+  const asOrgAdmin = renderFor("org_admin");
+  check("组织管理员看到的是「项目管理」页，而不是去找组织管理员（他自己就是）",
+    /项目管理/.test(asOrgAdmin) && !/请联系组织管理员/.test(asOrgAdmin),
+    `组织管理员看到：${(asOrgAdmin.match(/当前账号暂无可见项目。[^ ]*/u) || ["（没有空态提示）"])[0]}`);
+  const asMember = renderFor("user_account");
+  check("普通成员确实该被告知去找组织管理员（这条保留，证明上面两条不是把提示删了了事）",
+    /请联系组织管理员/.test(asMember),
+    `普通成员看到：${(asMember.match(/当前账号暂无可见项目。[^ ]*/u) || ["（没有空态提示）"])[0]}`);
+}
+
 function runFormRestoreCase() {
   const justification = "这个方案把订单状态机换成了事件溯源，属于架构层面的选择，必须先由架构组定稿再开工。";
   const buildForm = () => el("form", {dataset: {form: "human-confirmation", request: "hcr-1", round: "2"}}, [
