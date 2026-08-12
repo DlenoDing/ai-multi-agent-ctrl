@@ -1427,10 +1427,14 @@ await runErrorGuidanceCase();
   const setAt = serverSource.indexOf("const LEDGER_COLLECTIONS = new Set([");
   const setBlock = setAt < 0 ? "" : serverSource.slice(setAt, serverSource.indexOf("]);", setAt));
   const ledgers = [...setBlock.matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"/gu)].map((match) => match[1]);
-  const limitMatch = serverSource.match(/const ledgerLimit = Math\.min\(capped, (\d+)\)/u);
+  // 取【默认值】，不锁死写法：这一处从 Math.min(capped, 60) 改成可配（环境变量 || 60）之后，
+  // 只认字面量的提取会拿到 0，于是"界面渲染 20 行 > 服务端给 0 条"整片误报 ——
+  // 判据锁写法就会挡住正确的改进（本会话第三次撞见）。
+  const limitMatch = serverSource.match(/const ledgerLimit = Math\.min\(capped,[\s\S]{0,120}?(\d+)\)/u);
   const ledgerLimit = limitMatch ? Number(limitMatch[1]) : 0;
-  if (!ledgers.length || !ledgerLimit) {
-    failures.push("账本限流: 解析不到 LEDGER_COLLECTIONS 或 ledgerLimit —— 提取逻辑与代码脱节，本条在空转");
+  if (!ledgers.length || !ledgerLimit || ledgerLimit < 5) {
+    failures.push(`账本限流: 解析到集合 ${ledgers.length} 个、上限 ${ledgerLimit} —— 提取逻辑与代码脱节；`
+      + "上限解析成 0 或极小值时，下面每条渲染上限都会被误判成超额");
   }
   for (const collection of ledgers) {
     for (const use of appSource.matchAll(new RegExp(`state\\.${collection}\\b`, "gu"))) {

@@ -1415,7 +1415,9 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
   // 监控页一次轮询 1.1MB，绝大多数记录从没被显示过。给它们单独设一个更小的上限；
   // 任务组这类"人要逐条扫"的集合不动（那会让大项目的列表少列条目）。
   // 截断仍会被如实标记（界面显示"共 N+ 条"），所以少取不等于少说。
-  const ledgerLimit = Math.min(capped, 60);
+  // 上限做成可配：默认 60（每张账本表最多渲染 20 行，3 倍余量），
+  // 而门要能把它调小才验得动"截断仍会被如实标记"—— 造 60 条账本记录只为验一个标记，代价不合理。
+  const ledgerLimit = Math.min(capped, Math.max(1, Number(process.env.AIMAC_VIEW_LEDGER_LIMIT || 60)));
   const LEDGER_COLLECTIONS = new Set(["modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions",
     "agentExecutionEvents", "agentControlCommands", "workerLanes", "transitionEvidence"]);
   const limitFor = (field) => (LEDGER_COLLECTIONS.has(field) ? ledgerLimit : capped);

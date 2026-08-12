@@ -75,12 +75,20 @@ const freePort = async () => {
 
 await verifyFirstRunPath();
 
+// 账本上限调小到这个值，验"截断仍会被如实标记"才不用真造 60 条记录。
+// 断言的触发条件要用【同一个值】：服务端若不认这个环境变量（知识退化成写死 60），
+// 记录数就压不到上限，这时该说"这一轮没验到"，而不是报"截断标记 无" ——
+// 后者看起来像标记坏了，会把人引到错误的方向去查。
+const gateLedgerLimit = 2;
+
 const tickMs = 3000;
 const port = await freePort();
 const child = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {cwd: root,
   env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(port), AIMAC_RUNTIME_DIR: runtimeDir,
     AIMAC_ORCHESTRATOR_INTERVAL_MS: String(tickMs), AIMAC_STATE_STORE: "runtime_json",
-    AIMAC_BOOTSTRAP_TOKEN: "idle-tick-gate-token-0123456789", DATABASE_URL: ""},
+    AIMAC_BOOTSTRAP_TOKEN: "idle-tick-gate-token-0123456789", DATABASE_URL: "",
+    // 把账本上限调到 2：验"截断仍会被如实标记"不需要真造 60 条记录。
+    AIMAC_VIEW_LEDGER_LIMIT: String(gateLedgerLimit)},
   stdio: ["ignore", "pipe", "pipe"]});
 const base = `http://127.0.0.1:${port}`;
 const bootDeadline = Date.now() + 30000;
@@ -193,6 +201,27 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
   check(ownComplete === 12 && !markedTruncated,
     "按项目取全时不得再标成截断（否则界面把'就这么多'说成'还有更多'）",
     `取到本项目 ${ownComplete} 个任务组（共 12 个）｜截断标记 ${markedTruncated ? "有" : "无"}`);
+
+  // 两处改动的交叉点：按项目过滤 + 账本类集合的更小上限。
+  // 本项目自己的账本超过那个上限时，截断标记必须仍然为真 —— 否则界面会把 60 条说成全部，
+  // 而这正是"少取"这个优化最容易踩的坑：省了载荷，却顺手把报数变成了谎话。
+  {
+    const ledger = await (await fetch(`${base}/api/state?view=runtime&limit=200&projectId=${encodeURIComponent(quietId)}`,
+      {headers: auth})).json();
+    // 挑一个这一轮真的有记录的账本集合来验（哪个有取决于编排跑了什么，不写死）。
+    const ledgerNames = ["admissionDecisions", "modelSelectionDecisions", "sessionPlacementDecisions",
+      "workerLanes", "agentExecutionEvents", "agentControlCommands", "transitionEvidence"];
+    const picked = ledgerNames.find((name) => (ledger[name] || []).length >= 2) || ledgerNames[0];
+    const shipped = (ledger[picked] || []).length;
+    const marked = (ledger.truncatedCollections || []).includes(picked);
+    if (shipped >= gateLedgerLimit && shipped === gateLedgerLimit) {
+      check(marked, "账本被账本上限截断时，仍要如实标记（界面才会显示'共 N+ 条'）",
+        `${picked} 下发 ${shipped} 条（上限 2），截断标记 ${marked ? "有" : "无"}`);
+    } else {
+      console.log(`  --  账本没有被压到上限（下发 ${shipped} 条，期望正好 ${gateLedgerLimit} 条）：`
+        + `要么这一轮账本记录不足，要么服务端不认 AIMAC_VIEW_LEDGER_LIMIT —— "截断仍要标记"这条未被检验`);
+    }
+  }
 
   check(others === 0, "带上 projectId 时不夹带别的项目的记录",
     `混进来 ${others} 个别的项目的任务组`);
