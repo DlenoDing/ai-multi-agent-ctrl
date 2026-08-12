@@ -1158,6 +1158,21 @@ function verifyHumanAndOrganizationContracts(output) {
     // AI 提的选项被隔离进 ai: 命名空间，控制面自己的语义选项（accept/reject）不会被顶掉。
     if (!(gate.options || []).some((o) => o.optionId === "ai:parallel")) output.push("人工闸门: AI 的候选未被隔离到 ai: 命名空间（AI 可占用语义选项 id）");
     if (!(gate.options || []).some((o) => o.optionId === "accept") || !(gate.options || []).some((o) => o.optionId === "reject")) output.push("人工闸门: 控制面自己的语义选项被 AI 顶掉了（人以为在打回，实际可能是通过）");
+    // 核心决策【必须】带轮次：不带就等于跳过 TOCTOU 那道防护 —— AI 在人点下去之前改了候选方案，
+    // 人签的就成了另一版。round_stale 那条只在带了轮次时才生效，所以"不带会被拒"这一支同样要验，
+    // 否则整道防护是可选的。
+    // 在【克隆】的状态上探：守卫一旦失效，这一探就会真的把单子定稿掉，后面合法的那次
+    // 会撞上 not_pending 直接抛出去 —— 门崩在自己的探针上，而不是报出那条断言。
+    // 断言不得成为破坏源（本仓记过这一条）。
+    let missingRoundError = "";
+    try {
+      decideHumanConfirmation(structuredClone(gateState), gate.requestId,
+        {action: "finalize", selectedOptionId: "ai:parallel"}, {actor: humanActor});
+    } catch (error) { missingRoundError = String(error?.message || error); }
+    if (missingRoundError !== "human_confirmation_expected_round_required") {
+      output.push(`核心决策不带 expectedRound 也能定稿（实得 ${missingRoundError || "已受理"}）`
+        + " —— 那道防 TOCTOU 的轮次校验就成了可选项，AI 在人点下去之前改掉候选也不会被发现");
+    }
     decideHumanConfirmation(gateState, gate.requestId, {action: "finalize", selectedOptionId: "ai:parallel", expectedRound: gate.round}, {actor: humanActor});
     const gatedItem = gateTg.workItems[0];
     if (gate.status !== "answered" || gatedItem.status !== "verified") output.push("人工闸门: 人明确定稿后工作项未进入 verified");

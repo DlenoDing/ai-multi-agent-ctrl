@@ -518,6 +518,16 @@ const MUTATIONS = [
     expect: "仍在每拍推进"
   },
   {
+    // 核心决策必须带轮次令牌：可选校验等于没校验。round_stale 那条只在带了轮次时才生效，
+    // 所以"不带会被拒"这一支同样要有反面用例，否则整道防 TOCTOU 是可绕过的。
+    name: "核心决策不带轮次令牌不得放行",
+    file: CORE,
+    check: "verifyHumanAndOrganizationContracts",
+    from: '  if (request.decisionClass === "major" && decision.expectedRound === undefined) {',
+    to: '  if (false && request.decisionClass === "major" && decision.expectedRound === undefined) {',
+    expect: "不带 expectedRound 也能定稿"
+  },
+  {
     // 树摘要标的是"这次提交到底改出了什么内容"。谎报能过的话，提交里的东西就与它自称的无关了。
     name: "提交的树摘要必须与真实提交对得上",
     file: CORE,
