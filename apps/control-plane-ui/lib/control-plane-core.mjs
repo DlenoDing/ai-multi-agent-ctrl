@@ -605,21 +605,38 @@ export function revokeAccountSessions(state, accountId, reason) {
 
 export function recomputeOrganizationUsage(state) {
   const projectOrg = new Map((state.projects || []).map((project) => [project.id, project.organizationId || DEFAULT_ORGANIZATION_ID]));
-  for (const org of state.organizations || []) {
-    org.usage = {
-      // 两处漏计：① 这是三行统计里唯一没有默认组织兜底的，于是不带 organizationId 的账号
-      //（历史上经 MCP 邀请创建的那批）不计入任何组织，maxMembers 形同虚设；
-      // ② 只排除 disabled，而 MCP 的 account_suspend 写的是 suspended —— 被挂起的账号继续占额，
-      //    若它还是 MCP 邀请出来的（够不着 /api/org/members/:id/status），就没有任何释放杠杆。
-      members: (state.accounts || []).filter((account) => (account.organizationId || DEFAULT_ORGANIZATION_ID) === org.orgId
-        && !["disabled", "suspended", "retired"].includes(account.status)).length,
-      // 原先排除的是 status !== "deleted" —— 那个状态既不在 Project 的模型里（active → archived），
-      // 全仓也没有任何代码写它，于是这条排除永远为真、项目配额只增不减。按建模的终态算。
-      projects: (state.projects || []).filter((project) => (project.organizationId || DEFAULT_ORGANIZATION_ID) === org.orgId && project.status !== "archived").length,
-      taskGroups: (state.taskGroups || []).filter((taskGroup) => projectOrg.get(taskGroup.projectId) === org.orgId && !["closed", "aborted"].includes(taskGroup.status)).length,
-      agents: (state.agentRuntimeNodes || []).filter((node) => (node.organizationId || DEFAULT_ORGANIZATION_ID) === org.orgId && node.status !== "revoked").length
-    };
+  // 每个组织各扫一遍四个集合＝组织数 × 对象数的平方项。organizationQuotaCheck 每次都调它，
+  // 而每建一个项目/任务组/成员/节点都要过配额：实测 200 个组织 / 1.6 万个对象时单次 25ms，
+  // 规模翻倍耗时翻四倍。改成按组织分桶的单趟统计，判据与下面注释记录的口径逐字不变。
+  const usage = new Map();
+  for (const org of state.organizations || []) usage.set(org.orgId, {members: 0, projects: 0, taskGroups: 0, agents: 0});
+  const bump = (orgId, key) => {
+    const row = usage.get(orgId);
+    if (row) row[key] += 1;
+  };
+  // 两处漏计：① 这是三行统计里唯一没有默认组织兜底的，于是不带 organizationId 的账号
+  //（历史上经 MCP 邀请创建的那批）不计入任何组织，maxMembers 形同虚设；
+  // ② 只排除 disabled，而 MCP 的 account_suspend 写的是 suspended —— 被挂起的账号继续占额，
+  //    若它还是 MCP 邀请出来的（够不着 /api/org/members/:id/status），就没有任何释放杠杆。
+  for (const account of state.accounts || []) {
+    if (["disabled", "suspended", "retired"].includes(account.status)) continue;
+    bump(account.organizationId || DEFAULT_ORGANIZATION_ID, "members");
   }
+  // 原先排除的是 status !== "deleted" —— 那个状态既不在 Project 的模型里（active → archived），
+  // 全仓也没有任何代码写它，于是这条排除永远为真、项目配额只增不减。按建模的终态算。
+  for (const project of state.projects || []) {
+    if (project.status === "archived") continue;
+    bump(project.organizationId || DEFAULT_ORGANIZATION_ID, "projects");
+  }
+  for (const taskGroup of state.taskGroups || []) {
+    if (["closed", "aborted"].includes(taskGroup.status)) continue;
+    bump(projectOrg.get(taskGroup.projectId), "taskGroups");
+  }
+  for (const node of state.agentRuntimeNodes || []) {
+    if (node.status === "revoked") continue;
+    bump(node.organizationId || DEFAULT_ORGANIZATION_ID, "agents");
+  }
+  for (const org of state.organizations || []) org.usage = usage.get(org.orgId);
 }
 
 export function organizationOf(state, orgId) {
