@@ -602,6 +602,9 @@
     "bootstrap": "初始化",
     "repository-router": "仓库路由",
     "skill-registry": "技能注册表",
+    // MCP 的 account_invite 写的就是这个角色（HTTP 那条路默认 member），而成员管理页按 t(role)
+    // 渲染角色列 —— 漏了它，经 MCP 邀请进来的成员在中文界面上顶着一个英文角色名。
+    project_member: "项目成员",
     reviewer: "评审员",
     qa: "质量保障",
     security: "安全",

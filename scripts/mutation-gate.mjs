@@ -507,6 +507,14 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "走接口取数的那几页也要在漏译扫描的覆盖里",
+    file: I18N,
+    gate: "console",
+    from: '    project_member: "项目成员",',
+    to: "",
+    expect: "「project_member」（出现在 有指令与授权(走接口)/org-members）"
+  },
+  {
     name: "定稿页的协商记录也要在漏译扫描的覆盖里",
     file: I18N,
     gate: "console",

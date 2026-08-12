@@ -169,6 +169,16 @@ globalThis.__probe = {
   },
   setProjConfigStatus: (status) => { projConfigStatus = status; projConfig = null; },
   setFetch: (fn) => { globalThis.fetch = fn; },
+  // 漏译扫描要覆盖【数据不在 state 里】的那几页（人工指令 / 成员 / 智能体 / 项目设置）：
+  // 它们各自另走接口取数，只喂 state 渲染出来的永远是空壳。走真实的 loadPage 让那些
+  // 模块级变量被填上，再渲染 —— 与其给探针加一堆 setter，不如让它跑真实加载路径。
+  loadPageWith: async (nextState, account, projectId, pageId, fetchStub) => {
+    state = nextState; currentAccount = account; currentProjectId = projectId; page = pageId;
+    authToken = "probe-token";
+    globalThis.fetch = fetchStub;
+    await loadPage();
+    return document.body.innerHTML;
+  },
   api: (path, options) => api(path, options)
 };
 `;
@@ -2149,6 +2159,76 @@ await runErrorGuidanceCase();
     scanned.push(...scanState(label, state, account, projectId, pages));
   }
   if (scanned.length < 14) failures.push(`漏译扫描: 只渲染了 ${scanned.length} 个页面 —— 本段在空转`);
+  // 上面那四页的数据各自另走接口取，喂 state 只会渲染空壳。这里走真实的 loadPage，
+  // 用一个按路径回真实形状的 fetch 桩把它们填上 —— 形状照抄自真实服务的返回。
+  {
+    const canned = {
+      "/api/task-groups/tg_runtime_management/human-directives": {humanDirectives: [
+        {directiveId: "hd_1", directiveType: "cancel", instruction: "这条不做了", status: "applied",
+          issuedBy: "acct_system_owner", appliedActions: [{action: "task_group_cancel", ref: "TaskGroup:tg_runtime_management"}],
+          createdAt: "2026-08-12T00:00:00.000Z"},
+        {directiveId: "hd_2", directiveType: "add_requirement", instruction: "接口都要有中文错误信息",
+          status: "rejected", rejectReason: "task_group_not_found", issuedBy: "acct_system_owner",
+          appliedActions: [], createdAt: "2026-08-12T00:00:00.000Z"}]},
+      "/api/org/members": {members: [{accountId: "acct_m1", accountType: "user_account", displayName: "成员甲",
+        email: "m1@local", status: "invited", roles: ["project_member"], permissions: ["project:view"],
+        authPolicy: {method: "invite_token", mfaRequired: false, passwordSet: false}}]},
+      "/api/org/agents": {agentRuntimeNodes: [{nodeId: "node_1", nodeName: "节点甲", status: "online", admission: "full",
+        health: "ok", allowedRoles: ["*"], projectIds: ["prj_control_plane"], display: {region: null, dataRoot: null}}]},
+      "/api/org/projects": {projects: []},
+      "/api/orgs": {organizations: []},
+      "/api/system/overview": {server: {}, runtime: {}},
+      "/api/projects/prj_control_plane/config": {config: {
+        repositories: [{repositoryId: "repo_main", url: "https://example.invalid/repo.git", defaultBranch: "main",
+          credentialRef: "env:GIT_TOKEN"}],
+        baselineData: [{name: "订单基线", locator: "git:baseline/orders.json"}],
+        businessRules: [{ruleId: "br_1", title: "对外接口必须有中文错误信息", content: "…", status: "active"}],
+        systemRules: [], defaultRoles: ["implementer"]}, configVersion: 3}
+    };
+    const [, scanStateForFetch] = i18nScanStates.at(-1);
+    const fetchStub = async (url) => {
+      const path = String(url).replace(/^https?:\/\/[^/]+/u, "").split("?")[0];
+      // loadPage 自己会去拉 /api/state：不把登记的那份状态回给它，state 会被空对象冲掉，
+      // 页面于是渲染成"当前项目暂无任务组"，而扫描看起来"跑过了"。
+      const body = path === "/api/state" ? scanStateForFetch : (canned[path] ?? {});
+      return {ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+        json: async () => body, text: async () => JSON.stringify(body)};
+    };
+    // org-* 那两页只在【组织管理员】视角下存在：用系统管理员去渲染会被切回系统概览，
+    // 页数照涨而那两页的枚举一个都没过 —— 这正是"跑过了"最容易骗人的形态。
+    const orgAdmin = {accountId: "acct_org_admin", accountType: "org_admin", displayName: "组织管理员",
+      organizationId: "org_default"};
+    const [label, state, account, projectId] = i18nScanStates.at(-1);
+    const fetchDriven = [["directives", account], ["org-members", orgAdmin], ["org-agents", orgAdmin],
+      ["proj-settings", account]];
+    for (const [page, pageAccount] of fetchDriven) {
+      const context = vm.createContext(makeContext(el("div")));
+      context.window = {scrollTo: () => {}, addEventListener: () => {}, removeEventListener: () => {}};
+      context.scrollTo = () => {};
+      vm.runInContext(i18nSource, context, {filename: "i18n-zh.js"});
+      // 变量名与上面那段不同是有意的：变异门要求锚点在文件里唯一，
+      // 同名会让"加载不到真 i18n 就报空转"那条变异认不出该改哪一处。
+      const pageI18n = context.window.AIMAC_I18N;
+      if (!pageI18n || typeof pageI18n.t !== "function") throw new Error("漏译扫描（走接口那几页）: 没能加载真的 i18n —— 本段在空转");
+      context.t = pageI18n.t;
+      let touched = 0;
+      const inner = pageI18n.t;
+      context.window.AIMAC_I18N.t = (value) => { touched += 1; return inner(value); };
+      context.console = {log: () => {}, error: () => {}, warn: (message) => {
+        const hit = /未映射的枚举值：(.+)$/u.exec(String(message));
+        if (!hit || looksGenerated(hit[1])) return;
+        if (!misses.has(hit[1])) misses.set(hit[1], new Set());
+        misses.get(hit[1]).add(`${label}(走接口)/${page}`);
+      }};
+      vm.runInContext(appSource + PROBE_EPILOGUE, context, {filename: "app.js"});
+      try { await context.__probe.loadPageWith(state, pageAccount, projectId, page, fetchStub); }
+      catch (error) { failures.push(`漏译扫描: ${page} 走 loadPage 抛错（${String(error?.message || error).slice(0, 100)}）—— 这一页没被检验`); }
+      scanned.push(`${label}(走接口)/${page}`);
+      pageTouchCounts.set(page, Math.max(pageTouchCounts.get(page) || 0, touched));
+    }
+  }
+  // 判定必须在【全部扫描做完之后】：这一段起初写在走接口那四页之前，于是它们发现的漏译
+  // 只进了计数、没进 failures —— 门报"未命中 1 个"却退出码 0。
   for (const [value, where] of misses) {
     failures.push(`漏译扫描: 中文界面上会显示英文枚举「${value}」（出现在 ${[...where].slice(0, 3).join("、")}）`
       + " —— 给它补中文，或者别把这个值直接交给 t()");
@@ -2156,8 +2236,8 @@ await runErrorGuidanceCase();
   const shellOnly = [...pageTouchCounts].filter(([, count]) => count <= Math.min(...pageTouchCounts.values()));
   console.log(`漏译扫描：用真的 t 渲染了 ${scanned.length} 个页面，未命中 ${misses.size} 个`
     + `；另有 ${shellOnly.length} 页只渲染了空壳（${shellOnly.map(([page]) => page).join("、")}）——`
-    + "它们的数据不在 state 里，而是各自另走接口取（directiveList / orgMembers / /api/org/agents / projConfig），"
-    + "喂不进这道扫描。这几页的枚举值【本轮没有被检验】，别把上面那个页数读成全覆盖。");
+    + "它整页几乎不经 t()（标签写死在模板里），枚举面本来就小 —— 这不是覆盖缺口。"
+    + "数据不在 state 里的那几页（人工指令 / 成员 / 智能体）已改为走真实 loadPage + 接口桩来覆盖。");
 }
 
 if (failures.length) {
