@@ -148,6 +148,7 @@
     join_token_project_not_found: "入网令牌指向的项目不存在",
     checkpoint_claim_epoch_stale: "这份检查点来自该派发的上一次认领，当前持有者已换代 —— 它的提交属于上一次尝试，不能算作本轮成果",
     checkpoint_claim_epoch_required: "该派发被重新认领过，提交检查点必须带上持有的认领代次；若该节点的 agent 运行时早于 0.3.0（不发送代次），需重新执行入网安装命令升级",
+    dispatch_fail_claim_epoch_required: "该派发被重新认领过，上报失败/阻塞必须带上持有的认领代次；若该节点的 agent 运行时早于 0.3.0（不发送代次），需重新执行入网安装命令升级",
     test_result_status_required: "提交测试结果必须显式给出状态（通过/失败/跳过/错误）—— 缺省不会被当作通过",
     approval_decision_required: "处理审批必须显式给出结论（批准/拒绝/取消）—— 缺省不会被当作批准",
     dispatch_fail_claim_epoch_stale: "这条失败上报来自该派发的上一次认领，当前持有者已换代 —— 不能用它把正在跑的这一轮标记为失败或阻塞",
