@@ -97,6 +97,7 @@ export function checkHumanOnlyParity() {
   // 而它直接创建账号且不拒绝机器主体。所以再加一条不依赖实现的判据：
   // MCP 工具名的后半段若正好是某个真人专属动作，这个 case 同样必须拒绝机器主体。
   let nameChecked = 0;
+  const nameCoveredActions = new Set();
   for (const [index, mark] of marks.entries()) {
     // 后缀也算：human_confirmation_decide 对应的工具叫 confirmation_decide，
     // 严格同名就接不上。放宽成"动作名等于工具后半段，或以 _后半段 结尾"。
@@ -105,6 +106,7 @@ export function checkHumanOnlyParity() {
     if (!matched.length) continue;
     const action = matched.join("/");
     nameChecked += 1;
+    for (const name of matched) nameCoveredActions.add(name);
     const body = mcp.slice(mark.index, index + 1 < marks.length ? marks[index + 1].index : mark.index + 2000);
     // 两种合格写法：
     // （甲）白名单——"不是真人会话就拒"。更强：以后新增任何机器主体，默认就被挡住。
@@ -153,8 +155,15 @@ export function checkHumanOnlyParity() {
   }
   // 一并交出覆盖面。数组仍是主返回值（调用方按 .failures 取），覆盖数字用于收尾打印：
   // 覆盖悄悄缩水与"全都查过了"在输出上长得一模一样，而本会话有三次是靠这种数字先看出问题的。
+  // 两条路都够不到的动作要【点名】：REST 路由里就地改状态、不调 fn(state, ...) 的那些进不了
+  // 函数映射（project_archive 就是这样），而只要 MCP 侧没有同名工具，按名字那条路也接不上。
+  // 于是它们既不在按函数核对里、也不在按名字核对里 —— "没查到问题"与"根本没查"在输出上一样。
+  // 这不判失败（多数动作本就没有 MCP 对应物），但必须说出来，否则覆盖缩水没人看得见。
+  const functionCoveredActions = new Set([...humanOnlyFunctions.values()].flatMap((value) => String(value).split("/")));
+  const uncoveredActions = [...humanOnlyActions]
+    .filter((action) => !functionCoveredActions.has(action) && !nameCoveredActions.has(action));
   failures.coverage = {actions: humanOnlyActions.size, functions: humanOnlyFunctions.size,
-    dispatchPoints: marks.length, byFunction: checked, byName: nameChecked};
+    dispatchPoints: marks.length, byFunction: checked, byName: nameChecked, uncovered: uncoveredActions};
   return failures;
 }
 
@@ -173,5 +182,7 @@ if (fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(process.
   const coverage = failures.coverage || {};
   console.log(`human-only parity gate ok: ${coverage.actions} 个真人专属动作、`
     + `${coverage.functions} 个核心函数、${coverage.dispatchPoints} 个 MCP 分发点；`
-    + `按函数核对 ${coverage.byFunction} 处、按动作名核对 ${coverage.byName} 处，均在决策点只放行真人会话`);
+    + `按函数核对 ${coverage.byFunction} 处、按动作名核对 ${coverage.byName} 处，均在决策点只放行真人会话；`
+    + `另有 ${(coverage.uncovered || []).length} 个动作两条路都够不到（${(coverage.uncovered || []).join("、") || "无"}）——`
+    + "它们在 REST 路由里就地改状态、也没有同名 MCP 工具，本门对它们【没有检验】");
 }

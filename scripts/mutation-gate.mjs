@@ -507,6 +507,32 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    // 这道门此前只有一条登记变异（MCP 定稿白名单），其余四条失败路径从没被人看着红过。
+    // 下面三条分别钉住：REST 侧守卫失踪、按函数比对的越权检测、以及提取失效必须报空转。
+    name: "真人专属动作在 REST 侧失踪要被发现",
+    file: SERVER,
+    gate: "parity",
+    from: 'beginGuardedWrite(req, state, "project_archive"',
+    to: 'beginGuardedWrite(req, state, "project_archive_x"',
+    expect: "在 REST 侧找不到对应的守卫调用"
+  },
+  {
+    name: "MCP 工具通向真人专属核心函数要被发现",
+    file: MCP,
+    gate: "parity",
+    from: '    case "model-mcp.model_capabilities":\n      return {modelCapabilities: state.modelCapabilities};',
+    to: '    case "model-mcp.model_capabilities":\n      if (args.__probe) return contractPublish(state, args);\n      return {modelCapabilities: state.modelCapabilities};',
+    expect: "通向 contractPublish"
+  },
+  {
+    name: "真人专属对等门：REST 侧提取失效必须报空转",
+    file: "scripts/human-only-parity-gate.mjs",
+    gate: "parity",
+    from: "const CORE_CALL = /\\b([a-z][A-Za-z0-9]{3,})\\(\\s*state\\s*[,)]/g;",
+    to: "const CORE_CALL = /\\b(zzz[a-z]+)\\(\\s*state\\s*[,)]/g;",
+    expect: "提取逻辑已与代码脱节"
+  },
+  {
     name: "走接口取数的那几页也要在漏译扫描的覆盖里",
     file: I18N,
     gate: "console",
