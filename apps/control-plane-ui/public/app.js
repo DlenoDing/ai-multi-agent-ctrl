@@ -726,12 +726,19 @@ async function api(path, options = {}) {
 const stateEtags = new Map();
 const stateCache = new Map();
 
+// 项目视角的页面要带上当前项目：服务端据此在【截断之前】过滤，
+// 既把载荷压回这个项目的规模，也避免"别的项目更新的记录把窗口占满、本项目的表是空的"。
+const PROJECT_SCOPED_VIEWS = new Set(["tasks", "runtime"]);
+
 async function fetchState(view) {
-  const path = `/api/state?view=${encodeURIComponent(view)}&limit=200`;
+  const scopeProjectId = PROJECT_SCOPED_VIEWS.has(view) && currentProjectId ? currentProjectId : "";
+  const path = `/api/state?view=${encodeURIComponent(view)}&limit=200`
+    + (scopeProjectId ? `&projectId=${encodeURIComponent(scopeProjectId)}` : "");
   const headers = {"content-type": "application/json"};
   if (authToken) headers.authorization = `Bearer ${authToken}`;
-  const etag = stateEtags.get(view);
-  const cached = stateCache.get(view);
+  const cacheKey = scopeProjectId ? `${view}:${scopeProjectId}` : view;
+  const etag = stateEtags.get(cacheKey);
+  const cached = stateCache.get(cacheKey);
   if (etag && cached) headers["if-none-match"] = etag;
   const response = await fetch(path, {headers});
   if (response.status === 304 && cached) return cached;
@@ -741,8 +748,8 @@ async function fetchState(view) {
   }
   const payload = {...emptyState(), ...(await response.json())};
   const nextEtag = response.headers.get("etag");
-  if (nextEtag) { stateEtags.set(view, nextEtag); stateCache.set(view, payload); }
-  else { stateEtags.delete(view); stateCache.delete(view); }
+  if (nextEtag) { stateEtags.set(cacheKey, nextEtag); stateCache.set(cacheKey, payload); }
+  else { stateEtags.delete(cacheKey); stateCache.delete(cacheKey); }
   return payload;
 }
 

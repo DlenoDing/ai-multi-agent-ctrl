@@ -94,6 +94,51 @@ while (Date.now() < workDeadline) {
 check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把真实变化一起挡住）",
   advanced ? `新任务组出现后自治循环继续推进（${versionAfterCreate} → 更高）` : `新任务组建好之后状态版本停在 ${versionAfterCreate} 再也没动过`);
 
+// 项目视角的页面按 projectId 取数：既压载荷，也保证【安静项目看得到自己的记录】。
+// 视图是"按账号可见范围取最新 N 条"再截断，别的项目更新的记录会把窗口占满 ——
+// 页面上是空表，而人以为"这个项目没有记录"。过滤必须发生在截断【之前】。
+{
+  const orgId = (await (await fetch(`${base}/api/state?view=orgs`, {headers: auth})).json()).organizations?.[0]?.orgId;
+  const makeProject = async (name, key) => (await (await fetch(`${base}/api/projects`, {method: "POST",
+    headers: {...auth, "idempotency-key": key}, body: JSON.stringify({name, organizationId: orgId})})).json());
+  const quiet = await makeProject("安静项目", "scope-quiet");
+  const busy = await makeProject("繁忙项目", "scope-busy");
+  const quietId = quiet.id || quiet.project?.id;
+  const busyId = busy.id || busy.project?.id;
+  const seed = async (projectId, count, prefix) => {
+    for (let index = 0; index < count; index += 1) {
+      await fetch(`${base}/api/task-groups`, {method: "POST", headers: {...auth, "idempotency-key": `${prefix}-${index}`},
+        body: JSON.stringify({projectId, name: `${prefix}-任务组-${index}`, objective: "作用域探针"})});
+    }
+  };
+  // 任务组是【追加】存的（最老的在前），所以被上限挤掉的是【后建】的那个项目。
+  // 先把繁忙项目铺满，再建安静项目 —— 这样不带 projectId 时安静项目会一个都看不到。
+  // （方向搞反过一次：先建安静项目，它反而落在窗口里，断言看起来绿其实没验到东西。）
+  // 让【本项目自己的记录数超过窗口】：正确实现（先按项目过滤再截断）能把 12 个全给出来，
+  // 而"先截断再过滤"最多只能给出窗口那么多。这样判据就不依赖哪个项目恰好落在窗口里
+  // （前两版分别按创建顺序和"谁被挤掉"来判，都因为顺序其实由分片合并决定而没验到东西）。
+  await seed(busyId, 12, "busy");
+  await seed(quietId, 12, "quiet");
+  const fetchScoped = async (projectId) => (await (await fetch(
+    `${base}/api/state?view=tasks&limit=10${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ""}`,
+    {headers: auth})).json());
+  const unscoped = await fetchScoped(null);
+  const scoped = await fetchScoped(quietId);
+  const own = (list) => (list || []).filter((item) => item.projectId === quietId).length;
+  const others = (scoped.taskGroups || []).filter((item) => item.projectId !== quietId).length;
+  // 判据不依赖"谁先谁后被挤掉"：任务组在视图里的顺序由分片按 projectId 合并决定，
+  // 哪个项目落在窗口里是随机的（第一版按创建顺序猜方向，两个方向都没验到东西）。
+  // 稳的判据是：全局取数确实被上限截断了，而按项目取数把这个项目的全部取到了。
+  // 上限同样作用于按项目取数，所以判据不是"12 个全给"，而是【整个窗口都是本项目的】：
+  // 先过滤再截断 → 10 条全是我的；先截断再过滤 → 只剩窗口里恰好属于我的那几条。
+  check(scoped.taskGroups.length === 10 && own(scoped.taskGroups) === 10 && own(unscoped.taskGroups) < 10,
+    "全局取数会被上限截断，而按 projectId 取数能把这个项目的记录取全",
+    `全局取数返回 ${unscoped.taskGroups.length} 个（上限 10，说明确实被截断了），`
+    + `其中属于这个项目的 ${own(unscoped.taskGroups)} 个；按项目取数返回 ${scoped.taskGroups.length} 个、全部属于本项目的有 ${own(scoped.taskGroups)} 个（应为 10/10）`);
+  check(others === 0, "带上 projectId 时不夹带别的项目的记录",
+    `混进来 ${others} 个别的项目的任务组`);
+}
+
 child.kill("SIGTERM");
 await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000))]);
 if (fails.length) {

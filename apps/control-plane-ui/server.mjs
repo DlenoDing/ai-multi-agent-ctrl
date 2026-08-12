@@ -1386,7 +1386,7 @@ function projectTaskGroupsForView(taskGroups) {
   });
 }
 
-function stateViewForAccount(state, account, session, view = "full", limit = 80) {
+function stateViewForAccount(state, account, session, view = "full", limit = 80, requestedProjectId = null) {
   const scoped = cachedScopedState(state, account, session);
   // 归档故障的错误文本里会带运行目录路径，且它是系统级运维事实 —— 只给系统账号。
   // 不写进 scoped：那份对象带缓存且跨请求复用，改它会把故障粘在缓存里。
@@ -1398,6 +1398,19 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
   const liveRuntime = {...scoped.runtime, autonomousOrchestrator: runtimeOrchestratorStatus};
   if (!view || view === "full") return {...scoped, runtime: liveRuntime, ...faultField};
   const capped = Math.max(10, Math.min(500, Number(limit || 80)));
+  // 项目视角的页面（任务/监控/项目设置）本来就只看当前项目，而视图此前是【按账号可见范围取最新 N 条】，
+  // 再由控制台自己过滤。后果有两条：一是载荷按整个账号的规模走（实测 400 单元时监控页一次轮询 1.78MB，
+  // 而它最多渲染 20 行/表）；二是【安静项目会看不到自己的记录】—— 别的项目更新的记录先把窗口占满了，
+  // 页面上是空表，人却以为"这个项目没有记录"。所以过滤放到服务端、放在截断【之前】。
+  const scopeProjectId = requestedProjectId && (scoped.projects || []).some((item) => item.id === requestedProjectId)
+    ? requestedProjectId
+    : null;
+  // 判据由【数据自身】决定：记录上带 projectId 且不等于当前项目的就滤掉，其余一律保留。
+  // 不维护"哪些集合属于项目"的清单 —— 第一版拿存储层的分片清单来当这个清单，结果漏掉了
+  // modelSelectionDecisions 这类中央集合（分片是按存储布局切的，不是按归属切的），过滤等于没生效。
+  const inRequestedProject = (item) => !item || typeof item !== "object"
+    || item.projectId === undefined || item.projectId === null || item.projectId === scopeProjectId;
+  const scopeCollection = (value) => (scopeProjectId && Array.isArray(value) ? value.filter(inRequestedProject) : value);
   const base = {
     schemaVersion: scoped.schemaVersion,
     stateVersion: scoped.stateVersion,
@@ -1459,9 +1472,10 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
   };
   for (const field of viewFields[view] || []) {
     const value = scoped[field];
-    base[field] = Array.isArray(value)
-      ? (field === "taskGroups" ? projectTaskGroupsForView(sliceItems(value, capped)) : sliceItems(value, capped))
-      : value;
+    const scopedValue = scopeCollection(value);
+    base[field] = Array.isArray(scopedValue)
+      ? (field === "taskGroups" ? projectTaskGroupsForView(sliceItems(scopedValue, capped)) : sliceItems(scopedValue, capped))
+      : scopedValue;
     const dropped = viewDroppedFields[field];
     if (dropped && Array.isArray(base[field])) {
       base[field] = base[field].map((item) => {
@@ -1504,16 +1518,17 @@ function stateViewEtag(cacheKey, central) {
   return `W/"${digestOf(`${cacheKey}\u0000${central?.stateVersion || 0}\u0000${runtimeFactsSignature()}`).slice(7, 39)}"`;
 }
 
-function stateViewCacheKey(account, session, stateVersion, view, limit) {
-  return `${account.accountId}:${session.sessionId}:${stateVersion}:${view || "full"}:${limit || "default"}`
+function stateViewCacheKey(account, session, stateVersion, view, limit, projectId) {
+  // projectId 必须进键：不进的话，同一个人先看 A 项目再切到 B，会拿到 A 的缓存结果。
+  return `${account.accountId}:${session.sessionId}:${stateVersion}:${view || "full"}:${limit || "default"}:${projectId || "all"}`
     + `:${digestOf(runtimeFactsSignature()).slice(7, 23)}`;
 }
 
-function cachedStateView(state, account, session, view, limit) {
-  const key = stateViewCacheKey(account, session, state.stateVersion, view, limit);
+function cachedStateView(state, account, session, view, limit, projectId) {
+  const key = stateViewCacheKey(account, session, state.stateVersion, view, limit, projectId);
   const cached = stateViewCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.payload;
-  const payload = JSON.stringify(stateViewForAccount(state, account, session, view, limit));
+  const payload = JSON.stringify(stateViewForAccount(state, account, session, view, limit, projectId));
   stateViewCache.set(key, {payload, expiresAt: Date.now() + stateViewCacheTtlMs});
   if (stateViewCache.size > stateViewMaxEntries) {
     for (const cacheKey of stateViewCache.keys()) {
@@ -2227,7 +2242,8 @@ async function handleApi(req, res) {
     if (peeker) {
       const view = url.searchParams.get("view") || "full";
       const limit = Number(url.searchParams.get("limit") || 80);
-      const peekKey = stateViewCacheKey(peeker.account, peeker.session, central.stateVersion, view, limit);
+      const peekProjectId = url.searchParams.get("projectId") || null;
+      const peekKey = stateViewCacheKey(peeker.account, peeker.session, central.stateVersion, view, limit, peekProjectId);
       // 控制台每 5 秒轮询一次当前页视图（WebSocket 的兜底）。内容没变时，最省的做法不是
       // "更快地把它发一遍"，而是【根本不发】：ETag 对上就回 304，一个字节的载荷都不用付。
       // 签名里除了 stateVersion，还要带上不写盘的运行时事实（自治循环健康度、归档故障）——
@@ -2624,7 +2640,7 @@ async function handleApi(req, res) {
     }
     const view = url.searchParams.get("view") || "full";
     const limit = Number(url.searchParams.get("limit") || 80);
-    jsonString(res, 200, cachedStateView(state, reader.account, reader.session, view, limit),
+    jsonString(res, 200, cachedStateView(state, reader.account, reader.session, view, limit, url.searchParams.get("projectId") || null),
       req.stateViewEtag ? {etag: req.stateViewEtag, "cache-control": "no-cache"} : undefined);
     return;
   }
