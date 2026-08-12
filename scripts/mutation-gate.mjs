@@ -414,6 +414,14 @@ const MUTATIONS = [
     expect: "没有被裁回上限"
   },
   {
+    name: "在制品上限：已吊销的节点不得继续撑着队头",
+    file: CORE,
+    check: "verifyQuietProjectsDoNotHoardSlots",
+    from: "if (!RETIRED_NODE_STATUSES.has(node.status)) registered += 1;",
+    to: "registered += 1;",
+    expect: "永远不会有人来领"
+  },
+  {
     name: "在制品上限：从未注册过节点的项目不得占着完整队头",
     file: CORE,
     check: "verifyQuietProjectsDoNotHoardSlots",

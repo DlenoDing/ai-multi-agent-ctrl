@@ -38,6 +38,7 @@ import {
   runAutonomousCycle,
   WIP_ACTIVE_DISPATCH_STATUSES,
   wipCapacityForProject,
+  RETIRED_NODE_STATUSES,
   settleCellOwnedResources,
   expireStaleQueuedDispatches,
   recomputeTaskGroup,
@@ -5810,7 +5811,26 @@ function verifyQuietProjectsDoNotHoardSlots(output) {
       output.push(`在制品上限·安静项目：有节点在线（${withOnline}）并不比离线（${withOffline}）宽 —— `
         + "在线节点没有换来任何额度，界面上'多接入几台节点'那句话就是空头承诺");
     }
-    console.log(`在制品上限·安静项目：无节点 ${quiet} / 有节点但离线 ${withOffline} / 有节点在线 ${withOnline}`);
+    // 吊销是终态：这样的节点永远不会再来领活，不该再撑着完整队头。
+    const revokedNode = {agentRuntimeNodes: [{projectIds: ["prj_p"], status: "revoked", admission: "full"}]};
+    const withRevoked = wipCapacityForProject(revokedNode, "prj_p");
+    if (withRevoked !== quiet) {
+      output.push(`在制品上限·安静项目：唯一的节点已被吊销，却还拿着 ${withRevoked} 个名额（无节点时是 ${quiet}）—— `
+        + "吊销是永久的，这个项目已经没有执行方了，这些名额永远不会有人来领");
+    }
+    // 常量必须与状态机对齐：多写一个非终态会把还能回来的节点判死，漏写终态就是上面那个浪费。
+    const nodeMachine = readFileSync(resolve(root, "spec/state-machines.yaml"), "utf8");
+    const terminalLine = nodeMachine.split(/\r?\n/).find((line, index, lines) =>
+      /^\s+terminal:/.test(line) && lines.slice(0, index).reverse().find((candidate) => /^  \S/.test(candidate)) === "  AgentNode:");
+    const declaredTerminal = [...String(terminalLine || "").matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
+    if (!declaredTerminal.length) {
+      output.push("在制品上限·安静项目：取不到 AgentNode 的终态列表 —— 常量与状态机的一致性这条在空转");
+    } else if (declaredTerminal.sort().join(",") !== [...RETIRED_NODE_STATUSES].sort().join(",")) {
+      output.push(`在制品上限·安静项目：终态节点状态集合 ${[...RETIRED_NODE_STATUSES].join("、")} `
+        + `与状态机声明的 ${declaredTerminal.join("、")} 不一致`);
+    }
+    console.log(`在制品上限·安静项目：无节点 ${quiet} / 有节点但离线 ${withOffline} / 有节点在线 ${withOnline}`
+      + ` / 唯一节点已吊销 ${withRevoked}（终态集合已对着状态机核对：${declaredTerminal.join("、")}）`);
   } finally {
     if (saved === undefined) delete process.env.AIMAC_WIP_QUEUE_HEAD;
     else process.env.AIMAC_WIP_QUEUE_HEAD = saved;

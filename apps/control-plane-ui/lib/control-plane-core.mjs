@@ -1721,13 +1721,19 @@ function admissionDimensions(workItem, outcome) {
 // 额度 = 队头 + 该项目在线且完全准入的节点数 × 每节点并发。队头不能省 ——
 // 一个节点都没注册时额度会变成 0，那样新上线的节点第一拍无活可领，
 // 控制面 e2e 的"编排跑完必须有排队派发"也会整片打红。
+// 节点状态机（spec/state-machines.yaml 的 AgentNode）唯一的终态。吊销是永久的：
+// 这样的节点永远不会再来领活，把它算成"这个项目有执行方"，等于让一个已经没有执行方的项目
+// 一直撑着完整队头 —— 正是下面那段要防的浪费，从另一扇门漏回来。
+// 与状态机的一致由 contract-check 核对，不靠这条注释。
+export const RETIRED_NODE_STATUSES = new Set(["revoked"]);
+
 export function wipCapacityForProject(state, projectId) {
   const perNode = Math.max(1, Number(process.env.AIMAC_WIP_PER_NODE || 2));
   let online = 0;
   let registered = 0;
   for (const node of state.agentRuntimeNodes || []) {
     if (!(node.projectIds || []).includes(projectId)) continue;
-    registered += 1;
+    if (!RETIRED_NODE_STATUSES.has(node.status)) registered += 1;
     if (node.status === "online" && node.admission === "full") online += 1;
   }
   // 队头是给"活要能被立刻领走"留的余量。但额度是【按项目】算的，项目数一多，全局的在制品
