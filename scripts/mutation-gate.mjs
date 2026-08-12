@@ -419,6 +419,23 @@ const MUTATIONS = [
   // ── 非契约门的守卫。它们此前只在写下的当天被手工变异过一次，之后再没有任何东西
   //    证明它们仍有判别力 —— 而本会话两次写出"按构造永远为真"的断言，都是靠变异才发现的。
   {
+    name: "权限码本地化：授权列表里的权限码要有中文",
+    file: APP,
+    gate: "specs",
+    from: '  "task_group:control": "任务组执行控制",',
+    to: "",
+    expect: "task_group:control"
+  },
+  {
+    // 与审计动作那条同理：标签块换个名字，这道门就再也提取不到任何权限码，而它一片绿。
+    name: "权限码本地化：标签块取不到时必须报空转",
+    file: APP,
+    gate: "specs",
+    from: "const MEMBER_PERMISSION_OPTIONS = [",
+    to: "const MEMBER_PERM_OPTIONS = [",
+    expect: "本条在空转"
+  },
+  {
     name: "审计动作本地化：拼接出来的动作名也要有中文",
     file: I18N,
     gate: "specs",

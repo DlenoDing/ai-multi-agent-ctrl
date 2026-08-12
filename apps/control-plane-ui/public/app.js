@@ -497,7 +497,9 @@ function modelDecisionSummaryZh(decision) {
   if (model) parts.push(`选定模型：${model}`);
   const reasoning = decision.selectedModel?.reasoningLevel || decision.reasoningLevel;
   if (reasoning) parts.push(`推理档：${REASONING_LEVEL_LABELS[reasoning] || reasoning}`);
-  return parts.length ? parts.join(" · ") : t(decision.selectionMode || "-");
+  // t() 自己就把空值渲染成 "-"；再兜一个 "-" 进去，等于拿显示文本当词条去查，
+  // 开发期的"未映射枚举值"告警里就会混进 "-" 这种噪声，把真正漏译的那几条埋掉。
+  return parts.length ? parts.join(" · ") : t(decision.selectionMode);
 }
 
 function fmtTime(value) {
@@ -1485,7 +1487,7 @@ function renderSysOverview() {
     esc(accountName(entry.actor)),
     esc(t(entry.action)),
     {v: esc(entry.subject), c: "text-clip"},
-    badge(t(entry.result || "ok"))
+    badge(entry.result || "ok")
   ])).join("");
 
   const overviewPanels = overview ? [
@@ -1910,6 +1912,16 @@ const PERMISSION_LABELS = {
   "org:member_admin": "组织成员管理",
   "org:project_admin": "组织项目管理",
   "org:*": "组织全部权限",
+  // 这几条此前掉到 permLabel 的 t() 兜底上，而 i18n 字典里也没有它们，于是「账号与授权」页
+  // 的授权列表直接显示 task_group:control 这样的英文码。实测在真实数据上露出过四条。
+  "task_group:read": "查看任务组",
+  "task_group:control": "任务组执行控制",
+  "task_group:review": "任务组人工审核",
+  "task_group:monitor": "任务组执行监控",
+  "system:account_admin": "系统账号管理",
+  "system:bootstrap": "系统初始化",
+  "system:model_registry": "模型能力注册",
+  "system:skill_sync": "技能源同步",
   "system:*": "系统全部权限"
 };
 function permLabel(code) {
@@ -4151,7 +4163,7 @@ document.addEventListener("click", async (event) => {
         esc(accountName(entry.actor)),
         esc(t(entry.action)),
         {v: esc(entry.subject), c: "text-clip"},
-        badge(t(entry.result || "ok"))
+        badge(entry.result || "ok")
       ])).join("");
       const chain = archive.chain || {verified: 0, breaks: []};
       const chainNotice = chain.breaks?.length

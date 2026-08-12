@@ -1264,6 +1264,30 @@ case_marks.each_with_index do |(tool, at), index|
   errors << "MCP 工具 #{tool} 在作用域参数缺省时会落到控制面自己的任务组/房间，却没有受限主体守卫 —— 缺省不得等于放行" unless guarded
 end
 
+# 【权限码本地化】。「账号与授权」页把授权里的每个权限码交给 permLabel 显示，它兜底到 t()，
+# 而 i18n 字典里一个带冒号的权限码都没有 —— 于是 PERMISSION_LABELS 漏掉的那些直接显示英文码。
+# 实测用真实数据整页渲染时露出过四条（task_group:read/control/review/monitor）。
+# 权威来源取两处：permissionForAction 的映射值（每个受守卫动作都要一个权限）、
+# 以及角色包/种子直授里写死的那些。
+console_app_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+permission_label_block = console_app_source[/const MEMBER_PERMISSION_OPTIONS.*?function permLabel/m]
+if permission_label_block.nil?
+  errors << "权限码本地化门: 找不到 PERMISSION_LABELS 那一段 —— 提取逻辑与代码脱节，本条在空转"
+else
+  permission_for_action = server_source[/function permissionForAction\(action\) \{.*?\n\}/m]
+  errors << "权限码本地化门: 找不到 permissionForAction —— 本条在空转" if permission_for_action.nil?
+  mapped_permissions = permission_for_action.to_s.scan(/return "([a-z_]+:[a-z_*]+)"/).flatten
+  granted_permissions = server_source.scan(/permissions:\s*\[([^\]]*)\]/).flatten
+    .flat_map { |list| list.scan(/"([a-z_]+:[a-z_*]+)"/).flatten }
+  all_permissions = (mapped_permissions + granted_permissions).uniq
+  errors << "权限码本地化门: 只提取到 #{all_permissions.size} 个权限码 —— 提取逻辑与代码脱节" if all_permissions.size < 15
+  unlabelled = all_permissions.reject { |code| permission_label_block.include?("\"#{code}\"") }
+  unless unlabelled.empty?
+    errors << "这些权限码在中文界面上会显示成原始英文：#{unlabelled.sort.join(', ')} —— " \
+      "补进 app.js 的 PERMISSION_LABELS（permLabel 的 t() 兜底对带冒号的码从来没有词条）"
+  end
+end
+
 # 【审计动作名本地化】。审计页那一列直接把 audit() 的动作名交给 t() 显示 —— 没有中文就是
 # 一屏中英混排：human_confirmation_decide 显示"决策人工确认"，紧挨着的 agent_node_revoke
 # 显示英文原名。这条查出来时 75 个动作名里有 31 个没有中文，其中包括"吊销节点""吊销加入令牌"
@@ -2458,6 +2482,7 @@ fail_with(errors)
 puts "错误码本地化：只有表达式提取才看得见的有 #{expression_only_error_codes.length} 个" \
      "#{expression_only_error_codes.empty? ? '' : '（' + expression_only_error_codes.sort.join('、') + '）'}；" \
      "另有 #{expression_error_opaque.length} 处取值来自变量，未被检验"
+puts "权限码本地化：核对了 #{all_permissions.size} 个权限码，全部有中文"
 puts "审计动作本地化：核对了 #{audit_actions.length} 个动作名（其中 #{composed_audit_actions.uniq.length} 个是按闭集拼出来的，不是字面量），全部有中文" \
      "#{NON_HUMAN_AUDIT_ACTIONS.empty? ? '' : '（另有 ' + NON_HUMAN_AUDIT_ACTIONS.length.to_s + ' 个登记为不给人看）'}"
 puts "原因码本地化：核对了 #{localized_literals.length} 个字面量（含三元/|| 兜底里的）；" \
