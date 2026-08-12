@@ -1011,9 +1011,15 @@ function runWholeListCapCase() {
 // 对系统自行清除的那几类，必须明说"不用你动手"——否则人会守着一个不该他管的红点。
 function runBlockerGuideCase() {
   const probe = loadConsole(el("div"));
-  const covered = ["HumanConfirmationRequest", "PermissionOrApprovalRequest", "HumanDirective", "ReviewPlan",
-    "ReviewBundle", "SharedDefinitionContract", "ExecutionTopology", "WorkSession", "AgentDispatch", "Lease",
-    "RoleDriftGuard", "CommandEffect", "DerivedTaskRequest", "WorkItem", "Checkpoint", "RepositoryOutputTarget"];
+  // 这份清单原先是手写的 16 种 —— 而同一仓库的 contract-check 里就写着"手写表必然漂"
+  // （那条说的是关闭门名那一侧，已经按权威来源核对了；对象类型这一侧当时还没有）。
+  // core 新增一种阻塞类型时，手写清单不会跟着长，这条断言就会静默漏掉它。改成从 core 全量提取。
+  const coreSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const covered = [...new Set([...coreSource.matchAll(/objectType:\s*"([A-Za-z]+)"/gu)].map((match) => match[1]))]
+    // CloseBarrierGate 不走按类型的指引表，它按【门名】另有一张表（blockerGuide 先分这一支），
+    // 而那张表的覆盖由 contract-check 按权威门目录核对。
+    .filter((type) => type !== "CloseBarrierGate");
+  if (covered.length < 12) throw new Error(`阻塞类型提取只拿到 ${covered.length} 种 —— 提取逻辑与 core 脱节，本条在空转`);
   const missing = covered.filter((type) => !probe.blockerGuide(type));
   check("每一种阻塞类型都说得出下一步",
     missing.length === 0,

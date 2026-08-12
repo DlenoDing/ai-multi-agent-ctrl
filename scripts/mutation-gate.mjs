@@ -427,6 +427,14 @@ const MUTATIONS = [
     expect: "没有先 recycleExpiredClaims"
   },
   {
+    name: "阻塞类型指引：清单要按 core 全量取，不是手写",
+    file: CONSOLE_GATE,
+    gate: "console",
+    from: '[...coreSource.matchAll(/objectType:\\s*"([A-Za-z]+)"/gu)]',
+    to: '[...coreSource.matchAll(/objectTypeXX:\\s*"([A-Za-z]+)"/gu)]',
+    expect: "本条在空转"
+  },
+  {
     name: "漏译扫描：真的 t 渲染一遍，界面上不许出现英文枚举",
     file: I18N,
     gate: "console",
