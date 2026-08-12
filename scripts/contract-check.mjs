@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isStateStoreConflict, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { ensureStoredState, isStateStoreConflict, readStoredCentralState, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload, canonicalJson } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps/control-plane-ui/lib/pg-sync-store.mjs";
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
@@ -221,6 +221,7 @@ verifyAdmissionLedgerDoesNotGrowWithFlapping(errors);
 verifyEveryCloseGateHasHumanGuidance(errors);
 verifyGrantScopeCoversObjectsNamedOnlyById(errors);
 verifyLongRunningWorkKeepsItsClaim(errors);
+verifyCentralOnlyStateCannotBeWritten(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4680,6 +4681,31 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 会复核持有权，复核失败即停手 —— 于是一个跑了半小时以上的模型任务，会在最后一步发现
 // 自己已经不是持有者，整轮工作作废，而且下一轮同样跑不完，无限重来。
 // 系统靠的是"执行事件顺带续认领"：代理执行期间持续发心跳事件。这条链两头都没有门守着。
+// 中央态不是完整状态：项目分片里的集合（任务组、派发、会话、确认单…）在那份对象里是空的。
+// 拿它去写回，写入方会把不在列表里的分片行全删掉 —— 等于清空所有项目。
+// 这不是假想：PG 的 CAS 探针就这么清空过一次，当时是靠既有 e2e 才发现的。
+// 所以在【写入点】直接拒绝，而不是在每个调用点提醒 —— 调用点会越来越多。
+function verifyCentralOnlyStateCannotBeWritten(output) {
+  const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-central-only-"));
+  const statePath = join(runtimeDir, "control-plane-state.json");
+  const options = {root, runtimeDir, statePath, seedPath: resolve(root, "data", "seed-state.json"),
+    buildInitialState: () => structuredClone(seedState)};
+  ensureStoredState(options);
+  const central = readStoredCentralState(options);
+  if (!central || central.__centralOnly !== true) {
+    output.push("readStoredCentralState 没有给中央态打标记 —— 写入点就无从分辨它和完整状态");
+    return;
+  }
+  let refused = false;
+  central.stateVersion = Number(central.stateVersion || 0) + 1;
+  try { writeStoredState(central, {...options, expectedStateVersion: central.__loadedStateVersion}); }
+  catch (error) { refused = error?.code === "AIMAC_CENTRAL_ONLY_WRITE"; }
+  if (!refused) {
+    output.push("拿中央态去写回竟然被接受了 —— 它不含项目分片里的集合，写入方会把那些分片行全删掉，等于清空所有项目");
+  }
+  rmSync(runtimeDir, {recursive: true, force: true});
+}
+
 function verifyLongRunningWorkKeepsItsClaim(output) {
   const build = () => {
     const state = structuredClone(seedState);

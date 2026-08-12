@@ -157,6 +157,9 @@ export function readStoredCentralState(options) {
     const cached = cachedStoredState(centralStateCache, options.statePath, () => statCacheKey(options.statePath));
     if (cached) {
       cached.__loadedStateVersion = Number(cached.stateVersion || 0);
+      // 缓存命中这条分支也要打标记：否则"第一次读"的中央态拒得住、"第二次读"的拒不住，
+      // 而缓存命中恰恰是常态 —— 这种半边生效的保护比没有更危险。
+      cached.__centralOnly = true;
       return cached;
     }
   }
@@ -165,6 +168,10 @@ export function readStoredCentralState(options) {
     : JSON.parse(readFileSync(options.statePath, "utf8"));
   if (stateStoreKind() !== "postgresql") cacheStoredState(centralStateCache, options.statePath, central, statCacheKey(options.statePath));
   central.__loadedStateVersion = Number(central.stateVersion || 0);
+  // 打上"这是中央态、不是完整状态"的标记：项目分片里的集合（任务组、派发、会话、确认单…）
+  // 在这份对象里【是空的】。谁要是拿它去 writeStoredState，写入方会把不在列表里的分片行全删掉 ——
+  // 等于把所有项目的数据清空。标记会在 withoutInternalStateFields 里被剥掉，不会写进盘。
+  central.__centralOnly = true;
   return central;
 }
 
@@ -184,6 +191,12 @@ function assertStateVersionAdvanced(state, expectedStateVersion) {
 }
 
 export function writeStoredState(state, options) {
+  // 中央态不是完整状态：它不含项目分片里的集合。拿它写回去会把全部项目分片删掉。
+  // 这不是假想 —— PG 的 CAS 探针就这么清空过一次（当时靠既有 e2e 才发现）。
+  // 在写入点直接拒绝，比在每个调用点提醒可靠。
+  if (state && state.__centralOnly) {
+    throw Object.assign(new Error("refusing_to_write_central_only_state"), {code: "AIMAC_CENTRAL_ONLY_WRITE"});
+  }
   mkdirSync(options.runtimeDir, {recursive: true});
   assertStateVersionAdvanced(state, options.expectedStateVersion);
   if (stateStoreKind() === "postgresql") {

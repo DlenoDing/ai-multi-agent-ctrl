@@ -1405,7 +1405,14 @@ end
 # 的工作项一个都派发不了），但验收的人必须知道"执行方依据的角色规则并不是这个角色的"。
 errors << %(验收卡片必须说明角色技能回退（否则人以为它按自己角色的规则做事）) unless core_source.include?("没有属于自己的技能文件，本次实际绑定的是")
 # 过期会话原先只在有人登录时被顺带清理，无人登录期间长期滞留。
-errors << %(必须有独立的过期会话清扫（不能只依赖"下一次有人登录"）) unless server_source.include?("for (const session of revalidationState.authSessions || [])") && server_source.include?("session.status = \"expired\"")
+# 判据落在【心跳这一拍里确实做了这件事】上，不锁某一行的写法：
+# 原判据写死了 `for (const session of revalidationState.authSessions || [])`，
+# 于是把这段改写成 some()+全量读写（为了不在每拍都水合整份状态）就直接报红 ——
+# 而那次改写恰恰让清扫更省。判据锁写法就会挡住正确的改进。
+realtime_heartbeat_body = server_source[/const realtimeHeartbeat = setInterval\([\s\S]*?\n\}, Math\.max/m].to_s
+errors << "找不到实时心跳这一段 —— 提取逻辑与代码脱节" if realtime_heartbeat_body.empty?
+errors << %(必须有独立的过期会话清扫（不能只依赖"下一次有人登录"）) unless realtime_heartbeat_body.include?("authSessions") &&
+  realtime_heartbeat_body.include?(%(status = "expired")) && realtime_heartbeat_body.include?("writeState(")
 
 # 控制台里唯一能一次性摧毁全部租户的按钮，原先与"刷新页面"是同一种交互成本：两次单击，
 # 文案只说"重置为种子数据"。有真实租户数据时必须显式带上要摧毁的规模。

@@ -5252,23 +5252,33 @@ const realtimeHeartbeat = setInterval(() => {
   // 已建立的连接原先【从不重新校验】：账号被挂起、会话被撤销之后，那条 WebSocket 照旧活着并
   // 继续收到唤醒通知，直到它自己断开为止。撤销只对新连接生效等于撤销了一半。
   // 心跳本来就要遍历全部连接，在这里顺带复核主体是否仍然有效。
+  // 这一拍要用的只有 accounts 与 authSessions，两者都在【中央状态】里 —— 而 readState 会把
+  // 全部项目分片一起水合出来：实测 400 单元时一次 165ms，30 秒一拍，且【一个连接都没有时照付】。
+  // 所以先读中央态（实测 19ms），只有真的有过期会话要写回时，才升级成全量读写。
   let revalidationState = null;
-  try { revalidationState = readState(); } catch { revalidationState = null; }
+  try { revalidationState = readStoredCentralState({root, runtimeDir, statePath, seedPath, buildInitialState}); }
+  catch { revalidationState = null; }
   // 过期会话原先【只在有人登录时】被顺带清理，没有独立扫描器 —— 无人登录期间，已过期的会话记录
   // 长期滞留在 state 里。这里顺带扫一遍：心跳本来就在跑，且它读的就是同一份 state。
   // 只标记已过期的，绝不碰仍然有效的（那会把正在用的人踢下线）。
   if (revalidationState) {
     const nowMs = Date.now();
-    let expiredCount = 0;
-    for (const session of revalidationState.authSessions || []) {
-      if (session.status !== "active") continue;
-      if (new Date(session.expiresAt || 0).getTime() > nowMs) continue;
-      session.status = "expired";
-      session.updatedAt = new Date(nowMs).toISOString();
-      expiredCount += 1;
-    }
-    if (expiredCount) {
-      try { writeState(revalidationState); } catch { /* 清扫是尽力而为，冲突时下一轮心跳再来 */ }
+    const isExpired = (session) => session.status === "active"
+      && new Date(session.expiresAt || 0).getTime() <= nowMs;
+    // 中央态只用来【判断有没有要清的】。真要写回时必须走全量读 ——
+    // 拿中央态直接写会把项目分片当成空的，等于把所有项目的数据清掉。
+    if ((revalidationState.authSessions || []).some(isExpired)) {
+      try {
+        const writable = readState();
+        let expiredCount = 0;
+        for (const session of writable.authSessions || []) {
+          if (!isExpired(session)) continue;
+          session.status = "expired";
+          session.updatedAt = new Date(nowMs).toISOString();
+          expiredCount += 1;
+        }
+        if (expiredCount) writeState(writable);
+      } catch { /* 清扫是尽力而为，冲突时下一轮心跳再来 */ }
     }
   }
   for (const client of realtimeClients) {
