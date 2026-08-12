@@ -37,7 +37,8 @@ if [ -z "$SERVER_URL" ]; then
 fi
 if [ -n "$JOIN_TOKEN_FILE" ]; then
   if [ ! -f "$JOIN_TOKEN_FILE" ]; then
-    printf '%s\n' "--join-token-file does not exist" >&2
+    # 把找的是哪个路径说出来：人多半是从控制台复制的整条命令，路径错在哪儿只有脚本知道。
+    printf '%s\n' "--join-token-file does not exist: $JOIN_TOKEN_FILE" >&2
     exit 2
   fi
   JOIN_TOKEN=$(sed -n '1p' "$JOIN_TOKEN_FILE")
@@ -100,7 +101,15 @@ else
   exit 1
 fi
 if [ -z "$EXPECTED_HASH" ] || [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
+  # 校验和对不上是这套安装流程里最要紧的一次失败：它要么是下载损坏，要么是产物在路上被换过。
+  # 原先只说 "verification failed"——不说是哪个文件、期望什么、实到什么，也不说接下来该怎么办。
+  # 人在这一刻最需要的恰恰是这三件事，而它们都是脚本此刻就知道的。
   printf '%s\n' "Agent Runtime checksum verification failed" >&2
+  printf '%s\n' "  file:     $SERVER_URL/agent-runtime.mjs" >&2
+  printf '%s\n' "  expected: ${EXPECTED_HASH:-（校验和文件是空的，服务端没给出期望值）}" >&2
+  printf '%s\n' "  actual:   $ACTUAL_HASH" >&2
+  printf '%s\n' "  这份产物没有被安装。重试一次；仍不一致就【不要运行它】——" >&2
+  printf '%s\n' "  说明下载损坏，或者控制面到本机之间有人替换了产物。" >&2
   exit 1
 fi
 

@@ -97,6 +97,20 @@ end
 unless File.executable?(File.join(ROOT, "scripts/docker-up.sh"))
   errors << "scripts/docker-up.sh must be executable"
 end
+# 安装脚本的失败信息是操作者在【另一台机器上】唯一能看到的东西：控制台在这里帮不上忙。
+# 校验和对不上尤其要紧——它要么是下载损坏、要么是产物被替换过，而人此刻需要知道
+# 是哪个文件、期望什么、实到什么、以及"不要运行它"。这些脚本此刻全都知道。
+installer_source = File.read(File.join(ROOT, "scripts/install-agent.sh"))
+checksum_block = installer_source[/checksum verification failed.*?exit 1/m].to_s
+if checksum_block.empty?
+  errors << "安装脚本里找不到校验和失败那一段 —— 下面几条在空转"
+else
+  errors << "校验和失败时必须给出期望值与实到值（否则人无从判断是下载坏了还是产物被换了）" unless checksum_block.include?("$EXPECTED_HASH") && checksum_block.include?("$ACTUAL_HASH")
+  errors << "校验和失败时必须明说不要运行这份产物" unless checksum_block.include?("不要运行它")
+end
+# 路径类失败要说出找的是哪个路径：人多半是整条命令复制过来的，只有脚本知道路径错在哪儿。
+errors << "--join-token-file 不存在时要说出具体路径" unless installer_source.include?('"--join-token-file does not exist: $JOIN_TOKEN_FILE"')
+
 unless File.executable?(File.join(ROOT, "scripts/install-agent.sh"))
   errors << "scripts/install-agent.sh must be executable"
 end
