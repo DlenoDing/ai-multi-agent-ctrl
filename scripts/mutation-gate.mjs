@@ -30,6 +30,7 @@ const MUTATIONS = [
   // ── 本段会话新加的守卫：手工变异验过一次不算数，要每次全量 doctor 都重验 ─────────────
   {
     name: "取消/回收必须了结格子名下的资源",
+    check: "verifyCancelSettlesTheCellsResources",
     file: CORE,
     from: "    settleCellOwnedResources(state, dispatch.taskGroupId, dispatch.workItemId, dispatch.failureReason);",
     to: "",
@@ -37,6 +38,7 @@ const MUTATIONS = [
   },
   {
     name: "每个对象一条的派生记录不得上限抖动",
+    check: "verifyPerScopeRecordsSurviveTheirCap",
     file: CORE,
     from: "  state.completionReadiness = capPerTaskGroupRecords([readiness, ...state.completionReadiness.filter((item) => item.taskGroupId !== taskGroupId)], state, 80);",
     to: "  state.completionReadiness = [readiness, ...state.completionReadiness.filter((item) => item.taskGroupId !== taskGroupId)].slice(0, 80);",
@@ -44,6 +46,7 @@ const MUTATIONS = [
   },
   {
     name: "准入账本不得随反复受阻线性增长",
+    check: "verifyAdmissionLedgerDoesNotGrowWithFlapping",
     from: `    if (seenCells.has(item.workItemId)) continue;
     seenCells.add(item.workItemId);`,
     file: CORE,
@@ -52,6 +55,7 @@ const MUTATIONS = [
   },
   {
     name: "执行事件必须续上认领（长任务不得白干）",
+    check: "verifyLongRunningWorkKeepsItsClaim",
     file: GATEWAY,
     from: "      dispatch.claimExpiresAt = renewed;",
     to: "",
@@ -59,6 +63,7 @@ const MUTATIONS = [
   },
   {
     name: "中央态不得当成完整状态写回",
+    check: "verifyCentralOnlyStateCannotBeWritten",
     file: STORE,
     from: `  if (state && state.__centralOnly) {
     throw Object.assign(new Error("refusing_to_write_central_only_state"), {code: "AIMAC_CENTRAL_ONLY_WRITE"});
@@ -68,6 +73,7 @@ const MUTATIONS = [
   },
   {
     name: "认不出的状态版本必须拒读",
+    check: "verifyUnknownStateSchemaIsRefused",
     file: STORE,
     from: "  if (!declared || SUPPORTED_STATE_SCHEMA_VERSIONS.has(declared)) return state;",
     to: "  return state;",
@@ -75,6 +81,7 @@ const MUTATIONS = [
   },
   {
     name: "报文只给对象 id 时也要核对归属",
+    check: "verifyGrantScopeCoversObjectsNamedOnlyById",
     file: MCP,
     from: `  if (args.contractId) {
     const definition = (state.sharedDefinitions || []).find((item) => item.contractId === args.contractId);
@@ -85,6 +92,7 @@ const MUTATIONS = [
   },
   {
     name: "核心决策必须真人定稿",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: 'if (request.decisionClass === "major" && !isHumanConfirmationActor(state, options.actor))',
     to: "if (false)",
@@ -92,6 +100,7 @@ const MUTATIONS = [
   },
   {
     name: "AI 互审不得直接验收",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: 'workItem.status = "verification_ready";',
     to: 'workItem.status = "verified";',
@@ -99,6 +108,7 @@ const MUTATIONS = [
   },
   {
     name: "AI 再分析不得终结决策",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: 'if (!request.awaitingAiAnalysis && Number(request.round || 1) > 1)',
     to: "if (false)",
@@ -106,6 +116,7 @@ const MUTATIONS = [
   },
   {
     name: "定稿对象不得被掉包",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: "if (request.subjectContentDigest) {",
     to: "if (false) {",
@@ -113,6 +124,7 @@ const MUTATIONS = [
   },
   {
     name: "承载授权的记录 id 必须唯一",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: "if ((collection || []).some((item) => item?.[idField] === id)) {",
     to: "if (false) {",
@@ -120,6 +132,7 @@ const MUTATIONS = [
   },
   {
     name: "写入边界一个工作项只能有一份",
+    check: "verifyHumanAndOrganizationContracts",
     file: MCP,
     from: "if (activeExisting) return {repositoryOutputTarget: activeExisting, deduplicated: true};",
     to: "",
@@ -127,6 +140,7 @@ const MUTATIONS = [
   },
   {
     name: "确认单去重键按类别隔离",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: "const dedupeKey = `${decisionType}:` + (String(input.requestKey",
     to: 'const dedupeKey = "" + (String(input.requestKey',
@@ -134,6 +148,7 @@ const MUTATIONS = [
   },
   {
     name: "执行证据去重限定本次派发",
+    check: "verifyHumanAndOrganizationContracts",
     file: GATEWAY,
     from: "item.eventKey === eventKey && item.dispatchId === dispatchId",
     to: "item.eventKey === eventKey",
@@ -141,6 +156,7 @@ const MUTATIONS = [
   },
   {
     name: "技能绑定不得被冒名顶替且不得回退占位",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: "skillBasename(skill) === hint.skillRef",
     to: 'String(skill.roleSkillId || "").endsWith("/" + hint.skillRef)',
@@ -150,6 +166,7 @@ const MUTATIONS = [
   // 而它的测试是假绿"正是本门存在的理由。只收有 contract-check 断言的那几条（本门只跑它）。
   {
     name: "已关闭的任务组不得被再关一次（覆盖定稿归属）",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: 'if (request.mutate === true && taskGroup && ["closed", "aborted"].includes(taskGroup.status)) {',
     to: "if (false) {",
@@ -162,6 +179,7 @@ const MUTATIONS = [
     // 同一个漏传，在 runtime_json 上是当场抛错、零损失，在 PostgreSQL 上是删光整张分片表并提交。
     // 安全的那个行为落在没人在生产上跑的后端上，所以这条必须钉死。
     name: "漏传分片不得被当成空分片（PG 上等于删光）",
+    check: "verifyRuntimeJsonConflict",
     file: PGSTORE,
     from: "    shards: assertProjectShardsArray(projectShards),",
     to: "    shards: Array.isArray(projectShards) ? projectShards : [],",
@@ -169,6 +187,7 @@ const MUTATIONS = [
   },
   {
     name: "被降级的状态机保证不得对人隐身",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: "  state.runtime.transitionEnforcement = transitionEnforcementMode(state);",
     to: "  state.runtime.transitionEnforcement ||= transitionEnforcementMode(state);",
@@ -176,6 +195,7 @@ const MUTATIONS = [
   },
   {
     name: "定稿后方案实质变过就不得照常执行",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: 'if (["start", "merge"].includes(action) && topology.humanFinalization?.subjectContentDigest) {',
     to: "if (false) {",
@@ -183,6 +203,7 @@ const MUTATIONS = [
   },
   {
     name: "AI 不得自行降级已定稿方案",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: 'if (topology.humanFinalization?.outcome === "confirmed" && !downgradeApproved) {',
     to: "if (false) {",
@@ -190,6 +211,7 @@ const MUTATIONS = [
   },
   {
     name: "AI 不得自行取消已定稿方案",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: 'if (topology.humanFinalization?.outcome === "confirmed" && !cancelApproved) {',
     to: "if (false) {",
@@ -197,6 +219,7 @@ const MUTATIONS = [
   },
   {
     name: "人要据以定稿的文本被截断时必须留痕",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: "return `${text.slice(0, Math.max(0, max - marker.length))}${marker}`;",
     to: "return text.slice(0, max);",
@@ -204,6 +227,7 @@ const MUTATIONS = [
   },
   {
     name: "执行器凭据不得等同于节点令牌",
+    check: "verifyAgentGatewayContracts",
     file: GATEWAY,
     from: 'if (dispatch.status !== "running" || !dispatch.executorTokenDigest || !dispatch.assignedNodeId) continue;',
     to: "if (!dispatch.executorTokenDigest || !dispatch.assignedNodeId) continue;",
@@ -211,6 +235,7 @@ const MUTATIONS = [
   },
   {
     name: "规则标题必须进摘要（否则改标题＝改模型读到的内容而漂移检测失明）",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: "const digest = digestOf({ruleId, category, title, content});",
     to: "const digest = digestOf({ruleId, category, content});",
@@ -218,6 +243,7 @@ const MUTATIONS = [
   },
   {
     name: "草稿契约不得锁死关闭门（人无杠杆）",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     // 必须唯一匹配：这个片段在 core 里出现三次（派发循环 / completion readiness / close barrier），
     // 而被测的是 computeCloseBarrier 那一处。只写片段会改坏派发循环，于是本门报出"你的测试是假绿"，
@@ -233,6 +259,7 @@ const MUTATIONS = [
   },
   {
     name: "裸 Project 通配不得横扫全项目",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: "const projectRefs = [`Project:${taskGroup.projectId}`, taskGroup.projectId];",
     to: 'const projectRefs = [`Project:${taskGroup.projectId}`, taskGroup.projectId, "Project"];',
@@ -240,6 +267,7 @@ const MUTATIONS = [
   },
   {
     name: "合法发布必须真的激活",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: "args.allowDirectActivation === true",
     to: "false",
@@ -247,6 +275,7 @@ const MUTATIONS = [
   },
   {
     name: "技能绑定读的是生产者真实字段",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: 'String(skill.sourcePath || "")',
     to: 'String(skill.relativePath || "")',
@@ -254,6 +283,7 @@ const MUTATIONS = [
   },
   {
     name: "共享定义状态不得由调用方声称",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: "      : (SHARED_DEFINITION_CREATABLE_STATUSES.includes(args.status) ? args.status : \"draft\"),",
     to: '      : (args.status || "draft"),',
@@ -270,6 +300,7 @@ const MUTATIONS = [
   },
   {
     name: "越权访问必须被漂移门定性阻断",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: "const hardViolation = signals.some",
     to: "const hardViolation = [].some",
@@ -280,6 +311,7 @@ const MUTATIONS = [
   // 所以必须把"改坏它会红"这件事变成可重复的记录。
   {
     name: "人工定稿锁只看状态，不得挂在展示用数值上",
+    check: "verifyHumanAndOrganizationContracts",
     file: CORE,
     from: '      if (["verified", "closed"].includes(workItem.status)) {',
     to: '      if (["verified", "closed"].includes(workItem.status) && workItem.progress >= 100) {',
@@ -287,6 +319,7 @@ const MUTATIONS = [
   },
   {
     name: "容量淘汰不得删掉还开着的任务组",
+    check: "verifyHumanAndOrganizationContracts",
     file: STORE,
     from: '  taskGroups: (item) => !["closed", "aborted"].includes(item.status)',
     to: "  taskGroups: () => false",
@@ -294,6 +327,7 @@ const MUTATIONS = [
   },
   {
     name: "容量淘汰不得删掉人已经作出的决定",
+    check: "verifyHumanAndOrganizationContracts",
     file: STORE,
     from: '  humanConfirmationRequests: (item) => !["consumed", "expired", "cancelled"].includes(item.status),',
     to: '  humanConfirmationRequests: (item) => item.status === "pending",',
@@ -301,6 +335,7 @@ const MUTATIONS = [
   },
   {
     name: "MCP 租户边界必须覆盖每一个对象地址",
+    check: "verifyEveryProjectScopedIdIsScopeChecked",
     file: MCP,
     from: '  "envelopeId", "grantId", "nodeId", "reviewBundleId", "reviewPlanId", "topologyId"',
     to: '  "envelopeId", "grantId", "nodeId", "reviewBundleId", "reviewPlanId"',
@@ -308,6 +343,7 @@ const MUTATIONS = [
   },
   {
     name: "读侧每个集合都要么被过滤、要么登记为全局",
+    check: "verifyEveryStateCollectionIsTenantScoped",
     file: SERVER,
     from: "  cloned.reviewBundles = (state.reviewBundles || []).filter((item) => visibleTaskGroupIds.has(item.taskGroupId));\n",
     to: "",
@@ -315,6 +351,7 @@ const MUTATIONS = [
   },
   {
     name: "幂等重放必须绑定到当初那个调用方",
+    check: "verifyIdempotencyReplayIsPrincipalBound",
     file: MCP,
     from: "        || existingRecord.principalRef !== principalRef))",
     to: "))",
@@ -322,6 +359,7 @@ const MUTATIONS = [
   },
   {
     name: "分片拆合不得丢字段",
+    check: "verifyShardRoundTripKeepsEveryRecord",
     file: STORE,
     from: "      shard.collections[collection].push(item);",
     to: "      const {updatedAt, ...rest} = item;\n      shard.collections[collection].push(rest);",
@@ -330,6 +368,7 @@ const MUTATIONS = [
   // ↓ 本会话新增的守卫。它们此前只被手工变异验证过一次，而"验证过一次"与"以后一直有效"是两件事。
   {
     name: "控制命令重试用尽后不得还说「进行中」",
+    check: "verifyExhaustedControlRetriesTellTheTruth",
     file: GATEWAY,
     from: "      dispatch.blockedReason = rejectedReason;",
     to: '      dispatch.blockedReason = "control_pause_requested";',
@@ -337,6 +376,7 @@ const MUTATIONS = [
   },
   {
     name: "人批准的路径边界必须压在 git 算出的真实变更上",
+    check: "verifyHumanApprovedPathsBindTheCommit",
     file: CORE,
     from: "  if (approvedPaths.length) {",
     to: "  if (false) {",
@@ -344,6 +384,7 @@ const MUTATIONS = [
   },
   {
     name: "人在方案里划的禁区必须被强制",
+    check: "verifyHumanApprovedPathsBindTheCommit",
     file: CORE,
     from: "  if (forbiddenApproved.length) {",
     to: "  if (false) {",
@@ -351,6 +392,7 @@ const MUTATIONS = [
   },
   {
     name: "人批准时看到的验收项必须有证据",
+    check: "verifyApprovedAcceptanceChecksHaveEvidence",
     file: CORE,
     from: "      && (branch.acceptanceChecks || []).length && !(branch.validationEvidenceRefs || []).length) {",
     to: "      && false) {",
@@ -358,6 +400,7 @@ const MUTATIONS = [
   },
   {
     name: "任务组读摘要的记忆化必须按 stateVersion 失效",
+    check: "verifyPerformanceCachesStayCorrect",
     file: CORE,
     from: "  if (!perState || perState.stateVersion !== stateVersion) {",
     to: "  if (!perState) {",
@@ -372,6 +415,7 @@ const MUTATIONS = [
   },
   {
     name: "在制品上限：额度必须按项目算，不得跨项目共享",
+    check: "verifyWipCapacityIsPerProject",
     file: CORE,
     from: "const wipNow = wipInFlight.get(taskGroup.projectId) || 0;",
     to: "const wipNow = [...wipInFlight.values()].reduce((sum, value) => sum + value, 0);",
@@ -379,6 +423,7 @@ const MUTATIONS = [
   },
   {
     name: "优先级预留：靠后组的 P0 不得被靠前组的普通活饿死",
+    check: "verifyHighPriorityCellsAreNotStarvedByEarlierGroups",
     file: CORE,
     from: "if (wipNow + wipReserved >= wipCap) {",
     to: "if (wipNow >= wipCap) {",
@@ -393,6 +438,7 @@ const MUTATIONS = [
   },
   {
     name: "优先级预留：让路与额度真满不得记成同一件事",
+    check: "verifyHighPriorityCellsAreNotStarvedByEarlierGroups",
     file: CORE,
     from: 'whyThisCellNow: wipNow >= wipCap ? "cell_waiting_for_wip_capacity" : "cell_yielding_to_higher_priority"',
     to: 'whyThisCellNow: "cell_waiting_for_wip_capacity"',
@@ -401,7 +447,7 @@ const MUTATIONS = [
   {
     name: "在制品上限：闸必须真的挡住",
     file: CORE,
-    from: "      if (wipNow >= wipCap) {",
+    from: "      if (wipNow + wipReserved >= wipCap) {",
     to: "      if (false) {",
     expect: "闸没生效"
   },
@@ -414,6 +460,7 @@ const MUTATIONS = [
   },
   {
     name: "在制品上限：等额度是背压，不得记成 blocked",
+    check: "verifyWipCapacityBackpressure",
     file: CORE,
     from: 'outcome: "resource_queued", reasonCode: "wip_capacity_reached"',
     to: 'outcome: "blocked", reasonCode: "wip_capacity_reached"',
@@ -421,6 +468,7 @@ const MUTATIONS = [
   },
   {
     name: "在制品上限：在飞状态集合必须与 AgentDispatch 状态机一致",
+    check: "verifyWipCapacityBackpressure",
     file: CORE,
     from: '["queued", "running", "blocked"]',
     to: '["queued", "running"]',
@@ -428,6 +476,7 @@ const MUTATIONS = [
   },
   {
     name: "租约索引必须核对状态，不得把已释放的租约当成活的",
+    check: "verifyPerformanceCachesStayCorrect",
     file: CORE,
     from: '  if (cached && cached.status === "active" && cached.resourceRef === resourceRef) return cached;',
     to: "  if (cached) return cached;",
@@ -578,11 +627,29 @@ function removeWorktrees(dirs) {
 }
 
 // 必须是异步子进程：execFileSync 会阻塞整个进程，用它做"池"等于串行。
-function runContractCheck(workdir) {
+// mutation.check 指名"该抓它的那条检查"时，只跑那一条。契约门的固定开销实测 0.1s，
+// 完整一遍 41.3s —— 另外 44 条检查对这条变异毫无判别力，只是陪跑，而守卫每加一条就更贵。
+// 没指名的条目照旧跑全量：这是能力，不是义务，漏填只是慢，不会让判据失真。
+function runContractCheck(workdir, only) {
   return new Promise((resolve) => {
-    execFile("node", [join(workdir, "scripts/contract-check.mjs")], {cwd: workdir, maxBuffer: 64 * 1024 * 1024},
+    execFile("node", [join(workdir, "scripts/contract-check.mjs")],
+      {cwd: workdir, maxBuffer: 64 * 1024 * 1024, env: only ? {...process.env, AIMAC_CONTRACT_ONLY: only} : process.env},
       (error, stdout, stderr) => resolve({failed: Boolean(error), output: `${stdout || ""}${stderr || ""}`}));
   });
+}
+
+// 变异被抓住时，契约门会打印 failing-checks: —— 用它自动建立"变异 → 检查"的映射，
+// 免得人去手工维护一张对照表（手工表一定会漂，而漂了之后只是变慢，不会有人发现）。
+const discoveredChecks = new Map();
+function recordDiscovery(mutation, output) {
+  const match = /failing-checks: (.+)/u.exec(output);
+  if (match) discoveredChecks.set(mutation.name, match[1].trim());
+}
+
+function reportDiscovery() {
+  if (!process.env.AIMAC_MUTATION_DISCOVER || !discoveredChecks.size) return;
+  console.log("discovered check mapping:");
+  for (const [name, checks] of discoveredChecks) console.log(`  ${JSON.stringify(name)} => ${checks}`);
 }
 
 // 判据与串行逐字相同：必须失败，且失败信息里出现这条守卫对应的断言。
@@ -600,11 +667,15 @@ async function judgeMutation(mutation, workdir) {
   writeFileSync(target, original.replace(mutation.from, mutation.to));
   let result = {failed: false, output: ""};
   try {
-    result = await runContractCheck(workdir);
+    result = await runContractCheck(workdir, mutation.check);
   } finally {
     writeFileSync(target, original); // 只动副本，真实工作区全程未被触碰
   }
-  if (!result.failed) return `${mutation.name}: 守卫被改坏后 contract-check 仍然通过 —— 该守卫的测试是假绿，没有判别力`;
+  recordDiscovery(mutation, result.output);
+  if (!result.failed) {
+    return `${mutation.name}: 守卫被改坏后 contract-check 仍然通过 —— 该守卫的测试是假绿，没有判别力`
+      + (mutation.check ? `（本条只跑了 ${mutation.check}；若这条守卫其实由别的检查覆盖，改正 check 字段而不是删掉它）` : "");
+  }
   if (!result.output.includes(mutation.expect)) {
     return `${mutation.name}: 失败了但不是因为预期断言（期望出现「${mutation.expect}」）—— 测试可能在别处偶然失败，并未真正覆盖这条守卫`;
   }
@@ -638,6 +709,53 @@ async function runParallel(mutations) {
   removeWorktrees(dirs);
   return {failures, checked, workers};
 }
+
+// 锚点体检：只核对每条变异的 from 片段在目标文件里仍然【正好出现一次】，不跑任何 contract-check。
+// 纯文本、毫秒级，因此可以进快速链。
+//
+// 为什么需要它：完整变异门只在 npm run doctor（约 22 分钟）里跑，而守卫被改写、锚点随之失配
+// 是很平常的事 —— 本次就是：给闸加了优先级预留，改掉了 `if (wipNow >= wipCap)` 这一行，
+// 却没同步指向它的那条变异。全量门确实会报（"找不到要改坏的代码片段"），但要等一次长跑才知道，
+// 而这中间每一次"validate 全绿"都在暗示那条守卫仍然被验着。
+// 锚点失配不是小事：它意味着那条守卫【当前没有任何判别力证明】。
+function checkAnchorsOnly() {
+  const failures = [];
+  const seen = new Set();
+  // skip 掉的条目不执行，它的锚点自然也无从执行 —— 不能因此报红，但要点名列出来，
+  // 否则一条"永远跳过、锚点早已失配"的条目会假装自己还在守着什么。
+  const skipped = MUTATIONS.filter((mutation) => mutation.skip);
+  for (const mutation of MUTATIONS) {
+    if (mutation.skip) continue;
+    const key = `${mutation.file}::${mutation.from}::${mutation.to}`;
+    if (seen.has(key)) failures.push(`重复条目：${mutation.name} 与前面某条的 file/from/to 完全相同 —— 其中一条必然验的不是它自己声称的那个守卫`);
+    seen.add(key);
+    let source = "";
+    try {
+      source = readFileSync(join(root, mutation.file), "utf8");
+    } catch {
+      failures.push(`${mutation.name}: 读不到 ${mutation.file}`);
+      continue;
+    }
+    const occurrences = source.split(mutation.from).length - 1;
+    if (occurrences !== 1) {
+      failures.push(`${mutation.name}: 锚点在 ${mutation.file} 里出现 ${occurrences} 次（要求正好 1 次）—— `
+        + (occurrences ? "改不准被测的那一处" : "守卫已被改写而变异没跟上，这条守卫目前没有任何判别力证明"));
+    }
+    if (mutation.from === mutation.to) failures.push(`${mutation.name}: from 与 to 相同 —— 这条变异什么也没改坏`);
+    if (!mutation.expect) failures.push(`${mutation.name}: 没有 expect —— 只看退出码的话，任何一处偶然失败都会被当成"守卫有效"`);
+  }
+  if (failures.length) {
+    console.error("mutation anchor check failed:");
+    for (const failure of failures) console.error(`- ${failure}`);
+    process.exit(1);
+  }
+  console.log(`mutation anchor check ok: ${MUTATIONS.length - skipped.length} 条变异的锚点都仍然唯一匹配`
+    + `${skipped.length ? `；另有 ${skipped.length} 条被 skip（锚点不强制，判别力由各自注明的其它门覆盖）：${skipped.map((mutation) => mutation.name).join("、")}` : ""}`
+    + "（只核对锚点，没有验判别力 —— 那要跑完整变异门）");
+  process.exit(0);
+}
+
+if (process.argv.includes("--anchors-only")) checkAnchorsOnly();
 
 // 只跑名字里含某个片段的那几条。调单条变异时不必陪跑全量（本机全量并行约 24 分钟），
 // 也让"把 expect 改成绝不会出现的串、它必须报失败"这类自证做得起。
@@ -699,6 +817,7 @@ async function run() {
       for (const failure of failures) console.error(`- ${failure}`);
       process.exit(1);
     }
+    reportDiscovery();
     console.log(`mutation gate ok（并行 ${workers} 路 worktree）: ${checked.length} 条守卫均已证明其测试具备判别力`);
     for (const line of checked) console.log(line);
     return;
@@ -742,7 +861,8 @@ function runSerial(mutations = MUTATIONS) {
     let output = "";
     let passed = false;
     try {
-      execFileSync("node", [join(root, "scripts/contract-check.mjs")], {cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]});
+      execFileSync("node", [join(root, "scripts/contract-check.mjs")], {cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+        env: mutation.check ? {...process.env, AIMAC_CONTRACT_ONLY: mutation.check} : process.env});
       passed = true; // 改坏了却还通过 => 测试没有判别力
     } catch (error) {
       output = `${error.stdout || ""}${error.stderr || ""}`;
@@ -755,6 +875,7 @@ function runSerial(mutations = MUTATIONS) {
       pendingRestores.delete(path);
       clearPendingNote();
     }
+    recordDiscovery(mutation, output);
     process.stdout.write(`  · ${mutation.name} …\n`);
     if (passed) {
       failures.push(`${mutation.name}: 守卫被改坏后 contract-check 仍然通过 —— 该守卫的测试是假绿，没有判别力`);
@@ -769,6 +890,7 @@ function runSerial(mutations = MUTATIONS) {
     for (const failure of failures) console.error(`- ${failure}`);
     process.exit(1);
   }
+  reportDiscovery();
   console.log(`mutation gate ok: ${checked.length} 条守卫均已证明其测试具备判别力`);
   for (const line of checked) console.log(line);
 }

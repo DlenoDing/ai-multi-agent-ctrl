@@ -174,9 +174,29 @@ process.on("exit", () => { try { rmSync(probeRuntimeDir, {recursive: true, force
 
 const errors = [];
 
+// 变异门每验一条守卫都要跑一整遍本门。实测：把 45 条检查全跳过后固定开销只有 0.1s，
+// 完整一遍 41.3s —— 也就是说验一条守卫时，另外 44 条检查纯属陪跑，而守卫每加一条，
+// 陪跑就更贵一点。允许按名字只跑一条。
+//
+// 两条纪律：
+// 1. 过滤生效时必须在输出里【大声说出来】。一次"只跑了一条"的绿如果长得和全量绿一样，
+//    早晚会有人拿它当全量通过 —— 那正是这道门存在的意义被悄悄拿掉的方式。
+// 2. 名字打错必须报错退出，不能当成"没有匹配、于是全绿"。缺省不得等于有利结果。
+const ONLY = String(process.env.AIMAC_CONTRACT_ONLY || "").trim();
+const checkOrigin = new Map();
+let ranCheckCount = 0;
+const skippedChecks = [];
+function run(check) {
+  if (ONLY && check.name !== ONLY) { skippedChecks.push(check.name); return; }
+  ranCheckCount += 1;
+  const before = errors.length;
+  check(errors);
+  for (let index = before; index < errors.length; index += 1) checkOrigin.set(errors[index], check.name);
+}
+
 validateSchema(seedState.runtime, runtimeSchema, "seed.runtime", errors);
-verifyAgentGatewayContracts(errors);
-verifyHumanAndOrganizationContracts(errors);
+run(verifyAgentGatewayContracts);
+run(verifyHumanAndOrganizationContracts);
 
 for (const toolName of ["ui-console-mcp.runtime_health_get", "room-mcp.room_send", "agent-control-mcp.dispatch_status"]) {
   validateSchema(createMcpGrant(toolName, {tokenDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}), mcpGrantSchema, `McpGrant:${toolName}`, errors);
@@ -198,53 +218,62 @@ for (const tool of toolDefs) {
   if (tool.outputSchema?.type !== "object") errors.push(`MCP tool ${tool.name} outputSchema must be object`);
 }
 
-verifyRuntimeJsonConflict(errors);
-verifySeedRecordsMatchTheirDeclaredSchemas(errors);
-verifyEverySchemaVersionHasASpec(errors);
-verifyEveryProjectScopedIdIsScopeChecked(errors);
-verifyEveryStateCollectionIsTenantScoped(errors);
-verifyExpiredConfirmationRetargetsTheWorkItem(errors);
-verifyExpiredConfirmationLeavesNoStaleParking(errors);
-verifyPermissionOutcomeReleasesTheSession(errors);
-verifyShardRoundTripKeepsEveryRecord(errors);
-verifyOrchestrationDoesNotShellOutPerCell(errors);
-verifyWipCapacityBackpressure(errors);
-verifyHighPriorityCellsAreNotStarvedByEarlierGroups(errors);
-verifyWipCapacityIsPerProject(errors);
-verifyActiveDispatchesKeepTheirContracts(errors);
-verifySuspendedOrganizationHaltsExecution(errors);
-verifyHaltedTaskGroupsAreNotClaimable(errors);
-verifyExhaustedControlRetriesTellTheTruth(errors);
-verifyHumanApprovedPathsBindTheCommit(errors);
-verifyApprovedAcceptanceChecksHaveEvidence(errors);
-verifyPerformanceCachesStayCorrect(errors);
-verifyRepeatedExecutionFailureStops(errors);
-verifyOrchestratorReportsItsOwnOutcome(errors);
-verifyDegradedContentBundleIsVisible(errors);
-verifyMcpSummaryIsActuallyASummary(errors);
-verifyHeartbeatDoesNotHideFailedSelfCheck(errors);
-verifyTaskGroupBlockersStayBounded(errors);
-verifyPerScopeRecordsSurviveTheirCap(errors);
-verifyCancelSettlesTheCellsResources(errors);
-verifyAdmissionLedgerDoesNotGrowWithFlapping(errors);
-verifyEveryCloseGateHasHumanGuidance(errors);
-verifyGrantScopeCoversObjectsNamedOnlyById(errors);
-verifyLongRunningWorkKeepsItsClaim(errors);
-verifyCentralOnlyStateCannotBeWritten(errors);
-verifyUnknownStateSchemaIsRefused(errors);
-verifySuspendHaltsRunningWork(errors);
-verifyCancelDirectiveStopsRunningWork(errors);
-verifyPauseDirectiveIsReversible(errors);
-verifyIdempotencyReplayIsPrincipalBound(errors);
-verifyTestResultStatusRequired(errors);
-verifyApprovalDecisionRequired(errors);
-verifyWorkStatusEnumConvergence(errors);
-verifyTransitionEngine(errors);
-verifyCommandBusLifecycle(errors);
+run(verifyRuntimeJsonConflict);
+run(verifySeedRecordsMatchTheirDeclaredSchemas);
+run(verifyEverySchemaVersionHasASpec);
+run(verifyEveryProjectScopedIdIsScopeChecked);
+run(verifyEveryStateCollectionIsTenantScoped);
+run(verifyExpiredConfirmationRetargetsTheWorkItem);
+run(verifyExpiredConfirmationLeavesNoStaleParking);
+run(verifyPermissionOutcomeReleasesTheSession);
+run(verifyShardRoundTripKeepsEveryRecord);
+run(verifyOrchestrationDoesNotShellOutPerCell);
+run(verifyWipCapacityBackpressure);
+run(verifyHighPriorityCellsAreNotStarvedByEarlierGroups);
+run(verifyWipCapacityIsPerProject);
+run(verifyActiveDispatchesKeepTheirContracts);
+run(verifySuspendedOrganizationHaltsExecution);
+run(verifyHaltedTaskGroupsAreNotClaimable);
+run(verifyExhaustedControlRetriesTellTheTruth);
+run(verifyHumanApprovedPathsBindTheCommit);
+run(verifyApprovedAcceptanceChecksHaveEvidence);
+run(verifyPerformanceCachesStayCorrect);
+run(verifyRepeatedExecutionFailureStops);
+run(verifyOrchestratorReportsItsOwnOutcome);
+run(verifyDegradedContentBundleIsVisible);
+run(verifyMcpSummaryIsActuallyASummary);
+run(verifyHeartbeatDoesNotHideFailedSelfCheck);
+run(verifyTaskGroupBlockersStayBounded);
+run(verifyPerScopeRecordsSurviveTheirCap);
+run(verifyCancelSettlesTheCellsResources);
+run(verifyAdmissionLedgerDoesNotGrowWithFlapping);
+run(verifyEveryCloseGateHasHumanGuidance);
+run(verifyGrantScopeCoversObjectsNamedOnlyById);
+run(verifyLongRunningWorkKeepsItsClaim);
+run(verifyCentralOnlyStateCannotBeWritten);
+run(verifyUnknownStateSchemaIsRefused);
+run(verifySuspendHaltsRunningWork);
+run(verifyCancelDirectiveStopsRunningWork);
+run(verifyPauseDirectiveIsReversible);
+run(verifyIdempotencyReplayIsPrincipalBound);
+run(verifyTestResultStatusRequired);
+run(verifyApprovalDecisionRequired);
+run(verifyWorkStatusEnumConvergence);
+run(verifyTransitionEngine);
+run(verifyCommandBusLifecycle);
 
+if (ONLY && !ranCheckCount) {
+  console.error(`contract check failed:\n- AIMAC_CONTRACT_ONLY="${ONLY}" 没有匹配到任何检查 —— `
+    + "名字打错时必须报错，否则'一条都没跑'会被当成'一条都没错'");
+  process.exit(1);
+}
 if (errors.length) {
   console.error("contract check failed:");
   for (const error of errors) console.error(`- ${error}`);
+  // 失败出自哪条检查。变异门靠这一行自动建立"变异 → 该抓它的检查"的映射，
+  // 不用人去手工维护一张对照表（手工表一定会漂）。
+  const origins = [...new Set(errors.map((error) => checkOrigin.get(error)).filter(Boolean))];
+  if (origins.length) console.error(`failing-checks: ${origins.join(",")}`);
   process.exit(1);
 }
 
@@ -4258,7 +4287,9 @@ if (developerStateBefore !== developerStateAfter) {
   process.exit(1);
 }
 
-console.log("contract check ok");
+console.log(ONLY
+  ? `contract check（只跑了 ${ONLY}，跳过 ${skippedChecks.length} 条 —— 这【不是】一次全量核对）ok`
+  : "contract check ok");
 
 function loadJson(path) {
   return JSON.parse(readFileSync(resolve(root, path), "utf8"));
