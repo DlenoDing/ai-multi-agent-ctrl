@@ -427,6 +427,14 @@ const MUTATIONS = [
     expect: "没有先 recycleExpiredClaims"
   },
   {
+    name: "运行时提交不得改用户仓库的 git 配置",
+    check: "verifyCommitWorksWithoutConfiguredIdentity",
+    file: CORE,
+    from: "  try {\n    return gitStrict(root, [\"commit\", \"-m\", message]);",
+    to: "  if (!git(root, [\"config\", \"user.email\"], \"\")) gitStrict(root, [\"config\", \"user.email\", \"agent-runtime@local\"]);\n  try {\n    return gitStrict(root, [\"commit\", \"-m\", message]);",
+    expect: "写了东西"
+  },
+  {
     name: "阻塞类型指引：清单要按 core 全量取，不是手写",
     file: CONSOLE_GATE,
     gate: "console",

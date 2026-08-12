@@ -109,7 +109,8 @@ import {
   classifyDlqEntry,
   assignDlqEntry,
   replayDlqEntry,
-  sweepCommandBus
+  sweepCommandBus,
+  commitWithRuntimeIdentity,
 } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import {
   ackAgentControlCommand,
@@ -242,6 +243,7 @@ run(verifyExpiredConfirmationRetargetsTheWorkItem);
 run(verifyExpiredConfirmationLeavesNoStaleParking);
 run(verifyPermissionOutcomeReleasesTheSession);
 run(verifyShardRoundTripKeepsEveryRecord);
+run(verifyCommitWorksWithoutConfiguredIdentity);
 run(verifyOrchestrationDoesNotShellOutPerCell);
 run(verifyWipCapacityBackpressure);
 run(verifyHighPriorityCellsAreNotStarvedByEarlierGroups);
@@ -297,6 +299,49 @@ if (errors.length) {
   const origins = [...new Set(errors.map((error) => checkOrigin.get(error)).filter(Boolean))];
   if (origins.length) console.error(`failing-checks: ${origins.join(",")}`);
   process.exit(1);
+}
+
+// 运行时替人提交时，【不许改那个仓库的 git 配置】。
+// 原写法每次提交前先问两次 `git config user.email/name`，读不到就把 agent-runtime@local
+// 永久写进那个仓库 —— 在别人的仓库里留配置是我们不该做的事，而且常见路径上白付两次子进程。
+// 判据落在"能测得到"的那个性质上：本机 git 在没有配置身份时会自动推导（user@hostname），
+// 所以"提交会失败"造不出来；但"仓库的 local 配置多了两条"是原写法必然留下的痕迹。
+function verifyCommitWorksWithoutConfiguredIdentity(output) {
+  const repo = mkdtempSync(join(tmpdir(), "aimac-noident-"));
+  const env = {...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null"};
+  const run = (args) => execFileSync("git", args, {cwd: repo, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"]});
+  const savedEnv = {};
+  try {
+    run(["init", "-q", "-b", "main"]);
+    writeFileSync(join(repo, "a.txt"), "hello\n");
+    run(["add", "a.txt"]);
+    // 夹具自证：这个仓库确实【没有】配置身份，否则下面验的就不是那条路径。
+    // git config 读不到时退出码非 0（会抛），这正是"没有配置身份"的表现。
+    let configuredEmail = "";
+    try {
+      configuredEmail = execFileSync("git", ["config", "user.email"], {cwd: repo, encoding: "utf8", env,
+        stdio: ["ignore", "pipe", "pipe"]}).trim();
+    } catch { configuredEmail = ""; }
+    if (configuredEmail) {
+      output.push("无身份提交夹具无效：这个仓库已经配了 user.email，本条在空转");
+      return;
+    }
+    for (const key of ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"]) { savedEnv[key] = process.env[key]; process.env[key] = "/dev/null"; }
+    const localBefore = run(["config", "--local", "--list"]).split("\n").filter(Boolean).length;
+    commitWithRuntimeIdentity(repo, "runtime commit without configured identity");
+    const localAfter = run(["config", "--local", "--list"]).split("\n").filter(Boolean).length;
+    if (localAfter !== localBefore) {
+      output.push(`运行时提交往那个仓库的 git 配置里写了东西（${localBefore} 条 -> ${localAfter} 条）—— 不该在别人的仓库里留配置`);
+    }
+    if (!run(["log", "-1", "--format=%s"]).includes("runtime commit without configured identity")) {
+      output.push("没有配置身份的仓库里，运行时提交没有落下那次提交");
+    }
+  } catch (error) {
+    output.push(`没有配置身份的仓库里运行时提交失败：${String(error?.message || error).slice(0, 140)}`);
+  } finally {
+    for (const [key, value] of Object.entries(savedEnv)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(repo, {recursive: true, force: true});
+  }
 }
 
 function verifyHumanAndOrganizationContracts(output) {
@@ -5721,6 +5766,7 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     const commit = git("rev-parse", "HEAD");
     git("push", "-q", "origin", "HEAD:refs/heads/main");
     const remoteSha = execFileSync("git", ["ls-remote", remote, "refs/heads/main"], {encoding: "utf8"}).trim().split(/\s+/)[0];
+
     const contract = (state.agentTaskContracts || []).find((item) => item.sessionId === session.sessionId);
     const result = acceptAgentCheckpoint(state, {
       projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workId: workItem.id,

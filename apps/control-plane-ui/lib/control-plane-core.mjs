@@ -2837,12 +2837,10 @@ function runLocalGitArtifactWorker(state, request) {
     createdAt: at
   };
   writeFileSync(join(root, manifestPath), `${JSON.stringify(manifest, null, 2)}\n`);
-  if (!git(root, ["config", "user.email"], "")) gitStrict(root, ["config", "user.email", "agent-runtime@local"]);
-  if (!git(root, ["config", "user.name"], "")) gitStrict(root, ["config", "user.name", "AI Agent Runtime"]);
   gitStrict(root, ["add", manifestPath, outputPath]);
   const hasStaged = git(root, ["diff", "--cached", "--name-only"], "");
   if (!hasStaged) throw new Error("agent_runtime_no_git_changes");
-  gitStrict(root, ["commit", "-m", `Add AI runtime artifact manifest for ${workItem.id}`]);
+  commitWithRuntimeIdentity(root, `Add AI runtime artifact manifest for ${workItem.id}`);
   const commit = gitStrict(root, ["rev-parse", "HEAD"]);
   const branch = git(root, ["branch", "--show-current"], target.branch || "main") || target.branch || "main";
   const treeDigest = `git-tree:${gitStrict(root, ["rev-parse", `${commit}^{tree}`])}`;
@@ -4447,6 +4445,24 @@ export function gitHead(root = process.cwd()) {
 
 export function gitRemoteUrl(root = process.cwd(), remote = "origin") {
   return memoizedGitFact(`remote\u0000${root}\u0000${remote}`, () => git(root, ["remote", "get-url", remote], ""));
+}
+
+// 用运行时身份提交，但【不改用户的仓库配置】。
+// 原写法是每次提交前先问两次 `git config`，没配就把 agent-runtime@local 永久写进那个仓库 ——
+// 常见路径上白付两次子进程，而且留下一个我们不该留的副作用（在别人的仓库里改配置）。
+// 这里改成：先按仓库自己的身份提交；只有 git 因为缺身份拒绝时，才用 -c 就地补一个。
+// 语义与原来一致（配了就用配的），-c 只作用于这一次调用。
+// 抽成导出函数是为了让"没配身份的仓库"这个情形【测得到】：它在真实夹具里造不出来
+// （机器全局配置里总有身份），而不可测的分支等于没写。
+export function commitWithRuntimeIdentity(root, message) {
+  try {
+    return gitStrict(root, ["commit", "-m", message]);
+  } catch (error) {
+    const text = String(error?.stderr || error?.message || "");
+    if (!/user\.email|user\.name|empty ident|Author identity unknown/iu.test(text)) throw error;
+    return gitStrict(root, ["-c", "user.email=agent-runtime@local", "-c", "user.name=AI Agent Runtime",
+      "commit", "-m", message]);
+  }
 }
 
 function gitIsAncestor(root, ancestor, descendant) {
