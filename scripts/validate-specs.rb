@@ -1237,6 +1237,10 @@ case_marks.each_with_index do |(tool, at), index|
   errors << "MCP 工具 #{tool} 在作用域参数缺省时会落到控制面自己的任务组/房间，却没有受限主体守卫 —— 缺省不得等于放行" unless guarded
 end
 
+# grantMatchesArgs 的归属核对改由 contract-check 做【行为断言】（源码文本判据挡不住
+# "把条件改成 if (false)、正文原样留着"这种改动，实测如此）。这里只守住它仍然被导出，
+# 否则那条行为断言会在"函数不见了"时静默消失。
+errors << "grantMatchesArgs 必须导出，contract-check 的跨项目归属行为断言依赖它" unless mcp_source.include?("export function grantMatchesArgs(")
 # 关掉 fsync 是"这道门不验耐久性"的声明，不是"这套系统不需要耐久性"。
 # 它一旦出现在【专门验耐久性的门】里，那些门就会在一个不落盘的世界里全绿 ——
 # 崩溃一致性、并发写、空转不落盘这三道验的都是真实落盘行为。

@@ -13,7 +13,8 @@ import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs"
 import { publicAgentNode } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import {
-  summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit } from "../apps/mcp-server/server.mjs";
+  summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs
+} from "../apps/mcp-server/server.mjs";
 import {
   recordOrchestratorTickOutcome,
   acceptAgentCheckpoint,
@@ -218,6 +219,7 @@ verifyPerScopeRecordsSurviveTheirCap(errors);
 verifyCancelSettlesTheCellsResources(errors);
 verifyAdmissionLedgerDoesNotGrowWithFlapping(errors);
 verifyEveryCloseGateHasHumanGuidance(errors);
+verifyGrantScopeCoversObjectsNamedOnlyById(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4667,6 +4669,37 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 界面会安静地对它显示空白，人看到一个没过的门却得不到任何指引。
 // 今天两边是吻合的，但此前没有任何东西守着这份吻合。判据按【真实产出的 requiredGates】来，
 // 不按源码里的字面清单：门是从 gateFailures 的键推出来的，字面提取会跟不上。
+// MCP 的授权匹配只校验【报文里出现过的】作用域字段。报文只给一个对象 id（不给 projectId/
+// taskGroupId）时，那些字段比对一条都不触发 —— 只能靠"按 id 把对象查出来，再比它的归属"这一类分支。
+// 目前有两类需要这样兜：仓库产出目标与共享定义契约。少一个，对应的工具就能跨项目动别人的对象
+// （共享定义那条实测可把别人的草案推成 proposed，而 proposed 是阻塞状态，直接卡住对方的关闭门）。
+function verifyGrantScopeCoversObjectsNamedOnlyById(output) {
+  const grant = {projectId: "prj_mine", taskGroupId: "tg_mine", workId: "w_mine", sessionId: "sess_mine", dispatchId: "adp_mine"};
+  const state = {
+    repositoryOutputs: [
+      {targetId: "rot_mine", projectId: "prj_mine", taskGroupId: "tg_mine", workItemId: "w_mine"},
+      {targetId: "rot_theirs", projectId: "prj_theirs", taskGroupId: "tg_theirs", workItemId: "w_theirs"}
+    ],
+    sharedDefinitions: [
+      {contractId: "sdc_mine", projectId: "prj_mine"},
+      {contractId: "sdc_theirs", projectId: "prj_theirs"}
+    ]
+  };
+  const cases = [
+    ["自己项目的产出目标", {targetId: "rot_mine"}, true],
+    ["别人项目的产出目标", {targetId: "rot_theirs"}, false],
+    ["自己项目的共享定义契约", {contractId: "sdc_mine"}, true],
+    ["别人项目的共享定义契约", {contractId: "sdc_theirs"}, false]
+  ];
+  for (const [label, args, expected] of cases) {
+    const actual = grantMatchesArgs(state, grant, args);
+    if (actual !== expected) {
+      output.push(`MCP 授权匹配: ${label}（报文只给了对象 id）判成了 ${actual ? "允许" : "拒绝"}，应为 ${expected ? "允许" : "拒绝"}`
+        + " —— 报文不给作用域字段时，只有'按 id 查出对象再比归属'这条能兜住");
+    }
+  }
+}
+
 function verifyEveryCloseGateHasHumanGuidance(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});

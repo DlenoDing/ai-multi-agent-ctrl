@@ -1145,7 +1145,7 @@ function activeAgentMcpGrants(state, principal, toolName) {
   );
 }
 
-function grantMatchesArgs(state, grant, args = {}) {
+export function grantMatchesArgs(state, grant, args = {}) {
   if (args.dispatchId && args.dispatchId !== grant.dispatchId) return false;
   if (args.projectId && args.projectId !== grant.projectId) return false;
   if (args.taskGroupId && args.taskGroupId !== grant.taskGroupId) return false;
@@ -1157,6 +1157,15 @@ function grantMatchesArgs(state, grant, args = {}) {
   if (args.repositoryOutputTargetRef || args.targetId) {
     const target = state.repositoryOutputs.find((item) => item.targetId === (args.repositoryOutputTargetRef || args.targetId));
     if (!target || target.projectId !== grant.projectId || target.taskGroupId !== grant.taskGroupId || target.workItemId !== grant.workId) return false;
+  }
+  // 共享定义契约同理（与上面 targetId 一个形状）：报文只给 contractId、不给作用域时，
+  // 上面那些按字段比对的检查一条都不触发。而共享定义是【项目内】作用域的
+  // （sharedDefinitionAppliesToWork 要求 definition.projectId === taskGroup.projectId），
+  // 跨项目去动它对自己毫无用处，只会害别人：publish 会把对方的草案推成 proposed，
+  // 而 proposed 属于阻塞状态，直接卡住对方的关闭门、逼出一次人工处置。
+  if (args.contractId) {
+    const definition = (state.sharedDefinitions || []).find((item) => item.contractId === args.contractId);
+    if (definition && definition.projectId && definition.projectId !== grant.projectId) return false;
   }
   if (args.roomId) {
     const allowedRoomIds = new Set([`room_${grant.taskGroupId}`, grant.sessionId].filter(Boolean));
