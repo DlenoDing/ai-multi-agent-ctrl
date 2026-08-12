@@ -156,6 +156,21 @@ function run() {
       failures.push(`这些受守卫的写路由没有在 auditLog 里留痕：${auditless.join("；")} ——`
         + " decisionRecords 里虽然有，但控制台不读它，人在审计页上查不到是谁做的");
     }
+    // 留了痕还不够：actor 必须是【通过认证的那个账号】，不能是服务名。
+    // 实测有 7 条路由把 actor 记成 "ui-console-service"，其中包括授权的新增与撤销、
+    // 成员授权、agent 上线 —— 全是问责记录存在的理由，而条目里没有任何字段指向做这件事的人。
+    // 判据不写死某个服务名（那样换个名字就逃了），而是要求 audit 的第一个参数不是字符串字面量。
+    const serviceActors = [];
+    for (const block of guardedBlocks) {
+      for (const row of block.body) {
+        const match = /\baudit\(\s*state\s*,\s*"([a-z-]+)"/u.exec(row.text);
+        if (match) serviceActors.push(`${row.line}: ${match[1]}`);
+      }
+    }
+    if (serviceActors.length) {
+      failures.push(`这些受守卫的写路由把审计的 actor 记成了服务名而不是真人：${serviceActors.join("；")} ——`
+        + " 问责记录里查不到是谁做的；受守卫路由里 guard.actor 就是认证过的账号");
+    }
   }
 
   console.log(`auth placement gate ok: ${blocks.length} 条改状态路由鉴权之前无泄露无写入、每个受守卫动作都有显式权限映射、动作名不取自请求体，且按路径定位的对象其授权作用域不取自请求体`);

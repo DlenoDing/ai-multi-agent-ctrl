@@ -3296,7 +3296,7 @@ async function handleApi(req, res) {
       json(res, result.status || 409, {error: result.error});
       return;
     }
-    audit(state, "ui-console-service", "task_group_create", `TaskGroup:${result.taskGroup.id}`);
+    audit(state, guard.actor, "task_group_create", `TaskGroup:${result.taskGroup.id}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
@@ -3329,7 +3329,7 @@ async function handleApi(req, res) {
       json(res, result.status || 409, {error: result.error});
       return;
     }
-    audit(state, "ui-console-service", "task_group_work_item_create", `WorkItem:${taskGroup.id}:${result.workItem.id}`);
+    audit(state, guard.actor, "task_group_work_item_create", `WorkItem:${taskGroup.id}:${result.workItem.id}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
     json(res, 201, result);
@@ -3390,7 +3390,7 @@ async function handleApi(req, res) {
       createdAt: now(),
       updatedAt: now()
     });
-    audit(state, "ui-console-service", "project_member_grant", `Project:${project.id}`);
+    audit(state, guard.actor, "project_member_grant", `Project:${project.id}`);
     finishGuardedWrite(state, guard, 200, project);
     writeState(state);
     json(res, 200, project);
@@ -3412,7 +3412,7 @@ async function handleApi(req, res) {
     }
     agent.status = body.active === false ? "inactive" : "active";
     agent.capacity = agent.status === "active" ? "ready" : "standby";
-    audit(state, "ui-console-service", "agent_activation_update", `AgentNode:${agent.id}`);
+    audit(state, guard.actor, "agent_activation_update", `AgentNode:${agent.id}`);
     finishGuardedWrite(state, guard, 200, agent);
     writeState(state);
     json(res, 200, agent);
@@ -3442,7 +3442,7 @@ async function handleApi(req, res) {
       updatedAt: now()
     };
     state.agents.push(agent);
-    audit(state, "ui-console-service", "agent_create", `AgentNode:${agent.id}`);
+    audit(state, guard.actor, "agent_create", `AgentNode:${agent.id}`);
     finishGuardedWrite(state, guard, 201, agent);
     writeState(state);
     json(res, 201, agent);
@@ -3618,7 +3618,7 @@ async function handleApi(req, res) {
       updatedAt: at
     };
     state.accessGrants.push(grant);
-    audit(state, "ui-console-service", "access_grant_create", `${grant.resource.resourceType}:${grant.resource.resourceId}`);
+    audit(state, guard.actor, "access_grant_create", `${grant.resource.resourceType}:${grant.resource.resourceId}`);
     finishGuardedWrite(state, guard, 201, grant);
     writeState(state);
     json(res, 201, grant);
@@ -3640,7 +3640,7 @@ async function handleApi(req, res) {
     }
     grant.status = "revoked";
     grant.updatedAt = now();
-    audit(state, "ui-console-service", "access_grant_revoke", `AccessControlGrant:${grant.grantId}`);
+    audit(state, guard.actor, "access_grant_revoke", `AccessControlGrant:${grant.grantId}`);
     finishGuardedWrite(state, guard, 200, grant);
     writeState(state);
     json(res, 200, grant);
