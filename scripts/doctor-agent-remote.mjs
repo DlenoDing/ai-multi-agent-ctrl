@@ -300,6 +300,14 @@ try {
     // 但在役的旧版运行时不发送它，一旦其派发被重认领就会卡住 —— 拒绝信息必须直接给出该怎么办，
     // 否则运维面对的是一个只说"必须带上"的错误码。
     const reclaimed = (staleState.agentDispatches || []).find((item) => Number(item.attempts || 0) > 1);
+    // 这一整段（检查点与失败上报"缺代次必须被拒"）只在存在【被重认领过】的派发时才跑。
+    // 没有就整段跳过 —— 而"跳过"与"验过了"在输出上一模一样。实测就出现过：改坏 /fail 的强制，
+    // e2e 照样绿，因为这一轮压根没有 attempts>1 的派发。所以把它说出来。
+    console.log("  ..  派发的 attempts 分布：" + JSON.stringify((staleState.agentDispatches || [])
+      .reduce((acc, item) => { const k = String(item.attempts ?? "无"); acc[k] = (acc[k] || 0) + 1; return acc; }, {})));
+    console.log(reclaimed
+      ? `  ok  缺代次拒绝（检查点 + 失败上报）：用 attempts=${reclaimed.attempts} 的派发验过`
+      : "  --  这一轮没有被重认领过的派发，'缺代次必须被拒'（检查点与失败上报两条）未被检验");
     if (reclaimed) {
       const noEpoch = await fetch(`${baseUrl}/api/agent/v1/dispatches/${encodeURIComponent(reclaimed.dispatchId)}/checkpoint`, {
         method: "POST",
@@ -500,6 +508,58 @@ try {
 	  if (requeuedDispatch?.status !== "queued" || requeuedDispatch.assignedNodeId) {
 	    throw new Error("Agent node revocation ACK did not requeue the fenced dispatch");
 	  }
+	  // 让这个被重排的派发【再被认领一次】，attempts 变成 2 —— 只有这时"缺代次必须被拒"
+	  // 才有意义（首次认领不存在更早的持有者）。此前 e2e 里从来没有 attempts>1 的派发，
+	  // 于是那两条断言（检查点、失败上报）整段被跳过，而跳过与验过在输出上一模一样：
+	  // 我把 /fail 的强制改坏，e2e 照样绿，才发现这件事。
+	  const secondJoin = await json("/api/agent-join-tokens", {
+	    method: "POST",
+	    token: login.sessionToken,
+	    idempotencyKey: "doctor-agent-reclaim-token",
+	    body: {projectId: "prj_control_plane", nodeName: "reclaim-node", allowedRoles: ["*"], ttlSeconds: 900}
+	  });
+	  const secondRegistration = await json("/api/agent/v1/register", {
+	    method: "POST",
+	    token: secondJoin.joinToken,
+	    body: {nodeName: "reclaim-node", requestedRoles: ["*"], runtimeVersion: "doctor", profile: {tools: [], models: [{providerClass: "custom", adapter: "doctor", available: true}]}}
+	  });
+	  await json("/api/agent/v1/self-check", {
+	    method: "POST",
+	    token: secondRegistration.nodeToken,
+	    body: {checks: okSelfChecks(baseUrl), runtimeVersion: "doctor"}
+	  });
+	  const reclaim = await json("/api/agent/v1/dispatches/next", {method: "POST", token: secondRegistration.nodeToken, body: {}});
+	  const reclaimedId = reclaim.dispatch?.dispatch?.dispatchId;
+	  if (!reclaimedId) throw new Error("重排后的派发没能被新节点认领 —— '缺代次必须被拒'这两条又会整段跳过");
+	  const reclaimedAttempts = Number(reclaim.dispatch.dispatch.attempts || 0);
+	  if (reclaimedAttempts < 2) throw new Error(`重认领后的 attempts=${reclaimedAttempts}，不足以触发"缺代次必须被拒"`);
+	  const postNoEpoch = await fetch(`${baseUrl}/api/agent/v1/dispatches/${encodeURIComponent(reclaimedId)}/checkpoint`, {
+	    method: "POST",
+	    headers: {"content-type": "application/json", authorization: `Bearer ${secondRegistration.nodeToken}`},
+	    body: JSON.stringify({runId: reclaim.dispatch.dispatch.runId, sessionId: reclaim.dispatch.dispatch.sessionId})
+	  });
+	  const postNoEpochPayload = await postNoEpoch.json().catch(() => ({}));
+	  if (postNoEpoch.status !== 409 || postNoEpochPayload.error !== "checkpoint_claim_epoch_required") {
+	    throw new Error(`被重认领的派发接受了缺代次的检查点（HTTP ${postNoEpoch.status} / ${postNoEpochPayload.error}）——`
+	      + " 上一轮执行器的提交会被当成这一轮的成果");
+	  }
+	  const failNoEpoch = await fetch(`${baseUrl}/api/agent/v1/dispatches/${encodeURIComponent(reclaimedId)}/fail`, {
+	    method: "POST",
+	    headers: {"content-type": "application/json", authorization: `Bearer ${secondRegistration.nodeToken}`},
+	    body: JSON.stringify({status: "blocked", reason: "no-epoch probe"})
+	  });
+	  const failNoEpochPayload = await failNoEpoch.json().catch(() => ({}));
+	  if (failNoEpoch.status !== 409 || failNoEpochPayload.error !== "dispatch_fail_claim_epoch_required") {
+	    throw new Error(`被重认领的派发接受了缺代次的失败上报（HTTP ${failNoEpoch.status} / ${failNoEpochPayload.error}）——`
+	      + " 上一轮的执行器可以把这一轮正在跑的活标记为阻塞");
+	  }
+	  for (const [label, payload] of [["检查点", postNoEpochPayload], ["失败上报", failNoEpochPayload]]) {
+	    if (!String(payload.message || "").includes("重新执行入网安装命令")) {
+	      throw new Error(`${label}拒绝了缺代次，但没告诉运维该怎么办 —— 旧版运行时会卡在这里而看不出原因`);
+	    }
+	  }
+	  console.log(`  ok  缺代次必须被拒（检查点 + 失败上报）：用 attempts=${reclaimedAttempts} 的重认领派发验过`);
+
 	  // 到这里，这一轮 e2e 已经真的派发、真的 commit、真的 push、真的提交过 checkpoint。
 	  // 契约门那一侧只能校验它自己造的记录，够不到这些 —— 而 checkpoint 的 commitRefs/pushRefs
 	  // 正是关闭门赖以判定的证据面，此前没有任何实例被按规范校验过。
