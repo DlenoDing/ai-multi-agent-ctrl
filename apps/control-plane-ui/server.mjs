@@ -599,6 +599,21 @@ function isSystemAccount(account) {
   return Boolean(account && (account.accountType === "system_admin" || (account.roles || []).includes("system_admin") || (account.permissions || []).includes("system:*")));
 }
 
+// 成员类路由统一按【被改的那个账号】取作用域，而不是按操作者自己的组织取。
+// 按操作者取会让系统管理员（organizationId 为 null）在成员管理页列得出某组织的全部成员、
+// 对每一个动手却都拿到 org_member_not_found —— 界面上三个按钮全是坏的。
+// 但只有系统账号跟到目标所属的组织；其余人一律锁在自己的组织里，否则"别的组织有没有这个账号"
+// 会从 403（越权）与 404（不存在）的差别里漏出去，这几条路由就成了跨租户的存在性探针。
+function resolveOrgMemberTarget(state, actorAccount, accountId) {
+  const target = (state.accounts || []).find((item) => item.accountId === accountId);
+  const orgId = isSystemAccount(actorAccount) ? (target?.organizationId ?? null) : (actorAccount?.organizationId ?? null);
+  return {
+    orgId,
+    member: target && (target.organizationId ?? null) === orgId ? target : null,
+    scope: orgId ? {resourceType: "organization", resourceId: orgId} : {resourceType: "system", resourceId: "accounts"}
+  };
+}
+
 function publicAccountRecord(account) {
   return {
     schemaVersion: account.schemaVersion,
@@ -4693,10 +4708,10 @@ async function handleApi(req, res) {
   const orgMemberPermMatch = url.pathname.match(/^\/api\/org\/members\/([^/]+)\/permissions$/);
   if (req.method === "POST" && orgMemberPermMatch) {
     const actorAccount = accountFromRequest(req, state)?.account;
-    const orgId = actorAccount?.organizationId;
-    const guard = beginGuardedWrite(req, state, "org_member_permissions_update", `Account:${orgMemberPermMatch[1]}`, {resourceType: "organization", resourceId: orgId});
+    const target = resolveOrgMemberTarget(state, actorAccount, orgMemberPermMatch[1]);
+    const guard = beginGuardedWrite(req, state, "org_member_permissions_update", `Account:${orgMemberPermMatch[1]}`, target.scope);
     if (guard.status) return json(res, guard.status, guard.payload);
-    const member = state.accounts.find((item) => item.accountId === orgMemberPermMatch[1] && item.organizationId === orgId && item.accountType !== "org_admin");
+    const member = target.member && target.member.accountType !== "org_admin" ? target.member : null;
     if (!member) return json(res, 404, {error: "org_member_not_found"});
     member.permissions = sanitizeMemberPermissions(body.permissions, member.permissions || ["project:view"]);
     if (body.defaultProjectId !== undefined) member.defaultProjectId = body.defaultProjectId || null;
@@ -4716,11 +4731,11 @@ async function handleApi(req, res) {
   const orgMemberReissueMatch = url.pathname.match(/^\/api\/org\/members\/([^/]+)\/reissue-invite$/);
   if (req.method === "POST" && orgMemberReissueMatch) {
     const reissueActor = accountFromRequest(req, state)?.account;
-    const reissueOrgId = reissueActor?.organizationId;
+    const reissueTarget = resolveOrgMemberTarget(state, reissueActor, orgMemberReissueMatch[1]);
     const guard = beginGuardedWrite(req, state, "org_member_invite_reissue", `Account:${orgMemberReissueMatch[1]}`,
-      {resourceType: "organization", resourceId: reissueOrgId});
+      reissueTarget.scope);
     if (guard.status) return json(res, guard.status, guard.payload);
-    const member = state.accounts.find((item) => item.accountId === orgMemberReissueMatch[1] && item.organizationId === reissueOrgId);
+    const member = reissueTarget.member;
     if (!member) return json(res, 404, {error: "org_member_not_found"});
     // 被撤回的邀请（invited→disabled）也走这里：它同样从没接受过，两条登录路径同样是断的，
     // 而"先停用再重新邀请"这句原话在没有这一支时是空的 —— 邮箱唯一性拦住重建、配额还占着。
@@ -4752,19 +4767,13 @@ async function handleApi(req, res) {
   const orgMemberStatusMatch = url.pathname.match(/^\/api\/org\/members\/([^/]+)\/status$/);
   if (req.method === "POST" && orgMemberStatusMatch) {
     const actorAccount = accountFromRequest(req, state)?.account;
-    const targetAccount = (state.accounts || []).find((item) => item.accountId === orgMemberStatusMatch[1]);
-    // 作用域要取【被改的那个账号】所属的组织，不是操作者自己的。原先取操作者的：系统管理员的
-    // organizationId 是 null，于是它在成员管理页列得出某组织的全部成员、对每一个动手却都拿到
-    // org_member_not_found —— 人看到的是"这个成员不存在"，而它就在上面那张表里。
-    // 但只有系统账号按目标取；其余人一律按自己的组织取，否则"别的组织有没有这个账号"会从
-    // 403（越权）与 404（不存在）的差别里漏出去，成了一条跨租户的存在性探针。
-    const orgId = isSystemAccount(actorAccount) ? (targetAccount?.organizationId ?? null) : (actorAccount?.organizationId ?? null);
-    const guard = beginGuardedWrite(req, state, "org_member_status_update", `Account:${orgMemberStatusMatch[1]}`,
-      orgId ? {resourceType: "organization", resourceId: orgId} : {resourceType: "system", resourceId: "accounts"});
+    const target = resolveOrgMemberTarget(state, actorAccount, orgMemberStatusMatch[1]);
+    const orgId = target.orgId;
+    const guard = beginGuardedWrite(req, state, "org_member_status_update", `Account:${orgMemberStatusMatch[1]}`, target.scope);
     if (guard.status) return json(res, guard.status, guard.payload);
     // 原先把 org_admin 整个排除在外：组织管理员离职之后，控制台上没有任何入口能让它下线，
     // 只能靠系统管理员专属的 MCP 工具。现在允许停用，但不得把组织锁死 —— 至少要留一个活跃管理员。
-    const member = targetAccount && (targetAccount.organizationId ?? null) === orgId ? targetAccount : null;
+    const member = target.member;
     if (!member) return json(res, 404, {error: "org_member_not_found"});
     const nextMemberStatus = body.status === "disabled" ? "disabled" : "active";
     // 治理主体不能被停到零。原先只写了 org_admin 这一支，而系统管理员的 organizationId 是 null、

@@ -1138,6 +1138,24 @@ try {
     body: JSON.stringify({status: "active"})
   });
   if (systemRestoresMember.response.status !== 200) throw new Error(`system admin could not re-enable the member: ${systemRestoresMember.response.status}`);
+  // 同一张表上还有「权限」「重发邀请」两个按钮，它们此前是同一个毛病。这两条都写成【不改变任何
+  // 东西】的形态：权限原样提交、重发对一个已激活的账号 —— 关键是它必须回 409（够得着、但不适用），
+  // 而不是 404（找不到这个成员）。区分的正是被修掉的那个缺陷。
+  const systemEditsPermissions = await jsonFetch(port, `/api/org/members/${encodeURIComponent(memberAccountId)}/permissions`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-system-member-perms", authorization: systemAuth},
+    body: JSON.stringify({permissions: orgMembers.payload.members.find((member) => member.email === "doctor.member1@local").permissions})
+  });
+  if (systemEditsPermissions.response.status !== 200) {
+    throw new Error(`系统管理员改不了它列得出来的成员权限（${systemEditsPermissions.response.status}:${systemEditsPermissions.payload.error}）—— 界面上的「权限」按钮是坏的`);
+  }
+  const systemReissues = await jsonFetch(port, `/api/org/members/${encodeURIComponent(memberAccountId)}/reissue-invite`, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-system-member-reissue", authorization: systemAuth}
+  });
+  if (systemReissues.response.status !== 409 || systemReissues.payload.error !== "org_member_invite_reissue_not_applicable") {
+    throw new Error(`系统管理员的重发邀请没够着这个成员（应 409 not_applicable，得到 ${systemReissues.response.status}:${systemReissues.payload.error}）—— 404 说明这条路由仍按操作者自己的组织找人`);
+  }
   // 而放开这条口子不得让"别的组织有没有这个账号"漏出去：存在但不属于我 与 根本不存在，
   // 对组织管理员必须是同一个回答，否则这条路由就成了跨租户的存在性探针。
   const foreignTarget = await jsonFetch(port, "/api/org/members/acct_system_owner/status", {
