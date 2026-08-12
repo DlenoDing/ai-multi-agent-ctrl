@@ -1610,7 +1610,43 @@ i18n_key = ->(code) { i18n_zh_source.match?(/^\s*#{Regexp.escape(code)}:/) }
 # Scan core + gateway + MCP server: the MCP server also sets dispatch.blockedReason literals that the
 # console renders via t(), so it must be covered or a raw-English reason (e.g. mcp_session_paused) leaks.
 i18n_reason_sources = core_source + agent_gateway_source + mcp_source
-localized_literals = i18n_reason_sources.scan(/(?:blockedReason|reasonCode)\s*[:=]\s*"([a-z_]+)"/).flatten.uniq
+# 值表达式里的字面量都要看得见，不能只认紧跟冒号的那一个。
+# 三元与 || 兜底这两种写法在本仓库都真实存在，而只认字面量的提取【看不见它们】：
+# 实测有 21 个这样的字面量从未被这道门查过，其中"节点停机待停止"确实没有中文，
+# 而它的孪生项"节点吊销待停止"中文和出口指引都齐 —— 有的有、有的没有正是这类洞的常态。
+# 表达式的右边界按【下一个同级键】切，不按字符数猜：按距离取窗口会把隔壁 whyThisCellNow
+# 的取值也算成 reasonCode 的（那会造出一批查无此处的假红）。
+reason_literals = lambda do |source, key|
+  found = []
+  opaque = []
+  # 不加前缀约束：dispatch.blockedReason = "..." 这种带点号的赋值也必须看到
+  # （原门没有前缀约束，我一度加上去，等于把这一整类静默排除在外）。
+  # [:=](?!=) 排掉 === 比较，否则 `previous.reasonCode === reasonCode` 会被当成一次赋值。
+  source.to_enum(:scan, /#{key}\s*[:=](?!=)\s*/).each do
+    tail = source[Regexp.last_match.end(0), 300].to_s
+    boundary = [tail.index("\n") || tail.length, tail.index(/,\s*[A-Za-z_$][\w$]*\s*:/) || tail.length].min
+    expression = tail[0, boundary]
+    literals = expression.scan(/"([a-z][a-z_]*)"/).flatten
+    if literals.empty?
+      # 跟一跳：值是个裸标识符时，找它的 const 声明再取字面量。
+      # 本轮那个真缺陷（节点关停待停止没有中文）正是藏在这种一跳后面：
+      # const pendingReason = 是吊销 ? "..." : "..."，然后 dispatch.blockedReason = pendingReason。
+      # 跟不到就如实留在"未被检验"里 —— 跟两跳、跟函数参数都不做，那会把这道门变成半个求值器。
+      name = expression.strip[/\A([A-Za-z_$][\w$]*);?\z/, 1]
+      declaration = name && source[/const\s+#{Regexp.escape(name)}\s*=\s*([^;]{0,400});/m, 1]
+      hop = declaration ? declaration.scan(/"([a-z][a-z_]*)"/).flatten : []
+      hop.empty? ? opaque << expression.strip[0, 60] : found.concat(hop)
+    else
+      found.concat(literals)
+    end
+  end
+  [found.uniq, opaque.uniq]
+end
+blocked_literals, blocked_opaque = reason_literals.call(i18n_reason_sources, "blockedReason")
+reason_code_literals, reason_code_opaque = reason_literals.call(i18n_reason_sources, "reasonCode")
+localized_literals = (blocked_literals + reason_code_literals).uniq
+# 取值来自变量的那些，这道门看不到它们最终是什么 —— 明说出来，不要让"没报错"被当成"查过了"。
+opaque_reason_sites = (blocked_opaque + reason_code_opaque).uniq
 missing_localized = localized_literals.reject { |code| i18n_key.call(code) }
 errors << "Console i18n missing blockedReason/reasonCode keys: #{missing_localized.join(', ')}" unless missing_localized.empty?
 errors << "blockedReason must be a static string literal (not a template literal) for i18n" if i18n_reason_sources.match?(/blockedReason\s*[:=]\s*`/)
@@ -2245,4 +2281,7 @@ end
 
 fail_with(errors)
 
+puts "原因码本地化：核对了 #{localized_literals.length} 个字面量（含三元/|| 兜底里的）；" \
+     "另有 #{opaque_reason_sites.length} 处取值来自变量，本门看不到它们的取值，未被检验" \
+     "#{opaque_reason_sites.empty? ? '' : '：' + opaque_reason_sites.join('、')}"
 puts "spec validation ok"
