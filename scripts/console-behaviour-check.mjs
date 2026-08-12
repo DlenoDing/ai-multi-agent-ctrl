@@ -1299,6 +1299,36 @@ await runErrorGuidanceCase();
   }
 }
 
+// 任务组页是项目负责人盯单元的地方：单元交给执行方之后停着不动时，他在这一页等。
+// "没有任何在线 agent"此前只在监控页说 —— 他得先想到去那一页看，才知道自己在等一件
+// 不会发生的事。同一条规矩：提示要出现在人所在的位置。
+{
+  const account = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const withCells = (status, fleet) => ({
+    schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    organizations: [{orgId: "org_default", name: "组织", status: "active"}],
+    projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development",
+      workItems: [{id: "w1", title: "单元", status, progress: 30, ownerRole: "agent-runtime"}]}],
+    agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], findings: [],
+    humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: [], fleet
+  });
+  const probe = loadConsole(el("div"));
+  const stalled = probe.renderTaskGroupsWith(withCells("dispatched", {online: 0, total: 2}), account, "p1", null, {});
+  check("单元已交给执行方而没有在线 agent 时，要在任务组页上说出来",
+    /没有任何在线的 agent 节点/.test(stalled),
+    "进度条不会再动，而这一页一个字都不说 —— 人会一直等，并且会以为是 agent 在慢慢做");
+  check("要说清它们不会有进展、以及去哪儿看",
+    /不会有任何进展/.test(stalled) && /agent 页/.test(stalled),
+    "只说没节点，不说这对他意味着什么、下一步做什么");
+  check("有在线 agent 时不挂这条提示",
+    !/没有任何在线的 agent 节点/.test(probe.renderTaskGroupsWith(withCells("dispatched", {online: 1, total: 2}), account, "p1", null, {})),
+    "有节点在线还提示 —— 常亮的告警等于没有告警");
+  check("单元还没交出去时不挂这条提示",
+    !/没有任何在线的 agent 节点/.test(probe.renderTaskGroupsWith(withCells("draft", {online: 0, total: 2}), account, "p1", null, {})),
+    "单元还在 draft 就提示 agent 掉线 —— 这时它本来也不该动");
+}
+
 // 人把方案「交回 AI 再分析」之后，如果一个在线 agent 都没有，这个等待永远不会结束。
 // 而人工确认页上此前只写着"等待 AI 再分析"—— 人就坐在那儿等一件不会发生的事。
 // （舰队掉线的提示原先只挂在监控页，而这一页才是他等的地方。）

@@ -2210,7 +2210,7 @@ function renderTaskGroups() {
     return panel(taskGroup.name || taskGroup.id, head, {wide: true});
   }).join("");
 
-  return createPanels.join("") + (groupPanels || panel("任务组", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true}));
+  return cellsWaitingWithNoAgentNotice(groups) + createPanels.join("") + (groupPanels || panel("任务组", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true}));
 }
 
 function renderTaskGroupDetail(taskGroup) {
@@ -2771,6 +2771,22 @@ function fleetOfflineNotice() {
 // 如果此刻一个在线 agent 都没有，这个等待【永远不会结束】—— 而人工确认页上只写着
 // "等待 AI 再分析"，人就坐在那儿等一件不会发生的事。舰队掉线的提示原先只挂在监控页，
 // 而这一页才是他等的地方。
+// 任务组页是项目负责人盯单元的地方：单元停在 assigned/dispatched 不动时，他在这一页等。
+// 而"没有任何在线 agent"此前只在监控页说 —— 他要先想到去监控页看，才知道自己在等一件
+// 不会发生的事。提示要出现在他所在的位置。
+function cellsWaitingWithNoAgentNotice(groups) {
+  const fleet = (state || {}).fleet;
+  if (!fleet || Number(fleet.online || 0) > 0) return "";
+  const waitingStatuses = new Set(["assigned", "dispatched", "in_progress", "checkpoint_submitted"]);
+  const waiting = (groups || []).flatMap((group) => (group.workItems || []))
+    .filter((item) => waitingStatuses.has(item.status)).length;
+  if (!waiting) return "";
+  const total = Number(fleet.total || 0);
+  return `<div class="notice warn-notice">这个项目有 ${esc(waiting)} 个单元已经交给执行方，`
+    + `而当前【没有任何在线的 agent 节点】${total ? `（已注册 ${esc(total)} 个，此刻都不在线或已降级）` : "（一个都还没注册）"}：`
+    + `它们不会有任何进展，进度条也不会再动。先到 agent 页确认节点状态${total ? "，把降级的那台修好或重启" : "，按安装指引接入一台"}。</div>`;
+}
+
 function aiAnalysisStalledNotice(requests) {
   const fleet = (state || {}).fleet;
   if (!fleet || Number(fleet.online || 0) > 0) return "";
