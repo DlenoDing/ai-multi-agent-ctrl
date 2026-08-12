@@ -25,6 +25,8 @@ const PGSTORE = "apps/control-plane-ui/lib/pg-sync-store.mjs";
 const STORE = "apps/control-plane-ui/lib/state-store.mjs";
 const SERVER = "apps/control-plane-ui/server.mjs";
 const APP = "apps/control-plane-ui/public/app.js";
+const I18N = "apps/control-plane-ui/public/i18n-zh.js";
+const CONSOLE_GATE = "scripts/console-behaviour-check.mjs";
 
 // 每条 mutation：把守卫改坏，期望 contract-check 失败且输出里出现 expect 片段。
 const MUTATIONS = [
@@ -417,6 +419,46 @@ const MUTATIONS = [
   // ── 非契约门的守卫。它们此前只在写下的当天被手工变异过一次，之后再没有任何东西
   //    证明它们仍有判别力 —— 而本会话两次写出"按构造永远为真"的断言，都是靠变异才发现的。
   {
+    name: "本地化门必须看得见三元写法里的原因码",
+    file: I18N,
+    gate: "specs",
+    from: '    assigned_node_shutdown_pending_stop: "节点关停待停止",',
+    to: "",
+    expect: "assigned_node_shutdown_pending_stop"
+  },
+  {
+    name: "本地化门必须看得见 || 兜底写法里的错误码",
+    file: I18N,
+    gate: "specs",
+    from: "    repository_output_target_unsafe_branch: ",
+    to: "    repository_output_target_unsafe_branch_renamed: ",
+    expect: "repository_output_target_unsafe_branch"
+  },
+  {
+    name: "未达法定人数的审批必须继续挡住关闭门",
+    file: CORE,
+    gate: "specs",
+    from: 'export const APPROVAL_REQUEST_PENDING_STATUSES = ["requested", "quorum_collecting"];',
+    to: 'export const APPROVAL_REQUEST_PENDING_STATUSES = ["requested"];',
+    expect: "未达法定人数的审批不再挡住关闭"
+  },
+  {
+    name: "两处关闭门判定必须共用同一个待处理集合（各写各的必然漂）",
+    file: CORE,
+    gate: "specs",
+    from: "      (state.approvalRequests || []).some((item) => item.taskGroupId === taskGroupId && APPROVAL_REQUEST_PENDING_STATUSES.includes(item.status)),",
+    to: '      (state.approvalRequests || []).some((item) => item.taskGroupId === taskGroupId && ["requested", "quorum_collecting"].includes(item.status)),',
+    expect: "各写各的清单必然漂"
+  },
+  {
+    name: "check 参数写反必须当场报错（否则断言恒真、门与变异一起全绿）",
+    file: CONSOLE_GATE,
+    gate: "console",
+    from: "  check(\"项目数没到上限时不需要索引，行为不变\",\n    small.kept === \"p3\" && small.options.length === 1,",
+    to: "  check(small.kept === \"p3\" && small.options.length === 1,\n    \"项目数没到上限时不需要索引，行为不变\",",
+    expect: "参数错位"
+  },
+  {
     name: "准入判决 token 必须有中文（台账里那一栏就是回答'为什么不动'的）",
     file: APP,
     gate: "specs",
@@ -687,6 +729,8 @@ process.on("uncaughtException", (error) => { restoreAll(); console.error(error);
 // 前置条件：工作区必须干净。worktree 检出的是 HEAD，带不上未提交改动；脏的时候并行测到的
 // 不是本地这份代码，所以此时明说原因并退回串行，而不是"尽量并行"。
 const WORKTREE_PREFIX = "aimac-mutation-w";
+// 这些门要起真实服务，而 worktree 里没有 node_modules —— 只能在真实工作区跑。
+const NEEDS_REAL_TREE = new Set(["idle"]);
 
 function workingTreeIsClean() {
   try {
@@ -806,13 +850,14 @@ async function runParallel(mutations) {
     dirs.push(dir);
   }
   process.on("exit", () => removeWorktrees(dirs));
-  // 并行的前提是这道门【纯 CPU】。会起服务、并且带固定等待超时的门（空转门、崩溃门、并发写入门）
-  // 在 4 路并发下会因为资源竞争超时 —— 表现为"失败了但不是预期断言"，看起来像守卫失效，
-  // 实际是把测试环境本身压垮了。实测过一次：同一条变异单独跑是红在正确的断言上，并行跑就变了理由。
-  // 所以按门分两拨：契约门（纯 CPU）照旧并行，起服务的那几道排在最后串行跑，一次一个。
-  const SERIAL_GATES = new Set(["idle", "console", "specs"]);
-  const parallelQueue = mutations.filter((mutation) => !SERIAL_GATES.has(mutation.gate || "contract"));
-  const serialQueue = mutations.filter((mutation) => SERIAL_GATES.has(mutation.gate || "contract"));
+  // worktree 里【跑不了要起服务的门】：worktree 只有被 git 跟踪的文件，没有 node_modules，
+  // 服务起不来。空转门在那里会红在"init 之后 npm start 能直接起来"这条上 ——
+  // 于是变异门报"失败了但不是预期断言"，看起来像守卫失效，实际是环境不完整。
+  //（我第一版把它归因成"4 路并发压超时"，改成串行仍然红，才查出真因是 worktree。
+  //  归因错了的代价不是白改一次，是把一条真实的环境限制解释成了偶发抖动。）
+  // 所以这类门必须在【真实工作区】跑，走既有的串行路径（带崩溃便条与还原保护）。
+  const parallelQueue = mutations.filter((mutation) => !NEEDS_REAL_TREE.has(mutation.gate || "contract"));
+  const serialQueue = mutations.filter((mutation) => NEEDS_REAL_TREE.has(mutation.gate || "contract"));
   const queue = [...parallelQueue];
   const failures = [];
   const checked = [];
@@ -826,17 +871,8 @@ async function runParallel(mutations) {
       if (failure) failures.push(failure); else checked.push(`- ${mutation.name}`);
     }
   }));
-  if (serialQueue.length) {
-    process.stdout.write(`mutation gate: ${serialQueue.length} 条走会起服务的门，改为串行（并行会把它们压超时）。\n`);
-    for (const mutation of serialQueue) {
-      if (mutation.skip) { checked.push(`- ${mutation.name}（跳过：${mutation.skip}）`); continue; }
-      const failure = await judgeMutation(mutation, dirs[0]);
-      process.stdout.write(`  · ${mutation.name} …\n`);
-      if (failure) failures.push(failure); else checked.push(`- ${mutation.name}`);
-    }
-  }
   removeWorktrees(dirs);
-  return {failures, checked, workers};
+  return {failures, checked, workers, serialQueue};
 }
 
 // 锚点体检：只核对每条变异的 from 片段在目标文件里仍然【正好出现一次】，不跑任何 contract-check。
@@ -948,14 +984,25 @@ async function run() {
   }
   const mutations = selectedMutations();
   if (workingTreeIsClean()) {
-    const {failures, checked, workers} = await runParallel(mutations);
+    const {failures, checked, workers, serialQueue} = await runParallel(mutations);
     if (failures.length) {
       console.error("mutation gate failed:");
       for (const failure of failures) console.error(`- ${failure}`);
       process.exit(1);
     }
+    if (serialQueue.length) {
+      console.error(`mutation gate: 另有 ${serialQueue.length} 条要起服务的门，worktree 里起不来（没有 node_modules），`
+        + "改在真实工作区串行跑 —— 期间不要编辑源文件。");
+      const serial = runSerial(serialQueue, {silentOk: true});
+      if (serial.failures.length) {
+        console.error("mutation gate failed:");
+        for (const failure of serial.failures) console.error(`- ${failure}`);
+        process.exit(1);
+      }
+      checked.push(...serial.checked);
+    }
     reportDiscovery();
-    console.log(`mutation gate ok（并行 ${workers} 路 worktree）: ${checked.length} 条守卫均已证明其测试具备判别力`);
+    console.log(`mutation gate ok（并行 ${workers} 路 worktree${serialQueue.length ? ` + ${serialQueue.length} 条真实工作区串行` : ""}）: ${checked.length} 条守卫均已证明其测试具备判别力`);
     for (const line of checked) console.log(line);
     return;
   }
@@ -966,7 +1013,9 @@ async function run() {
   runSerial(mutations);
 }
 
-function runSerial(mutations = MUTATIONS) {
+// options.silentOk：作为并行批次的补充跑时，由调用方统一收尾报告，这里不要自己打印"全绿"
+// 也不要 process.exit —— 否则并行那批的结果会被这一段吞掉。
+function runSerial(mutations = MUTATIONS, options = {}) {
   acquireLock();            // 先排除并发实例，否则"恢复"可能覆盖另一个实例正在用的内容
   recoverFromPreviousRun(); // 再收拾上一轮被中断留下的残局，然后才开始改坏任何东西
   const failures = [];
@@ -1022,6 +1071,7 @@ function runSerial(mutations = MUTATIONS) {
       checked.push(`- ${mutation.name}`);
     }
   }
+  if (options.silentOk) return {failures, checked};
   if (failures.length) {
     console.error("mutation gate failed:");
     for (const failure of failures) console.error(`- ${failure}`);
@@ -1030,6 +1080,7 @@ function runSerial(mutations = MUTATIONS) {
   reportDiscovery();
   console.log(`mutation gate ok: ${checked.length} 条守卫均已证明其测试具备判别力`);
   for (const line of checked) console.log(line);
+  return {failures, checked};
 }
 
 await run();
