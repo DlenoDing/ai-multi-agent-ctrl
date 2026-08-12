@@ -459,6 +459,27 @@ const MUTATIONS = [
     expect: "参数错位"
   },
   {
+    name: "并发写入必须靠 CAS 拦住丢更新",
+    file: STORE,
+    gate: "writer",
+    from: `function throwStateStoreConflict(message) {
+  const error = new Error(message);`,
+    to: `function throwStateStoreConflict(message) {
+  return; // eslint-disable-line
+  const error = new Error(message);`,
+    expect: "丢了"
+  },
+  {
+    name: "崩溃后要按持锁进程是否还活着破锁（只靠时间兜底会把系统锁死）",
+    file: STORE,
+    gate: "crash",
+    from: `    const alive = lockOwnerAlive(lockDir);
+    if (alive === false) {`,
+    to: `    const alive = lockOwnerAlive(lockDir);
+    if (false) {`,
+    expect: "立刻恢复"
+  },
+  {
     name: "关闭门里不得混入状态机没有的状态名",
     file: CORE,
     gate: "barrier",
@@ -762,7 +783,7 @@ process.on("uncaughtException", (error) => { restoreAll(); console.error(error);
 // 不是本地这份代码，所以此时明说原因并退回串行，而不是"尽量并行"。
 const WORKTREE_PREFIX = "aimac-mutation-w";
 // 这些门要起真实服务，而 worktree 里没有 node_modules —— 只能在真实工作区跑。
-const NEEDS_REAL_TREE = new Set(["idle"]);
+const NEEDS_REAL_TREE = new Set(["idle", "crash", "writer"]);
 
 function workingTreeIsClean() {
   try {
@@ -808,6 +829,8 @@ const GATE_COMMANDS = {
   parity: "scripts/human-only-parity-gate.mjs",
   barrier: "scripts/barrier-liveness-gate.mjs",
   invariants: "scripts/system-invariants-gate.mjs",
+  crash: "scripts/crash-consistency-gate.mjs",
+  writer: "scripts/concurrent-writer-gate.mjs",
   console: "scripts/console-behaviour-check.mjs",
   idle: "scripts/idle-tick-gate.mjs",
   specs: "scripts/validate-specs.rb"
