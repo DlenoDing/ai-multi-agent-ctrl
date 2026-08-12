@@ -419,6 +419,14 @@ const MUTATIONS = [
   // ── 非契约门的守卫。它们此前只在写下的当天被手工变异过一次，之后再没有任何东西
   //    证明它们仍有判别力 —— 而本会话两次写出"按构造永远为真"的断言，都是靠变异才发现的。
   {
+    name: "每条推进路径都要先对账（否则死节点永远在线）",
+    file: SERVER,
+    gate: "specs",
+    from: "    recycleExpiredClaims(state);\n    const result = runAutonomousCycle(state, {root: repositoryRoot, runtimeDir, endpoint: publicEndpoint(req)",
+    to: "    const result = runAutonomousCycle(state, {root: repositoryRoot, runtimeDir, endpoint: publicEndpoint(req)",
+    expect: "没有先 recycleExpiredClaims"
+  },
+  {
     name: "权限码本地化：授权列表里的权限码要有中文",
     file: APP,
     gate: "specs",

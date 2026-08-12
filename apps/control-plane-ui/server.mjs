@@ -3052,6 +3052,13 @@ async function handleApi(req, res) {
       json(res, guard.status, guard.payload);
       return;
     }
+    // 对账要挂在【每一条推进路径】上，不只是后台那一拍。后台那一拍是可以被关掉的
+    //（AIMAC_ORCHESTRATOR_INTERVAL_MS=0 是文档里写明的开关），关掉之后系统靠人按这个按钮推进 ——
+    // 而此前这条路只推进、不对账：死掉的节点永远显示在线、running 派发的认领永不过期、
+    // 吊销截止期永不了结、注册重放里的明文令牌永不抹除。实测：节点静默 65 秒（宽限期 60 秒）、
+    // 手动跑两拍，它仍然 online、在线数仍是 1。
+    // 与后台那一拍同因：一个只在系统健康时才运行的对账，恰好在最需要它的时候不运行。
+    recycleExpiredClaims(state);
     const result = runAutonomousCycle(state, {root: repositoryRoot, runtimeDir, endpoint: publicEndpoint(req), mode: body.mode || "all", taskGroupId: body.taskGroupId, autoSyncSkills: body.autoSyncSkills !== false});
     audit(state, guard.actor, "orchestrator_run", `TaskGroup:${body.taskGroupId || "all"}`);
     finishGuardedWrite(state, guard, 200, result);

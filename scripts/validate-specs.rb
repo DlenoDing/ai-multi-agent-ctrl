@@ -1264,6 +1264,26 @@ case_marks.each_with_index do |(tool, at), index|
   errors << "MCP 工具 #{tool} 在作用域参数缺省时会落到控制面自己的任务组/房间，却没有受限主体守卫 —— 缺省不得等于放行" unless guarded
 end
 
+# 【每条推进路径都要先对账】。recycleExpiredClaims 负责把死掉的节点扫成 offline、把过期认领
+# 回收重排、了结吊销截止期、抹掉注册重放里的明文令牌。它此前只挂在后台那一拍上，而后台那一拍
+# 是可以被关掉的（AIMAC_ORCHESTRATOR_INTERVAL_MS=0 是文档里写明的开关）—— 关掉之后系统靠人按
+# "立即运行编排"推进，那条路只推进不对账：实测节点静默 65 秒（宽限期 60 秒）、手动跑两拍，
+# 它仍然显示在线。判据落在接线上而不是行为上：两个超时旋钮的下限都是 60 秒，
+# 行为断言要等满一分钟，而这条缺陷的形态恰恰是"某条路径少调了一个函数"。
+advance_sites = server_source.enum_for(:scan, /runAutonomousCycle\(state/).map { Regexp.last_match.begin(0) }
+if advance_sites.size < 2
+  errors << "推进路径对账门: 只找到 #{advance_sites.size} 处 runAutonomousCycle 调用 —— 提取逻辑与代码脱节，本条在空转"
+else
+  missing_reconcile = advance_sites.reject do |offset|
+    window = server_source[[0, offset - 1200].max...offset]
+    window.include?("recycleExpiredClaims(state)")
+  end
+  unless missing_reconcile.empty?
+    errors << "有 #{missing_reconcile.size} 处推进路径在调用 runAutonomousCycle 之前没有先 recycleExpiredClaims —— " \
+      "后台那一拍被关掉时，这条路会一边推进一边让死节点永远在线、过期认领永不回收"
+  end
+end
+
 # 【权限码本地化】。「账号与授权」页把授权里的每个权限码交给 permLabel 显示，它兜底到 t()，
 # 而 i18n 字典里一个带冒号的权限码都没有 —— 于是 PERMISSION_LABELS 漏掉的那些直接显示英文码。
 # 实测用真实数据整页渲染时露出过四条（task_group:read/control/review/monitor）。
@@ -2482,6 +2502,7 @@ fail_with(errors)
 puts "错误码本地化：只有表达式提取才看得见的有 #{expression_only_error_codes.length} 个" \
      "#{expression_only_error_codes.empty? ? '' : '（' + expression_only_error_codes.sort.join('、') + '）'}；" \
      "另有 #{expression_error_opaque.length} 处取值来自变量，未被检验"
+puts "推进路径对账：核对了 #{advance_sites.size} 处 runAutonomousCycle 调用，都先做了对账"
 puts "权限码本地化：核对了 #{all_permissions.size} 个权限码，全部有中文"
 puts "审计动作本地化：核对了 #{audit_actions.length} 个动作名（其中 #{composed_audit_actions.uniq.length} 个是按闭集拼出来的，不是字面量），全部有中文" \
      "#{NON_HUMAN_AUDIT_ACTIONS.empty? ? '' : '（另有 ' + NON_HUMAN_AUDIT_ACTIONS.length.to_s + ' 个登记为不给人看）'}"
