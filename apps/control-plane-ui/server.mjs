@@ -1435,7 +1435,12 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80)
   // 只在【视图】里裁掉：state 本身、view=full、MCP 下发都不受影响，需要细节时从那里取。
   // 判据由 validate-specs 守着：被裁掉的字段不得在控制台被引用（想渲染它就先把裁剪去掉）。
   const viewDroppedFields = {
-    modelSelectionDecisions: ["candidateRankings", "hardConstraintResults"]
+    modelSelectionDecisions: ["candidateRankings", "hardConstraintResults"],
+    // 关闭门记录单条 5.6KB，而控制台只读 satisfied / blockingObjects / taskGroupId / computedAt：
+    // gateResults 一项就占 53%（26 道门各带 evidenceRefs），requiredGates 又占 13%。
+    // 实测 400 单元时任务页 428KB 里有 121KB 是它们，而这一页每 5 秒轮询一次。
+    // 只在视图里裁 —— 账本本身（state/full/MCP）一个字段不动，审计仍然拿得到完整的门禁判定。
+    closeBarriers: ["gateResults", "requiredGates", "sourceQueryRefs", "holisticJudgment"]
   };
   const viewFields = {
     // policyDecisions / commands / decisionRecords 控制台一处都没读 —— 需要时从 view=full 取。

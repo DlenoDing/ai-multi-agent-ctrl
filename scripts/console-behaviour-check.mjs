@@ -1274,6 +1274,39 @@ await runErrorGuidanceCase();
   }
 }
 
+// 视图里被裁掉的字段，控制台一处都不许读。
+//
+// 裁字段是为了省载荷（关闭门记录单条 5.6KB，而控制台只读其中四个小字段），
+// 但读一个被裁掉的字段【不会报错】：它永远是 undefined，界面上永远显示空或 0，
+// 而人以为那里本来就没东西 —— 和"视图压根不下发这个集合"是同一类隐蔽故障。
+// 判据按 server.mjs 的 viewDroppedFields 全量核对，新增一条裁剪就自动被守住。
+{
+  const serverSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const at = serverSource.indexOf("const viewDroppedFields = {");
+  const block = at < 0 ? "" : serverSource.slice(at, serverSource.indexOf("\n  };", at));
+  const dropped = [];
+  for (const entry of block.matchAll(/^\s{4}([A-Za-z_][A-Za-z0-9_]*):\s*\[([^\]]*)\]/gmu)) {
+    for (const field of entry[2].matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"/gu)) dropped.push({collection: entry[1], field: field[1]});
+  }
+  // 自检用精确相等：登记表里写了几个集合，就必须解析出几个集合的字段。
+  // 用"条数下限"做自检不够 —— 删掉一整个集合之后条数照样过线（实测如此）。
+  const declaredCollections = (block.match(/^\s{4}[A-Za-z_][A-Za-z0-9_]*:\s*\[/gmu) || []).length;
+  const parsedCollections = new Set(dropped.map((item) => item.collection)).size;
+  if (!declaredCollections || parsedCollections !== declaredCollections) {
+    failures.push(`被裁字段: viewDroppedFields 里登记了 ${declaredCollections} 个集合，只解析出 ${parsedCollections} 个 ——`
+      + " 提取逻辑与登记表脱节，本条在空转");
+  }
+  for (const {collection, field} of dropped) {
+    // 控制台里出现 `.field` 即视为读它。字段名都足够独特（gateResults / candidateRankings…），
+    // 真撞上同名字段宁可报红让人来分辨 —— 漏报的代价是界面永远显示空值。
+    if (new RegExp(`\\.${field}\\b`, "u").test(appSource)) {
+      failures.push(`被裁字段: 视图里已经把 ${collection}.${field} 裁掉了，控制台却仍在读它 ——`
+        + " 不会报错，只会永远显示空值；要么别裁，要么改用别的字段");
+    }
+  }
+}
+
 // 控制台读的每一个顶层字段，都必须真的有视图会下发它。
 //
 // 读一个从不下发的字段【不会报错】：它只是永远是 undefined，界面永远显示空或 0，
