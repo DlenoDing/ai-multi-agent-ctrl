@@ -37,6 +37,7 @@ import {
   organizationQuotaCheck,
   runAutonomousCycle,
   WIP_ACTIVE_DISPATCH_STATUSES,
+  wipCapacityForProject,
   settleCellOwnedResources,
   expireStaleQueuedDispatches,
   recomputeTaskGroup,
@@ -231,6 +232,7 @@ run(verifyOrchestrationDoesNotShellOutPerCell);
 run(verifyWipCapacityBackpressure);
 run(verifyHighPriorityCellsAreNotStarvedByEarlierGroups);
 run(verifyWipCapacityIsPerProject);
+run(verifyQuietProjectsDoNotHoardSlots);
 run(verifyActiveDispatchesKeepTheirContracts);
 run(verifySuspendedOrganizationHaltsExecution);
 run(verifyHaltedTaskGroupsAreNotClaimable);
@@ -5783,6 +5785,38 @@ function verifyWipCapacityBackpressure(output) {
 // 额度与预留都以 projectId 为键。这类"看着对"的作用域是这套系统反复出问题的地方，
 // 所以用行为验而不是读代码：两个项目各自跑满，谁也不许吃掉谁的名额、谁的 P0 也不许
 // 在另一个项目里预留名额（那会让一个安静项目的额度被隔壁的紧急活白白扣住）。
+// 队头是给"活要能被立刻领走"留的余量，而额度按项目算 —— 项目一多，全局在制品又回到无界。
+// 从未注册过节点的项目，队头买不到任何东西，只留一个很小的头；注册过（哪怕此刻离线）就给全额，
+// 因为掉线是常态，那时队列恰恰该留着等它回来。三种情形逐一验，别只验中间那种。
+function verifyQuietProjectsDoNotHoardSlots(output) {
+  const saved = process.env.AIMAC_WIP_QUEUE_HEAD;
+  delete process.env.AIMAC_WIP_QUEUE_HEAD; // 本门顶上把它调得很大，这里要看默认行为
+  try {
+    const base = {agentRuntimeNodes: []};
+    const quiet = wipCapacityForProject(base, "prj_quiet");
+    const offlineNode = {agentRuntimeNodes: [{projectIds: ["prj_p"], status: "offline", admission: "full"}]};
+    const withOffline = wipCapacityForProject(offlineNode, "prj_p");
+    const onlineNode = {agentRuntimeNodes: [{projectIds: ["prj_p"], status: "online", admission: "full"}]};
+    const withOnline = wipCapacityForProject(onlineNode, "prj_p");
+    if (!(quiet > 0 && quiet <= 4)) {
+      output.push(`在制品上限·安静项目：一个节点都没注册过的项目拿到 ${quiet} 个名额 —— `
+        + "没有任何执行方会来领，这些会话/契约/租约全是纯浪费；项目一多就把上限的意义抵消掉了");
+    }
+    if (withOffline <= quiet) {
+      output.push(`在制品上限·安静项目：注册过节点但此刻离线的项目只拿到 ${withOffline} 个名额 —— `
+        + "掉线是常态，那时队列恰恰该留着等它回来，按'此刻在线'压缩队头会让恢复时无活可领");
+    }
+    if (withOnline <= withOffline) {
+      output.push(`在制品上限·安静项目：有节点在线（${withOnline}）并不比离线（${withOffline}）宽 —— `
+        + "在线节点没有换来任何额度，界面上'多接入几台节点'那句话就是空头承诺");
+    }
+    console.log(`在制品上限·安静项目：无节点 ${quiet} / 有节点但离线 ${withOffline} / 有节点在线 ${withOnline}`);
+  } finally {
+    if (saved === undefined) delete process.env.AIMAC_WIP_QUEUE_HEAD;
+    else process.env.AIMAC_WIP_QUEUE_HEAD = saved;
+  }
+}
+
 function verifyWipCapacityIsPerProject(output) {
   const CAP = 3;
   const previous = process.env.AIMAC_WIP_QUEUE_HEAD;

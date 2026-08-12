@@ -1722,14 +1722,21 @@ function admissionDimensions(workItem, outcome) {
 // 一个节点都没注册时额度会变成 0，那样新上线的节点第一拍无活可领，
 // 控制面 e2e 的"编排跑完必须有排队派发"也会整片打红。
 export function wipCapacityForProject(state, projectId) {
-  const queueHead = Math.max(1, Number(process.env.AIMAC_WIP_QUEUE_HEAD || 16));
   const perNode = Math.max(1, Number(process.env.AIMAC_WIP_PER_NODE || 2));
   let online = 0;
+  let registered = 0;
   for (const node of state.agentRuntimeNodes || []) {
-    if (node.status !== "online" || node.admission !== "full") continue;
     if (!(node.projectIds || []).includes(projectId)) continue;
-    online += 1;
+    registered += 1;
+    if (node.status === "online" && node.admission === "full") online += 1;
   }
+  // 队头是给"活要能被立刻领走"留的余量。但额度是【按项目】算的，项目数一多，全局的在制品
+  // 又回到无界：实测 100 个项目 × 20 单元、零 agent 时在飞 1600、状态 26.2MB ——
+  // 而上限本来就是为了防这个。一个【从未注册过任何节点】的项目，队头买不到任何东西：
+  // 没有执行方会来领，摊开的全是纯浪费。所以只给它一个很小的头（同场景降到 200 / 7.5MB）；
+  // 第一个节点注册上来，下一拍就回到完整队头。
+  // 判据是"注册过"而不是"此刻在线"：节点掉线是常态，那时队列恰恰该留着等它回来。
+  const queueHead = Math.max(1, Number(process.env.AIMAC_WIP_QUEUE_HEAD || (registered ? 16 : 2)));
   return queueHead + online * perNode;
 }
 

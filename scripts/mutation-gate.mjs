@@ -414,6 +414,14 @@ const MUTATIONS = [
     expect: "没有被裁回上限"
   },
   {
+    name: "在制品上限：从未注册过节点的项目不得占着完整队头",
+    file: CORE,
+    check: "verifyQuietProjectsDoNotHoardSlots",
+    from: "(registered ? 16 : 2)",
+    to: "16",
+    expect: "纯浪费"
+  },
+  {
     name: "在制品上限：额度必须按项目算，不得跨项目共享",
     check: "verifyWipCapacityIsPerProject",
     file: CORE,

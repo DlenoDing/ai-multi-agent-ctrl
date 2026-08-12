@@ -5,7 +5,7 @@
 import {spawn, spawnSync} from "node:child_process";
 import {createServer} from "node:net";
 import {once} from "node:events";
-import {mkdtempSync} from "node:fs";
+import {existsSync, mkdtempSync, readFileSync, readdirSync} from "node:fs";
 import {join, dirname, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {tmpdir} from "node:os";
@@ -79,7 +79,11 @@ await verifyFirstRunPath();
 // 断言的触发条件要用【同一个值】：服务端若不认这个环境变量（知识退化成写死 60），
 // 记录数就压不到上限，这时该说"这一轮没验到"，而不是报"截断标记 无" ——
 // 后者看起来像标记坏了，会把人引到错误的方向去查。
-const gateLedgerLimit = 2;
+// 调到 1：本轮实测这个安静项目在 runtime 视图里能拿到的账本集合只有 workerLanes 且只有 2 条，
+// 上限设 2 时"下发数 == 总数"，根本不发生截断，这条断言只会永远自报"未被检验"。
+// 上限设 1 才真的压出截断。这个数字取决于夹具能造出多少记录，不是越大越像真实场景 ——
+// 它唯一的作用是让截断发生。
+const gateLedgerLimit = 1;
 
 const tickMs = 3000;
 const port = await freePort();
@@ -211,15 +215,42 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
     // 挑一个这一轮真的有记录的账本集合来验（哪个有取决于编排跑了什么，不写死）。
     const ledgerNames = ["admissionDecisions", "modelSelectionDecisions", "sessionPlacementDecisions",
       "workerLanes", "agentExecutionEvents", "agentControlCommands", "transitionEvidence"];
-    const picked = ledgerNames.find((name) => (ledger[name] || []).length >= 2) || ledgerNames[0];
-    const shipped = (ledger[picked] || []).length;
-    const marked = (ledger.truncatedCollections || []).includes(picked);
-    if (shipped >= gateLedgerLimit && shipped === gateLedgerLimit) {
-      check(marked, "账本被账本上限截断时，仍要如实标记（界面才会显示'共 N+ 条'）",
-        `${picked} 下发 ${shipped} 条（上限 2），截断标记 ${marked ? "有" : "无"}`);
+    // 判据必须落在【真实总数】上，不能拿"下发数正好等于上限"当截断发生了：
+    // 集合总共就 gateLedgerLimit 条时，下发数同样等于上限，而这时【不该】有截断标记。
+    // 第一版就是这么写的，于是上游一个把在制品压小的改动让记录数正好落到 2，
+    // 断言当场要求一个不该存在的标记 —— 一条本该"未被检验"的路走成了假红。
+    // 真实总数从盘上的状态取（门自己起的服务，运行目录是自己的）。
+    const stored = JSON.parse(readFileSync(join(runtimeDir, "control-plane-state.json"), "utf8"));
+    const shardDir = join(runtimeDir, "project-state-shards");
+    const shards = existsSync(shardDir)
+      ? readdirSync(shardDir).map((name) => JSON.parse(readFileSync(join(shardDir, name), "utf8")))
+      : [];
+    // 总数要和视图【同一个作用域】：视图是按这个项目过滤过的，拿全局总数去比，
+    // 会挑中一个本项目一条都没有的集合，然后要求它有截断标记 —— 又是一条假红。
+    // 归属判据与服务端一致：没有 projectId 的记录属于所有人（中央集合）。
+    const mine = (item) => item.projectId === undefined || item.projectId === null || item.projectId === quietId;
+    const trueCount = (name) => (stored[name] || []).filter(mine).length
+      + shards.reduce((sum, shard) => sum + ((shard.collections || {})[name] || []).filter(mine).length, 0);
+    // 还要求这个集合【确实在这个视图里下发】：view=runtime 并不带全部账本集合，
+    // 挑中一个根本不在视图里的（下发 undefined），同样是在要求一个不存在的标记。
+    const picked = ledgerNames.find((name) => Array.isArray(ledger[name]) && trueCount(name) > gateLedgerLimit);
+    if (picked) {
+      const shipped = (ledger[picked] || []).length;
+      const marked = (ledger.truncatedCollections || []).includes(picked);
+      // 下发数超过配置的上限 = 服务端根本没认这个旋钮。这时照样要红（旋钮不生效，这道门就没有意义），
+      // 但标题不能说成"标记没打"—— 那会把人支到渲染那边去查，而问题在读取环境变量那一行。
+      if (shipped > gateLedgerLimit) {
+        check(false, "账本上限旋钮必须生效（否则'截断仍要标记'无从检验）",
+          `${picked} 实有 ${trueCount(picked)} 条，配置上限 ${gateLedgerLimit} 却下发了 ${shipped} 条 ——`
+          + " 服务端没有认 AIMAC_VIEW_LEDGER_LIMIT，不是标记坏了");
+      } else {
+        check(marked, "账本被账本上限截断时，仍要如实标记（界面才会显示'共 N+ 条'）",
+          `${picked} 实有 ${trueCount(picked)} 条、下发 ${shipped} 条（上限 ${gateLedgerLimit}），截断标记 ${marked ? "有" : "无"}`);
+      }
     } else {
-      console.log(`  --  账本没有被压到上限（下发 ${shipped} 条，期望正好 ${gateLedgerLimit} 条）：`
-        + `要么这一轮账本记录不足，要么服务端不认 AIMAC_VIEW_LEDGER_LIMIT —— "截断仍要标记"这条未被检验`);
+      console.log(`  --  这一轮没有任何账本集合的真实条数超过上限 ${gateLedgerLimit}`
+        + `（各集合实有：${ledgerNames.map((name) => `${name} ${trueCount(name)}`).join("、")}）——`
+        + ` 没有发生截断，"截断仍要标记"这条未被检验`);
     }
   }
 
