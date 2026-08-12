@@ -2738,6 +2738,9 @@ async function handleApi(req, res) {
     record.status = "revoked";
     record.updatedAt = now();
     const payload = {joinTokenId: record.joinTokenId, status: record.status};
+    // finishGuardedWrite 只写 decisionRecords，而【控制台一处都不读它】——
+    // 人能看到的那本账是 auditLog。安全动作不进那本账，等于"谁把这台机器踢出去的"查不到。
+    audit(state, guard.actor, "agent_join_token_revoke", `AgentJoinToken:${record.joinTokenId}`);
     finishGuardedWrite(state, guard, 200, payload);
     writeState(state);
     json(res, 200, payload);
@@ -2753,6 +2756,7 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "agent_node_revoke", `Project:${projectId}`, projectScope(projectId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const payload = requestAgentNodeRevocation(state, targetNode, body, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});
+    audit(state, guard.actor, "agent_node_revoke", `AgentRuntimeNode:${targetNode.nodeId}`);
     finishGuardedWrite(state, guard, 200, payload);
     writeState(state);
     json(res, 200, payload);
@@ -2796,6 +2800,9 @@ async function handleApi(req, res) {
       return json(res, 403, {error: "policy_denied", reason: "target_node_out_of_organization"});
     }
     const result = createAgentControlCommand(state, targetNode, body, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});
+    // 给 agent 下控制命令（暂停/取消/关停）同样是要留痕的动作：谁在什么时候停了谁。
+    audit(state, guard.actor, `agent_control_${result.command.commandType}`,
+      `AgentRuntimeNode:${targetNode.nodeId}${result.command.dispatchId ? `/AgentDispatch:${result.command.dispatchId}` : ""}`);
     finishGuardedWrite(state, guard, 201, result.command);
     writeState(state);
     json(res, 201, result);

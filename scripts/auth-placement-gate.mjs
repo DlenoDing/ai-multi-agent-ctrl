@@ -135,6 +135,29 @@ function run() {
     for (const message of clientSuppliedActions) console.error(`- ${message}`);
     process.exit(1);
   }
+  // 每条受守卫的写路由都要在【人能看到的那本账】里留一笔。
+  //
+  // finishGuardedWrite 会写 decisionRecords（含谁/什么动作/什么对象），但控制台一处都不读它 ——
+  // 人打开审计页看到的是 auditLog。于是"谁把这台节点踢出去的""谁停了这个派发"在界面上查不到。
+  // 实测过三条这样的路由：吊销接入令牌、吊销节点、给 agent 下控制命令，全是安全动作。
+  // 判据按【路由块】核对，不按守卫调用 —— 同一条路由可能有两次 beginGuardedWrite（三元分支）。
+  {
+    // block.body 是 {line, text} 的数组，不是字符串 —— 直接对它 includes("字符串") 永远为假，
+    // 那样这条判据从来不会触发（第一版就是这样，两条变异都不报红才发现）。先拼成文本。
+    const bodyText = (block) => block.body.map((row) => row.text).join("\n");
+    const guardedBlocks = blocks.filter((block) => bodyText(block).includes("beginGuardedWrite("));
+    if (guardedBlocks.length < 20) {
+      failures.push(`审计留痕: 只识别到 ${guardedBlocks.length} 条受守卫的写路由 —— 提取逻辑与代码脱节，本条在空转`);
+    }
+    const auditless = guardedBlocks
+      .filter((block) => !bodyText(block).includes("audit("))
+      .map((block) => `${block.startLine}: ${block.header.slice(0, 60)}`);
+    if (auditless.length) {
+      failures.push(`这些受守卫的写路由没有在 auditLog 里留痕：${auditless.join("；")} ——`
+        + " decisionRecords 里虽然有，但控制台不读它，人在审计页上查不到是谁做的");
+    }
+  }
+
   console.log(`auth placement gate ok: ${blocks.length} 条改状态路由鉴权之前无泄露无写入、每个受守卫动作都有显式权限映射、动作名不取自请求体，且按路径定位的对象其授权作用域不取自请求体`);
 }
 
