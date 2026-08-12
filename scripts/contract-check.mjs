@@ -222,6 +222,7 @@ verifyEveryCloseGateHasHumanGuidance(errors);
 verifyGrantScopeCoversObjectsNamedOnlyById(errors);
 verifyLongRunningWorkKeepsItsClaim(errors);
 verifyCentralOnlyStateCannotBeWritten(errors);
+verifyUnknownStateSchemaIsRefused(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4685,6 +4686,40 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 拿它去写回，写入方会把不在列表里的分片行全删掉 —— 等于清空所有项目。
 // 这不是假想：PG 的 CAS 探针就这么清空过一次，当时是靠既有 e2e 才发现的。
 // 所以在【写入点】直接拒绝，而不是在每个调用点提醒 —— 调用点会越来越多。
+// 盘上的状态自带 schemaVersion。这个字段此前【没有任何代码读过】——
+// 后果只在版本真的变了那天出现，而那天恰恰最不能容忍沉默：旧构建会把新格式当成自己认识的
+// 东西照读照写，把它认不出来的语义悄悄改掉，且是就地覆盖、没有回头路。
+// 所以读取点认不出来就拒绝，并给出一句能照着做的话。
+function verifyUnknownStateSchemaIsRefused(output) {
+  const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-schema-"));
+  const statePath = join(runtimeDir, "control-plane-state.json");
+  const options = {root, runtimeDir, statePath, seedPath: resolve(root, "data", "seed-state.json"),
+    buildInitialState: () => structuredClone(seedState)};
+  ensureStoredState(options);
+
+  // 未来版本写的状态：必须拒读，且错误里要说清"它是哪个版本、这个构建认哪个"
+  const central = JSON.parse(readFileSync(statePath, "utf8"));
+  writeFileSync(statePath, JSON.stringify({...central, schemaVersion: "control-plane-runtime-state/v2"}));
+  let refusal = null;
+  try { readStoredState(options); } catch (error) { refusal = error; }
+  if (refusal?.code !== "AIMAC_UNSUPPORTED_STATE_SCHEMA") {
+    output.push(`认不出的状态版本竟然照读不误（${refusal ? refusal.message : "没有报错"}）——`
+      + " 旧构建会把新格式当成自己认识的东西写回去，把认不出来的部分改掉，而且没有回头路");
+  } else if (!String(refusal.hint || "").includes("v2") || !String(refusal.hint || "").includes("迁移")) {
+    output.push("拒绝了，但没说清它是哪个版本、人现在能做什么 —— 运维只能看到一句报错");
+  }
+
+  // 没有这个字段的状态（早期状态与很多夹具）必须照常可读，不能把兼容性检查做成新的门槛
+  writeFileSync(statePath, JSON.stringify(Object.fromEntries(
+    Object.entries(central).filter(([key]) => key !== "schemaVersion"))));
+  try {
+    readStoredState(options);
+  } catch (error) {
+    output.push(`没有 schemaVersion 的状态被拒读了（${error.message}）—— 早期状态与夹具都没有这个字段`);
+  }
+  rmSync(runtimeDir, {recursive: true, force: true});
+}
+
 function verifyCentralOnlyStateCannotBeWritten(output) {
   const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-central-only-"));
   const statePath = join(runtimeDir, "control-plane-state.json");

@@ -128,6 +128,7 @@ export function readStoredState(options) {
     }
     return withRuntimeJsonLock(options, () => {
       const central = JSON.parse(readFileSync(options.statePath, "utf8"));
+      assertStateSchemaSupported(central);
       const state = hydrateProjectState(central, options);
       cacheStoredState(hydratedStateCache, options.statePath, state, runtimeJsonStateCacheKey(options, central));
       state.__loadedStateVersion = Number(state.stateVersion || 0);
@@ -146,9 +147,28 @@ export function readStoredState(options) {
     seededState.__loadedStateVersion = Number(seededState.stateVersion || 0);
     return seededState;
   }
+  assertStateSchemaSupported(first.central);
   const state = hydrateProjectState(first.central, options, first.shards);
   state.__loadedStateVersion = Number(state.stateVersion || 0);
   return state;
+}
+
+// 盘上的状态自带 schemaVersion，而此前【没有任何代码读过它】。
+// 后果只有在版本真的变了那天才出现，而那天恰恰最不能容忍沉默：旧构建会把新格式
+// 当成自己认识的东西照读照写，把它认不出来的语义悄悄改掉，而且是就地覆盖、没有回头路。
+// 所以在读取点直接拒绝：认不出来就不开工，让人看到一句能照着做的话。
+// 缺字段视为兼容（很多夹具与早期状态就没有这个字段），只拒绝【明确不同】的版本。
+const SUPPORTED_STATE_SCHEMA_VERSIONS = new Set(["control-plane-runtime-state/v1"]);
+
+function assertStateSchemaSupported(state) {
+  const declared = state && typeof state === "object" ? state.schemaVersion : null;
+  if (!declared || SUPPORTED_STATE_SCHEMA_VERSIONS.has(declared)) return state;
+  throw Object.assign(
+    new Error(`unsupported_state_schema_version:${declared}`),
+    {code: "AIMAC_UNSUPPORTED_STATE_SCHEMA",
+      hint: `盘上的状态是「${declared}」写的，这个构建只认 ${[...SUPPORTED_STATE_SCHEMA_VERSIONS].join(" / ")}。`
+        + "请换回能读它的版本，或先做数据迁移 —— 用这个构建继续写会把它认不出来的部分改掉。"}
+  );
 }
 
 export function readStoredCentralState(options) {
@@ -167,6 +187,7 @@ export function readStoredCentralState(options) {
     ? readPostgresState()
     : JSON.parse(readFileSync(options.statePath, "utf8"));
   if (stateStoreKind() !== "postgresql") cacheStoredState(centralStateCache, options.statePath, central, statCacheKey(options.statePath));
+  assertStateSchemaSupported(central);
   central.__loadedStateVersion = Number(central.stateVersion || 0);
   // 打上"这是中央态、不是完整状态"的标记：项目分片里的集合（任务组、派发、会话、确认单…）
   // 在这份对象里【是空的】。谁要是拿它去 writeStoredState，写入方会把不在列表里的分片行全删掉 ——

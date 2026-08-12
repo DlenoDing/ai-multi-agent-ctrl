@@ -96,8 +96,20 @@ const recoveryMs = Date.now() - recoveryStarted;
 check(Boolean(loginResult.sessionToken), "重启后还能登录（登录要写会话，写不进去就等于系统废了）",
   loginResult.sessionToken ? "ok" : JSON.stringify(loginResult).slice(0, 160));
 auth = {authorization: `Bearer ${loginResult.sessionToken}`, "content-type": "application/json"};
-if (lockAtKill.length) {
+// 快恢复靠的是锁里那条 owner 记录（pid+host）：按持锁进程是否还活着来破锁。
+// 但 SIGKILL 可能正好落在【建了锁目录、owner 还没写下去】的那个毫秒级窗口里 ——
+// 那时按设计只能退回短宽限期，慢是【正确行为】，不是故障。
+// 此前这一条只看"有没有留下锁目录"，于是落在那个窗口时会报一次假红
+// （实测发生过一次，我差点把它当成刚改的代码引入的回归）。
+// 门宁可说"这一轮没验到"，也不能报一个会让人查错方向的红。
+const lockOwnerStamped = lockAtKill.some((name) => existsSync(join(runtimeDir, name, "owner.json")));
+if (lockAtKill.length && lockOwnerStamped) {
   check(recoveryMs < 1500, "崩溃后的第一次写入立刻恢复（不是干等宽限期）", `${recoveryMs}ms`);
+} else if (lockAtKill.length) {
+  console.log(`  --  本轮 SIGKILL 落在建锁与写 owner 之间（锁目录里没有 owner 记录），`
+    + `只能走时间兜底，"立刻恢复"这条未被检验（本轮 ${recoveryMs}ms）`);
+} else {
+  console.log("  --  本轮崩溃没有留下锁目录，\"立刻恢复\"这条未被检验");
 }
 const after = (await (await fetch(`${base}/api/state?view=orgs`, {headers: auth})).json()).organizations
   ?.find((item) => item.orgId === orgId);
