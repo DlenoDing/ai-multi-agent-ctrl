@@ -167,6 +167,9 @@
 
 1. `POST /api/human-directives`（权限 `task_group:control`）→ `queued`。
 2. `runAutonomousCycle` 开头消费：结构化类型直接映射为既有控制动作（pause/resume/cancel → 任务组控制；add_requirement → 追加 workItem 需求）并记 `appliedActions`；`free_text` 转为一条 `pending` 的人工确认逆向澄清或作为编排上下文写入 `taskGroup.humanGuidance`（追加，不覆盖）。
+   **它会原样进入之后每一次派发的内容包**，所以是有上限的：留最近 200 条，
+   丢掉的记在 `humanGuidanceDroppedCount` 里，并在内容包与任务组页上如实报出条数 ——
+   悄悄丢掉人下达的要求不可接受，而让它无界增长等于几个月前的一句话永远在指挥今天的 agent。
 3. 每次状态迁移写审计（哈希链）。指令绝不直接注入执行会话的 prompt；只影响控制面状态与后续签发的契约内容。
 
 ---
