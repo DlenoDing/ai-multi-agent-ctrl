@@ -119,6 +119,8 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
   // （前两版分别按创建顺序和"谁被挤掉"来判，都因为顺序其实由分片合并决定而没验到东西）。
   await seed(busyId, 12, "busy");
   await seed(quietId, 12, "quiet");
+  const fetchScopedFull = async (projectId) => (await (await fetch(
+    `${base}/api/state?view=tasks&limit=200&projectId=${encodeURIComponent(projectId)}`, {headers: auth})).json());
   const fetchScoped = async (projectId) => (await (await fetch(
     `${base}/api/state?view=tasks&limit=10${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ""}`,
     {headers: auth})).json());
@@ -135,6 +137,16 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
     "全局取数会被上限截断，而按 projectId 取数能把这个项目的记录取全",
     `全局取数返回 ${unscoped.taskGroups.length} 个（上限 10，说明确实被截断了），`
     + `其中属于这个项目的 ${own(unscoped.taskGroups)} 个；按项目取数返回 ${scoped.taskGroups.length} 个、全部属于本项目的有 ${own(scoped.taskGroups)} 个（应为 10/10）`);
+  // 按项目取全的集合【不许】被标成截断：截断标记如果拿"账号范围的数组"来比，
+  // 按项目取数时每个集合都会被标上，界面到处显示"共 N+ 条"，而它其实取全了 ——
+  // 那是把"我这里就这么多"说成"还有更多"，同样是报数不实。
+  const complete = await fetchScopedFull(quietId);
+  const markedTruncated = (complete.truncatedCollections || []).includes("taskGroups");
+  const ownComplete = (complete.taskGroups || []).filter((item) => item.projectId === quietId).length;
+  check(ownComplete === 12 && !markedTruncated,
+    "按项目取全时不得再标成截断（否则界面把'就这么多'说成'还有更多'）",
+    `取到本项目 ${ownComplete} 个任务组（共 12 个）｜截断标记 ${markedTruncated ? "有" : "无"}`);
+
   check(others === 0, "带上 projectId 时不夹带别的项目的记录",
     `混进来 ${others} 个别的项目的任务组`);
 }

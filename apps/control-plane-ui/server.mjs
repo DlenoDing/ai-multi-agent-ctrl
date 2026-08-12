@@ -1411,6 +1411,14 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
   const inRequestedProject = (item) => !item || typeof item !== "object"
     || item.projectId === undefined || item.projectId === null || item.projectId === scopeProjectId;
   const scopeCollection = (value) => (scopeProjectId && Array.isArray(value) ? value.filter(inRequestedProject) : value);
+  // 账本类集合：控制台每张表最多渲染 10~20 行，却按整页上限（200）取 —— 实测 400 单元时
+  // 监控页一次轮询 1.1MB，绝大多数记录从没被显示过。给它们单独设一个更小的上限；
+  // 任务组这类"人要逐条扫"的集合不动（那会让大项目的列表少列条目）。
+  // 截断仍会被如实标记（界面显示"共 N+ 条"），所以少取不等于少说。
+  const ledgerLimit = Math.min(capped, 60);
+  const LEDGER_COLLECTIONS = new Set(["modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions",
+    "agentExecutionEvents", "agentControlCommands", "workerLanes", "transitionEvidence"]);
+  const limitFor = (field) => (LEDGER_COLLECTIONS.has(field) ? ledgerLimit : capped);
   const base = {
     schemaVersion: scoped.schemaVersion,
     stateVersion: scoped.stateVersion,
@@ -1474,7 +1482,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     const value = scoped[field];
     const scopedValue = scopeCollection(value);
     base[field] = Array.isArray(scopedValue)
-      ? (field === "taskGroups" ? projectTaskGroupsForView(sliceItems(scopedValue, capped)) : sliceItems(scopedValue, capped))
+      ? (field === "taskGroups" ? projectTaskGroupsForView(sliceItems(scopedValue, limitFor(field))) : sliceItems(scopedValue, limitFor(field)))
       : scopedValue;
     const dropped = viewDroppedFields[field];
     if (dropped && Array.isArray(base[field])) {
@@ -1491,7 +1499,11 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
   // 这里如实告诉界面哪些集合被截断过，界面据此改口径，而不是把截断后的长度当成总数。
   const truncatedCollections = [];
   for (const [field, value] of Object.entries(base)) {
-    if (Array.isArray(value) && Array.isArray(scoped[field]) && scoped[field].length > value.length) {
+    // 比较对象必须是【按项目过滤之后】的那份：拿账号范围的数组来比，
+    // 按项目取数时每个集合都会被标成截断，界面上到处是"共 N+ 条"，而它其实取全了 ——
+    // 那是把"我这里就这么多"说成了"还有更多"，同样是报数不实。
+    const comparable = scopeCollection(scoped[field]);
+    if (Array.isArray(value) && Array.isArray(comparable) && comparable.length > value.length) {
       truncatedCollections.push(field);
     }
   }
