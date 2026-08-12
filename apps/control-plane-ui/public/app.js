@@ -2243,6 +2243,10 @@ function renderTaskGroups() {
       <div class="stack">
         <div class="record-title">
           ${badge(taskGroup.status)} ${badge(taskGroup.phase)} ${badge(taskGroup.health)} ${badge(taskGroup.goalExecutionStatus || "active")}
+          ${/* 人工指令的「暂停」和「取消」落到同一个执行状态（都是 active_paused_by_freeze），
+                只有 pauseReason 分得开，而它此前一处都没渲染 —— 于是下了取消的人看到的是
+                "已被冻结暂停"，和别人按的暂停一模一样，而两者能不能恢复并不一样。 */""}
+          ${taskGroup.pauseReason ? customBadge(`停因：${t(taskGroup.pauseReason)}`, "orange") : ""}
         </div>
         ${progressLine(taskGroup.progress)}
         <div class="record-meta">

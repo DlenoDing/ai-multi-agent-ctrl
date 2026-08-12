@@ -1537,6 +1537,13 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     // 这一页真正要的只有 organizations（projects/taskGroups 本就在视图基底里）。
     orgs: ["organizations", "accessGrants"]
   };
+  // 认不出的视图名此前静默降级成基底：调用方拿到 200 和一份看着正常、却少了全部集合的载荷，
+  // 没有任何迹象说明它要的那些东西根本没被组装（我自己就用 view=directives 这个不存在的名字
+  // 得出过"指令一条都没有"的错误结论）。缺省不得等于"看起来成功"——认不出就直说，并给出可选值。
+  if (!Object.prototype.hasOwnProperty.call(viewFields, view)) {
+    throw Object.assign(new Error("state_view_unknown"), {status: 400,
+      details: {view, supported: ["full", ...Object.keys(viewFields)]}});
+  }
   for (const field of viewFields[view] || []) {
     const value = scoped[field];
     const scopedValue = scopeCollection(value);

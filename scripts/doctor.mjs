@@ -1014,6 +1014,23 @@ try {
   if (!orgMembers.response.ok || !orgMembers.payload.members.some((member) => member.email === "doctor.member1@local")) {
     throw new Error("org member list did not return the created member");
   }
+  // 认不出的视图名此前静默降级成基底：200 + 一份少了全部集合的载荷。调用方据此得出的
+  // "这类记录一条都没有"是错的，而没有任何迹象说明它要的东西根本没被组装。
+  const unknownView = await jsonFetch(port, "/api/state?view=directives&limit=10", {headers: {authorization: systemAuth}});
+  if (unknownView.response.status !== 400 || unknownView.payload.error !== "state_view_unknown"
+    || !(unknownView.payload.supported || []).includes("tasks")) {
+    throw new Error(`认不出的视图名没有被拒（应 400 state_view_unknown 且列出可选值，得到 ${unknownView.response.status}:${unknownView.payload.error}）—— 调用方会拿一份缺集合的 200 当成"没有数据"`);
+  }
+  // 同一个请求打第二次走的是视图缓存那条捷径（它另有一处取 view）—— 两条路径必须一致，
+  // 否则第一次被拒、第二次照常返回，或者反过来。
+  const unknownViewCached = await jsonFetch(port, "/api/state?view=directives&limit=10", {headers: {authorization: systemAuth}});
+  if (unknownViewCached.response.status !== 400) {
+    throw new Error(`认不出的视图名第二次请求返回 ${unknownViewCached.response.status} —— 视图缓存那条捷径绕过了校验`);
+  }
+  const knownView = await jsonFetch(port, "/api/state?view=tasks&limit=10", {headers: {authorization: systemAuth}});
+  if (!knownView.response.ok || !Array.isArray(knownView.payload.taskGroups)) {
+    throw new Error(`合法视图被误伤：view=tasks 返回 ${knownView.response.status}`);
+  }
   // authPolicy.mfaRequired 是 account.schema.json 的必填字段、也回显给调用方，但全仓没有一处读它。
   // 今天它处处写死 false，所以看不出问题 —— 一旦有任何路径把它置为 true，登录会一声不吭地照发会话。
   // 这里直接改盘上的账号记录把它置为 true（本阶段编排间隔是 0，没有后台写在抢），再走真实登录：

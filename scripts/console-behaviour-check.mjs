@@ -755,6 +755,18 @@ function runPendingTruncationCase() {
     check("没有截断时不挂那条提示",
       !/筛选只在已加载的这些里找/.test(probe.renderTaskGroupsWith(detailState, admin, "p1", "tg1", fullProgress)),
       "没有截断却仍提示只加载了一部分 —— 常亮的提示等于没有提示");
+    // 人工指令的「暂停」与「取消」落到同一个执行状态（active_paused_by_freeze），
+    // 分得开它们的只有 pauseReason。服务端一直在写、中文也早就有，而界面一处都没渲染 ——
+    // 于是下了取消的人看到的字样和别人按的暂停完全一样，而这两种停能不能恢复并不相同。
+    const pausedState = {...detailState,
+      taskGroups: [{...baseGroup, goalExecutionStatus: "active_paused_by_freeze", pauseReason: "human_directive_cancel"}]};
+    const pausedHtml = probe.renderTaskGroupsWith(pausedState, admin, "p1", "tg1", fullProgress);
+    check("冻结暂停要说清是什么原因停的",
+      /human_directive_cancel/.test(pausedHtml),
+      "任务组被冻结却不说停因 —— 人工指令的暂停与取消停在同一个状态上，界面上分不出是哪一种");
+    check("没有停因时不挂那个标记",
+      !/停因/.test(probe.renderTaskGroupsWith(detailState, admin, "p1", "tg1", fullProgress)),
+      "没有 pauseReason 也挂停因标记 —— 常亮的标记等于没有标记");
   }
 
   // 视图里嵌的工作项是截断过的（真实总数在 workItemCount）。把截断后的长度当总数，
