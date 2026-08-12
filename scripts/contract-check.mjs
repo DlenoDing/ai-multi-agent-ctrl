@@ -268,6 +268,7 @@ run(verifyEveryCloseGateHasHumanGuidance);
 run(verifyGrantScopeCoversObjectsNamedOnlyById);
 run(verifyLongRunningWorkKeepsItsClaim);
 run(verifyCentralOnlyStateCannotBeWritten);
+run(verifyMcpToolListCostStaysVisible);
 run(verifyMcpEnvelopeNeverCallsAnErrorSuccess);
 run(verifyOnlyHumanSessionsCanFinalize);
 run(verifyUnknownStateSchemaIsRefused);
@@ -4757,6 +4758,35 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 判据改成【按调用图】找：凡是通向 decideHumanConfirmation 的 MCP case，都必须只放行真人会话。
 // 这与 human-only-parity-gate 是同一条不变式的两个角度（那道门从 REST 侧的真人专属动作出发，
 // 这里从核心函数出发），重叠是有意的：这条线一旦破，后果是整套人机协同失效。
+// tools/list 是远程 MCP 客户端每次会话都要吞下去的一份东西：实测 85 个工具 498KB、
+// 约 12.7 万 token，其中 93% 是 inputSchema —— 而每个工具公布的 properties 是【全仓参数名的并集】
+// （168 个），不是它自己的参数。"撤销一个授权"这种工具也带着 168 个属性。
+// 为什么不改成逐工具：85 个 case 里 70 个把 args 整体转发给核心函数，静态推不出各自的参数集；
+// 硬推会给这 70 个生成空模式，而校验是 additionalProperties:false —— 那会直接拒掉真实调用。
+// 手工为 85 个工具声明参数是另一回事，不在"简单"的范围里。
+// 所以这里只做一件事：把这个成本钉住并让它可见。它涨了要有人知道，而不是等客户端塞不下才发现。
+// 运维侧的杠杆是 AIMAC_MCP_SERVICE_ALLOWED_TOOLS：把服务令牌收窄，列表按名字先过滤，成本同比下降。
+function verifyMcpToolListCostStaysVisible(output) {
+  const tools = createMcpToolDefinitions();
+  const bytes = JSON.stringify(tools).length;
+  const schemaBytes = tools.reduce((sum, tool) => sum + JSON.stringify(tool.inputSchema || {}).length, 0);
+  const properties = Object.keys(tools[0]?.inputSchema?.properties || {}).length;
+  if (tools.length < 40) {
+    output.push(`tools/list 成本：只拿到 ${tools.length} 个工具 —— 提取与工具表脱节，本条在空转`);
+    return;
+  }
+  // 上限按"当前值 + 30% 余量"定，用意不是卡死增长，而是让一次性翻倍的改动必须显式抬高它。
+  const ceilingBytes = 650 * 1024;
+  if (bytes > ceilingBytes) {
+    output.push(`tools/list 成本：${(bytes / 1024).toFixed(0)}KB 超过上限 ${(ceilingBytes / 1024).toFixed(0)}KB —— `
+      + "远程 MCP 客户端每次会话都要吞这一份（按 token 计费）；"
+      + "要么收窄公布的入参模式，要么显式抬高这个上限并说明为什么值得");
+  }
+  console.log(`tools/list 成本：${tools.length} 个工具 ${(bytes / 1024).toFixed(0)}KB`
+    + `（约 ${Math.round(bytes / 4 / 1000)}k token，其中 inputSchema 占 ${Math.round(schemaBytes * 100 / bytes)}%，`
+    + `每个工具公布 ${properties} 个属性——是全仓参数名的并集，不是它自己的）`);
+}
+
 // MCP 的返回信封是机器消费方唯一会看的那个字段。内层带了 error 却在信封上说成功，
 // 消费方就会把失败当成"查到了、只是没有数据"——实测两个进度查询在缺作用域时正是如此：
 // {progressSnapshot: null, error: "scope_ref_required_for_bounded_principal"}，信封 ok:true。
