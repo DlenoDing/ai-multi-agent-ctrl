@@ -1436,9 +1436,10 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     // 舰队计数（只有数字，几十字节）。没有它，界面就无从知道"活挂着但没有任何 agent 能接"——
     // 实测零节点时循环照样造出成千上万个 active 会话与租约，控制台看上去一片繁忙，
     // 而真相是没有任何东西在跑。节点明细只在 agent 页下发，这里不带。
+    // 按项目切分之后再数：选中项目时，别的项目的节点不能算进这个项目的舰队。
     fleet: {
-      online: (scoped.agentRuntimeNodes || []).filter((node) => node.status === "online").length,
-      total: (scoped.agentRuntimeNodes || []).length
+      online: (scopeCollection(scoped.agentRuntimeNodes) || []).filter((node) => node.status === "online").length,
+      total: (scopeCollection(scoped.agentRuntimeNodes) || []).length
     },
     // 在制品额度（两个数字）。编排周期一旦按这个额度把单元判成 resource_queued，界面必须能说出
     // "为什么我的单元不动" —— 后端有闸而界面没有出口，等于这个闸对使用者不存在。
@@ -1463,7 +1464,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     // 同一个集合在一个视图里按项目切、在另一个视图里不切，是"有的有、有的没有"的又一例。
     taskGroups: projectTaskGroupsForView(sliceItems(scopeCollection(scoped.taskGroups), capped)),
     modelCapabilities: sliceItems(scoped.modelCapabilities, capped),
-    agentRuntimeNodes: sliceItems(scoped.agentRuntimeNodes, capped),
+    agentRuntimeNodes: sliceItems(scopeCollection(scoped.agentRuntimeNodes), capped),
     // progressSnapshots 不进视图基底：控制台的进度数据走专用端点 /api/task-groups/:id/progress
     // 按需取，全站没有一处读 state.progressSnapshots。而单条快照把 repositoryOutputs 与 workItems
     // 整份嵌了进去（实测 300 单元时 97KB/条），基底又意味着【每个视图、每次请求】都带上 ——

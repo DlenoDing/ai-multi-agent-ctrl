@@ -1741,6 +1741,11 @@ export function makeProjectScopePredicate(taskGroups, scopeProjectId) {
     if (item.taskGroupId !== undefined && item.taskGroupId !== null) {
       return projectIdOf.get(item.taskGroupId) === scopeProjectId;
     }
+    // agent 节点用的是复数 projectIds（一个节点可服务多个项目）。漏了它的后果不是多几条记录：
+    // 视图基底里的 fleet 计数取的是下发的节点，于是 A 项目一个节点都没有、B 项目有一个在线时，
+    // A 的页面显示"舰队在线"，那条"没有在线 agent、这些活不会动"的提示就永远不出现 ——
+    // 而在制品额度那边算的是正确的 0。同一份状态，两处结论相反，人看到的是错的那个。
+    if (Array.isArray(item.projectIds)) return item.projectIds.includes(scopeProjectId);
     return true;
   };
 }

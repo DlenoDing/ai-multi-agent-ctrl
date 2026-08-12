@@ -5803,7 +5803,12 @@ function verifyProjectScopePredicateResolvesOwnership(output) {
     ["不带 projectId、靠 taskGroupId 归本项目", {taskGroupId: "tg_mine"}, true],
     ["不带 projectId、靠 taskGroupId 归别人", {taskGroupId: "tg_theirs"}, false],
     ["任务组查不到归属（不在可见范围内）", {taskGroupId: "tg_unknown"}, false],
-    ["两个归属字段都没有（全局配置）", {roleId: "reviewer"}, true]
+    ["两个归属字段都没有（全局配置）", {roleId: "reviewer"}, true],
+    // agent 节点用复数 projectIds。漏掉它时 fleet 计数会把别的项目的节点算进来，
+    // "没有在线 agent、这些活不会动"那条提示就永远不出现（实测过）。
+    ["节点服务本项目（复数 projectIds）", {projectIds: ["prj_mine", "prj_other"]}, true],
+    ["节点只服务别的项目", {projectIds: ["prj_other"]}, false],
+    ["节点不服务任何项目", {projectIds: []}, false]
   ];
   for (const [label, item, expected] of cases) {
     if (belongs(item) !== expected) {

@@ -414,6 +414,14 @@ const MUTATIONS = [
     expect: "没有被裁回上限"
   },
   {
+    name: "视图作用域：agent 节点按复数 projectIds 归属（否则舰队计数会串项目）",
+    file: CORE,
+    check: "verifyProjectScopePredicateResolvesOwnership",
+    from: "    if (Array.isArray(item.projectIds)) return item.projectIds.includes(scopeProjectId);",
+    to: "",
+    expect: "节点只服务别的项目"
+  },
+  {
     name: "视图作用域：不带 projectId 的记录要按 taskGroupId 反查归属",
     file: CORE,
     check: "verifyProjectScopePredicateResolvesOwnership",
