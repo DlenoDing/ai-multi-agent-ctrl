@@ -507,6 +507,16 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    // 这道门此前也只有一条登记变异。它真正要防的是"某类对象在生产中永远无法终结"，
+    // 而那条判据依赖状态生产者的提取 —— 提取一旦失效，门会一片绿地放过所有状态机。
+    name: "机器活性检查：状态生产者提取失效必须报出来",
+    file: "scripts/barrier-liveness-gate.mjs",
+    gate: "barrier",
+    from: "function loadProducedStatuses() {\n  const produced = new Set();",
+    to: "function loadProducedStatuses() {\n  const produced = new Set();\n  if (true) return produced;",
+    expect: "的状态一个都没有被代码写入过"
+  },
+  {
     // 这道门此前只有一条登记变异（MCP 定稿白名单），其余四条失败路径从没被人看着红过。
     // 下面三条分别钉住：REST 侧守卫失踪、按函数比对的越权检测、以及提取失效必须报空转。
     name: "真人专属动作在 REST 侧失踪要被发现",
