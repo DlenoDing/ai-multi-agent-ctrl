@@ -10,6 +10,27 @@ import {tmpdir} from "node:os";
 import {dirname, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 
+// 起过的子进程一律登记，并在【所有】退出路径上收掉。
+// 只在成功路径上 kill 是不够的：断言抛错、超时、Ctrl-C 时服务就成了孤儿（父进程没了、PPID=1），
+// 而它还带着自治循环在跑。本机实测积了 13 个这样的进程、最久的活了 15 小时，
+// 负载被抬到 7 以上 —— 后果不只是浪费：同一份代码的耗时量出 22s 和 99s 两个结果，
+// 任何性能判断都作不得数。测试留下的垃圾会污染后面所有测试。
+const spawnedChildren = [];
+function trackChild(child) {
+  spawnedChildren.push(child);
+  return child;
+}
+function killTrackedChildren() {
+  for (const child of spawnedChildren.splice(0)) {
+    try { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); } catch { /* 尽力而为 */ }
+  }
+}
+process.on("exit", killTrackedChildren);
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(signal, () => { killTrackedChildren(); process.exit(130); });
+}
+process.on("uncaughtException", (error) => { killTrackedChildren(); console.error(error); process.exit(1); });
+
 const root = process.argv[2] || resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-conc-"));
 const fails = [];
@@ -33,10 +54,10 @@ const freePort = async () => {
   return port;
 };
 const start = async (port) => {
-  const child = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {cwd: root,
+  const child = trackChild(spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {cwd: root,
     env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(port), AIMAC_RUNTIME_DIR: runtimeDir,
       AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_STATE_STORE: "runtime_json",
-      AIMAC_BOOTSTRAP_TOKEN: "concurrent-probe-token-0123456789", DATABASE_URL: ""}, stdio: ["ignore", "pipe", "pipe"]});
+      AIMAC_BOOTSTRAP_TOKEN: "concurrent-probe-token-0123456789", DATABASE_URL: ""}, stdio: ["ignore", "pipe", "pipe"]}));
   const base = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + 25000;
   while (Date.now() < deadline) {

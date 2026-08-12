@@ -10,6 +10,27 @@ import {join, dirname, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {tmpdir} from "node:os";
 
+// 起过的子进程一律登记，并在【所有】退出路径上收掉。
+// 只在成功路径上 kill 是不够的：断言抛错、超时、Ctrl-C 时服务就成了孤儿（父进程没了、PPID=1），
+// 而它还带着自治循环在跑。本机实测积了 13 个这样的进程、最久的活了 15 小时，
+// 负载被抬到 7 以上 —— 后果不只是浪费：同一份代码的耗时量出 22s 和 99s 两个结果，
+// 任何性能判断都作不得数。测试留下的垃圾会污染后面所有测试。
+const spawnedChildren = [];
+function trackChild(child) {
+  spawnedChildren.push(child);
+  return child;
+}
+function killTrackedChildren() {
+  for (const child of spawnedChildren.splice(0)) {
+    try { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); } catch { /* 尽力而为 */ }
+  }
+}
+process.on("exit", killTrackedChildren);
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(signal, () => { killTrackedChildren(); process.exit(130); });
+}
+process.on("uncaughtException", (error) => { killTrackedChildren(); console.error(error); process.exit(1); });
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // ── 新部署的第一条路径：npm run init 打印账号与令牌 → npm start → 照着它登录 ──────────
@@ -30,13 +51,13 @@ async function verifyFirstRunPath() {
   if (!email || !bootstrapToken) return;
 
   const firstRunPort = await freePort();
-  const firstRunChild = spawn(process.execPath, ["scripts/run-with-env.mjs", "apps/control-plane-ui/server.mjs"], {
+  const firstRunChild = trackChild(spawn(process.execPath, ["scripts/run-with-env.mjs", "apps/control-plane-ui/server.mjs"], {
     cwd: root,
     env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(firstRunPort), AIMAC_RUNTIME_DIR: firstRunDir,
       AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: "",
       AIMAC_BOOTSTRAP_TOKEN: undefined, AIMAC_MCP_SERVICE_TOKEN: undefined},
     stdio: ["ignore", "pipe", "pipe"]
-  });
+  }));
   const firstRunBase = `http://127.0.0.1:${firstRunPort}`;
   const upDeadline = Date.now() + 30000;
   let up = false;
@@ -93,13 +114,13 @@ const gateLedgerLimit = 1;
 
 const tickMs = 3000;
 const port = await freePort();
-const child = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {cwd: root,
+const child = trackChild(spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {cwd: root,
   env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(port), AIMAC_RUNTIME_DIR: runtimeDir,
     AIMAC_ORCHESTRATOR_INTERVAL_MS: String(tickMs), AIMAC_STATE_STORE: "runtime_json",
     AIMAC_BOOTSTRAP_TOKEN: "idle-tick-gate-token-0123456789", DATABASE_URL: "",
     // 把账本上限调到 2：验"截断仍会被如实标记"不需要真造 60 条记录。
     AIMAC_VIEW_LEDGER_LIMIT: String(gateLedgerLimit)},
-  stdio: ["ignore", "pipe", "pipe"]});
+  stdio: ["ignore", "pipe", "pipe"]}));
 const base = `http://127.0.0.1:${port}`;
 const bootDeadline = Date.now() + 30000;
 while (Date.now() < bootDeadline) {
