@@ -322,6 +322,7 @@ function check(name, condition, detail) {
     "常亮的提示等于没有提示");
 }
 
+
 function runFormRestoreCase() {
   const justification = "这个方案把订单状态机换成了事件溯源，属于架构层面的选择，必须先由架构组定稿再开工。";
   const buildForm = () => el("form", {dataset: {form: "human-confirmation", request: "hcr-1", round: "2"}}, [
