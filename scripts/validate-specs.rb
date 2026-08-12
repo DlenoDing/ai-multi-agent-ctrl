@@ -1237,6 +1237,60 @@ case_marks.each_with_index do |(tool, at), index|
   errors << "MCP 工具 #{tool} 在作用域参数缺省时会落到控制面自己的任务组/房间，却没有受限主体守卫 —— 缺省不得等于放行" unless guarded
 end
 
+# 【对象命名参数登记表】。这一类洞已经在本会话里出现两次（缺省作用域 5 处、共享定义契约 1 处），
+# 共同形状是：报文里出现一个指向既有对象的 id，而没有任何东西核对"这个对象是不是你的"。
+# 所以把它变成登记制：agent 可用工具里出现的每一个 id 类参数，都必须在下表里写明它凭什么安全。
+# 表里没有的一律报红 —— 新工具带来的新 id 参数，作者必须停下来想清楚并写下理由。
+MCP_ID_ARG_JUSTIFICATION = {
+  # 已在 grantMatchesArgs 里按 id 查出对象再比归属（contract-check 有行为断言）
+  "targetId" => "grantMatchesArgs 按归属核对",
+  "repositoryOutputTargetRef" => "grantMatchesArgs 按归属核对",
+  "contractId" => "grantMatchesArgs 按归属核对",
+  # 通用作用域字段，grantMatchesArgs 直接比对
+  "dispatchId" => "授权字段直比", "projectId" => "授权字段直比", "taskGroupId" => "授权字段直比",
+  "workId" => "授权字段直比", "workItemId" => "授权字段直比", "sessionId" => "授权字段直比",
+  "roomId" => "授权字段直比 + boundedRoomGuard",
+  # 逐工具的归属校验
+  "requestId" => "confirmationReadableByPrincipal / permissionRequestReadableByPrincipal 逐工具校验",
+  "reviewBundleId" => "boundedTaskGroupGuard 强制点名 taskGroupId，实现再按任务组限定查找",
+  "reviewPlanId" => "同 reviewBundleId",
+  # 全局目录：不含租户数据，读到也没有跨域信息
+  "roleId" => "全局角色目录", "sourceId" => "全局技能源目录", "roleSkillRef" => "全局角色技能目录",
+  "envelopeId" => "指令包前缀缓存，按内容寻址",
+  # 新建记录自带的 id / 证据引用：不用于定位既有对象
+  "testResultId" => "新建记录的 id", "ackId" => "新建记录的 id",
+  "evidenceRefs" => "证据引用，不定位既有对象", "messageRefs" => "同上",
+  "artifactManifestRefs" => "同上", "repositoryRefs" => "同上",
+  "consumerRef" => "绑定方自述，落库前由 boundedTaskGroupGuard 限定任务组", "consumerRefs" => "同上",
+  # 服务端从已认证主体派生，不采信报文
+  "participantId" => "服务端从主体派生，报文值不被采信",
+  # 自述身份：探测/注册自己这台节点
+  "nodeId" => "节点自述身份；nodeProbe 返回的队列深度是全局聚合（已知，属可接受的弱聚合信息）",
+  "ownerAccountId" => "artifact_manifest_index 走 principalProjectFilter 过滤"
+}.freeze
+agent_tool_names = agent_tools
+mcp_case_marks = mcp_source.enum_for(:scan, /^ {4}case "([a-z-]+-mcp\.[a-z_]+)":/).map { [Regexp.last_match(1), Regexp.last_match.begin(0)] }
+unjustified = {}
+mcp_case_marks.each_with_index do |(tool, at), index|
+  next unless agent_tool_names.include?(tool)
+  finish = index + 1 < mcp_case_marks.size ? mcp_case_marks[index + 1][1] : at + 1200
+  body = mcp_source[at...finish]
+  seen = body.scan(/args\.([A-Za-z_][A-Za-z0-9_]*)/).flatten
+  body.scan(/\b([a-zA-Z_][A-Za-z0-9_]*)\(state,/).flatten.uniq.each do |fn|
+    impl = mcp_source[/function #{fn}\(state[\s\S]{0,3000}?\n\}/m].to_s
+    seen += impl.scan(/args\.([A-Za-z_][A-Za-z0-9_]*)/).flatten
+  end
+  seen.uniq.select { |a| a =~ /(Id|Ids|Ref|Refs)$/ }.each do |arg|
+    next if MCP_ID_ARG_JUSTIFICATION.key?(arg)
+    (unjustified[arg] ||= []) << tool
+  end
+end
+errors << "MCP 对象命名参数门: 取不到 agent 工具清单或 case 清单 —— 提取逻辑与代码脱节" if agent_tool_names.size < 20 || mcp_case_marks.size < 40
+unjustified.each do |arg, tools_using|
+  errors << "MCP 工具 #{tools_using.uniq.join("、")} 收下了 id 类参数 #{arg}，而它不在对象命名参数登记表里 —— " \
+    "报文里每一个指向既有对象的 id 都必须有东西核对'这个对象是不是你的'，或在表里写明它凭什么不需要"
+end
+
 # grantMatchesArgs 的归属核对改由 contract-check 做【行为断言】（源码文本判据挡不住
 # "把条件改成 if (false)、正文原样留着"这种改动，实测如此）。这里只守住它仍然被导出，
 # 否则那条行为断言会在"函数不见了"时静默消失。
