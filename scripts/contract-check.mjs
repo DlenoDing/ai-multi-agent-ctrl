@@ -189,6 +189,16 @@ const ONLY = String(process.env.AIMAC_CONTRACT_ONLY || "").trim();
 const checkOrigin = new Map();
 let ranCheckCount = 0;
 const skippedChecks = [];
+// 异步检查同样要走过滤与来源归属，不能绕开 run()——绕开就等于它不受 AIMAC_CONTRACT_ONLY 约束，
+// 变异门单跑一条时它会陪跑。
+async function runAsync(check) {
+  if (ONLY && check.name !== ONLY) { skippedChecks.push(check.name); return; }
+  ranCheckCount += 1;
+  const before = errors.length;
+  await check(errors);
+  for (let index = before; index < errors.length; index += 1) checkOrigin.set(errors[index], check.name);
+}
+
 function run(check) {
   if (ONLY && check.name !== ONLY) { skippedChecks.push(check.name); return; }
   ranCheckCount += 1;
@@ -258,6 +268,7 @@ run(verifyEveryCloseGateHasHumanGuidance);
 run(verifyGrantScopeCoversObjectsNamedOnlyById);
 run(verifyLongRunningWorkKeepsItsClaim);
 run(verifyCentralOnlyStateCannotBeWritten);
+run(verifyMcpEnvelopeNeverCallsAnErrorSuccess);
 run(verifyOnlyHumanSessionsCanFinalize);
 run(verifyUnknownStateSchemaIsRefused);
 run(verifySuspendHaltsRunningWork);
@@ -4746,6 +4757,63 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 判据改成【按调用图】找：凡是通向 decideHumanConfirmation 的 MCP case，都必须只放行真人会话。
 // 这与 human-only-parity-gate 是同一条不变式的两个角度（那道门从 REST 侧的真人专属动作出发，
 // 这里从核心函数出发），重叠是有意的：这条线一旦破，后果是整套人机协同失效。
+// MCP 的返回信封是机器消费方唯一会看的那个字段。内层带了 error 却在信封上说成功，
+// 消费方就会把失败当成"查到了、只是没有数据"——实测两个进度查询在缺作用域时正是如此：
+// {progressSnapshot: null, error: "scope_ref_required_for_bounded_principal"}，信封 ok:true。
+// 判据用【全量空参调用】跑一遍所有工具，而不是读源码找 return 形状：
+// 我先用静态计数，数出 24 处"带 error 不带 ok:false"，其中绝大多数在运行时其实是 ok:false ——
+// 静态形状说明不了运行时契约。
+// 必须在子进程 + 独立运行目录里跑：空参也会打到写工具，第一版直接在本进程调用，
+// 把开发者真实的 .runtime 状态改了（是本门自己的"探针未隔离"检查抓住的）。
+function verifyMcpEnvelopeNeverCallsAnErrorSuccess(output) {
+  const probeDir = mkdtempSync(join(tmpdir(), "aimac-envelope-"));
+  const probeFile = join(probeDir, "probe.mjs");
+  writeFileSync(probeFile, `
+import { ensureStoredState } from ${JSON.stringify(resolve(root, "apps/control-plane-ui/lib/state-store.mjs"))};
+import { handleMcpJsonRpc, mcpToolNames } from ${JSON.stringify(resolve(root, "apps/mcp-server/server.mjs"))};
+import { readFileSync } from "node:fs";
+const root = ${JSON.stringify(root)};
+const runtimeDir = ${JSON.stringify(probeDir)};
+const seed = JSON.parse(readFileSync(root + "/data/seed-state.json", "utf8"));
+ensureStoredState({root, runtimeDir, statePath: runtimeDir + "/control-plane-state.json",
+  seedPath: root + "/data/seed-state.json", buildInitialState: () => seed});
+const principal = {kind: "system_service", id: "svc_envelope_probe",
+  projectIds: [seed.projects[0].id], allowedMcpTools: ["*"]};
+const liars = [];
+let called = 0;
+for (const name of mcpToolNames) {
+  let inner = {};
+  try {
+    const response = await handleMcpJsonRpc({jsonrpc: "2.0", id: 1, method: "tools/call",
+      params: {name, arguments: {}}}, {principal});
+    inner = JSON.parse(response?.result?.content?.[0]?.text || "{}");
+  } catch { continue; }
+  called += 1;
+  const innerError = inner.result && typeof inner.result === "object" ? inner.result.error : undefined;
+  if (inner.ok === true && innerError) liars.push(name + " → " + innerError);
+}
+console.log(JSON.stringify({called, liars}));
+`);
+  let probe = null;
+  try {
+    const out = execFileSync("node", [probeFile], {encoding: "utf8",
+      env: {...process.env, AIMAC_RUNTIME_DIR: probeDir}}).trim().split("\n").pop();
+    probe = JSON.parse(out);
+  } catch (error) {
+    output.push(`MCP 信封诚实：探针没跑起来（${String(error.stderr || error.message).slice(0, 160)}）—— 本条在空转`);
+    return;
+  }
+  if (probe.called < 40) {
+    output.push(`MCP 信封诚实：只成功调用了 ${probe.called} 个工具 —— 探针与工具表脱节，本条在空转`);
+    return;
+  }
+  if (probe.liars.length) {
+    output.push(`MCP 信封诚实：${probe.liars.length} 个工具在信封上说成功、内层却带 error（${probe.liars.join("；")}）——`
+      + " 只看信封的消费方会把失败当成'查到了、只是没有数据'");
+  }
+  console.log(`MCP 信封诚实：空参跑过 ${probe.called} 个工具，没有一个在信封上把 error 说成成功`);
+}
+
 function verifyOnlyHumanSessionsCanFinalize(output) {
   const mcpSource = readFileSync(resolve(root, "apps/mcp-server/server.mjs"), "utf8");
   // 按"下一个 case 标记"切体，不按花括号配对：case 体里既有带 {} 的也有不带的，

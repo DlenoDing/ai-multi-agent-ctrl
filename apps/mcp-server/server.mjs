@@ -698,7 +698,12 @@ export async function callTool(name, args = {}, context = {}) {
   }
   appendMcpAudit(mcpCall);
   return {
-    ok: result.ok !== false,
+    // 内层带了 error 就不能在信封上说成功。实测有两个进度查询在缺作用域时返回
+    // {progressSnapshot: null, error: "scope_ref_required_for_bounded_principal"} 而不带 ok:false，
+    // 于是信封是 ok:true —— 只看信封的消费方会把它当成"查到了，只是没有进度"，
+    // 而真相是"你没给作用域"。判据放在信封上而不是逐个工具补 ok:false：
+    // 那样以后新增的路径还会再漏一次，而这一层是所有工具的必经之处。
+    ok: result.ok !== false && !(result && typeof result === "object" && result.error),
     tool: name,
     stateVersion: state.stateVersion,
     result,
