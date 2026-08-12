@@ -2134,6 +2134,12 @@ function renderProjectOverview() {
   ])).join("");
 
   return [
+    // 项目概览是项目负责人一直盯着的那一页，也是最容易被"看起来一切正常"骗到的一页：
+    // 实测真实数据下它显示"健康度 ok、完成度 75%"，而当时一个在线 agent 都没有、
+    // 3 个单元交出去之后永远不会动 —— 任务组页和监控页都说了这件事，唯独这一页不说。
+    // 提示复用同一个函数，措辞与那两页一致，人不必在不同页面上对同一件事建立两套理解。
+    cellsWaitingWithNoAgentNotice(groups),
+    wipCapacityNotice(groups),
     panel(`项目进度 · ${esc(project.name)}`, `
       <div class="stack">
         ${progressLine(project.progress?.percent)}

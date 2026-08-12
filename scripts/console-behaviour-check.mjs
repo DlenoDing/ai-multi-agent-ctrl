@@ -293,6 +293,35 @@ function check(name, condition, detail) {
     configFetch < 0 ? "找不到取配置那段代码 —— 本条在空转" : `取配置段落里${/failed/u.test(wiringBlock) ? "有" : "没有"}置 failed 的接线`);
 }
 
+
+// 项目概览是项目负责人盯得最久的一页，也最容易被"看起来一切正常"骗到：
+// 实测真实编排产出下它显示"健康度 ok、完成度 75%"，而当时没有任何在线 agent、
+// 交出去的单元永远不会动。任务组页与监控页都会说这件事，这一页此前不说。
+{
+  const overviewRoot = el("div");
+  const overviewProbe = loadConsole(overviewRoot);
+  const stalled = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: [],
+      progress: {phase: "development", health: "ok", updatedAt: new Date(0).toISOString()}}],
+    taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", blockers: [],
+      workItems: [{id: "w1", title: "单元", status: "assigned", progress: 30, ownerRole: "agent-runtime"}]}],
+    agentDispatches: [], workSessions: [], agentRuntimeNodes: [], agents: [], closeBarriers: [],
+    qualityGates: [], findings: [], humanConfirmationRequests: [], humanDirectives: [],
+    truncatedCollections: [], fleet: {online: 0, total: 0}};
+  const admin = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const overviewText = (fleet) => {
+    overviewProbe.renderFullPageWith({...stalled, fleet}, admin, "p1", "proj-overview");
+    return String(overviewRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+  };
+  check("项目概览也要说出'没有在线 agent，这些活不会动'（它是被盯得最久的一页）",
+    /没有任何在线的 agent 节点/.test(overviewText({online: 0, total: 0})),
+    "概览页显示健康度 ok、进度在走，而实际一个单元都动不了 —— 另外两页说了，这一页不说");
+  check("有 agent 在线时概览页不挂这条提示",
+    !/没有任何在线的 agent 节点/.test(overviewText({online: 1, total: 1})),
+    "常亮的提示等于没有提示");
+}
+
 function runFormRestoreCase() {
   const justification = "这个方案把订单状态机换成了事件溯源，属于架构层面的选择，必须先由架构组定稿再开工。";
   const buildForm = () => el("form", {dataset: {form: "human-confirmation", request: "hcr-1", round: "2"}}, [
