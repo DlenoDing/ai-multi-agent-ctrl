@@ -1626,7 +1626,7 @@ reason_literals = lambda do |source, key|
     tail = source[Regexp.last_match.end(0), 300].to_s
     boundary = [tail.index("\n") || tail.length, tail.index(/,\s*[A-Za-z_$][\w$]*\s*:/) || tail.length].min
     expression = tail[0, boundary]
-    literals = expression.scan(/"([a-z][a-z_]*)"/).flatten
+    literals = expression.scan(/"([a-z][a-z_0-9]*)"/).flatten
     if literals.empty?
       # 跟一跳：值是个裸标识符时，找它的 const 声明再取字面量。
       # 本轮那个真缺陷（节点关停待停止没有中文）正是藏在这种一跳后面：
@@ -1634,7 +1634,7 @@ reason_literals = lambda do |source, key|
       # 跟不到就如实留在"未被检验"里 —— 跟两跳、跟函数参数都不做，那会把这道门变成半个求值器。
       name = expression.strip[/\A([A-Za-z_$][\w$]*);?\z/, 1]
       declaration = name && source[/const\s+#{Regexp.escape(name)}\s*=\s*([^;]{0,400});/m, 1]
-      hop = declaration ? declaration.scan(/"([a-z][a-z_]*)"/).flatten : []
+      hop = declaration ? declaration.scan(/"([a-z][a-z_0-9]*)"/).flatten : []
       hop.empty? ? opaque << expression.strip[0, 60] : found.concat(hop)
     else
       found.concat(literals)
@@ -1725,11 +1725,15 @@ state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-
 # 出现的时机恰恰是人最需要看懂的时候。逐批补翻译治不了本 —— 下一个新错误码照样会漏。
 # 登记的是【发给机器的那一侧】而不是【给人看的那一侧】：新增一个未登记的错误码默认要求翻译，
 # 忘了登记的代价是被门拦下（看得见），反过来则是人某天撞上一串英文（看不见）。
+# 登记在这里的码只会回给机器（MCP 客户端 / agent 运行时），不经 t() 到人眼前。
+# mcp_server_error 是 /mcp 端点的兜底：它面向 MCP 客户端，给它编一句中文只会让人以为
+# 控制台某处会显示它。门另有反向检查——机器面的码一旦被翻译，说明它其实会到人眼前，登记就该撤掉。
 machine_facing_error_codes = %w[
   mcp_streamable_http_requires_post mcp_auth_required
   event_node_binding_mismatch execution_event_key_required
   checkpoint_replay_binding_mismatch dispatch_not_assigned_to_node
   room_task_group_mismatch
+  mcp_server_error
 ].to_set
 # 核心与网关抛出的错误码同样会到人眼前：respondApiError 把它们原样回给控制台，而失败原因还会
 # 落在派发记录上（监控页按 t(blockedReason || failureReason) 渲染）。只扫 server.mjs 会漏掉
@@ -1738,7 +1742,16 @@ core_error_codes = (core_source.scan(/new Error\("([a-z0-9_]{5,})"\)/) +
                     core_source.scan(/topologyError\("([a-z0-9_]{5,})"/) +
                     agent_gateway_source.scan(/new Error\("([a-z0-9_]{5,})"\)/) +
                     agent_gateway_source.scan(/gatewayError\("([a-z0-9_]{5,})"/)).flatten.uniq
-server_error_codes = (server_source.scan(/error:\s*"([a-z0-9_]+)"/).flatten + core_error_codes).uniq
+# 错误码是【直接 t() 给人看】的，所以和原因码同规：三元 / || 兜底 / 一跳变量都要看得见。
+# 只认紧跟冒号的字面量时，`error: error.message || "mcp_server_error"` 这种整条逃逸 ——
+# 兜底真触发那一刻，人看到的就是这串英文，而那一刻恰恰是他最需要看懂的时候。
+expression_error_literals, expression_error_opaque = reason_literals.call(server_source, "error")
+plain_error_literals = server_source.scan(/error:\s*"([a-z0-9_]+)"/).flatten.uniq
+# 只有表达式提取才看得见的那些。两条既有覆盖路径都要减掉：紧跟冒号的字面量，
+# 以及 core/gateway 的 new Error("...")（后者当前没有交集，减它是防止以后重叠了还在虚报）。
+# 报"改进带来了多少"时混进本来就覆盖的，就是在给自己邀功；数字要减干净。
+expression_only_error_codes = expression_error_literals - plain_error_literals - core_error_codes
+server_error_codes = (plain_error_literals + expression_error_literals + core_error_codes).uniq
 # 本条同样不得空转：错误码总数远少于预期即说明提取逻辑与代码脱节。
 errors << "error-code i18n coverage check only found #{server_error_codes.size} codes — extraction has drifted" if server_error_codes.size < 150
 untranslated = server_error_codes.reject do |code|
@@ -2281,6 +2294,9 @@ end
 
 fail_with(errors)
 
+puts "错误码本地化：只有表达式提取才看得见的有 #{expression_only_error_codes.length} 个" \
+     "#{expression_only_error_codes.empty? ? '' : '（' + expression_only_error_codes.sort.join('、') + '）'}；" \
+     "另有 #{expression_error_opaque.length} 处取值来自变量，未被检验"
 puts "原因码本地化：核对了 #{localized_literals.length} 个字面量（含三元/|| 兜底里的）；" \
      "另有 #{opaque_reason_sites.length} 处取值来自变量，本门看不到它们的取值，未被检验" \
      "#{opaque_reason_sites.empty? ? '' : '：' + opaque_reason_sites.join('、')}"
