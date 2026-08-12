@@ -4807,6 +4807,20 @@ function verifyContentBundleNamesTheDispatchedItem(output) {
 function verifyMcpToolListCostStaysVisible(output) {
   const tools = createMcpToolDefinitions();
   const bytes = JSON.stringify(tools).length;
+  // 真正要紧的不是工具表总量，而是【一个真实远程客户端实际拿到多少】：服务令牌默认只放行
+  // defaultMcpServiceToolAllowlist 里那批，而通配符对服务令牌是明令禁止的（forbiddenMcpServiceTool）。
+  // 我先前用合成的 allowedMcpTools:["*"] 去量，把成本报成了将近两倍 —— 那个主体在产品里造不出来。
+  const serverSource = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const allowlistBlock = serverSource.match(/defaultMcpServiceToolAllowlist = \[([\s\S]*?)\]/u);
+  const defaultNames = allowlistBlock
+    ? [...allowlistBlock[1].matchAll(/"([a-z-]+-mcp\.[a-z_0-9]+)"/gu)].map((match) => match[1])
+    : [];
+  const defaultTools = tools.filter((tool) => defaultNames.includes(tool.name));
+  const defaultBytes = JSON.stringify(defaultTools).length;
+  if (!defaultNames.length) {
+    output.push("tools/list 成本：取不到服务令牌的默认放行清单 —— 报出的就只是工具表总量，"
+      + "而那不是任何真实客户端会拿到的量");
+  }
   const schemaBytes = tools.reduce((sum, tool) => sum + JSON.stringify(tool.inputSchema || {}).length, 0);
   const properties = Object.keys(tools[0]?.inputSchema?.properties || {}).length;
   if (tools.length < 40) {
@@ -4820,9 +4834,10 @@ function verifyMcpToolListCostStaysVisible(output) {
       + "远程 MCP 客户端每次会话都要吞这一份（按 token 计费）；"
       + "要么收窄公布的入参模式，要么显式抬高这个上限并说明为什么值得");
   }
-  console.log(`tools/list 成本：${tools.length} 个工具 ${(bytes / 1024).toFixed(0)}KB`
-    + `（约 ${Math.round(bytes / 4 / 1000)}k token，其中 inputSchema 占 ${Math.round(schemaBytes * 100 / bytes)}%，`
-    + `每个工具公布 ${properties} 个属性——是全仓参数名的并集，不是它自己的）`);
+  console.log(`tools/list 成本：默认服务令牌实际拿到 ${defaultTools.length} 个工具 ${(defaultBytes / 1024).toFixed(0)}KB`
+    + `（约 ${Math.round(defaultBytes / 4 / 1000)}k token）；工具表总量 ${tools.length} 个 ${(bytes / 1024).toFixed(0)}KB。`
+    + `其中 inputSchema 占 ${Math.round(schemaBytes * 100 / bytes)}%，每个工具公布 ${properties} 个属性`
+    + "——是全仓参数名的并集，不是它自己的");
 }
 
 // MCP 的返回信封是机器消费方唯一会看的那个字段。内层带了 error 却在信封上说成功，

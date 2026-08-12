@@ -132,5 +132,5 @@ if (!workspaceOwnerTokenEnv) {
 if (!process.env.AIMAC_MCP_SERVICE_TOKEN) {
   console.log(`central MCP service token: ${mcpServiceToken}`
     + `  (远程 MCP 客户端连 ${mcpEndpoint}/mcp 时作 Bearer 令牌；`
-    + "默认可见全部工具，一次 tools/list 约 128k token，用 AIMAC_MCP_SERVICE_ALLOWED_TOOLS 收窄)");
+    + "默认放行 46 个工具，一次 tools/list 约 69k token，用 AIMAC_MCP_SERVICE_ALLOWED_TOOLS 可再收窄)");
 }
