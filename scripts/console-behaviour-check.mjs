@@ -1225,6 +1225,55 @@ await runErrorGuidanceCase();
   }
 }
 
+// 人点"确认定稿"必须真的定稿。
+//
+// 服务端对【核心决策】的默认动作是 revise（AI 提案 → 人提意见 → AI 再分析），
+// 只有显式 action:"finalize" 才会落定稿锁。也就是说：控制台一旦漏传 action，
+// 人点了"确认定稿"、看到成功提示、页面刷新，而那张卡只是轮次 +1 仍然待办 ——
+// 什么都没定稿，且界面上没有任何地方说得出这件事。这一类"看起来做了其实没做"
+// 不会有任何功能测试报错，所以判据要落在【提交出去的报文】上。
+{
+  const probe = loadConsole(el("div"));
+  const submitSource = probe.handlerSource("submit");
+  const at = submitSource.indexOf("/decide");
+  // 判据要落在【真正被提交出去的那个对象字面量】上，不能取一段字符窗口：
+  // action 这个词在附近到处都是（变量声明、注释），窗口一取就永远为真 ——
+  // 实测把 action 从报文里删掉，按窗口判的版本照样是绿的。
+  const payloadStart = at < 0 ? -1 : submitSource.indexOf("JSON.stringify({", at);
+  let body = "";
+  if (payloadStart >= 0) {
+    let index = submitSource.indexOf("{", payloadStart + "JSON.stringify".length);
+    const start = index;
+    let depth = 0;
+    do {
+      if (submitSource[index] === "{") depth += 1;
+      else if (submitSource[index] === "}") depth -= 1;
+      index += 1;
+    } while (index < submitSource.length && depth > 0);
+    body = submitSource.slice(start, index);
+  }
+  if (at < 0 || !body) {
+    failures.push("定稿报文: 找不到人工确认的 decide 提交 —— 提取逻辑与代码脱节，本条在空转");
+  } else {
+    if (!/\baction\b/.test(body)) {
+      failures.push("定稿报文: 控制台提交人工确认决定时没有带上 action —— 服务端对核心决策默认按 revise 处理，"
+        + "人点了'确认定稿'会看到成功提示，而那张卡只是轮次 +1、仍然待办，什么都没定稿");
+    }
+    // 同样按语法结构取：只看 action 是怎么算出来的那一条语句，不看它前后一大片
+    // （"finalize" 与 data.action 在附近别处都出现，按窗口判会永远为真）。
+    const declAt = submitSource.lastIndexOf("const action =", at);
+    const declaration = declAt < 0 ? "" : submitSource.slice(declAt, submitSource.indexOf(";", declAt) + 1);
+    if (!declaration.includes("data.action") || !/"revise"[\s\S]*"reject"/.test(declaration)) {
+      failures.push("定稿报文: action 必须来自被点击的那个按钮（revise / finalize / reject），"
+        + "写死一个值等于把三个按钮做成同一个动作");
+    }
+    if (!/expectedRound/.test(body)) {
+      failures.push("定稿报文: 提交时必须带 expectedRound —— 少了它，AI 在你看这一页之后修订过方案，"
+        + "你的定稿会落在一个你没看过的版本上");
+    }
+  }
+}
+
 // 控制台读的每一个顶层字段，都必须真的有视图会下发它。
 //
 // 读一个从不下发的字段【不会报错】：它只是永远是 undefined，界面永远显示空或 0，
