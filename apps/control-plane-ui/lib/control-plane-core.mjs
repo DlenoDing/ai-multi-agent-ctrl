@@ -4571,7 +4571,11 @@ function recordTransition(state, machine, objectId, from, to, actor, requiresVal
     // warn 模式下这条转移是【非法但照样发生了】。原先它只进 console.warn，state 里不留任何痕迹 ——
     // 而 stdout 在事后排查时通常已经没了，留下的恰恰是最该被看见的那一条。记在转移记录上。
     rejection = {failureCode: error.failureCode || error.code || "transition.rejected", message: String(error.message || "").slice(0, 300)};
-    console.warn(`[transition-engine] rejected ${machine} ${from}->${to} by ${actor}: ${rejection.failureCode} (warn mode; transition still recorded)`);
+    // 带上对象 id：没有它，这行警告看起来像"生产代码正在做一件状态机不允许的事"，
+    // 而它在本仓库最常见的来源其实是契约门自己造的探针对象。我为此白查过一轮 ——
+    // 一行永远滚过去、又无从判断严重性的警告，和没有这行没什么区别。
+    console.warn(`[transition-engine] rejected ${machine} ${objectId} ${from}->${to} by ${actor}: `
+      + `${rejection.failureCode} (warn mode; transition still recorded)`);
   }
   const transition = {
     transitionId: createId("trn"),
