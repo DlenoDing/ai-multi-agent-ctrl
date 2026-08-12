@@ -206,7 +206,9 @@ function checkWiring(probe) {
 /* ---------------- 断言 ---------------- */
 
 const failures = [];
+let checkCount = 0;
 function check(name, condition, detail) {
+  checkCount += 1;
   // 参数自检：本门的顺序与另外三道门【相反】（那三道是 ok 在前）。写反时布尔落进 name、
   // 字符串落进 condition，非空字符串恒真 —— 断言永远通过，门绿、变异也绿，等于没写。
   // 真发生过一次，四条断言一起空转，只有"变异跑不出红"才暴露。
@@ -1881,4 +1883,6 @@ if (failures.length) {
   for (const failure of failures) console.error(`  - ${failure}`);
   process.exit(1);
 }
-console.log("console behaviour gate ok: 提交失败保内容（选项/口令排除/一次性消费/不串单/脏页标记/两处接线）与房间协作记录对人可见（含空态与取数接线）已行为验证");
+// 同样报出覆盖面：这道门有一百多条断言，只说 ok 的话，少跑一整段与全跑过在输出上没有区别。
+console.log(`console behaviour gate ok: ${checkCount} 条断言全部通过`
+  + "（提交失败保内容、房间协作记录对人可见、视图接线、项目切换器、额度提示等已行为验证）");

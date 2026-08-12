@@ -151,6 +151,10 @@ export function checkHumanOnlyParity() {
   if (!checked) {
     failures.push("真人专属对等门: 没有比对到任何一对「REST 真人专属 ↔ MCP 同函数」，本门在空转（已知至少存在 confirmation_decide 这一对）");
   }
+  // 一并交出覆盖面。数组仍是主返回值（调用方按 .failures 取），覆盖数字用于收尾打印：
+  // 覆盖悄悄缩水与"全都查过了"在输出上长得一模一样，而本会话有三次是靠这种数字先看出问题的。
+  failures.coverage = {actions: humanOnlyActions.size, functions: humanOnlyFunctions.size,
+    dispatchPoints: marks.length, byFunction: checked, byName: nameChecked};
   return failures;
 }
 
@@ -160,5 +164,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     for (const failure of failures) console.error(`  - ${failure}`);
     process.exit(1);
   }
-  console.log("human-only parity gate ok: 通向真人专属核心函数的 MCP 工具均在决策点拒绝机器主体");
+  // 报出覆盖面而不只是 ok：覆盖悄悄缩水与"全都查过了"在输出上长得一模一样。
+  // 本会话有三次是靠这种数字先看出问题的（视图枚举漏了一个、反查一次都没走到、判据一种都没挡住）。
+  const coverage = failures.coverage || {};
+  console.log(`human-only parity gate ok: ${coverage.actions} 个真人专属动作、`
+    + `${coverage.functions} 个核心函数、${coverage.dispatchPoints} 个 MCP 分发点；`
+    + `按函数核对 ${coverage.byFunction} 处、按动作名核对 ${coverage.byName} 处，均在决策点只放行真人会话`);
 }
