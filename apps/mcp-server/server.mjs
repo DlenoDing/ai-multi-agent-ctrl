@@ -2102,7 +2102,7 @@ export function sessionMutate(state, args, status) {
   return {session, controlCommands, directDispatches};
 }
 
-function capacitySnapshot(state, filter) {
+export function capacitySnapshot(state, filter) {
   // A bounded principal only sees capacity for its own projects; a null filter (system_admin /
   // wildcard) sees global aggregates. Prevents cross-tenant operational disclosure via this read.
   // 与 core 共用：手打第四份副本正是 cancelled/paused 这类未登记状态漂移进来的原因。
@@ -2114,8 +2114,15 @@ function capacitySnapshot(state, filter) {
     activeSessions: sessions.filter((item) => !terminal.includes(item.status)).length,
     activeSubagents: sessions.filter((item) => item.placement === "subagent" && !terminal.includes(item.status)).length,
     dispatchQueueDepth: dispatches.filter((item) => ["queued", "blocked"].includes(item.status)).length,
-    agentCount: filter ? state.agents.filter((item) => item.projectId && filter.has(item.projectId)).length : state.agents.length,
-    nodeCount: filter ? state.agentRuntimeNodes.filter((item) => item.projectId && filter.has(item.projectId)).length : state.agentRuntimeNodes.length,
+    // 这两个计数此前都按 item.projectId 过滤，而两种记录都【没有这个字段】：
+    // agents 是全局角色/模型注册表（记录里根本没有项目归属），节点带的是复数 projectIds。
+    // 于是对任何受限主体，两个数恒为 0 —— 调度方拿它判断容量，会一律得出"没有容量"。
+    // 失败方向是安全的（少报不泄漏），但报的是假数，而这个快照存在的意义就是让人/agent 据此决策。
+    // agents 与 modelProviderCount 同类（全局注册表、计数不含租户数据），按同一规矩全局上报。
+    agentCount: state.agents.length,
+    nodeCount: filter
+      ? state.agentRuntimeNodes.filter((item) => (item.projectIds || []).some((id) => filter.has(id))).length
+      : state.agentRuntimeNodes.length,
     modelProviderCount: state.modelCapabilities.length
   };
 }

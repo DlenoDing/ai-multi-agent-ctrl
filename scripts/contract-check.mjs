@@ -13,7 +13,7 @@ import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs"
 import { publicAgentNode } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import {
-  summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs
+  summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs, capacitySnapshot
 } from "../apps/mcp-server/server.mjs";
 import {
   recordOrchestratorTickOutcome,
@@ -236,6 +236,7 @@ run(verifyHighPriorityCellsAreNotStarvedByEarlierGroups);
 run(verifyWipCapacityIsPerProject);
 run(verifyQuietProjectsDoNotHoardSlots);
 run(verifyProjectScopePredicateResolvesOwnership);
+run(verifyCapacitySnapshotCountsAreNotAlwaysZero);
 run(verifyActiveDispatchesKeepTheirContracts);
 run(verifySuspendedOrganizationHaltsExecution);
 run(verifyHaltedTaskGroupsAreNotClaimable);
@@ -5794,6 +5795,43 @@ function verifyWipCapacityBackpressure(output) {
 // 视图按项目切分的判据。四种入参形态逐一验 —— 靠 taskGroupId 归属的那条分支在 e2e 夹具里
 // 走不到（要先给探针项目登记仓库才有 worker lane），而 worker lane 恰恰是唯一会下发到视图里的
 // "不带 projectId、靠任务组归属"的记录：真出过越界（选中 A 项目，监控页给的是 B 项目的全部 lane）。
+// 调度用的容量快照。受限主体拿到的两个计数此前恒为 0：agents 记录里根本没有项目归属字段，
+// 节点带的是复数 projectIds —— 而过滤条件写的是 item.projectId。少报不泄漏，方向是安全的，
+// 但这个快照存在的意义就是让调度方据此判断"还有没有容量"，报 0 等于让它判定没有容量。
+function verifyCapacitySnapshotCountsAreNotAlwaysZero(output) {
+  const probe = {
+    agents: [{id: "agent_a"}, {id: "agent_b"}],
+    agentRuntimeNodes: [
+      {nodeId: "n_mine", projectIds: ["prj_mine"], status: "online"},
+      {nodeId: "n_both", projectIds: ["prj_other", "prj_mine"], status: "online"},
+      {nodeId: "n_theirs", projectIds: ["prj_other"], status: "online"}
+    ],
+    workSessions: [{sessionId: "s1", projectId: "prj_mine", status: "active"}],
+    agentDispatches: [{dispatchId: "d1", projectId: "prj_mine", status: "queued"}],
+    modelCapabilities: [{modelId: "m1"}]
+  };
+  const bounded = capacitySnapshot(probe, new Set(["prj_mine"]));
+  const unrestricted = capacitySnapshot(probe, null);
+  if (bounded.nodeCount !== 2) {
+    output.push(`容量快照：受限主体看到 ${bounded.nodeCount} 个节点，应为 2（一个专属 + 一个同时服务两个项目）——`
+      + " 节点带的是复数 projectIds，按 item.projectId 过滤会让这个数恒为 0，调度方据此判定没有容量");
+  }
+  if (bounded.agentCount !== 2) {
+    output.push(`容量快照：受限主体看到 ${bounded.agentCount} 个 agent，应为 2 —— agents 是全局注册表、`
+      + "记录里没有项目归属字段，按 item.projectId 过滤同样恒为 0");
+  }
+  // 反向：别的项目的节点不许算进来，否则就从"少报"翻到"跨租户多报"。
+  if (unrestricted.nodeCount !== 3) {
+    output.push(`容量快照：无限制主体看到 ${unrestricted.nodeCount} 个节点，应为 3 —— 全局聚合被误过滤了`);
+  }
+  const onlyTheirs = capacitySnapshot(probe, new Set(["prj_none"]));
+  if (onlyTheirs.nodeCount !== 0) {
+    output.push(`容量快照：作用域里没有任何项目时看到 ${onlyTheirs.nodeCount} 个节点，应为 0 —— 过滤形同虚设`);
+  }
+  console.log(`容量快照：受限主体 节点 ${bounded.nodeCount}/agent ${bounded.agentCount}、`
+    + `无限制 节点 ${unrestricted.nodeCount}、作用域无交集 节点 ${onlyTheirs.nodeCount}`);
+}
+
 function verifyProjectScopePredicateResolvesOwnership(output) {
   const groups = [{id: "tg_mine", projectId: "prj_mine"}, {id: "tg_theirs", projectId: "prj_theirs"}];
   const belongs = makeProjectScopePredicate(groups, "prj_mine");

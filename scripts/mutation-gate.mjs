@@ -414,6 +414,14 @@ const MUTATIONS = [
     expect: "没有被裁回上限"
   },
   {
+    name: "容量快照：节点计数不得按不存在的字段过滤（那会恒为 0）",
+    file: MCP,
+    check: "verifyCapacitySnapshotCountsAreNotAlwaysZero",
+    from: "? state.agentRuntimeNodes.filter((item) => (item.projectIds || []).some((id) => filter.has(id))).length",
+    to: "? state.agentRuntimeNodes.filter((item) => item.projectId && filter.has(item.projectId)).length",
+    expect: "调度方据此判定没有容量"
+  },
+  {
     name: "视图作用域：agent 节点按复数 projectIds 归属（否则舰队计数会串项目）",
     file: CORE,
     check: "verifyProjectScopePredicateResolvesOwnership",
