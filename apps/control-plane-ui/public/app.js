@@ -22,6 +22,9 @@ let organizations = [];
 let orgAgentNodes = [];
 let orgMembers = [];
 let projConfig = null;
+// null 同时代表"还没取过""取失败了""没选项目"三件事，而界面把三者一律说成"配置接口加载失败" ——
+// 人会去追一个并不存在的故障（实测：渲染一个全新项目的设置页，第一眼就是这句）。分成三态。
+let projConfigStatus = "unloaded"; // unloaded | loaded | failed
 let projConfigVersion = null;
 let instructionState = null;
 let loginHint = null;
@@ -818,6 +821,7 @@ function clearSession() {
   orgAgentNodes = [];
   orgMembers = [];
   projConfig = null;
+  projConfigStatus = "unloaded";
   instructionState = null;
   modalHtml = "";
   expandedTaskGroupId = "";
@@ -1109,13 +1113,16 @@ async function loadPage() {
       state = await fetchState("tasks", {projectId: currentProjectId});
       ensureProjectSelection();
       if (currentProjectId) {
+        projConfigStatus = "unloaded";
         const configResult = await api(`/api/projects/${encodeURIComponent(currentProjectId)}/config`).catch(() => null);
         projConfig = configResult?.config || null;
+        projConfigStatus = projConfig ? "loaded" : "failed";
         // 记住"我读到的是哪一版"。保存时带回去，服务端据此判断这层配置在我打开之后有没有被别人改过 ——
         // 规则保存是整份替换，没有这个前提，后保存的人会静默删掉先保存的人新增的规则，两人都拿到 200。
         projConfigVersion = configResult?.configVersion || null;
       } else {
         projConfig = null;
+        projConfigStatus = "unloaded";
       }
     }
     ensureProjectSelection();
@@ -3561,7 +3568,9 @@ function renderProjectSettings() {
       </form>
     `, {wide: true}),
     !rulesLoaded
-      ? panel("规则配置", `<div class="notice warn-notice">暂时无法读取项目规则配置（配置接口加载失败），已隐藏规则编辑器以避免误保存清空规则。请点击右上角刷新重试。</div>`, {wide: true})
+      ? panel("规则配置", projConfigStatus === "failed"
+        ? `<div class="notice warn-notice">暂时无法读取项目规则配置（配置接口加载失败），已隐藏规则编辑器以避免误保存清空规则。请点击右上角刷新重试。</div>`
+        : `<div class="notice">正在加载项目规则配置…</div>`, {wide: true})
       : [
         panel("系统规则", ruleEditorForm({
           rules: resolved.systemRules || [],

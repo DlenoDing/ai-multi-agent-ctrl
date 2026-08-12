@@ -167,6 +167,7 @@ globalThis.__probe = {
     ensureProjectSelection();
     return {kept: currentProjectId, options: selectableProjects().map((item) => item.id)};
   },
+  setProjConfigStatus: (status) => { projConfigStatus = status; projConfig = null; },
   setFetch: (fn) => { globalThis.fetch = fn; },
   api: (path, options) => api(path, options)
 };
@@ -252,6 +253,44 @@ function check(name, condition, detail) {
   check("普通成员确实该被告知去找组织管理员（这条保留，证明上面两条不是把提示删了了事）",
     /请联系组织管理员/.test(asMember),
     `普通成员看到：${(asMember.match(/当前账号暂无可见项目。[^ ]*/u) || ["（没有空态提示）"])[0]}`);
+}
+
+
+// 规则编辑器在读不到配置时会整块隐藏（防止误保存把规则清空），这是对的。
+// 但"还没取过"与"取失败了"此前共用同一个 null，界面一律说"配置接口加载失败" ——
+// 打开一个全新项目的设置页，第一眼就是这句，人会去追一个并不存在的故障。
+{
+  const settingsRoot = el("div");
+  const settingsProbe = loadConsole(settingsRoot);
+  const withProject = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    projects: [{id: "p1", name: "新项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [], agentRuntimeNodes: [], agents: [], agentDispatches: [], workSessions: [],
+    closeBarriers: [], qualityGates: [], findings: [], humanConfirmationRequests: [], humanDirectives: [],
+    truncatedCollections: [], fleet: {online: 0, total: 0}};
+  const admin = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const settingsText = (status) => {
+    settingsProbe.setProjConfigStatus(status);
+    settingsProbe.renderFullPageWith(withProject, admin, "p1", "proj-settings");
+    return String(settingsRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+  };
+  const unloaded = settingsText("unloaded");
+  check("配置还没取到时说的是'正在加载'，不是'加载失败'",
+    /正在加载项目规则配置/.test(unloaded) && !/加载失败/.test(unloaded),
+    `未加载时显示：${(unloaded.match(/规则配置 [^ ]*/u) || ["（没有规则配置面板）"])[0]}`);
+  const failed = settingsText("failed");
+  check("真的取失败时仍要说清失败、并说明为什么把编辑器藏了",
+    /加载失败/.test(failed) && /误保存清空规则/.test(failed),
+    `失败时显示：${(failed.match(/规则配置 [^ ]*/u) || ["（没有规则配置面板）"])[0]}`);
+  // 上面两条是【渲染分支】：它们直接设置状态，因此证明不了"真失败时真的会置成 failed"。
+  // 少了这一条，把置位逻辑改成永远 unloaded 也照样全绿（变异验出来的）。
+  // 接线只能从源码看：取配置那一段之后必须有一处把状态置成 failed。按语句边界切，不按行数猜。
+  const appText = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const configFetch = appText.indexOf("/api/projects/${encodeURIComponent(currentProjectId)}/config");
+  const wiringBlock = configFetch < 0 ? "" : appText.slice(configFetch, appText.indexOf("\n      }", configFetch));
+  check("取配置失败时必须把状态置成 failed（否则界面永远停在'正在加载'）",
+    /projConfigStatus = projConfig \? "loaded" : "failed"/u.test(wiringBlock),
+    configFetch < 0 ? "找不到取配置那段代码 —— 本条在空转" : `取配置段落里${/failed/u.test(wiringBlock) ? "有" : "没有"}置 failed 的接线`);
 }
 
 function runFormRestoreCase() {
