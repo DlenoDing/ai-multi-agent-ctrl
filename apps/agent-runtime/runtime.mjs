@@ -315,8 +315,11 @@ function startControlWatcher(config, dispatchPackage) {
   // 会让整轮工作作废。所以这个间隔【上下都要有界】—— 只有下界的话，
   // 一个 AIMAC_AGENT_EXECUTION_KEEPALIVE_MS=3600000 就能把续期变成摆设，
   // 而故障表现是"跑得久的任务永远交不上检查点"，没人会想到是这个环境变量。
-  // 上界 300 秒：认领 TTL 的下限是 60 秒，实际默认 1800 秒，300 秒对任何配置都够密。
-  const keepAliveMs = Math.min(300000, Math.max(15000, Number(process.env.AIMAC_AGENT_EXECUTION_KEEPALIVE_MS || 60000)));
+  // 上界不写死常量，而是【按控制面给的真实认领 TTL 推导】：派发包里带着 claimTtlSeconds，
+  // 取它的 1/3。写死 300 秒的话，遇到 TTL 配成 60 秒的部署就又不够密了 —— 那也是猜。
+  const claimTtlMs = Math.max(60, Number(dispatchPackage?.dispatch?.claimTtlSeconds || 1800)) * 1000;
+  const keepAliveCeilingMs = Math.max(5000, Math.floor(claimTtlMs / 3));
+  const keepAliveMs = Math.min(keepAliveCeilingMs, Math.max(15000, Number(process.env.AIMAC_AGENT_EXECUTION_KEEPALIVE_MS || 60000)));
   let lastKeepAliveAt = Date.now();
   const loop = (async () => {
     while (state.running && !state.cancelled) {

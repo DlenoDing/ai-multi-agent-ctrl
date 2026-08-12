@@ -1316,6 +1316,18 @@ end
 errors << "代理执行期间必须持续发心跳执行事件（长任务靠它续认领）" unless runtime_source.match?(/lastKeepAliveAt[\s\S]{0,400}?submitExecutionEvent\([^)]*"heartbeat"/m)
 # 间隔只有下界是不够的：配一个超大值就能把续期变成摆设，而故障表现是"跑得久的任务永远交不上检查点"。
 errors << "心跳间隔必须上下都有界（只有 Math.max 的话，一个超大环境变量就能让续认领失效）" unless runtime_source.match?(/keepAliveMs = Math\.min\([\s\S]{0,80}?Math\.max\(/m)
+# 上界还必须【按控制面给的真实 TTL 推导】，不能写死常量：TTL 是可配的（下限 60 秒），
+# 写死一个 300 秒在 TTL=60 秒的部署上照样赶不上过期，而那同样是"猜一个数"。
+# 判据取【那一条语句本身】，不看它附近有什么：按邻近判的话，上一行的 claimTtlMs 就能让
+# "上界写死成 300000" 照样通过（实测如此，这是本会话第 7 次栽在按距离取范围上）。
+keepalive_ceiling_stmt = runtime_source[/const keepAliveCeilingMs\s*=[^;]*;/m].to_s
+errors << "找不到心跳上界的定义 —— 提取逻辑与代码脱节" if keepalive_ceiling_stmt.empty?
+errors << "心跳上界必须由认领 TTL 推导（写死常量在 TTL 配成 60 秒的部署上照样赶不上过期）" unless keepalive_ceiling_stmt.match?(/claimTtl/)
+# 链条有两环，要各自判：上界引用了 claimTtlMs，而 claimTtlMs 自己也可能被改成常量
+# （那样"按 TTL 推导"就只剩个名字）。
+claim_ttl_stmt = runtime_source[/const claimTtlMs\s*=[^;]*;/m].to_s
+errors << "找不到 claimTtlMs 的定义 —— 提取逻辑与代码脱节" if claim_ttl_stmt.empty?
+errors << "认领 TTL 必须取自【派发包里控制面给的那个值】，不能在代理侧写死" unless claim_ttl_stmt.match?(/dispatchPackage[\s\S]{0,60}claimTtlSeconds/)
 
 # 取消要能【停住正在烧的那一步】，而不只是挡住 push。机制是：每个执行器子进程都交给控制监视器
 # （attachChild），监视器收到取消就 terminateChild；附加时若已经取消，立刻就杀（这条覆盖了
