@@ -4297,7 +4297,7 @@ if (developerStateBefore !== developerStateAfter) {
 
 console.log(ONLY
   ? `contract check（只跑了 ${ONLY}，跳过 ${skippedChecks.length} 条 —— 这【不是】一次全量核对）ok`
-  : "contract check ok");
+  : `contract check ok: ${ranCheckCount} 条检查全部通过`);
 
 function loadJson(path) {
   return JSON.parse(readFileSync(resolve(root, path), "utf8"));
