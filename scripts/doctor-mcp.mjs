@@ -143,6 +143,73 @@ try {
   const entry = generated.mcpServers.ai_multi_agent_ctrl;
   if (generated.mcpServers["ai-multi-agent-ctrl"] || entry?.url !== `${baseUrl}/mcp` || entry.command || generated.transport !== "streamable-http") throw new Error("MCP client registration did not generate a remote-only endpoint");
 
+  // 只读工具的跨租户扫描：不逐个工具想"它会不会漏"，而是拿一个【绑定在项目 A 的节点】身份，
+  // 把每个只读工具都用【项目 B 的 id】调一遍，再在响应里全文搜 B 的 id。
+  // 现有排查法是"过一遍所有 read-only MCP 工具"——逐条，靠人记得；这一条对将来新增的工具自动生效。
+  const scanProject = await api("/api/projects", {method: "POST", idempotencyKey: "mcp-scan-project", token: admin.sessionToken,
+    body: {name: "隔壁项目", key: "mcp-scan-foreign"}});
+  const scanProjectId = scanProject.id || scanProject.project?.id;
+  const scanGroup = await api("/api/task-groups", {method: "POST", idempotencyKey: "mcp-scan-tg", token: admin.sessionToken,
+    body: {projectId: scanProjectId, title: "隔壁任务组"}});
+  const scanGroupId = scanGroup.taskGroup?.id || scanGroup.id;
+  if (!scanProjectId || !scanGroupId) throw new Error("跨租户扫描造不出隔壁项目 —— 本条在空转");
+  const joined = await api("/api/agent-join-tokens", {method: "POST", idempotencyKey: "mcp-scan-jt", token: admin.sessionToken,
+    body: {projectId: "prj_control_plane", nodeName: "mcp-scan-node", allowedRoles: ["*"], ttlSeconds: 1800, maxUses: 1}});
+  const registered = await api("/api/agent/v1/register", {method: "POST", idempotencyKey: "mcp-scan-reg", token: joined.joinToken,
+    body: {nodeName: "mcp-scan-node", requestedRoles: ["*"], runtimeVersion: "doctor",
+      profile: {tools: [], models: [{providerClass: "custom", adapter: "doctor", available: true}]}}});
+  const nodeToken = registered.nodeToken;
+  if (!nodeToken) throw new Error("跨租户扫描拿不到节点令牌 —— 本条在空转");
+  await api("/api/agent/v1/self-check", {method: "POST", token: nodeToken,
+    body: {runtimeVersion: "doctor", checks: [
+      {checkId: "runtime", status: "ok", detail: "doctor"}, {checkId: "gateway", status: "ok", detail: baseUrl},
+      {checkId: "filesystem", status: "ok", detail: "doctor"}, {checkId: "git", status: "ok", detail: "doctor"},
+      {checkId: "remote_mcp", status: "ok", detail: `${baseUrl}/mcp`},
+      {checkId: "model_executor", status: "ok", detail: "custom:doctor:available"}]}});
+  await api("/api/orchestrator/run", {method: "POST", idempotencyKey: "mcp-scan-cycle", token: admin.sessionToken,
+    body: {mode: "all", autoSyncSkills: false}});
+  const claimed = await api("/api/agent/v1/dispatches/next", {method: "POST", token: nodeToken, body: {}});
+  // 没领到活就没有授权，只读工具全都会以 ok:false 收场 —— 那样这段扫描什么都没验到。
+  if (!claimed.dispatch) throw new Error(`跨租户扫描的节点没领到派发（${claimed.reason || "无原因"}）—— 没有授权，所有只读工具都会直接报错，本条在空转`);
+  const grantedTaskGroupId = claimed.dispatch.taskGroupId;
+  const readOnlyTools = listed.tools.filter((tool) => tool.annotations?.readOnlyHint || tool.readOnlyHint);
+  if (readOnlyTools.length < 10) throw new Error(`跨租户扫描只认出 ${readOnlyTools.length} 个只读工具 —— 提取逻辑与代码脱节，本条在空转`);
+  const scanLeaks = [];
+  let probedExecuted = 0;
+  const reachableTools = new Set();
+  for (const tool of readOnlyTools) {
+    // 两种都要调，而且【不带参数】那一次才是关键：带 addressing 参数的调用会被 principal
+    // 作用域校验在到达过滤之前就拒掉（第一版只调了这一种，把守卫改坏也照样绿）；
+    // 不带参数的只读工具绕过那道校验，靠工具自己按 principal 过滤 —— 漏就漏在这里。
+    for (const args of [{projectId: scanProjectId, taskGroupId: scanGroupId}, {}, {taskGroupId: grantedTaskGroupId}]) {
+      let result;
+      try {
+        result = await mcpAs(nodeToken, "tools/call", {name: tool.name, arguments: args});
+      } catch {
+        continue; // 被拒就是对的：拒绝不会泄露任何东西
+      }
+      // 错误被包在成功的 JSON-RPC 信封里，ok:false 说明这个工具【根本没执行】——
+      // 只数真的执行了的那些，否则这段扫描会拿一堆错误信封冒充"验过了"。
+      const executed = !/"ok":\s*false/u.test(JSON.stringify(result));
+      if (executed) { probedExecuted += 1; reachableTools.add(tool.name); }
+      const text = JSON.stringify(result);
+      // 判据用【隔壁项目的内容】而不是它的 id：调用方自己传进去的 id 被回显不算泄露。
+      if (text.includes("隔壁项目") || text.includes("隔壁任务组")) {
+        scanLeaks.push(`${tool.name}(${Object.keys(args).length ? "带隔壁 id" : "不带参数"}): ${text.slice(0, 140)}`);
+      }
+    }
+  }
+  if (probedExecuted < 5) throw new Error(`跨租户扫描里只有 ${probedExecuted} 次调用真的执行了（其余都是 ok:false 的错误信封）—— 本条在空转`);
+  if (scanLeaks.length) {
+    throw new Error(`绑定在别的项目上的节点，从这些只读工具里拿到了隔壁项目的内容：\n  ${scanLeaks.join("\n  ")}`);
+  }
+  // 自证行要说清【实际验到了什么】：受限节点真正的边界是每次派发的工具白名单
+  // （其余工具直接 mcp_tool_not_granted_to_principal，连处理器都进不去），
+  // 状态过滤只是它后面的纵深防御。这段扫描守的是"凡是这个身份调得到的工具，都不许带出隔壁内容"。
+  console.log(`MCP 只读工具跨租户扫描 ok: ${readOnlyTools.length} 个只读工具各用三种入参调过`
+    + `（隔壁项目的 id / 无参 / 自己被授权的任务组），其中 ${reachableTools.size} 个这个受限节点真的调得到`
+    + `（${probedExecuted} 次执行），其余被工具白名单挡在门外；调得到的都没有带出隔壁项目的内容`);
+
   const localStart = spawnSync(process.execPath, ["apps/mcp-server/server.mjs"], {cwd: root, encoding: "utf8"});
   if (localStart.status === 0 || !localStart.stderr.includes("Local MCP stdio startup is disabled")) throw new Error("Agent-local MCP stdio server was not disabled");
   console.log(`mcp doctor ok: ${listed.tools.length} remote tools, auth, HTTP transport, input policy and remote-only registration verified`);
@@ -172,7 +239,7 @@ async function mcpAs(bearer, method, params) {
 async function api(path, options = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: options.method || "GET",
-    headers: {"content-type": "application/json", accept: "application/json", ...(options.token ? {authorization: `Bearer ${options.token}`} : {})},
+    headers: {"content-type": "application/json", accept: "application/json", ...(options.idempotencyKey ? {"idempotency-key": options.idempotencyKey} : {}), ...(options.token ? {authorization: `Bearer ${options.token}`} : {})},
     ...(options.body ? {body: JSON.stringify(options.body)} : {})
   });
   const payload = await response.json();
