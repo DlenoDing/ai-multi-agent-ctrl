@@ -167,6 +167,53 @@ try { parsed = JSON.parse(readFileSync(statePath, "utf8")); } catch (error) { pa
   }
 }
 
+// 故障标记不能只置不清：修好之后还一直报 degraded，人就会开始无视这个信号。
+// 但要分清两种 —— 文件损坏后还原了，本进程重读一次就好；而目录被换 / 状态被重建成空的，
+// 进程已经接在另一份数据上，把数据还原回去也救不了它，必须重启。提示要如实说清是哪一种。
+{
+  const recDir = mkdtempSync(join(tmpdir(), "aimac-crash-recover-"));
+  spawnSync(process.execPath, ["scripts/init-control-plane.mjs"], {cwd: root, encoding: "utf8",
+    env: {...process.env, AIMAC_RUNTIME_DIR: recDir, AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: "",
+      AIMAC_BOOTSTRAP_TOKEN: "crash-recover-token-0123456789ab"}});
+  const recStatePath = join(recDir, "control-plane-state.json");
+  const recGood = readFileSync(recStatePath, "utf8");
+  const recPort = await freePort();
+  const recChild = trackChild(spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
+    cwd: root,
+    env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(recPort), AIMAC_RUNTIME_DIR: recDir,
+      AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: ""},
+    stdio: ["ignore", "pipe", "pipe"]
+  }));
+  const recBase = `http://127.0.0.1:${recPort}`;
+  const recHealth = async () => {
+    const response = await fetch(`${recBase}/api/health`);
+    return {status: response.status, payload: await response.json().catch(() => ({}))};
+  };
+  try {
+    const readyBy = Date.now() + 20000;
+    while (Date.now() < readyBy) {
+      try { if ((await fetch(`${recBase}/api/health`)).ok) break; } catch { /* 等它起来 */ }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    writeFileSync(recStatePath, recGood.slice(0, 300));
+    const broken = await recHealth();
+    check(broken.status === 503, "弄坏之后健康检查确实转红（否则下面那条无从验证）", `HTTP ${broken.status}`);
+    check(/自动转回 ok/u.test(broken.payload.hint || ""),
+      "可自愈的这一类，提示要说它会自己转回来", String(broken.payload.hint || "").slice(0, 60));
+    writeFileSync(recStatePath, recGood);
+    const healed = await recHealth();
+    check(healed.status === 200 && healed.payload.status === "ok",
+      "还原之后健康检查自动转回 ok（故障标记不能只置不清）", `HTTP ${healed.status} ${JSON.stringify(healed.payload.storageFault || "ok")}`);
+    rmSync(join(recDir, "control-plane-state.json"), {force: true});
+    await recHealth();
+    const needsRestart = await recHealth();
+    check(/重启本进程/u.test(needsRestart.payload.hint || ""),
+      "救不回来的那一类，提示要说必须重启（还原数据不够）", String(needsRestart.payload.hint || "").slice(0, 60));
+  } finally {
+    recChild.kill("SIGKILL");
+  }
+}
+
 // 只把状态文件删掉（目录还在）：存储层会按种子重建一份空的，登录全失败，而健康检查照样 ok。
 // 目录 inode 那条判据认不出这种 —— 目录没变。所以让存储层把"我刚重建过"说出来，
 // 启动之后的重建一律算故障（首次部署时的重建是正常的，靠时间戳区分）。

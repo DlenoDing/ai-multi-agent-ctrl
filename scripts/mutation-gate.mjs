@@ -528,6 +528,16 @@ const MUTATIONS = [
     expect: "被默默接受了"
   },
   {
+    // 故障标记只置不清：修好之后还一直报 degraded，人很快就会开始无视这个信号 ——
+    // 而提示里还写着"恢复之后会自动转回 ok"，那句话就成了假的。
+    name: "存储故障修好之后健康检查要自己转回 ok",
+    file: SERVER,
+    gate: "crash",
+    from: "      if (recovered) {\n        lastStorageFault = null;",
+    to: "      if (false) {\n        lastStorageFault = null;",
+    expect: "自动转回 ok"
+  },
+  {
     // 只删状态文件（目录还在）：存储层按种子重建一份空的，登录全失败而健康检查照样 ok。
     // 目录 inode 那条判据认不出这种，所以要靠存储层把"我刚重建过"说出来。
     name: "状态被按种子重建过要算故障",

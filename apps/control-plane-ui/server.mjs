@@ -2343,9 +2343,26 @@ async function handleApi(req, res) {
       }
     }
     if (lastStorageFault) {
-      json(res, 503, {status: "degraded", storageFault: lastStorageFault,
-        hint: "状态文件读不出来：按 file 指出的那一份恢复或从备份还原，恢复后本接口自动转回 ok"});
-      return;
+      // 故障标记不能只置不清 —— 我第一版就是这样，而提示里还写着"恢复后自动转回 ok"，
+      // 那句话是假的：修好了它也一直报 degraded。这里当场复核一次。
+      // 但【目录被换 / 状态被重建成空的】这两种不复核：进程已经接在另一份数据上了，
+      // 把数据还原回去也救不了这个已经跑歪的进程，必须重启 —— 所以对它们如实说"要重启"。
+      const needsRestart = ["runtime_dir_replaced", "runtime_dir_missing", "state_rebuilt_from_seed"]
+        .includes(lastStorageFault.kind);
+      let recovered = false;
+      if (!needsRestart) {
+        try { readHealthState(); recovered = true; } catch { recovered = false; }
+      }
+      if (recovered) {
+        lastStorageFault = null;
+      } else {
+        json(res, 503, {status: "degraded", storageFault: lastStorageFault,
+          hint: needsRestart
+            ? "状态已经不是本进程启动时那一份了：先把数据恢复回去，然后【重启本进程】——"
+              + "当前进程还接着那份被换掉的状态，不重启光恢复数据没用"
+            : "状态读不出来：按 file/code 指出的线索恢复（文件损坏就还原那一份，数据库掉线就把它接回来），恢复之后本接口会自动转回 ok"});
+        return;
+      }
     }
     let state;
     try { state = readHealthState(); }
@@ -2359,7 +2376,7 @@ async function handleApi(req, res) {
         : {kind: "state_unreadable", code: error?.code || null, at: now()};
       console.error(`[state-store] health: ${error?.code || ""} ${String(error?.message || error).slice(0, 200)}`);
       json(res, 503, {status: "degraded", storageFault: lastStorageFault,
-        hint: "状态读不出来：按 file/code 指出的线索恢复（文件损坏就还原那一份，数据库掉线就把它接回来），恢复后本接口自动转回 ok"});
+        hint: "状态读不出来：按 file/code 指出的线索恢复（文件损坏就还原那一份，数据库掉线就把它接回来），恢复之后本接口会自动转回 ok"});
       return;
     }
     // 状态在【跑着的时候】被按种子重建过：首次部署时这是正常的，之后发生就意味着数据没了，
