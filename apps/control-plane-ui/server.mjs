@@ -4986,7 +4986,10 @@ async function handleApi(req, res) {
     }
     if (String(body.expectedConfigVersion) !== current) {
       return {error: "config_version_stale",
-        message: "这一层配置在你打开之后被改过了：直接保存会删掉对方的改动。请刷新后把你的修改重做一遍",
+        // 原文是"请刷新后把你的修改重做一遍"，比事实糟：提交失败时表单内容是被回填保住的，
+        // 不必重打。但也不能只说"内容还在"——版本号仍是旧的，不刷新就再点保存，还是同一个 409。
+        // 两件事都要说，人才知道下一步到底该怎么走。
+        message: "这一层配置在你打开之后被别人改过了：直接保存会删掉对方的改动。你刚填的内容还留在表单里，先复制出来，再刷新看对方改了什么，然后重新提交（不刷新的话再点保存还是同一个错——版本号还是旧的）",
         currentConfigVersion: current};
     }
     return null;

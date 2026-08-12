@@ -2317,6 +2317,19 @@ audit_result_literals.each do |value|
   errors << %(审计结果 "#{value}" 没有中文 —— 控制台审计日志会显示英文原值)
 end
 
+# 版本冲突这条消息必须与产品的真实行为一致。原文是"请刷新后把你的修改重做一遍" ——
+# 而提交失败时表单内容是被回填保住的（多行规则编辑器也有专门的门守着），不必重打；
+# 但只说"内容还在"同样不够：版本号仍是旧的，不刷新就再点保存，还是同一个 409。
+# 说得比事实糟会让人白干一遍，说得比事实好会让人卡在同一个错误上。
+config_stale_texts = [server_source[/config_version_stale",\s*\n\s*(?:\/\/[^\n]*\n\s*)*message: "([^"]+)"/m, 1],
+                      i18n_zh_source[/config_version_stale: "([^"]+)"/, 1]].compact
+errors << "取不到版本冲突的两处文案 —— 本条在空转" if config_stale_texts.length < 2
+config_stale_texts.each do |text|
+  errors << %(版本冲突文案说"重做一遍"却没说内容还在（提交失败会回填），人会白打一遍：#{text[0, 40]}) unless text.include?("还留在表单里")
+  errors << %(版本冲突文案没说清"不刷新再点保存还是同一个错"，人会卡在同一处：#{text[0, 40]}) unless text.include?("版本号还是旧的")
+end
+errors << "版本冲突的服务端文案与界面词典不一致（同一件事两处说法不同）" unless config_stale_texts.uniq.length == 1
+
 # 准入判决在控制台上的可读性：每个 whyThisCellNow 闭集 token，要么在 WHY_THIS_CELL_LABELS 里
 # 有中文，要么它同一处调用里的 reasonCode 已本地化（界面按这个顺序兜底）。两条都不满足 =
 # 人在台账里看到一串英文 token，而那一栏正是回答"我这个单元为什么不动"的地方。
