@@ -126,6 +126,12 @@ import { appendProjectExecutionEvent, readProjectExecutionEventByKey, readProjec
 import { assertTransition, resolveGate, loadStateMachines, loadGateCatalog } from "../apps/control-plane-ui/lib/transition-engine.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+// 本门验的是【逻辑】，不是耐久性：每一次原子替换都要 fsync 文件 + fsync 目录，
+// 实测这两项占了本门 63 秒里的 38 秒，而它们证明不了任何一条本门要断言的性质。
+// 耐久性由 crash-consistency-gate 专门验（那道门必须在 fsync 开着的前提下跑，
+// validate-specs 里有一条守着"耐久性门不得关掉 fsync"）。
+process.env.AIMAC_PROJECT_EVENT_FSYNC = "false";
 const seedState = loadJson("data/seed-state.json");
 const runtimeSchema = loadJson("spec/runtime-bootstrap.schema.json");
 const mcpGrantSchema = loadJson("spec/mcp-grant.schema.json");
@@ -4719,7 +4725,7 @@ function verifyAdmissionLedgerDoesNotGrowWithFlapping(output) {
   }));
   const flap = (rounds) => {
     for (let round = 0; round < rounds; round += 1) {
-      runAutonomousCycle(state, {root, mode: "all"});
+      runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
       for (const item of taskGroup.workItems) {
         if (item.status === "needs_decision" && item.blockedReason === "flap_probe") {
           item.status = "ready";

@@ -1208,6 +1208,21 @@ push_sites.each do |at|
   # push 前那一段里本来就有两处 throwIfCancelled，用紧邻窗口去卡它只会在无害的重排上误报。
   errors << "代理在 git push 之前必须检查本地取消标志（throwIfCancelled）—— 与持有权复核互为纵深" unless before.include?("throwIfCancelled()")
 end
+# 关掉 fsync 是"这道门不验耐久性"的声明，不是"这套系统不需要耐久性"。
+# 它一旦出现在【专门验耐久性的门】里，那些门就会在一个不落盘的世界里全绿 ——
+# 崩溃一致性、并发写、空转不落盘这三道验的都是真实落盘行为。
+%w[crash-consistency-gate.mjs concurrent-writer-gate.mjs idle-tick-gate.mjs].each do |gate|
+  gate_source = File.read(File.join(ROOT, "scripts", gate))
+  errors << "#{gate} 不得关闭 AIMAC_PROJECT_EVENT_FSYNC —— 它验的就是真实落盘行为，关掉之后整道门在一个不落盘的世界里全绿" if gate_source.include?("AIMAC_PROJECT_EVENT_FSYNC")
+end
+# 而默认必须是开着的：只有显式 === "false" 才关。写成 !== "true" 之类就会让生产默认不落盘。
+event_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/project-event-store.mjs"))
+fsync_guards = event_store_source.scan(/AIMAC_PROJECT_EVENT_FSYNC\s*(===|!==)\s*"(\w+)"/)
+errors << "事件存储里找不到 fsync 开关判据 —— 提取逻辑与代码脱节" if fsync_guards.size < 3
+fsync_guards.each do |op, value|
+  errors << %(fsync 开关必须"默认开、显式 false 才关"，现在写的是 #{op} "#{value}" —— 这会让生产默认不落盘) unless value == "false"
+end
+
 # 取消要能【停住正在烧的那一步】，而不只是挡住 push。机制是：每个执行器子进程都交给控制监视器
 # （attachChild），监视器收到取消就 terminateChild；附加时若已经取消，立刻就杀（这条覆盖了
 # "取消先到、子进程后起"的竞态）。所以每一处 spawnAndCapture 都必须把 control 传下去 ——
