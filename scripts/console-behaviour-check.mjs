@@ -420,6 +420,23 @@ function runRoomVisibilityCase() {
   check("房间消息对人可见",
     html.includes(spoken),
     "任务组详情里没有呈现房间消息 —— agent 之间谈成的方案，人只看得到送上来的结论，看不到过程");
+  // 这一屏取的是【最近】的若干条，而不是从头 50 条：按游标从头取会正好错过谈成结论的那一段。
+  // 而截掉的部分必须说出来 —— 50 条和"只有 50 条"在屏幕上长得一模一样，人会以为自己看全了。
+  {
+    const detailBase = {taskGroupId: "tg_x", progress: {}, config: null,
+      roomMessages: [{messageId: "room_msg_9", roomId: "room_tg_x", sequence: 119,
+        senderRef: "agent_node:node_a", payload: {text: spoken}, createdAt: "2026-08-02T00:00:00.000Z"}]};
+    const truncatedHtml = probe.renderTaskGroupDetail({...detailBase, roomMessageTotal: 120, roomMessagesTruncated: true},
+      {id: "tg_x", roles: []});
+    check("房间消息被截断时要说清共有多少条",
+      /共 120 条，这里显示最近/.test(truncatedHtml),
+      "房间消息被截断却不报总数 —— 人以为自己看完了整段协商，其实只看到一部分");
+    check("没有截断时不挂那句提示",
+      !/这里显示最近/.test(probe.renderTaskGroupDetail({...detailBase, roomMessageTotal: 1, roomMessagesTruncated: false}, {id: "tg_x", roles: []})),
+      "没有截断也说只显示最近若干条 —— 常亮的提示等于没有提示");
+  }
+
+
   check("显示服务端署名",
     html.includes("agent_node:node_a"),
     "没有显示消息的发送者，人无法分辨哪句话是谁说的");

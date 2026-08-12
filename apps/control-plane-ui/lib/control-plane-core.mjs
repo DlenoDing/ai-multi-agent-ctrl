@@ -6601,7 +6601,9 @@ export function roomSend(state, args) {
     // 能发消息的 agent 都可以把自己署名成 "human-owner" 之类，而这个值还会直接进 eventLog 的 actor：
     // 伪造的署名同时污染了本该用来交叉验证它的那份审计。房间里没有任何门在读它，所以这不是一条
     // 提权路径，但它是**给别的 agent 看的**——一句署名为业主的"已同意跳过评审"足以把后续推理带偏，
-    // 而人在控制台看不到房间。用 Symbol.for 承载：JSON 报文里不可能出现符号键，因此无法伪造。
+    // 而且【人现在看得到房间】（任务组详情页有协作记录面板），所以被误导的不只是别的 agent，
+    // 还有定稿前来看过程的那个人 —— 这句原先写的是"人在控制台看不到房间"，面板加上之后就过期了。
+    // 用 Symbol.for 承载：JSON 报文里不可能出现符号键，因此无法伪造。
     senderRef: args[ROOM_SENDER_KEY] || "unattributed",
     payload: args.payload || {text: args.text || ""},
     payloadDigest: digestOf(args.payload || args.text || ""),
@@ -6663,11 +6665,15 @@ export function roomWait(state, args) {
   const roomId = args.roomId || `room_${args.taskGroupId || "tg_runtime_management"}`;
   const afterSequence = Number(args.afterSequence || args.cursor || 0);
   const limit = Math.max(1, Math.min(500, Number(args.limit || 50)));
-  const messages = state.roomMessages
+  const pending = state.roomMessages
     .filter((item) => item.roomId === roomId && Number(item.sequence || 0) > afterSequence)
-    .sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0))
-    .slice(0, limit);
-  return {roomId, messages, nextCursor: messages.at(-1)?.sequence || afterSequence};
+    .sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0));
+  // tail：给【人】看的那一屏要的是最近的几条。按游标升序取前 N 条是 agent 的读法（它要顺序消费），
+  // 而人打开这一屏是为了"定稿前看一眼是怎么谈成的" —— 拿到最早的 50 条正好错过结论那一段。
+  const messages = args.tail ? pending.slice(-limit) : pending.slice(0, limit);
+  // 截断必须让读者看得出来：只回一个数组的话，50 条和"只有 50 条"在报文里长得一模一样。
+  return {roomId, messages, nextCursor: messages.at(-1)?.sequence || afterSequence,
+    total: pending.length, truncated: pending.length > messages.length};
 }
 
 // ExecutionTopology — plans how ONE work item is executed: serially, or fanned out across isolated

@@ -112,6 +112,7 @@ import {
   sweepCommandBus,
   commitWithRuntimeIdentity,
   appendHumanGuidance,
+  roomWait,
 } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import {
   ackAgentControlCommand,
@@ -247,6 +248,7 @@ run(verifyShardRoundTripKeepsEveryRecord);
 run(verifyCommitWorksWithoutConfiguredIdentity);
 run(verifyHumanGuidanceIsBoundedAndHonest);
 run(verifyNoModelFallbackMatchesWhatEngineDoes);
+run(verifyRoomWaitTailAndTruncationHonesty);
 run(verifyOrchestrationDoesNotShellOutPerCell);
 run(verifyWipCapacityBackpressure);
 run(verifyHighPriorityCellsAreNotStarvedByEarlierGroups);
@@ -316,6 +318,33 @@ if (errors.length) {
 // onNoModel 写着 split_task，引擎却从不拆任务。声明与实现不一致比没有声明更糟：
 // 读策略的人以为系统会自己拆任务，于是不去管那条 S1 阻塞。
 // 这条检查把两头钉在一起：声明的值必须是引擎真的做的那件事，而那件事必须真的发生。
+// 房间消息给【人】看的那一屏要的是最近的几条：按游标从头取会正好错过谈成结论的那一段，
+// 而人打开它就是为了"定稿前看一眼是怎么谈成的"。同时截断必须报数 ——
+// 50 条和"只有 50 条"在报文里长得一模一样。agent 侧按游标顺序消费的读法不变。
+function verifyRoomWaitTailAndTruncationHonesty(output) {
+  const state = {roomMessages: []};
+  for (let index = 1; index <= 120; index += 1) {
+    state.roomMessages.push({messageId: `m${index}`, roomId: "room_tg_x", sequence: index, payload: {text: `第 ${index} 条`}});
+  }
+  const head = roomWait(state, {roomId: "room_tg_x", limit: 50});
+  if (head.messages[0]?.sequence !== 1 || head.messages.at(-1)?.sequence !== 50) {
+    output.push(`agent 侧按游标读的顺序变了（实得 ${head.messages[0]?.sequence}..${head.messages.at(-1)?.sequence}，应为 1..50）—— 顺序消费会漏读`);
+  }
+  const tail = roomWait(state, {roomId: "room_tg_x", limit: 50, tail: true});
+  if (tail.messages[0]?.sequence !== 71 || tail.messages.at(-1)?.sequence !== 120) {
+    output.push(`给人看的那一屏没有取最近的 50 条（实得 ${tail.messages[0]?.sequence}..${tail.messages.at(-1)?.sequence}，应为 71..120）—— 人会正好错过谈成结论的那一段`);
+  }
+  for (const [label, result] of [["按游标", head], ["取末尾", tail]]) {
+    if (result.total !== 120 || result.truncated !== true) {
+      output.push(`${label}读法没有如实报出总数/截断（total=${result.total} truncated=${result.truncated}，应为 120/true）—— 读者看不出还有更多`);
+    }
+  }
+  const all = roomWait(state, {roomId: "room_tg_x", limit: 500, tail: true});
+  if (all.truncated !== false || all.messages.length !== 120) {
+    output.push(`没有截断时仍然报 truncated（${all.truncated}，共 ${all.messages.length} 条）—— 常亮的提示等于没有提示`);
+  }
+}
+
 function verifyNoModelFallbackMatchesWhatEngineDoes(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});

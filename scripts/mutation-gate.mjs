@@ -427,6 +427,30 @@ const MUTATIONS = [
     expect: "没有先 recycleExpiredClaims"
   },
   {
+    name: "给人看的房间那一屏要取最近的几条",
+    check: "verifyRoomWaitTailAndTruncationHonesty",
+    file: CORE,
+    from: "  const messages = args.tail ? pending.slice(-limit) : pending.slice(0, limit);",
+    to: "  const messages = pending.slice(0, limit);",
+    expect: "错过谈成结论的那一段"
+  },
+  {
+    name: "房间消息截断要如实报数",
+    check: "verifyRoomWaitTailAndTruncationHonesty",
+    file: CORE,
+    from: "    total: pending.length, truncated: pending.length > messages.length};",
+    to: "  };",
+    expect: "看不出还有更多"
+  },
+  {
+    name: "房间消息被截断时界面要说清共有多少条",
+    file: APP,
+    gate: "console",
+    from: "          ${tgDetail.roomMessagesTruncated",
+    to: "          ${false && tgDetail.roomMessagesTruncated",
+    expect: "被截断却不报总数"
+  },
+  {
     name: "没有可用模型时要给人挂 S1 阻塞",
     check: "verifyNoModelFallbackMatchesWhatEngineDoes",
     file: CORE,

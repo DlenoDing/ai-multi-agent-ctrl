@@ -1152,14 +1152,16 @@ async function loadTaskGroupDetail(taskGroupId) {
   const [progressResult, configResult, roomResult] = await Promise.all([
     api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/progress`),
     api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/config`).catch(() => null),
-    api(`/api/rooms/${encodeURIComponent(`room_${taskGroupId}`)}/messages?limit=50`).catch(() => null)
+    api(`/api/rooms/${encodeURIComponent(`room_${taskGroupId}`)}/messages?limit=50&tail=1`).catch(() => null)
   ]);
   tgDetail = {
     taskGroupId,
     progress: progressResult,
     config: configResult?.config || null,
     configVersion: configResult?.configVersion || null,
-    roomMessages: roomResult?.messages || null
+    roomMessages: roomResult?.messages || null,
+    roomMessageTotal: roomResult?.total ?? null,
+    roomMessagesTruncated: Boolean(roomResult?.truncated),
   };
 }
 
@@ -2467,6 +2469,11 @@ function renderTaskGroupDetail(taskGroup) {
       : `<div class="stack">
           <div class="small muted">这些是 agent 之间实际交换的消息。送到你面前的方案可能是在这里谈成的 ——
             定稿前值得看一眼过程，而不只是结论。发送者由服务端按已认证身份署名，不是消息自报的。</div>
+          ${/* 这一屏取的是【最近】的若干条：按游标从头取会正好错过谈成结论的那一段。
+                被截掉的部分必须说出来，否则 50 条和"只有 50 条"在屏幕上长得一模一样。 */""}
+          ${tgDetail.roomMessagesTruncated
+            ? `<div class="small muted">共 ${esc(String(tgDetail.roomMessageTotal ?? "?"))} 条，这里显示最近 ${roomMessages.length} 条。</div>`
+            : ""}
           ${roomMessages.map((message) => {
             const payload = message.payload && typeof message.payload === "object" ? message.payload : {};
             const text = typeof payload.text === "string" && payload.text ? payload.text : JSON.stringify(payload, null, 2);

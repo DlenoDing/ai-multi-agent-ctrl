@@ -4293,7 +4293,7 @@ async function handleApi(req, res) {
     if (req.method === "GET") {
       const authenticated = requireRead(req, state, taskGroupScope(state, roomTaskGroupId));
       if (authenticated.status) return json(res, authenticated.status, authenticated.payload);
-      const result = roomWait(state, {roomId, afterSequence: Number(url.searchParams.get("after") || url.searchParams.get("afterSequence") || 0), limit: Number(url.searchParams.get("limit") || 50)});
+      const result = roomWait(state, {roomId, tail: url.searchParams.get("tail") === "1", afterSequence: Number(url.searchParams.get("after") || url.searchParams.get("afterSequence") || 0), limit: Number(url.searchParams.get("limit") || 50)});
       json(res, 200, result);
       return;
     }
