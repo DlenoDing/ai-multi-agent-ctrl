@@ -2056,14 +2056,21 @@ await runErrorGuidanceCase();
   const looksGenerated = (value) => /\d/u.test(String(value).split("_").pop() || "");
   const misses = new Map();
   // 一份状态建一次上下文、在里面把所有页面渲一遍：每页都新建的话，app.js 要被重新解析上百次。
+  const pageTouchCounts = new Map();
   const scanState = (label, state, account, projectId, pages) => {
+    const tCalls = new Map();
     const context = vm.createContext(makeContext(el("div")));
     context.window = {scrollTo: () => {}, addEventListener: () => {}, removeEventListener: () => {}};
     context.scrollTo = () => {};
     vm.runInContext(i18nSource, context, {filename: "i18n-zh.js"});
     const real = context.window.AIMAC_I18N;
     if (!real || typeof real.t !== "function") throw new Error("漏译扫描: 没能加载真的 i18n —— 本段在空转");
+    // 数一数每页真正过了多少次 t()：只有外壳那点固定次数的页，等于它的枚举值从没被渲染过 ——
+    // 这道扫描对那些页是空的。这个数不作为判据（页面本来就有繁简之分），但必须【报出来】，
+    // 否则"渲染了 N 页、未命中 0 个"会被读成"N 页都查过了"。
     context.t = real.t;
+    const inner = real.t;
+    context.window.AIMAC_I18N.t = (value) => { tCalls.set(pageId, (tCalls.get(pageId) || 0) + 1); return inner(value); };
     let pageId = "?";
     context.console = {log: () => {}, error: () => {}, warn: (message) => {
       const hit = /未映射的枚举值：(.+)$/u.exec(String(message));
@@ -2079,6 +2086,7 @@ await runErrorGuidanceCase();
       // 页面名只是线索，判据是"有没有漏译"，不是"漏在哪几页"。
       context.__probe.renderFullPageWith(state, account, projectId, page);
       done.push(`${label}/${page}`);
+      pageTouchCounts.set(page, Math.max(pageTouchCounts.get(page) || 0, tCalls.get(page) || 0));
     }
     return done;
   };
@@ -2105,6 +2113,35 @@ await runErrorGuidanceCase();
     humanDirectives: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
     findings: [], permissionRequests: [], approvalRequests: [], truncatedCollections: []
   }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"}, "p1"]);
+  // 上面几份状态只覆盖到 5 个页面：量过每页触发的 t() 次数，14 页里有 9 页只有外壳那 38 次，
+  // 等于它们的枚举值从没被渲染过（定稿页的 revise 就是这么漏掉的）。
+  // 这一份补的是人工指令与账号授权两页 —— 记录形状照抄自真实服务的返回，不是编的：
+  // 编夹具是误报的主要来源，本会话已经两次把自己编错的字段名当成界面缺陷。
+  i18nScanStates.push(["有指令与授权", {
+    schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    projects: [{id: "prj_control_plane", name: "控制面", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [{id: "tg_runtime_management", projectId: "prj_control_plane", name: "运行时管理", status: "development", workItems: []}],
+    humanDirectives: [
+      {schemaVersion: "human-directive/v1", directiveId: "hd_1", projectId: "prj_control_plane",
+        taskGroupId: "tg_runtime_management", directiveType: "cancel", instruction: "这条不做了",
+        issuedBy: "acct_system_owner", status: "applied",
+        appliedActions: [{action: "task_group_cancel", ref: "TaskGroup:tg_runtime_management"}],
+        createdAt: "2026-08-12T00:00:00.000Z", updatedAt: "2026-08-12T00:00:00.000Z"},
+      {schemaVersion: "human-directive/v1", directiveId: "hd_2", projectId: "prj_control_plane",
+        taskGroupId: "tg_runtime_management", directiveType: "add_requirement", instruction: "接口都要有中文错误信息",
+        issuedBy: "acct_system_owner", status: "rejected", rejectReason: "task_group_not_found",
+        appliedActions: [], createdAt: "2026-08-12T00:00:00.000Z", updatedAt: "2026-08-12T00:00:00.000Z"}
+    ],
+    accessGrants: [{schemaVersion: "access-control-grant/v1", grantId: "grant_1",
+      subjectRef: {subjectType: "account", subjectId: "acct_system_owner"},
+      resource: {resourceType: "system_console", resourceId: "system"},
+      role: "system_owner", permissions: ["system:*", "task_group:read", "task_group:control"], status: "active"}],
+    accounts: [{schemaVersion: "account/v1", accountId: "acct_system_owner", accountType: "system_admin",
+      displayName: "System Owner", email: "system.admin@local", status: "active", roles: ["system_owner"],
+      permissions: ["system:*", "system:bootstrap", "system:skill_sync", "system:model_registry"]}],
+    agentRuntimeNodes: [], agentJoinTokens: [], agentDispatches: [], workSessions: [], closeBarriers: [],
+    qualityGates: [], findings: [], humanConfirmationRequests: [], truncatedCollections: []
+  }, {accountId: "acct_system_owner", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"}, "prj_control_plane"]);
   const scanned = [];
   const pages = ["sys-overview", "sys-orgs", "sys-settings", "sys-accounts", "org-overview", "org-members",
     "org-agents", "org-projects", "proj-overview", "tg", "review", "directives", "monitor", "proj-settings"];
@@ -2116,7 +2153,11 @@ await runErrorGuidanceCase();
     failures.push(`漏译扫描: 中文界面上会显示英文枚举「${value}」（出现在 ${[...where].slice(0, 3).join("、")}）`
       + " —— 给它补中文，或者别把这个值直接交给 t()");
   }
-  console.log(`漏译扫描：用真的 t 渲染了 ${scanned.length} 个页面，未命中 ${misses.size} 个`);
+  const shellOnly = [...pageTouchCounts].filter(([, count]) => count <= Math.min(...pageTouchCounts.values()));
+  console.log(`漏译扫描：用真的 t 渲染了 ${scanned.length} 个页面，未命中 ${misses.size} 个`
+    + `；另有 ${shellOnly.length} 页只渲染了空壳（${shellOnly.map(([page]) => page).join("、")}）——`
+    + "它们的数据不在 state 里，而是各自另走接口取（directiveList / orgMembers / /api/org/agents / projConfig），"
+    + "喂不进这道扫描。这几页的枚举值【本轮没有被检验】，别把上面那个页数读成全覆盖。");
 }
 
 if (failures.length) {
