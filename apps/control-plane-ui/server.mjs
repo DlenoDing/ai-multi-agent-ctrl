@@ -1242,6 +1242,16 @@ function scopedStateForAccount(state, account, session) {
     .map((item) => ({sessionId: item.sessionId, accountId: item.accountId, status: item.status, expiresAt: item.expiresAt, createdAt: item.createdAt, updatedAt: item.updatedAt}));
   cloned.agentRuntimeNodes = (state.agentRuntimeNodes || []).map(publicAgentNode);
   cloned.agentJoinTokens = listAgentJoinTokens(state);
+  // 系统账号此前拿到的是【原始账号记录】：里面有 passwordDigest（口令的 scrypt 哈希）和
+  // credentialDigest（一次性登录令牌的校验值）。控制台一个都不显示，把口令校验材料发进浏览器
+  // 没有任何用处，却会跟着 devtools、HAR 导出、录屏和任何一次 XSS 一起走。
+  // 非系统账号那条路（下面几十行处）早就在用显式白名单了 —— 系统这条只是绕开了它。
+  // 白名单而不是黑名单：将来账号上再加一个机密字段，缺省不该是"发出去"。
+  cloned.accounts = (state.accounts || []).map((item) => ({
+    ...publicAccountRecord(item),
+    ...(item.organizationId ? {organizationId: item.organizationId} : {}),
+    ...(item.accountId === account.accountId ? {effectivePermissions: accountEffectivePermissions(state, account)} : {})
+  }));
   if (isSystem) return cloned;
   const visibleProjectIds = new Set((state.projects || []).filter((project) => canReadProject(state, account, project.id)).map((project) => project.id));
   const visibleTaskGroupIds = new Set((state.taskGroups || []).filter((taskGroup) => canReadTaskGroup(state, account, taskGroup.id)).map((taskGroup) => taskGroup.id));
@@ -4804,7 +4814,11 @@ async function handleApi(req, res) {
     audit(state, guard.actor, "org_member_invite_reissue", `Account:${member.accountId}`);
     const reissuePayload = {account: publicAccountRecord(member), accountToken: reissuedToken,
       login: {email: member.email, tokenField: "accountToken"}};
-    finishGuardedWrite(state, guard, 200, reissuePayload);
+    // 幂等记录里【不存】明文令牌：它会随 view=full 一起发出去，而且长期留在状态里。
+    // 同批的 /api/accounts 邀请与 /api/agent-join-tokens 都是只存脱敏记录 —— 这条漏了。
+    // 重放拿不到令牌是有意的：一次性凭据只出现一次，重放的人本来就已经收到过那一份。
+    finishGuardedWrite(state, guard, 200, {account: reissuePayload.account,
+      login: reissuePayload.login, secretReturnedOnce: true});
     writeState(state);
     json(res, 200, reissuePayload);
     return;

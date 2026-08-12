@@ -1014,6 +1014,30 @@ try {
   if (!orgMembers.response.ok || !orgMembers.payload.members.some((member) => member.email === "doctor.member1@local")) {
     throw new Error("org member list did not return the created member");
   }
+  // 状态视图里不许出现凭据材料。此前系统账号拿到的是【原始账号记录】，里面有 passwordDigest
+  //（口令的 scrypt 哈希）和 credentialDigest（一次性登录令牌的校验值）——控制台一个都不显示，
+  // 而它们会跟着 devtools、HAR 导出、录屏和任何一次 XSS 走。
+  // 判据按【字段名】全量扫整份载荷，不是只盯这两个：将来账号或别的记录上再加一个凭据字段，
+  // 缺省不该是"发出去"。内容摘要（bodyDigest/contentDigest 之类）不在此列，它们不是校验凭据。
+  const CREDENTIAL_FIELDS = new Set(["passwordDigest", "credentialDigest", "tokenDigest", "nodeToken",
+    "joinToken", "accountToken", "sessionToken", "bootstrapToken", "credentialSecret"]);
+  const findCredentialFields = (node, path, hits) => {
+    if (Array.isArray(node)) { node.forEach((item) => findCredentialFields(item, `${path}[]`, hits)); return; }
+    if (!node || typeof node !== "object") return;
+    for (const [key, value] of Object.entries(node)) {
+      if (CREDENTIAL_FIELDS.has(key)) hits.push(`${path}.${key}`);
+      findCredentialFields(value, `${path}.${key}`, hits);
+    }
+  };
+  for (const viewName of ["full", "system", "users", "tasks"]) {
+    const viewPayload = await jsonFetch(port, `/api/state?view=${viewName}&limit=100`, {headers: {authorization: systemAuth}});
+    if (!viewPayload.response.ok) throw new Error(`凭据字段扫描取不到 view=${viewName}（${viewPayload.response.status}）—— 本条在空转`);
+    const hits = [];
+    findCredentialFields(viewPayload.payload, viewName, hits);
+    if (hits.length) {
+      throw new Error(`状态视图里带出了凭据材料：${hits.slice(0, 5).join("、")}${hits.length > 5 ? ` 等 ${hits.length} 处` : ""} —— 界面一个都不显示，这些东西不该离开服务端`);
+    }
+  }
   // 认不出的视图名此前静默降级成基底：200 + 一份少了全部集合的载荷。调用方据此得出的
   // "这类记录一条都没有"是错的，而没有任何迹象说明它要的东西根本没被组装。
   const unknownView = await jsonFetch(port, "/api/state?view=directives&limit=10", {headers: {authorization: systemAuth}});
