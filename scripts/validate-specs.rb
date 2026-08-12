@@ -1310,6 +1310,13 @@ fsync_guards.each do |op, value|
   errors << %(fsync 开关必须"默认开、显式 false 才关"，现在写的是 #{op} "#{value}" —— 这会让生产默认不落盘) unless value == "false"
 end
 
+# 跑得久的活靠心跳续认领：认领到期会被控制面回收重排，而代理 push 前的持有权复核会让整轮工作作废
+# （于是同一个任务无限重来，每次都在最后一步丢掉）。控制面那一半由 contract-check 行为断言守着
+# （执行事件必须续上 claimExpiresAt，且只有持有者能续），代理这一半守在这里。
+errors << "代理执行期间必须持续发心跳执行事件（长任务靠它续认领）" unless runtime_source.match?(/lastKeepAliveAt[\s\S]{0,400}?submitExecutionEvent\([^)]*"heartbeat"/m)
+# 间隔只有下界是不够的：配一个超大值就能把续期变成摆设，而故障表现是"跑得久的任务永远交不上检查点"。
+errors << "心跳间隔必须上下都有界（只有 Math.max 的话，一个超大环境变量就能让续认领失效）" unless runtime_source.match?(/keepAliveMs = Math\.min\([\s\S]{0,80}?Math\.max\(/m)
+
 # 取消要能【停住正在烧的那一步】，而不只是挡住 push。机制是：每个执行器子进程都交给控制监视器
 # （attachChild），监视器收到取消就 terminateChild；附加时若已经取消，立刻就杀（这条覆盖了
 # "取消先到、子进程后起"的竞态）。所以每一处 spawnAndCapture 都必须把 control 传下去 ——

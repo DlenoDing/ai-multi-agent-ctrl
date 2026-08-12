@@ -311,7 +311,12 @@ function startControlWatcher(config, dispatchPackage) {
       await loop.catch(() => {});
     }
   };
-  const keepAliveMs = Math.max(15000, Number(process.env.AIMAC_AGENT_EXECUTION_KEEPALIVE_MS || 60000));
+  // 心跳是长任务续认领的唯一手段：认领到期会被控制面回收重排，而代理 push 前的持有权复核
+  // 会让整轮工作作废。所以这个间隔【上下都要有界】—— 只有下界的话，
+  // 一个 AIMAC_AGENT_EXECUTION_KEEPALIVE_MS=3600000 就能把续期变成摆设，
+  // 而故障表现是"跑得久的任务永远交不上检查点"，没人会想到是这个环境变量。
+  // 上界 300 秒：认领 TTL 的下限是 60 秒，实际默认 1800 秒，300 秒对任何配置都够密。
+  const keepAliveMs = Math.min(300000, Math.max(15000, Number(process.env.AIMAC_AGENT_EXECUTION_KEEPALIVE_MS || 60000)));
   let lastKeepAliveAt = Date.now();
   const loop = (async () => {
     while (state.running && !state.cancelled) {

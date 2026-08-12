@@ -220,6 +220,7 @@ verifyCancelSettlesTheCellsResources(errors);
 verifyAdmissionLedgerDoesNotGrowWithFlapping(errors);
 verifyEveryCloseGateHasHumanGuidance(errors);
 verifyGrantScopeCoversObjectsNamedOnlyById(errors);
+verifyLongRunningWorkKeepsItsClaim(errors);
 verifySuspendHaltsRunningWork(errors);
 verifyCancelDirectiveStopsRunningWork(errors);
 verifyPauseDirectiveIsReversible(errors);
@@ -4673,6 +4674,56 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // taskGroupId）时，那些字段比对一条都不触发 —— 只能靠"按 id 把对象查出来，再比它的归属"这一类分支。
 // 目前有两类需要这样兜：仓库产出目标与共享定义契约。少一个，对应的工具就能跨项目动别人的对象
 // （共享定义那条实测可把别人的草案推成 proposed，而 proposed 是阻塞状态，直接卡住对方的关闭门）。
+// 跑得久的活不能因为"认领到期"把已做的工作丢掉。
+//
+// 认领有 TTL（默认 1800 秒），到期就被 recycleExpiredClaims 回收重排；而代理这边在 push 之前
+// 会复核持有权，复核失败即停手 —— 于是一个跑了半小时以上的模型任务，会在最后一步发现
+// 自己已经不是持有者，整轮工作作废，而且下一轮同样跑不完，无限重来。
+// 系统靠的是"执行事件顺带续认领"：代理执行期间持续发心跳事件。这条链两头都没有门守着。
+function verifyLongRunningWorkKeepsItsClaim(output) {
+  const build = () => {
+    const state = structuredClone(seedState);
+    ensureRuntimeCollections(state, {root});
+    const nearExpiry = new Date(Date.now() + 30 * 1000).toISOString();
+    state.agentDispatches = [{dispatchId: "adp_long", projectId: "prj_control_plane", taskGroupId: "tg_runtime_management",
+      workItemId: "w_long", sessionId: "sess_long", runId: "run_long", status: "running", assignedNodeId: "node_holder",
+      claimEpoch: 1, claimTtlSeconds: 1800, claimedAt: new Date().toISOString(), claimExpiresAt: nearExpiry,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()}];
+    return state;
+  };
+  let eventSeq = 0;
+  const eventFrom = (state, nodeId) => submitAgentExecutionEvent(state, {nodeId}, {
+    dispatchId: "adp_long", eventType: "heartbeat", progressPercent: 0, summary: "keep-alive",
+    eventKey: `keepalive-${nodeId}-${eventSeq += 1}`
+  });
+
+  const held = build();
+  const before = held.agentDispatches[0].claimExpiresAt;
+  try { eventFrom(held, "node_holder"); } catch (error) { output.push(`持有者发心跳竟然被拒：${error.message}`); }
+  const after = held.agentDispatches[0].claimExpiresAt;
+  if (!(new Date(after).getTime() > new Date(before).getTime())) {
+    output.push("执行事件没有续上认领：跑得久的活会在最后一步发现自己已经不是持有者，"
+      + "整轮工作作废，而且下一轮同样跑不完 —— 无限重来");
+  }
+
+  // 只有持有者能续。【如实说明这一条的强度】：非持有者这条路上至少有三层拦截
+  // （prepare 与 record 各有一次按 assignedNodeId 的查找，续期块里还比对了一次），
+  // 我试过单破一处、同时破两处，都仍然被拒 —— 也就是说我没能构造出让这条断言报红的变异。
+  // 所以它是兜底而不是强判据：真正被证明过判别力的是上面那条"执行事件必须续上认领"。
+  // 留着它的理由是它能挡住"整段重构把三层一起拿掉"这种改动，代价只有几行。
+  const other = build();
+  const otherBefore = other.agentDispatches[0].claimExpiresAt;
+  let intruderRejected = false;
+  try { eventFrom(other, "node_intruder"); } catch { intruderRejected = true; }
+  if (!intruderRejected) {
+    output.push("别的节点发的执行事件竟然被接受了 —— 执行事件会顺带续认领，"
+      + "等于任何节点都能替持有者把回收挡住，而认领的意义正是'谁在做这件事'");
+  }
+  if (other.agentDispatches[0].claimExpiresAt !== otherBefore) {
+    output.push("别的节点发一条执行事件就把认领续上了 —— 不能由旁人续命");
+  }
+}
+
 function verifyGrantScopeCoversObjectsNamedOnlyById(output) {
   const grant = {projectId: "prj_mine", taskGroupId: "tg_mine", workId: "w_mine", sessionId: "sess_mine", dispatchId: "adp_mine"};
   const state = {
