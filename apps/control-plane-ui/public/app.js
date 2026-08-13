@@ -1499,7 +1499,10 @@ function render() {
                   不标时区，人拿屏幕上的时间去对日志会差好几个小时，进而以为那条记录根本不存在。 */""}
             <span class="small muted" title="界面时间按本机时区显示；服务端日志用的是 UTC">${esc(localZoneLabel())}</span>
             ${clockSkewNote() ? `<span class="small warn-text" title="相对时间已按服务器时钟校正">${esc(clockSkewNote())}</span>` : ""}
-            <button class="secondary-button" data-action="open-change-password">修改密码</button>
+            ${/* 接口一直下发 authPolicy.passwordSet，这里此前没读：一个从没设过口令的人（邀请令牌登录的）
+                  看到的是"修改密码"，弹窗里还写着"当前密码（首次设置可留空）"—— 让他去想自己是不是忘了什么。
+                  系统知道他有没有设过，就该直接说对。 */""}
+            <button class="secondary-button" data-action="open-change-password">${currentAccount?.authPolicy?.passwordSet ? "修改密码" : "设置密码"}</button>
             <button class="icon-button" data-action="refresh" title="刷新" aria-label="刷新">↻</button>
             <button class="secondary-button" data-action="logout">退出登录</button>
           </div>
@@ -4378,7 +4381,7 @@ document.addEventListener("click", async (event) => {
     if (action === "open-change-password") {
       openModal("修改密码", `
         <form class="form-grid" data-form="change-password">
-          <div class="form-row"><label>当前密码（首次设置可留空）</label><input name="currentPassword" type="password" autocomplete="current-password"></div>
+          <div class="form-row"><label>${currentAccount?.authPolicy?.passwordSet ? "当前密码" : "当前密码（你还没有设过密码，留空即可）"}</label><input name="currentPassword" type="password" autocomplete="current-password"></div>
           <div class="form-row"><label>新密码（至少 8 位）</label><input name="newPassword" type="password" required minlength="8" autocomplete="new-password"></div>
           <div class="form-row"><label>确认新密码</label><input name="confirmPassword" type="password" required minlength="8" autocomplete="new-password"></div>
           <button class="primary-button" type="submit">保存新密码</button>

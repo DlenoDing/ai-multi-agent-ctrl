@@ -315,6 +315,7 @@ run(verifyOperatorCliRejectsUnknownFlags);
 run(verifyMcpDoesNotReimplementCore);
 run(verifyIssuedCredentialsAlwaysExpire);
 run(verifyInertMechanismsStayRegistered);
+run(verifyServerFieldsReachThePerson);
 run(verifyNoRequestScopedLeaks);
 run(verifySharedJsonWritesAreAtomic);
 run(verifyRefusalCodeCoverageRatchet);
@@ -5361,6 +5362,47 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 就得写一条【点名】它的断言，而那正是我们想要的东西。
 //
 // 棘轮只往一个方向走：数字变大＝新增的守卫没配判据；变小＝该把这里下调，把成果钉住。
+// 接口下发了、界面一个字不显示的字段。这一族实撞两次，两次都是【系统知道却不告诉人】：
+// ① 归档写失败过（archiveFault）—— 人在专门查历史的那一屏毫无察觉；
+// ② 哈希链只校验了尾部一窗（windowTruncated/bytesScanned/fileBytes）—— 那一屏照说"未发现改动"。
+// 两次都是"接口早就在说，只是没人接"。这道判据就是把这句话变成会报红的东西。
+function verifyServerFieldsReachThePerson(output) {
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8").replace(/\/\/[^\n]*/gu, "");
+  // 这些字段确实只发给机器（agent 运行时、装机脚本、MCP 客户端、健康探针），界面不该显示，
+  // 逐个写明是谁在读 —— 登记不是免检，是把"为什么不用显示"钉住。
+  const MACHINE_FACING_FIELDS = {
+    replayed: "派发重放标记，agent 运行时据此判断要不要重复执行",
+    publicUrl: "健康检查里给运维/装机脚本用的对外地址",
+    transport: "MCP 客户端据此选传输方式",
+    endpoint: "MCP / agent 网关地址，给客户端配置用",
+    schemaVersion: "协议版本，给调用方判兼容性",
+    serverUrl: "装机脚本写进 agent 配置",
+    installScriptUrl: "一条命令加入时给人复制的地址，由 init 打印而非界面渲染",
+    checkpoint: "检查点回执，agent 运行时读",
+    tokenSource: "启动诊断：令牌来自环境变量还是本地配置，运维看日志"
+  };
+  const fields = new Set();
+  for (const match of server.matchAll(/json\(res,\s*200,\s*\{([^}]{10,400})\}/gu)) {
+    for (const field of match[1].matchAll(/(^|[\s,{])([a-zA-Z][a-zA-Z0-9_]{3,})\s*:/gu)) fields.add(field[2]);
+  }
+  if (fields.size < 30) {
+    output.push(`下发字段判据只提取到 ${fields.size} 个字段 —— 提取多半失配，这道判据在空转`);
+    return;
+  }
+  const unread = [...fields].filter((name) => !new RegExp(`\\b${name}\\b`).test(app)).sort();
+  for (const name of unread) {
+    if (MACHINE_FACING_FIELDS[name]) continue;
+    output.push(`接口下发了 ${name}，而控制台全站没有一处读它 —— 要么把它显示给人，`
+      + "要么登记进 MACHINE_FACING_FIELDS 并写明是谁在读（这一族已经因为'没人接'漏过两次真事实）");
+  }
+  for (const [name, who] of Object.entries(MACHINE_FACING_FIELDS)) {
+    if (!fields.has(name)) {
+      output.push(`机器面字段登记里的 ${name}（${who}）已经不在任何 200 响应里了 —— 登记过期，删掉它`);
+    }
+  }
+}
+
 // 顶层函数不得引用它【没拿到】的请求作用域变量。这一类只有运行到那一行才炸，而"那一行"往往是
 // 错误处理支 —— 平时永远跑不到。实撞一次：兜底错误处理里那行日志引用了 req/url，而它只收 res，
 // 于是每一个走到兜底的请求都让服务端进程直接退出，症状只是并发写入门偶发 ECONNREFUSED，追了三轮。

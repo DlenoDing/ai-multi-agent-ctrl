@@ -1121,6 +1121,16 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // "接口下发了、界面没接"这一族已经漏过两次真事实（归档写失败、哈希链只校验尾窗）。
+    // 一条变异同时验两个方向：字段没人读要报红，机器面登记过期也要报红。
+    name: "下发给人的字段必须有人读",
+    file: "scripts/contract-check.mjs",
+    check: "verifyServerFieldsReachThePerson",
+    from: '    tokenSource: "启动诊断：令牌来自环境变量还是本地配置，运维看日志"',
+    to: '    tokenSourceGone: "已经不存在的字段"',
+    expect: "而控制台全站没有一处读它"
+  },
+  {
     // 归档只按尾部一窗（512KB）读取与校验。文件几百 MB 时这一屏说"未发现改动"，
     // 而窗口之外的记录一条都没查过 —— 人恰恰是为了查有没有被改动才打开这一屏的。
     name: "只校验了尾窗时这一屏要说出来",
