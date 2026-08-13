@@ -298,6 +298,7 @@ run(verifyUnknownStateSchemaIsRefused);
 run(verifySuspendHaltsRunningWork);
 run(verifyCancelDirectiveStopsRunningWork);
 run(verifyPauseDirectiveIsReversible);
+run(verifyEveryAssertionIsActuallyRegistered);
 run(verifyCrossOrgGrantIsRefusedOnBothDoors);
 run(verifyUnknownEnumValuesAreRefusedNotCoerced);
 run(verifyInitPrintsTheToolCountClientsActuallySee);
@@ -4882,6 +4883,43 @@ function extractMachineStates(yamlText, machine) {
 // 这里按真实入口逐条核对：填错必须拒，不填仍按各自的保守默认走。
 // 「不许跨组织授权」此前【只有 REST 那扇门在守】：MCP 批准一条授权请求时，铸造点不做租户校验。
 // 同一条不变式两扇门、只有一扇挡住，等于没挡住。这里按真实入口两侧各打一次。
+// 定义了却没注册进运行清单的断言，看起来就是覆盖 —— 而它一次都不会跑。
+// 这类错误极易发生（写完一个检查函数、忘了把它加进下面那串注册调用），且没有任何东西会提醒你：
+// 注：本注释刻意不写出注册调用的字面形状 —— 提取是全文扫的，写在注释里会被自己当成一次注册
+//（第一版就是这么触发了一条假红：注册清单里出现了一个并不存在的 verifyX）。
+// 门照常全绿，条数还多了一个"看着像"的检查。本门与控制台门各自按自己的登记形式自查。
+function verifyEveryAssertionIsActuallyRegistered(output) {
+  const selfSource = readFileSync(resolve(root, "scripts/contract-check.mjs"), "utf8");
+  const defined = [...new Set([...selfSource.matchAll(/^function (verify[A-Za-z0-9]+)\(/gmu)].map((match) => match[1]))];
+  const registered = new Set([...selfSource.matchAll(/run\((verify[A-Za-z0-9]+)\)/gu)].map((match) => match[1]));
+  if (defined.length < 40) {
+    output.push(`断言注册自查：只提取到 ${defined.length} 个检查函数 —— 提取逻辑与本文件脱节，本条在空转`);
+    return;
+  }
+  const unregistered = defined.filter((name) => !registered.has(name));
+  if (unregistered.length) {
+    output.push(`这些检查定义了却没有注册进运行清单：${unregistered.join("、")} —— 它们一次都不会跑，`
+      + "而门照常全绿、条数还多了一个看着像的检查");
+  }
+  const ghosts = [...registered].filter((name) => !defined.includes(name));
+  if (ghosts.length) {
+    output.push(`运行清单里这些检查已经不存在了：${ghosts.join("、")}`);
+  }
+
+  const consoleSource = readFileSync(resolve(root, "scripts/console-behaviour-check.mjs"), "utf8");
+  const consoleDefined = [...new Set([...consoleSource.matchAll(/^(?:async )?function (run[A-Za-z0-9]+Case)\(/gmu)]
+    .map((match) => match[1]))];
+  const consoleCalled = new Set([...consoleSource.matchAll(/(?:await )?(run[A-Za-z0-9]+Case)\(\)/gu)].map((match) => match[1]));
+  if (consoleDefined.length < 15) {
+    output.push(`断言注册自查：控制台门只提取到 ${consoleDefined.length} 个用例 —— 提取逻辑脱节，这一半在空转`);
+    return;
+  }
+  const consoleDead = consoleDefined.filter((name) => !consoleCalled.has(name));
+  if (consoleDead.length) {
+    output.push(`控制台门里这些用例定义了却没被调用：${consoleDead.join("、")} —— 一次都不会跑`);
+  }
+}
+
 function verifyCrossOrgGrantIsRefusedOnBothDoors(output) {
   const serverSource = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
   const mcpSource = readFileSync(resolve(root, "apps/mcp-server/server.mjs"), "utf8");

@@ -1039,6 +1039,15 @@ const MUTATIONS = [
     expect: "被授给了机器主体"
   },
   {
+    // 定义了却没注册的断言，看起来就是覆盖。把一条注册摘掉，本条必须点名它。
+    name: "定义了却没注册的断言必须被点名",
+    file: "scripts/contract-check.mjs",
+    check: "verifyEveryAssertionIsActuallyRegistered",
+    from: "run(verifyCrossOrgGrantIsRefusedOnBothDoors);",
+    to: "",
+    expect: "没有注册进运行清单"
+  },
+  {
     // 自述的账必须加得起来：旧账把"有 core 函数但 MCP 侧没有同名工具"的动作算成已覆盖，
     // 于是 22 个动作只交代了 16 个，剩下的既不在已核对里也不在够不到里。
     name: "真人专属动作的覆盖账必须加得起来",
