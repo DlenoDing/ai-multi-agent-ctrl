@@ -202,6 +202,34 @@ try {
   if (!foreignTask.structuredContent?.result?.taskGroup?.id) throw new Error("system admin MCP could not create a foreign task group");
   const foreignWork = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.work_item_create", arguments: {idempotencyKey: "doctor-foreign-work", taskGroupId: "tg_foreign_scope", workItemId: "work_foreign_scope", title: "Doctor Foreign Work", ownerRole: "orchestrator"}});
   if (!foreignWork.structuredContent?.result?.workItem?.id) throw new Error("system admin MCP could not create a foreign work item");
+
+  // 跨参数一致性守卫（validateExplicitMcpScopeExists）：调用方同时给作用域 id 和对象 id 时，
+  // 那个对象必须真属于该作用域 —— 防的是"拿自己有权的项目，配上别人的任务组/工作项/派发 id"。
+  // 这一族此前【一条判据都没有】：它失效时所有正常调用照旧成功，只有跨租户那一次会悄悄通过。
+  // 复用上面那个 foreignWork：自己再建一个会跟它撞同一个幂等键，把【既有】那条断言打红
+  //（第一版就是这样）—— 探针不要跟既有夹具抢资源。
+  {
+    const foreignTaskGroupId = foreignTask.structuredContent.result.taskGroup.id;
+    const foreignWorkId = foreignWork.structuredContent.result.workItem.id;
+    // 本项目的 projectId 配隔壁项目的 taskGroupId：必须被拒。
+    // （第一版只给 workItemId，被更早的"缺 taskGroupId"挡住 —— 工作项那条检查只在
+    //   没给 taskGroupId 时才生效，而 model_select 必须带它。报文里印出错误码才看出来。）
+    const mixed = await mcpAs(admin.sessionToken, "tools/call", {name: "model-mcp.model_select",
+      arguments: {idempotencyKey: "doctor-mixed-scope", projectId: "prj_control_plane",
+        taskGroupId: foreignTaskGroupId, workItemId: foreignWorkId, roleId: "orchestrator"}});
+    const mixedSaid = JSON.stringify(mixed.structuredContent?.result || mixed);
+    if (!mixedSaid.includes("task_group_project_scope_mismatch")) {
+      throw new Error(`把隔壁项目的任务组配上本项目的 projectId，居然通过了：${mixedSaid.slice(0, 200)}`);
+    }
+    // 反向：任务组配它【自己】的项目必须照常通过 —— 守卫不能把正当调用一起挡掉。
+    const consistent = await mcpAs(admin.sessionToken, "tools/call", {name: "model-mcp.model_select",
+      arguments: {idempotencyKey: "doctor-consistent-scope", projectId: foreignProjectResult.project.id,
+        taskGroupId: foreignTaskGroupId, workItemId: foreignWorkId, roleId: "orchestrator"}});
+    const consistentSaid = JSON.stringify(consistent.structuredContent?.result || consistent);
+    if (consistentSaid.includes("scope_mismatch")) {
+      throw new Error(`任务组与它自己的项目配在一起也被拒了 —— 守卫过头：${consistentSaid.slice(0, 200)}`);
+    }
+  }
   const foreignPermissionRequest = await mcp("tools/call", {name: "permission-mcp.permission_request_submit", arguments: {idempotencyKey: "doctor-foreign-permission-resource", resource: {resourceType: "task_group", resourceId: "tg_foreign_scope"}, permission: "task_group:control", reason: "must fail closed on nested resource scope"}});
   if (!foreignPermissionRequest.structuredContent?.result?.error?.includes("mcp_principal_project_scope_mismatch")) {
     throw new Error("MCP service token accepted nested permission resource outside its project scope");

@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 拿自己有权的项目配上别人的任务组 id —— 失效时所有正常调用照旧成功，只有跨租户那次悄悄通过。
+    name: "跨参数的作用域一致性要守住",
+    file: "apps/mcp-server/server.mjs",
+    skip: "判据由 mcp:doctor 覆盖（真拿隔壁项目的任务组配本项目 projectId，并要求一致时照常放行）",
+    from: '    return {allowed: false, error: "task_group_project_scope_mismatch", required: `${projectId}:${taskGroupId}`};',
+    to: "    return {allowed: true};",
+    expect: "居然通过了"
+  },
+  {
     // 限流失效是静默的：所有正常登录照旧成功，只有"猜口令"变得没有代价。
     name: "登录要限流",
     file: "apps/control-plane-ui/server.mjs",
