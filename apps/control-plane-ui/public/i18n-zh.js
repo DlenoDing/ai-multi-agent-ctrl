@@ -951,6 +951,7 @@
     mcp_tool_call: "MCP 工具调用",
     skill_source_already_retired: "技能源已经退役过了",
     plan_finalization_requirement_required: "必须明确指定是否需要人工定稿方案",
+    human_directive_type_unknown: "认不出这个指令类型",
     task_group_close_barrier_compute: "计算收尾门禁",
     task_group_config_reset: "重置任务组配置",
     task_group_config_update: "更新任务组配置",

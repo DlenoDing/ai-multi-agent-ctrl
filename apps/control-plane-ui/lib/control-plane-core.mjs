@@ -5593,9 +5593,17 @@ export function createHumanDirective(state, input = {}, options = {}) {
   const taskGroup = input.taskGroupId ? (state.taskGroups || []).find((item) => item.id === input.taskGroupId) : null;
   const projectId = taskGroup?.projectId || input.projectId;
   if (!projectId) throw Object.assign(new Error("human_directive_project_required"), {status: 400});
-  const directiveType = ["pause", "resume", "cancel", "adjust_priority", "add_requirement", "resolve_decision", "free_text"].includes(input.directiveType)
-    ? input.directiveType
-    : "free_text";
+  // 认不出的类型【不能降级成便条】：pause/cancel 拼错一个字母，原先会被记成一条 free_text 便条，
+  // 活照跑，而人以为自己已经把它停了（HTTP 200、无任何提示）。实测传 supplementary_requirement
+  // 拿到的记录是 free_text。不填是另一回事 —— 那就是想写条便条，降级到 free_text 是保守的。
+  const HUMAN_DIRECTIVE_TYPES = ["pause", "resume", "cancel", "adjust_priority", "add_requirement",
+    "resolve_decision", "free_text"];
+  if (input.directiveType !== undefined && input.directiveType !== null && input.directiveType !== ""
+    && !HUMAN_DIRECTIVE_TYPES.includes(input.directiveType)) {
+    throw Object.assign(new Error("human_directive_type_unknown"),
+      {status: 400, directiveType: String(input.directiveType).slice(0, 60), supported: HUMAN_DIRECTIVE_TYPES});
+  }
+  const directiveType = HUMAN_DIRECTIVE_TYPES.includes(input.directiveType) ? input.directiveType : "free_text";
   const instruction = String(input.instruction || "").trim().slice(0, 4000);
   if (!instruction && directiveType === "free_text") throw Object.assign(new Error("human_directive_instruction_required"), {status: 400});
   const resolution = directiveType === "resolve_decision"

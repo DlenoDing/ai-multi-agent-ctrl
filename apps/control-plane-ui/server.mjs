@@ -5003,7 +5003,11 @@ async function handleApi(req, res) {
     try {
       directive = createHumanDirective(state, body, {actor: guard.actor});
     } catch (error) {
-      return json(res, error.status || 500, {error: error.message});
+      // 带上错误自己挂的细节（认不出的类型要连合法清单一起给）：只回一个码，调用方只能猜。
+      // 与 state_view_unknown 那条同规。
+      return json(res, error.status || 500, {error: error.message,
+        ...(error.directiveType ? {directiveType: error.directiveType} : {}),
+        ...(error.supported ? {supported: error.supported} : {})});
     }
     const controlAction = {pause: "pause", resume: "resume", cancel: "cancel"}[directive.directiveType];
     const directiveTaskGroup = directive.taskGroupId ? state.taskGroups.find((item) => item.id === directive.taskGroupId) : null;

@@ -1393,6 +1393,22 @@ try {
     throw new Error(`cross-organization directive was not denied, got ${crossOrgDirective.response.status}`);
   }
 
+  // 认不出的指令类型必须被拒，不能降级成一条便条：pause/cancel 拼错一个字母，原先会记成
+  // free_text（HTTP 201、无任何提示），活照跑，而人以为自己已经把它停了。报文要连合法清单一起给，
+  // 否则调用方只能猜。
+  const badDirective = await jsonFetch(port, "/api/human-directives", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-directive-bad-type", authorization: systemAuth},
+    body: JSON.stringify({taskGroupId: "tg_runtime_management", directiveType: "pause_execution", instruction: "停一下"})
+  });
+  if (badDirective.response.status !== 400 || badDirective.payload.error !== "human_directive_type_unknown") {
+    throw new Error(`认不出的指令类型必须拒绝（得到 ${badDirective.response.status}/${badDirective.payload.error}）—— `
+      + "降级成 free_text 意味着 pause 拼错就变成一条便条，活照跑而人以为停住了");
+  }
+  if (!(badDirective.payload.supported || []).includes("pause")) {
+    throw new Error("拒绝报文里没有给出合法的指令类型清单 —— 调用方只能猜自己该写什么");
+  }
+
   const directive = await jsonFetch(port, "/api/human-directives", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-directive", authorization: systemAuth},

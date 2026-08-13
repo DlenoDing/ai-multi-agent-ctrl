@@ -832,6 +832,15 @@ const MUTATIONS = [
     expect: "永远在等一个不存在的基底"
   },
   {
+    // 认不出的指令类型降级成便条 = pause 拼错就变成一条 free_text，活照跑。
+    name: "认不出的人工指令类型必须拒绝",
+    file: CORE,
+    skip: "判别力由控制面 e2e 覆盖（真实 HTTP 路径上打这条路由）",
+    from: '    throw Object.assign(new Error("human_directive_type_unknown"),',
+    to: "    if (false) throw Object.assign(new Error(\"human_directive_type_unknown\"),",
+    expect: "human_directive_type_unknown"
+  },
+  {
     // 命令接口不许猜：退回 `=== true`，字段缺省就变成相反的决定，而理由照记。
     // 这条守卫由控制面 e2e 覆盖（真实 HTTP 路径），此处只核对锚点仍在。
     name: "方案定稿要求必须显式给出",
