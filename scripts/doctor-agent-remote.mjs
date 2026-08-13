@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
+import { assertNoUndefinedInPayload } from "./lib/no-undefined-payload.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const sandbox = mkdtempSync(join(tmpdir(), "aimac-agent-doctor-"));
@@ -973,6 +974,7 @@ async function json(path, options = {}) {
 }
 
 async function jsonRaw(path, options = {}) {
+  assertNoUndefinedInPayload(`${options.method || "GET"} ${path}`, options.body, options.allowUndefinedInPayload);
   const response = await fetch(`${baseUrl}${path}`, {
     method: options.method || (options.body ? "POST" : "GET"),
     headers: {accept: "application/json", ...(options.body ? {"content-type": "application/json"} : {}), ...(options.token ? {authorization: `Bearer ${options.token}`} : {}), ...(options.idempotencyKey ? {"idempotency-key": options.idempotencyKey} : {})},

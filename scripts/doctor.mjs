@@ -8,6 +8,7 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
+import { assertNoUndefinedInPayload } from "./lib/no-undefined-payload.mjs";
 
 async function getFreePort() {
   const server = createServer();
@@ -33,6 +34,7 @@ async function waitForHealth(port, timeoutMs = 8000) {
 }
 
 async function jsonFetch(port, path, options = {}) {
+  assertNoUndefinedInPayload(`${options.method || "GET"} ${path}`, options.body, options.allowUndefinedInPayload);
   const response = await fetch(`http://127.0.0.1:${port}${path}`, {
     ...options,
     headers: {"content-type": "application/json", ...(options.headers || {})}

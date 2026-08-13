@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { assertNoUndefinedInPayload } from "./lib/no-undefined-payload.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const port = await freePort();
@@ -395,6 +396,7 @@ async function mcp(method, params) {
 }
 
 async function mcpAs(bearer, method, params) {
+  assertNoUndefinedInPayload(`MCP ${method}${params?.name ? ` ${params.name}` : ""}`, params);
   const response = await fetch(`${baseUrl}/mcp`, {
     method: "POST",
     headers: {"content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${bearer}`},
@@ -406,6 +408,7 @@ async function mcpAs(bearer, method, params) {
 }
 
 async function api(path, options = {}) {
+  assertNoUndefinedInPayload(`API ${path}`, options.body, options.allowUndefinedInPayload);
   const response = await fetch(`${baseUrl}${path}`, {
     method: options.method || "GET",
     headers: {"content-type": "application/json", accept: "application/json", ...(options.idempotencyKey ? {"idempotency-key": options.idempotencyKey} : {}), ...(options.token ? {authorization: `Bearer ${options.token}`} : {})},

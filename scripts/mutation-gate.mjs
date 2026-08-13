@@ -986,6 +986,15 @@ const MUTATIONS = [
     expect: "这个目标可以改仓库里的任何东西"
   },
   {
+    // 这道网平时【无事可抓】，没有任何产品代码的变异能证明它 —— 只能靠它自己的加载期自检。
+    name: "报文里的 undefined 网不得是空的",
+    file: "scripts/lib/no-undefined-payload.mjs",
+    skip: "判别力由三个 e2e 的加载期自检覆盖（已用 mutate-probe 实证：判据改坏后当场报'这道网是空的'）",
+    from: "if (/undefined/u.test(text)) {",
+    to: "if (false) {",
+    expect: "这道网是空的"
+  },
+  {
     // 派发绑定的授权：工具在白名单里，但入参指向别的任务组。守卫失效时节点真的把消息发进了隔壁房间。
     name: "受限节点不得对别的任务组说话",
     file: MCP,
