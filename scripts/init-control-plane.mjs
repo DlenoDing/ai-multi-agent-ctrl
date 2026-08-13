@@ -14,6 +14,16 @@ const configPath = join(runtimeDir, "runtime-config.json");
 const seedPath = join(root, "data", "seed-state.json");
 const repositoryRoot = resolve(process.env.AIMAC_REPOSITORY_ROOT || root);
 const executionProfile = process.env.AIMAC_EXECUTION_PROFILE || "production";
+// 参数名打错不能当成没给：--check 打错就跳过只读分支【真的去初始化】——
+// 人想做一次探查，结果写了运行时状态和配置。认不出的一律拒绝，不猜。
+const KNOWN_FLAGS = ["--force", "--check"];
+const unknownFlags = process.argv.slice(2).filter((arg) => !KNOWN_FLAGS.includes(arg));
+if (unknownFlags.length) {
+  console.error(`init-control-plane: 认不出这些参数：${unknownFlags.join(" ")}`);
+  console.error(`  · 认得的参数：${KNOWN_FLAGS.join(" ")}`);
+  console.error("  · --check 打错会被当成没给，于是【真的执行初始化】而不是只读探查 —— 所以这里拒绝");
+  process.exit(2);
+}
 const force = process.argv.includes("--force");
 const checkOnly = process.argv.includes("--check");
 

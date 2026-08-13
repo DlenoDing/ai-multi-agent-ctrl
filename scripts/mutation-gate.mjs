@@ -967,9 +967,18 @@ const MUTATIONS = [
     expect: "只列了 3 处却不说这是前 3 处"
   },
   {
+    // 运维入口是逐个枚举的，任何一个不拦认不出的参数都要被点名（不能只有 agentctl 有）。
+    name: "每个运维入口都要拦认不出的参数",
+    check: "verifyOperatorCliRejectsUnknownFlags",
+    file: "scripts/init-control-plane.mjs",
+    from: "if (unknownFlags.length) {",
+    to: "if (false) {",
+    expect: "不拦截认不出的参数"
+  },
+  {
     // 白名单里留着代码已经不读的名字 → 那个参数被收下然后忽略，正是这套白名单要防的洞。
     name: "agentctl 登记的参数必须真的被读",
-    check: "verifyAgentctlRejectsUnknownFlags",
+    check: "verifyAgentctlFlagNamesMatchWhatItReads",
     file: "scripts/agentctl.mjs",
     from: '"max-uses", "idempotency-key", "verified"',
     to: '"max-uses", "idempotency-key", "verifed"',
@@ -978,7 +987,7 @@ const MUTATIONS = [
   {
     // 名单再齐，"拒绝"这个动作没接上也一样白搭。
     name: "agentctl 认不出的参数必须真的被拒",
-    check: "verifyAgentctlRejectsUnknownFlags",
+    check: "verifyAgentctlFlagNamesMatchWhatItReads",
     file: "scripts/agentctl.mjs",
     from: "  fail(`认不出这些参数：${unknownFlags.map((key) => `--${key}`).join(\" \")}`,",
     to: "  console.error(`认不出这些参数：${unknownFlags.map((key) => `--${key}`).join(\" \")}`, [",

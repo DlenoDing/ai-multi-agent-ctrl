@@ -299,7 +299,8 @@ run(verifySuspendHaltsRunningWork);
 run(verifyCancelDirectiveStopsRunningWork);
 run(verifyPauseDirectiveIsReversible);
 run(verifyTableFootersAdmitTruncation);
-run(verifyAgentctlRejectsUnknownFlags);
+run(verifyOperatorCliRejectsUnknownFlags);
+run(verifyAgentctlFlagNamesMatchWhatItReads);
 run(verifyEveryAssertionIsActuallyRegistered);
 run(verifyCrossOrgGrantIsRefusedOnBothDoors);
 run(verifyUnknownEnumValuesAreRefusedNotCoerced);
@@ -4925,7 +4926,56 @@ function verifyTableFootersAdmitTruncation(output) {
 //   · 白名单里留着代码不再读的名字 → 这个参数被接受、被忽略，人以为自己给了；
 //   · 代码读了白名单没登记的名字 → 那个参数永远被拒，功能等于不存在。
 // 两边都要点名。这道判据是纯文本的，零成本；行为那半在 agent:doctor 里真跑 CLI。
-function verifyAgentctlRejectsUnknownFlags(output) {
+function verifyOperatorCliRejectsUnknownFlags(output) {
+  // 这一类必须按【入口】枚举，不能按文件挑：参数名打错的洞在每个接受"名字-取值"的入口上
+  // 各长一遍，而按取值扫描的判据（body.X === true 那一类）完全看不见它。
+  const OPERATOR_CLIS = {
+    "scripts/agentctl.mjs": "运维接机器时敲的命令行",
+    "scripts/init-control-plane.mjs": "npm run init（--check 打错会真的去初始化）",
+    "scripts/sync-agent-skills.mjs": "npm run skills:sync（--source 打错会同步默认源）",
+    "scripts/register-mcp-client.mjs": "生成 MCP 客户端配置（--apply 打错会静默空跑）"
+  };
+  // 读 argv 但不属于运维入口的，登记原因，否则下面的完整性扫描会把它们点名。
+  const NOT_OPERATOR_CLIS = {
+    "scripts/mutation-gate.mjs": "验证代码（--anchors-only 只给门链自己用）",
+    "scripts/mutate-probe.mjs": "验证代码（判别力探针）",
+    "scripts/run-with-env.mjs": "透传壳，自己不解析参数",
+    "scripts/concurrent-writer-gate.mjs": "门；argv[2] 是工作目录，不是具名参数",
+    "scripts/crash-consistency-gate.mjs": "门；同上",
+    "scripts/system-invariants-gate.mjs": "门；同上",
+    "scripts/barrier-liveness-gate.mjs": "门；argv[1] 只用于入口判断",
+    "scripts/human-only-parity-gate.mjs": "门；同上"
+  };
+  for (const [path, why] of Object.entries(OPERATOR_CLIS)) {
+    const cli = readFileSync(resolve(root, path), "utf8");
+    // 两种可接受的形状：算出 unknownFlags 再拒，或逐个匹配、落到 else 就抛。
+    const rejects = /if \(unknownFlags\.length\)/u.test(cli) || /else throw new Error\(`unknown argument/u.test(cli);
+    if (!rejects) {
+      output.push(`${path}（${why}）不拦截认不出的参数 —— 打错的参数名会被当成没给，命令照跑`);
+    }
+  }
+  // 排除本文件：它出现"process.argv"只是因为上面那句报错文案里写了这个词，
+  // 门会把自己写的字当成数据吃进去（本仓第四次撞这个形状）。其余验证脚本走 NOT_OPERATOR_CLIS 登记。
+  const argvUsers = readdirSync(resolve(root, "scripts")).filter((name) => name.endsWith(".mjs"))
+    .map((name) => `scripts/${name}`)
+    .filter((path) => path !== "scripts/contract-check.mjs")
+    .filter((path) => /process\.argv/u.test(readFileSync(resolve(root, path), "utf8")));
+  if (argvUsers.length < 8) {
+    output.push(`运维入口核对：只扫到 ${argvUsers.length} 个读 argv 的脚本 —— 提取与目录脱节，本条在空转`);
+    return;
+  }
+  const unclassified = argvUsers.filter((path) => !OPERATOR_CLIS[path] && !NOT_OPERATOR_CLIS[path]);
+  if (unclassified.length) {
+    output.push(`这些脚本读 process.argv 却两张表都没登记：${unclassified.join("、")}`
+      + " —— 是运维入口就要拦认不出的参数，不是就写明原因，别让它悄悄躲开这道判据");
+  }
+  const gone = [...Object.keys(OPERATOR_CLIS), ...Object.keys(NOT_OPERATOR_CLIS)].filter((path) => !argvUsers.includes(path));
+  if (gone.length) {
+    output.push(`登记表里这些脚本已经不读 argv 了：${gone.join("、")} —— 过时的登记会掩护掉下一个漏网的入口`);
+  }
+}
+
+function verifyAgentctlFlagNamesMatchWhatItReads(output) {
   const source = readFileSync(resolve(root, "scripts/agentctl.mjs"), "utf8");
   const read = new Set([...source.matchAll(/args(?:\.([A-Za-z][A-Za-z0-9]*)|\["([a-z][a-z0-9-]*)"\])/gu)]
     .map((match) => match[1] || match[2]).filter((key) => key !== "_"));
