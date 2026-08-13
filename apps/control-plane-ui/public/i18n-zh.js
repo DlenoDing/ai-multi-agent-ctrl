@@ -812,6 +812,12 @@
     wip_capacity_reached: "在制品已达上限",
 
     org_quota_exceeded: "组织配额已超限",
+    // 请求体读取阶段的四个码：它们在任何路由之前就产生，此前一个中文都没有 ——
+    // 粘一大段规则超了 2MB、上传中途网络抖一下，界面上就是一串英文码。
+    request_body_too_large: "提交的内容超过 2MB 上限，请分批提交或精简内容",
+    request_body_invalid_json: "提交的内容不是合法 JSON（多半是集成方拼错了报文）",
+    request_aborted: "请求在传输中被中断（网络断了或页面被关掉），没有任何改动生效",
+    request_stream_error: "读取提交内容时连接出错，没有任何改动生效",
     organization_not_found: "未找到组织",
     organization_suspended: "组织已停用",
     organization_required: "缺少组织信息",

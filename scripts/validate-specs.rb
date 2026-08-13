@@ -2531,9 +2531,45 @@ puts "状态集合常量：核对了 #{status_constants.length} 个，对着 #{d
      "（#{STATUS_CONSTANTS_WITHOUT_STATE_MACHINE.size} 个已登记为自成真相源）"
 fail_with(errors)
 
+# 错误码里取值来自变量的那 18 处，2026-08-13 逐族追完。追的时候翻出真缺陷：
+# 请求体读取阶段那四个码（在任何路由之前就产生）一个中文都没有 —— 粘一大段规则超了 2MB、
+# 上传中途网络断一下，界面上就是一串英文码。这正是"盲数字"盖住的东西。
+# 登记按【族】而不是按行：同一个 helper 的返回值散落在多处调用点，逐行登记只会写十几遍同一句。
+TRACED_OPAQUE_ERROR_FAMILIES = [
+  {"name" => "请求体读取失败", "evidence" => 'fail("request_body_too_large", 413)',
+   "codes" => ["request_body_too_large", "request_body_invalid_json", "request_aborted", "request_stream_error"]},
+  {"name" => "规则片段校验", "evidence" => "function ruleFragmentsRejection",
+   "codes" => ["too_many_rules", "rule_fragments_must_be_an_array", "rule_id_too_long",
+               "rule_title_too_long", "rule_content_too_long"]},
+  {"name" => "授权请求净化", "evidence" => "function sanitizeGrantRequest",
+   "codes" => ["unsafe_grant_permissions", "grant_permission_not_delegable",
+               "grant_subject_account_not_found", "cross_org_grant_not_allowed"]},
+  {"name" => "配额检查", "evidence" => "organizationQuotaCheck", "codes" => ["org_quota_exceeded"]},
+  # error.message / result.error 这两族是【转发】：真实取值是别处 throw/return 的字面量，
+  # 本门作为字面量已经逐个查过。转发点本身没有自己的取值，不必登记码。
+  {"name" => "错误对象转发（error.message 一族）", "evidence" => "error.message", "codes" => []},
+  {"name" => "核心函数返回值转发（result.error 一族）", "evidence" => "result.error", "codes" => []},
+  # JSON-RPC 协议码，不经 t()，也不给人看。
+  {"name" => "JSON-RPC 协议码", "evidence" => "{code: -32600", "codes" => []}
+].freeze
+
+traced_error_problems = []
+TRACED_OPAQUE_ERROR_FAMILIES.each do |family|
+  unless server_source.include?(family["evidence"]) || mcp_source.include?(family["evidence"])
+    traced_error_problems << "错误码追查登记已过时：找不到「#{family['name']}」的依据 #{family['evidence']} —— 重新追一遍"
+  end
+  family["codes"].each do |code|
+    next if i18n_key.call(code)
+    traced_error_problems << "「#{family['name']}」追到的错误码 #{code} 没有中文 —— 它会原样显示给人"
+  end
+end
+fail_with(traced_error_problems)
+
 puts "错误码本地化：只有表达式提取才看得见的有 #{expression_only_error_codes.length} 个" \
      "#{expression_only_error_codes.empty? ? '' : '（' + expression_only_error_codes.sort.join('、') + '）'}；" \
-     "另有 #{expression_error_opaque.length} 处取值来自变量，未被检验"
+     "另有 #{expression_error_opaque.length} 处取值来自变量，本门跟不到，已按 " \
+     "#{TRACED_OPAQUE_ERROR_FAMILIES.length} 族人工追查并登记" \
+     "（#{TRACED_OPAQUE_ERROR_FAMILIES.sum { |f| f['codes'].length }} 个真实取值全部有中文，登记与源码一致性每次校验）"
 puts "推进路径对账：核对了 #{advance_sites.size} 处 runAutonomousCycle 调用，都先做了对账"
 puts "权限码本地化：核对了 #{all_permissions.size} 个权限码，全部有中文"
 puts "审计动作本地化：核对了 #{audit_actions.length} 个动作名（其中 #{composed_audit_actions.uniq.length} 个是按闭集拼出来的，不是字面量），全部有中文" \

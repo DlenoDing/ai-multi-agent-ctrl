@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 请求体读取阶段的四个码在任何路由之前就产生，原先一个中文都没有。
+    name: "请求体读取失败的码要有中文",
+    file: "apps/control-plane-ui/public/i18n-zh.js",
+    gate: "specs",
+    from: '    request_body_too_large: "提交的内容超过 2MB 上限，请分批提交或精简内容",',
+    to: "",
+    expect: "没有中文"
+  },
+  {
     // 追查依据从源码里消失 = 登记过时，门必须当场说出来，而不是继续照着旧结论放行。
     name: "变量来源的原因码登记要跟着源码走",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
