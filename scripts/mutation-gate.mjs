@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 词表里多一个产品代码里不存在的名字 = 每个工具的 inputSchema 都摆着一个假旋钮。
+    name: "MCP 入参词表不得有幽灵",
+    check: "verifyMcpInputDictionaryHasNoGhosts",
+    file: "apps/mcp-server/server.mjs",
+    from: "    dryRun: boolean,",
+    to: "    dryRun: boolean,\n    phantomKnob: string,",
+    expect: "根本不存在"
+  },
+  {
     // 有人接上生产者却没改登记 = 读代码的人继续以为这道闸不生效（反过来也一样害人）。
     name: "惰性机制被接上时登记要过期",
     check: "verifyInertMechanismsStayRegistered",

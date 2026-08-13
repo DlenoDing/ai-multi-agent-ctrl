@@ -302,6 +302,7 @@ run(verifyTableFootersAdmitTruncation);
 run(verifyOperatorCliRejectsUnknownFlags);
 run(verifyMcpDoesNotReimplementCore);
 run(verifyInertMechanismsStayRegistered);
+run(verifyMcpInputDictionaryHasNoGhosts);
 run(verifyAgentctlFlagNamesMatchWhatItReads);
 run(verifyEveryAssertionIsActuallyRegistered);
 run(verifyCrossOrgGrantIsRefusedOnBothDoors);
@@ -4941,6 +4942,36 @@ function verifyTableFootersAdmitTruncation(output) {
 // 读代码的人会以为它在跑。本仓已有两种登记（不可达导出、建模先于实现），但都盖不住这一类：
 // 函数被调用了、只是喂给它的数据没有任何生产者。
 // 登记必须【会过期】：哪天有人接上生产者，这里当场报红，提醒换成真正的行为断言。
+// 【MCP 入参词表里不许有幽灵】。所有工具共用一份属性词表，于是每个工具的 inputSchema 都会
+// 把它整份摆给调用方看。词表里多一个产品代码里根本不存在的名字，agent 就会以为那是个能用的
+// 旋钮，传过来被静默忽略（tools/list 的体积也跟着涨，那份报文一次就要几万 token）。
+//
+// 判据故意做得【窄】：只问"这个名字在产品代码里出现过没有"，不问"它是不是被当作入参消费"。
+// 试过后者，误报两轮：接收参数的对象名字五花八门（args / effectiveArgs / input / request /
+// decision / options…），按名字枚举必漏 —— 第一版把 dryRun 和 selectedOptionId 报成幽灵，
+// 而前者读作 effectiveArgs.dryRun、后者读作 decision.selectedOptionId，都是正在工作的参数。
+// 假红会消耗对门的信任，宁可只钉住"名字压根不存在"这一种，它零误报，也正是这次抓到的那两个。
+function verifyMcpInputDictionaryHasNoGhosts(output) {
+  const mcp = readFileSync(resolve(root, "apps/mcp-server/server.mjs"), "utf8");
+  const downstream = ["apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/server.mjs",
+    "apps/control-plane-ui/public/app.js"]
+    .map((path) => readFileSync(resolve(root, path), "utf8")).join("\n");
+  const start = mcp.indexOf("function commonInputProperties()");
+  const block = start < 0 ? "" : mcp.slice(start, mcp.indexOf("\n}", start));
+  const declared = [...block.matchAll(/^\s{4}([a-zA-Z][a-zA-Z0-9]*):/gmu)].map((match) => match[1]);
+  if (declared.length < 100) {
+    output.push(`MCP 入参词表核对：只提取到 ${declared.length} 个属性 —— 提取与代码脱节，本条在空转`);
+    return;
+  }
+  const elsewhere = `${mcp.slice(0, start)}${mcp.slice(start + block.length)}\n${downstream}`;
+  const ghosts = declared.filter((name) => !new RegExp(`\\b${name}\\b`, "u").test(elsewhere));
+  if (ghosts.length) {
+    output.push(`MCP 入参词表里这些名字在产品代码里根本不存在：${ghosts.join("、")} —— `
+      + "它们出现在每个工具的 inputSchema 里，调用方会以为是能用的旋钮，传了却被静默忽略");
+  }
+}
+
 function verifyInertMechanismsStayRegistered(output) {
   const core = readFileSync(resolve(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
   const server = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
