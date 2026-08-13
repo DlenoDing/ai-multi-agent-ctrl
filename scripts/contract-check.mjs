@@ -6886,7 +6886,8 @@ function verifyApprovedAcceptanceChecksHaveEvidence(output) {
 }
 
 function verifyHumanApprovedPathsBindTheCommit(output) {
-  const runCase = ({stray, finalized, trespass, writeForbidden, forgeCommit, forgePush, forgeTree, forgeContractDigest}) => {
+  const runCase = ({stray, finalized, trespass, writeForbidden, forgeCommit, forgePush, forgeTree,
+    forgeContractDigest, forgeManifestBinding, forgeManifestDigest}) => {
     const repo = mkdtempSync(join(tmpdir(), "cc-owned-"));
     const remote = mkdtempSync(join(tmpdir(), "cc-owned-remote-"));
     const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
@@ -6946,7 +6947,30 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       mkdirSync(join(repo, "infra"), {recursive: true});
       writeFileSync(join(repo, "infra/deploy.yaml"), "# 踩禁区\n");
     }
-    writeFileSync(join(repo, "docs/manifest.json"), JSON.stringify({outputs: ["docs/readme.md"]}));
+    // 清单声称的产出必须在这次提交里真的改过（服务端会去 git 里核对），
+    // 所以先把它写出来 —— 原先的占位清单根本走不到这一步，这个前提也就一直没人注意到。
+    mkdirSync(join(repo, "docs"), {recursive: true});
+    writeFileSync(join(repo, "docs/readme.md"), `# 本轮产出\n${Date.now()}\n`);
+    // 这份清单原先是个占位（{outputs:[…]}），缺了全部绑定字段 —— 于是【每一个】用例
+    // 都在 artifact_manifest_binding_mismatch 上就被拒了，下面那条"合规提交不该被误伤"
+    // 的正面对照从来没走到过被测的那道守卫（实测：accepted=false，错误码正是它）。
+    // 正面对照空转比反面用例缺失更难发现：它一直是绿的。
+    // 现在写一份真实清单，并给 forge* 留出谎报的位置。
+    writeFileSync(join(repo, "docs/manifest.json"), JSON.stringify({
+      schemaVersion: "artifact-manifest/v1",
+      projectId: forgeManifestBinding ? "prj_not_this_one" : taskGroup.projectId,
+      taskGroupId: taskGroup.id,
+      workId: workItem.id,
+      sessionId: session.sessionId,
+      taskContractDigest: forgeManifestDigest ? "sha256:not-the-contract-you-were-given"
+        : (state.agentTaskContracts || []).find((item) => item.sessionId === session.sessionId)?.contractDigest,
+      // 绑定还包含"这份清单指向哪个仓库产出目标" —— 漏了它同样报 binding_mismatch
+      // （第一版就漏了，报文一模一样，只能靠读那行完整条件才看出来是哪个字段）。
+      repositoryOutputTargetRefs: [target.targetId],
+      outputRefs: ["docs/readme.md"],
+      outputPolicy: "project_git_repository_only",
+      createdAt: new Date().toISOString()
+    }));
     git("add", "-A");
     git("commit", "-q", "-m", "改动");
     const commit = git("rev-parse", "HEAD");
@@ -7041,6 +7065,27 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
   const compliant = runCase({stray: false, finalized: true});
   if (!compliant.skipped && compliant.result.error === "changed_paths_outside_human_approved_plan") {
     output.push("只改了人批准范围内的路径，却仍被判越界 —— 这条守卫会误伤合规提交");
+  }
+  // 正面对照必须断言【真的被受理】。原先只断言"没有出现某个特定错误码"，
+  // 而它其实一直卡在 artifact_manifest_binding_mismatch 上 —— 那条对照从没走到被测守卫，
+  // 一直绿着。这一句同时兜住了下面所有伪造用例的前提：它们证明的是"谎报会被拒"，
+  // 而只有在"如实上报会被受理"成立时，那个证明才有意义。
+  if (!compliant.skipped && compliant.result.accepted !== true) {
+    output.push(`一份如实上报、且只改了批准范围内路径的检查点没有被受理（${compliant.result.error}）——`
+      + " 下面所有'谎报会被拒'的用例都建立在这条之上，它不成立时那些用例证明不了任何东西");
+  }
+
+  // 清单的绑定字段谎报：把一份真实提交的产出清单挂到别的项目/任务上。
+  const forgedBinding = runCase({stray: false, finalized: true, forgeManifestBinding: true});
+  if (!forgedBinding.skipped && forgedBinding.result.error !== "artifact_manifest_binding_mismatch") {
+    output.push(`产出清单谎报它属于哪个项目，检查点却没被拦下（实际：${forgedBinding.result.error || "已受理"}）`);
+  }
+  // 清单里的契约摘要谎报：与检查点自身那条同源，但这一份是【落在 git 里的证据文件】，
+  // 人事后翻仓库看到的就是它 —— 两处都要钉住。
+  const forgedManifestDigest = runCase({stray: false, finalized: true, forgeManifestDigest: true});
+  if (!forgedManifestDigest.skipped
+    && forgedManifestDigest.result.error !== "artifact_manifest_contract_digest_mismatch") {
+    output.push(`产出清单谎报任务契约摘要，检查点却没被拦下（实际：${forgedManifestDigest.result.error || "已受理"}）`);
   }
   // 对照二：没有人定稿的方案时，这条判据不该生效（人没有在这一维上做过约束）。
   // 卡片是人做决定时唯一看到的东西。禁区现在是服务端强制的边界之一，卡上却曾经不写 ——

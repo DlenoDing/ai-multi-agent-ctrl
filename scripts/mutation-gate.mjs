@@ -1049,6 +1049,25 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 产出清单谎报它属于哪个项目 = 把一份真实提交的证据挂到别的项目名下。
+    name: "产出清单的绑定字段要核对",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    file: CORE,
+    from: '      return {valid: false, status: 409, error: "artifact_manifest_binding_mismatch"};',
+    to: "      void 0;",
+    expect: "谎报它属于哪个项目"
+  },
+  {
+    // 正面对照：如实上报必须被受理。它空转过很久（清单缺绑定字段，每个用例都在同一处被拒），
+    // 而正面对照空转比反面用例缺失更难发现 —— 它一直是绿的。
+    name: "如实上报的检查点必须被受理",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    file: CORE,
+    from: '      return {valid: false, status: 409, error: "artifact_manifest_contract_digest_mismatch"};\n    }',
+    to: '      return {valid: false, status: 409, error: "artifact_manifest_contract_digest_mismatch"};\n    }\n    if (true) return {valid: false, status: 409, error: "forced_reject_probe"};',
+    expect: "没有被受理"
+  },
+  {
     // 谎报任务契约摘要 = 把一份真实的提交挂到它没做过的那件事上，而检查点是关闭门认账的证据。
     name: "检查点必须钉在它声称的那份契约上",
     check: "verifyHumanApprovedPathsBindTheCommit",
