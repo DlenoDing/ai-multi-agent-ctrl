@@ -1121,6 +1121,25 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // 谎报归属：产出目标登记在别的工作项名下。守卫失效时是"已受理"。
+    name: "产出目标必须属于这个工作项",
+    file: CORE,
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: 'const targetScopeMismatch = target.projectId !== taskGroup.projectId ? "projectId"\n    : target.taskGroupId !== taskGroup.id ? "taskGroupId"\n    : target.workItemId !== workItem.id ? "workItemId" : null;',
+    to: "const targetScopeMismatch = null;",
+    expect: "这次提交被算进了另一个工作项的产出"
+  },
+  {
+    // 夹带一个不属于本会话的产出目标，先响的是角色漂移门（按 actionScopeRefs 判权）。
+    // 它塌了会落到后面那道"目标引用必须恰好一个"，所以这条变异也顺带证明了第二道门还在。
+    name: "夹带别的产出目标要被角色漂移门拦下",
+    file: CORE,
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: '  if (!drift.allowed) {\n    return {accepted: false, status: 409, error: "role_drift_guard_not_clear"};\n  }',
+    to: '  if (false) { throw new Error("unreachable"); }',
+    expect: "一个会话可以顺手把别的目标也写进自己的证据里"
+  },
+  {
     // 这份证据到底属于哪件事：挂上别的工作项的会话，成果就算到了它没做过的那件事上。
     name: "检查点的会话必须属于这个工作项",
     file: CORE,

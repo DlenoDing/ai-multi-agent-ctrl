@@ -5219,7 +5219,7 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 棘轮只往一个方向走：数字变大＝新增的守卫没配判据；变小＝该把这里下调，把成果钉住。
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 93;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 91;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -7139,7 +7139,8 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     forgeContractDigest, forgeManifestBinding, forgeManifestDigest, forgeLeaseHolder,
     forgeCommitBranch, omitCommitEvidence, pushBehind, narrowAllowlist,
     manifestFromLastRound, outputFromLastRound, manifestNotJson,
-    foreignSession, omitLanguageDigest, forgeLanguageDigest, targetAlreadyPushed}) => {
+    foreignSession, omitLanguageDigest, forgeLanguageDigest, targetAlreadyPushed,
+    targetFromAnotherWorkItem, twoTargetRefs}) => {
     // 这段建置对每个用例完全相同，而它是本项检查里最贵的一块：实测 324ms/次 × 19 个用例 ≈ 6.2 秒
     // （对比：一次完整编排只要 61ms，克隆状态 1ms）。改成"建一次模板、之后按目录拷贝"。
     const {repo, remote, baseRef, caseRoot} = checkoutFromTemplate();
@@ -7162,6 +7163,8 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       // 仓库层放开，才看得出"人批的方案"这一层有没有生效；narrowAllowlist 反过来，专验仓库层这一道。
       // targetAlreadyPushed：这个产出目标上一轮已经推送定案了。再交一份检查点等于覆盖既成事实。
       status: targetAlreadyPushed ? "pushed" : "pending",
+      // targetFromAnotherWorkItem：这个产出目标登记在【别的工作项】名下。
+      ...(targetFromAnotherWorkItem ? {workItemId: `${workItem.id}__another`} : {}),
       pathAllowlist: narrowAllowlist ? ["docs/**"] : ["**"]});
     // foreignSession 要造一个【真实存在、但绑在别的工作项上】的会话：
     // 用一个根本不存在的 sessionId 的话，`!session` 那半先命中，验到的是"查无此会话"，
@@ -7277,7 +7280,8 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
         remoteSha: forgePush ? "0123456789abcdef0123456789abcdef01234567" : remoteSha,
         providerOperationId: `git-push:cc:${remoteSha}`, verifiedAt: new Date().toISOString(),
         rewriteRelation: "same_commit"}],
-      repositoryOutputTargetRefs: [target.targetId],
+      // twoTargetRefs：一次交上来两个产出目标。会话只对一个目标持有租约，多报一个就是趁机夹带。
+      repositoryOutputTargetRefs: twoTargetRefs ? [target.targetId, "tgt_smuggled_in"] : [target.targetId],
       // manifestFromLastRound：指向一份上一轮就在仓库里、这次没再动过的清单。
       artifactManifestRefs: [manifestFromLastRound ? "docs/carryover.json" : "docs/manifest.json"],
       changedPathEvidenceRefs: [`git-diff:${baseRef}:${commit}`, "git-path:docs/manifest.json"]
@@ -7364,6 +7368,23 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       "换一份语言约定就能让不合约定的产出过关"],
     ["目标已推送定案后再交一份", {targetAlreadyPushed: true}, "repository_output_target_already_pushed",
       "既成事实可以被后来的检查点覆盖"]
+  ]) {
+    const probe = runCase(opts);
+    if (probe.skipped) { output.push(`${label} 断言无从验证：${probe.skipped}`); continue; }
+    if (probe.result.accepted !== false || probe.result.error !== expected) {
+      output.push(`${label}，检查点却没被拦下（实际：${probe.result.error || "已受理"}）—— ${why}`);
+    }
+  }
+
+  // ⑪⑫ 谎报【归属】的两种形状。第二条的落点值得写清楚：夹带一个不属于本会话的产出目标时，
+  // 先响的是【角色漂移门】（它按 actionScopeRefs 判这个会话有没有权碰这些资源），
+  // 而不是后面那道"目标引用必须恰好一个"。两道都在，这里如实断言先响的那一道 ——
+  // 写成后一道的话，哪天漂移门塌了，这条断言反而会因为"落到了预期的码"而变绿。
+  for (const [label, opts, expected, why] of [
+    ["产出目标登记在别的工作项名下", {targetFromAnotherWorkItem: true}, "repository_output_target_scope_mismatch",
+      "这次提交被算进了另一个工作项的产出"],
+    ["夹带一个不属于本会话的产出目标", {twoTargetRefs: true}, "role_drift_guard_not_clear",
+      "一个会话可以顺手把别的目标也写进自己的证据里"]
   ]) {
     const probe = runCase(opts);
     if (probe.skipped) { output.push(`${label} 断言无从验证：${probe.skipped}`); continue; }
