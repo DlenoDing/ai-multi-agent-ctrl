@@ -485,8 +485,16 @@ async function flushCheckpointOutbox(config) {
     } catch (error) {
       // A corrupt outbox item must not crash the durability loop; quarantine and keep replaying the rest.
       const corruptPath = `${path}.corrupt-${Date.now()}`;
-      try { renameSync(path, corruptPath); } catch {}
-      process.stderr.write(`checkpoint outbox item corrupt, quarantined: ${filename} -> ${corruptPath} (${error.message})\n`);
+      // 改名失败（目录只读、盘满、同名占用）时文件仍在原地：下一拍会再解析失败一次。此时若照旧
+      // 说"已隔离到 corruptPath"，人按那个路径去找只会扑空，而真正该看的原路径一个字都没提。
+      let quarantineFault = null;
+      try { renameSync(path, corruptPath); } catch (renameError) { quarantineFault = renameError?.message || String(renameError); }
+      const quarantineNote = quarantineFault
+        ? `隔离失败仍在原地 ${path}（${quarantineFault}），下一拍会再次读到`
+        : `已隔离到 ${corruptPath}`;
+      process.stderr.write(quarantineFault
+        ? `checkpoint outbox item corrupt and quarantine failed: ${filename} still at ${path} (${error.message}; rename: ${quarantineFault})\n`
+        : `checkpoint outbox item corrupt, quarantined: ${filename} -> ${corruptPath} (${error.message})\n`);
       // 这条 outbox 承载的是【提交已经推送成功】的检查点。只往本机 stderr 写一行，控制面就永远
       // 不知道那份证据没了：派发挂在 running 上直到认领过期，人在控制台看到的是"还在跑"，
       // 而实际上分支上已经有了没人复核过的提交。文件名就是 safeName(dispatchId).json，
@@ -496,7 +504,7 @@ async function flushCheckpointOutbox(config) {
         await jsonRequest(`${config.serverUrl}/api/agent/v1/dispatches/${encodeURIComponent(corruptDispatchId)}/fail`, {
           method: "POST",
           token: config.nodeToken,
-          body: {status: "blocked", reason: `checkpoint_outbox_item_corrupt: 检查点证据文件损坏已隔离到 ${corruptPath}；该派发的提交可能已经推送，需人工核对该分支`}
+          body: {status: "blocked", reason: `checkpoint_outbox_item_corrupt: 检查点证据文件损坏，${quarantineNote}；该派发的提交可能已经推送，需人工核对该分支`}
         }).then(
           () => process.stdout.write(`checkpoint outbox corruption reported: ${corruptDispatchId}\n`),
           // 上报失败不能拖垮持久化循环，但也不能悄悄咽下去：本机日志必须留下"报了但没报成"，

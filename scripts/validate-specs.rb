@@ -1081,7 +1081,11 @@ errors << "质量门翻转必须留痕并对人可见" unless core_source.includ
 errors << "质量门必须有真人豁免杠杆" unless server_source.include?("qualityGateWaiveMatch") && server_source.include?("quality_gate_waive_requires_justification")
 errors << "质量门豁免必须限定真人" unless server_source.match?(/HUMAN_ONLY_ACTIONS = \[[^\]]*quality_gate_waive/m)
 errors << "质量门完整性必须有行为断言" unless contract_check_source.include?("判失败与清失败是同一个 AI")
-errors << "publish 不得铸造未知共享定义" unless mcp_source.include?("if (!definition) return {ok: false, error: \"shared_definition_not_found\"}")
+# 这句原先在【整份文件】里找，而 sharedDefinitionConsumerBind 里也有一模一样的一行：把 publish 的
+# 守卫整个删掉，断言照样绿 —— 它已经不证明任何关于 publish 的事。按函数体切开再找。
+publish_body = mcp_source[/export function sharedDefinitionPublish\b.*?\n\}\n/m]
+errors << "找不到 sharedDefinitionPublish 的函数体，'publish 不得铸造未知共享定义'这一条没被检验" if publish_body.nil?
+errors << "publish 不得铸造未知共享定义" unless publish_body.to_s.include?("if (!definition) return {ok: false, error: \"shared_definition_not_found\"}")
 errors << "共享定义三项必须有防回归测试" unless contract_check_source.include?("人工闸门: publish 铸造并激活了一个未知契约")
 # 写入边界的第三个写入方（REST）必须同规，且越权访问必须被角色漂移门定性阻断。
 errors << "REST 写入边界必须同样保证一个工作项只有一份生效目标" unless server_source.include?("const existingActiveTarget = (state.repositoryOutputs || []).find") && server_source.include?("if (existingActiveTarget) {")

@@ -1,6 +1,6 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -417,6 +417,49 @@ try {
   }
   if (corruptRun.status !== 0) {
     throw new Error(`一条损坏的 outbox 条目让整个持久化循环退出失败（${corruptRun.status}）—— 它只应被隔离: ${corruptOutput.slice(-800)}`);
+  }
+
+  // 隔离本身也会失败（目录只读、盘满、同名占用）。那一刻文件仍在原地，下一拍还会再读到它，
+  // 而报文若照旧说"已隔离到 <corruptPath>"，人按那个路径去找只会扑空：真正该看的原路径没人提过。
+  const blockedOutboxDir = join(agentWorkDir, "outbox");
+  const blockedDispatchId = "d_corrupt_stuck";
+  const blockedItemPath = join(blockedOutboxDir, `${blockedDispatchId}.json`);
+  mkdirSync(blockedOutboxDir, {recursive: true});
+  writeFileSync(blockedItemPath, "{ 同样不是合法 JSON");
+  chmodSync(blockedOutboxDir, 0o555);
+  let quarantineReallyBlocked = true;
+  try {
+    // root 无视目录权限位：先自证这一拍里 rename 确实做不到，否则下面断的是一个没发生的故障。
+    const probeTarget = `${blockedItemPath}.rename-probe`;
+    renameSync(blockedItemPath, probeTarget);
+    renameSync(probeTarget, blockedItemPath);
+    quarantineReallyBlocked = false;
+  } catch {}
+  if (!quarantineReallyBlocked) {
+    chmodSync(blockedOutboxDir, 0o755);
+    rmSync(blockedItemPath, {force: true});
+    console.log("  --  跳过【隔离失败时的报文】：当前身份能无视只读目录改名（多半是 root），这一条本轮没被检验");
+  } else {
+    const stuckRun = spawnSync(process.execPath, [runtimePath, "run", "--work-dir", agentWorkDir, "--once"], {
+      env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false"},
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024
+    });
+    const stuckOutput = `${stuckRun.stdout || ""}${stuckRun.stderr || ""}`;
+    chmodSync(blockedOutboxDir, 0o755);
+    if (!existsSync(blockedItemPath)) {
+      throw new Error(`只读目录下这条损坏条目竟然被移走了，本条没验到真实故障: ${stuckOutput.slice(-600)}`);
+    }
+    if (!stuckOutput.includes(`still at ${blockedItemPath}`)) {
+      throw new Error(`隔离失败了，报文却没说文件还在哪 —— 人按 .corrupt-<时间戳> 去找只会扑空: ${stuckOutput.slice(-800)}`);
+    }
+    if (/quarantined: d_corrupt_stuck/u.test(stuckOutput)) {
+      throw new Error(`文件明明还在原地，报文却宣称已隔离: ${stuckOutput.slice(-800)}`);
+    }
+    if (stuckRun.status !== 0) {
+      throw new Error(`隔离失败让整个持久化循环退出失败（${stuckRun.status}）—— 它只应如实上报: ${stuckOutput.slice(-800)}`);
+    }
+    rmSync(blockedItemPath, {force: true});
   }
 
   // claim 代次此前只被【客户端自查】和【执行器凭据】读取，检查点这个真正的写入点从不比较它。

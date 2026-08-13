@@ -293,13 +293,15 @@ const MUTATIONS = [
     expect: "调用方可直接把共享定义声明为生效/冲突"
   },
   {
+    // 原先这条是空转的：to 只在行尾追加一句注释（什么也没改坏），skip 说"由 validate-specs 的源码
+    // 断言覆盖"、而那句断言在整份文件里找一行 consumerBind 也有的字符串，锚点还因此撞成了两处。
+    // 契约门里本来就有真行为断言（传未知 contractId，要求 ok===false），直接接上它。
     name: "publish 不得铸造未知契约",
     file: MCP,
-    from: 'if (!definition) return {ok: false, error: "shared_definition_not_found"};',
-    to: "if (!definition) return {ok: false, error: \"shared_definition_not_found\"}; // eslint-disable-line",
-    to_alt: true,
-    expect: "publish 铸造并激活了一个未知契约",
-    skip: "publish 的 mutation 需要重建 || 分支，改动过大，由 validate-specs 的源码断言覆盖"
+    check: "verifyHumanAndOrganizationContracts",
+    from: 'if (!definition) return {ok: false, error: "shared_definition_not_found"};\n  // 生效的共享定义会被分发进每个 agent 的任务契约和指令包',
+    to: 'if (!definition) return {sharedDefinition: {contractId: args.contractId, status: "active"}};\n  // 生效的共享定义会被分发进每个 agent 的任务契约和指令包',
+    expect: "publish 铸造并激活了一个未知契约"
   },
   {
     name: "越权访问必须被漂移门定性阻断",
@@ -940,6 +942,16 @@ const MUTATIONS = [
     expect: "起来之后立刻退出了"
   },
   {
+    // 隔离（改名）本身会失败：目录只读、盘满、同名占用。文件仍在原地、下一拍还会再读到它，
+    // 而报文照旧说"已隔离到 <path>.corrupt-<时间戳>" —— 人按那个路径去找只会扑空。
+    name: "隔离失败时不许宣称已隔离",
+    file: "apps/agent-runtime/runtime.mjs",
+    skip: "判别力由远程 agent e2e 覆盖（已用 mutate-probe 实证：只读 outbox 目录下那道门变红）",
+    from: "      process.stderr.write(quarantineFault\n        ? `checkpoint outbox item corrupt and quarantine failed: ${filename} still at ${path} (${error.message}; rename: ${quarantineFault})\\n`\n        : ",
+    to: "      process.stderr.write(",
+    expect: "隔离失败了，报文却没说文件还在哪"
+  },
+  {
     // 同上，另一个运维入口。判别力由 mcp:doctor 覆盖（它真的 spawn 这个脚本走三条失败路径）。
     name: "register-mcp-client 失败时要给人话而不是崩溃栈",
     file: "scripts/register-mcp-client.mjs",
@@ -1255,6 +1267,8 @@ const MUTATIONS = [
   },
   {
     // 读了却没人赋值的 state 字段 = 那条信息永远到不了人眼前（今天抓到两个真的）。
+    // 同一处变异另有控制面 e2e 覆盖（真的把归档文件改成只读、写一次、读接口，再恢复并要求标记自清）；
+    // 曾为此单列过一条 skip 条目，但同 file/from/to 的两行登记只会让人以为守的是两处不同的东西。
     name: "服务端读的 state 字段必须有人赋值",
     check: "verifyServerStateFieldsHaveProducers",
     file: "apps/control-plane-ui/server.mjs",
@@ -1288,15 +1302,6 @@ const MUTATIONS = [
     from: "          ${faultNotice}",
     to: "",
     expect: "却不知道有条目从没落盘"
-  },
-  {
-    // 服务端读错来源：state 上那个字段全仓从没被赋过值，于是永远是 null。
-    name: "归档故障要读共享台账那份",
-    file: "apps/control-plane-ui/server.mjs",
-    skip: "判别力由控制面 e2e 覆盖（真的把归档文件改成只读、写一次、读接口，再恢复并要求标记自清）",
-    from: "      archiveFault: sharedAuditArchiveFault(),",
-    to: "      archiveFault: state.auditArchiveFault || null,",
-    expect: "归档故障"
   },
   {
     // 文档里写死的数字与代码常量漂开 = 运维照着旧数字去归档里找一份不存在的记录。
@@ -2309,11 +2314,11 @@ async function runParallel(mutations) {
 function checkAnchorsOnly() {
   const failures = [];
   const seen = new Set();
-  // skip 掉的条目不执行，它的锚点自然也无从执行 —— 不能因此报红，但要点名列出来，
-  // 否则一条"永远跳过、锚点早已失配"的条目会假装自己还在守着什么。
+  // skip 掉的条目不【执行】变异，但锚点唯一性是纯文本核对，跟执不执行无关：放过它们，就等于
+  // 这些条目"判别力由某某门覆盖"那句声明再也没人核 —— 被测代码改写后锚点失配，册子上却照旧写着
+  // 它守着什么。所以一样要求锚点存在且唯一，只是它们不参与真跑。
   const skipped = MUTATIONS.filter((mutation) => mutation.skip);
   for (const mutation of MUTATIONS) {
-    if (mutation.skip) continue;
     const key = `${mutation.file}::${mutation.from}::${mutation.to}`;
     if (seen.has(key)) failures.push(`重复条目：${mutation.name} 与前面某条的 file/from/to 完全相同 —— 其中一条必然验的不是它自己声称的那个守卫`);
     seen.add(key);
@@ -2345,8 +2350,8 @@ function checkAnchorsOnly() {
     for (const failure of failures) console.error(`- ${failure}`);
     process.exit(1);
   }
-  console.log(`mutation anchor check ok: ${MUTATIONS.length - skipped.length} 条变异的锚点都仍然唯一匹配`
-    + `${skipped.length ? `；另有 ${skipped.length} 条被 skip（锚点不强制，判别力由各自注明的其它门覆盖）：${skipped.map((mutation) => mutation.name).join("、")}` : ""}`
+  console.log(`mutation anchor check ok: ${MUTATIONS.length} 条变异的锚点都仍然唯一匹配`
+    + `${skipped.length ? `；其中 ${skipped.length} 条不在变异门里真跑（锚点一样要求唯一，判别力由各自注明的其它门覆盖）：${skipped.map((mutation) => mutation.name).join("、")}` : ""}`
     + "（只核对锚点，没有验判别力 —— 那要跑完整变异门）");
   process.exit(0);
 }
