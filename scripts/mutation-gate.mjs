@@ -1121,6 +1121,24 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // 归档路由要求先把所有任务组关掉（不级联，让人自己收尾）；归档后还能建新组，那次收尾就白做了。
+    name: "归档的项目不得再建任务组（REST）",
+    file: SERVER,
+    skip: "判别力由控制面 e2e 覆盖（已用 mutate-probe 实证：MCP 那份同形变异当场变红）",
+    from: '  if (project.status === "archived") {\n    return {ok: false, status: 409, error: "project_archived",',
+    to: '  if (false) {\n    return {ok: false, status: 409, error: "project_archived",',
+    expect: "归档前那次逐个关闭白做了"
+  },
+  {
+    // 建组有两份实现，只补一份是本仓最常见的洞。
+    name: "归档的项目不得再建任务组（MCP）",
+    file: MCP,
+    skip: "判别力由 MCP e2e 覆盖（已用 mutate-probe 实证：去掉判据后归档项目里真的建出了任务组）",
+    from: '  if (project.status === "archived") return {ok: false, error: "project_archived"};',
+    to: "  void project;",
+    expect: "两份建组实现只补了 REST 那一份"
+  },
+  {
     // 任务组终结之后仍能往里面加新东西：六个写入口原先全部照收，其中人工确认单会造出
     // 一张永远没人看得见也点不动的待办。
     name: "任务组终结后不得再加新东西",

@@ -43,7 +43,11 @@ const serverLog = [];
 // 这道门此前只在【断言失败】时才打印服务端输出。而它真正难查的那次是【裸异常】把整道门打断的：
 // 证据就在 serverLog 里，却因为异常直接冒到顶层而从没打印过。任何收场方式都要留下这份证据。
 const dumpServerLog = (why) => {
-  if (!serverLog.length) return;
+  // 空的时候也要出声："没打印"与"处理器没跑"长得一样，会让人去查一个不存在的问题（实撞一次）。
+  if (!serverLog.length) {
+    console.log(`  --  ${why}，但服务端一个字都没输出过 —— 它多半在起来之前就退了`);
+    return;
+  }
   console.log(`  --  ${why}，服务端输出（末 12 行）：`);
   for (const line of serverLog.slice(-12)) console.log(`      ${line}`);
 };
@@ -87,10 +91,14 @@ const start = async (port) => {
   // 服务端日志【一直】收着，失败时连同断言一起打出来。
   // 这道门的失败多半是时序偶发（实测六轮两次、之后十轮零次），事后复现不了 ——
   // 不留下那一刻的服务端输出，下一次偶发红同样查不动（这次就吃了这个亏）。
-  child.stderr.on("data", (chunk) => {
-    serverLog.push(`[srv${port}] ${String(chunk).trimEnd()}`);
-    if (serverLog.length > 200) serverLog.shift();
-  });
+  // 两条流都要收：服务端的正常日志走 stdout，只收 stderr 的话，出事那一刻这份"证据"是空的 ——
+  // 实测就是这样：门自报了 ECONNREFUSED，dump 却一个字都没打，我为此白查了一轮。
+  for (const [stream, tag] of [[child.stdout, "out"], [child.stderr, "err"]]) {
+    stream.on("data", (chunk) => {
+      serverLog.push(`[srv${port}/${tag}] ${String(chunk).trimEnd()}`);
+      if (serverLog.length > 200) serverLog.shift();
+    });
+  }
   const base = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + 25000;
   while (Date.now() < deadline) {

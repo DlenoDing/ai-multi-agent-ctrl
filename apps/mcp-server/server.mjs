@@ -1666,6 +1666,9 @@ function createTaskGroup(state, args) {
   if (!args.projectId) return {ok: false, error: "project_id_required"};
   const project = state.projects.find((item) => item.id === args.projectId);
   if (!project) return {ok: false, error: "project_not_found"};
+  // 与 REST 侧同规：归档的项目不得再新建任务组（那次收尾会白做，新组也没人看得见）。
+  // 建组有两份实现，只补一份就是这类洞最常见的样子 —— 本文件上面那段注释已经为同一形状写过一次。
+  if (project.status === "archived") return {ok: false, error: "project_archived"};
   const taskGroupId = args.taskGroupId || createId("tg");
   if (state.taskGroups.some((item) => item.id === taskGroupId)) return {ok: false, error: "task_group_id_conflict"};
   const quota = organizationQuotaCheck(state, project.organizationId || DEFAULT_ORGANIZATION_ID, "taskGroups");

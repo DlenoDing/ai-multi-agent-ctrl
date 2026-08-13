@@ -862,6 +862,14 @@ function createTaskGroupRecord(state, input = {}, options = {}) {
   const projectId = String(input.projectId || "prj_control_plane");
   const project = state.projects.find((item) => item.id === projectId);
   if (!project) return {ok: false, status: 404, error: "project_not_found"};
+  // 归档是项目的终结态，而且归档路由要求先把所有任务组关掉（不级联，让人自己收尾）。
+  // 归档之后还能往里建新任务组的话，那次收尾就白做了：项目重新变活，而它已经不在任何人的视野里
+  // （概览按 active 列、编排跳过 archived）—— 新组从此没人看、没人推，是一条谁也处置不掉的活。
+  // 与任务组终结后的写入判据（core 的 taskGroupSettledRejection）同规，只是高一层。
+  if (project.status === "archived") {
+    return {ok: false, status: 409, error: "project_archived",
+      message: "该项目已归档，不能再往里新建任务组。要继续这条线，请先恢复该项目或另建一个项目"};
+  }
   const taskGroupId = input.taskGroupId || createId("tg");
   if (state.taskGroups.some((item) => item.id === taskGroupId)) {
     return {ok: false, status: 409, error: "task_group_id_conflict"};

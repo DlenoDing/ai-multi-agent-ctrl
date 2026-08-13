@@ -1452,6 +1452,39 @@ try {
   }
   console.log("REST 写路径跨租户存在性 ok: 项目配置与成员两条写路由，两种'看不见'给同一个答案");
 
+  // 归档是项目的终结态，而归档路由【要求先把所有任务组关掉】（不级联，让人自己收尾）。
+  // 归档之后还能往里建新任务组的话，那次收尾就白做了：项目重新变活，而它已经不在任何人的视野里
+  // （概览按 active 列、编排跳过 archived）—— 新组从此没人看、没人推。
+  {
+    const archProject = await jsonFetch(port, "/api/projects", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-archive-probe-project", authorization: systemAuth},
+      body: JSON.stringify({name: "归档探针项目", key: "archive-probe"})});
+    const archProjectId = archProject.payload?.id || archProject.payload?.project?.id;
+    if (!archProjectId) throw new Error("归档探针造不出项目 —— 下面几条会在空转");
+    const archived = await jsonFetch(port, `/api/projects/${archProjectId}/archive`, {method: "POST",
+      headers: {"Idempotency-Key": "doctor-archive-probe", authorization: systemAuth}, body: "{}"});
+    if (!archived.response.ok) throw new Error(`归档一个没有任务组的项目就失败了：${JSON.stringify(archived.payload).slice(0, 160)}`);
+    const afterArchive = await jsonFetch(port, "/api/task-groups", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-archive-probe-tg", authorization: systemAuth},
+      body: JSON.stringify({projectId: archProjectId, title: "归档后新建的任务组"})});
+    if (afterArchive.response.ok || afterArchive.payload?.error !== "project_archived") {
+      throw new Error(`已归档的项目里还能新建任务组（${afterArchive.response.status} ${JSON.stringify(afterArchive.payload).slice(0, 120)}）`
+        + " —— 归档前那次逐个关闭白做了，新组也不在任何人的视野里");
+    }
+    // 正面对照：没归档的项目必须照常建得出来，否则这道判据把正常路径一起堵死。
+    const liveProject = await jsonFetch(port, "/api/projects", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-archive-live-project", authorization: systemAuth},
+      body: JSON.stringify({name: "未归档对照项目", key: "archive-live"})});
+    const liveId = liveProject.payload?.id || liveProject.payload?.project?.id;
+    const liveGroup = await jsonFetch(port, "/api/task-groups", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-archive-live-tg", authorization: systemAuth},
+      body: JSON.stringify({projectId: liveId, title: "未归档项目里的任务组"})});
+    if (!liveGroup.response.ok) {
+      throw new Error(`未归档的项目里也建不出任务组（${liveGroup.response.status} ${JSON.stringify(liveGroup.payload).slice(0, 120)}）—— 这道判据把正常路径堵死了`);
+    }
+    console.log("项目归档终态 ok: 归档后建不了新任务组，未归档的照常建得出来");
+  }
+
   // 跨租户存在性探针（REST 侧）：受限账号问一个项目 id，"查无此物"与"别处真有"必须给同一个答案。
   // 两者可分辨的话，拿一批 id 试一遍就知道这套部署里别的租户有没有它们。
   for (const route of ["config", "progress"]) {

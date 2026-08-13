@@ -384,6 +384,23 @@ try {
 
   }
 
+  // 建组有两份实现（REST 的 createTaskGroupRecord 与这里的 createTaskGroup）。归档判据只补一份，
+  // 就是本仓最常见的那种洞 —— 这一条守 MCP 那一份。
+  {
+    const archProject = await api("/api/projects", {method: "POST", idempotencyKey: "mcp-arch-project",
+      token: admin.sessionToken, body: {name: "MCP 归档探针项目", key: "mcp-archive-probe"}});
+    const archProjectId = archProject.id || archProject.project?.id;
+    if (!archProjectId) throw new Error("MCP 归档探针造不出项目 —— 本条在空转");
+    await api(`/api/projects/${archProjectId}/archive`, {method: "POST", idempotencyKey: "mcp-arch",
+      token: admin.sessionToken, body: {}});
+    const afterArchive = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.task_group_create",
+      arguments: {idempotencyKey: "mcp-arch-tg", projectId: archProjectId, title: "归档后新建"}});
+    if (afterArchive.structuredContent?.result?.error !== "project_archived") {
+      throw new Error(`MCP 侧在已归档的项目里还能新建任务组（${JSON.stringify(afterArchive.structuredContent?.result || "").slice(0, 150)}）`
+        + " —— 两份建组实现只补了 REST 那一份");
+    }
+  }
+
   // 跨租户存在性探针：受限节点问一个 id，"查无此物"与"存在但属于别的租户"必须给【同一个答案】。
   // 两者可分辨的话，拿一批 id 试一遍就知道这套部署里别的租户有没有它们 ——
   // REST 侧早把这条写成了口径（"别的组织有没有这个账号会从 403 与 404 的差别里漏出去"），
