@@ -71,6 +71,7 @@ import {
   isDelegatableGrantPermission,
   WORK_SESSION_SETTLED_STATUSES,
   revokeAccountSessions,
+  resolveRoleSkill,
   REGISTERED_OWNER_ROLES
 } from "../control-plane-ui/lib/control-plane-core.mjs";
 import {
@@ -2266,17 +2267,25 @@ function roleSkillParse(state, args) {
   };
 }
 
+// 这个视图原先自己实现了一遍"按角色找技能"，而且比 core 那份宽松得多：
+//   · 用 roleSkillId.includes(roleId) 子串匹配（"review" 能撞上 reviewer 的技能）；
+//   · 都找不到就落到 state.roleSkills[0] —— 数组顺序由技能源同步的替换写法决定，实质上是任意的；
+//   · 回退不留痕，agent 问"我这个角色的规则是什么"，拿到的是别人的规则，一声不吭。
+// core 的 resolveRoleSkill 早就把这些处理好了（歧义抛错、回退到通用技能但在返回值上标出
+// roleSkillFallback）。同一件事不再实现第二遍 —— 派发时按 core 那份绑定，
+// 而 agent 事先问到的却是另一套答案，那比两边都错更难查。
 function resolveRoleSkillView(state, args) {
   const roleId = args.roleId || args.ownerRole || "orchestrator";
-  const roleSkill = state.roleSkills.find((skill) => skill.roleSkillId === args.roleSkillRef)
-    || state.roleSkills.find((skill) => skill.roleSkillId?.includes(roleId))
-    || state.roleSkills[0];
+  const resolved = resolveRoleSkill(state, roleId,
+    {skillRef: args.roleSkillRef, taskGroupId: args.taskGroupId, projectId: args.projectId});
   const overlays = state.roleSkillOverlays.filter((overlay) =>
-    overlay.roleSkillRef === roleSkill?.roleSkillId &&
+    overlay.roleSkillRef === resolved?.roleSkillId &&
     (!overlay.taskGroupId || overlay.taskGroupId === args.taskGroupId) &&
     (!overlay.projectId || overlay.projectId === args.projectId)
   );
-  return {roleSkill, overlays, precedence: ["task_group_overlay", "project_overlay", "upstream_default"]};
+  return {roleSkill: resolved, overlays,
+    ...(resolved?.roleSkillFallback ? {roleSkillFallback: resolved.roleSkillFallback} : {}),
+    precedence: ["task_group_overlay", "project_overlay", "upstream_default"]};
 }
 
 const TEST_RESULT_STATUSES = ["passed", "failed", "skipped", "error"];

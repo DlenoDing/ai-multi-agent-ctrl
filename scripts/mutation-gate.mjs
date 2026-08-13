@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 自己再实现一遍"按角色找技能"：子串命中 + roleSkills[0] 兜底 + 回退不留痕。
+    name: "角色技能解析要走 core 那一份",
+    file: "apps/mcp-server/server.mjs",
+    skip: "判别力由 mcp:doctor 覆盖（未登记角色要拒、无专属技能要留痕、有专属技能不许误标）",
+    from: "  const resolved = resolveRoleSkill(state, roleId,\n    {skillRef: args.roleSkillRef, taskGroupId: args.taskGroupId, projectId: args.projectId});",
+    to: "  const resolved = state.roleSkills.find((skill) => skill.roleSkillId === args.roleSkillRef)\n    || state.roleSkills.find((skill) => skill.roleSkillId?.includes(roleId)) || state.roleSkills[0];",
+    expect: "未登记的角色被解析出了技能"
+  },
+  {
     // 未登记的角色被收下 → 派发时静默绑上 orchestrator 的技能，agent 按别人的规则干活。
     name: "MCP 侧也要拒未登记的执行角色",
     file: "apps/mcp-server/server.mjs",

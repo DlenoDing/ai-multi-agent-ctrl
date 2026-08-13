@@ -124,6 +124,36 @@ try {
       throw new Error(`拒绝时没有回登记过的角色清单 —— 调用方只能猜自己该填什么：${said.slice(0, 200)}`);
     }
   }
+  // agent 问"我这个角色的规则是什么"。这个视图原先自己实现了一遍匹配：子串命中、
+  // 都找不到就落到 roleSkills[0]（数组顺序由技能源同步决定，实质任意），而且回退不留痕 ——
+  // 拿到别人的规则却毫不知情。改成走 core 的 resolveRoleSkill，三支都验。
+  {
+    // ① 未登记的角色：当场拒，而不是把别人的技能给它。
+    const unknownRole = await mcpAs(admin.sessionToken, "tools/call", {name: "skill-mcp.role_skill_resolve",
+      arguments: {roleId: "front-end-wizard"}});
+    const unknownSaid = JSON.stringify(unknownRole.structuredContent?.result || unknownRole);
+    if (!unknownSaid.includes("role_skill_role_not_registered")) {
+      throw new Error(`未登记的角色被解析出了技能 —— agent 会按别人的规则干活：${unknownSaid.slice(0, 200)}`);
+    }
+    // ② 已登记但没有专属技能文件的角色：回退到通用技能，但必须留痕。
+    const noOwnSkill = await mcpAs(admin.sessionToken, "tools/call", {name: "skill-mcp.role_skill_resolve",
+      arguments: {roleId: "repository-router"}});
+    const fellBack = noOwnSkill.structuredContent?.result;
+    if (!fellBack?.roleSkill?.roleSkillId) {
+      throw new Error(`已登记的角色解析不出技能（应回退到通用技能）：${JSON.stringify(fellBack).slice(0, 200)}`);
+    }
+    if (fellBack.roleSkillFallback?.reason !== "role_has_no_dedicated_skill") {
+      throw new Error("回退到别人的技能却不留痕 —— agent 会以为这就是自己角色的规则："
+        + JSON.stringify(fellBack).slice(0, 200));
+    }
+    // ③ 有专属技能的角色不能被误标成回退，否则这个标记就成了没人看的噪音。
+    const ownRole = await mcpAs(admin.sessionToken, "tools/call", {name: "skill-mcp.role_skill_resolve",
+      arguments: {roleId: "orchestrator"}});
+    if (ownRole.structuredContent?.result?.roleSkillFallback) {
+      throw new Error("有专属技能的角色被误标成了回退 —— 这个标记会变成没人看的噪音");
+    }
+  }
+
   // 同一条通道上的老毛病：拒绝报文里的 details 此前被整层丢掉，只剩一个错误码。
   // work_item_status_unknown 特意写了 supported 清单，从加上到现在一次都没送出去过。
   {
