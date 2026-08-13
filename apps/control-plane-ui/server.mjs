@@ -618,11 +618,30 @@ function publicAccountRecord(account) {
   };
 }
 
-function normalizeStringList(value, fallback = []) {
+// 条数与单条长度都要有上限。实测两条请求（5 万条要求 + 一条 30 万字的要求）
+// 就把状态从 63KB 撑到 6.4MB —— 而每次写入的成本正比于状态大小，那是永久的账。
+// 与自由文本同规：拒绝，不静默截断（存下的与人写的不一致更难查）。
+// field 只用于把"是哪一项超了"说清楚；MCP 侧有一份孪生实现（normalizeMcpStringList），
+// 两边必须同规，少补一侧 agent 就能从那扇门把状态撑大。
+const STRING_LIST_MAX_ITEMS = 200;
+const STRING_LIST_MAX_ITEM_LENGTH = 2000;
+
+function normalizeStringList(value, fallback = [], field = "list") {
   const source = Array.isArray(value)
     ? value
     : String(value || "").split(/[\n,]/u);
+  if (source.length > STRING_LIST_MAX_ITEMS) {
+    throw Object.assign(new Error(`${field}_too_many_items`), {status: 400,
+      details: {limit: STRING_LIST_MAX_ITEMS, actual: source.length,
+        message: `这一项给了 ${source.length} 条，超出上限 ${STRING_LIST_MAX_ITEMS} 条。`}});
+  }
   const normalized = [...new Set(source.map((item) => String(item).trim()).filter(Boolean))];
+  const overlong = normalized.find((item) => item.length > STRING_LIST_MAX_ITEM_LENGTH);
+  if (overlong !== undefined) {
+    throw Object.assign(new Error(`${field}_item_too_long`), {status: 400,
+      details: {limit: STRING_LIST_MAX_ITEM_LENGTH, actual: overlong.length,
+        message: `这一项里有一条 ${overlong.length} 字，超出单条上限 ${STRING_LIST_MAX_ITEM_LENGTH} 字。`}});
+  }
   return normalized.length ? normalized : fallback;
 }
 
@@ -908,7 +927,7 @@ function createWorkItemRecord(state, taskGroupId, input = {}, options = {}) {
     // 等到派发再炸，人已经不知道问题出在哪。
     ownerRole: normalizeOwnerRole(input.ownerRole || input.roleId),
     progress: 0,
-    requirements: normalizeStringList(input.requirements, []),
+    requirements: normalizeStringList(input.requirements, [], "work_item_requirements"),
     auditRef: options.auditRef,
     createdAt: at,
     updatedAt: at

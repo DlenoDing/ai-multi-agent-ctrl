@@ -140,6 +140,17 @@ try {
     }
   }
 
+  // 数组那扇门同理，MCP 侧也要有上限。
+  {
+    const tooMany = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.work_item_create",
+      arguments: {idempotencyKey: "doctor-mcp-too-many-reqs", taskGroupId: "tg_runtime_management",
+        title: "条数探针", requirements: Array.from({length: 50000}, (unused, index) => `要求 ${index}`)}});
+    const said = JSON.stringify(tooMany.structuredContent?.result || tooMany);
+    if (!said.includes("work_item_requirements_too_many_items")) {
+      throw new Error(`MCP 侧收下了 5 万条机器可执行要求：${said.slice(0, 180)}`);
+    }
+  }
+
   // agent 问"我这个角色的规则是什么"。这个视图原先自己实现了一遍匹配：子串命中、
   // 都找不到就落到 roleSkills[0]（数组顺序由技能源同步决定，实质任意），而且回退不留痕 ——
   // 拿到别人的规则却毫不知情。改成走 core 的 resolveRoleSkill，三支都验。

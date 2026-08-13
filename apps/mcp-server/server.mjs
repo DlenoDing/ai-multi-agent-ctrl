@@ -806,9 +806,23 @@ function hasAnyInputArg(args, keys) {
   return keys.some((key) => hasInputArg(args, key));
 }
 
-function normalizeMcpStringList(value, fallback = []) {
+// 与 REST 侧同规（server.mjs 的 normalizeStringList）：条数与单条长度都有上限。
+// 少补这一侧，agent 一样能一次请求把状态撑成几兆 —— 这类洞的常见样子就是孪生分支只补一半。
+const MCP_STRING_LIST_MAX_ITEMS = 200;
+const MCP_STRING_LIST_MAX_ITEM_LENGTH = 2000;
+
+function normalizeMcpStringList(value, fallback = [], field = "list") {
   const source = Array.isArray(value) ? value : String(value || "").split(/[\n,]/u);
+  if (source.length > MCP_STRING_LIST_MAX_ITEMS) {
+    throw Object.assign(new Error(`${field}_too_many_items`), {status: 400,
+      details: {limit: MCP_STRING_LIST_MAX_ITEMS, actual: source.length}});
+  }
   const normalized = [...new Set(source.map((item) => String(item).trim()).filter(Boolean))];
+  const overlong = normalized.find((item) => item.length > MCP_STRING_LIST_MAX_ITEM_LENGTH);
+  if (overlong !== undefined) {
+    throw Object.assign(new Error(`${field}_item_too_long`), {status: 400,
+      details: {limit: MCP_STRING_LIST_MAX_ITEM_LENGTH, actual: overlong.length}});
+  }
   return normalized.length ? normalized : fallback;
 }
 
@@ -1714,7 +1728,7 @@ function createWorkItem(state, args) {
     status: mcpWorkItemCreateStatus(args.status),
     ownerRole: mcpWorkItemOwnerRole(args.roleId || args.ownerRole),
     progress: 0,
-    requirements: normalizeMcpStringList(args.requirements, []),
+    requirements: normalizeMcpStringList(args.requirements, [], "work_item_requirements"),
     createdAt: at,
     updatedAt: at
   };

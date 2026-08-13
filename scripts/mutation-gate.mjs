@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 数组是同一个洞的另一扇门：两条请求把状态从 63KB 撑到 6.4MB。
+    name: "字符串清单要有条数与单条上限",
+    file: "apps/control-plane-ui/server.mjs",
+    skip: "判别力由控制面 e2e 覆盖（真发 5 万条 + 一条 30 万字，并要求正常清单照常收下）",
+    from: "  if (source.length > STRING_LIST_MAX_ITEMS) {",
+    to: "  if (false) {",
+    expect: "被收下了"
+  },
+  {
     // 一次请求就能把状态从 56KB 撑到 1.8MB，而每次写入的成本正比于状态大小。
     name: "任务组目标要有长度上限",
     file: "apps/control-plane-ui/server.mjs",

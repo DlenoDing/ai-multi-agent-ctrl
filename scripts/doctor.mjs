@@ -980,6 +980,32 @@ try {
     if (bigProject.response.status !== 400 || bigProject.payload.error !== "project_name_too_long") {
       throw new Error(`30 万字的项目名被收下了（HTTP ${bigProject.response.status}）`);
     }
+    // 数组是同一个洞的另一扇门：条数与单条长度都要有上限。
+    // 实测两条请求（5 万条要求 + 一条 30 万字的要求）把状态从 63KB 撑到 6.4MB。
+    const tooManyItems = await jsonFetch(port, "/api/task-groups/tg_runtime_management/work-items", {
+      method: "POST", headers: {authorization: systemAuth, "Idempotency-Key": "doctor-too-many-reqs"},
+      body: JSON.stringify({title: "条数探针", ownerRole: "agent-runtime",
+        requirements: Array.from({length: 50000}, (unused, index) => `要求 ${index}`)})
+    });
+    if (tooManyItems.response.status !== 400 || tooManyItems.payload.error !== "work_item_requirements_too_many_items") {
+      throw new Error(`5 万条机器可执行要求被收下了（HTTP ${tooManyItems.response.status}）`);
+    }
+    const itemTooLong = await jsonFetch(port, "/api/task-groups/tg_runtime_management/work-items", {
+      method: "POST", headers: {authorization: systemAuth, "Idempotency-Key": "doctor-req-too-long"},
+      body: JSON.stringify({title: "长度探针", ownerRole: "agent-runtime", requirements: [huge]})
+    });
+    if (itemTooLong.response.status !== 400 || itemTooLong.payload.error !== "work_item_requirements_item_too_long") {
+      throw new Error(`单条 30 万字的要求被收下了（HTTP ${itemTooLong.response.status}）`);
+    }
+    // 正常长度的清单必须照常收下 —— 上限不能把真实用法一起挡掉。
+    const normalList = await jsonFetch(port, "/api/task-groups/tg_runtime_management/work-items", {
+      method: "POST", headers: {authorization: systemAuth, "Idempotency-Key": "doctor-normal-reqs"},
+      body: JSON.stringify({title: "正常清单", ownerRole: "agent-runtime",
+        requirements: ["页面能打开", "接口返回 200"]})
+    });
+    if (normalList.response.status !== 201 || normalList.payload.workItem?.requirements?.length !== 2) {
+      throw new Error(`正常长度的要求清单被上限挡掉了（HTTP ${normalList.response.status}）—— 守卫过头了`);
+    }
     const after = statSync(join(root, doctorRuntimeDir, "control-plane-state.json")).size;
     if (after > before + 64 * 1024) {
       throw new Error(`被拒的超长写入仍然把状态撑大了：${(before / 1024).toFixed(0)}KB → ${(after / 1024).toFixed(0)}KB`);
