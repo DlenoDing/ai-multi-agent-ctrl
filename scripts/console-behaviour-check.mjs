@@ -2171,6 +2171,44 @@ await runCodedApiErrorCase();
     "技能源已经同步成功了，表上还挂着上一次的失败原因 —— 人会去追一个已经解决的故障");
 }
 
+// 配额只数没被吊销的节点，而智能体那张表把已吊销的也列着。不说清楚，人会拿表里的行数去对
+// 这个数字，对不上又找不出原因。走真实加载路径（org-overview 会真的去取 /api/org/agents）。
+{
+  const overviewRoot = el("div");
+  const probe = loadConsole(overviewRoot);
+  const orgAdmin = {accountId: "u_org", accountType: "org_admin", displayName: "组织管理员", organizationId: "org_default"};
+  const orgState = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active",
+      quotas: {maxMembers: 50, maxProjects: 20, maxTaskGroups: 200, maxAgents: 100},
+      usage: {members: 2, projects: 1, taskGroups: 1, agents: 1}}],
+    projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
+    findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []};
+  const nodes = [
+    {nodeId: "node-live", status: "online", organizationId: "org_default"},
+    {nodeId: "node-gone", status: "revoked", organizationId: "org_default"}
+  ];
+  const overviewFetch = async (path) => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+    json: async () => String(path).includes("/api/org/agents") ? {agentRuntimeNodes: nodes} : orgState,
+    text: async () => JSON.stringify(orgState)});
+  await probe.loadWithFetch(orgState, orgAdmin, "", "org-overview", overviewFetch);
+  const overviewHtml = String(overviewRoot.innerHTML || "");
+  check("已吊销的节点不计入配额这件事要写出来",
+    /已吊销.*不计入配额|不计入配额/.test(overviewHtml),
+    "配额只数没被吊销的节点，而智能体那张表把已吊销的也列着 —— 两个数对不上，人找不出原因");
+  {
+    const cleanRoot = el("div");
+    const cleanProbe = loadConsole(cleanRoot);
+    const liveOnly = async (path) => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+      json: async () => String(path).includes("/api/org/agents") ? {agentRuntimeNodes: [nodes[0]]} : orgState,
+      text: async () => JSON.stringify(orgState)});
+    await cleanProbe.loadWithFetch(orgState, orgAdmin, "", "org-overview", liveOnly);
+    check("没有已吊销节点时不要多说一句",
+      !/不计入配额/.test(String(cleanRoot.innerHTML || "")),
+      "一个已吊销节点都没有，界面却挂着一句解释 —— 噪声会让真正要紧的那句被忽略");
+  }
+}
+
 // 失败原因常常带着细节（"git_command_failed:git push …（退出码 128：fatal: …）"）。
 // 词表按整串查永远命中不了，于是屏幕上摆着英文键 + 细节 —— 而细节恰恰是唯一有用的部分。
 {

@@ -723,6 +723,14 @@ const MUTATIONS = [
     expect: "人判过的事又回来了"
   },
   {
+    name: "已吊销节点不计入配额这件事要说出来",
+    file: APP,
+    gate: "console",
+    from: "            return revoked ? `<div class=\"small muted\">另有 ${revoked} 个已吊销，不计入配额</div>` : \"\";",
+    to: '            return "";',
+    expect: "两个数对不上，人找不出原因"
+  },
+  {
     // 用量与列表算的必须是同一批人。把服务账号放回用量里，对照立刻不成立。
     name: "服务账号不算组织成员",
     file: CORE,

@@ -1897,7 +1897,12 @@ function renderOrgOverview() {
           <div><div class="small muted">成员</div>${quotaLine(org.usage?.members, org.quotas?.maxMembers)}</div>
           <div><div class="small muted">项目</div>${quotaLine(org.usage?.projects, org.quotas?.maxProjects)}</div>
           <div><div class="small muted">任务组</div>${quotaLine(org.usage?.taskGroups, org.quotas?.maxTaskGroups)}</div>
-          <div><div class="small muted">AI 智能体</div>${quotaLine(org.usage?.agents, org.quotas?.maxAgents)}</div>
+          <div><div class="small muted">AI 智能体</div>${quotaLine(org.usage?.agents, org.quotas?.maxAgents)}${(() => {
+            // 配额只数没被吊销的，而智能体那张表把已吊销的也列着 —— 不说清楚，人会拿表里的行数
+            // 去对这个数字，对不上又找不出原因。只在确实有已吊销节点时才出现这一句。
+            const revoked = (orgAgentNodes || []).filter((node) => node.status === "revoked").length;
+            return revoked ? `<div class="small muted">另有 ${revoked} 个已吊销，不计入配额</div>` : "";
+          })()}</div>
           <div class="record-meta"><span>组织状态：${badge(org.status)}</span><span>创建时间：${fmtTime(org.createdAt)}</span></div>
         </div>
       `)
