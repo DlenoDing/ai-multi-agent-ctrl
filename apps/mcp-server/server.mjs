@@ -70,7 +70,8 @@ import {
   reviewPlanRecordCoverage,
   isDelegatableGrantPermission,
   WORK_SESSION_SETTLED_STATUSES,
-  revokeAccountSessions
+  revokeAccountSessions,
+  REGISTERED_OWNER_ROLES
 } from "../control-plane-ui/lib/control-plane-core.mjs";
 import {
   createAgentControlCommand,
@@ -1222,6 +1223,19 @@ function mcpWorkItemCreateStatus(value) {
     {status: 400, details: {status: String(value).slice(0, 60), supported: ["draft", "ready"]}});
 }
 
+// REST 侧（normalizeOwnerRole）把未登记的角色当场拒掉，理由写在那儿：认不出的角色被原样收下之后，
+// 派发时会静默绑上 orchestrator 的技能 —— agent 按别人的角色规则干活，而人以为自己指定了角色。
+// 这一侧原先一点校验都没有：同一个洞，孪生分支只补了一半（上面 status 那条注释讲的正是这件事，
+// 而它自己旁边这一行就没补）。词表用 core 里那份唯一的真相源，不在这里另抄一份。
+function mcpWorkItemOwnerRole(value) {
+  const role = String(value || "").trim() || "orchestrator";
+  if (!REGISTERED_OWNER_ROLES.includes(role)) {
+    throw Object.assign(new Error("work_item_owner_role_not_registered"),
+      {status: 400, details: {ownerRole: role.slice(0, 60), registeredRoles: REGISTERED_OWNER_ROLES}});
+  }
+  return role;
+}
+
 function mcpPrincipalLabel(principal) {
   const kind = String(principal?.kind || "unknown");
   const id = String(principal?.id || "unknown");
@@ -1696,7 +1710,7 @@ function createWorkItem(state, args) {
     // 与 REST 侧同规（server.mjs 的 workItemCreateStatus）：不填＝ready 是合理的创建默认，
     // 填错必须拒 —— 认不出的状态原先降级成"可开跑"。孪生分支只补一半是这类洞最常见的样子。
     status: mcpWorkItemCreateStatus(args.status),
-    ownerRole: args.roleId || args.ownerRole || "orchestrator",
+    ownerRole: mcpWorkItemOwnerRole(args.roleId || args.ownerRole),
     progress: 0,
     requirements: normalizeMcpStringList(args.requirements, []),
     createdAt: at,
@@ -3039,7 +3053,12 @@ export async function handleMcpJsonRpc(message, context = {}) {
       if (error.code) {
         return {jsonrpc: "2.0", id: message.id, error: {code: error.code, message: error.message}};
       }
-      return {jsonrpc: "2.0", id: message.id, result: toolResult({ok: false, tool: message.params?.name || "unknown", error: error.message}, true)};
+      // details 原先在这里被整个丢掉：报文只剩一个错误码。而读它的多半是 agent，
+      // 它要靠"合法取值有哪些"自己改请求重发 —— 特意写好的 supported/registeredRoles
+      // 一路都没送出去（work_item_status_unknown 那条从加上到现在一直如此）。
+      return {jsonrpc: "2.0", id: message.id, result: toolResult({ok: false,
+        tool: message.params?.name || "unknown", error: error.message,
+        ...(error.details ? {details: error.details} : {})}, true)};
     }
   }
   if (message.id !== undefined) return {jsonrpc: "2.0", id: message.id, error: {code: -32601, message: `Method not found: ${message.method}`}};

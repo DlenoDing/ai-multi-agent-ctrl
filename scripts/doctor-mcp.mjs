@@ -109,6 +109,33 @@ try {
   if (normalizedWork?.workItem?.status !== "ready" || normalizedWork.workItem.ownerRole !== "agent-runtime" || !normalizedWork.taskGroup?.roles?.some((role) => role.roleId === "agent-runtime")) {
     throw new Error("MCP work_item_create did not normalize work item status and task group role binding");
   }
+  // 未登记的角色必须在【创建这一刻】被拒。收下之后派发会静默绑上 orchestrator 的技能，
+  // agent 按别人的角色规则干活，而人以为自己指定了角色 —— REST 侧早就这么做了，
+  // 这一侧原先一点校验都没有（孪生分支只补一半）。
+  {
+    const bogusRole = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.work_item_create",
+      arguments: {idempotencyKey: "doctor-mcp-bogus-role", taskGroupId: "tg_runtime_management",
+        title: "角色写错的单元", ownerRole: "front-end-wizard"}});
+    const said = JSON.stringify(bogusRole.structuredContent?.result || bogusRole);
+    if (!said.includes("work_item_owner_role_not_registered")) {
+      throw new Error(`MCP 侧收下了未登记的角色（派发时会静默绑上 orchestrator 的技能）：${said.slice(0, 200)}`);
+    }
+    if (!said.includes("registeredRoles")) {
+      throw new Error(`拒绝时没有回登记过的角色清单 —— 调用方只能猜自己该填什么：${said.slice(0, 200)}`);
+    }
+  }
+  // 同一条通道上的老毛病：拒绝报文里的 details 此前被整层丢掉，只剩一个错误码。
+  // work_item_status_unknown 特意写了 supported 清单，从加上到现在一次都没送出去过。
+  {
+    const bogusStatus = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.work_item_create",
+      arguments: {idempotencyKey: "doctor-mcp-bogus-status", taskGroupId: "tg_runtime_management",
+        title: "状态写错的单元", status: "in_progress"}});
+    const said = JSON.stringify(bogusStatus.structuredContent?.result || bogusStatus);
+    if (!said.includes("work_item_status_unknown") || !said.includes("supported")) {
+      throw new Error(`状态填错时没把合法取值回给调用方：${said.slice(0, 200)}`);
+    }
+  }
+
   const foreignProject = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.project_create", arguments: {idempotencyKey: "doctor-foreign-project", projectId: "prj_foreign_scope", name: "Doctor Foreign Scope"}});
   const foreignProjectResult = foreignProject.structuredContent?.result;
   if (!foreignProjectResult?.project?.id || foreignProjectResult.ownerGrant?.subjectRef?.subjectId !== "acct_workspace_owner" || !foreignProjectResult.ownerGrant?.permissions?.includes("task_group:control")) {

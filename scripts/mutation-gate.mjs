@@ -1049,6 +1049,24 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 未登记的角色被收下 → 派发时静默绑上 orchestrator 的技能，agent 按别人的规则干活。
+    name: "MCP 侧也要拒未登记的执行角色",
+    file: "apps/mcp-server/server.mjs",
+    skip: "判别力由 mcp:doctor 覆盖（真的用一个未登记的角色建工作项）",
+    from: "    ownerRole: mcpWorkItemOwnerRole(args.roleId || args.ownerRole),",
+    to: '    ownerRole: args.roleId || args.ownerRole || "orchestrator",',
+    expect: "收下了未登记的角色"
+  },
+  {
+    // details 被整层丢掉 = 特意写好的合法取值清单一次都没送出去。
+    name: "MCP 拒绝报文要带上合法取值",
+    file: "apps/mcp-server/server.mjs",
+    skip: "判别力由 mcp:doctor 覆盖（真的填一个不存在的状态并检查 supported 清单）",
+    from: "        ...(error.details ? {details: error.details} : {})}, true)};",
+    to: "      }, true)};",
+    expect: "没把合法取值回给调用方"
+  },
+  {
     // "一个项目都没有"被说成"当前项目暂无任务组" —— 人会去找是哪个项目空着。
     name: "没有项目要说清是没有项目",
     file: APP,
