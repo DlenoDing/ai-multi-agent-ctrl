@@ -961,6 +961,24 @@ const MUTATIONS = [
     expect: "起来之后立刻退出了"
   },
   {
+    // 上报失败被吞 = 控制面永远不知道，派发一直挂在 running，人看到的是"还在跑"。
+    name: "向控制面上报失败的调用不得吞错",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "specs",
+    from: ".catch(\n        (ackError) => process.stderr.write(`control command failure ack failed:",
+    to: ".catch(() => {}); // (ackError) => process.stderr.write(`control command failure ack failed:",
+    expect: "把自己的错误吞掉了"
+  },
+  {
+    // 这道门的通过条件是"0 处吞错"，族名一改就会永远数出 0 而一片绿。
+    name: "上报族名必须自证仍在",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "specs",
+    from: 'ackControlCommand(config, command, "failed", {reason:',
+    to: 'ackControlCommand(config, command, "failed_renamed", {reason:',
+    expect: "这一族从此不被检验"
+  },
+  {
     // 孪生分支：陈旧会话目录清不掉时同样只有"若干天后盘满"这一个症状。
     name: "陈旧会话清不掉时必须出声",
     file: "apps/agent-runtime/runtime.mjs",

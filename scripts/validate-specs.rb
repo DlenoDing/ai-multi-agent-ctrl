@@ -2662,6 +2662,33 @@ puts "原因码本地化：核对了 #{localized_literals.length} 个字面量�
      "另有 #{opaque_reason_sites.length} 处取值来自变量，本门跟不到，已逐个人工追查并登记" \
      "（#{TRACED_OPAQUE_REASON_SITES.values.sum { |t| t['codes'].length }} 个真实取值全部有中文，" \
      "登记与源码一致性每次校验）"
+# "告诉控制面某件事失败了/被阻塞了"这一族调用，是控制面唯一的知情渠道：它自己失败还被 `.catch(() => {})`
+# 吞掉，那个派发/指令就一直挂在 running 或待执行，人在控制台看到的是"还在跑"。今天一次抓到三处
+# （派发失败上报、控制指令失败 ACK、检查点重放转恢复），而同一文件里损坏 outbox 那条路径早就写明
+# "上报失败不能悄悄咽下去" —— 孪生分支只补了一半，是这类洞最常见的样子。
+# 进度遥测（submitExecutionEvent 等）吞掉是可以的：丢一条进度条不影响任何人的判断。
+report_families = ["remoteServices.failurePath", "/fail`", "ackControlCommand(config, command, \"failed\""]
+swallow_errors = []
+swallow_checked = 0
+agent_runtime_source.enum_for(:scan, ".catch(() => {})").each do
+  tail = Regexp.last_match.begin(0)
+  head = agent_runtime_source.rindex(/\bawait\s/, tail) || 0
+  statement = agent_runtime_source[head...tail]
+  family = report_families.find { |needle| statement.include?(needle) }
+  next if family.nil?
+  swallow_checked += 1
+  swallow_errors << "runtime.mjs 第 #{agent_runtime_source[0...tail].count("\n") + 1} 行：向控制面上报失败的调用（#{family}）" \
+                    "把自己的错误吞掉了 —— 控制面永远不知道，那个派发/指令会一直挂着，人看到的是'还在跑'"
+end
+# "0 处吞错"是通过条件，因此本门天然容易空转：族名一旦被改掉，它会永远数出 0 而一片绿。
+# 要求每个族名在源码里确实还找得到 —— 找不到就说明这一族已经不叫这个名字、从此不再被检验。
+report_families.each do |needle|
+  next if agent_runtime_source.include?(needle)
+  swallow_errors << "上报族「#{needle}」在 runtime.mjs 里已经找不到了 —— 这一族从此不被检验，先确认它改成了什么再更新这里"
+end
+fail_with(swallow_errors)
+puts "上报失败不得静默：#{report_families.length} 族上报调用（族名逐个自证仍在）逐个核对，#{swallow_checked} 处吞错（应为 0）"
+
 # 把本门的规矩用在本门自己身上：一条源码字符串断言，如果它的目标串在被查文件里能匹配到多处，
 # 它就【指认不出自己守的是哪一处】—— 隔壁复制粘贴出的同形代码会替真守卫把它喂饱，真守卫被删被改
 # 也一声不响。今天实撞两次（publish 铸造未知契约、MCP 定稿白名单），都是这么裂开的。

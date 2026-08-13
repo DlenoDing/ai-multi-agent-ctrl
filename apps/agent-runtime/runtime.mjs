@@ -296,7 +296,12 @@ async function run(config) {
       } catch (error) {
         const eventType = error.controlStatus === "blocked" ? "blocked" : "failed";
         await submitExecutionEvent(config, claimed.dispatch, eventType, {summary: String(error.message || error).slice(0, 1000), status: eventType === "blocked" ? "attention" : "failed"}).catch(() => {});
-        await jsonRequest(`${config.serverUrl}${claimed.dispatch.remoteServices.failurePath}`, {method: "POST", token: config.nodeToken, body: {reason: String(error.message || error).slice(0, 2000), status: error.controlStatus || "failed"}}).catch(() => {});
+        // 这一条【就是】告诉控制面"这个派发挂了"。它自己失败还被吞掉的话，控制面那边派发一直是
+        // running，人在控制台看到的是"还在跑"，直到认领过期才被回收 —— 与 outbox 那条路径同一规矩：
+        // 上报失败不能拖垮循环，但也不能悄悄咽下去，否则事后分不清"没失败过"和"失败了却没人知道"。
+        await jsonRequest(`${config.serverUrl}${claimed.dispatch.remoteServices.failurePath}`, {method: "POST", token: config.nodeToken, body: {reason: String(error.message || error).slice(0, 2000), status: error.controlStatus || "failed"}}).catch(
+          (reportError) => process.stderr.write(`dispatch failure report failed: ${claimed.dispatch.dispatch.dispatchId} (${reportError?.message || reportError}) —— 控制面那边它仍是 running，要等认领过期才回收\n`)
+        );
         process.stderr.write(`dispatch failed: ${claimed.dispatch.dispatch.dispatchId} ${error.message}\n`);
         cleanupSessionDirectory(config, claimed.dispatch);
       }
@@ -395,7 +400,10 @@ async function pollControlCommands(config, options = {}) {
       await handleControlCommand(config, command, options);
     } catch (error) {
       process.stderr.write(`control command handling failed: ${command.commandId} ${error.message}\n`);
-      await ackControlCommand(config, command, "failed", {reason: String(error.message || error).slice(0, 500)}).catch(() => {});
+      // ACK 是控制面判定这条指令死活的唯一依据：吞掉就等于它永远停在待执行，而本机这边早已放弃。
+      await ackControlCommand(config, command, "failed", {reason: String(error.message || error).slice(0, 500)}).catch(
+        (ackError) => process.stderr.write(`control command failure ack failed: ${command.commandId} (${ackError?.message || ackError}) —— 控制面那边它仍是待执行\n`)
+      );
     }
   }
   if (Number(result.nextCursor || 0) > Number(config.controlCursor || 0)) {
@@ -538,7 +546,11 @@ async function flushCheckpointOutbox(config) {
           // 上面损坏隔离那一处拿不到代次（条目内容本就不可解析），因此 /fail 只做"带了就比较"，
           // 不强制要求 —— 强制会把那条恢复路径一起拖垮。
           body: {status: "blocked", claimEpoch: item.claimEpoch, reason: `${reasonPrefix}: ${String(error.message).slice(0, 500)}`}
-        }).catch(() => {});
+        }).catch(
+          // 证据已经挪进 .recover 文件、本机不再重放；这一条是控制面唯一的知情渠道，吞掉就等于
+          // 那个派发一直挂在 running，而分支上可能已经有了没人复核过的提交。
+          (reportError) => process.stderr.write(`checkpoint replay recovery report failed: ${item.dispatchId} (${reportError?.message || reportError}) —— 控制面那边它仍是 running，证据在 ${recoverPath}\n`)
+        );
         process.stderr.write(`checkpoint replay moved to recovery: ${item.dispatchId} -> ${recoverPath}\n`);
         continue;
       }
