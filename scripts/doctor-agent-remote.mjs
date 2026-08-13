@@ -1,6 +1,6 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -461,6 +461,49 @@ try {
     }
     rmSync(blockedItemPath, {force: true});
   }
+
+  // library 超过容量上限时会按 LRU 淘汰。淘汰【全都失败】（目录只读、文件被占用）时原先静默返回，
+  // 下一拍原样再来一遍：盘一直涨，而系统明明算出来自己超了，一个字都没对人说过。
+  const libraryDir = join(agentWorkDir, "library");
+  const capMb = 64; // 运行时对上限取 Math.max(64, …)，比这更小的配置不会生效
+  mkdirSync(join(libraryDir, "entry-a"), {recursive: true});
+  mkdirSync(join(libraryDir, "entry-b"), {recursive: true});
+  for (const name of ["entry-a", "entry-b"]) {
+    const blob = join(libraryDir, name, "blob.bin");
+    writeFileSync(blob, "");
+    truncateSync(blob, Math.ceil((capMb * 1024 * 1024) / 1.5)); // 稀疏文件：statSync 报得出大小，不真占盘
+  }
+  chmodSync(libraryDir, 0o555);
+  let evictionReallyBlocked = true;
+  try {
+    renameSync(join(libraryDir, "entry-a"), join(libraryDir, "entry-a-probe"));
+    renameSync(join(libraryDir, "entry-a-probe"), join(libraryDir, "entry-a"));
+    evictionReallyBlocked = false;
+  } catch {}
+  if (!evictionReallyBlocked) {
+    chmodSync(libraryDir, 0o755);
+    console.log("  --  跳过【淘汰全失败时必须出声】：当前身份能无视只读目录改名（多半是 root），这一条本轮没被检验");
+  } else {
+    const overCapRun = spawnSync(process.execPath, [runtimePath, "run", "--work-dir", agentWorkDir, "--once"], {
+      env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false", AIMAC_AGENT_LIBRARY_MAX_MB: String(capMb)},
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024
+    });
+    const overCapOutput = `${overCapRun.stdout || ""}${overCapRun.stderr || ""}`;
+    // 恢复权限位必须在任何断言【之前】：否则一条真红会让临时目录删不掉，rm 的 EACCES 反过来
+    // 把真正的失败信息盖掉（本轮实撞一次）。
+    chmodSync(libraryDir, 0o755);
+    if (!existsSync(join(libraryDir, "entry-a"))) {
+      throw new Error(`只读 library 目录下条目竟然被清掉了，本条没验到真实故障: ${overCapOutput.slice(-600)}`);
+    }
+    if (!overCapOutput.includes("library still over capacity after sweep")) {
+      throw new Error(`盘已超上限、淘汰又全失败，运行时一个字都没说 —— 人只会看到盘莫名其妙满了: ${overCapOutput.slice(-800)}`);
+    }
+    if (!overCapOutput.includes(`> ${capMb}MB`)) {
+      throw new Error(`超容报文没说清上限是多少，人无从判断该清盘还是该调高上限: ${overCapOutput.slice(-800)}`);
+    }
+  }
+  rmSync(libraryDir, {recursive: true, force: true});
 
   // claim 代次此前只被【客户端自查】和【执行器凭据】读取，检查点这个真正的写入点从不比较它。
   // 认领被回收后重新分配给同一个节点时 assignedNodeId 照样匹配，于是上一次尝试的检查点

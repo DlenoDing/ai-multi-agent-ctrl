@@ -610,13 +610,22 @@ function sweepLibraryOverCapacity(config) {
   }
   let total = entries.reduce((sum, entry) => sum + entry.size, 0);
   if (total <= maxBytes) return;
+  let evictionFault = null;
   for (const entry of entries.sort((left, right) => left.mtimeMs - right.mtimeMs)) {
     if (total <= maxBytes) break;
     try {
       rmSync(entry.dir, {recursive: true, force: true});
       total -= entry.size;
       process.stdout.write(`library entry evicted for capacity: ${entry.dir}\n`);
-    } catch {}
+    } catch (error) { evictionFault = error?.message || String(error); }
+  }
+  // 淘汰全都失败（目录只读、文件被占用），或最大的一个条目本身就超过上限时，这里静默返回过，
+  // 下一拍再原样来一遍：盘一直涨，而系统明明【算出来】自己超了，却一个字都没对人说过。
+  if (total > maxBytes) {
+    const mb = (bytes) => Math.round(bytes / (1024 * 1024));
+    process.stderr.write(`library still over capacity after sweep: ${mb(total)}MB > ${mb(maxBytes)}MB`
+      + `${evictionFault ? `（最后一次淘汰失败：${evictionFault}）` : "（已没有更多可淘汰的条目）"}`
+      + " —— 磁盘会继续涨，需人工清理或调高 AIMAC_AGENT_LIBRARY_MAX_MB\n");
   }
 }
 

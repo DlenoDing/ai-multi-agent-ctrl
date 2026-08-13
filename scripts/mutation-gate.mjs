@@ -961,6 +961,16 @@ const MUTATIONS = [
     expect: "起来之后立刻退出了"
   },
   {
+    // 淘汰全都失败（目录只读、文件被占用）时原先静默返回，下一拍原样再来：盘一直涨，
+    // 而系统明明算出来自己超了上限，一个字都没对人说过。
+    name: "清不动的时候必须出声",
+    file: "apps/agent-runtime/runtime.mjs",
+    skip: "判别力由远程 agent e2e 覆盖（已用 mutate-probe 实证：只读 library 目录下那道门变红）",
+    from: "  if (total > maxBytes) {\n    const mb = (bytes) => Math.round(bytes / (1024 * 1024));",
+    to: "  if (false) {\n    const mb = (bytes) => Math.round(bytes / (1024 * 1024));",
+    expect: "运行时一个字都没说"
+  },
+  {
     // 隔离（改名）本身会失败：目录只读、盘满、同名占用。文件仍在原地、下一拍还会再读到它，
     // 而报文照旧说"已隔离到 <path>.corrupt-<时间戳>" —— 人按那个路径去找只会扑空。
     name: "隔离失败时不许宣称已隔离",
