@@ -1121,6 +1121,24 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // 锁的 owner.json 是【给别的进程读的】：撕裂读会被当成"还没写"，据此给短宽限期，
+    // 把一个活着的持有者的锁提前破掉。
+    name: "锁持有者文件必须原子写（状态库）",
+    file: STORE,
+    check: "verifySharedJsonWritesAreAtomic",
+    from: '        renameSync(ownerTemporary, join(lockDir, "owner.json"));',
+    to: "        void ownerTemporary;",
+    expect: "找不到那次改名"
+  },
+  {
+    name: "锁持有者文件必须原子写（MCP）",
+    file: MCP,
+    check: "verifySharedJsonWritesAreAtomic",
+    from: '        renameSync(ownerTemporary, join(lockPath, "owner.json"));',
+    to: "        void ownerTemporary;",
+    expect: "找不到那次改名"
+  },
+  {
     // 兜底错误处理里那行日志引用了不在作用域的 req/url —— 每一个走到兜底的请求都会让服务端进程
     // 直接退出。症状只是偶发 ECONNREFUSED，追了三轮。请求信息必须显式传参。
     name: "兜底错误处理不得引用作用域外的变量",
@@ -1134,6 +1152,8 @@ const MUTATIONS = [
   },
   {
     // 运行时配置原先是直接 writeFileSync：另一个进程会读到只写了一半的 JSON，随机 500。
+    // 同一处变异也会被 verifySharedJsonWritesAreAtomic 静态判据抓住（那条更快、更早）；
+    // 这里跑并发门是因为它验的是【真实后果】—— 两个进程互读时确实会出第三种结局。
     name: "运行时配置必须原子写",
     file: SERVER,
     gate: "writer",

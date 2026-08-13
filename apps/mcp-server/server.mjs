@@ -1336,7 +1336,12 @@ function withMcpAuditLock(fn) {
       // 与状态库那把锁同规：把持锁者写进锁里。进程被硬杀时锁会留下，而"谁持有它、它还活着吗"
       // 是唯一能安全破锁的依据。只按时间兜底的话（阈值 30s > 获取超时 10s），
       // 崩溃后约 30 秒内每个写工具调用都要么直接失败、要么白等 10 秒才通过。
-      try { writeFileSync(join(lockPath, "owner.json"), JSON.stringify({pid: process.pid, at: new Date().toISOString()})); } catch { /* 锁已拿到，记不上持有者不该让写入失败 */ }
+      // 原子写，理由同状态库那把锁：撕裂读与"还没写"分不开，会让活着的持有者被提前破锁。
+      try {
+        const ownerTemporary = join(lockPath, `owner.${process.pid}.tmp`);
+        writeFileSync(ownerTemporary, JSON.stringify({pid: process.pid, at: new Date().toISOString()}));
+        renameSync(ownerTemporary, join(lockPath, "owner.json"));
+      } catch { /* 锁已拿到，记不上持有者不该让写入失败 */ }
       break;
     } catch (error) {
       if (error.code !== "EEXIST") throw error;

@@ -903,9 +903,13 @@ function withRuntimeJsonLock(options, fn) {
       // 把持锁者写进锁里：进程被硬杀时锁目录会留下，而"谁持有它、它还活着吗"是唯一能
       // 安全破锁的依据。实测过后果 —— SIGKILL 之后重启的服务【再也写不进去】：
       // 连登录（它要写会话）都报 state_store_lock_timeout，系统等于废了，得有人手工删目录。
+      // 原子写：这份文件【就是给别的进程读的】，而读者把"解析失败"与"还没写"当成同一种情况，
+      // 据此给短宽限期 —— 撕裂读会让一个【活着的】持有者的锁被提前破掉。先写临时文件再改名。
       try {
-        writeFileSync(join(lockDir, "owner.json"),
+        const ownerTemporary = join(lockDir, `owner.${process.pid}.tmp`);
+        writeFileSync(ownerTemporary,
           JSON.stringify({pid: process.pid, host: hostname(), at: new Date().toISOString()}));
+        renameSync(ownerTemporary, join(lockDir, "owner.json"));
       } catch { /* 锁已拿到，记不上持有者也不该让写入失败 */ }
       break;
     } catch (error) {

@@ -315,6 +315,7 @@ run(verifyOperatorCliRejectsUnknownFlags);
 run(verifyMcpDoesNotReimplementCore);
 run(verifyIssuedCredentialsAlwaysExpire);
 run(verifyInertMechanismsStayRegistered);
+run(verifySharedJsonWritesAreAtomic);
 run(verifyRefusalCodeCoverageRatchet);
 await runAsync(verifyGateFetchFailuresNameTheGate);
 run(verifyMcpInputDictionaryHasNoGhosts);
@@ -5359,6 +5360,43 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 就得写一条【点名】它的断言，而那正是我们想要的东西。
 //
 // 棘轮只往一个方向走：数字变大＝新增的守卫没配判据；变小＝该把这里下调，把成果钉住。
+// 跨进程共享的 JSON 文件必须原子写（临时文件 + 改名）。直接 writeFileSync 的话，另一个进程会读到
+// 只写了一半的内容：实撞两次 —— 运行时配置让 readState 抛 "Unexpected end of JSON input"（随机 500，
+// 追了三轮）；锁的 owner.json 撕裂读会被当成"还没写"，据此给短宽限期，把【活着的】持有者的锁提前破掉。
+//
+// 判据按【实际写法】枚举，不按文件名字面量：第一版只认 `writeFileSync(join(..., "runtime-config.json")`，
+// 而那一处用的是变量 `configPath` —— 门根本没盖住它（"门读不到那种写法"，本仓已第十次）。
+// 每一处都要求：禁止那个直写形式，且必须存在一次改名到该目标。
+function verifySharedJsonWritesAreAtomic(output) {
+  const SHARED_JSON_WRITES = [
+    {file: "apps/control-plane-ui/server.mjs", what: "runtime-config.json（两个副本共用一个 runtime 目录时互读）",
+      forbidden: "writeFileSync(configPath,", requiredRename: "renameSync(temporary, configPath)"},
+    {file: "apps/control-plane-ui/lib/state-store.mjs", what: "锁的 owner.json（破锁判据的唯一依据）",
+      forbidden: 'writeFileSync(join(lockDir, "owner.json")', requiredRename: 'renameSync(ownerTemporary, join(lockDir, "owner.json"))'},
+    {file: "apps/mcp-server/server.mjs", what: "锁的 owner.json（同上）",
+      forbidden: 'writeFileSync(join(lockPath, "owner.json")', requiredRename: 'renameSync(ownerTemporary, join(lockPath, "owner.json"))'}
+  ];
+  // 写给人/agent 看、没有任何代码读、撕裂也不致命的，登记豁免并写明理由。
+  const NOT_SHARED = {
+    "apps/control-plane-ui/lib/control-plane-core.mjs":
+      "技能索引 index.json 全仓没有任何读者（写给人和 agent 看），产出物与清单由租约保证单写者"
+  };
+  for (const entry of SHARED_JSON_WRITES) {
+    const src = readFileSync(join(root, entry.file), "utf8").split("\n").filter((line) => !/^\s*\/\//u.test(line)).join("\n");
+    if (src.includes(entry.forbidden)) {
+      output.push(`${entry.file}（${entry.what}）直接写了一份跨进程共享的 JSON —— 另一个进程会读到只写了一半的内容；`
+        + "改成临时文件 + renameSync");
+    }
+    if (!src.includes(entry.requiredRename)) {
+      output.push(`${entry.file}（${entry.what}）找不到那次改名（${entry.requiredRename}）——`
+        + " 要么原子写被拆掉了，要么这条登记已经与实现脱节，两种都得有人看一眼");
+    }
+  }
+  for (const [rel, reason] of Object.entries(NOT_SHARED)) {
+    if (!existsSync(join(root, rel))) output.push(`原子写豁免登记里的 ${rel} 不存在了（${reason}）—— 登记过期`);
+  }
+}
+
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
   const UNCOVERED_REFUSAL_CODE_CEILING = 80;

@@ -430,8 +430,11 @@ end
   errors << "#{file} 里找不到获取目录锁的那段循环 —— 本条在空转" if body.empty?
   errors << "#{file} 的目录锁没有在获取时判陈旧（#{call} 没被调用）：只靠时间兜底会让崩溃后约 30 秒写不进去" unless
     body.include?(call)
+  # 原先要求 owner.json 与 JSON.stringify({pid 按这个先后顺序出现在同一段里。改成原子写之后
+  # （先写临时文件、再改名到 owner.json）顺序颠倒了，这条就误报 —— 判据问的是"记没记 pid"，
+  # 不该连带规定它用哪种写法。两件事分开问：写了 pid，且落点是 owner.json。
   errors << "#{file} 的锁里没有记下持锁者 pid —— 破锁就只能靠时间" unless
-    body.match?(/owner\.json.*JSON\.stringify\(\{pid: process\.pid/m)
+    body.include?("JSON.stringify({pid: process.pid") && body.include?("owner.json")
 end
 
 # 视图下发的每个集合都要有人读。控制台是轮询的，多发一个集合就是每次请求都多付一笔 ——
