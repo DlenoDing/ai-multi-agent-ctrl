@@ -967,6 +967,24 @@ const MUTATIONS = [
     expect: "只列了 3 处却不说这是前 3 处"
   },
   {
+    // 白名单里留着代码已经不读的名字 → 那个参数被收下然后忽略，正是这套白名单要防的洞。
+    name: "agentctl 登记的参数必须真的被读",
+    check: "verifyAgentctlRejectsUnknownFlags",
+    file: "scripts/agentctl.mjs",
+    from: '"max-uses", "idempotency-key", "verified"',
+    to: '"max-uses", "idempotency-key", "verifed"',
+    expect: "却从不读取"
+  },
+  {
+    // 名单再齐，"拒绝"这个动作没接上也一样白搭。
+    name: "agentctl 认不出的参数必须真的被拒",
+    check: "verifyAgentctlRejectsUnknownFlags",
+    file: "scripts/agentctl.mjs",
+    from: "  fail(`认不出这些参数：${unknownFlags.map((key) => `--${key}`).join(\" \")}`,",
+    to: "  console.error(`认不出这些参数：${unknownFlags.map((key) => `--${key}`).join(\" \")}`, [",
+    expect: "没人用的局部变量"
+  },
+  {
     // 表脚少了第三个参数，"共 N 条"就成了把截断后的条数当总数报给人。
     name: "表脚不得把截断后的条数当总数",
     check: "verifyTableFootersAdmitTruncation",

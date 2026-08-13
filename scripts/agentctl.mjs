@@ -14,6 +14,25 @@ if (action !== "join-token create" && action !== "nodes list" && action !== "doc
      "接一台新机器通常不用它：项目管理界面上「发加入令牌」会直接给出可粘贴的安装命令"]);
 }
 
+// 子命令打错会大声报错（上面那段），参数名打错却一声不吭 —— 同一个文件里的孪生分支只补了一半，
+// 而这一半的默认值全都偏向"少做一点"：--verified 打错就静默给出【不做校验】的安装命令
+// （verified 那条会另下 .sha256 校验安装脚本再执行），--roles/--ttl/--node-name 打错退回默认，
+// nodes list 上写 --project 更是彻底空转。人以为自己要了某件事，屏幕上没有任何相反的迹象。
+const GLOBAL_FLAGS = ["server", "session-token", "email", "token"];
+const SUBCOMMAND_FLAGS = {
+  "join-token create": ["project", "project-id", "node-name", "roles", "ttl", "max-uses", "idempotency-key", "verified"],
+  "nodes list": [],
+  doctor: []
+};
+const knownFlags = new Set([...GLOBAL_FLAGS, ...SUBCOMMAND_FLAGS[action]]);
+const unknownFlags = Object.keys(args).filter((key) => key !== "_" && !knownFlags.has(key));
+if (unknownFlags.length) {
+  fail(`认不出这些参数：${unknownFlags.map((key) => `--${key}`).join(" ")}`,
+    [`「${action}」认得的参数：${[...knownFlags].map((key) => `--${key}`).join(" ")}`,
+     "打错的参数会被当成没给，命令照跑 —— 所以这里直接拒绝，而不是替你猜",
+     ...(SUBCOMMAND_FLAGS[action].length === 0 ? [`${action} 本身不接参数，只认上面那几个通用的`] : [])]);
+}
+
 if (action === "doctor") {
   const health = await request("/api/health");
   const manifest = await request("/api/agent/v1/bootstrap-manifest");

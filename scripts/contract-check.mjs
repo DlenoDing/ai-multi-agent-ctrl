@@ -299,6 +299,7 @@ run(verifySuspendHaltsRunningWork);
 run(verifyCancelDirectiveStopsRunningWork);
 run(verifyPauseDirectiveIsReversible);
 run(verifyTableFootersAdmitTruncation);
+run(verifyAgentctlRejectsUnknownFlags);
 run(verifyEveryAssertionIsActuallyRegistered);
 run(verifyCrossOrgGrantIsRefusedOnBothDoors);
 run(verifyUnknownEnumValuesAreRefusedNotCoerced);
@@ -4916,6 +4917,49 @@ function verifyTableFootersAdmitTruncation(output) {
   if (missing.length) {
     output.push(`这些表脚把截断后的条数当成了总数（moreText 少了第三个参数）：`
       + `${missing.map((call) => call.replace(/\s+/gu, " ").slice(0, 70)).join("；")}`);
+  }
+}
+
+// agentctl 现在会拒绝认不出的参数名（打错就静默当没给，是这条判据要防的原病）。
+// 白名单一旦与代码真正读取的键漂开，两个方向都会把那个洞放回来：
+//   · 白名单里留着代码不再读的名字 → 这个参数被接受、被忽略，人以为自己给了；
+//   · 代码读了白名单没登记的名字 → 那个参数永远被拒，功能等于不存在。
+// 两边都要点名。这道判据是纯文本的，零成本；行为那半在 agent:doctor 里真跑 CLI。
+function verifyAgentctlRejectsUnknownFlags(output) {
+  const source = readFileSync(resolve(root, "scripts/agentctl.mjs"), "utf8");
+  const read = new Set([...source.matchAll(/args(?:\.([A-Za-z][A-Za-z0-9]*)|\["([a-z][a-z0-9-]*)"\])/gu)]
+    .map((match) => match[1] || match[2]).filter((key) => key !== "_"));
+  const listLiteral = (name) => source.match(new RegExp(`${name}[^=]*=\\s*([\\s\\S]*?);`, "u"))?.[1] || "";
+  const declared = new Set([...`${listLiteral("GLOBAL_FLAGS")}${listLiteral("SUBCOMMAND_FLAGS")}`
+    .matchAll(/"([a-z][a-z0-9-]*)"/gu)].map((match) => match[1]));
+  if (read.size < 8 || declared.size < 8) {
+    output.push(`agentctl 参数核对：读到 ${read.size} 个取用键、${declared.size} 个登记名 —— 提取与代码脱节，本条在空转`);
+    return;
+  }
+  const acceptedButIgnored = [...declared].filter((key) => !read.has(key));
+  if (acceptedButIgnored.length) {
+    output.push(`agentctl 登记了这些参数却从不读取：${acceptedButIgnored.map((key) => `--${key}`).join(" ")}`
+      + " —— 给了会被收下然后忽略，正是这道白名单要防的那种静默");
+  }
+  const readButUndeclared = [...read].filter((key) => !declared.has(key));
+  if (readButUndeclared.length) {
+    output.push(`agentctl 读取了这些参数却没登记：${readButUndeclared.map((key) => `--${key}`).join(" ")}`
+      + " —— 它们会被当成认不出的参数拒掉，这个功能等于不存在");
+  }
+  // 上面两条只比对名单。名单再齐，"拒绝"这个动作没接上也一样白搭 —— 验接线，不只验判据：
+  // 算出来的 unknownFlags 必须真的落进 fail()，否则它只是一个没人用的局部变量。
+  const start = source.indexOf("if (unknownFlags.length)");
+  if (start === -1) {
+    output.push("agentctl 不再拦截认不出的参数 —— 打错的参数会被当成没给，命令照跑");
+    return;
+  }
+  let depth = 0, end = source.indexOf("{", start);
+  for (let index = end; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    else if (source[index] === "}") { depth -= 1; if (!depth) { end = index; break; } }
+  }
+  if (!source.slice(start, end).includes("fail(")) {
+    output.push("agentctl 算出了认不出的参数却没有 fail() —— 它只是个没人用的局部变量，命令照跑");
   }
 }
 

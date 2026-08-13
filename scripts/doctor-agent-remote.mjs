@@ -106,7 +106,26 @@ try {
     if (listed.status !== 0 || !String(listed.stdout).includes("agentRuntimeNodes")) {
       throw new Error(`agentctl nodes list 不可用（退出码 ${listed.status}）：${String(listed.stdout || listed.stderr).slice(0, 200)}`);
     }
-    const issued = runCli(["join-token", "create", "--project=prj_control_plane", "--name=cli-probe-node"]);
+    // 参数名打错必须当场拒绝，不能"当成没给"照跑。--verified 是最实的一条：
+    // 它决定给出的是【下载 .sha256 校验安装脚本再执行】还是【curl | sh】，
+    // 打错一个字母就静默降级成后者，而屏幕上没有任何相反的迹象。
+    // （这道门自己就中过：下面那条 join-token create 原先写的是 --name=，
+    //   而 agentctl 认的是 --node-name —— 它想钉住节点名，静默地什么也没钉。）
+    const badFlag = runCli(["join-token", "create", "--project=prj_control_plane", "--verifed"]);
+    if (badFlag.status !== 1 || !String(badFlag.stderr).includes("--verifed")) {
+      throw new Error(`agentctl 参数名打错时应当场拒绝并点名（退出码 ${badFlag.status}）：`
+        + String(badFlag.stderr || badFlag.stdout).slice(0, 200));
+    }
+    if (!String(badFlag.stderr).includes("--verified")) {
+      throw new Error("agentctl 拒绝打错的参数时没有列出认得的参数 —— 人看不出自己少打了哪个字母");
+    }
+    const verified = runCli(["join-token", "create", "--project=prj_control_plane", "--verified"]);
+    if (verified.status !== 0 || !/sha256/u.test(String(verified.stdout))) {
+      throw new Error("agentctl --verified 没有给出带校验的安装命令 —— 这个参数等于不存在："
+        + String(verified.stdout || verified.stderr).slice(0, 200));
+    }
+
+    const issued = runCli(["join-token", "create", "--project=prj_control_plane", "--node-name=cli-probe-node"]);
     if (issued.status !== 0) {
       throw new Error(`agentctl join-token create 不可用（退出码 ${issued.status}）：${String(issued.stderr || issued.stdout).slice(0, 200)}`);
     }
@@ -115,6 +134,11 @@ try {
     const command = String(issued.stdout);
     if (!command.includes("install-agent.sh") || !command.includes("--join-token-file")) {
       throw new Error(`agentctl 给出的接入命令不对：${command.slice(0, 200)}`);
+    }
+    // 上面给了 --node-name，接入命令里就必须带着它。不断言的话，这个参数写错了照样一片绿
+    // —— 这道门原先正是这么放过 --name= 的。
+    if (!command.includes("--node-name") || !command.includes("cli-probe-node")) {
+      throw new Error(`agentctl 没有把 --node-name 传进接入命令：${command.slice(0, 200)}`);
     }
     if (/--join-token[ =][^-]/u.test(command)) {
       throw new Error("agentctl 把接入令牌放进了命令行参数 —— 同机任何用户 ps 一下就能拿走");
