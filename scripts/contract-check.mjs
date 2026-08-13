@@ -303,6 +303,7 @@ run(verifyOperatorCliRejectsUnknownFlags);
 run(verifyMcpDoesNotReimplementCore);
 run(verifyInertMechanismsStayRegistered);
 run(verifyMcpInputDictionaryHasNoGhosts);
+run(verifyServerStateFieldsHaveProducers);
 run(verifyAgentctlFlagNamesMatchWhatItReads);
 run(verifyEveryAssertionIsActuallyRegistered);
 run(verifyCrossOrgGrantIsRefusedOnBothDoors);
@@ -4951,6 +4952,43 @@ function verifyTableFootersAdmitTruncation(output) {
 // decision / options…），按名字枚举必漏 —— 第一版把 dryRun 和 selectedOptionId 报成幽灵，
 // 而前者读作 effectiveArgs.dryRun、后者读作 decision.selectedOptionId，都是正在工作的参数。
 // 假红会消耗对门的信任，宁可只钉住"名字压根不存在"这一种，它零误报，也正是这次抓到的那两个。
+// 【读了 state.X 却没有任何地方给它赋值】。这一形状今天抓到两个真东西：
+//   · state.auditArchiveFault —— 归档接口一直下发它，而全仓没有赋值点，于是永远是 null，
+//     查历史那一屏对"归档写失败过"毫无察觉（b9aabc3）；
+//   · state.conditionSource —— 条件窗口那道闸的数据源没有生产者，闸永远不生效（764e7dc）。
+// 判据便宜且窄：只认"整个产品侧都没有 state.X = / ||= / ??= 这样的赋值，且种子里也没有这个键"。
+// 视图那一侧另有"控制台读了、服务端不下发"的判据（控制台门的视图接线），两条互补：
+// 那条管【下发面】，这条管【服务端自己读的字段有没有人写】。
+function verifyServerStateFieldsHaveProducers(output) {
+  const files = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/audit-ledger.mjs",
+    "apps/control-plane-ui/lib/state-store.mjs", "apps/mcp-server/server.mjs"];
+  const product = files.map((path) => readFileSync(resolve(root, path), "utf8")).join("\n");
+  const seedKeys = new Set(Object.keys(JSON.parse(readFileSync(resolve(root, "data/seed-state.json"), "utf8"))));
+  const read = new Set([...product.matchAll(/\bstate\.([a-zA-Z][a-zA-Z0-9_]*)/gu)].map((match) => match[1]));
+  const assigned = new Set([...product.matchAll(/\bstate\.([a-zA-Z][a-zA-Z0-9_]*)\s*(?:=[^=]|\|\|=|\?\?=)/gu)]
+    .map((match) => match[1]));
+  // "control-plane-state.json" 这类文件名里也有 state. —— 那不是字段读取。
+  const NOT_A_FIELD = new Set(["json"]);
+  // 已知无生产者、且已在别处登记为惰性机制的，不重复报（那条登记会在有人接上时过期报红）。
+  const REGISTERED_INERT = new Set(["conditionSource"]);
+  if (read.size < 40 || assigned.size < 40) {
+    output.push(`state 字段生产者核对：读到 ${read.size} 个、有赋值 ${assigned.size} 个 —— 提取与代码脱节，本条在空转`);
+    return;
+  }
+  const orphans = [...read].filter((field) => !assigned.has(field) && !seedKeys.has(field)
+    && !NOT_A_FIELD.has(field) && !REGISTERED_INERT.has(field)).sort();
+  if (orphans.length) {
+    output.push(`服务端读了这些 state 字段，全仓却没有任何地方给它们赋值：${orphans.map((f) => `state.${f}`).join("、")}`
+      + " —— 它们永远是 undefined：要么这条信息从来没到过人眼前，要么那段逻辑从来不生效");
+  }
+  const revived = [...REGISTERED_INERT].filter((field) => assigned.has(field));
+  if (revived.length) {
+    output.push(`这些字段已经有人赋值了：${revived.join("、")} —— 从 REGISTERED_INERT 里去掉，`
+      + "并给它配上真正的行为断言");
+  }
+}
+
 function verifyMcpInputDictionaryHasNoGhosts(output) {
   const mcp = readFileSync(resolve(root, "apps/mcp-server/server.mjs"), "utf8");
   const downstream = ["apps/control-plane-ui/lib/control-plane-core.mjs",

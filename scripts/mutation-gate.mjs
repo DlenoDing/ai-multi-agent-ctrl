@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 读了却没人赋值的 state 字段 = 那条信息永远到不了人眼前（今天抓到两个真的）。
+    name: "服务端读的 state 字段必须有人赋值",
+    check: "verifyServerStateFieldsHaveProducers",
+    file: "apps/control-plane-ui/server.mjs",
+    from: "      archiveFault: sharedAuditArchiveFault(),",
+    to: "      archiveFault: state.auditArchiveFault || null,",
+    expect: "没有任何地方给它们赋值"
+  },
+  {
     // 词表里多一个产品代码里不存在的名字 = 每个工具的 inputSchema 都摆着一个假旋钮。
     name: "MCP 入参词表不得有幽灵",
     check: "verifyMcpInputDictionaryHasNoGhosts",
