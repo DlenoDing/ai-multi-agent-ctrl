@@ -1049,6 +1049,16 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 正面对照必须钉死"真的被受理"：只断言"某个码没出现"的写法，会在因别的原因被拒时静默变绿。
+    // 这里改坏一处与被测性质【无关】的守卫 —— 旧写法看不见它，新写法会红。
+    name: "正面对照要钉死被受理",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    file: CORE,
+    from: '      return {valid: false, status: 409, error: "artifact_manifest_missing_output_refs"};',
+    to: '      return {valid: false, status: 409, error: "artifact_manifest_missing_output_refs"};\n    }\n    if (outputRefs.length) {\n      return {valid: false, status: 409, error: "unrelated_probe_rejection"};',
+    expect: "没有被受理"
+  },
+  {
     // 一个错误码盖着五个字段，不点名的话调用方只能逐个试。
     name: "绑定不一致要点名是哪个字段",
     check: "verifyHumanApprovedPathsBindTheCommit",

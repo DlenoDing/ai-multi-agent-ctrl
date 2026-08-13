@@ -7137,10 +7137,18 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
   const forbidDeclaredOnly = runCase({stray: false, finalized: true, trespass: true, writeForbidden: false});
   if (!forbidDeclaredOnly.skipped && forbidDeclaredOnly.result.error === "changed_paths_inside_human_forbidden_plan_paths") {
     output.push("方案里声明了禁区但这次提交没有踩到，却仍被判踩禁区 —— 这条守卫会误伤合规提交");
+  } else if (!forbidDeclaredOnly.skipped && forbidDeclaredOnly.result.accepted !== true) {
+    // 只断言"某个码没出现"的对照会在【因别的原因被拒】时静默变绿 —— 这套探针整体就这么空转过
+    // 很久（清单缺绑定字段，每个用例都在同一处被拒）。正面对照一律钉死"真的被受理"。
+    output.push(`没踩禁区的合规提交没有被受理（${forbidDeclaredOnly.result.error}）——`
+      + " 这条对照本该证明守卫不误伤，它自己先没走到守卫");
   }
   const notFinalized = runCase({stray: true, finalized: false});
   if (!notFinalized.skipped && notFinalized.result.error === "changed_paths_outside_human_approved_plan") {
     output.push("方案还没有经人定稿，却按人批准的范围拦下了提交 —— AI 自己提的边界被当成了人的批准");
+  } else if (!notFinalized.skipped && notFinalized.result.accepted !== true) {
+    output.push(`方案未定稿时的提交没有被受理（${notFinalized.result.error}）——`
+      + " 这条对照本该证明「没有人的批准就不按批准范围拦」，它自己先没走到那一步");
   }
 }
 
