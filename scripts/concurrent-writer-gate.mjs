@@ -34,7 +34,6 @@ process.on("exit", killTrackedChildren);
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.on(signal, () => { killTrackedChildren(); process.exit(130); });
 }
-process.on("uncaughtException", (error) => { killTrackedChildren(); console.error(error); process.exit(1); });
 
 const root = process.argv[2] || resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-conc-"));
@@ -51,16 +50,17 @@ const dumpServerLog = (why) => {
   console.log(`  --  ${why}，服务端输出（末 12 行）：`);
   for (const line of serverLog.slice(-12)) console.log(`      ${line}`);
 };
-process.on("uncaughtException", (error) => {
-  dumpServerLog(`本门被一个未捕获的异常打断（${error?.message || error}）`);
-  console.log("concurrent writer gate failed: 未捕获异常 —— 本轮什么也没验，别当成通过");
+// 只留【一个】uncaughtException 处理器。原先文件顶部另有一个（回收子进程后直接 process.exit(1)），
+// 它先注册就先退出，下面这份留证据的根本轮不到跑 —— 于是每次偶发红都只剩一段栈。
+// 两个处理器抢同一个出口，是"同一件事两道门"的另一种样子。
+const bailOut = (why, detail) => {
+  dumpServerLog(`${why}（${detail}）`);
+  killTrackedChildren();
+  console.log(`concurrent writer gate failed: ${why} —— 本轮什么也没验，别当成通过`);
   process.exit(1);
-});
-process.on("unhandledRejection", (reason) => {
-  dumpServerLog(`本门被一个未处理的 Promise 拒绝打断（${reason?.message || reason}）`);
-  console.log("concurrent writer gate failed: 未处理的拒绝 —— 本轮什么也没验，别当成通过");
-  process.exit(1);
-});
+};
+process.on("uncaughtException", (error) => bailOut("未捕获异常", error?.message || error));
+process.on("unhandledRejection", (reason) => bailOut("未处理的拒绝", reason?.message || reason));
 const check = (ok, label, detail = "") => {
   // 参数自检：布尔与标签写反时当场报错，而不是静默恒真。
   // 本仓库四道门里三道是 (ok, label)，控制台门是 (label, ok) —— 我照着另一道的顺序写过一次，
