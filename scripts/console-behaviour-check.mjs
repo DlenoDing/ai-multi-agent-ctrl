@@ -757,6 +757,44 @@ function runPendingTruncationCase() {
     capped.includes("2+") && /只多不少/.test(capped),
     "只改了总数却没说明是哪一类被截断、也没说明数字的方向");
 
+  // 改密码这一刻：服务端会撤销该账号【全部】会话，含当前这一条。而界面原先说
+  // "密码修改成功，下次登录可使用新密码" —— 人以为可以接着用，下一次点击才 401，
+  // 弹出的还是"会话已过期"：一个刚成功的操作紧接着一句像故障的话，看起来就是个 bug。
+  // 判据按语法结构切出 change-password 那一支，不取字符窗口（窗口会把邻居算进来）。
+  {
+    const source = probe.handlerSource("submit");
+    const at = source.indexOf('kind === "change-password"');
+    let branch = "";
+    if (at >= 0) {
+      let index = source.indexOf("{", at);
+      const start = index;
+      let depth = 0;
+      do {
+        if (source[index] === "{") depth += 1;
+        else if (source[index] === "}") depth -= 1;
+        index += 1;
+      } while (index < source.length && depth > 0);
+      // 注释要剥掉再判：这一支的注释里就写着"原先说……"，含着旧文案本身。
+      // 第一版没剥，当场被自己解释历史的那句话判成"文案没改"（门读到被测代码的注释，
+      // 与门读到自己写的字是同一形状）。剥掉之后正反两向都只看真正会跑的代码。
+      // 只剥"// 到行尾"，不要整行删 —— 整行删会把带尾注释的真代码一起删掉，造出假红。
+      branch = source.slice(start, index).replace(/\/\/[^\n]*$/gmu, "");
+    }
+    if (!branch.trim()) {
+      failures.push("改密提示: 切不出 change-password 这一支 —— 提取与代码脱节，本条在空转");
+    } else {
+      check("改完密码要当场把本地会话也清掉（服务端已经把它撤销了）",
+        /clearSession\(\)/u.test(branch),
+        "改密之后仍留在一条已经死掉的会话里 —— 下一次点击才 401，而那句提示写的是「会话已过期」");
+      check("改密的成功提示不许暗示当前会话还能接着用",
+        !/下次登录可使用新密码/u.test(branch),
+        "提示仍是「下次登录可使用新密码」—— 而这一台此刻已经被登出了");
+      check("改密的成功提示要说清所有会话（含这一台）都失效了",
+        /都已失效|包括当前这一台/u.test(branch),
+        "没有说清为什么突然要重新登录 —— 人会以为是故障");
+    }
+  }
+
   // 台账那句脚注原先是无条件的："这里只保留最近 N 条；更早的记录在归档文件里"，N 取当前条数。
   // 于是全新部署只有 2 条时它宣称有更早的记录被挤到归档里 —— 凭空造出一次截断，
   // 还把人支去看一个空归档。真实全新部署上读到的就是这句。两支都要验：

@@ -1015,6 +1015,17 @@ try {
       throw new Error(`改密落盘的不是 scrypt 而是 ${String(changed?.passwordDigest).slice(0, 24)}… —— 无密钥拉伸的摘要可被离线极快暴力破解`);
     }
   }
+  // 改密即撤销该账号【全部】会话（含发起这次改密的那一条）——那是"我怀疑被盗号"时唯一的自救手段，
+  // 不撤销就等于对攻击者毫无影响。这条性质此前只写在注释里，没有任何断言压着。
+  // 界面也依赖它：改完密码要当场回登录页，而不是留在一条已经死掉的会话里。
+  {
+    const staleSession = await jsonFetch(port, "/api/state?view=orgs", {headers: {authorization: orgAdminAuth}});
+    if (staleSession.response.status !== 401) {
+      throw new Error(`改密之后原来那条会话还能用（HTTP ${staleSession.response.status}）——`
+        + "被盗号的人改了密码，攻击者手里的令牌照样有效");
+    }
+  }
+
   const passwordLogin = await jsonFetch(port, "/api/auth/login", {
     method: "POST",
     body: JSON.stringify({email: "doctor.org.admin@local", password: "doctor-org-admin-pass"})

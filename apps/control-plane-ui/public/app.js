@@ -3832,8 +3832,15 @@ document.addEventListener("submit", async (event) => {
       if (String(data.newPassword || "").length < 8) throw new Error("新密码至少 8 位");
       if (data.newPassword !== data.confirmPassword) throw new Error("两次输入的新密码不一致");
       await api("/api/auth/change-password", {method: "POST", body: JSON.stringify({currentPassword: data.currentPassword || undefined, newPassword: data.newPassword})});
-      modalHtml = "";
-      openModal("修改密码", `<div class="notice">密码修改成功，下次登录可使用新密码。</div>`);
+      // 服务端改密即撤销该账号【全部】会话，含当前这一条（那是"我怀疑被盗号"时唯一的自救手段，
+      // 不撤销就等于对攻击者毫无影响）。而这里原先说"下次登录可使用新密码" —— 人以为可以接着用，
+      // 下一次点击才 401，弹出的还是"会话已过期，请重新登录"：一个刚成功的操作，
+      // 紧接着一句像是出了故障的话，看起来就是个 bug。
+      // 所以当场把本地会话也清掉、回到登录页，并说清这是安全设计而不是故障。
+      // clearSession 会清掉 modalHtml，必须先清会话再开弹窗。
+      clearSession();
+      openModal("修改密码", `<div class="notice">密码已更新。为防止旧口令继续可用，
+        这个账号的所有登录会话（包括当前这一台）都已失效 —— 请用新密码重新登录。</div>`);
       return;
     }
     if (kind === "org-create") {
