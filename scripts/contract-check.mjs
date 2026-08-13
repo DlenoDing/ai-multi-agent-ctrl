@@ -89,6 +89,7 @@ import {
   settleRuntimeIssuePatternForCandidate,
   collectRuntimeIssue,
   claimLease,
+  releaseLease,
   permissionRequestSubmit,
   approvalRequestCreate,
   advanceExecutionTopology,
@@ -1353,6 +1354,30 @@ function verifyHumanAndOrganizationContracts(output) {
     const verifiedByMachine = disposeCase("fixed_verified", false);
     if (verifiedByMachine.error) {
       output.push(`findingResolve: "已修复且有证据"是可核验的事实判断，AI 本就可以做，却被拒了（${verifiedByMachine.error}）`);
+    }
+
+    // 释放侧此前一条判据都没有：不存在的租约、以及【别人的】租约。
+    // 后者是互斥的核心 —— 能替别人释放，就等于没有互斥。
+    // （申领侧的三条在上面，本轮把它们从"只看 ok !== false"收紧成点名错误码。）
+    const releaseState = structuredClone(seedState);
+    ensureRuntimeCollections(releaseState, {root});
+    releaseState.repositoryOutputs = [{targetId: "tgt_lease", taskGroupId: "tg_runtime_management", status: "pending"}];
+    releaseState.workSessions = [{sessionId: "sess_holder", taskGroupId: "tg_runtime_management", status: "active"}];
+    releaseState.leases = [];
+    const held = claimLease(releaseState, {targetId: "tgt_lease", holderRef: "session:sess_holder"});
+    const missing = releaseLease(releaseState, {leaseId: "lease_never_existed", fencingToken: "x"});
+    if (missing.error !== "lease_not_found") {
+      output.push(`releaseLease: 释放一个不存在的租约没有被拒（实际：${missing.error || "已受理"}）`);
+    }
+    const byOther = releaseLease(releaseState, {leaseId: held.lease.leaseId, holderRef: "session:somebody_else",
+      fencingToken: held.lease.fencingToken});
+    if (byOther.error !== "lease_holder_mismatch") {
+      output.push(`releaseLease: 别人替持有者释放了租约（实际：${byOther.error || "已受理"}）—— 能替别人释放就等于没有互斥`);
+    }
+    const byHolder = releaseLease(releaseState, {leaseId: held.lease.leaseId, holderRef: "session:sess_holder",
+      fencingToken: held.lease.fencingToken});
+    if (byHolder.error || releaseState.leases.find((item) => item.leaseId === held.lease.leaseId)?.status !== "released") {
+      output.push(`releaseLease: 持有者本人也释放不了（${byHolder.error}）—— 租约没有出口，目标会被永久占住`);
     }
 
     // 规则来源采纳同理：把一份来源标成 active＝宣布"本项目认它"，只能由真人定。
@@ -2831,13 +2856,15 @@ function verifyHumanAndOrganizationContracts(output) {
       {sessionId: "ws_here", taskGroupId: hTg.id, projectId: hTg.projectId, status: "active"}
     ];
     holderState.leases = [];
+    // 判据要点名错误码，不能只看 `ok !== false`：换成【别的】守卫把它拒掉，这两条照样绿，
+    // 而被测的那道门其实已经没了（"拒了"和"拒对了"是两件事）。
     const foreignHolder = claimLease(holderState, {leaseId: "lease_foreign", repositoryOutputTargetRef: "rot_a", holderRef: "session:ws_elsewhere"});
-    if (foreignHolder.ok !== false) {
-      output.push("租约持有者: 可以把租约的持有者指向别的任务组的会话（造出一条谁也回收不了的永久租约）");
+    if (foreignHolder.error !== "lease_holder_scope_mismatch") {
+      output.push(`租约持有者: 可以把租约的持有者指向别的任务组的会话（造出一条谁也回收不了的永久租约）—— 实际：${foreignHolder.error || "已受理"}`);
     }
     const settledHolder = claimLease(holderState, {leaseId: "lease_settled", repositoryOutputTargetRef: "rot_b", holderRef: "session:ws_settled"});
-    if (settledHolder.ok !== false) {
-      output.push("租约持有者: 可以把租约挂在一个已了结的会话上，于是它永远不会被判为持有者已了结");
+    if (settledHolder.error !== "lease_holder_session_settled") {
+      output.push(`租约持有者: 可以把租约挂在一个已了结的会话上，于是它永远不会被判为持有者已了结 —— 实际：${settledHolder.error || "已受理"}`);
     }
     // 非空转自证：本任务组内的存活会话必须仍能正常申领
     const legitLease = claimLease(holderState, {leaseId: "lease_ok", repositoryOutputTargetRef: "rot_c", holderRef: "session:ws_here"});
@@ -5190,7 +5217,7 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 棘轮只往一个方向走：数字变大＝新增的守卫没配判据；变小＝该把这里下调，把成果钉住。
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 102;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 98;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];

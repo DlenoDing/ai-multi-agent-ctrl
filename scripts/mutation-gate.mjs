@@ -986,6 +986,24 @@ const MUTATIONS = [
     expect: "这个目标可以改仓库里的任何东西"
   },
   {
+    // 能替别人释放租约，就等于没有互斥。这条守卫失效时是"已受理"。
+    name: "不得替别人释放租约",
+    file: CORE,
+    check: "verifyHumanAndOrganizationContracts",
+    from: 'if (args.holderRef && lease.holderRef !== args.holderRef) return {ok: false, error: "lease_holder_mismatch"};',
+    to: "/* 守卫失效 */",
+    expect: "能替别人释放就等于没有互斥"
+  },
+  {
+    // 申领侧那三条原先只判 `ok !== false`：换一道门拒它照样绿。收紧成点名错误码之后才有这条判别力。
+    name: "租约持有者判据要认得出是哪道门拒的",
+    file: CORE,
+    check: "verifyHumanAndOrganizationContracts",
+    from: 'return {ok: false, error: "lease_holder_scope_mismatch", holderRef};',
+    to: 'return {ok: false, error: "lease_something_else", holderRef};',
+    expect: "谁也回收不了的永久租约"
+  },
+  {
     // 新增一道守卫却不配判据 —— 它失效时不会有任何东西变红。棘轮就是拦这个的。
     name: "新增拒绝码必须带判据",
     file: CORE,
