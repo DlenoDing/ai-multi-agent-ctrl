@@ -1,6 +1,6 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -504,6 +504,39 @@ try {
     }
   }
   rmSync(libraryDir, {recursive: true, force: true});
+
+  // 孪生分支：陈旧会话目录的清理同样会失败，同样只有"若干天后盘满"这一个症状。
+  const sessionsDir = join(agentWorkDir, "orgs", "org_probe", "projects", "prj_probe", "task-groups", "tg_probe", "sessions");
+  const staleSessionDir = join(sessionsDir, "s_stale");
+  mkdirSync(staleSessionDir, {recursive: true});
+  const longAgo = new Date("2020-01-01T00:00:00Z");
+  utimesSync(staleSessionDir, longAgo, longAgo);
+  chmodSync(sessionsDir, 0o555);
+  let sweepReallyBlocked = true;
+  try {
+    renameSync(staleSessionDir, `${staleSessionDir}-probe`);
+    renameSync(`${staleSessionDir}-probe`, staleSessionDir);
+    sweepReallyBlocked = false;
+  } catch {}
+  if (!sweepReallyBlocked) {
+    chmodSync(sessionsDir, 0o755);
+    console.log("  --  跳过【陈旧会话清不掉时必须出声】：当前身份能无视只读目录改名（多半是 root），这一条本轮没被检验");
+  } else {
+    const sweepRun = spawnSync(process.execPath, [runtimePath, "run", "--work-dir", agentWorkDir, "--once"], {
+      env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false", AIMAC_AGENT_SESSION_TTL_HOURS: "1"},
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024
+    });
+    const sweepOutput = `${sweepRun.stdout || ""}${sweepRun.stderr || ""}`;
+    chmodSync(sessionsDir, 0o755); // 恢复必须在断言之前，否则真红会被临时目录的 rm EACCES 盖掉
+    if (!existsSync(staleSessionDir)) {
+      throw new Error(`只读目录下陈旧会话竟然被清掉了，本条没验到真实故障: ${sweepOutput.slice(-600)}`);
+    }
+    if (!sweepOutput.includes("stale session sweep could not remove")) {
+      throw new Error(`陈旧会话一个都清不掉，运行时一个字都没说 —— 症状只会是若干天后盘满: ${sweepOutput.slice(-800)}`);
+    }
+  }
+  rmSync(join(agentWorkDir, "orgs", "org_probe"), {recursive: true, force: true});
 
   // claim 代次此前只被【客户端自查】和【执行器凭据】读取，检查点这个真正的写入点从不比较它。
   // 认领被回收后重新分配给同一个节点时 assignedNodeId 照样匹配，于是上一次尝试的检查点

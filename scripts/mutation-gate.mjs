@@ -961,6 +961,15 @@ const MUTATIONS = [
     expect: "起来之后立刻退出了"
   },
   {
+    // 孪生分支：陈旧会话目录清不掉时同样只有"若干天后盘满"这一个症状。
+    name: "陈旧会话清不掉时必须出声",
+    file: "apps/agent-runtime/runtime.mjs",
+    skip: "判别力由远程 agent e2e 覆盖（已用 mutate-probe 实证：只读 sessions 目录下那道门变红）",
+    from: "  if (sweepFaults) {\n    process.stderr.write(`stale session sweep could not remove",
+    to: "  if (false) {\n    process.stderr.write(`stale session sweep could not remove",
+    expect: "运行时一个字都没说"
+  },
+  {
     // 淘汰全都失败（目录只读、文件被占用）时原先静默返回，下一拍原样再来：盘一直涨，
     // 而系统明明算出来自己超了上限，一个字都没对人说过。
     name: "清不动的时候必须出声",

@@ -575,6 +575,10 @@ function sweepStaleSessionDirectories(config) {
   if (!existsSync(orgsRoot)) return;
   const cutoff = Date.now() - ttlMs;
   const walkLevel = (dir) => existsSync(dir) ? readdirSync(dir).map((name) => join(dir, name)) : [];
+  // 清不掉时原先静默跳过：这些目录会一直占着盘，而唯一的症状是若干天后盘满。
+  // ENOENT 不算故障 —— 目录被并发清掉是这里的常态，报出来只会淹掉真的那条。
+  let sweepFaults = 0;
+  let lastSweepFault = null;
   for (const orgDir of walkLevel(orgsRoot)) {
     for (const projectDir of walkLevel(join(orgDir, "projects"))) {
       for (const taskGroupDir of walkLevel(join(projectDir, "task-groups"))) {
@@ -584,10 +588,18 @@ function sweepStaleSessionDirectories(config) {
               rmSync(sessionDir, {recursive: true, force: true});
               process.stdout.write(`stale session directory removed: ${sessionDir}\n`);
             }
-          } catch {}
+          } catch (error) {
+            if (error?.code === "ENOENT") continue;
+            sweepFaults += 1;
+            lastSweepFault = `${sessionDir}: ${error?.message || error}`;
+          }
         }
       }
     }
+  }
+  if (sweepFaults) {
+    process.stderr.write(`stale session sweep could not remove ${sweepFaults} directories`
+      + `（最后一次失败：${lastSweepFault}）—— 它们会一直占着盘，需人工清理\n`);
   }
 }
 
