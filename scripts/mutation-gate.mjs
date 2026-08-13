@@ -832,6 +832,15 @@ const MUTATIONS = [
     expect: "永远在等一个不存在的基底"
   },
   {
+    // 孪生分支：MCP 侧退回降级写法，"两条路同规"那条判据必须当场报红。
+    name: "MCP 侧建工作项也不得降级未知状态",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyUnknownEnumValuesAreRefusedNotCoerced",
+    from: "    status: mcpWorkItemCreateStatus(args.status),",
+    to: '    status: ["draft", "ready"].includes(args.status) ? args.status : "ready",',
+    expect: "降级成 ready"
+  },
+  {
     // 人写的问责性文字超长时不能悄悄截断（存下的与人写的不一致）。
     name: "超长的人写文字必须拒绝而不是截断",
     file: CORE,

@@ -4922,7 +4922,19 @@ function verifyUnknownEnumValuesAreRefusedNotCoerced(output) {
     output.push(`刚好 4000 字的补充要求被拒了（${JSON.stringify(atLimit).slice(0, 100)}）—— 边界写反了`);
   }
 
-  // ③ 决策处置：reopen / abandon 是相反的两件事。
+  // ③ 同一个入参在 REST 与 MCP 两条路上都要按同一条规矩办。工作项创建就是一对孪生分支：
+  //    先只修了 REST 侧，MCP 侧仍把认不出的状态降级成 ready —— 只补一半是这类洞最常见的样子。
+  for (const [label, source] of [["REST", readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8")],
+    ["MCP", readFileSync(resolve(root, "apps/mcp-server/server.mjs"), "utf8")]]) {
+    if (/\["draft", "ready"\]\.includes\((?:input|args)\.status\)\s*\?/u.test(source)) {
+      output.push(`${label} 侧建工作项仍在把认不出的状态降级成 ready —— 应当拒绝并给出合法清单`);
+    }
+    if (!/WorkItemCreateStatus|workItemCreateStatus/u.test(source)) {
+      output.push(`${label} 侧建工作项没有走显式的状态校验 —— 两条路必须同规`);
+    }
+  }
+
+  // ④ 决策处置：reopen / abandon 是相反的两件事。
   let resolutionError = "";
   try {
     createHumanDirective(state, {taskGroupId: taskGroup.id, directiveType: "resolve_decision",

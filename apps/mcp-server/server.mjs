@@ -1215,6 +1215,13 @@ function riskLevelForTool(toolName) {
 
 // 审计里的"谁"：MCP 主体有三种（节点令牌 / 执行器凭据 / 远程 MCP 主体），都要记得出来。
 // 记成空或统一记成 "mcp" 等于把问责这一栏作废。
+function mcpWorkItemCreateStatus(value) {
+  if (value === undefined || value === null || value === "") return "ready";
+  if (["draft", "ready"].includes(value)) return value;
+  throw Object.assign(new Error("work_item_status_unknown"),
+    {status: 400, details: {status: String(value).slice(0, 60), supported: ["draft", "ready"]}});
+}
+
 function mcpPrincipalLabel(principal) {
   const kind = String(principal?.kind || "unknown");
   const id = String(principal?.id || "unknown");
@@ -1686,7 +1693,9 @@ function createWorkItem(state, args) {
   const workItem = {
     id: workItemId,
     title: args.title || "AI-native work item",
-    status: ["draft", "ready"].includes(args.status) ? args.status : "ready",
+    // 与 REST 侧同规（server.mjs 的 workItemCreateStatus）：不填＝ready 是合理的创建默认，
+    // 填错必须拒 —— 认不出的状态原先降级成"可开跑"。孪生分支只补一半是这类洞最常见的样子。
+    status: mcpWorkItemCreateStatus(args.status),
     ownerRole: args.roleId || args.ownerRole || "orchestrator",
     progress: 0,
     requirements: normalizeMcpStringList(args.requirements, []),
