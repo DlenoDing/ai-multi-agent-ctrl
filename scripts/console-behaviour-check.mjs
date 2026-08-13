@@ -2217,6 +2217,23 @@ await runCodedApiErrorCase();
     "悄悄替人校正了偏差，人就永远不知道自己这台机器的表是错的");
 }
 
+// 主审计只由控制台/REST 侧写，MCP 那 85 个工具一次都不调它 —— 经 MCP 改的状态在审计页上
+// 一条痕迹都没有。人来这一页问的正是"谁动了它"，台账的边界必须写在页面上。
+{
+  const auditRoot = el("div");
+  const admin = {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const auditState = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    projects: [], taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
+    findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: [],
+    auditLog: [{id: "a1", at: new Date().toISOString(), actor: "u1", action: "skill_source_retire",
+      subject: "AgentSkillSource:x", result: "succeeded"}]};
+  loadConsole(auditRoot).renderFullPageWith(auditState, admin, null, "sys-overview");
+  const auditHtml = String(auditRoot.innerHTML || "");
+  check("审计页要说清这份台账的边界",
+    /mcp-audit\.jsonl/.test(auditHtml) && /MCP/.test(auditHtml),
+    "经 MCP 改的状态在这一屏上一条痕迹都没有，而人来这里正是问「谁动了它」—— 台账边界必须写出来");
+}
+
 // 视图会把每个集合截到上限（服务端如实登记在 truncatedCollections 里）。此前只有 5 张表各自
 // 报出来，而界面上有 23 张表在渲染 state 集合 —— 实测真实部署里角色技能 269 条被截到 188 条，
 // 屏幕上一个字都没有。改成整屏报一次并逐个点名。

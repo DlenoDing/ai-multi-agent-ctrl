@@ -832,6 +832,14 @@ const MUTATIONS = [
     expect: "永远在等一个不存在的基底"
   },
   {
+    name: "审计页要说清台账只覆盖到哪",
+    file: APP,
+    gate: "console",
+    from: '<span class="mono">mcp-audit.jsonl</span> 里，不在这一屏内 —— 查"谁动了它"时两处都要看。</div>',
+    to: "</div>",
+    expect: "台账边界必须写出来"
+  },
+  {
     // 整屏那条横幅要真的接在外壳上，且要逐个点名（只说"有名单被截断"，人不知道是哪一份）。
     name: "被截断的名单要逐个点名",
     file: APP,
