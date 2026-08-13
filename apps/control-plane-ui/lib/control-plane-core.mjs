@@ -2029,6 +2029,12 @@ function runAutonomousCycleBody(state, request = {}) {
   const taskGroups = (state.taskGroups || []).filter((taskGroup) => !request.taskGroupId || taskGroup.id === request.taskGroupId);
   // A9: resample the external condition source once per cycle from the request/state — never from a
   // local clock — so window-gated cells are admitted/deferred against a verifiable current baseline.
+  // 【当前是惰性的，别把它当成一道在跑的闸】：两个来源都没有生产者 ——
+  // request.conditionSource 没有任何调用方传，state.conditionSource 全仓没有赋值点，
+  // 工作项那半的 conditionDependency 也只存在于本文件（没有 schema、没有种子、没有接口能设）。
+  // 于是 conditionWindowGate 永远拿到 null，而它在无源时是 fail-open 放行的。
+  // 这件事登记在契约门的 INERT_MECHANISMS 里：哪天有人接上了生产者，那条登记会当场过期报红，
+  // 提醒把它换成真正的行为断言。
   const conditionSource = request.conditionSource || state.conditionSource || null;
   // 组织被停用时，自治编排必须停手。此前"停用组织"只挡住了【人工写入】（经 hasPermission），
   // 而这个周期是系统驱动的、从不读组织状态 —— 于是名下的任务组照常派发、agent 照常执行、

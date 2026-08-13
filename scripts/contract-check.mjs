@@ -301,6 +301,7 @@ run(verifyPauseDirectiveIsReversible);
 run(verifyTableFootersAdmitTruncation);
 run(verifyOperatorCliRejectsUnknownFlags);
 run(verifyMcpDoesNotReimplementCore);
+run(verifyInertMechanismsStayRegistered);
 run(verifyAgentctlFlagNamesMatchWhatItReads);
 run(verifyEveryAssertionIsActuallyRegistered);
 run(verifyCrossOrgGrantIsRefusedOnBothDoors);
@@ -4936,6 +4937,44 @@ function verifyTableFootersAdmitTruncation(output) {
 // core 导出了某个名字，MCP 侧就不该再定义一个同名（或只差 mcp 前缀 / View、Record 后缀）的。
 // 名字对不上的重复它看不见（mcpWorkItemOwnerRole ←→ normalizeOwnerRole 就属于这种），
 // 所以下面会把"看不见哪一类"报出来，不让"没报错"被当成"查过了"。
+// 【建好了但接不上的机制要登记】。代码里存在、看起来像一道安全闸、实际永远不生效 ——
+// 读代码的人会以为它在跑。本仓已有两种登记（不可达导出、建模先于实现），但都盖不住这一类：
+// 函数被调用了、只是喂给它的数据没有任何生产者。
+// 登记必须【会过期】：哪天有人接上生产者，这里当场报红，提醒换成真正的行为断言。
+function verifyInertMechanismsStayRegistered(output) {
+  const core = readFileSync(resolve(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const server = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const mcp = readFileSync(resolve(root, "apps/mcp-server/server.mjs"), "utf8");
+  const product = `${core}\n${server}\n${mcp}`;
+  const INERT_MECHANISMS = [
+    {
+      name: "条件窗口门控（conditionWindowGate）",
+      why: "两个来源都没有生产者：request.conditionSource 没人传、state.conditionSource 没有赋值点，"
+        + "工作项那半的 conditionDependency 也只存在于 core 一个文件里。"
+        + "于是它永远拿到 null，而无源时是 fail-open 放行的 —— 别把它当成一道在跑的闸。",
+      // 接上的迹象：给 state 赋值（在哪个文件都算），或者【core 之外】有调用方在请求里传它。
+      // core 内部那两处 `conditionSource: input.conditionSource || null` 是透传，不是生产者 ——
+      // 第一版把它们也算成"已接上"，当场造出一条假红。
+      wiredWhen: [{where: "any", pattern: /\bstate\.conditionSource\s*=/u},
+        {where: "callers", pattern: /conditionSource:\s*[a-zA-Z]/u}]
+    }
+  ];
+  for (const mechanism of INERT_MECHANISMS) {
+    const callers = `${server}\n${mcp}`;
+    const wired = mechanism.wiredWhen
+      .filter((probe) => probe.pattern.test(probe.where === "callers" ? callers : product));
+    if (wired.length) {
+      output.push(`「${mechanism.name}」已经有人接上生产者了（命中 ${wired.length} 处迹象）——`
+        + "把它从 INERT_MECHANISMS 里去掉，并给它配上真正的行为断言；"
+        + "留着这条登记会让人以为它仍然不生效");
+    }
+  }
+  // 自检：登记本身要还指得着代码，否则它只是一段无人核对的文字。
+  if (!core.includes("conditionWindowGate")) {
+    output.push("INERT_MECHANISMS 登记的 conditionWindowGate 在 core 里已经找不到了 —— 登记该撤或该改");
+  }
+}
+
 function verifyMcpDoesNotReimplementCore(output) {
   const core = readFileSync(resolve(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
   const mcp = readFileSync(resolve(root, "apps/mcp-server/server.mjs"), "utf8");

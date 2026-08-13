@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 有人接上生产者却没改登记 = 读代码的人继续以为这道闸不生效（反过来也一样害人）。
+    name: "惰性机制被接上时登记要过期",
+    check: "verifyInertMechanismsStayRegistered",
+    file: CORE,
+    from: "  const conditionSource = request.conditionSource || state.conditionSource || null;",
+    to: "  state.conditionSource = state.conditionSource || null;\n  const conditionSource = request.conditionSource || state.conditionSource || null;",
+    expect: "已经有人接上生产者了"
+  },
+  {
     // 查历史的那一屏不说自己不完整 = 最害人的一种"看起来完整"。
     name: "归档不完整要在查历史那一屏说出来",
     file: APP,
