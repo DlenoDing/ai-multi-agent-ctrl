@@ -78,6 +78,8 @@ import {
   sharedDefinitionCreate,
   resolveRoleSkill,
   retireSkillSource,
+  settleRuntimeIssuePatternForCandidate,
+  collectRuntimeIssue,
   claimLease,
   permissionRequestSubmit,
   approvalRequestCreate,
@@ -255,6 +257,7 @@ run(verifyRoomWaitTailAndTruncationHonesty);
 run(verifyStateStoreConfigIsNotSilentlyDowngraded);
 run(verifySkillSourceSyncFailureIsVisible);
 run(verifySkillSourceRetireCascades);
+run(verifyRuntimeIssuePatternCanBeSettled);
 run(verifyOrchestrationDoesNotShellOutPerCell);
 run(verifyWipCapacityBackpressure);
 run(verifyHighPriorityCellsAreNotStarvedByEarlierGroups);
@@ -335,6 +338,53 @@ if (errors.length) {
 // 看不出这个源【从来没同步成功过】—— 而技能源决定 agent 会做什么。
 // 技能源接进来就拿不下去：状态机里 retired 这个终态一直没有生产者。补上之后，级联必须做完 ——
 // 留下指不到东西的角色技能或叠加规则，比不给这条路更糟。
+// 问题模式此前一个都终结不了：suppressed / closed 没有生产者。人在升级候选上做过的判断
+// 到不了模式这一层，于是同一件已经判过的事会一直被重新聚类、反复顶上来。
+function verifyRuntimeIssuePatternCanBeSettled(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const raise = (fingerprint) => collectRuntimeIssue(state, {issueClass: "repeated_failure_fingerprint",
+    issueFingerprint: fingerprint, forcePattern: true, taskGroupId: "tg_runtime_management"});
+  const pattern = raise("probe-noise");
+  if (!pattern?.patternId) {
+    output.push("问题模式收尾检查：夹具没造出模式 —— 本条在空转");
+    return;
+  }
+  // 判过"不予处理"之后：静默计数，不重开、不再升级。
+  const dismissed = {candidateId: "suc_probe", issuePatternId: pattern.patternId, resolvedBy: "u_probe"};
+  settleRuntimeIssuePatternForCandidate(state, dismissed, "dismissed");
+  if (pattern.status !== "suppressed") {
+    output.push(`候选判为"不予处理"之后，问题模式仍是 ${pattern.status} —— 状态机里那个终态还是没有生产者`);
+  }
+  const again = raise("probe-noise");
+  if (again.patternId !== pattern.patternId || again.status !== "suppressed") {
+    output.push(`已压制的模式又被顶起来了（拿到 ${again.patternId}/${again.status}）—— 人判过的事又回来了`);
+  }
+  if (Number(pattern.suppressedOccurrences || 0) < 1) {
+    output.push("压制之后再出现没有计数 —— 压制变成了丢数据，人事后查不出它还在不在发生");
+  }
+  // 判为"已解决"之后再出现：那是一件新事，要另起一条，而不是复活终态。
+  const closing = raise("probe-fixed");
+  settleRuntimeIssuePatternForCandidate(state, {candidateId: "suc_probe2", issuePatternId: closing.patternId}, "closed");
+  if (closing.status !== "closed") {
+    output.push(`候选判为"已解决"之后，问题模式仍是 ${closing.status}`);
+  }
+  const recurred = raise("probe-fixed");
+  if (recurred.patternId === closing.patternId) {
+    output.push("已收尾的模式被同一件事复活了 —— 终态之所以是终态，是因为人已经在它上面做过决定");
+  }
+  if (closing.status !== "closed") {
+    output.push("再出现把已收尾那条也改了 —— 历史被改写");
+  }
+  // 转外部维护不算判完：事情还在进行中，模式不该被终结。
+  const ongoing = raise("probe-ongoing");
+  settleRuntimeIssuePatternForCandidate(state, {candidateId: "suc_probe3", issuePatternId: ongoing.patternId},
+    "exported_for_external_maintenance");
+  if (["suppressed", "closed"].includes(ongoing.status)) {
+    output.push(`转外部维护把问题模式终结成了 ${ongoing.status} —— 事情还在进行中，终结它等于把证据链掐断`);
+  }
+}
+
 function verifySkillSourceRetireCascades(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});

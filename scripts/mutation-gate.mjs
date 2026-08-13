@@ -705,6 +705,24 @@ const MUTATIONS = [
     expect: "room_task_group_mismatch"
   },
   {
+    // 人的判断必须传导到模式那一层，否则判过的事会一直被重新聚类。
+    name: "候选被判不予处理时问题模式要压制",
+    file: CORE,
+    check: "verifyRuntimeIssuePatternCanBeSettled",
+    from: '  const disposition = {dismissed: "suppressed", closed: "closed"}[candidateStatus];',
+    to: "  const disposition = null;",
+    expect: "状态机里那个终态还是没有生产者"
+  },
+  {
+    // 压制之后不许被同一件事顶起来 —— 复活终态是另一类缺陷。
+    name: "已压制的模式不许被重新顶起来",
+    file: CORE,
+    check: "verifyRuntimeIssuePatternCanBeSettled",
+    from: '    item.issueFingerprint === fingerprint && item.status === "suppressed");',
+    to: '    item.issueFingerprint === fingerprint && item.status === "never-matches");',
+    expect: "人判过的事又回来了"
+  },
+  {
     // 退役的价值全在级联：只改状态不摘技能，等于退役了个寂寞。
     name: "技能源退役要摘掉它带来的角色技能",
     file: CORE,

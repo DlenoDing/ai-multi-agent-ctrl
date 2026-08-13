@@ -93,6 +93,7 @@ import {
   runCommandLifecycle,
   selectModel,
   syncSkillSource,
+  settleRuntimeIssuePatternForCandidate,
   retireSkillSource,
   updateTaskGroupLanguagePolicy,
   HUMAN_ACTOR_KEY,
@@ -3968,6 +3969,8 @@ async function handleApi(req, res) {
     // 而刷新那份快照的唯一入口原先就是那个按钮自己 —— 人处置掉最后一个阻塞项后，页面仍显示"存在阻塞"，
     // 于是永远等不到那个按钮（循环依赖）。
     recomputeBarrierAfterResolve(state, candidate.taskGroupId);
+    // 人的判断要传导到它背后的问题模式，否则同一件已经判过的事会一直被重新聚类、反复顶上来。
+    settleRuntimeIssuePatternForCandidate(state, candidate, nextStatus);
     audit(state, guard.actor, "system_upgrade_candidate_resolve", `SystemUpgradeCandidate:${candidate.candidateId}`, nextStatus);
     finishGuardedWrite(state, guard, 200, candidate);
     writeState(state);

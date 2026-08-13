@@ -3777,12 +3777,44 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
   return barrier;
 }
 
+// 问题模式此前【一个都终结不了】：状态机里的 suppressed / closed 没有任何生产者，
+// 于是人在升级候选上做过的判断到不了模式这一层 —— 同一件已经判过的事会一直被重新聚类。
+// 不另起一个入口：人已经在候选上做了决定，这里只是把那个决定传导下去。
+//   dismissed（不予处理）→ suppressed：以后静默计数，不再升级；
+//   closed（已解决）      → closed：再出现就是新的一条；
+//   exported_for_external_maintenance（转外部维护）→ 不动：事情还在进行中。
+export function settleRuntimeIssuePatternForCandidate(state, candidate, candidateStatus) {
+  const disposition = {dismissed: "suppressed", closed: "closed"}[candidateStatus];
+  if (!disposition || !candidate) return null;
+  const pattern = (state.runtimeIssuePatterns || []).find((item) =>
+    item.patternId === candidate.issuePatternId || item.candidateRef === candidate.candidateId);
+  if (!pattern || ["suppressed", "closed"].includes(pattern.status)) return null;
+  pattern.status = disposition;
+  pattern.settledBy = candidate.resolvedBy;
+  pattern.settledReason = `system_upgrade_candidate_${candidateStatus}`;
+  pattern.updatedAt = new Date().toISOString();
+  appendEvent(state, "decision", "RuntimeIssuePattern", pattern.patternId, "monitor",
+    {status: disposition, candidateId: candidate.candidateId});
+  return pattern;
+}
+
 export function collectRuntimeIssue(state, request = {}) {
   ensureRuntimeCollections(state);
   const at = new Date().toISOString();
   const fingerprint = request.issueFingerprint || digestOf({issueClass: request.issueClass, summary: request.summary}).slice(7, 23);
   const matchingSamples = state.runtimeIssueSamples.filter((sample) => sample.issueFingerprint === fingerprint);
-  let pattern = state.runtimeIssuePatterns.find((item) => item.issueFingerprint === fingerprint);
+  // 人已经判过"这个不用管"的模式，不该再被同一件事顶起来：静默计数，不重开、不再升级。
+  // （复活一个终态是另一类缺陷 —— 终态之所以是终态，就是因为人已经在它上面做过决定。）
+  const suppressed = state.runtimeIssuePatterns.find((item) =>
+    item.issueFingerprint === fingerprint && item.status === "suppressed");
+  if (suppressed) {
+    suppressed.suppressedOccurrences = Number(suppressed.suppressedOccurrences || 0) + 1;
+    suppressed.updatedAt = at;
+    return suppressed;
+  }
+  // 已收尾的也不复活：它又出现了就是一件新事（人以为修好了却回来了），另起一条模式如实反映。
+  let pattern = state.runtimeIssuePatterns.find((item) =>
+    item.issueFingerprint === fingerprint && item.status !== "closed");
   if (!pattern) {
     if (matchingSamples.length === 0 && !request.forcePattern) {
       const sample = {
