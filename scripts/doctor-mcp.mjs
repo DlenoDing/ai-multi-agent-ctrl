@@ -322,7 +322,25 @@ try {
   const claimed = await api("/api/agent/v1/dispatches/next", {method: "POST", token: nodeToken, body: {}});
   // 没领到活就没有授权，只读工具全都会以 ok:false 收场 —— 那样这段扫描什么都没验到。
   if (!claimed.dispatch) throw new Error(`跨租户扫描的节点没领到派发（${claimed.reason || "无原因"}）—— 没有授权，所有只读工具都会直接报错，本条在空转`);
-  const grantedTaskGroupId = claimed.dispatch.taskGroupId;
+  // 认领返回的是一整个派发包，派发本身在 .dispatch.dispatch 下。原先取 claimed.dispatch.taskGroupId
+  // 恒为 undefined，于是下面"三种入参"里的第三种 {taskGroupId: undefined} 序列化后等同于空参 ——
+  // 这段扫描的自述说验了三种，实际只验过两种。取错一层不会报错，只会静静少验一种形态。
+  const grantedTaskGroupId = claimed.dispatch.dispatch?.taskGroupId;
+  if (!grantedTaskGroupId) throw new Error("跨租户扫描拿不到本节点被授权的任务组 id —— 第三种入参会退化成空参，本条少验一种形态");
+  // 受限节点的授权边界：工具在白名单里，但入参指向【别的任务组】的房间 —— 必须按作用域拒掉。
+  // （这条此前没有任何门点过名。上面那三种入参的扫描只验"不许带出隔壁内容"，验的是读；这条验写。）
+  const crossRoom = await mcpAs(nodeToken, "tools/call", {name: "room-mcp.room_send",
+    arguments: {roomId: `room_${scanGroupId}`, payload: {text: "越界"}, idempotencyKey: "mcp-cross-room"}});
+  if (crossRoom.structuredContent?.result?.error !== "mcp_grant_scope_mismatch") {
+    throw new Error(`受限节点往隔壁任务组的房间里发言没有被按作用域拒掉（实际：${JSON.stringify(crossRoom.structuredContent?.result || "").slice(0, 200)}）`
+      + " —— 派发绑定的授权形同虚设，一个节点可以对任何任务组说话");
+  }
+  // 正面对照：往【自己被授权的】任务组房间里发言必须成功，否则上面那条可以靠"一律拒绝"蒙混过去。
+  const ownRoom = await mcpAs(nodeToken, "tools/call", {name: "room-mcp.room_send",
+    arguments: {roomId: `room_${grantedTaskGroupId}`, payload: {text: "本组"}, idempotencyKey: "mcp-own-room"}});
+  if (!ownRoom.structuredContent?.result?.message?.messageId) {
+    throw new Error(`受限节点在自己被授权的房间里也发不了言（${JSON.stringify(ownRoom.structuredContent?.result || "").slice(0, 200)}）—— 作用域把正常路径一起堵死了`);
+  }
   const readOnlyTools = listed.tools.filter((tool) => tool.annotations?.readOnlyHint || tool.readOnlyHint);
   if (readOnlyTools.length < 10) throw new Error(`跨租户扫描只认出 ${readOnlyTools.length} 个只读工具 —— 提取逻辑与代码脱节，本条在空转`);
   const scanLeaks = [];

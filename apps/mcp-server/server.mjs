@@ -888,6 +888,11 @@ function validateMcpGrant(state, toolName, args, argumentDigest, context = {}) {
   const scopeExists = validateExplicitMcpScopeExists(state, toolName, args);
   if (!scopeExists.allowed) return {...scopeExists, grantRef: `remote-principal:${principal.kind}:${principal.id}`};
   if (principal.kind === "agent_node") {
+    // 【第二道门，当前不可达】2026-08-14 用真实节点实测：checkpoint_submit 不在任何派发下发的
+    // 工具白名单里，所以上面 mcp_tool_not_granted_to_principal 会先拒掉，这一支走不到。
+    // 留着是因为白名单是【配置】：哪天有人把它放进某个角色的工具集，这道门就是最后一道 ——
+    // 检查点必须走网关（那里才有认领代次、围栏与证据链校验）。
+    // 因此它在"拒绝码覆盖"名单上会一直挂着零覆盖，那是如实的，不要为它编一个够不到的用例。
     if (toolName === "evidence-mcp.checkpoint_submit") {
       return {allowed: false, error: "agent_checkpoint_must_use_gateway", required: "/api/agent/v1/dispatches/:dispatchId/checkpoint"};
     }

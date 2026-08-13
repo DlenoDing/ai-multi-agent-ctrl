@@ -986,6 +986,24 @@ const MUTATIONS = [
     expect: "这个目标可以改仓库里的任何东西"
   },
   {
+    // 派发绑定的授权：工具在白名单里，但入参指向别的任务组。守卫失效时节点真的把消息发进了隔壁房间。
+    name: "受限节点不得对别的任务组说话",
+    file: MCP,
+    skip: "判别力由 MCP e2e 覆盖（已用 mutate-probe 实证：真实节点往隔壁房间发言时那道门变红）",
+    from: "const scopedGrants = activeGrants.filter((grant) => grantMatchesArgs(state, grant, args));",
+    to: "const scopedGrants = activeGrants;",
+    expect: "没有被按作用域拒掉"
+  },
+  {
+    // 认领返回的是整个派发包，取错一层不会报错，只会静静少验一种入参形态。
+    name: "跨租户扫描的第三种入参不得退化成空参",
+    file: "scripts/doctor-mcp.mjs",
+    skip: "判别力由 MCP e2e 覆盖（已用 mutate-probe 实证：取错一层时那条自证变红）",
+    from: "const grantedTaskGroupId = claimed.dispatch.dispatch?.taskGroupId;",
+    to: "const grantedTaskGroupId = claimed.dispatch.taskGroupId;",
+    expect: "少验一种形态"
+  },
+  {
     // 能替别人释放租约，就等于没有互斥。这条守卫失效时是"已受理"。
     name: "不得替别人释放租约",
     file: CORE,
