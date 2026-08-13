@@ -4948,8 +4948,9 @@ function verifyOperatorCliRejectsUnknownFlags(output) {
   };
   for (const [path, why] of Object.entries(OPERATOR_CLIS)) {
     const cli = readFileSync(resolve(root, path), "utf8");
-    // 两种可接受的形状：算出 unknownFlags 再拒，或逐个匹配、落到 else 就抛。
-    const rejects = /if \(unknownFlags\.length\)/u.test(cli) || /else throw new Error\(`unknown argument/u.test(cli);
+    // 四个入口现在是同一种形状：把认不出的参数收集起来，再一次性拒绝。
+    // 只认一种写法是有意的 —— 多认一种就多一条将来会漂的路。
+    const rejects = /if \(unknownFlags\.length\)/u.test(cli);
     if (!rejects) {
       output.push(`${path}（${why}）不拦截认不出的参数 —— 打错的参数名会被当成没给，命令照跑`);
     }

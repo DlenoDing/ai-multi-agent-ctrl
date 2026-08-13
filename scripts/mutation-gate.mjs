@@ -903,6 +903,15 @@ const MUTATIONS = [
     expect: "认不出子命令时"
   },
   {
+    // 同上，另一个运维入口。判别力由 mcp:doctor 覆盖（它真的 spawn 这个脚本走三条失败路径）。
+    name: "register-mcp-client 失败时要给人话而不是崩溃栈",
+    file: "scripts/register-mcp-client.mjs",
+    skip: "判别力由 mcp:doctor 覆盖（真的 spawn 这个脚本走失败路径）",
+    from: "    fail(`控制面地址不是一个合法的 URL：${value}`,",
+    to: "    throw new Error(`invalid url: ${value}`);\n    fail(`控制面地址不是一个合法的 URL：${value}`,",
+    expect: "不是一个合法的 URL"
+  },
+  {
     // 认不出的指令类型降级成便条 = pause 拼错就变成一条 free_text，活照跑。
     name: "认不出的人工指令类型必须拒绝",
     file: CORE,

@@ -143,6 +143,30 @@ try {
   const entry = generated.mcpServers.ai_multi_agent_ctrl;
   if (generated.mcpServers["ai-multi-agent-ctrl"] || entry?.url !== `${baseUrl}/mcp` || entry.command || generated.transport !== "streamable-http") throw new Error("MCP client registration did not generate a remote-only endpoint");
 
+  // 只跑成功路径的门看不见这个脚本对人说的话 —— 而它此前每一条失败路径都是一段 Node 崩溃栈
+  // （源码行 + 尖角 + 堆栈，全英文）。这里真的把它跑失败，读它对运维说了什么。
+  const runRegister = (argv) => spawnSync(process.execPath, ["scripts/register-mcp-client.mjs", ...argv],
+    {cwd: root, env: {...process.env, AIMAC_MCP_BEARER_TOKEN: token}, encoding: "utf8"});
+  for (const [why, argv, expected] of [
+    ["参数名打错", ["--aply"], "认不出这些参数"],
+    // 这条原先炸在 node:internal/url 里，连"是哪个参数"都不说。
+    ["地址不是 URL", ["--server-url=notaurl"], "不是一个合法的 URL"],
+    ["明文远程地址", ["--server-url=http://example.com"], "必须走 HTTPS"]
+  ]) {
+    const failed = runRegister(argv);
+    if (failed.status !== 1 || /\bat \w+\.<anonymous>|at Object\.|node:internal/u.test(String(failed.stderr))) {
+      throw new Error(`register-mcp-client ${why}时应给人话而不是崩溃栈（退出码 ${failed.status}）：`
+        + String(failed.stderr || failed.stdout).slice(0, 200));
+    }
+    if (!String(failed.stderr).includes(expected)) {
+      throw new Error(`register-mcp-client ${why}时没说清是什么问题，期望提到「${expected}」：`
+        + String(failed.stderr).slice(0, 200));
+    }
+    if (!/·/u.test(String(failed.stderr))) {
+      throw new Error(`register-mcp-client ${why}时只报了结论、没给下一步 —— 人不知道该改什么`);
+    }
+  }
+
   // 只读工具的跨租户扫描：不逐个工具想"它会不会漏"，而是拿一个【绑定在项目 A 的节点】身份，
   // 把每个只读工具都用【项目 B 的 id】调一遍，再在响应里全文搜 B 的 id。
   // 现有排查法是"过一遍所有 read-only MCP 工具"——逐条，靠人记得；这一条对将来新增的工具自动生效。

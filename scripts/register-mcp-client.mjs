@@ -5,7 +5,24 @@ import { fileURLToPath } from "node:url";
 import { mcpToolNames } from "../apps/mcp-server/server.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// 这个脚本此前每一条失败路径都是【一段 Node 崩溃栈】：参数打错、--apply 少了客户端、
+// 地址不是 HTTPS，人看到的都是源码行加一个尖角。与 agentctl 同规：一句人话 + 下一步，
+// 堆栈留给 AIMAC_REGISTER_MCP_DEBUG=1。参数拒绝也改成与另外三个运维入口同一种形状。
+const unknownFlags = [];
 const args = parseArgs(process.argv.slice(2));
+if (unknownFlags.length) {
+  fail(`认不出这些参数：${unknownFlags.join(" ")}`,
+    ["认得的参数：--apply --client= --target= --config= --output-dir= --server-url= --token= --token-env=",
+     "打错的参数会被当成没给（--apply 打错就变成空跑，配置根本没写下去）—— 所以这里拒绝，而不是替你猜"]);
+}
+// 取值校验放在"参数名认不出"之后：名字打错更可能是根因，先说那个。
+if (!["all", "codex", "claude", "cursor"].includes(args.client || "all")) {
+  fail(`--client 认不出：${args.client}`, ["可选值：all / codex / claude / cursor"]);
+}
+if (!["project", "user"].includes(args.target || "project")) {
+  fail(`--target 认不出：${args.target}`,
+    ["可选值：project（写进当前仓库）/ user（写进你的用户配置）"]);
+}
 const client = args.client || "all";
 const target = args.target || "project";
 const apply = Boolean(args.apply);
@@ -18,8 +35,17 @@ const outputs = [];
 
 mkdirSync(outputDir, {recursive: true});
 
-if (apply && client === "all") throw new Error("--apply requires --client=codex, --client=claude or --client=cursor");
-if (apply && !bearerToken && client !== "codex") throw new Error("--apply for JSON MCP clients requires --token or AIMAC_MCP_BEARER_TOKEN");
+if (apply && client === "all") {
+  fail("--apply 要写进哪个客户端的配置，必须指明",
+    ["加 --client=codex 或 --client=claude 或 --client=cursor",
+     "不加 --apply 时只生成配置片段到输出目录，不动你机器上的任何配置"]);
+}
+if (apply && !bearerToken && client !== "codex") {
+  fail(`--apply 写 ${client} 的配置需要一个可用的令牌`,
+    ["给 --token=<令牌>，或设环境变量 AIMAC_MCP_BEARER_TOKEN",
+     "JSON 类客户端不支持 ${环境变量} 占位，令牌必须当场写进文件（所以文件按 0600 落盘）",
+     "codex 那条走 TOML，可以留占位，所以它不要求"]);
+}
 
 const remoteEntry = {
   url: mcpUrl,
@@ -59,18 +85,27 @@ function parseArgs(argv) {
     else if (arg.startsWith("--server-url=")) parsed.serverUrl = arg.slice("--server-url=".length);
     else if (arg.startsWith("--token=")) parsed.token = arg.slice("--token=".length);
     else if (arg.startsWith("--token-env=")) parsed.tokenEnv = arg.slice("--token-env=".length);
-    else throw new Error(`unknown argument: ${arg}`);
+    else unknownFlags.push(arg);
   }
-  if (!["all", "codex", "claude", "cursor"].includes(parsed.client || "all")) throw new Error("--client must be all, codex, claude or cursor");
-  if (!["project", "user"].includes(parsed.target || "project")) throw new Error("--target must be project or user");
   return parsed;
 }
 
 function normalizeServerUrl(value) {
-  const parsed = new URL(value);
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    // 原先这里直接冒到 node:internal/url 的崩溃栈，连"是哪个参数"都不说。
+    fail(`控制面地址不是一个合法的 URL：${value}`,
+      ["它来自 --server-url=，或环境变量 AIMAC_PUBLIC_URL",
+       "要带协议，形如 https://aimac.example.com 或 http://127.0.0.1:4317"]);
+  }
   const local = ["127.0.0.1", "localhost", "::1"].includes(parsed.hostname);
   if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && local) && process.env.AIMAC_ALLOW_INSECURE_REMOTE_MCP !== "true") {
-    throw new Error("remote MCP requires HTTPS; set AIMAC_ALLOW_INSECURE_REMOTE_MCP=true only for isolated verification");
+    fail(`远程 MCP 必须走 HTTPS，而这个地址是 ${parsed.protocol}//${parsed.hostname}`,
+      ["MCP 请求头里带的是 Bearer 令牌，明文传输等于把它交出去",
+       "本机地址（127.0.0.1 / localhost / ::1）不受此限",
+       "隔离环境下确要放行：设 AIMAC_ALLOW_INSECURE_REMOTE_MCP=true"]);
   }
   return String(value).replace(/\/+$/u, "");
 }
@@ -130,7 +165,10 @@ function applyClientConfig() {
 
 function defaultClientConfigPath(selectedClient) {
   const userHome = process.env.HOME;
-  if (!userHome) throw new Error("--config is required when HOME is unavailable");
+  if (!userHome) {
+    fail("取不到你的用户目录（HOME 没有设），所以不知道该把配置写到哪",
+      ["用 --config=<配置文件路径> 直接指定", "或设好 HOME 再重跑"]);
+  }
   if (target !== "user") {
     if (selectedClient === "claude") return join(outputDir, "claude_desktop_config.json");
     if (selectedClient === "cursor") return join(outputDir, "cursor_mcp.json");
@@ -152,4 +190,14 @@ function replaceMarkedBlock(previous, block) {
     return [before, block.trimEnd(), after].filter(Boolean).join("\n\n") + "\n";
   }
   return [previous.trimEnd(), block.trimEnd()].filter(Boolean).join("\n\n") + "\n";
+}
+
+// 一句人话 + 下一步，退出码 1；堆栈留给 AIMAC_REGISTER_MCP_DEBUG=1。
+// 与 agentctl / agent 运行时同规：运维在自己机器上敲命令，不该收到一段 Node 崩溃栈。
+function fail(summary, nextSteps = []) {
+  console.error(`register-mcp-client: ${summary}`);
+  for (const step of nextSteps.filter(Boolean)) console.error(`  \u00b7 ${step}`);
+  if (process.env.AIMAC_REGISTER_MCP_DEBUG === "1") console.error(new Error(summary).stack);
+  else console.error("  \uff08\u8981\u770b\u5b8c\u6574\u5806\u6808\uff1aAIMAC_REGISTER_MCP_DEBUG=1 \u91cd\u8dd1\uff09");
+  process.exit(1);
 }
