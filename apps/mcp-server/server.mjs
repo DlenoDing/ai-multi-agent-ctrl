@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredState, writeStoredState } from "../control-plane-ui/lib/state-store.mjs";
+import { appendAuditEntry, flushPendingAuditAppends } from "../control-plane-ui/lib/audit-ledger.mjs";
 import { isSafeGitRemoteUrl } from "../control-plane-ui/lib/agent-gateway.mjs";
 import {
   acceptAgentCheckpoint,
@@ -224,6 +225,8 @@ function writeState(state) {
   computeProgressSnapshots(state);
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
   writeStoredState(state, {root, runtimeDir, statePath, seedPath, buildInitialState, expectedStateVersion: state.__loadedStateVersion});
+  // 先落盘状态、再追加归档：CAS 冲突时上一行会抛，那次操作根本没发生，归档里不该有它。
+  flushPendingAuditAppends(state, join(runtimeDir, "audit-log.jsonl"));
 }
 
 function buildInitialState() {
@@ -679,6 +682,17 @@ export async function callTool(name, args = {}, context = {}) {
   }
   try {
     if (isWriteTool(name) && !effectiveArgs.dryRun) {
+      // 主台账（控制台审计页读的那本）此前只由 REST 侧写，于是经 MCP 改的状态在那一屏上
+      // 一条痕迹都没有 —— 人来问"谁动了它"看到的是空白。动作名统一记成 mcp_tool_call，
+      // 工具名与它指到的那条记录放进 subject：85 个工具各记一个动作名的话，
+      // 中文词表要跟着长 85 条，而屏幕上照样是一串英文工具名。
+      appendAuditEntry(state, {
+        actor: mcpPrincipalLabel(context.principal),
+        action: "mcp_tool_call",
+        subject: mcpAuditSubject(name, effectiveArgs),
+        result: mcpCall.status,
+        at
+      });
       state.stateVersion = beforeVersion + 1;
       writeState(state);
     }
@@ -1197,6 +1211,23 @@ function riskLevelForTool(toolName) {
   if (toolName === "evidence-mcp.checkpoint_submit") return "L3";
   if (toolName.includes("grant") || toolName.includes("account") || toolName.includes("approval") || toolName.includes("lease")) return "L2";
   return "L1";
+}
+
+// 审计里的"谁"：MCP 主体有三种（节点令牌 / 执行器凭据 / 远程 MCP 主体），都要记得出来。
+// 记成空或统一记成 "mcp" 等于把问责这一栏作废。
+function mcpPrincipalLabel(principal) {
+  const kind = String(principal?.kind || "unknown");
+  const id = String(principal?.id || "unknown");
+  return `mcp:${kind}:${id}`;
+}
+
+// 审计里的"对什么"：工具名 + 它指到的那条记录（取第一个能单独定位到资源的入参）。
+function mcpAuditSubject(toolName, args) {
+  for (const key of RESOURCE_ADDRESSING_ARG_KEYS) {
+    const value = args?.[key];
+    if (typeof value === "string" && value) return `${toolName} · ${key}=${value}`;
+  }
+  return toolName;
 }
 
 function appendMcpAudit(event) {

@@ -2229,9 +2229,21 @@ await runCodedApiErrorCase();
       subject: "AgentSkillSource:x", result: "succeeded"}]};
   loadConsole(auditRoot).renderFullPageWith(auditState, admin, null, "sys-overview");
   const auditHtml = String(auditRoot.innerHTML || "");
-  check("审计页要说清这份台账的边界",
-    /mcp-audit\.jsonl/.test(auditHtml) && /MCP/.test(auditHtml),
-    "经 MCP 改的状态在这一屏上一条痕迹都没有，而人来这里正是问「谁动了它」—— 台账边界必须写出来");
+  check("审计页要说清这份台账覆盖到哪几条路径",
+    /mcp-audit\.jsonl/.test(auditHtml) && /MCP 工具调用/.test(auditHtml),
+    "台账现在含 MCP 的写入了，页面要说清这件事、以及入参摘要另存在哪 —— 否则人仍以为只看了一半");
+  {
+    // MCP 那条记录的动作名要有中文（它和 REST 的动作名走同一列 t()）。
+    const mcpAudit = structuredClone(auditState);
+    mcpAudit.auditLog = [{id: "a2", at: new Date().toISOString(), actor: "mcp:system_admin:acct_x",
+      action: "mcp_tool_call", subject: "review-mcp.review_plan_create · taskGroupId=tg1", result: "succeeded"}];
+    const mcpRoot = el("div");
+    loadConsole(mcpRoot, {realI18n: true}).renderFullPageWith(mcpAudit, admin, null, "sys-overview");
+    const mcpHtml = String(mcpRoot.innerHTML || "");
+    check("MCP 那条审计记录要显示成中文且看得出是谁做的",
+      /MCP 工具调用/.test(mcpHtml) && /mcp:system_admin:acct_x/.test(mcpHtml),
+      "审计页上出现英文动作名或看不出执行者 —— 问责这一栏作废");
+  }
 }
 
 // 视图会把每个集合截到上限（服务端如实登记在 truncatedCollections 里）。此前只有 5 张表各自

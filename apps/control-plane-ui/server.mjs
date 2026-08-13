@@ -7,6 +7,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node:os";
 import { basename, dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { appendAuditEntry, auditArchiveFault as sharedAuditArchiveFault, flushPendingAuditAppends as flushAuditArchive } from "./lib/audit-ledger.mjs";
 import { assertStateStoreConfig, consumeStateRebuildSignal, ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
 import { appendProjectExecutionEvent, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
 import {
@@ -330,49 +331,17 @@ function writeState(state) {
   for (const nodeId of nodeIdsWithQueuedCommands) notifyLongPollWaiters(`agent-control:${nodeId}`);
 }
 
+// 条目构造挪到了共享台账（lib/audit-ledger.mjs）：MCP 那条写路径要往【同一本】台账上记，
+// 两处各写一份的话，prevHash 链迟早分叉。这里保留同名包装，70 处调用点一个都不用改。
 function audit(state, actor, action, subject, result = "succeeded") {
   ensureControlState(state);
-  const entry = {
-    id: `audit_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-    at: now(),
-    actor,
-    action,
-    subject,
-    result,
-    stateVersion: Number(state.stateVersion || 0),
-    prevHash: state.auditLog[0]?.rowHash || state.auditChainHead || "sha256:genesis"
-  };
-  entry.rowHash = digestOf(entry);
-  state.auditLog.unshift(entry);
-  state.auditLog = state.auditLog.slice(0, 80);
-  state.auditChainHead = entry.rowHash;
-  state.__pendingAuditAppends = [...(state.__pendingAuditAppends || []), entry];
+  appendAuditEntry(state, {actor, action, subject, result, at: now()});
 }
 
 const AUDIT_ARCHIVE_PATH = () => join(runtimeDir, "audit-log.jsonl");
 
-// 归档故障是【本进程本地文件】的事实，不放进共享状态：状态在每次写盘后才更新故障标记，
-// 于是标记永远赶不上那一次持久化，下一个请求从存储重新载入时它已经不存在了（实测为 null）。
-let auditArchiveFault = null;
-
 function flushPendingAuditAppends(state) {
-  const pending = state.__pendingAuditAppends || [];
-  delete state.__pendingAuditAppends;
-  if (!pending.length) return;
-  try {
-    appendFileSync(AUDIT_ARCHIVE_PATH(), pending.map((entry) => `${JSON.stringify(entry)}\n`).join(""), {mode: 0o600});
-    auditArchiveFault = null;
-  } catch (error) {
-    // 内存里只留最近 80 条，归档才是问责的凭据。这里原先是 `catch {}`：磁盘满了、权限变了，
-    // 记录就这么没了，而且【没有任何人会知道】—— 出事时人以为查得到，实际早就断了。
-    // 失败必须同时落在两处：日志（运维看得见）和状态（控制台看得见），且要记下丢了几条。
-    auditArchiveFault = {
-      at: now(),
-      lostEntries: Number(auditArchiveFault?.lostEntries || 0) + pending.length,
-      error: String(error?.message || error).slice(0, 200)
-    };
-    console.error(`[audit] 归档写入失败，${pending.length} 条记录未落盘：${auditArchiveFault.error}`);
-  }
+  flushAuditArchive(state, AUDIT_ARCHIVE_PATH());
 }
 
 // 归档只能追加、且要能被人读到 —— 有归档而没有读取入口，等于没有归档。
@@ -1448,6 +1417,8 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
   const scoped = cachedScopedState(state, account, session);
   // 归档故障的错误文本里会带运行目录路径，且它是系统级运维事实 —— 只给系统账号。
   // 不写进 scoped：那份对象带缓存且跨请求复用，改它会把故障粘在缓存里。
+  // 故障标记现在由共享台账持有（MCP 那条写路径的归档失败也算在内，两边是同一本账）。
+  const auditArchiveFault = sharedAuditArchiveFault();
   const faultField = auditArchiveFault && isSystemAccount(account) ? {auditArchiveFault} : {};
   // 自治循环心跳同理：它在 state.runtime 里，而 scoped 那份对象【按 stateVersion 缓存并跨请求复用】。
   // 空转不再落盘之后版本号不动，于是整份 scoped（含心跳）被复用到过期为止 ——
@@ -1629,7 +1600,7 @@ function runtimeFactsSignature() {
     runtimeOrchestratorStatus?.lastTickAt || "",
     runtimeOrchestratorStatus?.consecutiveErrors || 0,
     runtimeOrchestratorStatus?.enabled ? 1 : 0,
-    auditArchiveFault?.at || ""
+    sharedAuditArchiveFault()?.at || ""
   ].join("|");
 }
 

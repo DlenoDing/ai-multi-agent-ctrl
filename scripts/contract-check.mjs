@@ -296,6 +296,7 @@ run(verifyUnknownStateSchemaIsRefused);
 run(verifySuspendHaltsRunningWork);
 run(verifyCancelDirectiveStopsRunningWork);
 run(verifyPauseDirectiveIsReversible);
+run(verifyMcpWritesLandInTheMainAuditLedger);
 run(verifyIdempotencyReplayIsPrincipalBound);
 run(verifyTestResultStatusRequired);
 run(verifyApprovalDecisionRequired);
@@ -4864,6 +4865,73 @@ function extractMachineStates(yamlText, machine) {
 // 必须在【子进程】里验：handleMcpJsonRpc 内部走 loadState() 读真实运行态，而运行目录在模块
 // 加载时就由 AIMAC_RUNTIME_DIR 定死了 —— 直接在本进程调用会把探针记录写进开发者的 .runtime，
 // 而且第二次跑会命中上一次留下的记录，这道门就成了看执行顺序的假绿/假红。（我第一版就是这样写的。）
+// 经 MCP 改的状态此前在控制台审计页上一条痕迹都没有：主台账只由 REST 侧写。
+// 合流之后要同时成立三件事，缺一件都比分开更糟：条目进台账（人看得见）、进归档（问责凭据）、
+// 且 prevHash 链不断（篡改检得出来）。必须在【子进程】里验：handleMcpJsonRpc 走自己的 loadState，
+// 运行目录在模块加载时就定死了。
+function verifyMcpWritesLandInTheMainAuditLedger(output) {
+  const probeDir = mkdtempSync(join(tmpdir(), "aimac-mcp-audit-"));
+  const probeFile = join(probeDir, "probe.mjs");
+  writeFileSync(probeFile, `
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { handleMcpJsonRpc } from ${JSON.stringify(resolve(root, "apps/mcp-server/server.mjs"))};
+const runtimeDir = process.env.AIMAC_RUNTIME_DIR;
+const response = await handleMcpJsonRpc({
+  jsonrpc: "2.0", id: 1, method: "tools/call",
+  params: {name: "review-mcp.review_plan_create", arguments: {
+    projectId: "prj_control_plane", taskGroupId: "tg_runtime_management",
+    requiredReviewerRoles: ["reviewer"], idempotencyKey: "audit-merge-probe"}}
+}, {principal: {kind: "system_admin", id: "acct_probe_auditor", allowedMcpTools: ["*"]}});
+const envelope = (() => { try { return JSON.parse(response?.result?.content?.[0]?.text || "{}"); } catch { return {}; } })();
+const state = JSON.parse(readFileSync(join(runtimeDir, "control-plane-state.json"), "utf8"));
+const archive = (() => { try { return readFileSync(join(runtimeDir, "audit-log.jsonl"), "utf8").trim().split("\\n"); } catch { return []; } })();
+const top = (state.auditLog || [])[0] || null;
+const chainOk = (state.auditLog || []).length < 2 ? true : (state.auditLog[0].prevHash === state.auditLog[1].rowHash);
+console.log(JSON.stringify({
+  ok: envelope.ok,
+  top: top && {actor: top.actor, action: top.action, subject: top.subject, result: top.result},
+  chainOk,
+  archived: archive.some((line) => line.includes("mcp_tool_call")),
+  archiveCount: archive.length
+}));
+`);
+  let probe = null;
+  try {
+    const stdout = execFileSync(process.execPath, [probeFile], {
+      encoding: "utf8",
+      env: {...process.env, AIMAC_RUNTIME_DIR: join(probeDir, "runtime"), AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: ""}
+    });
+    probe = JSON.parse(stdout.trim().split("\n").at(-1));
+  } catch (error) {
+    output.push(`MCP 写入进主台账：探针进程失败（${String(error.message).slice(0, 200)}）—— 这条断言无从验证`);
+    return;
+  } finally {
+    try { rmSync(probeDir, {recursive: true, force: true}); } catch { /* best effort */ }
+  }
+  if (probe.ok !== true) {
+    output.push(`MCP 写入进主台账：写工具本身就没成功（${JSON.stringify(probe).slice(0, 160)}）—— 这条断言无从验证`);
+    return;
+  }
+  if (probe.top?.action !== "mcp_tool_call") {
+    output.push(`经 MCP 改的状态没有进主审计台账（台账首条是 ${JSON.stringify(probe.top)}）—— `
+      + "人到审计页问「谁动了它」看到的是空白");
+  }
+  if (!String(probe.top?.actor || "").startsWith("mcp:")) {
+    output.push(`MCP 那条审计记录没写清是谁做的（actor=${probe.top?.actor}）—— 问责这一栏作废`);
+  }
+  if (!String(probe.top?.subject || "").includes("review-mcp.review_plan_create")) {
+    output.push(`MCP 那条审计记录没写清做了什么（subject=${probe.top?.subject}）`);
+  }
+  if (!probe.chainOk) {
+    output.push("MCP 追加的审计条目没有接上 prevHash 链 —— 链一断，篡改检测就作废");
+  }
+  if (!probe.archived) {
+    output.push(`MCP 那条审计记录只进了内存台账、没进归档（归档 ${probe.archiveCount} 行）—— `
+      + "内存只留 80 条，归档才是问责凭据：控制台看得见而凭据里没有，比两边都没有更糟");
+  }
+}
+
 function verifyIdempotencyReplayIsPrincipalBound(output) {
   const probeDir = mkdtempSync(join(tmpdir(), "aimac-idem-probe-"));
   const probeFile = join(probeDir, "probe.mjs");

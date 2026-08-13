@@ -1616,11 +1616,12 @@ function renderSysOverview() {
         ${state.auditArchiveFault ? `<div class="notice warn-notice">审计归档写入失败，已有 ${esc(state.auditArchiveFault.lostEntries)} 条记录没能落盘（${esc(state.auditArchiveFault.error)}）—— 这段时间的操作事后查不到，请先修复磁盘或权限。</div>` : ""}
         ${table(["时间", "操作者", "动作", {label: "对象", c: "text-clip"}, "结果"], audit, {moreText: moreText((state.auditLog || []).length, 15)})}
         <div class="small muted">这里只保留最近 ${(state.auditLog || []).length} 条；更早的记录在归档文件里，不在这一屏内。</div>
-        ${/* 主审计只由控制台/REST 侧的 audit() 写，MCP 那 85 个工具一次都不调它 ——
-              经 MCP 改的状态在这一屏上【一条痕迹都没有】。人来这里问的正是"谁动了它"，
-              所以必须说清这份台账的边界在哪、另一半在哪里看。 */""}
-        <div class="small muted">这份台账只记控制台与 REST 侧的动作。经 MCP 工具做的改动记在服务端的
-          <span class="mono">mcp-audit.jsonl</span> 里，不在这一屏内 —— 查"谁动了它"时两处都要看。</div>
+        ${/* 经 MCP 改的状态此前在这一屏上一条痕迹都没有（主台账只由 REST 侧写）。现在两条写路径
+              共用同一本台账：MCP 的写入记成「MCP 工具调用」，执行者形如 mcp:<主体类型>:<id>。
+              入参与返回摘要仍在 mcp-audit.jsonl 里，那是另一层的东西，这里说清去哪看。 */""}
+        <div class="small muted">控制台、REST 与 MCP 三条路径的改动都记在这一本台账里
+          （MCP 的记为「MCP 工具调用」，执行者形如 <span class="mono">mcp:主体类型:id</span>）。
+          每次 MCP 调用的入参与返回摘要另存于服务端的 <span class="mono">mcp-audit.jsonl</span>。</div>
         <div class="button-row"><button class="ghost-button" data-action="open-audit-archive">查看审计归档</button></div>
       </div>
     `, {wide: true})

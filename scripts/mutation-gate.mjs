@@ -832,12 +832,31 @@ const MUTATIONS = [
     expect: "永远在等一个不存在的基底"
   },
   {
+    // 合流的三件事各守一条：这条守"条目进得了主台账"。
+    name: "MCP 的写入要进主审计台账",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyMcpWritesLandInTheMainAuditLedger",
+    from: '        action: "mcp_tool_call",',
+    to: '        action: "mcp_tool_call_disabled",',
+    expect: "没有进主审计台账"
+  },
+  {
+    // 这条守"归档也收到了"：只落内存台账（80 条上限）而不落归档，
+    // 是控制台看得见、问责凭据里没有 —— 比两边都没有更糟。
+    name: "MCP 的审计条目也要落进归档",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyMcpWritesLandInTheMainAuditLedger",
+    from: '  flushPendingAuditAppends(state, join(runtimeDir, "audit-log.jsonl"));',
+    to: "  void state;",
+    expect: "没进归档"
+  },
+  {
     name: "审计页要说清台账只覆盖到哪",
     file: APP,
     gate: "console",
-    from: '<span class="mono">mcp-audit.jsonl</span> 里，不在这一屏内 —— 查"谁动了它"时两处都要看。</div>',
-    to: "</div>",
-    expect: "台账边界必须写出来"
+    from: "（MCP 的记为「MCP 工具调用」，执行者形如 <span class=\"mono\">mcp:主体类型:id</span>）。",
+    to: "。",
+    expect: "页面要说清这件事"
   },
   {
     // 整屏那条横幅要真的接在外壳上，且要逐个点名（只说"有名单被截断"，人不知道是哪一份）。

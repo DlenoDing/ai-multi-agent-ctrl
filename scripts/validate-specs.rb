@@ -2219,10 +2219,13 @@ end
 # 并认得多种写法】，否则得到的是随机答案。
 #
 # 三条出路，缺一即红：分片（分片层有 5000 兜底）／有裁剪机制／登记为随实体增长且不可裁剪。
+# 凡是【会改中央状态集合】的模块都要在这份扫描面里，否则把一段裁剪逻辑挪进新文件，
+# 本条就会把它报成"只增不减"（审计台账抽成共享模块时当场撞到）。
 state_sources = {
   "core" => core_source, "gateway" => agent_gateway_source,
   "server" => server_source, "mcp" => mcp_source,
-  "store" => File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs"))
+  "store" => File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")),
+  "audit" => File.read(File.join(ROOT, "apps/control-plane-ui/lib/audit-ledger.mjs"))
 }
 all_state_source = state_sources.values.join("\n")
 declared_collections = all_state_source.scan(/state\.([a-zA-Z]+)\s*\|\|=\s*\[\]/).flatten.uniq.sort
