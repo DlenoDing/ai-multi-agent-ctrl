@@ -2162,7 +2162,18 @@ await runCodedApiErrorCase();
     const retiredRoot = el("div");
     loadConsole(retiredRoot).renderFullPageWith(retired, admin, null, "sys-settings");
     const retiredHtml = String(retiredRoot.innerHTML || "");
-    check("已退役的源不再给同步按钮",
+    {
+    // 把唯一的源退役之后，22 个角色会全部落到内置技能上。系统照常跑，所以这件事【只能靠界面说】。
+    const allRetired = structuredClone(withSource);
+    allRetired.skillSources[0].status = "retired";
+    allRetired.roleSkills = [{roleSkillId: "system-orchestrator", sourceId: "system-default", roleId: "orchestrator"}];
+    const bareRoot = el("div");
+    loadConsole(bareRoot).renderFullPageWith(allRetired, admin, null, "sys-settings");
+    check("一个可用技能源都没有时要说清后果",
+      /没有可用的技能源/.test(String(bareRoot.innerHTML || "")),
+      "所有源都退役了，页面只是一张空表 —— 人看不出所有角色已经落到系统内置技能上");
+  }
+  check("已退役的源不再给同步按钮",
       !/data-action="sync-skill-source"/.test(retiredHtml) && /已退役/.test(retiredHtml),
       "已退役的源还摆着同步按钮 —— 点了也不会有任何效果，而人不知道");
   }

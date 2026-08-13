@@ -1731,7 +1731,14 @@ function renderSysSettings() {
         <dt>更新时间</dt><dd>${fmtTime(runtime.updatedAt)}</dd>
       </dl>
     `),
-    panel("技能源", capNotice("skillSources") + table(["技能源 / 仓库", "状态", "固定提交", {label: "角色数", c: "num"}, "操作"], sources)),
+    // 一个可用技能源都没有（没接过 / 全退役了）时，角色会全部回退到内置技能 —— 系统照常跑，
+    // 但 agent 拿到的是通用规则而不是这个组织自己的角色规则。这件事不写出来，人看到的只是一张空表。
+    panel("技能源", capNotice("skillSources") + table(["技能源 / 仓库", "状态", "固定提交", {label: "角色数", c: "num"}, "操作"], sources)
+      + ((state.skillSources || []).some((source) => source.status !== "retired")
+        ? ""
+        : `<div class="notice warn-notice">当前没有可用的技能源，所有角色都在用系统内置技能`
+          + `（共 ${(state.roleSkills || []).filter((skill) => skill.sourceId === "system-default").length} 个）。`
+          + "派发照常进行，但 agent 拿到的是通用角色规则，不是你们自己的那一份。</div>")),
     // 角色技能叠加会【改掉 agent 实际拥有的能力】（含 forbiddenCapabilityAdds），它是真人专属动作，
     // 数据也一直下发到这一页 —— 却从没有被渲染过：人看不到某个项目/任务组的角色规则被谁改过、改成了什么。
     // 创建仍走 API（补丁结构复杂，不值得为它在这里造一个编辑器），但"存在且生效"这件事必须看得见。

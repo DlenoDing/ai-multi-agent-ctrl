@@ -832,6 +832,14 @@ const MUTATIONS = [
     expect: "永远在等一个不存在的基底"
   },
   {
+    name: "没有可用技能源时要说清后果",
+    file: APP,
+    gate: "console",
+    from: '`<div class="notice warn-notice">当前没有可用的技能源，所有角色都在用系统内置技能`',
+    to: '""',
+    expect: "人看不出所有角色已经落到系统内置技能上"
+  },
+  {
     name: "技能源退役要有界面入口",
     file: APP,
     gate: "console",
