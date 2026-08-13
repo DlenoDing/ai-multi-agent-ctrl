@@ -5219,7 +5219,7 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 棘轮只往一个方向走：数字变大＝新增的守卫没配判据；变小＝该把这里下调，把成果钉住。
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 97;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 93;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -7138,7 +7138,8 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
   const runCase = ({stray, finalized, trespass, writeForbidden, forgeCommit, forgePush, forgeTree,
     forgeContractDigest, forgeManifestBinding, forgeManifestDigest, forgeLeaseHolder,
     forgeCommitBranch, omitCommitEvidence, pushBehind, narrowAllowlist,
-    manifestFromLastRound, outputFromLastRound, manifestNotJson}) => {
+    manifestFromLastRound, outputFromLastRound, manifestNotJson,
+    foreignSession, omitLanguageDigest, forgeLanguageDigest, targetAlreadyPushed}) => {
     // 这段建置对每个用例完全相同，而它是本项检查里最贵的一块：实测 324ms/次 × 19 个用例 ≈ 6.2 秒
     // （对比：一次完整编排只要 61ms，克隆状态 1ms）。改成"建一次模板、之后按目录拷贝"。
     const {repo, remote, baseRef, caseRoot} = checkoutFromTemplate();
@@ -7159,7 +7160,16 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     Object.assign(target, {projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workItemId: workItem.id,
       baseRef, branch: "main", remote: "origin", repositoryUrl: remote, status: "pending",
       // 仓库层放开，才看得出"人批的方案"这一层有没有生效；narrowAllowlist 反过来，专验仓库层这一道。
+      // targetAlreadyPushed：这个产出目标上一轮已经推送定案了。再交一份检查点等于覆盖既成事实。
+      status: targetAlreadyPushed ? "pushed" : "pending",
       pathAllowlist: narrowAllowlist ? ["docs/**"] : ["**"]});
+    // foreignSession 要造一个【真实存在、但绑在别的工作项上】的会话：
+    // 用一个根本不存在的 sessionId 的话，`!session` 那半先命中，验到的是"查无此会话"，
+    // 而不是"这份证据属于哪件事"那道绑定（第一版就是这样，把绑定判据删掉照样绿）。
+    if (foreignSession) {
+      state.workSessions.push({sessionId: "sess_from_another_work_item", taskGroupId: taskGroup.id,
+        projectId: taskGroup.projectId, workItemId: `${workItem.id}__another`, status: "active"});
+    }
     const lease = {leaseId: `lease_cc_${state.leases.length}`, resourceRef: `RepositoryOutputTarget:${target.targetId}`,
       // forgeLeaseHolder：租约在【别的会话】手里。这是真实世界里最常见的那一种 ——
       // 两个 agent 抢同一个产出目标，互斥全靠这道守卫。
@@ -7240,11 +7250,15 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     const contract = (state.agentTaskContracts || []).find((item) => item.sessionId === session.sessionId);
     const result = acceptAgentCheckpoint(state, {
       projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workId: workItem.id,
-      sessionId: session.sessionId, runId: dispatch.runId,
+      // foreignSession：拿【别的工作项】的会话来交这份检查点 —— 证据挂到了它没做过的那件事上。
+      sessionId: foreignSession ? "sess_from_another_work_item" : session.sessionId, runId: dispatch.runId,
       // forgeContractDigest：谎报"我干的是哪份任务契约"。契约摘要是把这份证据钉在
       // 那次派发上的那根钉子 —— 谎报能过的话，一份真实的提交就能挂到它没做过的那件事上。
       taskContractDigest: forgeContractDigest ? "sha256:not-the-contract-you-were-given" : contract?.contractDigest,
-      languagePolicyDigest: contract?.languagePolicyDigest, summary: "契约门",
+      // 语言策略摘要绑定的是"这份契约要求用什么语言产出"。omit：一个字都不带；forge：谎报。
+      languagePolicyDigest: omitLanguageDigest ? undefined
+        : forgeLanguageDigest ? "sha256:not-the-language-policy" : contract?.languagePolicyDigest,
+      summary: "契约门",
       // forgeCommit：交一个仓库里【根本不存在】的 40 位哈希。这是"AI 给自己判分"的核心边界 ——
       // 控制面若信了 agent 自报的提交，它就能拿凭空的证据过关闭门。
       // forgeCommitBranch：声称这次提交落在【另一个分支】上。产出目标钉的是仓库+分支，
@@ -7336,6 +7350,26 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     || brokenManifest.result.error !== "artifact_manifest_not_json") {
     output.push(`清单不是一份 JSON，检查点却没被拦下（实际：${brokenManifest.result.error || "已受理"}）`
       + " —— 后面所有按字段比对的绑定校验都会被跳过");
+  }
+
+  // ⑦⑧⑨⑩ 检查点验收路上最后四道零覆盖的门，都是"这份证据到底属于谁/属于哪一轮"的绑定：
+  // 挂错会话＝把成果算到它没做过的那件事上；语言策略摘要缺失或谎报＝产出语言的约定形同虚设；
+  // 目标已推送定案还能再交＝覆盖既成事实。四条一起按同一形状写。
+  for (const [label, opts, expected, why] of [
+    ["拿别的工作项的会话交检查点", {foreignSession: true}, "session_work_item_mismatch",
+      "证据被挂到它没做过的那件事上"],
+    ["一个字的语言策略摘要都不带", {omitLanguageDigest: true}, "checkpoint_language_policy_digest_required",
+      "契约里对产出语言的约定形同虚设"],
+    ["谎报语言策略摘要", {forgeLanguageDigest: true}, "checkpoint_language_policy_digest_mismatch",
+      "换一份语言约定就能让不合约定的产出过关"],
+    ["目标已推送定案后再交一份", {targetAlreadyPushed: true}, "repository_output_target_already_pushed",
+      "既成事实可以被后来的检查点覆盖"]
+  ]) {
+    const probe = runCase(opts);
+    if (probe.skipped) { output.push(`${label} 断言无从验证：${probe.skipped}`); continue; }
+    if (probe.result.accepted !== false || probe.result.error !== expected) {
+      output.push(`${label}，检查点却没被拦下（实际：${probe.result.error || "已受理"}）—— ${why}`);
+    }
   }
 
   // 契约摘要谎报必须被拒。这条守卫此前【一条判据都没有】：它失效时正常提交照旧成功，

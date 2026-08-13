@@ -1121,6 +1121,41 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // 这份证据到底属于哪件事：挂上别的工作项的会话，成果就算到了它没做过的那件事上。
+    name: "检查点的会话必须属于这个工作项",
+    file: CORE,
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: "if (!session || session.workItemId !== workItem.id) {",
+    to: "if (!session) {",
+    expect: "证据被挂到它没做过的那件事上"
+  },
+  {
+    name: "语言策略摘要不带就不许过",
+    file: CORE,
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: "if (!checkpointInput.languagePolicyDigest) {\n      return {accepted: false, status: 409, error: \"checkpoint_language_policy_digest_required\"};\n    }",
+    to: "/* 守卫失效 */",
+    expect: "契约里对产出语言的约定形同虚设"
+  },
+  {
+    // 这一条失效时直接"已受理"。
+    name: "语言策略摘要谎报不许过",
+    file: CORE,
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: "if (checkpointInput.languagePolicyDigest !== expectedLanguagePolicyDigest) {\n      return {accepted: false, status: 409, error: \"checkpoint_language_policy_digest_mismatch\"};\n    }",
+    to: "/* 守卫失效 */",
+    expect: "换一份语言约定就能让不合约定的产出过关"
+  },
+  {
+    // 同样失效即"已受理"：已经推送定案的产出目标，可以被后来的检查点覆盖。
+    name: "已推送定案的目标不得再交检查点",
+    file: CORE,
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: 'if (target.status === "pushed") return {valid: false, status: 409, error: "repository_output_target_already_pushed"};',
+    to: "/* 守卫失效 */",
+    expect: "既成事实可以被后来的检查点覆盖"
+  },
+  {
     // 谎报范围：指向的清单在仓库里找得到，只是不属于这次提交 —— 一份旧清单给这一轮背书。
     name: "旧清单不得给这一轮背书",
     file: CORE,
