@@ -5588,6 +5588,24 @@ export function consumeHumanConfirmation(state, requestId, options = {}) {
   return request;
 }
 
+// 人写的问责性文字（豁免理由、处置理由、补充要求）超长时【不能悄悄截断】：
+// 存下的是前 N 字，而人以为自己写的整段都在。本仓对规则片段早就立过这条规矩，
+// 并且特意移除了 textarea 的 maxlength —— 浏览器端截断会让服务端那句拒绝永远不被人看到。
+// 这里把同一条规矩用到其余人写字段上：拒绝，并说清上限与超了多少。
+export function assertHumanTextWithinLimit(value, field, limit) {
+  const text = String(value ?? "");
+  if (text.length <= limit) return text.trim();
+  // 人话放 details，不要放 message：路由是拿 error.message 当【稳定错误码】回的，
+  // 覆盖它等于把错误码换成一句中文（第一版就是这么写的，断言当场抓到）。
+  throw Object.assign(new Error(`${field}_too_long`), {
+    status: 400,
+    over: text.length - limit,
+    details: {limit, actual: text.length, over: text.length - limit,
+      message: `这段文字有 ${text.length} 字，超出上限 ${limit} 字 ${text.length - limit} 字。`
+        + "请精简后重新提交 —— 悄悄截断会让存下的内容与你写的不一致。"}
+  });
+}
+
 // 重开与放弃是相反的两件事。认不出的取值原先一律当成 reopen —— 人以为自己放弃了这个格子，
 // 而它被重开了，任务组也就一直关不掉。不填＝按 reopen（保守：留着让人再看），填错必须拒。
 function requireKnownResolution(value) {
@@ -5612,7 +5630,7 @@ export function createHumanDirective(state, input = {}, options = {}) {
       {status: 400, directiveType: String(input.directiveType).slice(0, 60), supported: HUMAN_DIRECTIVE_TYPES});
   }
   const directiveType = HUMAN_DIRECTIVE_TYPES.includes(input.directiveType) ? input.directiveType : "free_text";
-  const instruction = String(input.instruction || "").trim().slice(0, 4000);
+  const instruction = assertHumanTextWithinLimit(input.instruction || "", "human_directive_instruction", 4000);
   if (!instruction && directiveType === "free_text") throw Object.assign(new Error("human_directive_instruction_required"), {status: 400});
   const resolution = directiveType === "resolve_decision"
     ? (["reopen", "abandon"].includes(input.resolution) ? input.resolution : requireKnownResolution(input.resolution))

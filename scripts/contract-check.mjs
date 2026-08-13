@@ -4898,7 +4898,31 @@ function verifyUnknownEnumValuesAreRefusedNotCoerced(output) {
     }
   }
 
-  // ② 决策处置：reopen / abandon 是相反的两件事。
+  // ② 人写的问责性文字超长时不能悄悄截断：存下的是前 N 字，而人以为整段都在。
+  //    （本仓对规则片段早有这条规矩，并特意移除了 textarea 的 maxlength —— 浏览器端截断
+  //     会让服务端那句拒绝永远不被人看到。这里把同一条用到补充要求与各处理由上。）
+  let longError = null;
+  try {
+    createHumanDirective(state, {taskGroupId: taskGroup.id, directiveType: "add_requirement",
+      instruction: "长".repeat(4001)}, {actor: "acct_probe"});
+  } catch (error) { longError = error; }
+  if (String(longError?.message || "") !== "human_directive_instruction_too_long") {
+    output.push(`补充要求超长没有被拒（拿到 "${longError?.message || "成功了"}"）—— 悄悄截断意味着`
+      + "存下的内容与人写的不一致，而它会进入之后每一次派发的内容包");
+  } else if (longError.over !== 1 || !String(longError.message || longError.details || "").length) {
+    output.push(`超长拒绝没有说清超了多少（over=${longError.over}）—— 人不知道该删多少字`);
+  }
+  // 刚好到上限必须能过，否则这条改动会把正常使用也堵死。
+  let atLimit = null;
+  try {
+    atLimit = createHumanDirective(state, {taskGroupId: taskGroup.id, directiveType: "add_requirement",
+      instruction: "长".repeat(4000)}, {actor: "acct_probe"});
+  } catch (error) { atLimit = {error: String(error?.message || error)}; }
+  if (!atLimit?.directiveId) {
+    output.push(`刚好 4000 字的补充要求被拒了（${JSON.stringify(atLimit).slice(0, 100)}）—— 边界写反了`);
+  }
+
+  // ③ 决策处置：reopen / abandon 是相反的两件事。
   let resolutionError = "";
   try {
     createHumanDirective(state, {taskGroupId: taskGroup.id, directiveType: "resolve_decision",

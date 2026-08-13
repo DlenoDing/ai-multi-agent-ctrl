@@ -91,6 +91,7 @@ import {
   projectOwnerGrantPermissions,
   runAgentRuntimeWorker,
   runAutonomousCycle,
+  assertHumanTextWithinLimit,
   settleCellOwnedResources,
   runCommandLifecycle,
   selectModel,
@@ -3796,7 +3797,7 @@ async function handleApi(req, res) {
     if (["waived", "passed"].includes(gate.status)) return json(res, 409, {error: "quality_gate_already_settled", qualityGate: gate});
     gate.status = "waived";
     gate.waivedBy = guard.actor;
-    gate.waiveJustification = justification.slice(0, 2000);
+    gate.waiveJustification = assertHumanTextWithinLimit(justification, "quality_gate_waive_justification", 2000);
     gate.updatedAt = now();
     // 豁免恰好改变了验收卡片快照里的质量门状态。不同步刷新的话，人按下这个唯一的出路键之后，
     // 那张卡的 finalize/reject/revise 会被快照校验全部拒掉 —— 人把自己钉死，只能等过期。
@@ -3838,7 +3839,7 @@ async function handleApi(req, res) {
     if (["consumed", "rejected"].includes(bundle.status)) return json(res, 409, {error: "review_bundle_already_resolved", reviewBundle: bundle});
     bundle.status = nextStatus;
     bundle.resolvedBy = guard.actor;
-    bundle.resolutionJustification = justification.slice(0, 2000);
+    bundle.resolutionJustification = assertHumanTextWithinLimit(justification, "review_bundle_justification", 2000);
     bundle.updatedAt = now();
     // 处置完一项就要刷新关闭门快照：控制台上"关闭任务组"按钮只在 barrier.satisfied 时出现，
     // 而刷新那份快照的唯一入口原先就是那个按钮自己 —— 人处置掉最后一个阻塞项后，页面仍显示"存在阻塞"，
@@ -3878,7 +3879,7 @@ async function handleApi(req, res) {
     }
     candidate.status = nextStatus;
     candidate.resolvedBy = guard.actor;
-    candidate.resolutionJustification = justification.slice(0, 2000);
+    candidate.resolutionJustification = assertHumanTextWithinLimit(justification, "system_upgrade_candidate_justification", 2000);
     candidate.updatedAt = now();
     // 处置完一项就要刷新关闭门快照：控制台上"关闭任务组"按钮只在 barrier.satisfied 时出现，
     // 而刷新那份快照的唯一入口原先就是那个按钮自己 —— 人处置掉最后一个阻塞项后，页面仍显示"存在阻塞"，
@@ -3921,7 +3922,7 @@ async function handleApi(req, res) {
     if (!justification) return json(res, 400, {error: "plan_finalization_justification_required"});
     planWorkItem.requiresPlanFinalization = required;
     planWorkItem.planFinalizationDecidedBy = guard.actor;
-    planWorkItem.planFinalizationJustification = justification.slice(0, 2000);
+    planWorkItem.planFinalizationJustification = assertHumanTextWithinLimit(justification, "plan_finalization_justification", 2000);
     planWorkItem.updatedAt = now();
     audit(state, guard.actor, "work_item_plan_finalization_set", `WorkItem:${planWorkItem.id}`,
       required ? "plan_finalization_required" : "plan_finalization_cleared");
@@ -3994,7 +3995,7 @@ async function handleApi(req, res) {
     if (["closed", "rejected", "superseded"].includes(plan.status)) return json(res, 409, {error: "review_plan_already_resolved", reviewPlan: plan});
     plan.status = nextStatus;
     plan.resolvedBy = guard.actor;
-    plan.resolutionJustification = justification.slice(0, 2000);
+    plan.resolutionJustification = assertHumanTextWithinLimit(justification, "review_plan_justification", 2000);
     plan.closedAt = now();
     plan.updatedAt = now();
     // 处置完一项就要刷新关闭门快照：控制台上"关闭任务组"按钮只在 barrier.satisfied 时出现，
@@ -5016,7 +5017,8 @@ async function handleApi(req, res) {
       // 与 state_view_unknown 那条同规。
       return json(res, error.status || 500, {error: error.message,
         ...(error.directiveType ? {directiveType: error.directiveType} : {}),
-        ...(error.supported ? {supported: error.supported} : {})});
+        ...(error.supported ? {supported: error.supported} : {}),
+        ...(error.details || {})});
     }
     const controlAction = {pause: "pause", resume: "resume", cancel: "cancel"}[directive.directiveType];
     const directiveTaskGroup = directive.taskGroupId ? state.taskGroups.find((item) => item.id === directive.taskGroupId) : null;

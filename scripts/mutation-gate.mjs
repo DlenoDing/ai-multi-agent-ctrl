@@ -832,6 +832,15 @@ const MUTATIONS = [
     expect: "永远在等一个不存在的基底"
   },
   {
+    // 人写的问责性文字超长时不能悄悄截断（存下的与人写的不一致）。
+    name: "超长的人写文字必须拒绝而不是截断",
+    file: CORE,
+    check: "verifyUnknownEnumValuesAreRefusedNotCoerced",
+    from: "  if (text.length <= limit) return text.trim();",
+    to: "  if (true) return text.slice(0, limit).trim();",
+    expect: "超长没有被拒"
+  },
+  {
     // 发现处置：认不出的状态降级成 resolved 是【有利结果】，且直接喂给关闭门。
     name: "认不出的发现状态不得降级成已解决",
     file: CORE,
