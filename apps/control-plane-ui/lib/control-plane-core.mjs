@@ -3863,6 +3863,15 @@ export function collectRuntimeIssue(state, request = {}) {
       updatedAt: at
     };
     state.runtimeIssuePatterns.unshift(pattern);
+    // 被压制的模式不许被容量裁掉：它在原位不动（压制只是就地改状态，不会被重新 unshift），
+    // 够多新指纹之后就会掉出窗口 —— 于是同一件事重新聚类、重新升级，而人明明判过"不用管"。
+    // 人的判断不能被容量悄悄撤销，这与升级候选那边的保留式裁剪是同一条规矩。
+    // 保留式裁剪在这里是错的：它会无条件留下整类，压制一多就成了无界增长（规范门当场抓到）。
+    // 正确的做法是【在同一个 2000 的额度里排优先级】：压制过的排到前面，再照旧硬裁。
+    state.runtimeIssuePatterns = [
+      ...state.runtimeIssuePatterns.filter((item) => item.status === "suppressed"),
+      ...state.runtimeIssuePatterns.filter((item) => item.status !== "suppressed")
+    ];
     state.runtimeIssuePatterns = state.runtimeIssuePatterns.slice(0, 2000);
   } else {
     pattern.recurrenceCount += 1;

@@ -705,6 +705,15 @@ const MUTATIONS = [
     expect: "room_task_group_mismatch"
   },
   {
+    // 压制不能被容量悄悄撤销：被压制的那条原地不动，够多新指纹就会掉出窗口。
+    name: "被压制的模式不许被容量裁掉",
+    file: CORE,
+    check: "verifyRuntimeIssuePatternCanBeSettled",
+    from: '      ...state.runtimeIssuePatterns.filter((item) => item.status === "suppressed"),',
+    to: "      ...[],",
+    expect: "人的判断被容量悄悄撤销了"
+  },
+  {
     // 人的判断必须传导到模式那一层，否则判过的事会一直被重新聚类。
     name: "候选被判不予处理时问题模式要压制",
     file: CORE,

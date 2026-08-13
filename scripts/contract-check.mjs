@@ -366,6 +366,18 @@ function verifyRuntimeIssuePatternCanBeSettled(output) {
   if (Number(pattern.suppressedOccurrences || 0) < 1) {
     output.push("压制之后再出现没有计数 —— 压制变成了丢数据，人事后查不出它还在不在发生");
   }
+  // 压制不能被容量悄悄撤销：模式表按 2000 条裁，而被压制的那条【原地不动】、不会被重新顶到表头。
+  // 够多新指纹之后它会掉出窗口，同一件事重新聚类、重新升级 —— 人判过的事又回来了，而且无声无息。
+  for (let index = 0; index < 2100; index += 1) raise(`probe-flood-${index}`);
+  const survivor = (state.runtimeIssuePatterns || []).find((item) => item.patternId === pattern.patternId);
+  if (!survivor) {
+    output.push("涌进 2100 个新指纹之后，被压制的那条模式被容量裁掉了 —— 人的判断被容量悄悄撤销了");
+  } else {
+    const afterFlood = raise("probe-noise");
+    if (afterFlood.patternId !== pattern.patternId || afterFlood.status !== "suppressed") {
+      output.push(`裁剪之后同一件事又被重新聚类（拿到 ${afterFlood.patternId}/${afterFlood.status}）`);
+    }
+  }
   // 判为"已解决"之后再出现：那是一件新事，要另起一条，而不是复活终态。
   const closing = raise("probe-fixed");
   settleRuntimeIssuePatternForCandidate(state, {candidateId: "suc_probe2", issuePatternId: closing.patternId}, "closed");
