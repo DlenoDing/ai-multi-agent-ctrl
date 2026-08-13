@@ -5691,6 +5691,12 @@ function respondApiError(res, error) {
     json(res, 503, {error: "state_storage_unavailable", code: error.code, retryable: true});
     return;
   }
+  // 兜底这一支原先【一个字都不打】，而它上面每一支都打。于是一个未预期的 500 在服务端
+  // 不留任何痕迹：客户端看到 server_error，运维翻日志什么也没有，无从排查。
+  // 实测并发写入门偶发 500（六轮两次），正是因为这里静默才查不出是什么。
+  // 堆栈默认不打（生产日志会被贴进工单），要看用 AIMAC_SERVER_ERROR_DEBUG=1。
+  console.error(`[server-error] ${req.method} ${url.pathname}: ${error?.message || error}`);
+  if (process.env.AIMAC_SERVER_ERROR_DEBUG === "1" && error?.stack) console.error(error.stack);
   json(res, error.status || 500, {error: "server_error", message: error.message});
 }
 

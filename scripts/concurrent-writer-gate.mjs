@@ -34,6 +34,7 @@ process.on("uncaughtException", (error) => { killTrackedChildren(); console.erro
 const root = process.argv[2] || resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-conc-"));
 const fails = [];
+const serverLog = [];
 const check = (ok, label, detail = "") => {
   // 参数自检：布尔与标签写反时当场报错，而不是静默恒真。
   // 本仓库四道门里三道是 (ok, label)，控制台门是 (label, ok) —— 我照着另一道的顺序写过一次，
@@ -61,6 +62,13 @@ const start = async (port) => {
     env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(port), AIMAC_RUNTIME_DIR: runtimeDir,
       AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_STATE_STORE: "runtime_json",
       AIMAC_BOOTSTRAP_TOKEN: "concurrent-probe-token-0123456789", DATABASE_URL: ""}, stdio: ["ignore", "pipe", "pipe"]}));
+  // 服务端日志【一直】收着，失败时连同断言一起打出来。
+  // 这道门的失败多半是时序偶发（实测六轮两次、之后十轮零次），事后复现不了 ——
+  // 不留下那一刻的服务端输出，下一次偶发红同样查不动（这次就吃了这个亏）。
+  child.stderr.on("data", (chunk) => {
+    serverLog.push(`[srv${port}] ${String(chunk).trimEnd()}`);
+    if (serverLog.length > 200) serverLog.shift();
+  });
   const base = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + 25000;
   while (Date.now() < deadline) {
@@ -89,12 +97,22 @@ const created = new Set();
 const conflicts = {a: 0, b: 0};
 const rejectionCodes = new Set();
 const unexpected = [];
+const transportFlakes = [];
 const fire = async (server, auth, tag, count) => {
   for (let index = 0; index < count; index += 1) {
     const name = `${tag}-项目-${index}`;
-    const response = await fetch(`${server.base}/api/projects`, {method: "POST",
-      headers: {...auth, "idempotency-key": `conc-${tag}-${index}`},
-      body: JSON.stringify({name, organizationId: orgId})});
+    // 传输层抖动要与【服务端错误】分开：keep-alive 连接被服务端回收的同一刻客户端复用它，
+    // undici 会抛 UND_ERR_SOCKET —— 那是客户端侧的经典竞争，不是这道门要验的东西。
+    // 原先这里没有任何保护，一次连接被关就把整道门打成 Node 崩溃栈（实测撞到过）。
+    let response;
+    try {
+      response = await fetch(`${server.base}/api/projects`, {method: "POST",
+        headers: {...auth, "idempotency-key": `conc-${tag}-${index}`},
+        body: JSON.stringify({name, organizationId: orgId})});
+    } catch (error) {
+      transportFlakes.push(`${error?.cause?.code || error?.code || "unknown"}`);
+      continue;
+    }
     if (response.ok) created.add(name);
     else if (response.status === 409) {
       conflicts[tag] += 1;
@@ -123,6 +141,17 @@ check(lost.length === 0, "被确认成功的写入没有一条丢失（并发下
 // "项目分片只增不减"。CAS 失效时后者会顶上来把陈旧写入拒掉，于是"没丢更新"这条照样绿 ——
 // 实测把 CAS 改坏，整道门仍然通过，那条变异因此失去了判别力（全量变异门抓到的就是这个）。
 // 拒了不等于拒对了：并发退回必须是版本冲突，不能是别的守卫顺手接住。
+// keep-alive 复用竞争（UND_ERR_SOCKET）不是被测性质，报数但不判红。
+// 但 ECONNREFUSED 是另一回事：那是【服务端根本没在监听】，此时其余断言都没有意义 ——
+// 把两者混在一起报，会让"服务没起来"伪装成"网络有点抖"。实测背靠背连跑多轮时出现过成批的
+// ECONNREFUSED（本机负载所致，不是产品缺陷），正是靠分开报才看清的。
+const unreachable = transportFlakes.filter((code) => code === "ECONNREFUSED");
+if (transportFlakes.length) {
+  console.log(`  --  另有 ${transportFlakes.length} 次传输层失败（${[...new Set(transportFlakes)].join("、")}）`);
+}
+check(unreachable.length === 0, "整轮里服务端一直在监听（否则下面几条什么也没验）",
+  unreachable.length ? `${unreachable.length} 次 ECONNREFUSED —— 服务端没起来或中途死了，本轮结论不可信`
+    : "没有连不上的时刻");
 check(unexpected.length === 0,
   "并发写入只会成功或按版本冲突退回（没有第三种结局）",
   unexpected.length ? `另有 ${unexpected.length} 次别的失败：${[...new Set(unexpected)].slice(0, 3).join("、")}`
@@ -189,6 +218,10 @@ for (const [server, auth, tag] of [[a, authA, "a"], [b, authB, "b"]]) {
 
 for (const server of [a, b]) { server.child.kill("SIGTERM"); }
 await new Promise((resolve) => setTimeout(resolve, 500));
+if (fails.length && serverLog.length) {
+  console.log("  --  失败时的服务端输出（末 12 行）：");
+  for (const line of serverLog.slice(-12)) console.log(`      ${line}`);
+}
 console.log(fails.length
   ? `concurrent writer gate failed: ${fails.join("；")}`
   : "concurrent writer gate ok: 两进程并发写同一份状态，被确认的写入一条不丢、双方都没被对方的锁堵死");
