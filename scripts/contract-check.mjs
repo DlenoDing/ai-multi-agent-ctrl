@@ -55,6 +55,7 @@ import {
   requeuePermissionApprovedDispatch,
   findingResolve,
   findingSubmit,
+  TASK_GROUP_SETTLED_STATUSES,
   reviewBundleRegister,
   computeCompletionReadiness,
   createExecutionTopology,
@@ -1357,6 +1358,56 @@ function verifyHumanAndOrganizationContracts(output) {
     const verifiedByMachine = disposeCase("fixed_verified", false);
     if (verifiedByMachine.error) {
       output.push(`findingResolve: "已修复且有证据"是可核验的事实判断，AI 本就可以做，却被拒了（${verifiedByMachine.error}）`);
+    }
+
+    // 任务组终结之后不得再往它里面加新东西。原先只有房间消息锁了这一道
+    // （那处注释自己写着"只锁一道门是本仓反复出现的形态"），实测另外六个写入口全部照收：
+    // 发现项/许可申请/审批多数是【关闭门的阻塞对象】，落在已关闭的组上就成了谁也处置不掉的死记录；
+    // 人工确认单更糟 —— 造出一张永远没人看得见、也点不动的待办。
+    // 六条按同一形状写，并各配一条正面对照：组还开着时必须照常受理，否则这道锁把正常路径一起堵死。
+    {
+      const settledFixture = (status) => {
+        const st = structuredClone(seedState);
+        ensureRuntimeCollections(st, {root});
+        const tg = st.taskGroups.find((item) => item.id === "tg_runtime_management");
+        tg.status = status;
+        return {st, tg};
+      };
+      const writeEntries = [
+        ["findingSubmit", ({st, tg}) => findingSubmit(st, {taskGroupId: tg.id, projectId: tg.projectId,
+          severity: "high", summary: "关后提交的发现"})],
+        ["permissionRequestSubmit", ({st, tg}) => permissionRequestSubmit(st, {taskGroupId: tg.id,
+          projectId: tg.projectId, requestedCapability: "net", requestedResource: "x", promptType: "network"})],
+        ["approvalRequestCreate", ({st, tg}) => approvalRequestCreate(st, {taskGroupId: tg.id,
+          projectId: tg.projectId, approvalType: "release", summary: "关后审批"})],
+        ["createHumanConfirmationRequest", ({st, tg}) => createHumanConfirmationRequest(st, {taskGroupId: tg.id,
+          workItemId: tg.workItems[0].id, decisionType: "plan_topology", subjectRef: `TaskGroup:${tg.id}`,
+          summary: "关后确认", options: [{optionId: "a", label: "A"}]})],
+        ["createExecutionTopology", ({st, tg}) => createExecutionTopology(st, {taskGroupId: tg.id,
+          projectId: tg.projectId, workItemId: tg.workItems[0].id, mode: "parallel_branches",
+          runnerKind: "local", isolation: "worktree",
+          branches: [{branchId: "b_after", objective: "关后", ownedPaths: ["docs/**"], resourceScopes: [], acceptanceChecks: ["docs_lint"]}]})],
+        ["ruleSourceResolve", ({st, tg}) => ruleSourceResolve(st, {taskGroupId: tg.id, projectId: tg.projectId,
+          sourceRef: "reference:after-close"})]
+      ];
+      for (const [label, run] of writeEntries) {
+        for (const status of TASK_GROUP_SETTLED_STATUSES) {
+          let outcome;
+          try { outcome = run(settledFixture(status)); }
+          catch (error) { outcome = {error: `抛出 ${error.message}`}; }
+          if (outcome?.error !== "task_group_settled") {
+            output.push(`任务组已${status}，${label} 仍然往它里面写了新东西（实际：${outcome?.error || "已受理"}）`
+              + " —— 关闭门已经过了，此后的写入不受任何门约束，多数还会变成谁也处置不掉的死记录");
+          }
+        }
+        // 正面对照：组还开着时必须照常受理，否则这道锁把正常路径一起堵死。
+        let openOutcome;
+        try { openOutcome = run(settledFixture("active")); }
+        catch (error) { openOutcome = {error: `抛出 ${error.message}`}; }
+        if (openOutcome?.error === "task_group_settled") {
+          output.push(`任务组还开着，${label} 却被"已终结"挡住了 —— 这道锁把正常路径一起堵死`);
+        }
+      }
     }
 
     // 【终态一次性】这一族：了结过的记录不得被第二次调用改写成【另一个结论】。

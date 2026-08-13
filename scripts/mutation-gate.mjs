@@ -1121,6 +1121,25 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // 任务组终结之后仍能往里面加新东西：六个写入口原先全部照收，其中人工确认单会造出
+    // 一张永远没人看得见也点不动的待办。
+    name: "任务组终结后不得再加新东西",
+    file: CORE,
+    check: "verifyHumanAndOrganizationContracts",
+    from: "export function createHumanConfirmationRequest(state, input = {}) {\n  const settledRejection = taskGroupSettledRejection(state, input.taskGroupId);\n  if (settledRejection) return settledRejection;",
+    to: "export function createHumanConfirmationRequest(state, input = {}) {",
+    expect: "仍然往它里面写了新东西"
+  },
+  {
+    // 这道锁不能把还开着的任务组也锁住 —— 正面对照六条会同时报红。
+    name: "已终结的判据不得把正常任务组一起锁住",
+    file: CORE,
+    check: "verifyHumanAndOrganizationContracts",
+    from: 'export const TASK_GROUP_SETTLED_STATUSES = ["closed", "aborted"];',
+    to: 'export const TASK_GROUP_SETTLED_STATUSES = ["closed", "aborted", "active"];',
+    expect: "这道锁把正常路径一起堵死"
+  },
+  {
     // 真缺陷：active 不在规则来源的终态集里，于是【人已经采纳的来源，AI 一次调用就能改成 rejected】。
     name: "人采纳过的规则来源不得被机器改掉",
     file: CORE,

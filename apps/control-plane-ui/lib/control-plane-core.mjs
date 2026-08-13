@@ -5163,6 +5163,8 @@ export function decisionContentDigest(subject) {
 }
 
 export function createHumanConfirmationRequest(state, input = {}) {
+  const settledRejection = taskGroupSettledRejection(state, input.taskGroupId);
+  if (settledRejection) return settledRejection;
   ensureRuntimeCollections(state);
   const decisionType = String(input.decisionType || "runtime_execution");
   const isMajor = MAJOR_DECISION_TYPES.includes(decisionType);
@@ -6781,11 +6783,10 @@ export function roomSend(state, args) {
     const existing = state.roomMessages.find((item) => item.roomId === roomId && item.idempotencyKey === idempotencyKey);
     if (existing) return {message: existing, duplicate: true};
   }
-  // 任务组已终结，它的房间就不该再收消息：关闭门已经过了，协作已经结束，此后的写入不受任何门约束，
-  // 却照样长在中央 state 里、照样冲刷审计环。放在核心函数里而不是某一条路由上 —— 只锁一道门是本仓
-  // 反复出现的形态。房间对应的任务组不存在时不拦（例如控制面自用的房间），那条路已由授权侧兜住。
+  // 任务组已终结，它的房间就不该再收消息（判据见 taskGroupSettledRejection）。
+  // 房间对应的任务组不存在时不拦（例如控制面自用的房间），那条路已由授权侧兜住。
   const roomTaskGroup = (state.taskGroups || []).find((item) => item.id === roomId.replace(/^room_/, ""));
-  if (roomTaskGroup && ["closed", "aborted"].includes(roomTaskGroup.status)) {
+  if (roomTaskGroup && TASK_GROUP_SETTLED_STATUSES.includes(roomTaskGroup.status)) {
     return {ok: false, error: "room_task_group_settled", taskGroupStatus: roomTaskGroup.status};
   }
   const retainedMax = Math.max(0, ...state.roomMessages.filter((item) => item.roomId === roomId).map((item) => Number(item.sequence || 0)));
@@ -6998,6 +6999,8 @@ function globScopesOverlap(left, right) {
 }
 
 export function createExecutionTopology(state, args) {
+  const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);
+  if (settledRejection) return settledRejection;
   const taskGroup = findTaskGroup(state, args.taskGroupId);
   const workItem = (taskGroup?.workItems || []).find((item) => item.id === (args.workItemId || args.workId))
     || (taskGroup?.workItems || []).find((item) => !["superseded", "closed"].includes(item.status))
@@ -7506,6 +7509,8 @@ export function isDelegatableGrantPermission(permission) {
 }
 
 export function permissionRequestSubmit(state, args) {
+  const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);
+  if (settledRejection) return settledRejection;
   // 冒名的授权请求会让"批准读权限"的点击铸出别的 grant（见 assertUniqueRecordId 注释）。
   assertUniqueRecordId(state.permissionRequests, "requestId", args.requestId, "permission_request_id_conflict");
   const at = new Date().toISOString();
@@ -7711,6 +7716,8 @@ export function reviewBundleRegister(state, args) {
 }
 
 export function approvalRequestCreate(state, args) {
+  const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);
+  if (settledRejection) return settledRejection;
   // 冒名的审批请求可自带 quorum:1 / riskClass:low，让高危多方审批塌缩成一次点击。
   assertUniqueRecordId(state.approvalRequests, "approvalId", args.approvalId, "approval_request_id_conflict");
   const at = new Date().toISOString();
@@ -7773,7 +7780,22 @@ function nonTerminalFindingStatus(status, fallback) {
 // Finding 的终态集：门与 findingResolve 必须用同一份，否则两边各自手打就会再次漂移。
 export const FINDING_TERMINAL_STATUSES = ["resolved", "closed", "dismissed", "wontfix"];
 
+export const TASK_GROUP_SETTLED_STATUSES = ["closed", "aborted"];
+
+// 任务组终结之后，不得再往它里面加新东西：关闭门已经过了，此后的写入不受任何门约束，
+// 却照样长在中央 state 里 —— 而且多数是【关闭门的阻塞对象】，落在一个已关闭的组上就成了
+// 谁也处置不掉的死记录；人工确认单更糟：造出一张永远没人看得见、也点不动的待办。
+// 原先只有房间消息锁了这一道（那处注释自己写着"只锁一道门是本仓反复出现的形态"），
+// 实测另外六个写入口全部照收。判据放在 core 而不是某条路由上：REST 与 MCP 走的是同一批函数。
+export function taskGroupSettledRejection(state, taskGroupId) {
+  const taskGroup = (state.taskGroups || []).find((item) => item.id === taskGroupId);
+  if (!taskGroup || !TASK_GROUP_SETTLED_STATUSES.includes(taskGroup.status)) return null;
+  return {ok: false, error: "task_group_settled", taskGroupStatus: taskGroup.status, taskGroupId};
+}
+
 export function findingSubmit(state, args) {
+  const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);
+  if (settledRejection) return settledRejection;
   const at = new Date().toISOString();
   if (args.findingId) {
     const existing = (state.findings || []).find((item) => item.findingId === args.findingId);
@@ -7958,6 +7980,8 @@ export const RULE_SOURCE_HUMAN_ONLY_STATUSES = ["active"];
 export const RULE_SOURCE_TERMINAL_STATUSES = ["reference_only", "quarantined", "rejected", "superseded"];
 
 export function ruleSourceResolve(state, args) {
+  const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);
+  if (settledRejection) return settledRejection;
   const at = new Date().toISOString();
   const resolution = {
     schemaVersion: "rule-source-resolution/v1",
