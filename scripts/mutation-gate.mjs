@@ -1020,6 +1020,15 @@ const MUTATIONS = [
     expect: "本段在空转"
   },
   {
+    // 同形状第二次：文件名带连字符和点，同样会逃过提取，而运维一节正是靠它们指路。
+    name: "README 里的文件名也要被核对到",
+    file: "README.md",
+    gate: "specs",
+    from: "`mcp-audit.jsonl`",
+    to: "`mcp-audit-gone.jsonl`",
+    expect: "代码里已经没有了"
+  },
+  {
     // 上一条用的是光秃秃的标识符。带结尾冒号的写法（"码 + 细节"的前缀）此前会静默逃逸提取，
     // 改坏它门也不红 —— 同一形状本仓已经撞过四次，所以单独守一条。
     name: "README 里带冒号的标识符也要被核对到",

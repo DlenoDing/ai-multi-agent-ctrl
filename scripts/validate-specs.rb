@@ -1293,9 +1293,11 @@ ops_section = readme_source[/## 出事的时候它怎么说话.*?(?=\n## )/m]
 if ops_section.nil?
   errors << "README 少了「出事的时候它怎么说话」一节 —— 那几条运维行为没有任何地方成文"
 else
-  # 结尾的冒号要一起认（`git_command_failed:` 这种"码 + 细节"的前缀就是这么写的）：
-  # 只认光秃秃的标识符，会让带标点的写法【静默逃逸】—— 改坏它门也不红，等于这一条没在守。
-  ops_identifiers = ops_section.scan(/`([a-z_]{6,}):?`/).flatten.uniq
+  # 带标点的写法要一起认，否则它们【静默逃逸】—— 改坏也不红，等于这一条没在守。同形状撞过两次：
+  #   · 结尾冒号：`git_command_failed:` 这种"码 + 细节"的前缀；
+  #   · 文件名：`audit-log.jsonl` / `mcp-audit.jsonl` 带连字符和点，而运维一节正是靠它们指路。
+  ops_identifiers = (ops_section.scan(/`([a-z_]{6,}):?`/).flatten +
+    ops_section.scan(/`([a-z][a-z0-9_-]{4,}\.[a-z]{2,6})`/).flatten).uniq
   errors << "README 运维一节里没有点名任何标识符 —— 提取逻辑与文档脱节，本条在空转" if ops_identifiers.size < 2
   # core 也要查：运维语义（git 失败报文、技能源退役、问题模式压制）现在有一半落在那里。
   ops_sources = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/state-store.mjs",
