@@ -1882,7 +1882,16 @@ function renderSysAccounts() {
   ].join("");
 }
 
+// 一个项目都没有时，这两张表单的「项目」下拉是空的 —— 表单看着完整、点下去必然失败。
+// 实测全新组织的第一屏就是这样：加入令牌管理和项目成员授权都渲染成可提交的样子，0 个选项。
+// 与其让人填完再撞一个错误，不如当场说清第一步是什么。
+function noProjectYetNotice(what) {
+  return `<div class="notice">还没有任何项目，而${what}必须落在具体项目上。`
+    + "先创建一个项目：组织管理员在「项目管理」页，系统管理员在「账号与授权」页。</div>";
+}
+
 function renderProjectMemberForm() {
+  if (!(state.projects || []).length) return noProjectYetNotice("项目成员授权");
   return `
     <form class="form-grid" data-form="project-member">
       <div class="form-row"><label>项目</label>
@@ -1921,6 +1930,7 @@ function renderJoinTokenSection() {
     {v: fmtTime(token.expiresAt), c: "nowrap"},
     token.status === "issued" ? `<button class="danger-button" data-action="revoke-join-token" data-token-id="${esc(token.joinTokenId)}">撤销</button>` : "-"
   ])).join("");
+  if (!(state.projects || []).length) return noProjectYetNotice("智能体加入令牌");
   return `
     <div class="stack">
       <form class="form-grid" data-form="join-token">

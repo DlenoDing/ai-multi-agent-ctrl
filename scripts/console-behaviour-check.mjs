@@ -784,6 +784,42 @@ function runPendingTruncationCase() {
       "界面在没拿到 auditLogCap 的情况下报出了 80 —— 那个数是写死的");
   }
 
+  // 全新组织的第一屏：一个项目都没有，而「智能体加入令牌」和「项目成员授权」两张表单
+  // 照样完整渲染，「项目」下拉 0 个选项 —— 人填完点下去必然失败。实测真实开通流程就是这样。
+  // 两支都要验：没项目时不许摆出这两张表单，有项目时它们必须还在（否则是把杠杆藏了）。
+  {
+    const orgAdmin = {accountId: "oa1", email: "oa@b.c", accountType: "org_admin",
+      displayName: "组织管理员甲", organizationId: "org_probe"};
+    const orgState = (projects) => ({schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      organizations: [{orgId: "org_probe", name: "探针组织", status: "active",
+        quotas: {maxMembers: 50, maxProjects: 20, maxTaskGroups: 200, maxAgents: 100},
+        usage: {members: 1, projects: projects.length, taskGroups: 0, agents: 0}}],
+      projects, taskGroups: [], accounts: [], agentRuntimeNodes: [], agentJoinTokens: [],
+      accessGrants: [], auditLog: [], truncatedCollections: []});
+    const renderOrg = (projects, pageId) => {
+      const root = el("div");
+      loadConsole(root, {realI18n: true}).renderFullPageWith(orgState(projects), orgAdmin, "", pageId);
+      return String(root.innerHTML || "");
+    };
+    const emptyAgents = renderOrg([], "org-agents");
+    check("全新组织没有项目时，不摆出一张点了必然失败的加入令牌表单",
+      !/data-form="join-token"/u.test(emptyAgents) && /还没有任何项目/u.test(emptyAgents),
+      `实得：${(emptyAgents.replace(/<[^>]+>/gu, " ").match(/还没有任何项目[^<]{0,40}/u) || ["（照旧摆出了表单）"])[0]}`);
+    const emptyGrant = renderOrg([], "org-projects");
+    check("全新组织没有项目时，不摆出一张点了必然失败的成员授权表单",
+      !/data-form="project-member"/u.test(emptyGrant) && /还没有任何项目/u.test(emptyGrant),
+      `实得：${(emptyGrant.replace(/<[^>]+>/gu, " ").match(/还没有任何项目[^<]{0,40}/u) || ["（照旧摆出了表单）"])[0]}`);
+    // 提示必须说清第一步在哪一页，否则人还是不知道往哪走。
+    check("这条提示要指出该去哪一页创建项目",
+      /项目管理/u.test(emptyGrant) && /账号与授权/u.test(emptyGrant),
+      "提示没有点名创建项目的入口页");
+    const withProjects = [{id: "p1", name: "探针项目", organizationId: "org_probe", status: "active"}];
+    check("有项目时这两张表单必须还在（守卫不能把杠杆藏掉）",
+      /data-form="join-token"/u.test(renderOrg(withProjects, "org-agents"))
+        && /data-form="project-member"/u.test(renderOrg(withProjects, "org-projects")),
+      "有项目了却还在显示空态提示 —— 这两个入口被守卫吃掉了");
+  }
+
   // 红点只能统计"这个人有权处置"的项。把别人负责的也算进来，那个数字就永远清不掉 ——
   // 人每次打开都看到"还有 N 项等你处理"，点进去无事可做，最后学会无视它。
   // 决定"哪些项算数"的 taskGroups 自己也会被截断：超出上限的任务组下的待办连桶都进不去。

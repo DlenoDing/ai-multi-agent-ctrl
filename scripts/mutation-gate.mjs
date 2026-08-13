@@ -1049,6 +1049,33 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 空下拉的表单点了必然失败；这是全新组织的第一屏。
+    name: "没有项目时不摆出必然失败的表单",
+    file: APP,
+    gate: "console",
+    from: '  if (!(state.projects || []).length) return noProjectYetNotice("智能体加入令牌");',
+    to: "",
+    expect: "点了必然失败的加入令牌表单"
+  },
+  {
+    // 反向：守卫不能把有项目时的入口也吃掉。
+    name: "有项目时这两个入口必须还在",
+    file: APP,
+    gate: "console",
+    from: '  if (!(state.projects || []).length) return noProjectYetNotice("项目成员授权");',
+    to: "  if (true) return noProjectYetNotice(\"项目成员授权\");",
+    expect: "被守卫吃掉了"
+  },
+  {
+    // 初始组织管理员的邮箱是登录身份，不能替人编一个。
+    name: "建组织必须指定管理员邮箱",
+    file: "apps/control-plane-ui/server.mjs",
+    skip: "判别力由控制面 e2e 覆盖（真的用平铺字段建组织，要求 400 且点名 admin.email）",
+    from: "    if (!requestedAdminEmail || !requestedAdminEmail.includes(\"@\")) {",
+    to: "    if (false) {",
+    expect: "没给 admin.email 也把组织建出来了"
+  },
+  {
     // 没被挤掉却宣称"更早的在归档里" = 凭空造出一次截断，还把人支去看空归档。
     name: "台账脚注不得凭空宣称有记录被挤掉",
     file: APP,

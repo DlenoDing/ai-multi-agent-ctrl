@@ -844,6 +844,7 @@
     owner_account_not_found: "未找到负责人账号",
     account_not_found: "未找到账号",
     account_email_already_registered: "该邮箱已被注册",
+    organization_admin_email_required: "创建组织必须指定初始组织管理员的邮箱（它是这个人的登录身份）",
     agent_not_found: "未找到智能体档案",
     agent_node_not_found: "未找到智能体节点",
     agent_node_auth_required: "智能体节点需要认证",

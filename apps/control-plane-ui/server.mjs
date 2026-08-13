@@ -4563,6 +4563,18 @@ async function handleApi(req, res) {
       maxTaskGroups: boundedQuota(body.quotas?.maxTaskGroups, 200),
       maxAgents: boundedQuota(body.quotas?.maxAgents, 100)
     };
+    // 邮箱是这个组织管理员的【登录身份】，不能替人编一个。原先缺了就默认成
+    // `org-admin-<时间戳>@local` 并回 201 —— 我自己就踩过：字段发成平铺的 adminEmail
+    // （服务端认的是嵌套的 admin.email），于是指定的邮箱被静默丢掉、系统造了另一个身份，
+    // 而调用方拿到的是"创建成功"。控制台发的形状是对的，所以这个洞只在脚本/集成方那一侧显形。
+    const requestedAdminEmail = String(body.admin?.email || "").trim();
+    if (!requestedAdminEmail || !requestedAdminEmail.includes("@")) {
+      json(res, 400, {error: "organization_admin_email_required",
+        message: "创建组织必须指定初始组织管理员的邮箱：它是这个人的登录身份，系统不会替你编一个",
+        hint: '字段在 admin.email，形如 {"name":"…","admin":{"email":"a@b.c","displayName":"…"}}',
+        received: body.admin === undefined ? "请求体里没有 admin 这一层" : `admin.email = ${JSON.stringify(body.admin?.email)}`});
+      return;
+    }
     if (body.admin?.email && (state.accounts || []).some((item) => item.email === String(body.admin.email))) {
       json(res, 409, {error: "account_email_already_registered"});
       return;
@@ -4575,7 +4587,7 @@ async function handleApi(req, res) {
       accountType: "org_admin",
       organizationId: orgId,
       displayName: String(body.admin?.displayName || "组织管理员"),
-      email: String(body.admin?.email || `org-admin-${Date.now()}@local`),
+      email: requestedAdminEmail,
       status: "invited",
       roles: ["org_admin"],
       permissions: ["org:*", "project:create", "project:*", "task_group:*", "member:invite", "agent:activate", "project:grant"],

@@ -931,6 +931,24 @@ try {
   }
 
   // Organization, quota, human-directive and human-confirmation HTTP lifecycle.
+  // 邮箱是初始组织管理员的【登录身份】，不能替人编一个。原先缺了就默认成
+  // org-admin-<时间戳>@local 并回 201 —— 字段发成平铺的 adminEmail（服务端认的是嵌套
+  // 的 admin.email）就会静默走到这条路上，调用方拿到"创建成功"，而那个人的身份是系统编的。
+  {
+    const invented = await jsonFetch(port, "/api/orgs", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-org-no-admin-email", authorization: systemAuth},
+      body: JSON.stringify({name: "缺邮箱的组织", adminEmail: "flat@local", adminName: "平铺字段"})
+    });
+    if (invented.response.status !== 400 || invented.payload.error !== "organization_admin_email_required") {
+      throw new Error(`没给 admin.email 也把组织建出来了（HTTP ${invented.response.status}）：`
+        + `${JSON.stringify(invented.payload).slice(0, 200)}`);
+    }
+    if (!String(invented.payload.hint || "").includes("admin.email")) {
+      throw new Error("拒绝时没有指出字段在 admin.email —— 发成平铺字段的人只能靠猜");
+    }
+  }
+
   const orgCreate = await jsonFetch(port, "/api/orgs", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-org-create", authorization: systemAuth},
