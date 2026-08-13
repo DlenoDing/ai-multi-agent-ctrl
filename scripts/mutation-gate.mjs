@@ -832,6 +832,14 @@ const MUTATIONS = [
     expect: "永远在等一个不存在的基底"
   },
   {
+    name: "MCP 铸造授权要挡住查无此人的主体",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyCrossOrgGrantIsRefusedOnBothDoors",
+    from: '    return {grant: null, declinedReason: "grant_subject_account_not_found"};',
+    to: "    void subjectRef;",
+    expect: "主体查无此人，MCP 仍然铸出了授权"
+  },
+  {
     // 「不许跨组织授权」原先只有 REST 那扇门守着。去掉 MCP 铸造点这道，必须当场报红。
     name: "MCP 铸造授权也要挡住跨组织",
     file: "apps/mcp-server/server.mjs",

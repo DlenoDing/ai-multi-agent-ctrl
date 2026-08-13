@@ -4903,6 +4903,19 @@ function verifyCrossOrgGrantIsRefusedOnBothDoors(output) {
     justification: "跨组织探针"});
   const requestId = submitted?.permissionRequest?.requestId || submitted?.requestId || "prq_xorg";
   const resolved = permissionResolve(state, {requestId, status: "approved", resolvedBy: "acct_system_owner"});
+  // 主体查无此人时也要拒（REST 侧的 grant_subject_account_not_found）：不然会铸出一条指向
+  // 不存在账号的授权，而跨组织那道判据本身也会因为查不到账号而整条失效。
+  const ghost = permissionRequestSubmit(state, {requestId: "prq_ghost", subjectId: "acct_ghost",
+    subjectRef: {subjectType: "account", subjectId: "acct_ghost"},
+    resource: {resourceType: "project", resourceId: project.id}, permission: "project:view",
+    justification: "查无此人探针"});
+  const ghostResolved = permissionResolve(state, {requestId: ghost?.permissionRequest?.requestId || "prq_ghost",
+    status: "approved", resolvedBy: "acct_system_owner"});
+  if (ghostResolved?.accessGrant) {
+    output.push("主体查无此人，MCP 仍然铸出了授权 —— REST 那扇门会拒绝，而且跨组织那道判据会因此整条失效");
+  } else if (ghostResolved?.accessGrantDeclinedReason !== "grant_subject_account_not_found") {
+    output.push(`主体查无此人时的拒绝理由不对（${JSON.stringify(ghostResolved?.accessGrantDeclinedReason)}）`);
+  }
   if (resolved?.accessGrant) {
     output.push("跨组织的授权请求被批准后仍然铸出了 grant —— REST 那扇门会拒绝同一件事");
   } else if (resolved?.accessGrantDeclinedReason !== "cross_org_grant_not_allowed") {

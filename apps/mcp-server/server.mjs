@@ -2404,6 +2404,12 @@ function ensurePermissionAccessGrant(state, request, args, decision, at) {
   // 同一件事两扇门、只有一扇挡住，等于没挡住：经 MCP 批准一条主体在甲组织、资源在乙组织的请求，
   // 就能铸出一条 REST 侧会拒绝的跨租户授权。铸造点自己校验 —— 这也正是本函数注释立的规矩。
   const subjectAccount = (state.accounts || []).find((item) => item.accountId === subjectRef.subjectId);
+  // 主体是账号却查无此人时也要拒（REST 侧的 grant_subject_account_not_found）：
+  // 否则会铸出一条指向不存在账号的授权，而跨组织那道判据也会因为查不到账号而整条失效。
+  // 主体不是账号的（节点等）不适用这一条。
+  if (subjectRef.subjectType === "account" && !subjectAccount) {
+    return {grant: null, declinedReason: "grant_subject_account_not_found"};
+  }
   const resourceOrgId = organizationIdForGrantResource(state, request.resource);
   if (subjectAccount && resourceOrgId
     && (subjectAccount.organizationId || DEFAULT_ORGANIZATION_ID) !== resourceOrgId) {
