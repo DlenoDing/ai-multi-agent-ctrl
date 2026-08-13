@@ -986,6 +986,32 @@ const MUTATIONS = [
     expect: "这个目标可以改仓库里的任何东西"
   },
   {
+    // 谎报范围：指向的清单在仓库里找得到，只是不属于这次提交 —— 一份旧清单给这一轮背书。
+    name: "旧清单不得给这一轮背书",
+    file: CORE,
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: "if (!changedPaths.includes(manifestPath)) {\n      return {valid: false, status: 409, error: \"artifact_manifest_not_changed_in_commit\"};\n    }",
+    to: 'if (false) { throw new Error("unreachable"); }',
+    expect: "一份旧清单就能给这一轮背书"
+  },
+  {
+    // 这一条被改坏时直接"已受理"：交付清单可以虚报，而人正是照着它验收。
+    name: "上一轮的产出不得算进本轮清单",
+    file: CORE,
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: "if (!changedPaths.includes(outputRef)) {\n        return {valid: false, status: 409, error: \"artifact_output_ref_not_changed_in_commit\"};\n      }",
+    to: 'if (false) { throw new Error("unreachable"); }',
+    expect: "交付清单可以虚报"
+  },
+  {
+    name: "清单不是 JSON 时不得继续",
+    file: CORE,
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: '      return {valid: false, status: 409, error: "artifact_manifest_not_json"};',
+    to: "      manifest = {};",
+    expect: "后面所有按字段比对的绑定校验都会被跳过"
+  },
+  {
     // 后台刷新失败被吞 = 屏幕停在旧数据上却看起来还活着，人照着一屏冻住的数据做决定。
     name: "控制台后台刷新失败不得静默",
     file: APP,

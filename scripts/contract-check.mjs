@@ -6888,7 +6888,8 @@ function verifyApprovedAcceptanceChecksHaveEvidence(output) {
 function verifyHumanApprovedPathsBindTheCommit(output) {
   const runCase = ({stray, finalized, trespass, writeForbidden, forgeCommit, forgePush, forgeTree,
     forgeContractDigest, forgeManifestBinding, forgeManifestDigest, forgeLeaseHolder,
-    forgeCommitBranch, omitCommitEvidence, pushBehind, narrowAllowlist}) => {
+    forgeCommitBranch, omitCommitEvidence, pushBehind, narrowAllowlist,
+    manifestFromLastRound, outputFromLastRound, manifestNotJson}) => {
     const repo = mkdtempSync(join(tmpdir(), "cc-owned-"));
     const remote = mkdtempSync(join(tmpdir(), "cc-owned-remote-"));
     const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
@@ -6898,6 +6899,10 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     git("config", "user.name", "contract");
     mkdirSync(join(repo, "docs"), {recursive: true});
     writeFileSync(join(repo, "docs/readme.md"), "base\n");
+    // 上一轮就已经在仓库里、这一轮【没有再动过】的两份文件。谎报"范围"这一族全靠它们：
+    // 指向它们的清单/产出在树里都找得到，只是不属于这次提交 —— 光看"文件存不存在"分辨不出来。
+    writeFileSync(join(repo, "docs/carryover.md"), "上一轮的产出\n");
+    writeFileSync(join(repo, "docs/carryover.json"), JSON.stringify({schemaVersion: "artifact-manifest/v1"}));
     git("add", "-A");
     git("commit", "-q", "-m", "base");
     const baseRef = git("rev-parse", "HEAD");
@@ -6977,10 +6982,13 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       // 绑定还包含"这份清单指向哪个仓库产出目标" —— 漏了它同样报 binding_mismatch
       // （第一版就漏了，报文一模一样，只能靠读那行完整条件才看出来是哪个字段）。
       repositoryOutputTargetRefs: [target.targetId],
-      outputRefs: ["docs/readme.md"],
+      // outputFromLastRound：把上一轮就有、这次没动过的文件也算进本轮产出。
+      outputRefs: outputFromLastRound ? ["docs/readme.md", "docs/carryover.md"] : ["docs/readme.md"],
       outputPolicy: "project_git_repository_only",
       createdAt: new Date().toISOString()
     }));
+    // manifestNotJson：清单确实在这次提交里、也在白名单内，但它根本不是一份 JSON。
+    if (manifestNotJson) writeFileSync(join(repo, "docs/manifest.json"), "这不是 JSON\n");
     git("add", "-A");
     git("commit", "-q", "-m", "改动");
     git("push", "-q", "origin", "HEAD:refs/heads/main");
@@ -7021,7 +7029,8 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
         providerOperationId: `git-push:cc:${remoteSha}`, verifiedAt: new Date().toISOString(),
         rewriteRelation: "same_commit"}],
       repositoryOutputTargetRefs: [target.targetId],
-      artifactManifestRefs: ["docs/manifest.json"],
+      // manifestFromLastRound：指向一份上一轮就在仓库里、这次没再动过的清单。
+      artifactManifestRefs: [manifestFromLastRound ? "docs/carryover.json" : "docs/manifest.json"],
       changedPathEvidenceRefs: [`git-diff:${baseRef}:${commit}`, "git-path:docs/manifest.json"]
     }, {root: repo, actor: "agent-runtime"});
     rmSync(repo, {recursive: true, force: true});
@@ -7064,6 +7073,35 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     || outsideTarget.result.error !== "changed_paths_outside_repository_target_allowlist") {
     output.push(`改动越出了产出目标的路径白名单，检查点却没被拦下（实际：${outsideTarget.result.error || "已受理"}）`
       + " —— 这个目标可以改仓库里的任何东西");
+  }
+
+  // ④⑤ 谎报【范围】：指向的清单、声称的产出都在仓库里找得到，只是不属于这次提交 ——
+  // 上一轮的成果被算成这一轮的。这一族光看"文件存不存在"分辨不出来，必须比对本次改动路径。
+  // 判读提示：④⑥ 的守卫被改坏时，本夹具会落到下游的 binding_mismatch 上（carryover.json 里
+  // 没有绑定字段）。那是【这个夹具的巧合，不是冗余】—— 换成同一会话上一轮那份绑定齐全的旧清单，
+  // 下游那道门就不会响。⑤ 被改坏时直接"已受理"，没有任何第二道门。
+  const staleManifest = runCase({manifestFromLastRound: true});
+  if (staleManifest.skipped) { output.push(`旧清单断言无从验证：${staleManifest.skipped}`); }
+  else if (staleManifest.result.accepted !== false
+    || staleManifest.result.error !== "artifact_manifest_not_changed_in_commit") {
+    output.push(`清单指向的是上一轮就有、这次没动过的文件，检查点却没被拦下（实际：${staleManifest.result.error || "已受理"}）`
+      + " —— 一份旧清单就能给这一轮背书");
+  }
+  const staleOutput = runCase({outputFromLastRound: true});
+  if (staleOutput.skipped) { output.push(`旧产出断言无从验证：${staleOutput.skipped}`); }
+  else if (staleOutput.result.accepted !== false
+    || staleOutput.result.error !== "artifact_output_ref_not_changed_in_commit") {
+    output.push(`清单把上一轮的产出算进本轮，检查点却没被拦下（实际：${staleOutput.result.error || "已受理"}）`
+      + " —— 交付清单可以虚报，人照着它验收");
+  }
+
+  // ⑥ 清单在提交里、也在白名单内，但根本不是 JSON。
+  const brokenManifest = runCase({manifestNotJson: true});
+  if (brokenManifest.skipped) { output.push(`清单非 JSON 断言无从验证：${brokenManifest.skipped}`); }
+  else if (brokenManifest.result.accepted !== false
+    || brokenManifest.result.error !== "artifact_manifest_not_json") {
+    output.push(`清单不是一份 JSON，检查点却没被拦下（实际：${brokenManifest.result.error || "已受理"}）`
+      + " —— 后面所有按字段比对的绑定校验都会被跳过");
   }
 
   // 契约摘要谎报必须被拒。这条守卫此前【一条判据都没有】：它失效时正常提交照旧成功，
