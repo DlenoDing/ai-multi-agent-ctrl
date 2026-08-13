@@ -1200,14 +1200,15 @@ const MUTATIONS = [
   },
   {
     // 运行时配置原先是直接 writeFileSync：另一个进程会读到只写了一半的 JSON，随机 500。
-    // 同一处变异也会被 verifySharedJsonWritesAreAtomic 静态判据抓住（那条更快、更早）；
-    // 这里跑并发门是因为它验的是【真实后果】—— 两个进程互读时确实会出第三种结局。
+    // 这条曾登记为跑并发门（"它验的是真实后果"）。完整变异门跑下来它没红 ——
+    // 那个后果是【概率性】的：两个进程要恰好在写到一半时互读。单跑碰巧红过一次，不等于有判别力。
+    // 判别力证明必须是确定性的，所以改指静态判据；真实后果那一面由并发门日常跑着，不靠它证明。
     name: "运行时配置必须原子写",
     file: SERVER,
-    gate: "writer",
+    check: "verifySharedJsonWritesAreAtomic",
     from: "    const temporary = `${configPath}.${process.pid}.tmp`;\n    writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\\n`);\n    renameSync(temporary, configPath);",
     to: "    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\\n`);",
-    expect: "没有第三种结局"
+    expect: "直接写了一份跨进程共享的 JSON"
   },
   {
     // 归档路由要求先把所有任务组关掉（不级联，让人自己收尾）；归档后还能建新组，那次收尾就白做了。
@@ -2821,7 +2822,7 @@ async function judgeMutation(mutation, workdir) {
       + "这不是'守卫通过'，而是没人检查过";
   }
   if (!result.failed) {
-    return `${mutation.name}: 守卫被改坏后 contract-check 仍然通过 —— 该守卫的测试是假绿，没有判别力`
+    return `${mutation.name}: 守卫被改坏后 ${mutation.gate || "contract"} 门仍然通过 —— 该守卫的测试是假绿，没有判别力`
       + (mutation.check ? `（本条只跑了 ${mutation.check}；若这条守卫其实由别的检查覆盖，改正 check 字段而不是删掉它）` : "");
   }
   if (!result.output.includes(mutation.expect)) {
@@ -3055,7 +3056,7 @@ function runSerial(mutations = MUTATIONS, options = {}) {
     recordDiscovery(mutation, output);
     process.stdout.write(`  · ${mutation.name} …\n`);
     if (passed) {
-      failures.push(`${mutation.name}: 守卫被改坏后 contract-check 仍然通过 —— 该守卫的测试是假绿，没有判别力`);
+      failures.push(`${mutation.name}: 守卫被改坏后 ${mutation.gate || "contract"} 门仍然通过 —— 该守卫的测试是假绿，没有判别力`);
     } else if (!output.includes(mutation.expect)) {
       failures.push(`${mutation.name}: 失败了但不是因为预期断言（期望出现「${mutation.expect}」）—— 测试可能在别处偶然失败，并未真正覆盖这条守卫`);
     } else {
