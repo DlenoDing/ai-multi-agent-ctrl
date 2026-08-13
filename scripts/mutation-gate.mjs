@@ -986,6 +986,43 @@ const MUTATIONS = [
     expect: "这个目标可以改仓库里的任何东西"
   },
   {
+    // "不修就放行"这两类处置由 AI 自己下，等于它能把自己造出来的问题一笔勾销、关闭门随之通过。
+    name: "不修就放行的处置只能由真人下",
+    file: CORE,
+    check: "verifyHumanAndOrganizationContracts",
+    from: "if (NON_REMEDIATION_DISPOSITIONS.includes(disposition) && !humanActor) {",
+    to: "if (false) {",
+    expect: "一笔勾销"
+  },
+  {
+    // 闸门必须有出口：写成"一律拒绝"时，真人也过不去 —— 那是把这条路彻底堵死。
+    name: "真人处置的出口不得被堵死",
+    file: CORE,
+    check: "verifyHumanAndOrganizationContracts",
+    from: "if (NON_REMEDIATION_DISPOSITIONS.includes(disposition) && !humanActor) {\n    return {ok: false, error: \"finding_disposition_requires_human\", dispositionClass: disposition};",
+    to: "if (NON_REMEDIATION_DISPOSITIONS.includes(disposition)) {\n    return {ok: false, error: \"finding_disposition_requires_human\", dispositionClass: disposition};",
+    expect: "把出口一起堵死了"
+  },
+  {
+    // 把一份来源标成 active＝宣布"本项目认它"，AI 自行采纳等于自己给自己定规范。
+    name: "规则来源采纳只能由真人定",
+    file: CORE,
+    check: "verifyHumanAndOrganizationContracts",
+    from: 'if (wantsAdoption && !humanActor) return {ok: false, error: "rule_source_adoption_requires_human"};',
+    to: "/* 守卫失效 */",
+    expect: "自行宣布"
+  },
+  {
+    // 同一处守卫的另一种改坏法：连真人也拒。用 `wantsAdoption = true` 会先在别处报红
+    // （AI 本可做的了结也被拒），变异门当场判它"红得不是地方"——那正是它该做的事。
+    name: "真人采纳的出口不得被堵死",
+    file: CORE,
+    check: "verifyHumanAndOrganizationContracts",
+    from: 'if (wantsAdoption && !humanActor) return {ok: false, error: "rule_source_adoption_requires_human"};',
+    to: 'if (wantsAdoption) return {ok: false, error: "rule_source_adoption_requires_human"};',
+    expect: "闸门没有出口"
+  },
+  {
     // 一次真实的间歇红只留下 `TypeError: fetch failed` + 一个端口号，看不出出自哪道门。
     name: "门里 fetch 失败要说清哪道门、哪个地址、以及这一轮还算不算数",
     file: "scripts/lib/gate-fetch.mjs",

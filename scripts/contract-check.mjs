@@ -70,6 +70,10 @@ import {
   expireStaleLeases,
   refreshConfirmationsAfterHumanChange,
   HUMAN_ACTOR_KEY,
+  // 真人闸门的三份闭集：判据按闭集展开，新增一个取值时自动进入检验面，不必回来改断言。
+  NON_REMEDIATION_DISPOSITIONS,
+  RULE_SOURCE_HUMAN_ONLY_STATUSES,
+  RULE_SOURCE_AI_SETTLEABLE_STATUSES,
   reviewPlanCreate,
   reviewPlanRecordCoverage,
   REVIEW_PLAN_TERMINAL_STATUSES,
@@ -1321,6 +1325,64 @@ function verifyHumanAndOrganizationContracts(output) {
     const findRe = findingResolve(findIdem, {findingId: "find_settled", status: "dismissed", dispositionClass: "not_applicable"});
     if (findIdem.findings[0].status !== "resolved" || findIdem.findings[0].dispositionClass !== "fixed_unverified") output.push("findingResolve: a terminal fixed_unverified finding was re-disposed into an accepted class (barrier bypass)");
     if (!findRe.alreadyResolved) output.push("findingResolve: re-resolving a terminal finding did not report alreadyResolved");
+
+    // "不修就放行"这两类处置（not_applicable / scope_adjusted）由 AI 自己下，等于它能把自己造出来的
+    // 问题一笔勾销、关闭门随之通过。这道真人闸门此前【一条判据都没有】。四支都验：机器主体要被拒，
+    // 真人要放行（缺了正面对照的话，把守卫写成"一律拒绝"也照样绿），另两类可核验的处置 AI 仍可做。
+    const disposeCase = (dispositionClass, humanActor) => {
+      const st = structuredClone(seedState);
+      ensureRuntimeCollections(st, {root});
+      st.findings = [{findingId: "find_gate", status: "open", taskGroupId: "tg_runtime_management"}];
+      const args = {findingId: "find_gate", status: "dismissed", dispositionClass,
+        evidenceRefs: ["git-evidence:x"], rootCauseOwner: "team", resolutionRef: "pr-1"};
+      if (humanActor) args[HUMAN_ACTOR_KEY] = {accountId: "acct_workspace_owner", accountType: "system_admin"};
+      return findingResolve(st, args);
+    };
+    for (const dispositionClass of NON_REMEDIATION_DISPOSITIONS) {
+      const byMachine = disposeCase(dispositionClass, false);
+      if (byMachine.error !== "finding_disposition_requires_human") {
+        output.push(`findingResolve: 机器主体把发现处置成 ${dispositionClass}（不修就放行）没有被拦下`
+          + `（实际：${byMachine.error || "已受理"}）—— AI 可以把自己造出来的问题一笔勾销，关闭门随之通过`);
+      }
+      const byHuman = disposeCase(dispositionClass, true);
+      if (byHuman.error) {
+        output.push(`findingResolve: 真人处置 ${dispositionClass} 也被拒了（${byHuman.error}）—— 这道闸门把出口一起堵死了`);
+      }
+    }
+    const verifiedByMachine = disposeCase("fixed_verified", false);
+    if (verifiedByMachine.error) {
+      output.push(`findingResolve: "已修复且有证据"是可核验的事实判断，AI 本就可以做，却被拒了（${verifiedByMachine.error}）`);
+    }
+
+    // 规则来源采纳同理：把一份来源标成 active＝宣布"本项目认它"，只能由真人定。
+    const settleCase = (status, humanActor) => {
+      const st = structuredClone(seedState);
+      ensureRuntimeCollections(st, {root});
+      st.ruleSourceResolutions = [{resolutionId: "rsr_gate", taskGroupId: "tg_runtime_management", status: "discovered"}];
+      const args = {resolutionId: "rsr_gate", taskGroupId: "tg_runtime_management", status};
+      if (humanActor) args[HUMAN_ACTOR_KEY] = {accountId: "acct_workspace_owner", accountType: "system_admin"};
+      return {result: ruleSourceSettle(st, args), state: st};
+    };
+    for (const status of RULE_SOURCE_HUMAN_ONLY_STATUSES) {
+      const byMachine = settleCase(status, false);
+      if (byMachine.result.error !== "rule_source_adoption_requires_human") {
+        output.push(`ruleSourceSettle: 机器主体把规则来源采纳为 ${status} 没有被拦下`
+          + `（实际：${byMachine.result.error || "已受理"}）—— AI 自行宣布"本项目认哪份规范"`);
+      }
+      const byHuman = settleCase(status, true);
+      if (byHuman.result.error || byHuman.state.ruleSourceResolutions[0].status !== status) {
+        output.push(`ruleSourceSettle: 真人采纳为 ${status} 没有生效（${byHuman.result.error || byHuman.state.ruleSourceResolutions[0].status}）—— 闸门没有出口`);
+      }
+    }
+    const aiSettle = settleCase(RULE_SOURCE_AI_SETTLEABLE_STATUSES[0], false);
+    if (aiSettle.result.error) {
+      output.push(`ruleSourceSettle: AI 本就可以做的了结（${RULE_SOURCE_AI_SETTLEABLE_STATUSES[0]}）被拒了（${aiSettle.result.error}）`);
+    }
+    const bogusSettle = settleCase("not_a_real_status", false);
+    if (bogusSettle.result.error !== "rule_source_status_invalid") {
+      output.push(`ruleSourceSettle: 认不出的了结状态没有被拒（实际：${bogusSettle.result.error || "已受理"}）`
+        + " —— 状态名写错一个字母就等于绕过采纳闸门");
+    }
 
     // M3/M4 ReviewBundle: register must create a MODELED "submitted" state (was the unmodeled "registered"
     // that no path could clear -> permanent close-barrier wedge), and review_result_consume must
