@@ -734,6 +734,51 @@ function runReviewAxisCase() {
     "三项都写清楚的替代方案仍被加了缺失警告");
 }
 
+async function runSelfRowHasNoActionsCase() {
+// 真正挡住"把自己停用"的是【渲染那一层】：成员列表给自己那一行不发任何操作按钮，
+// 只挂一个「本人」徽标（manageable = accountType === "user_account" && !isSelf）。
+// 这一条钉的就是它 —— 下面那段钉的是"万一将来把这层拿掉，处理器要说对话"，两层都要有。
+{
+  const root = el("div");
+  const probeSelf = loadConsole(root, {realI18n: true});
+  const me = {accountId: "acct_me", accountType: "org_admin", displayName: "我自己",
+    email: "me@probe.local", organizationId: "org_default", status: "active", roles: ["org_admin"]};
+  const mate = {accountId: "acct_mate", accountType: "user_account", displayName: "同事",
+    email: "mate@probe.local", organizationId: "org_default", status: "active", roles: []};
+  const canned = {"/api/org/members": {members: [me, mate]}, "/api/org/agents": {agentRuntimeNodes: []}};
+  const stub = async (url) => {
+    const path = String(url).replace(/^https?:\/\/[^/]+/u, "").split("?")[0];
+    const payload = path === "/api/state"
+      ? {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {}, projects: [],
+         organizations: [], accounts: [], taskGroups: [], truncatedCollections: []}
+      : (canned[path] ?? {});
+    return {ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+      json: async () => payload, text: async () => JSON.stringify(payload)};
+  };
+  const html = await probeSelf.loadPageWith(null, me, "", "org-members", stub);
+  // 定位锚点踩过两次坑，都记在这里：
+  // ① 不能按 accountId —— 自己那一行正因为没有任何按钮，accountId 压根不出现在 HTML 里；
+  // ② 不能按显示名 —— 它先出现在【顶栏的账号标签】里，窗口会落在页头上而不是表格行。
+  // 用邮箱：它只在成员表那一行里出现。
+  const rowFor = (email) => {
+    const at = html.indexOf(email);
+    return at < 0 ? "" : html.slice(Math.max(0, at - 400), at + 900);
+  };
+  if (!rowFor("mate@probe.local").includes("data-account=\"acct_mate\"")) {
+    failures.push("自己那一行: 成员表没渲染出同事那一行 —— 夹具没触达被测代码，本条在空转");
+  } else {
+    check("成员列表不给自己那一行发操作按钮（同事那一行有，才证明不是整表都没按钮）",
+      !/data-action="member-status" data-account="acct_me"/u.test(html)
+        && !/data-action="member-perms" data-account="acct_me"/u.test(html)
+        && /data-action="member-status" data-account="acct_mate"/u.test(html),
+      "自己那一行也给了停用/权限按钮 —— 点下去就是把自己登出");
+    check("自己那一行要标出「本人」，否则人分不清哪一行是自己",
+      rowFor("me@probe.local").includes("本人"),
+      "成员表里认不出哪一行是自己");
+  }
+}
+}
+
 function runPendingTruncationCase() {
   const probe = loadConsole(el("div"));
   const admin = {accountId: "acct_a", accountType: "org_admin"};
@@ -1681,6 +1726,7 @@ runPlanFinalizationNoticeCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();
+await runSelfRowHasNoActionsCase();
 await runAuditChainBreakNoticeCase();
 await runFailingRequestIsNamedCase();
 await runCodedApiErrorCase();

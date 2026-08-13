@@ -1049,6 +1049,17 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 真正挡住"把自己停用"的是渲染这一层：自己那一行不发任何操作按钮。
+    // 注意条件有两个（不是 user_account、不是自己），对组织管理员而言先命中的是前者 ——
+    // 所以变异要把整个守卫放开，只删 !isSelf 的话组织管理员那一行照样没按钮，判据看不出差别。
+    name: "成员表不给自己那一行发操作按钮",
+    file: APP,
+    gate: "console",
+    from: '    const manageable = account.accountType === "user_account" && !isSelf;',
+    to: "    const manageable = true;",
+    expect: "点下去就是把自己登出"
+  },
+  {
     // 自己那一行和别人那一行走同一段话 —— 人不知道自己正在把自己登出。
     name: "停用成员要认出这一行是你自己",
     file: APP,
