@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 惰性字段被人接上却没改登记 = 读代码的人继续以为它不生效（反过来也一样害人）。
+    name: "信任分被人碰过时登记要过期",
+    check: "verifyInertMechanismsStayRegistered",
+    file: CORE,
+    from: 'status: "active", trustScore: 0.9,',
+    to: 'status: "active", trustScore: 0.9, trustScoreEcho: 0.9 + (0 * 1), /* trustScore */',
+    expect: "有人动过它"
+  },
+  {
     // 节点名会被嵌进给人复制的安装命令里，而且常驻状态 —— 人写的字段超长要拒。
     name: "节点名超长要拒而不是收下",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",

@@ -5084,6 +5084,19 @@ function verifyInertMechanismsStayRegistered(output) {
   const product = `${core}\n${server}\n${mcp}`;
   const INERT_MECHANISMS = [
     {
+      name: "智能体信任分（trustScore）",
+      why: "写三处、读零处：两处从入参落库、一处创建时写死 0.9，"
+        + "而全仓没有任何地方读它，界面不显示，spec/docs 里也没有它。"
+        + "名字看起来像一个治理信号（按信任分排序/挑选），实际不影响任何决定 —— "
+        + "读代码或读状态的人会以为智能体是按它挑的。",
+      // 判"有没有人读"要区分读与写，而写入侧的默认值（input.trustScore || 0.85）长得就像一次读 ——
+      // 第一版正则正是这么误报的。改用零误报的做法：锁定它在产品代码里的【出现次数】，
+      // 多一处就说明有人碰了它，登记当场过期。
+      // 数的是【出现次数】不是行数：`trustScore: Number(args.trustScore || 0.9)` 一行算两次。
+      // 当前 4 行 6 次：入参词表 1、MCP 写 2、REST 写 2、core 创建时写死 1。
+      expectedOccurrences: 6
+    },
+    {
       name: "条件窗口门控（conditionWindowGate）",
       why: "两个来源都没有生产者：request.conditionSource 没人传、state.conditionSource 没有赋值点，"
         + "工作项那半的 conditionDependency 也只存在于 core 一个文件里。"
@@ -5097,6 +5110,16 @@ function verifyInertMechanismsStayRegistered(output) {
   ];
   for (const mechanism of INERT_MECHANISMS) {
     const callers = `${server}\n${mcp}`;
+    if (mechanism.expectedOccurrences !== undefined) {
+      const name = mechanism.name.match(/（([a-zA-Z][a-zA-Z0-9]*)）/u)?.[1];
+      const actual = name ? (product.match(new RegExp(`\\b${name}\\b`, "gu")) || []).length : -1;
+      if (actual !== mechanism.expectedOccurrences) {
+        output.push(`「${mechanism.name}」在产品代码里出现了 ${actual} 次，登记时是 `
+          + `${mechanism.expectedOccurrences} 次 —— 有人动过它：要么它被接上了（那就从 INERT_MECHANISMS `
+          + "里去掉并配上真正的行为断言），要么被删了（那就撤掉这条登记）");
+      }
+      continue;
+    }
     const wired = mechanism.wiredWhen
       .filter((probe) => probe.pattern.test(probe.where === "callers" ? callers : product));
     if (wired.length) {
