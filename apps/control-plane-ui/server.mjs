@@ -1167,6 +1167,26 @@ function accountFromRequest(req, state) {
 // 存在性探针：拿一个 id 试一下就知道这套部署里别处有没有它（本文件 resolveOrgMemberTarget
 // 上方那段注释早把这条写成了口径，这里是同一条不变式在项目级路由上的缺口）。
 // 系统账号不受影响：它本就有权知道什么存在，给它准确的 404，否则运维分不清是打错了 id 还是权限不对。
+// 写路径同理：`beginGuardedWrite` 过了之后再查存在，就把"这个项目不存在"和"存在但你动不了"
+// 分成了两种答案（404 vs 403/400）。对非系统账号统一成"看不见"那一种。
+// 入口处的可见性判据：非系统账号对一个【看不见的】项目 id，无论它存不存在，都必须拿到同一个答案。
+// 只在存在检查那一处统一还不够 —— 路由各自的判权点在后面，foreign 与 missing 会落到不同的码上
+// （实测：POST config 落 policy_denied、POST members 落到更靠后的 account_not_found）。
+// 返回布尔而不是一个 {status,payload}：鉴权布局门要求前置校验的响应是【字面量 4xx + 固定错误串】，
+// 它没法判断一个变量 payload 里装的是不是状态内容 —— 那条判据是对的，这里照它的形状写。
+// 未认证不在这里处理：交给后面的守卫回 401，否则会把 401 说成 403。
+function projectHiddenFromActor(req, state, projectId) {
+  const authenticated = accountFromRequest(req, state);
+  if (!authenticated || isSystemAccount(authenticated.account)) return false;
+  const project = state.projects.find((item) => item.id === projectId);
+  return !(project && canReadResource(state, authenticated.account, projectScope(projectId)));
+}
+
+function missingProjectDenial(actorAccount) {
+  if (isSystemAccount(actorAccount)) return {status: 404, payload: {error: "project_not_found"}};
+  return {status: 403, payload: {error: "permission_denied"}};
+}
+
 function readableProjectOr403(req, state, projectId) {
   const reader = requireRead(req, state, projectScope(projectId));
   if (reader.status) return {denial: {status: reader.status, payload: reader.payload}};
@@ -3504,6 +3524,7 @@ async function handleApi(req, res) {
 
   const memberMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/members$/);
   if (req.method === "POST" && memberMatch) {
+    if (projectHiddenFromActor(req, state, memberMatch[1])) return json(res, 403, {error: "permission_denied"});
     const authenticated = accountFromRequest(req, state);
     if (!authenticated) {
       json(res, 401, {error: "auth_required"});
@@ -3515,7 +3536,8 @@ async function handleApi(req, res) {
     }
     const project = state.projects.find((item) => item.id === memberMatch[1]);
     if (!project) {
-      json(res, 404, {error: "project_not_found"});
+      const denial = missingProjectDenial(authenticated.account);
+      json(res, denial.status, denial.payload);
       return;
     }
     const accountId = body.accountId;
@@ -5227,12 +5249,16 @@ async function handleApi(req, res) {
     return;
   }
   if (req.method === "POST" && projectConfigMatch) {
+    if (projectHiddenFromActor(req, state, projectConfigMatch[1])) return json(res, 403, {error: "permission_denied"});
     const ruleErr = ruleFragmentsRejection(body.systemRules) || ruleFragmentsRejection(body.businessRules);
     if (ruleErr) return json(res, 422, {error: ruleErr, limits: {rules: 200, title: 256, content: 8192}});
     const guard = beginGuardedWrite(req, state, "project_config_update", `Project:${projectConfigMatch[1]}`, projectScope(projectConfigMatch[1]));
     if (guard.status) return json(res, guard.status, guard.payload);
     const project = state.projects.find((item) => item.id === projectConfigMatch[1]);
-    if (!project) return json(res, 404, {error: "project_not_found"});
+    if (!project) {
+      const denial = missingProjectDenial(guard.actorAccount || accountFromRequest(req, state)?.account);
+      return json(res, denial.status, denial.payload);
+    }
     const projectPrecondition = configPreconditionFailure(body, project.config);
     if (projectPrecondition) return json(res, 409, projectPrecondition);
     project.config = {

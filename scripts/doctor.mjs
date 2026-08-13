@@ -1431,6 +1431,27 @@ try {
   if (orgControl.response.status !== 200) {
     throw new Error(`org_admin could not control its own org project's task group, got ${orgControl.response.status}`);
   }
+  // 写路径上的同一条不变式：非系统账号对一个【看不见的】项目 id，无论它存不存在，答案必须一样。
+  // 只在读路径上统一是不够的 —— 写路由各自的判权点在存在检查【之后】，两种情况会落到不同的码上
+  // （实测过：POST config 落 policy_denied、POST members 一路走到更靠后的 account_not_found）。
+  for (const [what, path, payload] of [
+    ["config", "config", {configVersion: 1, baselineData: []}],
+    ["members", "members", {email: "review@local", displayName: "R", roles: "viewer"}]
+  ]) {
+    const answers = [];
+    for (const id of ["prj_never_existed", "prj_control_plane"]) {
+      const probe = await jsonFetch(port, `/api/projects/${id}/${path}`, {method: "POST",
+        headers: {"Idempotency-Key": `existence-write-${what}-${id}`, authorization: orgAdminAuth},
+        body: JSON.stringify(payload)});
+      answers.push(`${probe.response.status}:${probe.payload?.error}`);
+    }
+    if (answers[0] !== answers[1]) {
+      throw new Error(`POST /api/projects/:id/${path}：受限账号写"不存在的 id"得到 ${answers[0]}、写"别的租户真有的 id"得到 ${answers[1]}`
+        + " —— 两者可分辨，写路由同样是一台跨租户存在性探针");
+    }
+  }
+  console.log("REST 写路径跨租户存在性 ok: 项目配置与成员两条写路由，两种'看不见'给同一个答案");
+
   // 跨租户存在性探针（REST 侧）：受限账号问一个项目 id，"查无此物"与"别处真有"必须给同一个答案。
   // 两者可分辨的话，拿一批 id 试一遍就知道这套部署里别的租户有没有它们。
   for (const route of ["config", "progress"]) {

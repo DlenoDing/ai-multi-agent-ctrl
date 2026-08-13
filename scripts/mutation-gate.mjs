@@ -1121,6 +1121,23 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // 写路由的判权点在存在检查之后，两种"看不见"会落到不同的码上 —— 入口处那道可见性判据不能少。
+    name: "项目配置写入不得泄露别处有没有这个项目",
+    file: SERVER,
+    skip: "判别力由控制面 e2e 覆盖（已用 mutate-probe 实证：去掉入口判据后落回 policy_denied，两者可分辨）",
+    from: '    if (projectHiddenFromActor(req, state, projectConfigMatch[1])) return json(res, 403, {error: "permission_denied"});',
+    to: "    void projectHiddenFromActor;",
+    expect: "写路由同样是一台跨租户存在性探针"
+  },
+  {
+    name: "成员写入不得泄露别处有没有这个项目",
+    file: SERVER,
+    skip: "判别力由控制面 e2e 覆盖（已用 mutate-probe 实证：去掉入口判据后一路走到 account_not_found）",
+    from: '    if (projectHiddenFromActor(req, state, memberMatch[1])) return json(res, 403, {error: "permission_denied"});',
+    to: "    void projectHiddenFromActor;",
+    expect: "写路由同样是一台跨租户存在性探针"
+  },
+  {
     // REST 侧同一条不变式：受限账号问一个项目 id，两种"找不到"必须给同一个答案。
     name: "受限账号不得分辨出别处有没有某个项目",
     file: SERVER,
