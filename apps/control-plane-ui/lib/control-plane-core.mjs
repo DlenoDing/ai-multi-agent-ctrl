@@ -2979,8 +2979,14 @@ function runExecutorBackedAgentWorker(state, request) {
 
 function validateCheckpointGitEvidence(state, request) {
   const {taskGroup, workItem, session, dispatch, target, checkpointInput, root} = request;
-  if (target.projectId !== taskGroup.projectId || target.taskGroupId !== taskGroup.id || target.workItemId !== workItem.id) {
-    return {valid: false, status: 409, error: "repository_output_target_scope_mismatch"};
+  // 一个错误码盖着好几个字段时，报文必须点名是哪一个对不上 —— 否则调用方（多半是 agent）
+  // 只能逐个试。我自己补夹具时为此绕了三轮，每轮拿到的报文一模一样。
+  const targetScopeMismatch = target.projectId !== taskGroup.projectId ? "projectId"
+    : target.taskGroupId !== taskGroup.id ? "taskGroupId"
+    : target.workItemId !== workItem.id ? "workItemId" : null;
+  if (targetScopeMismatch) {
+    return {valid: false, status: 409, error: "repository_output_target_scope_mismatch",
+      mismatchedField: targetScopeMismatch};
   }
   if (target.status === "pushed") return {valid: false, status: 409, error: "repository_output_target_already_pushed"};
   const lease = state.leases.find((item) => item.leaseId === target.leaseRef);
@@ -2989,8 +2995,11 @@ function validateCheckpointGitEvidence(state, request) {
   }
   const normalizedCommitRefs = [];
   for (const commitRef of checkpointInput.commitRefs || []) {
-    if (commitRef.repo !== target.repositoryId || commitRef.branch !== target.branch) {
-      return {valid: false, status: 409, error: "commit_ref_target_mismatch"};
+    const commitRefMismatch = commitRef.repo !== target.repositoryId ? "repo"
+      : commitRef.branch !== target.branch ? "branch" : null;
+    if (commitRefMismatch) {
+      return {valid: false, status: 409, error: "commit_ref_target_mismatch",
+        mismatchedField: commitRefMismatch};
     }
     const fullCommit = git(root, ["rev-parse", "--verify", `${commitRef.commit}^{commit}`], "");
     if (!fullCommit) return {valid: false, status: 409, error: "commit_ref_not_found"};
@@ -3096,8 +3105,15 @@ function validateCheckpointGitEvidence(state, request) {
     } catch {
       return {valid: false, status: 409, error: "artifact_manifest_not_json"};
     }
-    if (manifest.projectId !== taskGroup.projectId || manifest.taskGroupId !== taskGroup.id || manifest.workId !== workItem.id || manifest.sessionId !== session.sessionId || !manifest.repositoryOutputTargetRefs?.includes(target.targetId)) {
-      return {valid: false, status: 409, error: "artifact_manifest_binding_mismatch"};
+    const bindingMismatch = manifest.projectId !== taskGroup.projectId ? "projectId"
+      : manifest.taskGroupId !== taskGroup.id ? "taskGroupId"
+      : manifest.workId !== workItem.id ? "workId"
+      : manifest.sessionId !== session.sessionId ? "sessionId"
+      : !manifest.repositoryOutputTargetRefs?.includes(target.targetId) ? "repositoryOutputTargetRefs"
+      : null;
+    if (bindingMismatch) {
+      return {valid: false, status: 409, error: "artifact_manifest_binding_mismatch",
+        mismatchedField: bindingMismatch};
     }
     if (manifest.taskContractDigest !== dispatch.taskContractDigest) {
       return {valid: false, status: 409, error: "artifact_manifest_contract_digest_mismatch"};

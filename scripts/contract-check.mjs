@@ -7080,6 +7080,12 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
   if (!forgedBinding.skipped && forgedBinding.result.error !== "artifact_manifest_binding_mismatch") {
     output.push(`产出清单谎报它属于哪个项目，检查点却没被拦下（实际：${forgedBinding.result.error || "已受理"}）`);
   }
+  // 一个错误码盖着五个字段，报文必须点名是哪一个 —— 否则调用方只能逐个试
+  // （补这套夹具时我为此绕了三轮，每轮报文一模一样）。
+  else if (!forgedBinding.skipped && forgedBinding.result.mismatchedField !== "projectId") {
+    output.push(`绑定不一致时没说清是哪个字段（实得 ${forgedBinding.result.mismatchedField || "没有这个字段"}）`
+      + " —— 一个错误码盖着五个字段，读它的多半是 agent，它只能逐个试");
+  }
   // 清单里的契约摘要谎报：与检查点自身那条同源，但这一份是【落在 git 里的证据文件】，
   // 人事后翻仓库看到的就是它 —— 两处都要钉住。
   const forgedManifestDigest = runCase({stray: false, finalized: true, forgeManifestDigest: true});

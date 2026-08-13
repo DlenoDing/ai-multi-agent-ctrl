@@ -1049,11 +1049,20 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 一个错误码盖着五个字段，不点名的话调用方只能逐个试。
+    name: "绑定不一致要点名是哪个字段",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    file: CORE,
+    from: '        mismatchedField: bindingMismatch};',
+    to: "      };",
+    expect: "没说清是哪个字段"
+  },
+  {
     // 产出清单谎报它属于哪个项目 = 把一份真实提交的证据挂到别的项目名下。
     name: "产出清单的绑定字段要核对",
     check: "verifyHumanApprovedPathsBindTheCommit",
     file: CORE,
-    from: '      return {valid: false, status: 409, error: "artifact_manifest_binding_mismatch"};',
+    from: '      return {valid: false, status: 409, error: "artifact_manifest_binding_mismatch",\n        mismatchedField: bindingMismatch};',
     to: "      void 0;",
     expect: "谎报它属于哪个项目"
   },
