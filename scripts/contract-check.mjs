@@ -298,6 +298,7 @@ run(verifyUnknownStateSchemaIsRefused);
 run(verifySuspendHaltsRunningWork);
 run(verifyCancelDirectiveStopsRunningWork);
 run(verifyPauseDirectiveIsReversible);
+run(verifyTableFootersAdmitTruncation);
 run(verifyEveryAssertionIsActuallyRegistered);
 run(verifyCrossOrgGrantIsRefusedOnBothDoors);
 run(verifyUnknownEnumValuesAreRefusedNotCoerced);
@@ -4888,6 +4889,36 @@ function extractMachineStates(yamlText, machine) {
 // 注：本注释刻意不写出注册调用的字面形状 —— 提取是全文扫的，写在注释里会被自己当成一次注册
 //（第一版就是这么触发了一条假红：注册清单里出现了一个并不存在的 verifyX）。
 // 门照常全绿，条数还多了一个"看着像"的检查。本门与控制台门各自按自己的登记形式自查。
+// 表脚那句"共 N 条"里的 N，来自【已经被视图截断过】的数组。moreText 的第三个参数正是用来
+// 在这种时候加个 "+"，但它靠每个调用点自己记得传 —— 与 capNotice 当初一模一样的形状
+// （那次是 23 张表里只有 5 张接了）。这里按调用点全量核对。
+function verifyTableFootersAdmitTruncation(output) {
+  const appSource = readFileSync(resolve(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const calls = [];
+  let index = 0;
+  while ((index = appSource.indexOf("moreText(", index)) !== -1) {
+    let depth = 0, end = index + 8;
+    for (; end < appSource.length; end += 1) {
+      if (appSource[end] === "(") depth += 1;
+      else if (appSource[end] === ")") { depth -= 1; if (!depth) break; }
+    }
+    calls.push(appSource.slice(index, end + 1));
+    index = end + 1;
+  }
+  const real = calls.filter((call) => call !== "moreText(total, shown, field)");
+  if (real.length < 10) {
+    output.push(`表脚截断核对：只提取到 ${real.length} 处 moreText 调用 —— 提取与代码脱节，本条在空转`);
+    return;
+  }
+  // 第三参可以是集合名（走 truncatedCollections）、true（调用点自己知道被截了）、
+  // 或一个布尔表达式（例如"到达服务端上限"）。缺了它，那句"共 N 条"就是在把截断后的数当总数。
+  const missing = real.filter((call) => call.split(",").length < 3);
+  if (missing.length) {
+    output.push(`这些表脚把截断后的条数当成了总数（moreText 少了第三个参数）：`
+      + `${missing.map((call) => call.replace(/\s+/gu, " ").slice(0, 70)).join("；")}`);
+  }
+}
+
 function verifyEveryAssertionIsActuallyRegistered(output) {
   const selfSource = readFileSync(resolve(root, "scripts/contract-check.mjs"), "utf8");
   const defined = [...new Set([...selfSource.matchAll(/^function (verify[A-Za-z0-9]+)\(/gmu)].map((match) => match[1]))];

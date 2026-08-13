@@ -967,6 +967,15 @@ const MUTATIONS = [
     expect: "只列了 3 处却不说这是前 3 处"
   },
   {
+    // 表脚少了第三个参数，"共 N 条"就成了把截断后的条数当总数报给人。
+    name: "表脚不得把截断后的条数当总数",
+    check: "verifyTableFootersAdmitTruncation",
+    file: APP,
+    from: "moreText: moreText((state.auditLog || []).length, 15, \"auditLog\")",
+    to: "moreText: moreText((state.auditLog || []).length, 15)",
+    expect: "当成了总数"
+  },
+  {
     // 整屏那条横幅要真的接在外壳上，且要逐个点名（只说"有名单被截断"，人不知道是哪一份）。
     name: "被截断的名单要逐个点名",
     file: APP,

@@ -1619,7 +1619,7 @@ function renderSysOverview() {
     panel("审计日志", `
       <div class="stack">
         ${state.auditArchiveFault ? `<div class="notice warn-notice">审计归档写入失败，已有 ${esc(state.auditArchiveFault.lostEntries)} 条记录没能落盘（${esc(state.auditArchiveFault.error)}）—— 这段时间的操作事后查不到，请先修复磁盘或权限。</div>` : ""}
-        ${table(["时间", "操作者", "动作", {label: "对象", c: "text-clip"}, "结果"], audit, {moreText: moreText((state.auditLog || []).length, 15)})}
+        ${table(["时间", "操作者", "动作", {label: "对象", c: "text-clip"}, "结果"], audit, {moreText: moreText((state.auditLog || []).length, 15, "auditLog")})}
         <div class="small muted">这里只保留最近 ${(state.auditLog || []).length} 条；更早的记录在归档文件里，不在这一屏内。</div>
         ${/* 经 MCP 改的状态此前在这一屏上一条痕迹都没有（主台账只由 REST 侧写）。现在两条写路径
               共用同一本台账：MCP 的写入记成「MCP 工具调用」，执行者形如 mcp:<主体类型>:<id>。
@@ -1792,7 +1792,7 @@ function renderSysSettings() {
         <div class="metric"><span>缓存命中目标</span><strong>${Math.round((metrics.cacheHitTarget || 0) * 100)}%</strong></div>
       </div>
     `),
-    panel("指令信封", table(["编号", "接收角色", "缓存键", "状态", {label: "目标 Token 数", c: "num"}], envelopes, {moreText: moreText((metrics.envelopes || []).length, 12)})),
+    panel("指令信封", table(["编号", "接收角色", "缓存键", "状态", {label: "目标 Token 数", c: "num"}], envelopes, {moreText: moreText((metrics.envelopes || []).length, 12, (metrics.envelopes || []).length >= 2000)})),
     panel("共享定义归属", table(["定义", "类型", "归属角色", "生产角色", "状态"], definitions), {wide: true})
   ].join("");
 }
