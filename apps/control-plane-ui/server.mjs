@@ -865,9 +865,12 @@ function createTaskGroupRecord(state, input = {}, options = {}) {
   const taskGroup = {
     id: taskGroupId,
     projectId,
-    name: input.name || input.title || "AI-native Task Group",
-    title: input.title || input.name || "AI-native Task Group",
-    objective: input.objective || input.title || input.name || "Machine-executed task group",
+    // 自由文本必须有上限：实测一次请求就能把目标写进 30 万字，状态文件 56KB 涨到 1.8MB，
+    // 而每次写入的成本正比于状态大小 —— 一个字段能让此后【每一次写入】都替它买单。
+    // 拒绝而不是静默截断：存下的内容与人写的不一致，比报错难查得多。
+    name: assertHumanTextWithinLimit(input.name || input.title || "AI-native Task Group", "task_group_name", 200),
+    title: assertHumanTextWithinLimit(input.title || input.name || "AI-native Task Group", "task_group_name", 200),
+    objective: assertHumanTextWithinLimit(input.objective || input.title || input.name || "Machine-executed task group", "task_group_objective", 4000),
     status: input.status || "planned",
     goalExecutionStatus: "ready",
     phase: input.phase || "planning",
@@ -896,7 +899,7 @@ function createWorkItemRecord(state, taskGroupId, input = {}, options = {}) {
   const at = now();
   const workItem = {
     id: workItemId,
-    title: input.title || "AI-native work item",
+    title: assertHumanTextWithinLimit(input.title || "AI-native work item", "work_item_title", 200),
     // 认不出的状态原先降级成 ready（可开跑）。不填＝ready 是合理的创建默认，填错则必须拒 ——
     // 人写了个自己以为存在的状态，拿到的却是"已经可以开跑"。
     status: workItemCreateStatus(input.status),
@@ -3378,7 +3381,7 @@ async function handleApi(req, res) {
     state.projects.push({
       id,
       organizationId: projectOrgId,
-      name: body.name || "Untitled Project",
+      name: assertHumanTextWithinLimit(body.name || "Untitled Project", "project_name", 200),
       status: "active",
       ownerAccountId,
       members: [{accountId: ownerAccountId, role: "project_owner"}],
@@ -5013,7 +5016,7 @@ async function handleApi(req, res) {
     state.projects.push({
       id,
       organizationId: orgId,
-      name: String(body.name || "").trim() || "未命名项目",
+      name: assertHumanTextWithinLimit(String(body.name || "").trim() || "未命名项目", "project_name", 200),
       status: "active",
       ownerAccountId: guard.actor,
       members: [{accountId: guard.actor, role: "project_owner"}],

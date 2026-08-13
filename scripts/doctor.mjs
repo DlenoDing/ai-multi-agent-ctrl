@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import WebSocket from "ws";
-import {chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync} from "node:fs";
+import {chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync} from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
@@ -950,6 +950,39 @@ try {
     }
     if (!String(invented.payload.hint || "").includes("admin.email")) {
       throw new Error("拒绝时没有指出字段在 admin.email —— 发成平铺字段的人只能靠猜");
+    }
+  }
+
+  // 自由文本必须有上限。实测一次请求就能把任务组目标写进 30 万字，状态文件 56KB 涨到 1.8MB —— 
+  // 而每次写入的成本正比于状态大小，这一个字段会让【此后每一次写入】都替它买单。
+  // 拒绝而不是静默截断：存下的内容与人写的不一致，比报错难查得多。
+  {
+    const huge = "长".repeat(300000);
+    const before = statSync(join(root, doctorRuntimeDir, "control-plane-state.json")).size;
+    const bigGroup = await jsonFetch(port, "/api/task-groups", {
+      method: "POST", headers: {authorization: systemAuth, "Idempotency-Key": "doctor-huge-objective"},
+      body: JSON.stringify({projectId: "prj_control_plane", title: "超长目标探针", objective: huge})
+    });
+    if (bigGroup.response.status !== 400 || bigGroup.payload.error !== "task_group_objective_too_long") {
+      throw new Error(`30 万字的任务组目标被收下了（HTTP ${bigGroup.response.status}）——`
+        + "状态会被它永久撑大，而每次写入的成本正比于状态大小");
+    }
+    // REST 侧把 details 摊平到顶层（{error, limit, actual, over, message}），
+    // MCP 侧是嵌在 details 里 —— 两边形状不同，判据要认各自那一份，别只按一种写。
+    const limitInfo = bigGroup.payload.details || bigGroup.payload;
+    if (!limitInfo.limit || !limitInfo.actual) {
+      throw new Error(`拒绝时没说上限是多少、实际多少：${JSON.stringify(bigGroup.payload).slice(0, 160)}`);
+    }
+    const bigProject = await jsonFetch(port, "/api/projects", {
+      method: "POST", headers: {authorization: systemAuth, "Idempotency-Key": "doctor-huge-project-name"},
+      body: JSON.stringify({name: huge, key: "huge"})
+    });
+    if (bigProject.response.status !== 400 || bigProject.payload.error !== "project_name_too_long") {
+      throw new Error(`30 万字的项目名被收下了（HTTP ${bigProject.response.status}）`);
+    }
+    const after = statSync(join(root, doctorRuntimeDir, "control-plane-state.json")).size;
+    if (after > before + 64 * 1024) {
+      throw new Error(`被拒的超长写入仍然把状态撑大了：${(before / 1024).toFixed(0)}KB → ${(after / 1024).toFixed(0)}KB`);
     }
   }
 

@@ -1049,6 +1049,24 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 一次请求就能把状态从 56KB 撑到 1.8MB，而每次写入的成本正比于状态大小。
+    name: "任务组目标要有长度上限",
+    file: "apps/control-plane-ui/server.mjs",
+    skip: "判别力由控制面 e2e 覆盖（真发一份 30 万字的目标，并核对被拒后状态没被撑大）",
+    from: '    objective: assertHumanTextWithinLimit(input.objective || input.title || input.name || "Machine-executed task group", "task_group_objective", 4000),',
+    to: '    objective: input.objective || input.title || input.name || "Machine-executed task group",',
+    expect: "被收下了"
+  },
+  {
+    // MCP 侧少补 = agent 一样能把状态撑大（孪生分支只补一半）。
+    name: "MCP 侧的任务组目标也要有上限",
+    file: "apps/mcp-server/server.mjs",
+    skip: "判别力由 mcp:doctor 覆盖（真发一份 30 万字的目标）",
+    from: '    objective: assertHumanTextWithinLimit(args.objective || args.title || "Machine-executed task group", "task_group_objective", 4000),',
+    to: '    objective: args.objective || args.title || "Machine-executed task group",',
+    expect: "MCP 侧收下了"
+  },
+  {
     // 明文一次性凭据落进审计归档：视图层那道凭据扫描看不见它（归档不经视图下发）。
     name: "一次性凭据不得落盘",
     file: "apps/control-plane-ui/server.mjs",

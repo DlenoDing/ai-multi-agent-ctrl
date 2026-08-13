@@ -124,6 +124,22 @@ try {
       throw new Error(`拒绝时没有回登记过的角色清单 —— 调用方只能猜自己该填什么：${said.slice(0, 200)}`);
     }
   }
+  // 与 REST 侧同规：自由文本有上限。少补这一侧，agent 一样能把状态撑大 ——
+  // 这类洞最常见的样子就是孪生分支只补一半（REST 侧改完，MCP 侧照旧）。
+  {
+    const huge = "长".repeat(300000);
+    const bigObjective = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.task_group_create",
+      arguments: {idempotencyKey: "doctor-mcp-huge-objective", projectId: "prj_control_plane",
+        title: "超长目标探针", objective: huge}});
+    const said = JSON.stringify(bigObjective.structuredContent?.result || bigObjective);
+    if (!said.includes("task_group_objective_too_long")) {
+      throw new Error(`MCP 侧收下了 30 万字的任务组目标 —— 状态会被它永久撑大：${said.slice(0, 200)}`);
+    }
+    if (!said.includes("limit") || !said.includes("actual")) {
+      throw new Error(`拒绝时没把上限与实际长度回给调用方：${said.slice(0, 200)}`);
+    }
+  }
+
   // agent 问"我这个角色的规则是什么"。这个视图原先自己实现了一遍匹配：子串命中、
   // 都找不到就落到 roleSkills[0]（数组顺序由技能源同步决定，实质任意），而且回退不留痕 ——
   // 拿到别人的规则却毫不知情。改成走 core 的 resolveRoleSkill，三支都验。

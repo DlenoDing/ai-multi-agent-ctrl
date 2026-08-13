@@ -850,6 +850,11 @@
     owner_account_not_found: "未找到负责人账号",
     account_not_found: "未找到账号",
     account_email_already_registered: "该邮箱已被注册",
+    // 自由文本上限：拒绝而不是静默截断（存下的与人写的不一致更难查）。
+    project_name_too_long: "项目名太长了",
+    task_group_name_too_long: "任务组名称太长了",
+    task_group_objective_too_long: "任务组目标太长了",
+    work_item_title_too_long: "工作项标题太长了",
     organization_admin_email_required: "创建组织必须指定初始组织管理员的邮箱（它是这个人的登录身份）",
     agent_not_found: "未找到智能体档案",
     agent_node_not_found: "未找到智能体节点",

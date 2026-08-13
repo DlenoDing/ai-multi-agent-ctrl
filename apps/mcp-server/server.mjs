@@ -70,6 +70,7 @@ import {
   reviewPlanRecordCoverage,
   isDelegatableGrantPermission,
   WORK_SESSION_SETTLED_STATUSES,
+  assertHumanTextWithinLimit,
   revokeAccountSessions,
   resolveRoleSkill,
   REGISTERED_OWNER_ROLES
@@ -1614,7 +1615,7 @@ function createProject(state, args) {
   const project = {
     id: projectId,
     organizationId,
-    name: args.name || args.title || "AI-native Project",
+    name: assertHumanTextWithinLimit(args.name || args.title || "AI-native Project", "project_name", 200),
     status: "active",
     ownerAccountId,
     members: [{accountId: ownerAccountId, role: "project_owner"}],
@@ -1642,9 +1643,11 @@ function createTaskGroup(state, args) {
   const taskGroup = {
     id: taskGroupId,
     projectId: project.id,
-    name: args.name || args.title || "AI-native Task Group",
-    title: args.title || args.name || "AI-native Task Group",
-    objective: args.objective || args.title || "Machine-executed task group",
+    // 与 REST 侧同规（server.mjs 的同名字段）：自由文本有上限，超了就拒。
+    // 少补这一侧的话，agent 一样能把状态撑大 —— 这类洞的常见样子就是孪生分支只补一半。
+    name: assertHumanTextWithinLimit(args.name || args.title || "AI-native Task Group", "task_group_name", 200),
+    title: assertHumanTextWithinLimit(args.title || args.name || "AI-native Task Group", "task_group_name", 200),
+    objective: assertHumanTextWithinLimit(args.objective || args.title || "Machine-executed task group", "task_group_objective", 4000),
     status: "planned",
     goalExecutionStatus: "ready",
     phase: "planning",
@@ -1705,7 +1708,7 @@ function createWorkItem(state, args) {
   const at = new Date().toISOString();
   const workItem = {
     id: workItemId,
-    title: args.title || "AI-native work item",
+    title: assertHumanTextWithinLimit(args.title || "AI-native work item", "work_item_title", 200),
     // 与 REST 侧同规（server.mjs 的 workItemCreateStatus）：不填＝ready 是合理的创建默认，
     // 填错必须拒 —— 认不出的状态原先降级成"可开跑"。孪生分支只补一半是这类洞最常见的样子。
     status: mcpWorkItemCreateStatus(args.status),
