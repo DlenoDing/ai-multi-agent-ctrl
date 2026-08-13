@@ -2171,6 +2171,38 @@ await runCodedApiErrorCase();
     "技能源已经同步成功了，表上还挂着上一次的失败原因 —— 人会去追一个已经解决的故障");
 }
 
+// 本机时钟快 20 分钟时，所有健康节点都会被算成"已 20 分钟没有心跳" —— 假警报把人派去查
+// 一个不存在的故障。相对时间要按服务器时钟算（响应头 Date），并且把偏差本身告诉人。
+{
+  const skewRoot = el("div");
+  const probe = loadConsole(skewRoot);
+  const admin = {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const freshBeat = new Date(Date.now() - 20 * 60 * 1000 + 5000).toISOString();  // 服务器眼里刚刚心跳过
+  const nodeState = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
+    findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: [],
+    agentRuntimeNodes: [{nodeId: "n1", status: "online", projectIds: ["p1"], organizationId: "org_default",
+      lastHeartbeatAt: freshBeat}]};
+  // 服务器的"现在"比本机慢 20 分钟：本机直接相减会得出"已 20 分钟没有心跳"。
+  const skewedFetch = async () => ({ok: true, status: 200, statusText: "OK",
+    headers: {get: (name) => String(name).toLowerCase() === "date" ? new Date(Date.now() - 20 * 60 * 1000).toUTCString() : null},
+    json: async () => nodeState, text: async () => JSON.stringify(nodeState)});
+  // 心跳提示渲染在执行监控页（renderMonitor 的节点表），不是智能体档案那一屏。
+  const skewBody = await probe.loadWithFetch(nodeState, admin, "p1", "monitor", skewedFetch);
+  const skewHtml = `${String(skewRoot.innerHTML || "")}${skewBody || ""}`;
+  // 先自证这一屏真的渲染出来了：不然"没找到失联提示"只是因为什么都没渲染。
+  check("时钟偏差夹具确实渲染了节点那一屏",
+    /n1/.test(skewHtml),
+    "这一屏没渲染出节点，下面两条在空转");
+  check("本机时钟快时不许把健康节点报成失联",
+    !/没有心跳/.test(skewHtml),
+    "相对时间拿本机时钟减服务端时间戳 —— 本机快 20 分钟，所有健康节点都会显示已失联");
+  check("时钟偏差本身要告诉人",
+    /本机时钟比服务器快/.test(skewHtml),
+    "悄悄替人校正了偏差，人就永远不知道自己这台机器的表是错的");
+}
+
 // 界面上所有时间按本机时区渲染，而服务端日志是 UTC。不标时区，人拿屏幕上的时间去对日志
 // 会差几个小时，进而以为那条记录不存在。
 {

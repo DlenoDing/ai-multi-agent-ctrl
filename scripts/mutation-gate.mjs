@@ -741,6 +741,22 @@ const MUTATIONS = [
     expect: "人判过的事又回来了"
   },
   {
+    name: "相对时间要按服务器时钟算",
+    file: APP,
+    gate: "console",
+    from: "  const ageMs = serverNow() - new Date(node.lastHeartbeatAt).getTime();",
+    to: "  const ageMs = Date.now() - new Date(node.lastHeartbeatAt).getTime();",
+    expect: "所有健康节点都会显示已失联"
+  },
+  {
+    name: "时钟偏差要告诉人，不能悄悄校正",
+    file: APP,
+    gate: "console",
+    from: '  return `本机时钟比服务器${minutes > 0 ? "快" : "慢"} ${Math.abs(minutes)} 分钟`;',
+    to: '  return "";',
+    expect: "人就永远不知道自己这台机器的表是错的"
+  },
+  {
     name: "界面要说清时间按哪个时区显示",
     file: APP,
     gate: "console",

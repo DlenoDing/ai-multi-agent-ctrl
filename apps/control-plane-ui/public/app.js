@@ -202,7 +202,7 @@ function claimMissHint(node) {
 
 function heartbeatStaleHint(node) {
   if (!node.lastHeartbeatAt || ["revoked", "offline"].includes(node.status)) return "";
-  const ageMs = Date.now() - new Date(node.lastHeartbeatAt).getTime();
+  const ageMs = serverNow() - new Date(node.lastHeartbeatAt).getTime();
   if (!Number.isFinite(ageMs) || ageMs < 3 * 60 * 1000) return "";
   const minutes = Math.floor(ageMs / 60000);
   return `<div class="small warn-text">⚠ 已 ${minutes} 分钟没有心跳</div>`;
@@ -519,6 +519,28 @@ function modelDecisionSummaryZh(decision) {
 
 // 本机时区标签（UTC+8 这种）。服务端记的是 UTC，两边差几个小时而屏幕上不标，
 // 对日志的人会以为记录不存在。
+// 界面上"已 N 分钟没有心跳"这类判断，此前拿【浏览器本机时钟】去减服务端给的时间戳。
+// 本机时钟快 20 分钟，所有健康节点都会显示"已 20 分钟没有心跳" —— 假警报会把人派去查一个
+// 不存在的故障（慢的方向反而无害：算出来是负数，不会报警）。每次响应都带 Date 头，
+// 拿它算一次偏差，之后所有相对时间都按【服务器的现在】算。
+let serverClockSkewMs = 0;
+function noteServerClock(response) {
+  const header = response?.headers?.get?.("date");
+  if (!header) return;
+  const serverNowMs = new Date(header).getTime();
+  if (!Number.isFinite(serverNowMs)) return;
+  serverClockSkewMs = Date.now() - serverNowMs;
+}
+function serverNow() {
+  return Date.now() - serverClockSkewMs;
+}
+// 偏差大到会影响判读时，直接说出来 —— 悄悄替人校正，人就永远不知道自己这台机器的表是错的。
+function clockSkewNote() {
+  const minutes = Math.round(serverClockSkewMs / 60000);
+  if (Math.abs(minutes) < 2) return "";
+  return `本机时钟比服务器${minutes > 0 ? "快" : "慢"} ${Math.abs(minutes)} 分钟`;
+}
+
 function localZoneLabel() {
   const minutes = -new Date().getTimezoneOffset();
   if (!Number.isFinite(minutes)) return "UTC";
@@ -707,6 +729,7 @@ async function api(path, options = {}) {
       + "它可能已经生效，也可能没有 —— 请先刷新页面确认结果，不要直接重试："
       + `重试会以新的幂等键再做一次。（${String(networkError?.message || networkError).slice(0, 120)}）`);
   }
+  noteServerClock(response);
   if (!response.ok) {
     let detail = "";
     let hint = "";
@@ -786,6 +809,7 @@ async function fetchState(view, options = {}) {
   const cached = stateCache.get(cacheKey);
   if (etag && cached) headers["if-none-match"] = etag;
   const response = await fetch(path, {headers});
+  noteServerClock(response);
   if (response.status === 304 && cached) return cached;
   if (!response.ok) {
     // 走回统一的错误处理（401 清会话、把服务端写的说明带给人）
@@ -1454,6 +1478,7 @@ function render() {
             ${/* 界面上所有时间都按浏览器本机时区渲染，而服务端日志（audit-log.jsonl、执行事件）是 UTC。
                   不标时区，人拿屏幕上的时间去对日志会差好几个小时，进而以为那条记录根本不存在。 */""}
             <span class="small muted" title="界面时间按本机时区显示；服务端日志用的是 UTC">${esc(localZoneLabel())}</span>
+            ${clockSkewNote() ? `<span class="small warn-text" title="相对时间已按服务器时钟校正">${esc(clockSkewNote())}</span>` : ""}
             <button class="secondary-button" data-action="open-change-password">修改密码</button>
             <button class="icon-button" data-action="refresh" title="刷新" aria-label="刷新">↻</button>
             <button class="secondary-button" data-action="logout">退出登录</button>
