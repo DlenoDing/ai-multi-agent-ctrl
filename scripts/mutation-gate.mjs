@@ -705,6 +705,31 @@ const MUTATIONS = [
     expect: "room_task_group_mismatch"
   },
   {
+    // 退役的价值全在级联：只改状态不摘技能，等于退役了个寂寞。
+    name: "技能源退役要摘掉它带来的角色技能",
+    file: CORE,
+    check: "verifySkillSourceRetireCascades",
+    from: "  state.roleSkills = (state.roleSkills || []).filter((skill) => skill.sourceId !== sourceId);",
+    to: "  state.roleSkills = state.roleSkills || [];",
+    expect: "还留在注册表里"
+  },
+  {
+    name: "指向被摘技能的叠加规则要终态化",
+    file: CORE,
+    check: "verifySkillSourceRetireCascades",
+    from: '    overlay.status = "superseded";',
+    to: '    overlay.status = overlay.status;',
+    expect: "永远在等一个不存在的基底"
+  },
+  {
+    name: "技能源退役要有界面入口",
+    file: APP,
+    gate: "console",
+    from: 'data-action="retire-skill-source"',
+    to: 'data-action="retire-skill-source-disabled"',
+    expect: "没有任何拿下去的出口"
+  },
+  {
     name: "技能源同步失败要写清为什么",
     file: CORE,
     check: "verifySkillSourceSyncFailureIsVisible",

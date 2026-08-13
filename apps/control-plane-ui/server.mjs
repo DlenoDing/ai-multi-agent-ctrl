@@ -93,6 +93,7 @@ import {
   runCommandLifecycle,
   selectModel,
   syncSkillSource,
+  retireSkillSource,
   updateTaskGroupLanguagePolicy,
   HUMAN_ACTOR_KEY,
   effectivePathDenylist,
@@ -972,6 +973,8 @@ const HUMAN_ONLY_ACTIONS = [
   // 与上面同因：改角色技能/技能源就是改规则层，必须真人。
   "role_skill_overlay_create",
   "skill_source_sync",
+  // 退役比同步更不可逆：它会摘掉这个源带来的全部角色技能、终态化指向它们的叠加规则。
+  "skill_source_retire",
   "quality_gate_waive",
   // 铸造账号必须是真人动作。人工定稿闸门只认 account.accountType，而铸造该 accountType 的动作
   // 原本不受同一条闸门保护 —— 机器主体铸一个"人"、再用返回的令牌登录，就成了合法的定稿人，
@@ -1671,7 +1674,7 @@ function permissionForAction(action) {
   if (action === "repository_output_target_select") return "project:*";
   if (action === "instruction_envelope_create") return "task_group:control";
   if (action === "shared_definition_contract_create") return "project:*";
-  if (action === "skill_source_sync") return "system:skill_sync";
+  if (action === "skill_source_sync" || action === "skill_source_retire") return "system:skill_sync";
   if (action === "role_skill_overlay_create") return "project:*";
   if (action === "model_capability_register") return "system:model_registry";
   if (action === "model_selection_decide" || action === "session_placement_decide") return "task_group:orchestrate";
@@ -3258,6 +3261,25 @@ async function handleApi(req, res) {
     }
     const result = syncSkillSource(state, skillSyncMatch[1], {root, runtimeDir});
     audit(state, guard.actor, "skill_source_sync", `AgentSkillSource:${skillSyncMatch[1]}`);
+    finishGuardedWrite(state, guard, 200, result);
+    writeState(state);
+    json(res, 200, result);
+    return;
+  }
+
+  // 退役：接进来的源此前拿不下去（状态机里 retired 一直没有生产者）。配错地址或换了仓库时，
+  // 人只能眼看着自治周期一遍遍重试它。
+  const skillRetireMatch = url.pathname.match(/^\/api\/skill-sources\/([^/]+)\/retire$/);
+  if (req.method === "POST" && skillRetireMatch) {
+    const guard = beginGuardedWrite(req, state, "skill_source_retire", `AgentSkillSource:${skillRetireMatch[1]}`,
+      {resourceType: "system", resourceId: "*"});
+    if (guard.status) {
+      json(res, guard.status, guard.payload);
+      return;
+    }
+    // 不自己接异常：与同步那条一样交给外层统一处理（它认 error.status，404/409 会如实回给人）。
+    const result = retireSkillSource(state, skillRetireMatch[1]);
+    audit(state, guard.actor, "skill_source_retire", `AgentSkillSource:${skillRetireMatch[1]}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
     json(res, 200, result);

@@ -2152,6 +2152,20 @@ await runCodedApiErrorCase();
   recovered.skillSources[0].status = "active";
   const recoveredRoot = el("div");
   loadConsole(recoveredRoot).renderFullPageWith(recovered, admin, null, "sys-settings");
+  // 接进来的源此前拿不下去：界面上只有"同步"。退役这条出口要在表上，且要说清后果。
+  check("技能源要能退役",
+    /data-action="retire-skill-source"/.test(html),
+    "技能源那张表只有同步，没有任何拿下去的出口 —— 配错地址的源只能一直留着，还会被自治周期反复重试");
+  {
+    const retired = structuredClone(withSource);
+    retired.skillSources[0].status = "retired";
+    const retiredRoot = el("div");
+    loadConsole(retiredRoot).renderFullPageWith(retired, admin, null, "sys-settings");
+    const retiredHtml = String(retiredRoot.innerHTML || "");
+    check("已退役的源不再给同步按钮",
+      !/data-action="sync-skill-source"/.test(retiredHtml) && /已退役/.test(retiredHtml),
+      "已退役的源还摆着同步按钮 —— 点了也不会有任何效果，而人不知道");
+  }
   check("同步恢复之后不再显示上一次的失败原因",
     !/Authentication failed/.test(String(recoveredRoot.innerHTML || "")),
     "技能源已经同步成功了，表上还挂着上一次的失败原因 —— 人会去追一个已经解决的故障");

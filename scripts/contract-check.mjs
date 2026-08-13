@@ -77,6 +77,7 @@ import {
   evaluateRoleDrift,
   sharedDefinitionCreate,
   resolveRoleSkill,
+  retireSkillSource,
   claimLease,
   permissionRequestSubmit,
   approvalRequestCreate,
@@ -253,6 +254,7 @@ run(verifyNoModelFallbackMatchesWhatEngineDoes);
 run(verifyRoomWaitTailAndTruncationHonesty);
 run(verifyStateStoreConfigIsNotSilentlyDowngraded);
 run(verifySkillSourceSyncFailureIsVisible);
+run(verifySkillSourceRetireCascades);
 run(verifyOrchestrationDoesNotShellOutPerCell);
 run(verifyWipCapacityBackpressure);
 run(verifyHighPriorityCellsAreNotStarvedByEarlierGroups);
@@ -331,6 +333,61 @@ if (errors.length) {
 // 技能源取不下来（仓库不在了 / 要认证 / ref 没有 / 网络不通）此前只抛 git 的原始报错，
 // 而 source.status 一动不动：人点完同步只看到一条会消失的 toast，那张表还写着 configured，
 // 看不出这个源【从来没同步成功过】—— 而技能源决定 agent 会做什么。
+// 技能源接进来就拿不下去：状态机里 retired 这个终态一直没有生产者。补上之后，级联必须做完 ——
+// 留下指不到东西的角色技能或叠加规则，比不给这条路更糟。
+function verifySkillSourceRetireCascades(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const source = (state.skillSources || [])[0];
+  if (!source) {
+    output.push("技能源退役检查：种子里没有技能源 —— 本条在空转");
+    return;
+  }
+  // 造出"这个源带来了角色技能、且有叠加规则指着它"的局面，否则级联没有可摘的东西。
+  const fromSource = {roleSkillId: "probe-skill", sourceId: source.sourceId, roleId: "reviewer",
+    sourcePath: "roles/reviewer.md", contentDigest: "sha256:probe"};
+  state.roleSkills = [...state.roleSkills, fromSource];
+  state.roleSkillOverlays = [...(state.roleSkillOverlays || []),
+    {overlayId: "ovl-probe", status: "active", roleSkillRef: "probe-skill", scope: {}, patch: {}}];
+  const systemSkillsBefore = state.roleSkills.filter((skill) => skill.sourceId === "system-default").length;
+
+  const result = retireSkillSource(state, source.sourceId);
+  if (source.status !== "retired") {
+    output.push(`技能源退役之后状态是 ${source.status}，不是 retired —— 状态机里那个终态仍然没有生产者`);
+  }
+  if (state.roleSkills.some((skill) => skill.sourceId === source.sourceId)) {
+    output.push("技能源退役之后，它带来的角色技能还留在注册表里 —— 退役等于没退");
+  }
+  if (state.roleSkills.filter((skill) => skill.sourceId === "system-default").length !== systemSkillsBefore) {
+    output.push("技能源退役把系统内置技能也带走了 —— 兜底没了，所有角色都会失去技能");
+  }
+  const overlay = (state.roleSkillOverlays || []).find((item) => item.overlayId === "ovl-probe");
+  if (overlay?.status !== "superseded") {
+    output.push(`指向被摘技能的叠加规则退役后仍是 ${overlay?.status} —— 它永远在等一个不存在的基底`);
+  }
+  if (result.droppedRoleSkills < 1) {
+    output.push(`退役返回的摘除数是 ${result.droppedRoleSkills} —— 界面据此告诉人发生了什么，报少了等于骗人`);
+  }
+  // 兜底还在：退役之后仍要能给角色解析出技能（回退到 system-*），否则等于把系统弄停。
+  try {
+    const resolved = resolveRoleSkill(state, "reviewer", {});
+    if (!resolved?.roleSkillId) output.push("技能源退役之后角色解析不出任何技能 —— 兜底链断了");
+  } catch (error) {
+    output.push(`技能源退役之后角色技能解析直接抛错（${String(error?.message || error).slice(0, 80)}）—— 退役把系统弄停了`);
+  }
+  // 重复退役要被拒，而不是又走一遍级联。
+  let second = "";
+  try { retireSkillSource(state, source.sourceId); } catch (error) { second = String(error?.message || error); }
+  if (second !== "skill_source_already_retired") {
+    output.push(`重复退役没有被拒（拿到 "${second || "成功了"}"）—— 幂等性只能靠调用方小心`);
+  }
+  let missing = "";
+  try { retireSkillSource(state, "no-such-source"); } catch (error) { missing = String(error?.message || error); }
+  if (missing !== "skill_source_not_found") {
+    output.push(`退役一个不存在的源没有报 skill_source_not_found（拿到 "${missing || "成功了"}"）`);
+  }
+}
+
 function verifySkillSourceSyncFailureIsVisible(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});

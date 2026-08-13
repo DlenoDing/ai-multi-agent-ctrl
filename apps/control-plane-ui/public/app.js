@@ -1648,7 +1648,13 @@ function renderSysSettings() {
       ? `<div class="small warn-text">${esc(source.lastSyncError)}</div>` : ""),
     `<span class="mono">${esc(String(source.pinnedCommit || "").slice(0, 10))}</span>`,
     {v: String((state.roleSkills || []).filter((skill) => skill.sourceId === source.sourceId).length), c: "num"},
-    `<button class="secondary-button" data-action="sync-skill-source" data-source="${esc(source.sourceId)}">同步</button>`
+    // 已退役的源不再提供同步（自治周期也不会再碰它）；未退役的多一条"退役"出口 ——
+    // 接进来却拿不下去，此前只能眼看着它一遍遍重试。
+    source.status === "retired"
+      ? `<span class="small muted">已退役，不再同步</span>`
+      : `<button class="secondary-button" data-action="sync-skill-source" data-source="${esc(source.sourceId)}">同步</button>`
+        + ` <button class="secondary-button" data-action="retire-skill-source" data-source="${esc(source.sourceId)}"`
+        + ` data-skills="${esc(String((state.roleSkills || []).filter((skill) => skill.sourceId === source.sourceId).length))}">退役</button>`
   ])).join("");
   const metrics = instructionState?.instructionMetrics || {stablePrefixTokens: 0, deltaMessageTargetTokens: 0, cacheHitTarget: 0, envelopes: []};
   const envelopes = (metrics.envelopes || []).slice(0, 12).map((envelope) => row([
@@ -4362,6 +4368,25 @@ document.addEventListener("click", async (event) => {
       await api(`/api/skill-sources/${encodeURIComponent(target.dataset.source)}/sync`, {method: "POST", body: "{}"});
       await loadPage();
       toast.success("已触发技能源同步");
+      return;
+    }
+    if (action === "retire-skill-source") {
+      const skillCount = Number(target.dataset.skills || 0);
+      if (!(await confirmDialog({
+        title: "退役技能源",
+        message: `确认退役技能源 ${target.dataset.source}？`,
+        // 说清真实后果：不是"隐藏"，是把它带来的角色技能全部摘掉。
+        sub: skillCount
+          ? `它带来的 ${skillCount} 个角色技能会一并摘掉，用到这些技能的角色将回退到系统内置技能`
+            + "（派发照常进行，界面上会标出「套用了别人的技能」）。指向它们的叠加规则会终态化。退役后不再自动同步。"
+          : "该源目前没有带来任何角色技能。退役后不再自动同步。",
+        danger: true,
+        confirmText: "退役"
+      }))) return;
+      const result = await api(`/api/skill-sources/${encodeURIComponent(target.dataset.source)}/retire`, {method: "POST", body: "{}"});
+      await loadPage();
+      toast.success(`已退役：摘掉 ${result?.droppedRoleSkills ?? 0} 个角色技能`
+        + (result?.supersededOverlays ? `，${result.supersededOverlays} 条叠加规则已终态化` : ""));
       return;
     }
     if (action === "revoke-join-token") {

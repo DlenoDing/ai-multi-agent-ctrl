@@ -1982,7 +1982,7 @@ function runAutonomousCycleBody(state, request = {}) {
   let skillSyncBlocked = false;
   if (request.autoSyncSkills !== false) {
     for (const source of state.skillSources || []) {
-      if (source.sourceId === "agency-agents-zh" && source.status !== "active") {
+      if (source.sourceId === "agency-agents-zh" && source.status !== "active" && source.status !== "retired") {
         try {
           syncSkillSource(state, source.sourceId, {root: request.root, runtimeDir: request.runtimeDir});
         } catch (error) {
@@ -3969,6 +3969,37 @@ export function syncSkillSource(state, sourceId, options = {}) {
   state.roleSkills = [...state.roleSkills.filter((skill) => skill.sourceId !== source.sourceId), ...roleSkills];
   appendEvent(state, "decision", "AgentSkillSource", source.sourceId, "skill-registry", {roleSkillCount: roleSkills.length, actualCommit});
   return {source, roleSkillCount: roleSkills.length, indexPath, actualCommit};
+}
+
+// 技能源接进来就【拿不下去】：状态机里 retired 这个终态一直没有生产者，界面上也只有"同步"。
+// 于是配错地址、换了仓库、或者干脆不再想要某个源，都只能留着它 —— 它还会被自治周期反复重试。
+// 退役要把级联做完，否则留下的是一堆指不到东西的废弃记录：
+//   · 这个源带来的角色技能全部摘掉（角色会回退到 system-* 兜底，且回退本身在返回值里留痕）；
+//   · 指向这些技能的叠加规则一并终态化（superseded），不然它们会永远等一个不存在的基底。
+// 系统兜底技能 sourceId 是 system-default，不属于任何登记的源，所以永远不会被这里带走。
+export function retireSkillSource(state, sourceId) {
+  const source = (state.skillSources || []).find((item) => item.sourceId === sourceId);
+  if (!source) throw Object.assign(new Error("skill_source_not_found"), {status: 404});
+  if (source.status === "retired") throw Object.assign(new Error("skill_source_already_retired"), {status: 409});
+  const droppedIds = new Set((state.roleSkills || [])
+    .filter((skill) => skill.sourceId === sourceId).map((skill) => skill.roleSkillId));
+  state.roleSkills = (state.roleSkills || []).filter((skill) => skill.sourceId !== sourceId);
+  const superseded = (state.roleSkillOverlays || []).filter((overlay) =>
+    droppedIds.has(overlay.roleSkillRef) && !["rejected", "superseded"].includes(overlay.status));
+  const at = new Date().toISOString();
+  for (const overlay of superseded) {
+    overlay.status = "superseded";
+    overlay.supersededReason = `skill_source_retired:${sourceId}`;
+    overlay.updatedAt = at;
+  }
+  source.status = "retired";
+  source.retiredAt = at;
+  source.updatedAt = at;
+  delete source.lastSyncError;
+  delete source.lastSyncFailedAt;
+  appendEvent(state, "decision", "AgentSkillSource", sourceId, "skill-registry",
+    {retired: true, droppedRoleSkills: droppedIds.size, supersededOverlays: superseded.length});
+  return {sourceId, status: source.status, droppedRoleSkills: droppedIds.size, supersededOverlays: superseded.length};
 }
 
 function listRoleFiles(repoDir, globs) {

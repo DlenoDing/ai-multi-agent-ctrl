@@ -99,7 +99,7 @@ const VAR_MACHINES = {
   request: ["PermissionRequest", "ApprovalRequest", "HumanConfirmationRequest", "DerivedTaskRequest"],
   target: ["RepositoryOutputTarget"], repositoryTarget: ["RepositoryOutputTarget"],
   source: ["AgentSkillSource"], lease: ["Lease"], lane: ["WorkerLane"], guard: ["RoleDriftGuard"],
-  entry: ["DLQEntry"], directive: ["HumanDirective"], grant: ["TempGrant", "AccessControlGrant"],
+  entry: ["DLQEntry"], directive: ["HumanDirective"], overlay: ["RoleSkillOverlay"], grant: ["TempGrant", "AccessControlGrant"],
   definition: ["SharedDefinitionContract"], pattern: ["RuntimeIssuePattern"], gate: ["QualityGate"],
   artifact: ["Artifact"], candidate: ["SystemUpgradeCandidate"],
   // 人工指令的暂停/恢复分支里，被停住与被放回的都是派发。
@@ -164,7 +164,6 @@ const MODELED_AHEAD_OF_IMPLEMENTATION = {
   ProgressSnapshot: "进度快照是被裁剪掉的，不走 archived 终态",
   // 下面三台是【真的缺一条路】，不是建模错误 —— 登记在这里是为了让缺口有名有姓，而不是让门闭嘴。
   Account: "账号只有 active/suspended，没有退役路径（与项目无归档、maxProjects 只增不减同源的产品缺口）",
-  AgentSkillSource: "技能源只有 syncing/quarantined/active，没有下线路径：接进来的源无法移除",
   RuntimeIssuePattern: "问题模式只有 observed/clustered/candidate_created，没有压制/收尾路径：一条噪声模式无法被消音，只会一直累积"
 };
 
