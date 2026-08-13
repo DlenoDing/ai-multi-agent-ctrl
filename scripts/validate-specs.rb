@@ -2689,6 +2689,16 @@ end
 fail_with(swallow_errors)
 puts "上报失败不得静默：#{report_families.length} 族上报调用（族名逐个自证仍在）逐个核对，#{swallow_checked} 处吞错（应为 0）"
 
+# 控制台侧同一形状：后台自动刷新、事件流长轮询、登出请求此前都是 `.catch(() => {})`。
+# 屏幕停在旧数据上却看起来还活着，是这一类里最刺眼的样子 —— 人会照着一屏冻住的数据做决定。
+# 剥掉行注释再数：本门自己在源码注释里写过这个写法，不剥的话它会读到自己写的字（同形已撞六次）。
+console_code = console_source.gsub(%r{//[^\n]*}, "")
+swallowed_console = console_code.scan(".catch(() => {})").length
+errors << "控制台里还有 #{swallowed_console} 处 `.catch(() => {})`：后台刷新/长轮询失败被吞掉，" \
+          "屏幕会停在旧数据上却看起来还活着。确实可以忽略的，改成显式写出理由的形态（如 `.catch(() => null)` 并注明）" if swallowed_console.positive?
+fail_with(errors)
+puts "控制台后台刷新不得静默吞错：剥注释后 #{swallowed_console} 处 `.catch(() => {})`（应为 0）"
+
 # 把本门的规矩用在本门自己身上：一条源码字符串断言，如果它的目标串在被查文件里能匹配到多处，
 # 它就【指认不出自己守的是哪一处】—— 隔壁复制粘贴出的同形代码会替真守卫把它喂饱，真守卫被删被改
 # 也一声不响。今天实撞两次（publish 铸造未知契约、MCP 定稿白名单），都是这么裂开的。

@@ -1202,6 +1202,17 @@ async function loadPage() {
   render();
 }
 
+// 后台自动刷新（实时唤醒、5 秒兜底轮询、监控页事件流）此前是 `.catch(() => {})`。网络与后端错误
+// loadPage 内部已经处理并弹了 toast，能漏到这里的是【渲染本身抛了】—— 那一刻屏幕停在旧数据上，
+// 看起来还活着，而且以后每一拍都会在同一处崩掉、同样没有声音。toast 挂在独立图层，render 崩了它照样显示。
+function reportBackgroundRefreshFailure(error) {
+  const message = error?.message || String(error);
+  console.error("[background-refresh]", error);
+  if (message === lastLoadErrorToast) return;
+  lastLoadErrorToast = message;
+  toast.error(`后台刷新失败，界面停在${lastLoadedAgo()}的数据：${message}`);
+}
+
 async function loadTaskGroupDetail(taskGroupId) {
   // 房间消息是 agent 之间实际说过的话。它此前在控制台上完全没有入口：人只看得到最后送上来的
   // 那一个提案，看不到它是怎么谈出来的。而人工定稿这道闸门的前提恰恰是「人能看见 AI 的推理过程
@@ -1306,7 +1317,11 @@ function startExecPolling() {
       // Do not rebuild the DOM while the operator is typing in a filter box or has the scope select
       // open — a full innerHTML render would drop focus/caret and close the dropdown every tick.
       if (!formTouched && !modalHtml && !(active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName))) render();
-    } catch {}
+    } catch (error) {
+      // 这条长轮询是监控页事件流的唯一来源。原先整个吞掉：流悄悄停住，而屏幕上还摆着上一拍的事件，
+      // 人会以为"这段时间真的什么都没发生"。
+      reportBackgroundRefreshFailure(error);
+    }
   }, 2500);
 }
 
@@ -4294,7 +4309,10 @@ document.addEventListener("click", async (event) => {
     if (page === "monitor") {
       try {
         await loadExecEvents({reset: true});
-      } catch {}
+      } catch (error) {
+        // 空白的事件列表分不出"这段时间没有事件"和"根本没取到" —— 后者必须说出来。
+        toast.error(`执行事件加载失败：${error?.message || error}`);
+      }
       startExecPolling();
       render();
     }
@@ -4342,7 +4360,11 @@ document.addEventListener("click", async (event) => {
     if (action === "logout") {
       try {
         await api("/api/auth/logout", {method: "POST", body: "{}"});
-      } catch {}
+      } catch (error) {
+        // 本机会话无论如何都要清掉（登出不能失败）。但服务端没作废成功时，那个令牌仍然有效到过期为止 ——
+        // 只说"已登出"等于让人以为凭据已经失效。共用电脑上这句话的分量不一样。
+        toast.error(`本机已登出，但服务端未确认作废这次会话：${error?.message || error}。若这是共用设备，请让管理员吊销该会话。`);
+      }
       clearSession();
       lastError = "";
       render();
@@ -4744,7 +4766,7 @@ function realtimeWake() {
     if (!authToken || loading || modalHtml || formTouched) return;
     const active = document.activeElement;
     if (active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;
-    loadPage().catch(() => {});
+    loadPage().catch(reportBackgroundRefreshFailure);
   }, 300);
 }
 
@@ -4796,7 +4818,7 @@ setInterval(() => {
   if (!authToken || loading || modalHtml || formTouched) return;
   const active = document.activeElement;
   if (active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;
-  loadPage().catch(() => {});
+  loadPage().catch(reportBackgroundRefreshFailure);
 }, 5000);
 
 /* ---------------- 启动 ---------------- */
@@ -4806,7 +4828,7 @@ if (authToken && currentAccount) {
   connectRealtime();
   loadPage().then(() => {
     if (page === "monitor") {
-      loadExecEvents({reset: true}).catch(() => {});
+      loadExecEvents({reset: true}).catch(reportBackgroundRefreshFailure);
       startExecPolling();
     }
   }).catch((error) => {

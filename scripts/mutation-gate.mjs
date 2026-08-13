@@ -961,6 +961,32 @@ const MUTATIONS = [
     expect: "起来之后立刻退出了"
   },
   {
+    // 后台刷新失败被吞 = 屏幕停在旧数据上却看起来还活着，人照着一屏冻住的数据做决定。
+    name: "控制台后台刷新失败不得静默",
+    file: APP,
+    gate: "specs",
+    from: "loadPage().catch(reportBackgroundRefreshFailure);\n}, 5000);",
+    to: "loadPage().catch(() => {});\n}, 5000);",
+    expect: "屏幕会停在旧数据上却看起来还活着"
+  },
+  {
+    name: "后台刷新失败要说出来、并说清屏幕停在多久以前",
+    file: APP,
+    gate: "console",
+    from: "  toast.error(`后台刷新失败，界面停在${lastLoadedAgo()}的数据：${message}`);",
+    to: "  toast.error(`后台刷新失败`);",
+    expect: "只说刷新失败，人不知道眼前这屏还能不能照着做决定"
+  },
+  {
+    // 本机清了会话、界面说"已登出"，而服务端那边这次会话仍然有效到过期为止。
+    name: "服务端没确认登出时必须说出来",
+    file: APP,
+    gate: "console",
+    from: "        toast.error(`本机已登出，但服务端未确认作废这次会话：${error?.message || error}。若这是共用设备，请让管理员吊销该会话。`);",
+    to: "        void error;",
+    expect: "人以为凭据已经失效"
+  },
+  {
     // 上报失败被吞 = 控制面永远不知道，派发一直挂在 running，人看到的是"还在跑"。
     name: "向控制面上报失败的调用不得吞错",
     file: "apps/agent-runtime/runtime.mjs",

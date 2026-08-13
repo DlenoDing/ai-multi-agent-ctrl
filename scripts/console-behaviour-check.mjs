@@ -81,6 +81,13 @@ class StubElement {
 
 function el(tag, attrs, children) { return new StubElement(tag, attrs, children); }
 
+// 桩里 innerHTML 是普通属性，父节点取不到子节点的内容；而 toast 是 appendChild 到 body 上的
+// 独立图层（真实浏览器里正因如此，#app 重渲染抹不掉它）。要断言 toast 说了什么，得走子树。
+function stubSubtreeText(node) {
+  if (!node) return "";
+  return [String(node.innerHTML || ""), ...(node.children || []).map(stubSubtreeText)].join(" ");
+}
+
 function makeContext(documentRoot) {
   const noop = () => {};
   const context = {
@@ -90,6 +97,9 @@ function makeContext(documentRoot) {
     setTimeout: () => 0,
     clearTimeout: noop,
     CSS: {escape: (value) => String(value).replace(/["\\]/g, "\\$&")},
+    // 桩里缺 console 时，任何往浏览器日志里写一行的代码路径都会以 ReferenceError 收场 ——
+    // 那是桩的故障，不是被测代码的（与上面 setAttribute 那条同理）。
+    console: {log: noop, warn: noop, error: noop, info: noop, debug: noop},
     fetch: async () => { throw new Error("行为门不应发起网络请求"); },
     WebSocket: class { constructor() { this.close = noop; } },
     location: {origin: "http://localhost", protocol: "http:", host: "localhost", href: "http://localhost/"},
@@ -207,7 +217,9 @@ globalThis.__probe = {
     await loadPage();
     return document.body.innerHTML;
   },
-  api: (path, options) => api(path, options)
+  api: (path, options) => api(path, options),
+  backgroundRefreshFailure: (error) => reportBackgroundRefreshFailure(error),
+  setLastLoadedAt: (value) => { lastLoadedAt = value; }
 };
 `;
 
@@ -2718,6 +2730,47 @@ await runCodedApiErrorCase();
     "只说加载失败，人不知道该不该继续照着这一屏做决定");
   const recoveredHtml = await probe.loadWithFetch(baseState, admin, "p1", "directives", okFetch);
   check("恢复之后横幅要自己消失", !/旧数据/.test(recoveredHtml), "只置不清的提示，人很快就会开始无视它");
+
+  // 上面那条横幅由 render() 画出来 —— 而【render 自己抛了】的时候画不出任何东西。后台自动刷新
+  // （实时唤醒 / 5 秒兜底轮询 / 监控页事件流）此前一律 `.catch(() => {})`：那一刻屏幕停在旧数据上，
+  // 看起来还活着，而且以后每一拍都在同一处崩掉、同样没有声音。toast 挂独立图层，render 崩了它还在。
+  const crashRoot = el("div");
+  const crashProbe = loadConsole(crashRoot);
+  crashProbe.setLastLoadedAt(Date.now() - 90 * 1000);
+  crashProbe.backgroundRefreshFailure(new Error("boom-render"));
+  const crashed = stubSubtreeText(crashRoot);
+  check("后台刷新崩了要出声",
+    /boom-render/.test(crashed),
+    `后台刷新失败一声不响 —— 屏幕停在旧数据上，看起来还活着（${crashed.slice(0, 120)}）`);
+  check("要说清屏幕停在多久以前的数据",
+    /(秒前|分钟前|小时前|一直没能加载成功)/.test(crashed),
+    "只说刷新失败，人不知道眼前这屏还能不能照着做决定");
+  crashProbe.backgroundRefreshFailure(new Error("boom-render"));
+  check("同一个错误不许每拍刷一条",
+    (stubSubtreeText(crashRoot).match(/boom-render/gu) || []).length === 1,
+    "5 秒一拍的兜底轮询会把同一条错误刷满整屏，人反而看不见别的");
+}
+
+// 登出请求失败时此前整个吞掉：本机会话清了、界面说"已登出"，而服务端那边这次会话仍然有效到过期
+// 为止。共用设备上，人以为凭据已经失效。
+{
+  const root = el("div");
+  const probe = loadConsole(root);
+  const admin = {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  probe.renderFullPageWith({schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {}, projects: [],
+    taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], findings: [],
+    humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []}, admin, null, "sys-overview");
+  probe.setFetch(async () => { throw new Error("fetch failed"); });
+  const button = {dataset: {action: "logout"}, disabled: false, textContent: "登出"};
+  button.closest = (selector) => (selector === "[data-action]" ? button : null);
+  await probe.click({target: button, preventDefault: () => {}});
+  const shown = stubSubtreeText(root);
+  check("服务端没确认登出时必须说出来",
+    /服务端未确认作废/.test(shown),
+    `登出请求失败被吞掉了 —— 人以为凭据已经失效，实际那次会话还有效（${shown.slice(0, 160)}）`);
+  check("说了之后还要给出下一步",
+    /吊销/.test(shown),
+    "只说'没确认作废'，人不知道该找谁做什么");
 }
 
   const pageTouchCounts = new Map();
