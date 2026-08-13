@@ -391,6 +391,15 @@ function verifyRuntimeIssuePatternCanBeSettled(output) {
   if (closing.status !== "closed") {
     output.push("再出现把已收尾那条也改了 —— 历史被改写");
   }
+  // 接线：这条传导只有在【处置候选那条真实路由】里被调用才有意义。直接调 core 的断言证明不了
+  // 路由还接着它 —— 那正是"只测判据不测接线"的形状。
+  const serverSourceForSettle = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const resolveRoute = serverSourceForSettle.slice(
+    serverSourceForSettle.indexOf("const upgradeCandidateResolveMatch"),
+    serverSourceForSettle.indexOf("const planFinalizationMatch"));
+  if (!resolveRoute.includes("settleRuntimeIssuePatternForCandidate(")) {
+    output.push("处置升级候选的路由没有把人的判断传导给问题模式 —— core 里那段代码没有任何调用方");
+  }
   // 转外部维护不算判完：事情还在进行中，模式不该被终结。
   const ongoing = raise("probe-ongoing");
   settleRuntimeIssuePatternForCandidate(state, {candidateId: "suc_probe3", issuePatternId: ongoing.patternId},
@@ -422,6 +431,17 @@ function verifyOrganizationMembershipHasOneAuthority(output) {
   const listFilter = serverSource.slice(serverSource.indexOf("const members = (state.accounts || [])"));
   if (!listFilter.slice(0, 400).includes("organizationMembershipOf(")) {
     output.push("成员列表没有走那处共用判据 —— 它和配额用量迟早会算出两批不同的人（此前就是）");
+  }
+  // 成员状态路由（停用/改权限/重发邀请都经它定位对象）同样要走这处判据：
+  // 列表里看得见的人就该管得到，列表里没有的（服务账号、没有组织的系统账号）也不该被组织管理员碰到。
+  const targetResolver = serverSource.slice(serverSource.indexOf("function resolveOrgMemberTarget"))
+    .slice(0, 700);
+  // 判据要问语义，不能只问"附近提到过这个名字"：那段里有两处调用，改坏一处仍然匹配得上
+  // （第一版就是这么写的，变异跑不红）。这里要求它【不再直接读原始字段】——
+  // 只要还有一处 target.organizationId，两边的归属规则就又分叉了。
+  if (!targetResolver.includes("organizationMembershipOf(") || /target\.organizationId/u.test(targetResolver)) {
+    output.push("成员状态路由定位对象时仍在直接读 target.organizationId —— 它和成员列表的归属规则会分叉，"
+      + "结果是「表上看得见却管不到」或反过来");
   }
   // 用量侧同理：真实种子里跑一遍，服务账号不许出现在任何组织的成员数里。
   const state = structuredClone(seedState);
@@ -474,6 +494,21 @@ function verifySkillSourceRetireCascades(output) {
   }
   if (result.droppedRoleSkills < 1) {
     output.push(`退役返回的摘除数是 ${result.droppedRoleSkills} —— 界面据此告诉人发生了什么，报少了等于骗人`);
+  }
+  // 退役之后自治周期不许再去同步它 —— 否则"拿下去"只是界面上的说法：那个源会继续被反复重试，
+  // 失败还会一路记成运行时问题。这一条我上一版改了代码却没写判据，补上（走真实周期入口）。
+  const retiredSource = source;
+  const beforeCycle = {...retiredSource};
+  try {
+    runAutonomousCycle(state, {root, mode: "all", reason: "retired-skill-source-probe"});
+  } catch (error) {
+    output.push(`退役后跑一轮编排就抛了（${String(error?.message || error).slice(0, 120)}）`);
+  }
+  if (retiredSource.status !== "retired") {
+    output.push(`跑完一轮编排之后，已退役的技能源变回了 ${retiredSource.status} —— 自治周期把它又同步了一遍`);
+  }
+  if (retiredSource.updatedAt !== beforeCycle.updatedAt) {
+    output.push("跑完一轮编排之后，已退役的技能源被改写过 —— 它本该完全不被碰");
   }
   // 兜底还在：退役之后仍要能给角色解析出技能（回退到 system-*），否则等于把系统弄停。
   try {

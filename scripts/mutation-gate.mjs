@@ -757,6 +757,31 @@ const MUTATIONS = [
     expect: "没有走那处共用判据"
   },
   {
+    name: "处置候选的路由必须把判断传导给问题模式",
+    file: SERVER,
+    check: "verifyRuntimeIssuePatternCanBeSettled",
+    from: "    settleRuntimeIssuePatternForCandidate(state, candidate, nextStatus);",
+    to: "    void nextStatus;",
+    expect: "没有任何调用方"
+  },
+  {
+    name: "成员状态路由要走共用归属判据",
+    file: SERVER,
+    check: "verifyOrganizationMembershipHasOneAuthority",
+    from: "    member: target && organizationMembershipOf(target) === orgId ? target : null,",
+    to: "    member: target && (target.organizationId ?? null) === orgId ? target : null,",
+    expect: "仍在直接读 target.organizationId"
+  },
+  {
+    // 退役后自治周期还去同步它，"拿下去"就只是界面上的说法。
+    name: "自治周期不许再同步已退役的技能源",
+    file: CORE,
+    check: "verifySkillSourceRetireCascades",
+    from: ' && source.status !== "retired") {',
+    to: ") {",
+    expect: "自治周期把它又同步了一遍"
+  },
+  {
     // 退役的价值全在级联：只改状态不摘技能，等于退役了个寂寞。
     name: "技能源退役要摘掉它带来的角色技能",
     file: CORE,
