@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -186,6 +186,41 @@ const root = resolve(new URL("..", import.meta.url).pathname);
 const port = await getFreePort();
 const doctorRuntimeDir = process.env.AIMAC_DOCTOR_RUNTIME_DIR || `.runtime/doctor-${Date.now()}`;
 const doctorRepo = setupDoctorRepository(root);
+
+// npm start 起不来是运维最常撞到的失败时刻，而这一族此前全是裸 throw ——
+// 一段 Node 崩溃栈加一个机器码，既不说规则是什么，也不说下一步。
+// 这四条都在【监听之前】就失败，所以起停很快，值得真跑一遍读它说的话。
+{
+  const startupCases = [
+    ["密钥太短", {AIMAC_BOOTSTRAP_TOKEN: "short-token"}, "至少 20 个字符"],
+    ["对外监听没给公开地址", {AIMAC_HOST: "0.0.0.0", AIMAC_PUBLIC_URL: ""}, "必须给 AIMAC_PUBLIC_URL"],
+    ["公开地址不是 URL", {AIMAC_PUBLIC_URL: "notaurl"}, "不是一个合法的 URL"],
+    ["公开地址是明文远程", {AIMAC_PUBLIC_URL: "http://aimac.example.test"}, "明文传输等于把它们交出去"]
+  ];
+  for (const [why, overrides, expected] of startupCases) {
+    const attempt = spawnSync(process.execPath, ["apps/control-plane-ui/server.mjs"],
+      {cwd: root, encoding: "utf8", timeout: 60000,
+        env: {...process.env, AIMAC_RUNTIME_DIR: `${doctorRuntimeDir}-startup`, AIMAC_PORT: "0", ...overrides}});
+    const said = `${attempt.stdout || ""}${attempt.stderr || ""}`;
+    if (attempt.status === 0) throw new Error(`启动期「${why}」居然没被拦下`);
+    if (/ {4}at \w+|node:internal/u.test(said)) {
+      throw new Error(`启动期「${why}」吐给运维的是崩溃栈：${said.slice(0, 200)}`);
+    }
+    if (!said.includes(expected)) {
+      throw new Error(`启动期「${why}」没说清原因，期望提到「${expected}」：${said.slice(0, 200)}`);
+    }
+    if (!said.includes("·")) throw new Error(`启动期「${why}」只报了结论、没给下一步`);
+  }
+  // 密钥不安全时绝不能把密钥本身回显出去 —— 启动日志常被原样贴进工单。
+  const leaky = spawnSync(process.execPath, ["apps/control-plane-ui/server.mjs"],
+    {cwd: root, encoding: "utf8", timeout: 60000,
+      env: {...process.env, AIMAC_RUNTIME_DIR: `${doctorRuntimeDir}-startup`, AIMAC_PORT: "0",
+        AIMAC_BOOTSTRAP_TOKEN: "hunter2-please-do-not-print"}});
+  if (`${leaky.stdout || ""}${leaky.stderr || ""}`.includes("hunter2-please-do-not-print")) {
+    throw new Error("启动期把不安全的密钥原样打进了日志");
+  }
+}
+
 const child = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
   cwd: root,
   env: {

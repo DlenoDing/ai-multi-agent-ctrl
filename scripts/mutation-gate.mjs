@@ -903,6 +903,15 @@ const MUTATIONS = [
     expect: "认不出子命令时"
   },
   {
+    // npm start 起不来是运维最常撞到的失败时刻。此前这一族是裸 throw + 机器码。
+    name: "启动期拒绝要说清规则和下一步",
+    file: "apps/control-plane-ui/server.mjs",
+    skip: "判别力由控制面 e2e 覆盖（已用 mutate-probe 实证：换回机器码那道门变红）",
+    from: "      throw startupError(`${envName} 这个密钥不安全，拒绝启动`, [",
+    to: "      throw new Error(`${envName}_is_unsafe_default_or_too_short`);",
+    expect: "没说清原因"
+  },
+  {
     // 装机的人是在一台新机器上 curl | sh，手上没有别的上下文。这三条都由远程 agent e2e 覆盖
     // （它真的把这个脚本跑失败）。登记在这里只是把"谁覆盖了它"写在明处 ——
     // 注意 skip 的条目【锚点不强制】，所以这份登记挡不住文案漂走，挡住它的是 e2e 里的断言本身。

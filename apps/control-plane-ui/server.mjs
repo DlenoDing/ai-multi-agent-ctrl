@@ -234,17 +234,48 @@ function assertRuntimeSecurity() {
     "AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN"
   ]) {
     if (process.env[envName] !== undefined && weakSecret(process.env[envName])) {
-      throw new Error(`${envName}_is_unsafe_default_or_too_short`);
+      // 只说长度，绝不回显密钥本身 —— 启动日志常被贴进工单。
+      throw startupError(`${envName} 这个密钥不安全，拒绝启动`, [
+        "要求：至少 20 个字符，且不能是示例/占位值",
+        `当前给的是 ${String(process.env[envName]).trim().length} 个字符`,
+        `生成一个：node -e "console.log(require('node:crypto').randomBytes(24).toString('base64url'))"`
+      ]);
     }
   }
   const configuredPublicUrl = process.env.AIMAC_PUBLIC_URL || readRuntimeConfig().publicUrl || "";
-  if (host === "0.0.0.0" && !configuredPublicUrl) throw new Error("AIMAC_PUBLIC_URL_required_when_binding_public_host");
+  if (host === "0.0.0.0" && !configuredPublicUrl) {
+    throw startupError("对外监听（0.0.0.0）时必须给 AIMAC_PUBLIC_URL", [
+      "agent 和 MCP 客户端要靠这个地址回连，服务自己猜不出对外该是什么地址",
+      "例：AIMAC_PUBLIC_URL=https://aimac.example.com",
+      "只在本机用就把 AIMAC_HOST 留空（默认 127.0.0.1），不需要这个变量"
+    ]);
+  }
   if (configuredPublicUrl) {
-    const parsed = new URL(configuredPublicUrl);
+    let parsed;
+    try {
+      parsed = new URL(configuredPublicUrl);
+    } catch {
+      // 原先这里直接冒出 node:internal/url 的崩溃栈，连是哪个变量都不说。
+      throw startupError(`AIMAC_PUBLIC_URL 不是一个合法的 URL：${configuredPublicUrl}`, [
+        "要带协议，形如 https://aimac.example.com",
+        "它也可能来自运行时配置文件里的 publicUrl"
+      ]);
+    }
     if (parsed.protocol !== "https:" && !isLocalHostname(parsed.hostname) && process.env.AIMAC_ALLOW_INSECURE_PUBLIC_URL !== "true") {
-      throw new Error("AIMAC_PUBLIC_URL_requires_https_for_non_local_hosts");
+      throw startupError(`AIMAC_PUBLIC_URL 用的是 ${parsed.protocol}// 而主机 ${parsed.hostname} 不是本机，拒绝启动`, [
+        "入网票和 Bearer 令牌都会走这个地址，明文传输等于把它们交出去",
+        "本机地址（127.0.0.1 / localhost / ::1）不受此限",
+        "隔离环境下确要放行：AIMAC_ALLOW_INSECURE_PUBLIC_URL=true"
+      ]);
     }
   }
+}
+
+// 启动期的失败是运维最常撞到的一刻（npm start 起不来）。这一族此前全是裸 throw ——
+// 人看到的是一段 Node 崩溃栈加一个机器码，既不说规则是什么，也不说下一步。
+// 与 [state-store] / [startup] 端口那几条同规：一句人话 + 下一步，退出码 1。
+function startupError(summary, nextSteps) {
+  return Object.assign(new Error(summary), {nextSteps});
 }
 
 function weakSecret(value) {
@@ -5610,7 +5641,13 @@ server.keepAliveTimeout = Math.max(5000, Number(process.env.AIMAC_KEEP_ALIVE_TIM
 server.headersTimeout = server.keepAliveTimeout + 5000;
 server.requestTimeout = Math.max(server.headersTimeout, Number(process.env.AIMAC_REQUEST_TIMEOUT_MS || 300000));
 
-assertRuntimeSecurity();
+try {
+  assertRuntimeSecurity();
+} catch (error) {
+  console.error(`[startup] ${error.message}`);
+  for (const step of error.nextSteps || []) console.error(`  · ${step}`);
+  process.exit(1);
+}
 ensureState();
 // 运行目录的身份（设备+inode）在启动时记一次：目录被清掉又重建时它会变。
 // 不能记【状态文件】的 inode —— 原子写每次 rename 都会换掉那个文件的 inode，
