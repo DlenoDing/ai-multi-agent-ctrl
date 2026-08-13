@@ -1067,6 +1067,24 @@ const MUTATIONS = [
     expect: "被守卫吃掉了"
   },
   {
+    // 手机键盘默认首字母大写：严格比较＝人拿自己的邮箱登不进来，且只回一句统一的 401。
+    name: "邮箱比对要按大小写归一",
+    file: "apps/control-plane-ui/server.mjs",
+    skip: "判别力由控制面 e2e 覆盖（真的换大小写+带空格登录一次）",
+    from: "      || state.accounts.find((item) => sameEmail(item.email, email));",
+    to: "      || null;",
+    expect: "换个大小写"
+  },
+  {
+    // 登录与"是否已注册"只改一边 → 两个只差大小写的账号，登录时不知道匹配谁。
+    name: "是否已注册要和登录同一口径",
+    file: "apps/control-plane-ui/server.mjs",
+    skip: "判别力由控制面 e2e 覆盖（真的建两个只差大小写的账号）",
+    from: "    if (body.admin?.email && (state.accounts || []).some((item) => sameEmail(item.email, body.admin.email))) {",
+    to: "    if (body.admin?.email && (state.accounts || []).some((item) => item.email === String(body.admin.email))) {",
+    expect: "只差大小写的第二个账号"
+  },
+  {
     // 初始组织管理员的邮箱是登录身份，不能替人编一个。
     name: "建组织必须指定管理员邮箱",
     file: "apps/control-plane-ui/server.mjs",

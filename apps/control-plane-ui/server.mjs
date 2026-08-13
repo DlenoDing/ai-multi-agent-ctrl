@@ -225,6 +225,19 @@ function readRuntimeConfig() {
   return JSON.parse(readFileSync(configPath, "utf8"));
 }
 
+// 邮箱比对一律走这里。域名部分本来就不区分大小写，而手机键盘默认把首字母大写 ——
+// 严格比较会让人用自己的邮箱登不进来，回的还是一句 invalid_credentials（有意不透露账号是否存在），
+// 于是人完全看不出问题出在大小写上。粘贴时带的首尾空格同理。
+// 登录查找与"是否已注册"必须用【同一个口径】：只改一边，就会出现两个只差大小写的账号，
+// 而登录时不知道该匹配谁。存储里仍保留本人填写的原样，只在比对时归一。
+function normalizedEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function sameEmail(left, right) {
+  return normalizedEmail(left) === normalizedEmail(right) && normalizedEmail(left) !== "";
+}
+
 function assertRuntimeSecurity() {
   for (const envName of [
     "AIMAC_BOOTSTRAP_TOKEN",
@@ -2689,7 +2702,10 @@ async function handleApi(req, res) {
     const config = readRuntimeConfig();
     const token = String(body.token || body.accountToken || body.bootstrapToken || "");
     const email = String(body.email || "");
-    const account = state.accounts.find((item) => item.email === email || item.accountId === email);
+    // 精确匹配优先：万一历史数据里已经有两个只差大小写的账号，行为与从前一致；
+    // 找不到再按归一口径找一次，让大小写/空格不同的人也能进来。
+    const account = state.accounts.find((item) => item.email === email || item.accountId === email)
+      || state.accounts.find((item) => sameEmail(item.email, email));
     const method = account?.authPolicy?.method;
     const bootstrapOk = method === "bootstrap_token" && digestOf(`bootstrap:${token}`) === config.bootstrapTokenHash;
     const localAccountOk = Boolean(account && config.localAccountTokenHashes?.[account.accountId] === digestOf(`account:${account.accountId}:${token}`));
@@ -3654,7 +3670,7 @@ async function handleApi(req, res) {
     // Email must be unique: /api/auth/login resolves an account by the FIRST email match, so a second
     // account sharing an explicit email would be unreachable via the email+token flow the invite
     // response hands back. Reject the collision (login-by-accountId is unaffected).
-    if (body.email && (state.accounts || []).some((item) => item.email === String(body.email))) {
+    if (body.email && (state.accounts || []).some((item) => sameEmail(item.email, body.email))) {
       json(res, 409, {error: "account_email_already_registered"});
       return;
     }
@@ -4575,7 +4591,7 @@ async function handleApi(req, res) {
         received: body.admin === undefined ? "请求体里没有 admin 这一层" : `admin.email = ${JSON.stringify(body.admin?.email)}`});
       return;
     }
-    if (body.admin?.email && (state.accounts || []).some((item) => item.email === String(body.admin.email))) {
+    if (body.admin?.email && (state.accounts || []).some((item) => sameEmail(item.email, body.admin.email))) {
       json(res, 409, {error: "account_email_already_registered"});
       return;
     }
@@ -4780,7 +4796,7 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const quota = organizationQuotaCheck(state, orgId, "members");
     if (!quota.allowed) return json(res, 409, {error: quota.error, quota: quota.quota, usage: quota.usage, kind: quota.kind});
-    if (body.email && (state.accounts || []).some((item) => item.email === String(body.email))) {
+    if (body.email && (state.accounts || []).some((item) => sameEmail(item.email, body.email))) {
       return json(res, 409, {error: "account_email_already_registered"});
     }
     const at = now();

@@ -949,6 +949,47 @@ try {
     }
   }
 
+  // 邮箱按大小写/首尾空格归一比对。手机键盘默认把首字母大写，粘贴常带空格 ——
+  // 严格比较会让人拿自己的邮箱登不进来，而回的是统一的 invalid_credentials（有意不透露
+  // 账号是否存在），于是人完全看不出问题出在大小写上。登录与"是否已注册"必须同一口径，
+  // 否则会存在两个只差大小写的账号、登录时不知道该匹配谁 —— 三支都验。
+  {
+    const made = await jsonFetch(port, "/api/orgs", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-org-email-case", authorization: systemAuth},
+      body: JSON.stringify({name: "大小写探针组织", admin: {displayName: "管", email: "case.probe@local"}})
+    });
+    if (made.response.status !== 201) throw new Error(`大小写探针组织没建起来：${made.response.status}`);
+    const upper = await jsonFetch(port, "/api/auth/login", {
+      method: "POST", body: JSON.stringify({email: "  Case.Probe@LOCAL  ", token: made.payload.accountToken})
+    });
+    if (upper.response.status !== 200) {
+      throw new Error(`换个大小写（并带首尾空格）就登不进来了：HTTP ${upper.response.status} `
+        + `${JSON.stringify(upper.payload).slice(0, 120)}`);
+    }
+    const dupe = await jsonFetch(port, "/api/orgs", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-org-email-case-dupe", authorization: systemAuth},
+      body: JSON.stringify({name: "撞名组织", admin: {displayName: "管乙", email: "CASE.PROBE@local"}})
+    });
+    if (dupe.response.status !== 409) {
+      throw new Error(`建出了只差大小写的第二个账号（HTTP ${dupe.response.status}）——`
+        + "登录时就不知道该匹配谁了");
+    }
+    // 统一的 401 是有意的（不透露账号是否存在）。归一比对不能把这个性质带偏。
+    const wrongToken = await jsonFetch(port, "/api/auth/login", {
+      method: "POST", body: JSON.stringify({email: "case.probe@local", token: "definitely-not-the-token"})
+    });
+    const noSuchAccount = await jsonFetch(port, "/api/auth/login", {
+      method: "POST", body: JSON.stringify({email: "nobody.at.all@local", token: "definitely-not-the-token"})
+    });
+    if (wrongToken.response.status !== 401 || noSuchAccount.response.status !== 401
+      || JSON.stringify(wrongToken.payload) !== JSON.stringify(noSuchAccount.payload)) {
+      throw new Error("登录失败的回答不再统一了 —— 账号存不存在会被探出来："
+        + `${JSON.stringify(wrongToken.payload)} vs ${JSON.stringify(noSuchAccount.payload)}`);
+    }
+  }
+
   const orgCreate = await jsonFetch(port, "/api/orgs", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-org-create", authorization: systemAuth},
