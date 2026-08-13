@@ -1049,6 +1049,24 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 没被挤掉却宣称"更早的在归档里" = 凭空造出一次截断，还把人支去看空归档。
+    name: "台账脚注不得凭空宣称有记录被挤掉",
+    file: APP,
+    gate: "console",
+    from: "  return `台账共 ${shown} 条，都在这一屏内；归档文件里是同一份完整记录。`;",
+    to: "  return `这一屏只保留最近 ${shown} 条；更早的记录在归档文件里，不在这一屏内。`;",
+    expect: "不许暗示有更早的记录"
+  },
+  {
+    // 上限写死在界面里，服务端一改这句话就开始说谎。
+    name: "台账上限只能来自服务端下发",
+    file: APP,
+    gate: "console",
+    from: "  const cap = Number(state.runtime?.auditLogCap || 0);",
+    to: "  const cap = 80;",
+    expect: "不许自己编一个"
+  },
+  {
     // 表脚少了第三个参数，"共 N 条"就成了把截断后的条数当总数报给人。
     name: "表脚不得把截断后的条数当总数",
     check: "verifyTableFootersAdmitTruncation",

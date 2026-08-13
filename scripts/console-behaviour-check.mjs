@@ -757,6 +757,33 @@ function runPendingTruncationCase() {
     capped.includes("2+") && /只多不少/.test(capped),
     "只改了总数却没说明是哪一类被截断、也没说明数字的方向");
 
+  // 台账那句脚注原先是无条件的："这里只保留最近 N 条；更早的记录在归档文件里"，N 取当前条数。
+  // 于是全新部署只有 2 条时它宣称有更早的记录被挤到归档里 —— 凭空造出一次截断，
+  // 还把人支去看一个空归档。真实全新部署上读到的就是这句。两支都要验：
+  // 没挤掉时不许暗示有东西被挤掉，挤掉了要报【上限】而不是当前条数。
+  {
+    const overview = {storage: {}, server: {}, resources: {}, energy: {}, runtime: {}};
+    const withAudit = (count) => ({
+      schemaVersion: "runtime-state/v1", stateVersion: 1,
+      runtime: {auditLogCap: 80}, projects: [], taskGroups: [], accounts: [], organizations: [],
+      auditLog: Array.from({length: count}, (unused, index) => ({at: "2026-08-13T00:00:00.000Z",
+        actor: "auth-service", action: "login", subject: `Account:a${index}`, result: "succeeded"}))
+    });
+    const few = probe.renderSysOverviewWith(withAudit(2), admin, overview);
+    check("台账没被挤掉时不许暗示有更早的记录不在这一屏",
+      /台账共 2 条，都在这一屏内/.test(few) && !/不在这一屏内/.test(few),
+      `实得：${(few.match(/台账[^<]{0,60}|这一屏只保留[^<]{0,60}/u) || ["（没有这句脚注）"])[0]}`);
+    const many = probe.renderSysOverviewWith(withAudit(80), admin, overview);
+    check("台账被挤掉时要报【上限】而不是当前条数",
+      /这一屏只保留最近 80 条/.test(many) && /不在这一屏内/.test(many),
+      `实得：${(many.match(/台账[^<]{0,60}|这一屏只保留[^<]{0,60}/u) || ["（没有这句脚注）"])[0]}`);
+    // 上限必须来自服务端下发的真相源：界面自己写死一个数，服务端一改这句话就开始说谎。
+    const noCap = probe.renderSysOverviewWith({...withAudit(80), runtime: {}}, admin, overview);
+    check("服务端没给上限时，界面不许自己编一个",
+      !/只保留最近 80 条/.test(noCap),
+      "界面在没拿到 auditLogCap 的情况下报出了 80 —— 那个数是写死的");
+  }
+
   // 红点只能统计"这个人有权处置"的项。把别人负责的也算进来，那个数字就永远清不掉 ——
   // 人每次打开都看到"还有 N 项等你处理"，点进去无事可做，最后学会无视它。
   // 决定"哪些项算数"的 taskGroups 自己也会被截断：超出上限的任务组下的待办连桶都进不去。

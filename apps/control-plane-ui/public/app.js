@@ -1620,7 +1620,7 @@ function renderSysOverview() {
       <div class="stack">
         ${state.auditArchiveFault ? `<div class="notice warn-notice">审计归档写入失败，已有 ${esc(state.auditArchiveFault.lostEntries)} 条记录没能落盘（${esc(state.auditArchiveFault.error)}）—— 这段时间的操作事后查不到，请先修复磁盘或权限。</div>` : ""}
         ${table(["时间", "操作者", "动作", {label: "对象", c: "text-clip"}, "结果"], audit, {moreText: moreText((state.auditLog || []).length, 15, "auditLog")})}
-        <div class="small muted">这里只保留最近 ${(state.auditLog || []).length} 条；更早的记录在归档文件里，不在这一屏内。</div>
+        <div class="small muted">${auditWindowNote()}</div>
         ${/* 经 MCP 改的状态此前在这一屏上一条痕迹都没有（主台账只由 REST 侧写）。现在两条写路径
               共用同一本台账：MCP 的写入记成「MCP 工具调用」，执行者形如 mcp:<主体类型>:<id>。
               入参与返回摘要仍在 mcp-audit.jsonl 里，那是另一层的东西，这里说清去哪看。 */""}
@@ -3069,6 +3069,19 @@ const COLLECTION_LABELS = {
   systemUpgradeCandidates: "升级候选", taskGroups: "任务组", testResults: "测试结果",
   workSessions: "工作会话", workerLanes: "载体"
 };
+// 这句话原先是无条件的："这里只保留最近 N 条；更早的记录在归档文件里，不在这一屏内。"
+// N 取的是当前条数 —— 于是全新部署只有 2 条时，它宣称"只保留最近 2 条、更早的在归档里"，
+// 凭空造出一次截断，还把人支去看一个空归档。这是截断诚实的镜像：不是藏起截断，是发明截断。
+// 上限由服务端下发（audit-ledger 的 AUDIT_LOG_CAP），界面不自己编这个数。
+function auditWindowNote() {
+  const shown = (state.auditLog || []).length;
+  const cap = Number(state.runtime?.auditLogCap || 0);
+  if (cap && shown >= cap) {
+    return `这一屏只保留最近 ${cap} 条；更早的记录在归档文件里，不在这一屏内。`;
+  }
+  return `台账共 ${shown} 条，都在这一屏内；归档文件里是同一份完整记录。`;
+}
+
 function truncationBanner() {
   const fields = (state.truncatedCollections || []).filter((field) => field !== "truncatedCollections");
   if (!fields.length) return "";

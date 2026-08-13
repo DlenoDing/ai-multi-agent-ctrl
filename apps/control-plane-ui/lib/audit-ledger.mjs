@@ -15,6 +15,10 @@ import { digestOf } from "./control-plane-core.mjs";
 
 let archiveFault = null;
 
+// 内存台账只留最近这么多条，更早的只在归档文件里。界面要据此判断「有没有东西被挤掉」，
+// 所以这个数必须只有一处 —— 此前它是这里的一个字面量，而界面自己编了一句"只保留最近 N 条"。
+export const AUDIT_LOG_CAP = 80;
+
 export function auditArchiveFault() {
   return archiveFault;
 }
@@ -33,7 +37,7 @@ export function appendAuditEntry(state, {actor, action, subject, result = "succe
   };
   entry.rowHash = digestOf(entry);
   state.auditLog.unshift(entry);
-  state.auditLog = state.auditLog.slice(0, 80);
+  state.auditLog = state.auditLog.slice(0, AUDIT_LOG_CAP);
   state.auditChainHead = entry.rowHash;
   state.__pendingAuditAppends = [...(state.__pendingAuditAppends || []), entry];
   return entry;

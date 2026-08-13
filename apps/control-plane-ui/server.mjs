@@ -7,7 +7,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node:os";
 import { basename, dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { appendAuditEntry, auditArchiveFault as sharedAuditArchiveFault, flushPendingAuditAppends as flushAuditArchive } from "./lib/audit-ledger.mjs";
+import { AUDIT_LOG_CAP, appendAuditEntry, auditArchiveFault as sharedAuditArchiveFault, flushPendingAuditAppends as flushAuditArchive } from "./lib/audit-ledger.mjs";
 import { mcpServiceAllowedTools } from "./lib/mcp-service-allowlist.mjs";
 import { assertStateStoreConfig, consumeStateRebuildSignal, ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
 import { appendProjectExecutionEvent, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
@@ -289,6 +289,8 @@ function readState() {
   ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: process.env.AIMAC_PUBLIC_URL || localEndpoint(), executionProfile});
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
   state.runtime.autonomousOrchestrator = runtimeOrchestratorStatus;
+  // 台账上限下发给界面：它要据此判断「有没有东西被挤掉」，而不是自己编一个数。
+  state.runtime.auditLogCap = AUDIT_LOG_CAP;
   return state;
 }
 
