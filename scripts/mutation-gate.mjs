@@ -2607,6 +2607,10 @@ const MUTATIONS = [
 // 超时被 SIGKILL 时处理器根本来不及跑，源码就留在改坏状态里（实测发生过：一次超时之后
 // control-plane-core.mjs 带着 `status: false` 留在工作区）。所以把"我正在改坏哪个文件"
 // 落到磁盘上：下次启动先看这张便条，能恢复就恢复，恢复不了就拒绝运行而不是继续改坏别的。
+// 【被硬杀之后怎么办】：信号钩子在 SIGKILL 下跑不了（工具超时、kill -9 都会走到这里），
+// 于是工作区里会留着一份被改坏的源码。**先原样再跑一次本门**，它会读这张便条把文件恢复回去；
+// 不要先手工 git checkout —— 那会把便条和它要恢复的对象一起丢掉，
+// 也就永远看不出到底是哪一条变异没收尾（2026-08-14 我自己就这么干了一次）。
 const pendingNotePath = join(root, ".runtime", "mutation-gate-pending.json");
 
 function writePendingNote(path, original, mutated) {
@@ -2832,6 +2836,9 @@ async function judgeMutation(mutation, workdir) {
 }
 
 async function runParallel(mutations) {
+  // 并行度封在 4：不是随手写的，是量过的。2026-08-14 在 18 核机器上实测 287 条变异 ——
+  // 4 路 393 秒；8 路超过 600 秒（更慢）。每个 worktree 里跑的是完整契约门，它自己就要起服务端、
+  // 开几百个 git 子进程，8 份并发只是在抢 CPU 和磁盘。**别再调大它。**
   const workers = Math.max(1, Math.min(4, cpus().length - 2));
   pruneStaleWorktrees();
   const dirs = [];
@@ -2920,7 +2927,13 @@ function checkAnchorsOnly() {
   process.exit(0);
 }
 
-if (process.argv.includes("--anchors-only")) checkAnchorsOnly();
+if (process.argv.includes("--anchors-only")) {
+  // 锚点体检原先不做恢复：上一轮被硬杀留下的便条会一直躺着，而它守的那个文件也一直是改坏的 ——
+  // 而锚点体检恰恰是每次 validate 都跑的第一道门，它最该先把残局收掉。
+  // （不收的话还有更坏的一面：锚点是拿【改坏后的】源码去比对的，本身就不作数。）
+  recoverFromPreviousRun();
+  checkAnchorsOnly();
+}
 
 // 只跑名字里含某个片段的那几条。调单条变异时不必陪跑全量（本机全量并行约 24 分钟），
 // 也让"把 expect 改成绝不会出现的串、它必须报失败"这类自证做得起。
