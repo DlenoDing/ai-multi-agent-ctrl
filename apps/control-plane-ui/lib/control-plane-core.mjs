@@ -2989,9 +2989,15 @@ function validateCheckpointGitEvidence(state, request) {
       mismatchedField: targetScopeMismatch};
   }
   if (target.status === "pushed") return {valid: false, status: 409, error: "repository_output_target_already_pushed"};
+  // 四个条件合用一个码，而它们对调用方意味着完全不同的下一步：没有租约要去申请，
+  // 被别的会话持有要等，租约已释放要重新获取。点名是哪一种（与同文件里另外三处同规）。
   const lease = state.leases.find((item) => item.leaseId === target.leaseRef);
-  if (!lease || lease.status !== "active" || lease.resourceRef !== `RepositoryOutputTarget:${target.targetId}` || lease.holderRef !== `session:${session.sessionId}`) {
-    return {valid: false, status: 409, error: "active_session_lease_required"};
+  const leaseProblem = !lease ? "lease_missing"
+    : lease.status !== "active" ? "lease_not_active"
+      : lease.resourceRef !== `RepositoryOutputTarget:${target.targetId}` ? "lease_on_another_resource"
+        : lease.holderRef !== `session:${session.sessionId}` ? "lease_held_by_another_session" : null;
+  if (leaseProblem) {
+    return {valid: false, status: 409, error: "active_session_lease_required", leaseProblem};
   }
   const normalizedCommitRefs = [];
   for (const commitRef of checkpointInput.commitRefs || []) {

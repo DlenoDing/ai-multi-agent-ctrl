@@ -6887,7 +6887,7 @@ function verifyApprovedAcceptanceChecksHaveEvidence(output) {
 
 function verifyHumanApprovedPathsBindTheCommit(output) {
   const runCase = ({stray, finalized, trespass, writeForbidden, forgeCommit, forgePush, forgeTree,
-    forgeContractDigest, forgeManifestBinding, forgeManifestDigest}) => {
+    forgeContractDigest, forgeManifestBinding, forgeManifestDigest, forgeLeaseHolder}) => {
     const repo = mkdtempSync(join(tmpdir(), "cc-owned-"));
     const remote = mkdtempSync(join(tmpdir(), "cc-owned-remote-"));
     const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
@@ -6919,7 +6919,10 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       baseRef, branch: "main", remote: "origin", repositoryUrl: remote, status: "pending",
       pathAllowlist: ["**"]}); // 仓库层放开，才看得出"人批的方案"这一层有没有生效
     const lease = {leaseId: `lease_cc_${state.leases.length}`, resourceRef: `RepositoryOutputTarget:${target.targetId}`,
-      holderRef: `session:${session.sessionId}`, status: "active", acquiredAt: new Date().toISOString()};
+      // forgeLeaseHolder：租约在【别的会话】手里。这是真实世界里最常见的那一种 ——
+      // 两个 agent 抢同一个产出目标，互斥全靠这道守卫。
+      holderRef: forgeLeaseHolder ? "session:somebody_else" : `session:${session.sessionId}`,
+      status: "active", acquiredAt: new Date().toISOString()};
     state.leases.push(lease);
     target.leaseRef = lease.leaseId;
 
@@ -7073,6 +7076,17 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
   if (!compliant.skipped && compliant.result.accepted !== true) {
     output.push(`一份如实上报、且只改了批准范围内路径的检查点没有被受理（${compliant.result.error}）——`
       + " 下面所有'谎报会被拒'的用例都建立在这条之上，它不成立时那些用例证明不了任何东西");
+  }
+
+  // 互斥租约：产出目标的租约在别的会话手里时，这一份检查点不能被受理 ——
+  // 否则两个 agent 可以同时往同一个产出目标上写。这条守卫此前【一条判据都没有】。
+  const foreignLease = runCase({stray: false, finalized: true, forgeLeaseHolder: true});
+  if (!foreignLease.skipped && foreignLease.result.error !== "active_session_lease_required") {
+    output.push(`租约在别的会话手里，这份检查点却被受理了（实际：${foreignLease.result.error || "已受理"}）`
+      + " —— 互斥没了，两个 agent 能同时往同一个产出目标上写");
+  } else if (!foreignLease.skipped && foreignLease.result.leaseProblem !== "lease_held_by_another_session") {
+    output.push(`租约被拒时没说清是哪一种（实得 ${foreignLease.result.leaseProblem || "没有这个字段"}）——`
+      + " 没有租约要去申请、被别人持有要等，两种下一步完全不同");
   }
 
   // 清单的绑定字段谎报：把一份真实提交的产出清单挂到别的项目/任务上。

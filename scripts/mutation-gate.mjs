@@ -1049,6 +1049,24 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 互斥没了 = 两个 agent 能同时往同一个产出目标上写。
+    name: "租约被别的会话持有时不得受理检查点",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    file: CORE,
+    from: "  if (leaseProblem) {",
+    to: "  if (false) {",
+    expect: "互斥没了"
+  },
+  {
+    // 没有租约要去申请、被别人持有要等 —— 两种下一步完全不同，报文必须分得开。
+    name: "租约被拒要说清是哪一种",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    file: CORE,
+    from: '    return {valid: false, status: 409, error: "active_session_lease_required", leaseProblem};',
+    to: '    return {valid: false, status: 409, error: "active_session_lease_required"};',
+    expect: "没说清是哪一种"
+  },
+  {
     // 跨组织授权失效时同组织的授权照旧成功，只有那一次把外人放进项目会悄悄通过。
     name: "别的组织的账号不得被授权进本项目",
     file: "apps/control-plane-ui/server.mjs",
