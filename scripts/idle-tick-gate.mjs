@@ -9,6 +9,9 @@ import {existsSync, mkdtempSync, readFileSync, readdirSync} from "node:fs";
 import {join, dirname, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {tmpdir} from "node:os";
+import {installGateFetch} from "./lib/gate-fetch.mjs";
+
+installGateFetch("空转门");
 
 // 起过的子进程一律登记，并在【所有】退出路径上收掉。
 // 只在成功路径上 kill 是不够的：断言抛错、超时、Ctrl-C 时服务就成了孤儿（父进程没了、PPID=1），

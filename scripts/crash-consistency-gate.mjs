@@ -6,6 +6,9 @@ import {once} from "node:events";
 import {chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, readdirSync, utimesSync, unlinkSync} from "node:fs";
 import {join} from "node:path";
 import {hostname, tmpdir} from "node:os";
+import {installGateFetch} from "./lib/gate-fetch.mjs";
+
+installGateFetch("崩溃一致性门");
 
 import {basename, dirname, resolve} from "node:path";
 import {fileURLToPath} from "node:url";

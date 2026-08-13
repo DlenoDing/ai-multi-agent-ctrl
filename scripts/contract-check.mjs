@@ -212,6 +212,11 @@ async function runAsync(check) {
 }
 
 function run(check) {
+  // async 的检查用 run() 注册＝它推进 errors 时报告早就打完了：那条检查【永远是绿的】。
+  // 本轮真撞了一次，且是靠"变异改不红"才发现的 —— 直接在这里拦住，别让下一个人再踩。
+  if (check.constructor?.name === "AsyncFunction") {
+    throw new Error(`${check.name} 是 async 检查，必须用 runAsync 注册 —— 用 run 的话它的失败永远来不及计入`);
+  }
   if (ONLY && check.name !== ONLY) { skippedChecks.push(check.name); return; }
   ranCheckCount += 1;
   const before = errors.length;
@@ -303,6 +308,7 @@ run(verifyOperatorCliRejectsUnknownFlags);
 run(verifyMcpDoesNotReimplementCore);
 run(verifyIssuedCredentialsAlwaysExpire);
 run(verifyInertMechanismsStayRegistered);
+await runAsync(verifyGateFetchFailuresNameTheGate);
 run(verifyMcpInputDictionaryHasNoGhosts);
 run(verifyServerStateFieldsHaveProducers);
 run(verifyProjectShardsAreNeverSilentlyDropped);
@@ -5107,6 +5113,57 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
   if (missing.length) {
     output.push(`这些地方签发了一次性邀请凭据却没写过期时间：${missing.join("、")} —— `
       + "登录判据是「没有过期时间就算没过期」，那张票会永远有效");
+  }
+}
+
+// 一次真实的间歇红只留下 `TypeError: fetch failed` + `ECONNREFUSED 127.0.0.1:50725`：
+// 看不出出自哪道门，也看不出最要紧的那句 —— 服务端没在监听时，这一轮后面的断言什么也没验。
+// 两半都要验：包装器真的说得出这些（行为），以及起服务的门真的装了它（接线）。
+async function verifyGateFetchFailuresNameTheGate(output) {
+  const {installGateFetch} = await import(`file://${join(root, "scripts/lib/gate-fetch.mjs")}`);
+  // 行为：真去连一个没人监听的端口。先占一个临时端口再立刻关掉 —— 这样它一定被拒、也一定不撞别人。
+  // （第一版用固定的 1 端口，undici 直接判 "bad port" 根本没发起连接，探针测了个空。）
+  const {createServer} = await import("node:net");
+  const closedServer = createServer();
+  await new Promise((resolve) => closedServer.listen(0, "127.0.0.1", resolve));
+  const closedPort = closedServer.address().port;
+  await new Promise((resolve) => closedServer.close(resolve));
+  const restore = installGateFetch("探针门");
+  let message = "";
+  try {
+    await fetch(`http://127.0.0.1:${closedPort}/never-listening`);
+    message = "(竟然连上了)";
+  } catch (error) {
+    message = String(error?.message || error);
+  } finally {
+    restore();
+  }
+  for (const [needle, why] of [["探针门", "没说是哪道门"], [`127.0.0.1:${closedPort}`, "没说哪个地址"],
+    ["ECONNREFUSED", "没给出错误码"], ["本轮结论不可信", "没说清这一轮什么也没验"]]) {
+    if (!message.includes(needle)) {
+      output.push(`门里 fetch 失败时的报文${why}（实际："${message.slice(0, 160)}"）`);
+    }
+  }
+  // 接线：起了真实服务端再去请求它的门，都要装上。装不上的要写明为什么。
+  const GATES_SERVING_HTTP = {
+    "scripts/idle-tick-gate.mjs": "空转门",
+    "scripts/crash-consistency-gate.mjs": "崩溃一致性门",
+    // 它自己那套逐请求分类只盖住了批量写那一段，后面几段是裸 fetch —— 实撞过一次：
+    // 服务端中途不再监听，一句裸 TypeError 把整道门打断，连它收集的服务端日志都没打印出来。
+    "scripts/concurrent-writer-gate.mjs": "并发写入门"
+  };
+  const EXEMPT = {};
+  for (const [rel, gateName] of Object.entries(GATES_SERVING_HTTP)) {
+    const src = readFileSync(join(root, rel), "utf8");
+    if (!src.includes(`installGateFetch("${gateName}")`)) {
+      output.push(`${rel} 起了真实服务端却没装 installGateFetch("${gateName}") —— 它的 fetch 一旦失败，只会留下一句读不动的 TypeError`);
+    }
+  }
+  for (const [rel, reason] of Object.entries(EXEMPT)) {
+    const src = readFileSync(join(root, rel), "utf8");
+    if (!src.includes("const transportFlakes = [];")) {
+      output.push(`${rel} 被登记为豁免（${reason}），但它自己那套分类已经不在了 —— 豁免的前提没了`);
+    }
   }
 }
 

@@ -9,6 +9,11 @@ import {tmpdir} from "node:os";
 
 import {dirname, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
+import {installGateFetch, transportErrorCode} from "./lib/gate-fetch.mjs";
+
+// 本门只有批量写那一段自己 catch 了 fetch，后面几段（定稿竞争、双方复写）是裸的：
+// 服务端中途不再监听时，一句裸 TypeError 就把整道门打断，连它自己收集的服务端日志都来不及打印。
+installGateFetch("并发写入门");
 
 // 起过的子进程一律登记，并在【所有】退出路径上收掉。
 // 只在成功路径上 kill 是不够的：断言抛错、超时、Ctrl-C 时服务就成了孤儿（父进程没了、PPID=1），
@@ -35,6 +40,23 @@ const root = process.argv[2] || resolve(dirname(fileURLToPath(import.meta.url)),
 const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-conc-"));
 const fails = [];
 const serverLog = [];
+// 这道门此前只在【断言失败】时才打印服务端输出。而它真正难查的那次是【裸异常】把整道门打断的：
+// 证据就在 serverLog 里，却因为异常直接冒到顶层而从没打印过。任何收场方式都要留下这份证据。
+const dumpServerLog = (why) => {
+  if (!serverLog.length) return;
+  console.log(`  --  ${why}，服务端输出（末 12 行）：`);
+  for (const line of serverLog.slice(-12)) console.log(`      ${line}`);
+};
+process.on("uncaughtException", (error) => {
+  dumpServerLog(`本门被一个未捕获的异常打断（${error?.message || error}）`);
+  console.log("concurrent writer gate failed: 未捕获异常 —— 本轮什么也没验，别当成通过");
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  dumpServerLog(`本门被一个未处理的 Promise 拒绝打断（${reason?.message || reason}）`);
+  console.log("concurrent writer gate failed: 未处理的拒绝 —— 本轮什么也没验，别当成通过");
+  process.exit(1);
+});
 const check = (ok, label, detail = "") => {
   // 参数自检：布尔与标签写反时当场报错，而不是静默恒真。
   // 本仓库四道门里三道是 (ok, label)，控制台门是 (label, ok) —— 我照着另一道的顺序写过一次，
@@ -110,7 +132,9 @@ const fire = async (server, auth, tag, count) => {
         headers: {...auth, "idempotency-key": `conc-${tag}-${index}`},
         body: JSON.stringify({name, organizationId: orgId})});
     } catch (error) {
-      transportFlakes.push(`${error?.cause?.code || error?.code || "unknown"}`);
+      // 取码要能穿透 AggregateError，否则 ECONNREFUSED 会被记成 unknown，
+      // 下面"服务端一直在监听"那条结论就永远出不来（本轮实撞）。
+      transportFlakes.push(transportErrorCode(error));
       continue;
     }
     if (response.ok) created.add(name);
@@ -218,10 +242,7 @@ for (const [server, auth, tag] of [[a, authA, "a"], [b, authB, "b"]]) {
 
 for (const server of [a, b]) { server.child.kill("SIGTERM"); }
 await new Promise((resolve) => setTimeout(resolve, 500));
-if (fails.length && serverLog.length) {
-  console.log("  --  失败时的服务端输出（末 12 行）：");
-  for (const line of serverLog.slice(-12)) console.log(`      ${line}`);
-}
+if (fails.length) dumpServerLog("有断言未通过");
 console.log(fails.length
   ? `concurrent writer gate failed: ${fails.join("；")}`
   : "concurrent writer gate ok: 两进程并发写同一份状态，被确认的写入一条不丢、双方都没被对方的锁堵死");

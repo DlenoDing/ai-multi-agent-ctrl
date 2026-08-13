@@ -986,6 +986,41 @@ const MUTATIONS = [
     expect: "这个目标可以改仓库里的任何东西"
   },
   {
+    // 一次真实的间歇红只留下 `TypeError: fetch failed` + 一个端口号，看不出出自哪道门。
+    name: "门里 fetch 失败要说清哪道门、哪个地址、以及这一轮还算不算数",
+    file: "scripts/lib/gate-fetch.mjs",
+    check: "verifyGateFetchFailuresNameTheGate",
+    from: "本轮结论不可信",
+    to: "连不上",
+    expect: "没说清这一轮什么也没验"
+  },
+  {
+    name: "起真实服务端的门都要装上那层自述",
+    file: "scripts/idle-tick-gate.mjs",
+    check: "verifyGateFetchFailuresNameTheGate",
+    from: 'installGateFetch("空转门");',
+    to: "// 没装",
+    expect: "起了真实服务端却没装"
+  },
+  {
+    // 它自己那套分类只盖住批量写那一段，后面几段是裸 fetch —— 这道门也必须装上。
+    name: "并发写入门也要装上那层自述",
+    file: "scripts/concurrent-writer-gate.mjs",
+    check: "verifyGateFetchFailuresNameTheGate",
+    from: "installGateFetch(\"并发写入门\");",
+    to: "// 没装",
+    expect: "起了真实服务端却没装"
+  },
+  {
+    // async 检查用 run() 注册＝它推进 errors 时报告早就打完了，那条检查永远是绿的（本轮实撞）。
+    name: "async 检查误用 run 必须当场拦住",
+    file: "scripts/contract-check.mjs",
+    check: "verifyGateFetchFailuresNameTheGate",
+    from: "await runAsync(verifyGateFetchFailuresNameTheGate);",
+    to: "run(verifyGateFetchFailuresNameTheGate);",
+    expect: "必须用 runAsync 注册"
+  },
+  {
     // 谎报范围：指向的清单在仓库里找得到，只是不属于这次提交 —— 一份旧清单给这一轮背书。
     name: "旧清单不得给这一轮背书",
     file: CORE,
