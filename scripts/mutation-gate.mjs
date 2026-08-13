@@ -986,6 +986,24 @@ const MUTATIONS = [
     expect: "这个目标可以改仓库里的任何东西"
   },
   {
+    // 新增一道守卫却不配判据 —— 它失效时不会有任何东西变红。棘轮就是拦这个的。
+    name: "新增拒绝码必须带判据",
+    file: CORE,
+    check: "verifyRefusalCodeCoverageRatchet",
+    from: 'if (!finalCommit) return {valid: false, status: 409, error: "commit_ref_not_found"};',
+    to: 'if (!finalCommit) return {valid: false, status: 409, error: "brand_new_uncovered_guard_code"};',
+    expect: "新增的守卫没有配判据"
+  },
+  {
+    // 棘轮的通过条件是一个数字，提取一失配它就永远数出 0 而一片绿。
+    name: "拒绝码棘轮不得空转",
+    file: "scripts/contract-check.mjs",
+    check: "verifyRefusalCodeCoverageRatchet",
+    from: 'for (const match of src.matchAll(/error:\\s*"([a-z0-9_]{6,})"/gu)) codes.add(match[1]);',
+    to: 'for (const match of src.matchAll(/nosuchthing:\\s*"([a-z0-9_]{6,})"/gu)) codes.add(match[1]);',
+    expect: "这道门在空转"
+  },
+  {
     // "不修就放行"这两类处置由 AI 自己下，等于它能把自己造出来的问题一笔勾销、关闭门随之通过。
     name: "不修就放行的处置只能由真人下",
     file: CORE,

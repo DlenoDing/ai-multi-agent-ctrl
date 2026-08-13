@@ -312,6 +312,7 @@ run(verifyOperatorCliRejectsUnknownFlags);
 run(verifyMcpDoesNotReimplementCore);
 run(verifyIssuedCredentialsAlwaysExpire);
 run(verifyInertMechanismsStayRegistered);
+run(verifyRefusalCodeCoverageRatchet);
 await runAsync(verifyGateFetchFailuresNameTheGate);
 run(verifyMcpInputDictionaryHasNoGhosts);
 run(verifyServerStateFieldsHaveProducers);
@@ -5176,6 +5177,58 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
     output.push(`这些地方签发了一次性邀请凭据却没写过期时间：${missing.join("、")} —— `
       + "登录判据是「没有过期时间就算没过期」，那张票会永远有效");
   }
+}
+
+// 拒绝码的覆盖棘轮。产品里每个 `error: "xxx"` 都是一道守卫的出口；没有任何门或 e2e 的源码提到过它，
+// 就意味着【它失效时没有任何东西会变红】—— 本轮已经因此挖出六道"失效即已受理"的检查点守卫，
+// 和两道形同虚设就能让 AI 自行结案的真人闸门。
+//
+// 口径要说清楚：判据是"门的源码里出现过这个码"，不是"它被触发过"。像 state_write_conflict
+// 那样只在运行期从报文里读出来比对的，这里算作零覆盖 —— 偏保守是有意的：要把它从名单上摘掉，
+// 就得写一条【点名】它的断言，而那正是我们想要的东西。
+//
+// 棘轮只往一个方向走：数字变大＝新增的守卫没配判据；变小＝该把这里下调，把成果钉住。
+function verifyRefusalCodeCoverageRatchet(output) {
+  // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
+  const UNCOVERED_REFUSAL_CODE_CEILING = 102;
+  const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
+    "apps/mcp-server/server.mjs"];
+  const codes = new Set();
+  for (const rel of PRODUCT) {
+    // 剥注释：注释里引用一个码不构成守卫，也不该被当成"这里有一道门"。
+    const src = readFileSync(join(root, rel), "utf8").replace(/\/\/[^\n]*/gu, "");
+    for (const match of src.matchAll(/error:\s*"([a-z0-9_]{6,})"/gu)) codes.add(match[1]);
+  }
+  const walk = (dir) => readdirSync(dir).flatMap((name) => {
+    const full = join(dir, name);
+    return statSync(full).isDirectory() ? walk(full) : [full];
+  });
+  // 整行注释要剥掉：在注释里提一个码【不是覆盖】。不剥的话，本函数上面那段解释文字里写到的
+  // state_write_conflict 就会把自己算成"已覆盖"——门读到自己写的字，这个形状本仓已撞七次。
+  // 只剥整行（不剥行尾），免得把 URL 里的 // 之后的真代码一起吃掉。
+  // 变异登记表要排除：它列的是【锚点】不是判据 —— 一个码出现在 from/to 里，不证明任何东西会因它变红。
+  // 更直接的理由：本棘轮自己的那条变异用了一个假码，而登记表就在被扫目录里，
+  // 于是"新增一个没配判据的码"当场被登记表自己喂饱（门读到自己写的字，本仓第八次）。
+  const gateSources = walk(join(root, "scripts"))
+    .filter((file) => /\.(mjs|rb|sh|js)$/u.test(file) && !file.endsWith("mutation-gate.mjs"))
+    .map((file) => readFileSync(file, "utf8").split("\n").filter((line) => !/^\s*(\/\/|#)/u.test(line)).join("\n"))
+    .join("\n");
+  const uncovered = [...codes].filter((code) => !gateSources.includes(code)).sort();
+  if (!codes.size) {
+    output.push("拒绝码棘轮：一个拒绝码都没提取到 —— 提取多半失配，这道门在空转");
+    return;
+  }
+  if (uncovered.length > UNCOVERED_REFUSAL_CODE_CEILING) {
+    const fresh = uncovered.slice(0, 12).join("、");
+    output.push(`拒绝码棘轮：零覆盖从 ${UNCOVERED_REFUSAL_CODE_CEILING} 涨到 ${uncovered.length}`
+      + ` —— 新增的守卫没有配判据，它失效时不会有任何东西变红。名单前几个：${fresh}`);
+  } else if (uncovered.length < UNCOVERED_REFUSAL_CODE_CEILING) {
+    output.push(`拒绝码棘轮：零覆盖已降到 ${uncovered.length}，把 UNCOVERED_REFUSAL_CODE_CEILING 改成这个数`
+      + " —— 棘轮留着松弛量，下一次回退就看不出来了");
+  }
+  console.log(`拒绝码覆盖：${codes.size} 个拒绝码，其中 ${uncovered.length} 个没有任何门/e2e 的源码提到过`
+    + `（棘轮 ${UNCOVERED_REFUSAL_CODE_CEILING}，只降不升；"没提到过"不等于"没被触发过"，但要摘牌就得写一条点名它的断言）`);
 }
 
 // 一次真实的间歇红只留下 `TypeError: fetch failed` + `ECONNREFUSED 127.0.0.1:50725`：
