@@ -298,6 +298,30 @@ try {
   const previousHeartbeat = await jsonRaw("/api/agent/v1/heartbeat", {method: "POST", token: agentConfig.nodeToken, body: {profile: {tools: [], models: [{providerClass: "custom", adapter: "doctor", available: true}]}}});
   const currentAfterPreviousHeartbeat = await jsonRaw("/api/agent/v1/nodes/me", {token: rotatedAgentConfig.nodeToken});
   if (!previousHeartbeat.response.ok || !currentAfterPreviousHeartbeat.response.ok) throw new Error("Agent heartbeat with previous credential invalidated the current credential");
+  // 节点自报的 profile 会常驻中央状态，而每次写入的成本正比于状态大小。
+  // 条数早就截到 100 了，条目【里面】的字符串原先一个都没截 —— 同一个函数里 region/dataRoot
+  // 都截了，数组里的没截。100 个工具 × 20KB 名字 = 2MB 的 profile 挂在一个节点上。
+  {
+    const huge = "长".repeat(20000);
+    const fatProfile = await jsonRaw("/api/agent/v1/heartbeat", {method: "POST", token: rotatedAgentConfig.nodeToken,
+      body: {profile: {tools: [{name: huge, version: huge, available: true}],
+        models: [{providerClass: huge, adapter: huge, available: true}], capabilityFlags: [huge]}}});
+    if (!fatProfile.response.ok) throw new Error(`超长 profile 的心跳被整条拒了（HTTP ${fatProfile.response.status}）—— 上报不该因此失败`);
+    const stored = await jsonRaw("/api/agent/v1/nodes/me", {token: rotatedAgentConfig.nodeToken});
+    const profile = stored.payload?.node?.profile || stored.payload?.profile || {};
+    const longest = Math.max(
+      ...(profile.tools || []).flatMap((tool) => [String(tool.name || "").length, String(tool.version || "").length]),
+      ...(profile.models || []).flatMap((model) => [String(model.providerClass || "").length, String(model.adapter || "").length]),
+      ...(profile.capabilityFlags || []).map((flag) => String(flag).length), 0);
+    if (longest > 200) {
+      throw new Error(`节点自报的 profile 里存下了 ${longest} 字的字符串 —— 它常驻中央状态，`
+        + "每次写入都替它买单；条数截了、条目里的字符串没截");
+    }
+    if (!(profile.tools || []).length || !(profile.models || []).length) {
+      throw new Error("超长 profile 被整条丢掉了 —— 应该截断而不是丢弃（那会让节点看起来没有任何工具）");
+    }
+  }
+
   assertAgentScopedMcpConfig(agentWorkDir, baseUrl, rotatedAgentConfig.nodeToken);
 
   await json(`/api/agent-nodes/${agentConfig.nodeId}/control`, {

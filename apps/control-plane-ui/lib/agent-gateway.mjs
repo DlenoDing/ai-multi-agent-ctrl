@@ -1777,9 +1777,14 @@ function sanitizeNodeProfile(profile) {
     cpuCount: boundedInteger(profile.cpuCount, 0, 4096, 0),
     memoryBytes: boundedInteger(profile.memoryBytes, 0, Number.MAX_SAFE_INTEGER, 0),
     diskFreeBytes: boundedInteger(profile.diskFreeBytes, 0, Number.MAX_SAFE_INTEGER, 0),
-    tools: Array.isArray(profile.tools) ? profile.tools.filter((item) => item && typeof item === "object").slice(0, 100).map((item) => ({name: String(item.name || ""), version: String(item.version || "unknown"), available: item.available === true})) : [],
-    models: Array.isArray(profile.models) ? profile.models.filter((item) => item && typeof item === "object").slice(0, 100).map((item) => ({providerClass: String(item.providerClass || "custom"), adapter: String(item.adapter || "custom"), available: item.available !== false})) : [],
-    capabilityFlags: uniqueStrings(profile.capabilityFlags || []).slice(0, 100),
+    // 条数截到 100 了，【条目里的字符串】原先一个都没截 —— 同一个函数里 region/dataRoot 都截了，
+    // 数组里的没截，是"只补一半"长在一个函数内部的样子。节点自报 100 个工具、每个名字 20KB，
+    // 就是 2MB 的 profile 常驻中央状态，而每次写入的成本正比于状态大小。
+    // 这里用截断而不是拒绝：profile 是机器上报的观测值，不是人写的文字，
+    // truncate 掉超长的名字不会让任何人"看到的与自己写的不一致"（与 region/dataRoot 同规）。
+    tools: Array.isArray(profile.tools) ? profile.tools.filter((item) => item && typeof item === "object").slice(0, 100).map((item) => ({name: String(item.name || "").slice(0, 200), version: String(item.version || "unknown").slice(0, 100), available: item.available === true})) : [],
+    models: Array.isArray(profile.models) ? profile.models.filter((item) => item && typeof item === "object").slice(0, 100).map((item) => ({providerClass: String(item.providerClass || "custom").slice(0, 100), adapter: String(item.adapter || "custom").slice(0, 100), available: item.available !== false})) : [],
+    capabilityFlags: uniqueStrings(profile.capabilityFlags || []).slice(0, 100).map((flag) => String(flag).slice(0, 100)),
     ...(sanitizePermissionProbe(profile.permission) ? {permission: sanitizePermissionProbe(profile.permission)} : {}),
     ...(sanitizeIntegrityProbe(profile.integrity) ? {integrity: sanitizeIntegrityProbe(profile.integrity)} : {}),
     region: String(profile.region || "").slice(0, 100) || undefined,

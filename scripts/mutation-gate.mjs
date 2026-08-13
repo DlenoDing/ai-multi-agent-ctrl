@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 条数截了、条目里的字符串没截：100 个工具 × 20KB 名字 = 2MB profile 常驻中央状态。
+    name: "节点 profile 里的字符串也要截断",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    skip: "判别力由远程 agent e2e 覆盖（真发一次超长 profile 心跳并读回存下的长度）",
+    from: 'name: String(item.name || "").slice(0, 200)',
+    to: 'name: String(item.name || "")',
+    expect: "字的字符串"
+  },
+  {
     // 数组是同一个洞的另一扇门：两条请求把状态从 63KB 撑到 6.4MB。
     name: "字符串清单要有条数与单条上限",
     file: "apps/control-plane-ui/server.mjs",
