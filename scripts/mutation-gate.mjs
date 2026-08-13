@@ -1049,6 +1049,17 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 跨组织授权失效时同组织的授权照旧成功，只有那一次把外人放进项目会悄悄通过。
+    name: "别的组织的账号不得被授权进本项目",
+    file: "apps/control-plane-ui/server.mjs",
+    skip: "判别力由控制面 e2e 覆盖（真拿另一个组织的管理员去授权本项目，要求 400）",
+    // 变异要【整块放行】而不是只删发送响应那一行：后者会让处理器不回响应就 return，
+    // 客户端挂到超时 —— 门是红了，但红的原因是超时，不是被测性质（第一版就是这样）。
+    from: '    if ((inviteeAccount.organizationId || DEFAULT_ORGANIZATION_ID) !== (project.organizationId || DEFAULT_ORGANIZATION_ID)) {',
+    to: "    if (false) {",
+    expect: "租户边界在成员授权这条路上是敞开的"
+  },
+  {
     // 正面对照必须钉死"真的被受理"：只断言"某个码没出现"的写法，会在因别的原因被拒时静默变绿。
     // 这里改坏一处与被测性质【无关】的守卫 —— 旧写法看不见它，新写法会红。
     name: "正面对照要钉死被受理",

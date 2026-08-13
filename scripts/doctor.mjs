@@ -1094,6 +1094,23 @@ try {
   }
   const orgId = orgCreate.payload.organization.orgId;
   let orgAdminAuth = await loginAs(port, "doctor.org.admin@local", orgCreate.payload.accountToken);
+
+  // 租户边界：别的组织的账号不得被授予本组织项目的角色。这条守卫此前【一条判据都没有】——
+  // 它失效时同组织的授权照旧成功，只有跨组织那一次会悄悄通过，而那等于把一个外人放进项目。
+  // 正面对照上面已经有了（第一次 members 授权用的是同组织账号，要求成功），这里补反面。
+  {
+    const foreignAccountId = orgCreate.payload.adminAccount?.accountId;
+    if (!foreignAccountId) throw new Error("拿不到别的组织的账号 id —— 跨组织授权这条在空转");
+    const crossOrgGrant = await jsonFetch(port, `/api/projects/${createdProject.payload.id}/members`, {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-cross-org-member", authorization: auth},
+      body: JSON.stringify({accountId: foreignAccountId, role: "project_admin"})
+    });
+    if (crossOrgGrant.response.status !== 400 || crossOrgGrant.payload.error !== "cross_org_member_not_allowed") {
+      throw new Error(`把别的组织的账号授权进了本项目（${crossOrgGrant.response.status}:`
+        + `${crossOrgGrant.payload.error}）—— 租户边界在成员授权这条路上是敞开的`);
+    }
+  }
   const changePassword = await jsonFetch(port, "/api/auth/change-password", {
     method: "POST",
     headers: {authorization: orgAdminAuth},
