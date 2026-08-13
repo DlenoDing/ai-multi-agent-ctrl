@@ -4957,6 +4957,31 @@ function verifyOperatorCliRejectsUnknownFlags(output) {
   }
   // 排除本文件：它出现"process.argv"只是因为上面那句报错文案里写了这个词，
   // 门会把自己写的字当成数据吃进去（本仓第四次撞这个形状）。其余验证脚本走 NOT_OPERATOR_CLIS 登记。
+  // shell 入口同理：人在命令行上敲的是哪种脚本，跟这个洞长不长没有关系。
+  // 只有明确是"参数原样透传给别的命令"的才免检，且必须写明透传给谁。
+  const SHELL_ENTRIES = {
+    "scripts/install-agent.sh": {rejects: true, why: "新机器上 curl | sh 装 agent"},
+    "scripts/start.sh": {rejects: true, why: "本地起控制面"},
+    "scripts/docker-up.sh": {rejects: false, why: "参数原样透传给 docker compose up --build"}
+  };
+  for (const [path, entry] of Object.entries(SHELL_ENTRIES)) {
+    if (!entry.rejects) continue;
+    if (!readFileSync(resolve(root, path), "utf8").includes("认不出这个参数")) {
+      output.push(`${path}（${entry.why}）不拦截认不出的参数 —— 打错的参数名会被当成没给，命令照跑`);
+    }
+  }
+  const shellFiles = readdirSync(resolve(root, "scripts")).filter((name) => name.endsWith(".sh"))
+    .map((name) => `scripts/${name}`);
+  if (shellFiles.length < 3) {
+    output.push(`运维入口核对：只扫到 ${shellFiles.length} 个 shell 脚本 —— 提取与目录脱节，本条在空转`);
+    return;
+  }
+  const unlistedShell = shellFiles.filter((path) => !SHELL_ENTRIES[path]);
+  if (unlistedShell.length) {
+    output.push(`这些 shell 脚本没登记：${unlistedShell.join("、")}`
+      + " —— 要么拦认不出的参数，要么写明参数是透传给谁的");
+  }
+
   const argvUsers = readdirSync(resolve(root, "scripts")).filter((name) => name.endsWith(".mjs"))
     .map((name) => `scripts/${name}`)
     .filter((path) => path !== "scripts/contract-check.mjs")

@@ -1004,6 +1004,15 @@ const MUTATIONS = [
     expect: "只列了 3 处却不说这是前 3 处"
   },
   {
+    // 枚举面含 shell 入口：人敲的是哪种脚本，跟这个洞长不长没关系。
+    name: "shell 运维入口也要拦认不出的参数",
+    check: "verifyOperatorCliRejectsUnknownFlags",
+    file: "scripts/start.sh",
+    from: '  printf \'%s\\n\' "start.sh: 认不出这个参数：$1" >&2',
+    to: '  printf \'%s\\n\' "start.sh: bad arg" >&2',
+    expect: "不拦截认不出的参数"
+  },
+  {
     // 运维入口是逐个枚举的，任何一个不拦认不出的参数都要被点名（不能只有 agentctl 有）。
     name: "每个运维入口都要拦认不出的参数",
     check: "verifyOperatorCliRejectsUnknownFlags",
