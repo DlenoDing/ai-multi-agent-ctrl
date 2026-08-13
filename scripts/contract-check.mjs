@@ -6887,7 +6887,8 @@ function verifyApprovedAcceptanceChecksHaveEvidence(output) {
 
 function verifyHumanApprovedPathsBindTheCommit(output) {
   const runCase = ({stray, finalized, trespass, writeForbidden, forgeCommit, forgePush, forgeTree,
-    forgeContractDigest, forgeManifestBinding, forgeManifestDigest, forgeLeaseHolder}) => {
+    forgeContractDigest, forgeManifestBinding, forgeManifestDigest, forgeLeaseHolder,
+    forgeCommitBranch}) => {
     const repo = mkdtempSync(join(tmpdir(), "cc-owned-"));
     const remote = mkdtempSync(join(tmpdir(), "cc-owned-remote-"));
     const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
@@ -6990,7 +6991,9 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       languagePolicyDigest: contract?.languagePolicyDigest, summary: "契约门",
       // forgeCommit：交一个仓库里【根本不存在】的 40 位哈希。这是"AI 给自己判分"的核心边界 ——
       // 控制面若信了 agent 自报的提交，它就能拿凭空的证据过关闭门。
-      commitRefs: [{repo: target.repositoryId, branch: "main",
+      // forgeCommitBranch：声称这次提交落在【另一个分支】上。产出目标钉的是仓库+分支，
+      // 谎报分支就等于把一份别处的提交算成本目标的成果。
+      commitRefs: [{repo: target.repositoryId, branch: forgeCommitBranch ? "not-the-target-branch" : "main",
         commit: forgeCommit ? "0123456789abcdef0123456789abcdef01234567" : commit,
         // forgeTree：树摘要谎报。它标的是"这次提交到底改出了什么内容"，
         // 控制面拿它和真实提交对照 —— 谎报能过的话，提交里的内容就与它自称的无关了。
@@ -7076,6 +7079,15 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
   if (!compliant.skipped && compliant.result.accepted !== true) {
     output.push(`一份如实上报、且只改了批准范围内路径的检查点没有被受理（${compliant.result.error}）——`
       + " 下面所有'谎报会被拒'的用例都建立在这条之上，它不成立时那些用例证明不了任何东西");
+  }
+
+  // 提交引用必须落在产出目标钉住的那个仓库与分支上。这条守卫此前【一条判据都没有】——
+  // 谎报分支等于把一份别处的提交算成本目标的成果，而关闭门认的就是这份成果。
+  const forgedBranch = runCase({stray: false, finalized: true, forgeCommitBranch: true});
+  if (!forgedBranch.skipped && forgedBranch.result.error !== "commit_ref_target_mismatch") {
+    output.push(`提交声称落在别的分支上，检查点却被受理了（实际：${forgedBranch.result.error || "已受理"}）`);
+  } else if (!forgedBranch.skipped && forgedBranch.result.mismatchedField !== "branch") {
+    output.push(`提交引用对不上时没说清是仓库还是分支（实得 ${forgedBranch.result.mismatchedField || "没有这个字段"}）`);
   }
 
   // 互斥租约：产出目标的租约在别的会话手里时，这一份检查点不能被受理 ——

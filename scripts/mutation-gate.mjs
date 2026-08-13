@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 谎报分支 = 把一份别处的提交算成本目标的成果，而关闭门认的就是这份成果。
+    name: "提交必须落在产出目标钉住的分支上",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    file: CORE,
+    from: "    if (commitRefMismatch) {",
+    to: "    if (false) {",
+    expect: "声称落在别的分支上"
+  },
+  {
     // 互斥没了 = 两个 agent 能同时往同一个产出目标上写。
     name: "租约被别的会话持有时不得受理检查点",
     check: "verifyHumanApprovedPathsBindTheCommit",
