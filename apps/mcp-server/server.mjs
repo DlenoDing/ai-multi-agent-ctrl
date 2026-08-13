@@ -696,6 +696,13 @@ export async function callTool(name, args = {}, context = {}) {
       auditRef: conflictCall.callId
     };
   }
+  // 这一层只写 MCP 自己的台账（mcp-audit.jsonl）。控制台那本主台账（state.auditLog + audit-log.jsonl）
+  // 由 UI 服务端的 audit() 写，这里一次都不调它 —— 于是经 MCP 改的状态在审计页上没有痕迹。
+  // 页面已经写清了这条边界（"两处都要看"）。要真的合流，得连着三件事一起做，缺一件都会造出
+  // 比现在更糟的不一致（控制台看得见、归档里没有）：
+  //   ① 审计条目的构造（含 prevHash 链）要抽成共享函数，两侧共用；
+  //   ② 归档落盘走的是 UI 服务端写状态时的 flushPendingAuditAppends，MCP 的写路径不经过它；
+  //   ③ actor 要从 MCP 主体映射过去（agent_node / executor / 远程主体），不能记成空。
   appendMcpAudit(mcpCall);
   return {
     // 内层带了 error 就不能在信封上说成功。实测有两个进度查询在缺作用域时返回
