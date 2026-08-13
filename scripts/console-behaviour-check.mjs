@@ -734,6 +734,39 @@ function runReviewAxisCase() {
     "三项都写清楚的替代方案仍被加了缺失警告");
 }
 
+// "一个项目都没有"与"项目里什么都没有"是两种处境，下一步完全不同。实测普通成员首次登录：
+// 项目概览说对了（暂无可见项目 + 找组织管理员），而任务组/人工指令说的是"当前项目暂无任务组"
+// —— 此刻根本没有当前项目；执行监控更是摆出十一张空表，一句解释都没有。
+// 两支都要验：没项目时六页都要说"暂无可见项目"，有项目而没任务组时那句区分必须还在。
+function runNoVisibleProjectCase() {
+  const member = {accountId: "m1", email: "m@b.c", accountType: "user_account",
+    displayName: "普通成员甲", organizationId: "org_default"};
+  const baseState = (projects, taskGroups) => ({schemaVersion: "runtime-state/v1", stateVersion: 1,
+    runtime: {}, organizations: [{orgId: "org_default", name: "组织", status: "active"}],
+    projects, taskGroups, accounts: [], agentRuntimeNodes: [], agentDispatches: [], workSessions: [],
+    humanConfirmationRequests: [], humanDirectives: [], closeBarriers: [], qualityGates: [],
+    findings: [], truncatedCollections: [], fleet: {online: 0, total: 0}});
+  const renderAs = (account, state, pageId, projectId = "") => {
+    const root = el("div");
+    loadConsole(root, {realI18n: true}).renderFullPageWith(state, account, projectId, pageId);
+    return String(root.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+  };
+  const pages = ["proj-overview", "tg", "review", "directives", "monitor", "proj-settings"];
+  const silent = pages.filter((pageId) => !/当前账号暂无可见项目/u.test(renderAs(member, baseState([], []), pageId)));
+  check("一个项目都没有时，六个项目页都要说清是【没有项目】而不是项目空着",
+    silent.length === 0,
+    `这些页没说：${silent.join("、")} —— 说"当前项目暂无任务组"会让人去找是哪个项目空着`);
+  check("这句话要按视角给出下一步（成员去找组织管理员，自己建不了项目）",
+    /请联系组织管理员为你分配项目/u.test(renderAs(member, baseState([], []), "monitor")),
+    "只说了没有项目，没说下一步 —— 而成员自己建不了项目");
+  // 反向：有项目、只是项目里还没有任务组 —— 那句区分必须还在，否则等于把一个有用的提示改没了。
+  const withProject = baseState([{id: "p1", name: "探针项目", organizationId: "org_default", status: "active"}], []);
+  const tgText = renderAs(member, withProject, "tg", "p1");
+  check("有项目但项目里没有任务组时，仍要说的是「当前项目暂无任务组」",
+    /当前项目暂无任务组/u.test(tgText) && !/当前账号暂无可见项目/u.test(tgText),
+    `实得：${(tgText.match(/当前[^ ]{0,20}/u) || ["（两句都没有）"])[0]}`);
+}
+
 async function runSelfRowHasNoActionsCase() {
 // 真正挡住"把自己停用"的是【渲染那一层】：成员列表给自己那一行不发任何操作按钮，
 // 只挂一个「本人」徽标（manageable = accountType === "user_account" && !isSelf）。
@@ -1391,6 +1424,9 @@ function runStuckTopologyLeverCase() {
   const probe = loadConsole(el("div"));
   const orchestrator = {accountId: "acct_o", accountType: "org_admin"};
   const withTopologies = (topologies) => ({
+    // 这一页以"当前项目"为抬头，夹具就必须真的有那个项目 —— 原先只有任务组挂着 projectId，
+    // 状态里一个项目都没有。那是个真实部署里不存在的形状（此前没人读这个字段，所以一直没露）。
+    projects: [{id: "p_a", name: "甲项目", organizationId: "org_default", status: "active"}],
     taskGroups: [{id: "tg_a", projectId: "p_a", name: "甲组", status: "active"}],
     executionTopologies: topologies,
     closeBarriers: [], agentRuntimeNodes: [], qualityGates: [], testResults: [], checkpoints: []
@@ -1432,6 +1468,7 @@ function runOutdatedRuntimeVisibilityCase() {
   const probe = loadConsole(el("div"));
   const admin = {accountId: "acct_a", accountType: "org_admin"};
   const withNode = (node) => probe.renderMonitorWith({
+    projects: [{id: "p_a", name: "甲项目", organizationId: "org_default", status: "active"}],
     taskGroups: [{id: "tg_a", projectId: "p_a", name: "甲组"}],
     agentRuntimeNodes: [node],
     closeBarriers: [], qualityGates: [], testResults: [], checkpoints: [], executionTopologies: []
@@ -1625,6 +1662,7 @@ function runSelfCheckReasonCase() {
   // 上面两条只证明判据本身对，证明不了它长在人看得见的那一行上 —— 把渲染里那次调用删掉，
   // 它们照样全绿。运行时节点表才是人真正看这件事的地方。
   const html = probe.renderMonitorWith({
+    projects: [{id: "p_a", name: "甲项目", organizationId: "org_default", status: "active"}],
     taskGroups: [{id: "tg_a", projectId: "p_a", name: "甲组"}],
     agentRuntimeNodes: [{nodeId: "n1", nodeName: "节点一", status: "degraded", admission: "read_only",
       selfCheckMissing: ["gateway"],
@@ -1726,6 +1764,7 @@ runPlanFinalizationNoticeCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();
+runNoVisibleProjectCase();
 await runSelfRowHasNoActionsCase();
 await runAuditChainBreakNoticeCase();
 await runFailingRequestIsNamedCase();

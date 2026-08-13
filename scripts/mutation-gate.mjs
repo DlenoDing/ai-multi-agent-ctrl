@@ -1049,6 +1049,24 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // "一个项目都没有"被说成"当前项目暂无任务组" —— 人会去找是哪个项目空着。
+    name: "没有项目要说清是没有项目",
+    file: APP,
+    gate: "console",
+    from: "  if (hasNoVisibleProject()) return panel(\"任务组\", noVisibleProjectNotice(), {wide: true});",
+    to: "",
+    expect: "而不是项目空着"
+  },
+  {
+    // 反向：有项目、只是里面还没有任务组，那句区分不能被吃掉。
+    name: "项目里没有任务组的提示不能被吃掉",
+    file: APP,
+    gate: "console",
+    from: "function hasNoVisibleProject() {\n  return !visibleProjects().length;",
+    to: "function hasNoVisibleProject() {\n  return true;",
+    expect: "仍要说的是"
+  },
+  {
     // 真正挡住"把自己停用"的是渲染这一层：自己那一行不发任何操作按钮。
     // 注意条件有两个（不是 user_account、不是自己），对组织管理员而言先命中的是前者 ——
     // 所以变异要把整个守卫放开，只删 !isSelf 的话组织管理员那一行照样没按钮，判据看不出差别。

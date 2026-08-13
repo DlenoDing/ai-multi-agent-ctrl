@@ -2217,6 +2217,26 @@ function renderOrgProjects() {
   ].join("");
 }
 
+// "一个项目都没有"与"项目里什么都没有"是两种处境，下一步完全不同：前者要去要/建一个项目，
+// 后者要去建任务组。原先只有项目概览分得清 —— 任务组和人工指令一律说"当前项目暂无任务组"，
+// 而此刻根本没有"当前项目"；执行监控更是直接摆出十一张空表，一句解释都没有。
+// 实测普通成员首次登录看到的就是这几屏。文案按【这个人能做什么】分流，只此一处。
+function noVisibleProjectNotice() {
+  const perspective = perspectiveOf(currentAccount);
+  const next = perspective === "system"
+    ? "到「账号与授权」页用「创建项目（系统级）」新建一个，或把已有项目授权给某个账号。"
+    : perspective === "org"
+      ? "到「项目管理」页创建项目，或把已有项目授权给成员。"
+      : "请联系组织管理员为你分配项目。";
+  return `<div class="notice">当前账号暂无可见项目。${esc(next)}</div>`;
+}
+
+// 判据要和这句话完全对齐：说的是"一个可见项目都没有"，不是"当前没选中项目"
+// （后者在项目存在、只是还没选上时也成立，那时这句话是错的）。
+function hasNoVisibleProject() {
+  return !visibleProjects().length;
+}
+
 /* ---------------- 成员：项目概览 ---------------- */
 
 function renderProjectOverview() {
@@ -2225,13 +2245,7 @@ function renderProjectOverview() {
     // 空态要按【这个人能做什么】说话。原先一律是"请联系组织管理员分配" —— 而系统管理员
     // 正是那个该去建项目的人，组织管理员也是；把他们支去找别人，是新部署第一步就撞上的死胡同。
     // （实测：全新部署、以系统管理员登录、打开项目概览，看到的就是这句。）
-    const perspective = perspectiveOf(currentAccount);
-    const next = perspective === "system"
-      ? "到「账号与授权」页用「创建项目（系统级）」新建一个，或把已有项目授权给某个账号。"
-      : perspective === "org"
-        ? "到「项目管理」页创建项目，或把已有项目授权给成员。"
-        : "请联系组织管理员为你分配项目。";
-    return panel("项目概览", `<div class="notice">当前账号暂无可见项目。${esc(next)}</div>`, {wide: true});
+    return panel("项目概览", noVisibleProjectNotice(), {wide: true});
   }
   const groups = projectTaskGroups();
   const openGroups = groups.filter((taskGroup) => !["closed", "aborted"].includes(taskGroup.status));
@@ -2388,6 +2402,7 @@ function renderTaskGroups() {
     return panel(taskGroup.name || taskGroup.id, head, {wide: true});
   }).join("");
 
+  if (hasNoVisibleProject()) return panel("任务组", noVisibleProjectNotice(), {wide: true});
   return cellsWaitingWithNoAgentNotice(groups) + wipCapacityNotice(groups) + createPanels.join("") + (groupPanels || panel("任务组", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true}));
 }
 
@@ -3139,7 +3154,9 @@ function renderReview() {
   if (!projectTaskGroups().length) {
     // 「待你处理」自称是跨全部可见项目的唯一汇总入口，却被"当前项目有没有任务组"这个不相干的条件
     // 挡在提前返回之后 —— 人切到一个空项目，"3 项等你处理"整块消失，会被读成"已经处理完了"。
-    return panel("人工审核", `<div class="notice">当前项目暂无任务组。下面的汇总仍覆盖你可见的全部项目。</div>`, {wide: true})
+    return panel("人工审核", hasNoVisibleProject()
+      ? noVisibleProjectNotice()
+      : `<div class="notice">当前项目暂无任务组。下面的汇总仍覆盖你可见的全部项目。</div>`, {wide: true})
       + renderPendingForMePanel();
   }
   const canReview = hasPerm("task_group:review");
@@ -3335,7 +3352,9 @@ const DIRECTIVE_TYPES = [
 
 function renderDirectives() {
   if (!projectTaskGroups().length) {
-    return panel("人工指令", `<div class="notice">当前项目暂无任务组。</div>`, {wide: true});
+    return panel("人工指令", hasNoVisibleProject()
+      ? noVisibleProjectNotice()
+      : `<div class="notice">当前项目暂无任务组。</div>`, {wide: true});
   }
   const directiveRows = directiveList.map((directive) => row([
     {v: fmtTime(directive.createdAt), c: "nowrap"},
@@ -3377,6 +3396,14 @@ function renderDirectives() {
 /* ---------------- 成员：执行监控 ---------------- */
 
 function renderMonitor() {
+  // 一个项目都没有时，这一页原先摆出十一张"暂无数据"的空表和一个空的监听范围下拉 ——
+  // 屏幕上全是表头，没有一句话说明为什么什么都没有、下一步该做什么。
+  // 条件是"没有项目，且这一页范围内一件事都没有"。生产上 projects 为空时本来就取不到任务组，
+  // 两个条件必然同时成立；多这一句只是不去误伤那些"任务组挂着 projectId、状态里却没有 projects"
+  // 的老夹具 —— 那种形状真实部署里不存在，但把它们逐个改掉的风险大于收益。
+  if (hasNoVisibleProject() && !projectTaskGroups().length) {
+    return panel("执行监控", noVisibleProjectNotice(), {wide: true});
+  }
   const groups = projectTaskGroups();
   // 这一页整体以"当前项目"为抬头，因此页内每张表都必须按它过滤。
   // 此前七张表里有五张漏了，最严重的一张还挂着"关闭任务组"按钮。
@@ -3734,7 +3761,7 @@ function cfgRoleRow(role = {}) {
 
 function renderProjectSettings() {
   const project = currentProject();
-  if (!project) return panel("项目设置", `<div class="notice">当前账号暂无可见项目。</div>`, {wide: true});
+  if (!project) return panel("项目设置", noVisibleProjectNotice(), {wide: true});
   const config = project.config || {};
   // projConfig===null means the config GET failed (effectiveProjectConfig always returns non-empty
   // systemRules defaults on success). Rendering empty editable rule editors here and saving would post
