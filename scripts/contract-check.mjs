@@ -300,6 +300,7 @@ run(verifyCancelDirectiveStopsRunningWork);
 run(verifyPauseDirectiveIsReversible);
 run(verifyTableFootersAdmitTruncation);
 run(verifyOperatorCliRejectsUnknownFlags);
+run(verifyMcpDoesNotReimplementCore);
 run(verifyAgentctlFlagNamesMatchWhatItReads);
 run(verifyEveryAssertionIsActuallyRegistered);
 run(verifyCrossOrgGrantIsRefusedOnBothDoors);
@@ -4926,6 +4927,49 @@ function verifyTableFootersAdmitTruncation(output) {
 //   · 白名单里留着代码不再读的名字 → 这个参数被接受、被忽略，人以为自己给了；
 //   · 代码读了白名单没登记的名字 → 那个参数永远被拒，功能等于不存在。
 // 两边都要点名。这道判据是纯文本的，零成本；行为那半在 agent:doctor 里真跑 CLI。
+// 一件事在 core 和 MCP 两处各实现一遍，只改一处 —— 两轮里连出两个洞：
+//   · 工作项执行角色：REST 拒未登记角色，MCP 侧一点校验都没有；
+//   · 按角色找技能：MCP 自己写了子串匹配 + roleSkills[0] 兜底 + 回退不留痕，
+//     而 core 的 resolveRoleSkill 早就处理好了 —— agent 事先问到的规则和派发时
+//     实际绑定的技能可能不是同一套，这比两边都错更难查。
+// 第二遍实现即使当时写对了，也会在下一次加固时被落下。这道判据按【名字】拦住同名重复：
+// core 导出了某个名字，MCP 侧就不该再定义一个同名（或只差 mcp 前缀 / View、Record 后缀）的。
+// 名字对不上的重复它看不见（mcpWorkItemOwnerRole ←→ normalizeOwnerRole 就属于这种），
+// 所以下面会把"看不见哪一类"报出来，不让"没报错"被当成"查过了"。
+function verifyMcpDoesNotReimplementCore(output) {
+  const core = readFileSync(resolve(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const mcp = readFileSync(resolve(root, "apps/mcp-server/server.mjs"), "utf8");
+  const exported = [...core.matchAll(/^export function ([a-zA-Z0-9]+)\(/gmu)].map((match) => match[1]);
+  const localMcp = [...mcp.matchAll(/^function ([a-zA-Z0-9]+)\(/gmu)].map((match) => match[1]);
+  const importBlock = mcp.match(/\{[\s\S]*?\} from "\.\.\/control-plane-ui\/lib\/control-plane-core\.mjs"/u)?.[0] || "";
+  const imported = new Set(importBlock.split(/[\s,{}]+/u).filter(Boolean));
+  if (exported.length < 80 || localMcp.length < 40 || imported.size < 40) {
+    output.push(`core/MCP 重复实现核对：提取到 ${exported.length} 个导出、${localMcp.length} 个本地函数、`
+      + `${imported.size} 个导入名 —— 与代码脱节，本条在空转`);
+    return;
+  }
+  const normalize = (name) => name.toLowerCase().replace(/^mcp/u, "").replace(/view$|record$/u, "");
+  const coreByNormalized = new Map(exported.map((name) => [normalize(name), name]));
+  const reimplemented = localMcp
+    .filter((name) => coreByNormalized.has(normalize(name)) && !imported.has(coreByNormalized.get(normalize(name))))
+    .map((name) => `MCP:${name} ←→ core:${coreByNormalized.get(normalize(name))}`);
+  if (reimplemented.length) {
+    output.push(`MCP 侧把 core 已经导出的东西又实现了一遍：${reimplemented.join("；")}`
+      + " —— 第二遍实现会在下一次加固时被落下，改成 import 那一份");
+  }
+  // 报数行要说清它【看不见什么】：名字对不上的重复它一个都发现不了
+  // （mcpWorkItemOwnerRole ←→ normalizeOwnerRole 就属于这种，得靠人读）。
+  // 少了这句，"没报错"会被当成"两边没有重复实现"。
+  console.log(`core/MCP 重复实现核对：按名字比对了 ${exported.length} 个 core 导出与 `
+    + `${localMcp.length} 个 MCP 本地函数（含 mcp 前缀、View/Record 后缀这几种改名）；`
+    + "名字对不上的重复这道判据看不见，只能靠人读。");
+  const shadowed = localMcp.filter((name) => imported.has(name));
+  if (shadowed.length) {
+    output.push(`MCP 侧既从 core 导入了这些名字、又在本地定义了同名函数：${shadowed.join("、")}`
+      + " —— 本地那份会遮蔽导入的那份，读代码的人看不出实际调的是哪个");
+  }
+}
+
 function verifyOperatorCliRejectsUnknownFlags(output) {
   // 这一类必须按【入口】枚举，不能按文件挑：参数名打错的洞在每个接受"名字-取值"的入口上
   // 各长一遍，而按取值扫描的判据（body.X === true 那一类）完全看不见它。

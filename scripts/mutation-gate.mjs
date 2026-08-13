@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 把 core 的 resolveRoleSkill 从导入里去掉 = 又变回本地一份，判据必须点名。
+    name: "core 导出的东西 MCP 不得再实现一遍",
+    check: "verifyMcpDoesNotReimplementCore",
+    file: "apps/mcp-server/server.mjs",
+    from: "  resolveRoleSkill,\n  REGISTERED_OWNER_ROLES",
+    to: "  REGISTERED_OWNER_ROLES",
+    expect: "又实现了一遍"
+  },
+  {
     // 自己再实现一遍"按角色找技能"：子串命中 + roleSkills[0] 兜底 + 回退不留痕。
     name: "角色技能解析要走 core 那一份",
     file: "apps/mcp-server/server.mjs",
