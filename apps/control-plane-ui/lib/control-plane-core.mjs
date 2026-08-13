@@ -2587,6 +2587,11 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {})
   if (!checkpointInput.runId) {
     return {accepted: false, status: 409, error: "checkpoint_run_id_required"};
   }
+  // runId 也是查询条件之一：这一步就是"这份检查点属于哪次运行"的绑定强制点。
+  // 对不上时找不到派发，报的是 active_agent_dispatch_required。
+  // 这下面原先还有一句 `runId !== dispatch.runId → checkpoint_run_id_mismatch`，
+  // 而它永远到不了（能走到那儿说明两者已经相等）—— 一段看起来在守、其实是死的代码，
+  // 读的人会以为绑定靠它，进而敢把上面这个查询条件放宽。已删，理由留在这里。
   const dispatch = (state.agentDispatches || []).find((item) =>
     item.sessionId === session.sessionId &&
     item.taskGroupId === taskGroup.id &&
@@ -2595,9 +2600,6 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {})
   );
   if (!dispatch || dispatch.status !== "running") {
     return {accepted: false, status: 409, error: "active_agent_dispatch_required"};
-  }
-  if (checkpointInput.runId && checkpointInput.runId !== dispatch.runId) {
-    return {accepted: false, status: 409, error: "checkpoint_run_id_mismatch"};
   }
   if (checkpointInput.taskContractDigest && checkpointInput.taskContractDigest !== dispatch.taskContractDigest) {
     return {accepted: false, status: 409, error: "checkpoint_task_contract_digest_mismatch"};

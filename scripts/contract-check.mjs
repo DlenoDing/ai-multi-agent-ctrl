@@ -6886,7 +6886,7 @@ function verifyApprovedAcceptanceChecksHaveEvidence(output) {
 }
 
 function verifyHumanApprovedPathsBindTheCommit(output) {
-  const runCase = ({stray, finalized, trespass, writeForbidden, forgeCommit, forgePush, forgeTree}) => {
+  const runCase = ({stray, finalized, trespass, writeForbidden, forgeCommit, forgePush, forgeTree, forgeContractDigest}) => {
     const repo = mkdtempSync(join(tmpdir(), "cc-owned-"));
     const remote = mkdtempSync(join(tmpdir(), "cc-owned-remote-"));
     const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
@@ -6956,7 +6956,10 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     const contract = (state.agentTaskContracts || []).find((item) => item.sessionId === session.sessionId);
     const result = acceptAgentCheckpoint(state, {
       projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workId: workItem.id,
-      sessionId: session.sessionId, runId: dispatch.runId, taskContractDigest: contract?.contractDigest,
+      sessionId: session.sessionId, runId: dispatch.runId,
+      // forgeContractDigest：谎报"我干的是哪份任务契约"。契约摘要是把这份证据钉在
+      // 那次派发上的那根钉子 —— 谎报能过的话，一份真实的提交就能挂到它没做过的那件事上。
+      taskContractDigest: forgeContractDigest ? "sha256:not-the-contract-you-were-given" : contract?.contractDigest,
       languagePolicyDigest: contract?.languagePolicyDigest, summary: "契约门",
       // forgeCommit：交一个仓库里【根本不存在】的 40 位哈希。这是"AI 给自己判分"的核心边界 ——
       // 控制面若信了 agent 自报的提交，它就能拿凭空的证据过关闭门。
@@ -6988,6 +6991,18 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
   else if (forged.result.accepted !== false || forged.result.error !== "commit_ref_not_found") {
     output.push(`交了一个仓库里不存在的 commit，检查点却没被拦下（实际：${forged.result.error || "已受理"}）`
       + " —— agent 可以拿凭空的提交过关闭门");
+  }
+
+  // 契约摘要谎报必须被拒。这条守卫此前【一条判据都没有】：它失效时正常提交照旧成功，
+  // 只有"把一份真实的提交挂到它没做过的那份契约上"会悄悄通过 —— 而检查点正是关闭门认账的证据。
+  // 两个 e2e 里都够不到它（那里的派发要么已完成、要么还在排队，而这道守卫只对 running 生效），
+  // 所以放在这套已有的伪造探针里：状态齐备、确定性也好。
+  const forgedContract = runCase({forgeContractDigest: true});
+  if (forgedContract.skipped) { output.push(`契约摘要谎报断言无从验证：${forgedContract.skipped}`); }
+  else if (forgedContract.result.accepted !== false
+    || forgedContract.result.error !== "checkpoint_task_contract_digest_mismatch") {
+    output.push(`检查点谎报任务契约摘要却没被拦下（实际：${forgedContract.result.error || "已受理"}）`
+      + " —— 一份真实的提交可以被挂到它没做过的那份契约上");
   }
 
   // 声称推送了、而远端没有那个提交：这条决定"活到底有没有真的交出去"。

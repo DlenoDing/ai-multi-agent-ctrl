@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 谎报任务契约摘要 = 把一份真实的提交挂到它没做过的那件事上，而检查点是关闭门认账的证据。
+    name: "检查点必须钉在它声称的那份契约上",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    file: CORE,
+    from: '    return {accepted: false, status: 409, error: "checkpoint_task_contract_digest_mismatch"};',
+    to: "    void 0;",
+    expect: "没被拦下"
+  },
+  {
     // 拿自己有权的项目配上别人的任务组 id —— 失效时所有正常调用照旧成功，只有跨租户那次悄悄通过。
     name: "跨参数的作用域一致性要守住",
     file: "apps/mcp-server/server.mjs",

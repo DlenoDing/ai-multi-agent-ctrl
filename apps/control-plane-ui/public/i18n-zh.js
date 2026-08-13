@@ -115,7 +115,6 @@
     checkpoint_language_policy_digest_mismatch: "检查点的语言策略摘要与契约不一致",
     checkpoint_language_policy_digest_required: "检查点必须带上语言策略摘要",
     checkpoint_missing_git_evidence: "检查点缺少 Git 证据（提交/推送）",
-    checkpoint_run_id_mismatch: "检查点的运行编号与派发不一致",
     checkpoint_run_id_required: "检查点必须带上运行编号",
     checkpoint_task_contract_digest_mismatch: "检查点的任务契约摘要与契约不一致",
     commit_ref_not_found: "找不到该提交",
