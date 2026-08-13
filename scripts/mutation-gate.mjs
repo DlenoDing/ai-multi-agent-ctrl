@@ -1121,6 +1121,25 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // "已查明不可达的第二道门"这份登记会过期：守卫改名或变得可达时必须报红，
+    // 否则它会一直替一个不存在的结论背书。
+    name: "第二道门登记过期要报红",
+    file: "scripts/lib/known-second-doors.mjs",
+    check: "verifyRefusalCodeCoverageRatchet",
+    from: "  agent_checkpoint_must_use_gateway:",
+    to: "  agent_checkpoint_must_use_gateway_renamed:",
+    expect: "在产品代码里已经不存在了"
+  },
+  {
+    // 不给任务组时按工作项反查归属那一维 —— 这一族最后一个没被点过名的码。
+    name: "工作项的项目维度要单独报",
+    file: MCP,
+    skip: "判别力由 MCP e2e 覆盖（十条表驱动断言里对应的一条）",
+    from: 'return {allowed: false, error: "work_item_project_scope_mismatch", required: `${projectId}:${workItemId}`};',
+    to: 'return {allowed: true};',
+    expect: "没有被拒成 work_item_project_scope_mismatch"
+  },
+  {
     // 跨参数作用域这一族九个码，判据要能分清是哪一维对不上 —— 分不清的话，人只能逐个试。
     name: "产出目标的工作项维度要单独报",
     file: MCP,

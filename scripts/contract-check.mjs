@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { SCHEMA_FILE_ALIASES, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { mcpServiceAllowedTools } from "../apps/control-plane-ui/lib/mcp-service-allowlist.mjs";
 import { createHash } from "node:crypto";
+import { KNOWN_SECOND_DOORS } from "./lib/known-second-doors.mjs";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -5219,7 +5220,7 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 棘轮只往一个方向走：数字变大＝新增的守卫没配判据；变小＝该把这里下调，把成果钉住。
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 82;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 81;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -5240,10 +5241,20 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 更直接的理由：本棘轮自己的那条变异用了一个假码，而登记表就在被扫目录里，
   // 于是"新增一个没配判据的码"当场被登记表自己喂饱（门读到自己写的字，本仓第八次）。
   const gateSources = walk(join(root, "scripts"))
-    .filter((file) => /\.(mjs|rb|sh|js)$/u.test(file) && !file.endsWith("mutation-gate.mjs"))
+    // 两份【登记表】要排除：它们列的是锚点/结论，不是判据 —— 一个码出现在登记里，
+    // 不证明任何东西会因它变红。不排除的话，光是把码写进登记就把它算成"已覆盖"了（本仓撞过两次）。
+    .filter((file) => /\.(mjs|rb|sh|js)$/u.test(file)
+      && !file.endsWith("mutation-gate.mjs") && !file.endsWith("known-second-doors.mjs"))
     .map((file) => readFileSync(file, "utf8").split("\n").filter((line) => !/^\s*(\/\/|#)/u.test(line)).join("\n"))
     .join("\n");
   const uncovered = [...codes].filter((code) => !gateSources.includes(code)).sort();
+  for (const [code, reason] of Object.entries(KNOWN_SECOND_DOORS)) {
+    if (!codes.has(code)) {
+      output.push(`第二道门登记里的 ${code} 在产品代码里已经不存在了 —— 登记过期，删掉它（${reason}）`);
+    } else if (!uncovered.includes(code)) {
+      output.push(`第二道门登记里的 ${code} 现在已经有判据了 —— 说明它变得可达了，从登记里删掉并确认那条判据验的是什么`);
+    }
+  }
   if (!codes.size) {
     output.push("拒绝码棘轮：一个拒绝码都没提取到 —— 提取多半失配，这道门在空转");
     return;
@@ -5256,7 +5267,9 @@ function verifyRefusalCodeCoverageRatchet(output) {
     output.push(`拒绝码棘轮：零覆盖已降到 ${uncovered.length}，把 UNCOVERED_REFUSAL_CODE_CEILING 改成这个数`
       + " —— 棘轮留着松弛量，下一次回退就看不出来了");
   }
+  const secondDoors = Object.keys(KNOWN_SECOND_DOORS).length;
   console.log(`拒绝码覆盖：${codes.size} 个拒绝码，其中 ${uncovered.length} 个没有任何门/e2e 的源码提到过`
+    + `（含 ${secondDoors} 个已查明【当前不可达】的第二道门，前面有另一道先拒，编不出用例，登记在册不必再查）`
     + `（棘轮 ${UNCOVERED_REFUSAL_CODE_CEILING}，只降不升；"没提到过"不等于"没被触发过"，但要摘牌就得写一条点名它的断言）`);
 }
 

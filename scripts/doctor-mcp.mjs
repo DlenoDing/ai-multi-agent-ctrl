@@ -305,6 +305,13 @@ try {
     body: {projectId: scanProjectId, title: "隔壁任务组"}});
   const scanGroupId = scanGroup.taskGroup?.id || scanGroup.id;
   if (!scanProjectId || !scanGroupId) throw new Error("跨租户扫描造不出隔壁项目 —— 本条在空转");
+  // 隔壁项目里也要有一个工作项：下面"按工作项反查归属"那一维，需要一个【存在、但属于别的项目】的
+  // 工作项 id，而且调用时【不能】带 taskGroupId（带了就走上一层的判据，走不到反查那一支）。
+  const scanWorkItem = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.work_item_create",
+    arguments: {idempotencyKey: "mcp-scan-wi", taskGroupId: scanGroupId, workItemId: "work_scan_foreign",
+      title: "隔壁工作项", ownerRole: "agent-runtime"}});
+  const scanWorkItemId = scanWorkItem.structuredContent?.result?.workItem?.id;
+  if (!scanWorkItemId) throw new Error("隔壁项目里造不出工作项 —— '按工作项反查归属'那一维会在空转");
   const joined = await api("/api/agent-join-tokens", {method: "POST", idempotencyKey: "mcp-scan-jt", token: admin.sessionToken,
     body: {projectId: "prj_control_plane", nodeName: "mcp-scan-node", allowedRoles: ["*"], ttlSeconds: 1800, maxUses: 1}});
   const registered = await api("/api/agent/v1/register", {method: "POST", idempotencyKey: "mcp-scan-reg", token: joined.joinToken,
@@ -356,6 +363,11 @@ try {
       ["资源是任务组、而 taskGroupId 指向别处", "resource-mcp.lease_claim",
         {idempotencyKey: "scope-res-g", targetId, resourceType: "task_group", resourceId: scanGroupId, taskGroupId: "tg_runtime_management"},
         "resource_task_group_scope_mismatch"],
+      // 这一维只有在【不给 taskGroupId】时才走得到（给了就走上一层判据）。所以要挑一个
+      // 必填里没有 taskGroupId 的工具 —— work_assign 强制要求它，用它永远到不了这一支。
+      ["工作项的项目对不上（不给任务组时按工作项反查归属）", "agent-control-mcp.dispatch_status",
+        {dispatchId: d.dispatchId, workItemId: scanWorkItemId, projectId: "prj_control_plane"},
+        "work_item_project_scope_mismatch"],
       ["资源是项目、而随附的任务组属于别的项目", "resource-mcp.lease_claim",
         {idempotencyKey: "scope-res-gp", targetId, resourceType: "project", resourceId: scanProjectId, taskGroupId: "tg_runtime_management"},
         "resource_task_group_project_scope_mismatch"]
@@ -369,6 +381,7 @@ try {
       }
     }
     console.log(`MCP 跨参数作用域一致性 ok: ${scopeCases.length} 种错配各自被拒成它自己的码（派发/产出目标/资源 × 项目/任务组/工作项）`);
+
   }
 
   // 受限节点的授权边界：工具在白名单里，但入参指向【别的任务组】的房间 —— 必须按作用域拒掉。
