@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { SCHEMA_FILE_ALIASES, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { mcpServiceAllowedTools } from "../apps/control-plane-ui/lib/mcp-service-allowlist.mjs";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7087,28 +7087,62 @@ function verifyApprovedAcceptanceChecksHaveEvidence(output) {
 }
 
 function verifyHumanApprovedPathsBindTheCommit(output) {
+  // 模板仓库：19 个用例的起点完全一样（一个带 docs/ 基线提交、已推到 bare remote 的仓库）。
+  // 原先每个用例都重跑一遍 init/config/commit/push（实测 324ms），现在只建一次再按目录拷贝。
+  // 拷贝出来的 .git/config 里 origin 仍指向模板的 remote，必须改指到本用例自己的那份 ——
+  // 不改的话 19 个用例会共用一个远端，互相看得见对方推上去的提交，这道检查就不再是隔离的。
+  const templateRoot = mkdtempSync(join(tmpdir(), "cc-owned-tpl-"));
+  const templateRepo = join(templateRoot, "repo");
+  const templateRemote = join(templateRoot, "remote");
+  mkdirSync(templateRepo, {recursive: true});
+  mkdirSync(templateRemote, {recursive: true});
+  {
+    const git = (...args) => execFileSync("git", args, {cwd: templateRepo, encoding: "utf8"}).trim();
+    execFileSync("git", ["init", "--bare", "-q", templateRemote]);
+    git("init", "-q");
+    git("config", "user.email", "contract@local");
+    git("config", "user.name", "contract");
+    mkdirSync(join(templateRepo, "docs"), {recursive: true});
+    writeFileSync(join(templateRepo, "docs/readme.md"), "base\n");
+    // 上一轮就已经在仓库里、这一轮【没有再动过】的两份文件。谎报"范围"这一族全靠它们：
+    // 指向它们的清单/产出在树里都找得到，只是不属于这次提交 —— 光看"文件存不存在"分辨不出来。
+    writeFileSync(join(templateRepo, "docs/carryover.md"), "上一轮的产出\n");
+    writeFileSync(join(templateRepo, "docs/carryover.json"), JSON.stringify({schemaVersion: "artifact-manifest/v1"}));
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    git("remote", "add", "origin", templateRemote);
+    git("push", "-q", "origin", "HEAD:refs/heads/main");
+  }
+  const templateBaseRef = execFileSync("git", ["rev-parse", "HEAD"], {cwd: templateRepo, encoding: "utf8"}).trim();
+  let templateVerified = false;
+  const checkoutFromTemplate = () => {
+    const caseRoot = mkdtempSync(join(tmpdir(), "cc-owned-"));
+    const repo = join(caseRoot, "repo");
+    const remote = join(caseRoot, "remote");
+    cpSync(templateRepo, repo, {recursive: true});
+    cpSync(templateRemote, remote, {recursive: true});
+    execFileSync("git", ["remote", "set-url", "origin", remote], {cwd: repo});
+    // 自证：拷贝出来的仓库与它自己那份远端必须对得上，否则下面每一个用例都在测一个坏起点。
+    // 只在【第一次】拷贝时验：验的是"cp + set-url 这套动作对不对"，那是每次都相同的不变量，
+    // 而这两条 git 子进程若每个用例都跑，会把这次优化省下的时间吃掉一半（实测）。
+    if (!templateVerified) {
+      const head = execFileSync("git", ["rev-parse", "HEAD"], {cwd: repo, encoding: "utf8"}).trim();
+      const remoteHead = execFileSync("git", ["ls-remote", remote, "refs/heads/main"], {encoding: "utf8"}).trim().split(/\s+/)[0];
+      if (head !== templateBaseRef || remoteHead !== templateBaseRef) {
+        throw new Error(`模板拷贝出来的仓库起点不对（本地 ${head} / 远端 ${remoteHead} / 模板 ${templateBaseRef}）—— 每个用例都会测在一个坏起点上`);
+      }
+      templateVerified = true;
+    }
+    return {repo, remote, baseRef: templateBaseRef, caseRoot};
+  };
   const runCase = ({stray, finalized, trespass, writeForbidden, forgeCommit, forgePush, forgeTree,
     forgeContractDigest, forgeManifestBinding, forgeManifestDigest, forgeLeaseHolder,
     forgeCommitBranch, omitCommitEvidence, pushBehind, narrowAllowlist,
     manifestFromLastRound, outputFromLastRound, manifestNotJson}) => {
-    const repo = mkdtempSync(join(tmpdir(), "cc-owned-"));
-    const remote = mkdtempSync(join(tmpdir(), "cc-owned-remote-"));
+    // 这段建置对每个用例完全相同，而它是本项检查里最贵的一块：实测 324ms/次 × 19 个用例 ≈ 6.2 秒
+    // （对比：一次完整编排只要 61ms，克隆状态 1ms）。改成"建一次模板、之后按目录拷贝"。
+    const {repo, remote, baseRef, caseRoot} = checkoutFromTemplate();
     const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
-    execFileSync("git", ["init", "--bare", "-q", remote]);
-    git("init", "-q");
-    git("config", "user.email", "contract@local");
-    git("config", "user.name", "contract");
-    mkdirSync(join(repo, "docs"), {recursive: true});
-    writeFileSync(join(repo, "docs/readme.md"), "base\n");
-    // 上一轮就已经在仓库里、这一轮【没有再动过】的两份文件。谎报"范围"这一族全靠它们：
-    // 指向它们的清单/产出在树里都找得到，只是不属于这次提交 —— 光看"文件存不存在"分辨不出来。
-    writeFileSync(join(repo, "docs/carryover.md"), "上一轮的产出\n");
-    writeFileSync(join(repo, "docs/carryover.json"), JSON.stringify({schemaVersion: "artifact-manifest/v1"}));
-    git("add", "-A");
-    git("commit", "-q", "-m", "base");
-    const baseRef = git("rev-parse", "HEAD");
-    git("remote", "add", "origin", remote);
-    git("push", "-q", "origin", "HEAD:refs/heads/main");
 
     const state = structuredClone(seedState);
     ensureRuntimeCollections(state, {root});
@@ -7234,8 +7268,7 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       artifactManifestRefs: [manifestFromLastRound ? "docs/carryover.json" : "docs/manifest.json"],
       changedPathEvidenceRefs: [`git-diff:${baseRef}:${commit}`, "git-path:docs/manifest.json"]
     }, {root: repo, actor: "agent-runtime"});
-    rmSync(repo, {recursive: true, force: true});
-    rmSync(remote, {recursive: true, force: true});
+    rmSync(caseRoot, {recursive: true, force: true});
     return {result, state, taskGroup, workItem};
   };
 
@@ -7458,6 +7491,7 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     output.push(`方案未定稿时的提交没有被受理（${notFinalized.result.error}）——`
       + " 这条对照本该证明「没有人的批准就不按批准范围拦」，它自己先没走到那一步");
   }
+  rmSync(templateRoot, {recursive: true, force: true});
 }
 
 function verifyHaltedTaskGroupsAreNotClaimable(output) {
