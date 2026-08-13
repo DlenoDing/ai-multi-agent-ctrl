@@ -4400,6 +4400,14 @@ document.addEventListener("click", async (event) => {
       const chainNotice = chain.breaks?.length
         ? `<div class="notice warn-notice">哈希链校验发现 ${chain.breaks.length} 处不一致（${esc(chain.breaks.slice(0, 3).map((item) => `${item.id}:${item.reason}`).join("、"))}${chain.breaks.length > 3 ? `，仅列前 3 处，其余 ${chain.breaks.length - 3} 处在服务端归档文件里` : ""}）—— 归档可能被改动过。</div>`
         : `<div class="notice">已按哈希链逐条校验本屏 ${chain.verified} 条记录，未发现改动。</div>`;
+      // 服务端一直下发着 windowTruncated/bytesScanned/fileBytes，而这里从来没渲染它们。
+      // 归档只按【尾部一窗】读取与校验：文件长到几百 MB 时，这一屏说"未发现改动"，
+      // 而窗口之外的几百万条一条都没查过 —— 人恰恰是为了查有没有被改动才打开这一屏的。
+      const scannedMb = (bytes) => `${(Number(bytes || 0) / (1024 * 1024)).toFixed(1)}MB`;
+      const windowNotice = archive.windowTruncated
+        ? `<div class="notice warn-notice">只读了归档末尾 ${esc(scannedMb(archive.bytesScanned))}（全文 ${esc(scannedMb(archive.fileBytes))}）：
+           上面的校验只覆盖这一窗，更早的记录本屏没有查过。要查更早的，请直接取归档文件核对。</div>`
+        : "";
       // 归档写失败过 = 这一屏少了东西。接口一直下发着这个事实，而这里从来没渲染它 ——
       // 而这一屏正是人专门来查历史的地方，"看起来完整"比别处更害人。
       const faultNotice = archive.archiveFault
@@ -4410,6 +4418,7 @@ document.addEventListener("click", async (event) => {
         <div class="stack">
           ${faultNotice}
           ${chainNotice}
+          ${windowNotice}
           ${archive.windowTruncated ? `<div class="small muted">归档文件共 ${Math.round((archive.fileBytes || 0) / 1024)} KB，这里只读了末尾 ${Math.round((archive.bytesScanned || 0) / 1024)} KB —— 更早的记录需要直接查归档文件。</div>` : ""}
           ${table(["时间", "操作者", "动作", {label: "对象", c: "text-clip"}, "结果"], rows, {emptyText: "归档里还没有记录"})}
         </div>

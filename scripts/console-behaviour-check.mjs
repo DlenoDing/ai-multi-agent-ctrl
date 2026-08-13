@@ -631,6 +631,21 @@ async function runArchiveFaultNoticeCase() {
   check("归档没出过问题时不许平白说它不完整",
     !/这份归档不完整/u.test(healthy),
     "没有故障却报不完整 —— 这种狼来了会让真出事时那句话没人信");
+
+  // 归档只按【尾部一窗】读取与校验（512KB）。文件长到几百 MB 时，这一屏说"未发现改动"，
+  // 而窗口之外的记录一条都没查过 —— 人恰恰是为了查有没有被改动才打开这一屏的。
+  // 服务端一直下发着 windowTruncated/bytesScanned/fileBytes，这里此前一个都没渲染。
+  const windowed = await openArchive({entries: [], chain: {verified: 200, breaks: []}, archiveFault: null,
+    windowTruncated: true, bytesScanned: 512 * 1024, fileBytes: 420 * 1024 * 1024});
+  check("只校验了尾部一窗时要说出来",
+    /只读了归档末尾/u.test(windowed),
+    `这一屏说"未发现改动"，却没说窗口之外的记录一条都没查过（${windowed.slice(0, 160)}）`);
+  check("并给出扫了多少、一共多少",
+    /0\.5MB/u.test(windowed) && /420\.0MB/u.test(windowed),
+    "只说'截断了'而不给量级，人判断不了漏掉的是十条还是几百万条");
+  check("没被截断时不许平白说只读了一窗",
+    !/只读了归档末尾/u.test(healthy),
+    "整份都读完了却说只读了一窗 —— 同样是狼来了");
 }
 
 async function runFailingRequestIsNamedCase() {

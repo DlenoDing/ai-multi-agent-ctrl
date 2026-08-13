@@ -1121,6 +1121,25 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // 归档只按尾部一窗（512KB）读取与校验。文件几百 MB 时这一屏说"未发现改动"，
+    // 而窗口之外的记录一条都没查过 —— 人恰恰是为了查有没有被改动才打开这一屏的。
+    name: "只校验了尾窗时这一屏要说出来",
+    file: APP,
+    gate: "console",
+    from: "      const windowNotice = archive.windowTruncated",
+    to: "      const windowNotice = false",
+    expect: "却没说窗口之外的记录一条都没查过"
+  },
+  {
+    // 只说"截断了"而不给量级，人判断不了漏掉的是十条还是几百万条。
+    name: "截断要给出量级",
+    file: APP,
+    gate: "console",
+    from: "只读了归档末尾 ${esc(scannedMb(archive.bytesScanned))}（全文 ${esc(scannedMb(archive.fileBytes))}）",
+    to: "只读了归档末尾一部分",
+    expect: "人判断不了漏掉的是十条还是几百万条"
+  },
+  {
     // 这一类只有跑到那一行才炸，而"那一行"多半在错误处理支上 —— 平时永远跑不到。
     // 这条变异正好复现那个真 bug：兜底日志引用它没拿到的 req。
     name: "顶层函数不得引用没拿到的请求变量",
