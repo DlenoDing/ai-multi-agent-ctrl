@@ -558,6 +558,37 @@ function runDecisionSelectCase() {
 // 这一段要真词表在场才看得见（本门其余部分把 t 桩成恒等函数）。
 // 一屏常常并发取两三个接口。只报 "500 server_error" 时，人不知道是哪一个挂了 ——
 // "组织数据没问题、是智能体列表挂了"与"整个组织视图都挂了"在屏幕上长得一模一样。
+// 审计归档的哈希链告警是这套系统里最要紧的一条消息（"归档可能被改动过"）。
+// 它只列前 3 处不一致，而原先没说这是【前 3 处】—— 查篡改的人以为自己看到的就是全部。
+async function runAuditChainBreakNoticeCase() {
+  const root = el("div");
+  const probe = loadConsole(root);
+  // 不要 stubNavigation：它把 render 换成空函数，而弹窗正是靠 render 落进 DOM 的（第一版就这么空转了）。
+  // 先渲染一次带账号的页面：没有当前账号时 render() 出的是登录页，弹窗根本不在里面
+  //（第一版就在看登录页的 HTML）。
+  const admin = {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  probe.renderFullPageWith({schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {}, projects: [],
+    taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], findings: [],
+    humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []}, admin, null, "sys-overview");
+  const breaks = Array.from({length: 7}, (_, index) => ({id: `audit_${index}`, reason: "hash_mismatch"}));
+  probe.setFetch(async () => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+    json: async () => ({entries: [], chain: {verified: 12, breaks}})}));
+  // 事件处理是 event.target.closest("[data-action]") 取按钮的：closest 返回 null 时它直接退出
+  // （第一版就这么空转了，两条断言都在看一个没渲染的弹窗）。
+  const button = {dataset: {action: "open-audit-archive"}, disabled: false, textContent: "查看审计归档"};
+  // closest 必须按选择器分辨：一律返回自己的话，前面 target.closest(".rule-row") 那一支会先命中，
+  // 然后在没有 classList 的桩上抛错、被 try 吞掉 —— 表现为"点了没反应"。
+  button.closest = (selector) => (selector === "[data-action]" ? button : null);
+  await probe.click({target: button, preventDefault: () => {}});
+  const shown = String(root.innerHTML || "");
+  check("哈希链告警要说清一共几处不一致",
+    /7 处不一致/.test(shown),
+    `篡改告警没有给出总数（${shown.slice(0, 120)}）`);
+  check("只列了前几处时要说出来",
+    /仅列前 3 处/.test(shown),
+    "只列了 3 处却不说这是前 3 处 —— 查篡改的人会以为自己看到的就是全部");
+}
+
 async function runFailingRequestIsNamedCase() {
   const probe = loadConsole(el("div"));
   probe.setFetch(async () => ({ok: false, status: 500, statusText: "Internal Server Error",
@@ -1515,6 +1546,7 @@ runPlanFinalizationNoticeCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();
+await runAuditChainBreakNoticeCase();
 await runFailingRequestIsNamedCase();
 await runCodedApiErrorCase();
 

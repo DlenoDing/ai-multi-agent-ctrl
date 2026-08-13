@@ -4319,7 +4319,7 @@ document.addEventListener("click", async (event) => {
       ])).join("");
       const chain = archive.chain || {verified: 0, breaks: []};
       const chainNotice = chain.breaks?.length
-        ? `<div class="notice warn-notice">哈希链校验发现 ${chain.breaks.length} 处不一致（${esc(chain.breaks.slice(0, 3).map((item) => `${item.id}:${item.reason}`).join("、"))}）—— 归档可能被改动过。</div>`
+        ? `<div class="notice warn-notice">哈希链校验发现 ${chain.breaks.length} 处不一致（${esc(chain.breaks.slice(0, 3).map((item) => `${item.id}:${item.reason}`).join("、"))}${chain.breaks.length > 3 ? `，仅列前 3 处，其余 ${chain.breaks.length - 3} 处在服务端归档文件里` : ""}）—— 归档可能被改动过。</div>`
         : `<div class="notice">已按哈希链逐条校验本屏 ${chain.verified} 条记录，未发现改动。</div>`;
       openModal("审计归档", `
         <div class="stack">
