@@ -1121,6 +1121,16 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // 受限主体问一个 id 时，"查无此物"与"存在但不属于你"必须给同一个答案，
+    // 否则报文就是一台跨租户存在性探针：拿一批 id 试一遍就知道别的租户有没有它们。
+    name: "受限主体不得分辨出别的租户有没有某个东西",
+    file: MCP,
+    skip: "判别力由 MCP e2e 覆盖（已用 mutate-probe 实证：条件改成恒假时两个答案又分得开了）",
+    from: '    const boundedPrincipal = principal.kind === "agent_node";',
+    to: "    const boundedPrincipal = false;",
+    expect: "跨租户存在性探针"
+  },
+  {
     // "已查明不可达的第二道门"这份登记会过期：守卫改名或变得可达时必须报红，
     // 否则它会一直替一个不存在的结论背书。
     name: "第二道门登记过期要报红",

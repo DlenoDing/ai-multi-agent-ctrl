@@ -384,6 +384,36 @@ try {
 
   }
 
+  // 跨租户存在性探针：受限节点问一个 id，"查无此物"与"存在但属于别的租户"必须给【同一个答案】。
+  // 两者可分辨的话，拿一批 id 试一遍就知道这套部署里别的租户有没有它们 ——
+  // REST 侧早把这条写成了口径（"别的组织有没有这个账号会从 403 与 404 的差别里漏出去"），
+  // 这里守的是同一条不变式在 MCP 侧的那一半。
+  for (const [tool, key, foreignId] of [
+    ["ui-console-mcp.task_group_progress_get", "taskGroupId", scanGroupId],
+    ["ui-console-mcp.project_progress_get", "projectId", scanProjectId]
+  ]) {
+    const answers = [];
+    for (const id of [`${key}_never_existed`, foreignId]) {
+      const r = await mcpAs(nodeToken, "tools/call", {name: tool, arguments: {[key]: id}});
+      answers.push(r.structuredContent?.result?.error || JSON.stringify(r.structuredContent?.result || "").slice(0, 80));
+    }
+    if (answers[0] !== answers[1]) {
+      throw new Error(`${tool}：受限节点问"不存在的 id"得到 ${answers[0]}、问"别的租户里真有的 id"得到 ${answers[1]}`
+        + " —— 两者可分辨，这个报文就是一台跨租户存在性探针");
+    }
+    // 正面对照：这两条不能靠"一律回同一个码"蒙混 —— 系统管理员本就有权知道什么存在，必须仍分得清。
+    // 实测：把上面那个"受限主体"条件改成恒真时，先响的是本文件更早那条服务令牌断言
+    // （它要求无效 taskGroupId 仍回 task_group_not_found）。所以这条正面对照的判别力是【叠在它上面】的，
+    // 不是独立证明的 —— 记在这里，免得以后误以为它自己验过了。
+    const adminMissing = await mcpAs(admin.sessionToken, "tools/call", {name: tool, arguments: {[key]: `${key}_never_existed`}});
+    const adminForeign = await mcpAs(admin.sessionToken, "tools/call", {name: tool, arguments: {[key]: foreignId}});
+    if (adminMissing.structuredContent?.result?.error === adminForeign.structuredContent?.result?.error) {
+      throw new Error(`${tool}：系统管理员问"不存在"和"别处真有"拿到了同一个答案 —— 越权与不存在被一锅端，`
+        + "运维再也分不清是打错了 id 还是权限不对");
+    }
+  }
+  console.log("MCP 跨租户存在性 ok: 受限节点分辨不出别的租户有没有某个任务组/项目，而系统管理员仍分得清");
+
   // 受限节点的授权边界：工具在白名单里，但入参指向【别的任务组】的房间 —— 必须按作用域拒掉。
   // （这条此前没有任何门点过名。上面那三种入参的扫描只验"不许带出隔壁内容"，验的是读；这条验写。）
   const crossRoom = await mcpAs(nodeToken, "tools/call", {name: "room-mcp.room_send",
@@ -425,6 +455,7 @@ try {
       }
     }
   }
+  console.error(`[探针] 这个受限节点调得到的工具：${[...reachableTools].join("、")}`);
   if (probedExecuted < 5) throw new Error(`跨租户扫描里只有 ${probedExecuted} 次调用真的执行了（其余都是 ok:false 的错误信封）—— 本条在空转`);
   if (scanLeaks.length) {
     throw new Error(`绑定在别的项目上的节点，从这些只读工具里拿到了隔壁项目的内容：\n  ${scanLeaks.join("\n  ")}`);

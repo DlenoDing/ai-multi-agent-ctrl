@@ -886,7 +886,20 @@ function validateMcpGrant(state, toolName, args, argumentDigest, context = {}) {
   const creationScope = validateMcpCreationScope(toolName, args, principal);
   if (!creationScope.allowed) return {...creationScope, grantRef: `remote-principal:${principal.kind}:${principal.id}`};
   const scopeExists = validateExplicitMcpScopeExists(state, toolName, args);
-  if (!scopeExists.allowed) return {...scopeExists, grantRef: `remote-principal:${principal.kind}:${principal.id}`};
+  if (!scopeExists.allowed) {
+    // 受限主体（绑定在某个项目上的 agent 节点）问一个 id 时，"查无此物"与"存在但不属于你"
+    // 必须给同一个答案。原先前者回 task_group_not_found / project_not_found，后者回
+    // mcp_grant_scope_mismatch —— 两者可分辨，报文就成了跨租户的存在性探针：
+    // 拿一个 id 试一下，就知道这套部署里别的租户有没有它。
+    // REST 侧早就把这条写成了口径（"别的组织有没有这个账号会从 403 与 404 的差别里漏出去"），
+    // 这里是同一条不变式在 MCP 侧的缺口。系统管理员与服务令牌不受影响：它们本就有权知道什么存在。
+    const boundedPrincipal = principal.kind === "agent_node";
+    if (boundedPrincipal && /_not_found$/u.test(String(scopeExists.error || ""))) {
+      return {allowed: false, error: "mcp_grant_scope_mismatch", required: toolName,
+        grantRef: `remote-principal:${principal.kind}:${principal.id}`};
+    }
+    return {...scopeExists, grantRef: `remote-principal:${principal.kind}:${principal.id}`};
+  }
   if (principal.kind === "agent_node") {
     // 【第二道门，当前不可达】2026-08-14 用真实节点实测：checkpoint_submit 不在任何派发下发的
     // 工具白名单里，所以上面 mcp_tool_not_granted_to_principal 会先拒掉，这一支走不到。
