@@ -877,6 +877,15 @@ const MUTATIONS = [
     expect: "这道判据不会响"
   },
   {
+    // 不走守卫的路由必须逐条登记：把认证那族从例外里去掉，三条路由立刻被点名。
+    name: "没有守卫的改状态路由必须被点名",
+    file: "scripts/auth-placement-gate.mjs",
+    gate: "auth",
+    from: '    || /"\\/api\\/auth\\/(login|logout|change-password)"/u.test(header);',
+    to: "    || false;",
+    expect: "既不走 beginGuardedWrite、也不属于已登记的例外"
+  },
+  {
     // 自述的账必须加得起来：旧账把"有 core 函数但 MCP 侧没有同名工具"的动作算成已覆盖，
     // 于是 22 个动作只交代了 16 个，剩下的既不在已核对里也不在够不到里。
     name: "真人专属动作的覆盖账必须加得起来",

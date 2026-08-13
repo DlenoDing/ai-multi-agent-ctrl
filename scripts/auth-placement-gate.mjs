@@ -187,13 +187,33 @@ function run() {
   // 它们之所以看起来"有效"，只是因为 failures 那时根本没声明——push 会抛 ReferenceError，
   // 门崩在自己身上、退出码非零，栈里写的是 "failures is not defined"，而不是"这条路由少了审计"。
   // 崩溃当红用，是最容易被当成"门在工作"的假象：错的位置、错的原因，且没人会去修它。
+  // 82 条改状态路由里有 12 条不走 beginGuardedWrite。它们都有正当理由，但此前【一条都没被交代】——
+  // 于是明天多一条没有守卫的管理路由，输出上和今天一模一样。改成登记制：
+  //   · /api/agent/v1/*：agent 网关，主体是节点令牌 + claim 围栏，不是人的权限；
+  //   · 三条认证路由：凭据本身就是鉴权，此时还没有会话可供守卫。
+  // 除此以外的任何一条都要报出来。
+  const unguardedAllowed = (header) => /"\/api\/agent\/v1\//u.test(header)
+    || /nodeControlAckMatch|nodeCheckpointMatch|nodeFailureMatch/u.test(header)
+    || /"\/api\/auth\/(login|logout|change-password)"/u.test(header);
+  const unguardedBlocks = blocks.filter((block) => !block.body.some((row) => row.text.includes("beginGuardedWrite(")));
+  const unexpected = unguardedBlocks.filter((block) => !unguardedAllowed(block.header));
+  if (unexpected.length) {
+    failures.push(`这些改状态的路由既不走 beginGuardedWrite、也不属于已登记的例外（agent 网关 / 认证）：`
+      + `${unexpected.map((block) => `第 ${block.startLine} 行 ${block.header.slice(0, 70)}`).join("；")}`
+      + " —— 要么接上守卫，要么登记并写明它靠什么鉴权");
+  }
+  if (unguardedBlocks.length < 8) {
+    failures.push(`不走守卫的路由只数到 ${unguardedBlocks.length} 条，远少于已知的 agent 网关那一族 —— 提取逻辑与代码脱节`);
+  }
+
   if (failures.length) {
     console.error("auth placement gate failed:");
     for (const message of failures) console.error(`- ${message}`);
     process.exit(1);
   }
   console.log(`auth placement gate ok: ${blocks.length} 条改状态路由鉴权之前无泄露无写入、每个受守卫动作都有显式权限映射、`
-    + `动作名不取自请求体、按路径定位的对象其授权作用域既不取自请求体也不取自操作者自己，且 ${blocks.filter((block) => block.body.some((row) => row.text.includes("beginGuardedWrite("))).length} 条受守卫写路由都在审计里记了真人`);
+    + `动作名不取自请求体、按路径定位的对象其授权作用域既不取自请求体也不取自操作者自己，且 ${blocks.filter((block) => block.body.some((row) => row.text.includes("beginGuardedWrite("))).length} 条受守卫写路由都在审计里记了真人；`
+    + `另有 ${blocks.filter((block) => !block.body.some((row) => row.text.includes("beginGuardedWrite("))).length} 条不走人类守卫（agent 网关走节点令牌 + claim 围栏、认证路由本身就是凭据鉴权），逐条登记过`);
 }
 
 // permissionForAction 的兜底是 system:*。漏一条映射不会报错，只会让那条杠杆【只有系统管理员
