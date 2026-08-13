@@ -5588,6 +5588,14 @@ export function consumeHumanConfirmation(state, requestId, options = {}) {
   return request;
 }
 
+// 重开与放弃是相反的两件事。认不出的取值原先一律当成 reopen —— 人以为自己放弃了这个格子，
+// 而它被重开了，任务组也就一直关不掉。不填＝按 reopen（保守：留着让人再看），填错必须拒。
+function requireKnownResolution(value) {
+  if (value === undefined || value === null || value === "") return "reopen";
+  throw Object.assign(new Error("human_directive_resolution_unknown"),
+    {status: 400, resolution: String(value).slice(0, 60), supported: ["reopen", "abandon"]});
+}
+
 export function createHumanDirective(state, input = {}, options = {}) {
   ensureRuntimeCollections(state);
   const taskGroup = input.taskGroupId ? (state.taskGroups || []).find((item) => item.id === input.taskGroupId) : null;
@@ -5607,7 +5615,7 @@ export function createHumanDirective(state, input = {}, options = {}) {
   const instruction = String(input.instruction || "").trim().slice(0, 4000);
   if (!instruction && directiveType === "free_text") throw Object.assign(new Error("human_directive_instruction_required"), {status: 400});
   const resolution = directiveType === "resolve_decision"
-    ? (["reopen", "abandon"].includes(input.resolution) ? input.resolution : "reopen")
+    ? (["reopen", "abandon"].includes(input.resolution) ? input.resolution : requireKnownResolution(input.resolution))
     : null;
   const at = new Date().toISOString();
   const directive = {
@@ -7834,6 +7842,12 @@ export function findingResolve(state, args) {
   // passing the close barrier's "no unfixed finding" gate with no new evidence. Return the settled finding.
   if (findingTerminalStatuses.includes(finding.status)) return {finding, alreadyResolved: true};
   const terminal = FINDING_TERMINAL_STATUSES;
+  // 认不出的状态原先降级成 "resolved" —— 那是【有利结果】，而且直接喂给关闭门 all_findings_terminal：
+  // 状态名写错一个字母，一条没修的发现就成了"已解决"，任务组照样能关。
+  // 缺省是另一回事（不填＝按下面的处置类派生），只拒绝【填了但认不出】的。
+  if (args.status !== undefined && args.status !== null && args.status !== "" && !terminal.includes(args.status)) {
+    return {ok: false, error: "finding_status_unknown", status: String(args.status).slice(0, 60), supported: terminal};
+  }
   const status = terminal.includes(args.status) ? args.status : "resolved";
   const evidenceRefs = [...new Set([...(finding.evidenceRefs || []), ...(args.evidenceRefs || [])])];
   // 处置类：显式指定优先，否则按状态派生；不足证据/归属者降级为不可闭合类，供 close-barrier 拦截"无修复即闭合"

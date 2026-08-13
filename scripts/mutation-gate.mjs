@@ -832,6 +832,24 @@ const MUTATIONS = [
     expect: "永远在等一个不存在的基底"
   },
   {
+    // 发现处置：认不出的状态降级成 resolved 是【有利结果】，且直接喂给关闭门。
+    name: "认不出的发现状态不得降级成已解决",
+    file: CORE,
+    check: "verifyUnknownEnumValuesAreRefusedNotCoerced",
+    from: '    return {ok: false, error: "finding_status_unknown", status: String(args.status).slice(0, 60), supported: terminal};',
+    to: "    void args;",
+    expect: "没有被拒"
+  },
+  {
+    // 决策处置：reopen / abandon 是相反的两件事。
+    name: "认不出的处置方式不得当成重开",
+    file: CORE,
+    check: "verifyUnknownEnumValuesAreRefusedNotCoerced",
+    from: '  throw Object.assign(new Error("human_directive_resolution_unknown"),',
+    to: '  if (false) throw Object.assign(new Error("human_directive_resolution_unknown"),',
+    expect: "没有被拒"
+  },
+  {
     // 认不出的指令类型降级成便条 = pause 拼错就变成一条 free_text，活照跑。
     name: "认不出的人工指令类型必须拒绝",
     file: CORE,

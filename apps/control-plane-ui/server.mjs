@@ -286,6 +286,13 @@ function writeState(state) {
 
 // 条目构造挪到了共享台账（lib/audit-ledger.mjs）：MCP 那条写路径要往【同一本】台账上记，
 // 两处各写一份的话，prevHash 链迟早分叉。这里保留同名包装，70 处调用点一个都不用改。
+function workItemCreateStatus(value) {
+  if (value === undefined || value === null || value === "") return "ready";
+  if (["draft", "ready"].includes(value)) return value;
+  throw Object.assign(new Error("work_item_status_unknown"),
+    {status: 400, details: {status: String(value).slice(0, 60), supported: ["draft", "ready"]}});
+}
+
 function audit(state, actor, action, subject, result = "succeeded") {
   ensureControlState(state);
   appendAuditEntry(state, {actor, action, subject, result, at: now()});
@@ -842,7 +849,9 @@ function createWorkItemRecord(state, taskGroupId, input = {}, options = {}) {
   const workItem = {
     id: workItemId,
     title: input.title || "AI-native work item",
-    status: ["draft", "ready"].includes(input.status) ? input.status : "ready",
+    // 认不出的状态原先降级成 ready（可开跑）。不填＝ready 是合理的创建默认，填错则必须拒 ——
+    // 人写了个自己以为存在的状态，拿到的却是"已经可以开跑"。
+    status: workItemCreateStatus(input.status),
     // 未登记的角色原先会被原样收下，然后在派发时静默绑上 orchestrator 的技能 ——
     // agent 按别人的角色规则干活。要拒就在【创建这一刻】拒，那时人还知道自己填了什么；
     // 等到派发再炸，人已经不知道问题出在哪。

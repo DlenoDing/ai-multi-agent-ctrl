@@ -53,6 +53,7 @@ import {
   findPermissionBlockedDispatch,
   requeuePermissionApprovedDispatch,
   findingResolve,
+  findingSubmit,
   reviewBundleRegister,
   computeCompletionReadiness,
   createExecutionTopology,
@@ -297,6 +298,7 @@ run(verifyUnknownStateSchemaIsRefused);
 run(verifySuspendHaltsRunningWork);
 run(verifyCancelDirectiveStopsRunningWork);
 run(verifyPauseDirectiveIsReversible);
+run(verifyUnknownEnumValuesAreRefusedNotCoerced);
 run(verifyInitPrintsTheToolCountClientsActuallySee);
 run(verifyMcpWritesLandInTheMainAuditLedger);
 run(verifyIdempotencyReplayIsPrincipalBound);
@@ -4874,6 +4876,49 @@ function extractMachineStates(yamlText, machine) {
 // init 打印给运维的那句"默认放行 N 个工具"必须与远程客户端真的看到的条数一致。
 // 此前 N 是写死的 46 —— 那是【过滤前】的白名单条数，真实放行 44 个（两个被 forbidden 规则拿掉）。
 // 运维照着这句话对不上自己客户端里的工具数，只能怀疑自己配错了。
+// 命令接口不得替人做决定。今天已经撞到三处同形状（方案定稿要求、人工指令类型、以及这一批），
+// 共同点是"认不出的取值被降级成某个默认动作"，而降到的那个往往正是【有利结果】或【相反的决定】。
+// 这里按真实入口逐条核对：填错必须拒，不填仍按各自的保守默认走。
+function verifyUnknownEnumValuesAreRefusedNotCoerced(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+
+  // ① 发现处置：认不出的状态原先降级成 resolved —— 那是有利结果，而且直接喂给关闭门。
+  const taskGroup = state.taskGroups.find((item) => item.id === "tg_runtime_management");
+  const finding = findingSubmit(state, {taskGroupId: taskGroup.id, workItemId: taskGroup.workItems[0].id,
+    severity: "major", summary: "探针发现", evidenceRefs: ["evidence:probe"]});
+  const findingId = finding?.finding?.findingId || finding?.findingId;
+  if (!findingId) {
+    output.push("认不出的取值必须拒绝：发现提交夹具没造出记录 —— 这一条在空转");
+  } else {
+    const coerced = findingResolve(state, {findingId, status: "resolve", justification: "拼错的状态"});
+    if (coerced?.error !== "finding_status_unknown") {
+      output.push(`发现处置：状态写错（"resolve"）没有被拒（拿到 ${JSON.stringify(coerced).slice(0, 110)}）—— `
+        + "原先会降级成 resolved，一条没修的发现就此终态化，关闭门照样放行");
+    }
+  }
+
+  // ② 决策处置：reopen / abandon 是相反的两件事。
+  let resolutionError = "";
+  try {
+    createHumanDirective(state, {taskGroupId: taskGroup.id, directiveType: "resolve_decision",
+      resolution: "abandoned", instruction: "放弃它"}, {actor: "acct_probe"});
+  } catch (error) { resolutionError = String(error?.message || error); }
+  if (resolutionError !== "human_directive_resolution_unknown") {
+    output.push(`决策处置：处置方式写错（"abandoned"）没有被拒（拿到 "${resolutionError || "成功了"}"）—— `
+      + "原先一律当成 reopen，人以为自己放弃了这个格子，而它被重开、任务组一直关不掉");
+  }
+  // 不填仍要能用（保守默认），否则这条改动会把正常路径也堵死。
+  let defaulted = null;
+  try {
+    defaulted = createHumanDirective(state, {taskGroupId: taskGroup.id, directiveType: "resolve_decision",
+      instruction: "按默认处置"}, {actor: "acct_probe"});
+  } catch (error) { defaulted = {error: String(error?.message || error)}; }
+  if (defaulted?.resolution !== "reopen") {
+    output.push(`决策处置：不填处置方式时应按保守默认 reopen（拿到 ${JSON.stringify(defaulted).slice(0, 110)}）`);
+  }
+}
+
 function verifyInitPrintsTheToolCountClientsActuallySee(output) {
   const initSource = readFileSync(resolve(root, "scripts/init-control-plane.mjs"), "utf8");
   const literal = initSource.match(/默认放行 (\d+) 个工具/u);
