@@ -2488,7 +2488,12 @@ function renderTaskGroupDetail(taskGroup) {
              机器判不了的事，判断权归人 —— 这里给出那个杠杆，并说清分类器的局限，
              免得"没被要求定稿"被读成"系统判断过、认为不必"。 -->
         ${workItem.requiresPlanFinalization === true
-          ? `<div class="notice warn-notice">已由 ${esc(workItem.planFinalizationDecidedBy || "?")} 指定：必须先有人工定稿的执行方案才能开跑${workItem.planFinalizationJustification ? `（${esc(workItem.planFinalizationJustification)}）` : ""}</div>`
+          ? `<div class="notice warn-notice">已由 ${esc(workItem.planFinalizationDecidedBy || "?")} 指定：必须先有人工定稿的执行方案才能开跑${workItem.planFinalizationJustification ? `（${esc(workItem.planFinalizationJustification)}）` : ""}。
+              ${/* 这句话原先只说事实、不说出口。而编排在这种情况下【不改工作项状态、也留不下任务组阻塞】
+                    （没有工作项被标成受阻时，本轮结算会把阻塞面整体清空），所以除了这一句，屏幕上再没有
+                    别的地方会讲它在等什么 —— 实测拉完杠杆连推三轮，单元一直停在原地。 */""}
+              等 agent 提出执行方案后，到「人工审核」页定稿它；没有在线 agent 时不会有人提方案。
+              不再需要这项要求时，在下面把它改回「不强制」。</div>`
           : ""}
         ${canReviewWork ? `
           <form class="form-grid" data-form="plan-finalization" data-task="${esc(taskGroup.id)}" data-work="${esc(workItem.id)}" style="margin-top:8px;">

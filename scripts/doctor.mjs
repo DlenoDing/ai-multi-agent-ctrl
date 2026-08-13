@@ -1369,7 +1369,9 @@ try {
   // 原先任何持直接 task_group:* 的账号都能穿过它拿到 404 —— 那既是越权放行（直接权限不绑定任何
   // 具体资源，等于对所有资源生效），也是一个不留审计的存在性预言机。现在按"作用域不可解析即拒绝"
   // 处理：不存在的 id 与无权限对调用方是同一个回答。确认单确实存在时，守卫按它的任务组落位，
-  // org_admin 在自己组织内的评审权限不受影响（下面 orgConfirmationDecide 正是走这条路）。
+  // org_admin 在自己组织内的评审权限不受影响 —— 确认单确实存在时，守卫按它的任务组落位。
+  // （原先这里写着"下面 orgConfirmationDecide 正是走这条路"，而那个变量在本文件里并不存在：
+  //   注释指向一个不存在的用例，读的人会以为那条路径被覆盖过。）
   if (orgReviewAuthority.response.status !== 403) {
     throw new Error(`未知确认单必须与无权限同样回答 403（不可解析的作用域应当拒绝，且不泄露存在性），got ${orgReviewAuthority.response.status}`);
   }

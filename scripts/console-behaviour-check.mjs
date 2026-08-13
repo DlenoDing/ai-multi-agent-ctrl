@@ -451,6 +451,28 @@ function sectionBodyOf(html, title) {
   return html.slice(bodyAt + bodyMark.length, bodyAt + bodyMark.length + 600);
 }
 
+// 人拉了"这个单元必须先由人定稿执行方案"这条杠杆之后，编排只把它记进准入台账：
+// 不改工作项状态、也加不了任务组阻塞（没有工作项被标成受阻时，本轮结算会把阻塞面整体清空）。
+// 于是这张卡上此前一个字都没有 —— 单元停在原地，人不知道它在等什么、不想等了怎么办。
+function runPlanFinalizationNoticeCase() {
+  const probe = loadConsole(el("div"));
+  const withRequirement = probe.renderTaskGroupDetail({taskGroupId: "tg_pf", progress: {}, config: null, roomMessages: []},
+    {id: "tg_pf", roles: [], workItems: [{id: "w_pf", title: "缓存策略", status: "in_progress", progress: 60,
+      ownerRole: "room-broker", requiresPlanFinalization: true}]});
+  check("被要求先定稿方案的单元要在卡上说清在等什么",
+    /必须先有人工定稿的执行方案才能开跑/.test(withRequirement),
+    "人自己拉了这条杠杆，单元却停在原地一个字都没有 —— 他不知道在等谁、等什么");
+  check("而且要给出口",
+    /人工审核/.test(withRequirement) && /改回「不强制」/.test(withRequirement),
+    "只说了在等什么、没说怎么往下走（等 agent 提方案后到哪定稿、不想等了怎么撤）");
+  const withoutRequirement = probe.renderTaskGroupDetail({taskGroupId: "tg_pf", progress: {}, config: null, roomMessages: []},
+    {id: "tg_pf", roles: [], workItems: [{id: "w_pf", title: "缓存策略", status: "in_progress", progress: 60,
+      ownerRole: "room-broker"}]});
+  check("没有这项要求时不要多说一句",
+    !/必须先有人工定稿的执行方案/.test(withoutRequirement),
+    "没被要求定稿方案的单元也挂着这条提示 —— 噪声会让真的那条被忽略");
+}
+
 function runRoomVisibilityCase() {
   const probe = loadConsole(el("div"));
   const spoken = "我建议把订单状态机换成事件溯源，评审那步可以跳过";
@@ -1466,6 +1488,7 @@ runSelfCheckReasonCase();
 await runNoResponseGuidanceCase();
 await runDoubleSubmitGuardCase();
 runNoDeadHelperCase();
+runPlanFinalizationNoticeCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();

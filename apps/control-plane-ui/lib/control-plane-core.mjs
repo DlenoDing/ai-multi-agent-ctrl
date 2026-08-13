@@ -2270,6 +2270,12 @@ function runAutonomousCycleBody(state, request = {}) {
           topology.taskGroupId === taskGroup.id && topology.workItemId === workItem.id
           && topology.humanFinalization?.outcome === "confirmed");
         if (!finalizedPlan) {
+          // 这一支【有意】不改工作项状态、也不加任务组阻塞：
+          //   · 加阻塞没用 —— 没有任何工作项被标成受阻时，本轮结算会把 taskGroup.blockers 整体清空
+          //     （见 health === "ok" 那一行），提示活不过这一轮；
+          //   · 标成 needs_decision 不诚实 —— 此刻还没有方案可供人定稿，那是把人叫来看一件他做不了的事。
+          // 人要看到的是"这个单元被我自己要求先定稿方案"，而那个事实就在 workItem.requiresPlanFinalization 上，
+          // 由界面直接讲出来（含出口：等 agent 提方案 / 撤销这项要求）。这里只如实记台账。
           recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "awaiting_plan_finalization",
             whyThisCellNow: `human marked this cell as requiring a finalized execution plan: ${workItem.planFinalizationJustification || ""}`, cycleRef});
           changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, awaiting: "plan_finalization"});
