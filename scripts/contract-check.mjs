@@ -1359,6 +1359,96 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push(`findingResolve: "已修复且有证据"是可核验的事实判断，AI 本就可以做，却被拒了（${verifiedByMachine.error}）`);
     }
 
+    // 【终态一次性】这一族：了结过的记录不得被第二次调用改写成【另一个结论】。
+    // 这一族最坏的样子是"人定了 A，随后一次重放把它变成 B"—— 定稿闸门、审批、发现项处置
+    // 都靠它。逐个了结点按同一形状问：先定 A，再试 B，记录必须仍是 A，且要自报"已经了结过了"。
+    {
+      const settleCases = [];
+
+      // ① 人工定稿：核心闸门。二次定稿必须抛出，并告诉后来者是谁在何时定了什么。
+      {
+        const st = structuredClone(seedState);
+        ensureRuntimeCollections(st, {root});
+        // 确认单的对象必须真实存在（定稿时会重新核对它的实质内容），所以先建一个拓扑当对象。
+        const subject = (createExecutionTopology(st, {taskGroupId: "tg_runtime_management", projectId: "prj_control_plane",
+          workItemId: "work_bootstrap", mode: "parallel_branches", runnerKind: "local", isolation: "worktree",
+          branches: [{branchId: "b_subject", objective: "定稿对象", ownedPaths: ["docs/**"], resourceScopes: [], acceptanceChecks: ["docs_lint"]}]})).topology;
+        const created = createHumanConfirmationRequest(st, {taskGroupId: "tg_runtime_management",
+          workItemId: "work_bootstrap", decisionType: "plan_topology", subjectRef: `ExecutionTopology:${subject.topologyId}`,
+          summary: "终态一次性探针", detail: "先定 A 再试 B",
+          options: [{optionId: "a", label: "选项 A"}, {optionId: "b", label: "选项 B"}]});
+        const requestId = created.request?.requestId || created.requestId;
+        const round = Number(st.humanConfirmationRequests.find((item) => item.requestId === requestId)?.round || 1);
+        // 真人主体必须是 state 里真实存在的账号：编一个 accountId 不算数，那正是这道闸门要挡的。
+        const humanOwner = (st.accounts || []).find((item) => item.status === "active"
+          && ["system_admin", "org_admin", "user_account"].includes(item.accountType));
+        if (!humanOwner) throw new Error("终态一次性：夹具里找不到生效中的真人账号，这一条会在空转");
+        const humanActorId = humanOwner.accountId || humanOwner.id;
+        decideHumanConfirmation(st, requestId, {action: "finalize", selectedOptionId: "a", expectedRound: round},
+          {actor: humanActorId});
+        let secondBlocked = null;
+        try {
+          decideHumanConfirmation(st, requestId, {action: "finalize", selectedOptionId: "b", expectedRound: round},
+            {actor: humanActorId});
+        } catch (error) { secondBlocked = error; }
+        const record = st.humanConfirmationRequests.find((item) => item.requestId === requestId);
+        settleCases.push({label: "人工定稿", blocked: Boolean(secondBlocked),
+          kept: record?.decision?.selectedOptionId === "a",
+          tellsWho: Boolean(secondBlocked?.decidedBy)});
+      }
+
+      // ② 执行方案拓扑：走到终态之后，任何动作都只能原样返回，不得再推进。
+      {
+        const st = structuredClone(seedState);
+        ensureRuntimeCollections(st, {root});
+        const topo = (createExecutionTopology(st, {taskGroupId: "tg_runtime_management", projectId: "prj_control_plane",
+          workItemId: "work_bootstrap", mode: "parallel_branches", runnerKind: "local", isolation: "worktree",
+          branches: [{branchId: "b_once", objective: "一次性", ownedPaths: ["docs/**"], resourceScopes: [], acceptanceChecks: ["docs_lint"]}]})).topology;
+        topo.status = "cancelled"; // 直接置终态：这里验的是"终态之后还能不能推进"，不是怎么走到终态
+        // 包起来：守卫塌掉时这一支会往下走并抛异常。让它变成一条红，而不是把整道门带崩 ——
+        // 崩掉的话读到的是一段栈，看不出是哪条不变式破了。
+        let after = null;
+        let threw = false;
+        try {
+          after = advanceExecutionTopology(st, {topologyId: topo.topologyId, action: "report_branch",
+            branchId: "b_once", branchStatus: "reported", resultRef: "bundle:x"});
+        } catch { threw = true; }
+        settleCases.push({label: "执行方案拓扑", blocked: after?.alreadyTerminal === true,
+          kept: !threw && topo.status === "cancelled", tellsWho: true});
+      }
+
+      // ③ 规则来源分流：真人采纳成 active 之后，不得被再一次调用改成别的了结状态。
+      {
+        const st = structuredClone(seedState);
+        ensureRuntimeCollections(st, {root});
+        st.ruleSourceResolutions = [{resolutionId: "rsr_once", taskGroupId: "tg_runtime_management", status: "discovered"}];
+        ruleSourceSettle(st, {resolutionId: "rsr_once", taskGroupId: "tg_runtime_management", status: "active",
+          [HUMAN_ACTOR_KEY]: {accountId: "acct_workspace_owner", accountType: "system_admin"}});
+        const second = ruleSourceSettle(st, {resolutionId: "rsr_once", taskGroupId: "tg_runtime_management", status: "rejected"});
+        settleCases.push({label: "规则来源分流", blocked: second?.alreadySettled === true || Boolean(second?.error),
+          kept: st.ruleSourceResolutions[0].status === "active", tellsWho: true});
+        // 出口必须还在：人自己反悔（把已采纳的来源改掉）要走得通，否则这道锁把人也锁在里面了。
+        const humanRevoke = ruleSourceSettle(st, {resolutionId: "rsr_once", taskGroupId: "tg_runtime_management",
+          status: "rejected", [HUMAN_ACTOR_KEY]: {accountId: "acct_workspace_owner", accountType: "system_admin"}});
+        if (humanRevoke?.error || st.ruleSourceResolutions[0].status !== "rejected") {
+          output.push(`终态一次性：真人也撤不掉自己采纳过的规则来源（${humanRevoke?.error || st.ruleSourceResolutions[0].status}）—— 锁把人一起锁在里面了`);
+        }
+      }
+
+      if (settleCases.length !== 3) output.push(`终态一次性：只造出了 ${settleCases.length} 个了结点 —— 这张表在空转`);
+      for (const item of settleCases) {
+        if (!item.kept) {
+          output.push(`终态一次性：${item.label} 被第二次调用改写成了另一个结论 —— 人定过的事可以被后来的调用翻掉`);
+        }
+        if (!item.blocked) {
+          output.push(`终态一次性：${item.label} 的二次了结没有被拒、也没有自报"已经了结过了" —— 调用方会以为自己这次生效了`);
+        }
+        if (!item.tellsWho) {
+          output.push(`终态一次性：${item.label} 拒绝二次了结时没说清是谁在何时定了什么 —— 输的那一方只能自己去翻记录`);
+        }
+      }
+    }
+
     // 释放侧此前一条判据都没有：不存在的租约、以及【别人的】租约。
     // 后者是互斥的核心 —— 能替别人释放，就等于没有互斥。
     // （申领侧的三条在上面，本轮把它们从"只看 ok !== false"收紧成点名错误码。）

@@ -7990,6 +7990,13 @@ export function ruleSourceSettle(state, args) {
   const humanActor = args[HUMAN_ACTOR_KEY] || null;
   const wantsAdoption = RULE_SOURCE_HUMAN_ONLY_STATUSES.includes(args.status);
   if (wantsAdoption && !humanActor) return {ok: false, error: "rule_source_adoption_requires_human"};
+  // active 不在 RULE_SOURCE_TERMINAL_STATUSES 里（那是有意的：人反悔时要留一条出口），
+  // 于是上面那道终态判据放行了它 —— 而 rejected/quarantined/reference_only 都是 AI 可自行了结的状态，
+  // 结果是【人已经采纳的规则来源，AI 一次调用就能改掉】。这正是采纳闸门要挡的事，只是漏在了反方向。
+  // 修法不是把 active 设成终态（那会把人自己反悔的出口也堵死），而是：离开 active 同样只能由真人。
+  if (RULE_SOURCE_HUMAN_ONLY_STATUSES.includes(resolution.status) && !humanActor) {
+    return {ok: false, error: "rule_source_adoption_requires_human", currentStatus: resolution.status};
+  }
   if (!wantsAdoption && !RULE_SOURCE_AI_SETTLEABLE_STATUSES.includes(args.status)) {
     return {ok: false, error: "rule_source_status_invalid"};
   }

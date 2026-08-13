@@ -1121,6 +1121,40 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // 真缺陷：active 不在规则来源的终态集里，于是【人已经采纳的来源，AI 一次调用就能改成 rejected】。
+    name: "人采纳过的规则来源不得被机器改掉",
+    file: CORE,
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  if (RULE_SOURCE_HUMAN_ONLY_STATUSES.includes(resolution.status) && !humanActor) {\n    return {ok: false, error: \"rule_source_adoption_requires_human\", currentStatus: resolution.status};\n  }",
+    to: "/* 守卫失效 */",
+    expect: "人定过的事可以被后来的调用翻掉"
+  },
+  {
+    // 这道锁不能把人自己也锁在里面：真人撤回必须走得通。
+    name: "人自己撤回采纳的出口不得被锁死",
+    file: CORE,
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  if (RULE_SOURCE_HUMAN_ONLY_STATUSES.includes(resolution.status) && !humanActor) {",
+    to: "  if (RULE_SOURCE_HUMAN_ONLY_STATUSES.includes(resolution.status)) {",
+    expect: "锁把人一起锁在里面了"
+  },
+  {
+    name: "已定稿的确认单不得被二次定稿",
+    file: CORE,
+    check: "verifyHumanAndOrganizationContracts",
+    from: '  if (request.status !== "pending") {',
+    to: "  if (false) {",
+    expect: "人定过的事可以被后来的调用翻掉"
+  },
+  {
+    name: "已终态的执行方案不得再被推进",
+    file: CORE,
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  if (TOPOLOGY_TERMINAL_STATUSES.includes(topology.status)) return {topology, alreadyTerminal: true};",
+    to: "/* 守卫失效 */",
+    expect: "人定过的事可以被后来的调用翻掉"
+  },
+  {
     // 写路由的判权点在存在检查之后，两种"看不见"会落到不同的码上 —— 入口处那道可见性判据不能少。
     name: "项目配置写入不得泄露别处有没有这个项目",
     file: SERVER,
