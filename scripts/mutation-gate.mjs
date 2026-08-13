@@ -672,6 +672,25 @@ const MUTATIONS = [
     expect: "failCommand 已经被接上了，但仍登记"
   },
   {
+    // 一条源码字符串断言若能匹配到多处，它就指认不出自己守的是哪一处：隔壁复制粘贴出的同形代码
+    // 会替真守卫喂饱它。这里真的造一处同形代码，要求 specs 门当场点名。
+    name: "源码断言不得被同形代码喂饱",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "specs",
+    from: "if (!providers.size) return false",
+    to: "if (!providers.size) return false; // 同形代码：if (!providers.size) return false",
+    expect: "能匹配 2 处"
+  },
+  {
+    // 上面那道扫描被打瞎时会静默变成"核对了 0 条"而一片绿 —— 空转下限必须自己也能报红。
+    name: "断言搜索面自查不得空转",
+    file: "scripts/validate-specs.rb",
+    gate: "specs",
+    from: "next unless needle.length >= 22 &&",
+    to: "next unless needle.length >= 2200 &&",
+    expect: "这道扫描在空转"
+  },
+  {
     // agent 侧那半是结构判据，同样要能被改坏后报红。
     name: "agent 运行时每处起 git 子进程的地方都要取失败原因",
     file: "apps/agent-runtime/runtime.mjs",

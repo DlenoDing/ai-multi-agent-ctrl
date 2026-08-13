@@ -891,7 +891,12 @@ errors << "核心决策必须强制阻塞，不受调用方 blocking 参数影�
 # 3. 定稿权只属于真人：机器主体一律拒绝（core + REST 权限层 + MCP 通道三处）。
 errors << "核心决策定稿必须校验真人账号" unless core_source.include?("human_confirmation_requires_human_actor") && core_source.include?("const HUMAN_ACCOUNT_TYPES = [\"system_admin\", \"org_admin\", \"user_account\"]")
 errors << "REST 权限层必须声明仅真人可执行的动作" unless server_source.include?("HUMAN_ONLY_ACTIONS") && server_source.include?("human_confirmation_decide")
-errors << "MCP 通道必须拒绝机器主体代为定稿" unless mcp_source.include?("human_confirmation_decision_forbidden_for_machine_principal") && mcp_source.include?("context?.principal?.kind === \"system_service\"")
+# 这条原先要求文件里同时出现那个错误码、和 `kind === "system_service"`。守卫早已从黑名单改成
+# 白名单（`!== "system_admin"`），后半句只是被另外五处无关的主体判断喂饱了 —— 真把白名单改回
+# 黑名单（注释里正警告这件事），门一声不响。改成钉住【相邻的这两行】：写法一变就红。
+errors << "MCP 通道必须按白名单拒绝机器主体代为定稿" unless mcp_source.include?(
+  "if (context?.principal?.kind !== \"system_admin\") {\n        return {ok: false, error: \"human_confirmation_decision_forbidden_for_machine_principal\"};"
+)
 # 4. 多轮协商：人提方案 -> AI 再分析 -> 人决定；只有 finalize 才终结并上锁，AI 永不能终结。
 errors << "人提出方案后必须转交 AI 再分析而不是直接生效" unless core_source.include?("request.awaitingAiAnalysis = true") && core_source.include?("action: \"human_revision_proposed\"")
 errors << "AI 再分析通道必须存在且不能终结决策" unless core_source.include?("export function submitAiConfirmationAnalysis") && mcp_source.include?("confirmation_analyze")
@@ -927,7 +932,11 @@ errors << "互审跳过必须同时匹配 decisionType（避免方案定稿掐�
 # 14. 防 TOCTOU：AI 修订候选必须推进轮次，人带过期轮次定稿必须被拒。
 errors << "AI 修订候选必须推进协商轮次并支持轮次令牌校验" unless core_source.include?("human_confirmation_round_stale") && core_source.include?("request.round += 1")
 errors << "轮次令牌必须有防回归测试" unless contract_check_source.include?("人工闸门: 人拿着过期轮次仍可定稿")
-errors << "定稿分歧必须回到人工确认而不是死堵" unless core_source.include?("requestKey: `plan_topology_downgrade:${topology.topologyId}`") && core_source.include?("if (isHumanConfirmationActor(state, args.actor))")
+# 两段都要求出现过还不够：`isHumanConfirmationActor` 在本文件里另有一处，把降级分支里那个
+# 判断整个删掉（＝AI 自行改写已定稿方案），另一处会顶上让门照样绿。按【降级分支这一段】切开再查。
+downgrade_branch = core_source[/if \(topology\.humanFinalization\?\.outcome === "confirmed" && !downgradeApproved\) \{.*?plan_topology_downgrade/m]
+errors << "找不到已定稿方案的降级分支，'定稿分歧必须回到人工确认'这一条没被检验" if downgrade_branch.nil?
+errors << "定稿分歧必须回到人工确认而不是死堵" unless downgrade_branch.to_s.include?("if (isHumanConfirmationActor(state, args.actor))")
 errors << "已定稿方案的降级出路必须有行为测试覆盖" unless contract_check_source.include?("人工闸门: 真人无法降级自己定稿的方案") && contract_check_source.include?("人工闸门: AI 的降级被拦下却没有挂出人工确认单")
 # 18. agent 通道只能提运行时确认，绝不能自选 decisionType/subjectRef 伪造核心决策单（洗白绕过 #2）。
 errors << "agent 确认通道必须白名单且恒定为运行时类" unless server_source.include?("decisionType: \"runtime_execution\"") && mcp_source.include?("decisionType: \"runtime_execution\"") && !server_source.include?("createHumanConfirmationRequest(state, {...body")
@@ -2653,4 +2662,50 @@ puts "原因码本地化：核对了 #{localized_literals.length} 个字面量�
      "另有 #{opaque_reason_sites.length} 处取值来自变量，本门跟不到，已逐个人工追查并登记" \
      "（#{TRACED_OPAQUE_REASON_SITES.values.sum { |t| t['codes'].length }} 个真实取值全部有中文，" \
      "登记与源码一致性每次校验）"
+# 把本门的规矩用在本门自己身上：一条源码字符串断言，如果它的目标串在被查文件里能匹配到多处，
+# 它就【指认不出自己守的是哪一处】—— 隔壁复制粘贴出的同形代码会替真守卫把它喂饱，真守卫被删被改
+# 也一声不响。今天实撞两次（publish 铸造未知契约、MCP 定稿白名单），都是这么裂开的。
+# 只管【整句守卫】：短标识符在源码里出现多次是正常的（同一个函数本来就会被调用多次）。
+self_source = File.read(File.join(ROOT, "scripts/validate-specs.rb"))
+source_paths = {}
+self_source.scan(/^([a-z_]+_source)\s*=\s*File\.read\(File\.join\(ROOT,\s*"([^"]+)"\)\)/) { |v, p| source_paths[v] = p }
+# 多文件拼接出来的源（如 mcp + core）恰恰最容易撞上同形代码：一句话在两个文件里各有一份，
+# 断言就分不清自己命中的是哪一份。把它们展开成成分文件，一起纳入核对。
+composed_sources = {}
+self_source.scan(/^([a-z_]+_source)\s*=\s*"((?:#\{[a-z_]+_source\}|\\n)+)"$/) do |name, body|
+  parts = body.scan(/#\{([a-z_]+_source)\}/).flatten
+  composed_sources[name] = parts if parts.all? { |part| source_paths.key?(part) }
+end
+source_cache = {}
+scope_errors = []
+scoped_checked = 0
+unresolved = Hash.new(0)
+self_source.each_line.with_index(1) do |line, lineno|
+  line.scan(/\b([a-z_]+_source)\.include\?\(("(?:[^"\\]|\\.)*")\)/) do |var, literal|
+    # 拼接出来的源（多文件合并）与带 #{} 插值的目标串静态定不下来，不能假装查过 —— 点名计数。
+    parts = composed_sources[var] || (source_paths.key?(var) ? [var] : nil)
+    if parts.nil? || literal.include?('#{')
+      unresolved[var] += 1
+      next
+    end
+    needle = literal[1..-2].gsub(/\\(.)/) { { "n" => "\n", "t" => "\t" }.fetch($1, $1) }
+    next unless needle.length >= 22 && needle.match?(/\breturn\b|\bif\s*\(|\bthrow\b|===|!==|&&/)
+    scoped_checked += 1
+    where = parts.map { |part| source_paths[part] }.join(" + ")
+    hits = parts.sum do |part|
+      (source_cache[part] ||= File.read(File.join(ROOT, source_paths[part]))).scan(needle).length
+    end
+    next if hits < 2
+    scope_errors << "第 #{lineno} 行那条断言在 #{where} 里能匹配 #{hits} 处 —— " \
+                    "它指认不出自己守的是哪一处，删掉真守卫也不会红。把范围切到那个函数/分支再查：#{needle[0, 60].gsub("\n", "⏎")}"
+  end
+end
+# 这道扫描被重构打瞎（提取正则失配、判据收得过窄）时会静默变成"核对了 0 条"而一片绿。
+# 这里用下限而不是精确相等：每加一条源码断言这个数就会变，钉死只会天天改数字；而本门真正要防的
+# 是【整条扫描失灵】那一跳，不是 50→49。50→49 那种漏检由"同形代码就报红"那条变异守着。
+scope_errors << "断言搜索面自查只核对到 #{scoped_checked} 条（远少于既有规模）—— 提取多半已失配，这道扫描在空转" if scoped_checked < 30
+fail_with(scope_errors)
+puts "断言搜索面：#{scoped_checked} 条整句守卫型的源码断言，目标串在被查文件里都只匹配一处" \
+     "（另有 #{unresolved.values.sum} 条定不下搜索面：#{unresolved.map { |v, c| "#{v}×#{c}" }.join("、")}，未核对）"
+
 puts "spec validation ok"
