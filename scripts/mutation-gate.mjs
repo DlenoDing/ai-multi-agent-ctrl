@@ -1049,6 +1049,24 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 扫掉在飞的临时文件 = 把一次正在进行的好写入毁掉。这条安全前提此前从没被确定性验过。
+    name: "在飞的临时文件不得被扫",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    gate: "crash",
+    from: "      if (statSync(full).mtimeMs < cutoff) unlinkSync(full);",
+    to: "      unlinkSync(full);",
+    expect: "绝不能碰"
+  },
+  {
+    // 按 pid 破的那条：写入者已死的临时文件不必等够 60 秒。
+    name: "写入者已死的临时文件要立刻清掉",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    gate: "crash",
+    from: "    try { process.kill(pid, 0); continue; } catch (error) { if (error?.code === \"EPERM\") continue; }",
+    to: "    continue;",
+    expect: "写入者进程已死的临时文件被清掉"
+  },
+  {
     // 请求体读取阶段的四个码在任何路由之前就产生，原先一个中文都没有。
     name: "请求体读取失败的码要有中文",
     file: "apps/control-plane-ui/public/i18n-zh.js",

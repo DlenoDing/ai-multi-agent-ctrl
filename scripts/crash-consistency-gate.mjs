@@ -3,11 +3,11 @@
 import {spawn, spawnSync} from "node:child_process";
 import {createServer} from "node:net";
 import {once} from "node:events";
-import {chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, readdirSync} from "node:fs";
+import {chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, readdirSync, utimesSync, unlinkSync} from "node:fs";
 import {join} from "node:path";
 import {hostname, tmpdir} from "node:os";
 
-import {dirname, resolve} from "node:path";
+import {basename, dirname, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 
 // 起过的子进程一律登记，并在【所有】退出路径上收掉。
@@ -431,6 +431,49 @@ check(resumed.ok, "重启后还能继续写入（残留的锁没有把系统锁�
       `HTTP ${afterDeadLock.status}，用时 ${deadLockMs}ms —— 只靠时间兜底会等满宽限期`);
   }
 }
+// 与上面那把"已死的锁"同一个道理：残留临时文件的清理只有在 SIGKILL 恰好落在写入中途时才验得到，
+// 而那要看运气（实测多数轮次都没撞上，这条整条跳过）。所以直接把前置条件造出来。
+// 临时文件有【两个】清理器，规则不同，必须分开造，否则一个夹具会同时满足两条、测不准是谁干的：
+//   · sweepStaleTempFiles —— 按年龄（60 秒以上才扫），防的是"崩溃攒下的垃圾没人删"；
+//   · sweepOrphanTempFiles —— 按写入者 pid 还活不活着，与年龄无关。
+// 还要有第三种：pid 活着、文件也新 —— 这一个【绝不能被碰】，那是并发在飞的写入正用着的文件，
+// 扫掉它就是把一次好写入毁掉。第一版我给"新文件"起名时用了一个不存在的 pid，
+// 于是它被 orphan 那条正确地扫掉，判据却报成"60 秒规则失效" —— 夹具把两套机制混成了一个。
+{
+  const tempNamed = (pid, tag) => join(runtimeDir, `${basename(statePath)}.tmp-${pid}-${tag}`);
+  const livePid = process.pid; // 本门自己：确实活着，且不是服务端进程自己
+  const agedTemp = tempNamed(livePid, "agedfile");
+  const orphanTemp = tempNamed(999999, "orphanfile");
+  const inFlightTemp = tempNamed(livePid, "inflightfile");
+  let staged = false;
+  try {
+    for (const path of [agedTemp, orphanTemp, inFlightTemp]) writeFileSync(path, "{}");
+    const twoMinutesAgo = new Date(Date.now() - 120000);
+    utimesSync(agedTemp, twoMinutesAgo, twoMinutesAgo);
+    staged = [agedTemp, orphanTemp, inFlightTemp].every((path) => existsSync(path));
+  } catch { staged = false; }
+  if (!staged) {
+    console.log("  --  造不出残留临时文件，清理这条未被检验");
+  } else {
+    // 端点用门里已经验过能写的那个 —— 我第一版拼错了路径，拿到 404，
+    // 那条断言当场变成"在测我有没有拼错 URL"，而不是在测清理逻辑。
+    const sweep = await fetch(`${base}/api/orgs/${orgId}/quotas`, {method: "POST",
+      headers: {...auth, "idempotency-key": "crash-sweep"}, body: JSON.stringify({quotas: {maxMembers: 57}})});
+    check(sweep.ok && !existsSync(agedTemp),
+      "崩溃攒下的临时文件（够旧）被下一次写入清掉",
+      `HTTP ${sweep.status}，${existsSync(agedTemp) ? "那个文件还在" : "已清掉"}`);
+    check(!existsSync(orphanTemp),
+      "写入者进程已死的临时文件被清掉（不必等够 60 秒）",
+      existsSync(orphanTemp) ? "那个文件还在 —— 一次崩溃攒一个，没人会去删" : "已清掉");
+    check(existsSync(inFlightTemp),
+      "写入者还活着、文件也还新的临时文件绝不能碰（那是在飞的写入）",
+      existsSync(inFlightTemp) ? "还在，没被碰" : "被扫掉了 —— 这会把一次正在进行的好写入毁掉");
+    for (const path of [agedTemp, orphanTemp, inFlightTemp]) {
+      try { unlinkSync(path); } catch { /* 清理探针自己留下的东西 */ }
+    }
+  }
+}
+
 const leftoversAfterWrite = readdirSync(runtimeDir).filter((name) => name.includes(".tmp-"));
 // 这一轮若没撞上写入中途，清理逻辑根本没被检验 —— 报成 ok 就是假绿，必须自己说出来。
 if (!leftoversAtKill.length) console.log("  --  本轮 SIGKILL 没有落在写入中途（盘上没有残留临时文件），清理这条未被检验");
