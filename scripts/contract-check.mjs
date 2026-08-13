@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { SCHEMA_FILE_ALIASES, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
+import { mcpServiceAllowedTools } from "../apps/control-plane-ui/lib/mcp-service-allowlist.mjs";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -296,6 +297,7 @@ run(verifyUnknownStateSchemaIsRefused);
 run(verifySuspendHaltsRunningWork);
 run(verifyCancelDirectiveStopsRunningWork);
 run(verifyPauseDirectiveIsReversible);
+run(verifyInitPrintsTheToolCountClientsActuallySee);
 run(verifyMcpWritesLandInTheMainAuditLedger);
 run(verifyIdempotencyReplayIsPrincipalBound);
 run(verifyTestResultStatusRequired);
@@ -4869,6 +4871,26 @@ function extractMachineStates(yamlText, machine) {
 // 合流之后要同时成立三件事，缺一件都比分开更糟：条目进台账（人看得见）、进归档（问责凭据）、
 // 且 prevHash 链不断（篡改检得出来）。必须在【子进程】里验：handleMcpJsonRpc 走自己的 loadState，
 // 运行目录在模块加载时就定死了。
+// init 打印给运维的那句"默认放行 N 个工具"必须与远程客户端真的看到的条数一致。
+// 此前 N 是写死的 46 —— 那是【过滤前】的白名单条数，真实放行 44 个（两个被 forbidden 规则拿掉）。
+// 运维照着这句话对不上自己客户端里的工具数，只能怀疑自己配错了。
+function verifyInitPrintsTheToolCountClientsActuallySee(output) {
+  const initSource = readFileSync(resolve(root, "scripts/init-control-plane.mjs"), "utf8");
+  const literal = initSource.match(/默认放行 (\d+) 个工具/u);
+  if (literal) {
+    output.push(`init 里"默认放行 ${literal[1]} 个工具"是写死的字面量 —— 白名单一改它就说谎，要按有效清单算出来`);
+  }
+  const allowed = new Set(mcpServiceAllowedTools());
+  const visible = createMcpToolDefinitions().filter((tool) => allowed.has(tool.name));
+  if (visible.length !== allowed.size) {
+    output.push(`服务令牌的有效白名单有 ${allowed.size} 个工具，但工具表里只有 ${visible.length} 个 —— `
+      + "白名单里有工具表中不存在的名字，客户端看到的会比配置里少");
+  }
+  if (visible.length < 20) {
+    output.push(`服务令牌只放行 ${visible.length} 个工具 —— 远少于预期，提取或白名单已与代码脱节`);
+  }
+}
+
 function verifyMcpWritesLandInTheMainAuditLedger(output) {
   const probeDir = mkdtempSync(join(tmpdir(), "aimac-mcp-audit-"));
   const probeFile = join(probeDir, "probe.mjs");
@@ -5374,11 +5396,9 @@ function verifyMcpToolListCostStaysVisible(output) {
   // 真正要紧的不是工具表总量，而是【一个真实远程客户端实际拿到多少】：服务令牌默认只放行
   // defaultMcpServiceToolAllowlist 里那批，而通配符对服务令牌是明令禁止的（forbiddenMcpServiceTool）。
   // 我先前用合成的 allowedMcpTools:["*"] 去量，把成本报成了将近两倍 —— 那个主体在产品里造不出来。
-  const serverSource = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
-  const allowlistBlock = serverSource.match(/defaultMcpServiceToolAllowlist = \[([\s\S]*?)\]/u);
-  const defaultNames = allowlistBlock
-    ? [...allowlistBlock[1].matchAll(/"([a-z-]+-mcp\.[a-z_0-9]+)"/gu)].map((match) => match[1])
-    : [];
+  // 直接问真相源（lib/mcp-service-allowlist.mjs），不要按文件 grep 那份清单：
+  // 清单挪进共享模块时，这条判据、规范门那条禁用判据、以及 init 的报数一起断过 —— 同一形状三次。
+  const defaultNames = mcpServiceAllowedTools();
   const defaultTools = tools.filter((tool) => defaultNames.includes(tool.name));
   const defaultBytes = JSON.stringify(defaultTools).length;
   if (!defaultNames.length) {

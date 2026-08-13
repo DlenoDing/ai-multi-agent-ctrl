@@ -4,6 +4,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { digestOf, ensureRuntimeCollections } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import { markRuntimeStorage, stateStoreKind, storedStateExists, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { mcpServiceAllowedTools } from "../apps/control-plane-ui/lib/mcp-service-allowlist.mjs";
+import { createMcpToolDefinitions } from "../apps/mcp-server/server.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeDir = resolve(root, process.env.AIMAC_RUNTIME_DIR || ".runtime");
@@ -129,8 +131,18 @@ if (!workspaceOwnerTokenEnv) {
   console.log(`local seed workspace owner token: ${workspaceOwnerToken}`
     + "  (种子里的普通成员账号 owner@local，用来验非管理员视角；登录方式与上面相同)");
 }
+// 这两个数原先是写死的字面量（"46 个工具、约 69k token"），而 46 是【过滤前】的条数 ——
+// 真实放行 44 个，远程客户端一跑 tools/list 就与这句话对不上。改成按同一处真相源算出来：
+// 工具数取服务令牌的有效白名单，token 数按真实 tools/list 载荷估（4 字节/token 粗算）。
+function mcpServiceToolFacts() {
+  const allowed = new Set(mcpServiceAllowedTools());
+  const payload = createMcpToolDefinitions().filter((tool) => allowed.has(tool.name));
+  return {count: payload.length, approxKiloTokens: Math.round(Buffer.byteLength(JSON.stringify(payload), "utf8") / 4 / 1000)};
+}
+
 if (!process.env.AIMAC_MCP_SERVICE_TOKEN) {
   console.log(`central MCP service token: ${mcpServiceToken}`
     + `  (远程 MCP 客户端连 ${mcpEndpoint}/mcp 时作 Bearer 令牌；`
-    + "默认放行 46 个工具，一次 tools/list 约 69k token，用 AIMAC_MCP_SERVICE_ALLOWED_TOOLS 可再收窄)");
+    + `默认放行 ${mcpServiceToolFacts().count} 个工具，一次 tools/list 约 ${mcpServiceToolFacts().approxKiloTokens}k token，`
+    + "用 AIMAC_MCP_SERVICE_ALLOWED_TOOLS 可再收窄)");
 }

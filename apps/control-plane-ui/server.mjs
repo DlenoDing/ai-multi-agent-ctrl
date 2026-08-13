@@ -8,6 +8,7 @@ import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node
 import { basename, dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { appendAuditEntry, auditArchiveFault as sharedAuditArchiveFault, flushPendingAuditAppends as flushAuditArchive } from "./lib/audit-ledger.mjs";
+import { mcpServiceAllowedTools } from "./lib/mcp-service-allowlist.mjs";
 import { assertStateStoreConfig, consumeStateRebuildSignal, ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
 import { appendProjectExecutionEvent, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
 import {
@@ -142,54 +143,6 @@ const unsafeSecretValues = new Set([
   "change-this-local-agent-runtime-token"
 ]);
 
-const defaultMcpServiceToolAllowlist = [
-  "orchestration-mcp.state_get",
-  "room-mcp.room_join",
-  "room-mcp.room_send",
-  "room-mcp.room_wait",
-  "room-mcp.room_ack",
-  "agent-control-mcp.node_probe",
-  "agent-control-mcp.dispatch_status",
-  "scheduler-mcp.model_select",
-  "scheduler-mcp.session_place",
-  "scheduler-mcp.capacity_snapshot",
-  "scheduler-mcp.execution_topology_plan",
-  "scheduler-mcp.execution_topology_advance",
-  "scheduler-mcp.derived_task_classify",
-  "resource-mcp.lease_claim",
-  "resource-mcp.lease_release",
-  "resource-mcp.resource_snapshot",
-  "model-mcp.model_capabilities",
-  "model-mcp.model_policy_get",
-  "model-mcp.model_select",
-  "skill-mcp.skill_source_sync",
-  "skill-mcp.role_skill_parse",
-  "skill-mcp.role_skill_overlay_validate",
-  "skill-mcp.role_skill_resolve",
-  "evidence-mcp.artifact_register",
-  "evidence-mcp.test_result_submit",
-  "permission-mcp.permission_probe",
-  "permission-mcp.permission_request_submit",
-  "permission-mcp.permission_status",
-  "review-mcp.review_plan_create",
-  "review-mcp.review_bundle_register",
-  "review-mcp.review_result_consume",
-  "review-mcp.completion_readiness_compute",
-  "definition-mcp.shared_definition_create",
-  "definition-mcp.shared_definition_publish",
-  "definition-mcp.shared_definition_consumer_bind",
-  "definition-mcp.shared_definition_conflict_report",
-  "instruction-mcp.cache_key_index",
-  "instruction-mcp.stable_prefix_get",
-  "instruction-mcp.delta_payload_compact",
-  "repository-mcp.repository_output_target_select",
-  "repository-mcp.repository_target_lease_bind",
-  "repository-mcp.artifact_manifest_index",
-  "ui-console-mcp.runtime_health_get",
-  "ui-console-mcp.management_surface_get",
-  "ui-console-mcp.project_progress_get",
-  "ui-console-mcp.task_group_progress_get"
-];
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -1112,29 +1065,6 @@ function mcpServiceProjectIds() {
   return configured.length ? configured : ["prj_control_plane"];
 }
 
-function mcpServiceAllowedTools() {
-  const configured = String(process.env.AIMAC_MCP_SERVICE_ALLOWED_TOOLS || "").split(",").map((item) => item.trim()).filter(Boolean);
-  const tools = configured.length ? configured : defaultMcpServiceToolAllowlist;
-  return tools.filter((tool) => !forbiddenMcpServiceTool(tool));
-}
-
-function forbiddenMcpServiceTool(tool) {
-  return tool === "*" ||
-    tool === "evidence-mcp.checkpoint_submit" ||
-    tool.startsWith("identity-mcp.") ||
-    tool.startsWith("governance-mcp.") ||
-    // 角色规则（"你是谁、职责边界、禁区"）是三类规则之一。skill_source_sync 会整体替换
-    // state.roleSkills（改掉所有 agent 收到的 SKILL.md 正文），role_skill_overlay_validate
-    // 直接创建 status:"active" 的 overlay 并立刻被下一次 buildTaskContract 选中。
-    // 两者原先都对 MCP 服务令牌开放，且都不是真人专属 —— 规则层被改了，而人工闸门在旁边看着。
-    // runtimeMutationPolicy 里那条 auto_publish_role_skill_overlay 是【声明了但从没有人执行】的禁令。
-    tool === "skill-mcp.skill_source_sync" ||
-    tool === "skill-mcp.role_skill_overlay_validate" ||
-    // 真人专属动作的 MCP 孪生：批准权限请求。决策点上已经挡了机器主体，这里同时关掉配置面，
-    // 免得运维以为"配上就能用"而实际收到一串拒绝。
-    tool === "permission-mcp.permission_resolve" ||
-    (tool.startsWith("orchestration-mcp.") && tool !== "orchestration-mcp.state_get");
-}
 
 // 前置认证：有些路由必须先按 id 查出对象、才能算出授权作用域（例如按节点/派发所属任务组授权），
 // 于是"对象存不存在""是否绑定在这个节点上"这类判断天然跑在 beginGuardedWrite 之前。若不先验身份，

@@ -1535,8 +1535,11 @@ errors << "持有权复核必须 fail-closed（复核失败时抛错阻止 push�
 # 角色规则（"你是谁、职责边界、禁区"）是三类规则之一。改角色技能 overlay 或整体替换技能源，
 # 就是改规则层 —— 而这两条原先都对 MCP 服务令牌开放、且都不是真人专属。
 # runtimeMutationPolicy 里那条 auto_publish_role_skill_overlay 是声明了却从没有人执行的禁令。
+# 禁用规则住在 lib/mcp-service-allowlist.mjs（服务令牌白名单的唯一真相源，init 也从那里取数）。
+# 这条判据原先只扫 server.mjs —— 规则一挪出去它就报红，而实际上规则还在。扫真相源本身。
+mcp_service_allowlist_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/mcp-service-allowlist.mjs"))
 ["skill-mcp.skill_source_sync", "skill-mcp.role_skill_overlay_validate"].each do |tool|
-  errors << %(#{tool} 必须对 MCP 服务令牌禁用（它改的是角色规则层，不能绕过人工闸门）) unless server_source.include?(%(tool === "#{tool}"))
+  errors << %(#{tool} 必须对 MCP 服务令牌禁用（它改的是角色规则层，不能绕过人工闸门）) unless mcp_service_allowlist_source.include?(%(tool === "#{tool}"))
 end
 ["role_skill_overlay_create", "skill_source_sync"].each do |action|
   errors << %(#{action} 必须是真人专属动作（改角色规则/技能源＝改规则层）) unless server_source.match?(/HUMAN_ONLY_ACTIONS\s*=\s*\[[^\]]*"#{action}"/m)

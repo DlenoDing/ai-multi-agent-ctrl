@@ -832,6 +832,15 @@ const MUTATIONS = [
     expect: "永远在等一个不存在的基底"
   },
   {
+    // 提示里的数字必须算出来。写死一个，白名单一改它就说谎（此前 46 vs 真实 44）。
+    name: "init 里的工具数不得写死",
+    file: "scripts/init-control-plane.mjs",
+    check: "verifyInitPrintsTheToolCountClientsActuallySee",
+    from: "默认放行 ${mcpServiceToolFacts().count} 个工具",
+    to: "默认放行 46 个工具",
+    expect: "是写死的字面量"
+  },
+  {
     // 合流的三件事各守一条：这条守"条目进得了主台账"。
     name: "MCP 的写入要进主审计台账",
     file: "apps/mcp-server/server.mjs",
