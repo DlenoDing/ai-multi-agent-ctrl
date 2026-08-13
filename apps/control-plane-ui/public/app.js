@@ -1489,6 +1489,7 @@ function render() {
               对一个监控台来说这是最要紧的那一刻，所以给一条常驻横幅，下一次加载成功自动消失。 */""}
         ${lastError ? `<div class="notice warn-notice">连不上控制面或这一页加载失败，下面显示的是
           ${esc(lastLoadedAgo())}的旧数据：${esc(lastError)}</div>` : ""}
+        ${truncationBanner()}
         <section class="content">${renderContent()}</section>
       </main>
     </div>
@@ -1733,7 +1734,7 @@ function renderSysSettings() {
     `),
     // 一个可用技能源都没有（没接过 / 全退役了）时，角色会全部回退到内置技能 —— 系统照常跑，
     // 但 agent 拿到的是通用规则而不是这个组织自己的角色规则。这件事不写出来，人看到的只是一张空表。
-    panel("技能源", capNotice("skillSources") + table(["技能源 / 仓库", "状态", "固定提交", {label: "角色数", c: "num"}, "操作"], sources)
+    panel("技能源", table(["技能源 / 仓库", "状态", "固定提交", {label: "角色数", c: "num"}, "操作"], sources)
       + ((state.skillSources || []).some((source) => source.status !== "retired")
         ? ""
         : `<div class="notice warn-notice">当前没有可用的技能源，所有角色都在用系统内置技能`
@@ -1853,9 +1854,9 @@ function renderSysAccounts() {
     `),
     panel("项目成员授权", renderProjectMemberForm()),
     panel("智能体入网令牌", renderJoinTokenSection(), {wide: true}),
-    panel("账号列表", capNotice("accounts") + table(["账号", "邮箱", "类型", "状态", "角色"], accounts), {wide: true}),
-    panel("访问授权列表", capNotice("accessGrants") + table(["主体", "资源", "角色", "状态", "权限", "操作"], grants), {wide: true}),
-    panel("编排智能体档案", capNotice("agents") + table(["名称", "角色", "模型策略", "状态", "操作"], agents) + `
+    panel("账号列表", table(["账号", "邮箱", "类型", "状态", "角色"], accounts), {wide: true}),
+    panel("访问授权列表", table(["主体", "资源", "角色", "状态", "权限", "操作"], grants), {wide: true}),
+    panel("编排智能体档案", table(["名称", "角色", "模型策略", "状态", "操作"], agents) + `
       <form class="form-grid" data-form="agent-create" style="margin-top:12px;">
         <div class="form-row-inline">
           <div class="form-row"><label>名称</label><input name="name" required></div>
@@ -2191,7 +2192,7 @@ function renderOrgProjects() {
       </form>
     `),
     panel("项目成员授权", renderProjectMemberForm()),
-    panel("项目列表", capNotice("projects") + table(["项目", "状态", "进度", "阶段", "健康度", "成员", "操作"], projectRows), {wide: true})
+    panel("项目列表", table(["项目", "状态", "进度", "阶段", "健康度", "成员", "操作"], projectRows), {wide: true})
   ].join("");
 }
 
@@ -3035,10 +3036,29 @@ function countSuffix(field) {
 // 有些表把整个集合原样铺开（没有"当前展示 N 条"的页脚），于是视图截断在这些页上连一点痕迹都没有：
 // 人看到的是一份自称完整的名单。账号、授权、智能体、项目这几张尤其要紧 —— 人正是照着它们
 // 判断"谁有权限"、"有哪些项目"，少列一条就是漏掉一个人或一个项目。
-function capNotice(field) {
-  return (state.truncatedCollections || []).includes(field)
-    ? `<div class="notice warn-notice">这份名单只加载了前若干条，实际条目更多 —— 不要据此判断"没有别的了"。</div>`
-    : "";
+// 视图为了体积会把每个集合截到上限，服务端如实登记在 truncatedCollections 里。此前只有 5 张表
+// 各自调 capNotice 报出来，而界面上有 23 张表在渲染 state 集合 —— 其余 18 张【截了也不说】。
+// 实测真实部署里 roleSkills 269 条被截到 188 条，屏幕上一个字都没有。
+// 逐表加提示要靠每次新增表时都记得，改成整屏报一次并逐个点名：新表以后自动被覆盖。
+const COLLECTION_LABELS = {
+  accessGrants: "访问授权", accounts: "账号", admissionDecisions: "准入判决", agentControlCommands: "控制指令",
+  agentDispatches: "派发", agentExecutionEvents: "执行事件", agentJoinTokens: "加入令牌",
+  agentRuntimeNodes: "智能体节点", agents: "编排智能体", approvalRequests: "审批请求", auditLog: "审计台账",
+  checkpoints: "检查点", closeBarriers: "关闭屏障", executionTopologies: "执行拓扑", findings: "评审发现",
+  humanConfirmationRequests: "人工确认", humanDirectives: "人工指令", modelCapabilities: "模型能力",
+  modelSelectionDecisions: "模型选择", organizations: "组织", permissionRequests: "授权请求", projects: "项目",
+  qualityGates: "质量门", repositoryOutputs: "仓库产出", reviewBundles: "评审包", reviewPlans: "评审计划",
+  roleSkillOverlays: "角色技能叠加", roleSkills: "角色技能", ruleSourceResolutions: "规则来源",
+  sessionPlacementDecisions: "会话放置", sharedDefinitions: "共享定义", skillSources: "技能源",
+  systemUpgradeCandidates: "升级候选", taskGroups: "任务组", testResults: "测试结果",
+  workSessions: "工作会话", workerLanes: "载体"
+};
+function truncationBanner() {
+  const fields = (state.truncatedCollections || []).filter((field) => field !== "truncatedCollections");
+  if (!fields.length) return "";
+  const names = fields.map((field) => COLLECTION_LABELS[field] || t(field)).join("、");
+  return `<div class="notice warn-notice">这几份名单只加载了前若干条，实际条目更多：${esc(names)}`
+    + " —— 不要据此判断「没有别的了」。</div>";
 }
 
 // 菜单红点的数字来源。独立成函数而不是内联在 render 里：内联的话，"红点与面板口径一致"这条

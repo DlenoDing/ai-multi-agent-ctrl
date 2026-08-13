@@ -1088,16 +1088,19 @@ function runCloseBarrierScopeCase() {
 // 有些表把整个集合原样铺开，没有"当前展示 N 条"的页脚 —— 视图截断在这些页上连痕迹都没有，
 // 而人正是照着账号/授权名单判断"谁有权限"。少列一条就是漏掉一个人。
 function runWholeListCapCase() {
-  const probe = loadConsole(el("div"));
   const admin = {accountId: "acct_a", accountType: "system_admin"};
   const base = {accounts: [{accountId: "acct_x", displayName: "某人", accountType: "user_account", status: "active"}], accessGrants: [], agents: []};
-  const full = probe.renderSysAccountsWith({...base}, admin);
+  // 截断提示从"每张表各自调一次"改成了整屏报一次（逐表调用要靠每次新增表时都记得，
+  // 而界面上 23 张表里此前只有 5 张接了）。所以这里要按【整页】渲染，narrow probe 看不到外壳。
+  const fullRoot = el("div");
+  loadConsole(fullRoot).renderFullPageWith({...base}, admin, null, "sys-accounts");
   check("名单完整时不加多余提示",
-    !full.includes("不要据此判断"),
+    !String(fullRoot.innerHTML || "").includes("不要据此判断"),
     "名单没有被截断也提示了不完整 —— 误报会让人不再相信这个提示");
-  const capped = probe.renderSysAccountsWith({...base, truncatedCollections: ["accounts"]}, admin);
+  const cappedRoot = el("div");
+  loadConsole(cappedRoot).renderFullPageWith({...base, truncatedCollections: ["accounts"]}, admin, null, "sys-accounts");
   check("整表铺开的名单被截断时必须说出来",
-    capped.includes("不要据此判断"),
+    String(cappedRoot.innerHTML || "").includes("不要据此判断"),
     "账号名单被视图截断了，页面上却没有任何痕迹 —— 人会把它当成完整名单，据此判断谁有权限");
 }
 
@@ -2212,6 +2215,36 @@ await runCodedApiErrorCase();
   check("时钟偏差本身要告诉人",
     /本机时钟比服务器快/.test(skewHtml),
     "悄悄替人校正了偏差，人就永远不知道自己这台机器的表是错的");
+}
+
+// 视图会把每个集合截到上限（服务端如实登记在 truncatedCollections 里）。此前只有 5 张表各自
+// 报出来，而界面上有 23 张表在渲染 state 集合 —— 实测真实部署里角色技能 269 条被截到 188 条，
+// 屏幕上一个字都没有。改成整屏报一次并逐个点名。
+{
+  const cutRoot = el("div");
+  const probe = loadConsole(cutRoot, {realI18n: true});
+  const admin = {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const cutState = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    projects: [], taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
+    findings: [], humanConfirmationRequests: [], humanDirectives: [],
+    truncatedCollections: ["roleSkills", "qualityGates"]};
+  probe.renderFullPageWith(cutState, admin, null, "sys-overview");
+  const cutHtml = String(cutRoot.innerHTML || "");
+  check("名单被截断时要在屏上说出来",
+    /只加载了前若干条/.test(cutHtml),
+    "服务端已经如实登记了哪些名单被截断，而屏幕上一个字都没有 —— 人会把截断后的条数当成全部");
+  check("被截断的名单要逐个点名，且是中文",
+    /角色技能/.test(cutHtml) && /质量门/.test(cutHtml),
+    "只说「有名单被截断了」，人不知道是哪一份 —— 一屏上有六七张表");
+  {
+    const fullRoot = el("div");
+    const full = structuredClone(cutState);
+    full.truncatedCollections = [];
+    loadConsole(fullRoot, {realI18n: true}).renderFullPageWith(full, admin, null, "sys-overview");
+    check("没有截断时不要多说一句",
+      !/只加载了前若干条/.test(String(fullRoot.innerHTML || "")),
+      "什么都没截断却挂着一条提示 —— 噪声会让真的截断被忽略");
+  }
 }
 
 // 界面上所有时间按本机时区渲染，而服务端日志是 UTC。不标时区，人拿屏幕上的时间去对日志

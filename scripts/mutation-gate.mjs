@@ -832,6 +832,15 @@ const MUTATIONS = [
     expect: "永远在等一个不存在的基底"
   },
   {
+    // 整屏那条横幅要真的接在外壳上，且要逐个点名（只说"有名单被截断"，人不知道是哪一份）。
+    name: "被截断的名单要逐个点名",
+    file: APP,
+    gate: "console",
+    from: "  const names = fields.map((field) => COLLECTION_LABELS[field] || t(field)).join(\"、\");",
+    to: '  const names = "";',
+    expect: "人不知道是哪一份"
+  },
+  {
     name: "没有可用技能源时要说清后果",
     file: APP,
     gate: "console",
