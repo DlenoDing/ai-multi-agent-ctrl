@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 明文一次性凭据落进审计归档：视图层那道凭据扫描看不见它（归档不经视图下发）。
+    name: "一次性凭据不得落盘",
+    file: "apps/control-plane-ui/server.mjs",
+    skip: "判别力由控制面 e2e 覆盖（用本轮真发出去的令牌去搜落盘文件，已用 mutate-probe 实证）",
+    from: '    audit(state, guard.actor, "org_create", `Organization:${orgId}`);',
+    to: '    audit(state, guard.actor, "org_create", `Organization:${orgId}:${adminToken}`);',
+    expect: "里存着明文的"
+  },
+  {
     // 少了几个项目的写入被静默放行 = 那些租户的数据当场没了。
     name: "项目分片不得被静默丢弃",
     check: "verifyProjectShardsAreNeverSilentlyDropped",

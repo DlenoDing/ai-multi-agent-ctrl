@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import WebSocket from "ws";
-import {chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs";
+import {chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync} from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
@@ -185,6 +185,9 @@ console.log(JSON.stringify({
 const root = resolve(new URL("..", import.meta.url).pathname);
 const port = await getFreePort();
 const doctorRuntimeDir = process.env.AIMAC_DOCTOR_RUNTIME_DIR || `.runtime/doctor-${Date.now()}`;
+// 本轮真实签发出去的一次性凭据。收尾时要证明它们【一个都没落盘】——
+// 用真令牌搜，而不是搜一个泛化的形状：后者在文件里本来就搜不到，断言会安静地空转。
+const issuedPlaintextSecrets = [];
 const doctorRepo = setupDoctorRepository(root);
 
 // npm start 起不来是运维最常撞到的失败时刻，而这一族此前全是裸 throw ——
@@ -734,6 +737,7 @@ try {
   if (!invitedAccount.response.ok || !invitedAccount.payload.accountToken || invitedAccount.payload.account?.credentialDigest) {
     throw new Error("account invite did not return a one-time account token with a redacted public account");
 	  }
+	  issuedPlaintextSecrets.push(["受邀账号的一次性令牌", invitedAccount.payload?.accountToken]);
 	  const invitedAuth = await loginAs(port, "project-view-only@local", invitedAccount.payload.accountToken);
 	  const invitedReplayDenied = await jsonFetch(port, "/api/auth/login", {
 	    method: "POST",
@@ -995,6 +999,7 @@ try {
     headers: {"Idempotency-Key": "doctor-org-create", authorization: systemAuth},
     body: JSON.stringify({name: "医生组织", quotas: {maxMembers: 2, maxProjects: 1, maxTaskGroups: 1, maxAgents: 1}, admin: {displayName: "组织超管", email: "doctor.org.admin@local"}})
   });
+  issuedPlaintextSecrets.push(["组织管理员的一次性令牌", orgCreate.payload?.accountToken]);
   if (orgCreate.response.status !== 201 || !orgCreate.payload.accountToken) {
     throw new Error(`organization create failed: ${orgCreate.response.status}`);
   }
@@ -1887,6 +1892,44 @@ if (doctorSweep.errors.length) {
   throw new Error(`doctor: e2e 真实产出的记录不符合它们自己声明的规范：\n- ${doctorSweep.errors.slice(0, 200).join("\n- ")}`);
 }
 console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条记录符合各自声明的 schema（含人工确认与定稿记录）；${doctorSweep.uncoveredNote}`);
+
+// 【明文机密不许落盘】。一次性令牌按设计只在签发那一刻回给调用方一次；如果它同时被写进了
+// 状态、幂等记录或审计归档，那就等于永久留在磁盘上 —— 而状态文件会随 view=full 出去、
+// 归档是给人查的、幂等记录会在重放时被原样回放。这一类咬过一次（幂等记录存明文令牌）。
+// 判据【用本轮真发出去的那几个令牌】去搜，不是搜一个泛化的形状：
+// 后者在文件里本来就搜不到东西，断言会安静地空转。
+{
+  const issuedSecrets = issuedPlaintextSecrets
+    .filter(([, secret]) => typeof secret === "string" && secret.length > 20);
+  if (issuedSecrets.length < 2) {
+    throw new Error(`明文机密核对：这一轮只拿到 ${issuedSecrets.length} 个真实令牌 —— 夹具没触达，本条在空转`);
+  }
+  const scanned = [];
+  for (const name of ["control-plane-state.json", "audit-log.jsonl", "mcp-audit.jsonl"]) {
+    const path = join(root, doctorRuntimeDir, name);
+    if (!existsSync(path)) continue;
+    scanned.push(name);
+    const raw = readFileSync(path, "utf8");
+    for (const [label, secret] of issuedSecrets) {
+      if (raw.includes(secret)) {
+        throw new Error(`${name} 里存着明文的${label} —— 一次性凭据只该出现在签发那一次的响应里，`
+          + "落盘之后它就永久可读了（状态会随 view=full 出去、归档是给人查的）");
+      }
+    }
+  }
+  const shardDir = join(root, doctorRuntimeDir, "project-db");
+  if (existsSync(shardDir)) {
+    for (const name of readdirSync(shardDir).filter((item) => item.endsWith(".state.json"))) {
+      scanned.push(`project-db/${name}`);
+      const raw = readFileSync(join(shardDir, name), "utf8");
+      for (const [label, secret] of issuedSecrets) {
+        if (raw.includes(secret)) throw new Error(`项目分片 ${name} 里存着明文的${label}`);
+      }
+    }
+  }
+  console.log(`明文机密核对 ok: ${issuedSecrets.length} 个本轮真实签发的令牌，`
+    + `在 ${scanned.length} 份落盘文件里一个都搜不到（只存摘要）`);
+}
 
 const [code, signal] = await exitPromise;
 try { rmSync(doctorRepo.base, {recursive: true, force: true}); } catch {}
