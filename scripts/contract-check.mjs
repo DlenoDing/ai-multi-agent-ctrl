@@ -6888,7 +6888,7 @@ function verifyApprovedAcceptanceChecksHaveEvidence(output) {
 function verifyHumanApprovedPathsBindTheCommit(output) {
   const runCase = ({stray, finalized, trespass, writeForbidden, forgeCommit, forgePush, forgeTree,
     forgeContractDigest, forgeManifestBinding, forgeManifestDigest, forgeLeaseHolder,
-    forgeCommitBranch}) => {
+    forgeCommitBranch, omitCommitEvidence, pushBehind, narrowAllowlist}) => {
     const repo = mkdtempSync(join(tmpdir(), "cc-owned-"));
     const remote = mkdtempSync(join(tmpdir(), "cc-owned-remote-"));
     const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
@@ -6918,7 +6918,8 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     if (!workItem || !session || !target) return {skipped: "夹具缺工作项/会话/写入目标"};
     Object.assign(target, {projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workItemId: workItem.id,
       baseRef, branch: "main", remote: "origin", repositoryUrl: remote, status: "pending",
-      pathAllowlist: ["**"]}); // 仓库层放开，才看得出"人批的方案"这一层有没有生效
+      // 仓库层放开，才看得出"人批的方案"这一层有没有生效；narrowAllowlist 反过来，专验仓库层这一道。
+      pathAllowlist: narrowAllowlist ? ["docs/**"] : ["**"]});
     const lease = {leaseId: `lease_cc_${state.leases.length}`, resourceRef: `RepositoryOutputTarget:${target.targetId}`,
       // forgeLeaseHolder：租约在【别的会话】手里。这是真实世界里最常见的那一种 ——
       // 两个 agent 抢同一个产出目标，互斥全靠这道守卫。
@@ -6951,6 +6952,11 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       mkdirSync(join(repo, "infra"), {recursive: true});
       writeFileSync(join(repo, "infra/deploy.yaml"), "# 踩禁区\n");
     }
+    if (narrowAllowlist) {
+      // 产出目标只准动 docs/**，这次提交却动了 apps/ —— 仓库层这道门比"人批的方案"那一层更靠前。
+      mkdirSync(join(repo, "apps"), {recursive: true});
+      writeFileSync(join(repo, "apps/server.mjs"), "// 越出产出目标的白名单\n");
+    }
     // 清单声称的产出必须在这次提交里真的改过（服务端会去 git 里核对），
     // 所以先把它写出来 —— 原先的占位清单根本走不到这一步，这个前提也就一直没人注意到。
     mkdirSync(join(repo, "docs"), {recursive: true});
@@ -6977,8 +6983,15 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     }));
     git("add", "-A");
     git("commit", "-q", "-m", "改动");
-    const commit = git("rev-parse", "HEAD");
     git("push", "-q", "origin", "HEAD:refs/heads/main");
+    // pushBehind：本地又提交了一版却没推上去 —— 远端停在上一版。这是真实里最像"已完成"的一种谎：
+    // 提交存在、推送记录也存在、树摘要对得上，唯独人去分支上复核时看到的不是这一版。
+    if (pushBehind) {
+      writeFileSync(join(repo, "docs/readme.md"), `# 又改了一版但没推\n${Date.now()}\n`);
+      git("add", "-A");
+      git("commit", "-q", "-m", "未推送的一版");
+    }
+    const commit = git("rev-parse", "HEAD");
     const remoteSha = execFileSync("git", ["ls-remote", remote, "refs/heads/main"], {encoding: "utf8"}).trim().split(/\s+/)[0];
 
     const contract = (state.agentTaskContracts || []).find((item) => item.sessionId === session.sessionId);
@@ -6993,7 +7006,9 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       // 控制面若信了 agent 自报的提交，它就能拿凭空的证据过关闭门。
       // forgeCommitBranch：声称这次提交落在【另一个分支】上。产出目标钉的是仓库+分支，
       // 谎报分支就等于把一份别处的提交算成本目标的成果。
-      commitRefs: [{repo: target.repositoryId, branch: forgeCommitBranch ? "not-the-target-branch" : "main",
+      // omitCommitEvidence：一条提交证据都不给就宣布干完了。这是这套证据链最外面那一圈 ——
+      // 它塌了，上面所有"证据必须对得上"的守卫都无从谈起，因为根本没有证据要对。
+      commitRefs: omitCommitEvidence ? [] : [{repo: target.repositoryId, branch: forgeCommitBranch ? "not-the-target-branch" : "main",
         commit: forgeCommit ? "0123456789abcdef0123456789abcdef01234567" : commit,
         // forgeTree：树摘要谎报。它标的是"这次提交到底改出了什么内容"，
         // 控制面拿它和真实提交对照 —— 谎报能过的话，提交里的内容就与它自称的无关了。
@@ -7021,6 +7036,34 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
   else if (forged.result.accepted !== false || forged.result.error !== "commit_ref_not_found") {
     output.push(`交了一个仓库里不存在的 commit，检查点却没被拦下（实际：${forged.result.error || "已受理"}）`
       + " —— agent 可以拿凭空的提交过关闭门");
+  }
+
+  // 下面三道守卫此前【一条判据都没有】。它们都在检查点验收这条路上，而这条路正是
+  // "AI 不能给自己判分"的落点：这里少一道门，关闭门就少一层。
+  // ① 一条提交证据都不给就宣布干完 —— 这是整条证据链最外面那一圈。
+  const noEvidence = runCase({omitCommitEvidence: true});
+  if (noEvidence.skipped) { output.push(`空证据断言无从验证：${noEvidence.skipped}`); }
+  else if (noEvidence.result.accepted !== false || noEvidence.result.error !== "checkpoint_missing_git_evidence") {
+    output.push(`一条提交证据都没给，检查点却没被拦下（实际：${noEvidence.result.error || "已受理"}）`
+      + " —— agent 空手就能宣布干完，后面所有'证据要对得上'的守卫都无从谈起");
+  }
+
+  // ② 本地又提交了一版却没推：提交在、推送记录在、树摘要也对，唯独人去分支上复核时看到的不是这一版。
+  const behind = runCase({pushBehind: true});
+  if (behind.skipped) { output.push(`未推送最终提交断言无从验证：${behind.skipped}`); }
+  else if (behind.result.accepted !== false || behind.result.error !== "push_ref_must_point_to_final_commit") {
+    output.push(`远端停在上一版，检查点却没被拦下（实际：${behind.result.error || "已受理"}）`
+      + " —— 人在分支上复核的不是这次交上来的那一版");
+  }
+
+  // ③ 产出目标只准动 docs/**，这次提交动了 apps/。这道门比"人批的方案"那一层更靠前，
+  // 且两层管的不是一回事：仓库层说"这个目标只负责这些路径"，方案层说"这次人批准了改哪些"。
+  const outsideTarget = runCase({narrowAllowlist: true});
+  if (outsideTarget.skipped) { output.push(`越出产出目标白名单断言无从验证：${outsideTarget.skipped}`); }
+  else if (outsideTarget.result.accepted !== false
+    || outsideTarget.result.error !== "changed_paths_outside_repository_target_allowlist") {
+    output.push(`改动越出了产出目标的路径白名单，检查点却没被拦下（实际：${outsideTarget.result.error || "已受理"}）`
+      + " —— 这个目标可以改仓库里的任何东西");
   }
 
   // 契约摘要谎报必须被拒。这条守卫此前【一条判据都没有】：它失效时正常提交照旧成功，

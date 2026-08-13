@@ -961,6 +961,31 @@ const MUTATIONS = [
     expect: "起来之后立刻退出了"
   },
   {
+    // 检查点验收这条路上此前有 19 道门零覆盖。这三道是其中最要紧的：失效时伪造的检查点直接【已受理】。
+    name: "空手不得宣布干完",
+    file: CORE,
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: 'return {accepted: false, status: 409, error: "checkpoint_missing_git_evidence"};',
+    to: "{ /* 守卫失效 */ }",
+    expect: "一条提交证据都没给"
+  },
+  {
+    name: "远端停在上一版不得算交付",
+    file: CORE,
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: "if (recordedRemoteSha !== sourceCommit || recordedRemoteSha !== finalCommit) {\n      return {valid: false, status: 409, error: \"push_ref_must_point_to_final_commit\"};\n    }",
+    to: 'if (false) { throw new Error("unreachable"); }',
+    expect: "人在分支上复核的不是这次交上来的那一版"
+  },
+  {
+    name: "改动不得越出产出目标的路径白名单",
+    file: CORE,
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: "if (!changedPaths.every((path) => canUseGitPath(path) && pathMatchesAllowlist(path, target.pathAllowlist || []))) {\n    return {valid: false, status: 409, error: \"changed_paths_outside_repository_target_allowlist\"};\n  }",
+    to: 'if (false) { throw new Error("unreachable"); }',
+    expect: "这个目标可以改仓库里的任何东西"
+  },
+  {
     // 后台刷新失败被吞 = 屏幕停在旧数据上却看起来还活着，人照着一屏冻住的数据做决定。
     name: "控制台后台刷新失败不得静默",
     file: APP,
