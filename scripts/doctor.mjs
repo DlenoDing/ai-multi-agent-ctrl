@@ -953,6 +953,36 @@ try {
     }
   }
 
+  // 一次性邀请凭据【会过期】这件事，代码里有判据（登录时比 credentialExpiresAt 与现在），
+  // 但没有任何断言证明它真的触发过 —— 一次重构把字段名比错，就变成"邀请令牌永不过期"，
+  // 而这类失效是静默的：所有正常登录照旧成功。这里直接把一份邀请改成已过期再登录。
+  // 注意登录判据写的是 `!credentialExpiresAt || 未过期`：字段【缺失】等于永不过期，
+  // 所以第二支验的是"缺字段的邀请也不能长期可用"这条边界目前不可达（五处签发都成对写了）。
+  {
+    const expiring = await jsonFetch(port, "/api/accounts", {
+      method: "POST", headers: {authorization: systemAuth, "Idempotency-Key": "doctor-expiring-invite"},
+      body: JSON.stringify({displayName: "过期邀请探针", email: "expiring.invite@local", accountType: "user_account"})
+    });
+    if (expiring.response.status !== 201 || !expiring.payload.accountToken) {
+      throw new Error(`过期邀请探针建不出来（HTTP ${expiring.response.status}）—— 本条在空转`);
+    }
+    const statePath = join(root, doctorRuntimeDir, "control-plane-state.json");
+    const snapshot = JSON.parse(readFileSync(statePath, "utf8"));
+    const target = (snapshot.accounts || []).find((item) => item.email === "expiring.invite@local");
+    if (!target?.credentialDigest || !target?.credentialExpiresAt) {
+      throw new Error("签发邀请时没有同时写下凭据摘要与过期时间 —— 缺过期时间等于这张票永不过期");
+    }
+    target.credentialExpiresAt = new Date(Date.now() - 60000).toISOString();
+    writeFileSync(statePath, JSON.stringify(snapshot));
+    const expiredLogin = await jsonFetch(port, "/api/auth/login", {
+      method: "POST", body: JSON.stringify({email: "expiring.invite@local", token: expiring.payload.accountToken})
+    });
+    if (expiredLogin.response.status !== 401) {
+      throw new Error(`已过期的一次性邀请仍然能登录（HTTP ${expiredLogin.response.status}）——`
+        + "那张票发出去之后就永远有效了");
+    }
+  }
+
   // 自由文本必须有上限。实测一次请求就能把任务组目标写进 30 万字，状态文件 56KB 涨到 1.8MB —— 
   // 而每次写入的成本正比于状态大小，这一个字段会让【此后每一次写入】都替它买单。
   // 拒绝而不是静默截断：存下的内容与人写的不一致，比报错难查得多。

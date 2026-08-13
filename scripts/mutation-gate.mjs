@@ -1049,6 +1049,27 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 签发时漏写过期时间 = 那张一次性邀请票永远有效，而且所有正常登录照旧成功（静默）。
+    name: "签发邀请必须同时写过期时间",
+    check: "verifyIssuedCredentialsAlwaysExpire",
+    file: "apps/control-plane-ui/server.mjs",
+    // 顺序是 摘要 → 签发时间 → 过期时间；第一版把前两行写反了，锚点匹配不上（门当场说
+    // "找不到要改坏的代码片段"，这提示比默默跳过有用得多）。
+    // 这一族有三处写法一样（邀请账号 / 建组织的管理员 / 建组织成员），必须连上下文写成唯一匹配。
+    from: "      credentialDigest: digestOf(`account-invite:${accountId}:${accountToken}`),\n      credentialIssuedAt: at,\n      credentialExpiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),",
+    to: "      credentialDigest: digestOf(`account-invite:${accountId}:${accountToken}`),\n      credentialIssuedAt: at,",
+    expect: "却没写过期时间"
+  },
+  {
+    // 过期检查失效是静默的：正常登录全部照旧成功，只有过期的那张票会悄悄继续可用。
+    name: "过期的一次性邀请不得再登录",
+    file: "apps/control-plane-ui/server.mjs",
+    skip: "判别力由控制面 e2e 覆盖（把一份真实邀请改成已过期再登录，要求 401）",
+    from: "&& (!account.credentialExpiresAt || new Date(account.credentialExpiresAt).getTime() > Date.now())",
+    to: "",
+    expect: "仍然能登录"
+  },
+  {
     // 惰性字段被人接上却没改登记 = 读代码的人继续以为它不生效（反过来也一样害人）。
     name: "信任分被人碰过时登记要过期",
     check: "verifyInertMechanismsStayRegistered",

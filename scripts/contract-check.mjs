@@ -301,6 +301,7 @@ run(verifyPauseDirectiveIsReversible);
 run(verifyTableFootersAdmitTruncation);
 run(verifyOperatorCliRejectsUnknownFlags);
 run(verifyMcpDoesNotReimplementCore);
+run(verifyIssuedCredentialsAlwaysExpire);
 run(verifyInertMechanismsStayRegistered);
 run(verifyMcpInputDictionaryHasNoGhosts);
 run(verifyServerStateFieldsHaveProducers);
@@ -5074,6 +5075,38 @@ function verifyMcpInputDictionaryHasNoGhosts(output) {
   if (ghosts.length) {
     output.push(`MCP 入参词表里这些名字在产品代码里根本不存在：${ghosts.join("、")} —— `
       + "它们出现在每个工具的 inputSchema 里，调用方会以为是能用的旋钮，传了却被静默忽略");
+  }
+}
+
+// 【签发凭据摘要的地方必须同时写下过期时间】。登录判据是
+// `!credentialExpiresAt || 未过期` —— 字段【缺失】等于这张票永不过期。
+// 今天五处签发都成对写了，所以那条兜底目前不可达；但只要有人加第六处忘了写过期，
+// 那张票就永远有效，而且不会有任何东西报警（所有正常登录照旧成功）。
+// 判据按【窗口】取（±12 行）：这里宁可漏报也不要误报 —— 窗口太小会把成对写的判成缺失。
+function verifyIssuedCredentialsAlwaysExpire(output) {
+  const files = ["apps/control-plane-ui/server.mjs", "apps/mcp-server/server.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs"];
+  const missing = [];
+  let sites = 0;
+  for (const rel of files) {
+    const lines = readFileSync(resolve(root, rel), "utf8").split("\n");
+    lines.forEach((line, index) => {
+      if (!/credentialDigest\s*[:=]/u.test(line) || /===/u.test(line)) return;
+      // agent 节点的凭据不走 credentialExpiresAt（它按 claim 代次与心跳回收，另有判据），
+      // 只看账号邀请那一族：摘要串以 account-invite: 开头。
+      if (!/account-invite:/u.test(line)) return;
+      sites += 1;
+      const window = lines.slice(Math.max(0, index - 12), index + 13).join("\n");
+      if (!/credentialExpiresAt/u.test(window)) missing.push(`${rel.split("/").pop()}:${index + 1}`);
+    });
+  }
+  if (sites < 4) {
+    output.push(`邀请凭据过期核对：只找到 ${sites} 处签发点 —— 提取与代码脱节，本条在空转`);
+    return;
+  }
+  if (missing.length) {
+    output.push(`这些地方签发了一次性邀请凭据却没写过期时间：${missing.join("、")} —— `
+      + "登录判据是「没有过期时间就算没过期」，那张票会永远有效");
   }
 }
 
