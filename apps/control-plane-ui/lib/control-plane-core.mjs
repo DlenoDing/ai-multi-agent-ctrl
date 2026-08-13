@@ -5198,7 +5198,7 @@ export function createHumanConfirmationRequest(state, input = {}) {
     decisionType,
     // AI 互审结论只作为【建议】随单附上，供人参考；它本身永远不能定稿。
     ...(input.peerReview ? {peerReview: {
-      verdict: String(input.peerReview.verdict || "unknown"),
+      verdict: String(input.peerReview.verdict || "unknown").slice(0, 200),
       findings: unique(input.peerReview.findings || []).slice(0, 50),
       ...(input.peerReview.reviewRecordRef ? {reviewRecordRef: String(input.peerReview.reviewRecordRef)} : {}),
       // 互审双轨的轨道二随单呈现：人要看到"AI 有没有跳出这个方案想过别的路"，

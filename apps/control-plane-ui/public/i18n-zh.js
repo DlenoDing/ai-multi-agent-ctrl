@@ -853,6 +853,7 @@
     // 自由文本上限：拒绝而不是静默截断（存下的与人写的不一致更难查）。
     work_item_requirements_too_many_items: "机器可执行要求给得太多了",
     work_item_requirements_item_too_long: "有一条机器可执行要求太长了",
+    agent_node_name_too_long: "节点名太长了",
     project_name_too_long: "项目名太长了",
     task_group_name_too_long: "任务组名称太长了",
     task_group_objective_too_long: "任务组目标太长了",

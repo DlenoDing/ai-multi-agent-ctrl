@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 节点名会被嵌进给人复制的安装命令里，而且常驻状态 —— 人写的字段超长要拒。
+    name: "节点名超长要拒而不是收下",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    skip: "判别力由远程 agent e2e 覆盖（真发一个 5000 字的节点名）",
+    from: '      String(input.nodeName || input.expectedNodeName || "").trim(), "agent_node_name", 200) || null,',
+    to: '      String(input.nodeName || input.expectedNodeName || "").trim(), "agent_node_name", 100000) || null,',
+    expect: "被收下了"
+  },
+  {
     // 条数截了、条目里的字符串没截：100 个工具 × 20KB 名字 = 2MB profile 常驻中央状态。
     name: "节点 profile 里的字符串也要截断",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",

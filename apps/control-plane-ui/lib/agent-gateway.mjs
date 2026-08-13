@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { normalize, resolve, sep } from "node:path";
 import { cancelPendingConfirmationsForDispatch, createId, digestOf, effectiveTaskGroupConfig, ensureRuntimeCollections, expireStaleQueuedDispatches, languagePolicyDirective, normalizeTaskGroupLanguagePolicy, organizationQuotaCheck,
-  computeEffectiveRulesDigest, applyEffectiveRulesDigest, settleCellOwnedResources
+  computeEffectiveRulesDigest, applyEffectiveRulesDigest, settleCellOwnedResources,
+  assertHumanTextWithinLimit
 } from "./control-plane-core.mjs";
 
 const DEFAULT_AGENT_MCP_TOOLS = [
@@ -91,7 +92,10 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
     joinTokenId: createId("ajt"),
     projectId,
     organizationId: tokenProject.organizationId || "org_default",
-    expectedNodeName: String(input.nodeName || input.expectedNodeName || "").trim() || null,
+    // 节点名是人在表单里填的，而且会被嵌进【给人复制执行的安装命令】里 —— 超长要拒，不能截断
+    // （截断后人复制到的命令与他填的不是一回事）。机器自报的字段走截断，见下面 runtimeVersion。
+    expectedNodeName: assertHumanTextWithinLimit(
+      String(input.nodeName || input.expectedNodeName || "").trim(), "agent_node_name", 200) || null,
     allowedRoles,
     allowedMcpTools: mcpToolsForRoles(allowedRoles),
     tokenDigest: digestOf(`agent-join:${token}`),
@@ -196,7 +200,7 @@ export function registerAgentNode(state, input = {}, options = {}) {
     credentialExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     profile,
     profileDigest: digestOf(profile),
-    runtimeVersion: String(input.runtimeVersion || "unknown"),
+    runtimeVersion: String(input.runtimeVersion || "unknown").slice(0, 100),
     lastHeartbeatAt: at,
     lastSelfCheckAt: null,
     activeDispatchIds: [],

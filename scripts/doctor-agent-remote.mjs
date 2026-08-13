@@ -298,6 +298,27 @@ try {
   const previousHeartbeat = await jsonRaw("/api/agent/v1/heartbeat", {method: "POST", token: agentConfig.nodeToken, body: {profile: {tools: [], models: [{providerClass: "custom", adapter: "doctor", available: true}]}}});
   const currentAfterPreviousHeartbeat = await jsonRaw("/api/agent/v1/nodes/me", {token: rotatedAgentConfig.nodeToken});
   if (!previousHeartbeat.response.ok || !currentAfterPreviousHeartbeat.response.ok) throw new Error("Agent heartbeat with previous credential invalidated the current credential");
+  // 同一类的另外两处：节点名是人在表单里填的（还会被嵌进给人复制的安装命令），超长要【拒】；
+  // 运行时版本是机器自报的，超长【截断】即可。两种处置对应两种来源，别用同一种。
+  {
+    const huge = "长".repeat(5000);
+    // 幂等键要带上，否则请求在 428 就被挡住、根本走不到名字校验（第一版就是这样，
+    // 报的是"5000 字的节点名被收下了（HTTP 428）"—— 拒了，但拒错了地方）。
+    const longName = await jsonRaw("/api/agent-join-tokens", {method: "POST", token: login.sessionToken,
+      idempotencyKey: "doctor-agent-long-node-name",
+      body: {projectId: "prj_control_plane", nodeName: huge, allowedRoles: ["agent-runtime"],
+        ttlSeconds: 1800, maxUses: 1}});
+    if (longName.response.status !== 400 || longName.payload.error !== "agent_node_name_too_long") {
+      throw new Error(`5000 字的节点名被收下了（HTTP ${longName.response.status}）——`
+        + "它会被嵌进给人复制的安装命令里，而且常驻状态");
+    }
+    const longVersion = await jsonRaw("/api/agent/v1/heartbeat", {method: "POST", token: rotatedAgentConfig.nodeToken,
+      body: {runtimeVersion: huge, profile: {tools: [], models: []}}});
+    if (!longVersion.response.ok) {
+      throw new Error(`超长 runtimeVersion 把心跳整条拒了（HTTP ${longVersion.response.status}）—— 机器自报的字段该截断，不该拒`);
+    }
+  }
+
   // 节点自报的 profile 会常驻中央状态，而每次写入的成本正比于状态大小。
   // 条数早就截到 100 了，条目【里面】的字符串原先一个都没截 —— 同一个函数里 region/dataRoot
   // 都截了，数组里的没截。100 个工具 × 20KB 名字 = 2MB 的 profile 挂在一个节点上。

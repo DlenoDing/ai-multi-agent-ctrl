@@ -799,7 +799,7 @@ function sanitizeGrantRequest(state, actor, input = {}, resourceScope = {}) {
   const account = state.accounts.find((item) => accountIdOf(item) === actor);
   const role = String(input.role || "viewer");
   const resource = {
-    resourceType: String(input.resourceType || resourceScope.resourceType || "project"),
+    resourceType: String(input.resourceType || resourceScope.resourceType || "project").slice(0, 100),
     resourceId: String(input.resourceId || resourceScope.resourceId || "prj_control_plane")
   };
   const explicitPermissions = normalizeStringList(input.permissions, []);
