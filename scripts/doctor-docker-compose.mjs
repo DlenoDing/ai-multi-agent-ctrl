@@ -2,6 +2,22 @@
 import { execFileSync, spawnSync } from "node:child_process";
 
 const root = new URL("..", import.meta.url).pathname;
+// 运维起容器走的是 scripts/docker-up.sh。两个 compose 命令都不在时，原先落到 exec 上，
+// 人看到的是 "docker-compose: command not found" —— 那指的是已废弃的 v1，照着去装反而走错路。
+// 这条不需要真的 docker：把 PATH 收窄到系统目录跑一次即可。
+{
+  const probe = spawnSync("bash", [`${root}scripts/docker-up.sh`],
+    {cwd: root, env: {PATH: "/usr/bin:/bin", HOME: process.env.HOME || "/tmp"}, encoding: "utf8"});
+  const said = String(probe.stderr || probe.stdout || "");
+  if (probe.status !== 1 || !said.includes("找不到 Docker Compose")) {
+    throw new Error(`没装 compose 时 docker-up.sh 没给人话（退出码 ${probe.status}）：${said.slice(0, 200)}`);
+  }
+  if (!/docker compose version|Docker Desktop/u.test(said) || !/npm run init/u.test(said)) {
+    throw new Error("没装 compose 的提示里缺少下一步（装什么、怎么验证、不用容器怎么跑）");
+  }
+  console.log("docker-up 前置检查 ok: 没装 compose 时给的是人话与下一步，不是 command not found");
+}
+
 const composeEnv = {
   ...process.env,
   AIMAC_PUBLIC_URL: "http://127.0.0.1:4317",

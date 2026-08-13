@@ -18,7 +18,8 @@ random_token() {
     node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex") + "\n")'
     return
   fi
-  printf '%s\n' 'secure random source required: install openssl or node' >&2
+  printf '%s\n' 'docker-up: 生成密钥需要一个安全随机源，这台机器上 openssl 与 node 都没有' >&2
+  printf '%s\n' '  · 装其中任意一个再重跑（openssl 通常随系统自带）' >&2
   exit 1
 }
 
@@ -85,6 +86,15 @@ chmod 600 "$ENV_FILE"
 
 if docker compose version >/dev/null 2>&1; then
   exec docker compose --env-file "$ENV_FILE" up --build "$@"
+fi
+# 两个都没有时，原先会落到下面那行 exec 上，人看到的是 "docker-compose: command not found" ——
+# 那指的是已经废弃的 v1，照着它去装反而走错路。这里明说该装什么。
+if ! command -v docker-compose >/dev/null 2>&1; then
+  printf '%s\n' 'docker-up: 这台机器上找不到 Docker Compose' >&2
+  printf '%s\n' '  · 装 Docker Desktop（自带 compose 插件），或给已有的 Docker 装上 compose 插件' >&2
+  printf '%s\n' '  · 验证：docker compose version' >&2
+  printf '%s\n' '  · 只想本地跑、不用容器的话：npm run init && npm start' >&2
+  exit 1
 fi
 
 exec docker-compose --env-file "$ENV_FILE" up --build "$@"
