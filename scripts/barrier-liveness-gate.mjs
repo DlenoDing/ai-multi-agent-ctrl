@@ -501,5 +501,13 @@ if (fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(process.
     for (const failure of failures) console.error(failure);
     process.exit(1);
   }
-  console.log("barrier liveness gate ok: 关闭门无空转、每台状态机都有活的状态与可达的终态、且没有够不到的导出杠杆");
+  // 报数要把【跳过了什么】说全：这道门有两份例外登记表，它们一变大，覆盖就变小，
+  // 而"全都通过"这句话一个字都不会变。两处都点名。
+  const machineCount = Object.keys(loadStateMachines()).length;
+  const modeledAhead = Object.keys(MODELED_AHEAD_OF_IMPLEMENTATION);
+  const deadAccepted = Object.keys(DEAD_EXPORT_ACCEPTED);
+  console.log(`barrier liveness gate ok: 关闭门无空转、${machineCount} 台状态机都有活的状态与可达的终态、`
+    + `且没有够不到的导出杠杆；跳过的两类逐一点名 —— `
+    + `${modeledAhead.length} 台登记为建模先于实现或缺一条路（${modeledAhead.join("、")}），`
+    + `${deadAccepted.length} 个导出登记为产品里到不了（${deadAccepted.join("、")}）`);
 }
