@@ -1121,6 +1121,27 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // 兜底错误处理里那行日志引用了不在作用域的 req/url —— 每一个走到兜底的请求都会让服务端进程
+    // 直接退出。症状只是偶发 ECONNREFUSED，追了三轮。请求信息必须显式传参。
+    name: "兜底错误处理不得引用作用域外的变量",
+    file: SERVER,
+    gate: "writer",
+    from: "    const requestLabel = `${req.method} ${req.url}`;",
+    to: "    const requestLabel = `${req.method} ${url.pathname}`;",
+    // 它红成的样子是"整道门被未捕获异常打断"：服务端在健康检查阶段就崩了，门连起都起不来。
+    // 这比"服务端死过"更早、更响 —— 期望串按实际那句写，别按想象中那句。
+    expect: "未捕获异常"
+  },
+  {
+    // 运行时配置原先是直接 writeFileSync：另一个进程会读到只写了一半的 JSON，随机 500。
+    name: "运行时配置必须原子写",
+    file: SERVER,
+    gate: "writer",
+    from: "    const temporary = `${configPath}.${process.pid}.tmp`;\n    writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\\n`);\n    renameSync(temporary, configPath);",
+    to: "    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\\n`);",
+    expect: "没有第三种结局"
+  },
+  {
     // 归档路由要求先把所有任务组关掉（不级联，让人自己收尾）；归档后还能建新组，那次收尾就白做了。
     name: "归档的项目不得再建任务组（REST）",
     file: SERVER,

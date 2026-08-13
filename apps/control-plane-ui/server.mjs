@@ -3,7 +3,7 @@ import { WebSocketServer } from "ws";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node:os";
 import { basename, dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -215,7 +215,13 @@ function ensureRuntimeConfig() {
   const comparableExisting = {...existing, updatedAt: config.updatedAt};
   if (!existsSync(configPath) || JSON.stringify(comparableExisting) !== JSON.stringify(config)) {
     config.updatedAt = now();
-    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    // 原子写：先写临时文件再改名。原先直接 writeFileSync，两个进程共用同一个 runtime 目录时
+    // （多副本、或本机起了两份），另一个进程会读到【只写了一半】的 JSON，
+    // 于是 readState → ensureRuntimeConfig → JSON.parse 抛 "Unexpected end of JSON input"，
+    // 表现为随机 500。状态文件早就是"临时文件+改名"了，这一份配置漏了 —— 同一形状只做了一半。
+    const temporary = `${configPath}.${process.pid}.tmp`;
+    writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`);
+    renameSync(temporary, configPath);
   }
   return config;
 }
@@ -5425,13 +5431,16 @@ const server = createServer((req, res) => {
       return;
     }
 
+    // 用 req.url 而不是 url.pathname：`url` 是 handleApi 内部的局部变量，这一层根本没有它 ——
+    // 第一版就是在这里又踩了一次同样的坑（好在这次日志能用，它直接说了 "url is not defined"）。
+    const requestLabel = `${req.method} ${req.url}`;
     handleApi(req, res).catch((error) => {
-      respondApiError(res, error);
+      respondApiError(res, error, requestLabel);
     });
   } catch (error) {
     try {
-      respondApiError(res, error);
-    } catch {}
+      respondApiError(res, error, `${req.method} ${req.url}`);
+    } catch { /* 兜底的兜底：响应都发不出去时不能再抛 */ }
   }
 });
 
@@ -5702,7 +5711,7 @@ realtimeHeartbeat.unref();
 
 let lastStorageFault = null;
 
-function respondApiError(res, error) {
+function respondApiError(res, error, requestLabel = "") {
   if (res.headersSent) {
     res.end();
     return;
@@ -5738,9 +5747,17 @@ function respondApiError(res, error) {
   // 不留任何痕迹：客户端看到 server_error，运维翻日志什么也没有，无从排查。
   // 实测并发写入门偶发 500（六轮两次），正是因为这里静默才查不出是什么。
   // 堆栈默认不打（生产日志会被贴进工单），要看用 AIMAC_SERVER_ERROR_DEBUG=1。
-  console.error(`[server-error] ${req.method} ${url.pathname}: ${error?.message || error}`);
-  if (process.env.AIMAC_SERVER_ERROR_DEBUG === "1" && error?.stack) console.error(error.stack);
-  json(res, error.status || 500, {error: "server_error", message: error.message});
+  // 【这一行本身曾是崩溃源】：它引用 req/url，而这个函数只收 res —— 于是每一个走到兜底的请求
+  // 都会在这里抛 ReferenceError，未捕获，**整个服务端进程直接退出**。
+  // 症状是并发写入门偶发 ECONNREFUSED，追了三轮才看见（门收集服务端输出的那套自己也坏着）。
+  // 两条教训写进代码：请求信息显式传参，别指望闭包；日志本身要包起来 ——
+  // 记录错误的代码把服务打死，比不记录坏得多。
+  try {
+    const where = requestLabel ? ` ${requestLabel}` : "";
+    console.error(`[server-error]${where}: ${error?.message || error}`);
+    if (process.env.AIMAC_SERVER_ERROR_DEBUG === "1" && error?.stack) console.error(error.stack);
+  } catch { /* 日志失败绝不能影响响应 */ }
+  json(res, error?.status || 500, {error: "server_error", message: error?.message});
 }
 
 server.keepAliveTimeout = Math.max(5000, Number(process.env.AIMAC_KEEP_ALIVE_TIMEOUT_MS || 65000));

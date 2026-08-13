@@ -87,6 +87,9 @@ const start = async (port) => {
   const child = trackChild(spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {cwd: root,
     env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(port), AIMAC_RUNTIME_DIR: runtimeDir,
       AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_STATE_STORE: "runtime_json",
+      // 这道门就是来查偶发故障的，服务端的堆栈默认要开着 —— 只有一行错误信息时，
+      // "Unexpected end of JSON input" 这种报错根本定位不到是哪一处 parse。
+      AIMAC_SERVER_ERROR_DEBUG: "1",
       AIMAC_BOOTSTRAP_TOKEN: "concurrent-probe-token-0123456789", DATABASE_URL: ""}, stdio: ["ignore", "pipe", "pipe"]}));
   // 服务端日志【一直】收着，失败时连同断言一起打出来。
   // 这道门的失败多半是时序偶发（实测六轮两次、之后十轮零次），事后复现不了 ——
@@ -248,6 +251,14 @@ for (const [server, auth, tag] of [[a, authA, "a"], [b, authB, "b"]]) {
   check(response.ok || response.status === 409, `${tag} 侧仍可写入（没有被对方的锁堵死）`, `HTTP ${response.status}`);
 }
 
+// 服务端在整轮里必须一直活着。这条不变式塌过一次，而且塌得很难看：兜底错误处理里那行日志
+// 引用了不在作用域里的 req/url，于是【每一个走到兜底的请求都会让服务端进程直接退出】。
+// 症状只是偶发 ECONNREFUSED，追了三轮。直接问"它还活着吗"，比数连接失败次数清楚得多。
+for (const [tag, server] of [["a", a], ["b", b]]) {
+  const dead = server.child.exitCode !== null || server.child.signalCode !== null;
+  check(!dead, `${tag} 侧服务端在整轮里没有死过（死了的话上面每一条都不算数）`,
+    dead ? `退出码 ${server.child.exitCode}／信号 ${server.child.signalCode}` : "仍在运行");
+}
 for (const server of [a, b]) { server.child.kill("SIGTERM"); }
 await new Promise((resolve) => setTimeout(resolve, 500));
 if (fails.length) dumpServerLog("有断言未通过");
