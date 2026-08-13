@@ -128,11 +128,19 @@ export function checkHumanOnlyParity() {
   }
 
   let checked = 0;
+  // 真的被核对过的动作要单独记下来。此前的账按"这个动作有没有对应的 core 函数"记，
+  // 而【有函数但 MCP 侧没有同名工具】的动作两条路都走不到，却因为在函数映射里而被算成已覆盖 ——
+  // 于是它既不出现在"已核对"里、也不出现在"够不到"里，自述的数字加起来对不上总数
+  // （22 个动作只交代了 16 个，skill_source_retire 一个字都没提）。
+  const functionVerifiedActions = new Set();
   marks.forEach((mark, index) => {
     const body = mcp.slice(mark.index, index + 1 < marks.length ? marks[index + 1].index : mark.index + 2000);
     const shared = [...callsIn(body)].filter((fn) => humanOnlyFunctions.has(fn));
     if (!shared.length) return;
     checked += 1;
+    for (const fn of shared) {
+      for (const action of String(humanOnlyFunctions.get(fn)).split("/")) functionVerifiedActions.add(action);
+    }
     // 挡住机器主体的写法必须同时点名两类主体：只挡 agent_node 会放过服务令牌，
     // 而服务令牌恰恰是那条能被一个环境变量打开的路。
     // 两种合格写法：
@@ -159,9 +167,16 @@ export function checkHumanOnlyParity() {
   // 函数映射（project_archive 就是这样），而只要 MCP 侧没有同名工具，按名字那条路也接不上。
   // 于是它们既不在按函数核对里、也不在按名字核对里 —— "没查到问题"与"根本没查"在输出上一样。
   // 这不判失败（多数动作本就没有 MCP 对应物），但必须说出来，否则覆盖缩水没人看得见。
-  const functionCoveredActions = new Set([...humanOnlyFunctions.values()].flatMap((value) => String(value).split("/")));
   const uncoveredActions = [...humanOnlyActions]
-    .filter((action) => !functionCoveredActions.has(action) && !nameCoveredActions.has(action));
+    .filter((action) => !functionVerifiedActions.has(action) && !nameCoveredActions.has(action));
+  // 账必须加得起来：已核对 + 够不到 = 全部。差一个都说明有动作从这份自述里漏掉了。
+  const accounted = new Set([...functionVerifiedActions, ...nameCoveredActions, ...uncoveredActions]
+    .filter((action) => humanOnlyActions.has(action)));
+  if (accounted.size !== humanOnlyActions.size) {
+    const missing = [...humanOnlyActions].filter((action) => !accounted.has(action));
+    failures.push(`真人专属对等门: ${humanOnlyActions.size} 个动作里有 ${missing.length} 个没进任何一栏`
+      + `（${missing.join("、")}）—— 自述的账加不起来，覆盖缩水看不出来`);
+  }
   failures.coverage = {actions: humanOnlyActions.size, functions: humanOnlyFunctions.size,
     dispatchPoints: marks.length, byFunction: checked, byName: nameChecked, uncovered: uncoveredActions};
   return failures;
@@ -184,5 +199,8 @@ if (fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(process.
     + `${coverage.functions} 个核心函数、${coverage.dispatchPoints} 个 MCP 分发点；`
     + `按函数核对 ${coverage.byFunction} 处、按动作名核对 ${coverage.byName} 处，均在决策点只放行真人会话；`
     + `另有 ${(coverage.uncovered || []).length} 个动作两条路都够不到（${(coverage.uncovered || []).join("、") || "无"}）——`
-    + "它们在 REST 路由里就地改状态、也没有同名 MCP 工具，本门对它们【没有检验】");
+    + "它们在 REST 路由里就地改状态、也没有同名 MCP 工具，所以本门对它们【当下没有可比对的另一条路】。"
+    + "这不等于没有防线：REST 侧仍由 beginGuardedWrite 按动作名挡机器主体；"
+    + "而一旦有人给其中某个加上同名 MCP 工具，上面「按动作名」那条就会把它收进来并要求同样的拒绝。"
+    + "");
 }

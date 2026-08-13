@@ -877,6 +877,16 @@ const MUTATIONS = [
     expect: "这道判据不会响"
   },
   {
+    // 自述的账必须加得起来：旧账把"有 core 函数但 MCP 侧没有同名工具"的动作算成已覆盖，
+    // 于是 22 个动作只交代了 16 个，剩下的既不在已核对里也不在够不到里。
+    name: "真人专属动作的覆盖账必须加得起来",
+    file: "scripts/human-only-parity-gate.mjs",
+    gate: "parity",
+    from: "    .filter((action) => !functionVerifiedActions.has(action) && !nameCoveredActions.has(action));",
+    to: "    .filter((action) => !humanOnlyFunctions.size && !nameCoveredActions.has(action));",
+    expect: "没进任何一栏"
+  },
+  {
     // 死导出检查此前把 scripts/ 也算成调用方，于是"只有门在调"的整族机制隐身。
     // 收紧之后要能认出来：摘掉一条登记，那个函数必须当场被点名。
     name: "只有门在调的导出不算接上了",
