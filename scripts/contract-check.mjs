@@ -298,6 +298,7 @@ run(verifyUnknownStateSchemaIsRefused);
 run(verifySuspendHaltsRunningWork);
 run(verifyCancelDirectiveStopsRunningWork);
 run(verifyPauseDirectiveIsReversible);
+run(verifyCrossOrgGrantIsRefusedOnBothDoors);
 run(verifyUnknownEnumValuesAreRefusedNotCoerced);
 run(verifyInitPrintsTheToolCountClientsActuallySee);
 run(verifyMcpWritesLandInTheMainAuditLedger);
@@ -4879,6 +4880,37 @@ function extractMachineStates(yamlText, machine) {
 // 命令接口不得替人做决定。今天已经撞到三处同形状（方案定稿要求、人工指令类型、以及这一批），
 // 共同点是"认不出的取值被降级成某个默认动作"，而降到的那个往往正是【有利结果】或【相反的决定】。
 // 这里按真实入口逐条核对：填错必须拒，不填仍按各自的保守默认走。
+// 「不许跨组织授权」此前【只有 REST 那扇门在守】：MCP 批准一条授权请求时，铸造点不做租户校验。
+// 同一条不变式两扇门、只有一扇挡住，等于没挡住。这里按真实入口两侧各打一次。
+function verifyCrossOrgGrantIsRefusedOnBothDoors(output) {
+  const serverSource = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const mcpSource = readFileSync(resolve(root, "apps/mcp-server/server.mjs"), "utf8");
+  for (const [label, source] of [["REST", serverSource], ["MCP", mcpSource]]) {
+    if (!source.includes("cross_org_grant_not_allowed")) {
+      output.push(`${label} 侧铸造授权时不做跨组织校验 —— 同一条不变式只有一扇门守着，等于没守`);
+    }
+  }
+  // 行为：主体在别的组织时不许铸出授权，且要说清为什么没铸（此前 accessGrant: null 是静默的）。
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const project = (state.projects || [])[0];
+  const outsider = {schemaVersion: "account/v1", accountId: "acct_outsider", accountType: "user_account",
+    displayName: "别组织的人", email: "outsider@other", organizationId: "org_other", status: "active"};
+  state.accounts = [...(state.accounts || []), outsider];
+  const submitted = permissionRequestSubmit(state, {requestId: "prq_xorg", subjectId: outsider.accountId,
+    subjectRef: {subjectType: "account", subjectId: outsider.accountId},
+    resource: {resourceType: "project", resourceId: project.id}, permission: "project:view",
+    justification: "跨组织探针"});
+  const requestId = submitted?.permissionRequest?.requestId || submitted?.requestId || "prq_xorg";
+  const resolved = permissionResolve(state, {requestId, status: "approved", resolvedBy: "acct_system_owner"});
+  if (resolved?.accessGrant) {
+    output.push("跨组织的授权请求被批准后仍然铸出了 grant —— REST 那扇门会拒绝同一件事");
+  } else if (resolved?.accessGrantDeclinedReason !== "cross_org_grant_not_allowed") {
+    output.push(`跨组织铸造被挡住了，但没说为什么（${JSON.stringify(resolved?.accessGrantDeclinedReason)}）—— `
+      + "人点了批准却什么都没发生，屏幕上得有个理由");
+  }
+}
+
 function verifyUnknownEnumValuesAreRefusedNotCoerced(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});

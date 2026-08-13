@@ -832,6 +832,15 @@ const MUTATIONS = [
     expect: "永远在等一个不存在的基底"
   },
   {
+    // 「不许跨组织授权」原先只有 REST 那扇门守着。去掉 MCP 铸造点这道，必须当场报红。
+    name: "MCP 铸造授权也要挡住跨组织",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyCrossOrgGrantIsRefusedOnBothDoors",
+    from: '    return {grant: null, declinedReason: "cross_org_grant_not_allowed"};',
+    to: "    void subjectAccount;",
+    expect: "仍然铸出了 grant"
+  },
+  {
     // 孪生分支：MCP 侧退回降级写法，"两条路同规"那条判据必须当场报红。
     name: "MCP 侧建工作项也不得降级未知状态",
     file: "apps/mcp-server/server.mjs",

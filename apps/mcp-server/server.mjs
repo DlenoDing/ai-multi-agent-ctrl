@@ -2357,13 +2357,34 @@ export function permissionResolve(state, args) {
   request.policyDecisionRef = decision.decisionId;
   request.updatedAt = at;
   let accessGrant = null;
+  let accessGrantDeclinedReason = null;
   if (request.status === "approved") {
-    accessGrant = ensurePermissionAccessGrant(state, request, args, decision, at);
+    // 批准了却没铸出授权，此前是【静默的】：调用方只看到 accessGrant: null，不知道为什么。
+    // 人点了"批准"，而实际什么都没发生 —— 必须把原因一起说出来。
+    ({grant: accessGrant, declinedReason: accessGrantDeclinedReason} =
+      ensurePermissionAccessGrant(state, request, args, decision, at));
     resumePermissionBlockedSession(state, request, at);
   } else {
     releasePermissionDeniedSession(state, request, at);
   }
-  return {permissionRequest: request, accessGrant};
+  return {permissionRequest: request, accessGrant,
+    ...(accessGrantDeclinedReason ? {accessGrantDeclinedReason} : {})};
+}
+
+// 授权资源归属哪个组织：项目直接取，任务组按它的项目反查。取不到就不做跨组织判断（宁可不拦，
+// 也不能凭空拒绝一条合法授权）——取不到本身由别的判据管。
+function organizationIdForGrantResource(state, resource) {
+  if (!resource) return null;
+  if (resource.resourceType === "project") {
+    const project = (state.projects || []).find((item) => item.id === resource.resourceId);
+    return project ? (project.organizationId || DEFAULT_ORGANIZATION_ID) : null;
+  }
+  if (resource.resourceType === "task_group") {
+    const taskGroup = (state.taskGroups || []).find((item) => item.id === resource.resourceId);
+    const project = taskGroup ? (state.projects || []).find((item) => item.id === taskGroup.projectId) : null;
+    return project ? (project.organizationId || DEFAULT_ORGANIZATION_ID) : null;
+  }
+  return null;
 }
 
 function ensurePermissionAccessGrant(state, request, args, decision, at) {
@@ -2372,9 +2393,21 @@ function ensurePermissionAccessGrant(state, request, args, decision, at) {
   // 防御纵深：提交侧已经拦下不可委派的权限与非任务组资源，但请求也可能来自 REST 或历史遗留记录，
   // 而这里是真正铸造 grant 的地方 —— 铸造点必须自己校验，不能依赖"上游应该已经挡过了"。
   // 只有控制面资源才铸 grant；external_capability 走的是能力边界那条路，不该在这里产生授权。
-  if (!permissions.length || !permissions.every((permission) => isDelegatableGrantPermission(permission))
-    || !["task_group", "project"].includes(request.resource?.resourceType)) {
-    return null;
+  if (!permissions.length) return {grant: null, declinedReason: "permission_missing"};
+  if (!permissions.every((permission) => isDelegatableGrantPermission(permission))) {
+    return {grant: null, declinedReason: "permission_not_delegable"};
+  }
+  if (!["task_group", "project"].includes(request.resource?.resourceType)) {
+    return {grant: null, declinedReason: "resource_type_not_grantable"};
+  }
+  // 「不许跨组织授权」这条不变式此前【只有 REST 那扇门在守】（server.mjs 的 sanitizeGrantRequest）。
+  // 同一件事两扇门、只有一扇挡住，等于没挡住：经 MCP 批准一条主体在甲组织、资源在乙组织的请求，
+  // 就能铸出一条 REST 侧会拒绝的跨租户授权。铸造点自己校验 —— 这也正是本函数注释立的规矩。
+  const subjectAccount = (state.accounts || []).find((item) => item.accountId === subjectRef.subjectId);
+  const resourceOrgId = organizationIdForGrantResource(state, request.resource);
+  if (subjectAccount && resourceOrgId
+    && (subjectAccount.organizationId || DEFAULT_ORGANIZATION_ID) !== resourceOrgId) {
+    return {grant: null, declinedReason: "cross_org_grant_not_allowed"};
   }
   const existing = state.accessGrants.find((grant) =>
     grant.status === "active" &&
@@ -2383,7 +2416,7 @@ function ensurePermissionAccessGrant(state, request, args, decision, at) {
     resourceMatches(grant.resource, request.resource) &&
     permissions.every((permission) => (grant.permissions || []).includes(permission) || (grant.permissions || []).includes("*"))
   );
-  if (existing) return existing;
+  if (existing) return {grant: existing, declinedReason: null};
   const ttlSeconds = Math.max(60, Math.min(86400, Number(args.ttlSeconds || 3600)));
   const grant = {
     schemaVersion: "access-control-grant/v1",
@@ -2401,7 +2434,7 @@ function ensurePermissionAccessGrant(state, request, args, decision, at) {
     updatedAt: at
   };
   state.accessGrants.unshift(grant);
-  return grant;
+  return {grant, declinedReason: null};
 }
 
 function resumePermissionBlockedSession(state, request, at) {
