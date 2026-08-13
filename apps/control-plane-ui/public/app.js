@@ -4424,8 +4424,27 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "member-status") {
       const status = target.dataset.status;
-      if (status === "disabled" && !(await confirmDialog({title: "停用成员", message: "确认停用该成员？", sub: "其活动会话将被立即吊销。", danger: true, confirmText: "停用"}))) return;
+      // 成员列表里也有你自己那一行。停用会当场吊销该账号的全部会话 —— 落在自己头上就是把自己登出，
+      // 而且只能由另一位组织管理员把你启用回来（"停到零"由服务端另行拦住）。
+      // 原先这里两样都不说：弹窗写"该成员"，随后 loadPage 撞 401 弹"会话已过期"，
+      // 紧接着又弹一个"已停用成员"的成功提示 —— 两条自相矛盾的话，而人始终不知道自己停用了自己。
+      const isSelf = Boolean(currentAccount?.accountId) && target.dataset.account === currentAccount.accountId;
+      if (status === "disabled" && !(await confirmDialog({
+        title: isSelf ? "停用你自己的账号" : "停用成员",
+        message: isSelf ? "这是你当前登录的账号，确认停用它？" : "确认停用该成员？",
+        sub: isSelf
+          ? "你会被立即登出，之后只能由另一位组织管理员把你启用回来。"
+          : "其活动会话将被立即吊销。",
+        danger: true, confirmText: "停用"
+      }))) return;
       await api(`/api/org/members/${encodeURIComponent(target.dataset.account)}/status`, {method: "POST", body: JSON.stringify({status})});
+      if (isSelf && status === "disabled") {
+        // 会话已经在服务端没了，再 loadPage 只会撞 401 弹一句"会话已过期"，把真正发生的事盖掉。
+        clearSession();
+        openModal("已停用你自己的账号", `<div class="notice">你的账号已停用，这一台已经登出。
+          要恢复，需要另一位组织管理员在「成员管理」里把它启用回来。</div>`);
+        return;
+      }
       await loadPage();
       toast.success(status === "disabled" ? "已停用成员" : "已启用成员");
       return;

@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 自己那一行和别人那一行走同一段话 —— 人不知道自己正在把自己登出。
+    name: "停用成员要认出这一行是你自己",
+    file: APP,
+    gate: "console",
+    from: "      const isSelf = Boolean(currentAccount?.accountId) && target.dataset.account === currentAccount.accountId;",
+    to: "      const isSelf = false;",
+    expect: "自己那一行和别人那一行走同一段话"
+  },
+  {
     // 改完密码留在一条已经死掉的会话里：下一次点击才 401，弹的还是"会话已过期"。
     name: "改密后要当场清掉本地会话",
     file: APP,

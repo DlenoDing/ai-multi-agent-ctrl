@@ -757,6 +757,40 @@ function runPendingTruncationCase() {
     capped.includes("2+") && /只多不少/.test(capped),
     "只改了总数却没说明是哪一类被截断、也没说明数字的方向");
 
+  // 成员列表里也有你自己那一行，而「停用」会当场吊销该账号的全部会话。落在自己头上就是把自己登出，
+  // 只能由另一位组织管理员恢复。原先弹窗只说"该成员"，随后 loadPage 撞 401 弹"会话已过期"，
+  // 紧接着又弹"已停用成员" —— 两条自相矛盾的话，而人始终不知道自己停用了自己。
+  // 按语法结构切出 member-status 那一支（先剥 // 注释：这一支的注释里就写着旧文案）。
+  {
+    const source = probe.handlerSource("click");
+    const at = source.indexOf('action === "member-status"');
+    let branch = "";
+    if (at >= 0) {
+      let index = source.indexOf("{", at);
+      const start = index;
+      let depth = 0;
+      do {
+        if (source[index] === "{") depth += 1;
+        else if (source[index] === "}") depth -= 1;
+        index += 1;
+      } while (index < source.length && depth > 0);
+      branch = source.slice(start, index).replace(/\/\/[^\n]*$/gmu, "");
+    }
+    if (!branch.trim()) {
+      failures.push("自停用提示: 切不出 member-status 这一支 —— 提取与代码脱节，本条在空转");
+    } else {
+      check("停用成员时要认出「这一行就是你自己」",
+        /currentAccount\?\.accountId/u.test(branch) && /isSelf/u.test(branch),
+        "自己那一行和别人那一行走同一段话 —— 人不知道自己正在把自己登出");
+      check("停用自己时要说清只能由别人恢复",
+        /另一位组织管理员/u.test(branch),
+        "没说清恢复要靠谁 —— 人被登出之后不知道该找谁");
+      check("停用自己之后不要再去 loadPage 撞 401",
+        /clearSession\(\)/u.test(branch),
+        "会话已经没了还去加载，弹的是「会话已过期」，把真正发生的事盖掉了");
+    }
+  }
+
   // 改密码这一刻：服务端会撤销该账号【全部】会话，含当前这一条。而界面原先说
   // "密码修改成功，下次登录可使用新密码" —— 人以为可以接着用，下一次点击才 401，
   // 弹出的还是"会话已过期"：一个刚成功的操作紧接着一句像故障的话，看起来就是个 bug。
