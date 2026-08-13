@@ -266,6 +266,19 @@ export function writeStoredState(state, options) {
     assertExpectedVersionFromCentral(previousCentral, options.expectedStateVersion);
     const previousShardIndex = new Map((previousCentral?.projectStateShards?.projects || []).map((entry) => [entry.projectId, entry]));
     const {centralState, projectShards, unchangedProjectIds} = externalizeProjectState(withoutInternalStateFields(state), previousShardIndex, options);
+    // 回收的判据是"不在本次写入的分片名单里就删文件"。于是任何一次【项目变少了的写入】
+    // 都会静默抹掉那些项目的全部数据。旁边那道 __centralOnly 守卫防的是同一类事故的一种形态
+    // （注释里写着 PG 的 CAS 探针真的这么清空过一次），但它盖不住"有项目、只是少了几个"：
+    // MCP 与控制台都会造 scoped 副本（按项目过滤后的深拷贝），今天没有任何调用点把它写回去，
+    // 而那是纪律不是机制 —— 写错一次的代价是别的租户的数据没了。
+    // 产品里项目只会归档、不会被移除（全仓没有从 state.projects 里删元素的代码），
+    // 所以"变少"必然是 bug；唯一合法的例外是重新初始化，它显式带上这个开关。
+    const removedProjectIds = [...previousShardIndex.keys()]
+      .filter((projectId) => !projectShards.some((shard) => shard.projectId === projectId));
+    if (removedProjectIds.length && !options.allowProjectShardRemoval) {
+      throw Object.assign(new Error(`refusing_to_drop_project_shards:${removedProjectIds.join(",")}`),
+        {code: "AIMAC_PROJECT_SHARD_REMOVAL"});
+    }
     const shardWrite = writeRuntimeJsonProjectShards(projectShards, options, unchangedProjectIds);
     writeRuntimeJsonCentralState(centralState, options);
     gcRuntimeJsonProjectShards(options, shardWrite.activeNames);

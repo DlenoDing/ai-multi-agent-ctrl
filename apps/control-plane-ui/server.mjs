@@ -317,12 +317,13 @@ function readHealthState() {
 
 let runtimeOrchestratorStatus = {intervalMs: 0, enabled: false};
 
-function writeState(state) {
+function writeState(state, writeOptions = {}) {
   stateViewCache.clear();
   scopedStateCache.clear();
   computeProgressSnapshots(state);
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
-  writeStoredState(state, {root, runtimeDir, statePath, seedPath, buildInitialState, expectedStateVersion: state.__loadedStateVersion});
+  writeStoredState(state, {root, runtimeDir, statePath, seedPath, buildInitialState,
+    expectedStateVersion: state.__loadedStateVersion, ...writeOptions});
   flushPendingAuditAppends(state);
   notifyLongPollWaiters("state");
   const nodeIdsWithQueuedCommands = new Set((state.agentControlCommands || [])
@@ -3101,7 +3102,8 @@ async function handleApi(req, res) {
     ensureRuntimeCollections(seed, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), executionProfile});
     finishGuardedWrite(seed, guard, 200, {profileId: "runtime_local"});
     audit(seed, "system", "bootstrap_init", "RuntimeBootstrapProfile:runtime_local");
-    writeState(seed);
+    // 唯一一条【合法】让项目变少的路：重置回种子。存储层默认拒绝丢弃项目分片，这里显式开口。
+    writeState(seed, {allowProjectShardRemoval: true});
     json(res, 200, seed);
     return;
   }

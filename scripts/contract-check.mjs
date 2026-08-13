@@ -304,6 +304,7 @@ run(verifyMcpDoesNotReimplementCore);
 run(verifyInertMechanismsStayRegistered);
 run(verifyMcpInputDictionaryHasNoGhosts);
 run(verifyServerStateFieldsHaveProducers);
+run(verifyProjectShardsAreNeverSilentlyDropped);
 run(verifyAgentctlFlagNamesMatchWhatItReads);
 run(verifyEveryAssertionIsActuallyRegistered);
 run(verifyCrossOrgGrantIsRefusedOnBothDoors);
@@ -4262,7 +4263,9 @@ function verifyRuntimeJsonConflict(output) {
       taskGroups: [{id: "tg_collision_a", projectId: "project/a", workItems: []}],
       agentDispatches: [{dispatchId: "adp_collision_a", projectId: "project/a", taskGroupId: "tg_collision_a", updatedAt: new Date().toISOString()}],
       idempotencyRecords: {}
-    }, {...options, expectedStateVersion: 2});
+      // 这份探针是【整份替换】：它只关心分片哈希，故意不带上一次写过的项目。
+      // 存储层默认拒绝丢弃项目分片（那会静默抹掉别的租户），所以这里显式开口。
+    }, {...options, expectedStateVersion: 2, allowProjectShardRemoval: true});
 	    const sharded = readStoredState(options);
 	    if (!sharded.agentDispatches.some((dispatch) => dispatch.dispatchId === "adp_collision_a")) {
 	      output.push("runtime_json project shard did not hydrate project-scoped dispatches");
@@ -4283,7 +4286,9 @@ function verifyRuntimeJsonConflict(output) {
           } catch {}
           writeFileSync(shardPath, originalShard);
         }
-		    writeStoredState({stateVersion: 4, runtime: {}, taskGroups: [], agentDispatches: [], idempotencyRecords: {}}, {...options, expectedStateVersion: sharded.__loadedStateVersion});
+		    // 这一处【就是在测删除】：清空之后分片文件要没、陈旧数据不许复活。
+		    // 存储层默认拒绝丢弃项目分片，所以这条正当的删除路径要显式开口。
+		    writeStoredState({stateVersion: 4, runtime: {}, taskGroups: [], agentDispatches: [], idempotencyRecords: {}}, {...options, expectedStateVersion: sharded.__loadedStateVersion, allowProjectShardRemoval: true});
     const emptied = readStoredState(options);
     if (emptied.agentDispatches.some((dispatch) => dispatch.dispatchId === "adp_collision_a") || emptied.taskGroups.some((taskGroup) => taskGroup.id === "tg_collision_a")) {
       output.push("runtime_json project shard stale data was resurrected after shard deletion");
@@ -4959,6 +4964,68 @@ function verifyTableFootersAdmitTruncation(output) {
 // 判据便宜且窄：只认"整个产品侧都没有 state.X = / ||= / ??= 这样的赋值，且种子里也没有这个键"。
 // 视图那一侧另有"控制台读了、服务端不下发"的判据（控制台门的视图接线），两条互补：
 // 那条管【下发面】，这条管【服务端自己读的字段有没有人写】。
+// 【项目分片只会增，不会因为一次写入就少掉】。runtime_json 的回收判据是"不在本次写入的
+// 分片名单里就删文件"，所以任何一次【项目变少了的写入】都会静默抹掉那些项目的全部数据。
+// 旁边的 __centralOnly 守卫防的是同一类事故的另一种形态（注释里写着 PG 的 CAS 探针真的
+// 这么清空过一次）。这条补上"有项目、只是少了几个"那一半：MCP 与控制台都会造按项目过滤的
+// scoped 深拷贝，今天没有调用点把它写回去 —— 那是纪律，不是机制。
+// 三支都验：少了要拒、带开关时要真的能少（重置回种子是合法的）、不少时照常写。
+function verifyProjectShardsAreNeverSilentlyDropped(output) {
+  const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-shard-drop-"));
+  const options = {root, runtimeDir, statePath: join(runtimeDir, "control-plane-state.json"),
+    seedPath: resolve(root, "data", "seed-state.json"),
+    buildInitialState: () => ({stateVersion: 1, runtime: {}, projects: []})};
+  const withProjects = (ids, version) => ({stateVersion: version, runtime: {},
+    projects: ids.map((id) => ({id, name: id, organizationId: "org_default", status: "active"})),
+    taskGroups: ids.map((id) => ({id: `tg_${id}`, projectId: id, name: `组 ${id}`, workItems: []}))});
+  try {
+    writeStoredState(withProjects(["prj_a", "prj_b"], 1), options);
+    const shardDir = join(runtimeDir, "project-db");
+    const before = readdirSync(shardDir).filter((name) => name.endsWith(".state.json")).length;
+    if (before < 2) {
+      output.push(`项目分片守卫：只写出 ${before} 个分片文件 —— 夹具没触达被测代码，本条在空转`);
+      return;
+    }
+    const loaded = readStoredState(options);
+    const shrunk = withProjects(["prj_a"], 2);
+    shrunk.__loadedStateVersion = loaded.__loadedStateVersion;
+    try {
+      writeStoredState(shrunk, {...options, expectedStateVersion: shrunk.__loadedStateVersion});
+      output.push("项目分片守卫：写入一份【项目变少了】的状态没有被拒 —— 那些项目的数据会被静默删掉");
+    } catch (error) {
+      if (!String(error?.message || "").includes("refusing_to_drop_project_shards")) {
+        output.push(`项目分片守卫：拒了，但报的是别的错：${error?.message}`);
+      }
+      if (!String(error?.message || "").includes("prj_b")) {
+        output.push("项目分片守卫：拒绝时没有点名是哪个项目会被丢掉 —— 人无从判断这次写入错在哪");
+      }
+    }
+    const stillThere = readdirSync(shardDir).filter((name) => name.endsWith(".state.json")).length;
+    if (stillThere !== before) {
+      output.push(`项目分片守卫：被拒的那次写入仍然改动了盘上的分片（${before} → ${stillThere}）`);
+    }
+    // 重置回种子是合法的"变少"，显式带开关时必须放行，否则这道守卫会把唯一正当的路也堵死。
+    const reset = withProjects(["prj_a"], 3);
+    reset.__loadedStateVersion = readStoredState(options).__loadedStateVersion;
+    // 这次写入必须成功。用 try 包住并报成一条点名的失败 —— 让它直接抛出去只会得到一段崩溃，
+    // 变异门看到的是"失败了但不是预期断言"，人也看不出是哪条性质坏了。
+    try {
+      writeStoredState(reset, {...options, expectedStateVersion: reset.__loadedStateVersion,
+        allowProjectShardRemoval: true});
+    } catch (error) {
+      output.push(`项目分片守卫：带开关的重置也被拒了（${error?.message}）——`
+        + " 唯一一条合法让项目变少的路被堵死了");
+      return;
+    }
+    const afterReset = readdirSync(shardDir).filter((name) => name.endsWith(".state.json")).length;
+    if (afterReset !== 1) {
+      output.push(`项目分片守卫：带开关的重置没有把多余分片清掉（还剩 ${afterReset} 个）—— 开关等于没接上`);
+    }
+  } finally {
+    rmSync(runtimeDir, {recursive: true, force: true});
+  }
+}
+
 function verifyServerStateFieldsHaveProducers(output) {
   const files = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/audit-ledger.mjs",

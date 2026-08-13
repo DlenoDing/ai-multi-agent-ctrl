@@ -1049,6 +1049,24 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 少了几个项目的写入被静默放行 = 那些租户的数据当场没了。
+    name: "项目分片不得被静默丢弃",
+    check: "verifyProjectShardsAreNeverSilentlyDropped",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    from: "    if (removedProjectIds.length && !options.allowProjectShardRemoval) {",
+    to: "    if (false) {",
+    expect: "没有被拒"
+  },
+  {
+    // 反向：合法的重置也被堵死，等于把唯一正当的路砍掉。
+    name: "带开关的重置仍要能清掉分片",
+    check: "verifyProjectShardsAreNeverSilentlyDropped",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    from: "    if (removedProjectIds.length && !options.allowProjectShardRemoval) {",
+    to: "    if (removedProjectIds.length) {",
+    expect: "项目分片守卫"
+  },
+  {
     // 读了却没人赋值的 state 字段 = 那条信息永远到不了人眼前（今天抓到两个真的）。
     name: "服务端读的 state 字段必须有人赋值",
     check: "verifyServerStateFieldsHaveProducers",
