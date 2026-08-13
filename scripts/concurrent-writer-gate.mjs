@@ -42,7 +42,10 @@ const check = (ok, label, detail = "") => {
     throw new Error(`check(ok, label, detail) 参数错位：收到 ok=${typeof ok}、label=${typeof label}`
       + "（本门的顺序是【条件在前、名称在后】）");
   }
-  console.log(`${ok ? "  ok " : "FAIL"} ${label}${detail ? ` — ${detail}` : ""}`); if (!ok) fails.push(label); };
+  console.log(`${ok ? "  ok " : "FAIL"} ${label}${detail ? ` — ${detail}` : ""}`);
+  // 失败摘要要带上 detail：并发类的失败常常是偶发的，而上层（commit.sh / CI）多半只抓摘要那一行。
+  // 一次抓不到细节的偶发红，等于什么线索都没留下 —— 实测就发生过一次，只看到断言名字。
+  if (!ok) fails.push(detail ? `${label}（${detail}）` : label); };
 
 const freePort = async () => {
   const listener = createServer();

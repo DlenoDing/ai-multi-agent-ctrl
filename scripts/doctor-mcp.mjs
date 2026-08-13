@@ -46,6 +46,21 @@ try {
   if (listed.tools.some((tool) => tool.name === "identity-mcp.grant_create" || tool.name === "governance-mcp.approval_request_create" || tool.name === "evidence-mcp.checkpoint_submit")) {
     throw new Error("remote MCP service token exposed high-risk admin or Agent checkpoint tools");
   }
+  // 上面点名的是三个工具，而真实规则是【整族禁用】（forbiddenMcpServiceTool 里
+  // identity-mcp.* 与 governance-mcp.* 是按前缀挡的）。抽样式断言在"规则被收窄成几个名字"时
+  // 不会红 —— 而那正是这层防护最可能的塌法。这里按规则本身全量核对。
+  // 这一族背后还有第二道门（决策点上按 principal.kind 拒机器主体），
+  // 但那道门只有在工具能拿到时才起作用；这一条守的是第一道。
+  // 【这一条没有登记变异】：治理面由两道独立过滤挡着（默认放行清单本来就不含它们，
+  // 禁用清单再按前缀挡一次），单点改坏任一道，另一道都接住，工具表照样不漏 ——
+  // 实测把前缀规则收窄成一个名字，这道门仍然绿。断言本身不空：它按【规则】枚举，
+  // 而不是抽样三个名字，所以两道一起塌时它会红，规则被收窄时它也不会给出虚假的安全感。
+  const leaked = listed.tools.map((tool) => tool.name)
+    .filter((name) => name.startsWith("identity-mcp.") || name.startsWith("governance-mcp."));
+  if (leaked.length) {
+    throw new Error(`服务令牌的工具表里出现了整族禁用的工具：${leaked.join("、")} —— `
+      + "identity/governance 这两族对机器主体是按前缀挡掉的，漏出来就等于把治理面交给了机器");
+  }
 
   const health = await mcp("tools/call", {name: "ui-console-mcp.runtime_health_get", arguments: {}});
   if (health.isError || health.structuredContent?.result?.runtime?.mcp?.protocol !== "mcp/streamable-http") throw new Error("remote MCP health did not report centralized streamable HTTP");
