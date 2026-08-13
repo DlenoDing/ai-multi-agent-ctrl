@@ -84,6 +84,8 @@ const orgId = (await (await fetch(`${a.base}/api/state?view=orgs`, {headers: aut
 // 各自建一批项目：每一条【被确认成功的】写入，最后都必须真的在状态里。
 const created = new Set();
 const conflicts = {a: 0, b: 0};
+const rejectionCodes = new Set();
+const unexpected = [];
 const fire = async (server, auth, tag, count) => {
   for (let index = 0; index < count; index += 1) {
     const name = `${tag}-项目-${index}`;
@@ -91,7 +93,18 @@ const fire = async (server, auth, tag, count) => {
       headers: {...auth, "idempotency-key": `conc-${tag}-${index}`},
       body: JSON.stringify({name, organizationId: orgId})});
     if (response.ok) created.add(name);
-    else if (response.status === 409) conflicts[tag] += 1;
+    else if (response.status === 409) {
+      conflicts[tag] += 1;
+      const body = await response.json().catch(() => ({}));
+      if (body.error) rejectionCodes.add(String(body.error));
+    } else {
+      // 非 200/409 原先被【静默忽略】：写入失败了，既不算成功也不算冲突，
+      // 于是"被确认的写入没有一条丢失"恒成立 —— 一个写不进去的系统照样能过这道门。
+      // 实测把 CAS 改坏之后，存储层另一道守卫抛出 500，正好落进这个盲区，
+      // 那条 CAS 变异因此失去判别力（全量变异门抓到的就是这个）。
+      const body = await response.json().catch(() => ({}));
+      unexpected.push(`${response.status}:${body.error || "无错误码"}`);
+    }
   }
 };
 await Promise.all([fire(a, authA, "a", 10), fire(b, authB, "b", 10)]);
@@ -103,6 +116,14 @@ check(created.size >= 10, "确实产生了足够的并发写入（否则这道�
   `${created.size} 条被确认（冲突退回：a=${conflicts.a} b=${conflicts.b}）`);
 check(lost.length === 0, "被确认成功的写入没有一条丢失（并发下不得丢更新）",
   lost.length ? `丢了 ${lost.length} 条：${lost.slice(0, 3).join("、")}` : "0 条丢失");
+// 还要钉住【是哪一道拦住的】。存储层有两道防线：CAS（版本对不上就冲突）与
+// "项目分片只增不减"。CAS 失效时后者会顶上来把陈旧写入拒掉，于是"没丢更新"这条照样绿 ——
+// 实测把 CAS 改坏，整道门仍然通过，那条变异因此失去了判别力（全量变异门抓到的就是这个）。
+// 拒了不等于拒对了：并发退回必须是版本冲突，不能是别的守卫顺手接住。
+check(unexpected.length === 0,
+  "并发写入只会成功或按版本冲突退回（没有第三种结局）",
+  unexpected.length ? `另有 ${unexpected.length} 次别的失败：${[...new Set(unexpected)].slice(0, 3).join("、")}`
+    : `退回的错误码：${[...rejectionCodes].join("、") || "（无退回）"}`);
 
 // 最高风险的那种并发不是"两个人各建各的项目"，而是【两个人对同一张人工定稿卡同时下决定】：
 // 定稿会写死一个不可逆的结论（谁批的、批了哪一版），两个都成立就等于账本上有两个互相矛盾的定稿。

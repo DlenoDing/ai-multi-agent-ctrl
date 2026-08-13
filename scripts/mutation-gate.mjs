@@ -1803,7 +1803,11 @@ const MUTATIONS = [
     to: `function throwStateStoreConflict(message) {
   return; // eslint-disable-line
   const error = new Error(message);`,
-    expect: "丢了"
+    // CAS 失效的【表现】变了：存储层后来多了一道"项目分片只增不减"的防线，
+    // 它会把陈旧写入拒掉，所以不再表现为"丢更新"，而是表现为并发写入出现了第三种结局
+    // （500，既不是成功也不是版本冲突）。原先门只统计 ok 与 409，500 被静默忽略，
+    // 于是这条变异一度完全失去判别力 —— 全量变异门抓到的就是这个。
+    expect: "第三种结局"
   },
   {
     name: "崩溃后要按持锁进程是否还活着破锁（只靠时间兜底会把系统锁死）",
