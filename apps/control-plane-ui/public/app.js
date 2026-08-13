@@ -745,7 +745,9 @@ async function api(path, options = {}) {
       render();
       toast.error("会话已过期，请重新登录 —— 你刚填写的内容已经保留，登录后会回到原处");
     }
-    throw new Error(`${response.status} ${detail ? t(detail) : response.statusText}${hint}`);
+    // 服务端有六处直接把 error.message 当错误码回（skill_source_sync_failed:… / pinned_commit_mismatch:… /
+    // git_command_failed:…），同样是 code:detail 形态 —— 整串查词表命中不了，人看到一串英文键。
+    throw new Error(`${response.status} ${detail ? explainCoded(detail) : response.statusText}${hint}`);
   }
   return response.json();
 }

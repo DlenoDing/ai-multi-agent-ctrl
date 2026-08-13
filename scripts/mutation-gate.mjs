@@ -679,6 +679,15 @@ const MUTATIONS = [
     expect: "直接起 git 子进程却不取失败原因"
   },
   {
+    // 渲染那条与 API 报错这条走的是两处调用点，各自守一条。
+    name: "API 报错也要拆开翻译",
+    file: APP,
+    gate: "console",
+    from: "${detail ? explainCoded(detail) : response.statusText}",
+    to: "${detail ? t(detail) : response.statusText}",
+    expect: "弹给人的提示还是一串英文键"
+  },
+  {
     name: "带细节的失败原因要拆开翻译",
     file: APP,
     gate: "console",

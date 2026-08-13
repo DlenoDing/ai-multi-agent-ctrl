@@ -532,6 +532,23 @@ function runDecisionSelectCase() {
     "占位项把实质选项挤掉了");
 }
 
+// 服务端有六处直接把 error.message 当错误码回，于是 API 报错也常是 code:detail 形态。
+// 这一段要真词表在场才看得见（本门其余部分把 t 桩成恒等函数）。
+async function runCodedApiErrorCase() {
+  const probe = loadConsole(el("div"), {realI18n: true});
+  probe.setFetch(async () => ({ok: false, status: 500, statusText: "Internal Server Error",
+    json: async () => ({error: "skill_source_sync_failed:agency-agents-zh：同步失败（退出码 128：fatal: 凭据被拒）"})}));
+  let thrown = null;
+  try { await probe.api("/api/probe", {method: "POST"}); } catch (error) { thrown = error; }
+  const message = String(thrown?.message || "");
+  check("API 报错里的 code:detail 也要拆开翻译",
+    /技能源同步失败/.test(message),
+    `弹给人的提示还是一串英文键（实际：${JSON.stringify(message.slice(0, 120))}）`);
+  check("API 报错翻译后细节不能丢",
+    /凭据被拒/.test(message),
+    "只剩翻译过的前缀，服务端给的原因没了");
+}
+
 // 服务端在不少错误里写了给人看的说明（message / reason / required）。前端原先只取 error 一个字段，
 // 于是一条本来解释清楚了"为什么、接下来怎么办"的 409，到人眼前只剩一串英文枚举。
 async function runErrorGuidanceCase() {
@@ -1449,6 +1466,7 @@ runNoDeadHelperCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();
+await runCodedApiErrorCase();
 
 // 控制台不得再走 view=full。
 //
