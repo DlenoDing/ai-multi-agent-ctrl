@@ -1329,8 +1329,10 @@ function verifyHumanAndOrganizationContracts(output) {
     if (!findRe.alreadyResolved) output.push("findingResolve: re-resolving a terminal finding did not report alreadyResolved");
 
     // "不修就放行"这两类处置（not_applicable / scope_adjusted）由 AI 自己下，等于它能把自己造出来的
-    // 问题一笔勾销、关闭门随之通过。这道真人闸门此前【一条判据都没有】。四支都验：机器主体要被拒，
-    // 真人要放行（缺了正面对照的话，把守卫写成"一律拒绝"也照样绿），另两类可核验的处置 AI 仍可做。
+    // 问题一笔勾销、关闭门随之通过。
+    // 说清这一段【补的是什么】：反面用例本来就有（另一处按 not_applicable 验过），但它只覆盖闭集里的
+    // 一个取值、也没有正面对照。这里改成按闭集枚举（以后新增一类处置自动进入检验面），
+    // 并补上两条正面对照 —— 缺了它们的话，把守卫写成"一律拒绝"同样全绿，而那是把出口一起堵死。
     const disposeCase = (dispositionClass, humanActor) => {
       const st = structuredClone(seedState);
       ensureRuntimeCollections(st, {root});
@@ -1740,7 +1742,7 @@ function verifyHumanAndOrganizationContracts(output) {
     const published = contractPublish(wedgeState, {contractId: "sdc_pub", projectId: "prj_control_plane", taskGroupId: "tg_runtime_management"}).contract;
     if (published.status !== "active") output.push(`人工闸门: 合法发布未能激活（status=${published.status}）——发布路径被自己的守卫打断，且会留下永久阻塞`);
     const publishUnknown = sharedDefinitionPublish(sdState, {contractId: "sdc_never_created"});
-    if (publishUnknown?.ok !== false) {
+    if (publishUnknown?.error !== "shared_definition_not_found") {
       output.push("人工闸门: publish 铸造并激活了一个未知契约（AI 自行宣布规范并自我批准）");
     }
 
@@ -3277,7 +3279,7 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("规则来源: 新分流记录没有挡住关闭门（这道门又空转了）");
     }
     const aiAdopt = ruleSourceSettle(rsState, {resolutionId: rsRecord.resolutionId, taskGroupId: rsTg.id, status: "active"});
-    if (aiAdopt.ok !== false || rsRecord.status === "active") {
+    if (aiAdopt.error !== "rule_source_adoption_requires_human" || rsRecord.status === "active") {
       output.push("规则来源: AI 可自行把一份材料采纳为本项目规则（自宣规范，与共享定义同一条口径被绕过）");
     }
     const aiDecline = ruleSourceSettle(rsState, {resolutionId: rsRecord.resolutionId, taskGroupId: rsTg.id, status: "reference_only"});
@@ -3334,7 +3336,7 @@ function verifyHumanAndOrganizationContracts(output) {
     findingState.findings = [{findingId: "fnd_probe", taskGroupId: "tg_runtime_management", projectId: "prj_control_plane",
       status: "open", severity: "high", summary: "probe"}];
     const aiDismiss = findingResolve(findingState, {findingId: "fnd_probe", status: "dismissed", dispositionClass: "not_applicable"});
-    if (aiDismiss.ok !== false || findingState.findings[0].status !== "open") {
+    if (aiDismiss.error !== "finding_disposition_requires_human" || findingState.findings[0].status !== "open") {
       output.push("发现项处置: AI 无需真人即可把缺陷判为不适用并放行（自造问题自己勾销）");
     }
     // 自报的 humanActor 是普通 JSON 字段，必须完全无效（真人身份走 Symbol 键，入参表达不出来）
