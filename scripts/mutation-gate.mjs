@@ -1049,6 +1049,24 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 查历史的那一屏不说自己不完整 = 最害人的一种"看起来完整"。
+    name: "归档不完整要在查历史那一屏说出来",
+    file: APP,
+    gate: "console",
+    from: "          ${faultNotice}",
+    to: "",
+    expect: "却不知道有条目从没落盘"
+  },
+  {
+    // 服务端读错来源：state 上那个字段全仓从没被赋过值，于是永远是 null。
+    name: "归档故障要读共享台账那份",
+    file: "apps/control-plane-ui/server.mjs",
+    skip: "判别力由控制面 e2e 覆盖（真的把归档文件改成只读、写一次、读接口，再恢复并要求标记自清）",
+    from: "      archiveFault: sharedAuditArchiveFault(),",
+    to: "      archiveFault: state.auditArchiveFault || null,",
+    expect: "归档故障"
+  },
+  {
     // 文档里写死的数字与代码常量漂开 = 运维照着旧数字去归档里找一份不存在的记录。
     name: "README 里的数字要跟着代码走",
     file: "apps/control-plane-ui/lib/audit-ledger.mjs",

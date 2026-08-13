@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import WebSocket from "ws";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
@@ -1721,6 +1721,38 @@ try {
     // 合流之前，经 MCP 改的状态在这本账上一条痕迹都没有。
     // 读【归档文件本身】而不是那个接口：接口取的是末尾若干条，而 MCP 那次调用发生在这一轮很早的
     // 阶段，后面几百条 REST 动作会把它挤出窗口 —— 我第一版就是这么写的，报出来的是假红。
+    // 归档写失败必须传到【专门查历史的那一屏】。此前接口读的是 state.auditArchiveFault，
+    // 而那个字段全仓从没被赋过值 —— 于是这个事实永远是 null，人打开归档只看到一屏记录，
+    // 不知道有条目从没落盘。两支都验：出故障要报，恢复之后要自己清掉
+    //（只置不清的故障标记等于提示在说谎）。
+    {
+      chmodSync(archivePath, 0o444);
+      const blockedWrite = await jsonFetch(port, `/api/orgs/${orgId}/quotas`, {
+        method: "POST", headers: {authorization: systemAuth, "Idempotency-Key": "doctor-archive-fault"},
+        body: JSON.stringify({quotas: {maxMembers: 61}})
+      });
+      const faulted = await readArchive();
+      chmodSync(archivePath, 0o644);
+      if (!blockedWrite.response.ok) {
+        throw new Error(`归档写不进去时整个写请求也失败了（HTTP ${blockedWrite.response.status}）——`
+          + "台账落不了盘不该把业务写入一起挡死");
+      }
+      const fault = faulted.payload.archiveFault;
+      if (!fault || !fault.lostEntries || !fault.error) {
+        throw new Error(`归档写失败了，查历史那一屏却毫无察觉：archiveFault=${JSON.stringify(fault)}`);
+      }
+      const recovered = await jsonFetch(port, `/api/orgs/${orgId}/quotas`, {
+        method: "POST", headers: {authorization: systemAuth, "Idempotency-Key": "doctor-archive-recover"},
+        body: JSON.stringify({quotas: {maxMembers: 62}})
+      });
+      if (!recovered.response.ok) throw new Error("恢复写权限之后仍然写不进去");
+      const afterRecovery = await readArchive();
+      if (afterRecovery.payload.archiveFault) {
+        throw new Error(`归档恢复正常之后故障标记没清掉：${JSON.stringify(afterRecovery.payload.archiveFault)}`
+          + " —— 只置不清的标记会让人以为一直在坏");
+      }
+    }
+
     const archivedLines = readFileSync(archivePath, "utf8").trim().split("\n").filter(Boolean);
     const mcpEntries = archivedLines.map((line) => { try { return JSON.parse(line); } catch { return {}; } })
       .filter((entry) => entry.action === "mcp_tool_call");

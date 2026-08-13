@@ -589,6 +589,38 @@ async function runAuditChainBreakNoticeCase() {
     "只列了 3 处却不说这是前 3 处 —— 查篡改的人会以为自己看到的就是全部");
 }
 
+// 归档写失败过 = 这一屏少了东西。接口一直下发着 archiveFault，而弹窗从来没渲染它 ——
+// 这一屏正是人专门来查历史的地方，"看起来完整"比别处更害人。
+// 两支都验：有故障时要说不完整并给出丢了几条；没故障时不许平白吓人。
+async function runArchiveFaultNoticeCase() {
+  const admin = {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const openArchive = async (payload) => {
+    const root = el("div");
+    const probe = loadConsole(root);
+    probe.renderFullPageWith({schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {}, projects: [],
+      taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], findings: [],
+      humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []}, admin, null, "sys-overview");
+    probe.setFetch(async () => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+      json: async () => payload}));
+    const button = {dataset: {action: "open-audit-archive"}, disabled: false, textContent: "查看审计归档"};
+    button.closest = (selector) => (selector === "[data-action]" ? button : null);
+    await probe.click({target: button, preventDefault: () => {}});
+    return String(root.innerHTML || "");
+  };
+  const faulted = await openArchive({entries: [], chain: {verified: 0, breaks: []},
+    archiveFault: {lostEntries: 4, error: "EACCES: permission denied"}});
+  check("归档写失败过时，这一屏要说清自己不完整",
+    /这份归档不完整/u.test(faulted) && /4/u.test(faulted),
+    `查历史的人看到的是一屏记录，却不知道有条目从没落盘（${faulted.slice(0, 140)}）`);
+  check("并说出失败原因（人要据此判断能不能补救）",
+    /EACCES/u.test(faulted),
+    "只说不完整、不说为什么 —— 人不知道是盘满了还是权限没了");
+  const healthy = await openArchive({entries: [], chain: {verified: 3, breaks: []}, archiveFault: null});
+  check("归档没出过问题时不许平白说它不完整",
+    !/这份归档不完整/u.test(healthy),
+    "没有故障却报不完整 —— 这种狼来了会让真出事时那句话没人信");
+}
+
 async function runFailingRequestIsNamedCase() {
   const probe = loadConsole(el("div"));
   probe.setFetch(async () => ({ok: false, status: 500, statusText: "Internal Server Error",
@@ -1767,6 +1799,7 @@ await runErrorGuidanceCase();
 runNoVisibleProjectCase();
 await runSelfRowHasNoActionsCase();
 await runAuditChainBreakNoticeCase();
+await runArchiveFaultNoticeCase();
 await runFailingRequestIsNamedCase();
 await runCodedApiErrorCase();
 

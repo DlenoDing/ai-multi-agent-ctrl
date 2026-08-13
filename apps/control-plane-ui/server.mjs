@@ -4760,7 +4760,10 @@ async function handleApi(req, res) {
       fileBytes: tail.fileBytes,
       bytesScanned: tail.bytesScanned,
       chain: verifyAuditChain(tail.entries),
-      archiveFault: state.auditArchiveFault || null,
+      // 读的必须是共享台账那份（模块变量），不是 state 上的字段 —— 后者全仓从没被赋过值，
+      // 于是这个字段一直是 null：归档写失败过之后，人打开【专门查历史的这一屏】毫无察觉。
+      // 概览页那条横幅是好的，因为它读的是视图里注入的那份；两处来源不同，只修好了一处。
+      archiveFault: sharedAuditArchiveFault(),
       at: now()
     });
     return;

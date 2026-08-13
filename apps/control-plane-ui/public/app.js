@@ -4378,8 +4378,15 @@ document.addEventListener("click", async (event) => {
       const chainNotice = chain.breaks?.length
         ? `<div class="notice warn-notice">哈希链校验发现 ${chain.breaks.length} 处不一致（${esc(chain.breaks.slice(0, 3).map((item) => `${item.id}:${item.reason}`).join("、"))}${chain.breaks.length > 3 ? `，仅列前 3 处，其余 ${chain.breaks.length - 3} 处在服务端归档文件里` : ""}）—— 归档可能被改动过。</div>`
         : `<div class="notice">已按哈希链逐条校验本屏 ${chain.verified} 条记录，未发现改动。</div>`;
+      // 归档写失败过 = 这一屏少了东西。接口一直下发着这个事实，而这里从来没渲染它 ——
+      // 而这一屏正是人专门来查历史的地方，"看起来完整"比别处更害人。
+      const faultNotice = archive.archiveFault
+        ? `<div class="notice warn-notice">这份归档不完整：写入失败过，已有 ${esc(String(archive.archiveFault.lostEntries || 0))}
+           条记录没能落盘（${esc(String(archive.archiveFault.error || "原因未记录"))}）—— 下面看到的不是全部。</div>`
+        : "";
       openModal("审计归档", `
         <div class="stack">
+          ${faultNotice}
           ${chainNotice}
           ${archive.windowTruncated ? `<div class="small muted">归档文件共 ${Math.round((archive.fileBytes || 0) / 1024)} KB，这里只读了末尾 ${Math.round((archive.bytesScanned || 0) / 1024)} KB —— 更早的记录需要直接查归档文件。</div>` : ""}
           ${table(["时间", "操作者", "动作", {label: "对象", c: "text-clip"}, "结果"], rows, {emptyText: "归档里还没有记录"})}
