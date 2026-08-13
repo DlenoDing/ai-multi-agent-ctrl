@@ -679,6 +679,14 @@ const MUTATIONS = [
     expect: "直接起 git 子进程却不取失败原因"
   },
   {
+    name: "报错要说清是哪一次请求失败的",
+    file: APP,
+    gate: "console",
+    from: "${hint}（${requestPath}）`);",
+    to: "${hint}`);",
+    expect: "报错里没有出请求路径"
+  },
+  {
     // 渲染那条与 API 报错这条走的是两处调用点，各自守一条。
     name: "API 报错也要拆开翻译",
     file: APP,

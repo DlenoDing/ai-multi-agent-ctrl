@@ -724,7 +724,8 @@ async function api(path, options = {}) {
   try {
     response = await fetch(path, {...options, headers});
   } catch (networkError) {
-    if (method === "GET") throw new Error(`加载失败：没有收到服务端响应（${String(networkError?.message || networkError).slice(0, 120)}）`);
+    if (method === "GET") throw new Error(`加载失败：没有收到服务端响应（${String(path).split("?")[0]}：`
+      + `${String(networkError?.message || networkError).slice(0, 120)}）`);
     throw new Error("这次操作没有收到服务端的回应（网络中断或服务未响应）。"
       + "它可能已经生效，也可能没有 —— 请先刷新页面确认结果，不要直接重试："
       + `重试会以新的幂等键再做一次。（${String(networkError?.message || networkError).slice(0, 120)}）`);
@@ -781,7 +782,11 @@ async function api(path, options = {}) {
     }
     // 服务端有六处直接把 error.message 当错误码回（skill_source_sync_failed:… / pinned_commit_mismatch:… /
     // git_command_failed:…），同样是 code:detail 形态 —— 整串查词表命中不了，人看到一串英文键。
-    throw new Error(`${response.status} ${detail ? explainCoded(detail) : response.statusText}${hint}`);
+    // 带上是【哪一次请求】失败的：一屏常常并发取两三个接口，只报 "500 server_error" 时
+    // 人不知道该查哪个（组织数据没问题、是智能体列表挂了，这两种情况在屏幕上长得一样）。
+    // 只给路径，不给查询串 —— 查询串里可能有项目 id 之类，横幅上不必要。
+    const requestPath = String(path).split("?")[0];
+    throw new Error(`${response.status} ${detail ? explainCoded(detail) : response.statusText}${hint}（${requestPath}）`);
   }
   return response.json();
 }

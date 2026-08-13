@@ -556,6 +556,29 @@ function runDecisionSelectCase() {
 
 // 服务端有六处直接把 error.message 当错误码回，于是 API 报错也常是 code:detail 形态。
 // 这一段要真词表在场才看得见（本门其余部分把 t 桩成恒等函数）。
+// 一屏常常并发取两三个接口。只报 "500 server_error" 时，人不知道是哪一个挂了 ——
+// "组织数据没问题、是智能体列表挂了"与"整个组织视图都挂了"在屏幕上长得一模一样。
+async function runFailingRequestIsNamedCase() {
+  const probe = loadConsole(el("div"));
+  probe.setFetch(async () => ({ok: false, status: 500, statusText: "Internal Server Error",
+    json: async () => ({error: "server_error"})}));
+  let thrown = null;
+  try { await probe.api("/api/org/agents?orgId=org_default", {method: "GET"}); } catch (error) { thrown = error; }
+  const message = String(thrown?.message || "");
+  check("报错要说清是哪一次请求失败的",
+    message.includes("/api/org/agents"),
+    `报错里没有出请求路径（${JSON.stringify(message.slice(0, 90))}）—— 一屏并发取好几个接口，人不知道该查哪个`);
+  check("路径不带查询串",
+    !message.includes("orgId=org_default"),
+    "把查询串也放进横幅了 —— 里面可能有项目 id 之类，屏幕上不必要");
+  let networkThrown = null;
+  probe.setFetch(async () => { throw new Error("fetch failed"); });
+  try { await probe.api("/api/org/agents", {method: "GET"}); } catch (error) { networkThrown = error; }
+  check("连不上时也要说清是哪一次请求",
+    String(networkThrown?.message || "").includes("/api/org/agents"),
+    "网络失败那条报错没有出请求路径");
+}
+
 async function runCodedApiErrorCase() {
   const probe = loadConsole(el("div"), {realI18n: true});
   probe.setFetch(async () => ({ok: false, status: 500, statusText: "Internal Server Error",
@@ -1492,6 +1515,7 @@ runPlanFinalizationNoticeCase();
 runRoomVisibilityCase();
 runDecisionSelectCase();
 await runErrorGuidanceCase();
+await runFailingRequestIsNamedCase();
 await runCodedApiErrorCase();
 
 // 控制台不得再走 view=full。
