@@ -5624,12 +5624,26 @@ function verifyEveryCloseGateHasHumanGuidance(output) {
   if (rawCoreThrown.length) {
     output.push(`这些 core 抛出的错误码会原样显示在派发失败原因里：${rawCoreThrown.join("、")} —— 补中文（界面会把冒号前那段翻出来）`);
   }
+  // agent 运行时抛出的失败会经派发失败原因显示在同一列上，所以它们也是面向人的。
+  // 只有【装机/命令行阶段】那些例外：那时人看的是终端，不是控制台。
+  const CLI_ONLY_RUNTIME_ERRORS = ["agent_bootstrap_usage", "agent_not_initialized", "agent_selfcheck_failed",
+    "agent_unknown_command"];
+  const runtimeSource = readFileSync(resolve(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const runtimeCodes = [...new Set([...runtimeSource.matchAll(/throw new Error\(`?"?([a-z0-9_]{6,}):/gu)].map((match) => match[1]))];
+  if (runtimeCodes.length < 8) {
+    output.push(`agent 运行时错误码中文覆盖自检：只提取到 ${runtimeCodes.length} 个 —— 提取逻辑与代码脱节，本条在空转`);
+  }
+  const rawRuntime = runtimeCodes.filter((code) => !localized(code) && !CLI_ONLY_RUNTIME_ERRORS.includes(code));
+  if (rawRuntime.length) {
+    output.push(`这些 agent 运行时的失败原因会原样显示英文：${rawRuntime.join("、")} —— `
+      + "它们经派发失败原因进到控制台那一列，和服务端的错误码是同一屏");
+  }
   const goneErrors = Object.keys(MACHINE_FACING_ERRORS).filter((code) => !errorCodes.includes(code));
   if (goneErrors.length) {
     output.push(`MACHINE_FACING_ERRORS 里这些错误码服务端已经不返回了：${goneErrors.join("、")} —— 过时的例外会掩护掉下一个漏译`);
   }
   console.log(`API 错误码中文覆盖：${errorCodes.length} 个里 ${errorCodes.length - Object.keys(MACHINE_FACING_ERRORS).length} 个面向人的都有中文，`
-    + `另有 core 抛出的 ${coreThrown.length} 个（走派发失败原因那条路）也逐个核对过；`
+    + `另有 core 抛出的 ${coreThrown.length} 个与 agent 运行时的 ${runtimeCodes.length} 个（都走派发失败原因那条路）也逐个核对过；`
     + `${Object.keys(MACHINE_FACING_ERRORS).length} 个登记为纯机器面（MCP 服务器与 agent 网关自身的报文不在此列，读者整体是程序）`);
 }
 

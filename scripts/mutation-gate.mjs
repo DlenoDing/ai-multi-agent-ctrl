@@ -696,6 +696,15 @@ const MUTATIONS = [
     expect: "屏幕上摆着一串英文键"
   },
   {
+    // agent 运行时抛的失败会走进控制台同一列。这条守的是"那一族也在核对范围里"。
+    name: "agent 运行时的失败原因也要有中文",
+    file: I18N,
+    check: "verifyEveryCloseGateHasHumanGuidance",
+    from: '    executor_not_installed: "这台节点上没有可用的执行器",',
+    to: '    executor_not_installed_x: "这台节点上没有可用的执行器",',
+    expect: "executor_not_installed"
+  },
+  {
     // 面向人的错误码漏了中文，人在屏幕上看到的就是英文键。摘掉一条登记即等价于新增一个漏译。
     name: "面向人的 API 错误码必须有中文",
     file: "scripts/contract-check.mjs",

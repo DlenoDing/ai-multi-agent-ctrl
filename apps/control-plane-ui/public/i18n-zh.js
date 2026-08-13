@@ -984,6 +984,21 @@
 
     /* ---------- 失败原因里 "code:detail" 的那一段前缀（由 explainCoded 取用） ---------- */
     git_command_failed: "git 命令失败",
+    /* ---------- agent 运行时抛出的失败原因（同样经派发失败原因显示给人） ---------- */
+    content_bundle_sync_failed: "内容包同步失败，没有同步到规则就不允许执行",
+    content_bundle_manifest_mismatch: "内容包整包摘要对不上",
+    content_bundle_digest_mismatch: "内容包里某个文件的摘要对不上",
+    content_bundle_path_escapes_session: "内容包里有路径指向会话目录之外",
+    checkpoint_replay_recover_required: "检查点重放需要人工恢复",
+    executor_produced_no_changes: "执行器没有产出任何仓库改动",
+    executor_produced_no_output: "执行器没有产出任务输出",
+    push_verification_failed: "推送校验没过",
+    executor_exited_nonzero: "执行器非正常退出",
+    executor_model_id_required: "执行器缺少模型标识",
+    executor_not_installed: "这台节点上没有可用的执行器",
+    skill_workset_digest_mismatch: "技能集摘要对不上",
+    skill_workset_path_escape: "技能集里有越界路径",
+    skill_workset_download_failed: "技能集下载失败",
     content_bundle_git_transfer_failed: "内容包大文件拉取失败",
     agent_runtime_executor_failed: "执行器没能跑完",
     agent_runtime_executor_undeclared_changes: "执行器改了没申报的文件",

@@ -625,7 +625,7 @@ async function syncContentBundle(config, dispatchPackage, taskRoot) {
   try {
     bundle = await retryableAgentRequest(() => jsonRequest(`${config.serverUrl}${bundlePath}`, {token: config.nodeToken}), "content_bundle");
   } catch (error) {
-    throw new Error(`content bundle sync failed; execution is not allowed without synchronized rules: ${error.message}`);
+    throw new Error(`content_bundle_sync_failed:${error.message}`);
   }
   const bundleDir = join(taskRoot, "bundle");
   const libraryDir = join(config.workDir, "library");
@@ -732,7 +732,7 @@ function verifyCheckpointReplayRemote(config, item) {
   const pushRef = item.checkpoint?.pushRefs?.at(-1);
   if (!target || !pushRef?.ref || !pushRef.remoteSha) return;
   const repositoryRoot = join(config.repositoryDir, safeName(target.repositoryId));
-  if (!existsSync(join(repositoryRoot, ".git"))) throw new Error("checkpoint replay recover_required: repository checkout missing");
+  if (!existsSync(join(repositoryRoot, ".git"))) throw new Error("checkpoint_replay_recover_required:仓库检出目录不在了");
   const remote = pushRef.remote || target.remote || "origin";
   const currentRemoteSha = gitLsRemote(repositoryRoot, remote, pushRef.ref);
   if (currentRemoteSha === pushRef.remoteSha) return;
@@ -740,7 +740,7 @@ function verifyCheckpointReplayRemote(config, item) {
     git(repositoryRoot, ["fetch", "--no-tags", remote, pushRef.ref]);
     git(repositoryRoot, ["merge-base", "--is-ancestor", pushRef.remoteSha, "FETCH_HEAD"]);
   } catch {
-    throw new Error(`checkpoint replay recover_required: pushed commit no longer contained in remote ${pushRef.ref}`);
+    throw new Error(`checkpoint_replay_recover_required:已推送的提交在远端 ${pushRef.ref} 上找不到了`);
   }
 }
 
@@ -991,7 +991,7 @@ async function executeDispatch(config, dispatchPackage, control) {
   const output = await runModelExecutor(config, dispatchPackage, repositoryRoot, skillWorkset, packagePath, promptPath, control);
   control?.throwIfCancelled();
   const changedBeforeManifest = gitStatusPaths(repositoryRoot);
-  if (!changedBeforeManifest.length) throw new Error("model agent produced no repository changes");
+  if (!changedBeforeManifest.length) throw new Error("executor_produced_no_changes:仓库里一个文件都没改");
   assertAllowedPaths(changedBeforeManifest, dispatchPackage.repositoryOutputTarget);
   await submitExecutionEvent(config, dispatchPackage, "repository_changed", {progressPercent: 65, summary: `Model executor changed ${changedBeforeManifest.length} repository paths.`, evidenceRefs: changedBeforeManifest.slice(0, 20).map((path) => `git-path:${path}`)});
   // §7 evidence: register a redacted test/execution report artifact (evidence only; deliverables stay in Git).
@@ -1004,7 +1004,7 @@ async function executeDispatch(config, dispatchPackage, control) {
   });
   const manifestPath = dispatchPackage.repositoryOutputTarget.artifactManifestPath;
   const outputRefs = changedBeforeManifest.filter((path) => path !== manifestPath);
-  if (!outputRefs.length) throw new Error("model agent produced no task output besides artifact manifest");
+  if (!outputRefs.length) throw new Error("executor_produced_no_output:除了产物清单没有任何任务输出");
   writeArtifactManifest(repositoryRoot, manifestPath, dispatchPackage, outputRefs, output);
   const changed = gitStatusPaths(repositoryRoot);
   assertAllowedPaths(changed, dispatchPackage.repositoryOutputTarget);
@@ -1035,7 +1035,7 @@ async function executeDispatch(config, dispatchPackage, control) {
   await assertStillHoldsClaim(config, dispatchPackage);
   git(repositoryRoot, ["push", remote, `HEAD:refs/heads/${branch}`]);
   const remoteSha = gitLsRemote(repositoryRoot, remote, `refs/heads/${branch}`);
-  if (remoteSha !== commit) throw new Error("remote push verification failed");
+  if (remoteSha !== commit) throw new Error("push_verification_failed:推上去之后远端的提交与本地对不上");
   await submitExecutionEvent(config, dispatchPackage, "git_pushed", {progressPercent: 90, summary: `Pushed ${commit} to ${remote}/refs/heads/${branch}.`, evidenceRefs: [`push:${remote}:refs/heads/${branch}:${remoteSha}`]});
   const tree = git(repositoryRoot, ["rev-parse", `${commit}^{tree}`]);
   const checkpoint = {
@@ -1154,7 +1154,7 @@ async function runModelExecutor(config, dispatchPackage, repositoryRoot, skillWo
   }
   control?.throwIfCancelled();
   if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`model executor exited ${result.status}: ${String(result.stderr || result.stdout || "").slice(-4000)}`);
+  if (result.status !== 0) throw new Error(`executor_exited_nonzero:退出码 ${result.status}：${String(result.stderr || result.stdout || "").slice(-4000)}`);
   const lines = String(result.stdout || "").trim().split("\n").filter(Boolean);
   try {
     return lines.length ? JSON.parse(lines.at(-1)) : {};
@@ -1289,10 +1289,10 @@ function runKnownModelCli(model, prompt, cwd, env, control, onOutput) {
   }
   if (provider === "ollama" && commandAvailable("ollama")) {
     const ollamaModel = modelId || process.env.AIMAC_OLLAMA_MODEL;
-    if (!ollamaModel) throw new Error("ollama execution requires a modelId or AIMAC_OLLAMA_MODEL");
+    if (!ollamaModel) throw new Error("executor_model_id_required:ollama 需要 modelId 或环境变量 AIMAC_OLLAMA_MODEL");
     return spawnAndCapture("ollama", ["run", ollamaModel], {cwd, env, input: prompt, control, onOutput});
   }
-  throw new Error(`no installed AI executor for provider ${provider}; configure --executor-command`);
+  throw new Error(`executor_not_installed:供应商 ${provider} 没有可用的执行器，装一个或用 --executor-command 指定`);
 }
 
 function providerClassForModel(model = {}) {
@@ -1328,11 +1328,11 @@ function syncSkillWorkset(config, dispatchPackage) {
   let workset = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, "utf8")) : null;
   if (!workset || workset.worksetDigest !== expected.worksetDigest || !verifySkillFiles(directory, workset.files || [])) {
     workset = syncJson(`${config.serverUrl}${expected.downloadPath}`, config.nodeToken);
-    if (workset.worksetDigest !== expected.worksetDigest) throw new Error("skill workset digest mismatch");
+    if (workset.worksetDigest !== expected.worksetDigest) throw new Error("skill_workset_digest_mismatch:技能集摘要与控制面给的对不上");
     mkdirSync(directory, {recursive: true});
     for (const file of workset.files || []) {
       const target = resolve(directory, normalize(file.path));
-      if (!inside(directory, target)) throw new Error("skill workset path escapes cache");
+      if (!inside(directory, target)) throw new Error("skill_workset_path_escape:技能集里有路径指向缓存目录之外");
       if (sha256(file.content) !== file.contentDigest) throw new Error(`skill file digest mismatch: ${file.path}`);
       mkdirSync(dirname(target), {recursive: true});
       writeFileSync(target, file.content, {mode: 0o600});
@@ -1775,7 +1775,7 @@ function retryableControlPlaneError(error) {
 
 function syncJson(url, token) {
   const result = spawnSync("curl", ["-fsSL", "--config", "-", url], {input: `header = "Authorization: Bearer ${token}"\n`, encoding: "utf8", maxBuffer: 32 * 1024 * 1024});
-  if (result.error || result.status !== 0) throw new Error(`skill workset download failed: ${result.stderr || result.error?.message}`);
+  if (result.error || result.status !== 0) throw new Error(`skill_workset_download_failed:${result.stderr || result.error?.message}`);
   return JSON.parse(result.stdout);
 }
 
