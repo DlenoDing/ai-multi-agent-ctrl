@@ -465,6 +465,30 @@ try {
   if (!createdWorkItem.response.ok || createdWorkItem.payload.workItem?.ownerRole !== "agent-runtime" || !createdWorkItem.payload.taskGroup?.roles?.some((role) => role.roleId === "agent-runtime")) {
     throw new Error("work item management API did not create role-bound machine-executable work");
   }
+  // 「这个单元必须先由人定稿方案」是真人专属杠杆，而它此前一条 e2e 覆盖都没有。
+  // 原先服务端读的是 `body.requiresPlanFinalization === true`：字段名写错或没带，
+  // 就【按"不强制"执行】并把提交人的理由记在那条相反的决定上（实测 {"required":true} 得到 200
+  // 且记录里是 false）。命令接口要拒绝，不要猜 —— 猜错的是人的意思。
+  const planFinalizationPath = `/api/task-groups/${createdTaskGroup.payload.taskGroup.id}`
+    + `/work-items/${encodeURIComponent(createdWorkItem.payload.workItem.id)}/plan-finalization`;
+  const planGuess = await jsonFetch(port, planFinalizationPath, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-plan-final-guess", authorization: systemAuth},
+    body: JSON.stringify({required: true, justification: "字段名写错的调用"})
+  });
+  if (planGuess.response.status !== 400 || planGuess.payload.error !== "plan_finalization_requirement_required") {
+    throw new Error(`没带 requiresPlanFinalization 时必须拒绝（得到 ${planGuess.response.status}/${planGuess.payload.error}）—— `
+      + "缺省会被当成「不强制」，与提交人的本意相反，而理由还会记在那条相反的决定上");
+  }
+  const planSet = await jsonFetch(port, planFinalizationPath, {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-plan-final-set", authorization: systemAuth},
+    body: JSON.stringify({requiresPlanFinalization: true, justification: "涉及存储选型，先要有人拍板的方案"})
+  });
+  if (!planSet.response.ok || planSet.payload.requiresPlanFinalization !== true) {
+    throw new Error(`显式要求人工定稿方案没有生效（${planSet.response.status}/${JSON.stringify(planSet.payload).slice(0, 120)}）`);
+  }
+
   const memberGrant = await jsonFetch(port, `/api/projects/${createdProject.payload.id}/members`, {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-project-member-role-template", authorization: auth},

@@ -3899,7 +3899,15 @@ async function handleApi(req, res) {
       `WorkItem:${planFinalizationMatch[1]}:${planFinalizationMatch[2]}`, taskGroupScope(state, planFinalizationMatch[1]));
     if (guard.status) return json(res, guard.status, guard.payload);
     if (!planWorkItem) return json(res, 404, {error: "work_item_not_found"});
-    const required = body.requiresPlanFinalization === true;
+    // 缺省不得等于一个决定：原先写的是 `=== true`，于是字段名写错、或调用方没带这个字段时，
+    // 这条命令会【按"不强制"执行】并把提交人的理由记在那条相反的决定上（审计写成 cleared）。
+    // 实测用 {"required": true} 调它：HTTP 200，记录里 requiresPlanFinalization=false、理由照收。
+    // 命令接口要拒绝，不要猜 —— 这是真人专属动作，猜错的是人的意思。
+    if (typeof body.requiresPlanFinalization !== "boolean") {
+      return json(res, 400, {error: "plan_finalization_requirement_required",
+        message: "必须显式给出 requiresPlanFinalization（true 或 false）：缺省会被当成「不强制」，那可能与你的本意相反"});
+    }
+    const required = body.requiresPlanFinalization;
     const justification = String(body.justification || "").trim();
     if (!justification) return json(res, 400, {error: "plan_finalization_justification_required"});
     planWorkItem.requiresPlanFinalization = required;
