@@ -893,6 +893,16 @@ const MUTATIONS = [
     expect: "没有被拒"
   },
   {
+    // 运维在自己机器上敲命令，不该收到一段 Node 崩溃栈。判别力由远程 agent e2e 覆盖
+    // （它会真的 spawn 这个 CLI 打错子命令、连错地址）。
+    name: "agentctl 失败时要给人话而不是崩溃栈",
+    file: "scripts/agentctl.mjs",
+    skip: "判别力由远程 agent e2e 覆盖（真的 spawn 这个 CLI 走失败路径）",
+    from: "  fail(`认不出这个子命令${action ? `：${action}` : \"（一个都没给）\"}`,",
+    to: "  throw new Error(`unknown subcommand: ${action}`);\n  fail(`认不出这个子命令${action ? `：${action}` : \"（一个都没给）\"}`,",
+    expect: "认不出子命令时"
+  },
+  {
     // 认不出的指令类型降级成便条 = pause 拼错就变成一条 free_text，活照跑。
     name: "认不出的人工指令类型必须拒绝",
     file: CORE,

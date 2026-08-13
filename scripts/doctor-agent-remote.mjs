@@ -82,6 +82,26 @@ try {
       AIMAC_SYSTEM_ADMIN_EMAIL: "system.admin@local"};
     const runCli = (argv) => spawnSync(process.execPath, [join(root, "scripts/agentctl.mjs"), ...argv, `--server=${baseUrl}`],
       {cwd: root, env: cliEnv, encoding: "utf8"});
+    // 失败路径此前一条覆盖都没有 —— 而运维敲错命令、连错地址、忘了给令牌，这三件事比成功路径常见。
+    // 原先每一条都是一段 Node 崩溃栈（at Object.<anonymous>…），人看不出自己错在哪。
+    const badCommand = runCli(["nodes", "lst"]);
+    if (badCommand.status !== 1 || /\bat \w+\.<anonymous>|at Object\./u.test(String(badCommand.stderr))) {
+      throw new Error(`agentctl 子命令打错时应给人话（退出码 ${badCommand.status}）：`
+        + String(badCommand.stderr || badCommand.stdout).slice(0, 200));
+    }
+    if (!String(badCommand.stderr).includes("join-token create")) {
+      throw new Error("agentctl 认不出子命令时没有列出可用的子命令 —— 人只能去翻文档");
+    }
+    const badServer = spawnSync(process.execPath, [join(root, "scripts/agentctl.mjs"), "doctor", "--server=http://127.0.0.1:9"],
+      {cwd: root, env: cliEnv, encoding: "utf8"});
+    if (badServer.status !== 1 || !String(badServer.stderr).includes("连不上控制面")) {
+      throw new Error(`agentctl 连不上控制面时没给人话（退出码 ${badServer.status}）：`
+        + String(badServer.stderr || badServer.stdout).slice(0, 200));
+    }
+    if (!/npm start|--server/u.test(String(badServer.stderr))) {
+      throw new Error("agentctl 连不上时没有告诉人下一步该做什么");
+    }
+
     const listed = runCli(["nodes", "list"]);
     if (listed.status !== 0 || !String(listed.stdout).includes("agentRuntimeNodes")) {
       throw new Error(`agentctl nodes list 不可用（退出码 ${listed.status}）：${String(listed.stdout || listed.stderr).slice(0, 200)}`);
