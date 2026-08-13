@@ -2171,6 +2171,22 @@ await runCodedApiErrorCase();
     "技能源已经同步成功了，表上还挂着上一次的失败原因 —— 人会去追一个已经解决的故障");
 }
 
+// 界面上所有时间按本机时区渲染，而服务端日志是 UTC。不标时区，人拿屏幕上的时间去对日志
+// 会差几个小时，进而以为那条记录不存在。
+{
+  const zoneRoot = el("div");
+  const probe = loadConsole(zoneRoot);
+  const admin = {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  const anyState = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    projects: [], taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
+    findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []};
+  probe.renderFullPageWith(anyState, admin, null, "sys-overview");
+  const shell = String(zoneRoot.innerHTML || "");
+  check("界面要说清时间是按哪个时区显示的",
+    /UTC[+-]?\d*/.test(shell) && /本机时区/.test(shell),
+    "屏幕上所有时间都不带时区，而服务端日志是 UTC —— 对日志的人会差几个小时，以为记录不存在");
+}
+
 // 配额只数没被吊销的节点，而智能体那张表把已吊销的也列着。不说清楚，人会拿表里的行数去对
 // 这个数字，对不上又找不出原因。走真实加载路径（org-overview 会真的去取 /api/org/agents）。
 {

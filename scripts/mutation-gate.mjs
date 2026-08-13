@@ -741,6 +741,14 @@ const MUTATIONS = [
     expect: "人判过的事又回来了"
   },
   {
+    name: "界面要说清时间按哪个时区显示",
+    file: APP,
+    gate: "console",
+    from: '<span class="small muted" title="界面时间按本机时区显示；服务端日志用的是 UTC">${esc(localZoneLabel())}</span>',
+    to: "",
+    expect: "对日志的人会差几个小时"
+  },
+  {
     name: "已吊销节点不计入配额这件事要说出来",
     file: APP,
     gate: "console",

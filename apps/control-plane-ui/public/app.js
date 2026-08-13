@@ -517,6 +517,17 @@ function modelDecisionSummaryZh(decision) {
   return parts.length ? parts.join(" · ") : t(decision.selectionMode);
 }
 
+// 本机时区标签（UTC+8 这种）。服务端记的是 UTC，两边差几个小时而屏幕上不标，
+// 对日志的人会以为记录不存在。
+function localZoneLabel() {
+  const minutes = -new Date().getTimezoneOffset();
+  if (!Number.isFinite(minutes)) return "UTC";
+  const sign = minutes < 0 ? "-" : "+";
+  const abs = Math.abs(minutes);
+  const rest = abs % 60;
+  return `UTC${sign}${Math.floor(abs / 60)}${rest ? `:${String(rest).padStart(2, "0")}` : ""}`;
+}
+
 function fmtTime(value) {
   if (!value) return "-";
   const date = new Date(value);
@@ -1440,6 +1451,9 @@ function render() {
           ${switcherHtml}
           <div class="topbar-actions">
             <span class="account-chip">${esc(currentAccount.displayName || currentAccount.email)} ${badge(currentAccount.accountType)}</span>
+            ${/* 界面上所有时间都按浏览器本机时区渲染，而服务端日志（audit-log.jsonl、执行事件）是 UTC。
+                  不标时区，人拿屏幕上的时间去对日志会差好几个小时，进而以为那条记录根本不存在。 */""}
+            <span class="small muted" title="界面时间按本机时区显示；服务端日志用的是 UTC">${esc(localZoneLabel())}</span>
             <button class="secondary-button" data-action="open-change-password">修改密码</button>
             <button class="icon-button" data-action="refresh" title="刷新" aria-label="刷新">↻</button>
             <button class="secondary-button" data-action="logout">退出登录</button>
