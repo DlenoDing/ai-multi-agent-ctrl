@@ -172,6 +172,30 @@ try {
     if (/ {4}at .*runtime\.mjs:/u.test(said)) {
       throw new Error("入网失败时把 Node 崩溃栈直接吐给了装机的人（堆栈应当留给 AIMAC_AGENT_DEBUG=1）");
     }
+
+    // 装机脚本自己的失败路径。人是在一台新机器上 curl | sh，手上没有任何别的上下文：
+    // 参数被截断（复制安装命令时最常见）原先是 "line 20: $2: unbound variable"，
+    // 下载不到产物原先只有 curl 那句英文、不说脚本当时在做什么。
+    for (const [why, argv, expected] of [
+      ["参数被截断", ["--server"], "后面少了取值"],
+      ["参数名打错", ["--serverr", baseUrl], "认不出这个参数"],
+      ["下载不到产物", ["--server", "https://127.0.0.1:9", "--join-token", "x",
+        "--work-dir", join(sandbox, "unreachable-agent")], "下载不到"]
+    ]) {
+      const broken = spawnSync("sh", [badTokenScript, ...argv],
+        {encoding: "utf8", env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true"}, timeout: 120000});
+      const output = `${broken.stdout || ""}${broken.stderr || ""}`;
+      if (broken.status === 0) throw new Error(`install-agent.sh ${why}时居然退出 0`);
+      if (/unbound variable|line \d+:/u.test(output)) {
+        throw new Error(`install-agent.sh ${why}时吐的是 shell 报错而不是人话：${output.slice(0, 160)}`);
+      }
+      if (!output.includes(expected)) {
+        throw new Error(`install-agent.sh ${why}时没说清是什么问题，期望提到「${expected}」：${output.slice(0, 160)}`);
+      }
+      if (!output.includes("·")) {
+        throw new Error(`install-agent.sh ${why}时只报了结论、没给下一步 —— 装机的人不知道该改什么`);
+      }
+    }
   }
 
   // 角色越界被拒时，只回一个码等于让接入方去猜：它要了什么、这张票允许什么、被挡的是哪几个，

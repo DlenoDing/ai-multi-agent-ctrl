@@ -903,6 +903,34 @@ const MUTATIONS = [
     expect: "认不出子命令时"
   },
   {
+    // 装机的人是在一台新机器上 curl | sh，手上没有别的上下文。这三条都由远程 agent e2e 覆盖
+    // （它真的把这个脚本跑失败）。登记在这里只是把"谁覆盖了它"写在明处 ——
+    // 注意 skip 的条目【锚点不强制】，所以这份登记挡不住文案漂走，挡住它的是 e2e 里的断言本身。
+    name: "装机脚本参数被截断时要给人话",
+    file: "scripts/install-agent.sh",
+    skip: "判别力由远程 agent e2e 覆盖（真的用截断的参数跑这个脚本）",
+    from: '    printf \'%s\\n\' "install-agent: $1 后面少了取值" >&2',
+    to: '    printf \'%s\\n\' "$2" >&2',
+    expect: "后面少了取值"
+  },
+  {
+    name: "装机脚本下载失败时要说清在下什么",
+    file: "scripts/install-agent.sh",
+    skip: "判别力由远程 agent e2e 覆盖（真的指向一个连不上的地址）",
+    from: '    printf \'%s\\n\' "install-agent: 下载不到$3" >&2',
+    to: '    printf \'%s\\n\' "download failed" >&2',
+    expect: "下载不到"
+  },
+  {
+    // 起完就宣布已启动 —— 进程当场退出也照说不误，控制面那边永远等不到这个节点。
+    name: "装机脚本宣布已启动前要确认它还活着",
+    file: "scripts/install-agent.sh",
+    skip: "判别力由远程 agent e2e 覆盖（已用 mutate-probe 实证：守护进程当场死掉时那道门变红）",
+    from: '  if ! kill -0 "$AGENT_PID" 2>/dev/null; then',
+    to: "  if false; then",
+    expect: "起来之后立刻退出了"
+  },
+  {
     // 同上，另一个运维入口。判别力由 mcp:doctor 覆盖（它真的 spawn 这个脚本走三条失败路径）。
     name: "register-mcp-client 失败时要给人话而不是崩溃栈",
     file: "scripts/register-mcp-client.mjs",

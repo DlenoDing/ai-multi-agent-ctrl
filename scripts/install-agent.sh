@@ -15,19 +15,36 @@ EXECUTOR_COMMAND="${AIMAC_AGENT_EXECUTOR_COMMAND:-}"
 START_DAEMON=true
 CONFIGURE_GLOBAL_CLIENTS=false
 
+# 带取值的参数少了取值时，set -u 会让 $2 直接炸成 "line 20: $2: unbound variable" ——
+# 这是 shell 版的崩溃栈，而复制安装命令时被截断正是最常见的情形。
+need_value() {
+  if [ "$2" -lt 2 ]; then
+    printf '%s\n' "install-agent: $1 后面少了取值" >&2
+    printf '%s\n' "  · 多半是复制安装命令时被截断了 —— 回控制台那一页重新复制整条命令" >&2
+    exit 2
+  fi
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --server) SERVER_URL=$2; shift 2 ;;
-    --join-token) JOIN_TOKEN=$2; shift 2 ;;
-    --join-token-file) JOIN_TOKEN_FILE=$2; shift 2 ;;
-    --node-name) NODE_NAME=$2; shift 2 ;;
-    --work-dir) WORK_DIR=$2; shift 2 ;;
-    --roles) ROLES=$2; shift 2 ;;
-    --executor-command) EXECUTOR_COMMAND=$2; shift 2 ;;
+    --server) need_value "$1" "$#"; SERVER_URL=$2; shift 2 ;;
+    --join-token) need_value "$1" "$#"; JOIN_TOKEN=$2; shift 2 ;;
+    --join-token-file) need_value "$1" "$#"; JOIN_TOKEN_FILE=$2; shift 2 ;;
+    --node-name) need_value "$1" "$#"; NODE_NAME=$2; shift 2 ;;
+    --work-dir) need_value "$1" "$#"; WORK_DIR=$2; shift 2 ;;
+    --roles) need_value "$1" "$#"; ROLES=$2; shift 2 ;;
+    --executor-command) need_value "$1" "$#"; EXECUTOR_COMMAND=$2; shift 2 ;;
     --no-daemon) START_DAEMON=false; shift ;;
     --configure-global-clients|--configure-clients) CONFIGURE_GLOBAL_CLIENTS=true; shift ;;
     --no-configure-global-clients|--no-configure-clients) CONFIGURE_GLOBAL_CLIENTS=false; shift ;;
-    *) printf '%s\n' "unknown argument: $1" >&2; exit 2 ;;
+    *)
+      printf '%s\n' "install-agent: 认不出这个参数：$1" >&2
+      printf '%s\n' "  · 认得的参数：--server --join-token --join-token-file --node-name --work-dir" >&2
+      printf '%s\n' "                --roles --executor-command --no-daemon --configure-global-clients" >&2
+      printf '%s\n' "  · 打错的参数会被当成没给（例如 --join-token 打错就变成"没有入网票"）——" >&2
+      printf '%s\n' "    所以这里拒绝。整条命令建议回控制台那一页直接复制" >&2
+      exit 2
+      ;;
   esac
 done
 
@@ -88,8 +105,20 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 mkdir -p "$BIN_DIR" "$WORK_DIR/logs" "$WORK_DIR/run"
-curl -fsSL "$SERVER_URL/agent-runtime.mjs" -o "$TMP_DIR/agent-runtime.mjs"
-curl -fsSL "$SERVER_URL/agent-runtime.mjs.sha256" -o "$TMP_DIR/agent-runtime.mjs.sha256"
+# 原先失败时只有 curl 自己那句英文（set -e 直接收场）：不说脚本当时在做什么、
+# 也不说下一步。人是在一台新机器上 curl | sh，手上没有任何别的上下文。
+download() {
+  if ! curl -fsSL "$1" -o "$2"; then
+    printf '%s\n' "install-agent: 下载不到$3" >&2
+    printf '%s\n' "  · 地址：$1" >&2
+    printf '%s\n' "  · 上面那行 curl 的报错就是原因：连不上多半是 --server 写错、或控制面没在跑；" >&2
+    printf '%s\n' "    404 则说明这个地址上的服务不是本产品的控制面" >&2
+    printf '%s\n' "  · 本机什么都没有被安装" >&2
+    exit 1
+  fi
+}
+download "$SERVER_URL/agent-runtime.mjs" "$TMP_DIR/agent-runtime.mjs" "Agent 运行时"
+download "$SERVER_URL/agent-runtime.mjs.sha256" "$TMP_DIR/agent-runtime.mjs.sha256" "Agent 运行时的校验和"
 
 EXPECTED_HASH=$(awk '{print $1}' "$TMP_DIR/agent-runtime.mjs.sha256")
 if command -v sha256sum >/dev/null 2>&1; then
@@ -138,6 +167,17 @@ if [ "$START_DAEMON" = "true" ]; then
   fi
   nohup node "$RUNTIME_PATH" run --work-dir "$WORK_DIR" >>"$WORK_DIR/logs/agent.log" 2>&1 &
   AGENT_PID=$!
+  # 原先起完就无条件宣布 AGENT_RUNTIME_STARTED —— 进程当场退出也照说不误，
+  # 装机的人以为装好了，而控制面那边永远等不到这个节点。先确认它还活着再宣布。
+  sleep 1
+  if ! kill -0 "$AGENT_PID" 2>/dev/null; then
+    printf '%s\n' "install-agent: Agent 运行时起来之后立刻退出了" >&2
+    printf '%s\n' "  · 日志：$WORK_DIR/logs/agent.log" >&2
+    printf '%s\n' "  · 日志最后几行：" >&2
+    tail -n 10 "$WORK_DIR/logs/agent.log" 2>/dev/null | sed 's/^/      /' >&2 || true
+    printf '%s\n' "  · 排掉原因后重跑安装命令即可，不需要先清理" >&2
+    exit 1
+  fi
   printf '%s\n' "$AGENT_PID" >"$PID_FILE"
   printf '%s\n' "AGENT_RUNTIME_STARTED pid=$AGENT_PID log=$WORK_DIR/logs/agent.log"
 else
