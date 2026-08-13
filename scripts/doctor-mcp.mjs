@@ -328,6 +328,49 @@ try {
   // 这段扫描的自述说验了三种，实际只验过两种。取错一层不会报错，只会静静少验一种形态。
   const grantedTaskGroupId = claimed.dispatch.dispatch?.taskGroupId;
   if (!grantedTaskGroupId) throw new Error("跨租户扫描拿不到本节点被授权的任务组 id —— 第三种入参会退化成空参，本条少验一种形态");
+  // 跨参数的作用域一致性：报文里同时出现 dispatchId / targetId / resource 与 projectId / taskGroupId /
+  // workItemId 时，后者必须与前者【真实的归属】对得上。对不上却放行，等于调用方可以拿一个自己有权的
+  // 上层 id 去操作别人的下层资源 —— 这一族九个码原先只有一个被点过名。
+  // 九条按同一形状表驱动：换一个字段就必须换一个码，报文分不清是哪一维时人只能逐个试。
+  {
+    const d = claimed.dispatch.dispatch;
+    const scopeCases = [
+      ["派发的项目对不上", "agent-control-mcp.dispatch_status",
+        {dispatchId: d.dispatchId, projectId: scanProjectId}, "dispatch_project_scope_mismatch"],
+      ["派发的任务组对不上", "agent-control-mcp.dispatch_status",
+        {dispatchId: d.dispatchId, taskGroupId: scanGroupId}, "dispatch_task_group_scope_mismatch"],
+      ["派发的工作项对不上", "agent-control-mcp.dispatch_status",
+        {dispatchId: d.dispatchId, workItemId: "work_bootstrap"}, "dispatch_work_item_scope_mismatch"],
+      ["产出目标的项目对不上", "repository-mcp.repository_target_lease_bind",
+        {idempotencyKey: "scope-tgt-p", targetId, holderRef: "session:x", projectId: scanProjectId},
+        "repository_target_project_scope_mismatch"],
+      ["产出目标的任务组对不上", "repository-mcp.repository_target_lease_bind",
+        {idempotencyKey: "scope-tgt-g", targetId, holderRef: "session:x", taskGroupId: scanGroupId},
+        "repository_target_task_group_scope_mismatch"],
+      ["产出目标的工作项对不上", "repository-mcp.repository_target_lease_bind",
+        {idempotencyKey: "scope-tgt-w", targetId, holderRef: "session:x", workItemId: "work_permissions"},
+        "repository_target_work_item_scope_mismatch"],
+      ["资源是项目、而 projectId 指向别处", "resource-mcp.lease_claim",
+        {idempotencyKey: "scope-res-p", targetId, resourceType: "project", resourceId: scanProjectId, projectId: "prj_control_plane"},
+        "resource_project_scope_mismatch"],
+      ["资源是任务组、而 taskGroupId 指向别处", "resource-mcp.lease_claim",
+        {idempotencyKey: "scope-res-g", targetId, resourceType: "task_group", resourceId: scanGroupId, taskGroupId: "tg_runtime_management"},
+        "resource_task_group_scope_mismatch"],
+      ["资源是项目、而随附的任务组属于别的项目", "resource-mcp.lease_claim",
+        {idempotencyKey: "scope-res-gp", targetId, resourceType: "project", resourceId: scanProjectId, taskGroupId: "tg_runtime_management"},
+        "resource_task_group_project_scope_mismatch"]
+    ];
+    for (const [label, name, args, expected] of scopeCases) {
+      const result = await mcp("tools/call", {name, arguments: args});
+      const actual = result.structuredContent?.result?.error;
+      if (actual !== expected) {
+        throw new Error(`跨参数作用域：${label} 没有被拒成 ${expected}（实际：${actual || JSON.stringify(result.structuredContent?.result || "").slice(0, 120)}）`
+          + " —— 拿一个自己有权的上层 id 就能操作别人的下层资源，或者报文分不清是哪一维对不上");
+      }
+    }
+    console.log(`MCP 跨参数作用域一致性 ok: ${scopeCases.length} 种错配各自被拒成它自己的码（派发/产出目标/资源 × 项目/任务组/工作项）`);
+  }
+
   // 受限节点的授权边界：工具在白名单里，但入参指向【别的任务组】的房间 —— 必须按作用域拒掉。
   // （这条此前没有任何门点过名。上面那三种入参的扫描只验"不许带出隔壁内容"，验的是读；这条验写。）
   const crossRoom = await mcpAs(nodeToken, "tools/call", {name: "room-mcp.room_send",

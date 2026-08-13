@@ -1121,6 +1121,23 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // 跨参数作用域这一族九个码，判据要能分清是哪一维对不上 —— 分不清的话，人只能逐个试。
+    name: "产出目标的工作项维度要单独报",
+    file: MCP,
+    skip: "判别力由 MCP e2e 覆盖（已用 mutate-probe 实证：那九条表驱动断言里对应的一条变红）",
+    from: 'if (workItemId && target.workItemId !== workItemId) return {allowed: false, error: "repository_target_work_item_scope_mismatch"',
+    to: 'if (false) return {allowed: false, error: "repository_target_work_item_scope_mismatch"',
+    expect: "没有被拒成 repository_target_work_item_scope_mismatch"
+  },
+  {
+    name: "资源的任务组维度要单独报",
+    file: MCP,
+    skip: "判别力由 MCP e2e 覆盖（已用 mutate-probe 实证：守卫删掉后落到主体作用域那道门，码不再是它自己的）",
+    from: "if (taskGroupId && taskGroupId !== explicitResource.resourceId) {\n      return {allowed: false, error: \"resource_task_group_scope_mismatch\", required: `${taskGroupId}:${explicitResource.resourceId}`};\n    }",
+    to: "/* 守卫失效 */",
+    expect: "没有被拒成 resource_task_group_scope_mismatch"
+  },
+  {
     // 谎报归属：产出目标登记在别的工作项名下。守卫失效时是"已受理"。
     name: "产出目标必须属于这个工作项",
     file: CORE,
