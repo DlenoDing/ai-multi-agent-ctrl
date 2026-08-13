@@ -2538,7 +2538,52 @@ puts "推进路径对账：核对了 #{advance_sites.size} 处 runAutonomousCycl
 puts "权限码本地化：核对了 #{all_permissions.size} 个权限码，全部有中文"
 puts "审计动作本地化：核对了 #{audit_actions.length} 个动作名（其中 #{composed_audit_actions.uniq.length} 个是按闭集拼出来的，不是字面量），全部有中文" \
      "#{NON_HUMAN_AUDIT_ACTIONS.empty? ? '' : '（另有 ' + NON_HUMAN_AUDIT_ACTIONS.length.to_s + ' 个登记为不给人看）'}"
+# 取值来自变量的那几处，本门跟不到（跟函数参数、跟两跳都会把它变成半个求值器）。
+# 但"每次都报一遍未被检验"等于把同一次人工追查摊派给以后的每一个人 —— 2026-08-13 逐个追完，
+# 结果登记在这里，并校验登记是否还成立：源头一改，登记就过时，门当场说出来。
+TRACED_OPAQUE_REASON_SITES = {
+  # applyDirectDispatchControl 的 reason 形参，唯一调用点传的是拼接出来的这一族。
+  "reason;" => {
+    "evidence" => "apps/control-plane-ui/server.mjs|`task_group_${action}`",
+    "codes" => ["task_group_pause", "task_group_resume", "task_group_cancel"]
+  },
+  # recordAdmissionDecision 是【汇点】：真实取值是各调用点的字面量，本门已经逐个查过它们。
+  "input.reasonCode || null;" => {
+    "evidence" => "apps/control-plane-ui/lib/control-plane-core.mjs|function recordAdmissionDecision",
+    "codes" => []
+  },
+  # 条件窗口那一支只有一个取值。
+  "windowGate.reasonCode" => {
+    "evidence" => "apps/control-plane-ui/lib/control-plane-core.mjs|reasonCode: \"condition_window_deferred\"",
+    "codes" => ["condition_window_deferred"]
+  }
+}.freeze
+
+traced_errors = []
+untraced = opaque_reason_sites - TRACED_OPAQUE_REASON_SITES.keys
+unless untraced.empty?
+  traced_errors << "这些取值来自变量的原因码处还没人追过：#{untraced.join('、')} —— " \
+                   "追到它的真实取值，把结果登进 TRACED_OPAQUE_REASON_SITES，别让它每次都以「未被检验」蒙混过去"
+end
+stale = TRACED_OPAQUE_REASON_SITES.keys - opaque_reason_sites
+unless stale.empty?
+  traced_errors << "TRACED_OPAQUE_REASON_SITES 里这些处已经不存在了：#{stale.join('、')} —— 过时的登记会掩护掉下一处"
+end
+TRACED_OPAQUE_REASON_SITES.each do |site, traced|
+  file, needle = traced["evidence"].split("|", 2)
+  body = File.read(File.join(ROOT, file))
+  unless body.include?(needle)
+    traced_errors << "#{site} 的追查依据已经不在源码里了（找不到 #{needle}）—— 重新追一遍再更新登记"
+  end
+  traced["codes"].each do |code|
+    next if i18n_key.call(code)
+    traced_errors << "#{site} 追到的原因码 #{code} 没有中文 —— 它会原样显示给人"
+  end
+end
+fail_with(traced_errors)
+
 puts "原因码本地化：核对了 #{localized_literals.length} 个字面量（含三元/|| 兜底里的）；" \
-     "另有 #{opaque_reason_sites.length} 处取值来自变量，本门看不到它们的取值，未被检验" \
-     "#{opaque_reason_sites.empty? ? '' : '：' + opaque_reason_sites.join('、')}"
+     "另有 #{opaque_reason_sites.length} 处取值来自变量，本门跟不到，已逐个人工追查并登记" \
+     "（#{TRACED_OPAQUE_REASON_SITES.values.sum { |t| t['codes'].length }} 个真实取值全部有中文，" \
+     "登记与源码一致性每次校验）"
 puts "spec validation ok"

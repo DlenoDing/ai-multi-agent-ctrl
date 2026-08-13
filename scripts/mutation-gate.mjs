@@ -1049,6 +1049,17 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 追查依据从源码里消失 = 登记过时，门必须当场说出来，而不是继续照着旧结论放行。
+    name: "变量来源的原因码登记要跟着源码走",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "specs",
+    // 换成一个【本来就有中文】的码：漏译那条检查照样全绿，只有"登记过时"这条会响 ——
+    // 否则先红的是漏译检查，验到的就不是这条守卫（第一版变异就是这样）。
+    from: 'reasonCode: "condition_window_deferred"',
+    to: 'reasonCode: "resource_queued"',
+    expect: "追查依据已经不在源码里了"
+  },
+  {
     // 把 core 的 resolveRoleSkill 从导入里去掉 = 又变回本地一份，判据必须点名。
     name: "core 导出的东西 MCP 不得再实现一遍",
     check: "verifyMcpDoesNotReimplementCore",
