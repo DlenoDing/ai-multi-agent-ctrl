@@ -930,6 +930,16 @@ const MUTATIONS = [
     expect: "既不走 beginGuardedWrite、也不属于已登记的例外"
   },
   {
+    // 最外层防线：机器主体的工具白名单里不能有真人专属工具。把定稿工具塞进控制角色工具包，
+    // 必须当场被点名 —— 否则机器就拿到了定稿权，只剩工具内部那道【真实部署里够不到】的判据兜着。
+    name: "真人专属工具不得授给机器主体",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "parity",
+    from: '  "orchestration-mcp.orchestrator_run",',
+    to: '  "human-review-mcp.confirmation_decide",\n  "orchestration-mcp.orchestrator_run",',
+    expect: "被授给了机器主体"
+  },
+  {
     // 自述的账必须加得起来：旧账把"有 core 函数但 MCP 侧没有同名工具"的动作算成已覆盖，
     // 于是 22 个动作只交代了 16 个，剩下的既不在已核对里也不在够不到里。
     name: "真人专属动作的覆盖账必须加得起来",

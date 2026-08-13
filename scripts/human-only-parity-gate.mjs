@@ -98,6 +98,10 @@ export function checkHumanOnlyParity() {
   // MCP 工具名的后半段若正好是某个真人专属动作，这个 case 同样必须拒绝机器主体。
   let nameChecked = 0;
   const nameCoveredActions = new Set();
+  // 哪些 MCP 工具是"真人专属"：沿用本门已经证明有效的两条映射（按动作名后缀、按共用核心函数），
+  // 不要另起一套命名比对 —— 我第一版拿工具名后缀 confirmation_decide 去比动作名
+  // human_confirmation_decide，两边命名不同，集合永远是空的，整条判据在空转（变异跑不红才发现）。
+  const humanOnlyToolNames = new Set();
   for (const [index, mark] of marks.entries()) {
     // 后缀也算：human_confirmation_decide 对应的工具叫 confirmation_decide，
     // 严格同名就接不上。放宽成"动作名等于工具后半段，或以 _后半段 结尾"。
@@ -107,6 +111,7 @@ export function checkHumanOnlyParity() {
     const action = matched.join("/");
     nameChecked += 1;
     for (const name of matched) nameCoveredActions.add(name);
+    humanOnlyToolNames.add(mark[1]);
     const body = mcp.slice(mark.index, index + 1 < marks.length ? marks[index + 1].index : mark.index + 2000);
     // 两种合格写法：
     // （甲）白名单——"不是真人会话就拒"。更强：以后新增任何机器主体，默认就被挡住。
@@ -141,6 +146,7 @@ export function checkHumanOnlyParity() {
     for (const fn of shared) {
       for (const action of String(humanOnlyFunctions.get(fn)).split("/")) functionVerifiedActions.add(action);
     }
+    humanOnlyToolNames.add(mark[1]);
     // 挡住机器主体的写法必须同时点名两类主体：只挡 agent_node 会放过服务令牌，
     // 而服务令牌恰恰是那条能被一个环境变量打开的路。
     // 两种合格写法：
@@ -161,6 +167,30 @@ export function checkHumanOnlyParity() {
   if (!checked) {
     failures.push("真人专属对等门: 没有比对到任何一对「REST 真人专属 ↔ MCP 同函数」，本门在空转（已知至少存在 confirmation_decide 这一对）");
   }
+  // 最外面那层防线此前没有任何门在守：机器主体的工具白名单里【不能有真人专属的工具】。
+  // 实弹验过今天是成立的（中央服务令牌打定稿工具拿到 mcp_tool_not_granted_to_principal，
+  // 节点的工具集里也只有提交/查询/取用/再分析，没有 decide）。但那是"现在恰好如此" ——
+  // 哪天有人把 decide 加进某个角色工具包，机器就拿到了定稿权，只剩最里层那道判据兜着，
+  // 而那一层【在真实部署里够不到、没法实弹验】。所以要在授予这一层就守住。
+  const gatewaySource = read("apps/control-plane-ui/lib/agent-gateway.mjs");
+  const grantLists = [...gatewaySource.matchAll(/const (DEFAULT_AGENT_MCP_TOOLS|CONTROL_ROLE_MCP_TOOLS) = \[([\s\S]*?)\];/gu)];
+  if (grantLists.length !== 2) {
+    failures.push(`真人专属对等门: 只提取到 ${grantLists.length} 份机器工具白名单（预期 2 份）—— 提取与代码脱节，这一层没在守`);
+  }
+  const machineGrantedTools = new Set(grantLists.flatMap(([, , body]) =>
+    [...body.matchAll(/"([a-z0-9-]+\.[a-z0-9_]+)"/gu)].map((match) => match[1])));
+  if (machineGrantedTools.size < 10) {
+    failures.push(`真人专属对等门: 机器工具白名单只解析出 ${machineGrantedTools.size} 个工具 —— 提取与代码脱节`);
+  }
+  if (!humanOnlyToolNames.size) {
+    failures.push("真人专属对等门: 一个真人专属 MCP 工具都没认出来 —— 授予层那条判据在空转");
+  }
+  const wronglyGranted = [...humanOnlyToolNames].filter((tool) => machineGrantedTools.has(tool));
+  if (wronglyGranted.length) {
+    failures.push(`真人专属对等门: 这些真人专属的 MCP 工具被授给了机器主体：${wronglyGranted.join("、")} —— `
+      + "定稿权一旦发给机器，就只剩工具内部那道判据兜着，而那一层在真实部署里够不到、没法实弹验");
+  }
+
   // 一并交出覆盖面。数组仍是主返回值（调用方按 .failures 取），覆盖数字用于收尾打印：
   // 覆盖悄悄缩水与"全都查过了"在输出上长得一模一样，而本会话有三次是靠这种数字先看出问题的。
   // 两条路都够不到的动作要【点名】：REST 路由里就地改状态、不调 fn(state, ...) 的那些进不了
