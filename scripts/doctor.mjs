@@ -1569,6 +1569,23 @@ try {
     if (chain.verified !== archive.payload.entries.length || (chain.breaks || []).length) {
       throw new Error(`doctor: 归档哈希链校验异常 verified=${chain.verified} breaks=${JSON.stringify(chain.breaks)}`);
     }
+    // 这一轮里 REST 与 MCP 交替写过同一本台账（上面共享定义那条走的是 /mcp）。链校验本身
+    // 少一条也照样通过 —— 所以要单独要求 MCP 那条真的在归档里，且看得出是谁做的。
+    // 合流之前，经 MCP 改的状态在这本账上一条痕迹都没有。
+    // 读【归档文件本身】而不是那个接口：接口取的是末尾若干条，而 MCP 那次调用发生在这一轮很早的
+    // 阶段，后面几百条 REST 动作会把它挤出窗口 —— 我第一版就是这么写的，报出来的是假红。
+    const archivedLines = readFileSync(archivePath, "utf8").trim().split("\n").filter(Boolean);
+    const mcpEntries = archivedLines.map((line) => { try { return JSON.parse(line); } catch { return {}; } })
+      .filter((entry) => entry.action === "mcp_tool_call");
+    if (!mcpEntries.length) {
+      throw new Error("doctor: 这一轮有过 MCP 写调用，归档里却没有 mcp_tool_call —— 经 MCP 改的状态在主台账上没有痕迹");
+    }
+    if (!mcpEntries.every((entry) => String(entry.actor || "").startsWith("mcp:"))) {
+      throw new Error(`doctor: MCP 那条审计记录看不出是谁做的（actor=${mcpEntries.map((entry) => entry.actor).join(",")}）`);
+    }
+    if (!mcpEntries.some((entry) => String(entry.subject || "").includes("definition-mcp.shared_definition_create"))) {
+      throw new Error(`doctor: MCP 审计记录里没写清做了什么（subject=${mcpEntries.map((entry) => entry.subject).join(" | ").slice(0, 200)}）`);
+    }
     // 链校验必须真的能发现改动：改掉归档里的一条执行者，它必须报出来。
     const originalArchive = readFileSync(archivePath, "utf8");
     const archiveLines = originalArchive.trim().split("\n");
