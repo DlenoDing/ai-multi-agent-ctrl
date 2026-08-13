@@ -723,6 +723,23 @@ const MUTATIONS = [
     expect: "人判过的事又回来了"
   },
   {
+    // 用量与列表算的必须是同一批人。把服务账号放回用量里，对照立刻不成立。
+    name: "服务账号不算组织成员",
+    file: CORE,
+    check: "verifyOrganizationMembershipHasOneAuthority",
+    from: '  if (!account || account.accountType === "service_account") return null;',
+    to: "  if (!account) return null;",
+    expect: "服务账号不是人"
+  },
+  {
+    name: "成员列表必须走那处共用归属判据",
+    file: SERVER,
+    check: "verifyOrganizationMembershipHasOneAuthority",
+    from: "      .filter((item) => organizationMembershipOf(item) === orgId)",
+    to: '      .filter((item) => item.organizationId === orgId && item.accountType !== "service_account")',
+    expect: "没有走那处共用判据"
+  },
+  {
     // 退役的价值全在级联：只改状态不摘技能，等于退役了个寂寞。
     name: "技能源退役要摘掉它带来的角色技能",
     file: CORE,

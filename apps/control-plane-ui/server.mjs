@@ -93,6 +93,7 @@ import {
   runCommandLifecycle,
   selectModel,
   syncSkillSource,
+  organizationMembershipOf,
   settleRuntimeIssuePatternForCandidate,
   retireSkillSource,
   updateTaskGroupLanguagePolicy,
@@ -608,10 +609,14 @@ function isSystemAccount(account) {
 // 会从 403（越权）与 404（不存在）的差别里漏出去，这几条路由就成了跨租户的存在性探针。
 function resolveOrgMemberTarget(state, actorAccount, accountId) {
   const target = (state.accounts || []).find((item) => item.accountId === accountId);
-  const orgId = isSystemAccount(actorAccount) ? (target?.organizationId ?? null) : (actorAccount?.organizationId ?? null);
+  // 归属同样走那处共用判据：列表里看得见的人，就该管得到；列表里没有的（服务账号、
+  // 没有组织的系统账号），组织管理员也不该经这条路碰到。
+  const orgId = isSystemAccount(actorAccount)
+    ? (target ? organizationMembershipOf(target) : null)
+    : (actorAccount?.organizationId ?? null);
   return {
     orgId,
-    member: target && (target.organizationId ?? null) === orgId ? target : null,
+    member: target && organizationMembershipOf(target) === orgId ? target : null,
     scope: orgId ? {resourceType: "organization", resourceId: orgId} : {resourceType: "system", resourceId: "accounts"}
   };
 }
@@ -4973,7 +4978,9 @@ async function handleApi(req, res) {
       || reader.account.accountType === "org_admin"
       || hasPermission(state, accountIdOf(reader.account), "member:invite", {resourceType: "organization", resourceId: orgId});
     const members = (state.accounts || [])
-      .filter((item) => item.organizationId === orgId && item.accountType !== "service_account")
+      // 与配额用量共用同一处判据：两边各写各的时，默认组织的"成员 N/50"里含着列表上
+      // 永远不出现的账号，配额满了人却找不到该停用谁。
+      .filter((item) => organizationMembershipOf(item) === orgId)
       .map((item) => {
         const isSelf = accountIdOf(item) === accountIdOf(reader.account);
         if (canAdminMembers || isSelf) {

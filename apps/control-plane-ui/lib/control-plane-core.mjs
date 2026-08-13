@@ -603,6 +603,19 @@ export function revokeAccountSessions(state, accountId, reason) {
   return revoked;
 }
 
+// 「谁算这个组织的成员」必须只有一处判据 —— 此前用量与成员列表各写各的，两边算的不是同一批人：
+// 用量把没有 organizationId 的账号兜底进默认组织、也把服务账号算进去；成员列表要求显式匹配、
+// 且排除服务账号。后果是默认组织的"成员 N/50"里含着两个【列表上永远不出现】的账号
+// （系统属主、agent 运行时的服务身份）：配额满了，人翻遍列表也找不到该停用谁。
+//   · 服务账号不是人，任何组织都不算它；
+//   · 没有组织的普通账号归默认组织（否则 maxMembers 形同虚设 —— 这是本函数原先修的那个洞）；
+//   · 没有组织的系统账号谁都不算：它不是某个组织的成员，也不该被组织管理员管到。
+export function organizationMembershipOf(account) {
+  if (!account || account.accountType === "service_account") return null;
+  if (account.organizationId) return account.organizationId;
+  return account.accountType === "system_admin" ? null : DEFAULT_ORGANIZATION_ID;
+}
+
 export function recomputeOrganizationUsage(state) {
   const projectOrg = new Map((state.projects || []).map((project) => [project.id, project.organizationId || DEFAULT_ORGANIZATION_ID]));
   // 每个组织各扫一遍四个集合＝组织数 × 对象数的平方项。organizationQuotaCheck 每次都调它，
@@ -620,7 +633,8 @@ export function recomputeOrganizationUsage(state) {
   //    若它还是 MCP 邀请出来的（够不着 /api/org/members/:id/status），就没有任何释放杠杆。
   for (const account of state.accounts || []) {
     if (["disabled", "suspended", "retired"].includes(account.status)) continue;
-    bump(account.organizationId || DEFAULT_ORGANIZATION_ID, "members");
+    const memberOrgId = organizationMembershipOf(account);
+    if (memberOrgId) bump(memberOrgId, "members");
   }
   // 原先排除的是 status !== "deleted" —— 那个状态既不在 Project 的模型里（active → archived），
   // 全仓也没有任何代码写它，于是这条排除永远为真、项目配额只增不减。按建模的终态算。

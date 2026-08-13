@@ -78,6 +78,8 @@ import {
   sharedDefinitionCreate,
   resolveRoleSkill,
   retireSkillSource,
+  organizationMembershipOf,
+  DEFAULT_ORGANIZATION_ID,
   settleRuntimeIssuePatternForCandidate,
   collectRuntimeIssue,
   claimLease,
@@ -256,6 +258,7 @@ run(verifyNoModelFallbackMatchesWhatEngineDoes);
 run(verifyRoomWaitTailAndTruncationHonesty);
 run(verifyStateStoreConfigIsNotSilentlyDowngraded);
 run(verifySkillSourceSyncFailureIsVisible);
+run(verifyOrganizationMembershipHasOneAuthority);
 run(verifySkillSourceRetireCascades);
 run(verifyRuntimeIssuePatternCanBeSettled);
 run(verifyOrchestrationDoesNotShellOutPerCell);
@@ -382,6 +385,48 @@ function verifyRuntimeIssuePatternCanBeSettled(output) {
     "exported_for_external_maintenance");
   if (["suppressed", "closed"].includes(ongoing.status)) {
     output.push(`转外部维护把问题模式终结成了 ${ongoing.status} —— 事情还在进行中，终结它等于把证据链掐断`);
+  }
+}
+
+// 配额那行与成员表必须由同一处判据算出来。真实运行目录里默认组织差了两个：
+// 系统属主（system_admin，没有 organizationId）与 agent 运行时的服务身份 —— 两个都在用量里、
+// 都不在列表里。判据只有一处（organizationMembershipOf），这里核对它的三条规则。
+function verifyOrganizationMembershipHasOneAuthority(output) {
+  const cases = [
+    [{accountId: "a1", accountType: "user_account", organizationId: "org_x"}, "org_x", "组织内的人"],
+    [{accountId: "a2", accountType: "user_account"}, DEFAULT_ORGANIZATION_ID, "没有组织的人归默认组织（否则 maxMembers 形同虚设）"],
+    [{accountId: "a3", accountType: "service_account", organizationId: "org_x"}, null, "服务账号不是人"],
+    [{accountId: "a4", accountType: "system_admin"}, null, "没有组织的系统账号不属于任何组织"],
+    [{accountId: "a5", accountType: "system_admin", organizationId: "org_x"}, "org_x", "落在组织里的系统管理员仍是该组织成员"]
+  ];
+  for (const [account, expected, why] of cases) {
+    const actual = organizationMembershipOf(account);
+    if (actual !== expected) {
+      output.push(`成员归属判据：${account.accountId}（${why}）算出来是 ${actual}，应为 ${expected}`);
+    }
+  }
+  // 接线：服务端的成员列表必须用这处判据，而不是自己再写一遍条件。
+  const serverSource = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const listFilter = serverSource.slice(serverSource.indexOf("const members = (state.accounts || [])"));
+  if (!listFilter.slice(0, 400).includes("organizationMembershipOf(")) {
+    output.push("成员列表没有走那处共用判据 —— 它和配额用量迟早会算出两批不同的人（此前就是）");
+  }
+  // 用量侧同理：真实种子里跑一遍，服务账号不许出现在任何组织的成员数里。
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const serviceAccounts = (state.accounts || []).filter((item) => item.accountType === "service_account");
+  if (!serviceAccounts.length) {
+    output.push("成员归属判据：种子里没有服务账号 —— 用量这一半在空转");
+    return;
+  }
+  for (const account of serviceAccounts) account.organizationId = DEFAULT_ORGANIZATION_ID;
+  recomputeOrganizationUsage(state);
+  const before = (state.organizations || []).find((org) => org.orgId === DEFAULT_ORGANIZATION_ID)?.usage?.members;
+  for (const account of serviceAccounts) account.accountType = "user_account";
+  recomputeOrganizationUsage(state);
+  const after = (state.organizations || []).find((org) => org.orgId === DEFAULT_ORGANIZATION_ID)?.usage?.members;
+  if (!(after > before)) {
+    output.push(`把服务账号改成普通账号后用量没有变（${before} -> ${after}）—— 这条对照不成立，说明用量根本没在按类型区分`);
   }
 }
 

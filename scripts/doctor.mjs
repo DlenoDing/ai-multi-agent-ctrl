@@ -1014,6 +1014,14 @@ try {
   if (!orgMembers.response.ok || !orgMembers.payload.members.some((member) => member.email === "doctor.member1@local")) {
     throw new Error("org member list did not return the created member");
   }
+  // 屏幕上的两个数必须是同一批人算出来的：配额那行写着"成员 N/上限"，成员表里就该有 N 行。
+  // 此前不是 —— 用量把没有组织的账号兜底进默认组织、也把服务账号算进去，而列表两样都不算。
+  // 于是配额满了，人翻遍列表也找不到该停用谁（默认组织实测差 2 个：系统属主与 agent 服务身份）。
+  const quotaUsage = Number(memberOverQuota.payload.usage);
+  if (orgMembers.payload.members.length !== quotaUsage) {
+    throw new Error(`配额说这个组织有 ${quotaUsage} 个成员，成员表里却是 ${orgMembers.payload.members.length} 行`
+      + " —— 两处算的不是同一批人，配额满了人找不到该停用谁");
+  }
   // 状态视图里不许出现凭据材料。此前系统账号拿到的是【原始账号记录】，里面有 passwordDigest
   //（口令的 scrypt 哈希）和 credentialDigest（一次性登录令牌的校验值）——控制台一个都不显示，
   // 而它们会跟着 devtools、HAR 导出、录屏和任何一次 XSS 走。
