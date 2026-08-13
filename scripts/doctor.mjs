@@ -1919,6 +1919,34 @@ try {
   }
   console.log("ai-native control flow ok");
 } finally {
+  // 【登录限流】。防爆破的实控件，而它一个断言都没有 —— 失效时所有正常登录照旧成功，
+  // 只有"猜口令"这件事变得没有代价，屏幕上不会有任何异样。
+  // 这一段【必须放在最后】：打满之后本机 IP 会被挡一分钟，放在中间会把后面所有登录一起拖垮。
+  {
+    const attempts = [];
+    for (let index = 0; index < 12; index += 1) {
+      attempts.push(await jsonFetch(port, "/api/auth/login", {
+        method: "POST", body: JSON.stringify({email: "system.admin@local", token: `wrong-${index}`})
+      }));
+    }
+    const limited = attempts.find((attempt) => attempt.response.status === 429);
+    if (!limited) {
+      throw new Error(`连续 12 次错误登录都没被限流（状态码：${attempts.map((a) => a.response.status).join(",")}）`
+        + " —— 口令空间可以随便爆破");
+    }
+    if (limited.payload.error !== "too_many_login_attempts" || !limited.payload.retryAfterSeconds) {
+      throw new Error(`限流的报文没说清是限流、也没说多久之后能再试：${JSON.stringify(limited.payload)}`);
+    }
+    // 被限流期间，【正确】的凭据同样要被挡住 —— 否则限流只挡错口令，爆破者一旦猜中就能立刻进。
+    const correctWhileLimited = await jsonFetch(port, "/api/auth/login", {
+      method: "POST", body: JSON.stringify({email: "system.admin@local", token: "doctor-bootstrap-token"})
+    });
+    if (correctWhileLimited.response.status !== 429) {
+      throw new Error(`限流期间正确凭据仍然放行（HTTP ${correctWhileLimited.response.status}）——`
+        + "那样限流只是拖慢猜测，猜中的那一次照样成功");
+    }
+  }
+
   child.kill("SIGTERM");
 }
 

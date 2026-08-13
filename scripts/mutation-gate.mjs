@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 限流失效是静默的：所有正常登录照旧成功，只有"猜口令"变得没有代价。
+    name: "登录要限流",
+    file: "apps/control-plane-ui/server.mjs",
+    skip: "判别力由控制面 e2e 覆盖（连打 12 次错口令要求 429，且限流期间正确凭据同样被挡）",
+    from: "    if (loginRateLimited(req)) {",
+    to: "    if (false) {",
+    expect: "都没被限流"
+  },
+  {
     // 签发时漏写过期时间 = 那张一次性邀请票永远有效，而且所有正常登录照旧成功（静默）。
     name: "签发邀请必须同时写过期时间",
     check: "verifyIssuedCredentialsAlwaysExpire",
