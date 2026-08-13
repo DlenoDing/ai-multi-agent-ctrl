@@ -1121,6 +1121,24 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // REST 侧同一条不变式：受限账号问一个项目 id，两种"找不到"必须给同一个答案。
+    name: "受限账号不得分辨出别处有没有某个项目",
+    file: SERVER,
+    skip: "判别力由控制面 e2e 覆盖（已用 mutate-probe 实证：退回旧行为时那两条断言变红）",
+    from: '  return {denial: {status: 403, payload: {error: "permission_denied"}}};',
+    to: '  return {denial: {status: 404, payload: {error: "project_not_found"}}};',
+    expect: "跨租户存在性探针"
+  },
+  {
+    // 不能靠"一律回同一个码"蒙混：系统账号必须仍拿得到准确的 404。
+    name: "系统账号仍要分得清打错 id 和没权限",
+    file: SERVER,
+    skip: "判别力由控制面 e2e 覆盖（已用 mutate-probe 实证：条件改成恒假时正面对照变红）",
+    from: '  if (isSystemAccount(reader.account)) return {denial: {status: 404, payload: {error: "project_not_found"}}};',
+    to: '  if (false) return {denial: {status: 404, payload: {error: "project_not_found"}}};',
+    expect: "越权与打错 id 被一锅端"
+  },
+  {
     // 受限主体问一个 id 时，"查无此物"与"存在但不属于你"必须给同一个答案，
     // 否则报文就是一台跨租户存在性探针：拿一批 id 试一遍就知道别的租户有没有它们。
     name: "受限主体不得分辨出别的租户有没有某个东西",

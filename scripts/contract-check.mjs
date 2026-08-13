@@ -5220,7 +5220,7 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 棘轮只往一个方向走：数字变大＝新增的守卫没配判据；变小＝该把这里下调，把成果钉住。
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 81;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 80;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];

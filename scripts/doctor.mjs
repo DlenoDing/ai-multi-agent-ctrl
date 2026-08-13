@@ -1431,6 +1431,27 @@ try {
   if (orgControl.response.status !== 200) {
     throw new Error(`org_admin could not control its own org project's task group, got ${orgControl.response.status}`);
   }
+  // 跨租户存在性探针（REST 侧）：受限账号问一个项目 id，"查无此物"与"别处真有"必须给同一个答案。
+  // 两者可分辨的话，拿一批 id 试一遍就知道这套部署里别的租户有没有它们。
+  for (const route of ["config", "progress"]) {
+    const answers = [];
+    for (const id of ["prj_never_existed", "prj_control_plane"]) {
+      const probe = await jsonFetch(port, `/api/projects/${id}/${route}`, {headers: {authorization: orgAdminAuth}});
+      answers.push(`${probe.response.status}:${probe.payload?.error}`);
+    }
+    if (answers[0] !== answers[1]) {
+      throw new Error(`/api/projects/:id/${route}：受限账号问"不存在的 id"得到 ${answers[0]}、问"别的租户真有的 id"得到 ${answers[1]}`
+        + " —— 两者可分辨，这条路由就是一台跨租户存在性探针");
+    }
+    // 正面对照：系统账号本就有权知道什么存在，必须仍拿得到准确的 404，否则运维分不清是打错 id 还是没权限。
+    const asSystem = await jsonFetch(port, `/api/projects/prj_never_existed/${route}`, {headers: {authorization: systemAuth}});
+    if (asSystem.response.status !== 404 || asSystem.payload?.error !== "project_not_found") {
+      throw new Error(`/api/projects/:id/${route}：系统账号问一个不存在的项目没有拿到 404 project_not_found`
+        + `（实际 ${asSystem.response.status} ${asSystem.payload?.error}）—— 越权与打错 id 被一锅端`);
+    }
+  }
+  console.log("REST 跨租户存在性 ok: 受限账号分辨不出别的租户有没有某个项目，而系统账号仍拿得到准确的 404");
+
   // org_admin has full org resource management: project-level config edit and confirmation review authority.
   // 整份替换类字段必须先读版本再写 —— 这正是真实客户端要做的事（不先读就写，等于愿意覆盖别人）。
   const orgProjectConfigRead = await jsonFetch(port, `/api/projects/${orgProject.payload.id}/config`, {headers: {authorization: orgAdminAuth}});

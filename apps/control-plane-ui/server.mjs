@@ -1162,6 +1162,20 @@ function accountFromRequest(req, state) {
   return account ? {session, account} : null;
 }
 
+// 按 id 取一个项目时，"查无此物"与"存在但不属于你"必须给同一个答案。原先前者一路走到
+// 404 project_not_found、后者被 requireRead 挡成 403 —— 两者可分辨，这些路由就成了跨租户的
+// 存在性探针：拿一个 id 试一下就知道这套部署里别处有没有它（本文件 resolveOrgMemberTarget
+// 上方那段注释早把这条写成了口径，这里是同一条不变式在项目级路由上的缺口）。
+// 系统账号不受影响：它本就有权知道什么存在，给它准确的 404，否则运维分不清是打错了 id 还是权限不对。
+function readableProjectOr403(req, state, projectId) {
+  const reader = requireRead(req, state, projectScope(projectId));
+  if (reader.status) return {denial: {status: reader.status, payload: reader.payload}};
+  const project = state.projects.find((item) => item.id === projectId);
+  if (project) return {reader, project};
+  if (isSystemAccount(reader.account)) return {denial: {status: 404, payload: {error: "project_not_found"}}};
+  return {denial: {status: 403, payload: {error: "permission_denied"}}};
+}
+
 function requireRead(req, state, resourceScope = {resourceType: "system", resourceId: "state"}) {
   const authenticated = accountFromRequest(req, state);
   if (!authenticated) return {status: 401, payload: {error: "auth_required"}};
@@ -2996,16 +3010,12 @@ async function handleApi(req, res) {
 
   const projectProgressMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/progress$/);
   if (req.method === "GET" && projectProgressMatch) {
-    const reader = requireRead(req, state, projectScope(projectProgressMatch[1]));
-    if (reader.status) {
-      json(res, reader.status, reader.payload);
+    const resolved = readableProjectOr403(req, state, projectProgressMatch[1]);
+    if (resolved.denial) {
+      json(res, resolved.denial.status, resolved.denial.payload);
       return;
     }
-    const project = state.projects.find((item) => item.id === projectProgressMatch[1]);
-    if (!project) {
-      json(res, 404, {error: "project_not_found"});
-      return;
-    }
+    const project = resolved.project;
     json(res, 200, {
       projectId: project.id,
       progress: project.progress,
@@ -5209,10 +5219,9 @@ async function handleApi(req, res) {
 
   const projectConfigMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/config$/);
   if (req.method === "GET" && projectConfigMatch) {
-    const reader = requireRead(req, state, projectScope(projectConfigMatch[1]));
-    if (reader.status) return json(res, reader.status, reader.payload);
-    const project = state.projects.find((item) => item.id === projectConfigMatch[1]);
-    if (!project) return json(res, 404, {error: "project_not_found"});
+    const resolved = readableProjectOr403(req, state, projectConfigMatch[1]);
+    if (resolved.denial) return json(res, resolved.denial.status, resolved.denial.payload);
+    const project = resolved.project;
     json(res, 200, {projectId: project.id, config: effectiveProjectConfig(project),
       configVersion: configLayerVersion(project.config)});
     return;
