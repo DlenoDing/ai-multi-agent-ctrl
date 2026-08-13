@@ -1121,6 +1121,25 @@ const MUTATIONS = [
     expect: "必须用 runAsync 注册"
   },
   {
+    // 这一类只有跑到那一行才炸，而"那一行"多半在错误处理支上 —— 平时永远跑不到。
+    // 这条变异正好复现那个真 bug：兜底日志引用它没拿到的 req。
+    name: "顶层函数不得引用没拿到的请求变量",
+    file: SERVER,
+    check: "verifyNoRequestScopedLeaks",
+    from: '    const where = requestLabel ? ` ${requestLabel}` : "";',
+    to: "    const where = req.method;",
+    expect: "引用了它没拿到的 req"
+  },
+  {
+    // 判据自己失配时会扫到 0 个函数、然后一片绿。
+    name: "请求作用域判据不得空转",
+    file: "scripts/contract-check.mjs",
+    check: "verifyNoRequestScopedLeaks",
+    from: "const header = lines[index].match(/^(?:export )?(?:async )?function ([A-Za-z0-9_]+)\\(([^)]*)\\)\\s*\\{/);",
+    to: "const header = lines[index].match(/^NOPE ([A-Za-z0-9_]+)\\(([^)]*)\\)/);",
+    expect: "这道判据在空转"
+  },
+  {
     // 锁的 owner.json 是【给别的进程读的】：撕裂读会被当成"还没写"，据此给短宽限期，
     // 把一个活着的持有者的锁提前破掉。
     name: "锁持有者文件必须原子写（状态库）",

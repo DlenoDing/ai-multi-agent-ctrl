@@ -315,6 +315,7 @@ run(verifyOperatorCliRejectsUnknownFlags);
 run(verifyMcpDoesNotReimplementCore);
 run(verifyIssuedCredentialsAlwaysExpire);
 run(verifyInertMechanismsStayRegistered);
+run(verifyNoRequestScopedLeaks);
 run(verifySharedJsonWritesAreAtomic);
 run(verifyRefusalCodeCoverageRatchet);
 await runAsync(verifyGateFetchFailuresNameTheGate);
@@ -5360,6 +5361,47 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 就得写一条【点名】它的断言，而那正是我们想要的东西。
 //
 // 棘轮只往一个方向走：数字变大＝新增的守卫没配判据；变小＝该把这里下调，把成果钉住。
+// 顶层函数不得引用它【没拿到】的请求作用域变量。这一类只有运行到那一行才炸，而"那一行"往往是
+// 错误处理支 —— 平时永远跑不到。实撞一次：兜底错误处理里那行日志引用了 req/url，而它只收 res，
+// 于是每一个走到兜底的请求都让服务端进程直接退出，症状只是并发写入门偶发 ECONNREFUSED，追了三轮。
+// 判据很土但够用：把函数体里出现的 req./res./url./body./guard. 与这个函数的形参、
+// 体内的局部声明、回调形参对一遍。本底为 0，新增一处就报红。
+function verifyNoRequestScopedLeaks(output) {
+  const REQUEST_SCOPED = ["req", "res", "url", "body", "guard"];
+  const FILES = ["apps/control-plane-ui/server.mjs", "apps/mcp-server/server.mjs",
+    "apps/control-plane-ui/lib/control-plane-core.mjs"];
+  let scannedFunctions = 0;
+  for (const rel of FILES) {
+    const lines = readFileSync(join(root, rel), "utf8").split("\n");
+    let index = 0;
+    while (index < lines.length) {
+      const header = lines[index].match(/^(?:export )?(?:async )?function ([A-Za-z0-9_]+)\(([^)]*)\)\s*\{/);
+      if (!header) { index += 1; continue; }
+      const [, name, params] = header;
+      let cursor = index + 1;
+      const body = [];
+      while (cursor < lines.length && lines[cursor] !== "}") { body.push(lines[cursor]); cursor += 1; }
+      const text = body.join("\n").replace(/\/\/[^\n]*/gu, "");
+      scannedFunctions += 1;
+      for (const id of REQUEST_SCOPED) {
+        if (params.split(",").some((part) => part.trim().split(/[\s=]/)[0] === id)) continue;
+        if (new RegExp(`(const|let|var)\\s+${id}\\b`).test(text)) continue;
+        if (new RegExp(`\\(\\s*${id}\\s*[,)]`).test(text)) continue;
+        if (new RegExp(`\\(\\s*[A-Za-z0-9_]+\\s*,\\s*${id}\\s*[,)]`).test(text)) continue;
+        if (new RegExp(`for\\s*\\(\\s*(const|let)\\s+${id}\\b`).test(text)) continue;
+        if (new RegExp(`\\b${id}\\.[A-Za-z_]`).test(text)) {
+          output.push(`${rel} 的 ${name}() 引用了它没拿到的 ${id} —— 走到那一行就是 ReferenceError，`
+            + "而这类行多半在错误处理支上，平时跑不到；把它作为参数显式传进来");
+        }
+      }
+      index = cursor + 1;
+    }
+  }
+  if (scannedFunctions < 200) {
+    output.push(`请求作用域判据只扫到 ${scannedFunctions} 个顶层函数 —— 提取多半失配，这道判据在空转`);
+  }
+}
+
 // 跨进程共享的 JSON 文件必须原子写（临时文件 + 改名）。直接 writeFileSync 的话，另一个进程会读到
 // 只写了一半的内容：实撞两次 —— 运行时配置让 readState 抛 "Unexpected end of JSON input"（随机 500，
 // 追了三轮）；锁的 owner.json 撕裂读会被当成"还没写"，据此给短宽限期，把【活着的】持有者的锁提前破掉。
