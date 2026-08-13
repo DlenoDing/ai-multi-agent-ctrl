@@ -1049,6 +1049,15 @@ const MUTATIONS = [
     expect: "没人用的局部变量"
   },
   {
+    // 文档里写死的数字与代码常量漂开 = 运维照着旧数字去归档里找一份不存在的记录。
+    name: "README 里的数字要跟着代码走",
+    file: "apps/control-plane-ui/lib/audit-ledger.mjs",
+    gate: "specs",
+    from: "export const AUDIT_LOG_CAP = 80;",
+    to: "export const AUDIT_LOG_CAP = 120;",
+    expect: "运维照着文档里的数字判断会判错"
+  },
+  {
     // 扫掉在飞的临时文件 = 把一次正在进行的好写入毁掉。这条安全前提此前从没被确定性验过。
     name: "在飞的临时文件不得被扫",
     file: "apps/control-plane-ui/lib/state-store.mjs",

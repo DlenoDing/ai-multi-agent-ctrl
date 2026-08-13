@@ -1310,6 +1310,33 @@ else
   end
 end
 
+# 【README 里写死的数字必须与代码一致】。上面那条只钉标识符，数字一个都没查 ——
+# 而文档里的数字恰恰最容易漂：改了常量、忘了文档，运维照着旧数字判断（"台账只留 80 条，
+# 更早的去归档里找"）就会找错地方。这里按【真相源】核对，不在文档里另立一份。
+# 只登记有唯一代码出处的数字；语义性的数字（"三条真实链路"）没有机器可核的出处，不登记。
+readme_numbers = [
+  {"what" => "内存审计台账的上限", "readme" => /内存里只留最近 (\d+) 条/,
+   "source" => "apps/control-plane-ui/lib/audit-ledger.mjs", "pattern" => /AUDIT_LOG_CAP = (\d+)/},
+  {"what" => "本机默认端口", "readme" => /127\.0\.0\.1:(\d+)/,
+   "source" => "apps/control-plane-ui/server.mjs", "pattern" => /AIMAC_PORT \|\| (\d+)\)/}
+]
+readme_numbers.each do |entry|
+  in_readme = readme_source.scan(entry["readme"]).flatten.uniq
+  if in_readme.empty?
+    errors << "README 数字核对已过时：文档里找不到「#{entry['what']}」了 —— " \
+      "要么它被删了、要么写法变了，登记该跟着改（否则这一条在空转）"
+    next
+  end
+  source_body = File.read(File.join(ROOT, entry["source"]))
+  in_code = source_body[entry["pattern"], 1]
+  if in_code.nil?
+    errors << "README 数字核对：在 #{entry['source']} 里找不到「#{entry['what']}」的真相源 —— 重新对一遍再更新登记"
+  elsif in_readme.any? { |value| value != in_code }
+    errors << "README 说「#{entry['what']}」是 #{in_readme.join('/')}，代码里是 #{in_code} —— " \
+      "运维照着文档里的数字判断会判错"
+  end
+end
+
 # 【权限码本地化】。「账号与授权」页把授权里的每个权限码交给 permLabel 显示，它兜底到 t()，
 # 而 i18n 字典里一个带冒号的权限码都没有 —— 于是 PERMISSION_LABELS 漏掉的那些直接显示英文码。
 # 实测用真实数据整页渲染时露出过四条（task_group:read/control/review/monitor）。
