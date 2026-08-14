@@ -111,7 +111,9 @@ import {
   refreshConfirmationsAfterHumanChange,
   revokeAccountSessions,
   REGISTERED_OWNER_ROLES,
-  taskGroupSettledRejection
+  taskGroupSettledRejection,
+  STRING_LIST_MAX_ITEMS,
+  STRING_LIST_MAX_ITEM_LENGTH
 } from "./lib/control-plane-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -630,8 +632,7 @@ function publicAccountRecord(account) {
 // 与自由文本同规：拒绝，不静默截断（存下的与人写的不一致更难查）。
 // field 只用于把"是哪一项超了"说清楚；MCP 侧有一份孪生实现（normalizeMcpStringList），
 // 两边必须同规，少补一侧 agent 就能从那扇门把状态撑大。
-const STRING_LIST_MAX_ITEMS = 200;
-const STRING_LIST_MAX_ITEM_LENGTH = 2000;
+// 上限取自 core 那份唯一真相源（见 import）——两侧各抄一份字面量会悄悄分叉。
 
 function normalizeStringList(value, fallback = [], field = "list") {
   const source = Array.isArray(value)

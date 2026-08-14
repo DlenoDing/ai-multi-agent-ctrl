@@ -1212,6 +1212,16 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 两侧各抄一份上限字面量：值一样只是巧合，改一处另一处不会跟，
+    // 症状是"同一份数据经控制台收得下、经 agent 被拒"，没人会立刻想到是两个常量分叉了。
+    name: "字符串清单上限不得各抄一份",
+    file: MCP,
+    check: "verifyStringListCapsShareOneSource",
+    from: "// 上限取自 core 那份唯一真相源 —— 与 REST 侧同一个常量，不在这里另抄一份。",
+    to: "const STRING_LIST_MAX_ITEMS_LOCAL = 200;",
+    expect: "自己又定义了一份字符串清单上限"
+  },
+  {
     // 项目负责人授权有两份实现：MCP 那侧会把既有授权的权限集刷新到当前，REST 那侧原样返回 ——
     // 权限集扩过一项之后，同一个人在两个项目里能做的事不一样，而没有任何地方会告诉他为什么。
     name: "既有的负责人授权要对齐当前权限集（REST）",

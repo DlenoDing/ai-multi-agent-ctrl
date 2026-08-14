@@ -317,6 +317,7 @@ run(verifyOperatorCliRejectsUnknownFlags);
 run(verifyMcpDoesNotReimplementCore);
 run(verifyIssuedCredentialsAlwaysExpire);
 run(verifyInertMechanismsStayRegistered);
+run(verifyStringListCapsShareOneSource);
 run(verifyBothOwnerGrantWritersRefreshPermissions);
 run(verifyBothWorkItemWritersHonourSettledTaskGroups);
 run(verifyServerFieldsReachThePerson);
@@ -5445,6 +5446,31 @@ function verifyNoRequestScopedLeaks(output) {
   }
   if (scannedFunctions < 200) {
     output.push(`请求作用域判据只扫到 ${scannedFunctions} 个顶层函数 —— 提取多半失配，这道判据在空转`);
+  }
+}
+
+// 字符串清单的上限：REST 与 MCP 各有一份归一实现，逻辑同规，而上限原先是【各写一份字面量】。
+// 值一样只是巧合 —— 改一处另一处不会跟，症状是"同一份数据经控制台收得下、经 agent 被拒"，
+// 谁也不会立刻想到是两个常量分叉了。判据：两侧都必须用 core 那份唯一真相源，不许再出现本地字面量。
+function verifyStringListCapsShareOneSource(output) {
+  const core = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  if (!/export const STRING_LIST_MAX_ITEMS = \d+;/u.test(core)
+    || !/export const STRING_LIST_MAX_ITEM_LENGTH = \d+;/u.test(core)) {
+    output.push("core 里找不到字符串清单上限那两个常量 —— 真相源没了，下面两条核对无从谈起");
+    return;
+  }
+  for (const rel of ["apps/control-plane-ui/server.mjs", "apps/mcp-server/server.mjs"]) {
+    const src = readFileSync(join(root, rel), "utf8");
+    // 按【前缀】匹配而不是全名：退化回本地字面量时名字多半会被改一点（加 _LOCAL、加 MCP_ 前缀），
+    // 全名匹配就漏了 —— 第一版正是这样，两条变异都没红（"门读不到那种写法"，本仓已第十一次）。
+    const localDefinition = /^const [A-Z_]*STRING_LIST_MAX_[A-Z_]* = /mu.test(src);
+    if (localDefinition) {
+      output.push(`${rel} 自己又定义了一份字符串清单上限 —— 两侧各抄一份字面量会悄悄分叉，`
+        + "改成从 core 导入那份唯一真相源");
+    }
+    if (!src.includes("STRING_LIST_MAX_ITEMS")) {
+      output.push(`${rel} 完全没用到字符串清单上限 —— 要么这一侧的归一实现没了，要么它不再限长`);
+    }
   }
 }
 

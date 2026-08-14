@@ -228,6 +228,12 @@ const defaultModelCeiling = {
   escalationPolicy: "special_signal_required"
 };
 
+// 字符串清单的上限：REST 与 MCP 各有一份归一实现（normalizeStringList / normalizeMcpStringList），
+// 逻辑同规，但上限原先是【各写一份字面量】—— 值一样只是巧合，改一处另一处不会跟，
+// 而这类分叉的症状是"同一份数据经控制台收得下、经 agent 被拒"，谁也不会立刻想到是上限不同。
+export const STRING_LIST_MAX_ITEMS = 200;
+export const STRING_LIST_MAX_ITEM_LENGTH = 2000;
+
 export const projectOwnerGrantPermissions = Object.freeze([
   "project:view",
   "project:update",
