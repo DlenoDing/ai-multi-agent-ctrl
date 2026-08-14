@@ -1212,6 +1212,25 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // "为什么还没验"那份登记会过期：某项后来补上变异了，说明还留着就是在替一个不成立的结论背书。
+    name: "待验登记过期要报红",
+    file: "scripts/contract-check.mjs",
+    check: "verifyContractChecksAreThemselvesTested",
+    from: '    verifyMcpToolListCostStaysVisible: "它钉的是上限与实测值本身，撑破它就等于制造它要防的那个问题",',
+    to: '    verifyTransitionEngine: "这一条其实已经有变异了",',
+    expect: "已经有变异指向了"
+  },
+  {
+    // 状态机迁移必须按【建模过的执行者】判权：不判的话，AI 角色能自行把工作项验收为 verified ——
+    // 那是整套"人工定稿"在状态机这一层的落点。
+    name: "状态机迁移必须按建模的执行者判权",
+    file: "apps/control-plane-ui/lib/transition-engine.mjs",
+    check: "verifyTransitionEngine",
+    from: "  const modeled = candidates.find((transition) => transition.actor === actor);",
+    to: "  const modeled = candidates[0];",
+    expect: "expected rejection for AI 角色自行把工作项验收为 verified"
+  },
+  {
     // 活跃派发引用的契约不得被裁掉：裁了之后 acceptAgentCheckpoint 按 sessionId+runId 找不到契约，
     // 永远报 agent_dispatch_contract_mismatch，派发再也终结不了、关闭门永久不可满足。
     name: "活跃派发的契约不得被裁掉",

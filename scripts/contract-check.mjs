@@ -5465,7 +5465,17 @@ function verifyNoRequestScopedLeaks(output) {
 // 把 core 里"只有真人能定稿"整个删掉它照样绿 —— 那道由别的用例守着，名字容易让人误以为是它。
 // 棘轮只降不升：新加检查就得配变异，或者把它加进这里并写明为什么不必。
 function verifyContractChecksAreThemselvesTested(output) {
-  const UNTESTED_CHECK_CEILING = 4;
+  const UNTESTED_CHECK_CEILING = 3;
+  // 这三项各有明确结论，登记在这里免得下一个人重走一遍：
+  //  · verifyMcpToolListCostStaysVisible —— 它的作用是【钉住上限并打印实测值】。撑破上限需要真的
+  //    把工具表做大（单条描述加长远远不够），而那正是它要防的事；成本数字另有记录，别再重量。
+  //  · verifySuspendHaltsRunningWork —— 试过两种改法都不红，真接线点未找到（见该函数上方注释）。
+  //  · verifyWorkStatusEnumConvergence —— 同上，改 spec 枚举两种写法都不红（见该函数上方注释）。
+  const UNTESTED_WITH_REASON = {
+    verifyMcpToolListCostStaysVisible: "它钉的是上限与实测值本身，撑破它就等于制造它要防的那个问题",
+    verifySuspendHaltsRunningWork: "试过两种改法都不红，真接线点待查（函数上方有记录）",
+    verifyWorkStatusEnumConvergence: "同上，改 spec 枚举两种写法都不红（函数上方有记录）"
+  };
   const self = readFileSync(join(root, "scripts/contract-check.mjs"), "utf8");
   const mutations = readFileSync(join(root, "scripts/mutation-gate.mjs"), "utf8");
   const registered = new Set([...self.matchAll(/run(?:Async)?\((verify[A-Za-z0-9]+)\)/gu)].map((m) => m[1]));
@@ -5475,6 +5485,12 @@ function verifyContractChecksAreThemselvesTested(output) {
     return;
   }
   const untested = [...registered].filter((name) => !covered.has(name)).sort();
+  for (const name of Object.keys(UNTESTED_WITH_REASON)) {
+    if (!untested.includes(name)) {
+      output.push(`判据自查：${name} 已经有变异指向了 —— 把它从 UNTESTED_WITH_REASON 里删掉，`
+        + "否则这条'为什么还没验'的说明会替一个不成立的结论背书");
+    }
+  }
   if (untested.length > UNTESTED_CHECK_CEILING) {
     output.push(`判据自查：没有变异指向的检查从 ${UNTESTED_CHECK_CEILING} 涨到 ${untested.length} ——`
       + ` 新加的检查没人验过它能不能红。新增的几项：${untested.slice(0, 6).join("、")}`);
