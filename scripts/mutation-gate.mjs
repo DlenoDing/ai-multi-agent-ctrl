@@ -1212,6 +1212,26 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 组织被停用之后，编排必须停住派发。守卫失效时【真的照常派发】—— agent 继续跑、模型额度继续烧，
+    // 而控制台上写着"已停用"。注意判据不在配额那道（organizationQuotaCheck）上：
+    // 把那一处删掉这条照样绿，真正生效的是编排循环里按 suspendedOrgIds 跳过的那一段。
+    name: "组织停用必须停住派发",
+    file: CORE,
+    check: "verifySuspendedOrganizationHaltsExecution",
+    from: "    if (projectOrgId && suspendedOrgIds.has(projectOrgId.get(taskGroup.projectId))) {",
+    to: "    if (false) {",
+    expect: "这一轮仍派发了"
+  },
+  {
+    // 已暂停/已停用的任务组，节点不得把排队中的派发领走。
+    name: "已叫停的任务组不得被认领",
+    file: GATEWAY,
+    check: "verifyHaltedTaskGroupsAreNotClaimable",
+    from: '    const paused = ["active_paused_by_freeze", "active_paused_by_control"].includes(taskGroup.goalExecutionStatus);',
+    to: "    const paused = false;",
+    expect: "节点仍把排队中的派发领走了"
+  },
+  {
     // 这道判据自己也要能红：提取一失配它会数出 0 项、然后一片绿。
     // （它上线那一刻自己就在"没有变异指向"的名单里 —— 这条变异同时也是它给自己摘牌。）
     name: "判据自查不得空转",

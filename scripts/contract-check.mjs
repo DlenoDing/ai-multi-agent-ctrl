@@ -5465,7 +5465,7 @@ function verifyNoRequestScopedLeaks(output) {
 // 把 core 里"只有真人能定稿"整个删掉它照样绿 —— 那道由别的用例守着，名字容易让人误以为是它。
 // 棘轮只降不升：新加检查就得配变异，或者把它加进这里并写明为什么不必。
 function verifyContractChecksAreThemselvesTested(output) {
-  const UNTESTED_CHECK_CEILING = 23;
+  const UNTESTED_CHECK_CEILING = 21;
   const self = readFileSync(join(root, "scripts/contract-check.mjs"), "utf8");
   const mutations = readFileSync(join(root, "scripts/mutation-gate.mjs"), "utf8");
   const registered = new Set([...self.matchAll(/run(?:Async)?\((verify[A-Za-z0-9]+)\)/gu)].map((m) => m[1]));
@@ -6300,6 +6300,10 @@ function verifyCancelDirectiveStopsRunningWork(output) {
   }
 }
 
+// 【尚未证明判别力】2026-08-14：试过两种改法（把 pause_dispatch 换成别的命令类型、直接置 null），
+// 这项检查都没红 —— 说明它断言的那批 pause_dispatch 命令另有产出路径，或者夹具够不到这一处。
+// 没有为它编一个"能过"的变异（那只会造出一条假证明）。它仍在 UNTESTED_CHECK_CEILING 的名单里，
+// 下一个动它的人请先找出真正的产出点，再决定这条判据该钉在哪。
 function verifySuspendHaltsRunningWork(output) {
   const probe = structuredClone(seedState);
   ensureRuntimeCollections(probe, {root});
