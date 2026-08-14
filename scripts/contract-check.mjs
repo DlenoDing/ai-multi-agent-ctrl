@@ -317,6 +317,7 @@ run(verifyOperatorCliRejectsUnknownFlags);
 run(verifyMcpDoesNotReimplementCore);
 run(verifyIssuedCredentialsAlwaysExpire);
 run(verifyInertMechanismsStayRegistered);
+run(verifyContractChecksAreThemselvesTested);
 run(verifyStringListCapsShareOneSource);
 run(verifyBothOwnerGrantWritersRefreshPermissions);
 run(verifyBothWorkItemWritersHonourSettledTaskGroups);
@@ -5455,6 +5456,33 @@ function verifyNoRequestScopedLeaks(output) {
   if (scannedFunctions < 200) {
     output.push(`请求作用域判据只扫到 ${scannedFunctions} 个顶层函数 —— 提取多半失配，这道判据在空转`);
   }
+}
+
+// 契约门自己的检查，有没有人验过它们【能不能红】？拒绝码棘轮问的是"产品守卫有没有判据"，
+// 这一条问的是反过来那半："判据有没有判别力"。实测 85 项里 26 项一条变异都没指向 ——
+// 抽查三项：审批缺结论、测试结果缺状态、通向定稿的 MCP 白名单，三项都真能红（已各补一条变异）。
+// 但也抽到一项【名字与它守的东西不符】：verifyOnlyHumanSessionsCanFinalize 守的是 MCP 那层白名单，
+// 把 core 里"只有真人能定稿"整个删掉它照样绿 —— 那道由别的用例守着，名字容易让人误以为是它。
+// 棘轮只降不升：新加检查就得配变异，或者把它加进这里并写明为什么不必。
+function verifyContractChecksAreThemselvesTested(output) {
+  const UNTESTED_CHECK_CEILING = 23;
+  const self = readFileSync(join(root, "scripts/contract-check.mjs"), "utf8");
+  const mutations = readFileSync(join(root, "scripts/mutation-gate.mjs"), "utf8");
+  const registered = new Set([...self.matchAll(/run(?:Async)?\((verify[A-Za-z0-9]+)\)/gu)].map((m) => m[1]));
+  const covered = new Set([...mutations.matchAll(/check:\s*"(verify[A-Za-z0-9]+)"/gu)].map((m) => m[1]));
+  if (registered.size < 60) {
+    output.push(`判据自查：只提取到 ${registered.size} 项注册检查 —— 提取多半失配，这道判据在空转`);
+    return;
+  }
+  const untested = [...registered].filter((name) => !covered.has(name)).sort();
+  if (untested.length > UNTESTED_CHECK_CEILING) {
+    output.push(`判据自查：没有变异指向的检查从 ${UNTESTED_CHECK_CEILING} 涨到 ${untested.length} ——`
+      + ` 新加的检查没人验过它能不能红。新增的几项：${untested.slice(0, 6).join("、")}`);
+  } else if (untested.length < UNTESTED_CHECK_CEILING) {
+    output.push(`判据自查：没有变异指向的检查已降到 ${untested.length}，把 UNTESTED_CHECK_CEILING 改成这个数`);
+  }
+  console.log(`判据自查：${registered.size} 项契约检查，其中 ${untested.length} 项还没有变异证明它能报红`
+    + `（棘轮 ${UNTESTED_CHECK_CEILING}，只降不升）`);
 }
 
 // 字符串清单的上限：REST 与 MCP 各有一份归一实现，逻辑同规，而上限原先是【各写一份字面量】。

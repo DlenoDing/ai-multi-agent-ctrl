@@ -1212,6 +1212,43 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 这道判据自己也要能红：提取一失配它会数出 0 项、然后一片绿。
+    // （它上线那一刻自己就在"没有变异指向"的名单里 —— 这条变异同时也是它给自己摘牌。）
+    name: "判据自查不得空转",
+    file: "scripts/contract-check.mjs",
+    check: "verifyContractChecksAreThemselvesTested",
+    from: 'const registered = new Set([...self.matchAll(/run(?:Async)?\\((verify[A-Za-z0-9]+)\\)/gu)].map((m) => m[1]));',
+    to: "const registered = new Set();",
+    expect: "这道判据在空转"
+  },
+  {
+    // 缺省不得等于有利结果：不给结论 = 批准，而法定人数与禁止自批都建立在这道闸门上。
+    name: "审批必须显式给出结论",
+    file: MCP,
+    check: "verifyApprovalDecisionRequired",
+    from: '    return {ok: false, error: "approval_decision_required",',
+    to: "    return {ok: true, approvalRequest: request,",
+    expect: "缺省被当成了批准"
+  },
+  {
+    // 同族：缺信息被当成通过，而质量门正是人看到「全通过」时的唯一依据。
+    name: "测试结果必须带状态",
+    file: MCP,
+    check: "verifyTestResultStatusRequired",
+    from: 'error: "test_result_status_required"',
+    to: 'error: "test_result_status_missing"',
+    expect: "缺信息被当成了通过"
+  },
+  {
+    // 这项检查守的是【MCP 那一层】的白名单，不是 core 那道（名字容易让人以为是后者）。
+    name: "通向定稿的 MCP 工具必须用白名单判主体",
+    file: MCP,
+    check: "verifyOnlyHumanSessionsCanFinalize",
+    from: '      if (context?.principal?.kind !== "system_admin") {',
+    to: "      if (false) {",
+    expect: "主体判据不是白名单"
+  },
+  {
     // 围栏令牌是「这次持有」与「上一次持有」的唯一区别。core 那道此前只有源码断言 ——
     // MCP e2e 里那条看似在验它，实际被 mcp_ 前缀那道顶掉了（两个码是子串关系，判据又用 includes）。
     name: "错的围栏令牌不得释放租约（core）",
