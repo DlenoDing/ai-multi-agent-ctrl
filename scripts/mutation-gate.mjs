@@ -1212,6 +1212,16 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 缺省不得等于有利结果：认不出的状态若按默认值处理，`status` 打错一个字母就是一次真实的激活。
+    // 守卫失效时会落到后一道"处置必须写理由"的门上 —— 断言点名了码，所以照样报红。
+    name: "认不出的处置状态必须拒绝",
+    file: SERVER,
+    skip: "判别力由控制面 e2e 覆盖（已用 mutate-probe 实证：改成按默认值处理后码不再是它自己的）",
+    from: '    const nextStatus = ["active", "superseded", "retired", "rejected"].includes(body.status) ? body.status : null;',
+    to: '    const nextStatus = body.status || "active";',
+    expect: "没有回 shared_definition_status_invalid"
+  },
+  {
     // "为什么还没验"那份登记会过期：某项后来补上变异了，说明还留着就是在替一个不成立的结论背书。
     name: "待验登记过期要报红",
     file: "scripts/contract-check.mjs",

@@ -1465,6 +1465,31 @@ try {
   }
   console.log("REST 写路径跨租户存在性 ok: 项目配置与成员两条写路由，两种'看不见'给同一个答案");
 
+  // 【缺省不得等于有利结果】四条处置路由都用"白名单映射 + 认不出就拒"。一旦改成"认不出按默认值处理"，
+  // `status` 打错一个字母就是一次真实的处置 —— 而这四条的推进方向全是【向前】（consumed/closed/active…）。
+  // 这里只验共享定义那一条：另外三类（复核包/升级候选/复核方案）种子里没有实例，
+  // 存在检查在状态校验【之前】，探针会停在 404，验不到被测的那道门 —— 与其编一个假通过，不如说清楚。
+  // 那三条的同形判据由契约门里各自的用例覆盖（它们直接调核心函数，不经过存在检查这一步）。
+  {
+    const bogusStatus = await jsonFetch(port, "/api/shared-definition-contracts/sdc_status_semantics/resolve", {method: "POST",
+      headers: {"Idempotency-Key": "status-invalid-shared-definition", authorization: systemAuth},
+      body: JSON.stringify({status: "definitely_not_a_status"})});
+    if (bogusStatus.payload?.error !== "shared_definition_status_invalid") {
+      throw new Error(`共享定义处置：喂一个认不出的状态，没有回 shared_definition_status_invalid`
+        + `（实际 ${bogusStatus.response.status} ${JSON.stringify(bogusStatus.payload).slice(0, 120)}）`
+        + " —— 认不出就按默认值处理的话，status 打错一个字母就是一次真实的激活");
+    }
+    // 正面对照：合法状态必须走得通，否则这道门把正常处置一起堵死。
+    const legitStatus = await jsonFetch(port, "/api/shared-definition-contracts/sdc_status_semantics/resolve", {method: "POST",
+      headers: {"Idempotency-Key": "status-valid-shared-definition", authorization: systemAuth},
+      // 这条路还要求写明处置理由（真人处置必须留下依据）—— 正面对照把这个前提也暴露了出来。
+      body: JSON.stringify({status: "retired", justification: "探针：验证合法状态照常走得通"})});
+    if (!legitStatus.response.ok) {
+      throw new Error(`共享定义处置：合法状态 retired 也被拒了（${legitStatus.response.status} ${JSON.stringify(legitStatus.payload).slice(0, 120)}）`);
+    }
+    console.log("认不出的处置状态 ok: 共享定义处置拒绝未知状态，而合法状态照常走得通");
+  }
+
   // 写入层的两道授权边界，此前都没有点名断言。
   // ① 真人专属动作不得由机器主体执行 —— 这是人工定稿闸门落在【写入层】的那一处：
   //    配置面挡一层、决策点挡一层，这里是第三层，而三层里只要有一层是唯一生效的那层就必须自己会红。
