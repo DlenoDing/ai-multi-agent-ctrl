@@ -1212,6 +1212,24 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 摘要要真是摘要：单元一多，全量带上就把 agent 的上下文占满了。
+    name: "MCP 摘要必须裁工作单元",
+    file: MCP,
+    check: "verifyMcpSummaryIsActuallyASummary",
+    from: "    return {...taskGroup, workItems: items.slice(0, MCP_SUMMARY_WORK_ITEM_CAP),",
+    to: "    return {...taskGroup, workItems: items,",
+    expect: "把全部工作单元都带上了"
+  },
+  {
+    // 内容包降级（缺角色技能文件）必须在控制台上看得见，否则人会把这次产出当正常产出来验收。
+    name: "内容包降级要在控制台留痕",
+    file: GATEWAY,
+    check: "verifyDegradedContentBundleIsVisible",
+    from: '        degradedGroup.blockers.push({id: `blk_skill_${dispatch.dispatchId}`, severity: "S2", summary});',
+    to: "        void summary;",
+    expect: "内容包降级在控制台上一个字都没有"
+  },
+  {
     // 内容包里必须点名本次的工作项：不点名的话 agent 只能从一份只有标题的清单里自己对应，
     // 对错了就是改错东西 —— 而它改完照样交检查点。
     name: "内容包必须点名本次工作项",
