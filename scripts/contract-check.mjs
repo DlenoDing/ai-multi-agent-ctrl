@@ -56,6 +56,7 @@ import {
   findingResolve,
   findingSubmit,
   TASK_GROUP_SETTLED_STATUSES,
+  projectOwnerGrantPermissions,
   taskGroupSettledRejection,
   reviewBundleRegister,
   computeCompletionReadiness,
@@ -316,6 +317,7 @@ run(verifyOperatorCliRejectsUnknownFlags);
 run(verifyMcpDoesNotReimplementCore);
 run(verifyIssuedCredentialsAlwaysExpire);
 run(verifyInertMechanismsStayRegistered);
+run(verifyBothOwnerGrantWritersRefreshPermissions);
 run(verifyBothWorkItemWritersHonourSettledTaskGroups);
 run(verifyServerFieldsReachThePerson);
 run(verifyNoRequestScopedLeaks);
@@ -5443,6 +5445,26 @@ function verifyNoRequestScopedLeaks(output) {
   }
   if (scannedFunctions < 200) {
     output.push(`请求作用域判据只扫到 ${scannedFunctions} 个顶层函数 —— 提取多半失配，这道判据在空转`);
+  }
+}
+
+// 项目负责人授权有两份实现（REST 的 ensureProjectOwnerGrant / MCP 的 ensureMcpProjectOwnerGrant）。
+// 差异实测过：MCP 那侧找到既有授权会把权限集刷新到当前，REST 那侧原样返回 ——
+// 于是一份【权限集已经过时】的授权，经控制台那条路永远补不上：同一个人在两个项目里能做的事不一样，
+// 而没有任何地方会告诉他为什么。判据按【两侧都要对齐到当前权限集】写。
+function verifyBothOwnerGrantWritersRefreshPermissions(output) {
+  const TWINS = [
+    {file: "apps/control-plane-ui/server.mjs", fn: "ensureProjectOwnerGrant"},
+    {file: "apps/mcp-server/server.mjs", fn: "ensureMcpProjectOwnerGrant"}
+  ];
+  for (const twin of TWINS) {
+    const src = readFileSync(join(root, twin.file), "utf8");
+    const body = src.slice(src.indexOf(`function ${twin.fn}(`));
+    const head = body.slice(0, body.indexOf("\n}\n"));
+    if (!/existing\.permissions\s*=\s*\[\.\.\.projectOwnerGrantPermissions\]/u.test(head)) {
+      output.push(`${twin.file} 的 ${twin.fn}() 找到既有授权时没有把权限集对齐到当前 —— `
+        + "权限集扩过一项之后，走这条路建的项目里，负责人会少一项权限，而没有任何地方会告诉他为什么");
+    }
   }
 }
 

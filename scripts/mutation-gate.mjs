@@ -1212,6 +1212,24 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 项目负责人授权有两份实现：MCP 那侧会把既有授权的权限集刷新到当前，REST 那侧原样返回 ——
+    // 权限集扩过一项之后，同一个人在两个项目里能做的事不一样，而没有任何地方会告诉他为什么。
+    name: "既有的负责人授权要对齐当前权限集（REST）",
+    file: SERVER,
+    check: "verifyBothOwnerGrantWritersRefreshPermissions",
+    from: "    existing.permissions = [...projectOwnerGrantPermissions];\n    existing.updatedAt = now();\n    return existing;",
+    to: "    return existing;",
+    expect: "没有把权限集对齐到当前"
+  },
+  {
+    name: "既有的负责人授权要对齐当前权限集（MCP）",
+    file: MCP,
+    check: "verifyBothOwnerGrantWritersRefreshPermissions",
+    from: "    existing.permissions = [...projectOwnerGrantPermissions];",
+    to: "    void projectOwnerGrantPermissions;",
+    expect: "没有把权限集对齐到当前"
+  },
+  {
     // 建工作项有两份实现，少接一份等于没接。这一族上一轮刚在"建组"那对上漏过一次。
     name: "终结的任务组里不得再建工作项（REST）",
     file: SERVER,

@@ -846,7 +846,15 @@ function ensureProjectOwnerGrant(state, project, ownerAccountId, policyDecisionR
     grant.resource?.resourceType === "project" &&
     grant.resource?.resourceId === project.id
   );
-  if (existing) return existing;
+  if (existing) {
+    // 找到就原样返回的话，一份【权限集已经过时】的既有授权永远补不上：
+    // 项目负责人的权限集后来扩过一项，经 MCP 建的项目会被刷新（那一侧本来就刷），
+    // 经控制台建的不会 —— 同一个人在两个项目里能做的事不一样，而没有任何地方会告诉他为什么。
+    // 与 MCP 侧同规：既有授权也对齐到当前权限集。
+    existing.permissions = [...projectOwnerGrantPermissions];
+    existing.updatedAt = now();
+    return existing;
+  }
   const at = now();
   const grant = {
     schemaVersion: "access-control-grant/v1",
