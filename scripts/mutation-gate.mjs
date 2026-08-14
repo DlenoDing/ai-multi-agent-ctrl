@@ -1212,6 +1212,25 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 人工定稿闸门落在【写入层】的那一处：机器主体不得执行真人专属动作。
+    // 守卫失效时会落到后面的权限门（policy_denied）—— 断言点名了码，所以照样报红。
+    name: "机器主体不得执行真人专属动作",
+    file: SERVER,
+    skip: "判别力由控制面 e2e 覆盖（已用 mutate-probe 实证：改成一律放行后落到 policy_denied，码不再是它自己的）",
+    from: "  if (HUMAN_ONLY_ACTIONS.includes(action)) return HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(account.accountType);",
+    to: "  if (HUMAN_ONLY_ACTIONS.includes(action)) return true;",
+    expect: "服务账号执行了真人专属动作"
+  },
+  {
+    // 既有断言只判 403，换一道门拒它照样绿；收紧成点名码之后才有这条判别力。
+    name: "非系统账号不得替别人挂项目负责人",
+    file: SERVER,
+    skip: "判别力由控制面 e2e 覆盖（已用 mutate-probe 实证：守卫删掉后建项目直接 201）",
+    from: "    if (requestedOwnerAccountId !== authenticatedAccountId && !isSystemAccount(authenticated.account)) {",
+    to: "    if (false) {",
+    expect: "not to assign another owner"
+  },
+  {
     // 两侧各抄一份上限字面量：值一样只是巧合，改一处另一处不会跟，
     // 症状是"同一份数据经控制台收得下、经 agent 被拒"，没人会立刻想到是两个常量分叉了。
     name: "字符串清单上限不得各抄一份",

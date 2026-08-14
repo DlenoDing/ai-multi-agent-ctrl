@@ -452,8 +452,12 @@ try {
     headers: {"Idempotency-Key": "doctor-project-delegated-owner-denied", authorization: auth},
     body: JSON.stringify({name: "Delegated Owner Project", ownerAccountId: "acct_reviewer"})
   });
-  if (delegatedProjectOwnerDenied.response.status !== 403) {
-    throw new Error(`expected non-system project creator not to assign another owner, got ${delegatedProjectOwnerDenied.response.status}`);
+  // 点名错误码而不是只看 403：换成【别的】守卫把它拒掉（比如权限不足），这条照样绿，
+  // 而"非系统账号不得替别人挂负责人"那道门其实已经没了 —— 拒了和拒对了是两件事。
+  if (delegatedProjectOwnerDenied.response.status !== 403
+    || delegatedProjectOwnerDenied.payload?.error !== "project_owner_assignment_denied") {
+    throw new Error(`expected non-system project creator not to assign another owner, got ${delegatedProjectOwnerDenied.response.status}`
+      + ` ${JSON.stringify(delegatedProjectOwnerDenied.payload).slice(0, 120)} —— 任何能建项目的人都能替别人挂上一份会真正生效的负责人授权`);
   }
   const delegatedProjectOwnerDeniedReplay = await jsonFetch(port, "/api/projects", {
     method: "POST",
@@ -1451,6 +1455,32 @@ try {
     }
   }
   console.log("REST 写路径跨租户存在性 ok: 项目配置与成员两条写路由，两种'看不见'给同一个答案");
+
+  // 写入层的两道授权边界，此前都没有点名断言。
+  // ① 真人专属动作不得由机器主体执行 —— 这是人工定稿闸门落在【写入层】的那一处：
+  //    配置面挡一层、决策点挡一层，这里是第三层，而三层里只要有一层是唯一生效的那层就必须自己会红。
+  //    动作要挑一个这个服务账号【本来就有权限】的，否则先撞上 permission_denied，
+  //    验到的是"它没权限"而不是"它不是人"（第一版就是这样）。
+  const machineHumanOnly = await jsonFetch(port, "/api/human-directives", {method: "POST",
+    headers: {"Idempotency-Key": "doctor-machine-human-only", authorization: agentAuth},
+    body: JSON.stringify({taskGroupId: "tg_runtime_management", directiveType: "guidance",
+      summary: "机器主体下的人工指令"})});
+  if (machineHumanOnly.response.status !== 403
+    || machineHumanOnly.payload?.error !== "principal_not_allowed_for_action") {
+    throw new Error(`服务账号执行了真人专属动作 human_directive_create（${machineHumanOnly.response.status} ${JSON.stringify(machineHumanOnly.payload).slice(0, 120)}）`
+      + " —— AI 拿一个服务账号就能替人下指令，人工闸门在写入层这一处形同虚设");
+  }
+  // 正面对照：同一个动作由真人做必须走得通，否则这道门把正常路径一起堵死。
+  const humanSameAction = await jsonFetch(port, "/api/human-directives", {method: "POST",
+    headers: {"Idempotency-Key": "doctor-human-same-action", authorization: systemAuth},
+    body: JSON.stringify({taskGroupId: "tg_runtime_management", directiveType: "guidance",
+      summary: "真人下的人工指令"})});
+  if (humanSameAction.response.status === 403
+    && humanSameAction.payload?.error === "principal_not_allowed_for_action") {
+    throw new Error("真人也被'真人专属动作'挡住了 —— 这道门把正常路径一起堵死了");
+  }
+
+  console.log("写入层授权边界 ok: 机器主体做不了真人专属动作，而真人照常可以");
 
   // 归档是项目的终结态，而归档路由【要求先把所有任务组关掉】（不级联，让人自己收尾）。
   // 归档之后还能往里建新任务组的话，那次收尾就白做了：项目重新变活，而它已经不在任何人的视野里
