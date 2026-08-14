@@ -361,7 +361,7 @@ try {
     headers: {"Idempotency-Key": "doctor-model-selection", authorization: systemAuth},
     body: JSON.stringify({taskGroupId: "tg_runtime_management", workItemId: "work_permissions", roleId: "policy-engine"})
   });
-  if (idempotencyConflict.response.status !== 409) {
+  if (idempotencyConflict.response.status !== 409 || idempotencyConflict.payload?.error !== "idempotency_key_reuse_conflict") {
     throw new Error(`expected idempotency conflict 409, got ${idempotencyConflict.response.status}`);
   }
   const reviewerScopedGrant = await jsonFetch(port, "/api/access-grants", {
@@ -377,7 +377,7 @@ try {
     headers: {"Idempotency-Key": "doctor-reviewer-orchestrate-denied", authorization: reviewerAuth},
     body: JSON.stringify({mode: "single", taskGroupId: "tg_runtime_management"})
   });
-  if (reviewerOrchestrateDenied.response.status !== 403) {
+  if (reviewerOrchestrateDenied.response.status !== 403 || reviewerOrchestrateDenied.payload?.error !== "policy_denied") {
     throw new Error(`expected task_group:control not to satisfy orchestrator permission, got ${reviewerOrchestrateDenied.response.status}`);
   }
   const reviewerProjectGrant = await jsonFetch(port, "/api/access-grants", {
@@ -393,7 +393,7 @@ try {
     headers: {"Idempotency-Key": "doctor-reviewer-cross-project-denied", authorization: reviewerAuth},
     body: JSON.stringify({subjectId: "acct_reviewer", resourceType: "project", resourceId: "prj_other", role: "project_admin", permissions: ["project:grant"]})
   });
-  if (reviewerCrossProjectDenied.response.status !== 403) {
+  if (reviewerCrossProjectDenied.response.status !== 403 || reviewerCrossProjectDenied.payload?.error !== "policy_denied") {
     throw new Error(`expected project-scoped grant isolation 403, got ${reviewerCrossProjectDenied.response.status}`);
   }
   const reviewerRuntimeGrantDenied = await jsonFetch(port, "/api/access-grants", {
@@ -409,7 +409,7 @@ try {
     headers: {"Idempotency-Key": "doctor-owner-wildcard-grant-denied", authorization: auth},
     body: JSON.stringify({subjectId: "acct_reviewer", resourceType: "project", resourceId: "prj_control_plane", role: "project_admin", permissions: ["project:*"]})
   });
-  if (ownerWildcardGrantDenied.response.status !== 400) {
+  if (ownerWildcardGrantDenied.response.status !== 400 || ownerWildcardGrantDenied.payload?.error !== "unsafe_grant_permissions") {
     throw new Error(`expected project owner wildcard grant to be rejected, got ${ownerWildcardGrantDenied.response.status}`);
   }
   const ownerCrossProjectDenied = await jsonFetch(port, "/api/access-grants", {
@@ -417,7 +417,7 @@ try {
     headers: {"Idempotency-Key": "doctor-owner-cross-project-denied", authorization: auth},
     body: JSON.stringify({subjectId: "acct_reviewer", resourceType: "project", resourceId: "prj_other", role: "project_admin", permissions: ["project:grant"]})
   });
-  if (ownerCrossProjectDenied.response.status !== 403) {
+  if (ownerCrossProjectDenied.response.status !== 403 || ownerCrossProjectDenied.payload?.error !== "policy_denied") {
     throw new Error(`expected workspace owner project grant to stay resource-scoped, got ${ownerCrossProjectDenied.response.status}`);
   }
   const ownerCrossProjectInviteDenied = await jsonFetch(port, "/api/accounts", {
@@ -425,7 +425,7 @@ try {
     headers: {"Idempotency-Key": "doctor-owner-cross-project-invite-denied", authorization: auth},
     body: JSON.stringify({projectId: "prj_other", displayName: "Other Project User", email: "other-project-user@local"})
   });
-  if (ownerCrossProjectInviteDenied.response.status !== 403) {
+  if (ownerCrossProjectInviteDenied.response.status !== 403 || ownerCrossProjectInviteDenied.payload?.error !== "policy_denied") {
     throw new Error(`expected workspace owner invite to stay project-scoped, got ${ownerCrossProjectInviteDenied.response.status}`);
   }
   const ownerSystemInviteDenied = await jsonFetch(port, "/api/accounts", {
@@ -433,7 +433,7 @@ try {
     headers: {"Idempotency-Key": "doctor-owner-system-invite-denied", authorization: auth},
     body: JSON.stringify({projectId: "prj_control_plane", accountType: "system_admin", displayName: "Escalated Admin", email: "escalated-admin@local", roles: "system_admin", permissions: "system:*"})
   });
-  if (ownerSystemInviteDenied.response.status !== 403) {
+  if (ownerSystemInviteDenied.response.status !== 403 || ownerSystemInviteDenied.payload?.error !== "policy_denied") {
     throw new Error(`expected project-scoped inviter not to create system admin, got ${ownerSystemInviteDenied.response.status}`);
   }
   const ownerCrossProjectAgentDenied = await jsonFetch(port, "/api/agents", {
@@ -441,7 +441,7 @@ try {
     headers: {"Idempotency-Key": "doctor-owner-cross-project-agent-denied", authorization: auth},
     body: JSON.stringify({projectId: "prj_other", name: "Other Project Agent", role: "reviewer", model: "auto_best"})
   });
-  if (ownerCrossProjectAgentDenied.response.status !== 403) {
+  if (ownerCrossProjectAgentDenied.response.status !== 403 || ownerCrossProjectAgentDenied.payload?.error !== "policy_denied") {
     throw new Error(`expected workspace owner agent activation to stay project-scoped, got ${ownerCrossProjectAgentDenied.response.status}`);
   }
   const delegatedDenyStateBefore = await jsonFetch(port, "/api/state?view=system&limit=20", {
@@ -467,7 +467,7 @@ try {
   const delegatedDenyStateAfter = await jsonFetch(port, "/api/state?view=system&limit=20", {
     headers: {authorization: systemAuth}
   });
-  if (delegatedProjectOwnerDeniedReplay.response.status !== 403) {
+  if (delegatedProjectOwnerDeniedReplay.response.status !== 403 || delegatedProjectOwnerDeniedReplay.payload?.error !== "project_owner_assignment_denied") {
     throw new Error(`expected delegated owner deny replay to remain 403, got ${delegatedProjectOwnerDeniedReplay.response.status}`);
   }
   if (delegatedDenyStateAfter.payload.stateVersion !== delegatedDenyStateBefore.payload.stateVersion) {
@@ -554,7 +554,7 @@ try {
     headers: {"Idempotency-Key": "doctor-owner-created-task-orchestrate-denied", authorization: auth},
     body: JSON.stringify({mode: "single", taskGroupId: createdTaskGroup.payload.taskGroup.id, autoSyncSkills: false})
   });
-  if (ownerCreatedTaskOrchestrateDenied.response.status !== 403) {
+  if (ownerCreatedTaskOrchestrateDenied.response.status !== 403 || ownerCreatedTaskOrchestrateDenied.payload?.error !== "policy_denied") {
     throw new Error(`expected project owner task_group:control not to satisfy orchestration permission, got ${ownerCreatedTaskOrchestrateDenied.response.status}`);
   }
   const ownerWorkerRunDenied = await jsonFetch(port, "/api/verification/agent-runtime/run", {
@@ -562,7 +562,7 @@ try {
     headers: {"Idempotency-Key": "doctor-owner-worker-run-denied", authorization: auth},
     body: JSON.stringify({taskGroupId: createdTaskGroup.payload.taskGroup.id, maxJobs: 1})
   });
-  if (ownerWorkerRunDenied.response.status !== 403) {
+  if (ownerWorkerRunDenied.response.status !== 403 || ownerWorkerRunDenied.payload?.error !== "principal_not_allowed_for_action") {
     throw new Error(`expected user account not to run agent runtime worker, got ${ownerWorkerRunDenied.response.status}`);
   }
   // 直接权限（写在账号 permissions 上、不绑定任何具体资源）绝不能满足 task_group: 级授权。
@@ -590,7 +590,7 @@ try {
     headers: {"Idempotency-Key": "doctor-cross-scope-resolve", authorization: crossScopeAuth},
     body: JSON.stringify({status: "closed", justification: "probe"})
   });
-  if (crossScopeResolve.response.status !== 403) {
+  if (crossScopeResolve.response.status !== 403 || crossScopeResolve.payload?.error !== "policy_denied") {
     throw new Error(`a direct task_group: permission (bound to no resource) settled a review plan: expected 403, got ${crossScopeResolve.response.status}`);
   }
 
@@ -731,7 +731,7 @@ try {
     headers: {"Idempotency-Key": "doctor-invite-not-delegable", authorization: auth},
     body: JSON.stringify({projectId: "prj_control_plane", displayName: "Escalation Probe", email: "escalation-probe@local", roles: "viewer", permissions: "task_group:review"})
   });
-  if (undelegatableInvite.response.status !== 403) {
+  if (undelegatableInvite.response.status !== 403 || undelegatableInvite.payload?.error !== "invite_permission_not_delegable") {
     throw new Error(`邀请方铸出了自己并不拥有的权限（应 403，得到 ${undelegatableInvite.response.status}）`);
   }
 
@@ -789,7 +789,7 @@ try {
     headers: {"Idempotency-Key": "doctor-bad-repository-target", authorization: auth},
     body: JSON.stringify({artifactManifestPath: "/tmp/bad.json", pathAllowlist: ["/tmp/**"]})
   });
-  if (badTarget.response.status !== 400) {
+  if (badTarget.response.status !== 400 || badTarget.payload?.error !== "repository_output_target_must_use_git_trackable_paths") {
     throw new Error(`expected bad repository target 400, got ${badTarget.response.status}`);
   }
   const runResult = await jsonFetch(port, "/api/orchestrator/run", {
@@ -830,7 +830,7 @@ try {
     headers: {"Idempotency-Key": "doctor-owner-checkpoint-denied", authorization: auth},
     body: JSON.stringify({taskGroupId: dispatched.taskGroupId, workId: dispatched.workItemId, sessionId: dispatched.sessionId})
   });
-  if (ownerCheckpointDenied.response.status !== 403) {
+  if (ownerCheckpointDenied.response.status !== 403 || ownerCheckpointDenied.payload?.error !== "principal_not_allowed_for_action") {
     throw new Error(`expected owner checkpoint submit 403, got ${ownerCheckpointDenied.response.status}`);
   }
   const missingRunCheckpointDenied = await jsonFetch(port, "/api/checkpoints", {
@@ -868,8 +868,15 @@ try {
       evidenceRefs: ["evidence:forged"]
     })
   });
-  if (forgedWrongTarget.response.status !== 409) {
-    throw new Error(`expected forged wrong target 409, got ${forgedWrongTarget.response.status}`);
+  // 这两条原先只判 409。实测它们落在 `active_agent_dispatch_required` ——
+  // 这一段里的派发还是 queued（不是 running），而"产出目标对不上""清单缺失"那两道门都在它后面，
+  // 也就是说**这两条从来没验到自己声称要验的东西**。收紧成点名码，把这个事实钉在明面上：
+  // 真正验那两道门的是契约门里的伪造夹具（它把派发置为 running 之后逐条走过）。
+  // 这里保留它们的价值是：证明"没有活跃派发就交检查点"这条边界本身还在。
+  if (forgedWrongTarget.response.status !== 409
+    || forgedWrongTarget.payload?.error !== "active_agent_dispatch_required") {
+    throw new Error(`没有活跃派发时交检查点，没有被 active_agent_dispatch_required 拦下`
+      + `（${forgedWrongTarget.response.status} ${JSON.stringify(forgedWrongTarget.payload).slice(0, 120)}）`);
   }
   const forgedMissingManifest = await jsonFetch(port, "/api/checkpoints", {
     method: "POST",
@@ -889,8 +896,10 @@ try {
       evidenceRefs: ["evidence:forged"]
     })
   });
-  if (forgedMissingManifest.response.status !== 409) {
-    throw new Error(`expected forged missing manifest 409, got ${forgedMissingManifest.response.status}`);
+  if (forgedMissingManifest.response.status !== 409
+    || forgedMissingManifest.payload?.error !== "active_agent_dispatch_required") {
+    throw new Error(`没有活跃派发时交检查点（缺清单那一版），没有被 active_agent_dispatch_required 拦下`
+      + `（${forgedMissingManifest.response.status} ${JSON.stringify(forgedMissingManifest.payload).slice(0, 120)}）`);
   }
   const workerResult = await jsonFetch(port, "/api/verification/agent-runtime/run", {
     method: "POST",
@@ -1071,7 +1080,7 @@ try {
       headers: {"Idempotency-Key": "doctor-org-email-case-dupe", authorization: systemAuth},
       body: JSON.stringify({name: "撞名组织", admin: {displayName: "管乙", email: "CASE.PROBE@local"}})
     });
-    if (dupe.response.status !== 409) {
+    if (dupe.response.status !== 409 || dupe.payload?.error !== "account_email_already_registered") {
       throw new Error(`建出了只差大小写的第二个账号（HTTP ${dupe.response.status}）——`
         + "登录时就不知道该匹配谁了");
     }
@@ -1302,7 +1311,7 @@ try {
   // 同一个请求打第二次走的是视图缓存那条捷径（它另有一处取 view）—— 两条路径必须一致，
   // 否则第一次被拒、第二次照常返回，或者反过来。
   const unknownViewCached = await jsonFetch(port, "/api/state?view=directives&limit=10", {headers: {authorization: systemAuth}});
-  if (unknownViewCached.response.status !== 400) {
+  if (unknownViewCached.response.status !== 400 || unknownViewCached.payload?.error !== "state_view_unknown") {
     throw new Error(`认不出的视图名第二次请求返回 ${unknownViewCached.response.status} —— 视图缓存那条捷径绕过了校验`);
   }
   const knownView = await jsonFetch(port, "/api/state?view=tasks&limit=10", {headers: {authorization: systemAuth}});
@@ -1429,7 +1438,7 @@ try {
     headers: {"Idempotency-Key": "doctor-org-tg-control-bogus", authorization: orgAdminAuth},
     body: JSON.stringify({action: "approved_by_security_review"})
   });
-  if (bogusControl.response.status !== 400) {
+  if (bogusControl.response.status !== 400 || bogusControl.payload?.error !== "unsupported_task_group_control_action") {
     throw new Error(`未登记的任务组控制动作返回了 ${bogusControl.response.status} —— 人得到成功回执却什么都没发生，且这个名字会进审计`);
   }
   if (orgControl.response.status !== 200) {
@@ -1555,7 +1564,7 @@ try {
     headers: {"Idempotency-Key": "doctor-last-admin-disable", authorization: orgAdminAuth},
     body: JSON.stringify({status: "disabled"})
   });
-  if (lastAdminDisable.response.status !== 409) {
+  if (lastAdminDisable.response.status !== 409 || lastAdminDisable.payload?.error !== "org_last_admin_cannot_be_disabled") {
     throw new Error(`停用最后一个活跃组织管理员应被拒（409），得到 ${lastAdminDisable.response.status} —— 组织会被彻底锁死`);
   }
   // 把一个【尚未接受邀请】的成员置为 active 会让它两条登录路径全断且无法恢复：
@@ -1566,7 +1575,7 @@ try {
     headers: {"Idempotency-Key": "doctor-zombie-activate", authorization: orgAdminAuth},
     body: JSON.stringify({status: "active"})
   });
-  if (zombieActivate.response.status !== 409) {
+  if (zombieActivate.response.status !== 409 || zombieActivate.payload?.error !== "org_member_invitation_pending") {
     throw new Error(`把未接受邀请的成员置为 active 应被拒（409），得到 ${zombieActivate.response.status} —— 会造出永远登不进来且仍占配额的僵尸账号`);
   }
   // 而这条判据不能只看【当前是不是 invited】：先停用再启用，两步就把同一个僵尸洗成 active。
@@ -1695,7 +1704,7 @@ try {
   // org_admin 在自己组织内的评审权限不受影响 —— 确认单确实存在时，守卫按它的任务组落位。
   // （原先这里写着"下面 orgConfirmationDecide 正是走这条路"，而那个变量在本文件里并不存在：
   //   注释指向一个不存在的用例，读的人会以为那条路径被覆盖过。）
-  if (orgReviewAuthority.response.status !== 403) {
+  if (orgReviewAuthority.response.status !== 403 || orgReviewAuthority.payload?.error !== "policy_denied") {
     throw new Error(`未知确认单必须与无权限同样回答 403（不可解析的作用域应当拒绝，且不泄露存在性），got ${orgReviewAuthority.response.status}`);
   }
   // Cross-organization write isolation: an org_admin cannot create a task group in another org's project.
@@ -1704,7 +1713,7 @@ try {
     headers: {"Idempotency-Key": "doctor-cross-org-tg", authorization: orgAdminAuth},
     body: JSON.stringify({projectId: "prj_control_plane", title: "越权任务组"})
   });
-  if (crossOrgTaskGroup.response.status !== 403) {
+  if (crossOrgTaskGroup.response.status !== 403 || crossOrgTaskGroup.payload?.error !== "policy_denied") {
     throw new Error(`cross-organization task group creation was not denied, got ${crossOrgTaskGroup.response.status}`);
   }
   const crossOrgDirective = await jsonFetch(port, "/api/human-directives", {
@@ -1712,7 +1721,7 @@ try {
     headers: {"Idempotency-Key": "doctor-cross-org-directive", authorization: orgAdminAuth},
     body: JSON.stringify({taskGroupId: "tg_runtime_management", directiveType: "pause"})
   });
-  if (crossOrgDirective.response.status !== 403) {
+  if (crossOrgDirective.response.status !== 403 || crossOrgDirective.payload?.error !== "policy_denied") {
     throw new Error(`cross-organization directive was not denied, got ${crossOrgDirective.response.status}`);
   }
 
