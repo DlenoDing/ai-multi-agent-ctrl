@@ -1212,6 +1212,41 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 连续失败停派之后，台账里必须留下原因 —— 否则事后查不到它为什么停了。
+    name: "连续失败停派要在台账留痕",
+    file: CORE,
+    check: "verifyRepeatedExecutionFailureStops",
+    from: '        recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "execution_failed_repeatedly",',
+    to: '        false && recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "execution_failed_repeatedly",',
+    expect: "事后查不到它为什么停了"
+  },
+  {
+    // 心跳并不重做自检：靠心跳把节点改回在线，界面上会出现"在线 + 自检未通过 + 只读"这种自相矛盾的一行。
+    name: "心跳不得掩盖自检失败",
+    file: GATEWAY,
+    check: "verifyHeartbeatDoesNotHideFailedSelfCheck",
+    from: "  if (missing.length) node.selfCheckMissing = missing;",
+    to: "  if (false) node.selfCheckMissing = missing;",
+    expect: "一次心跳就把自检失败的节点改回了在线"
+  },
+  {
+    // 提示到上限被丢弃时要记下丢了多少；而问题清掉之后那句"还有 N 条"必须消失。
+    name: "被丢弃的阻塞提示要记数",
+    file: CORE,
+    check: "verifyTaskGroupBlockersStayBounded",
+    from: "      taskGroup.blockersDroppedCount = Number(taskGroup.blockersDroppedCount || 0) + dropped;",
+    to: "      void dropped;",
+    expect: "却没有记下丢了多少"
+  },
+  {
+    name: "健康之后不得还挂着未保留提示",
+    file: CORE,
+    check: "verifyTaskGroupBlockersStayBounded",
+    from: '  if (taskGroup.health === "ok") delete taskGroup.blockersDroppedCount;',
+    to: "  void taskGroup;",
+    expect: "常亮的提示等于没有提示"
+  },
+  {
     // 人下了取消，在跑的派发必须真的停住 —— 否则 agent 会跑完、推 git、交检查点，
     // 而人以为自己已经叫停了。
     name: "取消指令必须停住在跑的派发",
