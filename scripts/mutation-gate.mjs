@@ -1212,6 +1212,24 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 确认卡过期后，挂卡时标记的三处（派发/会话/工作项）都要跟着改 —— 否则它们指向一张
+    // 不存在也不会再挂出来的卡，而未了结的会话还会一直算活跃、把关闭门永久挡住。
+    name: "确认卡过期后派发的停放要清掉",
+    file: CORE,
+    check: "verifyExpiredConfirmationLeavesNoStaleParking",
+    from: '      if (dispatch && dispatch.status === "blocked" && dispatch.blockedReason === "awaiting_human_confirmation") {',
+    to: "      if (false) {",
+    expect: "仍有 1 处记录停在 awaiting_human_confirmation"
+  },
+  {
+    name: "确认卡过期后工作项不得再指向那张卡",
+    file: CORE,
+    check: "verifyExpiredConfirmationRetargetsTheWorkItem",
+    from: "    const expiredWorkItem = request.workItemId ? (taskGroup?.workItems || []).find((item) => item.id === request.workItemId) : null;",
+    to: "    const expiredWorkItem = null;",
+    expect: "人打开这个工作项，被告知等一个永远不来的确认"
+  },
+  {
     // 权限申请【批准】之后必须把会话放出来：停在 permission_required 的会话一直算活跃，
     // 会把关闭门挡住，而人看到的是一个已经处置完的申请，找不到还卡在哪里。
     name: "权限批准必须释放会话",
