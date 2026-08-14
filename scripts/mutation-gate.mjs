@@ -1212,6 +1212,25 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 权限申请【批准】之后必须把会话放出来：停在 permission_required 的会话一直算活跃，
+    // 会把关闭门挡住，而人看到的是一个已经处置完的申请，找不到还卡在哪里。
+    name: "权限批准必须释放会话",
+    file: MCP,
+    check: "verifyPermissionOutcomeReleasesTheSession",
+    from: '    session.status = "active";\n    session.permissionRequestRef = `PermissionRequest:${request.requestId}`;\n    session.updatedAt = at;\n    return;',
+    to: '    session.permissionRequestRef = `PermissionRequest:${request.requestId}`;\n    session.updatedAt = at;\n    return;',
+    expect: "申请已 approved，会话不得再停在 permission_required"
+  },
+  {
+    // 拒绝那一支是对称的：驳回同样不能把会话留在非终态。
+    name: "权限拒绝同样必须释放会话",
+    file: MCP,
+    check: "verifyPermissionOutcomeReleasesTheSession",
+    from: '  if ((!session || session.status !== "permission_required") && !timedOutDispatch) return;',
+    to: "  if (true) return;",
+    expect: "申请已 rejected，会话不得再停在 permission_required"
+  },
+  {
     // 组织被停用之后，编排必须停住派发。守卫失效时【真的照常派发】—— agent 继续跑、模型额度继续烧，
     // 而控制台上写着"已停用"。注意判据不在配额那道（organizationQuotaCheck）上：
     // 把那一处删掉这条照样绿，真正生效的是编排循环里按 suspendedOrgIds 跳过的那一段。
