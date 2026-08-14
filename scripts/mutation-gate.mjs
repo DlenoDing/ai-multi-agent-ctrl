@@ -1212,6 +1212,16 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 五种阻塞态必须被算进 blocked 计数：不算的话概览上那个"阻塞 N 项"永远是 0，
+    // 人从总览看过去一切正常，而下面五个工作项谁也动不了。
+    name: "阻塞态必须被算进阻塞计数",
+    file: CORE,
+    check: "verifyWorkStatusEnumConvergence",
+    from: "  blocked: active.filter((item) => BLOCKED_OR_FAILED_WORKITEM_STATUSES.includes(item.status)).length",
+    to: "  blocked: 0",
+    expect: "counters.blocked 0 !="
+  },
+  {
     // 缺省不得等于有利结果：认不出的状态若按默认值处理，`status` 打错一个字母就是一次真实的激活。
     // 守卫失效时会落到后一道"处置必须写理由"的门上 —— 断言点名了码，所以照样报红。
     name: "认不出的处置状态必须拒绝",

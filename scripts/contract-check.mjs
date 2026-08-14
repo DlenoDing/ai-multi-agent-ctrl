@@ -5465,7 +5465,7 @@ function verifyNoRequestScopedLeaks(output) {
 // 把 core 里"只有真人能定稿"整个删掉它照样绿 —— 那道由别的用例守着，名字容易让人误以为是它。
 // 棘轮只降不升：新加检查就得配变异，或者把它加进这里并写明为什么不必。
 function verifyContractChecksAreThemselvesTested(output) {
-  const UNTESTED_CHECK_CEILING = 3;
+  const UNTESTED_CHECK_CEILING = 2;
   // 这三项各有明确结论，登记在这里免得下一个人重走一遍：
   //  · verifyMcpToolListCostStaysVisible —— 它的作用是【钉住上限并打印实测值】。撑破上限需要真的
   //    把工具表做大（单条描述加长远远不够），而那正是它要防的事；成本数字另有记录，别再重量。
@@ -5473,8 +5473,7 @@ function verifyContractChecksAreThemselvesTested(output) {
   //  · verifyWorkStatusEnumConvergence —— 同上，改 spec 枚举两种写法都不红（见该函数上方注释）。
   const UNTESTED_WITH_REASON = {
     verifyMcpToolListCostStaysVisible: "它钉的是上限与实测值本身，撑破它就等于制造它要防的那个问题",
-    verifySuspendHaltsRunningWork: "试过两种改法都不红，真接线点待查（函数上方有记录）",
-    verifyWorkStatusEnumConvergence: "同上，改 spec 枚举两种写法都不红（函数上方有记录）"
+    verifySuspendHaltsRunningWork: "已查明：它测的是本文件自造的一段模拟，不是产品路径（函数上方有记录）"
   };
   const self = readFileSync(join(root, "scripts/contract-check.mjs"), "utf8");
   const mutations = readFileSync(join(root, "scripts/mutation-gate.mjs"), "utf8");
@@ -6316,10 +6315,18 @@ function verifyCancelDirectiveStopsRunningWork(output) {
   }
 }
 
-// 【尚未证明判别力】2026-08-14：试过两种改法（把 pause_dispatch 换成别的命令类型、直接置 null），
-// 这项检查都没红 —— 说明它断言的那批 pause_dispatch 命令另有产出路径，或者夹具够不到这一处。
-// 没有为它编一个"能过"的变异（那只会造出一条假证明）。它仍在 UNTESTED_CHECK_CEILING 的名单里，
-// 下一个动它的人请先找出真正的产出点，再决定这条判据该钉在哪。
+// 【查明：它测的是自己写的那份模拟，不是产品代码】2026-08-14。
+// 下面调的 applyTaskGroupRuntimeControlProbe 是【本文件里自造的一段】（见其定义），
+// 它自己遍历派发、自己 createAgentControlCommand、自己把状态改成 blocked ——
+// 于是无论产品侧的停用路径怎么退化，这项检查都不会红。这解释了为什么两种产品变异都无效。
+//
+// 它并非全无价值：createAgentControlCommand 那一段是真的产品函数，这条断言仍守着
+// "命令能被造出来、且带得上 dispatchId/taskGroupId"。但它【不守】"停用会不会真的下发暂停"，
+// 而名字听起来正是后者 —— 与 verifyOnlyHumanSessionsCanFinalize 同一种名不副实。
+//
+// 真正守住"停用停住执行"的是 verifySuspendedOrganizationHaltsExecution（走真实编排循环，已有变异）。
+// 要让这一条也守住产品路径，得把 applyTaskGroupRuntimeControlProbe 换成真实的那条控制路径 ——
+// 那是一次独立改动，不在"补变异"这件事的范围里，故先如实记在这里。
 function verifySuspendHaltsRunningWork(output) {
   const probe = structuredClone(seedState);
   ensureRuntimeCollections(probe, {root});
@@ -8915,10 +8922,10 @@ function verifyApprovalDecisionRequired(output) {
   }
 }
 
-// 【尚未证明判别力】2026-08-14：试过改 spec 里 WorkItem 的状态枚举（改名、换名）两种改法，
-// 这项检查都没红 —— 它比对的多半是另一处提取（extractMachineStates 可能按别的锚点切），
-// 或者被测的枚举与它读的那份不是同一处。没有为它编一个能过的变异。
-// 下一个动它的人：先确认 extractMachineStates 到底从哪一段取值，再决定判据钉在哪。
+// 判别力来自它【后半段】那个场景：五种阻塞态的工作项都要被 computeProgressSnapshots 认出并计数。
+// 我先前两次改 spec 的状态枚举都没让它红 —— 因为前半段（spec 与种子的一致性）在当前数据下恒成立，
+// 真正踩到的是 BLOCKED_OR_FAILED_WORKITEM_STATUSES 那份计数真相源。
+// 记在这里：这项检查的名字说的是"枚举收敛"，而它真正守住的是"阻塞态会不会被算进 blocked 计数"。
 function verifyWorkStatusEnumConvergence(output) {
   const smText = readFileSync(resolve(root, "spec/state-machines.yaml"), "utf8");
   const workItemSet = new Set(extractMachineStates(smText, "WorkItem"));
