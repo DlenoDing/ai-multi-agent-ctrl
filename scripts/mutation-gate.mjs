@@ -1212,6 +1212,34 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 人下了取消，在跑的派发必须真的停住 —— 否则 agent 会跑完、推 git、交检查点，
+    // 而人以为自己已经叫停了。
+    name: "取消指令必须停住在跑的派发",
+    file: CORE,
+    check: "verifyCancelDirectiveStopsRunningWork",
+    from: '          dispatch.status = "cancelled";',
+    to: "          void dispatch;",
+    expect: "在跑的派发仍是 running"
+  },
+  {
+    // 暂停必须可逆：只会停不会起的话，界面上只是一个 blocked，没人看得出它再也不会自己起来。
+    name: "暂停指令必须可逆",
+    file: CORE,
+    check: "verifyPauseDirectiveIsReversible",
+    from: '          running.blockedReason = "task_group_pause";',
+    to: "          void running;",
+    expect: "暂停一次就永久卡住了"
+  },
+  {
+    // 有副作用的命令要留下 CommandEffect 并对账到 verified；没对账的必须挡住关闭门。
+    name: "命令效果必须被记录并对账",
+    file: CORE,
+    check: "verifyCommandBusLifecycle",
+    from: "  state.commandEffects.unshift(effect);",
+    to: "  void effect;",
+    expect: "did not block all_command_effects_terminal"
+  },
+  {
     // 确认卡过期后，挂卡时标记的三处（派发/会话/工作项）都要跟着改 —— 否则它们指向一张
     // 不存在也不会再挂出来的卡，而未了结的会话还会一直算活跃、把关闭门永久挡住。
     name: "确认卡过期后派发的停放要清掉",
