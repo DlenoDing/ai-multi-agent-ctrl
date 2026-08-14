@@ -1212,6 +1212,16 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 围栏令牌是「这次持有」与「上一次持有」的唯一区别。core 那道此前只有源码断言 ——
+    // MCP e2e 里那条看似在验它，实际被 mcp_ 前缀那道顶掉了（两个码是子串关系，判据又用 includes）。
+    name: "错的围栏令牌不得释放租约（core）",
+    file: CORE,
+    check: "verifyHumanAndOrganizationContracts",
+    from: 'if (String(lease.fencingToken) !== String(args.fencingToken)) return {ok: false, error: "lease_fencing_token_mismatch"};',
+    to: "/* 守卫失效 */",
+    expect: "拿一个错的围栏令牌就释放掉了租约"
+  },
+  {
     // 人工定稿闸门落在【写入层】的那一处：机器主体不得执行真人专属动作。
     // 守卫失效时会落到后面的权限门（policy_denied）—— 断言点名了码，所以照样报红。
     name: "机器主体不得执行真人专属动作",

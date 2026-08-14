@@ -1521,6 +1521,14 @@ function verifyHumanAndOrganizationContracts(output) {
     if (missing.error !== "lease_not_found") {
       output.push(`releaseLease: 释放一个不存在的租约没有被拒（实际：${missing.error || "已受理"}）`);
     }
+    // core 那道围栏令牌校验此前只有源码断言：MCP e2e 里那条看似在验它，实际被
+    // `mcp_lease_fencing_token_mismatch` 顶掉了（两个码是子串关系，判据用的又是 includes）。
+    const wrongToken = releaseLease(releaseState, {leaseId: held.lease.leaseId,
+      holderRef: "session:sess_holder", fencingToken: "not-the-token"});
+    if (wrongToken.error !== "lease_fencing_token_mismatch") {
+      output.push(`releaseLease: 拿一个错的围栏令牌就释放掉了租约（实际：${wrongToken.error || "已受理"}）`
+        + " —— 围栏令牌是「这次持有」与「上一次持有」的唯一区别，它形同虚设时旧持有者能释放新持有者的租约");
+    }
     const byOther = releaseLease(releaseState, {leaseId: held.lease.leaseId, holderRef: "session:somebody_else",
       fencingToken: held.lease.fencingToken});
     if (byOther.error !== "lease_holder_mismatch") {
@@ -5553,7 +5561,7 @@ function verifySharedJsonWritesAreAtomic(output) {
 
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 77;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 76;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];

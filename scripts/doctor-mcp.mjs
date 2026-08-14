@@ -67,13 +67,13 @@ try {
   if (health.isError || health.structuredContent?.result?.runtime?.mcp?.protocol !== "mcp/streamable-http") throw new Error("remote MCP health did not report centralized streamable HTTP");
 
   const unknownInput = await mcp("tools/call", {name: "ui-console-mcp.runtime_health_get", arguments: {unknownProperty: true}});
-  if (!unknownInput.structuredContent?.result?.error?.includes("mcp_input_unknown_property")) throw new Error("MCP input schema did not reject unknown properties");
+  if (unknownInput.structuredContent?.result?.error !== "mcp_input_unknown_property") throw new Error("MCP input schema did not reject unknown properties");
 
   const missingIdempotency = await mcp("tools/call", {name: "room-mcp.room_send", arguments: {roomId: "room_doctor", payload: {text: "must fail"}}});
-  if (!missingIdempotency.structuredContent?.result?.error?.includes("idempotency_key_required")) throw new Error("write MCP call without idempotencyKey was not rejected");
+  if (missingIdempotency.structuredContent?.result?.error !== "idempotency_key_required") throw new Error("write MCP call without idempotencyKey was not rejected");
 
   const fullState = await mcp("tools/call", {name: "orchestration-mcp.state_get", arguments: {scope: "full"}});
-  if (!fullState.structuredContent?.result?.error?.includes("full_state_scope_not_allowed")) throw new Error("state_get full scope was not denied");
+  if (fullState.structuredContent?.result?.error !== "full_state_scope_not_allowed") throw new Error("state_get full scope was not denied");
 
   const stateBeforeDryRun = await mcp("tools/call", {name: "orchestration-mcp.state_get", arguments: {scope: "summary"}});
   const scopedProgressSnapshots = stateBeforeDryRun.structuredContent?.result?.progressSnapshots || [];
@@ -88,14 +88,14 @@ try {
   const roomSend = await mcp("tools/call", {name: "room-mcp.room_send", arguments: {idempotencyKey: "doctor-room-send", roomId: "room_doctor", payload: {text: "remote MCP"}}});
   if (!roomSend.structuredContent?.result?.message?.messageId) throw new Error("remote MCP room_send failed");
   const idempotencyConflict = await mcp("tools/call", {name: "room-mcp.room_send", arguments: {idempotencyKey: "doctor-room-send", roomId: "room_doctor", payload: {text: "different"}}});
-  if (!idempotencyConflict.structuredContent?.result?.error?.includes("idempotency_key_reuse_conflict")) throw new Error("MCP idempotency key reuse was not rejected");
+  if (idempotencyConflict.structuredContent?.result?.error !== "idempotency_key_reuse_conflict") throw new Error("MCP idempotency key reuse was not rejected");
 
   const badRepositoryTarget = await mcp("tools/call", {name: "repository-mcp.repository_output_target_select", arguments: {idempotencyKey: "doctor-bad-path", taskGroupId: "tg_runtime_management", workItemId: "work_bootstrap", artifactManifestPath: "/tmp/bad.json"}});
-  if (!badRepositoryTarget.structuredContent?.result?.error?.includes("repository_output_target_must_use_git_trackable_paths")) throw new Error("MCP repository target selection accepted a non-git-trackable path");
+  if (badRepositoryTarget.structuredContent?.result?.error !== "repository_output_target_must_use_git_trackable_paths") throw new Error("MCP repository target selection accepted a non-git-trackable path");
   const invalidTaskGroupTarget = await mcp("tools/call", {name: "repository-mcp.repository_output_target_select", arguments: {idempotencyKey: "doctor-invalid-task-scope", taskGroupId: "tg_missing_scope", workItemId: "work_bootstrap", artifactManifestPath: "docs/artifact-manifests/doctor-invalid-task.json"}});
-  if (!invalidTaskGroupTarget.structuredContent?.result?.error?.includes("task_group_not_found")) throw new Error("MCP repository target selection did not fail closed on an invalid taskGroupId");
+  if (invalidTaskGroupTarget.structuredContent?.result?.error !== "task_group_not_found") throw new Error("MCP repository target selection did not fail closed on an invalid taskGroupId");
   const invalidWorkItemTarget = await mcp("tools/call", {name: "repository-mcp.repository_output_target_select", arguments: {idempotencyKey: "doctor-invalid-work-scope", taskGroupId: "tg_runtime_management", workItemId: "work_missing_scope", artifactManifestPath: "docs/artifact-manifests/doctor-invalid-work.json"}});
-  if (!invalidWorkItemTarget.structuredContent?.result?.error?.includes("work_item_not_found")) throw new Error("MCP repository target selection did not fail closed on an invalid workItemId");
+  if (invalidWorkItemTarget.structuredContent?.result?.error !== "work_item_not_found") throw new Error("MCP repository target selection did not fail closed on an invalid workItemId");
 
   const selected = await mcp("tools/call", {name: "model-mcp.model_select", arguments: {idempotencyKey: "doctor-model-select", taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", roleId: "orchestrator"}});
   if (!selected.structuredContent?.result?.selectedModel) throw new Error("remote MCP write call did not execute");
@@ -107,9 +107,15 @@ try {
   const lease = firstLease.structuredContent?.result?.lease;
   if (!lease?.fencingToken) throw new Error("remote MCP lease did not issue fencing token");
   const secondLease = await mcp("tools/call", {name: "resource-mcp.lease_claim", arguments: {idempotencyKey: "doctor-lease-2", repositoryOutputTargetRef: targetId, holderRef: "session:doctor-b"}});
-  if (!secondLease.structuredContent?.result?.error?.includes("lease_already_active")) throw new Error("lease_claim allowed a second active holder");
+  if (secondLease.structuredContent?.result?.error !== "lease_already_active") throw new Error("lease_claim allowed a second active holder");
   const wrongRelease = await mcp("tools/call", {name: "resource-mcp.lease_release", arguments: {idempotencyKey: "doctor-lease-release", leaseId: lease.leaseId, holderRef: "session:doctor-a", fencingToken: "wrong"}});
-  if (!wrongRelease.structuredContent?.result?.error?.includes("lease_fencing_token_mismatch")) throw new Error("lease release accepted the wrong fencing token");
+  // 精确相等而不是 includes：`lease_fencing_token_mismatch`（core 那道）是
+  // `mcp_lease_fencing_token_mismatch`（MCP 那道）的**真子串** —— 原先用 includes，
+  // 两道不同的门共用了一条判据，而实际拒它的一直是 MCP 那道，core 那道从没被这条验过。
+  // 按实际落点写：这条守的是 MCP 侧的围栏令牌校验；core 那道由契约门里的 releaseLease 用例守。
+  if (wrongRelease.structuredContent?.result?.error !== "mcp_lease_fencing_token_mismatch") {
+    throw new Error(`换一个围栏令牌就把别人的租约释放掉了（${JSON.stringify(wrongRelease.structuredContent?.result || "").slice(0, 140)}）`);
+  }
   const admin = await api("/api/auth/login", {method: "POST", body: {email: "system.admin@local", token: "doctor-bootstrap-token"}});
   const missingProjectTaskGroup = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.task_group_create", arguments: {idempotencyKey: "doctor-mcp-task-create-missing-project", taskGroupId: "tg_doctor_missing_project", name: "Missing Project Scope"}});
   if (missingProjectTaskGroup.structuredContent?.result?.error !== "mcp_required_argument_missing" || missingProjectTaskGroup.structuredContent?.result?.argument !== "projectId") {
@@ -247,7 +253,7 @@ try {
     }
   }
   const foreignPermissionRequest = await mcp("tools/call", {name: "permission-mcp.permission_request_submit", arguments: {idempotencyKey: "doctor-foreign-permission-resource", resource: {resourceType: "task_group", resourceId: "tg_foreign_scope"}, permission: "task_group:control", reason: "must fail closed on nested resource scope"}});
-  if (!foreignPermissionRequest.structuredContent?.result?.error?.includes("mcp_principal_project_scope_mismatch")) {
+  if (foreignPermissionRequest.structuredContent?.result?.error !== "mcp_principal_project_scope_mismatch") {
     throw new Error("MCP service token accepted nested permission resource outside its project scope");
   }
   const foreignTarget = await mcpAs(admin.sessionToken, "tools/call", {name: "repository-mcp.repository_output_target_select", arguments: {idempotencyKey: "doctor-foreign-target", targetId: "rot_doctor_foreign_scope", projectId: "prj_foreign_scope", taskGroupId: "tg_foreign_scope", workItemId: "work_foreign_scope", artifactManifestPath: "docs/artifact-manifests/doctor-foreign-scope.json"}});
@@ -257,7 +263,7 @@ try {
   const foreignLease = foreignLeaseClaim.structuredContent?.result?.lease;
   if (!foreignLease?.leaseId) throw new Error("system admin MCP could not create a foreign-scope lease");
   const foreignRelease = await mcp("tools/call", {name: "resource-mcp.lease_release", arguments: {idempotencyKey: "doctor-foreign-release-service-token", leaseId: foreignLease.leaseId, holderRef: "session:doctor-foreign", fencingToken: foreignLease.fencingToken}});
-  if (!foreignRelease.structuredContent?.result?.error?.includes("mcp_principal_project_scope_mismatch")) {
+  if (foreignRelease.structuredContent?.result?.error !== "mcp_principal_project_scope_mismatch") {
     throw new Error("MCP service token released a lease outside its project scope when only leaseId was supplied");
   }
 
