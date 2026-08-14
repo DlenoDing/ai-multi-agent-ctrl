@@ -416,6 +416,7 @@ const MUTATIONS = [
     file: CORE,
     from: "    try { capBoundedHistories(state); } catch { /* 裁剪失败不该掩盖本轮真正的异常 */ }",
     to: "",
+    check: "verifyPerformanceCachesStayCorrect",
     expect: "没有被裁回上限"
   },
   // ── 非契约门的守卫。它们此前只在写下的当天被手工变异过一次，之后再没有任何东西
@@ -2546,6 +2547,7 @@ const MUTATIONS = [
     file: CORE,
     from: "        consumePending(taskGroup.projectId, cellAdmissionPriority(workItem));",
     to: "        void 0;",
+    check: "verifyHighPriorityCellsAreNotStarvedByEarlierGroups",
     expect: "扣住了没还回来"
   },
   {
@@ -2561,6 +2563,7 @@ const MUTATIONS = [
     file: CORE,
     from: "      if (wipNow + wipReserved >= wipCap) {",
     to: "      if (false) {",
+    check: "verifyWipCapacityBackpressure",
     expect: "闸没生效"
   },
   {
@@ -2568,6 +2571,7 @@ const MUTATIONS = [
     file: CORE,
     from: "  return queueHead + online * perNode;",
     to: "  return 0;",
+    check: "verifyWipCapacityBackpressure",
     expect: "额度算成了 0"
   },
   {
