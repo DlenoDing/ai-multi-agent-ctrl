@@ -1212,6 +1212,25 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 内容包里必须点名本次的工作项：不点名的话 agent 只能从一份只有标题的清单里自己对应，
+    // 对错了就是改错东西 —— 而它改完照样交检查点。
+    name: "内容包必须点名本次工作项",
+    file: GATEWAY,
+    check: "verifyContentBundleNamesTheDispatchedItem",
+    from: "    contract.workId ? `\\n## 本次派发\\n工作项：${contract.workId}${",
+    to: "    false ? `\\n## 本次派发\\n工作项：${contract.workId}${",
+    expect: "整包里找不到本次的工作项"
+  },
+  {
+    // 记录声称遵守某份规范，而那份规范不存在 —— 这类记录第一次真正出现时，没有任何东西会核对它。
+    name: "声称的 schemaVersion 必须有规范文件",
+    file: CORE,
+    check: "verifyEverySchemaVersionHasASpec",
+    from: 'schemaVersion: "access-control-grant/v1"',
+    to: 'schemaVersion: "access-control-grant-renamed/v1"',
+    expect: "不存在，也没有登记它为什么不需要"
+  },
+  {
     // 信封说成功、内层却带 error：调用方（多半是 agent）按信封判断，就会把失败当成功继续往下走。
     name: "MCP 信封不得把带 error 的结果说成成功",
     file: MCP,

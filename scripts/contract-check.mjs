@@ -5465,7 +5465,7 @@ function verifyNoRequestScopedLeaks(output) {
 // 把 core 里"只有真人能定稿"整个删掉它照样绿 —— 那道由别的用例守着，名字容易让人误以为是它。
 // 棘轮只降不升：新加检查就得配变异，或者把它加进这里并写明为什么不必。
 function verifyContractChecksAreThemselvesTested(output) {
-  const UNTESTED_CHECK_CEILING = 10;
+  const UNTESTED_CHECK_CEILING = 8;
   const self = readFileSync(join(root, "scripts/contract-check.mjs"), "utf8");
   const mutations = readFileSync(join(root, "scripts/mutation-gate.mjs"), "utf8");
   const registered = new Set([...self.matchAll(/run(?:Async)?\((verify[A-Za-z0-9]+)\)/gu)].map((m) => m[1]));
@@ -8899,6 +8899,10 @@ function verifyApprovalDecisionRequired(output) {
   }
 }
 
+// 【尚未证明判别力】2026-08-14：试过改 spec 里 WorkItem 的状态枚举（改名、换名）两种改法，
+// 这项检查都没红 —— 它比对的多半是另一处提取（extractMachineStates 可能按别的锚点切），
+// 或者被测的枚举与它读的那份不是同一处。没有为它编一个能过的变异。
+// 下一个动它的人：先确认 extractMachineStates 到底从哪一段取值，再决定判据钉在哪。
 function verifyWorkStatusEnumConvergence(output) {
   const smText = readFileSync(resolve(root, "spec/state-machines.yaml"), "utf8");
   const workItemSet = new Set(extractMachineStates(smText, "WorkItem"));
