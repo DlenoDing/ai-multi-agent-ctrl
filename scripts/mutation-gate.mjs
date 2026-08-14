@@ -1212,6 +1212,24 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 信封说成功、内层却带 error：调用方（多半是 agent）按信封判断，就会把失败当成功继续往下走。
+    name: "MCP 信封不得把带 error 的结果说成成功",
+    file: MCP,
+    check: "verifyMcpEnvelopeNeverCallsAnErrorSuccess",
+    from: '    ok: result.ok !== false && !(result && typeof result === "object" && result.error),',
+    to: "    ok: result.ok !== false,",
+    expect: "在信封上说成功、内层却带 error"
+  },
+  {
+    // "连续失败几次"正是"要不要现在管它"的判据；只记 1 次等于把这个判断废掉。
+    name: "编排连续失败要累计次数",
+    file: CORE,
+    check: "verifyOrchestratorReportsItsOwnOutcome",
+    from: "    consecutiveErrors: failed ? Number(previous.consecutiveErrors || 0) + 1 : 0,",
+    to: "    consecutiveErrors: failed ? 1 : 0,",
+    expect: "连续两拍失败却只记了"
+  },
+  {
     // 连续失败停派之后，台账里必须留下原因 —— 否则事后查不到它为什么停了。
     name: "连续失败停派要在台账留痕",
     file: CORE,
