@@ -56,6 +56,7 @@ import {
   findingResolve,
   findingSubmit,
   TASK_GROUP_SETTLED_STATUSES,
+  taskGroupSettledRejection,
   reviewBundleRegister,
   computeCompletionReadiness,
   createExecutionTopology,
@@ -315,6 +316,7 @@ run(verifyOperatorCliRejectsUnknownFlags);
 run(verifyMcpDoesNotReimplementCore);
 run(verifyIssuedCredentialsAlwaysExpire);
 run(verifyInertMechanismsStayRegistered);
+run(verifyBothWorkItemWritersHonourSettledTaskGroups);
 run(verifyServerFieldsReachThePerson);
 run(verifyNoRequestScopedLeaks);
 run(verifySharedJsonWritesAreAtomic);
@@ -5441,6 +5443,26 @@ function verifyNoRequestScopedLeaks(output) {
   }
   if (scannedFunctions < 200) {
     output.push(`请求作用域判据只扫到 ${scannedFunctions} 个顶层函数 —— 提取多半失配，这道判据在空转`);
+  }
+}
+
+// 建工作项有【两份实现】：REST 的 createWorkItemRecord 与 MCP 的 createWorkItem。
+// "任务组终结后不得再加新东西"这道判据放在 core，两份实现各接一行 —— 少接一份就是本仓最常见的洞
+// （建组那对孪生实现刚在上一轮漏过一次）。行为面由 core 那张表盖住，这里守的是【两侧都接上了】。
+function verifyBothWorkItemWritersHonourSettledTaskGroups(output) {
+  const TWINS = [
+    {file: "apps/control-plane-ui/server.mjs", fn: "createWorkItemRecord"},
+    {file: "apps/mcp-server/server.mjs", fn: "createWorkItem"}
+  ];
+  for (const twin of TWINS) {
+    const src = readFileSync(join(root, twin.file), "utf8");
+    const body = src.slice(src.indexOf(`function ${twin.fn}(`));
+    const head = body.slice(0, body.indexOf("\n}\n"));
+    if (!head.includes("taskGroupSettledRejection(state, taskGroup.id)")) {
+      output.push(`${twin.file} 的 ${twin.fn}() 没有调 taskGroupSettledRejection —— `
+        + "已终结的任务组里还能塞进一件新活，它既没人推（编排跳过终结的组）也没人看得见；"
+        + "这道判据有两份实现，少接一份等于没接");
+    }
   }
 }
 

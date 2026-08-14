@@ -110,7 +110,8 @@ import {
   UNSAFE_DELEGATED_GRANT_PERMISSIONS,
   refreshConfirmationsAfterHumanChange,
   revokeAccountSessions,
-  REGISTERED_OWNER_ROLES
+  REGISTERED_OWNER_ROLES,
+  taskGroupSettledRejection
 } from "./lib/control-plane-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -925,6 +926,11 @@ function createTaskGroupRecord(state, input = {}, options = {}) {
 function createWorkItemRecord(state, taskGroupId, input = {}, options = {}) {
   const taskGroup = state.taskGroups.find((item) => item.id === taskGroupId);
   if (!taskGroup) return {ok: false, status: 404, error: "task_group_not_found"};
+  // 任务组终结之后不得再往里加新东西 —— 建工作项是这一族里最直接的一个，偏偏之前漏了：
+  // 上一轮给六个写入口（发现项/许可/审批/确认单/执行方案/规则来源）都加了这道判据，
+  // 唯独没加在"往已关闭的组里塞一件新活"上。新活既没人推（编排跳过终结的组）也没人看得见。
+  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);
+  if (settledRejection) return {...settledRejection, status: 409};
   const workItemId = input.workItemId || createId("work");
   if ((taskGroup.workItems || []).some((item) => item.id === workItemId)) {
     return {ok: false, status: 409, error: "work_item_id_conflict"};

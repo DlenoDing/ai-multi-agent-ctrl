@@ -73,7 +73,8 @@ import {
   assertHumanTextWithinLimit,
   revokeAccountSessions,
   resolveRoleSkill,
-  REGISTERED_OWNER_ROLES
+  REGISTERED_OWNER_ROLES,
+  taskGroupSettledRejection
 } from "../control-plane-ui/lib/control-plane-core.mjs";
 import {
   createAgentControlCommand,
@@ -1743,6 +1744,9 @@ function createWorkItem(state, args) {
   // which would add the item to an arbitrary tenant's task group when taskGroupId is omitted.
   const taskGroup = args.taskGroupId ? findTaskGroup(state, args.taskGroupId) : null;
   if (!taskGroup) return {ok: false, error: "task_group_not_found"};
+  // 与 REST 侧同规：终结的任务组不得再加新活。建组那对孪生实现上一轮就漏过一次，这对同样两份都要补。
+  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);
+  if (settledRejection) return settledRejection;
   const workItemId = args.workItemId || createId("work");
   if ((taskGroup.workItems || []).some((item) => item.id === workItemId)) return {ok: false, error: "work_item_id_conflict"};
   const at = new Date().toISOString();

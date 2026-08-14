@@ -1212,6 +1212,23 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 建工作项有两份实现，少接一份等于没接。这一族上一轮刚在"建组"那对上漏过一次。
+    name: "终结的任务组里不得再建工作项（REST）",
+    file: SERVER,
+    check: "verifyBothWorkItemWritersHonourSettledTaskGroups",
+    from: "  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);\n  if (settledRejection) return {...settledRejection, status: 409};",
+    to: "  void taskGroupSettledRejection;",
+    expect: "没有调 taskGroupSettledRejection"
+  },
+  {
+    name: "终结的任务组里不得再建工作项（MCP）",
+    file: MCP,
+    check: "verifyBothWorkItemWritersHonourSettledTaskGroups",
+    from: '  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);\n  if (settledRejection) return settledRejection;\n  const workItemId = args.workItemId || createId("work");',
+    to: '  const workItemId = args.workItemId || createId("work");',
+    expect: "没有调 taskGroupSettledRejection"
+  },
+  {
     // 归档路由要求先把所有任务组关掉（不级联，让人自己收尾）；归档后还能建新组，那次收尾就白做了。
     name: "归档的项目不得再建任务组（REST）",
     file: SERVER,
