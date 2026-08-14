@@ -5465,7 +5465,7 @@ function verifyNoRequestScopedLeaks(output) {
 // 把 core 里"只有真人能定稿"整个删掉它照样绿 —— 那道由别的用例守着，名字容易让人误以为是它。
 // 棘轮只降不升：新加检查就得配变异，或者把它加进这里并写明为什么不必。
 function verifyContractChecksAreThemselvesTested(output) {
-  const UNTESTED_CHECK_CEILING = 6;
+  const UNTESTED_CHECK_CEILING = 4;
   const self = readFileSync(join(root, "scripts/contract-check.mjs"), "utf8");
   const mutations = readFileSync(join(root, "scripts/mutation-gate.mjs"), "utf8");
   const registered = new Set([...self.matchAll(/run(?:Async)?\((verify[A-Za-z0-9]+)\)/gu)].map((m) => m[1]));

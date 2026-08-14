@@ -1212,6 +1212,26 @@ const MUTATIONS = [
     expect: "直接写了一份跨进程共享的 JSON"
   },
   {
+    // 活跃派发引用的契约不得被裁掉：裁了之后 acceptAgentCheckpoint 按 sessionId+runId 找不到契约，
+    // 永远报 agent_dispatch_contract_mismatch，派发再也终结不了、关闭门永久不可满足。
+    name: "活跃派发的契约不得被裁掉",
+    file: CORE,
+    check: "verifyActiveDispatchesKeepTheirContracts",
+    from: "  const activeSessionIds = new Set((dispatches || []).filter((item) => !terminal.has(item.status)).map((item) => item.sessionId).filter(Bo",
+    to: "  const activeSessionIds = new Set((dispatches || []).filter(() => false).map((item) => item.sessionId).filter(Bo",
+    expect: "活跃派发缺契约"
+  },
+  {
+    // 编排里的 git 事实必须【一轮一次】备忘：去掉备忘之后 200 单元一轮就是 401 次 git 子进程，
+    // 每次约 40ms，而编排同步占着主线程 —— 规模一上来控制面整段不响应。
+    name: "编排不得按单元起 git 子进程",
+    file: CORE,
+    check: "verifyOrchestrationDoesNotShellOutPerCell",
+    from: "  return memoizedGitFact(`head\\u0000${root}`, () => git(root, [\"rev-parse\", \"--short=12\", \"HEAD\"], \"000000000000\"));",
+    to: '  return git(root, ["rev-parse", "--short=12", "HEAD"], "000000000000");',
+    expect: "个单元的一轮编排调了"
+  },
+  {
     // 摘要要真是摘要：单元一多，全量带上就把 agent 的上下文占满了。
     name: "MCP 摘要必须裁工作单元",
     file: MCP,
