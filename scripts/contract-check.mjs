@@ -342,6 +342,7 @@ run(verifyMessagesDoNotPointAtInvisibleFields);
 run(verifyMachineFacingErrorsAreOutOfConsoleReach);
 run(verifyLongLivedRecordsDoNotPointAtCappedOnes);
 run(verifyCallsDoNotPassIgnoredArguments);
+run(verifyEnvValuesAreNotSilentlyClamped);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5493,6 +5494,78 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 //    那 10 处用例一直跑的是"没有仓库"的退化路径（改对之后门仍绿，说明它们此前白跑了一半）。
 //  · 空转门传 `AIMAC_ORCHESTRATOR_INTERVAL_MS=3000`，而服务端有 5000 下限 —— 同一类"传了不生效"。
 // 这道判据只管第一种（第二种是取值被改写，静态看不出来）。
+// 【传了却被钳制的环境变量】。"参数不生效"的第二种形状：值确实传到了，但被调方用
+// `Math.max(下限, …)` 改写掉。实测撞到过：空转门传 AIMAC_ORCHESTRATOR_INTERVAL_MS=3000，
+// 而服务端有 5000 下限 —— 门里所有按 3000 算的等待都短了，靠 deadline 轮询才没判错，
+// 代价是每一处都白等到超时（那道门 35 秒里有一半是这么来的）。
+// 传的人不会收到任何提示，只有量性能时才撞得见。
+function verifyEnvValuesAreNotSilentlyClamped(output) {
+  const clamps = new Map();
+  for (const rel of ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/state-store.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs",
+    "apps/control-plane-ui/lib/control-plane-core.mjs"]) {
+    const src = readFileSync(join(root, rel), "utf8");
+    const record = (name, kind, boundText) => {
+      const bound = boundText.split("*").map((part) => Number(part.trim())).reduce((a, b) => a * b, 1);
+      if (Number.isFinite(bound)) clamps.set(name, {kind, bound});
+    };
+    // 形态一：直接钳 process.env
+    for (const match of src.matchAll(/Math\.(max|min)\(\s*([\d*\s]+),\s*Number\(process\.env\.([A-Z_]+)/gu)) {
+      record(match[3], match[1], match[2]);
+    }
+    // 形态二：先存进变量再钳。**唯一被实测撞到的那个真事实正是这种写法**
+    // （`const orchestratorIntervalMs = Number(process.env.AIMAC_ORCHESTRATOR_INTERVAL_MS ?? 60000)`
+    // 之后 `Math.max(5000, orchestratorIntervalMs)`）—— 只认形态一的话，这道门等于没建。
+    for (const match of src.matchAll(
+      /const (\w+) = Number\(process\.env\.([A-Z_]+)\s*(?:\?\?|\|\|)/gu)) {
+      const [, variable, envName] = match;
+      const clamp = src.match(new RegExp(`Math\\.(max|min)\\(\\s*([\\d*\\s]+),\\s*${variable}\\b`, "u"));
+      if (clamp) record(envName, clamp[1], clamp[2]);
+    }
+  }
+  if (clamps.size < 10) {
+    output.push(`环境变量钳制核对：只认出 ${clamps.size} 处钳制 —— 提取多半失配，这道门在空转`);
+    return;
+  }
+  const offenders = [];
+  let checked = 0;
+  for (const rel of ["scripts/idle-tick-gate.mjs", "scripts/crash-consistency-gate.mjs",
+    "scripts/concurrent-writer-gate.mjs", "scripts/doctor.mjs", "scripts/doctor-mcp.mjs",
+    "scripts/doctor-agent-remote.mjs"]) {
+    const src = readFileSync(join(root, rel), "utf8");
+    for (const [name, {kind, bound}] of clamps) {
+      for (const match of src.matchAll(new RegExp(`${name}:\\s*(?:String\\(([^)]+)\\)|"(\\d+)")`, "gu"))) {
+        const raw = (match[1] || match[2] || "").trim();
+        let value = Number(raw);
+        if (!Number.isFinite(value)) {
+          // 传的是变量名：到同一个文件里找它的常量定义
+          // 传的是变量名：到同一个文件里找它的常量定义。
+          // 变量名要按【标识符】取，不能把整串里的非单词字符删掉再拼进正则
+          // （那样 `String(requestedTickMs)` 里取出的东西对不上任何定义，门就永远找不到值）。
+          const identifier = raw.match(/[A-Za-z_$][\w$]*/u)?.[0];
+          const literal = identifier
+            ? src.match(new RegExp(`const ${identifier} = (\\d+)`, "u")) : null;
+          value = literal ? Number(literal[1]) : NaN;
+        }
+        if (!Number.isFinite(value)) continue;
+        checked += 1;
+        // 0 往往是"关掉这个特性"的开关（服务端有 `intervalMs > 0 ? Math.max(…) : 0` 这种分支），
+        // 不是"想要 0 却被钳成下限"。把它当违规会报出一堆假警报，而假警报的下场是被人整条豁免掉。
+        if (value === 0) continue;
+        const clamped = kind === "max" ? value < bound : value > bound;
+        if (clamped) {
+          offenders.push(`${rel} 传 ${name}=${value}，而被调方 Math.${kind}(${bound}, …) 会把它改成 ${bound}`);
+        }
+      }
+    }
+  }
+  if (offenders.length) {
+    output.push("这些环境变量传了却会被静默改写：\n  " + offenders.join("\n  ")
+      + "\n  —— 传的人收不到任何提示；按被调方真正会用的值算，否则所有基于它的等待/阈值都是错的");
+  }
+  console.log(`环境变量钳制：${clamps.size} 处钳制、${checked} 处传值逐个核对，${offenders.length} 处会被改写（应为 0）`);
+}
+
 function verifyCallsDoNotPassIgnoredArguments(output) {
   const files = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",

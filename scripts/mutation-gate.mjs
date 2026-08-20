@@ -2962,6 +2962,14 @@ const MUTATIONS = [
     expect: "一个「报文里的 X」都没认出来"
   },
   {
+    name: "传了却会被钳制的环境变量要被门看见",
+    file: "scripts/idle-tick-gate.mjs",
+    check: "verifyEnvValuesAreNotSilentlyClamped",
+    from: "const requestedTickMs = 5000;",
+    to: "const requestedTickMs = 3000;",
+    expect: "传了却会被静默改写"
+  },
+  {
     name: "多传的参数会被静默丢掉，要被门看见",
     file: "scripts/contract-check.mjs",
     check: "verifyCallsDoNotPassIgnoredArguments",
