@@ -2946,6 +2946,22 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "授权的依据不许被容量挤掉",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "  state.policyDecisions = [...keptDecisions, ...stillReferenced];",
+    to: "  state.policyDecisions = keptDecisions;",
+    expect: "被容量挤掉了"
+  },
+  {
+    name: "长期记录指向有上限集合要被门看见",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyLongLivedRecordsDoNotPointAtCappedOnes",
+    from: "  state.policyDecisions = [...keptDecisions, ...stillReferenced];",
+    to: "  state.policyDecisions = keptDecisions; // stillReferenced 不再保留",
+    expect: "会变成悬空引用"
+  },
+  {
     name: "项目属主必须是真实存在的账号",
     file: "apps/mcp-server/server.mjs",
     gate: "mcp",

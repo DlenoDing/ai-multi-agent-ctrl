@@ -561,7 +561,18 @@ function finishGuardedWrite(state, guard, status, payload) {
     resultRef: `response:${guard.idempotencyKey}`
   });
   state.decisionRecords = state.decisionRecords.slice(0, 120);
-  state.policyDecisions = state.policyDecisions.slice(0, 120);
+  // policyDecisions 的容量淘汰是【永久删除】，而访问授权上带着 policyDecisionRef 指过来 ——
+  // 到量之后事后问"这条权限是凭什么给的"就答不出来了（授权是长期对象，决策只留最近 120 条）。
+  // 留下仍被引用的那些：数量以活跃授权数为界，不会失控；其余照旧按时间淘汰。
+  const referencedDecisionIds = new Set((state.accessGrants || [])
+    .filter((grant) => grant.status === "active" && grant.policyDecisionRef)
+    .map((grant) => grant.policyDecisionRef));
+  const keptDecisions = state.policyDecisions.slice(0, 120);
+  const keptIds = new Set(keptDecisions.map((item) => item.id));
+  const stillReferenced = state.policyDecisions
+    .slice(120)
+    .filter((item) => referencedDecisionIds.has(item.id) && !keptIds.has(item.id));
+  state.policyDecisions = [...keptDecisions, ...stillReferenced];
   state.idempotencyRecords[guard.idempotencyKey] = {status, payload, actor: guard.actor, action: guard.command.type, bodyDigest: guard.bodyDigest, createdAt: updatedAt};
   evictIdempotencyRecords(state);
   audit(state, "policy-engine", "policy_decision_allowed", guard.command.subject);

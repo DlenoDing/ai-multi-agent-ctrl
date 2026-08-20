@@ -334,6 +334,7 @@ run(verifyBothWorkItemWritersHonourSettledTaskGroups);
 run(verifyServerFieldsReachThePerson);
 run(verifyMessagesDoNotPointAtInvisibleFields);
 run(verifyMachineFacingErrorsAreOutOfConsoleReach);
+run(verifyLongLivedRecordsDoNotPointAtCappedOnes);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5457,6 +5458,62 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 看控制台的 api(...) 里有没有它。实测栽过一次：dispatch_not_assigned_to_node 落在
 // /api/agent-nodes/:id/control 上，而控制台的节点管理页就在调它 —— 人点"控制节点"失败时
 // 看到的是一串英文码。（同一个事实分散在三份登记册里，摘牌要三处一起摘。）
+
+// 【长期存活的记录，不许把依据挂在一个会被容量挤掉的集合上】。
+// decisionRecords / policyDecisions / modelSelectionDecisions 这几个集合都有硬上限
+// （120/120/160），到量就【永久删除】最旧的那些 —— 与视图截断不是一回事：视图截断只是这次
+// 少发几条（而且 truncatedCollections 会如实告诉界面），容量淘汰是数据没了、屏幕上毫无痕迹。
+// 访问授权、任务组这类长期对象若把 policyDecisionRef 指过去，用不了多久就成了悬空引用：
+// 事后问"这条权限是凭什么给的"，答不出来。
+//
+// 实测结论（2026-08-20）：种子里的 `pd_seed_*` 本来就是【占位】，不指向任何真实记录，
+// 所以现状不是"被挤掉了"而是"从来没打算指过去"。这道判据钉住的是【将来别这么接】。
+function verifyLongLivedRecordsDoNotPointAtCappedOnes(output) {
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const capped = new Set();
+  for (const match of server.matchAll(/state\.(\w+) = state\.\1\.slice\(0, (\d+)\)/gu)) {
+    if (Number(match[2]) <= 500) capped.add(match[1]);
+  }
+  if (capped.size < 2) {
+    output.push(`容量淘汰集合只提取到 ${capped.size} 个 —— 提取多半失配，这道门在空转`);
+    return;
+  }
+  // 这些集合本身就是"最近 N 条"的性质，被挤掉是设计（人不会拿它们当事后凭据）。
+  const REF_FIELDS_INTO_CAPPED = {
+    policyDecisionRef: "policyDecisions",
+    decisionRef: "decisionRecords",
+    modelSelectionRef: "modelSelectionDecisions"
+  };
+  const live = new Set(["accessGrants", "taskGroups", "projects", "accounts", "repositoryOutputs"]);
+  const offenders = [];
+  for (const [field, collection] of Object.entries(REF_FIELDS_INTO_CAPPED)) {
+    if (!capped.has(collection)) continue;
+    for (const name of live) {
+      // 只看"写进长期集合的那一刻带上了这个引用"这种写法
+      const re = new RegExp(`state\\.${name}\\.(?:push|unshift)\\([\\s\\S]{0,400}?${field}`, "u");
+      if (re.test(server)) offenders.push(`${name} 上带着 ${field}（指向有上限的 ${collection}）`);
+    }
+  }
+  // accessGrants → policyDecisions 这一对已经处理：淘汰时会把【仍被活跃授权引用的】决策留下
+  // （见 finishGuardedWrite 里的 stillReferenced）。判据据实豁免这一对，并钉住那段保留逻辑还在。
+  // 判据要看【那一行赋值】本身，不能只看两个标识符共现 —— 注释里留着同一个词就会把门喂饱
+  // （实测：把保留那一步删掉、注释里还写着 stillReferenced，门照绿。本仓第 N 次撞这个形状）。
+  const grantsKeepReferenced = /state\.policyDecisions\s*=\s*\[\.\.\.keptDecisions,\s*\.\.\.stillReferenced\]/u
+    .test(server.replace(/\/\/[^\n]*/gu, ""));
+  const remaining = offenders.filter((item) =>
+    !(grantsKeepReferenced && item.startsWith("accessGrants 上带着 policyDecisionRef")));
+  if (!grantsKeepReferenced) {
+    output.push("policyDecisions 的容量淘汰不再保留【仍被活跃授权引用的】那些 —— "
+      + "访问授权上的 policyDecisionRef 会变成悬空引用，事后答不出这条权限是凭什么给的");
+  }
+  if (remaining.length) {
+    output.push("长期存活的记录把依据挂在了会被容量挤掉的集合上：\n  " + remaining.join("\n  ")
+      + "\n  —— 到量就永久删除，事后问「这条是凭什么给的」答不出来；"
+      + "要留证据就写进审计台账（它每一条都先落归档再裁剪）");
+  }
+  console.log(`容量淘汰：${capped.size} 个集合有硬上限（${[...capped].join("、")}），`
+    + `${Object.keys(REF_FIELDS_INTO_CAPPED).length} 个引用字段逐个核对，${offenders.length} 处指过去（应为 0）`);
+}
 
 function verifyMachineFacingErrorsAreOutOfConsoleReach(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");

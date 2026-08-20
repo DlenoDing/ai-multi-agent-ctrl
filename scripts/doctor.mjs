@@ -2565,6 +2565,34 @@ try {
     }
   }
 
+  // 【授权的依据不许被容量挤掉】。policyDecisions 只留最近 120 条且是【永久删除】，
+  // 而访问授权是长期对象、上面带着 policyDecisionRef —— 到量之后事后问"这条权限是凭什么给的"
+  // 就答不出来。淘汰要放过仍被活跃授权引用的那些。这里真写满再查一次。
+  {
+    const before = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: systemAuth}});
+    const grant = (before.payload.accessGrants || [])
+      .find((item) => item.status === "active" && item.policyDecisionRef
+        && (before.payload.policyDecisions || []).some((d) => d.id === item.policyDecisionRef));
+    if (!grant) {
+      console.log("  --  这一轮没有'依据仍在库里'的活跃授权，容量淘汰断言未检验");
+    } else {
+      // 写满 120 条：每次守卫写入都会 unshift 一条 policyDecision。
+      for (let index = 0; index < 130; index += 1) {
+        await jsonFetch(port, "/api/task-groups/tg_runtime_management/control", {
+          method: "POST",
+          headers: {"Idempotency-Key": `doctor-cap-${index}`, authorization: systemAuth},
+          body: JSON.stringify({action: "recompute_readiness"})
+        });
+      }
+      const after = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: systemAuth}});
+      const stillThere = (after.payload.policyDecisions || []).some((d) => d.id === grant.policyDecisionRef);
+      if (!stillThere) {
+        throw new Error(`写满 policyDecisions 之后，活跃授权 ${grant.grantId} 的依据`
+          + `（${grant.policyDecisionRef}）被容量挤掉了 —— 事后问"这条权限是凭什么给的"，答不出来`);
+      }
+    }
+  }
+
   // 【停用必须叫停在跑的执行】。此前只有契约门里一条同名检查，测的是它自己写的一段模拟，
   // 产品路径怎么退化都不会红。这里走真实 HTTP：对一个确实有派发的任务组下暂停，之后该组下
   // 不得再有在跑的派发 —— 否则 agent 会跑到底、把产出推上 git、把额度烧完，而控制台上写着"已暂停"。
