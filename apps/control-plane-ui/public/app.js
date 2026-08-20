@@ -2383,6 +2383,23 @@ const LANGUAGE_OPTIONS = [
   ["es", "Español"]
 ];
 
+// 语种名要显示中文：后端存的 languageName 是英文（"Chinese"/"Japanese"），
+// 直接摆到中文界面上就成了"语言：Chinese"。界面本来就有 LANGUAGE_OPTIONS（zh-CN → 中文），
+// 先按语言标签查它，查不到再退回后端给的名字（那时至少还有个名字，好过空白）。
+// "没上报过进度"与"上报了 0%"是两回事：对一个【已完成】的派发显示"0%"，
+// 人会以为它什么都没干成（实测在真实状态上读出来的正是"已完成 0%"）。
+// 没有数就写"—"，让人知道这一栏是空的，而不是给一个看起来精确的假数。
+function percentCell(value) {
+  return value === undefined || value === null || value === "" ? "—" : `${esc(value)}%`;
+}
+
+function languageLabel(policy) {
+  const tag = policy?.languageTag;
+  const known = LANGUAGE_OPTIONS.find(([value]) => value === tag);
+  return known ? known[1] : (policy?.languageName || tag || "中文");
+}
+
+
 function languageSelectOptions(selected) {
   const known = LANGUAGE_OPTIONS.some(([value]) => value === selected);
   const options = known || !selected ? LANGUAGE_OPTIONS : [[selected, selected], ...LANGUAGE_OPTIONS];
@@ -2434,7 +2451,7 @@ function renderTaskGroups() {
         </div>
         ${progressLine(taskGroup.progress)}
         <div class="record-meta">
-          <span>语言：${esc(taskGroup.languagePolicy?.languageName || taskGroup.languagePolicy?.languageTag || "中文")}</span>
+          <span>语言：${esc(languageLabel(taskGroup.languagePolicy))}</span>
           <span>角色数：${(taskGroup.roles || []).length}</span>
           <span>工作项：${esc(taskGroup.workItemCount ?? (taskGroup.workItems || []).length)}</span>
           <span>更新时间：${fmtTime(taskGroup.updatedAt)}</span>
@@ -2557,7 +2574,7 @@ function renderTaskGroupDetail(taskGroup) {
         <button class="primary-button" type="submit">保存语言策略</button>
       </form>
     </div>
-  ` : `<div class="notice">当前账号无“任务组控制”权限，仅可查看。当前统一语言：${esc(languagePolicy.languageName || languagePolicy.languageTag || "中文")}。</div>`;
+  ` : `<div class="notice">当前账号无“任务组控制”权限，仅可查看。当前统一语言：${esc(languageLabel(languagePolicy))}。</div>`;
 
   // 视图里嵌的工作项是截断过的（真实总数在 workItemCount）。明细页优先用专用端点的完整列表；
   // 只有它没加载出来时才回落到这份截断的，而那时必须说清楚"这不是全部"。
@@ -3504,7 +3521,7 @@ function renderMonitor() {
   const eventRows = eventsShown.slice(0, 120).map((event) => row([
     {v: esc(event.sequence), c: "num"},
     badge(event.eventType, "blue"),
-    {v: `${esc(event.progressPercent ?? 0)}%`, c: "num"},
+    {v: percentCell(event.progressPercent), c: "num"},
     badge(event.status),
     // 证据引用此前从不渲染，而执行方恰恰在这里上报了"这次提示词里实际包含了哪几份规则文件"
     // （prompt-includes:system/rules.md 之类）。人在控制台上只看得到 summary 里那句"含 N 个规则文件"，
@@ -3542,7 +3559,7 @@ function renderMonitor() {
     `<span class="mono">${esc(dispatch.dispatchId)}</span>`,
     `<span class="mono">${esc(dispatch.workItemId || "-")}</span>`,
     badge(dispatch.status),
-    {v: `${esc(dispatch.progressPercent || 0)}%`, c: "num"},
+    {v: percentCell(dispatch.progressPercent), c: "num"},
     // 这两个标记控制面早就在写了（写它们的注释里明写着"必须留痕并让人看到"），而控制台从来没有
     // 渲染过它们 —— 于是人只看到"认领超时重新入队"，看不到最要紧的那句：上一任可能已经把提交推上去了。
     // 新持有者的 reset --hard origin/<branch> 会把那些提交当作基线继续往上做，而没有任何人复核过它们。

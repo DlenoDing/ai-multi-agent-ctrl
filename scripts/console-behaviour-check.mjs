@@ -263,6 +263,27 @@ function checkWiring(probe) {
     `submit 处理器没有在 showError 之前对表单取快照（捕获位置 ${captureAt}，报错位置 ${showErrorAt}）—— showError 会立刻整页重渲染，之后再取快照拿到的是已经被清空的表单`);
 }
 
+// 【拿真实状态把页面渲染成文本读】。夹具是人编的，编出来的只会是我想到的那些情形；
+// 真实运行之后的状态里有编不出来的组合。用法：
+//   AIMAC_RENDER_REAL=<运行目录> node scripts/console-behaviour-check.mjs
+// 只打印、不断言 —— 它是勘察工具，不是判据（判据要能报红，而"读一遍"报不了红）。
+if (process.env.AIMAC_RENDER_REAL) {
+  const dir = process.env.AIMAC_RENDER_REAL;
+  const {readStoredState} = await import(`${root}/apps/control-plane-ui/lib/state-store.mjs`);
+  const real = readStoredState({root, runtimeDir: dir, statePath: `${dir}/control-plane-state.json`,
+    seedPath: `${root}/data/seed-state.json`, buildInitialState: () => ({})});
+  const who = (real.accounts || []).find((item) => item.accountType === "system_admin") || (real.accounts || [])[0];
+  const probe = loadConsole(el("div"), {realI18n: true});
+  const strip = (html) => String(html).replace(/<[^>]+>/gu, " ").replace(/&nbsp;/gu, " ")
+    .split("\n").map((line) => line.replace(/\s+/gu, " ").trim()).filter(Boolean).join("\n");
+  const project = (real.projects || [])[0];
+  const taskGroup = (real.taskGroups || [])[0];
+  console.log(`=== 真实状态：${(real.projects || []).length} 个项目、${(real.taskGroups || []).length} 个任务组\n`);
+  console.log("=== 任务组页 ===\n" + strip(probe.renderTaskGroupsWith(real, who, project?.id, taskGroup?.id, null)).slice(0, 2400));
+  console.log("\n=== 监控页 ===\n" + strip(probe.renderMonitorWith(real, who, project?.id)).slice(0, 1600));
+  process.exit(0);
+}
+
 /* ---------------- 断言 ---------------- */
 
 const failures = [];
@@ -1171,6 +1192,15 @@ function runPendingTruncationCase() {
       sessionPlacementDecisions: [], closeBarriers: [], truncatedCollections: [],
       fleet: {online: 0, total: 2}
     };
+    // 没上报过进度的派发不能显示成 "0%"：那是把"没有"说成了一个看起来精确的数，
+    // 而对一个【已完成】的派发，人看到 0% 会以为它什么都没干成（真实状态里读出来的就是这样）。
+    const noProgress = structuredClone(base);
+    noProgress.agentDispatches = [{dispatchId: "adp_x", workItemId: "w1", taskGroupId: "tg1",
+      projectId: "p1", status: "completed"}];
+    const noProgressView = probe.renderMonitorWith(noProgress, admin, "p1");
+    check("没上报过进度就写「—」，不能显示成 0%",
+      /—/.test(noProgressView) && !/>0%</.test(noProgressView),
+      "已完成的派发显示「0%」—— 它根本没上报过进度，人会以为它什么都没干成");
     const offlineView = probe.renderMonitorWith(structuredClone(base), admin, "p1");
     check("有活在排队却没有在线 agent 时要在监控页上说出来",
       /没有任何在线的 agent 节点/.test(offlineView),
@@ -1243,6 +1273,15 @@ function runPendingTruncationCase() {
     // 绕开某件事。超出保留上限而被丢掉的条数也要说出来 —— 悄悄丢掉人下达的要求是不能接受的。
     const guidanceState = {...detailState, taskGroups: [{...baseGroup,
       humanGuidance: [{text: "先不要动数据库结构", addedAt: "2026-08-01T00:00:00.000Z"}], humanGuidanceDroppedCount: 3}]};
+    // 拿真实状态渲染时读出来的两处（AIMAC_RENDER_REAL）：
+    //  · "语言：Chinese" —— 后端存的是英文语种名，直接摆在中文界面上。
+    //  · 已完成的派发显示"0%" —— 它根本没上报过进度，`|| 0` 把"没有"变成了一个看起来精确的假数。
+    const langState = {...detailState, taskGroups: [{...baseGroup,
+      languagePolicy: {languageTag: "zh-CN", languageName: "Chinese"}}]};
+    const langHtml = probe.renderTaskGroupsWith(langState, admin, "p1", "tg1", fullProgress);
+    check("语种名要显示中文，不能把后端的英文名摆上去",
+      /语言：中文/.test(langHtml) && !/语言：Chinese/.test(langHtml),
+      "中文界面上写着「语言：Chinese」—— 界面本来就有 zh-CN→中文 的对照表");
     const guidanceHtml = probe.renderTaskGroupsWith(guidanceState, admin, "p1", "tg1", fullProgress);
     check("人工补充要求要看得见",
       /先不要动数据库结构/.test(guidanceHtml),

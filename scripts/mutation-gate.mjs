@@ -2962,6 +2962,22 @@ const MUTATIONS = [
     expect: "一个「报文里的 X」都没认出来"
   },
   {
+    name: "语种名要显示中文，不能把后端的英文名摆上去",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  return known ? known[1] : (policy?.languageName || tag || "中文");',
+    to: '  return policy?.languageName || tag || "中文";',
+    expect: "语种名要显示中文"
+  },
+  {
+    name: "没上报过进度不得显示成 0%",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  return value === undefined || value === null || value === "" ? "—" : `${esc(value)}%`;',
+    to: "  return `${esc(value || 0)}%`;",
+    expect: "没上报过进度"
+  },
+  {
     name: "变异挂错门要被静态门看见（不必等 565 秒的全量跑）",
     file: "scripts/mutation-gate.mjs",
     check: "verifyMutationsAreRegisteredAgainstTheRightGate",
