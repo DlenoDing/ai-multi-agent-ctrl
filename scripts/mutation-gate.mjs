@@ -1236,8 +1236,8 @@ const MUTATIONS = [
     name: "待验登记过期要报红",
     file: "scripts/contract-check.mjs",
     check: "verifyContractChecksAreThemselvesTested",
-    from: '    verifyMcpToolListCostStaysVisible: "它钉的是上限与实测值本身，撑破它就等于制造它要防的那个问题",',
-    to: '    verifyTransitionEngine: "这一条其实已经有变异了",',
+    from: '    verifyMcpToolListCostStaysVisible: "它钉的是上限与实测值本身，撑破它就等于制造它要防的那个问题"',
+    to: '    verifyTransitionEngine: "这一条其实已经有变异了"',
     expect: "已经有变异指向了"
   },
   {
@@ -2943,6 +2943,14 @@ const MUTATIONS = [
     to: "  if (cached) return cached;",
     expect: "写锁形同虚设"
   },
+  {
+    name: "停用必须叫停在跑的执行：暂停不得放过任何一个未终结的派发",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    ? "pause_dispatch"',
+    to: "    ? null",
+    expect: "既没收到 pause_dispatch、也没被改成 blocked"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
@@ -3112,7 +3120,10 @@ const GATE_COMMANDS = {
   writer: "scripts/concurrent-writer-gate.mjs",
   console: "scripts/console-behaviour-check.mjs",
   idle: "scripts/idle-tick-gate.mjs",
-  specs: "scripts/validate-specs.rb"
+  specs: "scripts/validate-specs.rb",
+  // 控制面 e2e（约 94 秒，其中九成在等 I/O，与别的变异并行几乎不占额外墙钟）。
+  // 只给那些【非走真实 HTTP 不可】的不变式用 —— 快门能守的一律别挂这里。
+  doctor: "scripts/doctor.mjs"
 };
 function gateInvocation(mutation, workdir) {
   const key = mutation.gate || "contract";

@@ -309,7 +309,6 @@ run(verifyMcpToolListCostStaysVisible);
 run(verifyMcpEnvelopeNeverCallsAnErrorSuccess);
 run(verifyOnlyHumanSessionsCanFinalize);
 run(verifyUnknownStateSchemaIsRefused);
-run(verifySuspendHaltsRunningWork);
 run(verifyCancelDirectiveStopsRunningWork);
 run(verifyPauseDirectiveIsReversible);
 run(verifyTableFootersAdmitTruncation);
@@ -5465,15 +5464,15 @@ function verifyNoRequestScopedLeaks(output) {
 // 把 core 里"只有真人能定稿"整个删掉它照样绿 —— 那道由别的用例守着，名字容易让人误以为是它。
 // 棘轮只降不升：新加检查就得配变异，或者把它加进这里并写明为什么不必。
 function verifyContractChecksAreThemselvesTested(output) {
-  const UNTESTED_CHECK_CEILING = 2;
-  // 这三项各有明确结论，登记在这里免得下一个人重走一遍：
+  const UNTESTED_CHECK_CEILING = 1;
+  // 这两项各有明确结论，登记在这里免得下一个人重走一遍：
+  //（原先在册的 verifySuspendHaltsRunningWork 已删除：它测的是本文件自造的一段模拟；
+  // "停用必须叫停在跑的执行"现由控制面 e2e 走真实 HTTP 守着，已配变异。）
   //  · verifyMcpToolListCostStaysVisible —— 它的作用是【钉住上限并打印实测值】。撑破上限需要真的
   //    把工具表做大（单条描述加长远远不够），而那正是它要防的事；成本数字另有记录，别再重量。
-  //  · verifySuspendHaltsRunningWork —— 试过两种改法都不红，真接线点未找到（见该函数上方注释）。
   //  · verifyWorkStatusEnumConvergence —— 同上，改 spec 枚举两种写法都不红（见该函数上方注释）。
   const UNTESTED_WITH_REASON = {
-    verifyMcpToolListCostStaysVisible: "它钉的是上限与实测值本身，撑破它就等于制造它要防的那个问题",
-    verifySuspendHaltsRunningWork: "已查明：它测的是本文件自造的一段模拟，不是产品路径（函数上方有记录）"
+    verifyMcpToolListCostStaysVisible: "它钉的是上限与实测值本身，撑破它就等于制造它要防的那个问题"
   };
   const self = readFileSync(join(root, "scripts/contract-check.mjs"), "utf8");
   const mutations = readFileSync(join(root, "scripts/mutation-gate.mjs"), "utf8");
@@ -6314,67 +6313,6 @@ function verifyCancelDirectiveStopsRunningWork(output) {
       + " —— 它会照常推到远端，取消只停在控制面自己的账面上");
   }
 }
-
-// 【查明：它测的是自己写的那份模拟，不是产品代码】2026-08-14。
-// 下面调的 applyTaskGroupRuntimeControlProbe 是【本文件里自造的一段】（见其定义），
-// 它自己遍历派发、自己 createAgentControlCommand、自己把状态改成 blocked ——
-// 于是无论产品侧的停用路径怎么退化，这项检查都不会红。这解释了为什么两种产品变异都无效。
-//
-// 它并非全无价值：createAgentControlCommand 那一段是真的产品函数，这条断言仍守着
-// "命令能被造出来、且带得上 dispatchId/taskGroupId"。但它【不守】"停用会不会真的下发暂停"，
-// 而名字听起来正是后者 —— 与 verifyOnlyHumanSessionsCanFinalize 同一种名不副实。
-//
-// 真正守住"停用停住执行"的是 verifySuspendedOrganizationHaltsExecution（走真实编排循环，已有变异）。
-// 要让这一条也守住产品路径，得把 applyTaskGroupRuntimeControlProbe 换成真实的那条控制路径 ——
-// 那是一次独立改动，不在"补变异"这件事的范围里，故先如实记在这里。
-function verifySuspendHaltsRunningWork(output) {
-  const probe = structuredClone(seedState);
-  ensureRuntimeCollections(probe, {root});
-  const taskGroup = probe.taskGroups.find((item) => item.id === "tg_runtime_management");
-  taskGroup.workItems = [{id: "w_running_probe", title: "在跑", status: "draft", ownerRole: "agent-runtime", progress: 0}];
-  probe.taskGroups = [taskGroup];
-  probe.agentDispatches = [];
-  runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
-  const dispatch = (probe.agentDispatches || [])[0];
-  if (!dispatch) {
-    output.push("停用必须叫停在跑的执行：没造出派发 —— 这条断言在空转");
-    return;
-  }
-  dispatch.status = "running";
-  dispatch.assignedNodeId = "node_running_probe";
-  probe.agentRuntimeNodes = [{nodeId: "node_running_probe", organizationId: "org_default", status: "online",
-    admission: "full", projectIds: [dispatch.projectId], allowedRoles: ["*"],
-    activeDispatchIds: [dispatch.dispatchId], profile: {models: []}}];
-  const before = (probe.agentControlCommands || []).length;
-  // 走真实的暂停执行器：组织停用复用的正是它，逐个任务组施加。
-  applyTaskGroupRuntimeControlProbe(probe, taskGroup);
-  const paused = (probe.agentControlCommands || []).filter((item) => item.commandType === "pause_dispatch");
-  if (paused.length <= before) {
-    output.push("停用必须叫停在跑的执行：对在跑的派发没有下发 pause_dispatch"
-      + " —— agent 会跑到底、把产出推上 git、把额度烧完，而控制台上写着已停用");
-  }
-  if (!["blocked", "cancelled"].includes((probe.agentDispatches || [])[0]?.status)) {
-    output.push(`停用必须叫停在跑的执行：派发仍是 ${(probe.agentDispatches || [])[0]?.status} —— 没有被真正叫停`);
-  }
-}
-
-// 暂停执行器住在 server.mjs（HTTP 层），契约门不启服务；这里按同样的语义复算一次，
-// 并由 validate-specs 的源码断言钉住"组织停用确实调用了它"，两边合起来覆盖这条链。
-function applyTaskGroupRuntimeControlProbe(state, taskGroup) {
-  for (const dispatch of state.agentDispatches || []) {
-    if (dispatch.taskGroupId !== taskGroup.id || ["completed", "failed", "cancelled"].includes(dispatch.status)) continue;
-    const node = dispatch.assignedNodeId
-      ? (state.agentRuntimeNodes || []).find((item) => item.nodeId === dispatch.assignedNodeId) : null;
-    if (node && ["running", "blocked"].includes(dispatch.status)) {
-      createAgentControlCommand(state, node, {commandType: "pause_dispatch", dispatchId: dispatch.dispatchId,
-        taskGroupId: taskGroup.id, payload: {reason: "organization_suspended"}},
-      {actor: "acct_probe", idempotencyKey: `org-suspend-probe:${dispatch.dispatchId}`});
-      dispatch.status = "blocked";
-      dispatch.blockedReason = "control_pause_requested";
-    }
-  }
-}
-
 
 // 控制命令重试用尽之后，状态不能还在说"进行中"。
 // 实测过的原点：人点暂停 → 节点连拒 4 次 → 不再重试，而派发停在下发那一刻写的

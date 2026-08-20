@@ -94,7 +94,8 @@ async function verifyRealtimeWebSocket(port, bearerAuth) {
         if (message.event === "wake" && message.channel === "state") { clearTimeout(timer); resolveWake(); }
       });
     });
-  } finally {
+
+} finally {
     try { ws.close(); } catch { /* already closing */ }
   }
 }
@@ -2076,6 +2077,47 @@ try {
     console.log(`审计归档 ok: ${archive.payload.entries.length} 条可读、哈希链逐条校验、改动能被发现、非系统账号 403`);
   }
   console.log("ai-native control flow ok");
+  // 【停用必须叫停在跑的执行】。此前只有契约门里一条同名检查，测的是它自己写的一段模拟，
+  // 产品路径怎么退化都不会红。这里走真实 HTTP：对一个确实有派发的任务组下暂停，之后该组下
+  // 不得再有在跑的派发 —— 否则 agent 会跑到底、把产出推上 git、把额度烧完，而控制台上写着"已暂停"。
+  // 放在收尾处：它会把该任务组的执行真的停掉，中间插入会拖垮后面的断言。
+  {
+    const before = await jsonFetch(port, "/api/state", {headers: {authorization: systemAuth}});
+    const live = (before.payload.agentDispatches || []).filter((item) =>
+      item.taskGroupId === "tg_runtime_management" && !["completed", "failed", "cancelled"].includes(item.status));
+    if (!live.length) {
+      throw new Error("收尾时 tg_runtime_management 下没有未终结的派发 —— 这一条断言会空转，"
+        + "等于没验过\"停用叫停在跑的执行\"；请改挂到确有派发的任务组上");
+    }
+    const paused = await jsonFetch(port, "/api/task-groups/tg_runtime_management/control", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-suspend-halts", authorization: systemAuth},
+      body: JSON.stringify({action: "pause"})
+    });
+    if (paused.response.status !== 200) {
+      throw new Error(`真人暂停任务组失败：HTTP ${paused.response.status} ${JSON.stringify(paused.payload)}`);
+    }
+    const after = await jsonFetch(port, "/api/state", {headers: {authorization: systemAuth}});
+    // 每一个原先未终结的派发都必须被处置：跑在节点上的那种要收到 pause_dispatch（否则节点上的
+    // 进程不知道自己该停），还没落到节点的那种直接改成 blocked。漏掉任何一个，"已暂停"就是假的。
+    const stopCommands = (after.payload.agentControlCommands || []).filter((item) =>
+      item.taskGroupId === "tg_runtime_management" && item.commandType === "pause_dispatch");
+    const commanded = new Set(stopCommands.map((item) => item.dispatchId));
+    const untouched = live.filter((item) => {
+      if (commanded.has(item.dispatchId)) return false;
+      const nowState = (after.payload.agentDispatches || []).find((row) => row.dispatchId === item.dispatchId);
+      return nowState?.status !== "blocked";
+    });
+    if (untouched.length) {
+      throw new Error(`暂停之后有 ${untouched.length} 个派发既没收到 pause_dispatch、也没被改成 blocked`
+        + `（${untouched.map((item) => `${item.dispatchId}:${item.status}`).join(",")}）——`
+        + " 控制台上写着已暂停，而它们照跑");
+    }
+    if (!stopCommands.length) {
+      console.log("  --  这一轮没有落到节点上的派发，pause_dispatch 那一支未被检验（其余派发已确认转为 blocked）");
+    }
+  }
+
 } finally {
   // 【登录限流】。防爆破的实控件，而它一个断言都没有 —— 失效时所有正常登录照旧成功，
   // 只有"猜口令"这件事变得没有代价，屏幕上不会有任何异样。
