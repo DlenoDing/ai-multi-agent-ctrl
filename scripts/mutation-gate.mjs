@@ -2944,6 +2944,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "登记里点名的读取方必须真的读它",
+    file: "scripts/contract-check.mjs",
+    check: "verifyServerFieldsReachThePerson",
+    from: '    transport: "入网自检读它（agentctl 比对 streamable-http），不是给人看的",',
+    to: '    transport: "MCP 客户端据此选传输方式",',
+    expect: "理由不成立"
+  },
+  {
     name: "文案点名的字段界面必须真的显示",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyMessagesDoNotPointAtInvisibleFields",

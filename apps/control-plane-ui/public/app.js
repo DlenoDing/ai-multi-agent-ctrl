@@ -802,7 +802,14 @@ async function api(path, options = {}) {
         // 而前端原先根本不显示它 —— 那句话把人指向一个他看不到的东西（实测造了一次真损坏才发现）。
         payload.file ? `涉及的文件：${payload.file}` : "",
         payload.kind ? `故障类型：${payload.kind}` : "",
-        payload.code && typeof payload.code === "string" ? `系统错误码：${payload.code}` : ""
+        payload.code && typeof payload.code === "string" ? `系统错误码：${payload.code}` : "",
+        // 版本不匹配那条报文让运维"重新执行入网安装命令升级"——那就得说清差在哪一版。
+        // 原先这两个字段登记成"装机脚本会读"，实测装机脚本与 agent 运行时都没读过（谁都没读）。
+        payload.requiredRuntimeVersion
+          ? `需要的运行时版本：${payload.requiredRuntimeVersion}（该节点当前 ${payload.nodeRuntimeVersion || "未知"}）` : "",
+        // 代次对不上时，"你带的是哪一代、当前是哪一代"要一起给，否则人不知道自己落后了多少。
+        payload.presented !== undefined && payload.claimEpoch !== undefined
+          ? `你带的认领代次 ${payload.presented}，当前是 ${payload.claimEpoch}` : ""
       ].map((item) => String(item || "").trim()).filter(Boolean);
       if (guidance.length) hint += `：${[...new Set(guidance)].join("；")}`;
     } catch {}

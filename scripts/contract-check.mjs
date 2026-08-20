@@ -5439,8 +5439,10 @@ function verifyServerFieldsReachThePerson(output) {
   // 逐个写明是谁在读 —— 登记不是免检，是把"为什么不用显示"钉住。
   const MACHINE_FACING_FIELDS = {
     replayed: "派发重放标记，agent 运行时据此判断要不要重复执行",
-    publicUrl: "健康检查里给运维/装机脚本用的对外地址",
-    transport: "MCP 客户端据此选传输方式",
+    transport: "入网自检读它（agentctl 比对 streamable-http），不是给人看的",
+    // publicUrl 只出现在 /api/health 里，而控制台压根不渲染健康页 —— 它是运维/装机直接
+    // curl 这个接口时看的对外地址。原先登记成"给装机脚本用"，实测装机脚本一次都没读（理由写错了）。
+    publicUrl: "只在 /api/health 里，运维直接读这个接口；控制台不渲染健康页",
     endpoint: "MCP / agent 网关地址，给客户端配置用",
     schemaVersion: "协议版本，给调用方判兼容性",
     serverUrl: "装机脚本写进 agent 配置",
@@ -5473,11 +5475,7 @@ function verifyServerFieldsReachThePerson(output) {
   // 60 秒，词表里只写"请稍后再试"）、closedBy/closedAt（谁关的、什么时候关的，人得自己翻台账）。
   // 出错那一刻恰恰是人最需要这些的时候。
   const REFUSAL_FIELDS_FOR_MACHINES = {
-    claimEpoch: "认领代次，agent 运行时据此判断自己是不是上一轮的执行器",
-    presented: "对照用的代次，同上，给 agent 看",
     retryable: "重试建议，agent 运行时据此决定要不要退避",
-    requiredRuntimeVersion: "装机脚本/agent 自检据此决定要不要升级",
-    nodeRuntimeVersion: "同上，agent 自报的版本",
     blockedReason: "阻塞原因码，界面另有整套中文渲染（explainCoded），不从这里取",
     status: "状态码回显，界面按记录本身渲染",
     qualityGate: "质量门对象回显，界面从 state 里取同一条",
@@ -5530,8 +5528,30 @@ function verifyServerFieldsReachThePerson(output) {
       output.push(`拒绝报文机器面登记里的 ${name}（${who}）已经不在任何拒绝里了 —— 登记过期，删掉它`);
     }
   }
+  // 【登记的理由本身也要成立】。过期校验只查"这个字段还在不在"，查不出"理由写错了" ——
+  // 实测栽过一次：file 登记成"界面另有 hint 那句人话"，而那句 hint 只在 /api/health 上有；
+  // 另有三条登记成"agent 运行时/装机脚本会读"，实测那两边一个字都没读（谁都没读）。
+  // 一条写错理由的登记，比没有登记更难发现。凡是点名了"谁在读"的，就去那边查一眼。
+  const READER_SOURCES = {
+    "agent 运行时": ["apps/agent-runtime/runtime.mjs"],
+    "装机脚本": ["scripts/install-agent.sh", "scripts/agentctl.mjs"],
+    "入网自检": ["scripts/agentctl.mjs"],
+    "MCP 客户端": ["apps/mcp-server/server.mjs"]
+  };
+  for (const [name, reason] of Object.entries({...MACHINE_FACING_FIELDS, ...REFUSAL_FIELDS_FOR_MACHINES})) {
+    for (const [who, files] of Object.entries(READER_SOURCES)) {
+      if (!reason.includes(who)) continue;
+      const seen = files.some((file) => {
+        try { return new RegExp(`\\b${name}\\b`).test(readFileSync(join(root, file), "utf8")); } catch { return false; }
+      });
+      if (!seen) {
+        output.push(`登记说 ${name} 由「${who}」读，但在 ${files.join(" / ")} 里一次都没出现 —— `
+          + "理由不成立。要么改成显示给人，要么写清真正的读取方（写错理由的登记比没有登记更难发现）");
+      }
+    }
+  }
   console.log(`拒绝报文字段：${refusalFields.size} 个逐个核对`
-    + `（${Object.keys(REFUSAL_FIELDS_FOR_MACHINES).length} 个登记为只给机器看）`);
+    + `（${Object.keys(REFUSAL_FIELDS_FOR_MACHINES).length} 个登记为只给机器看，理由里点名的读取方已逐个查过）`);
 }
 
 // 顶层函数不得引用它【没拿到】的请求作用域变量。这一类只有运行到那一行才炸，而"那一行"往往是

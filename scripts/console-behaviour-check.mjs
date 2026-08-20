@@ -729,7 +729,12 @@ async function runErrorGuidanceCase() {
     // 否则这句话把人指向一个他看不到的东西（造了一次真损坏才发现）。
     {payload: {error: "state_storage_corrupt", kind: "control_plane_state_corrupt", file: "control-plane-state.json"},
       expect: "涉及的文件：control-plane-state.json"},
-    {payload: {error: "state_storage_unavailable", code: "ENOSPC"}, expect: "系统错误码：ENOSPC"}
+    {payload: {error: "state_storage_unavailable", code: "ENOSPC"}, expect: "系统错误码：ENOSPC"},
+    // 这条报文让运维"重新执行入网安装命令升级"，那就得说清差在哪一版。
+    {payload: {error: "checkpoint_claim_epoch_required", requiredRuntimeVersion: "0.3.0", nodeRuntimeVersion: "0.2.1"},
+      expect: "需要的运行时版本：0.3.0（该节点当前 0.2.1）"},
+    {payload: {error: "checkpoint_claim_epoch_stale", presented: 2, claimEpoch: 5},
+      expect: "你带的认领代次 2，当前是 5"}
   ];
   for (const item of cases) {
     probe.setFetch(async () => ({ok: false, status: 409, statusText: "Conflict", json: async () => item.payload}));
