@@ -135,11 +135,18 @@ await verifyFirstRunPath();
 // 它唯一的作用是让截断发生。
 const gateLedgerLimit = 1;
 
-const tickMs = 3000;
+// 服务端对这个间隔有 5000ms 下限（server.mjs 里 `Math.max(5000, …)`）——
+// 传 3000 时它实际每 5 秒一拍，而这里所有 `tickMs * N` 的等待都按 3000 算，等短了。
+// 靠 deadline 轮询兜住了正确性，代价是每处都白等到超时才走。按【服务端真正会用的值】算。
+// 服务端对这个间隔有 5000ms 下限（server.mjs 里 `Math.max(5000, …)`）：传 3000 也是每 5 秒一拍，
+// 而这里所有 `tickMs * N` 的等待原先按 3000 算 —— 等短了，靠 deadline 轮询兜住正确性，
+// 代价是每处都白等到超时。直接按下限跑：语义不变，等待窗口按【真值】算，不再有白等。
+const requestedTickMs = 5000;
+const tickMs = Math.max(5000, requestedTickMs);
 const port = await freePort();
 const child = trackChild(spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {cwd: root,
   env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(port), AIMAC_RUNTIME_DIR: runtimeDir,
-    AIMAC_ORCHESTRATOR_INTERVAL_MS: String(tickMs), AIMAC_STATE_STORE: "runtime_json",
+    AIMAC_ORCHESTRATOR_INTERVAL_MS: String(requestedTickMs), AIMAC_STATE_STORE: "runtime_json",
     AIMAC_BOOTSTRAP_TOKEN: "idle-tick-gate-token-0123456789", DATABASE_URL: "",
     // 把账本上限调到 2：验"截断仍会被如实标记"不需要真造 60 条记录。
     AIMAC_VIEW_LEDGER_LIMIT: String(gateLedgerLimit)},
@@ -160,6 +167,10 @@ const stateVersion = async () => Number((await (await fetch(`${base}/api/state?v
 let last = await stateVersion();
 let stableSince = Date.now();
 const convergeDeadline = Date.now() + 90000;
+// 收敛判据：连续这么久状态版本不动，才算"它真的停下来了"。三拍是有意的 ——
+// 一拍可能恰好落在两次写之间，两拍撞上重试窗口。这 16.5 秒是这道门的【本质成本】，
+// 不是可以压掉的等待：要证明"空转不落盘"，就得真的空转足够久。
+// （门的总时长 45s 里，20.8s 是这类必须的等待，其余是起两台服务 + 真实编排。）
 const quietMs = tickMs * 3 + 1500;
 while (Date.now() < convergeDeadline) {
   await new Promise((r) => setTimeout(r, 1000));
