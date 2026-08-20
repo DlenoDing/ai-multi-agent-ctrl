@@ -2962,6 +2962,14 @@ const MUTATIONS = [
     expect: "一个「报文里的 X」都没认出来"
   },
   {
+    name: "认不出的升级候选状态必须拒绝",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (!nextStatus) return json(res, 400, {error: "system_upgrade_candidate_status_invalid"});',
+    to: '    if (false) return json(res, 400, {error: "system_upgrade_candidate_status_invalid"});',
+    expect: "认不出的升级候选状态必须拒绝"
+  },
+  {
     name: "启动期拒绝时不得把密钥原样打进日志",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

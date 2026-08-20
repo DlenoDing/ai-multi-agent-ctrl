@@ -1909,6 +1909,17 @@ try {
   // 升级候选没有 REST 创建入口（只能由 MCP 从运行问题模式导出，两跳）。先试着导一次；
   // 导不出来就如实说这一条没验，别硬造一个不存在的 id 去打 —— 那验的是 404，不是状态校验。
   {
+    // 先造一个运行问题模式：没有它就导不出候选，这条断言只能空转（此前它一直在报"未被检验"）。
+    // forcePattern 是产品自己的入参，用来跳过"要先攒够样本"那一步 —— 不是绕过判据。
+    // 要报够三次：导出只挑 recurrenceCount >= 3 的模式（"反复出现"才值得升级，报一次不算）。
+    for (let round = 0; round < 4; round += 1) {
+      await jsonFetch(port, "/api/runtime-issues", {
+        method: "POST",
+        headers: {"Idempotency-Key": `doctor-suc-seed-${round}`, authorization: systemAuth},
+        body: JSON.stringify({taskGroupId: "tg_runtime_management", issueFingerprint: "e2e-suc-seed",
+          issueClass: "repeated_failure_fingerprint", summary: "为升级候选造一条模式", forcePattern: true})
+      });
+    }
     await jsonFetch(port, "/mcp", {
       method: "POST", headers: {authorization: systemAuth},
       body: JSON.stringify({jsonrpc: "2.0", id: 1, method: "tools/call", params: {
