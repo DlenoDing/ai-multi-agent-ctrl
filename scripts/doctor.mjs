@@ -2402,6 +2402,32 @@ try {
     }
   }
 
+  // 【写完立刻读，必须看得见自己刚写的东西】。/api/state 有一层 60 秒的视图缓存，
+  // 键里带着 stateVersion —— 一旦它从键里掉出去（实测：把它删掉，整套 e2e 一条都不红），
+  // 人建完任务组刷新页面，最多一分钟内看到的还是旧的那份，而屏幕上没有任何异样。
+  // 缓存必须由"它失效条件被破坏时会出现的可观察故障"来守，不能只由"它存在"来守。
+  {
+    const readAll = () => jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: systemAuth}});
+    const before = await readAll();
+    const beforeCount = (before.payload.taskGroups || []).length;
+    const created = await jsonFetch(port, "/api/task-groups", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-cache-freshness", authorization: systemAuth},
+      body: JSON.stringify({projectId: "prj_control_plane", title: "缓存新鲜度探针"})
+    });
+    if (created.response.status !== 201) {
+      throw new Error(`造不出任务组用于缓存新鲜度检验（HTTP ${created.response.status}）`);
+    }
+    const newId = created.payload.taskGroup.id;
+    const after = await readAll();
+    const visible = (after.payload.taskGroups || []).some((item) => item.id === newId);
+    if (!visible) {
+      throw new Error(`刚建的任务组 ${newId} 在紧接着的一次 /api/state 里看不到`
+        + `（前 ${beforeCount} 条、后 ${(after.payload.taskGroups || []).length} 条）`
+        + " —— 视图缓存的失效条件坏了，人刷新页面最多一分钟内都看不到自己刚做的事");
+    }
+  }
+
   // 【停用必须叫停在跑的执行】。此前只有契约门里一条同名检查，测的是它自己写的一段模拟，
   // 产品路径怎么退化都不会红。这里走真实 HTTP：对一个确实有派发的任务组下暂停，之后该组下
   // 不得再有在跑的派发 —— 否则 agent 会跑到底、把产出推上 git、把额度烧完，而控制台上写着"已暂停"。

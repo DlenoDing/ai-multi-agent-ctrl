@@ -243,6 +243,34 @@ check(unexpected.length === 0,
     `磁盘 ${onDisk?.status}/${onDisk?.decision?.decidedBy || "-"}｜甲 ${fromWinner?.status}｜乙 ${fromLoser?.status}`);
 }
 
+// 【别的进程写入之后，这一台的读视图不能还是旧的】。/api/state 有一层 60 秒缓存：
+// 本进程自己写时靠 writeState 里的 clear() 失效，**别的进程写时那句 clear 根本不会执行**
+// —— 这一支只能靠缓存键里的 stateVersion 兜住。两条机制各管一种场景、互不替代，
+// 所以必须各自有用例：单独去掉任何一条都要有东西变红（实测过：此前两条都没人验）。
+{
+  const readGroups = async (server, auth) => {
+    const view = await (await fetch(`${server.base}/api/state?view=full&limit=200`, {headers: auth})).json();
+    return (view.taskGroups || []).map((item) => item.id);
+  };
+  // 乙先读一次，把这一份视图存进它自己的缓存。
+  const before = await readGroups(b, authB);
+  // 甲（另一个进程）写一条。用任务组而不是项目：项目名额在前面的用例里已经用满，
+  // 会拿到 org_quota_exceeded，那样这条断言就变成在验配额（实测撞到过）。
+  const created = await fetch(`${a.base}/api/task-groups`, {method: "POST",
+    headers: {...authA, "idempotency-key": "conc-cache-freshness"},
+    body: JSON.stringify({projectId: "prj_control_plane", title: "跨进程新鲜度探针"})});
+  const createdBody = await created.json().catch(() => ({}));
+  const createdId = createdBody?.taskGroup?.id || createdBody?.id;
+  check(Boolean(createdId), "跨进程新鲜度探针：甲侧写得进去",
+    `HTTP ${created.status} ${JSON.stringify(createdBody).slice(0, 120)}`);
+  if (createdId) {
+    const after = await readGroups(b, authB);
+    check(after.includes(createdId),
+      "别的进程写入之后，这一台立刻读得到（视图缓存没有把旧的那份端出来）",
+      `乙侧写前 ${before.length} 个任务组、写后 ${after.length} 个，${after.includes(createdId) ? "看得到" : "看不到"} ${createdId}`);
+  }
+}
+
 // 两边都还能继续写（谁也没被对方的锁堵死）
 for (const [server, auth, tag] of [[a, authA, "a"], [b, authB, "b"]]) {
   const response = await fetch(`${server.base}/api/projects`, {method: "POST",

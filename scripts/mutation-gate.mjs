@@ -2944,6 +2944,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "读视图缓存的键必须带 stateVersion（别的进程写入时只有它兜得住）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "writer",
+    from: '  return `${account.accountId}:${session.sessionId}:${stateVersion}:${view || "full"}:${limit || "default"}:${projectId || "all"}`',
+    to: '  return `${account.accountId}:${session.sessionId}:${view || "full"}:${limit || "default"}:${projectId || "all"}`',
+    expect: "别的进程写入之后，这一台立刻读得到"
+  },
+  {
     name: "按 id 取记录的读路由不得把别的租户的内容发出来",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

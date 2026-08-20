@@ -1688,6 +1688,12 @@ function stateViewEtag(cacheKey, central) {
   return `W/"${digestOf(`${cacheKey}\u0000${central?.stateVersion || 0}\u0000${runtimeFactsSignature()}`).slice(7, 39)}"`;
 }
 
+// 【键里的 stateVersion 是正确性那一条，writeState 里的 clear() 只是及时回收内存】——
+// 两者看着冗余，其实分工不同，别把哪一条当成多余删掉：
+//  · 本进程自己写：clear() 与版本号都能让它失效。
+//  · 【别的进程】写（每次请求都从磁盘重读状态，本仓真有多进程写同一份状态）：
+//    那句 clear 根本不会在这一台上执行，只有版本号进键才兜得住。并发写入门里有专门的用例。
+// 前提是"每一次写入都涨版本号"——会话过期清扫那处原先漏了，已补。
 function stateViewCacheKey(account, session, stateVersion, view, limit, projectId) {
   // projectId 必须进键：不进的话，同一个人先看 A 项目再切到 B，会拿到 A 的缓存结果。
   return `${account.accountId}:${session.sessionId}:${stateVersion}:${view || "full"}:${limit || "default"}:${projectId || "all"}`
@@ -5657,7 +5663,12 @@ const realtimeHeartbeat = setInterval(() => {
           session.updatedAt = new Date(nowMs).toISOString();
           expiredCount += 1;
         }
-        if (expiredCount) writeState(writable);
+        if (expiredCount) {
+          // 版本号必须跟着涨：读视图缓存的键带着它，不涨的话别的进程那一侧会在 TTL 内
+          // 继续端出过期会话还"有效"的那一份（全仓 77 处写入里只有这一处漏了）。
+          writable.stateVersion = Number(writable.stateVersion || 0) + 1;
+          writeState(writable);
+        }
       } catch { /* 清扫是尽力而为，冲突时下一轮心跳再来 */ }
     }
   }
