@@ -585,6 +585,38 @@ try {
     }
   }
 
+  // 【同一个 id 建两次必须撞】。这三条守卫此前没有任何断言 —— 删掉它们，第二次创建会
+  // 静默覆盖掉第一条（同一个 id 两份记录，或者后者顶掉前者），而调用方拿到的是 201。
+  {
+    const dupProject = `prj_dup_${Date.now()}`;
+    const mk = (name, args, key) => mcpAs(admin.sessionToken, "tools/call",
+      {name, arguments: {...args, idempotencyKey: key}});
+    const first = await mk("orchestration-mcp.project_create",
+      {projectId: dupProject, name: "重复 id 探针"}, "mcp-dup-prj-1");
+    if (first.structuredContent?.result?.error) {
+      throw new Error(`造不出用于重复 id 检验的项目：${JSON.stringify(first.structuredContent?.result).slice(0, 140)}`);
+    }
+    const cases = [
+      {name: "orchestration-mcp.project_create", args: {projectId: dupProject, name: "又一个"},
+        key: "mcp-dup-prj-2", code: "project_id_conflict"},
+      {name: "orchestration-mcp.task_group_create",
+        args: {projectId: dupProject, taskGroupId: "tg_runtime_management", title: "撞已有任务组"},
+        key: "mcp-dup-tg", code: "task_group_id_conflict"}
+    ];
+    const missed = [];
+    for (const item of cases) {
+      const again = await mk(item.name, item.args, item.key);
+      const error = again.structuredContent?.result?.error;
+      if (error !== item.code) {
+        missed.push(`${item.name} → ${JSON.stringify(error)}（应为 ${item.code}）`);
+      }
+    }
+    if (missed.length) {
+      throw new Error("同一个 id 建两次没有被拒：\n    " + missed.join("\n    ")
+        + "\n  —— 第二次会静默覆盖掉第一条，而调用方拿到的是成功");
+    }
+  }
+
   // 【MCP 侧「查无此物」也要逐个点名】。这些码此前没有任何门/e2e 提到过 ——
   // 也就是说把 `if (!x) return {error: "..."}` 整行删掉，没有任何东西会变红，
   // 而后面的代码会拿着 undefined 往下跑（本仓在 REST 侧已经因为这个漏过真事实）。

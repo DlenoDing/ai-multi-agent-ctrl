@@ -2946,6 +2946,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "同一个 id 建两次必须撞，不得静默覆盖",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "  if (state.projects.some((item) => item.id === projectId)) ret",
+    to: "  if (false) ret",
+    expect: "同一个 id 建两次没有被拒"
+  },
+  {
     name: "MCP 工具拿到不存在的 id 必须给出该给的拒绝码",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "mcp",
