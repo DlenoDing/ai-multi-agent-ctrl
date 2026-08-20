@@ -702,7 +702,18 @@ async function runErrorGuidanceCase() {
     {payload: {error: "dispatch_fail_status_unknown", supported: ["blocked", "cancelled", "failed"]},
       expect: "可用的取值：blocked、cancelled、failed"},
     {payload: {error: "unsupported_task_group_control_action", supported: ["pause", "resume"]},
-      expect: "可用的取值：pause、resume"}
+      expect: "可用的取值：pause、resume"},
+    // 服务端算出了"多久之后能再试"，词表里只写"请稍后再试" —— 人只能反复试到成功为止。
+    {payload: {error: "too_many_login_attempts", retryAfterSeconds: 60}, expect: "60 秒后可再试"},
+    // 谁关的、什么时候关的都在同一个响应里；不给的话人得自己去翻台账。
+    {payload: {error: "task_group_already_closed", closedBy: "acct_owner", closedAt: "2026-08-20T10:00:00Z"},
+      expect: "已由 acct_owner 关闭"},
+    {payload: {error: "state_unreadable", hint: "按 file/code 指出的线索恢复"}, expect: "按 file/code 指出的线索恢复"},
+    {payload: {error: "bootstrap_admin_required", received: "请求体里没有 admin 这一层"},
+      expect: "收到的是：请求体里没有 admin 这一层"},
+    {payload: {error: "project_has_open_task_groups", openTaskGroupIds: ["tg_a", "tg_b"]},
+      expect: "还没关掉的任务组：tg_a、tg_b"},
+    {payload: {error: "password_too_short", minLength: 8}, expect: "至少需要 8 位"}
   ];
   for (const item of cases) {
     probe.setFetch(async () => ({ok: false, status: 409, statusText: "Conflict", json: async () => item.payload}));

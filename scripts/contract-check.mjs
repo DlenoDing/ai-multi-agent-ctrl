@@ -5445,6 +5445,67 @@ function verifyServerFieldsReachThePerson(output) {
       output.push(`机器面字段登记里的 ${name}（${who}）已经不在任何 200 响应里了 —— 登记过期，删掉它`);
     }
   }
+
+  // 【拒绝报文也算】。上面只扫 200，于是 4xx/5xx 里那些"给人看的说明"整族在视野之外 ——
+  // 实测漏掉过 supported（12 处拒绝都带着它，前端一处没读）、retryAfterSeconds（服务端算出了
+  // 60 秒，词表里只写"请稍后再试"）、closedBy/closedAt（谁关的、什么时候关的，人得自己翻台账）。
+  // 出错那一刻恰恰是人最需要这些的时候。
+  const REFUSAL_FIELDS_FOR_MACHINES = {
+    claimEpoch: "认领代次，agent 运行时据此判断自己是不是上一轮的执行器",
+    presented: "对照用的代次，同上，给 agent 看",
+    retryable: "重试建议，agent 运行时据此决定要不要退避",
+    requiredRuntimeVersion: "装机脚本/agent 自检据此决定要不要升级",
+    nodeRuntimeVersion: "同上，agent 自报的版本",
+    blockedReason: "阻塞原因码，界面另有整套中文渲染（explainCoded），不从这里取",
+    status: "状态码回显，界面按记录本身渲染",
+    qualityGate: "质量门对象回显，界面从 state 里取同一条",
+    reviewBundle: "评审包对象回显，同上",
+    // 以下都是"把那条记录原样回显"，界面从 state 里取同一条渲染，不从拒绝报文里取：
+    approvalRequest: "审批请求对象回显",
+    finding: "缺陷对象回显",
+    permissionRequest: "权限申请对象回显",
+    reviewPlan: "评审计划对象回显",
+    ruleSourceResolution: "规则源处置对象回显",
+    sharedDefinition: "共享定义对象回显",
+    systemUpgradeCandidate: "升级候选对象回显",
+    topology: "执行拓扑对象回显",
+    code: "状态读不出来时的底层错误码，与 file 一起给运维看日志；界面另有 hint 那句人话",
+    file: "状态读不出来时指向哪一份文件，同上"
+  };
+  // 只取【顶层】字段：嵌套对象里的键（诊断结构里的 code/file 之类）不是拒绝报文的字段，
+  // 混进来会让这道门发出一堆假警报，而假警报的下场是被人随手登记掉（登记就此失去意义）。
+  const refusalFields = new Set();
+  for (const match of server.matchAll(/json\(res,\s*[45]\d\d,\s*\{error: "[a-z_]+"/gu)) {
+    const start = server.indexOf("{", match.index + match[0].lastIndexOf("{error") - 1);
+    let depth = 0;
+    let end = start;
+    for (; end < server.length && end < start + 600; end += 1) {
+      const ch = server[end];
+      if (ch === "{" || ch === "[") depth += 1;
+      else if (ch === "}" || ch === "]") { depth -= 1; if (!depth) break; }
+      else if (ch === "," && depth === 1) {
+        const rest = server.slice(end + 1, end + 60).match(/^\s*([a-zA-Z][a-zA-Z0-9_]{3,})\s*:/u);
+        if (rest) refusalFields.add(rest[1]);
+      }
+    }
+  }
+  if (refusalFields.size < 8) {
+    output.push(`拒绝报文字段只提取到 ${refusalFields.size} 个 —— 提取多半失配，这一支在空转`);
+    return;
+  }
+  for (const name of [...refusalFields].sort()) {
+    if (REFUSAL_FIELDS_FOR_MACHINES[name]) continue;
+    if (new RegExp(`payload\\.${name}\\b`).test(app)) continue;
+    output.push(`拒绝报文里带了 ${name}，而控制台一处都没读 —— 出错那一刻人最需要它。`
+      + "要么显示给人，要么登记进 REFUSAL_FIELDS_FOR_MACHINES 并写明是谁在读");
+  }
+  for (const [name, who] of Object.entries(REFUSAL_FIELDS_FOR_MACHINES)) {
+    if (!refusalFields.has(name)) {
+      output.push(`拒绝报文机器面登记里的 ${name}（${who}）已经不在任何拒绝里了 —— 登记过期，删掉它`);
+    }
+  }
+  console.log(`拒绝报文字段：${refusalFields.size} 个逐个核对`
+    + `（${Object.keys(REFUSAL_FIELDS_FOR_MACHINES).length} 个登记为只给机器看）`);
 }
 
 // 顶层函数不得引用它【没拿到】的请求作用域变量。这一类只有运行到那一行才炸，而"那一行"往往是
@@ -5755,7 +5816,7 @@ function verifySharedJsonWritesAreAtomic(output) {
 
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 42;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 40;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];

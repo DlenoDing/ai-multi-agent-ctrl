@@ -2944,6 +2944,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "拒绝报文里给人看的字段，前端不读要被门看见",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyServerFieldsReachThePerson",
+    from: "        payload.hint,",
+    to: '        "",',
+    expect: "拒绝报文里带了 hint"
+  },
+  {
     name: "服务端算好的合法清单必须到达人眼前",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

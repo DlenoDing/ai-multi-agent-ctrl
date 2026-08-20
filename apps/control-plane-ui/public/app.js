@@ -771,7 +771,18 @@ async function api(path, options = {}) {
         payload.reason,
         Array.isArray(payload.required) ? payload.required.join("；") : payload.required,
         Array.isArray(payload.supported) && payload.supported.length
-          ? `可用的取值：${payload.supported.join("、")}` : ""
+          ? `可用的取值：${payload.supported.join("、")}` : "",
+        // 服务端算出了"多久之后能再试"，词表里却只写着"请稍后再试" —— 人只能反复试。
+        payload.retryAfterSeconds ? `${payload.retryAfterSeconds} 秒后可再试` : "",
+        // 已经关掉的东西：谁关的、什么时候关的，都在同一个响应里。不给的话人得自己去翻台账。
+        payload.closedBy ? `已由 ${payload.closedBy} 关闭${payload.closedAt ? `（${payload.closedAt}）` : ""}` : "",
+        // hint 是服务端写的"下一步怎么办"；received 是"你实际发上来的是什么"（参数写错时最省事的一句）；
+        // openTaskGroupIds 是"还有哪几个挡着"。三样都在同一个响应里，不给出来人只能自己猜。
+        payload.hint,
+        payload.received ? `收到的是：${payload.received}` : "",
+        Array.isArray(payload.openTaskGroupIds) && payload.openTaskGroupIds.length
+          ? `还没关掉的任务组：${payload.openTaskGroupIds.join("、")}` : "",
+        payload.minLength ? `至少需要 ${payload.minLength} 位` : ""
       ].map((item) => String(item || "").trim()).filter(Boolean);
       if (guidance.length) hint += `：${[...new Set(guidance)].join("；")}`;
     } catch {}
