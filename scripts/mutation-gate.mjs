@@ -13,7 +13,7 @@
  */
 import { execFile, execFileSync } from "node:child_process";
 import { cpus, tmpdir } from "node:os";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -3166,6 +3166,8 @@ process.on("uncaughtException", (error) => { restoreAll(); console.error(error);
 // 不是本地这份代码，所以此时明说原因并退回串行，而不是"尽量并行"。
 const WORKTREE_PREFIX = "aimac-mutation-w";
 // 这些门要起真实服务，而 worktree 里没有 node_modules —— 只能在真实工作区跑。
+// doctor/mcp 同样如此：它们起的是真的 HTTP 服务，worktree 里连 node_modules 都没有，
+// 于是必跑失败 —— 而失败的原因不是被测守卫，门会报"红了但不是预期原因"（实测到过）。
 const NEEDS_REAL_TREE = new Set(["idle", "crash", "writer"]);
 
 function workingTreeIsClean() {
@@ -3189,6 +3191,16 @@ function pruneStaleWorktrees() {
     try { execFileSync("git", ["worktree", "remove", "--force", dir], {cwd: root, stdio: "ignore"}); } catch { /* 尽力而为 */ }
   }
   try { execFileSync("git", ["worktree", "prune"], {cwd: root, stdio: "ignore"}); } catch { /* 尽力而为 */ }
+}
+
+// worktree 只有被 git 跟踪的文件，没有 node_modules —— 起真实服务的门（doctor/mcp 要用 ws）
+// 因此必跑失败，而失败原因不是被测守卫，门会报"红了但不是预期原因"（实测撞到过）。
+// 一条软链就够：真实工作区的 node_modules 本来就是只读依赖，不必每个 worktree 各装一份
+// （装一份约 15 个包，8 个 worktree 就是 8 次 npm ci —— 那比省下的时间贵得多）。
+function linkNodeModules(dir) {
+  const source = join(root, "node_modules");
+  if (!existsSync(source)) return;
+  try { symlinkSync(source, join(dir, "node_modules"), "dir"); } catch { /* 已存在就算了 */ }
 }
 
 function removeWorktrees(dirs) {
@@ -3314,6 +3326,7 @@ async function runParallel(mutations) {
     const dir = join(tmpdir(), `${WORKTREE_PREFIX}${process.pid}-${index}`);
     try { rmSync(dir, {recursive: true, force: true}); } catch { /* 尽力而为 */ }
     execFileSync("git", ["worktree", "add", "--detach", "--quiet", dir, "HEAD"], {cwd: root, stdio: "ignore"});
+    linkNodeModules(dir);
     dirs.push(dir);
   }
   process.on("exit", () => removeWorktrees(dirs));
@@ -3429,6 +3442,7 @@ async function runSelfTest() {
   const dir = join(tmpdir(), `${WORKTREE_PREFIX}${process.pid}-selftest`);
   try { rmSync(dir, {recursive: true, force: true}); } catch { /* 尽力而为 */ }
   execFileSync("git", ["worktree", "add", "--detach", "--quiet", dir, "HEAD"], {cwd: root, stdio: "ignore"});
+  linkNodeModules(dir);
   process.on("exit", () => removeWorktrees([dir]));
   const problems = [];
   const impossible = await judgeMutation({...sample, expect: "这句话不会出现在任何输出里-selftest"}, dir);
