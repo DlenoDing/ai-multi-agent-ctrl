@@ -2946,6 +2946,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "清单路径必须是 git 跟得住的",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: '    return {accepted: false, status: 400, error: "artifact_manifest_must_be_git_trackable"};',
+    to: '    return {accepted: false, status: 400, error: "generic_rejected"};',
+    expect: "清单路径用绝对路径"
+  },
+  {
     name: "定下方案定稿要求必须写理由",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

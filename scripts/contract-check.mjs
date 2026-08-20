@@ -5955,7 +5955,7 @@ function verifySharedJsonWritesAreAtomic(output) {
 
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 23;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 22;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -7836,7 +7836,7 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     foreignSession, omitLanguageDigest, forgeLanguageDigest, targetAlreadyPushed,
     targetFromAnotherWorkItem, twoTargetRefs,
     pushRefWrongTarget, emptyFinalCommit, manifestDeleted, outputDeleted, outputOutsideAllowlist,
-    dispatchPaused, noTargetRef, targetRefsReversed}) => {
+    dispatchPaused, noTargetRef, targetRefsReversed, manifestAbsolutePath}) => {
     // 这段建置对每个用例完全相同，而它是本项检查里最贵的一块：实测 324ms/次 × 19 个用例 ≈ 6.2 秒
     // （对比：一次完整编排只要 61ms，克隆状态 1ms）。改成"建一次模板、之后按目录拷贝"。
     const {repo, remote, baseRef, caseRoot} = checkoutFromTemplate();
@@ -8017,7 +8017,10 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
           .find((id) => id !== target.targetId) || `${target.targetId}__other`, target.targetId]
           : twoTargetRefs ? [target.targetId, "tgt_smuggled_in"] : [target.targetId],
       // manifestFromLastRound：指向一份上一轮就在仓库里、这次没再动过的清单。
-      artifactManifestRefs: [manifestFromLastRound ? "docs/carryover.json"
+      // manifestAbsolutePath：清单路径用绝对路径。git 跟踪不了它 —— 而"跟踪不了"意味着
+      // 服务端根本无法去提交里核对这份清单，整条证据链从这里就断了。
+      artifactManifestRefs: manifestAbsolutePath ? ["/etc/passwd"]
+        : [manifestFromLastRound ? "docs/carryover.json"
         : manifestDeleted ? "docs/gone.json" : "docs/manifest.json"],
       changedPathEvidenceRefs: [`git-diff:${baseRef}:${commit}`, "git-path:docs/manifest.json"]
     }, {root: repo, actor: "agent-runtime"});
@@ -8055,6 +8058,8 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
   // 它是那道守卫后面的第二道，留着是对的（漂移守卫一旦放宽，它就是最后一道），但编不出用例。
   for (const probe of [
     {opts: {noTargetRef: true}, error: "repository_output_target_missing", what: "一个产出目标都不报"},
+    {opts: {manifestAbsolutePath: true}, error: "artifact_manifest_must_be_git_trackable",
+      what: "清单路径用绝对路径（git 跟踪不了，服务端根本无法去提交里核对它）"},
   ]) {
     const probed = runCase(probe.opts);
     if (probed.skipped) { output.push(`产出目标断言无从验证（${probe.what}）：${probed.skipped}`); continue; }
