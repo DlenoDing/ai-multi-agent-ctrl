@@ -2946,6 +2946,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "派发绑定的授权必须把省掉的作用域补成自己那条",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "    taskGroupId: args.taskGroupId || grantCheck.scope.taskGroupId,",
+    to: "    taskGroupId: args.taskGroupId,",
+    expect: "服务端没有把它补成这条派发自己的房间"
+  },
+  {
     name: "自治循环静默停摆（不报错只是不跑了）也要说出来",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

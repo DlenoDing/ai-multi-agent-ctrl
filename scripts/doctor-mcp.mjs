@@ -560,6 +560,31 @@ try {
       + "；白名单一旦放开，它们会自动落进前一支");
   }
 
+  // 【派发绑定的授权会自动补全作用域】。受限节点省掉 roomId/taskGroupId 时，服务端会拿
+  // 这条派发自己的作用域把它补上（applyAgentGrantScopeArgs）——所以它【补不出一个越界的值】，
+  // 而不是"缺省被当成放行"。这跟本仓那条"缺省不得等于有利结果"是同一件事的两种解法：
+  // 一种是拒绝，一种是把正确答案填进去。这里实测确认走的是后者，别再有人当成漏洞去追。
+  //
+  // 顺带把越界那一支压住：点名【隔壁项目】的房间时必须被拒（工具白名单先拒也算拒住了，
+  // 但要逐字对上码，否则"拒了"与"拒对了"分不开）。
+  {
+    const omitted = await mcpAs(nodeToken, "tools/call",
+      {name: "room-mcp.room_wait", arguments: {idempotencyKey: "mcp-bounded-room"}});
+    const omittedRoom = omitted.structuredContent?.result?.roomId;
+    if (!omittedRoom || !omittedRoom.includes(grantedTaskGroupId)) {
+      throw new Error(`受限节点省掉 roomId 时，服务端没有把它补成这条派发自己的房间`
+        + `（拿到 ${JSON.stringify(omittedRoom)}，应含 ${grantedTaskGroupId}）`
+        + " —— 补错了就等于让它读到别处");
+    }
+    const crossRoomWait = await mcpAs(nodeToken, "tools/call",
+      {name: "room-mcp.room_wait", arguments: {roomId: `room_${scanGroupId}`, idempotencyKey: "mcp-bounded-out"}});
+    const crossError = crossRoomWait.structuredContent?.result?.error;
+    if (!["out_of_scope", "mcp_grant_scope_mismatch"].includes(crossError)) {
+      throw new Error(`受限节点点名隔壁项目的房间却没有被拒（${JSON.stringify(crossError)}）`
+        + " —— 它能读到别的租户的协作记录");
+    }
+  }
+
   const readOnlyTools = listed.tools.filter((tool) => tool.annotations?.readOnlyHint || tool.readOnlyHint);
   if (readOnlyTools.length < 10) throw new Error(`跨租户扫描只认出 ${readOnlyTools.length} 个只读工具 —— 提取逻辑与代码脱节，本条在空转`);
   const scanLeaks = [];
