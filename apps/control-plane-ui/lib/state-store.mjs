@@ -247,6 +247,22 @@ function assertStateVersionAdvanced(state, expectedStateVersion) {
   throw error;
 }
 
+// 保留仍被长期对象引用的决策，其余按时间淘汰。数量以活跃长期对象数为界，不会失控。
+function capPolicyDecisionsKeepingReferenced(state) {
+  const cap = Math.max(100, Number(process.env.AIMAC_POLICY_DECISIONS_CAP || 500));
+  if (!Array.isArray(state?.policyDecisions) || state.policyDecisions.length <= cap) return;
+  const referenced = new Set([
+    ...(state.accessGrants || [])
+      .filter((grant) => grant.status === "active").map((grant) => grant.policyDecisionRef),
+    ...(state.repositoryOutputs || []).map((item) => item.decisionRecordRef)
+  ].filter(Boolean));
+  const kept = state.policyDecisions.slice(0, cap);
+  const keptIds = new Set(kept.map((item) => item.id));
+  const stillReferenced = state.policyDecisions.slice(cap)
+    .filter((item) => referenced.has(item.id) && !keptIds.has(item.id));
+  state.policyDecisions = stillReferenced.length ? [...kept, ...stillReferenced] : kept;
+}
+
 export function writeStoredState(state, options) {
   // 中央态不是完整状态：它不含项目分片里的集合。拿它写回去会把全部项目分片删掉。
   // 这不是假想 —— PG 的 CAS 探针就这么清空过一次（当时靠既有 e2e 才发现）。
@@ -254,6 +270,12 @@ export function writeStoredState(state, options) {
   if (state && state.__centralOnly) {
     throw Object.assign(new Error("refusing_to_write_central_only_state"), {code: "AIMAC_CENTRAL_ONLY_WRITE"});
   }
+  // 【容量淘汰放在写入点，而不是各个调用点】。policyDecisions 有三处淘汰（server 两处、core 一处），
+  // 而长期对象（授权、产出目标）上带着指向它的引用 —— 到量之后事后问"这条权限是凭什么给的"
+  // 就答不出来。此前保留逻辑写在 finishGuardedWrite / policyDecisionEval 里，
+  // 而 MCP 侧走的是 writeStoredState、绕开了它们：实测 10 条活跃授权里 4 条的依据已经没了。
+  // 与上面那条"拒绝写中央态"同一条道理：在写入点管住，比在每个调用点提醒可靠。
+  capPolicyDecisionsKeepingReferenced(state);
   mkdirSync(options.runtimeDir, {recursive: true});
   assertStateVersionAdvanced(state, options.expectedStateVersion);
   if (stateStoreKind() === "postgresql") {

@@ -2946,19 +2946,11 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
-    name: "授权的依据不许被容量挤掉",
-    gate: "doctor",
-    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
-    from: "  return stillReferenced.length ? [...kept, ...stillReferenced] : kept;",
-    to: "  return kept;",
-    expect: "被容量挤掉了"
-  },
-  {
-    name: "长期记录指向有上限集合要被门看见",
-    file: "apps/control-plane-ui/server.mjs",
+    name: "仍被引用的决策不许被容量挤掉（静态门与 e2e 各守一半）",
     check: "verifyLongLivedRecordsDoNotPointAtCappedOnes",
-    from: "  state.policyDecisions = capKeepingReferenced(state.policyDecisions, 120, referencedDecisionIds);",
-    to: "  state.policyDecisions = state.policyDecisions.slice(0, 120);",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    from: "  state.policyDecisions = stillReferenced.length ? [...kept, ...stillReferenced] : kept;",
+    to: "  state.policyDecisions = kept;",
     expect: "会变成悬空引用"
   },
   {

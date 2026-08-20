@@ -2614,6 +2614,90 @@ try {
     }
   }
 
+  // 【全量引用完整性】。判别力状况如实写在这里：试过对 modelSelectionDecisionRef /
+  // placementDecisionRef 两处赋值做变异，e2e 都不红 —— 因为那两条赋值在这一轮的编排里没被走到
+  // （反查看到的那些引用来自别的路径）。也就是说这条断言目前只证明了"当前状态是干净的"，
+  // 还没证明"脏了它会红"。留着的理由：它是【按真实数据反查】，源码判据看不见的接法只有它能发现，
+  // 而且上一轮正是靠它逼出了三族同形引用。下一个人若能造出一条真的悬空引用，请把变异登记上。
+  //
+  // 上一条只查"指向有上限集合"的引用；这一条更宽：状态里任何一个
+  // 形如 id 的引用值，都必须在某个集合里真的找得到。指向已消失的 id ＝ 静默损坏 ——
+  // 人点进去看到空白，或者判据把它当成"没有"而放行，两种都不会有任何报错。
+  {
+    // limit 要给足：视图会把每个集合截到 limit 条，被截掉的 id 收不进 knownIds，
+    // 于是指向它们的引用全被误报成"已不存在"（第一版用 200，报出 24 条全是这么来的）。
+    const full = await jsonFetch(port, "/api/state?view=full&limit=5000", {headers: {authorization: systemAuth}});
+    if ((full.payload.truncatedCollections || []).length) {
+      throw new Error(`引用完整性扫描拿到的是被截断的视图（${full.payload.truncatedCollections.join("、")}）`
+        + " —— 收不全 id，会把没被截到的引用误报成悬空");
+    }
+    // 收集状态里所有对象的 id（各集合的主键字段名不统一，按后缀认）。
+    const knownIds = new Set();
+    const collectIds = (node) => {
+      if (Array.isArray(node)) { node.forEach(collectIds); return; }
+      if (!node || typeof node !== "object") return;
+      for (const [key, value] of Object.entries(node)) {
+        if (typeof value === "string" && (key === "id" || /^[a-z][A-Za-z]*Id$/u.test(key)) && !/Ref$/u.test(key)) {
+          knownIds.add(value);
+        }
+        collectIds(value);
+      }
+    };
+    collectIds(full.payload);
+    if (knownIds.size < 50) {
+      throw new Error(`只收集到 ${knownIds.size} 个 id —— 提取多半失配，这条引用完整性断言在空转`);
+    }
+    // 这些引用值不是本状态里的对象 id：外部凭据、按约定拼出来的串、指向归档台账的。
+    const NOT_STATE_IDS = /^(?:audit|session|issue|sample|revocation|response|decision|evidence|policy|reference|resolution|room|contract|skill|spec|doc|file|repo|git-|sha256:|scrypt\$|refs\/|https?:)/u;
+    const COMPOSITE_KEYS = /^[a-z_]+:[^/]*\//u;
+    // 这些 Ref 指的不是状态里的对象：git 提交/分支、外部标识。按【字段名】排除，
+    // 比按取值形状猜可靠（第一版按取值猜，把 12 位提交哈希当成了悬空 id）。
+    const NOT_OBJECT_REF_FIELDS = new Set(["baseRef", "branchRef", "commitRef", "sourceRef",
+      "remoteRef", "headRef", "pushRef", "treeRef"]);
+    const dangling = [];
+    const walk = (node, path) => {
+      if (Array.isArray(node)) { node.forEach((item, index) => walk(item, `${path}[${index}]`)); return; }
+      if (!node || typeof node !== "object") return;
+      for (const [key, value] of Object.entries(node)) {
+        if (typeof value === "string" && /Ref$/u.test(key) && !NOT_OBJECT_REF_FIELDS.has(key)
+          && value && !NOT_STATE_IDS.test(value) && !COMPOSITE_KEYS.test(value)
+          // `类型:id` 形态（AgentTaskContract:cmd_xxx）要拆开比 id 那半 ——
+          // 整串去比永远命中不了，会把一堆正常引用报成悬空。
+          && !knownIds.has(value) && !knownIds.has(value.split(":").pop())) {
+          dangling.push(`${path}.${key}=${value}`);
+        }
+        walk(value, `${path}.${key}`);
+      }
+    };
+    // 只查【长期对象】的引用。历史流水类集合（idempotencyRecords / commands / auditLog /
+    // policyDecisions 自身…）本来就是"最近 N 条"，里面的引用指向那一刻的东西，被淘汰是设计 ——
+    // 把它们算进来会得到 750+ 条噪音，真信号一条都看不见（第一版就是这样）。
+    // 判据要问的是："人还会点开的那些对象，指向的东西还在不在。"
+    const LONG_LIVED = ["projects", "taskGroups", "accounts", "accessGrants", "organizations",
+      "repositoryOutputs", "agentDispatches", "workSessions", "agentRuntimeNodes", "leases",
+      "humanConfirmationRequests", "findings", "approvalRequests", "permissionRequests",
+      "reviewPlans", "reviewBundles", "executionTopologies", "ruleSourceResolutions"];
+    let scanned = 0;
+    for (const name of LONG_LIVED) {
+      if (!Array.isArray(full.payload[name])) continue;
+      scanned += full.payload[name].length;
+      walk(full.payload[name], `state.${name}`);
+    }
+    if (scanned < 20) {
+      throw new Error(`长期对象只扫到 ${scanned} 条 —— 集合名多半对不上，这条引用完整性断言在空转`);
+    }
+    // 已知且如实登记的一类：accessGrants.policyDecisionRef。种子里的 pd_seed_* 是【占位】
+    // （从来不指向真实记录）；另有几条来自"授权先建、那次请求没走到决策入库"的路径 ——
+    // 都不是被容量挤掉的。真正要守的是【已经入库的依据不许再被挤掉】，那条由上一段断言压着。
+    // 这里放行这一个字段，其余任何新出现的悬空引用一律报红。
+    const KNOWN_DANGLING = /^state\.accessGrants\[\d+\]\.policyDecisionRef=/u;
+    const unknown = dangling.filter((item) => !KNOWN_DANGLING.test(item));
+    if (unknown.length) {
+      throw new Error(`状态里有指向【已不存在的 id】的引用：\n    ${[...new Set(unknown)].slice(0, 8).join("\n    ")}`
+        + `\n  （共 ${unknown.length} 处）—— 人点进去看到空白，或者判据把它当成"没有"而放行，两种都不报错`);
+    }
+  }
+
   // 【授权的依据不许被容量挤掉】。policyDecisions 只留最近 120 条且是【永久删除】，
   // 而访问授权是长期对象、上面带着 policyDecisionRef —— 到量之后事后问"这条权限是凭什么给的"
   // 就答不出来。淘汰要放过仍被活跃授权引用的那些。这里真写满再查一次。

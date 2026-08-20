@@ -7810,6 +7810,9 @@ export function policyDecisionEval(state, args) {
   // EVERY guarded/MCP write, and this collection is central (not sharded). Without a source cap it
   // grows unbounded in central state on the MCP-first path (the UI server's separate 120-cap does
   // not cover MCP callers).
+  // 这里只管"别无限长"。「仍被长期对象引用的不许删」统一放在 writeStoredState（唯一的落盘入口）
+  // ——保留逻辑写在各个淘汰点上，就会有绕过它的路径（MCP 侧走 writeStoredState、绕开了 UI 那道，
+  // 实测 10 条活跃授权里 4 条的依据因此没了）。
   state.policyDecisions = [policyDecision, ...state.policyDecisions].slice(0, Math.max(100, Number(process.env.AIMAC_POLICY_DECISIONS_CAP || 500)));
   return {policyDecision};
 }

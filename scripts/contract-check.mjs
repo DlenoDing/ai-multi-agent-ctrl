@@ -5502,8 +5502,12 @@ function verifyLongLivedRecordsDoNotPointAtCappedOnes(output) {
   // （见 finishGuardedWrite 里的 stillReferenced）。判据据实豁免这一对，并钉住那段保留逻辑还在。
   // 判据要看【那一行赋值】本身，不能只看两个标识符共现 —— 注释里留着同一个词就会把门喂饱
   // （实测：把保留那一步删掉、注释里还写着 stillReferenced，门照绿。本仓第 N 次撞这个形状）。
-  const grantsKeepReferenced = /state\.policyDecisions\s*=\s*capKeepingReferenced\(/u
-    .test(server.replace(/\/\/[^\n]*/gu, ""));
+  // 保留逻辑统一在【唯一的落盘入口】writeStoredState 里（写在各个淘汰点上会有绕过它的路径：
+  // MCP 侧走 writeStoredState、绕开了 UI 那道，实测 10 条活跃授权里 4 条的依据因此没了）。
+  const store = readFileSync(join(root, "apps/control-plane-ui/lib/state-store.mjs"), "utf8")
+    .replace(/\/\/[^\n]*/gu, "");
+  const grantsKeepReferenced = /capPolicyDecisionsKeepingReferenced\(state\);/u.test(store)
+    && /state\.policyDecisions = stillReferenced\.length \? \[\.\.\.kept, \.\.\.stillReferenced\] : kept;/u.test(store);
   const remaining = offenders.filter((item) =>
     !(grantsKeepReferenced && item.startsWith("accessGrants 上带着 policyDecisionRef")));
   if (!grantsKeepReferenced) {
