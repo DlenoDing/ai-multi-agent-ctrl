@@ -2944,6 +2944,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "第二道门登记册必须被实测校验，过期要报红",
+    file: "scripts/lib/known-second-doors.mjs",
+    gate: "mcp",
+    from: '  "identity-mcp.account_invite": "account_invite_forbidden_for_machine_principal"',
+    to: '  "identity-mcp.account_invite": "account_invite_forbidden_for_machine_principal_x"',
+    expect: "没登记进第二道门册"
+  },
+  {
     name: "守卫之前无条件回 404 必须被门看见",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyMissingRecordsLookLikeInvisibleOnes",
@@ -3155,7 +3163,9 @@ const GATE_COMMANDS = {
   specs: "scripts/validate-specs.rb",
   // 控制面 e2e（约 94 秒，其中九成在等 I/O，与别的变异并行几乎不占额外墙钟）。
   // 只给那些【非走真实 HTTP 不可】的不变式用 —— 快门能守的一律别挂这里。
-  doctor: "scripts/doctor.mjs"
+  doctor: "scripts/doctor.mjs",
+  // MCP e2e（约 40 秒）。同样只给非走真实 MCP 调用不可的不变式用。
+  mcp: "scripts/doctor-mcp.mjs"
 };
 function gateInvocation(mutation, workdir) {
   const key = mutation.gate || "contract";

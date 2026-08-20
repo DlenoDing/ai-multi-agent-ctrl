@@ -20,3 +20,14 @@ export const KNOWN_SECOND_DOORS = {
   account_invite_forbidden_for_machine_principal:
     "同上，identity-mcp.* 整族按前缀对服务令牌禁用（MCP e2e 里有一条断言按规则全量核对这个前缀）"
 };
+
+// 工具名 → 它那道人工专属守卫的拒绝码。放在这个文件里是有意的：**拒绝码棘轮不扫本文件**，
+// 所以 MCP e2e 可以按工具名查表，而不必把码的字面量写进门的源码 —— 写进去的话，
+// 门就"读到了自己写的字"，这五条会被算成已覆盖（本仓第十次撞这个形状，这次是我自己撞的）。
+export const HUMAN_ONLY_MCP_TOOL_REFUSALS = {
+  "skill-mcp.skill_source_sync": "rule_layer_mutation_forbidden_for_machine_principal",
+  "skill-mcp.role_skill_overlay_validate": "rule_layer_mutation_forbidden_for_machine_principal",
+  "permission-mcp.permission_resolve": "permission_resolution_forbidden_for_machine_principal",
+  "governance-mcp.contract_publish": "contract_publish_forbidden_for_machine_principal",
+  "identity-mcp.account_invite": "account_invite_forbidden_for_machine_principal"
+};

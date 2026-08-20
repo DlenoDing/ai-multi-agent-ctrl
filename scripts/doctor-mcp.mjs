@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { KNOWN_SECOND_DOORS, HUMAN_ONLY_MCP_TOOL_REFUSALS } from "./lib/known-second-doors.mjs";
 import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
@@ -451,6 +452,71 @@ try {
   if (!ownRoom.structuredContent?.result?.message?.messageId) {
     throw new Error(`受限节点在自己被授权的房间里也发不了言（${JSON.stringify(ownRoom.structuredContent?.result || "").slice(0, 200)}）—— 作用域把正常路径一起堵死了`);
   }
+  // 【人工定稿闸门在 MCP 这一侧的牙齿】。这五道守卫此前只有 validate-specs 里的源码字面断言 ——
+  // 也就是说，把 `if (principal.kind === "agent_node")` 整段删掉，只要注释里的那行字还在，
+  // 门就照绿。它们挡的是：机器主体自己改规则层、自己批权限申请、自己发布契约、自己拉人进来。
+  //
+  // 实测发现其中四条对【唯一够得着的机器主体】是第二道门：工具白名单先回
+  // mcp_tool_not_granted_to_principal，走不到守卫。allowedMcpTools:["*"] 的 system_service
+  // 只存在于本地 stdio 通道，而本部署把 stdio 启动整个禁掉了（下面另有断言钉住这一点）。
+  // 所以这里分两支：够得着的必须逐字对上拒绝码；够不着的登记为"白名单先拒"，
+  // 并且【一旦将来白名单放开就会自动落进上一支】——那正是这张表存在的理由。
+  {
+    // 入参只求能通过校验（校验排在守卫之前）；期望的拒绝码按工具名从登记册里查，
+    // 不在本文件里写码的字面量。
+    const HUMAN_ONLY_ARGS = {
+      "skill-mcp.skill_source_sync": {sourceId: "agency-agents-zh", idempotencyKey: "mcp-human-only-1"},
+      "skill-mcp.role_skill_overlay_validate": {roleSkillRef: "ui-console-engineer", idempotencyKey: "mcp-human-only-2"},
+      "permission-mcp.permission_resolve": {requestId: "prq_probe", idempotencyKey: "mcp-human-only-3"},
+      "governance-mcp.contract_publish": {contractId: "ctr_probe", idempotencyKey: "mcp-human-only-4"},
+      "identity-mcp.account_invite": {email: "probe@local", idempotencyKey: "mcp-human-only-5"}
+    };
+    const HUMAN_ONLY_TOOLS = Object.entries(HUMAN_ONLY_MCP_TOOL_REFUSALS)
+      .map(([name, code]) => ({name, code, args: HUMAN_ONLY_ARGS[name]}));
+    if (HUMAN_ONLY_TOOLS.some((tool) => !tool.args)) {
+      throw new Error("人工专属工具登记册里多了一个工具，但这里没给它入参 —— 那一条会用 undefined 调过去，"
+        + "被入参校验拒掉，看起来像验过了");
+    }
+    const slipped = [];
+    const behindWhitelist = [];
+    for (const tool of HUMAN_ONLY_TOOLS) {
+      let result;
+      try {
+        const call = await mcpAs(nodeToken, "tools/call", {name: tool.name, arguments: tool.args});
+        result = call.structuredContent?.result;
+      } catch (error) {
+        behindWhitelist.push(`${tool.name}（传输层拒：${String(error?.message || error).slice(0, 40)}）`);
+        continue;
+      }
+      if (result?.error === "mcp_tool_not_granted_to_principal") {
+        behindWhitelist.push(tool.name);
+        continue;
+      }
+      if (result?.error !== tool.code) {
+        slipped.push(`${tool.name} → ${JSON.stringify(result || null).slice(0, 120)}（应为 ${tool.code}）`);
+      }
+    }
+    if (slipped.length) {
+      throw new Error("机器主体调人工专属工具没有被挡住：\n    " + slipped.join("\n    ")
+        + "\n  —— 定稿权那三层防线里，真正每天起作用的就是这一层");
+    }
+    // 够不着的那些，其拒绝码必须【已经登记在第二道门册里】。这一条同时校验了登记册本身：
+    // 此前没有任何东西核对过那份登记还成不成立 —— 白名单一放开、或者某条守卫被删掉，
+    // 登记就成了一句过期的话，而拒绝码棘轮正是靠它把这些码排除在扫描面之外的。
+    const unregistered = HUMAN_ONLY_TOOLS
+      .filter((tool) => behindWhitelist.some((entry) => entry.startsWith(tool.name)))
+      .filter((tool) => !KNOWN_SECOND_DOORS[tool.code]);
+    if (unregistered.length) {
+      throw new Error(`这些人工专属工具被白名单先拒，但它们的拒绝码没登记进第二道门册：`
+        + `${unregistered.map((tool) => `${tool.name}/${tool.code}`).join("、")}`
+        + " —— 棘轮会把它们当成没人验过的守卫，而登记册里查不到为什么");
+    }
+    console.log(`人工专属工具：${HUMAN_ONLY_TOOLS.length} 个逐个用受限节点令牌调过，`
+      + `${HUMAN_ONLY_TOOLS.length - behindWhitelist.length} 个走到了守卫并逐字对上拒绝码，`
+      + `${behindWhitelist.length} 个被工具白名单先拒（与第二道门册一致）`
+      + "；白名单一旦放开，它们会自动落进前一支");
+  }
+
   const readOnlyTools = listed.tools.filter((tool) => tool.annotations?.readOnlyHint || tool.readOnlyHint);
   if (readOnlyTools.length < 10) throw new Error(`跨租户扫描只认出 ${readOnlyTools.length} 个只读工具 —— 提取逻辑与代码脱节，本条在空转`);
   const scanLeaks = [];
