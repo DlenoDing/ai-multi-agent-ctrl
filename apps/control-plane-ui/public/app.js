@@ -764,10 +764,14 @@ async function api(path, options = {}) {
       // 服务端在不少错误里写了给人看的说明（message / reason / required），前端原先只取 error 一个字段，
       // 把它们全丢了 —— 于是一条本来说清了"为什么、接下来怎么办"的 409，到人眼前只剩一串英文枚举。
       // 典型：停用一个还没接受邀请的成员 → 服务端解释了原因，人看到的是 `409 org_member_invitation_pending`。
+      // supported 与 required 是同一件事的两面：服务端已经把【合法清单】算出来了，
+      // 不给出来的话，人看到的就是"认不出的 X"然后自己猜（12 处拒绝里都带着它，前端一处都没读）。
       const guidance = [
         payload.message,
         payload.reason,
-        Array.isArray(payload.required) ? payload.required.join("；") : payload.required
+        Array.isArray(payload.required) ? payload.required.join("；") : payload.required,
+        Array.isArray(payload.supported) && payload.supported.length
+          ? `可用的取值：${payload.supported.join("、")}` : ""
       ].map((item) => String(item || "").trim()).filter(Boolean);
       if (guidance.length) hint += `：${[...new Set(guidance)].join("；")}`;
     } catch {}

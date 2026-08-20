@@ -696,7 +696,13 @@ async function runErrorGuidanceCase() {
     // 人不知道是成员还是任务组、差多少，也不知道下一步去哪 —— 而这三样都在同一个响应里。
     {payload: {error: "org_quota_exceeded", quota: 200, usage: 200, kind: "taskGroups"}, expect: "任务组 200/200"},
     {payload: {error: "org_quota_exceeded", quota: 50, usage: 50, kind: "members"}, expect: "成员 50/50"},
-    {payload: {error: "org_quota_exceeded", quota: 20, usage: 20, kind: "projects"}, expect: "组织管理"}
+    {payload: {error: "org_quota_exceeded", quota: 20, usage: 20, kind: "projects"}, expect: "组织管理"},
+    // supported 与 required 是同一件事的两面：服务端已经把【合法清单】算出来了（12 处拒绝都带着它），
+    // 前端原先一处都没读 —— 人看到的是"认不出的上报状态"，然后自己猜该填什么。
+    {payload: {error: "dispatch_fail_status_unknown", supported: ["blocked", "cancelled", "failed"]},
+      expect: "可用的取值：blocked、cancelled、failed"},
+    {payload: {error: "unsupported_task_group_control_action", supported: ["pause", "resume"]},
+      expect: "可用的取值：pause、resume"}
   ];
   for (const item of cases) {
     probe.setFetch(async () => ({ok: false, status: 409, statusText: "Conflict", json: async () => item.payload}));

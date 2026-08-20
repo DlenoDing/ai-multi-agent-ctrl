@@ -2944,6 +2944,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "服务端算好的合法清单必须到达人眼前",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '        Array.isArray(payload.supported) && payload.supported.length\n          ? `可用的取值：${payload.supported.join("、")}` : ""',
+    to: '        ""',
+    expect: "服务端写的说明没有到达人"
+  },
+  {
     name: "认不出的分支状态不得降级成已上报",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyHumanAndOrganizationContracts",
