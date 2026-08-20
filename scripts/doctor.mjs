@@ -100,7 +100,13 @@ async function verifyRealtimeWebSocket(port, bearerAuth) {
   }
 }
 
-function expectStatus(result, status, label) {
+// 第四个参数给了就连拒绝码一起对：只判状态码等于"拒了"，不等于"拒对了"——
+// 同一个 409 可以是"已被处置"，也可以是"幂等键撞了"，两者对人的意思完全不同。
+function expectStatus(result, status, label, expectedError) {
+  if (expectedError !== undefined && result.payload?.error !== expectedError) {
+    throw new Error(`${label}: 状态码对上了（${result.response.status}），但拒绝码是 `
+      + `${JSON.stringify(result.payload?.error)}，应为 ${expectedError} —— 拒了不等于拒对了`);
+  }
   if (result.response.status !== status) {
     throw new Error(`${label}: expected ${status}, got ${result.response.status} ${JSON.stringify(result.payload)}`);
   }
@@ -1826,6 +1832,50 @@ try {
   expectStatus(await g2("/api/findings", invitedAuth, "g2b-finding-deny", {taskGroupId: "tg_runtime_management", summary: "denied"}), 403, "finding submit deny");
   expectStatus(await g2("/api/findings", orgAdminAuth, "g2b-finding-crossorg", {taskGroupId: "tg_runtime_management", summary: "cross org"}), 403, "finding submit cross-tenant deny");
   expectStatus(await g2(`/api/findings/${findingOk.payload.finding.findingId}/resolve`, reviewerAuth, "g2b-finding-resolve-ok", {status: "resolved", evidenceRefs: ["evidence:doctor"], rootCauseOwner: "reviewer"}), 200, "finding resolve happy");
+  // 已定过的缺陷不得被第二次处置：回 200 意味着后到的那个人以为自己改掉了结论，而记录没动。
+  expectStatus(await g2(`/api/findings/${findingOk.payload.finding.findingId}/resolve`, reviewerAuth,
+    "g2b-finding-resolve-again", {status: "dismissed", evidenceRefs: ["e2e"]}), 409,
+  "已被处置的缺陷必须回 409", "finding_already_resolved");
+  // 【认不出的处置状态必须拒绝】这三条走的是同一形状：状态名拼错时，原先会掉到默认那条
+  // 或者静默不改，人却拿到成功回执。三个入口各有自己的拒绝码，逐个点名。
+  const bogusStatusTargets = [
+    {create: ["/api/review-bundles", {taskGroupId: "tg_runtime_management", evidenceRefs: ["evidence:e2e-status"]}],
+      idOf: (r) => r.payload?.reviewBundle?.reviewBundleId || r.payload?.reviewBundleId,
+      base: "/api/review-bundles", code: "review_bundle_status_invalid", what: "评审包"},
+    {create: ["/api/review-plans", {taskGroupId: "tg_runtime_management", scope: "e2e"}],
+      idOf: (r) => r.payload?.reviewPlan?.reviewPlanId || r.payload?.reviewPlanId,
+      base: "/api/review-plans", code: "review_plan_status_invalid", what: "评审计划"},
+  ];
+  // 升级候选没有 REST 创建入口（只能由 MCP 从运行问题模式导出，两跳）。先试着导一次；
+  // 导不出来就如实说这一条没验，别硬造一个不存在的 id 去打 —— 那验的是 404，不是状态校验。
+  {
+    await jsonFetch(port, "/mcp", {
+      method: "POST", headers: {authorization: systemAuth},
+      body: JSON.stringify({jsonrpc: "2.0", id: 1, method: "tools/call", params: {
+        name: "governance-mcp.system_upgrade_candidate_export",
+        arguments: {taskGroupId: "tg_runtime_management", idempotencyKey: "doctor-suc-export"}}})
+    });
+    const view = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: systemAuth}});
+    const candidate = (view.payload.systemUpgradeCandidates || [])[0];
+    if (candidate?.candidateId) {
+      expectStatus(await g2(`/api/system-upgrade-candidates/${candidate.candidateId}/resolve`, systemAuth,
+        "g2b-status-bogus-candidate", {status: "approved_by_security_review", justification: "e2e"}), 400,
+      "认不出的升级候选状态必须拒绝", "system_upgrade_candidate_status_invalid");
+    } else {
+      console.log("  --  这一轮导不出升级候选（没有运行问题模式），它的状态校验未被检验");
+    }
+  }
+  for (const [index, target] of bogusStatusTargets.entries()) {
+    const created = await g2(target.create[0], systemAuth, `g2b-status-src-${index}`, target.create[1]);
+    const id = target.idOf(created);
+    if (!id) {
+      throw new Error(`造不出${target.what}用于状态校验（HTTP ${created.response.status} `
+        + `${JSON.stringify(created.payload).slice(0, 160)}）—— 那一条会打到不存在的 id 上，验的是 404 而不是状态校验`);
+    }
+    expectStatus(await g2(`${target.base}/${id}/resolve`, systemAuth, `g2b-status-bogus-${index}`,
+      {status: "approved_by_security_review", justification: "e2e"}), 400,
+    `认不出的${target.what}状态必须拒绝`, target.code);
+  }
 
   // approval-requests → task_group:review (+ resolve)
   const approvalOk = expectStatus(await g2("/api/approval-requests", reviewerAuth, "g2b-approval-ok", {taskGroupId: "tg_runtime_management", action: "guarded_action"}), 201, "approval create happy");
@@ -1887,8 +1937,8 @@ try {
   expectStatus(await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-resolve-ok", {status: "approved"}), 200, "permission resolve happy");
   // 两个人同时处置同一条授权请求：后到的那个必须拿到 409，而不是 200。
   // 回 200 的后果是【拒绝方被告知成功，而权限其实已经授出】—— 他不会再去看结果。
-  expectStatus(await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-resolve-again", {status: "rejected"}), 409, "已被处置的授权请求必须回 409（否则拒绝方以为自己成功了，而权限已授出）");
-  expectStatus(await g2(`/api/approval-requests/${approvalOk.payload.approvalRequest.approvalId}/resolve`, reviewerAuth, "g2b-approval-resolve-again", {status: "rejected"}), 409, "已被处置的审批请求必须回 409");
+  expectStatus(await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-resolve-again", {status: "rejected"}), 409, "已被处置的授权请求必须回 409（否则拒绝方以为自己成功了，而权限已授出）", "permission_request_already_resolved");
+  expectStatus(await g2(`/api/approval-requests/${approvalOk.payload.approvalRequest.approvalId}/resolve`, reviewerAuth, "g2b-approval-resolve-again", {status: "rejected"}), 409, "已被处置的审批请求必须回 409", "approval_already_resolved");
 
   // execution-topologies → task_group:orchestrate
   expectStatus(await g2("/api/execution-topologies", systemAuth, "g2b-topo-ok", {taskGroupId: "tg_runtime_management"}), 201, "execution topology happy");
@@ -1908,6 +1958,22 @@ try {
 
   // rule-source-resolutions → task_group:control
   expectStatus(await g2("/api/rule-source-resolutions", systemAuth, "g2b-rulesource-ok", {taskGroupId: "tg_runtime_management", sourceRef: "reference:doctor", classification: "reference_only"}), 201, "rule source resolve happy");
+  // 规则源一旦定案（reference_only/quarantined/rejected/superseded 都是终态）就不许再被改写：
+  // 回 200 意味着后来的人（或 AI）能把人已经定过的分类悄悄换掉，而记录上看不出发生过两次。
+  {
+    const settled = await g2("/api/rule-source-resolutions", systemAuth, "g2b-rulesource-settled-src",
+      {taskGroupId: "tg_runtime_management", sourceRef: "reference:doctor-settled", classification: "reference_only"});
+    const resolutionId = settled.payload?.ruleSourceResolution?.resolutionId || settled.payload?.resolutionId;
+    if (!resolutionId) {
+      throw new Error(`造不出规则源处置记录（${JSON.stringify(settled.payload).slice(0, 160)}）—— 这一条会打到不存在的 id 上`);
+    }
+    expectStatus(await g2(`/api/rule-source-resolutions/${resolutionId}/settle`, systemAuth,
+      "g2b-rulesource-settle-once", {taskGroupId: "tg_runtime_management", status: "rejected"}), 200,
+    "第一次定案必须成功（否则下面那条可以靠一律拒绝蒙混过去）");
+    expectStatus(await g2(`/api/rule-source-resolutions/${resolutionId}/settle`, systemAuth,
+      "g2b-rulesource-settle-again", {taskGroupId: "tg_runtime_management", status: "quarantined"}), 409,
+    "已定案的规则源不得被再次改写", "rule_source_already_settled");
+  }
   expectStatus(await g2("/api/rule-source-resolutions", invitedAuth, "g2b-rulesource-deny", {taskGroupId: "tg_runtime_management", sourceRef: "reference:x"}), 403, "rule source resolve deny");
 
   // 人工定稿闸门（HTTP 层真实校验）：机器主体【即使持有相应权限】也不得做核心决策。

@@ -2944,6 +2944,22 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "已定案的规则源不得被再次改写",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: "  if (RULE_SOURCE_TERMINAL_STATUSES.includes(resolution.status)) return {ruleSourceResolution: resolution, alreadySettled: true};",
+    to: "  if (false) return {ruleSourceResolution: resolution, alreadySettled: true};",
+    expect: "已定案的规则源不得被再次改写"
+  },
+  {
+    name: "认不出的处置状态必须拒绝，不得静默接受",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (!nextStatus) return json(res, 400, {error: "review_bundle_status_invalid"});',
+    to: '    if (false) return json(res, 400, {error: "review_bundle_status_invalid"});',
+    expect: "认不出的评审包状态必须拒绝"
+  },
+  {
     name: "第二道门登记册必须被实测校验，过期要报红",
     file: "scripts/lib/known-second-doors.mjs",
     gate: "mcp",
