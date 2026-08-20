@@ -2212,6 +2212,10 @@ function retryExecutionEventProjection(req, body) {
   return {ok: false, error: "state_conflict_not_recovered"};
 }
 
+// 「人把它叫停了」的几种落地理由。resume 认这几种，/fail 也据此拒绝 agent 覆盖 ——
+// 两处必须同源，否则加了一种新的暂停理由时，只有一边跟上（本仓最常见的漂移形态）。
+const HUMAN_CONTROL_BLOCK_REASONS = ["control_pause_requested", "task_group_pause", "task_group_rebound_drift"];
+
 function applyTaskGroupRuntimeControl(state, taskGroup, action, options = {}) {
   const at = now();
   const controlCommands = [];
@@ -2246,7 +2250,7 @@ function applyTaskGroupRuntimeControl(state, taskGroup, action, options = {}) {
   if (action === "resume") {
     for (const dispatch of state.agentDispatches || []) {
       if (dispatch.taskGroupId !== taskGroup.id || dispatch.status !== "blocked") continue;
-      if (!["control_pause_requested", "task_group_pause", "task_group_rebound_drift"].includes(dispatch.blockedReason)) continue;
+      if (!HUMAN_CONTROL_BLOCK_REASONS.includes(dispatch.blockedReason)) continue;
       dispatch.status = "queued";
       delete dispatch.blockedReason;
       delete dispatch.controlCommandRef;
@@ -2753,6 +2757,15 @@ async function handleApi(req, res) {
       return json(res, 200, {ok: true, replayed: true, dispatchId: dispatch.dispatchId, status: dispatch.status});
     }
     const reportedStatus = ["blocked", "cancelled"].includes(body.status) ? body.status : "failed";
+    // 人下的暂停不许被 agent 的上报抹掉：控制面已经把它置成 blocked 并写明是谁停的，
+    // 这时收到一条 failed，`dispatch.status = reportedStatus` 会把它推进终态 ——
+    // 人的动作从屏幕上消失，而且终态再也 resume 不回来（resume 只认 blocked）。
+    // 与 /checkpoint 同一道门：靠调用方自觉不算 fence（旧执行器、outbox 重放都会走到这里）。
+    if (dispatch.status === "blocked"
+      && HUMAN_CONTROL_BLOCK_REASONS.includes(dispatch.blockedReason)) {
+      return json(res, 409, {error: "dispatch_halted_by_human_control", blockedReason: dispatch.blockedReason,
+        message: "这个派发已经被人叫停了。先由人恢复（resume），再上报执行结果。"});
+    }
     if (dispatch.blockedReason === "awaiting_human_confirmation" && reportedStatus !== "blocked") {
       cancelPendingConfirmationsForDispatch(state, dispatch.dispatchId, `dispatch_${reportedStatus}`);
     }

@@ -2944,6 +2944,22 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "被叫停的派发不许再交检查点",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: '  if (!dispatch || dispatch.status !== "running") {',
+    to: '  if (!dispatch || !["running", "blocked"].includes(dispatch.status)) {',
+    expect: "派发已经被叫停（blocked），交上来的检查点却被受理了"
+  },
+  {
+    name: "人叫停之后 agent 的失败上报不许把这个决定抹掉",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (dispatch.status === "blocked"\n      && HUMAN_CONTROL_BLOCK_REASONS.includes(dispatch.blockedReason)) {',
+    to: "    if (false) {",
+    expect: "人已叫停的派发接受了 agent 的失败上报"
+  },
+  {
     name: "读视图缓存的键必须带 stateVersion（别的进程写入时只有它兜得住）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "writer",

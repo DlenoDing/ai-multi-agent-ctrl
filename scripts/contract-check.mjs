@@ -7616,7 +7616,8 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     manifestFromLastRound, outputFromLastRound, manifestNotJson,
     foreignSession, omitLanguageDigest, forgeLanguageDigest, targetAlreadyPushed,
     targetFromAnotherWorkItem, twoTargetRefs,
-    pushRefWrongTarget, emptyFinalCommit, manifestDeleted, outputDeleted, outputOutsideAllowlist}) => {
+    pushRefWrongTarget, emptyFinalCommit, manifestDeleted, outputDeleted, outputOutsideAllowlist,
+    dispatchPaused}) => {
     // 这段建置对每个用例完全相同，而它是本项检查里最贵的一块：实测 324ms/次 × 19 个用例 ≈ 6.2 秒
     // （对比：一次完整编排只要 61ms，克隆状态 1ms）。改成"建一次模板、之后按目录拷贝"。
     const {repo, remote, baseRef, caseRoot} = checkoutFromTemplate();
@@ -7627,7 +7628,11 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
     const dispatch = (state.agentDispatches || [])[0];
     if (!dispatch) return {skipped: "编排没有产出派发"};
-    dispatch.status = "running";
+    // dispatchPaused：人已经把这个派发叫停了（任务组暂停 / 组织停用都会把它置成 blocked
+    // 并向节点下 pause_dispatch）。节点不理会那条命令、照样把成果交上来时，受理必须拒 ——
+    // 靠调用方自觉不算 fence，fence 要落在写入点上。
+    dispatch.status = dispatchPaused ? "blocked" : "running";
+    if (dispatchPaused) dispatch.blockedReason = "control_pause_requested";
     const taskGroup = state.taskGroups.find((item) => item.id === dispatch.taskGroupId);
     const workItem = taskGroup?.workItems?.find((item) => item.id === dispatch.workItemId);
     const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
@@ -7815,6 +7820,17 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       output.push(`${probe.what} —— 检查点却没被按 ${probe.error} 拦下`
         + `（实际：${probed.result.error || "已受理"}）`);
     }
+  }
+
+  // 被叫停的派发不许再交成果：人点了暂停（或组织被停用）之后，控制面已经把派发置成 blocked
+  // 并向节点下了 pause_dispatch —— 但节点可能不理会（旧执行器、outbox 重放、坏掉的 agent）。
+  // 受理这一侧必须自己拒绝，否则"暂停"只是一句建议：产出照样落地、目标照样翻成 pushed。
+  // 实测：把这道判据放开成也接受 blocked，整条快速链一个门都不红。
+  const paused = runCase({dispatchPaused: true});
+  if (paused.skipped) { output.push(`叫停后仍交成果的断言无从验证：${paused.skipped}`); }
+  else if (paused.result.accepted !== false) {
+    output.push(`派发已经被叫停（blocked），交上来的检查点却被受理了（${paused.result.error || "已受理"}）`
+      + " —— 暂停就成了一句建议，agent 照样把产出推上去，而控制台上写着已暂停");
   }
 
   // 凭空的提交必须被拒。控制面自己去 git 里查（rev-parse --verify），不信 agent 自报 ——

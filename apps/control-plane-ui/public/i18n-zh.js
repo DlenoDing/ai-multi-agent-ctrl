@@ -533,6 +533,7 @@
     cell_held_for_human_plan_confirmation: "方案待人工定稿，暂缓执行",
     execution_topology_requires_human_plan_confirmation: "执行方案需人工定稿后才能启动",
     task_group_close_requires_human_actor: "关闭任务组必须由真人账号执行",
+    dispatch_halted_by_human_control: "这个派发已被真人叫停，先恢复再上报执行结果",
     human_confirmation_expired_needs_decision: "人工确认超时·已升级为人工决策",
     human_confirmation_requires_human_actor: "核心决策只能由真人账号确认，机器主体无权定稿",
     human_confirmation_decision_forbidden_for_machine_principal: "机器主体不得代为定稿，请在控制台人工确认窗口操作",

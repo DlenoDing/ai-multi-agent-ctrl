@@ -2428,6 +2428,84 @@ try {
     }
   }
 
+  // 【人叫停之后，agent 的上报不许把这个决定抹掉】。控制面把派发置成 blocked 并写明是谁停的
+  // （createAgentControlCommand 下发 pause_dispatch 时就置了），这时节点若报一条 failed，
+  // 原先会直接 `dispatch.status = reportedStatus` 推进终态：人的动作从屏幕上消失，
+  // 而且终态再也 resume 不回来（resume 只认 blocked）。旧执行器、outbox 重放都会走到这里 ——
+  // 靠调用方自觉不算 fence。实测：把这道判据去掉，整条快速链一个门都不红。
+  {
+    const haltJoin = await jsonFetch(port, "/api/agent-join-tokens", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-halt-join", authorization: systemAuth},
+      body: JSON.stringify({projectId: "prj_control_plane", allowedRoles: ["monitor"], ttlSeconds: 600})
+    });
+    const haltNode = await jsonFetch(port, "/api/agent/v1/register", {
+      method: "POST",
+      headers: {authorization: `Bearer ${haltJoin.payload?.joinToken}`},
+      body: JSON.stringify({nodeName: "doctor-halt-node", requestedRoles: ["monitor"],
+        runtimeVersion: "doctor", profile: {tools: [], models: [{providerClass: "custom", adapter: "doctor", available: true}]}})
+    });
+    if (haltNode.response.status !== 201) {
+      throw new Error(`造不出用于「人叫停后 agent 不得覆盖」的节点（HTTP ${haltNode.response.status} `
+        + `${JSON.stringify(haltNode.payload).slice(0, 120)}）`);
+    }
+    const haltNodeAuth = `Bearer ${haltNode.payload.nodeToken}`;
+    // 不自检就领不到活（admission 停在 read_only）—— 六项必检全绿才算入网。
+    await jsonFetch(port, "/api/agent/v1/self-check", {
+      method: "POST", headers: {authorization: haltNodeAuth},
+      body: JSON.stringify({runtimeVersion: "doctor", checks: [
+        {checkId: "runtime", status: "ok", detail: "doctor"},
+        {checkId: "gateway", status: "ok", detail: "doctor"},
+        {checkId: "filesystem", status: "ok", detail: "doctor"},
+        {checkId: "git", status: "ok", detail: "doctor"},
+        {checkId: "remote_mcp", status: "ok", detail: "doctor"},
+        {checkId: "model_executor", status: "ok", detail: "custom:doctor:available"}
+      ]})
+    });
+    const claimed = await jsonFetch(port, "/api/agent/v1/dispatches/next", {
+      method: "POST", headers: {authorization: haltNodeAuth}, body: JSON.stringify({})
+    });
+    // 认领回执是个信封：派发在 .dispatch 里，而 .dispatch 本身可能又套一层（实测两种都见过）。
+    const envelope = claimed.payload?.dispatch;
+    const claimedDispatch = envelope?.dispatchId ? envelope : envelope?.dispatch;
+    if (!claimedDispatch) {
+      console.log(`  --  这个节点这一轮领不到派发（${JSON.stringify(claimed.payload).slice(0, 90)}），`
+        + "「人叫停后 agent 不得覆盖」未被检验");
+    } else {
+      const groupId = claimedDispatch.taskGroupId;
+      const pauseIt = await jsonFetch(port, `/api/task-groups/${groupId}/control`, {
+        method: "POST",
+        headers: {"Idempotency-Key": "doctor-halt-pause", authorization: systemAuth},
+        body: JSON.stringify({action: "pause"})
+      });
+      if (pauseIt.response.status !== 200) {
+        throw new Error(`暂停任务组失败：HTTP ${pauseIt.response.status}（groupId=${groupId}）`);
+      }
+      const afterHalt = await jsonFetch(port, "/api/state", {headers: {authorization: systemAuth}});
+      const halted = (afterHalt.payload.agentDispatches || [])
+        .find((item) => item.dispatchId === claimedDispatch.dispatchId);
+      if (halted?.status !== "blocked") {
+        throw new Error(`人暂停之后这个派发不是 blocked（${halted?.status}）—— 下面那条断言会打在别的分支上`);
+      }
+      const failAfterHalt = await jsonFetch(port, `/api/agent/v1/dispatches/${claimedDispatch.dispatchId}/fail`, {
+        method: "POST",
+        headers: {authorization: haltNodeAuth},
+        body: JSON.stringify({status: "failed", reason: "执行器自己报的失败", claimEpoch: Number(halted.claimEpoch || 0)})
+      });
+      if (failAfterHalt.response.status !== 409
+        || failAfterHalt.payload?.error !== "dispatch_halted_by_human_control") {
+        throw new Error(`人已叫停的派发接受了 agent 的失败上报`
+          + `（HTTP ${failAfterHalt.response.status}/${failAfterHalt.payload?.error}）`
+          + " —— 人的暂停被机器改写成失败，屏幕上看不出是谁停的，而且终态再也恢复不回来");
+      }
+      await jsonFetch(port, `/api/task-groups/${groupId}/control`, {
+        method: "POST",
+        headers: {"Idempotency-Key": "doctor-halt-resume", authorization: systemAuth},
+        body: JSON.stringify({action: "resume"})
+      });
+    }
+  }
+
   // 【停用必须叫停在跑的执行】。此前只有契约门里一条同名检查，测的是它自己写的一段模拟，
   // 产品路径怎么退化都不会红。这里走真实 HTTP：对一个确实有派发的任务组下暂停，之后该组下
   // 不得再有在跑的派发 —— 否则 agent 会跑到底、把产出推上 git、把额度烧完，而控制台上写着"已暂停"。
