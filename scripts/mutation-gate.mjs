@@ -2986,6 +2986,14 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "注释不得用行号指代代码（行号会漂，引用却看着仍权威）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyCommentsDoNotCiteLineNumbers",
+    from: "见 parseRoleSkillFile 的返回值",
+    to: "parseRoleSkillFile 第 3271 行",
+    expect: "用【行号】指代代码"
+  },
+  {
     name: "百分比不得裸用 0 兜底（没上报过≠上报了 0）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyMeasurementsDoNotFakeZero",

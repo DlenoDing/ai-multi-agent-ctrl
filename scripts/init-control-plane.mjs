@@ -119,7 +119,7 @@ writeJson(configPath, {
 
 console.log("next: npm start");
 // 这里原先原样打印 `$AIMAC_PUBLIC_URL/mcp` —— 一个操作者照抄就用不了的地址，
-// 而且看不出它是占位符还是真值。第 42 行本来就算出了有效地址，打印它。
+// 而且看不出它是占位符还是真值。buildState 本来就算出了有效地址，打印它。
 // 没设 AIMAC_PUBLIC_URL 时那是个回环地址：本机的 MCP 客户端能连，别的机器连不上 ——
 // 这正是人需要提前知道的一件事，而不是等远程客户端连不上再回来查。
 const mcpEndpoint = process.env.AIMAC_PUBLIC_URL

@@ -4240,7 +4240,7 @@ export function resolveRoleSkill(state, roleId, request = {}) {
   // 真实 id 里根本没有 `/`/`:`，按那两个字符锚定会让所有角色静默回退到种子占位技能（我犯过这个错）。
   // 正确的锚点是 relativePath 的【文件名】：skillRef 指的就是它，且能天然区分
   // security-architect 与 security-cloud-security-architect 这种前缀包含关系。
-  // 字段名是 sourcePath（parseRoleSkillFile 第 3271 行），不是 relativePath —— 后者只是那里的局部
+  // 字段名是 sourcePath（见 parseRoleSkillFile 的返回值），不是 relativePath —— 后者只是那里的局部
   // 变量名。我上一版读错字段，导致 basename 恒为空、匹配退化成精确 id、所有角色静默回退到占位技能，
   // 而我那个"双向测试"用的 fixture 自造了一个生产中不存在的 relativePath 字段，所以照样全绿。
   const skillBasename = (skill) => String(skill.sourcePath || "").split("/").pop().replace(/\.md$/u, "");

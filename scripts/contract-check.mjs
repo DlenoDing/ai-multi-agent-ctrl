@@ -345,6 +345,7 @@ run(verifyCallsDoNotPassIgnoredArguments);
 run(verifyEnvValuesAreNotSilentlyClamped);
 run(verifyMutationsAreRegisteredAgainstTheRightGate);
 run(verifyMeasurementsDoNotFakeZero);
+run(verifyCommentsDoNotCiteLineNumbers);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5516,6 +5517,35 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 判据的形式选了"共用函数还在被用"而不是"扫 `xxxPercent || 0`"：
 // 三处都改完之后，后者一个样本都扫不到（空转自证当场拦住了我）。
 // 零样本的判据没有意义 —— 它永远绿，而且看不出是"没问题"还是"没在看"。
+// 注释和登记理由里不许写"某文件的第几行"：行号一定会漂，而漂了之后它【看着仍然权威】——
+// 读者顺着指过去落在一段无关代码上，分不清是注释旧了还是自己数错了，比没有引用更坏。
+// 本仓实测：三处这样的引用，三处全指错了（100%）。改用标识符名，它可 grep、跟着重命名一起动。
+// 本门自己的正则不会喂饱自己：模式里 序数字 后面跟的是反斜杠，不是数字。
+function verifyCommentsDoNotCiteLineNumbers(output) {
+  const walk = (dir) => readdirSync(dir).flatMap((name) => {
+    const full = join(dir, name);
+    if (name === "node_modules" || name === ".git") return [];
+    return statSync(full).isDirectory() ? walk(full) : [full];
+  });
+  const files = [...walk(join(root, "scripts")), ...walk(join(root, "apps"))]
+    // 变异登记表要排除：它存的是【锚点文本】不是主张 —— 本门那条变异的 to 字段照定义就得写成
+    // 一条行号引用，不排除的话登记表当场把门自己喂饱（门读到自己写的字，本仓第九次，
+    // 这次是全量跑里门自己报出来的）。变异真正改的是 core.mjs，排除登记表不影响它变红。
+    .filter((file) => /\.(mjs|js|rb|sh)$/u.test(file) && !file.endsWith("mutation-gate.mjs"));
+  const hits = [];
+  for (const file of files) {
+    const src = readFileSync(file, "utf8");
+    for (const match of src.matchAll(/第\s*\d+\s*行/gu)) {
+      hits.push(`${file.slice(root.length + 1)}:${src.slice(0, match.index).split("\n").length}: ${match[0]}`);
+    }
+  }
+  if (hits.length) {
+    output.push("这些地方用【行号】指代代码，行号会漂而引用看着仍然权威 —— 改成标识符名：\n  "
+      + hits.join("\n  "));
+  }
+  console.log(`行号引用：扫过 ${files.length} 份源码，${hits.length} 处用行号指代代码（应为 0）`);
+}
+
 function verifyMeasurementsDoNotFakeZero(output) {
   const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8")
     .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
@@ -9567,7 +9597,7 @@ function verifyEveryStateCollectionIsSchemaChecked(output) {
     modelProviders: "模型供应商目录，与 modelCapabilities 同源，由模型选择策略的校验覆盖",
     // 下面三个是运行时创建的，种子里没有 —— 我先前按种子做的同类扫描因此完全看不到它们。
     agentTaskContracts: "有 spec/agent-task-contract.schema.json，但记录用 contractVersion 而非 schemaVersion；"
-      + "本门第 3813 行对造出来的契约逐条 validateSchema，覆盖没有落空",
+      + "本门用 agentTaskContractSchema 对造出来的契约逐条 validateSchema，覆盖没有落空",
     workSessions: "没有独立规范；状态取值由 spec/state-machines.yaml 的 WorkSession 枚举守住"
       + "（verifyTransitionEngine 压过真实产出），归属字段由租户作用域核对覆盖",
     leases: "没有独立规范；租约的性质（互斥、fencing token 单调、过期回收）由行为断言守住，"
