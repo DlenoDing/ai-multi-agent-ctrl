@@ -2944,6 +2944,22 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "清单声称的产出不在提交里必须被拒（删掉的文件也算不在）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: '        return {valid: false, status: 409, error: "artifact_output_ref_not_in_commit"};',
+    to: '        return {valid: false, status: 409, error: "generic_rejected"};',
+    expect: "artifact_output_ref_not_in_commit 拦下"
+  },
+  {
+    name: "空提交不得当成交付（我提交了≠我改了东西）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: '  if (!changedPaths.length) return {valid: false, status: 409, error: "checkpoint_commit_has_no_changed_paths"};',
+    to: '  if (false) return {valid: false, status: 409, error: "checkpoint_commit_has_no_changed_paths"};',
+    expect: "checkpoint_commit_has_no_changed_paths 拦下"
+  },
+  {
     name: "另两套 e2e 的 4xx 断言没点名拒绝码要被门看见",
     file: "scripts/doctor-agent-remote.mjs",
     check: "verifyRefusalAssertionsNameTheCode",

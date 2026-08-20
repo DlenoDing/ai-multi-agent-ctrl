@@ -5684,7 +5684,7 @@ function verifySharedJsonWritesAreAtomic(output) {
 
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 51;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 46;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -7572,7 +7572,8 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     forgeCommitBranch, omitCommitEvidence, pushBehind, narrowAllowlist,
     manifestFromLastRound, outputFromLastRound, manifestNotJson,
     foreignSession, omitLanguageDigest, forgeLanguageDigest, targetAlreadyPushed,
-    targetFromAnotherWorkItem, twoTargetRefs}) => {
+    targetFromAnotherWorkItem, twoTargetRefs,
+    pushRefWrongTarget, emptyFinalCommit, manifestDeleted, outputDeleted, outputOutsideAllowlist}) => {
     // 这段建置对每个用例完全相同，而它是本项检查里最贵的一块：实测 324ms/次 × 19 个用例 ≈ 6.2 秒
     // （对比：一次完整编排只要 61ms，克隆状态 1ms）。改成"建一次模板、之后按目录拷贝"。
     const {repo, remote, baseRef, caseRoot} = checkoutFromTemplate();
@@ -7597,7 +7598,7 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       status: targetAlreadyPushed ? "pushed" : "pending",
       // targetFromAnotherWorkItem：这个产出目标登记在【别的工作项】名下。
       ...(targetFromAnotherWorkItem ? {workItemId: `${workItem.id}__another`} : {}),
-      pathAllowlist: narrowAllowlist ? ["docs/**"] : ["**"]});
+      pathAllowlist: (narrowAllowlist || outputOutsideAllowlist) ? ["docs/**"] : ["**"]});
     // foreignSession 要造一个【真实存在、但绑在别的工作项上】的会话：
     // 用一个根本不存在的 sessionId 的话，`!session` 那半先命中，验到的是"查无此会话"，
     // 而不是"这份证据属于哪件事"那道绑定（第一版就是这样，把绑定判据删掉照样绿）。
@@ -7645,6 +7646,19 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     // 清单声称的产出必须在这次提交里真的改过（服务端会去 git 里核对），
     // 所以先把它写出来 —— 原先的占位清单根本走不到这一步，这个前提也就一直没人注意到。
     mkdirSync(join(repo, "docs"), {recursive: true});
+    // 「在 changedPaths 里、却不在这次提交的树里」只有一种形态：这次提交把它【删掉】了。
+    // 先单独提交出来，最终那次提交再删除它 —— 两条 not_in_commit 判据要的正是这个形状。
+    if (manifestDeleted || outputDeleted) {
+      writeFileSync(join(repo, "docs/gone.json"), JSON.stringify({schemaVersion: "artifact-manifest/v1"}));
+      writeFileSync(join(repo, "docs/gone.md"), "上一轮就在，本轮被删\n");
+      git("add", "-A");
+      git("commit", "-q", "-m", "预置将被删除的文件");
+      git("push", "-q", "origin", "HEAD:refs/heads/main");
+      // 基线要挪到这一次提交上：否则"创建又删除"在 base→final 的 diff 里净效果为零，
+      // 那个路径根本不出现在 changedPaths 里，先撞上的是 not_changed_in_commit（实测过）。
+      target.baseRef = git("rev-parse", "HEAD");
+      rmSync(join(repo, manifestDeleted ? "docs/gone.json" : "docs/gone.md"), {force: true});
+    }
     writeFileSync(join(repo, "docs/readme.md"), `# 本轮产出\n${Date.now()}\n`);
     // 这份清单原先是个占位（{outputs:[…]}），缺了全部绑定字段 —— 于是【每一个】用例
     // 都在 artifact_manifest_binding_mismatch 上就被拒了，下面那条"合规提交不该被误伤"
@@ -7663,7 +7677,12 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       // （第一版就漏了，报文一模一样，只能靠读那行完整条件才看出来是哪个字段）。
       repositoryOutputTargetRefs: [target.targetId],
       // outputFromLastRound：把上一轮就有、这次没动过的文件也算进本轮产出。
-      outputRefs: outputFromLastRound ? ["docs/readme.md", "docs/carryover.md"] : ["docs/readme.md"],
+      outputRefs: outputFromLastRound ? ["docs/readme.md", "docs/carryover.md"]
+        // outputDeleted：清单声称的产出这次被删掉了 —— 它在 diff 里，却不在提交的树里。
+        : outputDeleted ? ["docs/readme.md", "docs/gone.md"]
+          // outputOutsideAllowlist：改动本身都在白名单内，但清单声称的产出越了界。
+          : outputOutsideAllowlist ? ["docs/readme.md", "apps/ghost.md"]
+            : ["docs/readme.md"],
       outputPolicy: "project_git_repository_only",
       createdAt: new Date().toISOString()
     }));
@@ -7678,6 +7697,13 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       writeFileSync(join(repo, "docs/readme.md"), `# 又改了一版但没推\n${Date.now()}\n`);
       git("add", "-A");
       git("commit", "-q", "-m", "未推送的一版");
+    }
+    // emptyFinalCommit：交一个什么都没改的提交。baseRef 清空后判据按 finalCommit^ 算 diff，
+    // 于是 changedPaths 为空 —— "我提交了"和"我改了东西"是两件事。
+    if (emptyFinalCommit) {
+      git("commit", "-q", "--allow-empty", "-m", "空提交");
+      git("push", "-q", "origin", "HEAD:refs/heads/main");
+      target.baseRef = "";
     }
     const commit = git("rev-parse", "HEAD");
     const remoteSha = execFileSync("git", ["ls-remote", remote, "refs/heads/main"], {encoding: "utf8"}).trim().split(/\s+/)[0];
@@ -7708,19 +7734,45 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
           : `git-tree:${git("rev-parse", `${commit}^{tree}`)}`, createdAt: new Date().toISOString()}],
       // forgePush：声称推上去了，而远端根本没有那个提交。这与"凭空的 commit"是一对 ——
       // 前者问"这次提交存不存在"，这条问"它到底有没有真的交出去"。控制面自己 ls-remote 对照。
-      pushRefs: [{repo: target.repositoryId, remote: "origin", ref: "refs/heads/main", sourceCommit: commit,
+      // pushRefWrongTarget：推送记录指向【别的分支】。产出目标钉的是仓库+分支，
+      // 对不上就等于拿另一处的推送来充当本目标的交付。
+      pushRefs: [{repo: target.repositoryId, remote: "origin",
+        ref: pushRefWrongTarget ? "refs/heads/not-the-target-branch" : "refs/heads/main", sourceCommit: commit,
         remoteSha: forgePush ? "0123456789abcdef0123456789abcdef01234567" : remoteSha,
         providerOperationId: `git-push:cc:${remoteSha}`, verifiedAt: new Date().toISOString(),
         rewriteRelation: "same_commit"}],
       // twoTargetRefs：一次交上来两个产出目标。会话只对一个目标持有租约，多报一个就是趁机夹带。
       repositoryOutputTargetRefs: twoTargetRefs ? [target.targetId, "tgt_smuggled_in"] : [target.targetId],
       // manifestFromLastRound：指向一份上一轮就在仓库里、这次没再动过的清单。
-      artifactManifestRefs: [manifestFromLastRound ? "docs/carryover.json" : "docs/manifest.json"],
+      artifactManifestRefs: [manifestFromLastRound ? "docs/carryover.json"
+        : manifestDeleted ? "docs/gone.json" : "docs/manifest.json"],
       changedPathEvidenceRefs: [`git-diff:${baseRef}:${commit}`, "git-path:docs/manifest.json"]
     }, {root: repo, actor: "agent-runtime"});
     rmSync(caseRoot, {recursive: true, force: true});
     return {result, state, taskGroup, workItem};
   };
+
+  // 证据链上还有五道守卫此前没有任何用例走过。它们都属于同一句话：
+  // 「agent 自报的产出，必须在那次提交里真的存在」。塌了就等于关闭门可以拿好看的清单过。
+  for (const probe of [
+    {opts: {pushRefWrongTarget: true}, error: "push_ref_target_mismatch",
+      what: "推送记录指向别的分支（拿另一处的推送充当本目标的交付）"},
+    {opts: {emptyFinalCommit: true}, error: "checkpoint_commit_has_no_changed_paths",
+      what: "交了一个什么都没改的提交（\"我提交了\"不等于\"我改了东西\"）"},
+    {opts: {manifestDeleted: true}, error: "artifact_manifest_not_in_commit",
+      what: "清单文件被这次提交删掉了（在 diff 里，却不在提交的树里）"},
+    {opts: {outputOutsideAllowlist: true}, error: "artifact_output_ref_outside_allowlist",
+      what: "改动都在白名单内，但清单声称的产出越了界"},
+    {opts: {outputDeleted: true}, error: "artifact_output_ref_not_in_commit",
+      what: "清单声称的产出这次被删掉了"}
+  ]) {
+    const probed = runCase(probe.opts);
+    if (probed.skipped) { output.push(`证据链断言无从验证（${probe.what}）：${probed.skipped}`); continue; }
+    if (probed.result.accepted !== false || probed.result.error !== probe.error) {
+      output.push(`${probe.what} —— 检查点却没被按 ${probe.error} 拦下`
+        + `（实际：${probed.result.error || "已受理"}）`);
+    }
+  }
 
   // 凭空的提交必须被拒。控制面自己去 git 里查（rev-parse --verify），不信 agent 自报 ——
   // 这条此前没有任何用例走过，而它塌了就等于关闭门可以拿伪造证据过。
