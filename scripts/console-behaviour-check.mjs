@@ -2968,7 +2968,38 @@ await runCodedApiErrorCase();
       silent.push(`${line}: ${named ? named[1] : "（内联）"} 被截到固定条数却没有 moreText 提示`);
     }
   }
-  check("每张有展示上限的表都要说出总数（否则人以为看到的就是全部）",
+  // 提示里的"当前展示 N 条"是个【字面量】，真正的截断写在别处的 slice(0, N)。
+  // 两个数由两处分别写死 —— 改了一处忘了另一处，界面就会稳稳地报一个假数。
+  // 屏幕上并排的两个数必须对得上，这一条不能靠人记得。
+  const mismatched = [];
+  let paired = 0;
+  for (const entry of appSource.matchAll(/\btable\(/gu)) {
+    const line = appSource.slice(0, entry.index).split("\n").length;
+    if (line < 615) continue;
+    const call = callAt(entry.index + entry[0].length);
+    const notice = /moreText\(/u.exec(call);
+    if (!notice) continue;
+    const shown = (topLevelArgs(callAt(entry.index + entry[0].length + notice.index + notice[0].length))[1] || "").trim();
+    const body = (topLevelArgs(call)[1] || "").trim();
+    const named = /^([A-Za-z_$][\w$]*)$/u.exec(body);
+    let definition = body;
+    if (named) {
+      const defs = [...appSource.matchAll(new RegExp(`(?:const|let)\\s+${named[1]}\\s*=`, "gu"))]
+        .filter((item) => item.index < entry.index);
+      if (!defs.length) { mismatched.push(`${line}: ${named[1]} 的定义找不到 —— 本条【没查成】`); continue; }
+      const from = defs[defs.length - 1].index;
+      const end = appSource.indexOf(";\n", from);
+      definition = appSource.slice(from, end < 0 ? from + 600 : end);
+    }
+    const cap = /\.slice\(\s*0\s*,\s*(\d+)\s*\)/u.exec(definition.split(".map(")[0]);
+    paired += 1;
+    if (!cap) mismatched.push(`${line}: 行数据没有截断，却在说「当前展示 ${shown} 条」`);
+    else if (cap[1] !== shown) mismatched.push(`${line}: 真实截到 ${cap[1]} 条，提示说 ${shown} 条`);
+  }
+  check("提示里的「当前展示 N 条」必须等于真实截断数（两处写死的数会各走各的）",
+    mismatched.length === 0 && paired >= 15,
+    mismatched.length ? `对不上：\n    ${mismatched.join("\n    ")}` : `只配上 ${paired} 对数 —— 扫描没打到该打的地方`);
+    check("每张有展示上限的表都要说出总数（否则人以为看到的就是全部）",
     silent.length === 0 && scanned >= 30,
     silent.length ? `静默截断：\n    ${silent.join("\n    ")}` : `只核对到 ${scanned} 处 table() 调用 —— 扫描没打到该打的地方`);
 }

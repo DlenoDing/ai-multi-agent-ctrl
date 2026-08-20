@@ -2986,6 +2986,22 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "「当前展示 N 条」必须等于真实截断数（两处写死的数会各走各的）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "moreText(eventsInScope.length, 10, \"agentExecutionEvents\")",
+    to: "moreText(eventsInScope.length, 25, \"agentExecutionEvents\")",
+    expect: "真实截到 10 条，提示说 25 条"
+  },
+  {
+    name: "两数配对打不到时必须红（不得绿着空转）",
+    file: "scripts/console-behaviour-check.mjs",
+    gate: "console",
+    from: "const notice = /moreText\\(/u.exec(call);",
+    to: "const notice = /moreTexx\\(/u.exec(call);",
+    expect: "只配上 0 对数"
+  },
+  {
     name: "有展示上限的表必须报总数（静默截断＝以为看到的就是全部）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
