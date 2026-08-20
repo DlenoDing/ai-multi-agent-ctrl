@@ -489,7 +489,7 @@
       "status": "development",
       "goalExecutionStatus": "active",
       "phase": "implementation",
-      "progress": 62,
+      "progress": 69,
       "health": "ok",
       "languagePolicy": {
         "schemaVersion": "language-policy/v1",
@@ -628,7 +628,7 @@
       "status": "solution_design",
       "goalExecutionStatus": "active",
       "phase": "protocol",
-      "progress": 71,
+      "progress": 80,
       "health": "ok",
       "languagePolicy": {
         "schemaVersion": "language-policy/v1",

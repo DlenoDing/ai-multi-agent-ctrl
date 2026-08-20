@@ -2986,6 +2986,30 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "没有工作项的任务组不得算作 100%（新建的组会显示'已完成'）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyEmptyTaskGroupIsNotComplete",
+    from: "    : 0;",
+    to: "    : 100;",
+    expect: "人会以为它已经做完了"
+  },
+  {
+    name: "进度不得一律返回 0（正面对照：有活时要算平均）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyEmptyTaskGroupIsNotComplete",
+    from: "  taskGroup.progress = items.length\n",
+    to: "  taskGroup.progress = false\n",
+    expect: "应为 80"
+  },
+  {
+    name: "种子里存的进度必须与它自己的工作项对得上",
+    file: "data/seed-state.json",
+    check: "verifyEmptyTaskGroupIsNotComplete",
+    from: "\"progress\": 80,",
+    to: "\"progress\": 71,",
+    expect: "存的进度是 71%"
+  },
+  {
     name: "变量转发的拒绝码也要有中文（控制台真会显示它们）",
     file: "apps/control-plane-ui/public/i18n-zh.js",
     check: "verifyEveryCloseGateHasHumanGuidance",

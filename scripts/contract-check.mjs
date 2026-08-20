@@ -350,6 +350,7 @@ run(verifyCommentsDoNotCiteLineNumbers);
 run(verifyGateReferencesResolve);
 run(verifyExecutorFailuresSayWhichKind);
 run(verifyStorageFaultKindsHaveChinese);
+run(verifyEmptyTaskGroupIsNotComplete);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5539,6 +5540,48 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 而人看到它的时刻正是控制面出事那一刻 —— 那是最不该甩标识符的时候。实测 8 种里 7 种没有中文。
 // 枚举必须【从产品代码里取】：我自己列一份清单，新增一种 kind 时清单不会跟着长。
 // 两个来源都要收：直接赋值的 {kind: "x"}，以及归类正则里的那几个分支（它们是 hit[1] 赋进去的）。
+// 没有在算的工作项时，任务组进度【不得算作 100%】。
+// 实测过的真实后果：新建一个任务组、还没来得及拆工作项，跑一轮自治循环，进度就变成 100 ——
+// 人在项目概览上看到的是"这个新任务组已经做完了"。缺席不得等于有利结果。
+// 同一条分支还盖住"工作项全被取代"：被取代的活不是做完的活。
+function verifyEmptyTaskGroupIsNotComplete(output) {
+  const blank = {id: "tg_blank", projectId: "p", name: "刚建好还没拆工作项", status: "active",
+    progress: 0, health: "ok", roles: [], workItems: [], blockers: []};
+  recomputeTaskGroup(blank);
+  if (blank.progress !== 0) {
+    output.push(`没有工作项的任务组重算出 ${blank.progress}% —— 人会以为它已经做完了`);
+  }
+  const superseded = {id: "tg_sup", projectId: "p", name: "工作项全被取代", status: "active",
+    progress: 0, health: "ok", roles: [], blockers: [],
+    workItems: [{id: "w1", status: "superseded", progress: 100}, {id: "w2", status: "superseded", progress: 100}]};
+  recomputeTaskGroup(superseded);
+  if (superseded.progress !== 0) {
+    output.push(`工作项全被取代的任务组重算出 ${superseded.progress}% —— 被取代的活不是做完的活`);
+  }
+  // 正面对照：有真活时照常算平均，别把上面两条靠"一律返回 0"蒙混过去。
+  const working = {id: "tg_live", projectId: "p", name: "在做", status: "active",
+    progress: 0, health: "ok", roles: [], blockers: [],
+    workItems: [{id: "w1", status: "verified", progress: 100}, {id: "w2", status: "in_progress", progress: 60}]};
+  recomputeTaskGroup(working);
+  if (working.progress !== 80) {
+    output.push(`有工作项时算出的进度是 ${working.progress}%（应为 80）—— 上面两条可能只是"一律返回 0"`);
+  }
+  // 种子里存的进度必须与它自己的工作项对得上：屏幕上并排的两个数由两处分别写死时，
+  // 一定会漂（实测 tg_instruction_efficiency 存 71、按工作项算 80，界面显示的是 71）。
+  const seed = loadJson("data/seed-state.json");
+  for (const taskGroup of seed.taskGroups || []) {
+    const stored = Number(taskGroup.progress);
+    const copy = JSON.parse(JSON.stringify(taskGroup));
+    recomputeTaskGroup(copy);
+    if (copy.progress !== stored) {
+      output.push(`种子里 ${taskGroup.id} 存的进度是 ${stored}%，按它自己的工作项算是 ${copy.progress}% —— `
+        + "界面显示的是存的那个，而工作项就列在旁边");
+    }
+  }
+  console.log(`任务组进度：空组与全被取代都算 0（不是 100），有活时按工作项平均；`
+    + `种子里 ${(seed.taskGroups || []).length} 个任务组的存值逐个与工作项核对`);
+}
+
 function verifyStorageFaultKindsHaveChinese(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8")
     .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));

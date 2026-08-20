@@ -4449,7 +4449,13 @@ export function recomputeTaskGroup(taskGroup) {
     blockers: taskGroup.blockers, blockersDroppedCount: taskGroup.blockersDroppedCount
   });
   const items = (taskGroup.workItems || []).filter((item) => item.status !== "superseded");
-  taskGroup.progress = items.length ? Math.round(items.reduce((sum, item) => sum + Number(item.progress || 0), 0) / items.length) : 100;
+  // 没有在算的工作项时【不能算作 100%】：刚建好还没拆工作项的任务组，跑一轮编排就会显示"已完成"——
+  // 人在项目概览上看到的是"这个新任务组做完了"（实测：建组后跑一次自治循环，progress 0 → 100）。
+  // 同一条分支还盖住"工作项全被取代"的情形：被取代的活不是做完的活，报 100 同样是在宣称没发生过的完成。
+  // 缺席不得等于有利结果 —— 没有活可算就是 0，旁边的「工作项：N」正好把这个 0 解释清楚。
+  taskGroup.progress = items.length
+    ? Math.round(items.reduce((sum, item) => sum + Number(item.progress || 0), 0) / items.length)
+    : 0;
   const blockedItems = items.filter((item) => BLOCKED_OR_FAILED_WORKITEM_STATUSES.includes(item.status));
   const executableCells = items.filter((item) => !BLOCKED_OR_FAILED_WORKITEM_STATUSES.includes(item.status) && !["verified", "closed"].includes(item.status));
   // A6 escalatable blocked cell = a genuine root-cause block, NOT an opt-in transient wait.
