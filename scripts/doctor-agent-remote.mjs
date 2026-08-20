@@ -736,7 +736,19 @@ try {
     idempotencyKey: "doctor-agent-permission-resolve",
     body: {status: "approved"}
   });
-  const [permissionExit] = await once(permissionChild, "exit");
+  // 等 agent 跑完不能无上限：它一旦卡住（等锁、等网络、等子进程），整个 e2e 就挂在这里，
+  // 最后死于一句 "Detected unsettled top-level await" —— 看不出是谁没退出。
+  // 同形状在控制面 e2e 里实测撞到过一次（后台自治周期的子进程不理 SIGTERM）。
+  const permissionRace = await Promise.race([
+    once(permissionChild, "exit").then(([code]) => ({code})),
+    new Promise((resolve) => setTimeout(() => resolve({timedOut: true}), 120000))
+  ]);
+  if (permissionRace.timedOut) {
+    permissionChild.kill("SIGKILL");
+    throw new Error(`permission-report Agent 跑了 120 秒还没结束，已强制结束 —— `
+      + `它多半卡在等待上（stderr 末尾：${String(permissionErr).slice(-200)}）`);
+  }
+  const permissionExit = permissionRace.code;
   if (permissionExit !== 0) throw new Error(`permission-report Agent run failed: ${permissionErr || permissionOut}`);
   if (!permissionOut.includes("permission report submitted")) throw new Error("Agent did not emit a structured permission report");
   const resolvedState = await json("/api/state", {token: login.sessionToken});

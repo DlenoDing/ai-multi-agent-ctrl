@@ -2396,8 +2396,23 @@ try {
     }
     console.log("autonomous orchestrator tick ok: state advanced with no request made");
   } finally {
+    // 无上限地等子进程退出 = 它一旦不理 SIGTERM，整个 e2e 就挂在这里，最后死于一句
+    // "Detected unsettled top-level await"，看不出是谁没退出、也跑不到后面的检查
+    // （并发跑变异门时实测撞到过，靠肉眼读那句警告才定位）。改成：先礼后兵，还不走就明说。
     tickChild.kill("SIGTERM");
-    await new Promise((resolve) => tickChild.on("exit", resolve));
+    const exited = await Promise.race([
+      new Promise((resolve) => tickChild.on("exit", () => resolve(true))),
+      new Promise((resolve) => setTimeout(() => resolve(false), 10000))
+    ]);
+    if (!exited) {
+      tickChild.kill("SIGKILL");
+      const killed = await Promise.race([
+        new Promise((resolve) => tickChild.on("exit", () => resolve(true))),
+        new Promise((resolve) => setTimeout(() => resolve(false), 5000))
+      ]);
+      if (!killed) throw new Error("后台自治周期的子进程 SIGTERM 与 SIGKILL 都不退出 —— 它多半卡在磁盘或子进程上");
+      console.log("  --  后台自治周期的子进程没有响应 SIGTERM，已强制结束（10 秒内未退出）");
+    }
   }
 }
 
@@ -2473,7 +2488,17 @@ console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条�
     + `在 ${scanned.length} 份落盘文件里一个都搜不到（只存摘要）`);
 }
 
-const [code, signal] = await exitPromise;
+// 同上：主服务被 SIGTERM 之后若不退出，整套 e2e 就挂死在最后一行 —— 前面所有断言都跑完了，
+// 人看到的却只有一句 unsettled top-level await。给它上限，超时就强杀并明说。
+const exitRace = await Promise.race([
+  exitPromise.then((pair) => ({pair})),
+  new Promise((resolve) => setTimeout(() => resolve({timedOut: true}), 15000))
+]);
+if (exitRace.timedOut) {
+  child.kill("SIGKILL");
+  console.log("  --  控制面服务收到 SIGTERM 后 15 秒未退出，已强制结束（断言均已跑完）");
+}
+const [code, signal] = exitRace.pair || [null, "SIGKILL"];
 try { rmSync(doctorRepo.base, {recursive: true, force: true}); } catch {}
 if (!process.env.AIMAC_DOCTOR_RUNTIME_DIR) { try { rmSync(join(root, doctorRuntimeDir), {recursive: true, force: true}); } catch {} }
 if (code && signal !== "SIGTERM") {

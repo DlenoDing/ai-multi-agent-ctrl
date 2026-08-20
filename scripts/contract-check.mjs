@@ -324,6 +324,7 @@ run(verifyServerFieldsReachThePerson);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
+run(verifyChildExitWaitsAreBounded);
 run(verifySharedJsonWritesAreAtomic);
 run(verifyRefusalCodeCoverageRatchet);
 await runAsync(verifyGateFetchFailuresNameTheGate);
@@ -5437,6 +5438,48 @@ function verifyServerFieldsReachThePerson(output) {
 // 守卫串位时状态码照样对得上。控制面 e2e 里这一条由运行期棘轮盯着（UNNAMED_REFUSAL_CEILING=0），
 // 另外两套 e2e 不走那个助手，这里按源码结构补上。
 // 401 不点名是允许的：未认证只有一种含义，没有可串的位。
+// 【等子进程退出必须有上限】。无上限地 await 一个子进程的 exit，等于把整套 e2e 的生死交给
+// 那个进程：它一旦不理 SIGTERM 或卡在磁盘上，Node 最后只会丢一句
+// "Detected unsettled top-level await"，既看不出是谁没退出，也跑不到后面的检查
+// （并发跑变异门时真撞到过，靠肉眼读那句警告才定位；修法是先礼后兵再明说）。
+function verifyChildExitWaitsAreBounded(output) {
+  const files = ["scripts/doctor.mjs", "scripts/doctor-mcp.mjs", "scripts/doctor-agent-remote.mjs",
+    "scripts/idle-tick-gate.mjs", "scripts/crash-consistency-gate.mjs", "scripts/concurrent-writer-gate.mjs"];
+  const unbounded = [];
+  let checked = 0;
+  for (const file of files) {
+    const lines = readFileSync(join(root, file), "utf8").split("\n");
+    for (const [index, line] of lines.entries()) {
+      // 只看真的在等某个子进程退出的那种；process.on("exit") 是本进程的退出钩子，不算。
+      if (!/once\(\w+, "exit"\)|\w+\.on\("exit"/u.test(line)) continue;
+      if (/^\s*process\.on\("exit"/u.test(line)) continue;
+      checked += 1;
+      // 上限可以写在同一行（Promise.race + setTimeout），也可能拆到相邻几行里。
+      const window = lines.slice(Math.max(0, index - 3), index + 4).join("\n");
+      if (/Promise\.race\(|setTimeout\(/u.test(window)) continue;
+      // 也可能是"这里先把 promise 存下来、到别处再限时"。跟着那个变量名去找 Promise.race，
+      // 否则会把已经限过时的写法当成漏网（第一版就是这样误报的）。
+      const assigned = line.match(/(?:const|let|var)\s+(\w+)\s*=/u)?.[1];
+      if (assigned) {
+        const raced = lines.some((other) => other.includes("Promise.race") && other.includes(assigned))
+          || lines.some((other, otherIndex) => other.includes(assigned) && otherIndex !== index
+            && lines.slice(Math.max(0, otherIndex - 2), otherIndex + 3).join("\n").includes("Promise.race"));
+        if (raced) continue;
+      }
+      unbounded.push(`${file}:${index + 1} ${line.trim().slice(0, 70)}`);
+    }
+  }
+  if (checked < 5) {
+    output.push(`等子进程退出核对：只找到 ${checked} 处 —— 提取多半失配，这道门在空转`);
+    return;
+  }
+  if (unbounded.length) {
+    output.push("这些地方无上限地等子进程退出：\n  " + unbounded.join("\n  ")
+      + "\n  —— 子进程不退出时整套 e2e 会挂死，最后只留一句看不懂的 unsettled top-level await");
+  }
+  console.log(`等子进程退出：${checked} 处逐个核对，${unbounded.length} 处没有上限（应为 0）`);
+}
+
 function verifyRefusalAssertionsNameTheCode(output) {
   const files = ["scripts/doctor-mcp.mjs", "scripts/doctor-agent-remote.mjs"];
   const loose = [];

@@ -2944,6 +2944,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "无上限地等子进程退出要被门看见",
+    file: "scripts/doctor-mcp.mjs",
+    check: "verifyChildExitWaitsAreBounded",
+    from: '  await Promise.race([once(child, "exit"), new Promise((resolveWait) => setTimeout(resolveWait, 3000))]);',
+    to: '  await once(child, "exit");',
+    expect: "无上限地等子进程退出"
+  },
+  {
     name: "清单声称的产出不在提交里必须被拒（删掉的文件也算不在）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyHumanApprovedPathsBindTheCommit",
