@@ -1427,7 +1427,6 @@ end
 # 所以做成登记制：新增的错误码要么给中文，要么写明它只发给机器、人看不到。
 MACHINE_FACING_ERRORS = {
   "checkpoint_replay_binding_mismatch" => "agent 网关回给代理的，控制台不显示",
-  "dispatch_not_assigned_to_node" => "同上",
   "event_node_binding_mismatch" => "同上",
   "execution_event_key_required" => "同上",
   "room_task_group_mismatch" => "同上（房间接口的机器侧调用）",
@@ -1918,7 +1917,7 @@ state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-
 machine_facing_error_codes = %w[
   mcp_streamable_http_requires_post mcp_auth_required
   event_node_binding_mismatch execution_event_key_required
-  checkpoint_replay_binding_mismatch dispatch_not_assigned_to_node
+  checkpoint_replay_binding_mismatch
   room_task_group_mismatch
   mcp_server_error
 ].to_set

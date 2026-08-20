@@ -534,6 +534,7 @@
     execution_topology_requires_human_plan_confirmation: "执行方案需人工定稿后才能启动",
     task_group_close_requires_human_actor: "关闭任务组必须由真人账号执行",
     dispatch_halted_by_human_control: "这个派发已被真人叫停，先恢复再上报执行结果",
+    dispatch_not_assigned_to_node: "这个派发不在该节点手上（已被回收或分给了别的节点）：刷新一下再看它现在归谁",
     agent_control_command_ack_status_unknown: "认不出的控制命令回执状态",
     dispatch_fail_status_unknown: "认不出的上报状态（blocked 可恢复，cancelled/failed 是终态）",
     execution_topology_branch_status_unknown: "认不出的分支状态",

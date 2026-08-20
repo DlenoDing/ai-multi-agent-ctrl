@@ -234,6 +234,17 @@ function run(check) {
 }
 
 validateSchema(seedState.runtime, runtimeSchema, "seed.runtime", errors);
+// 纯机器面的错误码（agent 网关 / MCP 报文，读者是程序）。两处检查共用这一份：
+// 一处查"有没有中文"，一处查"控制台是不是真的撞不到它"。分两份必漂。
+const MACHINE_FACING_ERRORS = {
+  mcp_streamable_http_requires_post: "MCP 传输层协议错误，读它的是 MCP 客户端",
+  mcp_auth_required: "同上",
+  event_node_binding_mismatch: "agent 网关：执行事件与节点绑定不符，读它的是 agent 运行时",
+  execution_event_key_required: "agent 网关：缺幂等键，读它的是 agent 运行时",
+  checkpoint_replay_binding_mismatch: "agent 网关：检查点重放绑定不符，读它的是 agent 运行时",
+  room_task_group_mismatch: "只在房间 POST 上返回，控制台对房间只读（GET），发消息的是 agent"
+};
+
 run(verifyAgentGatewayContracts);
 run(verifyHumanAndOrganizationContracts);
 
@@ -322,6 +333,7 @@ run(verifyBothOwnerGrantWritersRefreshPermissions);
 run(verifyBothWorkItemWritersHonourSettledTaskGroups);
 run(verifyServerFieldsReachThePerson);
 run(verifyMessagesDoNotPointAtInvisibleFields);
+run(verifyMachineFacingErrorsAreOutOfConsoleReach);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5414,6 +5426,57 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 【中文文案里点名的字段，界面必须真的显示它】。`state_storage_corrupt` 的文案写着
 // "报文里的 file 指出是哪一份，按它恢复" —— 而前端原先根本不显示 file，那句话把人指向
 // 一个他看不到的东西（造了一次真的状态损坏才发现）。文案与渲染是两个人写的，最容易脱节。
+// 【登记成"控制台不显示"的错误码，控制台就不该调得到那条路由】。这一族登记的理由都是
+// "agent 网关回给代理的，控制台不显示" —— 而这句话是可以核的：把这个码所在的那条路由找出来，
+// 看控制台的 api(...) 里有没有它。实测栽过一次：dispatch_not_assigned_to_node 落在
+// /api/agent-nodes/:id/control 上，而控制台的节点管理页就在调它 —— 人点"控制节点"失败时
+// 看到的是一串英文码。（同一个事实分散在三份登记册里，摘牌要三处一起摘。）
+
+function verifyMachineFacingErrorsAreOutOfConsoleReach(output) {
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const lines = server.split("\n");
+  const registered = Object.keys(MACHINE_FACING_ERRORS);
+  if (registered.length < 3) {
+    output.push(`机器面错误码登记只读到 ${registered.length} 条 —— 提取多半失配，这道门在空转`);
+    return;
+  }
+  // 控制台真的会请求的路径前缀（api("/api/xxx/...") 里的第二段）
+  // 要按【方法】分：控制台对房间只有 GET，而 room_task_group_mismatch 只在 POST 上返回 ——
+  // 只按路径段判会把这种"读得到但写不到"误报成够得着（第一版就是这样）。
+  const consolePaths = new Set();
+  const consoleWritePaths = new Set();
+  // 不能用 `[^)]` 划边界：路径里常有 encodeURIComponent(...)，第一个右括号就把窗口截断了，
+  // method 落在窗口外 —— 于是"控制台会写这条路由"看不见（实测：节点控制那处就是这样漏掉的）。
+  // 改成从 api( 起固定往后看一段字符。
+  for (const match of app.matchAll(/api\(\s*[`"']\/api\/([a-z0-9-]+)/gu)) {
+    consolePaths.add(match[1]);
+    const window = app.slice(match.index, match.index + 320);
+    if (/method:\s*["'`](POST|PUT|PATCH|DELETE)/u.test(window)) consoleWritePaths.add(match[1]);
+  }
+  if (consolePaths.size < 10) {
+    output.push(`控制台请求路径只提取到 ${consolePaths.size} 个 —— 提取多半失配，这道门在空转`);
+    return;
+  }
+  for (const code of registered) {
+    const at = lines.findIndex((line) => line.includes(`"${code}"`));
+    if (at < 0) continue;
+    let segment = null;
+    for (let i = at; i >= 0 && i > at - 300; i -= 1) {
+      const route = lines[i].match(/url\.pathname(?:\.match\(\/\^\\\/api\\\/([a-z0-9-]+)|\s*===\s*"\/api\/([a-z0-9-]+))/u);
+      if (route) { segment = route[1] || route[2]; break; }
+    }
+    if (!segment || segment === "agent") continue;   // /api/agent/v1/* 本就只给节点
+    // 只在写入口返回的码，只有当控制台【也写】那条路由时才够得着。
+    const writeOnly = lines.slice(Math.max(0, at - 40), at)
+      .some((line) => /req\.method === "(POST|PUT|PATCH|DELETE)"/u.test(line));
+    if (!(writeOnly ? consoleWritePaths : consolePaths).has(segment)) continue;
+    output.push(`${code} 登记成"控制台不显示"，但它出自 /api/${segment}/… 而控制台就在调这条路由 `
+      + "—— 人会看到一串英文码。要么补中文并摘掉登记，要么写清控制台为什么撞不到它");
+  }
+  console.log(`机器面错误码：${registered.length} 条逐个核对（控制台实际会请求 ${consolePaths.size} 个路径段）`);
+}
+
 function verifyMessagesDoNotPointAtInvisibleFields(output) {
   const dict = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
   const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8").replace(/\/\/[^\n]*/gu, "");
@@ -7081,15 +7144,6 @@ function verifyEveryCloseGateHasHumanGuidance(output) {
   // API 错误码同样会原样显示给人（前端对 error 走 t()，命中不了就把英文键摆在屏幕上），
   // 而它们只在出错那一刻才出现 —— 渲染扫描永远碰不到，得按权威来源（server.mjs 自己返回的
   // 那些字符串）全量核对。只登记【纯机器面】的例外：agent 网关与 MCP 的报文读者是程序。
-  const MACHINE_FACING_ERRORS = {
-    mcp_streamable_http_requires_post: "MCP 传输层协议错误，读它的是 MCP 客户端",
-    mcp_auth_required: "同上",
-    event_node_binding_mismatch: "agent 网关：执行事件与节点绑定不符，读它的是 agent 运行时",
-    execution_event_key_required: "agent 网关：缺幂等键，读它的是 agent 运行时",
-    checkpoint_replay_binding_mismatch: "agent 网关：检查点重放绑定不符，读它的是 agent 运行时",
-    dispatch_not_assigned_to_node: "agent 网关：派发不属于这个节点，读它的是 agent 运行时",
-    room_task_group_mismatch: "只在房间 POST 上返回，控制台对房间只读（GET），发消息的是 agent"
-  };
   const serverSourceForErrors = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
   const errorCodes = [...new Set([...serverSourceForErrors.matchAll(/error:\s*"([a-z0-9_]+)"/gu)].map((match) => match[1]))];
   if (errorCodes.length < 60) {

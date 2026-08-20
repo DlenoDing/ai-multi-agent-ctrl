@@ -739,8 +739,8 @@ const MUTATIONS = [
     name: "面向人的 API 错误码必须有中文",
     file: "scripts/contract-check.mjs",
     check: "verifyEveryCloseGateHasHumanGuidance",
-    from: "    room_task_group_mismatch: \"只在房间 POST 上返回",
-    to: "    room_task_group_mismatchX: \"只在房间 POST 上返回",
+    from: "  room_task_group_mismatch: \"只在房间 POST 上返回",
+    to: "  room_task_group_mismatchX: \"只在房间 POST 上返回",
     expect: "room_task_group_mismatch"
   },
   {
@@ -2942,6 +2942,14 @@ const MUTATIONS = [
     from: '  if (cached && cached.status === "active" && cached.resourceRef === resourceRef) return cached;',
     to: "  if (cached) return cached;",
     expect: "写锁形同虚设"
+  },
+  {
+    name: "登记成机器面的错误码，控制台不得调得到那条路由",
+    file: "scripts/contract-check.mjs",
+    check: "verifyMachineFacingErrorsAreOutOfConsoleReach",
+    from: '  room_task_group_mismatch: "只在房间 POST 上返回，控制台对房间只读（GET），发消息的是 agent"',
+    to: '  room_task_group_mismatch: "只在房间 POST 上返回，控制台对房间只读（GET），发消息的是 agent",\n  dispatch_not_assigned_to_node: "agent 网关：派发不属于这个节点"',
+    expect: "而控制台就在调这条路由"
   },
   {
     name: "登记里点名的读取方必须真的读它",
