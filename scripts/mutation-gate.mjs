@@ -2946,6 +2946,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "报错了当前口令就不许改密",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '      if (!currentOk) return json(res, 403, {error: "current_password_incorrect"});',
+    to: '      if (false) return json(res, 403, {error: "current_password_incorrect"});',
+    expect: "报错了当前口令就不许改密"
+  },
+  {
     name: "同一个 id 建两次必须撞，不得静默覆盖",
     file: "apps/mcp-server/server.mjs",
     gate: "mcp",

@@ -1142,6 +1142,17 @@ try {
         + `${crossOrgGrant.payload.error}）—— 租户边界在成员授权这条路上是敞开的`);
     }
   }
+  // 改口令的三道守卫此前一条断言都没有。它们各自失效的后果都很直接：
+  // 太短 → 弱口令进库；不核对当前口令 → 拿到一个没锁屏的会话就能改掉别人的口令；
+  // 登录不核对 → 口令形同虚设。
+  expectStatus(await jsonFetch(port, "/api/auth/change-password", {
+    method: "POST", headers: {authorization: orgAdminAuth},
+    body: JSON.stringify({newPassword: "短"})
+  }), 400, "太短的新口令必须被拒", "password_too_short");
+  expectStatus(await jsonFetch(port, "/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({email: "doctor.org.admin@local", password: "这不是我的口令"})
+  }), 401, "口令不对必须被拒", "invalid_credentials");
   const changePassword = await jsonFetch(port, "/api/auth/change-password", {
     method: "POST",
     headers: {authorization: orgAdminAuth},
@@ -1267,6 +1278,12 @@ try {
   }
   // 改密之后必须用新会话继续
   orgAdminAuth = `Bearer ${passwordLogin.payload.sessionToken}`;
+  // 这一条必须在【账号已经设过口令】之后：守卫只在 account.passwordDigest 存在时才核对当前口令，
+  // 第一次设密本来就不需要旧口令 —— 放在设密之前，验到的是"没有旧口令可核对"那一支（实测过）。
+  expectStatus(await jsonFetch(port, "/api/auth/change-password", {
+    method: "POST", headers: {authorization: orgAdminAuth},
+    body: JSON.stringify({currentPassword: "不是当前这一个", newPassword: "doctor-org-admin-pass2"})
+  }), 403, "报错了当前口令就不许改密", "current_password_incorrect");
   const memberCreate = await jsonFetch(port, "/api/org/members", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-org-member", authorization: orgAdminAuth},
