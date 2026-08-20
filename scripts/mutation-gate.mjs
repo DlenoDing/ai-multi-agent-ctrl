@@ -2944,6 +2944,22 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "4xx 断言必须点名拒绝码，只判状态码要被棘轮咬住",
+    file: "scripts/doctor.mjs",
+    gate: "doctor",
+    from: ', "work assign deny", "policy_denied");',
+    to: ', "work assign deny");',
+    expect: "只判状态码不判拒绝码的 4xx 断言从 0 涨到"
+  },
+  {
+    name: "点名拒绝码要抓得住守卫串位",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: 'new Error("task_group_close_requires_human_actor")',
+    to: 'new Error("policy_denied")',
+    expect: "拒了不等于拒对了"
+  },
+  {
     name: "已定案的规则源不得被再次改写",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "doctor",

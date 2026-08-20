@@ -100,9 +100,18 @@ async function verifyRealtimeWebSocket(port, bearerAuth) {
   }
 }
 
+// 没点名拒绝码的 4xx 断言登记在这里：它们只验了"拒了"，没验"拒对了"。
+// 同一个 409 可以是"已被处置"也可以是"幂等键撞了"，同一个 403 可以是越权也可以是组织被停 ——
+// 守卫串位时状态码照样对得上。棘轮只降不升；下面会把实测到的码打出来，照抄进第四个参数即可。
+const UNNAMED_REFUSALS = [];
+const UNNAMED_REFUSAL_CEILING = 0;
+
 // 第四个参数给了就连拒绝码一起对：只判状态码等于"拒了"，不等于"拒对了"——
 // 同一个 409 可以是"已被处置"，也可以是"幂等键撞了"，两者对人的意思完全不同。
 function expectStatus(result, status, label, expectedError) {
+  if (expectedError === undefined && status >= 400) {
+    UNNAMED_REFUSALS.push(`${label} → ${JSON.stringify(result.payload?.error)}`);
+  }
   if (expectedError !== undefined && result.payload?.error !== expectedError) {
     throw new Error(`${label}: 状态码对上了（${result.response.status}），但拒绝码是 `
       + `${JSON.stringify(result.payload?.error)}，应为 ${expectedError} —— 拒了不等于拒对了`);
@@ -1825,12 +1834,12 @@ try {
 
   // work-items assign → task_group:orchestrate
   expectStatus(await g2("/api/work-items/work_management_ui/assign", agentAuth, "g2b-assign-ok", {taskGroupId: "tg_runtime_management", roleId: "reviewer"}), 201, "work assign happy");
-  expectStatus(await g2("/api/work-items/work_management_ui/assign", invitedAuth, "g2b-assign-deny", {taskGroupId: "tg_runtime_management", roleId: "reviewer"}), 403, "work assign deny");
+  expectStatus(await g2("/api/work-items/work_management_ui/assign", invitedAuth, "g2b-assign-deny", {taskGroupId: "tg_runtime_management", roleId: "reviewer"}), 403, "work assign deny", "policy_denied");
 
   // findings → task_group:review (+ cross-tenant deny + resolve)
   const findingOk = expectStatus(await g2("/api/findings", reviewerAuth, "g2b-finding-ok", {taskGroupId: "tg_runtime_management", findingType: "review", severity: "low", summary: "doctor finding"}), 201, "finding submit happy");
-  expectStatus(await g2("/api/findings", invitedAuth, "g2b-finding-deny", {taskGroupId: "tg_runtime_management", summary: "denied"}), 403, "finding submit deny");
-  expectStatus(await g2("/api/findings", orgAdminAuth, "g2b-finding-crossorg", {taskGroupId: "tg_runtime_management", summary: "cross org"}), 403, "finding submit cross-tenant deny");
+  expectStatus(await g2("/api/findings", invitedAuth, "g2b-finding-deny", {taskGroupId: "tg_runtime_management", summary: "denied"}), 403, "finding submit deny", "policy_denied");
+  expectStatus(await g2("/api/findings", orgAdminAuth, "g2b-finding-crossorg", {taskGroupId: "tg_runtime_management", summary: "cross org"}), 403, "finding submit cross-tenant deny", "policy_denied");
   expectStatus(await g2(`/api/findings/${findingOk.payload.finding.findingId}/resolve`, reviewerAuth, "g2b-finding-resolve-ok", {status: "resolved", evidenceRefs: ["evidence:doctor"], rootCauseOwner: "reviewer"}), 200, "finding resolve happy");
   // 已定过的缺陷不得被第二次处置：回 200 意味着后到的那个人以为自己改掉了结论，而记录没动。
   expectStatus(await g2(`/api/findings/${findingOk.payload.finding.findingId}/resolve`, reviewerAuth,
@@ -1879,39 +1888,39 @@ try {
 
   // approval-requests → task_group:review (+ resolve)
   const approvalOk = expectStatus(await g2("/api/approval-requests", reviewerAuth, "g2b-approval-ok", {taskGroupId: "tg_runtime_management", action: "guarded_action"}), 201, "approval create happy");
-  expectStatus(await g2("/api/approval-requests", invitedAuth, "g2b-approval-deny", {taskGroupId: "tg_runtime_management"}), 403, "approval create deny");
+  expectStatus(await g2("/api/approval-requests", invitedAuth, "g2b-approval-deny", {taskGroupId: "tg_runtime_management"}), 403, "approval create deny", "policy_denied");
   expectStatus(await g2(`/api/approval-requests/${approvalOk.payload.approvalRequest.approvalId}/resolve`, reviewerAuth, "g2b-approval-resolve-ok", {status: "approved"}), 200, "approval resolve happy");
 
   // policy-decisions/evaluate → system:*
   expectStatus(await g2("/api/policy-decisions/evaluate", systemAuth, "g2b-policy-ok", {action: "mcp_tool_call", allowed: true}), 201, "policy eval happy");
-  expectStatus(await g2("/api/policy-decisions/evaluate", reviewerAuth, "g2b-policy-deny", {action: "mcp_tool_call"}), 403, "policy eval deny");
+  expectStatus(await g2("/api/policy-decisions/evaluate", reviewerAuth, "g2b-policy-deny", {action: "mcp_tool_call"}), 403, "policy eval deny", "policy_denied");
 
   // contracts → project:*
   expectStatus(await g2("/api/contracts", systemAuth, "g2b-contract-ok", {projectId: "prj_control_plane", definitionType: "semantic_contract"}), 201, "contract publish happy");
-  expectStatus(await g2("/api/contracts", reviewerAuth, "g2b-contract-deny", {projectId: "prj_control_plane"}), 403, "contract publish deny");
+  expectStatus(await g2("/api/contracts", reviewerAuth, "g2b-contract-deny", {projectId: "prj_control_plane"}), 403, "contract publish deny", "policy_denied");
 
   // rooms/:roomId/messages → task_group:control (POST) / read (GET)
   expectStatus(await g2("/api/rooms/room_tg_runtime_management/messages", systemAuth, "g2b-room-ok", {taskGroupId: "tg_runtime_management", text: "doctor room message"}), 201, "room send happy");
-  expectStatus(await g2("/api/rooms/room_tg_runtime_management/messages", invitedAuth, "g2b-room-deny", {taskGroupId: "tg_runtime_management", text: "x"}), 403, "room send deny");
+  expectStatus(await g2("/api/rooms/room_tg_runtime_management/messages", invitedAuth, "g2b-room-deny", {taskGroupId: "tg_runtime_management", text: "x"}), 403, "room send deny", "policy_denied");
   const roomRead = expectStatus(await g2("/api/rooms/room_tg_runtime_management/messages", systemAuth, null, null, "GET"), 200, "room wait read happy");
   if (!roomRead.payload.messages.some((message) => message.payload?.text === "doctor room message")) throw new Error("room wait did not return the sent message");
-  expectStatus(await g2("/api/rooms/room_tg_runtime_management/messages", invitedAuth, null, null, "GET"), 403, "room wait read deny");
+  expectStatus(await g2("/api/rooms/room_tg_runtime_management/messages", invitedAuth, null, null, "GET"), 403, "room wait read deny", "permission_denied");
 
   // leases claim/release → task_group:orchestrate
   // 用一个独立的工作项建租约夹具：一个工作项同时只能有一份生效的写入边界（防止后建的宽边界顶替
   // 人批准的窄边界），所以复用 work_permissions 会拿到它既有的、已被别的会话持租的那一份。
   const leaseTarget = expectStatus(await g2("/api/repository-output-targets", systemAuth, "g2b-lease-target", {taskGroupId: "tg_runtime_management", workItemId: "work_g2b_lease_fixture", artifactManifestPath: "docs/artifact-manifests/g2b-lease.json", pathAllowlist: ["docs/**"]}), 201, "lease target fixture");
   const leaseOk = expectStatus(await g2("/api/leases/claim", systemAuth, "g2b-lease-ok", {repositoryOutputTargetRef: leaseTarget.payload.targetId, holderRef: "session:doctor-g2b"}), 201, "lease claim happy");
-  expectStatus(await g2("/api/leases/claim", invitedAuth, "g2b-lease-deny", {repositoryOutputTargetRef: leaseTarget.payload.targetId}), 403, "lease claim deny");
+  expectStatus(await g2("/api/leases/claim", invitedAuth, "g2b-lease-deny", {repositoryOutputTargetRef: leaseTarget.payload.targetId}), 403, "lease claim deny", "policy_denied");
   expectStatus(await g2(`/api/leases/${leaseOk.payload.lease.leaseId}/release`, systemAuth, "g2b-lease-release-ok", {holderRef: "session:doctor-g2b", fencingToken: leaseOk.payload.lease.fencingToken}), 200, "lease release happy");
 
   // artifacts → task_group:checkpoint_submit (runtime service account allowed)
   expectStatus(await g2("/api/artifacts", agentAuth, "g2b-artifact-ok", {taskGroupId: "tg_runtime_management", artifactManifestRef: "docs/artifact-manifests/doctor.json"}), 201, "artifact register happy");
-  expectStatus(await g2("/api/artifacts", invitedAuth, "g2b-artifact-deny", {taskGroupId: "tg_runtime_management"}), 403, "artifact register deny");
+  expectStatus(await g2("/api/artifacts", invitedAuth, "g2b-artifact-deny", {taskGroupId: "tg_runtime_management"}), 403, "artifact register deny", "policy_denied");
 
   // permission-requests submit/resolve → checkpoint_submit (runtime allowed) / project:grant
   const permOk = expectStatus(await g2("/api/permission-requests", agentAuth, "g2b-perm-ok", {taskGroupId: "tg_runtime_management", permission: "task_group:read", subjectId: "acct_agent_runtime"}), 201, "permission request happy");
-  expectStatus(await g2("/api/permission-requests", invitedAuth, "g2b-perm-deny", {taskGroupId: "tg_runtime_management", permission: "task_group:read"}), 403, "permission request deny");
+  expectStatus(await g2("/api/permission-requests", invitedAuth, "g2b-perm-deny", {taskGroupId: "tg_runtime_management", permission: "task_group:read"}), 403, "permission request deny", "policy_denied");
   // 两个人同时编辑同一层规则：后保存者原先会静默删掉前保存者新增的规则，两人都拿到 200。
   // 丢的正是安全规则本身，而且不留痕。现在保存必须带上"我读到的是哪一版"。
   {
@@ -1924,10 +1933,10 @@ try {
     // B 拿着同一份旧版本保存：必须被拒，而不是把 A 刚加的那条删掉。
     expectStatus(await g2("/api/projects/prj_control_plane/config", auth, "cfg-second",
       {businessRules: [{ruleId: "biz.concurrent.b", title: "B 的规则", content: "B", enabled: true}], expectedConfigVersion: stale}),
-      409, "拿着过期版本保存规则必须被拒（否则会静默删掉别人刚写下的规则）");
+      409, "拿着过期版本保存规则必须被拒（否则会静默删掉别人刚写下的规则）", "config_version_stale");
     // 不带版本同样必须被拒 —— 否则任何忘了带的调用方都能绕过这道前提。
     expectStatus(await g2("/api/projects/prj_control_plane/config", auth, "cfg-noversion",
-      {businessRules: []}), 409, "不带版本保存整份规则必须被拒");
+      {businessRules: []}), 409, "不带版本保存整份规则必须被拒", "config_version_required");
     const afterCfg = await jsonFetch(port, "/api/projects/prj_control_plane/config", {headers: {authorization: auth}});
     if (!(afterCfg.payload.config.businessRules || []).some((rule) => rule.ruleId === "biz.concurrent.a")) {
       throw new Error("A 写下的规则在并发保存之后消失了");
@@ -1942,19 +1951,19 @@ try {
 
   // execution-topologies → task_group:orchestrate
   expectStatus(await g2("/api/execution-topologies", systemAuth, "g2b-topo-ok", {taskGroupId: "tg_runtime_management"}), 201, "execution topology happy");
-  expectStatus(await g2("/api/execution-topologies", invitedAuth, "g2b-topo-deny", {taskGroupId: "tg_runtime_management"}), 403, "execution topology deny");
+  expectStatus(await g2("/api/execution-topologies", invitedAuth, "g2b-topo-deny", {taskGroupId: "tg_runtime_management"}), 403, "execution topology deny", "policy_denied");
 
   // derived-task-requests → task_group:orchestrate
   expectStatus(await g2("/api/derived-task-requests", systemAuth, "g2b-derived-ok", {taskGroupId: "tg_runtime_management", title: "review the security configuration"}), 201, "derived task happy");
-  expectStatus(await g2("/api/derived-task-requests", invitedAuth, "g2b-derived-deny", {taskGroupId: "tg_runtime_management", title: "x"}), 403, "derived task deny");
+  expectStatus(await g2("/api/derived-task-requests", invitedAuth, "g2b-derived-deny", {taskGroupId: "tg_runtime_management", title: "x"}), 403, "derived task deny", "policy_denied");
 
   // review-plans → task_group:review
   expectStatus(await g2("/api/review-plans", reviewerAuth, "g2b-reviewplan-ok", {taskGroupId: "tg_runtime_management"}), 201, "review plan happy");
-  expectStatus(await g2("/api/review-plans", invitedAuth, "g2b-reviewplan-deny", {taskGroupId: "tg_runtime_management"}), 403, "review plan deny");
+  expectStatus(await g2("/api/review-plans", invitedAuth, "g2b-reviewplan-deny", {taskGroupId: "tg_runtime_management"}), 403, "review plan deny", "policy_denied");
 
   // review-bundles → task_group:review
   expectStatus(await g2("/api/review-bundles", reviewerAuth, "g2b-reviewbundle-ok", {taskGroupId: "tg_runtime_management"}), 201, "review bundle happy");
-  expectStatus(await g2("/api/review-bundles", invitedAuth, "g2b-reviewbundle-deny", {taskGroupId: "tg_runtime_management"}), 403, "review bundle deny");
+  expectStatus(await g2("/api/review-bundles", invitedAuth, "g2b-reviewbundle-deny", {taskGroupId: "tg_runtime_management"}), 403, "review bundle deny", "policy_denied");
 
   // rule-source-resolutions → task_group:control
   expectStatus(await g2("/api/rule-source-resolutions", systemAuth, "g2b-rulesource-ok", {taskGroupId: "tg_runtime_management", sourceRef: "reference:doctor", classification: "reference_only"}), 201, "rule source resolve happy");
@@ -1974,7 +1983,7 @@ try {
       "g2b-rulesource-settle-again", {taskGroupId: "tg_runtime_management", status: "quarantined"}), 409,
     "已定案的规则源不得被再次改写", "rule_source_already_settled");
   }
-  expectStatus(await g2("/api/rule-source-resolutions", invitedAuth, "g2b-rulesource-deny", {taskGroupId: "tg_runtime_management", sourceRef: "reference:x"}), 403, "rule source resolve deny");
+  expectStatus(await g2("/api/rule-source-resolutions", invitedAuth, "g2b-rulesource-deny", {taskGroupId: "tg_runtime_management", sourceRef: "reference:x"}), 403, "rule source resolve deny", "policy_denied");
 
   // 人工定稿闸门（HTTP 层真实校验）：机器主体【即使持有相应权限】也不得做核心决策。
   // 关键：先把所需权限真授给服务账号，否则 403 只是普通权限不足，测不出真人守卫（曾经就是这样的假绿）。
@@ -1986,10 +1995,10 @@ try {
   await gateGrant("gate-grant-tg", "task_group", "tg_runtime_management", "task_group_owner", ["task_group:configure", "task_group:control", "task_group:review"]);
   await gateGrant("gate-grant-proj", "project", "prj_control_plane", "project_admin", ["project:update"]);
   // 现在服务账号权限齐备，仍必须被真人守卫拒绝 —— 403 只可能来自 HUMAN_ONLY_ACTIONS。
-  expectStatus(await g2("/api/task-groups/tg_runtime_management/config", agentAuth, "gate-tgconfig-deny", {languagePolicy: {primaryLanguage: "zh-CN"}}), 403, "机器主体持权限仍不得变更任务组规则/配置");
-  expectStatus(await g2("/api/projects/prj_control_plane/config", agentAuth, "gate-projconfig-deny", {languagePolicy: {primaryLanguage: "zh-CN"}}), 403, "机器主体持权限仍不得变更项目规则/配置");
-  expectStatus(await g2("/api/human-directives", agentAuth, "gate-directive-deny", {taskGroupId: "tg_runtime_management", directiveType: "add_requirement", instruction: "doctor"}), 403, "机器主体持权限仍不得使用人工指令通道");
-  expectStatus(await g2("/api/task-groups/tg_runtime_management/close-barrier/compute", agentAuth, "gate-close-deny", {mutate: true}), 403, "机器主体持权限仍不得关闭任务组");
+  expectStatus(await g2("/api/task-groups/tg_runtime_management/config", agentAuth, "gate-tgconfig-deny", {languagePolicy: {primaryLanguage: "zh-CN"}}), 403, "机器主体持权限仍不得变更任务组规则/配置", "principal_not_allowed_for_action");
+  expectStatus(await g2("/api/projects/prj_control_plane/config", agentAuth, "gate-projconfig-deny", {languagePolicy: {primaryLanguage: "zh-CN"}}), 403, "机器主体持权限仍不得变更项目规则/配置", "permission_denied");
+  expectStatus(await g2("/api/human-directives", agentAuth, "gate-directive-deny", {taskGroupId: "tg_runtime_management", directiveType: "add_requirement", instruction: "doctor"}), 403, "机器主体持权限仍不得使用人工指令通道", "principal_not_allowed_for_action");
+  expectStatus(await g2("/api/task-groups/tg_runtime_management/close-barrier/compute", agentAuth, "gate-close-deny", {mutate: true}), 403, "机器主体持权限仍不得关闭任务组", "task_group_close_requires_human_actor");
   // 真人走同一条路径必须放行（证明拒绝确实是按主体类型，而不是端点本身坏了）。
   expectStatus(await g2("/api/task-groups/tg_runtime_management/config", systemAuth, "gate-tgconfig-ok", {languagePolicy: {primaryLanguage: "zh-CN"}}), 200, "真人变更任务组配置应放行");
 
@@ -2413,6 +2422,17 @@ if (!(doctorProducedState.humanConfirmationRequests || []).some((item) => item.s
 if (doctorSweep.errors.length) {
   throw new Error(`doctor: e2e 真实产出的记录不符合它们自己声明的规范：\n- ${doctorSweep.errors.slice(0, 200).join("\n- ")}`);
 }
+if (UNNAMED_REFUSALS.length > UNNAMED_REFUSAL_CEILING) {
+  throw new Error(`只判状态码不判拒绝码的 4xx 断言从 ${UNNAMED_REFUSAL_CEILING} 涨到 ${UNNAMED_REFUSALS.length}`
+    + " —— 新加的断言没点名拒绝码，守卫串位时它照样绿");
+}
+if (process.env.AIMAC_LIST_UNNAMED_REFUSALS) {
+  console.log(`没点名拒绝码的 4xx 断言 ${UNNAMED_REFUSALS.length} 条（实测到的码已附上，照抄进第四个参数）：\n  `
+    + UNNAMED_REFUSALS.join("\n  "));
+}
+console.log(`拒绝码点名：${UNNAMED_REFUSALS.length} 条 4xx 断言只判了状态码`
+  + `（棘轮 ${UNNAMED_REFUSAL_CEILING}，只降不升；AIMAC_LIST_UNNAMED_REFUSALS=1 可列出清单与实测码）`);
+
 console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条记录符合各自声明的 schema（含人工确认与定稿记录）；${doctorSweep.uncoveredNote}`);
 
 // 【明文机密不许落盘】。一次性令牌按设计只在签发那一刻回给调用方一次；如果它同时被写进了
