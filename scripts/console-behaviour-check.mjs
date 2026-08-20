@@ -152,6 +152,7 @@ globalThis.__probe = {
   renderTaskGroupDetail: (detail, taskGroup) => { tgDetail = detail; return renderTaskGroupDetail(taskGroup); },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
+  captureToast: (sink) => { toast.info = (message) => sink(message); },
   translate: (key) => t(key),
   filteredEmptyText: (query, hidden) => filteredEmptyText(query, hidden),
   applyFilterForSource: () => String(applyFilterFor),
@@ -286,7 +287,11 @@ if (process.env.AIMAC_RENDER_REAL) {
   console.log("=== 任务组页 ===\n" + strip(probe.renderTaskGroupsWith(real, who, project?.id, taskGroup?.id, null)).slice(0, 2400));
   console.log("\n=== 监控页 ===\n" + strip(probe.renderMonitorWith(real, who, project?.id)).slice(0, 1200));
   // 其余各页走通用入口。渲染不出来（抛异常）本身就是发现：真实数据里有夹具没有的组合。
-  for (const page of ["proj-overview", "review", "directives", "orgs", "agents", "rules", "system", "proj-settings"]) {
+  // 页 id 必须是真的存在的那几个。第一版写的是 orgs / agents / rules —— 产品对认不出的页 id
+  // 会静默回落到默认页，于是这三页渲染出来全是【系统概览】，而我在读它们时以为读的是组织管理。
+  // 勘察工具骗自己比门骗自己更难发现：它不报红，只是把错的东西摆给你看。
+  for (const page of ["proj-overview", "review", "directives", "sys-orgs", "sys-accounts",
+    "sys-settings", "sys-overview", "proj-settings"]) {
     try {
       // renderFullPageWith 不返回 HTML，它把内容写进 documentRoot（render() 的副作用）。
       // 拿返回值当 HTML 的话每一页都打印 "undefined"，看着像页面是空的（第一版就是这样）。
@@ -803,7 +808,35 @@ async function runErrorGuidanceCase() {
     /故障类型：控制面状态文件内容已损坏/u.test(said),
     `人看到的是：${JSON.stringify(said.slice(0, 160))} —— 出事那一刻甩给人一个英文标识符`);
   // 正面对照：真词表确实加载上了。少了这一条，词表没加载时上面那条会因为"两边都是原码"而误判。
-  check("这一条用的是真词表（对照：另一个已知键必须被翻译）",
+// 人点名要的页给不了时（页 id 不认识 / 这个页在他的视角下没有），控制台此前静默换成默认页。
+// 后果：人以为链接生效了、眼前这页就是他要的那页 —— 而系统明明知道不是。
+// 实测这条静默回落把勘察工具也骗了：拿三个不存在的页 id 渲染，出来的全是「系统概览」。
+{
+  const notices = [];
+  const navProbe = loadConsole(el("div"), {realI18n: true});
+  navProbe.captureToast((message) => notices.push(String(message)));
+  const account = {accountId: "u1", email: "a@b.c", accountType: "system_admin",
+    displayName: "管理员", organizationId: "org_default"};
+  const bare = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {}, projects: [],
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
+    findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []};
+  navProbe.renderFullPageWith(bare, account, null, "org-members");
+  check("要不到的那一页必须说出来（不能默默换一页给人）",
+    notices.some((message) => /在当前视角下打不开/u.test(message) && /已回到/u.test(message)),
+    `换页时什么都没说（收到的提示：${JSON.stringify(notices)}）—— 人会以为眼前这页就是他点的那页`);
+  check("说的时候要点名是哪一页、回到了哪一页",
+    notices.some((message) => /「成员管理」/u.test(message) && /已回到「系统概览」/u.test(message)),
+    `提示没点名要的是哪一页：${JSON.stringify(notices)}`);
+  // 正面对照：首次进入（没点名要任何页）时不该打扰。
+  notices.length = 0;
+  navProbe.renderFullPageWith(bare, account, null, "");
+  check("没点名要页面时不打扰（默认页本来就是正确答案）",
+    !notices.length,
+    `首次进入却弹了提示：${JSON.stringify(notices)}`);
+}
+
+    check("这一条用的是真词表（对照：另一个已知键必须被翻译）",
     realProbe.translate("state_storage_unavailable") !== "state_storage_unavailable",
     "真词表没加载上 —— 上面那条断言其实在空转");
 }

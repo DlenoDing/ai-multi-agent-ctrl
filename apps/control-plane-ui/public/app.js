@@ -1524,8 +1524,18 @@ function render() {
     return;
   }
   const perspective = perspectiveOf(currentAccount);
+  // 人点名要的那一页给不了时不能一声不吭。两种情形都落到这里：
+  //   页 id 不认识（版本升级改了名、旧书签、别人发来的链接）；
+  //   页存在但【在他的视角下没有】（权限）。
+  // 静默换成默认页，人会以为链接生效了、眼前这页就是他要的那页 —— 而系统明明知道不是。
+  // "没点名要"（首次进入、page 为空）不在此列：那时默认页就是正确答案，不该打扰。
+  const requestedPage = page;
   if (!page || !MENUS[perspective].some((item) => item.id === page)) {
     page = defaultPageFor(perspective);
+    if (requestedPage && requestedPage !== page) {
+      const asked = PAGE_META[requestedPage]?.[0] || requestedPage;
+      toast.info(`「${asked}」在当前视角下打不开，已回到「${PAGE_META[page]?.[0] || page}」`);
+    }
   }
   const [title, subtitle] = PAGE_META[page] || ["管理后台", ""];
   // 菜单上直接带计数：否则"等你签字的东西"藏在一个叫"执行监控"的页面里，人根本不会去点。

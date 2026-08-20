@@ -2986,6 +2986,22 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "要不到的那一页必须说出来（不得默默换一页给人）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    if (requestedPage && requestedPage !== page) {",
+    to: "    if (false) {",
+    expect: "换页时什么都没说"
+  },
+  {
+    name: "首次进入不得打扰（对照：默认页本来就是正确答案）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    if (requestedPage && requestedPage !== page) {\n",
+    to: "    if (true) {\n",
+    expect: "首次进入却弹了提示"
+  },
+  {
     name: "没有工作项的任务组不得算作 100%（新建的组会显示'已完成'）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyEmptyTaskGroupIsNotComplete",
