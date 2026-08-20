@@ -25,6 +25,20 @@ export const KNOWN_SECOND_DOORS = {
     "派发绑定的授权会把省掉的 roomId 补成本派发自己的房间，受限主体造不出'不点名'的调用",
   scope_ref_required_for_bounded_principal: "同上，作用域参数由 applyAgentGrantScopeArgs 补齐",
   task_group_id_required_for_bounded_principal: "同上，taskGroupId 由 applyAgentGrantScopeArgs 补齐",
+  idempotency_record_principal_unknown:
+    "只有【本次主体绑定改动之前写下的】旧幂等记录才触发；新部署造不出这种记录，"
+    + "而 e2e 只走 HTTP、碰不到状态内部（去改状态文件造它，夹具比守卫还脆）",
+  mcp_principal_project_scope_unresolved:
+    "给【将来新增的工具/参数】留的兜底（源码注释里明写着 defends future-added tools）："
+    + "现有每个带资源地址的参数都推得出 projectId，走不到这一支",
+  mcp_dispatch_bound_grant_required:
+    "受限节点调没被授予的工具时，mcp_tool_not_granted_to_principal 先拒（工具白名单在授权检查之前）",
+  project_id_required:
+    "入参 schema 里 task_group_create 的 projectId 就是必填，"
+    + "不给会先被 mcp_required_argument_missing 拒掉（e2e 里那条用例撞的正是它）",
+  state_conflict_not_recovered:
+    "要连撞三次 CAS 冲突才到（重试 3 次），而冲突由并发时序决定，编不出稳定用例；"
+    + "并发写入门验的是'冲突会被正确识别并退回'那一层（state_write_conflict，已有断言与变异）",
   organization_required:
     "orgId 两条来路都不会为空：系统账号走 `searchParams || DEFAULT_ORGANIZATION_ID`（有兜底），"
     + "非系统账号取 account.organizationId，而账号一律带组织（系统管理员的是 null，但它走前一支）"
