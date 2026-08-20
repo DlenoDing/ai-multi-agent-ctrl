@@ -2946,6 +2946,22 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "盘写不进去时健康页必须转 degraded",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "crash",
+    from: '    lastStorageFault = {kind: "state_storage_unavailable", file: basename(statePath), code: error.code, at: now()};',
+    to: "    // 不登记",
+    expect: "盘不可写时健康页必须转 degraded"
+  },
+  {
+    name: "盘不可写的复核要按可写性，不能问读得出来吗",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "crash",
+    from: "          try { accessSync(dirname(statePath), fsConstants.W_OK); recovered = true; } catch { recovered = false; }",
+    to: "          try { readHealthState(); recovered = true; } catch { recovered = false; }",
+    expect: "盘不可写时健康页必须转 degraded"
+  },
+  {
     name: "tools/list 成本判据的空转守卫要能红",
     file: "apps/control-plane-ui/lib/mcp-service-allowlist.mjs",
     check: "verifyMcpToolListCostStaysVisible",

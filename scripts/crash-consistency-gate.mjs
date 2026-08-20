@@ -159,7 +159,23 @@ try { parsed = JSON.parse(readFileSync(statePath, "utf8")); } catch (error) { pa
       "写失败的报文里不带服务器的绝对路径", JSON.stringify(blocked.payload).slice(0, 90));
     const stillReads = await call("/api/state?view=tasks&limit=10", {headers: auth});
     check(stillReads.status === 200, "盘不可写时读操作照常（不该被写故障拖下水）", `HTTP ${stillReads.status}`);
+    // 上面几条只问了"写请求得到什么"。真正决定运维知不知道出事的是【健康页】——
+    // 而它原先一路回 ok：磁盘一个字都写不进去，监控探针全绿，每一次写都在 503。
+    // 原因是"写不进磁盘"这一支根本不登记 storageFault（只有"状态损坏"那一支登记）。
+    const degraded = await call("/api/health");
+    check(degraded.status === 503 && degraded.payload.status === "degraded",
+      "盘不可写时健康页必须转 degraded（否则监控一路绿灯，而每一次写都在 503）",
+      `HTTP ${degraded.status} ${degraded.payload.status || ""}`);
+    check(String(degraded.payload.hint || "").includes("写不进磁盘"),
+      "健康页要说清是【写】不进去，不能套用「状态读不出来」那句 —— 运维会去查文件损坏，而实际是盘满或只读",
+      String(degraded.payload.hint || "").slice(0, 60));
     chmodSync(roDir, 0o700);
+    // 故障标记只置不清的话，修好了它也一直报 degraded；而复核不能统一用"读得出来吗"——
+    // 盘不可写时状态照样读得出来，那样故障会被当场清掉（这一支要按可写性复核）。
+    const healthy = await call("/api/health");
+    check(healthy.status === 200 && healthy.payload.status === "ok",
+      "盘恢复可写之后健康页自己转回 ok（不必重启）",
+      `HTTP ${healthy.status} ${healthy.payload.status || ""}`);
     const recovered = await call("/api/task-groups", {method: "POST",
       headers: {...auth, "idempotency-key": "crash-ro-2"},
       body: {projectId: "prj_control_plane", title: "恢复之后"}});

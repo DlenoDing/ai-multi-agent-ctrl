@@ -3,7 +3,7 @@ import { WebSocketServer } from "ws";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants as fsConstants, appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node:os";
 import { basename, dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2429,16 +2429,28 @@ async function handleApi(req, res) {
         .includes(lastStorageFault.kind);
       let recovered = false;
       if (!needsRestart) {
-        try { readHealthState(); recovered = true; } catch { recovered = false; }
+        // 复核要问的是"这个故障还在不在"，而不是统一问"读得出来吗"：
+        // 磁盘写不进去（EACCES/ENOSPC/只读挂载）时状态照样读得出来 —— 用读去复核，
+        // 故障会被当场清掉，健康页回到 ok，而每一次写仍然在 503（实测 chmod 500 就是这样）。
+        if (lastStorageFault.kind === "state_storage_unavailable") {
+          try { accessSync(dirname(statePath), fsConstants.W_OK); recovered = true; } catch { recovered = false; }
+        } else {
+          try { readHealthState(); recovered = true; } catch { recovered = false; }
+        }
       }
       if (recovered) {
         lastStorageFault = null;
       } else {
         json(res, 503, {status: "degraded", storageFault: lastStorageFault,
+          // 三种故障要说三种话：读不出来 / 写不进去 / 数据被换过。
+          // 原先"写不进去"也套用"状态读不出来"那一句 —— 运维会去查文件损坏，而实际是磁盘满了或挂载只读。
           hint: needsRestart
             ? "状态已经不是本进程启动时那一份了：先把数据恢复回去，然后【重启本进程】——"
               + "当前进程还接着那份被换掉的状态，不重启光恢复数据没用"
-            : "状态读不出来：按 file/code 指出的线索恢复（文件损坏就还原那一份，数据库掉线就把它接回来），恢复之后本接口会自动转回 ok"});
+            : lastStorageFault.kind === "state_storage_unavailable"
+              ? "状态写不进磁盘（读操作不受影响）：按 code 指出的原因处理 —— 检查运行目录的剩余空间、"
+                + "挂载是不是只读、以及本进程对它的写权限；恢复可写之后本接口会自动转回 ok，不必重启"
+              : "状态读不出来：按 file/code 指出的线索恢复（文件损坏就还原那一份，数据库掉线就把它接回来），恢复之后本接口会自动转回 ok"});
         return;
       }
     }
@@ -5837,6 +5849,11 @@ function respondApiError(res, error, requestLabel = "") {
   }
   if (["EACCES", "EPERM", "ENOSPC", "EROFS", "EDQUOT", "EMFILE", "ENFILE"].includes(error?.code)) {
     console.error(`[state-write] ${error.code}: ${error.message}`);
+    // 健康页必须跟着变：原先只有"状态损坏"那一支登记 lastStorageFault，写不进磁盘这一支不登记 ——
+    // 于是磁盘一个字都写不进去了，/api/health 仍然回 status:"ok"，监控探针一路绿灯，
+    // 而每一次写操作都在 503（实测：把运行目录 chmod 500 之后正是这样）。
+    // 健康页自己会在故障消失后把它清掉（那一支已有自愈判据），所以这里只管登记。
+    lastStorageFault = {kind: "state_storage_unavailable", file: basename(statePath), code: error.code, at: now()};
     json(res, 503, {error: "state_storage_unavailable", code: error.code, retryable: true});
     return;
   }
