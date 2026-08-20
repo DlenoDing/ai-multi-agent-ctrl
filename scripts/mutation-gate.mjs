@@ -2986,6 +2986,30 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "变量转发的拒绝码也要有中文（控制台真会显示它们）",
+    file: "apps/control-plane-ui/public/i18n-zh.js",
+    check: "verifyEveryCloseGateHasHumanGuidance",
+    from: "    high_risk_no_self_approval: \"高风险变更不能由提出人自己批准：请另找一位有批准权限的人\",\n",
+    to: "",
+    expect: "原样显示英文"
+  },
+  {
+    name: "转发路径的码必须进入核对面（收集了没人用＝静静少查）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyEveryCloseGateHasHumanGuidance",
+    from: "    ...forwardedCodes\n",
+    to: "    ...[]\n",
+    expect: "没有进入核对面"
+  },
+  {
+    name: "导入名提取失效必须报空转（不得静静少查一整条路）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyEveryCloseGateHasHumanGuidance",
+    from: "mcp-server\\/server\\.mjs\";/u",
+    to: "mcp-serverX\\/server\\.mjs\";/u",
+    expect: "一个都没提取到"
+  },
+  {
     name: "每种状态故障类型都要有中文（出事那一刻不能甩英文码）",
     file: "apps/control-plane-ui/public/i18n-zh.js",
     check: "verifyStorageFaultKindsHaveChinese",

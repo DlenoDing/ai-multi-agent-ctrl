@@ -7736,7 +7736,52 @@ function verifyEveryCloseGateHasHumanGuidance(output) {
   // 而它们只在出错那一刻才出现 —— 渲染扫描永远碰不到，得按权威来源（server.mjs 自己返回的
   // 那些字符串）全量核对。只登记【纯机器面】的例外：agent 网关与 MCP 的报文读者是程序。
   const serverSourceForErrors = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
-  const errorCodes = [...new Set([...serverSourceForErrors.matchAll(/error:\s*"([a-z0-9_]+)"/gu)].map((match) => match[1]))];
+  // 控制面自己写的字面量只是一半。另一半走【变量转发】：路由拿 core / MCP 模块返回的
+  // {ok:false, error:"…"} 直接 `error: result.error` 回出去 —— 字面量提取看不见它们，
+  // 于是三条真会出现在控制台上的拒绝码（审批/权限申请找不到、高风险不得自批）一直没有中文。
+  // 权威来源是【控制面从 MCP 模块导入的那几个函数】的函数体：它们回什么，人就看到什么。
+  const mcpSourceForErrors = readFileSync(resolve(root, "apps/mcp-server/server.mjs"), "utf8");
+  const importedFromMcp = (/import \{([^}]+)\} from "\.\.\/mcp-server\/server\.mjs";/u
+    .exec(serverSourceForErrors)?.[1] || "").split(",").map((name) => name.trim()).filter(Boolean);
+  if (!importedFromMcp.length) {
+    output.push("控制面从 MCP 模块导入的函数一个都没提取到 —— 提取形状与代码脱节，这一段在空转");
+  }
+  const forwardedCodes = [];
+  for (const name of importedFromMcp) {
+    const at = mcpSourceForErrors.indexOf(`export function ${name}(`) >= 0
+      ? mcpSourceForErrors.indexOf(`export function ${name}(`)
+      : mcpSourceForErrors.indexOf(`export async function ${name}(`);
+    if (at < 0) { output.push(`控制面导入了 ${name}，但在 MCP 模块里找不到它的定义 —— 提取脱节`); continue; }
+    let depth = 0;
+    let cursor = mcpSourceForErrors.indexOf("{", at);
+    const from = cursor;
+    while (cursor < mcpSourceForErrors.length) {
+      if (mcpSourceForErrors[cursor] === "{") depth += 1;
+      else if (mcpSourceForErrors[cursor] === "}" && (depth -= 1) === 0) break;
+      cursor += 1;
+    }
+    for (const match of mcpSourceForErrors.slice(from, cursor).matchAll(/error:\s*"([a-z0-9_]+)"/gu)) {
+      forwardedCodes.push(match[1]);
+    }
+  }
+  // 转发那条路必须真的产出码。只靠下面 `< 60` 的下限是不够的：把这一段整个去掉，
+  // 覆盖面从 103 掉到 98 而门照样绿（实测）—— 少查 5 个是看不见的。
+  // 守卫写成"这条路本身有没有产出"，它会跟着代码长，不用在这里写死个数。
+  const errorCodes = [...new Set([
+    ...[...serverSourceForErrors.matchAll(/error:\s*"([a-z0-9_]+)"/gu)].map((match) => match[1]),
+    ...forwardedCodes
+  ])];
+  // 守卫要钉在【使用处】，不是收集处。第一版写的是"forwardedCodes 不能为空"，
+  // 而把 `...forwardedCodes` 换成 `...[]` 时它照样绿 —— 收集仍在发生，只是没人用。
+  // 覆盖面从 103 静静掉到 98（下限 `< 60` 太松，看不见少了 5 个）。
+  if (importedFromMcp.length && !forwardedCodes.length) {
+    output.push(`控制面从 MCP 模块导入了 ${importedFromMcp.length} 个函数，却一个拒绝码都没提取到`);
+  }
+  const droppedForwarded = forwardedCodes.filter((code) => !errorCodes.includes(code));
+  if (droppedForwarded.length) {
+    output.push(`转发路径上的拒绝码没有进入核对面：${[...new Set(droppedForwarded)].join("、")} —— `
+      + "它们会出现在控制台上，却不在这条判据的视野里");
+  }
   if (errorCodes.length < 60) {
     output.push(`API 错误码中文覆盖自检：只提取到 ${errorCodes.length} 个 —— 提取逻辑与代码脱节，本条在空转`);
   }
