@@ -3303,7 +3303,13 @@ async function judgeMutation(mutation, workdir) {
       + (mutation.check ? `（本条只跑了 ${mutation.check}；若这条守卫其实由别的检查覆盖，改正 check 字段而不是删掉它）` : "");
   }
   if (!result.output.includes(mutation.expect)) {
-    return `${mutation.name}: 失败了但不是因为预期断言（期望出现「${mutation.expect}」）—— 测试可能在别处偶然失败，并未真正覆盖这条守卫`;
+    // 报文必须带上【它到底为什么红的】：只说"不是预期原因"的话，并发下的偶发失败与
+    // "变异锚点指错了地方"长得一模一样，只能靠重跑去猜（本仓追间歇红追过三轮，
+    // 每次卡住都是因为出事那一刻的证据没留下来）。
+    const tail = result.output.split("\n").filter((line) => line.trim())
+      .slice(-6).map((line) => `      ${line.slice(0, 160)}`).join("\n");
+    return `${mutation.name}: 失败了但不是因为预期断言（期望出现「${mutation.expect}」）`
+      + `—— 测试可能在别处偶然失败，并未真正覆盖这条守卫。实际输出末尾：\n${tail}`;
   }
   return null;
 }
