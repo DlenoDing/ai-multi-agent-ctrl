@@ -601,7 +601,15 @@ try {
         key: "mcp-dup-prj-2", code: "project_id_conflict"},
       {name: "orchestration-mcp.task_group_create",
         args: {projectId: dupProject, taskGroupId: "tg_runtime_management", title: "撞已有任务组"},
-        key: "mcp-dup-tg", code: "task_group_id_conflict"}
+        key: "mcp-dup-tg", code: "task_group_id_conflict"},
+      // 项目的属主必须是一个真实存在的账号：不校验的话，项目会挂在一个不存在的人名下 ——
+      // 组织归属、配额、可见性全都从属主推出来，属主是空的等于这些全落空。
+      {name: "orchestration-mcp.project_create",
+        args: {projectId: `${dupProject}_owner`, name: "属主不存在", ownerAccountId: "acct_not_a_real_person"},
+        key: "mcp-bad-owner", code: "owner_account_not_found"},
+      {name: "orchestration-mcp.work_item_create",
+        args: {taskGroupId: "tg_runtime_management", workItemId: "work_management_ui", title: "撞已有工作项"},
+        key: "mcp-dup-wi", code: "work_item_id_conflict"}
     ];
     const missed = [];
     for (const item of cases) {

@@ -2946,6 +2946,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "项目属主必须是真实存在的账号",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '    return {ok: false, error: "owner_account_not_found"};',
+    to: '    return {ok: false, error: "generic_rejected"};',
+    expect: "同一个 id 建两次没有被拒"
+  },
+  {
     name: "版本冲突退回的必须是 state_write_conflict",
     file: "apps/control-plane-ui/server.mjs",
     gate: "writer",
