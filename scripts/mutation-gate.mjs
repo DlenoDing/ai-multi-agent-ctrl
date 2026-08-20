@@ -2944,6 +2944,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "抛错展开进报文的字段也要被门扫到",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyServerFieldsReachThePerson",
+    from: '        Array.isArray(payload.deniedPaths) && payload.deniedPaths.length\n          ? `踩到禁区的路径：${payload.deniedPaths.join("、")}` : "",',
+    to: '        "",',
+    expect: "拒绝报文里带了 deniedPaths"
+  },
+  {
     name: "拒绝报文里给人看的字段，前端不读要被门看见",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyServerFieldsReachThePerson",

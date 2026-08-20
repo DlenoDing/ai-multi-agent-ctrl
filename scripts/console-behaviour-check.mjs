@@ -713,7 +713,18 @@ async function runErrorGuidanceCase() {
       expect: "收到的是：请求体里没有 admin 这一层"},
     {payload: {error: "project_has_open_task_groups", openTaskGroupIds: ["tg_a", "tg_b"]},
       expect: "还没关掉的任务组：tg_a、tg_b"},
-    {payload: {error: "password_too_short", minLength: 8}, expect: "至少需要 8 位"}
+    {payload: {error: "password_too_short", minLength: 8}, expect: "至少需要 8 位"},
+    {payload: {error: "review_bundle_status_invalid", currentStatus: "consumed", allowedStatuses: ["rejected"]},
+      expect: "当前状态：consumed"},
+    {payload: {error: "review_bundle_status_invalid", currentStatus: "consumed", allowedStatuses: ["rejected"]},
+      expect: "可以转到：rejected"},
+    {payload: {error: "changed_paths_inside_repository_target_denylist", deniedPaths: [".github/workflows/ci.yml"]},
+      expect: "踩到禁区的路径：.github/workflows/ci.yml"},
+    // expected/actual 是一对：只说"应该是 X"，人还是不知道差在哪。
+    {payload: {error: "checkpoint_tree_digest_mismatch", expected: "git-tree:aaa", actual: "git-tree:bbb"},
+      expect: "应为 git-tree:aaa，实际 git-tree:bbb"},
+    {payload: {error: "human_confirmation_already_decided", subjectRef: "WorkItem:w_api"},
+      expect: "这张卡管的是：WorkItem:w_api"}
   ];
   for (const item of cases) {
     probe.setFetch(async () => ({ok: false, status: 409, statusText: "Conflict", json: async () => item.payload}));

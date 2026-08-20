@@ -5489,6 +5489,12 @@ function verifyServerFieldsReachThePerson(output) {
       }
     }
   }
+  // 还有一条路：core / 网关【抛出】的错，字段是 `...(error.x ? {x: error.x} : {})` 这样展开进去的。
+  // 上面按 json(res,4xx,{...}) 的字面量扫看不到它们（实测漏了 currentStatus / allowedStatuses /
+  // deniedPaths 三样给人看的）。这一支按展开写法补扫。
+  for (const match of server.matchAll(/\.\.\.\((?:error|result)\.(\w+)\s*(?:!==\s*undefined\s*)?\?/gu)) {
+    refusalFields.add(match[1]);
+  }
   if (refusalFields.size < 8) {
     output.push(`拒绝报文字段只提取到 ${refusalFields.size} 个 —— 提取多半失配，这一支在空转`);
     return;

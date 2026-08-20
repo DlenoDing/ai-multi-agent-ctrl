@@ -782,7 +782,22 @@ async function api(path, options = {}) {
         payload.received ? `收到的是：${payload.received}` : "",
         Array.isArray(payload.openTaskGroupIds) && payload.openTaskGroupIds.length
           ? `还没关掉的任务组：${payload.openTaskGroupIds.join("、")}` : "",
-        payload.minLength ? `至少需要 ${payload.minLength} 位` : ""
+        payload.minLength ? `至少需要 ${payload.minLength} 位` : "",
+        // "现在是什么状态、只能转到哪几个"是一对：只给其中一个，人还是不知道能做什么。
+        payload.currentStatus ? `当前状态：${payload.currentStatus}` : "",
+        Array.isArray(payload.allowedStatuses) && payload.allowedStatuses.length
+          ? `可以转到：${payload.allowedStatuses.join("、")}` : "",
+        // 踩了禁区时，到底是哪几条路径 —— 不说的话人得自己拿 diff 去比对。
+        Array.isArray(payload.deniedPaths) && payload.deniedPaths.length
+          ? `踩到禁区的路径：${payload.deniedPaths.join("、")}` : "",
+        // expected / actual 是一对：只说"应该是 X"而不说"实际是什么"，人还是不知道差在哪。
+        // （前端原先一个都没读；同名的 expectedConfigVersion 是另一回事，别混。）
+        payload.expected !== undefined && payload.actual !== undefined
+          ? `应为 ${payload.expected}，实际 ${payload.actual}` : "",
+        payload.commit ? `涉及的提交：${payload.commit}` : "",
+        payload.directiveType ? `你发的指令类型：${payload.directiveType}` : "",
+        // 定稿冲突时，这张卡管的是哪件事 —— 同一个人手上常同时挂着好几张，不说清就得逐张点开找。
+        payload.subjectRef ? `这张卡管的是：${payload.subjectRef}` : ""
       ].map((item) => String(item || "").trim()).filter(Boolean);
       if (guidance.length) hint += `：${[...new Set(guidance)].join("；")}`;
     } catch {}
