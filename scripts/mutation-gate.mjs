@@ -2962,6 +2962,14 @@ const MUTATIONS = [
     expect: "一个「报文里的 X」都没认出来"
   },
   {
+    name: "多传的参数会被静默丢掉，要被门看见",
+    file: "scripts/contract-check.mjs",
+    check: "verifyCallsDoNotPassIgnoredArguments",
+    from: "const freezeResult = runAutonomousCycle(freezeState, {taskGroupId: freezeTg.id, root});",
+    to: "const freezeResult = runAutonomousCycle(freezeState, {taskGroupId: freezeTg.id}, {root});",
+    expect: "多传了参数"
+  },
+  {
     name: "淘汰要和写入在同一侧（MCP 写、只有 UI 淘汰＝那条路径上无限长）",
     file: "apps/mcp-server/server.mjs",
     check: "verifyLongLivedRecordsDoNotPointAtCappedOnes",

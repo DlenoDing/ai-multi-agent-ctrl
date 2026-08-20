@@ -341,6 +341,7 @@ run(verifyServerFieldsReachThePerson);
 run(verifyMessagesDoNotPointAtInvisibleFields);
 run(verifyMachineFacingErrorsAreOutOfConsoleReach);
 run(verifyLongLivedRecordsDoNotPointAtCappedOnes);
+run(verifyCallsDoNotPassIgnoredArguments);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5486,6 +5487,110 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 //
 // 实测结论（2026-08-20）：种子里的 `pd_seed_*` 本来就是【占位】，不指向任何真实记录，
 // 所以现状不是"被挤掉了"而是"从来没打算指过去"。这道判据钉住的是【将来别这么接】。
+// 【多传的参数会被静默丢掉】。JS 不会为此报错：`f(a, b, c)` 调一个只收两个参数的 f，
+// 第三个直接消失。实测撞到两次真事实：
+//  · `runAutonomousCycle(state, {...}, {root})` 写成三参 —— root 从没传进去，
+//    那 10 处用例一直跑的是"没有仓库"的退化路径（改对之后门仍绿，说明它们此前白跑了一半）。
+//  · 空转门传 `AIMAC_ORCHESTRATOR_INTERVAL_MS=3000`，而服务端有 5000 下限 —— 同一类"传了不生效"。
+// 这道判据只管第一种（第二种是取值被改写，静态看不出来）。
+function verifyCallsDoNotPassIgnoredArguments(output) {
+  const files = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
+    "apps/mcp-server/server.mjs", "scripts/contract-check.mjs",
+    // 声明的扫描面必须含所有被这几个文件调用的模块，否则"声明找不到"会被当成"零参"
+    // （实测：audit-ledger 不在表里，flushPendingAuditAppends(state, path) 被报成多传）。
+    "apps/control-plane-ui/lib/audit-ledger.mjs", "apps/control-plane-ui/lib/project-event-store.mjs",
+    "apps/control-plane-ui/lib/transition-engine.mjs", "apps/control-plane-ui/lib/mcp-service-allowlist.mjs"];
+  const balanced = (src, openIdx) => {
+    let depth = 0;
+    let count = 0;
+    let seen = false;
+    let inString = "";
+    for (let i = openIdx; i < Math.min(src.length, openIdx + 4000); i += 1) {
+      const ch = src[i];
+      // 字符串与模板串里的括号/逗号不算数：模板串里的 `${a}, ${b}` 会被数成两个参数
+      // （第一版就是这样把单参调用报成了双参）。反斜杠转义跳过下一个字符。
+      if (inString) {
+        if (ch === "\\") { i += 1; continue; }
+        if (ch === inString) inString = "";
+        continue;
+      }
+      if (ch === "\"" || ch === "'" || ch === "`") { inString = ch; continue; }
+      if ("([{".includes(ch)) {
+        // 解构形参 `({a, b})` 的 `{` 也算"有内容"：不这么算的话它会被数成 0 个参数，
+        // 于是每一次正常调用都被报成"多传"（第一版就是这样，runCase 的调用全被误报）。
+        if (depth === 1) seen = true;
+        depth += 1;
+      } else if (")]}".includes(ch)) {
+        depth -= 1;
+        if (!depth) return [seen ? count + 1 : 0, i];
+      } else if (depth === 1 && ch.trim()) seen = true;
+      // 只数【顶层】逗号：解构形参 ({a, b, c}) 里的逗号在 depth 2，不能算成三个参数
+      // （第一版就是这样把 runCase 的一个解构参数数成了 0 个，然后把每一次调用都报成多传）。
+      if (depth === 1 && ch === ",") count += 1;
+    }
+    return [null, openIdx];
+  };
+  const declared = new Map();
+  const variadic = new Set();
+  const sources = new Map();
+  for (const rel of files) {
+    // 先剥注释：注释里举的反例（比如这道判据自己注释里那句 `runAutonomousCycle(state, {...}, {root})`）
+    // 会被当成真实调用报出来 —— 门读到自己写的字，本仓撞过很多次。
+    // 用等长空格替换，行号才不会错位。
+    const src = readFileSync(join(root, rel), "utf8")
+      .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
+    sources.set(rel, src);
+    const note = (name, count, params) => {
+      if (params.includes("...")) variadic.add(name);
+      declared.set(name, Math.max(declared.get(name) ?? 0, count));
+    };
+    for (const match of src.matchAll(/(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(/gu)) {
+      const [count, end] = balanced(src, match.index + match[0].length - 1);
+      if (count !== null) note(match[1], count, src.slice(match.index, end));
+    }
+    for (const match of src.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\(/gu)) {
+      const [count, end] = balanced(src, match.index + match[0].length - 1);
+      if (count !== null && /^\s*=>/u.test(src.slice(end + 1, end + 4))) note(match[1], count, src.slice(match.index, end));
+    }
+  }
+  if (declared.size < 200) {
+    output.push(`参数个数核对：只认出 ${declared.size} 个函数声明 —— 提取多半失配，这道门在空转`);
+    return;
+  }
+  const offenders = [];
+  let checked = 0;
+  for (const [rel, src] of sources) {
+    for (const match of src.matchAll(/(?<![.\w])(\w+)\(/gu)) {
+      const name = match[1];
+      if (!declared.has(name) || variadic.has(name)) continue;
+      if (["if", "for", "while", "switch", "catch", "function", "return", "typeof"].includes(name)) continue;
+      const [count, end] = balanced(src, match.index + match[0].length - 1);
+      if (count === null) continue;
+      checked += 1;
+      if (count <= declared.get(name)) continue;
+      if (/^\s*(?:\{|=>)/u.test(src.slice(end + 1, end + 4))) continue;
+      offenders.push(`${rel}:${src.slice(0, match.index).split("\n").length} ${name}(传 ${count} / 声明 ${declared.get(name)})`);
+    }
+  }
+  // 零参转发函数收到多余实参是无害的冗余（ensurePostgresTable(options) 之类）：登记免检，
+  // 但要写明"为什么无害"，别让它变成一句宽泛的例外。
+  const HARMLESS_EXTRA_ARGS = {
+    ensurePostgresTable: "零参函数，多传的 options 只是调用方顺手带上的，函数体不读任何参数",
+    readPostgresState: "同上，零参转发到 pgReadState()",
+    loadStateMachines: "同上，零参读取规范文件"
+  };
+  const real = offenders.filter((item) => !Object.keys(HARMLESS_EXTRA_ARGS).some((name) => item.includes(` ${name}(`)));
+  if (real.length) {
+    output.push("这些调用多传了参数，而被调方根本不收 —— JS 不报错，只会静默丢掉：\n  "
+      + real.slice(0, 8).join("\n  ")
+      + "\n  —— 要么被调方加上这个形参，要么去掉多传的那个（实测撞到过：root 从没传进去，"
+      + "那批用例一直跑退化路径）");
+  }
+  console.log(`参数个数：${checked} 处调用逐个核对（${declared.size} 个函数声明、`
+    + `${variadic.size} 个变参不计），${real.length} 处多传（应为 0）`);
+}
+
 function verifyLongLivedRecordsDoNotPointAtCappedOnes(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
   // 扫描面要含 core：容量淘汰大多写在 core 里（server.mjs 只有两个），
