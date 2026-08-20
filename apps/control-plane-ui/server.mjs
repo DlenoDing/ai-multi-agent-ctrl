@@ -5510,7 +5510,10 @@ async function handleApi(req, res) {
     return;
   }
 
-  json(res, 404, {error: "api_not_found"});
+  // 只回一个码的话，人（和 agent）看不出是路径打错了、方法用错了、还是这个接口压根不存在。
+  // 把【它自己发的那次请求】回显出来：这是排障时最省事的一句，而它就在手上。
+  json(res, 404, {error: "api_not_found", method: req.method, path: url.pathname,
+    message: "这个接口不存在。核对路径与方法；控制台用的接口都在 /api/ 下面。"});
 }
 
 const server = createServer((req, res) => {

@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { connect as netConnect } from "node:net";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -2520,6 +2521,34 @@ try {
         headers: {"Idempotency-Key": "doctor-halt-resume", authorization: systemAuth},
         body: JSON.stringify({action: "resume"})
       });
+    }
+  }
+
+  // 【打错的接口要说清打错在哪】。这两条守卫此前没有任何断言，而它们是人和 agent 最常撞到的
+  // 两个：路径写错、URL 本身不合法。只回一个英文码的话，排障要从头猜起。
+  {
+    const bogusPath = await jsonFetch(port, "/api/no-such-endpoint", {headers: {authorization: systemAuth}});
+    if (bogusPath.response.status !== 404 || bogusPath.payload?.error !== "api_not_found") {
+      throw new Error(`打错的接口没有回 api_not_found（${bogusPath.response.status}/${bogusPath.payload?.error}）`);
+    }
+    if (bogusPath.payload.path !== "/api/no-such-endpoint" || bogusPath.payload.method !== "GET") {
+      throw new Error(`404 报文没有回显是哪一次请求（${JSON.stringify(bogusPath.payload).slice(0, 120)}）`
+        + " —— 一屏常常并发几个接口，不说清哪一个，人得逐个试");
+    }
+    // 畸形 URL 只能用裸 socket 发（fetch 会自己先把它规整掉）。这条守卫失效时 new URL 会抛，
+    // 一个畸形请求就能把请求处理整个打断 —— 而它是从公网就能发的。
+    const raw = await new Promise((resolve) => {
+      const socket = netConnect({host: "127.0.0.1", port}, () => {
+        socket.write("GET http://[ HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+      });
+      let text = "";
+      socket.on("data", (chunk) => { text += chunk.toString(); });
+      socket.on("close", () => resolve(text));
+      socket.on("error", () => resolve(""));
+    });
+    if (!raw.includes("invalid_request_url")) {
+      throw new Error(`畸形 URL 没有被当场拒成 invalid_request_url（收到：${raw.slice(0, 120).replace(/\r?\n/gu, " ")}）`
+        + " —— 这条守卫失效时一个畸形请求就能打断请求处理");
     }
   }
 

@@ -5569,6 +5569,10 @@ function verifyServerFieldsReachThePerson(output) {
     status: "状态码回显，界面按记录本身渲染",
     qualityGate: "质量门对象回显，界面从 state 里取同一条",
     reviewBundle: "评审包对象回显，同上",
+    // 404 回显的是【调用方自己发的那次请求】。控制台的报错横幅已经带上了它自己拼的请求路径
+    // （requestPath），再从报文里取一遍是同一句话说两遍；这两个字段是给直接调接口的人/agent 看的。
+    method: "404 回显调用方自己发的方法，给直接调接口的人/agent 排障用；控制台横幅另有 requestPath",
+    path: "同上，404 回显的请求路径",
     // 以下都是"把那条记录原样回显"，界面从 state 里取同一条渲染，不从拒绝报文里取：
     approvalRequest: "审批请求对象回显",
     finding: "缺陷对象回显",
@@ -5951,7 +5955,7 @@ function verifySharedJsonWritesAreAtomic(output) {
 
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 26;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 24;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];

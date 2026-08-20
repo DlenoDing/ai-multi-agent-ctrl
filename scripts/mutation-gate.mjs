@@ -2946,6 +2946,22 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "畸形 URL 必须当场拒，不得打断请求处理",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '      json(res, 400, {error: "invalid_request_url"});',
+    to: '      json(res, 400, {error: "bad_request"});',
+    expect: "畸形 URL 没有被当场拒"
+  },
+  {
+    name: "404 要回显是哪一次请求",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '  json(res, 404, {error: "api_not_found", method: req.method, path: url.pathname,',
+    to: '  json(res, 404, {error: "api_not_found", method: req.method,',
+    expect: "404 报文没有回显是哪一次请求"
+  },
+  {
     name: "不报产出目标必须拒（没人知道这次提交该落到哪个仓库）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyHumanApprovedPathsBindTheCommit",
