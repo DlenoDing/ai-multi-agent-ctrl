@@ -5605,8 +5605,12 @@ function verifyMessagesDoNotPointAtInvisibleFields(output) {
   // 文案里以"报文里的 X"/"响应里的 X"/"X 指出"这种方式点名的字段
   const named = new Set();
   for (const match of dict.matchAll(/(?:报文里的|响应里的|回执里的)\s*([a-zA-Z][a-zA-Z0-9_]{2,})/gu)) named.add(match[1]);
+  // 词表里"报文里的 X"这种写法只有个位数，用不了"提取太少＝空转"那种阈值。
+  // 改成把【实际认出的字段名】打出来：将来词表改了写法（比如换成"响应中的 X"），
+  // 这里会从 1 个变成 0 个，一眼看得见 —— 而只报"0 处违规"是看不出来的。
   if (!named.size) {
-    console.log("文案点名字段：词表里没有「报文里的 X」这种写法，本条无事可做");
+    output.push("文案点名字段：词表里一个「报文里的 X」都没认出来 —— "
+      + "要么词表换了写法（判据要跟上），要么这类文案被删光了（那这道门可以撤）");
     return;
   }
   for (const field of [...named].sort()) {
@@ -5874,12 +5878,14 @@ function verifyNoRequestScopedLeaks(output) {
   const FILES = ["apps/control-plane-ui/server.mjs", "apps/mcp-server/server.mjs",
     "apps/control-plane-ui/lib/control-plane-core.mjs"];
   let scannedFunctions = 0;
+  let scanned = 0;
   for (const rel of FILES) {
     const lines = readFileSync(join(root, rel), "utf8").split("\n");
     let index = 0;
     while (index < lines.length) {
       const header = lines[index].match(/^(?:export )?(?:async )?function ([A-Za-z0-9_]+)\(([^)]*)\)\s*\{/);
       if (!header) { index += 1; continue; }
+      scanned += 1;
       const [, name, params] = header;
       let cursor = index + 1;
       const body = [];
@@ -5903,6 +5909,14 @@ function verifyNoRequestScopedLeaks(output) {
   if (scannedFunctions < 200) {
     output.push(`请求作用域判据只扫到 ${scannedFunctions} 个顶层函数 —— 提取多半失配，这道判据在空转`);
   }
+  // 提取失配时这道门会一个函数都扫不到，然后"没有违规"地通过 —— 报数并自证，
+  // 视野塌了当场看得见（本仓刚因为改了被测代码的写法，把另一道门的视野从 5 打成 3）。
+  if (scanned < 80) {
+    output.push(`请求作用域泄漏核对：只切出 ${scanned} 个顶层函数 —— 提取多半失配，这道门在空转`);
+    return;
+  }
+  console.log(`请求作用域泄漏：${scanned} 个顶层函数逐个核对（${FILES.length} 份源码），`
+    + "0 处引用了它没拿到的请求变量");
 }
 
 // 契约门自己的检查，有没有人验过它们【能不能红】？拒绝码棘轮问的是"产品守卫有没有判据"，

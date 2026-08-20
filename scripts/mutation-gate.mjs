@@ -2946,6 +2946,22 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "请求作用域泄漏门：提取失配要自报空转",
+    file: "scripts/contract-check.mjs",
+    check: "verifyNoRequestScopedLeaks",
+    from: "      const header = lines[index].match(/^(?:export )?(?:async )?function ([A-Za-z0-9_]+)\\(([^)]*)\\)\\s*\\{/);",
+    to: "      const header = lines[index].match(/^ZZZ(?:export )?function ([A-Za-z0-9_]+)\\(([^)]*)\\)\\s*\\{/);",
+    expect: "提取多半失配"
+  },
+  {
+    name: "文案换了写法，点名字段那道门要报红而不是无事可做",
+    file: "apps/control-plane-ui/public/i18n-zh.js",
+    check: "verifyMessagesDoNotPointAtInvisibleFields",
+    from: "报文里的 file 指出是哪一份",
+    to: "响应中的 file 指出是哪一份",
+    expect: "一个「报文里的 X」都没认出来"
+  },
+  {
     name: "淘汰要和写入在同一侧（MCP 写、只有 UI 淘汰＝那条路径上无限长）",
     file: "apps/mcp-server/server.mjs",
     check: "verifyLongLivedRecordsDoNotPointAtCappedOnes",
