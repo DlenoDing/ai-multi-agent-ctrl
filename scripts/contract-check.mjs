@@ -6079,6 +6079,9 @@ function verifyChildExitWaitsAreBounded(output) {
       // 只看真的在等某个子进程退出的那种；process.on("exit") 是本进程的退出钩子，不算。
       if (!/once\(\w+, "exit"\)|\w+\.on\("exit"/u.test(line)) continue;
       if (/^\s*process\.on\("exit"/u.test(line)) continue;
+      // 只登记回调、不 await 的不算"等"：判据要问的是"这一行会不会把流程挂住"。
+      // 计时包装里的 `c.on("exit", () => times.push(...))` 就是这种（实测被误报过一次）。
+      if (/\.on\("exit",\s*\(\)\s*=>\s*(?:__proc|times|\w+)\.push\(/u.test(line)) continue;
       checked += 1;
       // 上限可以写在同一行（Promise.race + setTimeout），也可能拆到相邻几行里。
       const window = lines.slice(Math.max(0, index - 3), index + 4).join("\n");

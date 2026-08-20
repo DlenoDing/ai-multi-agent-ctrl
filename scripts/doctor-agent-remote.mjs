@@ -1,4 +1,22 @@
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { execFileSync as rawExecFileSync, spawn as rawSpawn, spawnSync as rawSpawnSync } from "node:child_process";
+// 【子进程计时】AIMAC_PROC_TIMING=1 打印最贵的几个子进程。
+// 这条 e2e 是提交回路里最慢的一段（实测 145 秒），而它的成本几乎全在等子进程：
+// 32 个子进程合计 81 秒，其中控制面服务的整段生命周期 41 秒、两次 agent 真跑批各 16 秒。
+// HTTP 只有 0.6 秒（64 次请求）—— 量之前我以为是轮询慢，方向完全错了。
+// 那两次跑批共用同一个 agentWorkDir、顺序相关（轮换→控制→跑→重放），不能并行；
+// 也就是说这 145 秒是"真的把一个 agent 跑起来"的代价，不是浪费。留着这个开关，
+// 免得下一个人重新搭一遍计时（我为此走了三条死路：console.log 打点、行距打点、包全局 fetch）。
+const __proc = [];
+const __lbl = (cmd, args) => `${String(cmd).split("/").pop()} ${(args || []).slice(0, 2).map((a) => String(a).split("/").pop()).join(" ")}`.slice(0, 50);
+const spawnSync = (...a) => { const t = Date.now(); try { return rawSpawnSync(...a); } finally { __proc.push([`spawnSync ${__lbl(a[0], a[1])}`, Date.now() - t]); } };
+const execFileSync = (...a) => { const t = Date.now(); try { return rawExecFileSync(...a); } finally { __proc.push([`execFileSync ${__lbl(a[0], a[1])}`, Date.now() - t]); } };
+const spawn = (...a) => { const t = Date.now(); const c = rawSpawn(...a); c.on("exit", () => __proc.push([`spawn ${__lbl(a[0], a[1])}`, Date.now() - t])); return c; };
+process.on("exit", () => {
+  if (!process.env.AIMAC_PROC_TIMING) return;
+  const total = __proc.reduce((s, i) => s + i[1], 0);
+  console.error(`\n[proc] ${__proc.length} 个子进程，合计 ${total} ms；最贵的 8 个：`);
+  for (const [k, ms] of [...__proc].sort((a, b) => b[1] - a[1]).slice(0, 8)) console.error(`  ${String(ms).padStart(6)} ms  ${k}`);
+});
 import { once } from "node:events";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
