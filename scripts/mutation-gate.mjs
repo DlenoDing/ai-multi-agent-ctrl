@@ -586,8 +586,8 @@ const MUTATIONS = [
     name: "加载失败要常驻说明这是旧数据",
     file: APP,
     gate: "console",
-    from: "        ${lastError ? `<div class=\"notice warn-notice\">连不上控制面或这一页加载失败，下面显示的是",
-    to: "        ${false ? `<div class=\"notice warn-notice\">连不上控制面或这一页加载失败，下面显示的是",
+    from: "        ${lastError ? `<div class=\"notice warn-notice\">${lastErrorIsRequest\n",
+    to: "        ${false ? `<div class=\"notice warn-notice\">${lastErrorIsRequest\n",
     expect: "人对着一屏冻住的数据看不出任何异常"
   },
   {
@@ -704,8 +704,8 @@ const MUTATIONS = [
     name: "报错要说清是哪一次请求失败的",
     file: APP,
     gate: "console",
-    from: "${hint}（${requestPath}）`);",
-    to: "${hint}`);",
+    from: "${hint}（${requestPath}）`));",
+    to: "${hint}`));",
     expect: "报错里没有出请求路径"
   },
   {
@@ -2984,6 +2984,22 @@ const MUTATIONS = [
     from: 'audit(state, "auth-service", "auth_login", `Account:${email}`, "credentials_invalid");',
     to: 'audit(state, "auth-service", "auth_login", `Account:${email}`, "denied");',
     expect: "台账上记成"
+  },
+  {
+    name: "控制台自身缺陷不得说成'连不上控制面'（会把人支去查网络）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "        ${lastError ? `<div class=\"notice warn-notice\">${lastErrorIsRequest",
+    to: "        ${lastError ? `<div class=\"notice warn-notice\">${true",
+    expect: "控制台自身缺陷被说成了"
+  },
+  {
+    name: "请求级失败必须都打记号（漏一处就会被说成控制台的缺陷）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    throw requestFailure(new Error(`${response.status}",
+    to: "    throw (new Error(`${response.status}",
+    expect: "处请求级抛出打了记号"
   },
   {
     name: "组织/账号的 active 不能说成'进行中'（一个全局键盖住了别的意思）",

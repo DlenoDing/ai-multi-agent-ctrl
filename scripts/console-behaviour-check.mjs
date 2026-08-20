@@ -152,6 +152,13 @@ globalThis.__probe = {
   renderTaskGroupDetail: (detail, taskGroup) => { tgDetail = detail; return renderTaskGroupDetail(taskGroup); },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
+  failureBannerText: (nextState, account, message, isRequest) => {
+    state = nextState; currentAccount = account; currentProjectId = null; page = "sys-overview";
+    authToken = "probe-token";
+    lastError = message; lastErrorIsRequest = isRequest;
+    render();
+    return String(document.body.innerHTML || "").replace(/<[^>]+>/gu, " ");
+  },
   statusBadge: (kind, value) => statusBadge(kind, value),
   captureToast: (sink) => { toast.info = (message) => sink(message); },
   translate: (key) => t(key),
@@ -840,6 +847,45 @@ async function runErrorGuidanceCase() {
     taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
     findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []};
   navProbe.renderFullPageWith(bare, account, null, "org-members");
+// 加载失败的横幅此前一律写"连不上控制面或这一页加载失败" —— 而异常有两类：
+//   请求级（连不上 / 超时 / 服务端 4xx5xx）：确实该去看控制面；
+//   控制台【自己抛的】（我们代码里的缺陷）：说"连不上控制面"会把人支去查网络和服务端，而 bug 在这一页里。
+// 这条是读真实渲染时撞见的：横幅上挂着一句 "Cannot read properties of undefined (reading 'get')"，
+// 前面却写着"连不上控制面"。
+{
+  const bannerProbe = loadConsole(el("div"), {realI18n: true});
+  const account = {accountId: "u1", email: "a@b.c", accountType: "system_admin",
+    displayName: "管理员", organizationId: "org_default"};
+  const bare = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {}, projects: [],
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
+    findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []};
+  // 横幅文案由 lastErrorIsRequest 决定；探针直接置位，比造两种真异常稳（真异常的分类
+  // 另有一条源码断言守着：三处请求级抛出都必须过 requestFailure）。
+  const requestBanner = bannerProbe.failureBannerText(bare, account,
+    "500 server_error（/api/system/overview）", true);
+  check("请求级失败照旧指向控制面",
+    /连不上控制面/u.test(requestBanner) && !/控制台这一页自己出错/u.test(requestBanner),
+    `请求级失败说成了：${JSON.stringify(requestBanner.slice(0, 120))}`);
+  const bugBanner = bannerProbe.failureBannerText(bare, account,
+    "Cannot read properties of undefined (reading 'get')", false);
+  check("控制台自己出错时不许说成'连不上控制面'",
+    /控制台这一页自己出错/u.test(bugBanner) && !/连不上控制面/u.test(bugBanner),
+    `控制台自身缺陷被说成了：${JSON.stringify(bugBanner.slice(0, 120))} —— 人会去查网络和服务端`);
+  // 上面两条【直接置位】了分类标记，证明不了真异常会被分对类。
+  // 少了下面这条，把三处 requestFailure( 全撤掉也照样全绿：那时每个请求失败都会被
+  // 说成"控制台自己出错了"—— 比原先更糟（原先至少方向对一半）。
+  const apiText = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8")
+    .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
+  const tagged = (apiText.match(/throw requestFailure\(/gu) || []).length;
+  check("请求级失败必须都打上记号（否则连不上也会被说成'控制台的缺陷'）",
+    tagged >= 3,
+    `只有 ${tagged} 处请求级抛出打了记号（应至少 3 处：GET 无响应、写操作无响应、服务端 4xx5xx）`);
+    check("说了之后要给出下一步（反馈给维护者）",
+    /反馈给维护者/u.test(bugBanner),
+    "只说'控制台自己出错了'，人不知道该做什么");
+}
+
 // 同一个英文枚举在不同对象上是不同的中文。词表全局、一个键一个值，于是最常见的那个意思
 // 盖住其余全部 —— 读真实渲染时读到"组织：进行中""账号：进行中"（组织不会"进行"，账号也不会）。
 {

@@ -44,6 +44,7 @@ let instructionState = null;
 let loginHint = null;
 
 let lastError = "";
+let lastErrorIsRequest = true;
 let lastLoadedAt = null;
 let lastLoadErrorToast = "";
 let loading = false;
@@ -462,6 +463,14 @@ function statusBadge(kind, value, tone) {
   return label ? customBadge(label, tone || toneOf(value)) : badge(value, tone);
 }
 
+// 给"请求级失败"打个记号：连不上、超时、服务端回 4xx/5xx —— 这些是控制面那边的事。
+// 没有这个记号的异常是【控制台自己抛的】（我们代码里的缺陷）。两者在屏幕上必须分开说：
+// 一律写"连不上控制面"会把人支去查网络和服务端，而 bug 就在这一页里。
+function requestFailure(error) {
+  error.requestFailure = true;
+  return error;
+}
+
 function badge(value, tone) {
   if (value === null || value === undefined || value === "") return `<span class="badge gray">-</span>`;
   return `<span class="badge ${tone || toneOf(value)}">${esc(t(value))}</span>`;
@@ -772,11 +781,11 @@ async function api(path, options = {}) {
   try {
     response = await fetch(path, {...options, headers});
   } catch (networkError) {
-    if (method === "GET") throw new Error(`加载失败：没有收到服务端响应（${String(path).split("?")[0]}：`
-      + `${String(networkError?.message || networkError).slice(0, 120)}）`);
-    throw new Error("这次操作没有收到服务端的回应（网络中断或服务未响应）。"
+    if (method === "GET") throw requestFailure(new Error(`加载失败：没有收到服务端响应（${String(path).split("?")[0]}：`
+      + `${String(networkError?.message || networkError).slice(0, 120)}）`));
+    throw requestFailure(new Error("这次操作没有收到服务端的回应（网络中断或服务未响应）。"
       + "它可能已经生效，也可能没有 —— 请先刷新页面确认结果，不要直接重试："
-      + `重试会以新的幂等键再做一次。（${String(networkError?.message || networkError).slice(0, 120)}）`);
+      + `重试会以新的幂等键再做一次。（${String(networkError?.message || networkError).slice(0, 120)}）`));
   }
   noteServerClock(response);
   if (!response.ok) {
@@ -879,7 +888,7 @@ async function api(path, options = {}) {
     // 人不知道该查哪个（组织数据没问题、是智能体列表挂了，这两种情况在屏幕上长得一样）。
     // 只给路径，不给查询串 —— 查询串里可能有项目 id 之类，横幅上不必要。
     const requestPath = String(path).split("?")[0];
-    throw new Error(`${response.status} ${detail ? explainCoded(detail) : response.statusText}${hint}（${requestPath}）`);
+    throw requestFailure(new Error(`${response.status} ${detail ? explainCoded(detail) : response.statusText}${hint}（${requestPath}）`));
   }
   return response.json();
 }
@@ -993,6 +1002,7 @@ function clearSession() {
 
 function showError(error) {
   lastError = error?.message || String(error);
+  lastErrorIsRequest = error?.requestFailure === true;
   // 通过顶层 toast 呈现错误，确保弹窗遮罩之上也可见（此前弹窗内表单报错被遮罩挡住成为静默失败）
   toast.error(lastError);
   render();
@@ -1283,6 +1293,7 @@ async function loadPage() {
     lastLoadedAt = Date.now();
   } catch (error) {
     lastError = error?.message || String(error);
+    lastErrorIsRequest = error?.requestFailure === true;
     // Surface authenticated page-load failures — previously the value was only rendered on the login
     // screen, so a backend 500 / network blip left the operator on stale content with no signal. Dedupe
     // so the 5s fallback poll and realtime wake don't spam the same transient error.
@@ -1613,8 +1624,10 @@ function render() {
         ${/* 加载失败此前只弹一次 toast。toast 会消失，而这一屏还挂着上一次成功时的数据 ——
               盯着执行监控页的人看到的是冻住的画面，屏幕上没有任何迹象说"这已经不是现在的样子了"。
               对一个监控台来说这是最要紧的那一刻，所以给一条常驻横幅，下一次加载成功自动消失。 */""}
-        ${lastError ? `<div class="notice warn-notice">连不上控制面或这一页加载失败，下面显示的是
-          ${esc(lastLoadedAgo())}的旧数据：${esc(lastError)}</div>` : ""}
+        ${lastError ? `<div class="notice warn-notice">${lastErrorIsRequest
+          ? `连不上控制面或这一页加载失败，下面显示的是 ${esc(lastLoadedAgo())}的旧数据：${esc(lastError)}`
+          : `控制台这一页自己出错了（不是控制面连不上），下面显示的是 ${esc(lastLoadedAgo())}的旧数据：`
+            + `${esc(lastError)}。这多半是控制台的缺陷 —— 请把这句话连同所在页面反馈给维护者`}</div>` : ""}
         ${truncationBanner()}
         <section class="content">${renderContent()}</section>
       </main>
@@ -4993,6 +5006,7 @@ if (authToken && currentAccount) {
     }
   }).catch((error) => {
     lastError = error?.message || String(error);
+    lastErrorIsRequest = error?.requestFailure === true;
     render();
   });
 } else {
