@@ -1,4 +1,16 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn as rawSpawn, spawnSync as rawSpawnSync } from "node:child_process";
+// 【子进程与请求计时】AIMAC_PROC_TIMING=1 打印最贵的几项。与远程 e2e 那套同规：
+// 在 import 行上改名包一层，一处改动全文件生效（--import 包 child_process 对 ESM 命名导入无效）。
+const __proc = [];
+const __lbl = (cmd, args) => `${String(cmd).split("/").pop()} ${(args || []).slice(0, 2).map((a) => String(a).split("/").pop()).join(" ")}`.slice(0, 50);
+const spawnSync = (...a) => { const t = Date.now(); try { return rawSpawnSync(...a); } finally { __proc.push([`spawnSync ${__lbl(a[0], a[1])}`, Date.now() - t]); } };
+const spawn = (...a) => { const t = Date.now(); const c = rawSpawn(...a); c.on("exit", () => __proc.push([`spawn ${__lbl(a[0], a[1])}`, Date.now() - t])); return c; };
+process.on("exit", () => {
+  if (!process.env.AIMAC_PROC_TIMING) return;
+  const total = __proc.reduce((sum, item) => sum + item[1], 0);
+  console.error(`\n[proc] ${__proc.length} 个子进程，合计 ${total} ms；最贵的 6 个：`);
+  for (const [k, ms] of [...__proc].sort((a, b) => b[1] - a[1]).slice(0, 6)) console.error(`  ${String(ms).padStart(6)} ms  ${k}`);
+});
 import { connect as netConnect } from "node:net";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -234,12 +246,20 @@ const doctorRepo = setupDoctorRepository(root);
     if (!said.includes("·")) throw new Error(`启动期「${why}」只报了结论、没给下一步`);
   }
   // 密钥不安全时绝不能把密钥本身回显出去 —— 启动日志常被原样贴进工单。
+  // 令牌必须是【真正不安全的】那种（太短），启动才会被拒、进程才会退出。
+  // 原先用的 "hunter2-please-do-not-print" 有 27 个字符、完全合法 —— 服务正常启动并一直监听，
+  // spawnSync 只能等满 60 秒超时才回来。这条断言因此白等 60 秒，
+  // 而且它验的是"正常启动的日志里没有密钥"，不是它想验的"拒绝时不回显密钥"（实测查出来的）。
+  const leakToken = "hunter2";
   const leaky = spawnSync(process.execPath, ["apps/control-plane-ui/server.mjs"],
-    {cwd: root, encoding: "utf8", timeout: 60000,
+    {cwd: root, encoding: "utf8", timeout: 20000,
       env: {...process.env, AIMAC_RUNTIME_DIR: `${doctorRuntimeDir}-startup`, AIMAC_PORT: "0",
-        AIMAC_BOOTSTRAP_TOKEN: "hunter2-please-do-not-print"}});
-  if (`${leaky.stdout || ""}${leaky.stderr || ""}`.includes("hunter2-please-do-not-print")) {
-    throw new Error("启动期把不安全的密钥原样打进了日志");
+        AIMAC_BOOTSTRAP_TOKEN: leakToken}});
+  if (leaky.status === 0) {
+    throw new Error(`启动期用一个只有 ${leakToken.length} 个字符的密钥居然启动成功了 —— 这条断言打在了别的分支上`);
+  }
+  if (`${leaky.stdout || ""}${leaky.stderr || ""}`.includes(leakToken)) {
+    throw new Error("启动期把不安全的密钥原样打进了日志 —— 启动日志常被原样贴进工单");
   }
 }
 

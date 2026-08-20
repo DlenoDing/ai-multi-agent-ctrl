@@ -2962,6 +2962,14 @@ const MUTATIONS = [
     expect: "一个「报文里的 X」都没认出来"
   },
   {
+    name: "启动期拒绝时不得把密钥原样打进日志",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "`当前给的是 ${String(process.env[envName]).trim().length} 个字符`,",
+    to: "`当前给的是 ${String(process.env[envName]).trim()}`,",
+    expect: "把不安全的密钥原样打进了日志"
+  },
+  {
     name: "登录失败不得记成「已驳回」（那是审批用语）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
