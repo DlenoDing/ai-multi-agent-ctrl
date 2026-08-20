@@ -8074,8 +8074,11 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
   // 实测：把这道判据放开成也接受 blocked，整条快速链一个门都不红。
   const paused = runCase({dispatchPaused: true});
   if (paused.skipped) { output.push(`叫停后仍交成果的断言无从验证：${paused.skipped}`); }
-  else if (paused.result.accepted !== false) {
-    output.push(`派发已经被叫停（blocked），交上来的检查点却被受理了（${paused.result.error || "已受理"}）`
+  // 逐字对码而不是只判"被拒"：只判被拒的话，别的守卫顺手拒掉也算数，
+  // 而这条验的是【叫停之后不许再交】那一道（本仓"拒了≠拒对了"的第四种残留形状）。
+  else if (paused.result.accepted !== false || paused.result.error !== "active_agent_dispatch_required") {
+    output.push(`派发已经被叫停（blocked），交上来的检查点没有被按 active_agent_dispatch_required 拦下`
+      + `（实际：${paused.result.error || "已受理"}）`
       + " —— 暂停就成了一句建议，agent 照样把产出推上去，而控制台上写着已暂停");
   }
 
