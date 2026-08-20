@@ -2962,6 +2962,14 @@ const MUTATIONS = [
     expect: "一个「报文里的 X」都没认出来"
   },
   {
+    name: "查无此人工确认卡必须给出该给的拒绝码",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: 'if (!confirmation || !confirmationReadableByPrincipal(confirmation, context)) return {ok: false, error: "human_confirmation_not_found"};\n      return {request: confirmation};',
+    to: 'if (!confirmation) return {ok: false, error: "generic_rejected"};\n      return {request: confirmation};',
+    expect: "没有给出该给的拒绝码"
+  },
+  {
     name: "传了却会被钳制的环境变量要被门看见",
     file: "scripts/idle-tick-gate.mjs",
     check: "verifyEnvValuesAreNotSilentlyClamped",
@@ -3204,7 +3212,7 @@ const MUTATIONS = [
   {
     name: "认不出的控制命令回执状态不得当成已接受",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",
-    gate: "doctor",
+    gate: "agent",
     from: "  if (input.status !== undefined && !nodeReportable.includes(input.status)) {",
     to: "  if (false) {",
     expect: "认不出的控制命令回执状态没有被拒"
@@ -3212,7 +3220,7 @@ const MUTATIONS = [
   {
     name: "认不出的失败上报状态不得降级成终态 failed",
     file: "apps/control-plane-ui/server.mjs",
-    gate: "doctor",
+    gate: "agent",
     from: "    if (body.status !== undefined && !FAIL_REPORT_STATUSES.includes(body.status)) {",
     to: "    if (false) {",
     expect: "认不出的失败上报状态没有被拒"
@@ -3223,7 +3231,7 @@ const MUTATIONS = [
     check: "verifyHumanApprovedPathsBindTheCommit",
     from: '  if (!dispatch || dispatch.status !== "running") {',
     to: '  if (!dispatch || !["running", "blocked"].includes(dispatch.status)) {',
-    expect: "派发已经被叫停（blocked），交上来的检查点却被受理了"
+    expect: "派发已经被叫停（blocked），交上来的检查点没有被按"
   },
   {
     name: "人叫停之后 agent 的失败上报不许把这个决定抹掉",
@@ -3393,7 +3401,11 @@ const MUTATIONS = [
     gate: "doctor",
     from: '    ? "pause_dispatch"',
     to: "    ? null",
-    expect: "既没收到 pause_dispatch、也没被改成 blocked"
+    // 这个变异先撞上【halt 那段的前置检查】（它要求暂停之后派发必须是 blocked），
+    // 而不是后面那条"逐个派发都要被处置"的断言 —— 两条断言盯的是同一件事，
+    // 先撞上哪一条取决于 e2e 里的先后。按【实际先红的那一句】写 expect，
+    // 否则变异门会报"红了但不是预期原因"，看起来像偶发失败（实测追了一轮）。
+    expect: "人暂停之后这个派发不是 blocked"
   },
 ];
 
@@ -3584,7 +3596,10 @@ const GATE_COMMANDS = {
   // 只给那些【非走真实 HTTP 不可】的不变式用 —— 快门能守的一律别挂这里。
   doctor: "scripts/doctor.mjs",
   // MCP e2e（约 40 秒）。同样只给非走真实 MCP 调用不可的不变式用。
-  mcp: "scripts/doctor-mcp.mjs"
+  mcp: "scripts/doctor-mcp.mjs",
+  // 远程 agent e2e。断言写在哪套 e2e 里，变异就得挂哪个门 ——
+  // 挂错门的表现是"单独跑那套 e2e 时红、进了全量门却绿"（实测：一条变异因此假绿）。
+  agent: "scripts/doctor-agent-remote.mjs"
 };
 function gateInvocation(mutation, workdir) {
   const key = mutation.gate || "contract";

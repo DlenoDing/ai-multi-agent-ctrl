@@ -639,6 +639,8 @@ try {
         code: "finding_not_found"},
       {name: "permission-mcp.permission_status", args: {requestId: "prq_bogus"},
         code: "permission_request_not_found"},
+      {name: "human-review-mcp.confirmation_status", args: {requestId: "hcr_bogus"},
+        code: "human_confirmation_not_found"},
       {name: "governance-mcp.role_drift_guard_bind",
         args: {taskGroupId: "tg_runtime_management", sessionId: "sess_bogus", runId: "run_bogus",
           idempotencyKey: "mcp-nf-4"},

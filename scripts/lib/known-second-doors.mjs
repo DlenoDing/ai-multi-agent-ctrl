@@ -17,6 +17,14 @@ export const KNOWN_SECOND_DOORS = {
     "同上，definition-mcp.shared_definition_publish 对机器主体不下发",
   permission_resolution_forbidden_for_machine_principal:
     "同上，permission-mcp.permission_resolve 对机器主体不下发",
+  // 这三条守的是"受限主体必须自报作用域"。实测（2026-08-20，MCP e2e 里用真实受限节点令牌）：
+  // 派发绑定的授权在进工具之前就把 dispatchId/projectId/taskGroupId/sessionId/runId 补齐了
+  // （applyAgentGrantScopeArgs）—— 受限主体【补不出一个缺参数的调用】，走不到这三道。
+  // 缺省在这里是靠"填上唯一正确的值"解决的，不是靠拒绝；那条自动补全另有断言与变异守着。
+  room_id_required_for_bounded_principal:
+    "派发绑定的授权会把省掉的 roomId 补成本派发自己的房间，受限主体造不出'不点名'的调用",
+  scope_ref_required_for_bounded_principal: "同上，作用域参数由 applyAgentGrantScopeArgs 补齐",
+  task_group_id_required_for_bounded_principal: "同上，taskGroupId 由 applyAgentGrantScopeArgs 补齐",
   organization_required:
     "orgId 两条来路都不会为空：系统账号走 `searchParams || DEFAULT_ORGANIZATION_ID`（有兜底），"
     + "非系统账号取 account.organizationId，而账号一律带组织（系统管理员的是 null，但它走前一支）"
