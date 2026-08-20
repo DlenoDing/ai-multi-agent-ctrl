@@ -1216,6 +1216,14 @@ function missingProjectDenial(actorAccount) {
   return {status: 403, payload: {error: "permission_denied"}};
 }
 
+// "查无此物"与"存在但你看不见"必须给同一个答案 —— 否则把 id 挨个试一遍，就能数出别的租户
+// 有多少条记录、id 长什么样（本仓已在项目与任务组两处修过同一条不变式，见 missingProjectDenial）。
+// 系统账号例外：它本就该知道什么存在，给它准确的 404，否则运维分不清是打错了 id 还是权限不对。
+function missingRecordDenial(req, state, code, deniedError) {
+  if (isSystemAccount(accountFromRequest(req, state)?.account)) return {status: 404, payload: {error: code}};
+  return {status: 403, payload: {error: deniedError}};
+}
+
 function readableProjectOr403(req, state, projectId) {
   const reader = requireRead(req, state, projectScope(projectId));
   if (reader.status) return {denial: {status: reader.status, payload: reader.payload}};
@@ -1829,6 +1837,14 @@ function directPermissionApplies(account, permission, requiredPermission, resour
   // task_group 级授权必须始终来自 grant（grant 绑定了具体资源），直接权限一律不算。
   if (permission.startsWith("task_group:")) return false;
   if (resourceScope.resourceType === "project" && permission.startsWith("project:") && requiredPermission !== "project:create") return false;
+  // 【归属解析不出组织的作用域是系统级的】。system / system_console / state / git_repo 这几种
+  // resourceType 在 resourceScopeOrganizationId 里一律返回 null —— 也就是上面那道组织边界什么
+  // 都没挡；再掉到这里的 return true，结果是任何拿着 project:grant 的组织管理员都能对系统级
+  // 对象动手。实测：一个普通组织的管理员撤掉了 grant_system_owner 那条 system:* 授权，HTTP 200。
+  // 系统级作用域只认 system: 权限（系统账号在本函数开头已经放行，不受影响）。
+  if (!["project", "task_group", "organization"].includes(resourceScope.resourceType)) {
+    return permission.startsWith("system:");
+  }
   return true;
 }
 
@@ -2966,7 +2982,10 @@ async function handleApi(req, res) {
   if (req.method === "POST" && revokeJoinTokenMatch) {
     if (!requireAuthenticated(req, state, res)) return;
     const record = state.agentJoinTokens.find((item) => item.joinTokenId === revokeJoinTokenMatch[1]);
-    if (!record) return json(res, 404, {error: "agent_join_token_not_found"});
+    if (!record) {
+      const denial = missingRecordDenial(req, state, "agent_join_token_not_found", "policy_denied");
+      return json(res, denial.status, denial.payload);
+    }
     const guard = beginGuardedWrite(req, state, "agent_join_token_revoke", `Project:${record.projectId}`, projectScope(record.projectId));
     if (guard.status) return json(res, guard.status, guard.payload);
     record.status = "revoked";
@@ -2985,7 +3004,10 @@ async function handleApi(req, res) {
   if (req.method === "POST" && revokeNodeMatch) {
     if (!requireAuthenticated(req, state, res)) return;
     const targetNode = state.agentRuntimeNodes.find((item) => item.nodeId === revokeNodeMatch[1]);
-    if (!targetNode) return json(res, 404, {error: "agent_node_not_found"});
+    if (!targetNode) {
+      const denial = missingRecordDenial(req, state, "agent_node_not_found", "policy_denied");
+      return json(res, denial.status, denial.payload);
+    }
     const projectId = targetNode.projectIds?.[0];
     const guard = beginGuardedWrite(req, state, "agent_node_revoke", `Project:${projectId}`, projectScope(projectId));
     if (guard.status) return json(res, guard.status, guard.payload);
@@ -3001,7 +3023,10 @@ async function handleApi(req, res) {
   if (req.method === "POST" && controlNodeMatch) {
     if (!requireAuthenticated(req, state, res)) return;
     const targetNode = state.agentRuntimeNodes.find((item) => item.nodeId === controlNodeMatch[1]);
-    if (!targetNode) return json(res, 404, {error: "agent_node_not_found"});
+    if (!targetNode) {
+      const denial = missingRecordDenial(req, state, "agent_node_not_found", "policy_denied");
+      return json(res, denial.status, denial.payload);
+    }
     const commandType = String(body.commandType || body.action || "refresh_profile");
     const targetDispatch = body.dispatchId ? state.agentDispatches.find((dispatch) => dispatch.dispatchId === body.dispatchId) : null;
     // A dispatch-scoped control command must target a dispatch actually bound to THIS node. Rejecting a
@@ -3109,7 +3134,10 @@ async function handleApi(req, res) {
   const dispatchEventsMatch = url.pathname.match(/^\/api\/agent-dispatches\/([^/]+)\/events$/);
   if (req.method === "GET" && dispatchEventsMatch) {
     const dispatch = state.agentDispatches.find((item) => item.dispatchId === dispatchEventsMatch[1]);
-    if (!dispatch) return json(res, 404, {error: "dispatch_not_found"});
+    if (!dispatch) {
+      const denial = missingRecordDenial(req, state, "dispatch_not_found", "permission_denied");
+      return json(res, denial.status, denial.payload);
+    }
     const reader = requireRead(req, state, taskGroupScope(state, dispatch.taskGroupId));
     if (reader.status) return json(res, reader.status, reader.payload);
     const result = await waitForProjectExecutionEvents(dispatch.projectId, {
@@ -3125,7 +3153,10 @@ async function handleApi(req, res) {
   const taskGroupEventsMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/execution-events$/);
   if (req.method === "GET" && taskGroupEventsMatch) {
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupEventsMatch[1]);
-    if (!taskGroup) return json(res, 404, {error: "task_group_not_found"});
+    if (!taskGroup) {
+      const denial = missingRecordDenial(req, state, "task_group_not_found", "permission_denied");
+      return json(res, denial.status, denial.payload);
+    }
     const reader = requireRead(req, state, taskGroupScope(state, taskGroup.id));
     if (reader.status) return json(res, reader.status, reader.payload);
     const result = await waitForProjectExecutionEvents(taskGroup.projectId, {
@@ -3141,7 +3172,10 @@ async function handleApi(req, res) {
   const sessionEventsMatch = url.pathname.match(/^\/api\/work-sessions\/([^/]+)\/execution-events$/);
   if (req.method === "GET" && sessionEventsMatch) {
     const session = state.workSessions.find((item) => item.sessionId === sessionEventsMatch[1]);
-    if (!session) return json(res, 404, {error: "work_session_not_found"});
+    if (!session) {
+      const denial = missingRecordDenial(req, state, "work_session_not_found", "permission_denied");
+      return json(res, denial.status, denial.payload);
+    }
     const reader = requireRead(req, state, taskGroupScope(state, session.taskGroupId));
     if (reader.status) return json(res, reader.status, reader.payload);
     const taskGroup = state.taskGroups.find((item) => item.id === session.taskGroupId);
@@ -3619,7 +3653,8 @@ async function handleApi(req, res) {
     if (!requireAuthenticated(req, state, res)) return;
     const agent = state.agents.find((item) => item.id === agentMatch[1]);
     if (!agent) {
-      json(res, 404, {error: "agent_not_found"});
+      const denial = missingRecordDenial(req, state, "agent_not_found", "policy_denied");
+      json(res, denial.status, denial.payload);
       return;
     }
     const guard = beginGuardedWrite(req, state, "agent_activation_update", `AgentNode:${agent.id}`, agent.projectId ? projectScope(agent.projectId) : {resourceType: "project", resourceId: "prj_control_plane"});
@@ -3693,7 +3728,8 @@ async function handleApi(req, res) {
     if (!requireAuthenticated(req, state, res)) return;
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupMatch[1]);
     if (!taskGroup) {
-      json(res, 404, {error: "task_group_not_found"});
+      const denial = missingRecordDenial(req, state, "task_group_not_found", "policy_denied");
+      json(res, denial.status, denial.payload);
       return;
     }
     // 动作名此前直接由请求体拼成守卫动作名与审计动作名，而权限映射对 task_group_* 一律放行
@@ -3847,7 +3883,8 @@ async function handleApi(req, res) {
     if (!requireAuthenticated(req, state, res)) return;
     const grant = state.accessGrants.find((item) => item.grantId === revokeGrantMatch[1]);
     if (!grant) {
-      json(res, 404, {error: "access_grant_not_found"});
+      const denial = missingRecordDenial(req, state, "access_grant_not_found", "policy_denied");
+      json(res, denial.status, denial.payload);
       return;
     }
     const guard = beginGuardedWrite(req, state, "access_grant_revoke", `AccessControlGrant:${grant.grantId}`, grant.resource || {resourceType: grant.resourceType, resourceId: grant.resourceId});
@@ -4584,7 +4621,12 @@ async function handleApi(req, res) {
     // path a planned topology would block the barrier forever. Scope the guard on the topology's OWN task
     // group (never a caller-supplied id) so it can't be driven from another tenant's scope.
     const existingTopology = (state.executionTopologies || []).find((item) => item.topologyId === topologyAdvanceMatch[1]);
-    if (!existingTopology) return json(res, 404, {error: "execution_topology_not_found"});
+    // "不存在"必须和"看不见"长得一样，否则把 id 挨个试一遍就能数出别的租户有多少条拓扑。
+    // 只有看得见全局的系统账号才配拿到真 404（与 missingProjectDenial 同一条不变式）。
+    if (!existingTopology) {
+      const denial = missingRecordDenial(req, state, "execution_topology_not_found", "policy_denied");
+      return json(res, denial.status, denial.payload);
+    }
     const guard = beginGuardedWrite(req, state, "execution_topology_advance", `ExecutionTopology:${topologyAdvanceMatch[1]}`, taskGroupScope(state, existingTopology.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     let result;

@@ -2077,6 +2077,145 @@ try {
     console.log(`审计归档 ok: ${archive.payload.entries.length} 条可读、哈希链逐条校验、改动能被发现、非系统账号 403`);
   }
   console.log("ai-native control flow ok");
+  // 【"这东西不存在"这条路必须被走过】。下面每个拒绝码原先都没有任何门/e2e 提到过 ——
+  // 也就是说，把 `if (!x) return 404` 整行删掉，没有任何东西会变红，而那意味着后面的代码会
+  // 拿着 undefined 往下跑（真实形态：读 x.status 直接把请求打成 500，或更糟，当成"没有约束"放行）。
+  // 系统管理员看得见全局，所以这里期望的是真 404 而不是 403（非系统主体的不泄露存在性另有断言）。
+  {
+    const NOT_FOUND_ROUTES = [
+      {method: "POST", path: "/api/execution-topologies/bogus_topology/advance", code: "execution_topology_not_found"},
+      {method: "POST", path: "/api/quality-gates/bogus_gate/waive", code: "quality_gate_not_found"},
+      {method: "POST", path: "/api/review-bundles/bogus_bundle/resolve", code: "review_bundle_not_found"},
+      {method: "POST", path: "/api/review-plans/bogus_plan/resolve", code: "review_plan_not_found"},
+      {method: "GET", path: "/api/work-sessions/bogus_session/execution-events", code: "work_session_not_found"},
+      {method: "POST", path: "/api/access-grants/bogus_grant/revoke", code: "access_grant_not_found"},
+      {method: "POST", path: "/api/agent-nodes/bogus_node/revoke", code: "agent_node_not_found"},
+      {method: "POST", path: "/api/agents/bogus_agent/activate", code: "agent_not_found"},
+      {method: "POST", path: "/api/orgs/bogus_org/quotas", code: "organization_not_found"},
+      {method: "POST", path: "/api/org/members/bogus_member/permissions", code: "org_member_not_found"},
+      {method: "POST", path: "/api/rule-source-resolutions/bogus_resolution/settle", code: "rule_source_resolution_not_found"},
+      {method: "POST", path: "/api/system-upgrade-candidates/bogus_candidate/resolve", code: "system_upgrade_candidate_not_found"},
+      {method: "POST", path: "/api/agent-join-tokens/bogus_join_token/revoke", code: "agent_join_token_not_found"}
+    ];
+    const wrong = [];
+    for (const route of NOT_FOUND_ROUTES) {
+      const probe = await jsonFetch(port, route.path, {
+        method: route.method,
+        headers: route.method === "GET"
+          ? {authorization: systemAuth}
+          : {"Idempotency-Key": `doctor-notfound-${route.code}`, authorization: systemAuth},
+        body: route.method === "GET" ? undefined : JSON.stringify({reason: "e2e 探测不存在的 id"})
+      });
+      if (probe.response.status !== 404 || probe.payload?.error !== route.code) {
+        wrong.push(`${route.method} ${route.path} → ${probe.response.status}/${probe.payload?.error}（应为 404/${route.code}）`);
+      }
+    }
+    if (wrong.length) {
+      throw new Error(`不存在的 id 没有得到该给的 404 拒绝码：\n    ${wrong.join("\n    ")}`);
+    }
+  }
+
+  // 【"不存在"与"看不见"必须长得一样】。上面那批用系统管理员打，拿到的是真 404 —— 那是对的。
+  // 但对【看不见这条记录】的人，404 与 403 的差别本身就是情报：把 id 挨个试一遍，就能数出别的
+  // 租户有多少条记录、id 长什么样。本仓已按这条不变式修过项目与任务组两处；这里按【路由】把同
+  // 形状的入口一次扫完 —— 只守一扇门等于没守，这是本仓反复撞到的形态。
+  {
+    // 造一个【别的租户的】加入令牌：不造的话这条路由永远没样本，探针就只能报"未检验"。
+    const foreignJoinToken = await jsonFetch(port, "/api/agent-join-tokens", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-oracle-join-token", authorization: systemAuth},
+      body: JSON.stringify({projectId: "prj_control_plane", roleId: "ui-console-engineer", ttlSeconds: 600})
+    });
+    if (foreignJoinToken.response.status !== 201) {
+      throw new Error(`造不出外租户加入令牌（HTTP ${foreignJoinToken.response.status} `
+        + `${JSON.stringify(foreignJoinToken.payload)}）—— 那条路由的存在性探针会一直空转`);
+    }
+    // 再把它兑成一个真实的运行节点：不注册的话 agent-nodes 那两条路由永远没样本。
+    const foreignNode = await jsonFetch(port, "/api/agent/v1/register", {
+      method: "POST",
+      headers: {authorization: `Bearer ${foreignJoinToken.payload.joinToken}`},
+      body: JSON.stringify({nodeName: "doctor-oracle-node", requestedRoles: ["agent-runtime"],
+        runtimeVersion: "doctor", profile: {tools: [], models: [{providerClass: "custom", adapter: "doctor", available: true}]}})
+    });
+    if (foreignNode.response.status !== 201) {
+      throw new Error(`造不出外租户运行节点（HTTP ${foreignNode.response.status} `
+        + `${JSON.stringify(foreignNode.payload)}）—— agent-nodes 两条路由的存在性探针会一直空转`);
+    }
+    const wide = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: systemAuth}});
+    if (!wide.response.ok) throw new Error("取不到系统侧全量视图 —— 存在性探针断言在空转");
+    const mine = new Set([orgId, orgProject.payload.id, orgTaskGroup.payload.taskGroup.id]);
+    // 归属可能挂在嵌套的 resource 上（访问授权就是），只看顶层字段会把自己的东西当成外租户的
+    // —— 那样"越权成功"其实是"对自己的东西操作成功"，会读出一个假缺陷。
+    const isForeign = (item) => ![item.organizationId, item.projectId, item.taskGroupId,
+      item.resource?.resourceId, item.resourceId, item.scope?.resourceId]
+      .some((ref) => ref && mine.has(ref));
+    const pickWhy = {};
+    const pick = (collection, idField) => {
+      const all = wide.payload[collection] || [];
+      const found = all.filter(isForeign).map((item) => item[idField]).find(Boolean);
+      // 没探到时要说清是"集合本来就空"还是"全都归自己"——两者要补的夹具完全不同。
+      if (!found) {
+        // 三种情形要分开：集合为空 / 都归自己 / id 字段名写错了（第三种最容易把断言变成空转）。
+        pickWhy[collection] = !all.length ? "集合为空"
+          : all.some((item) => item[idField]) ? `${all.length} 条但都归本组织`
+            : `${all.length} 条但没有一条有 ${idField} 字段 —— 取 id 的字段名写错了`;
+      }
+      return found;
+    };
+    const ORACLE_ROUTES = [
+      {method: "POST", path: (id) => `/api/execution-topologies/${id}/advance`, id: pick("executionTopologies", "topologyId")},
+      {method: "POST", path: (id) => `/api/agent-nodes/${id}/revoke`, id: pick("agentRuntimeNodes", "nodeId")},
+      {method: "POST", path: (id) => `/api/agent-nodes/${id}/control`, id: pick("agentRuntimeNodes", "nodeId")},
+      {method: "POST", path: (id) => `/api/task-groups/${id}/control`, id: pick("taskGroups", "id")},
+      {method: "POST", path: (id) => `/api/agents/${id}/activate`, id: pick("agents", "id")},
+      {method: "POST", path: (id) => `/api/access-grants/${id}/revoke`, id: pick("accessGrants", "grantId")},
+      {method: "POST", path: (id) => `/api/agent-join-tokens/${id}/revoke`, id: pick("agentJoinTokens", "joinTokenId")},
+      {method: "GET", path: (id) => `/api/agent-dispatches/${id}/events`, id: pick("agentDispatches", "dispatchId")},
+      {method: "GET", path: (id) => `/api/task-groups/${id}/execution-events`, id: pick("taskGroups", "id")},
+      {method: "GET", path: (id) => `/api/work-sessions/${id}/execution-events`, id: pick("workSessions", "sessionId")},
+      {method: "GET", path: (id) => `/api/task-groups/${id}/progress`, id: pick("taskGroups", "id")},
+      {method: "GET", path: (id) => `/api/task-groups/${id}/config`, id: pick("taskGroups", "id")},
+      {method: "POST", path: (id) => `/api/task-groups/${id}/work-items`, id: pick("taskGroups", "id")},
+      {method: "POST", path: (id) => `/api/task-groups/${id}/language-policy`, id: pick("taskGroups", "id")},
+      {method: "POST", path: (id) => `/api/task-groups/${id}/config`, id: pick("taskGroups", "id")},
+      {method: "POST", path: (id) => `/api/task-groups/${id}/config/reset`, id: pick("taskGroups", "id")}
+    ];
+    const leaks = [];
+    const unprobed = [];
+    for (const [index, route] of ORACLE_ROUTES.entries()) {
+      if (!route.id) { unprobed.push(route.path("<无外租户样本>")); continue; }
+      const hit = async (id) => jsonFetch(port, route.path(id), {
+        method: route.method,
+        headers: route.method === "GET"
+          ? {authorization: orgAdminAuth}
+          : {"Idempotency-Key": `doctor-oracle-${index}-${id}`, authorization: orgAdminAuth},
+        body: route.method === "GET" ? undefined : JSON.stringify({action: "pause", reason: "e2e 存在性探测"})
+      });
+      const [exists, missing] = [await hit(route.id), await hit(`bogus_oracle_${index}`)];
+      // 2xx 比"可分辨"严重一个量级：那不是泄露存在性，是真的动到了别人的东西。分开报，
+      // 否则真出这种事时，人读到的会是一条讲情报泄露的话。
+      if (exists.response.status < 400) {
+        leaks.push(`${route.method} ${route.path("<id>")}：对【别的租户的】记录返回了 ${exists.response.status}`
+          + " —— 越权写入成功，不是泄露存在性");
+      } else if (exists.response.status !== missing.response.status || exists.payload?.error !== missing.payload?.error) {
+        leaks.push(`${route.method} ${route.path("<id>")}：真实外租户 id → ${exists.response.status}/${exists.payload?.error}，`
+          + `编造的 id → ${missing.response.status}/${missing.payload?.error}`);
+      }
+    }
+    // 没有外租户样本的那几条不能算过：说出来，别让它看起来像验过了。
+    if (unprobed.length) {
+      console.log(`  --  ${unprobed.length} 条路由这一轮没有外租户样本，存在性探针未检验：${unprobed.join("、")}`
+        + `（原因：${Object.entries(pickWhy).map(([k, v]) => `${k} ${v}`).join("；")}）`);
+    }
+    if (leaks.length) {
+      throw new Error("越租户探测能分辨\"存在\"和\"不存在\"：\n    " + leaks.join("\n    ")
+        + "\n  —— 把 id 挨个试一遍就能数出别的租户有多少条记录");
+    }
+    if (ORACLE_ROUTES.length - unprobed.length < 5) {
+      throw new Error(`只探到 ${ORACLE_ROUTES.length - unprobed.length} 条路由 —— 夹具太干净，这条断言在空转`);
+    }
+  }
+
   // 【停用必须叫停在跑的执行】。此前只有契约门里一条同名检查，测的是它自己写的一段模拟，
   // 产品路径怎么退化都不会红。这里走真实 HTTP：对一个确实有派发的任务组下暂停，之后该组下
   // 不得再有在跑的派发 —— 否则 agent 会跑到底、把产出推上 git、把额度烧完，而控制台上写着"已暂停"。

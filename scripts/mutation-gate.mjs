@@ -2944,6 +2944,30 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "系统级作用域只认 system: 权限，认不出的 resourceType 不得掉进 return true",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    return permission.startsWith("system:");',
+    to: "    return true;",
+    expect: "越权写入成功"
+  },
+  {
+    name: "查无此物与看不见必须给同一个答案",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '  if (isSystemAccount(accountFromRequest(req, state)?.account)) return {status: 404, payload: {error: code}};',
+    to: "  if (true) return {status: 404, payload: {error: code}};",
+    expect: "越租户探测能分辨"
+  },
+  {
+    name: "不存在的 id 必须走到 404，不得掉进后面的代码",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (!gate) return json(res, 404, {error: "quality_gate_not_found"});',
+    to: '    if (false) return json(res, 404, {error: "quality_gate_not_found"});',
+    expect: "不存在的 id 没有得到该给的 404 拒绝码"
+  },
+  {
     name: "停用必须叫停在跑的执行：暂停不得放过任何一个未终结的派发",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

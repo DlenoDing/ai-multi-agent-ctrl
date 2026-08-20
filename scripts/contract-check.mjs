@@ -5603,7 +5603,7 @@ function verifySharedJsonWritesAreAtomic(output) {
 
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 75;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 60;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -5637,6 +5637,10 @@ function verifyRefusalCodeCoverageRatchet(output) {
     } else if (!uncovered.includes(code)) {
       output.push(`第二道门登记里的 ${code} 现在已经有判据了 —— 说明它变得可达了，从登记里删掉并确认那条判据验的是什么`);
     }
+  }
+  // 要摘牌就得先看得见名单。门本身不打印它（75 行噪音），按需打开。
+  if (process.env.AIMAC_LIST_UNCOVERED_CODES) {
+    console.log(`零覆盖拒绝码 ${uncovered.length} 个：\n  ${uncovered.join("\n  ")}`);
   }
   if (!codes.size) {
     output.push("拒绝码棘轮：一个拒绝码都没提取到 —— 提取多半失配，这道门在空转");
