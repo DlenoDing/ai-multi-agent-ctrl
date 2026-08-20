@@ -5576,7 +5576,29 @@ function verifyMutationsAreRegisteredAgainstTheRightGate(output) {
     output.push("这些变异挂错了门（单跑那套 e2e 会红、进全量变异门却绿＝假绿）：\n  "
       + offenders.join("\n  "));
   }
-  console.log(`变异挂门：${checked} 条可判的变异逐个核对（skip 与纯码不判），${offenders.length} 条挂错（应为 0）`);
+  // 【skip 的理由必须点名是哪道门在覆盖它】。43 条 skip 全写着"判别力由别的门覆盖" ——
+  // 这句话只有点了名才可核：写"由别处覆盖"等于没写，而登记制最怕的就是这种宽泛例外
+  // （本仓已经因为"理由写错"栽过一次：登记说某字段由装机脚本读，实测那边一个字都没读）。
+  // 这一支【没有单独的变异登记】：要造出"理由不点名"的样本，就得改某条 skip 的文案，
+  // 而那句话在同一条目里出现两次（name 与 skip 相邻），锚点做不到唯一匹配。
+  // 判别力已用 mutate-probe 手工实证过一次（把某条 skip 改成"由别处覆盖"，这一支当场红），
+  // 这里如实记下来，而不是硬凑一条锚点不稳的变异。
+  const NAMED_GATES = ["远程 agent e2e", "控制面 e2e", "MCP e2e", "mcp:doctor", "agent:doctor",
+    "崩溃", "并发", "空转", "控制台", "契约", "规范", "装机", "加载期自检", "doctor"];
+  const vague = [];
+  let skipCount = 0;
+  for (const entry of mutations.matchAll(/name: "([^"]+)"[\s\S]{0,600}?skip: "([^"]+)"/gu)) {
+    skipCount += 1;
+    if (!NAMED_GATES.some((gate) => entry[2].includes(gate))) vague.push(entry[1]);
+  }
+  if (skipCount < 20) {
+    output.push(`skip 理由核对：只解析出 ${skipCount} 条 skip —— 提取多半失配，这一支在空转`);
+  } else if (vague.length) {
+    output.push("这些 skip 的理由没点名是哪道门在覆盖它：\n  " + vague.slice(0, 6).join("\n  ")
+      + "\n  —— 写「由别处覆盖」等于没写，下一个人无从核对；点名之后才查得动");
+  }
+  console.log(`变异挂门：${checked} 条可判的变异逐个核对（skip 与纯码不判），${offenders.length} 条挂错（应为 0）；`
+    + `另有 ${skipCount} 条 skip，${vague.length} 条理由没点名（应为 0）`);
 }
 
 function verifyEnvValuesAreNotSilentlyClamped(output) {
