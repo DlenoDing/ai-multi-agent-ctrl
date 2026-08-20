@@ -364,7 +364,12 @@ try {
   if (!controlCommand.deliveredAt || !controlCommand.acknowledgedAt) throw new Error("Agent control command did not persist delivered and ACK timestamps");
 
   const reuse = await jsonRaw("/api/agent/v1/register", {method: "POST", token: joinResult.joinToken, body: {nodeName: "doctor-node", profile: {}}});
-  if (reuse.response.status !== 409) throw new Error(`one-time join token was reusable: ${reuse.response.status}`);
+  // 只判 409 不够：幂等键撞了也是 409。要的是"这张一次性令牌已经用掉了"这一条，
+  // 否则换成别的守卫先拒，这条断言照样绿而一次性语义已经没了。
+  if (reuse.response.status !== 409 || reuse.payload?.error !== "join_token_not_active") {
+    throw new Error(`一次性加入令牌被复用（HTTP ${reuse.response.status}/${reuse.payload?.error}，`
+      + "应为 409/join_token_not_active）—— 一张令牌能拉起多个节点");
+  }
 
   const orchestrated = await json("/api/orchestrator/run", {
     method: "POST",

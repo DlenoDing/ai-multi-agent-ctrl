@@ -2944,6 +2944,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "另两套 e2e 的 4xx 断言没点名拒绝码要被门看见",
+    file: "scripts/doctor-agent-remote.mjs",
+    check: "verifyRefusalAssertionsNameTheCode",
+    from: '  if (reuse.response.status !== 409 || reuse.payload?.error !== "join_token_not_active") {',
+    to: "  if (reuse.response.status !== 409) {",
+    expect: "只判了状态码，没点名拒绝码"
+  },
+  {
     name: "4xx 断言必须点名拒绝码，只判状态码要被棘轮咬住",
     file: "scripts/doctor.mjs",
     gate: "doctor",

@@ -323,6 +323,7 @@ run(verifyBothWorkItemWritersHonourSettledTaskGroups);
 run(verifyServerFieldsReachThePerson);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
+run(verifyRefusalAssertionsNameTheCode);
 run(verifySharedJsonWritesAreAtomic);
 run(verifyRefusalCodeCoverageRatchet);
 await runAsync(verifyGateFetchFailuresNameTheGate);
@@ -5431,6 +5432,39 @@ function verifyServerFieldsReachThePerson(output) {
 //     这时 404 对"不存在"和"不归你"是同一个答案，本来就分辨不了。agent 网关那两条就是这么写的。
 //  ② 用 missingRecordDenial()：系统账号拿真 404，其余拿与"看不见"一样的 403。
 // 错的写法是先无条件查到对象、再在守卫之前回 404 —— 那就成了跨租户的存在性探针。
+// 【4xx 断言必须点名拒绝码】。只判状态码等于只验了"拒了"：同一个 409 可以是"已被处置"也可以是
+// "幂等键撞了"，同一个 403 可以是越权、可以是组织被停、也可以是"这个动作机器不许做" ——
+// 守卫串位时状态码照样对得上。控制面 e2e 里这一条由运行期棘轮盯着（UNNAMED_REFUSAL_CEILING=0），
+// 另外两套 e2e 不走那个助手，这里按源码结构补上。
+// 401 不点名是允许的：未认证只有一种含义，没有可串的位。
+function verifyRefusalAssertionsNameTheCode(output) {
+  const files = ["scripts/doctor-mcp.mjs", "scripts/doctor-agent-remote.mjs"];
+  const loose = [];
+  let checked = 0;
+  for (const file of files) {
+    const lines = readFileSync(join(root, file), "utf8").split("\n");
+    for (const [index, line] of lines.entries()) {
+      const match = line.match(/\.status !== (4\d\d)/u);
+      if (!match || match[1] === "401") continue;
+      checked += 1;
+      // 码可以写在同一行（|| payload.error !== "x"），也可以紧跟在后面几行里单独判。
+      const window = lines.slice(index, index + 6).join("\n");
+      if (/\.error !== |\.error === |\.admission !== /u.test(window)) continue;
+      loose.push(`${file}:${index + 1} ${line.trim().slice(0, 70)}`);
+    }
+  }
+  if (checked < 8) {
+    output.push(`4xx 断言点名核对：只找到 ${checked} 处状态码比较 —— 提取多半失配，这道门在空转`);
+    return;
+  }
+  if (loose.length) {
+    output.push("这些 4xx 断言只判了状态码，没点名拒绝码：\n  " + loose.join("\n  ")
+      + "\n  —— 守卫串位（换成另一道先拒）时它们照样绿");
+  }
+  console.log(`4xx 断言点名：另两套 e2e 里 ${checked} 处状态码比较逐个核对，`
+    + `${loose.length} 处没点名拒绝码（应为 0；401 未认证不要求点名）`);
+}
+
 function verifyMissingRecordsLookLikeInvisibleOnes(output) {
   const source = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8").split("\n");
   const routeStarts = source
