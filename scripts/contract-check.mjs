@@ -212,11 +212,15 @@ let ranCheckCount = 0;
 const skippedChecks = [];
 // 异步检查同样要走过滤与来源归属，不能绕开 run()——绕开就等于它不受 AIMAC_CONTRACT_ONLY 约束，
 // 变异门单跑一条时它会陪跑。
+const PROCESS_STARTED_AT = Date.now();
+const CHECK_TIMINGS = [];
 async function runAsync(check) {
   if (ONLY && check.name !== ONLY) { skippedChecks.push(check.name); return; }
   ranCheckCount += 1;
   const before = errors.length;
+  const startedAt = Date.now();
   await check(errors);
+  CHECK_TIMINGS.push([`${check.name}(async)`, Date.now() - startedAt]);
   for (let index = before; index < errors.length; index += 1) checkOrigin.set(errors[index], check.name);
 }
 
@@ -229,7 +233,9 @@ function run(check) {
   if (ONLY && check.name !== ONLY) { skippedChecks.push(check.name); return; }
   ranCheckCount += 1;
   const before = errors.length;
+  const startedAt = Date.now();
   check(errors);
+  CHECK_TIMINGS.push([check.name, Date.now() - startedAt]);
   for (let index = before; index < errors.length; index += 1) checkOrigin.set(errors[index], check.name);
 }
 
@@ -692,7 +698,7 @@ function verifyNoModelFallbackMatchesWhatEngineDoes(output) {
     output.push("无模型场景夹具里没有任何工作项 —— 本条在空转");
     return;
   }
-  runAutonomousCycle(state, {root, reason: "no-model-fallback-probe"});
+  runAutonomousCycle(state, {root, reason: "no-model-fallback-probe", autoSyncSkills: false});
   const blocked = (state.taskGroups || []).flatMap((group) => (group.workItems || [])
     .filter((item) => item.blockedReason === "model_selection_rejected"));
   if (!blocked.length) {
@@ -929,7 +935,7 @@ function verifyHumanAndOrganizationContracts(output) {
   }
 
   // Human confirmation forces a none option, requires input for none, and dedups pending.
-  const cycle = runAutonomousCycle(state, {root, mode: "all"});
+  const cycle = runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
 
   // 编排跑完之后，state 里已经是【生产者真造出来的】记录。拿同一套"按记录自报的 schemaVersion
   // 找规范"的核对压一遍：只验种子的话，验的是夹具而不是生产者。
@@ -950,7 +956,7 @@ function verifyHumanAndOrganizationContracts(output) {
     finWork.humanFinalization = {outcome: "confirmed", decisionType: "work_item_verification",
       finalizedBy: "acct_alice", finalizedAt: "2026-08-03T00:00:00Z", confirmationRef: "hcr_finalized"};
     finState.agentDispatches = [];
-    for (let round = 0; round < 3; round += 1) runAutonomousCycle(finState, {root, mode: "all"});
+    for (let round = 0; round < 3; round += 1) runAutonomousCycle(finState, {root, mode: "all", autoSyncSkills: false});
     if ((finState.agentDispatches || []).some((dispatch) => dispatch.workItemId === finWork.id)) {
       output.push("人工定稿锁: 已被人验收定稿的工作项又被派发出去了"
         + " —— 互审对它永久跳过，之后 AI 落进去的改动再没有任何人复核，人的验收盖在了它没看过的成果上");
@@ -985,7 +991,7 @@ function verifyHumanAndOrganizationContracts(output) {
   {
     const idle = JSON.parse(JSON.stringify(state));
     ensureRuntimeCollections(idle, {root});
-    runAutonomousCycle(idle, {root, mode: "all"});           // 先跑一拍，让它把该做的做完
+    runAutonomousCycle(idle, {root, mode: "all", autoSyncSkills: false});           // 先跑一拍，让它把该做的做完
     const snapshot = () => ({
       updatedAt: (idle.taskGroups || []).map((group) => group.updatedAt).join("|"),
       checkIds: (idle.completionReadiness || []).map((item) => item.checkId).join("|"),
@@ -994,7 +1000,7 @@ function verifyHumanAndOrganizationContracts(output) {
       events: (idle.eventLog || []).length
     });
     const before = snapshot();
-    runAutonomousCycle(idle, {root, mode: "all"});           // 再跑一拍：这一拍什么都没发生
+    runAutonomousCycle(idle, {root, mode: "all", autoSyncSkills: false});           // 再跑一拍：这一拍什么都没发生
     const after = snapshot();
     if (after.updatedAt !== before.updatedAt) output.push("空转一拍刷新了任务组的 updatedAt —— 人按最近更新排序会看到全是噪声，真正动过的那个反而认不出来");
     if (after.checkIds !== before.checkIds) output.push("空转一拍给同一个完成度结论换了新的 checkId —— 同一个结论不该每分钟换一次身份");
@@ -1013,7 +1019,7 @@ function verifyHumanAndOrganizationContracts(output) {
         updatedAt: (busy.taskGroups || []).map((group) => group.updatedAt).join("|"),
         events: (busy.eventLog || []).length
       };
-      runAutonomousCycle(busy, {root, mode: "all"});
+      runAutonomousCycle(busy, {root, mode: "all", autoSyncSkills: false});
       if ((busy.taskGroups || []).map((group) => group.updatedAt).join("|") === beforeBusy.updatedAt) {
         output.push("真的有变化时任务组的 updatedAt 却没动 —— 跳过写入不能把真实变化一起挡住");
       }
@@ -2270,7 +2276,7 @@ function verifyHumanAndOrganizationContracts(output) {
     // 既会误报，也会在拦截失效时因为别处的派发而恰好蒙对。
     const dispatchedHold = () => (hcHoldState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === hcHoldWork.id);
     if (dispatchedHold()) { output.push("人工闸门: 测试前置不成立（该工作项已有派发）"); }
-    runAutonomousCycle(hcHoldState, {taskGroupId: hcHoldTg.id}, {root});
+    runAutonomousCycle(hcHoldState, {taskGroupId: hcHoldTg.id, root, autoSyncSkills: false});
     if (dispatchedHold()) {
       output.push("人工闸门: 工作项挂着待人工定稿的重大决策时仍被重新派发（人的定稿会落在一个正被改写的对象上）");
     }
@@ -2287,7 +2293,7 @@ function verifyHumanAndOrganizationContracts(output) {
         question: {summary: "待定"}, options: [{optionId: "a", label: "A"}, {optionId: "none", label: "不选"}],
         blocking: true, status: "pending", round: 1, createdAt: "2026-08-02T00:00:00Z", updatedAt: "2026-08-02T00:00:00Z"
       }];
-      runAutonomousCycle(typeState, {taskGroupId: hcHoldTg.id}, {root});
+      runAutonomousCycle(typeState, {taskGroupId: hcHoldTg.id, root, autoSyncSkills: false});
       if ((typeState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === hcHoldWork.id)) {
         output.push(`人工闸门: ${decisionType} 待人工定稿期间该工作项仍被派发（拦截只覆盖了部分决策类型）`);
       }
@@ -2298,7 +2304,7 @@ function verifyHumanAndOrganizationContracts(output) {
     hcFreeState.humanConfirmationRequests = [];
     const hcFreeWork = hcFreeState.taskGroups.find((item) => item.id === hcHoldTg.id).workItems.find((item) => item.id === hcHoldWork.id);
     hcFreeWork.status = "ready";
-    runAutonomousCycle(hcFreeState, {taskGroupId: hcHoldTg.id}, {root});
+    runAutonomousCycle(hcFreeState, {taskGroupId: hcHoldTg.id, root, autoSyncSkills: false});
     if (!(hcFreeState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === hcHoldWork.id)) {
       output.push("人工闸门: 没有待确认卡片时该工作项也派发不出去 —— 上面那条断言其实什么都没证明");
     }
@@ -2653,7 +2659,7 @@ function verifyHumanAndOrganizationContracts(output) {
     pfWork.planFinalizationJustification = "涉及存储选型";
     pfState.agentDispatches = [];
     pfState.executionTopologies = [];
-    runAutonomousCycle(pfState, {taskGroupId: pfTg.id}, {root});
+    runAutonomousCycle(pfState, {taskGroupId: pfTg.id, root, autoSyncSkills: false});
     if ((pfState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === pfWork.id)) {
       output.push("方案定稿指定: 人明确要求先定稿方案，工作项却照样被派发（这条杠杆等于不存在）");
     }
@@ -2663,7 +2669,7 @@ function verifyHumanAndOrganizationContracts(output) {
       humanFinalization: {outcome: "confirmed", decisionType: "plan_topology", finalizedBy: "acct_alice"}}];
     pfState.agentDispatches = [];
     pfWork.status = "ready";
-    runAutonomousCycle(pfState, {taskGroupId: pfTg.id}, {root});
+    runAutonomousCycle(pfState, {taskGroupId: pfTg.id, root, autoSyncSkills: false});
     if (!(pfState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === pfWork.id)) {
       output.push("方案定稿指定: 人已经定稿了方案，工作项仍然开不了跑（杠杆变成了死锁）");
     }
@@ -2679,7 +2685,7 @@ function verifyHumanAndOrganizationContracts(output) {
     govState.executionTopologies = [{topologyId: "topo_gov", taskGroupId: govTg.id, workItemId: govWork.id,
       projectId: govTg.projectId, status: "running", mode: "parallel_active",
       humanFinalization: {outcome: "confirmed", decisionType: "plan_topology", finalizedBy: "acct_alice"}}];
-    runAutonomousCycle(govState, {taskGroupId: govTg.id}, {root});
+    runAutonomousCycle(govState, {taskGroupId: govTg.id, root, autoSyncSkills: false});
     if ((govState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === govWork.id)) {
       output.push("定稿方案失效: 工作项有一份人已定稿的执行拓扑，却仍走普通派发通道（人批准的边界从未管住实际执行）");
     }
@@ -2689,7 +2695,7 @@ function verifyHumanAndOrganizationContracts(output) {
     freeState.agentDispatches = [];
     const freeWork = freeState.taskGroups.find((item) => item.id === govTg.id).workItems.find((item) => item.id === govWork.id);
     freeWork.status = "ready";
-    runAutonomousCycle(freeState, {taskGroupId: govTg.id}, {root});
+    runAutonomousCycle(freeState, {taskGroupId: govTg.id, root, autoSyncSkills: false});
     if (!(freeState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === govWork.id)) {
       output.push("定稿方案失效: 没有定稿拓扑时该工作项也派发不出去（上面那条断言什么都没证明）");
     }
@@ -2701,7 +2707,7 @@ function verifyHumanAndOrganizationContracts(output) {
     const clsTg = clsState.taskGroups.find((item) => item.id === "tg_runtime_management");
     clsTg.workItems = [{id: "wi_copy", title: "修复登录按钮文案", status: "ready", ownerRole: "reviewer", requirements: []}];
     clsState.agentDispatches = [];
-    runAutonomousCycle(clsState, {taskGroupId: clsTg.id}, {root});
+    runAutonomousCycle(clsState, {taskGroupId: clsTg.id, root, autoSyncSkills: false});
     if (clsTg.workItems[0].status === "needs_decision") {
       output.push("分类误判: 角色名参与了任务性质判定（reviewer 让一个文案修改被判成需要拆分的混合任务）");
     }
@@ -2719,7 +2725,7 @@ function verifyHumanAndOrganizationContracts(output) {
       {id: "wi_impl", title: "实现", status: "ready", dependsOnWorkItemRefs: ["wi_analysis"]}
     ];
     depState.agentDispatches = [];
-    runAutonomousCycle(depState, {taskGroupId: depTg.id}, {root});
+    runAutonomousCycle(depState, {taskGroupId: depTg.id, root, autoSyncSkills: false});
     const implItem = depTg.workItems.find((item) => item.id === "wi_impl");
     if ((depState.agentDispatches || []).some((item) => (item.workItemId || item.workId) === "wi_impl")) {
       output.push("依赖失效: 依赖尚未完成的工作项仍被派发（拆分建立的分析→实现顺序在第一次异常后就没了）");
@@ -2730,7 +2736,7 @@ function verifyHumanAndOrganizationContracts(output) {
     // 依赖被放弃时不能只是"等着"——它永远不会 verified，格子会无声卡死
     depTg.workItems.find((item) => item.id === "wi_analysis").status = "superseded";
     implItem.status = "ready";
-    runAutonomousCycle(depState, {taskGroupId: depTg.id}, {root});
+    runAutonomousCycle(depState, {taskGroupId: depTg.id, root, autoSyncSkills: false});
     if (implItem.status !== "needs_decision") {
       output.push("依赖失效: 依赖已被放弃时没有升级为人工决策（它永远不会 verified，格子会无声卡死）");
     }
@@ -3442,7 +3448,7 @@ function verifyHumanAndOrganizationContracts(output) {
       taskGroupId: freezeTg.id, directiveType: "adjust_priority", status: "queued",
       createdAt: "2026-08-02T00:00:00Z", updatedAt: "2026-08-02T00:00:00Z"
     }];
-    const freezeResult = runAutonomousCycle(freezeState, {taskGroupId: freezeTg.id, root});
+    const freezeResult = runAutonomousCycle(freezeState, {taskGroupId: freezeTg.id, root});  // 自愈冻结这条要真的触发技能源同步失败，不能关技能同步
     // 先证明这条测试没有空转：必须真的走进了同步失败分支，否则"指令被消费"是理所当然的，
     // 断言什么都没证明。
     if (!(freezeResult.changed || []).some((item) => item.reason === "skill_source_sync_failed")) {
@@ -4400,7 +4406,7 @@ function verifyHumanAndOrganizationContracts(output) {
   // A human cancel directive over a confirmation-blocked dispatch must not deadlock the work item.
   const cancelState = structuredClone(seedState);
   ensureRuntimeCollections(cancelState, {root});
-  runAutonomousCycle(cancelState, {root, mode: "all"});
+  runAutonomousCycle(cancelState, {root, mode: "all", autoSyncSkills: false});
   const cancelDispatch = (cancelState.agentDispatches || []).find((item) => ["queued", "running"].includes(item.status));
   if (cancelDispatch) {
     cancelDispatch.status = "running";
@@ -4419,7 +4425,7 @@ function verifyHumanAndOrganizationContracts(output) {
     const cancelledTaskGroup = (cancelState.taskGroups || []).find((item) => item.id === cancelDispatch.taskGroupId);
     if (cancelledTaskGroup.goalExecutionStatus !== "active_paused_by_freeze") output.push("Human cancel directive did not freeze the task group");
     const dispatchCountBefore = (cancelState.agentDispatches || []).length;
-    runAutonomousCycle(cancelState, {root, mode: "all"});
+    runAutonomousCycle(cancelState, {root, mode: "all", autoSyncSkills: false});
     const dispatchCountAfter = (cancelState.agentDispatches || []).length;
     if (dispatchCountAfter !== dispatchCountBefore) output.push("Cancelled+frozen task group re-dispatched work on the next cycle");
   }
@@ -5152,6 +5158,18 @@ if (developerStateBefore !== developerStateAfter) {
   process.exit(1);
 }
 
+// 谁最慢要能随手问出来：这道门是快速链里最贵的一段（实测 35s / 102s），
+// 而"哪条检查吃掉了多少"此前只能靠猜。AIMAC_CONTRACT_TIMING=1 打印前 8 名。
+if (process.env.AIMAC_CONTRACT_TIMING) {
+  // 报"合计"是为了看出【差额】：进程总耗时减去这个数，就是花在 run() 之外的顶层语句上的时间。
+  // 实测 91 条检查合计 20s，而整个进程 60s —— 也就是说三分之二的时间不在任何一条"检查"里，
+  // 而在散在文件里的顶层夹具构造上。要提速就得先看见这个差额，只看"最慢的检查"会一直找错地方。
+  const total = CHECK_TIMINGS.reduce((sum, [, ms]) => sum + ms, 0);
+  console.log(`计时覆盖：${CHECK_TIMINGS.length} 条检查、合计 ${total} ms`
+    + `（进程至此 ${Date.now() - PROCESS_STARTED_AT} ms —— 差额是顶层夹具构造）`);
+  console.log("最慢的 8 条检查：\n  " + CHECK_TIMINGS.sort((a, b) => b[1] - a[1]).slice(0, 8)
+    .map(([name, ms]) => `${String(ms).padStart(6)} ms  ${name}`).join("\n  "));
+}
 console.log(ONLY
   ? `contract check（只跑了 ${ONLY}，跳过 ${skippedChecks.length} 条 —— 这【不是】一次全量核对）ok`
   : `contract check ok: ${ranCheckCount} 条检查全部通过`);
@@ -7387,7 +7405,7 @@ function verifyCancelSettlesTheCellsResources(output) {
     ensureRuntimeCollections(state, {root});
     const taskGroup = state.taskGroups.find((item) => item.id === "tg_runtime_management");
     taskGroup.workItems = [{id: "w_cancel_probe", title: "会被取消的单元", status: "draft", progress: 0, ownerRole: "agent-runtime"}];
-    runAutonomousCycle(state, {root, mode: "all"});
+    runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
     // 再挂一个【从未绑定过租约】的输出目标：租约级联够不到它，只有按归属那条路能了结。
     // 不造这一个的话，把归属级联删掉门照样绿 —— 两道保护会互相遮蔽。
     (state.repositoryOutputs || []).push({
@@ -7429,7 +7447,7 @@ function verifyCancelSettlesTheCellsResources(output) {
     const live = () => (expiring.agentDispatches || [])
       .filter((item) => item.workItemId === "w_cancel_probe" && !["completed", "failed", "cancelled"].includes(item.status)).length;
     if (usable()) output.push("契约过期回收之后，这个格子的旧输出目标仍然可用 —— 它会一直挡着关闭门");
-    runAutonomousCycle(expiring, {root, mode: "all"});
+    runAutonomousCycle(expiring, {root, mode: "all", autoSyncSkills: false});
     if (!usable() || !live()) {
       output.push(`契约过期回收之后这个格子再也跑不起来了（可用目标 ${usable()}、在途派发 ${live()}）—— 清理被做成了报废`);
     }
@@ -7490,8 +7508,8 @@ function verifyPerScopeRecordsSurviveTheirCap(output) {
     // 单元数还要压过准入决策那道上限（400 + 64 余量），否则那一条断言是空转的
     workItems: Array.from({length: 3}, (_, cell) => ({id: `w_cap_${index}_${cell}`, title: `单元${index}-${cell}`, status: "draft", progress: 0, ownerRole: "agent-runtime"}))
   }))];
-  runAutonomousCycle(state, {root, mode: "all"});
-  runAutonomousCycle(state, {root, mode: "all"});
+  runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
+  runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
   // 判据要系统性，不能只盯着我碰巧观察到的那几个集合：同一形状在这套系统里已经撞过三次
   // （完成度、关闭门、准入决策），下一个是哪个集合无法预先知道。
   // 所以直接问【整份状态】：跑到收敛之后再跑一拍，任何一个集合都不许变。
@@ -7502,7 +7520,7 @@ function verifyPerScopeRecordsSurviveTheirCap(output) {
   let converged = false;
   let previousDigest = wholeDigest();
   for (let round = 0; round < 8; round += 1) {
-    runAutonomousCycle(state, {root, mode: "all"});
+    runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
     const nextDigest = wholeDigest();
     if (nextDigest === previousDigest) { converged = true; break; }
     previousDigest = nextDigest;
@@ -7510,7 +7528,7 @@ function verifyPerScopeRecordsSurviveTheirCap(output) {
   if (!converged) {
     // 收敛不了就要说清是谁在变 —— 这正是"哪个集合还在抖"的答案
     const before = JSON.parse(previousDigest);
-    runAutonomousCycle(state, {root, mode: "all"});
+    runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
     const after = JSON.parse(wholeDigest());
     const churning = [...new Set([...Object.keys(before), ...Object.keys(after)])]
       .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]))
@@ -7543,7 +7561,7 @@ function verifyPerScopeRecordsSurviveTheirCap(output) {
 
   // 反向：关闭掉的任务组必须可以被裁掉，否则"活的一条都不裁"会滑成"什么都不裁"，上限形同虚设。
   for (const group of state.taskGroups) if (group.id.startsWith("tg_cap_")) group.status = "closed";
-  runAutonomousCycle(state, {root, mode: "all"});
+  runAutonomousCycle(state, {root, mode: "all", autoSyncSkills: false});
   if ((state.completionReadiness || []).length > 144) {
     output.push(`任务组全部关闭之后，完成度记录仍有 ${state.completionReadiness.length} 条（上限 80 + 余量 64）—— 死记录没有被回收，内存无界`);
   }
@@ -9001,7 +9019,7 @@ const store = await import(join(root, "apps/control-plane-ui/lib/state-store.mjs
 const core = await import(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"));
 const probe = JSON.parse(readFileSync(join(root, "data/seed-state.json"), "utf8"));
 core.ensureRuntimeCollections(probe, {root});
-core.runAutonomousCycle(probe, {root, mode: "all"});
+core.runAutonomousCycle(probe, {root, mode: "all"});  // 分片往返要真造出足够记录，不能关技能同步
 // 只比对"夹具恰好填了的集合"会给出一半的虚假信心：编排周期不产出 checkpoints 这类集合，
 // 空集合被整个跳过，合并时漏掉它也不会有人发现。按分片清单给每个空集合补一条最小记录。
 const shardCollections = JSON.parse(readFileSync(join(root, "apps/control-plane-ui/lib/state-store.mjs"), "utf8")
@@ -9118,7 +9136,7 @@ function verifyExpiredConfirmationLeavesNoStaleParking(output) {
     return;
   }
   request.expiresAt = "2020-01-01T00:00:00Z";
-  runAutonomousCycle(probe, {root, mode: "all"});
+  runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
   if (probe.humanConfirmationRequests.find((item) => item.requestId === request.requestId)?.status !== "expired") {
     output.push("过期确认单的停放清理：卡没有被判过期 —— 这条断言无从验证");
     return;
@@ -9148,7 +9166,7 @@ function verifyExpiredConfirmationRetargetsTheWorkItem(output) {
     blocking: true, round: 1, status: "pending",
     expiresAt: "2020-01-01T00:00:00Z", createdAt: "2019-12-01T00:00:00Z", updatedAt: "2019-12-01T00:00:00Z"
   }];
-  runAutonomousCycle(expState, {root, mode: "all"});
+  runAutonomousCycle(expState, {root, mode: "all", autoSyncSkills: false});
   const settled = expState.humanConfirmationRequests.find((item) => item.requestId === "hcr_expiry_probe");
   if (settled?.status !== "expired") {
     output.push(`过期确认单的工作项指向：确认单没有被判过期（实得 ${settled?.status || "缺失"}）—— 这条断言无从验证`);
@@ -9184,7 +9202,7 @@ function verifyEveryStateCollectionIsTenantScoped(output) {
   const scoped = new Set([...serverSource.slice(begin, finish).matchAll(/cloned\.([a-zA-Z]+)\s*=/gu)].map((match) => match[1]));
   const probeState = structuredClone(seedState);
   ensureRuntimeCollections(probeState, {root});
-  runAutonomousCycle(probeState, {root, mode: "all"});
+  runAutonomousCycle(probeState, {root, mode: "all", autoSyncSkills: false});
   const collections = Object.entries(probeState).filter(([, value]) => Array.isArray(value)).map(([key]) => key);
   if (collections.length < 50) {
     output.push(`读侧租户隔离核对：只枚举到 ${collections.length} 个集合，远少于预期 —— 本条在空转`);
