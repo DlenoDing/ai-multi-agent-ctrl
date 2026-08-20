@@ -5951,7 +5951,7 @@ function verifySharedJsonWritesAreAtomic(output) {
 
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 27;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 26;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -7832,7 +7832,7 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     foreignSession, omitLanguageDigest, forgeLanguageDigest, targetAlreadyPushed,
     targetFromAnotherWorkItem, twoTargetRefs,
     pushRefWrongTarget, emptyFinalCommit, manifestDeleted, outputDeleted, outputOutsideAllowlist,
-    dispatchPaused}) => {
+    dispatchPaused, noTargetRef, targetRefsReversed}) => {
     // 这段建置对每个用例完全相同，而它是本项检查里最贵的一块：实测 324ms/次 × 19 个用例 ≈ 6.2 秒
     // （对比：一次完整编排只要 61ms，克隆状态 1ms）。改成"建一次模板、之后按目录拷贝"。
     const {repo, remote, baseRef, caseRoot} = checkoutFromTemplate();
@@ -8005,7 +8005,13 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
         providerOperationId: `git-push:cc:${remoteSha}`, verifiedAt: new Date().toISOString(),
         rewriteRelation: "same_commit"}],
       // twoTargetRefs：一次交上来两个产出目标。会话只对一个目标持有租约，多报一个就是趁机夹带。
-      repositoryOutputTargetRefs: twoTargetRefs ? [target.targetId, "tgt_smuggled_in"] : [target.targetId],
+      // noTargetRef：一个产出目标都不报 —— 那就没人知道这次提交该落到哪个仓库。
+      // targetRefsReversed：报了两个真实存在的目标（第一个是别处那一个）。用编造的 id 不行 ——
+      // 角色漂移守卫把 repositoryOutputTargetRefs 当作用域校验，编造的会先被它拒（实测过）。
+      repositoryOutputTargetRefs: noTargetRef ? []
+        : targetRefsReversed ? [(state.repositoryOutputs || []).map((item) => item.targetId)
+          .find((id) => id !== target.targetId) || `${target.targetId}__other`, target.targetId]
+          : twoTargetRefs ? [target.targetId, "tgt_smuggled_in"] : [target.targetId],
       // manifestFromLastRound：指向一份上一轮就在仓库里、这次没再动过的清单。
       artifactManifestRefs: [manifestFromLastRound ? "docs/carryover.json"
         : manifestDeleted ? "docs/gone.json" : "docs/manifest.json"],
@@ -8034,6 +8040,22 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     if (probed.result.accepted !== false || probed.result.error !== probe.error) {
       output.push(`${probe.what} —— 检查点却没被按 ${probe.error} 拦下`
         + `（实际：${probed.result.error || "已受理"}）`);
+    }
+  }
+
+  // 不报产出目标 = 没人知道这次提交该落到哪个仓库。这条守卫此前没有任何用例。
+  //
+  // 同一族的 repository_output_target_refs_must_match_single_session_target（报了多个目标）
+  // 【够不着】：角色漂移守卫把 repositoryOutputTargetRefs 当作用域校验，要求它恰好是本会话
+  // 那一个 —— 编造的 id 与别处真实的 id 都会先被它拒成 role_drift_guard_not_clear（两种都实测过）。
+  // 它是那道守卫后面的第二道，留着是对的（漂移守卫一旦放宽，它就是最后一道），但编不出用例。
+  for (const probe of [
+    {opts: {noTargetRef: true}, error: "repository_output_target_missing", what: "一个产出目标都不报"},
+  ]) {
+    const probed = runCase(probe.opts);
+    if (probed.skipped) { output.push(`产出目标断言无从验证（${probe.what}）：${probed.skipped}`); continue; }
+    if (probed.result.accepted !== false || probed.result.error !== probe.error) {
+      output.push(`${probe.what} —— 检查点却没被按 ${probe.error} 拦下（实际：${probed.result.error || "已受理"}）`);
     }
   }
 

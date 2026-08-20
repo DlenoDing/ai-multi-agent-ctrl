@@ -2946,6 +2946,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "不报产出目标必须拒（没人知道这次提交该落到哪个仓库）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: '    return {accepted: false, status: 409, error: "repository_output_target_missing"};',
+    to: '    return {accepted: false, status: 409, error: "generic_rejected"};',
+    expect: "一个产出目标都不报"
+  },
+  {
     name: "认不出的拓扑动作必须拒",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyHumanAndOrganizationContracts",

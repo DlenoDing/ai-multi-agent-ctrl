@@ -17,6 +17,9 @@ export const KNOWN_SECOND_DOORS = {
     "同上，definition-mcp.shared_definition_publish 对机器主体不下发",
   permission_resolution_forbidden_for_machine_principal:
     "同上，permission-mcp.permission_resolve 对机器主体不下发",
+  repository_output_target_refs_must_match_single_session_target:
+    "角色漂移守卫把 repositoryOutputTargetRefs 当作用域校验、要求恰好是本会话那一个，"
+    + "编造的 id 与别处真实的 id 都先被它拒成 role_drift_guard_not_clear（两种都实测过）",
   account_invite_forbidden_for_machine_principal:
     "同上，identity-mcp.* 整族按前缀对服务令牌禁用（MCP e2e 里有一条断言按规则全量核对这个前缀）"
 };
