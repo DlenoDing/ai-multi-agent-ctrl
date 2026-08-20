@@ -2944,6 +2944,22 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "租约释放要核对持有者，不能只看围栏令牌",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '    if (args.holderRef && lease.holderRef !== args.holderRef) return {allowed: false, error: "mcp_lease_holder_mismatch", grantRef};',
+    to: '    if (false) return {allowed: false, error: "mcp_lease_holder_mismatch", grantRef};',
+    expect: "报了别人的持有者"
+  },
+  {
+    name: "arguments 不是对象必须当场拒绝",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '    return {ok: false, error: "mcp_input_must_be_object"};',
+    to: '    return {ok: false, error: "mcp_input_rejected"};',
+    expect: "传成数组没有被拒"
+  },
+  {
     name: "按内容指纹归并也要分租户",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "doctor",

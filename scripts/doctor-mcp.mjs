@@ -70,6 +70,22 @@ try {
   const unknownInput = await mcp("tools/call", {name: "ui-console-mcp.runtime_health_get", arguments: {unknownProperty: true}});
   if (unknownInput.structuredContent?.result?.error !== "mcp_input_unknown_property") throw new Error("MCP input schema did not reject unknown properties");
 
+  // 入参校验的另外两支此前没有任何断言：类型不对、以及整个 arguments 根本不是对象。
+  // 塌了的话，一个数组或一个字符串会被当成参数对象往下传，工具拿到的是 undefined ——
+  // 而"缺省不得等于有利结果"这条在本仓已经撞过很多次。
+  const wrongType = await mcp("tools/call", {name: "ui-console-mcp.runtime_health_get", arguments: {projectId: 12345}});
+  if (wrongType.structuredContent?.result?.error !== "mcp_input_type_mismatch") {
+    throw new Error("入参类型不对没有被拒："
+      + `${JSON.stringify(wrongType.structuredContent?.result || null).slice(0, 140)}`
+      + " —— 类型不符的值会被当成合法参数往下传");
+  }
+  const notAnObject = await mcp("tools/call", {name: "ui-console-mcp.runtime_health_get", arguments: ["不是对象"]});
+  if (notAnObject.structuredContent?.result?.error !== "mcp_input_must_be_object") {
+    throw new Error("arguments 传成数组没有被拒："
+      + `${JSON.stringify(notAnObject.structuredContent?.result || null).slice(0, 140)}`
+      + " —— 工具会拿到一堆 undefined，而不是被明确告知参数不对");
+  }
+
   const missingIdempotency = await mcp("tools/call", {name: "room-mcp.room_send", arguments: {roomId: "room_doctor", payload: {text: "must fail"}}});
   if (missingIdempotency.structuredContent?.result?.error !== "idempotency_key_required") throw new Error("write MCP call without idempotencyKey was not rejected");
 
@@ -117,6 +133,33 @@ try {
   if (wrongRelease.structuredContent?.result?.error !== "mcp_lease_fencing_token_mismatch") {
     throw new Error(`换一个围栏令牌就把别人的租约释放掉了（${JSON.stringify(wrongRelease.structuredContent?.result || "").slice(0, 140)}）`);
   }
+  // 围栏令牌对了，但报的持有者不是自己 —— 这道门此前没有任何断言。它守的是
+  // "两个 agent 抢同一个产出目标"里最后一层：令牌可能被抄走（写在派发记录里、日志里），
+  // 抄到令牌的人还得是登记的那个持有者才放行。
+  const wrongHolder = await mcp("tools/call", {name: "resource-mcp.lease_release",
+    arguments: {idempotencyKey: "doctor-lease-holder", leaseId: lease.leaseId,
+      holderRef: "session:somebody-else", fencingToken: lease.fencingToken}});
+  if (wrongHolder.structuredContent?.result?.error !== "mcp_lease_holder_mismatch") {
+    throw new Error(`拿着正确的围栏令牌、报了别人的持有者，却把租约释放掉了`
+      + `（${JSON.stringify(wrongHolder.structuredContent?.result || "").slice(0, 140)}）`
+      + " —— 令牌一旦泄漏就没有第二道拦阻");
+  }
+  const wrongSession = await mcp("tools/call", {name: "resource-mcp.lease_release",
+    arguments: {idempotencyKey: "doctor-lease-session", leaseId: lease.leaseId,
+      holderRef: "session:doctor-a", sessionId: "sess-not-the-holder", fencingToken: lease.fencingToken}});
+  if (wrongSession.structuredContent?.result?.error !== "mcp_lease_session_mismatch") {
+    throw new Error(`用别的会话 id 就把租约释放掉了`
+      + `（${JSON.stringify(wrongSession.structuredContent?.result || "").slice(0, 140)}）`);
+  }
+  // 正面对照：正确的持有者 + 正确的令牌必须能释放，否则上面两条可以靠"一律拒绝"蒙混过去。
+  const rightRelease = await mcp("tools/call", {name: "resource-mcp.lease_release",
+    arguments: {idempotencyKey: "doctor-lease-ok", leaseId: lease.leaseId,
+      holderRef: "session:doctor-a", fencingToken: lease.fencingToken}});
+  if (rightRelease.structuredContent?.result?.error) {
+    throw new Error(`正确的持有者也释放不了租约（${JSON.stringify(rightRelease.structuredContent?.result).slice(0, 140)}）`
+      + " —— 互斥把正常路径一起堵死了，产出目标会永远卡在被占用状态");
+  }
+
   const admin = await api("/api/auth/login", {method: "POST", body: {email: "system.admin@local", token: "doctor-bootstrap-token"}});
   const missingProjectTaskGroup = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.task_group_create", arguments: {idempotencyKey: "doctor-mcp-task-create-missing-project", taskGroupId: "tg_doctor_missing_project", name: "Missing Project Scope"}});
   if (missingProjectTaskGroup.structuredContent?.result?.error !== "mcp_required_argument_missing" || missingProjectTaskGroup.structuredContent?.result?.argument !== "projectId") {
