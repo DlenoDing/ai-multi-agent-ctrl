@@ -2986,6 +2986,22 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "过滤筛光时要说'没有匹配某词的行'，不能只说'暂无数据'",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "return `没有匹配「${query}」的行${hiddenCount > 0 ? `（${hiddenCount} 行被过滤条件隐藏）` : \"\"}`;",
+    to: "return \"暂无数据\";",
+    expect: "过滤没匹配时说的是"
+  },
+  {
+    name: "文案必须真挂到空表上（纯函数写了没人用＝人看不到）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "row.querySelector(\".empty-cell\").textContent = filteredEmptyText(raw, hidden.length);",
+    to: "row.querySelector(\".empty-cell\").textContent = \"\";",
+    expect: "根本没调这个文案函数"
+  },
+  {
     name: "点名的判据必须真存在（失效的覆盖承诺＝以为有人管）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyGateReferencesResolve",

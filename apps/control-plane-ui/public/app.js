@@ -646,14 +646,45 @@ function filterInput(placeholder = "关键字过滤…", key = "") {
   return `<input class="filter-input" data-filter-input aria-label="${esc(placeholder)}" ${key ? `data-filter-key="${esc(key)}"` : ""} value="${esc(value)}" placeholder="${esc(placeholder)}">`;
 }
 
+// 过滤把行全筛光时该对人说什么。抽成纯函数是为了让判据验得到 ——
+// 行是 innerHTML 渲染出来的，DOM 桩里没有真实行树，隐藏那半只能靠源码看接线。
+function filteredEmptyText(query, hiddenCount) {
+  if (!query) return "";
+  return `没有匹配「${query}」的行${hiddenCount > 0 ? `（${hiddenCount} 行被过滤条件隐藏）` : ""}`;
+}
+
 // 按输入框内容隐藏不匹配的行/卡片；供输入时与每次 render 后回填复用
 function applyFilterFor(inputEl) {
   if (!inputEl) return;
   const scope = inputEl.closest(".panel") || document;
-  const query = String(inputEl.value || "").trim().toLowerCase();
+  const raw = String(inputEl.value || "").trim();
+  const query = raw.toLowerCase();
   scope.querySelectorAll(".data-table tbody tr, .agent-cards .agent-card").forEach((rowEl) => {
     if (rowEl.querySelector(".empty-cell")) return;
     rowEl.style.display = !query || rowEl.textContent.toLowerCase().includes(query) ? "" : "none";
+  });
+  // 全被筛光时必须说出来，否则人分不清"过滤没匹配"和"页面坏了"：
+  //   走 DOM 隐藏这条路 —— 看到的是一张只有表头、body 一个字都没有的表；
+  //   走 filterSource 那条路（源数组先筛） —— 看到的是"暂无数据"，会以为系统里压根没这类记录。
+  // 两条路径在这里收口。原来的空行不改文案、只藏起来，过滤词一清就能原样回来。
+  scope.querySelectorAll(".data-table tbody").forEach((tbody) => {
+    const injected = tbody.querySelector("tr[data-filter-empty]");
+    if (injected) injected.remove();
+    const rows = [...tbody.querySelectorAll("tr")];
+    const emptyRow = rows.find((rowEl) => rowEl.querySelector(".empty-cell"));
+    const hidden = rows.filter((rowEl) => rowEl !== emptyRow && rowEl.style.display === "none");
+    const visible = rows.filter((rowEl) => rowEl !== emptyRow && rowEl.style.display !== "none");
+    if (!query || visible.length) {
+      if (emptyRow) emptyRow.style.display = "";
+      return;
+    }
+    if (emptyRow) emptyRow.style.display = "none";
+    const columns = tbody.closest("table")?.querySelectorAll("thead th").length || 1;
+    const row = document.createElement("tr");
+    row.setAttribute("data-filter-empty", "1");
+    row.innerHTML = `<td class="empty-cell" colspan="${columns}"></td>`;
+    row.querySelector(".empty-cell").textContent = filteredEmptyText(raw, hidden.length);
+    tbody.appendChild(row);
   });
 }
 

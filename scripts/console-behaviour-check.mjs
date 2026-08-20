@@ -152,6 +152,8 @@ globalThis.__probe = {
   renderTaskGroupDetail: (detail, taskGroup) => { tgDetail = detail; return renderTaskGroupDetail(taskGroup); },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
+  filteredEmptyText: (query, hidden) => filteredEmptyText(query, hidden),
+  applyFilterForSource: () => String(applyFilterFor),
   heartbeatStaleHint: (node) => heartbeatStaleHint(node),
   claimMissHint: (node) => claimMissHint(node),
   selfCheckFailureHint: (node) => selfCheckFailureHint(node),
@@ -2889,6 +2891,32 @@ await runCodedApiErrorCase();
   check("说了之后还要给出下一步",
     /吊销/.test(shown),
     "只说'没确认作废'，人不知道该找谁做什么");
+}
+
+// 过滤把行全筛光时，人看到的东西此前有两种，都不对：
+//   DOM 隐藏那条路 —— 一张只有表头、body 一个字都没有的表（分不清是没匹配还是页面坏了）；
+//   filterSource 那条路 —— "暂无数据"，会以为系统里压根没这类记录。
+// 文案抽成纯函数才验得到：行是 innerHTML 渲染的，DOM 桩里没有真实行树。
+{
+  const filterProbe = loadConsole(el("div"));
+  check("过滤没匹配时说的是'没有匹配某词的行'，不是'暂无数据'",
+    filterProbe.filteredEmptyText("abc", 0) === "没有匹配「abc」的行",
+    `实际是：${JSON.stringify(filterProbe.filteredEmptyText("abc", 0))}`);
+  check("有行被藏起来时要报出藏了几行（人才知道清掉过滤词能看回来）",
+    filterProbe.filteredEmptyText("abc", 12) === "没有匹配「abc」的行（12 行被过滤条件隐藏）",
+    `实际是：${JSON.stringify(filterProbe.filteredEmptyText("abc", 12))}`);
+  check("没有过滤词时不得冒出这句话（本来就空的表还是该说'暂无数据'）",
+    filterProbe.filteredEmptyText("", 0) === "",
+    `没有过滤词却给出了：${JSON.stringify(filterProbe.filteredEmptyText("", 0))}`);
+  // 上面三条是【纯函数】：它们证明不了这句话真的被挂到了表上。
+  // 少了下面这条，把 applyFilterFor 里的调用整段删掉也照样全绿。
+  const wiring = filterProbe.applyFilterForSource();
+  check("过滤逻辑必须真的把这句话挂到空表上（否则纯函数写了也没人用）",
+    /filteredEmptyText\(raw, hidden\.length\)/u.test(wiring) && /data-filter-empty/u.test(wiring),
+    `applyFilterFor 里${/filteredEmptyText/u.test(wiring) ? "调了但形状对不上" : "根本没调"}这个文案函数`);
+  check("原来的空行只藏不改（过滤词一清，'暂无数据'要能原样回来）",
+    /emptyRow\.style\.display = "none"/u.test(wiring) && /emptyRow\.style\.display = ""/u.test(wiring),
+    "空行被改文案或被删掉了 —— 清掉过滤词后回不到原样");
 }
 
   const pageTouchCounts = new Map();
