@@ -5786,16 +5786,16 @@ function verifyNoRequestScopedLeaks(output) {
 // 把 core 里"只有真人能定稿"整个删掉它照样绿 —— 那道由别的用例守着，名字容易让人误以为是它。
 // 棘轮只降不升：新加检查就得配变异，或者把它加进这里并写明为什么不必。
 function verifyContractChecksAreThemselvesTested(output) {
-  const UNTESTED_CHECK_CEILING = 1;
-  // 这两项各有明确结论，登记在这里免得下一个人重走一遍：
+  const UNTESTED_CHECK_CEILING = 0;
   //（原先在册的 verifySuspendHaltsRunningWork 已删除：它测的是本文件自造的一段模拟；
   // "停用必须叫停在跑的执行"现由控制面 e2e 走真实 HTTP 守着，已配变异。）
   //  · verifyMcpToolListCostStaysVisible —— 它的作用是【钉住上限并打印实测值】。撑破上限需要真的
   //    把工具表做大（单条描述加长远远不够），而那正是它要防的事；成本数字另有记录，别再重量。
   //  · verifyWorkStatusEnumConvergence —— 同上，改 spec 枚举两种写法都不红（见该函数上方注释）。
-  const UNTESTED_WITH_REASON = {
-    verifyMcpToolListCostStaysVisible: "它钉的是上限与实测值本身，撑破它就等于制造它要防的那个问题"
-  };
+  // 空了：最后一项 verifyMcpToolListCostStaysVisible 曾登记为"撑破上限就等于制造它要防的问题"——
+  // 那句话只对它三条失败支里的【一支】成立。另外两支是空转守卫（取不到默认放行清单 / 工具数太少），
+  // 用一个变异就能证明它们能红。**登记的理由只覆盖了一部分，就等于这条登记是错的。**
+  const UNTESTED_WITH_REASON = {};
   const self = readFileSync(join(root, "scripts/contract-check.mjs"), "utf8");
   const mutations = readFileSync(join(root, "scripts/mutation-gate.mjs"), "utf8");
   const registered = new Set([...self.matchAll(/run(?:Async)?\((verify[A-Za-z0-9]+)\)/gu)].map((m) => m[1]));

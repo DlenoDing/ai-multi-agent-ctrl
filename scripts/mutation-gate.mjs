@@ -1236,8 +1236,10 @@ const MUTATIONS = [
     name: "待验登记过期要报红",
     file: "scripts/contract-check.mjs",
     check: "verifyContractChecksAreThemselvesTested",
-    from: '    verifyMcpToolListCostStaysVisible: "它钉的是上限与实测值本身，撑破它就等于制造它要防的那个问题"',
-    to: '    verifyTransitionEngine: "这一条其实已经有变异了"',
+    // 登记册现在是空的（每一项都配上变异了）。仍要证明"往里塞一条过期的登记会被抓住"：
+    // 塞一个【已经有变异】的检查名进去，判据必须指出它其实不需要豁免。
+    from: "  const UNTESTED_WITH_REASON = {};",
+    to: '  const UNTESTED_WITH_REASON = {verifyTransitionEngine: "这一条其实已经有变异了"};',
     expect: "已经有变异指向了"
   },
   {
@@ -2942,6 +2944,14 @@ const MUTATIONS = [
     from: '  if (cached && cached.status === "active" && cached.resourceRef === resourceRef) return cached;',
     to: "  if (cached) return cached;",
     expect: "写锁形同虚设"
+  },
+  {
+    name: "tools/list 成本判据的空转守卫要能红",
+    file: "apps/control-plane-ui/lib/mcp-service-allowlist.mjs",
+    check: "verifyMcpToolListCostStaysVisible",
+    from: "  const tools = configured.length ? configured : defaultMcpServiceToolAllowlist;",
+    to: "  const tools = configured.length ? configured : [];",
+    expect: "取不到服务令牌的默认放行清单"
   },
   {
     name: "登记成机器面的错误码，控制台不得调得到那条路由",
