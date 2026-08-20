@@ -1974,6 +1974,19 @@ try {
   const leaseTarget = expectStatus(await g2("/api/repository-output-targets", systemAuth, "g2b-lease-target", {taskGroupId: "tg_runtime_management", workItemId: "work_g2b_lease_fixture", artifactManifestPath: "docs/artifact-manifests/g2b-lease.json", pathAllowlist: ["docs/**"]}), 201, "lease target fixture");
   const leaseOk = expectStatus(await g2("/api/leases/claim", systemAuth, "g2b-lease-ok", {repositoryOutputTargetRef: leaseTarget.payload.targetId, holderRef: "session:doctor-g2b"}), 201, "lease claim happy");
   expectStatus(await g2("/api/leases/claim", invitedAuth, "g2b-lease-deny", {repositoryOutputTargetRef: leaseTarget.payload.targetId}), 403, "lease claim deny", "policy_denied");
+  // 租约按"它指向的产出目标是否可见"过滤，而这条过滤此前【没有任何断言】守着：
+  // 把 cloned.leases 那行 filter 整个去掉，全套静态门依旧全绿（变异验过）。
+  // 一条租约会说出"某个任务组里有一份写入边界正被人持着"——对看不见那个任务组的人这就是情报。
+  const leaseHidden = await g2("/api/state", invitedAuth, null, null, "GET");
+  if ((leaseHidden.payload?.leases || []).some((lease) => lease.leaseId === leaseOk.payload.lease.leaseId)) {
+    throw new Error("看不见那个任务组的账号，在状态里拿到了它的租约");
+  }
+  // 正面对照必须用【非系统】账号：系统账号走的是 isSystem 那一支，根本不经过这条过滤 ——
+  // 第一版用 systemAuth，把 cloned.leases 改成 [] 它照样绿（正面对照落在了另一条分支上）。
+  const leaseVisible = await g2("/api/state", reviewerAuth, null, null, "GET");
+  if (!(leaseVisible.payload?.leases || []).some((lease) => lease.leaseId === leaseOk.payload.lease.leaseId)) {
+    throw new Error("看得见的非系统账号也拿不到这份租约 —— 上面那条『没泄漏』其实在空转");
+  }
   expectStatus(await g2(`/api/leases/${leaseOk.payload.lease.leaseId}/release`, systemAuth, "g2b-lease-release-ok", {holderRef: "session:doctor-g2b", fencingToken: leaseOk.payload.lease.fencingToken}), 200, "lease release happy");
 
   // artifacts → task_group:checkpoint_submit (runtime service account allowed)

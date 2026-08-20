@@ -2986,6 +2986,22 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "租约必须按可见产出过滤（一条租约会说出那边有人正持着写入边界）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "cloned.leases = (state.leases || []).filter((lease) => visibleOutputRefs.has(lease.resourceRef));",
+    to: "cloned.leases = (state.leases || []);",
+    expect: "拿到了它的租约"
+  },
+  {
+    name: "租约的正面对照要落在被过滤的那条分支上（清空就该红）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "cloned.leases = (state.leases || []).filter((lease) => visibleOutputRefs.has(lease.resourceRef));\n",
+    to: "cloned.leases = [];\n",
+    expect: "其实在空转"
+  },
+  {
     name: "「当前展示 N 条」必须等于真实截断数（两处写死的数会各走各的）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
