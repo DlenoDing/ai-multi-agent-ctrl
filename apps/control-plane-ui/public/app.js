@@ -2613,7 +2613,7 @@ function renderTaskGroupDetail(taskGroup) {
             <button class="secondary-button" type="submit">保存</button>
           </form>` : ""}
         ${dispatch ? `
-          <div class="record-meta"><span>派发：<span class="mono">${esc(dispatch.dispatchId)}</span></span><span>${badge(dispatch.status)} ${esc(dispatch.progressPercent || 0)}%</span></div>
+          <div class="record-meta"><span>派发：<span class="mono">${esc(dispatch.dispatchId)}</span></span><span>${badge(dispatch.status)} ${percentCell(dispatch.progressPercent)}</span></div>
           <div class="button-row"><button class="secondary-button" data-action="show-dispatch-events" data-dispatch-id="${esc(dispatch.dispatchId)}">实时事件</button></div>
         ` : ""}
       </div>

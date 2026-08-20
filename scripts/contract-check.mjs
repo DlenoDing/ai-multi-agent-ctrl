@@ -344,6 +344,7 @@ run(verifyLongLivedRecordsDoNotPointAtCappedOnes);
 run(verifyCallsDoNotPassIgnoredArguments);
 run(verifyEnvValuesAreNotSilentlyClamped);
 run(verifyMutationsAreRegisteredAgainstTheRightGate);
+run(verifyMeasurementsDoNotFakeZero);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5508,6 +5509,35 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 两类必须排除，否则误报会淹掉真信号（第一版没排除，4 条命中全是误报）：
 //  · `skip:` 登记的（判别力由别的门覆盖，本就不在变异门里真跑）—— 它的 gate 字段无意义。
 //  · expect 是纯拒绝码/标识符的 —— 同一个码在多处出现是正常的，判不出归属。
+// 【测量值不得用 0 兜底】。"没上报过"与"上报了 0"是两回事：一个【已完成】的派发显示 "0%"，
+// 人会以为它什么都没干成（拿真实状态渲染出来读到的就是这样）。
+// 计数类可以兜 0（0 条就是 0 条），而百分比/评分/时长这类【测量值】不行 —— 没有就写"—"。
+//
+// 判据的形式选了"共用函数还在被用"而不是"扫 `xxxPercent || 0`"：
+// 三处都改完之后，后者一个样本都扫不到（空转自证当场拦住了我）。
+// 零样本的判据没有意义 —— 它永远绿，而且看不出是"没问题"还是"没在看"。
+function verifyMeasurementsDoNotFakeZero(output) {
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8")
+    .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
+  const uses = [...app.matchAll(/percentCell\(/gu)].length;
+  // 定义 1 处 + 调用若干处。低于 3 处调用说明有人把它换回了裸的 `|| 0`。
+  if (uses < 4) {
+    output.push(`percentCell 只被用了 ${uses - 1} 处（定义之外）—— 有人把百分比换回了裸的 0 兜底，`
+      + "而「没上报过」会因此显示成一个看起来精确的数");
+    return;
+  }
+  const naked = [...app.matchAll(/([\w.?[\]]*(?:Percent|Score|Ratio|Rate|Latency|Duration))\s*(?:\?\?|\|\|)\s*0\b/gu)]
+    .filter((match) => {
+      const before = app.slice(Math.max(0, match.index - 60), match.index);
+      return !/(?:const|let)\s+\w+\s*=\s*(?:Number\()?$/u.test(before);
+    });
+  if (naked.length) {
+    output.push("这些【测量值】直接用 0 兜底（没经 percentCell）：\n  "
+      + naked.map((match) => `${app.slice(0, match.index).split("\n").length}: ${match[1]}`).join("\n  "));
+  }
+  console.log(`测量值兜底：percentCell 被用于 ${uses - 1} 处渲染，${naked.length} 处仍在裸兜 0（应为 0）`);
+}
+
 function verifyMutationsAreRegisteredAgainstTheRightGate(output) {
   const GATE_SOURCES = {
     contract: "scripts/contract-check.mjs", auth: "scripts/auth-placement-gate.mjs",

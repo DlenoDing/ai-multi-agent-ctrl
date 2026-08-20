@@ -2962,6 +2962,14 @@ const MUTATIONS = [
     expect: "一个「报文里的 X」都没认出来"
   },
   {
+    name: "百分比不得裸用 0 兜底（没上报过≠上报了 0）",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyMeasurementsDoNotFakeZero",
+    from: '{v: percentCell(dispatch.progressPercent), c: "num"},',
+    to: '{v: `${esc(dispatch.progressPercent || 0)}%`, c: "num"},',
+    expect: "percentCell 只被用了"
+  },
+  {
     name: "语种名要显示中文，不能把后端的英文名摆上去",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
