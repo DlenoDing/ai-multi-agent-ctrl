@@ -2946,6 +2946,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "版本冲突退回的必须是 state_write_conflict",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "writer",
+    from: '    json(res, 409, {error: "state_write_conflict", retryable: true, message: error.message});',
+    to: '    json(res, 409, {error: "write_conflict", retryable: true, message: error.message});',
+    expect: "版本冲突退回的必须是 state_write_conflict"
+  },
+  {
     name: "清单路径必须是 git 跟得住的",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyHumanApprovedPathsBindTheCommit",

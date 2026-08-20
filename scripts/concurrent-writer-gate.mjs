@@ -191,6 +191,11 @@ check(unexpected.length === 0,
   "并发写入只会成功或按版本冲突退回（没有第三种结局）",
   unexpected.length ? `另有 ${unexpected.length} 次别的失败：${[...new Set(unexpected)].slice(0, 3).join("、")}`
     : `退回的错误码：${[...rejectionCodes].join("、") || "（无退回）"}`);
+// 退回的码原先只打印不断言：同一个 409 也可能是幂等键撞了、或者别的守卫先拒 ——
+// 那样这道门验的就不是"版本冲突被正确识别"，而只是"有东西被拒了"。逐字对上。
+check(rejectionCodes.size === 0 || [...rejectionCodes].every((code) => code === "state_write_conflict"),
+  "版本冲突退回的必须是 state_write_conflict（不能是别的守卫顺手拒的）",
+  `实际退回：${[...rejectionCodes].join("、") || "（无退回）"}`);
 
 // 最高风险的那种并发不是"两个人各建各的项目"，而是【两个人对同一张人工定稿卡同时下决定】：
 // 定稿会写死一个不可逆的结论（谁批的、批了哪一版），两个都成立就等于账本上有两个互相矛盾的定稿。
