@@ -3167,8 +3167,11 @@ process.on("uncaughtException", (error) => { restoreAll(); console.error(error);
 const WORKTREE_PREFIX = "aimac-mutation-w";
 // 这些门要起真实服务，而 worktree 里没有 node_modules —— 只能在真实工作区跑。
 // doctor/mcp 同样如此：它们起的是真的 HTTP 服务，worktree 里连 node_modules 都没有，
-// 于是必跑失败 —— 而失败的原因不是被测守卫，门会报"红了但不是预期原因"（实测到过）。
-const NEEDS_REAL_TREE = new Set(["idle", "crash", "writer"]);
+// 接上 node_modules 软链之后，起真实服务的门在 worktree 里也跑得起来（idle/crash/writer/doctor/mcp
+// 逐个实测过）。它们只杀自己 spawn 的子进程、端口一律取临时口，并行互不干扰，
+// 于是这份"必须在真实工作区串行"的清单空了 —— 留着这个开关是为了下一个发现例外的人有地方写。
+// 工作区不干净时仍然整体退回串行，那是另一条路径（worktree 取的是 HEAD，带不上未提交改动）。
+const NEEDS_REAL_TREE = new Set([]);
 
 function workingTreeIsClean() {
   try {
@@ -3478,7 +3481,7 @@ async function run() {
       process.exit(1);
     }
     if (serialQueue.length) {
-      console.error(`mutation gate: 另有 ${serialQueue.length} 条要起服务的门，worktree 里起不来（没有 node_modules），`
+      console.error(`mutation gate: 另有 ${serialQueue.length} 条登记为必须在真实工作区跑（见 NEEDS_REAL_TREE 上方说明），`
         + "改在真实工作区串行跑 —— 期间不要编辑源文件。");
       const serial = runSerial(serialQueue, {silentOk: true});
       if (serial.failures.length) {
