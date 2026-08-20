@@ -152,6 +152,7 @@ globalThis.__probe = {
   renderTaskGroupDetail: (detail, taskGroup) => { tgDetail = detail; return renderTaskGroupDetail(taskGroup); },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
+  statusBadge: (kind, value) => statusBadge(kind, value),
   captureToast: (sink) => { toast.info = (message) => sink(message); },
   translate: (key) => t(key),
   filteredEmptyText: (query, hidden) => filteredEmptyText(query, hidden),
@@ -290,14 +291,31 @@ if (process.env.AIMAC_RENDER_REAL) {
   // 页 id 必须是真的存在的那几个。第一版写的是 orgs / agents / rules —— 产品对认不出的页 id
   // 会静默回落到默认页，于是这三页渲染出来全是【系统概览】，而我在读它们时以为读的是组织管理。
   // 勘察工具骗自己比门骗自己更难发现：它不报红，只是把错的东西摆给你看。
+  // 有几页的数据【不在 state 里】，各自另走接口取数（组织列表、成员、智能体、系统概览、项目配置）。
+  // 只喂 state 直接渲染，它们一律显示"暂无数据" —— 而那是【工具的空】，不是产品的空态。
+  // 实测这条假线索骗过我一次：系统管理员的「组织列表」显示暂无数据，而真实状态里有组织。
+  // 办法：走真实 loadPage，state 类请求喂真状态；其余接口【不编数据】（编出来的是假故障），
+  // 而是记下来、在那一页下面明说"这里的空白是勘察桩答不了，不是产品的空"。
   for (const page of ["proj-overview", "review", "directives", "sys-orgs", "sys-accounts",
     "sys-settings", "sys-overview", "proj-settings"]) {
+    const unserved = new Set();
+    const fetchStub = async (path) => {
+      const url = String(path);
+      const ok = (payload) => ({ok: true, status: 200, json: async () => payload});
+      if (url.includes("/api/state")) return ok(real);
+      if (url.includes("/api/orgs")) return ok({organizations: real.organizations || []});
+      unserved.add(url.split("?")[0]);
+      return {ok: false, status: 404, statusText: "Not Found",
+        json: async () => ({error: "probe_stub_has_no_answer"})};
+    };
     try {
-      // renderFullPageWith 不返回 HTML，它把内容写进 documentRoot（render() 的副作用）。
-      // 拿返回值当 HTML 的话每一页都打印 "undefined"，看着像页面是空的（第一版就是这样）。
-      probe.renderFullPageWith(real, who, project?.id, page);
+      await probe.loadPageWith(real, who, project?.id, page, fetchStub);
       const text = strip(documentRoot.innerHTML || documentRoot.textContent || "");
       console.log(`\n=== ${page} ===\n` + (text.slice(0, 900) || "（空）"));
+      if (unserved.size) {
+        console.log(`  ↑ 这一页还向 ${[...unserved].join("、")} 取数，勘察桩没有答案 ——`
+          + " 上面与之相关的空白是工具的限制，不是产品的空态");
+      }
     } catch (error) {
       console.log(`\n=== ${page} === 渲染抛异常：${String(error?.message || error).slice(0, 160)}`);
     }
@@ -822,7 +840,41 @@ async function runErrorGuidanceCase() {
     taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
     findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []};
   navProbe.renderFullPageWith(bare, account, null, "org-members");
-  check("要不到的那一页必须说出来（不能默默换一页给人）",
+// 同一个英文枚举在不同对象上是不同的中文。词表全局、一个键一个值，于是最常见的那个意思
+// 盖住其余全部 —— 读真实渲染时读到"组织：进行中""账号：进行中"（组织不会"进行"，账号也不会）。
+{
+  const statusProbe = loadConsole(el("div"), {realI18n: true});
+  const cases = [
+    ["organization", "active", /启用中/u, "组织"],
+    ["account", "active", /已启用/u, "账号"],
+    ["grant", "active", /生效中/u, "授权"],
+    ["agent", "active", /已启用/u, "智能体"]
+  ];
+  for (const [kind, value, want, label] of cases) {
+    const shown = String(statusProbe.statusBadge(kind, value));
+    check(`${label}的 active 说的是它自己的那个词`,
+      want.test(shown) && !/进行中/u.test(shown),
+      `${label}显示成：${JSON.stringify(shown.replace(/<[^>]+>/gu, ""))}`);
+  }
+  // 上面全是【辅助函数】断言：证明不了这些状态格真的走了它。
+  // 实测把 `statusBadge("organization", org.status)` 换回 `badge(org.status)`，265 条断言全绿。
+  const appText = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8")
+    .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
+  const stillGeneric = ["org.status", "account.status", "grant.status", "agent.status", "source.status"]
+    .filter((field) => appText.includes(`badge(${field})`) && !appText.includes(`statusBadge("`));
+  const bypassed = ["org.status", "account.status", "grant.status", "agent.status", "source.status"]
+    .filter((field) => new RegExp(`(?<!status)badge\\(${field.replace(".", "\\.")}\\)`, "u").test(appText));
+  check("这些状态格必须走按对象的那层（否则覆盖表写了也没人用）",
+    !bypassed.length && !stillGeneric.length,
+    `这些还在走全局 badge()：${bypassed.join("、")} —— 覆盖表写了，屏幕上照旧是"进行中"`);
+
+  // 正面对照：没有登记覆盖的对象要【退回全局词表】，不能因为加了这层就一律显示原始英文。
+  check("没登记覆盖的对象仍走全局词表（任务组的 active 就是'进行中'）",
+    /进行中/u.test(String(statusProbe.statusBadge("taskGroup", "active"))),
+    "退不回全局词表了 —— 这层覆盖把没登记的对象也拦下了");
+}
+
+    check("要不到的那一页必须说出来（不能默默换一页给人）",
     notices.some((message) => /在当前视角下打不开/u.test(message) && /已回到/u.test(message)),
     `换页时什么都没说（收到的提示：${JSON.stringify(notices)}）—— 人会以为眼前这页就是他点的那页`);
   check("说的时候要点名是哪一页、回到了哪一页",

@@ -2473,8 +2473,8 @@ const MUTATIONS = [
     name: "技能源失败原因要出现在表上",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '    badge(source.status) + (source.status === "stale" && source.lastSyncError',
-    to: "    badge(source.status) + (false",
+    from: '    statusBadge("skillSource", source.status) + (source.status === "stale" && source.lastSyncError',
+    to: '    statusBadge("skillSource", source.status) + (false',
     expect: "原因没有出现在表上"
   },
   {
@@ -2984,6 +2984,22 @@ const MUTATIONS = [
     from: 'audit(state, "auth-service", "auth_login", `Account:${email}`, "credentials_invalid");',
     to: 'audit(state, "auth-service", "auth_login", `Account:${email}`, "denied");',
     expect: "台账上记成"
+  },
+  {
+    name: "组织/账号的 active 不能说成'进行中'（一个全局键盖住了别的意思）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const label = STATUS_LABEL_BY_KIND[kind]?.[value];",
+    to: "  const label = null;",
+    expect: "说的是它自己的那个词"
+  },
+  {
+    name: "状态格必须真走按对象那层（覆盖表写了没人用＝白写）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    statusBadge(\"organization\", org.status),",
+    to: "    badge(org.status),",
+    expect: "还在走全局 badge()"
   },
   {
     name: "要不到的那一页必须说出来（不得默默换一页给人）",

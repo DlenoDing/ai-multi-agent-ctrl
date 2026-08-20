@@ -445,6 +445,23 @@ function toneOf(value) {
   return "gray";
 }
 
+// 同一个英文枚举在不同对象上是不同的中文：组织的 active 是"启用中"，授权的 active 是"生效中"，
+// 任务组的 active 才是"进行中"。而词表是全局的、一个键只能有一个值 —— 最常见的那个意思会盖住
+// 其余全部，屏幕上就出现了"账号：进行中""组织：进行中"（读真实渲染读出来的）。
+// 按对象加一层覆盖，命中不了退回全局词表 —— 不改词表，也不给每个枚举值另造新键。
+const STATUS_LABEL_BY_KIND = {
+  organization: {active: "启用中", suspended: "已停用", disabled: "已停用"},
+  account: {active: "已启用", suspended: "已停用", disabled: "已停用", invited: "待接受邀请"},
+  grant: {active: "生效中", revoked: "已撤销", expired: "已过期"},
+  agent: {active: "已启用", disabled: "已停用", retired: "已退役"},
+  skillSource: {active: "已启用", retired: "已退役"}
+};
+
+function statusBadge(kind, value, tone) {
+  const label = STATUS_LABEL_BY_KIND[kind]?.[value];
+  return label ? customBadge(label, tone || toneOf(value)) : badge(value, tone);
+}
+
 function badge(value, tone) {
   if (value === null || value === undefined || value === "") return `<span class="badge gray">-</span>`;
   return `<span class="badge ${tone || toneOf(value)}">${esc(t(value))}</span>`;
@@ -1742,7 +1759,7 @@ function renderSysOverview() {
 function renderSysOrgs() {
   const orgRows = organizations.map((org) => row([
     `<strong>${esc(org.name)}</strong><div class="small muted mono">${esc(org.orgId)}</div>`,
-    badge(org.status),
+    statusBadge("organization", org.status),
     quotaLine(org.usage?.members, org.quotas?.maxMembers),
     quotaLine(org.usage?.projects, org.quotas?.maxProjects),
     quotaLine(org.usage?.taskGroups, org.quotas?.maxTaskGroups),
@@ -1799,7 +1816,7 @@ function renderSysSettings() {
     // 仓库地址此前一处都不显示：人看不出这个源钉的到底是什么，而"钉住哪一份"正是它存在的理由。
     `<span class="mono">${esc(source.sourceId)}</span><div class="small muted mono">${esc(source.repositoryUrl || "-")}${source.defaultRef ? ` @${esc(source.defaultRef)}` : ""}</div>`,
     // 同步失败时光显示 stale 说不出为什么；原因此前只在服务端日志里。
-    badge(source.status) + (source.status === "stale" && source.lastSyncError
+    statusBadge("skillSource", source.status) + (source.status === "stale" && source.lastSyncError
       ? `<div class="small warn-text">${esc(source.lastSyncError)}</div>` : ""),
     `<span class="mono">${esc(String(source.pinnedCommit || "").slice(0, 10))}</span>`,
     {v: String((state.roleSkills || []).filter((skill) => skill.sourceId === source.sourceId).length), c: "num"},
@@ -1908,14 +1925,14 @@ function renderSysAccounts() {
     esc(account.displayName),
     esc(account.email),
     badge(account.accountType),
-    badge(account.status),
+    statusBadge("account", account.status),
     esc((account.roles || []).map((role) => t(role)).join("、"))
   ])).join("");
   const grants = (state.accessGrants || []).map((grant) => row([
     `<span class="mono">${esc(grant.subjectRef?.subjectId || "-")}</span>`,
     resourceScopeLabel(grant.resource),
     esc(t(grant.role)),
-    badge(grant.status),
+    statusBadge("grant", grant.status),
     esc((grant.permissions || []).map(permLabel).join("、")),
     grant.status === "active" ? `<button class="danger-button" data-action="revoke-grant" data-grant="${esc(grant.grantId)}">撤销</button>` : "-"
   ])).join("");
@@ -1923,7 +1940,7 @@ function renderSysAccounts() {
     esc(agent.name),
     esc(t(agent.role)),
     esc(t(agent.model)),
-    badge(agent.status),
+    statusBadge("agent", agent.status),
     `<button class="secondary-button" data-action="toggle-agent" data-agent="${esc(agent.id)}">${agent.status === "active" ? "停用" : "启用"}</button>`
   ])).join("");
 
@@ -2075,7 +2092,7 @@ function renderOrgOverview() {
             const revoked = (orgAgentNodes || []).filter((node) => node.status === "revoked").length;
             return revoked ? `<div class="small muted">另有 ${revoked} 个已吊销，不计入配额</div>` : "";
           })()}</div>
-          <div class="record-meta"><span>组织状态：${badge(org.status)}</span><span>创建时间：${fmtTime(org.createdAt)}</span></div>
+          <div class="record-meta"><span>组织状态：${statusBadge("organization", org.status)}</span><span>创建时间：${fmtTime(org.createdAt)}</span></div>
         </div>
       `)
     : panel("配额用量", `<div class="notice">未找到当前账号归属的组织记录。</div>`);
@@ -2168,7 +2185,7 @@ function renderOrgMembers() {
       `<strong>${esc(account.displayName)}</strong>${isSelf ? ` ${customBadge("本人", "blue")}` : ""}`,
       esc(account.email),
       badge(account.accountType),
-      badge(account.status),
+      statusBadge("account", account.status),
       esc((account.roles || []).map((role) => t(role)).join("、")),
       manageable ? [
         `<button class="secondary-button" data-action="member-perms" data-account="${esc(account.accountId)}">权限</button>`,
