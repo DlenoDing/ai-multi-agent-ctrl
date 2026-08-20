@@ -2923,6 +2923,31 @@ function runLocalGitArtifactWorker(state, request) {
   };
 }
 
+// 子进程跑完之后，"到底哪种失败"只在这里判一次 —— 三个分支散在调用点时，
+// 新加一种失败很容易只补在其中一条路上。抽出来还有个好处：判据够得着（它是纯函数）。
+// 返回 null 表示"这次没失败"。
+export function classifyExecutorSpawnFailure(result) {
+  // ENOBUFS 只有一个意思：agent 写出来的比 maxBuffer 多。此前它按通用失败上报，人看到的是
+  // "agent_runtime_executor_failed:spawnSync /bin/sh ENOBUFS" —— 会被支去查网络和内核缓冲，
+  // 而真实原因是输出太大。更要紧的是此刻 stdout 里【已经收到的那部分是截断的】：
+  // 不单独认出来的话，后面的 JSON.parse 还会再失败一次，把人引向"输出不是合法 JSON"这个更错的结论。
+  if (result?.error?.code === "ENOBUFS") {
+    return "agent_runtime_executor_output_too_large:"
+      + `agent 输出超过 ${EXECUTOR_MAX_OUTPUT_BYTES / (1024 * 1024)} MB 上限，收到的部分是截断的、不能用`;
+  }
+  if (result?.error) return `agent_runtime_executor_failed:${result.error.message}`;
+  // 退出码非 0：原因在 stderr 里，stdout 只是兜底。两个都空时要说出"没留下任何原因"，
+  // 而不是甩一个空的失败码 —— 人拿着空字符串没法往下查。
+  if (result?.status !== 0) {
+    const detail = (result?.stderr || result?.stdout || "").trim().slice(0, 300);
+    return `agent_runtime_executor_failed:${detail || `执行器以退出码 ${result?.status} 结束，stderr 与 stdout 都是空的`}`;
+  }
+  return null;
+}
+
+// 上限写成常量：出错报文要把这个数说给人听，两处各写一个数就会各走各的。
+const EXECUTOR_MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
+
 function runExecutorBackedAgentWorker(state, request) {
   const {dispatch, taskGroup, workItem, session, target, root} = request;
   const contract = state.agentTaskContracts.find((item) => item.sessionId === session.sessionId && item.workId === workItem.id);
@@ -2951,10 +2976,10 @@ function runExecutorBackedAgentWorker(state, request) {
     encoding: "utf8",
     shell: true,
     env: process.env,
-    maxBuffer: 10 * 1024 * 1024
+    maxBuffer: EXECUTOR_MAX_OUTPUT_BYTES
   });
-  if (result.error) throw new Error(`agent_runtime_executor_failed:${result.error.message}`);
-  if (result.status !== 0) throw new Error(`agent_runtime_executor_failed:${(result.stderr || result.stdout || "").trim().slice(0, 300)}`);
+  const spawnFailure = classifyExecutorSpawnFailure(result);
+  if (spawnFailure) throw new Error(spawnFailure);
   let output;
   try {
     output = JSON.parse((result.stdout || "").trim());

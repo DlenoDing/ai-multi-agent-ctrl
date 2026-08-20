@@ -2986,6 +2986,30 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "输出超上限要说是超上限（不能混进通用失败让人去查网络）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutorFailuresSayWhichKind",
+    from: "if (result?.error?.code === \"ENOBUFS\") {",
+    to: "if (false) {",
+    expect: "「输出超上限」报的码不对"
+  },
+  {
+    name: "执行器没留下原因时要说出来（不能给个冒号后什么都没有的码）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutorFailuresSayWhichKind",
+    from: "return `agent_runtime_executor_failed:${detail || `执行器以退出码 ${result?.status} 结束，stderr 与 stdout 都是空的`}`;",
+    to: "return `agent_runtime_executor_failed:${detail}`;",
+    expect: "没有说清原因"
+  },
+  {
+    name: "失败分类必须真接在子进程之后（写了没人用＝白写）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutorFailuresSayWhichKind",
+    from: "const spawnFailure = classifyExecutorSpawnFailure(result);",
+    to: "const spawnFailure = null;",
+    expect: "没有接上 classifyExecutorSpawnFailure"
+  },
+  {
     name: "租约必须按可见产出过滤（一条租约会说出那边有人正持着写入边界）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

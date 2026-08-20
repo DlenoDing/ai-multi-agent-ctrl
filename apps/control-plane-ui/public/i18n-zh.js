@@ -80,6 +80,7 @@
     agent_runtime_executor_missing_artifact_manifest_refs: "执行器没有给出产出清单引用",
     agent_runtime_executor_no_git_changes: "执行器没有产生任何 Git 变更",
     agent_runtime_executor_output_not_json: "执行器输出不是合法 JSON",
+    agent_runtime_executor_output_too_large: "执行器输出超过上限被截断",
     agent_runtime_executor_output_outside_allowlist: "执行器输出落在允许路径之外",
     agent_runtime_executor_push_remote_sha_mismatch: "执行器推送后的远端提交号与本地不一致",
     agent_runtime_executor_requires_clean_worktree: "执行器要求工作区干净后才能开始",

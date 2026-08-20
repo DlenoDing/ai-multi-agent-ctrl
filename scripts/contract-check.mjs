@@ -130,6 +130,7 @@ import {
   appendHumanGuidance,
   roomWait,
   syncSkillSource,
+  classifyExecutorSpawnFailure
 } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import {
   ackAgentControlCommand,
@@ -347,6 +348,7 @@ run(verifyMutationsAreRegisteredAgainstTheRightGate);
 run(verifyMeasurementsDoNotFakeZero);
 run(verifyCommentsDoNotCiteLineNumbers);
 run(verifyGateReferencesResolve);
+run(verifyExecutorFailuresSayWhichKind);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5527,6 +5529,42 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 允许的例外只有一种：点名一个【已删除/已改名】的判据，并在同一行说出它已经没了。
 // 这不是白名单 —— 说清楚"它没了"的注记本来就该保留，它记的正是"这块现在归谁管"。
 // 变异登记表要排除，理由同 verifyCommentsDoNotCiteLineNumbers：它存锚点文本不存主张。
+// 执行器子进程失败时，人拿到的必须是"哪一种失败"，不是一个通用码。
+// 两处实际踩过的坑：
+//   ENOBUFS（agent 输出超上限）此前混在通用失败里 —— 报文是 "spawnSync /bin/sh ENOBUFS"，
+//     人会去查网络和内核缓冲；而且 stdout 里收到的那半是截断的，接着解析还会再错一次。
+//   退出码非 0 但 stderr/stdout 都空时，报文是一个冒号后面什么都没有的码 —— 人没法往下查。
+function verifyExecutorFailuresSayWhichKind(output) {
+  const cases = [
+    ["输出超上限", {error: {code: "ENOBUFS", message: "spawnSync /bin/sh ENOBUFS"}},
+      /output_too_large/u, /超过 10 MB 上限/u],
+    ["起不来", {error: {code: "ENOENT", message: "spawnSync /bin/sh ENOENT"}},
+      /executor_failed/u, /ENOENT/u],
+    ["退出码非 0", {status: 1, stderr: "boom"}, /executor_failed/u, /boom/u],
+    ["退出码非 0 且没留下原因", {status: 7, stderr: "", stdout: ""},
+      /executor_failed/u, /退出码 7 结束，stderr 与 stdout 都是空的/u]
+  ];
+  for (const [label, result, code, detail] of cases) {
+    const said = classifyExecutorSpawnFailure(result);
+    if (!said) { output.push(`执行器失败分类：「${label}」被当成了成功`); continue; }
+    if (!code.test(said)) output.push(`执行器失败分类：「${label}」报的码不对 —— ${said}`);
+    if (!detail.test(said)) output.push(`执行器失败分类：「${label}」没有说清原因 —— ${said}`);
+  }
+  if (classifyExecutorSpawnFailure({status: 0, stdout: "{}"}) !== null) {
+    output.push("执行器失败分类：跑成功了却被判成失败");
+  }
+  // 上面全是【纯函数】断言：证明不了它真的被接在子进程之后。
+  // 少了下面这条，把调用点换回原来那三个散装 if 也照样全绿。
+  const coreText = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const worker = coreText.slice(coreText.indexOf("function runExecutorBackedAgentWorker"));
+  const body = worker.slice(0, worker.indexOf("\n}\n"));
+  if (!/const spawnFailure = classifyExecutorSpawnFailure\(result\);/u.test(body)
+    || !/if \(spawnFailure\) throw new Error\(spawnFailure\);/u.test(body)) {
+    output.push("执行器 worker 里没有接上 classifyExecutorSpawnFailure —— 分类写了但没人用");
+  }
+  console.log(`执行器失败分类：${cases.length} 种失败逐个核对，都报出了是哪一种（并已确认接在子进程之后）`);
+}
+
 function verifyGateReferencesResolve(output) {
   const walk = (dir) => readdirSync(dir).flatMap((name) => {
     const full = join(dir, name);
