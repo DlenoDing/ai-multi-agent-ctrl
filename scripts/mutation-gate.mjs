@@ -2944,6 +2944,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "守卫之前无条件回 404 必须被门看见",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyMissingRecordsLookLikeInvisibleOnes",
+    from: '      const denial = missingRecordDenial(req, state, "agent_join_token_not_found", "policy_denied");\n      return json(res, denial.status, denial.payload);',
+    to: '      return json(res, 404, {error: "agent_join_token_not_found"});',
+    expect: "守卫之前就回了 404"
+  },
+  {
     name: "系统级作用域只认 system: 权限，认不出的 resourceType 不得掉进 return true",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

@@ -322,6 +322,7 @@ run(verifyBothOwnerGrantWritersRefreshPermissions);
 run(verifyBothWorkItemWritersHonourSettledTaskGroups);
 run(verifyServerFieldsReachThePerson);
 run(verifyNoRequestScopedLeaks);
+run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifySharedJsonWritesAreAtomic);
 run(verifyRefusalCodeCoverageRatchet);
 await runAsync(verifyGateFetchFailuresNameTheGate);
@@ -5421,6 +5422,52 @@ function verifyServerFieldsReachThePerson(output) {
 // 于是每一个走到兜底的请求都让服务端进程直接退出，症状只是并发写入门偶发 ECONNREFUSED，追了三轮。
 // 判据很土但够用：把函数体里出现的 req./res./url./body./guard. 与这个函数的形参、
 // 体内的局部声明、回调形参对一遍。本底为 0，新增一处就报红。
+// 【"查无此物"不得比"看不见"多说一个字】。这条不变式的行为判据在控制面 e2e 里（19 条路由逐条
+// 对打真实外租户 id 与编造 id），但那张表是手写的 —— 新加的路由不会自己进去。这里按语法结构
+// 把入口全量枚举一遍，让【将来新增的路由】也落进判据。
+//
+// 两种正确写法：
+//  ① 把归属写进【查找条件】—— `find(item => item.id === x && item.assignedNodeId === node.nodeId)`。
+//     这时 404 对"不存在"和"不归你"是同一个答案，本来就分辨不了。agent 网关那两条就是这么写的。
+//  ② 用 missingRecordDenial()：系统账号拿真 404，其余拿与"看不见"一样的 403。
+// 错的写法是先无条件查到对象、再在守卫之前回 404 —— 那就成了跨租户的存在性探针。
+function verifyMissingRecordsLookLikeInvisibleOnes(output) {
+  const source = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8").split("\n");
+  const routeStarts = source
+    .map((line, index) => (/if \(req\.method === "\w+" && \w*Match\)/u.test(line) ? index : -1))
+    .filter((index) => index >= 0);
+  if (routeStarts.length < 40) {
+    output.push(`"不存在≠看不见"：只切出 ${routeStarts.length} 个路由块 —— 切法多半失配，这道门在空转`);
+    return;
+  }
+  const offenders = [];
+  for (const [order, start] of routeStarts.entries()) {
+    const end = routeStarts[order + 1] ?? source.length;
+    const body = source.slice(start, end);
+    const guardAt = body.findIndex((line) =>
+      /beginGuardedWrite\(|requireRead\(|requireWrite\(|readableProjectOr403\(/u.test(line));
+    if (guardAt < 0) continue;
+    for (const [offset, line] of body.slice(0, guardAt).entries()) {
+      const match = line.match(/json\(res, 404, \{error: "([a-z_]+)"\}/u);
+      if (!match) continue;
+      // 归属写进查找条件的，本块里能看到对同一个变量的带归属 find —— 用 node.nodeId / accountId
+      // 这类主体标识做的比较。看不到就算它没做。
+      const scopedLookup = body.slice(0, offset).some((prior) =>
+        /\.find\(/u.test(prior) && /node\.nodeId|\baccountId\b|guard\.actor|reader\.account/u.test(prior));
+      if (scopedLookup) continue;
+      offenders.push(`${source[start].trim().slice(0, 60)} → L${start + offset + 1} ${match[1]}`);
+    }
+  }
+  if (offenders.length) {
+    output.push('"查无此物"与"看不见"给了不同答案（守卫之前就回了 404，且查找没带归属）：\n  '
+      + offenders.join("\n  ")
+      + "\n  —— 把 id 挨个试一遍就能数出别的租户有多少条记录；改用 missingRecordDenial()，"
+      + "或者把归属写进 find 的条件里");
+  }
+  console.log(`存在性探针：${routeStarts.length} 个路由块逐个核对，`
+    + `${offenders.length} 处在守卫之前无条件回 404（应为 0）`);
+}
+
 function verifyNoRequestScopedLeaks(output) {
   const REQUEST_SCOPED = ["req", "res", "url", "body", "guard"];
   const FILES = ["apps/control-plane-ui/server.mjs", "apps/mcp-server/server.mjs",
