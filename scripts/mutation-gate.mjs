@@ -3002,6 +3002,14 @@ const MUTATIONS = [
     expect: "挂错了门"
   },
   {
+    name: "指一个不存在的产出目标必须当场拒",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: 'if (!target) return {allowed: false, error: "repository_output_target_not_found", required: targetRef};',
+    to: 'if (!target) return {allowed: false, error: "generic_rejected", required: targetRef};',
+    expect: "没有给出该给的拒绝码"
+  },
+  {
     name: "查无此人工确认卡必须给出该给的拒绝码",
     file: "apps/mcp-server/server.mjs",
     gate: "mcp",

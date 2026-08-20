@@ -641,6 +641,11 @@ try {
         code: "permission_request_not_found"},
       {name: "human-review-mcp.confirmation_status", args: {requestId: "hcr_bogus"},
         code: "human_confirmation_not_found"},
+      // 产出目标是"这份成果往哪个仓库写"。指一个不存在的目标必须当场拒 ——
+      // 不拒的话后面的代码会拿着 undefined 往下走（本仓在 REST 侧已经因为这个漏过真事实）。
+      {name: "repository-mcp.repository_target_lease_bind",
+        args: {repositoryOutputTargetRef: "tgt_bogus", holderRef: "session:probe", idempotencyKey: "mcp-nf-target"},
+        code: "repository_output_target_not_found"},
       {name: "governance-mcp.role_drift_guard_bind",
         args: {taskGroupId: "tg_runtime_management", sessionId: "sess_bogus", runId: "run_bogus",
           idempotencyKey: "mcp-nf-4"},
