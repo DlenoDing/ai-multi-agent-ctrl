@@ -2565,6 +2565,55 @@ try {
     }
   }
 
+  // 【按数据反查：长期记录里有没有指向"有上限集合"的引用】。上面那条只钉住了
+  // accessGrants → policyDecisions 这一对（那是源码里看出来的）。真实运行之后集合里才有记录，
+  // 这里拿【实际产生的 id】去长期对象里全量搜一遍 —— 源码判据看不见的接法（拼出来的引用、
+  // 嵌在数组里的、字段名不在手写清单里的）只有这样才找得到。
+  {
+    const full = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: systemAuth}});
+    const CAPPED = ["policyDecisions", "decisionRecords", "modelSelectionDecisions",
+      "sessionPlacementDecisions", "transitionEvidence"];
+    const owner = new Map();
+    for (const name of CAPPED) {
+      for (const item of full.payload[name] || []) {
+        for (const key of ["id", "decisionId", "evidenceId", "recordId"]) {
+          if (item[key]) owner.set(String(item[key]), name);
+        }
+      }
+    }
+    const LIVE = ["accessGrants", "taskGroups", "projects", "accounts", "repositoryOutputs",
+      "agentDispatches", "workSessions"];
+    const dangling = [];
+    const walk = (node, path) => {
+      if (Array.isArray(node)) { node.forEach((item, index) => walk(item, `${path}[${index}]`)); return; }
+      if (node && typeof node === "object") {
+        for (const [key, value] of Object.entries(node)) walk(value, `${path}.${key}`);
+        return;
+      }
+      if (typeof node === "string" && owner.has(node)) dangling.push(`${path} → ${node}（${owner.get(node)}）`);
+    };
+    for (const name of LIVE) walk(full.payload[name] || [], name);
+    if (!owner.size) {
+      console.log("  --  这一轮有上限的集合里一条记录都没有，反查未检验");
+    } else {
+      // 已处理的几对：淘汰时会放过仍被引用的记录（capKeepingReferenced）。
+      // 白名单按【引用字段】写，新出现的接法一律报红 —— 这条断言的价值就在于抓那些新接法。
+      const HANDLED = [
+        /^accessGrants\[\d+\]\.policyDecisionRef /u,
+        /^repositoryOutputs\[\d+\]\.decisionRecordRef /u,
+        /^agentDispatches\[\d+\]\.modelSelectionDecisionRef /u,
+        /^workSessions\[\d+\]\.modelSelectionDecisionRef /u,
+        /^workSessions\[\d+\]\.placementDecisionRef /u
+      ];
+      const unexpected = dangling.filter((item) => !HANDLED.some((re) => re.test(item)));
+      if (unexpected.length) {
+        throw new Error(`长期记录里出现了指向【有上限集合】的引用，而这些引用没有保留机制：\n    `
+          + unexpected.slice(0, 6).join("\n    ")
+          + "\n  —— 到量就永久删除，事后查不回它的依据；要么给它保留、要么把依据写进审计台账");
+      }
+    }
+  }
+
   // 【授权的依据不许被容量挤掉】。policyDecisions 只留最近 120 条且是【永久删除】，
   // 而访问授权是长期对象、上面带着 policyDecisionRef —— 到量之后事后问"这条权限是凭什么给的"
   // 就答不出来。淘汰要放过仍被活跃授权引用的那些。这里真写满再查一次。

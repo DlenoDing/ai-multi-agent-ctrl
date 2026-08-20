@@ -5470,8 +5470,12 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 所以现状不是"被挤掉了"而是"从来没打算指过去"。这道判据钉住的是【将来别这么接】。
 function verifyLongLivedRecordsDoNotPointAtCappedOnes(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  // 扫描面要含 core：容量淘汰大多写在 core 里（server.mjs 只有两个），
+  // 只扫 server 的话这道门自己就只覆盖了三分之一 —— 本仓反复撞的"门的扫描面"那一族。
+  const core = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const sources = `${server}\n${core}`;
   const capped = new Set();
-  for (const match of server.matchAll(/state\.(\w+) = state\.\1\.slice\(0, (\d+)\)/gu)) {
+  for (const match of sources.matchAll(/state\.(\w+) = state\.\1\.slice\(0, (\d+)\)/gu)) {
     if (Number(match[2]) <= 500) capped.add(match[1]);
   }
   if (capped.size < 2) {
@@ -5491,14 +5495,14 @@ function verifyLongLivedRecordsDoNotPointAtCappedOnes(output) {
     for (const name of live) {
       // 只看"写进长期集合的那一刻带上了这个引用"这种写法
       const re = new RegExp(`state\\.${name}\\.(?:push|unshift)\\([\\s\\S]{0,400}?${field}`, "u");
-      if (re.test(server)) offenders.push(`${name} 上带着 ${field}（指向有上限的 ${collection}）`);
+      if (re.test(sources)) offenders.push(`${name} 上带着 ${field}（指向有上限的 ${collection}）`);
     }
   }
   // accessGrants → policyDecisions 这一对已经处理：淘汰时会把【仍被活跃授权引用的】决策留下
   // （见 finishGuardedWrite 里的 stillReferenced）。判据据实豁免这一对，并钉住那段保留逻辑还在。
   // 判据要看【那一行赋值】本身，不能只看两个标识符共现 —— 注释里留着同一个词就会把门喂饱
   // （实测：把保留那一步删掉、注释里还写着 stillReferenced，门照绿。本仓第 N 次撞这个形状）。
-  const grantsKeepReferenced = /state\.policyDecisions\s*=\s*\[\.\.\.keptDecisions,\s*\.\.\.stillReferenced\]/u
+  const grantsKeepReferenced = /state\.policyDecisions\s*=\s*capKeepingReferenced\(/u
     .test(server.replace(/\/\/[^\n]*/gu, ""));
   const remaining = offenders.filter((item) =>
     !(grantsKeepReferenced && item.startsWith("accessGrants 上带着 policyDecisionRef")));

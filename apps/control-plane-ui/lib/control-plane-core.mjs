@@ -890,6 +890,20 @@ function defaultModelSelectionPolicies() {
   }));
 }
 
+// 【容量淘汰不许删掉还被人指着的记录】。这几个集合是"最近 N 条"的性质，到量就【永久删除】，
+// 而长期对象（授权、产出目标、派发、会话）上带着指向它们的引用 ——
+// 挤掉之后事后问"这条是凭什么定的"就答不出来。保留仍被引用的那些：
+// 数量以活跃长期对象数为界，不会失控。三处淘汰共用这一份，抄三遍必漂。
+export function capKeepingReferenced(items, cap, referencedIds) {
+  const kept = items.slice(0, cap);
+  const keptIds = new Set(kept.map((item) => item.id || item.decisionId || item.evidenceId));
+  const stillReferenced = items.slice(cap).filter((item) => {
+    const id = item.id || item.decisionId || item.evidenceId;
+    return id && referencedIds.has(id) && !keptIds.has(id);
+  });
+  return stillReferenced.length ? [...kept, ...stillReferenced] : kept;
+}
+
 export function selectModel(state, request = {}) {
   ensureRuntimeCollections(state);
   const roleId = request.roleId || request.ownerRole || "orchestrator";
@@ -965,7 +979,11 @@ export function selectModel(state, request = {}) {
     decision.fallbackPolicyRef = policy?.policyId || "msp_default";
   }
   state.modelSelectionDecisions.unshift(decision);
-  state.modelSelectionDecisions = state.modelSelectionDecisions.slice(0, 160);
+  const referencedModelDecisions = new Set([
+    ...(state.agentDispatches || []).map((item) => item.modelSelectionDecisionRef),
+    ...(state.workSessions || []).map((item) => item.modelSelectionDecisionRef)
+  ].filter(Boolean));
+  state.modelSelectionDecisions = capKeepingReferenced(state.modelSelectionDecisions, 160, referencedModelDecisions);
   appendEvent(state, "model_selection_decision", "ModelSelectionDecision", decision.decisionId, "model-registry", decision);
   return decision;
 }
@@ -1330,7 +1348,9 @@ export function decideSessionPlacement(state, request = {}) {
     };
   }
   state.sessionPlacementDecisions.unshift(decision);
-  state.sessionPlacementDecisions = state.sessionPlacementDecisions.slice(0, 160);
+  const referencedPlacements = new Set((state.workSessions || [])
+    .map((item) => item.placementDecisionRef).filter(Boolean));
+  state.sessionPlacementDecisions = capKeepingReferenced(state.sessionPlacementDecisions, 160, referencedPlacements);
   appendEvent(state, "session_placement_decision", "SessionPlacementDecision", decision.decisionId, "scheduler", decision);
   return decision;
 }

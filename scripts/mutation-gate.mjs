@@ -2947,18 +2947,18 @@ const MUTATIONS = [
   },
   {
     name: "授权的依据不许被容量挤掉",
-    file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    from: "  state.policyDecisions = [...keptDecisions, ...stillReferenced];",
-    to: "  state.policyDecisions = keptDecisions;",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    from: "  return stillReferenced.length ? [...kept, ...stillReferenced] : kept;",
+    to: "  return kept;",
     expect: "被容量挤掉了"
   },
   {
     name: "长期记录指向有上限集合要被门看见",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyLongLivedRecordsDoNotPointAtCappedOnes",
-    from: "  state.policyDecisions = [...keptDecisions, ...stillReferenced];",
-    to: "  state.policyDecisions = keptDecisions; // stillReferenced 不再保留",
+    from: "  state.policyDecisions = capKeepingReferenced(state.policyDecisions, 120, referencedDecisionIds);",
+    to: "  state.policyDecisions = state.policyDecisions.slice(0, 120);",
     expect: "会变成悬空引用"
   },
   {
