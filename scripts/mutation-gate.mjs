@@ -2946,6 +2946,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "淘汰要和写入在同一侧（MCP 写、只有 UI 淘汰＝那条路径上无限长）",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyLongLivedRecordsDoNotPointAtCappedOnes",
+    from: "export function assignWorkItem(state, args) {",
+    to: 'export function assignWorkItem(state, args) {\n  state.decisionRecords.push({decisionId: "probe"});',
+    expect: "只在 server.mjs 里淘汰"
+  },
+  {
     name: "仍被引用的决策不许被容量挤掉（静态门与 e2e 各守一半）",
     check: "verifyLongLivedRecordsDoNotPointAtCappedOnes",
     file: "apps/control-plane-ui/lib/state-store.mjs",

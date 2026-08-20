@@ -5473,10 +5473,18 @@ function verifyLongLivedRecordsDoNotPointAtCappedOnes(output) {
   // 扫描面要含 core：容量淘汰大多写在 core 里（server.mjs 只有两个），
   // 只扫 server 的话这道门自己就只覆盖了三分之一 —— 本仓反复撞的"门的扫描面"那一族。
   const core = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const mcp = readFileSync(join(root, "apps/mcp-server/server.mjs"), "utf8");
   const sources = `${server}\n${core}`;
   const capped = new Set();
-  for (const match of sources.matchAll(/state\.(\w+) = state\.\1\.slice\(0, (\d+)\)/gu)) {
-    if (Number(match[2]) <= 500) capped.add(match[1]);
+  // 提取要认全三种写法：`= state.X.slice(...)`、`= [新的, ...state.X].slice(...)`、
+  // `= capKeepingReferenced(...)`。只认第一种的话，改一次写法这道门就少看见两个集合
+  // （实测：我把 core 那处改成 capKeepingReferenced 之后，提取从 5 个掉到 3 个）。
+  for (const match of sources.matchAll(
+    /state\.(\w+) = (?:state\.\1|\[[^\]]*\])\.slice\(0, ([^)]+)\)|state\.(\w+) = capKeepingReferenced\([^,]+, ([^,]+),/gu)) {
+    const name = match[1] || match[3];
+    const raw = (match[2] || match[4] || "").trim();
+    const bound = Number(raw.match(/\d+/u)?.[0] || 0);
+    if (name && bound && bound <= 2000) capped.add(name);
   }
   if (capped.size < 2) {
     output.push(`容量淘汰集合只提取到 ${capped.size} 个 —— 提取多半失配，这道门在空转`);
@@ -5518,6 +5526,29 @@ function verifyLongLivedRecordsDoNotPointAtCappedOnes(output) {
     output.push("长期存活的记录把依据挂在了会被容量挤掉的集合上：\n  " + remaining.join("\n  ")
       + "\n  —— 到量就永久删除，事后问「这条是凭什么给的」答不出来；"
       + "要留证据就写进审计台账（它每一条都先落归档再裁剪）");
+  }
+  // 【淘汰要和写入在同一侧】。MCP 侧走 writeStoredState 落盘，绕开 UI server 里的一切逻辑：
+  // 一个集合若【在 core/MCP 里被写入】而【只在 server.mjs 里被淘汰】，那条路径上它就无限长；
+  // 反过来（core 淘汰、只有 server 写）则是白做一道。policyDecisions 就是前一种，已挪到落盘入口。
+  const cappedIn = (name) => [
+    /state\.\w+ = state\.\w+\.slice/u.test(server) && new RegExp(`state\\.${name} = state\\.${name}\\.slice`, "u").test(server) ? "server" : null,
+    new RegExp(`state\\.${name} = (?:state\\.${name}|\\[)[^\\n]*slice|state\\.${name} = capKeepingReferenced`, "u").test(core) ? "core" : null,
+    new RegExp(`state\\.${name} = `, "u").test(store) ? "store" : null
+  ].filter(Boolean);
+  const writtenIn = (name) => [
+    new RegExp(`state\\.${name}\\.(?:push|unshift)`, "u").test(server) ? "server" : null,
+    new RegExp(`state\\.${name}\\.(?:push|unshift)`, "u").test(core) ? "core" : null,
+    new RegExp(`state\\.${name}\\.(?:push|unshift)`, "u").test(mcp) ? "mcp" : null
+  ].filter(Boolean);
+  for (const name of capped) {
+    const caps = cappedIn(name);
+    const writes = writtenIn(name);
+    if (caps.includes("store")) continue;                       // 落盘入口管的，谁写都盖得住
+    const bypassing = writes.filter((where) => where !== "server").length && caps.join() === "server";
+    if (bypassing) {
+      output.push(`${name} 在 ${writes.join("/")} 里被写入，却只在 server.mjs 里淘汰 —— `
+        + "MCP 侧走 writeStoredState 落盘、绕开 UI server，那条路径上它会无限长");
+    }
   }
   console.log(`容量淘汰：${capped.size} 个集合有硬上限（${[...capped].join("、")}），`
     + `${Object.keys(REF_FIELDS_INTO_CAPPED).length} 个引用字段逐个核对，${offenders.length} 处指过去（应为 0）`);
