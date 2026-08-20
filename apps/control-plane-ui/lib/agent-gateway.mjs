@@ -888,7 +888,16 @@ export function ackAgentControlCommand(state, node, commandId, input = {}) {
   ensureAgentGatewayCollections(state);
   const command = state.agentControlCommands.find((item) => item.commandId === commandId && item.nodeId === node.nodeId);
   if (!command) throw gatewayError("agent_control_command_not_found", 404);
-  const status = ["received", "acked", "completed", "failed", "rejected"].includes(input.status) ? input.status : "acked";
+  // 认不出的状态原先静默变成 "acked"：节点想【拒绝】一条暂停命令，拼错一个字母就被记成
+  // "已接受" —— 人从屏幕上看到的是 agent 收下了这条命令，而实际上它什么也没做。
+  // 不带 status 仍按 acked（那是合法的默认：收到了，没别的话说）；带了但认不出的必须拒。
+  // 合法值从 controlAckRank 派生：那张表本来就是这套回执状态的权威来源，
+  // 再抄一份就会漂（queued/delivered 是服务端自己写的，节点报不上来，所以排除）。
+  const nodeReportable = Object.keys(controlAckRank).filter((name) => !["queued", "delivered"].includes(name));
+  if (input.status !== undefined && !nodeReportable.includes(input.status)) {
+    throw gatewayError("agent_control_command_ack_status_unknown", 400, {supported: nodeReportable});
+  }
+  const status = input.status === undefined ? "acked" : input.status;
   const currentRank = controlAckRank[command.status] ?? 0;
   if (command.status === status) return {command, replayed: true};
   if (currentRank >= 4) throw gatewayError("agent_control_command_already_terminal", 409);

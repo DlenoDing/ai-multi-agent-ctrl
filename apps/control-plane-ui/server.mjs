@@ -2756,7 +2756,16 @@ async function handleApi(req, res) {
       if (dispatch.status === "completed") return json(res, 409, {error: "dispatch_already_completed"});
       return json(res, 200, {ok: true, replayed: true, dispatchId: dispatch.dispatchId, status: dispatch.status});
     }
-    const reportedStatus = ["blocked", "cancelled"].includes(body.status) ? body.status : "failed";
+    // 不填＝failed（这是 /fail 端点，默认合理）；填了但认不出的必须拒 ——
+    // 原先 "blockd" 这样拼错一个字母会被降级成 failed，那是【终态】：
+    // 本来只是阻塞、人一恢复就能接着跑的活，从此再也回不来，而上报方拿到的是 200。
+    const FAIL_REPORT_STATUSES = ["blocked", "cancelled", "failed"];
+    if (body.status !== undefined && !FAIL_REPORT_STATUSES.includes(body.status)) {
+      return json(res, 400, {error: "dispatch_fail_status_unknown", status: String(body.status).slice(0, 60),
+        supported: FAIL_REPORT_STATUSES,
+        message: "认不出的上报状态。blocked 可恢复，cancelled/failed 是终态 —— 别让拼写错误把可恢复的活变成终态。"});
+    }
+    const reportedStatus = body.status === undefined ? "failed" : body.status;
     // 人下的暂停不许被 agent 的上报抹掉：控制面已经把它置成 blocked 并写明是谁停的，
     // 这时收到一条 failed，`dispatch.status = reportedStatus` 会把它推进终态 ——
     // 人的动作从屏幕上消失，而且终态再也 resume 不回来（resume 只认 blocked）。

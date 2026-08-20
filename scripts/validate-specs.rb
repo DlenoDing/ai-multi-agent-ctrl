@@ -1393,7 +1393,7 @@ composed_audit_actions = []
 {
   "task_group_" => [server_source[/const TASK_GROUP_CONTROL_ACTIONS = \[([^\]]+)\]/, 1], 'audit(state, guard.actor, `task_group_${action}`'],
   "agent_control_" => [File.read(File.join(ROOT, "spec/agent-control-command.schema.json"))[/"commandType":\s*\{[^}]*"enum":\s*\[([^\]]+)\]/m, 1], 'audit(state, guard.actor, `agent_control_${result.command.commandType}`'],
-  "dispatch_" => [server_source[/const reportedStatus = \[([^\]]+)\]/, 1], 'audit(state, `agent-node:${node.nodeId}`, `dispatch_${reportedStatus}`']
+  "dispatch_" => [server_source[/const FAIL_REPORT_STATUSES = \[([^\]]+)\]/, 1], 'audit(state, `agent-node:${node.nodeId}`, `dispatch_${reportedStatus}`']
 }.each do |prefix, (closed_set, call_shape)|
   if closed_set.nil?
     errors << "审计动作本地化门: 取不到 #{prefix}* 的闭集 —— 提取逻辑与代码脱节，这一族在空转"

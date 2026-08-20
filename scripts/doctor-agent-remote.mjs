@@ -805,6 +805,27 @@ try {
 	  if (!revokeControls.commands.some((command) => command.commandId === revokeResult.command.commandId && command.commandType === "revoke")) {
 	    throw new Error("Agent node control channel did not deliver revoke command");
 	  }
+	  // 失败上报里认不出的状态同样必须拒：拼错 "blocked" 会被降级成 failed（终态），
+	  // 本来一恢复就能接着跑的活从此回不来，而上报方拿到的是 200。
+	  {
+	    const bogusFail = await jsonRaw(`/api/agent/v1/dispatches/${encodeURIComponent(revokedDispatchId)}/fail`, {
+	      method: "POST", token: revokeRegistration.nodeToken, body: {status: "blockd", reason: "拼错了"}});
+	    if (bogusFail.response.status !== 400 || bogusFail.payload?.error !== "dispatch_fail_status_unknown") {
+	      throw new Error(`认不出的失败上报状态没有被拒（HTTP ${bogusFail.response.status} / ${bogusFail.payload?.error}）`
+	        + " —— 拼错一个字母就把可恢复的活变成了终态");
+	    }
+	  }
+	  // 认不出的回执状态必须拒绝，不能静默当成 "acked"：节点想【拒绝】一条命令时拼错一个字母，
+	  // 原先会被记成"已接受" —— 人从屏幕上看到 agent 收下了这条命令，而它其实什么都没做。
+	  const bogusAck = await jsonRaw(`/api/agent/v1/control/${revokeResult.command.commandId}/ack`, {
+	    method: "POST", token: revokeRegistration.nodeToken, body: {status: "acknowledgd"}});
+	  if (bogusAck.response.status !== 400 || bogusAck.payload?.error !== "agent_control_command_ack_status_unknown") {
+	    throw new Error(`认不出的控制命令回执状态没有被拒（HTTP ${bogusAck.response.status} / ${bogusAck.payload?.error}）`
+	      + " —— 它会被静默记成已接受，人以为 agent 收下了这条命令");
+	  }
+	  if (!(bogusAck.payload?.supported || []).includes("rejected")) {
+	    throw new Error("拒绝报文里没给出合法的回执状态清单 —— 调用方只能猜自己该写什么");
+	  }
 	  await json(`/api/agent/v1/control/${revokeResult.command.commandId}/ack`, {
 	    method: "POST",
 	    token: revokeRegistration.nodeToken,

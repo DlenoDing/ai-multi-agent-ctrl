@@ -1466,6 +1466,19 @@ function verifyHumanAndOrganizationContracts(output) {
         const topo = (createExecutionTopology(st, {taskGroupId: "tg_runtime_management", projectId: "prj_control_plane",
           workItemId: "work_bootstrap", mode: "parallel_branches", runnerKind: "local", isolation: "worktree",
           branches: [{branchId: "b_once", objective: "一次性", ownedPaths: ["docs/**"], resourceScopes: [], acceptanceChecks: ["docs_lint"]}]})).topology;
+        // 认不出的分支状态必须拒：原先降级成 "reported"，一个【失败】的分支被记成"已上报"，
+        // 关闭门据此认为它交差了。
+        // 入参校验必须排在状态机之前：排在后面的话，认不出的取值会先撞上"当前状态不允许"，
+        // 抛一个与入参无关的异常 —— 调用方看到的报文说的是别的事。抛异常也算没拒对。
+        let bogusBranch = null;
+        try {
+          bogusBranch = advanceExecutionTopology(st, {topologyId: topo.topologyId, action: "report_branch",
+            branchId: "b_once", branchStatus: "faild", resultRef: "bundle:x"});
+        } catch (error) { bogusBranch = {error: `抛了异常: ${error.message}`}; }
+        if (bogusBranch?.error !== "execution_topology_branch_status_unknown") {
+          output.push(`认不出的分支状态没有被拒（${JSON.stringify(bogusBranch).slice(0, 90)}）`
+            + " —— 失败的分支会被记成已上报，关闭门以为它交差了");
+        }
         topo.status = "cancelled"; // 直接置终态：这里验的是"终态之后还能不能推进"，不是怎么走到终态
         // 包起来：守卫塌掉时这一支会往下走并抛异常。让它变成一条红，而不是把整道门带崩 ——
         // 崩掉的话读到的是一段栈，看不出是哪条不变式破了。
@@ -1689,6 +1702,21 @@ function verifyHumanAndOrganizationContracts(output) {
     decideHumanConfirmation(gateState, gate.requestId, {action: "revise", selectedOptionId: "none", inputText: "我有自己的方案：先补回归测试再验收", expectedRound: gate.round}, {actor: humanActor});
     if (gate.status !== "pending" || gate.awaitingAiAnalysis !== true || gate.round !== 2) output.push("人工闸门: 人提出方案后应继续挂起并等待 AI 再分析，而不是直接生效");
     if (gateTg.workItems[0].status === "verified") output.push("人工闸门: 人只是提了方案（未定稿），工作项就被验收了");
+    // 认不出的评估必须当场拒绝：原先它会被降级成 "concerns" —— AI 的立场被换成了另一种，
+    // 而人在卡片上读到的就是那份被换过的。拼错一个字母就够（"agreed" / "agree_"）。
+    // 在克隆上探测：守卫一旦失效，这次调用会【成功】并改掉状态（把 awaiting 清掉），
+    // 后面那次合法调用就会抛 409 —— 变异红了，但红的是别的地方，判别力等于没证明。
+    let bogusAssessment = null;
+    const bogusState = structuredClone(gateState);
+    try {
+      bogusAssessment = submitAiConfirmationAnalysis(bogusState, gate.requestId, {
+        assessment: "agreed", summary: "拼错的评估"
+      }, {actor: "agent-runtime"});
+    } catch (error) { bogusAssessment = {error: `抛了异常: ${error.message}`}; }
+    if (bogusAssessment?.error !== "ai_confirmation_assessment_unknown") {
+      output.push(`人工闸门: 认不出的 AI 评估没有被拒（${JSON.stringify(bogusAssessment).slice(0, 90)}）`
+        + " —— 它会被记成另一种立场，而人读到的就是那一份");
+    }
     // AI 再分析：可以反对/给更优方案，但绝不能终结决策。
     submitAiConfirmationAnalysis(gateState, gate.requestId, {
       assessment: "better_alternative", summary: "回归测试可与验收并行，建议改为先验收再补测试",

@@ -5569,6 +5569,13 @@ export function submitAiConfirmationAnalysis(state, requestId, input = {}, optio
   if (!request.awaitingAiAnalysis && Number(request.round || 1) > 1) {
     throw Object.assign(new Error("human_confirmation_not_awaiting_ai_analysis"), {status: 409});
   }
+  // 认不出的评估原先降级成 "concerns"：AI 的立场被换成了另一种，而人读到的是那份被换过的。
+  if (input.assessment !== undefined
+    && !["agree", "concerns", "better_alternative", "incorrect"].includes(input.assessment)) {
+    return {ok: false, error: "ai_confirmation_assessment_unknown",
+      assessment: String(input.assessment).slice(0, 60),
+      supported: ["agree", "concerns", "better_alternative", "incorrect"]};
+  }
   const assessment = ["agree", "concerns", "better_alternative", "incorrect"].includes(input.assessment) ? input.assessment : "concerns";
   const summary = String(input.summary || "").trim().slice(0, 300);
   if (!summary) throw Object.assign(new Error("ai_analysis_summary_required"), {status: 400});
@@ -7073,6 +7080,13 @@ export function createExecutionTopology(state, args) {
 export function advanceExecutionTopology(state, args) {
   const topology = (state.executionTopologies || []).find((item) => item.topologyId === args.topologyId);
   if (!topology) return {ok: false, error: "execution_topology_not_found"};
+  // 认不出的分支状态原先降级成 "reported" —— 一个【失败】的分支被记成"已上报"，
+  // 关闭门据此认为它交差了。填了但认不出的必须拒（不填仍按 reported，那是这条路径的语义）。
+  if (args.branchStatus !== undefined
+    && !["reported", "failed", "rejected", "blocked"].includes(args.branchStatus)) {
+    return {ok: false, error: "execution_topology_branch_status_unknown",
+      status: String(args.branchStatus).slice(0, 60), supported: ["reported", "failed", "rejected", "blocked"]};
+  }
   if (TOPOLOGY_TERMINAL_STATUSES.includes(topology.status)) return {topology, alreadyTerminal: true};
   const action = String(args.action || "");
   const at = new Date().toISOString();

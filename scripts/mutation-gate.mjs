@@ -2944,6 +2944,38 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "认不出的分支状态不得降级成已上报",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '  if (args.branchStatus !== undefined\n    && !["reported", "failed", "rejected", "blocked"].includes(args.branchStatus)) {',
+    to: "  if (false) {",
+    expect: "认不出的分支状态没有被拒"
+  },
+  {
+    name: "认不出的 AI 评估不得降级成 concerns",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '  if (input.assessment !== undefined\n    && !["agree", "concerns", "better_alternative", "incorrect"].includes(input.assessment)) {',
+    to: "  if (false) {",
+    expect: "认不出的 AI 评估没有被拒"
+  },
+  {
+    name: "认不出的控制命令回执状态不得当成已接受",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "doctor",
+    from: "  if (input.status !== undefined && !nodeReportable.includes(input.status)) {",
+    to: "  if (false) {",
+    expect: "认不出的控制命令回执状态没有被拒"
+  },
+  {
+    name: "认不出的失败上报状态不得降级成终态 failed",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    if (body.status !== undefined && !FAIL_REPORT_STATUSES.includes(body.status)) {",
+    to: "    if (false) {",
+    expect: "认不出的失败上报状态没有被拒"
+  },
+  {
     name: "被叫停的派发不许再交检查点",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyHumanApprovedPathsBindTheCommit",
