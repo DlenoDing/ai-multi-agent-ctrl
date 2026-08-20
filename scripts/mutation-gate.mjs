@@ -2944,6 +2944,16 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "按 id 取记录的读路由不得把别的租户的内容发出来",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    // 只放开【跨租户】那一支、保留未认证拦阻：否则先撞上的是"未认证必须 401"那条断言，
+    // 这条读泄漏断言的判别力就没被单独证明过（第一版换了两个路由才找到不被抢的那个）。
+    from: '    const reader = requireRead(req, state, taskGroupScope(state, humanDirectiveListMatch[1]));\n    if (reader.status) return json(res, reader.status, reader.payload);',
+    to: '    const reader = requireRead(req, state, taskGroupScope(state, humanDirectiveListMatch[1]));\n    if (reader.status && !accountFromRequest(req, state)) return json(res, reader.status, reader.payload);',
+    expect: "组织管理员读到了别的租户的内容"
+  },
+  {
     name: "租约释放要核对持有者，不能只看围栏令牌",
     file: "apps/mcp-server/server.mjs",
     gate: "mcp",

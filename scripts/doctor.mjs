@@ -2356,6 +2356,52 @@ try {
     }
   }
 
+  // 【按 id 取记录的读路由，不能把别的租户的内容发出来】。写路径已经按"不存在≠看不见"扫过；
+  // 读路径是另一件事：回 200 并附上内容，才是真的把数据交出去了。这里按【路由】枚举，
+  // 拿外租户的真实 id 去读，任何 2xx 都算漏（回执里有没有敏感字段是另一回事，先卡住"能不能读到"）。
+  {
+    const wideRead = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: systemAuth}});
+    const ownIds = new Set([orgId, orgProject.payload.id, orgTaskGroup.payload.taskGroup.id]);
+    const foreignGroup = (wideRead.payload.taskGroups || []).find((item) => !ownIds.has(item.id));
+    const foreignProject = (wideRead.payload.projects || []).find((item) => !ownIds.has(item.id));
+    const foreignSession = (wideRead.payload.workSessions || [])
+      .find((item) => item.taskGroupId && !ownIds.has(item.taskGroupId));
+    const foreignDispatch = (wideRead.payload.agentDispatches || [])
+      .find((item) => item.taskGroupId && !ownIds.has(item.taskGroupId));
+    const READ_ROUTES = [
+      {path: foreignGroup && `/api/task-groups/${foreignGroup.id}/readiness`, what: "任务组完成度"},
+      {path: foreignGroup && `/api/task-groups/${foreignGroup.id}/progress`, what: "任务组进度"},
+      {path: foreignGroup && `/api/task-groups/${foreignGroup.id}/execution-events`, what: "任务组执行事件"},
+      {path: foreignGroup && `/api/task-groups/${foreignGroup.id}/human-confirmations`, what: "任务组人工确认"},
+      {path: foreignGroup && `/api/task-groups/${foreignGroup.id}/human-directives`, what: "任务组人工指令"},
+      {path: foreignGroup && `/api/task-groups/${foreignGroup.id}/config`, what: "任务组配置"},
+      {path: foreignProject && `/api/projects/${foreignProject.id}/progress`, what: "项目进度"},
+      {path: foreignProject && `/api/projects/${foreignProject.id}/config`, what: "项目配置"},
+      {path: foreignSession && `/api/work-sessions/${foreignSession.sessionId}/execution-events`, what: "工作会话执行事件"},
+      {path: foreignDispatch && `/api/agent-dispatches/${foreignDispatch.dispatchId}/events`, what: "派发事件"}
+    ];
+    const leaked = [];
+    const unprobed = [];
+    for (const route of READ_ROUTES) {
+      if (!route.path) { unprobed.push(route.what); continue; }
+      const read = await jsonFetch(port, route.path, {headers: {authorization: orgAdminAuth}});
+      if (read.response.status < 400) {
+        leaked.push(`${route.what} ${route.path} → HTTP ${read.response.status}，`
+          + `回执 ${JSON.stringify(read.payload).slice(0, 90)}`);
+      }
+    }
+    if (unprobed.length) {
+      console.log(`  --  ${unprobed.length} 条读路由这一轮没有外租户样本，未检验：${unprobed.join("、")}`);
+    }
+    if (leaked.length) {
+      throw new Error("组织管理员读到了别的租户的内容：\n    " + leaked.join("\n    ")
+        + "\n  —— 写路径守住了，读路径把同一份数据发了出去");
+    }
+    if (READ_ROUTES.length - unprobed.length < 6) {
+      throw new Error(`只探到 ${READ_ROUTES.length - unprobed.length} 条读路由 —— 夹具太干净，这条断言在空转`);
+    }
+  }
+
   // 【停用必须叫停在跑的执行】。此前只有契约门里一条同名检查，测的是它自己写的一段模拟，
   // 产品路径怎么退化都不会红。这里走真实 HTTP：对一个确实有派发的任务组下暂停，之后该组下
   // 不得再有在跑的派发 —— 否则 agent 会跑到底、把产出推上 git、把额度烧完，而控制台上写着"已暂停"。
