@@ -2946,6 +2946,30 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "认不出的拓扑动作必须拒",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '    return {ok: false, error: "execution_topology_unknown_action"',
+    to: '    return {ok: false, error: "generic_rejected"',
+    expect: "认不出的动作没有被拒"
+  },
+  {
+    name: "往不存在的分支上写结果必须拒",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '    if (!branch) return {ok: false, error: "execution_topology_branch_not_found"',
+    to: '    if (!branch) return {ok: false, error: "generic_rejected"',
+    expect: "不存在的分支没有被拒"
+  },
+  {
+    name: "core 的 alreadyTerminal 标志必须在 REST 层翻成拒绝码",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '    if (result.alreadyTerminal) return json(res, 409, {error: "execution_topology_already_terminal", topology: result.topology});',
+    to: "    if (result.alreadyTerminal) return json(res, 200, result.topology);",
+    expect: "没有在 REST 层被翻成"
+  },
+  {
     name: "报错了当前口令就不许改密",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

@@ -1479,6 +1479,25 @@ function verifyHumanAndOrganizationContracts(output) {
         const topo = (createExecutionTopology(st, {taskGroupId: "tg_runtime_management", projectId: "prj_control_plane",
           workItemId: "work_bootstrap", mode: "parallel_branches", runnerKind: "local", isolation: "worktree",
           branches: [{branchId: "b_once", objective: "一次性", ownedPaths: ["docs/**"], resourceScopes: [], acceptanceChecks: ["docs_lint"]}]})).topology;
+        // 认不出的动作、不存在的分支：这两条守卫此前没有任何用例。它们失效的后果是
+        // 拓扑被推进到一个没人定义过的状态、或者往一个不存在的分支上写结果。
+        for (const probe of [
+          {args: {action: "no_such_action"}, code: "execution_topology_unknown_action", what: "认不出的动作"},
+          {args: {action: "report_branch", branchId: "b_not_here", branchStatus: "reported"},
+            needsRunning: true,
+            code: "execution_topology_branch_not_found", what: "不存在的分支"}
+        ]) {
+          let got = null;
+          try {
+            // report_branch 只在 running 时允许：不先置状态的话，先撞上的是状态机那道，
+            // 抛的异常与"分支不存在"无关（第一版就是这样）。
+            if (probe.needsRunning) topo.status = "running";
+            got = advanceExecutionTopology(st, {topologyId: topo.topologyId, ...probe.args});
+          } catch (error) { got = {error: `抛了异常: ${error.message}`}; }
+          if (got?.error !== probe.code) {
+            output.push(`${probe.what}没有被拒（${JSON.stringify(got).slice(0, 90)}，应为 ${probe.code}）`);
+          }
+        }
         // 认不出的分支状态必须拒：原先降级成 "reported"，一个【失败】的分支被记成"已上报"，
         // 关闭门据此认为它交差了。
         // 入参校验必须排在状态机之前：排在后面的话，认不出的取值会先撞上"当前状态不允许"，
@@ -1501,6 +1520,13 @@ function verifyHumanAndOrganizationContracts(output) {
           after = advanceExecutionTopology(st, {topologyId: topo.topologyId, action: "report_branch",
             branchId: "b_once", branchStatus: "reported", resultRef: "bundle:x"});
         } catch { threw = true; }
+        // core 只回一个 alreadyTerminal 标志，REST 那层要把它翻成 execution_topology_already_terminal。
+        // 这一层转换此前没人验：翻错了（或者忘了翻）人拿到的就是 200 加一个"没变化"的对象。
+        const serverSource = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+        if (!/result\.alreadyTerminal[^\n]*execution_topology_already_terminal/u.test(serverSource)) {
+          output.push("core 的 alreadyTerminal 标志没有在 REST 层被翻成 execution_topology_already_terminal"
+            + " —— 人对着一个已经终结的方案再点一次，拿到的会是 200 加一个没变化的对象");
+        }
         settleCases.push({label: "执行方案拓扑", blocked: after?.alreadyTerminal === true,
           kept: !threw && topo.status === "cancelled", tellsWho: true});
       }
@@ -5925,7 +5951,7 @@ function verifySharedJsonWritesAreAtomic(output) {
 
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 30;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 27;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
