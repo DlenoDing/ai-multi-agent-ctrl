@@ -832,7 +832,10 @@ async function api(path, options = {}) {
         // 状态损坏时的 file/kind：中文文案里明写着"报文里的 file 指出是哪一份"，
         // 而前端原先根本不显示它 —— 那句话把人指向一个他看不到的东西（实测造了一次真损坏才发现）。
         payload.file ? `涉及的文件：${payload.file}` : "",
-        payload.kind ? `故障类型：${payload.kind}` : "",
+        // kind 是个英文蛇形码。人看到它的时刻正是"控制面状态损坏"那一刻 ——
+        // 原样打出来等于在最要紧的时候甩给人一个标识符。走词表；词表没有就退回原码，
+        // 但那种情况由判据在提交前就拦下（每一种 kind 都必须有中文）。
+        payload.kind ? `故障类型：${t(payload.kind)}` : "",
         payload.code && typeof payload.code === "string" ? `系统错误码：${payload.code}` : "",
         // 版本不匹配那条报文让运维"重新执行入网安装命令升级"——那就得说清差在哪一版。
         // 原先这两个字段登记成"装机脚本会读"，实测装机脚本与 agent 运行时都没读过（谁都没读）。

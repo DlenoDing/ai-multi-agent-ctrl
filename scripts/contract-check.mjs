@@ -349,6 +349,7 @@ run(verifyMeasurementsDoNotFakeZero);
 run(verifyCommentsDoNotCiteLineNumbers);
 run(verifyGateReferencesResolve);
 run(verifyExecutorFailuresSayWhichKind);
+run(verifyStorageFaultKindsHaveChinese);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5534,6 +5535,51 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 //   ENOBUFS（agent 输出超上限）此前混在通用失败里 —— 报文是 "spawnSync /bin/sh ENOBUFS"，
 //     人会去查网络和内核缓冲；而且 stdout 里收到的那半是截断的，接着解析还会再错一次。
 //   退出码非 0 但 stderr/stdout 都空时，报文是一个冒号后面什么都没有的码 —— 人没法往下查。
+// 状态损坏/读不出时，界面上会打一行「故障类型：<kind>」。这些 kind 是英文蛇形码，
+// 而人看到它的时刻正是控制面出事那一刻 —— 那是最不该甩标识符的时候。实测 8 种里 7 种没有中文。
+// 枚举必须【从产品代码里取】：我自己列一份清单，新增一种 kind 时清单不会跟着长。
+// 两个来源都要收：直接赋值的 {kind: "x"}，以及归类正则里的那几个分支（它们是 hit[1] 赋进去的）。
+function verifyStorageFaultKindsHaveChinese(output) {
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8")
+    .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
+  // 归类正则的分支：`/^(a|b|c):(.+)$/` 里每一项都会被 hit[1] 赋成 kind。
+  const fromClassifier = new Set();
+  for (const match of server.matchAll(/\/\^\(([a-z0-9_|]+)\):\(\.\+\)\$\/u/gu)) {
+    for (const name of match[1].split("|")) fromClassifier.add(name);
+  }
+  // 按【赋值点】提取，不要求紧跟着就是 `{kind:` —— 其中一处走的是三元
+  // （`lastStorageFault = hit ? {…} : {kind: "state_unreadable", …}`），
+  // 只认"字面量紧跟"形状的话它会静默逃逸，门会绿着少查一种（这个形状本仓撞过九次）。
+  const kinds = new Set(fromClassifier);
+  const unaccounted = [];
+  for (const site of server.matchAll(/lastStorageFault = /gu)) {
+    const window = server.slice(site.index + site[0].length, site.index + 400);
+    const line = server.slice(0, site.index).split("\n").length;
+    if (/^\s*null\s*;/u.test(window)) continue;                       // 声明与清零，不是一种故障
+    const literals = [...window.matchAll(/kind: ([^,\n]+)/gu)]
+      .flatMap((entry) => [...entry[1].matchAll(/"([a-z0-9_]+)"/gu)].map((literal) => literal[1]));
+    if (literals.length) { for (const name of literals) kinds.add(name); continue; }
+    // kind 由变量算出来的那一处：它的取值全集来自归类正则，上面已经收进去了。
+    // 但"归类正则一个分支都没提取到"时不能放过 —— 那说明两边的提取形状都脱节了。
+    if (!fromClassifier.size) unaccounted.push(`第 ${line} 行：kind 是算出来的，而归类正则一个分支都没提取到`);
+  }
+  if (unaccounted.length) {
+    output.push("状态故障类型提取与产品代码脱节：\n  " + unaccounted.join("\n  "));
+    return;
+  }
+  if (kinds.size < 8) {
+    output.push(`状态故障类型只提取到 ${kinds.size} 种（应至少 8 种）—— 提取形状与产品代码脱节了，这条判据在空转`);
+    return;
+  }
+  const dictionary = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
+  const missing = [...kinds].filter((kind) => !new RegExp(`\\n\\s+${kind}: "`, "u").test(dictionary)).sort();
+  if (missing.length) {
+    output.push("这些【故障类型】没有中文，界面会在出事那一刻原样打出英文码：\n  " + missing.join("\n  "));
+  }
+  console.log(`状态故障类型：${kinds.size} 种逐个核对（含归类正则的 ${fromClassifier.size} 个分支），`
+    + `${missing.length} 种没有中文（应为 0）`);
+}
+
 function verifyExecutorFailuresSayWhichKind(output) {
   const cases = [
     ["输出超上限", {error: {code: "ENOBUFS", message: "spawnSync /bin/sh ENOBUFS"}},

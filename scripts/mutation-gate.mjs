@@ -2986,6 +2986,30 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "每种状态故障类型都要有中文（出事那一刻不能甩英文码）",
+    file: "apps/control-plane-ui/public/i18n-zh.js",
+    check: "verifyStorageFaultKindsHaveChinese",
+    from: "    runtime_dir_replaced: \"运行目录已被换成另一份，不是启动时那个\",\n",
+    to: "",
+    expect: "没有中文"
+  },
+  {
+    name: "界面必须把故障类型翻成中文（词表有而界面不查＝白写）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "payload.kind ? `故障类型：${t(payload.kind)}` : \"\",",
+    to: "payload.kind ? `故障类型：${payload.kind}` : \"\",",
+    expect: "出事那一刻甩给人一个英文标识符"
+  },
+  {
+    name: "真词表对照要能红（词表没加载时上面那条会误判）",
+    file: "scripts/console-behaviour-check.mjs",
+    gate: "console",
+    from: "const realProbe = loadConsole(el(\"div\"), {realI18n: true});",
+    to: "const realProbe = loadConsole(el(\"div\"));",
+    expect: "真词表没加载上"
+  },
+  {
     name: "输出超上限要说是超上限（不能混进通用失败让人去查网络）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyExecutorFailuresSayWhichKind",

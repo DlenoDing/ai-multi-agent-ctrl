@@ -152,6 +152,7 @@ globalThis.__probe = {
   renderTaskGroupDetail: (detail, taskGroup) => { tgDetail = detail; return renderTaskGroupDetail(taskGroup); },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
+  translate: (key) => t(key),
   filteredEmptyText: (query, hidden) => filteredEmptyText(query, hidden),
   applyFilterForSource: () => String(applyFilterFor),
   heartbeatStaleHint: (node) => heartbeatStaleHint(node),
@@ -784,6 +785,27 @@ async function runErrorGuidanceCase() {
       String(thrown.message).includes(item.expect),
       `服务端写的说明没有到达人（实际提示：${JSON.stringify(String(thrown.message).slice(0, 120))}）—— 人只看到一串英文错误码，而说明就在同一个响应里`);
   }
+}
+
+// 上面那批用的是桩词表（t 原样返回键），所以它们证明不了"kind 被翻译了"。
+// 而 kind 恰恰是个英文蛇形码，人看到它的时刻正是控制面状态损坏那一刻 ——
+// 最不该甩标识符的时候。这一条必须用【真词表】，否则断言与被测行为都在同一层假设上。
+// 实测：把 t(payload.kind) 换回 payload.kind，整套控制台门 255 条断言全绿（接线没人守）。
+{
+  const realProbe = loadConsole(el("div"), {realI18n: true});
+  realProbe.setFetch(async () => ({ok: false, status: 503, statusText: "Service Unavailable",
+    json: async () => ({error: "state_storage_corrupt", kind: "control_plane_state_corrupt",
+      file: "control-plane-state.json"})}));
+  let storageError = null;
+  try { await realProbe.api("/api/probe", {method: "POST"}); } catch (error) { storageError = error; }
+  const said = String(storageError?.message || "");
+  check("状态损坏时说的是中文的故障类型，不是英文码",
+    /故障类型：控制面状态文件内容已损坏/u.test(said),
+    `人看到的是：${JSON.stringify(said.slice(0, 160))} —— 出事那一刻甩给人一个英文标识符`);
+  // 正面对照：真词表确实加载上了。少了这一条，词表没加载时上面那条会因为"两边都是原码"而误判。
+  check("这一条用的是真词表（对照：另一个已知键必须被翻译）",
+    realProbe.translate("state_storage_unavailable") !== "state_storage_unavailable",
+    "真词表没加载上 —— 上面那条断言其实在空转");
 }
 
 // 控制面把失联节点扫下线要等超时；在那之前它照旧显示"在线"，而人此刻正想知道的就是"它是不是已经没了"。
