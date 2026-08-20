@@ -541,6 +541,19 @@ try {
     throw new Error(`没带 requiresPlanFinalization 时必须拒绝（得到 ${planGuess.response.status}/${planGuess.payload.error}）—— `
       + "缺省会被当成「不强制」，与提交人的本意相反，而理由还会记在那条相反的决定上");
   }
+  // 理由是这条决定的问责依据：不写理由就定下"这个方案要不要人工定稿"，事后没人答得出为什么。
+  // 这条守卫此前没有任何断言（旁边那条"字段名写错"有，它没有）。
+  {
+    const noWhy = await jsonFetch(port, planFinalizationPath, {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-plan-final-nowhy", authorization: systemAuth},
+      body: JSON.stringify({requiresPlanFinalization: true})
+    });
+    if (noWhy.response.status !== 400 || noWhy.payload.error !== "plan_finalization_justification_required") {
+      throw new Error(`不写理由就定下方案定稿要求，没有被拒（${noWhy.response.status}/${noWhy.payload.error}）`
+        + " —— 事后没人答得出这个决定是为什么");
+    }
+  }
   const planSet = await jsonFetch(port, planFinalizationPath, {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-plan-final-set", authorization: systemAuth},

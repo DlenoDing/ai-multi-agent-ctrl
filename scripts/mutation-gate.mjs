@@ -2946,6 +2946,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "定下方案定稿要求必须写理由",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (!justification) return json(res, 400, {error: "plan_finalization_justification_required"});',
+    to: '    if (false) return json(res, 400, {error: "plan_finalization_justification_required"});',
+    expect: "不写理由就定下方案定稿要求"
+  },
+  {
     name: "畸形 URL 必须当场拒，不得打断请求处理",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
