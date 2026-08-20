@@ -2946,6 +2946,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "MCP 工具拿到不存在的 id 必须给出该给的拒绝码",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: '  if (!finding) return {ok: false, error: "finding_not_found"};',
+    to: '  if (false) return {ok: false, error: "finding_not_found"};',
+    expect: "没有给出该给的拒绝码"
+  },
+  {
     name: "派发绑定的授权必须把省掉的作用域补成自己那条",
     file: "apps/mcp-server/server.mjs",
     gate: "mcp",

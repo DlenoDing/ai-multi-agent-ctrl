@@ -585,6 +585,42 @@ try {
     }
   }
 
+  // 【MCP 侧「查无此物」也要逐个点名】。这些码此前没有任何门/e2e 提到过 ——
+  // 也就是说把 `if (!x) return {error: "..."}` 整行删掉，没有任何东西会变红，
+  // 而后面的代码会拿着 undefined 往下跑（本仓在 REST 侧已经因为这个漏过真事实）。
+  // 用系统管理员令牌打：它不受工具白名单限制，够得到每一个工具。
+  {
+    const NOT_FOUND_TOOLS = [
+      {name: "governance-mcp.approval_resolve",
+        args: {approvalId: "apr_bogus", idempotencyKey: "mcp-nf-1"},
+        code: "approval_request_not_found"},
+      {name: "governance-mcp.finding_resolve",
+        args: {findingId: "fnd_bogus", status: "resolved", idempotencyKey: "mcp-nf-2"},
+        code: "finding_not_found"},
+      {name: "permission-mcp.permission_status", args: {requestId: "prq_bogus"},
+        code: "permission_request_not_found"},
+      {name: "governance-mcp.role_drift_guard_bind",
+        args: {taskGroupId: "tg_runtime_management", sessionId: "sess_bogus", runId: "run_bogus",
+          idempotencyKey: "mcp-nf-4"},
+        code: "task_contract_not_found"}
+    ];
+    const wrong = [];
+    for (const tool of NOT_FOUND_TOOLS) {
+      let result;
+      try {
+        const call = await mcpAs(admin.sessionToken, "tools/call", {name: tool.name, arguments: tool.args});
+        result = call.structuredContent?.result;
+      } catch (error) { result = {error: `传输层拒：${String(error?.message || error).slice(0, 50)}`}; }
+      if (result?.error !== tool.code) {
+        wrong.push(`${tool.name} → ${JSON.stringify(result || null).slice(0, 110)}（应为 ${tool.code}）`);
+      }
+    }
+    if (wrong.length) {
+      throw new Error("MCP 工具拿到不存在的 id 时没有给出该给的拒绝码：\n    " + wrong.join("\n    ")
+        + "\n  —— 删掉那道判据不会有任何东西变红，而后面的代码会拿着 undefined 往下跑");
+    }
+  }
+
   const readOnlyTools = listed.tools.filter((tool) => tool.annotations?.readOnlyHint || tool.readOnlyHint);
   if (readOnlyTools.length < 10) throw new Error(`跨租户扫描只认出 ${readOnlyTools.length} 个只读工具 —— 提取逻辑与代码脱节，本条在空转`);
   const scanLeaks = [];
