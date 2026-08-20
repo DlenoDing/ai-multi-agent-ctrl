@@ -343,6 +343,7 @@ run(verifyMachineFacingErrorsAreOutOfConsoleReach);
 run(verifyLongLivedRecordsDoNotPointAtCappedOnes);
 run(verifyCallsDoNotPassIgnoredArguments);
 run(verifyEnvValuesAreNotSilentlyClamped);
+run(verifyMutationsAreRegisteredAgainstTheRightGate);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5499,6 +5500,55 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 而服务端有 5000 下限 —— 门里所有按 3000 算的等待都短了，靠 deadline 轮询才没判错，
 // 代价是每一处都白等到超时（那道门 35 秒里有一半是这么来的）。
 // 传的人不会收到任何提示，只有量性能时才撞得见。
+// 【变异要挂在它的 expect 真正出现的那个门上】。挂错门的表现是
+// **"单跑那套 e2e 时红、进了全量变异门却绿"** —— 假绿，而且只有跑一次全量（565 秒）才看得见。
+// 今天实测撞到两条：断言写在 doctor-agent-remote.mjs 里，变异却挂 gate:"doctor"。
+// 这道判据把那 565 秒的发现搬进快速链。
+//
+// 两类必须排除，否则误报会淹掉真信号（第一版没排除，4 条命中全是误报）：
+//  · `skip:` 登记的（判别力由别的门覆盖，本就不在变异门里真跑）—— 它的 gate 字段无意义。
+//  · expect 是纯拒绝码/标识符的 —— 同一个码在多处出现是正常的，判不出归属。
+function verifyMutationsAreRegisteredAgainstTheRightGate(output) {
+  const GATE_SOURCES = {
+    contract: "scripts/contract-check.mjs", auth: "scripts/auth-placement-gate.mjs",
+    parity: "scripts/human-only-parity-gate.mjs", barrier: "scripts/barrier-liveness-gate.mjs",
+    invariants: "scripts/system-invariants-gate.mjs", crash: "scripts/crash-consistency-gate.mjs",
+    writer: "scripts/concurrent-writer-gate.mjs", console: "scripts/console-behaviour-check.mjs",
+    idle: "scripts/idle-tick-gate.mjs", specs: "scripts/validate-specs.rb",
+    doctor: "scripts/doctor.mjs", mcp: "scripts/doctor-mcp.mjs", agent: "scripts/doctor-agent-remote.mjs"
+  };
+  const sources = new Map();
+  for (const [gate, rel] of Object.entries(GATE_SOURCES)) sources.set(gate, readFileSync(join(root, rel), "utf8"));
+  const mutations = readFileSync(join(root, "scripts/mutation-gate.mjs"), "utf8");
+  const offenders = [];
+  let checked = 0;
+  for (const entry of mutations.matchAll(/\{\s*\n\s*name: "([^"]+)"([\s\S]*?)\n  \},/gu)) {
+    const [, name, body] = entry;
+    if (body.includes("skip:")) continue;
+    const expect = body.match(/expect: "([^"]+)"/u);
+    if (!expect) continue;
+    const text = expect[1];
+    if (/^[a-z_0-9:*]+$/u.test(text)) continue;
+    // gate 只认【本条目自己的那一行】：from/to 里可能原样带着别条的 `gate: "..."`
+    // （这道判据自己的变异登记就是这样 —— 它被自己抓了一次）。按行首缩进锁定。
+    const gate = body.match(/^\s{4}gate: "(\w+)"/mu)?.[1] || "contract";
+    const where = [...sources].filter(([, src]) => src.includes(text)).map(([key]) => key);
+    checked += 1;
+    if (where.length && !where.includes(gate)) {
+      offenders.push(`${name}：挂 ${gate} 门，而这句话只在 ${where.join("/")} 里`);
+    }
+  }
+  if (checked < 100) {
+    output.push(`变异挂门核对：只解析出 ${checked} 条可判的变异 —— 提取多半失配，这道门在空转`);
+    return;
+  }
+  if (offenders.length) {
+    output.push("这些变异挂错了门（单跑那套 e2e 会红、进全量变异门却绿＝假绿）：\n  "
+      + offenders.join("\n  "));
+  }
+  console.log(`变异挂门：${checked} 条可判的变异逐个核对（skip 与纯码不判），${offenders.length} 条挂错（应为 0）`);
+}
+
 function verifyEnvValuesAreNotSilentlyClamped(output) {
   const clamps = new Map();
   for (const rel of ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/state-store.mjs",

@@ -2962,6 +2962,14 @@ const MUTATIONS = [
     expect: "一个「报文里的 X」都没认出来"
   },
   {
+    name: "变异挂错门要被静态门看见（不必等 565 秒的全量跑）",
+    file: "scripts/mutation-gate.mjs",
+    check: "verifyMutationsAreRegisteredAgainstTheRightGate",
+    from: '    name: "认不出的控制命令回执状态不得当成已接受",\n    file: "apps/control-plane-ui/lib/agent-gateway.mjs",\n    gate: "agent",',
+    to: '    name: "认不出的控制命令回执状态不得当成已接受",\n    file: "apps/control-plane-ui/lib/agent-gateway.mjs",\n    gate: "doctor",',
+    expect: "挂错了门"
+  },
+  {
     name: "查无此人工确认卡必须给出该给的拒绝码",
     file: "apps/mcp-server/server.mjs",
     gate: "mcp",
