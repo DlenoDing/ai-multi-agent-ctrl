@@ -3012,6 +3012,16 @@ function orchestratorHealthText(status) {
   if (failures >= 1) {
     return `<span class="warn-text">（连续 ${esc(failures)} 拍失败，最近一次：${esc(status.lastError || "未记录")}）</span>`;
   }
+  // 还有一种更隐蔽的停摆：周期【不抛异常，只是彻底不跑了】（定时器被清、进程卡住、
+  // 主循环被某一拍卡死）。这时 consecutiveErrors 是 0、lastTickResult 停在上一次的 "ran"，
+  // 屏幕上照写"已启用 · 每 60 秒推进一次（上一拍 ran）"，而实际什么都没动。
+  // 判据照 agent 心跳那一套：拿上一拍的时间跟【周期本身声明的间隔】比，落后太多就说出来。
+  const tickAgeMs = status.lastTickAt ? serverNow() - new Date(status.lastTickAt).getTime() : NaN;
+  const intervalMs = Number(status.intervalMs || 0);
+  if (Number.isFinite(tickAgeMs) && intervalMs > 0 && tickAgeMs > Math.max(intervalMs * 5, 3 * 60 * 1000)) {
+    return `<span class="warn-text">（⚠ 已 ${Math.floor(tickAgeMs / 60000)} 分钟没有推进过 ——`
+      + `说好每 ${Math.round(intervalMs / 1000)} 秒一拍，自治周期多半已经停摆）</span>`;
+  }
   return status.lastTickAt ? `（上一拍 ${esc(t(status.lastTickResult) || status.lastTickResult || "ran")}）` : "";
 }
 
@@ -3097,7 +3107,21 @@ function aiAnalysisStalledNotice(requests) {
 function orchestratorStalledNotice() {
   const status = (state.runtime || {}).autonomousOrchestrator;
   const failures = Number(status?.consecutiveErrors || 0);
-  if (!status?.enabled || failures < 2) return "";
+  if (!status?.enabled) return "";
+  // 静默停摆（不报错、只是不跑了）与连续失败一样严重，而它一个错误计数都没有：
+  // 定时器被清、某一拍卡死时 consecutiveErrors 停在 0、lastTickResult 还是 "ran"。
+  // 判据只能是"说好每 N 秒一拍，实际多久没动了"。
+  const tickAgeMs = status.lastTickAt ? serverNow() - new Date(status.lastTickAt).getTime() : NaN;
+  const intervalMs = Number(status.intervalMs || 0);
+  if (failures < 2 && Number.isFinite(tickAgeMs) && intervalMs > 0
+    && tickAgeMs > Math.max(intervalMs * 5, 3 * 60 * 1000)) {
+    return `<div class="notice warn-notice">自治循环已经 ${esc(Math.floor(tickAgeMs / 60000))} 分钟没有推进过，`
+      + `而它自称每 ${esc(Math.round(intervalMs / 1000))} 秒一拍 —— 它没有报错，只是【不跑了】：`
+      + `派发不会被领走、关闭门不会重算、人工指令会一直停在待处理。`
+      + `请先看服务端日志（进程还在但主循环卡住时，日志里也会没有新的一拍）；`
+      + `恢复之前，需要人推进的事只能手动来。</div>`;
+  }
+  if (failures < 2) return "";
   return `<div class="notice warn-notice">自治循环已连续 ${esc(failures)} 拍失败，当前【没有任何东西在自行推进】：`
     + `派发不会被领走、关闭门不会重算、人工指令会一直停在待处理。最近一次失败：${esc(status.lastError || "未记录")}`
     + `（最后一次成功推进：${status.lastSuccessAt ? esc(fmtTime(status.lastSuccessAt)) : "无记录"}）。`

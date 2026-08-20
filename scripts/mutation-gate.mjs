@@ -2946,6 +2946,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "自治循环静默停摆（不报错只是不跑了）也要说出来",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (failures < 2 && Number.isFinite(tickAgeMs) && intervalMs > 0\n    && tickAgeMs > Math.max(intervalMs * 5, 3 * 60 * 1000)) {",
+    to: "  if (false) {",
+    expect: "自治循环静默停摆"
+  },
+  {
     name: "盘写不进去时健康页必须转 degraded",
     file: "apps/control-plane-ui/server.mjs",
     gate: "crash",

@@ -1339,12 +1339,25 @@ function runPendingTruncationCase() {
     check("停摆提示要带上失败原因与最后一次成功时间",
       stalledView.includes("boom") && /最后一次成功推进/.test(stalledView),
       "只说停了，不说为什么、也不说停了多久 —— 人无从判断严重程度");
+    // 还有一种更隐蔽的停摆：周期【不抛异常，只是彻底不跑了】（定时器被清、某一拍卡死）。
+    // 这时 consecutiveErrors 是 0、lastTickResult 还停在 "ran" —— 上面那两条断言全都不触发，
+    // 屏幕上照写"已启用 · 每 60 秒推进一次（上一拍 ran）"。判据要拿【上一拍的时间】跟间隔比。
+    const silent = structuredClone(stalled);
+    silent.runtime.autonomousOrchestrator = {enabled: true, intervalMs: 60000, consecutiveErrors: 0,
+      lastTickResult: "ran", lastTickAt: new Date(Date.now() - 42 * 60 * 1000).toISOString(),
+      lastSuccessAt: new Date(Date.now() - 42 * 60 * 1000).toISOString()};
+    const silentView = probe.renderMonitorWith(silent, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    check("自治循环静默停摆（不报错、只是不跑了）也要说出来",
+      /没有推进过/.test(silentView),
+      "周期已经 42 分钟没动过，而它自称每 60 秒一拍 —— 监控页却仍写着「上一拍 ran」，"
+      + "人要等到发现什么都没动才会怀疑");
     const healthy = structuredClone(stalled);
     healthy.runtime.autonomousOrchestrator = {enabled: true, intervalMs: 60000, consecutiveErrors: 0,
-      lastTickResult: "ran", lastSuccessAt: "2026-08-01T00:05:00Z"};
+      lastTickResult: "ran", lastTickAt: new Date(Date.now() - 30 * 1000).toISOString(),
+      lastSuccessAt: "2026-08-01T00:05:00Z"};
     const healthyView = probe.renderMonitorWith(healthy, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
     check("正常时不得挂着停摆告警",
-      !/没有任何东西在自行推进/.test(healthyView),
+      !/没有任何东西在自行推进|没有推进过/.test(healthyView),
       "自治循环正常，监控页却仍挂着停摆告警 —— 常亮的告警等于没有告警");
   }
 
