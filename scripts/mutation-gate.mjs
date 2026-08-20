@@ -2986,6 +2986,30 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "有展示上限的表必须报总数（静默截断＝以为看到的就是全部）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      {moreText: moreText(eventsInScope.length, 10, \"agentExecutionEvents\")})),",
+    to: "      {})),",
+    expect: "静默截断"
+  },
+  {
+    name: "静默截断扫描打不到时必须红（不得绿着空转）",
+    file: "scripts/console-behaviour-check.mjs",
+    gate: "console",
+    from: "for (const match of appSource.matchAll(/\\btable\\(/gu)) {",
+    to: "for (const match of appSource.matchAll(/\\btabIe\\(/gu)) {",
+    expect: "扫描没打到该打的地方"
+  },
+  {
+    name: "字符串截断是被规则排除、不是碰巧没撞上（不切 .map 就该误报）",
+    file: "scripts/console-behaviour-check.mjs",
+    gate: "console",
+    from: "const beforeMap = definition.split(\".map(\")[0];",
+    to: "const beforeMap = definition;",
+    expect: "静默截断"
+  },
+  {
     name: "过滤筛光时要说'没有匹配某词的行'，不能只说'暂无数据'",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

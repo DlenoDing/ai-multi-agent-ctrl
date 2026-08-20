@@ -2914,7 +2914,66 @@ await runCodedApiErrorCase();
   check("过滤逻辑必须真的把这句话挂到空表上（否则纯函数写了也没人用）",
     /filteredEmptyText\(raw, hidden\.length\)/u.test(wiring) && /data-filter-empty/u.test(wiring),
     `applyFilterFor 里${/filteredEmptyText/u.test(wiring) ? "调了但形状对不上" : "根本没调"}这个文案函数`);
-  check("原来的空行只藏不改（过滤词一清，'暂无数据'要能原样回来）",
+// 表格有展示上限就必须说出来 —— 逐张写断言必然漏（本仓的教训是"可枚举的面要按权威来源全量核对"）。
+// table() 是唯一的表格 helper，把它的调用点全量枚举，行数据被截过就要求带 moreText。
+// 两处易自欺，都踩过：
+//   一、同名变量（projectRows 出现两次）要从调用点【往前】找最近定义，取全文第一处会查错对象；
+//   二、行构造体里的 .slice 多半是截【字符串】（短 SHA），不是截集合 —— 按第一个 .map( 切开只看前半。
+//      不切的话 sources 那张表会被误判成静默截断（实际截的是 pinnedCommit）。
+{
+  const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const callAt = (start) => {
+    let depth = 1;
+    let cursor = start;
+    while (cursor < appSource.length && depth > 0) {
+      if (appSource[cursor] === "(") depth += 1;
+      else if (appSource[cursor] === ")") depth -= 1;
+      cursor += 1;
+    }
+    return appSource.slice(start, cursor - 1);
+  };
+  const topLevelArgs = (text) => {
+    const parts = [];
+    let depth = 0;
+    let current = "";
+    for (const ch of text) {
+      if ("([{".includes(ch)) depth += 1;
+      else if (")]}".includes(ch)) depth -= 1;
+      if (ch === "," && depth === 0) { parts.push(current); current = ""; } else current += ch;
+    }
+    parts.push(current);
+    return parts;
+  };
+  const silent = [];
+  let scanned = 0;
+  for (const match of appSource.matchAll(/\btable\(/gu)) {
+    const line = appSource.slice(0, match.index).split("\n").length;
+    if (line === appSource.slice(0, appSource.indexOf("function table(")).split("\n").length) continue;
+    const call = callAt(match.index + match[0].length);
+    if (/moreText/u.test(call)) { scanned += 1; continue; }
+    const body = (topLevelArgs(call)[1] || "").trim();
+    const named = /^([A-Za-z_$][\w$]*)$/u.exec(body);
+    let definition = body;
+    if (named) {
+      const defs = [...appSource.matchAll(new RegExp(`(?:const|let)\\s+${named[1]}\\s*=`, "gu"))]
+        .filter((item) => item.index < match.index);
+      if (!defs.length) { silent.push(`${line}: ${named[1]} —— 找不到定义，本条【没查成】`); continue; }
+      const from = defs[defs.length - 1].index;
+      const end = appSource.indexOf(";\n", from);
+      definition = appSource.slice(from, end < 0 ? from + 600 : end);
+    }
+    scanned += 1;
+    const beforeMap = definition.split(".map(")[0];
+    if (/\.slice\(\s*0\s*,\s*\d+\s*\)/u.test(beforeMap)) {
+      silent.push(`${line}: ${named ? named[1] : "（内联）"} 被截到固定条数却没有 moreText 提示`);
+    }
+  }
+  check("每张有展示上限的表都要说出总数（否则人以为看到的就是全部）",
+    silent.length === 0 && scanned >= 30,
+    silent.length ? `静默截断：\n    ${silent.join("\n    ")}` : `只核对到 ${scanned} 处 table() 调用 —— 扫描没打到该打的地方`);
+}
+
+    check("原来的空行只藏不改（过滤词一清，'暂无数据'要能原样回来）",
     /emptyRow\.style\.display = "none"/u.test(wiring) && /emptyRow\.style\.display = ""/u.test(wiring),
     "空行被改文案或被删掉了 —— 清掉过滤词后回不到原样");
 }

@@ -2357,7 +2357,10 @@ function renderProjectOverview() {
     badge(target.status),
     `<span class="mono">${esc((target.pathAllowlist || []).join("、"))}</span>`
   ])).join("");
-  const events = (state.agentExecutionEvents || []).filter((event) => groups.some((taskGroup) => taskGroup.id === event.taskGroupId)).slice(0, 10).map((event) => row([
+  // 只展示最新 10 条（数组是 unshift 追加的，最新在前）。总数要取【筛完范围之后】的长度：
+  // 拿 state.agentExecutionEvents.length 会把别的任务组也算进去，报出一个人在这页看不到的数。
+  const eventsInScope = (state.agentExecutionEvents || []).filter((event) => groups.some((taskGroup) => taskGroup.id === event.taskGroupId));
+  const events = eventsInScope.slice(0, 10).map((event) => row([
     {v: fmtTime(event.createdAt), c: "nowrap"},
     badge(event.eventType, "blue"),
     badge(event.status),
@@ -2391,7 +2394,8 @@ function renderProjectOverview() {
       </div>
     `),
     panel("任务组一览", table(["任务组", "状态", "阶段", "进度", "健康度", {label: "受阻数", c: "num"}], groupRows), {wide: true}),
-    panel("最新执行事件", table([{label: "时间", c: "nowrap"}, "事件", "状态", {label: "摘要", c: "text-clip"}], events)),
+    panel("最新执行事件", table([{label: "时间", c: "nowrap"}, "事件", "状态", {label: "摘要", c: "text-clip"}], events,
+      {moreText: moreText(eventsInScope.length, 10, "agentExecutionEvents")})),
     panel("仓库产出归属", table(["任务组", "仓库", "分支", "状态", "允许路径"], repoRows))
   ].join("");
 }
