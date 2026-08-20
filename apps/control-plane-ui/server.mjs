@@ -4354,7 +4354,14 @@ async function handleApi(req, res) {
   // ── Gap 2B: §4 REST endpoints over shared core mutators ─────────────────────
   const workItemAssignMatch = url.pathname.match(/^\/api\/work-items\/([^/]+)\/assign$/);
   if (req.method === "POST" && workItemAssignMatch) {
-    const guard = beginGuardedWrite(req, state, "work_assign", `WorkItem:${workItemAssignMatch[1]}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    // 作用域必须取【被改的那条记录】自己所属的任务组，不能取调用方在请求体里写的那个
+    // —— 否则就是 confused deputy：我对自己的组有权，请求体里写自己的组，守卫放行，
+    // 而 URL 上那条工作项是别人的。目前挡住这一手的是 core 里"查找按 taskGroupId 过滤"，
+    // 也就是说防线全压在 mutator 上；隔壁 findings 路由早就把这个口径写进注释了，这里补齐。
+    const assignTarget = (state.taskGroups || []).find((group) =>
+      (group.workItems || []).some((item) => item.id === workItemAssignMatch[1]));
+    const guard = beginGuardedWrite(req, state, "work_assign", `WorkItem:${workItemAssignMatch[1]}`,
+      taskGroupScope(state, assignTarget?.id || body.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = assignWorkItem(state, {...body, workItemId: workItemAssignMatch[1]});
     if (result.ok === false) return json(res, 404, {error: result.error});

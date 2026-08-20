@@ -3858,11 +3858,16 @@ export function collectRuntimeIssue(state, request = {}) {
   ensureRuntimeCollections(state);
   const at = new Date().toISOString();
   const fingerprint = request.issueFingerprint || digestOf({issueClass: request.issueClass, summary: request.summary}).slice(7, 23);
-  const matchingSamples = state.runtimeIssueSamples.filter((sample) => sample.issueFingerprint === fingerprint);
+  // 指纹是【内容】算出来的，天然会在不同租户之间撞上。按它查找时必须连归属一起比，
+  // 否则别的租户报一个相同的指纹就会被并进这条记录里：计数被改、样本被塞进来，
+  // 回执还把这条记录的内容原样带回去（HTTP 探针实测过）。
+  const sameOwner = (item) => (item.taskGroupId || null) === (request.taskGroupId || null);
+  const matchingSamples = state.runtimeIssueSamples
+    .filter((sample) => sample.issueFingerprint === fingerprint && sameOwner(sample));
   // 人已经判过"这个不用管"的模式，不该再被同一件事顶起来：静默计数，不重开、不再升级。
   // （复活一个终态是另一类缺陷 —— 终态之所以是终态，就是因为人已经在它上面做过决定。）
   const suppressed = state.runtimeIssuePatterns.find((item) =>
-    item.issueFingerprint === fingerprint && item.status === "suppressed");
+    item.issueFingerprint === fingerprint && item.status === "suppressed" && sameOwner(item));
   if (suppressed) {
     suppressed.suppressedOccurrences = Number(suppressed.suppressedOccurrences || 0) + 1;
     suppressed.updatedAt = at;
@@ -3870,7 +3875,7 @@ export function collectRuntimeIssue(state, request = {}) {
   }
   // 已收尾的也不复活：它又出现了就是一件新事（人以为修好了却回来了），另起一条模式如实反映。
   let pattern = state.runtimeIssuePatterns.find((item) =>
-    item.issueFingerprint === fingerprint && item.status !== "closed");
+    item.issueFingerprint === fingerprint && item.status !== "closed" && sameOwner(item));
   if (!pattern) {
     if (matchingSamples.length === 0 && !request.forcePattern) {
       const sample = {

@@ -766,8 +766,8 @@ const MUTATIONS = [
     name: "已压制的模式不许被重新顶起来",
     file: CORE,
     check: "verifyRuntimeIssuePatternCanBeSettled",
-    from: '    item.issueFingerprint === fingerprint && item.status === "suppressed");',
-    to: '    item.issueFingerprint === fingerprint && item.status === "never-matches");',
+    from: '    item.issueFingerprint === fingerprint && item.status === "suppressed" && sameOwner(item));',
+    to: '    item.issueFingerprint === fingerprint && item.status === "never-matches" && sameOwner(item));',
     expect: "人判过的事又回来了"
   },
   {
@@ -2942,6 +2942,22 @@ const MUTATIONS = [
     from: '  if (cached && cached.status === "active" && cached.resourceRef === resourceRef) return cached;',
     to: "  if (cached) return cached;",
     expect: "写锁形同虚设"
+  },
+  {
+    name: "按内容指纹归并也要分租户",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: "  const sameOwner = (item) => (item.taskGroupId || null) === (request.taskGroupId || null);",
+    to: "  const sameOwner = () => true;",
+    expect: "就被并进了"
+  },
+  {
+    name: "守卫作用域要取自被改的那条记录，不能取自请求体",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: 'taskGroupScope(state, assignTarget?.id || body.taskGroupId || "tg_runtime_management"));',
+    to: 'taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));',
+    expect: "拒它的不是守卫而是别的东西"
   },
   {
     name: "无上限地等子进程退出要被门看见",

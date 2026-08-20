@@ -2291,6 +2291,71 @@ try {
     }
   }
 
+  // 【守卫的作用域必须来自"要改的那条记录"，不能来自调用方给的参数】。
+  // 否则就是典型的 confused deputy：我对自己的任务组有权 → 我在请求体里写自己的任务组 →
+  // 守卫按我的组放行 → 实际被改的是 URL 上那条【别人的】记录。
+  // findings 那条路由的注释里已经写死了这个口径，这里逐个路由压一遍，别只守一扇门。
+  {
+    const wideView = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: systemAuth}});
+    const ownIds = new Set([orgId, orgProject.payload.id, orgTaskGroup.payload.taskGroup.id]);
+    const foreignWorkItem = (wideView.payload.taskGroups || [])
+      .filter((group) => !ownIds.has(group.id))
+      .flatMap((group) => (group.workItems || []).map((item) => ({groupId: group.id, itemId: item.id})))[0];
+    if (!foreignWorkItem) {
+      throw new Error("没有外租户的工作项可用于越权探测 —— 这条断言会空转");
+    }
+    const stolen = await jsonFetch(port, `/api/work-items/${foreignWorkItem.itemId}/assign`, {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-confused-deputy", authorization: orgAdminAuth},
+      // 请求体里写【自己的】任务组：守卫若按它判权，就会放行一次对别人记录的改写。
+      body: JSON.stringify({taskGroupId: orgTaskGroup.payload.taskGroup.id, assigneeRef: "acct_agent_runtime"})
+    });
+    // 必须是【守卫】把它拒掉（policy_denied），不能只靠 core 的查找过滤兜住 ——
+    // 后者是 mutator 的实现细节，一次自然的重构就会把它改没。
+    if (stolen.payload?.error !== "policy_denied") {
+      throw new Error(`越权改别的租户的工作项，拒它的不是守卫而是别的东西`
+        + `（HTTP ${stolen.response.status}/${stolen.payload?.error}）—— 防线压在 mutator 上，重构一次就没了`);
+    }
+    if (stolen.response.status < 400) {
+      throw new Error(`在请求体里写上自己的任务组，就改掉了别的租户的工作项`
+        + `（${foreignWorkItem.groupId}/${foreignWorkItem.itemId}，HTTP ${stolen.response.status}）`
+        + " —— 守卫按调用方给的参数判权，实际改的是 URL 上那一条");
+    }
+  }
+
+  // 【按内容指纹合并的记录也要分租户】。运行问题模式是按 issueFingerprint 找的 ——
+  // 如果那次查找不看归属，别的租户只要报一个同样的指纹，就会被并进我这条模式里：
+  // 计数被改、样本被塞进来，回执里还会把我这条模式的内容原样带回去。
+  {
+    const fingerprint = "e2e-cross-tenant-fp";
+    const submit = (auth, taskGroupId, key) => jsonFetch(port, "/api/runtime-issues", {
+      method: "POST",
+      headers: {"Idempotency-Key": key, authorization: auth},
+      body: JSON.stringify({taskGroupId, issueFingerprint: fingerprint,
+        issueClass: "repeated_failure_fingerprint", summary: "e2e 指纹合并探测", forcePattern: true})
+    });
+    const seeded = await submit(systemAuth, "tg_runtime_management", "doctor-fp-seed");
+    const seededId = seeded.payload?.patternId || seeded.payload?.pattern?.patternId;
+    if (!seededId) {
+      throw new Error(`造不出外租户的运行问题模式（HTTP ${seeded.response.status} `
+        + `${JSON.stringify(seeded.payload).slice(0, 140)}）—— 这条断言会空转`);
+    }
+    const merged = await submit(orgAdminAuth, orgTaskGroup.payload.taskGroup.id, "doctor-fp-merge");
+    const mergedId = merged.payload?.patternId || merged.payload?.pattern?.patternId;
+    if (mergedId === seededId) {
+      throw new Error(`别的租户报一个相同的 issueFingerprint，就被并进了 ${seededId} 这条模式`
+        + " —— 按内容指纹查找时没有分租户，计数与样本会被外人改写，回执还把内容带了出去");
+    }
+    // 正面对照：同一个租户再报一次同样的指纹，必须还是并进原来那条 ——
+    // 否则上面那条可以靠"一律不合并"蒙混过去，而按指纹归并正是这个特性的全部意义。
+    const sameTenantAgain = await submit(systemAuth, "tg_runtime_management", "doctor-fp-again");
+    const againId = sameTenantAgain.payload?.patternId || sameTenantAgain.payload?.pattern?.patternId;
+    if (againId !== seededId) {
+      throw new Error(`同一个租户再报同样的指纹却另起了一条模式（${againId} ≠ ${seededId}）`
+        + " —— 按指纹归并被一起堵死了，同一个问题会散成很多条，人根本看不出它反复出现");
+    }
+  }
+
   // 【停用必须叫停在跑的执行】。此前只有契约门里一条同名检查，测的是它自己写的一段模拟，
   // 产品路径怎么退化都不会红。这里走真实 HTTP：对一个确实有派发的任务组下暂停，之后该组下
   // 不得再有在跑的派发 —— 否则 agent 会跑到底、把产出推上 git、把额度烧完，而控制台上写着"已暂停"。
