@@ -2537,6 +2537,25 @@ try {
     }
   }
 
+  // 【登录失败的台账用语要准】。此前复用 "denied"，而词表里它是「已驳回」——审批用语。
+  // 真实台账上读出来是"登录 Account:x 已驳回"，看着像有人审批过他的登录请求。
+  {
+    await jsonFetch(port, "/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({email: "system.admin@local", password: "这不是口令"})
+    });
+    const ledger = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: systemAuth}});
+    const failedLogin = (ledger.payload.auditLog || [])
+      .find((item) => item.action === "auth_login" && item.result !== "granted" && item.result !== "allowed");
+    if (!failedLogin) {
+      throw new Error("台账里找不到失败登录的记录 —— 这条断言在空转");
+    }
+    if (failedLogin.result === "denied") {
+      throw new Error(`失败登录在台账上记成 "${failedLogin.result}"（词表里是「已驳回」）`
+        + " —— 那是审批用语，会让人以为有人拒了他的登录；应记成凭据不正确");
+    }
+  }
+
   // 【打错的接口要说清打错在哪】。这两条守卫此前没有任何断言，而它们是人和 agent 最常撞到的
   // 两个：路径写错、URL 本身不合法。只回一个英文码的话，排障要从头猜起。
   {

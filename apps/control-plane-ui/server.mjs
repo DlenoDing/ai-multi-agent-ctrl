@@ -2856,7 +2856,10 @@ async function handleApi(req, res) {
     const passwordOk = passwordCheck.ok;
     const tokenOk = bootstrapOk || localAccountOk || issuedAccountOk || passwordOk;
     if (!tokenOk || !account || !["active", "invited"].includes(account.status)) {
-      audit(state, "auth-service", "auth_login", `Account:${email}`, "denied");
+      // 结果码要按场景选："denied" 在词表里是「已驳回」（审批用语）——
+      // 登录失败并没有人审批过，台账上写"已驳回"会让人以为有人拒了他。
+      // 真实台账读出来就是"登录 Account:x 已驳回"（拿真实状态渲染时读到的）。
+      audit(state, "auth-service", "auth_login", `Account:${email}`, "credentials_invalid");
       commitDirectStateWrite(state);
       recordFailedLogin(req);
       json(res, 401, {error: "invalid_credentials"});

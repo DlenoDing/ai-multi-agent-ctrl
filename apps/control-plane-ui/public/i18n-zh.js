@@ -645,6 +645,9 @@
     exhausted: "已用尽",
     granted: "已授权",
     denied: "已驳回",
+    // 登录失败不是"被谁驳回了"，台账上要写清是凭据不对（此前复用 denied，
+    // 真实台账读出来是"登录 Account:x 已驳回"，看着像有人审批过）。
+    credentials_invalid: "凭据不正确",
     allowed: "已允许",
     evaluating: "评估中",
     grant_issued: "授权已签发",

@@ -273,14 +273,27 @@ if (process.env.AIMAC_RENDER_REAL) {
   const real = readStoredState({root, runtimeDir: dir, statePath: `${dir}/control-plane-state.json`,
     seedPath: `${root}/data/seed-state.json`, buildInitialState: () => ({})});
   const who = (real.accounts || []).find((item) => item.accountType === "system_admin") || (real.accounts || [])[0];
-  const probe = loadConsole(el("div"), {realI18n: true});
+  const documentRoot = el("div");
+  const probe = loadConsole(documentRoot, {realI18n: true});
   const strip = (html) => String(html).replace(/<[^>]+>/gu, " ").replace(/&nbsp;/gu, " ")
     .split("\n").map((line) => line.replace(/\s+/gu, " ").trim()).filter(Boolean).join("\n");
   const project = (real.projects || [])[0];
   const taskGroup = (real.taskGroups || [])[0];
   console.log(`=== 真实状态：${(real.projects || []).length} 个项目、${(real.taskGroups || []).length} 个任务组\n`);
   console.log("=== 任务组页 ===\n" + strip(probe.renderTaskGroupsWith(real, who, project?.id, taskGroup?.id, null)).slice(0, 2400));
-  console.log("\n=== 监控页 ===\n" + strip(probe.renderMonitorWith(real, who, project?.id)).slice(0, 1600));
+  console.log("\n=== 监控页 ===\n" + strip(probe.renderMonitorWith(real, who, project?.id)).slice(0, 1200));
+  // 其余各页走通用入口。渲染不出来（抛异常）本身就是发现：真实数据里有夹具没有的组合。
+  for (const page of ["proj-overview", "review", "directives", "orgs", "agents", "rules", "system", "proj-settings"]) {
+    try {
+      // renderFullPageWith 不返回 HTML，它把内容写进 documentRoot（render() 的副作用）。
+      // 拿返回值当 HTML 的话每一页都打印 "undefined"，看着像页面是空的（第一版就是这样）。
+      probe.renderFullPageWith(real, who, project?.id, page);
+      const text = strip(documentRoot.innerHTML || documentRoot.textContent || "");
+      console.log(`\n=== ${page} ===\n` + (text.slice(0, 900) || "（空）"));
+    } catch (error) {
+      console.log(`\n=== ${page} === 渲染抛异常：${String(error?.message || error).slice(0, 160)}`);
+    }
+  }
   process.exit(0);
 }
 

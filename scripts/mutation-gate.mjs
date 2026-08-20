@@ -2962,6 +2962,14 @@ const MUTATIONS = [
     expect: "一个「报文里的 X」都没认出来"
   },
   {
+    name: "登录失败不得记成「已驳回」（那是审批用语）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: 'audit(state, "auth-service", "auth_login", `Account:${email}`, "credentials_invalid");',
+    to: 'audit(state, "auth-service", "auth_login", `Account:${email}`, "denied");',
+    expect: "台账上记成"
+  },
+  {
     name: "百分比不得裸用 0 兜底（没上报过≠上报了 0）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyMeasurementsDoNotFakeZero",
