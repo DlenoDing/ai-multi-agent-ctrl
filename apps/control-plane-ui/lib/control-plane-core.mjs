@@ -5421,7 +5421,7 @@ export function decideHumanConfirmation(state, requestId, decision = {}, options
   });
   delete request.awaitingAiAnalysis;
   request.updatedAt = at;
-  // 人一旦定稿：把这次确认的内容摘要锁死。后续 AI 想改实质内容，必须重新走人工确认（见 assertHumanFinalization）。
+  // 人一旦定稿：把这次确认的内容摘要锁死。后续 AI 想改实质内容，必须重新走人工确认（见 applyHumanFinalization）。
   if (request.decisionClass === "major") applyHumanFinalization(state, request, actor, at, action);
   if (request.dispatchId) {
     const dispatch = (state.agentDispatches || []).find((item) => item.dispatchId === request.dispatchId);

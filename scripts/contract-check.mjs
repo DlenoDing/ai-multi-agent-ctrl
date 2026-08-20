@@ -160,7 +160,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 process.env.AIMAC_PROJECT_EVENT_FSYNC = "false";
 // 在制品上限默认 16（零 agent 时的队头），而本门有好几条断言要造出几百个派发才压得到
 // 【别的】上限（契约 160、派发裁剪、阻塞提示）—— 默认额度会把它们压成空转。
-// 这里整体放开，在制品上限本身由下面 wipCapacityContract() 单独把额度调小来验，
+// 这里整体放开，在制品上限本身由下面 verifyWipCapacityBackpressure 等四条判据单独把额度调小来验，
 // 不是把它关掉了事。
 process.env.AIMAC_WIP_QUEUE_HEAD = "100000";
 const seedState = loadJson("data/seed-state.json");
@@ -346,6 +346,7 @@ run(verifyEnvValuesAreNotSilentlyClamped);
 run(verifyMutationsAreRegisteredAgainstTheRightGate);
 run(verifyMeasurementsDoNotFakeZero);
 run(verifyCommentsDoNotCiteLineNumbers);
+run(verifyGateReferencesResolve);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5521,6 +5522,41 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 读者顺着指过去落在一段无关代码上，分不清是注释旧了还是自己数错了，比没有引用更坏。
 // 本仓实测：三处这样的引用，三处全指错了（100%）。改用标识符名，它可 grep、跟着重命名一起动。
 // 本门自己的正则不会喂饱自己：模式里 序数字 后面跟的是反斜杠，不是数字。
+// 注释和登记理由里说"这条由某判据守着"，那个判据必须真的存在 —— 指针失效的覆盖承诺比没有承诺更坏：
+// 读的人会据此认为这块已经有人管了。本仓实测 105 条判据、注释里引用一处失效（是合法的历史注记）。
+// 允许的例外只有一种：点名一个【已删除/已改名】的判据，并在同一行说出它已经没了。
+// 这不是白名单 —— 说清楚"它没了"的注记本来就该保留，它记的正是"这块现在归谁管"。
+// 变异登记表要排除，理由同 verifyCommentsDoNotCiteLineNumbers：它存锚点文本不存主张。
+function verifyGateReferencesResolve(output) {
+  const walk = (dir) => readdirSync(dir).flatMap((name) => {
+    const full = join(dir, name);
+    if (name === "node_modules" || name === ".git") return [];
+    return statSync(full).isDirectory() ? walk(full) : [full];
+  });
+  const files = [...walk(join(root, "scripts")), ...walk(join(root, "apps"))]
+    .filter((file) => /\.(mjs|js)$/u.test(file) && !file.endsWith("mutation-gate.mjs"))
+    .map((file) => [file.slice(root.length + 1), readFileSync(file, "utf8")]);
+  const declared = new Set();
+  for (const [, src] of files) {
+    for (const match of src.matchAll(/function\s+(verify[A-Za-z0-9]+)/gu)) declared.add(match[1]);
+  }
+  const stale = [];
+  for (const [rel, src] of files) {
+    const lines = src.split("\n");
+    lines.forEach((line, index) => {
+      if (/已删除|已改名|已并入/u.test(line)) return;
+      for (const match of line.matchAll(/\b(verify[A-Z][A-Za-z0-9]+)\b/gu)) {
+        if (!declared.has(match[1])) stale.push(`${rel}:${index + 1}: ${match[1]}`);
+      }
+    });
+  }
+  if (stale.length) {
+    output.push("这些地方点名了一条【不存在】的判据 —— 失效的覆盖承诺会让人以为这块已经有人管：\n  "
+      + stale.join("\n  "));
+  }
+  console.log(`判据引用：${declared.size} 条判据，引用里 ${stale.length} 处指向不存在的判据（应为 0）`);
+}
+
 function verifyCommentsDoNotCiteLineNumbers(output) {
   const walk = (dir) => readdirSync(dir).flatMap((name) => {
     const full = join(dir, name);

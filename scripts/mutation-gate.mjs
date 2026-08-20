@@ -2986,6 +2986,22 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "点名的判据必须真存在（失效的覆盖承诺＝以为有人管）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyGateReferencesResolve",
+    from: "见 applyHumanFinalization",
+    to: "见 verifyHumanFinalizationIsLocked",
+    expect: "点名了一条【不存在】的判据"
+  },
+  {
+    name: "历史注记是被规则豁免、不是被扫描漏掉（去掉'已删除'就该红）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyGateReferencesResolve",
+    from: "已删除：它测的是本文件自造的一段模拟",
+    to: "不再有：它测的是本文件自造的一段模拟",
+    expect: "点名了一条【不存在】的判据"
+  },
+  {
     name: "注释不得用行号指代代码（行号会漂，引用却看着仍权威）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyCommentsDoNotCiteLineNumbers",
