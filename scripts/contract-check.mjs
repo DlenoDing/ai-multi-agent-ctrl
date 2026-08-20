@@ -321,6 +321,7 @@ run(verifyStringListCapsShareOneSource);
 run(verifyBothOwnerGrantWritersRefreshPermissions);
 run(verifyBothWorkItemWritersHonourSettledTaskGroups);
 run(verifyServerFieldsReachThePerson);
+run(verifyMessagesDoNotPointAtInvisibleFields);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5410,6 +5411,27 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // ① 归档写失败过（archiveFault）—— 人在专门查历史的那一屏毫无察觉；
 // ② 哈希链只校验了尾部一窗（windowTruncated/bytesScanned/fileBytes）—— 那一屏照说"未发现改动"。
 // 两次都是"接口早就在说，只是没人接"。这道判据就是把这句话变成会报红的东西。
+// 【中文文案里点名的字段，界面必须真的显示它】。`state_storage_corrupt` 的文案写着
+// "报文里的 file 指出是哪一份，按它恢复" —— 而前端原先根本不显示 file，那句话把人指向
+// 一个他看不到的东西（造了一次真的状态损坏才发现）。文案与渲染是两个人写的，最容易脱节。
+function verifyMessagesDoNotPointAtInvisibleFields(output) {
+  const dict = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8").replace(/\/\/[^\n]*/gu, "");
+  // 文案里以"报文里的 X"/"响应里的 X"/"X 指出"这种方式点名的字段
+  const named = new Set();
+  for (const match of dict.matchAll(/(?:报文里的|响应里的|回执里的)\s*([a-zA-Z][a-zA-Z0-9_]{2,})/gu)) named.add(match[1]);
+  if (!named.size) {
+    console.log("文案点名字段：词表里没有「报文里的 X」这种写法，本条无事可做");
+    return;
+  }
+  for (const field of [...named].sort()) {
+    if (new RegExp(`payload\\.${field}\\b`).test(app)) continue;
+    output.push(`词表里让人去看报文里的 ${field}，而控制台一处都没显示它 —— `
+      + "那句话把人指向一个他看不到的东西");
+  }
+  console.log(`文案点名字段：${named.size} 个逐个核对（${[...named].sort().join("、")}）`);
+}
+
 function verifyServerFieldsReachThePerson(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
   const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8").replace(/\/\/[^\n]*/gu, "");
@@ -5469,8 +5491,6 @@ function verifyServerFieldsReachThePerson(output) {
     sharedDefinition: "共享定义对象回显",
     systemUpgradeCandidate: "升级候选对象回显",
     topology: "执行拓扑对象回显",
-    code: "状态读不出来时的底层错误码，与 file 一起给运维看日志；界面另有 hint 那句人话",
-    file: "状态读不出来时指向哪一份文件，同上"
   };
   // 只取【顶层】字段：嵌套对象里的键（诊断结构里的 code/file 之类）不是拒绝报文的字段，
   // 混进来会让这道门发出一堆假警报，而假警报的下场是被人随手登记掉（登记就此失去意义）。
@@ -5822,7 +5842,7 @@ function verifySharedJsonWritesAreAtomic(output) {
 
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 40;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 39;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];

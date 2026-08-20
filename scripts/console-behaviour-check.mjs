@@ -724,7 +724,12 @@ async function runErrorGuidanceCase() {
     {payload: {error: "checkpoint_tree_digest_mismatch", expected: "git-tree:aaa", actual: "git-tree:bbb"},
       expect: "应为 git-tree:aaa，实际 git-tree:bbb"},
     {payload: {error: "human_confirmation_already_decided", subjectRef: "WorkItem:w_api"},
-      expect: "这张卡管的是：WorkItem:w_api"}
+      expect: "这张卡管的是：WorkItem:w_api"},
+    // state_storage_corrupt 的中文明写着"报文里的 file 指出是哪一份" —— 那就必须真的显示出来，
+    // 否则这句话把人指向一个他看不到的东西（造了一次真损坏才发现）。
+    {payload: {error: "state_storage_corrupt", kind: "control_plane_state_corrupt", file: "control-plane-state.json"},
+      expect: "涉及的文件：control-plane-state.json"},
+    {payload: {error: "state_storage_unavailable", code: "ENOSPC"}, expect: "系统错误码：ENOSPC"}
   ];
   for (const item of cases) {
     probe.setFetch(async () => ({ok: false, status: 409, statusText: "Conflict", json: async () => item.payload}));

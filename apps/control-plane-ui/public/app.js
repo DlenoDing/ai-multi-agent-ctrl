@@ -797,7 +797,12 @@ async function api(path, options = {}) {
         payload.commit ? `涉及的提交：${payload.commit}` : "",
         payload.directiveType ? `你发的指令类型：${payload.directiveType}` : "",
         // 定稿冲突时，这张卡管的是哪件事 —— 同一个人手上常同时挂着好几张，不说清就得逐张点开找。
-        payload.subjectRef ? `这张卡管的是：${payload.subjectRef}` : ""
+        payload.subjectRef ? `这张卡管的是：${payload.subjectRef}` : "",
+        // 状态损坏时的 file/kind：中文文案里明写着"报文里的 file 指出是哪一份"，
+        // 而前端原先根本不显示它 —— 那句话把人指向一个他看不到的东西（实测造了一次真损坏才发现）。
+        payload.file ? `涉及的文件：${payload.file}` : "",
+        payload.kind ? `故障类型：${payload.kind}` : "",
+        payload.code && typeof payload.code === "string" ? `系统错误码：${payload.code}` : ""
       ].map((item) => String(item || "").trim()).filter(Boolean);
       if (guidance.length) hint += `：${[...new Set(guidance)].join("；")}`;
     } catch {}

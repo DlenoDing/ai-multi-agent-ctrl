@@ -2944,6 +2944,14 @@ const MUTATIONS = [
     expect: "写锁形同虚设"
   },
   {
+    name: "文案点名的字段界面必须真的显示",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyMessagesDoNotPointAtInvisibleFields",
+    from: '        payload.file ? `涉及的文件：${payload.file}` : "",',
+    to: '        "",',
+    expect: "指向一个他看不到的东西"
+  },
+  {
     name: "抛错展开进报文的字段也要被门扫到",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyServerFieldsReachThePerson",
