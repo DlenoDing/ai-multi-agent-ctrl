@@ -649,7 +649,12 @@ function table(headers, bodyRows, options = {}) {
   const th = (headline) => (headline && typeof headline === "object" && "label" in headline)
     ? `<th class="${headline.c || ""}">${esc(headline.label)}</th>`
     : `<th>${esc(headline)}</th>`;
-  const emptyRow = `<tr><td class="empty-cell" colspan="${headers.length}">${esc(options.emptyText || "暂无数据")}</td></tr>`;
+  // 35 张表里 30 张没给 emptyText，于是加载失败时它们照样断言"暂无数据" ——
+  // 而顶部横幅同时在说"这一页没加载出来"。人信的是离数据最近的那一句。
+  // 这种"每个使用点自己记得传"的机制在本仓已经失效过一次（23 张表只有 5 张接上）；
+  // 这次把默认值本身改对：没传 emptyText 时也按【有没有加载失败】分开说。
+  const emptyRow = `<tr><td class="empty-cell" colspan="${headers.length}">`
+    + `${esc(options.emptyText || (lastError ? "这张表没能加载出来（原因见页面顶部的横幅）—— 不是「一条都没有」" : "暂无数据"))}</td></tr>`;
   const footer = options.moreText ? `<div class="table-more">${esc(options.moreText)}</div>` : "";
   return `
     <div class="table-scroll">

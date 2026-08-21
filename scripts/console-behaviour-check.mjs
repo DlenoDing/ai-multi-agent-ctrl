@@ -155,6 +155,7 @@ globalThis.__probe = {
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
   listEmptyText: (what, failure) => { lastError = failure; return listEmptyText(what); },
+  tableWith: (failure, headers, rows, options) => { lastError = failure; return table(headers, rows, options); },
   skillSourceNotice: (skillSources, roleSkills) => {
     state = {...state, skillSources, roleSkills};
     return String(renderSysSettings()).replace(/<[^>]+>/gu, " ").includes("系统内置技能")
@@ -1070,6 +1071,16 @@ async function runErrorGuidanceCase() {
   check("加载失败时空表说的是'没能加载出来'，不是'暂无数据'",
     /没能加载出来/u.test(emptyProbeReal.listEmptyText("成员列表", "500 server_error")),
     `失败时空表说的是：${JSON.stringify(emptyProbeReal.listEmptyText("成员列表", "500 server_error"))}`);
+  // 35 张表里 30 张没传 emptyText，走的是 table() 的默认值 —— 那句默认值原先永远是"暂无数据"，
+  // 于是加载失败时它照样在断言"确实一条都没有"。默认值本身要分开说，不能指望每个使用点记得传。
+  check("没传 emptyText 的表，加载失败时也不许说「暂无数据」",
+    /没能加载出来/u.test(emptyProbeReal.tableWith("500 server_error", ["列"], ""))
+      && !/暂无数据/u.test(emptyProbeReal.tableWith("500 server_error", ["列"], "")),
+    emptyProbeReal.tableWith("500 server_error", ["列"], "").replace(/<[^>]+>/gu, " ").trim().slice(0, 110));
+  check("没有加载失败时仍然说「暂无数据」（不许无中生有地报故障）",
+    /暂无数据/u.test(emptyProbeReal.tableWith("", ["列"], "")),
+    emptyProbeReal.tableWith("", ["列"], "").replace(/<[^>]+>/gu, " ").trim().slice(0, 110));
+
   check("没有失败时仍然说'暂无数据'（真的没有就是没有）",
     emptyProbeReal.listEmptyText("成员列表", "") === "暂无数据",
     `没有失败却说成：${JSON.stringify(emptyProbeReal.listEmptyText("成员列表", ""))}`);

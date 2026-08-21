@@ -3211,6 +3211,14 @@ const MUTATIONS = [
     expect: "一条系统规则都没有时要当成故障说"
   },
   {
+    name: "没传 emptyText 的表在加载失败时不许说「暂无数据」",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '${esc(options.emptyText || (lastError ? "这张表没能加载出来（原因见页面顶部的横幅）—— 不是「一条都没有」" : "暂无数据"))}',
+    to: '${esc(options.emptyText || "暂无数据")}',
+    expect: "加载失败时也不许说「暂无数据」"
+  },
+  {
     name: "项目设置页三块配置为空时必须自己说话",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
