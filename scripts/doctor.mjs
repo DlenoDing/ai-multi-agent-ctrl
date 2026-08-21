@@ -292,6 +292,11 @@ child.stderr.on("data", (chunk) => {
 });
 const exitPromise = once(child, "exit");
 
+// 主体断言抛错时，finally 里的断言会抛出【新的】错误，把真正的失败原因整个盖掉。
+// 实测：把服务端的口令比对改坏，主体那条「错的口令被放行了」确实抛了，
+// 而屏幕上只剩 finally 里那句「连续 12 次错误登录都没被限流」—— 人会去修限流。
+// 所以 finally 里只留清理；那组断言用这个标志守住：主体没跑完就不跑它，也不假装跑过。
+let mainBodyCompleted = false;
 try {
   const health = await waitForHealth(port);
   console.log(`control console health ok: ${health.status}`);
@@ -326,6 +331,17 @@ try {
   });
   if (ownerBootstrapDenied.response.status !== 401) {
     throw new Error(`expected bootstrap token to be rejected for user account, got ${ownerBootstrapDenied.response.status}`);
+  }
+  // 「错的口令必须被拒」此前没有独立断言：它确实会被限流那条撞出来，但报的是
+  // "连续 12 次错误登录都没被限流"，看到这句话的人会去修限流，而真相是【任何口令都能登进去】。
+  // 归错因的报文比不报更坏，所以这里单独点名一次。
+  const wrongSecret = await jsonFetch(port, "/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({email: "system.admin@local", token: "definitely-not-the-bootstrap-token"})
+  });
+  if (wrongSecret.response.status !== 401 || wrongSecret.payload?.error !== "invalid_credentials") {
+    throw new Error("错的口令被放行了 —— 口令比对失效，任何人都能登进系统管理员账号"
+      + `（期望 401 invalid_credentials，得到 ${wrongSecret.response.status} ${wrongSecret.payload?.error || ""}）`);
   }
   const systemAuth = await loginAs(port, "system.admin@local", "doctor-bootstrap-token");
   const auth = await loginAs(port, "owner@local", "doctor-workspace-token");
@@ -2862,11 +2878,14 @@ try {
     }
   }
 
+  mainBodyCompleted = true;
 } finally {
   // 【登录限流】。防爆破的实控件，而它一个断言都没有 —— 失效时所有正常登录照旧成功，
   // 只有"猜口令"这件事变得没有代价，屏幕上不会有任何异样。
   // 这一段【必须放在最后】：打满之后本机 IP 会被挡一分钟，放在中间会把后面所有登录一起拖垮。
-  {
+  if (!mainBodyCompleted) {
+    console.error("  --  主体断言已经失败，登录限流这一组本轮跳过（跑它只会用新的错误盖掉真正的原因）");
+  } else {
     const attempts = [];
     for (let index = 0; index < 12; index += 1) {
       attempts.push(await jsonFetch(port, "/api/auth/login", {

@@ -3291,6 +3291,26 @@ const MUTATIONS = [
     expect: "没说清本机被改成什么样"
   },
   {
+    // 口令比对失效＝任何口令都能登进系统管理员账号。此前它确实会被"限流没生效"那条撞出来，
+    // 但那句话把人支去修限流 —— 归错因的报文比不报更坏。现在有一条点名的断言。
+    name: "错的口令必须被拒（点名 invalid_credentials，不靠限流那条顺带撞出来）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    const bootstrapOk = method === "bootstrap_token" && digestOf(`bootstrap:${token}`) === config.bootstrapTokenHash;',
+    to: '    const bootstrapOk = method === "bootstrap_token";',
+    expect: "错的口令被放行了"
+  },
+  {
+    // 会话令牌比对失效＝任何令牌都会命中【第一个还活着的会话】，等于随便谁都能登进别人的账号。
+    // 这条有覆盖（退出登录后旧令牌必须失效那条断言抓得到），但一直没登记过判别力证明。
+    name: "会话令牌必须逐个比对摘要（否则任何令牌都命中第一个活会话）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "function authenticateRequest(req, state) {\n  const token = bearerToken(req);\n  if (!token) return null;\n  const tokenDigest = digestOf(`session:${token}`);\n  const session = (state.authSessions || []).find((item) => item.tokenDigest === tokenDigest",
+    to: "function authenticateRequest(req, state) {\n  const token = bearerToken(req);\n  if (!token) return null;\n  const tokenDigest = digestOf(`session:${token}`);\n  const session = (state.authSessions || []).find((item) => true",
+    expect: "expected revoked bearer to be rejected after logout"
+  },
+  {
     // 节点凭据摘要比对失效＝任何 aimac_node_ 开头的串都能冒充某个节点。
     // 此前三套 e2e 无一报红（只测了"不带令牌"）。
     name: "形状对、内容错的节点令牌不得被放行",
