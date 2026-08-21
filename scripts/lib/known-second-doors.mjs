@@ -41,6 +41,14 @@ export const KNOWN_SECOND_DOORS = {
     + "为真时 normalizeInvitedAccount 已提前返回。真正拦住越权邀请的是按系统作用域判权那道"
     + "（doctor 里有 403 policy_denied 的断言）。留着它是为两处口径漂开的那天，"
     + "「必须共用同一个谓词」由 verifyInviteEscalationGuardsShareOnePredicate 钉着",
+    agent_runtime_no_git_changes:
+    "本地工作器每趟都会重写产出清单，而清单里带 createdAt —— 于是总有一个文件在变，"
+    + "hasStaged 永远为真。产出内容一字未变时撞的是检查点那道 artifact_output_ref_not_changed_in_commit"
+    + "（有断言与变异守着）。留着它是防清单变成确定性内容的那天",
+    agent_runtime_executor_no_git_changes:
+    "要走到它，执行器得【声明了产出、却一行都没改】—— 而那正好先撞 declared_unchanged_paths"
+    + "（gitOutputPaths 里每一条都必须在 git 里真的变过）。那道报得更准：它能点出是哪个文件。"
+    + "留着它是防将来两处判据分开的那天",
     agent_runtime_executor_manifest_outside_allowlist:
     "gitOutputPaths = changedPaths ∪ artifactManifestRefs，所以清单路径先在【产出】那个循环里被查到，"
     + "agent_runtime_executor_output_outside_allowlist 先拒（实测）。两道判据逐字相同，"

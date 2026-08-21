@@ -10518,19 +10518,21 @@ function verifyLocalGitWorkerRefusesUnsafeRepositoryState(output) {
       return (result.results || [])[0] || {};
     };
 
-    // 正面对照先走：干净工作树 + 白名单对得上时，这一趟必须真的跑完（否则下面全是「永远失败」）。
-    const clean = reasonOf(() => {});
-    if (clean.status !== "completed") {
-      output.push(`本地 git 工作器: 一切正常时也没跑完（${clean.status}/${clean.reason}）—— `
-        + "下面几条断言测不出任何东西");
-    }
-    // 每个用例跑完都会在仓库里留下提交，把仓库复位到基线，各用例之间互不干扰。
+    // 基线要取在【任何一趟跑之前】：取在成功那趟之后的话，reset 回来时产出文件已经在仓库里、
+    // 内容还一模一样，后面每一趟都变成"一字未变"（第一版正是这样，正面对照当场失败）。
     const baseline = git("rev-parse", "HEAD");
     const reset = () => {
       execFileSync("git", ["reset", "-q", "--hard", baseline], {cwd: repo});
       execFileSync("git", ["clean", "-qfd"], {cwd: repo});
       writeFileSync(join(repo, ".aimac-verification-repository"), "contract-check\n");
+      execFileSync("git", ["push", "-q", "-f", "origin", `${baseline}:refs/heads/main`], {cwd: repo});
     };
+    // 正面对照：干净工作树 + 白名单对得上时，这一趟必须真的跑完（否则下面全是「永远失败」）。
+    const clean = reasonOf(() => {});
+    if (clean.status !== "completed") {
+      output.push(`本地 git 工作器: 一切正常时也没跑完（${clean.status}/${clean.reason}）—— `
+        + "下面几条断言测不出任何东西");
+    }
     reset();
 
     const cases = [
@@ -10553,10 +10555,25 @@ function verifyLocalGitWorkerRefusesUnsafeRepositoryState(output) {
       }
       reset();
     }
+    // 连跑两次：第二次写出的内容与第一次完全相同（产出与清单都由固定字段拼成），
+    // git 里一行都不会变。这一趟必须被判为"没有改动"，而不是提交一个空 commit 再上报成功 ——
+    // 那会在台账上留下一次"干过活"的记录，而实际什么都没发生。
+    const firstRun = reasonOf(() => {});
+    if (firstRun.status !== "completed") {
+      output.push(`本地 git 工作器: 复位后第一趟就没跑完（${firstRun.status}/${firstRun.reason}）—— 下面那条测不出东西`);
+    }
+    const secondRun = reasonOf(() => {});
+    // 撞的是检查点那道（产出被声称改过、diff 里却没有它）：清单里带 createdAt，
+    // 所以每趟总有一个文件在变，agent_runtime_no_git_changes 因此够不着，已登记。
+    if (secondRun.reason !== "artifact_output_ref_not_changed_in_commit") {
+      output.push(`本地 git 工作器: 内容一字未变的第二趟也被当成干完了活（${secondRun.reason || secondRun.status}）—— `
+        + "台账上会多出一次空提交，看起来像做了事");
+    }
+    reset();
   } finally {
     rmSync(workspace, {recursive: true, force: true});
   }
-  console.log("本地 git 工作器：工作树不干净/产出越界/清单越界 三种形状全拒，正常情形跑得完 —— 核过");
+  console.log("本地 git 工作器：工作树不干净/产出越界/清单越界/一字未变 四种形状全拒，正常情形跑得完 —— 核过");
 }
 
 function verifyExecutorBackedWorkerRefusesUnsafeOutput(output) {
@@ -10597,6 +10614,11 @@ function verifyExecutorBackedWorkerRefusesUnsafeOutput(output) {
       'const input = JSON.parse(readFileSync(0, "utf8"));',
       'const mode = process.env.CC_EXECUTOR_MODE || "ok";',
       'if (mode === "not_json") { process.stdout.write("这不是 JSON"); process.exit(0); }',
+      // 什么都不写，却声称自己交了产出 —— git 里一行都没变，这一趟必须被判为"没有改动"，
+      // 而不是提交一个空 commit 再上报成功。
+      'if (mode === "no_changes") { process.stdout.write(JSON.stringify({'
+        + 'gitOutputRefs: ["docs/executor-output.md"], artifactManifestRefs: ["docs/executor-manifest.json"],'
+        + ' changedPaths: []})); process.exit(0); }',
       'const written = [];',
       'const write = (rel, body) => {',
       '  mkdirSync(dirname(join(process.cwd(), rel)), {recursive: true});',
@@ -10676,7 +10698,11 @@ function verifyExecutorBackedWorkerRefusesUnsafeOutput(output) {
       ["执行前工作树就不干净", "agent_runtime_executor_requires_clean_worktree", "ok", () => {
         writeFileSync(join(repo, "docs/someone-elses-work.md"), "别人还没提交的改动\n");
       }],
-      ["会话上没有任务合同", "task_contract_missing_for_executor", "ok", ({state}) => { state.agentTaskContracts = []; }]
+      ["会话上没有任务合同", "task_contract_missing_for_executor", "ok", ({state}) => { state.agentTaskContracts = []; }],
+      // 一行都没改却上报成功：撞的是【声称改了却没改】那道（它更靠前，且报得更准 ——
+      // 它能点出是哪个文件）。agent_runtime_executor_no_git_changes 因此够不着，已登记。
+      ["执行器一行都没改却上报成功", "agent_runtime_executor_declared_unchanged_paths:docs/executor-manifest.json",
+        "no_changes", () => {}]
     ];
     for (const [what, expected, mode, tune] of cases) {
       const got = runOnce(mode, tune);
@@ -10692,7 +10718,7 @@ function verifyExecutorBackedWorkerRefusesUnsafeOutput(output) {
     delete process.env.CC_EXECUTOR_MODE;
     rmSync(workspace, {recursive: true, force: true});
   }
-  console.log("外部执行器：非 JSON/无清单/产出越界/清单越界(撞产出那道)/工作树脏/无任务合同 六种形状全拒，合规结果照收 —— 核过");
+  console.log("外部执行器：非 JSON/无清单/产出越界/清单越界(撞产出那道)/工作树脏/无任务合同 七种形状全拒，合规结果照收 —— 核过");
 }
 
 function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {

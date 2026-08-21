@@ -3385,6 +3385,22 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "产出一字未变时不得算作干完了活",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyLocalGitWorkerRefusesUnsafeRepositoryState",
+    from: "        return {valid: false, status: 409, error: \"artifact_output_ref_not_changed_in_commit\",",
+    to: "        return {valid: false, status: 409, error: \"artifact_output_ref_not_changed_in_commit_x\",",
+    expect: "也被当成干完了活"
+  },
+  {
+    name: "执行器声称改了的文件必须真的变过",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutorBackedWorkerRefusesUnsafeOutput",
+    from: "  if (missingDeclaredChanges.length) throw new Error(`agent_runtime_executor_declared_unchanged_paths:${missingDeclaredChanges.slice(0, 5).join(\",\")}`);",
+    to: "  if (false) throw new Error(`agent_runtime_executor_declared_unchanged_paths:${missingDeclaredChanges.slice(0, 5).join(\",\")}`);",
+    expect: "一行都没改却上报成功"
+  },
+  {
     name: "中央态不得被写回存储",
     file: "apps/control-plane-ui/lib/state-store.mjs",
     check: "verifyRuntimeJsonConflict",
