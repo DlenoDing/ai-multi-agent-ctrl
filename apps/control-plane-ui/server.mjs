@@ -1562,9 +1562,12 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     // 实测零节点时循环照样造出成千上万个 active 会话与租约，控制台看上去一片繁忙，
     // 而真相是没有任何东西在跑。节点明细只在 agent 页下发，这里不带。
     // 按项目切分之后再数：选中项目时，别的项目的节点不能算进这个项目的舰队。
+    // total 原先数的是【所有行，含已吊销】。界面拿它分岔："已注册 N 个，把降级的那台修好或重启"
+    // 与"一个都还没注册，按安装指引接一台" —— 三台全被吊销时会说前一句，让人去修一台不存在的机器。
+    // 已吊销的节点不再参与任何事，不该出现在这个分母里。
     fleet: {
       online: (scopeCollection(scoped.agentRuntimeNodes) || []).filter((node) => node.status === "online").length,
-      total: (scopeCollection(scoped.agentRuntimeNodes) || []).length
+      total: (scopeCollection(scoped.agentRuntimeNodes) || []).filter((node) => node.status !== "revoked").length
     },
     // 在制品额度（两个数字）。编排周期一旦按这个额度把单元判成 resource_queued，界面必须能说出
     // "为什么我的单元不动" —— 后端有闸而界面没有出口，等于这个闸对使用者不存在。
@@ -4944,7 +4947,8 @@ async function handleApi(req, res) {
         ...(storagePartial ? {partial: true} : {})},
       runtime: {
         onlineNodes: (state.agentRuntimeNodes || []).filter((node) => node.status === "online").length,
-        totalNodes: (state.agentRuntimeNodes || []).length,
+        // 同上：已吊销的不算在"在线 X/Y"的 Y 里，否则半年前吊销的节点会一直让这个比值难看。
+        totalNodes: (state.agentRuntimeNodes || []).filter((node) => node.status !== "revoked").length,
         organizations: state.organizations.length,
         projects: (state.projects || []).length,
         // 总数与"进行中"要分开给：重置运行态那个确认框问的是【会毁掉多少】，

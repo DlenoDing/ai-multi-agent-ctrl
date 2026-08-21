@@ -3171,6 +3171,14 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "已吊销的节点必须离开舰队分母（否则叫人去修一台不存在的机器）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "agent",
+    from: 'total: (scopeCollection(scoped.agentRuntimeNodes) || []).filter((node) => node.status !== "revoked").length',
+    to: "total: (scopeCollection(scoped.agentRuntimeNodes) || []).length",
+    expect: "舰队分母把已吊销的节点也算了进去"
+  },
+  {
     name: "在线节点的分母不许把已吊销的算进去（同屏两个分母各算各的）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

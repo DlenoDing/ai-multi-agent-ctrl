@@ -3234,7 +3234,7 @@ function fleetOfflineNotice() {
   return `<div class="notice warn-notice">这个项目有 ${esc(waiting)} 个派发在排队或执行中，`
     + `但【没有任何在线的 agent 节点】${total ? `（已注册 ${esc(total)} 个，此刻都不在线或已降级）` : "（一个都还没注册）"}：`
     + `这些活现在不会有任何进展，界面上的"执行中"只是挂着。`
-    + `先到 agent 页确认节点状态与自检结果${total ? "，把降级的那台修好或重启" : "，按安装指引接入一台"}。</div>`;
+    + `先到「AI 智能体」页确认节点状态与自检结果${total ? "，把降级的那台修好或重启" : "，按安装指引接入一台"}。</div>`;
 }
 
 // 人把方案「交回 AI 再分析」之后，卡片会停在 awaitingAiAnalysis 等着 agent 来回答。
@@ -3281,7 +3281,7 @@ function wipCapacityNotice(groups) {
     + `（在飞 ${esc(wip.inFlight)} / 上限 ${esc(wip.capacity)}）：`
     + `${queued ? `还有 ${esc(queued)} 个单元` : "后续单元"}会等额度，不会立刻派发。`
     + outlook
-    + `想让它跑得更宽，就到 agent 页多接入几台节点（每多一台在线节点，额度自动上调）。</div>`;
+    + `想让它跑得更宽，就到「AI 智能体」页多接入几台节点（每多一台在线节点，额度自动上调）。</div>`;
 }
 
 function aiAnalysisStalledNotice(requests) {

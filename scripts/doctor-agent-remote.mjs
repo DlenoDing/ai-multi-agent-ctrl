@@ -862,6 +862,24 @@ try {
 	    body: {status: "completed", result: {stopped: true}}
 	  });
 	  const postAckState = await json("/api/state", {token: login.sessionToken});
+	  // 被吊销的节点必须【离开舰队分母】。原先 fleet.total 数的是所有行，于是三台全吊销时
+	  // 界面会说"已注册 3 个，此刻都不在线或已降级，把降级的那台修好或重启" —— 让人去修
+	  // 一台不存在的机器；正确的话是"一个都还没注册，按安装指引接一台"。
+	  // fleet 只在项目视角的视图里下发（full 视图提前返回，不带它）—— 要按控制台真用的那个取。
+	  const fleetView = await json("/api/state?view=projects&projectId=prj_control_plane", {token: login.sessionToken});
+	  if (!fleetView.fleet) {
+	    throw new Error("projects 视图没有下发 fleet 计数 —— 舰队分母这条断言在空转");
+	  }
+	  const revokedNodes = (fleetView.agentRuntimeNodes || []).filter((node) => node.status === "revoked").length;
+	  if (!revokedNodes) {
+	    throw new Error("这一轮没有任何已吊销的节点 —— 舰队分母这条断言在空转（吊销流程可能没走到）");
+	  }
+	  const liveNodes = (fleetView.agentRuntimeNodes || []).filter((node) => node.status !== "revoked").length;
+	  if (fleetView.fleet.total !== liveNodes) {
+	    throw new Error(`舰队分母把已吊销的节点也算了进去（fleet.total=${fleetView.fleet.total}，`
+	      + `未吊销的只有 ${liveNodes}，已吊销 ${revokedNodes}）—— 界面会据此说"把降级的那台修好或重启"，`
+	      + "而那台机器已经不在了");
+	  }
 	  const requeuedDispatch = postAckState.agentDispatches.find((dispatch) => dispatch.dispatchId === revokedDispatchId);
 	  if (requeuedDispatch?.status !== "queued" || requeuedDispatch.assignedNodeId) {
 	    throw new Error("Agent node revocation ACK did not requeue the fenced dispatch");
