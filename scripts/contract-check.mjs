@@ -2677,6 +2677,34 @@ function verifyHumanAndOrganizationContracts(output) {
     let cbBundle = null;
     try { cbBundle = buildExecutionContentBundle(cbBundleState, cbBNode, "ws_bundle", {}); }
     catch (error) { output.push(`内容包: 无法构建内容包（${error.message}）—— 这条断言无从验证`); }
+    // 内容包里有人写的规则、定稿决策、任务合同 —— 谁能取到它，取决于下面这两道门，此前【零覆盖】。
+    // 派发不在 running、或者不是这个节点的、或者会话对不上，都不能给；合同/任务组缺了也不能给半份。
+    const bundleRefusal = (mutate, sessionId = "ws_bundle") => {
+      const st = structuredClone(cbBundleState);
+      mutate(st);
+      try {
+        buildExecutionContentBundle(st, st.agentRuntimeNodes[0], sessionId, {});
+        return null;
+      } catch (error) { return error.message; }
+    };
+    const bundleCases = [
+      ["派发已经结束", "content_bundle_dispatch_not_active", (st) => { st.agentDispatches[0].status = "succeeded"; }],
+      ["派发派给了别的节点", "content_bundle_dispatch_not_active", (st) => { st.agentDispatches[0].assignedNodeId = "node_someone_else"; }],
+      ["任务合同不见了", "content_bundle_context_missing", (st) => { st.agentTaskContracts = []; }],
+      ["任务组不见了", "content_bundle_context_missing", (st) => { st.taskGroups = st.taskGroups.filter((item) => item.id !== cbBTg.id); }]
+    ];
+    for (const [what, expected, mutate] of bundleCases) {
+      const got = bundleRefusal(mutate);
+      if (got !== expected) {
+        output.push(`内容包: ${what}时拿到的不是 ${expected}（实际 ${got || "照样把内容包给出去了"}）—— `
+          + "内容包里有人写下的三类规则、已定稿的决策和任务合同");
+      }
+    }
+    // 会话号猜错也不能给：这一条与上面同一道门，但走的是"这个节点确实有派发、只是不是这个会话"。
+    const wrongSession = bundleRefusal(() => {}, "ws_guessed");
+    if (wrongSession !== "content_bundle_dispatch_not_active") {
+      output.push(`内容包: 猜一个会话号就取到了内容包（${wrongSession || "照样给出去了"}）`);
+    }
     const cbBundlePaths = (cbBundle?.entries || []).map((entry) => entry.path);
     if (!cbBundlePaths.includes("task/confirmations.json")) {
       output.push("内容包: 人已经拍板的定稿决策没有进入下发给 agent 的内容包（执行方无从知道人决定了什么）");
@@ -5035,6 +5063,39 @@ function verifyAgentGatewayContracts(output) {
     }
     const controlCommand = createAgentControlCommand(state, node, {commandType: "refresh_profile", dispatchId: claimed.dispatch.dispatch.dispatchId}, {actor: "contract-check", idempotencyKey: "contract-control-command"}).command;
     validateSchema(controlCommand, agentControlCommandSchema, "AgentControlCommand", output);
+    // 控制命令是人按下"暂停/取消/恢复"那个杠杆的落点。这两道门此前【零覆盖】：
+    // 已吊销的节点不该再收命令；命令指向的派发不在这个节点手里（或压根没有）时不该排队 ——
+    // 否则人在界面上按了暂停，回执说排上了，而它对不上任何一次真在跑的派发。
+    const controlRefusal = (mutate, input) => {
+      const st = structuredClone(state);
+      const stNode = st.agentRuntimeNodes.find((item) => item.nodeId === node.nodeId);
+      mutate(st, stNode);
+      const before = (st.agentControlCommands || []).length;
+      try {
+        createAgentControlCommand(st, stNode, input, {actor: "acct_alice"});
+        return {refusal: null, queued: (st.agentControlCommands || []).length - before};
+      } catch (error) { return {refusal: error.message, queued: (st.agentControlCommands || []).length - before}; }
+    };
+    const liveDispatchId = claimed.dispatch.dispatch.dispatchId;
+    const controlCases = [
+      ["已吊销的节点", "agent_node_not_active", (st, stNode) => { stNode.status = "revoked"; },
+        {commandType: "pause_dispatch", dispatchId: liveDispatchId}],
+      ["指向别人派发的暂停", "control_dispatch_not_active", () => {},
+        {commandType: "pause_dispatch", dispatchId: "dsp_belongs_to_someone_else"}],
+      ["派发已经结束了还要取消", "control_dispatch_not_active", (st) => {
+        st.agentDispatches = (st.agentDispatches || []).filter((item) => item.dispatchId !== liveDispatchId);
+      }, {commandType: "cancel_dispatch", dispatchId: liveDispatchId}]
+    ];
+    for (const [what, expected, mutate, input] of controlCases) {
+      const got = controlRefusal(mutate, input);
+      if (got.refusal !== expected) {
+        output.push(`控制命令: ${what}拿到的不是 ${expected}（实际 ${got.refusal || "命令就这么排上了"}）—— `
+          + "人在界面上按了这个杠杆，回执说排上了，而它对不上任何一次真在跑的派发");
+      }
+      if (got.queued > 0) {
+        output.push(`控制命令: ${what}被拒了，队列里却仍多出 ${got.queued} 条命令 —— 节点下次拉取会收到一条谁也没想发的指令`);
+      }
+    }
     const pendingCommands = listAgentControlCommands(state, node, {afterSequence: 0});
     if (!pendingCommands.commands.some((command) => command.commandId === controlCommand.commandId)) output.push("Agent control channel did not return queued command");
     const acked = ackAgentControlCommand(state, node, controlCommand.commandId, {status: "completed", result: {profileDigest: node.profileDigest}}).command;
@@ -8574,7 +8635,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
   // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
   // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 76;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 72;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];

@@ -3385,6 +3385,38 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "已吊销的节点不得再收控制命令",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentGatewayContracts",
+    from: "  if (!node || node.status === \"revoked\") throw gatewayError(\"agent_node_not_active\", 409);",
+    to: "  if (!node) throw gatewayError(\"agent_node_not_active\", 409);",
+    expect: "拿到的不是 agent_node_not_active"
+  },
+  {
+    name: "控制命令必须对得上一次真在跑的派发",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentGatewayContracts",
+    from: "  if (!dispatch) throw gatewayError(\"control_dispatch_not_active\", 409);",
+    to: "  if (false) throw gatewayError(\"control_dispatch_not_active\", 409);",
+    expect: "拿到的不是 control_dispatch_not_active"
+  },
+  {
+    name: "内容包只发给正在跑这次派发的那个节点",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  const dispatch = (state.agentDispatches || []).find((item) => item.sessionId === sessionId && item.assignedNodeId === node.nodeId && item.status === \"running\");",
+    to: "  const dispatch = (state.agentDispatches || [])[0];",
+    expect: "拿到的不是 content_bundle_dispatch_not_active"
+  },
+  {
+    name: "上下文缺了就不许发半份内容包",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  if (!contract || !taskGroup) throw gatewayError(\"content_bundle_context_missing\", 409);",
+    to: "  if (false) throw gatewayError(\"content_bundle_context_missing\", 409);",
+    expect: "拿到的不是 content_bundle_context_missing"
+  },
+  {
     name: "邀请提权的两道门必须共用同一个谓词",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyInviteEscalationGuardsShareOnePredicate",
