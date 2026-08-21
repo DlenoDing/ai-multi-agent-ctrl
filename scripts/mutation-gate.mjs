@@ -3595,6 +3595,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "新增受阻原因必须有中文",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyBlockedReasonsAllHaveChinese",
+    from: "          workItem.blockedReason = \"dependency_abandoned\";",
+    to: "          workItem.blockedReason = \"brand_new_reason_code\";",
+    expect: "受阻原因没有中文"
+  },
+  {
+    name: "词表里摘掉受阻原因要被查出来",
+    file: "apps/control-plane-ui/public/i18n-zh.js",
+    check: "verifyBlockedReasonsAllHaveChinese",
+    from: "    dependency_abandoned: \"\u4f9d\u8d56\u5df2\u88ab\u653e\u5f03\",",
+    to: "    dependency_abandoned_x: \"\u4f9d\u8d56\u5df2\u88ab\u653e\u5f03\",",
+    expect: "受阻原因没有中文"
+  },
+  {
     name: "在制品提示要说清额度按什么算",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyWipHintMatchesHowCapacityIsCounted",

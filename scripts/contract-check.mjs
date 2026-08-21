@@ -397,6 +397,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyBlockedReasonsAllHaveChinese);
 run(verifyWipHintMatchesHowCapacityIsCounted);
 run(verifyTempGrantGuidePointsAtTheRightLever);
 run(verifyWipeWarningMatchesTheServerGuard);
@@ -10961,6 +10962,28 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyBlockedReasonsAllHaveChinese(output) {
+  // 「受阻原因」是人在"这东西为什么不动了"那一刻唯一能读到的一句话。它由产品代码写死，
+  // 界面走词表显示 —— 词表少一条，人看到的就是一个英文蛇形码。
+  // 按【产生它的那几行】枚举，不按词表反查：词表里多一条无害，产品里多一个没中文才是缺陷。
+  const dict = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
+  const values = new Set();
+  for (const rel of ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
+    "apps/control-plane-ui/server.mjs"]) {
+    const src = readFileSync(join(root, rel), "utf8");
+    for (const match of src.matchAll(/blockedReason\s*[:=]\s*"([a-z0-9_]+)"/gu)) values.add(match[1]);
+  }
+  if (values.size < 15) {
+    output.push(`只提取到 ${values.size} 个受阻原因（实际有二十多个）—— 这条判据的正则形状没对上，它在空转`);
+  }
+  const missing = [...values].filter((value) => !new RegExp(`^\\s{4}${value}:`, "mu").test(dict)).sort();
+  if (missing.length) {
+    output.push(`这些受阻原因没有中文：${missing.join("、")} —— `
+      + "人在「这东西为什么不动了」那一刻，读到的会是一个英文蛇形码");
+  }
+  console.log(`受阻原因：${values.size} 个取值逐个核对，都有中文`);
 }
 
 function verifyWipHintMatchesHowCapacityIsCounted(output) {
