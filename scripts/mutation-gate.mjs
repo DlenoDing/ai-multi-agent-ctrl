@@ -3291,6 +3291,22 @@ const MUTATIONS = [
     expect: "没说清本机被改成什么样"
   },
   {
+    name: "finally 里不许有不受守卫的 throw（会盖掉真正的失败原因）",
+    file: "scripts/doctor.mjs",
+    check: "verifyFinallyBlocksDoNotMaskFailures",
+    from: '  if (!mainBodyCompleted) {\n    console.error("  --  主体断言已经失败，登录限流这一组本轮跳过（跑它只会用新的错误盖掉真正的原因）");\n  } else {',
+    to: "  {",
+    expect: "不受守卫的 throw"
+  },
+  {
+    name: "finally 提取脱节要自报空转",
+    file: "scripts/contract-check.mjs",
+    check: "verifyFinallyBlocksDoNotMaskFailures",
+    from: "for (const match of text.matchAll(/\\}\\s*finally\\s*\\{/gu)) {",
+    to: "for (const match of text.matchAll(/\\}\\s*finallyX\\s*\\{/gu)) {",
+    expect: "本条在空转"
+  },
+  {
     // 口令比对失效＝任何口令都能登进系统管理员账号。此前它确实会被"限流没生效"那条撞出来，
     // 但那句话把人支去修限流 —— 归错因的报文比不报更坏。现在有一条点名的断言。
     name: "错的口令必须被拒（点名 invalid_credentials，不靠限流那条顺带撞出来）",

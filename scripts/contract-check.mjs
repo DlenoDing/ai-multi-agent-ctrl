@@ -403,6 +403,7 @@ run(verifyGitRefGuardsAgree);
 run(verifyGitRemoteGuardTwinsAgree);
 run(verifyGitStatusParsingSurvivesRealFilenames);
 run(verifyRejectionAssertionsNameTheirCode);
+run(verifyFinallyBlocksDoNotMaskFailures);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5915,6 +5916,43 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // 后一种绕开了棘轮，而它只验了"不是 200" —— 任何一种拒绝都能让它通过，包括【与被测守卫无关】
 // 的那种。实测撞过一次：「组织停用后不能改配置」那条，请求没带 expectedConfigVersion，
 // 被 428 挡下，于是把守卫整个删掉断言照样绿。
+// finally 里抛出的错误会【替换】主体已经抛出的那个：屏幕上只剩后抛的那句，人照着它去修另一件事。
+// 实测：把服务端口令比对改坏，主体那条「错的口令被放行了」确实抛了，看到的却是
+// 「连续 12 次错误登录都没被限流」—— 归错因的报文比不报更坏。
+// 规矩：finally 里只留清理；非要"最后跑"的断言用一个"主体跑完了吗"的标志守住，
+// 清理本身要报错也只在主体成功时上升为错误。判据认这个形状：finally 体里的 throw 必须被这类标志包着。
+function verifyFinallyBlocksDoNotMaskFailures(output) {
+  const files = ["scripts/doctor.mjs", "scripts/doctor-mcp.mjs", "scripts/doctor-agent-remote.mjs",
+    "scripts/idle-tick-gate.mjs", "scripts/crash-consistency-gate.mjs", "scripts/concurrent-writer-gate.mjs"];
+  let blocks = 0;
+  const bare = [];
+  for (const file of files) {
+    const text = readFileSync(join(root, file), "utf8");
+    for (const match of text.matchAll(/\}\s*finally\s*\{/gu)) {
+      blocks += 1;
+      // finally 体：从这里到缩进相同的收口。取个上限，够覆盖本仓最长的那个。
+      const body = text.slice(match.index, match.index + 2500);
+      const end = body.indexOf("\n}\n") >= 0 ? body.indexOf("\n}\n") : body.length;
+      const scope = body.slice(0, end);
+      if (!/throw new Error/u.test(scope)) continue;
+      // 允许：throw 被"主体跑完了吗"这类标志守着（Passed / Completed / ok 结尾的布尔）。
+      // 守卫写法有 `if (mainBodyCompleted)` 也有 `if (!mainBodyCompleted) {...} else {...}`，
+      // 认名字不认句式（我第一版只认前者，把已经守好的那处判成裸 throw）。
+      if (/\b\w*(?:Passed|Completed|Succeeded)\b/u.test(scope) && /\bif \(/u.test(scope)) continue;
+      bare.push(`${file.split("/").pop()}:${text.slice(0, match.index).split("\n").length}`);
+    }
+  }
+  if (blocks < 8) {
+    output.push(`只扫到 ${blocks} 个 finally 块（应 ≥8）—— 提取脱节，本条在空转`);
+    return;
+  }
+  if (bare.length) {
+    output.push(`这些 finally 里有不受守卫的 throw：${bare.join("、")} —— `
+      + "主体断言失败时，它抛出的新错误会把真正的失败原因整个替换掉，人会照着它去修另一件事");
+  }
+  console.log(`finally 不许盖掉失败原因：${blocks} 个 finally 块逐个核对，${bare.length} 处有裸 throw（应为 0）`);
+}
+
 function verifyRejectionAssertionsNameTheirCode(output) {
   const files = ["scripts/doctor.mjs", "scripts/doctor-mcp.mjs", "scripts/doctor-agent-remote.mjs"];
   let scanned = 0;

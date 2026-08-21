@@ -2933,6 +2933,7 @@ try {
 // 而"这个特性根本没被跑过"正是本仓反复出现的形态。这里另起一台短周期的服务，**不发任何请求**，
 // 只看状态会不会自己往前走 —— 那才是"人建完任务组之后不必点任何东西"这句话的实际含义。
 {
+  let tickAssertionsPassed = false;
   const tickPort = port + 1;
   const tickChild = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
     cwd: root,
@@ -2960,6 +2961,7 @@ try {
       throw new Error(`autonomous orchestrator tick never advanced state on its own (stateVersion stayed ${before}) — a person who creates a task group would wait forever, because nothing drives the cycle: ${tickStderr.slice(0, 400)}`);
     }
     console.log("autonomous orchestrator tick ok: state advanced with no request made");
+    tickAssertionsPassed = true;
   } finally {
     // 无上限地等子进程退出 = 它一旦不理 SIGTERM，整个 e2e 就挂在这里，最后死于一句
     // "Detected unsettled top-level await"，看不出是谁没退出、也跑不到后面的检查
@@ -2977,7 +2979,15 @@ try {
         new Promise((resolve) => tickChild.on("exit", () => resolve(true))),
         new Promise((resolve) => setTimeout(() => resolve(false), 5000).unref())
       ]);
-      if (!killed) throw new Error("后台自治周期的子进程 SIGTERM 与 SIGKILL 都不退出 —— 它多半卡在磁盘或子进程上");
+      // 同一个坑的第二处：这是 finally 里的清理失败。上面那段断言若已经失败，
+      // 在这里再抛一个"子进程不退出"会把真正的原因盖掉。所以只在【断言过了】的情况下上升为错误，
+      // 否则降级成一行提示 —— 两件事都要说，但不能让清理问题冒充失败原因。
+      if (!killed) {
+        if (tickAssertionsPassed) {
+          throw new Error("后台自治周期的子进程 SIGTERM 与 SIGKILL 都不退出 —— 它多半卡在磁盘或子进程上");
+        }
+        console.error("  --  另外：后台自治周期的子进程 SIGTERM 与 SIGKILL 都不退出（这不是本轮失败的原因）");
+      }
       console.log("  --  后台自治周期的子进程没有响应 SIGTERM，已强制结束（10 秒内未退出）");
     }
   }
