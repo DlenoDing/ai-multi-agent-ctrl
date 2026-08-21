@@ -3561,6 +3561,22 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "新增写路由必须走守卫或登记替代鉴权",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyEveryWriteRouteIsGuardedOrRegistered",
+    from: "  if (req.method === \"POST\" && url.pathname === \"/api/auth/logout\") {",
+    to: "  if (req.method === \"POST\" && url.pathname === \"/api/danger/wipe\") {\n    state.projects = [];\n    json(res, 200, {ok: true});\n    return;\n  }\n  if (req.method === \"POST\" && url.pathname === \"/api/auth/logout\") {",
+    expect: "既没走 beginGuardedWrite、也没登记"
+  },
+  {
+    name: "已有写路由的守卫被拿掉要报红",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyEveryWriteRouteIsGuardedOrRegistered",
+    from: "    const guard = beginGuardedWrite(req, state, \"execution_topology_advance\"",
+    to: "    const guard = beginNothing(req, state, \"execution_topology_advance\"",
+    expect: "既没走 beginGuardedWrite、也没登记"
+  },
+  {
     name: "新增容量裁剪必须登记它保住什么",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyEveryCapExplainsWhatItKeeps",

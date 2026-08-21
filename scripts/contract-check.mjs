@@ -216,6 +216,23 @@ const CAP_FUNCTION_GUARDS = {
 };
 
 
+// 每一个写方法路由都要过 beginGuardedWrite（幂等、判权、留痕、CAS 都在里面）。
+// 走别的鉴权的登记在这里，并写明【它靠什么挡住未授权的人】—— 漏一个写路由的鉴权，
+// 是这个系统里最重的一类缺陷，而"现在就有十来个例外"会让任何扫描当场失效。
+const WRITE_ROUTES_WITHOUT_GUARDED_WRITE = {
+  "/api/agent/v1/register": "Agent Gateway：一次性加入令牌换节点凭据，registerAgentNode 里九道校验",
+  "/api/agent/v1/heartbeat": "Agent Gateway：节点令牌（authenticateAgentNode），非控制台主体",
+  "/api/agent/v1/self-check": "同上，节点令牌",
+  "/api/agent/v1/events": "同上，节点令牌；事件只写到自己那次派发上",
+  "/api/agent/v1/dispatches/next": "同上，节点令牌；认领时另有 claim 代次校验",
+  "/api/agent/v1/confirmations": "同上，节点令牌；确认单还要过 dispatch/taskGroup 归属校验",
+  nodeControlAckMatch: "Agent Gateway：节点令牌；只能回执自己那条命令（agent_control_command_not_found）",
+  nodeCheckpointMatch: "Agent Gateway：节点令牌；检查点另有整套产出/提交/推送校验",
+  nodeFailureMatch: "Agent Gateway：节点令牌；失败上报另有 claim 代次校验",
+  "/api/auth/logout": "会话本身就是凭据（authenticateRequest），撤销的是自己那条会话",
+  "/api/auth/change-password": "accountFromRequest 认证 + 旧密码校验；改的是自己的密码"
+};
+
 const seedState = loadJson("data/seed-state.json");
 const runtimeSchema = loadJson("spec/runtime-bootstrap.schema.json");
 const mcpGrantSchema = loadJson("spec/mcp-grant.schema.json");
@@ -371,6 +388,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyEveryWriteRouteIsGuardedOrRegistered);
 run(verifyEveryCapExplainsWhatItKeeps);
 run(verifyOneProjectWriteTouchesOneShard);
 run(verifyPanelGatesCoverEveryBlockInside);
@@ -10857,6 +10875,39 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyEveryWriteRouteIsGuardedOrRegistered(output) {
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const starts = [...server.matchAll(/\n  if \(req\.method === "(?:POST|PUT|PATCH|DELETE)"/gu)].map((match) => match.index);
+  const bounds = [...server.matchAll(/\n  (?:if \(req\.method|const \w+Match = )/gu)].map((match) => match.index);
+  if (starts.length < 40) {
+    output.push(`只切出 ${starts.length} 个写路由块（实际有八十来个）—— 这条判据的切法没对上，它在空转`);
+    console.log("写路由守卫：切法没对上");
+    return;
+  }
+  const unguarded = [];
+  for (const start of starts) {
+    const end = bounds.find((bound) => bound > start) ?? server.length;
+    const block = server.slice(start, end);
+    if (block.includes("beginGuardedWrite")) continue;
+    const condition = block.slice(0, block.indexOf(") {") + 1);
+    const key = /url\.pathname === "([^"]+)"/u.exec(condition)?.[1]
+      || /&&\s*(\w+Match)/u.exec(condition)?.[1]
+      || condition.slice(0, 60).replace(/\s+/gu, " ");
+    unguarded.push(key);
+  }
+  const unregistered = unguarded.filter((key) => !WRITE_ROUTES_WITHOUT_GUARDED_WRITE[key]).sort();
+  if (unregistered.length) {
+    output.push(`这些写路由既没走 beginGuardedWrite、也没登记它靠什么鉴权：${unregistered.join("、")} —— `
+      + "guarded write 里是幂等、判权、留痕、CAS 四样；绕开它就得说清这四样各由谁来做");
+  }
+  const stale = Object.keys(WRITE_ROUTES_WITHOUT_GUARDED_WRITE).filter((key) => !unguarded.includes(key)).sort();
+  if (stale.length) {
+    output.push(`登记表里这些路由已经不存在、或者已经改走 guarded write 了：${stale.join("、")} —— 登记过期，删掉它们`);
+  }
+  console.log(`写路由守卫：${starts.length} 个写路由块逐个核对，${starts.length - unguarded.length} 个走 guarded write、`
+    + `${unguarded.length} 个登记了替代鉴权`);
 }
 
 function verifyEveryCapExplainsWhatItKeeps(output) {
