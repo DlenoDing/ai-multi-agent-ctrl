@@ -353,6 +353,7 @@ run(verifyStorageFaultKindsHaveChinese);
 run(verifyEmptyTaskGroupIsNotComplete);
 run(verifyWholesaleConfigWritesArePreconditioned);
 run(verifyGatesDoNotCloneFromTheNetwork);
+run(verifyDocumentedApiPathsExist);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5559,6 +5560,54 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 慢（4~17s，随网速跳），而且让一道【静态门依赖外网】。
 // 71 处调用里 67 处早就关了，这道门是为了拦住第 68 处忘记关的。
 // 例外要有名有姓地登记，并写清为什么必须让它真的去同步。
+// 文档里点名的 /api/... 路径必须真的存在。core-control-plane-spec.md 自述是【终态规格】
+// （它自述"不区分先做/后做"），所以确实会写到还没建的接口 —— 但读者分不出哪些是活的，
+// 照着它接入的人会撞上 404。把"还没建"变成一个【有名有姓、看得见】的清单，而不是没人知道的事实。
+// 反向也要守：已经建好的接口必须从清单里摘掉，否则登记会留着骗人（今天刚清过一批过期登记）。
+function verifyDocumentedApiPathsExist(output) {
+  const NOT_YET_IMPLEMENTED = {
+    "/api/close-barriers/compute": "终态规格里的编排接口，当前由自治周期内部计算，没有对外路由",
+    "/api/completion-readiness/compute": "同上",
+    "/api/effective-instruction-packets": "指令包由派发时内部生成，没有对外的创建路由",
+    "/api/integration-batches": "集成批次实体尚未落地",
+    "/api/model-selection-decisions": "决策由 /api/model-selection/decide 产生，没有独立的集合路由",
+    "/api/role-drift-guards": "角色漂移防护由编排内部维护，没有对外路由",
+    "/api/role-drift-guards/:guardId/rebound": "同上",
+    "/api/runtime-issue-patterns": "模式由 /api/runtime-issues 归并产生，没有独立的集合路由",
+    "/api/session-placement-decisions": "放置决策由编排内部产生，没有独立的集合路由",
+    "/api/system-upgrade-candidates/import-external-result": "外部结果回填尚未落地"
+  };
+  const servers = ["apps/control-plane-ui/server.mjs", "apps/mcp-server/server.mjs"]
+    .map((file) => readFileSync(join(root, file), "utf8")).join("\n");
+  const documented = new Map();
+  for (const file of readdirSync(join(root, "docs")).filter((name) => name.endsWith(".md"))) {
+    const text = readFileSync(join(root, "docs", file), "utf8");
+    for (const match of text.matchAll(/(\/api\/[A-Za-z0-9/_:{}.-]+)/gu)) {
+      const path = match[1].replace(/[.,)`]+$/u, "");
+      if (!documented.has(path)) documented.set(path, file);
+    }
+  }
+  if (documented.size < 50) {
+    output.push(`文档里的 API 路径只提取到 ${documented.size} 条（应至少 50）—— 提取形状与文档脱节，本条在空转`);
+    return;
+  }
+  // 存在性判据：把 :id / {id} 这类占位段去掉，其余每一段都要在服务端源码里出现。
+  const liveInServer = (path) => path.split("/").filter((segment) => segment && !/^[:{]/u.test(segment))
+    .every((segment) => servers.includes(segment));
+  const missing = [...documented].filter(([path]) => !liveInServer(path) && !NOT_YET_IMPLEMENTED[path]);
+  if (missing.length) {
+    output.push("文档里点名的这些接口在服务端不存在，照着它接入的人会撞 404：\n  "
+      + missing.map(([path, file]) => `${path}（${file}）`).join("\n  ")
+      + "\n  要么建它，要么登记进 NOT_YET_IMPLEMENTED 并写明现在由什么代替");
+  }
+  const nowBuilt = Object.keys(NOT_YET_IMPLEMENTED).filter((path) => liveInServer(path));
+  if (nowBuilt.length) {
+    output.push(`这些接口已经建好了，登记要摘掉（留着会让人以为还没有）：${nowBuilt.join("、")}`);
+  }
+  console.log(`文档里的 API 路径：${documented.size} 条逐个核对，${missing.length} 条在服务端找不到（应为 0；`
+    + `另有 ${Object.keys(NOT_YET_IMPLEMENTED).length} 条登记为"终态规格里还没建的"）`);
+}
+
 function verifyGatesDoNotCloneFromTheNetwork(output) {
   const MUST_REALLY_SYNC = {
     verifySkillSourceRetireCascades:

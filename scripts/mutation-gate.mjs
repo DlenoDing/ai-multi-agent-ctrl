@@ -2986,6 +2986,22 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "文档点名的接口必须真存在（照着它接入的人会撞 404）",
+    file: "docs/core-control-plane-spec.md",
+    check: "verifyDocumentedApiPathsExist",
+    from: "| POST | `/api/integration-batches` | 创建集成批次 | release、orchestrator |",
+    to: "| POST | `/api/integration-batches-v2` | 创建集成批次 | release、orchestrator |",
+    expect: "撞 404"
+  },
+  {
+    name: "已经建好的接口要从'还没建'清单里摘掉（留着会骗人）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyDocumentedApiPathsExist",
+    from: "    \"/api/integration-batches\": \"集成批次实体尚未落地\",",
+    to: "    \"/api/orchestrator/run\": \"假装它还没建\",",
+    expect: "已经建好了"
+  },
+  {
     name: "暂停要说出叫停了几个在跑的派发（停住了与本来就没有是两件事）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
