@@ -7216,7 +7216,9 @@ function verifyServerFieldsReachThePerson(output) {
     // 404 回显的是【调用方自己发的那次请求】。控制台的报错横幅已经带上了它自己拼的请求路径
     // （requestPath），再从报文里取一遍是同一句话说两遍；这两个字段是给直接调接口的人/agent 看的。
     method: "404 回显调用方自己发的方法，给直接调接口的人/agent 排障用；控制台横幅另有 requestPath",
-    path: "同上，404 回显的请求路径",
+    // path 原先也登记在这里，而控制台其实一直在读它（产出目标被拒时那句"涉及的路径"）——
+    // 过期校验一上就逮到了。留着的害处不只是描述不实：它会替【将来任何叫 path 的字段】
+    // 永久豁免这道门。
     // 以下都是"把那条记录原样回显"，界面从 state 里取同一条渲染，不从拒绝报文里取：
     approvalRequest: "审批请求对象回显",
     finding: "缺陷对象回显",
@@ -7253,6 +7255,21 @@ function verifyServerFieldsReachThePerson(output) {
   if (refusalFields.size < 8) {
     output.push(`拒绝报文字段只提取到 ${refusalFields.size} 个 —— 提取多半失配，这一支在空转`);
     return;
+  }
+  // 登记册要配【过期校验】，否则它只增不减：字段改了名或不再出现，条目还留着，
+  // 下一个人读到的是一份说"这些字段是给机器看的"的清单，而其中几个字段早已不存在。
+  // 另一半更要紧：登记的字段后来被界面读了，那它就不再是"只给机器看"，登记该摘掉。
+  const staleRegistrations = Object.keys(REFUSAL_FIELDS_FOR_MACHINES)
+    .filter((name) => !refusalFields.has(name));
+  if (staleRegistrations.length) {
+    output.push(`REFUSAL_FIELDS_FOR_MACHINES 里这些字段已经不在任何拒绝报文里了，登记要摘掉：`
+      + `${staleRegistrations.join("、")}（留着会让人以为它们还在，而且会替将来同名的新字段挡掉这道门）`);
+  }
+  const nowShownToHumans = Object.keys(REFUSAL_FIELDS_FOR_MACHINES)
+    .filter((name) => refusalFields.has(name) && new RegExp(`payload\\.${name}\\b`).test(app));
+  if (nowShownToHumans.length) {
+    output.push(`这些字段登记着"只给机器看"，而控制台现在真的读了它们：${nowShownToHumans.join("、")}`
+      + " —— 登记要摘掉，否则它会替这些字段永久豁免这道门");
   }
   for (const name of [...refusalFields].sort()) {
     if (REFUSAL_FIELDS_FOR_MACHINES[name]) continue;

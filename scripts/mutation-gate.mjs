@@ -3171,6 +3171,22 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "登记为「只给机器看」的字段，界面一旦读了就该摘登记",
+    file: "scripts/contract-check.mjs",
+    check: "verifyServerFieldsReachThePerson",
+    from: '    method: "404 回显调用方自己发的方法，给直接调接口的人/agent 排障用；控制台横幅另有 requestPath",',
+    to: '    method: "404 回显调用方自己发的方法",\n    path: "同上，404 回显的请求路径",',
+    expect: "真的读了它们"
+  },
+  {
+    name: "登记册里已不存在的字段要被逮出来（否则它替同名新字段永久豁免）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyServerFieldsReachThePerson",
+    from: '    retryable: "重试建议，agent 运行时据此决定要不要退避",',
+    to: '    retryable: "重试建议，agent 运行时据此决定要不要退避",\n    zzzGoneField: "早就不存在了",',
+    expect: "已经不在任何拒绝报文里"
+  },
+  {
     name: "拒绝报文要说清这次到底执行了没有",
     file: "apps/control-plane-ui/public/i18n-zh.js",
     check: "verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect",
