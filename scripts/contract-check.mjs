@@ -62,6 +62,7 @@ import {
   findingSubmit,
   MAJOR_DECISION_TYPES,
   isHumanConfirmationActor,
+  capKeepingReferenced,
   canUseGitPath,
   isSafeGitRef,
   pathAllowlistValid,
@@ -329,6 +330,7 @@ run(verifyMcpSummaryIsActuallyASummary);
 run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
+run(verifyCapsKeepRecordsThatAreStillPointedAt);
 run(verifyCancelSettlesTheCellsResources);
 run(verifyAdmissionLedgerDoesNotGrowWithFlapping);
 run(verifyEveryCloseGateHasHumanGuidance);
@@ -9924,6 +9926,36 @@ function verifyCancelSettlesTheCellsResources(output) {
   if (pauseBranch(serverSource).includes("settleCellOwnedResources") || pauseBranch(gatewaySource).includes("settleCellOwnedResources")) {
     output.push("暂停也了结了资源 —— 暂停是可恢复的，把输出目标作废掉就恢复不回来了");
   }
+}
+
+// 容量裁剪按"最近 N 条"切，而【还被人指着的那一条】可能就在被切掉的那一段里：
+// 派发与会话都存着 modelSelectionDecisionRef，决策记录一旦被裁掉，那个引用就悬空 ——
+// 界面上点进去看"这次为什么选了这个模型"，得到的是空白，而记录曾经存在过。
+// capKeepingReferenced 就是为这件事写的，但它此前一个断言都没有：
+// 把它最后那句 `return stillReferenced.length ? [...] : kept;` 改成 `return kept;`，契约门 137 条全过。
+function verifyCapsKeepRecordsThatAreStillPointedAt(output) {
+  const items = Array.from({length: 10}, (_, index) => ({decisionId: `d${index}`}));
+  // 上限 3：d0..d2 留下，d3..d9 本该被裁。但 d7 还被指着，它必须活下来。
+  const kept = capKeepingReferenced(items, 3, new Set(["d7"]));
+  const ids = kept.map((item) => item.decisionId);
+  if (!ids.includes("d7")) {
+    output.push("还被指着的记录被容量裁掉了 —— 派发/会话上的 modelSelectionDecisionRef 会悬空，"
+      + "人点进去看「这次为什么选了这个模型」只会看到空白");
+  }
+  if (ids.length !== 4 || ids.slice(0, 3).join(",") !== "d0,d1,d2") {
+    output.push(`裁剪结果不对：${ids.join(",")}（应是 d0,d1,d2 再加上仍被引用的 d7）`);
+  }
+  // 反面：没人指着的时候不许多留 —— 否则这个上限形同虚设，集合会一直涨。
+  const plain = capKeepingReferenced(items, 3, new Set()).map((item) => item.decisionId);
+  if (plain.length !== 3) {
+    output.push(`没有任何引用时仍留下了 ${plain.length} 条（上限 3）—— 上限形同虚设，集合会一直涨`);
+  }
+  // 已经在保留窗口内的引用不许被重复添加一遍。
+  // 说明白：这一条今天【不承重】—— 把 capKeepingReferenced 里那句 `!keptIds.has(id)` 去掉，
+  // 它照样绿，因为 id 唯一时"窗口内"与"窗口外"不可能同时命中。留着是防 id 重复的那天。
+  const dup = capKeepingReferenced(items, 3, new Set(["d1"])).map((item) => item.decisionId);
+  if (dup.length !== 3) output.push(`窗口内的引用被重复留了一份：${dup.join(",")}`);
+  console.log("容量裁剪：仍被指着的记录留住、无人引用时不超额、窗口内的引用不重复 —— 三种形状都核过");
 }
 
 function verifyPerScopeRecordsSurviveTheirCap(output) {

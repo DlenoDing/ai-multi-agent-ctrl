@@ -3325,6 +3325,24 @@ const MUTATIONS = [
     expect: "链校验在空转"
   },
   {
+    // 派发与会话都存着 modelSelectionDecisionRef。被指着的那条决策一旦被容量裁掉，
+    // 引用就悬空：人点进去看"这次为什么选了这个模型"只会看到空白。
+    name: "容量裁剪必须留住仍被指着的记录",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyCapsKeepRecordsThatAreStillPointedAt",
+    from: "  return stillReferenced.length ? [...kept, ...stillReferenced] : kept;",
+    to: "  return kept;",
+    expect: "被容量裁掉了"
+  },
+  {
+    name: "容量上限不许形同虚设（没人引用时也不能全留）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyCapsKeepRecordsThatAreStillPointedAt",
+    from: "  const kept = items.slice(0, cap);",
+    to: "  const kept = items.slice(0);",
+    expect: "裁剪结果不对"
+  },
+  {
     // push 前的 claim 复核是另一扇门：checkpoint 路由自己也有一道陈旧代次检查，
     // 所以这一支此前零覆盖。它失效＝失联后恢复的节点先把提交推上去，事后才被拒。
     name: "push 前的 claim 复核必须拒陈旧代次",
