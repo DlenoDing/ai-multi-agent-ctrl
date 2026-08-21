@@ -2986,6 +2986,22 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "引用字段登记里的名字打错要被抓到（打错＝静默不查）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyLongLivedRecordsDoNotPointAtCappedOnes",
+    from: "    decisionRecordRef: \"decisionRecords\",",
+    to: "    decisionRef: \"decisionRecords\",",
+    expect: "根本不存在"
+  },
+  {
+    name: "长期记录不得指向有上限的集合（改对名字后这一项真的在查）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyLongLivedRecordsDoNotPointAtCappedOnes",
+    from: "  state.repositoryOutputs.push(target);",
+    to: "  state.repositoryOutputs.push({...target, decisionRecordRef: \"dr_x\"});",
+    expect: "指向有上限的 decisionRecords"
+  },
+  {
     name: "门里的编排周期不得联网同步（静态门不该依赖外网）",
     file: "scripts/contract-check.mjs",
     check: "verifyGatesDoNotCloneFromTheNetwork",

@@ -6075,11 +6075,19 @@ function verifyLongLivedRecordsDoNotPointAtCappedOnes(output) {
     return;
   }
   // 这些集合本身就是"最近 N 条"的性质，被挤掉是设计（人不会拿它们当事后凭据）。
+  // 字段名写错会让这一项【静默不查】：原先这里写的是 decisionRef / modelSelectionRef，
+  // 而真实字段叫 decisionRecordRef / modelSelectionDecisionRef —— 全仓一处都没有那两个名字，
+  // 于是三项里有两项一直在空跑，而门看起来覆盖了三项。下面那道守卫就是为了拦住这种打错。
   const REF_FIELDS_INTO_CAPPED = {
     policyDecisionRef: "policyDecisions",
-    decisionRef: "decisionRecords",
-    modelSelectionRef: "modelSelectionDecisions"
+    decisionRecordRef: "decisionRecords",
+    modelSelectionDecisionRef: "modelSelectionDecisions"
   };
+  const phantomFields = Object.keys(REF_FIELDS_INTO_CAPPED).filter((field) => !sources.includes(field));
+  if (phantomFields.length) {
+    output.push(`引用字段登记里这些名字在产品代码里根本不存在：${phantomFields.join("、")} —— `
+      + "名字打错的那一项会静默不查，而门看起来覆盖了它");
+  }
   const live = new Set(["accessGrants", "taskGroups", "projects", "accounts", "repositoryOutputs"]);
   const offenders = [];
   for (const [field, collection] of Object.entries(REF_FIELDS_INTO_CAPPED)) {
