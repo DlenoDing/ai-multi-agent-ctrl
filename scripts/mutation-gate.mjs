@@ -3267,6 +3267,22 @@ const MUTATIONS = [
     expect: "已经不在任何拒绝报文里"
   },
   {
+    name: "init 第一步失败不许抛裸栈（新人装第一次读的就是这几行）",
+    file: "scripts/init-control-plane.mjs",
+    check: "verifyInitFailsWithWordsNotAStackTrace",
+    from: "try {\n  mkdirSync(runtimeDir, { recursive: true });\n} catch (error) {",
+    to: "if (false) {\n  mkdirSync(runtimeDir, { recursive: true });\n} else if (mkdirSync(runtimeDir, { recursive: true })) {",
+    expect: "抛的是裸栈"
+  },
+  {
+    name: "init 失败要说清本机现在是什么状态",
+    file: "scripts/init-control-plane.mjs",
+    check: "verifyInitFailsWithWordsNotAStackTrace",
+    from: '  console.error("  · 这一步之前没有写过任何东西；排掉原因后重跑 npm run init 即可，不需要先清理");',
+    to: '  console.error("  · 排掉原因后重跑");',
+    expect: "本机现在是什么状态"
+  },
+  {
     name: "装机失败出口要交代本机被改成什么样了",
     file: "scripts/install-agent.sh",
     check: "verifyInstallScriptSaysWhatItLeftBehind",

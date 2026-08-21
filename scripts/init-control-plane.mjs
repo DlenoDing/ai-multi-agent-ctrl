@@ -64,7 +64,24 @@ function buildState() {
   return state;
 }
 
-mkdirSync(runtimeDir, { recursive: true });
+// 初始化的第一步就是建运行目录。它失败（只读挂载、权限、满盘）时原先直接把 Node 的栈抛出来：
+// 屏幕上是一句 EACCES 加一条绝对路径，而这【恰恰是新人装第一次】的时刻。
+// 要说清三件事：哪一步失败了、多半是什么原因、以及本机现在是什么状态（这一步之前什么都没写）。
+function failInit(step, error, hints) {
+  console.error(`init-control-plane: ${step}失败：${error?.code ? `${error.code} ` : ""}${error?.message || error}`);
+  for (const hint of hints) console.error(`  · ${hint}`);
+  console.error("  · 这一步之前没有写过任何东西；排掉原因后重跑 npm run init 即可，不需要先清理");
+  process.exit(1);
+}
+
+try {
+  mkdirSync(runtimeDir, { recursive: true });
+} catch (error) {
+  failInit(`建运行目录 ${runtimeDir}`, error, [
+    "只读挂载 / 权限不足 / 盘满都会走到这里；先确认这个路径所在的盘可写",
+    "要换个位置就设 AIMAC_RUNTIME_DIR 指向一个可写目录再重跑"
+  ]);
+}
 
 if (checkOnly) {
   const ready = storedStateExists(stateStoreOptions()) && existsSync(configPath);
@@ -75,7 +92,14 @@ if (checkOnly) {
 if (!force && storedStateExists(stateStoreOptions())) {
   console.log(`runtime state already exists: ${stateStoreKind() === "postgresql" ? "postgresql://aimac_control_plane_state/default" : statePath}`);
 } else {
-  writeStoredState(buildState(), stateStoreOptions());
+  try {
+    writeStoredState(buildState(), stateStoreOptions());
+  } catch (error) {
+    failInit("写运行时状态", error, [
+      "状态存储写不进去：盘满、权限，或 AIMAC_STATE_STORE 指向的后端连不上",
+      `当前存储后端：${stateStoreKind()}`
+    ]);
+  }
   console.log(`runtime state initialized: ${stateStoreKind() === "postgresql" ? "postgresql://aimac_control_plane_state/default" : statePath}`);
 }
 

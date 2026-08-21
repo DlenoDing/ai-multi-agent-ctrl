@@ -7,7 +7,7 @@ import { mcpServiceAllowedTools ,
 import { createHash } from "node:crypto";
 import { describePendingWreckage } from "./lib/mutation-wreckage.mjs";
 import { KNOWN_SECOND_DOORS } from "./lib/known-second-doors.mjs";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -382,6 +382,7 @@ run(verifyGuidanceNamesRealPages);
 run(verifyDangerousConfirmsStateTheConsequence);
 run(verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect);
 run(verifyInstallScriptSaysWhatItLeftBehind);
+run(verifyInitFailsWithWordsNotAStackTrace);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5810,6 +5811,40 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // 装机脚本是新节点的第一触点，而它半路失败时人最先想知道的是【这台机器现在是什么状态】：
 // 要不要先清理再重来？八个失败出口里原先只有三个说了这件事，其余四个只有一句
 // "Node.js 20 or newer is required"，人只能自己去猜有没有落下半个安装。
+// npm run init 是新人装第一次时敲的第一条命令。它的第一步（建运行目录）失败时原先直接抛
+// Node 的栈：屏幕上是 EACCES 加一条绝对路径，没有一句话说明这是什么、下一步做什么、
+// 本机现在是什么状态。这里【真的造一个不可写目录】跑一次，读它对人说的话。
+function verifyInitFailsWithWordsNotAStackTrace(output) {
+  const parent = mkdtempSync(join(tmpdir(), "aimac-init-ro-"));
+  try {
+    chmodSync(parent, 0o555);
+    const run = spawnSync(process.execPath, [join(root, "scripts/init-control-plane.mjs")], {
+      cwd: root, encoding: "utf8",
+      env: {...process.env, AIMAC_RUNTIME_DIR: join(parent, "sub"), AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: ""}
+    });
+    const said = `${run.stdout || ""}${run.stderr || ""}`;
+    if (run.status === 0) {
+      output.push("运行目录不可写，init 却报成功 —— 这一条在空转（多半是这台机器上 chmod 不生效，比如 root）");
+      return;
+    }
+    if (/at .*\.mjs:\d+/u.test(said) && !/init-control-plane: /u.test(said)) {
+      output.push(`init 失败时抛的是裸栈，没有人话：${said.split("\n")[0].slice(0, 100)}`);
+      return;
+    }
+    const missing = [];
+    if (!/建运行目录/u.test(said)) missing.push("哪一步失败了");
+    if (!/只读挂载|权限|盘满/u.test(said)) missing.push("多半是什么原因");
+    if (!/没有写过任何东西|不需要先清理/u.test(said)) missing.push("本机现在是什么状态");
+    if (missing.length) {
+      output.push(`init 失败的报文缺了：${missing.join("、")} —— 新人装第一次时读的就是这几行`);
+    }
+    console.log(`init 失败报文：真造了一个不可写的运行目录，它说清了「哪一步 / 为什么 / 本机没被动过」`);
+  } finally {
+    try { chmodSync(parent, 0o755); } catch { /* 尽力而为 */ }
+    rmSync(parent, {recursive: true, force: true});
+  }
+}
+
 function verifyInstallScriptSaysWhatItLeftBehind(output) {
   const lines = readFileSync(join(root, "scripts/install-agent.sh"), "utf8").split("\n");
   const exits = [];
