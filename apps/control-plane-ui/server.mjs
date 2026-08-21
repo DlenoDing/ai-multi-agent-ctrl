@@ -744,6 +744,10 @@ function normalizeInvitedAccount(input = {}, systemScoped = false, delegation = 
       permissions
     };
   }
+  // 这一行【当前恒为假】：上游 systemScopedInvite 用的就是 requestedSystemAccountInvite(body)，
+  // 为真时上面已经提前返回。它守的是那两处判定【漂开】的那天 —— 谁把上游换成别的口径
+  // （比如只看 accountType、不看 permissions），带 system:* 权限的邀请就会从项目这条路进来。
+  // 「两处必须同一个谓词」由 verifyInviteEscalationGuardsShareOnePredicate 钉着。
   if (requestedSystemAccountInvite(input)) throw new Error("project_invite_cannot_grant_system_account_or_permission");
   const shapeSafe = permissions.filter((permission) =>
     !permission.startsWith("system:") &&

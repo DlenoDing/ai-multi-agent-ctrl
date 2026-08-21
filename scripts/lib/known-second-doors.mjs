@@ -36,7 +36,12 @@ export const KNOWN_SECOND_DOORS = {
   project_id_required:
     "入参 schema 里 task_group_create 的 projectId 就是必填，"
     + "不给会先被 mcp_required_argument_missing 拒掉（e2e 里那条用例撞的正是它）",
-  execution_topology_requires_runner_and_isolation:
+  project_invite_cannot_grant_system_account_or_permission:
+    "恒为假：路由的 systemScopedInvite 用的就是同一个谓词 requestedSystemAccountInvite(body)，"
+    + "为真时 normalizeInvitedAccount 已提前返回。真正拦住越权邀请的是按系统作用域判权那道"
+    + "（doctor 里有 403 policy_denied 的断言）。留着它是为两处口径漂开的那天，"
+    + "「必须共用同一个谓词」由 verifyInviteEscalationGuardsShareOnePredicate 钉着",
+    execution_topology_requires_runner_and_isolation:
     "载体/隔离为 none 现在是资格检查阶段的阻塞项（2026-08-21 修正：原先只对多分支报，单分支方案会白定稿一场），"
     + "有阻塞项就不挂人工定稿单，start 先撞 execution_topology_requires_human_plan_confirmation；"
     + "先用合法载体走到定稿再改成 none 则先撞 human_finalized_decision_diverged。阻塞项那道有断言与变异守着",

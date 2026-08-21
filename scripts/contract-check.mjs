@@ -345,6 +345,7 @@ run(verifyMcpSummaryIsActuallyASummary);
 run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
+run(verifyInviteEscalationGuardsShareOnePredicate);
 run(verifyAgentJoinTokenIsSpentExactlyOnce);
 run(verifyServerSideAgentExecutionStaysOffOutsideVerification);
 run(verifyCapsKeepRecordsThatAreStillPointedAt);
@@ -10150,6 +10151,30 @@ function verifyHumanWrittenTextIsNeverSilentlyTruncated(output) {
       + "台账上记的与他写的不是一句话；改用 assertHumanTextWithinLimit（超了就拒，并说清超出多少）");
   }
   console.log(`人写文本不许静默截断：${guarded} 处走了长度校验，${truncated.length} 处仍在 slice 截断（应为 0）`);
+}
+
+function verifyInviteEscalationGuardsShareOnePredicate(output) {
+  // 「项目邀请不得铸出系统账号」有两道门：路由按 systemScopedInvite 走系统作用域判权（真正拦住的
+  // 是它），normalizeInvitedAccount 里还有一道兜底。兜底当前恒为假 —— 因为两处用【同一个谓词】。
+  // 那正是它能当兜底的前提：谁把上游换成别的口径，兜底立刻变成真的最后一道。这里钉住这个前提。
+  const src = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const upstream = src.match(/const systemScopedInvite = (\w+)\(/u);
+  if (!upstream) {
+    output.push("server.mjs 里找不到 systemScopedInvite 的计算 —— 这条判据的锚点漂了，它现在什么都没在查");
+  } else if (upstream[1] !== "requestedSystemAccountInvite") {
+    output.push(`路由用 ${upstream[1]}() 判"这是不是系统作用域的邀请"，而 normalizeInvitedAccount 的兜底用的是 `
+      + "requestedSystemAccountInvite() —— 两处口径一旦漂开，兜底守的就不是同一件事了，"
+      + "带 system:* 权限的邀请可能从项目这条路进来");
+  }
+  // 谓词本身必须同时看三样：账号类型、角色、权限前缀。少看一样就能从那一样绕过去。
+  const predicate = src.match(/function requestedSystemAccountInvite\([^)]*\)\s*\{([^]*?)\n\}/u)?.[1] || "";
+  for (const [what, needle] of [["账号类型", "system_admin"], ["角色", "roles"], ["权限前缀", "system:"]]) {
+    if (!predicate.includes(needle)) {
+      output.push(`requestedSystemAccountInvite 不再看${what}（找不到 ${needle}）—— 从这一样就能铸出一个系统账号`);
+    }
+  }
+  if (!predicate) output.push("读不到 requestedSystemAccountInvite 的函数体 —— 上面三条什么都没查");
+  console.log("邀请提权：路由与兜底共用同一个谓词、谓词同时看账号类型/角色/权限前缀 —— 核过");
 }
 
 function verifyAgentJoinTokenIsSpentExactlyOnce(output) {

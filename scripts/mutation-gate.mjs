@@ -3385,6 +3385,22 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "邀请提权的两道门必须共用同一个谓词",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyInviteEscalationGuardsShareOnePredicate",
+    from: "const systemScopedInvite = requestedSystemAccountInvite(body);",
+    to: "const systemScopedInvite = isSystemAccount(body);",
+    expect: "两处口径一旦漂开"
+  },
+  {
+    name: "识别系统邀请时不得漏看权限前缀",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyInviteEscalationGuardsShareOnePredicate",
+    from: "    permissions.some((permission) => permission === \"system:*\" || permission.startsWith(\"system:\"));",
+    to: "    false;",
+    expect: "不再看权限前缀"
+  },
+  {
     name: "认不出的令牌状态必须拒绝注册",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",
     check: "verifyAgentJoinTokenIsSpentExactlyOnce",
