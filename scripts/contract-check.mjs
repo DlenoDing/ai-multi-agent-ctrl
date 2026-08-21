@@ -4840,6 +4840,15 @@ function verifyRuntimeJsonConflict(output) {
     buildInitialState: () => ({stateVersion: 1, runtime: {}})
   };
   try {
+    // 中央态不含项目分片里的集合，拿它写回去会把全部项目分片删掉（PG 的 CAS 探针真这么清空过一次）。
+    // 这道门此前零覆盖 —— 它守的是"整批项目数据静默消失"。
+    let centralOnly = null;
+    try { writeStoredState({stateVersion: 1, runtime: {}, __centralOnly: true}, options); }
+    catch (error) { centralOnly = error.message; }
+    if (centralOnly !== "refusing_to_write_central_only_state") {
+      output.push(`拿中央态写回存储没有被拒（${centralOnly || "写进去了"}）—— `
+        + "中央态不含项目分片里的集合，这一写会把全部项目数据删掉，而且没有任何提示");
+    }
     writeStoredState({stateVersion: 1, runtime: {}}, options);
     const first = readStoredState(options);
     const second = readStoredState(options);
@@ -5166,10 +5175,27 @@ function verifyAgentGatewayContracts(output) {
     updatedAt: new Date().toISOString()
   });
   validateSchema(state.agentDispatches[0], agentDispatchSchema, "AgentDispatch", output);
-  try {
-    getSkillWorkset(state, registeredNode, contract.roleSkill.worksetId, {runtimeDir: join(root, ".runtime")});
-    output.push("Agent Gateway allowed skill workset download before dispatch claim");
-  } catch {}
+  // 原先是 catch {} —— 拒了就算过，比不出是这道门拒的还是别的门先拒（"拒了≠拒对了"）。
+  {
+    const beforeClaim = (() => {
+      try {
+        getSkillWorkset(state, registeredNode, contract.roleSkill.worksetId, {runtimeDir: join(root, ".runtime")});
+        return null;
+      } catch (error) { return error.message; }
+    })();
+    if (beforeClaim !== "skill_workset_not_found") {
+      output.push(`Agent Gateway: 派发还没被认领就能下载技能集（${beforeClaim || "下载成功"}）—— `
+        + "技能集里是这个角色的规则与项目定制，认领之前它不该属于任何节点");
+    }
+    // 另一种形状：派发在跑，但它是【别人的】。冒用一个 worksetId 就能读到别的节点的角色规则。
+    const foreignNode = {...registeredNode, nodeId: "node_not_the_owner"};
+    let foreign = null;
+    try { getSkillWorkset(state, foreignNode, contract.roleSkill.worksetId, {runtimeDir: join(root, ".runtime")}); }
+    catch (error) { foreign = error.message; }
+    if (foreign !== "skill_workset_not_found") {
+      output.push(`Agent Gateway: 别的节点也能下载这份技能集（${foreign || "下载成功"}）`);
+    }
+  }
   if (registered.gateway.mcpUrl !== "https://control.example.test/mcp") output.push("AgentRuntimeNode registration did not bind remote MCP URL");
   const node = registeredNode;
   const firstNodeToken = registered.nodeToken;
@@ -8848,7 +8874,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
   // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
   // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 29;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 26;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -10705,6 +10731,15 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     const st = fresh();
     const card = createHumanConfirmationRequest(st, {taskGroupId: tgId, decisionType: "work_item_verification",
       summary: "请确认这次验收", options: [{optionId: "accept", label: "通过"}]});
+    // 定稿时提交一个不在候选里的选项 —— 必须拒。放行的话定稿记录里会留下一个方案里没有的选择，
+    // 而"人选了什么"正是这张卡片存在的全部意义。
+    const bogusOption = refusalOf(() => decideHumanConfirmation(st, card.requestId,
+      {action: "finalize", selectedOptionId: "opt_从来没出现在这张卡上", expectedRound: 1},
+      {actor: (st.accounts.find((item) => item.accountType === "system_admin") || {}).accountId}));
+    if (bogusOption !== "human_confirmation_option_invalid") {
+      output.push(`人机协同入口: 定稿时提交了一个卡片上没有的选项（${bogusOption || "收下了"}）—— `
+        + "定稿记录里会留下一个方案里根本没有的选择");
+    }
     const emptySummary = refusalOf(() => submitAiConfirmationAnalysis(st, card.requestId,
       {assessment: "agree", summary: "  "}, {actor: "acct_agent_runtime"}));
     if (emptySummary !== "ai_analysis_summary_required") {
@@ -10730,7 +10765,7 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
         + "屏幕上那张卡会从「已处理」变回「等 AI 分析」");
     }
   }
-  console.log("人机协同入口：空问题/空选项/无项目/空指令/空分析/迟到的分析 六种形状全拒，正常输入照收 —— 核过");
+  console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
 }
 
 function verifyExecutionTopologyStateMachineRefusesBadTransitions(output) {

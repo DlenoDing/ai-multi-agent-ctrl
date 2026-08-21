@@ -3385,6 +3385,30 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "中央态不得被写回存储",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyRuntimeJsonConflict",
+    from: "  if (state && state.__centralOnly) {",
+    to: "  if (false) {",
+    expect: "拿中央态写回存储没有被拒"
+  },
+  {
+    name: "技能集只发给认领了这次派发的那个节点",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentGatewayContracts",
+    from: "  if (!dispatch) throw gatewayError(\"skill_workset_not_found\", 404);",
+    to: "  const dispatchOr = dispatch || (state.agentDispatches || [])[0];\n  if (!dispatchOr) throw gatewayError(\"skill_workset_not_found\", 404);",
+    expect: "能下载技能集"
+  },
+  {
+    name: "定稿不得提交卡片上没有的选项",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanCollaborationEntryPointsRefuseEmptyInput",
+    from: "  if (!option) throw Object.assign(new Error(\"human_confirmation_option_invalid\"), {status: 400});",
+    to: "  if (!option) return {ok: true};",
+    expect: "卡片上没有的选项"
+  },
+  {
     name: "没有任务合同的会话不得跑执行器",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyExecutorBackedWorkerRefusesUnsafeOutput",
