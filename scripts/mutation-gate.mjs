@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "读不出的运行时版本必须按过旧处理",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyOutdatedRuntimeIsFlaggedFailClosed",
+    from: "  if (a.some((part) => !Number.isFinite(part)) || a.length < b.length) return true; // \u7248\u672c\u53f7\u8bfb\u4e0d\u51fa\u6765\uff0c\u6309\u8fc7\u65e7\u5904\u7406",
+    to: "  if (a.some((part) => !Number.isFinite(part)) || a.length < b.length) return false;",
+    expect: "应为过旧"
+  },
+  {
+    name: "版本过旧的标签必须带到对外投影上",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyOutdatedRuntimeIsFlaggedFailClosed",
+    from: "  safe.runtimeOutdated = agentRuntimeOutdated(node);",
+    to: "  safe.runtimeOutdatedX = agentRuntimeOutdated(node);",
+    expect: "没有把 runtimeOutdated 带出去"
+  },
+  {
     name: "主视图不得带上界面从不读的大集合",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyViewDropsCollectionsNobodyReads",

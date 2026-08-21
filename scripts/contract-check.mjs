@@ -18,7 +18,7 @@ import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, diges
 import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps/control-plane-ui/lib/pg-sync-store.mjs";
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
 import { buildExecutionContentBundle as buildBundleForCheck, isSafeGitRemoteUrl } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
-import { publicAgentNode } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
+import { publicAgentNode, agentRuntimeOutdated, REQUIRED_AGENT_RUNTIME_VERSION } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import {
   summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs, capacitySnapshot
@@ -410,6 +410,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyOutdatedRuntimeIsFlaggedFailClosed);
 run(verifyViewDropsCollectionsNobodyReads);
 run(verifyConsoleDoesNotPullSkillBodies);
 run(verifyMachinePrincipalGuardsAreAllowlists);
@@ -10996,6 +10997,44 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyOutdatedRuntimeIsFlaggedFailClosed(output) {
+  // 低于 REQUIRED_AGENT_RUNTIME_VERSION 的节点不发认领代次：它的派发一旦被重新认领，
+  // 提交就会卡在 checkpoint_claim_epoch_required —— 活白干了。设计上选择【提示而不拦截】
+  // （界面上说清后果与出口），所以这个判定的准确性就是全部：判错了，人就收不到那句提示。
+  // 尤其是"版本号读不出来"必须按【过旧】处理 —— 认不出的东西倒向不利的那一侧。
+  const cases = [
+    ["比要求低", {runtimeVersion: "0.2.9"}, true],
+    ["正好等于要求", {runtimeVersion: REQUIRED_AGENT_RUNTIME_VERSION}, false],
+    ["高于要求", {runtimeVersion: "1.0.0"}, false],
+    ["次版本号更高", {runtimeVersion: "0.4.0"}, false],
+    ["修订号更高", {runtimeVersion: "0.3.1"}, false],
+    // 下面这些都是"读不出来"，必须一律判过旧，不能当成新版本放过去。
+    ["版本号缺失", {}, true],
+    ["版本号是空串", {runtimeVersion: ""}, true],
+    ["版本号是一句话", {runtimeVersion: "unknown"}, true],
+    ["版本号位数不够", {runtimeVersion: "0.3"}, true],
+    ["版本号带前缀", {runtimeVersion: "v0.9.0"}, true],
+    ["节点对象本身是空的", null, true]
+  ];
+  for (const [what, node, expected] of cases) {
+    const actual = agentRuntimeOutdated(node);
+    if (actual !== expected) {
+      output.push(`运行时版本判定：${what}（${JSON.stringify(node)}）判成了${actual ? "过旧" : "够新"}，`
+        + `应为${expected ? "过旧" : "够新"} —— `
+        + (expected
+          ? "认不出的版本号必须倒向「过旧」：判成够新的话，人收不到那句提示，"
+            + "而这台机器上的派发一旦被重新认领，提交就会被拒、活白干"
+          : "误判成过旧会让人去升级一台本来没问题的机器"));
+    }
+  }
+  // 这个标签必须真的挂到对外投影上 —— 判定对了但没带出去，界面还是什么都看不到。
+  const projected = publicAgentNode({nodeId: "n1", runtimeVersion: "0.1.0", status: "online"});
+  if (projected.runtimeOutdated !== true) {
+    output.push("publicAgentNode 没有把 runtimeOutdated 带出去 —— 判定算对了也没人看得到");
+  }
+  console.log(`运行时版本：${cases.length} 种取值逐个核对（读不出的一律按过旧），标签也确实带到了对外投影上`);
 }
 
 function verifyViewDropsCollectionsNobodyReads(output) {
