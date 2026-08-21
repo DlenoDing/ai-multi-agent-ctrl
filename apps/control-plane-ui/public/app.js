@@ -1219,6 +1219,7 @@ const SUBMIT_SUCCESS = {
   "upgrade-candidate-resolve": "已处置系统升级候选项",
   "shared-definition-resolve": "已处置共享定义契约",
   "topology-cancel": "已终止该执行方案：关闭门禁将在下一次重算时不再被它阻塞",
+  "topology-downgrade": "已降级为串行执行：该方案进入终态，关闭门禁将在下一次重算时不再被它阻塞",
   "close-task-group": "任务组已关闭"
 };
 
@@ -3904,6 +3905,13 @@ function renderMonitor() {
   const TOPOLOGY_CANCELLABLE = ["running", "integrating", "blocked", "needs_reconcile"];
   const stuckTopologies = (state.executionTopologies || [])
     .filter((item) => inScope(item) && TOPOLOGY_CANCELLABLE.includes(item.status)).slice(0, 8);
+  // 资格检查没过的方案是另一个死角，而且此前【整个界面都看不到它】：
+  //   start 被阻塞项挡下 · cancel 只从上面那四种状态走 · 于是后端唯一接受的出口是【降级为串行】。
+  // 人在任务组上只看到"存在阻塞 · N 项"一个红 chip，点不进去也不知道该做什么，
+  // 而 no_open_execution_topologies 会一直挡着关闭门（非终态）。降级后进入 downgraded 终态。
+  const downgradableTopologies = (state.executionTopologies || [])
+    .filter((item) => inScope(item) && item.status === "eligibility_checked" && (item.blockers || []).length)
+    .slice(0, 8);
   const canControlRules = hasPerm("task_group:control");   // rule_source_settle
   const canUpdateProject = hasPerm("project:update");      // shared_definition_resolve
   // 同段其余六处都按 inScope 过滤，唯独关闭门禁没有 —— 于是在项目 A 的监控页上会列出项目 B 的
@@ -3975,7 +3983,8 @@ function renderMonitor() {
     `, {wide: true, headerSide: filterInput("按门禁类型、工作项过滤…", "quality-gates")}) : "",
     // 关闭门禁上每一个阻塞项都必须能在这里被人处理掉。后端有杠杆而界面上没有入口，
     // 等于这个杠杆不存在 —— 人只会看到一个红 chip，然后无从下手。
-    (openReviewPlans.length || openRuleSources.length || blockingDefinitions.length || openReviewBundles.length || openUpgradeCandidates.length || stuckTopologies.length) ? panel("阻塞项人工处置", `
+    (openReviewPlans.length || openRuleSources.length || blockingDefinitions.length || openReviewBundles.length || openUpgradeCandidates.length || stuckTopologies.length
+      || downgradableTopologies.length) ? panel("阻塞项人工处置", `
       <div class="notice">下面这些阻塞只能由人来收尾：AI 要么不该有权决定（采纳规则、激活规范），要么已经无法推进（评审角色不再参与）。</div>
       ${(!canReviewGates && (openReviewPlans.length || openReviewBundles.length)) || (!canControlRules && (openRuleSources.length || openUpgradeCandidates.length)) || (!canUpdateProject && blockingDefinitions.length)
         ? `<div class="notice warn-notice">其中有些阻塞需要你没有的权限才能处置：评审计划/评审包需要「人工审核(task_group:review)」，规则来源/升级候选需要「任务组控制(task_group:control)」，共享定义契约需要「项目更新(project:update)」。这类权限只能在「项目成员授权」里按角色授予（例如"评审人"），请找项目负责人或组织管理员授予后再来。</div>`
@@ -4035,6 +4044,20 @@ function renderMonitor() {
               <div class="form-row"><label>处置</label>${decisionSelect("status", [["active", "激活为全局规范"], ["rejected", "驳回"], ["superseded", "被取代"], ["retired", "退役"]], "请选择处置…")}</div>
               <div class="form-row"><label>理由（必填）</label><input name="justification" placeholder="例如：已与相关方对齐，采纳为全局状态语义"></div>
               <button class="primary-button" type="submit">提交处置</button>
+            </form>`).join("")}
+        </div>` : ""}
+      ${canOrchestrate && downgradableTopologies.length ? `
+        <div class="record" style="margin-top:8px;">
+          <div class="record-title">资格检查没过的执行方案（这些阻塞项清不掉就启动不了；后端在这个阶段只接受【降级为串行】，不接受终止）</div>
+          ${downgradableTopologies.map((topology) => `
+            <form class="form-grid" data-form="topology-downgrade" data-request="${esc(topology.topologyId)}" style="margin-top:8px;">
+              <div class="record-meta"><span class="mono">${esc(topology.topologyId)}</span> · ${esc(taskGroupNameOf(topology.taskGroupId))} · ${badge(topology.status)}
+                · 工作项 <span class="mono">${esc(topology.workItemId || "-")}</span>
+                ${topology.humanFinalization?.outcome === "confirmed" ? " · " + customBadge("已由人定稿", "blue") : ""}</div>
+              <div class="small muted">卡在这几项：${(topology.blockers || [])
+                .slice(0, 6).map((blocker) => esc(topologyBlockerText(blocker))).join("；")}</div>
+              <div class="form-row"><label>降级理由（必填，会写进定稿记录）</label><input name="downgradeReason" placeholder="例如：这台机器上没有可用的隔离工作树，改为串行执行"></div>
+              <button class="primary-button" type="submit">降级为串行执行</button>
             </form>`).join("")}
         </div>` : ""}
       ${canOrchestrate && stuckTopologies.length ? `
@@ -4499,6 +4522,23 @@ document.addEventListener("submit", async (event) => {
         confirmText: "确认终止"
       }))) return "__skip_success__";
       await api(`/api/execution-topologies/${encodeURIComponent(form.dataset.request)}/advance`, {method: "POST", body: JSON.stringify({action: "cancel", cancelRef})});
+      await loadPage();
+      return;
+    }
+    if (kind === "topology-downgrade") {
+      const downgradeReason = String(data.downgradeReason || "").trim();
+      if (!downgradeReason) throw new Error("降级执行方案必须写明理由（它会写进定稿记录）");
+      // 降级是终态转移：方案不再按并行跑，也不能再启动。已定稿的方案由 AI 发起会被拦下并挂一张
+      // 新的确认单；这里是【人自己】在按，直接生效并改写定稿记录。
+      if (!(await confirmDialog({
+        title: "确认把该执行方案降级为串行",
+        message: "降级之后这个方案进入终态，不能再按并行启动或合并；若它已由人定稿，定稿记录会被改写为本次降级。",
+        sub: "这一步不可撤销。要按并行跑的话，得先把上面列出的阻塞项清掉，再重新提一份方案。",
+        danger: true,
+        confirmText: "确认降级"
+      }))) return "__skip_success__";
+      await api(`/api/execution-topologies/${encodeURIComponent(form.dataset.request)}/advance`,
+        {method: "POST", body: JSON.stringify({action: "downgrade", downgradeReason})});
       await loadPage();
       return;
     }

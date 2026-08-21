@@ -1496,6 +1496,20 @@ function runNoVisibleProjectCase() {
       /载体或隔离方式填的是/u.test(stuckText) && /一条验收项都没写/u.test(stuckText)
         && !/runner_or_isolation_none|no_acceptance_checks/u.test(stuckText),
       `人读到的是：${(/卡在这几项：([^<]{0,160})/u.exec(stuckText) || [])[1] || "（这一屏根本没渲染出来）"}`);
+    // 资格检查没过的方案此前【整个界面都看不到】：start 被阻塞项挡、cancel 只从 running 那四种
+    // 状态走，后端唯一接受的出口是降级为串行。人只看到任务组上"存在阻塞"一个红 chip，
+    // 点不进去也不知道该做什么，而这个方案是非终态，会一直挡着关闭门。
+    const eligibilityState = structuredClone(stuckState);
+    eligibilityState.executionTopologies[0].status = "eligibility_checked";
+    const eligibilityText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, eligibilityState, "monitor", "p1");
+    console.log("DBG elig text:", eligibilityText.slice(0, 400));
+    check("资格检查没过的执行方案要在界面上看得见（它是非终态，会一直挡着关闭门）",
+      /topo1/u.test(eligibilityText),
+      "界面上找不到它 —— 人只看到任务组「存在阻塞」，点不进去也不知道该做什么");
+    check("给的出口必须是后端在这个状态真接受的那一个（降级），而不是它会拒绝的终止",
+      /降级为串行执行/u.test(eligibilityText) && /降级理由/u.test(eligibilityText),
+      "没有降级入口 —— 后端有这条杠杆而界面上没有，等于这个杠杆不存在");
     // 中间那段是数据（分支 id），必须【原样】留着 —— 它是人定位到哪个分支的唯一线索。
     check("阻塞项里的分支 id 要原样显示，不要被当成枚举翻译掉",
       /b_api/u.test(stuckText),

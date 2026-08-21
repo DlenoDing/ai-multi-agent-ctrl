@@ -348,6 +348,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyPanelGatesCoverEveryBlockInside);
 run(verifyTopologyBlockerPartsAllHaveChinese);
 run(verifyExecutionTopologyStateMachineRefusesBadTransitions);
 run(verifyGateAssertionsMatchWholeRefusalCodes);
@@ -10831,6 +10832,36 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyPanelGatesCoverEveryBlockInside(output) {
+  // 「阻塞项人工处置」这个面板有一个总开关：任何一个集合非空就整块显示。往里加了一块、
+  // 却忘了把它的集合加进总开关 —— 那一块永远不显示，等于没加（2026-08-22 实测撞过一次：
+  // 降级入口写好了，人还是看不到）。总开关列的集合必须覆盖块内每一个 `xxx.length ?` 条件。
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const gateStart = app.indexOf('? panel("阻塞项人工处置"');
+  if (gateStart < 0) {
+    output.push("找不到「阻塞项人工处置」面板 —— 这条判据的锚点漂了，它现在什么都没在查");
+    console.log("阻塞项处置面板：锚点已漂");
+    return;
+  }
+  // 总开关：从这一行往前找到它所在表达式的开头（上一处 `\n    (`）。
+  const exprStart = app.lastIndexOf("\n    (", gateStart);
+  const gateExpr = app.slice(exprStart, gateStart);
+  const gateSets = new Set([...gateExpr.matchAll(/(\w+)\.length/gu)].map((match) => match[1]));
+  // 面板体：从 panel( 到这个 panel 的收尾（下一处 `\n    `), {wide` 或 `\n  ];`）。
+  const bodyEnd = app.indexOf("\n  ];", gateStart);
+  const body = app.slice(gateStart, bodyEnd < 0 ? gateStart + 6000 : bodyEnd);
+  const blockSets = new Set([...body.matchAll(/&&\s*(\w+)\.length\s*\?/gu)].map((match) => match[1]));
+  if (blockSets.size < 4) {
+    output.push(`面板里只认出 ${blockSets.size} 个条件块（实际有六七块）—— 这条判据的正则形状没对上，它在空转`);
+  }
+  const uncovered = [...blockSets].filter((name) => !gateSets.has(name)).sort();
+  if (uncovered.length) {
+    output.push(`「阻塞项人工处置」面板里这几块的集合没进总开关：${uncovered.join("、")} —— `
+      + "只有这几类阻塞时整块不显示，那一块等于没加（后端有杠杆而界面上没有入口）");
+  }
+  console.log(`阻塞项处置面板：总开关 ${gateSets.size} 个集合、面板里 ${blockSets.size} 个条件块，逐个核对`);
 }
 
 function verifyTopologyBlockerPartsAllHaveChinese(output) {

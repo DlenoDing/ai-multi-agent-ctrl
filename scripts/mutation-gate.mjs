@@ -3561,6 +3561,30 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "资格检查没过的方案必须在界面上看得见",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    .filter((item) => inScope(item) && item.status === \"eligibility_checked\" && (item.blockers || []).length)",
+    to: "    .filter(() => false)",
+    expect: "界面上找不到它"
+  },
+  {
+    name: "面板总开关漏掉一块等于那块没加",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "openUpgradeCandidates.length || stuckTopologies.length\n      || downgradableTopologies.length) ? panel(\"\u963b\u585e\u9879\u4eba\u5de5\u5904\u7f6e\", `",
+    to: "openUpgradeCandidates.length || stuckTopologies.length) ? panel(\"\u963b\u585e\u9879\u4eba\u5de5\u5904\u7f6e\", `",
+    expect: "界面上找不到它"
+  },
+  {
+    name: "面板开关判据自己不得空转",
+    file: "scripts/contract-check.mjs",
+    check: "verifyPanelGatesCoverEveryBlockInside",
+    from: "  const blockSets = new Set([...body.matchAll(/&&\\s*(\\w+)\\.length\\s*\\?/gu)].map((match) => match[1]));",
+    to: "  const blockSets = new Set([...body.matchAll(/&&\\s*(\\w+)\\.nosuchthing\\s*\\?/gu)].map((match) => match[1]));",
+    expect: "这条判据的正则形状没对上"
+  },
+  {
     name: "阻塞项的英文尾码必须翻成人话",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
