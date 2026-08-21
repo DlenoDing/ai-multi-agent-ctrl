@@ -686,6 +686,39 @@ try {
     const objects = barrier.payload?.closeBarrier?.blockingObjects || barrier.payload?.blockingObjects || [];
     return objects.map((item) => item.objectType);
   };
+  // 幂等记录按 key 全局存，命中后只比对 actor/action/bodyDigest 三样 —— 资源标识【不在其中】。
+  // 而有二十来条写路由的资源只出现在 URL 里、body 是空的：同一个人、同一个动作、同样的空 body，
+  // 对【两个不同对象】用同一个幂等键，第二次会拿到第一次的结果，那个对象根本没被处理过。
+  {
+    const sharedKey = "doctor-same-key-two-objects";
+    const first = await jsonFetch(port, "/api/task-groups/tg_runtime_management/close-barrier/compute", {
+      method: "POST",
+      headers: {"Idempotency-Key": sharedKey, authorization: reviewerAuth},
+      body: JSON.stringify({})
+    });
+    if (!first.response.ok) throw new Error(`幂等作用域探针的第一次调用就失败了（${first.response.status}）`);
+    const otherGroupId = (await jsonFetch(port, "/api/state", {headers: {authorization: systemAuth}}))
+      .payload?.taskGroups?.map((item) => item.id).find((id) => id !== "tg_runtime_management");
+    if (!otherGroupId) throw new Error("找不到第二个任务组 —— 这条断言无从验证");
+    const second = await jsonFetch(port, `/api/task-groups/${encodeURIComponent(otherGroupId)}/close-barrier/compute`, {
+      method: "POST",
+      headers: {"Idempotency-Key": sharedKey, authorization: reviewerAuth},
+      body: JSON.stringify({})
+    });
+    // 拒得对不对也要判：应当是"这个键已经用在别的对象上了"这一条，而不是碰巧撞上别的门。
+    if (second.response.status !== 409 || second.payload?.error !== "idempotency_key_reuse_conflict") {
+      throw new Error(`同一个幂等键换个对象再打，拿到的不是 409/idempotency_key_reuse_conflict`
+        + `（${second.response.status}/${second.payload?.error}）`);
+    }
+    const replayed = second.response.ok
+      && JSON.stringify(second.payload) === JSON.stringify(first.payload);
+    if (replayed) {
+      throw new Error(`同一个幂等键对两个不同任务组（tg_runtime_management → ${otherGroupId}）`
+        + "返回了同一份结果 —— 第二个任务组根本没被计算，而调用方拿到的是成功。"
+        + "幂等记录只比对 actor/action/bodyDigest，资源标识不在其中，而这类路由的资源只在 URL 里");
+    }
+  }
+
   const blockersBeforeResolve = await barrierBlockers("before");
   if (!blockersBeforeResolve.includes("ReviewPlan")) {
     throw new Error(`未决的评审计划没有出现在关闭门的阻塞项里（实得 ${[...new Set(blockersBeforeResolve)].join(",") || "空"}）—— 下面那条断言无从验证`);

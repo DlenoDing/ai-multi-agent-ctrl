@@ -3571,6 +3571,22 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "幂等命中要比对写的是哪个对象",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    const subjectChanged = existingRecord.subject !== undefined && existingRecord.subject !== subject;",
+    to: "    const subjectChanged = false;",
+    expect: "拿到的不是 409/idempotency_key_reuse_conflict"
+  },
+  {
+    name: "幂等记录必须记下写的是哪个对象",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "action: guard.command.type, subject: guard.command.subject, bodyDigest: guard.bodyDigest",
+    to: "action: guard.command.type, bodyDigest: guard.bodyDigest",
+    expect: "拿到的不是 409/idempotency_key_reuse_conflict"
+  },
+  {
     name: "选型决策的归属必须从任务组推出来",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyTaskGroupScopedWritesDeriveTheirProject",
@@ -4401,7 +4417,7 @@ const MUTATIONS = [
     name: "幂等键配了另一笔内容必须 409（否则拿到的是上一次的成功回执）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    from: "    if (existingRecord.actor !== actor || existingRecord.action !== action || existingRecord.bodyDigest !== bodyDigest) {",
+    from: "    if (existingRecord.actor !== actor || existingRecord.action !== action\n      || subjectChanged || existingRecord.bodyDigest !== bodyDigest) {",
     to: "    if (false) {",
     expect: "expected idempotency conflict 409"
   },

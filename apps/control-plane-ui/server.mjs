@@ -474,7 +474,11 @@ function beginGuardedWrite(req, state, action, subject, resourceScope = inferRes
   const bodyDigest = req.bodyDigest || digestOf("");
   const existingRecord = state.idempotencyRecords[idempotencyKey];
   if (existingRecord) {
-    if (existingRecord.actor !== actor || existingRecord.action !== action || existingRecord.bodyDigest !== bodyDigest) {
+    // subject 也要比：旧记录里没有这个字段时（本次改动之前写下的）跳过这一项，
+    // 否则升级那一刻所有在途的幂等键都会变成冲突。
+    const subjectChanged = existingRecord.subject !== undefined && existingRecord.subject !== subject;
+    if (existingRecord.actor !== actor || existingRecord.action !== action
+      || subjectChanged || existingRecord.bodyDigest !== bodyDigest) {
       return {status: 409, payload: {error: "idempotency_key_reuse_conflict"}};
     }
     // 响应体已过重放窗口时不能返回一个空的成功响应 —— 那看起来像原来那次调用的结果，
@@ -564,7 +568,10 @@ function finishGuardedWrite(state, guard, status, payload) {
     resultRef: `response:${guard.idempotencyKey}`
   });
   state.decisionRecords = state.decisionRecords.slice(0, 120);
-  state.idempotencyRecords[guard.idempotencyKey] = {status, payload, actor: guard.actor, action: guard.command.type, bodyDigest: guard.bodyDigest, createdAt: updatedAt};
+  // subject（这次写的是【哪个对象】）必须一起记下来。有二十来条写路由的资源只出现在 URL 里、
+  // body 是空的：同一个人、同一个动作、同样的空 body，对两个不同对象用同一个幂等键时，
+  // 第二次会命中第一次的记录并把那份结果原样返回 —— 而第二个对象根本没被处理过（实测复现）。
+  state.idempotencyRecords[guard.idempotencyKey] = {status, payload, actor: guard.actor, action: guard.command.type, subject: guard.command.subject, bodyDigest: guard.bodyDigest, createdAt: updatedAt};
   evictIdempotencyRecords(state);
   audit(state, "policy-engine", "policy_decision_allowed", guard.command.subject);
   audit(state, "command-bus", "command_succeeded", guard.command.subject);
