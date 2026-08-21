@@ -115,7 +115,8 @@ import {
   capKeepingReferenced,
   STRING_LIST_MAX_ITEMS,
   STRING_LIST_MAX_ITEM_LENGTH,
-  projectRepositories
+  projectRepositories,
+  isSafeGitRef
 } from "./lib/control-plane-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -2353,7 +2354,7 @@ async function prepareRemoteGitVerification(target, checkpointInput) {
     }
   }
   const branch = String(target.branch || "main");
-  if (!/^[A-Za-z0-9._\/-]+$/u.test(branch) || branch.startsWith("-") || branch.includes("..")) {
+  if (!isSafeGitRef(branch)) {
     const error = new Error("repository_output_target_unsafe_branch");
     error.status = 400;
     throw error;

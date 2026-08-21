@@ -6600,6 +6600,17 @@ export function canUseGitPath(path) {
   return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.startsWith("artifacts/") && !path.startsWith(".runtime/") && !path.startsWith("tmp/") && !path.includes("..");
 }
 
+// 分支/引用名会被原样交给 git。以 - 开头会被当成选项，空白与 ^~:?*[\\ 是 git 的引用语法字符。
+// 控制面这一侧收严到白名单字符集；agent 运行时是【单文件、只依赖 node 内置】的孪生实现，
+// 它自带一份检查（runtime.mjs 的 content_bundle_git_transfer_unsafe_ref），
+// 两份不能共用代码，但对危险形态的判断必须一致 —— 由 verifyGitRefGuardsAgree 交叉核对。
+export function isSafeGitRef(ref) {
+  const value = String(ref || "");
+  if (!value) return false;
+  if (value.startsWith("-") || value.includes("..")) return false;
+  return /^[A-Za-z0-9._/-]+$/u.test(value);
+}
+
 export function pathAllowlistValid(paths) {
   return Array.isArray(paths) && paths.length > 0 && paths.every(canUseGitPath);
 }

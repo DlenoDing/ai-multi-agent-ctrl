@@ -3302,6 +3302,38 @@ const MUTATIONS = [
     expect: "出现了别的租户的对象"
   },
   {
+    name: "引用名以 - 开头 / 含 .. 要拒（字符集白名单挡不住这两种）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyGitRefGuardsAgree",
+    from: '  if (value.startsWith("-") || value.includes("..")) return false;',
+    to: "  if (false) return false;",
+    expect: "判成安全"
+  },
+  {
+    name: "agent 那份孪生实现放宽了就要被交叉核对逮到",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyGitRefGuardsAgree",
+    from: '  if (ref.startsWith("-") || ref.includes("..") || /[\\s^~:?*[\\\\]/u.test(ref)) {',
+    to: '  if (ref.startsWith("-") || /[\\s^~:?*[\\\\]/u.test(ref)) {',
+    expect: "判断不一致"
+  },
+  {
+    name: "正常分支名不许被拒（拒了项目配不出产出目标）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyGitRefGuardsAgree",
+    from: "return /^[A-Za-z0-9._/-]+$/u.test(value);",
+    to: "return /^[A-Za-z0-9._]+$/u.test(value);",
+    expect: "正常分支名"
+  },
+  {
+    name: "提不出 agent 那份检查时要自报空转",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyGitRefGuardsAgree",
+    from: '  const ref = String(transfer.ref || "main");',
+    to: '  const ref = String(transfer.refX || "main");',
+    expect: "在空转"
+  },
+  {
     name: "产出路径不许向上穿越（写到仓库外面去）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyGitPathGuardRejectsEscapes",

@@ -762,7 +762,12 @@ function syncContentBundleGitTransfer(config, bundle, bundleDir) {
   const transferDir = join(bundleDir, "git-transfer");
   if (!inside(bundleDir, transferDir)) throw new Error("content_bundle_git_transfer_escapes_session");
   const ref = String(transfer.ref || "main");
-  if (ref.startsWith("-") || /[\s^~:?*[\\]/u.test(ref)) throw new Error("content_bundle_git_transfer_unsafe_ref");
+  // `..` 也要拒：git 的引用名本来就不允许它（check-ref-format），控制面那一侧（isSafeGitRef）
+  // 早就拒了 —— 这里漏掉的话，同一个 ref 控制面拒、agent 收下，然后在 git 那里以一句
+  // 难懂的错误失败。两份孪生实现对危险形态必须一致（contract-check 的 verifyGitRefGuardsAgree 交叉核对）。
+  if (ref.startsWith("-") || ref.includes("..") || /[\s^~:?*[\\]/u.test(ref)) {
+    throw new Error("content_bundle_git_transfer_unsafe_ref");
+  }
   const paths = (Array.isArray(transfer.paths) ? transfer.paths : []).filter((path) => typeof path === "string" && path && !path.startsWith("/") && !path.startsWith("-") && !path.includes("..") && !/[\0]/u.test(path));
   try {
     // Restrict git to safe network transports so a hostile repository URL cannot invoke a local command.

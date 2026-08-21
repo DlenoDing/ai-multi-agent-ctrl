@@ -63,6 +63,7 @@ import {
   MAJOR_DECISION_TYPES,
   isHumanConfirmationActor,
   canUseGitPath,
+  isSafeGitRef,
   pathAllowlistValid,
   pathMatchesAllowlist,
   TASK_GROUP_SETTLED_STATUSES,
@@ -398,6 +399,7 @@ run(verifyTerminalStatusListsAgree);
 run(verifyOnlyLiveHumanAccountsCanFinalize);
 run(verifyGitRemoteGuardRejectsCommandTransports);
 run(verifyGitPathGuardRejectsEscapes);
+run(verifyGitRefGuardsAgree);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5888,6 +5890,54 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // 拒绝绝对路径、`..` 穿越，以及三个不该被当成产出的目录（artifacts/ .runtime/ tmp/）。
 // 它此前一个直接断言都没有 —— 实测把 pathAllowlistValid 里的 every(canUseGitPath) 去掉，
 // 契约门 131 条全过。纯函数，直接把各种形状过一遍。
+// 分支/引用名会被原样交给 git：以 - 开头会被当成选项，空白与 ^~:?*[\\ 是引用语法字符。
+// 这条守卫有【两份实现】：控制面的 isSafeGitRef，和 agent 运行时里那一份 —— 后者是单文件、
+// 只依赖 node 内置的下发产物，共用不了代码。两份不必逐字相同（严的那份可以更严），
+// 但对【危险形态】的判断必须一致，否则控制面拒的东西 agent 照收，或者反过来。
+function verifyGitRefGuardsAgree(output) {
+  // 前两条专打那两个【额外条件】：`-main` 与 `a..b` 都通得过字符集白名单，
+  // 只有 startsWith("-") 和 includes("..") 拦得住它们。不放这两条的话，把那一行删掉判据也不红
+  //（白名单顺手挡住了别的所有形态）——第一版就是这样。
+  const dangerous = ["-main", "a..b", "--upload-pack=id", "-oProxyCommand=id", "a b", "a\tb",
+    "ref^1", "ref~2", "a:b", "a?b", "a*b", "a[b", "a\\b", ""];
+  const safe = ["main", "release/2026-08", "feature_x.1", "v1.0.0-rc1"];
+  for (const ref of dangerous) {
+    if (isSafeGitRef(ref)) output.push(`控制面把危险的引用名 ${JSON.stringify(ref)} 判成安全 —— 它会被原样交给 git`);
+  }
+  for (const ref of safe) {
+    if (!isSafeGitRef(ref)) output.push(`控制面把正常分支名 ${JSON.stringify(ref)} 判成不安全 —— 这个项目会配不出产出目标`);
+  }
+  // agent 那一份：从源码里把它的两个条件提出来跑同一张表。提取不到就直说，不要假装核过了。
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  // 从 `const ref = ...` 到抛 unsafe_ref 之间那一段就是它的检查体；把里面的条件逐个提出来跑。
+  // 不要写死成"某一行长什么样"：那样它换个写法（比如多加一个 includes(".."))判据就哑了。
+  const refAt = runtime.indexOf('const ref = String(transfer.ref || "main");');
+  const throwAt = runtime.indexOf("content_bundle_git_transfer_unsafe_ref", refAt);
+  const checkBody = refAt >= 0 && throwAt > refAt ? runtime.slice(refAt, throwAt) : "";
+  const patterns = [...checkBody.matchAll(/(\/(?:[^/\\\n]|\\.)+\/[a-z]*)\.test\(ref\)/gu)]
+    .map((hit) => new RegExp(hit[1].slice(1, hit[1].lastIndexOf("/")), hit[1].slice(hit[1].lastIndexOf("/") + 1)));
+  const literals = [...checkBody.matchAll(/ref\.(startsWith|includes)\("([^"]+)"\)/gu)]
+    .map((hit) => ({how: hit[1], text: hit[2]}));
+  if (!checkBody || (!patterns.length && !literals.length)) {
+    output.push("提不出 agent 运行时里那份引用名检查 —— 两份实现的交叉核对在空转（它被改写了？）");
+    return;
+  }
+  const agentRejects = (ref) => {
+    const value = String(ref);
+    if (literals.some((one) => one.how === "startsWith" ? value.startsWith(one.text) : value.includes(one.text))) return true;
+    return patterns.some((pattern) => pattern.test(value));
+  };
+  for (const ref of dangerous) {
+    if (ref === "") continue;  // agent 侧空值走 || "main" 兜底，不经过这道检查
+    if (!agentRejects(ref)) {
+      output.push(`agent 运行时会收下危险的引用名 ${JSON.stringify(ref)}，而控制面拒它 —— `
+        + "两份孪生实现对危险形态的判断不一致");
+    }
+  }
+  console.log(`引用名守卫：${dangerous.length} 种危险形态 + ${safe.length} 种正常分支名，`
+    + "控制面与 agent 运行时两份实现各跑一遍");
+}
+
 function verifyGitPathGuardRejectsEscapes(output) {
   const cases = [
     {path: "docs/design.md", ok: true, why: "普通相对路径"},
