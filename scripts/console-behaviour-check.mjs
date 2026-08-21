@@ -3723,6 +3723,8 @@ await runCodedApiErrorCase();
 }
 
   const pageTouchCounts = new Map();
+  const seenKeys = new Set();
+  const newKeysByState = new Map();
   const scanState = (label, state, account, projectId, pages) => {
     const tCalls = new Map();
     const context = vm.createContext(makeContext(el("div")));
@@ -3736,7 +3738,19 @@ await runCodedApiErrorCase();
     // 否则"渲染了 N 页、未命中 0 个"会被读成"N 页都查过了"。
     context.t = real.t;
     const inner = real.t;
-    context.window.AIMAC_I18N.t = (value) => { tCalls.set(pageId, (tCalls.get(pageId) || 0) + 1); return inner(value); };
+    context.window.AIMAC_I18N.t = (value) => {
+      tCalls.set(pageId, (tCalls.get(pageId) || 0) + 1);
+      // 记下这份状态让扫描【第一次】看到的枚举值。一份新加的夹具如果一个新键都没带来，
+      // 多半是它压根没渲染出来（状态取值不对、集合名写错），而扫描照样报"未命中 0 个"——
+      // 那读起来像"全查过了"。2026-08-22 实测踩过一次：executionTopologies 的 status 不在
+      // 可终止的四种之内，那一屏根本不渲染，摘掉中文也照样绿。
+      const key = String(value);
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        newKeysByState.set(label, (newKeysByState.get(label) || 0) + 1);
+      }
+      return inner(value);
+    };
     let pageId = "?";
     context.console = {log: () => {}, error: () => {}, warn: (message) => {
       const hit = /未映射的枚举值：(.+)$/u.exec(String(message));
@@ -3924,6 +3938,14 @@ await runCodedApiErrorCase();
   for (const [value, where] of misses) {
     failures.push(`漏译扫描: 中文界面上会显示英文枚举「${value}」（出现在 ${[...where].slice(0, 3).join("、")}）`
       + " —— 给它补中文，或者别把这个值直接交给 t()");
+  }
+  // 一份状态没带来任何新枚举值 = 它没有扩大扫描面。这不是判据（后加的状态可能只为补页面覆盖），
+  // 但必须报出来，否则"我加了夹具"与"那份夹具真渲染出来了"分不开。
+  const barrenStates = [...newKeysByState].filter(([, count]) => count === 0).map(([name]) => name);
+  const untouchedStates = i18nScanStates.map(([name]) => name).filter((name) => !newKeysByState.has(name));
+  if (barrenStates.length || untouchedStates.length) {
+    console.log(`  ..  这些夹具没给漏译扫描带来任何新枚举值：${[...barrenStates, ...untouchedStates].join("、")}`
+      + " —— 多半是那一屏没渲染出来（状态取值不对、集合名写错），不是「已经全覆盖了」");
   }
   const shellOnly = [...pageTouchCounts].filter(([, count]) => count <= Math.min(...pageTouchCounts.values()));
   console.log(`漏译扫描：用真的 t 渲染了 ${scanned.length} 个页面，未命中 ${misses.size} 个`
