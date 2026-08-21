@@ -3325,6 +3325,24 @@ const MUTATIONS = [
     expect: "链校验在空转"
   },
   {
+    // 规则状态认不出来时原先【默认成 active】：把 disabled 打错一个字母，那条规则不是被停用
+    // 而是照旧生效，而人以为自己关掉了它。安全规则上"以为关了其实没关"是最坏的一种默认。
+    name: "认不出的规则状态必须拒绝，不许默认成生效",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (rule.status !== undefined && !RULE_STATUSES.includes(rule.status)) return "rule_status_unknown";',
+    to: "    void 0;",
+    expect: "规则状态认不出来必须被拒"
+  },
+  {
+    name: "认不出的规则状态被拒时要给出合法清单",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '        ...(ruleErr === "rule_status_unknown" ? {allowedStatuses: RULE_STATUSES} : {})});\n    }\n    const guard = beginGuardedWrite(req, state, "project_config_update"',
+    to: '        ...({})});\n    }\n    const guard = beginGuardedWrite(req, state, "project_config_update"',
+    expect: "没给出合法的状态清单"
+  },
+  {
     // 派发与会话都存着 modelSelectionDecisionRef。被指着的那条决策一旦被容量裁掉，
     // 引用就悬空：人点进去看"这次为什么选了这个模型"只会看到空白。
     name: "容量裁剪必须留住仍被指着的记录",

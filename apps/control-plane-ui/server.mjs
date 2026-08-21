@@ -684,9 +684,17 @@ function ruleFragmentsRejection(value) {
     if (rule.ruleId !== undefined && String(rule.ruleId).length > 128) return "rule_id_too_long";
     if (rule.title !== undefined && String(rule.title).length > 256) return "rule_title_too_long";
     if (rule.content !== undefined && String(rule.content).length > 8192) return "rule_content_too_long";
+    // 认不出的状态原先在 sanitizeRuleFragments 里被【默认成 "active"】：把 disabled 打错一个字母
+    // （disable / Disabled / inactive），那条规则不是被停用，而是照旧生效 —— 而人以为自己关掉了它。
+    // 安全规则上"以为关了其实没关"和"以为开了其实没开"一样坏，所以这里拒绝，不猜。
+    if (rule.status !== undefined && !RULE_STATUSES.includes(rule.status)) return "rule_status_unknown";
   }
   return null;
 }
+
+// 规则的合法状态只有这三个。清单写一处：净化那边的兜底与校验这边的判定必须是同一份，
+// 否则"校验放过的"与"净化认得的"会分叉。
+const RULE_STATUSES = ["active", "draft", "disabled"];
 
 function sanitizeRuleFragments(value) {
   if (!Array.isArray(value)) return [];
@@ -695,7 +703,8 @@ function sanitizeRuleFragments(value) {
     if (rule.ruleId !== undefined) clean.ruleId = String(rule.ruleId).slice(0, 128);
     if (rule.title !== undefined) clean.title = String(rule.title).slice(0, 256);
     if (rule.content !== undefined) clean.content = String(rule.content).slice(0, 8192);
-    if (rule.status !== undefined) clean.status = ["active", "draft", "disabled"].includes(rule.status) ? rule.status : "active";
+    // 走到这里时状态一定合法（上面 ruleFragmentsRejection 已经拒过认不出的）。这句兜底是第二道门。
+    if (rule.status !== undefined) clean.status = RULE_STATUSES.includes(rule.status) ? rule.status : "active";
     if (rule.enabled !== undefined) clean.enabled = rule.enabled !== false;
     return clean;
   });
@@ -5418,7 +5427,11 @@ async function handleApi(req, res) {
   if (req.method === "POST" && projectConfigMatch) {
     if (projectHiddenFromActor(req, state, projectConfigMatch[1])) return json(res, 403, {error: "permission_denied"});
     const ruleErr = ruleFragmentsRejection(body.systemRules) || ruleFragmentsRejection(body.businessRules);
-    if (ruleErr) return json(res, 422, {error: ruleErr, limits: {rules: 200, title: 256, content: 8192}});
+    // 白名单式拒绝要把白名单一起给：只回一个 rule_status_unknown，调用方不知道该写什么。
+    if (ruleErr) {
+      return json(res, 422, {error: ruleErr, limits: {rules: 200, title: 256, content: 8192},
+        ...(ruleErr === "rule_status_unknown" ? {allowedStatuses: RULE_STATUSES} : {})});
+    }
     const guard = beginGuardedWrite(req, state, "project_config_update", `Project:${projectConfigMatch[1]}`, projectScope(projectConfigMatch[1]));
     if (guard.status) return json(res, guard.status, guard.payload);
     const project = state.projects.find((item) => item.id === projectConfigMatch[1]);
@@ -5456,7 +5469,11 @@ async function handleApi(req, res) {
   }
   if (req.method === "POST" && taskGroupConfigMatch) {
     const ruleErr = ruleFragmentsRejection(body.systemRules) || ruleFragmentsRejection(body.businessRules);
-    if (ruleErr) return json(res, 422, {error: ruleErr, limits: {rules: 200, title: 256, content: 8192}});
+    // 白名单式拒绝要把白名单一起给：只回一个 rule_status_unknown，调用方不知道该写什么。
+    if (ruleErr) {
+      return json(res, 422, {error: ruleErr, limits: {rules: 200, title: 256, content: 8192},
+        ...(ruleErr === "rule_status_unknown" ? {allowedStatuses: RULE_STATUSES} : {})});
+    }
     const guard = beginGuardedWrite(req, state, "task_group_config_update", `TaskGroup:${taskGroupConfigMatch[1]}`, taskGroupScope(state, taskGroupConfigMatch[1]));
     if (guard.status) return json(res, guard.status, guard.payload);
     const taskGroup = state.taskGroups.find((item) => item.id === taskGroupConfigMatch[1]);

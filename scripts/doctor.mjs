@@ -2053,6 +2053,17 @@ try {
     // 不带版本同样必须被拒 —— 否则任何忘了带的调用方都能绕过这道前提。
     expectStatus(await g2("/api/projects/prj_control_plane/config", auth, "cfg-noversion",
       {businessRules: []}), 409, "不带版本保存整份规则必须被拒", "config_version_required");
+    // 规则状态认不出来时必须【拒绝】，不能默认成 active：把 disabled 打错一个字母，
+    // 那条规则不是被停用而是照旧生效，而人以为自己关掉了它。
+    const beforeTypo = await jsonFetch(port, "/api/projects/prj_control_plane/config", {headers: {authorization: auth}});
+    const typoStatus = await g2("/api/projects/prj_control_plane/config", auth, "cfg-typo-status",
+      {businessRules: [{ruleId: "biz.typo", title: "打错状态", content: "x", status: "disable"}],
+        expectedConfigVersion: beforeTypo.payload.configVersion});
+    expectStatus(typoStatus, 422, "规则状态认不出来必须被拒（默认成 active＝你以为关掉的规则还在生效）",
+      "rule_status_unknown");
+    if (!Array.isArray(typoStatus.payload?.allowedStatuses)) {
+      throw new Error("拒了但没给出合法的状态清单 —— 调用方只能猜自己该写什么");
+    }
     const afterCfg = await jsonFetch(port, "/api/projects/prj_control_plane/config", {headers: {authorization: auth}});
     if (!(afterCfg.payload.config.businessRules || []).some((rule) => rule.ruleId === "biz.concurrent.a")) {
       throw new Error("A 写下的规则在并发保存之后消失了");

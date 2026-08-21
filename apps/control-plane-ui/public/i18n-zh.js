@@ -849,6 +849,7 @@
     organization_required: "缺少组织信息",
     org_member_not_found: "未找到组织成员",
 
+    rule_status_unknown: "规则状态认不出来：只能是 active（生效）、draft（草稿）、disabled（停用）。这次整批都没保存 —— 认不出的状态若按「生效」处理，你以为关掉的规则其实还在生效，所以宁可拒绝",
     rule_content_too_long: "规则内容过长（上限 8192 字），请精简后再保存",
     rule_title_too_long: "规则标题过长（上限 256 字）",
     rule_id_too_long: "规则标识过长（上限 128 字）",
