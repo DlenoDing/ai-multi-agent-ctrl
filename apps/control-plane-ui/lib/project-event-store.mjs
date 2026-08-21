@@ -575,7 +575,12 @@ function fsyncDirectory(path) {
     } finally {
       closeSync(fd);
     }
-  } catch {}
+  } catch {
+    // 目录 fsync 在有些平台/文件系统上本就不支持（macOS 上会 EINVAL/EACCES），
+    // 拿它当错误会让正常环境直接写不进事件。这里【只能】吞掉。
+    // 残留风险要说清：目录项没落盘时，刚轮转出来的那个新段文件可能在断电后不存在
+    //（段里的内容本身已经 fsync 过）。这是本存储在这些平台上的落盘保证上限，不是 bug。
+  }
 }
 
 function safeProjectId(projectId) {

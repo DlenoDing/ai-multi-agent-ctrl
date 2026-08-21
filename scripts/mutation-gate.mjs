@@ -3171,6 +3171,22 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "整个读不动的条目目录也要计数（只补里层会漏掉这一半）",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifySizeAccountingDoesNotSwallowFailures",
+    from: "      unsizedEntries += 1;",
+    to: "      void 0;",
+    expect: "没有计数"
+  },
+  {
+    name: "量不到的条目目录数了要报出来",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifySizeAccountingDoesNotSwallowFailures",
+    from: "  if (unsizedFiles || unsizedEntries) {",
+    to: "  if (unsizedFiles) {",
+    expect: "数了却没报出来"
+  },
+  {
     name: "按幂等键查找读到坏行不许静默（第三条读路径）",
     file: "apps/control-plane-ui/lib/project-event-store.mjs",
     check: "verifyCorruptEventLinesAreReported",

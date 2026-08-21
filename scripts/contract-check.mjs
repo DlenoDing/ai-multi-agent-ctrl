@@ -6166,6 +6166,19 @@ function verifySizeAccountingDoesNotSwallowFailures(output) {
   if (!/unsizedFiles/u.test(body)) {
     output.push("容量测量没有统计『量不到的文件』—— 算出来的总量是下限还是实际占用，人无从判断");
   }
+  // 两层都要数：里层是"这个文件量不到"，外层是"这个条目目录整个读不动"。
+  // 外层原先是 `catch {}`：不可读的大目录既不计入总量也进不了淘汰候选，淘汰因此永不触发，
+  // 而人看到的是"容量正常"。只补里层就会漏掉这一半（本仓上一轮正是只补了里层）。
+  // 判据要落在【那两处结构】上，不能只问"函数里出现过 unsizedEntries 吗" ——
+  // 声明行本身就含这个名字，把累加和上报都删掉它照样绿（第一版就是这样）。
+  const outerCatch = /entries\.push\([^)]*\);\s*\} catch \{([\s\S]{0,400}?)\n {4}\}/u.exec(body);
+  if (!outerCatch || !/unsizedEntries \+= 1/u.test(outerCatch[1])) {
+    output.push("条目目录整个读不动时没有计数（外层 catch 里没有 unsizedEntries += 1）—— "
+      + "一个不可读的大目录既不计入总量、也进不了淘汰候选，淘汰永不触发，而人看到的是「容量正常」");
+  }
+  if (!/if \(unsizedFiles \|\| unsizedEntries\)/u.test(body)) {
+    output.push("量不到的条目目录数了却没报出来 —— 数字只留在内存里，屏幕上还是那句「容量正常」");
+  }
   console.log(`容量测量：sweepLibraryOverCapacity 里 ${sizing.length} 处取大小，`
     + `量不到的文件已计数并如实上报（不当成 0）`);
 }

@@ -631,6 +631,7 @@ function sweepStaleSessionDirectories(config) {
 function sweepLibraryOverCapacity(config) {
   const maxBytes = Math.max(64, Number(process.env.AIMAC_AGENT_LIBRARY_MAX_MB || 2048)) * 1024 * 1024;
   let unsizedFiles = 0;
+  let unsizedEntries = 0;
   const libraryDir = join(config.workDir, "library");
   if (!existsSync(libraryDir)) return;
   const entries = [];
@@ -647,11 +648,19 @@ function sweepLibraryOverCapacity(config) {
         try { size += statSync(join(dir, file)).size; } catch { unsizedFiles += 1; }
       }
       entries.push({dir, size, mtimeMs: stat.mtimeMs});
-    } catch {}
+    } catch {
+      // 里层（单个文件量不到）已经计数了，外层原先是 `catch {}` —— 整个条目目录读不动时
+      // 它既不计入总量、也不进淘汰候选，而且【一个字都不说】。一个不可读的大目录会让
+      // 总量永远算不到上限：淘汰不触发，盘一直涨，人看到的是"容量正常"。
+      unsizedEntries += 1;
+    }
   }
   let total = entries.reduce((sum, entry) => sum + entry.size, 0);
-  if (unsizedFiles) {
-    process.stderr.write(`library sweep: ${unsizedFiles} 个文件量不到大小（权限/正被占用），`
+  if (unsizedFiles || unsizedEntries) {
+    const parts = [];
+    if (unsizedFiles) parts.push(`${unsizedFiles} 个文件量不到大小`);
+    if (unsizedEntries) parts.push(`${unsizedEntries} 个条目目录整个读不动（既没计入总量，也进不了淘汰候选）`);
+    process.stderr.write(`library sweep: ${parts.join("、")}（权限/正被占用），`
       + `算出来的 ${Math.round(total / (1024 * 1024))}MB 是【下限】而不是实际占用 —— `
       + "淘汰可能因此不触发，需人工核对\n");
   }
