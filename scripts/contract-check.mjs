@@ -397,6 +397,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyTaskGroupScopedWritesDeriveTheirProject);
 run(verifyOverlayOwnershipComesFromItsTaskGroup);
 run(verifyRuntimeFileWritesAreRegistered);
 run(verifyEveryWriteRouteIsGuardedOrRegistered);
@@ -10940,6 +10941,55 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyTaskGroupScopedWritesDeriveTheirProject(output) {
+  // 【按任务组判权的写入，落盘的 projectId 必须从那个任务组推出来】。取自由的 body/request.projectId
+  // 就意味着：判权判的是任务组甲，记录却落在项目乙名下 —— 它会出现在乙的视图与台账里，
+  // 而乙从没授权过任何人往里写东西。server.mjs 建产出目标那处早有这条（"never a free body.projectId"），
+  // 但同一个模式在 core 这几处没被应用（2026-08-22 实测复现两处）。
+  const FOREIGN = "prj_somebody_elses";
+  const fresh = () => {
+    const state = structuredClone(seedState);
+    ensureRuntimeCollections(state, {root});
+    return state;
+  };
+  {
+    const state = fresh();
+    const taskGroup = state.taskGroups[0];
+    const workItem = taskGroup.workItems[0];
+    selectModel(state, {taskGroupId: taskGroup.id, workItemId: workItem?.id, projectId: FOREIGN});
+    const strays = (state.modelSelectionDecisions || []).filter((item) => item.projectId === FOREIGN);
+    if (strays.length) {
+      output.push(`选型决策落在了调用方自己填的项目名下（${FOREIGN}，而任务组属于 ${taskGroup.projectId}）—— `
+        + "判权是按任务组判的，这条记录却进了别人项目的台账");
+    }
+  }
+  {
+    const state = fresh();
+    const taskGroup = state.taskGroups[0];
+    const workItem = taskGroup.workItems[0];
+    decideSessionPlacement(state, {taskGroupId: taskGroup.id, workItemId: workItem?.id, projectId: FOREIGN});
+    const strays = (state.sessionPlacementDecisions || []).filter((item) => item.projectId === FOREIGN);
+    if (strays.length) {
+      output.push(`会话放置决策落在了调用方自己填的项目名下（${FOREIGN}，而任务组属于 ${taskGroup.projectId}）`);
+    }
+  }
+  // 正面对照：不传 projectId 时照样要推得出正确的项目（否则上面两条可能是"永远丢弃 projectId"）。
+  {
+    const state = fresh();
+    const taskGroup = state.taskGroups[0];
+    const workItem = taskGroup.workItems[0];
+    selectModel(state, {taskGroupId: taskGroup.id, workItemId: workItem?.id});
+    decideSessionPlacement(state, {taskGroupId: taskGroup.id, workItemId: workItem?.id});
+    const modelOwned = (state.modelSelectionDecisions || [])[0]?.projectId;
+    const placementOwned = (state.sessionPlacementDecisions || [])[0]?.projectId;
+    if (modelOwned !== taskGroup.projectId || placementOwned !== taskGroup.projectId) {
+      output.push(`不传 projectId 时推不出正确归属（选型 ${modelOwned} / 放置 ${placementOwned}，`
+        + `应为 ${taskGroup.projectId}）—— 上面两条测的就不是"从任务组推"，而是"丢弃了这个字段"`);
+    }
+  }
+  console.log("按任务组判权的写入：选型决策、会话放置两处的归属都从任务组推出来，且不传时也推得对");
 }
 
 function verifyOverlayOwnershipComesFromItsTaskGroup(output) {

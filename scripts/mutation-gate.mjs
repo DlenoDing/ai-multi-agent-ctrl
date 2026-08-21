@@ -3571,6 +3571,30 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "选型决策的归属必须从任务组推出来",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyTaskGroupScopedWritesDeriveTheirProject",
+    from: "    projectId: modelDecisionOwner?.projectId || workItem.projectId || request.projectId || \"prj_control_plane\",",
+    to: "    projectId: request.projectId || workItem.projectId || \"prj_control_plane\",",
+    expect: "选型决策落在了调用方自己填的项目名下"
+  },
+  {
+    name: "会话放置决策的归属必须从任务组推出来",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyTaskGroupScopedWritesDeriveTheirProject",
+    from: "    // \u540c\u4e0a\uff1a\u8fd9\u4e2a\u52a8\u4f5c\u4e5f\u662f\u6309\u4efb\u52a1\u7ec4\u5224\u7684\u6743\uff08session_placement_decide \u2192 taskGroupScope\uff09\u3002\n    projectId: taskGroup?.projectId || request.projectId || \"prj_control_plane\",",
+    to: "    projectId: request.projectId || taskGroup?.projectId || \"prj_control_plane\",",
+    expect: "会话放置决策落在了调用方自己填的项目名下"
+  },
+  {
+    name: "推归属不得变成丢弃这个字段",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyTaskGroupScopedWritesDeriveTheirProject",
+    from: "    // \u540c\u4e0a\uff1a\u8fd9\u4e2a\u52a8\u4f5c\u4e5f\u662f\u6309\u4efb\u52a1\u7ec4\u5224\u7684\u6743\uff08session_placement_decide \u2192 taskGroupScope\uff09\u3002\n    projectId: taskGroup?.projectId || request.projectId || \"prj_control_plane\",",
+    to: "    projectId: \"prj_wrong_always\",",
+    expect: "推不出正确归属"
+  },
+  {
     name: "角色定制的归属必须从它挂的任务组推出来",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyOverlayOwnershipComesFromItsTaskGroup",

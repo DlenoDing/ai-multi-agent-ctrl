@@ -936,10 +936,15 @@ export function selectModel(state, request = {}) {
   const at = new Date().toISOString();
   const decisionId = createId("msd");
   const modelDecision = shortModelDecision({workItem, request, taskExecution, selected, modelCeiling});
+  const modelDecisionOwner = (state.taskGroups || [])
+    .find((item) => item.id === (request.taskGroupId || workItem.taskGroupId));
   const decision = {
     schemaVersion: "model-selection-decision/v1",
     decisionId,
-    projectId: request.projectId || workItem.projectId || "prj_control_plane",
+    // 归属从【被授权的那个作用域】推：这个动作是按任务组判的权（model_selection_decide →
+    // taskGroupScope），而 request.projectId 是调用方自由填的。原先它排在最前，
+    // 于是一条挂在项目甲任务组上的选型决策可以落在项目乙名下（实测复现）。
+    projectId: modelDecisionOwner?.projectId || workItem.projectId || request.projectId || "prj_control_plane",
     taskGroupId: request.taskGroupId || workItem.taskGroupId || "tg_runtime_management",
     workItemId: request.workItemId || workItem.id || "work_unknown",
     status: selected ? "selected" : "rejected",
@@ -1310,7 +1315,8 @@ export function decideSessionPlacement(state, request = {}) {
   const decision = {
     schemaVersion: "session-placement-decision/v1",
     decisionId: createId("spd"),
-    projectId: request.projectId || taskGroup?.projectId || "prj_control_plane",
+    // 同上：这个动作也是按任务组判的权（session_placement_decide → taskGroupScope）。
+    projectId: taskGroup?.projectId || request.projectId || "prj_control_plane",
     taskGroupId: request.taskGroupId || taskGroup?.id || "tg_runtime_management",
     workItemId: request.workItemId || workItem.id || "work_unknown",
     status: placement === "new_session" ? "new_session_selected" : "subagent_selected",
