@@ -1777,13 +1777,25 @@ try {
   // 用它测不出"暂停是否真的停住了执行与配置变更"，断言会假绿。
   // 用【它自己组织名下】的项目：上面 orgProjectConfig 刚验证过同一个动作在未暂停时是 200，
   // 所以这里的差别只可能来自组织被暂停。换成别人的项目会被普通权限判定挡住，测不出新判据。
+  // 这条请求必须【除了组织被暂停之外一切合法】，否则挡住它的是别的门，断言就成了假绿：
+  // 原先这里没带 expectedConfigVersion，实际拿到的是 428 config_version_required ——
+  // 把 hasPermission 里那句"组织被暂停就拒"整个删掉，这条断言照样绿（实测）。
+  // 所以要先读一遍拿到版本号，并且【点名拒绝码】，不能只判"不是 200"。
+  const suspendedConfigRead = await jsonFetch(port, `/api/projects/${orgProject.payload.id}/config`,
+    {headers: {authorization: orgAdminAuth}});
   const configWhileSuspended = await jsonFetch(port, `/api/projects/${orgProject.payload.id}/config`, {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-suspended-config", authorization: orgAdminAuth},
-    body: JSON.stringify({baselineData: [{name: "暂停期间", locator: "git:docs/nope"}]})
+    body: JSON.stringify({baselineData: [{name: "暂停期间", locator: "git:docs/nope"}],
+      expectedConfigVersion: suspendedConfigRead.payload?.configVersion})
   });
-  if (configWhileSuspended.response.status === 200) {
-    throw new Error("组织被暂停后其管理员仍能改配置 —— 暂停组织实际上只挡住了新建，没有停住任何在跑的东西");
+  // 拒绝码按【实测落点】写，不按猜的写：这里是 policy_denied（守卫在策略判定处拒的），
+  // 不是 permission_denied。写错的话断言会在正确行为上报红。
+  if (configWhileSuspended.response.status !== 403
+    || configWhileSuspended.payload?.error !== "policy_denied") {
+    throw new Error("组织被暂停后其管理员仍能改配置 —— 暂停组织实际上只挡住了新建，没有停住任何在跑的东西"
+      + `（期望 403 policy_denied，得到 ${configWhileSuspended.response.status} `
+      + `${configWhileSuspended.payload?.error || ""}）`);
   }
   // 读取必须仍然可用，否则被暂停的组织连"为什么停了"都查不到
   const readWhileSuspended = await jsonFetch(port, "/api/state?view=projects", {headers: {authorization: orgAdminAuth}});

@@ -3291,6 +3291,27 @@ const MUTATIONS = [
     expect: "没说清本机被改成什么样"
   },
   {
+    // 组织被停用后，它的管理员不能再改配置/推执行。这条守卫此前【零覆盖】：
+    // e2e 里那条断言只判"不是 200"，而它的请求没带 expectedConfigVersion，
+    // 实际被 428 挡下 —— 把守卫整个删掉照样绿。
+    name: "组织被停用后其管理员不得再改配置",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (scopedOrg && scopedOrg.status === "suspended") return false;',
+    to: "    if (false) return false;",
+    expect: "组织被暂停后其管理员仍能改配置"
+  },
+  {
+    // 同一个幂等键配上不同的内容/动作/主体时必须 409。放过的话，第二笔【不同的】写请求
+    // 会拿到第一笔的成功回执：调用方以为做成了，实际什么都没发生。
+    name: "幂等键配了另一笔内容必须 409（否则拿到的是上一次的成功回执）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    if (existingRecord.actor !== actor || existingRecord.action !== action || existingRecord.bodyDigest !== bodyDigest) {",
+    to: "    if (false) {",
+    expect: "expected idempotency conflict 409"
+  },
+  {
     // 作用域状态是按请求缓存的。缓存键里少了账号，第二个人就会拿到第一个人那份 ——
     // 整份跨租户数据，而单人自测完全看不出来（同一个账号命中的永远是自己那份）。
     // 这是本系统最致命的一条不变式，此前没有任何变异证明过它被守着。
