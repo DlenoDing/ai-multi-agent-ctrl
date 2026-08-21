@@ -410,6 +410,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyProtocolDocMatchesRequiredRuntimeVersion);
 run(verifyStateFilesRefuseUnknownSchemaVersions);
 run(verifyOutdatedRuntimeIsFlaggedFailClosed);
 run(verifyViewDropsCollectionsNobodyReads);
@@ -11038,6 +11039,39 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyProtocolDocMatchesRequiredRuntimeVersion(output) {
+  // agent 协议文档是给【第三方实现】看的。它此前全篇没提版本要求，而 node_register 的示例
+  // 写着 runtimeVersion: "0.2.0" —— 照它实现出来的 agent 一注册就是"版本过旧"，
+  // 而人要到某次派发被重新认领、提交被 checkpoint_claim_epoch_required 拒掉时才知道为什么。
+  const doc = readFileSync(join(root, "docs/agent-runtime-protocol.md"), "utf8");
+  const required = REQUIRED_AGENT_RUNTIME_VERSION;
+  if (!doc.includes(required)) {
+    output.push(`协议文档里没有出现当前要求的运行时版本 ${required} —— `
+      + "第三方照着它实现，节点一注册就是「版本过旧」");
+  }
+  // 文档里出现的每一个 runtimeVersion 取值都不能低于要求（示例尤其容易漂）。
+  const shown = [...doc.matchAll(/"runtimeVersion":\s*"([^"]+)"/gu)].map((match) => match[1]);
+  if (!shown.length) {
+    output.push("协议文档里一个 runtimeVersion 示例都没有 —— 这条判据的锚点漂了");
+  }
+  const stale = shown.filter((value) => agentRuntimeOutdated({runtimeVersion: value}));
+  if (stale.length) {
+    output.push(`协议文档的示例里 runtimeVersion 写着 ${[...new Set(stale)].join("、")}，低于要求的 ${required} —— `
+      + "照着这份示例实现的 agent，一注册就会被标记为「版本过旧」");
+  }
+  // 自带的那份 runtime 也必须达标：它和文档是同一份契约的两个面。
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const shipped = /const RUNTIME_VERSION = "([^"]+)"/u.exec(runtime)?.[1];
+  if (!shipped) {
+    output.push("读不出自带 agent 运行时的版本号 —— 这条判据的锚点漂了");
+  } else if (agentRuntimeOutdated({runtimeVersion: shipped})) {
+    output.push(`自带的 agent 运行时报的是 ${shipped}，低于控制平面要求的 ${required} —— `
+      + "官方那份自己就是「版本过旧」，任何人接上来都会看到那条告警");
+  }
+  console.log(`agent 协议版本：文档写明要求 ${required}、${shown.length} 处示例都不低于它、`
+    + `自带运行时报 ${shipped} —— 三处一致`);
 }
 
 function verifyStateFilesRefuseUnknownSchemaVersions(output) {

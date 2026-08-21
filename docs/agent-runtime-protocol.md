@@ -70,12 +70,18 @@ install_runtime
 
 ### 3.1 node_register
 
+`runtimeVersion` 必须不低于 **0.3.0**（控制平面里的 `REQUIRED_AGENT_RUNTIME_VERSION`）。
+低于它、或者版本号读不出来（缺失、空串、`0.3` 这种位数不够的），控制平面会把这个节点标记为
+「运行时版本过旧」并在控制台上提示运维升级 —— 因为 0.3.0 才引入**带认领代次提交**这条契约：
+更早的实现不发 `claimEpoch`，它的派发一旦被重新认领，提交就会卡在 `checkpoint_claim_epoch_required`，
+那一轮的活白干。控制平面不会因此拒绝注册或不派活，但那台机器随时可能白跑一轮。
+
 请求：
 
 ```json
 {
   "nodeName": "builder-01",
-  "runtimeVersion": "0.2.0",
+  "runtimeVersion": "0.3.0",
   "profile": {
     "platform": "darwin",
     "arch": "arm64",

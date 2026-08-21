@@ -3596,6 +3596,30 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "协议文档的版本示例不得低于要求",
+    file: "docs/agent-runtime-protocol.md",
+    check: "verifyProtocolDocMatchesRequiredRuntimeVersion",
+    from: "  \"runtimeVersion\": \"0.3.0\",",
+    to: "  \"runtimeVersion\": \"0.2.0\",",
+    expect: "低于要求的"
+  },
+  {
+    name: "抬高版本要求时协议文档要跟着改",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyProtocolDocMatchesRequiredRuntimeVersion",
+    from: "export const REQUIRED_AGENT_RUNTIME_VERSION = \"0.3.0\";",
+    to: "export const REQUIRED_AGENT_RUNTIME_VERSION = \"0.9.0\";",
+    expect: "协议文档里没有出现当前要求的运行时版本"
+  },
+  {
+    name: "自带 agent 运行时不得自己就过期",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyProtocolDocMatchesRequiredRuntimeVersion",
+    from: "const RUNTIME_VERSION = \"0.3.0\";",
+    to: "const RUNTIME_VERSION = \"0.2.0\";",
+    expect: "官方那份自己就是"
+  },
+  {
     name: "文档写了不存在的接口要被查出来",
     file: "docs/core-control-plane-spec.md",
     check: "verifyDocumentedApiPathsExist",
