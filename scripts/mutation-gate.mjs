@@ -3571,6 +3571,22 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "文案说了不可逆就必须标 danger",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyHarshWordingImpliesDangerFlag",
+    from: "        danger: true,\n        confirmText: \"\u91cd\u53d1\"",
+    to: "        confirmText: \"\u91cd\u53d1\"",
+    expect: "却没标 danger"
+  },
+  {
+    name: "不可逆措辞词表脱节要报空转",
+    file: "scripts/contract-check.mjs",
+    check: "verifyHarshWordingImpliesDangerFlag",
+    from: "const IRREVERSIBLE_WORDING = [\"\u5f53\u573a\u5931\u6548\", \"\u4e0d\u53ef\u64a4\u9500\", \"\u4e0d\u53ef\u9006\", \"\u65e0\u6cd5\u6062\u590d\", \"\u8fdb\u5165\u7ec8\u6001\", \"\u4f1a\u88ab\u5220\u9664\", \"\u6c38\u4e45\"];",
+    to: "const IRREVERSIBLE_WORDING = [\"\u4e0d\u4f1a\u51fa\u73b0\u7684\u8bcd\"];",
+    expect: "这条判据在空转"
+  },
+  {
     name: "改用户配置的写入必须原子（带标记的段落）",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyRuntimeFileWritesAreRegistered",

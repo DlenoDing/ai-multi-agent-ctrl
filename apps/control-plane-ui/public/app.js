@@ -4900,6 +4900,10 @@ document.addEventListener("click", async (event) => {
         title: "重发邀请",
         message: "确认为该成员重新签发一次性登录凭据？",
         sub: "旧的邀请令牌会当场失效 —— 重发不是再给一份，而是作废旧的、换一份，否则散落在聊天记录里的那一份仍然可用。新令牌同样只显示一次。",
+        // 文案自己写着"当场失效"：这是不可逆的，而且作废的是【别人手上】那份。
+        // confirmDialog 的安全语义（回车不触发、焦点落在「取消」）只对 danger 生效 ——
+        // 不标的话，一个回车就把对方的令牌作废了。同一个坑 5018 行附近记过一次。
+        danger: true,
         confirmText: "重发"
       }))) return;
       const reissued = await api(`/api/org/members/${encodeURIComponent(target.dataset.account)}/reissue-invite`, {method: "POST", body: "{}"});

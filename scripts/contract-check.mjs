@@ -233,6 +233,15 @@ const WRITE_ROUTES_WITHOUT_GUARDED_WRITE = {
   "/api/auth/change-password": "accountFromRequest 认证 + 旧密码校验；改的是自己的密码"
 };
 
+// 【文案说了严重后果，标记却说不危险】。confirmDialog 的安全语义（回车不触发、焦点落在「取消」）
+// 只对 danger:true 生效 —— 不标的话，一个回车就做完了那件不可逆的事。
+// 判据不需要人来编"哪些操作算危险"的表：**弹窗自己的文案**就是权威来源，
+// 它写着"当场失效 / 不可撤销 / 进入终态"却没标 danger，那是自相矛盾。
+// 实测查出一处：「重发邀请」的 sub 明写"旧的邀请令牌会当场失效"，作废的还是别人手上那份。
+const IRREVERSIBLE_WORDING = ["当场失效", "不可撤销", "不可逆", "无法恢复", "进入终态", "会被删除", "永久"];
+const CONFIRMS_WORDED_HARD_BUT_NOT_DANGEROUS = {};
+
+
 const seedState = loadJson("data/seed-state.json");
 const runtimeSchema = loadJson("spec/runtime-bootstrap.schema.json");
 const mcpGrantSchema = loadJson("spec/mcp-grant.schema.json");
@@ -458,6 +467,7 @@ run(verifySideEffectsComeAfterTheGuard);
 run(verifyServiceAllowlistSaysWhatItDropped);
 run(verifyFirstScreenPointsAtRealPlaces);
 run(verifyGuidanceNamesRealPages);
+run(verifyHarshWordingImpliesDangerFlag);
 run(verifyDangerousConfirmsStateTheConsequence);
 run(verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect);
 run(verifyInstallScriptSaysWhatItLeftBehind);
@@ -7024,6 +7034,45 @@ function verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect(output) {
     }
   }
   console.log(`拒绝结果确定性：${mustSayOutcome.length} 个码逐个核对，都说清了这次有没有执行、且没让人做无用的重试`);
+}
+
+function verifyHarshWordingImpliesDangerFlag(output) {
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const offenders = [];
+  let dialogs = 0;
+  // 词表命中数要单独报：词表一旦与文案脱节（改了措辞、或有人清空了词表），
+  // 这条判据会静静地全绿 —— 实测把词表换成一个不会出现的词，它照样报"都标了 danger"。
+  let worded = 0;
+  for (const match of app.matchAll(/confirmDialog\(\{/gu)) {
+    let depth = 0;
+    let end = match.index;
+    for (let index = match.index + match[0].length - 1; index < app.length; index += 1) {
+      if (app[index] === "{") depth += 1;
+      else if (app[index] === "}") { depth -= 1; if (!depth) { end = index; break; } }
+    }
+    const call = app.slice(match.index, end + 1).replace(/\/\/[^\n]*/gu, "");
+    dialogs += 1;
+    const harsh = IRREVERSIBLE_WORDING.filter((word) => call.includes(word));
+    if (harsh.length) worded += 1;
+    if (/danger:\s*true/u.test(call)) continue;
+    if (!harsh.length) continue;
+    const title = /title: "([^"]*)"/u.exec(call)?.[1] || call.slice(0, 30);
+    if (CONFIRMS_WORDED_HARD_BUT_NOT_DANGEROUS[title]) continue;
+    offenders.push(`「${title}」（文案里写着：${harsh.join("、")}）`);
+  }
+  if (dialogs < 10) {
+    output.push(`只找到 ${dialogs} 个确认弹窗（实际有二十来个）—— 这条判据的切法没对上，它在空转`);
+  }
+  if (worded < 5) {
+    output.push(`只有 ${worded} 个弹窗的文案命中了"不可逆"词表（二十来个危险操作里不该这么少）—— `
+      + "词表与实际措辞脱节了，这条判据在空转");
+  }
+  if (offenders.length) {
+    output.push(`这些确认弹窗的文案自己说了严重后果，却没标 danger：${offenders.join("；")} —— `
+      + "confirmDialog 的安全语义（回车不触发、焦点落在「取消」）只对 danger 生效，"
+      + "不标的话一个回车就做完了那件不可逆的事");
+  }
+  console.log(`确认弹窗措辞：${dialogs} 个逐个核对，其中 ${worded} 个文案写着不可逆后果，都标了 danger`);
 }
 
 function verifyDangerousConfirmsStateTheConsequence(output) {
