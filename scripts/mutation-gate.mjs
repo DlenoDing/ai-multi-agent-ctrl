@@ -3291,6 +3291,14 @@ const MUTATIONS = [
     expect: "没说清本机被改成什么样"
   },
   {
+    name: "docker 启动失败要说清 .env 已经写好了（含密钥，不必删）",
+    file: "scripts/docker-up.sh",
+    check: "verifyInstallScriptSaysWhatItLeftBehind",
+    from: `  printf '%s\\n' "  · 已经生成 $ENV_FILE（含随机密钥，权限 600）：装好 compose 后直接重跑即可，不必删它" >&2`,
+    to: `  printf '%s\\n' "  · 装好 compose 后重跑" >&2`,
+    expect: "没说清本机被改成什么样"
+  },
+  {
     name: "装机失败出口提取脱节要自报空转",
     file: "scripts/contract-check.mjs",
     check: "verifyInstallScriptSaysWhatItLeftBehind",

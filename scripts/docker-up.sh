@@ -20,6 +20,7 @@ random_token() {
   fi
   printf '%s\n' 'docker-up: 生成密钥需要一个安全随机源，这台机器上 openssl 与 node 都没有' >&2
   printf '%s\n' '  · 装其中任意一个再重跑（openssl 通常随系统自带）' >&2
+  printf '%s\n' '  · 这一步之前什么都没有被改；不需要先清理' >&2
   exit 1
 }
 
@@ -94,6 +95,7 @@ if ! command -v docker-compose >/dev/null 2>&1; then
   printf '%s\n' '  · 装 Docker Desktop（自带 compose 插件），或给已有的 Docker 装上 compose 插件' >&2
   printf '%s\n' '  · 验证：docker compose version' >&2
   printf '%s\n' '  · 只想本地跑、不用容器的话：npm run init && npm start' >&2
+  printf '%s\n' "  · 已经生成 $ENV_FILE（含随机密钥，权限 600）：装好 compose 后直接重跑即可，不必删它" >&2
   exit 1
 fi
 

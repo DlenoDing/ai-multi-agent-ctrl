@@ -5846,23 +5846,28 @@ function verifyInitFailsWithWordsNotAStackTrace(output) {
 }
 
 function verifyInstallScriptSaysWhatItLeftBehind(output) {
-  const lines = readFileSync(join(root, "scripts/install-agent.sh"), "utf8").split("\n");
+  // 两个入口脚本一起核：装机脚本与 docker 启动脚本都是"跑到一半失败"的常客。
+  // docker-up 尤其要说：它在检查 compose 【之前】就把含密钥的 .env 写好了。
   const exits = [];
-  for (const [index, line] of lines.entries()) {
-    if (!/^\s*exit 1\s*$/u.test(line)) continue;
-    const window = lines.slice(Math.max(0, index - 8), index).join("\n");
-    exits.push({line: index + 1, told: /什么都没有被安装|没有被安装|不需要先清理/u.test(window)});
+  for (const file of ["scripts/install-agent.sh", "scripts/docker-up.sh"]) {
+    const lines = readFileSync(join(root, file), "utf8").split("\n");
+    for (const [index, line] of lines.entries()) {
+      if (!/^\s*exit 1\s*$/u.test(line)) continue;
+      const window = lines.slice(Math.max(0, index - 8), index).join("\n");
+      exits.push({line: `${file.split("/").pop()}:${index + 1}`,
+        told: /什么都没有被安装|没有被安装|什么都没有被改|不需要先清理|不必删它/u.test(window)});
+    }
   }
-  if (exits.length < 6) {
-    output.push(`装机脚本里只找到 ${exits.length} 个失败出口（应 ≥6）—— 提取脱节，本条在空转`);
+  if (exits.length < 8) {
+    output.push(`两个入口脚本里只找到 ${exits.length} 个失败出口（应 ≥8）—— 提取脱节，本条在空转`);
     return;
   }
   const silent = exits.filter((item) => !item.told);
   if (silent.length) {
-    output.push(`装机脚本这些失败出口没说清本机被改成什么样了（第 ${silent.map((item) => item.line).join("、")} 行）—— `
+    output.push(`这些失败出口没说清本机被改成什么样了（${silent.map((item) => item.line).join("、")}）—— `
       + "人不知道要不要先清理再重来，也不知道是不是落下了半个安装");
   }
-  console.log(`装机失败出口：${exits.length} 个逐个核对，都交代了本机的状态`);
+  console.log(`入口脚本失败出口：${exits.length} 个逐个核对（装机 + docker 启动），都交代了本机的状态`);
 }
 
 function verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect(output) {
