@@ -348,6 +348,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyOneProjectWriteTouchesOneShard);
 run(verifyPanelGatesCoverEveryBlockInside);
 run(verifyTopologyBlockerPartsAllHaveChinese);
 run(verifyExecutionTopologyStateMachineRefusesBadTransitions);
@@ -10832,6 +10833,74 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyOneProjectWriteTouchesOneShard(output) {
+  // 每次写入都要把【每一个】项目的分片序列化并算摘要，摘要没变才跳过写盘。跳过一旦失效，
+  // 每写一次就重写全部项目分片 —— 磁盘写入量与项目数成正比，一个几百项目的部署上
+  // 每一次点击都要重写几百个文件。这条不测时间（机器快慢会让判据抖），测【文件被改了几个】。
+  const workspace = mkdtempSync(join(tmpdir(), "cc-shard-write-"));
+  try {
+    const statePath = join(workspace, "control-plane-state.json");
+    const options = {runtimeDir: workspace, statePath, seedPath: resolve(root, "data", "seed-state.json"),
+      buildInitialState: () => ({stateVersion: 1, runtime: {}})};
+    const PROJECTS = 12;
+    const state = structuredClone(seedState);
+    const projectTemplate = state.projects[0];
+    const groupTemplate = (state.taskGroups || [])[0];
+    state.projects = Array.from({length: PROJECTS}, (_, index) =>
+      ({...structuredClone(projectTemplate), id: `prj_shard_${index}`, name: `分片项目${index}`}));
+    state.taskGroups = state.projects.map((project, index) =>
+      ({...structuredClone(groupTemplate), id: `tg_shard_${index}`, projectId: project.id}));
+    state.stateVersion = 1;
+    writeStoredState(state, options);
+    const loaded = readStoredState(options);
+    // 分片落在 runtimeDir 下的 project-db/ 子目录里，不是与中央态平级（第一版找错了地方，
+    // 判据当场自报"形状没对上"—— 那正是它该有的行为）。
+    const shardDir = join(workspace, "project-db");
+    const shardFiles = () => (existsSync(shardDir) ? readdirSync(shardDir) : []).filter((name) => name.endsWith(".json"));
+    const before = new Map(shardFiles().map((name) => [name, statSync(join(shardDir, name)).mtimeMs]));
+    if (before.size < PROJECTS) {
+      output.push(`只落了 ${before.size} 个项目分片文件（建了 ${PROJECTS} 个项目）—— 这条判据的文件名形状没对上，它在空转`);
+      console.log("分片写入：分片文件形状没对上");
+      return;
+    }
+    // 只改一个项目下的一条记录，其余十一个项目一字未动。
+    const touched = loaded.taskGroups.find((item) => item.projectId === "prj_shard_3");
+    touched.name = "只改了这一个项目";
+    loaded.stateVersion = Number(loaded.stateVersion || 1) + 1;
+    writeStoredState(loaded, {...options, expectedStateVersion: loaded.__loadedStateVersion});
+    const rewritten = shardFiles().filter((name) => {
+      const previous = before.get(name);
+      return previous === undefined || statSync(join(shardDir, name)).mtimeMs !== previous;
+    });
+    if (rewritten.length !== 1) {
+      // 两个方向的后果完全不同，报文不能混作一谈：多写是性能问题，少写是【丢数据】。
+      output.push(rewritten.length === 0
+        ? "改了一个项目，却一个分片都没重写 —— 这次改动没有落盘，是丢数据"
+        : `只改了一个项目，却重写了 ${rewritten.length} 个项目分片（应为 1）—— `
+          + "未变动分片的跳过失效了：一个几百项目的部署上，每一次点击都要重写几百个文件");
+    }
+    // 反面对照：改两个项目就该重写两个 —— 否则上面那条可能是"永远只写一个"（真丢数据）。
+    const beforeTwo = new Map(shardFiles().map((name) => [name, statSync(join(shardDir, name)).mtimeMs]));
+    const again = readStoredState(options);
+    for (const projectId of ["prj_shard_5", "prj_shard_7"]) {
+      again.taskGroups.find((item) => item.projectId === projectId).name = `改了 ${projectId}`;
+    }
+    again.stateVersion = Number(again.stateVersion || 1) + 1;
+    writeStoredState(again, {...options, expectedStateVersion: again.__loadedStateVersion});
+    const rewrittenTwo = shardFiles().filter((name) => {
+      const previous = beforeTwo.get(name);
+      return previous === undefined || statSync(join(shardDir, name)).mtimeMs !== previous;
+    });
+    if (rewrittenTwo.length !== 2) {
+      output.push(`改了两个项目却重写了 ${rewrittenTwo.length} 个分片（应为 2）—— `
+        + (rewrittenTwo.length < 2 ? "有项目的改动没落盘，这是丢数据" : "跳过没有生效"));
+    }
+  } finally {
+    rmSync(workspace, {recursive: true, force: true});
+  }
+  console.log("分片写入：改一个项目重写一个分片、改两个重写两个 —— 未变动的分片确实被跳过");
 }
 
 function verifyPanelGatesCoverEveryBlockInside(output) {

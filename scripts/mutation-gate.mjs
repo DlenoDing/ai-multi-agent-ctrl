@@ -3561,6 +3561,22 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "未变动的项目分片必须被跳过",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyOneProjectWriteTouchesOneShard",
+    from: "      if (reusable) {",
+    to: "      if (false) {",
+    expect: "却重写了 13 个项目分片"
+  },
+  {
+    name: "变动的项目分片必须真的落盘",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyOneProjectWriteTouchesOneShard",
+    from: "      if (reusable) {",
+    to: "      if (previousName) {",
+    expect: "这次改动没有落盘"
+  },
+  {
     name: "界面权限名写错时那道门形同虚设",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
