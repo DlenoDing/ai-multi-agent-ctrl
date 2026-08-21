@@ -329,6 +329,14 @@ try {
     throw new Error(`形状对、内容错的节点令牌被放行了（HTTP ${forgedNodeToken.response.status}）—— `
       + "凭据比对失效时，任何人拼一个 aimac_node_ 开头的串就能冒充节点");
   }
+  // 生产 profile 下服务端不得自己把 agent 跑了 —— 那会一次性绕开认领、留痕和节点凭据。
+  // 不带任何凭据打：必须是 409 profile 拒绝，【不是】401。拿到 401 就说明这道拒绝被挪到了鉴权/落写之后。
+  const serverSideRun = await jsonRaw("/api/verification/agent-runtime/run", {method: "POST", body: {maxJobs: 1}});
+  if (serverSideRun.response.status !== 409 || serverSideRun.payload?.error !== "server_side_agent_execution_forbidden") {
+    throw new Error(`生产 profile 下 /api/verification/agent-runtime/run 没有按 profile 拒绝`
+      + `（HTTP ${serverSideRun.response.status} ${serverSideRun.payload?.error}）—— `
+      + "拿到 401 说明拒绝被挪到了鉴权之后；拿到 2xx 说明服务端可以直接代跑 agent，派发不经认领、不留痕");
+  }
   const previousCredentialProbe = await jsonRaw("/api/agent/v1/nodes/me", {token: agentConfig.nodeToken});
   const currentCredentialProbe = await jsonRaw("/api/agent/v1/nodes/me", {token: rotatedAgentConfig.nodeToken});
   if (!previousCredentialProbe.response.ok || !currentCredentialProbe.response.ok) throw new Error("Agent Gateway did not accept both previous and current credentials during rotation overlap");

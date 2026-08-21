@@ -63,6 +63,7 @@ import {
   MAJOR_DECISION_TYPES,
   isHumanConfirmationActor,
   capKeepingReferenced,
+  runAgentRuntimeWorker,
   canUseGitPath,
   isSafeGitRef,
   pathAllowlistValid,
@@ -330,6 +331,7 @@ run(verifyMcpSummaryIsActuallyASummary);
 run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
+run(verifyServerSideAgentExecutionStaysOffOutsideVerification);
 run(verifyCapsKeepRecordsThatAreStillPointedAt);
 run(verifyHumanWrittenTextIsNeverSilentlyTruncated);
 run(verifyCancelSettlesTheCellsResources);
@@ -10070,6 +10072,48 @@ function verifyHumanWrittenTextIsNeverSilentlyTruncated(output) {
       + "台账上记的与他写的不是一句话；改用 assertHumanTextWithinLimit（超了就拒，并说清超出多少）");
   }
   console.log(`人写文本不许静默截断：${guarded} 处走了长度校验，${truncated.length} 处仍在 slice 截断（应为 0）`);
+}
+
+function verifyServerSideAgentExecutionStaysOffOutsideVerification(output) {
+  // 「服务端自己把 agent 跑了」会一次性绕开整条隔离：不认领、不留派发痕迹、不受节点凭据约束。
+  // 它只在 verification 这个自检 profile 下才允许。两处实现（core 的函数、server.mjs 的路由）。
+  const runtimeState = (profile) => ({runtime: {executionProfile: profile}, agentDispatches: [
+    {id: "ad_1", taskGroupId: "tg_1", status: "queued"}
+  ]});
+  for (const profile of ["production", undefined, "Verification", "verification-ish"]) {
+    const result = runAgentRuntimeWorker(runtimeState(profile), {maxJobs: 1});
+    if (!result.blocked || result.reason !== "server_side_agent_execution_forbidden") {
+      output.push(`executionProfile=${JSON.stringify(profile)} 时服务端仍然自己把 agent 跑了`
+        + `（blocked=${result.blocked} reason=${result.reason}）—— 派发不经认领、不留痕、不受节点凭据约束`);
+    }
+    if ((result.results || []).length) {
+      output.push(`executionProfile=${JSON.stringify(profile)} 被拦下了却仍产出了 ${result.results.length} 条执行结果`);
+    }
+  }
+  // 正面对照走同一个函数、同一条分支：verification 下必须真的不拦（否则上面四条是「永远拦」而不是「按 profile 拦」）。
+  const allowed = runAgentRuntimeWorker(runtimeState("verification"), {maxJobs: 1, repositoryRoot: root});
+  if (allowed.blocked) {
+    output.push(`自检 profile（verification）下也被 ${allowed.reason} 拦住了 —— 这道判据其实是「永远拦」，测不出 profile 判断`);
+  }
+  // 路由那处：拒绝必须发生在 beginGuardedWrite 之前，否则生产环境每被挡一次都先落一条写入记录。
+  const serverSource = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  // 只取这一个路由的处理体：从它的 pathname 判断起，到下一个 `if (req.method ===` 为止。
+  // 整份文件里搜会被隔壁路由喂饱。
+  const routeStart = serverSource.indexOf('url.pathname === "/api/verification/agent-runtime/run"');
+  const routeEnd = routeStart < 0 ? -1 : serverSource.indexOf("if (req.method ===", routeStart + 10);
+  const routeBody = routeStart < 0 ? "" : serverSource.slice(routeStart, routeEnd < 0 ? undefined : routeEnd);
+  if (!routeBody) {
+    output.push("server.mjs 里找不到 /api/verification/agent-runtime/run 路由 —— 这道判据切块的锚点已经漂了，它现在什么都没在查");
+  }
+  const refuseAt = routeBody.indexOf("server_side_agent_execution_forbidden");
+  const guardAt = routeBody.indexOf("beginGuardedWrite");
+  if (refuseAt < 0) {
+    output.push("/api/verification/agent-runtime/run 路由里找不到 server_side_agent_execution_forbidden —— "
+      + "生产环境可以直接打这个接口让服务端代跑 agent");
+  } else if (guardAt >= 0 && guardAt < refuseAt) {
+    output.push("/api/verification/agent-runtime/run 先 beginGuardedWrite 再判 profile —— 生产环境每被挡一次都先落一条写入记录");
+  }
+  console.log("服务端代跑 agent：非自检 profile 四种取值全拦、自检 profile 放行、路由先拒后写 —— 核过");
 }
 
 function verifyCapsKeepRecordsThatAreStillPointedAt(output) {

@@ -3353,6 +3353,38 @@ const MUTATIONS = [
     expect: "did not carry the task-group language policy"
   },
   {
+    name: "生产 profile 下服务端不得自己跑 agent（核心函数）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyServerSideAgentExecutionStaysOffOutsideVerification",
+    from: "  if (state.runtime?.executionProfile !== \"verification\") {",
+    to: "  if (false) {",
+    expect: "服务端仍然自己把 agent 跑了"
+  },
+  {
+    name: "生产 profile 下服务端不得自己跑 agent（HTTP 路由）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "agent",
+    from: "    if (executionProfile !== \"verification\") {",
+    to: "    if (false) {",
+    expect: "没有按 profile 拒绝"
+  },
+  {
+    name: "提交不得改到人没批准的路径",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: "    const outside = changedPaths.filter((path) => !pathMatchesAllowlist(path, approvedPaths));",
+    to: "    const outside = [];",
+    expect: "人批的边界只由 agent 自报来守"
+  },
+  {
+    name: "提交不得踩到人划的禁区",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: "    const trespassed = changedPaths.filter((path) => pathMatchesAllowlist(path, forbiddenApproved));",
+    to: "    const trespassed = [];",
+    expect: "禁区只是记录里的一行字"
+  },
+  {
     // 产品的招牌承诺："人定稿之后，AI 不得擅自改变这个方案"。三道守卫都有断言抓得住，
     // 但从没登记过判别力证明 —— 招牌不变式尤其不该只靠"我记得有测过"。
     name: "定稿后方案的实质内容变了就不许照常启动",
