@@ -3171,6 +3171,14 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "系统规则一条不剩要当成故障说，不能与业务规则共用一句「暂无规则」",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '          || (category === "system"',
+    to: "          || (false",
+    expect: "一条系统规则都没有时要当成故障说"
+  },
+  {
     name: "项目设置页三块配置为空时必须自己说话",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

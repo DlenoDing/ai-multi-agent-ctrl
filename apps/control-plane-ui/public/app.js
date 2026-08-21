@@ -2985,7 +2985,15 @@ function ruleEditorForm(opts) {
     <form class="form-grid" ${formAttr} data-category="${esc(category)}" data-list="${esc(listId)}">
       ${opts.note ? `<div class="notice">${opts.note}</div>` : ""}
       <div class="rule-list" data-cfg-list="${esc(listId)}">
-        ${(rules || []).map((rule) => ruleRow(rule, layer, readOnly)).join("") || `<div class="small muted">暂无规则。</div>`}
+        ${/* 「暂无规则。」对这两类的含义完全相反：业务规则空是常态，系统规则空【不正常】——
+              内置默认系统规则本应始终在场（本机实测 32 条），一条都不剩说明要么被本项目全部停用了，
+              要么这次根本没取到。前者是一句无害的说明，后者是执行方将在没有系统级约束下干活。 */""}
+        ${(rules || []).map((rule) => ruleRow(rule, layer, readOnly)).join("")
+          || (category === "system"
+            ? `<div class="small warn-text">一条系统规则都没有 —— 内置默认规则本应始终在场：`
+              + `要么它们被本项目逐条停用了，要么这次没取到。在恢复之前，执行方是在【没有系统级约束】的情况下干活的。</div>`
+            : `<div class="small muted">还没有业务规则：本项目只受系统规则约束。`
+              + `要加本项目自己的约束，点下面的「新增业务规则」。</div>`)}
       </div>
       <div class="button-row">
         <button type="button" class="secondary-button" data-action="rule-add" data-target="${esc(listId)}" data-category="${esc(category)}" ${disabled}>新增${catLabel}规则</button>

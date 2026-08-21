@@ -141,6 +141,7 @@ function makeContext(documentRoot) {
 const PROBE_EPILOGUE = `
 globalThis.__probe = {
   requestFailureHint: (payload) => requestFailureHint(payload),
+  ruleEditorFormWith: (options) => ruleEditorForm(options),
   snapshotFormValues: (formEl) => snapshotFormValues(formEl),
   restorePendingForm: () => restorePendingForm(),
   setPending: (value) => { pendingFormRestore = value; },
@@ -439,6 +440,16 @@ function check(name, condition, detail) {
     check("可选项要说明它是可选的（基线数据空着不影响执行）",
       /还没有基线数据/.test(settingsText) && /可选/.test(settingsText),
       "把可选项写成和必填项一样的空提示，人会去填一份并不需要的东西");
+    // 「暂无规则。」对两类规则的含义相反：业务规则空是常态，系统规则空是故障
+    //（内置默认本应始终在场）。同一句话盖住两种情形，等于把一次故障说成常态。
+    check("业务规则为空是常态，要说清它意味着什么",
+      /还没有业务规则/.test(settingsText) && /只受系统规则约束/.test(settingsText),
+      settingsText.includes("暂无规则") ? "还在用那句对两类都一样的「暂无规则」" : settingsText.slice(0, 100));
+    const emptySystem = settingsProbe.ruleEditorFormWith({rules: [], listId: "x", category: "system",
+      layer: "project", project: proj.id, readOnly: false, note: ""});
+    check("一条系统规则都没有时要当成故障说（内置默认本应始终在场）",
+      /一条系统规则都没有/.test(emptySystem) && /没有系统级约束/.test(emptySystem),
+      String(emptySystem).replace(/<[^>]+>/gu, " ").slice(0, 130));
     check("默认角色为空时要说清回退到哪里",
       /还没有项目默认角色/.test(settingsText) && /内置角色/.test(settingsText),
       "空着不是坏事，但要说清系统会拿什么顶上");
