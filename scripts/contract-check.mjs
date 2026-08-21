@@ -381,6 +381,7 @@ run(verifyFirstScreenPointsAtRealPlaces);
 run(verifyGuidanceNamesRealPages);
 run(verifyDangerousConfirmsStateTheConsequence);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
+run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
 run(verifyLockConflictAdmitsTheWreckage);
 run(verifyOutputTargetKeepsItsPolicyDecision);
@@ -5728,6 +5729,45 @@ function verifyLockConflictAdmitsTheWreckage(output) {
 // 已签发未使用的入网令牌占着配额的位（签发第 N+1 张会被拒），而用量里原先只数节点 ——
 // 页面显示"2/3 还剩一格"，签发却被拒、报文说"3/3 已满"。屏幕上并排的两个数必须一处算出来。
 // 不能把令牌并进 agents：节点注册查的也是 agents，并进去就会被自己那张正在兑换的令牌顶掉一格。
+// moreText 的第三个参数（field）决定报出来的"共 N 条"要不要带 +：视图按上限截过之后，
+// 不带 field 的调用会把【截断后的长度】当成总数报给人 —— 系统知道还有更多却不说。
+// 这类"每个使用点自己记得传"的机制迟早会漏（本仓 23 张表曾经只有 5 张接上）。
+// 今天 18 处全传了，正因为如此才要立刻立个门：没有门的规范一定会漂回去。
+function verifyTruncationHonestyIsWiredAtEveryCallSite(output) {
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const calls = [];
+  for (const match of app.matchAll(/moreText\(/gu)) {
+    let depth = 0;
+    let end = match.index;
+    for (let index = match.end ?? match.index + match[0].length - 1; index < app.length; index += 1) {
+      if (app[index] === "(") depth += 1;
+      else if (app[index] === ")") { depth -= 1; if (!depth) { end = index; break; } }
+    }
+    const args = app.slice(match.index + match[0].length, end);
+    let nesting = 0;
+    let top = 1;
+    for (const char of args) {
+      if ("([{".includes(char)) nesting += 1;
+      else if (")]}".includes(char)) nesting -= 1;
+      else if (char === "," && !nesting) top += 1;
+    }
+    calls.push({args, top, at: app.slice(0, match.index).split("\n").length});
+  }
+  // 定义处自己那一行（function moreText(total, shown, field)）不算调用点。
+  const sites = calls.filter((call) => !call.args.startsWith("total, shown"));
+  if (sites.length < 16) {
+    output.push(`只找到 ${sites.length} 处 moreText 调用（应 ≥16）—— 提取脱节，本条在空转`);
+    return;
+  }
+  for (const site of sites) {
+    if (site.top < 3) {
+      output.push(`app.js:${site.at} 的 moreText 没传 field —— `
+        + "视图截断后它会把截出来的长度当成总数报给人（系统知道还有更多却不说）");
+    }
+  }
+  console.log(`截断诚实：${sites.length} 处 moreText 调用逐个核对，都带了 field`);
+}
+
 function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});

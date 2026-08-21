@@ -3059,6 +3059,22 @@ const MUTATIONS = [
     expect: "阻塞状态出口"
   },
   {
+    name: "每个 moreText 使用点都要传 field（否则截断后的长度被当成总数）",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyTruncationHonestyIsWiredAtEveryCallSite",
+    from: 'moreText(overlays.length, 20, "roleSkillOverlays")',
+    to: "moreText(overlays.length, 20)",
+    expect: "没传 field"
+  },
+  {
+    name: "moreText 提取脱节要自报空转",
+    file: "scripts/contract-check.mjs",
+    check: "verifyTruncationHonestyIsWiredAtEveryCallSite",
+    from: "for (const match of app.matchAll(/moreText\\(/gu)) {",
+    to: "for (const match of app.matchAll(/moreTextX\\(/gu)) {",
+    expect: "本条在空转"
+  },
+  {
     name: "已归档项目不计入配额这件事要写在同一屏上",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
