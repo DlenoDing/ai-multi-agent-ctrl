@@ -3059,6 +3059,14 @@ const MUTATIONS = [
     expect: "阻塞状态出口"
   },
   {
+    name: "报文让人去点的按钮必须真在界面上",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyGuidanceNamesRealPages",
+    from: "整个任务组被人暂停了：到该任务组页点「恢复执行」",
+    to: "整个任务组被人暂停了：到该任务组页点「重新开工」",
+    expect: "没有这个按钮"
+  },
+  {
     name: "产品报文不得指路到界面上没有的页（实测「运行时」页 10 处）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",

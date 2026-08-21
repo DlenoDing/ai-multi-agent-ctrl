@@ -5742,10 +5742,28 @@ function verifyGuidanceNamesRealPages(output) {
       }
     }
   }
+  // 报文还会点名按钮（"点「立即切断」"）。同一形状、同一次文件读，顺手核完：
+  // 权威来源是按钮/操作项上真出现的那段文字。模板占位（点「${label}」）跳过 —— 那是运行期才定的。
+  const labels = new Set([...app.matchAll(/>\s*([^<>{}]{2,10}?)\s*<\/(?:button|a)>/gu)].map((match) => match[1]));
+  let buttons = 0;
+  for (const file of files) {
+    const text = readFileSync(join(root, file), "utf8").replace(/\/\/[^\n]*/gu, (line) => " ".repeat(line.length));
+    for (const hit of text.matchAll(/点「([^」]{2,10})」/gu)) {
+      if (hit[1].includes("${")) continue;
+      buttons += 1;
+      if (!labels.has(hit[1])) {
+        output.push(`${file} 让人去点「${hit[1]}」，而界面上没有这个按钮 —— 出事时照着点不到的人就卡在那了`);
+      }
+    }
+  }
+  // 下限 5 是照产品里实测的 6 处写的。我第一版写 8 —— 那个数来自一次把【判据自己的代码】
+  // 也数进去的 grep（本文件里就有 8 处"点「X」"，全是这段注释和报文）。数分母要排除自己。
+  if (buttons < 5) output.push(`只找到 ${buttons} 处"点「X」"（应 ≥5）—— 提取脱节，本条在空转`);
+  if (labels.size < 30) output.push(`按钮文字只提出 ${labels.size} 个（应 ≥30）—— 权威表没提出来，本条在空转`);
   if (pointers < 20) {
     output.push(`只找到 ${pointers} 处指路（应 ≥20）—— 提取脱节或文件清单缩水了，本条在空转`);
   }
-  console.log(`指路核对：${pointers} 处「X」页/面板逐个比对权威表（页 ${pages.size} 个、面板 ${panels.size} 个）`);
+  console.log(`指路核对：${pointers} 处「X」页/面板 + ${buttons} 处"点「X」"逐个比对权威表（页 ${pages.size}、面板 ${panels.size}、按钮文字 ${labels.size}）`);
 }
 
 // 同一个对象字面量里把同一个键写两遍，JS 不报错，后写的静默胜出 ——
