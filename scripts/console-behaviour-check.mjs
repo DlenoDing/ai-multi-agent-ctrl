@@ -156,8 +156,8 @@ globalThis.__probe = {
   decisionSelect: (...args) => decisionSelect(...args),
   listEmptyText: (what, failure) => { lastError = failure; return listEmptyText(what); },
   tableWith: (failure, headers, rows, options) => { lastError = failure; return table(headers, rows, options); },
-  skillSourceNotice: (skillSources, roleSkills) => {
-    state = {...state, skillSources, roleSkills};
+  skillSourceNotice: (skillSources, roleSkillCountBySource) => {
+    state = {...state, skillSources, roleSkillCountBySource};
     return String(renderSysSettings()).replace(/<[^>]+>/gu, " ").includes("系统内置技能")
       ? String(renderSysSettings()).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ") : "";
   },
@@ -1008,7 +1008,9 @@ async function runErrorGuidanceCase() {
 // 而提示的条件此前只认后者 —— 新部署撞的恰恰是前者（种子里的源是 configured、角色数 0，不算退役）。
 {
   const skillProbe = loadConsole(el("div"), {realI18n: true});
-  const builtIn = [{roleSkillRef: "r1", sourceId: "system-default"}, {roleSkillRef: "r2", sourceId: "system-default"}];
+  // 服务端下发的是【按来源分组的计数】，不是技能数组：界面从不读正文，
+  // 而整份 roleSkills 是状态里最大的一块（真实部署 281 条 293KB），还会被视图上限截断。
+  const builtIn = {"system-default": 2};
   const neverSynced = skillProbe.skillSourceNotice(
     [{sourceId: "agency-agents-zh", status: "configured"}], builtIn);
   check("技能源接了但一条都没取下来时要说出来（新部署撞的就是这个）",
@@ -1021,7 +1023,7 @@ async function runErrorGuidanceCase() {
     `全退役时说的是：${JSON.stringify(allRetired.slice(0, 140))}`);
   const healthy = skillProbe.skillSourceNotice(
     [{sourceId: "agency-agents-zh", status: "active"}],
-    [...builtIn, {roleSkillRef: "r3", sourceId: "agency-agents-zh"}]);
+    {...builtIn, "agency-agents-zh": 1});
   check("源真的提供了技能时不许再吓唬人（正面对照）",
     healthy === "",
     `源已可用却仍在提示：${JSON.stringify(healthy.slice(0, 140))}`);

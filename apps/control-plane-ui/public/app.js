@@ -333,7 +333,7 @@ function emptyState() {
     modelSelectionPolicies: [],
     modelSelectionDecisions: [],
     skillSources: [],
-    roleSkills: [],
+    roleSkillCountBySource: {},
     roleSkillOverlays: [],
     sessionPlacementDecisions: [],
     workSessions: [],
@@ -1332,7 +1332,10 @@ async function loadPage() {
         admissionDecisions: runtimeState.admissionDecisions || [],
         workerLanes: runtimeState.workerLanes || [],
         skillSources: runtimeState.skillSources || [],
-        roleSkills: runtimeState.roleSkills || [],
+        // 服务端只下发【按来源分组的计数】：界面从不读技能正文，而整份 roleSkills 是状态里
+        // 最大的一块（真实部署 281 条 293KB），整份传过来既浪费、又会被视图上限截断，
+        // 让屏幕上那个"技能数"本身就是错的。
+        roleSkillCountBySource: runtimeState.roleSkillCountBySource || {},
         agentJoinTokens: runtimeState.agentJoinTokens || []
       };
       ensureProjectSelection();
@@ -1914,14 +1917,14 @@ function renderSysSettings() {
     statusBadge("skillSource", source.status) + (source.status === "stale" && source.lastSyncError
       ? `<div class="small warn-text">${esc(source.lastSyncError)}</div>` : ""),
     `<span class="mono">${esc(String(source.pinnedCommit || "").slice(0, 10))}</span>`,
-    {v: String((state.roleSkills || []).filter((skill) => skill.sourceId === source.sourceId).length), c: "num"},
+    {v: String((state.roleSkillCountBySource || {})[source.sourceId] || 0), c: "num"},
     // 已退役的源不再提供同步（自治周期也不会再碰它）；未退役的多一条"退役"出口 ——
     // 接进来却拿不下去，此前只能眼看着它一遍遍重试。
     source.status === "retired"
       ? `<span class="small muted">已退役，不再同步</span>`
       : `<button class="secondary-button" data-action="sync-skill-source" data-source="${esc(source.sourceId)}">同步</button>`
         + ` <button class="secondary-button" data-action="retire-skill-source" data-source="${esc(source.sourceId)}"`
-        + ` data-skills="${esc(String((state.roleSkills || []).filter((skill) => skill.sourceId === source.sourceId).length))}">退役</button>`
+        + ` data-skills="${esc(String((state.roleSkillCountBySource || {})[source.sourceId] || 0))}">退役</button>`
   ])).join("");
   const metrics = instructionState?.instructionMetrics || {stablePrefixTokens: 0, deltaMessageTargetTokens: 0, cacheHitTarget: 0, envelopes: []};
   const envelopes = (metrics.envelopes || []).slice(0, 12).map((envelope) => row([
@@ -1968,9 +1971,9 @@ function renderSysSettings() {
         // 新部署撞的正是前一种：种子里的源是 configured（从没同步过）、角色数 0，它不算退役，
         // 于是这条提示不出现，而 agent 拿到的仍然是内置通用规则（种子里那 12 条属于 system-default，
         // 不属于这个源）。这是"缺席被当成正常"的一种：没同步过和同步坏了后果一样，提示却只认后者。
-        const builtIn = (state.roleSkills || []).filter((skill) => skill.sourceId === "system-default").length;
+        const builtIn = (state.roleSkillCountBySource || {})["system-default"] || 0;
         const usable = (state.skillSources || []).filter((source) => source.status !== "retired"
-          && (state.roleSkills || []).some((skill) => skill.sourceId === source.sourceId));
+          && ((state.roleSkillCountBySource || {})[source.sourceId] || 0) > 0);
         if (usable.length) return "";
         const neverSynced = (state.skillSources || []).filter((source) => source.status !== "retired");
         const why = neverSynced.length

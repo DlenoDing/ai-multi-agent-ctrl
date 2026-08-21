@@ -3001,7 +3001,7 @@ const MUTATIONS = [
     name: "技能源接了但一条都没取下来时要说出来（新部署撞的就是这个）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "        const usable = (state.skillSources || []).filter((source) => source.status !== \"retired\"\n          && (state.roleSkills || []).some((skill) => skill.sourceId === source.sourceId));",
+    from: "        const usable = (state.skillSources || []).filter((source) => source.status !== \"retired\"\n          && ((state.roleSkillCountBySource || {})[source.sourceId] || 0) > 0);",
     to: "        const usable = (state.skillSources || []).filter((source) => source.status !== \"retired\");",
     expect: "未同步时说的是"
   },
@@ -3594,6 +3594,22 @@ const MUTATIONS = [
     from: "      || grownCollections.length > 0 || grownWorkItems;",
     to: "      ;",
     expect: "服务端已经不看这些了"
+  },
+  {
+    name: "技能源那一页不得整份下发技能正文",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyConsoleDoesNotPullSkillBodies",
+    from: "      roleSkillCountBySource,",
+    to: "      roleSkills: scoped.roleSkills,",
+    expect: "又在整份下发 roleSkills"
+  },
+  {
+    name: "界面不得再读技能正文",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyConsoleDoesNotPullSkillBodies",
+    from: "    {v: String((state.roleSkillCountBySource || {})[source.sourceId] || 0), c: \"num\"},",
+    to: "    {v: String((state.roleSkills || []).length), c: \"num\"},",
+    expect: "处读 state.roleSkills"
   },
   {
     name: "机器主体守卫必须是白名单式",

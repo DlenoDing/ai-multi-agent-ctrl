@@ -397,6 +397,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyConsoleDoesNotPullSkillBodies);
 run(verifyMachinePrincipalGuardsAreAllowlists);
 run(verifyBlockedReasonsAllHaveChinese);
 run(verifyWipHintMatchesHowCapacityIsCounted);
@@ -10981,6 +10982,36 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyConsoleDoesNotPullSkillBodies(output) {
+  // roleSkills 是整份状态里最大的一块（真实部署 281 条 293 KB，占 73%），而控制台
+  // 只按 sourceId 数个数、判存在，从不读技能正文。整份下发有两个后果：
+  // 每次打开技能源那一页白传 293 KB；而且它会被视图上限截断（实测 269 条截到 188 条），
+  // 屏幕上那个"技能数"本身就是错的。服务端改为只给按来源分组的计数（293 KB → 40 字节）。
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const skillRoute = server.slice(server.indexOf('skillSources: scoped.skillSources'),
+    server.indexOf('skillSources: scoped.skillSources') + 400);
+  if (!skillRoute) {
+    output.push("找不到技能源那一页的下发处 —— 这条判据的锚点漂了");
+    console.log("技能正文下发：锚点已漂");
+    return;
+  }
+  if (/roleSkills:\s*scoped\.roleSkills/u.test(skillRoute)) {
+    output.push("技能源那一页又在整份下发 roleSkills —— 真实部署里那是 293 KB（状态的 73%），"
+      + "而界面只用它数个数；何况它会被视图上限截断，屏幕上的技能数会因此偏小");
+  }
+  if (!/roleSkillCountBySource/u.test(skillRoute)) {
+    output.push("技能源那一页没有下发按来源分组的计数 —— 界面拿什么数个数？");
+  }
+  // 界面侧也不许再摸正文：读 state.roleSkills 就意味着它期待整份数据回来。
+  const readsBodies = [...app.matchAll(/state\.roleSkills\b/gu)].length;
+  if (readsBodies) {
+    output.push(`控制台里还有 ${readsBodies} 处读 state.roleSkills —— 它已经不下发了，`
+      + "这些地方会一直拿到空数组（技能数显示 0，而人看不出是没同步还是没下发)");
+  }
+  console.log("技能正文下发：那一页只给按来源分组的计数，界面无一处读技能正文");
 }
 
 function verifyMachinePrincipalGuardsAreAllowlists(output) {

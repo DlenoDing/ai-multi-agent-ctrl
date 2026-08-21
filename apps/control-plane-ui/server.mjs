@@ -3015,9 +3015,18 @@ async function handleApi(req, res) {
       return;
     }
     const scoped = cachedScopedState(state, reader.account, reader.session);
+    // 界面只按 sourceId 数个数、判存在（从不读正文）。而 roleSkills 是整份状态里最大的一块
+    // ——真实部署里 281 条 293KB，占 73%。整份下发有两个后果：每次打开这一页都白传 293KB；
+    // 而且它会被视图上限截断（实测 269 条截到 188 条），于是屏幕上那个"技能数"本身就是错的。
+    // 改为服务端直接给【按来源分组的计数】：既省掉那 293KB，计数也不再受截断影响。
+    const roleSkillCountBySource = {};
+    for (const skill of scoped.roleSkills || []) {
+      const key = skill.sourceId || "unknown";
+      roleSkillCountBySource[key] = (roleSkillCountBySource[key] || 0) + 1;
+    }
     json(res, 200, {
       skillSources: scoped.skillSources,
-      roleSkills: scoped.roleSkills,
+      roleSkillCountBySource,
       roleSkillOverlays: scoped.roleSkillOverlays
     });
     return;
