@@ -4775,14 +4775,19 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "toggle-agent") {
       const agent = (state.agents || []).find((item) => item.id === target.dataset.agent);
-      if (agent?.status === "active" && !(await confirmDialog({title: "停用智能体", message: "确认停用该智能体档案？", danger: true, confirmText: "停用"}))) return;
+      if (agent?.status === "active" && !(await confirmDialog({title: "停用智能体", message: "确认停用该智能体档案？",
+        // 这里最容易被误解成"把跑着的 agent 停了"。档案与运行中的节点是两回事，必须说破。
+        sub: "停用的是这份档案：该角色的新工作会改落到其它启用中的档案。它不会让正在运行的智能体节点停下来 ——要让节点停，用节点那一行的「关停节点」或「立即切断」。随时可以再启用。",
+        danger: true, confirmText: "停用"}))) return;
       await api(`/api/agents/${encodeURIComponent(target.dataset.agent)}/activate`, {method: "POST", body: JSON.stringify({active: agent?.status !== "active"})});
       await loadPage();
       toast.success(agent?.status === "active" ? "已停用智能体" : "已启用智能体");
       return;
     }
     if (action === "revoke-grant") {
-      if (!(await confirmDialog({title: "撤销访问授权", message: "确认撤销该访问授权？", danger: true, confirmText: "撤销"}))) return;
+      if (!(await confirmDialog({title: "撤销访问授权", message: "确认撤销该访问授权？",
+        sub: "该账号下一次请求就会失去这项授权；已经登录的会话不会被登出。需要时可以重新授权 —— 这一步可逆。",
+        danger: true, confirmText: "撤销"}))) return;
       await api(`/api/access-grants/${encodeURIComponent(target.dataset.grant)}/revoke`, {method: "POST", body: "{}"});
       await loadPage();
       toast.success("已撤销访问授权");
@@ -4849,7 +4854,9 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "agent-control") {
       const command = target.dataset.command;
-      if (command === "cancel_dispatch" && !(await confirmDialog({title: "取消派发", message: "确认取消该节点当前派发的任务？", danger: true, confirmText: "取消派发"}))) return;
+      if (command === "cancel_dispatch" && !(await confirmDialog({title: "取消派发", message: "确认取消该节点当前派发的任务？",
+        sub: "这次派发就此进入终态，不会自动重排；工作项退回「待人工决策」等你处置，它名下的产出目标与 MCP 授权一并了结。",
+        danger: true, confirmText: "取消派发"}))) return;
       if (command === "shutdown" && !(await confirmDialog({title: "关停节点", message: "确认优雅关停该节点？", sub: "节点将进入 draining，完成或围栏当前派发后离线（区别于硬吊销）。", danger: true, confirmText: "关停"}))) return;
       const node = [...(state.agentRuntimeNodes || []), ...orgAgentNodes].find((item) => item.nodeId === target.dataset.nodeId);
       const dispatchId = (node?.activeDispatchIds || node?.display?.currentDispatchIds || [])[0] || "";

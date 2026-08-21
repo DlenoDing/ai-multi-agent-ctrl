@@ -379,6 +379,7 @@ run(verifySideEffectsComeAfterTheGuard);
 run(verifyServiceAllowlistSaysWhatItDropped);
 run(verifyFirstScreenPointsAtRealPlaces);
 run(verifyGuidanceNamesRealPages);
+run(verifyDangerousConfirmsStateTheConsequence);
 run(verifyHintMapsHaveNoDuplicateKeys);
 run(verifyLockConflictAdmitsTheWreckage);
 run(verifyOutputTargetKeepsItsPolicyDecision);
@@ -5718,6 +5719,43 @@ function verifyLockConflictAdmitsTheWreckage(output) {
 // "到「运行时」页点「立即切断」"——PAGE_META 里根本没有「运行时」这个页（实测 10 处），
 // 而这些话恰恰出现在派发卡住、节点不肯停的时候，人正照着它找出口。
 // 权威来源是 app.js 的 PAGE_META（页名）与 panel("X", ...)（面板名），按它全量核对。
+// 标了 danger 的确认弹窗，是人按下去就收不回来的那一步。实测有三个只问"确认 X？"
+// 而不说会发生什么，其中「停用智能体」最糟：它停的是【档案】，正在跑的节点一点没停 ——
+// 想按停一个失控 agent 的人点完会以为已经停住了。
+// 判据用中文字数当代理：只问一句"确认 X？"的弹窗约 12~16 字，带后果句的实测最少 28 字。
+// 这是个粗判据，它守的是"有没有多写一句话"，写得对不对得靠人看 —— 但连一句都没有时它必红。
+function verifyDangerousConfirmsStateTheConsequence(output) {
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const dialogs = [];
+  for (const match of app.matchAll(/confirmDialog\(\{/gu)) {
+    let depth = 0;
+    let end = match.index;
+    for (let index = match.index + match[0].length - 1; index < app.length; index += 1) {
+      if (app[index] === "{") depth += 1;
+      else if (app[index] === "}") { depth -= 1; if (!depth) { end = index; break; } }
+    }
+    // 剥注释：本仓的注释里就写着"说清真实后果：…"这类话，不剥就是拿自己写的解释喂饱判据。
+    // 说明白：这一句今天【不承重】—— 试过不剥，最短值仍是 28，因为最短那几个弹窗旁边没有注释。
+    // 留着是因为它一旦承重就是静默的假绿（后果只写在注释里，屏幕上一个字没有）。
+    const call = app.slice(match.index, end + 1).replace(/\/\/[^\n]*/gu, "");
+    if (!call.includes("danger: true")) continue;
+    const literals = [...call.matchAll(/"([^"]*)"|`([^`]*)`/gu)].map((hit) => hit[1] ?? hit[2]).join("");
+    const title = call.match(/title: "([^"]*)"/u)?.[1] || literals.slice(0, 12);
+    dialogs.push({title, han: (literals.match(/[\u4e00-\u9fff]/gu) || []).length});
+  }
+  if (dialogs.length < 18) {
+    output.push(`只找到 ${dialogs.length} 个 danger 确认弹窗（应 ≥18）—— 提取脱节，本条在空转`);
+    return;
+  }
+  for (const dialog of dialogs) {
+    if (dialog.han < 24) {
+      output.push(`危险确认「${dialog.title}」通篇只有 ${dialog.han} 个汉字 —— `
+        + "多半只问了一句「确认 X？」而没说按下去会发生什么、可不可逆");
+    }
+  }
+  console.log(`危险确认：${dialogs.length} 个 danger 弹窗逐个核对，最短 ${Math.min(...dialogs.map((item) => item.han))} 个汉字（下限 24）`);
+}
+
 function verifyGuidanceNamesRealPages(output) {
   const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const pages = new Set([...app.matchAll(/^\s*"[a-z-]+": \["([^"]+)",/gmu)].map((match) => match[1]));

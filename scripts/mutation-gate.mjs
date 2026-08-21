@@ -3059,6 +3059,22 @@ const MUTATIONS = [
     expect: "阻塞状态出口"
   },
   {
+    name: "危险确认必须说清按下去会发生什么",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyDangerousConfirmsStateTheConsequence",
+    from: '        sub: "该账号下一次请求就会失去这项授权；已经登录的会话不会被登出。需要时可以重新授权 —— 这一步可逆。",\n',
+    to: "",
+    expect: "通篇只有"
+  },
+  {
+    name: "danger 弹窗提取脱节要自报空转",
+    file: "scripts/contract-check.mjs",
+    check: "verifyDangerousConfirmsStateTheConsequence",
+    from: 'if (!call.includes("danger: true")) continue;',
+    to: 'if (!call.includes("danger: TRUE")) continue;',
+    expect: "本条在空转"
+  },
+  {
     name: "报文让人去点的按钮必须真在界面上",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",
