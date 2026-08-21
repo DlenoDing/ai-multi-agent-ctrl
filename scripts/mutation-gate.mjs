@@ -3171,6 +3171,22 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "停摆提示要指出同一页上就能手动推一拍（连续失败那条）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "`请先看服务端日志定位原因。` + manualTickExit()",
+    to: "`请先看服务端日志定位原因。`",
+    expect: "停摆提示要指出本页就能手动推一拍"
+  },
+  {
+    name: "静默停摆那条也要指出手动出口（两条分支各写各的会漏一条）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      + manualTickExit() + `恢复之前，需要人推进的事只能手动来。</div>`;",
+    to: "      + `恢复之前，需要人推进的事只能手动来。</div>`;",
+    expect: "静默停摆那条也要指出手动推一拍的出口"
+  },
+  {
     name: "已吊销的节点必须离开舰队分母（否则叫人去修一台不存在的机器）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "agent",

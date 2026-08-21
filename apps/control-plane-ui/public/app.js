@@ -3297,6 +3297,15 @@ function aiAnalysisStalledNotice(requests) {
 
 // 连续失败就不只是"参数里的一行小字"了：它意味着此刻没有任何东西在推进，
 // 而人正在等系统自己往下走。放在监控页顶部。
+// 停摆时人在本页能做的唯一一件事：手动推一拍。按钮就在这条提示下面（有 orchestrate 权限时），
+// 而提示原先只说"需要人推进的事只能手动来"—— 人不会想到那句指的就是下面这个按钮。
+// 后端有杠杆、界面也有入口，报文却不指过去，等于这个出口不存在。
+function manualTickExit() {
+  return hasPerm("task_group:orchestrate")
+    ? "本页的「运行自治循环」可以手动推一拍（只顶这一拍，循环没恢复之前每一步都得这样推）；"
+    : "手动推一拍需要「任务组编排」权限，本账号没有 —— 找有这个权限的人来推，或先把循环修好；";
+}
+
 function orchestratorStalledNotice() {
   const status = (state.runtime || {}).autonomousOrchestrator;
   const failures = Number(status?.consecutiveErrors || 0);
@@ -3311,14 +3320,14 @@ function orchestratorStalledNotice() {
     return `<div class="notice warn-notice">自治循环已经 ${esc(Math.floor(tickAgeMs / 60000))} 分钟没有推进过，`
       + `而它自称每 ${esc(Math.round(intervalMs / 1000))} 秒一拍 —— 它没有报错，只是【不跑了】：`
       + `派发不会被领走、关闭门不会重算、人工指令会一直停在待处理。`
-      + `请先看服务端日志（进程还在但主循环卡住时，日志里也会没有新的一拍）；`
-      + `恢复之前，需要人推进的事只能手动来。</div>`;
+      + `请先看服务端日志（进程还在但主循环卡住时，日志里也会没有新的一拍）。`
+      + manualTickExit() + `恢复之前，需要人推进的事只能手动来。</div>`;
   }
   if (failures < 2) return "";
   return `<div class="notice warn-notice">自治循环已连续 ${esc(failures)} 拍失败，当前【没有任何东西在自行推进】：`
     + `派发不会被领走、关闭门不会重算、人工指令会一直停在待处理。最近一次失败：${esc(status.lastError || "未记录")}`
     + `（最后一次成功推进：${status.lastSuccessAt ? esc(fmtTime(status.lastSuccessAt)) : "无记录"}）。`
-    + `请先看服务端日志定位原因；恢复之前，需要人推进的事只能手动来。</div>`;
+    + `请先看服务端日志定位原因。` + manualTickExit() + `恢复之前，需要人推进的事只能手动来。</div>`;
 }
 
 

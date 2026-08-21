@@ -1847,6 +1847,19 @@ function runPendingTruncationCase() {
     check("自治循环连续失败要在监控页上说出来",
       /连续 3 拍失败|没有任何东西在自行推进/.test(stalledView),
       "自治循环已经连续失败、系统实际停摆，监控页却一个字都不说 —— 人会一直以为它在跑");
+    // 停摆时人在这一页能做的唯一一件事就是手动推一拍，按钮就在这条提示下面 ——
+    // 提示原先只说"只能手动来"，不指过去，等于这个出口不存在。
+    // 判据必须收窄到【这条提示】：拿整页匹配的话，页面上那个按钮自己就含这四个字，
+    // 把提示里的出口整段删掉它照样绿（第一版就是这样）。
+    // 切到【这一条 notice 的 </div> 为止】：固定长度的窗口会越过提示够到页面上那个按钮，
+    // 于是把提示里的出口整段删掉它照样绿（第一版 400 字的窗口就是这样）。
+    const noticeStart = stalledView.indexOf("自治循环已连续");
+    const stalledNotice = noticeStart < 0 ? ""
+      : stalledView.slice(noticeStart, stalledView.indexOf("</div>", noticeStart));
+    if (!stalledNotice) throw new Error("控制台行为门: 监控页上找不到停摆提示 —— 这一段断言在空转");
+    check("停摆提示要指出本页就能手动推一拍",
+      stalledNotice.includes("运行自治循环"),
+      "报文说「需要人推进的事只能手动来」，而同一页上就有那个按钮 —— 不点名等于没有出口");
     check("停摆提示要带上失败原因与最后一次成功时间",
       stalledView.includes("boom") && /最后一次成功推进/.test(stalledView),
       "只说停了，不说为什么、也不说停了多久 —— 人无从判断严重程度");
@@ -1858,6 +1871,11 @@ function runPendingTruncationCase() {
       lastTickResult: "ran", lastTickAt: new Date(Date.now() - 42 * 60 * 1000).toISOString(),
       lastSuccessAt: new Date(Date.now() - 42 * 60 * 1000).toISOString()};
     const silentView = probe.renderMonitorWith(silent, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    const silentStart = silentView.indexOf("自治循环已经");
+    const silentNotice = silentStart < 0 ? "" : silentView.slice(silentStart, silentView.indexOf("</div>", silentStart));
+    check("静默停摆那条也要指出手动推一拍的出口（两条分支各写各的会漏掉一条）",
+      Boolean(silentNotice) && silentNotice.includes("运行自治循环"),
+      silentNotice.slice(0, 120) || "监控页上找不到静默停摆提示 —— 这条断言在空转");
     check("自治循环静默停摆（不报错、只是不跑了）也要说出来",
       /没有推进过/.test(silentView),
       "周期已经 42 分钟没动过，而它自称每 60 秒一拍 —— 监控页却仍写着「上一拍 ran」，"
