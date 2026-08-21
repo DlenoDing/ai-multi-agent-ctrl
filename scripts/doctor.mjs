@@ -2013,6 +2013,27 @@ try {
   // 用一个独立的工作项建租约夹具：一个工作项同时只能有一份生效的写入边界（防止后建的宽边界顶替
   // 人批准的窄边界），所以复用 work_permissions 会拿到它既有的、已被别的会话持租的那一份。
   const leaseTarget = expectStatus(await g2("/api/repository-output-targets", systemAuth, "g2b-lease-target", {taskGroupId: "tg_runtime_management", workItemId: "work_g2b_lease_fixture", artifactManifestPath: "docs/artifact-manifests/g2b-lease.json", pathAllowlist: ["docs/**"]}), 201, "lease target fixture");
+  // 分支名与 remote 名必须【写时】就拒。原先只有读时（真要推的时候）才判，于是这些值能一路
+  // 存进产出目标里，界面显示一切正常，直到 agent 去推才炸 —— 那时报的是"执行失败"，
+  // 人看不出是自己当初填错了一个字段。放在这里是因为建产出目标要求任务组上已有角色漂移守卫。
+  for (const [what, extra, expected] of [
+    ["以横杠开头的分支名（会被 git 当成选项）", {branch: "-x"}, "repository_output_target_unsafe_branch"],
+    ["带 .. 的分支名", {branch: "release/../../etc"}, "repository_output_target_unsafe_branch"],
+    ["把选项藏在 remote 名里", {remote: "--upload-pack=touch /tmp/pwned"}, "repository_output_target_unsafe_remote"]
+  ]) {
+    const unsafe = await g2("/api/repository-output-targets", systemAuth, `g2b-unsafe-${expected}-${extra.branch || extra.remote}`,
+      {taskGroupId: "tg_runtime_management", workItemId: "work_permissions",
+        artifactManifestPath: "docs/manifest.json", pathAllowlist: ["docs/**"], ...extra});
+    if (unsafe.response.status !== 400 || unsafe.payload?.error !== expected) {
+      throw new Error(`${what}被存进产出目标了（HTTP ${unsafe.response.status}/${unsafe.payload?.error}，应为 400/${expected}）`
+        + " —— 界面显示一切正常，直到 agent 真去推的时候才炸，那时报的是「执行失败」");
+    }
+  }
+  // 正面对照走同一条路（同一个身份、同一个接口）：合法的分支与 remote 必须仍然建得出来。
+  // 上面那个 leaseTarget 就是它 —— 它用默认分支建成了，说明这两道判据不是「永远拒」。
+  if (!leaseTarget.payload?.targetId) {
+    throw new Error("合法参数也建不出产出目标 —— 上面三条其实是「永远拒」，测不出这两道判据");
+  }
   const leaseOk = expectStatus(await g2("/api/leases/claim", systemAuth, "g2b-lease-ok", {repositoryOutputTargetRef: leaseTarget.payload.targetId, holderRef: "session:doctor-g2b"}), 201, "lease claim happy");
   expectStatus(await g2("/api/leases/claim", invitedAuth, "g2b-lease-deny", {repositoryOutputTargetRef: leaseTarget.payload.targetId}), 403, "lease claim deny", "policy_denied");
   // 租约按"它指向的产出目标是否可见"过滤，而这条过滤此前【没有任何断言】守着：

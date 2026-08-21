@@ -871,6 +871,10 @@ function requestFailureHint(payload) {
     payload.cause === "path_allowlist_invalid" ? "原因：允许路径清单本身不合法（这是配置问题，不是你填的那条路径）" : "",
     payload.cause === "manifest_path_not_git_trackable" ? "原因：产出清单那条路径 git 跟不住" : "",
     payload.path ? `涉及的路径：${payload.path}` : "",
+    // 分支名/remote 名被拒时，把人填的那个值原样回显 —— 这两个字段常是复制粘贴带进来的
+    // （前后多个字符、藏了个 --option），不回显的话人盯着自己那份"看起来没错"的输入找不出问题。
+    payload.branch ? `你填的分支名：${payload.branch}` : "",
+    payload.remote ? `你填的 remote 名：${payload.remote}` : "",
     Array.isArray(payload.allowedPaths) && payload.allowedPaths.length
       ? `当前允许的路径：${payload.allowedPaths.join("、")}` : "",
     payload.file ? `涉及的文件：${payload.file}` : "",

@@ -4369,6 +4369,20 @@ async function handleApi(req, res) {
     }
     // Fail-closed at write time on an unsafe git URL so a malicious remote can never be persisted
     // (defense in depth alongside prepareRemoteGitVerification's read-time check).
+    // 分支名与 remote 名也要【写时】拒，和下面那条 repositoryUrl 一个道理：原先只有读时
+    // （prepareRemoteGitVerification）才判，于是 "-x" 这样的分支名、"--upload-pack=..." 这样的
+    // remote 名能一路存进产出目标里，界面显示一切正常，直到 agent 真去推的时候才炸 ——
+    // 那时报的是"执行失败"，人看不出是自己当初填错了一个字段。两处用同一个判据。
+    // 位置必须在 beginGuardedWrite 之前：拒绝不该先落一条写入记录（第一版就放在了守卫之后）。
+    if (!isSafeGitRef(String(body.branch || "main"))) {
+      json(res, 400, {error: "repository_output_target_unsafe_branch", branch: String(body.branch || "").slice(0, 80)});
+      return;
+    }
+    const requestedRemote = String(body.remote || "origin");
+    if (!/^[A-Za-z0-9._-]+$/u.test(requestedRemote) || requestedRemote.startsWith("-")) {
+      json(res, 400, {error: "repository_output_target_unsafe_remote", remote: requestedRemote.slice(0, 80)});
+      return;
+    }
     if (body.repositoryUrl && !isSafeGitRemoteUrl(body.repositoryUrl)) {
       json(res, 400, {error: "repository_output_target_unsafe_repository_url"});
       return;

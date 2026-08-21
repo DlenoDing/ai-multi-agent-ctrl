@@ -3385,6 +3385,22 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "不安全的分支名不得存进产出目标",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    if (!isSafeGitRef(String(body.branch || \"main\"))) {\n      json(res, 400, {error: \"repository_output_target_unsafe_branch\", branch: String(body.branch || \"\").slice(0, 80)});",
+    to: "    if (false) {\n      json(res, 400, {error: \"repository_output_target_unsafe_branch\", branch: String(body.branch || \"\").slice(0, 80)});",
+    expect: "被存进产出目标了"
+  },
+  {
+    name: "不安全的 remote 名不得存进产出目标",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    if (!/^[A-Za-z0-9._-]+$/u.test(requestedRemote) || requestedRemote.startsWith(\"-\")) {",
+    to: "    if (false) {",
+    expect: "被存进产出目标了"
+  },
+  {
     name: "门内断言写半截拒绝码要被查出来",
     file: "scripts/contract-check.mjs",
     check: "verifyGateAssertionsMatchWholeRefusalCodes",
