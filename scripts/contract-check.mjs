@@ -5965,28 +5965,42 @@ function verifyMcpInputDictionaryHasNoGhosts(output) {
 function verifyIssuedCredentialsAlwaysExpire(output) {
   const files = ["apps/control-plane-ui/server.mjs", "apps/mcp-server/server.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs"];
+  // 不按摘要串的字面前缀筛（原先只认这一行里写着 "account-invite:" 的）：把前缀提成变量，
+  // 这处签发点就整个从判据视野里消失，而它照样在签票 —— 实测把一处改成 `${INVITE_PREFIX}...`
+  // 并同时去掉过期时间，本条全绿放行了一张永不过期的票。
+  // 现在【所有】写 credentialDigest 的地方都要查，不按过期时间管的那族登记在这里。
+  const CREDENTIALS_NOT_BOUND_BY_EXPIRY = {
+    "agent-node": "agent 节点凭据不按时间过期：它按 claim 代次与心跳回收（sweepDeadAgentNodes / recycleExpiredClaims），另有判据",
+    _credentialDigest: "解构时把摘要摘出去丢掉（publicXxx 那一族），不是签发"
+  };
   const missing = [];
-  let sites = 0;
+  const sites = [];
   for (const rel of files) {
     const lines = readFileSync(resolve(root, rel), "utf8").split("\n");
     lines.forEach((line, index) => {
+      if (/^\s*\/\//u.test(line)) return;
       if (!/credentialDigest\s*[:=]/u.test(line) || /===/u.test(line)) return;
-      // agent 节点的凭据不走 credentialExpiresAt（它按 claim 代次与心跳回收，另有判据），
-      // 只看账号邀请那一族：摘要串以 account-invite: 开头。
-      if (!/account-invite:/u.test(line)) return;
-      sites += 1;
+      const exempt = Object.keys(CREDENTIALS_NOT_BOUND_BY_EXPIRY).find((key) => line.includes(key));
+      if (exempt) return;
+      sites.push(`${rel.split("/").pop()}:${index + 1}`);
       const window = lines.slice(Math.max(0, index - 12), index + 13).join("\n");
       if (!/credentialExpiresAt/u.test(window)) missing.push(`${rel.split("/").pop()}:${index + 1}`);
     });
   }
-  if (sites < 4) {
-    output.push(`邀请凭据过期核对：只找到 ${sites} 处签发点 —— 提取与代码脱节，本条在空转`);
-    return;
+  // 数量钉死而不是 >=：少一个签发点意味着它换了写法、从视野里溜走了，那正是要防的那件事。
+  const EXPECTED_SITES = 5;
+  if (sites.length !== EXPECTED_SITES) {
+    output.push(`按过期时间管的凭据签发点有 ${sites.length} 处（登记 ${EXPECTED_SITES} 处）：${sites.join("、")} —— `
+      + (sites.length < EXPECTED_SITES
+        ? "少了的那处多半换了写法，从这条判据的视野里溜走了（摘要串提成变量就会这样）"
+        : "新增了签发点：确认它写了过期时间之后，把这里的数字改成新的"));
   }
   if (missing.length) {
     output.push(`这些地方签发了一次性邀请凭据却没写过期时间：${missing.join("、")} —— `
       + "登录判据是「没有过期时间就算没过期」，那张票会永远有效");
   }
+  console.log(`凭据过期：${sites.length} 处签发点逐个核对，`
+    + `${Object.keys(CREDENTIALS_NOT_BOUND_BY_EXPIRY).length} 族登记为不按时间过期`);
 }
 
 // 拒绝码的覆盖棘轮。产品里每个 `error: "xxx"` 都是一道守卫的出口；没有任何门或 e2e 的源码提到过它，

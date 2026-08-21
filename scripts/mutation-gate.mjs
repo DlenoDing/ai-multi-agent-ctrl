@@ -2077,6 +2077,16 @@ const MUTATIONS = [
     expect: "都没被限流"
   },
   {
+    // 摘要串的前缀一提成变量，这处签发点就从判据视野里消失 —— 原先本条只认这一行里
+    // 写着 "account-invite:" 的，实测这么改并同时去掉过期时间，判据全绿放行了一张永不过期的票。
+    name: "换个写法签发凭据不得从过期核对里溜走",
+    check: "verifyIssuedCredentialsAlwaysExpire",
+    file: "apps/control-plane-ui/server.mjs",
+    from: "      credentialDigest: digestOf(`account-invite:${accountId}:${accountToken}`),\n      credentialIssuedAt: at,\n      credentialExpiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),",
+    to: "      credentialDigest: digestOf(`${INVITE_PREFIX}${accountId}:${accountToken}`),\n      credentialIssuedAt: at,\n      credentialNeverExpires: true,",
+    expect: "却没写过期时间"
+  },
+  {
     // 签发时漏写过期时间 = 那张一次性邀请票永远有效，而且所有正常登录照旧成功（静默）。
     name: "签发邀请必须同时写过期时间",
     check: "verifyIssuedCredentialsAlwaysExpire",
