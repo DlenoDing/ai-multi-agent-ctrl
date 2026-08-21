@@ -152,6 +152,7 @@ globalThis.__probe = {
   renderTaskGroupDetail: (detail, taskGroup) => { tgDetail = detail; return renderTaskGroupDetail(taskGroup); },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
+  listEmptyText: (what, failure) => { lastError = failure; return listEmptyText(what); },
   systemOverviewText: (nextState, account, status) => {
     state = nextState; currentAccount = account; currentProjectId = null; page = "sys-overview";
     authToken = "probe-token"; systemOverview = null; systemOverviewStatus = status;
@@ -857,6 +858,25 @@ async function runErrorGuidanceCase() {
     taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
     findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []};
   navProbe.renderFullPageWith(bare, account, null, "org-members");
+// 列表为空【不等于】没有记录 —— 加载失败时它可能压根没取回来。
+// 顶部横幅说"整页加载失败"，而表格里那句"暂无数据"是在断言"确实一条都没有"：
+// 两句话矛盾时，人信的是离数据最近的那一句 —— "接口挂了"就被读成"这个组织没有成员"。
+{
+  const emptyProbeReal = loadConsole(el("div"), {realI18n: true});
+  check("加载失败时空表说的是'没能加载出来'，不是'暂无数据'",
+    /没能加载出来/u.test(emptyProbeReal.listEmptyText("成员列表", "500 server_error")),
+    `失败时空表说的是：${JSON.stringify(emptyProbeReal.listEmptyText("成员列表", "500 server_error"))}`);
+  check("没有失败时仍然说'暂无数据'（真的没有就是没有）",
+    emptyProbeReal.listEmptyText("成员列表", "") === "暂无数据",
+    `没有失败却说成：${JSON.stringify(emptyProbeReal.listEmptyText("成员列表", ""))}`);
+  // 接线：三张【由独立接口取数】的表都要用它。少了这条，helper 写了没人用照样全绿。
+  const appSrc2 = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const wired = (appSrc2.match(/listEmptyText\(/gu) || []).length;
+  check("三张独立取数的表都要接上（组织 / 成员 / 智能体节点）",
+    wired >= 4,
+    `listEmptyText 只被用了 ${wired - 1} 处（定义之外，应为 3）—— 有表还在说"暂无数据"`);
+}
+
 // 系统概览这一块"还没取过"与"取失败了"此前共用同一个 null，一律显示"正在加载系统概览…"。
 // 加载已经失败、横幅就在页面顶部写着原因，这一块却还在转圈 —— 人会一直等一件不会发生的事。
 // 同一个形状在项目规则配置那里修过一次，这是第二处；所以这里连"接线"一起验（见下）。

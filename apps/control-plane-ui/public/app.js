@@ -459,6 +459,13 @@ const STATUS_LABEL_BY_KIND = {
   skillSource: {active: "已启用", retired: "已退役"}
 };
 
+// 加载失败时，列表为空【不等于】没有记录 —— 它可能压根没取回来。
+// 顶部横幅说的是"整页加载失败"，而表格里那句"暂无数据"是在断言"确实一条都没有"。
+// 两句话互相矛盾时，人信的是离数据最近的那一句 —— 于是"接口挂了"被读成"这个组织没有成员"。
+function listEmptyText(what) {
+  return lastError ? `${what}没能加载出来（原因见页面顶部的横幅）` : "暂无数据";
+}
+
 function statusBadge(kind, value, tone) {
   const label = STATUS_LABEL_BY_KIND[kind]?.[value];
   return label ? customBadge(label, tone || toneOf(value)) : badge(value, tone);
@@ -1826,7 +1833,8 @@ function renderSysOrgs() {
         <div class="record"><div class="record-title"><strong>配额强制</strong></div><div class="record-meta"><span>成员、项目、任务组、智能体创建时校验配额，超限将返回“组织配额超限”。</span></div></div>
       </div>
     `),
-    panel("组织列表", table(["组织", "状态", "成员", "项目", "任务组", "智能体", "创建时间", "操作"], orgRows), {wide: true, headerSide: filterInput("按组织名过滤…", "orgs")})
+    panel("组织列表", table(["组织", "状态", "成员", "项目", "任务组", "智能体", "创建时间", "操作"], orgRows,
+      {emptyText: listEmptyText("组织列表")}), {wide: true, headerSide: filterInput("按组织名过滤…", "orgs")})
   ].join("");
 }
 
@@ -2258,7 +2266,8 @@ function renderOrgMembers() {
         <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目、任务组细粒度授权可在“账号与授权、项目管理”中补充。</span></div></div>
       </div>
     `),
-    panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows), {wide: true, headerSide: filterInput("按姓名、邮箱过滤…", "members")})
+    panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows,
+      {emptyText: listEmptyText("成员列表")}), {wide: true, headerSide: filterInput("按姓名、邮箱过滤…", "members")})
   ].join("");
 }
 
@@ -2329,7 +2338,8 @@ function renderOrgAgents() {
       {v: fmtTime(node.lastHeartbeatAt), c: "nowrap"},
       agentActions(node)
     ])).join("");
-    bodyHtml = table(["名称", "运行状态", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"], nodeRows);
+    bodyHtml = table(["名称", "运行状态", "地区", "健康度", {label: "当前任务数", c: "num"}, {label: "最近心跳", c: "nowrap"}, "操作"],
+      nodeRows, {emptyText: listEmptyText("智能体节点")});
   }
 
   return [

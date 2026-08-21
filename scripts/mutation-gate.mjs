@@ -2986,6 +2986,22 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "加载失败的空表不得说'暂无数据'（那是在断言确实没有）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  return lastError ? `${what}没能加载出来（原因见页面顶部的横幅）` : \"暂无数据\";",
+    to: "  return \"暂无数据\";",
+    expect: "失败时空表说的是"
+  },
+  {
+    name: "三张独立取数的表都要接上（漏一张就照旧说暂无数据）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      {emptyText: listEmptyText(\"组织列表\")})",
+    to: "      {})",
+    expect: "只被用了"
+  },
+  {
     name: "系统概览取失败时不许还说'正在加载'（人会一直等）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
