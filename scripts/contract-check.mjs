@@ -370,6 +370,7 @@ run(verifyWhitelistRefusalsCarryTheWhitelist);
 run(verifyGuardedWritesAreAudited);
 run(verifyWarnModeRejectionsSurviveChurn);
 run(verifyCorruptEventLinesAreReported);
+run(verifySizeAccountingDoesNotSwallowFailures);
 run(verifyOutputTargetKeepsItsPolicyDecision);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
@@ -5645,6 +5646,37 @@ function verifyOutputTargetKeepsItsPolicyDecision(output) {
 //   那行若含 eventKey → 该键的幂等性没了 → 重放被当成新事件接受两次。
 // 而追加那段专门在处理"尾部没有换行"，说明撕裂写本来就是预期内的 —— 这条 catch 真的会被走到。
 // 不抛异常（一行坏数据不该让整个项目读不出来），但必须让人看见。
+// 【算容量的地方不许把量不到的当成 0】。agent 运行时按目录大小做淘汰：statSync 失败原先被空吞，
+// 总量因此算小 → 淘汰不触发 → 盘继续涨；而那条"还在超上限"的提示只在【算出来超了】时才说话，
+// 于是一整套安全机制看起来"没必要动"。一个静默为 0 的测量，比没有测量更危险。
+function verifySizeAccountingDoesNotSwallowFailures(output) {
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const sweepAt = runtime.indexOf("function sweepLibraryOverCapacity");
+  if (sweepAt < 0) {
+    output.push("容量测量核对：找不到 sweepLibraryOverCapacity —— 判据与代码脱节，本条在空转");
+    return;
+  }
+  // 窗口要盖住整个函数：1800 字符不够（这一段有 60 多行且注释很长），第一版因此报了空转 ——
+  // 那正是空转守卫该做的事，它拦住了一条什么都没查的判据。按函数体边界取。
+  const body = runtime.slice(sweepAt, runtime.indexOf("\n}\n", sweepAt) + 3);
+  // `[^)]*` 遇到内层括号就断了：真实写法是 `statSync(join(dir, file)).size`。
+  // 这类"第一个右括号就截断"的形状本会话撞过多次，改成不看括号内容。
+  const sizing = [...body.matchAll(/statSync\([\s\S]{0,40}?\)\.size/gu)];
+  if (!sizing.length) {
+    output.push("容量测量核对：这一段里找不到按 statSync 取大小的地方 —— 判据与代码脱节，本条在空转");
+    return;
+  }
+  if (/\.size; \} catch \{\}/u.test(body) || /\.size;\s*\} catch \(\w*\) \{\}/u.test(body)) {
+    output.push("agent 运行时按目录大小做淘汰，而量不到的文件被静默当成 0 —— "
+      + "总量算小则淘汰不触发、盘继续涨，且那条『还在超上限』的提示也不会出现");
+  }
+  if (!/unsizedFiles/u.test(body)) {
+    output.push("容量测量没有统计『量不到的文件』—— 算出来的总量是下限还是实际占用，人无从判断");
+  }
+  console.log(`容量测量：sweepLibraryOverCapacity 里 ${sizing.length} 处取大小，`
+    + `量不到的文件已计数并如实上报（不当成 0）`);
+}
+
 function verifyCorruptEventLinesAreReported(output) {
   const dir = mkdtempSync(join(tmpdir(), "aimac-eventlog-"));
   try {

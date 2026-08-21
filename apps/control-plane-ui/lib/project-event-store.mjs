@@ -436,7 +436,12 @@ function sequenceBoundsInFile(path) {
       const sequence = Number(JSON.parse(line).sequence || 0);
       if (sequence && !firstSequence) firstSequence = sequence;
       if (sequence) lastSequence = sequence;
-    } catch {}
+    } catch {
+      // 与索引重建同理：坏行被吞掉，这个段声明的序号范围就与它的内容对不上。
+      // 段清单是轮转与查找的依据，范围错了会让某些事件永远查不到。
+      eventLogCorruptionFault = eventLogCorruptionFault
+        || `${path.split("/").pop()} 里有解析不了的行，段序号范围可能不准 —— 查找与轮转都以它为准`;
+    }
   }
   return {firstSequence, lastSequence};
 }

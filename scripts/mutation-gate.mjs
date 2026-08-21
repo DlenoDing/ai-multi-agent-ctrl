@@ -3026,6 +3026,14 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "算容量时量不到的文件不得当成 0（淘汰会因此不触发）",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifySizeAccountingDoesNotSwallowFailures",
+    from: "try { size += statSync(join(dir, file)).size; } catch { unsizedFiles += 1; }",
+    to: "try { size += statSync(join(dir, file)).size; } catch {}",
+    expect: "静默当成 0"
+  },
+  {
     name: "事件日志的损坏行不得静默跳过（序号会被重用、幂等键会失效）",
     file: "apps/control-plane-ui/lib/project-event-store.mjs",
     check: "verifyCorruptEventLinesAreReported",

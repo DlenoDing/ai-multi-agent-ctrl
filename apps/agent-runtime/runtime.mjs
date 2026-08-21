@@ -617,6 +617,7 @@ function sweepStaleSessionDirectories(config) {
 
 function sweepLibraryOverCapacity(config) {
   const maxBytes = Math.max(64, Number(process.env.AIMAC_AGENT_LIBRARY_MAX_MB || 2048)) * 1024 * 1024;
+  let unsizedFiles = 0;
   const libraryDir = join(config.workDir, "library");
   if (!existsSync(libraryDir)) return;
   const entries = [];
@@ -627,12 +628,20 @@ function sweepLibraryOverCapacity(config) {
       if (!stat.isDirectory()) continue;
       let size = 0;
       for (const file of readdirSync(dir)) {
-        try { size += statSync(join(dir, file)).size; } catch {}
+        // 量不到的文件不能当成 0：总量算小 → 容量淘汰不触发 → 盘继续涨，
+        // 而下面那条"还在超上限"的提示也不会出现（它只在算出来超了的时候说话）。
+        // 一个静默为 0 的测量，会让一整套安全机制看起来"没必要动"。
+        try { size += statSync(join(dir, file)).size; } catch { unsizedFiles += 1; }
       }
       entries.push({dir, size, mtimeMs: stat.mtimeMs});
     } catch {}
   }
   let total = entries.reduce((sum, entry) => sum + entry.size, 0);
+  if (unsizedFiles) {
+    process.stderr.write(`library sweep: ${unsizedFiles} 个文件量不到大小（权限/正被占用），`
+      + `算出来的 ${Math.round(total / (1024 * 1024))}MB 是【下限】而不是实际占用 —— `
+      + "淘汰可能因此不触发，需人工核对\n");
+  }
   if (total <= maxBytes) return;
   let evictionFault = null;
   for (const entry of entries.sort((left, right) => left.mtimeMs - right.mtimeMs)) {
