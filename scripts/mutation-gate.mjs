@@ -3010,6 +3010,22 @@ const MUTATIONS = [
     expect: "仓内文件不存在"
   },
   {
+    name: "每一次守卫写入都要留痕（事后要答得出谁改的）",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyGuardedWritesAreAudited",
+    from: "    audit(state, guard.actor, \"project_config_update\", `Project:${project.id}`);",
+    to: "    void 0;",
+    expect: "没有留下审计条目"
+  },
+  {
+    name: "守卫写入扫描打不到时必须红（不得绿着空转）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyGuardedWritesAreAudited",
+    from: "const guards = [...server.matchAll(/beginGuardedWrite\\(\\s*\\n?\\s*req,",
+    to: "const guards = [...server.matchAll(/beginGuardedWriteX\\(\\s*\\n?\\s*req,",
+    expect: "只扫到 0 处"
+  },
+  {
     name: "白名单拒绝必须带上白名单（否则调用方只能穷举重试）",
     file: "apps/mcp-server/server.mjs",
     check: "verifyWhitelistRefusalsCarryTheWhitelist",

@@ -356,6 +356,7 @@ run(verifyGatesDoNotCloneFromTheNetwork);
 run(verifyDocumentedApiPathsExist);
 run(verifyRaceTimeoutsDoNotHoldTheProcess);
 run(verifyWhitelistRefusalsCarryTheWhitelist);
+run(verifyGuardedWritesAreAudited);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5576,6 +5577,43 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 现在 4 处全合规（角色那三处带 registeredRoles，状态那处带 allowedStatuses），这道门是为了让它保持。
 // 认字段名要认【这个仓里实际用的那些】：第一版只找 allowed/supported/expected，
 // 把三处带 registeredRoles 的全报成了缺口 —— 词汇假设造成的误报，比漏报更浪费时间。
+// 每一次守卫写入都要留痕：这套系统的治理属性就建在"事后答得出谁改的"上面。
+// 现在 72 处守卫写入全都有 audit()，这道门是为了让第 73 处别漏。
+// 切块要按【路由边界】，不能按 beginGuardedWrite 的出现位置切：
+// 有一条路由用三元写了两个 beginGuardedWrite，按出现位置切会让第一块在第二个 guard 处截断，
+// 于是 audit() 落在块外 —— 我第一版就是这么切的，报了一个不存在的缺口。
+function verifyGuardedWritesAreAudited(output) {
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8")
+    .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
+  const routeStarts = [...server.matchAll(/if \(req\.method === /gu)].map((match) => match.index);
+  const routeEndFor = (position) => routeStarts.find((start) => start > position) ?? server.length;
+  // 要认多行写法与三元 action：`beginGuardedWrite(\n  req,\n  state,\n  x ? "a" : "b", …)`。
+  // 只认单行带引号的话会漏掉它（实测漏 1 处，而那正是账号邀请这条写入路径）。
+  // 同时排除函数定义本身（它的第三个参数是形参 action，没有引号）。
+  const guards = [...server.matchAll(/beginGuardedWrite\(\s*\n?\s*req,\s*\n?\s*state,\s*\n?\s*[^)]{0,80}?[`"]([\w$]+)/gu)]
+    .filter((match) => !/beginGuardedWrite\(req, state, action,/u.test(server.slice(match.index, match.index + 60)));
+  const unaudited = [];
+  const seenRoutes = new Set();
+  for (const guard of guards) {
+    const end = routeEndFor(guard.index);
+    const route = `${guard.index}-${end}`;
+    if (seenRoutes.has(route)) continue;                 // 同一条路由里的多个 guard 只算一次
+    seenRoutes.add(route);
+    if (/\baudit\(/u.test(server.slice(guard.index, end))) continue;
+    unaudited.push(`${server.slice(0, guard.index).split("\n").length}: ${guard[1]}`);
+  }
+  if (guards.length < 60) {
+    output.push(`守卫写入只扫到 ${guards.length} 处（应至少 60）—— 提取形状与代码脱节，本条在空转`);
+    return;
+  }
+  if (unaudited.length) {
+    output.push("这些守卫写入没有留下审计条目 —— 事后问「这一改是谁做的」答不出来：\n  "
+      + unaudited.join("\n  "));
+  }
+  console.log(`守卫写入留痕：${guards.length} 处逐个核对（按路由归并 ${seenRoutes.size} 条），`
+    + `${unaudited.length} 处没有 audit（应为 0）`);
+}
+
 function verifyWhitelistRefusalsCarryTheWhitelist(output) {
   const CARRIES = /allowedStatuses|allowedRoles|registeredRoles|allowedResourceTypes|supported|expectedType|allowedPaths/u;
   const files = ["apps/mcp-server/server.mjs", "apps/control-plane-ui/server.mjs",
