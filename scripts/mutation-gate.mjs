@@ -2986,6 +2986,14 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "每个分片集合都必须真的比对过（漏一个就没人验它的拆合）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyShardRoundTripKeepsEveryRecord",
+    from: "  if (probe[collection].length) return;",
+    to: "  if (probe[collection].length || collection === \"humanDirectives\") return;",
+    expect: "一条记录都没比对到"
+  },
+  {
     name: "空转期间心跳必须真的往前走（合并等待窗口后仍要能红）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "idle",

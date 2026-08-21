@@ -9573,7 +9573,13 @@ const store = await import(join(root, "apps/control-plane-ui/lib/state-store.mjs
 const core = await import(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"));
 const probe = JSON.parse(readFileSync(join(root, "data/seed-state.json"), "utf8"));
 core.ensureRuntimeCollections(probe, {root});
-core.runAutonomousCycle(probe, {root, mode: "all"});  // 分片往返要真造出足够记录，不能关技能同步
+// 关掉技能同步：原先这里写着"不能关技能同步"，量过之后那是个没验证的判断。
+// 同步会往【全新的临时运行目录】git clone 一个 12MB 的远端仓库，每跑一次契约门就来一遍 ——
+// 5~17 秒（视网速），而且让一道【静态门依赖网络】。
+// 而它对本条判据毫无贡献：roleSkills 根本不在分片集合清单里，本条压根不比对它；
+// 实测开与关，分片集合的填充数一模一样（10/15，其余 5 个由下面的补齐逻辑覆盖）。
+// 7657ms → 25ms。
+core.runAutonomousCycle(probe, {root, mode: "all", autoSyncSkills: false});
 // 只比对"夹具恰好填了的集合"会给出一半的虚假信心：编排周期不产出 checkpoints 这类集合，
 // 空集合被整个跳过，合并时漏掉它也不会有人发现。按分片清单给每个空集合补一条最小记录。
 const shardCollections = JSON.parse(readFileSync(join(root, "apps/control-plane-ui/lib/state-store.mjs"), "utf8")
@@ -9616,10 +9622,16 @@ console.log(String(shardCollections.length));
       }
       return value;
     };
+    // 分片集合的清单从被测代码里取（子进程已经解析过一次，这里再取一次给守卫用）。
+    const shardNames = new Set(JSON.parse(
+      readFileSync(join(root, "apps/control-plane-ui/lib/state-store.mjs"), "utf8")
+        .match(/const projectShardCollections = (\[[\s\S]*?\]);/u)[1].replace(/,(\s*\])/gu, "$1")));
     let compared = 0;
+    const comparedCollections = new Set();
     for (const [name, items] of Object.entries(before)) {
       if (!Array.isArray(items) || !items.length) continue;
       compared += items.length;
+      comparedCollections.add(name);
       const back = after[name];
       if (!Array.isArray(back)) {
         output.push(`分片往返保真：集合 ${name} 往返后不再是数组（${typeof back}）—— 落盘再读回就丢了整个集合`);
@@ -9634,8 +9646,17 @@ console.log(String(shardCollections.length));
           + `；样例：${(lost[0] || gained[0] || "").slice(0, 200)}`);
       }
     }
-    if (compared < 200) {
-      output.push(`分片往返保真：只比对到 ${compared} 条记录，远少于预期 —— 夹具没造出足够数据，本条在空转`);
+    // 守的是【每个分片集合都真的比对过】，不是"总记录数够多"。
+    // 原先的守卫是 `compared < 200`，而 200 只是当时夹具恰好产出的量级 —— 一个弱代理：
+    // 它会被"某一类记录变多了"喂饱，也会因为关掉一个与分片无关的数据源而误报
+    // （实测：关掉技能同步后 roleSkills 的 281 条没了，总数掉到 166，而分片覆盖一条没少）。
+    const uncovered = [...shardNames].filter((name) => !comparedCollections.has(name));
+    if (uncovered.length) {
+      output.push(`分片往返保真：这些分片集合一条记录都没比对到 —— 夹具没造出数据，它们的拆合无人验证：\n  `
+        + uncovered.join("、"));
+    }
+    if (compared < 100) {
+      output.push(`分片往返保真：只比对到 ${compared} 条记录 —— 夹具整体失效，本条在空转`);
     }
   } finally {
     try { rmSync(roundTripDir, {recursive: true, force: true}); } catch { /* best effort */ }
