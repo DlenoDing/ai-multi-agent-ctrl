@@ -3026,6 +3026,14 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "配了不存在的项目 id 要在启动时说出来（否则每次调用都莫名越权失败）",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyServiceAllowlistSaysWhatItDropped",
+    from: "  if (configuredProjectIds.length) {",
+    to: "  if (false) {",
+    expect: "一个字都没说"
+  },
+  {
     name: "服务令牌白名单里配错的名字要说出来（否则当成有效工具放行）",
     file: "apps/control-plane-ui/lib/mcp-service-allowlist.mjs",
     check: "verifyServiceAllowlistSaysWhatItDropped",

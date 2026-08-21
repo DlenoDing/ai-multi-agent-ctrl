@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { SCHEMA_FILE_ALIASES, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { mcpServiceAllowedTools ,
   mcpServiceAllowlistNotice
@@ -5689,7 +5689,31 @@ function verifyServiceAllowlistSaysWhatItDropped(output) {
     if (mcpServiceAllowlistNotice()) {
       output.push(`没有自定义白名单却报了警：${mcpServiceAllowlistNotice()}`);
     }
-    console.log("服务令牌白名单：配了但会被禁令拿掉的、名字拼错的，都会当场说出来（默认配置下不报警）");
+    // 同族的第二处：AIMAC_MCP_SERVICE_PROJECT_IDS 配的是项目 id 清单，同样从不核对存在性。
+    // 它的核对在服务端【启动时】做（那里才有 state），所以这里只能验那段接线还在 ——
+    // 行为由启动日志承担，判据保证"这段核对没被删掉"。
+    // 锁行为不锁文字：只查"那段话在不在"的话，把 if 条件改成 false 也照样绿（实测过）。
+    // 真起一次服务端、配一个不存在的项目 id，看它到底说不说。
+    const bootDir = mkdtempSync(join(tmpdir(), "aimac-projid-"));
+    try {
+      const boot = spawnSync(process.execPath, [join(root, "scripts/run-with-env.mjs"),
+        join(root, "apps/control-plane-ui/server.mjs")], {
+        encoding: "utf8", timeout: 20000,
+        env: {...process.env, AIMAC_RUNTIME_DIR: bootDir, AIMAC_STATE_STORE: "runtime_json",
+          DATABASE_URL: "", AIMAC_PORT: "0", AIMAC_ORCHESTRATOR_INTERVAL_MS: "0",
+          AIMAC_MCP_SERVICE_PROJECT_IDS: "prj_control_plane,prj_definitely_not_here",
+          AIMAC_EXIT_AFTER_BOOT: "true"}
+      });
+      const said = `${boot.stdout || ""}${boot.stderr || ""}`;
+      if (!/prj_definitely_not_here/u.test(said)) {
+        output.push("AIMAC_MCP_SERVICE_PROJECT_IDS 配了不存在的项目 id，服务端启动时一个字都没说 —— "
+          + "服务令牌会被限定在它上面，之后每次调用都因作用域失败，而报错只说越权/看不见");
+      }
+    } finally {
+      try { rmSync(bootDir, {recursive: true, force: true}); } catch { /* best effort */ }
+    }
+    console.log("服务令牌白名单：配了但会被禁令拿掉的、名字拼错的，都会当场说出来（默认配置下不报警）；"
+      + "项目 id 清单的存在性核对接在启动路径上");
   } finally {
     if (previous === undefined) delete process.env.AIMAC_MCP_SERVICE_ALLOWED_TOOLS;
     else process.env.AIMAC_MCP_SERVICE_ALLOWED_TOOLS = previous;

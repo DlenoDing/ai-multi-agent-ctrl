@@ -5845,7 +5845,22 @@ try {
   mcpServiceAllowedTools(createMcpToolDefinitions().map((tool) => tool.name));
   const allowlistNotice = mcpServiceAllowlistNotice();
   if (allowlistNotice) console.warn(`[mcp-allowlist] ${allowlistNotice}`);
-} catch { /* 工具表取不到时不影响启动 */ }
+  // 同族：AIMAC_MCP_SERVICE_PROJECT_IDS 配的是【项目 id 清单】，而它同样从不核对这些 id 存不存在。
+  // 配错一个，服务令牌就被限定在一个不存在的项目上 —— 之后每次调用都因作用域失败，
+  // 而失败信息只会说"越权/看不见"，不会说"你配的那个项目根本没有"。
+  const configuredProjectIds = String(process.env.AIMAC_MCP_SERVICE_PROJECT_IDS || "")
+    .split(",").map((item) => item.trim()).filter(Boolean);
+  if (configuredProjectIds.length) {
+    const bootState = readStoredState({root, runtimeDir, statePath, seedPath, buildInitialState});
+    const known = new Set((bootState.projects || []).map((item) => item.id));
+    const missing = configuredProjectIds.filter((id) => !known.has(id));
+    if (missing.length) {
+      console.warn(`[mcp-allowlist] AIMAC_MCP_SERVICE_PROJECT_IDS 里这些项目不存在：${missing.join("、")}`
+        + " —— 服务令牌会被限定在它们上面，之后每次调用都因作用域失败，"
+        + "而报错只会说越权/看不见，不会说这个项目根本没有");
+    }
+  }
+} catch { /* 工具表或状态取不到时不影响启动 */ }
 const orchestratorIntervalMs = Number(process.env.AIMAC_ORCHESTRATOR_INTERVAL_MS ?? 60000);
 // 关掉它，后台就没有任何东西推进：人提交的指令一直停在"待处理"，派发不会被领走，
 // 关闭门不会重算 —— 而控制台上一切如常，人会以为系统在跑。这与状态机执行模式同形，
