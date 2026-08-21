@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "文档写了不存在的接口要被查出来",
+    file: "docs/core-control-plane-spec.md",
+    check: "verifyDocumentedApiPathsExist",
+    from: "| POST | `/api/work-items/:workItemId/assign` | \u5206\u914d\u6216\u6539\u6d3e | scheduler\u3001orchestrator |",
+    to: "| POST | `/api/work-items/:workItemId/reassign-now` | \u5206\u914d\u6216\u6539\u6d3e | scheduler\u3001orchestrator |",
+    expect: "在服务端不存在"
+  },
+  {
+    name: "产品删掉文档写着的路由要被查出来",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyDocumentedApiPathsExist",
+    from: "  const upgradeCandidateResolveMatch = url.pathname.match(/^\\/api\\/system-upgrade-candidates\\/([^/]+)\\/resolve$/);",
+    to: "  const upgradeCandidateResolveMatch = url.pathname.match(/^\\/api\\/gone\\/([^/]+)\\/resolve$/);",
+    expect: "在服务端不存在"
+  },
+  {
     name: "跨组织授权必须真的被拒（不只是源码里有那个码）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

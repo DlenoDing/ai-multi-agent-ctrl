@@ -364,7 +364,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | GET | `/api/task-groups/:taskGroupId/readiness` | 计算任务组完成就绪和关闭屏障 | orchestrator、monitor、ui-console-service |
 | POST | `/api/task-groups/:taskGroupId/language-policy` | 设置任务组统一语言策略 | orchestrator、ui-console-service |
 | POST | `/api/task-groups/:taskGroupId/control` | 暂停、恢复、请求复验或纠偏 | orchestrator、ui-console-service |
-| POST | `/api/work-items` | 创建 work item | orchestrator、decision-center |
+| POST | `/api/task-groups/:taskGroupId/work-items` | 创建 work item（挂在任务组下创建；改派走 `/api/work-items/:workItemId/assign`） | orchestrator、decision-center |
 | POST | `/api/work-items/:workItemId/assign` | 分配或改派 | scheduler、orchestrator |
 | POST | `/api/effective-instruction-packets` | 创建强化后的有效指令包 | orchestrator、policy-engine |
 | POST | `/api/instruction-envelopes` | 创建压缩后的角色指令信封 | orchestrator、instruction-optimizer |
@@ -411,7 +411,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/integration-batches` | 创建集成批次 | release、orchestrator |
 | POST | `/api/runtime-issues` | 收集重复运行期问题并生成升级候选，不触发运行时自修改 | monitor |
 | POST | `/api/runtime-issue-patterns` | 聚合重复运行问题 | monitor |
-| POST | `/api/system-upgrade-candidates/export` | 导出系统外升级证据包 | monitor、rule-steward |
+| POST | `/api/system-upgrade-candidates/:candidateId/resolve` | 处置升级候选项（导出证据包尚未落地） | monitor、rule-steward |
 | POST | `/api/system-upgrade-candidates/import-external-result` | 导入系统外独立升级后的版本化结果 | admin console、orchestrator import service |
 | POST | `/api/close-barriers/compute` | 计算并校验关闭屏障 | orchestrator |
 | POST | `/api/agent/v1/register` | 使用一次性 join token 初始化 Agent Runtime 节点 | agent-runtime |
@@ -421,7 +421,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/agent/v1/control/:commandId/ack` | Agent Runtime ACK 控制命令结果 | agent-runtime |
 | POST | `/api/agent/v1/dispatches/next` | Agent Runtime 拉取可执行 dispatch | agent-runtime |
 | POST | `/api/agent/v1/events` | Agent Runtime 实时回送执行事件 | agent-runtime |
-| POST | `/api/agents/:nodeId/activation` | 激活或停用 Agent | ui-console-service、policy-engine |
+| POST | `/api/agents/:agentId/activate` | 激活或停用 Agent（`/activation` 是同一路由的别名） | ui-console-service、policy-engine |
 | POST | `/api/agents` | 创建项目可用 Agent identity | ui-console-service、identity-service |
 | GET | `/api/runtime/health` | 运行健康检查 | ui-console-service、monitor |
 | POST | `/api/bootstrap/init` | 初始化运行态 | ui-console-service、agent-runtime |
