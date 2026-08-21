@@ -357,6 +357,7 @@ run(verifyDocumentedApiPathsExist);
 run(verifyRaceTimeoutsDoNotHoldTheProcess);
 run(verifyWhitelistRefusalsCarryTheWhitelist);
 run(verifyGuardedWritesAreAudited);
+run(verifyWarnModeRejectionsSurviveChurn);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5582,6 +5583,53 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 切块要按【路由边界】，不能按 beginGuardedWrite 的出现位置切：
 // 有一条路由用三元写了两个 beginGuardedWrite，按出现位置切会让第一块在第二个 guard 处截断，
 // 于是 audit() 落在块外 —— 我第一版就是这么切的，报了一个不存在的缺口。
+// 宽松模式下被放行的【非法状态转移】是最该被人看见的一条记录。原先它只记进 transitionEvidence，
+// 而那个集合上限 240、且每一次【合法】迁移也往里挤 —— 一次真实 e2e 跑完就有 145 条，
+// 想保住的那条几分钟就被日常流量顶出去了。改成同时写审计台账（先归档再裁剪，控制台也显示）。
+// 判据不能只验"写了一条"：必须验它【在日常流量把 transitionEvidence 挤满之后还在】。
+function verifyWarnModeRejectionsSurviveChurn(output) {
+  const previous = process.env.AIMAC_TRANSITION_STRICT;
+  process.env.AIMAC_TRANSITION_STRICT = "warn";
+  try {
+    const probe = structuredClone(seedState);
+    ensureRuntimeCollections(probe, {root});
+    const before = (probe.auditLog || []).length;
+    // 用已导出的入口触发，不为了测试去导出 recordTransition：
+    // verified 的工作项走这条路会撞上未建模的 verified->checkpoint_submitted（doctor 里那条探针同源）。
+    const bad = {id: "wi_churn_probe", status: "verified"};
+    advanceWorkItemToReviewRequested(probe, bad, {runId: "run_churn"});
+    const logged = (probe.auditLog || []).filter((entry) => entry.action === "transition_rejected_in_warn_mode");
+    if (logged.length !== 1) {
+      output.push(`宽松模式的非法转移没有进审计台账（台账新增 ${(probe.auditLog || []).length - before} 条，`
+        + `其中这一类 ${logged.length} 条）—— 它只留在 240 上限的 transitionEvidence 里，会被日常流量顶掉`);
+      return;
+    }
+    // 日常流量：灌 300 次【合法】迁移，把 transitionEvidence 挤满一轮。
+    // 日常流量：每次调用产生 3 条【合法】迁移，120 次足以把 240 上限挤满一轮。
+    for (let index = 0; index < 120; index += 1) {
+      advanceWorkItemToReviewRequested(probe, {id: `wi_noise_${index}`, status: "assigned"},
+        {runId: `run_noise_${index}`});
+    }
+    const evidenceLeft = (probe.transitionEvidence || [])
+      .filter((item) => item.objectId === "wi_churn_probe").length;
+    const auditLeft = (probe.auditLog || [])
+      .filter((entry) => entry.action === "transition_rejected_in_warn_mode").length;
+    if (evidenceLeft !== 0) {
+      output.push(`本条在空转：灌了 120 轮合法迁移，那条非法记录仍留在 transitionEvidence 里（${evidenceLeft} 条）——`
+        + "上限没起作用，这个用例没有复现出'被日常流量顶掉'那件事");
+    }
+    if (auditLeft !== 1) {
+      output.push(`日常流量把宽松模式的非法转移从审计台账里也顶掉了（剩 ${auditLeft} 条）——`
+        + "最该被看见的那一条没有留住");
+    }
+    console.log(`宽松模式非法转移：写台账 1 条；灌 120 轮合法迁移之后 transitionEvidence 里已被顶掉、`
+      + `台账里仍在（${auditLeft} 条）`);
+  } finally {
+    if (previous === undefined) delete process.env.AIMAC_TRANSITION_STRICT;
+    else process.env.AIMAC_TRANSITION_STRICT = previous;
+  }
+}
+
 function verifyGuardedWritesAreAudited(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8")
     .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));

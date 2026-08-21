@@ -3010,6 +3010,22 @@ const MUTATIONS = [
     expect: "仓内文件不存在"
   },
   {
+    name: "宽松模式的非法转移必须进审计台账（只记在有上限的集合里会被顶掉）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyWarnModeRejectionsSurviveChurn",
+    from: "    appendAuditEntry(state, {actor, action: \"transition_rejected_in_warn_mode\",",
+    to: "    void 0 || ((x) => x)({actor, action: \"transition_rejected_in_warn_mode\",",
+    expect: "没有进审计台账"
+  },
+  {
+    name: "这条用例必须真的复现'被日常流量顶掉'（上限变大就该报空转）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyWarnModeRejectionsSurviveChurn",
+    from: "  state.transitionEvidence = state.transitionEvidence.slice(0, 240);",
+    to: "  state.transitionEvidence = state.transitionEvidence.slice(0, 24000);",
+    expect: "本条在空转"
+  },
+  {
     name: "行号引用判据的文件枚举走空要报（找违规型判据会安静地全绿）",
     file: "scripts/contract-check.mjs",
     check: "verifyCommentsDoNotCiteLineNumbers",

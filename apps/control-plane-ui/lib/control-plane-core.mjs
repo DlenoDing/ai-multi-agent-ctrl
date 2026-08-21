@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
+import { appendAuditEntry } from "./audit-ledger.mjs";
 import { assertTransition, canonicalTransition, requiresValuesToEvidenceRefs } from "./transition-engine.mjs";
 
 const controlPlaneRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -4852,6 +4853,12 @@ function recordTransition(state, machine, objectId, from, to, actor, requiresVal
     // 一行永远滚过去、又无从判断严重性的警告，和没有这行没什么区别。
     console.warn(`[transition-engine] rejected ${machine} ${objectId} ${from}->${to} by ${actor}: `
       + `${rejection.failureCode} (warn mode; transition still recorded)`);
+    // 记进 transitionEvidence 还不够：那个集合上限 240，而【每一次合法迁移也往里挤】——
+    // 一次真实 e2e 跑完就有 145 条，非法迁移这条几分钟就被日常流量顶出去了。
+    // 想保住的恰恰是它。审计台账是先归档再裁剪的，而且控制台的「审计日志」面板会显示它。
+    // （这是"人最想留住的那条记录落在会被裁掉的集合上"的又一例。）
+    appendAuditEntry(state, {actor, action: "transition_rejected_in_warn_mode",
+      subject: `${machine}:${objectId} ${from}->${to}`, result: rejection.failureCode});
   }
   const transition = {
     transitionId: createId("trn"),
