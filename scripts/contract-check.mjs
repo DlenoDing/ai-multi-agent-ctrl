@@ -193,6 +193,29 @@ const THROW_HELPERS_WITHOUT_CODES = {
 };
 
 
+// 每一个容量裁剪都必须说明【它凭什么不会裁掉还在用的记录】。裸 slice 会造成上限抖动：
+// 被挤掉的对象下一拍找不到自己的旧记录、重记一条、再把别人挤掉 —— 账本每拍全量重写，
+// 落盘/ETag/控制台重渲染全被带动，而账本永远只是个轮转的子集（本仓撞过四次）。
+// 更坏的一种：人的判断落在会被裁掉的那条上，容量会悄悄撤销它。
+//
+// 这里用【登记制】而不是扫描：我试过按关键词扫函数体判断"有没有活跃保护"，
+// 11 个 cap 里误报了 4 个（capReasoning 压根不是集合裁剪、capLeaseHistory 用的词是 active）——
+// 手编的期望表本身就是错误来源。登记制至少逼着新增者写清楚一句话。
+const CAP_FUNCTION_GUARDS = {
+  capKeepingReferenced: "仍被别处引用的记录（decisionRecordRef 之类）留在窗口外也不裁",
+  capReasoning: "不是集合裁剪 —— 它钳的是单个模型的推理档位，与容量无关",
+  capPerTaskGroupRecords: "活着的任务组至少留一条（strandedLive）：否则那个组下一拍找不到自己的记录",
+  capAdmissionDecisions: "活着的单元一条都不裁（liveCellIds）：2000 单元时抖动会让账本每分钟重写 400 条",
+  capBoundedHistories: "调度器：本身不裁，逐个委托给下面这些带保护的 cap",
+  capLeaseHistory: "active 租约一条都不裁（fencing 与持有者权威还在用），只修剪已释放的历史",
+  capDispatchHistory: "未终结的派发一条都不裁",
+  capTaskContracts: "还有派发指着的合同一条都不裁",
+  capCommandBus: "三个集合都委托给 capRetainingPredicate，按「未终结」保留 —— 它们被关闭门读，裁错会让门假满足",
+  capRetainingOpen: "未了结状态的记录一条都不裁",
+  capRetainingPredicate: "调用方给的谓词判为「要留」的一条都不裁"
+};
+
+
 const seedState = loadJson("data/seed-state.json");
 const runtimeSchema = loadJson("spec/runtime-bootstrap.schema.json");
 const mcpGrantSchema = loadJson("spec/mcp-grant.schema.json");
@@ -348,6 +371,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyEveryCapExplainsWhatItKeeps);
 run(verifyOneProjectWriteTouchesOneShard);
 run(verifyPanelGatesCoverEveryBlockInside);
 run(verifyTopologyBlockerPartsAllHaveChinese);
@@ -10833,6 +10857,27 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyEveryCapExplainsWhatItKeeps(output) {
+  const core = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  // 三个是 export function（第一版只认行首 function，把它们当成"登记过期"报了红 ——
+  // 好在过期校验先咬住了我，否则漏掉的是三个真在裁剪的函数）。
+  const found = [...core.matchAll(/^(?:export )?function (cap[A-Z]\w*)\(/gum)].map((match) => match[1]);
+  if (found.length < 8) {
+    output.push(`只枚举到 ${found.length} 个 cap 函数（实际有十来个）—— 这条判据的正则形状没对上，它在空转`);
+  }
+  const unregistered = found.filter((name) => !CAP_FUNCTION_GUARDS[name]).sort();
+  if (unregistered.length) {
+    output.push(`这些容量裁剪没有登记它凭什么不裁掉还在用的记录：${unregistered.join("、")} —— `
+      + "裸 slice 会造成上限抖动（被挤掉的对象下一拍重记一条再挤掉别人，账本每拍全量重写），"
+      + "更坏的是人的判断落在被裁的那条上，容量会悄悄撤销它");
+  }
+  const stale = Object.keys(CAP_FUNCTION_GUARDS).filter((name) => !found.includes(name)).sort();
+  if (stale.length) {
+    output.push(`登记表里这些 cap 在产品代码里已经不存在了：${stale.join("、")} —— 登记过期，删掉它们`);
+  }
+  console.log(`容量裁剪：${found.length} 个 cap 函数逐个核对，都登记了它保住的是什么`);
 }
 
 function verifyOneProjectWriteTouchesOneShard(output) {

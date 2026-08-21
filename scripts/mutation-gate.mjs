@@ -3561,6 +3561,22 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "新增容量裁剪必须登记它保住什么",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyEveryCapExplainsWhatItKeeps",
+    from: "function capLeaseHistory(leases, limit = 2000) {",
+    to: "function capNaiveSlice(items, limit) { return items.slice(0, limit); }\nfunction capLeaseHistory(leases, limit = 2000) {",
+    expect: "没有登记它凭什么不裁掉还在用的记录"
+  },
+  {
+    name: "容量裁剪登记判据自己不得空转",
+    file: "scripts/contract-check.mjs",
+    check: "verifyEveryCapExplainsWhatItKeeps",
+    from: "  const found = [...core.matchAll(/^(?:export )?function (cap[A-Z]\\w*)\\(/gum)].map((match) => match[1]);",
+    to: "  const found = [...core.matchAll(/^(?:export )?function (nope[A-Z]\\w*)\\(/gum)].map((match) => match[1]);",
+    expect: "它在空转"
+  },
+  {
     name: "未变动的项目分片必须被跳过",
     file: "apps/control-plane-ui/lib/state-store.mjs",
     check: "verifyOneProjectWriteTouchesOneShard",
