@@ -195,6 +195,7 @@ export function readStoredState(options) {
 // 所以在读取点直接拒绝：认不出来就不开工，让人看到一句能照着做的话。
 // 缺字段视为兼容（很多夹具与早期状态就没有这个字段），只拒绝【明确不同】的版本。
 const SUPPORTED_STATE_SCHEMA_VERSIONS = new Set(["control-plane-runtime-state/v1"]);
+const SUPPORTED_PROJECT_SHARD_SCHEMA_VERSIONS = new Set(["project-state-shard/v1"]);
 
 function assertStateSchemaSupported(state) {
   const declared = state && typeof state === "object" ? state.schemaVersion : null;
@@ -670,6 +671,17 @@ function readRuntimeJsonProjectShards(options, centralState = {}) {
         let shard;
         try { shard = JSON.parse(source); }
         catch { throw new Error(`project_state_shard_corrupt:${name}`); }
+        // 分片写入时打了 schemaVersion，读取时却从没有人核过它 —— 中央态那道门
+        // （assertStateSchemaSupported）只管中央文件。项目数据全在分片里，
+        // 旧构建把新格式的分片当自己认识的照读照写，一样会把认不出来的语义就地改掉。
+        // 与中央态同规：缺字段视为兼容（早期分片没有它），只拒绝【明确不同】的版本。
+        if (shard.schemaVersion && !SUPPORTED_PROJECT_SHARD_SCHEMA_VERSIONS.has(shard.schemaVersion)) {
+          throw Object.assign(new Error(`unsupported_project_shard_schema_version:${name}`),
+            {code: "AIMAC_UNSUPPORTED_SHARD_SCHEMA",
+              hint: `项目分片 ${name} 是「${shard.schemaVersion}」写的，这个构建只认 `
+                + `${[...SUPPORTED_PROJECT_SHARD_SCHEMA_VERSIONS].join(" / ")}。`
+                + "请换回能读它的版本，或先做数据迁移 —— 用这个构建继续写会把它认不出来的部分改掉。"});
+        }
         const currentName = runtimeJsonProjectShardName(shard.projectId, shard.storageGeneration || "legacy");
         const stableName = `${safeProjectId(shard.projectId)}.state.json`;
         const legacyName = `${legacySafeProjectId(shard.projectId)}.state.json`;

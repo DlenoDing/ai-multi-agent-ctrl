@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "认不出版本的项目分片必须拒开工",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyStateFilesRefuseUnknownSchemaVersions",
+    from: "        if (shard.schemaVersion && !SUPPORTED_PROJECT_SHARD_SCHEMA_VERSIONS.has(shard.schemaVersion)) {",
+    to: "        if (false) {",
+    expect: "却照读不误"
+  },
+  {
+    name: "没有版本字段的旧分片仍要能读",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyStateFilesRefuseUnknownSchemaVersions",
+    from: "        if (shard.schemaVersion && !SUPPORTED_PROJECT_SHARD_SCHEMA_VERSIONS.has(shard.schemaVersion)) {",
+    to: "        if (!SUPPORTED_PROJECT_SHARD_SCHEMA_VERSIONS.has(shard.schemaVersion)) {",
+    expect: "没有 schemaVersion 的旧分片被拒了"
+  },
+  {
     name: "读不出的运行时版本必须按过旧处理",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",
     check: "verifyOutdatedRuntimeIsFlaggedFailClosed",

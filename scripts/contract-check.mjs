@@ -410,6 +410,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyStateFilesRefuseUnknownSchemaVersions);
 run(verifyOutdatedRuntimeIsFlaggedFailClosed);
 run(verifyViewDropsCollectionsNobodyReads);
 run(verifyConsoleDoesNotPullSkillBodies);
@@ -10997,6 +10998,76 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyStateFilesRefuseUnknownSchemaVersions(output) {
+  // 盘上的状态与项目分片各自带着 schemaVersion。认不出来时必须【不开工】：
+  // 旧构建把新格式当自己认识的照读照写，会把它认不出来的语义就地改掉，而且没有回头路。
+  // 缺字段视为兼容（早期状态与夹具没有它），只拒绝【明确不同】的版本。
+  const workspace = mkdtempSync(join(tmpdir(), "cc-schema-"));
+  try {
+    const statePath = join(workspace, "control-plane-state.json");
+    const options = {runtimeDir: workspace, statePath, seedPath: resolve(root, "data", "seed-state.json"),
+      buildInitialState: () => ({stateVersion: 1, runtime: {}})};
+    const base = structuredClone(seedState);
+    ensureRuntimeCollections(base, {root});
+    base.stateVersion = 1;
+    writeStoredState(base, options);
+    const readBack = () => {
+      try { readStoredState(options); return null; } catch (error) { return error.message; }
+    };
+    if (readBack() !== null) {
+      output.push("刚写下的状态自己就读不回来 —— 下面几条断言测不出任何东西");
+    }
+    // 中央态：版本认不出 → 拒。
+    const central = JSON.parse(readFileSync(statePath, "utf8"));
+    writeFileSync(statePath, JSON.stringify({...central, schemaVersion: "control-plane-runtime-state/v99"}));
+    const refusedCentral = readBack();
+    if (!String(refusedCentral).startsWith("unsupported_state_schema_version:")) {
+      output.push(`中央态声明了一个认不出的 schemaVersion，却照读不误（${refusedCentral || "读成功了"}）—— `
+        + "这个构建会把它认不出来的语义就地改掉，没有回头路");
+    }
+    // 缺字段仍要能读（早期状态与夹具没有这个字段）。
+    const {schemaVersion: _dropped, ...withoutVersion} = central;
+    writeFileSync(statePath, JSON.stringify(withoutVersion));
+    if (readBack() !== null) {
+      output.push("没有 schemaVersion 的旧状态被拒了 —— 早期状态与夹具都没有这个字段，这会让它们全都读不回来");
+    }
+    writeFileSync(statePath, JSON.stringify(central));
+    // 分片：同规。项目数据全在分片里，中央态那道门管不到它。
+    const shardDir = join(workspace, "project-db");
+    const shardFile = readdirSync(shardDir).find((name) => name.endsWith(".json"));
+    if (!shardFile) {
+      output.push("没落出项目分片 —— 分片那半条断言测不到");
+    } else {
+      const shardPath = join(shardDir, shardFile);
+      const shard = JSON.parse(readFileSync(shardPath, "utf8"));
+      writeFileSync(shardPath, JSON.stringify({...shard, schemaVersion: "project-state-shard/v99"}));
+      const refusedShard = readBack();
+      if (!String(refusedShard).startsWith("unsupported_project_shard_schema_version:")) {
+        output.push(`项目分片声明了一个认不出的 schemaVersion，却照读不误（${refusedShard || "读成功了"}）—— `
+          + "项目数据全在分片里，中央态那道门管不到它");
+      }
+      // 「缺字段仍可读」这一支要绕开摘要校验：改动分片内容本身就会让中央索引里的摘要对不上，
+      // 那时拒绝来自 digest_mismatch 而不是版本门，测不出想测的东西（第一版就是这样）。
+      // 把索引里那条的摘要一并清掉，让这次读取只剩版本这一道判断。
+      const {schemaVersion: _shardDropped, ...shardWithoutVersion} = shard;
+      writeFileSync(shardPath, JSON.stringify(shardWithoutVersion));
+      const indexed = JSON.parse(readFileSync(statePath, "utf8"));
+      for (const entry of indexed.projectStateShards?.projects || []) {
+        delete entry.storagePayloadDigest;
+        delete entry.storagePayloadBytes;
+      }
+      writeFileSync(statePath, JSON.stringify(indexed));
+      const droppedResult = readBack();
+      if (droppedResult !== null) {
+        output.push(`没有 schemaVersion 的旧分片被拒了（${droppedResult}）—— 早期分片没有这个字段`);
+      }
+    }
+  } finally {
+    rmSync(workspace, {recursive: true, force: true});
+  }
+  console.log("状态版本：中央态与项目分片各自认不出版本时都拒开工，缺字段的旧文件仍照常读");
 }
 
 function verifyOutdatedRuntimeIsFlaggedFailClosed(output) {
