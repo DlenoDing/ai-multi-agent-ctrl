@@ -3291,6 +3291,14 @@ const MUTATIONS = [
     expect: "没说清本机被改成什么样"
   },
   {
+    name: "agentctl 指的入口要写成页+面板+按钮（否则判据看不见它）",
+    file: "scripts/agentctl.mjs",
+    check: "verifyGuidanceNamesRealPages",
+    from: "到「AI 智能体」页的「加入令牌管理」面板点「签发一次性加入令牌」，",
+    to: "项目管理界面上点「发加入令牌」，",
+    expect: "没有这个按钮"
+  },
+  {
     name: "docker 启动失败要说清 .env 已经写好了（含密钥，不必删）",
     file: "scripts/docker-up.sh",
     check: "verifyInstallScriptSaysWhatItLeftBehind",
