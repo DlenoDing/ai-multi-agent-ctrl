@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "重放核对不得退化成只比 SHA 相等",
+    file: "scripts/contract-check.mjs",
+    check: "verifyReplayRemoteCheckDistinguishesLostFromMovedOn",
+    from: "        execFileSync(\"git\", [\"merge-base\", \"--is-ancestor\", sha, \"FETCH_HEAD\"], {cwd: repo});\n        return true;",
+    to: "        return lsRemote() === sha;",
+    expect: "就被判成「提交不见了」"
+  },
+  {
+    name: "造不出「提交真的不见了」时要自报空转",
+    file: "scripts/contract-check.mjs",
+    check: "verifyReplayRemoteCheckDistinguishesLostFromMovedOn",
+    from: "    git(\"reset\", \"-q\", \"--hard\", baseCommit);",
+    to: "    git(\"reset\", \"-q\", \"--hard\", pushed);",
+    expect: "情形三这条断言在空转"
+  },
+  {
     name: "证据脱敏必须挡住 Cookie",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyEvidenceRedactionCoversKnownSecrets",

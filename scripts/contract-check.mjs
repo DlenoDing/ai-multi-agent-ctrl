@@ -410,6 +410,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyReplayRemoteCheckDistinguishesLostFromMovedOn);
 run(verifyEvidenceRedactionCoversKnownSecrets);
 run(verifyDocumentedCommandsStillExist);
 run(verifyProtocolEventListMatchesReality);
@@ -11042,6 +11043,90 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyReplayRemoteCheckDistinguishesLostFromMovedOn(output) {
+  // agent 把提交 push 上去、还没等到检查点 ACK 就崩了 —— 重启后按 outbox 重放。重放【之前】
+  // 要先问远端："我那次推的提交还在吗？" 三种答案后果完全不同：
+  //   还在原位 → 照常重放；别人在它之上推了新提交 → 也照常重放（提交没丢，只是不在 ref 顶端）；
+  //   真的不见了（分支被强推覆盖 / 被删）→ 必须转人工，重放会把一份指向空提交的检查点交上去。
+  // verifyCheckpointReplayRemote 不导出（不为测试去导内部函数），而它的判断完全由两条 git 命令
+  // 决定：ls-remote 比 SHA、merge-base --is-ancestor 判祖先。这里在真仓上把三种情形跑一遍。
+  const workspace = mkdtempSync(join(tmpdir(), "cc-replay-"));
+  try {
+    const repo = join(workspace, "repo");
+    const remote = join(workspace, "remote");
+    mkdirSync(repo, {recursive: true});
+    execFileSync("git", ["init", "--bare", "-q", remote]);
+    const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "contract@local");
+    git("config", "user.name", "contract");
+    // 先落一个【基础】提交，再落"我这次推的"那个 —— 两者必须是不同的提交。
+    // 第一版把被推的那个当成了仓库的第一个提交，于是强推回退时它仍然是新历史的祖先，
+    // 情形三根本造不出来（判据当场报红，查下去才发现是夹具的错，不是产品的）。
+    writeFileSync(join(repo, "base.txt"), "base\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    git("remote", "add", "origin", remote);
+    git("push", "-q", "origin", "HEAD:refs/heads/main");
+    const baseCommit = git("rev-parse", "HEAD");
+    writeFileSync(join(repo, "a.txt"), "one\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "one");
+    git("push", "-q", "origin", "HEAD:refs/heads/main");
+    const pushed = git("rev-parse", "HEAD");
+    const lsRemote = () => (execFileSync("git", ["ls-remote", remote, "refs/heads/main"],
+      {cwd: repo, encoding: "utf8"}).split(/\s+/u)[0] || "");
+    const stillThere = (sha) => {
+      execFileSync("git", ["fetch", "--no-tags", "-q", remote, "refs/heads/main"], {cwd: repo});
+      try {
+        execFileSync("git", ["merge-base", "--is-ancestor", sha, "FETCH_HEAD"], {cwd: repo});
+        return true;
+      } catch { return false; }
+    };
+    // 情形一：远端还在原位 —— ls-remote 直接相等，连 fetch 都不用做。
+    if (lsRemote() !== pushed) {
+      output.push("刚推上去的提交在远端就对不上 —— 下面两条断言测不出任何东西");
+    }
+    // 情形二：别人在它之上推了新提交。提交没丢，只是不在 ref 顶端了 —— 必须仍判为"在"。
+    writeFileSync(join(repo, "b.txt"), "two\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "two");
+    git("push", "-q", "origin", "HEAD:refs/heads/main");
+    if (lsRemote() === pushed) {
+      output.push("别人推了新提交之后，远端 ref 却没变 —— 这个夹具没造出想要的情形");
+    } else if (!stillThere(pushed)) {
+      output.push("别人在我这次提交之上推了新提交，就被判成「提交不见了」—— "
+        + "那会把一次本该正常重放的检查点转成人工恢复，而实际上什么都没丢");
+    }
+    // 情形三：分支被强推覆盖，那次提交真的不在历史里了 —— 必须判为"不见了"。
+    // 回到基础提交再另起一条线：这样"我推的那个"就真的不在新历史里了。
+    git("reset", "-q", "--hard", baseCommit);
+    writeFileSync(join(repo, "c.txt"), "other\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "other-line");
+    git("push", "-q", "-f", "origin", "HEAD:refs/heads/main");
+    // 夹具自证：情形三成立的前提是"我推的那个提交真的不在新历史里"。
+    // 如果夹具把它造成了新历史的祖先（第一版就是：被推的恰好是仓库首个提交），
+    // 下面那条断言会永远绿，而它什么都没验 —— 那正是要防的假绿。
+    const stillAncestorInRepo = (() => {
+      try {
+        execFileSync("git", ["merge-base", "--is-ancestor", pushed, "HEAD"], {cwd: repo});
+        return true;
+      } catch { return false; }
+    })();
+    if (stillAncestorInRepo) {
+      output.push("夹具没造出「提交真的不见了」这种情形（它仍是新历史的祖先）—— 情形三这条断言在空转");
+    }
+    if (stillThere(pushed)) {
+      output.push("分支被强推覆盖、那次提交已经不在远端历史里，却仍被判成「还在」—— "
+        + "重放会把一份指向空提交的检查点交上去，而人以为那批改动已经落地");
+    }
+  } finally {
+    rmSync(workspace, {recursive: true, force: true});
+  }
+  console.log("检查点重放前的远端核对：还在原位 / 之上有新提交（仍算在）/ 被强推覆盖（判为丢失）—— 三种都核过");
 }
 
 function verifyEvidenceRedactionCoversKnownSecrets(output) {
