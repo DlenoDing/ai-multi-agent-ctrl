@@ -21,13 +21,17 @@ export const KNOWN_SECOND_DOORS = {
   permission_resolution_forbidden_for_machine_principal:
     "同上，permission-mcp.permission_resolve 对机器主体不下发",
   // 这三条守的是"受限主体必须自报作用域"。实测（2026-08-20，MCP e2e 里用真实受限节点令牌）：
-  // 派发绑定的授权在进工具之前就把 dispatchId/projectId/taskGroupId/sessionId/runId 补齐了
+  // 派发绑定的授权在进工具之前就把缺的 dispatchId/projectId/taskGroupId/sessionId/runId 填上了
   // （applyAgentGrantScopeArgs）—— 受限主体【补不出一个缺参数的调用】，走不到这三道。
-  // 缺省在这里是靠"填上唯一正确的值"解决的，不是靠拒绝；那条自动补全另有断言与变异守着。
+  //
+  // 2026-08-22 复核时把话说准：那一步是 `args.x || scope.x`，**调用方自己给的值优先**，
+  // 不是"覆盖"。所以真正挡住"自报别人的项目"的不是它，而是【补齐之前】那道
+  // grantMatchesArgs：它拿【原始参数】逐字段与授权比，对不上就 mcp_grant_scope_mismatch。
+  // 两句话差别很大 —— 按"覆盖"去理解的话，会以为这里天然安全而不去看那道比对。
   room_id_required_for_bounded_principal:
     "派发绑定的授权会把省掉的 roomId 补成本派发自己的房间，受限主体造不出'不点名'的调用",
-  scope_ref_required_for_bounded_principal: "同上，作用域参数由 applyAgentGrantScopeArgs 补齐",
-  task_group_id_required_for_bounded_principal: "同上，taskGroupId 由 applyAgentGrantScopeArgs 补齐",
+  scope_ref_required_for_bounded_principal: "同上，缺的作用域参数由 applyAgentGrantScopeArgs 填上",
+  task_group_id_required_for_bounded_principal: "同上，缺的 taskGroupId 由 applyAgentGrantScopeArgs 填上",
   idempotency_record_principal_unknown:
     "只有【本次主体绑定改动之前写下的】旧幂等记录才触发；新部署造不出这种记录，"
     + "而 e2e 只走 HTTP、碰不到状态内部（去改状态文件造它，夹具比守卫还脆）",

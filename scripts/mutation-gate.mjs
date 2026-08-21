@@ -3595,6 +3595,30 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "自报别人的项目要被授权比对拦下",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyGrantScopeCoversObjectsNamedOnlyById",
+    from: "  if (args.projectId && args.projectId !== grant.projectId) return false;",
+    to: "  if (false) return false;",
+    expect: "自报别人的 projectId"
+  },
+  {
+    name: "自报别人的任务组要被授权比对拦下",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyGrantScopeCoversObjectsNamedOnlyById",
+    from: "  if (args.taskGroupId && args.taskGroupId !== grant.taskGroupId) return false;",
+    to: "  if (false) return false;",
+    expect: "自报别人的 taskGroupId"
+  },
+  {
+    name: "自报别人的会话要被授权比对拦下",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyGrantScopeCoversObjectsNamedOnlyById",
+    from: "  if (args.sessionId && args.sessionId !== grant.sessionId) return false;",
+    to: "  if (false) return false;",
+    expect: "自报别人的 sessionId"
+  },
+  {
     name: "新增受阻原因必须有中文",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyBlockedReasonsAllHaveChinese",

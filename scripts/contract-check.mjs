@@ -10245,13 +10245,31 @@ function verifyGrantScopeCoversObjectsNamedOnlyById(output) {
     ["自己项目的产出目标", {targetId: "rot_mine"}, true],
     ["别人项目的产出目标", {targetId: "rot_theirs"}, false],
     ["自己项目的共享定义契约", {contractId: "sdc_mine"}, true],
-    ["别人项目的共享定义契约", {contractId: "sdc_theirs"}, false]
+    ["别人项目的共享定义契约", {contractId: "sdc_theirs"}, false],
+    // 【自报作用域字段】这一支：applyAgentGrantScopeArgs 是 `args.x || scope.x` ——
+    // 调用方自己给的值【优先】，不是被授权作用域覆盖。所以拦住"自报别人项目"的不是那一步，
+    // 而是这道逐字段比对。登记表里原先把它写成"补齐"，读起来像天然安全（2026-08-22 改准）。
+    ["自报别人的 projectId", {projectId: "prj_theirs"}, false],
+    ["自报别人的 taskGroupId", {taskGroupId: "tg_theirs"}, false],
+    ["自报别人的 workId", {workId: "w_theirs"}, false],
+    ["自报别人的 sessionId", {sessionId: "sess_theirs"}, false],
+    ["自报别人的 dispatchId", {dispatchId: "dsp_theirs"}, false],
+    // 正面对照走同一条比对：报自己的作用域必须放行，否则上面五条是"永远拒"。
+    ["自报自己的 projectId", {projectId: "prj_mine"}, true],
+    ["自报自己的 taskGroupId", {taskGroupId: "tg_mine"}, true]
   ];
   for (const [label, args, expected] of cases) {
     const actual = grantMatchesArgs(state, grant, args);
     if (actual !== expected) {
-      output.push(`MCP 授权匹配: ${label}（报文只给了对象 id）判成了 ${actual ? "允许" : "拒绝"}，应为 ${expected ? "允许" : "拒绝"}`
-        + " —— 报文不给作用域字段时，只有'按 id 查出对象再比归属'这条能兜住");
+      // 两支的后果不同，报文不能混作一谈：
+      //   自报作用域 → 靠逐字段比对拦（applyAgentGrantScopeArgs 不覆盖调用方给的值）；
+      //   只给对象 id → 靠"按 id 查出对象再比归属"兜。
+      const bySelfReport = label.startsWith("自报");
+      output.push(`MCP 授权匹配: ${label}判成了 ${actual ? "允许" : "拒绝"}，应为 ${expected ? "允许" : "拒绝"} —— `
+        + (bySelfReport
+          ? "作用域参数是调用方自己给的（applyAgentGrantScopeArgs 只填【缺的】、不覆盖已给的），"
+            + "拦住它的只有这道逐字段比对"
+          : "报文不给作用域字段时，只有「按 id 查出对象再比归属」这条能兜住"));
     }
   }
 }
