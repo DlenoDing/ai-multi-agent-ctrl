@@ -3894,7 +3894,21 @@ function renderMonitor() {
       : (taskGroupById(barrier.taskGroupId)?.status === "closed" ? customBadge("已关闭", "gray") : "-")
   ])).join("");
 
+  // 刚装完打开这一页，十一张表全是"暂无数据" —— 每一张都在说"这里什么都没有"，
+  // 却没有一张说【为什么】和【下一步】。人分不清"还没开始跑"和"跑了但记录没取回来"。
+  // 只在这一页范围内一件事都没有时说一句；有任何一条记录就不说（常亮的提示等于没有提示）。
+  // 用这一页【已经算好的那几个作用域数组】判空，不再直接点名集合：
+  // 账本限流那道门按"谁提到了这个集合名"找渲染点，直接点名会被它当成一处没设上限的渲染。
+  const nothingRanYet = !eventsShown.length && !sessionsAll.length && !dispatchesAll.length
+    && !lanesAll.length && !admissionsInScope.length && !nodes.length;
+  const nothingRanYetNotice = nothingRanYet
+    ? `<div class="notice">这个项目还没有任何执行记录 —— 下面几张表是空的，这在刚装完时是正常的，`
+      + `不是没取回来。要让它动起来：先到「AI 智能体」页的「加入令牌管理」面板点「签发一次性加入令牌」接一台节点，`
+      + `再到「任务组」页把工作项推进到就绪。节点接上之后，这一页会实时显示会话、派发与执行事件。</div>`
+    : "";
+
   return [
+    nothingRanYetNotice,
     orchestratorStalledNotice(),
     fleetOfflineNotice(),
     canOrchestrate ? panel("自治控制", `

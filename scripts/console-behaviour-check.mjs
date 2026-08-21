@@ -1919,6 +1919,23 @@ function runPendingTruncationCase() {
       sessionPlacementDecisions: [], closeBarriers: [], truncatedCollections: []
     };
     const stalledView = probe.renderMonitorWith(stalled, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    // 刚装完打开这一页是十一张"暂无数据"：每张都在说"这里什么都没有"，没有一张说为什么、下一步做什么。
+    const freshState = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: []}],
+      agentDispatches: [], workSessions: [], workerLanes: [], agentRuntimeNodes: [], qualityGates: [],
+      testResults: [], checkpoints: [], admissionDecisions: [], modelSelectionDecisions: [],
+      sessionPlacementDecisions: [], closeBarriers: [], agentExecutionEvents: [], truncatedCollections: []};
+    const freshView = probe.renderMonitorWith(freshState, admin, "p1").replace(/<!--[\s\S]*?-->/gu, "");
+    check("一件执行记录都没有时，监控页要说清这是正常的以及下一步",
+      /还没有任何执行记录/.test(freshView) && /签发一次性加入令牌/.test(freshView),
+      "十一张「暂无数据」并排，人分不清「还没开始跑」和「跑了但没取回来」");
+    const busyState = structuredClone(freshState);
+    busyState.workSessions = [{sessionId: "s1", taskGroupId: "tg1", status: "running"}];
+    check("有记录时不挂这条（常亮的提示等于没有提示）",
+      !/还没有任何执行记录/.test(probe.renderMonitorWith(busyState, admin, "p1")),
+      "有会话在跑，界面却还说「还没有任何执行记录」");
+
     check("自治循环连续失败要在监控页上说出来",
       /连续 3 拍失败|没有任何东西在自行推进/.test(stalledView),
       "自治循环已经连续失败、系统实际停摆，监控页却一个字都不说 —— 人会一直以为它在跑");

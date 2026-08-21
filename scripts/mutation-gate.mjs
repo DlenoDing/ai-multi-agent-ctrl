@@ -3291,6 +3291,22 @@ const MUTATIONS = [
     expect: "没说清本机被改成什么样"
   },
   {
+    name: "刚装完的监控页十一张空表要有一句话说清这是正常的",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    nothingRanYetNotice,",
+    to: '    "",',
+    expect: "监控页要说清这是正常的以及下一步"
+  },
+  {
+    name: "有执行记录时不许还挂着「还没有任何执行记录」",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const nothingRanYet = !eventsShown.length && !sessionsAll.length",
+    to: "  const nothingRanYet = true || (!eventsShown.length && !sessionsAll.length)",
+    expect: "有记录时不挂这条"
+  },
+  {
     name: "设置页那张仓库表也要走统一入口（否则同屏两处自相矛盾）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "console",
