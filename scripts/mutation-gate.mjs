@@ -3353,6 +3353,31 @@ const MUTATIONS = [
     expect: "did not carry the task-group language policy"
   },
   {
+    // 人是照着这段字定稿的。截断本身要写在人看得见的那段字里，不能无痕。
+    name: "AI 写给人读的问题正文截断必须留痕",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '      detail: truncateForHuman(String(input.question?.detail || input.detail || ""), 4000, "问题正文"),',
+    to: '      detail: String(input.question?.detail || input.detail || "").slice(0, 4000),',
+    expect: "被无痕截断"
+  },
+  {
+    name: "证据引用截断后要记下总数",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "        return refs.length > 20\n          ? {evidenceRefs: refs.slice(0, 20), evidenceRefsTotal: refs.length}\n          : {evidenceRefs: refs};",
+    to: "        return {evidenceRefs: refs.slice(0, 20)};",
+    expect: "没有记下总数"
+  },
+  {
+    name: "卡片上要说出证据引用的总数（界面这一层也截了一次）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "          const carded = Number(request.question?.evidenceRefsTotal || evidence.length);",
+    to: "          const carded = evidence.length;",
+    expect: "要说出总数"
+  },
+  {
     name: "人写的处置依据不许静默截断（规则源）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyHumanWrittenTextIsNeverSilentlyTruncated",

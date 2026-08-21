@@ -1375,6 +1375,37 @@ function runReviewAxisCase() {
     }],
     qualityGates: []
   });
+  // 证据引用在两层各截了一次（服务端建卡时留前 20、界面再显示前 12），两层都不说总数的话，
+  // 人会以为证据就这些 —— 而定稿正是照着证据做的。
+  {
+    const evidenceHtml = probe.renderReviewWith({
+      taskGroups: [{id: "tg1", projectId: null, name: "组一"}],
+      humanConfirmationRequests: [{
+        requestId: "hcr_ev", taskGroupId: "tg1", status: "pending", decisionClass: "operational",
+        question: {summary: "证据很多", evidenceRefs: Array.from({length: 20}, (_, i) => `ev:${i}`),
+          evidenceRefsTotal: 25},
+        options: []
+      }],
+      qualityGates: []
+    });
+    check("证据引用被截断时要说出总数（两层都截，都不说人就以为就这些）",
+      /共 25 条/.test(evidenceHtml) && /显示前 12 条/.test(evidenceHtml),
+      String(evidenceHtml).replace(/<[^>]+>/gu, " ").split("证据引用")[1]?.slice(0, 110) || "卡片上没有证据引用那一行");
+    const fewHtml = probe.renderReviewWith({
+      taskGroups: [{id: "tg1", projectId: null, name: "组一"}],
+      humanConfirmationRequests: [{
+        requestId: "hcr_ev2", taskGroupId: "tg1", status: "pending", decisionClass: "operational",
+        question: {summary: "证据不多", evidenceRefs: ["ev:1", "ev:2"]}, options: []
+      }],
+      qualityGates: []
+    });
+    // 收窄到【证据那一行】：整页匹配会被面板抬头那句"共 N 条待确认"喂饱（第一版就是这样）。
+    const fewLine = String(fewHtml).split("证据引用")[1]?.slice(0, 200) || "";
+    check("证据没被截断时不要多说一句",
+      Boolean(fewLine) && !/共 \d+ 条/.test(fewLine),
+      fewLine ? fewLine.replace(/<[^>]+>/gu, " ").slice(0, 100) : "卡片上没有证据引用那一行 —— 这条断言在空转");
+  }
+
   // 同一份数据在两个地方报数：面板说"2+"、列表标题说"2"，人不知道该信哪个。
   const cappedList = probe.renderReviewWith({
     ...stateWith("更简单，性能相当，稳定性略差"),

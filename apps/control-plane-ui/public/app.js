@@ -3497,7 +3497,15 @@ function renderReview() {
           </div>`);
         }
         if (evidence.length) {
-          parts.push(`<div class="record-meta"><span>证据引用：${evidence.slice(0, 12).map((ref) => `<span class="mono">${esc(ref)}</span>`).join("、")}</span></div>`);
+          // 这里只显示前 12 条，而卡片本身在创建时又只留了前 20 条（服务端 evidenceRefsTotal 记着原始条数）。
+          // 两层都截而都不说总数，人会以为证据就这些 —— 定稿是照着证据做的。
+          const shown = evidence.slice(0, 12);
+          const carded = Number(request.question?.evidenceRefsTotal || evidence.length);
+          const note = carded > shown.length
+            ? `（共 ${esc(carded)} 条，这里显示前 ${shown.length} 条${carded > evidence.length
+              ? "；卡片创建时只留了前 " + evidence.length + " 条" : ""}）`
+            : "";
+          parts.push(`<div class="record-meta"><span>证据引用：${shown.map((ref) => `<span class="mono">${esc(ref)}</span>`).join("、")}${note}</span></div>`);
         }
         if (gates.length) {
           parts.push(`<div class="record-meta"><span>质量门：${gates.map((gate) => `${esc(t(gate.gateType) || gate.gateType)}${badge(gate.status)}`).join(" ")}</span></div>`);

@@ -4507,6 +4507,25 @@ function verifyHumanAndOrganizationContracts(output) {
       } else if (!longRejected.details?.actual || !longRejected.details?.limit) {
         output.push("拒了超长定稿意见，但没说超出多少 —— 人不知道该删到什么程度");
       }
+      // 反方向：AI 写给人读的问题正文超长时【必须留痕】。拒绝会把流程卡死（AI 提不出问题
+      // 人就无从定稿），所以照旧截断 —— 但人是照着这段字定稿的，截断这件事要写在里面。
+      // 证据引用同理：只留前 20 条而不说总数，人会以为证据就这些。
+      {
+        const longQuestion = createHumanConfirmationRequest(state, {dispatchId: dispatch.dispatchId,
+          summary: "超长问题探针",
+          question: {detail: "详".repeat(4200), evidenceRefs: Array.from({length: 25}, (_, i) => `ev:${i}`)},
+          options: [{label: "方案A"}, {label: "方案B"}]});
+        const detail = String(longQuestion.question?.detail || "");
+        if (!/原文共 \d+ 字/u.test(detail) || !/未随本卡片下发/u.test(detail)) {
+          output.push("AI 写给人读的问题正文被无痕截断 —— 人在一句被拦腰截断的话上做核心决策，"
+            + "而屏幕上没有任何迹象");
+        }
+        if ((longQuestion.question?.evidenceRefs || []).length !== 20
+          || Number(longQuestion.question?.evidenceRefsTotal || 0) !== 25) {
+          output.push(`证据引用截断后没有记下总数（留了 ${(longQuestion.question?.evidenceRefs || []).length} 条、`
+            + `总数记成 ${longQuestion.question?.evidenceRefsTotal}）—— 人会以为证据就这些`);
+        }
+      }
       // 正面对照：没超的一字不差地存下来（把截断改成拒绝之后，别把正常的也拦了或改了）。
       // 包起来：上一步若【没有】拒（比如退回静默截断），这张卡已经被定稿掉，这里会抛 not_pending
       // 把整道门带崩 —— 读到的是一段栈，看不出是哪条不变式破了（本仓反复出现的形态）。

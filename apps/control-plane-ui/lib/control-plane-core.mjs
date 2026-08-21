@@ -5313,8 +5313,18 @@ export function createHumanConfirmationRequest(state, input = {}) {
     nodeId: input.nodeId || dispatch?.assignedNodeId || null,
     question: {
       summary,
-      detail: String(input.question?.detail || input.detail || "").slice(0, 4000),
-      evidenceRefs: unique(input.question?.evidenceRefs || input.evidenceRefs || []).slice(0, 20)
+      // 这段是【人据以定稿的问题正文】。原先是无痕 slice：超过 4000 字的部分直接消失，
+      // 人在一句被拦腰截断的话上做核心决策，而屏幕上没有任何迹象。
+      // 提出方是 AI（机器），拒绝会把流程卡死，所以照旧截断 —— 但必须留痕：
+      // 截断这件事本身要出现在人看得见的那段文字里。
+      detail: truncateForHuman(String(input.question?.detail || input.detail || ""), 4000, "问题正文"),
+      // 证据引用同理：只留前 20 条而不说总数，人会以为就这些。
+      ...(() => {
+        const refs = unique(input.question?.evidenceRefs || input.evidenceRefs || []);
+        return refs.length > 20
+          ? {evidenceRefs: refs.slice(0, 20), evidenceRefsTotal: refs.length}
+          : {evidenceRefs: refs};
+      })()
     },
     options: [...aiOptions, {optionId: "none", label: "不选择（自定义输入）", description: "以上选项均不采用，由人工直接输入确认内容。", system: true}],
     // 核心决策强制阻塞：blocking 原本由发起方(AI)自己决定，传 blocking:false 就能绕开人工闸门。
@@ -5735,6 +5745,15 @@ export function consumeHumanConfirmation(state, requestId, options = {}) {
 // 存下的是前 N 字，而人以为自己写的整段都在。本仓对规则片段早就立过这条规矩，
 // 并且特意移除了 textarea 的 maxlength —— 浏览器端截断会让服务端那句拒绝永远不被人看到。
 // 这里把同一条规矩用到其余人写字段上：拒绝，并说清上限与超了多少。
+// 机器写给人读的长文本：拒绝会把流程卡死（AI 提不出问题人就无从定稿），所以截断，
+// 但【截断这件事要出现在人看得见的那段字里】。无痕截断是本仓反复出现的那种"系统知道却不说"。
+export function truncateForHuman(value, limit, what) {
+  const text = String(value ?? "");
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}\n\n——（${what}原文共 ${text.length} 字，超出 ${limit} 字上限，`
+    + `以上只是前 ${limit} 字；余下 ${text.length - limit} 字未随本卡片下发）`;
+}
+
 export function assertHumanTextWithinLimit(value, field, limit) {
   const text = String(value ?? "");
   if (text.length <= limit) return text.trim();
