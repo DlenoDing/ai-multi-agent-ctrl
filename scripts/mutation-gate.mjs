@@ -3291,6 +3291,14 @@ const MUTATIONS = [
     expect: "没说清本机被改成什么样"
   },
   {
+    name: "读项目仓库不许绕开统一入口（两个字段会再次分叉）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyProjectRepositoriesHaveOneReader",
+    from: '  const repository = projectRepositories(project)[0] || {id: "repo_control_plane"',
+    to: '  const repository = project?.repositories?.[0] || {id: "repo_control_plane"',
+    expect: "绕开了统一入口"
+  },
+  {
     name: "项目仓库要认界面写的那个字段（否则界面上有入口却接错线）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyHumanAndOrganizationContracts",

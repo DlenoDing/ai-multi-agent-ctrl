@@ -383,6 +383,7 @@ run(verifyDangerousConfirmsStateTheConsequence);
 run(verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect);
 run(verifyInstallScriptSaysWhatItLeftBehind);
 run(verifyInitFailsWithWordsNotAStackTrace);
+run(verifyProjectRepositoriesHaveOneReader);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5832,6 +5833,37 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // npm run init 是新人装第一次时敲的第一条命令。它的第一步（建运行目录）失败时原先直接抛
 // Node 的栈：屏幕上是 EACCES 加一条绝对路径，没有一句话说明这是什么、下一步做什么、
 // 本机现在是什么状态。这里【真的造一个不可写目录】跑一次，读它对人说的话。
+// 项目仓库曾经有两个字段：顶层 project.repositories（没有任何写入点）和界面写的
+// project.config.repositories。判定读前者、界面写后者 —— 界面上有入口，接的却不是这根线，
+// 经界面建的项目会一直卡在 project_repository_not_registered 而人修不好。
+// 现在统一走 projectRepositories()。这道门守的是"别再直接读某一个字段"。
+function verifyProjectRepositoriesHaveOneReader(output) {
+  const files = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs"];
+  let readers = 0;
+  for (const file of files) {
+    const text = readFileSync(join(root, file), "utf8").replace(/\/\/[^\n]*/gu, (line) => " ".repeat(line.length));
+    const selfAt = text.indexOf("export function projectRepositories(");
+    const selfSpan = selfAt < 0 ? null : {start: selfAt, end: text.indexOf("\n}", selfAt)};
+    for (const match of text.matchAll(/(\w+)(\??)\.repositories\b/gu)) {
+      const owner = match[1];
+      if (!/project/iu.test(owner)) continue;
+      // 统一入口自己那一行、以及配置层的写入（config.repositories）不算。
+      const before = text.slice(Math.max(0, match.index - 40), match.index);
+      if (/config\??\.$/u.test(before)) continue;
+      // 统一入口自己的函数体要排除 —— 它就是那个"两个字段都认"的地方。
+      // 按【函数体范围】排除，不能按"往前 200 字里有没有函数名"：那段注释一长就漏判（撞过一次）。
+      // 说明白：这个排除今天【不承重】—— 把它放宽成整份文件，判据照样绿，
+      // 因为除统一入口外眼下没有第二个读取点。它守的是"将来在这份文件里新增读取点"那一刻。
+      if (selfSpan && match.index > selfSpan.start && match.index < selfSpan.end) continue;
+      readers += 1;
+      output.push(`${file} 里直接读了 ${owner}.repositories —— 项目仓库有两个字段（顶层与 config），`
+        + "直接读某一个就会与界面写的那个分叉；一律走 projectRepositories()");
+    }
+  }
+  console.log(`项目仓库读取口径：4 份源码逐个核对，${readers} 处绕开了统一入口（应为 0）`);
+}
+
 function verifyInitFailsWithWordsNotAStackTrace(output) {
   const parent = mkdtempSync(join(tmpdir(), "aimac-init-ro-"));
   try {
