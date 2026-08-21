@@ -2986,6 +2986,22 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "门里的编排周期不得联网同步（静态门不该依赖外网）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyGatesDoNotCloneFromTheNetwork",
+    from: "core.runAutonomousCycle(probe, {root, mode: \"all\", autoSyncSkills: false});",
+    to: "core.runAutonomousCycle(probe, {root, mode: \"all\"});",
+    expect: "没关技能同步"
+  },
+  {
+    name: "联网同步扫描打不到时必须红（不得绿着空转）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyGatesDoNotCloneFromTheNetwork",
+    from: "for (const match of source.matchAll(/runAutonomousCycle\\(/gu)) {",
+    to: "for (const match of source.matchAll(/runAutonomousCycIe\\(/gu)) {",
+    expect: "只扫到 0 处"
+  },
+  {
     name: "每个分片集合都必须真的比对过（漏一个就没人验它的拆合）",
     file: "scripts/contract-check.mjs",
     check: "verifyShardRoundTripKeepsEveryRecord",

@@ -352,6 +352,7 @@ run(verifyExecutorFailuresSayWhichKind);
 run(verifyStorageFaultKindsHaveChinese);
 run(verifyEmptyTaskGroupIsNotComplete);
 run(verifyWholesaleConfigWritesArePreconditioned);
+run(verifyGatesDoNotCloneFromTheNetwork);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -572,6 +573,9 @@ function verifySkillSourceRetireCascades(output) {
   const retiredSource = source;
   const beforeCycle = {...retiredSource};
   try {
+    // 这里【不能】关技能同步：本条判据要的就是"自治周期不许再同步已退役的技能源"——
+    // 关掉之后被测的那条路径根本不会被走到，守卫当场变成假绿（变异门验出来的）。
+    // 我原以为"它恰好不同步"是个偶然，其实那正是被测性质本身。
     runAutonomousCycle(state, {root, mode: "all", reason: "retired-skill-source-probe"});
   } catch (error) {
     output.push(`退役后跑一轮编排就抛了（${String(error?.message || error).slice(0, 120)}）`);
@@ -5550,6 +5554,62 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 服务端已经在两个端点上都做对了（项目配置、任务组配置），这道门是为了让它保持为真：
 // 将来新增一个整份替换的端点、忘了前置条件，没有别的机制会看见 ——
 // 一条不变式有两扇门只守一扇，等于没守。
+// 门里跑编排周期时必须关掉技能同步。种子里技能源的状态是 "configured"（既非 active 也非 retired），
+// 正好落在"要同步"那一支：于是每跑一次就往运行目录 git clone 一个 12MB 的远端仓库 ——
+// 慢（4~17s，随网速跳），而且让一道【静态门依赖外网】。
+// 71 处调用里 67 处早就关了，这道门是为了拦住第 68 处忘记关的。
+// 例外要有名有姓地登记，并写清为什么必须让它真的去同步。
+function verifyGatesDoNotCloneFromTheNetwork(output) {
+  const MUST_REALLY_SYNC = {
+    verifySkillSourceRetireCascades:
+      "本条测的就是【不许同步已退役的源】：关掉开关等于把被测路径整个绕开，守卫会变成假绿。"
+      + "源已 retired，落在跳过那一支，不产生网络克隆",
+    verifyHumanAndOrganizationContracts:
+      "里面的自愈冻结那一段要的就是【同步失败】本身：它靠一次真实的技能源同步失败触发，"
+      + "关掉就没有被测对象了（那次同步会立刻失败，不产生网络克隆）"
+  };
+  const walk = (dir) => readdirSync(dir).flatMap((name) => {
+    const full = join(dir, name);
+    if (name === "node_modules") return [];
+    return statSync(full).isDirectory() ? walk(full) : [full];
+  });
+  const files = walk(join(root, "scripts"))
+    // 变异登记表要排除：它存的是锚点文本，里面照定义会出现不带开关的调用。
+    .filter((file) => file.endsWith(".mjs") && !file.endsWith("mutation-gate.mjs"));
+  let scanned = 0;
+  const leaking = [];
+  for (const file of files) {
+    const source = readFileSync(file, "utf8").replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
+    for (const match of source.matchAll(/runAutonomousCycle\(/gu)) {
+      let depth = 1;
+      let cursor = match.index + match[0].length;
+      while (cursor < source.length && depth > 0) {
+        if (source[cursor] === "(") depth += 1;
+        else if (source[cursor] === ")") depth -= 1;
+        cursor += 1;
+      }
+      scanned += 1;
+      if (/autoSyncSkills: false/u.test(source.slice(match.index, cursor))) continue;
+      // 登记按【所在函数名】认，不按行号 —— 行号会漂（本仓今天刚清过一批漂掉的行号引用）。
+      const head = source.lastIndexOf("\nfunction ", match.index);
+      const owner = head < 0 ? "" : (/^\nfunction (\w+)/u.exec(source.slice(head, head + 80))?.[1] || "");
+      if (MUST_REALLY_SYNC[owner]) continue;
+      leaking.push(`${file.slice(root.length + 1)}:${source.slice(0, match.index).split("\n").length}`
+        + `（${owner || "顶层"}）`);
+    }
+  }
+  if (scanned < 50) {
+    output.push(`编排周期调用只扫到 ${scanned} 处（应至少 50）—— 提取形状与代码脱节，本条在空转`);
+    return;
+  }
+  if (leaking.length) {
+    output.push("这些门里的编排周期没关技能同步，会往运行目录 git clone 远端仓库（慢，且让门依赖外网）：\n  "
+      + leaking.join("\n  ") + "\n  要么加 autoSyncSkills: false，要么登记进 MUST_REALLY_SYNC 并写明为什么");
+  }
+  console.log(`门里的编排周期：${scanned} 处逐个核对，${leaking.length} 处会联网同步（应为 0；`
+    + `另有 ${Object.keys(MUST_REALLY_SYNC).length} 处登记为"要的就是同步失败本身"）`);
+}
+
 function verifyWholesaleConfigWritesArePreconditioned(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8")
     .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
