@@ -849,6 +849,7 @@
     org_member_not_found: "未找到组织成员",
 
     execution_topology_branch_status_unknown: "分支状态认不出来：只能是 reported（已上报）、failed（失败）、rejected（被拒）、blocked（受阻）。这次没有记 —— 认不出的状态若按「已上报」处理，一条真失败的分支会被当成做完了",
+    human_confirmation_input_too_long: "你写的定稿意见超出了上限：这一条没有保存 —— 悄悄截断会让台账上记的与你写的不一致，而人工定稿的全部意义就是「这句话是这个人说的」。请精简后重新提交（报文里给出了超出多少字）",
     rule_status_unknown: "规则状态认不出来：只能是 active（生效）、draft（草稿）、disabled（停用）。这次整批都没保存 —— 认不出的状态若按「生效」处理，你以为关掉的规则其实还在生效，所以宁可拒绝",
     rule_content_too_long: "规则内容过长（上限 8192 字），请精简后再保存",
     rule_title_too_long: "规则标题过长（上限 256 字）",

@@ -3353,6 +3353,33 @@ const MUTATIONS = [
     expect: "did not carry the task-group language policy"
   },
   {
+    // 定稿意见是人自己写下的那句话（"不选择（自定义输入）"那条路上它就是决定本身）。
+    // 原先超过 4000 字是 slice 静默截断：台账上记的与人写的不是一句话，
+    // 而人工闸门的全部意义就是"这句话是这个人说的"。
+    name: "超长的定稿意见要拒，不许悄悄截断",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '  const inputText = assertHumanTextWithinLimit(decision.inputText || "", "human_confirmation_input", 4000);',
+    to: '  const inputText = String(decision.inputText || "").trim().slice(0, 4000);',
+    expect: "超长的定稿意见没有被拒"
+  },
+  {
+    name: "正常长度的定稿意见必须原样存下",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  request.decision = {selectedOptionId, selectedLabel: option.label, inputText, decidedBy: actor, decidedAt: at, action};",
+    to: "  request.decision = {selectedOptionId, selectedLabel: option.label, inputText: String(inputText).slice(0, 10), decidedBy: actor, decidedAt: at, action};",
+    expect: "没有被原样存下"
+  },
+  {
+    name: "超长被拒时要说清超出多少",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "    details: {limit, actual: text.length, over: text.length - limit,",
+    to: "    details: {",
+    expect: "没说超出多少"
+  },
+  {
     // 在界面上停用一条规则，agent 就不该再收到它。这条端到端的性质此前零覆盖：
     // 把内容包里的 activeSystemRules 换成 systemRules，契约门 138 条全过 ——
     // 人关掉一条安全规则、界面写着"已停用"，而执行方的提示词里它还在。

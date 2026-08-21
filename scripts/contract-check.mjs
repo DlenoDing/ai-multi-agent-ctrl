@@ -4487,6 +4487,41 @@ function verifyHumanAndOrganizationContracts(output) {
       noneRejected = error.message === "human_confirmation_input_required_for_none";
     }
     if (!noneRejected) output.push("Human confirmation accepted a none selection without input text");
+    // 定稿意见是【人自己写下的那句话】——在"不选择（自定义输入）"这条路上它就是决定本身。
+    // 原先超过 4000 字是 slice 静默截断：台账上记的与人写的不一致，而人工闸门的全部意义
+    // 就是"这句话是这个人说的"。超了要拒，并说清超出多少。
+    // 【另起一张卡】：在上面那张上定稿会把它消费掉，后面那条"定稿后派发要重排"的断言就撞 not_pending
+    //（第一版就是这样 —— 我的用例把别人的前提拆了）。
+    {
+      const textRequest = createHumanConfirmationRequest(state,
+        {dispatchId: dispatch.dispatchId, summary: "定稿意见长度探针", options: [{label: "方案A"}, {label: "方案B"}]});
+      let longRejected = null;
+      try {
+        decideHumanConfirmation(state, textRequest.requestId,
+          {selectedOptionId: "none", inputText: "长".repeat(4001), action: "finalize"}, {actor: "acct_ct"});
+      } catch (error) { longRejected = error; }
+      if (longRejected?.message !== "human_confirmation_input_too_long") {
+        output.push(`超长的定稿意见没有被拒（${longRejected?.message || "居然通过了"}）—— `
+          + "它会被悄悄截断存下来，台账上记的与人写的不是一句话");
+      } else if (!longRejected.details?.actual || !longRejected.details?.limit) {
+        output.push("拒了超长定稿意见，但没说超出多少 —— 人不知道该删到什么程度");
+      }
+      // 正面对照：没超的一字不差地存下来（把截断改成拒绝之后，别把正常的也拦了或改了）。
+      // 包起来：上一步若【没有】拒（比如退回静默截断），这张卡已经被定稿掉，这里会抛 not_pending
+      // 把整道门带崩 —— 读到的是一段栈，看不出是哪条不变式破了（本仓反复出现的形态）。
+      const exactText = `这是我的定稿意见-${"字".repeat(200)}`;
+      let exact = null;
+      try {
+        exact = decideHumanConfirmation(state, textRequest.requestId,
+          {selectedOptionId: "none", inputText: exactText, action: "finalize"}, {actor: "acct_ct"});
+      } catch (error) {
+        output.push(`正常长度的定稿意见没能定稿（${error.message}）—— `
+          + "多半是上一步该拒没拒，把这张卡提前消费掉了");
+      }
+      if (exact && String(exact.decision?.inputText || "") !== exactText) {
+        output.push("正常长度的定稿意见没有被原样存下 —— 存下来的与人写的不是同一句话");
+      }
+    }
     const decided = decideHumanConfirmation(state, request.requestId, {selectedOptionId: request.options[0].optionId, inputText: "采用方案A"}, {actor: "acct_ct"});
     if (decided.status !== "answered") output.push("Human confirmation decision did not move the request to answered");
     const requeued = (state.agentDispatches || []).find((item) => item.dispatchId === dispatch.dispatchId);

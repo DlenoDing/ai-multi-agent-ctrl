@@ -5427,7 +5427,11 @@ export function decideHumanConfirmation(state, requestId, decision = {}, options
   const selectedOptionId = String(decision.selectedOptionId || "");
   const option = (request.options || []).find((item) => item.optionId === selectedOptionId);
   if (!option) throw Object.assign(new Error("human_confirmation_option_invalid"), {status: 400});
-  const inputText = String(decision.inputText || "").trim().slice(0, 4000);
+  // 这是【人自己写下的定稿意见】——在"不选择（自定义输入）"那条路上，它就是决定本身。
+  // 原先是 slice(0, 4000) 静默截断：存下来的与人写的不一致，而人工闸门的全部意义就是
+  // "这句话是这个人说的"。同一仓里其余人写文本（各类 justification、指令内容、任务组目标）
+  // 都走 assertHumanTextWithinLimit：超了就拒，并说清超出多少、请精简后重提。
+  const inputText = assertHumanTextWithinLimit(decision.inputText || "", "human_confirmation_input", 4000);
   if (selectedOptionId === "none" && !inputText) throw Object.assign(new Error("human_confirmation_input_required_for_none"), {status: 400});
   // 防 TOCTOU：AI 在人点击前修订了候选方案时，人看到的轮次已经过期。带上 expectedRound 的调用（控制台
   // 总是带）必须与当前轮次一致，否则拒绝，让人重新看过修订后的方案再定。
