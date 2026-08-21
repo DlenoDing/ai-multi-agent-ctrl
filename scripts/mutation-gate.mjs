@@ -3385,6 +3385,38 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "只能替自己那条控制命令回执",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentGatewayContracts",
+    from: "  if (!command) throw gatewayError(\"agent_control_command_not_found\", 404);",
+    to: "  if (!command) return {command: {status: \"completed\"}};",
+    expect: "agent_control_command_not_found"
+  },
+  {
+    name: "已终结的控制命令不得被改写",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentGatewayContracts",
+    from: "  if (currentRank >= 4) throw gatewayError(\"agent_control_command_already_terminal\", 409);",
+    to: "  if (false) throw gatewayError(\"agent_control_command_already_terminal\", 409);",
+    expect: "agent_control_command_already_terminal"
+  },
+  {
+    name: "控制命令回执状态不得倒退",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentGatewayContracts",
+    from: "  if ((controlAckRank[status] ?? 0) < currentRank) throw gatewayError(\"agent_control_command_ack_regression\", 409);",
+    to: "  if (false) throw gatewayError(\"agent_control_command_ack_regression\", 409);",
+    expect: "agent_control_command_ack_regression"
+  },
+  {
+    name: "认不出的控制命令类型不得建出来",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentGatewayContracts",
+    from: "  throw gatewayError(\"agent_control_command_type_invalid\", 400);",
+    to: "  return \"refresh_profile\";",
+    expect: "认不出的命令类型被建出来了"
+  },
+  {
     name: "运行时确认单必须绑在自己那次派发的节点上",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyHumanAndOrganizationContracts",

@@ -5266,6 +5266,47 @@ function verifyAgentGatewayContracts(output) {
     }
     const pendingCommands = listAgentControlCommands(state, node, {afterSequence: 0});
     if (!pendingCommands.commands.some((command) => command.commandId === controlCommand.commandId)) output.push("Agent control channel did not return queued command");
+    // 回执这条链上的四道门此前【零覆盖】。它们决定屏幕上那条命令显示成什么：
+    // 认不出的命令类型不能建、别人的命令不能替它回执、已终结的不能被改写、状态不能倒退 ——
+    // 倒退尤其要紧：一条已经 failed 的命令被回成 received，人看到的是"还在进行中"，永远等不到结果。
+    {
+      const ackProbe = (mutate, input) => {
+        const st = structuredClone(state);
+        const stNode = st.agentRuntimeNodes.find((item) => item.nodeId === node.nodeId);
+        const cmd = st.agentControlCommands.find((item) => item.commandId === controlCommand.commandId);
+        mutate(st, stNode, cmd);
+        try { return {refusal: null, command: ackAgentControlCommand(st, stNode, controlCommand.commandId, input).command}; }
+        catch (error) { return {refusal: error.message}; }
+      };
+      const ackCases = [
+        ["替不存在的命令回执", "agent_control_command_not_found", (st) => { st.agentControlCommands = []; }, {status: "completed"}],
+        ["替别的节点的命令回执", "agent_control_command_not_found",
+          (st, stNode, cmd) => { cmd.nodeId = "node_someone_else"; }, {status: "completed"}],
+        ["已经终结的命令再回一次别的结果", "agent_control_command_already_terminal",
+          (st, stNode, cmd) => { cmd.status = "failed"; }, {status: "completed"}],
+        ["把已经 failed 的命令回成还在进行中", "agent_control_command_ack_regression",
+          (st, stNode, cmd) => { cmd.status = "acked"; }, {status: "received"}]
+      ];
+      for (const [what, expected, mutate, input] of ackCases) {
+        const got = ackProbe(mutate, input);
+        if (got.refusal !== expected) {
+          output.push(`控制命令回执: ${what}拿到的不是 ${expected}（实际 ${got.refusal || `写成了 ${got.command?.status}`}）—— `
+            + "屏幕上那条命令会一直显示成还在进行中，人永远等不到结果");
+        }
+      }
+      // 认不出的命令类型必须在【建】的时候就拒，而不是建出一条谁也执行不了的命令。
+      let badType = null;
+      try { createAgentControlCommand(structuredClone(state), node, {commandType: "pause_everything"}, {actor: "acct_alice"}); }
+      catch (error) { badType = error.message; }
+      if (badType !== "agent_control_command_type_invalid") {
+        output.push(`控制命令: 认不出的命令类型被建出来了（${badType || "没有拒绝"}）—— 节点收到一条它不认识的指令，只能忽略`);
+      }
+      // 正面对照走同一条分支：合法的回执必须写得进去（否则上面四条是「永远拒」）。
+      const ackOk = ackProbe(() => {}, {status: "received"});
+      if (ackOk.refusal || ackOk.command?.status !== "received") {
+        output.push(`控制命令回执: 正常的回执也写不进去（${ackOk.refusal || ackOk.command?.status}）—— 上面四条其实是「永远拒」`);
+      }
+    }
     const acked = ackAgentControlCommand(state, node, controlCommand.commandId, {status: "completed", result: {profileDigest: node.profileDigest}}).command;
     if (acked.status !== "completed" || !acked.resultDigest) output.push("Agent control command ack did not persist terminal status and digest");
 	    const event = submitAgentExecutionEvent(state, node, {dispatchId: claimed.dispatch.dispatch.dispatchId, eventType: "executor_output", progressPercent: 45, summary: "contract event", eventKey: "contract-event-key"}).event;
@@ -8803,7 +8844,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
   // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
   // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 58;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 54;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
