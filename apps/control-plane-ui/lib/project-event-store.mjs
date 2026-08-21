@@ -95,6 +95,13 @@ export function readProjectExecutionEventByKey(runtimeDir, projectId, eventKey, 
   return null;
 }
 
+let eventLogCorruptionFault = "";
+
+// 与 auditArchiveFault 同规：只报事实，由服务端决定给谁看。
+export function projectEventLogFault() {
+  return eventLogCorruptionFault;
+}
+
 function findEventByKey(source, eventKey) {
   for (const line of source.split(/\r?\n/u).filter(Boolean).reverse()) {
     try {
@@ -240,6 +247,8 @@ function ensureProjectExecutionEventIndex(runtimeDir, projectId) {
   };
   const keyWindow = Math.max(100, Number(process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS || 500));
   const keyEntries = [];
+  let corruptLines = 0;
+  let corruptSample = "";
   for (const path of currentPaths) {
     const source = readFileSync(path, "utf8");
     for (const line of source.split(/\r?\n/u).filter(Boolean)) {
@@ -250,10 +259,24 @@ function ensureProjectExecutionEventIndex(runtimeDir, projectId) {
           writeProjectExecutionEventKey(runtimeDir, event, path);
           keyEntries.unshift([event.eventKey, event]);
         }
-      } catch {}
+      } catch {
+        // 索引重建时跳过一行坏数据，后果具体且都看不见：
+        //   那行若含最大序号 → lastSequence 算小了 → 下一条事件会【重用序号】；
+        //   那行若含 eventKey → 该键的幂等性没了 → 重放会被当成新事件【接受两次】。
+        // 而追加那段专门在处理"尾部没有换行"，说明撕裂写本来就是预期内的 ——
+        // 也就是说这条 catch 不是理论分支，它真的会被走到。至少要让人知道跳过了几行、在哪个文件。
+        corruptLines += 1;
+        if (!corruptSample) corruptSample = `${path.split("/").pop()}: ${line.slice(0, 60)}`;
+      }
     }
   }
   rebuilt.eventsByKey = Object.fromEntries(keyEntries.slice(0, keyWindow));
+  // 记成模块级的故障事实，走 auditArchiveFault 同一条路：系统账号的状态里下发，界面出横幅。
+  // 不抛异常：一行坏数据不该让整个项目读不出来；但也绝不能一声不吭。
+  if (corruptLines) {
+    eventLogCorruptionFault = `${corruptLines} 行事件日志解析不了，重建索引时跳过了`
+      + `（样例 ${corruptSample}）—— 序号可能被重用、幂等键可能失效，请核对该文件`;
+  }
   rebuilt.recentEventKeys = Object.keys(rebuilt.eventsByKey).slice(0, keyWindow);
   appendSafeJson(projectExecutionEventIndexPath(runtimeDir, projectId, {forWrite: true}), rebuilt);
   return rebuilt;

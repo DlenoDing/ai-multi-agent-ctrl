@@ -150,7 +150,9 @@ import {
   selfCheckAgentNode,
   submitAgentExecutionEvent
 } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
-import { appendProjectExecutionEvent, readProjectExecutionEventByKey, readProjectExecutionEvents } from "../apps/control-plane-ui/lib/project-event-store.mjs";
+import { appendProjectExecutionEvent, readProjectExecutionEventByKey, readProjectExecutionEvents,
+  projectEventLogFault
+} from "../apps/control-plane-ui/lib/project-event-store.mjs";
 import { assertTransition, resolveGate, loadStateMachines, loadGateCatalog } from "../apps/control-plane-ui/lib/transition-engine.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -367,6 +369,7 @@ run(verifyWhitelistRefusalsCarryTheWhitelist);
 //    换一种更粗的方式数一遍总数，差额立刻显出来（写路由 82 vs 守卫写入 71 就是这么发现的）。
 run(verifyGuardedWritesAreAudited);
 run(verifyWarnModeRejectionsSurviveChurn);
+run(verifyCorruptEventLinesAreReported);
 run(verifyOutputTargetKeepsItsPolicyDecision);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
@@ -5635,6 +5638,48 @@ function verifyOutputTargetKeepsItsPolicyDecision(output) {
       + "事后问「这个写入边界凭什么建的」答不出来");
   }
   console.log(`产出目标的策略决策：灌到 ${before} 条触发淘汰后仍在（调用方自带 decisionRecordRef 的那一支）`);
+}
+
+// 事件日志重建索引时跳过一行坏数据，后果具体且都不会自己现形：
+//   那行若含最大序号 → lastSequence 算小了 → 下一条事件重用序号；
+//   那行若含 eventKey → 该键的幂等性没了 → 重放被当成新事件接受两次。
+// 而追加那段专门在处理"尾部没有换行"，说明撕裂写本来就是预期内的 —— 这条 catch 真的会被走到。
+// 不抛异常（一行坏数据不该让整个项目读不出来），但必须让人看见。
+function verifyCorruptEventLinesAreReported(output) {
+  const dir = mkdtempSync(join(tmpdir(), "aimac-eventlog-"));
+  try {
+    const projectId = "prj_corrupt_probe";
+    for (let index = 1; index <= 3; index += 1) {
+      appendProjectExecutionEvent(dir,
+        {projectId, eventKey: `k${index}`, sequence: index, eventType: "probe",
+          createdAt: "2026-01-01T00:00:00.000Z"});
+    }
+    // 直接找日志文件：storageInfo 只收一个参数，多传一个会被 JS 静默丢掉（门刚拦下我这一手）。
+    const logPath = readdirSync(dir, {recursive: true}).map(String)
+      .filter((name) => name.endsWith("execution-events.jsonl")).map((name) => join(dir, name))[0];
+    if (!logPath || !existsSync(logPath)) {
+      output.push("事件日志损坏核对：造不出日志文件 —— 本条在空转");
+      return;
+    }
+    // 撕裂写：往日志里塞半行 JSON（这正是断电时会留下的样子）。
+    writeFileSync(logPath, `${readFileSync(logPath, "utf8")}{"eventKey":"k4","seq\n`);
+    // 索引重建由【文件快照变化】触发，而它只在追加时被调用 —— 所以要真的再写一条事件。
+    // 第一版只做了读，重建那条路根本没走到，判据报的红其实是"我的用例没打到被测面"。
+    appendProjectExecutionEvent(dir,
+      {projectId, eventKey: "k5", sequence: 5, eventType: "probe", createdAt: "2026-01-01T00:00:00.000Z"});
+    const fault = projectEventLogFault();
+    if (!fault) {
+      output.push("事件日志里有解析不了的行，重建索引时静默跳过了 —— "
+        + "序号可能被重用、幂等键可能失效，而没有任何地方说过这件事");
+      return;
+    }
+    if (!/行事件日志解析不了/u.test(fault) || !/序号|幂等/u.test(fault)) {
+      output.push(`事件日志损坏的报文没说清后果：${String(fault).slice(0, 120)}`);
+    }
+    console.log(`事件日志损坏：造了一行撕裂写，重建索引时报出了「${String(fault).slice(0, 40)}…」`);
+  } finally {
+    try { rmSync(dir, {recursive: true, force: true}); } catch { /* best effort */ }
+  }
 }
 
 function verifyWarnModeRejectionsSurviveChurn(output) {

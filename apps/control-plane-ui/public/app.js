@@ -1792,6 +1792,7 @@ function renderSysOverview() {
     panel("审计日志", `
       <div class="stack">
         ${state.auditArchiveFault ? `<div class="notice warn-notice">审计归档写入失败，已有 ${esc(state.auditArchiveFault.lostEntries)} 条记录没能落盘（${esc(state.auditArchiveFault.error)}）—— 这段时间的操作事后查不到，请先修复磁盘或权限。</div>` : ""}
+        ${state.eventLogFault ? `<div class="notice warn-notice">执行事件日志有损坏：${esc(state.eventLogFault)}</div>` : ""}
         ${table(["时间", "操作者", "动作", {label: "对象", c: "text-clip"}, "结果"], audit, {moreText: moreText((state.auditLog || []).length, 15, "auditLog")})}
         <div class="small muted">${auditWindowNote()}</div>
         ${/* 经 MCP 改的状态此前在这一屏上一条痕迹都没有（主台账只由 REST 侧写）。现在两条写路径

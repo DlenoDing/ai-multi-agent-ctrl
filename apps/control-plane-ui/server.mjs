@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { AUDIT_LOG_CAP, appendAuditEntry, auditArchiveFault as sharedAuditArchiveFault, flushPendingAuditAppends as flushAuditArchive } from "./lib/audit-ledger.mjs";
 import { mcpServiceAllowedTools } from "./lib/mcp-service-allowlist.mjs";
 import { assertStateStoreConfig, consumeStateRebuildSignal, ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
-import { appendProjectExecutionEvent, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
+import { appendProjectExecutionEvent, projectEventLogFault, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
 import {
   authenticateAgentNode,
   authenticateExecutorPrincipal,
@@ -1503,7 +1503,12 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
   // 不写进 scoped：那份对象带缓存且跨请求复用，改它会把故障粘在缓存里。
   // 故障标记现在由共享台账持有（MCP 那条写路径的归档失败也算在内，两边是同一本账）。
   const auditArchiveFault = sharedAuditArchiveFault();
-  const faultField = auditArchiveFault && isSystemAccount(account) ? {auditArchiveFault} : {};
+  // 事件日志的损坏行走同一条路：重建索引时跳过一行坏数据，后果是序号可能被重用、
+  // 幂等键可能失效 —— 都不会自己现形，必须让人看见。
+  const eventLogFault = projectEventLogFault();
+  const faultField = isSystemAccount(account)
+    ? {...(auditArchiveFault ? {auditArchiveFault} : {}), ...(eventLogFault ? {eventLogFault} : {})}
+    : {};
   // 自治循环心跳同理：它在 state.runtime 里，而 scoped 那份对象【按 stateVersion 缓存并跨请求复用】。
   // 空转不再落盘之后版本号不动，于是整份 scoped（含心跳）被复用到过期为止 ——
   // 控制台上"上次推进时间"冻住，看起来像自治循环死了。所以在出口处用内存里的实时值覆盖，

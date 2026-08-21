@@ -3026,6 +3026,22 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "事件日志的损坏行不得静默跳过（序号会被重用、幂等键会失效）",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    check: "verifyCorruptEventLinesAreReported",
+    from: "        corruptLines += 1;",
+    to: "        corruptLines += 0;",
+    expect: "静默跳过了"
+  },
+  {
+    name: "损坏报文必须说清后果（只说'跳过了几行'不够）",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    check: "verifyCorruptEventLinesAreReported",
+    from: "      + `（样例 ${corruptSample}）—— 序号可能被重用、幂等键可能失效，请核对该文件`;",
+    to: "      + \"\";",
+    expect: "没说清后果"
+  },
+  {
     name: "宽松模式的非法转移必须进审计台账（只记在有上限的集合里会被顶掉）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyWarnModeRejectionsSurviveChurn",
