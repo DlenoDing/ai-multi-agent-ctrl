@@ -8930,7 +8930,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   }
   const secondDoors = Object.keys(KNOWN_SECOND_DOORS).length;
   console.log(`拒绝码覆盖：${codes.size} 个拒绝码，其中 ${uncovered.length} 个没有任何门/e2e 的源码提到过`
-    + `（含 ${secondDoors} 个已查明【当前不可达】的第二道门，前面有另一道先拒，编不出用例，登记在册不必再查）`
+    + `（含 ${secondDoors} 个已查明今天为什么没有判据的（前面有另一道门先拒／够得着但代价不成比例，后者写明了代价），登记在册不必再查）`
     + `（棘轮 ${UNCOVERED_REFUSAL_CODE_CEILING}，只降不升；"没提到过"不等于"没被触发过"，但要摘牌就得写一条点名它的断言）`);
 }
 

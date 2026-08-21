@@ -1,4 +1,7 @@
-// 已【实测查明】当前不可达的第二道门：前面还有一道门先拒，所以编不出能走到它们的用例。
+// 已【实测查明】今天没有判据的拒绝码，两类：
+//   (a) 不可达的第二道门 —— 前面还有一道门先拒，编不出能走到它们的用例；
+//   (b) 够得着、但代价与收益不成比例 —— 这一类【必须写明代价是多少】，别拿它当筐。
+// 下面每条都注明属于哪一类。
 // 它们照样计入零覆盖（那是事实），登记在这里只为一件事：**别再有人花一轮去够它们**。
 // 本仓已经为此查过三轮（checkpoint_submit 一轮、project_create 一轮、规则层那族两轮）。
 //
@@ -41,6 +44,15 @@ export const KNOWN_SECOND_DOORS = {
     + "为真时 normalizeInvitedAccount 已提前返回。真正拦住越权邀请的是按系统作用域判权那道"
     + "（doctor 里有 403 policy_denied 的断言）。留着它是为两处口径漂开的那天，"
     + "「必须共用同一个谓词」由 verifyInviteEscalationGuardsShareOnePredicate 钉着",
+    agent_dispatch_requires_selected_model_decision:
+    "(a) fail-closed 兜底：派发前的 contract.model 由 buildTaskContract 统一填齐"
+    + "（modelId / modelDecision / modelSelectionDecisionRef 三个一起写入），"
+    + "正常路径造不出缺字段的 contract；enqueueAgentDispatch 不导出，也不为测试去导它。"
+    + "它守的是上游哪天漏填 —— 那时事后说不清「为什么用了这个模型」",
+  mcp_audit_lock_timeout:
+    "(b) 够得着但代价不成比例：要造它得占住审计锁并让持锁进程【活着】（否则会被判为陈旧锁破掉），"
+    + "然后白等满 10 秒的获取超时。契约门现在整体 14 秒，为这一条加 10 秒是 70% 的增幅。"
+    + "锁本身的正确性另有覆盖：破锁判据、崩溃后恢复都在 crash-consistency 与并发写入门里",
     agent_runtime_no_git_changes:
     "本地工作器每趟都会重写产出清单，而清单里带 createdAt —— 于是总有一个文件在变，"
     + "hasStaged 永远为真。产出内容一字未变时撞的是检查点那道 artifact_output_ref_not_changed_in_commit"
