@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "协议文档不得漏列 runtime 会发的事件",
+    file: "docs/agent-runtime-protocol.md",
+    check: "verifyProtocolEventListMatchesReality",
+    from: "\u3001`heartbeat`\uff08\u957f\u4efb\u52a1\u7684\u4fdd\u6d3b\u5fc3\u8df3\uff0c\u5e26 `progressPercent: 0`\uff09\u3002",
+    to: "\u3002",
+    expect: "而协议文档没列"
+  },
+  {
+    name: "协议文档不得列出 schema 不认的事件",
+    file: "docs/agent-runtime-protocol.md",
+    check: "verifyProtocolEventListMatchesReality",
+    from: "\u4e8b\u4ef6\u8986\u76d6 `dispatch_received`",
+    to: "\u4e8b\u4ef6\u8986\u76d6 `never_defined_event`\u3001`dispatch_received`",
+    expect: "而 schema 不认"
+  },
+  {
     name: "协议文档的版本示例不得低于要求",
     file: "docs/agent-runtime-protocol.md",
     check: "verifyProtocolDocMatchesRequiredRuntimeVersion",

@@ -194,7 +194,7 @@ GET /api/agent-dispatches/:dispatchId/events?afterSequence=<cursor>&waitMs=25000
 GET /api/task-groups/:taskGroupId/execution-events?afterSequence=<cursor>&waitMs=25000
 ```
 
-事件覆盖 `dispatch_received`、`skill_synced`、`executor_started`、`executor_output`、`repository_changed`、`git_committed`、`git_pushed`、`checkpoint_prepared`、`checkpoint_submitted`、`blocked`、`drift_signal`、`failed`。事件只提交阶段、摘要、进度、digest、`eventKey` 和 evidence refs，不上传大段原始 stdout；`eventKey` 是必填幂等键。服务端把完整事件追加到 `.runtime/project-db/p_<projectId_sha256>.execution-events.jsonl` 当前段，超过阈值后轮转为 `.runtime/project-db/p_<projectId_sha256>.execution-events.<firstSeq>-<lastSeq>.<sealedAt>.jsonl`，并维护 `.execution-events.manifest.json`、eventKey KV 索引和 tail-window 读取；中央 state 只保留最近轻量索引和进度摘要，并在 CAS 冲突时重读最新状态重放事件投影。管理界面默认展示汇总，点击任务组详情、work session 或 dispatch 后长轮询项目级事件库。
+事件覆盖 `dispatch_received`、`skill_synced`、`executor_started`、`executor_output`、`repository_changed`、`git_committed`、`git_pushed`、`checkpoint_prepared`、`checkpoint_submitted`、`blocked`、`drift_signal`、`failed`、`heartbeat`（长任务的保活心跳，带 `progressPercent: 0`）。事件只提交阶段、摘要、进度、digest、`eventKey` 和 evidence refs，不上传大段原始 stdout；`eventKey` 是必填幂等键。服务端把完整事件追加到 `.runtime/project-db/p_<projectId_sha256>.execution-events.jsonl` 当前段，超过阈值后轮转为 `.runtime/project-db/p_<projectId_sha256>.execution-events.<firstSeq>-<lastSeq>.<sealedAt>.jsonl`，并维护 `.execution-events.manifest.json`、eventKey KV 索引和 tail-window 读取；中央 state 只保留最近轻量索引和进度摘要，并在 CAS 冲突时重读最新状态重放事件投影。管理界面默认展示汇总，点击任务组详情、work session 或 dispatch 后长轮询项目级事件库。
 
 ## 5. dispatch 与 Skill 工作集
 

@@ -410,6 +410,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyProtocolEventListMatchesReality);
 run(verifyProtocolDocMatchesRequiredRuntimeVersion);
 run(verifyStateFilesRefuseUnknownSchemaVersions);
 run(verifyOutdatedRuntimeIsFlaggedFailClosed);
@@ -11039,6 +11040,42 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyProtocolEventListMatchesReality(output) {
+  // 协议文档里那份"事件覆盖 …"的清单是给第三方看的：他照着它决定自己要发哪些事件。
+  // 三方必须对得上 —— 文档列的、schema 认的、自带 runtime 真发的。
+  // 方向不对称：文档列了 schema 不认的，第三方发出来会被拒；
+  // 自带 runtime 发了文档没列的，第三方就不知道有这一类（heartbeat 当初就漏在这里）。
+  const doc = readFileSync(join(root, "docs/agent-runtime-protocol.md"), "utf8");
+  const line = doc.split("\n").find((row) => row.startsWith("事件覆盖")) || "";
+  const documented = new Set([...line.matchAll(/`([a-z_]+)`/gu)].map((match) => match[1]));
+  if (documented.size < 8) {
+    output.push(`协议文档里的事件清单只提取到 ${documented.size} 个（应有十来个）—— 这条判据的锚点漂了`);
+    console.log("协议事件清单：锚点已漂");
+    return;
+  }
+  const schema = JSON.parse(readFileSync(join(root, "spec/agent-execution-event.schema.json"), "utf8"));
+  const allowed = new Set(schema.properties?.eventType?.enum || []);
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  // 字面量与"由变量决定"两种写法都要认：failed 就是走三元传进去的（第一版只认字面量，把它误报成"不发"）。
+  const emitted = new Set([...runtime.matchAll(/submitExecutionEvent\([^,]+,[^,]+,\s*"([a-z_]+)"/gu)]
+    .map((match) => match[1]));
+  for (const match of runtime.matchAll(/eventType = [^;]{0,120}?"([a-z_]+)"[^;]{0,60}?"([a-z_]+)"/gu)) {
+    emitted.add(match[1]);
+    emitted.add(match[2]);
+  }
+  const notInSchema = [...documented].filter((name) => !allowed.has(name)).sort();
+  if (notInSchema.length) {
+    output.push(`协议文档让第三方发这些事件，而 schema 不认：${notInSchema.join("、")} —— 他发出来会被拒`);
+  }
+  const undocumented = [...emitted].filter((name) => !documented.has(name)).sort();
+  if (undocumented.length) {
+    output.push(`自带 runtime 会发这些事件，而协议文档没列：${undocumented.join("、")} —— `
+      + "第三方不知道有这一类，实现出来的 agent 在这些时刻是静默的");
+  }
+  console.log(`协议事件清单：文档 ${documented.size} 个、schema 认 ${allowed.size} 个、`
+    + `自带 runtime 真发 ${emitted.size} 个 —— 文档既没多列也没漏列`);
 }
 
 function verifyProtocolDocMatchesRequiredRuntimeVersion(output) {
