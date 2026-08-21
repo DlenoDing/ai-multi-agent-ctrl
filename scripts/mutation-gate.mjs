@@ -3315,6 +3315,14 @@ const MUTATIONS = [
     expect: "没被 effectiveProjectConfig 认出来"
   },
   {
+    name: "整份替换的字段漏进清单＝那个字段没有并发保护",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyWholesaleFieldListMatchesTheWrites",
+    from: 'const REPLACING_CONFIG_FIELDS = ["systemRules", "businessRules", "repositories", "baselineData", "defaultRoles"];',
+    to: 'const REPLACING_CONFIG_FIELDS = ["systemRules", "businessRules", "repositories", "baselineData"];',
+    expect: "没有乐观并发保护"
+  },
+  {
     name: "记录上不许带表单不回传的字段（保存一次就会悄悄消失）",
     file: "data/seed-state.json",
     check: "verifySeedLooksLikeSomethingTheProductMade",

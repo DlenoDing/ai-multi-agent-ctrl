@@ -385,6 +385,7 @@ run(verifyInstallScriptSaysWhatItLeftBehind);
 run(verifyInitFailsWithWordsNotAStackTrace);
 run(verifyProjectRepositoriesHaveOneReader);
 run(verifySeedLooksLikeSomethingTheProductMade);
+run(verifyWholesaleFieldListMatchesTheWrites);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5841,6 +5842,34 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // 种子是新人看到的第一份数据，它应当【像是这个产品自己造出来的】。
 // 实测任务组缺 createdAt/updatedAt，于是任务组页上两张卡片都写着"更新时间：-" ——
 // 人第一眼看到的就是一个不记录时间的系统。判据：产品创建任务组时必写的时间戳，种子里也要有。
+// 配置里有几个字段是【整份替换】的：保存时后端拿请求里的数组把旧的整块换掉。
+// 它们有一道乐观并发保护（expectedConfigVersion），保护的范围由一张【手抄的清单】
+// REPLACING_CONFIG_FIELDS 决定。写入处新增一个整份替换的字段而清单没跟上时，
+// 那个字段就没有任何保护 —— 两个人同时编辑，后保存的会静默删掉前一个人的改动，
+// 而审计只记"配置已更新"，不记内容差异。手抄的清单一定会漂，这里按源码全量核对。
+function verifyWholesaleFieldListMatchesTheWrites(output) {
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const listed = new Set((/const REPLACING_CONFIG_FIELDS = \[([^\]]+)\]/u.exec(server)?.[1] || "")
+    .split(",").map((item) => item.replace(/["\s]/gu, "")).filter(Boolean));
+  const replaced = new Set([...server.matchAll(
+    /\.\.\.\(body\.(\w+) !== undefined \? \{\1: (?:Array\.isArray|sanitizeRuleFragments)/gu)].map((hit) => hit[1]));
+  if (listed.size < 4 || replaced.size < 4) {
+    output.push(`清单 ${listed.size} 项 / 源码里认出 ${replaced.size} 处整份替换 —— 提取脱节，本条在空转`);
+    return;
+  }
+  const unprotected = [...replaced].filter((field) => !listed.has(field));
+  if (unprotected.length) {
+    output.push(`这些字段是整份替换的，却不在 REPLACING_CONFIG_FIELDS 里：${unprotected.join("、")} —— `
+      + "它们没有乐观并发保护，两个人同时编辑时后保存的会静默删掉前一个人的改动");
+  }
+  const stale = [...listed].filter((field) => !replaced.has(field));
+  if (stale.length) {
+    output.push(`REPLACING_CONFIG_FIELDS 里这些字段已经不是整份替换了：${stale.join("、")} —— `
+      + "清单过期会让人以为保护面比实际大");
+  }
+  console.log(`整份替换保护面：清单 ${listed.size} 项与源码 ${replaced.size} 处逐项比对，两边一致`);
+}
+
 function verifySeedLooksLikeSomethingTheProductMade(output) {
   const seed = JSON.parse(readFileSync(join(root, "data/seed-state.json"), "utf8"));
   const groups = seed.taskGroups || [];
