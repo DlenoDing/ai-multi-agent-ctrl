@@ -39,6 +39,16 @@ try {
   await waitForHealth();
   const unauthenticated = await fetch(`${baseUrl}/mcp`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({jsonrpc: "2.0", id: 1, method: "initialize", params: {}})});
   if (unauthenticated.status !== 401) throw new Error(`remote MCP did not reject unauthenticated request: ${unauthenticated.status}`);
+  // 「不带令牌」和「带一个错的令牌」是两条不同的路：前者在最外层就被挡下，后者要一路走到
+  // 服务令牌摘要比对那一句。此前只测了前者 —— 实测把那句比对改成 `if (true)`（任何令牌都算
+  // 服务主体，等于整个 MCP 面免鉴权），三套 e2e 无一报红。
+  const bogusToken = await fetch(`${baseUrl}/mcp`, {method: "POST",
+    headers: {"content-type": "application/json", authorization: "Bearer not-a-real-service-token"},
+    body: JSON.stringify({jsonrpc: "2.0", id: 1, method: "tools/list", params: {}})});
+  if (bogusToken.status !== 401) {
+    throw new Error(`带一个错的令牌也被放行了（HTTP ${bogusToken.status}）—— `
+      + "服务令牌比对失效时，任何人都能以服务主体身份调 MCP");
+  }
 
   const initialized = await mcp("initialize", {protocolVersion: "2025-06-18", capabilities: {}, clientInfo: {name: "doctor", version: "1"}});
   if (initialized.serverInfo?.name !== "ai-multi-agent-ctrl") throw new Error("remote MCP initialize failed");

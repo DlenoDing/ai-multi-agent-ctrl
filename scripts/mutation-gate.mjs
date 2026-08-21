@@ -3291,6 +3291,16 @@ const MUTATIONS = [
     expect: "没说清本机被改成什么样"
   },
   {
+    // 服务令牌摘要比对失效＝任何令牌都被当成 system_service 主体，整个 MCP 面免鉴权。
+    // 此前三套 e2e 无一报红（只测了"不带令牌"，没测"带一个错的令牌"）。
+    name: "带一个错的令牌不得被当成 MCP 服务主体",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "mcp",
+    from: "  if (config.mcpServiceTokenHash === digestOf(`mcp-service:${token}`)) {",
+    to: "  if (true) {",
+    expect: "带一个错的令牌也被放行了"
+  },
+  {
     name: "「必须被拒」的断言只判「不是 200」要被逮到",
     file: "scripts/doctor.mjs",
     check: "verifyRejectionAssertionsNameTheirCode",
