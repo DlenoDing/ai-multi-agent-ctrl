@@ -3302,6 +3302,14 @@ const MUTATIONS = [
     expect: "出现了别的租户的对象"
   },
   {
+    name: "调用方给的 [null] 不许变成名为 null 的角色",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyGitRemoteGuardTwinsAgree",
+    from: '  return [...new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean))];',
+    to: '  return [...new Set((values || []).map((value) => String(value).trim()).filter(Boolean))];',
+    expect: "变成了字符串留下来"
+  },
+  {
     name: "两侧的 git 失败原因要拼成同一句话",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyGitRemoteGuardTwinsAgree",

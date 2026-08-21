@@ -6014,6 +6014,32 @@ function verifyGitRemoteGuardTwinsAgree(output) {
         + " —— 两份孪生实现拼的不是同一句话，人在两处看到的原因对不上");
     }
   }
+  // 第三对：uniqueStrings。它过的是调用方给的角色/证据/能力清单，
+  // `String(value)` 会把 null/0/false 变成字符串留下来（一个 [null] 就成了名为 "null" 的角色）。
+  const gwText = readFileSync(join(root, "apps/control-plane-ui/lib/agent-gateway.mjs"), "utf8");
+  const uniqBodies = {控制面: pick(gwText, "uniqueStrings"), "agent 运行时": pick(runtime, "uniqueStrings")};
+  const uniqMade = {};
+  for (const [label, text] of Object.entries(uniqBodies)) {
+    if (!text) { output.push(`提不出${label}的 uniqueStrings —— 这一对的核对在空转`); return; }
+    try {
+      // eslint-disable-next-line no-new-func
+      uniqMade[label] = new Function(`${text}\nreturn uniqueStrings;`)();
+    } catch (error) {
+      output.push(`${label}的 uniqueStrings 取不出来（${error?.message || error}）—— 这一对在空转`);
+      return;
+    }
+  }
+  const junk = [null, undefined, 0, false, "reviewer", " qa "];
+  for (const [label, fn] of Object.entries(uniqMade)) {
+    const got = fn(junk);
+    if (got.some((item) => ["null", "undefined", "0", "false"].includes(item))) {
+      output.push(`${label}的 uniqueStrings 把 null/0/false 变成了字符串留下来（${JSON.stringify(got)}）—— `
+        + "调用方送来一个 [null]，它就成了一个名为 \"null\" 的角色，还会参与授权比对");
+    }
+  }
+  if (JSON.stringify(uniqMade["控制面"](junk)) !== JSON.stringify(uniqMade["agent 运行时"](junk))) {
+    output.push("两份 uniqueStrings 对同一份输入给出不同结果 —— 孪生实现漂了");
+  }
   console.log(`git 远端守卫孪生：${dangerous.length} 种危险形态两侧各跑一遍，正常地址两侧都收，本地路径只有控制面收；`
     + `失败原因文案 ${samples.length} 种也两侧比过`);
 }

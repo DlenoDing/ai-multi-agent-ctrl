@@ -1883,8 +1883,12 @@ function appendGatewayEvent(state, eventType, subjectId, payload) {
   state.agentGatewayEvents = state.agentGatewayEvents.slice(0, 1000);
 }
 
+// 与 agent 运行时那份孪生实现对齐：`String(value)` 会把 null/undefined/0/false 变成
+// 字符串 "null"/"undefined"/"0"/"false" 并留在结果里 —— 而这里过的全是调用方给的东西
+//（allowedRoles / requestedRoles / evidenceRefs / capabilityFlags）。
+// 一个 [null] 就会被存成名为 "null" 的角色，然后在授权比对里当作一个真角色参与。
 function uniqueStrings(values) {
-  return [...new Set((values || []).map((value) => String(value).trim()).filter(Boolean))];
+  return [...new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
 function boundedInteger(value, min, max, fallback) {
