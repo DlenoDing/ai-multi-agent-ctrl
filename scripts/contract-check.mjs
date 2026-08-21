@@ -355,6 +355,7 @@ run(verifyWholesaleConfigWritesArePreconditioned);
 run(verifyGatesDoNotCloneFromTheNetwork);
 run(verifyDocumentedApiPathsExist);
 run(verifyRaceTimeoutsDoNotHoldTheProcess);
+run(verifyWhitelistRefusalsCarryTheWhitelist);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5570,6 +5571,39 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 41 秒就结束，进程却要 146 秒才退出，多出来的 105 秒全在等一个 120 秒的定时器。
 // 每次提交都要付这一笔。加 .unref() 即可：真卡住时事件循环由子进程句柄吊着，超时照样触发
 // （已实测：卡住的子进程 2003ms 触发超时，正常退出的 65ms 就走）。
+// 「你给的取值不在白名单里」这种拒绝，必须把白名单一起给出去 —— 合法取值就在被测代码的上一行，
+// 不带它的话，调用方（agent 或经 REST 转发给人的界面）只知道"不行"，不知道什么行，只能穷举重试。
+// 现在 4 处全合规（角色那三处带 registeredRoles，状态那处带 allowedStatuses），这道门是为了让它保持。
+// 认字段名要认【这个仓里实际用的那些】：第一版只找 allowed/supported/expected，
+// 把三处带 registeredRoles 的全报成了缺口 —— 词汇假设造成的误报，比漏报更浪费时间。
+function verifyWhitelistRefusalsCarryTheWhitelist(output) {
+  const CARRIES = /allowedStatuses|allowedRoles|registeredRoles|allowedResourceTypes|supported|expectedType|allowedPaths/u;
+  const files = ["apps/mcp-server/server.mjs", "apps/control-plane-ui/server.mjs",
+    "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs"];
+  let scanned = 0;
+  const bare = [];
+  for (const file of files) {
+    const source = readFileSync(join(root, file), "utf8").replace(/\/\/[^\n]*/gu, (t) => " ".repeat(t.length));
+    const pattern = /if \(!([A-Z][A-Za-z0-9_]{3,}|\[[^\]]{6,140}\])\.includes\(([\w.?]+)\)\)([\s\S]{0,220}?)(error: "([a-z0-9_]+)"|new Error\(`?"?([a-z0-9_]{6,})[:"`])/gu;
+    for (const match of source.matchAll(pattern)) {
+      scanned += 1;
+      const code = match[5] || match[6];
+      const window = source.slice(match.index, match.index + match[0].length + 200);
+      if (CARRIES.test(window)) continue;
+      bare.push(`${file.split("/").pop()}:${source.slice(0, match.index).split("\n").length} ${code}`);
+    }
+  }
+  if (scanned < 4) {
+    output.push(`白名单式拒绝只扫到 ${scanned} 处（应至少 4）—— 提取形状与代码脱节，本条在空转`);
+    return;
+  }
+  if (bare.length) {
+    output.push("这些拒绝说了「你给的不在白名单里」，却没把白名单给出去（调用方只能穷举重试）：\n  "
+      + bare.join("\n  "));
+  }
+  console.log(`白名单式拒绝：${scanned} 处逐个核对，${bare.length} 处没带合法取值（应为 0）`);
+}
+
 function verifyRaceTimeoutsDoNotHoldTheProcess(output) {
   const walk = (dir) => readdirSync(dir).flatMap((name) => {
     const full = join(dir, name);

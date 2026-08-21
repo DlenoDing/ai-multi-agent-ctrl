@@ -3010,6 +3010,22 @@ const MUTATIONS = [
     expect: "仓内文件不存在"
   },
   {
+    name: "白名单拒绝必须带上白名单（否则调用方只能穷举重试）",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyWhitelistRefusalsCarryTheWhitelist",
+    from: "      received: String(rawStatus).slice(0, 60), allowedStatuses: [\"approved\", \"rejected\"]};",
+    to: "      received: String(rawStatus).slice(0, 60)};",
+    expect: "没把白名单给出去"
+  },
+  {
+    name: "白名单扫描打不到时必须红（不得绿着空转）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyWhitelistRefusalsCarryTheWhitelist",
+    from: "const pattern = /if \\(!([A-Z][A-Za-z0-9_]{3,}",
+    to: "const pattern = /if \\(!([A-Z][A-Za-z0-9_]{30,}",
+    expect: "只扫到 2 处"
+  },
+  {
     name: "产出目标被拒要说出是哪条路径（裸码让 agent 无从自纠）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

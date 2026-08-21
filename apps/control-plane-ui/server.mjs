@@ -4651,7 +4651,13 @@ async function handleApi(req, res) {
     const result = permissionResolve(state, {...body, requestId: permissionResolveMatch[1]});
     // 无法识别的处置结果是调用方的错，不是"找不到这条请求" —— 一律回 404 会让调用方去查 id，
     // 而真正的原因是它送了一个不属于 approved/rejected 的状态。
-    if (result.error === "permission_request_status_invalid") return json(res, 400, {error: result.error});
+    // 转发时不能只带 error：core/MCP 那侧同时给了 received 与 allowedStatuses，
+    // 只取 error 的话，人在控制台上看到"状态不合法"却看不到什么才合法（界面本来就会渲染这两个字段）。
+    if (result.error === "permission_request_status_invalid") {
+      return json(res, 400, {error: result.error,
+        ...(result.received === undefined ? {} : {received: result.received}),
+        ...(result.allowedStatuses === undefined ? {} : {allowedStatuses: result.allowedStatuses})});
+    }
     // 已被处置时必须回 409 而不是 200：后到者的决定被丢弃了，而 200 会让他确信自己成功了。
     // 权限那条最重 —— 拒绝方拿到 200，而权限其实已经授出。仓里另有五条处置路径本来就这么做
     // （质量门/评审计划/评审包/升级候选/共享定义），i18n 里也有现成的"可能是另一个人刚处理完"。

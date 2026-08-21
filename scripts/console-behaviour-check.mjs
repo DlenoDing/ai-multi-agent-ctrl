@@ -829,6 +829,10 @@ async function runErrorGuidanceCase() {
     {payload: {error: "state_storage_corrupt", kind: "control_plane_state_corrupt", file: "control-plane-state.json"},
       expect: "涉及的文件：control-plane-state.json"},
     {payload: {error: "state_storage_unavailable", code: "ENOSPC"}, expect: "系统错误码：ENOSPC"},
+    // 白名单拒绝必须带上白名单：合法取值就在被测代码的上一行，而回执原先只有一个码 ——
+    // 调用方只知道"你给的不行"，不知道什么行，只能穷举重试。
+    {payload: {error: "permission_request_status_invalid", received: "granted",
+      allowedStatuses: ["approved", "rejected"]}, expect: "可以转到：approved、rejected"},
     // 产出目标被拒有两种完全不同的原因，原先共用一个裸码：清单配置不合法（不是调用方的错）、
     // 那条路径 git 跟不住（调用方能改）。两者都不带真实取值，人只看到"必须用 git 跟得住的路径"。
     {payload: {error: "repository_output_target_must_use_git_trackable_paths",

@@ -2422,7 +2422,11 @@ export function permissionResolve(state, args) {
   const rawStatus = args.status || (args.allowed === false ? "rejected" : "approved");
   const resolvedStatus = rawStatus === "denied" ? "rejected" : rawStatus;
   if (!["approved", "rejected"].includes(resolvedStatus)) {
-    return {ok: false, error: "permission_request_status_invalid"};
+    // 合法取值就在上一行，而拒绝里原先不带它：调用方（agent 或经 REST 转发过来的人）
+    // 只知道"你给的不行"，不知道什么行 —— 只能穷举重试。同一族里角色那几处早就带了
+    // registeredRoles，这一处是漏的。控制台的指引数组已经支持 allowedStatuses，服务端不发就显示不出来。
+    return {ok: false, error: "permission_request_status_invalid",
+      received: String(rawStatus).slice(0, 60), allowedStatuses: ["approved", "rejected"]};
   }
   request.status = resolvedStatus;
   const decision = policyDecisionEval(state, {

@@ -7621,8 +7621,12 @@ export function permissionRequestSubmit(state, args) {
   // 危险的是自选出第三种：{system, accounts} 这样的资源配上 system:* 这样的权限。下面那道项目
   // 对齐守卫对"解析不出项目"的资源会短路放行 —— 守卫按它预期的形状写，遇到别的形状就失效。
   if (!PERMISSION_REQUEST_RESOURCE_TYPES.includes(request.resource.resourceType)) {
+    // 把合法取值一起给出去：申请方（多数是 agent）只知道"这个资源类型不行"时，
+    // 只能穷举重试；而合法集合就在这一行里。同族的角色校验一直带着 registeredRoles。
     const error = new Error("permission_request_resource_type_not_allowed");
     error.status = 400;
+    error.received = String(request.resource.resourceType || "").slice(0, 60);
+    error.allowedResourceTypes = PERMISSION_REQUEST_RESOURCE_TYPES;
     throw error;
   }
   // 无论哪种用途，都不得经这条通道铸出不可委派的权限（通配/system:）。REST 那道门一直这么拒，
