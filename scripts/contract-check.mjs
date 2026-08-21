@@ -5862,6 +5862,24 @@ function verifySeedLooksLikeSomethingTheProductMade(output) {
       + `${missing.length > 6 ? ` 等 ${missing.length} 处` : ""} —— 界面上会显示「更新时间：-」，`
       + "新人第一眼看到的是一个不记录时间的系统");
   }
+  // 项目设置那张表单是【整块替换】的：保存时按渲染出来的输入框重建数组，
+  // 记录上任何没被渲染的字段都会在人点一次"保存项目配置"之后悄悄消失。
+  // 实测种子里的仓库带着一个 purpose 字段：全仓没人读、也不在任何 schema 里，
+  // 却摆在数据里等着被一次无关的保存抹掉。字段要么有人读，要么别摆在那。
+  const formFields = new Set(["id", "url", "defaultBranch", "credentialSecretRef"]);
+  const strayed = [];
+  for (const project of seed.projects || []) {
+    const repos = [...(project.repositories || []), ...((project.config || {}).repositories || [])];
+    for (const repo of repos) {
+      for (const key of Object.keys(repo)) {
+        if (!formFields.has(key)) strayed.push(`${project.id}.${repo.id || "?"}.${key}`);
+      }
+    }
+  }
+  if (strayed.length) {
+    output.push(`种子里的仓库记录带着表单不回传的字段：${strayed.join("、")} —— `
+      + "人在项目设置里点一次保存，这些字段就没了（配置是整块替换的），而没有任何地方会说一声");
+  }
   console.log(`种子真实性：${groups.length} 个任务组、`
     + `${groups.reduce((sum, group) => sum + (group.workItems || []).length, 0)} 个工作项的时间戳逐个核对`);
 }

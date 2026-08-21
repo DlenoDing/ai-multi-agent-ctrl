@@ -3315,6 +3315,14 @@ const MUTATIONS = [
     expect: "没被 effectiveProjectConfig 认出来"
   },
   {
+    name: "记录上不许带表单不回传的字段（保存一次就会悄悄消失）",
+    file: "data/seed-state.json",
+    check: "verifySeedLooksLikeSomethingTheProductMade",
+    from: '"defaultBranch": "main"',
+    to: '"defaultBranch": "main", "purpose": "control_plane_specs_and_runtime"',
+    expect: "表单不回传的字段"
+  },
+  {
     name: "种子缺时间戳要被逮到（任务组这一半）",
     file: "scripts/contract-check.mjs",
     check: "verifySeedLooksLikeSomethingTheProductMade",

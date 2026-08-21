@@ -466,8 +466,7 @@
         {
           "id": "repo_control_plane",
           "url": "git@github.com:dleno/ai-multi-agent-ctrl.git",
-          "defaultBranch": "main",
-          "purpose": "control_plane_specs_and_runtime"
+          "defaultBranch": "main"
         }
       ],
       "progress": {
