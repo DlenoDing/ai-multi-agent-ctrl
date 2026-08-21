@@ -6993,6 +6993,17 @@ function verifyInertMechanismsStayRegistered(output) {
       expectedOccurrences: 6
     },
     {
+      name: "账号退役（accountRetired）",
+      why: "配额统计把 retired 的账号排除在外（core 那三行统计里唯一提到它的地方），"
+        + "而全仓【没有任何代码把账号写成 retired】—— lane 与技能源各有 retired，账号没有。"
+        + "于是读代码的人会以为『账号退役』这个能力存在：它不存在，挂起(suspended)是目前唯一的释放杠杆。"
+        + "『账号退役怎么做』是一项【尚未拍板的产品决定】，这条登记只陈述现状，不替它做决定。",
+      // 接上的迹象：任何地方把【账号】写成 retired。lane.status / source.status 的 retired 不算 ——
+      // 它们是另外两个对象，早就有生产者（第一版只搜 "retired" 字面量，被这两处直接喂饱）。
+      wiredWhen: [{where: "any", pattern: /account\.status = "retired"/u},
+        {where: "any", pattern: /accountStatus[^\n]{0,40}"retired"/u}]
+    },
+    {
       name: "条件窗口门控（conditionWindowGate）",
       why: "两个来源都没有生产者：request.conditionSource 没人传、state.conditionSource 没有赋值点，"
         + "工作项那半的 conditionDependency 也只存在于 core 一个文件里。"
@@ -7027,6 +7038,10 @@ function verifyInertMechanismsStayRegistered(output) {
   // 自检：登记本身要还指得着代码，否则它只是一段无人核对的文字。
   if (!core.includes("conditionWindowGate")) {
     output.push("INERT_MECHANISMS 登记的 conditionWindowGate 在 core 里已经找不到了 —— 登记该撤或该改");
+  }
+  // 同理：账号退役这条登记的依据是"配额统计排除了 retired"。那一行没了，这条登记就没有对象了。
+  if (!/\["disabled", "suspended", "retired"\]\.includes\(account\.status\)/u.test(core)) {
+    output.push("INERT_MECHANISMS 登记的账号退役：配额统计里那条 retired 排除已经不在了 —— 登记该撤或该改");
   }
 }
 

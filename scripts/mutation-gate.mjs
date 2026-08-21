@@ -3010,6 +3010,22 @@ const MUTATIONS = [
     expect: "仓内文件不存在"
   },
   {
+    name: "账号退役一旦被接上，登记必须当场过期",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyInertMechanismsStayRegistered",
+    from: "  account.status = \"suspended\";",
+    to: "  account.status = \"retired\";",
+    expect: "已经有人接上生产者"
+  },
+  {
+    name: "账号退役登记的依据没了要报（登记不得指着不存在的东西）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyInertMechanismsStayRegistered",
+    from: "    if ([\"disabled\", \"suspended\", \"retired\"].includes(account.status)) continue;",
+    to: "    if ([\"disabled\", \"suspended\"].includes(account.status)) continue;",
+    expect: "那条 retired 排除已经不在了"
+  },
+  {
     name: "每一次守卫写入都要留痕（事后要答得出谁改的）",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyGuardedWritesAreAudited",
