@@ -7309,7 +7309,9 @@ export function advanceExecutionTopology(state, args) {
     expect("running");
     const branch = branches.find((item) => item.branchId === args.branchId);
     if (!branch) return {ok: false, error: "execution_topology_branch_not_found"};
-    branch.status = ["reported", "failed", "rejected", "blocked"].includes(args.branchStatus) ? args.branchStatus : "reported";
+    // 认不出的分支状态在函数入口就被拒了（见上面那条 execution_topology_branch_status_unknown）。
+    // 这里只把"没填"落成默认：不填按 reported 是这条路径的语义。
+    branch.status = args.branchStatus || "reported";
     if (args.resultRef) branch.resultRef = String(args.resultRef);
     branch.actualChangedPaths = unique([...(branch.actualChangedPaths || []), ...(args.actualChangedPaths || [])]);
     branch.validationEvidenceRefs = unique([...(branch.validationEvidenceRefs || []), ...(args.validationEvidenceRefs || [])]);

@@ -553,7 +553,6 @@
     dispatch_not_assigned_to_node: "这个派发不在该节点手上（已被回收或分给了别的节点）：刷新一下再看它现在归谁",
     agent_control_command_ack_status_unknown: "认不出的控制命令回执状态",
     dispatch_fail_status_unknown: "认不出的上报状态（blocked 可恢复，cancelled/failed 是终态）",
-    execution_topology_branch_status_unknown: "认不出的分支状态",
     ai_confirmation_assessment_unknown: "认不出的 AI 评估结论",
     human_confirmation_expired_needs_decision: "人工确认超时·已升级为人工决策",
     human_confirmation_requires_human_actor: "核心决策只能由真人账号确认，机器主体无权定稿",
@@ -849,6 +848,7 @@
     organization_required: "缺少组织信息",
     org_member_not_found: "未找到组织成员",
 
+    execution_topology_branch_status_unknown: "分支状态认不出来：只能是 reported（已上报）、failed（失败）、rejected（被拒）、blocked（受阻）。这次没有记 —— 认不出的状态若按「已上报」处理，一条真失败的分支会被当成做完了",
     rule_status_unknown: "规则状态认不出来：只能是 active（生效）、draft（草稿）、disabled（停用）。这次整批都没保存 —— 认不出的状态若按「生效」处理，你以为关掉的规则其实还在生效，所以宁可拒绝",
     rule_content_too_long: "规则内容过长（上限 8192 字），请精简后再保存",
     rule_title_too_long: "规则标题过长（上限 256 字）",
