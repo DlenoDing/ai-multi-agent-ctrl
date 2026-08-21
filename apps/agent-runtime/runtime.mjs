@@ -1594,7 +1594,10 @@ function writeAgentScopedMcpConfig(config, profile) {
     detectedClients: (profile.tools || []).filter((tool) => ["codex", "claude", "cursor"].includes(tool.name) && tool.available).map((tool) => tool.name),
     mcpServers: {ai_multi_agent_ctrl: remote}
   });
-  writeFileSync(join(generatedDir, "codex_config.toml"), [
+  // 这份样例里带着 nodeToken 明文（权限 0o600），人会照着它复制到自己的 codex 配置里。
+  // 半份写入会让他复制到一个被截断的令牌，而系统随后报的是"认证失败"，
+  // 指不到"你复制的那份配置被截断了"上。同目录另两份一直是原子写的。
+  writeDurableText(join(generatedDir, "codex_config.toml"), [
     "# BEGIN ai-multi-agent-ctrl REMOTE MCP",
     "[mcp_servers.ai_multi_agent_ctrl]",
     `url = ${JSON.stringify(config.gateway.mcpUrl)}`,
@@ -1638,7 +1641,7 @@ export function removeGlobalRemoteMcpClients(paths = {}) {
       const end = previous.indexOf(endMark);
       if (start >= 0 && end > start) {
         const next = `${previous.slice(0, start).trimEnd()}\n${previous.slice(end + endMark.length).trimStart()}`.trim();
-        writeFileSync(path, next ? `${next}\n` : "", {mode: 0o600});
+        writeDurableText(path, next ? `${next}\n` : "", {mode: 0o600});
       }
     }
   } catch (error) {
@@ -1687,7 +1690,7 @@ function replaceMarkedText(path, start, end, block) {
     ? `${previous.slice(0, startIndex).trimEnd()}\n\n${block}\n${previous.slice(endIndex + end.length).trimStart()}`.trimStart()
     : `${previous.trimEnd()}\n\n${block}\n`.trimStart();
   mkdirSync(dirname(path), {recursive: true});
-  writeFileSync(path, next.endsWith("\n") ? next : `${next}\n`, {mode: 0o600});
+  writeDurableText(path, next.endsWith("\n") ? next : `${next}\n`, {mode: 0o600});
 }
 
 function verifyPackageBinding(config, value) {
@@ -1877,10 +1880,18 @@ function loadConfig() {
 // 统一成先写临时文件 -> fsync 文件 -> rename -> fsync 目录：任意时刻崩溃，磁盘上要么是旧的完整内容，
 // 要么是新的完整内容，不会出现半截。
 function writeDurableJson(path, value, options = {}) {
+  writeDurableText(path, `${JSON.stringify(value, null, 2)}\n`, options);
+}
+
+// 文本版。**改的是别人的文件时尤其要用它**：`~/.codex/config.toml`、`~/.claude/mcp.json`、
+// `~/.cursor/mcp.json` 都是用户自己的配置，里面有他配的其它 MCP 服务器与模型设置。
+// 这几处是 read-modify-write，原先直写目标文件 —— 写到一半断电，用户那份配置就成了半截，
+// 丢的不是我们的东西。（我们自己生成的文件反倒一直是原子写的，正好写反了。）
+function writeDurableText(path, text, options = {}) {
   const directory = dirname(path);
   mkdirSync(directory, {recursive: true});
   const temporary = `${path}.tmp-${process.pid}-${Date.now().toString(36)}`;
-  const payload = `${JSON.stringify(value, null, 2)}\n`;
+  const payload = String(text);
   const handle = openSync(temporary, "w", options.mode ?? 0o600);
   try {
     writeSync(handle, payload);

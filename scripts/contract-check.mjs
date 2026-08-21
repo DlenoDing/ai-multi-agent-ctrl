@@ -388,6 +388,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyRuntimeFileWritesAreRegistered);
 run(verifyEveryWriteRouteIsGuardedOrRegistered);
 run(verifyEveryCapExplainsWhatItKeeps);
 run(verifyOneProjectWriteTouchesOneShard);
@@ -10875,6 +10876,62 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyRuntimeFileWritesAreRegistered(output) {
+  // agent 运行时跑在【别人的机器】上，写的东西里有用户自己的配置（~/.codex/config.toml、
+  // ~/.claude/mcp.json、~/.cursor/mcp.json，里面是他配的其它 MCP 服务器）和带明文令牌的样例。
+  // 直写目标文件时崩溃/断电会留下半截 —— 丢的不是我们的东西。
+  //
+  // 第一版判据靠"往前看十四行有没有 homedir/mcp.json 字样"来认哪些写的是用户文件：
+  // replaceMarkedText 是个通用函数，路径线索在【调用点】不在函数体里，于是它整个逃过了检查
+  // （实测：把它退回直写，判据照报 0 处）。改成登记制 —— 每一处 writeFileSync 都要说明
+  // 它写的是什么、为什么不需要原子写。
+  const RUNTIME_DIRECT_WRITES = {
+    syncContentBundle: "内容包文件：整包每次派发重新下发，半截文件下一轮就被覆盖，且摘要对不上会被拒",
+    executeDispatch: "派发包与提示词：执行器的一次性输入，半截 JSON 会让这次执行【失败】而不是做错事",
+    syncSkillWorkset: "技能集文件：同内容包，摘要对不上时 Gateway 会拒发",
+    writeArtifactManifest: "产出清单：写在 git 工作树里，半截文件会被检查点的清单校验当场拒掉",
+    writableDirectory: "只是探一下目录能不能写（写个 ok 再删），不是持久数据"
+  };
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const lines = runtime.split("\n");
+  const direct = new Map();
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^\s*\/\//u.test(line) || !line.includes("writeFileSync(")) continue;
+    let owner = "(顶层)";
+    for (let back = index; back >= 0 && back > index - 120; back -= 1) {
+      const match = /^(?:async )?function (\w+)/u.exec(lines[back]);
+      if (match) { owner = match[1]; break; }
+    }
+    if (!direct.has(owner)) direct.set(owner, []);
+    direct.get(owner).push(index + 1);
+  }
+  if (!direct.size) {
+    output.push("agent 运行时里一处 writeFileSync 都没找到 —— 这条判据的锚点漂了，它在空转");
+    console.log("运行时落盘：锚点已漂");
+    return;
+  }
+  const unregistered = [...direct.keys()].filter((owner) => !RUNTIME_DIRECT_WRITES[owner]).sort();
+  if (unregistered.length) {
+    output.push(`agent 运行时里这些函数直写文件而没有登记理由：${unregistered.map((owner) =>
+      `${owner}(第 ${direct.get(owner).join("/")} 行)`).join("、")} —— `
+      + "它跑在别人的机器上：改用户自己的配置必须走 writeDurableText（临时文件 → fsync → rename → fsync 目录），"
+      + "不需要原子写的也要写明为什么");
+  }
+  const stale = Object.keys(RUNTIME_DIRECT_WRITES).filter((owner) => !direct.has(owner)).sort();
+  if (stale.length) {
+    output.push(`登记表里这些函数已经不直写文件了：${stale.join("、")} —— 登记过期，删掉它们`);
+  }
+  // 改用户配置的那几处必须真的在走原子写（登记表里没有它们，说明它们已经改完了 —— 这里正面确认一次）。
+  for (const [what, needle] of [["清理 codex 配置", "writeDurableText(path, next ? "], ["写入带标记的段落", "writeDurableText(path, next.endsWith"],
+    ["生成 codex 样例（含明文令牌）", 'writeDurableText(join(generatedDir, "codex_config.toml")']]) {
+    if (!runtime.includes(needle)) {
+      output.push(`${what}没有走原子写 —— 用户那份配置写到一半断电就成了半截，丢的不是我们的东西`);
+    }
+  }
+  console.log(`运行时落盘：${direct.size} 个函数直写（都登记了理由）、改用户配置的 3 处走原子写`);
 }
 
 function verifyEveryWriteRouteIsGuardedOrRegistered(output) {

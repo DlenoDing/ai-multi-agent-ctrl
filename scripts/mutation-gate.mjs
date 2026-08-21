@@ -3561,6 +3561,22 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "改用户配置的写入必须原子（带标记的段落）",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyRuntimeFileWritesAreRegistered",
+    from: "  writeDurableText(path, next.endsWith(\"\\n\") ? next : `${next}\\n`, {mode: 0o600});",
+    to: "  writeFileSync(path, next.endsWith(\"\\n\") ? next : `${next}\\n`, {mode: 0o600});",
+    expect: "直写文件而没有登记理由"
+  },
+  {
+    name: "新增直写文件的函数必须登记理由",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyRuntimeFileWritesAreRegistered",
+    from: "function writeArtifactManifest",
+    to: "function writeSomethingNew(p, v) { writeFileSync(p, v); }\nfunction writeArtifactManifest",
+    expect: "直写文件而没有登记理由"
+  },
+  {
     name: "新增写路由必须走守卫或登记替代鉴权",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyEveryWriteRouteIsGuardedOrRegistered",
