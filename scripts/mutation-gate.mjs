@@ -3010,6 +3010,22 @@ const MUTATIONS = [
     expect: "仓内文件不存在"
   },
   {
+    name: "每一句「正在加载」都要有对应的「取失败了」说法",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "function filterInput(placeholder = \"关键字过滤…\", key = \"\") {",
+    to: "function filterInput(placeholder = \"正在加载关键字…\", key = \"\") {",
+    expect: "没有失败态说法"
+  },
+  {
+    name: "加载提示扫描打不到时必须红（不得绿着空转）",
+    file: "scripts/console-behaviour-check.mjs",
+    gate: "console",
+    from: "const spots = [...appForLoading.matchAll(/正在加载[^`\"<]{0,24}/gu)];",
+    to: "const spots = [...appForLoading.matchAll(/正在加載[^`\"<]{0,24}/gu)];",
+    expect: "只找到 0 处"
+  },
+  {
     name: "任务组详情取失败时不许还说'正在加载'（第三处同形）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

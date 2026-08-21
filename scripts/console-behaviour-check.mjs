@@ -1016,6 +1016,28 @@ async function runErrorGuidanceCase() {
     `listEmptyText 只被用了 ${wired - 1} 处（定义之外，应为 3）—— 有表还在说"暂无数据"`);
 }
 
+// 「正在加载…」这句话必须有对应的【失败态】说法，否则取失败之后它会一直转圈。
+// 这个形状本仓撞了三次，每次长得都不一样：缺三态（项目规则配置）、
+// Promise.all 整组失败（系统概览）、一组请求里有的 catch 了有的没 catch（任务组详情）。
+// 共同点是：失败之后那个变量与"从没取过"长得一模一样。三处现在都修好了，这道门守第四处。
+{
+  const appForLoading = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8")
+    .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
+  const spots = [...appForLoading.matchAll(/正在加载[^`"<]{0,24}/gu)];
+  const naked = [];
+  for (const spot of spots) {
+    // 判据要落在【同一个渲染分支】里：往前看一段，必须有区分"取失败了"的东西。
+    const window = appForLoading.slice(Math.max(0, spot.index - 420), spot.index + 140);
+    if (/Status === "failed"|Status !== "failed"|\.loadFailed|loadFailed:/u.test(window)) continue;
+    naked.push(`${appForLoading.slice(0, spot.index).split("\n").length}: ${spot[0].trim()}`);
+  }
+  check("每一句「正在加载」都要有对应的「取失败了」说法（否则会一直转圈）",
+    naked.length === 0 && spots.length >= 3,
+    naked.length
+      ? `这些「正在加载」没有失败态说法：\n    ${naked.join("\n    ")}`
+      : `只找到 ${spots.length} 处「正在加载」（应至少 3）—— 提取与界面脱节，本条在空转`);
+}
+
 // 任务组详情：progress 那条请求原先没有 catch —— 一失败整个函数抛出、tgDetail 停在 null，
 // 而面板对 null 只有一种说法「正在加载任务组详情…」。顶上横幅已经报了失败，面板还在转圈。
 // 这是"一个 null 兼表两种意思"的第三处（前两处：项目规则配置、系统概览）。
