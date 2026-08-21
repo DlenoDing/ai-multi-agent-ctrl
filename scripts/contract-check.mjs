@@ -5884,22 +5884,50 @@ function verifyTerminalStatusListsAgree(output) {
   const files = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
     "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
     "apps/mcp-server/server.mjs"];
+  const sources = files.map((file) => [file, readFileSync(join(root, file), "utf8")]);
+  // 有【完整副本】的状态机才纳入：只出现子集的（比如派发的 cancelled/failed，不含 completed）
+  // 那是有意为之的语义区分 —— 把它们一起管会产出大量假警报，而假警报的下场是被随手豁免掉。
+  const WITH_COPIES = {TaskGroup: "任务组", AgentDispatch: "派发", QualityGate: "质量门"};
+  // 实测值。数量对不上就是有人改短了某一处，或新增了一处不完整的判断 —— 两种都要看见。
+  const EXPECTED_COPIES = {TaskGroup: 13, AgentDispatch: 13, QualityGate: 4};
   let copies = 0;
-  for (const file of files) {
-    const text = readFileSync(join(root, file), "utf8");
-    for (const hit of text.matchAll(/\[("(?:closed|aborted)"(?:,\s*"(?:closed|aborted)")*)\]/gu)) {
-      copies += 1;
-      const inline = [...hit[1].matchAll(/"([a-z_]+)"/gu)].map((one) => one[1]).sort().join(",");
-      if (inline !== expected) {
-        output.push(`${file} 里有一处终态字面量副本写的是 [${inline}]，而权威终态是 [${expected}] —— `
-          + "少一个就等于那个状态上的任务组仍被当成活的");
+  for (const [machine, label] of Object.entries(WITH_COPIES)) {
+    const scope = spec.slice(spec.indexOf(`${machine}:`), spec.indexOf(`${machine}:`) + 400);
+    const terms = [...(/terminal:\s*\[([^\]]*)\]/u.exec(scope)?.[1] || "")
+      .matchAll(/"([a-z_]+)"/gu)].map((hit) => hit[1]);
+    if (terms.length < 2) {
+      output.push(`规格里 ${machine} 的终态提取不到 —— 这一台在空转`);
+      continue;
+    }
+    const want = [...terms].sort().join(",");
+    const alt = terms.map((term) => `"${term}"`).join("|");
+    let seen = 0;
+    for (const [file, text] of sources) {
+      for (const hit of text.matchAll(new RegExp(`\\[((?:${alt})(?:,\\s*(?:${alt}))*)\\]`, "gu"))) {
+        const inline = [...hit[1].matchAll(/"([a-z_]+)"/gu)].map((one) => one[1]).sort();
+        // 只核对【完整副本】：子集是有意的语义区分，不在本条管辖内。
+        if (inline.length !== terms.length) continue;
+        seen += 1;
+        copies += 1;
+        if (inline.join(",") !== want) {
+          output.push(`${file} 里 ${label}的终态副本写的是 [${inline.join(",")}]，权威是 [${want}] —— `
+            + "对不上的那个状态会被当成还活着：写入不再被拒、编排继续推它");
+        }
       }
     }
+    if (seen < EXPECTED_COPIES[machine]) {
+      // 只核对"完整副本"意味着【漏掉一个成员】的副本会从视野里消失（长度不等就跳过）——
+      // 而那正是最危险的那种改动。所以副本【数量】本身也要对：少一处就说明有一份被改短了，
+      // 或者有人新写了一处不完整的判断。（第一版没有这一句，把 ["closed","aborted"] 改成
+      // ["closed"] 之后这道门照样绿。）
+      output.push(`${machine} 的完整终态副本只剩 ${seen} 处（应 ${EXPECTED_COPIES[machine]} 处）—— `
+        + "有一份被改短了（漏掉的那个状态从此被当成还活着），或者新写的判断没把终态写全");
+    }
   }
-  if (copies < 10) {
-    output.push(`只扫到 ${copies} 处终态字面量副本（实测 13）—— 提取脱节，本条在空转`);
+  if (copies < 20) {
+    output.push(`只扫到 ${copies} 处完整终态副本（实测 30）—— 提取脱节，本条在空转`);
   }
-  console.log(`终态口径：规格 [${declared.join("、")}]、常量、以及 ${copies} 处字面量副本三者逐字相同`);
+  console.log(`终态口径：${Object.keys(WITH_COPIES).length} 台状态机的规格终态、常量与 ${copies} 处完整副本逐字比对`);
 }
 
 function verifyHumanOnlyActionNamesStillExist(output) {

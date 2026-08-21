@@ -3315,12 +3315,20 @@ const MUTATIONS = [
     expect: "没被 effectiveProjectConfig 认出来"
   },
   {
+    name: "派发终态副本少写一个＝已取消的派发会被当成还在跑",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyTerminalStatusListsAgree",
+    from: '  agentDispatches: (item) => !["completed", "failed", "cancelled"].includes(item.status)',
+    to: '  agentDispatches: (item) => !["completed", "failed"].includes(item.status)',
+    expect: "被改短了"
+  },
+  {
     name: "终态副本少写一个状态＝那个状态上的任务组仍被当成活的",
     file: "apps/control-plane-ui/lib/state-store.mjs",
     check: "verifyTerminalStatusListsAgree",
     from: '  taskGroups: (item) => !["closed", "aborted"].includes(item.status)',
     to: '  taskGroups: (item) => !["closed"].includes(item.status)',
-    expect: "少一个就等于"
+    expect: "被改短了"
   },
   {
     name: "真人专属动作被改名＝那条保护静默失效",
