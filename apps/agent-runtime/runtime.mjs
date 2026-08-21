@@ -382,7 +382,13 @@ function startControlWatcher(config, dispatchPackage) {
       await delay(250);
     }
   })().catch((error) => {
-    process.stderr.write(`control watcher stopped: ${error.message}\n`);
+    // 这个 watcher 同时管两件事：接【取消/暂停】信号，以及按认领 TTL 续期。它一死，两件都停：
+    //   人在控制台上按取消，这台节点收不到 —— agent 会照常跑完并推 git（而界面显示"已取消"）；
+    //   认领不再续期 → 到期后控制面可能把同一份活重排给别人 → 两边同时在做。
+    // 只说 "stopped: <err>" 的话，这两件事都不会自己现形。
+    process.stderr.write(`control watcher stopped: ${error.message}`
+      + " —— 本次派发从此收不到取消/暂停信号（agent 会照常跑完并推送），"
+      + "认领也不再续期，到期后可能被重排给别人；建议尽快重启本节点\n");
   });
   return watcher;
 }
@@ -1641,7 +1647,11 @@ function mergeMcpJson(path, remote) {
     try {
       current = JSON.parse(readFileSync(path, "utf8")) || {};
     } catch (error) {
-      process.stderr.write(`[agent-runtime] skipping remote MCP merge — ${path} is not valid JSON: ${error.message}\n`);
+      // "skipping" 听着无害，实际后果是 agent 少了它本该有的工具：
+      // 远程 MCP 没配上去，这台节点跑出来的活会是【工具受限】的版本，而没有任何地方会说这件事。
+      process.stderr.write(`[agent-runtime] skipping remote MCP merge — ${path} is not valid JSON: ${error.message}`
+        + " —— 远程 MCP 工具不会配到这台节点上，agent 将以受限工具集执行；"
+        + "修好这份 JSON 或删掉它再重启\n");
       return;
     }
   }

@@ -5656,9 +5656,14 @@ function verifyOutputTargetKeepsItsPolicyDecision(output) {
 // 人会去查一条完全找错方向的路。节点侧沿用仓里既有的形状：英文事件名 + 中文后果。
 function verifyAgentSaysWhyItStoppedTakingWork(output) {
   const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  // 同一族：措辞听起来无害（deferred / stopped / skipping），而后果是这台节点从此
+  // 少做一件要紧的事。判据只挑【后果会让人走错方向】的那几条，不是要求每条日志都写小作文。
   const cases = [
     ["dispatch claim deferred", /不再领新活|不再领活/u, "节点停止领活"],
-    ["stale session sweep could not remove", /占盘|需人工/u, "会话目录清不掉"]
+    ["stale session sweep could not remove", /占盘|需人工/u, "会话目录清不掉"],
+    // watcher 死掉最隐蔽：人按了取消、界面显示已取消，而这台节点照常跑完并推送。
+    ["control watcher stopped", /收不到取消|不再续期/u, "取消通道断了"],
+    ["skipping remote MCP merge", /受限工具集|工具不会配/u, "远程 MCP 没配上"]
   ];
   let found = 0;
   for (const [marker, consequence, label] of cases) {

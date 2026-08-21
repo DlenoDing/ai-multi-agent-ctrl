@@ -3026,6 +3026,14 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "取消通道断了必须说出后果（人按了取消，节点照常推送）",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentSaysWhyItStoppedTakingWork",
+    from: "    process.stderr.write(`control watcher stopped: ${error.message}`\n      + \" —— 本次派发从此收不到取消/暂停信号（agent 会照常跑完并推送），\"\n      + \"认领也不再续期，到期后可能被重排给别人；建议尽快重启本节点\\n\");",
+    to: "    process.stderr.write(`control watcher stopped: ${error.message}\\n`);",
+    expect: "取消通道断了"
+  },
+  {
     name: "节点主动停活必须说出后果（否则与'角色不匹配'长得一样）",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyAgentSaysWhyItStoppedTakingWork",
