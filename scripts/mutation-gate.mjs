@@ -1046,8 +1046,8 @@ const MUTATIONS = [
     name: "拒绝码棘轮不得空转",
     file: "scripts/contract-check.mjs",
     check: "verifyRefusalCodeCoverageRatchet",
-    from: 'for (const match of src.matchAll(/error:\\s*"([a-z0-9_]{6,})"/gu)) codes.add(match[1]);',
-    to: 'for (const match of src.matchAll(/nosuchthing:\\s*"([a-z0-9_]{6,})"/gu)) codes.add(match[1]);',
+    from: "    for (const match of src.matchAll(REFUSAL_CODE_FORMS)) codes.add(match[1]);",
+    to: "    for (const match of src.matchAll(/nosuchthing:\\s*\"([a-z0-9_]{6,})\"/gu)) codes.add(match[1]);",
     expect: "这道门在空转"
   },
   {
@@ -3351,6 +3351,30 @@ const MUTATIONS = [
     from: "  const languagePolicy = normalizeTaskGroupLanguagePolicy(contract.languagePolicy);",
     to: '  const languagePolicy = normalizeTaskGroupLanguagePolicy({languageTag: "en"});',
     expect: "did not carry the task-group language policy"
+  },
+  {
+    name: "新增抛错工厂时拒绝码扫描面必须跟上",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyRefusalCodeScanSeesEveryThrowHelper",
+    from: "function topologyError(code, status = 409, details = {})",
+    to: "function policyError(code, status = 409) { throw Object.assign(new Error(code), {status}); }\nfunction topologyError(code, status = 409, details = {})",
+    expect: "不在拒绝码扫描面里"
+  },
+  {
+    name: "拒绝码扫描面被摘掉一种写法要报红",
+    file: "scripts/contract-check.mjs",
+    check: "verifyRefusalCodeScanSeesEveryThrowHelper",
+    from: "const REFUSAL_CODE_THROW_HELPERS = [\"topologyError\", \"gatewayError\"];",
+    to: "const REFUSAL_CODE_THROW_HELPERS = [\"topologyError\"];",
+    expect: "不在拒绝码扫描面里"
+  },
+  {
+    name: "没有执行载体的方案要在资格检查就说出来",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  if (topology.runnerKind === \"none\" || topology.isolation === \"none\") {\n    blockers.push(`runner_isolated:${topology.topologyId}:runner_or_isolation_none`);",
+    to: "  if (branches.length > 1 && (topology.runnerKind === \"none\" || topology.isolation === \"none\")) {\n    blockers.push(`runner_isolated:${topology.topologyId}:runner_or_isolation_none`);",
+    expect: "资格检查说没有阻塞项"
   },
   {
     name: "生产 profile 下服务端不得自己跑 agent（核心函数）",

@@ -36,7 +36,11 @@ export const KNOWN_SECOND_DOORS = {
   project_id_required:
     "入参 schema 里 task_group_create 的 projectId 就是必填，"
     + "不给会先被 mcp_required_argument_missing 拒掉（e2e 里那条用例撞的正是它）",
-  state_conflict_not_recovered:
+  execution_topology_requires_runner_and_isolation:
+    "载体/隔离为 none 现在是资格检查阶段的阻塞项（2026-08-21 修正：原先只对多分支报，单分支方案会白定稿一场），"
+    + "有阻塞项就不挂人工定稿单，start 先撞 execution_topology_requires_human_plan_confirmation；"
+    + "先用合法载体走到定稿再改成 none 则先撞 human_finalized_decision_diverged。阻塞项那道有断言与变异守着",
+    state_conflict_not_recovered:
     "要连撞三次 CAS 冲突才到（重试 3 次），而冲突由并发时序决定，编不出稳定用例；"
     + "并发写入门验的是'冲突会被正确识别并退回'那一层（state_write_conflict，已有断言与变异）",
   organization_required:

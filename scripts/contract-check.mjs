@@ -179,6 +179,19 @@ process.env.AIMAC_PROJECT_EVENT_FSYNC = "false";
 // 这里整体放开，在制品上限本身由下面 verifyWipCapacityBackpressure 等四条判据单独把额度调小来验，
 // 不是把它关掉了事。
 process.env.AIMAC_WIP_QUEUE_HEAD = "100000";
+// 产品里"抛出一个拒绝码"的四种写法。抽成常量是为了让下面那条判据能反向核对它 ——
+// 原先这里只认 `error: "码"` 一种，topologyError()/gatewayError()/new Error() 抛的 96 个码整族
+// 隐身，棘轮报"207 个码、16 个未覆盖"，真实是 303 个、83 个（本仓第十二次撞"门看不见表达式写法"）。
+const REFUSAL_CODE_THROW_HELPERS = ["topologyError", "gatewayError"];
+const REFUSAL_CODE_FORMS = new RegExp(
+  `(?:error:\\s*|new Error\\(\\s*|${REFUSAL_CODE_THROW_HELPERS.map((name) => `${name}\\(\\s*`).join("|")})"([a-z0-9_]{6,})"`, "gu");
+// 抛错工厂里【不产生拒绝码】的，登记在这里并写明理由 —— 否则下面那条判据会要求把它纳入扫描面。
+const THROW_HELPERS_WITHOUT_CODES = {
+  throwStateStoreConflict: "第一个参数是拼给运维看的自然语言（\"...expected N, found M\"），不是拒绝码；"
+    + "它的对外码由调用方的 isStateStoreConflict 判定，已另有判据"
+};
+
+
 const seedState = loadJson("data/seed-state.json");
 const runtimeSchema = loadJson("spec/runtime-bootstrap.schema.json");
 const mcpGrantSchema = loadJson("spec/mcp-grant.schema.json");
@@ -419,6 +432,7 @@ run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
 run(verifyChildExitWaitsAreBounded);
 run(verifySharedJsonWritesAreAtomic);
+run(verifyRefusalCodeScanSeesEveryThrowHelper);
 run(verifyRefusalCodeCoverageRatchet);
 await runAsync(verifyGateFetchFailuresNameTheGate);
 run(verifyMcpInputDictionaryHasNoGhosts);
@@ -1755,6 +1769,29 @@ function verifyHumanAndOrganizationContracts(output) {
     if (!planConfirmation) output.push("人工闸门: 资格通过后没有挂起执行方案的人工定稿单");
     const topoHuman = (topoState.accounts.find((a) => ["system_admin", "org_admin", "user_account"].includes(a.accountType)) || {}).accountId;
     if (planConfirmation) decideHumanConfirmation(topoState, planConfirmation.requestId, {action: "finalize", selectedOptionId: "accept_plan", expectedRound: planConfirmation.round}, {actor: topoHuman});
+    // 载体/隔离为 none 的方案：两道门都要在。第一道是资格检查 —— 它是给人看"还差什么"的地方，
+    // 必须当场说出来；漏在这里，人会认真看完一份根本跑不了的方案、定完稿，start 才被拒，
+    // 而定稿之后再改 runnerKind 会撞 human_finalized_decision_diverged，人只剩取消重来一条路。
+    for (const field of ["runnerKind", "isolation"]) {
+      const noneState = structuredClone(seedState);
+      ensureRuntimeCollections(noneState, {root});
+      const noneTg = noneState.taskGroups.find((item) => item.id === "tg_runtime_management");
+      noneTg.workItems = [{id: "wi_none", title: "无载体方案", status: "ready", ownerRole: "agent-runtime", progress: 0}];
+      const noneTopo = createExecutionTopology(noneState, {
+        taskGroupId: "tg_runtime_management", workItemId: "wi_none", root, [field]: "none",
+        branches: [{branchId: "b_none", objective: "单分支", ownedPaths: ["apps/none/**"], resourceScopes: ["db:none"],
+          acceptanceChecks: ["npm run validate"], outputContract: ["a", "b", "c", "d"]}]
+      }).topology;
+      advanceExecutionTopology(noneState, {topologyId: noneTopo.topologyId, action: "check_eligibility"});
+      if (!noneTopo.blockers.some((item) => item.endsWith("runner_or_isolation_none"))) {
+        output.push(`${field}="none" 的单分支方案资格检查说没有阻塞项（${JSON.stringify(noneTopo.blockers)}）—— `
+          + "人会认真看完一份根本启动不了的方案并定稿，start 才拒；定稿后连改都改不动，只能取消重来");
+      }
+      // start 那道 execution_topology_requires_runner_and_isolation 现在够不着了：有阻塞项就不会挂
+      // 定稿单，没定稿 start 先撞 requires_human_plan_confirmation；先用合法载体走到定稿、再改成 none
+      // 又会撞 human_finalized_decision_diverged。已登记在 KNOWN_SECOND_DOORS，留着它是对的 ——
+      // 阻塞项存在 state 里，将来多一个写入点能改 blockers，它就是最后一道。
+    }
     advanceExecutionTopology(topoState, {topologyId: planned.topologyId, action: "start"});
     if (planned.status !== "running") output.push("M1: eligible topology did not start");
     validateSchema(planned, topoSchema, "ExecutionTopology(running)", output);
@@ -8496,9 +8533,45 @@ function verifySharedJsonWritesAreAtomic(output) {
   }
 }
 
+// 棘轮的扫描面必须跟得上产品里制造拒绝的写法。少认一种写法，棘轮报出的数就只是"我查得见的那部分"，
+// 而它读起来像全貌 —— 这比没有棘轮更坏。
+function verifyRefusalCodeScanSeesEveryThrowHelper(output) {
+  const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
+    "apps/mcp-server/server.mjs"];
+  let found = 0;
+  for (const rel of PRODUCT) {
+    const src = readFileSync(join(root, rel), "utf8");
+    // 抛错工厂的形状：第一个形参叫 code/message/error，函数体里 new Error()。
+    for (const match of src.matchAll(/^(?:export )?function (\w+)\(\s*(?:code|message|error)\b[^)]*\)\s*\{/gum)) {
+      if (!src.slice(match.index + match[0].length, match.index + match[0].length + 400).includes("new Error(")) continue;
+      found += 1;
+      const name = match[1];
+      if (REFUSAL_CODE_THROW_HELPERS.includes(name) || THROW_HELPERS_WITHOUT_CODES[name]) continue;
+      output.push(`${rel} 里的抛错工厂 ${name}() 不在拒绝码扫描面里 —— 它抛出的码棘轮一个都看不见，`
+        + "棘轮会继续报一个偏小的数，读起来却像全貌");
+    }
+  }
+  if (found < 3) {
+    output.push(`抛错工厂只枚举到 ${found} 个（至少应有 topologyError / gatewayError / throwStateStoreConflict 三个）`
+      + " —— 这条判据的正则形状没对上，它现在什么都没在查");
+  }
+  for (const name of Object.keys(THROW_HELPERS_WITHOUT_CODES)) {
+    if (!PRODUCT.some((rel) => readFileSync(join(root, rel), "utf8").includes(`function ${name}(`))) {
+      output.push(`THROW_HELPERS_WITHOUT_CODES 里的 ${name} 在产品代码里已经不存在了 —— 登记过期，删掉它`);
+    }
+  }
+  console.log(`拒绝码扫描面：产品里 ${found} 个抛错工厂逐个核对，`
+    + `${REFUSAL_CODE_THROW_HELPERS.length} 个纳入扫描、${Object.keys(THROW_HELPERS_WITHOUT_CODES).length} 个登记为不抛码`);
+}
+
 function verifyRefusalCodeCoverageRatchet(output) {
   // 放在函数里：顶层 const 不提升，而注册调用在它上面（本会话第二次撞这个）。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 16;
+  // 2026-08-21：从 16 抬到 83。这【不是】放松 —— 一个未覆盖的码都没有新增，是扫描面从
+  // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
+  // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
+  // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
+  const UNCOVERED_REFUSAL_CODE_CEILING = 83;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -8506,7 +8579,10 @@ function verifyRefusalCodeCoverageRatchet(output) {
   for (const rel of PRODUCT) {
     // 剥注释：注释里引用一个码不构成守卫，也不该被当成"这里有一道门"。
     const src = readFileSync(join(root, rel), "utf8").replace(/\/\/[^\n]*/gu, "");
-    for (const match of src.matchAll(/error:\s*"([a-z0-9_]{6,})"/gu)) codes.add(match[1]);
+    // 四种写法都要认。原先只认 `error: "码"` 一种，于是 topologyError()/gatewayError()/
+    // throw new Error() 抛出的【96 个码整族隐身】——本棘轮当时报"207 个码、16 个未覆盖"，
+    // 真实是 303 个码、83 个零覆盖。门看不见的表达式写法，这是本仓第十二次。
+    for (const match of src.matchAll(REFUSAL_CODE_FORMS)) codes.add(match[1]);
   }
   const walk = (dir) => readdirSync(dir).flatMap((name) => {
     const full = join(dir, name);

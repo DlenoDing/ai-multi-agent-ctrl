@@ -7117,8 +7117,12 @@ function evaluateTopologyEligibility(topology) {
     if (!(branch.acceptanceChecks || []).length) blockers.push(`final_validation_available:${branch.branchId}:no_acceptance_checks`);
     if ((branch.outputContract || []).length < 4) blockers.push(`result_bundle_contract:${branch.branchId}:incomplete`);
   }
-  // Parallel execution requires a real isolation boundary; a serial single-branch plan does not.
-  if (branches.length > 1 && (topology.runnerKind === "none" || topology.isolation === "none")) {
+  // 载体/隔离为 none 的方案【一律】不得启动 —— start 那道门（execution_topology_requires_runner_and_isolation）
+  // 对单分支也拦。这里原先只对多分支报阻塞项，两处判据是矛盾的：单分支 none 方案资格检查说"没有阻塞项"，
+  // 人认真看完定了稿，start 才拒；而定稿之后再改 runnerKind 会撞 human_finalized_decision_diverged，
+  // 人只剩"取消方案重来"一条路 —— 一次白定稿。阻塞项就是给人看"还差什么"的地方，必须在这里说。
+  // 并行还额外需要真实隔离边界，串行单分支只要有个载体即可，但都不能是 none。
+  if (topology.runnerKind === "none" || topology.isolation === "none") {
     blockers.push(`runner_isolated:${topology.topologyId}:runner_or_isolation_none`);
   }
   if (branches.length > 1 && (topology.ownedPathsRequired !== false) && branches.some((branch) => !(branch.ownedPaths || []).length)) {
