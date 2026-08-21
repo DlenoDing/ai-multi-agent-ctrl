@@ -3114,6 +3114,22 @@ const MUTATIONS = [
     expect: "那条 retired 排除已经不在了"
   },
   {
+    name: "夹具传的值不得被产品钳掉（钳掉就测到了别的值）",
+    file: "scripts/doctor-agent-remote.mjs",
+    check: "verifyEnvValuesAreNotSilentlyClamped",
+    from: "  const capMb = 64;",
+    to: "  const capMb = 32;",
+    expect: "处会被改写"
+  },
+  {
+    name: "钳制提取源缩小时必须报空转（分母静静变小看不出来）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyEnvValuesAreNotSilentlyClamped",
+    from: "\"apps/control-plane-ui/lib/control-plane-core.mjs\", \"apps/agent-runtime/runtime.mjs\"]) {",
+    to: "\"apps/control-plane-ui/lib/control-plane-core.mjs\"]) {",
+    expect: "这道门在空转"
+  },
+  {
     name: "不走守卫的写路由也要留痕（否则事后完全无迹可循）",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyGuardedWritesAreAudited",

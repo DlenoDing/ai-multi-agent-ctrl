@@ -6253,9 +6253,14 @@ function verifyMutationsAreRegisteredAgainstTheRightGate(output) {
 
 function verifyEnvValuesAreNotSilentlyClamped(output) {
   const clamps = new Map();
+  // agent 运行时也要收：它有 8 处 Math.max 钳制，而 e2e 正在给其中四个传值
+  //（LIBRARY_MAX_MB / SESSION_TTL_HOURS / POLL_INTERVAL / POLL_ATTEMPTS）。
+  // 现在四个都恰好不被钳住，但那条知识只写在夹具的一行注释里
+  //（`const capMb = 64; // 运行时对上限取 Math.max(64, …)`）—— 没有任何东西强制它。
+  // 把提取源扩到运行时，这条知识才由门来守：改小了当场报红，而不是让用例静默测到别的值。
   for (const rel of ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs",
-    "apps/control-plane-ui/lib/control-plane-core.mjs"]) {
+    "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/agent-runtime/runtime.mjs"]) {
     const src = readFileSync(join(root, rel), "utf8");
     const record = (name, kind, boundText) => {
       const bound = boundText.split("*").map((part) => Number(part.trim())).reduce((a, b) => a * b, 1);
@@ -6275,8 +6280,8 @@ function verifyEnvValuesAreNotSilentlyClamped(output) {
       if (clamp) record(envName, clamp[1], clamp[2]);
     }
   }
-  if (clamps.size < 10) {
-    output.push(`环境变量钳制核对：只认出 ${clamps.size} 处钳制 —— 提取多半失配，这道门在空转`);
+  if (clamps.size < 36) {
+    output.push(`环境变量钳制核对：只认出 ${clamps.size} 处钳制（应至少 36）—— 提取形状或文件清单与代码脱节，这道门在空转`);
     return;
   }
   const offenders = [];
