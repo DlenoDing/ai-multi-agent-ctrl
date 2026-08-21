@@ -1106,6 +1106,12 @@ function loginRateLimited(req) {
   return entry.count >= maxAttempts;
 }
 
+function loginRetryAfterSeconds(req) {
+  const entry = loginAttempts.get(loginClientIp(req));
+  if (!entry) return 0;
+  return Math.max(1, Math.ceil((entry.resetAt - Date.now()) / 1000));
+}
+
 function clearFailedLogins(req) {
   loginAttempts.delete(loginClientIp(req));
 }
@@ -2848,7 +2854,9 @@ async function handleApi(req, res) {
 
 	  if (req.method === "POST" && url.pathname === "/api/auth/login") {
     if (loginRateLimited(req)) {
-      json(res, 429, {error: "too_many_login_attempts", retryAfterSeconds: 60});
+      // 原先写死 60 —— 而窗口是从【第一次失败】起算的，真到人被挡住时常常只剩十几秒。
+      // 报一个偏大的数，人就真的去等满一分钟；这个值服务端本来就有，没有理由不说准。
+      json(res, 429, {error: "too_many_login_attempts", retryAfterSeconds: loginRetryAfterSeconds(req)});
       return;
     }
     const config = readRuntimeConfig();

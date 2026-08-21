@@ -3171,6 +3171,14 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "限流要报真实剩余秒数（写死 60 会让人白等满一分钟）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "retryAfterSeconds: loginRetryAfterSeconds(req)",
+    to: "retryAfterSeconds: 60",
+    expect: "秒后可再试"
+  },
+  {
     name: "「X」处 这一说法也要被认成指路（登录页那句就是这么漏掉的）",
     file: "scripts/contract-check.mjs",
     check: "verifyGuidanceNamesRealPages",

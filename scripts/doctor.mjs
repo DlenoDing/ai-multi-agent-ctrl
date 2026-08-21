@@ -2869,6 +2869,12 @@ try {
     if (limited.payload.error !== "too_many_login_attempts" || !limited.payload.retryAfterSeconds) {
       throw new Error(`限流的报文没说清是限流、也没说多久之后能再试：${JSON.stringify(limited.payload)}`);
     }
+    // 那个秒数要是【真的剩余时间】。原先写死 60，而窗口从第一次失败起算：12 次错误登录
+    // 在同一秒内跑完，真实剩余必然小于 60。报大了，人就真的去等满一分钟。
+    if (!(limited.payload.retryAfterSeconds < 60)) {
+      throw new Error(`限流说"${limited.payload.retryAfterSeconds} 秒后可再试"，而窗口是从第一次失败起算的 ——`
+        + "这 12 次是连着打完的，剩余必然不足 60 秒；报一个偏大的数会让人白等");
+    }
     // 被限流期间，【正确】的凭据同样要被挡住 —— 否则限流只挡错口令，爆破者一旦猜中就能立刻进。
     const correctWhileLimited = await jsonFetch(port, "/api/auth/login", {
       method: "POST", body: JSON.stringify({email: "system.admin@local", token: "doctor-bootstrap-token"})
