@@ -5696,13 +5696,26 @@ function verifyServiceAllowlistSaysWhatItDropped(output) {
     // 真起一次服务端、配一个不存在的项目 id，看它到底说不说。
     const bootDir = mkdtempSync(join(tmpdir(), "aimac-projid-"));
     try {
-      const boot = spawnSync(process.execPath, [join(root, "scripts/run-with-env.mjs"),
-        join(root, "apps/control-plane-ui/server.mjs")], {
+      // 起服务端只为看它启动时说什么，所以【一收到那行就停】，不要等超时。
+      // 第一版给它传了个 AIMAC_EXIT_AFTER_BOOT —— 那是我凭空发明的开关，没人认，
+      // 于是每跑一次这道门就白等满 20 秒（validate 因此从 52s 涨到 72s）。
+      // 想让一个进程早点结束，得用它真的认识的办法：这里读到目标输出就 kill。
+      const boot = spawnSync(process.execPath, ["-e", `
+        const {spawn} = require("node:child_process");
+        // 用 node 起脚本，不能把 .mjs 当可执行文件 spawn（会 EACCES，而那看起来像"服务端没说话"）。
+        const child = spawn(process.execPath, [process.argv[1], process.argv[2]], {env: process.env});
+        let seen = "";
+        const stop = () => { try { child.kill("SIGKILL"); } catch {} process.stdout.write(seen); process.exit(0); };
+        const onData = (chunk) => { seen += chunk; if (seen.includes("mcp-allowlist") || seen.length > 20000) stop(); };
+        child.stdout.on("data", onData);
+        child.stderr.on("data", onData);
+        child.on("exit", stop);
+        setTimeout(stop, 12000).unref();
+      `, join(root, "scripts/run-with-env.mjs"), join(root, "apps/control-plane-ui/server.mjs")], {
         encoding: "utf8", timeout: 20000,
         env: {...process.env, AIMAC_RUNTIME_DIR: bootDir, AIMAC_STATE_STORE: "runtime_json",
           DATABASE_URL: "", AIMAC_PORT: "0", AIMAC_ORCHESTRATOR_INTERVAL_MS: "0",
-          AIMAC_MCP_SERVICE_PROJECT_IDS: "prj_control_plane,prj_definitely_not_here",
-          AIMAC_EXIT_AFTER_BOOT: "true"}
+          AIMAC_MCP_SERVICE_PROJECT_IDS: "prj_control_plane,prj_definitely_not_here"}
       });
       const said = `${boot.stdout || ""}${boot.stderr || ""}`;
       if (!/prj_definitely_not_here/u.test(said)) {
