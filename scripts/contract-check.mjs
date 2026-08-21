@@ -410,6 +410,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyDocumentedCommandsStillExist);
 run(verifyProtocolEventListMatchesReality);
 run(verifyProtocolDocMatchesRequiredRuntimeVersion);
 run(verifyStateFilesRefuseUnknownSchemaVersions);
@@ -11040,6 +11041,43 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyDocumentedCommandsStillExist(output) {
+  // README 与 docs 里给的命令是【新人的第一步】。脚本改名或删掉之后，这些命令会当场报
+  // "Missing script"，而人还没跑起来任何东西，只能猜是自己环境不对。
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  const scripts = new Set(Object.keys(pkg.scripts || {}));
+  const files = ["README.md", ...readdirSync(join(root, "docs")).filter((name) => name.endsWith(".md"))
+    .map((name) => `docs/${name}`)];
+  const missingScripts = new Map();
+  const missingFiles = new Map();
+  let cited = 0;
+  for (const file of files) {
+    const text = readFileSync(join(root, file), "utf8");
+    for (const match of text.matchAll(/npm run ([a-z0-9:_-]+)/gu)) {
+      cited += 1;
+      if (!scripts.has(match[1])) missingScripts.set(match[1], file);
+    }
+    // 直接给出的脚本路径同理：写错一个字，人照着敲就是 "Cannot find module"。
+    for (const match of text.matchAll(/node (scripts\/[A-Za-z0-9./_-]+\.(?:mjs|rb|sh))/gu)) {
+      cited += 1;
+      if (!existsSync(join(root, match[1]))) missingFiles.set(match[1], file);
+    }
+  }
+  if (cited < 10) {
+    output.push(`文档里只提取到 ${cited} 处命令（README 与 docs 加起来远不止）—— 这条判据的形状没对上，它在空转`);
+  }
+  if (missingScripts.size) {
+    output.push(`文档里让人跑这些 npm 脚本，而 package.json 里没有：`
+      + `${[...missingScripts].map(([name, file]) => `${name}（${file}）`).join("、")} —— `
+      + "照着敲会当场报 Missing script，而人还没跑起来任何东西");
+  }
+  if (missingFiles.size) {
+    output.push(`文档里让人跑这些脚本文件，而它们不存在：`
+      + `${[...missingFiles].map(([name, file]) => `${name}（${file}）`).join("、")}`);
+  }
+  console.log(`文档里的命令：${cited} 处逐个核对，npm 脚本与脚本文件都还在`);
 }
 
 function verifyProtocolEventListMatchesReality(output) {

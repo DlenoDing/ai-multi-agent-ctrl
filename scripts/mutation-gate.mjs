@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "文档里写了不存在的 npm 脚本要被查出来",
+    file: "README.md",
+    check: "verifyDocumentedCommandsStillExist",
+    from: "npm run doctor\nnpm run mcp:doctor",
+    to: "npm run doctor-full\nnpm run mcp:doctor",
+    expect: "package.json 里没有"
+  },
+  {
+    name: "脚本改名时文档要跟着改",
+    file: "package.json",
+    check: "verifyDocumentedCommandsStillExist",
+    from: "\"mcp:doctor\":",
+    to: "\"mcp:doctor-renamed\":",
+    expect: "package.json 里没有"
+  },
+  {
     name: "协议文档不得漏列 runtime 会发的事件",
     file: "docs/agent-runtime-protocol.md",
     check: "verifyProtocolEventListMatchesReality",
