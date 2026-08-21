@@ -255,11 +255,17 @@ export function assertTransition(state, machineName, from, to, actor, requiresVa
     throw new TransitionError("transition.unknown_machine", `unknown state machine "${machineName}"`, { machineName });
   }
   const states = Array.isArray(machine.states) ? machine.states : [];
+  // 合法状态就在手边（machine.states），原先一个都不说：调用方只知道"这个不行"，
+  // 不知道什么行 —— 只能去翻 spec。带上它，报文本身就够诊断。
   if (!states.includes(from)) {
-    throw new TransitionError("transition.unknown_from_state", `${machineName}: "${from}" is not a declared state`, { machineName, from });
+    throw new TransitionError("transition.unknown_from_state",
+      `${machineName}: "${from}" is not a declared state (declared: ${states.join(", ")})`,
+      { machineName, from, declaredStates: states });
   }
   if (!states.includes(to)) {
-    throw new TransitionError("transition.unknown_to_state", `${machineName}: "${to}" is not a declared state`, { machineName, to });
+    throw new TransitionError("transition.unknown_to_state",
+      `${machineName}: "${to}" is not a declared state (declared: ${states.join(", ")})`,
+      { machineName, to, declaredStates: states });
   }
   const candidates = (machine.transitions || []).filter((transition) => transition.from === from && transition.to === to);
   if (candidates.length === 0) {

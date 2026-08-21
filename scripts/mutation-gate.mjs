@@ -1769,7 +1769,7 @@ const MUTATIONS = [
     name: "旧清单不得给这一轮背书",
     file: CORE,
     check: "verifyHumanApprovedPathsBindTheCommit",
-    from: "if (!changedPaths.includes(manifestPath)) {\n      return {valid: false, status: 409, error: \"artifact_manifest_not_changed_in_commit\"};\n    }",
+    from: "if (!changedPaths.includes(manifestPath)) {\n      // 白名单就是\"这次提交实际改了哪些路径\"。带上它，agent 一眼看出自己漏了 stage；\n      // 不带的话它只知道\"不在里面\"，不知道里面有什么（上一行的 deniedPaths 早就是这么做的）。\n      return {valid: false, status: 409, error: \"artifact_manifest_not_changed_in_commit\",\n        manifestPath, changedPaths: changedPaths.slice(0, 20)};\n    }",
     to: 'if (false) { throw new Error("unreachable"); }',
     expect: "一份旧清单就能给这一轮背书"
   },
@@ -1778,7 +1778,7 @@ const MUTATIONS = [
     name: "上一轮的产出不得算进本轮清单",
     file: CORE,
     check: "verifyHumanApprovedPathsBindTheCommit",
-    from: "if (!changedPaths.includes(outputRef)) {\n        return {valid: false, status: 409, error: \"artifact_output_ref_not_changed_in_commit\"};\n      }",
+    from: "if (!changedPaths.includes(outputRef)) {\n        // 同上：把这次提交实际改了哪些路径一并给出去。\n        return {valid: false, status: 409, error: \"artifact_output_ref_not_changed_in_commit\",\n          outputRef, changedPaths: changedPaths.slice(0, 20)};\n      }",
     to: 'if (false) { throw new Error("unreachable"); }',
     expect: "交付清单可以虚报"
   },
@@ -3147,19 +3147,19 @@ const MUTATIONS = [
   },
   {
     name: "白名单拒绝必须带上白名单（否则调用方只能穷举重试）",
-    file: "apps/mcp-server/server.mjs",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyWhitelistRefusalsCarryTheWhitelist",
-    from: "      received: String(rawStatus).slice(0, 60), allowedStatuses: [\"approved\", \"rejected\"]};",
-    to: "      received: String(rawStatus).slice(0, 60)};",
+    from: "        manifestPath, changedPaths: changedPaths.slice(0, 20)};",
+    to: "        manifestPath};",
     expect: "没把白名单给出去"
   },
   {
     name: "白名单扫描打不到时必须红（不得绿着空转）",
     file: "scripts/contract-check.mjs",
     check: "verifyWhitelistRefusalsCarryTheWhitelist",
-    from: "const pattern = /if \\(!([A-Z][A-Za-z0-9_]{3,}",
-    to: "const pattern = /if \\(!([A-Z][A-Za-z0-9_]{30,}",
-    expect: "只扫到 2 处"
+    from: "    \"apps/control-plane-ui/lib/state-store.mjs\", \"apps/control-plane-ui/lib/transition-engine.mjs\",",
+    to: "",
+    expect: "只扫到 9 处"
   },
   {
     name: "产出目标被拒要说出是哪条路径（裸码让 agent 无从自纠）",

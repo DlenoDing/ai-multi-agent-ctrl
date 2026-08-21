@@ -5740,24 +5740,47 @@ function verifyGuardedWritesAreAudited(output) {
 }
 
 function verifyWhitelistRefusalsCarryTheWhitelist(output) {
-  const CARRIES = /allowedStatuses|allowedRoles|registeredRoles|allowedResourceTypes|supported|expectedType|allowedPaths/u;
+  // 「合法取值」在这个仓里有很多名字，认字段名要认它实际用的那些（按词汇假设找会误报，今天撞过一次）。
+  const CARRIES = /allowedStatuses|allowedRoles|registeredRoles|allowedResourceTypes|declaredStates|KNOWN_STATE_STORES|changedPaths|supported|expectedType|allowedPaths/u;
+  // MCP 的「未知工具」不列白名单是对的：工具表 85 个，塞进一条报错里没有用，
+  // 客户端本来就该走 tools/list 拿。登记成明账，而不是让它一直躺在缺口名单里。
+  const WHITELIST_TOO_LARGE_TO_INLINE = {
+    "Unknown tool: ": "工具表 85 个，列进报错没有意义；MCP 客户端拿工具表的正规入口是 tools/list"
+  };
+  // 分母要是【被测面的全部】：第一版只列了四个文件，而状态机引擎与存储层里也有白名单式拒绝
+  //（transition-engine 的 unknown_from_state / unknown_to_state 当时正是不带白名单的）。
+  // "N/N 全通过"里的 N 是门自己定义的 —— 漏了一整族，从绿色输出里看不出来。
   const files = ["apps/mcp-server/server.mjs", "apps/control-plane-ui/server.mjs",
-    "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs"];
+    "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
+    "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/transition-engine.mjs",
+    "apps/control-plane-ui/lib/project-event-store.mjs", "apps/agent-runtime/runtime.mjs"];
   let scanned = 0;
   const bare = [];
   for (const file of files) {
     const source = readFileSync(join(root, file), "utf8").replace(/\/\/[^\n]*/gu, (t) => " ".repeat(t.length));
-    const pattern = /if \(!([A-Z][A-Za-z0-9_]{3,}|\[[^\]]{6,140}\])\.includes\(([\w.?]+)\)\)([\s\S]{0,220}?)(error: "([a-z0-9_]+)"|new Error\(`?"?([a-z0-9_]{6,})[:"`])/gu;
+    // 认不出【自定义错误类】与【模板串报文】的话，分母会少一整族：
+    // transition-engine 用 `new TransitionError("transition.unknown_from_state", …)`，
+    // state-store 用 `new Error(\`AIMAC_STATE_STORE=… 认不出来\`)` —— 两者都不是 `new Error("小写码"`。
+    // 第一版只认后者，于是这道门报"6 处全通过"，而实际有 9 处、其中 2 处当时不带白名单。
+    const pattern = /if \(!([A-Za-z][A-Za-z0-9_.]{3,}|\[[^\]]{6,140}\])\.includes\(([\w.?]+)\)\)([\s\S]{0,240}?)(error: "([a-z0-9_]+)"|new [A-Za-z]*Error\(\s*[`"]([^`"]{4,60}))/gu;
     for (const match of source.matchAll(pattern)) {
       scanned += 1;
-      const code = match[5] || match[6];
-      const window = source.slice(match.index, match.index + match[0].length + 200);
-      if (CARRIES.test(window)) continue;
+      const code = (match[5] || match[6] || "").slice(0, 46);
+      // 只看【错误码之后的回执正文】，不看整个窗口：白名单的名字往往同时是被判定的那个集合名
+      //（`!changedPaths.includes(x)`），拿整窗匹配的话，条件里那个词会把门自己喂饱 ——
+      // 我把 changedPaths 加进词表时正是这样，当场让那两处失明（变异验出来的）。
+      // 两种合法形态都要认：白名单在【回执字段】里，或者直接写进【报文正文】
+      //（state-store 那条就是 `认不出来（可选：${KNOWN_STATE_STORES.join(" / ")}）`）。
+      // 但都必须落在错误码【之后】，不能拿条件那一段来充数 —— 条件里往往就含着集合名。
+      const payload = source.slice(match.index + match[0].length, match.index + match[0].length + 220);
+      if (CARRIES.test(payload) || /\.join\(|可选：|declared:/u.test(payload)) continue;
+      if (Object.keys(WHITELIST_TOO_LARGE_TO_INLINE).some((key) => code.startsWith(key))) continue;
       bare.push(`${file.split("/").pop()}:${source.slice(0, match.index).split("\n").length} ${code}`);
     }
   }
-  if (scanned < 4) {
-    output.push(`白名单式拒绝只扫到 ${scanned} 处（应至少 4）—— 提取形状与代码脱节，本条在空转`);
+  // 下限要跟着分母走：把某个文件从清单里删掉时，分母会静静变小而门照样绿（实测 12→9）。
+  if (scanned < 10) {
+    output.push(`白名单式拒绝只扫到 ${scanned} 处（应至少 10）—— 提取形状或文件清单与代码脱节，本条在空转`);
     return;
   }
   if (bare.length) {

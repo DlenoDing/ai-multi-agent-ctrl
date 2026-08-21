@@ -3150,7 +3150,10 @@ function validateCheckpointGitEvidence(state, request) {
   }
   for (const manifestPath of checkpointInput.artifactManifestRefs || []) {
     if (!changedPaths.includes(manifestPath)) {
-      return {valid: false, status: 409, error: "artifact_manifest_not_changed_in_commit"};
+      // 白名单就是"这次提交实际改了哪些路径"。带上它，agent 一眼看出自己漏了 stage；
+      // 不带的话它只知道"不在里面"，不知道里面有什么（上一行的 deniedPaths 早就是这么做的）。
+      return {valid: false, status: 409, error: "artifact_manifest_not_changed_in_commit",
+        manifestPath, changedPaths: changedPaths.slice(0, 20)};
     }
     if (!pathMatchesAllowlist(manifestPath, target.pathAllowlist || [])) {
       return {valid: false, status: 409, error: "artifact_manifest_outside_allowlist"};
@@ -3195,7 +3198,9 @@ function validateCheckpointGitEvidence(state, request) {
         return {valid: false, status: 409, error: "artifact_output_ref_outside_allowlist"};
       }
       if (!changedPaths.includes(outputRef)) {
-        return {valid: false, status: 409, error: "artifact_output_ref_not_changed_in_commit"};
+        // 同上：把这次提交实际改了哪些路径一并给出去。
+        return {valid: false, status: 409, error: "artifact_output_ref_not_changed_in_commit",
+          outputRef, changedPaths: changedPaths.slice(0, 20)};
       }
       if (!gitPathExists(root, finalCommit, outputRef)) {
         return {valid: false, status: 409, error: "artifact_output_ref_not_in_commit"};
