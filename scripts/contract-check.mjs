@@ -5981,7 +5981,41 @@ function verifyGitRemoteGuardTwinsAgree(output) {
   if (agentGuard("/srv/repos/x.git") || agentGuard("file:///srv/x.git")) {
     output.push("agent 运行时接受了本地路径/file:// —— 那会让远端节点去读它自己主机上的仓库");
   }
-  console.log(`git 远端守卫孪生：${dangerous.length} 种危险形态两侧各跑一遍，正常地址两侧都收，本地路径只有控制面收`);
+  // 同一对孪生里还有 gitFailureDetail：它拼的是【人看到的那句失败原因】。
+  // 两侧各写一份，一侧改进了措辞另一侧没跟，人在控制台与在 agent 日志里看到的就不是一句话。
+  const coreText = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const pick = (text, name) => {
+    const at = text.indexOf(`function ${name}(`);
+    return at < 0 ? "" : text.slice(at, text.indexOf("\n}", at) + 2);
+  };
+  const bodies = {控制面: pick(coreText, "gitFailureDetail"), "agent 运行时": pick(runtime, "gitFailureDetail")};
+  const made = {};
+  for (const [label, text] of Object.entries(bodies)) {
+    if (!text) { output.push(`提不出${label}的 gitFailureDetail —— 这一对的核对在空转`); return; }
+    try {
+      // eslint-disable-next-line no-new-func
+      made[label] = new Function(`${text}\nreturn gitFailureDetail;`)();
+    } catch (error) {
+      output.push(`${label}的 gitFailureDetail 取不出来（${error?.message || error}）—— 这一对在空转`);
+      return;
+    }
+  }
+  const samples = [
+    {status: 128, stderr: "fatal: repository not found"},
+    {status: 1, stderr: "Receiving objects:  43% (43/100)"},
+    {status: 1, stderr: ""},
+    {status: 128, stderr: "remote: Permission denied\nfatal: unable to access"}
+  ];
+  for (const sample of samples) {
+    const left = made["控制面"](sample);
+    const right = made["agent 运行时"](sample);
+    if (left !== right) {
+      output.push(`同一个 git 失败，控制面说「${String(left).slice(0, 40)}」而 agent 说「${String(right).slice(0, 40)}」`
+        + " —— 两份孪生实现拼的不是同一句话，人在两处看到的原因对不上");
+    }
+  }
+  console.log(`git 远端守卫孪生：${dangerous.length} 种危险形态两侧各跑一遍，正常地址两侧都收，本地路径只有控制面收；`
+    + `失败原因文案 ${samples.length} 种也两侧比过`);
 }
 
 function verifyGitRefGuardsAgree(output) {

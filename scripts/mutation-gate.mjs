@@ -3302,6 +3302,14 @@ const MUTATIONS = [
     expect: "出现了别的租户的对象"
   },
   {
+    name: "两侧的 git 失败原因要拼成同一句话",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyGitRemoteGuardTwinsAgree",
+    from: '  const prefix = conclusions.length || !detail ? "" : "只有进度输出：";',
+    to: '  const prefix = "";',
+    expect: "不是同一句话"
+  },
+  {
     name: "控制面解析 git status 必须用 -z（否则中文文件名让提交走不通）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyGitStatusParsingSurvivesRealFilenames",

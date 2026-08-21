@@ -1952,7 +1952,10 @@ function gitFailureDetail(error) {
     .map((line) => line.trim()).filter(Boolean);
   const conclusions = lines.filter((line) => /^(fatal|error|remote|warning):/iu.test(line));
   const detail = (conclusions.length ? conclusions : lines).slice(-3).join("；").slice(0, 400);
-  return `退出码 ${error?.status ?? "?"}${detail ? `：${detail}` : "，且没有任何输出"}`;
+  // 与控制面那份孪生实现保持一致：没有 fatal/error/remote 结论行时，剩下的多半是进度输出
+  //（"Receiving objects: 43%"），直接摆出来像是原因。点明它不是原因，人才知道要去别处找。
+  const prefix = conclusions.length || !detail ? "" : "只有进度输出：";
+  return `退出码 ${error?.status ?? "?"}${detail ? `：${prefix}${detail}` : "，且没有任何输出"}`;
 }
 
 function gitLsRemote(root, remote, ref) {
