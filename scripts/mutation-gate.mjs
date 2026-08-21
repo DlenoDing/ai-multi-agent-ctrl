@@ -3596,6 +3596,14 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "跨组织授权必须真的被拒（不只是源码里有那个码）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    return {ok: false, status: 400, error: \"cross_org_grant_not_allowed\"};",
+    to: "    if (false) return {ok: false, status: 400, error: \"cross_org_grant_not_allowed\"};",
+    expect: "把本组织资源的权授给了别组织的账号"
+  },
+  {
     name: "两条存储路共用的合并处也要核分片版本",
     file: "apps/control-plane-ui/lib/state-store.mjs",
     check: "verifyStateFilesRefuseUnknownSchemaVersions",

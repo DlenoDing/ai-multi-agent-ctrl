@@ -449,6 +449,48 @@ try {
   if (reviewerCrossProjectDenied.response.status !== 403 || reviewerCrossProjectDenied.payload?.error !== "policy_denied") {
     throw new Error(`expected project-scoped grant isolation 403, got ${reviewerCrossProjectDenied.response.status}`);
   }
+  // 跨【组织】授权此前只有一条源码字面断言（"server.mjs 里出现过 cross_org_grant_not_allowed"）——
+  // 把那道守卫改成 `if (false) return {...}`，判据照绿（实测）。这里从真通道走一遍：
+  // 建一个别的组织、在里面拉一个人，然后拿系统管理员去给他授本组织资源的权 —— 必须被拒。
+  {
+    const otherOrg = await jsonFetch(port, "/api/orgs", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-cross-org-org", authorization: systemAuth},
+      // 建组织时必须同时给它一个管理员（organization_admin_email_required）——
+      // 正好用这个人当"别组织的账号"，省掉再拉一次人。
+      body: JSON.stringify({name: "另一个组织", admin: {email: "outsider@other.local", displayName: "别组织的人"}})
+    });
+    if (!otherOrg.response.ok) {
+      throw new Error(`建不出第二个组织（${otherOrg.response.status}/${otherOrg.payload?.error}）—— 跨组织那条断言无从验证`);
+    }
+    const outsiderId = otherOrg.payload?.adminAccount?.accountId;
+    if (!outsiderId) {
+      throw new Error(`建组织的回执里没有管理员账号 id（${JSON.stringify(otherOrg.payload).slice(0, 160)}）`);
+    }
+    // 用系统管理员来授：把"权限不够"那道门排除掉，让跨组织这道成为唯一可能的拦截点。
+    const crossOrg = await jsonFetch(port, "/api/access-grants", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-cross-org-grant", authorization: systemAuth},
+      body: JSON.stringify({subjectId: outsiderId, resourceType: "project", resourceId: "prj_control_plane",
+        role: "project_admin", permissions: ["project:view"]})
+    });
+    if (crossOrg.response.status !== 400 || crossOrg.payload?.error !== "cross_org_grant_not_allowed") {
+      throw new Error(`把本组织资源的权授给了别组织的账号（HTTP ${crossOrg.response.status}/${crossOrg.payload?.error}）`
+        + " —— 组织是最外层的租户边界，这一授就等于把它打通了");
+    }
+    // 正面对照走同一条路：授给【本组织】的账号必须成功，否则上面那条可能只是"永远拒"。
+    const sameOrg = await jsonFetch(port, "/api/access-grants", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-same-org-grant", authorization: systemAuth},
+      body: JSON.stringify({subjectId: "acct_reviewer", resourceType: "project", resourceId: "prj_control_plane",
+        role: "project_admin", permissions: ["project:view"]})
+    });
+    if (!sameOrg.response.ok) {
+      throw new Error(`同组织内的正常授权也被拒了（${sameOrg.response.status}/${sameOrg.payload?.error}）`
+        + " —— 上面那条跨组织断言其实是「永远拒」，测不出那道守卫");
+    }
+  }
+
   const reviewerRuntimeGrantDenied = await jsonFetch(port, "/api/access-grants", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-reviewer-runtime-grant-denied", authorization: reviewerAuth},
