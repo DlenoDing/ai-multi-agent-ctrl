@@ -292,7 +292,22 @@ if (process.env.AIMAC_RENDER_REAL) {
   const {readStoredState} = await import(`${root}/apps/control-plane-ui/lib/state-store.mjs`);
   const real = readStoredState({root, runtimeDir: dir, statePath: `${dir}/control-plane-state.json`,
     seedPath: `${root}/data/seed-state.json`, buildInitialState: () => ({})});
-  const who = (real.accounts || []).find((item) => item.accountType === "system_admin") || (real.accounts || [])[0];
+  // 视角可换：AIMAC_RENDER_AS=<邮箱>。默认系统管理员，但不同视角看到的是不同的页与不同的空态，
+  // 只读一个人的屏幕会漏掉另一类人才撞得到的死胡同（"请联系组织管理员"那次就是这么发现的）。
+  const wantWho = process.env.AIMAC_RENDER_AS;
+  const who = (wantWho && (real.accounts || []).find((item) => item.email === wantWho))
+    || (real.accounts || []).find((item) => item.accountType === "system_admin") || (real.accounts || [])[0];
+  if (wantWho && who?.email !== wantWho) {
+    console.log(`（要的是 ${wantWho}，真实状态里没有这个账号 —— 下面渲染的是 ${who?.email}）`);
+  }
+  console.log(`=== 视角：${who?.email}（${who?.accountType}）`);
+  // 这里喂进去的是【完整状态】：服务端的 scopedStateForAccount 没有导出（导入 server.mjs 会把服务起起来），
+  // 所以下面渲染出来的东西没经过按账号的可见性过滤。非系统账号在真实控制台上收到的会更少。
+  // 不写这一句的话，两个方向都会误判：把"成员看到了别人的项目"当成越权缺陷（其实是工具没过滤），
+  // 或者反过来以为这里能验出越权（越权由 doctor 的读泄漏用例守着，不是这里）。
+  if (who?.accountType !== "system_admin") {
+    console.log("（注意：喂进去的是完整状态，未经服务端按账号过滤 —— 这一视角实际收到的会更少；越权与否由 e2e 的读泄漏用例守，不看这里）");
+  }
   const documentRoot = el("div");
   const probe = loadConsole(documentRoot, {realI18n: true});
   const strip = (html) => String(html).replace(/<[^>]+>/gu, " ").replace(/&nbsp;/gu, " ")
