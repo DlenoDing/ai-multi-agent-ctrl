@@ -2210,7 +2210,13 @@ function renderOrgOverview() {
           return archived ? `<div class="small muted">另有 ${archived} 个已归档，不计入配额</div>` : "";
         })()}</div>
         <div class="metric"><span>进行中的任务组</span><strong>${openTaskGroups.length}${countSuffix("taskGroups")}</strong></div>
-        <div class="metric"><span>在线智能体节点</span><strong>${(orgAgentNodes || []).filter((node) => node.status === "online").length}/${(orgAgentNodes || []).length}</strong></div>
+        <div class="metric"><span>在线智能体节点</span><strong>${(() => {
+          // 分母原先是"表里所有行"，把已吊销的也算了进去 —— 同一屏上配额那格明说了
+          // "已吊销不计入配额"，两个分母各算各的，人对不上。已吊销的节点不再参与任何事，
+          // 它不该出现在"在线 X/Y"的 Y 里。
+          const alive = (orgAgentNodes || []).filter((node) => node.status !== "revoked");
+          return `${alive.filter((node) => node.status === "online").length}/${alive.length}`;
+        })()}</strong></div>
         <div class="metric"><span>受阻项</span><strong>${(state.taskGroups || []).flatMap((taskGroup) => taskGroup.blockers || []).length}</strong></div>
       </div>
     `),

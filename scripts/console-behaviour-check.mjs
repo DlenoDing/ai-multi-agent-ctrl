@@ -3239,6 +3239,12 @@ await runCodedApiErrorCase();
     text: async () => JSON.stringify(orgState)});
   await probe.loadWithFetch(orgState, orgAdmin, "", "org-overview", overviewFetch);
   const overviewHtml = String(overviewRoot.innerHTML || "");
+  // 同一屏上另一处分母：「在线智能体节点 X/Y」原先把已吊销的也算进 Y，
+  // 而旁边那格明说"已吊销不计入配额" —— 两个分母各算各的。
+  const fleetCell = overviewHtml.slice(overviewHtml.indexOf("在线智能体节点"), overviewHtml.indexOf("在线智能体节点") + 220);
+  check("在线节点的分母不含已吊销的（与旁边那格配额同口径）",
+    fleetCell.includes(">1/1<") || /1\/1/.test(fleetCell.replace(/<[^>]+>/gu, "")),
+    fleetCell.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 120));
   check("已吊销的节点不计入配额这件事要写出来",
     /已吊销.*不计入配额|不计入配额/.test(overviewHtml),
     "配额只数没被吊销的节点，而智能体那张表把已吊销的也列着 —— 两个数对不上，人找不出原因");

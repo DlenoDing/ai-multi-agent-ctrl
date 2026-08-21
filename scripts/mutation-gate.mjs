@@ -3171,6 +3171,14 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "在线节点的分母不许把已吊销的算进去（同屏两个分母各算各的）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: 'const alive = (orgAgentNodes || []).filter((node) => node.status !== "revoked");',
+    to: "const alive = (orgAgentNodes || []);",
+    expect: "在线节点的分母不含已吊销的"
+  },
+  {
     name: "限流要报真实剩余秒数（写死 60 会让人白等满一分钟）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
