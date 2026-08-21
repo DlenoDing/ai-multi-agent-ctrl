@@ -3291,6 +3291,22 @@ const MUTATIONS = [
     expect: "没说清本机被改成什么样"
   },
   {
+    name: "「必须被拒」的断言只判「不是 200」要被逮到",
+    file: "scripts/doctor.mjs",
+    check: "verifyRejectionAssertionsNameTheirCode",
+    from: '  if (configWhileSuspended.response.status !== 403\n    || configWhileSuspended.payload?.error !== "policy_denied") {',
+    to: "  if (configWhileSuspended.response.status === 200) {",
+    expect: "没点名拒绝码"
+  },
+  {
+    name: "拒绝断言点名：提取脱节要自报空转",
+    file: "scripts/contract-check.mjs",
+    check: "verifyRejectionAssertionsNameTheirCode",
+    from: "/\\.response\\.status\\s*(?:===|!==|>=|<)/gu",
+    to: "/\\.responseX\\.status\\s*(?:===|!==|>=|<)/gu",
+    expect: "本条在空转"
+  },
+  {
     // 组织被停用后，它的管理员不能再改配置/推执行。这条守卫此前【零覆盖】：
     // e2e 里那条断言只判"不是 200"，而它的请求没带 expectedConfigVersion，
     // 实际被 428 挡下 —— 把守卫整个删掉照样绿。

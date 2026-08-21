@@ -402,6 +402,7 @@ run(verifyGitPathGuardRejectsEscapes);
 run(verifyGitRefGuardsAgree);
 run(verifyGitRemoteGuardTwinsAgree);
 run(verifyGitStatusParsingSurvivesRealFilenames);
+run(verifyRejectionAssertionsNameTheirCode);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5909,6 +5910,44 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // 而报文里是一串八进制。这是个中文产品。agent 运行时那份孪生实现一直用的是 -z。
 // 这条路没有可达的导出入口（runExecutorBackedAgentWorker 要真起执行器子进程），
 // 所以验两件事：① 前提确实成立（在真仓库上跑两遍 git 比一比）；② 两份实现都用了 -z。
+// e2e 里"这次必须被拒"的断言有两种写法：走 expectStatus(result, 4xx, label, code)（它会强制点名
+// 拒绝码，未点名的进 UNNAMED_REFUSALS 棘轮），和手写 `if (x.response.status === 200) throw`。
+// 后一种绕开了棘轮，而它只验了"不是 200" —— 任何一种拒绝都能让它通过，包括【与被测守卫无关】
+// 的那种。实测撞过一次：「组织停用后不能改配置」那条，请求没带 expectedConfigVersion，
+// 被 428 挡下，于是把守卫整个删掉断言照样绿。
+function verifyRejectionAssertionsNameTheirCode(output) {
+  const files = ["scripts/doctor.mjs", "scripts/doctor-mcp.mjs", "scripts/doctor-agent-remote.mjs"];
+  let scanned = 0;
+  let surface = 0;
+  const bare = [];
+  for (const file of files) {
+    const text = readFileSync(join(root, file), "utf8");
+    // 违规数今天是 0，那就分不清"干净"和"根本没扫成"。所以另外量【被扫的面】：
+    // 三套 e2e 里所有 `response.status` 比较的总数，它塌了就说明提取脱节。
+    surface += [...text.matchAll(/\.response\.status\s*(?:===|!==|>=|<)/gu)].length;
+    for (const match of text.matchAll(/if \(([\w.?]+)\.response\.status === (?:200|201)[^)]*\)/gu)) {
+      scanned += 1;
+      const after = text.slice(match.index + match[0].length, match.index + match[0].length + 300);
+      // "点了码"必须是【比较】，不能只是报错文案里提了一句 payload.error —— 那是给人看的，
+      // 不参与判定。第一版就是这么误判的：把假绿那条放回去，判据照样绿。
+      if (!/payload\??\.error\s*(?:===|!==)\s*"/u.test(after)) {
+        bare.push(`${file.split("/").pop()}:${text.slice(0, match.index).split("\n").length}`);
+      }
+    }
+  }
+  if (bare.length) {
+    output.push(`这些「必须被拒」的断言只判了「不是 200」，没点名拒绝码：${bare.join("、")} —— `
+      + "任何一种拒绝都能让它通过，包括与被测守卫无关的那种（少带一个字段就够了）；"
+      + "改成断言具体的状态码 + payload.error");
+  }
+  if (surface < 60) {
+    output.push(`三套 e2e 里只扫到 ${surface} 处状态码比较（应 ≥60，实测 ${surface >= 60 ? surface : "更多"}）—— `
+      + "提取脱节，本条在空转（违规数是 0 时尤其要能分清「干净」和「没扫成」）");
+  }
+  console.log(`拒绝断言点名：三套 e2e 共 ${surface} 处状态码比较，其中手写的「=== 200 就算失败」${scanned} 处，`
+    + `${bare.length} 处没点码（应为 0）`);
+}
+
 function verifyGitStatusParsingSurvivesRealFilenames(output) {
   const dir = mkdtempSync(join(tmpdir(), "aimac-gitname-"));
   try {
