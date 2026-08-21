@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import {
-execFileSync, spawnSync } from "node:child_process";
+execFileSync, spawn, spawnSync } from "node:child_process";
 import { SCHEMA_FILE_ALIASES, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { mcpServiceAllowedTools ,
   mcpServiceAllowlistNotice
@@ -410,6 +410,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+runAsync(verifyStoppingAnExecutorTellsTheTruth);
 run(verifyDocumentedEnvVarsAreRealKnobs);
 run(verifyReplayRemoteCheckDistinguishesLostFromMovedOn);
 run(verifyEvidenceRedactionCoversKnownSecrets);
@@ -11044,6 +11045,51 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+async function verifyStoppingAnExecutorTellsTheTruth(output) {
+  // 人在界面上按「暂停/终止」→ 命令排队 → agent 拉取 → **agent 真去停执行器** → 回执。
+  // 最后这一段此前没有任何判据。它必须做到三件事，缺一件人就会被骗：
+  //   ① 先礼后兵：SIGTERM 之后不听话才 SIGKILL；
+  //   ② 按【进程组】杀 —— 执行器自己会拉起子进程，只杀父进程会留下一堆还在跑的活；
+  //   ③ 杀不掉时如实回 stopped:false（上层据此把回执写成 failed），不许谎报成功。
+  // terminateChild 不导出（不为测试去导内部函数），这里按它的形状真起进程验这三件事。
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  if (!/process\.kill\(-child\.pid, signal\)/u.test(runtime)) {
+    output.push("停执行器时不再按进程组杀（process.kill(-pid)）—— 执行器拉起的子进程会留下来继续跑，"
+      + "而控制台显示「已停止」");
+  }
+  const grace = /const killTimer = setTimeout\(\(\) => \{\s*killChildProcessGroup\(child, "SIGKILL"\);/u.test(runtime);
+  if (!grace) {
+    output.push("停执行器时不再先发 SIGTERM 再补 SIGKILL —— 直接 SIGKILL 会让执行器来不及收尾，"
+      + "而只发 SIGTERM 又会在它不听话时永远等下去");
+  }
+  if (!/resolveStop\(\{stopped: false, reason: "child_stop_timeout"\}\)/u.test(runtime)) {
+    output.push("停执行器超时后不再如实回 stopped:false —— 上层会把回执写成 completed，"
+      + "人看到「已停止」，而那个进程还在跑");
+  }
+  // 行为面：按同样的形状真起一个【忽略 SIGTERM】的子进程，确认这套先礼后兵能把它收掉，
+  // 而且收掉的是整个进程组。
+  const script = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); console.log('up');";
+  const child = spawn(process.execPath, ["-e", script], {detached: true, stdio: ["ignore", "pipe", "ignore"]});
+  try {
+    await new Promise((resolve) => { child.stdout.once("data", resolve); setTimeout(resolve, 3000); });
+    const stopped = await new Promise((resolve) => {
+      let done = false;
+      const finish = (value) => { if (!done) { done = true; resolve(value); } };
+      const killTimer = setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch { /* 已经走了 */ } }, 300);
+      const giveUp = setTimeout(() => finish(false), 5000);
+      child.once("close", () => { clearTimeout(killTimer); clearTimeout(giveUp); finish(true); });
+      try { process.kill(-child.pid, "SIGTERM"); } catch { finish(true); }
+    });
+    if (!stopped) {
+      output.push("一个忽略 SIGTERM 的执行器没能在宽限期后被 SIGKILL 收掉 —— "
+        + "人按了终止，进程还在跑，而回执会说它停了");
+    }
+  } finally {
+    try { process.kill(-child.pid, "SIGKILL"); } catch { /* 已经收掉了 */ }
+  }
+  console.log("停执行器：按进程组杀、先 SIGTERM 后 SIGKILL、杀不掉如实回 false —— 三条都在，且真收得掉忽略 SIGTERM 的进程");
 }
 
 function verifyDocumentedEnvVarsAreRealKnobs(output) {

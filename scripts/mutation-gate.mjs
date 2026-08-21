@@ -3596,6 +3596,30 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "停执行器必须按进程组杀",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyStoppingAnExecutorTellsTheTruth",
+    from: "process.kill(-child.pid, signal);",
+    to: "process.kill(child.pid, signal);",
+    expect: "停执行器时不再按进程组杀"
+  },
+  {
+    name: "停执行器必须先礼后兵",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyStoppingAnExecutorTellsTheTruth",
+    from: `const killTimer = setTimeout(() => {\n      killChildProcessGroup(child, "SIGKILL");`,
+    to: `const killTimer = setTimeout(() => {\n      killChildProcessGroup(child, "SIGTERM");`,
+    expect: "停执行器时不再先发 SIGTERM 再补 SIGKILL"
+  },
+  {
+    name: "停不掉的执行器不许谎报已停止",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyStoppingAnExecutorTellsTheTruth",
+    from: `resolveStop({stopped: false, reason: "child_stop_timeout"});`,
+    to: `resolveStop({stopped: true, reason: "child_stop_timeout"});`,
+    expect: "停执行器超时后不再如实回 stopped:false"
+  },
+  {
     name: "文档写了不存在的环境变量要被查出来",
     file: "docs/human-org-console-and-content-distribution-design.md",
     check: "verifyDocumentedEnvVarsAreRealKnobs",
