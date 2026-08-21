@@ -2986,6 +2986,22 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "文档里让人敲的命令必须真存在（第一条命令失败人就进不去门）",
+    file: "README.md",
+    check: "verifyDocumentedApiPathsExist",
+    from: "npm run mcp:doctor",
+    to: "npm run mcp:doctor-x",
+    expect: "package.json 里没有"
+  },
+  {
+    name: "文档点名的仓内文件必须真存在",
+    file: "docs/machine-executable-artifacts.md",
+    check: "verifyDocumentedApiPathsExist",
+    from: "`spec/state-machines.yaml`",
+    to: "`spec/state-machines-v2.yaml`",
+    expect: "仓内文件不存在"
+  },
+  {
     name: "文档点名的接口必须真存在（照着它接入的人会撞 404）",
     file: "docs/core-control-plane-spec.md",
     check: "verifyDocumentedApiPathsExist",

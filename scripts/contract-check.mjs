@@ -5604,8 +5604,41 @@ function verifyDocumentedApiPathsExist(output) {
   if (nowBuilt.length) {
     output.push(`这些接口已经建好了，登记要摘掉（留着会让人以为还没有）：${nowBuilt.join("、")}`);
   }
-  console.log(`文档里的 API 路径：${documented.size} 条逐个核对，${missing.length} 条在服务端找不到（应为 0；`
-    + `另有 ${Object.keys(NOT_YET_IMPLEMENTED).length} 条登记为"终态规格里还没建的"）`);
+  // 同一个意思的另外两族：文档里让人【敲的命令】和【点名的仓内文件】。
+  // 它们比接口更要命 —— README 的第一条命令失败，人连门都进不去。
+  // 现在两族都是干净的（10 个脚本、79 条路径全都有效），这道守卫是为了让它保持干净：
+  // 今天光是重命名判据函数就打断过两条变异锚点，文档里的引用一样会漂。
+  const scripts = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).scripts || {};
+  const badCommands = [];
+  const badPaths = [];
+  let commandCount = 0;
+  let pathCount = 0;
+  for (const file of readdirSync(join(root, "docs")).filter((name) => name.endsWith(".md")).concat("../README.md")) {
+    const full = file.startsWith("..") ? join(root, "README.md") : join(root, "docs", file);
+    if (!existsSync(full)) continue;
+    const text = readFileSync(full, "utf8");
+    for (const match of text.matchAll(/npm run (?:-s )?([\w:-]+)/gu)) {
+      commandCount += 1;
+      if (!scripts[match[1]]) badCommands.push(`${match[1]}（${file}）`);
+    }
+    for (const match of text.matchAll(/`((?:scripts|apps|spec|data|docs)\/[\w./-]+)`/gu)) {
+      pathCount += 1;
+      if (!existsSync(join(root, match[1]))) badPaths.push(`${match[1]}（${file}）`);
+    }
+  }
+  if (commandCount < 8 || pathCount < 40) {
+    output.push(`文档里的命令/路径只提取到 ${commandCount}/${pathCount} 处（应至少 8/40）—— 提取形状脱节，本条在空转`);
+    return;
+  }
+  if (badCommands.length) {
+    output.push(`文档里让人敲的这些命令 package.json 里没有：${[...new Set(badCommands)].join("、")}`);
+  }
+  if (badPaths.length) {
+    output.push(`文档里点名的这些仓内文件不存在：${[...new Set(badPaths)].join("、")}`);
+  }
+  console.log(`文档点名的东西：API 路径 ${documented.size} 条、命令 ${commandCount} 处、仓内路径 ${pathCount} 处逐个核对，`
+    + `${missing.length + badCommands.length + badPaths.length} 处找不到（应为 0；`
+    + `另有 ${Object.keys(NOT_YET_IMPLEMENTED).length} 条 API 登记为"终态规格里还没建的"）`);
 }
 
 function verifyGatesDoNotCloneFromTheNetwork(output) {
