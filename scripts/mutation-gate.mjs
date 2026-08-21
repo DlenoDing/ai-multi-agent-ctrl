@@ -3302,6 +3302,30 @@ const MUTATIONS = [
     expect: "出现了别的租户的对象"
   },
   {
+    name: "agent 那份 git 远端守卫落后于控制面就要被逮到",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyGitRemoteGuardTwinsAgree",
+    from: '  const beforeSlash = value.split("/")[0];\n  if (beforeSlash.includes("::") && !beforeSlash.includes("[")) return false;\n  // Reject a host segment',
+    to: "  // Reject a host segment",
+    expect: "两份孪生实现不一致"
+  },
+  {
+    name: "远端 agent 不许接受本地路径（会去读它自己主机上的仓库）",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyGitRemoteGuardTwinsAgree",
+    from: "  return /^https?:\\/\\//iu.test(value) || /^git:\\/\\//iu.test(value);",
+    to: "  return true;",
+    expect: "读它自己主机上的仓库"
+  },
+  {
+    name: "提不出 agent 那份远端守卫时要自报空转",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyGitRemoteGuardTwinsAgree",
+    from: "function isSafeGitRemoteUrl(url) {",
+    to: "function isSafeGitRemoteUrlX(url) {",
+    expect: "在空转"
+  },
+  {
     name: "引用名以 - 开头 / 含 .. 要拒（字符集白名单挡不住这两种）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyGitRefGuardsAgree",

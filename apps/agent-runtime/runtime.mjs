@@ -747,6 +747,11 @@ function isSafeGitRemoteUrl(url) {
   // Reject git's local-command transports (ext::, fd::, remote helpers) that can run arbitrary commands.
   if (/^[a-z0-9+.-]*::/iu.test(value)) return false;
   if (value.startsWith("ext:") || value.startsWith("fd:")) return false;
+  // 与控制面那份保持一致：git 的 remote-helper 语法是【第一个 / 之前出现 ::】，helper 名可以带 @，
+  // 上面那条 ^[a-z0-9+.-]*:: 因为 @ 不在字符集里会放过 `user@host::payload`。
+  // IPv6 要放行（:: 在方括号内）。两份实现由 contract-check 的 verifyGitRemoteGuardTwinsAgree 交叉核对。
+  const beforeSlash = value.split("/")[0];
+  if (beforeSlash.includes("::") && !beforeSlash.includes("[")) return false;
   // Reject a host segment that begins with '-' so git cannot pass it to ssh as an option (e.g. -oProxyCommand=...).
   const scp = value.match(/^[^@\s]+@([^:\s]+):.+/u);
   if (scp) return !scp[1].startsWith("-");

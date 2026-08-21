@@ -400,6 +400,7 @@ run(verifyOnlyLiveHumanAccountsCanFinalize);
 run(verifyGitRemoteGuardRejectsCommandTransports);
 run(verifyGitPathGuardRejectsEscapes);
 run(verifyGitRefGuardsAgree);
+run(verifyGitRemoteGuardTwinsAgree);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5894,6 +5895,48 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // 这条守卫有【两份实现】：控制面的 isSafeGitRef，和 agent 运行时里那一份 —— 后者是单文件、
 // 只依赖 node 内置的下发产物，共用不了代码。两份不必逐字相同（严的那份可以更严），
 // 但对【危险形态】的判断必须一致，否则控制面拒的东西 agent 照收，或者反过来。
+// isSafeGitRemoteUrl 在两侧【各有一份】：控制面（agent-gateway）与 agent 运行时
+// （单文件下发产物，共用不了代码）。今天收紧控制面那份时就差点只改一半 ——
+// 两份对【危险形态】必须判得一样；尾部的差异是有意的（远端 agent 不接受本地路径与 file://，
+// 那会让它去读自己主机上的仓库），所以只比危险面，不要求逐字相同。
+function verifyGitRemoteGuardTwinsAgree(output) {
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const start = runtime.indexOf("function isSafeGitRemoteUrl(url) {");
+  const body = start < 0 ? "" : runtime.slice(start, runtime.indexOf("\n}", start) + 2);
+  if (!body || !body.includes("return")) {
+    output.push("提不出 agent 运行时里那份 isSafeGitRemoteUrl —— 孪生交叉核对在空转");
+    return;
+  }
+  let agentGuard;
+  try {
+    // eslint-disable-next-line no-new-func
+    agentGuard = new Function(`${body}\nreturn isSafeGitRemoteUrl;`)();
+  } catch (error) {
+    output.push(`agent 那份 isSafeGitRemoteUrl 取不出来（${error?.message || error}）—— 孪生交叉核对在空转`);
+    return;
+  }
+  const dangerous = ["ext::sh -c id", "fd::7", "anything::payload", "user@host::payload",
+    "ext:sh", "fd:7", "--upload-pack=x", "git@-oProxyCommand=id:repo.git", "ssh://-oProxyCommand=id/x.git", ""];
+  for (const url of dangerous) {
+    if (agentGuard(url)) {
+      output.push(`agent 运行时会收下危险地址 ${JSON.stringify(url)} —— 控制面拒它，两份孪生实现不一致`);
+    }
+    if (isSafeGitRemoteUrl(url)) {
+      output.push(`控制面会收下危险地址 ${JSON.stringify(url)}`);
+    }
+  }
+  // 正常地址两边都要收，否则接了 agent 的项目根本拉不到内容。
+  for (const url of ["https://example.com/o/r.git", "git@github.com:o/r.git", "ssh://git@example.com/o/r.git"]) {
+    if (!agentGuard(url)) output.push(`agent 运行时拒了正常地址 ${JSON.stringify(url)} —— 这台节点取不到内容包`);
+    if (!isSafeGitRemoteUrl(url)) output.push(`控制面拒了正常地址 ${JSON.stringify(url)}`);
+  }
+  // 有意的差异：远端 agent 不接受本地路径（那会让它去读自己主机上的仓库），控制面接受。
+  if (agentGuard("/srv/repos/x.git") || agentGuard("file:///srv/x.git")) {
+    output.push("agent 运行时接受了本地路径/file:// —— 那会让远端节点去读它自己主机上的仓库");
+  }
+  console.log(`git 远端守卫孪生：${dangerous.length} 种危险形态两侧各跑一遍，正常地址两侧都收，本地路径只有控制面收`);
+}
+
 function verifyGitRefGuardsAgree(output) {
   // 前两条专打那两个【额外条件】：`-main` 与 `a..b` 都通得过字符集白名单，
   // 只有 startsWith("-") 和 includes("..") 拦得住它们。不放这两条的话，把那一行删掉判据也不红
