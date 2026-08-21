@@ -3595,6 +3595,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "在制品提示要说清额度按什么算",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyWipHintMatchesHowCapacityIsCounted",
+    from: "    + `\u60f3\u8ba9\u5b83\u8dd1\u5f97\u66f4\u5bbd\uff0c\u5c31\u5230\u300cAI \u667a\u80fd\u4f53\u300d\u9875\u591a\u63a5\u5165\u51e0\u53f0\u8282\u70b9\uff1a\u989d\u5ea6\u6309\u3010\u5728\u7ebf\u4e14\u5df2\u901a\u8fc7\u81ea\u68c0\u3011\u7684\u8282\u70b9\u6570\u4e0a\u8c03 \u2014\u2014 `",
+    to: "    + `\u60f3\u8ba9\u5b83\u8dd1\u5f97\u66f4\u5bbd\uff0c\u5c31\u5230\u300cAI \u667a\u80fd\u4f53\u300d\u9875\u591a\u63a5\u5165\u51e0\u53f0\u8282\u70b9\uff08\u6bcf\u591a\u4e00\u53f0\u5728\u7ebf\u8282\u70b9\uff0c\u989d\u5ea6\u81ea\u52a8\u4e0a\u8c03\uff09\u3002`",
+    expect: "而提示只说「在线节点」"
+  },
+  {
+    name: "额度算法改了提示要跟着改",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyWipHintMatchesHowCapacityIsCounted",
+    from: "    if (node.status === \"online\" && node.admission === \"full\") online += 1;",
+    to: "    if (node.status === \"online\") online += 1;",
+    expect: "已经不看 admission 了"
+  },
+  {
     name: "临时授权的指引必须指向真能解开门的那个动作",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyTempGrantGuidePointsAtTheRightLever",

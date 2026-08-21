@@ -3332,7 +3332,12 @@ function wipCapacityNotice(groups) {
     + `（在飞 ${esc(wip.inFlight)} / 上限 ${esc(wip.capacity)}）：`
     + `${queued ? `还有 ${esc(queued)} 个单元` : "后续单元"}会等额度，不会立刻派发。`
     + outlook
-    + `想让它跑得更宽，就到「AI 智能体」页多接入几台节点（每多一台在线节点，额度自动上调）。</div>`;
+    // 额度按【在线且准入为 full】的节点数算（wipCapacityForProject）。只说"在线"会让人白等：
+    // 刚注册的节点是 limited、自检有缺项的是 read_only，两者都在线、都不加额度、也领不到活。
+    // 人接上一台看额度没动，会以为系统坏了或自己接错了。
+    + `想让它跑得更宽，就到「AI 智能体」页多接入几台节点：额度按【在线且已通过自检】的节点数上调 —— `
+    + `刚接上的节点处于"受限"、自检有缺项的处于"只读"，这两种都不加额度，`
+    + `在那一页看它的「准入」列，缺项也列在那里。</div>`;
 }
 
 function aiAnalysisStalledNotice(requests) {

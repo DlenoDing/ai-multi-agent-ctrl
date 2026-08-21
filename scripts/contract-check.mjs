@@ -397,6 +397,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyWipHintMatchesHowCapacityIsCounted);
 run(verifyTempGrantGuidePointsAtTheRightLever);
 run(verifyWipeWarningMatchesTheServerGuard);
 run(verifyTimestampFieldsDeclareTheirFormat);
@@ -10960,6 +10961,34 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyWipHintMatchesHowCapacityIsCounted(output) {
+  // 在制品达到上限时那条提示告诉人"多接几台节点，额度自动上调"。而额度只按
+  // 【在线且准入为 full】的节点算：刚注册的是 limited、自检有缺项的是 read_only，
+  // 两者都在线、都不加额度、也领不到活。只说"在线"的话，人接上一台看额度没动，
+  // 会以为系统坏了 —— 而真正要做的是去看那台节点缺了哪项自检。
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const core = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  // [^] 在 u 模式下非法（"匹配任意字符"要写成 [\s\S]）—— 第一版让整个门起不来。
+  const capacityFn = /export function wipCapacityForProject[\s\S]*?\n\}/u.exec(core)?.[0] || "";
+  if (!capacityFn) {
+    output.push("找不到 wipCapacityForProject —— 这条判据的锚点漂了");
+    console.log("在制品提示：锚点已漂");
+    return;
+  }
+  const countsAdmission = /admission === "full"/u.test(capacityFn);
+  const hint = /想让它跑得更宽[^`]{0,400}/u.exec(app)?.[0] || "";
+  if (!hint) {
+    output.push("找不到在制品上限那条提示 —— 这条判据的锚点漂了");
+  } else if (countsAdmission && !/自检|准入/u.test(hint)) {
+    output.push("额度只按【在线且准入 full】的节点算，而提示只说「在线节点」 —— "
+      + "人接上一台刚注册（limited）或自检有缺项（read_only）的节点，额度不会动，"
+      + "他会以为系统坏了，而真正要看的是那台节点缺了哪项自检");
+  } else if (!countsAdmission && /自检|准入/u.test(hint)) {
+    output.push("提示说额度要看自检/准入，而 wipCapacityForProject 已经不看 admission 了 —— 两处漂开了");
+  }
+  console.log(`在制品提示：额度${countsAdmission ? "按在线且准入 full 计" : "只按在线计"}，提示与它一致`);
 }
 
 function verifyTempGrantGuidePointsAtTheRightLever(output) {
