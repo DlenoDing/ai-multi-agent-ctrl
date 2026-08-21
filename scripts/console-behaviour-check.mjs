@@ -564,6 +564,25 @@ function check(name, condition, detail) {
     overviewProbe.renderFullPageWith({...stalled, fleet}, admin, "p1", "proj-overview");
     return String(overviewRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
   };
+  // 同一屏上两个百分比：顶上那个是服务端【按工作项】平均，关键指标里那个是前端【按任务组】平均。
+  // 实测种子上就是 73% 与 75%。两个都有用，但标签必须说清各自是怎么算的，否则读起来像同一件事。
+  {
+    const twoNumbers = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: [],
+        progress: {percent: 73, phase: "开发", health: "ok", updatedAt: "2026-08-01T00:00:00Z"}}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "组一", status: "development", progress: 70, workItems: []},
+        {id: "tg2", projectId: "p1", name: "组二", status: "development", progress: 80, workItems: []}],
+      agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], findings: [],
+      humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []};
+    const overviewRoot2 = el("div");
+    const overviewProbe2 = loadConsole(overviewRoot2);
+    overviewProbe2.renderFullPageWith(twoNumbers, admin, "p1", "proj-overview");
+    const text = String(overviewRoot2.innerHTML || "").replace(/<[^>]+>/gu, " ");
+    check("并排的两个百分比要各自说清是怎么算的",
+      /任务组平均进度/.test(text) && /按工作项平均/.test(text) && !/事项完成度/.test(text),
+      "顶上 73%、下面 75%，标签却都读作「完成度」—— 人只能以为其中一个错了");
+  }
+
   check("项目概览也要说出'没有在线 agent，这些活不会动'（它是被盯得最久的一页）",
     /没有任何在线的 agent 节点/.test(overviewText({online: 0, total: 0})),
     "概览页显示健康度 ok、进度在走，而实际一个单元都动不了 —— 另外两页说了，这一页不说");

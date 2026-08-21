@@ -298,7 +298,7 @@ const PAGE_META = {
   "org-members": ["成员管理", "创建成员、权限分配、停用与一次性登录令牌"],
   "org-agents": ["AI 智能体", "组织内智能体节点：运行状态、健康度、加入令牌与吊销"],
   "org-projects": ["项目管理", "创建项目、基础配置与成员授权"],
-  "proj-overview": ["项目概览", "进度、健康度、事项完成度与待人工确认数"],
+  "proj-overview": ["项目概览", "总进度、健康度、任务组平均进度与待人工确认数"],
   "tg": ["任务组", "事项清单、角色、配置继承与执行控制"],
   "review": ["人工审核", "集中处理执行过程中提交的人工确认请求"],
   "directives": ["人工指令", "通过独立通道向系统下达结构化指令"],
@@ -2484,6 +2484,10 @@ function renderProjectOverview() {
   const groups = projectTaskGroups();
   const openGroups = groups.filter((taskGroup) => !["closed", "aborted"].includes(taskGroup.status));
   const blockers = groups.flatMap((taskGroup) => taskGroup.blockers || []);
+  // 这个数是【按任务组】平均，而同一屏顶上那个大百分比是服务端【按工作项】平均算的
+  // （control-plane-core 的 recomputeProgressSnapshots）。两个数并排、公式不同，
+  // 实测种子上就是 73% 与 75% —— 标签原先写"事项完成度"，读起来像是同一件事的第二种说法。
+  // 两个都有用（一个看整体、一个看有没有某个组在拖），但必须各自说清是怎么算的。
   const avgProgress = groups.length ? Math.round(groups.reduce((sum, taskGroup) => sum + Number(taskGroup.progress || 0), 0) / groups.length) : 0;
   const groupRows = groups.map((taskGroup) => row([
     `<strong>${esc(taskGroup.name || taskGroup.id)}</strong>`,
@@ -2531,7 +2535,8 @@ function renderProjectOverview() {
     panel("关键指标", `
       <div class="metric-grid">
         <div class="metric"><span>任务组</span><strong>${openGroups.length}/${groups.length}</strong></div>
-        <div class="metric"><span>事项完成度</span><strong>${avgProgress}%</strong></div>
+        <div class="metric"><span>任务组平均进度</span><strong>${avgProgress}%</strong>
+          <div class="small muted">按任务组平均；上面那个总进度是按工作项平均的，两者不一定相等</div></div>
         <div class="metric"><span>受阻项</span><strong>${blockers.length}</strong></div>
         <div class="metric"><span>待人工确认</span><strong>${pendingConfirmCount}</strong></div>
       </div>

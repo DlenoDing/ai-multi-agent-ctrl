@@ -3291,6 +3291,14 @@ const MUTATIONS = [
     expect: "没说清本机被改成什么样"
   },
   {
+    name: "并排的两个百分比要各自说清算法（73% 与 75% 同屏）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '<div class="metric"><span>任务组平均进度</span>',
+    to: '<div class="metric"><span>事项完成度</span>',
+    expect: "要各自说清是怎么算的"
+  },
+  {
     name: "刚装完的监控页十一张空表要有一句话说清这是正常的",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
