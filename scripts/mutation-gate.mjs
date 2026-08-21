@@ -3385,6 +3385,54 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "确认单必须有问题正文",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanCollaborationEntryPointsRefuseEmptyInput",
+    from: "  if (!summary) throw Object.assign(new Error(\"human_confirmation_question_required\"), {status: 400});",
+    to: "  if (false) throw Object.assign(new Error(\"human_confirmation_question_required\"), {status: 400});",
+    expect: "没有问题正文的确认单"
+  },
+  {
+    name: "确认单必须至少有一个选项",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanCollaborationEntryPointsRefuseEmptyInput",
+    from: "  if (!aiOptions.length) throw Object.assign(new Error(\"human_confirmation_options_required\"), {status: 400});",
+    to: "  if (false) throw Object.assign(new Error(\"human_confirmation_options_required\"), {status: 400});",
+    expect: "一个选项都没有的确认单"
+  },
+  {
+    name: "人工指令必须属于某个项目",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanCollaborationEntryPointsRefuseEmptyInput",
+    from: "  if (!projectId) throw Object.assign(new Error(\"human_directive_project_required\"), {status: 400});",
+    to: "  if (false) throw Object.assign(new Error(\"human_directive_project_required\"), {status: 400});",
+    expect: "不属于任何项目的人工指令"
+  },
+  {
+    name: "自由文本指令必须有内容",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanCollaborationEntryPointsRefuseEmptyInput",
+    from: "  if (!instruction && directiveType === \"free_text\") throw Object.assign(new Error(\"human_directive_instruction_required\"), {status: 400});",
+    to: "  if (false) throw Object.assign(new Error(\"human_directive_instruction_required\"), {status: 400});",
+    expect: "没有内容的人工指令"
+  },
+  {
+    name: "AI 的分析意见必须有正文",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanCollaborationEntryPointsRefuseEmptyInput",
+    from: "  if (!summary) throw Object.assign(new Error(\"ai_analysis_summary_required\"), {status: 400});",
+    to: "  if (false) throw Object.assign(new Error(\"ai_analysis_summary_required\"), {status: 400});",
+    expect: "没有正文的分析意见"
+  },
+  {
+    name: "人已处理完的卡片不得再收 AI 分析",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanCollaborationEntryPointsRefuseEmptyInput",
+    from: "  if (request.status !== \"pending\") throw Object.assign(new Error(\"human_confirmation_not_pending\"), {status: 409});",
+    to: "  if (false) throw Object.assign(new Error(\"human_confirmation_not_pending\"), {status: 409});",
+    expect: "还能被 AI 追加分析"
+  },
+  {
     name: "方案必须挂在一件真实工作项上",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",

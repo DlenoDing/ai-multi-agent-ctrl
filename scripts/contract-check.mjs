@@ -345,6 +345,7 @@ run(verifyMcpSummaryIsActuallyASummary);
 run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
+run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
 run(verifyExecutionTopologyStateMachineRefusesBadTransitions);
 run(verifyGateAssertionsMatchWholeRefusalCodes);
 run(verifyInviteEscalationGuardsShareOnePredicate);
@@ -8845,7 +8846,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
   // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
   // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 42;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 36;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -10422,6 +10423,70 @@ function verifyHumanWrittenTextIsNeverSilentlyTruncated(output) {
       + "台账上记的与他写的不是一句话；改用 assertHumanTextWithinLimit（超了就拒，并说清超出多少）");
   }
   console.log(`人写文本不许静默截断：${guarded} 处走了长度校验，${truncated.length} 处仍在 slice 截断（应为 0）`);
+}
+
+function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
+  // 人机协同这几个入口的入参校验此前【零覆盖】。它们看着像琐碎的必填校验，实际守的是同一件事：
+  // 送到人面前的卡片不能是空的 —— 没有问题、没有选项、没有指令内容的卡片，人无从判断，
+  // 而它照样阻塞着执行，只能等 7 天过期。
+  const fresh = () => {
+    const st = structuredClone(seedState);
+    ensureRuntimeCollections(st, {root});
+    return st;
+  };
+  const refusalOf = (fn) => { try { fn(); return null; } catch (error) { return error.message; } };
+  const tgId = "tg_runtime_management";
+
+  const cases = [
+    ["没有问题正文的确认单", "human_confirmation_question_required", (st) =>
+      createHumanConfirmationRequest(st, {taskGroupId: tgId, decisionType: "work_item_verification",
+        summary: "   ", options: [{optionId: "a", label: "选项甲"}]})],
+    ["一个选项都没有的确认单", "human_confirmation_options_required", (st) =>
+      createHumanConfirmationRequest(st, {taskGroupId: tgId, decisionType: "work_item_verification",
+        summary: "请确认", options: []})],
+    ["不属于任何项目的人工指令", "human_directive_project_required", (st) =>
+      createHumanDirective(st, {directiveType: "free_text", instruction: "做点什么"}, {actor: "acct_alice"})],
+    ["没有内容的人工指令", "human_directive_instruction_required", (st) =>
+      createHumanDirective(st, {taskGroupId: tgId, directiveType: "free_text", instruction: "   "}, {actor: "acct_alice"})]
+  ];
+  for (const [what, expected, run] of cases) {
+    const got = refusalOf(() => run(fresh()));
+    if (got !== expected) {
+      output.push(`人机协同入口: ${what}拿到的不是 ${expected}（实际 ${got || "就这么建出来了"}）—— `
+        + "一张人无从判断的卡片照样阻塞着执行，只能等它过期");
+    }
+  }
+  // AI 的分析意见也不能是空的：它是人做决定时唯一能读到的机器判断。
+  {
+    const st = fresh();
+    const card = createHumanConfirmationRequest(st, {taskGroupId: tgId, decisionType: "work_item_verification",
+      summary: "请确认这次验收", options: [{optionId: "accept", label: "通过"}]});
+    const emptySummary = refusalOf(() => submitAiConfirmationAnalysis(st, card.requestId,
+      {assessment: "agree", summary: "  "}, {actor: "acct_agent_runtime"}));
+    if (emptySummary !== "ai_analysis_summary_required") {
+      output.push(`人机协同入口: AI 交了一份没有正文的分析意见（${emptySummary || "收下了"}）—— `
+        + "人在卡片上看到的是「AI 已分析」，点开却什么都没有");
+    }
+    // 正面对照走同一条路：有正文时必须收得下。
+    const okSummary = refusalOf(() => submitAiConfirmationAnalysis(st, card.requestId,
+      {assessment: "agree", summary: "两个方案代价相当，建议按甲执行"}, {actor: "acct_agent_runtime"}));
+    if (okSummary !== null) {
+      output.push(`人机协同入口: 有正文的分析意见也被拒了（${okSummary}）—— 上面那条其实是「永远拒」`);
+    }
+    // 已经不在 pending 的单子不得再收分析意见：那会把一张人已经处理完的卡片改回"等 AI"。
+    const settled = fresh();
+    const settledCard = createHumanConfirmationRequest(settled, {taskGroupId: tgId,
+      decisionType: "work_item_verification", summary: "请确认", options: [{optionId: "accept", label: "通过"}]});
+    const stored = settled.humanConfirmationRequests.find((item) => item.requestId === settledCard.requestId);
+    stored.status = "answered";
+    const late = refusalOf(() => submitAiConfirmationAnalysis(settled, settledCard.requestId,
+      {assessment: "agree", summary: "迟到的分析"}, {actor: "acct_agent_runtime"}));
+    if (late !== "human_confirmation_not_pending") {
+      output.push(`人机协同入口: 人已经处理完的卡片还能被 AI 追加分析（${late || "收下了"}）—— `
+        + "屏幕上那张卡会从「已处理」变回「等 AI 分析」");
+    }
+  }
+  console.log("人机协同入口：空问题/空选项/无项目/空指令/空分析/迟到的分析 六种形状全拒，正常输入照收 —— 核过");
 }
 
 function verifyExecutionTopologyStateMachineRefusesBadTransitions(output) {
