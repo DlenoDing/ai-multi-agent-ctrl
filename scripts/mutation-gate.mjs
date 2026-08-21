@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "文档写了不存在的环境变量要被查出来",
+    file: "docs/human-org-console-and-content-distribution-design.md",
+    check: "verifyDocumentedEnvVarsAreRealKnobs",
+    from: "AIMAC_AGENT_LIBRARY_MAX_MB",
+    to: "AIMAC_AGENT_LIBRARY_MAX_MEGABYTES",
+    expect: "代码里【一处都没有】"
+  },
+  {
+    name: "代码里把环境变量改名要被查出来",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyDocumentedEnvVarsAreRealKnobs",
+    from: "AIMAC_AGENT_SESSION_TTL_HOURS",
+    to: "AIMAC_AGENT_SESSION_TTL_H",
+    expect: "代码里【一处都没有】"
+  },
+  {
     name: "重放核对不得退化成只比 SHA 相等",
     file: "scripts/contract-check.mjs",
     check: "verifyReplayRemoteCheckDistinguishesLostFromMovedOn",

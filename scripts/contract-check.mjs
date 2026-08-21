@@ -410,6 +410,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyDocumentedEnvVarsAreRealKnobs);
 run(verifyReplayRemoteCheckDistinguishesLostFromMovedOn);
 run(verifyEvidenceRedactionCoversKnownSecrets);
 run(verifyDocumentedCommandsStillExist);
@@ -11043,6 +11044,65 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyDocumentedEnvVarsAreRealKnobs(output) {
+  // 文档里写着的 AIMAC_* 环境变量是【运维照着设的旋钮】。名字错一个字，设了不生效，
+  // 而且什么都不会报 —— 他会以为调过了。
+  // 读法有三种，都得认（只认 process.env.X 的话，会把三类真旋钮误报成幽灵）：
+  //   ① process.env.X —— 自己读；
+  //   ② 传给子进程的环境（AIMAC_CONTENT_BUNDLE_DIR: ... 这种对象字面量）；
+  //   ③ 出现在给人复制的安装命令 / 界面示例里（AIMAC_JOIN_TOKEN、AIMAC_REPO_TOKEN_）。
+  const sources = [];
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (/\.(mjs|js)$/u.test(name)) sources.push(readFileSync(full, "utf8"));
+    }
+  };
+  // 只扫【产品实现】：apps/ 全部，加上 scripts/ 里那几个【运维真会跑】的（npm run init /
+  // skills:sync 指向它们）。scripts/ 下的门与 e2e 必须排除 —— 它们也会提到这些变量
+  // （设置环境、写在注释里），算进来的话产品那侧把旋钮改了名照样绿（门读到自己人写的字，
+  // 本仓的老形状；这一条我在写它的时候又撞了一次）。
+  walk(join(root, "apps"));
+  for (const name of ["init-control-plane.mjs", "sync-agent-skills.mjs", "run-with-env.mjs"]) {
+    const full = join(root, "scripts", name);
+    if (!existsSync(full)) {
+      output.push(`产品脚本 ${name} 不见了 —— 这条判据的扫描面漂了，它会把那里读的旋钮全报成幽灵`);
+      continue;
+    }
+    sources.push(readFileSync(full, "utf8"));
+  }
+  // 剥掉注释再拼：本判据自己的注释里就写着几个变量名（讲为什么要用词边界比时举的例），
+  // 不剥的话它们会把自己喂饱 —— 代码里明明改了名，判据照绿（实测撞到，本仓的老形状）。
+  const code = sources.map((text) => text.split("\n")
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/u.test(line)).join("\n")).join("\n");
+  const documented = new Map();
+  for (const file of ["README.md", ...readdirSync(join(root, "docs")).filter((n) => n.endsWith(".md")).map((n) => `docs/${n}`)]) {
+    for (const match of readFileSync(join(root, file), "utf8").matchAll(/\b(AIMAC_[A-Z0-9_]+)/gu)) {
+      if (!documented.has(match[1])) documented.set(match[1], file);
+    }
+  }
+  if (documented.size < 15) {
+    output.push(`文档里只提取到 ${documented.size} 个 AIMAC_ 变量（应有二十来个）—— 这条判据的形状没对上，它在空转`);
+  }
+  // 用词边界比，不能用 includes：代码里把某个变量名【截短】之后（少写几个字母），
+  // 文档里那个更长的名字用 includes 仍然命中不到、用它反过来查却会命中 —— 结果是
+  // 被截短的改名整个逃掉，判据照绿（实测撞到）。
+  // 注意这里【不举具体变量名为例】：本判据扫的就是 scripts/**，注释里写下的名字会把自己喂饱。
+  // 以下划线结尾的是【前缀】而不是完整变量名（文档里写成 env:AIMAC_REPO_TOKEN_X 这类示例，
+  // 真实变量由运维自己接后缀）。这类按前缀匹配，其余按词边界 —— 混作一谈会两头误报。
+  const ghosts = [...documented]
+    .filter(([name]) => (name.endsWith("_")
+      ? !code.includes(name)
+      : !new RegExp(`\\b${name}\\b`, "u").test(code))).sort();
+  if (ghosts.length) {
+    output.push(`文档里写着这些环境变量，而代码里【一处都没有】：`
+      + `${ghosts.map(([name, file]) => `${name}（${file}）`).join("、")} —— `
+      + "运维照着设了不会生效，也不会有任何提示，他会以为已经调过了");
+  }
+  console.log(`文档里的环境变量：${documented.size} 个逐个核对，代码里都真实存在`);
 }
 
 function verifyReplayRemoteCheckDistinguishesLostFromMovedOn(output) {
