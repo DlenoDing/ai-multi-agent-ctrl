@@ -2593,7 +2593,7 @@ function renderTaskGroups() {
         <div class="form-row"><label>目标描述</label><textarea name="objective" required placeholder="描述该任务组要达成的目标"></textarea></div>
         <div class="form-row"><label>统一语言</label><select name="languageTag">${languageSelectOptions("zh-CN")}</select></div>
         <div class="form-row"><label>初始角色（逗号分隔）</label><input name="roles" value="orchestrator,agent-runtime,reviewer"></div>
-        ${currentProjectId ? "" : `<div class="notice warn-notice">当前无可见项目，无法创建任务组。</div>`}
+        ${currentProjectId ? "" : noVisibleProjectNotice()}
         <button class="primary-button" type="submit" ${currentProjectId ? "" : "disabled"}>创建任务组</button>
       </form>
     `),
@@ -2736,7 +2736,7 @@ function renderTaskGroupDetail(taskGroup) {
         <button class="primary-button" type="submit" ${editDisabled}>保存默认角色</button>
       </form>
     </div>
-  ` : `<div class="notice">暂时无法读取任务组配置。</div>`;
+  ` : `<div class="notice">暂时无法读取任务组配置（配置接口没取回来）：请点击右上角刷新重试；若一直取不回来，多半是这一台服务端有问题，配置本身没丢。</div>`;
 
   const languagePolicy = taskGroup.languagePolicy || {languageTag: "zh-CN"};
   const controlHtml = canControl ? `
@@ -3254,7 +3254,7 @@ function cellsWaitingWithNoAgentNotice(groups) {
   const total = Number(fleet.total || 0);
   return `<div class="notice warn-notice">这个项目有 ${esc(waiting)} 个单元已经交给执行方，`
     + `而当前【没有任何在线的 agent 节点】${total ? `（已注册 ${esc(total)} 个，此刻都不在线或已降级）` : "（一个都还没注册）"}：`
-    + `它们不会有任何进展，进度条也不会再动。先到 agent 页确认节点状态${total ? "，把降级的那台修好或重启" : "，按安装指引接入一台"}。</div>`;
+    + `它们不会有任何进展，进度条也不会再动。先到「AI 智能体」页确认节点状态${total ? "，把降级的那台修好或重启" : "，按安装指引接入一台"}。</div>`;
 }
 
 // 在制品额度用满时的出口。这条与"没有在线 agent"那条是两回事，不能合并：
@@ -3292,7 +3292,7 @@ function aiAnalysisStalledNotice(requests) {
   const total = Number(fleet.total || 0);
   return `<div class="notice warn-notice">有 ${esc(waiting)} 张卡片在等 AI 再分析，`
     + `而当前【没有任何在线的 agent 节点】${total ? `（已注册 ${esc(total)} 个，此刻都不在线或已降级）` : "（一个都还没注册）"}：`
-    + `这个等待不会有结果。要么先到 agent 页把节点恢复，要么直接在这里定稿或打回 —— 不必等它回话。</div>`;
+    + `这个等待不会有结果。要么先到「AI 智能体」页把节点恢复，要么直接在这里定稿或打回 —— 不必等它回话。</div>`;
 }
 
 // 连续失败就不只是"参数里的一行小字"了：它意味着此刻没有任何东西在推进，

@@ -3171,6 +3171,14 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "不许用没加书名号的英文页名指路（「到 agent 页」实测 4 处）",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyGuidanceNamesRealPages",
+    from: "要么先到「AI 智能体」页把节点恢复",
+    to: "要么先到 agent 页把节点恢复",
+    expect: "没加书名号"
+  },
+  {
     name: "停摆提示要指出同一页上就能手动推一拍（连续失败那条）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

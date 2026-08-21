@@ -5896,6 +5896,16 @@ function verifyGuidanceNamesRealPages(output) {
   }
   // 下限 5 是照产品里实测的 6 处写的。我第一版写 8 —— 那个数来自一次把【判据自己的代码】
   // 也数进去的 grep（本文件里就有 8 处"点「X」"，全是这段注释和报文）。数分母要排除自己。
+  // 还有一种写法完全躲开上面两条：不加书名号的"到 agent 页"。实测 4 处，全指向
+  // 一个不存在的页名（真名是「AI 智能体」）—— 而它出现在"活不动了"这类最要紧的报文里。
+  // 这一条只认这个已知形状：白名单式地要求页名必须带书名号。
+  for (const file of files) {
+    const text = readFileSync(join(root, file), "utf8").replace(/\/\/[^\n]*/gu, (line) => " ".repeat(line.length));
+    for (const hit of text.matchAll(/到 ?([A-Za-z][A-Za-z ]{1,12}) ?页/gu)) {
+      output.push(`${file} 用没加书名号的英文页名指路（「到 ${hit[1].trim()} 页」）—— `
+        + "界面上的页名都是中文，照着找不到；页名一律写成「X」页，判据才核得到它");
+    }
+  }
   if (buttons < 12) output.push(`只找到 ${buttons} 处控件指路（应 ≥12，实测 14）—— 提取脱节或少认了一种说法，本条在空转`);
   if (labels.size < 30) output.push(`按钮文字只提出 ${labels.size} 个（应 ≥30）—— 权威表没提出来，本条在空转`);
   if (pointers < 20) {

@@ -2499,7 +2499,7 @@ await runCodedApiErrorCase();
     /没有任何在线的 agent 节点/.test(stalled),
     "进度条不会再动，而这一页一个字都不说 —— 人会一直等，并且会以为是 agent 在慢慢做");
   check("要说清它们不会有进展、以及去哪儿看",
-    /不会有任何进展/.test(stalled) && /agent 页/.test(stalled),
+    /不会有任何进展/.test(stalled) && /「AI 智能体」页/.test(stalled),
     "只说没节点，不说这对他意味着什么、下一步做什么");
   check("有在线 agent 时不挂这条提示",
     !/没有任何在线的 agent 节点/.test(probe.renderTaskGroupsWith(withCells("assigned", {online: 1, total: 2}), account, "p1", null, {})),
