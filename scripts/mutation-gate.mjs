@@ -3561,6 +3561,22 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "界面权限名写错时那道门形同虚设",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const canOrchestrate = hasPerm(\"task_group:orchestrate\");",
+    to: "  const canOrchestrate = hasPerm(\"task_group:orchestrate_typo\");",
+    expect: "页一字不变"
+  },
+  {
+    name: "没有编排权限的人不得看到编排入口",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const canOrchestrate = hasPerm(\"task_group:orchestrate\");",
+    to: "  const canOrchestrate = true;",
+    expect: "看得到按钮却按不动"
+  },
+  {
     name: "资格检查没过的方案必须在界面上看得见",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

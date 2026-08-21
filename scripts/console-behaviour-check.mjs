@@ -1515,6 +1515,63 @@ function runNoVisibleProjectCase() {
       /b_api/u.test(stuckText),
       "分支 id 不见了 —— 人知道「有个分支没写验收项」，却不知道是哪一个");
   }
+  // 界面上的每一个权限门（canOrchestrate 之类）都应当真的挡住些东西。一个门如果去掉它
+  // 页面一字不变，那它要么写错了权限名、要么包的那块早就被挪走了 —— 人的权限被"看起来"
+  // 限制住了，实际没有；反过来，一个真起作用的门若权限名与后端要的不一致，
+  // 人会看到一个按下去必然 403 的按钮。这里用差分核对：不需要手编"哪个门管哪些按钮"的表。
+  {
+    const ALL_PERMS = ["task_group:review", "task_group:control", "task_group:orchestrate",
+      "task_group:checkpoint_submit", "project:grant", "project:update", "agent:activate"];
+    const richState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development",
+        workItems: [{id: "wi1", title: "并行改造", status: "assigned", ownerRole: "agent-runtime", progress: 20}]}],
+      executionTopologies: [{
+        schemaVersion: "execution-topology/v1", topologyId: "topo1", projectId: "p1", taskGroupId: "tg1",
+        workItemId: "wi1", status: "eligibility_checked", mode: "parallel_active",
+        runnerKind: "none", isolation: "none", mergePolicy: "parent_serial_after_all_required_reported",
+        groups: [{groupId: "g1", branches: [{branchId: "b_api", objective: "", status: "queued",
+          ownedPaths: [], acceptanceChecks: [], outputContract: []}]}],
+        blockers: ["runner_isolated:topo1:runner_or_isolation_none"],
+        baseSnapshot: {stateVersion: 1, gitHead: "abc1234"},
+        createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z"
+      }],
+      // 另外两种权限各配一条真数据，否则"去掉它页面一字不变"只说明这份状态触发不了那一块，
+      // 不说明那道门是死的（差分判据最容易在这里骗自己）。形状照抄自这两块的过滤条件。
+      reviewPlans: [{reviewPlanId: "rp1", projectId: "p1", taskGroupId: "tg1", workItemId: "wi1",
+        status: "planned", createdAt: "2026-08-10T00:00:00.000Z"}],
+      systemUpgradeCandidates: [{candidateId: "suc1", projectId: "p1", taskGroupId: "tg1",
+        status: "candidate_created", summary: "把重试上限做成可配", createdAt: "2026-08-10T00:00:00.000Z"}],
+      humanConfirmationRequests: [], humanDirectives: [], agentDispatches: [], workSessions: [],
+      closeBarriers: [], qualityGates: [], findings: [], permissionRequests: [], approvalRequests: [],
+      truncatedCollections: []
+    };
+    const asUser = (perms) => renderAs({accountId: "u2", accountType: "user_account", displayName: "操作员",
+      organizationId: "org_default", effectivePermissions: perms}, richState, "monitor", "p1");
+    const full = asUser(ALL_PERMS);
+    const deadGates = [];
+    for (const perm of ALL_PERMS) {
+      const without = asUser(ALL_PERMS.filter((item) => item !== perm));
+      if (without === full) deadGates.push(perm);
+    }
+    // 只在监控页上量：这一页同时用到 orchestrate / review / control 三种权限，
+    // 另外四种主要落在别的页上，缺了它们这一页本来就不该变 —— 所以判据只针对这三种。
+    const shouldMatter = ["task_group:orchestrate", "task_group:review", "task_group:control"];
+    const silentlyDead = deadGates.filter((perm) => shouldMatter.includes(perm));
+    check("监控页上三种权限各自都要真的挡住些东西（不然人的权限只是「看起来」被限制了）",
+      silentlyDead.length === 0,
+      `这些权限去掉后监控页一字不变：${silentlyDead.join("、")} —— 门包的那块要么被挪走了、要么权限名写错了`);
+    // 反面：给全权限时，需要 orchestrate 的那两个入口必须都在（否则上面那条是"永远相等"）。
+    check("有 orchestrate 权限时，自治循环与方案降级两个入口都要在",
+      /运行自治循环/u.test(full) && /降级为串行执行/u.test(full),
+      "全权限身份都看不到这两个入口 —— 上面那条差分断言测不出任何东西");
+    // 缺 orchestrate 时，这两个入口必须都不在 —— 看得到却按不动同样是杠杆不可达。
+    const noOrchestrate = asUser(ALL_PERMS.filter((item) => item !== "task_group:orchestrate"));
+    check("没有 orchestrate 权限时，这两个入口都不该出现（按下去必然 403）",
+      !/运行自治循环/u.test(noOrchestrate) && !/降级为串行执行/u.test(noOrchestrate),
+      "看得到按钮却按不动 —— 后端 execution_topology_advance / orchestrator_run 都要 task_group:orchestrate");
+  }
   const pages = ["proj-overview", "tg", "review", "directives", "monitor", "proj-settings"];
   const silent = pages.filter((pageId) => !/当前账号暂无可见项目/u.test(renderAs(member, baseState([], []), pageId)));
   check("一个项目都没有时，六个项目页都要说清是【没有项目】而不是项目空着",
