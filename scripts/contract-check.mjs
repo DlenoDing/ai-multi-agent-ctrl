@@ -5685,7 +5685,24 @@ function verifySideEffectsComeAfterTheGuard(output) {
     output.push("这些写路由在【守卫之前】就改了状态 —— 幂等重放会把那一段再做一遍，"
       + "而回执仍是原结果，重复不会在任何地方现形：\n  " + early.join("\n  "));
   }
-  console.log(`副作用位置：${guarded} 条守卫写入逐个核对，${early.length} 条在守卫之前就改状态（应为 0）`);
+  // MCP 那一侧是同构的：命中幂等记录就走 replayed 分支，callTool 在 else 里。
+  // 本仓有过多次"REST 修了、MCP 没修"的孪生差异，所以两侧一起守 ——
+  // 判据要问的是【那条 replayed 分支还在不在，且真正的执行仍在它的 else 里】。
+  const mcp = readFileSync(join(root, "apps/mcp-server/server.mjs"), "utf8")
+    .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
+  // 判据要问【命中幂等记录时是否返回原结果而不再执行】，不能只找 "replayed: true" 这个标记：
+  //   把标记删掉、分支还在的话，那种变异不该红（回执少个字段，行为没变）；
+  //   而真正危险的是【分支本身没了】—— 那时 existingRecord 命中也会继续往下跑到 callTool。
+  // 所以锁定"命中记录 → 直接用 existingRecord.payload 出结果"这件事，再确认执行在它之后。
+  const replayAt = mcp.search(/existingRecord\) \{[\s\S]{0,200}?existingRecord\.payload/u);
+  const callAt = mcp.indexOf("await callTool(", replayAt < 0 ? 0 : replayAt);
+  if (replayAt < 0) {
+    output.push("MCP 侧找不到「命中幂等记录就返回原结果」那一支 —— 重放会把写工具真的再执行一次");
+  } else if (callAt < 0 || callAt < replayAt) {
+    output.push("MCP 侧真正的执行不在幂等重放那一支【之后】—— 命中幂等记录时仍会再跑一次工具");
+  }
+  console.log(`副作用位置：${guarded} 条守卫写入逐个核对，${early.length} 条在守卫之前就改状态（应为 0）；`
+    + "MCP 侧的幂等重放分支在真正执行之前（两侧同规）");
 }
 
 function verifyAgentSaysWhyItStoppedTakingWork(output) {

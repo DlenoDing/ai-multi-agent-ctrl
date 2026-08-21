@@ -3026,6 +3026,14 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "MCP 侧命中幂等记录必须直接回原结果（否则写工具会再跑一次）",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifySideEffectsComeAfterTheGuard",
+    from: "      } else if (existingRecord) {",
+    to: "      } else if (false) {",
+    expect: "MCP 侧找不到"
+  },
+  {
     name: "副作用必须在守卫之后（守卫前的写入不受重放保护）",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifySideEffectsComeAfterTheGuard",
