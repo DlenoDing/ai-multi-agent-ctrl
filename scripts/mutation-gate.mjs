@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "主视图不得带上界面从不读的大集合",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyViewDropsCollectionsNobodyReads",
+    from: "  cloned.roleSkills = [];",
+    to: "  cloned.roleSkillsKept = [];",
+    expect: "主视图又开始带上 roleSkills"
+  },
+  {
+    name: "界面读被清空的集合要被查出来",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyViewDropsCollectionsNobodyReads",
+    from: "    modelSelectionPolicies: [],",
+    to: "    modelSelectionPolicies: [], _probe: (state.modelProviders || []).length,",
+    expect: "而主视图把它清空了"
+  },
+  {
     name: "技能源那一页不得整份下发技能正文",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyConsoleDoesNotPullSkillBodies",

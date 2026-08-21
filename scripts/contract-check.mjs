@@ -242,6 +242,19 @@ const IRREVERSIBLE_WORDING = ["当场失效", "不可撤销", "不可逆", "无�
 const CONFIRMS_WORDED_HARD_BUT_NOT_DANGEROUS = {};
 
 
+// 主视图基底里这几个集合，全站没有一处读 state.<它们>，而每次 /api/state 都整份带上。
+// 真实部署里合计 309 KB（roleSkills 一项就 293 KB，占整份状态的 73%）。
+// 它们各有专用端点按需取，不依赖主视图。登记在这里是为了：将来谁把某一个接回界面，
+// 这条判据会当场要求把它从清空名单里挪走 —— 而不是让它继续白传。
+const VIEW_OMITTED_UNREAD_COLLECTIONS = {
+  roleSkills: "技能源那一页只取按来源分组的计数（roleSkillCountBySource）",
+  modelSelectionPolicies: "模型那一页有专用端点 /api/model-selection",
+  progressSnapshots: "进度走 /api/task-groups/:id/progress 按需取",
+  modelProviders: "界面连提都没提过它",
+  managementSurfaces: "控制台自己的页面清单写死在前端，不从状态里取"
+};
+
+
 const seedState = loadJson("data/seed-state.json");
 const runtimeSchema = loadJson("spec/runtime-bootstrap.schema.json");
 const mcpGrantSchema = loadJson("spec/mcp-grant.schema.json");
@@ -397,6 +410,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyViewDropsCollectionsNobodyReads);
 run(verifyConsoleDoesNotPullSkillBodies);
 run(verifyMachinePrincipalGuardsAreAllowlists);
 run(verifyBlockedReasonsAllHaveChinese);
@@ -10984,6 +10998,23 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
 }
 
+function verifyViewDropsCollectionsNobodyReads(output) {
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  for (const [name, why] of Object.entries(VIEW_OMITTED_UNREAD_COLLECTIONS)) {
+    if (!new RegExp(`cloned\\.${name} = \\[\\]`, "u").test(server)) {
+      output.push(`主视图又开始带上 ${name} 了（${why}）—— 界面不读它，这是纯浪费；`
+        + "真实部署里这五个加起来是 309 KB，每次打开控制台都要传一遍");
+    }
+    if (new RegExp(`state\\.${name}\\b`, "u").test(app)) {
+      output.push(`控制台开始读 state.${name} 了，而主视图把它清空了 —— 它会一直拿到空数组。`
+        + `要么把它接回视图（并说明为什么值得传），要么改走那条专用路径（${why}）`);
+    }
+  }
+  console.log(`主视图瘦身：${Object.keys(VIEW_OMITTED_UNREAD_COLLECTIONS).length} 个"界面不读"的集合逐个核对，`
+    + "都没被带进主视图，界面也没有一处读它们");
+}
+
 function verifyConsoleDoesNotPullSkillBodies(output) {
   // roleSkills 是整份状态里最大的一块（真实部署 281 条 293 KB，占 73%），而控制台
   // 只按 sourceId 数个数、判存在，从不读技能正文。整份下发有两个后果：
@@ -13646,12 +13677,12 @@ function verifyExpiredConfirmationRetargetsTheWorkItem(output) {
 }
 
 function verifyEveryStateCollectionIsTenantScoped(output) {
+  // 2026-08-22：managementSurfaces / modelProviders / modelSelectionPolicies / roleSkills
+  // 已经改成【主视图整体清空】（界面一处都不读，白传 309 KB）—— 它们不再"原样透出"，
+  // 所以从这份登记里移走。这道门反向也核："登记为全局却其实被过滤了"同样报红，
+  // 正是它在改动当天咬住了我。
   const GLOBAL_REGISTRY_COLLECTIONS = {
-    managementSurfaces: "控制台面目录：系统级清单，与租户无关",
     modelCapabilities: "模型能力画像：全局注册表",
-    modelProviders: "模型供应商：全局注册表",
-    modelSelectionPolicies: "选型策略：按 taskType/roleId 而非项目组织，全局共享",
-    roleSkills: "角色技能目录：由技能源同步而来，全局共享",
     skillSources: "技能源：全局配置（仓库地址与信任策略，不含凭据）"
   };
   const serverSource = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");

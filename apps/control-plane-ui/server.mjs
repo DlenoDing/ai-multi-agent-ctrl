@@ -1383,7 +1383,7 @@ function scopedStateForAccount(state, account, session) {
   cloned.admissionDecisions = (state.admissionDecisions || []).filter((item) => item.taskGroupId ? visibleTaskGroupIds.has(item.taskGroupId) : visibleProjectIds.has(item.projectId));
   cloned.admissionScans = (state.admissionScans || []).filter((item) => item.taskGroupId ? visibleTaskGroupIds.has(item.taskGroupId) : visibleProjectIds.has(item.projectId));
   cloned.sharedDefinitions = (state.sharedDefinitions || []).filter((definition) => visibleProjectIds.has(definition.projectId) || (definition.scopeRefs || []).some((ref) => visibleTaskGroupIds.has(String(ref).replace("TaskGroup:", ""))));
-  cloned.progressSnapshots = (state.progressSnapshots || []).filter((snapshot) => snapshot.scopeType === "project" ? visibleProjectIds.has(snapshot.scopeRef) : visibleTaskGroupIds.has(snapshot.scopeRef));
+  // progressSnapshots 在下面被整体清空（界面不读它），这里原本的可见性过滤已无意义。
   // 租约按"它指向的产出目标是否可见"过滤。原先对每条租约都整趟扫一遍 repositoryOutputs ——
   // 两个集合都随工作量增长，于是每次取状态都要付一次乘积（实测 n=3200 时 78ms，每请求）。
   // 先把可见目标的 ref 收成集合：结果完全一样，代价从 O(租约×产出) 降到 O(租约+产出)。
@@ -1429,6 +1429,17 @@ function scopedStateForAccount(state, account, session) {
   cloned.agentGatewayEvents = [];
   cloned.mcpCalls = [];
   cloned.mcpProbeNodes = [];
+  // 下面这五个【全站没有一处读 state.<它们>】，而主视图每次都整份传：
+  // roleSkills 一项在真实部署里就是 293 KB（整份状态的 73%），加起来 309 KB 白传。
+  // 技能源与模型两页各有专用端点按需取（roleSkills 那页现在只取按来源的计数），
+  // 进度快照走 /api/task-groups/:id/progress，都不依赖主视图基底。
+  // 它们仍留在 SCOPED_ALLOWED_TOP_KEYS 里 —— 那是【防泄漏的白名单】，管的是"允许出现什么"，
+  // 与"这一份要不要带上它"是两回事，不能混为一谈。
+  cloned.roleSkills = [];
+  cloned.modelSelectionPolicies = [];
+  cloned.progressSnapshots = [];
+  cloned.modelProviders = [];
+  cloned.managementSurfaces = [];
   cloned.instructionMetrics = {
     ...state.instructionMetrics,
     envelopes: (state.instructionMetrics?.envelopes || []).filter((envelope) => envelope.taskGroupId && visibleTaskGroupIds.has(envelope.taskGroupId))
