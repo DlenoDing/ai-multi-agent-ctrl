@@ -530,6 +530,19 @@ try {
   if (!createdProjectReplay.response.ok || createdProjectReplay.payload.id !== createdProject.payload.id || createdProjectReplay.payload.ownerGrant?.grantId !== createdProject.payload.ownerGrant?.grantId) {
     throw new Error("project creation idempotency replay did not preserve owner grant payload");
   }
+  // 「返回同一个 id」还不够：那也可能是两条同名记录里的第一条。真正要守的是【没有做第二次】。
+  // 服务端靠 beginGuardedWrite 里那条 early return 保证（命中幂等记录就直接回原结果，
+  // 后面的写入代码一行都不跑）—— 但这件事此前没有任何断言，那条 return 被删掉也不会有人发现。
+  {
+    const afterReplay = await jsonFetch(port, "/api/state?view=projects&limit=200",
+      {headers: {authorization: systemAuth}});
+    const sameName = (afterReplay.payload?.projects || [])
+      .filter((item) => item.name === "Doctor Managed Project");
+    if (sameName.length !== 1) {
+      throw new Error(`幂等重放把项目建了 ${sameName.length} 条（应为 1）—— `
+        + "重放返回了同一个 id，但写入其实执行了两次");
+    }
+  }
   const createdTaskGroup = await jsonFetch(port, "/api/task-groups", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-task-group-create", authorization: auth},

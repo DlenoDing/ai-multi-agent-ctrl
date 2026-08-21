@@ -3026,6 +3026,14 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "幂等重放不得真的写第二次（返回同 id 不等于没做两次）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    state.projects.push({\n      id,\n      organizationId: projectOrgId,",
+    to: "    state.projects.push({id: `${id}_dup`, organizationId: projectOrgId, name: body.name, status: \"active\"});\n    state.projects.push({\n      id,\n      organizationId: projectOrgId,",
+    expect: "幂等重放把项目建了"
+  },
+  {
     name: "取消通道断了必须说出后果（人按了取消，节点照常推送）",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyAgentSaysWhyItStoppedTakingWork",
