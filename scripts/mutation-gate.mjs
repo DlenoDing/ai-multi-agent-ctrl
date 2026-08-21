@@ -16,6 +16,7 @@ import { cpus, tmpdir } from "node:os";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { describePendingWreckage } from "./lib/mutation-wreckage.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CORE = "apps/control-plane-ui/lib/control-plane-core.mjs";
@@ -3050,6 +3051,48 @@ const MUTATIONS = [
     expect: "没有自定义白名单却报了警"
   },
   {
+    name: "锁冲突时必须交代还有一份改坏的源码没还原",
+    file: "scripts/lib/mutation-wreckage.mjs",
+    check: "verifyLockConflictAdmitsTheWreckage",
+    from: '  if (onDisk === note.original) return "";',
+    to: '  if (onDisk !== "zzz") return "";',
+    expect: "没说清"
+  },
+  {
+    name: "已经还原好了就不许再吓人（假警报同样是坏报文）",
+    file: "scripts/lib/mutation-wreckage.mjs",
+    check: "verifyLockConflictAdmitsTheWreckage",
+    from: "  if (onDisk === note.original) return \"\";",
+    to: "  if (false) return \"\";",
+    expect: "不该提残局"
+  },
+  {
+    name: "残局描述写对了也得真被锁冲突分支念出来",
+    file: "scripts/mutation-gate.mjs",
+    check: "verifyLockConflictAdmitsTheWreckage",
+    // 锚点拼起来写：本条改的是【本文件】里的真代码，而整串若原样出现在这一行，
+    // 唯一性检查就会同时命中真代码和登记项自己（2 次）—— 拼接后本行不含完整串。
+    from: "      + describePending" + "Wreckage(pendingNotePath));",
+    to: '      + "");',
+    expect: "没人念出来"
+  },
+  {
+    name: "首屏指引不得点名界面上没有的页（我第一版就写错了这句）",
+    file: "scripts/init-control-plane.mjs",
+    check: "verifyFirstScreenPointsAtRealPlaces",
+    from: "「账号与授权」页 → 在「智能体入网令牌」面板",
+    to: "「智能体」页 → 在「一次性入网」面板",
+    expect: "界面上没有的位置"
+  },
+  {
+    name: "首屏界面名提取脱节要自报空转（否则 0 个名字＝永远绿）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyFirstScreenPointsAtRealPlaces",
+    from: "[...init.matchAll(/「([^」]{2,20})」/gu)]",
+    to: "[...init.matchAll(/『([^』]{2,20})』/gu)]",
+    expect: "本条在空转"
+  },
+  {
     name: "MCP 侧命中幂等记录必须直接回原结果（否则写工具会再跑一次）",
     file: "apps/mcp-server/server.mjs",
     check: "verifySideEffectsComeAfterTheGuard",
@@ -4229,7 +4272,8 @@ function acquireLock() {
   if (holder?.pid && holder.pid !== process.pid && processAlive(holder.pid)) {
     console.error(`mutation gate: 另一个实例正在运行（pid ${holder.pid}，起于 ${holder.startedAt || "未知"}）。`
       + "\n  两个实例会互相覆盖对方改坏的源码，因此本次拒绝启动。"
-      + `\n  若确认那个进程已死，删除 ${lockPath} 后重试。`);
+      + `\n  若确认那个进程已死，删除 ${lockPath} 后重试。`
+      + describePendingWreckage(pendingNotePath));
     process.exit(1);
   }
   try {

@@ -127,7 +127,14 @@ const mcpEndpoint = process.env.AIMAC_PUBLIC_URL
 console.log(`mcp: ${mcpEndpoint}/mcp` + (process.env.AIMAC_PUBLIC_URL
   ? ""
   : "  (回环地址，只有本机的 MCP 客户端连得上；要给别的机器用，先设 AIMAC_PUBLIC_URL 再重跑)"));
-console.log("agent: log in to the management console, open the target project, generate a one-time join command, then run that command on the Agent host");
+// 这一屏其余每一行都是"英文标签 + 括号里中文说明"，只有这一行是整句英文 ——
+// 而它恰恰是最复杂的一步（怎么让 agent 入网），新人第一次装的时候读的就是它。
+// 按同一形状改：标签仍是英文（脚本输出要能 grep），说明用中文，并点名那个入口在哪。
+// 入口名要按【界面上真有的那个】写：我第一版写的是"「智能体」页"，而实际在
+// 「账号与授权」页的"智能体入网令牌"面板 —— 指向一个不存在的页面比不给指引更糟，
+// 人会先怀疑自己的版本不对。写之前搜过 app.js 里的真实面板名。
+console.log("agent: 登录管理控制台 → 「账号与授权」页 → 在「智能体入网令牌」面板签发一次性入网命令 → "
+  + "把那条命令拿到 Agent 主机上执行（命令里已带好地址与一次性令牌，不必手工配置）");
 // 登录同时需要【身份】和【令牌】：系统管理员的 authPolicy.method 是 bootstrap_token，
 // 登录时要填邮箱/账号 ID 再配上这个令牌。原先只打印令牌，从不打印身份 —— 而那个值只存在于
 // .env.example 与种子数据里，人拿着一串 token 面对"登录账号"输入框无从下手。

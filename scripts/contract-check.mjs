@@ -5,6 +5,7 @@ import { mcpServiceAllowedTools ,
   mcpServiceAllowlistNotice
 } from "../apps/control-plane-ui/lib/mcp-service-allowlist.mjs";
 import { createHash } from "node:crypto";
+import { describePendingWreckage } from "./lib/mutation-wreckage.mjs";
 import { KNOWN_SECOND_DOORS } from "./lib/known-second-doors.mjs";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -376,6 +377,8 @@ run(verifySizeAccountingDoesNotSwallowFailures);
 run(verifyAgentSaysWhyItStoppedTakingWork);
 run(verifySideEffectsComeAfterTheGuard);
 run(verifyServiceAllowlistSaysWhatItDropped);
+run(verifyFirstScreenPointsAtRealPlaces);
+run(verifyLockConflictAdmitsTheWreckage);
 run(verifyOutputTargetKeepsItsPolicyDecision);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
@@ -5665,6 +5668,67 @@ function verifyOutputTargetKeepsItsPolicyDecision(output) {
 // 运维用 AIMAC_MCP_SERVICE_ALLOWED_TOOLS 整份替换服务令牌白名单时，配了什么与实际生效了什么
 // 必须对得上，对不上就要说出来。实测原先的行为：配 3 个（1 个拼错、1 个在禁令表里）→ 放行 2 个，
 // 一声不吭；而且**拼错的那个还被当成有效工具放行了** —— 白名单本身从不核对工具是否存在。
+// npm run init 打印的是新人看到的【第一屏】。里面的指引点名了界面上的位置，
+// 而那些名字会漂：我自己写第一版时就写了"「智能体」页"，实际入口在
+// 「账号与授权」页的「智能体入网令牌」面板 —— 指向一个不存在的页面比不给指引更糟，
+// 人会先怀疑自己的版本不对，而不是怀疑这句话写错了。
+// 判据：首屏里所有「」括起来的界面名，都要在控制台源码里真的出现。
+// 变异门被硬杀会留下一份【被改坏的】源码和一张恢复便条。重跑本门会自动照便条还原，
+// 但"拿不到锁"那次不会 —— 它在 acquireLock 里就退出了，而它只说"删掉锁重试"。
+// 照着做的人删完锁可能先去跑别的门、甚至提交那份 `if (false)` 代码（2026-08-21 我自己差点）。
+// 这里【真调】那个描述函数跑四种形状，再核对锁冲突分支确实调了它 ——
+// 只验函数不验接线，等于函数写对了却没人调；只验接线不验函数，等于它可以永远返回空串。
+function verifyLockConflictAdmitsTheWreckage(output) {
+  const note = {path: "/repo/x.mjs", original: "GOOD", mutated: "BROKEN"};
+  const reader = (files) => (target) => {
+    if (!(target in files)) throw new Error("ENOENT");
+    return files[target];
+  };
+  const cases = [
+    {what: "磁盘上还是改坏的那份", files: {"/n.json": JSON.stringify(note), "/repo/x.mjs": "BROKEN"},
+      must: ["/repo/x.mjs", "还没还原", "重新跑一次本门"]},
+    {what: "磁盘既不是原样也不是改坏那份", files: {"/n.json": JSON.stringify(note), "/repo/x.mjs": "SOMETHING ELSE"},
+      must: ["/repo/x.mjs", "手工确认"]},
+    {what: "已经还原好了", files: {"/n.json": JSON.stringify(note), "/repo/x.mjs": "GOOD"}, must: []},
+    {what: "根本没有便条", files: {}, must: []}
+  ];
+  for (const item of cases) {
+    const text = describePendingWreckage("/n.json", reader(item.files));
+    if (!item.must.length) {
+      if (text) output.push(`锁冲突报文：${item.what} 时不该提残局，却说了「${text.trim().slice(0, 40)}」`);
+      continue;
+    }
+    const missing = item.must.filter((word) => !text.includes(word));
+    if (missing.length) {
+      output.push(`锁冲突报文：${item.what} 时没说清 ${missing.join("、")} —— `
+        + "人会删掉锁就走，带着一份改坏的源码去跑别的门或提交");
+    }
+  }
+  const gate = readFileSync(join(root, "scripts/mutation-gate.mjs"), "utf8");
+  const conflict = gate.slice(gate.indexOf("function acquireLock()"), gate.indexOf("function acquireLock()") + 900);
+  if (!conflict.includes("describePendingWreckage(")) {
+    output.push("mutation-gate 的锁冲突分支没调 describePendingWreckage —— 残局描述写对了也没人念出来");
+  }
+  console.log(`锁冲突报文：${cases.length} 种残局形状逐个真调，接线也核过`);
+}
+
+function verifyFirstScreenPointsAtRealPlaces(output) {
+  const init = readFileSync(join(root, "scripts/init-control-plane.mjs"), "utf8")
+    .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const names = [...new Set([...init.matchAll(/「([^」]{2,20})」/gu)].map((match) => match[1]))];
+  if (names.length < 3) {
+    output.push(`首屏指引里只找到 ${names.length} 个界面名（应至少 3）—— 提取脱节或指引被删了，本条在空转`);
+    return;
+  }
+  const missing = names.filter((name) => !app.includes(name));
+  if (missing.length) {
+    output.push(`首屏指引点名了界面上没有的位置：${missing.join("、")} —— `
+      + "照着找不到的人会先怀疑自己装错了版本，而不是怀疑这句话");
+  }
+  console.log(`首屏指引：${names.length} 个界面名逐个到控制台源码里核对，${missing.length} 个找不到（应为 0）`);
+}
+
 function verifyServiceAllowlistSaysWhatItDropped(output) {
   const previous = process.env.AIMAC_MCP_SERVICE_ALLOWED_TOOLS;
   try {
