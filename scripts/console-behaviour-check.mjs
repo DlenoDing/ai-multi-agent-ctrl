@@ -168,6 +168,7 @@ globalThis.__probe = {
   },
   statusBadge: (kind, value) => statusBadge(kind, value),
   captureToast: (sink) => { toast.info = (message) => sink(message); },
+  captureToastKind: (kind, sink) => { toast[kind] = (message) => sink(message); },
   translate: (key) => t(key),
   filteredEmptyText: (query, hidden) => filteredEmptyText(query, hidden),
   applyFilterForSource: () => String(applyFilterFor),
@@ -858,6 +859,51 @@ async function runErrorGuidanceCase() {
     taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
     findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []};
   navProbe.renderFullPageWith(bare, account, null, "org-members");
+// 点「运行自治循环」拿到的回执此前被整个丢掉，一律弹"已触发编排循环"。
+// 而这一拍完全可能【跑了但什么都没推进】：技能源同步失败会让整轮提前返回，
+// changed 里只留一条 blocked_resource —— 人以为成功了，下次再点还是同样的结果。
+{
+  const cycleProbe = loadConsole(el("div"), {realI18n: true});
+  const account = {accountId: "u1", email: "a@b.c", accountType: "system_admin",
+    displayName: "管理员", organizationId: "org_default"};
+  const bare = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {}, projects: [],
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
+    findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []};
+  const said = [];
+  const runWith = async (payload) => {
+    said.length = 0;
+    cycleProbe.renderFullPageWith(bare, account, null, "monitor");
+    cycleProbe.setFetch(async () => ({ok: true, status: 200, headers: {get: () => null},
+      json: async () => payload}));
+    // stubNavigation 会把 toast 整个换掉 —— 捕获必须【装在它之后】，否则捕不到任何东西
+    // （第一版装在前面，三条断言拿到的都是空字符串）。
+    cycleProbe.stubNavigation();
+    cycleProbe.captureToast((message) => said.push(`info:${message}`));
+    cycleProbe.captureToastKind("success", (message) => said.push(`success:${message}`));
+    cycleProbe.captureToastKind("error", (message) => said.push(`error:${message}`));
+    const button = {dataset: {action: "orchestrator-run"}, disabled: false, textContent: "运行自治循环"};
+    button.closest = (selector) => (selector === "[data-action]" ? button : null);
+    await cycleProbe.click({target: button, preventDefault: () => {}});
+    return said.join(" | ");
+  };
+  const blockedSaid = await runWith({changed: [{status: "blocked_resource", reason: "skill_source_sync_failed"}]});
+  check("这一拍被挡住时不许说成'已触发'（人会以为成功了）",
+    /error:/u.test(blockedSaid) && /被挡住/u.test(blockedSaid),
+    `被挡住时说的是：${JSON.stringify(blockedSaid.slice(0, 140))}`);
+  check("被挡住时要说出是被什么挡住的",
+    /技能源同步失败/u.test(blockedSaid),
+    `没有点名原因：${JSON.stringify(blockedSaid.slice(0, 140))}`);
+  const idleSaid = await runWith({changed: []});
+  check("跑了但没有可做的事，要说出来（不能与'推进了'共用一句话）",
+    /没有可推进的事项/u.test(idleSaid),
+    `空转一拍说的是：${JSON.stringify(idleSaid.slice(0, 140))}`);
+  const movedSaid = await runWith({changed: [{status: "dispatched"}, {status: "dispatched"}]});
+  check("真推进了要报出推进了几项",
+    /推进了 2 项/u.test(movedSaid),
+    `推进两项时说的是：${JSON.stringify(movedSaid.slice(0, 140))}`);
+}
+
 // 列表为空【不等于】没有记录 —— 加载失败时它可能压根没取回来。
 // 顶部横幅说"整页加载失败"，而表格里那句"暂无数据"是在断言"确实一条都没有"：
 // 两句话矛盾时，人信的是离数据最近的那一句 —— "接口挂了"就被读成"这个组织没有成员"。

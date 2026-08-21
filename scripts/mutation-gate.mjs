@@ -2986,6 +2986,22 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "编排这一拍被挡住时不得说成'已触发'（人会以为成功了）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      const blocked = (cycle?.changed || []).filter((item) => item?.status === \"blocked_resource\");",
+    to: "      const blocked = [];",
+    expect: "被挡住时说的是"
+  },
+  {
+    name: "'跑了没事做'与'推进了N项'不得共用一句话",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      toast.success(advanced ? `已触发编排循环，推进了 ${advanced} 项` : \"已触发编排循环：本轮没有可推进的事项\");",
+    to: "      toast.success(\"已触发编排循环\");",
+    expect: "空转一拍说的是"
+  },
+  {
     name: "引用字段登记里的名字打错要被抓到（打错＝静默不查）",
     file: "scripts/contract-check.mjs",
     check: "verifyLongLivedRecordsDoNotPointAtCappedOnes",

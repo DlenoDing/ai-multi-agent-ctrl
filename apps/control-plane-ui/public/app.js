@@ -4931,9 +4931,21 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "orchestrator-run") {
-      await api("/api/orchestrator/run", {method: "POST", body: JSON.stringify({mode: "all"})});
+      const cycle = await api("/api/orchestrator/run", {method: "POST", body: JSON.stringify({mode: "all"})});
       await loadPage();
-      toast.success("已触发编排循环");
+      // 这一拍完全可能【跑了但什么都没推进】：技能源同步失败会让整轮提前返回，
+      // changed 里只留一条 blocked_resource。此前这里把回执整个丢掉、一律弹"已触发编排循环"——
+      // 人以为成功了，而系统正卡在那儿，下一次再点还是同样的结果。
+      const blocked = (cycle?.changed || []).filter((item) => item?.status === "blocked_resource");
+      if (blocked.length) {
+        const reasons = [...new Set(blocked.map((item) => t(item.reason) || item.reason))];
+        toast.error(`编排这一拍被挡住了，没有推进任何事项：${reasons.join("；")}`);
+        return;
+      }
+      // "跑了并推进了"与"跑了但没有可做的事"对人是两件事：后者说明系统健康且无事可做，
+      // 前者说明它在干活。一句相同的"已触发"把这两种都盖住了。
+      const advanced = (cycle?.changed || []).length;
+      toast.success(advanced ? `已触发编排循环，推进了 ${advanced} 项` : "已触发编排循环：本轮没有可推进的事项");
       return;
     }
     if (action === "decide-model") {
