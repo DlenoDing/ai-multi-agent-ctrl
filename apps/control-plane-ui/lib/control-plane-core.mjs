@@ -4029,6 +4029,12 @@ export function registerRoleSkillOverlay(state, body = {}) {
     throw Object.assign(new Error("role_skill_overlay_base_not_found"), {status: 404, roleSkillRef: body.roleSkillRef || null});
   }
   const at = new Date().toISOString();
+  const overlayTaskGroupId = body.scope === "task_group" || body.taskGroupId
+    ? (body.taskGroupId || "tg_runtime_management")
+    : null;
+  const overlayTaskGroup = overlayTaskGroupId
+    ? (state.taskGroups || []).find((item) => item.id === overlayTaskGroupId)
+    : null;
   const overlay = {
     schemaVersion: "role-skill-overlay/v1",
     overlayId: createId("rso"),
@@ -4041,8 +4047,13 @@ export function registerRoleSkillOverlay(state, body = {}) {
     decisionRecordRef: body.decisionRecordRef || `decision:overlay:${base.roleSkillId}`,
     auditRef: body.auditRef || `audit:overlay:${base.roleSkillId}`,
     createdAt: at,
-    projectId: body.projectId || "prj_control_plane",
-    ...(body.scope === "task_group" || body.taskGroupId ? {taskGroupId: body.taskGroupId || "tg_runtime_management"} : {})
+    // 归属【从被授权的那个作用域推出来】，不取自由的 body.projectId —— 路由是按任务组判的权，
+    // 而这里原样采纳 projectId 的话，一条挂在 tg_A（属于项目甲）的 overlay 可以落在项目乙名下：
+    // 它不会被下发给乙的 agent（项目级选取要求 !item.taskGroupId），但会出现在乙的视图里，
+    // 归属记录就此对不上。server.mjs 里建产出目标那处早就是这么做的（"never a free body.projectId"），
+    // 这里是同一个模式没被应用。
+    projectId: overlayTaskGroup?.projectId || body.projectId || "prj_control_plane",
+    ...(overlayTaskGroupId ? {taskGroupId: overlayTaskGroupId} : {})
   };
   state.roleSkillOverlays.unshift(overlay);
   state.roleSkillOverlays = state.roleSkillOverlays.slice(0, 2000);

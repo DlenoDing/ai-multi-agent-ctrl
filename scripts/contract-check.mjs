@@ -397,6 +397,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyOverlayOwnershipComesFromItsTaskGroup);
 run(verifyRuntimeFileWritesAreRegistered);
 run(verifyEveryWriteRouteIsGuardedOrRegistered);
 run(verifyEveryCapExplainsWhatItKeeps);
@@ -10939,6 +10940,44 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyOverlayOwnershipComesFromItsTaskGroup(output) {
+  // 角色技能定制（overlay）的归属必须【从它挂的那个任务组推出来】。路由是按任务组判的权，
+  // 而 core 原先原样采纳 body.projectId —— 一条挂在项目甲任务组上的 overlay 可以落在项目乙名下。
+  // 它不会被下发给乙的 agent（项目级选取要求 !item.taskGroupId，任务组级要求 id 相等），
+  // 但会出现在乙的视图里，归属记录就此对不上。
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const taskGroup = state.taskGroups[0];
+  const base = state.roleSkills[0];
+  const forged = registerRoleSkillOverlay(state, {
+    roleSkillRef: base.roleSkillId, scope: "task_group", taskGroupId: taskGroup.id,
+    projectId: "prj_somebody_elses", patch: {allowedCapabilityAdds: ["cap_probe"]}
+  });
+  const overlay = forged.overlay || forged;
+  if (overlay.projectId !== taskGroup.projectId) {
+    output.push(`overlay 挂在 ${taskGroup.id}（属于 ${taskGroup.projectId}），却落在 ${overlay.projectId} 名下 —— `
+      + "归属取的是调用方自己填的 projectId，而判权是按任务组判的；它会出现在别人项目的视图里");
+  }
+  if (overlay.taskGroupId !== taskGroup.id) {
+    output.push(`task_group 作用域的 overlay 没有打上任务组（${overlay.taskGroupId}）—— `
+      + "少了它，项目级选取（要求 !taskGroupId）会把这条也算进去，那才是真的跨项目下发");
+  }
+  // 项目级 overlay（不带任务组）仍按调用方给的项目走 —— 那时路由判的就是项目作用域，两者一致。
+  // 这里必须用一个【与种子里那个任务组所属项目不同】的项目 id：用同一个的话，
+  // "从任务组推"和"按调用方给的"两种实现给出的答案一样，这条反面对照分辨不出来（第一版就是这样）。
+  state.projects.push({...structuredClone(state.projects[0]), id: "prj_second", name: "第二个项目"});
+  const projectScoped = registerRoleSkillOverlay(state, {
+    roleSkillRef: base.roleSkillId, scope: "project", projectId: "prj_second",
+    patch: {allowedCapabilityAdds: ["cap_probe2"]}
+  });
+  const projectOverlay = projectScoped.overlay || projectScoped;
+  if (projectOverlay.projectId !== "prj_second" || projectOverlay.taskGroupId) {
+    output.push(`项目级 overlay 的归属被改坏了（projectId=${projectOverlay.projectId} `
+      + `taskGroupId=${projectOverlay.taskGroupId}）—— 上面那条修法不该波及项目级的那一支`);
+  }
+  console.log("角色定制归属：任务组作用域从任务组推出项目、项目作用域按调用方给的项目 —— 两支都核过");
 }
 
 function verifyRuntimeFileWritesAreRegistered(output) {

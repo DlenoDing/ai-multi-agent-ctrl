@@ -3571,6 +3571,22 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "角色定制的归属必须从它挂的任务组推出来",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyOverlayOwnershipComesFromItsTaskGroup",
+    from: "    projectId: overlayTaskGroup?.projectId || body.projectId || \"prj_control_plane\",",
+    to: "    projectId: body.projectId || \"prj_control_plane\",",
+    expect: "却落在 prj_somebody_elses 名下"
+  },
+  {
+    name: "从任务组推归属不得波及项目级那一支",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyOverlayOwnershipComesFromItsTaskGroup",
+    from: "    projectId: overlayTaskGroup?.projectId || body.projectId || \"prj_control_plane\",",
+    to: "    projectId: (state.taskGroups || [])[0]?.projectId || \"prj_control_plane\",",
+    expect: "项目级 overlay 的归属被改坏了"
+  },
+  {
     name: "agent 通道不得透传自选字段",
     file: "apps/control-plane-ui/server.mjs",
     gate: "agent",
