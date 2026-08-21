@@ -537,28 +537,32 @@
           "title": "Runtime bootstrap profile",
           "status": "verified",
           "ownerRole": "agent-runtime",
-          "progress": 100
+          "progress": 100,
+          "updatedAt": "2026-07-23T11:31:40.233Z"
         },
         {
           "id": "work_management_ui",
           "title": "System and user management console",
           "status": "in_progress",
           "ownerRole": "ui-console-service",
-          "progress": 58
+          "progress": 58,
+          "updatedAt": "2026-07-23T11:31:40.233Z"
         },
         {
           "id": "work_permissions",
           "title": "Project and task-group permission model",
           "status": "review_requested",
           "ownerRole": "policy-engine",
-          "progress": 74
+          "progress": 74,
+          "updatedAt": "2026-07-23T11:31:40.233Z"
         },
         {
           "id": "work_progress",
           "title": "Progress snapshots and task visibility",
           "status": "in_progress",
           "ownerRole": "monitor",
-          "progress": 44
+          "progress": 44,
+          "updatedAt": "2026-07-23T11:31:40.233Z"
         }
       ],
       "blockers": [],
@@ -618,7 +622,9 @@
         "generatedBy": "orchestrator",
         "generatedAt": "2026-07-23T10:00:00Z",
         "updatedAt": "2026-07-23T10:00:00Z"
-      }
+      },
+      "createdAt": "2026-07-23T11:31:40.233Z",
+      "updatedAt": "2026-07-23T11:31:40.233Z"
     },
     {
       "id": "tg_instruction_efficiency",
@@ -669,14 +675,16 @@
           "title": "InstructionEnvelope schema",
           "status": "verified",
           "ownerRole": "orchestrator",
-          "progress": 100
+          "progress": 100,
+          "updatedAt": "2026-07-23T11:31:40.233Z"
         },
         {
           "id": "work_cache_hints",
           "title": "Cache hint and token budget policy",
           "status": "in_progress",
           "ownerRole": "room-broker",
-          "progress": 60
+          "progress": 60,
+          "updatedAt": "2026-07-23T11:31:40.233Z"
         }
       ],
       "blockers": [],
@@ -712,7 +720,9 @@
         "generatedBy": "orchestrator",
         "generatedAt": "2026-07-23T10:00:00Z",
         "updatedAt": "2026-07-23T10:00:00Z"
-      }
+      },
+      "createdAt": "2026-07-23T11:31:40.233Z",
+      "updatedAt": "2026-07-23T11:31:40.233Z"
     }
   ],
   "sharedDefinitions": [

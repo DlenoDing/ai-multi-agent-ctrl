@@ -3315,6 +3315,22 @@ const MUTATIONS = [
     expect: "没被 effectiveProjectConfig 认出来"
   },
   {
+    name: "种子缺时间戳要被逮到（任务组这一半）",
+    file: "scripts/contract-check.mjs",
+    check: "verifySeedLooksLikeSomethingTheProductMade",
+    from: 'for (const field of ["createdAt", "updatedAt"]) {',
+    to: 'for (const field of ["createdAt", "auditRef"]) {',
+    expect: "缺时间戳"
+  },
+  {
+    name: "种子缺时间戳要被逮到（工作项这一半）",
+    file: "scripts/contract-check.mjs",
+    check: "verifySeedLooksLikeSomethingTheProductMade",
+    from: "if (!item.updatedAt) missing.push(`${group.id}/${item.id}.updatedAt`);",
+    to: "if (!item.auditRef) missing.push(`${group.id}/${item.id}.updatedAt`);",
+    expect: "缺时间戳"
+  },
+  {
     name: "读项目仓库不许绕开统一入口（两个字段会再次分叉）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyProjectRepositoriesHaveOneReader",

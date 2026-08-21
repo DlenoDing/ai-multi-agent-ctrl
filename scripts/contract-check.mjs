@@ -384,6 +384,7 @@ run(verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect);
 run(verifyInstallScriptSaysWhatItLeftBehind);
 run(verifyInitFailsWithWordsNotAStackTrace);
 run(verifyProjectRepositoriesHaveOneReader);
+run(verifySeedLooksLikeSomethingTheProductMade);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5837,6 +5838,34 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // project.config.repositories。判定读前者、界面写后者 —— 界面上有入口，接的却不是这根线，
 // 经界面建的项目会一直卡在 project_repository_not_registered 而人修不好。
 // 现在统一走 projectRepositories()。这道门守的是"别再直接读某一个字段"。
+// 种子是新人看到的第一份数据，它应当【像是这个产品自己造出来的】。
+// 实测任务组缺 createdAt/updatedAt，于是任务组页上两张卡片都写着"更新时间：-" ——
+// 人第一眼看到的就是一个不记录时间的系统。判据：产品创建任务组时必写的时间戳，种子里也要有。
+function verifySeedLooksLikeSomethingTheProductMade(output) {
+  const seed = JSON.parse(readFileSync(join(root, "data/seed-state.json"), "utf8"));
+  const groups = seed.taskGroups || [];
+  if (groups.length < 2) {
+    output.push(`种子里只有 ${groups.length} 个任务组 —— 本条在空转`);
+    return;
+  }
+  const missing = [];
+  for (const group of groups) {
+    for (const field of ["createdAt", "updatedAt"]) {
+      if (!group[field]) missing.push(`${group.id}.${field}`);
+    }
+    for (const item of group.workItems || []) {
+      if (!item.updatedAt) missing.push(`${group.id}/${item.id}.updatedAt`);
+    }
+  }
+  if (missing.length) {
+    output.push(`种子里这些记录缺时间戳（产品自己创建时一定会写）：${missing.slice(0, 6).join("、")}`
+      + `${missing.length > 6 ? ` 等 ${missing.length} 处` : ""} —— 界面上会显示「更新时间：-」，`
+      + "新人第一眼看到的是一个不记录时间的系统");
+  }
+  console.log(`种子真实性：${groups.length} 个任务组、`
+    + `${groups.reduce((sum, group) => sum + (group.workItems || []).length, 0)} 个工作项的时间戳逐个核对`);
+}
+
 function verifyProjectRepositoriesHaveOneReader(output) {
   const files = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs"];
