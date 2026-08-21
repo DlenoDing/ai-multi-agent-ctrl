@@ -357,6 +357,14 @@ run(verifyGatesDoNotCloneFromTheNetwork);
 run(verifyDocumentedApiPathsExist);
 run(verifyRaceTimeoutsDoNotHoldTheProcess);
 run(verifyWhitelistRefusalsCarryTheWhitelist);
+// ── 写新判据时的两条硬要求（本会话各撞过三次以上，写在这里免得下次又逐条补）──────────
+// 1) 「找违规、有才红」型的判据必须有【样本下限】：它一个样本都没扫到时会安静地全绿。
+//    最后一步固定问一句"如果它一个样本都没扫到，会红还是会绿"。
+// 2) 下限要【贴近当前实际值】（留 1~5 余量），不是随手写个 4。
+//    写成 4 只防得住"扫到 0"，防不住"删掉文件清单里一项、分母从 12 静静变成 9"——
+//    今天在白名单拒绝、环境变量钳制、转发拒绝码三处各撞过一次，三次都是绿着少查。
+// 3) 分母本身也要核对："我枚举的那个集合，是不是被测面的全部"。
+//    换一种更粗的方式数一遍总数，差额立刻显出来（写路由 82 vs 守卫写入 71 就是这么发现的）。
 run(verifyGuardedWritesAreAudited);
 run(verifyWarnModeRejectionsSurviveChurn);
 run(verifyOutputTargetKeepsItsPolicyDecision);
@@ -805,7 +813,7 @@ function verifyGitFailureSaysWhyWithoutLeakingPaths(output) {
     output.push("git 失败报文核对: agent 运行时里没有取 git 原因的那一步 —— 结构判据已与代码脱节");
   }
   const rawSites = [...runtimeSource.matchAll(/execFileSync\("git"/gu)].map((match) => match.index);
-  if (rawSites.length < 3) {
+  if (rawSites.length < 8) {
     output.push(`git 失败报文核对: 只找到 ${rawSites.length} 处 git 子进程调用，远少于预期 —— 本条在空转`);
   }
   const uncovered = new Set();
@@ -5824,8 +5832,10 @@ function verifyRaceTimeoutsDoNotHoldTheProcess(output) {
       }
     }
   }
-  if (scanned < 4) {
-    output.push(`race 里的长超时只扫到 ${scanned} 处（应至少 4）—— 提取形状与代码脱节，本条在空转`);
+  // 下限贴近实际（当前 10 处）：写成 4 只防得住"扫到 0"，防不住"悄悄少扫一族"——
+  // 今天已经三次遇到"删掉文件清单里一项、分母静静变小而门照样绿"。
+  if (scanned < 8) {
+    output.push(`race 里的长超时只扫到 ${scanned} 处（应至少 8）—— 提取形状或文件清单与代码脱节，本条在空转`);
     return;
   }
   if (holding.length) {
