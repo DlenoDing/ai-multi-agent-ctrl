@@ -3171,6 +3171,30 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "「X」处 这一说法也要被认成指路（登录页那句就是这么漏掉的）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyGuidanceNamesRealPages",
+    from: '(?:点[「“]([^」”]{2,16})[」”]|[「“]([^」”]{2,16})[」”](?:处|按钮))',
+    to: '(?:点[「“]([^」”]{2,16})[」”])',
+    expect: "本条在空转"
+  },
+  {
+    name: "指路点名的控件不存在要报红（「X」处 形状）",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyGuidanceNamesRealPages",
+    from: "可在顶栏「设置密码」处设置个人密码",
+    to: "可在顶栏「修改口令」处设置个人密码",
+    expect: "没有这个按钮"
+  },
+  {
+    name: "三元里的按钮文字判据也要看得见（否则把对的指路判成错）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyGuidanceNamesRealPages",
+    from: 'for (const literal of body.matchAll(/"([^"]{2,32})"/gu)) labels.add(literal[1]);',
+    to: "void body;",
+    expect: "没有这个按钮"
+  },
+  {
     name: "报文让人去点的按钮必须真在界面上",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",

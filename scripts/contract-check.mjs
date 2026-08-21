@@ -5849,7 +5849,9 @@ function verifyGuidanceNamesRealPages(output) {
   for (const file of files) {
     // 注释里可以谈论写错过的名字（本仓就有几条这样的自述），只核对真会打给人看的字符串。
     const text = readFileSync(join(root, file), "utf8").replace(/\/\/[^\n]*/gu, (line) => " ".repeat(line.length));
-    for (const hit of text.matchAll(/「([^」]{2,16})」(页|面板)/gu)) {
+    // 弯引号也要认：登录页那句"可在顶栏“修改密码”设置个人密码"就是这么漏掉的 ——
+    // 而它面向的恰恰是【第一次登录】的人，那批人看到的按钮写着「设置密码」。
+    for (const hit of text.matchAll(/[「“]([^」”]{2,16})[」”](页|面板)/gu)) {
       pointers += 1;
       const known = hit[2] === "页" ? pages : panels;
       if (!known.has(hit[1])) {
@@ -5860,21 +5862,41 @@ function verifyGuidanceNamesRealPages(output) {
   }
   // 报文还会点名按钮（"点「立即切断」"）。同一形状、同一次文件读，顺手核完：
   // 权威来源是按钮/操作项上真出现的那段文字。模板占位（点「${label}」）跳过 —— 那是运行期才定的。
-  const labels = new Set([...app.matchAll(/>\s*([^<>{}]{2,10}?)\s*<\/(?:button|a)>/gu)].map((match) => match[1]));
+  // 上限原先是 10 个字，而"选择定稿（此后 AI 不再更改）"有 16 个 —— 判据看不见这个按钮，
+  // 于是把一条【正确的】指路判成了错。提取面的宽度自己也要核。
+  // 按钮文字有两种写法：直接写死，和 `${条件 ? "A" : "B"}`（顶栏那个"修改密码/设置密码"就是）。
+  // 只认写死的那种，等于判据看不见一半按钮 —— 会把正确的指路判成错。两种都收。
+  const labels = new Set();
+  for (const match of app.matchAll(/>([^<>]{2,120}?)<\/(?:button|a|label|option|th)>/gu)) {
+    const body = match[1].trim();
+    if (!body.includes("${")) labels.add(body);
+    for (const literal of body.matchAll(/"([^"]{2,32})"/gu)) labels.add(literal[1]);
+  }
+  // 指路点名的不只有按钮：还有输入框标签（登录页「登录账号」处）和下拉里的选项
+  // （「人工指令」页的指令类型「决策处置（重开 / 放弃）」）。这些清单在源码里是数组常量，
+  // 不是标签文字 —— 只扫标签等于把它们判成"界面上没有"。
+  for (const match of app.matchAll(/\["[a-z_]+", "([^"]{2,32})"\]/gu)) labels.add(match[1]);
   let buttons = 0;
   for (const file of files) {
     const text = readFileSync(join(root, file), "utf8").replace(/\/\/[^\n]*/gu, (line) => " ".repeat(line.length));
-    for (const hit of text.matchAll(/点「([^」]{2,10})」/gu)) {
+    // 指按钮/控件的三种说法：点「X」、「X」处、「X」按钮。
+    // 只认"点「X」"会漏掉登录页那句"可在顶栏「设置密码」处设置个人密码"——它前面是"栏"不是"在"。
+    for (const hit of text.matchAll(/(?:点[「“]([^」”]{2,16})[」”]|[「“]([^」”]{2,16})[」”](?:处|按钮))/gu)) {
+      hit[1] = hit[1] ?? hit[2];
       if (hit[1].includes("${")) continue;
+      // "在「X」页/面板" 说的是地方不是按钮，上一条已经按权威表核过了。
+      if (pages.has(hit[1]) || panels.has(hit[1])) continue;
       buttons += 1;
-      if (!labels.has(hit[1])) {
+      // 按前缀算命中：真实按钮常带一段括号说明（「选择定稿（此后 AI 不再更改）」），
+      // 指路只给前半截，人照样找得到。要求整串相等会把这种正常写法判成错。
+      if (![...labels].some((label) => label === hit[1] || label.startsWith(hit[1]))) {
         output.push(`${file} 让人去点「${hit[1]}」，而界面上没有这个按钮 —— 出事时照着点不到的人就卡在那了`);
       }
     }
   }
   // 下限 5 是照产品里实测的 6 处写的。我第一版写 8 —— 那个数来自一次把【判据自己的代码】
   // 也数进去的 grep（本文件里就有 8 处"点「X」"，全是这段注释和报文）。数分母要排除自己。
-  if (buttons < 5) output.push(`只找到 ${buttons} 处"点「X」"（应 ≥5）—— 提取脱节，本条在空转`);
+  if (buttons < 12) output.push(`只找到 ${buttons} 处控件指路（应 ≥12，实测 14）—— 提取脱节或少认了一种说法，本条在空转`);
   if (labels.size < 30) output.push(`按钮文字只提出 ${labels.size} 个（应 ≥30）—— 权威表没提出来，本条在空转`);
   if (pointers < 20) {
     output.push(`只找到 ${pointers} 处指路（应 ≥20）—— 提取脱节或文件清单缩水了，本条在空转`);

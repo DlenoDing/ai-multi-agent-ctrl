@@ -1599,7 +1599,7 @@ function renderLogin() {
           <button class="primary-button" type="submit">登 录</button>
         </form>
         ${hintBlock}
-        <p class="small muted" style="margin-top:16px;">首次使用一次性令牌登录后，可在顶栏“修改密码”设置个人密码。</p>
+        <p class="small muted" style="margin-top:16px;">首次使用一次性令牌登录后，可在顶栏「设置密码」处设置个人密码（设过之后那里会变成「修改密码」）。</p>
       </div>
     </div>
   `;
@@ -2326,7 +2326,7 @@ function renderOrgMembers() {
     panel("说明", `
       <div class="stack">
         <div class="record"><div class="record-title"><strong>一次性令牌</strong></div><div class="record-meta"><span>成员首次使用令牌登录后令牌即失效，可在顶栏“修改密码”设置个人密码。</span></div></div>
-        <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目、任务组细粒度授权可在“账号与授权、项目管理”中补充。</span></div></div>
+        <div class="record"><div class="record-title"><strong>权限边界</strong></div><div class="record-meta"><span>成员权限不可包含系统级与组织级通配权限；项目、任务组细粒度授权可在「账号与授权」页与「项目管理」页补充。</span></div></div>
       </div>
     `),
     panel("成员列表", table(["成员", "邮箱", "类型", "状态", "角色", "操作"], memberRows,
@@ -2724,7 +2724,7 @@ function renderTaskGroupDetail(taskGroup) {
           <input name="defaultRoles" data-orig="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" value="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" ${editDisabled}>
         </div>
         <div class="record-meta">
-          <span>仓库配置：${(config.repositories || []).length} 条（在“项目设置”维护，任务组可覆盖）</span>
+          <span>仓库配置：${(config.repositories || []).length} 条（在「项目设置」页维护，任务组可覆盖）</span>
           <span>基线数据：${(config.baselineData || []).length} 条</span>
         </div>
         <button class="primary-button" type="submit" ${editDisabled}>保存默认角色</button>
@@ -3522,7 +3522,7 @@ function renderReview() {
           <button class="primary-button" type="submit" name="action" value="finalize">选择定稿（此后 AI 不再更改）</button>
           <button class="danger-button" type="submit" name="action" value="reject">打回返工</button>
         </div>
-        <div class="notice" style="margin-top:6px;">定稿前可与 AI 多轮协商：你提方案 → AI 再分析（可提出不合理之处或更优方式）→ 你再决定。只有点“选择定稿”才锁定。</div>
+        <div class="notice" style="margin-top:6px;">定稿前可与 AI 多轮协商：你提方案 → AI 再分析（可提出不合理之处或更优方式）→ 你再决定。只有点「选择定稿」才锁定。</div>
       </form>` : `<div class="notice warn-notice" style="margin-top:10px;">当前账号无“人工审核”权限，仅可查看待确认问题。</div>`}
       ${(request.deliberation || []).length ? `<div class="record-meta" style="margin-top:8px;display:block;">
         <strong>协商记录（第 ${esc(String(request.round || 1))} 轮${request.awaitingAiAnalysis ? "，等待 AI 再分析" : ""}）</strong>
