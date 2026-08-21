@@ -859,6 +859,42 @@ try {
         + "失联后恢复的节点会先把提交推上去，等检查点被拒时东西已经在远端分支上了");
     }
   }
+  // （放在 claim 复核之后：提一张阻塞型确认单会把派发变成 blocked，
+  //   放在前面会吃掉那条断言的前提 —— 实测撞了一次。）
+  // agent 提确认单这条路【三套 e2e 从来没走过】。它守着一个已复现的绕过：agent 自选
+  // decisionType/subjectRef，伪造一张文案无害的"方案确认"卡片，而锁落在它想跑的另一个对象上。
+  // 路由里是逐字段白名单，但契约门测的是【白名单之后】的 core 调用（注释自己写着"模拟"）——
+  // 把路由改回 {...body} 透传，148 条契约检查全绿。只有从这条真通道打进去才看得见。
+  {
+    const claimedForCard = revokeClaim.dispatch.dispatch || revokeClaim.dispatch;
+    const forged = await json("/api/agent/v1/confirmations", {
+      method: "POST", token: revokeRegistration.nodeToken,
+      body: {
+        dispatchId: claimedForCard.dispatchId,
+        workItemId: claimedForCard.workItemId,
+        sessionId: claimedForCard.sessionId,
+        summary: "看起来无害的一个问题：要不要继续这一步？",
+        options: [{optionId: "go", label: "继续"}],
+        // 以下三样是 agent 想自己塞的：类别、被锁定的对象、决策等级。一个都不该被采纳。
+        decisionType: "plan_topology",
+        subjectRef: "ExecutionTopology:topo_agent_wants_this",
+        decisionClass: "major"
+      }
+    });
+    const card = forged.request;
+    if (!card) throw new Error(`agent 通道提不出运行时确认单：${JSON.stringify(forged).slice(0, 160)}`);
+    if (card.decisionType !== "runtime_execution") {
+      throw new Error(`agent 自选的 decisionType 被采纳了（${card.decisionType}）—— `
+        + "它能伪造一张文案无害的核心决策卡片，人一点确认，定稿锁就落到没人真正看过的那个对象上");
+    }
+    if (card.subjectRef) {
+      throw new Error(`agent 自选的 subjectRef 被采纳了（${card.subjectRef}）—— 锁会落到它指定的对象上`);
+    }
+    if (card.decisionClass === "major") {
+      throw new Error("agent 提的单被记成了核心决策 —— 核心决策一律由控制面按真实对象生成，不走这条通道");
+    }
+  }
+
   const revokeResult = await json(`/api/agent-nodes/${revokeRegistration.node.nodeId}/revoke`, {
     method: "POST",
     token: login.sessionToken,

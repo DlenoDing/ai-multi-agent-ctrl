@@ -150,6 +150,10 @@
     "blockedReason": {
       "type": "string"
     },
+    "humanConfirmationRef": {
+      "type": "string",
+      "description": "派发被阻塞在人工确认上时，记下是【哪一张】确认单挡住了它。只有 blockedReason=awaiting_human_confirmation 时才有。"
+    },
     "failureReason": {
       "type": "string"
     },

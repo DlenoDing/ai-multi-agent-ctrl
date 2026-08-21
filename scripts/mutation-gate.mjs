@@ -3571,6 +3571,22 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "agent 通道不得透传自选字段",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "agent",
+    from: "      request = createHumanConfirmationRequest(state, {\n        nodeId: node.nodeId,\n        dispatchId: body.dispatchId,",
+    to: "      request = createHumanConfirmationRequest(state, {\n        ...body,\n        nodeId: node.nodeId,\n        dispatchId: body.dispatchId,",
+    expect: "被采纳了"
+  },
+  {
+    name: "派发卡住时要说清在等哪张卡",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      dispatch.humanConfirmationRef\n        ? `<div class=\"small muted\">\u5728\u7b49\u8fd9\u5f20\u5361\uff1a<span class=\"mono\">${esc(dispatch.humanConfirmationRef)}</span></div>`\n        : \"\",",
+    to: "      \"\",",
+    expect: "没说是哪一张"
+  },
+  {
     name: "重新初始化必须带确认串",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

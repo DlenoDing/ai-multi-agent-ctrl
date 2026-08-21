@@ -3790,6 +3790,12 @@ function renderMonitor() {
     // 新持有者的 reset --hard origin/<branch> 会把那些提交当作基线继续往上做，而没有任何人复核过它们。
     [
       esc(explainCoded(dispatch.blockedReason || dispatch.failureReason)),
+      // 卡在人工确认上时，控制面【知道】是哪一张卡挡住的（dispatch.humanConfirmationRef），
+      // 而这里从来没显示过它 —— 人只看到"到人工审核页定稿对应的确认卡"，
+      // 却不知道是哪一张；审核页上同时挂着好几张时，只能一张张点开比对。
+      dispatch.humanConfirmationRef
+        ? `<div class="small muted">在等这张卡：<span class="mono">${esc(dispatch.humanConfirmationRef)}</span></div>`
+        : "",
       dispatch.previousHolderMayHavePushed
         ? `<div class="small warn-text">⚠ 上一任持有者${dispatch.recycledFromNodeId ? `（${esc(dispatch.recycledFromNodeId)}）` : ""}可能已经推送过提交：新持有者会把它们当作基线，需人工核对该分支</div>`
         : "",

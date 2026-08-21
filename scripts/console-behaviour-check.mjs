@@ -1572,6 +1572,28 @@ function runNoVisibleProjectCase() {
       !/运行自治循环/u.test(noOrchestrate) && !/降级为串行执行/u.test(noOrchestrate),
       "看得到按钮却按不动 —— 后端 execution_topology_advance / orchestrator_run 都要 task_group:orchestrate");
   }
+  // 派发卡在人工确认上时，控制面知道是哪一张卡挡住的，而界面从来没显示过它 ——
+  // 人只看到"到人工审核页定稿对应的确认卡"，同时挂着好几张时只能一张张点开比对。
+  {
+    const blockedState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development",
+        workItems: [{id: "wi1", title: "改造", status: "assigned", ownerRole: "agent-runtime", progress: 30}]}],
+      agentDispatches: [{schemaVersion: "agent-dispatch/v1", dispatchId: "dsp_waiting", projectId: "p1",
+        taskGroupId: "tg1", workItemId: "wi1", sessionId: "ws1", runId: "run1", status: "blocked",
+        blockedReason: "awaiting_human_confirmation", humanConfirmationRef: "hcr_the_one_blocking_it",
+        attempts: 1, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z"}],
+      workSessions: [], humanConfirmationRequests: [], humanDirectives: [], executionTopologies: [],
+      closeBarriers: [], qualityGates: [], findings: [], permissionRequests: [], approvalRequests: [],
+      truncatedCollections: []
+    };
+    const blockedText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, blockedState, "monitor", "p1");
+    check("派发卡在人工确认上时，要说清在等哪一张卡",
+      /hcr_the_one_blocking_it/u.test(blockedText),
+      "只说了「到人工审核页定稿对应的确认卡」，没说是哪一张 —— 同时挂着几张时人只能一张张点开比对");
+  }
   const pages = ["proj-overview", "tg", "review", "directives", "monitor", "proj-settings"];
   const silent = pages.filter((pageId) => !/当前账号暂无可见项目/u.test(renderAs(member, baseState([], []), pageId)));
   check("一个项目都没有时，六个项目页都要说清是【没有项目】而不是项目空着",
