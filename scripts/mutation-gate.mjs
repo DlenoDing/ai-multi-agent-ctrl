@@ -3385,6 +3385,30 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "工作树不干净时不得替人提交",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyLocalGitWorkerRefusesUnsafeRepositoryState",
+    from: "  if (gitStatusPaths(root).length) throw new Error(\"agent_runtime_worker_requires_clean_worktree\");",
+    to: "  if (false) throw new Error(\"agent_runtime_worker_requires_clean_worktree\");",
+    expect: "工作树里有没提交的改动"
+  },
+  {
+    name: "产出路径必须落在白名单内",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyLocalGitWorkerRefusesUnsafeRepositoryState",
+    from: "  if (!pathMatchesAllowlist(outputPath, target.pathAllowlist || [])) throw new Error(\"agent_runtime_output_outside_allowlist\");",
+    to: "  if (false) throw new Error(\"agent_runtime_output_outside_allowlist\");",
+    expect: "白名单不含产出目录"
+  },
+  {
+    name: "清单路径必须落在白名单内",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyLocalGitWorkerRefusesUnsafeRepositoryState",
+    from: "  if (!pathMatchesAllowlist(manifestPath, target.pathAllowlist || [])) throw new Error(\"artifact_manifest_outside_allowlist\");",
+    to: "  if (false) throw new Error(\"artifact_manifest_outside_allowlist\");",
+    expect: "清单路径落在白名单之外"
+  },
+  {
     name: "确认单必须有问题正文",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyHumanCollaborationEntryPointsRefuseEmptyInput",

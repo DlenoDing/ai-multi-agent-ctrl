@@ -345,6 +345,7 @@ run(verifyMcpSummaryIsActuallyASummary);
 run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
+run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
 run(verifyExecutionTopologyStateMachineRefusesBadTransitions);
 run(verifyGateAssertionsMatchWholeRefusalCodes);
@@ -8846,7 +8847,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
   // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
   // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 36;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 34;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -10423,6 +10424,112 @@ function verifyHumanWrittenTextIsNeverSilentlyTruncated(output) {
       + "台账上记的与他写的不是一句话；改用 assertHumanTextWithinLimit（超了就拒，并说清超出多少）");
   }
   console.log(`人写文本不许静默截断：${guarded} 处走了长度校验，${truncated.length} 处仍在 slice 截断（应为 0）`);
+}
+
+function verifyLocalGitWorkerRefusesUnsafeRepositoryState(output) {
+  // agent 干活那一步的 git 安全边界此前整族【零覆盖】：工作树必须干净、产出与清单必须落在
+  // 白名单内、推完远端 SHA 必须与本地一致。工作树那条最要紧 —— 不干净就提交，
+  // 等于把别人（或上一次跑到一半）的未提交改动一起推上去，而没人知道那些改动是谁的。
+  const workspace = mkdtempSync(join(tmpdir(), "cc-local-worker-"));
+  try {
+    const repo = join(workspace, "repo");
+    const remote = join(workspace, "remote");
+    mkdirSync(repo, {recursive: true});
+    execFileSync("git", ["init", "--bare", "-q", remote]);
+    const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "contract@local");
+    git("config", "user.name", "contract");
+    // 这个标记文件是 deterministicLocalWorker 的开关之一：只有【自检仓】才允许服务端自己跑。
+    writeFileSync(join(repo, ".aimac-verification-repository"), "contract-check\n");
+    mkdirSync(join(repo, "docs"), {recursive: true});
+    writeFileSync(join(repo, "docs/readme.md"), "base\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    git("remote", "add", "origin", remote);
+    git("push", "-q", "origin", "HEAD:refs/heads/main");
+
+    const build = (tune = () => {}) => {
+      const st = structuredClone(seedState);
+      st.runtime = {...(st.runtime || {}), executionProfile: "verification"};
+      ensureRuntimeCollections(st, {root: repo});
+      const taskGroup = st.taskGroups.find((item) => item.id === "tg_runtime_management");
+      const workItem = taskGroup.workItems[0];
+      workItem.status = "assigned";
+      const target = st.repositoryOutputs.find((item) => item.taskGroupId === taskGroup.id) || st.repositoryOutputs[0];
+      target.taskGroupId = taskGroup.id;
+      target.workItemId = workItem.id;
+      target.pathAllowlist = ["docs/**"];
+      // 登记的仓库地址要与这个临时仓真正配着的 remote 一致，否则每个用例都先撞
+      // push_ref_remote_repository_mismatch（那道另有判据守着，不是这里要测的）。
+      target.repositoryUrl = remote;
+      // 基线是【这次提交之前】的 HEAD：种子里写的是字面量 "HEAD"，那样 diff 永远为空，
+      // 每个用例都先撞 checkpoint_commit_has_no_changed_paths。
+      target.baseRef = execFileSync("git", ["rev-parse", "HEAD"], {cwd: repo, encoding: "utf8"}).trim();
+      target.artifactManifestPath = "docs/artifact-manifests/probe.json";
+      st.workSessions = [{sessionId: "ws_worker", taskGroupId: taskGroup.id, projectId: taskGroup.projectId,
+        workItemId: workItem.id, status: "active"}];
+      st.agentDispatches = [{dispatchId: "dsp_worker", sessionId: "ws_worker", runId: "run_worker",
+        taskGroupId: taskGroup.id, projectId: taskGroup.projectId, workItemId: workItem.id,
+        repositoryOutputTargetRef: target.targetId, status: "queued", requiredCredentialEnvNames: []}];
+      st.agentTaskContracts = [{sessionId: "ws_worker", runId: "run_worker", projectId: taskGroup.projectId,
+        taskGroupId: taskGroup.id, workId: workItem.id, roleId: "agent-runtime", roleSkill: {}, actionBasis: {}}];
+      // 检查点校验要求这次会话确实持着这个产出目标的租约 —— 少了它，每个用例都会先撞
+      // active_session_lease_required，正面对照与三条反面用例一起空转。
+      const lease = {leaseId: "lease_worker", resourceRef: `RepositoryOutputTarget:${target.targetId}`,
+        holderRef: "session:ws_worker", status: "active", fencingToken: 1,
+        acquiredAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString()};
+      st.leases = [lease];
+      target.leaseRef = lease.leaseId;
+      tune({state: st, taskGroup, workItem, target});
+      return st;
+    };
+    const reasonOf = (tune) => {
+      const st = build(tune);
+      const result = runAgentRuntimeWorker(st, {root: repo, repositoryRoot: repo, maxJobs: 1,
+        allowDeterministicLocalWorker: true});
+      return (result.results || [])[0] || {};
+    };
+
+    // 正面对照先走：干净工作树 + 白名单对得上时，这一趟必须真的跑完（否则下面全是「永远失败」）。
+    const clean = reasonOf(() => {});
+    if (clean.status !== "completed") {
+      output.push(`本地 git 工作器: 一切正常时也没跑完（${clean.status}/${clean.reason}）—— `
+        + "下面几条断言测不出任何东西");
+    }
+    // 每个用例跑完都会在仓库里留下提交，把仓库复位到基线，各用例之间互不干扰。
+    const baseline = git("rev-parse", "HEAD");
+    const reset = () => {
+      execFileSync("git", ["reset", "-q", "--hard", baseline], {cwd: repo});
+      execFileSync("git", ["clean", "-qfd"], {cwd: repo});
+      writeFileSync(join(repo, ".aimac-verification-repository"), "contract-check\n");
+    };
+    reset();
+
+    const cases = [
+      ["工作树里有没提交的改动", "agent_runtime_worker_requires_clean_worktree", () => {
+        writeFileSync(join(repo, "docs/someone-elses-work.md"), "别人还没提交的改动\n");
+      }],
+      // 白名单要含清单目录、不含产出目录 —— 否则先撞清单那道门（第一版写 ["spec/**"]，两道全越界）。
+      ["产出目标的白名单不含产出目录", "agent_runtime_output_outside_allowlist", ({target}) => {
+        target.pathAllowlist = ["docs/artifact-manifests/**"];
+      }],
+      ["清单路径落在白名单之外", "artifact_manifest_outside_allowlist", ({target}) => {
+        target.artifactManifestPath = "spec/outside.json";
+      }]
+    ];
+    for (const [what, expected, tune] of cases) {
+      const got = reasonOf(tune);
+      if (got.reason !== expected) {
+        output.push(`本地 git 工作器: ${what}时拿到的不是 ${expected}（实际 ${got.reason || got.status}）—— `
+          + "工作树不干净就提交，等于把别人没提交完的改动一起推上去");
+      }
+      reset();
+    }
+  } finally {
+    rmSync(workspace, {recursive: true, force: true});
+  }
+  console.log("本地 git 工作器：工作树不干净/产出越界/清单越界 三种形状全拒，正常情形跑得完 —— 核过");
 }
 
 function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
