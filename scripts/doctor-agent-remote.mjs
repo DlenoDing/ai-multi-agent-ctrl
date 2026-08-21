@@ -320,6 +320,15 @@ try {
   if (rotationRun.status !== 0) throw new Error(`Agent Runtime credential rotation run failed: ${rotationRun.stderr || rotationRun.stdout}`);
   const rotatedAgentConfig = JSON.parse(readFileSync(agentConfigPath, "utf8"));
   if (rotatedAgentConfig.nodeToken === agentConfig.nodeToken) throw new Error("Agent Runtime did not persist a rotated node credential");
+  // 「不带令牌」和「带一个形状对但内容错的令牌」是两条路：前者在最外层就被挡下，
+  // 后者要一路走到凭据摘要比对那一句。此前只有前者被测过 —— 实测把 nodeAcceptsToken 里
+  // 那句 `node.credentialDigest === presentedDigest` 去掉（任何 aimac_node_ 开头的串都能
+  // 冒充某个节点），三套 e2e 无一报红。
+  const forgedNodeToken = await jsonRaw("/api/agent/v1/nodes/me", {token: "aimac_node_forged_but_well_formed"});
+  if (forgedNodeToken.response.status !== 401) {
+    throw new Error(`形状对、内容错的节点令牌被放行了（HTTP ${forgedNodeToken.response.status}）—— `
+      + "凭据比对失效时，任何人拼一个 aimac_node_ 开头的串就能冒充节点");
+  }
   const previousCredentialProbe = await jsonRaw("/api/agent/v1/nodes/me", {token: agentConfig.nodeToken});
   const currentCredentialProbe = await jsonRaw("/api/agent/v1/nodes/me", {token: rotatedAgentConfig.nodeToken});
   if (!previousCredentialProbe.response.ok || !currentCredentialProbe.response.ok) throw new Error("Agent Gateway did not accept both previous and current credentials during rotation overlap");

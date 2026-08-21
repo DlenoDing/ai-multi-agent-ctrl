@@ -3291,6 +3291,16 @@ const MUTATIONS = [
     expect: "没说清本机被改成什么样"
   },
   {
+    // 节点凭据摘要比对失效＝任何 aimac_node_ 开头的串都能冒充某个节点。
+    // 此前三套 e2e 无一报红（只测了"不带令牌"）。
+    name: "形状对、内容错的节点令牌不得被放行",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "agent",
+    from: "  return (currentValid && node.credentialDigest === presentedDigest) || previousValid;",
+    to: "  return currentValid || previousValid;",
+    expect: "形状对、内容错的节点令牌被放行了"
+  },
+  {
     // 服务令牌摘要比对失效＝任何令牌都被当成 system_service 主体，整个 MCP 面免鉴权。
     // 此前三套 e2e 无一报红（只测了"不带令牌"，没测"带一个错的令牌"）。
     name: "带一个错的令牌不得被当成 MCP 服务主体",
