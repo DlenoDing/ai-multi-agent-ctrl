@@ -410,6 +410,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyEvidenceRedactionCoversKnownSecrets);
 run(verifyDocumentedCommandsStillExist);
 run(verifyProtocolEventListMatchesReality);
 run(verifyProtocolDocMatchesRequiredRuntimeVersion);
@@ -11041,6 +11042,56 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyEvidenceRedactionCoversKnownSecrets(output) {
+  // agent 上报的证据（日志、测试报告、HAR…）会进控制面台账、给人看。redactEvidence 是
+  // 凭据外泄的最后一道，而它六条规则【一条判据都没有】。函数不导出（不为测试去导内部函数），
+  // 所以这里把那几条正则从源码里取出来、在同样的输入上跑一遍 —— 测的是"这些规则真能挡住什么"，
+  // 而不是"源码里有这么几行"。
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const body = /function redactEvidence\(value\) \{([\s\S]*?)\n\}/u.exec(runtime)?.[1] || "";
+  if (!body) {
+    output.push("找不到 redactEvidence —— 这条判据的锚点漂了，它什么都没在查");
+    console.log("证据脱敏：锚点已漂");
+    return;
+  }
+  const rules = [...body.matchAll(/text = text\.replace\((\/(?:\\.|\[[^\]]*\]|[^/\\])+\/[gimsuy]*),\s*("(?:[^"\\]|\\.)*")\)/gu)]
+    .map((match) => {
+      const [, pattern, replacement] = match;
+      const at = pattern.lastIndexOf("/");
+      return {re: new RegExp(pattern.slice(1, at), pattern.slice(at + 1)), to: JSON.parse(replacement)};
+    });
+  if (rules.length < 6) {
+    output.push(`只从 redactEvidence 里取出 ${rules.length} 条规则（源码里有六条）—— 提取形状没对上，本条在空转`);
+    return;
+  }
+  const redact = (text) => rules.reduce((acc, rule) => acc.replace(rule.re, rule.to), String(text));
+  // 每一条都要有一个"它必须挡住"的真实样本。样本形状照抄自真实凭据前缀（本仓自己签发的
+  // aimac_node_ / aimac_join_，以及常见的 GitHub / OpenAI / Slack 令牌）。
+  const secrets = [
+    ["请求头里的 Bearer 令牌", "Authorization: Bearer aimac_node_s3cr3tvalue", "aimac_node_s3cr3tvalue"],
+    ["Cookie 整行", "set-cookie: session=abc123; Path=/", "abc123"],
+    ["写成 key=value 的密钥", "api_key=sk-liveXYZ123", "sk-liveXYZ123"],
+    ["口令字段", "password: hunter2hunter2", "hunter2hunter2"],
+    ["本仓自己签发的节点令牌", "节点凭据 aimac_node_abcdefghijklmnop 已就绪", "aimac_node_abcdefghijklmnop"],
+    ["加入令牌", "join with aimac_join_zzzzzzzzzzzz now", "aimac_join_zzzzzzzzzzzz"],
+    ["GitHub 个人令牌", "remote uses ghp_0123456789abcdefghij", "ghp_0123456789abcdefghij"],
+    ["私钥整块", "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIB\n-----END RSA PRIVATE KEY-----", "MIIEowIB"],
+    ["URL 里的账号口令", "git clone https://user:p4ssw0rd@github.com/o/r.git", "p4ssw0rd"]
+  ];
+  for (const [what, sample, leaked] of secrets) {
+    if (redact(sample).includes(leaked)) {
+      output.push(`证据脱敏漏掉了${what}：「${leaked}」原样留在了上报内容里 —— `
+        + "证据会进控制面台账、显示给人看，这是凭据外泄的最后一道");
+    }
+  }
+  // 正面对照：普通内容不许被抹掉，否则"全抹成 [redacted]"也能让上面九条全绿，而证据就没用了。
+  const innocuous = "npm run validate 通过，用时 57s，提交 abc1234 已推送到 origin/main";
+  if (redact(innocuous) !== innocuous) {
+    output.push(`脱敏把普通证据内容也改了：「${redact(innocuous)}」—— 那样证据就读不出原意了`);
+  }
+  console.log(`证据脱敏：${rules.length} 条规则、${secrets.length} 种真实凭据形状逐个跑过，都挡住了；普通内容原样保留`);
 }
 
 function verifyDocumentedCommandsStillExist(output) {

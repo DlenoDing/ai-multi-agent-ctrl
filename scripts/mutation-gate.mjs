@@ -3596,6 +3596,30 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "证据脱敏必须挡住 Cookie",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyEvidenceRedactionCoversKnownSecrets",
+    from: "  text = text.replace(/((?:set-)?cookie\\s*[:=]\\s*)[^\\n\\r]+/giu, \"$1[redacted]\");",
+    to: "  text = text;",
+    expect: "证据脱敏漏掉了"
+  },
+  {
+    name: "证据脱敏必须挡住私钥整块",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyEvidenceRedactionCoversKnownSecrets",
+    from: "  text = text.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu, \"[redacted-private-key]\");",
+    to: "  text = text;",
+    expect: "证据脱敏漏掉了"
+  },
+  {
+    name: "证据脱敏必须挡住 URL 里的口令",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyEvidenceRedactionCoversKnownSecrets",
+    from: "  text = text.replace(/([a-z][a-z0-9+.-]*:\\/\\/)[^@/\\s]+@/giu, \"$1[redacted]@\");",
+    to: "  text = text;",
+    expect: "证据脱敏漏掉了"
+  },
+  {
     name: "文档里写了不存在的 npm 脚本要被查出来",
     file: "README.md",
     check: "verifyDocumentedCommandsStillExist",
