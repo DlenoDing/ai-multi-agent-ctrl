@@ -397,6 +397,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyMachinePrincipalGuardsAreAllowlists);
 run(verifyBlockedReasonsAllHaveChinese);
 run(verifyWipHintMatchesHowCapacityIsCounted);
 run(verifyTempGrantGuidePointsAtTheRightLever);
@@ -9006,7 +9007,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
   // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
   // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 23;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 19;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -10980,6 +10981,45 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyMachinePrincipalGuardsAreAllowlists(output) {
+  // 「只有真人能定稿」这类守卫必须写成【白名单】：放行 system_admin、其余一律拒。
+  // 写成黑名单（拒 agent_node / system_service）的语义是"没列到的一律放行"——
+  // 以后新增任何机器主体，默认就能替人定稿，而且不会有任何东西报警。
+  // 这道守卫今天够不着（受限节点连这个工具的白名单都进不去，已登记为第二道门），
+  // 所以行为断言测不到它 —— 能钉住的只有"它写成了哪种形状"。
+  const mcp = readFileSync(join(root, "apps/mcp-server/server.mjs"), "utf8");
+  const GUARDS = {
+    human_confirmation_decision_forbidden_for_machine_principal: "替人定稿",
+    rule_layer_mutation_forbidden_for_machine_principal: "改规则层",
+    permission_resolution_forbidden_for_machine_principal: "批权限申请",
+    contract_publish_forbidden_for_machine_principal: "发布契约",
+    account_invite_forbidden_for_machine_principal: "拉人进来"
+  };
+  let checked = 0;
+  for (const [code, what] of Object.entries(GUARDS)) {
+    const at = mcp.indexOf(`"${code}"`);
+    if (at < 0) {
+      output.push(`找不到「${what}」那道守卫（${code}）—— 它要么被删了，要么改了码，这条判据的锚点漂了`);
+      continue;
+    }
+    checked += 1;
+    // 往前找最近的那个 if 条件。
+    const before = mcp.slice(Math.max(0, at - 400), at);
+    const condition = /if \(([^\n]{0,160})\)\s*\{\s*$/u.exec(before.slice(before.lastIndexOf("if (")))?.[1]
+      || before.slice(before.lastIndexOf("if (")).split("\n")[0];
+    const allowlist = /!==\s*"system_admin"/u.test(condition);
+    const denylist = /===\s*"(agent_node|system_service|agent_identity|service_account)"/u.test(condition);
+    if (denylist || !allowlist) {
+      output.push(`「${what}」那道守卫写成了${denylist ? "黑名单" : "认不出的形状"}（${condition.trim().slice(0, 90)}）—— `
+        + "黑名单的语义是「没列到的一律放行」：以后新增任何机器主体，默认就能做这件事，而且不会有任何东西报警");
+    }
+  }
+  if (checked < 4) {
+    output.push(`只核到 ${checked} 道机器主体守卫（登记了 ${Object.keys(GUARDS).length} 道）—— 这条判据在空转`);
+  }
+  console.log(`机器主体守卫：${checked} 道逐个核对，都是白名单式（放行真人、其余一律拒）`);
 }
 
 function verifyBlockedReasonsAllHaveChinese(output) {

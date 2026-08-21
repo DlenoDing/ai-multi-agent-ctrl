@@ -14,12 +14,6 @@ export const KNOWN_SECOND_DOORS = {
     "checkpoint_submit 不在任何派发下发的工具白名单里，mcp_tool_not_granted_to_principal 先拒",
   mcp_project_create_requires_system_admin:
     "MCP 只认 agent_node / 系统管理员 / 服务令牌三种主体：前两者被工具白名单挡，后者本身就是管理员",
-  rule_layer_mutation_forbidden_for_machine_principal:
-    "skill-mcp.* 不在服务令牌工具表里，机器主体够不到这个决策点",
-  contract_publish_forbidden_for_machine_principal:
-    "同上，definition-mcp.shared_definition_publish 对机器主体不下发",
-  permission_resolution_forbidden_for_machine_principal:
-    "同上，permission-mcp.permission_resolve 对机器主体不下发",
   // 这三条守的是"受限主体必须自报作用域"。实测（2026-08-20，MCP e2e 里用真实受限节点令牌）：
   // 派发绑定的授权在进工具之前就把缺的 dispatchId/projectId/taskGroupId/sessionId/runId 填上了
   // （applyAgentGrantScopeArgs）—— 受限主体【补不出一个缺参数的调用】，走不到这三道。
@@ -83,8 +77,6 @@ export const KNOWN_SECOND_DOORS = {
   repository_output_target_refs_must_match_single_session_target:
     "角色漂移守卫把 repositoryOutputTargetRefs 当作用域校验、要求恰好是本会话那一个，"
     + "编造的 id 与别处真实的 id 都先被它拒成 role_drift_guard_not_clear（两种都实测过）",
-  account_invite_forbidden_for_machine_principal:
-    "同上，identity-mcp.* 整族按前缀对服务令牌禁用（MCP e2e 里有一条断言按规则全量核对这个前缀）"
 };
 
 // 工具名 → 它那道人工专属守卫的拒绝码。放在这个文件里是有意的：**拒绝码棘轮不扫本文件**，
@@ -95,5 +87,9 @@ export const HUMAN_ONLY_MCP_TOOL_REFUSALS = {
   "skill-mcp.role_skill_overlay_validate": "rule_layer_mutation_forbidden_for_machine_principal",
   "permission-mcp.permission_resolve": "permission_resolution_forbidden_for_machine_principal",
   "governance-mcp.contract_publish": "contract_publish_forbidden_for_machine_principal",
-  "identity-mcp.account_invite": "account_invite_forbidden_for_machine_principal"
+  "identity-mcp.account_invite": "account_invite_forbidden_for_machine_principal",
+  // 定稿是整套"人工闸门"的最后一道：机器主体替人点了确认，AI 的方案就此获得人的背书。
+  // 它与上面五条同族，却一直不在册 —— 而这个工具【三套 e2e 从没调过】（2026-08-22 按
+  // MCP 工具清单全量核对时发现：85 个工具里 53 个没被调过，其中 21 个是写工具）。
+  "human-review-mcp.confirmation_decide": "human_confirmation_decision_forbidden_for_machine_principal"
 };

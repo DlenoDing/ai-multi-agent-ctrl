@@ -1449,7 +1449,10 @@ async function dispatchTool(state, name, args, context = {}) {
       // 规则层（角色 SKILL.md 正文 / 覆盖层）不该由机器主体改：syncSkillSource 会整体替换
       // state.roleSkills，registerRoleSkillOverlay 直接产出 active 覆盖层并被下一次 buildTaskContract
       // 选中。REST 侧已把两者定为真人专属，配置面也挡了服务令牌 —— 但配置是配置，锁要落在决策点上。
-      if (context?.principal?.kind === "agent_node" || context?.principal?.kind === "system_service") {
+      // 白名单式，与「替人定稿」那道同规：放行控制台代表的真人会话（system_admin），其余一律拒。
+      // 原先是黑名单（列举 agent_node / system_service）—— 那条语义是"没列到的一律放行"，
+      // 以后新增任何机器主体，默认就能做这件事，而且不会有任何东西报警。
+      if (context?.principal?.kind !== "system_admin") {
         return {ok: false, error: "rule_layer_mutation_forbidden_for_machine_principal"};
       }
       return syncSkillSource(state, args.sourceId || "agency-agents-zh", {root, runtimeDir});
@@ -1459,7 +1462,8 @@ async function dispatchTool(state, name, args, context = {}) {
       // 规则层（角色 SKILL.md 正文 / 覆盖层）不该由机器主体改：syncSkillSource 会整体替换
       // state.roleSkills，registerRoleSkillOverlay 直接产出 active 覆盖层并被下一次 buildTaskContract
       // 选中。REST 侧已把两者定为真人专属，配置面也挡了服务令牌 —— 但配置是配置，锁要落在决策点上。
-      if (context?.principal?.kind === "agent_node" || context?.principal?.kind === "system_service") {
+      // 同上，白名单式：覆盖层是"项目级角色规则定制"，机器主体改它等于自己给自己换规矩。
+      if (context?.principal?.kind !== "system_admin") {
         return {ok: false, error: "rule_layer_mutation_forbidden_for_machine_principal"};
       }
       return registerRoleSkillOverlay(state, args);
@@ -1486,7 +1490,10 @@ async function dispatchTool(state, name, args, context = {}) {
       // 它今天不在 agent 节点的工具集、也不在服务令牌默认白名单里，可一旦运维在
       // AIMAC_MCP_SERVICE_ALLOWED_TOOLS 里配上它，真人专属就被一个环境变量悄悄取消了 ——
       // 挡在决策点上，才与"谁能拿到这个工具"无关。
-      if (context?.principal?.kind === "agent_node" || context?.principal?.kind === "system_service") {
+      // 白名单式，与「替人定稿」那道同规：放行控制台代表的真人会话（system_admin），其余一律拒。
+      // 原先是黑名单（列举 agent_node / system_service）—— 那条语义是"没列到的一律放行"，
+      // 以后新增任何机器主体，默认就能做这件事，而且不会有任何东西报警。
+      if (context?.principal?.kind !== "system_admin") {
         return {ok: false, error: "permission_resolution_forbidden_for_machine_principal"};
       }
       return permissionResolve(state, args);
@@ -1565,7 +1572,10 @@ async function dispatchTool(state, name, args, context = {}) {
     case "governance-mcp.contract_publish":
       // 共享定义契约一旦 active 就进入每个后续任务契约与指令包，且不在阻塞集里，不会留下可见阻塞。
       // REST 的 contract_publish 是真人专属，这里是同一个函数的第二道门。
-      if (context?.principal?.kind === "agent_node" || context?.principal?.kind === "system_service") {
+      // 白名单式，与「替人定稿」那道同规：放行控制台代表的真人会话（system_admin），其余一律拒。
+      // 原先是黑名单（列举 agent_node / system_service）—— 那条语义是"没列到的一律放行"，
+      // 以后新增任何机器主体，默认就能做这件事，而且不会有任何东西报警。
+      if (context?.principal?.kind !== "system_admin") {
         return {ok: false, error: "contract_publish_forbidden_for_machine_principal"};
       }
       return contractPublish(state, args);
@@ -1589,7 +1599,10 @@ async function dispatchTool(state, name, args, context = {}) {
       // 建账号是治理决策：REST 侧把 account_invite / system_account_invite 都定为真人专属，
       // 而这一侧此前直接落到实现上。两侧各写了一份实现（REST 是内联的），所以"同一个核心函数"
       // 那条对等检查结构上连不起来 —— 锁必须落在决策点本身，工具清单只是配置。
-      if (context?.principal?.kind === "agent_node" || context?.principal?.kind === "system_service") {
+      // 白名单式，与「替人定稿」那道同规：放行控制台代表的真人会话（system_admin），其余一律拒。
+      // 原先是黑名单（列举 agent_node / system_service）—— 那条语义是"没列到的一律放行"，
+      // 以后新增任何机器主体，默认就能做这件事，而且不会有任何东西报警。
+      if (context?.principal?.kind !== "system_admin") {
         return {ok: false, error: "account_invite_forbidden_for_machine_principal"};
       }
       return accountInvite(state, args);

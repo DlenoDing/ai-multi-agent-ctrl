@@ -522,7 +522,11 @@ try {
       "skill-mcp.role_skill_overlay_validate": {roleSkillRef: "ui-console-engineer", idempotencyKey: "mcp-human-only-2"},
       "permission-mcp.permission_resolve": {requestId: "prq_probe", idempotencyKey: "mcp-human-only-3"},
       "governance-mcp.contract_publish": {contractId: "ctr_probe", idempotencyKey: "mcp-human-only-4"},
-      "identity-mcp.account_invite": {email: "probe@local", idempotencyKey: "mcp-human-only-5"}
+      "identity-mcp.account_invite": {email: "probe@local", idempotencyKey: "mcp-human-only-5"},
+      // 实测：受限节点根本调不到它（工具白名单先回 mcp_tool_not_granted_to_principal），
+      // 所以它落进下面的"第二道门"那一支，拒绝码登记在 KNOWN_SECOND_DOORS 里。
+      "human-review-mcp.confirmation_decide": {requestId: "hcr_probe", selectedOptionId: "accept",
+        action: "finalize", idempotencyKey: "mcp-human-only-6"}
     };
     const HUMAN_ONLY_TOOLS = Object.entries(HUMAN_ONLY_MCP_TOOL_REFUSALS)
       .map(([name, code]) => ({name, code, args: HUMAN_ONLY_ARGS[name]}));
@@ -556,13 +560,20 @@ try {
     // 够不着的那些，其拒绝码必须【已经登记在第二道门册里】。这一条同时校验了登记册本身：
     // 此前没有任何东西核对过那份登记还成不成立 —— 白名单一放开、或者某条守卫被删掉，
     // 登记就成了一句过期的话，而拒绝码棘轮正是靠它把这些码排除在扫描面之外的。
+    // 够不着的那些，要么登记在第二道门册里，要么已经有别的门在点名核对它
+    // （2026-08-22：这五道守卫的【形状】现在由 verifyMachinePrincipalGuardsAreAllowlists
+    //  逐条核 —— 那条判据的源码里带着这些码，于是拒绝码棘轮不再把它们算成零覆盖，
+    //  契约门当场要求把它们从第二道门册删掉。两张表说的是两件事：
+    //  "为什么没有行为断言"（登记册）和"有没有任何门提到过它"（棘轮）。
+    //  这里改成认第二种：有判据点名就不必再登记，否则登记就成了永远删不掉的一句空话。）
+    const guardShapeCheck = readFileSync(new URL("./contract-check.mjs", import.meta.url), "utf8");
     const unregistered = HUMAN_ONLY_TOOLS
       .filter((tool) => behindWhitelist.some((entry) => entry.startsWith(tool.name)))
-      .filter((tool) => !KNOWN_SECOND_DOORS[tool.code]);
+      .filter((tool) => !KNOWN_SECOND_DOORS[tool.code] && !guardShapeCheck.includes(tool.code));
     if (unregistered.length) {
-      throw new Error(`这些人工专属工具被白名单先拒，但它们的拒绝码没登记进第二道门册：`
-        + `${unregistered.map((tool) => `${tool.name}/${tool.code}`).join("、")}`
-        + " —— 棘轮会把它们当成没人验过的守卫，而登记册里查不到为什么");
+      throw new Error(`这些人工专属工具被白名单先拒，而它们的拒绝码既没登记进第二道门册、`
+        + `也没有任何门点名核对过：${unregistered.map((tool) => `${tool.name}/${tool.code}`).join("、")}`
+        + " —— 那就是一道谁也没验过的守卫");
     }
     console.log(`人工专属工具：${HUMAN_ONLY_TOOLS.length} 个逐个用受限节点令牌调过，`
       + `${HUMAN_ONLY_TOOLS.length - behindWhitelist.length} 个走到了守卫并逐字对上拒绝码，`

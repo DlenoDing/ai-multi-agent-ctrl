@@ -1481,8 +1481,9 @@ const MUTATIONS = [
     name: "通向定稿的 MCP 工具必须用白名单判主体",
     file: MCP,
     check: "verifyOnlyHumanSessionsCanFinalize",
-    from: '      if (context?.principal?.kind !== "system_admin") {',
-    to: "      if (false) {",
+    // 五道机器主体守卫现在写法相同（都白名单化了），锚点必须带上各自的拒绝码才唯一。
+    from: "      if (context?.principal?.kind !== \"system_admin\") {\n        return {ok: false, error: \"human_confirmation_decision_forbidden_for_machine_principal\"};",
+    to: "      if (false) {\n        return {ok: false, error: \"human_confirmation_decision_forbidden_for_machine_principal\"};",
     expect: "主体判据不是白名单"
   },
   {
@@ -2768,8 +2769,8 @@ const MUTATIONS = [
     name: "真人专属动作在 MCP 侧必须拒绝机器主体",
     file: MCP,
     gate: "parity",
-    from: 'if (context?.principal?.kind !== "system_admin") {',
-    to: "if (false) {",
+    from: "      // \u9009\u4e2d\u3002REST \u4fa7\u5df2\u628a\u4e24\u8005\u5b9a\u4e3a\u771f\u4eba\u4e13\u5c5e\uff0c\u914d\u7f6e\u9762\u4e5f\u6321\u4e86\u670d\u52a1\u4ee4\u724c \u2014\u2014 \u4f46\u914d\u7f6e\u662f\u914d\u7f6e\uff0c\u9501\u8981\u843d\u5728\u51b3\u7b56\u70b9\u4e0a\u3002\n      // \u767d\u540d\u5355\u5f0f\uff0c\u4e0e\u300c\u66ff\u4eba\u5b9a\u7a3f\u300d\u90a3\u9053\u540c\u89c4\uff1a\u653e\u884c\u63a7\u5236\u53f0\u4ee3\u8868\u7684\u771f\u4eba\u4f1a\u8bdd\uff08system_admin\uff09\uff0c\u5176\u4f59\u4e00\u5f8b\u62d2\u3002\n      // \u539f\u5148\u662f\u9ed1\u540d\u5355\uff08\u5217\u4e3e agent_node / system_service\uff09\u2014\u2014 \u90a3\u6761\u8bed\u4e49\u662f\"\u6ca1\u5217\u5230\u7684\u4e00\u5f8b\u653e\u884c\"\uff0c\n      // \u4ee5\u540e\u65b0\u589e\u4efb\u4f55\u673a\u5668\u4e3b\u4f53\uff0c\u9ed8\u8ba4\u5c31\u80fd\u505a\u8fd9\u4ef6\u4e8b\uff0c\u800c\u4e14\u4e0d\u4f1a\u6709\u4efb\u4f55\u4e1c\u897f\u62a5\u8b66\u3002\n      if (context?.principal?.kind !== \"system_admin\") {",
+    to: "      // \u9009\u4e2d\u3002REST \u4fa7\u5df2\u628a\u4e24\u8005\u5b9a\u4e3a\u771f\u4eba\u4e13\u5c5e\uff0c\u914d\u7f6e\u9762\u4e5f\u6321\u4e86\u670d\u52a1\u4ee4\u724c \u2014\u2014 \u4f46\u914d\u7f6e\u662f\u914d\u7f6e\uff0c\u9501\u8981\u843d\u5728\u51b3\u7b56\u70b9\u4e0a\u3002\n      // \u767d\u540d\u5355\u5f0f\uff0c\u4e0e\u300c\u66ff\u4eba\u5b9a\u7a3f\u300d\u90a3\u9053\u540c\u89c4\uff1a\u653e\u884c\u63a7\u5236\u53f0\u4ee3\u8868\u7684\u771f\u4eba\u4f1a\u8bdd\uff08system_admin\uff09\uff0c\u5176\u4f59\u4e00\u5f8b\u62d2\u3002\n      // \u539f\u5148\u662f\u9ed1\u540d\u5355\uff08\u5217\u4e3e agent_node / system_service\uff09\u2014\u2014 \u90a3\u6761\u8bed\u4e49\u662f\"\u6ca1\u5217\u5230\u7684\u4e00\u5f8b\u653e\u884c\"\uff0c\n      // \u4ee5\u540e\u65b0\u589e\u4efb\u4f55\u673a\u5668\u4e3b\u4f53\uff0c\u9ed8\u8ba4\u5c31\u80fd\u505a\u8fd9\u4ef6\u4e8b\uff0c\u800c\u4e14\u4e0d\u4f1a\u6709\u4efb\u4f55\u4e1c\u897f\u62a5\u8b66\u3002\n      if (false) {",
     expect: "没有拒绝机器主体"
   },
   {
@@ -3593,6 +3594,14 @@ const MUTATIONS = [
     from: "      || grownCollections.length > 0 || grownWorkItems;",
     to: "      ;",
     expect: "服务端已经不看这些了"
+  },
+  {
+    name: "机器主体守卫必须是白名单式",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyMachinePrincipalGuardsAreAllowlists",
+    from: "      if (context?.principal?.kind !== \"system_admin\") {\n        return {ok: false, error: \"account_invite_forbidden_for_machine_principal\"};",
+    to: "      if (context?.principal?.kind === \"agent_node\") {\n        return {ok: false, error: \"account_invite_forbidden_for_machine_principal\"};",
+    expect: "那道守卫写成了黑名单"
   },
   {
     name: "自报别人的项目要被授权比对拦下",
