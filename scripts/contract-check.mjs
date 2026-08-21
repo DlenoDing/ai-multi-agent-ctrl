@@ -1013,6 +1013,22 @@ function verifyHumanAndOrganizationContracts(output) {
   // Quota enforcement returns quota + usage detail.
   if (defaultOrg) {
     defaultOrg.quotas.maxProjects = defaultOrg.usage.projects;
+    // 配额或用量被写坏时按【超额】处理：Number("abc") 是 NaN，而 usage >= NaN 是 false ——
+    // 直接比的话那个组织就成了"配额无限"。入口那侧 boundedQuota 会挡住，这里验判定点自己的兜底。
+    {
+      const unreadable = structuredClone(state);
+      const org = (unreadable.organizations || []).find((item) => item.orgId === "org_default");
+      if (!org) {
+        output.push("配额兜底: 找不到 org_default —— 这条断言无从验证");
+      } else {
+        org.quotas = {...(org.quotas || {}), maxProjects: "无限"};
+        const verdict = organizationQuotaCheck(unreadable, "org_default", "projects");
+        if (verdict.allowed || verdict.error !== "org_quota_unreadable") {
+          output.push(`配额被写成非数字时仍然放行（allowed=${verdict.allowed} error=${verdict.error}）—— `
+            + "那个组织就成了配额无限：建项目、拉人、接节点都不再受限");
+        }
+      }
+    }
     const denied = organizationQuotaCheck(state, "org_default", "projects");
     if (denied.allowed || denied.error !== "org_quota_exceeded" || typeof denied.quota !== "number" || typeof denied.usage !== "number") {
       output.push("organizationQuotaCheck did not report org_quota_exceeded with quota/usage detail");

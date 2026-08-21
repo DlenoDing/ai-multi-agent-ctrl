@@ -682,6 +682,13 @@ export function organizationQuotaCheck(state, orgId, kind) {
   const quotaKeyByKind = {members: "maxMembers", projects: "maxProjects", taskGroups: "maxTaskGroups", agents: "maxAgents"};
   const quota = Number(org.quotas?.[quotaKeyByKind[kind]] || 0);
   const usage = Number(org.usage?.[kind] || 0);
+  // 认不出的数字按【超额】处理。Number("abc") 是 NaN，而 `usage >= NaN` 是 false ——
+  // 直接比的话，一个配额被写坏的组织会变成"配额无限"。入口那侧 boundedQuota 已经挡住了
+  // 非有限值（路由改配额时会回退到旧值），schema 也要求 integer/minimum 1；
+  // 这里是【判定点】自己的兜底：它不该依赖上游每一条路都没出错。
+  if (!Number.isFinite(quota) || !Number.isFinite(usage)) {
+    return {allowed: false, error: "org_quota_unreadable", quota, usage, kind};
+  }
   if (usage >= quota) return {allowed: false, error: "org_quota_exceeded", quota, usage, kind};
   return {allowed: true, quota, usage, kind};
 }

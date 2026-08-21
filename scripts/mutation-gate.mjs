@@ -3571,6 +3571,14 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "读不出的配额必须按超额处理",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  if (!Number.isFinite(quota) || !Number.isFinite(usage)) {\n    return {allowed: false, error: \"org_quota_unreadable\", quota, usage, kind};\n  }",
+    to: "  if (false) {\n    return {allowed: false, error: \"org_quota_unreadable\", quota, usage, kind};\n  }",
+    expect: "配额被写成非数字时仍然放行"
+  },
+  {
     name: "写坏的到期时间必须按已过期处理",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",
     check: "verifyAgentJoinTokenIsSpentExactlyOnce",

@@ -846,6 +846,7 @@
     wip_capacity_reached: "在制品已达上限",
 
     org_quota_exceeded: "组织配额已超限",
+    org_quota_unreadable: "组织配额或用量不是个数字，读不出来（已按超限处理）",
     // 请求体读取阶段的四个码：它们在任何路由之前就产生，此前一个中文都没有 ——
     // 粘一大段规则超了 2MB、上传中途网络抖一下，界面上就是一串英文码。
     request_body_too_large: "提交的内容超过 2MB 上限，请分批提交或精简内容",
