@@ -2203,7 +2203,12 @@ function renderOrgOverview() {
     quotaPanel,
     panel("组织运行统计", `
       <div class="metric-grid">
-        <div class="metric"><span>项目总数</span><strong>${projects.length}${countSuffix("projects")}</strong></div>
+        <div class="metric"><span>项目总数</span><strong>${projects.length}${countSuffix("projects")}</strong>${(() => {
+          // 这一格数的是全部项目，而同一屏上那格配额排除了已归档的 —— 两个数并排却不同口径，
+          // 人只能以为其中一个错了。与上面"已吊销节点"同一处理：只在真有已归档项目时说一句。
+          const archived = projects.filter((project) => project.status === "archived").length;
+          return archived ? `<div class="small muted">另有 ${archived} 个已归档，不计入配额</div>` : "";
+        })()}</div>
         <div class="metric"><span>进行中的任务组</span><strong>${openTaskGroups.length}${countSuffix("taskGroups")}</strong></div>
         <div class="metric"><span>在线智能体节点</span><strong>${(orgAgentNodes || []).filter((node) => node.status === "online").length}/${(orgAgentNodes || []).length}</strong></div>
         <div class="metric"><span>受阻项</span><strong>${(state.taskGroups || []).flatMap((taskGroup) => taskGroup.blockers || []).length}</strong></div>

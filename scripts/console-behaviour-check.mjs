@@ -3243,6 +3243,29 @@ await runCodedApiErrorCase();
     /已吊销.*不计入配额|不计入配额/.test(overviewHtml),
     "配额只数没被吊销的节点，而智能体那张表把已吊销的也列着 —— 两个数对不上，人找不出原因");
   {
+    // 「项目总数」数全部、同屏那格配额排除已归档 —— 两个数并排却不同口径。
+    const archRoot = el("div");
+    const archProbe = loadConsole(archRoot);
+    const archState = {...orgState,
+      projects: [...orgState.projects, {id: "p_old", name: "旧项目", organizationId: "org_default", status: "archived", members: []}]};
+    const archFetch = async (path) => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+      json: async () => String(path).includes("/api/org/agents") ? {agentRuntimeNodes: [nodes[0]]} : archState,
+      text: async () => JSON.stringify(archState)});
+    await archProbe.loadWithFetch(archState, orgAdmin, "", "org-overview", archFetch);
+    check("已归档的项目不计入配额这件事要写出来",
+      /已归档，不计入配额/.test(String(archRoot.innerHTML || "")),
+      "「项目总数 2」和「项目 1/20」并排显示，人只能以为其中一个错了");
+    const noArchRoot = el("div");
+    const noArchProbe = loadConsole(noArchRoot);
+    const noArchFetch = async (path) => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+      json: async () => String(path).includes("/api/org/agents") ? {agentRuntimeNodes: [nodes[0]]} : orgState,
+      text: async () => JSON.stringify(orgState)});
+    await noArchProbe.loadWithFetch(orgState, orgAdmin, "", "org-overview", noArchFetch);
+    check("没有已归档项目时不要多说一句",
+      !/已归档，不计入配额/.test(String(noArchRoot.innerHTML || "")), "噪声会让真正要紧的那句被忽略");
+  }
+
+  {
     // 未使用的入网令牌【占着配额的位】，页面上却只数节点 —— 于是"还剩一格"和"3/3 已满"
     // 同时成立。两个面必须同一口径：占位数要显出来，且合计要算给人看。
     const reservedRoot = el("div");

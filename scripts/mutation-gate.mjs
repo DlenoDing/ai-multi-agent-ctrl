@@ -3059,6 +3059,22 @@ const MUTATIONS = [
     expect: "阻塞状态出口"
   },
   {
+    name: "已归档项目不计入配额这件事要写在同一屏上",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '          return archived ? `<div class="small muted">另有 ${archived} 个已归档，不计入配额</div>` : "";',
+    to: '          return "";',
+    expect: "已归档的项目不计入配额这件事要写出来"
+  },
+  {
+    name: "没有已归档项目时不许多挂一句",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "          return archived ?",
+    to: "          return true ?",
+    expect: "没有已归档项目时不要多说一句"
+  },
+  {
     name: "未使用的入网令牌必须算成配额占位",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyOutstandingJoinTokensHoldTheirQuotaSlot",
