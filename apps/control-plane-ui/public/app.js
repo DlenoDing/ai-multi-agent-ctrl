@@ -4847,9 +4847,22 @@ document.addEventListener("click", async (event) => {
     if (action === "task-control") {
       const taskAction = target.dataset.taskAction;
       if (taskAction === "rebound_drift" && !(await confirmDialog({title: "执行纠偏", message: "确认执行纠偏？", sub: "任务组健康度将标记为需关注并触发复核。", confirmText: "执行纠偏"}))) return;
-      await api(`/api/task-groups/${encodeURIComponent(target.dataset.task)}/control`, {method: "POST", body: JSON.stringify({action: taskAction})});
+      const control = await api(`/api/task-groups/${encodeURIComponent(target.dataset.task)}/control`,
+        {method: "POST", body: JSON.stringify({action: taskAction})});
       await loadPage();
-      toast.success({pause: "已暂停任务组", resume: "已恢复任务组", rebound_drift: "已触发纠偏"}[taskAction] || "已执行任务组操作");
+      // 暂停的全部意义就是停住【在跑的那些活】，而回执里正好有这个数（runtimeControl），
+      // 此前被整个丢掉：无论叫停了三个派发还是一个都没有，人看到的都是同一句"已暂停任务组"。
+      // "停住了 3 个"与"当前本来就没有在跑的"对下达暂停的人是两件事。
+      const runtimeControl = control?.runtimeControl || {};
+      const stopped = (runtimeControl.controlCommands || []).length + (runtimeControl.directDispatches || []).length;
+      const resumed = (runtimeControl.resumedDispatches || []).length;
+      if (taskAction === "pause") {
+        toast.success(stopped ? `已暂停任务组，并叫停了 ${stopped} 个在跑的派发` : "已暂停任务组：当前没有在跑的派发");
+      } else if (taskAction === "resume") {
+        toast.success(resumed ? `已恢复任务组，放行了 ${resumed} 个此前被挡住的派发` : "已恢复任务组：没有被这次暂停挡住的派发");
+      } else {
+        toast.success({rebound_drift: "已触发纠偏"}[taskAction] || "已执行任务组操作");
+      }
       return;
     }
     if (action === "tg-detail") {

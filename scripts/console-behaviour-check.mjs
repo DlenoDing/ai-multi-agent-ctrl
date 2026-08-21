@@ -887,6 +887,36 @@ async function runErrorGuidanceCase() {
     await cycleProbe.click({target: button, preventDefault: () => {}});
     return said.join(" | ");
   };
+  // 暂停/恢复的回执里带着"叫停/放行了几个派发"，此前也被整个丢掉：
+  // 无论停住了三个还是一个都没有，人看到的都是同一句"已暂停任务组"。
+  // 而暂停的全部意义就是停住在跑的活 —— 这两种情形对下达暂停的人是两件事。
+  const controlSaid = async (action, runtimeControl) => {
+    said.length = 0;
+    cycleProbe.renderFullPageWith(bare, account, null, "tg");
+    cycleProbe.setFetch(async () => ({ok: true, status: 200, headers: {get: () => null},
+      json: async () => ({taskGroup: {id: "tg1"}, runtimeControl})}));
+    cycleProbe.stubNavigation();
+    cycleProbe.captureToastKind("success", (message) => said.push(String(message)));
+    cycleProbe.captureToastKind("error", (message) => said.push(String(message)));
+    const button = {dataset: {action: "task-control", task: "tg1", taskAction: action},
+      disabled: false, textContent: "暂停"};
+    button.closest = (selector) => (selector === "[data-action]" ? button : null);
+    await cycleProbe.click({target: button, preventDefault: () => {}});
+    return said.join(" | ");
+  };
+  const stoppedSaid = await controlSaid("pause", {controlCommands: [{}, {}], directDispatches: [{}], resumedDispatches: []});
+  check("暂停时要说出叫停了几个在跑的派发",
+    /叫停了 3 个/u.test(stoppedSaid),
+    `暂停时说的是：${JSON.stringify(stoppedSaid.slice(0, 120))}`);
+  const nothingSaid = await controlSaid("pause", {controlCommands: [], directDispatches: [], resumedDispatches: []});
+  check("本来就没有在跑的派发时要说清楚（不能与'叫停了N个'共用一句话）",
+    /当前没有在跑的派发/u.test(nothingSaid),
+    `没有在跑时说的是：${JSON.stringify(nothingSaid.slice(0, 120))}`);
+  const resumedSaid = await controlSaid("resume", {controlCommands: [], directDispatches: [], resumedDispatches: [{}, {}]});
+  check("恢复时要说出放行了几个派发",
+    /放行了 2 个/u.test(resumedSaid),
+    `恢复时说的是：${JSON.stringify(resumedSaid.slice(0, 120))}`);
+
   const blockedSaid = await runWith({changed: [{status: "blocked_resource", reason: "skill_source_sync_failed"}]});
   check("这一拍被挡住时不许说成'已触发'（人会以为成功了）",
     /error:/u.test(blockedSaid) && /被挡住/u.test(blockedSaid),

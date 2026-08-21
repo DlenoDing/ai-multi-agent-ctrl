@@ -2986,6 +2986,14 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "暂停要说出叫停了几个在跑的派发（停住了与本来就没有是两件事）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "        toast.success(stopped ? `已暂停任务组，并叫停了 ${stopped} 个在跑的派发` : \"已暂停任务组：当前没有在跑的派发\");",
+    to: "        toast.success(\"已暂停任务组\");",
+    expect: "暂停时说的是"
+  },
+  {
     name: "编排这一拍被挡住时不得说成'已触发'（人会以为成功了）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
