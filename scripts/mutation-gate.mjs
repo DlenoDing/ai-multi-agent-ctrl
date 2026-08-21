@@ -3315,6 +3315,14 @@ const MUTATIONS = [
     expect: "没被 effectiveProjectConfig 认出来"
   },
   {
+    name: "终态副本少写一个状态＝那个状态上的任务组仍被当成活的",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyTerminalStatusListsAgree",
+    from: '  taskGroups: (item) => !["closed", "aborted"].includes(item.status)',
+    to: '  taskGroups: (item) => !["closed"].includes(item.status)',
+    expect: "少一个就等于"
+  },
+  {
     name: "真人专属动作被改名＝那条保护静默失效",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyHumanOnlyActionNamesStillExist",

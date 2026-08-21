@@ -390,6 +390,7 @@ run(verifySeedLooksLikeSomethingTheProductMade);
 run(verifyWholesaleFieldListMatchesTheWrites);
 run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
+run(verifyTerminalStatusListsAgree);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5861,6 +5862,46 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // 路由照常工作，只是机器主体从此也能做了。
 // 提取要认三元写法：真实调用是 `systemScopedInvite ? "system_account_invite" : "account_invite"`，
 // 只认"第三个参数是字面量"会把这两个判成已失效（我第一版就这么误报了）。
+// 任务组的终态在三个地方各存了一份：规格 spec/state-machines.yaml 的 terminal、
+// 代码常量 TASK_GROUP_SETTLED_STATUSES、以及散落在源码里的 13 处字面量副本
+// （`!["closed", "aborted"].includes(...)`）。终态一旦增减，漏改任何一处都是【放行】：
+// 那个新终态上的任务组仍会被当成"还活着"，写入不再被拒、编排继续推它、容量继续算它。
+// 不强求所有调用点都改用常量（12 处改动的风险大于收益），但三份清单必须字字相同。
+function verifyTerminalStatusListsAgree(output) {
+  const spec = readFileSync(join(root, "spec/state-machines.yaml"), "utf8");
+  const block = spec.slice(spec.indexOf("TaskGroup:"), spec.indexOf("TaskGroup:") + 400);
+  const declared = [...(/terminal:\s*\[([^\]]*)\]/u.exec(block)?.[1] || "")
+    .matchAll(/"([a-z_]+)"/gu)].map((hit) => hit[1]);
+  if (declared.length < 2) {
+    output.push(`规格里 TaskGroup 的 terminal 只提取到 ${declared.length} 个 —— 提取脱节，本条在空转`);
+    return;
+  }
+  const expected = [...declared].sort().join(",");
+  if ([...TASK_GROUP_SETTLED_STATUSES].sort().join(",") !== expected) {
+    output.push(`TASK_GROUP_SETTLED_STATUSES（${TASK_GROUP_SETTLED_STATUSES.join("、")}）与规格声明的终态`
+      + `（${declared.join("、")}）不一致 —— 差的那个状态上的任务组会被当成"还活着"：写入不再被拒、编排继续推它`);
+  }
+  const files = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
+    "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
+    "apps/mcp-server/server.mjs"];
+  let copies = 0;
+  for (const file of files) {
+    const text = readFileSync(join(root, file), "utf8");
+    for (const hit of text.matchAll(/\[("(?:closed|aborted)"(?:,\s*"(?:closed|aborted)")*)\]/gu)) {
+      copies += 1;
+      const inline = [...hit[1].matchAll(/"([a-z_]+)"/gu)].map((one) => one[1]).sort().join(",");
+      if (inline !== expected) {
+        output.push(`${file} 里有一处终态字面量副本写的是 [${inline}]，而权威终态是 [${expected}] —— `
+          + "少一个就等于那个状态上的任务组仍被当成活的");
+      }
+    }
+  }
+  if (copies < 10) {
+    output.push(`只扫到 ${copies} 处终态字面量副本（实测 13）—— 提取脱节，本条在空转`);
+  }
+  console.log(`终态口径：规格 [${declared.join("、")}]、常量、以及 ${copies} 处字面量副本三者逐字相同`);
+}
+
 function verifyHumanOnlyActionNamesStillExist(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
   const listed = [...(/const HUMAN_ONLY_ACTIONS = \[([\s\S]*?)\n\];/u.exec(server)?.[1] || "")
