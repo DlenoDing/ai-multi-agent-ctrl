@@ -3385,6 +3385,54 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "权限请求的资源类型必须在册",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  if (!PERMISSION_REQUEST_RESOURCE_TYPES.includes(request.resource.resourceType)) {",
+    to: "  if (false) {",
+    expect: "permission_request_resource_type_not_allowed"
+  },
+  {
+    name: "权限请求不得铸出通配或 system 权限",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  if (!isDelegatableGrantPermission(request.permission)) {",
+    to: "  if (false) {",
+    expect: "permission_request_permission_not_delegable"
+  },
+  {
+    name: "解析不出所属项目的权限请求必须拒",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  if (request.taskGroupId && request.resource.resourceType !== \"external_capability\" && !resourceProjectId) {",
+    to: "  if (false) {",
+    expect: "permission_request_resource_scope_unresolvable"
+  },
+  {
+    name: "已了结的会话不得被权限请求复活",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "    if (session && WORK_SESSION_SETTLED_STATUSES.includes(session.status)) {",
+    to: "    if (false) {",
+    expect: "permission_request_session_already_settled"
+  },
+  {
+    name: "权限请求带的会话必须属于本任务组",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "    if (session && request.taskGroupId && session.taskGroupId !== request.taskGroupId) {",
+    to: "    if (false) {",
+    expect: "permission_request_session_scope_mismatch"
+  },
+  {
+    name: "权限请求带的工作项必须属于本任务组",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "    if (!(owningGroup?.workItems || []).some((item) => item.id === request.workId)) {",
+    to: "    if (false) {",
+    expect: "permission_request_work_item_scope_mismatch"
+  },
+  {
     name: "已吊销的节点不得再收控制命令",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",
     check: "verifyAgentGatewayContracts",

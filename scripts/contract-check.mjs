@@ -3312,23 +3312,45 @@ function verifyHumanAndOrganizationContracts(output) {
     ensureRuntimeCollections(prqScopeState, {root});
     prqScopeState.workSessions = [
       {sessionId: "ws_victim", taskGroupId: "tg_other_tenant", projectId: "prj_other", status: "completed_objective"},
-      {sessionId: "ws_mine", taskGroupId: "tg_runtime_management", projectId: "prj_control_plane", status: "active"}
+      {sessionId: "ws_mine", taskGroupId: "tg_runtime_management", projectId: "prj_control_plane", status: "active"},
+      // 本组内已经了结的会话：跨组那条先拒的是作用域，这条要撞的是"已了结不得复活"。
+      {sessionId: "ws_mine_done", taskGroupId: "tg_runtime_management", projectId: "prj_control_plane", status: "completed_objective"}
     ];
-    let prqForeignSessionBlocked = false;
-    try {
-      permissionRequestSubmit(prqScopeState, {taskGroupId: "tg_runtime_management", sessionId: "ws_victim",
-        resourceType: "task_group", resourceId: "tg_runtime_management", permission: "task_group:read"});
-    } catch (error) { prqForeignSessionBlocked = /session_scope_mismatch/.test(error.message); }
-    if (!prqForeignSessionBlocked || prqScopeState.workSessions[0].status !== "completed_objective") {
-      output.push("权限请求: 可以把别的任务组已了结的会话复活成 permission_required（对方关闭门就此永久被挡）");
+    // 这一族六条守卫此前【零覆盖】——下面两条原先写的是 /session_scope_mismatch/.test(...)，
+    // 只匹配子串：既比不出是不是这道门拒的，棘轮也看不见（它按完整码扫）。
+    const prqRefusal = (args) => {
+      try { permissionRequestSubmit(prqScopeState, args); return null; }
+      catch (error) { return error.message; }
+    };
+    const base = {resourceType: "task_group", resourceId: "tg_runtime_management", permission: "task_group:read"};
+    const prqCases = [
+      ["把别的任务组已了结的会话复活成 permission_required（对方关闭门就此永久被挡）",
+        "permission_request_session_scope_mismatch", {taskGroupId: "tg_runtime_management", sessionId: "ws_victim", ...base}],
+      ["为不属于本任务组的工作项报权限请求（随后自行拒绝即可终结那个格子并作废其产出）",
+        "permission_request_work_item_scope_mismatch", {taskGroupId: "tg_runtime_management", workId: "wi_not_in_this_group", ...base}],
+      // 自选一种资源类型，就能绕过下面那道"项目必须对齐"的守卫 —— 它对解析不出项目的资源短路放行。
+      ["自选一种控制面不认的资源类型", "permission_request_resource_type_not_allowed",
+        {taskGroupId: "tg_runtime_management", resourceType: "system", resourceId: "accounts", permission: "task_group:read"}],
+      // 通配/system: 权限不得经这条通道铸出来（REST 那道门一直这么拒）。
+      ["申请一个通配权限", "permission_request_permission_not_delegable",
+        {taskGroupId: "tg_runtime_management", ...base, permission: "task_group:*"}],
+      ["申请一个 system: 权限", "permission_request_permission_not_delegable",
+        {taskGroupId: "tg_runtime_management", ...base, permission: "system:accounts_admin"}],
+      // 解析不出所属项目时必须 fail closed，不能当作"无从比较"放行。
+      ["指向一个不存在的任务组资源", "permission_request_resource_scope_unresolvable",
+        {taskGroupId: "tg_runtime_management", resourceType: "task_group", resourceId: "tg_does_not_exist", permission: "task_group:read"}],
+      // 本组内已了结的会话同样不得被复活 —— 上一条撞的是跨组，这条撞的是"已了结"。
+      ["把本组里已了结的会话复活", "permission_request_session_already_settled",
+        {taskGroupId: "tg_runtime_management", sessionId: "ws_mine_done", ...base}]
+    ];
+    for (const [what, expected, args] of prqCases) {
+      const got = prqRefusal(args);
+      if (got !== expected) {
+        output.push(`权限请求: ${what} —— 拿到的不是 ${expected}（实际 ${got || "请求就这么收下了"}）`);
+      }
     }
-    let prqForeignWorkBlocked = false;
-    try {
-      permissionRequestSubmit(prqScopeState, {taskGroupId: "tg_runtime_management", workId: "wi_not_in_this_group",
-        resourceType: "task_group", resourceId: "tg_runtime_management", permission: "task_group:read"});
-    } catch (error) { prqForeignWorkBlocked = /work_item_scope_mismatch/.test(error.message); }
-    if (!prqForeignWorkBlocked) {
-      output.push("权限请求: 可以为不属于本任务组的工作项报权限请求（随后自行拒绝即可终结那个格子并作废其产出）");
+    if (prqScopeState.workSessions[0].status !== "completed_objective") {
+      output.push("权限请求: 别的任务组那个已了结的会话被这几次尝试改了状态 —— 拒绝没有做到零副作用");
     }
     // 非空转自证：本任务组内的正常请求必须仍然走得通
     const prqLegitTg = prqScopeState.taskGroups.find((item) => item.id === "tg_runtime_management");
@@ -8635,7 +8657,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
   // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
   // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 72;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 66;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
