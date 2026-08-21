@@ -372,6 +372,7 @@ run(verifyWarnModeRejectionsSurviveChurn);
 run(verifyCorruptEventLinesAreReported);
 run(verifySizeAccountingDoesNotSwallowFailures);
 run(verifyAgentSaysWhyItStoppedTakingWork);
+run(verifySideEffectsComeAfterTheGuard);
 run(verifyOutputTargetKeepsItsPolicyDecision);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
@@ -5654,6 +5655,39 @@ function verifyOutputTargetKeepsItsPolicyDecision(output) {
 // 只说 "deferred" / "could not remove" 的话，控制台上这个节点仍是绿的、派发排着队 ——
 // 与"角色不匹配 / 模型不可用"长得一模一样（控制面那边为此专门做过 claimMissHint），
 // 人会去查一条完全找错方向的路。节点侧沿用仓里既有的形状：英文事件名 + 中文后果。
+// 幂等重放靠的是 beginGuardedWrite 里那条 early return：命中幂等记录就直接回原结果，
+// 后面的写入一行都不跑。**这条保护只覆盖守卫【之后】的代码** —— 守卫之前若已经改了状态，
+// 重放会把那一段再做一遍，而回执看起来仍是"原结果"，没有任何地方会显出重复。
+// 现在 70 条守卫写入全都把副作用放在守卫之后（守卫前只有读），这道门是为了让它保持。
+function verifySideEffectsComeAfterTheGuard(output) {
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8")
+    .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
+  const starts = [...server.matchAll(/if \(req\.method === "(?:POST|PUT|PATCH|DELETE)"/gu)].map((m) => m.index);
+  const early = [];
+  let guarded = 0;
+  for (const [index, start] of starts.entries()) {
+    const finish = starts[index + 1] ?? server.length;
+    const block = server.slice(start, finish);
+    const at = block.indexOf("beginGuardedWrite");
+    if (at < 0) continue;
+    guarded += 1;
+    const before = block.slice(0, at);
+    // 只认【写】：集合的 push/unshift/splice、对 state 子树赋值、给记录字段赋字面量状态。
+    const mutations = [...before.matchAll(/state\.\w+\.(?:push|unshift|splice)\(|state\.\w+\s*=\s*(?!=)|\w+\.status\s*=\s*["`]/gu)];
+    if (!mutations.length) continue;
+    early.push(`${server.slice(0, start).split("\n").length}: ${mutations[0][0].trim()}`);
+  }
+  if (guarded < 60) {
+    output.push(`守卫写入只扫到 ${guarded} 条（应至少 60）—— 提取形状与代码脱节，本条在空转`);
+    return;
+  }
+  if (early.length) {
+    output.push("这些写路由在【守卫之前】就改了状态 —— 幂等重放会把那一段再做一遍，"
+      + "而回执仍是原结果，重复不会在任何地方现形：\n  " + early.join("\n  "));
+  }
+  console.log(`副作用位置：${guarded} 条守卫写入逐个核对，${early.length} 条在守卫之前就改状态（应为 0）`);
+}
+
 function verifyAgentSaysWhyItStoppedTakingWork(output) {
   const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
   // 同一族：措辞听起来无害（deferred / stopped / skipping），而后果是这台节点从此

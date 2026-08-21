@@ -3026,6 +3026,22 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "副作用必须在守卫之后（守卫前的写入不受重放保护）",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifySideEffectsComeAfterTheGuard",
+    from: "  if (req.method === \"POST\" && url.pathname === \"/api/projects\") {",
+    to: "  if (req.method === \"POST\" && url.pathname === \"/api/projects\") {\n    state.__probeTouched = true;",
+    expect: "守卫之前】就改了状态"
+  },
+  {
+    name: "副作用位置扫描打不到时必须红（不得绿着空转）",
+    file: "scripts/contract-check.mjs",
+    check: "verifySideEffectsComeAfterTheGuard",
+    from: "const starts = [...server.matchAll(/if \\(req\\.method === \"(?:POST|PUT|PATCH|DELETE)\"/gu)].map((m) => m.index);\n  const early = [];",
+    to: "const starts = [...server.matchAll(/if \\(req\\.methodX === \"(?:POST|PUT|PATCH|DELETE)\"/gu)].map((m) => m.index);\n  const early = [];",
+    expect: "只扫到 0 条"
+  },
+  {
     name: "幂等重放不得真的写第二次（返回同 id 不等于没做两次）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
