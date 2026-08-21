@@ -3307,6 +3307,32 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    // 审计链断掉＝篡改检测作废。这条判据此前一直在空转：探针只写一条记录，
+    // 而链校验在"少于两条"时恒真 —— 把 prevHash 改成常量它照样绿。
+    name: "审计链断掉要被逮到（prevHash 必须接上一条）",
+    file: "apps/control-plane-ui/lib/audit-ledger.mjs",
+    check: "verifyMcpWritesLandInTheMainAuditLedger",
+    from: '    prevHash: state.auditLog[0]?.rowHash || state.auditChainHead || "sha256:genesis"',
+    to: '    prevHash: "sha256:genesis"',
+    expect: "没有接上 prevHash 链"
+  },
+  {
+    name: "台账不足两条时要自报空转（链校验在那时恒真）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyMcpWritesLandInTheMainAuditLedger",
+    from: "await handleMcpJsonRpc({\n  jsonrpc: \"2.0\", id: 2, method: \"tools/call\",",
+    to: "if (false) await handleMcpJsonRpc({\n  jsonrpc: \"2.0\", id: 2, method: \"tools/call\",",
+    expect: "链校验在空转"
+  },
+  {
+    name: "项目读授权失效要被逮到（存在性预言机那条抓得住）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '  if (resourceScope.resourceType === "project") return canReadProject(state, account, resourceScope.resourceId);',
+    to: '  if (resourceScope.resourceType === "project") return true;',
+    expect: "两者可分辨"
+  },
+  {
     // 口令比对失效＝任何口令都能登进系统管理员账号。此前它确实会被"限流没生效"那条撞出来，
     // 但那句话把人支去修限流 —— 归错因的报文比不报更坏。现在有一条点名的断言。
     name: "错的口令必须被拒（点名 invalid_credentials，不靠限流那条顺带撞出来）",

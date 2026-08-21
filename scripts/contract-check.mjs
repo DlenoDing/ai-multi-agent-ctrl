@@ -8946,14 +8946,23 @@ const response = await handleMcpJsonRpc({
     requiredReviewerRoles: ["reviewer"], idempotencyKey: "audit-merge-probe"}}
 }, {principal: {kind: "system_admin", id: "acct_probe_auditor", allowedMcpTools: ["*"]}});
 const envelope = (() => { try { return JSON.parse(response?.result?.content?.[0]?.text || "{}"); } catch { return {}; } })();
+// 再写一次：prevHash 链要有【两条】记录才验得动（少于两条时那个比较恒真，链断了也看不出来）。
+await handleMcpJsonRpc({
+  jsonrpc: "2.0", id: 2, method: "tools/call",
+  params: {name: "review-mcp.review_plan_create", arguments: {
+    projectId: "prj_control_plane", taskGroupId: "tg_runtime_management",
+    requiredReviewerRoles: ["reviewer"], idempotencyKey: "audit-merge-probe-2"}}
+}, {principal: {kind: "system_admin", id: "acct_probe_auditor", allowedMcpTools: ["*"]}});
 const state = JSON.parse(readFileSync(join(runtimeDir, "control-plane-state.json"), "utf8"));
 const archive = (() => { try { return readFileSync(join(runtimeDir, "audit-log.jsonl"), "utf8").trim().split("\\n"); } catch { return []; } })();
 const top = (state.auditLog || [])[0] || null;
-const chainOk = (state.auditLog || []).length < 2 ? true : (state.auditLog[0].prevHash === state.auditLog[1].rowHash);
+const auditCount = (state.auditLog || []).length;
+const chainOk = auditCount < 2 ? true : (state.auditLog[0].prevHash === state.auditLog[1].rowHash);
 console.log(JSON.stringify({
   ok: envelope.ok,
   top: top && {actor: top.actor, action: top.action, subject: top.subject, result: top.result},
   chainOk,
+  auditCount,
   archived: archive.some((line) => line.includes("mcp_tool_call")),
   archiveCount: archive.length
 }));
@@ -8985,7 +8994,11 @@ console.log(JSON.stringify({
   if (!String(probe.top?.subject || "").includes("review-mcp.review_plan_create")) {
     output.push(`MCP 那条审计记录没写清做了什么（subject=${probe.top?.subject}）`);
   }
-  if (!probe.chainOk) {
+  // 链校验在【只有一条记录】时恒真 —— 那样它永远绿，链断了也看不出来。
+  // 实测：把 prevHash 改成常量（整条链断掉），这条判据照样通过。先要求台账里真有两条。
+  if ((probe.auditCount || 0) < 2) {
+    output.push(`本轮台账里只有 ${probe.auditCount} 条记录 —— prevHash 链校验在空转（它在少于两条时恒真）`);
+  } else if (!probe.chainOk) {
     output.push("MCP 追加的审计条目没有接上 prevHash 链 —— 链一断，篡改检测就作废");
   }
   if (!probe.archived) {
