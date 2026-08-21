@@ -4741,13 +4741,27 @@ function gitRemoteSha(root, remote, ref) {
   return line?.split(/\s+/u)[0] || "";
 }
 
+// 必须用 -z。`git status --porcelain`（不带 -z）会把【带空格或非 ASCII 的路径】加引号并做八进制
+// 转义（core.quotePath 默认开着）：`docs/a b.md` 变成 `"docs/a b.md"`，`docs/设计说明.md` 变成
+// `"docs/\350\256\276..."`。而这里解析出来的路径要跟执行方申报的路径逐条比对，对不上就判成
+// 「未申报的改动」把提交拒掉 —— 也就是说，仓库里只要有一个中文文件名，提交路径就走不通，
+// 而报文里是一串八进制。这是个中文产品。agent 运行时那份孪生实现一直用的是 -z。
+// -z 的记录形态：`XY <path>` NUL 结尾；重命名/复制（X 或 Y 是 R/C）后面【另起一个字段】放源路径，
+// 不带 `XY ` 前缀，也不会出现 ` -> `。所以要逐字段走，不能对源路径再 slice(3)。
 function gitStatusPaths(root = process.cwd()) {
-  return git(root, ["status", "--porcelain", "--untracked-files=all"], "")
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .filter(Boolean)
-    .map((line) => line.slice(3).split(" -> ").pop())
-    .filter(Boolean);
+  const fields = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], "").split("\0");
+  const paths = [];
+  for (let index = 0; index < fields.length; index += 1) {
+    const entry = fields[index];
+    if (!entry) continue;
+    paths.push(entry.slice(3));
+    if (/[RC]/u.test(entry.slice(0, 2))) {
+      const source = fields[index + 1];
+      if (source) paths.push(source);
+      index += 1;
+    }
+  }
+  return [...new Set(paths)].filter(Boolean);
 }
 
 function gitPathExists(root, commit, path) {

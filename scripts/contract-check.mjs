@@ -401,6 +401,7 @@ run(verifyGitRemoteGuardRejectsCommandTransports);
 run(verifyGitPathGuardRejectsEscapes);
 run(verifyGitRefGuardsAgree);
 run(verifyGitRemoteGuardTwinsAgree);
+run(verifyGitStatusParsingSurvivesRealFilenames);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5899,6 +5900,52 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // （单文件下发产物，共用不了代码）。今天收紧控制面那份时就差点只改一半 ——
 // 两份对【危险形态】必须判得一样；尾部的差异是有意的（远端 agent 不接受本地路径与 file://，
 // 那会让它去读自己主机上的仓库），所以只比危险面，不要求逐字相同。
+// `git status --porcelain`（不带 -z）会把带空格或非 ASCII 的路径加引号并做八进制转义
+// （core.quotePath 默认开着）。控制面把这份输出解析出来的路径拿去跟执行方申报的路径逐条比对，
+// 对不上就判成「未申报的改动」把提交拒掉 —— 于是仓库里只要有一个中文文件名，提交路径就走不通，
+// 而报文里是一串八进制。这是个中文产品。agent 运行时那份孪生实现一直用的是 -z。
+// 这条路没有可达的导出入口（runExecutorBackedAgentWorker 要真起执行器子进程），
+// 所以验两件事：① 前提确实成立（在真仓库上跑两遍 git 比一比）；② 两份实现都用了 -z。
+function verifyGitStatusParsingSurvivesRealFilenames(output) {
+  const dir = mkdtempSync(join(tmpdir(), "aimac-gitname-"));
+  try {
+    const run = (...args) => execFileSync("git", args, {cwd: dir, encoding: "utf8"});
+    run("init", "-q", ".");
+    run("config", "user.email", "contract@local");
+    run("config", "user.name", "contract");
+    mkdirSync(join(dir, "docs"), {recursive: true});
+    writeFileSync(join(dir, "docs/设计说明.md"), "x\n");
+    writeFileSync(join(dir, "docs/a b.md"), "x\n");
+    const plain = run("status", "--porcelain", "--untracked-files=all");
+    const zeroed = run("status", "--porcelain=v1", "-z", "--untracked-files=all");
+    if (!plain.includes('"docs/a b.md"') || !/\\3[0-7]{2}/u.test(plain)) {
+      output.push(`前提不成立：这台机器上 git status --porcelain 没有给带空格/中文的路径加引号转义`
+        + `（拿到的是 ${JSON.stringify(plain.slice(0, 80))}）—— 本条在空转`);
+      return;
+    }
+    if (!zeroed.includes("docs/设计说明.md") || !zeroed.includes("docs/a b.md")) {
+      output.push("加了 -z 之后中文/带空格的路径仍然不是原样 —— 解析口径要重新想");
+    }
+    const core = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+    const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+    for (const [label, text] of [["控制面", core], ["agent 运行时", runtime]]) {
+      const at = text.indexOf("function gitStatusPaths(");
+      const body = at < 0 ? "" : text.slice(at, text.indexOf("\n}", at));
+      if (!body) {
+        output.push(`${label}里找不到 gitStatusPaths —— 本条的接线核对在空转`);
+        continue;
+      }
+      if (!/"-z"/u.test(body)) {
+        output.push(`${label}的 gitStatusPaths 没有用 -z —— 带空格或中文的路径会被 git 加引号转义，`
+          + "然后跟执行方申报的路径对不上，提交被判成「未申报的改动」而拒掉");
+      }
+    }
+    console.log("git status 解析：真造了中文与带空格的文件名，确认不带 -z 会转义；两份实现都用了 -z");
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+}
+
 function verifyGitRemoteGuardTwinsAgree(output) {
   const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
   const start = runtime.indexOf("function isSafeGitRemoteUrl(url) {");

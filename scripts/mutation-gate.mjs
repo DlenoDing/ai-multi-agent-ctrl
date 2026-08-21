@@ -3302,6 +3302,22 @@ const MUTATIONS = [
     expect: "出现了别的租户的对象"
   },
   {
+    name: "控制面解析 git status 必须用 -z（否则中文文件名让提交走不通）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyGitStatusParsingSurvivesRealFilenames",
+    from: '  const fields = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], "").split("\\0");',
+    to: '  const fields = git(root, ["status", "--porcelain", "--untracked-files=all"], "").split("\\n");',
+    expect: "没有用 -z"
+  },
+  {
+    name: "agent 那份解析 git status 同样必须用 -z",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyGitStatusParsingSurvivesRealFilenames",
+    from: '  const raw = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);',
+    to: '  const raw = git(root, ["status", "--porcelain", "--untracked-files=all"]);',
+    expect: "没有用 -z"
+  },
+  {
     name: "agent 那份 git 远端守卫落后于控制面就要被逮到",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyGitRemoteGuardTwinsAgree",
