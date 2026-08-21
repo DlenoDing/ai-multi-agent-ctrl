@@ -3325,6 +3325,15 @@ const MUTATIONS = [
     expect: "链校验在空转"
   },
   {
+    // 去掉版本比对＝两个并发写互相覆盖，后写的静默吞掉前一个人的改动。
+    name: "状态存储的版本比对（CAS）不得去掉",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    gate: "writer",
+    from: "    throwStateStoreConflict(`runtime_json state version conflict; expected ${expectedStateVersion}, found ${central.stateVersion}`);",
+    to: "    void 0;",
+    expect: "没有第三种结局"
+  },
+  {
     name: "项目读授权失效要被逮到（存在性预言机那条抓得住）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
