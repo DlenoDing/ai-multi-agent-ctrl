@@ -1839,8 +1839,8 @@ const MUTATIONS = [
     name: "陈旧会话清不掉时必须出声",
     file: "apps/agent-runtime/runtime.mjs",
     skip: "判别力由远程 agent e2e 覆盖（已用 mutate-probe 实证：只读 sessions 目录下那道门变红）",
-    from: "  if (sweepFaults) {\n    process.stderr.write(`stale session sweep could not remove",
-    to: "  if (false) {\n    process.stderr.write(`stale session sweep could not remove",
+    from: "  if (sweepFaults) {\n    // 清不掉就意味着盘会一直涨",
+    to: "  if (false) {\n    // 清不掉就意味着盘会一直涨",
     expect: "运行时一个字都没说"
   },
   {
@@ -3023,6 +3023,22 @@ const MUTATIONS = [
     check: "verifyOutputTargetKeepsItsPolicyDecision",
     from: "  if (!Array.isArray(state?.policyDecisions) || state.policyDecisions.length <= cap) return;",
     to: "  if (!Array.isArray(state?.policyDecisions) || state.policyDecisions.length <= cap * 100) return;",
+    expect: "本条在空转"
+  },
+  {
+    name: "节点主动停活必须说出后果（否则与'角色不匹配'长得一样）",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentSaysWhyItStoppedTakingWork",
+    from: "        + \" —— 本节点在 outbox 清空前不再领新活；控制台上它仍显示在线，\"",
+    to: "        + \" \"",
+    expect: "没说这对人意味着什么"
+  },
+  {
+    name: "节点告警的 marker 变了要报空转（判据不得绿着找不到）",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentSaysWhyItStoppedTakingWork",
+    from: "dispatch claim deferred: ${outboxPending}",
+    to: "dispatch claim postponed: ${outboxPending}",
     expect: "本条在空转"
   },
   {

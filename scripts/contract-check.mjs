@@ -371,6 +371,7 @@ run(verifyGuardedWritesAreAudited);
 run(verifyWarnModeRejectionsSurviveChurn);
 run(verifyCorruptEventLinesAreReported);
 run(verifySizeAccountingDoesNotSwallowFailures);
+run(verifyAgentSaysWhyItStoppedTakingWork);
 run(verifyOutputTargetKeepsItsPolicyDecision);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
@@ -5649,6 +5650,33 @@ function verifyOutputTargetKeepsItsPolicyDecision(output) {
 // 【算容量的地方不许把量不到的当成 0】。agent 运行时按目录大小做淘汰：statSync 失败原先被空吞，
 // 总量因此算小 → 淘汰不触发 → 盘继续涨；而那条"还在超上限"的提示只在【算出来超了】时才说话，
 // 于是一整套安全机制看起来"没必要动"。一个静默为 0 的测量，比没有测量更危险。
+// 节点【主动停止领活】时必须说出后果。它有两处会这样：outbox 待重放、会话目录清不掉。
+// 只说 "deferred" / "could not remove" 的话，控制台上这个节点仍是绿的、派发排着队 ——
+// 与"角色不匹配 / 模型不可用"长得一模一样（控制面那边为此专门做过 claimMissHint），
+// 人会去查一条完全找错方向的路。节点侧沿用仓里既有的形状：英文事件名 + 中文后果。
+function verifyAgentSaysWhyItStoppedTakingWork(output) {
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const cases = [
+    ["dispatch claim deferred", /不再领新活|不再领活/u, "节点停止领活"],
+    ["stale session sweep could not remove", /占盘|需人工/u, "会话目录清不掉"]
+  ];
+  let found = 0;
+  for (const [marker, consequence, label] of cases) {
+    const at = runtime.indexOf(marker);
+    if (at < 0) {
+      output.push(`节点告警核对：找不到「${label}」那条输出（marker: ${marker}）—— 判据与代码脱节，本条在空转`);
+      continue;
+    }
+    found += 1;
+    if (!consequence.test(runtime.slice(at, at + 400))) {
+      output.push(`节点「${label}」只说了发生什么，没说这对人意味着什么 —— `
+        + "控制台上它仍是绿的，人会往完全错误的方向查");
+    }
+  }
+  if (found < cases.length) return;
+  console.log(`节点主动停活的告警：${cases.length} 处逐个核对，都带上了后果（英文事件名 + 中文后果，与仓里既有形状一致）`);
+}
+
 function verifySizeAccountingDoesNotSwallowFailures(output) {
   const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
   const sweepAt = runtime.indexOf("function sweepLibraryOverCapacity");

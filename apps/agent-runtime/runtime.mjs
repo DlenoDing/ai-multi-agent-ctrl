@@ -248,7 +248,12 @@ async function run(config) {
       return;
     }
     if (outboxPending > 0) {
-      process.stderr.write(`dispatch claim deferred: ${outboxPending} checkpoint outbox item(s) pending replay\n`);
+      // 只说"deferred"会把人引到错误方向：控制台上这个节点是绿的、派发排着，
+      // 而它其实【主动停止领活】了 —— 与"角色不匹配/模型不可用"在界面上长得一模一样
+      // （控制面那边为此专门做过 claimMissHint）。把后果和出口一起说出来。
+      process.stderr.write(`dispatch claim deferred: ${outboxPending} checkpoint outbox item(s) pending replay`
+        + " —— 本节点在 outbox 清空前不再领新活；控制台上它仍显示在线，"
+        + "但派发会一直排队。清空要么靠自动重放成功，要么看上面 replay 的报错\n");
       if (once) return;
       await delay(config.pollIntervalSeconds * 1000);
       continue;
@@ -610,7 +615,9 @@ function sweepStaleSessionDirectories(config) {
     }
   }
   if (sweepFaults) {
+    // 清不掉就意味着盘会一直涨，而这条清理是唯一的出口 —— 必须说出后果。
     process.stderr.write(`stale session sweep could not remove ${sweepFaults} directories`
+      + " —— 这些目录会一直占盘，且下一轮清理多半同样失败（权限/被占用），需人工处理"
       + `（最后一次失败：${lastSweepFault}）—— 它们会一直占着盘，需人工清理\n`);
   }
 }
