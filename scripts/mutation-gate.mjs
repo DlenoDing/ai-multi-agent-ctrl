@@ -3291,6 +3291,22 @@ const MUTATIONS = [
     expect: "没说清本机被改成什么样"
   },
   {
+    name: "项目仓库要认界面写的那个字段（否则界面上有入口却接错线）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  const configured = project?.config?.repositories;",
+    to: "  const configured = null;",
+    expect: "接的却不是这根线"
+  },
+  {
+    name: "只认配置层会让只有顶层字段的老项目集体卡死",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  return Array.isArray(project?.repositories) ? project.repositories : [];",
+    to: "  return [];",
+    expect: "老项目被判成没登记"
+  },
+  {
     name: "agentctl 指的入口要写成页+面板+按钮（否则判据看不见它）",
     file: "scripts/agentctl.mjs",
     check: "verifyGuidanceNamesRealPages",

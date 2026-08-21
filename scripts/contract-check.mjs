@@ -4189,12 +4189,30 @@ function verifyHumanAndOrganizationContracts(output) {
         output.push("a project with no registered repository still dispatched work — its output silently falls back to the control plane's own repository, which the person never configured");
       }
       // 反向：登记了仓库就必须能派发，否则这条判据是把项目整个卡死。
-      bareProject.repositories = [{id: "repo_x", url: "git@example.com:acme/app.git", defaultBranch: "main"}];
+      // 【要按人真的走的那条路配】：界面上"项目设置 → 仓库与凭证引用"写的是 config.repositories，
+      // 建项目接口写的也是它。这条对照原先直接设顶层 project.repositories —— 那个字段
+      // 全仓没有任何写入点，于是"配好了就能派发"从来没被真正验过，而实际情况是：
+      // 人在界面上加了仓库，挡他的那道判定一动不动（实测）。
+      bareProject.config = {repositories: [{id: "repo_x", url: "git@example.com:acme/app.git", defaultBranch: "main"}]};
       repoState.admissionDecisions = [];
       runAutonomousCycle(repoState, {root, mode: "all", autoSyncSkills: false});
       if ((repoState.admissionDecisions || []).some((decision) =>
         decision.taskGroupId === "tg_no_repo" && decision.reasonCode === "project_repository_not_registered")) {
-        output.push("a project with a registered repository was still blocked as unregistered — the check became a permanent wedge");
+        output.push("人在项目设置里配好了仓库（config.repositories，界面唯一的入口），准入却仍然挡着 —— "
+          + "界面上有入口，接的却不是这根线；这个项目会一直卡死，而人看不出为什么");
+      }
+      // 老数据/种子只有顶层 project.repositories，同样要认。
+      const legacyProject = {id: "prj_legacy_repo", name: "legacy", organizationId: bareProject.organizationId,
+        status: "active", members: [], repositories: [{id: "repo_y", url: "git@example.com:acme/legacy.git"}]};
+      repoState.projects = [...repoState.projects, legacyProject];
+      const legacyGroup = {...structuredClone(sourceGroup), id: "tg_legacy_repo", projectId: legacyProject.id, status: "development"};
+      for (const item of legacyGroup.workItems) item.status = "ready";
+      repoState.taskGroups = [...repoState.taskGroups, legacyGroup];
+      repoState.admissionDecisions = [];
+      runAutonomousCycle(repoState, {root, mode: "all", autoSyncSkills: false});
+      if ((repoState.admissionDecisions || []).some((decision) =>
+        decision.taskGroupId === "tg_legacy_repo" && decision.reasonCode === "project_repository_not_registered")) {
+        output.push("只有顶层 project.repositories 的老项目被判成没登记 —— 种子与历史数据会集体卡死");
       }
     }
   }

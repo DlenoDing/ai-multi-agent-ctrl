@@ -2283,7 +2283,7 @@ function runAutonomousCycleBody(state, request = {}) {
       // 这不该靠兜底，该在派发前挡住并说清楚：先去项目设置里登记仓库。
       // 控制面自举项目除外：它就是以这份仓库为工作对象的。
       const cellProject = (state.projects || []).find((item) => item.id === taskGroup.projectId);
-      if (cellProject && cellProject.id !== "prj_control_plane" && !(cellProject.repositories || []).length) {
+      if (cellProject && cellProject.id !== "prj_control_plane" && !projectRepositories(cellProject).length) {
         recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "project_repository_not_registered",
           whyThisCellNow: "the project has no registered repository, so there is nowhere for this work to be written", cycleRef});
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, awaiting: "project_repository"});
@@ -4354,7 +4354,7 @@ function ensureRepositoryTarget(state, project, taskGroup, workItem, request) {
     return existing;
   }
   const at = new Date().toISOString();
-  const repository = project?.repositories?.[0] || {id: "repo_control_plane", url: "git@github.com:dleno/ai-multi-agent-ctrl.git", defaultBranch: "main"};
+  const repository = projectRepositories(project)[0] || {id: "repo_control_plane", url: "git@github.com:dleno/ai-multi-agent-ctrl.git", defaultBranch: "main"};
   const remote = request.remote || "origin";
   const remoteUrl = gitRemoteUrl(request.root, remote) || repository.url;
   const target = {
@@ -7974,8 +7974,20 @@ export function normalizeRepositoryUrl(url) {
   return String(url || "").trim().replace(/\/+$/u, "").replace(/\.git$/u, "").replace(/\/+$/u, "").toLowerCase();
 }
 
+// 项目的仓库登记在【两个地方】：顶层 project.repositories（只有种子写过）与
+// project.config.repositories（界面那个"仓库与凭证引用"表单写的、建项目时也写这里）。
+// 而准入判定、提交目标、URL 白名单读的都是顶层 —— 于是经界面建的项目永远"没登记仓库"：
+// 单元被 project_repository_not_registered 挡住，人去项目设置里加一条仓库，那条改动
+// 落在另一个字段上，挡的那道判定一动不动。界面上有入口，接的却不是这根线。
+// 统一从这里取：先看配置层（人能改的那份），没有再退回顶层（老数据/种子）。
+export function projectRepositories(project) {
+  const configured = project?.config?.repositories;
+  if (Array.isArray(configured) && configured.length) return configured;
+  return Array.isArray(project?.repositories) ? project.repositories : [];
+}
+
 export function repositoryUrlRegisteredForProject(project, url) {
-  const registered = (project?.repositories || []).map((item) => normalizeRepositoryUrl(item.url)).filter(Boolean);
+  const registered = projectRepositories(project).map((item) => normalizeRepositoryUrl(item.url)).filter(Boolean);
   // 项目一个仓库都没登记时不拦（本地部署/引导期），此时地址由服务端从工作区推导，不是调用方给的。
   if (!registered.length) return true;
   return registered.includes(normalizeRepositoryUrl(url));

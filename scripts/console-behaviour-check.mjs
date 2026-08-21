@@ -456,6 +456,20 @@ function check(name, condition, detail) {
       "空着不是坏事，但要说清系统会拿什么顶上");
   }
 
+  if (process.env.AIMAC_READ_FIRST) {
+    const seed = JSON.parse(fs.readFileSync(path.join(root, "data/seed-state.json"), "utf8"));
+    const firstRoot = el("div");
+    const firstProbe = loadConsole(firstRoot, {realI18n: true});
+    const firstFetch = async () => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+      json: async () => seed, text: async () => JSON.stringify(seed)});
+    await firstProbe.loadWithFetch(seed, {accountId: "u1", email: "a@b.c", accountType: "system_admin",
+      displayName: "管理员", organizationId: "org_default", permissions: ["system:*"]},
+      seed.projects[0].id, "proj-overview", firstFetch);
+    console.log("\n======== 新人登录后的项目概览（真实种子）========");
+    console.log(String(firstRoot.innerHTML || "").replace(/<[^>]+>/gu, " ")
+      .split("\n").map((l) => l.replace(/\s+/gu, " ").trim()).filter(Boolean).join("\n").slice(0, 2500));
+  }
+
   const emptyProbe = loadConsole(emptyRoot);
   const emptyState = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
     organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],

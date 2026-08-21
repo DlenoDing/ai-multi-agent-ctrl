@@ -114,7 +114,8 @@ import {
   taskGroupSettledRejection,
   capKeepingReferenced,
   STRING_LIST_MAX_ITEMS,
-  STRING_LIST_MAX_ITEM_LENGTH
+  STRING_LIST_MAX_ITEM_LENGTH,
+  projectRepositories
 } from "./lib/control-plane-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -4390,7 +4391,9 @@ async function handleApi(req, res) {
     const targetTaskGroup = state.taskGroups.find((item) => item.id === targetTaskGroupId);
     const targetProjectId = targetTaskGroup?.projectId || body.projectId || "prj_control_plane";
     const project = state.projects.find((item) => item.id === targetProjectId);
-    const repository = (project?.repositories || []).find((item) => item.id === body.repositoryId) || project?.repositories?.[0];
+    // 与 core 同一口径：界面写的是 config.repositories，顶层只有种子有（见 projectRepositories）。
+    const projectRepos = projectRepositories(project);
+    const repository = projectRepos.find((item) => item.id === body.repositoryId) || projectRepos[0];
     const target = {
       schemaVersion: "repository-output-target/v1",
       targetId: createId("rot"),
