@@ -3571,6 +3571,22 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "写坏的到期时间必须按已过期处理",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentJoinTokenIsSpentExactlyOnce",
+    from: "  if (!Number.isFinite(joinTokenExpiryMs) || joinTokenExpiryMs <= Date.now()) {",
+    to: "  if (joinTokenExpiryMs <= Date.now()) {",
+    expect: "到期时间是个认不出的串"
+  },
+  {
+    name: "时间字段漏声明格式要被查出来",
+    file: "spec/agent-dispatch.schema.json",
+    check: "verifyTimestampFieldsDeclareTheirFormat",
+    from: "    \"claimExpiresAt\": {\n      \"type\": \"string\",\n      \"format\": \"date-time\"",
+    to: "    \"claimExpiresAt\": {\n      \"type\": \"string\"",
+    expect: "没有声明 format: date-time"
+  },
+  {
     name: "幂等命中要比对写的是哪个对象",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

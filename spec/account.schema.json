@@ -148,6 +148,7 @@
     },
     "activatedAt": {
       "type": "string",
+      "format": "date-time",
       "description": "账号被激活的时间。"
     },
     "credentialDigest": {
@@ -155,14 +156,17 @@
       "description": "一次性开通凭据的摘要（只存摘要）。"
     },
     "credentialIssuedAt": {
-      "type": "string"
+      "type": "string",
+      "format": "date-time"
     },
     "credentialExpiresAt": {
       "type": "string",
+      "format": "date-time",
       "description": "开通凭据的到期时间：过期后必须重新签发，不能无限期可用。"
     },
     "credentialConsumedAt": {
       "type": "string",
+      "format": "date-time",
       "description": "凭据被消费的时间；已消费即不可重放。"
     }
   }

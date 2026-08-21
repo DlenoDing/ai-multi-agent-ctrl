@@ -166,7 +166,12 @@ export function registerAgentNode(state, input = {}, options = {}) {
   if (record.status === "expired") throw gatewayError("join_token_expired", 401, {tokenStatus: record.status});
   if (record.status === "revoked") throw gatewayError("join_token_revoked", 401, {tokenStatus: record.status});
   if (record.status !== "issued") throw gatewayError("join_token_not_active", 409, {tokenStatus: record.status});
-  if (new Date(record.expiresAt).getTime() <= Date.now()) {
+  // 认不出的到期时间【按已过期处理】。`new Date("坏值").getTime()` 是 NaN，
+  // 而 `NaN <= now` 是 false —— 直接比的话，一张 expiresAt 被写坏的令牌会被判成"没过期"，
+  // 永久可用。schema 那一层已经要求 date-time（也补齐了全仓 24 个漏声明的字段），
+  // 但这条路是【凭据兑换】：它自己也得在认不出时倒向拒绝，而不是依赖上游都没出错。
+  const joinTokenExpiryMs = new Date(record.expiresAt).getTime();
+  if (!Number.isFinite(joinTokenExpiryMs) || joinTokenExpiryMs <= Date.now()) {
     record.status = "expired";
     record.updatedAt = new Date().toISOString();
     throw gatewayError("join_token_expired", 401);

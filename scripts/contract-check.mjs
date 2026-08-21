@@ -397,6 +397,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyTimestampFieldsDeclareTheirFormat);
 run(verifyTaskGroupScopedWritesDeriveTheirProject);
 run(verifyOverlayOwnershipComesFromItsTaskGroup);
 run(verifyRuntimeFileWritesAreRegistered);
@@ -10943,6 +10944,44 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
 }
 
+function verifyTimestampFieldsDeclareTheirFormat(output) {
+  // 时间字段没有 format: date-time，非法串就能存进去。而 `new Date("not-a-date").getTime()`
+  // 是 NaN，**两个方向的比较都是 false**：判"已过期"不会过期（fail-open，那张票永久可用），
+  // 判"未过期"不会放行。规范核对是这类值唯一的入口关卡 —— 它得先知道这是个时间。
+  // 2026-08-22 实测：119 个以 At 结尾的字符串时间字段里，24 个没有声明格式。
+  const offenders = [];
+  let scanned = 0;
+  for (const file of readdirSync(join(root, "spec")).filter((name) => name.endsWith(".schema.json"))) {
+    let schema;
+    try { schema = JSON.parse(readFileSync(join(root, "spec", file), "utf8")); } catch { continue; }
+    const walk = (node) => {
+      if (!node || typeof node !== "object") return;
+      const props = node.properties;
+      if (props && typeof props === "object") {
+        for (const [name, spec] of Object.entries(props)) {
+          if (spec && typeof spec === "object" && name.endsWith("At") && spec.type === "string" && !spec.enum) {
+            scanned += 1;
+            if (spec.format !== "date-time") offenders.push(`${file.replace(".schema.json", "")}.${name}`);
+          }
+          walk(spec);
+        }
+      }
+      for (const key of ["items", "$defs", "definitions"]) walk(node[key]);
+    };
+    walk(schema);
+  }
+  if (scanned < 60) {
+    output.push(`只扫到 ${scanned} 个时间字段（实际有一百多个）—— 这条判据的遍历没走到，它在空转`);
+  }
+  if (offenders.length) {
+    output.push(`这些时间字段没有声明 format: date-time：${offenders.slice(0, 12).join("、")}`
+      + `${offenders.length > 12 ? ` 等 ${offenders.length} 个` : ""} —— `
+      + "非法时间串会被规范核对放行，而 new Date(它).getTime() 是 NaN，"
+      + "「已过期」和「未过期」两种比较都会得到 false：该拒的不拒、该收的不收");
+  }
+  console.log(`时间字段格式：${scanned} 个以 At 结尾的字符串字段逐个核对，都声明了 date-time`);
+}
+
 function verifyTaskGroupScopedWritesDeriveTheirProject(output) {
   // 【按任务组判权的写入，落盘的 projectId 必须从那个任务组推出来】。取自由的 body/request.projectId
   // 就意味着：判权判的是任务组甲，记录却落在项目乙名下 —— 它会出现在乙的视图与台账里，
@@ -11555,6 +11594,13 @@ function verifyAgentJoinTokenIsSpentExactlyOnce(output) {
       st.agentJoinTokens[0].status = "revoked";
       return issued.joinToken;
     }],
+    // 到期时间被写坏时也必须按【已过期】处理：new Date("坏值").getTime() 是 NaN，
+    // 而 NaN <= now 是 false —— 直接比的话这张票会被判成"没过期"，永久可用。
+    ["到期时间是个认不出的串", "join_token_expired", (st) => {
+      const issued = issue(st);
+      st.agentJoinTokens[0].expiresAt = "not-a-real-timestamp";
+      return issued.joinToken;
+    }],
     // 认不出的状态必须【拒】，不能当成可用。schema 只认四个值，多出来的一个（迁移写坏、
     // 将来加了新状态而这里忘了跟）落到这道兜底上；它不能悄悄放行一次注册。
     ["状态是认不出的值", "join_token_not_active", (st) => {
@@ -11597,7 +11643,7 @@ function verifyAgentJoinTokenIsSpentExactlyOnce(output) {
   if (orphan !== "join_token_project_not_found") {
     output.push(`给不存在的项目签出了加入令牌（${orphan || "没有拒绝"}）—— 兑出来的节点归属不明、配额算不到任何组织头上`);
   }
-  console.log("加入令牌：伪造/过期/已兑换/已吊销/指名不符/空名字/非一次性/项目不存在 九种形状全拒（含认不出的状态），合法令牌正常兑换 —— 核过");
+  console.log("加入令牌：伪造/过期/已兑换/已吊销/指名不符/空名字/非一次性/项目不存在 十种形状全拒（含认不出的状态与写坏的到期时间），合法令牌正常兑换 —— 核过");
 }
 
 function verifyServerSideAgentExecutionStaysOffOutsideVerification(output) {

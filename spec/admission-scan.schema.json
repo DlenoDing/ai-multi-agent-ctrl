@@ -5,31 +5,117 @@
   "description": "A8：每个任务组每轮一条的周期级准入扫描，把整个候选集连同 deferred/blocked/resource_queued 名单一起留档 —— 也就是每次派发背后「本轮还有什么本可以跑」的机器可读记录。只留被选中的那一条，事后无法判断调度是否公平、是否有 cell 被长期饿死。",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "scanId", "projectId", "taskGroupId", "cycleRef", "candidateCells", "selectedCells", "deferredCells", "blockedCells", "resourceQueuedCells", "cellClasses", "sampledAt"],
+  "required": [
+    "schemaVersion",
+    "scanId",
+    "projectId",
+    "taskGroupId",
+    "cycleRef",
+    "candidateCells",
+    "selectedCells",
+    "deferredCells",
+    "blockedCells",
+    "resourceQueuedCells",
+    "cellClasses",
+    "sampledAt"
+  ],
   "properties": {
-    "schemaVersion": {"const": "admission-scan/v1"},
-    "scanId": {"type": "string", "pattern": "^adms_[a-z0-9_]+$"},
-    "projectId": {"type": "string", "minLength": 1},
-    "taskGroupId": {"type": "string", "minLength": 1},
-    "cycleRef": {"type": "string", "minLength": 1},
-    "ruleset": {"type": ["string", "null"]},
-    "conditionSource": {"type": ["string", "object", "null"]},
-    "resourceSnapshot": {"type": ["object", "null"]},
-    "candidateCells": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-    "selectedCells": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-    "deferredCells": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-    "blockedCells": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-    "resourceQueuedCells": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "schemaVersion": {
+      "const": "admission-scan/v1"
+    },
+    "scanId": {
+      "type": "string",
+      "pattern": "^adms_[a-z0-9_]+$"
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cycleRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ruleset": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "conditionSource": {
+      "type": [
+        "string",
+        "object",
+        "null"
+      ]
+    },
+    "resourceSnapshot": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "candidateCells": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "selectedCells": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "deferredCells": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "blockedCells": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "resourceQueuedCells": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
     "cellClasses": {
       "type": "object",
       "description": "cellId -> cellClass。取值域与 AdmissionDecision.cellClass 同源。",
       "patternProperties": {
         "^.+$": {
           "type": "string",
-          "enum": ["ready_now", "ready_after_resource_admission", "pending_window", "pending_data_volume", "blocked_external", "blocked_by_exact_dependency", "diagnostic_only_no_pass", "defer_downstream"]
+          "enum": [
+            "ready_now",
+            "ready_after_resource_admission",
+            "pending_window",
+            "pending_data_volume",
+            "blocked_external",
+            "blocked_by_exact_dependency",
+            "diagnostic_only_no_pass",
+            "defer_downstream"
+          ]
         }
       }
     },
-    "sampledAt": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T"}
+    "sampledAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    }
   }
 }

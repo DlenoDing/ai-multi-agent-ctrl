@@ -183,6 +183,7 @@
     },
     "reportedCreatedAt": {
       "type": "string",
+      "format": "date-time",
       "description": "执行方自报的检查点时间。仅作留档，【不】参与验收卡片挑选检查点的排序 —— 落库时间以服务端写的 createdAt 为准，否则执行方能决定人看到哪一份检查点。"
     },
     "selfReportedChangedPathEvidenceRefs": {
