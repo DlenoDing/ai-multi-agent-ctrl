@@ -3291,6 +3291,41 @@ const MUTATIONS = [
     expect: "没说清本机被改成什么样"
   },
   {
+    // 作用域状态是按请求缓存的。缓存键里少了账号，第二个人就会拿到第一个人那份 ——
+    // 整份跨租户数据，而单人自测完全看不出来（同一个账号命中的永远是自己那份）。
+    // 这是本系统最致命的一条不变式，此前没有任何变异证明过它被守着。
+    name: "作用域状态的缓存键必须含账号（少了就是整份跨租户串数据）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "  const key = `${account.accountId}:${session.sessionId}:${state.stateVersion}`;",
+    to: "  const key = `shared:${state.stateVersion}`;",
+    expect: "出现了别的租户的对象"
+  },
+  {
+    name: "定稿人必须是【生效中】的账号（挂起的人不能定稿）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyOnlyLiveHumanAccountsCanFinalize",
+    from: '  if (account.status !== "active") return false;',
+    to: "  if (false) return false;",
+    expect: "被挂起的人"
+  },
+  {
+    name: "定稿人必须是人（服务账号不算）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyOnlyLiveHumanAccountsCanFinalize",
+    from: "  return HUMAN_ACCOUNT_TYPES.includes(account.accountType);",
+    to: "  return true;",
+    expect: "服务账号"
+  },
+  {
+    name: "账号不存在要干脆回 false，不是抛异常（定稿路由会 500）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyOnlyLiveHumanAccountsCanFinalize",
+    from: "  if (!account) return false;",
+    to: "  if (false) return false;",
+    expect: "直接抛了异常"
+  },
+  {
     name: "并排的两个百分比要各自说清算法（73% 与 75% 同屏）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

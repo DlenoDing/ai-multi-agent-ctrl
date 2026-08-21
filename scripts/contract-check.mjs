@@ -61,6 +61,7 @@ import {
   findingResolve,
   findingSubmit,
   MAJOR_DECISION_TYPES,
+  isHumanConfirmationActor,
   TASK_GROUP_SETTLED_STATUSES,
   projectOwnerGrantPermissions,
   taskGroupSettledRejection,
@@ -391,6 +392,7 @@ run(verifyWholesaleFieldListMatchesTheWrites);
 run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
+run(verifyOnlyLiveHumanAccountsCanFinalize);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5867,6 +5869,48 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // （`!["closed", "aborted"].includes(...)`）。终态一旦增减，漏改任何一处都是【放行】：
 // 那个新终态上的任务组仍会被当成"还活着"，写入不再被拒、编排继续推它、容量继续算它。
 // 不强求所有调用点都改用常量（12 处改动的风险大于收益），但三份清单必须字字相同。
+// "只有真人能定稿"这条招牌不变式，判定落在 isHumanConfirmationActor 上。它有两层：
+// 账号类型必须是人，且账号必须【生效中】。第二层此前一个断言都没有 —— 实测把
+// `if (account.status !== "active") return false;` 改成 `if (false)`，
+// 契约门与控制面 e2e 全都照常通过。（挂起/停用都会吊销会话，所以它是第二道门；
+// 但第二道门也是门：本仓反复出现的形态正是"同一间屋子两道门，只锁了一道"。）
+// 它是纯函数，直接调它把各种账号形态过一遍。
+function verifyOnlyLiveHumanAccountsCanFinalize(output) {
+  const cases = [
+    {who: "生效中的组织管理员", account: {accountId: "a1", accountType: "org_admin", status: "active"}, allowed: true},
+    {who: "生效中的系统管理员", account: {accountId: "a2", accountType: "system_admin", status: "active"}, allowed: true},
+    {who: "生效中的普通成员", account: {accountId: "a3", accountType: "user_account", status: "active"}, allowed: true},
+    {who: "被挂起的人", account: {accountId: "a4", accountType: "user_account", status: "suspended"}, allowed: false},
+    {who: "被停用的人", account: {accountId: "a5", accountType: "user_account", status: "disabled"}, allowed: false},
+    {who: "只受邀未接受的人", account: {accountId: "a6", accountType: "user_account", status: "invited"}, allowed: false},
+    {who: "服务账号", account: {accountId: "a7", accountType: "service_account", status: "active"}, allowed: false},
+    {who: "智能体身份", account: {accountId: "a8", accountType: "agent_identity", status: "active"}, allowed: false}
+  ];
+  for (const item of cases) {
+    const state = {accounts: [item.account]};
+    const actual = isHumanConfirmationActor(state, item.account.accountId);
+    if (actual !== item.allowed) {
+      output.push(`${item.who}${item.allowed ? "应当" : "不应当"}能定稿核心决策，实际 ${actual}`
+        + `（accountType=${item.account.accountType}、status=${item.account.status}）`
+        + (item.allowed ? " —— 闸门把真人也挡住了，核心决策会永远停在待确认" : " —— 人工定稿闸门被绕过"));
+    }
+  }
+  // 账号不存在时要【返回 false】，不是抛异常：抛出去在生产上是一个 500，
+  // 而调用点（定稿路由）看到的是"这次请求崩了"，不是"这个人不能定稿"。
+  let missingVerdict;
+  try {
+    missingVerdict = isHumanConfirmationActor({accounts: []}, "nobody");
+  } catch (error) {
+    output.push(`账号不存在时 isHumanConfirmationActor 直接抛了异常（${error?.message || error}）—— `
+      + "定稿路由会 500，而它本该干脆地回一句「这个人不能定稿」");
+    missingVerdict = false;
+  }
+  if (missingVerdict !== false) {
+    output.push("账号根本不存在时也判成了「人」—— 一个编造的 actorId 就能定稿");
+  }
+  console.log(`定稿资格：${cases.length} 种账号形态逐个核对（类型 × 状态两层都验）`);
+}
+
 function verifyTerminalStatusListsAgree(output) {
   const spec = readFileSync(join(root, "spec/state-machines.yaml"), "utf8");
   const block = spec.slice(spec.indexOf("TaskGroup:"), spec.indexOf("TaskGroup:") + 400);
