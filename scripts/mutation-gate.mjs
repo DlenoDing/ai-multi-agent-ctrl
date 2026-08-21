@@ -2986,6 +2986,14 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "空转期间心跳必须真的往前走（合并等待窗口后仍要能红）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "idle",
+    from: "    lastTickAt: at,",
+    to: "    lastTickAt: \"2026-01-01T00:00:00.000Z\",",
+    expect: "空转期间控制台仍看得到自治循环在跑"
+  },
+  {
     name: "整份替换配置必须带版本前置条件（后保存的会静默盖掉前一个人）",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyWholesaleConfigWritesArePreconditioned",

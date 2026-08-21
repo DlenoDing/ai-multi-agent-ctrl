@@ -164,6 +164,20 @@ const auth = {authorization: `Bearer ${login.sessionToken}`, "content-type": "ap
 const stateVersion = async () => Number((await (await fetch(`${base}/api/state?view=orgs`, {headers: auth})).json()).stateVersion || 0);
 
 // 1) 空转会收敛：连续若干拍状态版本不再推进
+// 心跳的基准取在这里：下面那段收敛等待本身就是一段【已证明没有落盘】的空转窗口，
+// 在它两端取心跳，正好就是"不落盘但没死"要证的那件事 —— 比另起一段 11 秒的等待
+// 既省时间又更贴题（原先那段等待观察的是同一台服务的同一种状态，白等一次）。
+const tickAt = async () => (await (await fetch(`${base}/api/state?view=runtime`, {headers: auth})).json())?.runtime?.autonomousOrchestrator?.lastTickAt;
+// 基准必须是【真值】：服务刚起来时还没跑过一拍，lastTickAt 是 undefined ——
+// 拿 undefined 当基准的话，"心跳从此定死不动"也满足 after !== before，这条断言就成了摆设。
+// （实测：第一版就是这样，把 lastTickAt 写死成常量，门照样全绿。）
+let beforeTick;
+const firstTickDeadline = Date.now() + tickMs * 2 + 5000;
+while (Date.now() < firstTickDeadline) {
+  beforeTick = await tickAt();
+  if (beforeTick) break;
+  await new Promise((r) => setTimeout(r, 500));
+}
 let last = await stateVersion();
 let stableSince = Date.now();
 const convergeDeadline = Date.now() + 90000;
@@ -182,14 +196,21 @@ const converged = Date.now() - stableSince > quietMs;
 check(converged, "空转的自治循环会收敛到不再落盘",
   converged ? `连续 ${Math.round((Date.now() - stableSince) / 1000)} 秒（≥3 拍）状态版本停在 ${last}` : `观察 90 秒仍在每拍推进，最后版本 ${last}`);
 
-// 2) 不落盘不等于装死：控制台看到的心跳仍要往前走
-const tickAt = async () => (await (await fetch(`${base}/api/state?view=runtime`, {headers: auth})).json())?.runtime?.autonomousOrchestrator?.lastTickAt;
-const beforeTick = await tickAt();
-await new Promise((r) => setTimeout(r, tickMs * 2 + 1000));
+// 2) 不落盘不等于装死：控制台看到的心跳仍要往前走。
+// 取样窗口就是上面那段收敛等待（≥3 拍、且期间已证明没有落盘）——
+// 断言要求它至少跨过 2 拍，否则窗口太短、"心跳没变"可能只是还没到下一拍。
 const afterTick = await tickAt();
-check(Boolean(afterTick) && afterTick !== beforeTick,
-  "空转期间控制台仍看得到自治循环在跑（跳过落盘不能让它看起来死了）",
-  `lastTickAt ${beforeTick} → ${afterTick}`);
+const observedMs = Date.now() - stableSince + quietMs;
+if (observedMs < tickMs * 2) {
+  check(false, "空转期间控制台仍看得到自治循环在跑（跳过落盘不能让它看起来死了）",
+    `观察窗口只有 ${Math.round(observedMs / 1000)} 秒，不足 2 拍 —— 这条在空转，不能据此下结论`);
+} else {
+  check(Boolean(beforeTick) && Boolean(afterTick) && afterTick !== beforeTick,
+    "空转期间控制台仍看得到自治循环在跑（跳过落盘不能让它看起来死了）",
+    beforeTick
+      ? `lastTickAt ${beforeTick} → ${afterTick}（跨 ${Math.round(observedMs / 1000)} 秒的空转窗口）`
+      : "等了两拍也没拿到第一次心跳 —— 基准取不到，这条不能据此下结论");
+}
 
 // 3) 真有活时照样推进：跳过不能把真实变化一起挡住。
 // 注意基准要取在【建完之后】：建任务组这个写请求自己就会推进版本，
