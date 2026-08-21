@@ -1304,6 +1304,13 @@ export function isSafeGitRemoteUrl(url) {
   // are used by local deployments and the doctor, and cannot execute commands).
   if (/^[a-z0-9+.-]*::/iu.test(value)) return false;
   if (value.startsWith("ext:") || value.startsWith("fd:")) return false;
+  // git 认的 remote-helper 语法是【第一个 `/` 之前出现 `::`】，helper 名可以带 @：
+  // `user@host::payload` 会被它当成名为 `user@host` 的 helper 去 exec，而上面那条
+  // `^[a-z0-9+.-]*::` 因为 @ 不在字符集里，正好放过这一种。
+  // 目前它撞不上真问题（每处 git 调用都设了 GIT_ALLOW_PROTOCOL，helper 传输被 git 自己拦下），
+  // 但那是第二道门；这一道自己也该关严。IPv6 要放行：`user@[::1]:repo.git` 里的 :: 在方括号内。
+  const beforeSlash = value.split("/")[0];
+  if (beforeSlash.includes("::") && !beforeSlash.includes("[")) return false;
   // Reject a host segment that begins with '-' so git cannot pass it to ssh as an option (e.g. -oProxyCommand=...).
   const scp = value.match(/^[^@\s]+@([^:\s]+):.+/u);
   if (scp) return !scp[1].startsWith("-");

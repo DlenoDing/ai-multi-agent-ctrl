@@ -17,7 +17,7 @@ import { assertStateStoreConfig, ensureStoredState, isStateStoreConflict, readSt
 import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload, canonicalJson } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps/control-plane-ui/lib/pg-sync-store.mjs";
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
-import { buildExecutionContentBundle as buildBundleForCheck } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
+import { buildExecutionContentBundle as buildBundleForCheck, isSafeGitRemoteUrl } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { publicAgentNode } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import {
@@ -393,6 +393,7 @@ run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
 run(verifyOnlyLiveHumanAccountsCanFinalize);
+run(verifyGitRemoteGuardRejectsCommandTransports);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5875,6 +5876,43 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // 契约门与控制面 e2e 全都照常通过。（挂起/停用都会吊销会话，所以它是第二道门；
 // 但第二道门也是门：本仓反复出现的形态正是"同一间屋子两道门，只锁了一道"。）
 // 它是纯函数，直接调它把各种账号形态过一遍。
+// isSafeGitRemoteUrl 是本仓最直接的一道 RCE 守卫：git 的 remote-helper 传输（ext:: / fd::）
+// 会在宿主上执行任意命令，而仓库地址是【调用方能给的】。它此前一个直接断言都没有 ——
+// 实测把那句 `if (/^[a-z0-9+.-]*::/iu.test(value)) return false;` 改成 `if (false)`，
+// 契约门 130 条全过。（源码里唯一出现 ext:: 的地方是拿它去制造一次同步失败，不是在验这道守卫。）
+function verifyGitRemoteGuardRejectsCommandTransports(output) {
+  const cases = [
+    {url: "ext::sh -c id", safe: false, why: "remote-helper 传输，会在宿主上执行任意命令"},
+    {url: "fd::7", safe: false, why: "同上"},
+    {url: "anything::payload", safe: false, why: "任意 <名字>:: 都是 remote helper"},
+    {url: "ext:sh", safe: false, why: "单冒号写法同样能走到 helper"},
+    {url: "fd:7", safe: false, why: "同上"},
+    {url: "--upload-pack=touch /tmp/x", safe: false, why: "以 - 开头会被 git 当成参数"},
+    {url: "git@-oProxyCommand=id:repo.git", safe: false, why: "scp 写法里主机名以 - 开头，会被 ssh 当选项"},
+    {url: "ssh://-oProxyCommand=id/repo.git", safe: false, why: "ssh URL 的主机名以 - 开头，同上"},
+    {url: "", safe: false, why: "空地址"},
+    {url: "https://example.com/org/repo.git", safe: true, why: "正常 https"},
+    {url: "git@github.com:org/repo.git", safe: true, why: "正常 scp 写法"},
+    {url: "ssh://git@example.com/org/repo.git", safe: true, why: "正常 ssh"},
+    {url: "/srv/repos/local.git", safe: true, why: "本地仓库（本地部署与 doctor 要用）"},
+    {url: "./relative.git", safe: true, why: "显式相对路径"},
+    // git 认的 helper 语法是"第一个 / 之前有 ::"，helper 名可以带 @ —— 上面那条
+    // ^[a-z0-9+.-]*:: 因为 @ 不在字符集里正好放过它。
+    {url: "user@host::payload", safe: false, why: "git 会把 user@host 当成 remote helper 名去 exec"},
+    // IPv6 里的 :: 不能误伤（它在方括号内）。
+    {url: "ssh://[::1]/repo.git", safe: true, why: "IPv6 的 ssh 地址"},
+    {url: "user@[::1]:repo.git", safe: true, why: "IPv6 的 scp 写法"}
+  ];
+  for (const item of cases) {
+    const actual = isSafeGitRemoteUrl(item.url);
+    if (actual !== item.safe) {
+      output.push(`isSafeGitRemoteUrl(${JSON.stringify(item.url)}) = ${actual}，应为 ${item.safe}`
+        + `（${item.why}）${item.safe ? " —— 正常地址被拒会让这个项目根本推不上去" : " —— 这是一条可以在宿主上执行命令的地址"}`);
+    }
+  }
+  console.log(`git 远端守卫：${cases.length} 种地址形态逐个核对（含 ext::/fd::/以 - 开头的主机名）`);
+}
+
 function verifyOnlyLiveHumanAccountsCanFinalize(output) {
   const cases = [
     {who: "生效中的组织管理员", account: {accountId: "a1", accountType: "org_admin", status: "active"}, allowed: true},

@@ -3302,6 +3302,38 @@ const MUTATIONS = [
     expect: "出现了别的租户的对象"
   },
   {
+    name: "带 @ 的 remote-helper 写法也要拒（user@host::payload）",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyGitRemoteGuardRejectsCommandTransports",
+    from: '  if (beforeSlash.includes("::") && !beforeSlash.includes("[")) return false;',
+    to: "  if (false) return false;",
+    expect: "remote helper"
+  },
+  {
+    name: "IPv6 地址不许被误伤（:: 在方括号内）",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyGitRemoteGuardRejectsCommandTransports",
+    from: '  if (beforeSlash.includes("::") && !beforeSlash.includes("[")) return false;',
+    to: '  if (beforeSlash.includes("::")) return false;',
+    expect: "IPv6 的 scp 写法"
+  },
+  {
+    name: "scp 写法里以 - 开头的主机名要拒（会被 ssh 当选项）",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyGitRemoteGuardRejectsCommandTransports",
+    from: '  if (scp) return !scp[1].startsWith("-");',
+    to: "  if (scp) return true;",
+    expect: "会被 ssh 当选项"
+  },
+  {
+    name: "正常 https 地址不许被拒（拒了这个项目根本推不上去）",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyGitRemoteGuardRejectsCommandTransports",
+    from: '  if (/^(https?|git|file):\\/\\//iu.test(value)) return true;',
+    to: '  if (/^(https?|git|file):\\/\\//iu.test(value)) return false;',
+    expect: "正常地址被拒"
+  },
+  {
     name: "定稿人必须是【生效中】的账号（挂起的人不能定稿）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyOnlyLiveHumanAccountsCanFinalize",
