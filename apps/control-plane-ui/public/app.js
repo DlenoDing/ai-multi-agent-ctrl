@@ -5014,6 +5014,7 @@ document.addEventListener("click", async (event) => {
 /* ---------------- 实时推送（WebSocket，回退到 5 秒轮询） ---------------- */
 
 let realtimeSocket = null;
+let realtimeLastMessageAt = 0;
 let realtimeReconnectTimer = null;
 let realtimeWakeTimer = null;
 
@@ -5047,6 +5048,9 @@ function connectRealtime() {
     try { socket.send(JSON.stringify({subscribe: ["state"]})); } catch { /* closing */ }
   });
   socket.addEventListener("message", (event) => {
+    // 记下"实时通道确实在送东西"的时刻。判据不能是"socket 开着"——
+    // socket 开着却不再送消息，正是最需要兜底轮询的那一刻（同形的静默停摆本仓修过两次）。
+    realtimeLastMessageAt = Date.now();
     let message;
     try { message = JSON.parse(event.data); } catch { return; }
     if (message.event === "wake") realtimeWake();
@@ -5076,6 +5080,10 @@ setInterval(() => {
   if (!authToken || loading || modalHtml || formTouched) return;
   const active = document.activeElement;
   if (active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;
+  // 这一拍是【兜底】，注释一直这么写，而代码原先无条件跑：实时通道正常时也照样每 5 秒全量拉一遍。
+  // 判据用"最近确实收到过实时消息"，不用"socket 开着"：socket 开着却不送消息，
+  // 恰恰是最需要兜底的那一刻。15 秒没消息就当它不在送了，照常轮询。
+  if (Date.now() - realtimeLastMessageAt < 15000) return;
   loadPage().catch(reportBackgroundRefreshFailure);
 }, 5000);
 

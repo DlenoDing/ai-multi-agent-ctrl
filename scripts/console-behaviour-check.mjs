@@ -1016,6 +1016,30 @@ async function runErrorGuidanceCase() {
     `listEmptyText 只被用了 ${wired - 1} 处（定义之外，应为 3）—— 有表还在说"暂无数据"`);
 }
 
+// 5 秒兜底轮询的注释一直写着"WebSocket 不可用时的兜底"，而代码原先【无条件跑】：
+// 实时通道正常时也照样每 5 秒全量拉一遍。判据必须是"最近确实收到过实时消息"，
+// 不能是"socket 开着" —— socket 开着却不再送消息，恰恰是最需要兜底的那一刻
+// （同形的静默停摆本仓修过两次：编排心跳、控制通道）。
+{
+  const pollSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8")
+    .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
+  const at = pollSource.indexOf("}, 5000);");
+  const body = at < 0 ? "" : pollSource.slice(Math.max(0, at - 700), at);
+  check("兜底轮询在实时通道正常时要让路（否则等于双份负载）",
+    /realtimeLastMessageAt/u.test(body),
+    at < 0 ? "找不到那个 5 秒轮询 —— 本条在空转" : "兜底轮询无条件跑：实时通道正常时也在全量拉");
+  check("让路的判据是【最近真收到过消息】，不是【socket 开着】",
+    !/realtimeSocket\s*(&&|\?|\))/u.test(body) || /realtimeLastMessageAt/u.test(body),
+    "用 socket 是否打开来判断：它开着却不送消息时，兜底会跟着一起哑掉");
+  // 时刻只在真收到消息时更新 —— 否则"最近收到过"这个判据本身就是假的。
+  const stamped = pollSource.indexOf("realtimeLastMessageAt = Date.now()");
+  const inMessageHandler = stamped > 0
+    && /addEventListener\("message"/u.test(pollSource.slice(Math.max(0, stamped - 300), stamped));
+  check("那个时刻只在收到实时消息时更新（不能在别处顺手刷新）",
+    inMessageHandler,
+    "时刻不是在 message 事件里打的 —— 它证明不了通道还在送东西");
+}
+
 // 「正在加载…」这句话必须有对应的【失败态】说法，否则取失败之后它会一直转圈。
 // 这个形状本仓撞了三次，每次长得都不一样：缺三态（项目规则配置）、
 // Promise.all 整组失败（系统概览）、一组请求里有的 catch 了有的没 catch（任务组详情）。

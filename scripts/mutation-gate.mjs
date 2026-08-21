@@ -3162,6 +3162,22 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "兜底轮询要在实时通道正常时让路（否则双份负载）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (Date.now() - realtimeLastMessageAt < 15000) return;",
+    to: "  if (false) return;",
+    expect: "兜底轮询无条件跑"
+  },
+  {
+    name: "「最近收到过消息」这个时刻只能在 message 事件里打",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    realtimeLastMessageAt = Date.now();\n    let message;",
+    to: "    let message;",
+    expect: "不是在 message 事件里打的"
+  },
+  {
     name: "每一句「正在加载」都要有对应的「取失败了」说法",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
