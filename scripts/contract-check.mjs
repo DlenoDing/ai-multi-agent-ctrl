@@ -345,6 +345,7 @@ run(verifyMcpSummaryIsActuallyASummary);
 run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
+run(verifyExecutionTopologyStateMachineRefusesBadTransitions);
 run(verifyGateAssertionsMatchWholeRefusalCodes);
 run(verifyInviteEscalationGuardsShareOnePredicate);
 run(verifyAgentJoinTokenIsSpentExactlyOnce);
@@ -8844,7 +8845,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
   // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
   // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 54;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 42;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -10421,6 +10422,171 @@ function verifyHumanWrittenTextIsNeverSilentlyTruncated(output) {
       + "台账上记的与他写的不是一句话；改用 assertHumanTextWithinLimit（超了就拒，并说清超出多少）");
   }
   console.log(`人写文本不许静默截断：${guarded} 处走了长度校验，${truncated.length} 处仍在 slice 截断（应为 0）`);
+}
+
+function verifyExecutionTopologyStateMachineRefusesBadTransitions(output) {
+  // 并行执行方案的状态机守卫此前整族【零覆盖】：什么时候能合、合之前要有什么。
+  // 它们决定"这个方案算不算跑完了"—— 少一道，一个分支还没报到的方案就能被当成已完成合并掉。
+  const base = () => {
+    const st = structuredClone(seedState);
+    ensureRuntimeCollections(st, {root});
+    const tg = st.taskGroups.find((item) => item.id === "tg_runtime_management");
+    tg.workItems = [{id: "wi_topo_sm", title: "状态机用例", status: "ready", ownerRole: "agent-runtime", progress: 0}];
+    return {st, tg};
+  };
+  const makeTopology = (extra = {}) => {
+    const {st, tg} = base();
+    const topology = createExecutionTopology(st, {
+      taskGroupId: tg.id, workItemId: "wi_topo_sm", root,
+      branches: [
+        {branchId: "b_a", objective: "分支甲", ownedPaths: ["apps/a/**"], resourceScopes: ["db:a"]},
+        {branchId: "b_b", objective: "分支乙", ownedPaths: ["apps/b/**"], resourceScopes: ["db:b"]}
+      ],
+      ...extra
+    }).topology;
+    return {st, tg, topology};
+  };
+  const refusalOf = (st, args) => {
+    try { advanceExecutionTopology(st, args); return null; }
+    catch (error) { return error.message; }
+  };
+  const humanActor = (st) => (st.accounts.find((item) =>
+    ["system_admin", "org_admin", "user_account"].includes(item.accountType)) || {}).accountId;
+  // 走到 running：资格检查 → 人定稿 → 启动。后面几条都从这里分叉。
+  const runningTopology = () => {
+    const {st, topology} = makeTopology();
+    advanceExecutionTopology(st, {topologyId: topology.topologyId, action: "check_eligibility"});
+    const card = (st.humanConfirmationRequests || [])
+      .find((item) => item.decisionType === "plan_topology" && item.status === "pending");
+    if (card) {
+      decideHumanConfirmation(st, card.requestId,
+        {action: "finalize", selectedOptionId: "accept_plan", expectedRound: card.round}, {actor: humanActor(st)});
+    }
+    advanceExecutionTopology(st, {topologyId: topology.topologyId, action: "start"});
+    return {st, topology};
+  };
+
+  // 建方案时就要挡住的两条。
+  {
+    const {st, tg} = base();
+    // 不填 workItemId 会回退到"第一个还没关掉的工作项"，所以要够到这道门，得让任务组里
+    // 一个可用工作项都没有 —— 那正是它守的场景：方案挂不到任何一件事上。
+    tg.workItems = [{id: "wi_closed", title: "已关闭", status: "closed", ownerRole: "agent-runtime", progress: 100}];
+    let noWorkItem = null;
+    try {
+      createExecutionTopology(st, {taskGroupId: tg.id, root,
+        branches: [{branchId: "b_a", objective: "甲", ownedPaths: ["apps/a/**"], resourceScopes: ["db:a"]}]});
+    } catch (error) { noWorkItem = error.message; }
+    if (noWorkItem !== "execution_topology_requires_work_item") {
+      output.push(`执行方案: 不指明工作项也能建方案（${noWorkItem || "建成了"}）—— 这份方案不属于任何一件事，`
+        + "它的产出没有归属，关闭门也不知道该等谁");
+    }
+    let externalRunner = null;
+    try {
+      makeTopology({runnerKind: "external_runner"});
+    } catch (error) { externalRunner = error.message; }
+    if (externalRunner !== "execution_topology_external_runner_requires_grant_and_local_verification") {
+      output.push(`执行方案: 用外部运行器却不要授权凭据、也不要本地验证证据（${externalRunner || "建成了"}）—— `
+        + "改动会落在一个控制面既没授权过、也没验证过的地方");
+    }
+  }
+  // 有阻塞项时不得启动。
+  {
+    const {st, topology} = makeTopology();
+    advanceExecutionTopology(st, {topologyId: topology.topologyId, action: "check_eligibility"});
+    topology.blockers = ["owned_paths_disjoint:branch_without_owned_paths"];
+    const blocked = refusalOf(st, {topologyId: topology.topologyId, action: "start"});
+    if (blocked !== "execution_topology_eligibility_blocked") {
+      output.push(`执行方案: 带着阻塞项就启动了（${blocked || `状态变成 ${topology.status}`}）—— `
+        + "资格检查列出的问题一个都没解决，方案照跑");
+    }
+    const noReason = refusalOf(st, {topologyId: topology.topologyId, action: "downgrade"});
+    if (noReason !== "execution_topology_downgrade_requires_reason") {
+      output.push(`执行方案: 不写理由就把并行方案降级成串行（${noReason || "降级成功"}）—— `
+        + "人事后看不出为什么这份方案不按原样跑了");
+    }
+  }
+  // 合并前的三道门。
+  {
+    const {st, topology} = runningTopology();
+    const merge = (args) => refusalOf(st, {topologyId: topology.topologyId, action: "merge", ...args});
+    // 一个分支正常报到、另一个报的是 failed。两者都算"报到过"（于是方案进 integrating），
+    // 但 merge 只认 accepted/reported —— 这正是"还有分支没跑成就被当成完成"的形状。
+    advanceExecutionTopology(st, {topologyId: topology.topologyId, action: "report_branch", branchId: "b_a",
+      resultRef: "bundle:b_a", actualChangedPaths: ["apps/a/x.txt"]});
+    advanceExecutionTopology(st, {topologyId: topology.topologyId, action: "report_branch", branchId: "b_b",
+      branchStatus: "failed", resultRef: "bundle:b_b"});
+    const noEvidence = merge({});
+    if (noEvidence !== "execution_topology_merge_requires_final_validation_evidence") {
+      output.push(`执行方案: 不给终验证据就能合（${noEvidence || "合成功了"}）—— 没有任何东西证明这批改动验过`);
+    }
+    // 阻塞项那道在前面，先清掉，否则这里测的是那一道而不是"分支没跑成"这一道。
+    topology.blockers = [];
+    const unfinished = merge({finalValidationEvidenceRefs: ["npm run validate:ok"]});
+    if (unfinished !== "execution_topology_merge_requires_all_branches_reported") {
+      output.push(`执行方案: 有分支报的是 failed，方案却被合了（${unfinished || "合成功了"}）—— `
+        + "那个分支没跑成，它负责的那部分要么丢了，要么在没人看过的情况下进了主干");
+    }
+    // 把 failed 那条改成正常报到，只留一条阻塞项 —— 第三道门。
+    topology.groups.flatMap((group) => group.branches || [])
+      .filter((branch) => branch.branchId === "b_b").forEach((branch) => { branch.status = "reported"; });
+    topology.blockers = ["owned_paths_disjoint:branch_without_owned_paths"];
+    const stillBlocked = merge({finalValidationEvidenceRefs: ["npm run validate:ok"]});
+    if (stillBlocked !== "execution_topology_merge_blocked_by_topology_blockers") {
+      output.push(`执行方案: 带着阻塞项就合了（${stillBlocked || "合成功了"}）—— `
+        + "「分支写到了批准范围之外」这类证据还挂着，方案却被当成完成");
+    }
+    // 正面对照走同一条路：清掉阻塞项、给上证据，必须合得成。
+    topology.blockers = [];
+    const merged = merge({finalValidationEvidenceRefs: ["npm run validate:ok"]});
+    if (merged !== null || topology.status !== "merged") {
+      output.push(`执行方案: 该合的时候也合不了（${merged || topology.status}）—— 上面三条其实是「永远拒」`);
+    }
+  }
+  // 阻塞/解阻塞/对账/取消这四条都要求带上"凭什么"。
+  {
+    const {st, topology} = runningTopology();
+    for (const branchId of ["b_a", "b_b"]) {
+      advanceExecutionTopology(st, {topologyId: topology.topologyId, action: "report_branch", branchId,
+        resultRef: `bundle:${branchId}`, actualChangedPaths: [`apps/${branchId.slice(-1)}/x.txt`]});
+    }
+    const noRef = refusalOf(st, {topologyId: topology.topologyId, action: "block"});
+    if (noRef !== "execution_topology_block_requires_derived_task_request_ref") {
+      // 这道守卫失效时那次 block 会【真的成功】，状态变成 blocked，下面几步的 expect 全部落空 ——
+      // 抛出来的是状态机异常而不是这条红。把这一族拆成"报红就地返回"，别让它崩在别处。
+      output.push(`执行方案: 不说因为哪件事就把方案挂起（${noRef || "挂起成功"}）—— 人看不出在等什么，`
+        + "而且这个方案从此挂在一条没人认领的理由上");
+    } else {
+      advanceExecutionTopology(st, {topologyId: topology.topologyId, action: "block",
+        blockingDerivedTaskRequestRef: "dtr_needs_api_change"});
+      const noResolved = refusalOf(st, {topologyId: topology.topologyId, action: "unblock"});
+      if (noResolved !== "execution_topology_unblock_requires_resolved_ref") {
+        output.push(`执行方案: 不说解决了哪一条就解除挂起（${noResolved || "解除成功"}）`);
+      }
+      const wrongRef = refusalOf(st, {topologyId: topology.topologyId, action: "unblock", resolvedBlockerRef: "dtr_不是这一条"});
+      if (wrongRef !== "execution_topology_blocker_not_found") {
+        output.push(`执行方案: 用一个对不上的引用解除了挂起（${wrongRef || "解除成功"}）—— `
+          + "阻塞项没清掉却回到了 integrating，或者清掉了别的证据");
+      }
+    }
+  }
+  {
+    const {st, topology} = runningTopology();
+    advanceExecutionTopology(st, {topologyId: topology.topologyId, action: "reconcile_required", runnerId: "wt_1"});
+    const noEvidence = refusalOf(st, {topologyId: topology.topologyId, action: "reconcile"});
+    if (noEvidence !== "execution_topology_reconcile_requires_evidence") {
+      output.push(`执行方案: 运行载体状态不明时不给证据就宣布对账完成（${noEvidence || "对账成功"}）—— `
+        + "没有任何东西证明那台机器上到底发生了什么");
+    }
+  }
+  {
+    const {st, topology} = runningTopology();
+    const noCancelRef = refusalOf(st, {topologyId: topology.topologyId, action: "cancel"});
+    if (noCancelRef !== "execution_topology_cancel_requires_ref") {
+      output.push(`执行方案: 不写理由就终止方案（${noCancelRef || "终止成功"}）—— 台账上只留下一条"被取消了"`);
+    }
+  }
+  console.log("执行方案状态机：建方案两条、启动两条、合并三条、挂起/解除/对账/取消五条 —— 十二道门逐个核过");
 }
 
 function verifyGateAssertionsMatchWholeRefusalCodes(output) {

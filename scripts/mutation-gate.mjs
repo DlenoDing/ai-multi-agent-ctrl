@@ -3385,6 +3385,102 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "方案必须挂在一件真实工作项上",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",
+    from: "  if (!workItemId) throw topologyError(\"execution_topology_requires_work_item\", 400);",
+    to: "  if (false) throw topologyError(\"execution_topology_requires_work_item\", 400);",
+    expect: "不指明工作项也能建方案"
+  },
+  {
+    name: "外部运行器必须带授权与本地验证",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",
+    from: "    throw topologyError(\"execution_topology_external_runner_requires_grant_and_local_verification\", 400);",
+    to: "    void 0;",
+    expect: "用外部运行器却不要授权凭据"
+  },
+  {
+    name: "带着阻塞项不得启动方案",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",
+    from: "    if (topology.blockers.length) throw topologyError(\"execution_topology_eligibility_blocked\");",
+    to: "    if (false) throw topologyError(\"execution_topology_eligibility_blocked\");",
+    expect: "带着阻塞项就启动了"
+  },
+  {
+    name: "方案降级必须写理由",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",
+    from: "    if (!reason) throw topologyError(\"execution_topology_downgrade_requires_reason\", 400);",
+    to: "    if (false) throw topologyError(\"execution_topology_downgrade_requires_reason\", 400);",
+    expect: "不写理由就把并行方案降级"
+  },
+  {
+    name: "合并必须有终验证据",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",
+    from: "    if (!validation.length) throw topologyError(\"execution_topology_merge_requires_final_validation_evidence\", 400);",
+    to: "    if (false) throw topologyError(\"execution_topology_merge_requires_final_validation_evidence\", 400);",
+    expect: "不给终验证据就能合"
+  },
+  {
+    name: "带着阻塞项不得合并",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",
+    from: "    if (topology.blockers.length) throw topologyError(\"execution_topology_merge_blocked_by_topology_blockers\");",
+    to: "    if (false) throw topologyError(\"execution_topology_merge_blocked_by_topology_blockers\");",
+    expect: "带着阻塞项就合了"
+  },
+  {
+    name: "有分支没跑成不得合并",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",
+    from: "    if (unfinished.length) throw topologyError(\"execution_topology_merge_requires_all_branches_reported\");",
+    to: "    if (false) throw topologyError(\"execution_topology_merge_requires_all_branches_reported\");",
+    expect: "方案却被合了"
+  },
+  {
+    name: "挂起方案必须说清在等哪件事",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",
+    from: "    if (!ref) throw topologyError(\"execution_topology_block_requires_derived_task_request_ref\", 400);",
+    to: "    if (false) throw topologyError(\"execution_topology_block_requires_derived_task_request_ref\", 400);",
+    expect: "不说因为哪件事就把方案挂起"
+  },
+  {
+    name: "解除挂起必须说清解决了哪一条",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",
+    from: "    if (!ref) throw topologyError(\"execution_topology_unblock_requires_resolved_ref\", 400);",
+    to: "    if (false) throw topologyError(\"execution_topology_unblock_requires_resolved_ref\", 400);",
+    expect: "不说解决了哪一条就解除挂起"
+  },
+  {
+    name: "对不上的引用不得解除挂起",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",
+    from: "    if (topology.blockers.length === before) throw topologyError(\"execution_topology_blocker_not_found\", 409);",
+    to: "    if (false) throw topologyError(\"execution_topology_blocker_not_found\", 409);",
+    expect: "用一个对不上的引用解除了挂起"
+  },
+  {
+    name: "运行载体对账必须有证据",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",
+    from: "    if (!evidence) throw topologyError(\"execution_topology_reconcile_requires_evidence\", 400);",
+    to: "    if (false) throw topologyError(\"execution_topology_reconcile_requires_evidence\", 400);",
+    expect: "不给证据就宣布对账完成"
+  },
+  {
+    name: "终止方案必须写理由",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",
+    from: "    if (!ref) throw topologyError(\"execution_topology_cancel_requires_ref\", 400);",
+    to: "    if (false) throw topologyError(\"execution_topology_cancel_requires_ref\", 400);",
+    expect: "不写理由就终止方案"
+  },
+  {
     name: "只能替自己那条控制命令回执",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",
     check: "verifyAgentGatewayContracts",
