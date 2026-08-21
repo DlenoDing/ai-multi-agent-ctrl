@@ -777,6 +777,109 @@ function associateFormLabels() {
 
 /* ---------------- API 封装 ---------------- */
 
+// 出错那一刻对人说的话，全部在这里拼。原先它埋在 api() 的 fetch 分支里 ——
+// 那是【网络失败时才走到】的一段，断言够不着，于是这九十行报文谁也没验过：
+// 实测配额拒绝会多打一句"故障类型：agents"（词表里没这个键，屏幕上是英文码，说的还是错的）。
+// 抽成纯函数：进去一个服务端载荷，出来一句给人看的话，门可以直接拿真载荷调它。
+function requestFailureHint(payload) {
+  let hint = "";
+  // 服务端在 403 里已经写明了缺哪个权限、作用在哪个资源上，前端原先只取 error 字段丢掉其余，
+  // 于是人只看到"权限不足"，看不出该去要什么权限、找谁要 —— 报错指不到真正的原因。
+  if (payload.requiredPermission) {
+    const scope = payload.resourceScope ? `${payload.resourceScope.resourceType || "?"}:${payload.resourceScope.resourceId || "?"}` : "";
+    hint = `（需要 ${payload.requiredPermission}${scope ? ` @ ${scope}` : ""}${String(payload.requiredPermission).startsWith("task_group:") ? "；这类权限只能在「项目成员授权」里按角色授予，写在账号上的直接权限不生效" : ""}）`;
+  }
+  if (Array.isArray(payload.permissions) && payload.permissions.length) hint += `（涉及：${payload.permissions.join("、")}）`;
+  // 核心决策闸门上最容易并发的一步：两个人同时打开同一张确认单各自点定稿。CAS 只让一个写成，
+  // 输的那一方原先只看到"该确认单已不在待处理状态"，不知道是谁、定了什么，只能自己去翻记录。
+  if (payload.decidedBy || payload.decidedAction) {
+    const who = payload.decidedBy ? accountName(payload.decidedBy) : "另一个人";
+    const what = payload.decidedAction === "finalize" ? "定稿" : payload.decidedAction === "reject" ? "打回返工" : payload.decidedAction === "revise" ? "提交了修改意见" : "处理";
+    hint += `（${esc(who)} 已在 ${fmtTime(payload.decidedAt)} ${what}${payload.decidedOption ? `：${esc(payload.decidedOption)}` : ""}；刷新即可看到结果，重复提交不会生效）`;
+  } else if (payload.currentRound !== undefined) {
+    hint += `（当前轮次已是第 ${esc(payload.currentRound)} 轮，你看到的是更早的一轮 —— AI 在你点击前修订过候选方案，请刷新后重新查看再决定）`;
+  }
+  // 配额超限时服务端已经算出了【哪一类、用了多少、上限多少】，前端原先只取 error ——
+  // 人看到"组织配额已超限"，不知道是成员、项目、任务组还是智能体，也不知道差多少，
+  // 更不知道下一步该去哪。这三样都在手上，不给出来没有任何理由。
+  if (payload.quota !== undefined && payload.usage !== undefined) {
+    const kindLabel = {members: "成员", projects: "项目", taskGroups: "任务组", agents: "智能体"}[payload.kind] || "该资源";
+    // 智能体这一类的"腾出来"和别的不一样：用量数的是【没被吊销的节点】，
+    // 关停（draining）、停用档案都不减，未使用的入网令牌还要先占一格。
+    // 写成笼统的"关掉不再需要的"，人会去关停节点然后发现数字纹丝不动。
+    const freeUp = payload.kind === "agents"
+      ? "或吊销一台不再用的节点（关停、停用档案都不减用量；未签发出去用掉的入网令牌也占着额度）"
+      : "或先关掉/归档不再需要的";
+    hint += `（${kindLabel} ${esc(payload.usage)}/${esc(payload.quota)} 已满：到「组织管理」页调高这一项配额，`
+      + `${freeUp}，再重试）`;
+  }
+  // 服务端在不少错误里写了给人看的说明（message / reason / required），前端原先只取 error 一个字段，
+  // 把它们全丢了 —— 于是一条本来说清了"为什么、接下来怎么办"的 409，到人眼前只剩一串英文枚举。
+  // 典型：停用一个还没接受邀请的成员 → 服务端解释了原因，人看到的是 `409 org_member_invitation_pending`。
+  // supported 与 required 是同一件事的两面：服务端已经把【合法清单】算出来了，
+  // 不给出来的话，人看到的就是"认不出的 X"然后自己猜（12 处拒绝里都带着它，前端一处都没读）。
+  const guidance = [
+    payload.message,
+    payload.reason,
+    Array.isArray(payload.required) ? payload.required.join("；") : payload.required,
+    Array.isArray(payload.supported) && payload.supported.length
+      ? `可用的取值：${payload.supported.join("、")}` : "",
+    // 服务端算出了"多久之后能再试"，词表里却只写着"请稍后再试" —— 人只能反复试。
+    payload.retryAfterSeconds ? `${payload.retryAfterSeconds} 秒后可再试` : "",
+    // 已经关掉的东西：谁关的、什么时候关的，都在同一个响应里。不给的话人得自己去翻台账。
+    payload.closedBy ? `已由 ${payload.closedBy} 关闭${payload.closedAt ? `（${payload.closedAt}）` : ""}` : "",
+    // hint 是服务端写的"下一步怎么办"；received 是"你实际发上来的是什么"（参数写错时最省事的一句）；
+    // openTaskGroupIds 是"还有哪几个挡着"。三样都在同一个响应里，不给出来人只能自己猜。
+    payload.hint,
+    payload.received ? `收到的是：${payload.received}` : "",
+    Array.isArray(payload.openTaskGroupIds) && payload.openTaskGroupIds.length
+      ? `还没关掉的任务组：${payload.openTaskGroupIds.join("、")}` : "",
+    payload.minLength ? `至少需要 ${payload.minLength} 位` : "",
+    // "现在是什么状态、只能转到哪几个"是一对：只给其中一个，人还是不知道能做什么。
+    payload.currentStatus ? `当前状态：${payload.currentStatus}` : "",
+    Array.isArray(payload.allowedStatuses) && payload.allowedStatuses.length
+      ? `可以转到：${payload.allowedStatuses.join("、")}` : "",
+    // 踩了禁区时，到底是哪几条路径 —— 不说的话人得自己拿 diff 去比对。
+    Array.isArray(payload.deniedPaths) && payload.deniedPaths.length
+      ? `踩到禁区的路径：${payload.deniedPaths.join("、")}` : "",
+    // expected / actual 是一对：只说"应该是 X"而不说"实际是什么"，人还是不知道差在哪。
+    // （前端原先一个都没读；同名的 expectedConfigVersion 是另一回事，别混。）
+    payload.expected !== undefined && payload.actual !== undefined
+      ? `应为 ${payload.expected}，实际 ${payload.actual}` : "",
+    payload.commit ? `涉及的提交：${payload.commit}` : "",
+    payload.directiveType ? `你发的指令类型：${payload.directiveType}` : "",
+    // 定稿冲突时，这张卡管的是哪件事 —— 同一个人手上常同时挂着好几张，不说清就得逐张点开找。
+    payload.subjectRef ? `这张卡管的是：${payload.subjectRef}` : "",
+    // 状态损坏时的 file/kind：中文文案里明写着"报文里的 file 指出是哪一份"，
+    // 而前端原先根本不显示它 —— 那句话把人指向一个他看不到的东西（实测造了一次真损坏才发现）。
+    // 产出目标被拒时，服务端会说清是【配置不合法】还是【这条路径 git 跟不住】，并带上真实取值。
+    // 不转达的话，人看到的仍然只是"必须用 git 跟得住的路径"，不知道是哪一条不行。
+    payload.cause === "path_allowlist_invalid" ? "原因：允许路径清单本身不合法（这是配置问题，不是你填的那条路径）" : "",
+    payload.cause === "manifest_path_not_git_trackable" ? "原因：产出清单那条路径 git 跟不住" : "",
+    payload.path ? `涉及的路径：${payload.path}` : "",
+    Array.isArray(payload.allowedPaths) && payload.allowedPaths.length
+      ? `当前允许的路径：${payload.allowedPaths.join("、")}` : "",
+    payload.file ? `涉及的文件：${payload.file}` : "",
+    // kind 是个英文蛇形码。人看到它的时刻正是"控制面状态损坏"那一刻 ——
+    // 原样打出来等于在最要紧的时候甩给人一个标识符。走词表；词表没有就退回原码，
+    // 但那种情况由判据在提交前就拦下（每一种 kind 都必须有中文）。
+    // 只在【存储故障】那一族里 kind 才是"故障类型"。配额拒绝里的 kind 是"哪一类配额"
+    // （agents/members/…），上面那段已经按配额语义说过了 —— 不排掉的话这里会再打一句
+    // "故障类型：agents"：词表里没有这个键，屏幕上就是一个英文标识符，而且说的还是错的。
+    payload.kind && payload.quota === undefined ? `故障类型：${t(payload.kind)}` : "",
+    payload.code && typeof payload.code === "string" ? `系统错误码：${payload.code}` : "",
+    // 版本不匹配那条报文让运维"重新执行入网安装命令升级"——那就得说清差在哪一版。
+    // 原先这两个字段登记成"装机脚本会读"，实测装机脚本与 agent 运行时都没读过（谁都没读）。
+    payload.requiredRuntimeVersion
+      ? `需要的运行时版本：${payload.requiredRuntimeVersion}（该节点当前 ${payload.nodeRuntimeVersion || "未知"}）` : "",
+    // 代次对不上时，"你带的是哪一代、当前是哪一代"要一起给，否则人不知道自己落后了多少。
+    payload.presented !== undefined && payload.claimEpoch !== undefined
+      ? `你带的认领代次 ${payload.presented}，当前是 ${payload.claimEpoch}` : ""
+  ].map((item) => String(item || "").trim()).filter(Boolean);
+  if (guidance.length) hint += `：${[...new Set(guidance)].join("；")}`;
+  return hint;
+}
+
 async function api(path, options = {}) {
   const method = (options.method || "GET").toUpperCase();
   const headers = {"content-type": "application/json", ...(options.headers || {})};
@@ -802,91 +905,7 @@ async function api(path, options = {}) {
     try {
       const payload = await response.json();
       detail = payload.error || "";
-      // 服务端在 403 里已经写明了缺哪个权限、作用在哪个资源上，前端原先只取 error 字段丢掉其余，
-      // 于是人只看到"权限不足"，看不出该去要什么权限、找谁要 —— 报错指不到真正的原因。
-      if (payload.requiredPermission) {
-        const scope = payload.resourceScope ? `${payload.resourceScope.resourceType || "?"}:${payload.resourceScope.resourceId || "?"}` : "";
-        hint = `（需要 ${payload.requiredPermission}${scope ? ` @ ${scope}` : ""}${String(payload.requiredPermission).startsWith("task_group:") ? "；这类权限只能在「项目成员授权」里按角色授予，写在账号上的直接权限不生效" : ""}）`;
-      }
-      if (Array.isArray(payload.permissions) && payload.permissions.length) hint += `（涉及：${payload.permissions.join("、")}）`;
-      // 核心决策闸门上最容易并发的一步：两个人同时打开同一张确认单各自点定稿。CAS 只让一个写成，
-      // 输的那一方原先只看到"该确认单已不在待处理状态"，不知道是谁、定了什么，只能自己去翻记录。
-      if (payload.decidedBy || payload.decidedAction) {
-        const who = payload.decidedBy ? accountName(payload.decidedBy) : "另一个人";
-        const what = payload.decidedAction === "finalize" ? "定稿" : payload.decidedAction === "reject" ? "打回返工" : payload.decidedAction === "revise" ? "提交了修改意见" : "处理";
-        hint += `（${esc(who)} 已在 ${fmtTime(payload.decidedAt)} ${what}${payload.decidedOption ? `：${esc(payload.decidedOption)}` : ""}；刷新即可看到结果，重复提交不会生效）`;
-      } else if (payload.currentRound !== undefined) {
-        hint += `（当前轮次已是第 ${esc(payload.currentRound)} 轮，你看到的是更早的一轮 —— AI 在你点击前修订过候选方案，请刷新后重新查看再决定）`;
-      }
-      // 配额超限时服务端已经算出了【哪一类、用了多少、上限多少】，前端原先只取 error ——
-      // 人看到"组织配额已超限"，不知道是成员、项目、任务组还是智能体，也不知道差多少，
-      // 更不知道下一步该去哪。这三样都在手上，不给出来没有任何理由。
-      if (payload.quota !== undefined && payload.usage !== undefined) {
-        const kindLabel = {members: "成员", projects: "项目", taskGroups: "任务组", agents: "智能体"}[payload.kind] || "该资源";
-        hint += `（${kindLabel} ${esc(payload.usage)}/${esc(payload.quota)} 已满：到「组织管理」页调高这一项配额，`
-          + "或先关掉/归档不再需要的，再重试）";
-      }
-      // 服务端在不少错误里写了给人看的说明（message / reason / required），前端原先只取 error 一个字段，
-      // 把它们全丢了 —— 于是一条本来说清了"为什么、接下来怎么办"的 409，到人眼前只剩一串英文枚举。
-      // 典型：停用一个还没接受邀请的成员 → 服务端解释了原因，人看到的是 `409 org_member_invitation_pending`。
-      // supported 与 required 是同一件事的两面：服务端已经把【合法清单】算出来了，
-      // 不给出来的话，人看到的就是"认不出的 X"然后自己猜（12 处拒绝里都带着它，前端一处都没读）。
-      const guidance = [
-        payload.message,
-        payload.reason,
-        Array.isArray(payload.required) ? payload.required.join("；") : payload.required,
-        Array.isArray(payload.supported) && payload.supported.length
-          ? `可用的取值：${payload.supported.join("、")}` : "",
-        // 服务端算出了"多久之后能再试"，词表里却只写着"请稍后再试" —— 人只能反复试。
-        payload.retryAfterSeconds ? `${payload.retryAfterSeconds} 秒后可再试` : "",
-        // 已经关掉的东西：谁关的、什么时候关的，都在同一个响应里。不给的话人得自己去翻台账。
-        payload.closedBy ? `已由 ${payload.closedBy} 关闭${payload.closedAt ? `（${payload.closedAt}）` : ""}` : "",
-        // hint 是服务端写的"下一步怎么办"；received 是"你实际发上来的是什么"（参数写错时最省事的一句）；
-        // openTaskGroupIds 是"还有哪几个挡着"。三样都在同一个响应里，不给出来人只能自己猜。
-        payload.hint,
-        payload.received ? `收到的是：${payload.received}` : "",
-        Array.isArray(payload.openTaskGroupIds) && payload.openTaskGroupIds.length
-          ? `还没关掉的任务组：${payload.openTaskGroupIds.join("、")}` : "",
-        payload.minLength ? `至少需要 ${payload.minLength} 位` : "",
-        // "现在是什么状态、只能转到哪几个"是一对：只给其中一个，人还是不知道能做什么。
-        payload.currentStatus ? `当前状态：${payload.currentStatus}` : "",
-        Array.isArray(payload.allowedStatuses) && payload.allowedStatuses.length
-          ? `可以转到：${payload.allowedStatuses.join("、")}` : "",
-        // 踩了禁区时，到底是哪几条路径 —— 不说的话人得自己拿 diff 去比对。
-        Array.isArray(payload.deniedPaths) && payload.deniedPaths.length
-          ? `踩到禁区的路径：${payload.deniedPaths.join("、")}` : "",
-        // expected / actual 是一对：只说"应该是 X"而不说"实际是什么"，人还是不知道差在哪。
-        // （前端原先一个都没读；同名的 expectedConfigVersion 是另一回事，别混。）
-        payload.expected !== undefined && payload.actual !== undefined
-          ? `应为 ${payload.expected}，实际 ${payload.actual}` : "",
-        payload.commit ? `涉及的提交：${payload.commit}` : "",
-        payload.directiveType ? `你发的指令类型：${payload.directiveType}` : "",
-        // 定稿冲突时，这张卡管的是哪件事 —— 同一个人手上常同时挂着好几张，不说清就得逐张点开找。
-        payload.subjectRef ? `这张卡管的是：${payload.subjectRef}` : "",
-        // 状态损坏时的 file/kind：中文文案里明写着"报文里的 file 指出是哪一份"，
-        // 而前端原先根本不显示它 —— 那句话把人指向一个他看不到的东西（实测造了一次真损坏才发现）。
-        // 产出目标被拒时，服务端会说清是【配置不合法】还是【这条路径 git 跟不住】，并带上真实取值。
-        // 不转达的话，人看到的仍然只是"必须用 git 跟得住的路径"，不知道是哪一条不行。
-        payload.cause === "path_allowlist_invalid" ? "原因：允许路径清单本身不合法（这是配置问题，不是你填的那条路径）" : "",
-        payload.cause === "manifest_path_not_git_trackable" ? "原因：产出清单那条路径 git 跟不住" : "",
-        payload.path ? `涉及的路径：${payload.path}` : "",
-        Array.isArray(payload.allowedPaths) && payload.allowedPaths.length
-          ? `当前允许的路径：${payload.allowedPaths.join("、")}` : "",
-        payload.file ? `涉及的文件：${payload.file}` : "",
-        // kind 是个英文蛇形码。人看到它的时刻正是"控制面状态损坏"那一刻 ——
-        // 原样打出来等于在最要紧的时候甩给人一个标识符。走词表；词表没有就退回原码，
-        // 但那种情况由判据在提交前就拦下（每一种 kind 都必须有中文）。
-        payload.kind ? `故障类型：${t(payload.kind)}` : "",
-        payload.code && typeof payload.code === "string" ? `系统错误码：${payload.code}` : "",
-        // 版本不匹配那条报文让运维"重新执行入网安装命令升级"——那就得说清差在哪一版。
-        // 原先这两个字段登记成"装机脚本会读"，实测装机脚本与 agent 运行时都没读过（谁都没读）。
-        payload.requiredRuntimeVersion
-          ? `需要的运行时版本：${payload.requiredRuntimeVersion}（该节点当前 ${payload.nodeRuntimeVersion || "未知"}）` : "",
-        // 代次对不上时，"你带的是哪一代、当前是哪一代"要一起给，否则人不知道自己落后了多少。
-        payload.presented !== undefined && payload.claimEpoch !== undefined
-          ? `你带的认领代次 ${payload.presented}，当前是 ${payload.claimEpoch}` : ""
-      ].map((item) => String(item || "").trim()).filter(Boolean);
-      if (guidance.length) hint += `：${[...new Set(guidance)].join("；")}`;
+      hint = requestFailureHint(payload);
     } catch {}
     if (response.status === 401 && authToken) {
       // 会话是【绝对过期】的（登录时定死，不续期）。而人在打字时轮询是暂停的，
@@ -4777,7 +4796,7 @@ document.addEventListener("click", async (event) => {
       const agent = (state.agents || []).find((item) => item.id === target.dataset.agent);
       if (agent?.status === "active" && !(await confirmDialog({title: "停用智能体", message: "确认停用该智能体档案？",
         // 这里最容易被误解成"把跑着的 agent 停了"。档案与运行中的节点是两回事，必须说破。
-        sub: "停用的是这份档案：该角色的新工作会改落到其它启用中的档案。它不会让正在运行的智能体节点停下来 ——要让节点停，用节点那一行的「关停节点」或「立即切断」。随时可以再启用。",
+        sub: "停用的是这份档案：该角色的新工作会改落到其它启用中的档案。它不会让正在运行的智能体节点停下来 ——要让节点停，到组织的「AI 智能体」页用「关停节点」或「立即切断」（本页管的是档案，不是节点）。随时可以再启用。",
         danger: true, confirmText: "停用"}))) return;
       await api(`/api/agents/${encodeURIComponent(target.dataset.agent)}/activate`, {method: "POST", body: JSON.stringify({active: agent?.status !== "active"})});
       await loadPage();

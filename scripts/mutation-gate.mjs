@@ -3059,6 +3059,30 @@ const MUTATIONS = [
     expect: "阻塞状态出口"
   },
   {
+    name: "配额里的 kind 不得被当成故障类型再打一遍",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: 'payload.kind && payload.quota === undefined ? `故障类型：${t(payload.kind)}` : "",',
+    to: 'payload.kind ? `故障类型：${t(payload.kind)}` : "",',
+    expect: "不能被当成「故障类型」再打一遍"
+  },
+  {
+    name: "排除故障类型时不许把存储故障那一族一起挡掉",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "payload.kind && payload.quota === undefined ?",
+    to: "payload.kind && false ?",
+    expect: "存储故障那一族仍要打出故障类型"
+  },
+  {
+    name: "智能体配额要说清只有吊销才腾得出额度",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '? "或吊销一台不再用的节点（关停、停用档案都不减用量；未签发出去用掉的入网令牌也占着额度）"',
+    to: '? "或先关掉/归档不再需要的"',
+    expect: "只有吊销才腾得出来"
+  },
+  {
     name: "危险确认必须说清按下去会发生什么",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyDangerousConfirmsStateTheConsequence",
@@ -3408,7 +3432,7 @@ const MUTATIONS = [
     name: "产出目标被拒要说出是哪条路径（裸码让 agent 无从自纠）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "        payload.path ? `涉及的路径：${payload.path}` : \"\",",
+    from: "    payload.path ? `涉及的路径：${payload.path}` : \"\",",
     to: "        \"\",",
     expect: "没有到达人"
   },
@@ -3672,7 +3696,7 @@ const MUTATIONS = [
     name: "界面必须把故障类型翻成中文（词表有而界面不查＝白写）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "payload.kind ? `故障类型：${t(payload.kind)}` : \"\",",
+    from: "payload.kind && payload.quota === undefined ? `故障类型：${t(payload.kind)}` : \"\",",
     to: "payload.kind ? `故障类型：${payload.kind}` : \"\",",
     expect: "出事那一刻甩给人一个英文标识符"
   },
@@ -4048,7 +4072,7 @@ const MUTATIONS = [
     name: "文案点名的字段界面必须真的显示",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyMessagesDoNotPointAtInvisibleFields",
-    from: '        payload.file ? `涉及的文件：${payload.file}` : "",',
+    from: '    payload.file ? `涉及的文件：${payload.file}` : "",',
     to: '        "",',
     expect: "指向一个他看不到的东西"
   },
@@ -4056,7 +4080,7 @@ const MUTATIONS = [
     name: "抛错展开进报文的字段也要被门扫到",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyServerFieldsReachThePerson",
-    from: '        Array.isArray(payload.deniedPaths) && payload.deniedPaths.length\n          ? `踩到禁区的路径：${payload.deniedPaths.join("、")}` : "",',
+    from: '    Array.isArray(payload.deniedPaths) && payload.deniedPaths.length\n      ? `踩到禁区的路径：${payload.deniedPaths.join("、")}` : "",',
     to: '        "",',
     expect: "拒绝报文里带了 deniedPaths"
   },
@@ -4064,7 +4088,7 @@ const MUTATIONS = [
     name: "拒绝报文里给人看的字段，前端不读要被门看见",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyServerFieldsReachThePerson",
-    from: "        payload.hint,",
+    from: "    payload.hint,",
     to: '        "",',
     expect: "拒绝报文里带了 hint"
   },
@@ -4072,8 +4096,8 @@ const MUTATIONS = [
     name: "服务端算好的合法清单必须到达人眼前",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '        Array.isArray(payload.supported) && payload.supported.length\n          ? `可用的取值：${payload.supported.join("、")}` : ""',
-    to: '        ""',
+    from: '    Array.isArray(payload.supported) && payload.supported.length\n      ? `可用的取值：${payload.supported.join("、")}` : ""',
+    to: '    ""',
     expect: "服务端写的说明没有到达人"
   },
   {

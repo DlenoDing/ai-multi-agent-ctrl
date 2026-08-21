@@ -140,6 +140,7 @@ function makeContext(documentRoot) {
 // 若这些绑定被改名，尾插会在加载时抛 ReferenceError —— 本门直接失败，而不是悄悄测了个空。
 const PROBE_EPILOGUE = `
 globalThis.__probe = {
+  requestFailureHint: (payload) => requestFailureHint(payload),
   snapshotFormValues: (formEl) => snapshotFormValues(formEl),
   restorePendingForm: () => restorePendingForm(),
   setPending: (value) => { pendingFormRestore = value; },
@@ -390,6 +391,20 @@ function check(name, condition, detail) {
 // 空态必须按【这个人能做什么】说话，所以三种视角逐一验，不是验"有没有提示"。
 {
   const emptyRoot = el("div");
+  // 出错那一刻对人说的话：拿【服务端真的会回的载荷】直接调拼装函数。
+  // 这段原先埋在 api() 的网络失败分支里，断言够不着 —— 于是九十行报文一条都没验过。
+  {
+    // 真词表：这段话里要不要露出英文码，取决于词表有没有那个键。
+    const probe = loadConsole(el("div"), {realI18n: true});
+    const quotaHint = probe.requestFailureHint({error: "org_quota_exceeded", kind: "agents", quota: 3, usage: 3});
+    check("配额拒绝要说清是哪一类、用了多少、上限多少", quotaHint.includes("智能体 3/3"), quotaHint.slice(0, 90));
+    check("智能体配额要说清只有吊销才腾得出来（关停/停用都不减）", quotaHint.includes("吊销"), quotaHint.slice(0, 120));
+    check("配额里的 kind 是「哪一类配额」，不能被当成「故障类型」再打一遍（词表里没有 agents，会露出英文码）",
+      !quotaHint.includes("故障类型"), quotaHint.slice(0, 120));
+    const faultHint = probe.requestFailureHint({error: "state_store_unavailable", kind: "state_read_failed"});
+    check("存储故障那一族仍要打出故障类型（上一条不能把它一起挡掉）", faultHint.includes("故障类型"), faultHint.slice(0, 90));
+  }
+
   const emptyProbe = loadConsole(emptyRoot);
   const emptyState = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
     organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
