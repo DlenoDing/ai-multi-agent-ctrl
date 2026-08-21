@@ -32,6 +32,7 @@ let currentProjectId = sessionStorage.getItem("aimac.projectId") || "";
 
 let state = emptyState();
 let systemOverview = null;
+let systemOverviewStatus = "unloaded"; // unloaded | loaded | failed
 let organizations = [];
 let orgAgentNodes = [];
 let orgMembers = [];
@@ -978,6 +979,7 @@ function clearSession() {
   document.body.classList.remove("modal-open");
   state = emptyState();
   systemOverview = null;
+  systemOverviewStatus = "unloaded";
   organizations = [];
   orgAgentNodes = [];
   orgMembers = [];
@@ -1215,7 +1217,19 @@ async function loadPage() {
   loading = true;
   try {
     if (page === "sys-overview") {
-      [systemOverview, state] = await Promise.all([api("/api/system/overview"), fetchState("system")]);
+      // "还没取过"与"取失败了"此前共用同一个 null，那一块一律显示"正在加载系统概览…" ——
+      // 加载已经失败、横幅就在上面写着原因，这一块却还在转圈，人会一直等一件不会发生的事。
+      // （同一个形状在项目规则配置那里修过一次，这是第二处 —— 一个 null 兼表两种意思。）
+      // 顺带：原先 Promise.all 一失败，state 也一起丢了；现在概览取不到时其余数据照样呈现。
+      let overviewFailure = null;
+      const [overviewResult, systemState] = await Promise.all([
+        api("/api/system/overview").catch((error) => { overviewFailure = error; return null; }),
+        fetchState("system")
+      ]);
+      systemOverview = overviewResult;
+      systemOverviewStatus = overviewResult ? "loaded" : "failed";
+      state = systemState;
+      if (overviewFailure) throw overviewFailure;
     } else if (page === "sys-orgs") {
       organizations = (await api("/api/orgs")).organizations || [];
     } else if (page === "sys-settings") {
@@ -1740,7 +1754,9 @@ function renderSysOverview() {
         <dt>状态存储引擎</dt><dd>${esc(t(overview.storage.stateStore))}</dd>
       </dl>
     `)
-  ].join("") : panel("系统概览", `<div class="notice">正在加载系统概览…</div>`, {wide: true});
+  ].join("") : panel("系统概览", `<div class="notice">${systemOverviewStatus === "failed"
+    ? "系统概览这一块没能加载出来（原因写在页面顶部的横幅里）—— 下面的系统服务与审计日志是刚取到的，可以照常看"
+    : "正在加载系统概览…"}</div>`, {wide: true});
 
   return overviewPanels + [
     panel("系统服务", table(["服务", "状态", "健康度"], services)),

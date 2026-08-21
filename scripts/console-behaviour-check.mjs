@@ -152,6 +152,12 @@ globalThis.__probe = {
   renderTaskGroupDetail: (detail, taskGroup) => { tgDetail = detail; return renderTaskGroupDetail(taskGroup); },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
+  systemOverviewText: (nextState, account, status) => {
+    state = nextState; currentAccount = account; currentProjectId = null; page = "sys-overview";
+    authToken = "probe-token"; systemOverview = null; systemOverviewStatus = status;
+    render();
+    return String(document.body.innerHTML || "").replace(/<[^>]+>/gu, " ");
+  },
   failureBannerText: (nextState, account, message, isRequest) => {
     state = nextState; currentAccount = account; currentProjectId = null; page = "sys-overview";
     authToken = "probe-token";
@@ -308,11 +314,15 @@ if (process.env.AIMAC_RENDER_REAL) {
     const unserved = new Set();
     const fetchStub = async (path) => {
       const url = String(path);
-      const ok = (payload) => ({ok: true, status: 200, json: async () => payload});
+      // headers 必须给：api() 会读 response.headers.get("etag")。第一版没给，
+      // 于是每一页横幅上都挂着一句 "Cannot read properties of undefined (reading 'get')" ——
+      // 一个由勘察工具自己制造的假故障，看着却像产品缺陷。
+      const headers = {get: () => null};
+      const ok = (payload) => ({ok: true, status: 200, headers, json: async () => payload});
       if (url.includes("/api/state")) return ok(real);
       if (url.includes("/api/orgs")) return ok({organizations: real.organizations || []});
       unserved.add(url.split("?")[0]);
-      return {ok: false, status: 404, statusText: "Not Found",
+      return {ok: false, status: 404, statusText: "Not Found", headers,
         json: async () => ({error: "probe_stub_has_no_answer"})};
     };
     try {
@@ -847,6 +857,40 @@ async function runErrorGuidanceCase() {
     taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
     findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []};
   navProbe.renderFullPageWith(bare, account, null, "org-members");
+// 系统概览这一块"还没取过"与"取失败了"此前共用同一个 null，一律显示"正在加载系统概览…"。
+// 加载已经失败、横幅就在页面顶部写着原因，这一块却还在转圈 —— 人会一直等一件不会发生的事。
+// 同一个形状在项目规则配置那里修过一次，这是第二处；所以这里连"接线"一起验（见下）。
+{
+  const overviewProbe = loadConsole(el("div"), {realI18n: true});
+  const account = {accountId: "u1", email: "a@b.c", accountType: "system_admin",
+    displayName: "管理员", organizationId: "org_default"};
+  const bare = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {}, projects: [],
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
+    findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []};
+  const shownWith = (status) => overviewProbe.systemOverviewText(bare, account, status);
+  const unloaded = shownWith("unloaded");
+  check("还没取到时说的是'正在加载'",
+    /正在加载系统概览/u.test(unloaded) && !/没能加载出来/u.test(unloaded),
+    `未加载时显示：${JSON.stringify(unloaded.slice(0, 100))}`);
+  const failed = shownWith("failed");
+  check("取失败时不许还说'正在加载'（人会一直等一件不会发生的事）",
+    /没能加载出来/u.test(failed) && !/正在加载系统概览/u.test(failed),
+    `失败时显示：${JSON.stringify(failed.slice(0, 120))}`);
+  check("失败时要说清别的部分还能看（否则人以为整页都废了）",
+    /可以照常看/u.test(failed),
+    "只说这块没加载出来，没说下面的系统服务与审计仍然有效");
+  // 上面三条是【渲染分支】：直接置状态，证明不了"真失败时真的会置成 failed"。
+  // 少了这一条，把置位逻辑改成永远 unloaded 也照样全绿（项目配置那处就是被变异验出来的）。
+  const appSrc = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const overviewFetch = appSrc.indexOf('api("/api/system/overview")');
+  const wiring = overviewFetch < 0 ? "" : appSrc.slice(overviewFetch, overviewFetch + 500);
+  check("取失败时必须把状态置成 failed（否则界面永远停在'正在加载'）",
+    /systemOverviewStatus = overviewResult \? "loaded" : "failed"/u.test(wiring),
+    overviewFetch < 0 ? "找不到取系统概览那段代码 —— 本条在空转"
+      : `取概览段落里${/failed/u.test(wiring) ? "有" : "没有"}置 failed 的接线`);
+}
+
 // 加载失败的横幅此前一律写"连不上控制面或这一页加载失败" —— 而异常有两类：
 //   请求级（连不上 / 超时 / 服务端 4xx5xx）：确实该去看控制面；
 //   控制台【自己抛的】（我们代码里的缺陷）：说"连不上控制面"会把人支去查网络和服务端，而 bug 在这一页里。

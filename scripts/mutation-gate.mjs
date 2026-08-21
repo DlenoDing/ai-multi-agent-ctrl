@@ -2986,6 +2986,22 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "系统概览取失败时不许还说'正在加载'（人会一直等）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  ].join(\"\") : panel(\"系统概览\", `<div class=\"notice\">${systemOverviewStatus === \"failed\"",
+    to: "  ].join(\"\") : panel(\"系统概览\", `<div class=\"notice\">${false",
+    expect: "取失败时不许还说"
+  },
+  {
+    name: "取概览失败必须置成 failed（不置就永远停在'正在加载'）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      systemOverviewStatus = overviewResult ? \"loaded\" : \"failed\";",
+    to: "      systemOverviewStatus = \"unloaded\";",
+    expect: "没有置 failed 的接线"
+  },
+  {
     name: "控制台自身缺陷不得说成'连不上控制面'（会把人支去查网络）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
