@@ -3281,15 +3281,35 @@ async function handleApi(req, res) {
     const liveOrgs = (state.organizations || []).filter((item) => item.orgId !== DEFAULT_ORGANIZATION_ID).length;
     const liveProjects = (state.projects || []).length;
     const liveTaskGroups = (state.taskGroups || []).length;
-    const hasTenantData = liveOrgs > 0 || liveProjects > 1 || liveTaskGroups > 1;
+    // 只数【组织/项目/任务组】三个集合是不够的：一个团队完全可能就待在默认组织里、
+    // 用种子自带的那一个项目和任务组干活，底下积累了几百个工作项、会话、派发与人工定稿记录。
+    // 那时三个数都没超种子，hasTenantData 判成 false —— 不带任何确认就能把这一切抹掉。
+    // 界面那一侧一直要求打字确认，所以这条路只在【绕过界面直接打接口】时打开（脚本、curl、误调用）。
+    // 判据改成"有没有人在这里真干过活"：只取那些【干活才会长】的集合，
+    // 登录/审计这类一开机就涨的不算，否则刚装完的本地排障也要凑确认串，等于把这条路封死。
+    const bootstrapBaseline = JSON.parse(readFileSync(seedPath, "utf8"));
+    const countWorkItems = (snapshot) => (snapshot.taskGroups || [])
+      .reduce((total, group) => total + (group.workItems || []).length, 0);
+    const WORK_EVIDENCE = ["accounts", "workSessions", "agentDispatches", "humanConfirmationRequests",
+      "artifacts", "repositoryOutputs", "agentRuntimeNodes", "checkpoints", "executionTopologies"];
+    const grownCollections = WORK_EVIDENCE
+      .filter((name) => (state[name] || []).length > (bootstrapBaseline[name] || []).length);
+    const grownWorkItems = countWorkItems(state) > countWorkItems(bootstrapBaseline);
+    const hasTenantData = liveOrgs > 0 || liveProjects > 1 || liveTaskGroups > 1
+      || grownCollections.length > 0 || grownWorkItems;
     if (hasTenantData && String(body.confirmDestroy || "") !== `${liveOrgs}/${liveProjects}/${liveTaskGroups}`) {
       return json(res, 409, {
         error: "bootstrap_init_requires_explicit_confirmation",
         message: "运行态里已有真实数据，重新初始化会全部抹掉；请带上 confirmDestroy=<组织数>/<项目数>/<任务组数> 再调用",
-        organizations: liveOrgs, projects: liveProjects, taskGroups: liveTaskGroups
+        organizations: liveOrgs, projects: liveProjects, taskGroups: liveTaskGroups,
+        // 三个数都没超种子、却仍被要求确认时，人会以为系统在无理取闹。说清是哪些东西在证明
+        // 这里有人干过活 —— 否则他只会反复重试那个"0/1/1"的串。
+        ...(grownCollections.length || grownWorkItems
+          ? {grownBeyondSeed: [...grownCollections, ...(grownWorkItems ? ["workItems"] : [])]}
+          : {})
       });
     }
-    const seed = JSON.parse(readFileSync(seedPath, "utf8"));
+    const seed = structuredClone(bootstrapBaseline);
     seed.__loadedStateVersion = state.__loadedStateVersion;
     seed.runtime.updatedAt = now();
     seed.runtime.executionProfile = executionProfile;

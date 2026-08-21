@@ -3571,6 +3571,30 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "重新初始化必须带确认串",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    if (hasTenantData && String(body.confirmDestroy || \"\") !== `${liveOrgs}/${liveProjects}/${liveTaskGroups}`) {",
+    to: "    if (false) {",
+    expect: "不带确认就能重新初始化运行态"
+  },
+  {
+    name: "判断有没有真实数据要看集合超没超种子",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    const WORK_EVIDENCE = [\"accounts\", \"workSessions\", \"agentDispatches\", \"humanConfirmationRequests\",\n      \"artifacts\", \"repositoryOutputs\", \"agentRuntimeNodes\", \"checkpoints\", \"executionTopologies\"];",
+    to: "    const WORK_EVIDENCE = [];",
+    expect: "没有任何【集合】超出种子的证据"
+  },
+  {
+    name: "判断有没有真实数据要把工作项算进去",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    const grownWorkItems = countWorkItems(state) > countWorkItems(bootstrapBaseline);",
+    to: "    const grownWorkItems = false;",
+    expect: "没把【工作项】算进证据"
+  },
+  {
     name: "文案说了不可逆就必须标 danger",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyHarshWordingImpliesDangerFlag",

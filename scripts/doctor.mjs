@@ -2890,6 +2890,46 @@ try {
       throw new Error(`真人暂停任务组失败：HTTP ${paused.response.status} ${JSON.stringify(paused.payload)}`);
     }
     const after = await jsonFetch(port, "/api/state", {headers: {authorization: systemAuth}});
+  // 重新初始化（抹掉运行态全部数据）这条路【三套 e2e 从来没有走过】。它是全系统最不可逆的一步，
+  // 而且判据曾经只数「组织/项目/任务组」三个集合：一个团队待在默认组织里、用种子自带的
+  // 那一个项目和任务组干活，三个数都没超种子，于是不带任何确认就能抹掉一切。
+  // 这里跑到这一步时，本轮已经造了大量真实工作 —— 正好用来验"它认得出这里有人干过活"。
+  {
+    const wipeWithoutConfirm = await jsonFetch(port, "/api/bootstrap/init", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-wipe-no-confirm", authorization: systemAuth},
+      body: JSON.stringify({})
+    });
+    if (wipeWithoutConfirm.response.status !== 409
+      || wipeWithoutConfirm.payload?.error !== "bootstrap_init_requires_explicit_confirmation") {
+      throw new Error(`不带确认就能重新初始化运行态（HTTP ${wipeWithoutConfirm.response.status}/`
+        + `${wipeWithoutConfirm.payload?.error}）—— 这一步抹掉全部数据、不可撤销、没有备份`);
+    }
+    // 报文要说清"凭什么认为这里有真实数据"，否则三个数看着都是种子规模时，人会以为系统在无理取闹、
+    // 反复重试那个串。本轮的工作量应该体现在会话/派发/确认单这些集合上。
+    // 两类证据要【分开】断言：合起来只判"非空"的话，两者中任何一个失效都测不出来
+    //（实测：把 WORK_EVIDENCE 清空、或把 grownWorkItems 写死 false，各自都还是绿的）。
+    const grown = wipeWithoutConfirm.payload?.grownBeyondSeed || [];
+    const grownSets = grown.filter((name) => name !== "workItems");
+    if (!grownSets.length) {
+      throw new Error("拒绝报文里没有任何【集合】超出种子的证据 —— 本轮明明造了会话、派发、确认单，"
+        + `只给了 ${wipeWithoutConfirm.payload?.organizations}/${wipeWithoutConfirm.payload?.projects}/`
+        + `${wipeWithoutConfirm.payload?.taskGroups} 三个数，而三集合的规模证明不了底下有没有人干过活`);
+    }
+    if (!grown.includes("workItems")) {
+      throw new Error("拒绝报文没把【工作项】算进证据 —— 一个团队完全可能就待在种子那一个项目和"
+        + "任务组里干活，那时三个集合数都没超种子，唯一能证明这里有真实数据的就是工作项");
+    }
+    // 确认串对不上时同样要拒（打字确认的全部意义就在这一条上）。
+    const wipeWrongToken = await jsonFetch(port, "/api/bootstrap/init", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-wipe-wrong-token", authorization: systemAuth},
+      body: JSON.stringify({confirmDestroy: "0/0/0"})
+    });
+    if (wipeWrongToken.response.status !== 409) {
+      throw new Error(`确认串对不上却放行了重新初始化（HTTP ${wipeWrongToken.response.status}）`);
+    }
+  }
     // 每一个原先未终结的派发都必须被处置：跑在节点上的那种要收到 pause_dispatch（否则节点上的
     // 进程不知道自己该停），还没落到节点的那种直接改成 blocked。漏掉任何一个，"已暂停"就是假的。
     const stopCommands = (after.payload.agentControlCommands || []).filter((item) =>
