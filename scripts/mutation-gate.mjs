@@ -3353,6 +3353,32 @@ const MUTATIONS = [
     expect: "did not carry the task-group language policy"
   },
   {
+    // 产品的招牌承诺："人定稿之后，AI 不得擅自改变这个方案"。三道守卫都有断言抓得住，
+    // 但从没登记过判别力证明 —— 招牌不变式尤其不该只靠"我记得有测过"。
+    name: "定稿后方案的实质内容变了就不许照常启动",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '  if (["start", "merge"].includes(action) && topology.humanFinalization?.subjectContentDigest) {',
+    to: "  if (false) {",
+    expect: "定稿后方案的实质内容被改动"
+  },
+  {
+    name: "AI 不得自行取消人已定稿的方案",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '    if (topology.humanFinalization?.outcome === "confirmed" && !cancelApproved) {',
+    to: "    if (false) {",
+    expect: "AI 可自行取消已被人定稿的执行方案"
+  },
+  {
+    name: "AI 不得自行降级人已定稿的方案",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '    if (topology.humanFinalization?.outcome === "confirmed" && !downgradeApproved) {',
+    to: "    if (false) {",
+    expect: "已定稿方案被 AI 自行降级"
+  },
+  {
     // 人是照着这段字定稿的。截断本身要写在人看得见的那段字里，不能无痕。
     name: "AI 写给人读的问题正文截断必须留痕",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
