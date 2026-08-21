@@ -5035,7 +5035,9 @@ export function effectiveProjectConfig(project) {
   const businessRules = resolveRuleCategory(defaultBusinessRules(), base.businessRules, null, "business");
   return {
     projectId: project?.id,
-    repositories: base.repositories ?? [],
+    // 走统一入口：否则设置页那张表只看 config，而种子/老项目的仓库在顶层 ——
+    // 屏幕上显示"还没有配置仓库"，同一屏的「仓库产出归属」里却列着一个仓库。
+    repositories: projectRepositories(project),
     baselineData: base.baselineData ?? [],
     systemRules,
     businessRules,

@@ -421,13 +421,19 @@ function check(name, condition, detail) {
     const seed = JSON.parse(fs.readFileSync(path.join(root, "data/seed-state.json"), "utf8"));
     const proj = seed.projects[0];
     const cfg = effectiveProjectConfig(proj);
-    if ((cfg.repositories || []).length) {
-      throw new Error("控制台行为门: 种子项目现在有仓库配置了 —— 这一段测的是【空配置】，断言在空转，请改用一个空项目");
+    // 种子项目【有】一个仓库（在顶层字段上），设置页必须把它显出来 ——
+    // 否则同一屏上「仓库产出归属」列着仓库、而这里说"还没有配置仓库"。
+    if (!(cfg.repositories || []).length) {
+      throw new Error("控制台行为门: 种子项目的仓库没被 effectiveProjectConfig 认出来 —— "
+        + "设置页会显示「还没有配置仓库」，而同一屏的「仓库产出归属」里列着它");
     }
+    // 空配置那几条断言改用一个真的空项目，别拿种子当空的。
+    const emptyProject = {id: "prj_empty_cfg", name: "空项目", organizationId: "org_default", status: "active", members: []};
+    const emptyCfg = effectiveProjectConfig(emptyProject);
     const settingsRoot = el("div");
     const settingsProbe = loadConsole(settingsRoot, {realI18n: true});
     const settingsFetch = async (target) => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
-      json: async () => String(target).includes("/config") ? {projectId: proj.id, config: cfg, configVersion: 1} : seed,
+      json: async () => String(target).includes("/config") ? {projectId: proj.id, config: emptyCfg, configVersion: 1} : seed,
       text: async () => JSON.stringify(seed)});
     await settingsProbe.loadWithFetch(seed, {accountId: "u1", email: "a@b.c", accountType: "system_admin",
       displayName: "管理员", organizationId: "org_default", permissions: ["system:*"]},

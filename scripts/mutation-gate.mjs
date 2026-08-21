@@ -3291,6 +3291,14 @@ const MUTATIONS = [
     expect: "没说清本机被改成什么样"
   },
   {
+    name: "设置页那张仓库表也要走统一入口（否则同屏两处自相矛盾）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "console",
+    from: "    repositories: projectRepositories(project),",
+    to: "    repositories: base.repositories ?? [],",
+    expect: "没被 effectiveProjectConfig 认出来"
+  },
+  {
     name: "读项目仓库不许绕开统一入口（两个字段会再次分叉）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyProjectRepositoriesHaveOneReader",
