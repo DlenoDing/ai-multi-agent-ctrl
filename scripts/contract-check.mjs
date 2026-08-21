@@ -5896,6 +5896,9 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // 这条守卫有【两份实现】：控制面的 isSafeGitRef，和 agent 运行时里那一份 —— 后者是单文件、
 // 只依赖 node 内置的下发产物，共用不了代码。两份不必逐字相同（严的那份可以更严），
 // 但对【危险形态】的判断必须一致，否则控制面拒的东西 agent 照收，或者反过来。
+// 【控制面 ↔ 单文件 agent 运行时】这一族孪生实现的交叉核对。函数名只提了远端地址，
+// 实际管三对：isSafeGitRemoteUrl（危险地址）、gitFailureDetail（人看到的失败原因）、
+// uniqueStrings（调用方给的角色/证据清单）。新增孪生对时加在这里，别再开一个门。
 // isSafeGitRemoteUrl 在两侧【各有一份】：控制面（agent-gateway）与 agent 运行时
 // （单文件下发产物，共用不了代码）。今天收紧控制面那份时就差点只改一半 ——
 // 两份对【危险形态】必须判得一样；尾部的差异是有意的（远端 agent 不接受本地路径与 file://，
