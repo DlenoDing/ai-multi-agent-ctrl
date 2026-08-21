@@ -3171,6 +3171,22 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "按幂等键查找读到坏行不许静默（第三条读路径）",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    check: "verifyCorruptEventLinesAreReported",
+    from: "      corrupt += 1;",
+    to: "      corrupt += 0;",
+    expect: "按幂等键查找时读到解析不了的行，一声不吭"
+  },
+  {
+    name: "多种损坏成因要各记一条，后来的不许顶掉先前的",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    check: "verifyCorruptEventLinesAreReported",
+    from: "  if (!eventLogFaults.has(cause)) eventLogFaults.set(cause, text);",
+    to: "  eventLogFaults.clear(); eventLogFaults.set(cause, text);",
+    expect: "只报了后撞上的那条成因"
+  },
+  {
     name: "系统规则一条不剩要当成故障说，不能与业务规则共用一句「暂无规则」",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
@@ -3480,8 +3496,8 @@ const MUTATIONS = [
     name: "损坏报文必须说清后果（只说'跳过了几行'不够）",
     file: "apps/control-plane-ui/lib/project-event-store.mjs",
     check: "verifyCorruptEventLinesAreReported",
-    from: "      + `（样例 ${corruptSample}）—— 序号可能被重用、幂等键可能失效，请核对该文件`;",
-    to: "      + \"\";",
+    from: "      + `（样例 ${corruptSample}）—— 序号可能被重用、幂等键可能失效，请核对该文件`);",
+    to: "      + \"\");",
     expect: "没说清后果"
   },
   {

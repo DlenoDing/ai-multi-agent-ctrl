@@ -6201,7 +6201,32 @@ function verifyCorruptEventLinesAreReported(output) {
     if (!/行事件日志解析不了/u.test(fault) || !/序号|幂等/u.test(fault)) {
       output.push(`事件日志损坏的报文没说清后果：${String(fault).slice(0, 120)}`);
     }
-    console.log(`事件日志损坏：造了一行撕裂写，重建索引时报出了「${String(fault).slice(0, 40)}…」`);
+    // 第二条路：按【幂等键查找】时读到坏行。它与重建索引是两段代码，上一轮只补了重建那段 ——
+    // 而这一段才是幂等本身：坏行被跳过时，写过的事件被判成"没见过"，调用方再做一遍。
+    {
+      const probeDir = mkdtempSync(join(tmpdir(), "aimac-eventkey-"));
+      try {
+        appendProjectExecutionEvent(probeDir, {projectId, eventKey: "kk1", sequence: 1,
+          eventType: "probe", createdAt: "2026-01-01T00:00:00.000Z"});
+        const probePath = readdirSync(probeDir, {recursive: true}).map(String)
+          .filter((name) => name.endsWith("execution-events.jsonl")).map((name) => join(probeDir, name))[0];
+        writeFileSync(probePath, `${readFileSync(probePath, "utf8")}{"eventKey":"kk2","seq\n`);
+        readProjectExecutionEventByKey(probeDir, projectId, "kk-never", {allowFullScan: true});
+        const after = projectEventLogFault();
+        if (!/按幂等键查找时跳过/u.test(after)) {
+          output.push("按幂等键查找时读到解析不了的行，一声不吭 —— 已经写过的事件会被判成没做过，"
+            + "于是重复执行、重复记账，而没有任何地方说过这件事");
+        }
+        // 两条路径都撞上时，两件事都要说出来：它们的后果不同（序号被重用 / 幂等失效）。
+        if (!/重建索引时跳过/u.test(after)) {
+          output.push(`只报了后撞上的那条成因（拿到的是「${String(after).slice(0, 60)}…」）—— `
+            + "先报的那条被顶掉了，而两者的后果不一样");
+        }
+      } finally {
+        rmSync(probeDir, {recursive: true, force: true});
+      }
+    }
+    console.log(`事件日志损坏：重建索引与按幂等键查找【两条路径】各造了一行撕裂写，都报出来了`);
   } finally {
     try { rmSync(dir, {recursive: true, force: true}); } catch { /* best effort */ }
   }

@@ -95,19 +95,37 @@ export function readProjectExecutionEventByKey(runtimeDir, projectId, eventKey, 
   return null;
 }
 
-let eventLogCorruptionFault = "";
+// 按【成因】各记一条。原先是一个字符串加 `||` 保护：第一条路径先报了，
+// 后面两条就永远说不出话 —— 而它们说的是不同的后果（序号被重用 / 段范围不准 / 幂等失效）。
+// 成因只有三种，不会涨。
+const eventLogFaults = new Map();
+
+function noteEventLogFault(cause, text) {
+  if (!eventLogFaults.has(cause)) eventLogFaults.set(cause, text);
+}
 
 // 与 auditArchiveFault 同规：只报事实，由服务端决定给谁看。
 export function projectEventLogFault() {
-  return eventLogCorruptionFault;
+  return [...eventLogFaults.values()].join("；");
 }
 
+// 第三条读路径。上一轮补了索引重建与段序号扫描两处，漏了这一处 —— 而它恰恰是【幂等查找】：
+// 坏行被静默跳过时，一条其实已经写过的事件会被判成"没见过"，调用方于是再执行一遍。
+// 幂等这件事本身就是"出问题时才起作用"，它失效时更不能一声不吭。
 function findEventByKey(source, eventKey) {
+  let corrupt = 0;
   for (const line of source.split(/\r?\n/u).filter(Boolean).reverse()) {
     try {
       const event = JSON.parse(line);
       if (event.eventKey === eventKey) return event;
-    } catch {}
+    } catch {
+      corrupt += 1;
+    }
+  }
+  if (corrupt) {
+    noteEventLogFault("key-lookup",
+      `${corrupt} 行事件日志解析不了，按幂等键查找时跳过了 —— 已经写过的事件可能查不到，`
+        + "于是被当成没做过再做一遍（重复执行、重复记账），请核对该文件");
   }
   return null;
 }
@@ -274,8 +292,8 @@ function ensureProjectExecutionEventIndex(runtimeDir, projectId) {
   // 记成模块级的故障事实，走 auditArchiveFault 同一条路：系统账号的状态里下发，界面出横幅。
   // 不抛异常：一行坏数据不该让整个项目读不出来；但也绝不能一声不吭。
   if (corruptLines) {
-    eventLogCorruptionFault = `${corruptLines} 行事件日志解析不了，重建索引时跳过了`
-      + `（样例 ${corruptSample}）—— 序号可能被重用、幂等键可能失效，请核对该文件`;
+    noteEventLogFault("index-rebuild", `${corruptLines} 行事件日志解析不了，重建索引时跳过了`
+      + `（样例 ${corruptSample}）—— 序号可能被重用、幂等键可能失效，请核对该文件`);
   }
   rebuilt.recentEventKeys = Object.keys(rebuilt.eventsByKey).slice(0, keyWindow);
   appendSafeJson(projectExecutionEventIndexPath(runtimeDir, projectId, {forWrite: true}), rebuilt);
@@ -439,8 +457,8 @@ function sequenceBoundsInFile(path) {
     } catch {
       // 与索引重建同理：坏行被吞掉，这个段声明的序号范围就与它的内容对不上。
       // 段清单是轮转与查找的依据，范围错了会让某些事件永远查不到。
-      eventLogCorruptionFault = eventLogCorruptionFault
-        || `${path.split("/").pop()} 里有解析不了的行，段序号范围可能不准 —— 查找与轮转都以它为准`;
+      noteEventLogFault("segment-scan",
+        `${path.split("/").pop()} 里有解析不了的行，段序号范围可能不准 —— 查找与轮转都以它为准`);
     }
   }
   return {firstSequence, lastSequence};
