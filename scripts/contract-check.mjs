@@ -62,6 +62,9 @@ import {
   findingSubmit,
   MAJOR_DECISION_TYPES,
   isHumanConfirmationActor,
+  canUseGitPath,
+  pathAllowlistValid,
+  pathMatchesAllowlist,
   TASK_GROUP_SETTLED_STATUSES,
   projectOwnerGrantPermissions,
   taskGroupSettledRejection,
@@ -394,6 +397,7 @@ run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
 run(verifyOnlyLiveHumanAccountsCanFinalize);
 run(verifyGitRemoteGuardRejectsCommandTransports);
+run(verifyGitPathGuardRejectsEscapes);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5880,6 +5884,40 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // 会在宿主上执行任意命令，而仓库地址是【调用方能给的】。它此前一个直接断言都没有 ——
 // 实测把那句 `if (/^[a-z0-9+.-]*::/iu.test(value)) return false;` 改成 `if (false)`，
 // 契约门 130 条全过。（源码里唯一出现 ext:: 的地方是拿它去制造一次同步失败，不是在验这道守卫。）
+// 产出路径白名单决定 agent 能往仓库的哪些位置写。canUseGitPath 是它的底座：
+// 拒绝绝对路径、`..` 穿越，以及三个不该被当成产出的目录（artifacts/ .runtime/ tmp/）。
+// 它此前一个直接断言都没有 —— 实测把 pathAllowlistValid 里的 every(canUseGitPath) 去掉，
+// 契约门 131 条全过。纯函数，直接把各种形状过一遍。
+function verifyGitPathGuardRejectsEscapes(output) {
+  const cases = [
+    {path: "docs/design.md", ok: true, why: "普通相对路径"},
+    {path: "apps/control-plane-ui/server.mjs", ok: true, why: "普通相对路径"},
+    {path: "/etc/passwd", ok: false, why: "绝对路径，写到仓库外面去了"},
+    {path: "../../.ssh/authorized_keys", ok: false, why: "向上穿越"},
+    {path: "docs/../../etc/hosts", ok: false, why: "中段穿越"},
+    {path: "artifacts/x.bin", ok: false, why: "产出目录不入库"},
+    {path: ".runtime/state.json", ok: false, why: "运行目录不入库"},
+    {path: "tmp/scratch", ok: false, why: "临时目录不入库"},
+    {path: "", ok: false, why: "空路径"}
+  ];
+  for (const item of cases) {
+    if (canUseGitPath(item.path) !== item.ok) {
+      output.push(`canUseGitPath(${JSON.stringify(item.path)}) = ${!item.ok}，应为 ${item.ok}（${item.why}）`);
+    }
+  }
+  // 清单只要有一条不合法，整份就不合法 —— 否则夹带一条 ../ 就能把写入范围扩到仓库外。
+  if (pathAllowlistValid(["docs/**", "../../etc"])) {
+    output.push("路径白名单里夹带了一条 ../ 却被判成合法 —— 夹带一条就能把写入范围扩到仓库外");
+  }
+  if (pathAllowlistValid([])) output.push("空白名单被判成合法 —— 那等于没有范围限制");
+  if (!pathAllowlistValid(["docs/**", "spec/**"])) output.push("正常白名单被判成不合法 —— 项目会配不出产出目标");
+  // 匹配侧同理：模式合法但目标路径穿越时也必须拒。
+  if (pathMatchesAllowlist("../outside.md", ["**"])) {
+    output.push("目标路径带 ../ 却匹配上了白名单 —— 通配模式不能把穿越一起放行");
+  }
+  console.log(`产出路径守卫：${cases.length} 种路径形态 + 白名单整体合法性 + 通配匹配逐个核对`);
+}
+
 function verifyGitRemoteGuardRejectsCommandTransports(output) {
   const cases = [
     {url: "ext::sh -c id", safe: false, why: "remote-helper 传输，会在宿主上执行任意命令"},

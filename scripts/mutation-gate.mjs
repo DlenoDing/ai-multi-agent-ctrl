@@ -3302,6 +3302,30 @@ const MUTATIONS = [
     expect: "出现了别的租户的对象"
   },
   {
+    name: "产出路径不许向上穿越（写到仓库外面去）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyGitPathGuardRejectsEscapes",
+    from: '!path.includes("..");',
+    to: "true;",
+    expect: "向上穿越"
+  },
+  {
+    name: "白名单要逐条校验（夹带一条 ../ 就能扩大写入范围）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyGitPathGuardRejectsEscapes",
+    from: "  return Array.isArray(paths) && paths.length > 0 && paths.every(canUseGitPath);",
+    to: "  return Array.isArray(paths) && paths.length > 0;",
+    expect: "夹带了一条"
+  },
+  {
+    name: "通配模式不许把穿越的目标路径一起放行",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyGitPathGuardRejectsEscapes",
+    from: "  if (!canUseGitPath(path)) return false;\n  return (allowlist || []).some((pattern) => {",
+    to: "  return (allowlist || []).some((pattern) => {",
+    expect: "通配模式不能把穿越一起放行"
+  },
+  {
     name: "带 @ 的 remote-helper 写法也要拒（user@host::payload）",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",
     check: "verifyGitRemoteGuardRejectsCommandTransports",
