@@ -167,6 +167,7 @@
     join_token_invalid: "入网令牌无效",
     join_token_must_be_one_time: "入网令牌必须是一次性的",
     join_token_node_name_mismatch: "节点名与入网令牌登记的不一致",
+    join_token_revoked: "入网令牌已被吊销",
     join_token_not_active: "入网令牌不处于可用状态",
     join_token_project_not_found: "入网令牌指向的项目不存在",
     checkpoint_claim_epoch_stale: "这份检查点来自该派发的上一次认领，当前持有者已换代 —— 它的提交属于上一次尝试，不能算作本轮成果",

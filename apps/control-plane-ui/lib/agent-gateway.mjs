@@ -158,7 +158,14 @@ export function registerAgentNode(state, input = {}, options = {}) {
       return {...replay.result, node: publicAgentNode(existingNode), replayed: true};
     }
   }
-  if (record.status !== "issued") throw gatewayError("join_token_not_active", 409);
+  // 状态要照实说。原先这四种状态一律回 join_token_not_active（"入网令牌不处于可用状态"）——
+  // 系统明明知道是"已被使用"还是"已过期"还是"已吊销"，却给人最模糊的那一句；而下面那两道按
+  // useCount/expiresAt 判的检查在正常流程里永远够不着（兑换成功当场就把 status 置成 consumed）。
+  // 不用三元：拒绝码写在三元里会从拒绝码扫描面逃逸（本仓撞过的形状）。
+  if (record.status === "consumed") throw gatewayError("join_token_consumed", 409, {tokenStatus: record.status});
+  if (record.status === "expired") throw gatewayError("join_token_expired", 401, {tokenStatus: record.status});
+  if (record.status === "revoked") throw gatewayError("join_token_revoked", 401, {tokenStatus: record.status});
+  if (record.status !== "issued") throw gatewayError("join_token_not_active", 409, {tokenStatus: record.status});
   if (new Date(record.expiresAt).getTime() <= Date.now()) {
     record.status = "expired";
     record.updatedAt = new Date().toISOString();

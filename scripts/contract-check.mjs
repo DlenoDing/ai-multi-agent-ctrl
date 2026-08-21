@@ -152,6 +152,7 @@ import {
   claimNextDispatch,
   createAgentControlCommand,
   createAgentJoinToken,
+  ensureAgentGatewayCollections,
   getSkillWorkset,
   heartbeatAgentNode,
   listAgentControlCommands,
@@ -344,6 +345,7 @@ run(verifyMcpSummaryIsActuallyASummary);
 run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
+run(verifyAgentJoinTokenIsSpentExactlyOnce);
 run(verifyServerSideAgentExecutionStaysOffOutsideVerification);
 run(verifyCapsKeepRecordsThatAreStillPointedAt);
 run(verifyHumanWrittenTextIsNeverSilentlyTruncated);
@@ -8571,7 +8573,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
   // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
   // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 83;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 76;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -10148,6 +10150,103 @@ function verifyHumanWrittenTextIsNeverSilentlyTruncated(output) {
       + "台账上记的与他写的不是一句话；改用 assertHumanTextWithinLimit（超了就拒，并说清超出多少）");
   }
   console.log(`人写文本不许静默截断：${guarded} 处走了长度校验，${truncated.length} 处仍在 slice 截断（应为 0）`);
+}
+
+function verifyAgentJoinTokenIsSpentExactlyOnce(output) {
+  // 接节点这道门整族此前【零覆盖】：一张加入令牌换一台节点，令牌无效/过期/用过/名字对不上都必须拒。
+  // 任何一处失效，一张泄漏出去的令牌就能被反复兑换成节点，而节点持有的凭据能取内容包、领派发。
+  const fresh = () => {
+    const st = structuredClone(seedState);
+    ensureAgentGatewayCollections(st);
+    st.agentRuntimeNodes = [];
+    st.agentJoinTokens = [];
+    return st;
+  };
+  const issue = (st, extra = {}) => createAgentJoinToken(st,
+    {projectId: "prj_control_plane", allowedRoles: ["agent-runtime"], ...extra}, {actor: "acc_system_owner"});
+  const refusalOf = (fn) => { try { fn(); return null; } catch (error) { return error.message; } };
+
+  // 正面对照先走一遍：同一条路上合法令牌必须换得到节点，否则下面全是"永远拒"。
+  const okState = fresh();
+  const okToken = issue(okState);
+  // 返回的字段叫 joinToken，不叫 token —— 拿错字段会让"合法令牌"也变成伪造令牌，正面对照就白设了。
+  const registered = registerAgentNode(okState, {nodeName: "probe-node", requestedRoles: ["agent-runtime"]},
+    {joinToken: okToken.joinToken});
+  if (!registered?.nodeToken) {
+    output.push("合法加入令牌换不到节点凭据 —— 下面几条拒绝断言全是「永远拒」，测不出任何东西");
+  }
+
+  const cases = [
+    ["编造的令牌", "join_token_invalid", (st) => { issue(st); return "aimac_join_forged_but_well_formed"; }],
+    ["过期的令牌", "join_token_expired", (st) => {
+      const issued = issue(st);
+      st.agentJoinTokens[0].expiresAt = new Date(Date.now() - 1000).toISOString();
+      return issued.joinToken;
+    }],
+    // 同一张过期令牌再试一次：第一次已把 status 落成 expired，第二次走的是【按状态】那道。
+    // 两次必须说同一句话 —— 原先第二次回的是 join_token_not_active（"不处于可用状态"），
+    // 明明知道是过期还给人最模糊的那句。
+    ["第二次拿同一张过期令牌", "join_token_expired", (st) => {
+      const issued = issue(st);
+      st.agentJoinTokens[0].expiresAt = new Date(Date.now() - 1000).toISOString();
+      try { registerAgentNode(st, {nodeName: "first-try", requestedRoles: ["agent-runtime"]}, {joinToken: issued.joinToken}); }
+      catch { /* 第一次必拒，这里要的是它留下的 status */ }
+      return issued.joinToken;
+    }],
+    ["已经兑换过的令牌", "join_token_consumed", (st) => {
+      const issued = issue(st);
+      registerAgentNode(st, {nodeName: "first-node", requestedRoles: ["agent-runtime"]}, {joinToken: issued.joinToken});
+      return issued.joinToken;
+    }],
+    ["指名给别人的令牌", "join_token_node_name_mismatch", (st) => issue(st, {expectedNodeName: "只给这台"}).joinToken],
+    ["被吊销的令牌", "join_token_revoked", (st) => {
+      const issued = issue(st);
+      st.agentJoinTokens[0].status = "revoked";
+      return issued.joinToken;
+    }],
+    // 认不出的状态必须【拒】，不能当成可用。schema 只认四个值，多出来的一个（迁移写坏、
+    // 将来加了新状态而这里忘了跟）落到这道兜底上；它不能悄悄放行一次注册。
+    ["状态是认不出的值", "join_token_not_active", (st) => {
+      const issued = issue(st);
+      st.agentJoinTokens[0].status = "paused_for_review";
+      return issued.joinToken;
+    }]
+  ];
+  for (const [what, expected, prepare] of cases) {
+    const st = fresh();
+    const token = prepare(st);
+    const before = st.agentRuntimeNodes.length;
+    const got = refusalOf(() => registerAgentNode(st, {nodeName: "intruder", requestedRoles: ["agent-runtime"]},
+      {joinToken: token}));
+    if (got !== expected) {
+      output.push(`${what}拿到的不是 ${expected}（实际 ${got || "根本没拒，注册成功了"}）—— `
+        + "一张流出去的加入令牌就能被反复兑换成节点，而节点凭据能取内容包、领派发");
+    }
+    if (st.agentRuntimeNodes.length !== before) {
+      output.push(`${what}被拒了，却还是留下了一台节点记录 —— 它永久占着组织的 agents 配额，新节点再也接不进来`);
+    }
+  }
+  // 名字必填：空名字会被嵌进给人复制的安装命令，也让人在列表里认不出这是哪台机器。
+  const namelessState = fresh();
+  const namelessToken = issue(namelessState).joinToken;
+  const nameless = refusalOf(() => registerAgentNode(namelessState, {nodeName: "  ", requestedRoles: ["agent-runtime"]},
+    {joinToken: namelessToken}));
+  if (nameless !== "node_name_required") {
+    output.push(`空节点名拿到的不是 node_name_required（实际 ${nameless || "注册成功了"}）`);
+  }
+  // 一次性是签发时就该守住的：maxUses 传 2 必须当场拒，而不是签出一张能用两次的票。
+  const twiceState = fresh();
+  const twice = refusalOf(() => issue(twiceState, {maxUses: 2}));
+  if (twice !== "join_token_must_be_one_time") {
+    output.push(`maxUses=2 的加入令牌被签出来了（${twice || "没有拒绝"}）—— 一张票换两台节点`);
+  }
+  // 令牌必须绑在一个真实项目上，否则它兑出来的节点归属不明、配额也算不到任何组织头上。
+  const orphanState = fresh();
+  const orphan = refusalOf(() => createAgentJoinToken(orphanState, {projectId: "prj_does_not_exist"}, {actor: "acc_system_owner"}));
+  if (orphan !== "join_token_project_not_found") {
+    output.push(`给不存在的项目签出了加入令牌（${orphan || "没有拒绝"}）—— 兑出来的节点归属不明、配额算不到任何组织头上`);
+  }
+  console.log("加入令牌：伪造/过期/已兑换/已吊销/指名不符/空名字/非一次性/项目不存在 九种形状全拒（含认不出的状态），合法令牌正常兑换 —— 核过");
 }
 
 function verifyServerSideAgentExecutionStaysOffOutsideVerification(output) {

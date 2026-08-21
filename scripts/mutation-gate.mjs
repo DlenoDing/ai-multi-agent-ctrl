@@ -3353,6 +3353,46 @@ const MUTATIONS = [
     expect: "did not carry the task-group language policy"
   },
   {
+    name: "加入令牌不存在时不得放行",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentJoinTokenIsSpentExactlyOnce",
+    from: "  if (!record) throw gatewayError(\"join_token_invalid\", 401);",
+    to: "  if (!record) return {nodeToken: \"x\"};",
+    expect: "编造的令牌拿到的不是 join_token_invalid"
+  },
+  {
+    name: "用过的加入令牌不得再兑一台节点",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentJoinTokenIsSpentExactlyOnce",
+    from: "  if (record.status === \"consumed\") throw gatewayError(\"join_token_consumed\", 409, {tokenStatus: record.status});",
+    to: "  if (false) throw gatewayError(\"join_token_consumed\", 409, {tokenStatus: record.status});",
+    expect: "已经兑换过的令牌拿到的不是 join_token_consumed"
+  },
+  {
+    name: "过期令牌第二次也要照实说过期",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentJoinTokenIsSpentExactlyOnce",
+    from: "  if (record.status === \"expired\") throw gatewayError(\"join_token_expired\", 401, {tokenStatus: record.status});",
+    to: "  if (false) throw gatewayError(\"join_token_expired\", 401, {tokenStatus: record.status});",
+    expect: "第二次拿同一张过期令牌拿到的不是 join_token_expired"
+  },
+  {
+    name: "指名给某台机器的加入令牌不得被别人用",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentJoinTokenIsSpentExactlyOnce",
+    from: "  if (record.expectedNodeName && record.expectedNodeName !== nodeName) throw gatewayError(\"join_token_node_name_mismatch\", 403);",
+    to: "  if (false) throw gatewayError(\"join_token_node_name_mismatch\", 403);",
+    expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
+  },
+  {
+    name: "认不出的令牌状态必须拒绝注册",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentJoinTokenIsSpentExactlyOnce",
+    from: "  if (record.status !== \"issued\") throw gatewayError(\"join_token_not_active\", 409, {tokenStatus: record.status});",
+    to: "  if (false) throw gatewayError(\"join_token_not_active\", 409, {tokenStatus: record.status});",
+    expect: "状态是认不出的值拿到的不是 join_token_not_active"
+  },
+  {
     name: "新增抛错工厂时拒绝码扫描面必须跟上",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyRefusalCodeScanSeesEveryThrowHelper",
@@ -5214,7 +5254,7 @@ const MUTATIONS = [
     name: "另两套 e2e 的 4xx 断言没点名拒绝码要被门看见",
     file: "scripts/doctor-agent-remote.mjs",
     check: "verifyRefusalAssertionsNameTheCode",
-    from: '  if (reuse.response.status !== 409 || reuse.payload?.error !== "join_token_not_active") {',
+    from: '  if (reuse.response.status !== 409 || reuse.payload?.error !== "join_token_consumed") {',
     to: "  if (reuse.response.status !== 409) {",
     expect: "只判了状态码，没点名拒绝码"
   },

@@ -410,9 +410,15 @@ try {
   const reuse = await jsonRaw("/api/agent/v1/register", {method: "POST", token: joinResult.joinToken, body: {nodeName: "doctor-node", profile: {}}});
   // 只判 409 不够：幂等键撞了也是 409。要的是"这张一次性令牌已经用掉了"这一条，
   // 否则换成别的守卫先拒，这条断言照样绿而一次性语义已经没了。
-  if (reuse.response.status !== 409 || reuse.payload?.error !== "join_token_not_active") {
+  // 2026-08-21：码从 join_token_not_active（"不处于可用状态"）改成照实说的 join_token_consumed
+  // ——四种状态原先一律回那句最模糊的，而系统明明知道是用过了还是过期了还是被吊销了。
+  if (reuse.response.status !== 409 || reuse.payload?.error !== "join_token_consumed") {
     throw new Error(`一次性加入令牌被复用（HTTP ${reuse.response.status}/${reuse.payload?.error}，`
-      + "应为 409/join_token_not_active）—— 一张令牌能拉起多个节点");
+      + "应为 409/join_token_consumed）—— 一张令牌能拉起多个节点");
+  }
+  if (reuse.payload?.tokenStatus !== "consumed") {
+    throw new Error(`拒绝报文里没有说清令牌现在是什么状态（tokenStatus=${reuse.payload?.tokenStatus}）—— `
+      + "人拿着一张不work的令牌，得知道是用过了、过期了还是被吊销了");
   }
 
   const orchestrated = await json("/api/orchestrator/run", {
