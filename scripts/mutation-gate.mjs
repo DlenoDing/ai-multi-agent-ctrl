@@ -3595,6 +3595,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "临时授权的指引必须指向真能解开门的那个动作",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyTempGrantGuidePointsAtTheRightLever",
+    from: "\u8981\u7acb\u523b\u6536\u56de\u5c31\u5230\u300c\u4eba\u5de5\u6307\u4ee4\u300d\u9875\u53d6\u6d88\u5bf9\u5e94\u7684\u6d3e\u53d1\uff08\u64a4\u9500\u8be5\u6d3e\u53d1\u7684\u8282\u70b9\u7ed1\u5b9a\u65f6\u4f1a\u4e00\u5e76\u6536\u56de\u8fd9\u4e9b\u6388\u6743\uff09\u3002",
+    to: "\u8981\u7acb\u523b\u6536\u56de\u5c31\u5230\u300c\u8d26\u53f7\u4e0e\u6388\u6743\u300d\u9875\u64a4\u9500\u3002",
+    expect: "人撤了一圈，门照样挡着"
+  },
+  {
+    name: "门读的集合与指引说的必须是同一个",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyTempGrantGuidePointsAtTheRightLever",
+    from: "    no_active_temp_grants: (state.mcpGrants || []).some",
+    to: "    no_active_temp_grants: (state.accessGrants || []).some",
+    expect: "两处漂开了"
+  },
+  {
     name: "编排节奏要按真实间隔说不能写死",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

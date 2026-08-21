@@ -397,6 +397,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyTempGrantGuidePointsAtTheRightLever);
 run(verifyWipeWarningMatchesTheServerGuard);
 run(verifyTimestampFieldsDeclareTheirFormat);
 run(verifyTaskGroupScopedWritesDeriveTheirProject);
@@ -10959,6 +10960,39 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyTempGrantGuidePointsAtTheRightLever(output) {
+  // 关闭门 no_active_temp_grants 判的是【派发上的 MCP 授权】（state.mcpGrants），
+  // 而界面指引原先让人去「账号与授权」页撤销 —— 那页管的是 accessGrants，是另一个集合：
+  // 人撤了一圈，门照样挡着（后端有杠杆而指引指错了地方，比没有指引更费人）。
+  // mcpGrants 全仓只在 revokeDispatchNodeBinding 里被回收，人能触发它的路是取消派发。
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const core = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const guide = /no_active_temp_grants:\s*((?:"[^"]*"\s*\+?\s*)+)/u.exec(app)?.[1] || "";
+  if (!guide) {
+    output.push("找不到 no_active_temp_grants 的界面指引 —— 这条判据的锚点漂了");
+    console.log("临时授权指引：锚点已漂");
+    return;
+  }
+  const gateReads = /no_active_temp_grants:\s*\(state\.(\w+)/u.exec(core)?.[1];
+  if (gateReads !== "mcpGrants") {
+    output.push(`这道门现在读的是 state.${gateReads}，而指引是按 mcpGrants 写的 —— 两处漂开了`);
+  }
+  if (/账号与授权」页撤销/u.test(guide)) {
+    output.push("指引把人指向「账号与授权」页 —— 那页撤销的是 accessGrants，"
+      + "而挡住这道门的是派发上的 mcpGrants：人撤了一圈，门照样挡着");
+  }
+  // mcpGrants 的回收只有一条路。指引必须指向能触发它的那个动作，而不是别的撤销按钮。
+  const revokeSites = [...core.matchAll(/grantStatus = "revoked"/gu)].length;
+  if (revokeSites !== 1) {
+    output.push(`mcpGrants 的回收点从 1 处变成了 ${revokeSites} 处 —— `
+      + "指引说的「取消派发」可能不再是唯一出口，重新核对它指向哪里");
+  }
+  if (!/人工指令」页取消/u.test(guide)) {
+    output.push("指引没有指向「人工指令」页取消派发 —— 那是人能触发 mcpGrants 回收的唯一一条路");
+  }
+  console.log("临时授权指引：门读 mcpGrants、回收点唯一、指引指向能真正解开它的那个动作");
 }
 
 function verifyWipeWarningMatchesTheServerGuard(output) {
