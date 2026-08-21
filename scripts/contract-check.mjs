@@ -354,6 +354,7 @@ run(verifyEmptyTaskGroupIsNotComplete);
 run(verifyWholesaleConfigWritesArePreconditioned);
 run(verifyGatesDoNotCloneFromTheNetwork);
 run(verifyDocumentedApiPathsExist);
+run(verifyRaceTimeoutsDoNotHoldTheProcess);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5564,6 +5565,56 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // （它自述"不区分先做/后做"），所以确实会写到还没建的接口 —— 但读者分不出哪些是活的，
 // 照着它接入的人会撞上 404。把"还没建"变成一个【有名有姓、看得见】的清单，而不是没人知道的事实。
 // 反向也要守：已经建好的接口必须从清单里摘掉，否则登记会留着骗人（今天刚清过一批过期登记）。
+// `Promise.race([活儿, setTimeout(上限)])` 里的定时器是【上限】，不该把进程吊到上限。
+// 活儿先完成时输家定时器没人清，Node 就一直等它自然到期 —— 实测远程 agent e2e 的输出
+// 41 秒就结束，进程却要 146 秒才退出，多出来的 105 秒全在等一个 120 秒的定时器。
+// 每次提交都要付这一笔。加 .unref() 即可：真卡住时事件循环由子进程句柄吊着，超时照样触发
+// （已实测：卡住的子进程 2003ms 触发超时，正常退出的 65ms 就走）。
+function verifyRaceTimeoutsDoNotHoldTheProcess(output) {
+  const walk = (dir) => readdirSync(dir).flatMap((name) => {
+    const full = join(dir, name);
+    if (name === "node_modules") return [];
+    return statSync(full).isDirectory() ? walk(full) : [full];
+  });
+  const files = walk(join(root, "scripts"))
+    // 变异登记表存的是锚点文本，里面照定义会出现不带 unref 的写法。
+    .filter((file) => file.endsWith(".mjs") && !file.endsWith("mutation-gate.mjs"));
+  let scanned = 0;
+  const holding = [];
+  for (const file of files) {
+    const source = readFileSync(file, "utf8").replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
+    // 只认【Promise.race 里的超时】。不能一律扫 setTimeout：夹具里还有真正的睡眠
+    // （`await new Promise((r) => setTimeout(r, 1500))`），给它加 unref 会让进程提前退出 ——
+    // 那是把一个省时间的改动变成一个缺陷。第一版就是这么扫的，当场把 4 处睡眠一起报了出来。
+    for (const race of source.matchAll(/Promise\.race\(\[/gu)) {
+      let depth = 1;
+      let cursor = race.index + race[0].length;
+      while (cursor < source.length && depth > 0) {
+        if (source[cursor] === "[") depth += 1;
+        else if (source[cursor] === "]") depth -= 1;
+        cursor += 1;
+      }
+      const body = source.slice(race.index, cursor);
+      for (const timer of body.matchAll(/setTimeout\(([\s\S]{0,90}?),\s*(\d+)\)(\.unref\(\))?/gu)) {
+        if (Number(timer[2]) < 3000) continue;
+        scanned += 1;
+        if (timer[3] || /clearTimeout/u.test(body)) continue;
+        holding.push(`${file.slice(root.length + 1)}:${source.slice(0, race.index).split("\n").length}`
+          + `（${timer[2]} ms）`);
+      }
+    }
+  }
+  if (scanned < 4) {
+    output.push(`race 里的长超时只扫到 ${scanned} 处（应至少 4）—— 提取形状与代码脱节，本条在空转`);
+    return;
+  }
+  if (holding.length) {
+    output.push("这些 Promise.race 里 ≥3 秒的超时没有 .unref()，活儿先做完时它们会把进程吊到上限：\n  "
+      + holding.join("\n  ") + "\n  加 .unref()：语义不变（真卡住时由子进程句柄吊着，超时照样触发）");
+  }
+  console.log(`race 里的长超时：${scanned} 处逐个核对，${holding.length} 处会吊住进程（应为 0）`);
+}
+
 function verifyDocumentedApiPathsExist(output) {
   const NOT_YET_IMPLEMENTED = {
     "/api/close-barriers/compute": "终态规格里的编排接口，当前由自治周期内部计算，没有对外路由",

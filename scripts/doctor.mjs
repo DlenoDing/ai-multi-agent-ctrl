@@ -2900,13 +2900,15 @@ try {
     tickChild.kill("SIGTERM");
     const exited = await Promise.race([
       new Promise((resolve) => tickChild.on("exit", () => resolve(true))),
-      new Promise((resolve) => setTimeout(() => resolve(false), 10000))
+      // .unref()：这些定时器只是【上限】，不该把进程吊到上限（同 doctor-agent-remote 的 120s 那处：
+      // 实测输出早就结束、进程还在等定时器自然到期）。真卡住时事件循环由子进程句柄吊着，超时照样生效。
+      new Promise((resolve) => setTimeout(() => resolve(false), 10000).unref())
     ]);
     if (!exited) {
       tickChild.kill("SIGKILL");
       const killed = await Promise.race([
         new Promise((resolve) => tickChild.on("exit", () => resolve(true))),
-        new Promise((resolve) => setTimeout(() => resolve(false), 5000))
+        new Promise((resolve) => setTimeout(() => resolve(false), 5000).unref())
       ]);
       if (!killed) throw new Error("后台自治周期的子进程 SIGTERM 与 SIGKILL 都不退出 —— 它多半卡在磁盘或子进程上");
       console.log("  --  后台自治周期的子进程没有响应 SIGTERM，已强制结束（10 秒内未退出）");
@@ -2990,7 +2992,7 @@ console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条�
 // 人看到的却只有一句 unsettled top-level await。给它上限，超时就强杀并明说。
 const exitRace = await Promise.race([
   exitPromise.then((pair) => ({pair})),
-  new Promise((resolve) => setTimeout(() => resolve({timedOut: true}), 15000))
+  new Promise((resolve) => setTimeout(() => resolve({timedOut: true}), 15000).unref())
 ]);
 if (exitRace.timedOut) {
   child.kill("SIGKILL");

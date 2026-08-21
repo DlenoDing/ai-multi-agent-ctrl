@@ -98,7 +98,7 @@ async function verifyFirstRunPath() {
       login.sessionToken ? "ok" : JSON.stringify(login).slice(0, 160));
   }
   firstRunChild.kill("SIGTERM");
-  await Promise.race([once(firstRunChild, "exit"), new Promise((resolve2) => setTimeout(resolve2, 3000))]);
+  await Promise.race([once(firstRunChild, "exit"), new Promise((resolve2) => setTimeout(resolve2, 3000).unref())]);
 }
 const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-idle-"));
 const fails = [];
@@ -382,7 +382,7 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
 }
 
 child.kill("SIGTERM");
-await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000))]);
+await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000).unref())]);
 if (fails.length) {
   console.error(`idle tick gate failed: ${fails.join("；")}`);
   process.exit(1);

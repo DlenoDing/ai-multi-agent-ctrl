@@ -13,9 +13,18 @@ const execFileSync = (...a) => { const t = Date.now(); try { return rawExecFileS
 const spawn = (...a) => { const t = Date.now(); const c = rawSpawn(...a); c.on("exit", () => __proc.push([`spawn ${__lbl(a[0], a[1])}`, Date.now() - t])); return c; };
 process.on("exit", () => {
   if (!process.env.AIMAC_PROC_TIMING) return;
-  const total = __proc.reduce((s, i) => s + i[1], 0);
-  console.error(`\n[proc] ${__proc.length} 个子进程，合计 ${total} ms；最贵的 8 个：`);
-  for (const [k, ms] of [...__proc].sort((a, b) => b[1] - a[1]).slice(0, 8)) console.error(`  ${String(ms).padStart(6)} ms  ${k}`);
+  // 两类进程不能加在一起报总数：长期存活的（服务端、agent 运行时）那个毫秒数是【它活了多久】，
+  // 也就是整场测试的时长，不是它花掉的成本；短命的才是"这一步等了多久"。
+  // 加在一起会得出"81 秒都在起子进程"这种结论，而那会把人引去优化进程启动 —— 完全找错方向。
+  // （这份汇总自己就骗过一次：一份记录据此写下"32 个子进程 81s"，其中 56s 是两个长期进程的存活时长。）
+  const longLived = __proc.filter(([label]) => label.startsWith("spawn "));
+  const shortLived = __proc.filter(([label]) => !label.startsWith("spawn "));
+  const sum = (rows) => rows.reduce((acc, item) => acc + item[1], 0);
+  console.error(`\n[proc] 短命子进程 ${shortLived.length} 个，合计 ${sum(shortLived)} ms —— 这才是等待成本；`
+    + `另有长期存活进程 ${longLived.length} 个（存活 ${sum(longLived)} ms＝测试时长，不是开销）`);
+  console.error("  最贵的短命进程：");
+  for (const [k, ms] of [...shortLived].sort((a, b) => b[1] - a[1]).slice(0, 8)) console.error(`  ${String(ms).padStart(6)} ms  ${k}`);
+  for (const [k, ms] of longLived) console.error(`  ${String(ms).padStart(6)} ms  ${k}（长期存活）`);
 });
 import { once } from "node:events";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
@@ -760,7 +769,10 @@ try {
   // 同形状在控制面 e2e 里实测撞到过一次（后台自治周期的子进程不理 SIGTERM）。
   const permissionRace = await Promise.race([
     once(permissionChild, "exit").then(([code]) => ({code})),
-    new Promise((resolve) => setTimeout(() => resolve({timedOut: true}), 120000))
+    // .unref()：这个定时器只是【上限】，不该把进程吊到上限。子进程先退出时它没人清 ——
+    // 实测整场 e2e 的输出 41 秒就结束，进程却要 146 秒才退出，多出来的 105 秒全在等它自然到期。
+    // unref 之后它仍会在需要时触发：真卡住时事件循环由子进程句柄吊着，超时照样生效。
+    new Promise((resolve) => setTimeout(() => resolve({timedOut: true}), 120000).unref())
   ]);
   if (permissionRace.timedOut) {
     permissionChild.kill("SIGKILL");
@@ -933,7 +945,7 @@ try {
 		  console.log("agent remote doctor ok: one-command join, checksum install, credential rotation, initialization, self-check (permission+integrity probe), remote MCP, control command ACK, project/session-level execution event stream, on-demand skill workset, dispatch, commit, push and checkpoint outbox replay, two-step evidence artifact registration, permission_report loop with safe-retry-point recovery, revoke pending+ACK requeue verified");
 } finally {
   server.kill("SIGTERM");
-  await Promise.race([once(server, "exit"), new Promise((resolveWait) => setTimeout(resolveWait, 3000))]);
+  await Promise.race([once(server, "exit"), new Promise((resolveWait) => setTimeout(resolveWait, 3000).unref())]);
   rmSync(sandbox, {recursive: true, force: true});
   if (server.exitCode && server.exitCode !== 0 && stderr) process.stderr.write(stderr);
 }

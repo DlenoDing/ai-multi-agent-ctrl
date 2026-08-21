@@ -103,7 +103,7 @@ const inflight = Promise.all(Array.from({length: 12}, (_, index) => fetch(`${bas
   body: JSON.stringify({quotas: {maxMembers: 90 + index}})}).catch(() => null)));
 await new Promise((resolve) => setTimeout(resolve, 40));
 child.kill("SIGKILL");
-await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000))]);
+await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000).unref())]);
 await inflight;
 
 // ── 第二段：重启，状态必须能读回，且要么 45 要么 99，不能是坏的
@@ -502,7 +502,7 @@ if (leftoversAtKill.length) check(leftoversAfterWrite.length === 0, "崩溃留�
 
 child.kill("SIGTERM");
 
-await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000))]);
+await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000).unref())]);
 console.log(fails.length
   ? `crash consistency gate failed: ${fails.join("；")}`
   : "crash consistency gate ok: 写入中被 SIGKILL 后，状态不半份、锁不锁死系统、临时文件被下一次写入清掉");

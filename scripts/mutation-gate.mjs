@@ -3010,6 +3010,22 @@ const MUTATIONS = [
     expect: "仓内文件不存在"
   },
   {
+    name: "race 里的长超时必须 unref（否则活儿做完了进程还吊在上限）",
+    file: "scripts/doctor-mcp.mjs",
+    check: "verifyRaceTimeoutsDoNotHoldTheProcess",
+    from: "setTimeout(resolveWait, 3000).unref())]);",
+    to: "setTimeout(resolveWait, 3000))]);",
+    expect: "会把进程吊到上限"
+  },
+  {
+    name: "长超时扫描打不到时必须红（不得绿着空转）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyRaceTimeoutsDoNotHoldTheProcess",
+    from: "for (const race of source.matchAll(/Promise\\.race\\(\\[/gu)) {",
+    to: "for (const race of source.matchAll(/PromiseX\\.race\\(\\[/gu)) {",
+    expect: "只扫到 0 处"
+  },
+  {
     name: "文档点名的接口必须真存在（照着它接入的人会撞 404）",
     file: "docs/core-control-plane-spec.md",
     check: "verifyDocumentedApiPathsExist",
@@ -3759,7 +3775,7 @@ const MUTATIONS = [
     name: "无上限地等子进程退出要被门看见",
     file: "scripts/doctor-mcp.mjs",
     check: "verifyChildExitWaitsAreBounded",
-    from: '  await Promise.race([once(child, "exit"), new Promise((resolveWait) => setTimeout(resolveWait, 3000))]);',
+    from: '  await Promise.race([once(child, "exit"), new Promise((resolveWait) => setTimeout(resolveWait, 3000).unref())]);',
     to: '  await once(child, "exit");',
     expect: "无上限地等子进程退出"
   },
