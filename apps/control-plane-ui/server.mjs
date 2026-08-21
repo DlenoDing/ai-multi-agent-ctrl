@@ -2427,7 +2427,7 @@ async function handleApi(req, res) {
     if (lastStorageFault) {
       // 故障标记不能只置不清 —— 我第一版就是这样，而提示里还写着"恢复后自动转回 ok"，
       // 那句话是假的：修好了它也一直报 degraded。这里当场复核一次。
-      // 但【目录被换 / 状态被重建成空的】这两种不复核：进程已经接在另一份数据上了，
+      // 但【目录被换 / 目录不见了 / 状态被重建成空的】这三种不复核：进程已经接在另一份数据上了，
       // 把数据还原回去也救不了这个已经跑歪的进程，必须重启 —— 所以对它们如实说"要重启"。
       const needsRestart = ["runtime_dir_replaced", "runtime_dir_missing", "state_rebuilt_from_seed"]
         .includes(lastStorageFault.kind);
