@@ -79,7 +79,11 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
   const outstandingJoinTokens = (state.agentJoinTokens || []).filter((item) => item.status === "issued" && (item.organizationId || "org_default") === tokenOrgId && new Date(item.expiresAt).getTime() > Date.now()).length;
   const quota = organizationQuotaCheck(state, tokenOrgId, "agents");
   if (!quota.allowed || quota.usage + outstandingJoinTokens >= quota.quota) {
-    throw gatewayError("org_quota_exceeded", 409, {kind: "agents", quota: quota.quota, usage: (quota.usage || 0) + outstandingJoinTokens});
+    // 这个 usage 是"节点 + 未使用的令牌"，与页面上那格【同一口径】（usage.agentsReserved 就是后一半）。
+    // 分开报出来，人才对得上："我明明只有 2 台节点"——第三格是自己上次签发还没用掉的那张令牌。
+    throw gatewayError("org_quota_exceeded", 409, {kind: "agents", quota: quota.quota,
+      usage: (quota.usage || 0) + outstandingJoinTokens,
+      nodes: quota.usage || 0, outstandingJoinTokens});
   }
   const ttlSeconds = boundedInteger(input.ttlSeconds, 60, 86400, 1800);
   if (input.maxUses !== undefined && Number(input.maxUses) !== 1) throw gatewayError("join_token_must_be_one_time", 400);

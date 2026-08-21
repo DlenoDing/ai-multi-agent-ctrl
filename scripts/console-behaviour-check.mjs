@@ -401,6 +401,12 @@ function check(name, condition, detail) {
     check("智能体配额要说清只有吊销才腾得出来（关停/停用都不减）", quotaHint.includes("吊销"), quotaHint.slice(0, 120));
     check("配额里的 kind 是「哪一类配额」，不能被当成「故障类型」再打一遍（词表里没有 agents，会露出英文码）",
       !quotaHint.includes("故障类型"), quotaHint.slice(0, 120));
+    // 屏幕上并排的两个数必须出自同一口径：页面那格数节点，签发令牌时却把未使用的令牌也算进去 ——
+    // 于是"还剩一格"和"3/3 已满"同时成立，人只能以为系统数错了。
+    const splitHint = probe.requestFailureHint(
+      {error: "org_quota_exceeded", kind: "agents", quota: 3, usage: 3, nodes: 2, outstandingJoinTokens: 1});
+    check("配额报文要拆开说清是节点还是没用掉的令牌占的位",
+      splitHint.includes("2 台节点") && splitHint.includes("1 张未使用的入网令牌"), splitHint.slice(0, 130));
     const faultHint = probe.requestFailureHint({error: "state_store_unavailable", kind: "state_read_failed"});
     check("存储故障那一族仍要打出故障类型（上一条不能把它一起挡掉）", faultHint.includes("故障类型"), faultHint.slice(0, 90));
   }
@@ -3236,6 +3242,34 @@ await runCodedApiErrorCase();
   check("已吊销的节点不计入配额这件事要写出来",
     /已吊销.*不计入配额|不计入配额/.test(overviewHtml),
     "配额只数没被吊销的节点，而智能体那张表把已吊销的也列着 —— 两个数对不上，人找不出原因");
+  {
+    // 未使用的入网令牌【占着配额的位】，页面上却只数节点 —— 于是"还剩一格"和"3/3 已满"
+    // 同时成立。两个面必须同一口径：占位数要显出来，且合计要算给人看。
+    const reservedRoot = el("div");
+    const reservedProbe = loadConsole(reservedRoot);
+    const reservedState = {...orgState, organizations: [{...orgState.organizations[0],
+      quotas: {...orgState.organizations[0].quotas, maxAgents: 3},
+      usage: {members: 2, projects: 1, taskGroups: 1, agents: 2, agentsReserved: 1}}]};
+    const reservedFetch = async (path) => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+      json: async () => String(path).includes("/api/org/agents") ? {agentRuntimeNodes: [nodes[0]]} : reservedState,
+      text: async () => JSON.stringify(reservedState)});
+    await reservedProbe.loadWithFetch(reservedState, orgAdmin, "", "org-overview", reservedFetch);
+    const reservedHtml = String(reservedRoot.innerHTML || "");
+    check("未使用的入网令牌占着配额，页面要显出来并给出合计",
+      reservedHtml.includes("未使用的入网令牌占着位") && reservedHtml.includes("合计 3/3"),
+      "页面只数节点时，人看着还剩一格却签不出令牌，报文还说 3/3 已满 —— 两个数出自不同口径");
+    const noReserveRoot = el("div");
+    const noReserveProbe = loadConsole(noReserveRoot);
+    const noReserveState = {...orgState, organizations: [{...orgState.organizations[0],
+      usage: {members: 2, projects: 1, taskGroups: 1, agents: 2, agentsReserved: 0}}]};
+    const noReserveFetch = async (path) => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+      json: async () => String(path).includes("/api/org/agents") ? {agentRuntimeNodes: [nodes[0]]} : noReserveState,
+      text: async () => JSON.stringify(noReserveState)});
+    await noReserveProbe.loadWithFetch(noReserveState, orgAdmin, "", "org-overview", noReserveFetch);
+    check("没有未使用的令牌时不要多说一句",
+      !String(noReserveRoot.innerHTML || "").includes("未使用的入网令牌占着位"),
+      "一张待用令牌都没有，界面却挂着一句解释");
+  }
   {
     const cleanRoot = el("div");
     const cleanProbe = loadConsole(cleanRoot);

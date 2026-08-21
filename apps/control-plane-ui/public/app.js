@@ -610,11 +610,16 @@ function progressLine(percent) {
   return `<div class="progress-line">${progressBar(safe)}<em>${safe}%</em></div>`;
 }
 
-function quotaLine(used, max) {
+// reserved：已经占着位、但还不是"用量"的那部分（目前只有未使用的入网令牌）。
+// 不并进 used 是因为服务端两处判定口径不同（签发令牌算占位、节点注册不算），
+// 但人看到的那一格必须把它显出来 —— 否则"还剩一格却签不出来"没有任何解释。
+function quotaLine(used, max, reserved = 0) {
   const total = Math.max(1, Number(max || 1));
-  const percent = Math.round((Number(used || 0) / total) * 100);
+  const held = Number(used || 0) + Number(reserved || 0);
+  const percent = Math.round((held / total) * 100);
   const tone = percent >= 100 ? "quota-full" : percent >= 80 ? "quota-warn" : "quota-ok";
-  return `<div class="progress-line">${progressBar(percent, tone)}<em>${used ?? 0}/${max ?? 0}</em></div>`;
+  return `<div class="progress-line">${progressBar(percent, tone)}<em>${used ?? 0}/${max ?? 0}`
+    + `${Number(reserved) > 0 ? `（另有 ${esc(reserved)} 张未使用的入网令牌占着位，合计 ${held}/${max ?? 0}）` : ""}</em></div>`;
 }
 
 function panel(title, body, options = {}) {
@@ -810,7 +815,11 @@ function requestFailureHint(payload) {
     const freeUp = payload.kind === "agents"
       ? "或吊销一台不再用的节点（关停、停用档案都不减用量；未签发出去用掉的入网令牌也占着额度）"
       : "或先关掉/归档不再需要的";
-    hint += `（${kindLabel} ${esc(payload.usage)}/${esc(payload.quota)} 已满：到「组织管理」页调高这一项配额，`
+    // 智能体这一格的"已用"是节点 + 未使用的入网令牌。不拆开的话，只有 2 台节点的人
+    // 看到"3/3 已满"会以为系统数错了 —— 页面上那格现在也按同一口径显示。
+    const breakdown = payload.outstandingJoinTokens
+      ? `（其中 ${esc(payload.nodes)} 台节点 + ${esc(payload.outstandingJoinTokens)} 张未使用的入网令牌）` : "";
+    hint += `（${kindLabel} ${esc(payload.usage)}/${esc(payload.quota)} 已满${breakdown}：到「组织管理」页调高这一项配额，`
       + `${freeUp}，再重试）`;
   }
   // 服务端在不少错误里写了给人看的说明（message / reason / required），前端原先只取 error 一个字段，
@@ -1835,7 +1844,7 @@ function renderSysOrgs() {
     quotaLine(org.usage?.members, org.quotas?.maxMembers),
     quotaLine(org.usage?.projects, org.quotas?.maxProjects),
     quotaLine(org.usage?.taskGroups, org.quotas?.maxTaskGroups),
-    quotaLine(org.usage?.agents, org.quotas?.maxAgents),
+    quotaLine(org.usage?.agents, org.quotas?.maxAgents, org.usage?.agentsReserved),
     fmtTime(org.createdAt),
     [
       `<button class="secondary-button" data-action="org-quota" data-org="${esc(org.orgId)}">配额</button>`,
@@ -2172,7 +2181,7 @@ function renderOrgOverview() {
           <div><div class="small muted">成员</div>${quotaLine(org.usage?.members, org.quotas?.maxMembers)}</div>
           <div><div class="small muted">项目</div>${quotaLine(org.usage?.projects, org.quotas?.maxProjects)}</div>
           <div><div class="small muted">任务组</div>${quotaLine(org.usage?.taskGroups, org.quotas?.maxTaskGroups)}</div>
-          <div><div class="small muted">AI 智能体</div>${quotaLine(org.usage?.agents, org.quotas?.maxAgents)}${(() => {
+          <div><div class="small muted">AI 智能体</div>${quotaLine(org.usage?.agents, org.quotas?.maxAgents, org.usage?.agentsReserved)}${(() => {
             // 配额只数没被吊销的，而智能体那张表把已吊销的也列着 —— 不说清楚，人会拿表里的行数
             // 去对这个数字，对不上又找不出原因。只在确实有已吊销节点时才出现这一句。
             const revoked = (orgAgentNodes || []).filter((node) => node.status === "revoked").length;

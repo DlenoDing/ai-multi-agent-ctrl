@@ -78,6 +78,11 @@
         "agents": {
           "type": "integer",
           "minimum": 0
+        },
+        "agentsReserved": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "已签发但还没用掉的入网令牌数：它们占着 maxAgents 的位（签发下一张会被拒），但不计入 agents —— 节点注册查的是 agents，并进去的话节点会被自己那张正在兑换的令牌顶掉一格"
         }
       }
     },

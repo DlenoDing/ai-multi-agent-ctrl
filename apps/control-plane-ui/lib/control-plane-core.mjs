@@ -629,7 +629,9 @@ export function recomputeOrganizationUsage(state) {
   // 而每建一个项目/任务组/成员/节点都要过配额：实测 200 个组织 / 1.6 万个对象时单次 25ms，
   // 规模翻倍耗时翻四倍。改成按组织分桶的单趟统计，判据与下面注释记录的口径逐字不变。
   const usage = new Map();
-  for (const org of state.organizations || []) usage.set(org.orgId, {members: 0, projects: 0, taskGroups: 0, agents: 0});
+  for (const org of state.organizations || []) {
+    usage.set(org.orgId, {members: 0, projects: 0, taskGroups: 0, agents: 0, agentsReserved: 0});
+  }
   const bump = (orgId, key) => {
     const row = usage.get(orgId);
     if (row) row[key] += 1;
@@ -656,6 +658,14 @@ export function recomputeOrganizationUsage(state) {
   for (const node of state.agentRuntimeNodes || []) {
     if (node.status === "revoked") continue;
     bump(node.organizationId || DEFAULT_ORGANIZATION_ID, "agents");
+  }
+  // 已签发但还没用掉的入网令牌【占着位】：签发第 N+1 张时会被拒（createAgentJoinToken 把它算进用量）。
+  // 但页面上的"智能体 2/3"数的只是节点 —— 于是人看着还有一格，签发却被拒，报文还说"3/3 已满"。
+  // 屏幕上并排的两个数必须出自同一处统计。不能直接并进 agents：节点注册时查的也是 agents，
+  // 并进去的话，节点会被自己那张正在兑换的令牌顶掉一格，永远注册不上。所以单列一项。
+  for (const token of state.agentJoinTokens || []) {
+    if (token.status !== "issued") continue;
+    bump(token.organizationId || DEFAULT_ORGANIZATION_ID, "agentsReserved");
   }
   for (const org of state.organizations || []) org.usage = usage.get(org.orgId);
 }

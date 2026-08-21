@@ -3059,6 +3059,46 @@ const MUTATIONS = [
     expect: "阻塞状态出口"
   },
   {
+    name: "未使用的入网令牌必须算成配额占位",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyOutstandingJoinTokensHoldTheirQuotaSlot",
+    from: '    if (token.status !== "issued") continue;',
+    to: '    if (token.status !== "issuedX") continue;',
+    expect: "没有被算成占位"
+  },
+  {
+    name: "占位不得并进 agents（否则节点被自己那张令牌顶掉一格）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyOutstandingJoinTokensHoldTheirQuotaSlot",
+    from: '    bump(token.organizationId || DEFAULT_ORGANIZATION_ID, "agentsReserved");',
+    to: '    bump(token.organizationId || DEFAULT_ORGANIZATION_ID, "agents");',
+    expect: "没有被算成占位"
+  },
+  {
+    name: "页面要显出占位并给出合计（否则还剩一格却签不出来）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '${Number(reserved) > 0 ? `（另有 ${esc(reserved)} 张未使用的入网令牌占着位，合计 ${held}/${max ?? 0}）` : ""}',
+    to: "",
+    expect: "未使用的入网令牌占着配额，页面要显出来并给出合计"
+  },
+  {
+    name: "没有待用令牌时页面不许多挂一句",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "${Number(reserved) > 0 ?",
+    to: "${true ?",
+    expect: "没有未使用的令牌时不要多说一句"
+  },
+  {
+    name: "配额报文要拆开说是节点还是待用令牌占的位",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    const breakdown = payload.outstandingJoinTokens",
+    to: "    const breakdown = false && payload.outstandingJoinTokens",
+    expect: "要拆开说清是节点还是没用掉的令牌"
+  },
+  {
     name: "配额里的 kind 不得被当成故障类型再打一遍",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

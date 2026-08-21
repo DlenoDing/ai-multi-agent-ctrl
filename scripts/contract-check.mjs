@@ -380,6 +380,7 @@ run(verifyServiceAllowlistSaysWhatItDropped);
 run(verifyFirstScreenPointsAtRealPlaces);
 run(verifyGuidanceNamesRealPages);
 run(verifyDangerousConfirmsStateTheConsequence);
+run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyHintMapsHaveNoDuplicateKeys);
 run(verifyLockConflictAdmitsTheWreckage);
 run(verifyOutputTargetKeepsItsPolicyDecision);
@@ -5724,6 +5725,43 @@ function verifyLockConflictAdmitsTheWreckage(output) {
 // 想按停一个失控 agent 的人点完会以为已经停住了。
 // 判据用中文字数当代理：只问一句"确认 X？"的弹窗约 12~16 字，带后果句的实测最少 28 字。
 // 这是个粗判据，它守的是"有没有多写一句话"，写得对不对得靠人看 —— 但连一句都没有时它必红。
+// 已签发未使用的入网令牌占着配额的位（签发第 N+1 张会被拒），而用量里原先只数节点 ——
+// 页面显示"2/3 还剩一格"，签发却被拒、报文说"3/3 已满"。屏幕上并排的两个数必须一处算出来。
+// 不能把令牌并进 agents：节点注册查的也是 agents，并进去就会被自己那张正在兑换的令牌顶掉一格。
+function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
+  const state = structuredClone(seedState);
+  ensureRuntimeCollections(state, {root});
+  const orgId = DEFAULT_ORGANIZATION_ID;
+  state.agentJoinTokens = [
+    {tokenId: "jt_1", status: "issued", organizationId: orgId},
+    {tokenId: "jt_2", status: "issued", organizationId: orgId},
+    {tokenId: "jt_used", status: "consumed", organizationId: orgId},
+    {tokenId: "jt_revoked", status: "revoked", organizationId: orgId}
+  ];
+  recomputeOrganizationUsage(state);
+  const usage = (state.organizations || []).find((org) => org.orgId === orgId)?.usage;
+  if (!usage) {
+    output.push("配额占位判据：默认组织没有用量记录 —— 本条在空转");
+    return;
+  }
+  if (usage.agentsReserved !== 2) {
+    output.push(`未使用的入网令牌没有被算成占位（agentsReserved=${usage.agentsReserved}，应为 2 —— `
+      + "两张 issued，另外两张已用/已撤销不算）；页面就会显示「还剩一格」而签发被拒");
+  }
+  const nodesOnly = usage.agents;
+  state.agentJoinTokens = [];
+  recomputeOrganizationUsage(state);
+  const after = (state.organizations || []).find((org) => org.orgId === orgId)?.usage;
+  if (after.agents !== nodesOnly) {
+    output.push(`令牌被并进了 agents（${nodesOnly} -> ${after.agents}）—— 节点注册查的也是 agents，`
+      + "并进去的话节点会被自己那张正在兑换的令牌顶掉一格，永远注册不上");
+  }
+  if (after.agentsReserved !== 0) {
+    output.push(`一张待用令牌都没有时 agentsReserved 仍是 ${after.agentsReserved} —— 页面会凭空多挂一句解释`);
+  }
+  console.log(`配额占位：${usage.agents} 台节点 + ${usage.agentsReserved} 张待用令牌，两者分列且节点数不受令牌影响`);
+}
+
 function verifyDangerousConfirmsStateTheConsequence(output) {
   const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const dialogs = [];
