@@ -3343,6 +3343,33 @@ const MUTATIONS = [
     expect: "没给出合法的状态清单"
   },
   {
+    // 在界面上停用一条规则，agent 就不该再收到它。这条端到端的性质此前零覆盖：
+    // 把内容包里的 activeSystemRules 换成 systemRules，契约门 138 条全过 ——
+    // 人关掉一条安全规则、界面写着"已停用"，而执行方的提示词里它还在。
+    name: "停用的系统规则不许出现在 agent 的内容包里",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyContentBundleNamesTheDispatchedItem",
+    from: '  const systemRulesText = renderRules(config.activeSystemRules, "系统规则");',
+    to: '  const systemRulesText = renderRules(config.systemRules, "系统规则");',
+    expect: "仍然出现在 agent 的内容包里"
+  },
+  {
+    name: "停用的业务规则同样不许出现（种子里没有业务规则，这一半要自己造）",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyContentBundleNamesTheDispatchedItem",
+    from: '  const businessRulesText = renderRules(config.activeBusinessRules, "业务规则");',
+    to: '  const businessRulesText = renderRules(config.businessRules, "业务规则");',
+    expect: "停用的业务规则仍然出现"
+  },
+  {
+    name: "业务规则必须真的下发（正面对照：不下发也要报红）",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyContentBundleNamesTheDispatchedItem",
+    from: '  const businessRulesText = renderRules(config.activeBusinessRules, "业务规则");',
+    to: '  const businessRulesText = "";',
+    expect: "没有出现在 agent 的内容包里"
+  },
+  {
     // 派发与会话都存着 modelSelectionDecisionRef。被指着的那条决策一旦被容量裁掉，
     // 引用就悬空：人点进去看"这次为什么选了这个模型"只会看到空白。
     name: "容量裁剪必须留住仍被指着的记录",

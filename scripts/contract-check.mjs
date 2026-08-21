@@ -9378,6 +9378,55 @@ function verifyContentBundleNamesTheDispatchedItem(output) {
     output.push(`内容包点名：构建失败（${String(error.message).slice(0, 120)}）—— 本条在空转`);
     return;
   }
+  // 【在界面上停用一条规则，agent 就不该再收到它】。这条端到端的性质此前零覆盖：
+  // 把内容包里的 activeSystemRules 换成 systemRules（即把停用的也发下去），契约门 138 条全过。
+  // 人关掉一条安全规则、以为从此不生效，而 agent 的提示词里它还在 —— 这比没关更坏。
+  {
+    const offProbe = structuredClone(probe);
+    const offProject = (offProbe.projects || []).find((item) => item.id === dispatch.projectId);
+    const sample = effectiveProjectConfig(offProject).activeSystemRules[0];
+    if (!sample) {
+      output.push("内容包规则：这个项目一条生效中的系统规则都没有 —— 停用那条断言在空转");
+    } else {
+      const marker = String(sample.content || "").slice(0, 24);
+      const onBundle = buildBundleForCheck(offProbe, node, dispatch.sessionId, {root});
+      const onText = (onBundle.entries || []).map((entry) => String(entry.content || "")).join("\n");
+      if (!marker || !onText.includes(marker)) {
+        output.push("内容包规则：生效中的系统规则本来就不在包里 —— 停用那条断言在空转（先证明它在，再证明关掉后不在）");
+      } else {
+        offProject.config = {...(offProject.config || {}),
+          systemRules: [{ruleId: sample.ruleId, enabled: false}]};
+        const offBundle = buildBundleForCheck(offProbe, node, dispatch.sessionId, {root});
+        const offText = (offBundle.entries || []).map((entry) => String(entry.content || "")).join("\n");
+        if (offText.includes(marker)) {
+          output.push(`在项目层停用的系统规则（${sample.ruleId}）仍然出现在 agent 的内容包里 —— `
+            + "人以为自己关掉了它，而执行方照旧按它干活；这比没关更坏，因为界面上写着「已停用」");
+        }
+      }
+      // 业务规则是另一半：种子里一条都没有，只验系统规则的话这一半永远没被跑过
+      // （实测把 activeBusinessRules 换成 businessRules，判据照样绿）。自己造一条。
+      {
+        const bizProbe = structuredClone(probe);
+        const bizProject = (bizProbe.projects || []).find((item) => item.id === dispatch.projectId);
+        const bizMarker = "只此一条的业务规则正文-probe";
+        bizProject.config = {...(bizProject.config || {}),
+          businessRules: [{ruleId: "biz.bundle.probe", title: "内容包探针", content: bizMarker, enabled: true}]};
+        const onBiz = buildBundleForCheck(bizProbe, node, dispatch.sessionId, {root});
+        const onBizText = (onBiz.entries || []).map((entry) => String(entry.content || "")).join("\n");
+        if (!onBizText.includes(bizMarker)) {
+          output.push("刚配的业务规则没有出现在 agent 的内容包里 —— 人在项目设置里写的业务约束根本没下发");
+        } else {
+          bizProject.config = {...bizProject.config,
+            businessRules: [{ruleId: "biz.bundle.probe", title: "内容包探针", content: bizMarker, enabled: false}]};
+          const offBiz = buildBundleForCheck(bizProbe, node, dispatch.sessionId, {root});
+          const offBizText = (offBiz.entries || []).map((entry) => String(entry.content || "")).join("\n");
+          if (offBizText.includes(bizMarker)) {
+            output.push("停用的业务规则仍然出现在 agent 的内容包里 —— 与系统规则同一处毛病，两半都要守");
+          }
+        }
+      }
+    }
+  }
   const context = (bundle.entries || []).map((entry) => String(entry.content || "")).join("\n");
   if (!context.includes(contract.workId)) {
     output.push(`内容包点名：整包里找不到本次的工作项 ${contract.workId} —— `
