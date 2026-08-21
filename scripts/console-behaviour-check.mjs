@@ -153,6 +153,11 @@ globalThis.__probe = {
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
   listEmptyText: (what, failure) => { lastError = failure; return listEmptyText(what); },
+  skillSourceNotice: (skillSources, roleSkills) => {
+    state = {...state, skillSources, roleSkills};
+    return String(renderSysSettings()).replace(/<[^>]+>/gu, " ").includes("系统内置技能")
+      ? String(renderSysSettings()).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ") : "";
+  },
   systemOverviewText: (nextState, account, status) => {
     state = nextState; currentAccount = account; currentProjectId = null; page = "sys-overview";
     authToken = "probe-token"; systemOverview = null; systemOverviewStatus = status;
@@ -874,6 +879,29 @@ async function runErrorGuidanceCase() {
     taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
     findings: [], humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []};
   navProbe.renderFullPageWith(bare, account, null, "org-members");
+// "技能源接了但一个角色技能都没取下来"与"全退役了"后果完全一样：agent 拿到的都是内置通用规则。
+// 而提示的条件此前只认后者 —— 新部署撞的恰恰是前者（种子里的源是 configured、角色数 0，不算退役）。
+{
+  const skillProbe = loadConsole(el("div"), {realI18n: true});
+  const builtIn = [{roleSkillRef: "r1", sourceId: "system-default"}, {roleSkillRef: "r2", sourceId: "system-default"}];
+  const neverSynced = skillProbe.skillSourceNotice(
+    [{sourceId: "agency-agents-zh", status: "configured"}], builtIn);
+  check("技能源接了但一条都没取下来时要说出来（新部署撞的就是这个）",
+    /一个角色技能都还没取下来/u.test(neverSynced) && /同步/u.test(neverSynced),
+    `未同步时说的是：${JSON.stringify(neverSynced.slice(0, 140))}`);
+  const allRetired = skillProbe.skillSourceNotice(
+    [{sourceId: "agency-agents-zh", status: "retired"}], builtIn);
+  check("全退役时仍照旧提示（这条不能因为改条件而丢掉）",
+    /当前没有可用的技能源/u.test(allRetired),
+    `全退役时说的是：${JSON.stringify(allRetired.slice(0, 140))}`);
+  const healthy = skillProbe.skillSourceNotice(
+    [{sourceId: "agency-agents-zh", status: "active"}],
+    [...builtIn, {roleSkillRef: "r3", sourceId: "agency-agents-zh"}]);
+  check("源真的提供了技能时不许再吓唬人（正面对照）",
+    healthy === "",
+    `源已可用却仍在提示：${JSON.stringify(healthy.slice(0, 140))}`);
+}
+
 // 点「运行自治循环」拿到的回执此前被整个丢掉，一律弹"已触发编排循环"。
 // 而这一拍完全可能【跑了但什么都没推进】：技能源同步失败会让整轮提前返回，
 // changed 里只留一条 blocked_resource —— 人以为成功了，下次再点还是同样的结果。

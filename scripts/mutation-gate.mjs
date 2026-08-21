@@ -2449,8 +2449,8 @@ const MUTATIONS = [
     name: "没有可用技能源时要说清后果",
     file: APP,
     gate: "console",
-    from: '`<div class="notice warn-notice">当前没有可用的技能源，所有角色都在用系统内置技能`',
-    to: '""',
+    from: '        return `<div class="notice warn-notice">${esc(why)}，所有角色都在用系统内置技能（共 ${builtIn} 个）。`',
+    to: '        return "" || `<div class="notice">${esc("")}${builtIn}`',
     expect: "人看不出所有角色已经落到系统内置技能上"
   },
   {
@@ -2984,6 +2984,14 @@ const MUTATIONS = [
     from: 'audit(state, "auth-service", "auth_login", `Account:${email}`, "credentials_invalid");',
     to: 'audit(state, "auth-service", "auth_login", `Account:${email}`, "denied");',
     expect: "台账上记成"
+  },
+  {
+    name: "技能源接了但一条都没取下来时要说出来（新部署撞的就是这个）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "        const usable = (state.skillSources || []).filter((source) => source.status !== \"retired\"\n          && (state.roleSkills || []).some((skill) => skill.sourceId === source.sourceId));",
+    to: "        const usable = (state.skillSources || []).filter((source) => source.status !== \"retired\");",
+    expect: "未同步时说的是"
   },
   {
     name: "文档里让人敲的命令必须真存在（第一条命令失败人就进不去门）",

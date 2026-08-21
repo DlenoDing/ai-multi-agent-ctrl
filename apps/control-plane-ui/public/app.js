@@ -1904,11 +1904,24 @@ function renderSysSettings() {
     // 一个可用技能源都没有（没接过 / 全退役了）时，角色会全部回退到内置技能 —— 系统照常跑，
     // 但 agent 拿到的是通用规则而不是这个组织自己的角色规则。这件事不写出来，人看到的只是一张空表。
     panel("技能源", table(["技能源 / 仓库", "状态", "固定提交", {label: "角色数", c: "num"}, "操作"], sources)
-      + ((state.skillSources || []).some((source) => source.status !== "retired")
-        ? ""
-        : `<div class="notice warn-notice">当前没有可用的技能源，所有角色都在用系统内置技能`
-          + `（共 ${(state.roleSkills || []).filter((skill) => skill.sourceId === "system-default").length} 个）。`
-          + "派发照常进行，但 agent 拿到的是通用角色规则，不是你们自己的那一份。</div>")),
+      + (() => {
+        // 判据要问的是"有没有一个源【真的提供了】角色技能"，而不是"有没有非退役的源"。
+        // 上面那条注释本来就写着两种情况——"没接过 / 全退役了"——而条件只覆盖了后一种。
+        // 新部署撞的正是前一种：种子里的源是 configured（从没同步过）、角色数 0，它不算退役，
+        // 于是这条提示不出现，而 agent 拿到的仍然是内置通用规则（种子里那 12 条属于 system-default，
+        // 不属于这个源）。这是"缺席被当成正常"的一种：没同步过和同步坏了后果一样，提示却只认后者。
+        const builtIn = (state.roleSkills || []).filter((skill) => skill.sourceId === "system-default").length;
+        const usable = (state.skillSources || []).filter((source) => source.status !== "retired"
+          && (state.roleSkills || []).some((skill) => skill.sourceId === source.sourceId));
+        if (usable.length) return "";
+        const neverSynced = (state.skillSources || []).filter((source) => source.status !== "retired");
+        const why = neverSynced.length
+          ? `已接入 ${neverSynced.length} 个技能源，但一个角色技能都还没取下来`
+            + "（新部署要先点右侧的「同步」把它拉下来；同步失败时这一行会显示原因）"
+          : "当前没有可用的技能源";
+        return `<div class="notice warn-notice">${esc(why)}，所有角色都在用系统内置技能（共 ${builtIn} 个）。`
+          + "派发照常进行，但 agent 拿到的是通用角色规则，不是你们自己的那一份。</div>";
+      })()),
     // 角色技能叠加会【改掉 agent 实际拥有的能力】（含 forbiddenCapabilityAdds），它是真人专属动作，
     // 数据也一直下发到这一页 —— 却从没有被渲染过：人看不到某个项目/任务组的角色规则被谁改过、改成了什么。
     // 创建仍走 API（补丁结构复杂，不值得为它在这里造一个编辑器），但"存在且生效"这件事必须看得见。
