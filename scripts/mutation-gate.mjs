@@ -3385,6 +3385,38 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "不在册的角色技能不得发包",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  if (!skill) throw gatewayError(\"role_skill_not_found\", 409);",
+    to: "  if (!skill) return {files: [], worksetId: \"x\"};",
+    expect: "拿到的不是 role_skill_not_found"
+  },
+  {
+    name: "技能源路径必须在技能目录内且文件真在",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "    if (!inside(sourceRoot, target) || !existsSync(target)) throw gatewayError(\"role_skill_source_missing\", 409);",
+    to: "    if (false) throw gatewayError(\"role_skill_source_missing\", 409);",
+    expect: "拿到的不是 role_skill_source_missing"
+  },
+  {
+    name: "盘上的技能正文必须与登记的摘要一致",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "    if (digestOf(content) !== skill.contentDigest) {",
+    to: "    if (false) {",
+    expect: "技能包却照样发了"
+  },
+  {
+    name: "角色技能注册表空了必须拒而不是回退",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "    throw Object.assign(new Error(\"role_skill_registry_empty\"), {status: 409, roleId});",
+    to: "    return {roleSkillId: \"fallback\", skill: {roleSkillId: \"fallback\"}};",
+    expect: "注册表空了却没拒"
+  },
+  {
     name: "不安全的分支名不得存进产出目标",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

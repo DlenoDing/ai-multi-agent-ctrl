@@ -2526,6 +2526,106 @@ function verifyHumanAndOrganizationContracts(output) {
       output.push("角色定制: overlay 里追加的禁止能力没有出现在下发内容里");
     }
 
+    // 技能包是 agent 干活的依据（SKILL.md 就是它读到的角色规则）。这四道门此前【零覆盖】：
+    // 技能不在册、源文件不在盘上、盘上那份与登记的摘要对不上、注册表整个空了。
+    // 摘要那条最要紧 —— 它对不上意味着盘上那份被换过，而 agent 会照着换过的规则干活。
+    {
+      const skillRefusal = (mutate) => {
+        const st = structuredClone(ovState);
+        const contract = structuredClone(ovContract);
+        mutate(st, contract);
+        try { buildSkillWorkset(st, contract, {runtimeDir: ".runtime"}); return null; }
+        catch (error) { return error.message; }
+      };
+      const skillCases = [
+        ["契约指向一个不在册的技能", "role_skill_not_found",
+          (st, contract) => { contract.roleSkill.roleSkillRef = "role_skill_does_not_exist"; }],
+        ["技能源文件不在盘上", "role_skill_source_missing", (st) => {
+          const target = st.roleSkills.find((item) => item.roleSkillId === ovBase.roleSkillId);
+          target.sourceId = "agency-agents-zh";
+          target.sourcePath = "agents/这份文件不存在.md";
+        }],
+        // 路径逃逸与"文件不存在"落在同一道门上：sourcePath 指到 skill-sources 之外也必须拒，
+        // 否则登记一条 ../../ 的路径就能把仓库里任意文件当成角色规则发给 agent。
+        ["技能源路径指到技能目录之外", "role_skill_source_missing", (st) => {
+          const target = st.roleSkills.find((item) => item.roleSkillId === ovBase.roleSkillId);
+          target.sourceId = "agency-agents-zh";
+          target.sourcePath = "../../../../etc/passwd";
+        }],
+        // 注册表空了这条走的是另一个入口（resolveRoleSkill），单独测，见下。
+        ["技能引用是空串", "role_skill_not_found", (st, contract) => { contract.roleSkill.roleSkillRef = ""; }]
+      ];
+      for (const [what, expected, mutate] of skillCases) {
+        const got = skillRefusal(mutate);
+        if (got !== expected) {
+          output.push(`角色技能: ${what}时拿到的不是 ${expected}（实际 ${got || "技能包照样发出去了"}）—— `
+            + "SKILL.md 就是 agent 读到的角色规则，发错一份它就按别人的规矩干活");
+        }
+      }
+      // 摘要对不上：盘上确实有这份文件，但内容被换过。要造出这一条得真写一个文件到技能源目录。
+      const skillSourceRoot = join(root, ".runtime", "skill-sources", "agency-agents-zh", "repo", "agents");
+      mkdirSync(skillSourceRoot, {recursive: true});
+      const probeSkillPath = join(skillSourceRoot, "contract-check-digest-probe.md");
+      writeFileSync(probeSkillPath, "# 被换过的技能正文\n");
+      try {
+        const digestState = structuredClone(ovState);
+        const digestSkill = digestState.roleSkills.find((item) => item.roleSkillId === ovBase.roleSkillId);
+        digestSkill.sourceId = "agency-agents-zh";
+        digestSkill.sourcePath = "agents/contract-check-digest-probe.md";
+        digestSkill.contentDigest = "sha256:登记的是另一份内容";
+        let digestRefusal = null;
+        let digestDetail = null;
+        try { buildSkillWorkset(digestState, structuredClone(ovContract), {runtimeDir: ".runtime"}); }
+        catch (error) { digestRefusal = error.message; digestDetail = error.details || error; }
+        if (digestRefusal !== "role_skill_digest_mismatch") {
+          output.push(`角色技能: 盘上那份与登记的摘要对不上，技能包却照样发了（${digestRefusal || "没有拒绝"}）—— `
+            + "谁能写那个目录，谁就能改 agent 读到的角色规则");
+        }
+        // 报文必须说清是哪一份、盘上算出来是多少 —— 否则运维只能逐个文件去猜。
+        for (const field of ["roleSkillId", "sourcePath", "expected", "actual"]) {
+          if (!digestDetail?.[field]) {
+            output.push(`角色技能: 摘要不符的报文里没有 ${field} —— 运维只能逐个文件去猜是哪一份被换了`);
+          }
+        }
+        // 正面对照走同一条分支：把登记的摘要改成盘上那份的真实摘要，必须发得出来。
+        // digestOf 带 sha256: 前缀 —— 少了前缀会让正面对照撞在同一道门上，看着像"永远拒"。
+        digestSkill.contentDigest = `sha256:${createHash("sha256").update("# 被换过的技能正文\n").digest("hex")}`;
+        let matched = null;
+        try { matched = buildSkillWorkset(digestState, structuredClone(ovContract), {runtimeDir: ".runtime"}); }
+        catch (error) { matched = {error: error.message}; }
+        if (!(matched?.files || []).some((file) => file.path === "SKILL.md")) {
+          output.push(`角色技能: 摘要对得上时也发不出技能包（${matched?.error || "没有 SKILL.md"}）—— `
+            + "上面那条其实是「永远拒」，测不出摘要校验");
+        }
+      } finally {
+        rmSync(probeSkillPath, {force: true});
+      }
+    }
+
+    // 注册表整个空了：这条在 resolveRoleSkill 上（分配角色技能那一步），不是发包那一步。
+    // 它必须【拒】而不是回退到某个默认技能 —— 悄悄给一份别人的角色规则比拒绝更坏。
+    {
+      const emptyState = structuredClone(seedState);
+      ensureRuntimeCollections(emptyState, {root});
+      emptyState.roleSkills = [];
+      let emptyRefusal = null;
+      try { resolveRoleSkill(emptyState, "reviewer", {}); }
+      catch (error) { emptyRefusal = error.message; }
+      if (emptyRefusal !== "role_skill_registry_empty") {
+        output.push(`角色技能: 注册表空了却没拒（${emptyRefusal || "照样分配出了一份技能"}）—— `
+          + "悄悄回退到某份默认技能，等于让 agent 按别人的角色规则干活");
+      }
+      // 正面对照走同一条路：注册表正常时必须分配得出来。
+      const okState = structuredClone(seedState);
+      ensureRuntimeCollections(okState, {root});
+      let resolved = null;
+      try { resolved = resolveRoleSkill(okState, "reviewer", {}); }
+      catch (error) { resolved = {error: error.message}; }
+      if (!resolved?.skill && !resolved?.roleSkillId) {
+        output.push(`角色技能: 注册表正常时也分配不出技能（${resolved?.error || JSON.stringify(resolved)}）—— 上面那条是「永远拒」`);
+      }
+    }
+
     // 角色技能的静默错绑：未登记角色原先静默拿到 orchestrator 的技能，最终兜底取数组首元素
     //（顺序由技能源同步的替换写法决定，实质上是任意的）—— agent 因此按【别人的角色规则】干活。
     const skillState = structuredClone(seedState);
@@ -8667,7 +8767,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
   // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
   // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 64;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 60;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
