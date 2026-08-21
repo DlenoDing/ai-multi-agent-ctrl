@@ -8874,7 +8874,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
   // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
   // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 26;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 23;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -10525,8 +10525,17 @@ function verifyLocalGitWorkerRefusesUnsafeRepositoryState(output) {
       execFileSync("git", ["reset", "-q", "--hard", baseline], {cwd: repo});
       execFileSync("git", ["clean", "-qfd"], {cwd: repo});
       writeFileSync(join(repo, ".aimac-verification-repository"), "contract-check\n");
+      rmSync(join(workspace, "flag-rewind-remote"), {force: true});
       execFileSync("git", ["push", "-q", "-f", "origin", `${baseline}:refs/heads/main`], {cwd: repo});
     };
+    // 远端在收下推送之后被改回去（另一个人强推、或服务端钩子回滚）。靠开关文件启用。
+    const rewindFlag = join(workspace, "flag-rewind-remote");
+    const postReceive = join(remote, "hooks", "post-receive");
+    writeFileSync(postReceive, ["#!/bin/sh",
+      `[ -f ${JSON.stringify(rewindFlag)} ] || exit 0`,
+      `git update-ref refs/heads/main ${baseline}`].join("\n"));
+    chmodSync(postReceive, 0o755);
+
     // 正面对照：干净工作树 + 白名单对得上时，这一趟必须真的跑完（否则下面全是「永远失败」）。
     const clean = reasonOf(() => {});
     if (clean.status !== "completed") {
@@ -10545,6 +10554,9 @@ function verifyLocalGitWorkerRefusesUnsafeRepositoryState(output) {
       }],
       ["清单路径落在白名单之外", "artifact_manifest_outside_allowlist", ({target}) => {
         target.artifactManifestPath = "spec/outside.json";
+      }],
+      ["推上去之后远端被改回了旧提交", "agent_runtime_push_remote_sha_mismatch", () => {
+        writeFileSync(rewindFlag, "on\n");
       }]
     ];
     for (const [what, expected, tune] of cases) {
@@ -10573,7 +10585,7 @@ function verifyLocalGitWorkerRefusesUnsafeRepositoryState(output) {
   } finally {
     rmSync(workspace, {recursive: true, force: true});
   }
-  console.log("本地 git 工作器：工作树不干净/产出越界/清单越界/一字未变 四种形状全拒，正常情形跑得完 —— 核过");
+  console.log("本地 git 工作器：工作树不干净/产出越界/清单越界/远端被改回/一字未变 五种形状全拒，正常情形跑得完 —— 核过");
 }
 
 function verifyExecutorBackedWorkerRefusesUnsafeOutput(output) {
@@ -10598,6 +10610,9 @@ function verifyExecutorBackedWorkerRefusesUnsafeOutput(output) {
     git("push", "-q", "origin", "HEAD:refs/heads/main");
     const baseline = git("rev-parse", "HEAD");
     const reset = () => {
+      // 钩子的开关文件要一起关掉，否则它会一直影响后面的用例（复位不彻底比没复位更难查）。
+      rmSync(join(workspace, "flag-dirty-after-commit"), {force: true});
+      rmSync(join(workspace, "flag-rewind-remote"), {force: true});
       execFileSync("git", ["reset", "-q", "--hard", baseline], {cwd: repo});
       execFileSync("git", ["clean", "-qfd"], {cwd: repo});
       execFileSync("git", ["push", "-q", "-f", "origin", `${baseline}:refs/heads/main`], {cwd: repo});
@@ -10645,6 +10660,23 @@ function verifyExecutorBackedWorkerRefusesUnsafeOutput(output) {
       '}));'
     ].join("\n"));
     process.env.AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND = `node ${JSON.stringify(fakeExecutor)}`;
+
+    // 两个 git 钩子，用来造出真实的"干活期间外部动了手"的两种场景。
+    // 它们靠开关文件启用，平时不触发 —— 否则每个用例都会被它们干扰。
+    const dirtyFlag = join(workspace, "flag-dirty-after-commit");
+    const rewindFlag = join(workspace, "flag-rewind-remote");
+    const postCommit = join(repo, ".git", "hooks", "post-commit");
+    writeFileSync(postCommit, ["#!/bin/sh",
+      `[ -f ${JSON.stringify(dirtyFlag)} ] || exit 0`,
+      // 有人（另一个进程、编辑器、跑着的构建）在提交刚落地时动了工作树。
+      'printf "有人在提交之后动了工作树\\n" > docs/touched-after-commit.md'].join("\n"));
+    chmodSync(postCommit, 0o755);
+    const postReceive = join(remote, "hooks", "post-receive");
+    writeFileSync(postReceive, ["#!/bin/sh",
+      `[ -f ${JSON.stringify(rewindFlag)} ] || exit 0`,
+      // 远端在收下这次推送之后被改回去了（另一个人强推、或服务端钩子回滚）。
+      `git update-ref refs/heads/main ${baseline}`].join("\n"));
+    chmodSync(postReceive, 0o755);
 
     const build = (tune = () => {}) => {
       const st = structuredClone(seedState);
@@ -10702,7 +10734,13 @@ function verifyExecutorBackedWorkerRefusesUnsafeOutput(output) {
       // 一行都没改却上报成功：撞的是【声称改了却没改】那道（它更靠前，且报得更准 ——
       // 它能点出是哪个文件）。agent_runtime_executor_no_git_changes 因此够不着，已登记。
       ["执行器一行都没改却上报成功", "agent_runtime_executor_declared_unchanged_paths:docs/executor-manifest.json",
-        "no_changes", () => {}]
+        "no_changes", () => {}],
+      ["提交刚落地就有人动了工作树", "agent_runtime_executor_uncommitted_changes_after_commit", "ok", () => {
+        writeFileSync(dirtyFlag, "on\n");
+      }],
+      ["推上去之后远端被改回了旧提交", "agent_runtime_executor_push_remote_sha_mismatch", "ok", () => {
+        writeFileSync(rewindFlag, "on\n");
+      }]
     ];
     for (const [what, expected, mode, tune] of cases) {
       const got = runOnce(mode, tune);
@@ -10718,7 +10756,7 @@ function verifyExecutorBackedWorkerRefusesUnsafeOutput(output) {
     delete process.env.CC_EXECUTOR_MODE;
     rmSync(workspace, {recursive: true, force: true});
   }
-  console.log("外部执行器：非 JSON/无清单/产出越界/清单越界(撞产出那道)/工作树脏/无任务合同 七种形状全拒，合规结果照收 —— 核过");
+  console.log("外部执行器：非 JSON/无清单/产出越界/清单越界(撞产出那道)/工作树脏/无任务合同/一行未改/提交后被动过/远端被改回 九种形状全拒，合规结果照收 —— 核过");
 }
 
 function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {

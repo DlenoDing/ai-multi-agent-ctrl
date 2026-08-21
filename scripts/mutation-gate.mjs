@@ -3385,6 +3385,30 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "提交之后工作树必须复查一次",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutorBackedWorkerRefusesUnsafeOutput",
+    from: "  if (gitStatusPaths(root).length) throw new Error(\"agent_runtime_executor_uncommitted_changes_after_commit\");",
+    to: "  if (false) throw new Error(\"agent_runtime_executor_uncommitted_changes_after_commit\");",
+    expect: "agent_runtime_executor_uncommitted_changes_after_commit"
+  },
+  {
+    name: "推完必须核对远端 SHA（执行器）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutorBackedWorkerRefusesUnsafeOutput",
+    from: "  if (remoteSha !== commit) throw new Error(\"agent_runtime_executor_push_remote_sha_mismatch\");",
+    to: "  if (false) throw new Error(\"agent_runtime_executor_push_remote_sha_mismatch\");",
+    expect: "agent_runtime_executor_push_remote_sha_mismatch"
+  },
+  {
+    name: "推完必须核对远端 SHA（本地工作器）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyLocalGitWorkerRefusesUnsafeRepositoryState",
+    from: "  if (remoteSha !== commit) throw new Error(\"agent_runtime_push_remote_sha_mismatch\");",
+    to: "  if (false) throw new Error(\"agent_runtime_push_remote_sha_mismatch\");",
+    expect: "agent_runtime_push_remote_sha_mismatch"
+  },
+  {
     name: "产出一字未变时不得算作干完了活",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyLocalGitWorkerRefusesUnsafeRepositoryState",
