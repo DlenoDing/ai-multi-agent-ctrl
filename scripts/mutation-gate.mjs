@@ -3171,6 +3171,30 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "拒绝报文要说清这次到底执行了没有",
+    file: "apps/control-plane-ui/public/i18n-zh.js",
+    check: "verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect",
+    from: "这次写请求没有带幂等键，因此没有执行：写接口要求每一笔都带 Idempotency-Key",
+    to: "缺少幂等键：写接口要求每一笔都带 Idempotency-Key",
+    expect: "没说【这次到底改没改成】"
+  },
+  {
+    name: "原样重发注定失败的码不许把「请重试」当出口",
+    file: "apps/control-plane-ui/public/i18n-zh.js",
+    check: "verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect",
+    from: "另一处同时改了同一份状态，你这次的改动没有写进去（是整笔被拒，不会只写一半）：刷新看一眼当前状态，再决定要不要重做",
+    to: "状态写入冲突，没有写进去，请重试",
+    expect: "无用的重试"
+  },
+  {
+    name: "词条不见了要自报空转（拒绝结果确定性）",
+    file: "apps/control-plane-ui/public/i18n-zh.js",
+    check: "verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect",
+    from: "    state_write_conflict:",
+    to: "    state_write_conflictX:",
+    expect: "这条判据在空转"
+  },
+  {
     name: "不许用没加书名号的英文页名指路（「到 agent 页」实测 4 处）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",

@@ -380,6 +380,7 @@ run(verifyServiceAllowlistSaysWhatItDropped);
 run(verifyFirstScreenPointsAtRealPlaces);
 run(verifyGuidanceNamesRealPages);
 run(verifyDangerousConfirmsStateTheConsequence);
+run(verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5800,6 +5801,37 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
     output.push(`一张待用令牌都没有时 agentsReserved 仍是 ${after.agentsReserved} —— 页面会凭空多挂一句解释`);
   }
   console.log(`配额占位：${usage.agents} 台节点 + ${usage.agentsReserved} 张待用令牌，两者分列且节点数不受令牌影响`);
+}
+
+// 一笔写被拒时，人最先想知道的是"我这次到底改没改成"。
+// 说"请重试"而不说这件事，人就得先去翻记录确认，或者不敢重试。
+// 这几个码的结果是【确定的】（CAS 整笔被拒 / 幂等键命中 / 前置条件不满足），词表必须说出来。
+function verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect(output) {
+  const dict = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
+  // 登记制：这几个码的结果都是【确定的、这次没有执行】，而且原样重试必然同样失败。
+  // 只说"请重试"是让人去做一件没用的事，还留着"是不是已经改了一半"这个疑问。
+  // 新增同类码时加进来；这不是全量枚举，因为"结果确不确定"读不出来。
+  const mustSayOutcome = ["state_write_conflict", "idempotency_key_required", "idempotency_key_reuse_conflict"];
+  for (const code of mustSayOutcome) {
+    const line = dict.split("\n").find((row) => row.trim().startsWith(`${code}:`));
+    if (!line) {
+      output.push(`${code} 在词表里没有中文 —— 这条判据在空转`);
+      continue;
+    }
+    // "没有写进去 / 没有生效 / 已经生效"这一类话，缺了就等于让人自己去猜。
+    if (!/没有写进去|没有生效|没有执行|不会只写一半|已经生效/u.test(line)) {
+      output.push(`${code} 的中文只说了怎么办、没说【这次到底改没改成】—— `
+        + "人不敢重试（怕做两遍），也不敢不重试（怕漏了）");
+    }
+  }
+  // 反过来也要管：这几个码原样重试注定失败，报文不许把"请重试"当成出口。
+  for (const code of mustSayOutcome) {
+    const line = dict.split("\n").find((row) => row.trim().startsWith(`${code}:`)) || "";
+    if (/[，。：]请重试|，请稍后再试/u.test(line)) {
+      output.push(`${code} 让人"请重试"，而原样重发必然同样失败 —— 出口要说清换什么条件才有用`);
+    }
+  }
+  console.log(`拒绝结果确定性：${mustSayOutcome.length} 个码逐个核对，都说清了这次有没有执行、且没让人做无用的重试`);
 }
 
 function verifyDangerousConfirmsStateTheConsequence(output) {
