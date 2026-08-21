@@ -4280,7 +4280,9 @@ async function handleApi(req, res) {
       return json(res, 409, {error: "shared_definition_already_resolved", sharedDefinition: definition});
     }
     definition.status = nextStatus;
-    definition.resolutionJustification = definitionJustification.slice(0, 2000);
+    // 同上：人写的处置依据超了要拒，不能悄悄截断（这条也是真人专属的杠杆）。
+    definition.resolutionJustification =
+      assertHumanTextWithinLimit(definitionJustification, "shared_definition_resolution_justification", 2000);
     definition.resolvedBy = guard.actor;
     definition.updatedAt = now();
     // 处置完一项就要刷新关闭门快照：控制台上"关闭任务组"按钮只在 barrier.satisfied 时出现，

@@ -8177,7 +8177,13 @@ export function ruleSourceSettle(state, args) {
   resolution.status = args.status;
   resolution.adoptionPolicy = wantsAdoption ? "active_project_rule" : "not_active_rule";
   if (humanActor) resolution.settledBy = humanActor;
-  if (args.justification) resolution.settlementJustification = String(args.justification).slice(0, 2000);
+  // 人为这次处置写下的依据。原先是 slice 静默截断：台账上记的与他写的不是一句话 ——
+  // 而这条杠杆（rule_source_settle）是真人专属的，留痕就是它存在的理由。
+  // 与同批其余人写文本（各类 justification、定稿意见、指令内容）同规：超了就拒。
+  if (args.justification) {
+    resolution.settlementJustification =
+      assertHumanTextWithinLimit(args.justification, "rule_source_settlement_justification", 2000);
+  }
   resolution.updatedAt = new Date().toISOString();
   return {ruleSourceResolution: resolution};
 }

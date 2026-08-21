@@ -331,6 +331,7 @@ run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyCapsKeepRecordsThatAreStillPointedAt);
+run(verifyHumanWrittenTextIsNeverSilentlyTruncated);
 run(verifyCancelSettlesTheCellsResources);
 run(verifyAdmissionLedgerDoesNotGrowWithFlapping);
 run(verifyEveryCloseGateHasHumanGuidance);
@@ -10017,6 +10018,41 @@ function verifyCancelSettlesTheCellsResources(output) {
 // 界面上点进去看"这次为什么选了这个模型"，得到的是空白，而记录曾经存在过。
 // capKeepingReferenced 就是为这件事写的，但它此前一个断言都没有：
 // 把它最后那句 `return stillReferenced.length ? [...] : kept;` 改成 `return kept;`，契约门 137 条全过。
+// 人写下的字（定稿意见、各类处置依据、指令内容、任务组目标）一旦被 slice 静默截断，
+// 台账上记的就与他写的不是一句话 —— 而这些记录存在的全部理由就是"这句话是这个人说的"。
+// 本仓的既定做法是 assertHumanTextWithinLimit：超了就拒，并说清超出多少、请精简后重提。
+// 实测漏了三处：定稿意见（4000）、规则源处置依据（2000）、共享定义处置依据（2000）。
+// 这里按【字段名】兜底：凡是名字像"人写的理由/意见/说明"的，都不许出现 slice 截断。
+function verifyHumanWrittenTextIsNeverSilentlyTruncated(output) {
+  const files = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
+    "apps/mcp-server/server.mjs"];
+  // 形状要收窄到【把人写的原文存进某个字段】那一种：
+  // ① 名字必须【正好】是那几个词之一（第一版用 includes，instructionMetrics 撞上了 "instruction"）；
+  // ② 必须是赋值（= 或 对象字面量的 key: 值），排除只用来算摘要的 —— 摘要按定义就是短的，
+  //    5477 那处 `summary: String(inputText || …).slice(0, 300)` 同一语句里把全文存进了 detail。
+  const truncated = [];
+  for (const file of files) {
+    const text = readFileSync(join(root, file), "utf8").replace(/\/\/[^\n]*/gu, (line) => " ".repeat(line.length));
+    const shape = /(?:^|[.\s])(\w*(?:[Jj]ustification|inputText|instruction|objective|rationale))\s*=\s*[^\n=][^\n]{0,90}?\.slice\(0,\s*(\d{2,5})\)/gmu;
+    for (const match of text.matchAll(shape)) {
+      if (!/^(?:\w*[Jj]ustification|inputText|instruction|objective|rationale)$/u.test(match[1])) continue;
+      truncated.push(`${file.split("/").pop()}:${text.slice(0, match.index).split("\n").length}（${match[1]} → ${match[2]} 字）`);
+    }
+  }
+  // 分母：这几份源码里 assertHumanTextWithinLimit 的使用点数量。它塌了说明提取脱节。
+  const guarded = files.reduce((sum, file) =>
+    sum + [...readFileSync(join(root, file), "utf8").matchAll(/assertHumanTextWithinLimit\(/gu)].length, 0);
+  if (guarded < 8) {
+    output.push(`只找到 ${guarded} 处 assertHumanTextWithinLimit（应 ≥8）—— 提取脱节，本条在空转`);
+    return;
+  }
+  if (truncated.length) {
+    output.push(`这些【人写的文本】被 slice 静默截断了：${truncated.join("、")} —— `
+      + "台账上记的与他写的不是一句话；改用 assertHumanTextWithinLimit（超了就拒，并说清超出多少）");
+  }
+  console.log(`人写文本不许静默截断：${guarded} 处走了长度校验，${truncated.length} 处仍在 slice 截断（应为 0）`);
+}
+
 function verifyCapsKeepRecordsThatAreStillPointedAt(output) {
   const items = Array.from({length: 10}, (_, index) => ({decisionId: `d${index}`}));
   // 上限 3：d0..d2 留下，d3..d9 本该被裁。但 d7 还被指着，它必须活下来。

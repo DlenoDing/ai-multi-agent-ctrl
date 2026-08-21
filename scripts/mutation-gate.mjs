@@ -3353,6 +3353,30 @@ const MUTATIONS = [
     expect: "did not carry the task-group language policy"
   },
   {
+    name: "人写的处置依据不许静默截断（规则源）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanWrittenTextIsNeverSilentlyTruncated",
+    from: '    resolution.settlementJustification =\n      assertHumanTextWithinLimit(args.justification, "rule_source_settlement_justification", 2000);',
+    to: "    resolution.settlementJustification = String(args.justification).slice(0, 2000);",
+    expect: "被 slice 静默截断"
+  },
+  {
+    name: "人写的处置依据不许静默截断（共享定义）",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyHumanWrittenTextIsNeverSilentlyTruncated",
+    from: '    definition.resolutionJustification =\n      assertHumanTextWithinLimit(definitionJustification, "shared_definition_resolution_justification", 2000);',
+    to: "    definition.resolutionJustification = definitionJustification.slice(0, 2000);",
+    expect: "被 slice 静默截断"
+  },
+  {
+    name: "人写文本判据的分母塌了要自报空转",
+    file: "scripts/contract-check.mjs",
+    check: "verifyHumanWrittenTextIsNeverSilentlyTruncated",
+    from: 'sum + [...readFileSync(join(root, file), "utf8").matchAll(/assertHumanTextWithinLimit\\(/gu)].length, 0);',
+    to: "sum + 0, 0);",
+    expect: "本条在空转"
+  },
+  {
     // 定稿意见是人自己写下的那句话（"不选择（自定义输入）"那条路上它就是决定本身）。
     // 原先超过 4000 字是 slice 静默截断：台账上记的与人写的不是一句话，
     // 而人工闸门的全部意义就是"这句话是这个人说的"。
