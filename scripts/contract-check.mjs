@@ -389,6 +389,7 @@ run(verifyProjectRepositoriesHaveOneReader);
 run(verifySeedLooksLikeSomethingTheProductMade);
 run(verifyWholesaleFieldListMatchesTheWrites);
 run(verifyEveryDecisionTypeIsClassified);
+run(verifyHumanOnlyActionNamesStillExist);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5855,6 +5856,38 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // 于是新增一种决策类型而忘了归类，它就默默落进运行级 —— 闸门对它不存在，
 // 而屏幕上看不出任何差别（同一张确认卡，只是少了那条红色的"必须人工定稿"）。
 // 这里把全仓出现过的 decisionType 全部枚举，每一种都必须明确归类。
+// "必须真人来做"由 HUMAN_ONLY_ACTIONS 这张手写清单圈定，靠【动作名字符串】匹配。
+// 动作名一改，清单里那条就不再命中任何东西 —— 保护静默消失，而且没有任何地方会报错：
+// 路由照常工作，只是机器主体从此也能做了。
+// 提取要认三元写法：真实调用是 `systemScopedInvite ? "system_account_invite" : "account_invite"`，
+// 只认"第三个参数是字面量"会把这两个判成已失效（我第一版就这么误报了）。
+function verifyHumanOnlyActionNamesStillExist(output) {
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const listed = [...(/const HUMAN_ONLY_ACTIONS = \[([\s\S]*?)\n\];/u.exec(server)?.[1] || "")
+    .matchAll(/"([a-z_]+)"/gu)].map((hit) => hit[1]);
+  const guarded = new Set();
+  for (const match of server.matchAll(/beginGuardedWrite\(/gu)) {
+    let depth = 0;
+    let end = match.index;
+    for (let index = match.index + match[0].length - 1; index < server.length; index += 1) {
+      if (server[index] === "(") depth += 1;
+      else if (server[index] === ")") { depth -= 1; if (!depth) { end = index; break; } }
+    }
+    // 调用里出现的所有字符串字面量都收进来：动作名可能写在三元里，也可能与资源标识同列。
+    for (const literal of server.slice(match.index, end).matchAll(/"([a-z_]+)"/gu)) guarded.add(literal[1]);
+  }
+  if (listed.length < 15 || guarded.size < 40) {
+    output.push(`清单 ${listed.length} 条 / 守卫动作 ${guarded.size} 个 —— 提取脱节，本条在空转`);
+    return;
+  }
+  const orphaned = listed.filter((action) => !guarded.has(action));
+  if (orphaned.length) {
+    output.push(`HUMAN_ONLY_ACTIONS 里这些动作名已经没有对应的受守卫写入了：${orphaned.join("、")} —— `
+      + "多半是动作被改了名，那条真人专属保护已经静默失效（路由照常工作，只是机器主体也能做了）");
+  }
+  console.log(`真人专属清单：${listed.length} 条动作名逐个到守卫调用里核对（共 ${guarded.size} 个动作名），${orphaned.length} 条失效（应为 0）`);
+}
+
 function verifyEveryDecisionTypeIsClassified(output) {
   // 运行级是【有意】不进闸门的那些，逐条写明为什么安全。新增时必须在这里落一笔。
   const OPERATIONAL_BY_DESIGN = {

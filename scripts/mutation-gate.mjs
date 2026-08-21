@@ -3315,6 +3315,22 @@ const MUTATIONS = [
     expect: "没被 effectiveProjectConfig 认出来"
   },
   {
+    name: "真人专属动作被改名＝那条保护静默失效",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyHumanOnlyActionNamesStillExist",
+    from: '      systemScopedInvite ? "system_account_invite" : "account_invite",',
+    to: '      systemScopedInvite ? "system_account_inviteX" : "account_inviteX",',
+    expect: "已经没有对应的受守卫写入"
+  },
+  {
+    name: "提取认不出三元写法就会把活的保护误报成失效",
+    file: "scripts/contract-check.mjs",
+    check: "verifyHumanOnlyActionNamesStillExist",
+    from: 'for (const literal of server.slice(match.index, end).matchAll(/"([a-z_]+)"/gu)) guarded.add(literal[1]);',
+    to: 'guarded.add(String(/beginGuardedWrite\\([^,]+,[^,]+,\\s*"([a-z_]+)"/u.exec(server.slice(match.index, end))?.[1] || ""));',
+    expect: "已经没有对应的受守卫写入"
+  },
+  {
     name: "决策类型没归类＝悄悄落进运行级，人工闸门对它不存在",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyEveryDecisionTypeIsClassified",
