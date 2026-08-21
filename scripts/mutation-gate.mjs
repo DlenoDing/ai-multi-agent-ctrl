@@ -3267,6 +3267,22 @@ const MUTATIONS = [
     expect: "已经不在任何拒绝报文里"
   },
   {
+    name: "装机失败出口要交代本机被改成什么样了",
+    file: "scripts/install-agent.sh",
+    check: "verifyInstallScriptSaysWhatItLeftBehind",
+    from: '  printf \'%s\\n\' "  · 装好 Node 20+ 后重跑这条安装命令即可；本机什么都没有被安装" >&2',
+    to: '  printf \'%s\\n\' "  · 装好 Node 20+ 后重跑这条安装命令即可" >&2',
+    expect: "没说清本机被改成什么样"
+  },
+  {
+    name: "装机失败出口提取脱节要自报空转",
+    file: "scripts/contract-check.mjs",
+    check: "verifyInstallScriptSaysWhatItLeftBehind",
+    from: "if (!/^\\s*exit 1\\s*$/u.test(line)) continue;",
+    to: "if (!/^\\s*exit 11\\s*$/u.test(line)) continue;",
+    expect: "本条在空转"
+  },
+  {
     name: "拒绝报文要说清这次到底执行了没有",
     file: "apps/control-plane-ui/public/i18n-zh.js",
     check: "verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect",

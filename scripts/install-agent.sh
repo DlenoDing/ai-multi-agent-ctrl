@@ -66,16 +66,19 @@ if [ -z "$JOIN_TOKEN" ]; then
 fi
 if ! command -v node >/dev/null 2>&1; then
   printf '%s\n' "Node.js 20 or newer is required on the Agent host" >&2
+  printf '%s\n' "  · 装好 Node 20+ 后重跑这条安装命令即可；本机什么都没有被安装" >&2
   exit 1
 fi
 NODE_MAJOR=$(node -p 'Number(process.versions.node.split(".")[0])')
 if [ "$NODE_MAJOR" -lt 20 ]; then
   printf '%s\n' "Node.js 20 or newer is required; found $(node --version)" >&2
+  printf '%s\n' "  · 升级 Node 后重跑这条安装命令即可；本机什么都没有被安装" >&2
   exit 1
 fi
 for required_command in curl git; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     printf '%s\n' "$required_command is required on the Agent host" >&2
+    printf '%s\n' "  · 装好它之后重跑这条安装命令即可；本机什么都没有被安装" >&2
     exit 1
   fi
 done
@@ -87,6 +90,7 @@ case "$SERVER_URL" in
   http://*)
     if [ "${AIMAC_AGENT_ALLOW_INSECURE_HTTP:-false}" != "true" ]; then
       printf '%s\n' "Public Agent Gateway requires HTTPS. Set AIMAC_AGENT_ALLOW_INSECURE_HTTP=true only for isolated verification." >&2
+      printf '%s\n' "  · 明文 http 会把入网令牌暴露在链路上；换 https 地址后重跑；本机什么都没有被安装" >&2
       exit 1
     fi
     ;;
@@ -126,7 +130,8 @@ if command -v sha256sum >/dev/null 2>&1; then
 elif command -v shasum >/dev/null 2>&1; then
   ACTUAL_HASH=$(shasum -a 256 "$TMP_DIR/agent-runtime.mjs" | awk '{print $1}')
 else
-  printf '%s\n' "sha256sum or shasum is required" >&2
+  printf '%s\n' "sha256sum or shasum is required（校验下载下来的运行时要用它）" >&2
+  printf '%s\n' "  · 装好其中一个后重跑；本机什么都没有被安装" >&2
   exit 1
 fi
 if [ -z "$EXPECTED_HASH" ] || [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then

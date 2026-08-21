@@ -381,6 +381,7 @@ run(verifyFirstScreenPointsAtRealPlaces);
 run(verifyGuidanceNamesRealPages);
 run(verifyDangerousConfirmsStateTheConsequence);
 run(verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect);
+run(verifyInstallScriptSaysWhatItLeftBehind);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5806,6 +5807,29 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // 一笔写被拒时，人最先想知道的是"我这次到底改没改成"。
 // 说"请重试"而不说这件事，人就得先去翻记录确认，或者不敢重试。
 // 这几个码的结果是【确定的】（CAS 整笔被拒 / 幂等键命中 / 前置条件不满足），词表必须说出来。
+// 装机脚本是新节点的第一触点，而它半路失败时人最先想知道的是【这台机器现在是什么状态】：
+// 要不要先清理再重来？八个失败出口里原先只有三个说了这件事，其余四个只有一句
+// "Node.js 20 or newer is required"，人只能自己去猜有没有落下半个安装。
+function verifyInstallScriptSaysWhatItLeftBehind(output) {
+  const lines = readFileSync(join(root, "scripts/install-agent.sh"), "utf8").split("\n");
+  const exits = [];
+  for (const [index, line] of lines.entries()) {
+    if (!/^\s*exit 1\s*$/u.test(line)) continue;
+    const window = lines.slice(Math.max(0, index - 8), index).join("\n");
+    exits.push({line: index + 1, told: /什么都没有被安装|没有被安装|不需要先清理/u.test(window)});
+  }
+  if (exits.length < 6) {
+    output.push(`装机脚本里只找到 ${exits.length} 个失败出口（应 ≥6）—— 提取脱节，本条在空转`);
+    return;
+  }
+  const silent = exits.filter((item) => !item.told);
+  if (silent.length) {
+    output.push(`装机脚本这些失败出口没说清本机被改成什么样了（第 ${silent.map((item) => item.line).join("、")} 行）—— `
+      + "人不知道要不要先清理再重来，也不知道是不是落下了半个安装");
+  }
+  console.log(`装机失败出口：${exits.length} 个逐个核对，都交代了本机的状态`);
+}
+
 function verifyAmbiguousOutcomeRefusalsSayWhetherItTookEffect(output) {
   const dict = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
   // 登记制：这几个码的结果都是【确定的、这次没有执行】，而且原样重试必然同样失败。
