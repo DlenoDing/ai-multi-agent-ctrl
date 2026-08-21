@@ -829,6 +829,22 @@ async function runErrorGuidanceCase() {
     {payload: {error: "state_storage_corrupt", kind: "control_plane_state_corrupt", file: "control-plane-state.json"},
       expect: "涉及的文件：control-plane-state.json"},
     {payload: {error: "state_storage_unavailable", code: "ENOSPC"}, expect: "系统错误码：ENOSPC"},
+    // 产出目标被拒有两种完全不同的原因，原先共用一个裸码：清单配置不合法（不是调用方的错）、
+    // 那条路径 git 跟不住（调用方能改）。两者都不带真实取值，人只看到"必须用 git 跟得住的路径"。
+    {payload: {error: "repository_output_target_must_use_git_trackable_paths",
+      cause: "path_allowlist_invalid", allowedPaths: ["docs/**", "spec/**"]},
+      expect: "原因：允许路径清单本身不合法"},
+    {payload: {error: "repository_output_target_must_use_git_trackable_paths",
+      cause: "manifest_path_not_git_trackable", path: "../outside.json"},
+      expect: "涉及的路径：../outside.json"},
+    // 这个码在【运行时够不着】：清单要走到它，必须先在 changedPaths 里
+    //（artifact_manifest_not_changed_in_commit 那道），而任何越出白名单的改动都会更早撞上
+    // changed_paths_outside_repository_target_allowlist（整体校验）—— 两道合起来把它围死了。
+    // 它原先登记在 known-second-doors 里；这条断言验的是【界面拿到它时说什么】，不是可达性。
+    // 整体校验一旦放宽，它就是最后一道，那时这段说明就是它的来历。
+    {payload: {error: "artifact_manifest_outside_allowlist",
+      path: "tmp/x.json", allowedPaths: ["docs/**", "spec/**"]},
+      expect: "当前允许的路径：docs/**、spec/**"},
     // 这条报文让运维"重新执行入网安装命令升级"，那就得说清差在哪一版。
     {payload: {error: "checkpoint_claim_epoch_required", requiredRuntimeVersion: "0.3.0", nodeRuntimeVersion: "0.2.1"},
       expect: "需要的运行时版本：0.3.0（该节点当前 0.2.1）"},

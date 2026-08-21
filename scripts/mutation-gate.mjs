@@ -3010,6 +3010,14 @@ const MUTATIONS = [
     expect: "仓内文件不存在"
   },
   {
+    name: "产出目标被拒要说出是哪条路径（裸码让 agent 无从自纠）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "        payload.path ? `涉及的路径：${payload.path}` : \"\",",
+    to: "        \"\",",
+    expect: "没有到达人"
+  },
+  {
     name: "race 里的长超时必须 unref（否则活儿做完了进程还吊在上限）",
     file: "scripts/doctor-mcp.mjs",
     check: "verifyRaceTimeoutsDoNotHoldTheProcess",

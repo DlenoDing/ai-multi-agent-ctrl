@@ -865,6 +865,13 @@ async function api(path, options = {}) {
         payload.subjectRef ? `这张卡管的是：${payload.subjectRef}` : "",
         // 状态损坏时的 file/kind：中文文案里明写着"报文里的 file 指出是哪一份"，
         // 而前端原先根本不显示它 —— 那句话把人指向一个他看不到的东西（实测造了一次真损坏才发现）。
+        // 产出目标被拒时，服务端会说清是【配置不合法】还是【这条路径 git 跟不住】，并带上真实取值。
+        // 不转达的话，人看到的仍然只是"必须用 git 跟得住的路径"，不知道是哪一条不行。
+        payload.cause === "path_allowlist_invalid" ? "原因：允许路径清单本身不合法（这是配置问题，不是你填的那条路径）" : "",
+        payload.cause === "manifest_path_not_git_trackable" ? "原因：产出清单那条路径 git 跟不住" : "",
+        payload.path ? `涉及的路径：${payload.path}` : "",
+        Array.isArray(payload.allowedPaths) && payload.allowedPaths.length
+          ? `当前允许的路径：${payload.allowedPaths.join("、")}` : "",
         payload.file ? `涉及的文件：${payload.file}` : "",
         // kind 是个英文蛇形码。人看到它的时刻正是"控制面状态损坏"那一刻 ——
         // 原样打出来等于在最要紧的时候甩给人一个标识符。走词表；词表没有就退回原码，

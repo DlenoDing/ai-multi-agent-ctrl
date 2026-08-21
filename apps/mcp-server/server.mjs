@@ -761,11 +761,21 @@ function validateInputArgs(name, args) {
   if (name === "repository-mcp.repository_output_target_select") {
     const pathAllowlist = args.pathAllowlist || ["docs/**", "apps/**", "scripts/**", "spec/**", "data/**", "package.json", "Dockerfile", "docker-compose.yml", "README.md"];
     const artifactManifestPath = args.artifactManifestPath || `docs/artifact-manifests/${args.workItemId}.json`;
-    if (!pathAllowlistValid(pathAllowlist) || !canUseGitPath(artifactManifestPath)) {
-      return {ok: false, error: "repository_output_target_must_use_git_trackable_paths"};
+    // 两种完全不同的原因原先共用一个码、且不带任何取值：
+    //   允许清单本身不合法 —— 那是【配置】的问题，不是调用方给错了路径；
+    //   清单里那条产出清单路径 git 跟踪不了 —— 这才是调用方能改的。
+    // agent 拿到裸码只能瞎猜（还可能为一件不是它的错的事反复重试）。带上判别与真实取值。
+    if (!pathAllowlistValid(pathAllowlist)) {
+      return {ok: false, error: "repository_output_target_must_use_git_trackable_paths",
+        cause: "path_allowlist_invalid", allowedPaths: pathAllowlist};
+    }
+    if (!canUseGitPath(artifactManifestPath)) {
+      return {ok: false, error: "repository_output_target_must_use_git_trackable_paths",
+        cause: "manifest_path_not_git_trackable", path: artifactManifestPath};
     }
     if (!pathMatchesAllowlist(artifactManifestPath, pathAllowlist)) {
-      return {ok: false, error: "artifact_manifest_outside_allowlist"};
+      return {ok: false, error: "artifact_manifest_outside_allowlist",
+        path: artifactManifestPath, allowedPaths: pathAllowlist};
     }
   }
   return {ok: true};
@@ -2998,11 +3008,18 @@ export function repositoryOutputTargetSelect(state, args) {
   const at = new Date().toISOString();
   const pathAllowlist = args.pathAllowlist || ["docs/**", "apps/**", "scripts/**", "spec/**", "data/**", "package.json", "Dockerfile", "docker-compose.yml", "README.md"];
   const artifactManifestPath = args.artifactManifestPath || `docs/artifact-manifests/${args.workItemId || workItem?.id || "work"}.json`;
-  if (!pathAllowlistValid(pathAllowlist) || !canUseGitPath(artifactManifestPath)) {
-    return {ok: false, error: "repository_output_target_must_use_git_trackable_paths"};
+  // 同上：配置不合法与路径给错了是两回事，都要说出真实取值（否则 agent 无从自纠）。
+  if (!pathAllowlistValid(pathAllowlist)) {
+    return {ok: false, error: "repository_output_target_must_use_git_trackable_paths",
+      cause: "path_allowlist_invalid", allowedPaths: pathAllowlist};
+  }
+  if (!canUseGitPath(artifactManifestPath)) {
+    return {ok: false, error: "repository_output_target_must_use_git_trackable_paths",
+      cause: "manifest_path_not_git_trackable", path: artifactManifestPath};
   }
   if (!pathMatchesAllowlist(artifactManifestPath, pathAllowlist)) {
-    return {ok: false, error: "artifact_manifest_outside_allowlist"};
+    return {ok: false, error: "artifact_manifest_outside_allowlist",
+      path: artifactManifestPath, allowedPaths: pathAllowlist};
   }
   if (args.repositoryUrl && !isSafeGitRemoteUrl(args.repositoryUrl)) {
     return {ok: false, error: "repository_output_target_unsafe_repository_url"};

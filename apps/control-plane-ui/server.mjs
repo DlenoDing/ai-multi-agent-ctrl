@@ -4321,8 +4321,16 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/repository-output-targets") {
     const pathAllowlist = body.pathAllowlist || ["docs/**", "spec/**"];
     const artifactManifestPath = body.artifactManifestPath || `docs/artifact-manifests/manifest.${Date.now()}.json`;
-    if (!validPathAllowlist(pathAllowlist) || !gitTrackablePath(artifactManifestPath)) {
-      json(res, 400, {error: "repository_output_target_must_use_git_trackable_paths"});
+    // 与 MCP 那两处同规：两种原因分开说，并带上真实取值。
+    // 原先只回一个裸码，人在控制台上看到"必须用 git 跟得住的路径"，却不知道是哪条路径不行。
+    if (!validPathAllowlist(pathAllowlist)) {
+      json(res, 400, {error: "repository_output_target_must_use_git_trackable_paths",
+        cause: "path_allowlist_invalid", allowedPaths: pathAllowlist});
+      return;
+    }
+    if (!gitTrackablePath(artifactManifestPath)) {
+      json(res, 400, {error: "repository_output_target_must_use_git_trackable_paths",
+        cause: "manifest_path_not_git_trackable", path: artifactManifestPath});
       return;
     }
     // Fail-closed at write time on an unsafe git URL so a malicious remote can never be persisted

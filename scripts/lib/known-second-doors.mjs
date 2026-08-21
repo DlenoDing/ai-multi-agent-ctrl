@@ -43,10 +43,6 @@ export const KNOWN_SECOND_DOORS = {
     "orgId 两条来路都不会为空：系统账号走 `searchParams || DEFAULT_ORGANIZATION_ID`（有兜底），"
     + "非系统账号取 account.organizationId，而账号一律带组织（系统管理员的是 null，但它走前一支）"
     + "——这一道是给'将来去掉那个兜底'留的最后一关",
-  artifact_manifest_outside_allowlist:
-    "要走到它，清单必须先【在 changedPaths 里】（artifact_manifest_not_changed_in_commit 那道），"
-    + "而任何越出白名单的改动都会更早撞上 changed_paths_outside_repository_target_allowlist（整体校验）"
-    + "——两道合起来把它围死了；留着是对的：整体校验一旦放宽，它就是最后一道",
   repository_output_target_refs_must_match_single_session_target:
     "角色漂移守卫把 repositoryOutputTargetRefs 当作用域校验、要求恰好是本会话那一个，"
     + "编造的 id 与别处真实的 id 都先被它拒成 role_drift_guard_not_clear（两种都实测过）",
