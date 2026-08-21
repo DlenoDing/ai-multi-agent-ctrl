@@ -3328,7 +3328,7 @@ const MUTATIONS = [
     gate: "doctor",
     from: "retryAfterSeconds: loginRetryAfterSeconds(req)",
     to: "retryAfterSeconds: 60",
-    expect: "秒后可再试"
+    expect: "不会随时间变小"
   },
   {
     name: "「X」处 这一说法也要被认成指路（登录页那句就是这么漏掉的）",

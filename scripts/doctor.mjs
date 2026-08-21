@@ -2869,11 +2869,21 @@ try {
     if (limited.payload.error !== "too_many_login_attempts" || !limited.payload.retryAfterSeconds) {
       throw new Error(`限流的报文没说清是限流、也没说多久之后能再试：${JSON.stringify(limited.payload)}`);
     }
-    // 那个秒数要是【真的剩余时间】。原先写死 60，而窗口从第一次失败起算：12 次错误登录
-    // 在同一秒内跑完，真实剩余必然小于 60。报大了，人就真的去等满一分钟。
-    if (!(limited.payload.retryAfterSeconds < 60)) {
-      throw new Error(`限流说"${limited.payload.retryAfterSeconds} 秒后可再试"，而窗口是从第一次失败起算的 ——`
-        + "这 12 次是连着打完的，剩余必然不足 60 秒；报一个偏大的数会让人白等");
+    // 那个秒数要是【真的剩余时间】而不是写死的 60。
+    // 判据不能写成"< 60"：12 次尝试可能在 1 毫秒内打完，剩余 59.999 秒向上取整正好是 60 ——
+    // 那样这条断言会偶发红（全量变异门里被两条无关变异各撞出来一次）。
+    // 改成验它【真的在倒数】：隔一秒再撞一次，第二次报的秒数必须更小。写死的 60 过不了这一关。
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const laterLimited = await jsonFetch(port, "/api/auth/login", {
+      method: "POST", body: JSON.stringify({email: "system.admin@local", token: "wrong-again"})
+    });
+    if (laterLimited.response.status !== 429) {
+      throw new Error(`限流窗口内再撞一次却没被拦（HTTP ${laterLimited.response.status}）—— 这条断言在空转`);
+    }
+    if (!(laterLimited.payload.retryAfterSeconds < limited.payload.retryAfterSeconds)) {
+      throw new Error(`限流报的秒数不会随时间变小（先 ${limited.payload.retryAfterSeconds}，`
+        + `隔 1.2 秒后仍是 ${laterLimited.payload.retryAfterSeconds}）—— 它是个写死的数，`
+        + "人会照着它白等满一分钟");
     }
     // 被限流期间，【正确】的凭据同样要被挡住 —— 否则限流只挡错口令，爆破者一旦猜中就能立刻进。
     const correctWhileLimited = await jsonFetch(port, "/api/auth/login", {
