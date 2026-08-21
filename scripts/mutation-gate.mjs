@@ -3596,6 +3596,14 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "两条存储路共用的合并处也要核分片版本",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyStateFilesRefuseUnknownSchemaVersions",
+    from: "    if (shard?.schemaVersion && !SUPPORTED_PROJECT_SHARD_SCHEMA_VERSIONS.has(shard.schemaVersion)) {",
+    to: "    if (false) {",
+    expect: "合并处没有核分片的 schemaVersion"
+  },
+  {
     name: "认不出版本的项目分片必须拒开工",
     file: "apps/control-plane-ui/lib/state-store.mjs",
     check: "verifyStateFilesRefuseUnknownSchemaVersions",

@@ -11067,7 +11067,23 @@ function verifyStateFilesRefuseUnknownSchemaVersions(output) {
   } finally {
     rmSync(workspace, {recursive: true, force: true});
   }
-  console.log("状态版本：中央态与项目分片各自认不出版本时都拒开工，缺字段的旧文件仍照常读");
+  // 上面那几支走的是 runtime_json 这条路。PG 那条路读分片时【不经过】同一个读取函数
+  //（pgReadStateWithShards 把分片当 preReadShards 传进来），所以版本校验必须也落在
+  // 两条路共用的那个合并处 —— 否则 PG 部署上这道门等于不存在。
+  // 这里只能静态核：起一个真 PG 不在这道门的成本之内（同文件里"分片与中央索引一致"那条
+  // 用的也是同一个办法，注释里写明了理由）。
+  const store = readFileSync(join(root, "apps/control-plane-ui/lib/state-store.mjs"), "utf8");
+  const hydrate = /function hydrateProjectState\([\s\S]*?\n\}/u.exec(store)?.[0] || "";
+  if (!hydrate) {
+    output.push("找不到 hydrateProjectState —— 这条判据的锚点漂了");
+  // 只看这个名字出现过不够：`if (false) { ...原样保留... }` 一样能让它出现（实测）。
+  // 要查的是它真的在【条件】里。
+  } else if (!/if \([^)]{0,120}SUPPORTED_PROJECT_SHARD_SCHEMA_VERSIONS[^)]{0,80}\)/u.test(hydrate)) {
+    output.push("两条存储路共用的那个合并处没有核分片的 schemaVersion —— "
+      + "PG 走 pgReadStateWithShards 把分片直接传进来，不经过 runtime_json 的读取函数，"
+      + "那道门对 PG 部署等于不存在");
+  }
+  console.log("状态版本：中央态与项目分片各自认不出版本时都拒开工（两条存储路都核到），缺字段的旧文件仍照常读");
 }
 
 function verifyOutdatedRuntimeIsFlaggedFailClosed(output) {

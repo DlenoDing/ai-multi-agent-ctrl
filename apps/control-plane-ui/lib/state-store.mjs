@@ -600,6 +600,19 @@ function hydrateProjectState(centralState, options, preReadShards) {
   // preReadShards 传进来，根本不经过 readPostgresProjectShards —— 校验写在那里等于没写。
   // runtime_json 的三道校验在它自己的读取函数里完成，这里不重复。
   if (stateStoreKind() === "postgresql") assertProjectShardsMatchCentralIndex(shards, centralState);
+  // 分片自己声明的 schemaVersion 也要在【这里】核一遍：runtime_json 那条路在自己的读取函数里
+  // 已经核过，而 PG 走 pgReadStateWithShards() 把分片当 preReadShards 传进来 ——
+  // 与上面那条注释同一个道理，写在读取函数里对 PG 等于没写。
+  // 认不出就不开工：旧构建把新格式的分片照读照写，会把认不出的语义就地改掉，没有回头路。
+  for (const shard of shards) {
+    if (shard?.schemaVersion && !SUPPORTED_PROJECT_SHARD_SCHEMA_VERSIONS.has(shard.schemaVersion)) {
+      throw Object.assign(new Error(`unsupported_project_shard_schema_version:${shard.projectId || "unknown"}`),
+        {code: "AIMAC_UNSUPPORTED_SHARD_SCHEMA",
+          hint: `项目 ${shard.projectId || "unknown"} 的分片是「${shard.schemaVersion}」写的，`
+            + `这个构建只认 ${[...SUPPORTED_PROJECT_SHARD_SCHEMA_VERSIONS].join(" / ")}。`
+            + "请换回能读它的版本，或先做数据迁移。"});
+    }
+  }
   for (const shard of shards) {
     for (const collection of projectShardCollections) {
       const items = Array.isArray(shard.collections?.[collection]) ? shard.collections[collection] : [];
