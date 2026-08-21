@@ -3026,6 +3026,22 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "服务令牌白名单里配错的名字要说出来（否则当成有效工具放行）",
+    file: "apps/control-plane-ui/lib/mcp-service-allowlist.mjs",
+    check: "verifyServiceAllowlistSaysWhatItDropped",
+    from: "      ? allowed.filter((tool) => !knownToolNames.includes(tool)) : [];",
+    to: "      ? [] : [];",
+    expect: "配了不存在的工具名却没说"
+  },
+  {
+    name: "默认白名单下不得无中生有地报警",
+    file: "apps/control-plane-ui/lib/mcp-service-allowlist.mjs",
+    check: "verifyServiceAllowlistSaysWhatItDropped",
+    from: "  } else {\n    lastServiceAllowlistNotice = \"\";\n  }",
+    to: "  } else {\n    lastServiceAllowlistNotice = \"无中生有\";\n  }",
+    expect: "没有自定义白名单却报了警"
+  },
+  {
     name: "MCP 侧命中幂等记录必须直接回原结果（否则写工具会再跑一次）",
     file: "apps/mcp-server/server.mjs",
     check: "verifySideEffectsComeAfterTheGuard",

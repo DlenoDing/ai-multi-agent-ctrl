@@ -52,10 +52,34 @@ export const defaultMcpServiceToolAllowlist = [
   "ui-console-mcp.task_group_progress_get"
 ];
 
-export function mcpServiceAllowedTools() {
+// 运维配了什么、实际生效了什么，两者不一致时必须说出来。实测原先的行为：
+// 配 3 个（1 个拼错、1 个在禁令表里）→ 放行 2 个，一声不吭；
+// 而拼错的那个还【被当成有效工具放行了】—— 白名单从不核对工具是否存在。
+// 两种都要说：被禁令拿掉的（配了也不会生效）、名字不存在的（多半是拼错，配了等于没配）。
+let lastServiceAllowlistNotice = "";
+
+export function mcpServiceAllowlistNotice() {
+  return lastServiceAllowlistNotice;
+}
+
+export function mcpServiceAllowedTools(knownToolNames = null) {
   const configured = String(process.env.AIMAC_MCP_SERVICE_ALLOWED_TOOLS || "").split(",").map((item) => item.trim()).filter(Boolean);
   const tools = configured.length ? configured : defaultMcpServiceToolAllowlist;
-  return tools.filter((tool) => !forbiddenMcpServiceTool(tool));
+  const allowed = tools.filter((tool) => !forbiddenMcpServiceTool(tool));
+  if (configured.length) {
+    const blocked = configured.filter((tool) => forbiddenMcpServiceTool(tool));
+    const unknown = knownToolNames
+      ? allowed.filter((tool) => !knownToolNames.includes(tool)) : [];
+    const parts = [];
+    if (blocked.length) parts.push(`${blocked.join("、")} 在禁令表里，配了也不会生效`);
+    if (unknown.length) parts.push(`${unknown.join("、")} 不是任何一个工具的名字（多半拼错了），配了等于没配`);
+    lastServiceAllowlistNotice = parts.length
+      ? `AIMAC_MCP_SERVICE_ALLOWED_TOOLS 配了 ${configured.length} 个、实际放行 ${allowed.length} 个：${parts.join("；")}`
+      : "";
+  } else {
+    lastServiceAllowlistNotice = "";
+  }
+  return allowed;
 }
 
 export function forbiddenMcpServiceTool(tool) {

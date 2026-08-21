@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { SCHEMA_FILE_ALIASES, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
-import { mcpServiceAllowedTools } from "../apps/control-plane-ui/lib/mcp-service-allowlist.mjs";
+import { mcpServiceAllowedTools ,
+  mcpServiceAllowlistNotice
+} from "../apps/control-plane-ui/lib/mcp-service-allowlist.mjs";
 import { createHash } from "node:crypto";
 import { KNOWN_SECOND_DOORS } from "./lib/known-second-doors.mjs";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -373,6 +375,7 @@ run(verifyCorruptEventLinesAreReported);
 run(verifySizeAccountingDoesNotSwallowFailures);
 run(verifyAgentSaysWhyItStoppedTakingWork);
 run(verifySideEffectsComeAfterTheGuard);
+run(verifyServiceAllowlistSaysWhatItDropped);
 run(verifyOutputTargetKeepsItsPolicyDecision);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
@@ -5659,6 +5662,40 @@ function verifyOutputTargetKeepsItsPolicyDecision(output) {
 // 后面的写入一行都不跑。**这条保护只覆盖守卫【之后】的代码** —— 守卫之前若已经改了状态，
 // 重放会把那一段再做一遍，而回执看起来仍是"原结果"，没有任何地方会显出重复。
 // 现在 70 条守卫写入全都把副作用放在守卫之后（守卫前只有读），这道门是为了让它保持。
+// 运维用 AIMAC_MCP_SERVICE_ALLOWED_TOOLS 整份替换服务令牌白名单时，配了什么与实际生效了什么
+// 必须对得上，对不上就要说出来。实测原先的行为：配 3 个（1 个拼错、1 个在禁令表里）→ 放行 2 个，
+// 一声不吭；而且**拼错的那个还被当成有效工具放行了** —— 白名单本身从不核对工具是否存在。
+function verifyServiceAllowlistSaysWhatItDropped(output) {
+  const previous = process.env.AIMAC_MCP_SERVICE_ALLOWED_TOOLS;
+  try {
+    const known = createMcpToolDefinitions().map((tool) => tool.name);
+    if (known.length < 40) {
+      output.push(`服务令牌白名单核对：工具表只取到 ${known.length} 个 —— 提取脱节，本条在空转`);
+      return;
+    }
+    const real = known.find((name) => name.startsWith("room-mcp."));
+    process.env.AIMAC_MCP_SERVICE_ALLOWED_TOOLS = `${real},room-mcp.__typo__,evidence-mcp.checkpoint_submit`;
+    const allowed = mcpServiceAllowedTools(known);
+    const notice = mcpServiceAllowlistNotice();
+    if (!/禁令表里/u.test(notice)) {
+      output.push(`配了禁令表里的工具却没说：实际放行 ${allowed.length} 个，提示是 ${JSON.stringify(notice)}`);
+    }
+    if (!/不是任何一个工具的名字|拼错/u.test(notice)) {
+      output.push(`配了不存在的工具名却没说：它会被当成有效工具放行，而运维以为配对了。提示：${JSON.stringify(notice)}`);
+    }
+    // 正面对照：没有自定义配置时不许无中生有地报警。
+    delete process.env.AIMAC_MCP_SERVICE_ALLOWED_TOOLS;
+    mcpServiceAllowedTools(known);
+    if (mcpServiceAllowlistNotice()) {
+      output.push(`没有自定义白名单却报了警：${mcpServiceAllowlistNotice()}`);
+    }
+    console.log("服务令牌白名单：配了但会被禁令拿掉的、名字拼错的，都会当场说出来（默认配置下不报警）");
+  } finally {
+    if (previous === undefined) delete process.env.AIMAC_MCP_SERVICE_ALLOWED_TOOLS;
+    else process.env.AIMAC_MCP_SERVICE_ALLOWED_TOOLS = previous;
+  }
+}
+
 function verifySideEffectsComeAfterTheGuard(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8")
     .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));

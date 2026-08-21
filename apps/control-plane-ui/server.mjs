@@ -8,7 +8,7 @@ import { arch, cpus, freemem, hostname, loadavg, platform, totalmem } from "node
 import { basename, dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AUDIT_LOG_CAP, appendAuditEntry, auditArchiveFault as sharedAuditArchiveFault, flushPendingAuditAppends as flushAuditArchive } from "./lib/audit-ledger.mjs";
-import { mcpServiceAllowedTools } from "./lib/mcp-service-allowlist.mjs";
+import { mcpServiceAllowedTools, mcpServiceAllowlistNotice } from "./lib/mcp-service-allowlist.mjs";
 import { assertStateStoreConfig, consumeStateRebuildSignal, ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
 import { appendProjectExecutionEvent, projectEventLogFault, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
 import {
@@ -37,7 +37,7 @@ import {
   selfCheckAgentNode,
   validateDispatchClaim
 } from "./lib/agent-gateway.mjs";
-import { approvalResolve, assignWorkItem, handleMcpJsonRpc, isWriteTool, permissionResolve } from "../mcp-server/server.mjs";
+import { approvalResolve, assignWorkItem, handleMcpJsonRpc, isWriteTool, permissionResolve, createMcpToolDefinitions } from "../mcp-server/server.mjs";
 import {
   recordOrchestratorTickOutcome,
   canUseGitPath,
@@ -1162,7 +1162,8 @@ function mcpContextFromRequest(req, state) {
   }
   const config = readRuntimeConfig();
   if (config.mcpServiceTokenHash === digestOf(`mcp-service:${token}`)) {
-    const allowedMcpTools = mcpServiceAllowedTools();
+    // 把真实工具名传进去：不传的话"名字拼错了"那一半永远探测不到（白名单本身不核对工具存不存在）。
+    const allowedMcpTools = mcpServiceAllowedTools(createMcpToolDefinitions().map((tool) => tool.name));
     return {principal: {kind: "system_service", id: "remote-mcp-client", projectIds: mcpServiceProjectIds(), allowedMcpTools}, allowedMcpTools};
   }
   return null;
@@ -5838,6 +5839,13 @@ export function runOrchestratorTick() {
 }
 
 // 间隔设为 0 即关闭 —— 端到端脚本用它把周期关掉，避免后台推进打乱被断言的状态序列。
+// 配置问题只在启动那一刻有人看：这里主动核对一次服务令牌白名单，
+// 把"配了但不会生效 / 名字拼错了"当场说出来，而不是等运维去数 tools/list。
+try {
+  mcpServiceAllowedTools(createMcpToolDefinitions().map((tool) => tool.name));
+  const allowlistNotice = mcpServiceAllowlistNotice();
+  if (allowlistNotice) console.warn(`[mcp-allowlist] ${allowlistNotice}`);
+} catch { /* 工具表取不到时不影响启动 */ }
 const orchestratorIntervalMs = Number(process.env.AIMAC_ORCHESTRATOR_INTERVAL_MS ?? 60000);
 // 关掉它，后台就没有任何东西推进：人提交的指令一直停在"待处理"，派发不会被领走，
 // 关闭门不会重算 —— 而控制台上一切如常，人会以为系统在跑。这与状态机执行模式同形，
