@@ -2709,7 +2709,7 @@ function renderTaskGroupDetail(taskGroup) {
           `).join("")}</div>` : ""}
         </div>
       `).join("")}</div>`
-    : `<div class="notice">事项清单尚未生成。控制面会按固定周期自动跑编排（默认每分钟一次），
+    : `<div class="notice">事项清单尚未生成。控制面会按固定周期自动跑编排（${orchestratorCadenceText()}），
         生成后会出现在这里 —— 你不需要点任何按钮。若长时间没有变化，多半是这个任务组还缺前置条件
         （例如项目尚未登记仓库、或角色技能未同步），到「执行监控」页看阻塞项。</div>`;
 
@@ -3350,6 +3350,16 @@ function manualTickExit() {
   return hasPerm("task_group:orchestrate")
     ? "本页的「运行自治循环」可以手动推一拍（只顶这一拍，循环没恢复之前每一步都得这样推）；"
     : "手动推一拍需要「任务组编排」权限，本账号没有 —— 找有这个权限的人来推，或先把循环修好；";
+}
+
+// 编排节奏要按【真实下发的间隔】说，不能写死"每分钟一次"：它由 AIMAC_ORCHESTRATOR_INTERVAL_MS
+// 决定，运维调过之后那句话就在说假话，而人正是照它判断"等多久还没动静才算不对劲"。
+// 关掉自治时更要说清 —— 否则人会一直等一个永远不会来的自动推进。
+function orchestratorCadenceText() {
+  const status = (state.runtime || {}).autonomousOrchestrator || {};
+  if (!status.enabled) return "当前这台没有开自治周期，不会自动跑";
+  const seconds = Math.round(Number(status.intervalMs || 0) / 1000);
+  return seconds > 0 ? `当前设置：每 ${seconds} 秒一次` : "间隔未知";
 }
 
 function orchestratorStalledNotice() {

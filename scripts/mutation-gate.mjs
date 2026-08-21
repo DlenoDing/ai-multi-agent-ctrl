@@ -3595,6 +3595,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "编排节奏要按真实间隔说不能写死",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "\uff08${orchestratorCadenceText()}\uff09\uff0c",
+    to: "\uff08\u9ed8\u8ba4\u6bcf\u5206\u949f\u4e00\u6b21\uff09\uff0c",
+    expect: "界面还在说别的"
+  },
+  {
+    name: "自治关掉时要说清不会自动跑",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (!status.enabled) return \"\u5f53\u524d\u8fd9\u53f0\u6ca1\u6709\u5f00\u81ea\u6cbb\u5468\u671f\uff0c\u4e0d\u4f1a\u81ea\u52a8\u8dd1\";",
+    to: "  if (!status.enabled) return \"\u6309\u56fa\u5b9a\u5468\u671f\";",
+    expect: "人会一直等下去"
+  },
+  {
     name: "清空按钮的说明不得暗示生产点不了",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

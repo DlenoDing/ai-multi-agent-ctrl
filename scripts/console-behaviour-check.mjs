@@ -1503,7 +1503,6 @@ function runNoVisibleProjectCase() {
     eligibilityState.executionTopologies[0].status = "eligibility_checked";
     const eligibilityText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
       organizationId: "org_default"}, eligibilityState, "monitor", "p1");
-    console.log("DBG elig text:", eligibilityText.slice(0, 400));
     check("资格检查没过的执行方案要在界面上看得见（它是非终态，会一直挡着关闭门）",
       /topo1/u.test(eligibilityText),
       "界面上找不到它 —— 人只看到任务组「存在阻塞」，点不进去也不知道该做什么");
@@ -1631,6 +1630,46 @@ function runNoVisibleProjectCase() {
     check("要说清真正拦住误操作的是什么（打字确认），以及它在什么条件下触发",
       /生产环境同样点得动/u.test(sysText) && /打字确认|原样输入/u.test(sysText),
       "没说清拦住它的是下一步的打字确认，人会以为有别的保护");
+  }
+  // 「控制面会按固定周期自动跑编排」这句原先写死"默认每分钟一次"——而间隔由环境变量决定，
+  // 运维调过之后它就在说假话，而人正是照它判断"等多久还没动静才算不对劲"。
+  // 关掉自治时更要说清：否则人会一直等一个永远不会来的自动推进。
+  {
+    const cadenceState = (orchestrator) => ({
+      schemaVersion: "runtime-state/v1", stateVersion: 1,
+      runtime: {autonomousOrchestrator: orchestrator},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      // 没有 taskAnalysis 的任务组才会出现那句「事项清单尚未生成」。
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: []}],
+      humanConfirmationRequests: [], humanDirectives: [], agentDispatches: [], workSessions: [],
+      executionTopologies: [], closeBarriers: [], qualityGates: [], findings: [],
+      permissionRequests: [], approvalRequests: [], truncatedCollections: []
+    });
+    const who = {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+    // 「事项清单尚未生成」那块在任务组【详情】里，要走 renderTaskGroupsWith 并给一份没有
+    // taskAnalysis 的 detail —— 用整页渲染的话那一屏根本不出现，断言会报"没渲染出来"（实测）。
+    const renderDetail = (orchestrator) => {
+      // renderTaskGroupsWith 是【返回】这段 HTML 的，不写进 documentRoot（第一版读 innerHTML，
+      // 拿到 123 个字符的空壳，断言报"这一屏没渲染出来"）。
+      const html = loadConsole(el("div"), {realI18n: true})
+        .renderTaskGroupsWith(cadenceState(orchestrator), who, "p1", "tg1",
+          // taskGroupId 必须对上，否则详情面板会显示"正在加载"而不是内容（第一版漏了它）。
+          // 形状照抄 loadTaskGroupDetail 真实赋的那一份：少一个字段面板就会在别处炸
+          // （第一版只给 progress，撞了 "Cannot read properties of undefined"）。
+          {taskGroupId: "tg1", loadFailed: false,
+            progress: {taskAnalysis: null, roles: [], blockers: [], workItems: []},
+            config: null, configVersion: null,
+            roomMessages: [], roomMessageTotal: 0, roomMessagesTruncated: false});
+      return String(html || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+    };
+    const slow = renderDetail({enabled: true, intervalMs: 300000});
+    check("编排节奏要按真实下发的间隔说，不能写死「每分钟一次」",
+      /每 300 秒一次/u.test(slow) && !/默认每分钟一次/u.test(slow),
+      `运维把间隔调成 5 分钟，界面还在说别的：${(/自动跑编排（([^）]{0,40})/u.exec(slow) || [])[1] || "（这一屏没渲染出来）"}`);
+    const off = renderDetail({enabled: false, intervalMs: 0});
+    check("自治关掉时要说清「不会自动跑」，别让人等一个不会来的推进",
+      /没有开自治周期/u.test(off),
+      "自治关着，界面还在说「会按固定周期自动跑编排」—— 人会一直等下去");
   }
   const pages = ["proj-overview", "tg", "review", "directives", "monitor", "proj-settings"];
   const silent = pages.filter((pageId) => !/当前账号暂无可见项目/u.test(renderAs(member, baseState([], []), pageId)));
