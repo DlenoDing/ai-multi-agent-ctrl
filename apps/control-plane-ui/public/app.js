@@ -4058,20 +4058,25 @@ function renderProjectSettings() {
   const editDisabled = canEdit ? "" : "disabled";
   const readOnlyNotice = canEdit ? "" : `<div class="notice warn-notice">当前账号无“项目授权管理”权限，项目配置为只读。</div>`;
 
+  // 三块配置为空时，页面原先只剩一个"添加 X"按钮 —— 人分不清"这个项目没配"
+  // 和"配置没加载出来"，也不知道空着会怎样。空要自己说话，并说清后果。
+  const cfgEmpty = (list, text) => (Array.isArray(list) && list.length)
+    ? "" : `<div class="small muted">${esc(text)}</div>`;
+
   return [
     panel(`项目设置 · ${esc(project.name)}`, `
       ${readOnlyNotice}
       <form class="form-grid" data-form="project-config" data-project="${esc(project.id)}">
         <div class="form-row"><label>仓库与凭证引用（凭证只存引用，不落明文）</label>
-          <div class="cfg-rows" data-cfg-list="proj-repos">${(config.repositories || []).map((repo) => cfgRepoRow(repo)).join("")}</div>
+          <div class="cfg-rows" data-cfg-list="proj-repos">${(config.repositories || []).map((repo) => cfgRepoRow(repo)).join("")}${cfgEmpty(config.repositories, "还没有配置仓库：执行方没有可提交的目标，产出会卡在「没有产出目标」而落不了地。点下面的「添加仓库」配一个（凭证只填引用名，不填明文）。")}</div>
           <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="repo" data-target="proj-repos" ${editDisabled}>添加仓库</button></div>
         </div>
         <div class="form-row"><label>基线数据</label>
-          <div class="cfg-rows" data-cfg-list="proj-baseline">${(config.baselineData || []).map((item) => cfgBaselineRow(item)).join("")}</div>
+          <div class="cfg-rows" data-cfg-list="proj-baseline">${(config.baselineData || []).map((item) => cfgBaselineRow(item)).join("")}${cfgEmpty(config.baselineData, "还没有基线数据：这一项是可选的，空着不影响执行，只是 agent 少一份可对照的现状材料。")}</div>
           <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="baseline" data-target="proj-baseline" ${editDisabled}>添加基线</button></div>
         </div>
         <div class="form-row"><label>默认角色</label>
-          <div class="cfg-rows" data-cfg-list="proj-roles">${(config.defaultRoles || []).map((role) => cfgRoleRow(role)).join("")}</div>
+          <div class="cfg-rows" data-cfg-list="proj-roles">${(config.defaultRoles || []).map((role) => cfgRoleRow(role)).join("")}${cfgEmpty(config.defaultRoles, "还没有项目默认角色：任务组会各自指定角色，指定不到时回退到系统内置角色。")}</div>
           <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="role" data-target="proj-roles" ${editDisabled}>添加角色</button></div>
         </div>
         <button class="primary-button" type="submit" ${editDisabled}>保存项目配置</button>

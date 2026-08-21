@@ -5876,7 +5876,8 @@ function verifyGuidanceNamesRealPages(output) {
   }
   const files = ["apps/control-plane-ui/public/app.js", "apps/control-plane-ui/lib/agent-gateway.mjs",
     "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
-    "apps/agent-runtime/runtime.mjs", "scripts/agentctl.mjs", "scripts/init-control-plane.mjs"];
+    "apps/agent-runtime/runtime.mjs", "apps/mcp-server/server.mjs",
+    "scripts/agentctl.mjs", "scripts/init-control-plane.mjs"];
   let pointers = 0;
   for (const file of files) {
     // 注释里可以谈论写错过的名字（本仓就有几条这样的自述），只核对真会打给人看的字符串。

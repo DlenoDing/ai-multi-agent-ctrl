@@ -411,6 +411,39 @@ function check(name, condition, detail) {
     check("存储故障那一族仍要打出故障类型（上一条不能把它一起挡掉）", faultHint.includes("故障类型"), faultHint.slice(0, 90));
   }
 
+  // 项目设置页几乎不经 t()，此前只在漏译扫描里渲染成空壳 —— 1000 行的一页没有任何行为断言。
+  // 用【真实种子配置】渲染它：三块配置在种子里都是空的，而页面原先只剩一个"添加 X"按钮，
+  // 人分不清"这个项目没配"和"配置没加载出来"，也不知道空着会怎样。
+  {
+    const {effectiveProjectConfig} = await import("../apps/control-plane-ui/lib/control-plane-core.mjs");
+    const seed = JSON.parse(fs.readFileSync(path.join(root, "data/seed-state.json"), "utf8"));
+    const proj = seed.projects[0];
+    const cfg = effectiveProjectConfig(proj);
+    if ((cfg.repositories || []).length) {
+      throw new Error("控制台行为门: 种子项目现在有仓库配置了 —— 这一段测的是【空配置】，断言在空转，请改用一个空项目");
+    }
+    const settingsRoot = el("div");
+    const settingsProbe = loadConsole(settingsRoot, {realI18n: true});
+    const settingsFetch = async (target) => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+      json: async () => String(target).includes("/config") ? {projectId: proj.id, config: cfg, configVersion: 1} : seed,
+      text: async () => JSON.stringify(seed)});
+    await settingsProbe.loadWithFetch(seed, {accountId: "u1", email: "a@b.c", accountType: "system_admin",
+      displayName: "管理员", organizationId: "org_default", permissions: ["system:*"]},
+      proj.id, "proj-settings", settingsFetch);
+    const settingsText = String(settingsRoot.innerHTML || "").replace(/<[^>]+>/gu, " ");
+    check("项目设置页真的渲染出来了（不是空壳）",
+      settingsText.includes("仓库与凭证引用"), settingsText.slice(0, 120));
+    check("没配仓库时要说清空着会怎样（而不是只剩一个「添加仓库」按钮）",
+      /还没有配置仓库/.test(settingsText) && /落不了地|没有产出目标/.test(settingsText),
+      "人分不清「这个项目没配」和「配置没加载出来」，也不知道空着会卡在哪一步");
+    check("可选项要说明它是可选的（基线数据空着不影响执行）",
+      /还没有基线数据/.test(settingsText) && /可选/.test(settingsText),
+      "把可选项写成和必填项一样的空提示，人会去填一份并不需要的东西");
+    check("默认角色为空时要说清回退到哪里",
+      /还没有项目默认角色/.test(settingsText) && /内置角色/.test(settingsText),
+      "空着不是坏事，但要说清系统会拿什么顶上");
+  }
+
   const emptyProbe = loadConsole(emptyRoot);
   const emptyState = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
     organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],

@@ -3171,6 +3171,14 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "项目设置页三块配置为空时必须自己说话",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const cfgEmpty = (list, text) => (Array.isArray(list) && list.length)",
+    to: "  const cfgEmpty = (list, text) => (true)",
+    expect: "没配仓库时要说清空着会怎样"
+  },
+  {
     name: "高频免留痕登记要有过期校验",
     file: "scripts/contract-check.mjs",
     check: "verifyGuardedWritesAreAudited",
