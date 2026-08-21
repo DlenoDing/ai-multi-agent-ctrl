@@ -8192,7 +8192,9 @@ function verifyRefusalAssertionsNameTheCode(output) {
       checked += 1;
       // 码可以写在同一行（|| payload.error !== "x"），也可以紧跟在后面几行里单独判。
       const window = lines.slice(index, index + 6).join("\n");
-      if (/\.error !== |\.error === |\.admission !== /u.test(window)) continue;
+      // 拒绝码不是只叫 error：claim 复核那条路由回的是 {valid, reason}，点名 reason 一样算点名。
+      // 只认 error 的话，正确写法会被判成"没点名"（我给 push 前的 claim 复核补断言时撞到了）。
+      if (/\.error !== |\.error === |\.admission !== |\.reason !== |\.reason === /u.test(window)) continue;
       loose.push(`${file}:${index + 1} ${line.trim().slice(0, 70)}`);
     }
   }

@@ -3325,6 +3325,16 @@ const MUTATIONS = [
     expect: "链校验在空转"
   },
   {
+    // push 前的 claim 复核是另一扇门：checkpoint 路由自己也有一道陈旧代次检查，
+    // 所以这一支此前零覆盖。它失效＝失联后恢复的节点先把提交推上去，事后才被拒。
+    name: "push 前的 claim 复核必须拒陈旧代次",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "agent",
+    from: "  if (claimEpoch !== undefined && Number(claimEpoch) !== Number(dispatch.claimEpoch || 0)) {",
+    to: "  if (false) {",
+    expect: "放过了陈旧代次"
+  },
+  {
     // 去掉版本比对＝两个并发写互相覆盖，后写的静默吞掉前一个人的改动。
     name: "状态存储的版本比对（CAS）不得去掉",
     file: "apps/control-plane-ui/lib/state-store.mjs",

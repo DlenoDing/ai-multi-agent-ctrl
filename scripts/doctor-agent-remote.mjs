@@ -823,6 +823,28 @@ try {
   });
   const revokeClaim = await json("/api/agent/v1/dispatches/next", {method: "POST", token: revokeRegistration.nodeToken, body: {claimTtlSeconds: 900}});
   if (!revokeClaim.dispatch) throw new Error(`revoke test could not claim a dispatch: ${requeueOrchestrated.changed?.map((item) => item.workItemId || item.dispatchId).join(",") || "none"}`);
+  // git push 之前那道 claim 复核（GET /dispatches/:id/claim）是【另一扇门】：checkpoint 路由自己
+  // 也有一道陈旧代次检查，而把 validateDispatchClaim 里那句代次比对整个删掉，三套 e2e 无一报红。
+  // 它失效的后果更直接：失联后恢复的节点会先把提交 push 上去，等检查点被拒时东西已经在远端分支上。
+  // 必须在【刚认领、派发还在 running】的这一刻验：完成之后走的是 dispatch_completed 那一支。
+  {
+    const claimed = revokeClaim.dispatch.dispatch || revokeClaim.dispatch;
+    const claimUrl = `${baseUrl}/api/agent/v1/dispatches/${encodeURIComponent(claimed.dispatchId)}/claim`;
+    const fresh = await fetch(`${claimUrl}?claimEpoch=${Number(claimed.claimEpoch || 0)}`,
+      {headers: {authorization: `Bearer ${revokeRegistration.nodeToken}`}});
+    if (fresh.status !== 200) {
+      const why = await fresh.json().catch(() => ({}));
+      throw new Error(`刚认领的派发做 claim 复核却没通过（${fresh.status} ${why.reason || ""}）—— 下面那条陈旧代次断言会在空转`);
+    }
+    const stale = await fetch(`${claimUrl}?claimEpoch=${Number(claimed.claimEpoch || 0) - 1}`,
+      {headers: {authorization: `Bearer ${revokeRegistration.nodeToken}`}});
+    const stalePayload = await stale.json().catch(() => ({}));
+    if (stale.status !== 409 || stalePayload.reason !== "claim_epoch_stale") {
+      throw new Error("push 前的 claim 复核放过了陈旧代次"
+        + `（期望 409 claim_epoch_stale，得到 ${stale.status} ${stalePayload.reason || ""}）—— `
+        + "失联后恢复的节点会先把提交推上去，等检查点被拒时东西已经在远端分支上了");
+    }
+  }
   const revokeResult = await json(`/api/agent-nodes/${revokeRegistration.node.nodeId}/revoke`, {
     method: "POST",
     token: login.sessionToken,
