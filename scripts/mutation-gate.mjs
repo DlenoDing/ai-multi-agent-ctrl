@@ -3343,6 +3343,16 @@ const MUTATIONS = [
     expect: "没给出合法的状态清单"
   },
   {
+    // 任务组上选的统一语言必须真的传到 agent 的技能工作集里，否则界面上选了日语、
+    // 执行方照旧按默认语言干活，而两边都不会报错。
+    name: "任务组选的语言必须传到 agent（不许写死）",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyAgentGatewayContracts",
+    from: "  const languagePolicy = normalizeTaskGroupLanguagePolicy(contract.languagePolicy);",
+    to: '  const languagePolicy = normalizeTaskGroupLanguagePolicy({languageTag: "en"});',
+    expect: "did not carry the task-group language policy"
+  },
+  {
     // 在界面上停用一条规则，agent 就不该再收到它。这条端到端的性质此前零覆盖：
     // 把内容包里的 activeSystemRules 换成 systemRules，契约门 138 条全过 ——
     // 人关掉一条安全规则、界面写着"已停用"，而执行方的提示词里它还在。
