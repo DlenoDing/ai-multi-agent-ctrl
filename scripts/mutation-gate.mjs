@@ -3051,6 +3051,46 @@ const MUTATIONS = [
     expect: "没有自定义白名单却报了警"
   },
   {
+    name: "阻塞卡片上的人工出口被抹掉要报红（本门原先认的页名根本不存在）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "它等待的资源尚未就绪：让系统管理员到「系统设置」页核对模型与技能源状态。",
+    to: "它等待的资源尚未就绪。",
+    expect: "阻塞状态出口"
+  },
+  {
+    name: "产品报文不得指路到界面上没有的页（实测「运行时」页 10 处）",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyGuidanceNamesRealPages",
+    from: "让组织管理员到「AI 智能体」页核对该节点的自检结果",
+    to: "到「运行时」页核对节点自检结果",
+    expect: "界面上没有这个"
+  },
+  {
+    name: "页名权威表提不出来要自报空转（否则 0 个页名＝谁都合法）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyGuidanceNamesRealPages",
+    from: 'app.matchAll(/^\\s*"[a-z-]+": \\["([^"]+)",/gmu)',
+    to: 'app.matchAll(/^\\s*"[a-z-]+": \\[`([^`]+)`,/gmu)',
+    expect: "本条在空转"
+  },
+  {
+    name: "同一张表里同一个键写两遍要被逮住（后写的静默胜出）",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyHintMapsHaveNoDuplicateKeys",
+    from: '  task_group_pause: "整个任务组被人暂停了：到该任务组页点「恢复执行」"',
+    to: '  task_group_pause: "重复的第一条",\n  task_group_pause: "整个任务组被人暂停了：到该任务组页点「恢复执行」"',
+    expect: "写了两遍"
+  },
+  {
+    name: "只扫顶层字面量会漏掉 i18n 那张 966 条的 dict（缩进的）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyHintMapsHaveNoDuplicateKeys",
+    from: "      const open = line.match(/^(\\s*)const (\\w+) = \\{$/u);",
+    to: "      const open = line.match(/^()const (\\w+) = \\{$/u);",
+    expect: "本条在空转"
+  },
+  {
     name: "锁冲突时必须交代还有一份改坏的源码没还原",
     file: "scripts/lib/mutation-wreckage.mjs",
     check: "verifyLockConflictAdmitsTheWreckage",
@@ -4555,6 +4595,26 @@ async function runParallel(mutations) {
 // 却没同步指向它的那条变异。全量门确实会报（"找不到要改坏的代码片段"），但要等一次长跑才知道，
 // 而这中间每一次"validate 全绿"都在暗示那条守卫仍然被验着。
 // 锚点失配不是小事：它意味着那条守卫【当前没有任何判别力证明】。
+// 登记项自身写错（门名打错、没有 expect、from 与 to 相同）时，真跑起来的表现是
+// "失败了但不是预期断言"—— 红是红了，可它指的方向完全不对：人会去查被测代码，而错在登记项。
+// 这类核对不用读文件，毫秒级，所以【锚点体检和真跑都要做】。
+// 原先只有锚点体检做，于是单跑一条时（AIMAC_MUTATION_ONLY）这道拦截根本不生效 ——
+// 2026-08-21 我把 gate 写成 "console-behaviour"、又写成路径常量，两次都只看到那句误导的话。
+function registryShapeFailures(mutations) {
+  const failures = [];
+  for (const mutation of mutations) {
+    if (mutation.from === mutation.to) failures.push(`${mutation.name}: from 与 to 相同 —— 这条变异什么也没改坏`);
+    if (mutation.gate && !GATE_COMMANDS[mutation.gate]) {
+      failures.push(`${mutation.name}: gate "${mutation.gate}" 不存在（可选：${Object.keys(GATE_COMMANDS).join("、")}）`);
+    }
+    if (mutation.check && (mutation.gate || "contract") !== "contract") {
+      failures.push(`${mutation.name}: check 只对契约门有意义，而这条指向 ${mutation.gate} 门 —— 它不会生效，留着会让人以为已经收窄了范围`);
+    }
+    if (!mutation.expect) failures.push(`${mutation.name}: 没有 expect —— 只看退出码的话，任何一处偶然失败都会被当成"守卫有效"`);
+  }
+  return failures;
+}
+
 function checkAnchorsOnly() {
   const failures = [];
   const seen = new Set();
@@ -4578,16 +4638,7 @@ function checkAnchorsOnly() {
       failures.push(`${mutation.name}: 锚点在 ${mutation.file} 里出现 ${occurrences} 次（要求正好 1 次）—— `
         + (occurrences ? "改不准被测的那一处" : "守卫已被改写而变异没跟上，这条守卫目前没有任何判别力证明"));
     }
-    if (mutation.from === mutation.to) failures.push(`${mutation.name}: from 与 to 相同 —— 这条变异什么也没改坏`);
-    // 门名写错时，真跑起来会表现为"失败了但不是预期断言"——红是红了，但指向的方向完全不对。
-    // 在毫秒级的锚点体检里直接拦住，说清可选值。
-    if (mutation.gate && !GATE_COMMANDS[mutation.gate]) {
-      failures.push(`${mutation.name}: gate "${mutation.gate}" 不存在（可选：${Object.keys(GATE_COMMANDS).join("、")}）`);
-    }
-    if (mutation.check && (mutation.gate || "contract") !== "contract") {
-      failures.push(`${mutation.name}: check 只对契约门有意义，而这条指向 ${mutation.gate} 门 —— 它不会生效，留着会让人以为已经收窄了范围`);
-    }
-    if (!mutation.expect) failures.push(`${mutation.name}: 没有 expect —— 只看退出码的话，任何一处偶然失败都会被当成"守卫有效"`);
+    failures.push(...registryShapeFailures([mutation]));
   }
   if (failures.length) {
     console.error("mutation anchor check failed:");
@@ -4621,6 +4672,14 @@ function selectedMutations() {
   }
   console.error(`mutation gate: 只跑名字含「${filter}」的 ${selected.length} 条（AIMAC_MUTATION_ONLY）。`);
   return selected;
+}
+
+function refuseMalformedRegistry(mutations) {
+  const failures = registryShapeFailures(mutations);
+  if (!failures.length) return;
+  console.error("mutation gate: 登记项本身写错了，拒绝开跑（跑了也只会报一句指错方向的话）：");
+  for (const failure of failures) console.error(`- ${failure}`);
+  process.exit(1);
 }
 
 // 门自证：本门的判据是"改坏守卫后 contract-check 必须失败【且报的是那一条】"。
@@ -4662,6 +4721,7 @@ async function run() {
     return;
   }
   const mutations = selectedMutations();
+  refuseMalformedRegistry(mutations);
   if (workingTreeIsClean()) {
     const {failures, checked, workers, serialQueue} = await runParallel(mutations);
     if (failures.length) {

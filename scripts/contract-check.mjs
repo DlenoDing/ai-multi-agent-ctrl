@@ -378,6 +378,8 @@ run(verifyAgentSaysWhyItStoppedTakingWork);
 run(verifySideEffectsComeAfterTheGuard);
 run(verifyServiceAllowlistSaysWhatItDropped);
 run(verifyFirstScreenPointsAtRealPlaces);
+run(verifyGuidanceNamesRealPages);
+run(verifyHintMapsHaveNoDuplicateKeys);
 run(verifyLockConflictAdmitsTheWreckage);
 run(verifyOutputTargetKeepsItsPolicyDecision);
 run(verifyNoRequestScopedLeaks);
@@ -5710,6 +5712,76 @@ function verifyLockConflictAdmitsTheWreckage(output) {
     output.push("mutation-gate 的锁冲突分支没调 describePendingWreckage —— 残局描述写对了也没人念出来");
   }
   console.log(`锁冲突报文：${cases.length} 种残局形状逐个真调，接线也核过`);
+}
+
+// 首屏那条判据只守 init 一个文件。同一形状在【产品报文】里更常见也更要紧：
+// "到「运行时」页点「立即切断」"——PAGE_META 里根本没有「运行时」这个页（实测 10 处），
+// 而这些话恰恰出现在派发卡住、节点不肯停的时候，人正照着它找出口。
+// 权威来源是 app.js 的 PAGE_META（页名）与 panel("X", ...)（面板名），按它全量核对。
+function verifyGuidanceNamesRealPages(output) {
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const pages = new Set([...app.matchAll(/^\s*"[a-z-]+": \["([^"]+)",/gmu)].map((match) => match[1]));
+  const panels = new Set([...app.matchAll(/panel\("([^"]+)"/gu)].map((match) => match[1]));
+  if (pages.size < 12 || panels.size < 15) {
+    output.push(`页名/面板名的权威表没提出来（页 ${pages.size}、面板 ${panels.size}）—— 本条在空转`);
+    return;
+  }
+  const files = ["apps/control-plane-ui/public/app.js", "apps/control-plane-ui/lib/agent-gateway.mjs",
+    "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
+    "apps/agent-runtime/runtime.mjs", "scripts/agentctl.mjs", "scripts/init-control-plane.mjs"];
+  let pointers = 0;
+  for (const file of files) {
+    // 注释里可以谈论写错过的名字（本仓就有几条这样的自述），只核对真会打给人看的字符串。
+    const text = readFileSync(join(root, file), "utf8").replace(/\/\/[^\n]*/gu, (line) => " ".repeat(line.length));
+    for (const hit of text.matchAll(/「([^」]{2,16})」(页|面板)/gu)) {
+      pointers += 1;
+      const known = hit[2] === "页" ? pages : panels;
+      if (!known.has(hit[1])) {
+        output.push(`${file} 指路到「${hit[1]}」${hit[2]}，而界面上没有这个${hit[2]} —— `
+          + "照着找不到的人会卡在原地，而这句话通常正是出事那一刻给的唯一出口");
+      }
+    }
+  }
+  if (pointers < 20) {
+    output.push(`只找到 ${pointers} 处指路（应 ≥20）—— 提取脱节或文件清单缩水了，本条在空转`);
+  }
+  console.log(`指路核对：${pointers} 处「X」页/面板逐个比对权威表（页 ${pages.size} 个、面板 ${panels.size} 个）`);
+}
+
+// 同一个对象字面量里把同一个键写两遍，JS 不报错，后写的静默胜出 ——
+// 实测 STUCK_EXIT_HINT 里 assigned_node_shutdown_pending_stop 写了两遍，
+// 上面那条按权威词表写的「关停」永远不会出现，屏幕上显示的是下面那条。
+function verifyHintMapsHaveNoDuplicateKeys(output) {
+  const files = ["apps/control-plane-ui/public/app.js", "apps/control-plane-ui/public/i18n-zh.js"];
+  let scanned = 0;
+  let keys = 0;
+  for (const file of files) {
+    const lines = readFileSync(join(root, file), "utf8").split("\n");
+    // 第一版只认顶层 `const X = {`，于是 i18n-zh.js 里那张一千多条的 `dict`（在函数里，带缩进）
+    // 整张没被扫到 —— 而它恰恰是最容易撞键的一张。开合都按缩进配对。
+    let frame = null;
+    for (const line of lines) {
+      const open = line.match(/^(\s*)const (\w+) = \{$/u);
+      if (!frame && open) { frame = {indent: open[1], name: open[2], seen: new Map()}; continue; }
+      if (!frame) continue;
+      if (line === `${frame.indent}};` || line === `${frame.indent}}`) { scanned += 1; frame = null; continue; }
+      const entry = line.match(/^\s+(?:([A-Za-z_]\w*)|"([^"]+)"):/u);
+      if (!entry) continue;
+      const key = entry[1] || entry[2];
+      keys += 1;
+      if (frame.seen.has(key)) {
+        output.push(`${file} 的 ${frame.name} 里 ${key} 写了两遍 —— `
+          + "JS 不报错，后写的那条静默胜出，先写的那句话永远不会出现在屏幕上");
+      }
+      frame.seen.set(key, true);
+    }
+  }
+  // 下限贴着实测值写（16 张 / 1136 键，其中 i18n 的 dict 独占 966）：写宽了，
+  // 提取哪天漏掉半张表也照样绿。
+  if (scanned < 15 || keys < 1100) {
+    output.push(`只扫到 ${scanned} 张字面量表 / ${keys} 个键（应 ≥15 张、≥1100 键）—— 提取脱节，本条在空转`);
+  }
+  console.log(`重复键：${scanned} 张对象字面量、${keys} 个键逐个查过`);
 }
 
 function verifyFirstScreenPointsAtRealPlaces(output) {

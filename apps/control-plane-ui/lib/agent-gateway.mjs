@@ -1367,7 +1367,7 @@ export function buildExecutionContentBundle(state, node, sessionId, options = {}
     if (degradedGroup) {
       degradedGroup.blockers = degradedGroup.blockers || [];
       const summary = `派发 ${dispatch.dispatchId} 下发的内容包缺少角色技能文件（${skillWorksetFailure}）：`
-        + "执行方是在没有角色规则的情况下干活的，产出质量会打折 —— 先到「运行时」页核对技能源，再决定这次产出要不要采信";
+        + "执行方是在没有角色规则的情况下干活的，产出质量会打折 —— 先让系统管理员到「系统设置」页核对技能源，再决定这次产出要不要采信";
       if (!degradedGroup.blockers.some((item) => item.summary === summary)) {
         degradedGroup.blockers.push({id: `blk_skill_${dispatch.dispatchId}`, severity: "S2", summary});
       }

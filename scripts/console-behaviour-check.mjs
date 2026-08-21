@@ -2885,7 +2885,11 @@ await runCodedApiErrorCase();
     const visible = html.replace(/<!--[\s\S]*?-->/gu, "");
     const cardStart = visible.indexOf("被停住的工作项");
     const card = visible.slice(cardStart, cardStart + 900);
-    const hasExit = /人工指令|人工审核|运行时」页|agent 节点/.test(card);
+    // 别写死页名：本门原先认的是"运行时」页"，而界面上【根本没有】这个页（实测 10 处报文
+    // 都指向它）—— 门和被测代码共用了同一个漂掉的名字，于是"指向不存在的页"被当成合法出口。
+    // 这里只要求卡片指到【某个】页，那个页名是不是真的，由 contract-check 的
+    // verifyGuidanceNamesRealPages 按 PAGE_META 全量核对。
+    const hasExit = /人工指令|人工审核|「[^」]{2,16}」页|agent 节点/.test(card);
     const saysSelfClearing = /自动放行|无需操作/.test(card);
     if (NO_PRODUCER[status]) continue;
     if (!hasExit && !saysSelfClearing) {

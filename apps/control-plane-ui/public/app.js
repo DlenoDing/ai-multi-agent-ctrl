@@ -3067,20 +3067,19 @@ const STUCK_EXIT_HINT = {
   human_confirmation_expired_needs_decision: "确认卡已超时：到「人工指令」页用「决策处置（重开 / 放弃）」处置",
   permission_request_pending: "到「人工审核」页批准或驳回对应的权限申请",
   credential_required: "在承接它的 agent 节点上配置所需的凭据环境变量",
-  agent_runtime_executor_required: "该节点没有可用的模型执行器：到「运行时」页核对节点自检结果",
+  agent_runtime_executor_required: "该节点没有可用的模型执行器：让组织管理员到「AI 智能体」页核对该节点的自检结果",
   // 下面三条是【节点拒绝了人的控制指令且重试已用尽】。它们不会自己好，而且最要紧的一点是：
   // 控制面这边已经停了，那台机器上的 agent 可能还在跑 —— 出口是绕开节点配合的强制吊销。
-  control_pause_rejected_by_node: "节点拒绝了暂停且重试已用尽：到「运行时」页对该节点点「立即切断」，再确认它确实停了",
-  control_cancel_rejected_by_node: "节点拒绝了取消且重试已用尽：到「运行时」页对该节点点「立即切断」，再确认它确实停了",
-  assigned_node_stop_control_failed_retries_exhausted: "节点停止控制重试已用尽：到「运行时」页对该节点点「立即切断」（不需要节点配合）",
+  control_pause_rejected_by_node: "节点拒绝了暂停且重试已用尽：让组织管理员到「AI 智能体」页对该节点点「立即切断」，再确认它确实停了",
+  control_cancel_rejected_by_node: "节点拒绝了取消且重试已用尽：让组织管理员到「AI 智能体」页对该节点点「立即切断」，再确认它确实停了",
+  assigned_node_stop_control_failed_retries_exhausted: "节点停止控制重试已用尽：让组织管理员到「AI 智能体」页对该节点点「立即切断」（不需要节点配合）",
   // 这两条只在【节点失联超时】后才会被自动重排；节点若还在心跳却始终不 ACK，它会一直等下去。
   // 所以不能登记成"会自己好"，出口是不需要节点配合的立即切断。
-  assigned_node_revocation_pending_stop: "正在等节点确认吊销：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，到「运行时」页点「立即切断」",
+  assigned_node_revocation_pending_stop: "正在等节点确认吊销：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，让组织管理员到「AI 智能体」页点「立即切断」",
   // 关停与吊销是同一条代码路径的两个分支，恢复方式也一样。孪生项里只有吊销那一半写了
   // 中文和出口，停机那一半两样都没有 —— 于是同一件事，走吊销的人看到中文指引，
   // 走关停的人看到一串英文、且没有下一步。
-  assigned_node_shutdown_pending_stop: "正在等节点确认关停：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，到「运行时」页点「立即切断」",
-  assigned_node_shutdown_pending_stop: "正在等节点确认下线：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，到「运行时」页点「立即切断」",
+  assigned_node_shutdown_pending_stop: "正在等节点确认关停：节点失联超时后系统会自动重排；若它仍在心跳却迟迟不确认，让组织管理员到「AI 智能体」页点「立即切断」",
   task_group_pause: "整个任务组被人暂停了：到该任务组页点「恢复执行」"
 };
 // 提示只在【当前真的有派发卡在这些原因上】时出现，且按出现过的原因去重 —— 逐行重复同一句话
@@ -3104,8 +3103,8 @@ function stuckExitNotice(dispatches, sessions) {
 const WORK_ITEM_EXIT_HINT = {
   needs_decision: "编排不会再自动推进它：到「人工指令」页用「决策处置（重开 / 放弃）」处置。",
   blocked_dependency: "无需操作：它依赖的工作项通过验收后，下一轮编排会自动放行。",
-  model_selection_rejected: "没有可运行的模型满足它的硬性约束：到「运行时」页核对模型能力注册，或放宽该工作项的模型约束。",
-  blocked_resource: "它等待的资源尚未就绪：到「运行时」页核对模型与技能源状态。",
+  model_selection_rejected: "没有可运行的模型满足它的硬性约束：让系统管理员到「系统设置」页核对模型能力注册，或放宽该工作项的模型约束。",
+  blocked_resource: "它等待的资源尚未就绪：让系统管理员到「系统设置」页核对模型与技能源状态。",
   credential_required: "执行需要智能体运行时凭据：在承接它的 agent 节点上配置所需的凭据环境变量后重试。",
   permission_required: "需要先获得授权：到「人工审核」页批准对应的权限申请。",
   execution_failed_repeatedly: "同一个工作项连续多次执行失败，系统已停止自动重派（否则会一直空烧模型额度）：到「人工指令」页用「决策处置（重开 / 放弃）」处置，重开前先看阻塞提示里最近一次的失败原因。"
