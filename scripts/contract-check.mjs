@@ -1849,6 +1849,42 @@ function verifyHumanAndOrganizationContracts(output) {
       options: [{optionId: "accept", label: "确认验收（定稿）", recommended: true}, {optionId: "reject", label: "打回返工"}]
     });
     validateSchema(gate, hcrSchema, "HumanConfirmationRequest(major)", output);
+    // 运行时确认单必须绑在【自己那次派发】上。这两道门此前零覆盖：报一张挂在别人派发上的确认单，
+    // 就能把别人的执行卡在 permission/confirmation 上（阻塞型的单子会挡住对方的关闭门）。
+    {
+      const cfmState = structuredClone(seedState);
+      ensureRuntimeCollections(cfmState, {root});
+      const cfmTg = cfmState.taskGroups.find((item) => item.id === "tg_runtime_management");
+      cfmState.agentDispatches = [{dispatchId: "dsp_owner", sessionId: "ws_owner", runId: "run_owner",
+        taskGroupId: cfmTg.id, projectId: cfmTg.projectId, workItemId: cfmTg.workItems[0].id,
+        status: "running", assignedNodeId: "node_owner"}];
+      const cfmRefusal = (extra) => {
+        const st = structuredClone(cfmState);
+        try {
+          createHumanConfirmationRequest(st, {taskGroupId: cfmTg.id, workItemId: cfmTg.workItems[0].id,
+            decisionType: "runtime_execution", summary: "运行时确认", dispatchId: "dsp_owner",
+            options: [{optionId: "go", label: "继续"}], ...extra});
+          return null;
+        } catch (error) { return error.message; }
+      };
+      const cfmCases = [
+        ["冒用别人的节点身份", "confirmation_dispatch_node_mismatch", {nodeId: "node_intruder"}],
+        ["把单子挂到别的任务组名下", "confirmation_task_group_mismatch", {nodeId: "node_owner", taskGroupId: "tg_other_tenant"}],
+        ["指向一次并不存在的派发", "dispatch_not_found", {dispatchId: "dsp_never_existed", nodeId: "node_owner"}]
+      ];
+      for (const [what, expected, extra] of cfmCases) {
+        const got = cfmRefusal(extra);
+        if (got !== expected) {
+          output.push(`运行时确认单: ${what}时拿到的不是 ${expected}（实际 ${got || "单子就这么挂上了"}）—— `
+            + "阻塞型的确认单会把对方的执行卡住，连关闭门一起挡下");
+        }
+      }
+      // 正面对照走同一条分支：节点与任务组都对得上时，单子必须挂得成。
+      const cfmOk = cfmRefusal({nodeId: "node_owner"});
+      if (cfmOk !== null) {
+        output.push(`运行时确认单: 节点与任务组都对得上时也挂不上（${cfmOk}）—— 上面三条其实是「永远拒」`);
+      }
+    }
     if (gate.decisionClass !== "major" || gate.blocking !== true) output.push("人工闸门: 核心决策未被强制标记为 major/阻塞（AI 传 blocking:false 就能绕开闸门）");
     // 机器主体不得定稿。用【独立的一张单】来验，否则守卫一旦失效，这次调用会真的把主流程那张单定稿掉，
     // 后续步骤随即崩溃 —— 报出来的是异常而不是这条断言，这条守卫等于没有被自己的断言覆盖。
@@ -8767,7 +8803,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
   // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
   // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 60;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 58;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];

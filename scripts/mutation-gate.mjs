@@ -3385,6 +3385,22 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "运行时确认单必须绑在自己那次派发的节点上",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  if (dispatch && input.nodeId && dispatch.assignedNodeId !== input.nodeId) throw Object.assign(new Error(\"confirmation_dispatch_node_mismatch\"), {status: 403});",
+    to: "  if (false) throw Object.assign(new Error(\"confirmation_dispatch_node_mismatch\"), {status: 403});",
+    expect: "拿到的不是 confirmation_dispatch_node_mismatch"
+  },
+  {
+    name: "运行时确认单不得挂到别的任务组名下",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  if (dispatch && input.taskGroupId && input.taskGroupId !== dispatch.taskGroupId) throw Object.assign(new Error(\"confirmation_task_group_mismatch\"), {status: 409});",
+    to: "  if (false) throw Object.assign(new Error(\"confirmation_task_group_mismatch\"), {status: 409});",
+    expect: "拿到的不是 confirmation_task_group_mismatch"
+  },
+  {
     name: "不在册的角色技能不得发包",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",
     check: "verifyHumanAndOrganizationContracts",
