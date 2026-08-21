@@ -254,7 +254,10 @@ function capPolicyDecisionsKeepingReferenced(state) {
   const referenced = new Set([
     ...(state.accessGrants || [])
       .filter((grant) => grant.status === "active").map((grant) => grant.policyDecisionRef),
-    ...(state.repositoryOutputs || []).map((item) => item.decisionRecordRef)
+    // 读 policyDecisionRef，不再读 decisionRecordRef：后者是调用方给的决策记录引用，
+    // 调用方一传，这里就再也认不出该保护哪条策略决策了。旧记录上只有 decisionRecordRef，
+    // 两个都收（旧数据里它存的确实是策略决策 id）。
+    ...(state.repositoryOutputs || []).flatMap((item) => [item.policyDecisionRef, item.decisionRecordRef])
   ].filter(Boolean));
   const kept = state.policyDecisions.slice(0, cap);
   const keptIds = new Set(kept.map((item) => item.id));

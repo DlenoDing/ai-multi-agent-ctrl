@@ -4391,7 +4391,13 @@ async function handleApi(req, res) {
       pathDenylist: effectivePathDenylist({pathDenylist: body.pathDenylist, forbiddenPathRules: body.forbiddenPathRules}),
       status: "selected",
       outputPolicy: "project_git_repository_only",
+      // 这两个是不同的东西，原先挤在一个字段里：decisionRecordRef 是【调用方给的决策记录引用】，
+      // 而落盘处的保留逻辑要的是【这次写入的策略决策 id】（凭什么允许写这个仓库/这些路径）。
+      // 原先写成 `body.decisionRecordRef || guard.policyDecision.id`：调用方一旦真的传了前者，
+      // 保留逻辑就再也找不到那条策略决策 —— 它会被容量悄悄挤掉，而那正是那段逻辑要防的事。
+      // 实测真实状态里就有一条 decisionRecordRef 存着 pd_ 开头的 id（策略决策，不是决策记录）。
       decisionRecordRef: body.decisionRecordRef || guard.policyDecision.id,
+      policyDecisionRef: guard.policyDecision.id,
       artifactManifestPath,
       auditRef: `audit:${guard.idempotencyKey}`,
       createdAt: at,

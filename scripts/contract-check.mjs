@@ -8,7 +8,8 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertStateStoreConfig, ensureStoredState, isStateStoreConflict, readStoredCentralState, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { assertStateStoreConfig, ensureStoredState, isStateStoreConflict, readStoredCentralState, readStoredState, writeStoredState 
+} from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload, canonicalJson } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps/control-plane-ui/lib/pg-sync-store.mjs";
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
@@ -358,6 +359,7 @@ run(verifyRaceTimeoutsDoNotHoldTheProcess);
 run(verifyWhitelistRefusalsCarryTheWhitelist);
 run(verifyGuardedWritesAreAudited);
 run(verifyWarnModeRejectionsSurviveChurn);
+run(verifyOutputTargetKeepsItsPolicyDecision);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5587,6 +5589,46 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 而那个集合上限 240、且每一次【合法】迁移也往里挤 —— 一次真实 e2e 跑完就有 145 条，
 // 想保住的那条几分钟就被日常流量顶出去了。改成同时写审计台账（先归档再裁剪，控制台也显示）。
 // 判据不能只验"写了一条"：必须验它【在日常流量把 transitionEvidence 挤满之后还在】。
+// 产出目标背后的【策略决策】（凭什么允许写这个仓库、这些路径）必须扛得住容量淘汰。
+// 原先落盘处的保留逻辑读的是 decisionRecordRef，而那个字段是 `body.decisionRecordRef || 策略决策id`：
+// 调用方一旦真的传了前者，保留逻辑就再也认不出该保护哪一条 —— 策略决策被悄悄挤掉，
+// 而事后问"这个目标凭什么建的"就答不出来了。实测真实状态里确实有一条 decisionRecordRef 存着 pd_ 开头的 id。
+// 判据要打的正是【调用方传了 decisionRecordRef】那一支：不传的那支原先就是对的，验它证明不了什么。
+function verifyOutputTargetKeepsItsPolicyDecision(output) {
+  const probe = structuredClone(seedState);
+  ensureRuntimeCollections(probe, {root});
+  const keptDecision = {id: "pd_must_survive", action: "repository_output_target_create",
+    createdAt: "2026-01-01T00:00:00.000Z"};
+  probe.policyDecisions = [keptDecision];
+  probe.repositoryOutputs = [{targetId: "rot_probe", projectId: "prj_control_plane",
+    // 调用方给了自己的决策记录引用 —— 这一支原先会让保留逻辑失去目标
+    decisionRecordRef: "decision:caller-supplied",
+    policyDecisionRef: "pd_must_survive"}];
+  // 灌满上限：淘汰只在超过 cap 时发生。
+  const cap = Math.max(100, Number(process.env.AIMAC_POLICY_DECISIONS_CAP || 500));
+  for (let index = 0; index < cap + 20; index += 1) {
+    probe.policyDecisions.unshift({id: `pd_noise_${index}`, action: "noise", createdAt: "2026-01-02T00:00:00.000Z"});
+  }
+  const before = probe.policyDecisions.length;
+  // 走真实落盘入口，不为测试去导出内部函数：淘汰就发生在 writeStoredState 里（唯一的写入收口）。
+  const capDir = mkdtempSync(join(tmpdir(), "aimac-cap-probe-"));
+  try {
+    writeStoredState(probe, {root, runtimeDir: capDir, statePath: join(capDir, "control-plane-state.json"),
+      seedPath: resolve(root, "data", "seed-state.json"), buildInitialState: () => ({})});
+  } finally {
+    try { rmSync(capDir, {recursive: true, force: true}); } catch { /* best effort */ }
+  }
+  if (probe.policyDecisions.length >= before) {
+    output.push(`本条在空转：灌了 ${before} 条策略决策（上限 ${cap}）却一条都没被淘汰 —— 没有复现出容量淘汰`);
+    return;
+  }
+  if (!probe.policyDecisions.some((item) => item.id === "pd_must_survive")) {
+    output.push("调用方自带 decisionRecordRef 时，产出目标背后的策略决策被容量挤掉了 —— "
+      + "事后问「这个写入边界凭什么建的」答不出来");
+  }
+  console.log(`产出目标的策略决策：灌到 ${before} 条触发淘汰后仍在（调用方自带 decisionRecordRef 的那一支）`);
+}
+
 function verifyWarnModeRejectionsSurviveChurn(output) {
   const previous = process.env.AIMAC_TRANSITION_STRICT;
   process.env.AIMAC_TRANSITION_STRICT = "warn";
@@ -6352,7 +6394,11 @@ function verifyLongLivedRecordsDoNotPointAtCappedOnes(output) {
     output.push(`引用字段登记里这些名字在产品代码里根本不存在：${phantomFields.join("、")} —— `
       + "名字打错的那一项会静默不查，而门看起来覆盖了它");
   }
-  const live = new Set(["accessGrants", "taskGroups", "projects", "accounts", "repositoryOutputs"]);
+  // 长期集合的清单要含【人会回头看的那些请求】：审批 / 权限申请 / 发现项上都挂着
+  // "凭什么批的"这类引用，而它们本身不受任何上限约束。第一版漏了它们，
+  // 于是一条指向 120 上限 decisionRecords 的引用不会被这道门看见。
+  const live = new Set(["accessGrants", "taskGroups", "projects", "accounts", "repositoryOutputs",
+    "approvalRequests", "permissionRequests", "findings", "humanConfirmationRequests"]);
   const offenders = [];
   for (const [field, collection] of Object.entries(REF_FIELDS_INTO_CAPPED)) {
     if (!capped.has(collection)) continue;

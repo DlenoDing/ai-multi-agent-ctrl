@@ -2633,7 +2633,10 @@ try {
   // 这里拿【实际产生的 id】去长期对象里全量搜一遍 —— 源码判据看不见的接法（拼出来的引用、
   // 嵌在数组里的、字段名不在手写清单里的）只有这样才找得到。
   {
-    const full = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: systemAuth}});
+    // limit 要大于【有上限的集合】的上限（policyDecisions 是 500）：视图截断会让指向被截掉那段的
+    // 引用看起来像悬空，而它其实还在盘上。下面这条本来就是"引用完整性"核对，
+    // 拿一份被截过的数据去做，报出来的是工具的假故障，不是系统的真缺陷。
+    const full = await jsonFetch(port, "/api/state?view=full&limit=5000", {headers: {authorization: systemAuth}});
     const CAPPED = ["policyDecisions", "decisionRecords", "modelSelectionDecisions",
       "sessionPlacementDecisions", "transitionEvidence"];
     const owner = new Map();
@@ -2664,6 +2667,10 @@ try {
       const HANDLED = [
         /^accessGrants\[\d+\]\.policyDecisionRef /u,
         /^repositoryOutputs\[\d+\]\.decisionRecordRef /u,
+        // 与上一条同源、拆开之后的那一半：decisionRecordRef 原先兼着两种引用
+        //（调用方给的决策记录 / 这次写入的策略决策），调用方一传，落盘处的保留逻辑就认不出该保护哪条。
+        // 现在策略决策单独走 policyDecisionRef，保留逻辑读它 —— 两个字段都在保留集合里。
+        /^repositoryOutputs\[\d+\]\.policyDecisionRef /u,
         /^agentDispatches\[\d+\]\.modelSelectionDecisionRef /u,
         /^workSessions\[\d+\]\.modelSelectionDecisionRef /u,
         /^workSessions\[\d+\]\.placementDecisionRef /u

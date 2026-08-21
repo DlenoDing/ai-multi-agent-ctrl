@@ -3010,6 +3010,22 @@ const MUTATIONS = [
     expect: "仓内文件不存在"
   },
   {
+    name: "产出目标的策略决策不得被容量挤掉（调用方自带引用那一支）",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyOutputTargetKeepsItsPolicyDecision",
+    from: "    ...(state.repositoryOutputs || []).flatMap((item) => [item.policyDecisionRef, item.decisionRecordRef])",
+    to: "    ...(state.repositoryOutputs || []).map((item) => item.decisionRecordRef)",
+    expect: "被容量挤掉"
+  },
+  {
+    name: "这条用例必须真的触发容量淘汰（不淘汰就该报空转）",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyOutputTargetKeepsItsPolicyDecision",
+    from: "  if (!Array.isArray(state?.policyDecisions) || state.policyDecisions.length <= cap) return;",
+    to: "  if (!Array.isArray(state?.policyDecisions) || state.policyDecisions.length <= cap * 100) return;",
+    expect: "本条在空转"
+  },
+  {
     name: "宽松模式的非法转移必须进审计台账（只记在有上限的集合里会被顶掉）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyWarnModeRejectionsSurviveChurn",
