@@ -3010,6 +3010,22 @@ const MUTATIONS = [
     expect: "仓内文件不存在"
   },
   {
+    name: "行号引用判据的文件枚举走空要报（找违规型判据会安静地全绿）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyCommentsDoNotCiteLineNumbers",
+    from: "    .filter((file) => /\\.(mjs|js|rb|sh)$/u.test(file) && !file.endsWith(\"mutation-gate.mjs\"));",
+    to: "    .filter((file) => /\\.(mjsX|js|rb|sh)$/u.test(file) && !file.endsWith(\"mutation-gate.mjs\"));",
+    expect: "本条在空转"
+  },
+  {
+    name: "判据引用的提取走空要报（同上）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyGateReferencesResolve",
+    from: "for (const match of src.matchAll(/function\\s+(verify[A-Za-z0-9]+)/gu)) declared.add(match[1]);",
+    to: "for (const match of src.matchAll(/functionX\\s+(verify[A-Za-z0-9]+)/gu)) declared.add(match[1]);",
+    expect: "本条在空转"
+  },
+  {
     name: "每一句「正在加载」都要有对应的「取失败了」说法",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

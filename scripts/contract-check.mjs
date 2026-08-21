@@ -5975,6 +5975,11 @@ function verifyGateReferencesResolve(output) {
       }
     });
   }
+  // 同上的空转守卫：declared 走空时 stale 也会是空的，门就安静地绿了。
+  if (declared.size < 50) {
+    output.push(`判据引用：只提取到 ${declared.size} 条判据（应至少 50）—— 提取与代码脱节，本条在空转`);
+    return;
+  }
   if (stale.length) {
     output.push("这些地方点名了一条【不存在】的判据 —— 失效的覆盖承诺会让人以为这块已经有人管：\n  "
       + stale.join("\n  "));
@@ -5999,6 +6004,12 @@ function verifyCommentsDoNotCiteLineNumbers(output) {
     for (const match of src.matchAll(/第\s*\d+\s*行/gu)) {
       hits.push(`${file.slice(root.length + 1)}:${src.slice(0, match.index).split("\n").length}: ${match[0]}`);
     }
+  }
+  // 空转守卫：这是"找违规、有才红"型判据 —— 文件走空时它会安静地全绿。
+  // 本会话在别人的判据上补了六次这种守卫，自己写的这两条反倒漏了。
+  if (files.length < 30) {
+    output.push(`行号引用：只扫到 ${files.length} 份源码（应至少 30）—— 文件枚举与仓库脱节，本条在空转`);
+    return;
   }
   if (hits.length) {
     output.push("这些地方用【行号】指代代码，行号会漂而引用看着仍然权威 —— 改成标识符名：\n  "
