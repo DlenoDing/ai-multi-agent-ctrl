@@ -351,6 +351,7 @@ run(verifyGateReferencesResolve);
 run(verifyExecutorFailuresSayWhichKind);
 run(verifyStorageFaultKindsHaveChinese);
 run(verifyEmptyTaskGroupIsNotComplete);
+run(verifyWholesaleConfigWritesArePreconditioned);
 run(verifyNoRequestScopedLeaks);
 run(verifyMissingRecordsLookLikeInvisibleOnes);
 run(verifyRefusalAssertionsNameTheCode);
@@ -5544,6 +5545,38 @@ function verifyIssuedCredentialsAlwaysExpire(output) {
 // 实测过的真实后果：新建一个任务组、还没来得及拆工作项，跑一轮自治循环，进度就变成 100 ——
 // 人在项目概览上看到的是"这个新任务组已经做完了"。缺席不得等于有利结果。
 // 同一条分支还盖住"工作项全被取代"：被取代的活不是做完的活。
+// 「整份替换」的配置字段（仓库 / 基线 / 默认角色 / 系统规则 / 业务规则）必须先过版本前置条件，
+// 否则两个人同时改，后保存的那个会静默盖掉前一个人的改动，而审计只记"配置已更新"、不记内容差异。
+// 服务端已经在两个端点上都做对了（项目配置、任务组配置），这道门是为了让它保持为真：
+// 将来新增一个整份替换的端点、忘了前置条件，没有别的机制会看见 ——
+// 一条不变式有两扇门只守一扇，等于没守。
+function verifyWholesaleConfigWritesArePreconditioned(output) {
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8")
+    .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
+  const writes = [...server.matchAll(/\{(\w+): Array\.isArray\(body\.(\w+)\) \? body\.\2 : \[\]\}/gu)];
+  // 提取形状与代码脱节时必须报出来：第一版正则按 `X = Array.isArray(...)` 写，
+  // 而真实写法是对象展开，于是扫出 0 处 —— 那会被读成"没有这种写入点"。
+  if (writes.length < 6) {
+    output.push(`整份替换配置的写入点只提取到 ${writes.length} 处（应至少 6 处）—— 提取形状与代码脱节，本条在空转`);
+    return;
+  }
+  const unguarded = [];
+  for (const write of writes) {
+    // JS 的 lastIndexOf 只吃两个参数：照 Python 的 rfind(sub, 0, pos) 写成三个的话，
+    // 第三个被忽略、position=0 会让它一律返回 -1，于是每一处都被判成"没有前置条件"。
+    const routeStart = server.lastIndexOf("if (req.method", write.index);
+    const before = routeStart < 0 ? "" : server.slice(routeStart, write.index);
+    if (!/PreconditionFailure\(/u.test(before)) {
+      unguarded.push(`${server.slice(0, write.index).split("\n").length}: ${write[1]}`);
+    }
+  }
+  if (unguarded.length) {
+    output.push("这些【整份替换】的配置写入没有版本前置条件，后保存的人会静默盖掉前一个人的改动：\n  "
+      + unguarded.join("\n  "));
+  }
+  console.log(`整份替换的配置写入：${writes.length} 处逐个核对，${unguarded.length} 处没有版本前置条件（应为 0）`);
+}
+
 function verifyEmptyTaskGroupIsNotComplete(output) {
   const blank = {id: "tg_blank", projectId: "p", name: "刚建好还没拆工作项", status: "active",
     progress: 0, health: "ok", roles: [], workItems: [], blockers: []};

@@ -2986,6 +2986,22 @@ const MUTATIONS = [
     expect: "台账上记成"
   },
   {
+    name: "整份替换配置必须带版本前置条件（后保存的会静默盖掉前一个人）",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyWholesaleConfigWritesArePreconditioned",
+    from: "    const taskGroupPrecondition = configPreconditionFailure(body, taskGroup.config",
+    to: "    const taskGroupPrecondition = noPrecondition(body, taskGroup.config",
+    expect: "没有版本前置条件"
+  },
+  {
+    name: "整份替换的提取形状失效必须报空转（不得静静少查）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyWholesaleConfigWritesArePreconditioned",
+    from: "const writes = [...server.matchAll(/\\{(\\w+): Array\\.isArray\\(body\\.(\\w+)\\) \\? body\\.\\2 : \\[\\]\\}/gu)];",
+    to: "const writes = [...server.matchAll(/\\{(\\w+): ArrayX\\.isArray\\(body\\.(\\w+)\\) \\? body\\.\\2 : \\[\\]\\}/gu)];",
+    expect: "只提取到 0 处"
+  },
+  {
     name: "加载失败的空表不得说'暂无数据'（那是在断言确实没有）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
