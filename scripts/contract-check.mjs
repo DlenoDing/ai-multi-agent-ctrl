@@ -345,6 +345,7 @@ run(verifyMcpSummaryIsActuallyASummary);
 run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
+run(verifyGateAssertionsMatchWholeRefusalCodes);
 run(verifyInviteEscalationGuardsShareOnePredicate);
 run(verifyAgentJoinTokenIsSpentExactlyOnce);
 run(verifyServerSideAgentExecutionStaysOffOutsideVerification);
@@ -3650,7 +3651,11 @@ function verifyHumanAndOrganizationContracts(output) {
         taskGroupId: "tg_runtime_management", subjectId: "acct_agent_runtime",
         resourceType: "system", resourceId: "accounts", permission: "system:*", reason: "运行时需要读取配置"
       });
-    } catch (error) { escalationBlocked = /resource_type_not_allowed|permission_not_delegable/.test(error.message); }
+    } catch (error) {
+      // 写完整码：只匹配子串既比不出是哪道门拒的，棘轮也看不见它（它按完整码扫源码）。
+      escalationBlocked = ["permission_request_resource_type_not_allowed", "permission_request_permission_not_delegable"]
+        .includes(error.message);
+    }
     if (!escalationBlocked) {
       output.push("提权链: 执行方可提交作用于 system 资源的 system:* 授权申请（批准后即可铸造 system_admin 账号，人工闸门被整体绕过）");
     }
@@ -3660,7 +3665,7 @@ function verifyHumanAndOrganizationContracts(output) {
         taskGroupId: "tg_runtime_management", subjectId: "acct_agent_runtime",
         resourceType: "task_group", resourceId: "tg_runtime_management", permission: "task_group:*", reason: "probe"
       });
-    } catch (error) { wildcardBlocked = /permission_not_delegable/.test(error.message); }
+    } catch (error) { wildcardBlocked = error.message === "permission_request_permission_not_delegable"; }
     if (!wildcardBlocked) {
       output.push("提权链: 可经申请-批准通道铸造通配权限（REST 那道门拒绝、这道门放行，两套标准）");
     }
@@ -4728,13 +4733,18 @@ function verifyRuntimeJsonConflict(output) {
         assertProjectShardsMatchCentralIndex([tampered], central);
         output.push("a project shard whose contents no longer match the central index was accepted — anyone with write access to the shard table can inject or delete task groups, dispatches and human confirmation requests invisibly");
       } catch (error) {
-        if (!/digest_mismatch/u.test(error.message)) output.push(`tampered shard raised the wrong error: ${error.message}`);
+        // 码带 :<projectId> 后缀，所以用前缀比 —— 但前缀必须是完整码，不能只写 digest_mismatch。
+        if (!String(error.message).startsWith("project_state_shard_payload_digest_mismatch:")) {
+          output.push(`tampered shard raised the wrong error: ${error.message}`);
+        }
       }
       try {
         assertProjectShardsMatchCentralIndex([], central);
         output.push("a project shard listed in the central index but absent from storage was accepted — deleting a shard is as invisible as rewriting it");
       } catch (error) {
-        if (!/shard_missing/u.test(error.message)) output.push(`missing shard raised the wrong error: ${error.message}`);
+        if (!String(error.message).startsWith("project_state_shard_missing:")) {
+          output.push(`missing shard raised the wrong error: ${error.message}`);
+        }
       }
       // 兼容层必须有退役条件，否则它会无界存在（sys.scope-convergence「不做过度兼容」）。
       // 这里的兼容是【读取时接受旧格式摘要】，它的退役条件是"下一次写入会把该分片规范化"——
@@ -10234,6 +10244,52 @@ function verifyHumanWrittenTextIsNeverSilentlyTruncated(output) {
       + "台账上记的与他写的不是一句话；改用 assertHumanTextWithinLimit（超了就拒，并说清超出多少）");
   }
   console.log(`人写文本不许静默截断：${guarded} 处走了长度校验，${truncated.length} 处仍在 slice 截断（应为 0）`);
+}
+
+function verifyGateAssertionsMatchWholeRefusalCodes(output) {
+  // 门里比对拒绝码时写半截（/permission_not_delegable/.test(msg)）有两个后果：
+  // 比不出是哪道门拒的（同前缀/后缀的别的码也算通过），而拒绝码棘轮按【完整码】扫源码，
+  // 它看不见这处断言 —— 于是这道守卫在棘轮眼里仍是零覆盖。四处这样写的都在 2026-08-21 改掉了。
+  const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
+    "apps/mcp-server/server.mjs"];
+  const codes = new Set();
+  for (const rel of PRODUCT) {
+    const src = readFileSync(join(root, rel), "utf8").replace(/\/\/[^\n]*/gu, "");
+    // 与棘轮同一个正则常量，但这里换个写法遍历 —— 否则两处代码逐字相同，
+    // 「棘轮不得空转」那条变异的锚点会同时命中两份，改不准被测的那一处。
+    for (const found of [...src.matchAll(REFUSAL_CODE_FORMS)]) codes.add(found[1]);
+    // 带后缀的码（`project_state_shard_missing:${id}`）也要认，否则下面判不出"这半截是某个码的一段"。
+    for (const match of src.matchAll(/new Error\(`([a-z][a-z0-9_]{5,}):/gu)) codes.add(match[1]);
+  }
+  const gateFiles = ["scripts/contract-check.mjs", "scripts/system-invariants.mjs", "scripts/human-only-parity.mjs",
+    "scripts/crash-consistency.mjs", "scripts/console-behaviour-check.mjs"];
+  let checked = 0;
+  for (const rel of gateFiles) {
+    const full = join(root, rel);
+    if (!existsSync(full)) continue;
+    const src = readFileSync(full, "utf8").split("\n").filter((line) => !/^\s*\/\//u.test(line)).join("\n");
+    const fragments = [
+      ...src.matchAll(/\/([a-z][a-z0-9_|]{4,})\/u?\w*\.test\((?:\w+\??\.)?message\)/gu),
+      ...src.matchAll(/message[^\n]{0,30}\.(?:includes|startsWith)\("([a-z][a-z0-9_]{4,})/gu)
+    ];
+    for (const match of fragments) {
+      for (const fragment of match[1].split("|")) {
+        checked += 1;
+        if (codes.has(fragment)) continue;
+        // 半截：它是某个真拒绝码的一段，但本身不是完整的码。
+        const owners = [...codes].filter((code) => code !== fragment && code.includes(fragment));
+        if (owners.length) {
+          output.push(`${rel} 里用半截拒绝码 "${fragment}" 做断言（完整的是 ${owners.slice(0, 3).join(" / ")}）—— `
+            + "比不出是哪道门拒的，而拒绝码棘轮按完整码扫源码，它看不见这处断言，那道守卫在棘轮眼里仍是零覆盖");
+        }
+      }
+    }
+  }
+  if (checked < 4) {
+    output.push(`只找到 ${checked} 处按 message 比对的断言（门里远不止这些）—— 这条判据的正则形状没对上，它现在几乎什么都没查`);
+  }
+  console.log(`门内拒绝码断言：${checked} 处按 message 比对的写法逐个核对，都是完整码`);
 }
 
 function verifyInviteEscalationGuardsShareOnePredicate(output) {

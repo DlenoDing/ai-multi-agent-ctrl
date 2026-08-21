@@ -3385,6 +3385,14 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "门内断言写半截拒绝码要被查出来",
+    file: "scripts/contract-check.mjs",
+    check: "verifyGateAssertionsMatchWholeRefusalCodes",
+    from: "} catch (error) { wildcardBlocked = error.message === \"permission_request_permission_not_delegable\"; }",
+    to: "} catch (error) { wildcardBlocked = /permission_not_delegable/.test(error.message); }",
+    expect: "用半截拒绝码"
+  },
+  {
     name: "权限请求的资源类型必须在册",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyHumanAndOrganizationContracts",
