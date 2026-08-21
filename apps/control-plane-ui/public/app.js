@@ -1350,13 +1350,21 @@ async function loadTaskGroupDetail(taskGroupId) {
   // 那一个提案，看不到它是怎么谈出来的。而人工定稿这道闸门的前提恰恰是「人能看见 AI 的推理过程
   // 再决定」—— 看不见协商过程，定稿就退化成对结论点头。读取失败不阻断详情页：房间是旁证，
   // 不该让它的问题挡住主干信息。
+  // progress 这条原先没有 catch：它一失败，整个函数抛出、tgDetail 停在 null，
+  // 而面板对 null 只有一种说法——"正在加载任务组详情…"。于是顶上横幅已经报了失败，
+  // 面板还在转圈，人等一件不会发生的事。（同一个"一个 null 兼表两种意思"的形状，
+  // 项目规则配置、系统概览各修过一次，这是第三处。）
+  // 仍要把错误抛出去：横幅要说清原因。但先把 tgDetail 填上，让面板说得出"没能加载出来"。
+  let progressFailure = null;
   const [progressResult, configResult, roomResult] = await Promise.all([
-    api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/progress`),
+    api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/progress`)
+      .catch((error) => { progressFailure = error; return null; }),
     api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/config`).catch(() => null),
     api(`/api/rooms/${encodeURIComponent(`room_${taskGroupId}`)}/messages?limit=50&tail=1`).catch(() => null)
   ]);
   tgDetail = {
     taskGroupId,
+    loadFailed: Boolean(progressFailure),
     progress: progressResult,
     config: configResult?.config || null,
     configVersion: configResult?.configVersion || null,
@@ -1364,6 +1372,7 @@ async function loadTaskGroupDetail(taskGroupId) {
     roomMessageTotal: roomResult?.total ?? null,
     roomMessagesTruncated: Boolean(roomResult?.truncated),
   };
+  if (progressFailure) throw progressFailure;
 }
 
 async function loadReviewData() {
@@ -2610,6 +2619,10 @@ function renderTaskGroups() {
 function renderTaskGroupDetail(taskGroup) {
   if (!tgDetail || tgDetail.taskGroupId !== taskGroup.id) {
     return `<div class="notice">正在加载任务组详情…</div>`;
+  }
+  if (tgDetail.loadFailed) {
+    return `<div class="notice warn-notice">这个任务组的详情没能加载出来（原因写在页面顶部的横幅里）——`
+      + "上面那行概要是刚取到的，可以照常看；点一下右上角的刷新可以再试一次。</div>";
   }
   const progressData = tgDetail.progress || {};
   const analysis = progressData.taskAnalysis;

@@ -3010,6 +3010,30 @@ const MUTATIONS = [
     expect: "仓内文件不存在"
   },
   {
+    name: "任务组详情取失败时不许还说'正在加载'（第三处同形）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (tgDetail.loadFailed) {",
+    to: "  if (false) {",
+    expect: "取失败时不许还说"
+  },
+  {
+    name: "详情取失败必须记进 tgDetail（不记就永远停在'正在加载'）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    loadFailed: Boolean(progressFailure),",
+    to: "    loadFailed: false,",
+    expect: "没有把失败记进"
+  },
+  {
+    name: "详情的失败不得被吞（横幅要说清原因）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (progressFailure) throw progressFailure;",
+    to: "  void progressFailure;",
+    expect: "失败被吞了"
+  },
+  {
     name: "账号退役一旦被接上，登记必须当场过期",
     file: "apps/mcp-server/server.mjs",
     check: "verifyInertMechanismsStayRegistered",

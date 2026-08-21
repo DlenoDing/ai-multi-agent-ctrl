@@ -1016,6 +1016,40 @@ async function runErrorGuidanceCase() {
     `listEmptyText 只被用了 ${wired - 1} 处（定义之外，应为 3）—— 有表还在说"暂无数据"`);
 }
 
+// 任务组详情：progress 那条请求原先没有 catch —— 一失败整个函数抛出、tgDetail 停在 null，
+// 而面板对 null 只有一种说法「正在加载任务组详情…」。顶上横幅已经报了失败，面板还在转圈。
+// 这是"一个 null 兼表两种意思"的第三处（前两处：项目规则配置、系统概览）。
+{
+  const tgProbe = loadConsole(el("div"), {realI18n: true});
+  const group = {id: "tg1", name: "任务组", status: "active", workItems: [], roles: [], blockers: []};
+  const loading = String(tgProbe.renderTaskGroupDetail(null, group)).replace(/<[^>]+>/gu, " ");
+  check("还没取到时说的是'正在加载'",
+    /正在加载任务组详情/u.test(loading),
+    `未加载时显示：${JSON.stringify(loading.slice(0, 90))}`);
+  // 这个对象要带上渲染所需的最小字段：否则把 loadFailed 分支去掉时渲染会直接崩，
+  // 崩溃虽然也算失败，但拿不到干净的断言消息（变异登记的 expect 就对不上）。
+  const failedDetail = {taskGroupId: "tg1", loadFailed: true, progress: {}, config: null,
+    configVersion: null, roomMessages: null, roomMessageTotal: null, roomMessagesTruncated: false};
+  const failed = String(tgProbe.renderTaskGroupDetail(failedDetail, group))
+    .replace(/<[^>]+>/gu, " ");
+  check("取失败时不许还说'正在加载'（人会一直等一件不会发生的事）",
+    /没能加载出来/u.test(failed) && !/正在加载任务组详情/u.test(failed),
+    `失败时显示：${JSON.stringify(failed.slice(0, 120))}`);
+  check("失败时要给出下一步（刷新再试）",
+    /刷新/u.test(failed),
+    "只说没加载出来，没说能怎么办");
+  // 上面三条是渲染分支，证明不了"真失败时会置上 loadFailed"。接线只能从源码看。
+  const appSrc = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const at = appSrc.indexOf("async function loadTaskGroupDetail(");
+  const body = at < 0 ? "" : appSrc.slice(at, at + 1600);
+  check("progress 取失败时必须把 loadFailed 置上（否则面板永远停在'正在加载'）",
+    /progressFailure = error/u.test(body) && /loadFailed: Boolean\(progressFailure\)/u.test(body),
+    at < 0 ? "找不到 loadTaskGroupDetail —— 本条在空转" : "取详情那段没有把失败记进 tgDetail");
+  check("失败仍要抛出去（横幅要说清原因，不能被吞掉）",
+    /if \(progressFailure\) throw progressFailure;/u.test(body),
+    "失败被吞了 —— 面板说得出'没加载出来'，横幅却不说为什么");
+}
+
 // 系统概览这一块"还没取过"与"取失败了"此前共用同一个 null，一律显示"正在加载系统概览…"。
 // 加载已经失败、横幅就在页面顶部写着原因，这一块却还在转圈 —— 人会一直等一件不会发生的事。
 // 同一个形状在项目规则配置那里修过一次，这是第二处；所以这里连"接线"一起验（见下）。
