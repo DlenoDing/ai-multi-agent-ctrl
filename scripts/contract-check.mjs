@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { execFileSync, spawnSync } from "node:child_process";
+import {
+execFileSync, spawnSync } from "node:child_process";
 import { SCHEMA_FILE_ALIASES, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { mcpServiceAllowedTools ,
   mcpServiceAllowlistNotice
@@ -59,6 +60,7 @@ import {
   requeuePermissionApprovedDispatch,
   findingResolve,
   findingSubmit,
+  MAJOR_DECISION_TYPES,
   TASK_GROUP_SETTLED_STATUSES,
   projectOwnerGrantPermissions,
   taskGroupSettledRejection,
@@ -386,6 +388,7 @@ run(verifyInitFailsWithWordsNotAStackTrace);
 run(verifyProjectRepositoriesHaveOneReader);
 run(verifySeedLooksLikeSomethingTheProductMade);
 run(verifyWholesaleFieldListMatchesTheWrites);
+run(verifyEveryDecisionTypeIsClassified);
 run(verifyOutstandingJoinTokensHoldTheirQuotaSlot);
 run(verifyTruncationHonestyIsWiredAtEveryCallSite);
 run(verifyHintMapsHaveNoDuplicateKeys);
@@ -5847,6 +5850,44 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // REPLACING_CONFIG_FIELDS 决定。写入处新增一个整份替换的字段而清单没跟上时，
 // 那个字段就没有任何保护 —— 两个人同时编辑，后保存的会静默删掉前一个人的改动，
 // 而审计只记"配置已更新"，不记内容差异。手抄的清单一定会漂，这里按源码全量核对。
+// 人工定稿闸门的【作用范围】由一张手写清单 MAJOR_DECISION_TYPES 决定：在册的一律强制阻塞、
+// 必须真人确认、不给 AI 预选；不在册的走运行级（可不阻塞、可预选 AI 推荐）。
+// 于是新增一种决策类型而忘了归类，它就默默落进运行级 —— 闸门对它不存在，
+// 而屏幕上看不出任何差别（同一张确认卡，只是少了那条红色的"必须人工定稿"）。
+// 这里把全仓出现过的 decisionType 全部枚举，每一种都必须明确归类。
+function verifyEveryDecisionTypeIsClassified(output) {
+  // 运行级是【有意】不进闸门的那些，逐条写明为什么安全。新增时必须在这里落一笔。
+  const OPERATIONAL_BY_DESIGN = {
+    runtime_execution: "执行过程中的运行时确认（要不要重试、走哪条兜底）：不改变已定稿的方案本身，"
+      + "高频且低风险；强制阻塞会把每一次小选择都堵到人跟前，反而让人对确认卡麻木"
+  };
+  const sources = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs"];
+  const seen = new Set();
+  for (const file of sources) {
+    const text = readFileSync(join(root, file), "utf8");
+    for (const hit of text.matchAll(/decisionType:\s*"([a-z_]+)"/gu)) seen.add(hit[1]);
+    for (const hit of text.matchAll(/decisionType === "([a-z_]+)"/gu)) seen.add(hit[1]);
+  }
+  if (seen.size < 4) {
+    output.push(`只枚举到 ${seen.size} 种决策类型（应 ≥4）—— 提取脱节，本条在空转`);
+    return;
+  }
+  const unclassified = [...seen].filter((type) =>
+    !MAJOR_DECISION_TYPES.includes(type) && !OPERATIONAL_BY_DESIGN[type]);
+  if (unclassified.length) {
+    output.push(`这些决策类型两边都没登记：${unclassified.join("、")} —— `
+      + "不在 MAJOR_DECISION_TYPES 里就默认按运行级处理：不强制阻塞、AI 推荐可以预选，"
+      + "人工定稿闸门对它不存在，而屏幕上看不出差别");
+  }
+  const staleOperational = Object.keys(OPERATIONAL_BY_DESIGN).filter((type) => !seen.has(type));
+  if (staleOperational.length) {
+    output.push(`OPERATIONAL_BY_DESIGN 里这些类型全仓已经没有了：${staleOperational.join("、")} —— 登记过期`);
+  }
+  console.log(`决策类型归类：${seen.size} 种逐个核对（核心 ${MAJOR_DECISION_TYPES.filter((type) => seen.has(type)).length} 种、`
+    + `运行级 ${Object.keys(OPERATIONAL_BY_DESIGN).length} 种登记在册）`);
+}
+
 function verifyWholesaleFieldListMatchesTheWrites(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
   const listed = new Set((/const REPLACING_CONFIG_FIELDS = \[([^\]]+)\]/u.exec(server)?.[1] || "")

@@ -3315,6 +3315,14 @@ const MUTATIONS = [
     expect: "没被 effectiveProjectConfig 认出来"
   },
   {
+    name: "决策类型没归类＝悄悄落进运行级，人工闸门对它不存在",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyEveryDecisionTypeIsClassified",
+    from: '  "task_split",               // 任务拆分',
+    to: '  "task_splitX",               // 任务拆分',
+    expect: "两边都没登记"
+  },
+  {
     name: "整份替换的字段漏进清单＝那个字段没有并发保护",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyWholesaleFieldListMatchesTheWrites",
