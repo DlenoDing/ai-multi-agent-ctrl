@@ -2543,7 +2543,18 @@ function renderProjectOverview() {
         <div class="metric"><span>任务组平均进度</span><strong>${avgProgress}%</strong>
           <div class="small muted">按任务组平均；上面那个总进度是按工作项平均的，两者不一定相等</div></div>
         <div class="metric"><span>受阻项</span><strong>${blockers.length}</strong></div>
-        <div class="metric"><span>待人工确认</span><strong>${pendingConfirmCount}</strong></div>
+        <div class="metric"><span>待人工确认</span><strong>${pendingConfirmCount}</strong>
+          ${(() => {
+            // 这一格只数【确认单】一类。而等人拍板的东西有九类，散在人工审核与执行监控两页上 ——
+            // 项目概览是人每天先看的那一屏，它显示 0 的时候人就不会再往下找了
+            //（实测：这里报 0，同一时刻人工审核页报"共 3 项等待你处理"）。
+            // 两个数出自同一处判据（pendingForMe），这里把差额说出来并给出去处。
+            const todo = pendingForMe();
+            const others = Math.max(0, todo.total - pendingConfirmCount);
+            if (!others) return "";
+            return `<div class="small warn-text">另有 ${others} 项${todo.partial ? "+" : ""}等你处理`
+              + `（评审计划、发现项、授权请求…）—— 到「人工审核」页看汇总</div>`;
+          })()}</div>
       </div>
     `),
     panel("任务组一览", table(["任务组", "状态", "阶段", "进度", "健康度", {label: "受阻数", c: "num"}], groupRows), {wide: true}),

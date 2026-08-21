@@ -3571,6 +3571,14 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "项目概览要说出别处还有多少事等人处理",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "            const todo = pendingForMe();\n            const others = Math.max(0, todo.total - pendingConfirmCount);",
+    to: "            const todo = pendingForMe();\n            const others = 0;",
+    expect: "必须在同一格里说出来"
+  },
+  {
     name: "读不出的配额必须按超额处理",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyHumanAndOrganizationContracts",

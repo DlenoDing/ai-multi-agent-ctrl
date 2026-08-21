@@ -1594,6 +1594,31 @@ function runNoVisibleProjectCase() {
       /hcr_the_one_blocking_it/u.test(blockedText),
       "只说了「到人工审核页定稿对应的确认卡」，没说是哪一张 —— 同时挂着几张时人只能一张张点开比对");
   }
+  // 项目概览上的「待人工确认」只数确认单一类，而等人拍板的东西有九类、散在两个页面上。
+  // 它是人每天先看的那一屏：显示 0 的时候人就不会再往下找（真实运行态上实测到过 ——
+  // 这里 0，同一时刻人工审核页"共 3 项等待你处理"）。
+  {
+    const todoState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: []}],
+      // 一条确认单都没有，但有三条等人收尾的评审计划。
+      humanConfirmationRequests: [],
+      reviewPlans: [1, 2, 3].map((n) => ({reviewPlanId: `rp${n}`, projectId: "p1", taskGroupId: "tg1",
+        status: "planned", createdAt: "2026-08-10T00:00:00.000Z"})),
+      humanDirectives: [], agentDispatches: [], workSessions: [], executionTopologies: [],
+      closeBarriers: [], qualityGates: [], findings: [], permissionRequests: [], approvalRequests: [],
+      truncatedCollections: []
+    };
+    const overview = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, todoState, "proj-overview", "p1");
+    check("项目概览上「待人工确认 0」时，若别处还有等人处理的事，必须在同一格里说出来",
+      /另有 3 项等你处理/u.test(overview),
+      "只显示了「待人工确认 0」—— 人当天就不会再去人工审核页，而那里正躺着三条等他收尾的评审计划");
+    check("并且要给出去处（否则人知道有事却不知道去哪）",
+      /人工审核/u.test(overview),
+      "说了还有事，没说去哪看");
+  }
   const pages = ["proj-overview", "tg", "review", "directives", "monitor", "proj-settings"];
   const silent = pages.filter((pageId) => !/当前账号暂无可见项目/u.test(renderAs(member, baseState([], []), pageId)));
   check("一个项目都没有时，六个项目页都要说清是【没有项目】而不是项目空着",
