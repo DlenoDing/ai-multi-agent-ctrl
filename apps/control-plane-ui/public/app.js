@@ -1823,7 +1823,10 @@ function renderSysOverview() {
     panel("系统服务", table(["服务", "状态", "健康度"], services)),
     panel("维护操作", `
       <div class="stack">
-        <div class="notice warn-notice">重新初始化会将运行态重置为种子数据，仅用于本地环境排障。</div>
+        <div class="notice warn-notice">重新初始化会把运行态【整个】重置为种子数据：全部组织、项目、任务组、账号、
+          访问授权与审计记录都会消失，不可撤销、没有备份。它的用途是本地排障，但
+          <strong>生产环境同样点得动</strong> —— 服务端没有环境判据，拦住误操作的只有下一步的打字确认：
+          只要这里有人真干过活（有会话、派发、确认单或工作项超出种子），就必须原样输入当前规模才放行。</div>
         <div class="button-row"><button class="danger-button" data-action="bootstrap-init">重新初始化运行态</button></div>
       </div>
     `),

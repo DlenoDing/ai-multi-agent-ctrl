@@ -397,6 +397,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyWipeWarningMatchesTheServerGuard);
 run(verifyTimestampFieldsDeclareTheirFormat);
 run(verifyTaskGroupScopedWritesDeriveTheirProject);
 run(verifyOverlayOwnershipComesFromItsTaskGroup);
@@ -10958,6 +10959,39 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyWipeWarningMatchesTheServerGuard(output) {
+  // 界面上那段警告承诺了两件事：①生产环境同样点得动（服务端没有环境判据）；
+  // ②有人真干过活时必须打字确认。这两句一旦与服务端漂开，人就是照着一段假承诺在做决定。
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const warning = /重新初始化会把运行态[^<]{0,400}/u.exec(app)?.[0] || "";
+  if (!warning) {
+    output.push("找不到「重新初始化」那段警告 —— 这条判据的锚点漂了，它什么都没在查");
+    console.log("清空警告：锚点已漂");
+    return;
+  }
+  // ①：服务端确实没有按 executionProfile 拦这条路由。哪天加上了，这句话就得改。
+  const wipeRoute = server.slice(server.indexOf('url.pathname === "/api/bootstrap/init"'),
+    server.indexOf('url.pathname === "/api/bootstrap/init"') + 2600);
+  if (/executionProfile\s*[!=]==?\s*"production"|executionProfile\s*===\s*"verification"/u.test(wipeRoute)) {
+    output.push("界面说「生产环境同样点得动」，而服务端已经按 executionProfile 拦住了 —— "
+      + "两处漂开了：现在这句话在吓唬人，而真实行为是拒绝");
+  }
+  // ②：打字确认那道门必须还在，且仍按"有人真干过活"触发。
+  if (!wipeRoute.includes("bootstrap_init_requires_explicit_confirmation")) {
+    output.push("界面承诺「必须原样输入当前规模才放行」，而服务端那道确认门不见了 —— "
+      + "人照着这段话以为有保护，实际一点就抹掉");
+  }
+  // 只看这两个名字出现过不够 —— 变量声明留着、却没接进 hasTenantData 时它照样绿（实测）。
+  // 要查的是【它们真的参与了那个判定】。
+  const tenantDecision = /const hasTenantData = [^;]{0,300};/u.exec(wipeRoute)?.[0] || "";
+  if (!/grownCollections|grownWorkItems/u.test(tenantDecision)) {
+    output.push("界面说「有会话、派发、确认单或工作项超出种子就要确认」，而服务端已经不看这些了 —— "
+      + "退回只数三个集合的话，待在种子那一个项目里干活的团队不会被要求确认");
+  }
+  console.log("清空警告：界面那两句承诺（生产可点、有真实数据要打字确认）与服务端逐条对得上");
 }
 
 function verifyTimestampFieldsDeclareTheirFormat(output) {

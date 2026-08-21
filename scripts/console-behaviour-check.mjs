@@ -1619,6 +1619,19 @@ function runNoVisibleProjectCase() {
       /人工审核/u.test(overview),
       "说了还有事，没说去哪看");
   }
+  // 「重新初始化运行态」这个按钮就在系统管理员的落地页上，一点抹掉全部数据。
+  // 它的说明原先写着"仅用于本地环境排障"—— 而服务端【没有任何环境判据】，生产同样点得动
+  // （服务端注释自己写着这一点）。文案让人以为生产点不了，那比不写更坏。
+  {
+    const sysText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, baseState([], []), "sys-overview");
+    check("抹掉全部数据那个按钮，说明里不能暗示「生产环境点不了」",
+      !/仅用于本地环境排障/u.test(sysText),
+      "说明写着「仅用于本地环境排障」，而服务端没有环境判据 —— 人以为生产点不了，实际点得动");
+    check("要说清真正拦住误操作的是什么（打字确认），以及它在什么条件下触发",
+      /生产环境同样点得动/u.test(sysText) && /打字确认|原样输入/u.test(sysText),
+      "没说清拦住它的是下一步的打字确认，人会以为有别的保护");
+  }
   const pages = ["proj-overview", "tg", "review", "directives", "monitor", "proj-settings"];
   const silent = pages.filter((pageId) => !/当前账号暂无可见项目/u.test(renderAs(member, baseState([], []), pageId)));
   check("一个项目都没有时，六个项目页都要说清是【没有项目】而不是项目空着",

@@ -3571,6 +3571,38 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "界面说生产可点时服务端不得偷偷拦掉",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyWipeWarningMatchesTheServerGuard",
+    from: "  if (req.method === \"POST\" && url.pathname === \"/api/bootstrap/init\") {",
+    to: "  if (req.method === \"POST\" && url.pathname === \"/api/bootstrap/init\") {\n    if (executionProfile === \"production\") return json(res, 409, {error: \"not_here\"});",
+    expect: "而服务端已经按 executionProfile 拦住了"
+  },
+  {
+    name: "界面承诺的打字确认门必须真的在",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyWipeWarningMatchesTheServerGuard",
+    from: "        error: \"bootstrap_init_requires_explicit_confirmation\",",
+    to: "        error: \"bootstrap_init_needs_nothing\",",
+    expect: "那道确认门不见了"
+  },
+  {
+    name: "界面承诺看工作量时服务端不得退回只数三集合",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyWipeWarningMatchesTheServerGuard",
+    from: "      || grownCollections.length > 0 || grownWorkItems;",
+    to: "      ;",
+    expect: "服务端已经不看这些了"
+  },
+  {
+    name: "清空按钮的说明不得暗示生产点不了",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "<strong>\u751f\u4ea7\u73af\u5883\u540c\u6837\u70b9\u5f97\u52a8</strong>",
+    to: "\u4ec5\u7528\u4e8e\u672c\u5730\u73af\u5883\u6392\u969c",
+    expect: "没说清拦住它的是下一步的打字确认"
+  },
+  {
     name: "项目概览要说出别处还有多少事等人处理",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
