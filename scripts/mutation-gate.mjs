@@ -3114,6 +3114,22 @@ const MUTATIONS = [
     expect: "那条 retired 排除已经不在了"
   },
   {
+    name: "不走守卫的写路由也要留痕（否则事后完全无迹可循）",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyGuardedWritesAreAudited",
+    from: "    audit(state, \"auth-service\", \"auth_logout\"",
+    to: "    void (\"auth-service\", \"auth_logout\"",
+    expect: "既不走守卫、也不留痕"
+  },
+  {
+    name: "写路由枚举打不到时必须红（不得绿着空转）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyGuardedWritesAreAudited",
+    from: "const writeStarts = [...server.matchAll(/if \\(req\\.method === \"(?:POST|PUT|PATCH|DELETE)\"/gu)].map((m) => m.index);",
+    to: "const writeStarts = [...server.matchAll(/if \\(req\\.methodX === \"(?:POST|PUT|PATCH|DELETE)\"/gu)].map((m) => m.index);",
+    expect: "只扫到 0 条"
+  },
+  {
     name: "每一次守卫写入都要留痕（事后要答得出谁改的）",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyGuardedWritesAreAudited",

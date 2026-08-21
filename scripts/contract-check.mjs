@@ -5700,8 +5700,43 @@ function verifyGuardedWritesAreAudited(output) {
     output.push("这些守卫写入没有留下审计条目 —— 事后问「这一改是谁做的」答不出来：\n  "
       + unaudited.join("\n  "));
   }
+  // 上面只看了【走守卫的】写入。还有 12 条写路由不经 beginGuardedWrite（agent 网关用节点令牌、
+  // /api/auth/* 在登录前或自助）—— 这道门原先一条都没看它们，却报"71/71 全有审计"。
+  // 其中 5 条是【高频机器流量】：给它们留痕会把有上限的审计台账冲爆，
+  // 反而把人要看的条目挤掉（今天刚修过同形的危害）。所以不留痕是对的，但要有名有姓地登记。
+  const HIGH_FREQUENCY_NO_AUDIT = {
+    "/api/agent/v1/heartbeat": "每 10~30 秒一次；留痕会把台账冲爆，而节点在线与否看的是 lastHeartbeatAt",
+    "/api/agent/v1/self-check": "同上，周期性自检；结果落在节点记录上",
+    "/api/agent/v1/events": "执行事件本身就是流水，且已成集合；再抄进台账是重复且高频",
+    "/api/agent/v1/dispatches/next": "领活是高频轮询；认领事实记在派发记录的 claimedAt/claimEpoch 上",
+    nodeControlAck: "控制命令的【回执】；命令下发那一刻已经留痕，回执状态记在命令记录上"
+  };
+  const writeStarts = [...server.matchAll(/if \(req\.method === "(?:POST|PUT|PATCH|DELETE)"/gu)].map((m) => m.index);
+  const unguardedUnaudited = [];
+  for (const [index, start] of writeStarts.entries()) {
+    const finish = writeStarts[index + 1] ?? server.length;
+    const block = server.slice(start, finish);
+    if (/beginGuardedWrite/u.test(block)) continue;
+    if (/\baudit\(|appendAuditEntry\(/u.test(block)) continue;
+    const path = /url\.pathname === "([^"]+)"/u.exec(block)?.[1]
+      || /(\w+Match)\)/u.exec(block)?.[1]?.replace(/Match$/u, "")
+      || `第 ${server.slice(0, start).split("\n").length} 行`;
+    if (HIGH_FREQUENCY_NO_AUDIT[path]) continue;
+    unguardedUnaudited.push(path);
+  }
+  if (writeStarts.length < 60) {
+    output.push(`写路由只扫到 ${writeStarts.length} 条（应至少 60）—— 提取形状与代码脱节，本条在空转`);
+    return;
+  }
+  if (unguardedUnaudited.length) {
+    output.push("这些写路由既不走守卫、也不留痕 —— 事后完全无迹可循：\n  "
+      + unguardedUnaudited.join("\n  ")
+      + "\n  要么留痕，要么登记进 HIGH_FREQUENCY_NO_AUDIT 并写明为什么（台账有上限，高频写入会把人要看的挤掉）");
+  }
   console.log(`守卫写入留痕：${guards.length} 处逐个核对（按路由归并 ${seenRoutes.size} 条），`
-    + `${unaudited.length} 处没有 audit（应为 0）`);
+    + `${unaudited.length} 处没有 audit（应为 0）；另有 ${writeStarts.length} 条写路由整体核对，`
+    + `${unguardedUnaudited.length} 条既不走守卫也不留痕（应为 0；`
+    + `${Object.keys(HIGH_FREQUENCY_NO_AUDIT).length} 条登记为高频机器流量）`);
 }
 
 function verifyWhitelistRefusalsCarryTheWhitelist(output) {
