@@ -41,6 +41,10 @@ export const KNOWN_SECOND_DOORS = {
     + "为真时 normalizeInvitedAccount 已提前返回。真正拦住越权邀请的是按系统作用域判权那道"
     + "（doctor 里有 403 policy_denied 的断言）。留着它是为两处口径漂开的那天，"
     + "「必须共用同一个谓词」由 verifyInviteEscalationGuardsShareOnePredicate 钉着",
+    agent_runtime_executor_manifest_outside_allowlist:
+    "gitOutputPaths = changedPaths ∪ artifactManifestRefs，所以清单路径先在【产出】那个循环里被查到，"
+    + "agent_runtime_executor_output_outside_allowlist 先拒（实测）。两道判据逐字相同，"
+    + "留着它是防将来两个集合分开算的那天",
     execution_topology_requires_runner_and_isolation:
     "载体/隔离为 none 现在是资格检查阶段的阻塞项（2026-08-21 修正：原先只对多分支报，单分支方案会白定稿一场），"
     + "有阻塞项就不挂人工定稿单，start 先撞 execution_topology_requires_human_plan_confirmation；"

@@ -346,6 +346,7 @@ run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
+run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
 run(verifyExecutionTopologyStateMachineRefusesBadTransitions);
 run(verifyGateAssertionsMatchWholeRefusalCodes);
@@ -8847,7 +8848,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
   // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
   // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 34;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 29;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
@@ -10530,6 +10531,142 @@ function verifyLocalGitWorkerRefusesUnsafeRepositoryState(output) {
     rmSync(workspace, {recursive: true, force: true});
   }
   console.log("本地 git 工作器：工作树不干净/产出越界/清单越界 三种形状全拒，正常情形跑得完 —— 核过");
+}
+
+function verifyExecutorBackedWorkerRefusesUnsafeOutput(output) {
+  // 外部执行器（真正跑 agent 的那条路）的安全边界此前整族【零覆盖】。它比本地工作器更危险：
+  // 输出内容由外部进程说了算，控制面只能靠这几道门核对"它说改了什么"与"git 里真的改了什么"。
+  const workspace = mkdtempSync(join(tmpdir(), "cc-executor-"));
+  const previousCommand = process.env.AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND;
+  try {
+    const repo = join(workspace, "repo");
+    const remote = join(workspace, "remote");
+    mkdirSync(repo, {recursive: true});
+    execFileSync("git", ["init", "--bare", "-q", remote]);
+    const git = (...args) => execFileSync("git", args, {cwd: repo, encoding: "utf8"}).trim();
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "contract@local");
+    git("config", "user.name", "contract");
+    mkdirSync(join(repo, "docs"), {recursive: true});
+    writeFileSync(join(repo, "docs/readme.md"), "base\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    git("remote", "add", "origin", remote);
+    git("push", "-q", "origin", "HEAD:refs/heads/main");
+    const baseline = git("rev-parse", "HEAD");
+    const reset = () => {
+      execFileSync("git", ["reset", "-q", "--hard", baseline], {cwd: repo});
+      execFileSync("git", ["clean", "-qfd"], {cwd: repo});
+      execFileSync("git", ["push", "-q", "-f", "origin", `${baseline}:refs/heads/main`], {cwd: repo});
+    };
+
+    // 一个假执行器：写出它被要求写的文件，然后按参数打印一份（可能撒谎的）JSON。
+    const fakeExecutor = join(workspace, "executor.mjs");
+    // 假执行器：读 stdin 拿到绑定信息，写出文件，然后按 mode 打印一份（可能撒谎的）JSON。
+    // 它必须【如实声明自己写过的每一个文件】—— 否则先撞 undeclared_changes 那道门，
+    // 测到的就不是"产出越界"而是"漏报改动"（第一版正是这样，两个用例都测错了门）。
+    writeFileSync(fakeExecutor, [
+      'import {mkdirSync, writeFileSync, readFileSync} from "node:fs";',
+      'import {dirname, join} from "node:path";',
+      'const input = JSON.parse(readFileSync(0, "utf8"));',
+      'const mode = process.env.CC_EXECUTOR_MODE || "ok";',
+      'if (mode === "not_json") { process.stdout.write("这不是 JSON"); process.exit(0); }',
+      'const written = [];',
+      'const write = (rel, body) => {',
+      '  mkdirSync(dirname(join(process.cwd(), rel)), {recursive: true});',
+      '  writeFileSync(join(process.cwd(), rel), body);',
+      '  written.push(rel);',
+      '};',
+      // 清单要带全套绑定字段，否则每个用例都先撞 artifact_manifest_binding_mismatch。
+      'const manifest = (rel) => write(rel, JSON.stringify({',
+      '  schemaVersion: "artifact-manifest/v1",',
+      '  projectId: input.projectId, taskGroupId: input.taskGroupId, workId: input.workId,',
+      '  sessionId: input.sessionId, taskContractDigest: input.taskContract?.contractDigest,',
+      '  repositoryOutputTargetRefs: [input.repositoryOutputTarget?.targetId],',
+      '  outputRefs: [outputPath], outputPolicy: "project_git_repository_only",',
+      '  createdAt: new Date().toISOString()',
+      '}));',
+      'const outputPath = mode === "output_outside" ? "spec/sneaked.md" : "docs/executor-output.md";',
+      'const manifestPath = mode === "manifest_outside" ? "spec/sneaked.json" : "docs/executor-manifest.json";',
+      'write(outputPath, `# 执行器产出\\n${mode}\\n`);',
+      'manifest(manifestPath);',
+      'process.stdout.write(JSON.stringify({',
+      '  gitOutputRefs: [outputPath],',
+      '  artifactManifestRefs: mode === "no_manifest" ? [] : [manifestPath],',
+      '  changedPaths: written',
+      '}));'
+    ].join("\n"));
+    process.env.AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND = `node ${JSON.stringify(fakeExecutor)}`;
+
+    const build = (tune = () => {}) => {
+      const st = structuredClone(seedState);
+      st.runtime = {...(st.runtime || {}), executionProfile: "verification"};
+      ensureRuntimeCollections(st, {root: repo});
+      const taskGroup = st.taskGroups.find((item) => item.id === "tg_runtime_management");
+      const workItem = taskGroup.workItems[0];
+      workItem.status = "assigned";
+      const target = st.repositoryOutputs.find((item) => item.taskGroupId === taskGroup.id) || st.repositoryOutputs[0];
+      target.taskGroupId = taskGroup.id;
+      target.workItemId = workItem.id;
+      target.pathAllowlist = ["docs/**"];
+      target.artifactManifestPath = "docs/executor-manifest.json";
+      target.repositoryUrl = remote;
+      target.baseRef = execFileSync("git", ["rev-parse", "HEAD"], {cwd: repo, encoding: "utf8"}).trim();
+      st.workSessions = [{sessionId: "ws_exec", taskGroupId: taskGroup.id, projectId: taskGroup.projectId,
+        workItemId: workItem.id, status: "active"}];
+      st.agentDispatches = [{dispatchId: "dsp_exec", sessionId: "ws_exec", runId: "run_exec",
+        taskGroupId: taskGroup.id, projectId: taskGroup.projectId, workItemId: workItem.id,
+        repositoryOutputTargetRef: target.targetId, status: "queued", requiredCredentialEnvNames: []}];
+      st.agentTaskContracts = [{sessionId: "ws_exec", runId: "run_exec", projectId: taskGroup.projectId,
+        taskGroupId: taskGroup.id, workId: workItem.id, roleId: "agent-runtime", roleSkill: {}, actionBasis: {}}];
+      const lease = {leaseId: "lease_exec", resourceRef: `RepositoryOutputTarget:${target.targetId}`,
+        holderRef: "session:ws_exec", status: "active", fencingToken: 1,
+        acquiredAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString()};
+      st.leases = [lease];
+      target.leaseRef = lease.leaseId;
+      tune({state: st, taskGroup, workItem, target});
+      return st;
+    };
+    const runOnce = (mode, tune) => {
+      process.env.CC_EXECUTOR_MODE = mode;
+      const st = build(tune);
+      const result = runAgentRuntimeWorker(st, {root: repo, repositoryRoot: repo, maxJobs: 1});
+      return (result.results || [])[0] || {};
+    };
+
+    const okRun = runOnce("ok");
+    if (okRun.status !== "completed") {
+      output.push(`外部执行器: 一份合规的执行结果也没被接受（${okRun.status}/${okRun.reason}）—— 下面几条测不出任何东西`);
+    }
+    reset();
+
+    const cases = [
+      ["执行器吐的不是 JSON", "agent_runtime_executor_output_not_json", "not_json", () => {}],
+      ["执行器不给产出清单", "agent_runtime_executor_missing_artifact_manifest_refs", "no_manifest", () => {}],
+      ["执行器把产出写到白名单之外", "agent_runtime_executor_output_outside_allowlist", "output_outside", () => {}],
+      // 清单越界撞的是【产出】那道：gitOutputPaths 已经并入了 artifactManifestRefs，
+      // 所以清单路径先在产出循环里被查到。manifest_outside_allowlist 因此够不着（已登记）。
+      ["执行器把清单写到白名单之外", "agent_runtime_executor_output_outside_allowlist", "manifest_outside", () => {}],
+      ["执行前工作树就不干净", "agent_runtime_executor_requires_clean_worktree", "ok", () => {
+        writeFileSync(join(repo, "docs/someone-elses-work.md"), "别人还没提交的改动\n");
+      }],
+      ["会话上没有任务合同", "task_contract_missing_for_executor", "ok", ({state}) => { state.agentTaskContracts = []; }]
+    ];
+    for (const [what, expected, mode, tune] of cases) {
+      const got = runOnce(mode, tune);
+      if (got.reason !== expected) {
+        output.push(`外部执行器: ${what}时拿到的不是 ${expected}（实际 ${got.reason || got.status}）—— `
+          + "控制面只能靠这几道门核对「它说改了什么」与「git 里真的改了什么」");
+      }
+      reset();
+    }
+  } finally {
+    if (previousCommand === undefined) delete process.env.AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND;
+    else process.env.AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND = previousCommand;
+    delete process.env.CC_EXECUTOR_MODE;
+    rmSync(workspace, {recursive: true, force: true});
+  }
+  console.log("外部执行器：非 JSON/无清单/产出越界/清单越界(撞产出那道)/工作树脏/无任务合同 六种形状全拒，合规结果照收 —— 核过");
 }
 
 function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {

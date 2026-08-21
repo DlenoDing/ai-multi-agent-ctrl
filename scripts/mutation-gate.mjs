@@ -3385,6 +3385,46 @@ const MUTATIONS = [
     expect: "指名给别人的令牌拿到的不是 join_token_node_name_mismatch"
   },
   {
+    name: "没有任务合同的会话不得跑执行器",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutorBackedWorkerRefusesUnsafeOutput",
+    from: "  if (!contract) throw new Error(\"task_contract_missing_for_executor\");",
+    to: "  if (!contract) return {ok: true};",
+    expect: "task_contract_missing_for_executor"
+  },
+  {
+    name: "执行器启动前工作树必须干净",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutorBackedWorkerRefusesUnsafeOutput",
+    from: "  if (gitStatusPaths(root).length) throw new Error(\"agent_runtime_executor_requires_clean_worktree\");",
+    to: "  if (false) throw new Error(\"agent_runtime_executor_requires_clean_worktree\");",
+    expect: "agent_runtime_executor_requires_clean_worktree"
+  },
+  {
+    name: "执行器吐的不是 JSON 时必须拒",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutorBackedWorkerRefusesUnsafeOutput",
+    from: "    throw new Error(\"agent_runtime_executor_output_not_json\");",
+    to: "    output = {};",
+    expect: "agent_runtime_executor_output_not_json"
+  },
+  {
+    name: "执行器必须交出产出清单",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutorBackedWorkerRefusesUnsafeOutput",
+    from: "  if (!Array.isArray(output.artifactManifestRefs) || output.artifactManifestRefs.length === 0) throw new Error(\"agent_runtime_executor_missing_artifact_manifest_refs\");",
+    to: "  if (false) throw new Error(\"agent_runtime_executor_missing_artifact_manifest_refs\");",
+    expect: "agent_runtime_executor_missing_artifact_manifest_refs"
+  },
+  {
+    name: "执行器的产出必须落在白名单内",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutorBackedWorkerRefusesUnsafeOutput",
+    from: "    if (!canUseGitPath(outputPath) || !pathMatchesAllowlist(outputPath, target.pathAllowlist || [])) throw new Error(\"agent_runtime_executor_output_outside_allowlist\");",
+    to: "    if (false) throw new Error(\"agent_runtime_executor_output_outside_allowlist\");",
+    expect: "agent_runtime_executor_output_outside_allowlist"
+  },
+  {
     name: "工作树不干净时不得替人提交",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyLocalGitWorkerRefusesUnsafeRepositoryState",
