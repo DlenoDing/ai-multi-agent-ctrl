@@ -126,7 +126,15 @@
     independent_deliverables: "分支缺少可独立交付的目标",
     final_validation_available: "分支没有声明任何验收项",
     result_bundle_contract: "分支的结果包契约不完整",
-    runner_isolated: "并行方案缺少真正的隔离边界",
+    // 2026-08-22：这条不再只对并行报 —— 载体/隔离为 none 的单分支方案同样启动不了，
+    // 阻塞项要在资格检查阶段就说出来（原先只对多分支报，人会白定稿一场）。文案跟着改准。
+    runner_isolated: "方案没有指明执行载体或隔离方式",
+    // 阻塞项的【尾段】此前一个中文都没有，人看到的是「（b_api · no_acceptance_checks）」。
+    // 这些码由 topologyBlockerText 逐段走词表，查不到就原样打出来。
+    no_acceptance_checks: "这个分支一条验收项都没写",
+    missing_objective: "这个分支没写要达成什么",
+    incomplete: "产出契约填得不全（至少要四项）",
+    runner_or_isolation_none: "载体或隔离方式填的是「none」",
     runner_handle_uncertain: "执行载体状态未知，需要人工核对",
     blocking_derived_task_request: "被一条派生任务请求挡住",
     checkpoint_commit_has_no_changed_paths: "检查点提交没有任何改动路径",

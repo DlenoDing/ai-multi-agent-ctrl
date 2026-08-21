@@ -3561,6 +3561,30 @@ const MUTATIONS = [
     expect: "还能被 AI 追加分析"
   },
   {
+    name: "阻塞项的英文尾码必须翻成人话",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    .map((part) => (Object.prototype.hasOwnProperty.call(dict, part) ? t(part) : part))",
+    to: "    .map((part) => part)",
+    expect: "不能出现英文尾码"
+  },
+  {
+    name: "阻塞项里的分支 id 不得被翻掉",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const detail = rest.filter(Boolean)\n    .map((part) => (Object.prototype.hasOwnProperty.call(dict, part) ? t(part) : part))\n    .join(\" \u00b7 \");",
+    to: "  const detail = \"\";",
+    expect: "分支 id 不见了"
+  },
+  {
+    name: "阻塞项尾码没中文要被门查出来",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyTopologyBlockerPartsAllHaveChinese",
+    from: "    if (!branch.objective) blockers.push(`independent_deliverables:${branch.branchId}:missing_objective`);",
+    to: "    if (!branch.objective) blockers.push(`independent_deliverables:${branch.branchId}:brand_new_reason`);",
+    expect: "尾码没有中文"
+  },
+  {
     name: "方案必须挂在一件真实工作项上",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyExecutionTopologyStateMachineRefusesBadTransitions",

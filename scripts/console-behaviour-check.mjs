@@ -1466,6 +1466,41 @@ function runNoVisibleProjectCase() {
     loadConsole(root, {realI18n: true}).renderFullPageWith(state, account, projectId, pageId);
     return String(root.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
   };
+  // 方案卡住时，人在监控页读到的"卡在这几项"必须是中文。阻塞项是 kind:分支:尾码 三段式，
+  // 尾段（no_acceptance_checks 之类）此前一个中文都没有 —— 而它正是唯一说明原因的那一段。
+  // 漏译扫描发现不了这类：它只在【渲染到】那一屏时才查得到，而三份基础状态里都没有执行拓扑。
+  {
+    const stuckState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development",
+        workItems: [{id: "wi1", title: "并行改造", status: "assigned", ownerRole: "agent-runtime", progress: 20}]}],
+      executionTopologies: [{
+        schemaVersion: "execution-topology/v1", topologyId: "topo1", projectId: "p1", taskGroupId: "tg1",
+        workItemId: "wi1", status: "blocked", mode: "parallel_active",
+        runnerKind: "none", isolation: "none", mergePolicy: "parent_serial_after_all_required_reported",
+        groups: [{groupId: "g1", branches: [{branchId: "b_api", objective: "", status: "queued",
+          ownedPaths: [], acceptanceChecks: [], outputContract: []}]}],
+        blockers: ["runner_isolated:topo1:runner_or_isolation_none",
+          "final_validation_available:b_api:no_acceptance_checks"],
+        baseSnapshot: {stateVersion: 1, gitHead: "abc1234"},
+        createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z"
+      }],
+      humanConfirmationRequests: [], humanDirectives: [], agentDispatches: [], workSessions: [],
+      closeBarriers: [], qualityGates: [], findings: [], permissionRequests: [], approvalRequests: [],
+      truncatedCollections: []
+    };
+    const stuckText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, stuckState, "monitor", "p1");
+    check("方案卡住时，「卡在这几项」里每一段都要是人话，不能出现英文尾码",
+      /载体或隔离方式填的是/u.test(stuckText) && /一条验收项都没写/u.test(stuckText)
+        && !/runner_or_isolation_none|no_acceptance_checks/u.test(stuckText),
+      `人读到的是：${(/卡在这几项：([^<]{0,160})/u.exec(stuckText) || [])[1] || "（这一屏根本没渲染出来）"}`);
+    // 中间那段是数据（分支 id），必须【原样】留着 —— 它是人定位到哪个分支的唯一线索。
+    check("阻塞项里的分支 id 要原样显示，不要被当成枚举翻译掉",
+      /b_api/u.test(stuckText),
+      "分支 id 不见了 —— 人知道「有个分支没写验收项」，却不知道是哪一个");
+  }
   const pages = ["proj-overview", "tg", "review", "directives", "monitor", "proj-settings"];
   const silent = pages.filter((pageId) => !/当前账号暂无可见项目/u.test(renderAs(member, baseState([], []), pageId)));
   check("一个项目都没有时，六个项目页都要说清是【没有项目】而不是项目空着",
@@ -3743,6 +3778,42 @@ await runCodedApiErrorCase();
     }],
     humanDirectives: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [],
     findings: [], permissionRequests: [], approvalRequests: [], truncatedCollections: []
+  }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"}, "p1"]);
+  // 执行方案的阻塞项此前【从没被渲染过】：三份基础状态里都没有 executionTopologies，
+  // 于是 topologyBlockerText 那一族值不在扫描面里 —— 扫描报"未命中 0 个"，而真实情况是
+  // 那几个尾码一个中文都没有（2026-08-22 实测：no_acceptance_checks / missing_objective /
+  // incomplete / runner_or_isolation_none 全是英文，人看到的是「（b_api · no_acceptance_checks）」）。
+  // 这份状态把那一屏也渲染出来，让扫描真的查得到它。
+  i18nScanStates.push(["卡住的执行方案", {
+    schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development",
+      workItems: [{id: "wi1", title: "并行改造", status: "assigned", ownerRole: "agent-runtime", progress: 20}]}],
+    executionTopologies: [{
+      schemaVersion: "execution-topology/v1", topologyId: "topo1", projectId: "p1", taskGroupId: "tg1",
+      // 状态必须是可终止的那四种之一（TOPOLOGY_CANCELLABLE），否则这一屏根本不渲染，
+      // 扫描会报"未命中 0 个"而其实一个字都没查到（第一版写 eligibility_checked，实测就是这样）。
+      workItemId: "wi1", status: "blocked", mode: "parallel_active",
+      runnerKind: "none", isolation: "none", mergePolicy: "parent_serial_after_all_required_reported",
+      groups: [{groupId: "g1", branches: [
+        {branchId: "b_api", objective: "", status: "queued", ownedPaths: [], acceptanceChecks: [], outputContract: []},
+        {branchId: "b_ui", objective: "UI", status: "queued", ownedPaths: ["apps/ui/**"], acceptanceChecks: ["npm test"],
+          outputContract: ["a", "b", "c", "d"]}
+      ]}],
+      // 五种尾码各来一条：这正是人在"方案为什么跑不了"那一刻会读到的整屏。
+      blockers: [
+        "runner_isolated:topo1:runner_or_isolation_none",
+        "independent_deliverables:b_api:missing_objective",
+        "final_validation_available:b_api:no_acceptance_checks",
+        "result_bundle_contract:b_api:incomplete",
+        "owned_paths_disjoint:b_ui:wrote_apps/api/x.txt"
+      ],
+      baseSnapshot: {stateVersion: 1, gitHead: "abc1234"},
+      createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z"
+    }],
+    humanConfirmationRequests: [], humanDirectives: [], agentDispatches: [], workSessions: [],
+    closeBarriers: [], qualityGates: [], findings: [], permissionRequests: [], approvalRequests: [],
+    truncatedCollections: []
   }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"}, "p1"]);
   // 上面几份状态只覆盖到 5 个页面：量过每页触发的 t() 次数，14 页里有 9 页只有外壳那 38 次，
   // 等于它们的枚举值从没被渲染过（定稿页的 revise 就是这么漏掉的）。

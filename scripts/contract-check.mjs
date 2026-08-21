@@ -348,6 +348,7 @@ run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
+run(verifyTopologyBlockerPartsAllHaveChinese);
 run(verifyExecutionTopologyStateMachineRefusesBadTransitions);
 run(verifyGateAssertionsMatchWholeRefusalCodes);
 run(verifyInviteEscalationGuardsShareOnePredicate);
@@ -10830,6 +10831,36 @@ function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {
     }
   }
   console.log("人机协同入口：空问题/空选项/无项目/空指令/卡上没有的选项/空分析/迟到的分析 七种形状全拒，正常输入照收 —— 核过");
+}
+
+function verifyTopologyBlockerPartsAllHaveChinese(output) {
+  // 执行方案的阻塞项是 `kind:分支或id:尾码` 三段式，界面按段查词表。kind 段一直有中文，
+  // 【尾段一个都没有】—— 人看到的是「（b_api · no_acceptance_checks）」，在"方案为什么跑不了"
+  // 这一刻甩给他一个英文标识符。按源码枚举尾码（权威来源就是产生它们的那几行），逐个核对。
+  const core = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const dict = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
+  const tails = new Set();
+  // 形状一：`kind:${...}:tail`（尾段是字面量）。
+  for (const match of core.matchAll(/`([a-z][a-z0-9_]*):\$\{[^}]*\}:([a-z][a-z0-9_]{3,})`/gu)) tails.add(match[2]);
+  // 形状二：`kind:tail`（中间没有 id 段），只取两段都是字面量的。
+  for (const match of core.matchAll(/blockers\.push\(`([a-z][a-z0-9_]*):([a-z][a-z0-9_]{3,})`\)/gu)) tails.add(match[2]);
+  if (tails.size < 4) {
+    output.push(`只提取到 ${tails.size} 个阻塞项尾码（至少有 no_acceptance_checks / missing_objective / `
+      + "incomplete / runner_or_isolation_none 四个）—— 这条判据的正则形状没对上，它现在几乎没在查");
+  }
+  const missing = [...tails].filter((tail) => !new RegExp(`^\\s{4}${tail}:`, "mu").test(dict)).sort();
+  if (missing.length) {
+    output.push(`执行方案阻塞项的尾码没有中文：${missing.join("、")} —— `
+      + "人在「这个方案为什么跑不了」这一刻看到的是一串英文标识符，而它正是唯一说明原因的那一段");
+  }
+  // kind 段同样要有中文（它一直有，这里把两段一起钉住，免得将来加了新 kind 只补尾码）。
+  const kinds = new Set();
+  for (const match of core.matchAll(/blockers(?:\.push\(|[^\n]{0,40}unique\(\[[^\]]{0,80})`([a-z][a-z0-9_]*):/gu)) kinds.add(match[1]);
+  const missingKinds = [...kinds].filter((kind) => !new RegExp(`^\\s{4}${kind}:`, "mu").test(dict)).sort();
+  if (missingKinds.length) {
+    output.push(`执行方案阻塞项的类别没有中文：${missingKinds.join("、")}`);
+  }
+  console.log(`执行方案阻塞项：${kinds.size} 个类别 + ${tails.size} 个尾码逐个核对，都有中文`);
 }
 
 function verifyExecutionTopologyStateMachineRefusesBadTransitions(output) {

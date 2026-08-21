@@ -3180,7 +3180,16 @@ function workItemExitHint(workItem) {
 // 又等于没说 —— 按种类翻成中文，后面跟上分支与细节（它们是 id 与路径，本来就该原样给）。
 function topologyBlockerText(blocker) {
   const [kind, ...rest] = String(blocker).split(":");
-  const detail = rest.filter(Boolean).join(" · ");
+  // 尾段也要走词表：这几类阻塞项的最后一段是英文蛇形码（no_acceptance_checks 之类），
+  // 原样打出来等于在"方案为什么跑不了"这一刻甩给人一个标识符。
+  // 但中间段是【数据】（分支 id、路径），不是枚举 —— 对它们调 t() 会让漏译扫描把 b_api
+  // 这种 id 报成"缺中文"。所以只翻译词表里确实有的那些段，其余原样。
+  // 「尾码必须有中文」由契约门按源码枚举核对（verifyTopologyBlockerPartsAllHaveChinese），
+  // 那才是权威来源 —— 这里不承担发现漏译的职责。
+  const dict = I18N.dict || {};
+  const detail = rest.filter(Boolean)
+    .map((part) => (Object.prototype.hasOwnProperty.call(dict, part) ? t(part) : part))
+    .join(" · ");
   const label = t(kind);
   return detail ? `${label}（${detail}）` : label;
 }
