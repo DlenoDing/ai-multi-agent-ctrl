@@ -3171,6 +3171,30 @@ const MUTATIONS = [
     expect: "本条在空转"
   },
   {
+    name: "高频免留痕登记要有过期校验",
+    file: "scripts/contract-check.mjs",
+    check: "verifyGuardedWritesAreAudited",
+    from: "  const staleExcuses = Object.keys(HIGH_FREQUENCY_NO_AUDIT).filter((path) => !excused.has(path));",
+    to: "  const staleExcuses = Object.keys(HIGH_FREQUENCY_NO_AUDIT).filter((path) => !excused.has(path) || true);",
+    expect: "登记要摘掉"
+  },
+  {
+    name: "同步豁免登记指向的判据函数必须还在",
+    file: "scripts/contract-check.mjs",
+    check: "verifyGatesDoNotCloneFromTheNetwork",
+    from: "    verifySkillSourceRetireCascades:",
+    to: "    verifySkillSourceRetireCascadesGone:",
+    expect: "登记过期了"
+  },
+  {
+    name: "白名单免列登记的前缀必须还真的出现在被测代码里",
+    file: "scripts/contract-check.mjs",
+    check: "verifyWhitelistRefusalsCarryTheWhitelist",
+    from: '    "Unknown tool: ": "工具表 85 个',
+    to: '    "Unknown toolX: ": "工具表 85 个',
+    expect: "登记过期了"
+  },
+  {
     name: "登记为「只给机器看」的字段，界面一旦读了就该摘登记",
     file: "scripts/contract-check.mjs",
     check: "verifyServerFieldsReachThePerson",

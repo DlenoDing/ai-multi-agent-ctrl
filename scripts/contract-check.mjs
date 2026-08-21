@@ -6290,6 +6290,7 @@ function verifyGuardedWritesAreAudited(output) {
   };
   const writeStarts = [...server.matchAll(/if \(req\.method === "(?:POST|PUT|PATCH|DELETE)"/gu)].map((m) => m.index);
   const unguardedUnaudited = [];
+  const excused = new Set();
   for (const [index, start] of writeStarts.entries()) {
     const finish = writeStarts[index + 1] ?? server.length;
     const block = server.slice(start, finish);
@@ -6298,8 +6299,15 @@ function verifyGuardedWritesAreAudited(output) {
     const path = /url\.pathname === "([^"]+)"/u.exec(block)?.[1]
       || /(\w+Match)\)/u.exec(block)?.[1]?.replace(/Match$/u, "")
       || `第 ${server.slice(0, start).split("\n").length} 行`;
-    if (HIGH_FREQUENCY_NO_AUDIT[path]) continue;
+    if (HIGH_FREQUENCY_NO_AUDIT[path]) { excused.add(path); continue; }
     unguardedUnaudited.push(path);
+  }
+  // 过期校验：登记的路由后来加了留痕、改了路径或被删掉之后，条目还留着 ——
+  // 清单会变成一份"这些高频路由不留痕"的错误说明，而且会替将来同路径的新写入永久豁免。
+  const staleExcuses = Object.keys(HIGH_FREQUENCY_NO_AUDIT).filter((path) => !excused.has(path));
+  if (staleExcuses.length) {
+    output.push(`HIGH_FREQUENCY_NO_AUDIT 里这几条已经不是"无留痕的写路由"了（加了留痕、改了路径或没了），`
+      + `登记要摘掉：${staleExcuses.join("、")}`);
   }
   if (writeStarts.length < 60) {
     output.push(`写路由只扫到 ${writeStarts.length} 条（应至少 60）—— 提取形状与代码脱节，本条在空转`);
@@ -6324,6 +6332,8 @@ function verifyWhitelistRefusalsCarryTheWhitelist(output) {
   const WHITELIST_TOO_LARGE_TO_INLINE = {
     "Unknown tool: ": "工具表 85 个，列进报错没有意义；MCP 客户端拿工具表的正规入口是 tools/list"
   };
+  // 过期校验见下（要等 files 定下来才扫得了）。
+
   // 分母要是【被测面的全部】：第一版只列了四个文件，而状态机引擎与存储层里也有白名单式拒绝
   //（transition-engine 的 unknown_from_state / unknown_to_state 当时正是不带白名单的）。
   // "N/N 全通过"里的 N 是门自己定义的 —— 漏了一整族，从绿色输出里看不出来。
@@ -6333,6 +6343,15 @@ function verifyWhitelistRefusalsCarryTheWhitelist(output) {
     "apps/control-plane-ui/lib/project-event-store.mjs", "apps/agent-runtime/runtime.mjs"];
   let scanned = 0;
   const bare = [];
+  {
+    const allSources = files.map((file) => readFileSync(join(root, file), "utf8")).join("\n");
+    for (const prefix of Object.keys(WHITELIST_TOO_LARGE_TO_INLINE)) {
+      if (!allSources.includes(prefix)) {
+        output.push(`WHITELIST_TOO_LARGE_TO_INLINE 登记了「${prefix}」，而被测源码里已经没有这句话 —— `
+          + "登记过期了；留着等于给将来同前缀的新拒绝发一张免死金牌");
+      }
+    }
+  }
   for (const file of files) {
     const source = readFileSync(join(root, file), "utf8").replace(/\/\/[^\n]*/gu, (t) => " ".repeat(t.length));
     // 认不出【自定义错误类】与【模板串报文】的话，分母会少一整族：
@@ -6500,6 +6519,16 @@ function verifyGatesDoNotCloneFromTheNetwork(output) {
       "里面的自愈冻结那一段要的就是【同步失败】本身：它靠一次真实的技能源同步失败触发，"
       + "关掉就没有被测对象了（那次同步会立刻失败，不产生网络克隆）"
   };
+  // 过期校验：登记的是【判据函数名】。函数改名或删掉之后条目还留着，清单就指向了不存在的东西，
+  // 而且会替将来同名的新判据默默放行（本会话光是重命名就打断过两条变异锚点）。
+  {
+    const self = readFileSync(join(root, "scripts/contract-check.mjs"), "utf8");
+    for (const owner of Object.keys(MUST_REALLY_SYNC)) {
+      if (!self.includes(`function ${owner}(`)) {
+        output.push(`MUST_REALLY_SYNC 登记了 ${owner}，而本文件里没有这个判据函数 —— 登记过期了`);
+      }
+    }
+  }
   const walk = (dir) => readdirSync(dir).flatMap((name) => {
     const full = join(dir, name);
     if (name === "node_modules") return [];
