@@ -11,7 +11,15 @@ const seedPath = join(root, "data", "seed-state.json");
 const repositoryRoot = resolve(process.env.AIMAC_REPOSITORY_ROOT || root);
 const executionProfile = process.env.AIMAC_EXECUTION_PROFILE || "production";
 // 参数名打错不能当成没给：--source 打错就静默同步默认那个源，人以为自己同步的是另一个。
-const unknownFlags = process.argv.slice(2).filter((arg) => !arg.startsWith("--source="));
+// `--help` 是任何人敲的第一件事。此前它被当成打错的参数拒掉（非零退出、报错口吻）——
+// 该说的内容本来就在下面那段里，只是以"你做错了"的姿态给出。同样的话，问的时候就该给。
+const wantsHelp = process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h");
+if (wantsHelp) {
+  console.log("用法：npm run skills:sync [-- --source=<技能源 id>]");
+  console.log("  · 认得的参数：--source=<技能源 id>（不给则用 agency-agents-zh）");
+  process.exit(0);
+}
+const unknownFlags = process.argv.slice(2).filter((arg) => !arg.startsWith("--source=") && arg !== "--help" && arg !== "-h");
 if (unknownFlags.length) {
   console.error(`sync-agent-skills: 认不出这些参数：${unknownFlags.join(" ")}`);
   console.error("  · 认得的参数：--source=<技能源 id>（不给则用 agency-agents-zh）");

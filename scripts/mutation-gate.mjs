@@ -4004,6 +4004,16 @@ const MUTATIONS = [
     expect: "出口要说清装什么"
   },
   {
+    // 七个运维入口此前都把 --help 当成打错的参数拒掉（非零退出、报错口吻），
+    // 而认得的参数就写在那段拒绝文案里。拿掉任一处的 --help 分支都要红。
+    name: "运维入口必须答得上 --help",
+    file: "scripts/backup-runtime.mjs",
+    check: "verifyOperatorCliRejectsUnknownFlags",
+    from: 'const wantsHelp = process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h");',
+    to: "const wantsHelp = false;",
+    expect: "不认 --help"
+  },
+  {
     // 装 agent 是运维敲的第一条命令：文档写了脚本不认的参数＝照着做立刻失败。
     name: "文档不得写脚本并不认的装机参数",
     file: "docs/agent-runtime-protocol.md",

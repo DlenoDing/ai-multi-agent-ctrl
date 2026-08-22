@@ -10207,6 +10207,19 @@ function verifyOperatorCliRejectsUnknownFlags(output) {
     "scripts/start.sh": {rejects: true, why: "本地起控制面"},
     "scripts/docker-up.sh": {rejects: false, why: "参数原样透传给 docker compose up --build"}
   };
+  // `--help` 是任何人敲的第一件事。六个运维入口此前都把它当成【打错的参数】拒掉：
+  // 非零退出、报错口吻，而该说的内容本来就在那段拒绝文案里。同样的话，问的时候就该给。
+  // 判据只看形状：入口里要有 `--help` 这个分支（六处现在都有）。
+  for (const path of [...Object.keys(OPERATOR_CLIS), ...Object.keys(SHELL_ENTRIES)]) {
+    // 参数原样透传的那个例外：--help 本来就该由被透传的命令（docker compose）自己回答，
+    // 在这里拦下来反而是把人挡在真正的帮助前面。
+    if (SHELL_ENTRIES[path] && SHELL_ENTRIES[path].rejects === false) continue;
+    const text = readFileSync(resolve(root, path), "utf8");
+    if (!/--help/u.test(text)) {
+      output.push(`${path} 不认 --help —— 人问「这个命令怎么用」时收到的是一句"你参数打错了"，`
+        + "而认得的参数就写在那段拒绝文案里；同样的话，问的时候就该给");
+    }
+  }
   for (const [path, entry] of Object.entries(SHELL_ENTRIES)) {
     if (!entry.rejects) continue;
     if (!readFileSync(resolve(root, path), "utf8").includes("认不出这个参数")) {

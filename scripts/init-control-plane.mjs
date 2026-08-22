@@ -17,6 +17,15 @@ const executionProfile = process.env.AIMAC_EXECUTION_PROFILE || "production";
 // 参数名打错不能当成没给：--check 打错就跳过只读分支【真的去初始化】——
 // 人想做一次探查，结果写了运行时状态和配置。认不出的一律拒绝，不猜。
 const KNOWN_FLAGS = ["--force", "--check"];
+// `--help` 是任何人敲的第一件事。此前它被当成打错的参数拒掉（非零退出、报错口吻）——
+// 该说的内容本来就在下面那段里，只是以"你做错了"的姿态给出。同样的话，问的时候就该给。
+const wantsHelp = process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h");
+if (wantsHelp) {
+  console.log("用法：npm run init [-- --check | --force]");
+  console.log(`  · 认得的参数：${KNOWN_FLAGS.join(" ")}`);
+  console.log("  · --check 只读探查，不写运行时状态与配置；--force 覆盖已有运行态");
+  process.exit(0);
+}
 const unknownFlags = process.argv.slice(2).filter((arg) => !KNOWN_FLAGS.includes(arg));
 if (unknownFlags.length) {
   console.error(`init-control-plane: 认不出这些参数：${unknownFlags.join(" ")}`);

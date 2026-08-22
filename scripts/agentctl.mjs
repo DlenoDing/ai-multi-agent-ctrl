@@ -7,6 +7,31 @@ const args = parseArgs(process.argv.slice(2));
 const action = args._.join(" ");
 const serverUrl = String(args.server || process.env.AIMAC_PUBLIC_URL || "http://127.0.0.1:4317").replace(/\/+$/u, "");
 
+// 这两张表要声明在【用到它们的地方之前】：--help 那段会读它们，放在后面就是 TDZ，
+// 表现是敲 --help 直接崩在一行源码上（本仓撞过多次的坑，这里第一版又踩了一遍）。
+// 子命令打错会大声报错（上面那段），参数名打错却一声不吭 —— 同一个文件里的孪生分支只补了一半，
+// 而这一半的默认值全都偏向"少做一点"：--verified 打错就静默给出【不做校验】的安装命令
+// （verified 那条会另下 .sha256 校验安装脚本再执行），--roles/--ttl/--node-name 打错退回默认，
+// nodes list 上写 --project 更是彻底空转。人以为自己要了某件事，屏幕上没有任何相反的迹象。
+const GLOBAL_FLAGS = ["server", "session-token", "email", "token"];
+const SUBCOMMAND_FLAGS = {
+  "join-token create": ["project", "project-id", "node-name", "roles", "ttl", "max-uses", "idempotency-key", "verified"],
+  "nodes list": [],
+  doctor: []
+};
+
+// `--help` 是任何人敲的第一件事。此前它走到"认不出这个子命令"那条路上去了 ——
+// 该说的内容本来就在下面，只是以"你做错了"的姿态给出、并且非零退出。
+if (process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h")) {
+  console.log("用法：npm run agentctl -- <子命令> [参数]");
+  console.log("  · 子命令：join-token create | nodes list | doctor");
+  console.log(`  · 通用参数：${GLOBAL_FLAGS.map((key) => `--${key}`).join(" ")}`);
+  for (const [name, flags] of Object.entries(SUBCOMMAND_FLAGS)) {
+    console.log(`  · ${name}：${flags.length ? flags.map((key) => `--${key}`).join(" ") : "只认上面那几个通用参数"}`);
+  }
+  console.log("  · 接一台新机器通常不用它：到「AI 智能体」页的「加入令牌管理」面板点「签发一次性加入令牌」");
+  process.exit(0);
+}
 if (action !== "join-token create" && action !== "nodes list" && action !== "doctor") {
   fail(`认不出这个子命令${action ? `：${action}` : "（一个都没给）"}`,
     ["可用：agentctl join-token create | nodes list | doctor",
@@ -18,16 +43,6 @@ if (action !== "join-token create" && action !== "nodes list" && action !== "doc
        + "会直接给出可粘贴的安装命令"]);
 }
 
-// 子命令打错会大声报错（上面那段），参数名打错却一声不吭 —— 同一个文件里的孪生分支只补了一半，
-// 而这一半的默认值全都偏向"少做一点"：--verified 打错就静默给出【不做校验】的安装命令
-// （verified 那条会另下 .sha256 校验安装脚本再执行），--roles/--ttl/--node-name 打错退回默认，
-// nodes list 上写 --project 更是彻底空转。人以为自己要了某件事，屏幕上没有任何相反的迹象。
-const GLOBAL_FLAGS = ["server", "session-token", "email", "token"];
-const SUBCOMMAND_FLAGS = {
-  "join-token create": ["project", "project-id", "node-name", "roles", "ttl", "max-uses", "idempotency-key", "verified"],
-  "nodes list": [],
-  doctor: []
-};
 const knownFlags = new Set([...GLOBAL_FLAGS, ...SUBCOMMAND_FLAGS[action]]);
 const unknownFlags = Object.keys(args).filter((key) => key !== "_" && !knownFlags.has(key));
 if (unknownFlags.length) {

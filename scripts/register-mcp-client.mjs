@@ -8,6 +8,15 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // 这个脚本此前每一条失败路径都是【一段 Node 崩溃栈】：参数打错、--apply 少了客户端、
 // 地址不是 HTTPS，人看到的都是源码行加一个尖角。与 agentctl 同规：一句人话 + 下一步，
 // 堆栈留给 AIMAC_REGISTER_MCP_DEBUG=1。参数拒绝也改成与另外三个运维入口同一种形状。
+// `--help` 是任何人敲的第一件事。此前它被当成打错的参数拒掉（非零退出、报错口吻）——
+// 该说的内容本来就在下面那段里，只是以"你做错了"的姿态给出。同样的话，问的时候就该给。
+const wantsHelp = process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h");
+if (wantsHelp) {
+  console.log("用法：node scripts/register-mcp-client.mjs [--apply] [--client=all|codex|claude|cursor] [--target=project|user] ...");
+  console.log("  · 认得的参数：--apply --client= --target= --config= --output-dir= --server-url= --token= --token-env=");
+  console.log("  · 不给 --apply 时只打印将要写的配置，不落盘");
+  process.exit(0);
+}
 const unknownFlags = [];
 const args = parseArgs(process.argv.slice(2));
 if (unknownFlags.length) {

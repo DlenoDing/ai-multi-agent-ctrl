@@ -11,6 +11,14 @@ import { basename, join, resolve } from "node:path";
 
 // 认不出的参数一律拒（与仓里其它运维入口同一形状）：`--verify` 这种打错的名字被当成"没给"的话，
 // 命令会照跑，而人以为自己开了某个开关。备份只吃两个位置参数。
+// `--help` 是任何人敲的第一件事。此前它被当成打错的参数拒掉（非零退出、报错口吻）——
+// 该说的内容本来就在下面那段里，只是以"你做错了"的姿态给出。同样的话，问的时候就该给。
+const wantsHelp = process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h");
+if (wantsHelp) {
+  console.log("用法：npm run backup [-- <运行目录> <备份目录>]（都是位置参数，没有开关）");
+  console.log("可用环境变量：AIMAC_RUNTIME_DIR（默认源）、AIMAC_BACKUP_ATTEMPTS（重试次数，默认 5）");
+  process.exit(0);
+}
 const unknownFlags = process.argv.slice(2).filter((item) => item.startsWith("-"));
 if (unknownFlags.length) {
   console.error(`认不出的参数：${unknownFlags.join(" ")}\n`

@@ -25,6 +25,23 @@ need_value() {
   fi
 }
 
+# --help 是任何人敲的第一件事。此前它落到下面的 * 分支被当成打错的参数（退出码 2、报错口吻）——
+# 该说的内容本来就在那里，只是以"你做错了"的姿态给出。同样的话，问的时候就该给。
+for arg in "$@"; do
+  case "$arg" in
+    --help|-h)
+      printf '%s\n' "用法：sh install-agent.sh --server <地址> --join-token-file <文件> [其它参数]"
+      printf '%s\n' "  · 必给：--server，以及 --join-token 或 --join-token-file 之一"
+      printf '%s\n' "  · 认得的参数：--server --join-token --join-token-file --node-name --work-dir"
+      printf '%s\n' "                --roles --executor-command --no-daemon"
+      printf '%s\n' "                --configure-global-clients / --no-configure-global-clients（别名 --configure-clients / --no-configure-clients）"
+      printf '%s\n' "  · --executor-command：自定义模型执行器。不给时自动探测 codex / claude / gemini / ollama；"
+      printf '%s\n' "    四个都没有、也不给它，这台节点就没有可用执行器，派发会卡住"
+      exit 0
+      ;;
+  esac
+done
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --server) need_value "$1" "$#"; SERVER_URL=$2; shift 2 ;;
