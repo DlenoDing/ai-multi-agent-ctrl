@@ -465,6 +465,7 @@ run(verifyProtocolEventListMatchesReality);
 run(verifyProtocolDocMatchesRequiredRuntimeVersion);
 run(verifyStateFilesRefuseUnknownSchemaVersions);
 run(verifyOutdatedRuntimeIsFlaggedFailClosed);
+run(verifyGrantedAgentToolsAllExist);
 run(verifyEveryRouteHasSomeoneWhoCallsIt);
 run(verifyConsoleDoesNotReadStrippedTaskGroupFields);
 run(verifyViewDropsCollectionsNobodyReads);
@@ -12556,6 +12557,31 @@ function verifyOutdatedRuntimeIsFlaggedFailClosed(output) {
     output.push("publicAgentNode 没有把 runtimeOutdated 带出去 —— 判定算对了也没人看得到");
   }
   console.log(`运行时版本：${cases.length} 种取值逐个核对（读不出的一律按过旧），标签也确实带到了对外投影上`);
+}
+
+function verifyGrantedAgentToolsAllExist(output) {
+  // 注册节点时按角色授出一批 MCP 工具名（DEFAULT_AGENT_MCP_TOOLS / CONTROL_ROLE_MCP_TOOLS）。
+  // 这些名字里若有一个 MCP 侧根本没有的，【不会报错】—— 只会让 agent 少一件本该有的工具，
+  // 而它执行到那一步时报的是 mcp_tool_not_granted_to_principal，人会去查授权，查不到根因。
+  const gateway = readFileSync(join(root, "apps/control-plane-ui/lib/agent-gateway.mjs"), "utf8");
+  const listOf = (name) => {
+    const block = new RegExp(`const ${name} = \\[([\\s\\S]*?)\\];`, "u").exec(gateway);
+    return block ? [...block[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]) : [];
+  };
+  const granted = [...new Set([...listOf("DEFAULT_AGENT_MCP_TOOLS"), ...listOf("CONTROL_ROLE_MCP_TOOLS")])];
+  if (granted.length < 20) {
+    output.push(`只从网关提取到 ${granted.length} 个会授给 agent 的工具名（应 20+）—— 提取脱节，本条在空转`);
+    return;
+  }
+  const declared = new Set(mcpToolNames);
+  const ghosts = granted.filter((name) => !declared.has(name));
+  if (ghosts.length) {
+    output.push(`网关会把这些工具授给 agent，而 MCP 侧根本没有它们：${ghosts.join("、")} —— `
+      + "授一个不存在的名字不会报错，只会让 agent 少一件本该有的工具，"
+      + "而它执行到那一步报的是「没授权」，人会顺着授权去查，查不到根因");
+  }
+  console.log(`授给 agent 的 MCP 工具名：${granted.length} 个逐个对着 MCP 的 ${declared.size} 个声明核过，`
+    + `${ghosts.length} 个不存在（应为 0）`);
 }
 
 function verifyEveryRouteHasSomeoneWhoCallsIt(output) {

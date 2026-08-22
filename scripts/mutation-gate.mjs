@@ -3652,6 +3652,14 @@ const MUTATIONS = [
     expect: "产出清单的路径爬到仓库之外却没被拦下"
   },
   {
+    name: "授给 agent 的工具名打错要被查出来",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyGrantedAgentToolsAllExist",
+    from: '  "agent-control-mcp.node_probe",',
+    to: '  "agent-control-mcp.node_prob",',
+    expect: "MCP 侧根本没有它们"
+  },
+  {
     name: "新长出来的死路由要被查出来",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyEveryRouteHasSomeoneWhoCallsIt",
