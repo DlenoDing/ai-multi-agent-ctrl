@@ -337,7 +337,13 @@ if (process.env.AIMAC_RENDER_REAL) {
     + "产品里切页会重新加载并清掉它 —— 看到「本页很新 + 别的页的 404」这种搭配，那是工具的拼接）\n");
   console.log("（这些数是服务端视图算出来的，本工具喂的是原始状态 —— 它们显示成 0/缺省是工具的缺省，"
     + "不是产品算错了：任务组「角色数」(roleCount)、按任务组的权限(taskGroupPermissions)、"
-    + "技能源角色数(roleSkillCountBySource)、各表的「共 N+ 条」截断标记）\n");
+    + "技能源角色数(roleSkillCountBySource，它也决定「系统内置技能（共 N 个）」那个数)、"
+    + "各表的「共 N+ 条」截断标记）\n");
+  // 还有一类是【服务端读取时注入的内存心跳】：盘上那份状态里恒为 null。
+  // 拿 npm run init 出来的目录渲染时，系统设置页会显示「后台自治 已关闭」——
+  // 而默认其实是 60 秒一拍（AIMAC_ORCHESTRATOR_INTERVAL_MS ?? 60000）。我为此查过一轮才确认。
+  console.log("（「后台自治」那一行是服务端读取时注入的内存心跳（runtime.autonomousOrchestrator），"
+    + "盘上的状态里恒为 null —— 本工具喂的是盘上那份，所以它总显示「已关闭」，那不是产品的默认值）\n");
   const documentRoot = el("div");
   const probe = loadConsole(documentRoot, {realI18n: true});
   const strip = (html) => String(html).replace(/<[^>]+>/gu, " ").replace(/&nbsp;/gu, " ")
