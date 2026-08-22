@@ -3652,6 +3652,14 @@ const MUTATIONS = [
     expect: "产出清单的路径爬到仓库之外却没被拦下"
   },
   {
+    name: "运维要用的运行参数不许没写进文档",
+    file: "README.md",
+    check: "verifyOperatorEnvVarsAreDocumented",
+    from: "| `AIMAC_PORT` | `4317` | 监听端口 |",
+    to: "",
+    expect: "文档里一个字都没写"
+  },
+  {
     name: "授给 agent 的工具名打错要被查出来",
     file: "apps/control-plane-ui/lib/agent-gateway.mjs",
     check: "verifyGrantedAgentToolsAllExist",

@@ -63,6 +63,21 @@ export AIMAC_BOOTSTRAP_TOKEN='<system-admin-bootstrap-token>'
 export AIMAC_MCP_SERVICE_TOKEN='<central-mcp-service-token>'
 ```
 
+运维会用到的运行参数（其余的都是内部调参，改它们之前先读源码里那一处的注释）：
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `AIMAC_HOST` | `127.0.0.1` | 监听地址。对外监听（`0.0.0.0`）时必须同时给 `AIMAC_PUBLIC_URL`，否则启动会被拒 |
+| `AIMAC_PORT` | `4317` | 监听端口 |
+| `AIMAC_PUBLIC_URL` | 按监听地址推导 | 对外访问地址。它会进安装命令与 MCP 端点，明文远程地址会被拒 |
+| `AIMAC_RUNTIME_DIR` | `.runtime` | 运行态落盘目录（状态、项目分片、审计台账、锁） |
+| `AIMAC_REPOSITORY_ROOT` | 仓库根 | 核验档位下本机工作副本的根目录 |
+| `AIMAC_EXECUTION_PROFILE` | `production` | `verification` 时控制面自己跑工作器（只用于本机核验） |
+| `AIMAC_ORCHESTRATOR_INTERVAL_MS` | `60000` | 后台自治周期。**写 0 关掉它**：关掉后不再产生新派发，但【已排队的派发仍会被在线 agent 领走】，要连它们一起停到任务组页「暂停执行」 |
+| `AIMAC_TRANSITION_STRICT` | `true` | 非法状态迁移一律拒绝；`false` 是宽松模式（放行但记账） |
+| `AIMAC_TRUST_PROXY` | `false` | 置于反向代理之后时才开，决定是否采信 `X-Forwarded-*` |
+| `AIMAC_MAX_EXECUTION_ATTEMPTS` | `3` | 同一工作项连续失败多少次后停止自动重派（停下来之后由人在「人工指令」页处置） |
+
 本地演示/验收账号可选用 seed 覆盖变量；生产环境应在管理界面里创建用户、项目成员、任务组授权和服务账号授权，不把用户或项目凭证作为统一服务器 secret：
 
 ```bash

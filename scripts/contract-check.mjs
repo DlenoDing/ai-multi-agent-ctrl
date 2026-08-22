@@ -199,6 +199,14 @@ const AGENT_RUNTIME_UNREACHABLE_CODES = {
     "transferDir 是 join(bundleDir, \"git-transfer\") 现拼的，永远落在 bundleDir 之内。留着是防将来有人把它改成由包里的字段决定"
 };
 
+// 运维会用到的运行参数。判据只管这一批 —— 代码里另有 90 多个内部调参（各种上限、超时），
+// 把它们也写进文档只会变成噪声，改它们之前本来就该读源码里那一处的注释。
+const OPERATOR_FACING_ENV_VARS = [
+  "AIMAC_HOST", "AIMAC_PORT", "AIMAC_PUBLIC_URL", "AIMAC_RUNTIME_DIR", "AIMAC_REPOSITORY_ROOT",
+  "AIMAC_EXECUTION_PROFILE", "AIMAC_ORCHESTRATOR_INTERVAL_MS", "AIMAC_TRANSITION_STRICT",
+  "AIMAC_TRUST_PROXY", "AIMAC_MAX_EXECUTION_ATTEMPTS", "AIMAC_BOOTSTRAP_TOKEN"
+];
+
 const AGENT_RUNTIME_CLI_THROWS = new Set([
   "unknown command: ${command}",
   "bootstrap requires --server and --join-token-file",
@@ -465,6 +473,7 @@ run(verifyProtocolEventListMatchesReality);
 run(verifyProtocolDocMatchesRequiredRuntimeVersion);
 run(verifyStateFilesRefuseUnknownSchemaVersions);
 run(verifyOutdatedRuntimeIsFlaggedFailClosed);
+run(verifyOperatorEnvVarsAreDocumented);
 run(verifyGrantedAgentToolsAllExist);
 run(verifyEveryRouteHasSomeoneWhoCallsIt);
 run(verifyConsoleDoesNotReadStrippedTaskGroupFields);
@@ -12557,6 +12566,31 @@ function verifyOutdatedRuntimeIsFlaggedFailClosed(output) {
     output.push("publicAgentNode 没有把 runtimeOutdated 带出去 —— 判定算对了也没人看得到");
   }
   console.log(`运行时版本：${cases.length} 种取值逐个核对（读不出的一律按过旧），标签也确实带到了对外投影上`);
+}
+
+function verifyOperatorEnvVarsAreDocumented(output) {
+  // 反方向此前没人查：文档写了不存在的变量会被规范门抓（那是"文档→代码"），
+  // 而【代码里有、文档里没有】的旋钮运维根本发现不了 —— 实测 AIMAC_PORT / AIMAC_HOST /
+  // AIMAC_RUNTIME_DIR 一个 .md 都没提，改端口只能去读源码；
+  // 更糟的是 server.mjs 与 validate-specs.rb 两处注释都写着
+  // 「AIMAC_ORCHESTRATOR_INTERVAL_MS=0 是文档里写明的开关」，而文档里根本没有这句。
+  const docs = [...readdirSync(join(root, "docs")).filter((name) => name.endsWith(".md"))
+    .map((name) => readFileSync(join(root, "docs", name), "utf8")), readFileSync(join(root, "README.md"), "utf8")].join("\n");
+  const code = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/agent-runtime/runtime.mjs", "apps/mcp-server/server.mjs"]
+    .map((file) => readFileSync(join(root, file), "utf8")).join("\n");
+  const missing = OPERATOR_FACING_ENV_VARS.filter((name) => !docs.includes(name));
+  if (missing.length) {
+    output.push(`这些运维会用到的运行参数，文档里一个字都没写：${missing.join("、")} —— `
+      + "人只能去读源码才知道它存在（实测改端口就是这样）");
+  }
+  // 登记表本身也要跟着代码走：登记了一个代码里已经不读的变量，文档就在写一件不存在的事。
+  const stale = OPERATOR_FACING_ENV_VARS.filter((name) => !code.includes(name));
+  if (stale.length) {
+    output.push(`这些变量登记为「运维会用到」，而产品代码已经不读它们了：${stale.join("、")} —— `
+      + "文档里那一行在说一件不存在的事，该撤");
+  }
+  console.log(`运维侧运行参数：${OPERATOR_FACING_ENV_VARS.length} 个逐个核对，都在文档里且代码里真的在读`);
 }
 
 function verifyGrantedAgentToolsAllExist(output) {
