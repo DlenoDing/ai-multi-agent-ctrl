@@ -255,7 +255,7 @@ function updateProjectExecutionEventIndex(runtimeDir, event, existingIndex = nul
   index.fileSnapshot = snapshotProjectEventFiles(projectExecutionEventReadPaths(runtimeDir, event.projectId));
   index.backfilledAt ||= new Date().toISOString();
   index.updatedAt = new Date().toISOString();
-  appendSafeJson(path, index);
+  appendSafeJson(path, index, {durable: false});   // 派生数据：崩了从日志重建
 }
 
 function ensureProjectExecutionEventIndex(runtimeDir, projectId) {
@@ -332,7 +332,8 @@ function ensureProjectExecutionEventIndex(runtimeDir, projectId) {
       + `（样例 ${corruptSample}）—— 序号可能被重用、幂等键可能失效，请核对该文件`);
   }
   rebuilt.recentEventKeys = Object.keys(rebuilt.eventsByKey).slice(0, keyWindow);
-  appendSafeJson(projectExecutionEventIndexPath(runtimeDir, projectId, {forWrite: true}), rebuilt);
+  appendSafeJson(projectExecutionEventIndexPath(runtimeDir, projectId, {forWrite: true}), rebuilt,
+    {durable: false});   // 派生数据：崩了下一次读会再重建一遍
   return rebuilt;
 }
 
@@ -383,7 +384,7 @@ function writeProjectExecutionEventKey(runtimeDir, event, path) {
     file: path.split("/").pop(),
     event,
     updatedAt: new Date().toISOString()
-  });
+  }, {durable: false});   // 派生数据：崩了退到索引与日志扫描
 }
 
 function projectExecutionEventKeyDir(runtimeDir, projectId) {
@@ -585,12 +586,19 @@ function snapshotsEqual(left = [], right = []) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function appendSafeJson(path, value) {
+// durable=false 是给【派生数据】用的：索引与事件键 KV 都能从日志重算出来（重建那段就是干这个的），
+// 为它们各按一次 fsync，买到的只是"崩溃后不用重算"，代价却压在每一次事件追加上 ——
+// 实测一次追加 24ms，其中 4 次 fsync（每次约 3.3ms）花在这两份派生文件上。
+// 崩溃后它们可能是旧的、缺的、甚至是半截的：三种都已有出口 —— 索引解析不了当没有（去重建）、
+// KV 解析不了当没命中（退到索引与扫描）、内容旧了会因文件快照对不上而重建。
+// 【日志本身与段清单仍然按次 fsync】：日志是唯一的事实来源，段清单里的 size/digest 是完整性基线，
+// 这两样丢了没法从别处算回来。
+function appendSafeJson(path, value, options = {}) {
   mkdirSync(dirname(path), {recursive: true});
   const temporary = `${path}.tmp-${process.pid}-${Date.now()}`;
-  writeDurableFile(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  writeDurableFile(temporary, `${JSON.stringify(value, null, 2)}\n`, options);
   renameSync(temporary, path);
-  fsyncDirectory(dirname(path));
+  if (options.durable !== false) fsyncDirectory(dirname(path));
 }
 
 function appendDurableLine(path, line) {
@@ -622,12 +630,12 @@ function appendDurableLine(path, line) {
   }
 }
 
-function writeDurableFile(path, data) {
+function writeDurableFile(path, data, options = {}) {
   mkdirSync(dirname(path), {recursive: true});
   const fd = openSync(path, "w", 0o600);
   try {
     writeFileSync(fd, data);
-    if (process.env.AIMAC_PROJECT_EVENT_FSYNC !== "false") fsyncSync(fd);
+    if (options.durable !== false && process.env.AIMAC_PROJECT_EVENT_FSYNC !== "false") fsyncSync(fd);
   } finally {
     closeSync(fd);
   }

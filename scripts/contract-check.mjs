@@ -563,7 +563,7 @@ run(verifyGuardedWritesAreAudited);
 run(verifyWarnModeRejectionsSurviveChurn);
 run(verifyCorruptEventLinesAreReported);
 run(verifySealedEventSegmentsAreNotSilentlyLost);
-run(verifyEventIndexRebuildKeepsItsPromises);
+runAsync(verifyEventIndexRebuildKeepsItsPromises);
 run(verifySizeAccountingDoesNotSwallowFailures);
 run(verifyAgentSaysWhyItStoppedTakingWork);
 run(verifySideEffectsComeAfterTheGuard);
@@ -8002,7 +8002,7 @@ function verifySizeAccountingDoesNotSwallowFailures(output) {
 //   ③ 已有的 KV 文件不被重写 —— 这不只是省时间：GC 按 mtime 淘汰最旧的，重建把全部文件的 mtime
 //      刷新一遍之后，"谁最旧"就成了乱的，它会把该留的删掉；
 //   ④ 文件真丢了的那个键，重建仍然要把它补回来（跳过的只能是"已经在的"）。
-function verifyEventIndexRebuildKeepsItsPromises(output) {
+async function verifyEventIndexRebuildKeepsItsPromises(output) {
   const previousCap = process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES;
   const previousKeys = process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS;
   const previousFileCap = process.env.AIMAC_PROJECT_EVENT_KEY_FILE_CAP;
@@ -8077,6 +8077,114 @@ function verifyEventIndexRebuildKeepsItsPromises(output) {
     }
     if (!existsSync(lostKeyFile)) {
       output.push(`键文件丢了的那个键（${lostKey}）在重建之后没被补回来 —— 跳过的只能是"已经在的"`);
+    }
+
+    // 派生文件【不再按次 fsync】（索引与键 KV 都能从日志重算，为它们各按一次 fsync 要占掉
+    // 一次追加 24ms 里的 13ms）。这个决定的全部依据是"崩了能恢复"，所以恢复要真的验：
+    // 断电后这两份文件可能是旧的、缺的、或者【半截的】。前两种上面验过了，这里造半截的。
+    {
+      const indexPath = join(pdb, readdirSync(pdb).find((name) => name.endsWith("execution-events.index.json")));
+      const survivingKeyFile = keyFileOf(`rk${eventCount - 3}`);
+      if (!survivingKeyFile) {
+        output.push("索引重建判据没造出想测的情形：找不到可以写坏的键文件");
+        return;
+      }
+      writeFileSync(indexPath, '{"schemaVersion":"project-execution-event-index/v4","eventsB');
+      writeFileSync(survivingKeyFile, "{\"eventKey\":\"rk");
+      const afterTorn = appendProjectExecutionEvent(dir, {projectId,
+        schemaVersion: "agent-execution-event/v1", eventKey: "rk_after_torn",
+        eventType: "probe", taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
+      if (Number(afterTorn.event?.sequence) !== eventCount + 2) {
+        output.push(`索引被写坏（断电后的半截文件）之后接着追加，序号是 ${afterTorn.event?.sequence}`
+          + `（应为 ${eventCount + 2}）—— 派生文件不按次 fsync 的前提就是"坏了能从日志重算"，`
+          + "这里算不回来就说明那个前提不成立");
+      }
+      const stillDeduped = appendProjectExecutionEvent(dir, {projectId,
+        schemaVersion: "agent-execution-event/v1", eventKey: `rk${eventCount - 3}`,
+        eventType: "probe", taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
+      if (!stillDeduped.duplicate) {
+        output.push("键文件被写坏之后，这个键就认不出重复了 —— 半截的 KV 文件必须退回索引与日志去查，"
+          + "而不是当作「没见过」（那会让已经做过的事再做一遍）");
+      }
+    }
+
+    // 落盘保证【按写入的种类】分：日志是唯一的事实来源、段清单里的 size/digest 是完整性基线，
+    // 这两样丢了没法从别处算回来，必须按次 fsync。判据按【真实调用点】核，
+    // 新加一处写入要么显式标成派生（durable: false），要么进这份名单并说明为什么丢不起。
+    {
+      const source = readFileSync(join(root, "apps/control-plane-ui/lib/project-event-store.mjs"), "utf8");
+      const mustStayDurable = {
+        projectExecutionEventManifestPath: "段清单记着每段的 size 与 digest —— 那是完整性基线，丢了就再也判不出段被改过"
+      };
+      const calls = [...source.matchAll(/(?<!function )appendSafeJson\(([^;]*?)\);/gsu)].map((hit) => hit[1]);
+      if (calls.length < 4) {
+        output.push(`落盘种类判据只找到 ${calls.length} 处 appendSafeJson（应至少 4 处）—— 提取脱节了`);
+        return;
+      }
+      for (const call of calls) {
+        const derived = /durable:\s*false/u.test(call);
+        const named = Object.keys(mustStayDurable).find((name) => call.includes(name));
+        if (derived && named) {
+          output.push(`${named} 这一处被标成了派生数据（durable: false）—— ${mustStayDurable[named]}`);
+        }
+        if (!derived && !named) {
+          output.push(`有一处 appendSafeJson 既没标成派生、也不在"必须按次 fsync"的名单里：`
+            + `${call.split("\n")[0].slice(0, 70)} —— 这处写的东西丢了会怎样，要先回答再落地`);
+        }
+      }
+      // 「源码里还有 fsyncSync 这一行」证明不了它还在起作用（前面加一句 return 就骗过去了，
+      // 变异当场证明了这一点）。所以【真的数】：把模块复制一份，把 node:fs 的 openSync/fsyncSync
+      // 换成会记账的壳，跑一次真实追加，看它对哪些文件按了 fsync。
+      // 出厂那份一行不动 —— 与 agent 运行时那套「复制一份+追加 export」是同一个办法。
+      const fsyncDir = mkdtempSync(join(tmpdir(), "aimac-fsync-probe-"));
+      const previousFsync = process.env.AIMAC_PROJECT_EVENT_FSYNC;
+      try {
+        const copy = join(fsyncDir, "event-store-under-test.mjs");
+        const shimmed = source.replace(
+          /^import \{[^}]*\} from "node:fs";$/mu,
+          [
+            'import * as __fs from "node:fs";',
+            "export const __fsynced = [];",
+            "const __fdPaths = new Map();",
+            "const openSync = (path, ...rest) => "
+              + "{ const fd = __fs.openSync(path, ...rest); __fdPaths.set(fd, String(path)); return fd; };",
+            "const fsyncSync = (fd) => { __fsynced.push(__fdPaths.get(fd) || String(fd)); return __fs.fsyncSync(fd); };",
+            "const {appendFileSync, closeSync, existsSync, mkdirSync, readFileSync, readdirSync,"
+              + " readSync, renameSync, rmSync, statSync, writeFileSync} = __fs;"
+          ].join("\n")
+        );
+        if (shimmed === source) {
+          output.push("落盘计数判据没接上：project-event-store 的 node:fs 导入行形状变了，换不进记账壳");
+          return;
+        }
+        writeFileSync(copy, shimmed);
+        process.env.AIMAC_PROJECT_EVENT_FSYNC = "true";   // 本门整体关掉了 fsync，这一段要打开才量得到
+        const probe = await import(pathToFileURL(copy).href);
+        const probeDir = join(fsyncDir, "runtime");
+        probe.appendProjectExecutionEvent(probeDir, {projectId: "prj_fsync_probe",
+          schemaVersion: "agent-execution-event/v1", eventKey: "fk1", eventType: "probe",
+          taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
+        probe.__fsynced.length = 0;
+        probe.appendProjectExecutionEvent(probeDir, {projectId: "prj_fsync_probe",
+          schemaVersion: "agent-execution-event/v1", eventKey: "fk2", eventType: "probe",
+          taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
+        const fsynced = [...probe.__fsynced];
+        const loggedSynced = fsynced.filter((path) => path.endsWith(".execution-events.jsonl"));
+        if (!loggedSynced.length) {
+          output.push(`一次事件追加没有对日志按过 fsync（按到的是 ${JSON.stringify(fsynced)}）—— `
+            + "日志是唯一的事实来源，索引与键 KV 都从它重算，它丢了就是真丢了");
+        }
+        const derivedSynced = fsynced.filter((path) => /event-keys|\.index\.json/u.test(path));
+        if (derivedSynced.length) {
+          output.push(`一次事件追加对派生文件按了 ${derivedSynced.length} 次 fsync —— `
+            + "索引与键 KV 都能从日志重算，为它们按 fsync 是把每次追加的代价从 7ms 抬回 24ms，"
+            + "换来的只是「崩溃后不用重算」");
+        }
+      } finally {
+        rmSync(fsyncDir, {recursive: true, force: true});
+        if (previousFsync === undefined) delete process.env.AIMAC_PROJECT_EVENT_FSYNC;
+        else process.env.AIMAC_PROJECT_EVENT_FSYNC = previousFsync;
+      }
     }
   } finally {
     rmSync(dir, {recursive: true, force: true});

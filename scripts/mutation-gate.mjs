@@ -3727,6 +3727,33 @@ const MUTATIONS = [
     expect: "orchestrator permission"
   },
   {
+    // 落盘策略按写入种类分：日志必须按次 fsync（唯一的事实来源）。
+    // 这条变异在它前面插一句 return —— 源码里那行 fsyncSync 还在，所以"搜源码"型的判据骗得过，
+    // 真数一遍就骗不过（判据把模块复制一份、把 fsyncSync 换成记账壳来数）。
+    name: "事件日志必须按次 fsync",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    check: "verifyEventIndexRebuildKeepsItsPromises",
+    from: '  if (process.env.AIMAC_PROJECT_EVENT_FSYNC === "false") return;\n  const fd = openSync(path, "r");',
+    to: '  return;\n  const fd = openSync(path, "r");',
+    expect: "没有对日志按过 fsync"
+  },
+  {
+    name: "派生文件不得按次 fsync（每次追加 7ms→24ms）",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    check: "verifyEventIndexRebuildKeepsItsPromises",
+    from: "  }, {durable: false});   // 派生数据：崩了退到索引与日志扫描",
+    to: "  });",
+    expect: "对派生文件按了"
+  },
+  {
+    name: "段清单不得被标成派生数据",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    check: "verifyEventIndexRebuildKeepsItsPromises",
+    from: '  appendSafeJson(projectExecutionEventManifestPath(runtimeDir, projectId, {forWrite: true}), {\n    schemaVersion: "project-execution-event-manifest/v1",',
+    to: '  appendSafeJson(projectExecutionEventManifestPath(runtimeDir, projectId, {forWrite: true}), {\n    durable: false,\n    schemaVersion: "project-execution-event-manifest/v1",',
+    expect: "被标成了派生数据"
+  },
+  {
     // 重建【从新往旧】扫、攒够淘汰上限就停。方向反过来就会把最新那段漏掉 ——
     // 序号上界随之算小，下一条事件重用已经用过的号。
     name: "索引重建要从最新往回扫（否则序号被重用）",
