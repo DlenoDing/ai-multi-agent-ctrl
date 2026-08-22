@@ -1303,6 +1303,53 @@ try {
     rmSync(rewindHook, {force: true});
     console.log("  ok  推上去之后远端被回退时，agent 发现并判失败（push_verification_failed）");
   }
+  // 【发件箱里那份检查点，声称推上去的提交在远端已经找不到了】。真实成因：别人强推、
+  // 分支被重置、镜像回滚 —— 而这份检查点承载的是"提交已经推送成功"。agent 必须把它挪进恢复区
+  // 并告诉控制面，不能一直重放（那会把这个节点卡在这一条上，新活一件都领不了）。
+  {
+    const outboxDir = join(agentWorkDir, "outbox");
+    mkdirSync(outboxDir, {recursive: true});
+    const ghostDispatchId = "adp_replay_recover_probe";
+    // 仓库检出目录必须真的在（前面的派发已经克隆过）：不在的话走的是另一条恢复分支，
+    // 验的就不是"提交在远端找不到了"这一支。
+    const clonedRepo = join(agentWorkDir, "repositories", "repo_control_plane");
+    if (!existsSync(join(clonedRepo, ".git"))) {
+      throw new Error(`「重放找不到提交」这条没造出想测的情形：agent 侧没有克隆好的仓库（${clonedRepo}）`);
+    }
+    writeFileSync(join(outboxDir, `${ghostDispatchId}.json`), JSON.stringify({
+      dispatchId: ghostDispatchId,
+      claimEpoch: 1,
+      checkpointPath: `/api/agent/v1/dispatches/${ghostDispatchId}/checkpoint`,
+      repositoryOutputTarget: {repositoryId: "repo_control_plane", remote: "origin", branch: "main"},
+      checkpoint: {runId: "run_replay_recover_probe", status: "completed",
+        // 这个 sha 在远端根本不存在（造一个合法长度的假值）——「已推送的提交找不到了」正是这样。
+        pushRefs: [{remote: "origin", ref: "refs/heads/main", remoteSha: "0123456789abcdef0123456789abcdef01234567"}]},
+      createdAt: new Date().toISOString()
+    }, null, 2));
+    const replayRecover = spawnSync(process.execPath, [runtimePath, "run", "--work-dir", agentWorkDir, "--once"], {
+      env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false"},
+      encoding: "utf8", maxBuffer: 32 * 1024 * 1024
+    });
+    const replayText = `${replayRecover.stdout || ""}${replayRecover.stderr || ""}`;
+    // 光判那个码是【不够】的：拆掉"远端找不到这个提交"那道守卫之后，重放会继续往下走，
+    // 控制面回 404 —— 而 404 同样算终局错误，同一个码照样出现，断言就绿了（实测如此）。
+    // 所以要点到【具体是哪一句原因】：这一条守的是"推上去的东西没了"，不是"这个派发不存在"。
+    if (!/checkpoint_replay_recover_required[^\n]*上找不到了/u.test(replayText)) {
+      throw new Error("发件箱里那份检查点声称的提交在远端找不到了，agent 没有在【重放之前】认出来"
+        + `（要人工恢复）—— 它会带着一份指向不存在提交的证据继续往下走（agent 输出：${replayText.slice(-400)}）`);
+    }
+    const recovered = readdirSync(outboxDir).filter((name) => name.includes(".recover-"));
+    if (!recovered.length) {
+      throw new Error("agent 说了要恢复，却没有把那份证据挪到 .recover- 文件里 —— "
+        + "证据既没交上去、也没留在能找到的地方");
+    }
+    if (readdirSync(outboxDir).some((name) => name === `${ghostDispatchId}.json`)) {
+      throw new Error("那份重放不了的检查点还留在发件箱里 —— 下一拍还会再试一遍，节点会一直被它卡住");
+    }
+    console.log("  ok  发件箱里「提交在远端找不到了」的检查点：挪进恢复区、报回控制面、不再重放"
+      + "（checkpoint_replay_recover_required）");
+  }
+
 
 
 		  console.log("agent remote doctor ok: one-command join, checksum install, credential rotation, initialization, self-check (permission+integrity probe), remote MCP, control command ACK, project/session-level execution event stream, on-demand skill workset, dispatch, commit, push and checkpoint outbox replay, two-step evidence artifact registration, permission_report loop with safe-retry-point recovery, revoke pending+ACK requeue verified");

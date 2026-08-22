@@ -3767,6 +3767,17 @@ const MUTATIONS = [
     expect: "从没加载成功过的页不许说"
   },
   {
+    // 发件箱里那份检查点声称的提交在远端没了（别人强推／分支重置／镜像回滚）：必须在【重放之前】
+    // 认出来，挪进恢复区并报回控制面。拆掉之后重放会继续往下走、控制面回 404 —— 而 404 同样算
+    // 终局错误，同一个码照样出现，所以判据点的是【具体那句原因】而不只是码（只判码时实测不红）。
+    name: "重放前必须认出「推上去的提交在远端没了」",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "    throw new Error(`checkpoint_replay_recover_required:已推送的提交在远端 ${pushRef.ref} 上找不到了`);",
+    to: "    return;",
+    expect: "没有在【重放之前】认出来"
+  },
+  {
     // 推上去之后远端不是我推的那个（并发强推／镜像同步拨回去／服务端钩子改写引用）。
     // agent 不发现的话，它会带着"已推送"的检查点回去，而那份产出并不在远端。
     // 拆掉这一道之后控制面会在检查点上回 push_ref_must_point_to_final_commit —— 第二道门。

@@ -576,7 +576,10 @@ async function flushCheckpointOutbox(config) {
           // 那个派发一直挂在 running，而分支上可能已经有了没人复核过的提交。
           (reportError) => process.stderr.write(`checkpoint replay recovery report failed: ${item.dispatchId} (${reportError?.message || reportError}) —— 控制面那边它仍是 running，证据在 ${recoverPath}\n`)
         );
-        process.stderr.write(`checkpoint replay moved to recovery: ${item.dispatchId} -> ${recoverPath}\n`);
+        // 把【为什么】也打出来：只说"挪到恢复区了"的话，运维翻 agent 日志看到的是一个动作，
+        // 而他要判断的是"这份证据还能不能用、要不要人工介入" —— 那取决于是终局错误还是重试用尽。
+        process.stderr.write(`checkpoint replay moved to recovery: ${item.dispatchId} -> ${recoverPath}`
+          + ` （${reasonPrefix}: ${String(error.message).slice(0, 200)}）\n`);
         continue;
       }
       // Under the cap: persist the incremented attempt count so it survives an agent restart, then defer.
