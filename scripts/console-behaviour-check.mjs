@@ -1649,6 +1649,25 @@ function runNoVisibleProjectCase() {
       /还没有过动静/u.test(stallText),
       "这一格空着与「刚刚才动过」看不出区别 —— 而它恰恰是最该被人看到的那种");
   }
+  // 任务组整份 roles 不再进视图（列表只用来数个数，明细页读的是进度接口那份）——
+  // 服务端改给 roleCount。这里钉住：界面显示的就是服务端给的那个数，而不是它自己数出来的 0。
+  {
+    const countState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "有七个角色的组", status: "development",
+        roleCount: 7, workItems: []}],
+      humanConfirmationRequests: [], humanDirectives: [], agentDispatches: [], workSessions: [],
+      executionTopologies: [], closeBarriers: [], qualityGates: [], findings: [],
+      permissionRequests: [], approvalRequests: [], truncatedCollections: []
+    };
+    const countText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, countState, "tg", "p1");
+    check("任务组的角色数显示的是服务端给的那个数（整份 roles 不再下发）",
+      /角色数：7/u.test(countText),
+      "视图不再带整份 roles（列表只数个数、明细页另有来源）—— 界面必须用服务端给的 roleCount，"
+        + "否则它自己数一个空数组，屏幕上永远是 0");
+  }
   // 人工指令页的「目标任务组」下拉：只列出你真能控制的那些。列全了的话，人照着下拉选一个，
   // 提交必然 403 —— 而下拉本身就是这一页告诉他"可以选什么"的地方。
   {
@@ -3377,7 +3396,26 @@ await runCodedApiErrorCase();
     failures.push(`被裁字段: viewDroppedFields 里登记了 ${declaredCollections} 个集合，只解析出 ${parsedCollections} 个 ——`
       + " 提取逻辑与登记表脱节，本条在空转");
   }
+  // 少数字段控制台确实在读，但读的是【另一个来源】给的那份（专用接口），不是视图里这份。
+  // 登记要可核：下面会逐个确认那些读取点【全部】带着声明的那个前缀，光写一句豁免不算数。
+  const READ_FROM_ANOTHER_SOURCE = {
+    "taskGroups.taskAnalysis": "progressData."
+  };
   for (const {collection, field} of dropped) {
+    const fromElsewhere = READ_FROM_ANOTHER_SOURCE[`${collection}.${field}`];
+    if (fromElsewhere) {
+      const reads = [...appSource.matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\.${field}\\b`, "gu"))]
+        .map((match) => `${match[1]}.`);
+      const strays = [...new Set(reads.filter((prefix) => prefix !== fromElsewhere))];
+      if (!reads.length) {
+        failures.push(`被裁字段: ${collection}.${field} 登记为"读的是 ${fromElsewhere}那份"，`
+          + "但控制台一处都没读它 —— 这条登记该撤");
+      } else if (strays.length) {
+        failures.push(`被裁字段: ${collection}.${field} 登记为只从 ${fromElsewhere}读，`
+          + `实际还有 ${strays.join("、")} 这样的读取点 —— 那些会永远拿到 undefined`);
+      }
+      continue;
+    }
     // 控制台里出现 `.field` 即视为读它。字段名都足够独特（gateResults / candidateRankings…），
     // 真撞上同名字段宁可报红让人来分辨 —— 漏报的代价是界面永远显示空值。
     if (new RegExp(`\\.${field}\\b`, "u").test(appSource)) {

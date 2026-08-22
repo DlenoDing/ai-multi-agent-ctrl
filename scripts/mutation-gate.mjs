@@ -3628,6 +3628,22 @@ const MUTATIONS = [
     expect: "别人那段也有"
   },
   {
+    name: "被裁字段的豁免必须可核（读取点确实来自声明的来源）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "specs",
+    from: "  const analysis = progressData.taskAnalysis;",
+    to: "  const analysis = progressData.taskAnalysis; const stray = tgDetail.taskAnalysis;",
+    expect: "实际还有 tgDetail 这样的读取点"
+  },
+  {
+    name: "任务组的角色数必须用服务端给的那个数",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "          <span>角色数：${taskGroup.roleCount ?? (taskGroup.roles || []).length}</span>",
+    to: "          <span>角色数：${(taskGroup.roles || []).length}</span>",
+    expect: "界面必须用服务端给的 roleCount"
+  },
+  {
     name: "只有一页读的大块不许放回视图基底",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyViewDropsCollectionsNobodyReads",

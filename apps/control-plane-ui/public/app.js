@@ -2689,7 +2689,7 @@ function renderTaskGroups() {
         ${progressLine(taskGroup.progress)}
         <div class="record-meta">
           <span>语言：${esc(languageLabel(taskGroup.languagePolicy))}</span>
-          <span>角色数：${(taskGroup.roles || []).length}</span>
+          <span>角色数：${taskGroup.roleCount ?? (taskGroup.roles || []).length}</span>
           <span>工作项：${esc(taskGroup.workItemCount ?? (taskGroup.workItems || []).length)}</span>
           <span>更新时间：${fmtTime(taskGroup.updatedAt)}</span>
         </div>

@@ -1511,7 +1511,11 @@ function projectTaskGroupsForView(taskGroups) {
       ? {...analysis, items: undefined, itemCount: analysis.items.length}
       : analysis;
     const items = Array.isArray(taskGroup.workItems) ? taskGroup.workItems : [];
-    const projected = slimAnalysis === analysis ? {...taskGroup} : {...taskGroup, taskAnalysis: slimAnalysis};
+    // roles 列表页只用来数个数（「角色数：N」），明细页读的是进度接口给的那份。
+    // 整份带上在 80 组时约 11 KB，而这一页每 5 秒轮询一次 —— 只给个数。
+    const roles = Array.isArray(taskGroup.roles) ? taskGroup.roles : [];
+    const projected = {...(slimAnalysis === analysis ? taskGroup : {...taskGroup, taskAnalysis: slimAnalysis}),
+      roles: undefined, roleCount: roles.length};
     if (items.length <= embeddedWorkItemCap) return {...projected, workItemCount: items.length};
     return {...projected, workItems: items.slice(0, embeddedWorkItemCap),
       workItemCount: items.length, workItemsTruncated: true};
@@ -1665,7 +1669,10 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     // gateResults 一项就占 53%（26 道门各带 evidenceRefs），requiredGates 又占 13%。
     // 实测 400 单元时任务页 428KB 里有 121KB 是它们，而这一页每 5 秒轮询一次。
     // 只在视图里裁 —— 账本本身（state/full/MCP）一个字段不动，审计仍然拿得到完整的门禁判定。
-    closeBarriers: ["gateResults", "requiredGates", "sourceQueryRefs", "holisticJudgment"]
+    closeBarriers: ["gateResults", "requiredGates", "sourceQueryRefs", "holisticJudgment"],
+    // taskAnalysis 控制台一处都不读【视图里这份】：明细页读的是进度接口给的那份
+    //（progressData.taskAnalysis）。80 组时约 6.6 KB，每 5 秒一次。
+    taskGroups: ["taskAnalysis"]
   };
   const viewFields = {
     // policyDecisions / commands / decisionRecords 控制台一处都没读 —— 需要时从 view=full 取。

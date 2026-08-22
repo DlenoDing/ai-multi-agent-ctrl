@@ -389,7 +389,20 @@ dropped_block = view_server_source[/const viewDroppedFields = \{(.*?)\n  \};/m].
 dropped_fields = dropped_block.scan(/"([a-zA-Z]+)"/).flatten.uniq - dropped_block.scan(/^\s{4}([a-zA-Z]+):/).flatten
 errors << "视图字段裁剪表是空的 —— 要么删掉这套机制，要么它已经失效" if dropped_fields.empty?
 console_for_dropped = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+# 少数字段控制台确实在读，但读的是【另一个来源】给的那份（专用接口），不是视图里这份。
+# 登记要可核：要求那些读取点【全部】带着声明的前缀，只写一句豁免不算数。
+READ_FROM_ANOTHER_SOURCE = {"taskAnalysis" => "progressData"}.freeze
 dropped_fields.each do |field|
+  if (source_prefix = READ_FROM_ANOTHER_SOURCE[field])
+    prefixes = console_for_dropped.scan(/([A-Za-z_$][A-Za-z0-9_$]*)\.#{Regexp.escape(field)}\b/).flatten.uniq
+    strays = prefixes - [source_prefix]
+    if prefixes.empty?
+      errors << "字段 #{field} 登记为「读的是 #{source_prefix} 那份」，但控制台一处都没读它 —— 这条登记该撤"
+    elsif !strays.empty?
+      errors << "字段 #{field} 登记为只从 #{source_prefix} 读，实际还有 #{strays.join('、')} 这样的读取点 —— 那些会永远拿到 undefined"
+    end
+    next
+  end
   next unless console_for_dropped.include?(".#{field}")
   errors << "字段 #{field} 已在视图里被裁掉，控制台却仍在引用它 —— 页面不会报错，只会永远显示空值。" \
             "要渲染它就先把它从 viewDroppedFields 里去掉"
