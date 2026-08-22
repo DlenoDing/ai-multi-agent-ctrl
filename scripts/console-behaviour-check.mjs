@@ -1649,6 +1649,43 @@ function runNoVisibleProjectCase() {
       /还没有过动静/u.test(stallText),
       "这一格空着与「刚刚才动过」看不出区别 —— 而它恰恰是最该被人看到的那种");
   }
+  // 按钮同理：任务组列表上「暂停 / 恢复 / 纠偏」这些是按任务组授权的，而控制台原先用跨资源并集判 ——
+  // 只在 tg1 上有控制权的人，在 tg2 那一行也看得到按钮，按下去必然 403（「看得到按不动」）。
+  {
+    const twoGroups = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [
+        {id: "tg_mine", projectId: "p1", name: "我能控的", status: "development", workItems: []},
+        {id: "tg_theirs", projectId: "p1", name: "别人的组", status: "development", workItems: []}
+      ],
+      taskGroupPermissions: {tg_mine: ["task_group:read", "task_group:control"], tg_theirs: ["task_group:read"]},
+      humanConfirmationRequests: [], humanDirectives: [], agentDispatches: [], workSessions: [],
+      executionTopologies: [], closeBarriers: [], qualityGates: [], findings: [],
+      permissionRequests: [], approvalRequests: [], truncatedCollections: []
+    };
+    const rows = renderAs({accountId: "u_op", accountType: "member", displayName: "操作员",
+      organizationId: "org_default", effectivePermissions: ["project:view", "task_group:read", "task_group:control"]},
+      twoGroups, "tg", "p1");
+    // renderAs 给的是【去掉标签之后的可见文本】，所以按可见文案分段核，不要去匹配 HTML 属性
+    //（第一版就是这么写的，两边都数到 0，看起来像修复没生效）。
+    const flat = rows.replace(/\s+/gu, " ");
+    // 用【最后一次出现】：这一页上面的「创建工作项」表单里有个下拉，把两个组名先列了一遍，
+    // 取第一次出现会切到那段下拉文本上，两边都数不到按钮（第一版就是这么误判的）。
+    const mineFrom = flat.lastIndexOf("我能控的");
+    const theirsFrom = flat.lastIndexOf("别人的组");
+    const mineSegment = mineFrom >= 0 && theirsFrom > mineFrom ? flat.slice(mineFrom, theirsFrom) : "";
+    const theirsSegment = theirsFrom >= 0 ? flat.slice(theirsFrom) : "";
+    if (!mineSegment || !theirsSegment) {
+      check("任务组列表按组判权的夹具要真渲染出两组", false,
+        "这一屏没渲染出那两个任务组 —— 下面的断言什么也没验");
+    } else {
+      check("任务组列表上的控制按钮只出现在你真有权控制的那一组",
+        /暂停/u.test(mineSegment) && !/暂停/u.test(theirsSegment),
+        `我能控的那段${/暂停/u.test(mineSegment) ? "有" : "没有"}控制按钮、别人那段${/暂停/u.test(theirsSegment) ? "也有" : "没有"} —— `
+          + "并集判权会让人在别人负责的组上也看到按钮，按下去必然 403");
+    }
+  }
   // 「待你处理」那块明写着「只统计你有权处置的；别人负责的部分不会出现在这里」。
   // 而控制台判权用的是 effectivePermissions —— 服务端注释里就写着它是【跨资源的并集、只作 UI 提示】，
   // 后端每一次写入却是按资源判的。于是只在 tg1 上有评审权的人，会把 tg2 的待办也算成自己的，

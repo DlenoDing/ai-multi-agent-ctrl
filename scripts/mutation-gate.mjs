@@ -3596,6 +3596,14 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "任务组列表的控制按钮必须按组判权",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '${hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="secondary-button" data-action="task-control"',
+    to: '${canControl ? `<button class="secondary-button" data-action="task-control"',
+    expect: "别人那段也有"
+  },
+  {
     name: "「待你处理」必须按任务组判权而不是并集",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

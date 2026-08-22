@@ -2702,10 +2702,10 @@ function renderTaskGroups() {
         </details>` : ""}
         <div class="button-row">
           <button class="secondary-button" data-action="tg-detail" data-task="${esc(taskGroup.id)}">${expanded ? "收起详情" : "查看详情"}</button>
-          ${canControl ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="pause">暂停</button>
+          ${hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="pause">暂停</button>
           <button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="resume">恢复</button>` : ""}
-          ${canReview || canControl ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="request_review">请求评审</button>` : ""}
-          ${canControl ? `<button class="danger-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="rebound_drift">纠偏</button>` : ""}
+          ${hasGroupPerm(taskGroup.id, "task_group:review") || hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="request_review">请求评审</button>` : ""}
+          ${hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="danger-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="rebound_drift">纠偏</button>` : ""}
         </div>
         ${expanded ? renderTaskGroupDetail(taskGroup) : ""}
       </div>
@@ -2757,8 +2757,9 @@ function renderTaskGroupDetail(taskGroup) {
   `).join("") || `<div class="notice">暂无角色记录。</div>`;
 
   const config = tgDetail.config;
-  const canControl = hasPerm("task_group:control");
-  const canReviewWork = hasPerm("task_group:review");
+  // 这一页只对着一个任务组，按它判权（并集会让只在别的组上有权的人看到按不动的按钮）。
+  const canControl = hasGroupPerm(taskGroup.id, "task_group:control");
+  const canReviewWork = hasGroupPerm(taskGroup.id, "task_group:review");
   const editDisabled = canControl ? "" : "disabled";
   const configHtml = config ? `
     <div class="stack">
