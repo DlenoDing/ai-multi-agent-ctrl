@@ -16,7 +16,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import WebSocket from "ws";
-import {chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync} from "node:fs";
+import {chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync} from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
@@ -3241,6 +3241,163 @@ try {
     if (stale.length) throw new Error(`这些路由登记着"空 body 也该成功"，实际已经不在写路由清单里：${stale.join("、")}`);
     console.log(`写路由空 body 扫描 ok: ${writeRoutes.length} 条逐个打过空 body，0 个 5xx、`
       + `拒绝都带机器可读的码、${Object.keys(EMPTY_BODY_IS_FINE).length} 个空 body 也该成功的已逐个登记`);
+  // 上面只扫了【字面量路径】。带 id 的那 50 多条（/api/x/:id/close、/decide、/revoke、/checkpoint…）
+  // 恰恰是破坏性动作所在，一条都没扫过。要扫就得用【真 id】，于是它们真的会执行 ——
+  // 所以在【运行目录的副本】上另起一台服务来扫，伤害留在副本里，主服务的状态不受影响。
+  {
+    const sweepDir = join(root, `${doctorRuntimeDir}-empty-body`);
+    rmSync(sweepDir, {recursive: true, force: true});
+    cpSync(join(root, doctorRuntimeDir), sweepDir, {recursive: true});
+    const sweepPort = await getFreePort();
+    const sweepChild = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {cwd: root,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(sweepPort), AIMAC_RUNTIME_DIR: sweepDir,
+        AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_BOOTSTRAP_TOKEN: "doctor-bootstrap-token",
+        AIMAC_EXIT_WITH_PARENT: "1"}});
+    let sweepStderr = "";
+    sweepChild.stderr.on("data", (chunk) => { sweepStderr += String(chunk); });
+    try {
+      await waitForHealth(sweepPort, 15000);
+      const sweepAuth = await loginAs(sweepPort, "system.admin@local", "doctor-bootstrap-token");
+      const full = await jsonFetch(sweepPort, "/api/state?view=full&limit=200", {headers: {authorization: sweepAuth}});
+      const live = full.payload || {};
+      // 路径段 → 一个真实存在的 id。取不到的段这条路由就扫不了，必须【报出来】而不是当成扫过了。
+      const idFor = {
+        "task-groups": (live.taskGroups || [])[0]?.id,
+        projects: (live.projects || [])[0]?.id,
+        "agent-dispatches": (live.agentDispatches || [])[0]?.dispatchId,
+        dispatches: (live.agentDispatches || [])[0]?.dispatchId,
+        "human-confirmations": (live.humanConfirmationRequests || [])[0]?.requestId,
+        "approval-requests": (live.approvalRequests || [])[0]?.approvalId,
+        "permission-requests": (live.permissionRequests || [])[0]?.requestId,
+        "agent-nodes": (live.agentRuntimeNodes || [])[0]?.nodeId,
+        "agent-join-tokens": (live.agentJoinTokens || [])[0]?.joinTokenId,
+        accounts: (live.accounts || [])[0]?.accountId,
+        findings: (live.findings || [])[0]?.findingId,
+        sessions: (live.workSessions || [])[0]?.sessionId,
+        control: (live.agentControlCommands || [])[0]?.commandId,
+        "skill-sources": (live.skillSources || [])[0]?.sourceId || (live.skillSources || [])[0]?.id,
+        agents: (live.agents || [])[0]?.id,
+        "access-grants": (live.accessGrants || [])[0]?.grantId,
+        "quality-gates": (live.qualityGates || [])[0]?.gateId || (live.qualityGates || [])[0]?.id,
+        "review-bundles": (live.reviewBundles || [])[0]?.bundleId,
+        "review-plans": (live.reviewPlans || [])[0]?.planId,
+        "system-upgrade-candidates": (live.systemUpgradeCandidates || [])[0]?.candidateId,
+        "rule-source-resolutions": (live.ruleSourceResolutions || [])[0]?.resolutionId,
+        "shared-definition-contracts": (live.sharedDefinitions || [])[0]?.contractId,
+        "work-items": (live.taskGroups || []).flatMap((group) => group.workItems || [])[0]?.id,
+        leases: (live.leases || [])[0]?.leaseId,
+        "execution-topologies": (live.executionTopologies || [])[0]?.topologyId,
+        orgs: (live.organizations || [])[0]?.organizationId || (live.organizations || [])[0]?.id,
+        members: (live.accounts || []).find((item) => item.accountType !== "system_admin")?.accountId
+      };
+      const paramRoutes = [];
+      const unresolved = [];
+      // 抓到 `$/` 为止，不能用 [^)]+?：路由正则自己就带括号（`([^/]+)`），那样会在第一个右括号
+      // 处截断，拿到半截的 `/^\/api\/x\/([^/]+`，后面全盘皆错（第一版就是这样，解析出 0 条）。
+      for (const hit of serverSource.matchAll(/url\.pathname\.match\((\/\^\\\/api.*?\$\/[a-z]*)\)/gu)) {
+        const after = serverSource.slice(hit.index, hit.index + 260);
+        const method = /req\.method === "(POST|PATCH|PUT|DELETE)"/u.exec(after)?.[1];
+        if (!method) continue;                                   // GET 路由不在本条范围
+        const literal = hit[1].replace(/^\/\^/u, "").replace(/\$\/[a-z]*$/u, "").replace(/\\\//gu, "/");
+        // 按【占位串整体】切，不能按 "/" 切：`([^/]+)` 自己就带一个斜杠，按 "/" 切会把它劈成
+        // `([^` 和 `]+)`，拼出来是 `/api/x/([%5E/]+` 这种乱码 —— 36 条全打在 404 上，
+        // 而"拒绝且带码"照样成立，整轮绿着什么也没验（下面那条撞门自查就是为此加的，它当场抓到了）。
+        const chunks = literal.split("([^/]+)");
+        let resolved = chunks[0];
+        let ok = chunks.length > 1 && !literal.includes("(") === false;
+        ok = chunks.length > 1;
+        for (let index = 1; index < chunks.length; index += 1) {
+          const previous = chunks[index - 1].split("/").filter(Boolean).pop();
+          const id = idFor[previous];
+          if (!id) { ok = false; break; }
+          resolved += `${encodeURIComponent(id)}${chunks[index]}`;
+        }
+        if (!ok || resolved.includes("(")) { unresolved.push(`${method} ${literal}`); continue; }
+        paramRoutes.push([method, resolved, literal]);
+      }
+      if (paramRoutes.length < 10) {
+        throw new Error(`带 id 的路由只解析出 ${paramRoutes.length} 条（应 10+）—— 提取与代码脱节，本条在空转`);
+      }
+      // 带 id 的这些里，空 body 也该成功的同样逐个登记。
+      const PARAM_EMPTY_BODY_IS_FINE = {
+        "POST /api/task-groups/([^/]+)/control": "动作缺省是 recompute_readiness（只重算，不改任何状态）",
+        "POST /api/agent-join-tokens/([^/]+)/revoke": "吊销这一张令牌：对象在 URL 里，本来就没有别的参数",
+        "POST /api/agent-nodes/([^/]+)/revoke": "吊销这个节点：同上",
+        "POST /api/task-groups/([^/]+)/config/reset": "重置回继承值：它的语义就是「不带参数」",
+        "POST /api/task-groups/([^/]+)/close-barrier/compute": "重算关闭门：只算不改",
+        "POST /api/skill-sources/([^/]+)/sync": "把这个源重新同步一遍：源地址在记录里，本来就没有别的参数",
+        "POST /api/skill-sources/([^/]+)/retire": "退役这个源：对象在 URL 里，动作在路径里，没有别的参数",
+        "POST /api/access-grants/([^/]+)/revoke": "吊销这一份授权：同上"
+      };
+      const paramCodes = {};
+      const paramBad = [];
+      const paramUnnamed = [];
+      const paramSucceeded = [];
+      for (const [method, path, literal] of paramRoutes) {
+        const response = await fetch(`http://127.0.0.1:${sweepPort}${path}`, {method,
+          headers: {"content-type": "application/json", authorization: sweepAuth,
+            "idempotency-key": `empty-body-param-${method}-${literal.replace(/[^a-z0-9]/gu, "-")}`},
+          body: "{}"});
+        const payload = await response.json().catch(() => ({}));
+        if (response.status >= 500) { paramBad.push(`${method} ${literal} → ${response.status} ${JSON.stringify(payload).slice(0, 80)}`); continue; }
+        if (response.status >= 400) {
+          if (!/^[a-z][a-z0-9_]{4,}$/u.test(String(payload.error || ""))) {
+            paramUnnamed.push(`${method} ${literal} → ${response.status} ${JSON.stringify(payload).slice(0, 70)}`);
+          }
+          paramCodes[String(payload.error || response.status)] = (paramCodes[String(payload.error || response.status)] || 0) + 1;
+          if (process.env.AIMAC_TRACE_EMPTY_BODY) console.log(`    [带id] ${method} ${path} → ${response.status} ${JSON.stringify(payload).slice(0, 90)}`);
+          continue;
+        }
+        if (!PARAM_EMPTY_BODY_IS_FINE[`${method} ${literal}`]) {
+          paramSucceeded.push(`${method} ${literal} → ${response.status} ${JSON.stringify(payload).slice(0, 110)}`);
+        }
+      }
+      if (paramBad.length) throw new Error("这些带 id 的写路由收到空 body 就 5xx：\n  " + paramBad.join("\n  "));
+      if (paramUnnamed.length) throw new Error("这些带 id 的写路由拒绝了空 body，却没给机器可读的码：\n  " + paramUnnamed.join("\n  "));
+      if (paramSucceeded.length) {
+        throw new Error("这些带 id 的写路由【一个字段都不给】也成功了（它们是 close/decide/revoke 这一类，"
+          + "缺省就把事做了最贵）：\n  " + paramSucceeded.join("\n  "));
+      }
+      // 「撞在另一道门上」自查：拒绝码要是大半落在"找不到这个对象"上，说明我的 id 根本没对上，
+      // 这一轮验的是 404 而不是"缺参数怎么办"。绿着报 ok 比不报更坏。
+      const notFound = Object.entries(paramCodes)
+        .filter(([code]) => /not_found|不存在/u.test(code)).reduce((sum, [, n]) => sum + n, 0);
+      if (notFound > paramRoutes.length / 2) {
+        throw new Error(`带 id 的空 body 扫描里 ${notFound}/${paramRoutes.length} 条是"找不到这个对象" ——`
+          + " 说明填进去的 id 没对上，这一轮验的是 404，不是缺参数怎么办");
+      }
+      // 上面那轮是【通用】扫描：它只问"有没有码"，不问是哪一个。这两条单独点名 ——
+      // 「改成员状态」的缺省原先等于启用（一个被停用的账号就这么被静默恢复），
+      // 「改成员授权」两样都不给时什么也不改却回 200（调用方以为改成功了）。
+      {
+        const someMember = (live.accounts || []).find((item) => item.accountType !== "system_admin");
+        const statusCall = await jsonFetch(sweepPort, `/api/org/members/${encodeURIComponent(someMember.accountId)}/status`,
+          {method: "POST", headers: {authorization: sweepAuth, "Idempotency-Key": "empty-body-member-status"}, body: JSON.stringify({})});
+        if (statusCall.payload.error !== "member_status_required") {
+          throw new Error(`改成员状态时不给 status，拿到的是 ${statusCall.response.status}/${statusCall.payload.error} —— `
+            + "缺省不得等于启用（原先它会把成员置成 active）");
+        }
+        if (!Array.isArray(statusCall.payload.supported)) {
+          throw new Error("拒绝里没有把合法取值给出来 —— 人只能自己猜");
+        }
+        const permCall = await jsonFetch(sweepPort, `/api/org/members/${encodeURIComponent(someMember.accountId)}/permissions`,
+          {method: "POST", headers: {authorization: sweepAuth, "Idempotency-Key": "empty-body-member-perm"}, body: JSON.stringify({})});
+        if (permCall.payload.error !== "member_permissions_update_empty") {
+          throw new Error(`改成员授权时两样都不给，拿到的是 ${permCall.response.status}/${permCall.payload.error} —— `
+            + "什么都没改却回 200 的话，调用方会以为改成功了");
+        }
+      }
+      console.log(`带 id 的写路由空 body 扫描 ok: ${paramRoutes.length} 条逐个打过（在运行目录的副本上，用真 id），`
+        + `0 个 5xx、拒绝都带码（${Object.entries(paramCodes).sort((a, b) => b[1] - a[1]).slice(0, 4)
+          .map(([code, n]) => `${code}×${n}`).join("、")}）；另有 ${unresolved.length} 条因为找不到对应的真实对象没扫`
+        + `${unresolved.length ? `（${unresolved.join("、")}）` : ""}`);
+    } finally {
+      sweepChild.kill("SIGKILL");
+      rmSync(sweepDir, {recursive: true, force: true});
+    }
+  }
+
   }
 
   child.kill("SIGTERM");

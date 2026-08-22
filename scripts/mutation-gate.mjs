@@ -3660,6 +3660,24 @@ const MUTATIONS = [
     expect: "却照读不误"
   },
   {
+    // 空 body 打到「改成员状态」上原先会置成 active —— 一个被停用的账号就这么被静默恢复。
+    name: "改成员状态的缺省不得等于启用",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (!["active", "disabled"].includes(String(body.status || ""))) {',
+    to: "    if (false) {",
+    expect: "一个字段都不给】也成功了"
+  },
+  {
+    // 带 id 的那批路由要用【真 id】才扫得到，取不到 id 就只是在验 404。
+    name: "带 id 的空 body 扫描要用真 id（不许退化成验 404）",
+    file: "scripts/doctor.mjs",
+    gate: "doctor",
+    from: '        const chunks = literal.split("([^/]+)");',
+    to: '        const chunks = [literal];',
+    expect: "只解析出 0 条"
+  },
+  {
     // 空 body 打过去照样 201：凭空给种子账号发一份授权。同族还有铸账号、挂审批单、建产物记录。
     name: "发授权必须点名主体与资源（不许替人挑一个）",
     file: "apps/control-plane-ui/server.mjs",

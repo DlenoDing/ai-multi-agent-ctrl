@@ -3299,6 +3299,11 @@ async function handleApi(req, res) {
     if (controlActor && !isSystemAccount(controlActor) && controlActor.organizationId && targetNodeOrg && targetNodeOrg !== controlActor.organizationId) {
       return json(res, 403, {error: "policy_denied", reason: "target_node_out_of_organization"});
     }
+    // 不给命令类型就默认 refresh_profile：空 body 打过来也会真的往节点下一条命令（实测 201）。
+    // 控制命令是对着【别人机器上正在跑的东西】发的，缺省不该替调用方挑一个。
+    // 【必须放在鉴权之后】：放前面的话，真实的外租户节点 id 回 400（缺参数）、编造的 id 回 403，
+    // 两者可分辨＝挨个试就能数出别的租户有多少节点。跨租户存在性预言机那道门当场抓到过这一版。
+    if (requireBodyFields(res, body, ["commandType"], "agent_control_command_type_required")) return;
     const result = createAgentControlCommand(state, targetNode, body, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});
     // 给 agent 下控制命令（暂停/取消/关停）同样是要留痕的动作：谁在什么时候停了谁。
     audit(state, guard.actor, `agent_control_${result.command.commandType}`,
@@ -3815,6 +3820,9 @@ async function handleApi(req, res) {
 
   const workItemCreateMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/work-items$/);
   if (req.method === "POST" && workItemCreateMatch) {
+    // 空 body 原先会造出一个标题叫「AI-native work item」的真工作项：它进任务组、进进度分母、
+    // 要人去处置。工作项是干活的单位，标题必须由人给。
+    if (requireBodyFields(res, body, ["title"], "work_item_title_required")) return;
     const authenticated = accountFromRequest(req, state);
     if (!authenticated) {
       json(res, 401, {error: "auth_required"});
@@ -3965,6 +3973,9 @@ async function handleApi(req, res) {
 
   const taskGroupLanguageMatch = url.pathname.match(/^\/api\/task-groups\/([^/]+)\/language-policy$/);
   if (req.method === "POST" && taskGroupLanguageMatch) {
+    // 空 body 原先会把这个组的统一语言【设成默认值】—— 而语言策略是规则层的东西，
+    // 它会进之后每一次派发的指令包。改它必须说清改成哪一种。
+    if (requireBodyFields(res, body, ["languageTag"], "language_tag_required")) return;
     const taskGroupId = taskGroupLanguageMatch[1];
     const guard = beginGuardedWrite(req, state, "task_group_language_policy_update", `TaskGroup:${taskGroupId}`, taskGroupScope(state, taskGroupId));
     if (guard.status) {
@@ -5280,6 +5291,11 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const member = target.member && target.member.accountType !== "org_admin" ? target.member : null;
     if (!member) return json(res, 404, {error: "org_member_not_found"});
+    // 两样都不给等于什么都没说，却回 200 —— 调用方以为改成功了。至少要给一样。
+    if (body.permissions === undefined && body.defaultProjectId === undefined) {
+      return json(res, 400, {error: "member_permissions_update_empty",
+        message: "改成员授权至少要给 permissions 或 defaultProjectId 之一 —— 两样都不给时这条接口什么也不会改"});
+    }
     member.permissions = sanitizeMemberPermissions(body.permissions, member.permissions || ["project:view"]);
     if (body.defaultProjectId !== undefined) member.defaultProjectId = body.defaultProjectId || null;
     member.updatedAt = now();
@@ -5346,6 +5362,14 @@ async function handleApi(req, res) {
     // 只能靠系统管理员专属的 MCP 工具。现在允许停用，但不得把组织锁死 —— 至少要留一个活跃管理员。
     const member = target.member;
     if (!member) return json(res, 404, {error: "org_member_not_found"});
+    // 缺省不得等于"启用"：空 body 打过来原先会把成员置成 active —— 一个被停用的账号
+    // 就这么被静默恢复了（实测 200）。认不出的取值也一样要拒，并把合法值列出来。
+    if (!["active", "disabled"].includes(String(body.status || ""))) {
+      // 字段名用仓里既有的 supported：控制台已经会把它渲染成「可用的取值：…」。
+      // 自己新造一个 allowed 的话，服务端算出来了、界面一处都不读 —— 出错那一刻人还是得猜。
+      return json(res, 400, {error: "member_status_required", supported: ["active", "disabled"],
+        message: "改成员状态必须显式给出 status（active / disabled）—— 缺省不会被当作启用"});
+    }
     const nextMemberStatus = body.status === "disabled" ? "disabled" : "active";
     // 治理主体不能被停到零。原先只写了 org_admin 这一支，而系统管理员的 organizationId 是 null、
     // 与它自己调用时的 orgId 恰好相等，所以这条路由够得着它 —— 全新部署里唯一的系统管理员可以把
