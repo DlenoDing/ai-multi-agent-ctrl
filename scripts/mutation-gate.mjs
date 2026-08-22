@@ -3767,6 +3767,17 @@ const MUTATIONS = [
     expect: "从没加载成功过的页不许说"
   },
   {
+    // 执行器跑完一个字都没改＝模型空转（额度烧了、活没动）。它必须被判成失败并如实报回控制面，
+    // 而不是当成做完了去提交一个空 commit。拆掉这一道之后会落到下一道（no_output），
+    // 断言点的是【具体是哪一个码】，所以照样红。
+    name: "执行器一个字都没改必须判失败",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: '  if (!changedBeforeManifest.length) throw new Error("executor_produced_no_changes:仓库里一个文件都没改");',
+    to: '  if (false) throw new Error("executor_produced_no_changes:仓库里一个文件都没改");',
+    expect: "没有报出 executor_produced_no_changes"
+  },
+  {
     name: "开工前工作树不干净必须拒绝开工",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyAgentRuntimeGuardsRefuseRealAttacks",

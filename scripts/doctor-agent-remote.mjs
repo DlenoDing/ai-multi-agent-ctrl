@@ -51,6 +51,13 @@ writeFileSync(executor, `
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 const input = JSON.parse(readFileSync(0, "utf8"));
+// 「跑完一个字都没改」这条路此前零覆盖：真实里它意味着模型空转（额度烧了、活没动），
+// 而 agent 必须把它判成失败并如实报回控制面，而不是当成做完了去提交一个空 commit。
+// 按工作项 id 里的标记切换：这一支【什么都不写】，只打一句摘要。
+if (String(input.workId || "").includes("nochange")) {
+  console.log(JSON.stringify({summary: "探针：这一轮故意什么都不改", verificationRefs: []}));
+  process.exit(0);
+}
 const outputPath = \`docs/agent-runtime-output/\${input.taskGroupId}/\${input.workId}.md\`;
 mkdirSync(join(input.repositoryRoot, dirname(outputPath)), {recursive: true});
 writeFileSync(join(input.repositoryRoot, outputPath), [
@@ -1166,6 +1173,45 @@ try {
 	    throw new Error(`agent remote doctor: e2e 真实产出的记录不符合它们自己声明的规范：\n- ${sweep.errors.slice(0, 200).join("\n- ")}`);
 	  }
 	  console.log(`e2e 产出规范核对 ok: ${sweep.validated} 条记录符合各自声明的 schema（含 checkpoint 的 commit/push 证据）；${sweep.uncoveredNote}`);
+
+  // 【执行器跑完一个字都没改】。真实里这意味着模型空转：额度烧了、活没动。
+  // agent 必须把它判成失败并如实报回控制面 —— 不能当成做完了去提交一个空 commit，
+  // 也不能悄悄退出（那样派发会挂在"运行中"直到租约过期，人看到的是"还在跑"）。
+  // 这条失败码此前零覆盖（36 个码里剩下的 6 个之一），而它守的是最容易被当成"没事发生"的一种失败。
+  {
+    await json("/api/task-groups/tg_runtime_management/work-items", {
+      method: "POST", token: login.sessionToken, idempotencyKey: "doctor-agent-nochange-work",
+      body: {workItemId: "work_nochange_probe", title: "执行器什么都不改时要判失败",
+        ownerRole: "agent-runtime", requirements: ["commit to project git", "return checkpoint"]}
+    });
+    await json("/api/orchestrator/run", {
+      method: "POST", token: login.sessionToken, idempotencyKey: "doctor-agent-nochange-orchestrate",
+      body: {mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false}
+    });
+    const nochangeRun = spawnSync(process.execPath, [runtimePath, "run", "--work-dir", agentWorkDir, "--once"], {
+      env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false"},
+      encoding: "utf8", maxBuffer: 32 * 1024 * 1024
+    });
+    const nochangeText = `${nochangeRun.stdout || ""}${nochangeRun.stderr || ""}`;
+    const state = await json("/api/state?view=full&limit=200", {token: login.sessionToken});
+    const nochangeDispatch = (state.agentDispatches || [])
+      .find((item) => item.workItemId === "work_nochange_probe");
+    // 夹具没造出想测的情形也要能自报：派发没造出来 / 没被这台节点领走时，下面两条恒绿。
+    if (!nochangeDispatch) {
+      throw new Error("「什么都不改」这条没造出想测的情形：没有为它造出派发 —— 下面两条断言什么也没验");
+    }
+    if (!/executor_produced_no_changes/u.test(nochangeText)) {
+      throw new Error("执行器一个字都没改，agent 侧没有报出 executor_produced_no_changes —— "
+        + `它要么当成做完了、要么悄悄退了（agent 输出：${nochangeText.slice(-300)}）`);
+    }
+    if (!String(nochangeDispatch.failureReason || "").includes("executor_produced_no_changes")) {
+      throw new Error("agent 判了失败，而控制面上这条派发的失败原因不是它（"
+        + `${nochangeDispatch.status}/${nochangeDispatch.failureReason || "空"}）—— `
+        + "人在控制台上看不出这一轮为什么没产出");
+    }
+    console.log("  ok  执行器一个字都没改时判失败，并如实报回控制面（executor_produced_no_changes）");
+  }
+
 		  console.log("agent remote doctor ok: one-command join, checksum install, credential rotation, initialization, self-check (permission+integrity probe), remote MCP, control command ACK, project/session-level execution event stream, on-demand skill workset, dispatch, commit, push and checkpoint outbox replay, two-step evidence artifact registration, permission_report loop with safe-retry-point recovery, revoke pending+ACK requeue verified");
 } finally {
   server.kill("SIGTERM");
