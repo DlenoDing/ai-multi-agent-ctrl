@@ -79,7 +79,7 @@ const MUTATIONS = [
     name: "认不出的状态版本必须拒读",
     check: "verifyUnknownStateSchemaIsRefused",
     file: STORE,
-    from: "  if (!declared || SUPPORTED_STATE_SCHEMA_VERSIONS.has(declared)) return state;",
+    from: "  if (SUPPORTED_STATE_SCHEMA_VERSIONS.has(declared)) return state;",
     to: "  return state;",
     expect: "竟然照读不误"
   },
@@ -3650,6 +3650,14 @@ const MUTATIONS = [
     from: 'if (!inside(repositoryRoot, target)) throw new Error("artifact_manifest_path_escapes_repository',
     to: 'if (false) throw new Error("artifact_manifest_path_escapes_repository',
     expect: "产出清单的路径爬到仓库之外却没被拦下"
+  },
+  {
+    name: "根本不像状态的中央态必须拒读（否则下一次写入把空的落盘）",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyStateFilesRefuseUnknownSchemaVersions",
+    from: "  if (!declared && looksLikeState) return state;",
+    to: "  if (!declared) return state;",
+    expect: "却照读不误"
   },
   {
     name: "PostgreSQL 上分片整行被删也必须拒绝开工",

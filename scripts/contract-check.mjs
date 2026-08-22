@@ -12484,6 +12484,19 @@ function verifyStateFilesRefuseUnknownSchemaVersions(output) {
       output.push(`中央态声明了一个认不出的 schemaVersion，却照读不误（${refusedCentral || "读成功了"}）—— `
         + "这个构建会把它认不出来的语义就地改掉，没有回头路");
     }
+    // 但"根本不像一份状态"要拒。这是最危险的那种坏法：盘上那份被截断、被别的东西覆盖、
+    // 或一次没恢复完的还原之后，读出来是一份补齐默认值的空状态 —— 控制台看起来像刚装完，
+    // 而【下一次写入就把这份空的落盘】，本来还能恢复的东西就没了。
+    // 实测（改之前）：内容写成 {} 甚至 "hello" 都照读不误，0 个项目、正常开工。
+    for (const [why, body] of [["空对象", "{}"], ["根本不是对象", '"hello"'], ["空数组", "[]"]]) {
+      writeFileSync(statePath, body);
+      const refused = readBack();
+      if (!String(refused).startsWith("control_plane_state_unrecognized:")) {
+        output.push(`中央态被写成${why}，却照读不误（${refused || "读成功了"}）—— `
+          + "读出来是一份补齐默认值的空状态，控制台看起来像刚装完，而下一次写入就把它落盘");
+      }
+    }
+    writeFileSync(statePath, JSON.stringify(central));
     // 缺字段仍要能读（早期状态与夹具没有这个字段）。
     const {schemaVersion: _dropped, ...withoutVersion} = central;
     writeFileSync(statePath, JSON.stringify(withoutVersion));
@@ -12540,7 +12553,8 @@ function verifyStateFilesRefuseUnknownSchemaVersions(output) {
       + "PG 走 pgReadStateWithShards 把分片直接传进来，不经过 runtime_json 的读取函数，"
       + "那道门对 PG 部署等于不存在");
   }
-  console.log("状态版本：中央态与项目分片各自认不出版本时都拒开工（两条存储路都核到），缺字段的旧文件仍照常读");
+  console.log("状态版本：中央态与项目分片各自认不出版本时都拒开工（两条存储路都核到），"
+    + "缺字段的旧文件仍照常读，而【根本不像一份状态】的（空对象/空数组/不是对象）一律拒");
 }
 
 function verifyOutdatedRuntimeIsFlaggedFailClosed(output) {

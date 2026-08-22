@@ -197,9 +197,30 @@ export function readStoredState(options) {
 const SUPPORTED_STATE_SCHEMA_VERSIONS = new Set(["control-plane-runtime-state/v1"]);
 const SUPPORTED_PROJECT_SHARD_SCHEMA_VERSIONS = new Set(["project-state-shard/v1"]);
 
-function assertStateSchemaSupported(state) {
+function assertStateSchemaSupported(state, source = "control-plane-state") {
   const declared = state && typeof state === "object" ? state.schemaVersion : null;
-  if (!declared || SUPPORTED_STATE_SCHEMA_VERSIONS.has(declared)) return state;
+  if (SUPPORTED_STATE_SCHEMA_VERSIONS.has(declared)) return state;
+  // 「认不出的版本」会被下面拒掉，而「根本没声明」原先直接放行 —— 缺席比写错还宽松。
+  // 后果是静默的数据损失：盘上那份被截断/被别的东西覆盖/一次没写完的恢复之后，
+  // 读出来是一份补齐默认值的空状态，控制台看起来像刚装完，而【下一次写入就把这份空的落盘】。
+  // 实测：内容写成 {} 甚至 "hello" 都照读不误，0 个项目、正常开工。
+  // 全新安装走的是另一条路（文件/行根本不存在 → buildInitialState），不受这里影响。
+  // 缺 schemaVersion 【本身】不拒：早期状态与部分夹具就是没有这个字段，这是有意的兼容决定
+  //（旁边那条判据明写着「缺字段仍要能读」）。要拒的是另一件事 ——
+  // 这份东西根本不像一份状态：不是对象，或者一个能认出来的集合都没有。
+  const looksLikeState = state && typeof state === "object" && !Array.isArray(state)
+    && ["accounts", "projects", "taskGroups", "organizations"].some((key) => Array.isArray(state[key]));
+  if (!declared && looksLikeState) return state;
+  if (!declared) {
+    throw Object.assign(
+      new Error(`control_plane_state_unrecognized:${source}`),
+      {code: "AIMAC_STATE_UNRECOGNIZED",
+        hint: "这份状态在，但它不像本系统写出来的：既没有 schemaVersion，也没有任何一个能认出来的集合"
+          + "（accounts / projects / taskGroups / organizations）。多半是被别的东西覆盖过，"
+          + "或者一次没写完/没恢复完的还原。系统不会拿它开工，也不会覆盖它 —— "
+          + "先把它挪走或换回备份再重启；确认要从零开始的话，把它删掉，系统会按种子重新初始化。"}
+    );
+  }
   throw Object.assign(
     new Error(`unsupported_state_schema_version:${declared}`),
     {code: "AIMAC_UNSUPPORTED_STATE_SCHEMA",
