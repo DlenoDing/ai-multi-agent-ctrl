@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/project.schema.json",
+  "title": "Project",
+  "description": "一个项目。三个入口能建它（REST /api/projects、REST /api/org/projects、MCP project_create），此前三处各写各的：只有 MCP 写时间戳，只有 org 那条写 config，MCP 还把仓库登记写进了 repositoryRefs —— 那个字段全仓一个读者都没有。这份规范把三处的形状钉在一起。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "name", "status", "ownerAccountId", "members", "progress"],
+  "properties": {
+    "schemaVersion": {"const": "project/v1"},
+    "id": {"type": "string", "pattern": "^prj_"},
+    "organizationId": {"type": "string", "minLength": 1},
+    "name": {"type": "string", "minLength": 1, "maxLength": 200},
+    "status": {"enum": ["active", "archived"], "description": "取值必须与 spec/state-machines.yaml 的 Project 逐个对齐（有一道门在对表）。"},
+    "ownerAccountId": {"type": "string", "minLength": 1},
+    "members": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["accountId", "role"],
+        "properties": {"accountId": {"type": "string", "minLength": 1}, "role": {"type": "string", "minLength": 1}}
+      }
+    },
+    "progress": {
+      "type": "object",
+      "required": ["percent", "phase", "health", "updatedAt"],
+      "properties": {
+        "percent": {"type": "number", "minimum": 0, "maximum": 100},
+        "phase": {"type": "string", "minLength": 1},
+        "health": {"type": "string", "minLength": 1},
+        "openTaskGroups": {"type": "integer", "minimum": 0},
+        "blockedItems": {"type": "integer", "minimum": 0},
+        "updatedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "config": {
+      "type": "object",
+      "description": "人能改的那一份配置。仓库登记要落在 config.repositories —— 准入判定、提交目标、URL 白名单共用的 projectRepositories() 读的就是这里（其次才退回顶层 repositories 这份老数据）。",
+      "properties": {
+        "repositories": {"type": "array", "items": {"type": "object"}},
+        "baselineData": {"type": "array"},
+        "businessRules": {"type": "array"},
+        "defaultRoles": {"type": "array"}
+      }
+    },
+    "repositories": {"type": "array", "items": {"type": "object"}, "description": "老数据/种子写的那一份，projectRepositories() 在 config 为空时退回读它。新入口一律写 config.repositories。"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"},
+    "archivedAt": {"type": "string", "format": "date-time"}
+  }
+}

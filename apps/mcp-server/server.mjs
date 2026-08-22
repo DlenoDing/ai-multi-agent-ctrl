@@ -1679,6 +1679,7 @@ function createProject(state, args) {
     .map((item) => (typeof item === "string" ? {url: item} : item))
     .filter((item) => item && typeof item === "object");
   const project = {
+    schemaVersion: "project/v1",
     id: projectId,
     organizationId,
     name: assertHumanTextWithinLimit(args.name || args.title || "AI-native Project", "project_name", 200),

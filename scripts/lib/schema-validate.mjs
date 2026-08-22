@@ -149,10 +149,10 @@ export const SCHEMA_FILE_ALIASES = {"control-event": "control-events"};
 // 顶红一次 —— 一步走了三轮。数字只放这一处，四个调用点都从这里取。
 // 改动方式：清掉一个集合 -> 这里对应的数减一 -> 变异登记里的锚点跟着改。
 export const UNCOVERED_CEILINGS = {
-  "控制面 e2e 产出": 13,
-  "远程 agent e2e 产出": 10,
-  "种子数据": 4,
-  "编排产出": 5
+  "控制面 e2e 产出": 12,
+  "远程 agent e2e 产出": 9,
+  "种子数据": 3,
+  "编排产出": 4
 };
 
 // 凡是带 schemaVersion 的记录，一律按它【自己声明的】那份规范校验：映射取自记录自身，
@@ -223,6 +223,14 @@ export function sweepRecordsAgainstDeclaredSchemas(state, options = {}) {
       validateSchema(item, schema, `${label}.${collection}[${index}]`, output);
     }
     if (objects && !declaring) uncovered.push({collection, count: objects, spec: specFileFor(collection, specDir)});
+    // 部分带、部分不带最危险：按 schemaVersion 派发的校验把不带的那些【静默跳过】，
+    // 而报数只会说"N 条全部合规"。同一个集合有几个写入点时，漏掉一个就是这个样子 ——
+    // 那一整条写路径从此不受规范约束，门照样绿。（此前只有契约门查这一项，两套 e2e 没查。）
+    if (declaring && declaring < objects) {
+      output.push(`${label} ${collection}：${objects} 条里有 ${objects - declaring} 条没有 schemaVersion —— `
+        + "按记录自身规范派发的校验会把这几条静默跳过，而它们恰恰是最可能漂了的那几条"
+        + "（多半是某个写入点没跟上）");
+    }
   }
   // 规范存在、记录却不声明它 = 接线断了：这类记录本来验得了，现在一条都不验，而门照样绿。
   // （少一个 schemaVersion 赋值就会变成这样，minValidated 只在总量掉很多时才拦得住。）

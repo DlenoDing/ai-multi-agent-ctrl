@@ -448,6 +448,7 @@
   ],
   "projects": [
     {
+      "schemaVersion": "project/v1",
       "id": "prj_control_plane",
       "name": "AI-native Control Plane",
       "status": "active",

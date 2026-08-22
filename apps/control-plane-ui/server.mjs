@@ -3787,6 +3787,7 @@ async function handleApi(req, res) {
     const id = createId("prj");
     const ownerAccountId = requestedOwnerAccountId;
     state.projects.push({
+      schemaVersion: "project/v1",
       id,
       organizationId: projectOrgId,
       name: assertHumanTextWithinLimit(body.name || "Untitled Project", "project_name", 200),
@@ -5538,6 +5539,7 @@ async function handleApi(req, res) {
     if (!quota.allowed) return json(res, 409, {error: quota.error, quota: quota.quota, usage: quota.usage, kind: quota.kind});
     const id = createId("prj");
     state.projects.push({
+      schemaVersion: "project/v1",
       id,
       organizationId: orgId,
       name: assertHumanTextWithinLimit(String(body.name || "").trim() || "未命名项目", "project_name", 200),

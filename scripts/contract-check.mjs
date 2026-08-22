@@ -16523,8 +16523,6 @@ function verifyEveryProjectScopedIdIsScopeChecked(output) {
 // 所以改成登记制：不带 schemaVersion 的集合必须逐个写明凭什么可以不带；写不出理由的就是下一个洞。
 function verifyEveryStateCollectionIsSchemaChecked(output) {
   const COLLECTIONS_WITHOUT_SCHEMA_VERSION = {
-    projects: "项目实体本身没有独立规范：它的可变部分（config/repositories/rules）各有专门校验，"
-      + "而 id/名称/成员这些由租户接口的入参校验守住",
     taskGroups: "任务组同上；它内部的工作项状态由 spec/state-machines.yaml 的 WorkItem 枚举守住"
       + "（verifyTransitionEngine 会压过真实产出）",
     agents: "逻辑 agent 注册表（角色/模型/容量），不是租户数据，也不参与任何按 schemaVersion 的派发校验",

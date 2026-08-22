@@ -3993,6 +3993,16 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 三个入口建项目，规范把三处的形状钉在一起。这条变异去掉 org 那条路的 schemaVersion：
+    // 少一处声明，那一整条路造出来的项目就退出规范校验，而门原本照样绿。
+    name: "三个建项目入口都要声明规范",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '      schemaVersion: "project/v1",\n      id,\n      organizationId: orgId,',
+    to: "      id,\n      organizationId: orgId,",
+    expect: "条没有 schemaVersion"
+  },
+  {
     // 项目上的仓库登记有三处落点：顶层 repositories（种子）、config.repositories（界面写、
     // 所有读者读）、以及 MCP 那条路写的 repositoryRefs —— 最后这个全仓一个读者都没有。
     // 于是经 MCP 建的项目「登记了仓库」等于没登记。断言直接调读者那个函数，不查字段名。
@@ -4175,8 +4185,8 @@ const MUTATIONS = [
     name: "种子与编排产出的不受约束集合数也要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     check: "verifySeedRecordsMatchTheirDeclaredSchemas",
-    from: '"种子数据": 4,',
-    to: '"种子数据": 3,',
+    from: '"种子数据": 3,',
+    to: '"种子数据": 2,',
     expect: "不受规范约束的集合从 3 涨到 4"
   },
   {
@@ -4202,8 +4212,8 @@ const MUTATIONS = [
     name: "不受规范约束的集合数要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "doctor",
-    from: '"控制面 e2e 产出": 13,',
-    to: '"控制面 e2e 产出": 12,',
+    from: '"控制面 e2e 产出": 12,',
+    to: '"控制面 e2e 产出": 11,',
     // 期望要挑【这道门自己会打印的那一句】：控制面 e2e 的前缀是"控制面 e2e 产出："，
     // 契约门那两处（种子/编排产出）用的是别的前缀 —— 只写公共部分会被判成"挂错了门"。
     expect: "控制面 e2e 产出：不受规范约束的集合"
@@ -4215,8 +4225,8 @@ const MUTATIONS = [
     name: "远程 agent 那侧的规范覆盖也要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "agent",
-    from: '"远程 agent e2e 产出": 10,',
-    to: '"远程 agent e2e 产出": 9,',
+    from: '"远程 agent e2e 产出": 9,',
+    to: '"远程 agent e2e 产出": 8,',
     expect: "远程 agent e2e 产出：不受规范约束的集合"
   },
   {
@@ -6448,8 +6458,8 @@ const MUTATIONS = [
     name: "幂等重放不得真的写第二次（返回同 id 不等于没做两次）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    from: "    state.projects.push({\n      id,\n      organizationId: projectOrgId,",
-    to: "    state.projects.push({id: `${id}_dup`, organizationId: projectOrgId, name: body.name, status: \"active\"});\n    state.projects.push({\n      id,\n      organizationId: projectOrgId,",
+    from: "    state.projects.push({\n      schemaVersion: \"project/v1\",\n      id,\n      organizationId: projectOrgId,",
+    to: "    state.projects.push({schemaVersion: \"project/v1\", id: `${id}_dup`, organizationId: projectOrgId, name: body.name, status: \"active\"});\n    state.projects.push({\n      schemaVersion: \"project/v1\",\n      id,\n      organizationId: projectOrgId,",
     expect: "幂等重放把项目建了"
   },
   {
