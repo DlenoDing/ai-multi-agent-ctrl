@@ -4303,7 +4303,9 @@ const MUTATIONS = [
     // 改名不行：一个零覆盖的码换成另一个零覆盖的码，总数不变。要【新增】一个才测得出。
     from: "function ensureCleanWorktree(root) {",
     to: 'function ensureCleanWorktree(root) {\n  if (root === "never") throw new Error("brand_new_uncovered_code:凑数用");',
-    expect: "零覆盖从 14 涨到 15"
+    // 期望里【不要写死数字】：这个棘轮今天从 12 一路降到 4，每降一次这条就过期一次
+    //（完整变异门跑出来的"失败了但不是因为预期断言"，其中两条就是这么来的）。
+    expect: "零覆盖从"
   },
   {
     name: "机器上那份仓库指向别处时必须拒绝开工",
