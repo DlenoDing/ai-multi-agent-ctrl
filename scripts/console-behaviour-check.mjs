@@ -1649,6 +1649,62 @@ function runNoVisibleProjectCase() {
       /还没有过动静/u.test(stallText),
       "这一格空着与「刚刚才动过」看不出区别 —— 而它恰恰是最该被人看到的那种");
   }
+  // 人工指令页的「目标任务组」下拉：只列出你真能控制的那些。列全了的话，人照着下拉选一个，
+  // 提交必然 403 —— 而下拉本身就是这一页告诉他"可以选什么"的地方。
+  {
+    const directiveState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [
+        {id: "tg_mine", projectId: "p1", name: "我能控的", status: "development", workItems: []},
+        {id: "tg_theirs", projectId: "p1", name: "别人的组", status: "development", workItems: []}
+      ],
+      taskGroupPermissions: {tg_mine: ["task_group:read", "task_group:control"], tg_theirs: ["task_group:read"]},
+      humanDirectives: [], humanConfirmationRequests: [], agentDispatches: [], workSessions: [],
+      executionTopologies: [], closeBarriers: [], qualityGates: [], findings: [],
+      permissionRequests: [], approvalRequests: [], truncatedCollections: []
+    };
+    const directiveText = renderAs({accountId: "u_op", accountType: "member", displayName: "操作员",
+      organizationId: "org_default", effectivePermissions: ["project:view", "task_group:read", "task_group:control"]},
+      directiveState, "directives", "p1");
+    check("人工指令的「目标任务组」下拉只列出你真能控制的组",
+      /我能控的/u.test(directiveText) && !/别人的组/u.test(directiveText),
+      "下拉列出了没有控制权的任务组 —— 人照着它选一个，提交必然 403");
+  }
+  // 监控页上的「关闭任务组 / 豁免质量门」也一样：动作按【那一行所属的任务组】判。
+  {
+    const monitorState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [
+        {id: "tg_mine", projectId: "p1", name: "我能控的", status: "development", workItems: []},
+        {id: "tg_theirs", projectId: "p1", name: "别人的组", status: "development", workItems: []}
+      ],
+      taskGroupPermissions: {tg_mine: ["task_group:read", "task_group:control", "task_group:review"],
+        tg_theirs: ["task_group:read"]},
+      closeBarriers: [
+        {barrierId: "cb1", projectId: "p1", taskGroupId: "tg_mine", satisfied: true, blockingObjects: [],
+          computedAt: "2026-08-20T00:00:00.000Z"},
+        {barrierId: "cb2", projectId: "p1", taskGroupId: "tg_theirs", satisfied: true, blockingObjects: [],
+          computedAt: "2026-08-20T00:00:00.000Z"}
+      ],
+      humanConfirmationRequests: [], humanDirectives: [], agentDispatches: [], workSessions: [],
+      executionTopologies: [], qualityGates: [], findings: [], permissionRequests: [], approvalRequests: [],
+      truncatedCollections: []
+    };
+    const monitorText = renderAs({accountId: "u_op", accountType: "member", displayName: "操作员",
+      organizationId: "org_default", effectivePermissions: ["project:view", "task_group:read", "task_group:control"]},
+      monitorState, "monitor", "p1");
+    const closeButtons = (monitorText.match(/关闭任务组/gu) || []).length;
+    if (!/我能控的/u.test(monitorText)) {
+      check("监控页按组判权的夹具要真渲染出关闭门那张表", false, "这一屏没渲染出关闭门 —— 断言什么也没验");
+    } else {
+      check("「关闭任务组」按钮只出现在你真有权控制的那一行",
+        closeButtons === 1,
+        `两个任务组都满足关闭条件，而按钮出现了 ${closeButtons} 个（应为 1）—— `
+          + "并集判权会让人在别人负责的组上也看到「关闭任务组」，按下去必然 403");
+    }
+  }
   // 按钮同理：任务组列表上「暂停 / 恢复 / 纠偏」这些是按任务组授权的，而控制台原先用跨资源并集判 ——
   // 只在 tg1 上有控制权的人，在 tg2 那一行也看得到按钮，按下去必然 403（「看得到按不动」）。
   {
@@ -1700,8 +1756,10 @@ function runNoVisibleProjectCase() {
       ],
       // 两个任务组各有一张待定稿的确认单，而这个人只在 tg1 上有评审权。
       humanConfirmationRequests: [
-        {requestId: "hcr_mine", projectId: "p1", taskGroupId: "tg1", status: "pending", question: {title: "我该定的"}},
-        {requestId: "hcr_theirs", projectId: "p1", taskGroupId: "tg2", status: "pending", question: {title: "别人该定的"}}
+        {requestId: "hcr_mine", projectId: "p1", taskGroupId: "tg1", status: "pending", round: 1,
+          question: {title: "我该定的", detail: "我该定的"}, options: [{optionId: "a", summary: "甲"}]},
+        {requestId: "hcr_theirs", projectId: "p1", taskGroupId: "tg2", status: "pending", round: 1,
+          question: {title: "别人该定的", detail: "别人该定的"}, options: [{optionId: "a", summary: "甲"}]}
       ],
       taskGroupPermissions: {tg1: ["task_group:read", "task_group:review"], tg2: ["task_group:read"]},
       humanDirectives: [], agentDispatches: [], workSessions: [], executionTopologies: [],
@@ -1711,6 +1769,21 @@ function runNoVisibleProjectCase() {
     const scopedText = renderAs({accountId: "u_reviewer", accountType: "member", displayName: "评审人",
       organizationId: "org_default", effectivePermissions: ["project:view", "task_group:read", "task_group:review"]},
       scopedState, "review", "p1");
+    // 计数按组算了，卡片上的【动作】也要按组：同一屏上两张确认单，只有我负责的那张能定稿。
+    // （这一屏会把两张卡片都列出来 —— 看得见没问题，「看得见却按不动」才是问题。）
+    const mineAt = scopedText.lastIndexOf("我该定的");
+    const theirsAt = scopedText.lastIndexOf("别人该定的");
+    if (mineAt < 0 || theirsAt < 0) {
+      check("人工审核页按组判权的夹具要真渲染出两张卡片", false,
+        "这一屏没渲染出那两张确认单 —— 下面的断言什么也没验");
+    } else {
+      const first = mineAt < theirsAt ? scopedText.slice(mineAt, theirsAt) : scopedText.slice(mineAt);
+      const second = mineAt < theirsAt ? scopedText.slice(theirsAt) : scopedText.slice(theirsAt, mineAt);
+      check("确认单的定稿表单只出现在你有权评审的那个任务组上",
+        /定稿/u.test(first) && !/定稿/u.test(second),
+        `我负责的那张${/定稿/u.test(first) ? "有" : "没有"}定稿表单、别人那张${/定稿/u.test(second) ? "也有" : "没有"} —— `
+          + "后端按资源判权，并集会让人对着一张按不动的表单填半天");
+    }
     check("「待你处理」只算你在【那个任务组】上真有权处置的",
       /共 1 项等待你处理/u.test(scopedText) && !/共 2 项等待你处理/u.test(scopedText),
       "控制台判权用的是跨资源的并集，而后端按资源判 —— 只在 tg1 上有评审权的人会看到 tg2 的待办，"

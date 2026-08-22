@@ -3596,6 +3596,30 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "确认单的定稿表单必须按组判权",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      ${hasGroupPerm(request.taskGroupId, "task_group:review") ? `<form class="form-grid" data-form="hcr-decide"',
+    to: '      ${canReview ? `<form class="form-grid" data-form="hcr-decide"',
+    expect: "别人那张也有"
+  },
+  {
+    name: "关闭任务组按钮必须按行判权",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '    (barrier.satisfied && hasGroupPerm(barrier.taskGroupId, "task_group:control")',
+    to: "    (barrier.satisfied && canCloseTaskGroup",
+    expect: "按钮出现了 2 个"
+  },
+  {
+    name: "人工指令的目标任务组下拉必须按权限过滤",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '${taskGroupSelector(directiveTaskGroupId, "directive-tg", "task_group:control")}',
+    to: '${taskGroupSelector(directiveTaskGroupId, "directive-tg")}',
+    expect: "下拉列出了没有控制权的任务组"
+  },
+  {
     name: "任务组列表的控制按钮必须按组判权",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

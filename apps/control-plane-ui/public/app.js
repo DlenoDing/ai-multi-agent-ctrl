@@ -3132,8 +3132,12 @@ function findWorkItemDispatch(taskGroupId, workItemId) {
 
 /* ---------------- 成员：人工审核 ---------------- */
 
-function taskGroupSelector(selectedId, selectName) {
-  const groups = projectTaskGroups();
+// requirePermission：只列出【在那个任务组上真有这个权限】的组。人工指令表单用它 ——
+// 原先列出全部组，选到自己没权限的那个，提交必然 403，而人是照着下拉选的。
+function taskGroupSelector(selectedId, selectName, requirePermission = null) {
+  const groups = requirePermission
+    ? projectTaskGroups().filter((taskGroup) => hasGroupPerm(taskGroup.id, requirePermission))
+    : projectTaskGroups();
   return `
     <select data-select="${selectName}">
       ${groups.map((taskGroup) => `<option value="${esc(taskGroup.id)}" ${taskGroup.id === selectedId ? "selected" : ""}>${esc(taskGroup.name || taskGroup.id)}</option>`).join("")}
@@ -3562,6 +3566,8 @@ function renderReview() {
       : `<div class="notice">当前项目暂无任务组。下面的汇总仍覆盖你可见的全部项目。</div>`, {wide: true})
       + renderPendingForMePanel();
   }
+  // 页面级的这个仍是并集，只用来决定「整页要不要提示无权限」；每一条卡片的动作按【它所属的
+  // 任务组】判（见下面的 hasGroupPerm）—— 后端就是按资源判的，并集会让人看到按不动的表单。
   const canReview = hasPerm("task_group:review");
   // 集中处理：汇总项目内全部任务组的人工确认（tasks 视角已按可见任务组下发），而非逐组切换
   const projectTaskGroupIds = new Set(projectTaskGroups().map((taskGroup) => taskGroup.id));
@@ -3643,7 +3649,7 @@ function renderReview() {
           return parts.join("");
         })()}
       </div>` : ""}
-      ${canReview ? `<form class="form-grid" data-form="hcr-decide" data-request="${esc(request.requestId)}" data-round="${esc(String(request.round || 1))}" style="margin-top:10px;">
+      ${hasGroupPerm(request.taskGroupId, "task_group:review") ? `<form class="form-grid" data-form="hcr-decide" data-request="${esc(request.requestId)}" data-round="${esc(String(request.round || 1))}" style="margin-top:10px;">
         ${request.decisionClass === "major" ? `<div class="notice">核心决策不预选任何选项：这一栏必须由你主动勾选。AI 的推荐只是建议，预先替你选好会让"点一下定稿"成为最省力的路径，而这套闸门存在的理由正是不让 AI 的判断顺着惯性变成结论。</div>` : ""}
         <div class="option-list">
           ${(request.options || []).map((option, index) => `
@@ -3712,7 +3718,7 @@ function renderReview() {
         <div class="record">
           <div class="record-title"><strong>审批请求：${esc(item.summary || item.action || "-")}</strong>${badge(item.status)}</div>
           <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>${fmtTime(item.createdAt)}</span></div>
-          ${canReview ? `<form class="form-grid" data-form="approval-resolve" data-request="${esc(item.approvalId)}" style="margin-top:8px;">
+          ${hasGroupPerm(item.taskGroupId, "task_group:review") ? `<form class="form-grid" data-form="approval-resolve" data-request="${esc(item.approvalId)}" style="margin-top:8px;">
             <div class="btn-row"><button class="primary-button" type="submit" name="status" value="approved">批准</button><button class="ghost-button" type="submit" name="status" value="rejected">驳回</button></div>
           </form>` : ""}
         </div>`).join("")}
@@ -3723,7 +3729,7 @@ function renderReview() {
           <!-- 曾被处置但因证据/归属不全而未能了结：不说明原因的话，人只看到它还开着，
                不知道上一次处置是被什么挡下来的，也就不知道补什么才能过。 -->
           ${item.lastResolutionAttempt ? `<div class="notice warn-notice">上一次处置未能了结它：判为 ${esc(t(item.lastResolutionAttempt.dispositionClass) || item.lastResolutionAttempt.dispositionClass)}（${esc(t(item.lastResolutionAttempt.reason) || item.lastResolutionAttempt.reason)}）。补齐后可再次处置。</div>` : ""}
-          ${canReview ? `<form class="form-grid" data-form="finding-resolve" data-request="${esc(item.findingId)}" style="margin-top:8px;">
+          ${hasGroupPerm(item.taskGroupId, "task_group:review") ? `<form class="form-grid" data-form="finding-resolve" data-request="${esc(item.findingId)}" style="margin-top:8px;">
             <div class="form-row"><label>处置类别</label>${dispositionSelectHtml}</div>
             <div class="form-row"><label>处置状态</label>${decisionSelect("status", [["resolved", "已解决"], ["closed", "已关闭"], ["dismissed", "已忽略"], ["wontfix", "不修复"]])}</div>
             <div class="form-row"><label>证据引用（可选，逗号分隔）</label><input name="evidenceRefs" placeholder="evidence:..."></div>
@@ -3779,7 +3785,7 @@ function renderDirectives() {
   const canControl = hasPerm("task_group:control");
   const formHtml = canControl ? `
         <form class="form-grid" data-form="directive-create">
-          <div class="form-row"><label>目标任务组</label>${taskGroupSelector(directiveTaskGroupId, "directive-tg")}</div>
+          <div class="form-row"><label>目标任务组</label>${taskGroupSelector(directiveTaskGroupId, "directive-tg", "task_group:control")}</div>
           <div class="form-row"><label>指令类型</label>
             <select name="directiveType">${DIRECTIVE_TYPES.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("")}</select>
           </div>
@@ -4020,7 +4026,8 @@ function renderMonitor() {
     barrier.satisfied ? customBadge("可关闭", "green") : customBadge("存在阻塞", "red"),
     {v: String((barrier.blockingObjects || []).length), c: "num"},
     {v: fmtTime(barrier.computedAt), c: "nowrap"},
-    (barrier.satisfied && canCloseTaskGroup && taskGroupById(barrier.taskGroupId)?.status !== "closed")
+    (barrier.satisfied && hasGroupPerm(barrier.taskGroupId, "task_group:control")
+      && taskGroupById(barrier.taskGroupId)?.status !== "closed")
       ? `<button class="primary-button" data-action="close-task-group" data-task="${esc(barrier.taskGroupId)}">关闭任务组</button>`
       : (taskGroupById(barrier.taskGroupId)?.status === "closed" ? customBadge("已关闭", "gray") : "-")
   ])).join("");
@@ -4070,7 +4077,7 @@ function renderMonitor() {
         <div class="record" style="margin-top:8px;">
           <div class="record-title">豁免未通过的质量门</div>
           <div class="record-meta">豁免是由你负责的放行决定：门仍未通过，只是你判定它在本次范围内不适用。执行方无法自行豁免，理由会随门一起留档并显示在验收卡片上。</div>
-          ${waivableGates.map((qg) => `
+          ${waivableGates.filter((qg) => hasGroupPerm(qg.taskGroupId, "task_group:review")).map((qg) => `
             <form class="form-grid" data-form="quality-gate-waive" data-request="${esc(qg.gateId)}" style="margin-top:8px;">
               <div class="record-meta"><span class="mono">${esc(qg.gateId)}</span> · ${esc(t(qg.gateType) || qg.gateType || "-")} · ${esc(qg.workItemId || "-")} · ${badge(qg.status)}</div>
               <div class="form-row"><label>豁免理由（必填）</label><input name="justification" placeholder="例如：该门针对的能力不在本任务组范围内"></div>
@@ -4089,7 +4096,7 @@ function renderMonitor() {
       ${canReviewGates && openReviewPlans.length ? `
         <div class="record" style="margin-top:8px;">
           <div class="record-title">评审计划（要求的评审角色到齐即自动闭合；到不齐时由你收尾）</div>
-          ${openReviewPlans.map((plan) => `
+          ${openReviewPlans.filter((plan) => hasGroupPerm(plan.taskGroupId, "task_group:review")).map((plan) => `
             <form class="form-grid" data-form="review-plan-resolve" data-request="${esc(plan.reviewPlanId)}" style="margin-top:8px;">
               <div class="record-meta"><span class="mono">${esc(plan.reviewPlanId)}</span> · ${esc(taskGroupNameOf(plan.taskGroupId))} · ${badge(plan.status)}
                 · 需要 ${esc((plan.requiredReviewerRoles || []).map((role) => t(role) || role).join("、") || "-")}
@@ -4102,7 +4109,7 @@ function renderMonitor() {
       ${canControlRules && openRuleSources.length ? `
         <div class="record" style="margin-top:8px;">
           <div class="record-title">规则来源分流（判为"采纳为本项目规则"只能由你做，AI 只能判不采纳）</div>
-          ${openRuleSources.map((item) => `
+          ${openRuleSources.filter((item) => hasGroupPerm(item.taskGroupId, "task_group:control")).map((item) => `
             <form class="form-grid" data-form="rule-source-settle" data-request="${esc(item.resolutionId)}" style="margin-top:8px;">
               <div class="record-meta"><span class="mono">${esc(item.sourceRef || item.resolutionId)}</span> · ${esc(taskGroupNameOf(item.taskGroupId))} · ${badge(item.status)}</div>
               <div class="form-row"><label>判定</label>${decisionSelect("status", [["active", "采纳为本项目规则"], ["reference_only", "仅作参考"], ["quarantined", "隔离"], ["rejected", "不采纳"]], "请选择判定…")}</div>
@@ -4113,7 +4120,7 @@ function renderMonitor() {
       ${canReviewGates && openReviewBundles.length ? `
         <div class="record" style="margin-top:8px;">
           <div class="record-title">评审包（外部评审结论回流后自动终态化；回不来时由你收尾）</div>
-          ${openReviewBundles.map((bundle) => `
+          ${openReviewBundles.filter((bundle) => hasGroupPerm(bundle.taskGroupId, "task_group:review")).map((bundle) => `
             <form class="form-grid" data-form="review-bundle-resolve" data-request="${esc(bundle.reviewBundleId)}" style="margin-top:8px;">
               <div class="record-meta"><span class="mono">${esc(bundle.reviewBundleId)}</span> · ${esc(taskGroupNameOf(bundle.taskGroupId))} · ${badge(bundle.status)}${bundle.workItemId ? ` · ${esc(bundle.workItemId)}` : ""}</div>
               <div class="form-row"><label>收尾方式</label>${decisionSelect("status", [["consumed", "已采纳该评审结论"], ["rejected", "驳回该评审包"]], "请选择收尾方式…")}</div>
