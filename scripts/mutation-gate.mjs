@@ -3660,6 +3660,25 @@ const MUTATIONS = [
     expect: "却照读不误"
   },
   {
+    // 空 body 打过去照样 201：凭空给种子账号发一份授权。同族还有铸账号、挂审批单、建产物记录。
+    name: "发授权必须点名主体与资源（不许替人挑一个）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (requireBodyFields(res, body, ["subjectId", "resourceId"], "access_grant_subject_and_resource_required")) return;',
+    to: "    void requireBodyFields;",
+    expect: "一个字段都不给】也成功了"
+  },
+  {
+    // 「少填了一个字段」不该报成「系统坏了」：原先落进通用出口成了 500 server_error，
+    // 真实原因埋在 message 里 —— 监控当事故、人去查服务端日志，而他要做的只是补上 projectId。
+    name: "缺 projectId 的加入令牌请求不得报成 500",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "doctor",
+    from: '  if (!tokenProject) throw gatewayError("join_token_project_not_found", 404, {projectId: projectId || null});',
+    to: '  if (!tokenProject) throw new Error("join_token_project_not_found");',
+    expect: "收到空 body 就 5xx"
+  },
+  {
     // 刚装完那条横幅要指【这个账号菜单里有的那一页】：系统管理员的入口在「账号与授权」，
     // 组织管理员才在「AI 智能体」。指错的话，照着做的人在自己的菜单里找一个不存在的入口。
     name: "刚装完的指路要指这个账号点得到的那一页",

@@ -215,6 +215,7 @@ console.log(JSON.stringify({
 }
 
 const root = resolve(new URL("..", import.meta.url).pathname);
+let doctorSystemAuth = null;   // 见下面 loginAs 之后那一句：跨块复用同一个系统管理员会话
 const port = await getFreePort();
 const doctorRuntimeDir = process.env.AIMAC_DOCTOR_RUNTIME_DIR || `.runtime/doctor-${Date.now()}`;
 // 上一轮跑挂了/被打断的运行目录没人收。commit.sh 每次提交都跑一遍这套 e2e ——
@@ -356,6 +357,9 @@ try {
       + `（期望 401 invalid_credentials，得到 ${wrongSecret.response.status} ${wrongSecret.payload?.error || ""}）`);
   }
   const systemAuth = await loginAs(port, "system.admin@local", "doctor-bootstrap-token");
+  // 留一份给【后面别的块】用：这一路下去有一段故意打十几次错密码验限流，那之后再 login 会被挡，
+  // 报出来的是"登录失败"，与那些断言要验的事毫无关系。
+  doctorSystemAuth = systemAuth;
   const auth = await loginAs(port, "owner@local", "doctor-workspace-token");
   const reviewerAuth = await loginAs(port, "review@local", "doctor-reviewer-token");
   const agentAuth = await loginAs(port, "agent.runtime@local", "doctor-agent-runtime-token");
@@ -3172,6 +3176,71 @@ try {
       throw new Error(`限流期间正确凭据仍然放行（HTTP ${correctWhileLimited.response.status}）——`
         + "那样限流只是拖慢猜测，猜中的那一次照样成功");
     }
+  }
+
+  // 【REST 写路由的空 body 扫描】——MCP 那侧同形的孪生（85 个工具逐个空参调过）。
+  // 人和脚本都会把 body 写漏（前端一个字段没填、curl 忘了 -d），这一刻系统说什么，决定了对方
+  // 是能自己改对、还是去查一个不存在的问题。三件事：一个都不许 5xx（那是内部错误，不是回答）、
+  // 拒绝要带机器可读的码、【空 body 绝不许成功】（那就是"缺省即做了"）。
+  // 放在最后跑：这一轮会往系统里打几十个请求，前面的断言不该被它扰动。
+  {
+    const serverSource = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+    const writeRoutes = [...new Set([...serverSource.matchAll(
+      /req\.method === "(POST|PATCH|PUT|DELETE)" && url\.pathname === "(\/api\/[^"]+)"/gu)]
+      .map((hit) => `${hit[1]} ${hit[2]}`))].sort();
+    if (writeRoutes.length < 15) {
+      throw new Error(`空 body 扫描只提取到 ${writeRoutes.length} 条写路由（应 15+）—— 提取与代码脱节，本条在空转`);
+    }
+    // 空 body 也该成功的，逐个登记理由。新加的路由若默认就把事做了，这里会点它的名。
+    const EMPTY_BODY_IS_FINE = {
+      "POST /api/orchestrator/run": "自治循环的手动一拍：本来就没有必填输入",
+      "POST /api/agent/v1/dispatches/next": "认领下一个派发：不带参数就是「给我一个」",
+      "POST /api/auth/logout": "登出自己，没有输入"
+    };
+    // 复用已有会话，不要在这里重新登录：紧挨着上面那段【故意打了十几次错密码】的限流用例，
+  // 这一刻再 login 会被限流挡下，报出来的是"登录失败"，与本条要验的事毫无关系。
+  const emptyBodyAuth = doctorSystemAuth;
+    const badStatus = [];
+    const unnamedRefusal = [];
+    const succeeded = [];
+    for (const route of writeRoutes) {
+      const [method, path] = route.split(" ");
+      if (process.env.AIMAC_TRACE_EMPTY_BODY) console.log(`    [空body] ${route}`);
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, {method,
+        headers: {"content-type": "application/json", authorization: emptyBodyAuth,
+          "idempotency-key": `empty-body-${method}-${path.replace(/[^a-z0-9]/gu, "-")}`},
+        body: "{}"});
+      const payload = await response.json().catch(() => ({}));
+      if (response.status >= 500) {
+        badStatus.push(`${route} → ${response.status} ${JSON.stringify(payload).slice(0, 80)}`);
+        continue;
+      }
+      if (response.status >= 400) {
+        if (!/^[a-z][a-z0-9_]{4,}$/u.test(String(payload.error || ""))) {
+          unnamedRefusal.push(`${route} → ${response.status} ${JSON.stringify(payload).slice(0, 70)}`);
+        }
+        continue;
+      }
+      if (!EMPTY_BODY_IS_FINE[route]) {
+      succeeded.push(`${route} → ${response.status} ${JSON.stringify(payload).slice(0, 150)}`);
+    }
+    }
+    if (badStatus.length) {
+      throw new Error("这些写路由收到空 body 就 5xx（内部错误，不是回答 —— 调用方既不知道缺什么也没法改对）：\n  "
+        + badStatus.join("\n  "));
+    }
+    if (unnamedRefusal.length) {
+      throw new Error("这些写路由拒绝了空 body，却没给机器可读的码（调用方要据此分支）：\n  "
+        + unnamedRefusal.join("\n  "));
+    }
+    if (succeeded.length) {
+      throw new Error("这些写路由【一个字段都不给】也成功了 —— 先回答「它到底做了什么」，"
+        + "要么拒绝并说明缺什么，要么登记进 EMPTY_BODY_IS_FINE 并写清理由：\n  " + succeeded.join("\n  "));
+    }
+    const stale = Object.keys(EMPTY_BODY_IS_FINE).filter((route) => !writeRoutes.includes(route));
+    if (stale.length) throw new Error(`这些路由登记着"空 body 也该成功"，实际已经不在写路由清单里：${stale.join("、")}`);
+    console.log(`写路由空 body 扫描 ok: ${writeRoutes.length} 条逐个打过空 body，0 个 5xx、`
+      + `拒绝都带机器可读的码、${Object.keys(EMPTY_BODY_IS_FINE).length} 个空 body 也该成功的已逐个登记`);
   }
 
   child.kill("SIGTERM");

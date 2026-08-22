@@ -329,6 +329,19 @@ function readState() {
   return state;
 }
 
+// 【命令接口不许替调用方猜对象】。这几条写路由原先把缺失的对象字段用默认值补上：
+// 空 body 打过去照样 201 —— 凭空给种子账号发一份授权、铸一个能登录的"New User"、
+// 在控制面自己的任务组上挂一张审批单（它会进别人的待办、卡住关闭门）。
+// 人少填一个字段就造出一条要人处置的真记录，而且看不出这不是他想要的那个对象。
+// 缺了就拒，并说清缺的是哪一个。（控制面 e2e 里有一条按【真实路由清单】逐个打空 body 的扫描守着。）
+function requireBodyFields(res, body, fields, code) {
+  const missing = fields.filter((field) => !String(body?.[field] ?? "").trim());
+  if (!missing.length) return false;
+  json(res, 400, {error: code, missing,
+    message: `缺少必填字段：${missing.join("、")} —— 这条接口不会替你挑一个默认对象`});
+  return true;
+}
+
 function readHealthState() {
   ensureState();
   const state = readStoredCentralState({root, runtimeDir, statePath, seedPath, buildInitialState});
@@ -3920,6 +3933,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/agents") {
+    if (requireBodyFields(res, body, ["role"], "agent_role_required")) return;
     const guard = beginGuardedWrite(req, state, "agent_create", `AgentNode:${body.role || "custom"}`, projectScope(body.projectId || "prj_control_plane"));
     if (guard.status) {
       json(res, guard.status, guard.payload);
@@ -4009,6 +4023,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/accounts") {
+    if (requireBodyFields(res, body, ["email"], "account_email_required")) return;
     const systemScopedInvite = requestedSystemAccountInvite(body);
     const guard = beginGuardedWrite(
       req,
@@ -4093,6 +4108,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/access-grants") {
+    if (requireBodyFields(res, body, ["subjectId", "resourceId"], "access_grant_subject_and_resource_required")) return;
     const resourceScope = {resourceType: body.resourceType || "project", resourceId: body.resourceId || "prj_control_plane"};
     const guard = beginGuardedWrite(req, state, "access_grant_create", `${resourceScope.resourceType}:${resourceScope.resourceId}`, resourceScope);
     if (guard.status) {
@@ -4696,6 +4712,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/approval-requests") {
+    if (requireBodyFields(res, body, ["taskGroupId"], "approval_request_task_group_required")) return;
     const guard = beginGuardedWrite(req, state, "approval_request_create", `ApprovalRequest:${body.approvalId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
     // Record the proposer as the AUTHENTICATED actor (never client-supplied) for high_risk_no_self_approval.
@@ -4836,6 +4853,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/artifacts") {
+    if (requireBodyFields(res, body, ["taskGroupId"], "artifact_task_group_required")) return;
     const guard = beginGuardedWrite(req, state, "artifact_register", `Artifact:${body.artifactId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = artifactRegister(state, body);

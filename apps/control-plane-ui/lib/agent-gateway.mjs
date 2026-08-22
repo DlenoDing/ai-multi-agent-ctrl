@@ -74,7 +74,11 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
   ensureAgentGatewayCollections(state);
   const projectId = String(input.projectId || "").trim();
   const tokenProject = state.projects.find((project) => project.id === projectId);
-  if (!tokenProject) throw new Error("join_token_project_not_found");
+  // 带上状态码：不带的话它落进通用出口，成了 500 server_error —— 而这是【调用方少填了一个字段】，
+  // 不是系统坏了。实测空 body 打这条路由就是 500，真实原因埋在 message 里；
+  // 监控看到 5xx 会当成事故，人看到 server_error 会去查服务端日志，而他要做的只是补上 projectId。
+  // （下面配额那条早就用了 gatewayError，同一个函数里两种写法 —— 这一条是漏掉的那个。）
+  if (!tokenProject) throw gatewayError("join_token_project_not_found", 404, {projectId: projectId || null});
   const tokenOrgId = tokenProject.organizationId || "org_default";
   const outstandingJoinTokens = (state.agentJoinTokens || []).filter((item) => item.status === "issued" && (item.organizationId || "org_default") === tokenOrgId && new Date(item.expiresAt).getTime() > Date.now()).length;
   const quota = organizationQuotaCheck(state, tokenOrgId, "agents");
