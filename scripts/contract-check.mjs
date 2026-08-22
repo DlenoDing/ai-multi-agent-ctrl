@@ -196,7 +196,16 @@ const AGENT_RUNTIME_UNREACHABLE_CODES = {
   agent_control_plane_retry_exhausted:
     "重试次数有下限（≥1），每一轮不是 return 就是 throw，循环走不到尽头。留着是防将来有人把下限改没了 —— 那时它会静静返回 undefined",
   content_bundle_git_transfer_escapes_session:
-    "transferDir 是 join(bundleDir, \"git-transfer\") 现拼的，永远落在 bundleDir 之内。留着是防将来有人把它改成由包里的字段决定"
+    "transferDir 是 join(bundleDir, \"git-transfer\") 现拼的，永远落在 bundleDir 之内。留着是防将来有人把它改成由包里的字段决定",
+  // 下面两条【不是走不到，是造它的代价不成比例】。两条都需要"再起一次真派发"，而远程 e2e 走到
+  // 这一步时，那件探针活已经撞上返工上限、新建的活又受 WIP 约束排不上（2026-08-22 实测：
+  // 编排回执里全是 awaiting human_confirmation，agent 领不到任何派发，夹具自报"没造出想测的情形"）。
+  // 要造就得先替人处置掉一张确认单去腾 WIP —— 那会让这条 e2e 依赖"人工定稿"的具体形状，
+  // 而那正是本仓最不该被测试代码随手动的东西。等哪天 e2e 里有一件【可重复派发的空转活】时再接。
+  agent_permission_request_not_created:
+    "控制面回了 200 却没给单号 —— 要么改服务端返回、要么起桩服务端；两条都得再造一次真派发（见上）",
+  agent_permission_request_timed_out:
+    "等待上限走完要一次真派发＋一张【故意不处置】的权限单；同上，e2e 走到这一步已经派不出活了"
 };
 
 // 运维会用到的运行参数。判据只管这一批 —— 代码里另有 90 多个内部调参（各种上限、超时），
@@ -12729,7 +12738,8 @@ function verifyAgentFailureCodeCoverageRatchet(output) {
       + " 把 AGENT_RUNTIME_UNCOVERED_CEILING 改小，否则它挡不住下一次回升");
   }
   console.log(`agent 失败码覆盖：${codes.length} 个码，${uncovered.length} 个没有任何门/e2e 提到过`
-    + `（其中 ${registered.length} 个已登记为构造上走不到）（棘轮 ${AGENT_RUNTIME_UNCOVERED_CEILING}，只降不升）`);
+    + `（其中 ${registered.length} 个已逐条登记：走不到，或造它的代价不成比例 —— 登记里写明是哪一种）`
+    + `（棘轮 ${AGENT_RUNTIME_UNCOVERED_CEILING}，只降不升）`);
 }
 
 function verifyAgentFailureReasonsAreCoded(output) {
