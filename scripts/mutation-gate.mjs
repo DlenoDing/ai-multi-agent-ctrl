@@ -4004,6 +4004,16 @@ const MUTATIONS = [
     expect: "出口要说清装什么"
   },
   {
+    // 只核对模式（--verify）：拿到一份来路不明的备份，还原前先验。让它恒真就该红 ——
+    // 崩溃门里配了正反两条（好的要过、残缺的要拒），恒真只会打中后者。
+    name: "备份的只核对模式不得恒真",
+    file: "scripts/backup-runtime.mjs",
+    gate: "crash",
+    from: "  const problems = verify(source);",
+    to: "  const problems = [];",
+    expect: "只核对模式：对着残缺目录必须拒绝"
+  },
+  {
     // 会放宽默认安全强度的开关必须有清单：审计一套部署的人得先知道该查什么。
     // 从 README 那张表里拿掉一条，门就该点名它。
     name: "放宽默认限制的开关必须在 README 的清单里",

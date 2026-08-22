@@ -604,6 +604,21 @@ await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000).
         check(refused.status !== 0 && /project-db|分片/u.test(said),
           "备份脚本对着一份残缺的运行目录必须拒绝（拷完要核，不是拷完就算）",
           `退出码 ${refused.status}：${said.trim().split("\n")[0].slice(0, 110)}`);
+
+        // 只核对、不拷贝的那个模式（`--verify <目录>`）：备份是在【拷的那一刻】核过的，
+        // 而人手里的备份未必出自这个命令（README 自己警告过 `cp -R` 会拷出"看着完整"的目录）。
+        // 两个方向都验：好的要过、残缺的要拒 —— 只验一个方向的话，一个恒真/恒假的实现也能过。
+        const checkedBadRun = spawnSync(process.execPath, ["scripts/backup-runtime.mjs", "--verify", halfDir],
+          {cwd: root, encoding: "utf8"});
+        const badSaid = `${checkedBadRun.stdout || ""}${checkedBadRun.stderr || ""}`;
+        check(checkedBadRun.status !== 0 && /project-db|分片/u.test(badSaid),
+          "只核对模式：对着残缺目录必须拒绝并说清缺什么",
+          `退出码 ${checkedBadRun.status}：${badSaid.trim().split("\n")[0].slice(0, 110)}`);
+        const checkedGoodRun = spawnSync(process.execPath, ["scripts/backup-runtime.mjs", "--verify", copyDir],
+          {cwd: root, encoding: "utf8"});
+        check(checkedGoodRun.status === 0 && /核对通过/u.test(`${checkedGoodRun.stdout || ""}`),
+          "只核对模式：对着上面那份刚核过的备份必须通过（否则它就是个恒假的实现）",
+          `退出码 ${checkedGoodRun.status}：${`${checkedGoodRun.stdout || ""}${checkedGoodRun.stderr || ""}`.trim().split("\n")[0].slice(0, 110)}`);
       }
     }
   } finally {

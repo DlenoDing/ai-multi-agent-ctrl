@@ -15,11 +15,18 @@ import { basename, join, resolve } from "node:path";
 // 该说的内容本来就在下面那段里，只是以"你做错了"的姿态给出。同样的话，问的时候就该给。
 const wantsHelp = process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h");
 if (wantsHelp) {
-  console.log("用法：npm run backup [-- <运行目录> <备份目录>]（都是位置参数，没有开关）");
+  console.log("用法：npm run backup [-- <运行目录> <备份目录>]");
+  console.log("      npm run backup -- --verify <备份目录>   只核对一份已有的备份，不拷贝");
   console.log("可用环境变量：AIMAC_RUNTIME_DIR（默认源）、AIMAC_BACKUP_ATTEMPTS（重试次数，默认 5）");
   process.exit(0);
 }
-const unknownFlags = process.argv.slice(2).filter((item) => item.startsWith("-"));
+// 只核对、不拷贝。为什么需要它：备份是在【拷的那一刻】核过的，而人手里的备份未必出自这个命令
+// —— README 自己就警告过 `cp -R` 会拷出"看着完整"的目录（索引指着已被删掉的旧分片）。
+// 那种目录的问题只在【还原之后启动时】才暴露，而那时通常已经是出事之后了。
+// 校验逻辑现成就在下面，暴露成一个模式而已。
+const rest = process.argv.slice(2);
+const checkOnlyMode = rest.includes("--verify");
+const unknownFlags = rest.filter((item) => item.startsWith("-") && item !== "--verify");
 if (unknownFlags.length) {
   console.error(`认不出的参数：${unknownFlags.join(" ")}\n`
     + "用法：node scripts/backup-runtime.mjs [运行目录] [备份目录]（都是位置参数，没有开关）\n"
@@ -27,8 +34,9 @@ if (unknownFlags.length) {
   process.exit(1);
 }
 
-const source = resolve(process.argv[2] || process.env.AIMAC_RUNTIME_DIR || ".runtime");
-const target = resolve(process.argv[3] || `${source}-backup-${new Date().toISOString().replace(/[^0-9]/gu, "").slice(0, 14)}`);
+const positional = rest.filter((item) => !item.startsWith("-"));
+const source = resolve(positional[0] || process.env.AIMAC_RUNTIME_DIR || ".runtime");
+const target = resolve(positional[1] || `${source}-backup-${new Date().toISOString().replace(/[^0-9]/gu, "").slice(0, 14)}`);
 const attempts = Math.max(1, Number(process.env.AIMAC_BACKUP_ATTEMPTS || 5));
 
 if (!existsSync(source)) {
@@ -75,6 +83,24 @@ function verify(dir) {
     problems.push("project-db 目录整个不在，而中央索引里记着分片");
   }
   return problems;
+}
+
+if (checkOnlyMode) {
+  // 只核对已有目录：source 就是要核的那份（--verify <目录>）。
+  if (!existsSync(source)) {
+    console.error(`要核对的目录不在：${source}`);
+    process.exit(1);
+  }
+  const problems = verify(source);
+  if (problems.length) {
+    console.error(`这份备份核对不通过：${source}\n  ${problems.slice(0, 8).join("\n  ")}`);
+    console.error("【不要】拿它去还原 —— 索引与分片对不上，起来之后 /api/health 会回 503 并指名缺了什么。");
+    process.exit(1);
+  }
+  console.log(`备份核对通过：${source}`);
+  console.log("核过的：中央索引点名的每个分片都在且正文长度对得上；段清单点名的每个事件段都在。");
+  console.log("还原：停机后把这个目录整个拷回去（或用 AIMAC_RUNTIME_DIR 指向它）再启动。");
+  process.exit(0);
 }
 
 let lastProblems = ["没跑成"];
