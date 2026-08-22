@@ -3596,6 +3596,30 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "正在跑的派发要说出上次动静是多久以前",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      ? esc(sinceText(dispatch.lastExecutionEventAt))",
+    to: '      ? ""',
+    expect: "上一次有动静是多久以前"
+  },
+  {
+    name: "认不出的时间不得显示成刚刚",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: 'if (!Number.isFinite(at)) return value ? "时间无法识别" : "";',
+    to: 'if (!Number.isFinite(at)) return "";',
+    expect: "认不出的时间不得显示成「刚刚」"
+  },
+  {
+    name: "领走了却没动静的派发不得留空",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "`领走 ${esc(sinceText(dispatch.claimedAt))}，还没有过动静`",
+    to: '""',
+    expect: "「还没有过动静」而不是留空"
+  },
+  {
     name: "派发包合同摘要缺失必须当不匹配",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyDispatchBindingChecksRefuseMissingValues",

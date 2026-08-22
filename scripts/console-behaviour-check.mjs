@@ -1595,6 +1595,54 @@ function runNoVisibleProjectCase() {
       /hcr_the_one_blocking_it/u.test(blockedText),
       "只说了「到人工审核页定稿对应的确认卡」，没说是哪一张 —— 同时挂着几张时人只能一张张点开比对");
   }
+  // 一个卡住的派发在屏幕上跟一个正常在跑的派发长得一模一样：状态 running、进度是最高水位
+  // （只增不减），没有任何时间。实测过一次 —— agent 侧挂死，心跳照常，控制面一直显示「还在跑」，
+  // 26 分钟后才被人发现。控制面其实一直记着 lastExecutionEventAt，只是从没渲染过。
+  {
+    const stallState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development",
+        workItems: [{id: "wi1", title: "改造", status: "in_progress", ownerRole: "agent-runtime", progress: 45}]}],
+      agentDispatches: [
+        {schemaVersion: "agent-dispatch/v1", dispatchId: "dsp_stalled", projectId: "p1", taskGroupId: "tg1",
+          workItemId: "wi1", sessionId: "ws1", runId: "run1", status: "running", progressPercent: 45,
+          attempts: 1, claimedAt: new Date(Date.now() - 95 * 60000).toISOString(),
+          lastExecutionEventAt: new Date(Date.now() - 93 * 60000).toISOString(),
+          createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z"},
+        {schemaVersion: "agent-dispatch/v1", dispatchId: "dsp_fresh", projectId: "p1", taskGroupId: "tg1",
+          workItemId: "wi1", sessionId: "ws2", runId: "run2", status: "running", progressPercent: 45,
+          attempts: 1, claimedAt: new Date(Date.now() - 120000).toISOString(),
+          lastExecutionEventAt: new Date(Date.now() - 30000).toISOString(),
+          createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z"},
+        {schemaVersion: "agent-dispatch/v1", dispatchId: "dsp_silent", projectId: "p1", taskGroupId: "tg1",
+          workItemId: "wi1", sessionId: "ws3", runId: "run3", status: "running", progressPercent: 0,
+          attempts: 1, claimedAt: new Date(Date.now() - 40 * 60000).toISOString(),
+          createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z"},
+        // 写坏的时间：Date 解析不出来时 NaN 会一路走成 0 —— 那会把一条坏记录说成「刚刚才动过」，
+        // 恰好是最有利的那个解释。
+        {schemaVersion: "agent-dispatch/v1", dispatchId: "dsp_bad_time", projectId: "p1", taskGroupId: "tg1",
+          workItemId: "wi1", sessionId: "ws4", runId: "run4", status: "running", progressPercent: 10,
+          attempts: 1, lastExecutionEventAt: "前天下午",
+          createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z"}
+      ],
+      workSessions: [], humanConfirmationRequests: [], humanDirectives: [], executionTopologies: [],
+      closeBarriers: [], qualityGates: [], findings: [], permissionRequests: [], approvalRequests: [],
+      truncatedCollections: []
+    };
+    const stallText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, stallState, "monitor", "p1");
+    check("正在跑的派发要说出它上一次有动静是多久以前",
+      /2 小时前|93 分钟前/u.test(stallText) && /30 秒前/u.test(stallText),
+      "两个派发都是 running 45%，一个刚动过、一个一个半小时没动了 —— 屏幕上必须能分出来，"
+        + "否则挂死的 agent 与正常干活的 agent 长得一模一样");
+    check("认不出的时间不得显示成「刚刚」",
+      /时间无法识别/u.test(stallText) && !/(?<![0-9])0 秒前/u.test(stallText),
+      "NaN 一路走成 0，一条坏记录就被说成刚刚才动过 —— 认不出的取值不许落在最有利的那个解释上");
+    check("领走了却一次动静都没有的派发，要说的是「还没有过动静」而不是留空",
+      /还没有过动静/u.test(stallText),
+      "这一格空着与「刚刚才动过」看不出区别 —— 而它恰恰是最该被人看到的那种");
+  }
   // 项目概览上的「待人工确认」只数确认单一类，而等人拍板的东西有九类、散在两个页面上。
   // 它是人每天先看的那一屏：显示 0 的时候人就不会再往下找（真实运行态上实测到过 ——
   // 这里 0，同一时刻人工审核页"共 3 项等待你处理"）。

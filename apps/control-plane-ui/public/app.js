@@ -3425,6 +3425,22 @@ function lastLoadedAgo() {
   return minutes < 60 ? `${minutes} 分钟前` : `${Math.round(minutes / 60)} 小时前`;
 }
 
+// 一个正在跑的派发，屏幕上永远是「running 45%」—— 不管它上一次真有动静是一分钟前还是半天前。
+// 实测过一次：agent 侧挂死，控制面因为心跳照常而一直显示「还在跑」，26 分钟后才被人发现。
+// 控制面其实一直记着 lastExecutionEventAt，只是从没渲染过。这里不设阈值、不下判断，
+// 只把「上一次动静是多久以前」摆出来 —— 什么算太久，看的人比任何阈值都清楚。
+function sinceText(value) {
+  const at = value ? new Date(value).getTime() : NaN;
+  // 认不出的时间不能显示成「刚刚」：那会把一条坏记录说成最新的。
+  if (!Number.isFinite(at)) return value ? "时间无法识别" : "";
+  const seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
+  if (seconds < 60) return `${seconds} 秒前`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} 小时前` : `${Math.round(hours / 24)} 天前`;
+}
+
 function countSuffix(field) {
   return (state.truncatedCollections || []).includes(field) ? "+" : "";
 }
@@ -3822,6 +3838,12 @@ function renderMonitor() {
     `<span class="mono">${esc(dispatch.workItemId || "-")}</span>`,
     badge(dispatch.status),
     {v: percentCell(dispatch.progressPercent), c: "num"},
+    // 「最近动静」＝上一条执行事件到现在有多久。进度百分比是【最高水位】（只增不减），
+    // 所以一个卡住的派发会一直显示同一个数字，看不出它其实早就不动了。
+    {v: dispatch.lastExecutionEventAt
+      ? esc(sinceText(dispatch.lastExecutionEventAt))
+      : `<span class="muted">${dispatch.claimedAt ? `领走 ${esc(sinceText(dispatch.claimedAt))}，还没有过动静` : "还没被领走"}</span>`,
+      c: "nowrap"},
     // 这两个标记控制面早就在写了（写它们的注释里明写着"必须留痕并让人看到"），而控制台从来没有
     // 渲染过它们 —— 于是人只看到"认领超时重新入队"，看不到最要紧的那句：上一任可能已经把提交推上去了。
     // 新持有者的 reset --hard origin/<branch> 会把那些提交当作基线继续往上做，而没有任何人复核过它们。
@@ -4002,7 +4024,7 @@ function renderMonitor() {
     `, {wide: true, headerSide: filterInput("按事件、摘要过滤…", "events")}),
     panel("可复用执行载体（Worker Lane）", table(["角色", "功能", "状态", {label: "复用代数", c: "num"}, "当前会话", {label: "更新时间", c: "nowrap"}], laneRows, {moreText: moreText(lanesAll.length, 20, "workerLanes")}), {wide: true, headerSide: filterInput("按角色、会话过滤…", "worker-lanes")}),
     panel("工作会话", table(["会话", "角色", "工作项", "放置方式", {label: "执行载体", c: "nowrap"}, "状态", "原因", "详情"], sessions, {moreText: moreText(sessionsAll.length, 20, "workSessions")}), {wide: true, headerSide: filterInput("按会话、工作项过滤…", "sessions")}),
-    panel("智能体派发", stuckExitNotice(dispatchesAll, sessionsAll) + table(["派发", "工作项", "状态", {label: "进度", c: "num"}, "原因", "详情"], dispatches, {moreText: moreText(dispatchesAll.length, 20, "agentDispatches")}), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
+    panel("智能体派发", stuckExitNotice(dispatchesAll, sessionsAll) + table(["派发", "工作项", "状态", {label: "进度", c: "num"}, {label: "最近动静", c: "nowrap"}, "原因", "详情"], dispatches, {moreText: moreText(dispatchesAll.length, 20, "agentDispatches")}), {wide: true, headerSide: filterInput("按派发、工作项过滤…", "dispatches")}),
     panel("控制通道", table([{label: "序号", c: "num"}, "节点", "命令", "作用对象", "状态", {label: "更新时间", c: "nowrap"}], commands, {moreText: moreText(commandsInScope.length, 16, "agentControlCommands")}), {wide: true}),
     panel("运行时节点", table(["节点", "状态", "准入", {label: "最近心跳", c: "nowrap"}, "操作"], nodes), {wide: true, headerSide: filterInput("按节点过滤…", "runtime-nodes")}),
     panel("模型选择记录", table(["角色", "工作项", "模型", "状态", {label: "决策说明", c: "text-clip"}], decisions, {moreText: moreText(decisionsInScope.length, 10, "modelSelectionDecisions")})),
