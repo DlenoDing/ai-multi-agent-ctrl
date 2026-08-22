@@ -10850,7 +10850,7 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
     writeFileSync(copy, `${source}\nexport {isSafeCloneUrl, assertAllowedPaths, verifyPackageBinding,`
       + " verifySkillFiles, classifyPushPermissionDenial, inside,"
       + " retryableControlPlaneError, retryableAgentRequest, syncContentBundle, syncSkillWorkset,"
-      + " applyPermissionResolution, mcpToolCall};\n");
+      + " applyPermissionResolution, mcpToolCall, prepareRepository};\n");
     const rt = await import(pathToFileURL(copy).href);
     const refusalOf = (fn) => { try { fn(); return null; } catch (error) { return String(error.message).split(":")[0]; } };
 
@@ -11159,11 +11159,47 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
       await new Promise((resolveClose) => apiServer.close(resolveClose));
     }
 
+    // ⑪ 仓库准备：决定【往这台机器上克隆什么】以及【活最后推到哪里去】。
+    // 三道守卫此前都零覆盖，而它们各自对应一种很具体的坏事。
+    {
+      const repoConfig = {repositoryDir: join(dir, "repos")};
+      const prepareRefusal = (target) => {
+        try { rt.prepareRepository(repoConfig, target); return null; }
+        catch (error) { return String(error.message).split(":")[0]; }
+      };
+      const prepareCases = [
+        ["派发没给地址（还是占位的）", {repositoryId: "r1", repositoryUrl: "git:unknown"},
+          "dispatch_repository_url_not_cloneable"],
+        ["地址是空的", {repositoryId: "r2", repositoryUrl: ""}, "dispatch_repository_url_not_cloneable"],
+        ["地址用了能跑命令的传输方式", {repositoryId: "r3", repositoryUrl: "ext::sh -c whoami"},
+          "dispatch_repository_url_unsafe_transport"]
+      ];
+      for (const [what, target, expected] of prepareCases) {
+        const got = prepareRefusal(target);
+        if (got !== expected) {
+          output.push(`仓库准备：${what}时拿到的是 ${got || "放行"}（应为 ${expected}）—— `
+            + "这道决定往这台机器上克隆什么");
+        }
+      }
+      // 机器上已经有一份同名仓库，但它的 remote 指向别处：再往下做会把活提交到别人的仓库里。
+      const squatted = join(dir, "repos", "r4");
+      mkdirSync(squatted, {recursive: true});
+      execFileSync("git", ["init", "-q", "-b", "main", squatted]);
+      execFileSync("git", ["-C", squatted, "remote", "add", "origin", "https://example.com/somewhere-else.git"]);
+      const mismatch = prepareRefusal({repositoryId: "r4", repositoryUrl: "https://example.com/the-real-one.git",
+        remote: "origin", branch: "main"});
+      if (mismatch !== "local_repository_remote_mismatch") {
+        output.push(`仓库准备：机器上那份仓库的 remote 指向别处时拿到的是 ${mismatch || "放行"} —— `
+          + "再往下做会把这次的活提交并推到另一个仓库里");
+      }
+    }
+
     console.log(`agent 侧守卫真跑一遍（导出的是副本、出厂那份没动）：派发包绑定 ${bindingCases.length} 例、`
       + `产出路径 ${pathCases.length} 例、克隆地址 ${urlCases.length} 例、技能文件 3 例、`
       + `推送被拒分类 ${denialCases.length} 例、重试判定 ${retryCases.length} 例、`
       + "内容包 6 例（含「上一轮的文件必须先清掉」）、技能集 5 例、"
-      + "§8 处置表 7 例（含「认不出的状态不许当成批准」）、控制面 MCP 调用 3 例");
+      + "§8 处置表 7 例（含「认不出的状态不许当成批准」）、控制面 MCP 调用 3 例、"
+      + "仓库准备 4 例（含「机器上那份仓库指向别处」）");
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }

@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "机器上那份仓库指向别处时必须拒绝开工",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: 'if (configuredUrl !== target.repositoryUrl) throw new Error("local_repository_remote_mismatch',
+    to: 'if (false) throw new Error("local_repository_remote_mismatch',
+    expect: "remote 指向别处时拿到的是"
+  },
+  {
+    name: "克隆前必须先判传输方式安不安全",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: 'if (!isSafeCloneUrl(target.repositoryUrl)) throw new Error("dispatch_repository_url_unsafe_transport',
+    to: 'if (false) throw new Error("dispatch_repository_url_unsafe_transport',
+    expect: "地址用了能跑命令的传输方式时拿到的是"
+  },
+  {
     name: "认不出的权限处置状态不许当成批准",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
