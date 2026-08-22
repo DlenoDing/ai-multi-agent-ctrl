@@ -10849,7 +10849,7 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
     const source = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
     writeFileSync(copy, `${source}\nexport {isSafeCloneUrl, assertAllowedPaths, verifyPackageBinding,`
       + " verifySkillFiles, classifyPushPermissionDenial, inside,"
-      + " retryableControlPlaneError, retryableAgentRequest, syncContentBundle};\n");
+      + " retryableControlPlaneError, retryableAgentRequest, syncContentBundle, syncSkillWorkset};\n");
     const rt = await import(pathToFileURL(copy).href);
     const refusalOf = (fn) => { try { fn(); return null; } catch (error) { return String(error.message).split(":")[0]; } };
 
@@ -11053,10 +11053,56 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
       await new Promise((resolveClose) => bundleServer.close(resolveClose));
     }
 
+    // ⑧ 技能集：这次干活遵循的角色技能文件。它走 curl 下载，同样用本地小服务喂。
+    // 命中缓存的那条也要验 —— 缓存里被改过的文件必须触发重下（上面 verifySkillFiles 已验过判定，
+    // 这里验的是【它真的接在这条路上】）。
+    // 它是【同步】的（spawnSync curl）。用同进程里的 http 服务喂会死锁：事件循环被 curl 堵着，
+    // 服务永远答不了（第一版就是这样，整条检查卡死）。改用 file:// —— curl 一样认，
+    // 而且「文件不存在」正好是下载失败那一例。
+    const skillFeedDir = join(dir, "skill-feed");
+    mkdirSync(skillFeedDir, {recursive: true});
+    const skillFeed = join(skillFeedDir, "workset.json");
+    {
+      const skillConfig = {serverUrl: `file://${skillFeedDir}`, nodeToken: "t",
+        skillCacheDir: join(dir, "skill-cache")};
+      // 缓存是按 worksetId 存的：几条用例共用一个 id 时，后面几条会命中前一条留下的缓存、
+      // 整个不走下载分支（第一版就是这样，两条用例静静地什么也没测）。每条用一个自己的 id。
+      const worksetOf = (id, files, digest = `sha256:${id}`) => ({worksetId: id, worksetDigest: digest, files});
+      const askFor = (id, digest = `sha256:${id}`) => ({skillWorkset: {worksetId: id, worksetDigest: digest,
+        downloadPath: "/workset.json"}});
+      const syncSkill = (body, present = true, ask = askFor()) => {
+        if (present) writeFileSync(skillFeed, JSON.stringify(body));
+        else rmSync(skillFeed, {force: true});
+        try { return {value: rt.syncSkillWorkset(skillConfig, ask)}; }
+        catch (error) { return {code: String(error.message).split(":")[0]}; }
+      };
+      const okFile = {path: "role.md", content: "# 角色技能\n", contentDigest: digestOfText("# 角色技能\n")};
+      const good = syncSkill(worksetOf("ws_ok", [okFile]), true, askFor("ws_ok"));
+      if (good.code || !existsSync(join(dir, "skill-cache", "ws_ok", "role.md"))) {
+        output.push(`技能集：一份合规的技能集没能落盘（${good.code || "没写出文件"}）—— 下面几条测不出东西`);
+      }
+      const skillCases = [
+        ["下回来的摘要与派发里说的对不上", "ws_digest",
+          worksetOf("ws_digest", [okFile], "sha256:someone-elses"), true, "skill_workset_digest_mismatch"],
+        ["技能文件路径爬到缓存目录之外", "ws_escape",
+          worksetOf("ws_escape", [{...okFile, path: "../../evil.md"}]), true, "skill_workset_path_escape"],
+        ["技能文件内容与摘要对不上", "ws_tampered",
+          worksetOf("ws_tampered", [{...okFile, content: "# 被人改过\n"}]), true, "skill_file_digest_mismatch"],
+        ["控制面不给下载", "ws_missing", {error: "nope"}, false, "skill_workset_download_failed"]
+      ];
+      for (const [what, id, body, present, expected] of skillCases) {
+        const got = syncSkill(body, present, askFor(id));
+        if (got.code !== expected) {
+          output.push(`技能集：${what}时拿到的是 ${got.code || "放行"}（应为 ${expected}）—— `
+            + "这几道决定「模型照着执行的角色规则是不是控制面发的那一份」");
+        }
+      }
+    }
+
     console.log(`agent 侧守卫真跑一遍（导出的是副本、出厂那份没动）：派发包绑定 ${bindingCases.length} 例、`
       + `产出路径 ${pathCases.length} 例、克隆地址 ${urlCases.length} 例、技能文件 3 例、`
       + `推送被拒分类 ${denialCases.length} 例、重试判定 ${retryCases.length} 例、`
-      + "内容包 6 例（含「上一轮的文件必须先清掉」）");
+      + "内容包 6 例（含「上一轮的文件必须先清掉」）、技能集 5 例");
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }

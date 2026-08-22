@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "技能集里的路径不得指向缓存目录之外",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: 'if (!inside(directory, target)) throw new Error("skill_workset_path_escape:技能集里有路径指向缓存目录之外");',
+    to: "",
+    expect: "技能文件路径爬到缓存目录之外"
+  },
+  {
+    name: "下回来的技能集摘要必须与派发里说的一致",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: 'if (workset.worksetDigest !== expected.worksetDigest) throw new Error("skill_workset_digest_mismatch',
+    to: 'if (false) throw new Error("skill_workset_digest_mismatch',
+    expect: "下回来的摘要与派发里说的对不上"
+  },
+  {
     name: "内容包写入前必须先清掉上一轮的文件",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
