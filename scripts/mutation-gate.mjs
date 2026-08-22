@@ -3652,6 +3652,14 @@ const MUTATIONS = [
     expect: "产出清单的路径爬到仓库之外却没被拦下"
   },
   {
+    name: "PostgreSQL 上分片整行被删也必须拒绝开工",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    gate: "docker",
+    from: "      throw new Error(`project_state_shard_missing:${projectId}`);",
+    to: "      void projectId;",
+    expect: "整行被删掉之后控制面照常开工"
+  },
+  {
     // 这条挂在 docker 门上（要一台真 PostgreSQL）。分片防篡改此前只在 runtime_json 上验过，
     // 而生产用的是 PG —— 那道守卫存在的全部理由就是"有 DB 写权限的人直接改分片行"。
     name: "PostgreSQL 上的分片防篡改必须真的生效",

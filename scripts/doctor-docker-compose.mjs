@@ -131,6 +131,37 @@ try {
           + `分片防篡改在生产后端上等于不存在（健康检查 ${probe.stdout}，登录回执：${said.slice(0, 160)}）`);
       }
       console.log("  PostgreSQL 分片防篡改 ok: 直接改分片行之后控制面拒绝开工，没有把被改过的内容当成真相");
+      // 同一个威胁模型下还有两种改法。它们的后果与"改内容"不同，所以要分开验：
+      //   · 把整行删掉：索引里还有这个项目，而它的数据没了 —— 照读的话人会看到一个空项目，
+      //     以为"这个项目本来就没东西"，而不是"数据丢了"。
+      //   · 把 schemaVersion 改成认不出的值：旧构建照读照写会把认不出的语义就地改掉，没有回头路。
+      const restoreShard = () => execFileSync("docker",
+        ["compose", "exec", "-T", "postgres", "psql", "-U", "aimac", "-d", "aimac", "-v", "ON_ERROR_STOP=1", "-c",
+          `insert into aimac_project_state_shards (project_id, shard) values ('${target}', $json$${snapshot}$json$::jsonb)`
+          + ` on conflict (project_id) do update set shard = excluded.shard`],
+        {cwd: root, env: composeEnv, encoding: "utf8"});
+      const loginNow = () => spawnSync("curl", ["-fsS", "-X", "POST", "-H", "content-type: application/json",
+        "-d", JSON.stringify({email: "system.admin@local", token: composeEnv.AIMAC_BOOTSTRAP_TOKEN || "docker-doctor-bootstrap-token"}),
+        "http://127.0.0.1:4317/api/auth/login"], {cwd: root, env: composeEnv, encoding: "utf8"});
+      for (const [why, sql, expect] of [
+        ["整行被删掉", `delete from aimac_project_state_shards where project_id = '${target}'`, /missing|shard/u],
+        // 改 schemaVersion 也改了分片内容，所以【摘要那道门会先拦下它】——
+        // 这条用例证明的是"连版本字段这种改动也逃不掉"，不是"版本门本身在起作用"。
+        // 版本门自己由契约门的三条变异守着（SUPPORTED_PROJECT_SHARD_SCHEMA_VERSIONS）。
+        ["连版本字段这种小改动也逃不掉",
+          `update aimac_project_state_shards set shard = jsonb_set(shard, '{schemaVersion}', '"project-shard/v99"'::jsonb) where project_id = '${target}'`,
+          /schema|shard|digest/u]
+      ]) {
+        psql(sql);
+        const attempt = loginNow();
+        const answer = `${attempt.stdout || ""}${attempt.stderr || ""}`;
+        restoreShard();
+        if (attempt.status === 0 && !expect.test(answer)) {
+          throw new Error(`PostgreSQL 里${why}之后控制面照常开工 —— ${answer.slice(0, 160)}`);
+        }
+      }
+      console.log("  PostgreSQL 分片被删/被小改 ok: 两种改法控制面都拒绝开工，没有把缺失当成「本来就没有」"
+        + "（版本门本身由契约门的变异守，这里的小改动是被摘要那道先拦下的）");
       // 收拾干净：后面的断言还要用这套环境。整行原样写回，不做"聪明的部分还原"。
       execFileSync("docker", ["compose", "exec", "-T", "postgres", "psql", "-U", "aimac", "-d", "aimac",
         "-v", "ON_ERROR_STOP=1", "-c",

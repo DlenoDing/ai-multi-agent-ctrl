@@ -357,12 +357,16 @@ const pendingAsyncChecks = [];
 function runAsync(check) {
   if (ONLY && check.name !== ONLY) { skippedChecks.push(check.name); return Promise.resolve(); }
   ranCheckCount += 1;
-  const before = errors.length;
   const startedAt = Date.now();
   const done = (async () => {
-    await check(errors);
+    // 给它一个【自己的】数组：异步检查在 await 期间，别的检查也在往共享数组里推错误，
+    // 按 before..after 的下标区间归属会把那些算到它头上（实测报过一次张冠李戴的 failing-checks，
+    // 让人去查一个根本没出问题的检查）。
+    const own = [];
+    await check(own);
     CHECK_TIMINGS.push([`${check.name}(async)`, Date.now() - startedAt]);
-    for (let index = before; index < errors.length; index += 1) checkOrigin.set(errors[index], check.name);
+    for (const error of own) checkOrigin.set(error, check.name);
+    errors.push(...own);
   })();
   pendingAsyncChecks.push(done);
   return done;
@@ -12131,12 +12135,16 @@ async function verifyStoppingAnExecutorTellsTheTruth(output) {
   const script = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); console.log('up');";
   const child = spawn(process.execPath, ["-e", script], {detached: true, stdio: ["ignore", "pipe", "ignore"]});
   try {
-    await new Promise((resolve) => { child.stdout.once("data", resolve); setTimeout(resolve, 3000); });
+    // 等它把 "up" 打出来再动手：没等到就 SIGTERM 的话，handler 可能还没装上，
+    // 这一条就变成"验一个普通进程能不能被 SIGTERM 杀掉"，而不是它想验的那件事。
+    await new Promise((resolve) => { child.stdout.once("data", resolve); setTimeout(resolve, 8000); });
     const stopped = await new Promise((resolve) => {
       let done = false;
       const finish = (value) => { if (!done) { done = true; resolve(value); } };
       const killTimer = setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch { /* 已经走了 */ } }, 300);
-      const giveUp = setTimeout(() => finish(false), 5000);
+      // 这条验的是「SIGKILL 收得掉」，不是「多快收掉」。5 秒在机器被别的门压满时会偶发红
+      //（实测：docker e2e 与变异门同时在跑那一次）—— 时限放宽到 20 秒，判据不变。
+      const giveUp = setTimeout(() => finish(false), 20000);
       child.once("close", () => { clearTimeout(killTimer); clearTimeout(giveUp); finish(true); });
       try { process.kill(-child.pid, "SIGTERM"); } catch { finish(true); }
     });
