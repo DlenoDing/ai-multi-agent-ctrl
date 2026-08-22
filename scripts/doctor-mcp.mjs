@@ -274,6 +274,27 @@ try {
     }
   }
 
+  // 「不显式说 false 就当允许」这一族：这个工具原先是 `args.allowed !== false`，
+  // 不给就是允许，而且想拒绝时传字符串 "false" 也会变成允许（!== false 只认布尔）。
+  // 允许那一支会跑完整个命令生命周期、落一条 accepted 命令并给出 policyDecisionRef。
+  // 用管理员会话打：服务令牌没被授予这个工具（mcp_tool_not_granted_to_principal 会先拒），
+  // 拿它验的话，验到的是工具白名单那道门，不是这一条。
+  // 两种形态由【两道不同的门】接住，各自点名，别混成一句：
+  //   · 不给 → 本条新加的 guarded_action_verdict_required；
+  //   · 传字符串 "false" → 更靠前的入参类型校验（入参字典把 allowed 声明成 boolean）。
+  // 后者正是 REST 那侧【没有】的一层，所以同一族在 /api/policy-decisions/evaluate 上要单独验。
+  for (const [label, extra, code] of [["不给判决", {}, "guarded_action_verdict_required"],
+    ["判决传成字符串", {allowed: "false"}, "mcp_input_type_mismatch"]]) {
+    const verdict = await mcpAs(admin.sessionToken, "tools/call", {name: "ui-console-mcp.guarded_action_dispatch",
+      arguments: {action: "probe_action", idempotencyKey: `mcp-verdict-${encodeURIComponent(label)}`, ...extra}});
+    if (verdict.structuredContent?.result?.error !== code) {
+      throw new Error(`记受守卫动作时「${label}」必须被拒：`
+        + `${JSON.stringify(verdict.structuredContent?.result || null).slice(0, 160)}`
+        + `（应为 ${code}）—— 缺省或非布尔都不该被当成允许`);
+    }
+  }
+
+
   const foreignProject = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.project_create", arguments: {idempotencyKey: "doctor-foreign-project", projectId: "prj_foreign_scope", name: "Doctor Foreign Scope", repositoryRefs: ["https://git.example.com/foreign/scope.git"]}});
   const foreignProjectResult = foreignProject.structuredContent?.result;
   if (!foreignProjectResult?.project?.id || foreignProjectResult.ownerGrant?.subjectRef?.subjectId !== "acct_workspace_owner" || !foreignProjectResult.ownerGrant?.permissions?.includes("task_group:control")) {

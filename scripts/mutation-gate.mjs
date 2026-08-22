@@ -4004,6 +4004,16 @@ const MUTATIONS = [
     expect: "出口要说清装什么"
   },
   {
+    // 镜像形态：`X !== false`（不显式说 false 就当真）。这个工具原先不给判决就是"允许"，
+    // 而允许那一支会跑完整个命令生命周期、落一条 accepted 命令并给出 policyDecisionRef。
+    name: "记受守卫动作不给判决必须拒绝",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '  if (typeof args.allowed !== "boolean") {\n    return {ok: false, error: "guarded_action_verdict_required",',
+    to: '  if (false) {\n    return {ok: false, error: "guarded_action_verdict_required",',
+    expect: "记受守卫动作时「不给判决」必须被拒"
+  },
+  {
     // 「不显式说 false 就落在有利一侧」这个形状连出过两次真缺陷，已立门逐处登记。
     // 把判决那一行退回旧写法（未登记的形状），门就该点名它。
     name: "缺省落在有利一侧的写法必须逐处登记",

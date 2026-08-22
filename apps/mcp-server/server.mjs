@@ -2899,7 +2899,15 @@ function progressGet(state, args, scopeType, filter) {
 }
 
 function guardedActionDispatch(state, args) {
-  const decision = policyDecisionEval(state, {action: args.action || "guarded_action", resource: args.resource || {}, allowed: args.allowed !== false}).policyDecision;
+  // 判决由调用方声明（这个工具的用途就是"控制台已经判过了，把它记下来并走命令生命周期"）——
+  // 那就必须【显式】声明。原先是 `args.allowed !== false`：不给就是允许，
+  // 而且想拒绝时传字符串 "false" 也会变成允许（`!== false` 只认布尔 false）。
+  // 允许这一支会跑完整个命令生命周期并落一条 accepted 命令，还给出一个 policyDecisionRef。
+  if (typeof args.allowed !== "boolean") {
+    return {ok: false, error: "guarded_action_verdict_required",
+      message: "记一次受守卫动作必须显式给出 allowed（true / false）—— 缺省不会被当作允许"};
+  }
+  const decision = policyDecisionEval(state, {action: args.action || "guarded_action", resource: args.resource || {}, allowed: args.allowed}).policyDecision;
   if (decision.result !== "allowed") {
     return {
       commandResult: {
