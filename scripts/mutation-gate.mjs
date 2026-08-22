@@ -3660,6 +3660,15 @@ const MUTATIONS = [
     expect: "却照读不误"
   },
   {
+    // 组织这一层同形，爆炸半径更大：停用会级联停掉名下所有在跑的执行。
+    name: "改组织状态的缺省不得等于启用",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (!["active", "suspended"].includes(String(body.status || ""))) {',
+    to: "    if (false) {",
+    expect: "缺省不得等于启用"
+  },
+  {
     // 空 body 打到「改成员状态」上原先会置成 active —— 一个被停用的账号就这么被静默恢复。
     name: "改成员状态的缺省不得等于启用",
     file: "apps/control-plane-ui/server.mjs",
@@ -3673,8 +3682,8 @@ const MUTATIONS = [
     name: "带 id 的空 body 扫描要用真 id（不许退化成验 404）",
     file: "scripts/doctor.mjs",
     gate: "doctor",
-    from: '        const chunks = literal.split("([^/]+)");',
-    to: '        const chunks = [literal];',
+    from: '        const chunks = literal.replace(/\\(\\?:([^|)]+)\\|[^)]*\\)/gu, "$1").split("([^/]+)");',
+    to: "        const chunks = [literal];",
     expect: "只解析出 0 条"
   },
   {

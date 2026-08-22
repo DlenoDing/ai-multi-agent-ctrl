@@ -3931,6 +3931,12 @@ async function handleApi(req, res) {
       json(res, guard.status, guard.payload);
       return;
     }
+    // 同一形状：空 body 原先等于"启用"。路径叫 activate，但停用走的也是这条（active:false），
+    // 所以"什么都不说"不能替调用方选一边。
+    if (typeof body.active !== "boolean") {
+      return json(res, 400, {error: "agent_activation_flag_required", supported: [true, false],
+        message: "启用/停用智能体必须显式给出 active（true / false）—— 缺省不会被当作启用"});
+    }
     agent.status = body.active === false ? "inactive" : "active";
     agent.capacity = agent.status === "active" ? "ready" : "standby";
     audit(state, guard.actor, "agent_activation_update", `AgentNode:${agent.id}`);
@@ -5098,6 +5104,12 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const organization = organizationOf(state, orgQuotaMatch[1]);
     if (!organization) return json(res, 404, {error: "organization_not_found"});
+    // 一个配额都不给却回 200：什么也没改，而调用方以为改成功了。
+    const quotaKeys = ["maxMembers", "maxProjects", "maxTaskGroups", "maxAgents"];
+    if (!quotaKeys.some((key) => body.quotas?.[key] !== undefined || body[key] !== undefined)) {
+      return json(res, 400, {error: "org_quota_update_empty", supported: quotaKeys,
+        message: "改配额至少要给一项 —— 一项都不给时这条接口什么也不会改"});
+    }
     for (const key of ["maxMembers", "maxProjects", "maxTaskGroups", "maxAgents"]) {
       if (body.quotas?.[key] !== undefined) organization.quotas[key] = boundedQuota(body.quotas[key], organization.quotas[key]);
       else if (body[key] !== undefined) organization.quotas[key] = boundedQuota(body[key], organization.quotas[key]);
@@ -5116,6 +5128,12 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     const organization = organizationOf(state, orgStatusMatch[1]);
     if (!organization) return json(res, 404, {error: "organization_not_found"});
+    // 缺省不得等于"启用"：空 body 原先会把组织置成 active —— 一个被停用的组织就这么被静默恢复，
+    // 而停用本身是会级联停掉名下所有在跑执行的。与改成员状态同一形状、爆炸半径更大。
+    if (!["active", "suspended"].includes(String(body.status || ""))) {
+      return json(res, 400, {error: "org_status_required", supported: ["active", "suspended"],
+        message: "改组织状态必须显式给出 status（active / suspended）—— 缺省不会被当作启用"});
+    }
     const previousOrgStatus = organization.status;
     organization.status = body.status === "suspended" ? "suspended" : "active";
     organization.updatedAt = now();

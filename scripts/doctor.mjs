@@ -3280,15 +3280,15 @@ try {
         agents: (live.agents || [])[0]?.id,
         "access-grants": (live.accessGrants || [])[0]?.grantId,
         "quality-gates": (live.qualityGates || [])[0]?.gateId || (live.qualityGates || [])[0]?.id,
-        "review-bundles": (live.reviewBundles || [])[0]?.bundleId,
-        "review-plans": (live.reviewPlans || [])[0]?.planId,
+        "review-bundles": (live.reviewBundles || [])[0]?.reviewBundleId,
+        "review-plans": (live.reviewPlans || [])[0]?.reviewPlanId,
         "system-upgrade-candidates": (live.systemUpgradeCandidates || [])[0]?.candidateId,
         "rule-source-resolutions": (live.ruleSourceResolutions || [])[0]?.resolutionId,
         "shared-definition-contracts": (live.sharedDefinitions || [])[0]?.contractId,
         "work-items": (live.taskGroups || []).flatMap((group) => group.workItems || [])[0]?.id,
         leases: (live.leases || [])[0]?.leaseId,
         "execution-topologies": (live.executionTopologies || [])[0]?.topologyId,
-        orgs: (live.organizations || [])[0]?.organizationId || (live.organizations || [])[0]?.id,
+        orgs: (live.organizations || [])[0]?.orgId,
         members: (live.accounts || []).find((item) => item.accountType !== "system_admin")?.accountId
       };
       const paramRoutes = [];
@@ -3303,7 +3303,8 @@ try {
         // 按【占位串整体】切，不能按 "/" 切：`([^/]+)` 自己就带一个斜杠，按 "/" 切会把它劈成
         // `([^` 和 `]+)`，拼出来是 `/api/x/([%5E/]+` 这种乱码 —— 36 条全打在 404 上，
         // 而"拒绝且带码"照样成立，整轮绿着什么也没验（下面那条撞门自查就是为此加的，它当场抓到了）。
-        const chunks = literal.split("([^/]+)");
+        // 路径里的选择分支（/(?:activate|activation)$）取第一个写法即可 —— 两条都是同一个处理器。
+        const chunks = literal.replace(/\(\?:([^|)]+)\|[^)]*\)/gu, "$1").split("([^/]+)");
         let resolved = chunks[0];
         let ok = chunks.length > 1 && !literal.includes("(") === false;
         ok = chunks.length > 1;
@@ -3386,6 +3387,26 @@ try {
         if (permCall.payload.error !== "member_permissions_update_empty") {
           throw new Error(`改成员授权时两样都不给，拿到的是 ${permCall.response.status}/${permCall.payload.error} —— `
             + "什么都没改却回 200 的话，调用方会以为改成功了");
+        }
+        // 组织这一层同形，而且爆炸半径更大：停用会级联停掉名下所有在跑的执行，
+        // 空 body 等于把整个组织恢复回来。
+        const someOrg = (live.organizations || [])[0];
+        const orgStatusCall = await jsonFetch(sweepPort, `/api/orgs/${encodeURIComponent(someOrg.orgId)}/status`,
+          {method: "POST", headers: {authorization: sweepAuth, "Idempotency-Key": "empty-body-org-status"}, body: JSON.stringify({})});
+        if (orgStatusCall.payload.error !== "org_status_required") {
+          throw new Error(`改组织状态时不给 status，拿到的是 ${orgStatusCall.response.status}/${orgStatusCall.payload.error} —— `
+            + "缺省不得等于启用（停用是会级联停掉在跑的执行的，静默恢复更危险）");
+        }
+        const orgQuotaCall = await jsonFetch(sweepPort, `/api/orgs/${encodeURIComponent(someOrg.orgId)}/quotas`,
+          {method: "POST", headers: {authorization: sweepAuth, "Idempotency-Key": "empty-body-org-quota"}, body: JSON.stringify({})});
+        if (orgQuotaCall.payload.error !== "org_quota_update_empty") {
+          throw new Error(`改配额时一项都不给，拿到的是 ${orgQuotaCall.response.status}/${orgQuotaCall.payload.error}`);
+        }
+        const someAgent = (live.agents || [])[0];
+        const agentActivateCall = await jsonFetch(sweepPort, `/api/agents/${encodeURIComponent(someAgent.id)}/activate`,
+          {method: "POST", headers: {authorization: sweepAuth, "Idempotency-Key": "empty-body-agent-activate"}, body: JSON.stringify({})});
+        if (agentActivateCall.payload.error !== "agent_activation_flag_required") {
+          throw new Error(`启停智能体时不给 active，拿到的是 ${agentActivateCall.response.status}/${agentActivateCall.payload.error}`);
         }
       }
       console.log(`带 id 的写路由空 body 扫描 ok: ${paramRoutes.length} 条逐个打过（在运行目录的副本上，用真 id），`
