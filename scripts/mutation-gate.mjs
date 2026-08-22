@@ -3993,6 +3993,16 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 策略决策台账里有两种记录形状（REST 守卫写 id、MCP 那条路写 decisionId）。
+    // 保留逻辑只认一种的话，被活跃授权引用着的那一半照样被容量挤掉：授权还在、依据没了。
+    name: "容量保护要认两种形状的决策 id",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyOutputTargetKeepsItsPolicyDecision",
+    from: "  const decisionIdOf = (item) => item.id || item.decisionId;",
+    to: "  const decisionIdOf = (item) => item.id;",
+    expect: "被容量挤掉了"
+  },
+  {
     // 问责台账此前【不受任何规范约束】：813 条真实记录一条都没被校验过。
     // 这条变异只改一个字段的类型（既有断言都看不见），规范才管得着。
     name: "审计行的字段类型要被规范钉住",

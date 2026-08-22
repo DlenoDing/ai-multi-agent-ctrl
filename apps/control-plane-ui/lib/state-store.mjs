@@ -327,10 +327,15 @@ function capPolicyDecisionsKeepingReferenced(state) {
     // 两个都收（旧数据里它存的确实是策略决策 id）。
     ...(state.repositoryOutputs || []).flatMap((item) => [item.policyDecisionRef, item.decisionRecordRef])
   ].filter(Boolean));
+  // 这个集合里有【两种记录形状】：REST 守卫写 {id,status,actor,resource:字符串}，
+  // MCP 那条路（policyDecisionEval）写 {decisionId,result,subjectRef,resource:对象}。
+  // 按 item.id 认引用的话，MCP 那一半的 id 是 undefined —— 于是被活跃授权引用着的决策照样被挤掉：
+  // 授权还在、它的依据没了，事后问"这份授权凭什么发的"答不出来。两个字段名都认。
+  const decisionIdOf = (item) => item.id || item.decisionId;
   const kept = state.policyDecisions.slice(0, cap);
-  const keptIds = new Set(kept.map((item) => item.id));
+  const keptIds = new Set(kept.map(decisionIdOf));
   const stillReferenced = state.policyDecisions.slice(cap)
-    .filter((item) => referenced.has(item.id) && !keptIds.has(item.id));
+    .filter((item) => referenced.has(decisionIdOf(item)) && !keptIds.has(decisionIdOf(item)));
   state.policyDecisions = stillReferenced.length ? [...kept, ...stillReferenced] : kept;
 }
 

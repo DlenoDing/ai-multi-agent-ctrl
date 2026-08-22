@@ -6732,7 +6732,40 @@ function verifyOutputTargetKeepsItsPolicyDecision(output) {
     output.push("调用方自带 decisionRecordRef 时，产出目标背后的策略决策被容量挤掉了 —— "
       + "事后问「这个写入边界凭什么建的」答不出来");
   }
-  console.log(`产出目标的策略决策：灌到 ${before} 条触发淘汰后仍在（调用方自带 decisionRecordRef 的那一支）`);
+  // MCP 那条路写出来的策略决策用的是【decisionId】，不是 id（两处构造，两种形状：
+  // REST 守卫写 {id,status,actor,resource:字符串}，MCP 写 {decisionId,result,subjectRef,resource:对象}）。
+  // 保留逻辑按 item.id 认引用，对 MCP 那一半 item.id 是 undefined —— 于是【被活跃授权引用着的
+  // 决策照样被挤掉】：授权还在，它的依据没了，事后问"凭什么发的"答不出来。
+  {
+    const mcpProbe = structuredClone(seedState);
+    ensureRuntimeCollections(mcpProbe, {root});
+    mcpProbe.policyDecisions = [{decisionId: "pd_mcp_must_survive", action: "mcp_tool_call",
+      result: "allowed", createdAt: "2026-01-01T00:00:00.000Z"}];
+    mcpProbe.accessGrants = [{grantId: "grant_probe", status: "active",
+      subjectRef: {subjectType: "account", subjectId: "acct_probe"},
+      resource: {resourceType: "project", resourceId: "prj_control_plane"},
+      policyDecisionRef: "pd_mcp_must_survive"}];
+    const mcpCap = Math.max(100, Number(process.env.AIMAC_POLICY_DECISIONS_CAP || 500));
+    for (let index = 0; index < mcpCap + 20; index += 1) {
+      mcpProbe.policyDecisions.unshift({id: `pd_noise_${index}`, action: "noise", createdAt: "2026-01-02T00:00:00.000Z"});
+    }
+    const mcpBefore = mcpProbe.policyDecisions.length;
+    const mcpDir = mkdtempSync(join(tmpdir(), "aimac-cap-mcp-"));
+    try {
+      writeStoredState(mcpProbe, {root, runtimeDir: mcpDir, statePath: join(mcpDir, "control-plane-state.json"),
+        seedPath: resolve(root, "data", "seed-state.json"), buildInitialState: () => ({})});
+    } finally {
+      try { rmSync(mcpDir, {recursive: true, force: true}); } catch { /* best effort */ }
+    }
+    if (mcpProbe.policyDecisions.length >= mcpBefore) {
+      output.push(`本条在空转：灌了 ${mcpBefore} 条却没触发淘汰 —— 没有复现出容量淘汰`);
+    } else if (!mcpProbe.policyDecisions.some((item) => (item.decisionId || item.id) === "pd_mcp_must_survive")) {
+      output.push("MCP 那条路写出来的策略决策（用 decisionId 而不是 id）被容量挤掉了，"
+        + "而它正被一份【活跃授权】引用着 —— 授权还在、依据没了，事后问「凭什么发的」答不出来");
+    }
+  }
+  console.log(`产出目标的策略决策：灌到 ${before} 条触发淘汰后仍在（调用方自带 decisionRecordRef 的那一支）；`
+    + "MCP 那条路的 decisionId 形状也验过");
 }
 
 // 事件日志重建索引时跳过一行坏数据，后果具体且都不会自己现形：
