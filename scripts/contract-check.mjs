@@ -424,6 +424,7 @@ for (const tool of toolDefs) {
 
 run(verifyRuntimeJsonConflict);
 run(verifyStorageFaultCodesReachTheOperator);
+run(verifyEveryGuardedActionIsClassified);
 run(verifySeedRecordsMatchTheirDeclaredSchemas);
 run(verifyEverySchemaVersionHasASpec);
 run(verifyEveryStateCollectionIsSchemaChecked);
@@ -5010,6 +5011,85 @@ function verifyHumanAndOrganizationContracts(output) {
 // 要么登记为「另有出口」并写明为什么。原先服务端两处各写死一个三码白名单 —— 白名单式的枚举
 // 天生漏掉后来新增的同族码（实测漏了 7 个，其中一个是上一次提交刚加的），而漏掉的后果不是报错，
 // 是【把最需要说清楚的那一刻说成"未知错误"】。权威来源取 state-store 的真实抛出点，不是手编清单。
+// "机器主体能不能做这件事"必须是一道被回答过的题。原先只有真人专属那份清单，没列到的一律放行 ——
+// 于是新加一条写路由默认就把它交给了机器，而这道题根本没被问过。现在两份清单都显式，
+// 这条判据按 beginGuardedWrite 的【真实调用点】两向核对：没分类的动作要红，清单里多出来的也要红。
+// 提取必须看得见三种写法：字面量、三元（account_invite / system_account_invite）、
+// 模板串（`task_group_${action}`，取值来自 TASK_GROUP_CONTROL_ACTIONS）——
+// 只认第一种的话，后两种会静默逃出这道门（本仓同形状撞过十几次）。
+function verifyEveryGuardedActionIsClassified(output) {
+  const source = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const listOf = (name) => {
+    const hit = new RegExp(`const ${name} = \\[(.*?)\\n\\];`, "su").exec(source);
+    return hit ? [...hit[1].matchAll(/"([a-z_0-9]+)"/gu)].map((entry) => entry[1]) : null;
+  };
+  const humanOnly = listOf("HUMAN_ONLY_ACTIONS");
+  const machineAllowed = listOf("MACHINE_ALLOWED_ACTIONS");
+  const controlActions = [...(/const TASK_GROUP_CONTROL_ACTIONS = \[([^\]]*)\]/u.exec(source)?.[1] || "")
+    .matchAll(/"([a-z_0-9]+)"/gu)].map((entry) => entry[1]);
+  const servicePair = [...(/\[("agent_runtime_worker_run"[^\]]*)\]\.includes\(action\)/u.exec(source)?.[1] || "")
+    .matchAll(/"([a-z_0-9]+)"/gu)].map((entry) => entry[1]);
+  if (!humanOnly || !machineAllowed || !controlActions.length || !servicePair.length) {
+    output.push("动作分类判据没查成（不是查过了没发现）：两份清单或动作取值集抠不出来，"
+      + `拿到 humanOnly=${humanOnly?.length} machine=${machineAllowed?.length} `
+      + `control=${controlActions.length} service=${servicePair.length}`);
+    return;
+  }
+  const found = new Set();
+  const unparsed = [];
+  for (const site of source.matchAll(/beginGuardedWrite\(/gu)) {
+    if (source.slice(0, site.index).trimEnd().endsWith("function")) continue;   // 定义处
+    let depth = 1;
+    let cursor = site.index + site[0].length;
+    while (depth && cursor < source.length) {
+      if (source[cursor] === "(") depth += 1;
+      else if (source[cursor] === ")") depth -= 1;
+      cursor += 1;
+    }
+    const call = source.slice(site.index + site[0].length, cursor - 1);
+    const parts = [];
+    let current = "";
+    let nesting = 0;
+    for (const ch of call) {
+      if ("([{".includes(ch)) nesting += 1;
+      if (")]}".includes(ch)) nesting -= 1;
+      if (ch === "," && nesting === 0) { parts.push(current); current = ""; continue; }
+      current += ch;
+    }
+    parts.push(current);
+    const line = source.slice(0, site.index).split("\n").length;
+    const arg = (parts[2] || "").trim();
+    const literals = [...arg.matchAll(/"([a-z_0-9]+)"/gu)].map((entry) => entry[1]);
+    const templates = [...arg.matchAll(/`([a-z_]+)\$\{/gu)].map((entry) => entry[1]);
+    if (!literals.length && !templates.length) { unparsed.push(`第 ${line} 行：${arg.slice(0, 60)}`); continue; }
+    for (const name of literals) found.add(name);
+    for (const prefix of templates) for (const suffix of controlActions) found.add(`${prefix}${suffix}`);
+  }
+  if (unparsed.length) {
+    output.push("这些写路由的动作名这条判据读不出来，等于它们没被核过：\n  " + unparsed.join("\n  "));
+    return;
+  }
+  if (found.size < 60) {
+    output.push(`只提取到 ${found.size} 个受守卫动作（应远多于此）—— 提取形状与产品代码脱节了，这条判据在空转`);
+    return;
+  }
+  const classified = new Set([...humanOnly, ...machineAllowed, ...servicePair]);
+  const unclassified = [...found].filter((action) => !classified.has(action)).sort();
+  if (unclassified.length) {
+    output.push("这些写动作没有回答过「机器主体能不能做」：\n  " + unclassified.join("\n  ")
+      + "\n  要么进 HUMAN_ONLY_ACTIONS，要么进 MACHINE_ALLOWED_ACTIONS 并写清为什么机器可以做");
+  }
+  const stale = [...classified].filter((action) => !found.has(action)).sort();
+  if (stale.length) {
+    output.push("这些动作在清单里、却没有任何写路由用它 —— 要么路由改名了（那条路现在没被分类守着）、"
+      + `要么这条登记该删：\n  ${stale.join("\n  ")}`);
+  }
+  const both = humanOnly.filter((action) => machineAllowed.includes(action));
+  if (both.length) output.push(`这些动作同时登记在两份清单里：${both.join("、")}`);
+  console.log(`受守卫写动作：${found.size} 个逐个分类（真人专属 ${humanOnly.length}、机器可做 ${machineAllowed.length}、`
+    + `agent 运行时专属 ${servicePair.length}），未分类 ${unclassified.length} 个（应为 0）`);
+}
+
 function verifyStorageFaultCodesReachTheOperator(output) {
   // 放在函数体内：模块级 const 会落在文件末尾，而 run() 在文件上半部就调它 —— 那是 TDZ，
   // 一跑就 ReferenceError（本文件已栽过三次）。

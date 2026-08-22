@@ -3660,6 +3660,25 @@ const MUTATIONS = [
     expect: "却照读不误"
   },
   {
+    // 判据侧：没分类的动作要被拦下来（模板串 `task_group_${action}` 这一支也要看得见）。
+    name: "受守卫的写动作必须逐个回答过机器能不能做",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyEveryGuardedActionIsClassified",
+    from: '  "task_group_cancel", "task_group_abort",',
+    to: '  "task_group_cancel",',
+    expect: "没有回答过「机器主体能不能做」"
+  },
+  {
+    // 行为侧：把一条真实路由的动作名改成没登记的，请求当场 403。
+    // 这条证的是"缺省不放行"本身 —— 原先那句 `return true` 下，改名之后一切照跑。
+    name: "没登记过的写动作一律拒绝（不是默认交给机器）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: 'beginGuardedWrite(req, state, "orchestrator_run", `TaskGroup:${body.taskGroupId || "all"}`',
+    to: 'beginGuardedWrite(req, state, "orchestrator_run_unregistered", `TaskGroup:${body.taskGroupId || "all"}`',
+    expect: "orchestrator permission"
+  },
+  {
     name: "段清单里记着却不在盘上的事件段必须说出来",
     file: "apps/control-plane-ui/lib/project-event-store.mjs",
     check: "verifySealedEventSegmentsAreNotSilentlyLost",

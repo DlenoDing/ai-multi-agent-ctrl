@@ -1052,13 +1052,60 @@ const HUMAN_ONLY_ACTIONS = [
 ];
 const HUMAN_ACCOUNT_TYPES_FOR_ACTIONS = ["system_admin", "org_admin", "user_account"];
 
+// 上面那份清单是【黑名单姿势】：没列到的动作一律放行给机器主体。于是"新加一条写路由"这件事
+// 默认把它交给机器，而"要不要交给机器"根本没被问过 —— 这正是本仓反复出现的形态
+// （缺省不得等于有利结果）。所以两份清单都要显式：不在任何一份里的动作【谁都不许做】，
+// 由 verifyEveryGuardedActionIsClassified 按 beginGuardedWrite 的真实调用点两向核对，
+// 新动作在 CI 上就会被拦下来，而不是悄悄以"机器也能做"上线。
+// 每一族都写清楚"为什么机器可以做"。判断标准是那条人工定稿闸门：
+// 提案、上报、执行推进可以是机器；【落闸、定稿、铸凭据】必须是人。
+const MACHINE_ALLOWED_ACTIONS = [
+  // 一、执行侧：agent 节点的接入、认领与产出。这些本来就是机器在做的事。
+  "agent_create", "agent_activation_update", "agent_node_revoke",
+  "agent_join_token_create", "agent_join_token_revoke",
+  "agent_control_command_create", "task_group_agent_control_command_create",
+  "artifact_register", "lease_claim", "lease_release", "work_assign", "instruction_envelope_create",
+  // 二、编排与推进：自治循环每一拍都在做，人不可能逐条点。
+  "orchestrator_run", "execution_topology_plan", "execution_topology_advance",
+  "derived_task_classify", "model_selection_decide", "session_placement_decide",
+  "repository_output_target_select", "model_capability_register", "policy_decision_eval",
+  "task_group_close_barrier_compute", "task_group_recompute_readiness", "runtime_issue_collect",
+  // 三、只提不决：造出来的都是待人处置的单子，终局仍在真人专属的那几个动作上。
+  "approval_request_create", "permission_request_submit", "finding_submit",
+  "review_plan_create", "review_bundle_register", "shared_definition_contract_create",
+  "room_send", "task_group_create", "task_group_work_item_create",
+  "project_create", "org_project_create",
+  // 四、看着像"决"、实则另有内部闸门的三个（改这三处实现时必须回来看这里）：
+  // approval_resolve —— 机器可以投票，但凑够法定人数【且至少一票来自真人】才会变 approved；
+  // finding_resolve —— 终态化只对治理角色开放，提交方（control 角色）够不着；
+  // rule_source_resolve —— 规则源的最终落定是真人专属的 rule_source_settle。
+  "approval_resolve", "finding_resolve", "rule_source_resolve",
+  // 五、组织与授权面。这一族是【留给人定的判断题】，现状原样登记在此：
+  // 机器主体拿到相应权限即可建组织、改成员权限与状态、调配额、发放/撤销资源授权。
+  // 它绕不过人工定稿闸门（闸门认的是 accountType，而铸账号 account_invite 已是真人专属），
+  // 但"机器能不能自行调整组织授权"本身是产品决定，不由我单方改。
+  "org_create", "org_member_create", "org_member_permissions_update", "org_member_status_update",
+  "org_quota_update", "org_status_update",
+  "access_grant_create", "access_grant_revoke", "project_member_grant",
+  // 六、任务组运行控制。pause/resume/request_review/rebound_drift 是可恢复的运行调节；
+  // 而 cancel/abort 会取消整组在跑的派发，并连带作废其名下待人工确认的单子 ——
+  // 「关闭任务组」已经是真人专属，这两个到不了终态却拿掉了人正在等的东西。
+  // 同样登记为现状并留给人定：不由我单方改。
+  "task_group_pause", "task_group_resume", "task_group_request_review", "task_group_rebound_drift",
+  "task_group_cancel", "task_group_abort",
+  // 七、首次引导：空库上建出第一个系统账号，那一刻还没有任何"人"可用。
+  "bootstrap_init"
+];
+
 function principalAllowedForAction(account, action) {
   if (!account) return false;
   if (["agent_runtime_worker_run", "checkpoint_submit"].includes(action)) {
     return account.accountType === "service_account" && (account.roles || []).includes("service_agent_runtime");
   }
   if (HUMAN_ONLY_ACTIONS.includes(action)) return HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(account.accountType);
-  return true;
+  // 没登记过的动作【谁都不许做】。这是接线错误时的 fail-closed：新路由忘了分类的话，
+  // 它在 e2e 上当场 403，而不是默认把这件事交给机器主体。
+  return MACHINE_ALLOWED_ACTIONS.includes(action);
 }
 
 function stableDigest(fill) {
