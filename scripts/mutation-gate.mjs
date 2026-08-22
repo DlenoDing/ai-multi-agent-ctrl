@@ -3660,6 +3660,15 @@ const MUTATIONS = [
     expect: "却照读不误"
   },
   {
+    // 类型写错（该字符串的给了数组）不许把服务端打成 500：手写校验最容易在 trim/map/length 上当场抛。
+    name: "字段类型写错不得让服务端 5xx",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '  const missing = fields.filter((field) => !String(body?.[field] ?? "").trim());',
+    to: "  const missing = fields.filter((field) => !body?.[field]?.trim());",
+    expect: "收到【类型写错】的字段就 5xx"
+  },
+  {
     // 组织这一层同形，爆炸半径更大：停用会级联停掉名下所有在跑的执行。
     name: "改组织状态的缺省不得等于启用",
     file: "apps/control-plane-ui/server.mjs",

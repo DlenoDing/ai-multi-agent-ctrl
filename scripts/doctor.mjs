@@ -3241,6 +3241,44 @@ try {
     if (stale.length) throw new Error(`这些路由登记着"空 body 也该成功"，实际已经不在写路由清单里：${stale.join("、")}`);
     console.log(`写路由空 body 扫描 ok: ${writeRoutes.length} 条逐个打过空 body，0 个 5xx、`
       + `拒绝都带机器可读的码、${Object.keys(EMPTY_BODY_IS_FINE).length} 个空 body 也该成功的已逐个登记`);
+    // 【类型写错】是空 body 之外的另一层：字段给了，但类型不对（该字符串的给了数组、该数组的给了
+    // 字符串、该对象的给了数字）。手写的校验最容易在这里崩 —— `x.trim()`、`x.map()`、`x.length`
+    // 都会当场抛，而调用方拿到的是 500 server_error。这一轮只判两件事：一个都不许 5xx、
+    // 拒绝要带机器可读的码。不判"必须拒绝"：多余字段被忽略是合理的，本条要防的是【崩】。
+    {
+      const hostileBody = {
+        projectId: ["not-a-string"], taskGroupId: {nested: true}, workItemId: 42,
+        title: [], name: {}, email: 1, status: ["active"], permissions: "not-a-list",
+        quotas: [], role: 7, commandType: {}, languageTag: [], subjectId: {}, resourceId: 0,
+        active: "yes", requirements: "not-a-list", options: "not-a-list", tags: {}
+      };
+      const typeBad = [];
+      const typeUnnamed = [];
+      for (const route of writeRoutes) {
+        const [method, path] = route.split(" ");
+        const response = await fetch(`http://127.0.0.1:${port}${path}`, {method,
+          headers: {"content-type": "application/json", authorization: emptyBodyAuth,
+            "idempotency-key": `wrong-type-${method}-${path.replace(/[^a-z0-9]/gu, "-")}`},
+          body: JSON.stringify(hostileBody)});
+        const payload = await response.json().catch(() => ({}));
+        if (response.status >= 500) {
+          typeBad.push(`${route} → ${response.status} ${JSON.stringify(payload).slice(0, 90)}`);
+          continue;
+        }
+        if (response.status >= 400 && !/^[a-z][a-z0-9_]{4,}$/u.test(String(payload.error || ""))) {
+          typeUnnamed.push(`${route} → ${response.status} ${JSON.stringify(payload).slice(0, 70)}`);
+        }
+      }
+      if (typeBad.length) {
+        throw new Error("这些写路由收到【类型写错】的字段就 5xx（手写校验直接在 trim/map/length 上抛了）：\n  "
+          + typeBad.join("\n  "));
+      }
+      if (typeUnnamed.length) {
+        throw new Error("这些写路由拒绝了类型写错的输入，却没给机器可读的码：\n  " + typeUnnamed.join("\n  "));
+      }
+      console.log(`写路由类型写错扫描 ok: ${writeRoutes.length} 条各打了一次全字段类型错乱的 body，0 个 5xx`);
+    }
+
   // 上面只扫了【字面量路径】。带 id 的那 50 多条（/api/x/:id/close、/decide、/revoke、/checkpoint…）
   // 恰恰是破坏性动作所在，一条都没扫过。要扫就得用【真 id】，于是它们真的会执行 ——
   // 所以在【运行目录的副本】上另起一台服务来扫，伤害留在副本里，主服务的状态不受影响。
@@ -3335,7 +3373,17 @@ try {
       const paramBad = [];
       const paramUnnamed = [];
       const paramSucceeded = [];
+      // 带 id 的这批也各打一次【类型错乱】的 body：只判"不许崩"，与字面量那批同规。
+      const paramTypeBad = [];
       for (const [method, path, literal] of paramRoutes) {
+        const hostile = await fetch(`http://127.0.0.1:${sweepPort}${path}`, {method,
+          headers: {"content-type": "application/json", authorization: sweepAuth,
+            "idempotency-key": `wrong-type-param-${method}-${literal.replace(/[^a-z0-9]/gu, "-")}`},
+          body: JSON.stringify({projectId: ["x"], taskGroupId: {}, status: ["active"], active: "yes",
+            permissions: "not-a-list", quotas: [], commandType: {}, title: [], reason: 7, decision: []})});
+        if (hostile.status >= 500) {
+          paramTypeBad.push(`${method} ${literal} → ${hostile.status} ${(await hostile.text()).slice(0, 80)}`);
+        } else { await hostile.text(); }
         const response = await fetch(`http://127.0.0.1:${sweepPort}${path}`, {method,
           headers: {"content-type": "application/json", authorization: sweepAuth,
             "idempotency-key": `empty-body-param-${method}-${literal.replace(/[^a-z0-9]/gu, "-")}`},
@@ -3353,6 +3401,9 @@ try {
         if (!PARAM_EMPTY_BODY_IS_FINE[`${method} ${literal}`]) {
           paramSucceeded.push(`${method} ${literal} → ${response.status} ${JSON.stringify(payload).slice(0, 110)}`);
         }
+      }
+      if (paramTypeBad.length) {
+        throw new Error("这些带 id 的写路由收到【类型写错】的字段就 5xx：\n  " + paramTypeBad.join("\n  "));
       }
       if (paramBad.length) throw new Error("这些带 id 的写路由收到空 body 就 5xx：\n  " + paramBad.join("\n  "));
       if (paramUnnamed.length) throw new Error("这些带 id 的写路由拒绝了空 body，却没给机器可读的码：\n  " + paramUnnamed.join("\n  "));
@@ -3410,7 +3461,7 @@ try {
         }
       }
       console.log(`带 id 的写路由空 body 扫描 ok: ${paramRoutes.length} 条逐个打过（在运行目录的副本上，用真 id），`
-        + `0 个 5xx、拒绝都带码（${Object.entries(paramCodes).sort((a, b) => b[1] - a[1]).slice(0, 4)
+        + `0 个 5xx（空 body 与类型错乱各打一遍）、拒绝都带码（${Object.entries(paramCodes).sort((a, b) => b[1] - a[1]).slice(0, 4)
           .map(([code, n]) => `${code}×${n}`).join("、")}）；另有 ${unresolved.length} 条因为找不到对应的真实对象没扫`
         + `${unresolved.length ? `（${unresolved.join("、")}）` : ""}`);
     } finally {
