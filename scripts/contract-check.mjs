@@ -16728,8 +16728,25 @@ function verifyComposePortsAreNotAccidentallyPublic(output) {
   }
   const stale = Object.keys(PUBLIC_ON_PURPOSE).filter((port) => !published.some((entry) => entry.endsWith(`:${port}`)));
   if (stale.length) output.push(`compose 端口核对：登记表已过时，这些端口已经不发布了：${stale.join("、")}`);
+  // 崩了/宿主重启之后要自己回来：agent 节点都指着这个地址，它不在，排队的派发就一直停着，
+  // 而没有任何人会收到通知。配置错导致起不来不会被掩盖 —— 启动报文写着具体原因，
+  // healthcheck 也不会转 healthy。
+  const servicesBlock = compose.slice(compose.indexOf("services:"), compose.indexOf("\nvolumes:"));
+  const services = [...servicesBlock.matchAll(/^ {2}([a-z][\w-]*):$/gmu)].map((hit) => hit[1]);
+  if (services.length < 2) {
+    output.push(`compose 重启策略核对：只提取到 ${services.length} 个服务（实测 2）—— 提取失配，本条在空转`);
+  }
+  for (const name of services) {
+    const start = servicesBlock.indexOf(`\n  ${name}:`) + 1;
+    const nextHeader = [...servicesBlock.slice(start + 1).matchAll(/^ {2}[a-z][\w-]*:$/gmu)][0];
+    const own = servicesBlock.slice(start, nextHeader ? start + 1 + nextHeader.index : undefined);
+    if (!/restart:\s*unless-stopped/u.test(own)) {
+      output.push(`compose 服务 ${name} 没有 restart 策略 —— 宿主重启或进程崩掉之后它不会自己回来，`
+        + "而 agent 节点都指着这个地址；排队的派发会一直停着，没有任何人收到通知");
+    }
+  }
   console.log(`compose 端口核对：${published.length} 条端口发布逐个核过，`
-    + `${Object.keys(PUBLIC_ON_PURPOSE).length} 条登记为有意对外`);
+    + `${Object.keys(PUBLIC_ON_PURPOSE).length} 条登记为有意对外；${services.length} 个服务都有 restart 策略`);
 }
 
 function verifySecurityRelaxingSwitchesAreListed(output) {

@@ -4095,6 +4095,16 @@ const MUTATIONS = [
     expect: "只核对模式：对着残缺目录必须拒绝"
   },
   {
+    // 宿主重启／进程崩掉之后要自己回来：agent 节点都指着控制面这个地址，它不在，
+    // 排队的派发就一直停着，而没有任何人会收到通知。
+    name: "compose 服务要有重启策略",
+    file: "docker-compose.yml",
+    check: "verifyComposePortsAreNotAccidentallyPublic",
+    from: "    image: postgres:16-alpine\n    restart: unless-stopped",
+    to: "    image: postgres:16-alpine",
+    expect: "compose 服务 postgres 没有 restart 策略"
+  },
+  {
     // 写密钥要先收紧 umask 再落盘：只在写完之后 chmod 的话，从创建到 chmod 之间那一瞬
     // 文件是按默认 umask 建的（多用户机器上通常 0644），别人在那一瞬读得到。
     name: "写密钥的脚本要先收紧 umask",
