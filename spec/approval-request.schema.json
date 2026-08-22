@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/approval-request.schema.json",
+  "title": "ApprovalRequest",
+  "description": "一次需要多方点头的审批。manifest 的 approval_authorizes_only_exact_action 说的就是它：批准只授权那一个确切动作。此前 action 缺省成占位串 guarded_action、resource 缺省成 {} —— 一条写着「已批准」却说不清批的是什么的记录；现在动作必须由调用方给，资源缺省绑到任务组本身（比空对象更窄）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "approvalId", "projectId", "taskGroupId", "action", "resource", "status", "riskClass", "requiredApprovers", "quorum", "approvals", "expiresAt", "createdAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": {"const": "approval-request/v1"},
+    "approvalId": {"type": "string", "minLength": 1},
+    "projectId": {"type": "string", "pattern": "^prj"},
+    "taskGroupId": {"type": "string", "pattern": "^tg"},
+    "action": {"type": "string", "minLength": 1, "description": "批的是哪个动作。不许是占位串 —— 缺了它这条批准就没有边界。"},
+    "resource": {
+      "type": "object",
+      "required": ["resourceType", "resourceId"],
+      "description": "批准作用在哪个对象上。缺省绑到任务组本身；空对象是不允许的（它既可以被读成「什么都没批」，也可以被读成「批了个啥都算」）。",
+      "properties": {"resourceType": {"type": "string", "minLength": 1}, "resourceId": {"type": "string", "minLength": 1}}
+    },
+    "status": {"enum": ["requested", "policy_precheck", "risk_classified", "quorum_collecting", "approved", "rejected", "expired", "cancelled"]},
+    "riskClass": {"type": "string", "minLength": 1},
+    "requiredApprovers": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
+    "quorum": {"type": "integer", "minimum": 1, "description": "冒名的审批请求可自带 quorum:1 让高危多方审批塌缩成一次点击 —— 这条只钉形状，是否可信由 approvalRequestCreate 那边的判定守。"},
+    "proposedBy": {"type": ["string", "null"], "description": "发起人（认证出来的那个身份，不接受调用方自填），high_risk_no_self_approval 靠它。"},
+    "approvals": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "resolvedBy": {"type": "string", "minLength": 1},
+    "expiresAt": {"type": "string", "format": "date-time"},
+    "decisionRecordRef": {"type": "string", "minLength": 1},
+    "auditRef": {"type": "string", "minLength": 1},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  }
+}

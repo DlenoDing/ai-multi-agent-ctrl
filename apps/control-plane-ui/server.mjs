@@ -4805,6 +4805,9 @@ async function handleApi(req, res) {
     if (guard.status) return json(res, guard.status, guard.payload);
     // Record the proposer as the AUTHENTICATED actor (never client-supplied) for high_risk_no_self_approval.
     const result = approvalRequestCreate(state, {...body, proposedBy: guard.actor});
+    // core 的拒绝要原样转发：不接住的话下一行 result.approvalRequest.approvalId 直接抛，
+    // 调用方收到的是 500 server_error —— 「少填一个字段报成服务器故障」这一族在本仓已经撞过一次。
+    if (result.ok === false) return json(res, 400, {error: result.error, ...(result.message ? {message: result.message} : {})});
     audit(state, guard.actor, "approval_request_create", `ApprovalRequest:${result.approvalRequest.approvalId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);

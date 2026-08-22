@@ -2165,7 +2165,16 @@ try {
   }
 
   // approval-requests → task_group:review (+ resolve)
-  const approvalOk = expectStatus(await g2("/api/approval-requests", reviewerAuth, "g2b-approval-ok", {taskGroupId: "tg_runtime_management", action: "guarded_action"}), 201, "approval create happy");
+  const approvalOk = expectStatus(await g2("/api/approval-requests", reviewerAuth, "g2b-approval-ok", {taskGroupId: "tg_runtime_management", action: "release_candidate_promote"}), 201, "approval create happy");
+  // manifest 的不变式是「批准只授权那一个确切动作」。action 此前缺省成占位串 guarded_action、
+  // resource 缺省成 {} —— 一条写着「已批准」却说不清批的是什么的记录。动作现在必须给。
+  expectStatus(await g2("/api/approval-requests", reviewerAuth, "g2b-approval-no-action", {taskGroupId: "tg_runtime_management"}), 400, "approval create without action", "approval_request_action_required");
+  // 资源缺省要绑到任务组本身（比空对象【更窄】的默认，不是更宽的）。
+  if (approvalOk.payload.approvalRequest?.resource?.resourceId !== "tg_runtime_management"
+      || approvalOk.payload.approvalRequest?.resource?.resourceType !== "task_group") {
+    throw new Error("审批单没给资源时要绑到任务组本身，实际："
+      + JSON.stringify(approvalOk.payload.approvalRequest?.resource));
+  }
   expectStatus(await g2("/api/approval-requests", invitedAuth, "g2b-approval-deny", {taskGroupId: "tg_runtime_management"}), 403, "approval create deny", "policy_denied");
   expectStatus(await g2(`/api/approval-requests/${approvalOk.payload.approvalRequest.approvalId}/resolve`, reviewerAuth, "g2b-approval-resolve-ok", {status: "approved"}), 200, "approval resolve happy");
 

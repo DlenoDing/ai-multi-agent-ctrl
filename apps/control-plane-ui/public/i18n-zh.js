@@ -1053,6 +1053,7 @@
     human_directive_type_unknown: "认不出这个指令类型",
     human_directive_resolution_unknown: "认不出这个处置方式",
     finding_status_unknown: "认不出这个发现状态",
+    approval_request_action_required: "审批单必须写明批的是哪个动作",
     agent_status_unknown: "认不出这个智能体状态",
     agent_trust_score_invalid: "信任分必须是 0 到 1 之间的数",
     task_group_status_unknown: "认不出这个任务组状态",

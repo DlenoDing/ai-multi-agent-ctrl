@@ -7738,6 +7738,7 @@ export function permissionRequestSubmit(state, args) {
   assertUniqueRecordId(state.permissionRequests, "requestId", args.requestId, "permission_request_id_conflict");
   const at = new Date().toISOString();
   const request = {
+    schemaVersion: "permission-request/v1",
     requestId: args.requestId || createId("perm_req"),
     subjectId: args.subjectId || args.subjectRef?.subjectId || "acct_agent_runtime",
     subjectRef: args.subjectRef || {subjectType: "account", subjectId: args.subjectId || "acct_agent_runtime"},
@@ -7949,12 +7950,26 @@ export function approvalRequestCreate(state, args) {
   assertUniqueRecordId(state.approvalRequests, "approvalId", args.approvalId, "approval_request_id_conflict");
   const at = new Date().toISOString();
   const taskGroup = taskGroupForRecord(state, args);
+  // manifest 的不变式是「批准只授权那一个确切动作」，而这里原先给了两个占位默认：
+  // action 缺省成 "guarded_action"、resource 缺省成 {} —— 一条写着「已批准」却说不清批的是什么
+  // 的记录。今天只有关闭门在读它（"有没有待审批"），所以还不构成授权洞；但只要有人照着
+  // 「查一下有没有对应的批准」去写判定，空 resource 立刻变成"批了个啥都算"。
+  // 动作必须由调用方给（命令接口要拒绝，不要猜）；资源缺省绑到任务组本身 ——
+  // 那是比空对象【更窄】的默认，不是更宽的。
+  if (!args.action || !String(args.action).trim()) {
+    return {ok: false, error: "approval_request_action_required",
+      message: "审批单必须写明批的是哪个动作：一条不说明动作的批准，等于没说批了什么"};
+  }
+  const approvalTaskGroupId = taskGroup?.id || args.taskGroupId || "tg_runtime_management";
   const request = {
+    schemaVersion: "approval-request/v1",
     approvalId: args.approvalId || createId("approval"),
     projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
-    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
-    action: args.action || "guarded_action",
-    resource: args.resource || {},
+    taskGroupId: approvalTaskGroupId,
+    action: String(args.action).trim(),
+    resource: (args.resource && typeof args.resource === "object" && Object.keys(args.resource).length)
+      ? args.resource
+      : {resourceType: "task_group", resourceId: approvalTaskGroupId},
     // "pending" 不在 ApprovalRequest 的已登记状态里 —— 按 schema 校验这条记录本身就是非法的，
     // 而关闭门又照着已登记枚举去判，两边对不上。统一到已登记的初始态 requested。
     status: "requested",

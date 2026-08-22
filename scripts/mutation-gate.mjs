@@ -3993,6 +3993,26 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // manifest 的不变式是「批准只授权那一个确切动作」，而这里原先给了两个占位默认：
+    // action 缺省成 "guarded_action"、resource 缺省成 {}。一条写着「已批准」却说不清批的是什么
+    // 的记录，只要有人照着「查一下有没有对应的批准」去写判定，立刻变成"批了个啥都算"。
+    name: "审批单必须写明批的是哪个动作",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: "  if (!args.action || !String(args.action).trim()) {",
+    to: "  if (false) {",
+    expect: "approval create without action"
+  },
+  {
+    // 资源缺省要绑到任务组本身 —— 那是比空对象【更窄】的默认。
+    name: "审批单没给资源时要绑到任务组本身",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: "      : {resourceType: \"task_group\", resourceId: approvalTaskGroupId},",
+    to: "      : {},",
+    expect: "审批单没给资源时要绑到任务组本身"
+  },
+  {
     // 任务组有两个建入口，规范把两处形状钉在一起。去掉 REST 这一处的声明，
     // 那一整条写路径就退出规范校验，而种子那两条仍带着 —— 「部分带部分不带」当场发现。
     // （原先想拿 progress 越界当锚点：建组时写的 progress 立刻被 computeProgressSnapshots
@@ -4278,8 +4298,8 @@ const MUTATIONS = [
     name: "不受规范约束的集合数要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "doctor",
-    from: '"控制面 e2e 产出": 8,',
-    to: '"控制面 e2e 产出": 7,',
+    from: '"控制面 e2e 产出": 6,',
+    to: '"控制面 e2e 产出": 5,',
     // 期望要挑【这道门自己会打印的那一句】：控制面 e2e 的前缀是"控制面 e2e 产出："，
     // 契约门那两处（种子/编排产出）用的是别的前缀 —— 只写公共部分会被判成"挂错了门"。
     expect: "控制面 e2e 产出：不受规范约束的集合"
@@ -4291,8 +4311,8 @@ const MUTATIONS = [
     name: "远程 agent 那侧的规范覆盖也要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "agent",
-    from: '"远程 agent e2e 产出": 5,',
-    to: '"远程 agent e2e 产出": 4,',
+    from: '"远程 agent e2e 产出": 4,',
+    to: '"远程 agent e2e 产出": 3,',
     expect: "远程 agent e2e 产出：不受规范约束的集合"
   },
   {

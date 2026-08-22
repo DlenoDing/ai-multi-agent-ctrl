@@ -1709,7 +1709,7 @@ function verifyHumanAndOrganizationContracts(output) {
         ["permissionRequestSubmit", ({st, tg}) => permissionRequestSubmit(st, {taskGroupId: tg.id,
           projectId: tg.projectId, requestedCapability: "net", requestedResource: "x", promptType: "network"})],
         ["approvalRequestCreate", ({st, tg}) => approvalRequestCreate(st, {taskGroupId: tg.id,
-          projectId: tg.projectId, approvalType: "release", summary: "关后审批"})],
+          projectId: tg.projectId, action: "release", approvalType: "release", summary: "关后审批"})],
         ["createHumanConfirmationRequest", ({st, tg}) => createHumanConfirmationRequest(st, {taskGroupId: tg.id,
           workItemId: tg.workItems[0].id, decisionType: "plan_topology", subjectRef: `TaskGroup:${tg.id}`,
           summary: "关后确认", options: [{optionId: "a", label: "A"}]})],
@@ -2456,7 +2456,7 @@ function verifyHumanAndOrganizationContracts(output) {
     ensureRuntimeCollections(uniqState, {root});
     const uniqChecks = [
       ["permissionRequests", () => permissionRequestSubmit(uniqState, {requestId: "perm_dup", taskGroupId: "tg_runtime_management", permission: "task_group:read"}), "permission_request_id_conflict"],
-      ["approvalRequests", () => approvalRequestCreate(uniqState, {approvalId: "appr_dup", taskGroupId: "tg_runtime_management", riskClass: "high", quorum: 3}), "approval_request_id_conflict"],
+      ["approvalRequests", () => approvalRequestCreate(uniqState, {approvalId: "appr_dup", taskGroupId: "tg_runtime_management", action: "release", riskClass: "high", quorum: 3}), "approval_request_id_conflict"],
       // 评审包：同 id 注册两次会让 consume 的 find 只命中最新那份，旧副本永远停在 submitted
       // 挡着关闭门，且没有第二条杠杆能碰到它。
       ["reviewBundles", () => reviewBundleRegister(uniqState, {reviewBundleId: "rvb_dup", taskGroupId: "tg_runtime_management", workItemId: "wi_x"}), "review_bundle_id_conflict"]
@@ -16481,7 +16481,12 @@ function verifyEveryProjectScopedIdIsScopeChecked(output) {
   const NOT_AN_OBJECT_ADDRESS = {
     roleId: "角色名，不是记录 id（同一个 roleId 在每个任务组里都存在）",
     runId: "派发的运行序号，必须与 sessionId 配对才能定位；sessionId 已在清单里",
-    repositoryId: "RepositoryOutputTarget 的属性（哪个仓库），定位目标用的是 targetId，已在清单里"
+    repositoryId: "RepositoryOutputTarget 的属性（哪个仓库），定位目标用的是 targetId，已在清单里",
+    // 2026-08-23 补 spec/permission-request.schema.json 时被这道扫描点名。追下去：subjectId 是
+    // 授权申请的【主体】（谁要权限），不是被操作的对象地址 —— 请求本身落在调用方自己的
+    // taskGroupId 作用域内（那个键受守卫），而"主体在甲组织、资源在乙组织"由铸造点的
+    // cross_org_grant_not_allowed 拦住（那道判定的注释写着它当初正是"两扇门只守一扇"修出来的）。
+    subjectId: "授权申请的主体（谁要权限），不是对象地址；跨组织由铸造点的 cross_org_grant_not_allowed 守"
   };
   const vocabulary = new Set(Object.keys(createMcpToolDefinitions()[0]?.inputSchema?.properties || {}));
   if (vocabulary.size < 100) {

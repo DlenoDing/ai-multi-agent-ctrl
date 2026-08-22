@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/permission-request.schema.json",
+  "title": "PermissionRequest",
+  "description": "执行过程中「我需要这个权限」的申请。它的出口有两条：批准后签出一张精确到资源的授权，或被驳回。manifest 的 permission_request_must_converge 要求它不能悬着。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "subjectId",
+    "subjectRef",
+    "resource",
+    "permission",
+    "status",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "permission-request/v1"
+    },
+    "requestId": {
+      "type": "string",
+      "pattern": "^perm_req_"
+    },
+    "subjectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subjectRef": {
+      "type": "object",
+      "required": [
+        "subjectType",
+        "subjectId"
+      ],
+      "properties": {
+        "subjectType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subjectId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "required": [
+        "resourceType",
+        "resourceId"
+      ],
+      "description": "申请的是【哪个对象上】的权限。这一层不能缺：授权要精确到资源，泛泛一个权限名等于要一张通行证。",
+      "properties": {
+        "resourceType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resourceId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "permission": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskGroupId": {
+      "type": "string",
+      "pattern": "^tg"
+    },
+    "status": {
+      "enum": [
+        "observed",
+        "classified",
+        "routed_to_controller",
+        "pending_approval",
+        "approved",
+        "rejected",
+        "external_capability_required",
+        "external_capability_available",
+        "preauthorized_capability_bound",
+        "external_capability_blocked",
+        "reassigned",
+        "scope_reduced",
+        "grant_issued",
+        "retrying",
+        "resolved",
+        "aborted",
+        "expired"
+      ]
+    },
+    "reason": {
+      "type": "string"
+    },
+    "policyDecisionRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "哪个工作项在申请（远程 agent 那条路会带上）。"
+    }
+  }
+}
