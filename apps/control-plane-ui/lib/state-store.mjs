@@ -244,6 +244,19 @@ function assertStateSchemaSupported(state, source = "control-plane-state") {
   );
 }
 
+// 只读中央态的调用方（健康检查那条路，为省一次全量读而只读中央文件）看不见分片存不存在。
+// 而「中央索引记着 N 个项目的分片、project-db 目录整个不在」恰恰是备份只拷了一半的样子：
+// 数据面已经不可用，而健康检查照回 ok —— 监控一路绿灯。这里给它一个 O(1) 的核对（一次 existsSync）。
+export function projectShardStorageFault(options, central) {
+  if (stateStoreKind() === "postgresql") return null;
+  const indexed = (central?.projectStateShards?.projects || []).length;
+  if (!indexed) return null;
+  if (existsSync(join(options.runtimeDir, projectDbDirName))) return null;
+  return {code: "project_state_shard_missing", file: projectDbDirName,
+    hint: `中央索引里记着 ${indexed} 个项目的分片，而 ${projectDbDirName} 目录整个不在 —— `
+      + "备份多半只拷了中央文件。把它连同 project-db 一起还原回来，本接口会自动转回 ok。"};
+}
+
 export function readStoredCentralState(options, readOptions = {}) {
   ensureStoredState(options);
   if (stateStoreKind() !== "postgresql") {
@@ -735,7 +748,19 @@ function pruneIdempotencyRecords(records) {
 
 function readRuntimeJsonProjectShards(options, centralState = {}) {
   const dir = join(options.runtimeDir, projectDbDirName);
-  if (!existsSync(dir)) return [];
+  if (!existsSync(dir)) {
+    // 目录整个不在，只有【索引里也没有分片】时才是正常的（首次启动，还没写过任何项目）。
+    // 索引里记着分片、连目录都没有，是「备份只拷了一半」最典型的样子：实测把 project-db 删掉之后
+    // 控制面照常起来、/api/health 还回 ok —— 人以为还原成功了，登录进去才发现项目数据全没了。
+    // 逐个分片的缺失判定在下面，但整目录缺失时它一条都跑不到（names 是空的），所以在这里拦。
+    const indexed = (centralState?.projectStateShards?.projects || []).length;
+    if (!indexed) return [];
+    throw Object.assign(new Error(`project_state_shard_missing:${projectDbDirName}`),
+      {code: "AIMAC_PROJECT_DB_DIR_MISSING",
+        hint: `中央索引里记着 ${indexed} 个项目的分片，而 ${projectDbDirName} 目录整个不在 —— `
+          + "备份多半只拷了中央文件。把它连同 project-db 一起还原回来；"
+          + "确实要从零开始的话，先把中央文件也移走。"});
+  }
   const indexedMetadata = runtimeJsonShardMetadataFromCentral(centralState);
   const names = indexedMetadata
     ? [...indexedMetadata.keys()].filter((name) => name.endsWith(".state.json"))

@@ -9,7 +9,7 @@ import { basename, dirname, extname, join, normalize, resolve } from "node:path"
 import { fileURLToPath } from "node:url";
 import { AUDIT_LOG_CAP, appendAuditEntry, auditArchiveFault as sharedAuditArchiveFault, flushPendingAuditAppends as flushAuditArchive } from "./lib/audit-ledger.mjs";
 import { mcpServiceAllowedTools, mcpServiceAllowlistNotice } from "./lib/mcp-service-allowlist.mjs";
-import { assertStateStoreConfig, consumeStateRebuildSignal, ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
+import { assertStateStoreConfig, consumeStateRebuildSignal, ensureStoredState, isStateStoreConflict, markRuntimeStorage, projectShardStorageFault, readStoredCentralState, readStoredState, stateStoreKind, writeStoredState } from "./lib/state-store.mjs";
 import { appendProjectExecutionEvent, projectEventLogFault, projectExecutionEventStorageInfo, readProjectExecutionEventByKey, readProjectExecutionEvents } from "./lib/project-event-store.mjs";
 import {
   authenticateAgentNode,
@@ -332,6 +332,11 @@ function readState() {
 function readHealthState() {
   ensureState();
   const state = readStoredCentralState({root, runtimeDir, statePath, seedPath, buildInitialState});
+  // 这条路【只读中央文件】（为省一次全量读），于是分片在不在它看不见。而"中央索引记着分片、
+  // project-db 整个不在"正是备份只拷了一半的样子：登录进去项目数据全没了，健康检查却回 ok。
+  // 一次 existsSync 就能分辨，抛出去走存储故障那条统一出口（503 + 说清该恢复哪一份）。
+  const shardFault = projectShardStorageFault({root, runtimeDir, statePath, seedPath, buildInitialState}, state);
+  if (shardFault) throw Object.assign(new Error(`${shardFault.code}:${shardFault.file}`), {hint: shardFault.hint});
   ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: process.env.AIMAC_PUBLIC_URL || localEndpoint(), executionProfile});
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
   return state;

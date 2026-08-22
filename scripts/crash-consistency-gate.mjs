@@ -3,7 +3,7 @@
 import {spawn, spawnSync} from "node:child_process";
 import {createServer} from "node:net";
 import {once} from "node:events";
-import {chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, readdirSync, utimesSync, unlinkSync} from "node:fs";
+import {chmodSync, cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, readdirSync, utimesSync, unlinkSync} from "node:fs";
 import {join} from "node:path";
 import {hostname, tmpdir} from "node:os";
 import {installGateFetch} from "./lib/gate-fetch.mjs";
@@ -503,6 +503,104 @@ if (leftoversAtKill.length) check(leftoversAfterWrite.length === 0, "崩溃留�
 child.kill("SIGTERM");
 
 await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000).unref())]);
+
+// 【备份／还原】：设计文档把它列为要求，而此前没有任何东西验过"拷下来的那份还原得回去"。
+// 运维最自然的做法是【不停机直接 cp -R 运行目录】—— 那一刻中央索引与项目分片、事件段清单
+// 可能各处在不同时刻。分片是按 generation 命名的（旧的那份在盘上还留着），加上落盘都走
+// 原子改名，所以这样拷到的是【某一时刻的完整快照】。这条性质今天正好被我改到的那几处
+// （分片索引/摘要/段清单）撑着，必须钉住，否则将来某次"顺手删掉旧 generation"就会让它悄悄失效。
+{
+  const backupBase = mkdtempSync(join(tmpdir(), "aimac-backup-"));
+  const liveDir = join(backupBase, "live");
+  const copyDir = join(backupBase, "copy");
+  const halfDir = join(backupBase, "half");
+  const bootstrapToken = "backup-gate-token-0123456789ab";
+  const initResult = spawnSync(process.execPath, ["scripts/init-control-plane.mjs"], {cwd: root, encoding: "utf8",
+    env: {...process.env, AIMAC_RUNTIME_DIR: liveDir, AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: "",
+      AIMAC_BOOTSTRAP_TOKEN: bootstrapToken}});
+  const startServer = async (dir, port) => {
+    const server = trackChild(spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {cwd: root,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(port), AIMAC_RUNTIME_DIR: dir,
+        AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: "",
+        AIMAC_BOOTSTRAP_TOKEN: bootstrapToken, AIMAC_EXIT_WITH_PARENT: "1"}}));
+    let stderr = "";
+    server.stderr.on("data", (chunk) => { stderr += String(chunk); });
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      try { await fetch(`http://127.0.0.1:${port}/api/health`); return {server, stderr: () => stderr, up: true}; }
+      catch { await new Promise((resolve) => setTimeout(resolve, 150)); }
+    }
+    return {server, stderr: () => stderr, up: false};
+  };
+  try {
+    if (initResult.status !== 0) {
+      check(false, "备份还原的夹具起不来", `init 退出码 ${initResult.status}：${String(initResult.stderr || "").slice(0, 120)}`);
+    } else {
+      const livePort = await freePort();
+      const live = await startServer(liveDir, livePort);
+      const login = await (await fetch(`http://127.0.0.1:${livePort}/api/auth/login`, {method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({email: "system.admin@local", token: bootstrapToken})})).json().catch(() => ({}));
+      let written = 0;
+      let stopWriting = false;
+      const writer = (async () => {
+        while (!stopWriting) {
+          const response = await fetch(`http://127.0.0.1:${livePort}/api/task-groups`, {method: "POST",
+            headers: {authorization: `Bearer ${login.sessionToken}`, "content-type": "application/json",
+              "idempotency-key": `backup-gate-${written}`},
+            body: JSON.stringify({projectId: "prj_control_plane", title: `备份期任务组 ${written}`})});
+          if (response.status === 201) written += 1;
+          await response.text();
+        }
+      })();
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      cpSync(liveDir, copyDir, {recursive: true});          // 不停机，直接拷整个运行目录
+      cpSync(liveDir, halfDir, {recursive: true});
+      rmSync(join(halfDir, "project-db"), {recursive: true, force: true});   // 只拷了一半的那种备份
+      stopWriting = true;
+      await writer;
+      live.server.kill("SIGKILL");
+      if (written < 3) {
+        check(false, "备份还原的夹具没造出想测的情形", `拷贝期间只写成功了 ${written} 次，快照里几乎没有变化`);
+      } else {
+        const restoredPort = await freePort();
+        const restored = await startServer(copyDir, restoredPort);
+        const health = restored.up
+          ? await (await fetch(`http://127.0.0.1:${restoredPort}/api/health`)).json().catch(() => ({})) : {};
+        check(restored.up && health.status === "ok",
+          "不停机拷下来的运行目录，还原之后起得来且健康检查为 ok",
+          `起来了=${restored.up} health=${health.status || JSON.stringify(health.storageFault || {}).slice(0, 80)}`);
+        const restoredLogin = restored.up ? await (await fetch(`http://127.0.0.1:${restoredPort}/api/auth/login`,
+          {method: "POST", headers: {"content-type": "application/json"},
+            body: JSON.stringify({email: "system.admin@local", token: bootstrapToken})})).json().catch(() => ({})) : {};
+        let groups = -1;
+        if (restoredLogin.sessionToken) {
+          const view = await (await fetch(`http://127.0.0.1:${restoredPort}/api/state?view=tasks&limit=200&projectId=prj_control_plane`,
+            {headers: {authorization: `Bearer ${restoredLogin.sessionToken}`}})).json().catch(() => ({}));
+          groups = (view.taskGroups || []).length;
+        }
+        check(groups > 0, "还原之后读得出项目数据（分片与中央索引对得上）",
+          `读到 ${groups} 个任务组（拷贝期间共写成功 ${written} 个）`);
+        restored.server.kill("SIGKILL");
+
+        // 只拷了中央文件、漏掉 project-db 的那种"半份备份"：必须响亮地拒绝，
+        // 而不是带着一份【没有任何项目数据】的状态照常起来 —— 那才是最坏的：
+        // 人以为还原成功了，登录进去发现活全没了，而系统一句话都没说。
+        const halfPort = await freePort();
+        const half = await startServer(halfDir, halfPort);
+        const halfHealth = half.up
+          ? await (await fetch(`http://127.0.0.1:${halfPort}/api/health`)).json().catch(() => ({})) : {};
+        const complained = /shard|分片/u.test(JSON.stringify(halfHealth)) || /shard/u.test(half.stderr());
+        check(halfHealth.status !== "ok" && complained,
+          "只拷了一半的备份（漏掉 project-db）必须报出来，不许带着空项目照常起来",
+          `health=${halfHealth.status || "起不来"} 说了分片=${complained}`);
+        half.server.kill("SIGKILL");
+      }
+    }
+  } finally {
+    rmSync(backupBase, {recursive: true, force: true});
+  }
+}
 console.log(fails.length
   ? `crash consistency gate failed: ${fails.join("；")}`
   : "crash consistency gate ok: 写入中被 SIGKILL 后，状态不半份、锁不锁死系统、临时文件被下一次写入清掉");

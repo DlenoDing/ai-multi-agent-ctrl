@@ -3735,6 +3735,16 @@ const MUTATIONS = [
     expect: "orchestrator permission"
   },
   {
+    // 只拷了中央文件、漏掉 project-db 的"半份备份"必须报出来。原先整目录不在时读取端直接返回
+    // 空数组，控制面带着一份没有任何项目数据的状态照常起来、健康检查还回 ok。
+    name: "只拷了一半的备份必须报出来",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "crash",
+    from: "  const shardFault = projectShardStorageFault({root, runtimeDir, statePath, seedPath, buildInitialState}, state);",
+    to: "  const shardFault = null;",
+    expect: "不许带着空项目照常起来"
+  },
+  {
     // 写侧的跨租户：授权必须比对【入参里的作用域】。拆掉这一句，绑在项目 A 上的节点
     // 拿隔壁项目的 id 就能写进去（实测 26 个写工具真的执行了，隔壁记录 1→25 条）。
     name: "授权必须比对入参的作用域（写侧跨租户）",
