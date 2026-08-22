@@ -6025,7 +6025,9 @@ function verifyAutoResumeHintsReallyAutoResume(output) {
   const tick = (tune) => {
     const state = structuredClone(seedState);
     ensureRuntimeCollections(state, {root});
-    const taskGroup = (state.taskGroups || []).find((item) => (item.workItems || []).length);
+    // 同上：固定挑控制面自举项目下的组，避免撞上「项目没登记仓库」那道更靠前的前置。
+    const taskGroup = (state.taskGroups || []).find((item) => item.projectId === "prj_control_plane"
+      && (item.workItems || []).length) || (state.taskGroups || []).find((item) => (item.workItems || []).length);
     tune(state, taskGroup);
     runAutonomousCycle(state, {root, runtimeDir: join(root, ".runtime"), endpoint: "http://127.0.0.1:1", mode: "all"});
     const after = state.taskGroups.find((item) => item.id === taskGroup.id);
@@ -6073,7 +6075,12 @@ function verifyExecutionFailureCapSurvivesHistoryAndReopen(output) {
   const tick = (tune) => {
     const state = structuredClone(seedState);
     ensureRuntimeCollections(state, {root});
-    const taskGroup = (state.taskGroups || []).find((item) => (item.workItems || []).length);
+    // 固定挑控制面自举项目下的那个组：它是唯一不需要"先登记仓库"的项目（见
+    // project_repository_not_registered 那道前置）。原先挑「第一个有工作项的组」——
+    // 整跑时前面的检查改过共享 seedState，那一轮挑到的项目没有登记仓库，于是全部用例
+    // 都停在那道更靠前的前置上（状态 ready/无原因），看起来像"上限失效了"。
+    const taskGroup = (state.taskGroups || []).find((item) => item.projectId === "prj_control_plane"
+      && (item.workItems || []).length) || (state.taskGroups || []).find((item) => (item.workItems || []).length);
     const workItem = taskGroup.workItems[0];
     tune(state, taskGroup, workItem);
     runAutonomousCycle(state, {root, runtimeDir: join(root, ".runtime"), endpoint: "http://127.0.0.1:1", mode: "all"});

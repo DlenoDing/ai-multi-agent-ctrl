@@ -4076,7 +4076,7 @@ const MUTATIONS = [
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyEvidenceRedactionCoversKnownSecrets",
     from: "  text = text.replace(/((?:set-)?cookie\\s*[:=]\\s*)[^\\n\\r]+/giu, \"$1[redacted]\");",
-    to: "  text = text;",
+    to: "  text = text.replace(/never-matches-cookie/giu, \"$1[redacted]\");",
     expect: "证据脱敏漏掉了"
   },
   {
@@ -4084,7 +4084,7 @@ const MUTATIONS = [
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyEvidenceRedactionCoversKnownSecrets",
     from: "  text = text.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu, \"[redacted-private-key]\");",
-    to: "  text = text;",
+    to: "  text = text.replace(/never-matches-key/gu, \"[redacted-private-key]\");",
     expect: "证据脱敏漏掉了"
   },
   {
@@ -4092,7 +4092,7 @@ const MUTATIONS = [
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyEvidenceRedactionCoversKnownSecrets",
     from: "  text = text.replace(/([a-z][a-z0-9+.-]*:\\/\\/)[^@/\\s]+@/giu, \"$1[redacted]@\");",
-    to: "  text = text;",
+    to: "  text = text.replace(/(never-matches-url)/giu, \"$1[redacted]@\");",
     expect: "证据脱敏漏掉了"
   },
   {
