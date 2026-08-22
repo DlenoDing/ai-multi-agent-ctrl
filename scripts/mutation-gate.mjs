@@ -3735,6 +3735,25 @@ const MUTATIONS = [
     expect: "orchestrator permission"
   },
   {
+    // 没点名对象也照答的那几个只读工具，回答里必须说清答的是谁。
+    name: "默认答的工具要说清答的是哪一个对象",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyEveryMcpToolAnswersAnEmptyCall",
+    from: '      return boundedTaskGroupGuard(state, args, context) || computeCloseBarrier(state, args.taskGroupId || "tg_runtime_management", args);',
+    to: '      return boundedTaskGroupGuard(state, args, context) || {ok: true, note: "no object"};',
+    expect: "没说】它答的是哪一个"
+  },
+  {
+    // 写/决策类工具绝不许在一个参数都不给时成功 —— 「缺省即批准」最贵的那一种。
+    // 这条变异把只读标记整体翻掉，等于宣称那 19 个空参也答的工具都是写工具。
+    name: "空参也能答的必须都是只读工具",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyEveryMcpToolAnswersAnEmptyCall",
+    from: "      readOnlyHint: isReadOnlyTool(name),",
+    to: "      readOnlyHint: false,",
+    expect: "却在一个参数都不给时成功了"
+  },
+  {
     // 轮询探路那条路只读，所以拿缓存里那份原样用（2MB 状态省掉每请求 4.84ms 的克隆）。
     name: "轮询探路不得退回每请求克隆整份状态",
     file: "apps/control-plane-ui/lib/state-store.mjs",

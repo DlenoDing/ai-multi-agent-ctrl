@@ -518,6 +518,7 @@ run(verifyGrantScopeCoversObjectsNamedOnlyById);
 run(verifyLongRunningWorkKeepsItsClaim);
 run(verifyCentralOnlyStateCannotBeWritten);
 run(verifyPollingPeekDoesNotCloneOrMutate);
+runAsync(verifyEveryMcpToolAnswersAnEmptyCall);
 runAsync(verifyStateWriteDoesNotCloneTheWorld);
 run(verifyContentBundleNamesTheDispatchedItem);
 run(verifyMcpToolListCostStaysVisible);
@@ -11090,6 +11091,131 @@ async function verifyStateWriteDoesNotCloneTheWorld(output) {
     if (!(back.taskGroups || []).some((item) => item.id === marker)) {
       output.push("写完之后再读，读到的还是旧状态 —— 缓存没有失效，此后所有人看到的都是过期数据");
     }
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+}
+
+// 「agent 把工具调错了会怎样」是这套系统对外的主要接口面，而它整体没有被枚举过。
+// 这条判据把 85 个工具【逐个用空参调一遍】，钉住三件事：
+//   ① 一个都不许崩（agent 拿到的必须是可处理的拒绝，不是内部异常）；
+//   ② 拒绝要带机器可读的码（agent 要据此分支，读不懂散文）；
+//   ③ **写/决策类工具绝不许在没给参数时成功** —— 那正是「缺省即批准」这一类最贵的形态
+//      （approval_resolve 曾经就是缺 status 时默认批准）。
+// 空参也能答的那些逐个登记：新加一个工具若默认答/默认做，这里会点它的名。
+// 顺带钉住"没点名对象却照答"的那几个必须在回答里说清答的是谁 —— 调用方才分得出这不是它问的那个。
+async function verifyEveryMcpToolAnswersAnEmptyCall(output) {
+  // 放函数体内：模块级 const 会落在文件末尾，而 runAsync 在文件上半部就调它 —— 那是 TDZ。
+  const MCP_TOOLS_THAT_ANSWER_WITHOUT_ARGS = {
+    "orchestration-mcp.state_get": "全局只读快照，本来就没有对象参数",
+    "scheduler-mcp.capacity_snapshot": "全局容量快照",
+    "resource-mcp.resource_snapshot": "全局资源快照",
+    "model-mcp.model_capabilities": "全局模型能力表",
+    "model-mcp.model_policy_get": "全局选型策略",
+    "skill-mcp.role_skill_parse": "全库角色技能解析结果",
+    "identity-mcp.permission_matrix_get": "全局权限矩阵（系统面）",
+    "ui-console-mcp.runtime_health_get": "运行时健康，无对象参数",
+    "ui-console-mcp.management_surface_get": "管理面清单，无对象参数",
+    "instruction-mcp.cache_key_index": "指令缓存键索引，无对象参数",
+    "instruction-mcp.stable_prefix_get": "稳定前缀，无对象参数",
+    "agent-control-mcp.node_probe": "自检探针：不针对已有对象，自己造一个探针 id",
+    // 下面这些【是对象型的】：缺对象时落到控制面自己的任务组/项目。这是给控制台与系统管理员的便利，
+    // 而受限主体（绑在项目上的 agent）走 boundedTaskGroupGuard / boundedRoomGuard / principalProjectFilter
+    // 会被要求点名。它们必须在回答里说清答的是谁 —— 下面的字段名就是判据要核的那一项。
+    "review-mcp.completion_readiness_compute": {reason: "缺对象时算控制面自己的任务组", names: "taskGroupId"},
+    "governance-mcp.close_barrier_compute": {reason: "缺对象时算控制面自己的任务组", names: "taskGroupId"},
+    "room-mcp.room_wait": {reason: "缺对象时等控制面自己的房间", names: "roomId"},
+    "permission-mcp.permission_probe": {reason: "缺对象时探控制面项目上的默认主体", names: "subjectId"},
+    "ui-console-mcp.project_progress_get": {reason: "缺对象时给当前项目的进度快照", names: null},
+    "ui-console-mcp.task_group_progress_get": {reason: "缺对象时给控制面任务组的进度快照", names: null},
+    "skill-mcp.role_skill_resolve": {reason: "缺对象时给默认角色技能的解析结果", names: null}
+  };
+  // 【必须起子进程】：MCP 服务端在 import 那一刻就把运行目录定死了，调用前再改环境变量是没用的 ——
+  // 第一版就这么写，于是 85 次调用写进了开发机真实的 .runtime，被隔离门当场抓到
+  //（"这类断言的结果取决于上一次运行留下了什么，绿了也不能算数"）。
+  const dir = mkdtempSync(join(tmpdir(), "aimac-mcp-empty-"));
+  try {
+    const probeFile = join(dir, "empty-call-probe.mjs");
+    writeFileSync(probeFile, `
+import { handleMcpJsonRpc, mcpToolNames, createMcpToolDefinitions } from ${JSON.stringify(resolve(root, "apps/mcp-server/server.mjs"))};
+const principal = {kind: "system_admin", id: "acct_empty_call_probe", allowedMcpTools: ["*"]};
+const readOnly = Object.fromEntries(createMcpToolDefinitions().map((tool) => [tool.name, tool.annotations?.readOnlyHint === true]));
+const rows = [];
+let index = 0;
+for (const name of mcpToolNames) {
+  index += 1;
+  try {
+    const response = await handleMcpJsonRpc({jsonrpc: "2.0", id: index, method: "tools/call",
+      params: {name, arguments: {}}}, {principal});
+    if (response?.error) { rows.push({name, kind: "jsonrpc_error"}); continue; }
+    let body = {};
+    try { body = JSON.parse(response?.result?.content?.[0]?.text || "{}"); } catch { body = {}; }
+    const inner = body.result ?? body;
+    const refusalCode = inner?.error || body?.error;
+    if (body.ok === false || inner?.ok === false || refusalCode) {
+      rows.push({name, kind: "refused", code: refusalCode ?? null});
+      continue;
+    }
+    rows.push({name, kind: "answered", inner});
+  } catch (error) {
+    rows.push({name, kind: "threw", detail: \`\${error?.constructor?.name}: \${String(error?.message || error).slice(0, 80)}\`});
+  }
+}
+process.stdout.write(JSON.stringify({rows, readOnly, total: mcpToolNames.length}));
+`);
+    const probe = spawnSync(process.execPath, [probeFile], {encoding: "utf8", timeout: 180000,
+      env: {...process.env, AIMAC_RUNTIME_DIR: join(dir, "runtime"), AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: ""}});
+    let report = null;
+    try { report = JSON.parse(probe.stdout || "null"); } catch { report = null; }
+    if (!report?.rows?.length) {
+      output.push(`MCP 空参调用判据没跑成（不是跑过了没发现）：${String(probe.stderr || probe.stdout || "无输出").slice(0, 200)}`);
+      return;
+    }
+    const readOnly = new Map(Object.entries(report.readOnly));
+    const answered = [];
+    for (const row of report.rows) {
+      if (row.kind === "threw") {
+        output.push(`${row.name} 用空参调用直接抛了异常（${row.detail}）—— `
+          + "agent 那边拿到的是一个内部错误，既不知道缺什么也没法分支处理");
+        continue;
+      }
+      if (row.kind === "refused") {
+        if (!row.code || !/^[a-z][a-z0-9_]{4,}$/u.test(String(row.code))) {
+          output.push(`${row.name} 拒绝了空参调用，但没给机器可读的码（拿到 ${JSON.stringify(row.code) || "什么都没有"}）——`
+            + " agent 要据此分支（是缺参数、还是没权限、还是对象不存在），散文分不出来");
+        }
+        continue;
+      }
+      if (row.kind === "answered") answered.push({name: row.name, inner: row.inner});
+    }
+    const registered = new Set(Object.keys(MCP_TOOLS_THAT_ANSWER_WITHOUT_ARGS));
+    for (const {name, inner} of answered) {
+      if (!registered.has(name)) {
+        output.push(`${name} 在【一个参数都不给】的时候照样成功返回了 —— 先回答"它答的是谁的事"：`
+          + "对象型工具要么拒绝并说明缺什么，要么登记进 MCP_TOOLS_THAT_ANSWER_WITHOUT_ARGS 并写清理由");
+        continue;
+      }
+      if (!readOnly.get(name)) {
+        output.push(`${name} 是【写/决策类】工具，却在一个参数都不给时成功了 —— `
+          + "这正是「缺省即批准」最贵的那一种：漏填一个参数就把事做了");
+      }
+      const entry = MCP_TOOLS_THAT_ANSWER_WITHOUT_ARGS[name];
+      const names = typeof entry === "object" ? entry.names : null;
+      if (names) {
+        const said = inner?.[names] ?? inner?.progressSnapshot?.[names] ?? inner?.[Object.keys(inner || {})[0]]?.[names];
+        if (!said) {
+          output.push(`${name} 没点名对象也照答，而回答里【没说】它答的是哪一个（应带 ${names}）——`
+            + "调用方分不出这答的不是它问的那个");
+        }
+      }
+    }
+    const stale = [...registered].filter((name) => !answered.some((item) => item.name === name));
+    if (stale.length) {
+      output.push(`这些工具登记着"空参也能答"，实际却拒绝了：${stale.join("、")} —— `
+        + "登记过期会让下一个人以为这块已经想过了");
+    }
+    console.log(`MCP 空参调用：${report.total} 个工具逐个调过（子进程里、自己的运行目录），${answered.length} 个空参也答`
+      + `（都是只读，且逐个登记了理由），其余拒绝且都带机器可读的码，0 个抛异常`);
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
