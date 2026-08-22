@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/lease.schema.json",
+  "title": "Lease",
+  "description": "对某个资源的独占持有。manifest 的 lease_before_write 说的就是它：写之前先拿租约，fencingToken 用来判定「后来者压过先来者」。此前这个集合不受任何规范约束，两个构造点长出了两种形状（编排那条写 auditRef+taskContractDigest，MCP 那条写 sequence）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "leaseId", "resourceRef", "holderRef", "status", "fencingToken", "expiresAt", "createdAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": {"const": "lease/v1"},
+    "leaseId": {"type": "string", "pattern": "^lease_"},
+    "resourceRef": {"type": "string", "minLength": 1, "description": "「Type:id」形式，例如 RepositoryOutputTarget:rot_x。"},
+    "holderRef": {"type": "string", "minLength": 1},
+    "status": {
+      "enum": ["requested", "active", "renewing", "released", "expired", "revoked"],
+      "description": "取值必须与 spec/state-machines.yaml 的 Lease 逐个对齐。两个构造点都直接落在 active：requested->active 那道门要的 resource_available 与 fencing_token，取到租约的那一刻就都满足了。"
+    },
+    "fencingToken": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "必须是【递增的正整数】—— 判定「谁更晚」靠的是数值比较。本仓另有几处 fencingToken 是 `fence:<id>` 这样的字符串（挂在别的对象上），一旦那种取值混进租约，比大小会退化成字典序而不报任何错：3 会大于 10。这条 type 就是为了让那种混入当场红。"
+    },
+    "sequence": {"type": "integer", "minimum": 1, "description": "MCP 那条路写的、与 fencingToken 同值的重复字段。租约对象是整个返回给调用方的，所以先留着不删。退役条件：确认没有外部调用方读它之后删掉，只留 fencingToken。"},
+    "expiresAt": {"type": "string", "format": "date-time"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"},
+    "auditRef": {"type": "string", "minLength": 1},
+    "taskContractDigest": {"type": "string", "minLength": 1, "description": "把租约绑到授权它的那份任务契约上。只有编排那条路写。"},
+    "previousHolderRef": {"type": "string", "minLength": 1},
+    "transferEvidenceRefs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "expiredReason": {"type": "string", "minLength": 1}
+  }
+}

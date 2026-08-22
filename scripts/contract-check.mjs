@@ -16528,12 +16528,11 @@ function verifyEveryStateCollectionIsSchemaChecked(output) {
     agents: "逻辑 agent 注册表（角色/模型/容量），不是租户数据，也不参与任何按 schemaVersion 的派发校验",
     modelProviders: "模型供应商目录，与 modelCapabilities 同源，由模型选择策略的校验覆盖",
     // 下面三个是运行时创建的，种子里没有 —— 我先前按种子做的同类扫描因此完全看不到它们。
-    agentTaskContracts: "有 spec/agent-task-contract.schema.json，但记录用 contractVersion 而非 schemaVersion；"
-      + "本门用 agentTaskContractSchema 对造出来的契约逐条 validateSchema，覆盖没有落空",
+    agentTaskContracts: "有 spec/agent-task-contract.schema.json，但记录用 contractVersion 而非 schemaVersion"
+      + "（那份规范 additionalProperties:false 且根本没有 schemaVersion 字段，硬要求它声明等于要它违反自己的规范）；"
+      + "两套 e2e 的规范核对已经能认出它 —— 规范里 contractVersion 被钉成 const，扫描据此自指认",
     workSessions: "没有独立规范；状态取值由 spec/state-machines.yaml 的 WorkSession 枚举守住"
-      + "（verifyTransitionEngine 压过真实产出），归属字段由租户作用域核对覆盖",
-    leases: "没有独立规范；租约的性质（互斥、fencing token 单调、过期回收）由行为断言守住，"
-      + "结构校验给不出这些保证"
+      + "（verifyTransitionEngine 压过真实产出），归属字段由租户作用域核对覆盖"
   };
   const probe = structuredClone(seedState);
   ensureRuntimeCollections(probe, {root});

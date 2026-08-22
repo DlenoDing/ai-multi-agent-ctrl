@@ -4471,6 +4471,7 @@ function ensureLease(state, repositoryTarget, holderRef = "orchestrator", taskCo
   if (!lease) {
     state.leaseSequence = Number(state.leaseSequence || 0) + 1;
     lease = {
+      schemaVersion: "lease/v1",
       leaseId: createId("lease"),
       resourceRef: `RepositoryOutputTarget:${repositoryTarget.targetId}`,
       holderRef,
@@ -7613,6 +7614,10 @@ export function claimLease(state, args) {
   }
   state.leaseSequence = Number(state.leaseSequence || 0) + 1;
   const lease = {
+    // 两个构造点长出了两种形状（这条写 sequence，编排那条写 auditRef+taskContractDigest）。
+    // 规范把两种都钉住了；fencingToken 必须是正整数，别处那种 `fence:<id>` 字符串混进来
+    // 会让「谁更晚」的比较退化成字典序（3 > 10）而不报任何错。
+    schemaVersion: "lease/v1",
     leaseId: args.leaseId || createId("lease"),
     resourceRef,
     holderRef,
