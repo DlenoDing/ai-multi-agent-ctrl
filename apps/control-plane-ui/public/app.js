@@ -3237,15 +3237,33 @@ const STUCK_EXIT_HINT = {
 // 会话也会被停住，而且可能在【派发已经终结之后】仍然停着（确认卡超时那条链就是这样）——
 // 那时只扫派发的话，这条提示不会出现，而会话仍然算活跃、仍然挡着关闭门。两边一起扫，一条提示。
 const SESSION_SETTLED_STATUSES = ["completed_objective", "recycled", "failed", "aborted"];
+// 出口提示里有一类是【叫读的人自己去按一个按钮】。按不按得动要按【任务组】判：
+// 观察者在监控页照样看得到「到该任务组页点「恢复执行」」，而他那一页上根本没有这个按钮 ——
+// 指到一个够不着的地方，比不给出口更耗人。这里只登记我核过的那几条：
+// 键是阻塞原因，值是按那个出口所需要的权限（按组判，口径与按钮本身同一个 hasGroupPerm）。
+const STUCK_EXIT_PERMISSION = {
+  task_group_pause: "task_group:control"
+};
 function stuckExitNotice(dispatches, sessions) {
-  const reasons = [
-    ...(dispatches || []).filter((dispatch) => dispatch.status === "blocked").map((dispatch) => dispatch.blockedReason),
-    ...(sessions || []).filter((session) => !SESSION_SETTLED_STATUSES.includes(session.status)).map((session) => session.blockedReason)
-  ];
-  const stuck = [...new Set(reasons.filter((reason) => STUCK_EXIT_HINT[reason]))];
+  const blocked = [
+    ...(dispatches || []).filter((dispatch) => dispatch.status === "blocked"),
+    ...(sessions || []).filter((session) => !SESSION_SETTLED_STATUSES.includes(session.status))
+  ].filter((item) => STUCK_EXIT_HINT[item.blockedReason]);
+  const stuck = [...new Set(blocked.map((item) => item.blockedReason))];
   if (!stuck.length) return "";
+  // 「够不着」要说清是哪几个任务组够不着，否则人只知道"我不行"，不知道该去找谁。
+  const outOfReach = (reason) => {
+    const perm = STUCK_EXIT_PERMISSION[reason];
+    if (!perm) return "";
+    const groups = [...new Set(blocked.filter((item) => item.blockedReason === reason)
+      .map((item) => item.taskGroupId).filter(Boolean))];
+    const denied = groups.filter((id) => !hasGroupPerm(id, perm));
+    if (!denied.length || denied.length < groups.length) return "";
+    return `（你在${denied.map((id) => `「${taskGroupNameOf(id)}」`).join("、")}上没有这个权限，`
+      + "只能看、不能动 —— 它在等这个组里有权的人处置）";
+  };
   return `<div class="notice warn-notice">有执行被挡住，需要人处理：${stuck
-    .map((reason) => `<br>· ${esc(t(reason) || reason)} —— ${esc(STUCK_EXIT_HINT[reason])}`).join("")}</div>`;
+    .map((reason) => `<br>· ${esc(t(reason) || reason)} —— ${esc(STUCK_EXIT_HINT[reason])}${esc(outOfReach(reason))}`).join("")}</div>`;
 }
 
 // 被阻塞工作项的出口提示。键优先看 blockedReason（更具体），退回到 status。

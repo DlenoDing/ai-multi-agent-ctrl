@@ -3993,6 +3993,16 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 出口提示里有一类是「叫读的人自己去按一个按钮」，按不按得动要按【任务组】判。
+    // 观察者在监控页照样看到「到该任务组页点「恢复执行」」，而他那一页上根本没有这个按钮。
+    name: "够不着的出口要说清是哪个任务组够不着",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    const denied = groups.filter((id) => !hasGroupPerm(id, perm));",
+    to: "    const denied = [];",
+    expect: "够不着的出口要说清是哪个任务组够不着"
+  },
+  {
     // 服务端早就把「仓库登记的两处落点」并成一份了（effectiveProjectConfig 的注释写的就是
     // 这个缺陷），而设置页读的是状态里的原始 project.config —— 修好的口径到不了屏幕上：
     // 种子项目的设置页写着「还没有配置仓库：产出会卡在没有产出目标」，

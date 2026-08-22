@@ -1988,6 +1988,25 @@ function runNoVisibleProjectCase() {
       /另有 2\s*个派发被挡住/u.test(stuckText),
       "概览是人每天先看的那一屏 —— 它显示「受阻项 0」时人就不会再往执行监控页找了，"
         + "而那边正提示「有执行被挡住，需要人处理」");
+    // 出口提示里有一类是「叫读的人自己去按一个按钮」，而按不按得动要按【任务组】判。
+    // 观察者在监控页照样看到「到该任务组页点「恢复执行」」，他那一页上却根本没有这个按钮 ——
+    // 指到一个够不着的地方，比不给出口更耗人（真实运行态渲染出来读到的）。
+    {
+      const viewerAccount = {accountId: "u2", accountType: "user_account", displayName: "观察者",
+        organizationId: "org_default", permissions: ["task_group:read"], effectivePermissions: ["task_group:read"]};
+      const viewerText = renderAs(viewerAccount, {...stuckState,
+        taskGroupPermissions: {tg1: ["task_group:read"]}, taskGroupPermissionsDefault: ["task_group:read"]},
+        "monitor", "p1");
+      check("够不着的出口要说清是哪个任务组够不着",
+        /有执行被挡住/u.test(viewerText) && /没有这个权限/u.test(viewerText) && /任务组/u.test(viewerText),
+        "观察者读到「到该任务组页点「恢复执行」」，而那一页上没有这个按钮 —— "
+          + "出口指到够不着的地方，人只会在两页之间来回找");
+      const adminText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+        organizationId: "org_default"}, stuckState, "monitor", "p1");
+      check("有权限的人不该看到那句「你没有权限」",
+        /有执行被挡住/u.test(adminText) && !/没有这个权限/u.test(adminText),
+        "给有权的人加一句「你没权限」，会让他以为自己按不动而去找别人");
+    }
     // 同一屏上还有一张「任务组一览」，每行一个「受阻数」—— 它数的也是 blockers。
     // 人扫这张表是在找"哪个组卡住了"，而卡着 2 个派发的那一行显示 0，等于把他从答案上引开。
     check("任务组一览的受阻数为 0 但这个组有派发被挡住时，行上要说出来",
