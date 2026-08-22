@@ -3253,6 +3253,54 @@ const doctorProducedState = readStoredState({
   // 走到"新建初始状态"说明读的不是本轮跑出来的东西；那样校验一份崭新的种子会得到毫无意义的绿。
   buildInitialState: () => { throw new Error("doctor: 期望读到本轮跑出的状态，却触发了初始状态创建"); }
 });
+// 记录之间的引用要指得到实物。这不是理论问题：容量淘汰真的干过这件事 ——
+// capTaskContracts 的去重键写错（用了不存在的 contractId），"绝不淘汰活跃派发的契约"这条
+// 从来没生效过，最老那批活跃派发的契约被删掉之后，它们的检查点此后永远报
+// agent_dispatch_contract_mismatch，派发无法终结、关闭门被永久挡住。
+// 这里按【真实跑出来的状态】核几对最致命的引用；样本太小就自报，不假装验过。
+// 分工说清楚：这一轮 e2e 的契约数远不到淘汰上限（160），【淘汰那一支根本没被走到】——
+// 它由契约门里那条 capTaskContracts 判据单独守（"还有派发指着的合同一条都不裁"）。
+// 这条核的是别的断裂方式：写入端漏填、分片合并丢记录、终态清理顺手删掉了还被引用的东西。
+{
+  const groups = doctorProducedState.taskGroups || [];
+  const taskGroupIds = new Set(groups.map((item) => item.id));
+  const workItemIds = new Set(groups.flatMap((item) => (item.workItems || []).map((work) => work.id)));
+  const sessionIds = new Set((doctorProducedState.workSessions || []).map((item) => item.sessionId));
+  const dangling = [];
+  const inspect = (label, rows, pairs) => {
+    for (const row of rows) {
+      for (const [field, pool, poolName] of pairs) {
+        const value = row[field];
+        if (value && !pool.has(value)) dangling.push(`${label}.${field}=${value}（${poolName}里没有）`);
+      }
+    }
+    return rows.length;
+  };
+  const checked = inspect("checkpoint", doctorProducedState.checkpoints || [],
+      [["taskGroupId", taskGroupIds, "任务组"], ["workId", workItemIds, "工作项"], ["sessionId", sessionIds, "会话"]])
+    + inspect("dispatch", doctorProducedState.agentDispatches || [],
+      [["taskGroupId", taskGroupIds, "任务组"], ["workItemId", workItemIds, "工作项"], ["sessionId", sessionIds, "会话"]])
+    + inspect("session", doctorProducedState.workSessions || [],
+      [["taskGroupId", taskGroupIds, "任务组"], ["workItemId", workItemIds, "工作项"]]);
+  // 未终结的派发必须还找得到它的任务契约 —— 这正是上面那个容量缺陷的直接后果。
+  const contracts = new Set((doctorProducedState.agentTaskContracts || []).map((item) => `${item.sessionId}:${item.runId}`));
+  for (const dispatch of doctorProducedState.agentDispatches || []) {
+    if (["completed", "failed", "cancelled"].includes(dispatch.status)) continue;
+    if (!contracts.has(`${dispatch.sessionId}:${dispatch.runId}`)) {
+      dangling.push(`未终结的派发 ${dispatch.dispatchId} 找不到它的任务契约（${dispatch.sessionId}:${dispatch.runId}）`);
+    }
+  }
+  if (dangling.length) {
+    throw new Error(`e2e 真实产出里有指不到实物的引用：\n- ${dangling.slice(0, 12).join("\n- ")}`);
+  }
+  if (checked < 5) {
+    console.log(`  --  这一轮只跑出 ${checked} 条带引用的记录，「引用都指得到实物」这条基本没被检验`);
+  } else {
+    console.log(`  ok  引用完整性：${checked} 条记录（检查点/派发/会话）的任务组、工作项、会话引用都指得到实物，`
+      + "未终结的派发也都还找得到自己的任务契约");
+  }
+}
+
 const doctorSweep = sweepRecordsAgainstDeclaredSchemas(doctorProducedState, {
   specDir: join(root, "spec"), label: "控制面 e2e 产出", minValidated: 50
 });

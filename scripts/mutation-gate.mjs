@@ -3652,6 +3652,16 @@ const MUTATIONS = [
     expect: "产出清单的路径爬到仓库之外却没被拦下"
   },
   {
+    // 只验这条断言【不是空转】：真实产出里把契约集合清空，它必须报出来。
+    // 淘汰那一支在这套 e2e 里走不到（契约数远不到 160），由契约门那条单独守。
+    name: "e2e 产出的引用完整性断言不得空转",
+    file: "scripts/doctor.mjs",
+    gate: "doctor",
+    from: "  const contracts = new Set((doctorProducedState.agentTaskContracts || []).map((item) => `${item.sessionId}:${item.runId}`));",
+    to: "  const contracts = new Set();",
+    expect: "指不到实物的引用"
+  },
+  {
     name: "agentctl 参数值写错不得静默退回默认",
     file: "scripts/agentctl.mjs",
     gate: "agent",
