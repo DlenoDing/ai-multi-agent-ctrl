@@ -3685,7 +3685,9 @@ const MUTATIONS = [
     gate: "doctor",
     from: '    if (!["active", "suspended"].includes(String(body.status || ""))) {',
     to: "    if (false) {",
-    expect: "缺省不得等于启用"
+    // 现在红在【空 body 扫描】上，而且它报得更准：直接点出是哪条路由缺省就把事做了。
+    // 2026-08-23 整跑变异门发现原期望串过期 —— 先复现、看清红在哪，再改登记。
+    expect: "POST /api/orgs/([^/]+)/status → 200"
   },
   {
     // 空 body 打到「改成员状态」上原先会置成 active —— 一个被停用的账号就这么被静默恢复。
@@ -3993,6 +3995,16 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 反方向的核对：规范存在、却没有任何代码产出它描述的记录（读 spec/ 的人会以为对象存在）。
+    // 拿掉登记表里的一条，那份规范就该被点名。
+    name: "没有产出者的规范要么被点名要么写明现状",
+    file: "scripts/contract-check.mjs",
+    check: "verifyRecordSpecsHaveProducers",
+    from: '    "gate-catalog": "文档规范：校验 spec/gates.yaml",\n',
+    to: "",
+    expect: "gate-catalog.schema.json"
+  },
+  {
     // 这道门本身：拿掉任意一处唯一性守卫都要红。挑规则来源那处（本会话新补的两处之一）。
     // 门的写法自查过两次：把 `||` 换成 `??` 这种等价写法它照样数到 10 处（不是只认一种写法），
     // 拿掉守卫会点名到具体函数。
@@ -4201,7 +4213,10 @@ const MUTATIONS = [
     gate: "doctor",
     from: '    status: "active",\n    actor: guard.actor,',
     to: '    status: "accepted",\n    actor: guard.actor,',
-    expect: "decisionRecords[0].status expected enum"
+    // 这条现在红在【状态对表】那道门上（它站得比 schema 核对更靠前，报得也更准：
+    // 直接说"DecisionRecord 状态机没有登记的状态 accepted"）。2026-08-23 整跑变异门发现
+    // 原期望串已过期 —— 先复现确认它确实红、红在哪，再改登记。
+    expect: "decisionRecords 里出现了 DecisionRecord 状态机没有登记的状态 accepted"
   },
   {
     // 会话被撤销时人要问的是「什么时候、为什么」。此前两条撤销路径各写一半（登出只写时间、
@@ -4324,7 +4339,7 @@ const MUTATIONS = [
     check: "verifySeedRecordsMatchTheirDeclaredSchemas",
     from: '"种子数据": 0,',
     to: '"种子数据": 1,',
-    expect: "不受规范约束的集合从 3 涨到 4"
+    expect: "种子数据：不受规范约束的集合已降到"
   },
   {
     // 「这条断言指不指得出自己守的是哪一处」现在按【运行时记下的真实目标串】核（原先解析本文件源码，
@@ -6813,7 +6828,7 @@ const MUTATIONS = [
     check: "verifyWhitelistRefusalsCarryTheWhitelist",
     from: "    \"apps/control-plane-ui/lib/state-store.mjs\", \"apps/control-plane-ui/lib/transition-engine.mjs\",",
     to: "",
-    expect: "只扫到 9 处"
+    expect: "白名单式拒绝只扫到 10 处"
   },
   {
     name: "产出目标被拒要说出是哪条路径（裸码让 agent 无从自纠）",
@@ -7824,9 +7839,16 @@ const WORKTREE_PREFIX = "aimac-mutation-w";
 // doctor/mcp 同样如此：它们起的是真的 HTTP 服务，worktree 里连 node_modules 都没有，
 // 接上 node_modules 软链之后，起真实服务的门在 worktree 里也跑得起来（idle/crash/writer/doctor/mcp
 // 逐个实测过）。它们只杀自己 spawn 的子进程、端口一律取临时口，并行互不干扰，
-// 于是这份"必须在真实工作区串行"的清单空了 —— 留着这个开关是为了下一个发现例外的人有地方写。
+// 于是这份"必须在真实工作区串行"的清单一度空了 —— 留着这个开关是为了下一个发现例外的人有地方写。
 // 工作区不干净时仍然整体退回串行，那是另一条路径（worktree 取的是 HEAD，带不上未提交改动）。
-const NEEDS_REAL_TREE = new Set([]);
+//
+// 2026-08-23 找到了那个例外：**docker 门**。它不是"缺 node_modules"，而是
+// 【共用同一台 docker 守护进程 + 固定主机端口 127.0.0.1:4317】—— 两个 worker 同时
+// `docker compose up` 必然撞端口，表现是整跑变异门时那条报一段字节转储、判成
+// "失败了但不是因为预期断言"，而单独跑它当场就红（我为此单跑复现过一次才敢下结论）。
+// 代价：两条 docker 变异改成串行，各要几分钟。这道门只在发版前跑，稳定比快要紧 ——
+// 一条假失败会让人去查一个不存在的缺陷。
+const NEEDS_REAL_TREE = new Set(["docker"]);
 
 function workingTreeIsClean() {
   try {

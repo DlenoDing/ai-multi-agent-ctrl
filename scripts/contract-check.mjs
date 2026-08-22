@@ -443,6 +443,7 @@ run(verifySeedRecordsMatchTheirDeclaredSchemas);
 run(verifyEverySchemaVersionHasASpec);
 run(verifyEveryStateCollectionIsSchemaChecked);
 run(verifyCallerChosenIdsHaveUniquenessGuards);
+run(verifyRecordSpecsHaveProducers);
 run(verifyEveryProjectScopedIdIsScopeChecked);
 run(verifyEveryStateCollectionIsTenantScoped);
 run(verifyExpiredConfirmationRetargetsTheWorkItem);
@@ -7026,9 +7027,32 @@ function verifyFinallyBlocksDoNotMaskFailures(output) {
       if (!/throw new Error/u.test(scope)) continue;
       // 允许：throw 被"主体跑完了吗"这类标志守着（Passed / Completed / ok 结尾的布尔）。
       // 守卫写法有 `if (mainBodyCompleted)` 也有 `if (!mainBodyCompleted) {...} else {...}`，
-      // 认名字不认句式（我第一版只认前者，把已经守好的那处判成裸 throw）。
-      if (/\b\w*(?:Passed|Completed|Succeeded)\b/u.test(scope) && /\bif \(/u.test(scope)) continue;
-      bare.push(`${file.split("/").pop()}:${text.slice(0, match.index).split("\n").length}`);
+      // 认名字不认句式（第一版只认前者，把已经守好的那处判成裸 throw）。
+      //
+      // 但【不能在整个作用域里找守卫词】：同一个 finally 里有好几处独立的守卫时，
+      // 拿掉其中一处，块里还有别处 —— 判据照样判成"守住了"，变异绿着过去
+      //（2026-08-23 整跑变异门抓到；这正是本仓「整块被隔壁同形代码喂饱」那一族）。
+      // 改成逐个 throw 判它【自己】在不在守卫分支里：按行走一遍花括号深度，
+      // 记住每一层是不是由带守卫词的 if 打开的（`} else {` 承接前一层的守卫身份）。
+      const guardStack = [];
+      let pendingElseGuard = false;
+      for (const line of scope.split("\n")) {
+        const opensGuard = /\bif \(/u.test(line) && /\b\w*(?:Passed|Completed|Succeeded)\b/u.test(line);
+        const takesElse = /^\s*\}\s*else\b/u.test(line);
+        let opened = false;
+        for (const ch of line) {
+          if (ch === "{") {
+            guardStack.push(opened ? false : (opensGuard || (takesElse && pendingElseGuard)));
+            opened = true;
+          } else if (ch === "}") {
+            pendingElseGuard = guardStack.pop() === true;
+          }
+        }
+        if (/throw new Error/u.test(line) && !guardStack.some(Boolean)) {
+          bare.push(`${file.split("/").pop()}:${text.slice(0, match.index).split("\n").length}`);
+          break;
+        }
+      }
     }
   }
   if (blocks < 8) {
@@ -8561,8 +8585,11 @@ function verifyWhitelistRefusalsCarryTheWhitelist(output) {
     }
   }
   // 下限要跟着分母走：把某个文件从清单里删掉时，分母会静静变小而门照样绿（实测 12→9）。
-  if (scanned < 10) {
-    output.push(`白名单式拒绝只扫到 ${scanned} 处（应至少 10）—— 提取形状或文件清单与代码脱节，本条在空转`);
+  // 下限要跟着真实面走：实测 13 处。原先写 10 —— 而"从文件清单里删掉两个文件"恰好降到 10，
+  // 不小于 10，于是那条变异绿着过去了（2026-08-23 整跑变异门抓到）。
+  // 这个数只增不减：新增白名单式拒绝会把它抬高，掉下去只可能是清单被删或提取失配。
+  if (scanned < 13) {
+    output.push(`白名单式拒绝只扫到 ${scanned} 处（应至少 13）—— 提取形状或文件清单与代码脱节，本条在空转`);
     return;
   }
   if (bare.length) {
@@ -16545,6 +16572,66 @@ function verifyEveryProjectScopedIdIsScopeChecked(output) {
 // 规则来源判定 —— 三个都按 id 处置（find(xxxId === 参数)），同 id 两条会留下一个永远挡着
 // 关闭门、又没有第二条杠杆碰得到的孤儿。同族的评审包/审批单/权限申请早就有守卫，就它们漏了。
 // 判据按【函数体】切，只认 `<键>: args.<x> || createId(` 这一种写法（`??` 也认）。
+// 反方向的核对：规范存在、却【没有任何代码产出它描述的那种记录】。
+// 正方向（记录声称遵守一份不存在的规范）早有门；反方向此前没人查 ——
+// 读 spec/ 的人会以为这些对象在系统里真的存在。2026-08-23 一扫，七份里四份是真的没有产出者，
+// 其中 external-capability-boundary 尤其要紧：manifest 的不变式清单里就有它，
+// 而实现把这个概念折叠进了 PermissionRequest（资源类型 external_capability ＋ 四个相关状态）。
+function verifyRecordSpecsHaveProducers(output) {
+  // 例外要写明【今天的现状是什么】，不是"暂时没做"。
+  const SPECS_WITHOUT_PRODUCERS = {
+    "state-machines": "文档规范：校验的是 spec/state-machines.yaml 本身，不是运行时记录",
+    "terminal-execution-manifest": "文档规范：校验 spec/terminal-execution-manifest.yaml",
+    "gate-catalog": "文档规范：校验 spec/gates.yaml",
+    "external-capability-boundary":
+      "概念已折叠进 PermissionRequest：资源类型 external_capability（PERMISSION_REQUEST_RESOURCE_TYPES）"
+      + "＋四个状态（external_capability_required / available / blocked / preauthorized_capability_bound），"
+      + "并且铸授权那一步明确拒绝为它铸 grant。没有独立记录 —— 读这份 spec 的人别以为有",
+    "session-placement-policy":
+      "放置【决策】有记录（sessionPlacementDecisions，受 spec/session-placement-decision.schema.json 约束），"
+      + "而策略本身没有独立记录：判定写在代码里（持续性信号那段），不落库",
+    "git-automation-policy":
+      "未实现：今天约束 git 的是 RepositoryOutputTarget（允许路径/分支/凭证引用）＋推送被拒分类那条链，"
+      + "不是一份独立的自动化策略记录",
+    "git-command":
+      "未实现：git 动作today由 agent 侧执行并以 commitRefs/pushRefs＋检查点证据回传，"
+      + "控制面不为每条 git 命令建记录"
+  };
+  const specDir = resolve(root, "spec");
+  const product = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
+    "apps/control-plane-ui/lib/audit-ledger.mjs", "apps/control-plane-ui/lib/project-event-store.mjs",
+    "apps/mcp-server/server.mjs", "apps/agent-runtime/runtime.mjs", "data/seed-state.json"]
+    .map((file) => readFileSync(resolve(root, file), "utf8")).join("\n");
+  let scanned = 0;
+  const orphaned = [];
+  const seen = new Set();
+  for (const file of readdirSync(specDir).filter((name) => name.endsWith(".schema.json"))) {
+    const schema = JSON.parse(readFileSync(join(specDir, file), "utf8"));
+    const stem = file.replace(/\.schema\.json$/u, "");
+    const declared = Object.values(schema.properties || {})
+      .find((prop) => typeof prop?.const === "string" && /^[a-z0-9-]+\/v\d+$/u.test(prop.const))?.const;
+    if (!declared) continue;   // 不用 <名>/vN 自识别的规范不在本条覆盖面内
+    scanned += 1;
+    if (product.includes(declared)) continue;
+    seen.add(stem);
+    if (!SPECS_WITHOUT_PRODUCERS[stem]) orphaned.push(`${file}（${declared}）`);
+  }
+  if (scanned < 30) {
+    output.push(`规范产出者核对：只扫到 ${scanned} 份带自识别常量的规范（实测 40+）—— 提取失配，本条在空转`);
+  }
+  if (orphaned.length) {
+    output.push(`规范产出者核对：这些规范描述的记录，产品里【没有任何地方产出】：${orphaned.join("、")} —— `
+      + "读 spec/ 的人会以为这些对象真的存在。要么让它有产出者，要么在 SPECS_WITHOUT_PRODUCERS 里写明今天的现状");
+  }
+  const stale = Object.keys(SPECS_WITHOUT_PRODUCERS).filter((stem) => !seen.has(stem));
+  if (stale.length) {
+    output.push(`规范产出者核对：登记表已过时：${stale.join("、")} 现在有产出者了（或规范已删）`);
+  }
+  console.log(`规范产出者核对：${scanned} 份带自识别常量的规范逐个核过，`
+    + `${Object.keys(SPECS_WITHOUT_PRODUCERS).length} 份登记为「今天没有产出者」并写明了现状`);
+}
+
 function verifyCallerChosenIdsHaveUniquenessGuards(output) {
   // 例外要写明【凭什么可以没有】，不是"暂时不管"。
   const ALLOWED_WITHOUT_GUARD = {
