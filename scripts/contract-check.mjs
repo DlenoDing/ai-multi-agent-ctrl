@@ -450,6 +450,7 @@ run(verifyAgentInstallerFlagsMatchTheDocs);
 run(verifySecurityRelaxingSwitchesAreListed);
 run(verifyComposePortsAreNotAccidentallyPublic);
 run(verifyContainerRunsAsNonRoot);
+run(verifySecretWritersTightenUmaskFirst);
 run(verifyFalsyDefaultsDoNotFavourTheCaller);
 run(verifyEveryProjectScopedIdIsScopeChecked);
 run(verifyEveryStateCollectionIsTenantScoped);
@@ -16664,6 +16665,31 @@ function verifyFalsyDefaultsDoNotFavourTheCaller(output) {
 // 镜像必须以非 root 运行，并且这件事要在 README 里说给升级的人听 ——
 // 旧版本是 root 跑的，已存在的具名卷属主是 root，换过来之后非 root 进程写不进去。
 // 光改 Dockerfile 而不写这一句，升级的人看到的是一句 EACCES。
+// 写密钥的脚本要【先收紧 umask、再落盘】。只在写完之后 chmod 的话，
+// 从创建到 chmod 之间那一瞬文件是按默认 umask 建的（多用户机器上通常 0644）。
+function verifySecretWritersTightenUmaskFirst(output) {
+  const writers = {
+    "scripts/docker-up.sh": {file: "$ENV_FILE", what: "本机引导令牌与 PostgreSQL 口令"}
+  };
+  for (const [path, entry] of Object.entries(writers)) {
+    const text = readFileSync(resolve(root, path), "utf8")
+      .split("\n").filter((line) => !/^\s*#/u.test(line)).join("\n");
+    const umaskAt = text.indexOf("umask 077");
+    const writeAt = text.indexOf(`cat > "${entry.file}"`);
+    if (umaskAt < 0) {
+      output.push(`${path} 写${entry.what}之前没有 umask 077 —— 从创建到 chmod 之间那一瞬，别人读得到`);
+      continue;
+    }
+    if (writeAt >= 0 && umaskAt > writeAt) {
+      output.push(`${path} 的 umask 077 写在落盘【之后】了 —— 那一瞬的窗口还在`);
+    }
+    if (!text.includes("chmod 600")) {
+      output.push(`${path} 落盘后没有 chmod 600 —— umask 只管新建，改不动已经存在的那份`);
+    }
+  }
+  console.log(`密钥落盘核对：${Object.keys(writers).length} 个写密钥的脚本，先 umask 再落盘、落盘后再 chmod`);
+}
+
 function verifyContainerRunsAsNonRoot(output) {
   const dockerfile = readFileSync(resolve(root, "Dockerfile"), "utf8")
     .split("\n").filter((line) => !/^\s*#/u.test(line)).join("\n");

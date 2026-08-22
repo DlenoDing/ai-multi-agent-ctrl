@@ -1,6 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
+# 先收紧 umask，再落盘。下面写的是本机的引导令牌与 PostgreSQL 口令；
+# 只在写完之后 chmod 600 的话，从 `cat >` 到 chmod 之间那一瞬，文件是按默认 umask 建的
+# （多用户机器上通常 0644）—— 别人在那一瞬读得到。装 agent 的那条命令用的是同一招。
+umask 077
 ENV_FILE="${AIMAC_DOCKER_ENV_FILE:-.runtime/docker.env}"
 mkdir -p "$(dirname "$ENV_FILE")"
 

@@ -4095,6 +4095,16 @@ const MUTATIONS = [
     expect: "只核对模式：对着残缺目录必须拒绝"
   },
   {
+    // 写密钥要先收紧 umask 再落盘：只在写完之后 chmod 的话，从创建到 chmod 之间那一瞬
+    // 文件是按默认 umask 建的（多用户机器上通常 0644），别人在那一瞬读得到。
+    name: "写密钥的脚本要先收紧 umask",
+    file: "scripts/docker-up.sh",
+    check: "verifySecretWritersTightenUmaskFirst",
+    from: "umask 077",
+    to: "umask 022",
+    expect: "之前没有 umask 077"
+  },
+  {
     // 容器以非 root 跑。光改 Dockerfile 而不告诉升级的人，他会撞上一句 EACCES ——
     // 旧版本是 root 跑的，已存在的具名卷属主是 root。
     name: "容器必须非 root，且要告诉升级的人 chown",
