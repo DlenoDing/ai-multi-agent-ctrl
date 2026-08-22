@@ -3596,6 +3596,30 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "内容包写入前必须先清掉上一轮的文件",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: "try { rmSync(bundleDir, {recursive: true, force: true}); } catch { /* 首次执行时它本就不存在 */ }",
+    to: "",
+    expect: "人删掉的规则会在下一次执行里复活"
+  },
+  {
+    name: "内容包整包摘要不得形同虚设",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: "if (recomputed !== bundle.bundleDigest) {",
+    to: "if (false) {",
+    expect: "有条目被整个丢掉时拿到的是 放行"
+  },
+  {
+    name: "内容包条目不得写到会话目录之外",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: "if (!inside(bundleDir, sessionTarget)) throw new Error(`content_bundle_path_escapes_session: ${entry.path}`);",
+    to: "",
+    expect: "路径爬到会话目录之外时拿到的是 放行"
+  },
+  {
     name: "答复了的错误不得再拿报文猜是不是暂时故障",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyAgentRuntimeGuardsRefuseRealAttacks",

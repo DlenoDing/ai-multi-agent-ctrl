@@ -10849,7 +10849,7 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
     const source = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
     writeFileSync(copy, `${source}\nexport {isSafeCloneUrl, assertAllowedPaths, verifyPackageBinding,`
       + " verifySkillFiles, classifyPushPermissionDenial, inside,"
-      + " retryableControlPlaneError, retryableAgentRequest};\n");
+      + " retryableControlPlaneError, retryableAgentRequest, syncContentBundle};\n");
     const rt = await import(pathToFileURL(copy).href);
     const refusalOf = (fn) => { try { fn(); return null; } catch (error) { return String(error.message).split(":")[0]; } };
 
@@ -10993,9 +10993,70 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
     if (previousAttempts === undefined) delete process.env.AIMAC_AGENT_RETRY_ATTEMPTS;
     else process.env.AIMAC_AGENT_RETRY_ATTEMPTS = previousAttempts;
 
+    // ⑦ 内容包：控制面下发的「这次干活要遵守的全部内容」。它要走一次真的 HTTP，
+    // 所以起一个本地小服务按用例吐不同的包 —— 这几道守卫此前一条覆盖都没有。
+    const {createServer} = await import("node:http");
+    let bundleResponse = {status: 200, body: {}};
+    const bundleServer = createServer((req, res) => {
+      res.writeHead(bundleResponse.status, {"content-type": "application/json"});
+      res.end(JSON.stringify(bundleResponse.body));
+    });
+    await new Promise((resolveListen) => bundleServer.listen(0, "127.0.0.1", resolveListen));
+    const bundlePort = bundleServer.address().port;
+    const digestOfText = (text) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
+    const bundleOf = (entries, tamper = (value) => value) => tamper({
+      entries,
+      bundleDigest: digestOfText(JSON.stringify(entries.map((entry) => `${entry.path}:${entry.contentDigest}`)))
+    });
+    const entryOf = (path, content, extra = {}) => ({path, content, contentDigest: digestOfText(content), ...extra});
+    const bundleConfig = {serverUrl: `http://127.0.0.1:${bundlePort}`, nodeToken: "t", workDir: join(dir, "agent")};
+    const taskRoot = join(dir, "task");
+    const syncOnce = async (body, status = 200) => {
+      bundleResponse = {status, body};
+      try {
+        return {value: await rt.syncContentBundle(bundleConfig, {remoteServices: {contentBundlePath: "/bundle"}}, taskRoot)};
+      } catch (error) { return {code: String(error.message).split(":")[0]}; }
+    };
+    try {
+      const rules = entryOf("system/rules.md", "# 规则\n必须遵守\n");
+      const extra = entryOf("system/extra.md", "# 另一条\n");
+      const first = await syncOnce(bundleOf([rules, extra]));
+      if (first.code || !existsSync(join(taskRoot, "bundle", "system/rules.md"))) {
+        output.push(`内容包：一份合规的包没能落盘（${first.code || "没写出文件"}）—— 下面几条测不出东西`);
+      }
+      // 人把某一类规则整个禁用之后，那份文件不该还留在盘上被当作生效规则。
+      // 同一个 sessionId 被重排给同一节点时目录完全相同 —— 不清空的话"已删掉的规则"会复活。
+      await syncOnce(bundleOf([rules]));
+      if (existsSync(join(taskRoot, "bundle", "system/extra.md"))) {
+        output.push("内容包：上一轮的文件在新包里已经没有了，却还留在盘上 —— "
+          + "人删掉的规则会在下一次执行里复活，而模型被要求「遵守该目录下的每一个文件」");
+      }
+      const bundleCases = [
+        ["某一条被改过", bundleOf([{...rules, content: "# 规则\n随便改改\n"}]), "content_bundle_digest_mismatch"],
+        // 整包摘要发现的是【条目被整个丢掉】—— 而丢掉的可能正是那份规则，逐条摘要看不出来。
+        ["有条目被整个丢掉", (() => { const value = bundleOf([rules, extra]); return {...value, entries: [rules]}; })(),
+          "content_bundle_manifest_mismatch"],
+        ["路径爬到会话目录之外", bundleOf([entryOf("../../evil.md", "x")]), "content_bundle_path_escapes_session"]
+      ];
+      for (const [what, body, expected] of bundleCases) {
+        const got = await syncOnce(body);
+        if (got.code !== expected) {
+          output.push(`内容包：${what}时拿到的是 ${got.code || "放行"}（应为 ${expected}）—— `
+            + "这几道决定「模型手里那份规则是不是控制面发的那一份」");
+        }
+      }
+      const failed = await syncOnce({error: "nope"}, 400);
+      if (failed.code !== "content_bundle_sync_failed") {
+        output.push(`内容包：控制面拒绝下发时拿到的是 ${failed.code || "放行"}（应为 content_bundle_sync_failed）`);
+      }
+    } finally {
+      await new Promise((resolveClose) => bundleServer.close(resolveClose));
+    }
+
     console.log(`agent 侧守卫真跑一遍（导出的是副本、出厂那份没动）：派发包绑定 ${bindingCases.length} 例、`
       + `产出路径 ${pathCases.length} 例、克隆地址 ${urlCases.length} 例、技能文件 3 例、`
-      + `推送被拒分类 ${denialCases.length} 例、重试判定 ${retryCases.length} 例`);
+      + `推送被拒分类 ${denialCases.length} 例、重试判定 ${retryCases.length} 例、`
+      + "内容包 6 例（含「上一轮的文件必须先清掉」）");
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
