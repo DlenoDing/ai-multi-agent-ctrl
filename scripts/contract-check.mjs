@@ -10849,7 +10849,8 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
     const source = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
     writeFileSync(copy, `${source}\nexport {isSafeCloneUrl, assertAllowedPaths, verifyPackageBinding,`
       + " verifySkillFiles, classifyPushPermissionDenial, inside,"
-      + " retryableControlPlaneError, retryableAgentRequest, syncContentBundle, syncSkillWorkset};\n");
+      + " retryableControlPlaneError, retryableAgentRequest, syncContentBundle, syncSkillWorkset,"
+      + " applyPermissionResolution, mcpToolCall};\n");
     const rt = await import(pathToFileURL(copy).href);
     const refusalOf = (fn) => { try { fn(); return null; } catch (error) { return String(error.message).split(":")[0]; } };
 
@@ -11099,10 +11100,70 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
       }
     }
 
+    // ⑨ §8 处置表：人做完决定之后 agent 到底怎么走。这张表一条判据都没有，
+    // 而它最要紧的一格是【认不出的处置状态不许当成批准】—— 那等于没人批也照干。
+    let apiResponse = {status: 200, body: {}};
+    const apiServer = createServer((req, res) => {
+      // 心跳回执故意不带 nodeToken：带了的话运行时会去改真实的 agent-config.json。
+      res.writeHead(apiResponse.status, {"content-type": "application/json"});
+      res.end(JSON.stringify(apiResponse.body));
+    });
+    await new Promise((resolveListen) => apiServer.listen(0, "127.0.0.1", resolveListen));
+    const apiBase = `http://127.0.0.1:${apiServer.address().port}`;
+    try {
+      const apiConfig = {serverUrl: apiBase, nodeToken: "t", nodeId: "n1", executorCommand: "",
+        gateway: {heartbeatUrl: `${apiBase}/hb`, mcpUrl: `${apiBase}/mcp`}};
+      const pkg = {dispatch: {dispatchId: "d1"}, remoteServices: {executionEventPath: "/ev"},
+        taskContract: {projectId: "p1", taskGroupId: "tg1", workId: "w1", sessionId: "s1", runId: "r1"}};
+      const resolveWith = async (status) => {
+        apiResponse = {status: 200, body: {ok: true}};
+        try { return {value: await rt.applyPermissionResolution(apiConfig, pkg, {status, requestId: "pr1"})}; }
+        catch (error) { return {code: String(error.message).split(":")[0]}; }
+      };
+      const resolutionCases = [
+        ["批准了", "approved", {value: "retry"}],
+        ["发了凭据", "grant_issued", {value: "retry"}],
+        ["缩小了范围", "scope_reduced", {value: "retry"}],
+        ["改派给别人", "reassign", {code: "agent_permission_reassigned"}],
+        ["明确拒绝", "denied", {code: "agent_permission_not_granted"}],
+        // 这一格是这张表的要害：认不出的状态（拼错、新增的、控制面回了个空）
+        // 绝不能落在「批准」那一侧 —— 那等于没人批也照干。
+        ["认不出的状态", "whatever_new_status", {code: "agent_permission_not_granted"}],
+        ["空状态", "", {code: "agent_permission_not_granted"}]
+      ];
+      for (const [what, status, expected] of resolutionCases) {
+        const got = await resolveWith(status);
+        if (JSON.stringify(got) !== JSON.stringify(expected)) {
+          output.push(`§8 处置表：${what}的结果是 ${JSON.stringify(got)}（应为 ${JSON.stringify(expected)}）—— `
+            + "这张表决定人做完决定之后活是接着干、交接、还是停住");
+        }
+      }
+
+      // ⑩ 调用控制面 MCP：出错与被拒是两回事，报文也要分得开。
+      const mcpCases = [
+        ["控制面回了 JSON-RPC error", {error: {message: "boom"}}, "agent_mcp_call_error"],
+        ["工具明确拒绝", {result: {structuredContent: {ok: false, result: {error: "nope"}}}}, "agent_mcp_call_refused"],
+        ["正常返回", {result: {structuredContent: {ok: true, result: {done: true}}}}, null]
+      ];
+      for (const [what, body, expected] of mcpCases) {
+        apiResponse = {status: 200, body};
+        let code = null;
+        try { await rt.mcpToolCall(apiConfig, "evidence-mcp.artifact_register", {}); }
+        catch (error) { code = String(error.message).split(":")[0]; }
+        if (code !== expected) {
+          output.push(`调用控制面 MCP：${what}时拿到的是 ${code || "成功"}（应为 ${expected || "成功"}）—— `
+            + "「它出错了」和「它拒绝了我」是两件事，报文混在一起会让人查错方向");
+        }
+      }
+    } finally {
+      await new Promise((resolveClose) => apiServer.close(resolveClose));
+    }
+
     console.log(`agent 侧守卫真跑一遍（导出的是副本、出厂那份没动）：派发包绑定 ${bindingCases.length} 例、`
       + `产出路径 ${pathCases.length} 例、克隆地址 ${urlCases.length} 例、技能文件 3 例、`
       + `推送被拒分类 ${denialCases.length} 例、重试判定 ${retryCases.length} 例、`
-      + "内容包 6 例（含「上一轮的文件必须先清掉」）、技能集 5 例");
+      + "内容包 6 例（含「上一轮的文件必须先清掉」）、技能集 5 例、"
+      + "§8 处置表 7 例（含「认不出的状态不许当成批准」）、控制面 MCP 调用 3 例");
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }

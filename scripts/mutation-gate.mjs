@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "认不出的权限处置状态不许当成批准",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: 'if (["grant_issued", "approved", "granted"].includes(status)) {',
+    to: 'if (!["reassign", "denied"].includes(status)) {',
+    expect: "认不出的状态的结果是"
+  },
+  {
+    name: "控制面拒绝了工具调用不得当成成功",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: "if (payload.ok === false) throw new Error(`agent_mcp_call_refused",
+    to: "if (false) throw new Error(`agent_mcp_call_refused",
+    expect: "工具明确拒绝时拿到的是 成功"
+  },
+  {
     name: "技能集里的路径不得指向缓存目录之外",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyAgentRuntimeGuardsRefuseRealAttacks",

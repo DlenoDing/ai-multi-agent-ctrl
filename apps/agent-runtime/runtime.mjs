@@ -1943,7 +1943,7 @@ async function jsonRequest(url, options = {}) {
 
 async function retryableAgentRequest(fn, label) {
   // 认不出的值（打错字、写成 0）不能变成「一次都不试」—— 那时循环体整个不执行，
-  // 这次调用根本没发生过，而调用方拿到的只是一句"重试次数用完了"。至少试一次。
+  // 这次调用根本没发生过，而调用方拿到的只是一句「重试次数用完了」。至少试一次。
   const configuredAttempts = Number(process.env.AIMAC_AGENT_RETRY_ATTEMPTS);
   const attempts = Number.isFinite(configuredAttempts) && configuredAttempts >= 1
     ? Math.floor(configuredAttempts) : 4;
@@ -1957,6 +1957,9 @@ async function retryableAgentRequest(fn, label) {
       await delay(waitMs);
     }
   }
+  // 走不到这里：上面的下限保证至少跑一轮，而每一轮不是 return 就是 throw。
+  // 留着是因为一旦有人把下限改没了，没有它就会静静地返回 undefined —— 那比抛错难查得多。
+  // （它因此在「agent 侧失败码零覆盖」的清单上会一直挂着，那是如实的，不要为它编一个够不到的用例。）
   throw new Error(`agent_control_plane_retry_exhausted:${label} 反复冲突，重试次数用完了`);
 }
 
