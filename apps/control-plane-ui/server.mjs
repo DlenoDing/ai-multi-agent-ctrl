@@ -126,6 +126,16 @@ const runtimeDir = resolve(root, process.env.AIMAC_RUNTIME_DIR || ".runtime");
 const statePath = join(runtimeDir, "control-plane-state.json");
 const configPath = join(runtimeDir, "runtime-config.json");
 const seedPath = join(root, "data", "seed-state.json");
+// 存储层「读不出来」的故障码是【一族】，不是几个特例。原先健康页与错误出口各写死同一个三码白名单，
+// 于是同族的码静默掉进兜底：control_plane_state_unrecognized（认不出的状态文件）与三种校验不符
+// 都不在名单里 —— 写操作回的是 500 server_error 而不是 503 state_storage_corrupt，
+// 健康页只说「没归到已知的几类」，而这两处恰恰是要告诉人「该去恢复哪一份」的地方。
+// 改按家族前缀认，新增同族码自动在列。写入侧的拒绝（refusing_to_drop_project_shards、
+// project_shard_safe_id_collision）与可重试的 state_store_lock_timeout 不在此列：它们各有出口，
+// 归到「损坏、不可重试」会把话说错。判据 verifyStorageFaultCodesReachTheOperator 按 state-store
+// 里的真实抛出点全量核对这两类的归属与中文说明。
+const storageFaultCodePattern =
+  /^(control_plane_state_[a-z_]+|project_state_shard_[a-z_]+|unsupported_(?:state|project_shard)_schema_version):(.+)$/u;
 const agentInstallerPath = join(root, "scripts", "install-agent.sh");
 const agentRuntimePath = join(root, "apps", "agent-runtime", "runtime.mjs");
 const host = process.env.AIMAC_HOST || "127.0.0.1";
@@ -2567,7 +2577,7 @@ async function handleApi(req, res) {
       // 兜底：读不出状态就是 degraded，不管是哪种原因。只认几种已知形态的话，
       // 生产上 PostgreSQL 中途掉线、文件权限被改这类照样会让健康检查报 ok，
       // 而那正是最需要它说实话的时刻。原因归类只用于把话说清楚，不作为"算不算故障"的判据。
-      const hit = /^(control_plane_state_corrupt|project_state_shard_corrupt|project_state_shard_missing):(.+)$/u.exec(String(error?.message || ""));
+      const hit = storageFaultCodePattern.exec(String(error?.message || ""));
       lastStorageFault = hit
         ? {kind: hit[1], file: hit[2], at: now()}
         : {kind: "state_unreadable", code: error?.code || null, at: now()};
@@ -6052,8 +6062,7 @@ function respondApiError(res, error, requestLabel = "") {
   // 这一类要给一个稳定的错误码，让人知道该去查什么；路径留在服务端日志里，不回给调用方。
   // 状态文件损坏：与上面的写失败同规 —— 稳定错误码 + 说清是哪一份，路径不回给调用方。
   // 而且要【记下来】：分片坏掉时服务照常起、/api/health 仍然 200，监控是绿的而数据面已经不可用。
-  const corrupt = /^(control_plane_state_corrupt|project_state_shard_corrupt|project_state_shard_missing):(.+)$/u
-    .exec(String(error?.message || ""));
+  const corrupt = storageFaultCodePattern.exec(String(error?.message || ""));
   if (corrupt) {
     lastStorageFault = {kind: corrupt[1], file: corrupt[2], at: now()};
     console.error(`[state-store] ${corrupt[1]}: ${corrupt[2]}`);

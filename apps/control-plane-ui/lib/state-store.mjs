@@ -434,7 +434,11 @@ export function assertProjectShardsMatchCentralIndex(shards, centralState) {
   // 索引里有、却一个分片都没读到：这是"分片被删掉"的形态，必须与被改写同等对待。
   const present = new Set(shards.map((shard) => shard.projectId));
   for (const [projectId, entry] of indexed) {
-    if (entry.storagePayloadDigest && !present.has(projectId)) {
+    // 不再要求索引里有摘要：【索引条目本身】就是"这个项目有一份分片"的声明。
+    // 摘要缺席（没恢复完的还原、被别的东西覆盖）时原先整道跳过 —— 实测那时把分片写成 {}，
+    // 读取端因为匹配不上而直接丢掉它，读出来是「1 个项目、0 个任务组」，那个项目的活全没了，
+    // 而下一次写入就把这份空的落盘。缺席不能等于"那就当它没有过"。
+    if (!present.has(projectId)) {
       throw new Error(`project_state_shard_missing:${projectId}`);
     }
   }
@@ -732,7 +736,13 @@ function readRuntimeJsonProjectShards(options, centralState = {}) {
             indexedEntry.storagePayloadDigest !== legacyDigestProjectShardPayload(shard)) {
           throw new Error(`project_state_shard_digest_mismatch:${name}`);
         }
-        return name === currentName || name === stableName || name === legacyName ? shard : null;
+        if (name === currentName || name === stableName || name === legacyName) return shard;
+        // 名字对不上时【不能】一律当野文件扔掉：索引里记着这一份，就说明"这个项目有分片"，
+        // 读到了却悄悄丢弃＝这个项目的数据凭空消失。实测把分片写成 {}（projectId 没了，
+        // 三个候选名都算不出来）时读出来是「1 个项目、0 个任务组」，那个项目的活全没了，
+        // 而下一次写入就把这份空的落盘。索引外的同名文件仍按野文件忽略。
+        if (indexedEntry) throw new Error(`project_state_shard_identity_mismatch:${name}`);
+        return null;
       } catch (error) {
         if (indexedEntry) throw error;
         return null;

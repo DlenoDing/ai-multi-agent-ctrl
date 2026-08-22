@@ -3660,6 +3660,38 @@ const MUTATIONS = [
     expect: "却照读不误"
   },
   {
+    name: "存储故障归类不得退回写死的码白名单",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyStorageFaultCodesReachTheOperator",
+    from: "  /^(control_plane_state_[a-z_]+|project_state_shard_[a-z_]+|unsupported_(?:state|project_shard)_schema_version):(.+)$/u;",
+    to: "  /^(control_plane_state_corrupt|project_state_shard_corrupt|project_state_shard_missing):(.+)$/u;",
+    expect: "没人认得"
+  },
+  {
+    name: "被认成存储故障的码都要有中文说明",
+    file: "apps/control-plane-ui/public/i18n-zh.js",
+    check: "verifyStorageFaultCodesReachTheOperator",
+    from: '    project_state_shard_identity_mismatch: "索引里记着的项目分片，内容对不上它自己的名字（多半被覆盖过）",',
+    to: '    project_state_shard_identity_mismatch_typo: "索引里记着的项目分片，内容对不上它自己的名字（多半被覆盖过）",',
+    expect: "却没有它的中文说明"
+  },
+  {
+    name: "索引里记着、摘要却缺席的分片没读到也要拒绝",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyRuntimeJsonConflict",
+    from: "    if (!present.has(projectId)) {",
+    to: "    if (entry.storagePayloadDigest && !present.has(projectId)) {",
+    expect: "摘要却缺席的分片一个都没读到时被放行"
+  },
+  {
+    name: "索引里记着的分片被写成空壳不得静默丢弃",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyRuntimeJsonConflict",
+    from: "        if (indexedEntry) throw new Error(`project_state_shard_identity_mismatch:${name}`);",
+    to: "        if (false) throw new Error(`project_state_shard_identity_mismatch:${name}`);",
+    expect: "被写成空壳后仍被静默接受"
+  },
+  {
     name: "PostgreSQL 上分片整行被删也必须拒绝开工",
     file: "apps/control-plane-ui/lib/state-store.mjs",
     gate: "docker",

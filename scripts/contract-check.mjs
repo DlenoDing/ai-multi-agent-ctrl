@@ -423,6 +423,7 @@ for (const tool of toolDefs) {
 }
 
 run(verifyRuntimeJsonConflict);
+run(verifyStorageFaultCodesReachTheOperator);
 run(verifySeedRecordsMatchTheirDeclaredSchemas);
 run(verifyEverySchemaVersionHasASpec);
 run(verifyEveryStateCollectionIsSchemaChecked);
@@ -5004,6 +5005,54 @@ function verifyHumanAndOrganizationContracts(output) {
   }
 }
 
+// 存储层抛出的每一个「带文件名后缀」的码，都要么被服务端认成存储故障（503 + 说清是哪一份 + 中文说明），
+// 要么登记为「另有出口」并写明为什么。原先服务端两处各写死一个三码白名单 —— 白名单式的枚举
+// 天生漏掉后来新增的同族码（实测漏了 7 个，其中一个是上一次提交刚加的），而漏掉的后果不是报错，
+// 是【把最需要说清楚的那一刻说成"未知错误"】。权威来源取 state-store 的真实抛出点，不是手编清单。
+function verifyStorageFaultCodesReachTheOperator(output) {
+  // 放在函数体内：模块级 const 会落在文件末尾，而 run() 在文件上半部就调它 —— 那是 TDZ，
+  // 一跑就 ReferenceError（本文件已栽过三次）。
+  const STORAGE_CODES_WITH_THEIR_OWN_EXIT = {
+    state_store_lock_timeout: "可重试的争锁超时，不是损坏；归到不可重试会让调用方放弃本可成功的重试",
+    refusing_to_drop_project_shards: "写入侧的拒绝：状态读得好好的，是这一次写入不许做",
+    project_shard_safe_id_collision: "写入侧的拒绝：两个项目算出同一个分片文件名，落盘前就挡住"
+  };
+  const i18nSource = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
+  const {codes, pattern, server: serverSource} = storageFaultCodesFromSource();
+  if (codes.length < 10) {
+    output.push(`存储故障码的枚举只抓到 ${codes.length} 个，太少了 —— 多半是抛出写法变了而这条判据没跟上`);
+    return;
+  }
+  if (!pattern) {
+    output.push("server.mjs 里找不到 storageFaultCodePattern —— 两处存储故障归类又各写各的了");
+    return;
+  }
+  const uses = serverSource.split("storageFaultCodePattern").length - 1;
+  if (uses < 3) {
+    output.push(`storageFaultCodePattern 只被用了 ${uses - 1} 处 —— 健康页与错误出口必须用同一个判据，`
+      + "否则「哪些算存储故障」会在两处各说各话");
+  }
+  if (/\(control_plane_state_corrupt\|/u.test(serverSource)) {
+    output.push("server.mjs 里又出现了写死码名的存储故障白名单 —— 同族新码会静默掉进兜底");
+  }
+  for (const code of codes) {
+    const known = Object.prototype.hasOwnProperty.call(STORAGE_CODES_WITH_THEIR_OWN_EXIT, code);
+    const matched = pattern.test(`${code}:sample`);
+    if (matched && known) {
+      output.push(`${code} 既被认成存储故障、又登记着「另有出口」—— 这两件事只能占一样`);
+      continue;
+    }
+    if (!matched && !known) {
+      output.push(`${code} 抛出来之后没人认得：健康页会说「没归到已知的几类」、写操作回 500 server_error，`
+        + "人看不出该去恢复哪一份。要么让它落进 storageFaultCodePattern，要么登记为另有出口并写明理由");
+      continue;
+    }
+    if (matched && !new RegExp(`\\n\\s*${code}:`, "u").test(i18nSource)) {
+      output.push(`${code} 被认成存储故障，界面上却没有它的中文说明 —— 出事那一刻人看到的是一个英文码`);
+    }
+  }
+}
+
 function verifyRuntimeJsonConflict(output) {
   const previousStore = process.env.AIMAC_STATE_STORE;
   const previousDatabaseUrl = process.env.DATABASE_URL;
@@ -5071,6 +5120,53 @@ function verifyRuntimeJsonConflict(output) {
       } catch (error) {
         if (!String(error.message).startsWith("project_state_shard_missing:")) {
           output.push(`missing shard raised the wrong error: ${error.message}`);
+        }
+      }
+      // 上面那条索引条目【带着摘要】。缺失判定原先要求"索引里有摘要才查"，于是摘要缺席时整道跳过 ——
+      // 一次没恢复完的还原正是这个形态（分片被覆盖、索引里的摘要与字节数一起没了）。
+      // 索引条目本身就是"这个项目有一份分片"的声明，缺席不能等于"那就当它没有过"。
+      try {
+        assertProjectShardsMatchCentralIndex([], {projectStateShards: {projects: [{projectId: "prj_no_digest"}]}});
+        output.push("索引里记着、摘要却缺席的分片一个都没读到时被放行 —— 没恢复完的还原正是这个形态，整个项目的数据静默消失");
+      } catch (error) {
+        if (!String(error.message).startsWith("project_state_shard_missing:")) {
+          output.push(`缺摘要的缺失分片报的是另一件事：${error.message}`);
+        }
+      }
+      // 走【真实读路径】再验一遍同一件事：上面两条是直接调校验函数，而 runtime_json 那条路根本不调它，
+      // 它在自己的读取函数里核。实测那里的漏洞更隐蔽 —— 分片被写成 {} 之后 projectId 没了，
+      // 三个候选文件名都算不出来，于是"名字对不上"被当成路过的野文件【静默丢弃】：
+      // 读出来是「1 个项目、0 个任务组」，这个项目的活全没了，下一次写入就把这份空的落盘。
+      {
+        const blankDir = mkdtempSync(join(tmpdir(), "aimac-contract-blank-shard-"));
+        const seed = JSON.parse(readFileSync(resolve(root, "data", "seed-state.json"), "utf8"));
+        const blankOptions = {root, runtimeDir: blankDir, statePath: join(blankDir, "control-plane-state.json"),
+          seedPath: resolve(root, "data", "seed-state.json"), buildInitialState: () => seed};
+        try {
+          writeStoredState(readStoredState(blankOptions), blankOptions);
+          const shardDir = join(blankDir, "project-db");
+          const names = existsSync(shardDir) ? readdirSync(shardDir).filter((name) => name.endsWith(".state.json")) : [];
+          const central = JSON.parse(readFileSync(blankOptions.statePath, "utf8"));
+          const entries = central.projectStateShards?.projects || [];
+          // 夹具没造出想测的情形也要能自报：没有分片、或索引里没有对应条目时，下面的断言恒绿。
+          if (!names.length || !entries.length) {
+            output.push(`空壳分片断言的夹具没造出想测的情形：分片 ${names.length} 份、索引条目 ${entries.length} 条`);
+          } else {
+            writeFileSync(join(shardDir, names[0]), "{}");
+            for (const entry of entries) { delete entry.storagePayloadDigest; delete entry.storagePayloadBytes; }
+            writeFileSync(blankOptions.statePath, JSON.stringify(central));
+            try {
+              const back = readStoredState(blankOptions);
+              output.push(`索引里记着的分片被写成空壳后仍被静默接受（读出来 ${(back.projects || []).length} 个项目、`
+                + `${(back.taskGroups || []).length} 个任务组）—— 那个项目的数据凭空消失，下一次写入就把空的落盘`);
+            } catch (error) {
+              if (!String(error.message).startsWith("project_state_shard_identity_mismatch:")) {
+                output.push(`空壳分片报的是另一件事：${error.message}`);
+              }
+            }
+          }
+        } finally {
+          rmSync(blankDir, {recursive: true, force: true});
         }
       }
       // 兼容层必须有退役条件，否则它会无界存在（sys.scope-convergence「不做过度兼容」）。
@@ -8343,13 +8439,29 @@ function verifyEmptyTaskGroupIsNotComplete(output) {
     + `种子里 ${(seed.taskGroups || []).length} 个任务组的存值逐个与工作项核对`);
 }
 
+// 存储故障码只有一个权威来源：state-store 里【真实的抛出点】，配上 server.mjs 那条归类正则。
+// 两条判据（归类对不对、有没有中文）都从这里取 —— 各写一套提取形状就会各自脱节，
+// 而脱节的那一侧会绿着少查（本仓「字面量提取看不见变量写法」已撞过十几次）。
+function storageFaultCodesFromSource() {
+  const store = readFileSync(join(root, "apps/control-plane-ui/lib/state-store.mjs"), "utf8");
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const codes = [...new Set([...store.matchAll(/new Error\(`([a-z_]+):\$\{/gu)].map((hit) => hit[1]))];
+  const literal = /const storageFaultCodePattern\s*=\s*\n?\s*(\/\^.*\/u);/u.exec(server);
+  const pattern = literal ? new RegExp(literal[1].slice(1, -2), "u") : null;
+  return {codes, pattern, server,
+    matched: pattern ? codes.filter((code) => pattern.test(`${code}:sample`)) : []};
+}
+
 function verifyStorageFaultKindsHaveChinese(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8")
     .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
-  // 归类正则的分支：`/^(a|b|c):(.+)$/` 里每一项都会被 hit[1] 赋成 kind。
-  const fromClassifier = new Set();
-  for (const match of server.matchAll(/\/\^\(([a-z0-9_|]+)\):\(\.\+\)\$\/u/gu)) {
-    for (const name of match[1].split("|")) fromClassifier.add(name);
+  // 归类正则里 hit[1] 会被赋成 kind。它按【家族前缀】认码，所以分支名不再是码名 ——
+  // 取值全集要回到真实抛出点去问，不能从正则字面里抠（抠出来的是 `[a-z_]+` 这种，谁都不是）。
+  const {matched, pattern} = storageFaultCodesFromSource();
+  const fromClassifier = new Set(matched);
+  if (!pattern) {
+    output.push("server.mjs 里找不到 storageFaultCodePattern —— 这条判据没查成，不是查过了没发现");
+    return;
   }
   // 按【赋值点】提取，不要求紧跟着就是 `{kind:` —— 其中一处走的是三元
   // （`lastStorageFault = hit ? {…} : {kind: "state_unreadable", …}`），
