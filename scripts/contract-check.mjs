@@ -16529,13 +16529,10 @@ function verifyEveryProjectScopedIdIsScopeChecked(output) {
 // 所以改成登记制：不带 schemaVersion 的集合必须逐个写明凭什么可以不带；写不出理由的就是下一个洞。
 function verifyEveryStateCollectionIsSchemaChecked(output) {
   const COLLECTIONS_WITHOUT_SCHEMA_VERSION = {
-    modelProviders: "模型供应商目录，与 modelCapabilities 同源，由模型选择策略的校验覆盖",
     // 下面三个是运行时创建的，种子里没有 —— 我先前按种子做的同类扫描因此完全看不到它们。
     agentTaskContracts: "有 spec/agent-task-contract.schema.json，但记录用 contractVersion 而非 schemaVersion"
       + "（那份规范 additionalProperties:false 且根本没有 schemaVersion 字段，硬要求它声明等于要它违反自己的规范）；"
       + "两套 e2e 的规范核对已经能认出它 —— 规范里 contractVersion 被钉成 const，扫描据此自指认",
-    workSessions: "没有独立规范；状态取值由 spec/state-machines.yaml 的 WorkSession 枚举守住"
-      + "（verifyTransitionEngine 压过真实产出），归属字段由租户作用域核对覆盖"
   };
   const probe = structuredClone(seedState);
   ensureRuntimeCollections(probe, {root});

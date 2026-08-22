@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/finding.schema.json",
+  "title": "Finding",
+  "description": "执行/评审过程中提出的一条发现项。未了结的发现项会挡住关闭门，所以它的 status 必须落在已登记的取值里 —— 提交接口只接受非终态（不许一提交就自称已解决）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "findingId", "projectId", "taskGroupId", "findingType", "severity", "status", "summary", "evidenceRefs", "createdAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": {"const": "finding/v1"},
+    "findingId": {"type": "string", "pattern": "^finding"},
+    "projectId": {"type": "string", "pattern": "^prj"},
+    "taskGroupId": {"type": "string", "pattern": "^tg"},
+    "workItemId": {"type": "string", "minLength": 1},
+    "findingType": {"type": "string", "minLength": 1},
+    "severity": {"type": "string", "minLength": 1},
+    "status": {"enum": ["open", "resolved", "closed", "dismissed", "wontfix"]},
+    "summary": {"type": "string", "minLength": 1},
+    "evidenceRefs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "dispositionClass": {"type": "string", "minLength": 1, "description": "了结方式（修好并验过 / 判定不修 …）。处置时才有。"},
+    "resolutionRef": {"type": "string", "minLength": 1},
+    "rootCauseOwner": {"type": "string", "minLength": 1},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  }
+}

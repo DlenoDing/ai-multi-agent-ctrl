@@ -87,6 +87,7 @@ const embeddedMcpLogicalServers = [
 const embeddedMcpToolCount = 81;
 
 const modelProviderAdapters = providerClasses.map((providerClass) => ({
+  schemaVersion: "model-provider/v1",
   providerClass,
   adapterId: `adapter:${providerClass}`,
   credentialEnvNames: credentialEnvNames(providerClass),
@@ -1617,6 +1618,7 @@ export function buildTaskContract(state, request = {}) {
     placementDecision.workerCarrierDecision.reusePrecheck = acquired.reusePrecheck.checks;
   }
   state.workSessions.unshift({
+    schemaVersion: "work-session/v1",
     sessionId,
     projectId: contract.projectId,
     taskGroupId: contract.taskGroupId,
@@ -8064,6 +8066,7 @@ export function findingSubmit(state, args) {
   }
   const taskGroup = taskGroupForRecord(state, args);
   const finding = {
+    schemaVersion: "finding/v1",
     findingId: args.findingId || createId("finding"),
     projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
     taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",

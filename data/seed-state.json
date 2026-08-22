@@ -3021,6 +3021,7 @@
   "authSessions": [],
   "modelProviders": [
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "openai",
       "adapterId": "adapter:openai",
       "credentialEnvNames": [
@@ -3030,6 +3031,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "anthropic",
       "adapterId": "adapter:anthropic",
       "credentialEnvNames": [
@@ -3039,6 +3041,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "google",
       "adapterId": "adapter:google",
       "credentialEnvNames": [
@@ -3049,6 +3052,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "xai",
       "adapterId": "adapter:xai",
       "credentialEnvNames": [
@@ -3058,6 +3062,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "meta",
       "adapterId": "adapter:meta",
       "credentialEnvNames": [
@@ -3067,6 +3072,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "mistral",
       "adapterId": "adapter:mistral",
       "credentialEnvNames": [
@@ -3076,6 +3082,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "deepseek",
       "adapterId": "adapter:deepseek",
       "credentialEnvNames": [
@@ -3085,6 +3092,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "qwen",
       "adapterId": "adapter:qwen",
       "credentialEnvNames": [
@@ -3095,6 +3103,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "moonshot",
       "adapterId": "adapter:moonshot",
       "credentialEnvNames": [
@@ -3104,6 +3113,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "zhipu",
       "adapterId": "adapter:zhipu",
       "credentialEnvNames": [
@@ -3113,6 +3123,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "baidu",
       "adapterId": "adapter:baidu",
       "credentialEnvNames": [
@@ -3122,6 +3133,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "tencent",
       "adapterId": "adapter:tencent",
       "credentialEnvNames": [
@@ -3131,6 +3143,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "openrouter",
       "adapterId": "adapter:openrouter",
       "credentialEnvNames": [
@@ -3140,6 +3153,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "azure_openai",
       "adapterId": "adapter:azure_openai",
       "credentialEnvNames": [
@@ -3150,6 +3164,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "aws_bedrock",
       "adapterId": "adapter:aws_bedrock",
       "credentialEnvNames": [
@@ -3160,6 +3175,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "vertex_ai",
       "adapterId": "adapter:vertex_ai",
       "credentialEnvNames": [
@@ -3170,6 +3186,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "ollama",
       "adapterId": "adapter:ollama",
       "credentialEnvNames": [
@@ -3179,6 +3196,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "vllm",
       "adapterId": "adapter:vllm",
       "credentialEnvNames": [
@@ -3188,6 +3206,7 @@
       "status": "discovered"
     },
     {
+      "schemaVersion": "model-provider/v1",
       "providerClass": "custom",
       "adapterId": "adapter:custom",
       "credentialEnvNames": [

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/model-provider.schema.json",
+  "title": "ModelProvider",
+  "description": "模型适配器目录项。它是静态清单：知道这个供应商存在、还没探过它能不能用，所以初态是 discovered（此前写的是状态机里根本没有的 configured）。凭证只登记环境变量【名】，明文一律不落库。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["providerClass", "adapterId", "credentialEnvNames", "invocationMode", "status"],
+  "properties": {
+    "schemaVersion": {"const": "model-provider/v1"},
+    "providerClass": {"type": "string", "minLength": 1},
+    "adapterId": {"type": "string", "pattern": "^adapter:"},
+    "credentialEnvNames": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+      "description": "只放环境变量名（大写下划线）。这条 pattern 顺便挡住「有人把明文密钥填进来」—— 真密钥不长这样。"
+    },
+    "invocationMode": {"enum": ["provider_api", "local_or_http_endpoint"]},
+    "status": {"enum": ["discovered", "probed", "available", "degraded", "unavailable", "retired"]}
+  }
+}

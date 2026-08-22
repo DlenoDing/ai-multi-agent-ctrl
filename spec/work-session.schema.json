@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/work-session.schema.json",
+  "title": "WorkSession",
+  "description": "一次工作会话：某个角色在某个工作项上的一段执行。它是关闭门认「还有活在跑」的依据之一 —— 会话可能在派发已经终结之后仍然挂着（确认卡超时那条链就是这样），所以它的 status 与派发的 status 是两件事。 字段清单按源码里所有 session.<字段> = 的赋值点枚举，不是撞一个补一个 —— 但要注意按名字抓会混进 authSessions 那边的局部变量（那里也叫 session），revokedAt/revokedReason 就是那样混进来的，已剔除。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "sessionId",
+    "projectId",
+    "taskGroupId",
+    "workItemId",
+    "roleId",
+    "agentId",
+    "placement",
+    "status",
+    "startedAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "work-session/v1"
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "pattern": "^prj"
+    },
+    "taskGroupId": {
+      "type": "string",
+      "pattern": "^tg"
+    },
+    "workItemId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roleId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agentId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "placement": {
+      "enum": [
+        "new_session",
+        "subagent"
+      ],
+      "description": "由放置决策给出；子智能体那一支要另有安全性证明（见 SessionPlacementDecision）。"
+    },
+    "laneId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "复用执行载体的 id；新建会话不复用载体时为空。"
+    },
+    "status": {
+      "enum": [
+        "starting",
+        "active",
+        "waiting_room_event",
+        "waiting_dependency",
+        "permission_required",
+        "needs_decision",
+        "stale_state",
+        "paused",
+        "completed_objective",
+        "recycled",
+        "failed",
+        "aborted"
+      ]
+    },
+    "blockedReason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "挂住的原因码；监控页按它给出口提示，所以它必须是登记过的码。"
+    },
+    "parentSessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "controlCommandRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "checkpointRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "modelSelectionDecisionRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "placementDecisionRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskContractDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "progressPercent": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "网关按执行事件单调抬升（Math.max，只增不减）——会话进度倒退会让人以为活干回去了。"
+    },
+    "lastExecutionEventRef": {
+      "type": "string",
+      "minLength": 1,
+      "description": "上一次动静指向哪条执行事件 —— 监控页的「最近动静」靠它，屏幕上永远「running 45%」那次就是因为它从没被渲染过。"
+    },
+    "attentionFlag": {
+      "type": "boolean",
+      "description": "执行事件报 attention 时置位（布尔，不是原因串）。"
+    },
+    "permissionRequestRef": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

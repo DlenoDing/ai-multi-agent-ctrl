@@ -3993,6 +3993,16 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 会话的 placement 只有两种（新会话 / 子智能体），监控页按它分栏、放置决策按它另配安全性证明。
+    // 规范把它钉成闭集：写出第三种取值时当场红，而不是在界面上多出一个谁也不认识的分类。
+    name: "会话的放置方式必须是闭集里的取值",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: "    placement: placementDecision.placement,",
+    to: '    placement: "handed_over",',
+    expect: "placement expected enum new_session|subagent"
+  },
+  {
     // manifest 的不变式是「批准只授权那一个确切动作」，而这里原先给了两个占位默认：
     // action 缺省成 "guarded_action"、resource 缺省成 {}。一条写着「已批准」却说不清批的是什么
     // 的记录，只要有人照着「查一下有没有对应的批准」去写判定，立刻变成"批了个啥都算"。
@@ -4271,8 +4281,8 @@ const MUTATIONS = [
     name: "种子与编排产出的不受约束集合数也要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     check: "verifySeedRecordsMatchTheirDeclaredSchemas",
-    from: '"种子数据": 1,',
-    to: '"种子数据": 0,',
+    from: '"种子数据": 0,',
+    to: '"种子数据": 1,',
     expect: "不受规范约束的集合从 3 涨到 4"
   },
   {
@@ -4298,8 +4308,8 @@ const MUTATIONS = [
     name: "不受规范约束的集合数要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "doctor",
-    from: '"控制面 e2e 产出": 6,',
-    to: '"控制面 e2e 产出": 5,',
+    from: '"控制面 e2e 产出": 3,',
+    to: '"控制面 e2e 产出": 2,',
     // 期望要挑【这道门自己会打印的那一句】：控制面 e2e 的前缀是"控制面 e2e 产出："，
     // 契约门那两处（种子/编排产出）用的是别的前缀 —— 只写公共部分会被判成"挂错了门"。
     expect: "控制面 e2e 产出：不受规范约束的集合"
@@ -4311,8 +4321,8 @@ const MUTATIONS = [
     name: "远程 agent 那侧的规范覆盖也要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "agent",
-    from: '"远程 agent e2e 产出": 4,',
-    to: '"远程 agent e2e 产出": 3,',
+    from: '"远程 agent e2e 产出": 2,',
+    to: '"远程 agent e2e 产出": 1,',
     expect: "远程 agent e2e 产出：不受规范约束的集合"
   },
   {
