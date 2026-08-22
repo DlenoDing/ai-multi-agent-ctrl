@@ -1756,8 +1756,12 @@ function replaceMarkedText(path, start, end, block) {
 
 function verifyPackageBinding(config, value) {
   if (value.nodeBinding?.nodeId !== config.nodeId) throw new Error("dispatch package node binding mismatch");
-  if (value.dispatch?.taskContractDigest !== value.taskContract?.contractDigest) throw new Error("dispatch task contract digest mismatch");
-  if (value.skillWorkset?.worksetId !== value.taskContract?.roleSkill?.worksetId) throw new Error("dispatch skill workset binding mismatch");
+  // 两边【都没有】的时候 !== 也是 false —— 一个不带摘要的派发包会让这两道绑定校验整个空转，
+  // 而它们正是用来拦「发给我的合同其实属于另一趟派发」的。缺失一律当不匹配。
+  const contractDigest = value.taskContract?.contractDigest;
+  if (!contractDigest || value.dispatch?.taskContractDigest !== contractDigest) throw new Error("dispatch task contract digest mismatch");
+  const worksetId = value.taskContract?.roleSkill?.worksetId;
+  if (!worksetId || value.skillWorkset?.worksetId !== worksetId) throw new Error("dispatch skill workset binding mismatch");
 }
 
 function verifySkillFiles(directory, files) {

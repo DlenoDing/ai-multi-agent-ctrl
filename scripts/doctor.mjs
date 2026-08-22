@@ -2695,6 +2695,32 @@ try {
       console.log(`  --  这个节点这一轮领不到派发（${JSON.stringify(claimed.payload).slice(0, 90)}），`
         + "「人叫停后 agent 不得覆盖」未被检验");
     } else {
+      // agent 拿到派发包后会核三道绑定（节点、任务合同摘要、技能集）。那三道是「两个值必须相等」，
+      // 而两边【都缺】时也相等 —— 所以运行时那边已经改成缺失即拒。这里核的是另一半：
+      // 控制面下发的包里这几个字段真的在。少了任何一个，agent 侧就只剩一道空转的比较。
+      const pkg = envelope?.taskContract ? envelope : null;
+      if (!pkg) {
+        console.log("  --  这次认领回执里没有完整派发包，「派发包必须带齐绑定」未被检验");
+      } else {
+        const bindings = [
+          ["节点绑定", pkg.nodeBinding?.nodeId],
+          ["任务合同摘要（派发侧）", pkg.dispatch?.taskContractDigest],
+          ["任务合同摘要（合同侧）", pkg.taskContract?.contractDigest],
+          ["技能集（包侧）", pkg.skillWorkset?.worksetId],
+          ["技能集（合同侧）", pkg.taskContract?.roleSkill?.worksetId]
+        ].filter(([, value]) => !value).map(([what]) => what);
+        if (bindings.length) {
+          throw new Error(`控制面下发的派发包缺了绑定字段：${bindings.join("、")} —— `
+            + "agent 侧那几道「两边必须相等」的校验会因为两边都缺而空转");
+        }
+        if (pkg.dispatch?.taskContractDigest !== pkg.taskContract?.contractDigest) {
+          throw new Error("派发包里的任务合同摘要与合同自身的摘要对不上 —— agent 会直接拒收这个派发");
+        }
+        if (pkg.skillWorkset?.worksetId !== pkg.taskContract?.roleSkill?.worksetId) {
+          throw new Error("派发包里的技能集与合同上写的不是同一个 —— agent 会直接拒收这个派发");
+        }
+        console.log("  ok  派发包带齐了三道绑定（节点 / 任务合同摘要 / 技能集），两侧值一致");
+      }
       const groupId = claimedDispatch.taskGroupId;
       const pauseIt = await jsonFetch(port, `/api/task-groups/${groupId}/control`, {
         method: "POST",

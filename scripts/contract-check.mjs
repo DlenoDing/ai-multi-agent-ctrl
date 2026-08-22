@@ -408,6 +408,7 @@ run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
+run(verifyDispatchBindingChecksRefuseMissingValues);
 run(verifyRuntimeConstantsSitBeforeItsTopLevelAwait);
 run(verifyTruncatedExecutorOutputSaysSo);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
@@ -10803,6 +10804,36 @@ function verifyLocalGitWorkerRefusesUnsafeRepositoryState(output) {
     rmSync(workspace, {recursive: true, force: true});
   }
   console.log("本地 git 工作器：工作树不干净/产出越界/清单越界/远端被改回/一字未变 五种形状全拒，正常情形跑得完 —— 核过");
+}
+
+function verifyDispatchBindingChecksRefuseMissingValues(output) {
+  // agent 收到派发包时核三道绑定。它们都是「两个值必须相等」，而两边【都缺】时 !== 也是 false ——
+  // 一个不带摘要的包会让两道校验整个空转，而它们正是用来拦「发给我的合同其实属于另一趟派发」的。
+  // 这一段只在真 agent 机器上跑（本进程够不着），所以这里核形状；
+  // 另一半 —— 控制面下发的包里这些字段真的在 —— 由控制面 e2e 拿【真派发包】断言。
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const body = runtime.match(/^function verifyPackageBinding[\s\S]*?^\}/mu)?.[0] || "";
+  if (!body) {
+    output.push("runtime.mjs 里找不到 verifyPackageBinding —— 这条判据按函数体切，找不到就等于没查");
+    return;
+  }
+  const required = [
+    ["任务合同摘要", /if \(!contractDigest \|\|/u],
+    ["技能集", /if \(!worksetId \|\|/u]
+  ];
+  for (const [what, shape] of required) {
+    if (!shape.test(body)) {
+      output.push(`派发包的${what}绑定又变回了「两个值比一比」—— 两边都缺时它是相等的，`
+        + "于是不带摘要的包会让这道校验整个空转");
+    }
+  }
+  // 相等比较本身也不能丢：只判「非空」等于谁的摘要都收。
+  if (!/value\.dispatch\?\.taskContractDigest !== contractDigest/u.test(body)
+    || !/value\.skillWorkset\?\.worksetId !== worksetId/u.test(body)) {
+    output.push("派发包绑定只剩「字段非空」而不再比对两侧的值 —— 换成另一趟派发的摘要照样收");
+  }
+  console.log("派发包绑定：任务合同摘要与技能集都是「缺失即拒 + 两侧必须相等」（形状核对；"
+    + "控制面确实下发这些字段那一半由控制面 e2e 拿真派发包验）");
 }
 
 function verifyRuntimeConstantsSitBeforeItsTopLevelAwait(output) {

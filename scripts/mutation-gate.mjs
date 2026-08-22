@@ -3596,6 +3596,30 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "派发包合同摘要缺失必须当不匹配",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyDispatchBindingChecksRefuseMissingValues",
+    from: "if (!contractDigest || value.dispatch?.taskContractDigest !== contractDigest)",
+    to: "if (value.dispatch?.taskContractDigest !== contractDigest)",
+    expect: "又变回了「两个值比一比」"
+  },
+  {
+    name: "派发包绑定不得只判非空",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyDispatchBindingChecksRefuseMissingValues",
+    from: "if (!worksetId || value.skillWorkset?.worksetId !== worksetId)",
+    to: "if (!worksetId)",
+    expect: "只剩「字段非空」而不再比对两侧的值"
+  },
+  {
+    name: "控制面下发的派发包必须带齐绑定",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "doctor",
+    from: "      worksetId: skillWorkset.worksetId,",
+    to: "      worksetId: undefined,",
+    expect: "缺了绑定字段"
+  },
+  {
     name: "顶层 await 之后不得声明模块级常量",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyRuntimeConstantsSitBeforeItsTopLevelAwait",
