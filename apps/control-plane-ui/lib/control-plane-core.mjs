@@ -604,6 +604,7 @@ export function revokeAccountSessions(state, accountId, reason) {
     if (session.accountId !== accountId || session.status !== "active") continue;
     session.status = "revoked";
     session.revokedReason = reason;
+    session.revokedAt = at;
     session.updatedAt = at;
     revoked += 1;
   }

@@ -3993,6 +3993,17 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 会话被撤销时人要问的是「什么时候、为什么」。此前两条撤销路径各写一半（登出只写时间、
+    // 改密/停用只写原因），谁都没有读者所以谁也没发现。规范用 if/then 把不变式钉住：
+    // status=revoked ⇒ revokedAt 与 revokedReason 都得在 —— 这样将来第三条撤销路径漏写会当场红。
+    name: "被撤销的会话必须答得上「什么时候」",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: "    session.revokedAt = at;\n",
+    to: "",
+    expect: "revokedAt is required"
+  },
+  {
     // 两处构造必须都写 id（所有读者共用的那个键）。只写 decisionId 的话，容量保护、
     // 以及任何按 id 认对象的读者都看不见它 —— 规范把这条钉住。
     name: "MCP 那条路的策略决策也要写 id",
@@ -4127,11 +4138,22 @@ const MUTATIONS = [
     name: "不受规范约束的集合数要棘轮住",
     file: "scripts/doctor.mjs",
     gate: "doctor",
-    from: "maxUncovered: 17});",
-    to: "maxUncovered: 16});",
+    from: "maxUncovered: 16});",
+    to: "maxUncovered: 15});",
     // 期望要挑【这道门自己会打印的那一句】：控制面 e2e 的前缀是"控制面 e2e 产出："，
     // 契约门那两处（种子/编排产出）用的是别的前缀 —— 只写公共部分会被判成"挂错了门"。
     expect: "控制面 e2e 产出：不受规范约束的集合"
+  },
+  {
+    // 这个棘轮有【两个】—— 控制面 e2e 一个、远程 agent e2e 一个。上一轮只降了控制面那个，
+    // 远程那个照样红；而它此前没有任何变异证明自己还活着。两处标签原先都含"e2e 产出"，
+    // 期望串会互相吞并，所以远程那边的 label 改成了"远程 agent e2e 产出"。
+    name: "远程 agent 那侧的规范覆盖也要棘轮住",
+    file: "scripts/doctor-agent-remote.mjs",
+    gate: "agent",
+    from: "maxUncovered: 13});",
+    to: "maxUncovered: 12});",
+    expect: "远程 agent e2e 产出：不受规范约束的集合"
   },
   {
     name: "运维要用的运行参数不许没写进文档",

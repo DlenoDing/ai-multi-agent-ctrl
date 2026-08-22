@@ -297,7 +297,16 @@ schema_machine_aliases = {
 # 新增一个带 status 枚举的 schema 时，要么建机器、要么登记到这里说明为什么不需要。
 schemas_without_state_machine = Set.new(%w[
   AgentControlCommand AgentExecutionEvent AgentJoinToken InternalReviewRecord Organization WorkerLane
+  AuthSession
 ])
+# AuthSession 豁免的只有"与 state-machines.yaml 对表"这一项，别的照常：
+# spec/auth-session.schema.json 仍然钉住三个状态的取值，并且用 if/then 要求 revoked
+# 必须带 revokedAt 与 revokedReason。不给它建机器是因为 state-machines.yaml 的机器必须同时
+# 出现在 manifest 的 requiredControlObjects 里，而那份清单是【终端执行域的控制对象】
+# （Project/TaskGroup/Lease/Checkpoint…）；登录会话是控制台自身的鉴权设施，塞进去会歪曲那份清单的含义。
+# 代价：会话的迁移写法没有跨文件对照，只能靠 schema 的 enum 兜住取值。
+# 什么时候该撤销这条豁免：控制台自身的基础设施对象（Account/AuthSession 这类）一旦有了自己的
+# 对象清单，就把机器建起来。
 
 Dir[File.join(ROOT, "spec/*.schema.json")].sort.each do |path|
   schema = JSON.parse(File.read(path))

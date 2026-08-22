@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/auth-session.schema.json",
+  "title": "AuthSession",
+  "description": "一次登录会话。鉴权把 Bearer 令牌哈希之后【逐条比对 tokenDigest】来找它，所以这里绝不能出现明文令牌；expiresAt 是唯一让会话自然失效的东西 —— 它一旦写坏（非法时间串），`new Date(x) > now` 两个方向都是 false，该拒的不拒、该收的不收，而且没有任何地方会报错。此前这个集合不受任何规范约束。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "tokenDigest",
+    "accountId",
+    "status",
+    "expiresAt",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "auth-session/v1"
+    },
+    "sessionId": {
+      "type": "string",
+      "pattern": "^authsess_"
+    },
+    "tokenDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]+$",
+      "description": "只存摘要。落盘明文令牌那条另有 e2e 在守（本轮真发出去的令牌要在所有落盘文件里搜不到）。"
+    },
+    "accountId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "active",
+        "revoked",
+        "expired"
+      ]
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "revokedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "revokedReason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "撤销原因。登出写 logout，改密/停用走 revokeAccountSessions 写各自的原因码。"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "revoked"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "revokedAt",
+          "revokedReason"
+        ],
+        "description": "被撤销的会话必须答得上「什么时候、为什么」。此前两条撤销路径各写一半：登出只写时间、改密/停用只写原因。这条 if/then 就是为了让【将来第三条撤销路径】漏写时当场红。"
+      }
+    }
+  ]
+}

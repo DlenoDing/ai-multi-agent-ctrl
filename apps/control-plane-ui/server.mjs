@@ -3097,6 +3097,10 @@ async function handleApi(req, res) {
       : 8 * 60 * 60;
     const expiresAt = new Date(Date.now() + sessionTtlSeconds * 1000).toISOString();
     state.authSessions.unshift({
+      // 这个集合此前不受任何规范约束。要紧的是两条：绝不存明文令牌（只存摘要），
+      // 以及 expiresAt 必须是合法时间 —— 写坏了的话 `new Date(x) > now` 两个方向都是 false，
+      // 该拒的不拒、该收的不收，而且没有任何地方会报错（本仓的时间形态老毛病）。
+      schemaVersion: "auth-session/v1",
       sessionId: createId("authsess"),
       tokenDigest: digestOf(`session:${sessionToken}`),
       accountId: account.accountId,
@@ -3124,6 +3128,9 @@ async function handleApi(req, res) {
     if (session) {
       session.status = "revoked";
       session.revokedAt = now();
+      // 撤销原因两条路径都要写：另一条（改密/停用触发的 revokeAccountSessions）此前只写原因不写时间，
+      // 这条只写时间不写原因。会话被撤销时人要问的是「什么时候、为什么」，缺一半就答不上来。
+      session.revokedReason = "logout";
       session.updatedAt = session.revokedAt;
       audit(state, "auth-service", "auth_logout", `Account:${session.accountId}`);
       commitDirectStateWrite(state);

@@ -3633,7 +3633,7 @@ const doctorProducedState = readStoredState({
 
 const doctorSweep = sweepRecordsAgainstDeclaredSchemas(doctorProducedState, {
   specDir: join(root, "spec"), label: "控制面 e2e 产出", minValidated: 50
-, maxUncovered: 17});
+, maxUncovered: 16});
 if (!(doctorProducedState.humanConfirmationRequests || []).some((item) => item.schemaVersion)) {
   throw new Error("doctor: 本轮没有产出任何带 schemaVersion 的人工确认单 —— 这道规范核对在空转，人工定稿闸门的记录面依旧无人校验");
 }
