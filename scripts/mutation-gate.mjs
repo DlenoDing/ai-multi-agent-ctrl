@@ -3993,6 +3993,16 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // MCP 返回的东西一律按不可信处理：untrustedResult 恒为 true。写成别的值等于宣称
+    // 「这一条的返回可以当事实用」，而全系统没有任何机制支撑那个宣称。规范把它钉成 const true。
+    name: "MCP 调用台账不得宣称返回可信",
+    file: "apps/mcp-server/server.mjs",
+    gate: "doctor",
+    from: '    resultDigest: digestOf(result),\n    untrustedResult: true,',
+    to: '    resultDigest: digestOf(result),\n    untrustedResult: false,',
+    expect: "untrustedResult expected const true"
+  },
+  {
     // 出口提示里有一类是「叫读的人自己去按一个按钮」，按不按得动要按【任务组】判。
     // 观察者在监控页照样看到「到该任务组页点「恢复执行」」，而他那一页上根本没有这个按钮。
     name: "够不着的出口要说清是哪个任务组够不着",
@@ -4256,8 +4266,8 @@ const MUTATIONS = [
     name: "不受规范约束的集合数要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "doctor",
-    from: '"控制面 e2e 产出": 10,',
-    to: '"控制面 e2e 产出": 9,',
+    from: '"控制面 e2e 产出": 9,',
+    to: '"控制面 e2e 产出": 8,',
     // 期望要挑【这道门自己会打印的那一句】：控制面 e2e 的前缀是"控制面 e2e 产出："，
     // 契约门那两处（种子/编排产出）用的是别的前缀 —— 只写公共部分会被判成"挂错了门"。
     expect: "控制面 e2e 产出：不受规范约束的集合"
@@ -4269,8 +4279,8 @@ const MUTATIONS = [
     name: "远程 agent 那侧的规范覆盖也要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "agent",
-    from: '"远程 agent e2e 产出": 7,',
-    to: '"远程 agent e2e 产出": 6,',
+    from: '"远程 agent e2e 产出": 6,',
+    to: '"远程 agent e2e 产出": 5,',
     expect: "远程 agent e2e 产出：不受规范约束的集合"
   },
   {

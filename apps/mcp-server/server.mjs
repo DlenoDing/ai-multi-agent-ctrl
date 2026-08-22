@@ -670,6 +670,7 @@ export async function callTool(name, args = {}, context = {}) {
   }
   const at = new Date().toISOString();
   const mcpCall = {
+    schemaVersion: "mcp-call/v1",
     callId: createId("mcp_call"),
     toolName: name,
     idempotencyKey: args.idempotencyKey || createId("idem_mcp"),

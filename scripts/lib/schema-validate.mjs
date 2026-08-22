@@ -149,8 +149,8 @@ export const SCHEMA_FILE_ALIASES = {"control-event": "control-events"};
 // 顶红一次 —— 一步走了三轮。数字只放这一处，四个调用点都从这里取。
 // 改动方式：清掉一个集合 -> 这里对应的数减一 -> 变异登记里的锚点跟着改。
 export const UNCOVERED_CEILINGS = {
-  "控制面 e2e 产出": 10,
-  "远程 agent e2e 产出": 7,
+  "控制面 e2e 产出": 9,
+  "远程 agent e2e 产出": 6,
   "种子数据": 2,
   "编排产出": 3
 };

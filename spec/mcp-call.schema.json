@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/mcp-call.schema.json",
+  "title": "McpCall",
+  "description": "一次经 MCP 的【写】调用留下的台账条目（只读工具不记，否则一次列表查询就能把 300 条上限冲掉）。入参与结果只存摘要，正文不落库。untrustedResult 恒为 true：MCP 返回的东西一律按不可信处理，控制面不会拿它当已证实的事实。此前这个集合既没有规范也没有状态机 —— 是覆盖面上的真空。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "callId", "toolName", "idempotencyKey", "status", "readOnly", "argumentDigest", "resultDigest", "untrustedResult", "createdAt"],
+  "properties": {
+    "schemaVersion": {"const": "mcp-call/v1"},
+    "callId": {"type": "string", "pattern": "^mcp_call_"},
+    "toolName": {"type": "string", "minLength": 1, "description": "「<组>.<工具>」形式，例如 governance-mcp.system_upgrade_candidate_export。"},
+    "idempotencyKey": {"type": "string", "minLength": 1},
+    "status": {"enum": ["succeeded", "failed"], "description": "这个对象没有生命周期：一次调用要么成了要么没成，写下就不再变。"},
+    "readOnly": {"type": "boolean"},
+    "argumentDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "resultDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "untrustedResult": {"const": true, "description": "恒为 true。写成别的值等于宣称「这一条的返回可以当事实用」，而全系统没有任何机制支撑那个宣称。"},
+    "conflict": {"type": "boolean", "description": "落库时撞上并发写冲突（state_write_conflict）的那一条会带它。"},
+    "createdAt": {"type": "string", "format": "date-time"}
+  }
+}

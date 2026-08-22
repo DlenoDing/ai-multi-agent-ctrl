@@ -297,11 +297,12 @@ schema_machine_aliases = {
 # 新增一个带 status 枚举的 schema 时，要么建机器、要么登记到这里说明为什么不需要。
 schemas_without_state_machine = Set.new(%w[
   AgentControlCommand AgentExecutionEvent AgentJoinToken InternalReviewRecord Organization WorkerLane
-  AuthSession Agent
+  AuthSession Agent McpCall
 ])
 # Agent（逻辑智能体目录项）与 AuthSession 同理：它没有生命周期，只有启停两态，
 # 而 state-machines.yaml 的机器必须同时出现在 manifest 的 requiredControlObjects 里 ——
 # 那份清单是终端执行域的控制对象。运行时节点那个才是 AgentNode，两者不是一回事。
+# McpCall 更直白：一次调用要么成了要么没成，写下就不再变，没有"生命周期"可言。
 # 豁免的只有"与 state-machines.yaml 对表"这一项：取值仍由 spec/agent.schema.json 的 enum 钉住，
 # 且建智能体的接口现在按 AGENT_STATUSES 白名单拒绝认不出的取值。
 # AuthSession 豁免的只有"与 state-machines.yaml 对表"这一项，别的照常：
