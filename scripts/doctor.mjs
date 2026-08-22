@@ -600,6 +600,31 @@ try {
   if (!createdProjectReplay.response.ok || createdProjectReplay.payload.id !== createdProject.payload.id || createdProjectReplay.payload.ownerGrant?.grantId !== createdProject.payload.ownerGrant?.grantId) {
     throw new Error("project creation idempotency replay did not preserve owner grant payload");
   }
+  // 技能源那一页显示「每个源提供了多少角色技能」。roleSkills 本身不再下发（281 条 293KB，
+  // 界面从不读正文），改成服务端给按来源的计数 —— 但那次改动只把计数接到了 /api/skill-registry 上，
+  // 而控制台读的是 view=runtime、一次都没调过那个接口；更糟的是 scoped.roleSkills 已被清空，
+  // 于是连那个接口自己也在回全 0。真实运行态上实测：明明有 281 条，屏幕上每个源都是 0，
+  // 横幅恒说「一个角色技能都还没取下来」。这类"接线断了"只有走真服务端才看得见。
+  {
+    const runtimeView = await jsonFetch(port, "/api/state?view=runtime", {headers: {authorization: systemAuth}});
+    const counts = runtimeView.payload?.roleSkillCountBySource;
+    const sources = runtimeView.payload?.skillSources || [];
+    if (!counts || typeof counts !== "object") {
+      throw new Error("view=runtime 没有带 roleSkillCountBySource —— 技能源页拿不到角色数，"
+        + "屏幕上每个源都会显示 0，横幅恒说「一个角色技能都还没取下来」");
+    }
+    const total = Object.values(counts).reduce((sum, value) => sum + Number(value || 0), 0);
+    if (!total) {
+      throw new Error(`view=runtime 里每个来源的角色技能数都是 0（${JSON.stringify(counts)}）—— `
+        + "这份运行态里有技能，计数却算在了被清空的那份 scoped 上");
+    }
+    for (const source of sources) {
+      if (source.status === "retired") continue;
+      if (!(counts[source.sourceId] > 0)) continue;
+      // 有源、且它真的提供了技能：那条「一个角色技能都还没取下来」的横幅就不该再出现。
+      // 这里只核数据面（横幅本身由控制台门核）。
+    }
+  }
   // 「返回同一个 id」还不够：那也可能是两条同名记录里的第一条。真正要守的是【没有做第二次】。
   // 服务端靠 beginGuardedWrite 里那条 early return 保证（命中幂等记录就直接回原结果，
   // 后面的写入代码一行都不跑）—— 但这件事此前没有任何断言，那条 return 被删掉也不会有人发现。

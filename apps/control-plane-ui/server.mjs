@@ -1704,6 +1704,21 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
       });
     }
   }
+  // 技能源那一页要显示「每个源提供了多少角色技能」。roleSkills 本身不下发（281 条 293KB、
+  // 界面从不读正文），改为在这里给出【按来源分组的计数】。原先只有 /api/skill-registry 算它，
+  // 而控制台读的是这个视图、一次都没调过那个接口 —— 于是屏幕上每个源的角色数恒为 0，
+  // 横幅也恒说「一个角色技能都还没取下来」（真实运行态实测：明明有 281 条）。
+  // 计数用【未截断】的那份算：视图上限会把 269 条截到 188，那个数本身就是错的。
+  if (view === "runtime") {
+    const roleSkillCountBySource = {};
+    // 从 state 算而不是 scoped：非系统账号那条路上 scoped.roleSkills 被清空了（省掉那 293 KB 的
+    // 那次改动清的；系统账号走的是更上面的 early return，所以拿 scoped 算只在系统视角下"碰巧对"）。
+    for (const skill of state.roleSkills || []) {
+      const key = skill.sourceId || "unknown";
+      roleSkillCountBySource[key] = (roleSkillCountBySource[key] || 0) + 1;
+    }
+    base.roleSkillCountBySource = roleSkillCountBySource;
+  }
   // 视角为了体积把每个集合截到 capped 条，而界面拿这些数组直接报数（「共 N 项等待你处理，跨你
   // 可见的全部项目统计」）——超过上限时那个 N 是错的，且错得毫无痕迹：人以为处置完这 N 项就清空了。
   // 这里如实告诉界面哪些集合被截断过，界面据此改口径，而不是把截断后的长度当成总数。
@@ -3031,7 +3046,9 @@ async function handleApi(req, res) {
     // 而且它会被视图上限截断（实测 269 条截到 188 条），于是屏幕上那个"技能数"本身就是错的。
     // 改为服务端直接给【按来源分组的计数】：既省掉那 293KB，计数也不再受截断影响。
     const roleSkillCountBySource = {};
-    for (const skill of scoped.roleSkills || []) {
+    // 同上：scoped.roleSkills 已被清空，这里必须从 state 算（这个端点因此也一直在回全 0，
+    // 只是控制台从没调过它，没人看见）。
+    for (const skill of state.roleSkills || []) {
       const key = skill.sourceId || "unknown";
       roleSkillCountBySource[key] = (roleSkillCountBySource[key] || 0) + 1;
     }

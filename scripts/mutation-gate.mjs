@@ -3596,6 +3596,14 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "技能源的角色数必须真的下发到那一页",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '  if (view === "runtime") {',
+    to: "  if (false) {",
+    expect: "没有带 roleSkillCountBySource"
+  },
+  {
     name: "概览受阻项为 0 时要说出被挡住的派发",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
