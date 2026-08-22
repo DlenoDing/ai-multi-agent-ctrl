@@ -4004,6 +4004,26 @@ const MUTATIONS = [
     expect: "出口要说清装什么"
   },
   {
+    // agent 下载回来的不是 JSON（代理/登录页换了响应、令牌失效回了一段文本）：
+    // 那句失败原因会原样进控制台，所以必须带码，并把响应开头带上 —— 那是唯一的线索。
+    name: "技能集下载回非 JSON 时报文要带码",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: "throw new Error(`skill_workset_response_not_json:技能集下载回的不是 JSON（开头：${jsonHead(result.stdout)}）`);",
+    to: "throw new Error(`技能集下载回的不是 JSON`);",
+    expect: "报文要带码、并带上响应开头"
+  },
+  {
+    // 三份 JSON（运行时配置 / 中央状态 / 种子）里坏了一份，报文必须点名是哪一份。
+    // 退回裸 JSON.parse 就只剩一句 "Expected property name or '}' at position 2"。
+    name: "配置读不出来时要点名是哪份文件",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "crash",
+    from: "  return readJsonFile(configPath, \"运行时配置\", CONFIG_NEXT_STEP);",
+    to: '  return JSON.parse(readFileSync(configPath, "utf8"));',
+    expect: "运行时配置坏了要点名是哪一份文件"
+  },
+  {
     // 调用方给的到期时间解析不了，落库后 Date.parse 得 NaN，而 NaN 参与的比较两个方向都是 false：
     // 同一条坏数据在 MCP 判权那处判成"已过期"、在关闭门那处判成"没有活跃授权"。两边都不报错。
     name: "解析不了的到期时间必须在铸出授权之前被拒",

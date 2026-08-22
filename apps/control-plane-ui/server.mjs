@@ -177,8 +177,24 @@ function ensureState() {
   ensureStoredState({root, runtimeDir, statePath, seedPath, buildInitialState});
 }
 
+// 读 JSON 文件时把【哪个文件、它是干什么的、下一步怎么办】一起说清。
+// 原先是裸 JSON.parse：人手改过 runtime-config.json 之后，启动只吐一句
+// "Expected property name or '}' in JSON at position 2" —— 连是哪个文件都没有，
+// 而这套部署里同时有三份 JSON（运行时配置 / 中央状态 / 种子）。
+function readJsonFile(path, what, nextStep) {
+  const text = readFileSync(path, "utf8");
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    const detail = String(error.message || error).slice(0, 120);
+    throw new Error(`${what}读不出来（不是合法 JSON）：${path}\n  · 解析器说：${detail}\n  · ${nextStep}`);
+  }
+}
+const SEED_NEXT_STEP = "这份文件随发行版一起分发 —— 它坏了通常说明安装包不完整，重新拉取一份";
+const CONFIG_NEXT_STEP = "它由 npm run init 生成，可以直接删掉让下一次启动重新生成（里面的本地令牌会换一批）";
+
 function buildInitialState() {
-  const seed = JSON.parse(readFileSync(seedPath, "utf8"));
+  const seed = readJsonFile(seedPath, "种子数据", SEED_NEXT_STEP);
   seed.runtime.updatedAt = now();
   seed.runtime.executionProfile = executionProfile;
   ensureRuntimeCollections(seed, {root: repositoryRoot, runtimeDir, endpoint: process.env.AIMAC_PUBLIC_URL || localEndpoint(), executionProfile});
@@ -188,7 +204,7 @@ function buildInitialState() {
 
 function ensureRuntimeConfig() {
   mkdirSync(runtimeDir, { recursive: true });
-  const existing = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) : {};
+  const existing = existsSync(configPath) ? readJsonFile(configPath, "运行时配置", CONFIG_NEXT_STEP) : {};
   const localToken = process.env.AIMAC_BOOTSTRAP_TOKEN || existing.localBootstrapToken || randomBytes(24).toString("base64url");
   const workspaceOwnerTokenEnv = process.env.AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN;
   const reviewerTokenEnv = process.env.AIMAC_LOCAL_SEED_REVIEWER_TOKEN;
@@ -243,7 +259,7 @@ function ensureRuntimeConfig() {
 
 function readRuntimeConfig() {
   if (!existsSync(configPath)) return ensureRuntimeConfig();
-  return JSON.parse(readFileSync(configPath, "utf8"));
+  return readJsonFile(configPath, "运行时配置", CONFIG_NEXT_STEP);
 }
 
 // 邮箱比对一律走这里。域名部分本来就不区分大小写，而手机键盘默认把首字母大写 ——
@@ -3486,7 +3502,7 @@ async function handleApi(req, res) {
     // 界面那一侧一直要求打字确认，所以这条路只在【绕过界面直接打接口】时打开（脚本、curl、误调用）。
     // 判据改成"有没有人在这里真干过活"：只取那些【干活才会长】的集合，
     // 登录/审计这类一开机就涨的不算，否则刚装完的本地排障也要凑确认串，等于把这条路封死。
-    const bootstrapBaseline = JSON.parse(readFileSync(seedPath, "utf8"));
+    const bootstrapBaseline = readJsonFile(seedPath, "种子数据", SEED_NEXT_STEP);
     const countWorkItems = (snapshot) => (snapshot.taskGroups || [])
       .reduce((total, group) => total + (group.workItems || []).length, 0);
     const WORK_EVIDENCE = ["accounts", "workSessions", "agentDispatches", "humanConfirmationRequests",

@@ -1055,6 +1055,7 @@
     finding_status_unknown: "认不出这个发现状态",
     review_plan_id_conflict: "这个评审计划 id 已经被创建过了",
     rule_source_resolution_id_conflict: "这个规则来源判定 id 已经被创建过了",
+    skill_workset_response_not_json: "技能集下载回的不是 JSON",
     expires_at_invalid: "到期时间解析不了",
     ttl_seconds_invalid: "有效期必须是数",
     control_command_expires_at_invalid: "控制命令的到期时间解析不了",

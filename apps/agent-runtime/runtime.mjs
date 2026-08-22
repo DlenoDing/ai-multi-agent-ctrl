@@ -1983,15 +1983,35 @@ function retryableControlPlaneError(error) {
   return /state_write_conflict|AIMAC_STATE_CONFLICT|abort|timed?\s?out|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|fetch failed/iu.test(message);
 }
 
+// 解析 JSON 时把【这份东西是哪来的】一起说出来。agent 跑在别人的机器上、无人值守：
+// 一句裸的 "Unexpected token < in JSON" 无从判断是代理返回了 HTML、令牌过期跳了登录页，
+// 还是本地配置被谁改坏了。
+function jsonHead(text) {
+  return String(text || "").trim().slice(0, 80).replace(/\s+/gu, " ") || "（空）";
+}
+
 function syncJson(url, token) {
   const result = spawnSync("curl", ["-fsSL", "--config", "-", url], {input: `header = "Authorization: Bearer ${token}"\n`, encoding: "utf8", maxBuffer: 32 * 1024 * 1024});
   if (result.error || result.status !== 0) throw new Error(`skill_workset_download_failed:${result.stderr || result.error?.message}`);
-  return JSON.parse(result.stdout);
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    // 失败原因会原样进控制台，所以带码。开头那几个字最能说明问题：
+    // 代理/登录页把响应换成了 HTML，还是令牌失效回了一段文本。
+    throw new Error(`skill_workset_response_not_json:技能集下载回的不是 JSON（开头：${jsonHead(result.stdout)}）`);
+  }
 }
 
 function loadConfig() {
   if (!existsSync(configPath)) throw new Error(`agent is not initialized: ${configPath}`);
-  return JSON.parse(readFileSync(configPath, "utf8"));
+  const text = readFileSync(configPath, "utf8");
+  try {
+    return JSON.parse(text);
+  } catch {
+    // 这一条只给【在这台机器上敲命令的人】看（登记在 AGENT_RUNTIME_CLI_THROWS）：
+    // 裸的 "Unexpected token" 无从判断是配置被改坏了还是别的什么。
+    throw new Error(`agent config is not valid JSON: ${configPath}（开头：${jsonHead(text)}）—— 重新跑一次安装命令即可重建`);
+  }
 }
 
 // agent-config.json 里存着 nodeToken，而 join token 是一次性的（maxUses: 1）——

@@ -297,6 +297,29 @@ try { parsed = JSON.parse(readFileSync(statePath, "utf8")); } catch (error) { pa
   }
 }
 
+// 运行时配置被改坏（人手改 runtime-config.json 加错一个逗号，是很常见的一步）。
+// 此前启动只吐一句 "Expected property name or '}' in JSON at position 2" —— 连是哪个文件都没有，
+// 而这套部署里同时有三份 JSON（运行时配置 / 中央状态 / 种子）。报文要点名文件并给下一步。
+{
+  const badCfgDir = mkdtempSync(join(tmpdir(), "aimac-crash-badcfg-"));
+  spawnSync(process.execPath, ["scripts/init-control-plane.mjs"], {cwd: root, encoding: "utf8",
+    env: {...process.env, AIMAC_RUNTIME_DIR: badCfgDir, AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: "",
+      AIMAC_BOOTSTRAP_TOKEN: "crash-badcfg-token-0123456789ab"}});
+  writeFileSync(join(badCfgDir, "runtime-config.json"), "{ 这不是 json\n");
+  const said = spawnSync(process.execPath, ["apps/control-plane-ui/server.mjs"], {cwd: root, encoding: "utf8",
+    env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: "0", AIMAC_RUNTIME_DIR: badCfgDir,
+      AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: ""},
+    timeout: 20000});
+  const text = `${said.stdout || ""}${said.stderr || ""}`;
+  check(/运行时配置/u.test(text) && text.includes("runtime-config.json"),
+    "运行时配置坏了要点名是哪一份文件（三份 JSON 里的哪一份）",
+    text.trim().split("\n")[0].slice(0, 120) || "（什么都没说）");
+  check(/npm run init|删掉/u.test(text),
+    "并且要给下一步（这份配置可以删掉重生成）",
+    text.trim().split("\n").slice(0, 3).join(" ｜ ").slice(0, 140));
+  rmSync(badCfgDir, {recursive: true, force: true});
+}
+
 // 状态文件损坏（截断 / 半份 / 被别的东西覆盖）是崩溃与坏盘之后的常见残局。此前两种都很难处置：
 // 中央文件坏了，服务照样打印启动横幅，只有 /api/health 回 500 加一句 "Unterminated string in JSON
 // at position 31584"；分片坏了更糟 —— 服务起来了、健康检查一路 200，而读数据全 500，监控是绿的。

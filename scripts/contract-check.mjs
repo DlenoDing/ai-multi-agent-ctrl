@@ -229,6 +229,7 @@ const AGENT_RUNTIME_CLI_THROWS = new Set([
   "bootstrap requires --server and --join-token-file",
   "agent self-check failed: ${check.missingChecks.join(\",\")}",
   "agent is not initialized: ${configPath}",
+  "agent config is not valid JSON: ${configPath}（开头：${jsonHead(text)}）—— 重新跑一次安装命令即可重建",
   "public Agent Gateway requires HTTPS; set AIMAC_AGENT_ALLOW_INSECURE_HTTP=true only for isolated"
 ]);
 
@@ -12094,9 +12095,30 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
       + " retryableControlPlaneError, retryableAgentRequest, syncContentBundle, syncSkillWorkset,"
       + " applyPermissionResolution, mcpToolCall, prepareRepository,"
       + " syncContentBundleGitTransfer, writeArtifactManifest,"
-      + " ensureCleanWorktree, buildExecutionPrompt, runKnownModelCli};\n");
+      + " ensureCleanWorktree, buildExecutionPrompt, runKnownModelCli, jsonHead, syncJson};\n");
     const rt = await import(pathToFileURL(copy).href);
     const refusalOf = (fn) => { try { fn(); return null; } catch (error) { return String(error.message).split(":")[0]; } };
+
+    // ⓪ 下载回来的不是 JSON（中间有代理/登录页把响应换掉、或令牌失效回了一段文本）：
+    // 此前是裸 JSON.parse，抛出的是 "Unexpected token < in JSON at position 0" ——
+    // 那句会原样变成控制台上的「失败原因」，人无从判断是网络中间件还是服务端的问题。
+    // 判据只验【报文形状】：带码 + 带响应开头（jsonHead 是那段报文里唯一可单测的部分）。
+    if (rt.jsonHead("<html><body>Login</body></html>") !== "<html><body>Login</body></html>") {
+      output.push("agent 报文里的「响应开头」没取对 —— 那是判断'代理换了响应'唯一的线索");
+    }
+    if (rt.jsonHead("   \n  ") !== "（空）") {
+      output.push("空响应要如实说成「（空）」，否则报文里那一段是空白，读的人以为是渲染问题");
+    }
+    {
+      // 真跑一次：curl 支持 file://，喂它一段 HTML（正是代理/登录页会返回的东西）。
+      const htmlPath = join(mkdtempSync(join(tmpdir(), "aimac-notjson-")), "login.html");
+      writeFileSync(htmlPath, "<html><body>Please sign in</body></html>\n");
+      let said = "（没抛）";
+      try { rt.syncJson(`file://${htmlPath}`, "tok"); } catch (error) { said = String(error.message || error); }
+      if (!said.startsWith("skill_workset_response_not_json:") || !said.includes("<html>")) {
+        output.push(`技能集下载回非 JSON 时，报文要带码、并带上响应开头：实际「${said.slice(0, 120)}」`);
+      }
+    }
 
     // ① 派发包绑定：三道都要「缺了也算不匹配」。此前只有形状核对够得着。
     const contract = {contractDigest: "sha256:c1", roleSkill: {worksetId: "ws1"}};
