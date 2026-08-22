@@ -190,7 +190,7 @@ process.env.AIMAC_WIP_QUEUE_HEAD = "100000";
 // agent 侧失败码的覆盖棘轮。2026-08-22 起量：一开始 36 个码里 32 个【没有任何门/e2e 的源码提到过】——
 // 因为 runtime.mjs 不导出任何东西，长期被当成测不了。改用「复制一份 + 追加导出」之后一轮轮清到 14（不含只在变异表里出现过的那两个 —— 那不算断言）。
 // 只降不升：要摘牌就得写一条真的点名它的断言。
-const AGENT_RUNTIME_UNCOVERED_CEILING = 14;
+const AGENT_RUNTIME_UNCOVERED_CEILING = 12;
 // 构造上走不到的，登记在此并写明理由 —— 它们会一直挂在清单上，那是如实的，不要为它们编够不到的用例。
 const AGENT_RUNTIME_UNREACHABLE_CODES = {
   agent_control_plane_retry_exhausted:
@@ -11129,7 +11129,8 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
     writeFileSync(copy, `${source}\nexport {isSafeCloneUrl, assertAllowedPaths, verifyPackageBinding,`
       + " verifySkillFiles, classifyPushPermissionDenial, inside,"
       + " retryableControlPlaneError, retryableAgentRequest, syncContentBundle, syncSkillWorkset,"
-      + " applyPermissionResolution, mcpToolCall, prepareRepository};\n");
+      + " applyPermissionResolution, mcpToolCall, prepareRepository,"
+      + " syncContentBundleGitTransfer, writeArtifactManifest};\n");
     const rt = await import(pathToFileURL(copy).href);
     const refusalOf = (fn) => { try { fn(); return null; } catch (error) { return String(error.message).split(":")[0]; } };
 
@@ -11473,12 +11474,64 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
       }
     }
 
+    // ⑫ 内容包的 git 传输：控制面可以让 agent 去另一个仓库取内容。地址与引用名都是外部输入，
+    // 而它们最终会拼进 git 命令行 —— 这两道此前零覆盖。
+    {
+      const transferDir = join(dir, "bundle-transfer");
+      mkdirSync(transferDir, {recursive: true});
+      const transferRefusal = (transfer) => {
+        try { rt.syncContentBundleGitTransfer({}, {gitTransfer: transfer}, transferDir); return null; }
+        catch (error) { return String(error.message).split(":")[0]; }
+      };
+      const transferCases = [
+        ["没开传输", {enabled: false, repositoryUrl: "https://x/y.git"}, null],
+        ["地址还是占位的", {enabled: true, repositoryUrl: "git:unknown"}, null],
+        ["地址能跑任意命令", {enabled: true, repositoryUrl: "ext::sh -c whoami"},
+          "content_bundle_git_transfer_unsafe_repository_url"],
+        ["地址以横杠开头（会被 git 当参数）", {enabled: true, repositoryUrl: "--upload-pack=touch /tmp/x"},
+          "content_bundle_git_transfer_unsafe_repository_url"],
+        ["引用名以横杠开头", {enabled: true, repositoryUrl: "https://x/y.git", ref: "--exec=whoami"},
+          "content_bundle_git_transfer_unsafe_ref"],
+        ["引用名里有 ..", {enabled: true, repositoryUrl: "https://x/y.git", ref: "main/../etc"},
+          "content_bundle_git_transfer_unsafe_ref"],
+        ["引用名里有空格", {enabled: true, repositoryUrl: "https://x/y.git", ref: "main branch"},
+          "content_bundle_git_transfer_unsafe_ref"]
+      ];
+      for (const [what, transfer, expected] of transferCases) {
+        const got = transferRefusal(transfer);
+        if (got !== expected) {
+          output.push(`内容包 git 传输：${what}时拿到的是 ${got || "放行"}（应为 ${expected || "放行"}）—— `
+            + "这两个值最终会拼进 agent 机器上的 git 命令行");
+        }
+      }
+    }
+
+    // ⑬ 产出清单的落点必须在仓库内：清单路径由派发给出，写到仓库外面就是往人家机器上乱写。
+    {
+      const repoDir = join(dir, "manifest-repo");
+      mkdirSync(repoDir, {recursive: true});
+      const manifestRefusal = (manifestPath) => {
+        try {
+          rt.writeArtifactManifest(repoDir, manifestPath, {dispatch: {dispatchId: "d1"},
+            taskContract: {projectId: "p1", taskGroupId: "tg1", workId: "w1", sessionId: "s1", runId: "r1"},
+            repositoryOutputTarget: {targetId: "t1"}}, [], {});
+          return null;
+        } catch (error) { return String(error.message).split(":")[0]; }
+      };
+      if (manifestRefusal("../../outside.json") !== "artifact_manifest_path_escapes_repository") {
+        output.push("产出清单的路径爬到仓库之外却没被拦下 —— 清单路径来自派发，等于让控制面往 agent 机器上任意写");
+      }
+      if (manifestRefusal("docs/manifest.json") !== null) {
+        output.push("仓库内的正常清单路径被拒了 —— 上面那条测的就不是越界了");
+      }
+    }
+
     console.log(`agent 侧守卫真跑一遍（导出的是副本、出厂那份没动）：派发包绑定 ${bindingCases.length} 例、`
       + `产出路径 ${pathCases.length} 例、克隆地址 ${urlCases.length} 例、技能文件 3 例、`
       + `推送被拒分类 ${denialCases.length} 例、重试判定 ${retryCases.length} 例、`
       + "内容包 6 例（含「上一轮的文件必须先清掉」）、技能集 5 例、"
       + "§8 处置表 7 例（含「认不出的状态不许当成批准」）、控制面 MCP 调用 3 例、"
-      + "仓库准备 4 例（含「机器上那份仓库指向别处」）");
+      + "仓库准备 4 例（含「机器上那份仓库指向别处」）、内容包 git 传输 7 例、产出清单落点 2 例");
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }

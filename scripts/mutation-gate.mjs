@@ -3636,6 +3636,22 @@ const MUTATIONS = [
     expect: "实际还有 tgDetail 这样的读取点"
   },
   {
+    name: "内容包 git 引用名必须先判安全",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: 'if (ref.startsWith("-") || ref.includes("..") || /[\\s^~:?*[\\\\]/u.test(ref)) {',
+    to: "if (false) {",
+    expect: "引用名以横杠开头时拿到的是"
+  },
+  {
+    name: "产出清单不得写到仓库之外",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: 'if (!inside(repositoryRoot, target)) throw new Error("artifact_manifest_path_escapes_repository',
+    to: 'if (false) throw new Error("artifact_manifest_path_escapes_repository',
+    expect: "产出清单的路径爬到仓库之外却没被拦下"
+  },
+  {
     name: "语言标签读错字段会静默回落成中文",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
