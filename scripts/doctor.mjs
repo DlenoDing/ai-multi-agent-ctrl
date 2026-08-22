@@ -611,13 +611,17 @@ try {
       throw new Error("view=tasks 没有带 taskGroupPermissions —— 控制台只能退回跨资源的并集，"
         + "「待你处理」会把别人负责的任务组也算进来");
     }
-    const missing = groups.filter((group) => !Array.isArray(perms[group.id]));
-    if (missing.length) {
-      throw new Error(`view=tasks 里有 ${missing.length} 个任务组没有对应的权限项 —— `
-        + "控制台对它们会退回并集，那几组的待办数仍然是错的");
+    // 编码是「默认集 + 只列例外」：与默认集相同的组【不列出来】（系统账号每组重复四个权限串，
+    // 80 组要 8.4 KB，占那份载荷的 10%）。所以这里核的是：默认集在、且每一组都能解出权限来。
+    const fallback = tasksView.payload?.taskGroupPermissionsDefault;
+    if (!Array.isArray(fallback)) {
+      throw new Error("view=tasks 没有带 taskGroupPermissionsDefault —— 没列出来的那些组，"
+        + "控制台会退回跨资源的并集");
     }
-    if (groups.length && !groups.some((group) => (perms[group.id] || []).includes("task_group:review"))) {
-      throw new Error("系统账号在所有任务组上都没有 task_group:review —— 这份权限映射多半算错了");
+    const resolvedFor = (group) => (Array.isArray(perms[group.id]) ? perms[group.id] : fallback);
+    if (groups.length && !groups.some((group) => resolvedFor(group).includes("task_group:review"))) {
+      throw new Error(`系统账号在所有任务组上都解不出 task_group:review（默认集 ${JSON.stringify(fallback)}）—— `
+        + "这份权限映射多半算错了");
     }
   }
   // 技能源那一页显示「每个源提供了多少角色技能」。roleSkills 本身不再下发（281 条 293KB，

@@ -270,6 +270,11 @@ const CONFIRMS_WORDED_HARD_BUT_NOT_DANGEROUS = {};
 // 真实部署里合计 309 KB（roleSkills 一项就 293 KB，占整份状态的 73%）。
 // 它们各有专用端点按需取，不依赖主视图。登记在这里是为了：将来谁把某一个接回界面，
 // 这条判据会当场要求把它从清空名单里挪走 —— 而不是让它继续白传。
+// 视图基底是【每个视图、每次轮询】都带的那一份。这几块只有某一页读，放进基底就是每次白传。
+const BASE_MUST_NOT_CARRY = {
+  modelCapabilities: "实测 15.8 KB，只有系统设置页读；它已列在 runtime 视图里，那正是那一页取的视图"
+};
+
 const VIEW_OMITTED_UNREAD_COLLECTIONS = {
   roleSkills: "技能源那一页只取按来源分组的计数（roleSkillCountBySource）",
   modelSelectionPolicies: "模型那一页有专用端点 /api/model-selection",
@@ -12511,8 +12516,28 @@ function verifyViewDropsCollectionsNobodyReads(output) {
         + `要么把它接回视图（并说明为什么值得传），要么改走那条专用路径（${why}）`);
     }
   }
+  // 视图【基底】是每个视图、每次轮询都带的那一份。只有一页读的大块不该待在里面：
+  // modelCapabilities 实测 15.8 KB，而它只有系统设置页读 —— 待在基底里等于每次打开
+  // 任务组/监控/审核页都白传一遍（实测 tasks 视图 87 KB → 63 KB）。
+  const baseStart = server.indexOf("  const base = {");
+  let depth = 0;
+  let baseEnd = baseStart;
+  for (let index = baseStart; index < server.length; index += 1) {
+    if (server[index] === "{") depth += 1;
+    else if (server[index] === "}") { depth -= 1; if (!depth) { baseEnd = index; break; } }
+  }
+  const baseBlock = server.slice(baseStart, baseEnd + 1);
+  if (baseStart < 0 || baseBlock.length < 200) {
+    output.push("找不到视图基底的定义 —— 这条判据按它切分，找不到就等于没查");
+  } else {
+    for (const [field, why] of Object.entries(BASE_MUST_NOT_CARRY)) {
+      if (new RegExp(`^\\s{4}${field}:`, "mu").test(baseBlock)) {
+        output.push(`${field} 又被放回视图基底了（${why}）—— 基底是每个视图每次轮询都带的那一份`);
+      }
+    }
+  }
   console.log(`主视图瘦身：${Object.keys(VIEW_OMITTED_UNREAD_COLLECTIONS).length} 个"界面不读"的集合逐个核对，`
-    + "都没被带进主视图，界面也没有一处读它们");
+    + `都没被带进主视图，界面也没有一处读它们；另有 ${Object.keys(BASE_MUST_NOT_CARRY).length} 个"只有一页读的大块"不在视图基底里`);
 }
 
 function verifyConsoleDoesNotPullSkillBodies(output) {

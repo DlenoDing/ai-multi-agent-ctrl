@@ -1640,7 +1640,8 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     // 的任务组（实测 100 个项目时 235KB / 每 5 秒一次，而这一页只关心选中的那个）。
     // 同一个集合在一个视图里按项目切、在另一个视图里不切，是"有的有、有的没有"的又一例。
     taskGroups: projectTaskGroupsForView(sliceItems(scopeCollection(scoped.taskGroups), capped)),
-    modelCapabilities: sliceItems(scoped.modelCapabilities, capped),
+    // modelCapabilities 不进基底：只有系统设置那一页读它（实测 15.8 KB），而基底意味着
+    // 【每个视图、每次轮询】都带一遍。它现在只列在 runtime 视图里 —— 那正是那一页取的视图。
     agentRuntimeNodes: sliceItems(scopeCollection(scoped.agentRuntimeNodes), capped),
     // progressSnapshots 不进视图基底：控制台的进度数据走专用端点 /api/task-groups/:id/progress
     // 按需取，全站没有一处读 state.progressSnapshots。而单条快照把 repositoryOutputs 与 workItems
@@ -1672,7 +1673,7 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     users: ["accounts", "accessGrants", "projects", "agentJoinTokens"],
     projects: ["accounts", "accessGrants", "projects", "repositoryOutputs", "agentJoinTokens"],
     tasks: ["taskGroups", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "repositoryOutputs", "checkpoints", "closeBarriers", "humanConfirmationRequests", "humanDirectives", "permissionRequests", "approvalRequests", "findings", "qualityGates", "testResults", "reviewPlans", "sharedDefinitions", "reviewBundles", "ruleSourceResolutions", "systemUpgradeCandidates", "executionTopologies"],
-    runtime: ["modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions", "workerLanes", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkills", "roleSkillOverlays"],
+    runtime: ["modelCapabilities", "modelSelectionPolicies", "modelSelectionDecisions", "sessionPlacementDecisions", "admissionDecisions", "workerLanes", "workSessions", "agentDispatches", "agentControlCommands", "agentExecutionEvents", "agentJoinTokens", "skillSources", "roleSkillOverlays"],
     // effectiveInstructionPackets / roleDriftGuards 控制台一处都没读（实测这一视图 608KB 里
     // 它们占 303KB）。需要时可从 view=full 或专用接口取，不该让每次打开这一页都付这笔钱。
     instructions: ["instructionMetrics", "sharedDefinitions"],
@@ -1716,17 +1717,24 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
   // 这里按任务组把真实权限算出来给界面。口径不在这儿重写一遍 —— 仍旧调后端那份 hasPermission。
   if (view === "tasks") {
     const consolePermissions = ["task_group:read", "task_group:review", "task_group:control", "task_group:orchestrate"];
+    // 编码成「默认集 + 只列例外」：系统账号/项目所有者在每一组上都是全权限，逐组重复四个串
+    // 在 80 组时就要 8.4 KB（占这一份载荷的 10%），而它每次轮询都要传一遍。
     const taskGroupPermissions = {};
+    const fullSet = isSystemAccount(account) ? consolePermissions : null;
     for (const taskGroup of base.taskGroups || []) {
       const project = (state.projects || []).find((item) => item.id === taskGroup.projectId);
       // 项目所有者这一条不在 hasPermission 里（canReadTaskGroup 也是单独判的），照它的写法来。
       const owns = project?.ownerAccountId === account.accountId;
-      taskGroupPermissions[taskGroup.id] = isSystemAccount(account) || owns
+      const granted = isSystemAccount(account) || owns
         ? consolePermissions
         : consolePermissions.filter((permission) => hasPermission(state, account.accountId, permission,
           {resourceType: "task_group", resourceId: taskGroup.id, projectId: taskGroup.projectId}));
+      // 与默认集一致的不列出来 —— 界面拿不到条目时按默认集判（见 hasGroupPerm）。
+      if (fullSet && granted.length === fullSet.length) continue;
+      taskGroupPermissions[taskGroup.id] = granted;
     }
     base.taskGroupPermissions = taskGroupPermissions;
+    base.taskGroupPermissionsDefault = fullSet || [];
   }
   if (view === "runtime") {
     const roleSkillCountBySource = {};

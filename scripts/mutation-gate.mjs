@@ -3628,11 +3628,19 @@ const MUTATIONS = [
     expect: "别人那段也有"
   },
   {
+    name: "只有一页读的大块不许放回视图基底",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyViewDropsCollectionsNobodyReads",
+    from: "    // modelCapabilities 不进基底：只有系统设置那一页读它（实测 15.8 KB），而基底意味着",
+    to: "    modelCapabilities: sliceItems(scoped.modelCapabilities, capped),\n    // modelCapabilities 不进基底：只有系统设置那一页读它（实测 15.8 KB），而基底意味着",
+    expect: "又被放回视图基底了"
+  },
+  {
     name: "「待你处理」必须按任务组判权而不是并集",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "  if (!map || !taskGroupId || !map[taskGroupId]) return hasPerm(perm);",
-    to: "  return hasPerm(perm);",
+    from: "  const granted = map[taskGroupId] || state.taskGroupPermissionsDefault;",
+    to: "  const granted = null;",
     expect: "只算你在【那个任务组】上真有权处置的"
   },
   {

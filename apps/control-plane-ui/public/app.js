@@ -402,8 +402,11 @@ async function copyText(text) {
 // 那时宁可多显示一个按钮，也不要把人自己的活藏起来。
 function hasGroupPerm(taskGroupId, perm) {
   const map = state.taskGroupPermissions;
-  if (!map || !taskGroupId || !map[taskGroupId]) return hasPerm(perm);
-  const granted = map[taskGroupId];
+  // 服务端只列【与默认集不同】的那些组（系统账号在每组上都是全权限，逐组重复要 8.4KB）。
+  // 拿不到整份映射时才退回并集；拿得到、但这一组没列出来 = 它就是默认集。
+  if (!map || !taskGroupId) return hasPerm(perm);
+  const granted = map[taskGroupId] || state.taskGroupPermissionsDefault;
+  if (!granted) return hasPerm(perm);
   return granted.includes(perm) || granted.includes(`${String(perm).split(":")[0]}:*`);
 }
 
