@@ -7007,6 +7007,7 @@ export function roomSend(state, args) {
   // 序号在消息确定要落库之后才消费。若先占号再因超限拒绝，房间序列上就留下一个永久空洞，
   // 而 roomWait 只按 sequence > afterSequence 推进、读者无从察觉少了什么。
   const message = {
+    schemaVersion: "room-message/v1",
     messageId: args.messageId || createId("room_msg"),
     roomId,
     sequence: nextSequence,
@@ -7676,9 +7677,14 @@ function attestedArtifactDigest(args) {
 }
 
 export function artifactRegister(state, args) {
+  // 七个同族构造（权限申请/审批单/评审包/租约/执行拓扑/共享定义…）都有这道守卫，产出登记漏了。
+  // 同 id 注册两次会让"按 id 找那条产出"的读者只命中其中一条，另一条永远看不见 ——
+  // 而这个集合上恰好挂着「registered 但没有自证摘要就挡着关闭门」的判定。
+  assertUniqueRecordId(state.artifacts, "artifactId", args.artifactId, "artifact_id_conflict");
   const at = new Date().toISOString();
   const taskGroup = taskGroupForRecord(state, args);
   const artifact = {
+    schemaVersion: "artifact/v1",
     artifactId: args.artifactId || createId("artifact"),
     projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
     taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",

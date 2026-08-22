@@ -2459,14 +2459,18 @@ function verifyHumanAndOrganizationContracts(output) {
       ["approvalRequests", () => approvalRequestCreate(uniqState, {approvalId: "appr_dup", taskGroupId: "tg_runtime_management", action: "release", riskClass: "high", quorum: 3}), "approval_request_id_conflict"],
       // 评审包：同 id 注册两次会让 consume 的 find 只命中最新那份，旧副本永远停在 submitted
       // 挡着关闭门，且没有第二条杠杆能碰到它。
-      ["reviewBundles", () => reviewBundleRegister(uniqState, {reviewBundleId: "rvb_dup", taskGroupId: "tg_runtime_management", workItemId: "wi_x"}), "review_bundle_id_conflict"]
+      ["reviewBundles", () => reviewBundleRegister(uniqState, {reviewBundleId: "rvb_dup", taskGroupId: "tg_runtime_management", workItemId: "wi_x"}), "review_bundle_id_conflict"],
+      // 产出登记：这个集合上挂着「registered 但没有自证摘要就挡着关闭门」的判定，
+      // 同 id 两条会让按 id 找的读者只看见一条。七个同族都有守卫，就它漏了。
+      ["artifacts", () => artifactRegister(uniqState, {artifactId: "artifact_dup", taskGroupId: "tg_runtime_management", artifactManifestRef: "docs/artifact-manifests/x.json"}), "artifact_id_conflict"]
     ];
     for (const [label, create, expectedError] of uniqChecks) {
       create();
       let rejected = false;
       try { create(); } catch (error) { rejected = error.message === expectedError; }
       if (!rejected) output.push(`人工闸门: ${label} 允许重复 id（冒名记录可顶替人批准的那一份）`);
-      if ((uniqState[label] || []).filter((item) => String(item.requestId || item.approvalId || item.reviewBundleId).includes("_dup")).length !== 1) {
+      const dupIdOf = (item) => String(item.requestId || item.approvalId || item.reviewBundleId || item.artifactId || "");
+      if ((uniqState[label] || []).filter((item) => dupIdOf(item).includes("_dup")).length !== 1) {
         output.push(`人工闸门: ${label} 里出现了同 id 的多条记录`);
       }
     }
@@ -16482,6 +16486,10 @@ function verifyEveryProjectScopedIdIsScopeChecked(output) {
     roleId: "角色名，不是记录 id（同一个 roleId 在每个任务组里都存在）",
     runId: "派发的运行序号，必须与 sessionId 配对才能定位；sessionId 已在清单里",
     repositoryId: "RepositoryOutputTarget 的属性（哪个仓库），定位目标用的是 targetId，已在清单里",
+    // 2026-08-23 补 spec/artifact.schema.json 时被点名。追下去：artifactId 只用作【新建时
+    // 调用方自选的 id】，全仓没有任何地方拿它去定位既有产出（读者按 workItemId 找）。
+    // 顺带发现它缺唯一性守卫（七个同族都有），已补 artifact_id_conflict。
+    artifactId: "新建产出时调用方自选的 id，不用来定位既有对象；重复 id 由 artifact_id_conflict 拦",
     // 2026-08-23 补 spec/permission-request.schema.json 时被这道扫描点名。追下去：subjectId 是
     // 授权申请的【主体】（谁要权限），不是被操作的对象地址 —— 请求本身落在调用方自己的
     // taskGroupId 作用域内（那个键受守卫），而"主体在甲组织、资源在乙组织"由铸造点的

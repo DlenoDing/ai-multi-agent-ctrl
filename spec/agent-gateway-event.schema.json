@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/agent-gateway-event.schema.json",
+  "title": "AgentGatewayEvent",
+  "description": "agent 网关自己的运行留痕（命令入队、心跳异常、吊销等）。它没有生命周期，只是一条条追加的事件；排障时人靠它还原「那一刻网关做了什么」。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "eventId", "eventType", "subjectId", "payload", "createdAt"],
+  "properties": {
+    "schemaVersion": {"const": "agent-gateway-event/v1"},
+    "eventId": {"type": "string", "pattern": "^age_"},
+    "eventType": {"type": "string", "minLength": 1},
+    "subjectId": {"type": "string", "minLength": 1, "description": "这条事件说的是哪个对象（节点、派发、命令…）。"},
+    "payload": {"type": "object"},
+    "createdAt": {"type": "string", "format": "date-time"}
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/room-message.schema.json",
+  "title": "RoomMessage",
+  "description": "协作室里的一条消息。署名（senderRef）由服务端从【已认证主体】派生，绝不取调用方入参 —— 报文里的 senderRef 会被直接拒绝，而不是悄悄忽略（悄悄忽略会让调用方以为自己署上了名）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "messageId", "roomId", "sequence", "senderRef", "payload", "payloadDigest", "status", "createdAt"],
+  "properties": {
+    "schemaVersion": {"const": "room-message/v1"},
+    "messageId": {"type": "string", "pattern": "^room_msg_"},
+    "roomId": {"type": "string", "minLength": 1},
+    "sequence": {"type": "integer", "minimum": 1},
+    "senderRef": {
+      "type": "string",
+      "pattern": "^(account:[^:\\s]+|agent_node:[^:\\s]+|unattributed)$",
+      "description": "只有三种形状：account:<id> / agent_node:<id> / unattributed。这条 pattern 顺带挡住 \"account:undefined\" —— 那是账号 id 没取到时插值拼出来的，长得像正常署名（2026-08-23 实测每一条真人发的消息都是它）。身份不明要如实写 unattributed。"
+    },
+    "payload": {"type": "object"},
+    "payloadDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "status": {"enum": ["created", "persisted", "delivered", "dlq"]},
+    "createdAt": {"type": "string", "format": "date-time"}
+  }
+}

@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/artifact.schema.json",
+  "title": "Artifact",
+  "description": "一次产出登记。要紧的是别把「登记过」当成「验证过」：证据内容从不上传到控制面（那是日志/截图/数据库转储，全系统最敏感的一类数据），所以控制面【无法】核验摘要与内容是否相符。contentDigestAttested 的真实含义只是「执行方声明了一个摘要，且它与给出的定位符自洽」。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "artifactId",
+    "projectId",
+    "taskGroupId",
+    "outputRefs",
+    "contentDigestAttested",
+    "requestDigest",
+    "status",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "artifact/v1"
+    },
+    "artifactId": {
+      "type": "string",
+      "pattern": "^artifact"
+    },
+    "projectId": {
+      "type": "string",
+      "pattern": "^prj"
+    },
+    "taskGroupId": {
+      "type": "string",
+      "pattern": "^tg"
+    },
+    "artifactManifestRef": {
+      "type": "string",
+      "minLength": 1,
+      "description": "仓库产出的清单路径。证据类产出（日志/截图/HAR…）没有它 —— 那类的身份是 outputRefs 里的 artifact:// 定位符。所以不强求它在，但下面要求两者至少有一个。"
+    },
+    "outputRefs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "contentDigest": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "contentDigestAttested": {
+      "type": "boolean"
+    },
+    "requestDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "【请求参数】的哈希 —— 与文件内容毫无关系。它不能被当成内容证据。"
+    },
+    "status": {
+      "enum": [
+        "prepared",
+        "uploaded",
+        "redacted",
+        "verified",
+        "registered",
+        "rejected",
+        "gc"
+      ]
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "contentDigestAttested": {
+            "const": true
+          }
+        },
+        "required": [
+          "contentDigestAttested"
+        ]
+      },
+      "then": {
+        "required": [
+          "contentDigest"
+        ],
+        "properties": {
+          "contentDigest": {
+            "type": "string"
+          }
+        },
+        "description": "声称有自证摘要，就必须真的带着那个摘要 —— 否则这条「已按摘要登记」的记录什么都没证明。"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "contentDigestAttested": {
+            "const": false
+          }
+        },
+        "required": [
+          "contentDigestAttested"
+        ]
+      },
+      "then": {
+        "properties": {
+          "contentDigest": {
+            "type": "null"
+          }
+        },
+        "description": "反向也要钉住：没有自证摘要时不许留一个看起来像摘要的值在那里。"
+      }
+    },
+    {
+      "anyOf": [
+        {
+          "required": [
+            "artifactManifestRef"
+          ],
+          "properties": {
+            "artifactManifestRef": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "properties": {
+            "outputRefs": {
+              "type": "array",
+              "minItems": 1
+            }
+          },
+          "required": [
+            "outputRefs"
+          ]
+        }
+      ],
+      "description": "清单引用与产出定位符【至少要有一个】：两个都没有的话，这条登记根本没说产出了什么，却照样算作一次产出。"
+    }
+  ]
+}

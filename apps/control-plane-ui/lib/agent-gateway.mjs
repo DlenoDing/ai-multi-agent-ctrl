@@ -1902,7 +1902,7 @@ function publicJoinToken(record) {
 }
 
 function appendGatewayEvent(state, eventType, subjectId, payload) {
-  state.agentGatewayEvents.unshift({eventId: createId("age"), eventType, subjectId, payload, createdAt: new Date().toISOString()});
+  state.agentGatewayEvents.unshift({schemaVersion: "agent-gateway-event/v1", eventId: createId("age"), eventType, subjectId, payload, createdAt: new Date().toISOString()});
   state.agentGatewayEvents = state.agentGatewayEvents.slice(0, 1000);
 }
 

@@ -3993,6 +3993,16 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 产出登记里最要紧的一条：别把「登记过」当成「验证过」。声称有自证摘要
+    // （contentDigestAttested:true）就必须真的带着那个摘要，否则这条记录什么都没证明。
+    name: "声称有自证摘要就必须真的带着摘要",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: "    contentDigest: attestedArtifactDigest(args),\n    contentDigestAttested: Boolean(attestedArtifactDigest(args)),",
+    to: "    contentDigest: attestedArtifactDigest(args),\n    contentDigestAttested: true,",
+    expect: "contentDigest expected string"
+  },
+  {
     // 「把 undefined 拼进字符串」这一族：得到的不是空、不是报错，而是一个长得很正常的值。
     // 检查点的改动证据原先就是 "git-diff:<base>:undefined" —— 校验函数没把 finalCommit 带出来。
     name: "证据串里不许拼进 undefined",
@@ -4318,8 +4328,8 @@ const MUTATIONS = [
     name: "不受规范约束的集合数要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "doctor",
-    from: '"控制面 e2e 产出": 3,',
-    to: '"控制面 e2e 产出": 2,',
+    from: '"控制面 e2e 产出": 0,',
+    to: '"控制面 e2e 产出": 1,',
     // 期望要挑【这道门自己会打印的那一句】：控制面 e2e 的前缀是"控制面 e2e 产出："，
     // 契约门那两处（种子/编排产出）用的是别的前缀 —— 只写公共部分会被判成"挂错了门"。
     expect: "控制面 e2e 产出：不受规范约束的集合"
@@ -4331,7 +4341,7 @@ const MUTATIONS = [
     name: "远程 agent 那侧的规范覆盖也要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "agent",
-    from: '"远程 agent e2e 产出": 2,',
+    from: '"远程 agent e2e 产出": 0,',
     to: '"远程 agent e2e 产出": 1,',
     expect: "远程 agent e2e 产出：不受规范约束的集合"
   },
