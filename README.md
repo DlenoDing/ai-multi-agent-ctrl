@@ -118,6 +118,28 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 
 常规 Agent Runtime 必须具备选中模型 provider 的凭证。Runtime 会优先调用已探测到的 Codex、Claude 或 Gemini CLI，也可在安装时用 `--executor-command` 绑定其他模型/Agent 适配器；executor 接收 task contract、有效指令包、远程 MCP 和 Skill 工作集路径。`AIMAC_EXECUTION_PROFILE=verification` 才能使用服务器内的确定性验证 worker；生产 profile 永远由远程注册节点执行，缺少模型适配器或凭证时只能上报失败，不能在服务器伪造完成。
 
+## 会放宽默认限制的开关
+
+下面这些环境变量【降低】默认的安全/隔离强度。默认全都不开；审计一套部署时，先看这几个。
+每一条的判定都在代码里，不是文档里的约定 —— 下面写的就是那处判定在做什么。
+
+| 开关 | 不设时（默认） | 设了之后 |
+| --- | --- | --- |
+| `AIMAC_ALLOW_INSECURE_PUBLIC_URL=true` | 非本机的公开地址必须是 HTTPS，否则启动就拒 | 允许用明文 HTTP 作为公开地址 |
+| `AIMAC_AGENT_ALLOW_INSECURE_HTTP=true` | agent 连非本机网关必须走 HTTPS | 允许 agent 用明文 HTTP 连网关 |
+| `AIMAC_ALLOW_INSECURE_REMOTE_MCP=true` | 生成 MCP 客户端配置时，非本机地址必须 HTTPS | 允许把明文 HTTP 的 MCP 地址写进客户端配置 |
+| `AIMAC_MCP_ALLOW_FULL_STATE=true` | MCP 的 `scope=full` 一律拒（连租户内也拒：整份转储远超 agent 所需） | 允许经 MCP 取回整份（脱敏后的）状态 |
+| `AIMAC_ALLOW_LOCAL_DETERMINISTIC_WORKER=true` | 请求里的 `allowDeterministicLocalWorker` 无效 | 允许用本地确定性工作器代替真实 agent 执行 |
+| `AIMAC_PROJECT_EVENT_ALLOW_FULL_KEY_SCAN=true` | 事件索引取不到键时不做全量扫描（避免大目录上的长停顿） | 允许全量扫描键空间 |
+| `AIMAC_ALLOWED_PUBLIC_HOSTS=a,b` | 只接受本机 Host 头 | 额外接受列出的这些 Host |
+
+反方向的一个（**收紧**，不是放宽，列在这里是免得有人以为它和上面同族）：
+
+| 开关 | 作用 |
+| --- | --- |
+| `AIMAC_ALLOW_LOCAL_GIT_REMOTE=false` | 默认允许 `file://` 与本地路径作为仓库地址（本地部署与自检要用）。多租户托管部署应当设成 `false`：否则租户自填的 repositoryUrl 能让共享宿主去 fetch 宿主上的任意本地仓库 |
+| `AIMAC_MCP_SERVICE_ALLOWED_TOOLS=...` | 收窄服务令牌能调的 MCP 工具集 |
+
 ## 出事的时候它怎么说话
 
 这些是运维真会碰到、且【不看文档就会误判】的几条：

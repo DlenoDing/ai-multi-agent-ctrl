@@ -2,6 +2,7 @@
 import {
 execFileSync, spawn, spawnSync } from "node:child_process";
 import { SCHEMA_FILE_ALIASES, UNCOVERED_CEILINGS, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
+import { OPERATOR_CLIS, OPERATOR_SHELL_ENTRIES, OPERATOR_ENTRY_FILES, ENV_READING_SUPPORT_FILES } from "./lib/operator-entries.mjs";
 import { checkRecordStatusesAreDeclaredStates, extractMachineStates } from "./lib/state-machine-states.mjs";
 import { mcpServiceAllowedTools ,
   mcpServiceAllowlistNotice
@@ -445,6 +446,7 @@ run(verifyEveryStateCollectionIsSchemaChecked);
 run(verifyCallerChosenIdsHaveUniquenessGuards);
 run(verifyRecordSpecsHaveProducers);
 run(verifyAgentInstallerFlagsMatchTheDocs);
+run(verifySecurityRelaxingSwitchesAreListed);
 run(verifyEveryProjectScopedIdIsScopeChecked);
 run(verifyEveryStateCollectionIsTenantScoped);
 run(verifyExpiredConfirmationRetargetsTheWorkItem);
@@ -10171,13 +10173,9 @@ function verifyMcpDoesNotReimplementCore(output) {
 function verifyOperatorCliRejectsUnknownFlags(output) {
   // 这一类必须按【入口】枚举，不能按文件挑：参数名打错的洞在每个接受"名字-取值"的入口上
   // 各长一遍，而按取值扫描的判据（body.X === true 那一类）完全看不见它。
-  const OPERATOR_CLIS = {
-    "scripts/agentctl.mjs": "运维接机器时敲的命令行",
-    "scripts/init-control-plane.mjs": "npm run init（--check 打错会真的去初始化）",
-    "scripts/sync-agent-skills.mjs": "npm run skills:sync（--source 打错会同步默认源）",
-    "scripts/register-mcp-client.mjs": "生成 MCP 客户端配置（--apply 打错会静默空跑）",
-    "scripts/backup-runtime.mjs": "npm run backup（参数打错会把备份写到一个叫 --xxx 的目录里）"
-  };
+  // 清单收在 lib/operator-entries.mjs：它此前与环境旋钮那道门各写一份，
+  // 后者手写的三个漏掉了 register-mcp-client.mjs，于是那里读的开关被报成「代码里一处都没有」。
+
   // 读 argv 但不属于运维入口的，登记原因，否则下面的完整性扫描会把它们点名。
   const NOT_OPERATOR_CLIS = {
     "scripts/mutation-gate.mjs": "验证代码（--anchors-only 只给门链自己用）",
@@ -10202,11 +10200,8 @@ function verifyOperatorCliRejectsUnknownFlags(output) {
   // 门会把自己写的字当成数据吃进去（本仓第四次撞这个形状）。其余验证脚本走 NOT_OPERATOR_CLIS 登记。
   // shell 入口同理：人在命令行上敲的是哪种脚本，跟这个洞长不长没有关系。
   // 只有明确是"参数原样透传给别的命令"的才免检，且必须写明透传给谁。
-  const SHELL_ENTRIES = {
-    "scripts/install-agent.sh": {rejects: true, why: "新机器上 curl | sh 装 agent"},
-    "scripts/start.sh": {rejects: true, why: "本地起控制面"},
-    "scripts/docker-up.sh": {rejects: false, why: "参数原样透传给 docker compose up --build"}
-  };
+  const SHELL_ENTRIES = OPERATOR_SHELL_ENTRIES;
+
   // `--help` 是任何人敲的第一件事。六个运维入口此前都把它当成【打错的参数】拒掉：
   // 非零退出、报错口吻，而该说的内容本来就在那段拒绝文案里。同样的话，问的时候就该给。
   // 判据只看形状：入口里要有 `--help` 这个分支（六处现在都有）。
@@ -13210,10 +13205,12 @@ function verifyDocumentedEnvVarsAreRealKnobs(output) {
   // （设置环境、写在注释里），算进来的话产品那侧把旋钮改了名照样绿（门读到自己人写的字，
   // 本仓的老形状；这一条我在写它的时候又撞了一次）。
   walk(join(root, "apps"));
-  for (const name of ["init-control-plane.mjs", "sync-agent-skills.mjs", "run-with-env.mjs"]) {
-    const full = join(root, "scripts", name);
+  // 扫描面取自【运维入口的唯一清单】，不再手写：手写那三个漏掉了 register-mcp-client.mjs，
+  // 于是它里面读的 AIMAC_ALLOW_INSECURE_REMOTE_MCP 被这道门报成"代码里一处都没有"（一句假话）。
+  for (const relative of [...OPERATOR_ENTRY_FILES, ...ENV_READING_SUPPORT_FILES]) {
+    const full = join(root, relative);
     if (!existsSync(full)) {
-      output.push(`产品脚本 ${name} 不见了 —— 这条判据的扫描面漂了，它会把那里读的旋钮全报成幽灵`);
+      output.push(`运维入口 ${relative} 不见了 —— 这条判据的扫描面漂了，它会把那里读的旋钮全报成幽灵`);
       continue;
     }
     sources.push(readFileSync(full, "utf8"));
@@ -16579,6 +16576,35 @@ function verifyEveryProjectScopedIdIsScopeChecked(output) {
 //  · 脚本收的参数必须被文档写到 —— 否则是"杠杆存在但人找不到"。
 // 后者当天就抓到真的：--executor-command 与 --roles 一字未提，而"节点没有可用模型执行器"
 // 正是控制台上一条真实的阻塞原因，运维照文档装完根本不知道还有这个开关。
+// 「会放宽默认限制的开关」必须有一张清单。发现性不是问题（这类开关大多在被挡住的那一刻
+// 就把自己写进报文了），问题在**审计一套部署的人**：他需要先知道有哪些开关可能被打开过。
+// 2026-08-23 一扫：9 个这样的开关里 8 个文档一字未提。
+function verifySecurityRelaxingSwitchesAreListed(output) {
+  const files = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/project-event-store.mjs",
+    "apps/mcp-server/server.mjs", "apps/agent-runtime/runtime.mjs",
+    "scripts/install-agent.sh", "scripts/register-mcp-client.mjs"];
+  const readme = readFileSync(resolve(root, "README.md"), "utf8");
+  const found = new Set();
+  for (const file of files) {
+    const text = readFileSync(resolve(root, file), "utf8");
+    for (const hit of text.matchAll(/\bAIMAC_[A-Z0-9_]*(?:ALLOW|INSECURE|UNSAFE)[A-Z0-9_]*\b/gu)) found.add(hit[0]);
+  }
+  if (found.size < 7) {
+    output.push(`放宽开关核对：只扫到 ${found.size} 个（实测 9）—— 提取失配，本条在空转`);
+    return;
+  }
+  // 用 includes 比会被【子串吞并】：把表里的名字改成 AIMAC_X_RENAMED，includes("AIMAC_X") 仍为真，
+  // 门绿着过去（本仓的老形状，这道新门第一版就踩了）。按同一条正则从 README 提名字再比集合。
+  const listed = new Set([...readme.matchAll(/\bAIMAC_[A-Z0-9_]+\b/gu)].map((hit) => hit[0]));
+  const missing = [...found].filter((name) => !listed.has(name)).sort();
+  if (missing.length) {
+    output.push(`放宽开关核对：这些开关会改变默认的安全/隔离强度，而 README 的「会放宽默认限制的开关」`
+      + `一节没有列出它们：${missing.join("、")} —— 审计一套部署的人无从知道该查什么`);
+  }
+  console.log(`放宽开关核对：${found.size} 个会改变默认强度的开关逐个核过，都在 README 的清单里`);
+}
+
 function verifyAgentInstallerFlagsMatchTheDocs(output) {
   // 有意不写进文档的参数要登记（写明为什么不写）。
   const UNDOCUMENTED_ON_PURPOSE = {};

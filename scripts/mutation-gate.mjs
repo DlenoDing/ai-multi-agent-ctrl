@@ -4004,6 +4004,16 @@ const MUTATIONS = [
     expect: "出口要说清装什么"
   },
   {
+    // 会放宽默认安全强度的开关必须有清单：审计一套部署的人得先知道该查什么。
+    // 从 README 那张表里拿掉一条，门就该点名它。
+    name: "放宽默认限制的开关必须在 README 的清单里",
+    file: "README.md",
+    check: "verifySecurityRelaxingSwitchesAreListed",
+    from: "| `AIMAC_MCP_ALLOW_FULL_STATE=true` |",
+    to: "| `AIMAC_MCP_ALLOW_FULL_STATE_RENAMED=true` |",
+    expect: "AIMAC_MCP_ALLOW_FULL_STATE"
+  },
+  {
     // 七个运维入口此前都把 --help 当成打错的参数拒掉（非零退出、报错口吻），
     // 而认得的参数就写在那段拒绝文案里。拿掉任一处的 --help 分支都要红。
     name: "运维入口必须答得上 --help",
