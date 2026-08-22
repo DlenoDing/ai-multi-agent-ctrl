@@ -61,6 +61,7 @@
     org_member_invitation_pending: "该成员尚未接受邀请，不能启用；请重新发出邀请或让对方先用一次性令牌登录",
     task_contract_expired: "任务契约已过期：没有节点在有效期内领取这次派发，多半是节点未接入或角色不匹配",
     task_contract_missing: "找不到对应的任务契约：该派发已失去依据，通常发生在任务组配置被改动之后",
+    instruction_envelope_task_group_required: "创建指令信封必须点名是哪个任务组的",
     work_item_owner_role_required: "指派必须点名负责角色",
     work_item_owner_role_not_registered: "填写的负责角色未在本任务组登记：先在任务组里加上这个角色，或改选已登记的角色",
     idempotent_result_expired: "这次写入早已完成，但它的结果已过可重放期；请刷新页面查看当前状态，不要重复提交",

@@ -330,6 +330,9 @@ const organizationSchema = loadJson("spec/organization.schema.json");
 // 落盘 —— 不设它的话，每跑一次门就往【开发者真实的 .runtime】里重建一次技能索引。
 // 那既是弄脏别人的状态，更要紧的是让门的结果依赖那份 git 克隆在不在：同一份代码在不同机器上
 // 可能走不同分支。指到临时目录，让这道门只依赖它自己造的东西。
+// 2026-08-22：环境变量指过来了，而【显式传 runtimeDir 的那 11 处】还指着开发机的 .runtime ——
+// 一半接上、一半没接。后果在完整变异门里现形：worktree 里没有那个目录，同一条判据在那里的行为
+// 与本机不同，报出来是"失败了但不是因为预期断言"，读的人会去查一个不存在的守卫问题。
 // 自查用：跑之前先记下开发者真实运行态的指纹。这道门自己就犯过——探针以为在用自造的 state，
 // 实际写进了真实 .runtime，于是第二次跑会撞上自己上一次的残留，绿得毫无意义。
 const developerStatePath = resolve(root, ".runtime", "control-plane-state.json");
@@ -4519,7 +4522,7 @@ function verifyHumanAndOrganizationContracts(output) {
       taskGroupId: "tg_runtime_management", sessionId: "sess_miss", runId: "run_miss", updatedAt: new Date().toISOString()}];
     missState.agentTaskContracts = [{sessionId: "sess_miss", runId: "run_miss", roleId: "reviewer",
       model: {providerClass: "openai"}, expiresAt: new Date(Date.now() + 3600000).toISOString()}];
-    claimNextDispatch(missState, missNode, {runtimeDir: join(root, ".runtime"), claimTtlSeconds: 300});
+    claimNextDispatch(missState, missNode, {runtimeDir: probeRuntimeDir, claimTtlSeconds: 300});
     const roleReason = (missNode.lastClaimMiss?.reasons || [])[0];
     if (roleReason?.reason !== "role_not_allowed_on_node" || roleReason?.requiredRole !== "reviewer") {
       output.push(`a node that cannot claim because of its role range recorded ${JSON.stringify(roleReason)} — the console cannot tell this apart from a model mismatch, and the person has no way to find out`);
@@ -4527,7 +4530,7 @@ function verifyHumanAndOrganizationContracts(output) {
     // 换成角色匹配、模型不匹配：必须报出另一种原因，而不是同一句。
     missState.agentTaskContracts[0].roleId = "orchestrator";
     missState.agentTaskContracts[0].model = {providerClass: "anthropic"};
-    claimNextDispatch(missState, missNode, {runtimeDir: join(root, ".runtime"), claimTtlSeconds: 300});
+    claimNextDispatch(missState, missNode, {runtimeDir: probeRuntimeDir, claimTtlSeconds: 300});
     const modelReason = (missNode.lastClaimMiss?.reasons || [])[0];
     if (modelReason?.reason !== "model_not_runnable_on_node") {
       output.push(`a node that cannot claim because the model is unavailable recorded ${JSON.stringify(modelReason)} — indistinguishable from the role case`);
@@ -5496,7 +5499,7 @@ function verifyAgentGatewayContracts(output) {
   ensureRuntimeCollections(mixedState, {root});
   const mixedTaskGroup = mixedState.taskGroups.find((item) => item.id === "tg_runtime_management");
   mixedTaskGroup.workItems.unshift({id: "work_mixed_model_split", title: "深度分析并开发实现完整代码", status: "ready", ownerRole: "agent-runtime", progress: 0, requirements: ["analysis", "implementation"]});
-  runAutonomousCycle(mixedState, {root, runtimeDir: join(root, ".runtime"), endpoint: "https://control.example.test", mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false});
+  runAutonomousCycle(mixedState, {root, runtimeDir: probeRuntimeDir, endpoint: "https://control.example.test", mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false});
   // 任务拆分是核心方案决策：AI 只能提案，第一轮【不得】直接拆，而应挂起一张人工定稿单。
   if (mixedTaskGroup.workItems.some((item) => item.id === "work_mixed_model_split_analysis")) {
     output.push("人工闸门: 任务拆分未经人工定稿就被执行了（AI 自行决定了怎么干）");
@@ -5508,7 +5511,7 @@ function verifyAgentGatewayContracts(output) {
   if (splitConfirmation) {
     const splitHuman = (mixedState.accounts.find((a) => ["system_admin", "org_admin", "user_account"].includes(a.accountType)) || {}).accountId;
     decideHumanConfirmation(mixedState, splitConfirmation.requestId, {action: "finalize", selectedOptionId: "accept_split", expectedRound: splitConfirmation.round}, {actor: splitHuman});
-    const splitResult = runAutonomousCycle(mixedState, {root, runtimeDir: join(root, ".runtime"), endpoint: "https://control.example.test", mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false});
+    const splitResult = runAutonomousCycle(mixedState, {root, runtimeDir: probeRuntimeDir, endpoint: "https://control.example.test", mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false});
     if (!splitResult.changed.some((item) => item.reason === "mixed_analysis_implementation_split") || !mixedTaskGroup.workItems.some((item) => item.id === "work_mixed_model_split_analysis") || !mixedTaskGroup.workItems.some((item) => item.id === "work_mixed_model_split_implementation")) {
       output.push("人工闸门: 人已定稿同意拆分，编排器却仍未执行拆分");
     }
@@ -5548,7 +5551,7 @@ function verifyAgentGatewayContracts(output) {
   {
     const beforeClaim = (() => {
       try {
-        getSkillWorkset(state, registeredNode, contract.roleSkill.worksetId, {runtimeDir: join(root, ".runtime")});
+        getSkillWorkset(state, registeredNode, contract.roleSkill.worksetId, {runtimeDir: probeRuntimeDir});
         return null;
       } catch (error) { return error.message; }
     })();
@@ -5559,7 +5562,7 @@ function verifyAgentGatewayContracts(output) {
     // 另一种形状：派发在跑，但它是【别人的】。冒用一个 worksetId 就能读到别的节点的角色规则。
     const foreignNode = {...registeredNode, nodeId: "node_not_the_owner"};
     let foreign = null;
-    try { getSkillWorkset(state, foreignNode, contract.roleSkill.worksetId, {runtimeDir: join(root, ".runtime")}); }
+    try { getSkillWorkset(state, foreignNode, contract.roleSkill.worksetId, {runtimeDir: probeRuntimeDir}); }
     catch (error) { foreign = error.message; }
     if (foreign !== "skill_workset_not_found") {
       output.push(`Agent Gateway: 别的节点也能下载这份技能集（${foreign || "下载成功"}）`);
@@ -5579,10 +5582,10 @@ function verifyAgentGatewayContracts(output) {
     }
   node.status = "online";
   node.admission = "full";
-  const claimed = claimNextDispatch(state, node, {runtimeDir: join(root, ".runtime"), claimTtlSeconds: 300});
+  const claimed = claimNextDispatch(state, node, {runtimeDir: probeRuntimeDir, claimTtlSeconds: 300});
   if (!claimed.dispatch) output.push(`Agent Gateway did not claim a compatible dispatch: ${claimed.reason || "unknown"}`);
   if (claimed.dispatch) {
-    const workset = getSkillWorkset(state, registeredNode, contract.roleSkill.worksetId, {runtimeDir: join(root, ".runtime")});
+    const workset = getSkillWorkset(state, registeredNode, contract.roleSkill.worksetId, {runtimeDir: probeRuntimeDir});
     validateSchema(workset, skillWorksetSchema, "AgentSkillWorkset", output);
     if (workset.languagePolicyDigest !== contract.languagePolicyDigest || !workset.executionDirective.includes(contract.languagePolicy.languageTag)) {
       output.push("Agent skill workset did not carry the task-group language policy");
@@ -5880,7 +5883,7 @@ function verifyAgentGatewayContracts(output) {
       {checkId: "remote_mcp", status: "ok"},
       {checkId: "model_executor", status: "ok"}
     ]});
-    const shutdownClaim = claimNextDispatch(state, shutdownNode, {runtimeDir: join(root, ".runtime"), claimTtlSeconds: 300});
+    const shutdownClaim = claimNextDispatch(state, shutdownNode, {runtimeDir: probeRuntimeDir, claimTtlSeconds: 300});
 	    if (shutdownClaim.dispatch) {
 	      const shutdownDispatchId = shutdownClaim.dispatch.dispatch.dispatchId;
 	      const shutdownCommand = createAgentControlCommand(state, shutdownNode, {commandType: "shutdown"}, {actor: "contract-check", idempotencyKey: "contract-node-shutdown"}).command;
@@ -6246,7 +6249,7 @@ function verifyAutoResumeHintsReallyAutoResume(output) {
     const taskGroup = (state.taskGroups || []).find((item) => item.projectId === "prj_control_plane"
       && (item.workItems || []).length) || (state.taskGroups || []).find((item) => (item.workItems || []).length);
     tune(state, taskGroup);
-    runAutonomousCycle(state, {root, runtimeDir: join(root, ".runtime"), endpoint: "http://127.0.0.1:1", mode: "all"});
+    runAutonomousCycle(state, {root, runtimeDir: probeRuntimeDir, endpoint: "http://127.0.0.1:1", mode: "all"});
     const after = state.taskGroups.find((item) => item.id === taskGroup.id);
     return after.workItems.find((item) => item.id === "w_waiter");
   };
@@ -6300,7 +6303,7 @@ function verifyExecutionFailureCapSurvivesHistoryAndReopen(output) {
       && (item.workItems || []).length) || (state.taskGroups || []).find((item) => (item.workItems || []).length);
     const workItem = taskGroup.workItems[0];
     tune(state, taskGroup, workItem);
-    runAutonomousCycle(state, {root, runtimeDir: join(root, ".runtime"), endpoint: "http://127.0.0.1:1", mode: "all"});
+    runAutonomousCycle(state, {root, runtimeDir: probeRuntimeDir, endpoint: "http://127.0.0.1:1", mode: "all"});
     const after = state.taskGroups.find((item) => item.id === taskGroup.id)
       .workItems.find((item) => item.id === workItem.id);
     return {status: after.status, blockedReason: after.blockedReason || null};

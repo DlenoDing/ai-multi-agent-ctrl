@@ -4185,6 +4185,10 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/instruction-envelopes") {
+    // 全仓 30 处 `|| "tg_runtime_management"` 里，只有这一处会把默认值【写进记录】：
+    // 不点名任务组时，这份指令信封（发给 agent 的规则包）会挂到控制面自己的管理组上。
+    // 判权作用域用那个默认是另一回事（对象还不存在时总得有个作用域），落账不行 —— 记到别人账上。
+    if (requireBodyFields(res, body, ["taskGroupId"], "instruction_envelope_task_group_required")) return;
     const guard = beginGuardedWrite(req, state, "instruction_envelope_create", "InstructionEnvelope:new", taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) {
       json(res, guard.status, guard.payload);
