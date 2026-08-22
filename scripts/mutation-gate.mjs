@@ -3993,6 +3993,16 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 评审计划按 id 处置（两个入口都是 find(reviewPlanId === x)），同 id 两条会留下一个
+    // 永远停在 ready、挡着关闭门、又没有第二条杠杆碰得到的孤儿。同族的评审包早有守卫。
+    name: "评审计划的 id 不许重复",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '  assertUniqueRecordId(state.reviewPlans, "reviewPlanId", args.reviewPlanId, "review_plan_id_conflict");\n',
+    to: "",
+    expect: "reviewPlans 允许重复 id"
+  },
+  {
     // 产出登记里最要紧的一条：别把「登记过」当成「验证过」。声称有自证摘要
     // （contentDigestAttested:true）就必须真的带着那个摘要，否则这条记录什么都没证明。
     name: "声称有自证摘要就必须真的带着摘要",

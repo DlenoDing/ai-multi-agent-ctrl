@@ -1053,6 +1053,8 @@
     human_directive_type_unknown: "认不出这个指令类型",
     human_directive_resolution_unknown: "认不出这个处置方式",
     finding_status_unknown: "认不出这个发现状态",
+    review_plan_id_conflict: "这个评审计划 id 已经被创建过了",
+    rule_source_resolution_id_conflict: "这个规则来源判定 id 已经被创建过了",
     artifact_id_conflict: "这个产出 id 已经被登记过了",
     approval_request_action_required: "审批单必须写明批的是哪个动作",
     agent_status_unknown: "认不出这个智能体状态",

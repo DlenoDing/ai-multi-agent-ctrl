@@ -7909,6 +7909,9 @@ export function reviewPlanRecordCoverage(state, args) {
 }
 
 export function reviewPlanCreate(state, args) {
+  // 与 reviewBundleRegister 同一形状：处置走 find(reviewPlanId === x)，同 id 两条只会命中一条，
+  // 另一条永远停在 ready 挡着关闭门，而且没有第二条杠杆碰得到它。那边早有守卫，这边漏了。
+  assertUniqueRecordId(state.reviewPlans, "reviewPlanId", args.reviewPlanId, "review_plan_id_conflict");
   const taskGroup = taskGroupForRecord(state, args);
   const at = new Date().toISOString();
   const plan = {
@@ -8260,6 +8263,8 @@ export const RULE_SOURCE_TERMINAL_STATUSES = ["reference_only", "quarantined", "
 export function ruleSourceResolve(state, args) {
   const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);
   if (settledRejection) return settledRejection;
+  // 同上：判定走 find(resolutionId === x)，同 id 两条会留下一个永远停在 discovered 的孤儿。
+  assertUniqueRecordId(state.ruleSourceResolutions, "resolutionId", args.resolutionId, "rule_source_resolution_id_conflict");
   const at = new Date().toISOString();
   const resolution = {
     schemaVersion: "rule-source-resolution/v1",

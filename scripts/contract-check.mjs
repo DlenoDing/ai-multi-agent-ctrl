@@ -2462,14 +2462,19 @@ function verifyHumanAndOrganizationContracts(output) {
       ["reviewBundles", () => reviewBundleRegister(uniqState, {reviewBundleId: "rvb_dup", taskGroupId: "tg_runtime_management", workItemId: "wi_x"}), "review_bundle_id_conflict"],
       // 产出登记：这个集合上挂着「registered 但没有自证摘要就挡着关闭门」的判定，
       // 同 id 两条会让按 id 找的读者只看见一条。七个同族都有守卫，就它漏了。
-      ["artifacts", () => artifactRegister(uniqState, {artifactId: "artifact_dup", taskGroupId: "tg_runtime_management", artifactManifestRef: "docs/artifact-manifests/x.json"}), "artifact_id_conflict"]
+      ["artifacts", () => artifactRegister(uniqState, {artifactId: "artifact_dup", taskGroupId: "tg_runtime_management", artifactManifestRef: "docs/artifact-manifests/x.json"}), "artifact_id_conflict"],
+      // 评审计划与规则来源判定：两者都按 id 处置（各有两个入口 find(...===id)），
+      // 同 id 两条会留下一个永远挡着关闭门、又碰不到的孤儿。同族的评审包早有守卫，这两个漏了。
+      ["reviewPlans", () => reviewPlanCreate(uniqState, {reviewPlanId: "rvp_dup", taskGroupId: "tg_runtime_management"}), "review_plan_id_conflict"],
+      ["ruleSourceResolutions", () => ruleSourceResolve(uniqState, {resolutionId: "rsr_dup", taskGroupId: "tg_runtime_management", sourceRef: "reference:x"}), "rule_source_resolution_id_conflict"]
     ];
     for (const [label, create, expectedError] of uniqChecks) {
       create();
       let rejected = false;
       try { create(); } catch (error) { rejected = error.message === expectedError; }
       if (!rejected) output.push(`人工闸门: ${label} 允许重复 id（冒名记录可顶替人批准的那一份）`);
-      const dupIdOf = (item) => String(item.requestId || item.approvalId || item.reviewBundleId || item.artifactId || "");
+      const dupIdOf = (item) => String(item.requestId || item.approvalId || item.reviewBundleId
+        || item.artifactId || item.reviewPlanId || item.resolutionId || "");
       if ((uniqState[label] || []).filter((item) => dupIdOf(item).includes("_dup")).length !== 1) {
         output.push(`人工闸门: ${label} 里出现了同 id 的多条记录`);
       }
