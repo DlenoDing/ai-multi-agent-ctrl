@@ -3993,6 +3993,17 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 这道门本身：拿掉任意一处唯一性守卫都要红。挑规则来源那处（本会话新补的两处之一）。
+    // 门的写法自查过两次：把 `||` 换成 `??` 这种等价写法它照样数到 10 处（不是只认一种写法），
+    // 拿掉守卫会点名到具体函数。
+    name: "自选 id 的构造缺守卫要被门发现",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyCallerChosenIdsHaveUniquenessGuards",
+    from: '  assertUniqueRecordId(state.ruleSourceResolutions, "resolutionId", args.resolutionId, "rule_source_resolution_id_conflict");\n',
+    to: "",
+    expect: "ruleSourceResolve 让调用方自选 resolutionId"
+  },
+  {
     // 评审计划按 id 处置（两个入口都是 find(reviewPlanId === x)），同 id 两条会留下一个
     // 永远停在 ready、挡着关闭门、又没有第二条杠杆碰得到的孤儿。同族的评审包早有守卫。
     name: "评审计划的 id 不许重复",

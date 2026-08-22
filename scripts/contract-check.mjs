@@ -442,6 +442,7 @@ run(verifyEveryGuardedActionIsClassified);
 run(verifySeedRecordsMatchTheirDeclaredSchemas);
 run(verifyEverySchemaVersionHasASpec);
 run(verifyEveryStateCollectionIsSchemaChecked);
+run(verifyCallerChosenIdsHaveUniquenessGuards);
 run(verifyEveryProjectScopedIdIsScopeChecked);
 run(verifyEveryStateCollectionIsTenantScoped);
 run(verifyExpiredConfirmationRetargetsTheWorkItem);
@@ -16540,6 +16541,59 @@ function verifyEveryProjectScopedIdIsScopeChecked(output) {
 // 实际后果刚撞过一次：agents 没有 schema，于是"按 item.projectId 过滤但 schema 里没有这个字段"
 // 的全量扫描把它静默跳过了，一个恒为 0 的容量计数因此躲过一轮。
 // 所以改成登记制：不带 schemaVersion 的集合必须逐个写明凭什么可以不带；写不出理由的就是下一个洞。
+// 「调用方自选 id 的构造必须有唯一性守卫」。这一族本会话咬过三次：产出登记、评审计划、
+// 规则来源判定 —— 三个都按 id 处置（find(xxxId === 参数)），同 id 两条会留下一个永远挡着
+// 关闭门、又没有第二条杠杆碰得到的孤儿。同族的评审包/审批单/权限申请早就有守卫，就它们漏了。
+// 判据按【函数体】切，只认 `<键>: args.<x> || createId(` 这一种写法（`??` 也认）。
+function verifyCallerChosenIdsHaveUniquenessGuards(output) {
+  // 例外要写明【凭什么可以没有】，不是"暂时不管"。
+  const ALLOWED_WITHOUT_GUARD = {
+    findingSubmit: "它是按 findingId 的 upsert（同 id 再提交是就地更新既有记录，不会产生第二条）；"
+      + "越权由两侧各自的守卫挡住：REST 路由按发现项【自己的】任务组判权，"
+      + "MCP 侧 inferMcpArgumentProjectIds 能从 findingId 反推出项目",
+    roomSend: "房间消息全仓没有任何按 messageId 定位的读者（读的是 sequence），"
+      + "重复 id 不会让谁被顶替；重放由 idempotencyKey 那层挡"
+  };
+  const source = readFileSync(resolve(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const bodies = [];
+  const header = /^(?:export )?function ([A-Za-z0-9_]+)\(/gmu;
+  let match = header.exec(source);
+  while (match) {
+    const next = header.exec(source);
+    bodies.push([match[1], source.slice(match.index, next ? next.index : source.length)]);
+    match = next;
+  }
+  if (bodies.length < 50) {
+    output.push(`自选 id 守卫核对：只切出 ${bodies.length} 个函数体 —— 切法与源码脱节，本条在空转`);
+    return;
+  }
+  const sites = [];
+  for (const [name, body] of bodies) {
+    for (const hit of body.matchAll(/(\w+):\s*args\.(\w+)\s*(?:\|\||\?\?)\s*createId\(/gu)) {
+      sites.push({name, key: hit[1], guarded: body.includes("assertUniqueRecordId")});
+    }
+  }
+  // 报数要能分清"查过了没有"：这个数掉下去多半是写法变了，而不是洞被修完了。
+  if (sites.length < 8) {
+    output.push(`自选 id 守卫核对：只提取到 ${sites.length} 处「调用方自选 id」的构造（实测 10 处）—— `
+      + "提取失配，本条在空转");
+  }
+  for (const site of sites) {
+    if (site.guarded || ALLOWED_WITHOUT_GUARD[site.name]) continue;
+    output.push(`自选 id 守卫核对：${site.name} 让调用方自选 ${site.key}，却没有 assertUniqueRecordId —— `
+      + "同 id 两条时，按 id 处置的那一侧只会命中其中一条，另一条永远碰不到；"
+      + "要么加守卫，要么在 ALLOWED_WITHOUT_GUARD 里写明凭什么可以没有");
+  }
+  const stale = Object.keys(ALLOWED_WITHOUT_GUARD).filter((name) =>
+    !sites.some((site) => site.name === name && !site.guarded));
+  if (stale.length) {
+    output.push(`自选 id 守卫核对：登记表已过时：${stale.join("、")} 现在要么有守卫了、要么不再让调用方自选 id`);
+  }
+  console.log(`自选 id 守卫核对：${sites.length} 处「调用方自选 id」的构造逐个核过，`
+    + `${sites.filter((site) => site.guarded).length} 处有唯一性守卫、`
+    + `${Object.keys(ALLOWED_WITHOUT_GUARD).length} 处登记为不需要`);
+}
+
 function verifyEveryStateCollectionIsSchemaChecked(output) {
   const COLLECTIONS_WITHOUT_SCHEMA_VERSION = {
     // 下面三个是运行时创建的，种子里没有 —— 我先前按种子做的同类扫描因此完全看不到它们。
