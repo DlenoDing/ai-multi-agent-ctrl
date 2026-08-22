@@ -40,9 +40,9 @@ const COLLECTIONS_WITHOUT_STATE_MACHINE = {
   authSessions: "spec/auth-session.schema.json 的 status enum",
   agentJoinTokens: "spec/agent-join-token.schema.json 的 status enum",
   agentControlCommands: "spec/agent-control-command.schema.json 的 status enum",
-  // 下面两个是【真空】：既没有状态机，也没有规范文件。代价：它们的 status 想写什么写什么，
+  agents: "spec/agent.schema.json 的 status enum（逻辑智能体目录项没有生命周期，只有启停两态）",
+  // 这个是【真空】：既没有状态机，也没有规范文件。代价：它的 status 想写什么写什么，
   // 没有任何东西会发现。登记在这里是为了让这个真空看得见，而不是把它藏起来。
-  agents: "真空：没有规范也没有状态机（待清）",
   mcpCalls: "真空：没有规范也没有状态机（待清）"
 };
 

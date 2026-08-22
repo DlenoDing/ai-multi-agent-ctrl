@@ -556,6 +556,24 @@ try {
   if (ownerCrossProjectAgentDenied.response.status !== 403 || ownerCrossProjectAgentDenied.payload?.error !== "policy_denied") {
     throw new Error(`expected workspace owner agent activation to stay project-scoped, got ${ownerCrossProjectAgentDenied.response.status}`);
   }
+  // 建智能体时 status 与 trustScore 此前是【请求体直接落库】：status 想写什么写什么
+  // （界面的启停按钮只认 active/inactive，别的取值会让它永远显示「启用」）；
+  // trustScore 走 Number(任意输入)，`Number("高")` 得到 NaN 并序列化成 null 存进去。
+  for (const [label, body, code] of [
+    ["认不出的状态", {name: "Stray status agent", role: "reviewer", status: "paused"}, "agent_status_unknown"],
+    ["不是数的信任分", {name: "Stray trust agent", role: "reviewer", trustScore: "高"}, "agent_trust_score_invalid"],
+    ["超出范围的信任分", {name: "Out of range agent", role: "reviewer", trustScore: 7}, "agent_trust_score_invalid"]
+  ]) {
+    const rejected = await jsonFetch(port, "/api/agents", {
+      method: "POST",
+      headers: {"Idempotency-Key": `doctor-agent-reject-${code}-${encodeURIComponent(label)}`, authorization: systemAuth},
+      body: JSON.stringify({projectId: "prj_control_plane", model: "auto_best", ...body})
+    });
+    if (rejected.response.status !== 400 || rejected.payload?.error !== code) {
+      throw new Error(`建智能体时「${label}」必须被拒绝（期望 400 ${code}）：`
+        + `实际 ${rejected.response.status} ${JSON.stringify(rejected.payload).slice(0, 200)}`);
+    }
+  }
   const delegatedDenyStateBefore = await jsonFetch(port, "/api/state?view=system&limit=20", {
     headers: {authorization: systemAuth}
   });

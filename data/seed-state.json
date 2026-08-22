@@ -383,6 +383,7 @@
   ],
   "agents": [
     {
+      "schemaVersion": "agent/v1",
       "id": "agent_orchestrator",
       "name": "Orchestrator Runtime",
       "role": "orchestrator",
@@ -392,6 +393,7 @@
       "capacity": "ready"
     },
     {
+      "schemaVersion": "agent/v1",
       "id": "agent_scheduler",
       "name": "Scheduler Agent",
       "role": "scheduler",
@@ -401,6 +403,7 @@
       "capacity": "ready"
     },
     {
+      "schemaVersion": "agent/v1",
       "id": "agent_reviewer",
       "name": "Independent Reviewer",
       "role": "reviewer",
@@ -410,6 +413,7 @@
       "capacity": "standby"
     },
     {
+      "schemaVersion": "agent/v1",
       "id": "agent_qa",
       "name": "QA Runtime",
       "role": "qa",
@@ -419,6 +423,7 @@
       "capacity": "ready"
     },
     {
+      "schemaVersion": "agent/v1",
       "id": "agent_security",
       "name": "Security Reviewer",
       "role": "security",
@@ -428,6 +433,7 @@
       "capacity": "ready"
     },
     {
+      "schemaVersion": "agent/v1",
       "id": "agent_release",
       "name": "Release Runtime",
       "role": "release",
@@ -437,6 +443,7 @@
       "capacity": "ready"
     },
     {
+      "schemaVersion": "agent/v1",
       "id": "agent_monitor",
       "name": "Monitor Agent",
       "role": "monitor",

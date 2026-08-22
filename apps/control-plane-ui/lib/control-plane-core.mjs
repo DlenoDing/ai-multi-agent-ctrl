@@ -728,7 +728,7 @@ function ensureDefaultAgents(state) {
   ];
   for (const [id, name, role, model] of defaults) {
     if (state.agents.some((agent) => agent.id === id)) continue;
-    state.agents.push({id, name, role, model, status: "active", trustScore: 0.9, capacity: "ready"});
+    state.agents.push({schemaVersion: "agent/v1", id, name, role, model, status: "active", trustScore: 0.9, capacity: "ready"});
   }
 }
 

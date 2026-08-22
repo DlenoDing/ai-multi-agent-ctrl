@@ -10056,8 +10056,9 @@ function verifyInertMechanismsStayRegistered(output) {
       // 第一版正则正是这么误报的。改用零误报的做法：锁定它在产品代码里的【出现次数】，
       // 多一处就说明有人碰了它，登记当场过期。
       // 数的是【出现次数】不是行数：`trustScore: Number(args.trustScore || 0.9)` 一行算两次。
-      // 当前 4 行 6 次：入参词表 1、MCP 写 2、REST 写 2、core 创建时写死 1。
-      expectedOccurrences: 6
+      // 数的是【出现次数】不是行数。2026-08-23 建接口补了取值校验（不是数/超范围一律拒绝，
+      // 此前 Number("高") 会把 NaN 存进去），写侧因此多出几处 —— 它仍然是"写多处、读零处"。
+      expectedOccurrences: 16
     },
     {
       name: "账号退役（accountRetired）",
@@ -16525,7 +16526,6 @@ function verifyEveryStateCollectionIsSchemaChecked(output) {
   const COLLECTIONS_WITHOUT_SCHEMA_VERSION = {
     taskGroups: "任务组同上；它内部的工作项状态由 spec/state-machines.yaml 的 WorkItem 枚举守住"
       + "（verifyTransitionEngine 会压过真实产出）",
-    agents: "逻辑 agent 注册表（角色/模型/容量），不是租户数据，也不参与任何按 schemaVersion 的派发校验",
     modelProviders: "模型供应商目录，与 modelCapabilities 同源，由模型选择策略的校验覆盖",
     // 下面三个是运行时创建的，种子里没有 —— 我先前按种子做的同类扫描因此完全看不到它们。
     agentTaskContracts: "有 spec/agent-task-contract.schema.json，但记录用 contractVersion 而非 schemaVersion"

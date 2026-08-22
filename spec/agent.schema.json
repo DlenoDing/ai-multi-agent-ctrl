@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/agent.schema.json",
+  "title": "Agent",
+  "description": "逻辑智能体目录项（角色 + 模型 + 启停）。注意它不是运行时节点 —— 那是 AgentRuntimeNode。控制台的「智能体」表渲染 name/role/model/status，启停按钮读的就是 status。此前这个集合既没有规范也没有状态机，status 与 trustScore 都是从请求体直接落库：status 想写什么写什么，trustScore 走 Number(任意输入)，`Number(\"高\")` 得到 NaN，序列化成 null 存进去。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "name", "role", "model", "status", "trustScore", "capacity"],
+  "properties": {
+    "schemaVersion": {"const": "agent/v1"},
+    "id": {"type": "string", "pattern": "^agent"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 200},
+    "role": {"type": "string", "minLength": 1},
+    "model": {"type": "string", "minLength": 1},
+    "status": {"enum": ["active", "inactive"], "description": "只有这两态：控制台的启停按钮按 status === \"active\" 判断该显示「停用」还是「启用」。"},
+    "trustScore": {"type": "number", "minimum": 0, "maximum": 1},
+    "capacity": {"enum": ["ready", "standby"], "description": "由 status 派生（active→ready）。目前没有任何读者，留着是因为它随 status 一起被维护；退役条件：确认没有外部调用方读它之后与 trustScore 一并去掉。"},
+    "organizationId": {"type": "string", "minLength": 1},
+    "projectId": {"type": "string", "minLength": 1},
+    "roleSkillRef": {"type": "string", "minLength": 1},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  }
+}

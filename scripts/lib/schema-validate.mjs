@@ -149,10 +149,10 @@ export const SCHEMA_FILE_ALIASES = {"control-event": "control-events"};
 // 顶红一次 —— 一步走了三轮。数字只放这一处，四个调用点都从这里取。
 // 改动方式：清掉一个集合 -> 这里对应的数减一 -> 变异登记里的锚点跟着改。
 export const UNCOVERED_CEILINGS = {
-  "控制面 e2e 产出": 12,
-  "远程 agent e2e 产出": 9,
-  "种子数据": 3,
-  "编排产出": 4
+  "控制面 e2e 产出": 11,
+  "远程 agent e2e 产出": 8,
+  "种子数据": 2,
+  "编排产出": 3
 };
 
 // 凡是带 schemaVersion 的记录，一律按它【自己声明的】那份规范校验：映射取自记录自身，

@@ -297,8 +297,13 @@ schema_machine_aliases = {
 # 新增一个带 status 枚举的 schema 时，要么建机器、要么登记到这里说明为什么不需要。
 schemas_without_state_machine = Set.new(%w[
   AgentControlCommand AgentExecutionEvent AgentJoinToken InternalReviewRecord Organization WorkerLane
-  AuthSession
+  AuthSession Agent
 ])
+# Agent（逻辑智能体目录项）与 AuthSession 同理：它没有生命周期，只有启停两态，
+# 而 state-machines.yaml 的机器必须同时出现在 manifest 的 requiredControlObjects 里 ——
+# 那份清单是终端执行域的控制对象。运行时节点那个才是 AgentNode，两者不是一回事。
+# 豁免的只有"与 state-machines.yaml 对表"这一项：取值仍由 spec/agent.schema.json 的 enum 钉住，
+# 且建智能体的接口现在按 AGENT_STATUSES 白名单拒绝认不出的取值。
 # AuthSession 豁免的只有"与 state-machines.yaml 对表"这一项，别的照常：
 # spec/auth-session.schema.json 仍然钉住三个状态的取值，并且用 if/then 要求 revoked
 # 必须带 revokedAt 与 revokedReason。不给它建机器是因为 state-machines.yaml 的机器必须同时
@@ -2607,7 +2612,9 @@ puts "准入判决可读性：#{admission_calls.length} 处调用、#{labelled.s
 # 关闭门清单里的 in_review / waiting（连同整份清单都是没人读的死代码，而两道 CRITICAL 门在守它）。
 # 名字对不上 = 那段判定永远不成立，而它看起来和"判定过了、没命中"一模一样。
 STATUS_CONSTANTS_WITHOUT_STATE_MACHINE = {
-  "TEST_RESULT_STATUSES" => "测试结果既没有状态机也没有 schema，这个常量自己就是真相源（MCP 入参校验用）"
+  "TEST_RESULT_STATUSES" => "测试结果既没有状态机也没有 schema，这个常量自己就是真相源（MCP 入参校验用）",
+  "AGENT_STATUSES" => "逻辑智能体目录项没有状态机（见 schemas_without_state_machine 里的 Agent），" \
+    "真相源是 spec/agent.schema.json 的 status enum；这个常量就是建接口用来拒绝认不出取值的白名单"
 }.freeze
 # 机器挂在 machines 键下面。直接 each_value 顶层会遍历到 schemaVersion 这种字符串，
 # 一个状态都取不到 —— 而那样的话下面每条常量都会被误报成"状态查无此名"（第一版就是这样）。

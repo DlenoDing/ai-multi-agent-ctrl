@@ -752,6 +752,7 @@ function ruleFragmentsRejection(value) {
 
 // 规则的合法状态只有这三个。清单写一处：净化那边的兜底与校验这边的判定必须是同一份，
 // 否则"校验放过的"与"净化认得的"会分叉。
+const AGENT_STATUSES = ["active", "inactive"];
 const RULE_STATUSES = ["active", "draft", "disabled"];
 
 function sanitizeRuleFragments(value) {
@@ -3988,14 +3989,34 @@ async function handleApi(req, res) {
       json(res, guard.status, guard.payload);
       return;
     }
+    // 此前这两个字段是【请求体直接落库】：status 想写什么写什么（界面的启停按钮只认
+    // active/inactive，别的取值会让那个按钮永远显示「启用」）；trustScore 走 Number(任意输入)，
+    // `Number("高")` 得到 NaN，序列化成 null 存进去，而 NaN 参与的比较两个方向都是 false。
+    // 命令接口要拒绝，不要猜。
+    const agentStatus = body.status === undefined || body.status === null || body.status === ""
+      ? "active"
+      : body.status;
+    if (!AGENT_STATUSES.includes(agentStatus)) {
+      return json(res, 400, {error: "agent_status_unknown", status: String(body.status).slice(0, 60), supported: AGENT_STATUSES});
+    }
+    const trustScore = body.trustScore === undefined || body.trustScore === null || body.trustScore === ""
+      ? 0.85
+      : Number(body.trustScore);
+    if (!Number.isFinite(trustScore) || trustScore < 0 || trustScore > 1) {
+      // 报文里不放控制台不读的字段：出错那一刻人看到的是 message，
+      // 单独带一个 trustScore 键等于把最关键的那个值藏在人看不见的地方。
+      return json(res, 400, {error: "agent_trust_score_invalid",
+        message: `信任分必须是 0 到 1 之间的数（收到的是「${String(body.trustScore).slice(0, 60)}」）`});
+    }
     const agent = {
+      schemaVersion: "agent/v1",
       id: createId("agent"),
-      name: body.name || `${body.role || "custom"} Agent`,
+      name: assertHumanTextWithinLimit(body.name || `${body.role || "custom"} Agent`, "agent_name", 200),
       role: body.role || "custom",
       model: body.model || "auto_best",
-      status: body.status || "active",
-      trustScore: Number(body.trustScore || 0.85),
-      capacity: body.status === "inactive" ? "standby" : "ready",
+      status: agentStatus,
+      trustScore,
+      capacity: agentStatus === "inactive" ? "standby" : "ready",
       projectId: body.projectId,
       organizationId: (body.projectId ? state.projects.find((item) => item.id === body.projectId)?.organizationId : null)
         || accountFromRequest(req, state)?.account?.organizationId

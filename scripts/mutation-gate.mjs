@@ -3993,6 +3993,16 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 建智能体时 status 与 trustScore 此前是请求体直接落库。界面的启停按钮只认 active/inactive，
+    // 别的取值会让它永远显示「启用」；trustScore 走 Number(任意输入) 能把 NaN 存进去。
+    name: "认不出的智能体状态必须拒绝",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    if (!AGENT_STATUSES.includes(agentStatus)) {",
+    to: "    if (false) {",
+    expect: "认不出的状态"
+  },
+  {
     // 三个入口建项目，规范把三处的形状钉在一起。这条变异去掉 org 那条路的 schemaVersion：
     // 少一处声明，那一整条路造出来的项目就退出规范校验，而门原本照样绿。
     name: "三个建项目入口都要声明规范",
@@ -4185,8 +4195,8 @@ const MUTATIONS = [
     name: "种子与编排产出的不受约束集合数也要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     check: "verifySeedRecordsMatchTheirDeclaredSchemas",
-    from: '"种子数据": 3,',
-    to: '"种子数据": 2,',
+    from: '"种子数据": 2,',
+    to: '"种子数据": 1,',
     expect: "不受规范约束的集合从 3 涨到 4"
   },
   {
@@ -4212,8 +4222,8 @@ const MUTATIONS = [
     name: "不受规范约束的集合数要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "doctor",
-    from: '"控制面 e2e 产出": 12,',
-    to: '"控制面 e2e 产出": 11,',
+    from: '"控制面 e2e 产出": 11,',
+    to: '"控制面 e2e 产出": 10,',
     // 期望要挑【这道门自己会打印的那一句】：控制面 e2e 的前缀是"控制面 e2e 产出："，
     // 契约门那两处（种子/编排产出）用的是别的前缀 —— 只写公共部分会被判成"挂错了门"。
     expect: "控制面 e2e 产出：不受规范约束的集合"
@@ -4225,8 +4235,8 @@ const MUTATIONS = [
     name: "远程 agent 那侧的规范覆盖也要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "agent",
-    from: '"远程 agent e2e 产出": 9,',
-    to: '"远程 agent e2e 产出": 8,',
+    from: '"远程 agent e2e 产出": 8,',
+    to: '"远程 agent e2e 产出": 7,',
     expect: "远程 agent e2e 产出：不受规范约束的集合"
   },
   {
