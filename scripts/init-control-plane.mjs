@@ -171,6 +171,16 @@ console.log("agent: 登录管理控制台 → 「账号与授权」页 → 在�
 // 登录同时需要【身份】和【令牌】：系统管理员的 authPolicy.method 是 bootstrap_token，
 // 登录时要填邮箱/账号 ID 再配上这个令牌。原先只打印令牌，从不打印身份 —— 而那个值只存在于
 // .env.example 与种子数据里，人拿着一串 token 面对"登录账号"输入框无从下手。
+// 刚装完登进去，项目概览上是一个 73% 的项目、更新时间在一个月前 —— 那是随发行版附带的
+// 示例数据（控制面自身的开发任务），而屏幕上没有任何地方说它是示例。人会以为这套部署里
+// 有别人的数据，或者干脆就在这个示例项目里开工（那正是本仓最危险那个缺陷的前提：
+// 待在种子那一个项目里干活，"有没有真实数据"的判定就看不出来）。在这里说清楚，
+// 因为这正是他决定下一步做什么的那一刻。
+const seedState = loadJson(seedPath);
+const seedProjects = (seedState.projects || []).map((item) => item.name).join("、");
+console.log(`sample data: 运行态里带着示例项目 ${seedProjects}（${(seedState.taskGroups || []).length} 个任务组，`
+  + "控制面自身的开发任务）。它的进度与时间都是示例，不是你的数据 —— 建自己的项目再开工；"
+  + "要清掉它：登录后到「系统概览」页用「重新初始化运行态」。");
 console.log(`system admin login: ${process.env.AIMAC_SYSTEM_ADMIN_EMAIL || "system.admin@local"}  (在登录页「登录账号」处填它)`);
 if (!process.env.AIMAC_BOOTSTRAP_TOKEN) {
   console.log(`local bootstrap token: ${bootstrapToken}  (与上面的登录账号配合使用)`);

@@ -43,6 +43,18 @@ async function verifyFirstRunPath() {
   const bootstrapToken = (init.stdout.match(/local bootstrap token:\s*(\S+)/u) || [])[1];
   check(Boolean(email && bootstrapToken), "init 会把登录账号与令牌一起打印出来",
     `账号 ${email || "（没打印）"}｜令牌 ${bootstrapToken ? "已打印" : "（没打印）"}`);
+  // 刚装完登进去，项目概览上是一个 73% 的项目、更新时间在一个月前 —— 那是随发行版附带的
+  // 示例数据，而屏幕上没有任何地方说它是示例。人会以为这套部署里有别人的数据，
+  // 或者干脆就在这个示例项目里开工（那正是"待在种子那一个项目里干活，真实数据判定就看不出来"
+  // 那个缺陷的前提）。判据要求这句话【点出示例项目的真名】——
+  // 写死一句"带着示例数据"的话，种子换了项目它也不会变。
+  const seedProjectNames = JSON.parse(readFileSync(join(root, "data/seed-state.json"), "utf8"))
+    .projects.map((item) => item.name);
+  const sampleLine = (init.stdout.match(/^sample data: (.+)$/mu) || [])[1] || "";
+  check(Boolean(sampleLine) && seedProjectNames.every((name) => sampleLine.includes(name)),
+    "init 要说清运行态里带着示例项目（并点名是哪个）",
+    sampleLine ? `打印了：${sampleLine.slice(0, 80)}` : "一个字都没说 —— 人会把示例项目的 73% 当成自己的进度");
+
   // init 的输出是新部署者看到的第一屏，里面每一行都要能照着做。
   // 这条原先打印的是字面量 `$AIMAC_PUBLIC_URL/mcp` —— 照抄就是个坏地址，
   // 而且看不出是占位符还是真值。判据：必须是真地址，且不带未展开的变量名。

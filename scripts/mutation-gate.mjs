@@ -4004,6 +4004,16 @@ const MUTATIONS = [
     expect: "出口要说清装什么"
   },
   {
+    // 刚装完那一屏上是一个 73% 的示例项目、更新时间在一个月前，而没有一处说它是示例。
+    // 判据要求 init 那句话【点名】示例项目 —— 写死一句"带着示例数据"，种子换了它也不会变。
+    name: "init 要点名示例项目（不能写死一句话）",
+    file: "scripts/init-control-plane.mjs",
+    gate: "idle",
+    from: "const seedProjects = (seedState.projects || []).map((item) => item.name).join(\"、\");",
+    to: 'const seedProjects = "示例项目";',
+    expect: "init 要说清运行态里带着示例项目"
+  },
+  {
     // 只核对模式（--verify）：拿到一份来路不明的备份，还原前先验。让它恒真就该红 ——
     // 崩溃门里配了正反两条（好的要过、残缺的要拒），恒真只会打中后者。
     name: "备份的只核对模式不得恒真",
