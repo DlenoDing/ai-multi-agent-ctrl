@@ -214,8 +214,10 @@ function pendingForMe() {
   const groups = (state.taskGroups || []);
   const groupIds = new Set(groups.map((taskGroup) => taskGroup.id));
   const inScope = (item) => item && groupIds.has(item.taskGroupId);
-  const canReview = hasPerm("task_group:review");
-  const canControl = hasPerm("task_group:control");
+  // 任务组级的权限按【每个任务组】判：只在 tg1 上有评审权的人，不该把 tg2 的待办算成自己的
+  //（这块面板明写着「只统计你有权处置的」）。项目级的两个仍按项目判 —— 这一屏本来就只看一个项目。
+  const canReviewGroup = (item) => hasGroupPerm(item?.taskGroupId, "task_group:review");
+  const canControlGroup = (item) => hasGroupPerm(item?.taskGroupId, "task_group:control");
   const canGrant = hasPerm("project:grant");
   const canUpdateProject = hasPerm("project:update");
   const buckets = [];
@@ -225,38 +227,40 @@ function pendingForMe() {
   // taskGroups 自己也会被截断，而它决定了 inScope —— 超出上限的任务组下的待办连桶都进不去，
   // 一条都不会被算到。所以它一旦被截，所有桶的数字都只是下限，而不只是某一类不准。
   const scopeTruncated = truncated.has("taskGroups");
+  // allowed 可以是布尔（项目级权限，这一屏只看一个项目）或按条判断的函数（任务组级权限）。
   const add = (id, label, page, items, allowed, sourceField) => {
-    if (!allowed || !items.length) return;
-    buckets.push({id, label, page, count: items.length, capped: scopeTruncated || truncated.has(sourceField), items: items.slice(0, 5)});
+    const mine = typeof allowed === "function" ? items.filter(allowed) : (allowed ? items : []);
+    if (!mine.length) return;
+    buckets.push({id, label, page, count: mine.length, capped: scopeTruncated || truncated.has(sourceField), items: mine.slice(0, 5)});
   };
   add("confirmations", "待你定稿的核心决策", "review",
-    (state.humanConfirmationRequests || []).filter((item) => inScope(item) && item.status === "pending"), canReview, "humanConfirmationRequests");
+    (state.humanConfirmationRequests || []).filter((item) => inScope(item) && item.status === "pending"), canReviewGroup, "humanConfirmationRequests");
   add("permissions", "待你批准的授权请求", "review",
     (state.permissionRequests || []).filter((item) => inScope(item) && item.status === "pending_approval"), canGrant, "permissionRequests");
   add("approvals", "待你处理的审批请求", "review",
-    (state.approvalRequests || []).filter((item) => inScope(item) && ["requested", "quorum_collecting"].includes(item.status)), canReview, "approvalRequests");
+    (state.approvalRequests || []).filter((item) => inScope(item) && ["requested", "quorum_collecting"].includes(item.status)), canReviewGroup, "approvalRequests");
   add("findings", "待你处置的发现项", "review",
-    (state.findings || []).filter((item) => inScope(item) && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status)), canReview, "findings");
+    (state.findings || []).filter((item) => inScope(item) && !["resolved", "closed", "dismissed", "wontfix"].includes(item.status)), canReviewGroup, "findings");
   add("qualityGates", "未通过、可由你豁免的质量门", "monitor",
-    (state.qualityGates || []).filter((item) => inScope(item) && !["passed", "waived"].includes(item.status)), canReview, "qualityGates");
+    (state.qualityGates || []).filter((item) => inScope(item) && !["passed", "waived"].includes(item.status)), canReviewGroup, "qualityGates");
   add("reviewPlans", "待你收尾的评审计划", "monitor",
-    (state.reviewPlans || []).filter((item) => inScope(item) && !["closed", "rejected", "superseded"].includes(item.status)), canReview, "reviewPlans");
+    (state.reviewPlans || []).filter((item) => inScope(item) && !["closed", "rejected", "superseded"].includes(item.status)), canReviewGroup, "reviewPlans");
   add("reviewBundles", "待你收尾的评审包", "monitor",
-    (state.reviewBundles || []).filter((item) => inScope(item) && !["consumed", "rejected"].includes(item.status)), canReview, "reviewBundles");
+    (state.reviewBundles || []).filter((item) => inScope(item) && !["consumed", "rejected"].includes(item.status)), canReviewGroup, "reviewBundles");
   add("ruleSources", "待你判定的规则来源", "monitor",
-    (state.ruleSourceResolutions || []).filter((item) => inScope(item) && !["reference_only", "quarantined", "rejected", "superseded", "active"].includes(item.status)), canControl, "ruleSourceResolutions");
+    (state.ruleSourceResolutions || []).filter((item) => inScope(item) && !["reference_only", "quarantined", "rejected", "superseded", "active"].includes(item.status)), canControlGroup, "ruleSourceResolutions");
   add("upgradeCandidates", "待你判定的系统升级候选项", "monitor",
-    (state.systemUpgradeCandidates || []).filter((item) => inScope(item) && item.status === "candidate_created"), canControl, "systemUpgradeCandidates");
+    (state.systemUpgradeCandidates || []).filter((item) => inScope(item) && item.status === "candidate_created"), canControlGroup, "systemUpgradeCandidates");
   // 这两类同样【只有人能了结】，而且都在关闭门的阻塞清单里 —— 之前却不在待办里：
   // 人看到"0 待处理"，任务组却因为等他终止一个卡住的方案、或确认一条指令已被消费而关不掉。
   // 状态集与 computeCloseBarrier 的判据对齐（拓扑终态 merged/downgraded/cancelled；
   // 指令 queued/acknowledged 才算未消费），不另立一套 —— 两套口径迟早分叉，而分叉那天没人会发现。
   add("topologies", "待你终止的卡住执行方案", "monitor",
     (state.executionTopologies || []).filter((item) => inScope(item)
-      && ["blocked", "needs_reconcile"].includes(item.status)), canControl, "executionTopologies");
+      && ["blocked", "needs_reconcile"].includes(item.status)), canControlGroup, "executionTopologies");
   add("directives", "待你确认已被消费的人工指令", "directives",
     (state.humanDirectives || []).filter((item) => inScope(item)
-      && ["queued", "acknowledged"].includes(item.status)), canControl, "humanDirectives");
+      && ["queued", "acknowledged"].includes(item.status)), canControlGroup, "humanDirectives");
   const visibleProjectIds = new Set(groups.map((taskGroup) => taskGroup.projectId).filter(Boolean));
   add("sharedDefinitions", "待你处置的共享定义契约", "monitor",
     (state.sharedDefinitions || []).filter((item) => ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"].includes(item.status)
@@ -392,6 +396,17 @@ async function copyText(text) {
 }
 
 /* 权限门控：system_admin / org_admin 全权；user_account 看 permissions 列表 */
+// 「这个任务组上我有没有这个权限」。effectivePermissions 是【跨资源的并集】（服务端注释里写明了
+// 它只是 UI 提示），拿它判具体任务组会把别人负责的那些也算成自己的 —— 而后端每一次写入都按资源判。
+// 服务端在 tasks 视图里按任务组算好了真实权限；拿不到那份映射时（别的视图）退回并集，
+// 那时宁可多显示一个按钮，也不要把人自己的活藏起来。
+function hasGroupPerm(taskGroupId, perm) {
+  const map = state.taskGroupPermissions;
+  if (!map || !taskGroupId || !map[taskGroupId]) return hasPerm(perm);
+  const granted = map[taskGroupId];
+  return granted.includes(perm) || granted.includes(`${String(perm).split(":")[0]}:*`);
+}
+
 function hasPerm(perm) {
   const account = currentAccount;
   if (!account) return false;

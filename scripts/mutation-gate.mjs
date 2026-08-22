@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "「待你处理」必须按任务组判权而不是并集",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (!map || !taskGroupId || !map[taskGroupId]) return hasPerm(perm);",
+    to: "  return hasPerm(perm);",
+    expect: "只算你在【那个任务组】上真有权处置的"
+  },
+  {
+    name: "tasks 视图必须按任务组下发真实权限",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    base.taskGroupPermissions = taskGroupPermissions;",
+    to: "    void taskGroupPermissions;",
+    expect: "没有带 taskGroupPermissions"
+  },
+  {
     name: "依赖被放弃时必须升级成需要人处置",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyAutoResumeHintsReallyAutoResume",

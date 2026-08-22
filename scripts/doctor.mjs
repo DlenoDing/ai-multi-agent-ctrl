@@ -600,6 +600,26 @@ try {
   if (!createdProjectReplay.response.ok || createdProjectReplay.payload.id !== createdProject.payload.id || createdProjectReplay.payload.ownerGrant?.grantId !== createdProject.payload.ownerGrant?.grantId) {
     throw new Error("project creation idempotency replay did not preserve owner grant payload");
   }
+  // 控制台判「这件事我能不能处置」原先用 effectivePermissions —— 服务端注释里就写着它是
+  // 【跨资源的并集、只作 UI 提示】，而后端每次写入都按资源判。于是「待你处理」会把别的任务组的
+  // 待办也算成你的。视图现在按任务组把真实权限算好下发；这一条钉住"它真的下发了、而且是按资源的"。
+  {
+    const tasksView = await jsonFetch(port, "/api/state?view=tasks", {headers: {authorization: systemAuth}});
+    const perms = tasksView.payload?.taskGroupPermissions;
+    const groups = tasksView.payload?.taskGroups || [];
+    if (!perms || typeof perms !== "object") {
+      throw new Error("view=tasks 没有带 taskGroupPermissions —— 控制台只能退回跨资源的并集，"
+        + "「待你处理」会把别人负责的任务组也算进来");
+    }
+    const missing = groups.filter((group) => !Array.isArray(perms[group.id]));
+    if (missing.length) {
+      throw new Error(`view=tasks 里有 ${missing.length} 个任务组没有对应的权限项 —— `
+        + "控制台对它们会退回并集，那几组的待办数仍然是错的");
+    }
+    if (groups.length && !groups.some((group) => (perms[group.id] || []).includes("task_group:review"))) {
+      throw new Error("系统账号在所有任务组上都没有 task_group:review —— 这份权限映射多半算错了");
+    }
+  }
   // 技能源那一页显示「每个源提供了多少角色技能」。roleSkills 本身不再下发（281 条 293KB，
   // 界面从不读正文），改成服务端给按来源的计数 —— 但那次改动只把计数接到了 /api/skill-registry 上，
   // 而控制台读的是 view=runtime、一次都没调过那个接口；更糟的是 scoped.roleSkills 已被清空，

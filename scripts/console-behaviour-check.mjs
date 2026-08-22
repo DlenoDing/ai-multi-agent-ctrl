@@ -1649,6 +1649,36 @@ function runNoVisibleProjectCase() {
       /还没有过动静/u.test(stallText),
       "这一格空着与「刚刚才动过」看不出区别 —— 而它恰恰是最该被人看到的那种");
   }
+  // 「待你处理」那块明写着「只统计你有权处置的；别人负责的部分不会出现在这里」。
+  // 而控制台判权用的是 effectivePermissions —— 服务端注释里就写着它是【跨资源的并集、只作 UI 提示】，
+  // 后端每一次写入却是按资源判的。于是只在 tg1 上有评审权的人，会把 tg2 的待办也算成自己的，
+  // 点进去必然 403。服务端现在按任务组把真实权限算好下发（taskGroupPermissions）。
+  {
+    const scopedState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [
+        {id: "tg1", projectId: "p1", name: "我负责的", status: "development", workItems: []},
+        {id: "tg2", projectId: "p1", name: "别人负责的", status: "development", workItems: []}
+      ],
+      // 两个任务组各有一张待定稿的确认单，而这个人只在 tg1 上有评审权。
+      humanConfirmationRequests: [
+        {requestId: "hcr_mine", projectId: "p1", taskGroupId: "tg1", status: "pending", question: {title: "我该定的"}},
+        {requestId: "hcr_theirs", projectId: "p1", taskGroupId: "tg2", status: "pending", question: {title: "别人该定的"}}
+      ],
+      taskGroupPermissions: {tg1: ["task_group:read", "task_group:review"], tg2: ["task_group:read"]},
+      humanDirectives: [], agentDispatches: [], workSessions: [], executionTopologies: [],
+      closeBarriers: [], qualityGates: [], findings: [], permissionRequests: [], approvalRequests: [],
+      truncatedCollections: []
+    };
+    const scopedText = renderAs({accountId: "u_reviewer", accountType: "member", displayName: "评审人",
+      organizationId: "org_default", effectivePermissions: ["project:view", "task_group:read", "task_group:review"]},
+      scopedState, "review", "p1");
+    check("「待你处理」只算你在【那个任务组】上真有权处置的",
+      /共 1 项等待你处理/u.test(scopedText) && !/共 2 项等待你处理/u.test(scopedText),
+      "控制台判权用的是跨资源的并集，而后端按资源判 —— 只在 tg1 上有评审权的人会看到 tg2 的待办，"
+        + "点进去必然 403，而这块面板明写着「别人负责的部分不会出现在这里」");
+  }
   // 「受阻项」数的是任务组身上的 blockers；而【被挡住的派发】是另一回事，只在执行监控页上说。
   // 真实运行态上实测过：概览显示「受阻项 0」，同一份数据里有 2 个 blocked 派发、
   // 监控页正提示「有执行被挡住，需要人处理」—— 人先看的那一屏让他得出相反结论。

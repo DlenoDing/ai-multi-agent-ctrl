@@ -1709,6 +1709,25 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
   // 而控制台读的是这个视图、一次都没调过那个接口 —— 于是屏幕上每个源的角色数恒为 0，
   // 横幅也恒说「一个角色技能都还没取下来」（真实运行态实测：明明有 281 条）。
   // 计数用【未截断】的那份算：视图上限会把 269 条截到 188，那个数本身就是错的。
+  // 控制台判「这件事我能不能处置」用的是 effectivePermissions —— 那是【跨资源的并集】，
+  // 注释里也写明了它只是 UI 提示。而后端每一次写入都按资源判（canReadTaskGroup 那一套）。
+  // 于是「待你处理」那块会把【别的任务组】的待办也算成你的：只在 tg1 上有评审权的人，
+  // 看到的数字里混着 tg2 的，点进去必然 403。而那块面板恰恰写着「只统计你有权处置的」。
+  // 这里按任务组把真实权限算出来给界面。口径不在这儿重写一遍 —— 仍旧调后端那份 hasPermission。
+  if (view === "tasks") {
+    const consolePermissions = ["task_group:read", "task_group:review", "task_group:control", "task_group:orchestrate"];
+    const taskGroupPermissions = {};
+    for (const taskGroup of base.taskGroups || []) {
+      const project = (state.projects || []).find((item) => item.id === taskGroup.projectId);
+      // 项目所有者这一条不在 hasPermission 里（canReadTaskGroup 也是单独判的），照它的写法来。
+      const owns = project?.ownerAccountId === account.accountId;
+      taskGroupPermissions[taskGroup.id] = isSystemAccount(account) || owns
+        ? consolePermissions
+        : consolePermissions.filter((permission) => hasPermission(state, account.accountId, permission,
+          {resourceType: "task_group", resourceId: taskGroup.id, projectId: taskGroup.projectId}));
+    }
+    base.taskGroupPermissions = taskGroupPermissions;
+  }
   if (view === "runtime") {
     const roleSkillCountBySource = {};
     // 从 state 算而不是 scoped：非系统账号那条路上 scoped.roleSkills 被清空了（省掉那 293 KB 的
