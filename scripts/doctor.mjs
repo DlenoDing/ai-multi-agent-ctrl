@@ -2275,6 +2275,9 @@ try {
     }
   }
 
+  // 「没说」不能变成「批准」。这一处原先默认 approved，而批准会【真的铸出一张访问授权】——
+  // 只传 requestId 就能凭空发出一条 task_group:read（实测）。审批那侧早就修过同一件事。
+  expectStatus(await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-resolve-silent", {}), 400, "处理授权申请不给结论必须拒绝（缺省不得等于批准）", "permission_decision_required");
   expectStatus(await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-resolve-ok", {status: "approved"}), 200, "permission resolve happy");
   // 两个人同时处置同一条授权请求：后到的那个必须拿到 409，而不是 200。
   // 回 200 的后果是【拒绝方被告知成功，而权限其实已经授出】—— 他不会再去看结果。

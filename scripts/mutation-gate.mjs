@@ -4004,6 +4004,17 @@ const MUTATIONS = [
     expect: "出口要说清装什么"
   },
   {
+    // 处理授权申请时「没说」不能变成「批准」—— 而批准会真的铸出一张访问授权。
+    // 这一处原先是 `args.status || (allowed === false ? rejected : approved)`：只传 requestId
+    // 就凭空发出一条 task_group:read（实测）。审批那侧早就修过同一件事，这侧没跟上。
+    name: "处理授权申请不给结论必须拒绝",
+    file: "apps/mcp-server/server.mjs",
+    gate: "doctor",
+    from: "  if (args.status === undefined && args.allowed === undefined) {",
+    to: "  if (false) {",
+    expect: "处理授权申请不给结论必须拒绝"
+  },
+  {
     // 刚装完那一屏上是一个 73% 的示例项目、更新时间在一个月前，而没有一处说它是示例。
     // 判据要求 init 那句话【点名】示例项目 —— 写死一句"带着示例数据"，种子换了它也不会变。
     name: "init 要点名示例项目（不能写死一句话）",

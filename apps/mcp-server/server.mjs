@@ -2451,6 +2451,16 @@ export function permissionResolve(state, args) {
   // resolve-once guard above then made it permanently unresolvable. A blocked cell would be waiting on
   // a permission that no longer blocks anything and can no longer be granted, with the close gate
   // reporting green. Fail loudly instead; an unrecognised outcome is a caller bug, not a decision.
+  // 「没说」不能变成「批准」。这一处原先是 `args.status || (allowed === false ? rejected : approved)`：
+  // 只给 requestId、什么结论都不说，就走成 approved —— 而批准这一步会【真的铸出一张访问授权】
+  //（ensurePermissionAccessGrant）。实测：只传 requestId，state.accessGrants 里凭空多出一条
+  // task_group:read。同一件事在审批那侧（approvalResolve）早就修过了，写着"缺省不会被当作批准"，
+  // 权限申请这侧没跟上 —— 又是「同一条不变式两扇门只守一扇」。
+  if (args.status === undefined && args.allowed === undefined) {
+    return {ok: false, error: "permission_decision_required",
+      allowedStatuses: ["approved", "rejected"],
+      message: "处理授权申请必须显式给出 status（approved/rejected）或 allowed —— 缺省不会被当作批准"};
+  }
   const rawStatus = args.status || (args.allowed === false ? "rejected" : "approved");
   const resolvedStatus = rawStatus === "denied" ? "rejected" : rawStatus;
   if (!["approved", "rejected"].includes(resolvedStatus)) {
