@@ -3660,6 +3660,16 @@ const MUTATIONS = [
     expect: "却照读不误"
   },
   {
+    // 刚装完那条横幅要指【这个账号菜单里有的那一页】：系统管理员的入口在「账号与授权」，
+    // 组织管理员才在「AI 智能体」。指错的话，照着做的人在自己的菜单里找一个不存在的入口。
+    name: "刚装完的指路要指这个账号点得到的那一页",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '    system: "「账号与授权」页的「智能体入网令牌」面板",',
+    to: '    system: "「AI 智能体」页的「加入令牌管理」面板",',
+    expect: "而这一屏的导航里没有这几页"
+  },
+  {
     name: "够不着的审核卡要说清是哪个任务组不给你动",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

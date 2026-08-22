@@ -1484,6 +1484,43 @@ function runNoVisibleProjectCase() {
     loadConsole(root, {realI18n: true}).renderFullPageWith(state, account, projectId, pageId);
     return String(root.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
   };
+  // 指路要指【这个人自己菜单里有的那一页】。刚装完的第一屏最容易犯这个错：监控页那条
+  // "还没有任何执行记录"的横幅原先一律写「AI 智能体」页 —— 而那一页只在【组织管理员】的菜单里，
+  // 刚 npm run init 完、最可能读到这句话的系统管理员根本点不到它（他的入口在「账号与授权」页）。
+  // 这条判据不盯那一句文案，而是核【一般性质】：横幅里点名的页，必须出现在这一屏的导航里。
+  {
+    const emptyState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: []}],
+      agentDispatches: [], workSessions: [], agentRuntimeNodes: [], executionTopologies: [],
+      humanConfirmationRequests: [], humanDirectives: [], closeBarriers: [], qualityGates: [],
+      findings: [], permissionRequests: [], approvalRequests: [], truncatedCollections: []
+    };
+    const personas = [
+      ["系统管理员", {accountId: "u_sys", accountType: "system_admin", displayName: "系统管理员",
+        organizationId: "org_default", permissions: ["system:*"]}],
+      ["组织管理员", {accountId: "u_org", accountType: "org_admin", displayName: "组织管理员",
+        organizationId: "org_default", effectivePermissions: ["project:view", "org:member_admin"]}],
+      ["组织成员", {accountId: "u_member", accountType: "user_account", displayName: "成员",
+        organizationId: "org_default", effectivePermissions: ["project:view"]}]
+    ];
+    for (const [who, account] of personas) {
+      const text = renderAs(account, emptyState, "monitor", "p1");
+      if (!/还没有任何执行记录/u.test(text)) {
+        check(`${who}：刚装完的监控页要有那条"表是空的、这是正常的"横幅`, false,
+          "这一屏没渲染出横幅 —— 下面那条什么也没验");
+        continue;
+      }
+      const banner = text.slice(text.indexOf("还没有任何执行记录"), text.indexOf("还没有任何执行记录") + 220);
+      const named = [...banner.matchAll(/「([^」]{2,10})」页/gu)].map((hit) => hit[1]);
+      const missing = named.filter((label) => !text.includes(label + " ") && !text.includes(" " + label));
+      check(`${who}：横幅里指的页必须是这个账号菜单里有的`,
+        missing.length === 0,
+        `它让人去「${missing.join("、")}」页，而这一屏的导航里没有这几页 —— `
+          + "照着做的人会在自己的菜单里找一个不存在的入口");
+    }
+  }
   // 方案卡住时，人在监控页读到的"卡在这几项"必须是中文。阻塞项是 kind:分支:尾码 三段式，
   // 尾段（no_acceptance_checks 之类）此前一个中文都没有 —— 而它正是唯一说明原因的那一段。
   // 漏译扫描发现不了这类：它只在【渲染到】那一屏时才查得到，而三份基础状态里都没有执行拓扑。

@@ -4079,9 +4079,19 @@ function renderMonitor() {
   // 账本限流那道门按"谁提到了这个集合名"找渲染点，直接点名会被它当成一处没设上限的渲染。
   const nothingRanYet = !eventsShown.length && !sessionsAll.length && !dispatchesAll.length
     && !lanesAll.length && !admissionsInScope.length && !nodes.length;
+  // 指路要指【这个人自己菜单里有的那一页】：签发加入令牌的面板，组织管理员在「AI 智能体」页，
+  // 系统管理员在「账号与授权」页，而普通成员两页都没有。原先一律写「AI 智能体」页 ——
+  // 而刚 npm run init 完、最可能看到这条横幅的恰恰是系统管理员，他菜单里根本没有那一页。
+  const JOIN_TOKEN_ENTRY_BY_PERSPECTIVE = {
+    system: "「账号与授权」页的「智能体入网令牌」面板",
+    org: "「AI 智能体」页的「加入令牌管理」面板"
+  };
+  const joinTokenWhere = JOIN_TOKEN_ENTRY_BY_PERSPECTIVE[perspectiveOf(currentAccount)];
   const nothingRanYetNotice = nothingRanYet
     ? `<div class="notice">这个项目还没有任何执行记录 —— 下面几张表是空的，这在刚装完时是正常的，`
-      + `不是没取回来。要让它动起来：先到「AI 智能体」页的「加入令牌管理」面板点「签发一次性加入令牌」接一台节点，`
+      + `不是没取回来。要让它动起来：${joinTokenWhere
+        ? `先到${joinTokenWhere}点「签发一次性加入令牌」接一台节点，`
+        : "先让管理员接一台执行节点（签发加入令牌这件事你这个账号做不了），"}`
       + `再到「任务组」页把工作项推进到就绪。节点接上之后，这一页会实时显示会话、派发与执行事件。</div>`
     : "";
 
