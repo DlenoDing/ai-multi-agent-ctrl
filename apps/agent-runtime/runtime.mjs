@@ -25,6 +25,12 @@ const configPath = join(workDir, "agent-config.json");
 // of orphaning a detached model CLI that keeps holding the checkout and calling MCP/pushing.
 // Declared BEFORE the top-level `await main()` so installChildReaper() doesn't hit a temporal dead zone.
 const activeChildProcesses = new Set();
+// 这个文件的模块体在下面就 `await main()` —— 顶层 await 会把模块求值挂起，
+// 【它之后声明的模块级 const 在整个运行期都停在 TDZ 里】。第一版把这个常量放在
+// createBoundedOutput 旁边（1350 行），结果执行器一起来就 ReferenceError，而且不是报错
+// 是【挂死】：异常发生在 spawn 之后、stdin.end 之前，子进程等不到 EOF，父进程又因为
+// 子进程 stdio 还开着退不出来。所有模块级常量都必须待在这一段。
+const OUTPUT_CAPTURE_MAX_CHARS_DEFAULT = 32 * 1024 * 1024;
 let signalHandlersInstalled = false;
 function installChildReaper() {
   if (signalHandlersInstalled) return;
@@ -884,7 +890,7 @@ function redactEvidence(value) {
 function redactEvidenceMetadata(metadata = {}) {
   const result = {};
   for (const [key, value] of Object.entries(metadata || {})) {
-    result[key] = typeof value === "string" ? redactEvidence(value).slice(0, 500) : value;
+    result[key] = typeof value === "string" ? headForHuman(redactEvidence(value), 500) : value;
   }
   return result;
 }
@@ -1236,12 +1242,12 @@ async function runModelExecutor(config, dispatchPackage, repositoryRoot, skillWo
   }
   control?.throwIfCancelled();
   if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`executor_exited_nonzero:退出码 ${result.status}：${String(result.stderr || result.stdout || "").slice(-4000)}`);
+  if (result.status !== 0) throw new Error(`executor_exited_nonzero:退出码 ${result.status}：${tailForHuman(result.stderr || result.stdout || "", 4000)}`);
   const lines = String(result.stdout || "").trim().split("\n").filter(Boolean);
   try {
     return lines.length ? JSON.parse(lines.at(-1)) : {};
   } catch {
-    return {summary: String(result.stdout || "AI model agent completed execution.").slice(-2000)};
+    return {summary: tailForHuman(result.stdout || "AI model agent completed execution.", 2000)};
   }
 }
 
@@ -1266,8 +1272,19 @@ function spawnAndCapture(commandName, commandArgs, options = {}) {
     const child = spawn(commandName, commandArgs, {cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32"});
     activeChildProcesses.add(child);
     options.control?.attachChild(child);
-    let stdout = "";
-    let stderr = "";
+    // 子进程已经起来了，从这里到 stdin.end() 之间抛出任何异常都不能就这么散了：
+    // 它读不到 EOF 会一直等下去，而它的 stdio 还挂在我们身上 —— 事件循环不空，我们也退不出来。
+    // 结果是【整台节点静默挂死】：控制面看到的是「还在跑」，人等到认领过期为止。
+    // （真发生过一次：一个模块级常量落在顶层 await 之后，TDZ 报错就变成了这样一场挂死。）
+    const failFast = (error) => {
+      try { child.stdin?.end(); } catch { /* 已经关了 */ }
+      try { killChildProcessGroup(child, "SIGKILL"); } catch { /* 已经走了 */ }
+      activeChildProcesses.delete(child);
+      reject(error);
+    };
+    try {
+    const stdout = createBoundedOutput();
+    const stderr = createBoundedOutput();
     let timedOut = false;
     // Wall-clock guard: a hung/runaway model executor (network stall, interactive prompt, infinite loop)
     // would otherwise pin the node forever — the control watcher's keep-alive keeps renewing the claim, so
@@ -1279,23 +1296,24 @@ function spawnAndCapture(commandName, commandArgs, options = {}) {
     const timer = executionTimeoutMs > 0 ? setTimeout(() => { timedOut = true; terminateChild(child).catch(() => {}); }, executionTimeoutMs) : null;
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString();
-      stdout = boundedOutputAppend(stdout, text);
+      stdout.append(text);
       options.onOutput?.("stdout", text);
     });
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString();
-      stderr = boundedOutputAppend(stderr, text);
+      stderr.append(text);
       options.onOutput?.("stderr", text);
     });
     child.on("error", (error) => { if (timer) clearTimeout(timer); activeChildProcesses.delete(child); reject(error); });
     child.on("close", (status, signal) => {
       if (timer) clearTimeout(timer);
       activeChildProcesses.delete(child);
-      if (timedOut) return resolveResult({status: 124, signal, stdout, stderr: `${stderr}\n[agent-runtime] execution timed out after ${executionTimeoutMs}ms`, timedOut: true});
-      resolveResult({status: status ?? (signal ? 143 : 1), signal, stdout, stderr});
+      if (timedOut) return resolveResult({status: 124, signal, stdout: stdout.read(), stderr: `${stderr.read()}\n[agent-runtime] execution timed out after ${executionTimeoutMs}ms`, timedOut: true});
+      resolveResult({status: status ?? (signal ? 143 : 1), signal, stdout: stdout.read(), stderr: stderr.read()});
     });
     if (options.input) child.stdin.end(options.input);
     else child.stdin.end();
+    } catch (error) { failFast(error); }
   });
 }
 
@@ -1341,8 +1359,51 @@ function killChildProcessGroup(child, signal) {
   }
 }
 
-function boundedOutputAppend(current, chunk) {
-  return `${current}${chunk}`.slice(-(32 * 1024 * 1024));
+// 内存吃紧的 agent 机器可以调小（AIMAC_AGENT_OUTPUT_CAPTURE_MAX_CHARS）。认不出的值一律回默认，
+// 不许当成 0 —— 那会把每一份执行器输出都砍成空的，而且砍得悄无声息。
+function outputCaptureLimit() {
+  const configured = Number(process.env.AIMAC_AGENT_OUTPUT_CAPTURE_MAX_CHARS);
+  return Number.isFinite(configured) && configured >= 1024 ? Math.floor(configured) : OUTPUT_CAPTURE_MAX_CHARS_DEFAULT;
+}
+
+// 执行器的输出会作为失败原因摆到人面前。超上限时保留【末尾】是对的（真正的报错通常在最后），
+// 但砍掉的部分必须说出来 —— 悄悄砍掉开头，人读到的半句话跟一份完整日志长得一模一样。
+// 累积也不能每来一块就重切一次 32MB：那是平方项（一份 32MB 的日志会被复制上万次）。
+// 这里放宽到上限的 1.5 倍才切一刀，每刀至少丢掉 16MB，摊下来每块只多一次追加。
+function createBoundedOutput(limit = outputCaptureLimit()) {
+  let text = "";
+  let dropped = 0;
+  const trim = () => {
+    if (text.length <= limit) return;
+    dropped += text.length - limit;
+    text = text.slice(-limit);
+  };
+  return {
+    append(chunk) {
+      text += chunk;
+      if (text.length > limit + Math.ceil(limit / 2)) trim();
+    },
+    read() {
+      trim();
+      if (dropped <= 0) return text;
+      return `[agent-runtime] 这段输出超过 ${limit} 字上限，开头 ${dropped} 字已丢弃，以下只是末尾部分\n${text}`;
+    }
+  };
+}
+
+// 证据元数据留的是【开头】（键值型，前面才是有效信息），同样要说出后面砍了多少。
+function headForHuman(value, limit) {
+  const text = String(value ?? "");
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}…（原文共 ${text.length} 字，超出 ${limit} 字上限，余下 ${text.length - limit} 字未上报）`;
+}
+
+// 摆给人看之前再切一刀（失败摘要有自己的更小上限）。同样要说出砍了多少。
+function tailForHuman(value, limit) {
+  const text = String(value ?? "");
+  if (text.length <= limit) return text;
+  return `（原文共 ${text.length} 字，以下只是末尾 ${limit} 字，开头 ${text.length - limit} 字未随本条下发）\n`
+    + text.slice(-limit);
 }
 
 function runKnownModelCli(model, prompt, cwd, env, control, onOutput) {

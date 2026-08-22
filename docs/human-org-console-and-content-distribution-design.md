@@ -212,6 +212,7 @@
 - `sessions/<sessionId>/`：dispatch 达终态（checkpoint 已受理 / failed / cancelled）后由运行时**自动删除**；异常残留由运行时启动时按 `mtime > AIMAC_AGENT_SESSION_TTL_HOURS`（默认 72h）清扫。
 - `library/`：digest 寻址长期保留；LRU 清理阈值 `AIMAC_AGENT_LIBRARY_MAX_MB`（默认 2048）。
 - `projects/<id>/repository/`：长期保留，项目在控制面删除后由 revoke/shutdown 流程提示清理。
+- 执行器输出在内存里最多留 `AIMAC_AGENT_OUTPUT_CAPTURE_MAX_CHARS` 字（默认 32Mi，小于 1024 或认不出的值回默认）；超出部分从**开头**丢弃，并在输出最前面写明丢了多少 —— 摆到人面前的失败原因不许看着像全文。
 
 ### 4.4 三类规则体系（角色规则 / 系统规则 / 业务规则）
 

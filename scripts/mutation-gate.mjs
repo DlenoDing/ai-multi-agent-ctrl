@@ -3596,6 +3596,54 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "顶层 await 之后不得声明模块级常量",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyRuntimeConstantsSitBeforeItsTopLevelAwait",
+    from: "function pathMatches(rule, path) {",
+    to: "const LATE_CONST_PROBE = 1;\nfunction pathMatches(rule, path) {",
+    expect: "顶层 await 之后声明了模块级常量"
+  },
+  {
+    name: "起了子进程之后的异常必须先收掉子进程",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyRuntimeConstantsSitBeforeItsTopLevelAwait",
+    from: "    } catch (error) { failFast(error); }",
+    to: "    } catch (error) { throw error; }",
+    expect: "起了子进程之后不再兜住异常"
+  },
+  {
+    name: "失败原因被砍短必须说出砍了多少",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutorBackedWorkerRefusesUnsafeOutput",
+    from: `const detail = truncateForHuman((result?.stderr || result?.stdout || "").trim(), 300, "执行器输出");`,
+    to: `const detail = (result?.stderr || result?.stdout || "").trim().slice(0, 300);`,
+    expect: "失败原因被砍短了却没说砍了多少"
+  },
+  {
+    name: "运行时侧失败原因也要说出砍了多少",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyTruncatedExecutorOutputSaysSo",
+    from: '${tailForHuman(result.stderr || result.stdout || "", 4000)}',
+    to: '${String(result.stderr || result.stdout || "").slice(-4000)}',
+    expect: "执行器非零退出的失败原因被砍短时不再说明砍了多少"
+  },
+  {
+    name: "执行器输出超内存上限时丢了多少要记下来",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyTruncatedExecutorOutputSaysSo",
+    from: "dropped += text.length - limit;",
+    to: "dropped += 0;",
+    expect: "执行器输出超过内存上限时开头被悄悄丢掉"
+  },
+  {
+    name: "输出上限认不出时不得当成 0",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyTruncatedExecutorOutputSaysSo",
+    from: "return Number.isFinite(configured) && configured >= 1024 ? Math.floor(configured) : OUTPUT_CAPTURE_MAX_CHARS_DEFAULT;",
+    to: "return Math.floor(configured) || OUTPUT_CAPTURE_MAX_CHARS_DEFAULT;",
+    expect: "执行器输出上限认不出时不再回默认"
+  },
+  {
     name: "停执行器必须按进程组杀",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyStoppingAnExecutorTellsTheTruth",

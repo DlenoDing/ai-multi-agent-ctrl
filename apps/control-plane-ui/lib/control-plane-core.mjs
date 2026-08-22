@@ -2963,7 +2963,9 @@ export function classifyExecutorSpawnFailure(result) {
   // 退出码非 0：原因在 stderr 里，stdout 只是兜底。两个都空时要说出"没留下任何原因"，
   // 而不是甩一个空的失败码 —— 人拿着空字符串没法往下查。
   if (result?.status !== 0) {
-    const detail = (result?.stderr || result?.stdout || "").trim().slice(0, 300);
+    // 砍到 300 字要说出砍了多少：半截报错跟一条完整报错长得一模一样，
+    // 人会拿它当全部线索去查（真正的下文往往就在被砍掉的那截里）。
+    const detail = truncateForHuman((result?.stderr || result?.stdout || "").trim(), 300, "执行器输出");
     return `agent_runtime_executor_failed:${detail || `执行器以退出码 ${result?.status} 结束，stderr 与 stdout 都是空的`}`;
   }
   return null;

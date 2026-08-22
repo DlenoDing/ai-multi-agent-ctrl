@@ -408,6 +408,8 @@ run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
+run(verifyRuntimeConstantsSitBeforeItsTopLevelAwait);
+run(verifyTruncatedExecutorOutputSaysSo);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
 runAsync(verifyStoppingAnExecutorTellsTheTruth);
@@ -10803,6 +10805,90 @@ function verifyLocalGitWorkerRefusesUnsafeRepositoryState(output) {
   console.log("本地 git 工作器：工作树不干净/产出越界/清单越界/远端被改回/一字未变 五种形状全拒，正常情形跑得完 —— 核过");
 }
 
+function verifyRuntimeConstantsSitBeforeItsTopLevelAwait(output) {
+  // runtime.mjs 的模块体在文件很靠前的地方就 `await main()`。顶层 await 会把模块求值挂起，
+  // 【它之后声明的模块级 const/let 在整个运行期都停在 TDZ 里】—— 读一下就 ReferenceError。
+  // 这条不变式此前没人写下来，而它踩中的后果不是报错是【挂死】：异常若发生在 spawn 之后、
+  // stdin.end() 之前，子进程等不到 EOF，父进程又因子进程 stdio 还开着退不出来，
+  // 控制面看到的是「还在跑」。实测这样卡了 26 分钟才被发现。
+  const runtimePath = join(root, "apps/agent-runtime/runtime.mjs");
+  const lines = readFileSync(runtimePath, "utf8").split("\n");
+  const awaitLine = lines.findIndex((line) => /^\s*await main\(\);/u.test(line));
+  if (awaitLine < 0) {
+    output.push("runtime.mjs 里找不到顶层 await main() —— 这条判据按它的位置切分，找不到就等于没查");
+    return;
+  }
+  const late = [];
+  for (let index = awaitLine + 1; index < lines.length; index += 1) {
+    const match = /^(?:const|let|var) ([A-Za-z0-9_$]+)/u.exec(lines[index]);
+    if (match) late.push(`${match[1]}（第 ${index + 1} 行）`);
+  }
+  if (late.length) {
+    output.push(`runtime.mjs 在顶层 await 之后声明了模块级常量：${late.join("、")} —— `
+      + "顶层 await 挂起了模块求值，这些名字在整个运行期都读不到（ReferenceError），"
+      + "而踩中它多半表现为挂死而不是报错。全部挪到 activeChildProcesses 那一段去");
+  }
+  // 上面那句「顶层 await 之后的 const 读不到」不是听来的规矩，这里当场证一次 ——
+  // 否则哪天 Node 改了语义，这道门就会继续拦着一件其实没问题的事。
+  const probeDir = mkdtempSync(join(tmpdir(), "cc-tdz-"));
+  try {
+    const probe = join(probeDir, "probe.mjs");
+    writeFileSync(probe, ["await Promise.resolve();",
+      "try { console.log(LATE_CONST); } catch (error) { console.log(error.constructor.name); }",
+      "const LATE_CONST = 1;"].join("\n"));
+    const probed = execFileSync(process.execPath, [probe], {encoding: "utf8"}).trim();
+    if (probed !== "ReferenceError") {
+      output.push(`顶层 await 之后的模块级 const 现在读得到了（探针拿到 ${probed}）—— `
+        + "这道门拦的是一件已经不成立的事，该重新想清楚再决定留不留");
+    }
+  } finally {
+    rmSync(probeDir, {recursive: true, force: true});
+  }
+  // 子进程起来之后到 stdin.end() 之间的异常必须快失败（杀子进程 + reject），不能就这么散了。
+  const runtime = readFileSync(runtimePath, "utf8");
+  if (!/const failFast = \(error\) => \{[\s\S]{0,320}killChildProcessGroup\(child, "SIGKILL"\);[\s\S]{0,160}reject\(error\);/u.test(runtime)
+    || !/\} catch \(error\) \{ failFast\(error\); \}/u.test(runtime)) {
+    output.push("spawnAndCapture 起了子进程之后不再兜住异常 —— 子进程等不到 EOF，"
+      + "父进程也退不出来，整台节点静默挂死，而控制面显示「还在跑」");
+  }
+  console.log(`runtime.mjs：顶层 await（第 ${awaitLine + 1} 行）之后没有模块级常量（TDZ 语义当场探过），`
+    + "且子进程起来后的异常会杀掉子进程再抛 —— 核过");
+}
+
+function verifyTruncatedExecutorOutputSaysSo(output) {
+  // 执行器输出有【两份】实现：控制面里的核验工作器（spawnSync）和 agent 机器上的运行时
+  // （spawnAndCapture）。两边都要在砍短输出时说出砍了多少 —— 半截日志跟全文长得一模一样。
+  // 控制面那份由 verifyExecutorBackedWorkerRefusesUnsafeOutput 真跑一遍验；
+  // 运行时那份只在真 agent 机器上跑（本进程够不着），这里按形状核对它的三个截断点。
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const points = [
+    ["执行器非零退出的失败原因", /executor_exited_nonzero:[^`]*\$\{tailForHuman\(/u],
+    ["执行器没吐 JSON 时的兜底摘要", /return \{summary: tailForHuman\(/u],
+    ["证据元数据的每个字段", /headForHuman\(redactEvidence\(value\), 500\)/u]
+  ];
+  for (const [what, shape] of points) {
+    if (!shape.test(runtime)) {
+      output.push(`${what}被砍短时不再说明砍了多少 —— 人拿到的是半截内容，读起来跟完整内容没有区别`);
+    }
+  }
+  // 内存累积那一层：超上限时丢的是【开头】，读出来必须带一句"丢了多少"。
+  if (!/dropped \+= text\.length - limit;/u.test(runtime)
+    || !/开头 \$\{dropped\} 字已丢弃/u.test(runtime)) {
+    output.push("执行器输出超过内存上限时开头被悄悄丢掉 —— 既没记下丢了多少，也没在读出来时说明");
+  }
+  // 上限本身认不出时必须回默认，不能当 0（那会把每份输出都砍成空的，而且砍得悄无声息）。
+  if (!/Number\.isFinite\(configured\) && configured >= 1024 \? Math\.floor\(configured\) : OUTPUT_CAPTURE_MAX_CHARS_DEFAULT/u.test(runtime)) {
+    output.push("执行器输出上限认不出时不再回默认 —— 一个打错的环境变量会把所有输出砍成空的");
+  }
+  // 两边的措辞必须都能让人看出"这不是全文"。控制面那份用的是共用的 truncateForHuman。
+  const core = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  if (!/const detail = truncateForHuman\(/u.test(core)) {
+    output.push("控制面侧执行器失败原因不再走 truncateForHuman —— 两份实现会在「砍了不说」这件事上分叉");
+  }
+  console.log("执行器输出被砍短时都说得出砍了多少：控制面那份已真跑（见上一条），"
+    + "运行时那份按形状核对四个截断点 —— 它只在真 agent 机器上跑，本进程够不着");
+}
+
 function verifyExecutorBackedWorkerRefusesUnsafeOutput(output) {
   // 外部执行器（真正跑 agent 的那条路）的安全边界此前整族【零覆盖】。它比本地工作器更危险：
   // 输出内容由外部进程说了算，控制面只能靠这几道门核对"它说改了什么"与"git 里真的改了什么"。
@@ -10965,13 +11051,34 @@ function verifyExecutorBackedWorkerRefusesUnsafeOutput(output) {
       }
       reset();
     }
+
+    // 执行器的输出会原样变成人看到的失败原因，中间要过两道砍：内存累积上限（32Mi）和
+    // 失败摘要上限（4000 字）。两道都保留末尾 —— 那是对的，但【必须说出砍掉了多少】：
+    // 砍完的半截日志跟一份完整日志长得一模一样，人会拿它当全部证据去判断。
+    const noise = "X".repeat(12000);
+    writeFileSync(join(workspace, "loud-executor.mjs"), [
+      `process.stderr.write(${JSON.stringify(noise)});`,
+      'process.stderr.write("\\n最先出错的那一行在开头，已经被砍掉了\\n");',
+      'process.exit(3);'
+    ].join("\n"));
+    process.env.AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND = `node ${JSON.stringify(join(workspace, "loud-executor.mjs"))}`;
+    const loud = runOnce("ok");
+    const loudReason = String(loud.reason || "");
+    if (!loudReason.startsWith("agent_runtime_executor_failed:")) {
+      output.push(`外部执行器: 非零退出没被判成 agent_runtime_executor_failed（实际 ${loudReason.slice(0, 60) || loud.status}）—— 下面这条测不出东西`);
+    } else if (!/原文共 \d{5,} 字/u.test(loudReason) || !/未随本卡片下发|未随本条下发/u.test(loudReason)) {
+      output.push("外部执行器: 失败原因被砍短了却没说砍了多少 —— "
+        + `人拿到的是半截报错，读起来跟完整报错没有区别（实际：${loudReason.slice(0, 120)}）`);
+    }
+    reset();
+
   } finally {
     if (previousCommand === undefined) delete process.env.AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND;
     else process.env.AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND = previousCommand;
     delete process.env.CC_EXECUTOR_MODE;
     rmSync(workspace, {recursive: true, force: true});
   }
-  console.log("外部执行器：非 JSON/无清单/产出越界/清单越界(撞产出那道)/工作树脏/无任务合同/一行未改/提交后被动过/远端被改回 九种形状全拒，合规结果照收 —— 核过");
+  console.log("外部执行器：非 JSON/无清单/产出越界/清单越界(撞产出那道)/工作树脏/无任务合同/一行未改/提交后被动过/远端被改回 九种形状全拒，合规结果照收；失败原因被砍短时说得出砍了多少 —— 核过");
 }
 
 function verifyHumanCollaborationEntryPointsRefuseEmptyInput(output) {

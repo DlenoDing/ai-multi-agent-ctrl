@@ -1567,7 +1567,10 @@ spawn_sites.each do |at|
   line_no = runtime_source[0...at].count("\n") + 1
   errors << "代理第 #{line_no} 行的 spawnAndCapture 没有把 control 传下去 —— 取消将杀不掉这个子进程，模型会一直跑到底"
 end
-errors << "spawnAndCapture 必须把子进程交给控制监视器（attachChild），否则取消只能挡住 push、停不下正在烧的那一步" unless runtime_source.match?(/function spawnAndCapture[\s\S]{0,400}?attachChild\(child\)/m)
+# 原先是"函数名之后 400 字符内出现 attachChild"。往 spawn 后面加几行注释就会让它误报 ——
+# 而它想问的其实是"这个函数体里到底有没有把子进程交出去"。按函数体切（到下一个顶格 } 为止）。
+spawn_capture_body = runtime_source[/^function spawnAndCapture[\s\S]*?^\}/m].to_s
+errors << "spawnAndCapture 必须把子进程交给控制监视器（attachChild），否则取消只能挡住 push、停不下正在烧的那一步" unless spawn_capture_body.include?("attachChild(child)")
 errors << "控制监视器附加子进程时若已处于取消态，必须当场终止（覆盖'取消先到、子进程后起'的竞态）" unless runtime_source.match?(/attachChild\(child\)\s*\{[\s\S]{0,300}?state\.cancelled && child[\s\S]{0,120}?terminateChild/m)
 
 # 复核本身必须 fail-closed：网络不通时确认不了自己仍是持有者，就必须当作已经不是。
