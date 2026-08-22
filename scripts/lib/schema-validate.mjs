@@ -144,6 +144,17 @@ export function createSchemaValidator(specDir) {
 // 整类记录悄悄退出校验，而门依然是绿的。
 export const SCHEMA_FILE_ALIASES = {"control-event": "control-events"};
 
+// 「不受规范约束的集合数」这个棘轮有【四个调用点】：控制面 e2e、远程 agent e2e、
+// 契约门的种子数据与编排产出。清掉一个集合时四处都会变，而我每次只降一个、再被下一处
+// 顶红一次 —— 一步走了三轮。数字只放这一处，四个调用点都从这里取。
+// 改动方式：清掉一个集合 -> 这里对应的数减一 -> 变异登记里的锚点跟着改。
+export const UNCOVERED_CEILINGS = {
+  "控制面 e2e 产出": 14,
+  "远程 agent e2e 产出": 11,
+  "种子数据": 4,
+  "编排产出": 6
+};
+
 // 凡是带 schemaVersion 的记录，一律按它【自己声明的】那份规范校验：映射取自记录自身，
 // 不需要维护对照表，也就不会因为漏登记而少验一类。
 export function sweepRecordsAgainstDeclaredSchemas(state, options = {}) {

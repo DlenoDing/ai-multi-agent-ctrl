@@ -20,7 +20,7 @@ import {chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rea
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
+import { UNCOVERED_CEILINGS, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { sweepStaleDoctorRuntimeDirs } from "./lib/stale-runtime-dirs.mjs";
 import { assertNoUndefinedInPayload } from "./lib/no-undefined-payload.mjs";
 
@@ -3633,7 +3633,7 @@ const doctorProducedState = readStoredState({
 
 const doctorSweep = sweepRecordsAgainstDeclaredSchemas(doctorProducedState, {
   specDir: join(root, "spec"), label: "控制面 e2e 产出", minValidated: 50
-, maxUncovered: 14});
+, maxUncovered: UNCOVERED_CEILINGS["控制面 e2e 产出"]});
 if (!(doctorProducedState.humanConfirmationRequests || []).some((item) => item.schemaVersion)) {
   throw new Error("doctor: 本轮没有产出任何带 schemaVersion 的人工确认单 —— 这道规范核对在空转，人工定稿闸门的记录面依旧无人校验");
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {
 execFileSync, spawn, spawnSync } from "node:child_process";
-import { SCHEMA_FILE_ALIASES, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
+import { SCHEMA_FILE_ALIASES, UNCOVERED_CEILINGS, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { mcpServiceAllowedTools ,
   mcpServiceAllowlistNotice
 } from "../apps/control-plane-ui/lib/mcp-service-allowlist.mjs";
@@ -212,8 +212,9 @@ const AGENT_RUNTIME_UNREACHABLE_CODES = {
 // 把它们也写进文档只会变成噪声，改它们之前本来就该读源码里那一处的注释。
 // 「另有 N 个集合没有任何记录声明规范」这句原先只打印。它读起来像一句无害的说明，
 // 而新加一个集合、不给它规范文件，它会静默混进这个 N 里，从此不受任何规范约束。
-// 两个调用点各有自己的实测值（种子数据 4、编排产出 7）。
-const UNCOVERED_COLLECTION_CEILINGS = {"种子数据": 4, "编排产出": 6};
+// 两个调用点各有自己的实测值，数字与另两处（两套 e2e）一起放在 lib 里 ——
+// 它们会同时变，散在四个文件里的后果是清一个集合要被顶红三次。
+const UNCOVERED_COLLECTION_CEILINGS = UNCOVERED_CEILINGS;
 
 const OPERATOR_FACING_ENV_VARS = [
   "AIMAC_HOST", "AIMAC_PORT", "AIMAC_PUBLIC_URL", "AIMAC_RUNTIME_DIR", "AIMAC_REPOSITORY_ROOT",

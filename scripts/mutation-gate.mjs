@@ -4131,10 +4131,10 @@ const MUTATIONS = [
   },
   {
     name: "种子与编排产出的不受约束集合数也要棘轮住",
-    file: "scripts/contract-check.mjs",
+    file: "scripts/lib/schema-validate.mjs",
     check: "verifySeedRecordsMatchTheirDeclaredSchemas",
-    from: '{"种子数据": 4, "编排产出": 6}',
-    to: '{"种子数据": 3, "编排产出": 6}',
+    from: '"种子数据": 4,',
+    to: '"种子数据": 3,',
     expect: "不受规范约束的集合从 3 涨到 4"
   },
   {
@@ -4158,10 +4158,10 @@ const MUTATIONS = [
   },
   {
     name: "不受规范约束的集合数要棘轮住",
-    file: "scripts/doctor.mjs",
+    file: "scripts/lib/schema-validate.mjs",
     gate: "doctor",
-    from: "maxUncovered: 14});",
-    to: "maxUncovered: 13});",
+    from: '"控制面 e2e 产出": 14,',
+    to: '"控制面 e2e 产出": 13,',
     // 期望要挑【这道门自己会打印的那一句】：控制面 e2e 的前缀是"控制面 e2e 产出："，
     // 契约门那两处（种子/编排产出）用的是别的前缀 —— 只写公共部分会被判成"挂错了门"。
     expect: "控制面 e2e 产出：不受规范约束的集合"
@@ -4171,10 +4171,10 @@ const MUTATIONS = [
     // 远程那个照样红；而它此前没有任何变异证明自己还活着。两处标签原先都含"e2e 产出"，
     // 期望串会互相吞并，所以远程那边的 label 改成了"远程 agent e2e 产出"。
     name: "远程 agent 那侧的规范覆盖也要棘轮住",
-    file: "scripts/doctor-agent-remote.mjs",
+    file: "scripts/lib/schema-validate.mjs",
     gate: "agent",
-    from: "maxUncovered: 11});",
-    to: "maxUncovered: 10});",
+    from: '"远程 agent e2e 产出": 11,',
+    to: '"远程 agent e2e 产出": 10,',
     expect: "远程 agent e2e 产出：不受规范约束的集合"
   },
   {
