@@ -4840,6 +4840,11 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "policy_decision_eval", `PolicyDecision:${body.decisionId || "new"}`, {resourceType: "system", resourceId: "policy_engine"});
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = policyDecisionEval(state, body);
+    // core 的拒绝要原样转发：不接住的话下一行 result.policyDecision.decisionId 直接抛，
+    // 调用方收到 500 —— 「少填一个字段报成服务器故障」这一族本仓已经撞过两次。
+    if (result.ok === false) {
+      return json(res, 400, {error: result.error, received: result.received, message: result.message});
+    }
     audit(state, guard.actor, "policy_decision_eval", `PolicyDecision:${result.policyDecision.decisionId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);

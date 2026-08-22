@@ -4004,6 +4004,16 @@ const MUTATIONS = [
     expect: "出口要说清装什么"
   },
   {
+    // 策略决策是【会被别处引用的治理记录】。原先 `allowed === false ? denied : allowed`：
+    // 不说＝放行；更隐蔽的是 `=== false` 只认布尔，想记拒绝却传字符串 "false" 也会记成放行。
+    name: "记策略决策不给判决必须拒绝",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: '  if (typeof args.allowed !== "boolean") {',
+    to: "  if (false) {",
+    expect: "记策略决策不给判决必须拒绝"
+  },
+  {
     // 处理授权申请时「没说」不能变成「批准」—— 而批准会真的铸出一张访问授权。
     // 这一处原先是 `args.status || (allowed === false ? rejected : approved)`：只传 requestId
     // 就凭空发出一条 task_group:read（实测）。审批那侧早就修过同一件事，这侧没跟上。

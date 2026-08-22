@@ -2180,6 +2180,11 @@ try {
 
   // policy-decisions/evaluate → system:*
   expectStatus(await g2("/api/policy-decisions/evaluate", systemAuth, "g2b-policy-ok", {action: "mcp_tool_call", allowed: true}), 201, "policy eval happy");
+  // 判决不能靠缺省。策略决策是【会被别处引用的治理记录】（access grant 的 policyDecisionRef 指它），
+  // 原先 `allowed === false ? denied : allowed` —— 不说就记成放行，
+  // 而且传字符串 "false" 或数字 0（想记一次拒绝）同样会被记成放行。
+  expectStatus(await g2("/api/policy-decisions/evaluate", systemAuth, "g2b-policy-silent", {action: "mcp_tool_call"}), 400, "记策略决策不给判决必须拒绝（缺省不得记成放行）", "policy_decision_verdict_required");
+  expectStatus(await g2("/api/policy-decisions/evaluate", systemAuth, "g2b-policy-stringy", {action: "mcp_tool_call", allowed: "false"}), 400, "判决必须是布尔（字符串 \"false\" 不许被记成放行）", "policy_decision_verdict_required");
   expectStatus(await g2("/api/policy-decisions/evaluate", reviewerAuth, "g2b-policy-deny", {action: "mcp_tool_call"}), 403, "policy eval deny", "policy_denied");
 
   // contracts → project:*

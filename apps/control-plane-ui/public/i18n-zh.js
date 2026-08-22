@@ -1055,6 +1055,7 @@
     finding_status_unknown: "认不出这个发现状态",
     review_plan_id_conflict: "这个评审计划 id 已经被创建过了",
     rule_source_resolution_id_conflict: "这个规则来源判定 id 已经被创建过了",
+    policy_decision_verdict_required: "记策略决策必须显式给出放行或拒绝",
     permission_decision_required: "处理授权申请必须显式给出批准或驳回",
     artifact_id_conflict: "这个产出 id 已经被登记过了",
     approval_request_action_required: "审批单必须写明批的是哪个动作",

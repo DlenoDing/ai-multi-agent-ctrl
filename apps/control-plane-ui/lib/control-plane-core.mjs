@@ -8013,6 +8013,17 @@ export function policyDecisionEval(state, args) {
   // —— 容量保护按它认"还被引用着"，只写 decisionId 的话，被活跃授权引用着的决策照样被挤掉
   //（2026-08-22 实测并修）。这里两个都写、同值：decisionId 是已经发布出去的工具输出字段，
   // 直接改名会打断调用方；退役条件写在 spec/policy-decision.schema.json 里。
+  // 判决必须由调用方显式给出。原先是 `args.allowed === false ? "denied" : "allowed"`：
+  // 不说＝放行，而这是一条【会被别处引用的治理记录】（access grant 的 policyDecisionRef 就指它）。
+  // 同族的两处（授权申请处置、审批处置）都已经改成"缺省不作数"，这一处是漏的。
+  // 还有一层更隐蔽：`=== false` 只认布尔 false —— 调用方想记一次拒绝却传了字符串 "false"
+  // 或数字 0，记下来的会是【放行】。所以这里要的是布尔，不是"真假值"。
+  // 内部三处调用（MCP 工具白名单、授权申请处置、守卫写）都传显式布尔，不受影响。
+  if (typeof args.allowed !== "boolean") {
+    return {ok: false, error: "policy_decision_verdict_required",
+      received: args.allowed === undefined ? "（没给）" : String(args.allowed).slice(0, 40),
+      message: "记一条策略决策必须显式给出 allowed（true / false）—— 缺省不会被记成放行"};
+  }
   const decisionId = args.decisionId || createId("pd");
   const policyDecision = {
     schemaVersion: "policy-decision/v1",
@@ -8021,7 +8032,7 @@ export function policyDecisionEval(state, args) {
     action: args.action || "mcp_tool_call",
     resource: args.resource || {},
     subjectRef: args.subjectRef || {subjectType: "service", subjectId: "mcp-proxy"},
-    result: args.allowed === false ? "denied" : "allowed",
+    result: args.allowed ? "allowed" : "denied",
     reasonCode: args.reasonCode || "local_mcp_policy_eval",
     evidenceRefs: args.evidenceRefs || [],
     createdAt: at
