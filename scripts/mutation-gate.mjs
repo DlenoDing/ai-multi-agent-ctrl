@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "答复了的错误不得再拿报文猜是不是暂时故障",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: "if (status) return status === 409 || status === 429 || (status >= 500 && status <= 599);",
+    to: "if (status === 409 || status === 429 || (status >= 500 && status <= 599)) return true;",
+    expect: "码里带 timeout"
+  },
+  {
+    name: "重试次数写坏了不得变成一次都不试",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: "const attempts = Number.isFinite(configuredAttempts) && configuredAttempts >= 1\n    ? Math.floor(configuredAttempts) : 4;",
+    to: "const attempts = Number(process.env.AIMAC_AGENT_RETRY_ATTEMPTS || 4);",
+    expect: "一次都没试就失败了"
+  },
+  {
     name: "产出路径必须拦住「白名单前缀 + 爬出去」",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyAgentRuntimeGuardsRefuseRealAttacks",

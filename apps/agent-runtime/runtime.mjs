@@ -1942,7 +1942,11 @@ async function jsonRequest(url, options = {}) {
 }
 
 async function retryableAgentRequest(fn, label) {
-  const attempts = Number(process.env.AIMAC_AGENT_RETRY_ATTEMPTS || 4);
+  // 认不出的值（打错字、写成 0）不能变成「一次都不试」—— 那时循环体整个不执行，
+  // 这次调用根本没发生过，而调用方拿到的只是一句"重试次数用完了"。至少试一次。
+  const configuredAttempts = Number(process.env.AIMAC_AGENT_RETRY_ATTEMPTS);
+  const attempts = Number.isFinite(configuredAttempts) && configuredAttempts >= 1
+    ? Math.floor(configuredAttempts) : 4;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       return await fn();
@@ -1963,11 +1967,14 @@ function retryableControlPlaneError(error) {
   // 可重试的写冲突 —— 那会让一个【已经失去 claim】的节点反复重试，直到耗尽次数才停，
   // 期间它仍然认为自己该继续干活。失去持有权不是暂时性故障，重试改变不了它。
   if (error?.nonRetryable === true) return false;
-  // Retry state-write conflicts AND transient transport failures (5xx / 429 / request-timeout-abort /
-  // connection reset/refused/DNS): a momentary control-plane blip or rolling deploy must not surface to
-  // the caller as a permanent error (which, on the bare heartbeat/claim calls, would kill the daemon).
-  if (status === 409 || status === 429 || (status >= 500 && status <= 599)) return true;
-  return /state_write_conflict|AIMAC_STATE_CONFLICT|409|abort|timed?\s?out|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|fetch failed/iu.test(message);
+  // 服务端【答复了】的（带 HTTP 状态码）只按状态码判：写冲突/限流/5xx 可重试，其余不重试。
+  // 原先这里还拿整条报文做子串匹配，而控制面有一批【永久】拒绝码本身就带着 timeout / abort 字样
+  // （agent_node_heartbeat_timeout、dispatch_revocation_ack_timeout、dispatch_shutdown_ack_timeout…）——
+  // 于是一句"你这个节点已被判定失联"会被反复重试四次，而重试改变不了它。
+  if (status) return status === 409 || status === 429 || (status >= 500 && status <= 599);
+  // 没有状态码＝压根没连上（fetch 自己抛的）。这一类才该按报文认：一次滚动重启或网络抖动
+  // 不能在心跳/认领这种裸调用上冒成永久错误 —— 那会直接把 agent 守护进程带走。
+  return /state_write_conflict|AIMAC_STATE_CONFLICT|abort|timed?\s?out|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|fetch failed/iu.test(message);
 }
 
 function syncJson(url, token) {

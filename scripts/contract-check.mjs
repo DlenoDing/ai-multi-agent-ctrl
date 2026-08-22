@@ -10848,7 +10848,8 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
     const copy = join(dir, "runtime-under-test.mjs");
     const source = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
     writeFileSync(copy, `${source}\nexport {isSafeCloneUrl, assertAllowedPaths, verifyPackageBinding,`
-      + " verifySkillFiles, classifyPushPermissionDenial, inside};\n");
+      + " verifySkillFiles, classifyPushPermissionDenial, inside,"
+      + " retryableControlPlaneError, retryableAgentRequest};\n");
     const rt = await import(pathToFileURL(copy).href);
     const refusalOf = (fn) => { try { fn(); return null; } catch (error) { return String(error.message).split(":")[0]; } };
 
@@ -10951,8 +10952,50 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
             : "把它挂起来等人处置是错的：人处置不了，只是白等四分钟"));
       }
     }
+    // ⑥ 「这次失败该不该重试」：判错两个方向都要命 —— 把永久拒绝当成暂时故障会让 agent
+    // 反复捶控制面（而重试改变不了它）；把一次网络抖动当成永久错误会直接带走守护进程
+    // （心跳/认领是裸调用，抛出去就没人接）。
+    const retryCases = [
+      ["写冲突", {status: 409, message: "state_write_conflict"}, true],
+      ["限流", {status: 429, message: "too_many_requests"}, true],
+      ["服务端 5xx", {status: 503, message: "server_error"}, true],
+      ["显式标了不可重试", {status: 409, message: "claim_lost", nonRetryable: true}, false],
+      ["没权限", {status: 403, message: "agent_node_not_active"}, false],
+      ["参数不对", {status: 400, message: "bad_request"}, false],
+      // 这三条是关键：永久拒绝的【码里带着】timeout / abort 字样。
+      ["节点被判失联（4xx，码里带 timeout）", {status: 403, message: "agent_node_heartbeat_timeout: 节点已被判定失联"}, false],
+      ["撤销回执超时（4xx，码里带 timeout）", {status: 409, message: "dispatch_revocation_ack_timeout", nonRetryable: true}, false],
+      ["人把它中止了（4xx，报文里带 abort）", {status: 400, message: "dispatch_aborted_by_human"}, false],
+      // 没有状态码＝根本没连上，这才靠报文认。
+      ["连不上", new Error("fetch failed"), true],
+      ["连接被拒", new Error("connect ECONNREFUSED 127.0.0.1:8080"), true],
+      ["DNS 抖", new Error("getaddrinfo EAI_AGAIN control-plane"), true],
+      ["本机自己的编码错", new Error("x is not a function"), false]
+    ];
+    for (const [what, error, expected] of retryCases) {
+      if (rt.retryableControlPlaneError(error) !== expected) {
+        output.push(`重试判定：${what}被判成${expected ? "不重试" : "要重试"} —— `
+          + (expected ? "一次抖动会被当成永久错误，而心跳/认领是裸调用，抛出去就把守护进程带走了"
+            : "永久拒绝被反复重试，agent 会一直捶控制面，而重试改变不了它"));
+      }
+    }
+    // 重试次数写坏了不能变成「一次都不试」：那时这次调用根本没发生过。
+    const previousAttempts = process.env.AIMAC_AGENT_RETRY_ATTEMPTS;
+    for (const bad of ["0", "abc", "-3"]) {
+      process.env.AIMAC_AGENT_RETRY_ATTEMPTS = bad;
+      let calls = 0;
+      const value = await rt.retryableAgentRequest(async () => { calls += 1; return "ok"; }, "探针").catch((e) => e);
+      if (calls === 0 || value !== "ok") {
+        output.push(`重试次数写成 ${bad} 时一次都没试就失败了（调用了 ${calls} 次）—— `
+          + "一个打错的环境变量会让 agent 的每一次上报都变成「重试次数用完了」，而它压根没发出去过");
+      }
+    }
+    if (previousAttempts === undefined) delete process.env.AIMAC_AGENT_RETRY_ATTEMPTS;
+    else process.env.AIMAC_AGENT_RETRY_ATTEMPTS = previousAttempts;
+
     console.log(`agent 侧守卫真跑一遍（导出的是副本、出厂那份没动）：派发包绑定 ${bindingCases.length} 例、`
-      + `产出路径 ${pathCases.length} 例、克隆地址 ${urlCases.length} 例、技能文件 3 例、推送被拒分类 ${denialCases.length} 例`);
+      + `产出路径 ${pathCases.length} 例、克隆地址 ${urlCases.length} 例、技能文件 3 例、`
+      + `推送被拒分类 ${denialCases.length} 例、重试判定 ${retryCases.length} 例`);
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
