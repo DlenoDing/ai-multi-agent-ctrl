@@ -576,8 +576,13 @@ function finishGuardedWrite(state, guard, status, payload) {
   const updatedAt = now();
   state.stateVersion += 1;
   const decisionRecord = {
+    // 此前这个集合不受任何规范约束，status 一直写着 `accepted` —— 而 spec/state-machines.yaml 的
+    // DecisionRecord 压根没有这个状态。守卫在写之前已经同步评估完策略，drafted/validated
+    // 两步没有对应的现实动作，所以记录直接落在 active（那道 validated->active 的门要的
+    // state_version_incremented 与 audit_ref，这里两项都满足）。
+    schemaVersion: "decision-record/v1",
     decisionId: createId("decision"),
-    status: "accepted",
+    status: "active",
     actor: guard.actor,
     action: guard.command.type,
     subject: guard.command.subject,

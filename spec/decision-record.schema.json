@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/decision-record.schema.json",
+  "title": "DecisionRecord",
+  "description": "受守卫的写操作留下的问责条目：谁、对什么对象、做了什么动作、依据哪条策略决策、负载摘要是多少。manifest 的 decision_record_is_immutable 说的就是它 —— 写下就不再改，只会被容量淘汰（上限 120）。控制台一处都不读它，所以它长什么样此前没有任何东西管；写这份规范时发现 status 一直写着 `accepted`，而 spec/state-machines.yaml 里 DecisionRecord 压根没有这个状态。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "decisionId", "status", "actor", "action", "subject", "policyDecisionRef", "payloadDigest", "createdAt", "auditRef"],
+  "properties": {
+    "schemaVersion": {"const": "decision-record/v1"},
+    "decisionId": {"type": "string", "pattern": "^decision_"},
+    "status": {
+      "enum": ["drafted", "validated", "active", "superseded", "revoked"],
+      "description": "取值必须与 spec/state-machines.yaml 的 DecisionRecord 逐个对齐（有一道门在对表）。本实现直接落在 active：守卫在写之前就同步做完了策略评估，drafted/validated 两步没有对应的现实动作，而 validated->active 那道门要的 state_version_incremented 与 audit_ref 两项它都满足。"
+    },
+    "actor": {"type": "string", "minLength": 1},
+    "action": {"type": "string", "minLength": 1},
+    "subject": {"type": "string", "minLength": 1, "description": "「Type:id」形式，例如 TaskGroup:tg_x。"},
+    "policyDecisionRef": {"type": "string", "pattern": "^pd_", "description": "指向 policyDecisions 里那条评估记录。注意它与调用方自填的 decisionRecordRef 不是一回事（那两个曾经挤在同一个字段里）。"},
+    "payloadDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "auditRef": {"type": "string", "minLength": 1}
+  }
+}
