@@ -2,6 +2,7 @@
 import {
 execFileSync, spawn, spawnSync } from "node:child_process";
 import { SCHEMA_FILE_ALIASES, UNCOVERED_CEILINGS, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
+import { checkRecordStatusesAreDeclaredStates } from "./lib/state-machine-states.mjs";
 import { mcpServiceAllowedTools ,
   mcpServiceAllowlistNotice
 } from "../apps/control-plane-ui/lib/mcp-service-allowlist.mjs";
@@ -1237,6 +1238,7 @@ function verifyHumanAndOrganizationContracts(output) {
   // 编排跑完之后，state 里已经是【生产者真造出来的】记录。拿同一套"按记录自报的 schemaVersion
   // 找规范"的核对压一遍：只验种子的话，验的是夹具而不是生产者。
   verifySeedRecordsMatchTheirDeclaredSchemas(output, state, "编排产出", 30);
+  assertRecordStatusesAreDeclaredStates(output, state, "编排产出");
 
   // 人一旦验收定稿，这个工作项就不能再被派发 —— 因为 performIndependentReview 对已定稿项永久
   // 返回 human_finalized，之后落进去的任何改动都不会再被复核，人的验收会盖在它没看过的成果上。
@@ -16614,6 +16616,12 @@ function verifyEverySchemaVersionHasASpec(output) {
         + " —— 这类记录第一次真正出现时，没有任何门会发现它不符合任何契约");
     }
   }
+}
+
+function assertRecordStatusesAreDeclaredStates(output, sourceState, label) {
+  const {errors, note} = checkRecordStatusesAreDeclaredStates(resolve(root, "spec/state-machines.yaml"), sourceState, label);
+  output.push(...errors);
+  console.log(note);
 }
 
 function verifySeedRecordsMatchTheirDeclaredSchemas(output, sourceState = seedState, label = "种子数据", minValidated = 20) {

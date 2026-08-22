@@ -91,7 +91,9 @@ const modelProviderAdapters = providerClasses.map((providerClass) => ({
   adapterId: `adapter:${providerClass}`,
   credentialEnvNames: credentialEnvNames(providerClass),
   invocationMode: ["ollama", "vllm", "custom"].includes(providerClass) ? "local_or_http_endpoint" : "provider_api",
-  status: "configured"
+  // discovered 是 ModelProvider 状态机的初态：适配器目录是静态的，还没有探过它能不能用。
+  // 此前写的是 configured —— 机器里根本没有这个状态，按状态机推理的东西一个都不认识它。
+  status: "discovered"
 }));
 
 // 两个清单是不同层面的东西，不能混为一谈：

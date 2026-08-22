@@ -376,6 +376,21 @@ function writeState(state, writeOptions = {}) {
 
 // 条目构造挪到了共享台账（lib/audit-ledger.mjs）：MCP 那条写路径要往【同一本】台账上记，
 // 两处各写一份的话，prevHash 链迟早分叉。这里保留同名包装，70 处调用点一个都不用改。
+// 任务组的初始状态。此前这里是 `input.status || "planned"` —— 两处都错：
+//   · planned 在 spec/state-machines.yaml 的 TaskGroup 里根本没有登记（机器的初态是 intake），
+//     按状态机推理的东西一个都不认识它，而这不报任何错；
+//   · input.status 完全不校验，调用方能把任意字符串塞成初始状态。
+// 字面量清单与状态机的一致性由 validate-specs 的「状态集合常量」那道门逐个对表。
+const TASK_GROUP_STATUSES = ["intake", "discovery", "product_design", "solution_design", "ui_design",
+  "development", "global_development_review", "verification", "repair", "reverification",
+  "integration", "release", "online_quality", "closed", "aborted"];
+function taskGroupCreateStatus(value) {
+  if (value === undefined || value === null || value === "") return "intake";
+  if (TASK_GROUP_STATUSES.includes(value)) return value;
+  throw Object.assign(new Error("task_group_status_unknown"),
+    {status: 400, details: {status: String(value).slice(0, 60), supported: TASK_GROUP_STATUSES}});
+}
+
 function workItemCreateStatus(value) {
   if (value === undefined || value === null || value === "") return "ready";
   if (["draft", "ready"].includes(value)) return value;
@@ -972,7 +987,7 @@ function createTaskGroupRecord(state, input = {}, options = {}) {
     name: assertHumanTextWithinLimit(input.name || input.title || "AI-native Task Group", "task_group_name", 200),
     title: assertHumanTextWithinLimit(input.title || input.name || "AI-native Task Group", "task_group_name", 200),
     objective: assertHumanTextWithinLimit(input.objective || input.title || input.name || "Machine-executed task group", "task_group_objective", 4000),
-    status: input.status || "planned",
+    status: taskGroupCreateStatus(input.status),
     goalExecutionStatus: "ready",
     phase: input.phase || "planning",
     progress: 0,

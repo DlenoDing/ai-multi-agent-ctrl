@@ -1,0 +1,100 @@
+import { readFileSync } from "node:fs";
+
+// spec/state-machines.yaml 里某台机器登记的状态。不引 YAML 依赖。
+// 注意 states 列表里夹着注释行（`      # ...`）—— 判断"列表结束"只能看缩进更浅的键，
+// 不能看"这一行不是 - 开头"（我第一版探针就是这么写的，报出一个假漂移）。
+export function extractMachineStates(yamlText, machine) {
+  const lines = yamlText.split(/\r?\n/);
+  let index = lines.findIndex((line) => line === `  ${machine}:`);
+  if (index < 0) return [];
+  const states = [];
+  let inStates = false;
+  for (index += 1; index < lines.length; index++) {
+    const line = lines[index];
+    if (/^  \S/.test(line)) break;                       // 下一台机器
+    if (/^    states:\s*$/.test(line)) { inStates = true; continue; }
+    if (!inStates) continue;
+    const item = line.match(/^      - "([^"]+)"\s*$/u);
+    if (item) { states.push(item[1]); continue; }
+    if (/^    \S/.test(line)) break;                     // 下一个键（transitions: 等）
+  }
+  return states;
+}
+
+// 集合名 -> 机器名。默认按单复数推导，对不上的在这里点名。
+const STATE_MACHINE_BY_COLLECTION = {agentRuntimeNodes: "AgentNode"};
+
+// 没有同名状态机的集合要登记。不登记就静默跳过，而"跳过"和"查过了没问题"长得一模一样。
+// 绝大多数的理由是同一条：它的 status 由自己那份 schema 的 enum 守住（那道核对压在真实记录上）。
+const COLLECTIONS_WITHOUT_STATE_MACHINE = {
+  accessGrants: "spec/access-control-grant.schema.json 的 status enum",
+  sharedDefinitions: "spec/shared-definition-contract.schema.json 的 status enum",
+  repositoryOutputs: "spec/repository-output-target.schema.json 的 status enum",
+  managementSurfaces: "spec/management-console-surface.schema.json 的 status enum",
+  skillSources: "spec/agent-skill-source.schema.json 的 status enum",
+  roleSkills: "spec/agent-role-skill.schema.json 的 status enum",
+  completionReadiness: "spec/completion-readiness.schema.json 的 status enum",
+  agentDispatches: "spec/agent-dispatch.schema.json 的 status enum",
+  workerLanes: "spec/worker-lane.schema.json 的 status enum",
+  organizations: "spec/organization.schema.json 的 status enum",
+  authSessions: "spec/auth-session.schema.json 的 status enum",
+  agentJoinTokens: "spec/agent-join-token.schema.json 的 status enum",
+  agentControlCommands: "spec/agent-control-command.schema.json 的 status enum",
+  // 下面两个是【真空】：既没有状态机，也没有规范文件。代价：它们的 status 想写什么写什么，
+  // 没有任何东西会发现。登记在这里是为了让这个真空看得见，而不是把它藏起来。
+  agents: "真空：没有规范也没有状态机（待清）",
+  mcpCalls: "真空：没有规范也没有状态机（待清）"
+};
+
+const machineNameForCollection = (collection) => {
+  if (STATE_MACHINE_BY_COLLECTION[collection]) return STATE_MACHINE_BY_COLLECTION[collection];
+  const singular = collection.replace(/ies$/u, "y").replace(/s$/u, "");
+  return singular.charAt(0).toUpperCase() + singular.slice(1);
+};
+
+// 记录的 status 必须是 spec/state-machines.yaml 里【那台机器登记过的】状态。
+// 已有的「状态集合常量」那道门查的是源码里手写的 const XXX_STATUSES 清单，看不见
+// `status: "planned"` 这种直接写在构造点上的取值。手跑一次同样的对表就扫出三处漂移：
+// 问责台账写着机器没有的 accepted、任务组建出来就是机器没有的 planned、种子里的模型提供方是 configured。
+// 判据落在【真实产出的记录】上，不解析源码。
+export function checkRecordStatusesAreDeclaredStates(specPath, sourceState, label, {minChecked = 12} = {}) {
+  const yamlText = readFileSync(specPath, "utf8");
+  const errors = [];
+  let checked = 0;
+  const seenWithoutMachine = new Set();
+  const unregistered = [];
+  for (const [collection, items] of Object.entries(sourceState || {})) {
+    if (!Array.isArray(items)) continue;
+    const values = new Set(items
+      .filter((item) => item && typeof item === "object" && typeof item.status === "string" && item.status)
+      .map((item) => item.status));
+    if (!values.size) continue;
+    const machine = machineNameForCollection(collection);
+    const states = extractMachineStates(yamlText, machine);
+    if (!states.length) {
+      seenWithoutMachine.add(collection);
+      if (!COLLECTIONS_WITHOUT_STATE_MACHINE[collection]) {
+        unregistered.push(`${collection}（取值 ${[...values].sort().join("/")}）`);
+      }
+      continue;
+    }
+    checked += 1;
+    const stray = [...values].filter((value) => !states.includes(value)).sort();
+    if (stray.length) {
+      errors.push(`${label}：${collection} 里出现了 ${machine} 状态机没有登记的状态 ${stray.join("、")} —— `
+        + "凡是按状态机推理的东西（关闭门的了结集、非终态集、迁移判权）都不认识它，"
+        + "而这不会报任何错，只是那些判定永远不成立");
+    }
+  }
+  if (checked < minChecked) {
+    errors.push(`${label}：只对上了 ${checked} 个有状态机的集合（至少该有 ${minChecked} 个）—— `
+      + "集合名到机器名的推导已与数据脱节，本条在空转");
+  }
+  if (unregistered.length) {
+    errors.push(`${label}：这些集合带 status 却没有同名状态机，也没有登记：${unregistered.join("、")} —— `
+      + "要么建机器，要么在 COLLECTIONS_WITHOUT_STATE_MACHINE 里写明它凭什么可以没有");
+  }
+  const note = `${label}状态对表：${checked} 个集合的 status 取值逐个对过 spec/state-machines.yaml，`
+    + `${seenWithoutMachine.size} 个按登记跳过（登记表共 ${Object.keys(COLLECTIONS_WITHOUT_STATE_MACHINE).length} 项）`;
+  return {errors, checked, note, seenWithoutMachine};
+}

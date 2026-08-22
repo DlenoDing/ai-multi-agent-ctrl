@@ -1713,7 +1713,8 @@ function createTaskGroup(state, args) {
     name: assertHumanTextWithinLimit(args.name || args.title || "AI-native Task Group", "task_group_name", 200),
     title: assertHumanTextWithinLimit(args.title || args.name || "AI-native Task Group", "task_group_name", 200),
     objective: assertHumanTextWithinLimit(args.objective || args.title || "Machine-executed task group", "task_group_objective", 4000),
-    status: "planned",
+    // intake 是 TaskGroup 机器的初态。此前写的是 planned —— 机器里没有这个状态。
+    status: "intake",
     goalExecutionStatus: "ready",
     phase: "planning",
     progress: 0,

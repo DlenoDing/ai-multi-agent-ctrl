@@ -1053,6 +1053,7 @@
     human_directive_type_unknown: "认不出这个指令类型",
     human_directive_resolution_unknown: "认不出这个处置方式",
     finding_status_unknown: "认不出这个发现状态",
+    task_group_status_unknown: "认不出这个任务组状态",
     work_item_status_unknown: "认不出这个工作项状态",
     human_directive_instruction_too_long: "指令内容超出长度上限",
     quality_gate_waive_justification_too_long: "豁免理由超出长度上限",

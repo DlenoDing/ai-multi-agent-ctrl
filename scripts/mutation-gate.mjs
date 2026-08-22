@@ -3993,6 +3993,26 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 状态对表这道门：记录的 status 必须是 spec/state-machines.yaml 里那台机器登记过的状态。
+    // 已有的「状态集合常量」门查的是源码里手写的 const 清单，看不见直接写在构造点上的取值。
+    // 这道门装上当天就抓出两处：任务组建出来是机器没有的 planned、模型提供方是 configured。
+    name: "记录的状态必须在状态机里登记过",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '    status: "intake",\n    goalExecutionStatus: "ready",',
+    to: '    status: "planned",\n    goalExecutionStatus: "ready",',
+    expect: "TaskGroup 状态机没有登记的状态 planned"
+  },
+  {
+    // 认不出的初始状态要拒绝，不要照收：此前 `input.status || "planned"` 完全不校验。
+    name: "认不出的任务组状态必须拒绝",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "  if (TASK_GROUP_STATUSES.includes(value)) return value;",
+    to: "  if (true) return value;",
+    expect: "认不出的任务组状态必须拒绝"
+  },
+  {
     // 租约的 fencingToken 必须是递增正整数 —— 判定「谁更晚」靠数值比较。本仓另有几处
     // fencingToken 是 `fence:<id>` 字符串（挂在别的对象上），混进租约会让比较退化成
     // 字典序（3 > 10）而不报任何错。规范把它钉成 integer。

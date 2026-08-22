@@ -21,6 +21,7 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { UNCOVERED_CEILINGS, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
+import { checkRecordStatusesAreDeclaredStates } from "./lib/state-machine-states.mjs";
 import { sweepStaleDoctorRuntimeDirs } from "./lib/stale-runtime-dirs.mjs";
 import { assertNoUndefinedInPayload } from "./lib/no-undefined-payload.mjs";
 
@@ -673,6 +674,22 @@ try {
   });
   if (!createdTaskGroup.response.ok || createdTaskGroup.payload.taskGroup?.projectId !== createdProject.payload.id || createdTaskGroup.payload.taskGroup?.languagePolicy?.languageTag !== "en") {
     throw new Error("task group management API did not create a project-scoped language-bound task group");
+  }
+  // 建组的 status 此前完全不校验（`input.status || "planned"`），调用方能把任意字符串塞成
+  // 初始状态；而默认值 planned 在 TaskGroup 状态机里根本没有登记。两条一起修：默认落在机器的
+  // 初态 intake，认不出的取值要【拒绝】而不是照收。
+  if (createdTaskGroup.payload.taskGroup?.status !== "intake") {
+    throw new Error(`新建任务组该落在状态机的初态 intake，实际是 ${createdTaskGroup.payload.taskGroup?.status}`);
+  }
+  const strayStatusGroup = await jsonFetch(port, "/api/task-groups", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-task-group-stray-status", authorization: auth},
+    body: JSON.stringify({projectId: createdProject.payload.id, name: "Stray status", status: "planned"})
+  });
+  if (strayStatusGroup.response.status !== 400 || strayStatusGroup.payload.error !== "task_group_status_unknown"
+      || !(strayStatusGroup.payload.supported || []).includes("intake")) {
+    throw new Error("认不出的任务组状态必须拒绝，并把可用取值一起给出："
+      + `实际 ${strayStatusGroup.response.status} ${JSON.stringify(strayStatusGroup.payload).slice(0, 200)}`);
   }
   const createdWorkItem = await jsonFetch(port, `/api/task-groups/${createdTaskGroup.payload.taskGroup.id}/work-items`, {
     method: "POST",
@@ -3630,6 +3647,14 @@ const doctorProducedState = readStoredState({
       + "未终结的派发也都还找得到自己的任务契约");
   }
 }
+
+// status 取值对表：与规范核对同源（都压在本轮真跑出来的记录上），但查的是另一件事 ——
+// 记录的状态在 spec/state-machines.yaml 里登记过没有。任务组建出来就是 planned，
+// 而 TaskGroup 机器根本没有这个状态，这只有在 e2e 产出上才看得见（编排产出里的任务组来自种子）。
+const doctorStates = checkRecordStatusesAreDeclaredStates(join(root, "spec/state-machines.yaml"),
+  doctorProducedState, "控制面 e2e 产出");
+console.log(doctorStates.note);
+if (doctorStates.errors.length) throw new Error(`doctor: ${doctorStates.errors.join("\n- ")}`);
 
 const doctorSweep = sweepRecordsAgainstDeclaredSchemas(doctorProducedState, {
   specDir: join(root, "spec"), label: "控制面 e2e 产出", minValidated: 50

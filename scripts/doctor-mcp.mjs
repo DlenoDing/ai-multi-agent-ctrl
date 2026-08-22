@@ -6,6 +6,8 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { assertNoUndefinedInPayload } from "./lib/no-undefined-payload.mjs";
+import { checkRecordStatusesAreDeclaredStates } from "./lib/state-machine-states.mjs";
+import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const port = await freePort();
@@ -729,6 +731,20 @@ try {
   console.log(`MCP 只读工具跨租户扫描 ok: ${readOnlyTools.length} 个只读工具各用三种入参调过`
     + `（隔壁项目的 id / 无参 / 自己被授权的任务组），其中 ${reachableTools.size} 个这个受限节点真的调得到`
     + `（${probedExecuted} 次执行），其余被工具白名单挡在门外；调得到的都没有带出隔壁项目的内容`);
+
+  // 状态对表：MCP 这条写路径造出来的记录，status 也必须是状态机登记过的状态。
+  // 不接这道门的话，"MCP 建的组落在机器里没有的 planned" 这种漂移在任何门下都看不见
+  // （控制面 e2e 走的是 REST 那条路，两条路各写各的）。放在主流程里、清理运行目录之前。
+  const mcpProducedState = readStoredState({
+    root, runtimeDir,
+    statePath: join(runtimeDir, "control-plane-state.json"),
+    seedPath: join(root, "data/seed-state.json"),
+    buildInitialState: () => { throw new Error("mcp doctor: 期望读到本轮跑出的状态，却触发了初始状态创建"); }
+  });
+  const mcpStates = checkRecordStatusesAreDeclaredStates(join(root, "spec/state-machines.yaml"),
+    mcpProducedState, "MCP e2e 产出");
+  console.log(mcpStates.note);
+  if (mcpStates.errors.length) throw new Error(`mcp doctor: ${mcpStates.errors.join("\n- ")}`);
 
   const localStart = spawnSync(process.execPath, ["apps/mcp-server/server.mjs"], {cwd: root, encoding: "utf8"});
   if (localStart.status === 0 || !localStart.stderr.includes("Local MCP stdio startup is disabled")) throw new Error("Agent-local MCP stdio server was not disabled");

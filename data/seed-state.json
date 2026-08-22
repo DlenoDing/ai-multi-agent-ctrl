@@ -3017,7 +3017,7 @@
         "OPENAI_API_KEY"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "anthropic",
@@ -3026,7 +3026,7 @@
         "ANTHROPIC_API_KEY"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "google",
@@ -3036,7 +3036,7 @@
         "GEMINI_API_KEY"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "xai",
@@ -3045,7 +3045,7 @@
         "XAI_API_KEY"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "meta",
@@ -3054,7 +3054,7 @@
         "META_API_KEY"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "mistral",
@@ -3063,7 +3063,7 @@
         "MISTRAL_API_KEY"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "deepseek",
@@ -3072,7 +3072,7 @@
         "DEEPSEEK_API_KEY"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "qwen",
@@ -3082,7 +3082,7 @@
         "QWEN_API_KEY"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "moonshot",
@@ -3091,7 +3091,7 @@
         "MOONSHOT_API_KEY"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "zhipu",
@@ -3100,7 +3100,7 @@
         "ZHIPU_API_KEY"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "baidu",
@@ -3109,7 +3109,7 @@
         "BAIDU_API_KEY"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "tencent",
@@ -3118,7 +3118,7 @@
         "TENCENT_HUNYUAN_API_KEY"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "openrouter",
@@ -3127,7 +3127,7 @@
         "OPENROUTER_API_KEY"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "azure_openai",
@@ -3137,7 +3137,7 @@
         "AZURE_OPENAI_ENDPOINT"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "aws_bedrock",
@@ -3147,7 +3147,7 @@
         "AWS_PROFILE"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "vertex_ai",
@@ -3157,7 +3157,7 @@
         "VERTEX_PROJECT_ID"
       ],
       "invocationMode": "provider_api",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "ollama",
@@ -3166,7 +3166,7 @@
         "OLLAMA_HOST"
       ],
       "invocationMode": "local_or_http_endpoint",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "vllm",
@@ -3175,7 +3175,7 @@
         "VLLM_ENDPOINT"
       ],
       "invocationMode": "local_or_http_endpoint",
-      "status": "configured"
+      "status": "discovered"
     },
     {
       "providerClass": "custom",
@@ -3184,7 +3184,7 @@
         "AIMAC_CUSTOM_MODEL_ENDPOINT"
       ],
       "invocationMode": "local_or_http_endpoint",
-      "status": "configured"
+      "status": "discovered"
     }
   ],
   "agentDispatches": [],
