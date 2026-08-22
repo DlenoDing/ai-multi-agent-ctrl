@@ -2531,7 +2531,16 @@ function renderProjectOverview() {
     badge(taskGroup.phase),
     progressLine(taskGroup.progress),
     badge(taskGroup.health),
-    {v: String((taskGroup.blockers || []).length), c: "num"}
+    // 这一列数的是【关闭门的阻塞项】。而人扫这张表时想知道的是"哪个组卡住了" ——
+    // 同一个组里被挡住的派发不算在这个数里，于是一个有 2 个派发被挡住的组在这一行显示 0，
+    // 他就不会再往下找了（实测：真实运行态上正是这样）。上面「受阻项」那一格已经按同一个
+    // 道理补过差额，这一行照它：不改这个数的口径，把另一件事说出来。
+    {v: (() => {
+      const blocked = (taskGroup.blockers || []).length;
+      const stuck = (state.agentDispatches || [])
+        .filter((item) => item.taskGroupId === taskGroup.id && item.status === "blocked").length;
+      return stuck ? `${blocked} <span class="warn-text">· 派发被挡 ${stuck}</span>` : String(blocked);
+    })(), c: "num"}
   ])).join("");
   const repoRows = (state.repositoryOutputs || []).filter((target) => target.projectId === project.id).map((target) => row([
     esc(taskGroupNameOf(target.taskGroupId)),

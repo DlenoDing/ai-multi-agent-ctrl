@@ -3660,6 +3660,14 @@ const MUTATIONS = [
     expect: "却照读不误"
   },
   {
+    name: "任务组一览的受阻数要说出被挡住的派发",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      return stuck ? `${blocked} <span class="warn-text">· 派发被挡 ${stuck}</span>` : String(blocked);',
+    to: "      return String(blocked);",
+    expect: "行上要说出来"
+  },
+  {
     name: "已了结的派发不许说「还没被领走」",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
