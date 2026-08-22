@@ -201,6 +201,11 @@ const AGENT_RUNTIME_UNREACHABLE_CODES = {
 
 // 运维会用到的运行参数。判据只管这一批 —— 代码里另有 90 多个内部调参（各种上限、超时），
 // 把它们也写进文档只会变成噪声，改它们之前本来就该读源码里那一处的注释。
+// 「另有 N 个集合没有任何记录声明规范」这句原先只打印。它读起来像一句无害的说明，
+// 而新加一个集合、不给它规范文件，它会静默混进这个 N 里，从此不受任何规范约束。
+// 两个调用点各有自己的实测值（种子数据 4、编排产出 7）。
+const UNCOVERED_COLLECTION_CEILINGS = {"种子数据": 4, "编排产出": 7};
+
 const OPERATOR_FACING_ENV_VARS = [
   "AIMAC_HOST", "AIMAC_PORT", "AIMAC_PUBLIC_URL", "AIMAC_RUNTIME_DIR", "AIMAC_REPOSITORY_ROOT",
   "AIMAC_EXECUTION_PROFILE", "AIMAC_ORCHESTRATOR_INTERVAL_MS", "AIMAC_TRANSITION_STRICT",
@@ -15600,6 +15605,17 @@ function verifySeedRecordsMatchTheirDeclaredSchemas(output, sourceState = seedSt
   output.push(...found);
   // 报数要自己说清没看过什么：只报"多少条合规"会被读成全覆盖。
   console.log(`${label}规范核对：${validated} 条记录按自己声明的规范验过；${uncoveredNote}`);
+  const ceiling = UNCOVERED_COLLECTION_CEILINGS[label];
+  const uncoveredCount = Number(/另有 (\d+) 个集合/u.exec(uncoveredNote)?.[1] ?? 0);
+  if (Number.isFinite(ceiling)) {
+    if (uncoveredCount > ceiling) {
+      output.push(`${label}：不受规范约束的集合从 ${ceiling} 涨到 ${uncoveredCount} —— `
+        + "新集合要么补一份 spec，要么明确它为什么不需要");
+    } else if (uncoveredCount < ceiling) {
+      output.push(`${label}：不受规范约束的集合已降到 ${uncoveredCount}（棘轮还写着 ${ceiling}）—— `
+        + "把它改小，否则挡不住下一次回升");
+    }
+  }
   // "有规范却没人声明"这条在当前数据上恰好为空 —— 空着的判据和不存在的判据长得一样，
   // 所以当场注入一次破坏：把某个本来验得了的集合的 schemaVersion 抹掉，它必须被点名。
   const damaged = structuredClone(sourceState);

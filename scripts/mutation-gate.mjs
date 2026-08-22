@@ -3652,6 +3652,22 @@ const MUTATIONS = [
     expect: "产出清单的路径爬到仓库之外却没被拦下"
   },
   {
+    name: "种子与编排产出的不受约束集合数也要棘轮住",
+    file: "scripts/contract-check.mjs",
+    check: "verifySeedRecordsMatchTheirDeclaredSchemas",
+    from: '{"种子数据": 4, "编排产出": 7}',
+    to: '{"种子数据": 3, "编排产出": 7}',
+    expect: "不受规范约束的集合从 3 涨到 4"
+  },
+  {
+    name: "定不下搜索面的断言数要棘轮住",
+    file: "scripts/validate-specs.rb",
+    gate: "specs",
+    from: "UNRESOLVED_ASSERTION_SCOPE_CEILING = 11",
+    to: "UNRESOLVED_ASSERTION_SCOPE_CEILING = 10",
+    expect: "定不下搜索面的源码断言从 10 涨到 11"
+  },
+  {
     name: "不受规范约束的集合数要棘轮住",
     file: "scripts/doctor.mjs",
     gate: "doctor",

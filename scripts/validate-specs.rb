@@ -2766,6 +2766,18 @@ end
 # 这里用下限而不是精确相等：每加一条源码断言这个数就会变，钉死只会天天改数字；而本门真正要防的
 # 是【整条扫描失灵】那一跳，不是 50→49。50→49 那种漏检由"同形代码就报红"那条变异守着。
 scope_errors << "断言搜索面自查只核对到 #{scoped_checked} 条（远少于既有规模）—— 提取多半已失配，这道扫描在空转" if scoped_checked < 30
+# 「定不下搜索面」的那几条是【没被核对过】的：它们的目标串可能同时匹配到别处，
+# 断言就变成了在验另一段代码。这个数原先只打印，读起来像一句无害的说明 ——
+# 新写一条定不下搜索面的断言，它会静默混进来。棘轮住，只降不升。
+UNRESOLVED_ASSERTION_SCOPE_CEILING = 11
+unresolved_total = unresolved.values.sum
+if unresolved_total > UNRESOLVED_ASSERTION_SCOPE_CEILING
+  scope_errors << "定不下搜索面的源码断言从 #{UNRESOLVED_ASSERTION_SCOPE_CEILING} 涨到 #{unresolved_total} —— " \
+    "新写的断言要指明在哪个源文件里找（否则它可能匹配到别处，验的是另一段代码）"
+elsif unresolved_total < UNRESOLVED_ASSERTION_SCOPE_CEILING
+  scope_errors << "定不下搜索面的源码断言已降到 #{unresolved_total}（棘轮还写着 #{UNRESOLVED_ASSERTION_SCOPE_CEILING}）—— " \
+    "把它改小，否则挡不住下一次回升"
+end
 fail_with(scope_errors)
 puts "断言搜索面：#{scoped_checked} 条整句守卫型的源码断言，目标串在被查文件里都只匹配一处" \
      "（另有 #{unresolved.values.sum} 条定不下搜索面：#{unresolved.map { |v, c| "#{v}×#{c}" }.join("、")}，未核对）"
