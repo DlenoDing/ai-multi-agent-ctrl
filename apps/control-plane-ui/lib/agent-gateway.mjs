@@ -719,8 +719,15 @@ export function validateDispatchClaim(state, node, dispatchId, claimEpoch) {
   return {valid: true, claimEpoch: Number(dispatch.claimEpoch || 0), claimExpiresAt: dispatch.claimExpiresAt};
 }
 
+// 判死的阈值要【下发给界面】：界面上"在线"这个字来自 node.status，而 status 只有在扫描跑过之后
+// 才会翻成 offline —— 扫描挂在编排拍上，拍不跑它就一直写着"在线"。实测读到过「在线 + 已 175 分钟
+// 没有心跳」同行并排。界面自己再写死一个阈值就成了第二个真相源，所以从这里取同一个数。
+export function nodeHeartbeatTimeoutMs() {
+  return boundedInteger(process.env.AIMAC_NODE_HEARTBEAT_TIMEOUT_MS, 60000, 86400000, 900000);
+}
+
 export function sweepDeadAgentNodes(state, nowMs = Date.now()) {
-  const graceMs = boundedInteger(process.env.AIMAC_NODE_HEARTBEAT_TIMEOUT_MS, 60000, 86400000, 900000);
+  const graceMs = nodeHeartbeatTimeoutMs();
   const swept = [];
   for (const node of state.agentRuntimeNodes || []) {
     if (!["online", "degraded", "draining", "initializing"].includes(node.status)) continue;

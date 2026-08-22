@@ -206,12 +206,30 @@ function claimMissHint(node) {
   return `<div class="small warn-text">⚠ 有 ${miss.queuedCount} 个排队派发接不了：${lines.join("；")}</div>`;
 }
 
+// 心跳超过服务端判死阈值时，这一行上的「在线」就是假的：status 只有在扫描跑过之后才会翻成
+// offline，而扫描挂在编排拍上 —— 拍不跑（自治关着、进程刚起、没人写），它可以一直写着"在线"。
+// 真实运行态上读到过同一行里【在线 + 已 175 分钟没有心跳】并排。阈值取服务端下发的那一个，
+// 不在这里另写一个数（那就成了第二个真相源，两边会各自漂）。
+// 心跳有多旧只算一处：本机时钟快 20 分钟时所有健康节点都会被算成失联，所以按【服务器时钟】算。
+// 两个使用点（提示文案、超时判定）共用它，别各写一份。
+function heartbeatAgeMs(node) {
+  return serverNow() - new Date(node.lastHeartbeatAt).getTime();
+}
+
+function heartbeatTimedOut(node) {
+  const timeoutMs = Number(state.runtime?.nodeHeartbeatTimeoutMs || 0);
+  if (!timeoutMs || !node.lastHeartbeatAt || ["revoked", "offline"].includes(node.status)) return false;
+  const ageMs = heartbeatAgeMs(node);
+  return Number.isFinite(ageMs) && ageMs >= timeoutMs;
+}
+
 function heartbeatStaleHint(node) {
   if (!node.lastHeartbeatAt || ["revoked", "offline"].includes(node.status)) return "";
-  const ageMs = serverNow() - new Date(node.lastHeartbeatAt).getTime();
+  const ageMs = heartbeatAgeMs(node);
   if (!Number.isFinite(ageMs) || ageMs < 3 * 60 * 1000) return "";
   const minutes = Math.floor(ageMs / 60000);
-  return `<div class="small warn-text">⚠ 已 ${minutes} 分钟没有心跳</div>`;
+  return `<div class="small warn-text">⚠ 已 ${minutes} 分钟没有心跳${heartbeatTimedOut(node)
+    ? "（已超过判死阈值，服务端会在下一次编排拍时把它标成离线）" : ""}</div>`;
 }
 
 function pendingForMe() {
@@ -3959,7 +3977,10 @@ function renderMonitor() {
     `<strong>${esc(node.nodeName || node.nodeId)}</strong><div class="small muted mono">${esc(node.nodeId)}</div>`,
     // "降级/只读"此前不说原因：缺哪几项自检只进网关事件负载，而那条流没有任何界面。
     // 人看到一个黄色徽标，然后无从下手。
-    `${badge(node.status)}${claimMissHint(node)}${node.runtimeOutdated
+    `${heartbeatTimedOut(node)
+      ? `${badge("heartbeat_timeout")}<div class="small warn-text">记录上还写着「${esc(t(node.status) || node.status)}」——`
+        + "那是上一次扫描留下的，心跳早就断了</div>"
+      : badge(node.status)}${claimMissHint(node)}${node.runtimeOutdated
       ? `<div class="small warn-text">运行时版本过旧（${esc(node.runtimeVersion || "未知")}）：它不发送认领代次，一旦这台机器上的派发被重新认领，提交就会被拒。请在该主机上重新执行入网安装命令升级。</div>`
       : ""}${(node.selfCheckMissing || []).length
       ? `<div class="small warn-text">自检未通过：${(node.selfCheckMissing || []).map((item) => esc(t(item))).join("、")}</div>`

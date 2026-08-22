@@ -35,8 +35,7 @@ import {
   requestAgentNodeRevocation,
   revokeDispatchMcpGrants,
   selfCheckAgentNode,
-  validateDispatchClaim
-} from "./lib/agent-gateway.mjs";
+  validateDispatchClaim, nodeHeartbeatTimeoutMs } from "./lib/agent-gateway.mjs";
 import { approvalResolve, assignWorkItem, handleMcpJsonRpc, isWriteTool, permissionResolve, createMcpToolDefinitions } from "../mcp-server/server.mjs";
 import {
   recordOrchestratorTickOutcome,
@@ -326,6 +325,9 @@ function readState() {
   state.runtime.autonomousOrchestrator = runtimeOrchestratorStatus;
   // 台账上限下发给界面：它要据此判断「有没有东西被挤掉」，而不是自己编一个数。
   state.runtime.auditLogCap = AUDIT_LOG_CAP;
+  // 判死阈值下发给界面：节点行上的"在线"来自 node.status，而它只有在扫描跑过之后才翻成 offline
+  // （扫描挂在编排拍上）。界面要据此说出"心跳已经超时、只是还没被标记"，而不是照抄一个过时的字。
+  state.runtime.nodeHeartbeatTimeoutMs = nodeHeartbeatTimeoutMs();
   return state;
 }
 
@@ -4676,6 +4678,16 @@ async function handleApi(req, res) {
     const guard = beginGuardedWrite(req, state, "work_assign", `WorkItem:${workItemAssignMatch[1]}`,
       taskGroupScope(state, assignTarget?.id || body.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
+    // 空 body 原先也能"指派"：它把草稿工作项推进到 ready，归属缺失时还挑一个 orchestrator。
+    // 指派是"谁来干这件事"的决定，不该由缺省替人做。（这一条是完整变异门跑出来的：
+    // 另一条无关变异改变了工作项状态，我那轮扫描的结果就跟着变了 —— 说明这条路由的行为
+    // 本来就取决于对象状态，缺省更不该在这里做决定。）
+    // 两个字段名任一即可，所以不能连着调两次 requireBodyFields —— 它自己会发响应，
+    // 连调两次就是往同一个请求上发两遍（headers already sent）。
+    if (!String(body.roleId ?? body.ownerRole ?? "").trim()) {
+      return json(res, 400, {error: "work_item_owner_role_required",
+        message: "指派必须点名负责角色（roleId 或 ownerRole）—— 缺省不会替你挑一个"});
+    }
     const result = assignWorkItem(state, {...body, workItemId: workItemAssignMatch[1]});
     if (result.ok === false) return json(res, 404, {error: result.error});
     audit(state, guard.actor, "work_assign", `WorkItem:${result.workItem.id}`);

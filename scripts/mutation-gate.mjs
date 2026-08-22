@@ -775,8 +775,8 @@ const MUTATIONS = [
     name: "相对时间要按服务器时钟算",
     file: APP,
     gate: "console",
-    from: "  const ageMs = serverNow() - new Date(node.lastHeartbeatAt).getTime();",
-    to: "  const ageMs = Date.now() - new Date(node.lastHeartbeatAt).getTime();",
+    from: "  return serverNow() - new Date(node.lastHeartbeatAt).getTime();",
+    to: "  return Date.now() - new Date(node.lastHeartbeatAt).getTime();",
     expect: "所有健康节点都会显示已失联"
   },
   {
@@ -3658,6 +3658,16 @@ const MUTATIONS = [
     from: "  if (!declared && looksLikeState) return state;",
     to: "  if (!declared) return state;",
     expect: "却照读不误"
+  },
+  {
+    // 心跳早就超过判死阈值时，行上不许还写着「在线」—— status 只有扫描跑过才翻成 offline，
+    // 而扫描挂在编排拍上；真实运行态上读到过【在线 + 已 175 分钟没有心跳】同行并排。
+    name: "心跳超时的节点不许还显示在线",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    `${heartbeatTimedOut(node)",
+    to: "    `${false",
+    expect: "行上不许还写着「在线」"
   },
   {
     // 类型写错（该字符串的给了数组）不许把服务端打成 500：手写校验最容易在 trim/map/length 上当场抛。

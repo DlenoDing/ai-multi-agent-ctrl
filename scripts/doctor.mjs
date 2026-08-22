@@ -3453,6 +3453,15 @@ try {
         if (orgQuotaCall.payload.error !== "org_quota_update_empty") {
           throw new Error(`改配额时一项都不给，拿到的是 ${orgQuotaCall.response.status}/${orgQuotaCall.payload.error}`);
         }
+        // 指派工作项必须点名归属角色：空 body 原先会把草稿推进到 ready、还替人挑一个 orchestrator。
+        // 这条是【完整变异门】跑出来的 —— 另一条无关变异改了工作项状态，我那轮扫描的结论就跟着变了，
+        // 说明这条路由的行为本来就取决于对象状态，缺省更不该在这里替人做决定。
+        const someWorkItem = (live.taskGroups || []).flatMap((group) => group.workItems || [])[0];
+        const assignCall = await jsonFetch(sweepPort, `/api/work-items/${encodeURIComponent(someWorkItem.id)}/assign`,
+          {method: "POST", headers: {authorization: sweepAuth, "Idempotency-Key": "empty-body-assign"}, body: JSON.stringify({})});
+        if (assignCall.payload.error !== "work_item_owner_role_required") {
+          throw new Error(`指派工作项时不给归属角色，拿到的是 ${assignCall.response.status}/${assignCall.payload.error}`);
+        }
         const someAgent = (live.agents || [])[0];
         const agentActivateCall = await jsonFetch(sweepPort, `/api/agents/${encodeURIComponent(someAgent.id)}/activate`,
           {method: "POST", headers: {authorization: sweepAuth, "Idempotency-Key": "empty-body-agent-activate"}, body: JSON.stringify({})});

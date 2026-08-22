@@ -3073,6 +3073,43 @@ function runHeartbeatHintCase() {
   const revoked = probe.heartbeatStaleHint({status: "revoked", lastHeartbeatAt: new Date(Date.now() - 42 * 60 * 1000).toISOString()});
   check("已终态的不重复报警", revoked === "",
     "已撤销的节点还在提示心跳陈旧 —— 它本来就不该再有心跳");
+
+  // 心跳超过服务端判死阈值时，同一行上的「在线」是假的：status 只有在扫描跑过之后才翻成 offline，
+  // 而扫描挂在编排拍上。真实运行态上读到过同一行【在线 + 已 175 分钟没有心跳】并排。
+  // 阈值必须取服务端下发的那个（runtime.nodeHeartbeatTimeoutMs），界面自己再写死一个就成了第二个真相源。
+  {
+    const nodeState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1,
+      runtime: {nodeHeartbeatTimeoutMs: 15 * 60 * 1000},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development", workItems: []}],
+      agentRuntimeNodes: [{schemaVersion: "agent-runtime-node/v1", nodeId: "node_zombie", nodeName: "僵尸节点",
+        status: "online", admission: "full", projectIds: ["p1"],
+        lastHeartbeatAt: new Date(Date.now() - 175 * 60 * 1000).toISOString()}],
+      agentDispatches: [], workSessions: [], humanConfirmationRequests: [], humanDirectives: [],
+      executionTopologies: [], closeBarriers: [], qualityGates: [], findings: [],
+      permissionRequests: [], approvalRequests: [], truncatedCollections: []
+    };
+    // 这个函数里没有 renderAs（它在另一个块的作用域里），照它的做法就地渲染一次。
+    // realI18n 必须开：下面判的「心跳超时」是词表给的，桩成恒等函数时拿到的是英文键。
+    const nodeRoot = el("div");
+    loadConsole(nodeRoot, {realI18n: true}).renderFullPageWith(nodeState,
+      {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"},
+      "p1", "monitor");
+    const nodeText = String(nodeRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+    if (!/僵尸节点/u.test(nodeText)) {
+      check("心跳超时的节点行要渲染出来", false, "这一屏没渲染出运行时节点表 —— 下面几条什么也没验");
+    } else {
+      const row = nodeText.slice(nodeText.indexOf("僵尸节点"), nodeText.indexOf("僵尸节点") + 260);
+      check("心跳早就超时的节点，行上不许还写着「在线」",
+        /心跳超时/u.test(row) && !/(^|[^未])在线(?![^的]*的)/u.test(row.replace(/记录上还写着「[^」]*」/u, "")),
+        `同一行里「在线」和「已 175 分钟没有心跳」并排（${row.slice(0, 120)}）—— `
+          + "status 只有扫描跑过才翻成 offline，而扫描挂在编排拍上，拍不跑它能一直写着在线");
+      check("要说清那个「在线」是哪来的",
+        /记录上还写着/u.test(row) && /下一次编排拍/u.test(nodeText),
+        "只把字换掉、不说它为什么还是旧的，人会以为控制台和服务端各说各话");
+    }
+  }
 }
 
 // 规则编辑器每一行都用同样的 name。回填若按 name 找元素（querySelector 永远取第一个），
