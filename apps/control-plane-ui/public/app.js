@@ -3217,7 +3217,9 @@ const STUCK_EXIT_HINT = {
   human_confirmation_expired_needs_decision: "确认卡已超时：到「人工指令」页用「决策处置（重开 / 放弃）」处置",
   permission_request_pending: "到「人工审核」页批准或驳回对应的权限申请",
   credential_required: "在承接它的 agent 节点上配置所需的凭据环境变量",
-  agent_runtime_executor_required: "该节点没有可用的模型执行器：让组织管理员到「AI 智能体」页核对该节点的自检结果",
+  agent_runtime_executor_required: "该节点上没有模型执行器：到那台机器上装 codex / claude / gemini / ollama 任一个"
+    + "（节点会自动探测这四个命令），或用 --executor-command 指定自定义执行器后重新加入；"
+    + "装好后到「AI 智能体」页对该节点点「刷新」（重新采集自检）确认它认出来了",
   // 下面三条是【节点拒绝了人的控制指令且重试已用尽】。它们不会自己好，而且最要紧的一点是：
   // 控制面这边已经停了，那台机器上的 agent 可能还在跑 —— 出口是绕开节点配合的强制吊销。
   control_pause_rejected_by_node: "节点拒绝了暂停且重试已用尽：让组织管理员到「AI 智能体」页对该节点点「立即切断」，再确认它确实停了",

@@ -444,6 +444,7 @@ run(verifyEverySchemaVersionHasASpec);
 run(verifyEveryStateCollectionIsSchemaChecked);
 run(verifyCallerChosenIdsHaveUniquenessGuards);
 run(verifyRecordSpecsHaveProducers);
+run(verifyAgentInstallerFlagsMatchTheDocs);
 run(verifyEveryProjectScopedIdIsScopeChecked);
 run(verifyEveryStateCollectionIsTenantScoped);
 run(verifyExpiredConfirmationRetargetsTheWorkItem);
@@ -16560,6 +16561,40 @@ function verifyEveryProjectScopedIdIsScopeChecked(output) {
 // 读 spec/ 的人会以为这些对象在系统里真的存在。2026-08-23 一扫，七份里四份是真的没有产出者，
 // 其中 external-capability-boundary 尤其要紧：manifest 的不变式清单里就有它，
 // 而实现把这个概念折叠进了 PermissionRequest（资源类型 external_capability ＋ 四个相关状态）。
+// 装 agent 是运维敲的第一条命令。这道门两个方向都核：
+//  · 文档里出现的参数必须在脚本里真的存在 —— 否则"照着做会立刻失败"；
+//  · 脚本收的参数必须被文档写到 —— 否则是"杠杆存在但人找不到"。
+// 后者当天就抓到真的：--executor-command 与 --roles 一字未提，而"节点没有可用模型执行器"
+// 正是控制台上一条真实的阻塞原因，运维照文档装完根本不知道还有这个开关。
+function verifyAgentInstallerFlagsMatchTheDocs(output) {
+  // 有意不写进文档的参数要登记（写明为什么不写）。
+  const UNDOCUMENTED_ON_PURPOSE = {};
+  const script = readFileSync(resolve(root, "scripts/install-agent.sh"), "utf8");
+  const doc = readFileSync(resolve(root, "docs/agent-runtime-protocol.md"), "utf8");
+  // 脚本认的参数：`--x)` 这种 case 分支才算，帮助文本里的提及不算。
+  const scriptFlags = new Set([...script.matchAll(/^\s*((?:--[a-z][a-z-]*\|)*--[a-z][a-z-]*)\)/gmu)]
+    .flatMap((hit) => hit[1].split("|")));
+  const docFlags = new Set([...doc.matchAll(/`(--[a-z][a-z-]*)`|\s(--[a-z][a-z-]*)\s/gu)]
+    .map((hit) => hit[1] || hit[2]).filter(Boolean));
+  if (scriptFlags.size < 12) {
+    output.push(`装机参数核对：只从 install-agent.sh 提取到 ${scriptFlags.size} 个参数（实测 12）—— 提取失配，本条在空转`);
+    return;
+  }
+  const ghost = [...docFlags].filter((flag) => !scriptFlags.has(flag)).sort();
+  if (ghost.length) {
+    output.push(`装机参数核对：文档写了脚本并不认的参数：${ghost.join("、")} —— 照着做会立刻失败`);
+  }
+  const hidden = [...scriptFlags].filter((flag) => !docFlags.has(flag) && !UNDOCUMENTED_ON_PURPOSE[flag]).sort();
+  if (hidden.length) {
+    output.push(`装机参数核对：脚本收这些参数、文档一字未提：${hidden.join("、")} —— `
+      + "杠杆存在但人找不到；要么写进文档，要么在 UNDOCUMENTED_ON_PURPOSE 里写明为什么不写");
+  }
+  const stale = Object.keys(UNDOCUMENTED_ON_PURPOSE).filter((flag) => !scriptFlags.has(flag) || docFlags.has(flag));
+  if (stale.length) output.push(`装机参数核对：登记表已过时：${stale.join("、")}`);
+  console.log(`装机参数核对：install-agent.sh 的 ${scriptFlags.size} 个参数与文档两向核过`
+    + `（文档提到 ${docFlags.size} 个，${Object.keys(UNDOCUMENTED_ON_PURPOSE).length} 个登记为有意不写）`);
+}
+
 function verifyRecordSpecsHaveProducers(output) {
   // 例外要写明【今天的现状是什么】，不是"暂时没做"。
   const SPECS_WITHOUT_PRODUCERS = {

@@ -42,6 +42,20 @@ sh install-agent.sh \
   --work-dir "$HOME/.local/share/aimac-agent"
 ```
 
+全部参数（`sh install-agent.sh --help` 之外，这里是完整清单）：
+
+| 参数 | 作用 |
+| --- | --- |
+| `--server` | 控制面地址 |
+| `--join-token` / `--join-token-file` | 一次性入网令牌（优先用 `--join-token-file`，命令行参数会进 shell 历史与进程列表） |
+| `--node-name` | 节点名，默认 `hostname` |
+| `--work-dir` | 节点数据根目录 |
+| `--roles` | 这个节点承接哪些角色（逗号分隔），不给则由控制面按派发决定 |
+| `--executor-command` | **自定义模型执行器命令**。不给时节点自动探测 `codex` / `claude` / `gemini` / `ollama` 四个命令；四个都没有、也没给这个参数，节点就没有可用执行器 —— 派发会卡在 `agent_runtime_executor_required`，控制台上那条阻塞提示写的也是这句 |
+| `--configure-clients` / `--no-configure-clients` | 是否改写这台机器上 codex/claude/cursor 的 MCP 客户端配置（项目级） |
+| `--configure-global-clients` / `--no-configure-global-clients` | 同上，但改写用户全局配置 |
+| `--no-daemon` | 只安装、不起常驻进程 |
+
 加入成功回显：
 
 ```text

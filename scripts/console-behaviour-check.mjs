@@ -3866,6 +3866,27 @@ await runCodedApiErrorCase();
       `${workItemReasons.size} 种工作项阻塞原因逐个核过（${Object.keys(CARRIED_BY_STATUS).length} 种登记为由状态带出口）`);
   }
 
+  // 「没有可用模型执行器」这条的出口原先只说"去看该节点的自检结果"——那是【去哪看】，不是【做什么】。
+  // 运行时自动探测的就是 codex / claude / gemini / ollama 四个命令（runtime.mjs probeProfile），
+  // 四个都没有、也没给 --executor-command，节点就没有执行器。出路是具体的，就该写出来。
+  {
+    const executorHintState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1,
+      projects: [{id: "p_x", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg_x", projectId: "p_x", name: "任务组", status: "development", workItems: []}],
+      agentDispatches: [{dispatchId: "dsp_x", taskGroupId: "tg_x", workItemId: "w_x",
+        status: "blocked", blockedReason: "agent_runtime_executor_required", progressPercent: 0}],
+      workSessions: [], workerLanes: [], agentRuntimeNodes: [], qualityGates: [], testResults: [],
+      checkpoints: [], admissionDecisions: [], modelSelectionDecisions: [], sessionPlacementDecisions: [],
+      truncatedCollections: []
+    };
+    const executorRendered = probe.renderMonitorWith(executorHintState, account, "p_x").replace(/<!--[\s\S]*?-->/gu, "");
+    check("「没有模型执行器」的出口要说清装什么、怎么覆盖",
+      /codex/.test(executorRendered) && /ollama/.test(executorRendered) && /--executor-command/.test(executorRendered),
+      "只说「去看该节点的自检结果」等于把人送到一屏数据前面，而没告诉他下一步做什么："
+        + "自动探测的四个命令与 --executor-command 覆盖项都该出现在这句话里");
+  }
+
   // 瞬态：不需要人动手，写"出口"反而是教人做无用功。登记的是【为什么它会自己好】。
   const TRANSIENT = {
     claim_expired_requeued: "claim 过期后派发已被重排回队列，下一个节点会认领",

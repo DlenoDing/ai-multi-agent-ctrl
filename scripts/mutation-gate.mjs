@@ -3995,6 +3995,24 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 出口要说【做什么】，不是【去哪看】。退回旧文案（只说去看自检结果）就该红。
+    name: "「没有模型执行器」的出口要说清装什么",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  agent_runtime_executor_required: "该节点上没有模型执行器：到那台机器上装 codex / claude / gemini / ollama 任一个"',
+    to: '  agent_runtime_executor_required: "该节点没有可用的模型执行器：让组织管理员到「AI 智能体」页核对该节点的自检结果" + ""',
+    expect: "出口要说清装什么"
+  },
+  {
+    // 装 agent 是运维敲的第一条命令：文档写了脚本不认的参数＝照着做立刻失败。
+    name: "文档不得写脚本并不认的装机参数",
+    file: "docs/agent-runtime-protocol.md",
+    check: "verifyAgentInstallerFlagsMatchTheDocs",
+    from: "| `--roles` |",
+    to: "| `--role` |",
+    expect: "文档写了脚本并不认的参数"
+  },
+  {
     // 工作项那一面此前整个没有门：判据把它排除掉，理由是"界面上有 needs_decision 兜底出口"——
     // 而那句话从没被验过。把兜底那一条改名，这一面就该整片红。
     name: "工作项阻塞的兜底出口不在了要红",
@@ -6522,8 +6540,8 @@ const MUTATIONS = [
     name: "产品报文不得指路到界面上没有的页（实测「运行时」页 10 处）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyGuidanceNamesRealPages",
-    from: "让组织管理员到「AI 智能体」页核对该节点的自检结果",
-    to: "到「运行时」页核对节点自检结果",
+    from: "装好后到「AI 智能体」页对该节点点「刷新」（重新采集自检）确认它认出来了",
+    to: "装好后到「运行时」页对该节点点「刷新」确认它认出来了",
     expect: "界面上没有这个"
   },
   {
