@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { assertNoUndefinedInPayload } from "./lib/no-undefined-payload.mjs";
 import { checkRecordStatusesAreDeclaredStates } from "./lib/state-machine-states.mjs";
 import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { projectRepositories } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const port = await freePort();
@@ -273,10 +274,18 @@ try {
     }
   }
 
-  const foreignProject = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.project_create", arguments: {idempotencyKey: "doctor-foreign-project", projectId: "prj_foreign_scope", name: "Doctor Foreign Scope"}});
+  const foreignProject = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.project_create", arguments: {idempotencyKey: "doctor-foreign-project", projectId: "prj_foreign_scope", name: "Doctor Foreign Scope", repositoryRefs: ["https://git.example.com/foreign/scope.git"]}});
   const foreignProjectResult = foreignProject.structuredContent?.result;
   if (!foreignProjectResult?.project?.id || foreignProjectResult.ownerGrant?.subjectRef?.subjectId !== "acct_workspace_owner" || !foreignProjectResult.ownerGrant?.permissions?.includes("task_group:control")) {
     throw new Error("system admin MCP could not create a foreign project with owner grant");
+  }
+  // 登记的仓库必须被【真正的读者】看见。断言不查字段名，直接调准入判定/提交目标共用的
+  // projectRepositories()：此前 MCP 把它写在 repositoryRefs 上，那个字段全仓一个读者都没有，
+  // 于是"登记了仓库"等于没登记 —— 单元照样被 project_repository_not_registered 挡住。
+  if (!projectRepositories(foreignProjectResult.project)
+        .some((repo) => repo?.url === "https://git.example.com/foreign/scope.git")) {
+    throw new Error("MCP 建项目时登记的仓库，准入判定读不到（projectRepositories 返回："
+      + `${JSON.stringify(projectRepositories(foreignProjectResult.project)).slice(0, 200)}）`);
   }
   const foreignTask = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.task_group_create", arguments: {idempotencyKey: "doctor-foreign-task", projectId: "prj_foreign_scope", taskGroupId: "tg_foreign_scope", name: "Doctor Foreign Task", roles: ["orchestrator"]}});
   if (!foreignTask.structuredContent?.result?.taskGroup?.id) throw new Error("system admin MCP could not create a foreign task group");

@@ -3993,6 +3993,17 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 项目上的仓库登记有三处落点：顶层 repositories（种子）、config.repositories（界面写、
+    // 所有读者读）、以及 MCP 那条路写的 repositoryRefs —— 最后这个全仓一个读者都没有。
+    // 于是经 MCP 建的项目「登记了仓库」等于没登记。断言直接调读者那个函数，不查字段名。
+    name: "MCP 建项目登记的仓库要落在读者真读的那处",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "      repositories: normalizeRepositoryEntries(args.repositoryRefs),",
+    to: "      repositories: [],",
+    expect: "准入判定读不到"
+  },
+  {
     // 状态对表这道门：记录的 status 必须是 spec/state-machines.yaml 里那台机器登记过的状态。
     // 已有的「状态集合常量」门查的是源码里手写的 const 清单，看不见直接写在构造点上的取值。
     // 这道门装上当天就抓出两处：任务组建出来是机器没有的 planned、模型提供方是 configured。

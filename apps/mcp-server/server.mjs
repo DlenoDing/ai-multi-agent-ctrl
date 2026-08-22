@@ -1674,6 +1674,10 @@ function createProject(state, args) {
   const organizationId = ownerAccount.organizationId || DEFAULT_ORGANIZATION_ID;
   const quota = organizationQuotaCheck(state, organizationId, "projects");
   if (!quota.allowed) return {ok: false, error: quota.error, quota};
+  // 字符串写法（只给地址）与对象写法（带凭证引用名等）都收，统一成读者认识的对象形状。
+  const normalizeRepositoryEntries = (value) => (Array.isArray(value) ? value : [])
+    .map((item) => (typeof item === "string" ? {url: item} : item))
+    .filter((item) => item && typeof item === "object");
   const project = {
     id: projectId,
     organizationId,
@@ -1681,7 +1685,18 @@ function createProject(state, args) {
     status: "active",
     ownerAccountId,
     members: [{accountId: ownerAccountId, role: "project_owner"}],
-    repositoryRefs: args.repositoryRefs || [],
+    // 仓库登记必须落在【读者真读的那个地方】。此前这里写的是 repositoryRefs ——
+    // 全仓一个读者都没有：准入判定、提交目标、URL 白名单走的都是 projectRepositories()，
+    // 它只认 config.repositories（界面写的）与顶层 repositories（老数据/种子）。
+    // 于是经 MCP 建的项目「登记了仓库」等于没登记：单元照样被 project_repository_not_registered
+    // 挡住，而调用方填的那份躺在没人读的字段上。入参名仍用字典里已有的 repositoryRefs
+    // （共享入参字典要不要动是人的决定，不在这里改），只把落点搬到读者真读的那处。
+    config: {
+      repositories: normalizeRepositoryEntries(args.repositoryRefs),
+      baselineData: [],
+      businessRules: [],
+      defaultRoles: []
+    },
     progress: {percent: 0, phase: "initialized", health: "ok", updatedAt: at},
     createdAt: at,
     updatedAt: at

@@ -3793,7 +3793,11 @@ async function handleApi(req, res) {
       status: "active",
       ownerAccountId,
       members: [{accountId: ownerAccountId, role: "project_owner"}],
-      progress: {percent: 0, phase: "intake", health: "ok", openTaskGroups: 0, blockedItems: 0, updatedAt: now()}
+      progress: {percent: 0, phase: "intake", health: "ok", openTaskGroups: 0, blockedItems: 0, updatedAt: now()},
+      // 三个建项目的入口里，此前只有 MCP 那个写时间戳 —— 另两个建出来的项目
+      // 「什么时候建的」系统整个答不上来（顶层 updatedAt 也只在后来被改动时才冒出来）。
+      createdAt: now(),
+      updatedAt: now()
     });
     const project = state.projects.at(-1);
     const ownerGrant = ensureProjectOwnerGrant(state, project, ownerAccountId, guard.policyDecision.id, `audit:${guard.idempotencyKey}`);
@@ -5546,7 +5550,9 @@ async function handleApi(req, res) {
         businessRules: [],
         defaultRoles: []
       },
-      progress: {percent: 0, phase: "intake", health: "ok", openTaskGroups: 0, blockedItems: 0, updatedAt: now()}
+      progress: {percent: 0, phase: "intake", health: "ok", openTaskGroups: 0, blockedItems: 0, updatedAt: now()},
+      createdAt: now(),
+      updatedAt: now()
     });
     const ownerGrant = ensureProjectOwnerGrant(state, state.projects.at(-1), guard.actor, guard.policyDecision.id, `audit:${guard.idempotencyKey}`);
     recomputeOrganizationUsage(state);
