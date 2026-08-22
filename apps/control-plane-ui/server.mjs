@@ -3103,15 +3103,10 @@ async function handleApi(req, res) {
     return;
   }
 
-  if (req.method === "GET" && url.pathname === "/api/progress-snapshots") {
-    const reader = accountFromRequest(req, state);
-    if (!reader) {
-      json(res, 401, {error: "auth_required"});
-      return;
-    }
-    json(res, 200, {progressSnapshots: cachedScopedState(state, reader.account, reader.session).progressSnapshots});
-    return;
-  }
+  // 这里原先有一条 GET /api/progress-snapshots：全仓零调用（控制台、agentctl、MCP、e2e、文档都没有），
+  // 而且它读的 scoped.progressSnapshots 对非系统账号【恒为空】（那是主视图瘦身时清掉的五个集合之一）。
+  // 一个没人用、对多数账号又静默返回空的接口，留着只会坑下一个发现它的人。
+  // 进度数据的正主是 GET /api/task-groups/:id/progress（按需取一个任务组，控制台用的就是它）。
 
   if (req.method === "GET" && url.pathname === "/api/agent-nodes") {
     const reader = accountFromRequest(req, state);

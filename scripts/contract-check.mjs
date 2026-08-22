@@ -465,6 +465,7 @@ run(verifyProtocolEventListMatchesReality);
 run(verifyProtocolDocMatchesRequiredRuntimeVersion);
 run(verifyStateFilesRefuseUnknownSchemaVersions);
 run(verifyOutdatedRuntimeIsFlaggedFailClosed);
+run(verifyEveryRouteHasSomeoneWhoCallsIt);
 run(verifyConsoleDoesNotReadStrippedTaskGroupFields);
 run(verifyViewDropsCollectionsNobodyReads);
 run(verifyConsoleDoesNotPullSkillBodies);
@@ -12555,6 +12556,41 @@ function verifyOutdatedRuntimeIsFlaggedFailClosed(output) {
     output.push("publicAgentNode 没有把 runtimeOutdated 带出去 —— 判定算对了也没人看得到");
   }
   console.log(`运行时版本：${cases.length} 种取值逐个核对（读不出的一律按过旧），标签也确实带到了对外投影上`);
+}
+
+function verifyEveryRouteHasSomeoneWhoCallsIt(output) {
+  // 没有任何调用方、也没写进文档的 HTTP 路由＝死掉的对外面。它不是"多写了几行"那么简单：
+  // 实测删掉的那条 GET /api/progress-snapshots 读的是【对非系统账号恒为空】的集合 ——
+  // 下一个发现它的人会拿它去取进度，得到空数组，然后去查一个不存在的数据缺陷。
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const routes = new Set();
+  for (const match of server.matchAll(/url\.pathname === "(\/api\/[^"]+)"/gu)) routes.add(match[1]);
+  for (const match of server.matchAll(/url\.pathname\.match\(\/\^\\\/api\\\/([a-z0-9\\/_-]+)/gu)) {
+    routes.add(`/api/${match[1].replace(/\\\//gu, "/").replace(/\\/gu, "")}`);
+  }
+  if (routes.size < 60) {
+    output.push(`路由只提取到 ${routes.size} 条（应 60+）—— 提取与代码脱节，本条在空转`);
+    return;
+  }
+  const callerFiles = ["apps/control-plane-ui/public/app.js", "scripts/agentctl.mjs",
+    "apps/agent-runtime/runtime.mjs", "apps/mcp-server/server.mjs"];
+  let callers = callerFiles.map((file) => readFileSync(join(root, file), "utf8")).join("\n");
+  for (const name of readdirSync(join(root, "scripts"), {recursive: true})) {
+    // 变异表不算调用方：它里面的路径只是"要把哪一行改成什么"。不剔掉的话，
+    // 这条门就没法被变异验证 —— 变异写进去的那个假路径会被它自己读到（本仓第二次踩）。
+    if (typeof name === "string" && name.endsWith(".mjs") && name !== "mutation-gate.mjs") {
+      callers += readFileSync(join(root, "scripts", name), "utf8");
+    }
+  }
+  for (const name of readdirSync(join(root, "docs"))) {
+    if (name.endsWith(".md")) callers += readFileSync(join(root, "docs", name), "utf8");
+  }
+  const orphans = [...routes].filter((route) => !callers.includes(route.split("(")[0].replace(/\/$/u, ""))).sort();
+  if (orphans.length) {
+    output.push(`这些路由没有任何调用方，也没写进文档：${orphans.join("、")} —— `
+      + "要么接上、要么写进文档说明它是给谁的、要么删掉；留着的那条会被下一个人当成可用接口");
+  }
+  console.log(`对外路由：${routes.size} 条逐个核对，都有调用方或写进了文档（${orphans.length} 条没有，应为 0）`);
 }
 
 function verifyConsoleDoesNotReadStrippedTaskGroupFields(output) {

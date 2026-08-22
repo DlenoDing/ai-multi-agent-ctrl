@@ -3652,6 +3652,14 @@ const MUTATIONS = [
     expect: "产出清单的路径爬到仓库之外却没被拦下"
   },
   {
+    name: "新长出来的死路由要被查出来",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyEveryRouteHasSomeoneWhoCallsIt",
+    from: '  if (req.method === "GET" && url.pathname === "/api/agent-nodes") {',
+    to: '  if (req.method === "GET" && url.pathname === "/api/nobody-calls-this") { json(res, 200, {}); return; }\n  if (req.method === "GET" && url.pathname === "/api/agent-nodes") {',
+    expect: "没有任何调用方，也没写进文档"
+  },
+  {
     // 只验这条断言【不是空转】：真实产出里把契约集合清空，它必须报出来。
     // 淘汰那一支在这套 e2e 里走不到（契约数远不到 160），由契约门那条单独守。
     name: "e2e 产出的引用完整性断言不得空转",
