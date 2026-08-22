@@ -152,16 +152,37 @@ export function sweepRecordsAgainstDeclaredSchemas(state, options = {}) {
   const cache = new Map();
   const output = [];
   let validated = 0;
-  const declaredSchemaFor = (record) => {
-    const declared = String(record?.schemaVersion || "");
-    const stem = declared.replace(/\/v\d+$/u, "");
-    if (!stem || stem === declared) return null; // 没有 "<名>/vN" 形状就不是可定位的规范
-    const name = SCHEMA_FILE_ALIASES[stem] || stem;
+  let selfIdentified = 0;   // 靠规范里的 const 自指认（而非 schemaVersion）验到的条数
+  const loadSpec = (name) => {
     if (cache.has(name)) return cache.get(name);
     let schema = null;
     try { schema = JSON.parse(readFileSync(join(specDir, `${name}.schema.json`), "utf8")); } catch { schema = null; }
     cache.set(name, schema);
     return schema;
+  };
+  const declaredSchemaFor = (record) => {
+    const declared = String(record?.schemaVersion || "");
+    const stem = declared.replace(/\/v\d+$/u, "");
+    if (!stem || stem === declared) return null; // 没有 "<名>/vN" 形状就不是可定位的规范
+    return loadSpec(SCHEMA_FILE_ALIASES[stem] || stem);
+  };
+  // 不是所有记录都用 schemaVersion 自报家门：agentTaskContracts 用的是 contractVersion
+  // （它的规范 additionalProperties:false 且根本没有 schemaVersion 这个字段，硬要求它声明
+  // 等于要求记录违反自己的规范）。只认一个字段名的话，这类集合就整个悄悄退出校验 ——
+  // 41 个键与规范一字不差，却一条都没被验过。
+  //
+  // 判据不写字段名对照表（那种表一定会漂），改成【让规范自己指认】：
+  // 记录的某个字符串字段形如 "<名>/vN"，且 spec/<名>.schema.json 里【同名字段】的 const
+  // 恰好等于这个取值 —— 那才算自报。同一条记录上的 protocolVersion:"control-plane/v1"
+  // 因此不会被误认（没有那份规范文件，规范里也没把它钉成 const）。
+  const selfIdentifiedSchemaFor = (record) => {
+    for (const [field, value] of Object.entries(record)) {
+      if (typeof value !== "string" || !/^[a-z0-9-]+\/v\d+$/u.test(value)) continue;
+      const stem = value.replace(/\/v\d+$/u, "");
+      const schema = loadSpec(SCHEMA_FILE_ALIASES[stem] || stem);
+      if (schema?.properties?.[field]?.const === value) return {schema, field};
+    }
+    return null;
   };
   // 不带 schemaVersion 的记录会被静默跳过 —— 于是"N 条全部符合规范"读起来像全覆盖，
   // 而整整一个集合可能一条都没被看过。所以按集合记下"看没看过"，并把没看过的点名报出来。
@@ -172,7 +193,15 @@ export function sweepRecordsAgainstDeclaredSchemas(state, options = {}) {
     for (const [index, item] of items.entries()) {
       if (!item || typeof item !== "object") continue;
       objects += 1;
-      if (!item.schemaVersion) continue;
+      if (!item.schemaVersion) {
+        const alternate = selfIdentifiedSchemaFor(item);
+        if (!alternate) continue;
+        declaring += 1;
+        validated += 1;
+        selfIdentified += 1;
+        validateSchema(item, alternate.schema, `${label}.${collection}[${index}]`, output);
+        continue;
+      }
       declaring += 1;
       const schema = declaredSchemaFor(item);
       if (!schema) {
@@ -207,7 +236,10 @@ export function sweepRecordsAgainstDeclaredSchemas(state, options = {}) {
   if (validated < minValidated) {
     output.push(`${label}规范核对只校验到 ${validated} 条记录，远少于预期的 ${minValidated} —— 提取逻辑已与数据结构脱节，本条可能在空转`);
   }
-  return {errors: output, validated, uncovered, uncoveredNote: uncoveredNote(uncovered)};
+  // 这条数要露在外面：靠 const 自指认的那条路一旦断了（改个字段名、规范里的 const 没了），
+  // 表现是"少验了一整个集合"而不是报错 —— 数掉到 0 才看得出来。
+  return {errors: output, validated, selfIdentified, uncovered,
+    uncoveredNote: uncoveredNote(uncovered) + (selfIdentified ? `；其中 ${selfIdentified} 条不带 schemaVersion，是靠规范里的 const 自指认认出来的` : "")};
 }
 
 // 集合名 → 规范文件名：taskGroups→task-group、policies→policy。只用来回答"这个集合本来验得了吗"。

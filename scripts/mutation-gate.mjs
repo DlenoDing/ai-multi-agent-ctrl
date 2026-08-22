@@ -3993,6 +3993,17 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 不是所有记录都用 schemaVersion 自报家门（agentTaskContracts 用 contractVersion）。
+    // 扫描只认一个字段名时，这一整个集合悄悄退出校验，而门照样绿 —— 41 个键与规范
+    // 一字不差却一条没验过。判据改成"让规范自己用 const 指认"，拆掉它就该少验一个集合。
+    name: "自识别字段不止 schemaVersion 一个",
+    file: "scripts/lib/schema-validate.mjs",
+    gate: "doctor",
+    from: "      if (schema?.properties?.[field]?.const === value) return {schema, field};",
+    to: "      if (false && schema?.properties?.[field]?.const === value) return {schema, field};",
+    expect: "控制面 e2e 产出：不受规范约束的集合从"
+  },
+  {
     // 问责台账此前不受任何规范约束（控制台一处都不读它），status 就一路漂到了
     // `accepted` —— 而 spec/state-machines.yaml 的 DecisionRecord 根本没有这个状态。
     // 规范把取值钉死在状态机那五个上，漂回去当场红。
@@ -4122,8 +4133,8 @@ const MUTATIONS = [
     name: "种子与编排产出的不受约束集合数也要棘轮住",
     file: "scripts/contract-check.mjs",
     check: "verifySeedRecordsMatchTheirDeclaredSchemas",
-    from: '{"种子数据": 4, "编排产出": 7}',
-    to: '{"种子数据": 3, "编排产出": 7}',
+    from: '{"种子数据": 4, "编排产出": 6}',
+    to: '{"种子数据": 3, "编排产出": 6}',
     expect: "不受规范约束的集合从 3 涨到 4"
   },
   {
@@ -4149,8 +4160,8 @@ const MUTATIONS = [
     name: "不受规范约束的集合数要棘轮住",
     file: "scripts/doctor.mjs",
     gate: "doctor",
-    from: "maxUncovered: 15});",
-    to: "maxUncovered: 14});",
+    from: "maxUncovered: 14});",
+    to: "maxUncovered: 13});",
     // 期望要挑【这道门自己会打印的那一句】：控制面 e2e 的前缀是"控制面 e2e 产出："，
     // 契约门那两处（种子/编排产出）用的是别的前缀 —— 只写公共部分会被判成"挂错了门"。
     expect: "控制面 e2e 产出：不受规范约束的集合"
@@ -4162,8 +4173,8 @@ const MUTATIONS = [
     name: "远程 agent 那侧的规范覆盖也要棘轮住",
     file: "scripts/doctor-agent-remote.mjs",
     gate: "agent",
-    from: "maxUncovered: 12});",
-    to: "maxUncovered: 11});",
+    from: "maxUncovered: 11});",
+    to: "maxUncovered: 10});",
     expect: "远程 agent e2e 产出：不受规范约束的集合"
   },
   {
