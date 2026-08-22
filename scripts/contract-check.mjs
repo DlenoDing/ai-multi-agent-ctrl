@@ -306,14 +306,24 @@ const skippedChecks = [];
 // 变异门单跑一条时它会陪跑。
 const PROCESS_STARTED_AT = Date.now();
 const CHECK_TIMINGS = [];
-async function runAsync(check) {
-  if (ONLY && check.name !== ONLY) { skippedChecks.push(check.name); return; }
+// 忘了 await 的 runAsync 与"用 run 注册 async 检查"是同一个病：报告在它跑完之前就打完了，
+// 那条检查里所有【await 之后】才推进的错误一条都不算数 —— 它永远是绿的。
+// 实测两处都中了（其中一条的行为面因此从落地起就没被计入过），所以不再指望每个调用点自己记得 ——
+// 把 promise 收在这里，汇总前统一等。
+const pendingAsyncChecks = [];
+
+function runAsync(check) {
+  if (ONLY && check.name !== ONLY) { skippedChecks.push(check.name); return Promise.resolve(); }
   ranCheckCount += 1;
   const before = errors.length;
   const startedAt = Date.now();
-  await check(errors);
-  CHECK_TIMINGS.push([`${check.name}(async)`, Date.now() - startedAt]);
-  for (let index = before; index < errors.length; index += 1) checkOrigin.set(errors[index], check.name);
+  const done = (async () => {
+    await check(errors);
+    CHECK_TIMINGS.push([`${check.name}(async)`, Date.now() - startedAt]);
+    for (let index = before; index < errors.length; index += 1) checkOrigin.set(errors[index], check.name);
+  })();
+  pendingAsyncChecks.push(done);
+  return done;
 }
 
 function run(check) {
@@ -409,6 +419,7 @@ run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyDispatchBindingChecksRefuseMissingValues);
+runAsync(verifyTestServersDieWithTheirParent);
 run(verifyRuntimeConstantsSitBeforeItsTopLevelAwait);
 run(verifyTruncatedExecutorOutputSaysSo);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
@@ -549,6 +560,9 @@ run(verifyApprovalDecisionRequired);
 run(verifyWorkStatusEnumConvergence);
 run(verifyTransitionEngine);
 run(verifyCommandBusLifecycle);
+
+// 汇总之前把所有 async 检查等干净。少了这一句，它们推进的错误会赶不上报告。
+await Promise.all(pendingAsyncChecks);
 
 if (ONLY && !ranCheckCount) {
   console.error(`contract check failed:\n- AIMAC_CONTRACT_ONLY="${ONLY}" 没有匹配到任何检查 —— `
@@ -6450,9 +6464,13 @@ function verifyFinallyBlocksDoNotMaskFailures(output) {
     const text = readFileSync(join(root, file), "utf8");
     for (const match of text.matchAll(/\}\s*finally\s*\{/gu)) {
       blocks += 1;
-      // finally 体：从这里到缩进相同的收口。取个上限，够覆盖本仓最长的那个。
+      // finally 体：切到【与 finally 那一行同缩进】的收口。原先固定找顶格的 "\n}\n" ——
+      // 缩进在块里的 finally 因此会一路切到几十行之外，把别处的 throw 算到它头上（实测误报过一次）。
+      const lineStart = text.lastIndexOf("\n", match.index) + 1;
+      const indent = /^[\t ]*/u.exec(text.slice(lineStart, match.index))[0];
+      const closer = `\n${indent}}`;
       const body = text.slice(match.index, match.index + 2500);
-      const end = body.indexOf("\n}\n") >= 0 ? body.indexOf("\n}\n") : body.length;
+      const end = body.indexOf(closer) >= 0 ? body.indexOf(closer) : body.length;
       const scope = body.slice(0, end);
       if (!/throw new Error/u.test(scope)) continue;
       // 允许：throw 被"主体跑完了吗"这类标志守着（Passed / Completed / ok 结尾的布尔）。
@@ -10834,6 +10852,73 @@ function verifyDispatchBindingChecksRefuseMissingValues(output) {
   }
   console.log("派发包绑定：任务合同摘要与技能集都是「缺失即拒 + 两侧必须相等」（形状核对；"
     + "控制面确实下发这些字段那一半由控制面 e2e 拿真派发包验）");
+}
+
+async function verifyTestServersDieWithTheirParent(output) {
+  // e2e 起的服务端在父进程被 SIGKILL 时会成为孤儿：finally 跑不了，它就一直占着端口和内存。
+  // 2026-08-22 在这台机器上数出【79 个】，最久的活了 8 天 —— 全是被打断的 e2e 留下的。
+  const outputBefore = output.length;
+  const runner = mkdtempSync(join(tmpdir(), "cc-orphan-"));
+  try {
+    // 一个"起服务端然后自己被杀"的父进程。它只负责把服务端拉起来并把 pid 报出来。
+    const parentScript = join(runner, "parent.mjs");
+    writeFileSync(parentScript, [
+      'import { spawn } from "node:child_process";',
+      `const child = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {`,
+      `  cwd: ${JSON.stringify(root)},`,
+      '  env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: "0", AIMAC_EXIT_WITH_PARENT: "1",',
+      `    AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_RUNTIME_DIR: ${JSON.stringify(join(runner, "runtime"))}},`,
+      '  stdio: ["ignore", "ignore", "ignore"]',
+      "});",
+      'process.stdout.write(`${child.pid}\n`);',
+      "setInterval(() => {}, 1000);"
+    ].join("\n"));
+    const parent = spawn(process.execPath, [parentScript], {stdio: ["ignore", "pipe", "ignore"]});
+    const childPid = await new Promise((resolve) => {
+      let buffer = "";
+      parent.stdout.on("data", (chunk) => {
+        buffer += chunk.toString();
+        if (buffer.includes("\n")) resolve(Number(buffer.trim()));
+      });
+      setTimeout(() => resolve(0), 8000);
+    });
+    if (!childPid) {
+      output.push("孤儿服务端判据没能起来被测的服务端 —— 这一条什么也没验");
+      parent.kill("SIGKILL");
+      return;
+    }
+    const alive = () => { try { process.kill(childPid, 0); return true; } catch { return false; } };
+    // 先确认它【真的起来了并且待得住】。服务端若因为别的原因（端口、运行目录）当场退出，
+    // 下面那句"父进程死后它也没了"会恒真 —— 那时这一条什么也没验，而它看起来是绿的。
+    await new Promise((resolveWait) => setTimeout(resolveWait, 2000));
+    if (!alive()) {
+      output.push("孤儿服务端判据：被测的服务端在父进程还活着时就已经退了 —— 这一条什么也没验");
+      parent.kill("SIGKILL");
+      return;
+    }
+    // 父进程被 SIGKILL：退出钩子一个都不会跑，只能靠服务端自己发现"起我的那个人没了"。
+    parent.kill("SIGKILL");
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline && alive()) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+    }
+    if (alive()) {
+      try { process.kill(childPid, "SIGKILL"); } catch { /* 已经走了 */ }
+      output.push("起服务端的进程被 SIGKILL 之后，服务端还活着 —— 它会一直占着端口和内存，"
+        + "直到有人手工发现（实测积到过 79 个，最久 8 天）");
+    }
+    // 三套 e2e 都得真的把这个开关传下去，否则上面这条只证明了"开关本身管用"。
+    for (const file of ["scripts/doctor.mjs", "scripts/doctor-mcp.mjs", "scripts/doctor-agent-remote.mjs"]) {
+      if (!/AIMAC_EXIT_WITH_PARENT: "1"/u.test(readFileSync(join(root, file), "utf8"))) {
+        output.push(`${file} 起服务端时没传 AIMAC_EXIT_WITH_PARENT —— 它被打断时会留下一个孤儿服务端`);
+      }
+    }
+  } finally {
+    rmSync(runner, {recursive: true, force: true});
+  }
+  if (output.length === outputBefore) {
+    console.log("起服务端的进程被 SIGKILL 后服务端自己退出（真杀真等），三套 e2e 也都传了这个开关 —— 核过");
+  }
 }
 
 function verifyRuntimeConstantsSitBeforeItsTopLevelAwait(output) {

@@ -31,6 +31,14 @@ const activeChildProcesses = new Set();
 // 是【挂死】：异常发生在 spawn 之后、stdin.end 之前，子进程等不到 EOF，父进程又因为
 // 子进程 stdio 还开着退不出来。所有模块级常量都必须待在这一段。
 const OUTPUT_CAPTURE_MAX_CHARS_DEFAULT = 32 * 1024 * 1024;
+const PUSH_PERMISSION_DENIALS = [
+  {re: /authentication failed/iu, promptType: "credential_required"},
+  {re: /could not read username|could not read password|terminal prompts disabled/iu, promptType: "credential_required"},
+  {re: /permission denied \(publickey/iu, promptType: "credential_required"},
+  {re: /remote: permission to .* denied|remote: write access to repository not granted/iu, promptType: "permission_denied"},
+  {re: /\b403 forbidden\b|the requested url returned error: 403/iu, promptType: "permission_denied"},
+  {re: /pre-receive hook declined|protected branch|refusing to allow .* to (?:create|update)/iu, promptType: "permission_denied"}
+];
 let signalHandlersInstalled = false;
 function installChildReaper() {
   if (signalHandlersInstalled) return;
@@ -929,6 +937,17 @@ async function registerEvidenceArtifact(config, dispatchPackage, evidence) {
   }
 }
 
+// §8 要求「执行中捕获常见错误码、CLI 提示…」，而此前运行时只实现了模拟开关那一半：
+// 真实部署里一次凭据不足的推送只会变成一条普通失败，活白干、人也拿不到可处置的选项。
+// 这里只认【明确是权限】的说法。连不上、找不到仓库、非快进一律不算 —— 误判的代价是
+// 把一个本该立刻失败的派发挂在那里等人，比不检测更坏。
+
+function classifyPushPermissionDenial(text) {
+  const value = String(text || "");
+  const hit = PUSH_PERMISSION_DENIALS.find((item) => item.re.test(value));
+  return hit ? hit.promptType : null;
+}
+
 function permissionBlockedError(message) {
   const error = new Error(message);
   error.controlStatus = "blocked";
@@ -1121,7 +1140,31 @@ async function executeDispatch(config, dispatchPackage, control) {
   // 新持有者的 reset --hard origin/<branch> 又会把它静默当作基线 —— 两个节点的工作混在一起，
   // 而控制面对此毫无记录。所以在这一步之前必须向控制面复核"我还是不是持有者"。
   await assertStillHoldsClaim(config, dispatchPackage);
-  git(repositoryRoot, ["push", remote, `HEAD:refs/heads/${branch}`]);
+  const pushOnce = () => git(repositoryRoot, ["push", remote, `HEAD:refs/heads/${branch}`]);
+  try {
+    pushOnce();
+  } catch (pushError) {
+    const promptType = classifyPushPermissionDenial(`${pushError?.stderr || ""}\n${pushError?.message || ""}`);
+    // 不是权限问题（网络、非快进、仓库不在）就照常失败：那些人处置不了，挂在这里只是白等。
+    if (!promptType) throw pushError;
+    // 活已经干完并提交在本地了。直接失败等于把这一整趟丢掉，而这恰恰是 §8 存在的理由：
+    // 暂停远端副作用、把它变成一张人能处置的单子、处置完从安全重试点接着走。
+    const resolution = await runPermissionReport(config, dispatchPackage, {
+      step: "git_push",
+      promptType,
+      requestedCapability: "git_push",
+      requestedResource: `repo:${dispatchPackage.repositoryOutputTarget.repositoryId}`,
+      riskLevel: "L2",
+      suggestedActions: ["grant_credential", "capability_exchange_required", "reassign", "abort"]
+    }, control);
+    await applyPermissionResolution(config, dispatchPackage, resolution);
+    control?.throwIfCancelled();
+    // 等人处置这段时间里认领可能已经易主（几分钟足够超时重排）。推之前必须再复核一次 ——
+    // 与上面第一次推送前那次复核是同一个理由。
+    await assertStillHoldsClaim(config, dispatchPackage);
+    // 只重试一次：处置完还被拒，说明那件事没解决，再转一圈只是把人耗在同一张单子上。
+    pushOnce();
+  }
   const remoteSha = gitLsRemote(repositoryRoot, remote, `refs/heads/${branch}`);
   if (remoteSha !== commit) throw new Error("push_verification_failed:推上去之后远端的提交与本地对不上");
   await submitExecutionEvent(config, dispatchPackage, "git_pushed", {progressPercent: 90, summary: `Pushed ${commit} to ${remote}/refs/heads/${branch}.`, evidenceRefs: [`push:${remote}:refs/heads/${branch}:${remoteSha}`]});

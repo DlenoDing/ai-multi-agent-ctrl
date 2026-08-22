@@ -6076,6 +6076,20 @@ server.on("error", (error) => {
   process.exit(1);
 });
 
+// e2e 起服务端的进程若被 SIGKILL（或整个终端被关掉），它的 finally 跑不了，
+// 这个服务端就成了孤儿：一直占着内存和端口，直到有人手工发现。实测一次数出【79 个】，
+// 最久的活了 8 天。父进程没了就跟着退 —— 只在显式打开时生效，生产不受影响。
+if (process.env.AIMAC_EXIT_WITH_PARENT === "1") {
+  const bornTo = process.ppid;
+  // unref：这只是看门狗，不该把一个本该退出的进程吊在事件循环里。
+  setInterval(() => {
+    // 父进程没了之后本进程会被过继给 1（launchd/init）。ppid 变了就是那一刻。
+    if (process.ppid === bornTo) return;
+    console.error(`[server] 起我的那个进程（pid ${bornTo}）已经不在了，跟着退出 —— 否则会变成一个占着端口的孤儿`);
+    process.exit(0);
+  }, 2000).unref();
+}
+
 server.listen(port, host, () => {
   console.log(`AI Multi-Agent Ctrl console: http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`);
   console.log(`Centralized MCP endpoint: ${publicEndpoint()}/mcp`);

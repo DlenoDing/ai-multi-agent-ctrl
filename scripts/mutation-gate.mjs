@@ -3596,6 +3596,33 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "起服务端的进程死了服务端要跟着退",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyTestServersDieWithTheirParent",
+    from: "if (process.ppid === bornTo) return;",
+    to: "if (true) return;",
+    expect: "服务端还活着"
+  },
+  {
+    name: "真实的推送被拒必须走 §8 而不是直接失败",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "    if (!promptType) throw pushError;",
+    to: "    throw pushError;",
+    expect: "没有走 §8 上报权限单"
+  },
+  {
+    // 认得出「这是权限问题」这件事本身是承重的：把整张表清空，被拒的推送就又变回一条普通失败。
+    // （逐条改单个签名不行 —— 这个夹具同时命中「remote: permission to … denied」和
+    // 「pre-receive hook declined」两条，改掉一条另一条会接住，看起来像"改坏了也没事"。）
+    name: "推送被拒的分类不得把权限当成普通失败",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "const hit = PUSH_PERMISSION_DENIALS.find((item) => item.re.test(value));",
+    to: "const hit = PUSH_PERMISSION_DENIALS.slice(0, 0).find((item) => item.re.test(value));",
+    expect: "没有走 §8 上报权限单"
+  },
+  {
     name: "检查点不带契约摘要不得整道跳过",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyHumanApprovedPathsBindTheCommit",

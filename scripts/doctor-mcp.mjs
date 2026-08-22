@@ -19,6 +19,8 @@ const child = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
   env: {
     ...process.env,
     AIMAC_HOST: "127.0.0.1",
+    // 我要是被 SIGKILL 掉（或终端被关），finally 跑不了 —— 这个服务端就成了占着端口的孤儿。
+    AIMAC_EXIT_WITH_PARENT: "1",
     // 关掉后台自治周期：端到端断言的是一段确定的状态序列，后台推进会把它打乱。
     AIMAC_ORCHESTRATOR_INTERVAL_MS: "0",
     AIMAC_PORT: String(port),

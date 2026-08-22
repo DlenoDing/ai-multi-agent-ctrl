@@ -73,6 +73,8 @@ const server = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
   env: {
     ...process.env,
     AIMAC_HOST: "127.0.0.1",
+    // 我要是被 SIGKILL 掉（或终端被关），finally 跑不了 —— 这个服务端就成了占着端口的孤儿。
+    AIMAC_EXIT_WITH_PARENT: "1",
     // 关掉后台自治周期：端到端断言的是一段确定的状态序列，后台推进会把它打乱。
     AIMAC_ORCHESTRATOR_INTERVAL_MS: "0",
     AIMAC_PORT: String(port),
@@ -1016,6 +1018,106 @@ try {
 	    }
 	  }
 	  console.log(`  ok  缺代次必须被拒（检查点 + 失败上报）：用 attempts=${reclaimedAttempts} 的重认领派发验过`);
+
+	  // §8 的权限回路上面已经验过一遍，但那次是靠 AIMAC_AGENT_SIMULATE_PERMISSION_BLOCK 触发的。
+	  // 真实部署里【没有任何东西会触发它】—— 检测那一半此前只有一个模拟开关（代码注释里写着
+	  // "real deployments wire concrete detectors here"）。于是凭据不足的推送只会变成一条普通失败：
+	  // 活白干，人也拿不到"发凭据 / 改派 / 中止"这几个选项。这里造一次【真的被远端拒掉的推送】。
+	  {
+	    const denyHook = join(remote, "hooks", "pre-receive");
+	    const denyFlag = join(sandbox, "flag-deny-push");
+	    writeFileSync(denyHook, ["#!/bin/sh",
+	      `[ -f ${JSON.stringify(denyFlag)} ] || exit 0`,
+	      // 服务端拒绝写入时的原话形状（GitHub / Gerrit / 分支保护都是这一类）。
+	      'echo "remote: Permission to prj_control_plane.git denied to permission-node." 1>&2',
+	      "exit 1"].join("\n"));
+	    chmodSync(denyHook, 0o755);
+	    let deniedRun = null;
+	    try {
+	      // 先编排、后开拒 —— 编排自己也会推一次。第一版把开关先打开了，结果连编排那一步一起拒掉，
+	      // 整个请求卡住不返回（查了才发现：拒的不是我想拒的那次推送）。
+	      // 先造一件新活：到这一步任务组里的机器可执行工作项已经做完了，直接编排拿不到新派发，
+	      // 这一条就会整条空转（第一版正是这样，自报里写着「没领到新派发」）。
+	      await json("/api/task-groups/tg_runtime_management/work-items", {
+	        method: "POST", token: login.sessionToken, idempotencyKey: "doctor-agent-denied-push-work",
+	        body: {title: "推送被远端拒掉时要走 §8", ownerRole: "agent-runtime",
+	          requirements: ["commit to project git", "return checkpoint"]}
+	      });
+	      await json("/api/orchestrator/run", {
+	        method: "POST", token: login.sessionToken, idempotencyKey: "doctor-agent-denied-push-orchestrate",
+	        body: {mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false}
+	      });
+	      writeFileSync(denyFlag, "on\n");
+	      const deniedChild = spawn(process.execPath, [permissionRuntime, "run", "--work-dir", permissionWorkDir, "--once"], {
+	        env: {
+	          ...process.env,
+	          AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true",
+	          AIMAC_AGENT_CONFIGURE_CLIENTS: "false",
+	          // 这一次【不给】模拟开关：要么是真的检测到了，要么这条什么也没验。
+	          AIMAC_AGENT_PERMISSION_POLL_INTERVAL_MS: "300",
+	          AIMAC_AGENT_PERMISSION_POLL_ATTEMPTS: "200"
+	        },
+	        stdio: ["ignore", "pipe", "pipe"]
+	      });
+	      let deniedOut = "";
+	      let deniedErr = "";
+	      deniedChild.stdout.on("data", (chunk) => { deniedOut += chunk.toString(); });
+	      deniedChild.stderr.on("data", (chunk) => { deniedErr += chunk.toString(); });
+	      // 拿不到派发（工作项都做完了）时这一条就没造出情形 —— 必须自报，不能等成超时。
+	      const denied = await waitForPendingPermissionRequest(login.sessionToken, "git_push").catch((error) => ({error}));
+	      if (denied.error) {
+	        // 它多半【早就退了】（没领到派发就直接结束）。对一个已经退出的子进程再
+	        // await once(child,"exit") 会永远等下去 —— 那个事件在我们挂监听之前就发过了。
+	        // 第一版正是这么写的，整套 e2e 卡死在这一行，查了三轮才落到它头上。
+	        if (deniedChild.exitCode === null && deniedChild.signalCode === null) {
+	          deniedChild.kill("SIGKILL");
+	          await Promise.race([once(deniedChild, "exit"),
+	            new Promise((resolveWait) => setTimeout(resolveWait, 3000).unref())]);
+	        }
+	        // 「没造出情形」和「造出了但没检测出来」必须分开：混成一类的话，
+	        // 把检测器改坏之后这一条照样绿（实测 —— 两条变异都骗过了它）。
+	        // agent 明明领到了派发还失败了，那就是缺陷，不是这一轮没赶上。
+	        const agentText = String(deniedOut + deniedErr);
+	        if (/dispatch failed/u.test(agentText)) {
+	          throw new Error("推送被远端拒掉，agent 直接把派发判失败了，没有走 §8 上报权限单 —— "
+	            + `活白干，人也拿不到「发凭据 / 改派 / 中止」这几个选项：${agentText.slice(-200)}`);
+	        }
+	        console.log("  --  这一轮没造出「推送被远端拒掉」的情形（没领到新派发），"
+	          + `「真实的推送被拒要走 §8」未被检验：${agentText.slice(-160)}`);
+	      } else {
+	        if (denied.promptType && !["permission_denied", "credential_required"].includes(denied.promptType)) {
+	          throw new Error(`推送被拒上报成了 ${denied.promptType} —— 它该被认成权限问题`);
+	        }
+	        // 人处置：先真的把拒绝解除（相当于运维去补了写权限），再批这张单。
+	        rmSync(denyFlag, {force: true});
+	        await json(`/api/permission-requests/${denied.requestId}/resolve`, {
+	          method: "POST", token: login.sessionToken, idempotencyKey: "doctor-agent-denied-push-resolve",
+	          body: {status: "approved"}
+	        });
+	        const deniedRace = await Promise.race([
+	          once(deniedChild, "exit").then(([code]) => ({code})),
+	          new Promise((resolveWait) => setTimeout(() => resolveWait({timedOut: true}), 120000).unref())
+	        ]);
+	        if (deniedRace.timedOut) {
+	          deniedChild.kill("SIGKILL");
+	          throw new Error(`推送被拒后的 agent 跑了 120 秒还没结束（stderr 末尾：${deniedErr.slice(-200)}）`);
+	        }
+	        if (deniedRace.code !== 0) {
+	          throw new Error(`推送被拒 → 人授权 → 重推 这一趟没跑通：${deniedErr || deniedOut}`);
+	        }
+	        if (!deniedOut.includes("permission report submitted")) {
+	          throw new Error("推送被远端拒掉了，agent 却没有上报权限单 —— 活白干，人也拿不到可处置的选项");
+	        }
+	        deniedRun = denied;
+	      }
+	    } finally {
+	      rmSync(denyFlag, {force: true});
+	      rmSync(denyHook, {force: true});
+	    }
+	    if (deniedRun) {
+	      console.log("  ok  真实的推送被拒 → 权限单 → 人授权 → 从安全重试点重推：整条跑通（没有用模拟开关）");
+	    }
+	  }
 
 	  // 到这里，这一轮 e2e 已经真的派发、真的 commit、真的 push、真的提交过 checkpoint。
 	  // 契约门那一侧只能校验它自己造的记录，够不到这些 —— 而 checkpoint 的 commitRefs/pushRefs
