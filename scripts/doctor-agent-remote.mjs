@@ -48,14 +48,27 @@ const baseUrl = `http://127.0.0.1:${port}`;
 
 setupRepository();
 writeFileSync(executor, `
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 const input = JSON.parse(readFileSync(0, "utf8"));
 // 「跑完一个字都没改」这条路此前零覆盖：真实里它意味着模型空转（额度烧了、活没动），
 // 而 agent 必须把它判成失败并如实报回控制面，而不是当成做完了去提交一个空 commit。
 // 按工作项 id 里的标记切换：这一支【什么都不写】，只打一句摘要。
 if (String(input.workId || "").includes("nochange")) {
-  console.log(JSON.stringify({summary: "探针：这一轮故意什么都不改", verificationRefs: []}));
+  // 两种"看着做了、其实没做"共用这一个工作项，按标记文件切换：
+  // 编排是否会为一件【新活】排派发，取决于任务组当时的状态（上一条探针失败之后就不排了，
+  // 实测第二个工作项根本没进编排回执）。让同一件活跑第二次，才是稳的造法。
+  const onlyManifest = existsSync(${JSON.stringify(join(sandbox, "only-manifest.flag"))});
+  if (onlyManifest) {
+    const manifestPath = input.repositoryOutputTarget?.artifactManifestPath;
+    if (manifestPath) {
+      mkdirSync(join(input.repositoryRoot, dirname(manifestPath)), {recursive: true});
+      writeFileSync(join(input.repositoryRoot, manifestPath), "{}");
+    }
+    console.log(JSON.stringify({summary: "探针：只写了产物清单", verificationRefs: []}));
+  } else {
+    console.log(JSON.stringify({summary: "探针：这一轮故意什么都不改", verificationRefs: []}));
+  }
   process.exit(0);
 }
 const outputPath = \`docs/agent-runtime-output/\${input.taskGroupId}/\${input.workId}.md\`;
@@ -467,11 +480,18 @@ try {
     maxBuffer: 32 * 1024 * 1024
   });
   if (run.status !== 0 || !run.stdout.includes("checkpoint intentionally deferred")) {
-    const remoteHead = execFileSync("git", ["--git-dir", remote, "rev-parse", "refs/heads/main"], {encoding: "utf8"}).trim();
-    const remoteParent = execFileSync("git", ["--git-dir", remote, "rev-parse", `${remoteHead}^`], {encoding: "utf8"}).trim();
-    const remoteDiff = execFileSync("git", ["--git-dir", remote, "diff", "--name-only", remoteParent, remoteHead], {encoding: "utf8"}).trim();
+    // 【报错路径自己不许崩】。这一段是为了把"远端上到底有什么"一并说出来，可它假设远端至少有两个提交：
+    // agent 这一轮要是根本没推上去，远端就只有初始那一个，`HEAD^` 直接 fatal ——
+    // 于是真正的失败原因（run.stderr）一个字都看不到，屏幕上只剩一句 git 的 unknown revision。
+    // 本仓记过同一形状：记录错误的那行代码把现场毁掉。诊断信息一律尽力而为。
+    const tryGit = (args) => {
+      try { return execFileSync("git", ["--git-dir", remote, ...args], {encoding: "utf8"}).trim(); }
+      catch (error) { return `（取不到：${String(error.message).split("\n")[0].slice(0, 80)}）`; }
+    };
+    const remoteHead = tryGit(["rev-parse", "refs/heads/main"]);
+    const remoteDiff = tryGit(["show", "--name-only", "--pretty=format:", remoteHead]);
     const manifests = remoteDiff.split("\n").filter((path) => path.includes("artifact-manifests/"));
-    const manifest = manifests[0] ? execFileSync("git", ["--git-dir", remote, "show", `${remoteHead}:${manifests[0]}`], {encoding: "utf8"}).trim() : "missing";
+    const manifest = manifests[0] ? tryGit(["show", `${remoteHead}:${manifests[0]}`]) : "missing";
     throw new Error(`remote Agent dispatch execution failed: ${run.stderr || run.stdout}\nremoteDiff=${remoteDiff}\nmanifest=${manifest}`);
   }
 
@@ -1210,6 +1230,39 @@ try {
         + "人在控制台上看不出这一轮为什么没产出");
     }
     console.log("  ok  执行器一个字都没改时判失败，并如实报回控制面（executor_produced_no_changes）");
+  }
+
+  // 【只写了产物清单、没有任何任务输出】。比"一个字都没改"更隐蔽：git 看得到改动、提交也能成，
+  // 而提交里除了 agent 自己要写的那份清单什么都没有 —— 验收的人翻开一看是空的。
+  // 复用上面那件活跑第二次（编排不会为一件新活再排派发：上一条探针失败之后任务组的状态就变了，
+  // 实测新工作项根本没进编排回执 —— 那样这一条会永远"没造出情形"）。
+  {
+    writeFileSync(join(sandbox, "only-manifest.flag"), "on\n");
+    const manifestOrchestrated = await json("/api/orchestrator/run", {
+      method: "POST", token: login.sessionToken, idempotencyKey: "doctor-agent-onlymanifest-orchestrate",
+      body: {mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false}
+    });
+    const manifestRun = spawnSync(process.execPath, [runtimePath, "run", "--work-dir", agentWorkDir, "--once"], {
+      env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false"},
+      encoding: "utf8", maxBuffer: 32 * 1024 * 1024
+    });
+    const manifestText = `${manifestRun.stdout || ""}${manifestRun.stderr || ""}`;
+    if (!/adp_/u.test(manifestText)) {
+      throw new Error("「只写清单」这条没造出想测的情形：这一轮 agent 没领到任何派发 —— 下面的断言什么也没验"
+        + `（编排回执：${JSON.stringify(manifestOrchestrated.changed || []).slice(0, 300)}）`);
+    }
+    if (!/executor_produced_no_output/u.test(manifestText)) {
+      throw new Error("执行器只写了产物清单，agent 侧没有报出 executor_produced_no_output —— "
+        + `等于拿一份空清单冒充产出（agent 输出：${manifestText.slice(-300)}）`);
+    }
+    const afterState = await json("/api/state?view=full&limit=200", {token: login.sessionToken});
+    const failedByOutput = (afterState.agentDispatches || [])
+      .some((item) => String(item.failureReason || "").includes("executor_produced_no_output"));
+    if (!failedByOutput) {
+      throw new Error("agent 判了失败，而控制面上没有任何一条派发的失败原因是 executor_produced_no_output —— "
+        + "人在控制台上看不出这一轮为什么没产出");
+    }
+    console.log("  ok  执行器只写了产物清单、没有任务输出时判失败（executor_produced_no_output）");
   }
 
 		  console.log("agent remote doctor ok: one-command join, checksum install, credential rotation, initialization, self-check (permission+integrity probe), remote MCP, control command ACK, project/session-level execution event stream, on-demand skill workset, dispatch, commit, push and checkpoint outbox replay, two-step evidence artifact registration, permission_report loop with safe-retry-point recovery, revoke pending+ACK requeue verified");
