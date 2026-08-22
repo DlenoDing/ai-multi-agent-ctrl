@@ -4951,6 +4951,7 @@ function recordTransition(state, machine, objectId, from, to, actor, requiresVal
       subject: `${machine}:${objectId} ${from}->${to}`, result: rejection.failureCode});
   }
   const transition = {
+    schemaVersion: "transition-evidence/v1",
     transitionId: createId("trn"),
     machine,
     objectId,

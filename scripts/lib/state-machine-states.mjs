@@ -86,6 +86,12 @@ export function checkRecordStatusesAreDeclaredStates(specPath, sourceState, labe
         + "而这不会报任何错，只是那些判定永远不成立");
     }
   }
+  // 这里【不加】"迁移证据的 from/to 要在状态机里登记过"那道核对 —— 我写完才发现它永远不会触发：
+  // 产品自己的迁移引擎（lib/transition-engine.mjs）在运行时就按同一份 spec/state-machines.yaml
+  // 判 from/to，严格模式直接抛、宽松模式记成 rejected（而 rejected 那类本来就该跳过）。
+  // 也就是说它与被测代码共用同一个真相源、且守在更靠后的位置，只能是一道空转的门。
+  // 真验到它的方式是把一处迁移改成未登记的状态：结果是引擎当场抛错、e2e 在别处红，
+  // 而不是这道核对报出来 —— 「失败了但不是因为预期断言」。
   if (checked < minChecked) {
     errors.push(`${label}：只对上了 ${checked} 个有状态机的集合（至少该有 ${minChecked} 个）—— `
       + "集合名到机器名的推导已与数据脱节，本条在空转");
@@ -95,6 +101,7 @@ export function checkRecordStatusesAreDeclaredStates(specPath, sourceState, labe
       + "要么建机器，要么在 COLLECTIONS_WITHOUT_STATE_MACHINE 里写明它凭什么可以没有");
   }
   const note = `${label}状态对表：${checked} 个集合的 status 取值逐个对过 spec/state-machines.yaml，`
-    + `${seenWithoutMachine.size} 个按登记跳过（登记表共 ${Object.keys(COLLECTIONS_WITHOUT_STATE_MACHINE).length} 项）`;
+    + `${seenWithoutMachine.size} 个按登记跳过（登记表共 ${Object.keys(COLLECTIONS_WITHOUT_STATE_MACHINE).length} 项）`
+    ;
   return {errors, checked, note, seenWithoutMachine};
 }

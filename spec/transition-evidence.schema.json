@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/transition-evidence.schema.json",
+  "title": "TransitionEvidence",
+  "description": "一次状态迁移的留痕：哪台机器上的哪个对象、从哪到哪、谁做的、拿什么当依据。宽松（warn）模式下【非法但照样发生了】的那一条会多带一个 rejected —— 那是这个集合里最该被看见的记录，而集合本身有 240 条上限、合法迁移也往里挤，所以那条同时会被写进审计台账（先归档再裁剪）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "transitionId", "machine", "objectId", "from", "to", "actor", "evidenceRefs", "createdAt"],
+  "properties": {
+    "schemaVersion": {"const": "transition-evidence/v1"},
+    "transitionId": {"type": "string", "pattern": "^trn_"},
+    "machine": {"type": "string", "minLength": 1, "description": "spec/state-machines.yaml 里的机器名。from/to 是否是这台机器登记过的状态，由 checkRecordStatusesAreDeclaredStates 逐条对表（schema 表达不了跨文件的这层关系）。"},
+    "objectId": {"type": "string", "minLength": 1},
+    "from": {"type": "string", "minLength": 1},
+    "to": {"type": "string", "minLength": 1},
+    "actor": {"type": "string", "minLength": 1},
+    "evidenceRefs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "rejected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["failureCode"],
+      "description": "只有 warn 模式下被判为非法、却仍然发生了的迁移才有它。failureCode 必须在 —— 少了它这条记录就只是「有什么不对」，答不上来是哪道判定拒的。",
+      "properties": {
+        "failureCode": {"type": "string", "minLength": 1},
+        "message": {"type": "string"}
+      }
+    }
+  }
+}

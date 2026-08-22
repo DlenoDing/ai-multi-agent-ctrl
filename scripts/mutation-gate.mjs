@@ -3993,6 +3993,18 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 迁移证据里最该被看见的是 warn 模式下「非法但照样发生了」的那条：它多带一个 rejected。
+    // failureCode 少了，这条记录就只剩「有什么不对」，答不上是哪道判定拒的。规范把它钉成必填。
+    // （注意：本步一度还想核 from/to 在不在状态机里 —— 那道核对永远不会触发，
+    //   产品自己的迁移引擎按同一份 yaml 守在更靠前的位置，已撤掉并在 lib 里写明原因。）
+    name: "迁移证据要声明自己的规范",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: '    schemaVersion: "transition-evidence/v1",\n    transitionId: createId("trn"),',
+    to: '    transitionId: createId("trn"),',
+    expect: "transitionEvidence"
+  },
+  {
     // 建智能体时 status 与 trustScore 此前是请求体直接落库。界面的启停按钮只认 active/inactive，
     // 别的取值会让它永远显示「启用」；trustScore 走 Number(任意输入) 能把 NaN 存进去。
     name: "认不出的智能体状态必须拒绝",
@@ -4222,8 +4234,8 @@ const MUTATIONS = [
     name: "不受规范约束的集合数要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "doctor",
-    from: '"控制面 e2e 产出": 11,',
-    to: '"控制面 e2e 产出": 10,',
+    from: '"控制面 e2e 产出": 10,',
+    to: '"控制面 e2e 产出": 9,',
     // 期望要挑【这道门自己会打印的那一句】：控制面 e2e 的前缀是"控制面 e2e 产出："，
     // 契约门那两处（种子/编排产出）用的是别的前缀 —— 只写公共部分会被判成"挂错了门"。
     expect: "控制面 e2e 产出：不受规范约束的集合"
@@ -4235,8 +4247,8 @@ const MUTATIONS = [
     name: "远程 agent 那侧的规范覆盖也要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "agent",
-    from: '"远程 agent e2e 产出": 8,',
-    to: '"远程 agent e2e 产出": 7,',
+    from: '"远程 agent e2e 产出": 7,',
+    to: '"远程 agent e2e 产出": 6,',
     expect: "远程 agent e2e 产出：不受规范约束的集合"
   },
   {
