@@ -316,6 +316,12 @@ if (process.env.AIMAC_RENDER_REAL) {
   if (who?.accountType !== "system_admin") {
     console.log("（注意：喂进去的是完整状态，未经服务端按账号过滤 —— 这一视角实际收到的会更少；越权与否由 e2e 的读泄漏用例守，不看这里）");
   }
+  // 有几块内容【不在状态里】：它们由页面加载后另发请求取（执行事件走长轮询、待确认数走计数接口、
+  // 评审/指令走各自的接口）。这个工具只喂状态、不发请求，所以那几块渲出来永远是「暂无数据」——
+  // 与产品真的没有数据长得一模一样。不说这一句，读的人会去查一个不存在的缺陷，
+  // 或者反过来以为"事件流是通的"（本轮就差点把执行事件流的空当成缺陷去查）。
+  console.log("（这几块的数据不在状态里、要另发请求取，本工具不发 —— 它们显示的「暂无数据」是工具的空，"
+    + "不是产品的空：实时事件流 / 最新执行事件 / 待人工确认数 / 评审与人工指令明细 / 组织成员与节点）\n");
   const documentRoot = el("div");
   const probe = loadConsole(documentRoot, {realI18n: true});
   const strip = (html) => String(html).replace(/<[^>]+>/gu, " ").replace(/&nbsp;/gu, " ")
@@ -1642,6 +1648,37 @@ function runNoVisibleProjectCase() {
     check("领走了却一次动静都没有的派发，要说的是「还没有过动静」而不是留空",
       /还没有过动静/u.test(stallText),
       "这一格空着与「刚刚才动过」看不出区别 —— 而它恰恰是最该被人看到的那种");
+  }
+  // 「受阻项」数的是任务组身上的 blockers；而【被挡住的派发】是另一回事，只在执行监控页上说。
+  // 真实运行态上实测过：概览显示「受阻项 0」，同一份数据里有 2 个 blocked 派发、
+  // 监控页正提示「有执行被挡住，需要人处理」—— 人先看的那一屏让他得出相反结论。
+  {
+    const stuckState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "development",
+        blockers: [], workItems: [{id: "wi1", title: "改造", status: "in_progress", ownerRole: "agent-runtime", progress: 40}]}],
+      agentDispatches: [
+        {schemaVersion: "agent-dispatch/v1", dispatchId: "d_blocked_1", projectId: "p1", taskGroupId: "tg1",
+          workItemId: "wi1", sessionId: "s1", runId: "r1", status: "blocked", blockedReason: "task_group_pause",
+          attempts: 1, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z"},
+        {schemaVersion: "agent-dispatch/v1", dispatchId: "d_blocked_2", projectId: "p1", taskGroupId: "tg1",
+          workItemId: "wi1", sessionId: "s2", runId: "r2", status: "blocked", blockedReason: "task_group_pause",
+          attempts: 1, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z"},
+        {schemaVersion: "agent-dispatch/v1", dispatchId: "d_running", projectId: "p1", taskGroupId: "tg1",
+          workItemId: "wi1", sessionId: "s3", runId: "r3", status: "running", attempts: 1,
+          createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z"}
+      ],
+      workSessions: [], humanConfirmationRequests: [], humanDirectives: [], executionTopologies: [],
+      closeBarriers: [], qualityGates: [], findings: [], permissionRequests: [], approvalRequests: [],
+      truncatedCollections: []
+    };
+    const stuckText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, stuckState, "proj-overview", "p1");
+    check("受阻项为 0 但有派发被挡住时，概览要把这件事说出来",
+      /另有 2\s*个派发被挡住/u.test(stuckText),
+      "概览是人每天先看的那一屏 —— 它显示「受阻项 0」时人就不会再往执行监控页找了，"
+        + "而那边正提示「有执行被挡住，需要人处理」");
   }
   // 项目概览上的「待人工确认」只数确认单一类，而等人拍板的东西有九类、散在两个页面上。
   // 它是人每天先看的那一屏：显示 0 的时候人就不会再往下找（真实运行态上实测到过 ——

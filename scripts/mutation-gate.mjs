@@ -3596,6 +3596,14 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "概览受阻项为 0 时要说出被挡住的派发",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: 'const stuck = (state.agentDispatches || []).filter((item) => item.status === "blocked").length;',
+    to: "const stuck = 0;",
+    expect: "概览要把这件事说出来"
+  },
+  {
     name: "清过期目录不得碰不该碰的东西",
     file: "scripts/lib/stale-runtime-dirs.mjs",
     check: "verifyStaleE2eRuntimeDirsGetSwept",

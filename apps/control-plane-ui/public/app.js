@@ -2548,7 +2548,19 @@ function renderProjectOverview() {
         <div class="metric"><span>任务组</span><strong>${openGroups.length}/${groups.length}</strong></div>
         <div class="metric"><span>任务组平均进度</span><strong>${avgProgress}%</strong>
           <div class="small muted">按任务组平均；上面那个总进度是按工作项平均的，两者不一定相等</div></div>
-        <div class="metric"><span>受阻项</span><strong>${blockers.length}</strong></div>
+        <div class="metric"><span>受阻项</span><strong>${blockers.length}</strong>
+          ${(() => {
+            // 这一格数的是【任务组身上的 blockers】（关闭门那一套）。而「被挡住的派发」是另一回事，
+            // 它出现在执行监控页上，那里明说「有执行被挡住，需要人处理」——
+            // 项目概览是人每天先看的那一屏，这里显示 0 的时候人就不会再往下找了。
+            // （实测：这里 0，同一份数据里有 2 个 blocked 派发，监控页正提示要人处理。
+            //  与上一格「待人工确认」是同一种病，修法也照它：不改这个数的口径，把差额说出来并给出去处。）
+            const stuck = (state.agentDispatches || []).filter((item) => item.status === "blocked").length;
+            if (!stuck) return "";
+            return `<div class="small warn-text">另有 ${stuck}${countSuffix("agentDispatches")} 个派发被挡住 ——`
+              + " 到「执行监控」页看它们卡在哪</div>";
+          })()}
+        </div>
         <div class="metric"><span>待人工确认</span><strong>${pendingConfirmCount}</strong>
           ${(() => {
             // 这一格只数【确认单】一类。而等人拍板的东西有九类，散在人工审核与执行监控两页上 ——
