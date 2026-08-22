@@ -1026,6 +1026,7 @@
     shared_definition_contract_create: "创建共享定义契约",
     skill_source_sync: "同步技能源",
     skill_source_retire: "退役技能源",
+    transition_rejected_in_warn_mode: "宽松模式下放行了一次本该被拒的状态迁移",
     mcp_tool_call: "MCP 工具调用",
     skill_source_already_retired: "技能源已经退役过了",
     plan_finalization_requirement_required: "必须明确指定是否需要人工定稿方案",

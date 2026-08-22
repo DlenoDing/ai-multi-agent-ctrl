@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "审计动作名的另一种写法也要被中文门看见",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "specs",
+    from: 'action: "transition_rejected_in_warn_mode",',
+    to: 'action: "transition_waved_through_in_warn_mode",',
+    expect: "审计动作名在中文审计页上会显示成原始英文"
+  },
+  {
+    name: "请求作用域泄漏要扫到网关那份源码",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyNoRequestScopedLeaks",
+    from: "function appendGatewayEvent(state, eventType, subjectId, payload) {",
+    to: "function appendGatewayEvent(state, eventType, subjectId, payload) {\n  if (req.method === \"POST\") { /* 这个函数没有 req */ }",
+    expect: "引用了它没拿到的 req"
+  },
+  {
     name: "agent 的失败原因不得是没码的英文",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyAgentFailureReasonsAreCoded",

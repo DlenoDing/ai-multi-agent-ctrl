@@ -1383,8 +1383,12 @@ end
 # "豁免质量门"——恰恰是特意放进台账让人能看懂的那批安全动作。
 # 与错误码同规做成登记制：新增动作要么给中文，要么写明它不出现在给人看的那本账里。
 NON_HUMAN_AUDIT_ACTIONS = {}.freeze
-audit_actions = [server_source, core_source, agent_gateway_source].flat_map do |src|
-  src.scan(/\baudit\(\s*state\s*,[^,]+,\s*"([a-z0-9_]+)"/).flatten
+# 两种写法都要取：audit(state, actor, "名", …) 与 appendAuditEntry(state, {action: "名", …})。
+# 只认前者时，后者写的动作名在审计页上显示成原始英文 —— 实测漏了
+# transition_rejected_in_warn_mode（宽松模式放行的非法迁移，恰恰是最该被人看见的那条）。
+audit_actions = [server_source, core_source, agent_gateway_source, mcp_source].flat_map do |src|
+  src.scan(/\baudit\(\s*state\s*,[^,]+,\s*"([a-z0-9_]+)"/).flatten +
+    src.scan(/appendAuditEntry\(\s*state\s*,\s*\{[^}]{0,400}?action:\s*"([a-z0-9_]+)"/m).flatten
 end.uniq
 # 三处动作名不是字面量，是按闭集拼出来的。只数字面量的门看不见它们 —— 本仓踩过同一形状：
 # 字面量提取会让三元/变量/模板串写法静默逃逸。这里把闭集从源码里取出来展开，

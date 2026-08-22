@@ -8878,7 +8878,8 @@ function verifyMissingRecordsLookLikeInvisibleOnes(output) {
 function verifyNoRequestScopedLeaks(output) {
   const REQUEST_SCOPED = ["req", "res", "url", "body", "guard"];
   const FILES = ["apps/control-plane-ui/server.mjs", "apps/mcp-server/server.mjs",
-    "apps/control-plane-ui/lib/control-plane-core.mjs"];
+    "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
+    "apps/control-plane-ui/lib/state-store.mjs", "apps/agent-runtime/runtime.mjs"];
   let scannedFunctions = 0;
   let scanned = 0;
   for (const rel of FILES) {
