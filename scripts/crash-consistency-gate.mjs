@@ -554,8 +554,14 @@ await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000).
         }
       })();
       await new Promise((resolve) => setTimeout(resolve, 700));
-      cpSync(liveDir, copyDir, {recursive: true});          // 不停机，直接拷整个运行目录
-      cpSync(liveDir, halfDir, {recursive: true});
+      // 用【文档里让运维用的那个脚本】备份，而不是在门里另写一份 cp —— 判据要压在真实产出上。
+      // 它自己会重试并按索引核对：裸 cp 在写入密集时会撞上正在改名的临时文件（实测三次中一次），
+      // 更要紧的是可能拷到"中央索引指着已被 GC 删掉的旧分片"那种看着完整、还原不回来的快照。
+      const backup = spawnSync(process.execPath, ["scripts/backup-runtime.mjs", liveDir, copyDir],
+        {cwd: root, encoding: "utf8"});
+      check(backup.status === 0, "不停机备份（npm run backup）在持续写入下也能拿到通过核对的快照",
+        `退出码 ${backup.status}：${String(backup.stdout || backup.stderr || "").trim().split("\n")[0].slice(0, 120)}`);
+      cpSync(liveDir, halfDir, {recursive: true, force: true});
       rmSync(join(halfDir, "project-db"), {recursive: true, force: true});   // 只拷了一半的那种备份
       stopWriting = true;
       await writer;
@@ -595,6 +601,17 @@ await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000).
           "只拷了一半的备份（漏掉 project-db）必须报出来，不许带着空项目照常起来",
           `health=${halfHealth.status || "起不来"} 说了分片=${complained}`);
         half.server.kill("SIGKILL");
+
+        // 备份脚本自己的承诺也要验，而且要【确定性地】验：拿一份明知残缺的运行目录
+        // （中央索引记着分片、project-db 却不在）让它备份，它必须拒绝并说清缺什么。
+        // 不这么验的话，"拷完核一遍"那一步被删掉也照样绿 —— 竞态不撞上时，没核对的拷贝多半也是好的。
+        const refused = spawnSync(process.execPath,
+          ["scripts/backup-runtime.mjs", halfDir, join(backupBase, "half-backup")],
+          {cwd: root, encoding: "utf8", env: {...process.env, AIMAC_BACKUP_ATTEMPTS: "1"}});
+        const said = `${refused.stdout || ""}${refused.stderr || ""}`;
+        check(refused.status !== 0 && /project-db|分片/u.test(said),
+          "备份脚本对着一份残缺的运行目录必须拒绝（拷完要核，不是拷完就算）",
+          `退出码 ${refused.status}：${said.trim().split("\n")[0].slice(0, 110)}`);
       }
     }
   } finally {

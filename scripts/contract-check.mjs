@@ -10105,7 +10105,8 @@ function verifyOperatorCliRejectsUnknownFlags(output) {
     "scripts/agentctl.mjs": "运维接机器时敲的命令行",
     "scripts/init-control-plane.mjs": "npm run init（--check 打错会真的去初始化）",
     "scripts/sync-agent-skills.mjs": "npm run skills:sync（--source 打错会同步默认源）",
-    "scripts/register-mcp-client.mjs": "生成 MCP 客户端配置（--apply 打错会静默空跑）"
+    "scripts/register-mcp-client.mjs": "生成 MCP 客户端配置（--apply 打错会静默空跑）",
+    "scripts/backup-runtime.mjs": "npm run backup（参数打错会把备份写到一个叫 --xxx 的目录里）"
   };
   // 读 argv 但不属于运维入口的，登记原因，否则下面的完整性扫描会把它们点名。
   const NOT_OPERATOR_CLIS = {

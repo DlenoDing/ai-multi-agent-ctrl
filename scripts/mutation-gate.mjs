@@ -3735,6 +3735,16 @@ const MUTATIONS = [
     expect: "orchestrator permission"
   },
   {
+    // 备份脚本的承诺是"拷完按索引核一遍"。拿掉核对之后，对着一份明知残缺的运行目录它也会报成功 ——
+    // 而运维要到还原那一刻才发现这份备份用不了。
+    name: "备份脚本必须真的核对拷出来那份",
+    file: "scripts/backup-runtime.mjs",
+    gate: "crash",
+    from: "  lastProblems = verify(target);",
+    to: "  lastProblems = [];",
+    expect: "对着一份残缺的运行目录必须拒绝"
+  },
+  {
     // 只拷了中央文件、漏掉 project-db 的"半份备份"必须报出来。原先整目录不在时读取端直接返回
     // 空数组，控制面带着一份没有任何项目数据的状态照常起来、健康检查还回 ok。
     name: "只拷了一半的备份必须报出来",

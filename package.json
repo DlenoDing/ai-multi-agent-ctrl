@@ -20,6 +20,7 @@
     "mcp:doctor": "node scripts/run-with-env.mjs scripts/doctor-mcp.mjs",
     "agentctl": "node scripts/run-with-env.mjs scripts/agentctl.mjs",
     "agent:doctor": "node scripts/run-with-env.mjs scripts/doctor-agent-remote.mjs",
+    "backup": "node scripts/backup-runtime.mjs",
     "skills:sync": "node scripts/run-with-env.mjs scripts/sync-agent-skills.mjs",
     "contract:check": "node scripts/run-with-env.mjs scripts/contract-check.mjs",
     "validate": "ruby scripts/validate-specs.rb && npm run -s mutation-anchors && npm run contract:check && npm run -s auth-placement-gate && npm run -s barrier-liveness-gate && npm run -s console-behaviour-gate && npm run -s human-only-parity-gate && npm run -s system-invariants-gate && npm run -s crash-consistency-gate && npm run -s concurrent-writer-gate && npm run -s idle-tick-gate",
