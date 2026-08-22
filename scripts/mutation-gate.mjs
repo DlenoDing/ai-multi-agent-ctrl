@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "界面读了视图不下发的字段要被查出来",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyConsoleReadsOnlyWhatItsViewDelivers",
+    from: "    base.roleSkillCountBySource = roleSkillCountBySource;",
+    to: "    void roleSkillCountBySource;",
+    expect: "读了它取的那个视图【不下发】的字段"
+  },
+  {
+    name: "字段名打错也要被查出来（不是只认删字段）",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyConsoleReadsOnlyWhatItsViewDelivers",
+    from: "skillSources: runtimeState.skillSources || [],",
+    to: "skillSources: runtimeState.skillSourcesTypo || [],",
+    expect: "skillSourcesTypo"
+  },
+  {
     name: "技能源的角色数必须真的下发到那一页",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

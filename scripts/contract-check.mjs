@@ -572,6 +572,7 @@ run(verifyRefusalCodeScanSeesEveryThrowHelper);
 run(verifyRefusalCodeCoverageRatchet);
 await runAsync(verifyGateFetchFailuresNameTheGate);
 run(verifyMcpInputDictionaryHasNoGhosts);
+run(verifyConsoleReadsOnlyWhatItsViewDelivers);
 run(verifyServerStateFieldsHaveProducers);
 run(verifyProjectShardsAreNeverSilentlyDropped);
 run(verifyAgentctlFlagNamesMatchWhatItReads);
@@ -6005,6 +6006,81 @@ function verifyProjectShardsAreNeverSilentlyDropped(output) {
   } finally {
     rmSync(runtimeDir, {recursive: true, force: true});
   }
+}
+
+function verifyConsoleReadsOnlyWhatItsViewDelivers(output) {
+  // 控制台按页取【视图】：state?view=runtime 之类。视图是白名单式的，只带列出来的那些集合。
+  // 2026-08-22 撞到一次：技能源页读 runtimeState.roleSkillCountBySource，而那个字段当时
+  // 只由 /api/skill-registry 算 —— 控制台一次都没调过它。屏幕上每个源的角色数因此恒为 0，
+  // 横幅恒说「一个角色技能都还没取下来」，而真实运行态里有 281 条。
+  // 这一类"接线断了"不会报错、不会红，只是那个数永远是缺省值。这里按视图逐个对。
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const viewsBlock = /const viewFields = \{([\s\S]*?)\n  \};/u.exec(server)?.[1];
+  if (!viewsBlock) {
+    output.push("找不到 viewFields 定义 —— 这条判据按它切分，找不到就等于没查");
+    return;
+  }
+  const views = new Map();
+  for (const line of viewsBlock.split("\n")) {
+    const match = /^\s*([a-zA-Z]\w*):\s*\[(.*)\],?\s*$/u.exec(line);
+    if (match) views.set(match[1], new Set([...match[2].matchAll(/"([^"]+)"/gu)].map((item) => item[1])));
+  }
+  // 每个视图都带的基底键（schemaVersion/runtime/projects/…）与出口处额外附加的（truncatedCollections…）。
+  const baseStart = server.indexOf("  const base = {");
+  let depth = 0;
+  let baseEnd = baseStart;
+  for (let index = baseStart; index < server.length; index += 1) {
+    if (server[index] === "{") depth += 1;
+    else if (server[index] === "}") { depth -= 1; if (!depth) { baseEnd = index; break; } }
+  }
+  const baseKeys = new Set([...server.slice(baseStart, baseEnd + 1).matchAll(/^\s{4}([a-zA-Z]\w*):/gmu)]
+    .map((match) => match[1]));
+  for (const match of server.matchAll(/\bbase\.([a-zA-Z]\w*)\s*=/gu)) baseKeys.add(match[1]);
+  if (views.size < 5 || baseKeys.size < 8) {
+    output.push(`视图字段提取脱节（视图 ${views.size} 个、基底键 ${baseKeys.size} 个）—— 本条在空转`);
+    return;
+  }
+  // 控制台里把某个视图的返回值绑到一个变量上的两种写法：直接 await，或在 Promise.all 里按位置解构。
+  const bindings = [];
+  for (const match of app.matchAll(/const (\w+) = await fetchState\("(\w+)"/gu)) {
+    bindings.push([match[1], match[2]]);
+  }
+  for (const match of app.matchAll(/const \[([^\]]+)\] = await Promise\.all\(\[([\s\S]{0,400}?)\]\)/gu)) {
+    const names = match[1].split(",").map((name) => name.trim());
+    // 按【顶层逗号】切调用，位置与解构名一一对应。fetchState 之外的调用（api(...)）跳过。
+    const calls = [];
+    let depthCall = 0;
+    let current = "";
+    for (const ch of match[2]) {
+      if ("([{".includes(ch)) depthCall += 1;
+      if (")]}".includes(ch)) depthCall -= 1;
+      if (ch === "," && depthCall === 0) { calls.push(current); current = ""; continue; }
+      current += ch;
+    }
+    calls.push(current);
+    names.forEach((name, index) => {
+      const view = /fetchState\("(\w+)"/u.exec(calls[index] || "")?.[1];
+      if (view) bindings.push([name, view]);
+    });
+  }
+  if (bindings.length < 3) {
+    output.push(`只认出 ${bindings.length} 处「取某个视图」的写法（应 3+）—— 提取脱节，本条在空转`);
+    return;
+  }
+  const missing = [];
+  for (const [name, view] of bindings) {
+    const allowed = new Set([...(views.get(view) || []), ...baseKeys]);
+    for (const match of app.matchAll(new RegExp(`\\b${name}\\.([a-zA-Z]\\w*)`, "gu"))) {
+      if (!allowed.has(match[1])) missing.push(`${name}.${match[1]}（取的是 view=${view}）`);
+    }
+  }
+  if (missing.length) {
+    output.push(`控制台读了它取的那个视图【不下发】的字段：${[...new Set(missing)].join("、")} —— `
+      + "不会报错也不会红，那个数只是永远停在缺省值上（实测过一次：技能源页的角色数恒为 0）");
+  }
+  console.log(`控制台按视图读字段：${bindings.length} 处绑定、${views.size} 个视图逐个对过，`
+    + `${missing.length} 处读了视图不给的（应为 0）`);
 }
 
 function verifyServerStateFieldsHaveProducers(output) {
