@@ -561,6 +561,7 @@ run(verifyWhitelistRefusalsCarryTheWhitelist);
 run(verifyGuardedWritesAreAudited);
 run(verifyWarnModeRejectionsSurviveChurn);
 run(verifyCorruptEventLinesAreReported);
+run(verifySealedEventSegmentsAreNotSilentlyLost);
 run(verifySizeAccountingDoesNotSwallowFailures);
 run(verifyAgentSaysWhyItStoppedTakingWork);
 run(verifySideEffectsComeAfterTheGuard);
@@ -7905,6 +7906,81 @@ function verifySizeAccountingDoesNotSwallowFailures(output) {
   }
   console.log(`容量测量：sweepLibraryOverCapacity 里 ${sizing.length} 处取大小，`
     + `量不到的文件已计数并如实上报（不当成 0）`);
+}
+
+// 段清单是"这个项目有哪几段历史"的索引，而读取侧原先对它【一处都没核过】：段文件不在盘上就
+// 悄悄跳过、长度与摘要记了也没人比。三种后果都是同一件事 —— 系统知道历史缺了/被改了，却不告诉人。
+// 三条分支各造一次真实损坏来验（删段 / 变长改写 / 等长改写），只验"有没有说出来"，不验它是否还给数据：
+// 这是历史读路径，为一段坏历史把整页打死更糟，所以设计上是照给 + 报故障。
+function verifySealedEventSegmentsAreNotSilentlyLost(output) {
+  const previousMax = process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES;
+  process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES = "1024";
+  const dir = mkdtempSync(join(tmpdir(), "aimac-event-segment-"));
+  const projectId = "prj_segment_probe";
+  try {
+    for (let i = 1; i <= 20; i += 1) {
+      appendProjectExecutionEvent(dir, {projectId, eventKey: `sk${i}`, sequence: i, eventType: "probeAAAA",
+        createdAt: "2026-01-01T00:00:00.000Z", payload: {filler: "x".repeat(80)}});
+    }
+    const pdb = join(dir, "project-db");
+    const manifestName = readdirSync(pdb).find((name) => name.endsWith("execution-events.manifest.json"));
+    const segments = manifestName ? JSON.parse(readFileSync(join(pdb, manifestName), "utf8")).segments || [] : [];
+    // 夹具没造出想测的情形也要能自报：没轮转出封存段的话，下面三条断言全是空转。
+    if (segments.length < 3) {
+      output.push(`已封存事件段的判据没造出想测的情形：只轮转出 ${segments.length} 段（需要 3 段）`);
+      return;
+    }
+    const baseline = readProjectExecutionEvents(dir, projectId, {limit: 1000});
+    const baselineCount = (baseline.events || baseline).length;
+    // 故障台账是【模块级】的，同一进程里前面的判据已经往里写过（撕裂写那两条）——
+    // 所以基线不能要求"整本账为空"，只要求我这三种成因的话术还没出现过。
+    // 同一成因只留先撞上的那一条：真被别人先占了，下面就分不清是谁报的，必须自报而不是绿着过。
+    const segmentPhrases = /不在盘上|长度与段清单对不上|校验值与段清单对不上/u;
+    if (segmentPhrases.test(projectEventLogFault())) {
+      output.push(`已封存事件段的判据在基线上就有同类故障，后面几条分不清是谁报的：${projectEventLogFault()}`);
+      return;
+    }
+    {
+      // 三次损坏各自单独判，靠"故障文本里出现了哪一段"区分。
+      rmSync(join(pdb, segments[0].file), {force: true});
+      const afterDelete = readProjectExecutionEvents(dir, projectId, {limit: 1000});
+      const deleteFault = projectEventLogFault();
+      if ((afterDelete.events || afterDelete).length >= baselineCount) {
+        output.push("已封存事件段的判据没造出想测的情形：删掉一段之后读到的事件没有变少");
+      } else if (!new RegExp(`${segments[0].file}[^；]*不在盘上`, "u").test(deleteFault)) {
+        output.push(`段清单里记着的事件段被删掉，读出来的事件少了却一声不吭 —— `
+          + `这段执行历史凭空消失，页面上只是变少（拿到的故障：${deleteFault || "(无)"}）`);
+      }
+    }
+    {
+      const path = join(pdb, segments[1].file);
+      writeFileSync(path, readFileSync(path, "utf8").replace("probeAAAA", "probeLONGER"));
+      readProjectExecutionEvents(dir, projectId, {limit: 1000});
+      if (!new RegExp(`${segments[1].file}[^；]*长度与段清单对不上`, "u").test(projectEventLogFault())) {
+        output.push("已封存的事件段被改成另一个长度，没人比过段清单里记着的字节数 —— "
+          + "这段审计历史已经不是当初封存的那份，却照样当真发出去");
+      }
+    }
+    {
+      const path = join(pdb, segments[2].file);
+      const before = readFileSync(path, "utf8");
+      const after = before.replace("probeAAAA", "probeBBBBB".slice(0, 9));
+      if (after === before || after.length !== before.length) {
+        output.push("已封存事件段的判据没造出想测的情形：等长改写没改动内容（夹具的替换串长度对不上）");
+      } else {
+        writeFileSync(path, after);
+        readProjectExecutionEvents(dir, projectId, {limit: 1000});
+        if (!new RegExp(`${segments[2].file}[^；]*校验值与段清单对不上`, "u").test(projectEventLogFault())) {
+          output.push("已封存的事件段被【等长】改写，长度这一关放行、摘要又没人核 —— "
+            + "段清单里那个 digest 是记了给谁看的？改过的审计历史照样当真发出去");
+        }
+      }
+    }
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+    if (previousMax === undefined) delete process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES;
+    else process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES = previousMax;
+  }
 }
 
 function verifyCorruptEventLinesAreReported(output) {

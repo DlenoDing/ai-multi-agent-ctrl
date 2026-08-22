@@ -3660,6 +3660,30 @@ const MUTATIONS = [
     expect: "却照读不误"
   },
   {
+    name: "段清单里记着却不在盘上的事件段必须说出来",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    check: "verifySealedEventSegmentsAreNotSilentlyLost",
+    from: "      if (!existsSync(path)) {",
+    to: "      if (false) {",
+    expect: "读出来的事件少了却一声不吭"
+  },
+  {
+    name: "已封存事件段的长度必须比过段清单",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    check: "verifySealedEventSegmentsAreNotSilentlyLost",
+    from: "  if (segment.size && Number(segment.size) !== stat.size) {",
+    to: "  if (false) {",
+    expect: "没人比过段清单里记着的字节数"
+  },
+  {
+    name: "已封存事件段的摘要必须真的核过",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    check: "verifySealedEventSegmentsAreNotSilentlyLost",
+    from: "  if (digestFile(path) !== segment.digest) {",
+    to: "  if (false) {",
+    expect: "摘要又没人核"
+  },
+  {
     name: "存储故障归类不得退回写死的码白名单",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyStorageFaultCodesReachTheOperator",

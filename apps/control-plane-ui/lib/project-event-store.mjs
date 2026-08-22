@@ -97,7 +97,7 @@ export function readProjectExecutionEventByKey(runtimeDir, projectId, eventKey, 
 
 // 按【成因】各记一条。原先是一个字符串加 `||` 保护：第一条路径先报了，
 // 后面两条就永远说不出话 —— 而它们说的是不同的后果（序号被重用 / 段范围不准 / 幂等失效）。
-// 成因只有三种，不会涨。
+// 成因是固定的六种，不会随文件数涨（同一成因只留先撞上的那一条，具体是哪一段写在正文里）。
 const eventLogFaults = new Map();
 
 function noteEventLogFault(cause, text) {
@@ -172,8 +172,21 @@ function projectExecutionEventReadPaths(runtimeDir, projectId) {
   const manifest = readProjectExecutionEventManifest(runtimeDir, projectId);
   const dir = join(runtimeDir, "project-db");
   const fromManifest = (manifest.segments || [])
-    .map((segment) => join(dir, segment.file))
-    .filter((path) => existsSync(path));
+    .filter((segment) => {
+      const path = join(dir, segment.file);
+      if (!existsSync(path)) {
+        // 段清单说有这一段，盘上却没有 —— 悄悄跳过等于【这段历史凭空消失】：
+        // 实测删掉一个已封存段，同一次查询读出来的事件从 40 条变成 35 条，没有任何地方说过。
+        // 下面按名字扫目录那一路也补不回它（文件本来就不在），所以必须在这里说出来。
+        noteEventLogFault("segment-missing",
+          `段清单里记着的事件段 ${segment.file} 不在盘上了 —— 序号 ${segment.firstSequence}-${segment.lastSequence} `
+            + "的执行历史读不到了（页面上不会有任何提示，只是变少），请从备份还原这一段或核对是谁删的");
+        return false;
+      }
+      noteSealedSegmentDamage(path, segment);
+      return true;
+    })
+    .map((segment) => join(dir, segment.file));
   const prefix = `${safeProjectId(projectId)}.execution-events.`;
   const fromDirectory = existsSync(dir)
     ? readdirSync(dir)
@@ -501,6 +514,37 @@ function readFileHead(path, maxBytes) {
   } finally {
     closeSync(fd);
   }
+}
+
+// 段清单里记着每一段的 size 与 digest，而读取侧【一处都没核过】。实测把一个已封存段截空，
+// 事件从 35 条变成 30 条；把段里一条事件改掉，改过的那条照样当真发出去 —— 两次都一声不吭。
+// 已封存的段是不可变的，据此分两级核：长度每次都核（stat 是 O(1)）；摘要按「长度+mtime」记住
+// 核过的结论，一个进程里每段最多算一次（段上限默认 64MB，约 40ms，此后直接跳过）。
+// 只报故障、不抛错：这是历史与审计的读路径，为一段坏掉的历史把整页打死更糟 ——
+// 但也【不能不说】，坏掉的审计历史被当成真的，比读不出来更危险。
+const verifiedSegmentDigests = new Map();
+
+function noteSealedSegmentDamage(path, segment) {
+  let stat;
+  try { stat = statSync(path); } catch { return; }
+  if (segment.size && Number(segment.size) !== stat.size) {
+    noteEventLogFault("segment-size",
+      `已封存的事件段 ${segment.file} 长度与段清单对不上（封存时 ${segment.size} 字节，现在 ${stat.size} 字节）——`
+        + `序号 ${segment.firstSequence}-${segment.lastSequence} 的执行历史已经不是当初封存的那一份，不可信`);
+    return;
+  }
+  if (!segment.digest) return;
+  // 缓存键按【路径】存一条、值带上长度与 mtime：段被改过时 mtime 变、键的值对不上，会重算一次。
+  // 用 Map 而不是 Set，是为了让它的条目数被段数封住 —— 反复改写同一个文件不会把它撑大。
+  const stamp = `${stat.size}:${stat.mtimeMs}`;
+  if (verifiedSegmentDigests.get(path) === stamp) return;
+  if (digestFile(path) !== segment.digest) {
+    noteEventLogFault("segment-digest",
+      `已封存的事件段 ${segment.file} 的校验值与段清单对不上 —— 长度没变而内容变了，`
+        + `序号 ${segment.firstSequence}-${segment.lastSequence} 的执行历史被改写过，不可信`);
+    return;
+  }
+  verifiedSegmentDigests.set(path, stamp);
 }
 
 function digestFile(path) {
