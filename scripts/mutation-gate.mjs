@@ -3652,6 +3652,14 @@ const MUTATIONS = [
     expect: "产出清单的路径爬到仓库之外却没被拦下"
   },
   {
+    name: "不受规范约束的集合数要棘轮住",
+    file: "scripts/doctor.mjs",
+    gate: "doctor",
+    from: "maxUncovered: 19});",
+    to: "maxUncovered: 18});",
+    expect: "不受规范约束的集合从 18 涨到 19"
+  },
+  {
     name: "运维要用的运行参数不许没写进文档",
     file: "README.md",
     check: "verifyOperatorEnvVarsAreDocumented",

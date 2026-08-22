@@ -147,7 +147,7 @@ export const SCHEMA_FILE_ALIASES = {"control-event": "control-events"};
 // 凡是带 schemaVersion 的记录，一律按它【自己声明的】那份规范校验：映射取自记录自身，
 // 不需要维护对照表，也就不会因为漏登记而少验一类。
 export function sweepRecordsAgainstDeclaredSchemas(state, options = {}) {
-  const {specDir, label = "记录", minValidated = 0} = options;
+  const {specDir, label = "记录", minValidated = 0, maxUncovered} = options;
   const {validateSchema} = createSchemaValidator(specDir);
   const cache = new Map();
   const output = [];
@@ -191,6 +191,18 @@ export function sweepRecordsAgainstDeclaredSchemas(state, options = {}) {
       output.push(`${label} ${collection}（${count} 条）没有任何记录声明 schemaVersion，而 spec/${spec}.schema.json 是存在的`
         + " —— 这一整个集合因此退出了规范校验，接线断了");
     }
+  }
+  // 「没有任何记录声明规范」的集合数要棘轮住。有规范文件的那些上面已经直接报错了；
+  // 剩下这些是【连规范文件都没有】的 —— 新集合可以静默混进来，从此不受任何规范约束，
+  // 而这一行只是打印一句"本次未核对"，读起来像一句无害的说明。
+  if (Number.isFinite(maxUncovered) && uncovered.length > maxUncovered) {
+    const added = uncovered.map((item) => item.collection).sort().join("、");
+    output.push(`${label}：不受规范约束的集合从 ${maxUncovered} 涨到 ${uncovered.length} —— `
+      + `新集合要么补一份 spec，要么明确它为什么不需要（当前清单：${added}）`);
+  }
+  if (Number.isFinite(maxUncovered) && uncovered.length < maxUncovered) {
+    output.push(`${label}：不受规范约束的集合已降到 ${uncovered.length}（棘轮还写着 ${maxUncovered}）—— `
+      + "把它改小，否则它挡不住下一次回升");
   }
   if (validated < minValidated) {
     output.push(`${label}规范核对只校验到 ${validated} 条记录，远少于预期的 ${minValidated} —— 提取逻辑已与数据结构脱节，本条可能在空转`);
