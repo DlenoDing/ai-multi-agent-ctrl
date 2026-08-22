@@ -1457,6 +1457,9 @@ export function buildExecutionContentBundle(state, node, sessionId, options = {}
     ...(taskGroup.humanGuidance || []).map((item) => `- ${item.text}`),
     ...(guidanceDropped ? [`- （另有 ${guidanceDropped} 条更早的补充要求已超出保留上限，不在本包内；需要时到任务组页查看历史指令）`] : [])
   ].join("\n");
+  const dispatchedWorkItemTitle = contract.workId
+    ? (taskGroup.workItems || []).find((item) => item.id === contract.workId)?.title
+    : null;
   const contextText = [
     `# 任务上下文`,
     `任务组：${taskGroup.id}（${taskGroup.phase || taskGroup.status || ""}）`,
@@ -1472,8 +1475,7 @@ export function buildExecutionContentBundle(state, node, sessionId, options = {}
     // 兜底：清单里若没有与 workId 对得上的条目（分析项与工作项不同源时会这样），
     // 也要把本次的工作项单独说清楚，而不是让 agent 在一份对不上的清单里找。
     contract.workId ? `\n## 本次派发\n工作项：${contract.workId}${
-      (taskGroup.workItems || []).find((item) => item.id === contract.workId)?.title
-        ? `（${(taskGroup.workItems || []).find((item) => item.id === contract.workId).title}）` : ""}` : ""
+      dispatchedWorkItemTitle ? `（${dispatchedWorkItemTitle}）` : ""}` : ""
   ].filter(Boolean).join("\n");
   pushEntry("task/context.md", "task", "task", contextText, `TaskGroup:${taskGroup.id}`);
   if (!entries.length) pushEntry("task/context.md", "task", "task", `# 任务上下文\n任务组：${taskGroup.id}`, `TaskGroup:${taskGroup.id}`);
