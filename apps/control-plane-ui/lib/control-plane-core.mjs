@@ -5332,6 +5332,11 @@ export function decisionContentDigest(subject) {
 }
 
 export function createHumanConfirmationRequest(state, input = {}) {
+  const confirmationExpiry = normalizedExpiry(input.expiresAt);
+  if (confirmationExpiry === false) {
+    return {ok: false, error: "expires_at_invalid", received: String(input.expiresAt).slice(0, 60),
+      message: "到期时间解析不了 —— 落库之后所有比较都会静默失败，所以这里拒绝"};
+  }
   const settledRejection = taskGroupSettledRejection(state, input.taskGroupId);
   if (settledRejection) return settledRejection;
   ensureRuntimeCollections(state);
@@ -5424,7 +5429,7 @@ export function createHumanConfirmationRequest(state, input = {}) {
     round: 1,
     dedupeKey,
     status: "pending",
-    expiresAt: input.expiresAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    expiresAt: confirmationExpiry || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     createdAt: at,
     updatedAt: at
   };
@@ -7114,6 +7119,19 @@ const TOPOLOGY_ELIGIBILITY_GATES = [
 // 人批准的是卡片描述的 A，实际生效的是 B。这一类绕过在四轮复核里出现了四次（拓扑、仓库产出目标、
 // 授权请求、审批请求），每次都是同一个形状，所以这里做成统一的守卫，新增同类集合时直接复用。
 // ---------------------------------------------------------------------------------------------------
+// 调用方给的到期时间必须能解析。写坏了的 expiresAt（"不是日期"、"2026-13-45T..."）落库之后，
+// Date.parse 得 NaN，而【NaN 参与的比较两个方向都是 false】—— 同一条坏数据在不同读者那里
+// 倒向相反的结论：MCP 判权那处 `new Date(x).getTime() > now` 为假 → 这张授权永远用不了；
+// 关闭门的 no_active_temp_grants 同样为假 → 一张已签发的临时授权【不再挡门】。
+// 两边都不报错，屏幕上也看不出来。所以收在写入点：解析不了就拒，不猜、不落库。
+// 返回：没给 → null（调用方用自己的默认）；能解析 → 规范化的 ISO；解析不了 → false。
+export function normalizedExpiry(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const at = new Date(value);
+  if (!Number.isFinite(at.getTime())) return false;
+  return at.toISOString();
+}
+
 export function assertUniqueRecordId(collection, idField, id, errorCode) {
   if (!id) return;
   if ((collection || []).some((item) => item?.[idField] === id)) {
@@ -7594,6 +7612,11 @@ export function expireStaleLeases(state, nowMs = Date.now()) {
 }
 
 export function claimLease(state, args) {
+  const leaseExpiry = normalizedExpiry(args.expiresAt);
+  if (leaseExpiry === false) {
+    return {ok: false, error: "expires_at_invalid", received: String(args.expiresAt).slice(0, 60),
+      message: "到期时间解析不了 —— 落库之后所有比较都会静默失败，所以这里拒绝"};
+  }
   // 租约决定谁有写权限：冒名的同 id 租约会让受害会话的 target.leaseRef 永远匹配不上，
   // 该工作项再也提交不了检查点、到不了验收，且没有任何杠杆可清（第五轮复现）。
   assertUniqueRecordId(state.leases, "leaseId", args.leaseId, "lease_id_conflict");
@@ -7635,7 +7658,7 @@ export function claimLease(state, args) {
     status: "active",
     fencingToken: state.leaseSequence,
     sequence: state.leaseSequence,
-    expiresAt: args.expiresAt || new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+    expiresAt: leaseExpiry || new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
     createdAt: at,
     updatedAt: at
   };
@@ -7976,6 +7999,11 @@ export function approvalRequestCreate(state, args) {
     return {ok: false, error: "approval_request_action_required",
       message: "审批单必须写明批的是哪个动作：一条不说明动作的批准，等于没说批了什么"};
   }
+  const approvalExpiry = normalizedExpiry(args.expiresAt);
+  if (approvalExpiry === false) {
+    return {ok: false, error: "expires_at_invalid", received: String(args.expiresAt).slice(0, 60),
+      message: "到期时间解析不了 —— 落库之后所有比较都会静默失败，所以这里拒绝"};
+  }
   const approvalTaskGroupId = taskGroup?.id || args.taskGroupId || "tg_runtime_management";
   const request = {
     schemaVersion: "approval-request/v1",
@@ -7997,7 +8025,7 @@ export function approvalRequestCreate(state, args) {
     // requested the guarded action — never a client-supplied field.
     proposedBy: args.proposedBy || null,
     approvals: [],
-    expiresAt: args.expiresAt || new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    expiresAt: approvalExpiry || new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     decisionRecordRef: args.decisionRecordRef || `decision:approval:${at}`,
     auditRef: args.auditRef || `audit:approval:${at}`,
     createdAt: at,

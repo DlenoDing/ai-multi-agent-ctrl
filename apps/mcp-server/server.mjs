@@ -13,6 +13,7 @@ import {
   submitAiConfirmationAnalysis,
   isHumanConfirmationActor,
   assertUniqueRecordId,
+  normalizedExpiry,
   createHumanConfirmationRequest,
   decideHumanConfirmation,
   collectRuntimeIssue,
@@ -2456,6 +2457,17 @@ export function permissionResolve(state, args) {
   //（ensurePermissionAccessGrant）。实测：只传 requestId，state.accessGrants 里凭空多出一条
   // task_group:read。同一件事在审批那侧（approvalResolve）早就修过了，写着"缺省不会被当作批准"，
   // 权限申请这侧没跟上 —— 又是「同一条不变式两扇门只守一扇」。
+  // 到期时间/有效期解析不了要在【改动这条请求之前】就拒。放到铸授权那一步太晚：
+  // 那时 request.status 已经写成 approved，而「一次性处置」守卫会让它【再也改不动】——
+  // 结果是一条"已批准、没有授权、也无法重新处置"的死记录（实测过一次才发现位置错了）。
+  if (normalizedExpiry(args.expiresAt) === false) {
+    return {ok: false, error: "expires_at_invalid", received: String(args.expiresAt).slice(0, 60),
+      message: "到期时间解析不了 —— 落库之后所有比较都会静默失败（NaN 两个方向都是 false），所以这里拒绝"};
+  }
+  if (args.ttlSeconds !== undefined && !Number.isFinite(Number(args.ttlSeconds))) {
+    return {ok: false, error: "ttl_seconds_invalid", received: String(args.ttlSeconds).slice(0, 60),
+      message: "有效期不是数 —— 它会一路传染成 NaN，最后在生成到期时间时抛错"};
+  }
   if (args.status === undefined && args.allowed === undefined) {
     return {ok: false, error: "permission_decision_required",
       allowedStatuses: ["approved", "rejected"],
@@ -2548,6 +2560,16 @@ function ensurePermissionAccessGrant(state, request, args, decision, at) {
     permissions.every((permission) => (grant.permissions || []).includes(permission) || (grant.permissions || []).includes("*"))
   );
   if (existing) return {grant: existing, declinedReason: null};
+  // 到期时间与有效期都要在【铸出授权之前】收敛：
+  //  · expiresAt 解析不了 → 落库后所有比较都静默失败（NaN 两个方向都是 false）：
+  //    MCP 判权那处判成"已过期"，关闭门的 no_active_temp_grants 判成"没有活跃授权"—— 两边都不报错。
+  //  · ttlSeconds 不是数 → Math.max/min 传染成 NaN → new Date(NaN).toISOString() 直接抛 RangeError，
+  //    REST 那条路（没有入参类型字典）上表现为 500。
+  const grantExpiry = normalizedExpiry(args.expiresAt);
+  if (grantExpiry === false) return {grant: null, declinedReason: "expires_at_invalid"};
+  if (args.ttlSeconds !== undefined && !Number.isFinite(Number(args.ttlSeconds))) {
+    return {grant: null, declinedReason: "ttl_seconds_invalid"};
+  }
   const ttlSeconds = Math.max(60, Math.min(86400, Number(args.ttlSeconds || 3600)));
   const grant = {
     schemaVersion: "access-control-grant/v1",
@@ -2559,7 +2581,7 @@ function ensurePermissionAccessGrant(state, request, args, decision, at) {
     scopeDigest: digestOf({subjectRef, resource: request.resource, permissions}),
     status: "active",
     policyDecisionRef: decision.decisionId,
-    expiresAt: args.expiresAt || new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+    expiresAt: grantExpiry || new Date(Date.now() + ttlSeconds * 1000).toISOString(),
     auditRef: `audit:permission:${request.requestId}`,
     createdAt: at,
     updatedAt: at

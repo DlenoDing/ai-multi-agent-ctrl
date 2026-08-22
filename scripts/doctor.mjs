@@ -2283,6 +2283,22 @@ try {
   // 「没说」不能变成「批准」。这一处原先默认 approved，而批准会【真的铸出一张访问授权】——
   // 只传 requestId 就能凭空发出一条 task_group:read（实测）。审批那侧早就修过同一件事。
   expectStatus(await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-resolve-silent", {}), 400, "处理授权申请不给结论必须拒绝（缺省不得等于批准）", "permission_decision_required");
+  // 到期时间解析不了必须在【铸出授权之前】拒。落库之后 Date.parse 得 NaN，而 NaN 参与的比较
+  // 两个方向都是 false：MCP 判权那处判成"已过期"（这张授权永远用不了），
+  // 关闭门的 no_active_temp_grants 同样为假（一张已签发的授权不再挡门）—— 两边都不报错。
+  {
+    const badExpiry = await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-bad-expiry", {status: "approved", expiresAt: "不是日期"});
+    // 拒必须发生在【改动这条请求之前】：400 + 请求仍是待处置，而不是"已批准但没有授权"。
+    const badTtl = await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-bad-ttl", {status: "approved", ttlSeconds: "abc"});
+    if (badTtl.response.status !== 400 || badTtl.payload?.error !== "ttl_seconds_invalid") {
+      throw new Error("有效期不是数必须拒（它会一路传染成 NaN，最后在生成到期时间时抛 RangeError）："
+        + `实际 ${badTtl.response.status} ${JSON.stringify(badTtl.payload).slice(0, 160)}`);
+    }
+    if (badExpiry.response.status !== 400 || badExpiry.payload?.error !== "expires_at_invalid") {
+      throw new Error("解析不了的到期时间必须在铸出授权之前被拒："
+        + `实际 ${badExpiry.response.status} ${JSON.stringify(badExpiry.payload).slice(0, 200)}`);
+    }
+  }
   expectStatus(await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-resolve-ok", {status: "approved"}), 200, "permission resolve happy");
   // 两个人同时处置同一条授权请求：后到的那个必须拿到 409，而不是 200。
   // 回 200 的后果是【拒绝方被告知成功，而权限其实已经授出】—— 他不会再去看结果。

@@ -4999,6 +4999,9 @@ async function handleApi(req, res) {
     // 只取 error 的话，人在控制台上看到"状态不合法"却看不到什么才合法（界面本来就会渲染这两个字段）。
     // 「没说」不能变成「批准」：core 那侧现在要求显式结论，这里要把拒绝原样转发，
     // 否则会掉到下面 `result.ok === false → 404`，人看到的是"这条申请不存在"（假话）。
+    if (result.error === "expires_at_invalid" || result.error === "ttl_seconds_invalid") {
+      return json(res, 400, {error: result.error, received: result.received, message: result.message});
+    }
     if (result.error === "permission_decision_required") {
       return json(res, 400, {error: result.error, allowedStatuses: result.allowedStatuses, message: result.message});
     }

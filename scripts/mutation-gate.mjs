@@ -1584,8 +1584,8 @@ const MUTATIONS = [
     name: "任务组终结后不得再加新东西",
     file: CORE,
     check: "verifyHumanAndOrganizationContracts",
-    from: "export function createHumanConfirmationRequest(state, input = {}) {\n  const settledRejection = taskGroupSettledRejection(state, input.taskGroupId);\n  if (settledRejection) return settledRejection;",
-    to: "export function createHumanConfirmationRequest(state, input = {}) {",
+    from: "  const settledRejection = taskGroupSettledRejection(state, input.taskGroupId);\n  if (settledRejection) return settledRejection;",
+    to: "",
     expect: "仍然往它里面写了新东西"
   },
   {
@@ -4002,6 +4002,16 @@ const MUTATIONS = [
     from: '  agent_runtime_executor_required: "该节点上没有模型执行器：到那台机器上装 codex / claude / gemini / ollama 任一个"',
     to: '  agent_runtime_executor_required: "该节点没有可用的模型执行器：让组织管理员到「AI 智能体」页核对该节点的自检结果" + ""',
     expect: "出口要说清装什么"
+  },
+  {
+    // 调用方给的到期时间解析不了，落库后 Date.parse 得 NaN，而 NaN 参与的比较两个方向都是 false：
+    // 同一条坏数据在 MCP 判权那处判成"已过期"、在关闭门那处判成"没有活跃授权"。两边都不报错。
+    name: "解析不了的到期时间必须在铸出授权之前被拒",
+    file: "apps/mcp-server/server.mjs",
+    gate: "doctor",
+    from: '  if (normalizedExpiry(args.expiresAt) === false) {',
+    to: "  if (false) {",
+    expect: "解析不了的到期时间必须在铸出授权之前被拒"
   },
   {
     // 镜像形态：`X !== false`（不显式说 false 就当真）。这个工具原先不给判决就是"允许"，

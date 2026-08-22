@@ -437,6 +437,21 @@ try {
 
   assertAgentScopedMcpConfig(agentWorkDir, baseUrl, rotatedAgentConfig.nodeToken);
 
+  // 到期时间解析不了要当场拒。控制命令的 expiresAt 一旦落成 NaN，判它过没过期的比较
+  // 两个方向都是 false —— 要么永不过期、一直挂在队列里，要么被当成早已过期而从不投递。
+  {
+    let refused = null;
+    try {
+      await json(`/api/agent-nodes/${agentConfig.nodeId}/control`, {
+        method: "POST", token: login.sessionToken, idempotencyKey: "doctor-agent-control-bad-expiry",
+        body: {commandType: "refresh_profile", expiresAt: "不是日期"}
+      });
+    } catch (error) { refused = String(error?.message || error); }
+    if (!refused || !refused.includes("control_command_expires_at_invalid")) {
+      throw new Error(`控制命令的到期时间解析不了必须当场拒：实际 ${refused || "居然成功了"}`);
+    }
+  }
+
   await json(`/api/agent-nodes/${agentConfig.nodeId}/control`, {
     method: "POST",
     token: login.sessionToken,

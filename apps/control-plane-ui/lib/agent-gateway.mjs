@@ -3,7 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { normalize, resolve, sep } from "node:path";
 import { cancelPendingConfirmationsForDispatch, createId, digestOf, effectiveTaskGroupConfig, ensureRuntimeCollections, expireStaleQueuedDispatches, languagePolicyDirective, normalizeTaskGroupLanguagePolicy, organizationQuotaCheck,
   computeEffectiveRulesDigest, applyEffectiveRulesDigest, settleCellOwnedResources,
-  assertHumanTextWithinLimit
+  assertHumanTextWithinLimit,
+  normalizedExpiry
 } from "./control-plane-core.mjs";
 
 const DEFAULT_AGENT_MCP_TOOLS = [
@@ -850,6 +851,14 @@ export function getDispatchForNode(state, node, dispatchId, options = {}) {
 }
 
 export function createAgentControlCommand(state, node, input = {}, options = {}) {
+  // 到期时间解析不了就拒。控制命令（暂停/取消/吊销…）的 expiresAt 一旦是 NaN，
+  // 判它过没过期的比较两个方向都会静默失败 —— 要么这条命令永不过期、一直挂在队列里，
+  // 要么被当成早已过期而从不投递；两种都不报错。ttlSeconds 已由 boundedInteger 收敛，
+  // expiresAt 此前是【原样收下调用方给的】。
+  const commandExpiry = normalizedExpiry(input.expiresAt);
+  if (commandExpiry === false) {
+    throw gatewayError("control_command_expires_at_invalid", 400, {received: String(input.expiresAt).slice(0, 60)});
+  }
   ensureAgentGatewayCollections(state);
   if (!node || node.status === "revoked") throw gatewayError("agent_node_not_active", 409);
   const commandType = normalizeControlCommandType(input.commandType || input.action || "refresh_profile");
@@ -872,7 +881,7 @@ export function createAgentControlCommand(state, node, input = {}, options = {})
     requiresAck: true,
     createdBy: options.actor || "control-plane",
     idempotencyKey: options.idempotencyKey || null,
-    expiresAt: input.expiresAt || new Date(Date.now() + boundedInteger(input.ttlSeconds, 60, 86400, 1800) * 1000).toISOString(),
+    expiresAt: commandExpiry || new Date(Date.now() + boundedInteger(input.ttlSeconds, 60, 86400, 1800) * 1000).toISOString(),
     createdAt: at,
     updatedAt: at
   };
