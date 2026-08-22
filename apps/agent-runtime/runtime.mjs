@@ -876,9 +876,9 @@ async function mcpToolCall(config, name, args) {
     headers: {accept: "application/json, text/event-stream"},
     body: {jsonrpc: "2.0", id: `agent-${name}-${Date.now()}`, method: "tools/call", params: {name, arguments: args}}
   }), `mcp_${name}`);
-  if (response.error) throw new Error(`mcp ${name} error: ${response.error.message}`);
+  if (response.error) throw new Error(`agent_mcp_call_error:调用控制面的 ${name} 出错：${response.error.message}`);
   const payload = response.result?.structuredContent || {};
-  if (payload.ok === false) throw new Error(`mcp ${name} failed: ${payload.result?.error || "unknown"}`);
+  if (payload.ok === false) throw new Error(`agent_mcp_call_refused:控制面拒绝了 ${name}：${payload.result?.error || "没给原因"}`);
   return payload.result || {};
 }
 
@@ -1010,7 +1010,7 @@ async function runPermissionReport(config, dispatchPackage, block, control) {
     reason: JSON.stringify(report).slice(0, 900)
   });
   const requestId = submitResult.permissionRequest?.requestId;
-  if (!requestId) throw permissionBlockedError("permission request submission did not return a requestId");
+  if (!requestId) throw permissionBlockedError("agent_permission_request_not_created:权限单没建起来（控制面没回单号），这一趟停在推送前，活还在这台机器上");
   process.stdout.write(`permission report submitted: ${requestId} promptType=${block.promptType} capability=${block.requestedCapability}\n`);
   const attempts = Math.max(1, Number(process.env.AIMAC_AGENT_PERMISSION_POLL_ATTEMPTS || 240));
   const intervalMs = Math.max(200, Number(process.env.AIMAC_AGENT_PERMISSION_POLL_INTERVAL_MS || 1000));
@@ -1028,7 +1028,7 @@ async function runPermissionReport(config, dispatchPackage, block, control) {
     }
     await delay(intervalMs);
   }
-  throw permissionBlockedError(`permission request ${requestId} was not resolved before timeout`);
+  throw permissionBlockedError(`agent_permission_request_timed_out:等人处置权限单 ${requestId} 超时了。到「人工审核」处置完这张单，再回「智能体派发」恢复这个派发；活还在这台机器上，不用重做`);
 }
 
 // §8 resolution table. Returns when execution may resume from the safe retry point; throws blocked/aborted otherwise.
@@ -1051,9 +1051,9 @@ async function applyPermissionResolution(config, dispatchPackage, resolution) {
     return "retry";
   }
   if (status === "reassign") {
-    throw permissionBlockedError(`permission reassigned; handing off at ${point} (PermissionRequest:${resolution.requestId})`);
+    throw permissionBlockedError(`agent_permission_reassigned:这件活被改派给别的节点了（权限单 ${resolution.requestId}），我在 ${point} 交接`);
   }
-  throw permissionBlockedError(`permission ${status || "rejected"}; work blocked at ${point} (PermissionRequest:${resolution.requestId})`);
+  throw permissionBlockedError(`agent_permission_not_granted:权限没批下来（${status || "已拒绝"}，权限单 ${resolution.requestId}），这件活停在 ${point}`);
 }
 
 async function refreshProfileHeartbeat(config) {
@@ -1519,7 +1519,7 @@ function syncSkillWorkset(config, dispatchPackage) {
     for (const file of workset.files || []) {
       const target = resolve(directory, normalize(file.path));
       if (!inside(directory, target)) throw new Error("skill_workset_path_escape:技能集里有路径指向缓存目录之外");
-      if (sha256(file.content) !== file.contentDigest) throw new Error(`skill file digest mismatch: ${file.path}`);
+      if (sha256(file.content) !== file.contentDigest) throw new Error(`skill_file_digest_mismatch:技能文件 ${file.path} 的内容与控制面给的摘要对不上`);
       mkdirSync(dirname(target), {recursive: true});
       writeFileSync(target, file.content, {mode: 0o600});
     }
@@ -1539,8 +1539,8 @@ function isSafeCloneUrl(url) {
 function prepareRepository(config, target) {
   const repositoryRoot = join(config.repositoryDir, safeName(target.repositoryId));
   if (!existsSync(join(repositoryRoot, ".git"))) {
-    if (!target.repositoryUrl || target.repositoryUrl.startsWith("git:unknown")) throw new Error("dispatch repository URL is not cloneable");
-    if (!isSafeCloneUrl(target.repositoryUrl)) throw new Error("dispatch repository URL uses an unsafe git transport");
+    if (!target.repositoryUrl || target.repositoryUrl.startsWith("git:unknown")) throw new Error("dispatch_repository_url_not_cloneable:派发没给出可克隆的仓库地址（还是占位的 git:unknown）");
+    if (!isSafeCloneUrl(target.repositoryUrl)) throw new Error("dispatch_repository_url_unsafe_transport:派发给的仓库地址用的是能执行任意命令的 git 传输方式（ext::/fd:: 这类），不敢克隆");
     mkdirSync(dirname(repositoryRoot), {recursive: true});
     // 克隆失败（认证被拒 / 仓库不在 / 连不上）此前抛的是 "Command failed: git clone <url> <本机路径>"：
     // 它会作为失败摘要上报，直接显示在控制台上 —— 没说原因，还带着 agent 本机的目录。
@@ -1552,7 +1552,7 @@ function prepareRepository(config, target) {
   }
   const remote = target.remote || "origin";
   const configuredUrl = git(repositoryRoot, ["remote", "get-url", remote]);
-  if (configuredUrl !== target.repositoryUrl) throw new Error("local repository remote does not match dispatch target");
+  if (configuredUrl !== target.repositoryUrl) throw new Error("local_repository_remote_mismatch:这台机器上已有的那份仓库，remote 与派发指定的不是同一个 —— 再往下做会把活提交到别处");
   git(repositoryRoot, ["fetch", "--prune", remote]);
   const remoteBranch = `${remote}/${target.branch}`;
   let checkoutBase = remoteBranch;
@@ -1575,7 +1575,7 @@ function buildExecutionPrompt(config, dispatchPackage, workset, packagePath) {
   const contract = dispatchPackage.taskContract;
   const model = contract.model || {};
   if (!model.modelDecision || !(model.model || model.modelId) || !(model.reasoning || model.reasoningLevel)) {
-    throw new Error("dispatch model, reasoning and modelDecision are required");
+    throw new Error("dispatch_model_decision_missing:派发没说用哪个模型（model / reasoning / modelDecision 三样缺一）");
   }
   const languagePolicy = contract.languagePolicy || {};
   const languageTag = languagePolicy.languageTag || "zh-CN";
@@ -1658,7 +1658,7 @@ function modelDecisionLine(value) {
 
 function writeArtifactManifest(repositoryRoot, manifestPath, dispatchPackage, outputRefs, output) {
   const target = resolve(repositoryRoot, normalize(manifestPath));
-  if (!inside(repositoryRoot, target)) throw new Error("artifact manifest path escapes repository");
+  if (!inside(repositoryRoot, target)) throw new Error("artifact_manifest_path_escapes_repository:产出清单的路径指到仓库外面去了");
   mkdirSync(dirname(target), {recursive: true});
   const manifest = {
     schemaVersion: "artifact-manifest/v1",
@@ -1798,13 +1798,13 @@ function replaceMarkedText(path, start, end, block) {
 }
 
 function verifyPackageBinding(config, value) {
-  if (value.nodeBinding?.nodeId !== config.nodeId) throw new Error("dispatch package node binding mismatch");
+  if (value.nodeBinding?.nodeId !== config.nodeId) throw new Error("dispatch_package_node_binding_mismatch:这个派发包不是发给本节点的");
   // 两边【都没有】的时候 !== 也是 false —— 一个不带摘要的派发包会让这两道绑定校验整个空转，
   // 而它们正是用来拦「发给我的合同其实属于另一趟派发」的。缺失一律当不匹配。
   const contractDigest = value.taskContract?.contractDigest;
-  if (!contractDigest || value.dispatch?.taskContractDigest !== contractDigest) throw new Error("dispatch task contract digest mismatch");
+  if (!contractDigest || value.dispatch?.taskContractDigest !== contractDigest) throw new Error("dispatch_task_contract_digest_mismatch:派发包里的任务契约摘要与契约本身对不上（或者根本没带）");
   const worksetId = value.taskContract?.roleSkill?.worksetId;
-  if (!worksetId || value.skillWorkset?.worksetId !== worksetId) throw new Error("dispatch skill workset binding mismatch");
+  if (!worksetId || value.skillWorkset?.worksetId !== worksetId) throw new Error("dispatch_skill_workset_binding_mismatch:派发包里的技能集与契约上写的不是同一个（或者根本没带）");
 }
 
 function verifySkillFiles(directory, files) {
@@ -1953,7 +1953,7 @@ async function retryableAgentRequest(fn, label) {
       await delay(waitMs);
     }
   }
-  throw new Error(`${label} retry exhausted`);
+  throw new Error(`agent_control_plane_retry_exhausted:${label} 反复冲突，重试次数用完了`);
 }
 
 function retryableControlPlaneError(error) {
@@ -2023,7 +2023,7 @@ function writeSecretJson(path, value) {
 }
 
 function ensureCleanWorktree(root) {
-  if (gitStatusPaths(root).length) throw new Error("agent repository worktree is not clean before dispatch");
+  if (gitStatusPaths(root).length) throw new Error("agent_worktree_not_clean:开工前这台机器上的工作树就不干净（有没提交的改动）—— 先清干净，否则分不清哪些改动是这次干的");
 }
 
 function gitStatusPaths(root) {
@@ -2085,8 +2085,8 @@ function assertAllowedPaths(paths, target) {
   const allowlist = target.pathAllowlist || [];
   const forbidden = target.pathDenylist || target.forbiddenPathRules || [];
   for (const path of paths) {
-    if (path.startsWith("/") || path.split("/").includes("..") || !allowlist.some((rule) => pathMatches(rule, path))) throw new Error(`repository path outside dispatch allowlist: ${path}`);
-    if (forbidden.some((rule) => pathMatches(rule, path))) throw new Error(`repository path forbidden for runtime dispatch: ${path}`);
+    if (path.startsWith("/") || path.split("/").includes("..") || !allowlist.some((rule) => pathMatches(rule, path))) throw new Error(`repository_path_outside_allowlist:${path} 不在这次派发允许改的路径里`);
+    if (forbidden.some((rule) => pathMatches(rule, path))) throw new Error(`repository_path_forbidden:${path} 在这次派发的禁改清单里`);
   }
 }
 

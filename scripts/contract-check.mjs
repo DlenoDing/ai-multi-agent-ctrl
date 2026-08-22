@@ -183,6 +183,16 @@ process.env.AIMAC_WIP_QUEUE_HEAD = "100000";
 // 产品里"抛出一个拒绝码"的四种写法。抽成常量是为了让下面那条判据能反向核对它 ——
 // 原先这里只认 `error: "码"` 一种，topologyError()/gatewayError()/new Error() 抛的 96 个码整族
 // 隐身，棘轮报"207 个码、16 个未覆盖"，真实是 303 个、83 个（本仓第十二次撞"门看不见表达式写法"）。
+// 装 agent 的人是在自己机器上敲一条命令，这几处抛错是【当场】给他看的（explainAgentFailure
+// 会把已知的翻成人话），不会经过控制台，所以不要求带码。
+const AGENT_RUNTIME_CLI_THROWS = new Set([
+  "unknown command: ${command}",
+  "bootstrap requires --server and --join-token-file",
+  "agent self-check failed: ${check.missingChecks.join(\",\")}",
+  "agent is not initialized: ${configPath}",
+  "public Agent Gateway requires HTTPS; set AIMAC_AGENT_ALLOW_INSECURE_HTTP=true only for isolated"
+]);
+
 const REFUSAL_CODE_THROW_HELPERS = ["topologyError", "gatewayError"];
 const REFUSAL_CODE_FORMS = new RegExp(
   `(?:error:\\s*|new Error\\(\\s*|${REFUSAL_CODE_THROW_HELPERS.map((name) => `${name}\\(\\s*`).join("|")})"([a-z0-9_]{6,})"`, "gu");
@@ -421,6 +431,7 @@ run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 run(verifyDispatchBindingChecksRefuseMissingValues);
 runAsync(verifyTestServersDieWithTheirParent);
 run(verifyRuntimeConstantsSitBeforeItsTopLevelAwait);
+run(verifyAgentFailureReasonsAreCoded);
 run(verifyTruncatedExecutorOutputSaysSo);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
@@ -10922,6 +10933,11 @@ async function verifyTestServersDieWithTheirParent(output) {
 }
 
 function verifyRuntimeConstantsSitBeforeItsTopLevelAwait(output) {
+  // 【为什么不给契约门自己也来一道同样的门】：本文件也是「run(...) 与顶层常量交错」，
+  // 2026-08-22 真在这里踩过一次（常量放在 10990 行、run 在 366 行）。但代价不成比例 ——
+  // 要判准得先知道哪些顶格的 const 在模板串里（本文件嵌着大量探针脚本），而逐行数反引号会被
+  // 正则字面量里的落单反引号带偏（实测五处失步里三处如此），得写个能识别正则字面量的词法器。
+  // 而它在契约门里的后果是【当场 ReferenceError、报文清楚】，不像下面 runtime.mjs 那样变成挂死。
   // runtime.mjs 的模块体在文件很靠前的地方就 `await main()`。顶层 await 会把模块求值挂起，
   // 【它之后声明的模块级 const/let 在整个运行期都停在 TDZ 里】—— 读一下就 ReferenceError。
   // 这条不变式此前没人写下来，而它踩中的后果不是报错是【挂死】：异常若发生在 spawn 之后、
@@ -10969,6 +10985,32 @@ function verifyRuntimeConstantsSitBeforeItsTopLevelAwait(output) {
   }
   console.log(`runtime.mjs：顶层 await（第 ${awaitLine + 1} 行）之后没有模块级常量（TDZ 语义当场探过），`
     + "且子进程起来后的异常会杀掉子进程再抛 —— 核过");
+}
+
+function verifyAgentFailureReasonsAreCoded(output) {
+  // agent 抛出的原因会【原样】变成派发的阻塞/失败原因，显示在控制台的「原因」那一列上。
+  // 控制面那边早有一整套纪律（码 + 中文词条 + 4xx 点名），而 runtime.mjs 从来不在任何一道门的
+  // 视野里 —— 于是这一族长期是英文自由文本（2026-08-22 一次补了 18 条）。
+  // 码本身由规范门核「有没有中文」；这里核的是另一半：还有没有【压根没带码】的。
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const bare = [];
+  for (const match of runtime.matchAll(/throw (?:new Error|permissionBlockedError)\(\s*([`"])([^`"]*)\1/gu)) {
+    const message = match[2];
+    // 两种都算：`码:中文说明`，以及只有一个码（那时中文全靠 i18n 词表，规范门会核）。
+    if (/^[a-z0-9_]{6,}(?::|$)/u.test(message)) continue;
+    if ([...AGENT_RUNTIME_CLI_THROWS].some((known) => message.startsWith(known.slice(0, 24)))) continue;
+    bare.push(message.slice(0, 60));
+  }
+  if (bare.length) {
+    output.push(`agent 这几处抛错没带码，会原样变成控制台上那句「原因」：${bare.join(" / ")} —— `
+      + "写成 `码:中文说明`（码要在 i18n-zh 里有词条），或者确认它只给装机的人看、登记进 AGENT_RUNTIME_CLI_THROWS");
+  }
+  // 提取脱节要自报：一条都没扫到多半是写法变了，而不是真的一条不带码的都没有。
+  const coded = [...runtime.matchAll(/throw (?:new Error|permissionBlockedError)\(\s*[`"][a-z0-9_]{6,}(?::|["`])/gu)].length;
+  if (coded < 20) {
+    output.push(`agent 抛错只提取到 ${coded} 条带码的（应当 20+）—— 提取逻辑多半与代码脱节，这一条在空转`);
+  }
+  console.log(`agent 失败原因：${coded} 条带码（控制台按码显示中文），没带码的只剩装机时当场给人看的那几处 —— 核过`);
 }
 
 function verifyTruncatedExecutorOutputSaysSo(output) {

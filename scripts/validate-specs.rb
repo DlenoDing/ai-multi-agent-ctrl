@@ -1433,9 +1433,12 @@ MACHINE_FACING_ERRORS = {
   "mcp_auth_required" => "MCP 传输层，回给 MCP 客户端",
   "mcp_streamable_http_requires_post" => "同上"
 }.freeze
-error_codes = [server_source, core_source, agent_gateway_source].flat_map do |src|
+# runtime.mjs 也要扫：agent 侧抛出的原因会【原样】变成派发的阻塞/失败原因显示在控制台上，
+# 而这道门原先根本看不见那个文件 —— 于是那一族整体是英文自由文本（2026-08-22 一次补了 18 条）。
+# 它的写法是 `code:中文说明`（模板串居多），所以要按前缀取码，而不是整串等于码。
+error_codes = ([server_source, core_source, agent_gateway_source].flat_map do |src|
   src.scan(/error:\s*"([a-z_0-9]+)"/).flatten + src.scan(/new Error\("([a-z_0-9]+)"\)/).flatten
-end.uniq
+end + agent_runtime_source.scan(/throw (?:new Error|permissionBlockedError)\([`"]([a-z_0-9]{6,})(?::|["`])/).flatten).uniq
 errors << "错误码本地化门: 只提取到 #{error_codes.size} 个错误码 —— 提取逻辑与代码脱节" if error_codes.size < 100
 unlocalized = error_codes.reject { |code| i18n_zh_source.match?(/(^|[^A-Za-z0-9_])#{Regexp.escape(code)}\s*:/) }
 unregistered = unlocalized.reject { |code| MACHINE_FACING_ERRORS.key?(code) }

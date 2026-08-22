@@ -3596,6 +3596,14 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "agent 的失败原因不得是没码的英文",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentFailureReasonsAreCoded",
+    from: 'throw new Error("agent_worktree_not_clean:',
+    to: 'throw new Error("worktree is dirty before dispatch, please clean it:',
+    expect: "没带码，会原样变成控制台上那句「原因」"
+  },
+  {
     name: "起服务端的进程死了服务端要跟着退",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyTestServersDieWithTheirParent",
