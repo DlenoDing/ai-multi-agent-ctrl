@@ -3767,6 +3767,17 @@ const MUTATIONS = [
     expect: "从没加载成功过的页不许说"
   },
   {
+    // 推上去之后远端不是我推的那个（并发强推／镜像同步拨回去／服务端钩子改写引用）。
+    // agent 不发现的话，它会带着"已推送"的检查点回去，而那份产出并不在远端。
+    // 拆掉这一道之后控制面会在检查点上回 push_ref_must_point_to_final_commit —— 第二道门。
+    name: "推完必须核对远端就是自己推的那个",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: '  if (remoteSha !== commit) throw new Error("push_verification_failed:推上去之后远端的提交与本地对不上");',
+    to: '  if (false) throw new Error("push_verification_failed:推上去之后远端的提交与本地对不上");',
+    expect: "agent 没有发现"
+  },
+  {
     // 只写了产物清单、没有任何任务输出：比"一个字都没改"更隐蔽（git 看得到改动、提交也能成，
     // 而提交里除了 agent 自己要写的那份清单什么都没有）。拆掉这一道之后控制面会在检查点上
     // 回 artifact_manifest_missing_output_refs —— 断言点的是具体哪个码，所以照样红。

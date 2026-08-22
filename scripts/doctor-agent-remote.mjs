@@ -54,7 +54,9 @@ const input = JSON.parse(readFileSync(0, "utf8"));
 // 「跑完一个字都没改」这条路此前零覆盖：真实里它意味着模型空转（额度烧了、活没动），
 // 而 agent 必须把它判成失败并如实报回控制面，而不是当成做完了去提交一个空 commit。
 // 按工作项 id 里的标记切换：这一支【什么都不写】，只打一句摘要。
-if (String(input.workId || "").includes("nochange")) {
+// 第三种情形（推送校验）要走【正常产出】那条路，所以这两个"其实没做"的探针要让开。
+if (String(input.workId || "").includes("nochange")
+  && !existsSync(${JSON.stringify(join(sandbox, "rewind-after-push.flag"))})) {
   // 两种"看着做了、其实没做"共用这一个工作项，按标记文件切换：
   // 编排是否会为一件【新活】排派发，取决于任务组当时的状态（上一条探针失败之后就不排了，
   // 实测第二个工作项根本没进编排回执）。让同一件活跑第二次，才是稳的造法。
@@ -1264,6 +1266,44 @@ try {
     }
     console.log("  ok  执行器只写了产物清单、没有任务输出时判失败（executor_produced_no_output）");
   }
+  // 【推上去之后远端不是我推的那个】。真实成因：并发的强推、镜像同步把分支拨回去、
+  // 或者服务端的钩子改写了引用。agent 必须发现并判失败 —— 否则它会带着"已推送"的检查点回去，
+  // 而那份产出实际上不在远端，验收的人按 commit 去看会扑空。
+  // 造法：post-receive 钩子在推入之后把分支回退到上一版（推送本身是成功的，只是结果被改了）。
+  {
+    const rewindFlag = join(sandbox, "rewind-after-push.flag");
+    const rewindHook = join(remote, "hooks", "post-receive");
+    writeFileSync(rewindHook, ["#!/bin/sh",
+      `[ -f ${JSON.stringify(rewindFlag)} ] || exit 0`,
+      "while read old new ref; do",
+      '  case "$old" in 0000000000000000000000000000000000000000) continue;; esac',
+      '  git update-ref "$ref" "$old"',
+      "done",
+      "exit 0"].join("\n"));
+    chmodSync(rewindHook, 0o755);
+    writeFileSync(rewindFlag, "on\n");
+    const rewindOrchestrated = await json("/api/orchestrator/run", {
+      method: "POST", token: login.sessionToken, idempotencyKey: "doctor-agent-rewind-orchestrate",
+      body: {mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false}
+    });
+    const rewindRun = spawnSync(process.execPath, [runtimePath, "run", "--work-dir", agentWorkDir, "--once"], {
+      env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false"},
+      encoding: "utf8", maxBuffer: 32 * 1024 * 1024
+    });
+    const rewindText = `${rewindRun.stdout || ""}${rewindRun.stderr || ""}`;
+    if (!/adp_/u.test(rewindText)) {
+      throw new Error("「推完被回退」这条没造出想测的情形：这一轮 agent 没领到任何派发"
+        + `（编排回执：${JSON.stringify(rewindOrchestrated.changed || []).slice(0, 300)}）`);
+    }
+    if (!/push_verification_failed/u.test(rewindText)) {
+      throw new Error("推上去之后远端被回退，agent 没有发现 —— 它会带着「已推送」的检查点回去，"
+        + `而那份产出并不在远端（agent 输出：${rewindText.slice(-300)}）`);
+    }
+    writeFileSync(rewindFlag, "");
+    rmSync(rewindHook, {force: true});
+    console.log("  ok  推上去之后远端被回退时，agent 发现并判失败（push_verification_failed）");
+  }
+
 
 		  console.log("agent remote doctor ok: one-command join, checksum install, credential rotation, initialization, self-check (permission+integrity probe), remote MCP, control command ACK, project/session-level execution event stream, on-demand skill workset, dispatch, commit, push and checkpoint outbox replay, two-step evidence artifact registration, permission_report loop with safe-retry-point recovery, revoke pending+ACK requeue verified");
 } finally {

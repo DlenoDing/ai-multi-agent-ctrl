@@ -190,7 +190,7 @@ process.env.AIMAC_WIP_QUEUE_HEAD = "100000";
 // agent 侧失败码的覆盖棘轮。2026-08-22 起量：一开始 36 个码里 32 个【没有任何门/e2e 的源码提到过】——
 // 因为 runtime.mjs 不导出任何东西，长期被当成测不了。改用「复制一份 + 追加导出」之后一轮轮清到 14（不含只在变异表里出现过的那两个 —— 那不算断言）。
 // 只降不升：要摘牌就得写一条真的点名它的断言。
-const AGENT_RUNTIME_UNCOVERED_CEILING = 6;
+const AGENT_RUNTIME_UNCOVERED_CEILING = 5;
 // 构造上走不到的，登记在此并写明理由 —— 它们会一直挂在清单上，那是如实的，不要为它们编够不到的用例。
 const AGENT_RUNTIME_UNREACHABLE_CODES = {
   agent_control_plane_retry_exhausted:
