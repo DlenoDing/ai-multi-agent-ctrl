@@ -3286,6 +3286,21 @@ try {
     const sweepDir = join(root, `${doctorRuntimeDir}-empty-body`);
     rmSync(sweepDir, {recursive: true, force: true});
     cpSync(join(root, doctorRuntimeDir), sweepDir, {recursive: true});
+    // 造一条质量门：真实运行态里它由检查点证据派生，而这一轮 e2e 走完之后一条都没有 ——
+    // 于是「豁免质量门」这条路由永远扫不到（自报里一直挂着它）。而 waive 恰恰是最不能"缺省即做"的
+    // 那一类（真人专属的放行决定）。直接往副本的状态里写一条：这是【副本】，伤害不出这个目录。
+    {
+      const sweepStatePath = join(sweepDir, "control-plane-state.json");
+      const sweepState = JSON.parse(readFileSync(sweepStatePath, "utf8"));
+      const at = new Date().toISOString();
+      sweepState.qualityGates = [...(sweepState.qualityGates || []), {
+        schemaVersion: "quality-gate/v1", gateId: "qg_empty_body_probe", gateType: "test_pass_rate",
+        projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", status: "failed",
+        testResultRef: "test:empty-body-probe", createdAt: at, updatedAt: at
+      }];
+      sweepState.stateVersion = Number(sweepState.stateVersion || 0) + 1;
+      writeFileSync(sweepStatePath, JSON.stringify(sweepState, null, 2));
+    }
     const sweepPort = await getFreePort();
     const sweepChild = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {cwd: root,
       stdio: ["ignore", "pipe", "pipe"],
@@ -3317,7 +3332,7 @@ try {
         "skill-sources": (live.skillSources || [])[0]?.sourceId || (live.skillSources || [])[0]?.id,
         agents: (live.agents || [])[0]?.id,
         "access-grants": (live.accessGrants || [])[0]?.grantId,
-        "quality-gates": (live.qualityGates || [])[0]?.gateId || (live.qualityGates || [])[0]?.id,
+        "quality-gates": (live.qualityGates || [])[0]?.gateId,
         "review-bundles": (live.reviewBundles || [])[0]?.reviewBundleId,
         "review-plans": (live.reviewPlans || [])[0]?.reviewPlanId,
         "system-upgrade-candidates": (live.systemUpgradeCandidates || [])[0]?.candidateId,
