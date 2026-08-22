@@ -527,6 +527,7 @@ function beginGuardedWrite(req, state, action, subject, resourceScope = inferRes
   const requiredPermission = permissionForAction(action);
   const allowed = hasPermission(state, actor, requiredPermission, resourceScope);
   const policyDecision = {
+    schemaVersion: "policy-decision/v1",
     id: createId("pd"),
     status: allowed ? "allowed" : "denied",
     actor,

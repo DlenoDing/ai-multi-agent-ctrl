@@ -7969,8 +7969,15 @@ export function approvalRequestCreate(state, args) {
 
 export function policyDecisionEval(state, args) {
   const at = new Date().toISOString();
+  // 这个集合有两处构造（这里与 REST 守卫），字段名一直不一样。**id 是所有读者共用的那个键**
+  // —— 容量保护按它认"还被引用着"，只写 decisionId 的话，被活跃授权引用着的决策照样被挤掉
+  //（2026-08-22 实测并修）。这里两个都写、同值：decisionId 是已经发布出去的工具输出字段，
+  // 直接改名会打断调用方；退役条件写在 spec/policy-decision.schema.json 里。
+  const decisionId = args.decisionId || createId("pd");
   const policyDecision = {
-    decisionId: args.decisionId || createId("pd"),
+    schemaVersion: "policy-decision/v1",
+    id: decisionId,
+    decisionId,
     action: args.action || "mcp_tool_call",
     resource: args.resource || {},
     subjectRef: args.subjectRef || {subjectType: "service", subjectId: "mcp-proxy"},

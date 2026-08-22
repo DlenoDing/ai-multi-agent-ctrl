@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/policy-decision.schema.json",
+  "title": "PolicyDecision",
+  "description": "每一次受守卫的写入都会留下一条：谁、对什么、被允许还是被拒、依据是什么。它是访问授权与产出目标的『凭什么发的』那条引用（policyDecisionRef）指向的对象。此前这个集合不受任何规范约束，而它【有两处构造】：REST 守卫与 MCP 的 policy_decision_eval —— 两边字段名不一样（id/decisionId、status/result、actor/subjectRef、resource 一个是字符串一个是对象），容量保护只认其中一种，被引用着的另一半照样被挤掉（2026-08-22 实测并修）。这份规范先把【两种形状都钉住】，并要求两边都写 id：只有它是所有读者共用的键。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "action", "createdAt"],
+  "properties": {
+    "schemaVersion": {"const": "policy-decision/v1"},
+    "id": {"type": "string", "pattern": "^pd_",
+      "description": "所有读者共用的键（容量保护按它认『还被引用着』）。MCP 那条路同时保留 decisionId，是对已发布工具输出的兼容。"},
+    "decisionId": {"type": "string", "pattern": "^pd_",
+      "description": "MCP policy_decision_eval 的对外字段名；与 id 同值。退役条件：确认没有外部调用方再读它。"},
+    "action": {"type": "string", "minLength": 1},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["evaluating", "allowed", "denied"],
+      "description": "REST 守卫这一支的判定。取值必须与 state-machines.yaml 的 PolicyDecision 一致（含初始态 evaluating）—— 那道门会逐个比对，少一个就红"},
+    "result": {"enum": ["evaluating", "allowed", "denied"], "description": "MCP 这一支的判定（同一件事，字段名不同）"},
+    "actor": {"type": "string", "minLength": 1, "description": "REST 守卫：认证出来的调用方"},
+    "subjectRef": {"type": "object", "description": "MCP：主体（subjectType/subjectId）"},
+    "resource": {"type": ["string", "object"],
+      "description": "REST 是 'Type:id' 字符串，MCP 是 {resourceType,resourceId} 对象 —— 读的人两种都要认"},
+    "resourceScope": {"type": "object"},
+    "policyVersion": {"type": "string"},
+    "requiredPermission": {"type": "string"},
+    "reasonCode": {"type": "string"},
+    "evidenceRefs": {"type": "array", "items": {"type": "string"}}
+  }
+}

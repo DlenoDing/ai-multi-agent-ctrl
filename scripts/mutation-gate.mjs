@@ -3993,6 +3993,16 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 两处构造必须都写 id（所有读者共用的那个键）。只写 decisionId 的话，容量保护、
+    // 以及任何按 id 认对象的读者都看不见它 —— 规范把这条钉住。
+    name: "MCP 那条路的策略决策也要写 id",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: "    id: decisionId,\n    decisionId,",
+    to: "    decisionId,",
+    expect: "policyDecisions[172].id is required"
+  },
+  {
     // 策略决策台账里有两种记录形状（REST 守卫写 id、MCP 那条路写 decisionId）。
     // 保留逻辑只认一种的话，被活跃授权引用着的那一半照样被容量挤掉：授权还在、依据没了。
     name: "容量保护要认两种形状的决策 id",
@@ -4117,8 +4127,8 @@ const MUTATIONS = [
     name: "不受规范约束的集合数要棘轮住",
     file: "scripts/doctor.mjs",
     gate: "doctor",
-    from: "maxUncovered: 18});",
-    to: "maxUncovered: 17});",
+    from: "maxUncovered: 17});",
+    to: "maxUncovered: 16});",
     // 期望要挑【这道门自己会打印的那一句】：控制面 e2e 的前缀是"控制面 e2e 产出："，
     // 契约门那两处（种子/编排产出）用的是别的前缀 —— 只写公共部分会被判成"挂错了门"。
     expect: "控制面 e2e 产出：不受规范约束的集合"

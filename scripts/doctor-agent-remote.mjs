@@ -1187,7 +1187,7 @@ try {
 	  });
 	  const sweep = sweepRecordsAgainstDeclaredSchemas(producedState, {
 	    specDir: join(root, "spec"), label: "e2e 产出", minValidated: 30
-	  , maxUncovered: 15});
+	  , maxUncovered: 14});
 	  if (!(producedState.checkpoints || []).some((item) => item.schemaVersion)) {
 	    throw new Error("agent remote doctor: 本轮没有产出任何带 schemaVersion 的 checkpoint —— 这道规范核对在空转，commit/push 证据面依旧无人校验");
 	  }
