@@ -3596,6 +3596,14 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "依赖被放弃时必须升级成需要人处置",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyAutoResumeHintsReallyAutoResume",
+    from: "        if (abandonedDep) {",
+    to: "        if (false) {",
+    expect: "它永远等不到验收，又不是 needs_decision"
+  },
+  {
     name: "失败计数必须真的累加",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyExecutionFailureCapSurvivesHistoryAndReopen",

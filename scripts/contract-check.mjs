@@ -573,6 +573,7 @@ run(verifyRefusalCodeScanSeesEveryThrowHelper);
 run(verifyRefusalCodeCoverageRatchet);
 await runAsync(verifyGateFetchFailuresNameTheGate);
 run(verifyMcpInputDictionaryHasNoGhosts);
+run(verifyAutoResumeHintsReallyAutoResume);
 run(verifyExecutionFailureCapSurvivesHistoryAndReopen);
 run(verifyOrchestratorOffWordingMatchesWhatStillRuns);
 run(verifyConsoleReadsOnlyWhatItsViewDelivers);
@@ -6009,6 +6010,59 @@ function verifyProjectShardsAreNeverSilentlyDropped(output) {
   } finally {
     rmSync(runtimeDir, {recursive: true, force: true});
   }
+}
+
+function verifyAutoResumeHintsReallyAutoResume(output) {
+  // 出口提示里凡是写着「无需操作 / 会自动放行」的，都是在叫人【不要动】。
+  // 这类话一旦为假，后果比不写更糟：人真的就不看它了，而它永远不会自己好。
+  // app.js 里那条注释本来就写着「每一条都对应代码里真实的清除路径」—— 但没有判据。
+  const hintSource = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const hintBlock = /const WORK_ITEM_EXIT_HINT = \{([\s\S]*?)\n\};/u.exec(hintSource)?.[1] || "";
+  if (!/blocked_dependency:[^\n]*自动放行/u.test(hintBlock)) {
+    output.push("blocked_dependency 的出口提示不再说「会自动放行」—— 这条判据按那句话写的，改了措辞要一起改判据");
+    return;
+  }
+  const tick = (tune) => {
+    const state = structuredClone(seedState);
+    ensureRuntimeCollections(state, {root});
+    const taskGroup = (state.taskGroups || []).find((item) => (item.workItems || []).length);
+    tune(state, taskGroup);
+    runAutonomousCycle(state, {root, runtimeDir: join(root, ".runtime"), endpoint: "http://127.0.0.1:1", mode: "all"});
+    const after = state.taskGroups.find((item) => item.id === taskGroup.id);
+    return after.workItems.find((item) => item.id === "w_waiter");
+  };
+  const withDependency = (dependencyStatus) => (state, taskGroup) => {
+    taskGroup.workItems = [
+      {id: "w_dep", title: "先做的那件", status: dependencyStatus, ownerRole: "agent-runtime", progress: 100},
+      {id: "w_waiter", title: "等它的那件", status: "blocked_dependency", ownerRole: "agent-runtime",
+        progress: 0, dependsOnWorkItemRefs: ["w_dep"]}
+    ];
+  };
+
+  // ① 依赖还没验收：继续等是对的。
+  // 这一条【没有登记变异】：顺序保障是双门的 —— 早处这段判完之后，后面那段还会按同样的依赖
+  // 重判一次并把它压回 blocked_dependency。单点改坏任一处它都照样挡着（实测过：改早处那道，
+  // 结果只是 blockedReason 从无变成 awaiting_dependency，状态没变）。断言本身不空：
+  // 同一套夹具下「依赖已验收」会走到 assigned，两者分得开。
+  const waiting = tick(withDependency("in_progress"));
+  if (waiting.status !== "blocked_dependency") {
+    output.push(`依赖还没通过验收，等它的那件却已经离开了 blocked_dependency（${waiting.status}）—— `
+      + "顺序保障没了：分析还没做完，实现已经派下去");
+  }
+  // ② 依赖通过验收：必须【自动】放行，否则界面那句「无需操作」就是让人白等。
+  const released = tick(withDependency("verified"));
+  if (released.status === "blocked_dependency") {
+    output.push("依赖已经通过验收，等它的那件仍卡在 blocked_dependency —— "
+      + "而界面告诉人「无需操作：下一轮编排会自动放行」，人会一直等下去");
+  }
+  // ③ 依赖被放弃：它永远等不到验收。必须升级成需要人处置，否则那格没有任何出口
+  //（它不是 needs_decision，「决策处置」这个杠杆够不着它）。
+  const abandoned = tick(withDependency("superseded"));
+  if (abandoned.status !== "needs_decision" || abandoned.blockedReason !== "dependency_abandoned") {
+    output.push(`依赖被放弃之后，等它的那件是 ${abandoned.status}/${abandoned.blockedReason || "无原因"} —— `
+      + "它永远等不到验收，又不是 needs_decision，人连处置它的杠杆都没有");
+  }
+  console.log("出口提示「无需操作，会自动放行」名副其实：没验收就等、验收了就放、依赖被放弃则升级成需要人处置 —— 核过");
 }
 
 function verifyExecutionFailureCapSurvivesHistoryAndReopen(output) {
