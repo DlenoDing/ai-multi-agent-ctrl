@@ -3993,6 +3993,16 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 「把 undefined 拼进字符串」这一族：得到的不是空、不是报错，而是一个长得很正常的值。
+    // 检查点的改动证据原先就是 "git-diff:<base>:undefined" —— 校验函数没把 finalCommit 带出来。
+    name: "证据串里不许拼进 undefined",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: "    finalCommit,\n    evidenceRef: `git-evidence:",
+    to: "    evidenceRef: `git-evidence:",
+    expect: "里拼进了 undefined"
+  },
+  {
     // 会话的 placement 只有两种（新会话 / 子智能体），监控页按它分栏、放置决策按它另配安全性证明。
     // 规范把它钉成闭集：写出第三种取值时当场红，而不是在界面上多出一个谁也不认识的分类。
     name: "会话的放置方式必须是闭集里的取值",

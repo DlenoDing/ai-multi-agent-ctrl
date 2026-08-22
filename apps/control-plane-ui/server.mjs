@@ -4884,7 +4884,12 @@ async function handleApi(req, res) {
       const roomSendArgs = {...body, roomId, taskGroupId: roomTaskGroupId};
       const roomSendAccount = accountFromRequest(req, state);
       const roomSendNode = roomSendAccount ? null : authenticateAgentNode(state, bearerToken(req));
-      roomSendArgs[ROOM_SENDER_KEY] = roomSendAccount ? `account:${roomSendAccount.accountId}`
+      // accountFromRequest 返回的是 {session, account} —— 账号 id 在【里层】。
+      // 原先写的是 roomSendAccount.accountId，取到 undefined，于是经 REST 由真人发的每一条
+      // 房间消息都署名成字符串 "account:undefined"：协作记录里谁说的这件事整个丢了，
+      // 而它不报错、也不是空 —— 看起来像一个正常的署名。
+      const roomSenderAccountId = accountIdOf(roomSendAccount?.account || {});
+      roomSendArgs[ROOM_SENDER_KEY] = roomSenderAccountId ? `account:${roomSenderAccountId}`
         : roomSendNode ? `agent_node:${roomSendNode.nodeId}` : "unattributed";
       const result = roomSend(state, roomSendArgs);
       if (result.error === "room_task_group_settled") return json(res, 409, {error: result.error, taskGroupStatus: result.taskGroupStatus});

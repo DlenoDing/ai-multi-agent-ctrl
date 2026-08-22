@@ -255,6 +255,34 @@ export function sweepRecordsAgainstDeclaredSchemas(state, options = {}) {
   if (validated < minValidated) {
     output.push(`${label}规范核对只校验到 ${validated} 条记录，远少于预期的 ${minValidated} —— 提取逻辑已与数据结构脱节，本条可能在空转`);
   }
+  // 「把 undefined 拼进字符串」这一族：`account:${x}` 里 x 是 undefined 时，得到的不是空、
+  // 不是报错，而是一个长得很正常的值 "account:undefined"。它随记录一路展示，看起来像署名/像证据。
+  // 2026-08-23 这道扫描一上来就抓到两处真缺陷：房间消息的署名（accountFromRequest 返回的是
+  // {session, account}，账号 id 在里层，取到了 undefined），以及每一个检查点的改动证据
+  // （校验函数根本没把 finalCommit 带出来，于是 "git-diff:<base>:undefined"）。
+  // 同族还有 [object Object]（把对象拼进串）与 NaN（把算坏的数拼进串）。
+  {
+    const suspicious = /undefined|\[object Object\]|\bNaN\b/u;
+    const byField = new Map();
+    const walk = (node, path, depth) => {
+      if (depth > 12 || byField.size > 40) return;
+      if (typeof node === "string") {
+        if (suspicious.test(node)) {
+          const key = path.replace(/\[\d+\]/gu, "[]");
+          if (!byField.has(key)) byField.set(key, node.slice(0, 80));
+        }
+        return;
+      }
+      if (Array.isArray(node)) { node.forEach((item, index) => walk(item, `${path}[${index}]`, depth + 1)); return; }
+      if (node && typeof node === "object") { for (const [key, value] of Object.entries(node)) walk(value, `${path}.${key}`, depth + 1); }
+    };
+    walk(state || {}, label, 0);
+    for (const [field, sample] of byField) {
+      output.push(`${field} 里拼进了 undefined / [object Object] / NaN：「${sample}」 —— `
+        + "这不是空值也不是报错，它长得像一个正常的值，会一路展示给人看");
+    }
+  }
+
   // 这条数要露在外面：靠 const 自指认的那条路一旦断了（改个字段名、规范里的 const 没了），
   // 表现是"少验了一整个集合"而不是报错 —— 数掉到 0 才看得出来。
   return {errors: output, validated, selfIdentified, uncovered,

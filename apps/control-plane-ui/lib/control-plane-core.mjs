@@ -3256,6 +3256,11 @@ function validateCheckpointGitEvidence(state, request) {
     normalizedCommitRefs,
     normalizedPushRefs,
     changedPaths,
+    // 调用方要拿它拼 `git-diff:<base>:<commit>`，而这里原先【没有把它带出去】——
+    // 于是每一个检查点的第一条改动证据都是 "git-diff:<base>:undefined"：
+    // 那条 ref 存在的全部理由是"证据由控制面自己算，不由被证明的一方提供"，
+    // 而它指向的范围是空的。不报错、不是空值，看起来像一条正常的证据。
+    finalCommit,
     evidenceRef: `git-evidence:${target.targetId}:${finalCommit}`
   };
 }
