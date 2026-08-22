@@ -3660,6 +3660,30 @@ const MUTATIONS = [
     expect: "却照读不误"
   },
   {
+    name: "开工前工作树不干净必须拒绝开工",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: '  if (gitStatusPaths(root).length) throw new Error("agent_worktree_not_clean',
+    to: '  if (false) throw new Error("agent_worktree_not_clean',
+    expect: "却照常开工"
+  },
+  {
+    name: "派发的模型决策三样缺一都不许开工",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: "  if (!model.modelDecision || !(model.model || model.modelId) || !(model.reasoning || model.reasoningLevel)) {",
+    to: "  if (!model.modelDecision) {",
+    expect: "派发的模型决策"
+  },
+  {
+    name: "ollama 没有模型名不得把空名交给它猜",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: '    if (!ollamaModel) throw new Error("executor_model_id_required',
+    to: '    if (false) throw new Error("executor_model_id_required',
+    expect: "应当明确说缺什么"
+  },
+  {
     // 判据侧：没分类的动作要被拦下来（模板串 `task_group_${action}` 这一支也要看得见）。
     name: "受守卫的写动作必须逐个回答过机器能不能做",
     file: "apps/control-plane-ui/server.mjs",

@@ -190,7 +190,7 @@ process.env.AIMAC_WIP_QUEUE_HEAD = "100000";
 // agent 侧失败码的覆盖棘轮。2026-08-22 起量：一开始 36 个码里 32 个【没有任何门/e2e 的源码提到过】——
 // 因为 runtime.mjs 不导出任何东西，长期被当成测不了。改用「复制一份 + 追加导出」之后一轮轮清到 14（不含只在变异表里出现过的那两个 —— 那不算断言）。
 // 只降不升：要摘牌就得写一条真的点名它的断言。
-const AGENT_RUNTIME_UNCOVERED_CEILING = 12;
+const AGENT_RUNTIME_UNCOVERED_CEILING = 8;
 // 构造上走不到的，登记在此并写明理由 —— 它们会一直挂在清单上，那是如实的，不要为它们编够不到的用例。
 const AGENT_RUNTIME_UNREACHABLE_CODES = {
   agent_control_plane_retry_exhausted:
@@ -11419,7 +11419,8 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
       + " verifySkillFiles, classifyPushPermissionDenial, inside,"
       + " retryableControlPlaneError, retryableAgentRequest, syncContentBundle, syncSkillWorkset,"
       + " applyPermissionResolution, mcpToolCall, prepareRepository,"
-      + " syncContentBundleGitTransfer, writeArtifactManifest};\n");
+      + " syncContentBundleGitTransfer, writeArtifactManifest,"
+      + " ensureCleanWorktree, buildExecutionPrompt, runKnownModelCli};\n");
     const rt = await import(pathToFileURL(copy).href);
     const refusalOf = (fn) => { try { fn(); return null; } catch (error) { return String(error.message).split(":")[0]; } };
 
@@ -11815,12 +11816,93 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
       }
     }
 
+    // ⑬ 三种「还没开始就不该开始」。这三个码此前都零覆盖，而它们各自守着一个很具体的坏结果。
+    {
+      // 开工前工作树就不干净：这台机器上有别人留下的没提交改动，跑完之后分不清哪些是这次干的 ——
+      // 产出清单会把别人的改动一并算成本次产出，提交与推送也就跟着把它带出去。
+      const repo = join(dir, "worktree-probe");
+      mkdirSync(repo, {recursive: true});
+      execFileSync("git", ["init", "-q"], {cwd: repo, stdio: "ignore"});
+      const cleanRefusal = (() => {
+        try { rt.ensureCleanWorktree(repo); return null; } catch (error) { return String(error.message).split(":")[0]; }
+      })();
+      if (cleanRefusal !== null) {
+        output.push(`干净的工作树被判成不干净（${cleanRefusal}）—— 下面那条测的就不是"不干净"了`);
+      }
+      writeFileSync(join(repo, "leftover.txt"), "别人留下的改动\n");
+      const dirtyRefusal = (() => {
+        try { rt.ensureCleanWorktree(repo); return null; } catch (error) { return String(error.message).split(":")[0]; }
+      })();
+      if (dirtyRefusal !== "agent_worktree_not_clean") {
+        output.push(`开工前工作树里有没提交的改动却照常开工（拿到 ${dirtyRefusal || "放行"}）—— `
+          + "跑完分不清哪些改动是这次干的，别人的改动会被算成本次产出一起提交推送");
+      }
+
+      // 派发没说清用哪个模型：三样（modelDecision / model / reasoning）缺一都不许开工。
+      // 缺了还硬跑的话，执行器会拿默认模型干活，而台账上记的是"按某某决策执行的" —— 对不上。
+      const fullContract = {model: {modelDecision: "md1", model: "claude-x", reasoning: "high"},
+        projectId: "p1", taskGroupId: "tg1", workId: "w1", sessionId: "s1", runId: "r1",
+        languagePolicy: {languageTag: "zh-CN", languageName: "中文"}};
+      const promptRefusal = (model) => {
+        try {
+          rt.buildExecutionPrompt({gateway: {mcpUrl: "http://127.0.0.1:1/mcp"}}, {taskContract: {...fullContract, model},
+            repositoryOutputTarget: {targetId: "t1"}}, {files: []}, join(dir, "package.json"));
+          return null;
+        } catch (error) { return String(error.message).split(":")[0]; }
+      };
+      const modelCases = [
+        ["三样齐全", fullContract.model, null],
+        ["没说是谁定的模型", {model: "claude-x", reasoning: "high"}, "dispatch_model_decision_missing"],
+        ["没说用哪个模型", {modelDecision: "md1", reasoning: "high"}, "dispatch_model_decision_missing"],
+        ["没说用多深的推理", {modelDecision: "md1", model: "claude-x"}, "dispatch_model_decision_missing"]
+      ];
+      for (const [what, model, expected] of modelCases) {
+        const got = promptRefusal(model);
+        if (got !== expected) {
+          output.push(`派发的模型决策「${what}」时拿到 ${got || "放行"}（应为 ${expected || "放行"}）—— `
+            + "缺一样就硬跑的话，执行器用的模型与台账上记的那个不是同一个");
+        }
+      }
+
+      // 没有可用的执行器：必须明说"装一个或指定命令"，而不是拿个别的将就跑。
+      const cliRefusal = (model, env = {}) => {
+        try { rt.runKnownModelCli(model, "prompt", dir, {...process.env, ...env}, null, null); return null; }
+        catch (error) { return String(error.message).split(":")[0]; }
+      };
+      if (cliRefusal({providerClass: "no_such_provider", modelId: "m1"}) !== "executor_not_installed") {
+        output.push("供应商没有任何可用执行器时没有明确报错 —— 人会以为活在跑，其实一步都没动");
+      }
+      // ollama 那一支要有 ollama 在 PATH 上才走得到，这里放一个只应付 --version 的桩。
+      const stubDir = join(dir, "stub-bin");
+      mkdirSync(stubDir, {recursive: true});
+      const stub = join(stubDir, "ollama");
+      writeFileSync(stub, "#!/bin/sh\nexit 0\n");
+      chmodSync(stub, 0o755);
+      const previousPath = process.env.PATH;
+      const previousOllamaModel = process.env.AIMAC_OLLAMA_MODEL;
+      process.env.PATH = `${stubDir}:${previousPath}`;
+      delete process.env.AIMAC_OLLAMA_MODEL;
+      try {
+        const got = cliRefusal({providerClass: "ollama"});
+        if (got !== "executor_model_id_required") {
+          output.push(`ollama 既没给 modelId 也没给 AIMAC_OLLAMA_MODEL 时拿到 ${got || "放行"} —— `
+            + "应当明确说缺什么，而不是把空模型名交给 ollama 去猜");
+        }
+      } finally {
+        process.env.PATH = previousPath;
+        if (previousOllamaModel === undefined) delete process.env.AIMAC_OLLAMA_MODEL;
+        else process.env.AIMAC_OLLAMA_MODEL = previousOllamaModel;
+      }
+    }
+
     console.log(`agent 侧守卫真跑一遍（导出的是副本、出厂那份没动）：派发包绑定 ${bindingCases.length} 例、`
       + `产出路径 ${pathCases.length} 例、克隆地址 ${urlCases.length} 例、技能文件 3 例、`
       + `推送被拒分类 ${denialCases.length} 例、重试判定 ${retryCases.length} 例、`
       + "内容包 6 例（含「上一轮的文件必须先清掉」）、技能集 5 例、"
       + "§8 处置表 7 例（含「认不出的状态不许当成批准」）、控制面 MCP 调用 3 例、"
-      + "仓库准备 4 例（含「机器上那份仓库指向别处」）、内容包 git 传输 7 例、产出清单落点 2 例");
+      + "仓库准备 4 例（含「机器上那份仓库指向别处」）、内容包 git 传输 7 例、产出清单落点 2 例、"
+      + "开工前置 7 例（工作树不干净 2 例、模型决策缺一不可 4 例、没有可用执行器 1 例）、"
+      + "ollama 缺模型名 1 例");
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
