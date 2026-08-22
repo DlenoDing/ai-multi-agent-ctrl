@@ -246,8 +246,11 @@ globalThis.__probe = {
     return document.body.innerHTML;
   },
   api: (path, options) => api(path, options),
+  setPage: (value) => { page = value; },
   backgroundRefreshFailure: (error) => reportBackgroundRefreshFailure(error),
-  setLastLoadedAt: (value) => { lastLoadedAt = value; }
+  // 「上一次加载成功」是按页记的：钩子要把当前页那一格也填上，否则它模拟的其实是
+  // 「别的页成过、这一页从没成过」——那是另一种情形（下面单独有断言）。
+  setLastLoadedAt: (value) => { lastLoadedAt = value; pageLoadedAt[page] = value; }
 };
 `;
 
@@ -322,6 +325,13 @@ if (process.env.AIMAC_RENDER_REAL) {
   // 或者反过来以为"事件流是通的"（本轮就差点把执行事件流的空当成缺陷去查）。
   console.log("（这几块的数据不在状态里、要另发请求取，本工具不发 —— 它们显示的「暂无数据」是工具的空，"
     + "不是产品的空：实时事件流 / 最新执行事件 / 待人工确认数 / 评审与人工指令明细 / 组织成员与节点）\n");
+  // 另一类假线索：有些字段是【服务端视图算出来的】，原始状态里根本没有。喂原始状态渲染时它们
+  // 显示成 0/缺省，看着像"产品把它算错了"。实测差点当成缺陷去查：任务组页「角色数：0」，
+  // 而真实状态里那个组有 7 个角色 —— 界面读的是视图字段 roleCount（视图会把 roles 剥掉换成计数）。
+  // 这两件事的区别只有一句话：产品读的是视图，本工具喂的是原始状态。
+  console.log("（这些数是服务端视图算出来的，本工具喂的是原始状态 —— 它们显示成 0/缺省是工具的缺省，"
+    + "不是产品算错了：任务组「角色数」(roleCount)、按任务组的权限(taskGroupPermissions)、"
+    + "技能源角色数(roleSkillCountBySource)、各表的「共 N+ 条」截断标记）\n");
   const documentRoot = el("div");
   const probe = loadConsole(documentRoot, {realI18n: true});
   const strip = (html) => String(html).replace(/<[^>]+>/gu, " ").replace(/&nbsp;/gu, " ")
@@ -1630,7 +1640,14 @@ function runNoVisibleProjectCase() {
         {schemaVersion: "agent-dispatch/v1", dispatchId: "dsp_bad_time", projectId: "p1", taskGroupId: "tg1",
           workItemId: "wi1", sessionId: "ws4", runId: "run4", status: "running", progressPercent: 10,
           attempts: 1, lastExecutionEventAt: "前天下午",
-          createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z"}
+          createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z"},
+        // 已了结的派发：认领时间在了结时被清掉，事件时间这一条也没有（doctor 的真实运行态里
+        // 正是这样一条 completed 派发）。原先这一格照着 claimedAt 说话，于是写着「还没被领走」——
+        // 一条已经跑完的活，屏幕上说它没人领。
+        {schemaVersion: "agent-dispatch/v1", dispatchId: "dsp_done", projectId: "p1", taskGroupId: "tg1",
+          workItemId: "wi1", sessionId: "ws5", runId: "run5", status: "completed", progressPercent: 100,
+          attempts: 1, createdAt: "2026-08-10T00:00:00.000Z",
+          updatedAt: new Date(Date.now() - 25 * 60000).toISOString()}
       ],
       workSessions: [], humanConfirmationRequests: [], humanDirectives: [], executionTopologies: [],
       closeBarriers: [], qualityGates: [], findings: [], permissionRequests: [], approvalRequests: [],
@@ -1645,6 +1662,10 @@ function runNoVisibleProjectCase() {
     check("认不出的时间不得显示成「刚刚」",
       /时间无法识别/u.test(stallText) && !/(?<![0-9])0 秒前/u.test(stallText),
       "NaN 一路走成 0，一条坏记录就被说成刚刚才动过 —— 认不出的取值不许落在最有利的那个解释上");
+    check("已了结的派发不许说「还没被领走」",
+      /已了结 25 分钟前/u.test(stallText),
+      "认领时间在了结时被清掉，这一格于是照着 claimedAt 说「还没被领走」—— 一条已经跑完的活，"
+        + "屏幕上说它没人领过（真实运行态上读到的）。了结记录的 updatedAt 就是它最后一次动的时间");
     check("领走了却一次动静都没有的派发，要说的是「还没有过动静」而不是留空",
       /还没有过动静/u.test(stallText),
       "这一格空着与「刚刚才动过」看不出区别 —— 而它恰恰是最该被人看到的那种");
@@ -4032,6 +4053,21 @@ await runCodedApiErrorCase();
   check("要说清屏幕停在多久以前的数据",
     /(秒前|分钟前|小时前|一直没能加载成功)/.test(crashed),
     "只说刷新失败，人不知道眼前这屏还能不能照着做决定");
+  // 在能加载的页上待过之后，切到一个从没加载成功过的页：原先横幅照着【全局】那个时间说话，
+  // 于是写出「下面显示的是 0 秒前的旧数据」—— 而这一页根本没有过数据。
+  // 真实运行态上读到的正是这句。最该警惕的一刻不能被说成「数据是新的」。
+  {
+    const freshRoot = el("div");
+    const freshProbe = loadConsole(freshRoot);
+    freshProbe.setLastLoadedAt(Date.now() - 3000);
+    freshProbe.setPage("directives");
+    freshProbe.backgroundRefreshFailure(new Error("boom-other-page"));
+    const freshText = stubSubtreeText(freshRoot);
+    check("从没加载成功过的页不许说「显示的是几秒前的旧数据」",
+      /从来没有加载成功过/u.test(freshText) && !/秒前的旧数据/u.test(freshText),
+      `别的页刚加载过，切到这一页却失败了 —— 横幅照着全局时间说「0 秒前的旧数据」，`
+        + `而这一页一条数据都没有过（${freshText.slice(0, 140)}）`);
+  }
   crashProbe.backgroundRefreshFailure(new Error("boom-render"));
   check("同一个错误不许每拍刷一条",
     (stubSubtreeText(crashRoot).match(/boom-render/gu) || []).length === 1,

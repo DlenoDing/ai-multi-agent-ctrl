@@ -47,6 +47,10 @@ let loginHint = null;
 let lastError = "";
 let lastErrorIsRequest = true;
 let lastLoadedAt = null;
+// 「上一次加载成功」要【按页】记。原先是一个全局值：在能加载的页上待过之后再切到一个加载失败的页，
+// 横幅会说「下面显示的是 0 秒前的旧数据」—— 而这一页根本没有过数据，那句话把最该警惕的一刻
+// 说成了「数据是新的」。真实运行态上读到的正是这句（人工指令页取数失败时）。
+const pageLoadedAt = {};
 let lastLoadErrorToast = "";
 let loading = false;
 let formTouched = false;
@@ -1378,6 +1382,7 @@ async function loadPage() {
     lastError = "";
     lastLoadErrorToast = "";
     lastLoadedAt = Date.now();
+    pageLoadedAt[page] = lastLoadedAt;
   } catch (error) {
     lastError = error?.message || String(error);
     lastErrorIsRequest = error?.requestFailure === true;
@@ -1721,8 +1726,8 @@ function render() {
               盯着执行监控页的人看到的是冻住的画面，屏幕上没有任何迹象说"这已经不是现在的样子了"。
               对一个监控台来说这是最要紧的那一刻，所以给一条常驻横幅，下一次加载成功自动消失。 */""}
         ${lastError ? `<div class="notice warn-notice">${lastErrorIsRequest
-          ? `连不上控制面或这一页加载失败，下面显示的是 ${esc(lastLoadedAgo())}的旧数据：${esc(lastError)}`
-          : `控制台这一页自己出错了（不是控制面连不上），下面显示的是 ${esc(lastLoadedAgo())}的旧数据：`
+          ? `连不上控制面或这一页加载失败，${esc(lastLoadedAgo())}：${esc(lastError)}`
+          : `控制台这一页自己出错了（不是控制面连不上），${esc(lastLoadedAgo())}：`
             + `${esc(lastError)}。这多半是控制台的缺陷 —— 请把这句话连同所在页面反馈给维护者`}</div>` : ""}
         ${truncationBanner()}
         <section class="content">${renderContent()}</section>
@@ -3459,11 +3464,18 @@ function blockerGuide(objectType, gate) {
 
 // 旧数据到底旧到什么程度，人得看得见 —— 只说"加载失败"，他不知道该不该继续照着这屏做决定。
 function lastLoadedAgo() {
-  if (!lastLoadedAt) return "登录以来一直没能加载成功的";
-  const seconds = Math.max(0, Math.round((Date.now() - lastLoadedAt) / 1000));
-  if (seconds < 60) return `${seconds} 秒前`;
-  const minutes = Math.round(seconds / 60);
-  return minutes < 60 ? `${minutes} 分钟前` : `${Math.round(minutes / 60)} 小时前`;
+  const at = pageLoadedAt[page];
+  if (!at) {
+    // 这一页从来没成过：说「显示的是 N 秒前的旧数据」是假的 —— 屏幕上根本没有这一页的数据。
+    return lastLoadedAt ? "这一页从来没有加载成功过，下面是空的（不是「一条都没有」）"
+      : "登录以来一直没能加载成功，下面是空的（不是「一条都没有」）";
+  }
+  const seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
+  const ago = seconds < 60 ? `${seconds} 秒前` : (() => {
+    const minutes = Math.round(seconds / 60);
+    return minutes < 60 ? `${minutes} 分钟前` : `${Math.round(minutes / 60)} 小时前`;
+  })();
+  return `下面显示的是 ${ago}的旧数据`;
 }
 
 // 一个正在跑的派发，屏幕上永远是「running 45%」—— 不管它上一次真有动静是一分钟前还是半天前。
@@ -3883,9 +3895,14 @@ function renderMonitor() {
     {v: percentCell(dispatch.progressPercent), c: "num"},
     // 「最近动静」＝上一条执行事件到现在有多久。进度百分比是【最高水位】（只增不减），
     // 所以一个卡住的派发会一直显示同一个数字，看不出它其实早就不动了。
+    // 已了结的派发不能说「还没被领走」：认领时间在了结时被清掉，于是一条【已完成】的派发
+    // 在这一列上写着"还没被领走"（真实运行态上读到的，doctor 那条 work_management_ui 正是如此）。
+    // 了结记录的 updatedAt 就是它最后一次动的时间，说这个既准确又不夸大。
     {v: dispatch.lastExecutionEventAt
       ? esc(sinceText(dispatch.lastExecutionEventAt))
-      : `<span class="muted">${dispatch.claimedAt ? `领走 ${esc(sinceText(dispatch.claimedAt))}，还没有过动静` : "还没被领走"}</span>`,
+      : terminalDispatchStatuses.has(dispatch.status)
+        ? `<span class="muted">已了结${dispatch.updatedAt ? ` ${esc(sinceText(dispatch.updatedAt))}` : ""}</span>`
+        : `<span class="muted">${dispatch.claimedAt ? `领走 ${esc(sinceText(dispatch.claimedAt))}，还没有过动静` : "还没被领走"}</span>`,
       c: "nowrap"},
     // 这两个标记控制面早就在写了（写它们的注释里明写着"必须留痕并让人看到"），而控制台从来没有
     // 渲染过它们 —— 于是人只看到"认领超时重新入队"，看不到最要紧的那句：上一任可能已经把提交推上去了。

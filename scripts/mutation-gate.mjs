@@ -3660,6 +3660,22 @@ const MUTATIONS = [
     expect: "却照读不误"
   },
   {
+    name: "已了结的派发不许说「还没被领走」",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "      : terminalDispatchStatuses.has(dispatch.status)",
+    to: "      : false",
+    expect: "已了结的派发不许说"
+  },
+  {
+    name: "「上一次加载成功」要按页记",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const at = pageLoadedAt[page];",
+    to: "  const at = lastLoadedAt;",
+    expect: "从没加载成功过的页不许说"
+  },
+  {
     name: "开工前工作树不干净必须拒绝开工",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
