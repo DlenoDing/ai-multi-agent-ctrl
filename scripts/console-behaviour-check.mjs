@@ -1764,6 +1764,54 @@ function runNoVisibleProjectCase() {
           + "并集判权会让人在别人负责的组上也看到「关闭任务组」，按下去必然 403");
     }
   }
+  // 人工审核页上，够不着的那几张卡要说清【是哪个组】不给你动。三种卡里两种此前一句话都没有
+  // （表单不见了、卡片照样挂着，多半还带着「阻塞执行」），第三种那句写的是"当前账号无人工审核权限"——
+  // 而判权是按任务组的：在 A 组有权的人看到 B 组的卡时，这句话是假的。
+  {
+    const reviewScopeState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [
+        {id: "tg_mine", projectId: "p1", name: "我能审的", status: "development", workItems: []},
+        {id: "tg_theirs", projectId: "p1", name: "别人的组", status: "development", workItems: []}
+      ],
+      taskGroupPermissions: {tg_mine: ["task_group:read", "task_group:review"], tg_theirs: ["task_group:read"]},
+      humanConfirmationRequests: [
+        {requestId: "hcr_mine", projectId: "p1", taskGroupId: "tg_mine", status: "pending", round: 1,
+          decisionClass: "major", blocking: true, question: {summary: "我这组的定稿"}, options: [{optionId: "o1", label: "通过"}],
+          createdAt: "2026-08-20T00:00:00.000Z"},
+        {requestId: "hcr_theirs", projectId: "p1", taskGroupId: "tg_theirs", status: "pending", round: 1,
+          decisionClass: "major", blocking: true, question: {summary: "别人组的定稿"}, options: [{optionId: "o1", label: "通过"}],
+          createdAt: "2026-08-20T00:00:00.000Z"}
+      ],
+      approvalRequests: [{approvalId: "apr_theirs", projectId: "p1", taskGroupId: "tg_theirs", status: "requested",
+        riskClass: "high", summary: "别人组的审批", createdAt: "2026-08-20T00:00:00.000Z"}],
+      findings: [{findingId: "fnd_theirs", projectId: "p1", taskGroupId: "tg_theirs", status: "open",
+        severity: "high", summary: "别人组的发现项", createdAt: "2026-08-20T00:00:00.000Z"}],
+      permissionRequests: [], humanDirectives: [], agentDispatches: [], workSessions: [],
+      executionTopologies: [], closeBarriers: [], qualityGates: [], truncatedCollections: []
+    };
+    const reviewText = renderAs({accountId: "u_rev", accountType: "member", displayName: "评审员",
+      organizationId: "org_default", effectivePermissions: ["project:view", "task_group:read", "task_group:review"]},
+      reviewScopeState, "review", "p1");
+    // 夹具没造出想测的情形也要能自报：两张卡都得渲染出来，断言才有意义。
+    if (!/我这组的定稿/u.test(reviewText) || !/别人组的定稿/u.test(reviewText)) {
+      check("人工审核按组判权的夹具要把两张卡都渲染出来", false,
+        "这一屏没渲染出待确认卡 —— 下面几条断言什么也没验");
+    } else {
+      const notes = (reviewText.match(/别人的组」上没有/gu) || []).length;
+      check("够不着的卡要说清是【哪个任务组】不给你动",
+        notes === 3,
+        `三张够不着的卡（定稿 / 审批 / 发现项）里只有 ${notes} 张说了 —— `
+          + "另外那些表单不见了、卡片还挂着（多半带着「阻塞执行」），人分不清是自己没权还是页面坏了");
+      check("按组判权时不许再说「当前账号无人工审核权限」",
+        !/当前账号无“人工审核”权限/u.test(reviewText),
+        "这个账号在另一个组上明明有评审权 —— 说他「账号无权限」是假话，他找不到该找谁");
+      check("有权的那张卡照常给表单",
+        /选择定稿/u.test(reviewText),
+        "有权的组上也没有定稿表单 —— 上面那条测的就不是「够不着」了");
+    }
+  }
   // 按钮同理：任务组列表上「暂停 / 恢复 / 纠偏」这些是按任务组授权的，而控制台原先用跨资源并集判 ——
   // 只在 tg1 上有控制权的人，在 tg2 那一行也看得到按钮，按下去必然 403（「看得到按不动」）。
   {
@@ -1838,9 +1886,12 @@ function runNoVisibleProjectCase() {
     } else {
       const first = mineAt < theirsAt ? scopedText.slice(mineAt, theirsAt) : scopedText.slice(mineAt);
       const second = mineAt < theirsAt ? scopedText.slice(theirsAt) : scopedText.slice(theirsAt, mineAt);
+      // 认【按钮上的字】而不是"定稿"这两个字：够不着的卡上现在会写一句"你在任务组「X」上没有
+      // 人工审核（定稿）的权限"，光搜 /定稿/ 会被它喂饱（本仓的老毛病：新文案喂饱旁边那条断言）。
+      const hasForm = (text) => /选择定稿/u.test(text);
       check("确认单的定稿表单只出现在你有权评审的那个任务组上",
-        /定稿/u.test(first) && !/定稿/u.test(second),
-        `我负责的那张${/定稿/u.test(first) ? "有" : "没有"}定稿表单、别人那张${/定稿/u.test(second) ? "也有" : "没有"} —— `
+        hasForm(first) && !hasForm(second),
+        `我负责的那张${hasForm(first) ? "有" : "没有"}定稿表单、别人那张${hasForm(second) ? "也有" : "没有"} —— `
           + "后端按资源判权，并集会让人对着一张按不动的表单填半天");
     }
     check("「待你处理」只算你在【那个任务组】上真有权处置的",

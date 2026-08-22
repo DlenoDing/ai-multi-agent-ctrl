@@ -3564,6 +3564,15 @@ function todoCountsByPage() {
   return counts;
 }
 
+// 按【任务组】判权时，"你没有这个权限"这句话必须说清是【哪个组】：在 A 组有评审权的人
+// 看到 B 组的卡，一句"当前账号无人工审核权限"是假的 —— 他有，只是不在这个组上。
+// 另外两处（审批、发现项）此前【连这句都没有】：表单不见了、卡片照样挂着，人分不清是自己没权
+// 还是页面坏了。而这些卡多半带着「阻塞执行」，看到它却动不了、又没人告诉他去找谁，是最难受的一种。
+function noRightOnThisGroup(taskGroupId, what) {
+  return `<div class="notice" style="margin-top:8px;">你在任务组「${esc(taskGroupNameOf(taskGroupId))}」上没有${esc(what)}的权限，`
+    + "这里只能看、不能动 —— 它在等这个组里有权的人处置。</div>";
+}
+
 function renderPendingForMePanel() {
   const todo = pendingForMe();
   return panel("待你处理", `
@@ -3695,7 +3704,7 @@ function renderReview() {
           <button class="danger-button" type="submit" name="action" value="reject">打回返工</button>
         </div>
         <div class="notice" style="margin-top:6px;">定稿前可与 AI 多轮协商：你提方案 → AI 再分析（可提出不合理之处或更优方式）→ 你再决定。只有点「选择定稿」才锁定。</div>
-      </form>` : `<div class="notice warn-notice" style="margin-top:10px;">当前账号无“人工审核”权限，仅可查看待确认问题。</div>`}
+      </form>` : noRightOnThisGroup(request.taskGroupId, "人工审核（定稿）")}
       ${(request.deliberation || []).length ? `<div class="record-meta" style="margin-top:8px;display:block;">
         <strong>协商记录（第 ${esc(String(request.round || 1))} 轮${request.awaitingAiAnalysis ? "，等待 AI 再分析" : ""}）</strong>
         ${(request.deliberation || []).map((turn) => `<div>· ${turn.actorKind === "ai" ? "AI" : esc(accountName(turn.actor))}｜${esc(t(turn.action) || turn.action)}${turn.assessment ? `（${esc(t(turn.assessment) || turn.assessment)}）` : ""}：${esc(turn.summary)}</div>`).join("")}
@@ -3746,7 +3755,7 @@ function renderReview() {
           <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>${fmtTime(item.createdAt)}</span></div>
           ${hasGroupPerm(item.taskGroupId, "task_group:review") ? `<form class="form-grid" data-form="approval-resolve" data-request="${esc(item.approvalId)}" style="margin-top:8px;">
             <div class="btn-row"><button class="primary-button" type="submit" name="status" value="approved">批准</button><button class="ghost-button" type="submit" name="status" value="rejected">驳回</button></div>
-          </form>` : ""}
+          </form>` : noRightOnThisGroup(item.taskGroupId, "人工审核（审批）")}
         </div>`).join("")}
       ${openFindings.map((item) => `
         <div class="record">
@@ -3760,7 +3769,7 @@ function renderReview() {
             <div class="form-row"><label>处置状态</label>${decisionSelect("status", [["resolved", "已解决"], ["closed", "已关闭"], ["dismissed", "已忽略"], ["wontfix", "不修复"]])}</div>
             <div class="form-row"><label>证据引用（可选，逗号分隔）</label><input name="evidenceRefs" placeholder="evidence:..."></div>
             <button class="primary-button" type="submit">提交处置</button>
-          </form>` : ""}
+          </form>` : noRightOnThisGroup(item.taskGroupId, "人工审核（处置发现项）")}
         </div>`).join("")}
       ${!pendingPermissions.length && !pendingApprovals.length && !openFindings.length ? `<div class="notice">当前项目没有待处置的授权 / 审批 / 发现。</div>` : ""}
     </div>`;

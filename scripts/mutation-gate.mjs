@@ -3660,6 +3660,14 @@ const MUTATIONS = [
     expect: "却照读不误"
   },
   {
+    name: "够不着的审核卡要说清是哪个任务组不给你动",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '          </form>` : noRightOnThisGroup(item.taskGroupId, "人工审核（审批）")}',
+    to: '          </form>` : ""}',
+    expect: "只有 2 张说了"
+  },
+  {
     name: "任务组一览的受阻数要说出被挡住的派发",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
