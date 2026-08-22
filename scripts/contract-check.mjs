@@ -447,6 +447,7 @@ run(verifyCallerChosenIdsHaveUniquenessGuards);
 run(verifyRecordSpecsHaveProducers);
 run(verifyAgentInstallerFlagsMatchTheDocs);
 run(verifySecurityRelaxingSwitchesAreListed);
+run(verifyFalsyDefaultsDoNotFavourTheCaller);
 run(verifyEveryProjectScopedIdIsScopeChecked);
 run(verifyEveryStateCollectionIsTenantScoped);
 run(verifyExpiredConfirmationRetargetsTheWorkItem);
@@ -16579,6 +16580,52 @@ function verifyEveryProjectScopedIdIsScopeChecked(output) {
 // 「会放宽默认限制的开关」必须有一张清单。发现性不是问题（这类开关大多在被挡住的那一刻
 // 就把自己写进报文了），问题在**审计一套部署的人**：他需要先知道有哪些开关可能被打开过。
 // 2026-08-23 一扫：9 个这样的开关里 8 个文档一字未提。
+// 「不显式说 false 就落在有利一侧」有个明确的生成式：`X === false ? 负面 : 正面`。
+// 2026-08-23 靠它连查出两处真缺陷 —— 处理授权申请（不说＝批准并铸出访问授权）、
+// 记策略决策（不说＝放行，而且传字符串 "false" 想记拒绝，同样记成放行：`=== false` 只认布尔）。
+// 每一处都要登记为什么安全；新增一处就得先回答这个问题。
+function verifyFalsyDefaultsDoNotFavourTheCaller(output) {
+  const SAFE_BY_DESIGN = {
+    'result.ok === false ? "failed" : "succeeded"':
+      "派生自【本次调用的真实结果对象】，不是调用方入参 —— 没有「缺省」这一说",
+    'args.allowed === false ? "rejected" : "approved"':
+      "两处（授权申请处置 / 审批处置）都在这一行【之前】要求显式结论，缺省一律拒；"
+      + "留着这个三元只是把已确认的布尔翻成状态名",
+    'body.active === false ? "inactive" : "active"':
+      "上面有 `typeof body.active !== \"boolean\"` 一律 400（agent_activation_flag_required）",
+    'raw === false ? "unavailable" : "unknown"':
+      "三态判定：true→available、false→unavailable、其余→unknown。缺省落在 unknown（最不利），不是有利一侧"
+  };
+  const files = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs", "apps/agent-runtime/runtime.mjs"];
+  let scanned = 0;
+  const unregistered = [];
+  const seen = new Set();
+  for (const file of files) {
+    for (const line of readFileSync(resolve(root, file), "utf8").split("\n")) {
+      if (/^\s*(\/\/|\*)/u.test(line)) continue;          // 注释里讲这个形状的不算（门读到自己写的字）
+      const hit = /([A-Za-z_$][\w$.?]*)\s*===\s*false\s*\?([^;]*)/u.exec(line);
+      if (!hit) continue;
+      scanned += 1;
+      const key = Object.keys(SAFE_BY_DESIGN).find((shape) => line.includes(shape));
+      if (key) { seen.add(key); continue; }
+      unregistered.push(`${file.split("/").pop()}: ${line.trim().slice(0, 90)}`);
+    }
+  }
+  if (scanned < 5) {
+    output.push(`缺省判决核对：只扫到 ${scanned} 处 \`=== false ?\`（实测 6）—— 提取失配，本条在空转`);
+    return;
+  }
+  if (unregistered.length) {
+    output.push("缺省判决核对：这些地方用「不显式说 false 就走正面」决定结果，而没有登记为什么安全："
+      + `\n    ${unregistered.join("\n    ")}\n  —— 这个形状连出过两次真缺陷（不说＝批准并发证、不说＝记成放行）；`
+      + "要么在这一行之前要求显式取值，要么在 SAFE_BY_DESIGN 里写明它为什么不危险");
+  }
+  const stale = Object.keys(SAFE_BY_DESIGN).filter((shape) => !seen.has(shape));
+  if (stale.length) output.push(`缺省判决核对：登记表已过时，这些形状代码里已经没有了：${stale.join("；").slice(0, 160)}`);
+  console.log(`缺省判决核对：${scanned} 处 \`=== false ?\` 逐个核过，${Object.keys(SAFE_BY_DESIGN).length} 种形状登记为安全并写明了理由`);
+}
+
 function verifySecurityRelaxingSwitchesAreListed(output) {
   const files = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/project-event-store.mjs",

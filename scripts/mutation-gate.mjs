@@ -4004,6 +4004,16 @@ const MUTATIONS = [
     expect: "出口要说清装什么"
   },
   {
+    // 「不显式说 false 就落在有利一侧」这个形状连出过两次真缺陷，已立门逐处登记。
+    // 把判决那一行退回旧写法（未登记的形状），门就该点名它。
+    name: "缺省落在有利一侧的写法必须逐处登记",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyFalsyDefaultsDoNotFavourTheCaller",
+    from: '    result: args.allowed ? "allowed" : "denied",',
+    to: '    result: args.allowed === false ? "denied" : "allowed",',
+    expect: "没有登记为什么安全"
+  },
+  {
     // 策略决策是【会被别处引用的治理记录】。原先 `allowed === false ? denied : allowed`：
     // 不说＝放行；更隐蔽的是 `=== false` 只认布尔，想记拒绝却传字符串 "false" 也会记成放行。
     name: "记策略决策不给判决必须拒绝",
