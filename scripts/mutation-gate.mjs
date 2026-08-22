@@ -3736,6 +3736,15 @@ const MUTATIONS = [
     expect: "那就是还在克隆"
   },
   {
+    // 写完只让缓存失效，不再顺手填一份（填一份要克隆两次整份状态）。
+    name: "写完不得再克隆整份状态去填缓存",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyStateWriteDoesNotCloneTheWorld",
+    from: "    centralStateCache.clear();",
+    to: "    cacheStoredState(centralStateCache, options.statePath, centralState, statCacheKey(options.statePath));",
+    expect: "克隆了 3 次整份状态"
+  },
+  {
     // 冻的只能是【留在缓存里那一份】。把冻结的原件递给会改它的调用方，健康检查一进门就
     // "Cannot assign to read only property" —— 这一次是崩溃一致性门先抓到的，太贵了，钉进契约门。
     name: "冻结的那份不得递给会改它的调用方",

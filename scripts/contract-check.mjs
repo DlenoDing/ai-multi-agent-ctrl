@@ -518,6 +518,7 @@ run(verifyGrantScopeCoversObjectsNamedOnlyById);
 run(verifyLongRunningWorkKeepsItsClaim);
 run(verifyCentralOnlyStateCannotBeWritten);
 run(verifyPollingPeekDoesNotCloneOrMutate);
+runAsync(verifyStateWriteDoesNotCloneTheWorld);
 run(verifyContentBundleNamesTheDispatchedItem);
 run(verifyMcpToolListCostStaysVisible);
 run(verifyMcpEnvelopeNeverCallsAnErrorSuccess);
@@ -11041,6 +11042,59 @@ function verifyUnknownStateSchemaIsRefused(output) {
 // 改成把缓存里那份【原样】给出去（shared:true）之后，视图请求从 6.1ms 降到 0.2ms。
 // 这条判据钉住共用那条路的两件事：真的没克隆（不然优化白做），以及【拿到的是冻的】——
 // 共用对象一旦被谁写一笔，污染的是此后所有人的读，而那种错最难查。
+// 一次「读出来改一改再写回去」原先要把整份状态克隆【三次】：读一次给调用方私有副本，
+// 写完再填两个缓存各一次（实测 2MB 状态一轮 6.2MB 克隆，占写路径三分之一）。
+// 后两次是白花的：填缓存省下的只是下一个读者的一次解析，而解析 2MB 2.65ms 比克隆 4.84ms 还便宜。
+// 改成写完只让缓存失效之后，一轮 50.6ms → 42.7ms。这条判据把它钉住 ——
+// 「更快且仍然全绿」里的全绿可能是自己改出来的，所以既数克隆次数，也验读回来的确实是新值。
+async function verifyStateWriteDoesNotCloneTheWorld(output) {
+  const dir = mkdtempSync(join(tmpdir(), "aimac-write-clone-"));
+  try {
+    const copy = join(dir, "state-store-under-test.mjs");
+    const original = readFileSync(join(root, "apps/control-plane-ui/lib/state-store.mjs"), "utf8");
+    // 相对导入要改成绝对的：副本不在原目录里。
+    const shimmed = `export const __clones = [];\nconst __clone = (value) => { __clones.push(JSON.stringify(value ?? null).length); return structuredClone(value); };\n`
+      + original.replace(/from "\.\/pg-sync-store\.mjs"/u,
+        `from ${JSON.stringify(join(root, "apps/control-plane-ui/lib/pg-sync-store.mjs"))}`)
+        .replaceAll("structuredClone(", "__clone(");
+    if (!shimmed.includes("__clone(")) {
+      output.push("克隆计数判据没接上：state-store 里已经没有 structuredClone 了，提取形状要跟上");
+      return;
+    }
+    writeFileSync(copy, shimmed);
+    const store = await import(pathToFileURL(copy).href);
+    const runtimeDir = join(dir, "runtime");
+    const options = {root, runtimeDir, statePath: join(runtimeDir, "control-plane-state.json"),
+      seedPath: resolve(root, "data", "seed-state.json"), buildInitialState: () => structuredClone(seedState)};
+    store.ensureStoredState(options);
+    store.readStoredState(options);                       // 预热缓存
+    store.__clones.length = 0;
+    const state = store.readStoredState(options);
+    const marker = `tg_clone_probe_${state.taskGroups.length}`;
+    state.taskGroups.push({schemaVersion: "task-group/v1", id: marker, projectId: "prj_control_plane",
+      name: "克隆计数探针", status: "planned", workItems: [], roles: [],
+      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z"});
+    state.stateVersion = Number(state.stateVersion || 0) + 1;
+    store.writeStoredState(state, {...options, expectedStateVersion: state.__loadedStateVersion});
+    const clones = store.__clones.length;
+    // 允许两次，各有各的理由：一次是交给调用方的私有副本，一次是写完填【完整状态】那份缓存 ——
+    // 后者不是为省时间，而是盘变只读时读路径还要拿锁（拿锁要写盘），缓存冷了读就跟着写故障一起倒。
+    // 第三次（中央态那份缓存）是白花的：读中央态不用拿锁，冷缓存只多一次解析，而解析比克隆便宜。
+    if (clones > 2) {
+      output.push(`一轮「读—改—写」克隆了 ${clones} 次整份状态（共 ${(store.__clones.reduce((a, b) => a + b, 0) / 1048576).toFixed(1)} MB）——`
+        + "该有的只有两次（给调用方的私有副本、写完填完整状态那份缓存）；"
+        + "中央态那份填缓存是白花的，读它不用拿锁，冷缓存只多一次比克隆更便宜的解析");
+    }
+    // 快了不算数，还得对：写完之后读回来必须是新值（缓存失效没做对的话这里会读到旧的）。
+    const back = store.readStoredState(options);
+    if (!(back.taskGroups || []).some((item) => item.id === marker)) {
+      output.push("写完之后再读，读到的还是旧状态 —— 缓存没有失效，此后所有人看到的都是过期数据");
+    }
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+}
+
 function verifyPollingPeekDoesNotCloneOrMutate(output) {
   const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-shared-read-"));
   const statePath = join(runtimeDir, "control-plane-state.json");

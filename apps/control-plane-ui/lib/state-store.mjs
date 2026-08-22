@@ -362,8 +362,18 @@ export function writeStoredState(state, options) {
     const shardWrite = writeRuntimeJsonProjectShards(projectShards, options, unchangedProjectIds);
     writeRuntimeJsonCentralState(centralState, options);
     gcRuntimeJsonProjectShards(options, shardWrite.activeNames);
-    cacheStoredState(centralStateCache, options.statePath, centralState, statCacheKey(options.statePath));
-    cacheStoredState(hydratedStateCache, options.statePath, hydratedStateFromParts(centralState, projectShards), runtimeJsonStateCacheKey(options, centralState));
+    // 中央态那份缓存【只失效、不填充】：填一次要克隆整份状态（2MB 约 4.84ms），而它省下的
+    // 只是下一个读者的一次解析 —— 解析同一份 2.65ms，本来就更便宜。读中央态不用拿锁，
+    // 冷缓存对它没有别的影响。
+    centralStateCache.clear();
+    // 完整状态这一份【必须填】，而且原因不是省时间：读完整状态要先拿 runtime_json 的锁，
+    // 而拿锁要往盘上写。盘变成只读的时候（满盘、权限、只读挂载），缓存要是冷的，
+    // 读操作就会跟着写故障一起倒 —— 而那一刻人最需要的恰恰是"还能读得出来"。
+    // 崩溃一致性门里「盘不可写时读操作照常（不该被写故障拖下水）」那条守着它：
+    // 我按"省一次克隆"的想法把它也改成失效，那条当场变红。省时间的改动要先问清楚
+    // 眼前这行代码除了省时间还担着什么。
+    cacheStoredState(hydratedStateCache, options.statePath, hydratedStateFromParts(centralState, projectShards),
+      runtimeJsonStateCacheKey(options, centralState));
   });
 }
 
