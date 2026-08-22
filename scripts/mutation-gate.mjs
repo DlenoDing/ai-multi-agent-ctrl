@@ -3652,6 +3652,14 @@ const MUTATIONS = [
     expect: "产出清单的路径爬到仓库之外却没被拦下"
   },
   {
+    name: "不许再从任务组上读已被视图剥掉的字段",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyConsoleDoesNotReadStrippedTaskGroupFields",
+    from: "  const roles = (progressData.roles || []).map((role) => `",
+    to: "  const roles = (progressData.roles || taskGroup.roles || []).map((role) => `",
+    expect: "控制台仍从任务组上读 roles"
+  },
+  {
     name: "语言标签读错字段会静默回落成中文",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
@@ -3663,7 +3671,7 @@ const MUTATIONS = [
     name: "任务组的角色数必须用服务端给的那个数",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "          <span>角色数：${taskGroup.roleCount ?? (taskGroup.roles || []).length}</span>",
+    from: "          <span>角色数：${taskGroup.roleCount ?? 0}</span>",
     to: "          <span>角色数：${(taskGroup.roles || []).length}</span>",
     expect: "界面必须用服务端给的 roleCount"
   },

@@ -2689,7 +2689,7 @@ function renderTaskGroups() {
         ${progressLine(taskGroup.progress)}
         <div class="record-meta">
           <span>语言：${esc(languageLabel(taskGroup.languagePolicy))}</span>
-          <span>角色数：${taskGroup.roleCount ?? (taskGroup.roles || []).length}</span>
+          <span>角色数：${taskGroup.roleCount ?? 0}</span>
           <span>工作项：${esc(taskGroup.workItemCount ?? (taskGroup.workItems || []).length)}</span>
           <span>更新时间：${fmtTime(taskGroup.updatedAt)}</span>
         </div>
@@ -2748,7 +2748,9 @@ function renderTaskGroupDetail(taskGroup) {
         生成后会出现在这里 —— 你不需要点任何按钮。若长时间没有变化，多半是这个任务组还缺前置条件
         （例如项目尚未登记仓库、或角色技能未同步），到「执行监控」页看阻塞项。</div>`;
 
-  const roles = (progressData.roles || taskGroup.roles || []).map((role) => `
+  // 只读进度接口那份：视图里的任务组【不再带整份 roles】（列表只用 roleCount）。
+  // 留着 `|| taskGroup.roles` 那截兜底会骗人 —— 它永远是 undefined，看代码的人以为还有第二个来源。
+  const roles = (progressData.roles || []).map((role) => `
     <div class="record">
       <div class="record-title">
         <strong>${esc(t(role.roleId))}</strong><span class="mono small muted">${esc(role.roleId)}</span>

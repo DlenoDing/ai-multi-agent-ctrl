@@ -465,6 +465,7 @@ run(verifyProtocolEventListMatchesReality);
 run(verifyProtocolDocMatchesRequiredRuntimeVersion);
 run(verifyStateFilesRefuseUnknownSchemaVersions);
 run(verifyOutdatedRuntimeIsFlaggedFailClosed);
+run(verifyConsoleDoesNotReadStrippedTaskGroupFields);
 run(verifyViewDropsCollectionsNobodyReads);
 run(verifyConsoleDoesNotPullSkillBodies);
 run(verifyMachinePrincipalGuardsAreAllowlists);
@@ -12554,6 +12555,45 @@ function verifyOutdatedRuntimeIsFlaggedFailClosed(output) {
     output.push("publicAgentNode 没有把 runtimeOutdated 带出去 —— 判定算对了也没人看得到");
   }
   console.log(`运行时版本：${cases.length} 种取值逐个核对（读不出的一律按过旧），标签也确实带到了对外投影上`);
+}
+
+function verifyConsoleDoesNotReadStrippedTaskGroupFields(output) {
+  // projectTaskGroupsForView 从视图里的任务组上剥掉了几个字段（整份 roles、taskAnalysis、
+  // 语言策略里除 tag/name 之外的部分）。界面若还从任务组上读它们，【不会报错】——
+  // 只会永远拿到 undefined：角色数恒为 0、语言静默回落成中文。
+  // 更坏的是留一截 `|| taskGroup.roles` 当兜底：它永远不生效，却让看代码的人以为还有第二个来源。
+  // 注释要剥掉：解释「为什么不再读 taskGroup.roles」的那句注释本身含有这个写法，
+  // 门会读到自己人写的字（本仓的老毛病，这次抓的正是它自己）。
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8")
+    .replace(/\/\/[^\n]*/gu, (line) => " ".repeat(line.length));
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const stripped = {
+    roles: "列表只用 roleCount；明细页读的是进度接口给的 progressData.roles",
+    taskAnalysis: "明细页读的是 progressData.taskAnalysis"
+  };
+  // 先确认服务端确实在剥 —— 不然这条判据是在防一件已经不存在的事。
+  const shaper = server.match(/^function projectTaskGroupsForView[\s\S]*?^\}/mu)?.[0] || "";
+  if (!/roles: undefined/u.test(shaper) || !/languagePolicy: slimPolicy/u.test(shaper)) {
+    output.push("视图不再从任务组上剥字段了 —— 这条判据按那件事写的，剥法改了要一起改判据");
+    return;
+  }
+  for (const [field, why] of Object.entries(stripped)) {
+    const reads = [...app.matchAll(new RegExp(`\\b(taskGroup|group|tg|item)\\.${field}\\b`, "gu"))]
+      .map((match) => match[0]);
+    if (reads.length) {
+      output.push(`控制台仍从任务组上读 ${field}（${reads.join("、")}）—— 视图已经把它剥掉了（${why}）：`
+        + "不会报错，只会永远拿到 undefined；当兜底留着更糟，它永远不生效却让人以为还有第二个来源");
+    }
+  }
+  // 语言策略只留 tag/name：读别的字段同样会静默拿到 undefined。
+  const policyReads = [...app.matchAll(/languagePolicy\.([a-zA-Z]\w*)/gu)].map((match) => match[1]);
+  const allowedPolicyFields = new Set(["languageTag", "languageName"]);
+  const strayPolicy = [...new Set(policyReads.filter((field) => !allowedPolicyFields.has(field)))];
+  if (strayPolicy.length) {
+    output.push(`控制台读了语言策略里的 ${strayPolicy.join("、")}，而视图只留了 languageTag / languageName —— `
+      + "屏幕上会静默回落成默认值");
+  }
+  console.log(`视图从任务组上剥掉的字段：${Object.keys(stripped).length + 1} 项逐个核对，控制台没有一处再从任务组上读它们`);
 }
 
 function verifyViewDropsCollectionsNobodyReads(output) {
