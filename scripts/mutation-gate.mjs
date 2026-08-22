@@ -3727,6 +3727,34 @@ const MUTATIONS = [
     expect: "orchestrator permission"
   },
   {
+    // 轮询探路那条路只读，所以拿缓存里那份原样用（2MB 状态省掉每请求 4.84ms 的克隆）。
+    name: "轮询探路不得退回每请求克隆整份状态",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyPollingPeekDoesNotCloneOrMutate",
+    from: "  return options.shared ? entry.value : structuredClone(entry.value);",
+    to: "  return structuredClone(entry.value);",
+    expect: "那就是还在克隆"
+  },
+  {
+    // 冻的只能是【留在缓存里那一份】。把冻结的原件递给会改它的调用方，健康检查一进门就
+    // "Cannot assign to read only property" —— 这一次是崩溃一致性门先抓到的，太贵了，钉进契约门。
+    name: "冻结的那份不得递给会改它的调用方",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyPollingPeekDoesNotCloneOrMutate",
+    from: "    if (!readOptions.shared) return structuredClone(central);",
+    to: "    if (false) return structuredClone(central);",
+    expect: "拿到的是【冻结】的那一份"
+  },
+  {
+    // 共用出去的那份必须是冻的：谁写它一笔，污染的是此后所有人的读。
+    name: "共用出去的中央态必须冻结",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyPollingPeekDoesNotCloneOrMutate",
+    from: "    deepFreeze(central);",
+    to: "    void deepFreeze;",
+    expect: "没有被冻结"
+  },
+  {
     // 落盘策略按写入种类分：日志必须按次 fsync（唯一的事实来源）。
     // 这条变异在它前面插一句 return —— 源码里那行 fsyncSync 还在，所以"搜源码"型的判据骗得过，
     // 真数一遍就骗不过（判据把模块复制一份、把 fsyncSync 换成记账壳来数）。

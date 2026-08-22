@@ -517,6 +517,7 @@ run(verifyEveryCloseGateHasHumanGuidance);
 run(verifyGrantScopeCoversObjectsNamedOnlyById);
 run(verifyLongRunningWorkKeepsItsClaim);
 run(verifyCentralOnlyStateCannotBeWritten);
+run(verifyPollingPeekDoesNotCloneOrMutate);
 run(verifyContentBundleNamesTheDispatchedItem);
 run(verifyMcpToolListCostStaysVisible);
 run(verifyMcpEnvelopeNeverCallsAnErrorSuccess);
@@ -11033,6 +11034,77 @@ function verifyUnknownStateSchemaIsRefused(output) {
     output.push(`没有 schemaVersion 的状态被拒读了（${error.message}）—— 早期状态与夹具都没有这个字段`);
   }
   rmSync(runtimeDir, {recursive: true, force: true});
+}
+
+// 控制台每 5 秒轮询一次。那条路只需要"认出是谁 + 算个 ETag"，却要为它把整份中央态克隆一遍：
+// 实测 2MB 时一次 structuredClone 4.84ms，占掉一个请求 6ms 里的八成，连 /api/health 也照付。
+// 改成把缓存里那份【原样】给出去（shared:true）之后，视图请求从 6.1ms 降到 0.2ms。
+// 这条判据钉住共用那条路的两件事：真的没克隆（不然优化白做），以及【拿到的是冻的】——
+// 共用对象一旦被谁写一笔，污染的是此后所有人的读，而那种错最难查。
+function verifyPollingPeekDoesNotCloneOrMutate(output) {
+  const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-shared-read-"));
+  const statePath = join(runtimeDir, "control-plane-state.json");
+  const options = {root, runtimeDir, statePath, seedPath: resolve(root, "data", "seed-state.json"),
+    buildInitialState: () => structuredClone(seedState)};
+  try {
+    ensureStoredState(options);
+    const first = readStoredCentralState(options, {shared: true});
+    const second = readStoredCentralState(options, {shared: true});
+    if (first !== second) {
+      output.push("共用读每次都给了一份新对象 —— 那就是还在克隆（2MB 状态一次 4.84ms，"
+        + "压在每一个轮询请求上），这条优化白做了");
+    }
+    if (!Object.isFrozen(first)) {
+      output.push("共用出去的中央态没有被冻结 —— 只读那条路上任何一次不小心的赋值都会污染"
+        + "此后所有人的读，而且不会有任何迹象");
+    }
+    let refused = false;
+    try { first.stateVersion = -1; } catch { refused = true; }
+    if (!refused || first.stateVersion === -1) {
+      output.push("往共用出去的中央态上写一笔居然生效了 —— 缓存被就地改写，后面每个请求读到的都是它");
+    }
+    const privateCopy = readStoredCentralState(options);
+    if (privateCopy === first || Object.isFrozen(privateCopy)) {
+      output.push("不带 shared 的读拿到的不是独立可改的副本 —— 写入方要在它上面改完再落盘，"
+        + "共用同一份的话一个请求改到一半的东西会被另一个请求读到");
+    }
+    privateCopy.stateVersion = 4242;
+    if (readStoredCentralState(options, {shared: true}).stateVersion === 4242) {
+      output.push("写入方在自己那份副本上的改动漏进了共用的那一份 —— 两者必须互不影响");
+    }
+    // 上面走的是【缓存已经被写入方填好】那一支。冻结有两个落点，另一支是"缓存对不上、
+    // 从盘上重新解析"—— 直接改盘上的文件让缓存失效，把那一支也走一遍
+    //（第一版没有这一段，把首次解析那处的冻结去掉它照样绿）。
+    const onDisk = JSON.parse(readFileSync(statePath, "utf8"));
+    onDisk.stateVersion = Number(onDisk.stateVersion || 0) + 1;
+    writeFileSync(statePath, JSON.stringify(onDisk));
+    const reparsed = readStoredCentralState(options, {shared: true});
+    if (!Object.isFrozen(reparsed)) {
+      output.push("从盘上重新解析出来的中央态共用出去时没有被冻结 —— 冻结有两个落点，"
+        + "只冻一处等于常态下（内容刚变过那一拍）是不设防的");
+    }
+    if (reparsed !== readStoredCentralState(options, {shared: true})) {
+      output.push("重新解析之后的共用读又开始每次给新对象了");
+    }
+    // 重新解析那一支也要把【不带 shared 的那份】验一遍：冻错对象的话，
+    // 会改它的调用方第一次读就当场 "Cannot assign to read only property"
+    // （健康检查进门就补集合，实测正是它先撞上 —— 那次只有崩溃一致性门抓得到，太贵了）。
+    // 必须让它落在【未命中】那一支上：前面刚共用读过，缓存是热的，这时候读到的是克隆，
+    // 恒不冻结 —— 那样这条断言就成了空转（第一版正是这样，退回坏写法它照样绿）。
+    onDisk.stateVersion += 1;
+    writeFileSync(statePath, JSON.stringify(onDisk));
+    const freshPrivate = readStoredCentralState(options);
+    if (Object.isFrozen(freshPrivate)) {
+      // 报完就打住：下面那一笔赋值在这种情况下会抛 TypeError，把这条判据变成一句崩溃栈，
+      // 而人需要看到的是"哪件事没守住"。
+      output.push("重新解析之后，不带 shared 的读拿到的是【冻结】的那一份 —— "
+        + "会改它的调用方（健康检查一进门就补集合）当场抛错，整个读路径瘫掉");
+    } else {
+      freshPrivate.runtime = {...(freshPrivate.runtime || {}), probe: true};
+    }
+  } finally {
+    rmSync(runtimeDir, {recursive: true, force: true});
+  }
 }
 
 function verifyCentralOnlyStateCannotBeWritten(output) {

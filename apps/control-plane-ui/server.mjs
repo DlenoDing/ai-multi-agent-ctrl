@@ -2660,7 +2660,12 @@ async function handleApi(req, res) {
   // （分片里装的是任务组/派发那些集合，账号与会话不在其中），只读中央状态实测 19ms。
   // 未命中则原样落回下面的正常路径，语义完全不变。
   if (req.method === "GET" && url.pathname === "/api/state") {
-    const central = readStoredCentralState({root, runtimeDir, statePath, seedPath, buildInitialState});
+    // 这一段【只读】：认出是谁、算 ETag、命中就回 304 或直接发缓存里的那份载荷。
+    // 所以拿缓存里那份共用对象，不为它克隆整份状态 —— 实测 2MB 时一次克隆 4.84ms，
+    // 而轮询的常态恰恰是"内容没变、回 304"，那 4.84ms 全是白付的。
+    // 判据 verifyPollingPeekDoesNotCloneOrMutate 钉住这条路走完之后那份对象一字未变。
+    const central = readStoredCentralState({root, runtimeDir, statePath, seedPath, buildInitialState},
+      {shared: true});
     const peeker = central && accountFromRequest(req, central);
     if (peeker) {
       const view = url.searchParams.get("view") || "full";

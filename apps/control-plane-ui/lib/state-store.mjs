@@ -74,18 +74,33 @@ function runtimeJsonStateCacheKey(options, central) {
   return parts.join("|");
 }
 
-function cacheStoredState(cache, statePath, value, key) {
+// 存进来的时候要克隆：调用方拿着同一个对象还会接着改（写入方尤其如此），
+// 不克隆的话缓存会跟着它一起变。【已经冻上的除外】—— 冻的东西没人改得动，再克隆一遍
+// 既白花 4.84ms，又让"共用出去的就是缓存里那一份"这件事不成立（克隆出来的不带冻结）。
+function cacheStoredState(cache, statePath, value, key, options = {}) {
   if (!key) return;
   cache.clear();
-  cache.set(statePath, {key, value: structuredClone(value)});
+  cache.set(statePath, {key, value: options.frozen ? value : structuredClone(value)});
 }
 
-function cachedStoredState(cache, statePath, keyBuilder) {
+// 缓存命中默认【克隆一份】再给出去：调用方多半会改它（改完再落盘），共用同一个对象的话
+// 一个请求改到一半的东西会被另一个请求读到。代价是实测 2MB 的状态一次 structuredClone 4.84ms，
+// 而它压在【每一个】请求上 —— 连 /api/health 这种一个字节都不返回的也要付。
+// shared:true 是给【只读且明确不改】的调用方用的（例如轮询的 ETag 比对那一段）：直接给缓存里那份。
+// 谁要用它，就要有判据钉住"这条路走完之后那份对象一字未变"，否则一次不小心的赋值会污染所有人的读。
+function deepFreeze(value) {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const key of Object.keys(value)) deepFreeze(value[key]);
+  return value;
+}
+
+function cachedStoredState(cache, statePath, keyBuilder, options = {}) {
   const entry = cache.get(statePath);
   if (!entry) return null;
   const currentKey = keyBuilder(entry.value);
   if (!currentKey || entry.key !== currentKey) return null;
-  return structuredClone(entry.value);
+  return options.shared ? entry.value : structuredClone(entry.value);
 }
 
 export function stateStoreKind() {
@@ -229,28 +244,46 @@ function assertStateSchemaSupported(state, source = "control-plane-state") {
   );
 }
 
-export function readStoredCentralState(options) {
+export function readStoredCentralState(options, readOptions = {}) {
   ensureStoredState(options);
   if (stateStoreKind() !== "postgresql") {
-    const cached = cachedStoredState(centralStateCache, options.statePath, () => statCacheKey(options.statePath));
+    const cached = cachedStoredState(centralStateCache, options.statePath, () => statCacheKey(options.statePath),
+      readOptions);
     if (cached) {
-      cached.__loadedStateVersion = Number(cached.stateVersion || 0);
-      // 缓存命中这条分支也要打标记：否则"第一次读"的中央态拒得住、"第二次读"的拒不住，
-      // 而缓存命中恰恰是常态 —— 这种半边生效的保护比没有更危险。
-      cached.__centralOnly = true;
+      // 缓存不只由读路径填 —— 写入方落盘之后也会把新状态放进来，而那一份【没有这两个标记】。
+      // 所以命中之后仍要补齐（这个老毛病由 verifyCentralOnlyStateCannotBeWritten 守着：
+      // "第一次读拒得住、第二次读拒不住"这种半边生效的保护比没有更危险）。
+      // 已经打好标记的那份多半是冻的，不能再赋值 —— 所以先判断再补。
+      if (cached.__centralOnly !== true) {
+        cached.__loadedStateVersion = Number(cached.stateVersion || 0);
+        cached.__centralOnly = true;
+        if (readOptions.shared) deepFreeze(cached);
+      }
       return cached;
     }
   }
   const central = stateStoreKind() === "postgresql"
     ? readPostgresState()
     : parseStateFile(options.statePath);
-  if (stateStoreKind() !== "postgresql") cacheStoredState(centralStateCache, options.statePath, central, statCacheKey(options.statePath));
   assertStateSchemaSupported(central);
   central.__loadedStateVersion = Number(central.stateVersion || 0);
   // 打上"这是中央态、不是完整状态"的标记：项目分片里的集合（任务组、派发、会话、确认单…）
   // 在这份对象里【是空的】。谁要是拿它去 writeStoredState，写入方会把不在列表里的分片行全删掉 ——
   // 等于把所有项目的数据清空。标记会在 withoutInternalStateFields 里被剥掉，不会写进盘。
   central.__centralOnly = true;
+  // 进缓存之前【深冻结】：这份对象会被 shared:true 的调用方原样拿走（不克隆），
+  // 冻上之后谁不小心写它就当场抛错，而不是悄悄污染此后所有人的读 —— 这是共用那条路的安全底座。
+  // 代价是每个版本一次 2.67ms（实测），比原先每个请求一次 4.84ms 的克隆还便宜；
+  // 而克隆出来的那份不带冻结（structuredClone 不保留 frozen），写入方照样能改。
+  // 标记必须在冻结【之前】打好，否则下面这两行赋值自己就会抛。
+  if (stateStoreKind() !== "postgresql") {
+    deepFreeze(central);
+    cacheStoredState(centralStateCache, options.statePath, central, statCacheKey(options.statePath), {frozen: true});
+    // 冻的是【留在缓存里共用的那一份】。不带 shared 的调用方会接着改它（健康检查那条路进门就
+    // ensureRuntimeCollections 补集合），把冻结的原件直接递给他，第一次读就当场
+    // "Cannot assign to read only property" —— 崩溃一致性门抓到的正是这个。
+    if (!readOptions.shared) return structuredClone(central);
+  }
   return central;
 }
 
