@@ -3993,6 +3993,18 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 服务端早就把「仓库登记的两处落点」并成一份了（effectiveProjectConfig 的注释写的就是
+    // 这个缺陷），而设置页读的是状态里的原始 project.config —— 修好的口径到不了屏幕上：
+    // 种子项目的设置页写着「还没有配置仓库：产出会卡在没有产出目标」，
+    // 同一屏的「仓库产出归属」却列着它、状态是「已推送」。
+    name: "设置页要读 config 接口算出来的那份",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const cfgSource = rulesLoaded ? resolved : config;",
+    to: "  const cfgSource = config;",
+    expect: "设置页要显示 config 接口算出来的仓库"
+  },
+  {
     // 迁移证据里最该被看见的是 warn 模式下「非法但照样发生了」的那条：它多带一个 rejected。
     // failureCode 少了，这条记录就只剩「有什么不对」，答不上是哪道判定拒的。规范把它钉成必填。
     // （注意：本步一度还想核 from/to 在不在状态机里 —— 那道核对永远不会触发，

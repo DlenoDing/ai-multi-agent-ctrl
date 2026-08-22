@@ -455,6 +455,28 @@ function check(name, condition, detail) {
       displayName: "管理员", organizationId: "org_default", permissions: ["system:*"]},
       proj.id, "proj-settings", settingsFetch);
     const settingsText = String(settingsRoot.innerHTML || "").replace(/<[^>]+>/gu, " ");
+    // 接线断裂的那一半：effectiveProjectConfig 早就把两处仓库登记并成一份了（它的注释写的就是
+    // 这个缺陷），而设置页读的是【状态里的原始 project.config】—— 修好的口径根本到不了屏幕上。
+    // 上面那条断言只验了那个函数，验不到这一段接线；真实运行态渲染出来一看，
+    // 种子项目上赫然写着「还没有配置仓库：产出会卡在没有产出目标」，
+    // 而同一屏的「仓库产出归属」列着这个仓库、状态是「已推送」。
+    {
+      const wiredRoot = el("div");
+      const wiredProbe = loadConsole(wiredRoot, {realI18n: true});
+      const wiredFetch = async (target) => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+        json: async () => String(target).includes("/config") ? {projectId: proj.id, config: cfg, configVersion: 1} : seed,
+        text: async () => JSON.stringify(seed)});
+      await wiredProbe.loadWithFetch(seed, {accountId: "u1", email: "a@b.c", accountType: "system_admin",
+        displayName: "管理员", organizationId: "org_default", permissions: ["system:*"]},
+        proj.id, "proj-settings", wiredFetch);
+      const wiredHtml = String(wiredRoot.innerHTML || "");
+      const wiredText = wiredHtml.replace(/<[^>]+>/gu, " ");
+      const repoUrl = (cfg.repositories || [])[0]?.url || "";
+      check("设置页要显示 config 接口算出来的仓库（而不是状态里的原始 config）",
+        wiredHtml.includes(repoUrl) && !/还没有配置仓库/.test(wiredText),
+        `种子项目只在顶层字段上登记了仓库（${repoUrl}）。屏幕上没有它就意味着这一页在说假话：`
+        + "同一屏的「仓库产出归属」列着它、状态是已推送，而这里催人再登记一遍");
+    }
     check("项目设置页真的渲染出来了（不是空壳）",
       settingsText.includes("仓库与凭证引用"), settingsText.slice(0, 120));
     check("没配仓库时要说清空着会怎样（而不是只剩一个「添加仓库」按钮）",
