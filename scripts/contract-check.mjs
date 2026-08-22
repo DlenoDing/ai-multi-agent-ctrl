@@ -519,6 +519,7 @@ run(verifyLongRunningWorkKeepsItsClaim);
 run(verifyCentralOnlyStateCannotBeWritten);
 run(verifyPollingPeekDoesNotCloneOrMutate);
 runAsync(verifyEveryMcpToolAnswersAnEmptyCall);
+runAsync(verifyBoundedNodeCannotWriteIntoAnotherProject);
 runAsync(verifyStateWriteDoesNotCloneTheWorld);
 run(verifyContentBundleNamesTheDispatchedItem);
 run(verifyMcpToolListCostStaysVisible);
@@ -11104,6 +11105,142 @@ async function verifyStateWriteDoesNotCloneTheWorld(output) {
 //      （approval_resolve 曾经就是缺 status 时默认批准）。
 // 空参也能答的那些逐个登记：新加一个工具若默认答/默认做，这里会点它的名。
 // 顺带钉住"没点名对象却照答"的那几个必须在回答里说清答的是谁 —— 调用方才分得出这不是它问的那个。
+// 只读那一侧早有跨租户扫描（doctor-mcp：绑在项目 A 的节点，把每个只读工具用项目 B 的 id 调一遍，
+// 再在响应里搜 B 的内容）。**写这一侧没有对应的**，而"同一形状不该有的有守卫、有的没有"正是本仓
+// 反复出现的形态。这条判据把 63 个写工具【逐个】用隔壁项目的 id 调一遍（参数按各自的 inputSchema
+// 补齐 —— 不补的话大半撞在"缺参数"上，验不到作用域那一层），钉住两件事：
+//   ① 一个都不许真的执行；② 隔壁项目的数据在整轮之后一个字节都不许变（"拒了但已经改了"是另一种）。
+// 它同时把每个工具【被哪道门拦下的】打出来：拒绝码全落在"缺参数"上就说明这轮验的是我的参数合成，
+// 不是守卫本身。
+async function verifyBoundedNodeCannotWriteIntoAnotherProject(output) {
+  const dir = mkdtempSync(join(tmpdir(), "aimac-mcp-write-scope-"));
+  try {
+    const probeFile = join(dir, "write-scope-probe.mjs");
+    writeFileSync(probeFile, `
+import { createHash } from "node:crypto";
+import { handleMcpJsonRpc, createMcpToolDefinitions } from ${JSON.stringify(resolve(root, "apps/mcp-server/server.mjs"))};
+import { readStoredState, writeStoredState } from ${JSON.stringify(resolve(root, "apps/control-plane-ui/lib/state-store.mjs"))};
+const root = ${JSON.stringify(root)};
+const runtimeDir = process.env.AIMAC_RUNTIME_DIR;
+const options = {root, runtimeDir, statePath: runtimeDir + "/control-plane-state.json",
+  seedPath: root + "/data/seed-state.json", buildInitialState: () => ({})};
+const sys = {principal: {kind: "system_admin", id: "acct_scope_sys", allowedMcpTools: ["*"]}};
+const call = (name, args, ctx) => handleMcpJsonRpc({jsonrpc: "2.0", id: 1, method: "tools/call",
+  params: {name, arguments: args}}, ctx);
+const unwrap = (response) => {
+  if (response?.error) return {kind: "jsonrpc_error", code: String(response.error.message || "").slice(0, 60)};
+  let body = {};
+  try { body = JSON.parse(response?.result?.content?.[0]?.text || "{}"); } catch { body = {}; }
+  const inner = body.result ?? body;
+  const code = inner?.error || body?.error;
+  if (body.ok === false || inner?.ok === false || code) return {kind: "refused", code: String(code || "(没有码)")};
+  return {kind: "executed", inner};
+};
+// 先用系统身份造一个【隔壁项目】和它的任务组
+const madeProject = unwrap(await call("orchestration-mcp.project_create",
+  {name: "隔壁项目", idempotencyKey: "write-scope-project"}, sys));
+const foreignProjectId = madeProject.inner?.project?.id || madeProject.inner?.id;
+const madeGroup = unwrap(await call("orchestration-mcp.task_group_create",
+  {projectId: foreignProjectId, title: "隔壁任务组", idempotencyKey: "write-scope-group"}, sys));
+const foreignGroupId = madeGroup.inner?.taskGroup?.id || madeGroup.inner?.id;
+const foreignDigest = () => {
+  const state = readStoredState(options);
+  const mine = [];
+  for (const [collection, items] of Object.entries(state)) {
+    if (!Array.isArray(items)) continue;
+    for (const item of items) {
+      if (item && typeof item === "object"
+        && (item.projectId === foreignProjectId || item.taskGroupId === foreignGroupId)) {
+        mine.push(collection + ":" + JSON.stringify(item));
+      }
+    }
+  }
+  return {count: mine.length, digest: createHash("sha256").update(mine.sort().join("|")).digest("hex")};
+};
+const before = foreignDigest();
+const defs = createMcpToolDefinitions().filter((tool) => tool.annotations?.readOnlyHint !== true);
+const bounded = {principal: {kind: "agent_node", id: "node_bounded_probe",
+  projectIds: ["prj_control_plane"], allowedMcpTools: ["*"]}};
+// 这个节点必须【在自己项目里有一份活的、绑在派发上的授权】：没有的话它连第一道门
+// （mcp_dispatch_bound_grant_required）都过不去，这一轮就只验到"没授权不许写"——
+// 而要验的是"有授权、但拿隔壁的 id 去写"。授权直接写进状态：起真节点认领真派发要跑整套 e2e，
+// 代价不成比例，而这里要的只是让判定落到 grantMatchesArgs 那一行上。
+{
+  const state = readStoredState(options);
+  const ownGroup = (state.taskGroups || []).find((item) => item.projectId === "prj_control_plane");
+  const at = new Date(Date.now() + 30 * 60000).toISOString();
+  state.mcpGrants = [...(state.mcpGrants || []), ...defs.map((def, index) => ({
+    schemaVersion: "mcp-grant/v1", grantId: "grant_scope_probe_" + index, grantStatus: "issued",
+    agentNodeId: "node_bounded_probe", toolName: def.name, dispatchId: "dsp_scope_probe",
+    projectId: "prj_control_plane", taskGroupId: ownGroup?.id, workId: "work_scope_probe",
+    sessionId: "sess_scope_probe", expiresAt: at, createdAt: new Date().toISOString()
+  }))];
+  state.stateVersion = Number(state.stateVersion || 0) + 1;
+  writeStoredState(state, {...options, expectedStateVersion: state.__loadedStateVersion});
+}
+const rows = [];
+for (const def of defs) {
+  const props = def.inputSchema?.properties || {};
+  const args = {};
+  for (const key of def.inputSchema?.required || []) {
+    const type = props[key]?.type;
+    if (/projectId/i.test(key)) args[key] = foreignProjectId;
+    else if (/taskGroupId/i.test(key)) args[key] = foreignGroupId;
+    else if (key === "idempotencyKey") args[key] = "write-scope-" + def.name;
+    else if (type === "array") args[key] = [];
+    else if (type === "integer" || type === "number") args[key] = 1;
+    else if (type === "boolean") args[key] = true;
+    else if (type === "object") args[key] = {};
+    else args[key] = "write-scope-" + key;
+  }
+  args.projectId = foreignProjectId;
+  args.taskGroupId = foreignGroupId;
+  args.idempotencyKey = "write-scope-" + def.name;
+  let row;
+  try { row = unwrap(await call(def.name, args, bounded)); }
+  catch (error) { row = {kind: "threw", code: String(error?.message || error).slice(0, 60)}; }
+  rows.push({name: def.name, kind: row.kind, code: row.code || null});
+}
+const after = foreignDigest();
+process.stdout.write(JSON.stringify({foreignProjectId, foreignGroupId, rows, before, after}));
+`);
+    const probe = spawnSync(process.execPath, [probeFile], {encoding: "utf8", timeout: 300000,
+      env: {...process.env, AIMAC_RUNTIME_DIR: join(dir, "runtime"), AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: ""}});
+    let report = null;
+    try { report = JSON.parse(probe.stdout || "null"); } catch { report = null; }
+    if (!report?.rows?.length || !report.foreignProjectId || !report.foreignGroupId) {
+      output.push(`写侧越权判据没跑成（不是跑过了没发现）：${String(probe.stderr || probe.stdout || "无输出").slice(0, 220)}`);
+      return;
+    }
+    if (!report.before.count) {
+      output.push("写侧越权判据没造出想测的情形：隔壁项目里一条记录都没有，"
+        + "「隔壁的数据一个字节都没变」这条恒真");
+      return;
+    }
+    const executed = report.rows.filter((row) => row.kind === "executed");
+    if (executed.length) {
+      output.push(`绑在项目 A 上的节点，拿【隔壁项目】的 id 调这些写工具居然执行了：`
+        + `${executed.map((row) => row.name).join("、")} —— 只读那侧早有跨租户扫描，写这侧一直没有`);
+    }
+    if (report.before.digest !== report.after.digest) {
+      output.push(`整轮下来隔壁项目的数据变了（${report.before.count} 条 → ${report.after.count} 条）——`
+        + " 「拒了」不等于「什么都没做」：有工具在返回拒绝之前已经写下去了");
+    }
+    const byCode = {};
+    for (const row of report.rows) byCode[row.code || row.kind] = (byCode[row.code || row.kind] || 0) + 1;
+    const missingArgs = byCode.mcp_required_argument_missing || 0;
+    if (missingArgs > 8) {
+      output.push(`${missingArgs} 个写工具是被「缺参数」拦下的（不是被作用域）—— 这一轮验的是参数合成，`
+        + "不是守卫本身。把这些工具的必填项按 inputSchema 补齐再验");
+    }
+    console.log(`写工具跨租户：${report.rows.length} 个写工具各用隔壁项目的 id 调过（必填项按 inputSchema 合成），`
+      + `0 个执行、隔壁 ${report.before.count} 条记录一字未变；拦下它们的门：`
+      + Object.entries(byCode).sort((a, b) => b[1] - a[1]).map(([code, n]) => `${code}×${n}`).join("、"));
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+}
+
 async function verifyEveryMcpToolAnswersAnEmptyCall(output) {
   // 放函数体内：模块级 const 会落在文件末尾，而 runAsync 在文件上半部就调它 —— 那是 TDZ。
   const MCP_TOOLS_THAT_ANSWER_WITHOUT_ARGS = {

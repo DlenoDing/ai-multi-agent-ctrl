@@ -3735,6 +3735,16 @@ const MUTATIONS = [
     expect: "orchestrator permission"
   },
   {
+    // 写侧的跨租户：授权必须比对【入参里的作用域】。拆掉这一句，绑在项目 A 上的节点
+    // 拿隔壁项目的 id 就能写进去（实测 26 个写工具真的执行了，隔壁记录 1→25 条）。
+    name: "授权必须比对入参的作用域（写侧跨租户）",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyBoundedNodeCannotWriteIntoAnotherProject",
+    from: "    const scopedGrants = activeGrants.filter((grant) => grantMatchesArgs(state, grant, args));",
+    to: "    const scopedGrants = activeGrants;",
+    expect: "拿【隔壁项目】的 id 调这些写工具居然执行了"
+  },
+  {
     // 没点名对象也照答的那几个只读工具，回答里必须说清答的是谁。
     name: "默认答的工具要说清答的是哪一个对象",
     file: "apps/mcp-server/server.mjs",
