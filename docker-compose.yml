@@ -40,7 +40,11 @@ services:
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
       POSTGRES_DB: "aimac"
     ports:
-      - "55432:5432"
+      # 只绑回环。控制面走内网 postgres:5432 连它，发布出来只是为了在宿主上 psql／跑自检。
+      # 写成 "55432:5432" 的话监听的是 0.0.0.0 —— 而 Docker 的端口发布会【绕过宿主防火墙】
+      #（UFW 那类规则挡不住它），云上 `docker compose up` 一开，整份控制面状态所在的库
+      # 就只隔着一个 POSTGRES_PASSWORD 暴露在公网上。
+      - "127.0.0.1:55432:5432"
     volumes:
       - aimac-postgres:/var/lib/postgresql/data
     healthcheck:

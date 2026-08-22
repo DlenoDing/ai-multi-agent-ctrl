@@ -448,6 +448,7 @@ run(verifyCallerChosenIdsHaveUniquenessGuards);
 run(verifyRecordSpecsHaveProducers);
 run(verifyAgentInstallerFlagsMatchTheDocs);
 run(verifySecurityRelaxingSwitchesAreListed);
+run(verifyComposePortsAreNotAccidentallyPublic);
 run(verifyFalsyDefaultsDoNotFavourTheCaller);
 run(verifyEveryProjectScopedIdIsScopeChecked);
 run(verifyEveryStateCollectionIsTenantScoped);
@@ -16653,6 +16654,34 @@ function verifyFalsyDefaultsDoNotFavourTheCaller(output) {
   const stale = Object.keys(SAFE_BY_DESIGN).filter((shape) => !seen.has(shape));
   if (stale.length) output.push(`缺省判决核对：登记表已过时，这些形状代码里已经没有了：${stale.join("；").slice(0, 160)}`);
   console.log(`缺省判决核对：${scanned} 处 \`=== false ?\` 逐个核过，${Object.keys(SAFE_BY_DESIGN).length} 种形状登记为安全并写明了理由`);
+}
+
+// compose 里发布出去的端口要么绑回环，要么写明【为什么必须对外】。
+// Docker 的端口发布会绕过宿主防火墙（UFW 那类规则挡不住它）—— 写成 "55432:5432" 就是
+// 监听 0.0.0.0，云上 `docker compose up` 一开，那个服务就在公网上了。
+// 2026-08-23 实测：postgres 此前正是这么发布的，而库里是整份控制面状态。
+function verifyComposePortsAreNotAccidentallyPublic(output) {
+  // 有意对外的要登记，写明它凭什么。
+  const PUBLIC_ON_PURPOSE = {
+    "4317": "控制面本身：agent 节点与浏览器都要连它，不对外就没法用；它自己有鉴权"
+  };
+  const compose = readFileSync(resolve(root, "docker-compose.yml"), "utf8");
+  const published = [...compose.matchAll(/^\s*-\s*"([^"]*:\d+)"\s*$/gmu)].map((hit) => hit[1]);
+  if (published.length < 2) {
+    output.push(`compose 端口核对：只提取到 ${published.length} 条端口发布（实测 2）—— 提取失配，本条在空转`);
+    return;
+  }
+  for (const entry of published) {
+    if (entry.startsWith("127.0.0.1:") || entry.startsWith("localhost:")) continue;
+    const container = entry.split(":").pop();
+    if (PUBLIC_ON_PURPOSE[container]) continue;
+    output.push(`compose 端口核对：${entry} 绑在 0.0.0.0 上 —— Docker 的端口发布会绕过宿主防火墙，`
+      + "云上一开就是公网可达；要么写成 127.0.0.1:<宿主口>:<容器口>，要么在 PUBLIC_ON_PURPOSE 里写明凭什么对外");
+  }
+  const stale = Object.keys(PUBLIC_ON_PURPOSE).filter((port) => !published.some((entry) => entry.endsWith(`:${port}`)));
+  if (stale.length) output.push(`compose 端口核对：登记表已过时，这些端口已经不发布了：${stale.join("、")}`);
+  console.log(`compose 端口核对：${published.length} 条端口发布逐个核过，`
+    + `${Object.keys(PUBLIC_ON_PURPOSE).length} 条登记为有意对外`);
 }
 
 function verifySecurityRelaxingSwitchesAreListed(output) {

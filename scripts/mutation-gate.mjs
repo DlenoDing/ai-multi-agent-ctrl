@@ -4095,6 +4095,16 @@ const MUTATIONS = [
     expect: "只核对模式：对着残缺目录必须拒绝"
   },
   {
+    // Docker 的端口发布会绕过宿主防火墙：写成 "55432:5432" 就是监听 0.0.0.0，
+    // 云上 `docker compose up` 一开，那个库（整份控制面状态）就在公网上了。
+    name: "compose 发布的端口不得意外对外",
+    file: "docker-compose.yml",
+    check: "verifyComposePortsAreNotAccidentallyPublic",
+    from: '      - "127.0.0.1:55432:5432"',
+    to: '      - "55432:5432"',
+    expect: "绑在 0.0.0.0 上"
+  },
+  {
     // 会放宽默认安全强度的开关必须有清单：审计一套部署的人得先知道该查什么。
     // 从 README 那张表里拿掉一条，门就该点名它。
     name: "放宽默认限制的开关必须在 README 的清单里",
