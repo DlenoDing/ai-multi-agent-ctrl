@@ -112,6 +112,14 @@ curl -fsSL https://control.example.com/install-agent.sh | sh -s -- \
 
 Codex/Claude/Cursor 等 Agent 侧远程 MCP 配置由安装脚本和 Runtime 使用该节点的 node token 自动生成、刷新和维护。不要把 `scripts/register-mcp-client.mjs` 当作 Agent 入网步骤；它只保留给内部协议诊断，并且必须显式传入 bearer token。
 
+容器以**非 root**（镜像自带的 `node` 用户）运行，端口只发布控制面自己那一个；
+PostgreSQL 只绑回环 `127.0.0.1:55432`（Docker 的端口发布会绕过宿主防火墙，绑 0.0.0.0
+等于把整份状态所在的库放到公网上）。
+**从更早的版本升级时**：那时容器是 root 跑的，已存在的 `aimac-runtime` 卷属主是 root，
+换成非 root 之后写不进去。升级前执行一次
+`docker run --rm -v aimac-runtime:/v alpine chown -R 1000:1000 /v`（`node` 用户的 uid 是 1000），
+或者干脆删掉这个卷让它重建（里面是运行时配置与技能源缓存，权威状态在 PostgreSQL 里）。
+
 Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token 写入镜像层。`npm run docker:up` 会在 `.runtime/docker.env` 生成缺失的本地验证 token 和 `POSTGRES_PASSWORD`，再由 Compose 在容器运行时注入 `AIMAC_PUBLIC_URL`、`AIMAC_BOOTSTRAP_TOKEN`、`AIMAC_MCP_SERVICE_TOKEN`、本地 seed 账号 token 和 `DATABASE_URL`，通过 `shell:start` 初始化并启动控制面、Agent Gateway、Skill Registry 与远程 MCP。共享环境必须用真实外部 secret 和 HTTPS 反向代理覆盖这些本地生成值。
 
 `npm run init` 会生成本地系统 bootstrap token、本地 seed 用户账号 token 和中央 MCP service token。系统管理员账号使用 bootstrap token；普通用户、项目管理员和服务账号使用各自账号 token 或后续管理界面生成的授权，不能用 bootstrap token 直接登录任意账号。Agent 可见的凭证不是这些 seed token，而是每次项目 join token 消费后由服务端签发的唯一 node token。

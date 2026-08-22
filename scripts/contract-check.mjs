@@ -449,6 +449,7 @@ run(verifyRecordSpecsHaveProducers);
 run(verifyAgentInstallerFlagsMatchTheDocs);
 run(verifySecurityRelaxingSwitchesAreListed);
 run(verifyComposePortsAreNotAccidentallyPublic);
+run(verifyContainerRunsAsNonRoot);
 run(verifyFalsyDefaultsDoNotFavourTheCaller);
 run(verifyEveryProjectScopedIdIsScopeChecked);
 run(verifyEveryStateCollectionIsTenantScoped);
@@ -16660,6 +16661,27 @@ function verifyFalsyDefaultsDoNotFavourTheCaller(output) {
 // Docker 的端口发布会绕过宿主防火墙（UFW 那类规则挡不住它）—— 写成 "55432:5432" 就是
 // 监听 0.0.0.0，云上 `docker compose up` 一开，那个服务就在公网上了。
 // 2026-08-23 实测：postgres 此前正是这么发布的，而库里是整份控制面状态。
+// 镜像必须以非 root 运行，并且这件事要在 README 里说给升级的人听 ——
+// 旧版本是 root 跑的，已存在的具名卷属主是 root，换过来之后非 root 进程写不进去。
+// 光改 Dockerfile 而不写这一句，升级的人看到的是一句 EACCES。
+function verifyContainerRunsAsNonRoot(output) {
+  const dockerfile = readFileSync(resolve(root, "Dockerfile"), "utf8")
+    .split("\n").filter((line) => !/^\s*#/u.test(line)).join("\n");
+  if (!/^USER\s+node\s*$/mu.test(dockerfile)) {
+    output.push("Dockerfile 没有 `USER node` —— 容器以 root 跑，进程只需要写 /app/.runtime，没有理由给它 root");
+  }
+  if (!/chown -R node:node/u.test(dockerfile)) {
+    output.push("Dockerfile 切了非 root 却没有 chown —— 具名卷首次创建时会沿用镜像里那个目录的属主，"
+      + "不改属主的话挂上来就是 root 的，非 root 进程写不进去");
+  }
+  const readme = readFileSync(resolve(root, "README.md"), "utf8");
+  if (!/chown -R 1000:1000/u.test(readme)) {
+    output.push("README 没有给【从 root 版本升级的人】那一句 —— 旧卷是 root 属主，"
+      + "换成非 root 之后写不进去，他看到的会是一句 EACCES 而不知道该 chown");
+  }
+  console.log("容器身份核对：镜像以 node 用户运行、目录属主已改、README 写了旧卷的升级步骤");
+}
+
 function verifyComposePortsAreNotAccidentallyPublic(output) {
   // 有意对外的要登记，写明它凭什么。
   const PUBLIC_ON_PURPOSE = {

@@ -1393,8 +1393,10 @@ end
 readme_numbers = [
   {"what" => "内存审计台账的上限", "readme" => /内存里只留最近 (\d+) 条/,
    "source" => "apps/control-plane-ui/lib/audit-ledger.mjs", "pattern" => /AUDIT_LOG_CAP = (\d+)/},
-  {"what" => "本机默认端口", "readme" => /127\.0\.0\.1:(\d+)/,
-   "source" => "apps/control-plane-ui/server.mjs", "pattern" => /AIMAC_PORT \|\| (\d+)\)/}
+  {"what" => "控制面本机默认端口", "readme" => %r{http://127\.0\.0\.1:(\d+)},
+   "source" => "apps/control-plane-ui/server.mjs", "pattern" => /AIMAC_PORT \|\| (\d+)\)/},
+  {"what" => "compose 里 PostgreSQL 的宿主端口", "readme" => /只绑回环 `127\.0\.0\.1:(\d+)`/,
+   "source" => "docker-compose.yml", "pattern" => /"127\.0\.0\.1:(\d+):5432"/}
 ]
 readme_numbers.each do |entry|
   in_readme = readme_source.scan(entry["readme"]).flatten.uniq

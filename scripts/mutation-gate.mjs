@@ -4095,6 +4095,16 @@ const MUTATIONS = [
     expect: "只核对模式：对着残缺目录必须拒绝"
   },
   {
+    // 容器以非 root 跑。光改 Dockerfile 而不告诉升级的人，他会撞上一句 EACCES ——
+    // 旧版本是 root 跑的，已存在的具名卷属主是 root。
+    name: "容器必须非 root，且要告诉升级的人 chown",
+    file: "README.md",
+    check: "verifyContainerRunsAsNonRoot",
+    from: "`docker run --rm -v aimac-runtime:/v alpine chown -R 1000:1000 /v`",
+    to: "重新创建容器即可",
+    expect: "没有给【从 root 版本升级的人】那一句"
+  },
+  {
     // Docker 的端口发布会绕过宿主防火墙：写成 "55432:5432" 就是监听 0.0.0.0，
     // 云上 `docker compose up` 一开，那个库（整份控制面状态）就在公网上了。
     name: "compose 发布的端口不得意外对外",
