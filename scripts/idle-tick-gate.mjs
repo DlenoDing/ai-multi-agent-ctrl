@@ -10,6 +10,7 @@ import {join, dirname, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {tmpdir} from "node:os";
 import {installGateFetch} from "./lib/gate-fetch.mjs";
+import {createChildTracker} from "./lib/child-tracking.mjs";
 
 installGateFetch("空转门");
 
@@ -18,16 +19,7 @@ installGateFetch("空转门");
 // 而它还带着自治循环在跑。本机实测积了 13 个这样的进程、最久的活了 15 小时，
 // 负载被抬到 7 以上 —— 后果不只是浪费：同一份代码的耗时量出 22s 和 99s 两个结果，
 // 任何性能判断都作不得数。测试留下的垃圾会污染后面所有测试。
-const spawnedChildren = [];
-function trackChild(child) {
-  spawnedChildren.push(child);
-  return child;
-}
-function killTrackedChildren() {
-  for (const child of spawnedChildren.splice(0)) {
-    try { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); } catch { /* 尽力而为 */ }
-  }
-}
+const {trackChild, killTrackedChildren} = createChildTracker();
 process.on("exit", killTrackedChildren);
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.on(signal, () => { killTrackedChildren(); process.exit(130); });

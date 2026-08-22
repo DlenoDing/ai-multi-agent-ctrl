@@ -2,7 +2,7 @@
 import {
 execFileSync, spawn, spawnSync } from "node:child_process";
 import { SCHEMA_FILE_ALIASES, UNCOVERED_CEILINGS, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
-import { checkRecordStatusesAreDeclaredStates } from "./lib/state-machine-states.mjs";
+import { checkRecordStatusesAreDeclaredStates, extractMachineStates } from "./lib/state-machine-states.mjs";
 import { mcpServiceAllowedTools ,
   mcpServiceAllowlistNotice
 } from "../apps/control-plane-ui/lib/mcp-service-allowlist.mjs";
@@ -6052,24 +6052,7 @@ function loadJson(path) {
   return JSON.parse(readFileSync(resolve(root, path), "utf8"));
 }
 
-// Extract the declared states of a state-machine from spec/state-machines.yaml without a YAML dependency.
-function extractMachineStates(yamlText, machine) {
-  const lines = yamlText.split(/\r?\n/);
-  let index = lines.findIndex((line) => line === `  ${machine}:`);
-  if (index < 0) return [];
-  const states = [];
-  let inStates = false;
-  for (index += 1; index < lines.length; index++) {
-    const line = lines[index];
-    if (/^  \S/.test(line)) break; // next machine at 2-space indent
-    if (/^    states:\s*$/.test(line)) { inStates = true; continue; }
-    if (!inStates) continue;
-    const item = line.match(/^      - "([^"]+)"\s*$/);
-    if (item) { states.push(item[1]); continue; }
-    if (/^    \S/.test(line)) break; // next key (e.g. transitions:)
-  }
-  return states;
-}
+// extractMachineStates 收进了 lib/state-machine-states.mjs（此前这里与那边各存一份）。
 
 // Gap #4: WorkItem/WorkSession status must stay within the legal state-machine enums; there is no
 // "blocked"/"monitor_attention" state. Also confirm the converged blocked enums are recognized by
