@@ -572,6 +572,7 @@ run(verifyRefusalCodeScanSeesEveryThrowHelper);
 run(verifyRefusalCodeCoverageRatchet);
 await runAsync(verifyGateFetchFailuresNameTheGate);
 run(verifyMcpInputDictionaryHasNoGhosts);
+run(verifyOrchestratorOffWordingMatchesWhatStillRuns);
 run(verifyConsoleReadsOnlyWhatItsViewDelivers);
 run(verifyServerStateFieldsHaveProducers);
 run(verifyProjectShardsAreNeverSilentlyDropped);
@@ -6006,6 +6007,31 @@ function verifyProjectShardsAreNeverSilentlyDropped(output) {
   } finally {
     rmSync(runtimeDir, {recursive: true, force: true});
   }
+}
+
+function verifyOrchestratorOffWordingMatchesWhatStillRuns(output) {
+  // 「后台自治已关闭」时控制台原先说「派发不会被领走」。这是错的，而且错在最要命的时刻：
+  // 运维出事时关掉自治周期，以为系统冻住了 —— 而【认领走的是网关】，与自治周期毫无关系，
+  // 已经排队的派发照样被在线 agent 领走、执行、提交、推送。
+  // （证据：控制面 e2e 全程 AIMAC_ORCHESTRATOR_INTERVAL_MS=0，照样认领并跑完了派发。）
+  const gateway = readFileSync(join(root, "apps/control-plane-ui/lib/agent-gateway.mjs"), "utf8");
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const orchestratorAware = (gateway.match(/autonomousOrchestrator|orchestratorInterval/gu) || []).length;
+  if (orchestratorAware > 0) {
+    output.push(`网关现在会看自治周期了（${orchestratorAware} 处）—— 那么「关掉自治周期之后派发还会不会被领走」`
+      + "这件事就变了，控制台上那几句话要跟着重写（它们现在说的是「仍会被领走」）");
+    return;
+  }
+  if (/派发不会被领走/u.test(app)) {
+    output.push("控制台仍在说「派发不会被领走」—— 认领走的是网关，与自治周期无关："
+      + "运维照着这句话在事故时关掉自治周期，会以为系统冻住了，而排队的派发照样在跑");
+  }
+  // 说清事实之外还要给出【真能停下来的那个杠杆】，否则等于只告诉人「你以为的停不是停」。
+  if (!/已经排队的派发仍会被在线 agent 领走并执行/u.test(app) || !/暂停执行/u.test(app)) {
+    output.push("「自治周期已关闭」那段没说清「排队中的派发仍会被领走」，或没给出真能停下来的出口"
+      + "（任务组页的「暂停执行」）—— 只说现状不给出口，人还是不知道该按哪里");
+  }
+  console.log("「自治周期关闭」的说法与实际一致：网关不看自治周期，控制台如实说明排队的派发仍会被领走，并给了停下来的出口");
 }
 
 function verifyConsoleReadsOnlyWhatItsViewDelivers(output) {

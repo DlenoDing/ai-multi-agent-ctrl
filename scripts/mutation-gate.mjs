@@ -3596,6 +3596,14 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "不许再说「关了自治周期派发就不会被领走」",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyOrchestratorOffWordingMatchesWhatStillRuns",
+    from: "但【已经排队的派发仍会被在线 agent 领走并执行】—— 认领走的是网关，与自治周期无关。",
+    to: "派发不会被领走。",
+    expect: "控制台仍在说「派发不会被领走」"
+  },
+  {
     name: "界面读了视图不下发的字段要被查出来",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyConsoleReadsOnlyWhatItsViewDelivers",

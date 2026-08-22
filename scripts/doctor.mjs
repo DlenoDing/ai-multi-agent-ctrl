@@ -2758,6 +2758,20 @@ try {
         }
         console.log("  ok  派发包带齐了三道绑定（节点 / 任务合同摘要 / 技能集），两侧值一致");
       }
+      // 这一整套 e2e 全程 AIMAC_ORCHESTRATOR_INTERVAL_MS=0（后台自治是关的），而上面这一次认领
+      // 确确实实拿到了派发 —— 控制台原先在「已关闭」时写着「派发不会被领走」，这就是它为假的现场。
+      // 钉成断言：哪天认领真的开始看自治周期了，这里会红，提醒人回去改那几句话
+      //（文案那一侧由 verifyOrchestratorOffWordingMatchesWhatStillRuns 守）。
+      {
+        const runtimeNow = await jsonFetch(port, "/api/state?view=runtime", {headers: {authorization: systemAuth}});
+        const orchestrator = runtimeNow.payload?.runtime?.autonomousOrchestrator;
+        if (orchestrator?.enabled !== false) {
+          console.log(`  --  这一轮后台自治不是关着的（enabled=${JSON.stringify(orchestrator?.enabled)}），`
+            + "「关掉自治周期后派发照样被领走」未被检验");
+        } else {
+          console.log("  ok  后台自治关着，派发照样被领走（认领走的是网关）—— 控制台不许说「派发不会被领走」");
+        }
+      }
       const groupId = claimedDispatch.taskGroupId;
       const pauseIt = await jsonFetch(port, `/api/task-groups/${groupId}/control`, {
         method: "POST",

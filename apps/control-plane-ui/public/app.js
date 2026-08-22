@@ -1953,7 +1953,9 @@ function renderSysSettings() {
         <dt>执行档位</dt><dd>${esc(executionProfileLabel(runtime.executionProfile))}</dd>
         <dt>后台自治</dt><dd>${runtime.autonomousOrchestrator?.enabled
           ? `每 ${esc(Math.round((runtime.autonomousOrchestrator.intervalMs || 0) / 1000))} 秒推进一次${orchestratorHealthText(runtime.autonomousOrchestrator)}`
-          : `<span class="warn-text">已关闭：后台不推进任何东西 —— 人提交的指令会一直停在待处理，派发不会被领走，关闭门不会重算</span>`}</dd>
+          : `<span class="warn-text">已关闭：不再产生新的派发，关闭门不会重算，人提交的指令会一直停在待处理。`
+            + `但【已经排队的派发仍会被在线 agent 领走并执行】—— 认领走的是网关，与自治周期无关。`
+            + `要连它们一起停，到任务组页点「暂停执行」。</span>`}</dd>
         <dt>状态机执行</dt><dd>${runtime.transitionEnforcement === "strict"
           ? "严格（非法状态转移一律拒绝）"
           : `<span class="warn-text">宽松：非法状态转移只记一笔就放行（${esc(runtime.transitionEnforcement || "未知")}）—— 流程不得跳步这条保证当前是关的</span>`}</dd>
@@ -3400,13 +3402,15 @@ function orchestratorStalledNotice() {
     && tickAgeMs > Math.max(intervalMs * 5, 3 * 60 * 1000)) {
     return `<div class="notice warn-notice">自治循环已经 ${esc(Math.floor(tickAgeMs / 60000))} 分钟没有推进过，`
       + `而它自称每 ${esc(Math.round(intervalMs / 1000))} 秒一拍 —— 它没有报错，只是【不跑了】：`
-      + `派发不会被领走、关闭门不会重算、人工指令会一直停在待处理。`
+      + `不会再有新的派发、关闭门不会重算、人工指令会一直停在待处理；`
+      + `而【已经排队的派发仍会被领走并执行】—— 认领走的是网关，不归它管。`
       + `请先看服务端日志（进程还在但主循环卡住时，日志里也会没有新的一拍）。`
       + manualTickExit() + `恢复之前，需要人推进的事只能手动来。</div>`;
   }
   if (failures < 2) return "";
-  return `<div class="notice warn-notice">自治循环已连续 ${esc(failures)} 拍失败，当前【没有任何东西在自行推进】：`
-    + `派发不会被领走、关闭门不会重算、人工指令会一直停在待处理。最近一次失败：${esc(status.lastError || "未记录")}`
+  return `<div class="notice warn-notice">自治循环已连续 ${esc(failures)} 拍失败，当前【不会再有新的派发】：`
+    + `关闭门不会重算、人工指令会一直停在待处理；而已经排队的派发仍会被领走并执行。`
+    + `最近一次失败：${esc(status.lastError || "未记录")}`
     + `（最后一次成功推进：${status.lastSuccessAt ? esc(fmtTime(status.lastSuccessAt)) : "无记录"}）。`
     + `请先看服务端日志定位原因。` + manualTickExit() + `恢复之前，需要人推进的事只能手动来。</div>`;
 }
