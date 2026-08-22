@@ -21,6 +21,7 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
+import { sweepStaleDoctorRuntimeDirs } from "./lib/stale-runtime-dirs.mjs";
 import { assertNoUndefinedInPayload } from "./lib/no-undefined-payload.mjs";
 
 async function getFreePort() {
@@ -216,6 +217,15 @@ console.log(JSON.stringify({
 const root = resolve(new URL("..", import.meta.url).pathname);
 const port = await getFreePort();
 const doctorRuntimeDir = process.env.AIMAC_DOCTOR_RUNTIME_DIR || `.runtime/doctor-${Date.now()}`;
+// 上一轮跑挂了/被打断的运行目录没人收。commit.sh 每次提交都跑一遍这套 e2e ——
+// 实测在这台机器上攒到 1367 个、3.9GB。失败那次的留着给人查（保留期内），过期的这里收走。
+{
+  const swept = sweepStaleDoctorRuntimeDirs(join(root, ".runtime"), {
+    keep: [doctorRuntimeDir.split("/").at(-1), `${doctorRuntimeDir.split("/").at(-1)}-startup`]
+  });
+  if (swept.removed.length) console.log(`  ..  清掉了 ${swept.removed.length} 个过期的 e2e 运行目录（保留期内的 ${swept.keptRecent.length} 个留着给人查）`);
+  if (swept.failed.length) console.log(`  --  有 ${swept.failed.length} 个清不掉：${swept.failed.slice(0, 3).join("、")}`);
+}
 // 本轮真实签发出去的一次性凭据。收尾时要证明它们【一个都没落盘】——
 // 用真令牌搜，而不是搜一个泛化的形状：后者在文件里本来就搜不到，断言会安静地空转。
 const issuedPlaintextSecrets = [];
@@ -3253,6 +3263,10 @@ if (exitRace.timedOut) {
 const [code, signal] = exitRace.pair || [null, "SIGKILL"];
 try { rmSync(doctorRepo.base, {recursive: true, force: true}); } catch {}
 if (!process.env.AIMAC_DOCTOR_RUNTIME_DIR) { try { rmSync(join(root, doctorRuntimeDir), {recursive: true, force: true}); } catch {} }
+// 启动期那批用的是另一个目录（<主目录>-startup），原先从来没被收过 —— 736 个就是这么来的。
+if (!process.env.AIMAC_DOCTOR_RUNTIME_DIR) {
+  try { rmSync(join(root, `${doctorRuntimeDir}-startup`), {recursive: true, force: true}); } catch { /* 清不掉就留给下一轮的过期清理 */ }
+}
 if (code && signal !== "SIGTERM") {
   throw new Error(`doctor server exited with ${code}: ${stderr}`);
 }

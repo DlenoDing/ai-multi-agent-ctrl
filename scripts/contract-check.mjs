@@ -7,8 +7,9 @@ import { mcpServiceAllowedTools ,
 } from "../apps/control-plane-ui/lib/mcp-service-allowlist.mjs";
 import { createHash } from "node:crypto";
 import { describePendingWreckage } from "./lib/mutation-wreckage.mjs";
+import { sweepStaleDoctorRuntimeDirs } from "./lib/stale-runtime-dirs.mjs";
 import { KNOWN_SECOND_DOORS } from "./lib/known-second-doors.mjs";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, utimesSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -443,6 +444,7 @@ run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 runAsync(verifyAgentRuntimeGuardsRefuseRealAttacks);
 runAsync(verifyTestServersDieWithTheirParent);
 run(verifyRuntimeConstantsSitBeforeItsTopLevelAwait);
+run(verifyStaleE2eRuntimeDirsGetSwept);
 run(verifyAgentFailureCodeCoverageRatchet);
 run(verifyAgentFailureReasonsAreCoded);
 run(verifyTruncatedExecutorOutputSaysSo);
@@ -11338,6 +11340,70 @@ function verifyRuntimeConstantsSitBeforeItsTopLevelAwait(output) {
   }
   console.log(`runtime.mjs：顶层 await（第 ${awaitLine + 1} 行）之后没有模块级常量（TDZ 语义当场探过），`
     + "且子进程起来后的异常会杀掉子进程再抛 —— 核过");
+}
+
+function verifyStaleE2eRuntimeDirsGetSwept(output) {
+  // 控制面 e2e 每跑一次留一个运行目录，跑挂/被打断那次的没人收 ——
+  // 实测攒到 1367 个、3.9GB（commit.sh 每次提交都跑一遍）。
+  // 清理这种动作要格外小心：删错东西比不删坏得多，所以这里连"不该碰的"一起验。
+  const sandbox = mkdtempSync(join(tmpdir(), "cc-sweep-"));
+  try {
+    const make = (name, ageMs) => {
+      const path = join(sandbox, name);
+      mkdirSync(join(path, "nested"), {recursive: true});
+      writeFileSync(join(path, "nested", "state.json"), "{}");
+      const when = new Date(Date.now() - ageMs);
+      utimesSync(path, when, when);
+      return path;
+    };
+    const oldMain = make("doctor-1000", 5 * 60 * 60 * 1000);
+    const oldStartup = make("doctor-1000-startup", 5 * 60 * 60 * 1000);
+    const fresh = make("doctor-2000", 60 * 1000);
+    const mine = make("doctor-3000", 5 * 60 * 60 * 1000);
+    // 不该碰的：真实运行态、别的工具留下的、人手工放的。
+    const realRuntime = make("projects", 99 * 60 * 60 * 1000);
+    const uiReview = make("ui-review-1", 99 * 60 * 60 * 1000);
+    writeFileSync(join(sandbox, "control-plane-state.json"), "{}");
+
+    const swept = sweepStaleDoctorRuntimeDirs(sandbox, {staleAfterMs: 2 * 60 * 60 * 1000, keep: ["doctor-3000"]});
+    const gone = (path) => !existsSync(path);
+    const cases = [
+      ["过期的主目录", oldMain, true],
+      ["过期的启动期目录", oldStartup, true],
+      ["还在保留期内的", fresh, false],
+      ["本轮自己正在用的（keep）", mine, false],
+      ["真实运行态目录", realRuntime, false],
+      ["别的工具留下的", uiReview, false],
+      ["运行态文件", join(sandbox, "control-plane-state.json"), false]
+    ];
+    for (const [what, path, shouldBeGone] of cases) {
+      if (gone(path) !== shouldBeGone) {
+        output.push(`过期 e2e 目录清理：${what}${shouldBeGone ? "没被清掉" : "被清掉了"} —— `
+          + (shouldBeGone ? "它会一直占着盘（实测攒到 3.9GB）" : "顺手清理把不该动的东西删了，那比不清理坏得多"));
+      }
+    }
+    if (swept.removed.length !== 2) {
+      output.push(`过期 e2e 目录清理：报告说清了 ${swept.removed.length} 个（实际该是 2 个）—— `
+        + "报数与实际不符时，人没法从日志判断它到底动了什么");
+    }
+    // 目录还不存在（第一次跑）不该报错。
+    const missing = sweepStaleDoctorRuntimeDirs(join(sandbox, "not-there"));
+    if (missing.removed.length || missing.failed.length) {
+      output.push("过期 e2e 目录清理：对着一个还不存在的目录也报出了动作 —— 第一次跑会被它绊住");
+    }
+    // e2e 那一侧要真的接上，否则上面这些只证明了"这个函数本身管用"。
+    const doctorSource = readFileSync(join(root, "scripts/doctor.mjs"), "utf8");
+    if (!/sweepStaleDoctorRuntimeDirs\(/u.test(doctorSource)) {
+      output.push("控制面 e2e 没有调用过期目录清理 —— 它每次提交都跑一遍，留下的目录没人收");
+    }
+    if (!/rmSync\(join\(root, `\$\{doctorRuntimeDir\}-startup`\)/u.test(doctorSource)) {
+      output.push("控制面 e2e 收尾时没收启动期那份运行目录（<主目录>-startup）—— 实测 736 个就是这么来的");
+    }
+  } finally {
+    rmSync(sandbox, {recursive: true, force: true});
+  }
+  console.log("过期 e2e 运行目录：过期的两种都清、保留期内/本轮在用/真实运行态/别的工具留下的都不碰，"
+    + "e2e 两侧都真的接上了 —— 核过");
 }
 
 function verifyAgentFailureCodeCoverageRatchet(output) {

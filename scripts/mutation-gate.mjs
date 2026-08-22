@@ -3596,6 +3596,22 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "清过期目录不得碰不该碰的东西",
+    file: "scripts/lib/stale-runtime-dirs.mjs",
+    check: "verifyStaleE2eRuntimeDirsGetSwept",
+    from: "if (!entry.isDirectory() || !entry.name.startsWith(DOCTOR_RUNTIME_DIR_PREFIX)) continue;",
+    to: "if (!entry.isDirectory()) continue;",
+    expect: "顺手清理把不该动的东西删了"
+  },
+  {
+    name: "保留期内的目录不得被清掉",
+    file: "scripts/lib/stale-runtime-dirs.mjs",
+    check: "verifyStaleE2eRuntimeDirsGetSwept",
+    from: "if (!Number.isFinite(ageMs) || ageMs < staleAfterMs) { result.keptRecent.push(entry.name); continue; }",
+    to: "",
+    expect: "还在保留期内的被清掉了"
+  },
+  {
     name: "agent 失败码零覆盖回升要被拦住",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyAgentFailureCodeCoverageRatchet",
