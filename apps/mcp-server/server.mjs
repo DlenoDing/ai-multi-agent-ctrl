@@ -1723,6 +1723,7 @@ function createTaskGroup(state, args) {
   const at = new Date().toISOString();
   const languagePolicy = normalizeTaskGroupLanguagePolicy(args.languagePolicy || args);
   const taskGroup = {
+    schemaVersion: "task-group/v1",
     id: taskGroupId,
     projectId: project.id,
     // 与 REST 侧同规（server.mjs 的同名字段）：自由文本有上限，超了就拒。

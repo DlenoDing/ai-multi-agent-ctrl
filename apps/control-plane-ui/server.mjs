@@ -980,6 +980,7 @@ function createTaskGroupRecord(state, input = {}, options = {}) {
     roles.push({roleId, status: "ready", skillBinding: "server_resolved_on_dispatch", addedBy: "inherited", addedAt: at});
   }
   const taskGroup = {
+    schemaVersion: "task-group/v1",
     id: taskGroupId,
     projectId,
     // 自由文本必须有上限：实测一次请求就能把目标写进 30 万字，状态文件 56KB 涨到 1.8MB，

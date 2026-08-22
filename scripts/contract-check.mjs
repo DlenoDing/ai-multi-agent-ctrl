@@ -16524,8 +16524,6 @@ function verifyEveryProjectScopedIdIsScopeChecked(output) {
 // 所以改成登记制：不带 schemaVersion 的集合必须逐个写明凭什么可以不带；写不出理由的就是下一个洞。
 function verifyEveryStateCollectionIsSchemaChecked(output) {
   const COLLECTIONS_WITHOUT_SCHEMA_VERSION = {
-    taskGroups: "任务组同上；它内部的工作项状态由 spec/state-machines.yaml 的 WorkItem 枚举守住"
-      + "（verifyTransitionEngine 会压过真实产出）",
     modelProviders: "模型供应商目录，与 modelCapabilities 同源，由模型选择策略的校验覆盖",
     // 下面三个是运行时创建的，种子里没有 —— 我先前按种子做的同类扫描因此完全看不到它们。
     agentTaskContracts: "有 spec/agent-task-contract.schema.json，但记录用 contractVersion 而非 schemaVersion"

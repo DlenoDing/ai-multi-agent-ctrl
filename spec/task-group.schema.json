@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/task-group.schema.json",
+  "title": "TaskGroup",
+  "description": "一个任务组。两个入口能建它（REST /api/task-groups 与 MCP task_group_create）。这里只钉住它自己的标量与几个必在的容器；工作项、角色、阻塞项各是一族对象，由各自的判据守。此前这个集合不受任何规范约束 —— 建出来的初始 status 曾是状态机里根本没有的 planned，而 status 还能由调用方随便填。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schemaVersion", "id", "projectId", "name", "status", "goalExecutionStatus", "phase", "progress", "health", "languagePolicy", "roles", "workItems", "blockers", "createdAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": {"const": "task-group/v1"},
+    "id": {"type": "string", "pattern": "^tg"},
+    "projectId": {"type": "string", "pattern": "^prj"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 200},
+    "title": {"type": "string", "maxLength": 200},
+    "objective": {"type": "string", "maxLength": 4000},
+    "status": {
+      "enum": ["intake", "discovery", "product_design", "solution_design", "ui_design", "development",
+        "global_development_review", "verification", "repair", "reverification", "integration",
+        "release", "online_quality", "closed", "aborted"],
+      "description": "取值必须与 spec/state-machines.yaml 的 TaskGroup 逐个对齐（有一道门在对表）。建接口按同一份白名单拒绝认不出的取值。"
+    },
+    "goalExecutionStatus": {
+      "enum": ["ready", "active", "active_paused_by_control", "active_paused_by_freeze", "closed"],
+      "description": "「这个组现在还跑不跑」，与 status（走到哪一阶段了）是两件事：被人暂停时 status 不变、这个字段变。"
+    },
+    "phase": {"type": "string", "minLength": 1},
+    "progress": {
+      "type": "number", "minimum": 0, "maximum": 100,
+      "description": "项目概览的「任务组平均进度」直接拿它取平均 —— 一个 NaN 或越界值会把那一屏的数悄悄带偏。"
+    },
+    "health": {"enum": ["ok", "attention", "blocked"]},
+    "languagePolicy": {"type": "object", "description": "由 spec/language-policy.schema.json 钉住内部形状。"},
+    "roles": {"type": "array"},
+    "workItems": {"type": "array"},
+    "blockers": {"type": "array"},
+    "auditRef": {"type": "string", "minLength": 1},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  }
+}

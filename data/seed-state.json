@@ -489,6 +489,7 @@
   ],
   "taskGroups": [
     {
+      "schemaVersion": "task-group/v1",
       "id": "tg_runtime_management",
       "projectId": "prj_control_plane",
       "name": "Runtime and Management Console",
@@ -634,6 +635,7 @@
       "updatedAt": "2026-07-23T11:31:40.233Z"
     },
     {
+      "schemaVersion": "task-group/v1",
       "id": "tg_instruction_efficiency",
       "projectId": "prj_control_plane",
       "name": "Instruction Format and Cache Efficiency",

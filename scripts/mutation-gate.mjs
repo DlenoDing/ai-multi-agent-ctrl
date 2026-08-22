@@ -3993,6 +3993,18 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 任务组有两个建入口，规范把两处形状钉在一起。去掉 REST 这一处的声明，
+    // 那一整条写路径就退出规范校验，而种子那两条仍带着 —— 「部分带部分不带」当场发现。
+    // （原先想拿 progress 越界当锚点：建组时写的 progress 立刻被 computeProgressSnapshots
+    //   重算掉，变异下去照样绿 —— 锚点要落在留得住的值上。）
+    name: "两个建任务组入口都要声明规范",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    schemaVersion: "task-group/v1",\n    id: taskGroupId,',
+    to: "    id: taskGroupId,",
+    expect: "条没有 schemaVersion"
+  },
+  {
     // MCP 返回的东西一律按不可信处理：untrustedResult 恒为 true。写成别的值等于宣称
     // 「这一条的返回可以当事实用」，而全系统没有任何机制支撑那个宣称。规范把它钉成 const true。
     name: "MCP 调用台账不得宣称返回可信",
@@ -4239,8 +4251,8 @@ const MUTATIONS = [
     name: "种子与编排产出的不受约束集合数也要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     check: "verifySeedRecordsMatchTheirDeclaredSchemas",
-    from: '"种子数据": 2,',
-    to: '"种子数据": 1,',
+    from: '"种子数据": 1,',
+    to: '"种子数据": 0,',
     expect: "不受规范约束的集合从 3 涨到 4"
   },
   {
@@ -4266,8 +4278,8 @@ const MUTATIONS = [
     name: "不受规范约束的集合数要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "doctor",
-    from: '"控制面 e2e 产出": 9,',
-    to: '"控制面 e2e 产出": 8,',
+    from: '"控制面 e2e 产出": 8,',
+    to: '"控制面 e2e 产出": 7,',
     // 期望要挑【这道门自己会打印的那一句】：控制面 e2e 的前缀是"控制面 e2e 产出："，
     // 契约门那两处（种子/编排产出）用的是别的前缀 —— 只写公共部分会被判成"挂错了门"。
     expect: "控制面 e2e 产出：不受规范约束的集合"
@@ -4279,8 +4291,8 @@ const MUTATIONS = [
     name: "远程 agent 那侧的规范覆盖也要棘轮住",
     file: "scripts/lib/schema-validate.mjs",
     gate: "agent",
-    from: '"远程 agent e2e 产出": 6,',
-    to: '"远程 agent e2e 产出": 5,',
+    from: '"远程 agent e2e 产出": 5,',
+    to: '"远程 agent e2e 产出": 4,',
     expect: "远程 agent e2e 产出：不受规范约束的集合"
   },
   {
