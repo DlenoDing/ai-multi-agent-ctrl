@@ -1649,6 +1649,25 @@ function runNoVisibleProjectCase() {
       /还没有过动静/u.test(stallText),
       "这一格空着与「刚刚才动过」看不出区别 —— 而它恰恰是最该被人看到的那种");
   }
+  // 语言策略在视图里只留 languageTag / languageName（整份 331 字节里 scope 就占 133，而界面不读它）。
+  // 钉住：只给这两个字段时，列表那句「语言：X」和详情页那个下拉的预选值都还对。
+  {
+    const slimLangState = {
+      schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+      projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+      taskGroups: [{id: "tg1", projectId: "p1", name: "日语组", status: "development", roleCount: 0,
+        languagePolicy: {languageTag: "ja", languageName: "Japanese"}, workItems: []}],
+      humanConfirmationRequests: [], humanDirectives: [], agentDispatches: [], workSessions: [],
+      executionTopologies: [], closeBarriers: [], qualityGates: [], findings: [],
+      permissionRequests: [], approvalRequests: [], truncatedCollections: []
+    };
+    const langText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, slimLangState, "tg", "p1");
+    check("语言策略只给 tag 时，界面显示的仍是那门语言（不是回落成中文）",
+      /语言：日本語/u.test(langText),
+      "视图里的语言策略已经瘦到只剩 languageTag / languageName —— 界面若还依赖别的字段，"
+        + "屏幕上会静默回落成默认的「中文」，而这个组配的是别的语言");
+  }
   // 任务组整份 roles 不再进视图（列表只用来数个数，明细页读的是进度接口那份）——
   // 服务端改给 roleCount。这里钉住：界面显示的就是服务端给的那个数，而不是它自己数出来的 0。
   {

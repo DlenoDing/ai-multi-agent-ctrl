@@ -1514,8 +1514,14 @@ function projectTaskGroupsForView(taskGroups) {
     // roles 列表页只用来数个数（「角色数：N」），明细页读的是进度接口给的那份。
     // 整份带上在 80 组时约 11 KB，而这一页每 5 秒轮询一次 —— 只给个数。
     const roles = Array.isArray(taskGroup.roles) ? taskGroup.roles : [];
+    // 语言策略整份 331 字节（scope 一项就占 133），而控制台只读 languageTag / languageName
+    //（列表那句「语言：中文」和详情页那个下拉的预选值）。80 组时约 24 KB，每 5 秒一次。
+    const policy = taskGroup.languagePolicy;
+    const slimPolicy = policy
+      ? {languageTag: policy.languageTag, ...(policy.languageName ? {languageName: policy.languageName} : {})}
+      : policy;
     const projected = {...(slimAnalysis === analysis ? taskGroup : {...taskGroup, taskAnalysis: slimAnalysis}),
-      roles: undefined, roleCount: roles.length};
+      roles: undefined, roleCount: roles.length, ...(policy ? {languagePolicy: slimPolicy} : {})};
     if (items.length <= embeddedWorkItemCap) return {...projected, workItemCount: items.length};
     return {...projected, workItems: items.slice(0, embeddedWorkItemCap),
       workItemCount: items.length, workItemsTruncated: true};

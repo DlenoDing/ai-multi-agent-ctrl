@@ -3636,6 +3636,14 @@ const MUTATIONS = [
     expect: "实际还有 tgDetail 这样的读取点"
   },
   {
+    name: "语言标签读错字段会静默回落成中文",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const tag = policy?.languageTag;",
+    to: "  const tag = policy?.tag;",
+    expect: "界面显示的仍是那门语言"
+  },
+  {
     name: "任务组的角色数必须用服务端给的那个数",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
