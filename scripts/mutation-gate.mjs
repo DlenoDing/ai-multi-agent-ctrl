@@ -4095,6 +4095,16 @@ const MUTATIONS = [
     expect: "只核对模式：对着残缺目录必须拒绝"
   },
   {
+    // 装机脚本用 nohup 起 agent，重启后不会回来。只说"自己去配 systemd"等于没给出口 ——
+    // 少了 enable-linger 那一句，用户一登出服务就被停掉，而人会以为已经常驻了。
+    name: "常驻做法要给全（少 enable-linger 等于没给）",
+    file: "docs/agent-runtime-protocol.md",
+    check: "verifyAgentInstallerSaysItIsNotPersistent",
+    from: 'loginctl enable-linger "$USER"',
+    to: "# 记得处理登出的情况",
+    expect: "少了 enable-linger"
+  },
+  {
     // 宿主重启／进程崩掉之后要自己回来：agent 节点都指着控制面这个地址，它不在，
     // 排队的派发就一直停着，而没有任何人会收到通知。
     name: "compose 服务要有重启策略",

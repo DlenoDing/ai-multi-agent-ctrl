@@ -56,6 +56,56 @@ sh install-agent.sh \
 | `--configure-global-clients` / `--no-configure-global-clients` | 同上，但改写用户全局配置 |
 | `--no-daemon` | 只安装、不起常驻进程 |
 
+## 让它常驻（开机自启 + 崩了自动重启）
+
+安装脚本用 `nohup` 起进程，**宿主重启或它自己崩掉之后不会回来**。节点一失联，排给它的活就停在队列里
+（控制台上那个节点会显示没有心跳，但不会有人被主动通知）。要常驻，用系统自带的服务管理器 ——
+安装脚本有意不碰它们（不用 sudo、不改任何系统文件），所以这一步由你来做。
+
+Linux（systemd 用户级，不需要 root）：
+
+```ini
+# ~/.config/systemd/user/aimac-agent.service
+[Unit]
+Description=AIMAC Agent Runtime
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/env node %h/.local/share/aimac-agent/bin/aimac-agent-runtime.mjs run --work-dir %h/.local/share/aimac-agent
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload && systemctl --user enable --now aimac-agent
+loginctl enable-linger "$USER"   # 没有这一句，用户登出之后服务会被停掉
+```
+
+macOS（launchd 用户级）：
+
+```xml
+<!-- ~/Library/LaunchAgents/local.aimac.agent.plist -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>local.aimac.agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string><string>node</string>
+    <string>/Users/YOU/.local/share/aimac-agent/bin/aimac-agent-runtime.mjs</string>
+    <string>run</string><string>--work-dir</string>
+    <string>/Users/YOU/.local/share/aimac-agent</string>
+  </array>
+  <key>KeepAlive</key><true/>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
+```
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.aimac.agent.plist
+```
+
 加入成功回显：
 
 ```text

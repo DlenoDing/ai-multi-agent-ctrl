@@ -451,6 +451,7 @@ run(verifySecurityRelaxingSwitchesAreListed);
 run(verifyComposePortsAreNotAccidentallyPublic);
 run(verifyContainerRunsAsNonRoot);
 run(verifySecretWritersTightenUmaskFirst);
+run(verifyAgentInstallerSaysItIsNotPersistent);
 run(verifyFalsyDefaultsDoNotFavourTheCaller);
 run(verifyEveryProjectScopedIdIsScopeChecked);
 run(verifyEveryStateCollectionIsTenantScoped);
@@ -16667,6 +16668,34 @@ function verifyFalsyDefaultsDoNotFavourTheCaller(output) {
 // 光改 Dockerfile 而不写这一句，升级的人看到的是一句 EACCES。
 // 写密钥的脚本要【先收紧 umask、再落盘】。只在写完之后 chmod 的话，
 // 从创建到 chmod 之间那一瞬文件是按默认 umask 建的（多用户机器上通常 0644）。
+// 装机脚本用 nohup 起 agent：宿主重启或它自己崩掉之后【不会回来】。
+// 装的人看到 STARTED 会以为"装好了就一直在"，而节点一失联，排给它的活就停在队列里
+//（控制台上只是显示那个节点没有心跳，不会有人被主动通知）。
+// 这一条与 compose 的 restart 策略是同一族：说清后果，并给出真能照做的出口。
+function verifyAgentInstallerSaysItIsNotPersistent(output) {
+  const installer = readFileSync(resolve(root, "scripts/install-agent.sh"), "utf8")
+    .split("\n").filter((line) => !/^\s*#/u.test(line)).join("\n");
+  if (!/nohup/u.test(installer)) {
+    output.push("装机常驻核对：装机脚本里已经没有 nohup 了 —— 常驻方式变了，这条判据要跟着改（否则它在空转）");
+    return;
+  }
+  if (!/不会自动回来|不会自己回来/u.test(installer)) {
+    output.push("装机脚本宣布 STARTED 时没说【重启后不会自动回来】—— 装的人会以为装好了就一直在，"
+      + "而节点失联时排给它的活只是静静停在队列里");
+  }
+  const doc = readFileSync(resolve(root, "docs/agent-runtime-protocol.md"), "utf8");
+  for (const [what, needle] of [["systemd", "systemctl --user enable --now"], ["launchd", "launchctl bootstrap"]]) {
+    if (!doc.includes(needle)) {
+      output.push(`装机常驻核对：文档里没有 ${what} 那份现成配置 —— 只说"自己去配"等于没给出口`);
+    }
+  }
+  if (!doc.includes("loginctl enable-linger")) {
+    output.push("装机常驻核对：systemd 那份少了 enable-linger —— 没有它，用户一登出服务就被停掉，"
+      + "而人会以为已经常驻了");
+  }
+  console.log("装机常驻核对：STARTED 时说清了不会自动回来，文档里 systemd／launchd 两份配置都在（含 enable-linger）");
+}
+
 function verifySecretWritersTightenUmaskFirst(output) {
   const writers = {
     "scripts/docker-up.sh": {file: "$ENV_FILE", what: "本机引导令牌与 PostgreSQL 口令"}
@@ -16783,8 +16812,9 @@ function verifyAgentInstallerFlagsMatchTheDocs(output) {
   // 脚本认的参数：`--x)` 这种 case 分支才算，帮助文本里的提及不算。
   const scriptFlags = new Set([...script.matchAll(/^\s*((?:--[a-z][a-z-]*\|)*--[a-z][a-z-]*)\)/gmu)]
     .flatMap((hit) => hit[1].split("|")));
-  const docFlags = new Set([...doc.matchAll(/`(--[a-z][a-z-]*)`|\s(--[a-z][a-z-]*)\s/gu)]
-    .map((hit) => hit[1] || hit[2]).filter(Boolean));
+  const docLines = doc.split("\n").filter((line) => /^\|\s*`--/u.test(line) || line.includes("install-agent.sh"));
+  const docFlags = new Set(docLines.flatMap((line) =>
+    [...line.matchAll(/`(--[a-z][a-z-]*)`|\s(--[a-z][a-z-]*)[\s"]/gu)].map((hit) => hit[1] || hit[2]).filter(Boolean)));
   if (scriptFlags.size < 12) {
     output.push(`装机参数核对：只从 install-agent.sh 提取到 ${scriptFlags.size} 个参数（实测 12）—— 提取失配，本条在空转`);
     return;

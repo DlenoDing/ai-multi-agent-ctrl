@@ -202,6 +202,12 @@ if [ "$START_DAEMON" = "true" ]; then
   fi
   printf '%s\n' "$AGENT_PID" >"$PID_FILE"
   printf '%s\n' "AGENT_RUNTIME_STARTED pid=$AGENT_PID log=$WORK_DIR/logs/agent.log"
+  # 这个进程是 nohup 起的：宿主重启、或它自己崩掉之后【不会自己回来】。
+  # 装的人看到 STARTED 会以为"装好了就一直在"，而节点一失联，排队的派发就没人认领
+  #（控制面那边只会显示这个节点没有心跳，不会有人被通知）。这里说清楚，并给出常驻的做法。
+  printf '%s\n' "注意：这是一个 nohup 进程 —— 宿主重启或它自己崩掉之后不会自动回来。"
+  printf '%s\n' "  · 重新拉起：node $RUNTIME_PATH run --work-dir $WORK_DIR"
+  printf '%s\n' "  · 要让它常驻（开机自启 + 崩了自动重启）：docs/agent-runtime-protocol.md 里有 systemd 与 launchd 两份现成配置"
 else
   printf '%s\n' "AGENT_RUNTIME_READY command=node $RUNTIME_PATH run --work-dir $WORK_DIR"
 fi
