@@ -3596,6 +3596,15 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "agent 失败码零覆盖回升要被拦住",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentFailureCodeCoverageRatchet",
+    // 改名不行：一个零覆盖的码换成另一个零覆盖的码，总数不变。要【新增】一个才测得出。
+    from: "function ensureCleanWorktree(root) {",
+    to: 'function ensureCleanWorktree(root) {\n  if (root === "never") throw new Error("brand_new_uncovered_code:凑数用");',
+    expect: "零覆盖从 14 涨到 15"
+  },
+  {
     name: "机器上那份仓库指向别处时必须拒绝开工",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyAgentRuntimeGuardsRefuseRealAttacks",

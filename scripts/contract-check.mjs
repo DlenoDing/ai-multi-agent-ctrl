@@ -185,6 +185,18 @@ process.env.AIMAC_WIP_QUEUE_HEAD = "100000";
 // 隐身，棘轮报"207 个码、16 个未覆盖"，真实是 303 个、83 个（本仓第十二次撞"门看不见表达式写法"）。
 // 装 agent 的人是在自己机器上敲一条命令，这几处抛错是【当场】给他看的（explainAgentFailure
 // 会把已知的翻成人话），不会经过控制台，所以不要求带码。
+// agent 侧失败码的覆盖棘轮。2026-08-22 起量：一开始 36 个码里 32 个【没有任何门/e2e 的源码提到过】——
+// 因为 runtime.mjs 不导出任何东西，长期被当成测不了。改用「复制一份 + 追加导出」之后一轮轮清到 14（不含只在变异表里出现过的那两个 —— 那不算断言）。
+// 只降不升：要摘牌就得写一条真的点名它的断言。
+const AGENT_RUNTIME_UNCOVERED_CEILING = 14;
+// 构造上走不到的，登记在此并写明理由 —— 它们会一直挂在清单上，那是如实的，不要为它们编够不到的用例。
+const AGENT_RUNTIME_UNREACHABLE_CODES = {
+  agent_control_plane_retry_exhausted:
+    "重试次数有下限（≥1），每一轮不是 return 就是 throw，循环走不到尽头。留着是防将来有人把下限改没了 —— 那时它会静静返回 undefined",
+  content_bundle_git_transfer_escapes_session:
+    "transferDir 是 join(bundleDir, \"git-transfer\") 现拼的，永远落在 bundleDir 之内。留着是防将来有人把它改成由包里的字段决定"
+};
+
 const AGENT_RUNTIME_CLI_THROWS = new Set([
   "unknown command: ${command}",
   "bootstrap requires --server and --join-token-file",
@@ -431,6 +443,7 @@ run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
 runAsync(verifyAgentRuntimeGuardsRefuseRealAttacks);
 runAsync(verifyTestServersDieWithTheirParent);
 run(verifyRuntimeConstantsSitBeforeItsTopLevelAwait);
+run(verifyAgentFailureCodeCoverageRatchet);
 run(verifyAgentFailureReasonsAreCoded);
 run(verifyTruncatedExecutorOutputSaysSo);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
@@ -11325,6 +11338,46 @@ function verifyRuntimeConstantsSitBeforeItsTopLevelAwait(output) {
   }
   console.log(`runtime.mjs：顶层 await（第 ${awaitLine + 1} 行）之后没有模块级常量（TDZ 语义当场探过），`
     + "且子进程起来后的异常会杀掉子进程再抛 —— 核过");
+}
+
+function verifyAgentFailureCodeCoverageRatchet(output) {
+  // 「有没有门提到过这个码」不等于「这条路被走过」，但它是能自动量的那一半：
+  // 一个码在整套 scripts/ 里一次都没出现过，说明它失效时不会有任何东西变红。
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const codes = [...new Set([...runtime.matchAll(
+    /throw (?:new Error|permissionBlockedError)\(\s*[`"]([a-z0-9_]{6,})(?::|["`])/gu)].map((match) => match[1]))];
+  if (codes.length < 30) {
+    output.push(`agent 失败码只提取到 ${codes.length} 个（应 30+）—— 提取脱节，这条棘轮在空转`);
+    return;
+  }
+  // 登记表本身要从扫描面里剔掉：它写着那两个码的名字，不剔的话它们会因为"出现在 scripts/ 里"
+  // 而被算成有覆盖 —— 门读到自己写的字，本仓的老毛病（第一版就是这样，当场报「登记该撤」）。
+  const registryBlock = /const AGENT_RUNTIME_UNREACHABLE_CODES = \{[\s\S]*?\n\};/u;
+  const gateText = readdirSync(join(root, "scripts"), {recursive: true})
+    .filter((name) => typeof name === "string" && /\.(?:mjs|rb)$/u.test(name))
+    // 变异表也不算：条目里的码只是"要把哪一行改成什么"，本身不是断言；
+    // 更要紧的是不剔掉它，这条棘轮就没法被变异验证 —— 变异写进去的那个假码名会被它自己读到，
+    // 于是"新增一个零覆盖的码"永远不红（第一版正是这样）。
+    .filter((name) => name !== "mutation-gate.mjs")
+    .map((name) => readFileSync(join(root, "scripts", name), "utf8").replace(registryBlock, ""))
+    .join("\n");
+  const uncovered = codes.filter((code) => !gateText.includes(code)).sort();
+  const registered = uncovered.filter((code) => AGENT_RUNTIME_UNREACHABLE_CODES[code]);
+  const stale = Object.keys(AGENT_RUNTIME_UNREACHABLE_CODES).filter((code) => !uncovered.includes(code));
+  if (stale.length) {
+    output.push(`这些码已经不在零覆盖清单上了，登记该撤：${stale.join("、")} —— `
+      + "留着过期的登记会让下一个人以为它仍然测不到");
+  }
+  if (uncovered.length > AGENT_RUNTIME_UNCOVERED_CEILING) {
+    output.push(`agent 失败码零覆盖从 ${AGENT_RUNTIME_UNCOVERED_CEILING} 涨到 ${uncovered.length}：`
+      + `${uncovered.join("、")} —— 新增的失败路径没有任何门会因它失效而变红`);
+  }
+  if (uncovered.length < AGENT_RUNTIME_UNCOVERED_CEILING) {
+    output.push(`agent 失败码零覆盖已降到 ${uncovered.length}（棘轮还写着 ${AGENT_RUNTIME_UNCOVERED_CEILING}）——`
+      + " 把 AGENT_RUNTIME_UNCOVERED_CEILING 改小，否则它挡不住下一次回升");
+  }
+  console.log(`agent 失败码覆盖：${codes.length} 个码，${uncovered.length} 个没有任何门/e2e 提到过`
+    + `（其中 ${registered.length} 个已登记为构造上走不到）（棘轮 ${AGENT_RUNTIME_UNCOVERED_CEILING}，只降不升）`);
 }
 
 function verifyAgentFailureReasonsAreCoded(output) {
