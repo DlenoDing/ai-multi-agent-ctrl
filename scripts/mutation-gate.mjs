@@ -4031,7 +4031,7 @@ const MUTATIONS = [
     gate: "doctor",
     from: '  if (normalizedExpiry(args.expiresAt) === false) {',
     to: "  if (false) {",
-    expect: "解析不了的到期时间必须在铸出授权之前被拒"
+    expect: "「到期时间解析不了」必须在改动这条请求之前被拒"
   },
   {
     // 镜像形态：`X !== false`（不显式说 false 就当真）。这个工具原先不给判决就是"允许"，

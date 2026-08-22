@@ -2283,20 +2283,20 @@ try {
   // 「没说」不能变成「批准」。这一处原先默认 approved，而批准会【真的铸出一张访问授权】——
   // 只传 requestId 就能凭空发出一条 task_group:read（实测）。审批那侧早就修过同一件事。
   expectStatus(await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-resolve-silent", {}), 400, "处理授权申请不给结论必须拒绝（缺省不得等于批准）", "permission_decision_required");
-  // 到期时间解析不了必须在【铸出授权之前】拒。落库之后 Date.parse 得 NaN，而 NaN 参与的比较
-  // 两个方向都是 false：MCP 判权那处判成"已过期"（这张授权永远用不了），
-  // 关闭门的 no_active_temp_grants 同样为假（一张已签发的授权不再挡门）—— 两边都不报错。
-  {
-    const badExpiry = await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-bad-expiry", {status: "approved", expiresAt: "不是日期"});
-    // 拒必须发生在【改动这条请求之前】：400 + 请求仍是待处置，而不是"已批准但没有授权"。
-    const badTtl = await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-bad-ttl", {status: "approved", ttlSeconds: "abc"});
-    if (badTtl.response.status !== 400 || badTtl.payload?.error !== "ttl_seconds_invalid") {
-      throw new Error("有效期不是数必须拒（它会一路传染成 NaN，最后在生成到期时间时抛 RangeError）："
-        + `实际 ${badTtl.response.status} ${JSON.stringify(badTtl.payload).slice(0, 160)}`);
-    }
-    if (badExpiry.response.status !== 400 || badExpiry.payload?.error !== "expires_at_invalid") {
-      throw new Error("解析不了的到期时间必须在铸出授权之前被拒："
-        + `实际 ${badExpiry.response.status} ${JSON.stringify(badExpiry.payload).slice(0, 200)}`);
+  // 到期时间/有效期解析不了，必须在【改动这条请求之前】就拒 —— 而不是等到铸授权那一步：
+  // 那时 request.status 已经写成 approved，「一次性处置」守卫会让它再也改不动，
+  // 留下一条"已批准、没有授权、也无法重新处置"的死记录。
+  // 两条各自调用后【立刻】断言：先前把两次调用排在一起，变异一放开守卫，
+  // 第一次调用就把申请处置掉了，第二条断言撞上 409 —— 红是红了，红的却是另一件事。
+  for (const [label, body, code] of [
+    ["有效期不是数", {status: "approved", ttlSeconds: "abc"}, "ttl_seconds_invalid"],
+    ["到期时间解析不了", {status: "approved", expiresAt: "不是日期"}, "expires_at_invalid"]
+  ]) {
+    const refused = await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`,
+      systemAuth, `g2b-perm-bad-${code}`, body);
+    if (refused.response.status !== 400 || refused.payload?.error !== code) {
+      throw new Error(`处理授权申请时「${label}」必须在改动这条请求之前被拒（期望 400 ${code}）：`
+        + `实际 ${refused.response.status} ${JSON.stringify(refused.payload).slice(0, 180)}`);
     }
   }
   expectStatus(await g2(`/api/permission-requests/${permOk.payload.permissionRequest.requestId}/resolve`, systemAuth, "g2b-perm-resolve-ok", {status: "approved"}), 200, "permission resolve happy");

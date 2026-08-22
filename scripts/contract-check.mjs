@@ -7812,7 +7812,7 @@ function verifyGuidanceNamesRealPages(output) {
         + "界面上的页名都是中文，照着找不到；页名一律写成「X」页，判据才核得到它");
     }
   }
-  if (buttons < 12) output.push(`只找到 ${buttons} 处控件指路（应 ≥12，实测 14）—— 提取脱节或少认了一种说法，本条在空转`);
+  if (buttons < 19) output.push(`只找到 ${buttons} 处控件指路（应 ≥19，实测 19）—— 提取脱节或少认了一种说法，本条在空转`);
   if (labels.size < 30) output.push(`按钮文字只提出 ${labels.size} 个（应 ≥30）—— 权威表没提出来，本条在空转`);
   if (pointers < 20) {
     output.push(`只找到 ${pointers} 处指路（应 ≥20）—— 提取脱节或文件清单缩水了，本条在空转`);
@@ -10173,6 +10173,13 @@ function verifyMcpDoesNotReimplementCore(output) {
 }
 
 function verifyOperatorCliRejectsUnknownFlags(output) {
+  // 剥掉注释再判 —— 否则门会读到【被测文件自己的注释】：那几个入口的注释里就写着
+  // "--help 是任何人敲的第一件事"、"此前它落进下面那条『认不出这个参数』"，
+  // 于是把真实的守卫删掉，门在注释里照样搜得到，变异绿着过去（2026-08-23 整跑变异门抓到两条）。
+  // 本仓的老形状「门读到自己写的字」，这一次源头在被测代码的注释上。
+  const withoutComments = (text, path) => (path.endsWith(".sh")
+    ? text.split("\n").filter((line) => !/^\s*#/u.test(line)).join("\n")
+    : text.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/u.test(line)).join("\n"));
   // 这一类必须按【入口】枚举，不能按文件挑：参数名打错的洞在每个接受"名字-取值"的入口上
   // 各长一遍，而按取值扫描的判据（body.X === true 那一类）完全看不见它。
   // 清单收在 lib/operator-entries.mjs：它此前与环境旋钮那道门各写一份，
@@ -10190,7 +10197,7 @@ function verifyOperatorCliRejectsUnknownFlags(output) {
     "scripts/human-only-parity-gate.mjs": "门；同上"
   };
   for (const [path, why] of Object.entries(OPERATOR_CLIS)) {
-    const cli = readFileSync(resolve(root, path), "utf8");
+    const cli = withoutComments(readFileSync(resolve(root, path), "utf8"), path);
     // 四个入口现在是同一种形状：把认不出的参数收集起来，再一次性拒绝。
     // 只认一种写法是有意的 —— 多认一种就多一条将来会漂的路。
     const rejects = /if \(unknownFlags\.length\)/u.test(cli);
@@ -10211,7 +10218,7 @@ function verifyOperatorCliRejectsUnknownFlags(output) {
     // 参数原样透传的那个例外：--help 本来就该由被透传的命令（docker compose）自己回答，
     // 在这里拦下来反而是把人挡在真正的帮助前面。
     if (SHELL_ENTRIES[path] && SHELL_ENTRIES[path].rejects === false) continue;
-    const text = readFileSync(resolve(root, path), "utf8");
+    const text = withoutComments(readFileSync(resolve(root, path), "utf8"), path);
     if (!/--help/u.test(text)) {
       output.push(`${path} 不认 --help —— 人问「这个命令怎么用」时收到的是一句"你参数打错了"，`
         + "而认得的参数就写在那段拒绝文案里；同样的话，问的时候就该给");
@@ -10219,7 +10226,7 @@ function verifyOperatorCliRejectsUnknownFlags(output) {
   }
   for (const [path, entry] of Object.entries(SHELL_ENTRIES)) {
     if (!entry.rejects) continue;
-    if (!readFileSync(resolve(root, path), "utf8").includes("认不出这个参数")) {
+    if (!withoutComments(readFileSync(resolve(root, path), "utf8"), path).includes("认不出这个参数")) {
       output.push(`${path}（${entry.why}）不拦截认不出的参数 —— 打错的参数名会被当成没给，命令照跑`);
     }
   }
