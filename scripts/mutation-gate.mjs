@@ -3727,6 +3727,32 @@ const MUTATIONS = [
     expect: "orchestrator permission"
   },
   {
+    // 重建【从新往旧】扫、攒够淘汰上限就停。方向反过来就会把最新那段漏掉 ——
+    // 序号上界随之算小，下一条事件重用已经用过的号。
+    name: "索引重建要从最新往回扫（否则序号被重用）",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    check: "verifyEventIndexRebuildKeepsItsPromises",
+    from: "  for (let index = currentPaths.length - 1; index >= 0; index -= 1) {",
+    to: "  for (let index = 0; index < currentPaths.length; index += 1) {",
+    expect: "序号被重用"
+  },
+  {
+    name: "重建不得重写已经存在的键文件",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    check: "verifyEventIndexRebuildKeepsItsPromises",
+    from: "    if (existsSync(projectExecutionEventKeyPath(runtimeDir, event.projectId, event.eventKey))) continue;",
+    to: "    if (false) continue;",
+    expect: "重写了一遍"
+  },
+  {
+    name: "键文件真丢了时重建要把它补回来",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    check: "verifyEventIndexRebuildKeepsItsPromises",
+    from: "    writeProjectExecutionEventKey(runtimeDir, event, path);\n  }\n  rebuilt.eventsByKey",
+    to: "    void event; void path;\n  }\n  rebuilt.eventsByKey",
+    expect: "没被补回来"
+  },
+  {
     name: "段清单里记着却不在盘上的事件段必须说出来",
     file: "apps/control-plane-ui/lib/project-event-store.mjs",
     check: "verifySealedEventSegmentsAreNotSilentlyLost",

@@ -563,6 +563,7 @@ run(verifyGuardedWritesAreAudited);
 run(verifyWarnModeRejectionsSurviveChurn);
 run(verifyCorruptEventLinesAreReported);
 run(verifySealedEventSegmentsAreNotSilentlyLost);
+run(verifyEventIndexRebuildKeepsItsPromises);
 run(verifySizeAccountingDoesNotSwallowFailures);
 run(verifyAgentSaysWhyItStoppedTakingWork);
 run(verifySideEffectsComeAfterTheGuard);
@@ -7992,6 +7993,102 @@ function verifySizeAccountingDoesNotSwallowFailures(output) {
 // 悄悄跳过、长度与摘要记了也没人比。三种后果都是同一件事 —— 系统知道历史缺了/被改了，却不告诉人。
 // 三条分支各造一次真实损坏来验（删段 / 变长改写 / 等长改写），只验"有没有说出来"，不验它是否还给数据：
 // 这是历史读路径，为一段坏历史把整页打死更糟，所以设计上是照给 + 报故障。
+// 索引重建原先把【整段历史】重读一遍、并为每一条事件重写一个 KV 文件：实测 99 次轮转、300 条事件
+// 要 132 秒（440ms/条，而无历史时是 24ms），而它跑在项目锁里 —— 这个项目的每一次事件追加都卡着。
+// 改成「已封存段的序号上界取自段清单／键从新往旧扫到淘汰上限为止／已有 KV 文件不重写」之后是 9.2 秒。
+// 快了不算数，得证明它仍然守着原来那三件事，所以这条判据【走真实读写】逐条验：
+//   ① 序号不重用（重建后接着追加，序号必须是历史最大值 +1）；
+//   ② 幂等还在（重建之前写过的键，重建之后再写一次要认出是重复）；
+//   ③ 已有的 KV 文件不被重写 —— 这不只是省时间：GC 按 mtime 淘汰最旧的，重建把全部文件的 mtime
+//      刷新一遍之后，"谁最旧"就成了乱的，它会把该留的删掉；
+//   ④ 文件真丢了的那个键，重建仍然要把它补回来（跳过的只能是"已经在的"）。
+function verifyEventIndexRebuildKeepsItsPromises(output) {
+  const previousCap = process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES;
+  const previousKeys = process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS;
+  const previousFileCap = process.env.AIMAC_PROJECT_EVENT_KEY_FILE_CAP;
+  process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES = "1024";
+  // 键窗口与【文件上限】是两个开关，早停看的是后者（默认 5000）—— 只压前者的话这个夹具
+  // 永远走不到那一支（第一版正是这样：把扫描方向反过来它照样绿）。两个都压到 100、事件写 110 条，
+  // 最旧的十条就落在不被扫的段里，而"序号会不会重用"恰恰只有在那一支上才可能出问题。
+  process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS = "100";
+  process.env.AIMAC_PROJECT_EVENT_KEY_FILE_CAP = "100";
+  const eventCount = 110;
+  const dir = mkdtempSync(join(tmpdir(), "aimac-event-rebuild-"));
+  const projectId = "prj_rebuild_probe";
+  try {
+    for (let i = 1; i <= eventCount; i += 1) {
+      // schemaVersion 不能省：KV 与索引两处查找都只认 agent-execution-event/v1 的记录
+      // （真实生产者 agent-gateway 每条都打）。不打的话下面「重建之后还认不认得出重复」那条
+      // 恒为红，而红的其实是夹具 —— 所以紧接着先验一次基线。
+      appendProjectExecutionEvent(dir, {projectId, schemaVersion: "agent-execution-event/v1",
+        eventKey: `rk${i}`, sequence: i, eventType: "probe",
+        taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z", payload: {filler: "x".repeat(120)}});
+    }
+    // 基线：重建【之前】就要认得出重复。这一条红了说明夹具没造出想测的情形，不是产品的问题。
+    const baselineDuplicate = appendProjectExecutionEvent(dir, {projectId,
+      schemaVersion: "agent-execution-event/v1", eventKey: "rk5", eventType: "probe",
+      taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
+    if (!baselineDuplicate.duplicate) {
+      output.push("索引重建判据没造出想测的情形：重建之前就认不出重复（夹具的事件多半缺 schemaVersion）");
+      return;
+    }
+    const pdb = join(dir, "project-db");
+    const segments = readdirSync(pdb).filter((name) => /execution-events\.\d+-\d+\./u.test(name));
+    if (segments.length < 2) {
+      output.push(`索引重建判据没造出想测的情形：只轮转出 ${segments.length} 个已封存段（需要至少 2 个）`);
+      return;
+    }
+    const keyDir = join(pdb, "event-keys");
+    // 按【文件名】找不到想要的那个键（名字是 eventKey 的 sha256），所以读出来按 eventKey 认。
+    // 不在判据里自己算一遍 sha256：那等于把产品的落点规则抄第二份，两边会各自漂。
+    const keyFileOf = (wanted) => readdirSync(keyDir, {recursive: true}).map(String)
+      .filter((name) => name.endsWith(".json")).map((name) => join(keyDir, name))
+      .find((path) => { try { return JSON.parse(readFileSync(path, "utf8")).eventKey === wanted; } catch { return false; } });
+    const sampleKeyFile = keyFileOf(`rk${eventCount - 2}`);
+    const lostKeyFile = keyFileOf(`rk${eventCount - 1}`);
+    if (!sampleKeyFile || !lostKeyFile) {
+      output.push("索引重建判据没造出想测的情形：最近那几个键没有各自的 KV 文件");
+      return;
+    }
+    const before = statSync(sampleKeyFile).mtimeMs;
+    // 删掉一个【最近的】键文件，验④：跳过的只能是已经在的，丢了的要补回来。
+    // 取最近的而不是最旧的：淘汰窗口之外的键本来就不该被补回来（补了下一轮 GC 也会删）。
+    const lostKey = JSON.parse(readFileSync(lostKeyFile, "utf8")).eventKey;
+    rmSync(lostKeyFile, {force: true});
+    // 逼出一次重建：索引文件没了，文件快照自然对不上。
+    rmSync(join(pdb, readdirSync(pdb).find((name) => name.endsWith("execution-events.index.json"))), {force: true});
+    const appended = appendProjectExecutionEvent(dir, {projectId,
+      schemaVersion: "agent-execution-event/v1", eventKey: "rk_after_rebuild",
+      eventType: "probe", taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
+    if (Number(appended.event?.sequence) !== eventCount + 1) {
+      output.push(`重建之后接着追加，序号是 ${appended.event?.sequence}（应为 ${eventCount + 1}）—— `
+        + "序号被重用意味着两条不同的事件顶着同一个号，事后没法说清哪件事先发生");
+    }
+    const duplicate = appendProjectExecutionEvent(dir, {projectId,
+      schemaVersion: "agent-execution-event/v1", eventKey: "rk5",
+      eventType: "probe", taskGroupId: "tg1", createdAt: "2026-01-01T00:00:00.000Z"});
+    if (!duplicate.duplicate) {
+      output.push("重建之后，重建之前写过的事件键没被认出是重复 —— 幂等失效，重放会被当成新事件"
+        + "接受两次（重复执行、重复记账）");
+    }
+    if (statSync(sampleKeyFile).mtimeMs !== before) {
+      output.push("重建把已经存在的键文件重写了一遍 —— 一是白花时间（实测 300 条事件 132 秒），"
+        + "二是把全部文件的 mtime 刷新，而 GC 正是按 mtime 淘汰最旧的：此后它会把该留的删掉");
+    }
+    if (!existsSync(lostKeyFile)) {
+      output.push(`键文件丢了的那个键（${lostKey}）在重建之后没被补回来 —— 跳过的只能是"已经在的"`);
+    }
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+    if (previousCap === undefined) delete process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES;
+    else process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES = previousCap;
+    if (previousKeys === undefined) delete process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS;
+    else process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS = previousKeys;
+    if (previousFileCap === undefined) delete process.env.AIMAC_PROJECT_EVENT_KEY_FILE_CAP;
+    else process.env.AIMAC_PROJECT_EVENT_KEY_FILE_CAP = previousFileCap;
+  }
+}
+
 function verifySealedEventSegmentsAreNotSilentlyLost(output) {
   const previousMax = process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES;
   process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES = "1024";

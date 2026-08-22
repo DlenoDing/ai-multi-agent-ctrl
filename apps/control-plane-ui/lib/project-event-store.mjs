@@ -277,18 +277,37 @@ function ensureProjectExecutionEventIndex(runtimeDir, projectId) {
     updatedAt: new Date().toISOString()
   };
   const keyWindow = Math.max(100, Number(process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS || 500));
+  // 重建【不再把整段历史重读重写一遍】。实测 200 个已封存段（2000 条事件）时，一次重建要 3.2 秒，
+  // 而它是在项目锁里跑的 —— 这个项目的每一次事件追加都卡在那儿；而重建由「文件快照变了」触发，
+  // 也就是【每一次轮转】之后都来一遍。代价还随历史无限涨。三处改动，语义不变：
+  //   ① 已封存段的序号上界取自段清单/文件名（段一旦封存就不会再变），不为求一个 max 去读它；
+  //   ② 键【从新往旧】扫，攒够淘汰上限就停 —— 再往前的键本来就会被 GC 删掉，写了也白写；
+  //   ③ 已经有 KV 文件的键不重写：重建多半由轮转触发，那时文件都还在（existsSync 30µs vs 落盘 1.6ms）。
+  //      顺带修掉一个真错：重写会把文件 mtime 全刷新，而 GC 正是按 mtime 淘汰最旧的 —— 重建之后
+  //      "谁最旧"就成了乱的，它会把该留的删掉。
+  const keyFileCap = Math.max(keyWindow, Number(process.env.AIMAC_PROJECT_EVENT_KEY_FILE_CAP || 5000));
   const keyEntries = [];
   let corruptLines = 0;
   let corruptSample = "";
-  for (const path of currentPaths) {
+  // 序号上界不必另找兜底：currentPaths 是按序号升序排的，这里【从最新往回扫】，
+  // 所以最大序号所在的那个文件永远是第一个被扫到的（它要么是当前正在写的那份，要么在刚轮转过、
+  // 当前文件还不存在时是最新的那个已封存段）。不扫的都是更旧的段，序号只会更小。
+  // 别在这里为"万一"加一层按段清单/文件名取 max 的兜底：那条分支任何情形都走不到，
+  // 留着只会让人以为序号连续性有两道保护 —— 真正守着它的是下面这个扫描方向，
+  // 判据 verifyEventIndexRebuildKeepsItsPromises 把方向反过来就会红。
+  for (let index = currentPaths.length - 1; index >= 0; index -= 1) {
+    const path = currentPaths[index];
+    if (keyEntries.length >= keyFileCap) continue;
     const source = readFileSync(path, "utf8");
-    for (const line of source.split(/\r?\n/u).filter(Boolean)) {
+    const lines = source.split(/\r?\n/u).filter(Boolean);
+    for (let cursor = lines.length - 1; cursor >= 0; cursor -= 1) {
+      const line = lines[cursor];
       try {
         const event = JSON.parse(line);
         rebuilt.lastSequence = Math.max(Number(rebuilt.lastSequence || 0), Number(event.sequence || 0));
         if (event.eventKey) {
-          writeProjectExecutionEventKey(runtimeDir, event, path);
-          keyEntries.unshift([event.eventKey, event]);
+          // 键的落盘推迟到扫完再做：这里还不知道它落不落在淘汰窗口里。
+          keyEntries.push([event.eventKey, event, path]);
         }
       } catch {
         // 索引重建时跳过一行坏数据，后果具体且都看不见：
@@ -301,7 +320,11 @@ function ensureProjectExecutionEventIndex(runtimeDir, projectId) {
       }
     }
   }
-  rebuilt.eventsByKey = Object.fromEntries(keyEntries.slice(0, keyWindow));
+  for (const [, event, path] of keyEntries.slice(0, keyFileCap)) {
+    if (existsSync(projectExecutionEventKeyPath(runtimeDir, event.projectId, event.eventKey))) continue;
+    writeProjectExecutionEventKey(runtimeDir, event, path);
+  }
+  rebuilt.eventsByKey = Object.fromEntries(keyEntries.slice(0, keyWindow).map(([key, event]) => [key, event]));
   // 记成模块级的故障事实，走 auditArchiveFault 同一条路：系统账号的状态里下发，界面出横幅。
   // 不抛异常：一行坏数据不该让整个项目读不出来；但也绝不能一声不吭。
   if (corruptLines) {
