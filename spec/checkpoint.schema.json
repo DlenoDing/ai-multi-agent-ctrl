@@ -23,6 +23,7 @@
     "artifactManifestRefs",
     "changedPathEvidenceRefs",
     "evidenceRefs",
+    "taskContractDigest",
     "languagePolicyDigest",
     "outputContractDigest",
     "createdAt"

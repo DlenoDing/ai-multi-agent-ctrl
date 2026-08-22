@@ -3596,6 +3596,14 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "检查点不带契约摘要不得整道跳过",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyHumanApprovedPathsBindTheCommit",
+    from: '  if (dispatch.taskContractDigest && !checkpointInput.taskContractDigest) {\n    return {accepted: false, status: 409, error: "checkpoint_task_contract_digest_required"};\n  }\n',
+    to: "",
+    expect: "不带任务契约摘要就被受理了"
+  },
+  {
     name: "正在跑的派发要说出上次动静是多久以前",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

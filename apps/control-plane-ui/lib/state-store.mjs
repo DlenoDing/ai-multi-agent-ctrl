@@ -400,6 +400,10 @@ export function assertProjectShardsMatchCentralIndex(shards, centralState) {
     // 下面两条兼容分支即成为不可达代码，可以连同 insertionOrderDigest*/legacyDigest* 一并删除。
     // 【若有人把复用判定改成也接受旧格式摘要，这个退役条件当场失效、兼容路径变成永久的】——
     // 那属于 sys.scope-convergence 禁止的长期双路径，改动复用判定时必须同时处置这里。
+    // 「没有摘要就整道跳过」在这里是【查过的】，不是漏网：写入侧两条分支都必写摘要，
+    // 而复用判定要求「上一份的摘要 === 这次算出来的」—— 缺摘要的条目必然不可复用、下一次写入就被补上，
+    // 所以这个状态最多存活到下一次落盘。能删掉索引里这个字段的人，同样能把摘要重算成对的，
+    // 拦不住他。（2026-08-22 顺着「填了才查」这个形状把全仓 20 处逐个看过一遍的结论。）
     if (entry.storagePayloadDigest && entry.storagePayloadDigest !== digestProjectShardPayload(shard)
       && entry.storagePayloadDigest !== insertionOrderDigestProjectShardPayload(shard)
       && entry.storagePayloadDigest !== legacyDigestProjectShardPayload(shard)) {

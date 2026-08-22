@@ -2651,6 +2651,13 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {})
   if (!dispatch || dispatch.status !== "running") {
     return {accepted: false, status: 409, error: "active_agent_dispatch_required"};
   }
+  // 原先是「填了才查」：不填就整道跳过 —— 而这道守卫问的正是「你干的是哪份契约」，
+  // 检查点又是关闭门认账的证据。紧挨着的语言策略摘要早就是「契约上有就必须给」，
+  // 两道同形的校验一严一松，松的那道恰好更要紧。派发上的摘要一定有（网关构造派发包时就写了），
+  // 唯一的提交方是运行时且它一直在发（MCP 那条路被 agent_checkpoint_must_use_gateway 拒掉）。
+  if (dispatch.taskContractDigest && !checkpointInput.taskContractDigest) {
+    return {accepted: false, status: 409, error: "checkpoint_task_contract_digest_required"};
+  }
   if (checkpointInput.taskContractDigest && checkpointInput.taskContractDigest !== dispatch.taskContractDigest) {
     return {accepted: false, status: 409, error: "checkpoint_task_contract_digest_mismatch"};
   }
@@ -2723,6 +2730,10 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {})
     selfReportedChangedPathEvidenceRefs: checkpointInput.changedPathEvidenceRefs,
     evidenceRefs: unique([...(checkpointInput.evidenceRefs || ["evidence:agent-runtime-checkpoint"]), evidence.evidenceRef]),
     languagePolicyDigest: expectedLanguagePolicyDigest,
+    // 「这份证据是在哪份任务契约下做出来的」此前没有落进记录里 —— 提交时核过就丢了，
+    // 事后从检查点看不出来。存的是【派发上的那份】（服务端认定的），不是执行方自报的那份，
+    // 与上面语言策略摘要同规：证据不该由被证明的一方提供。
+    taskContractDigest: dispatch.taskContractDigest,
     outputContractDigest: checkpointInput.outputContractDigest || specContentDigest("spec/checkpoint.schema.json"),
     // createdAt 原先由调用方给，而验收卡片按它倒序挑"那一份检查点" —— 执行方因此能决定
     // 人看到的是哪一份。落库时间由服务端定；执行方自报的时间另存，不参与排序。

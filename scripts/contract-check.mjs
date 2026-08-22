@@ -13085,7 +13085,7 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     return {repo, remote, baseRef: templateBaseRef, caseRoot};
   };
   const runCase = ({stray, finalized, trespass, writeForbidden, forgeCommit, forgePush, forgeTree,
-    forgeContractDigest, forgeManifestBinding, forgeManifestDigest, forgeLeaseHolder,
+    forgeContractDigest, omitContractDigest, forgeManifestBinding, forgeManifestDigest, forgeLeaseHolder,
     forgeCommitBranch, omitCommitEvidence, pushBehind, narrowAllowlist,
     manifestFromLastRound, outputFromLastRound, manifestNotJson,
     foreignSession, omitLanguageDigest, forgeLanguageDigest, targetAlreadyPushed,
@@ -13237,7 +13237,8 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
       sessionId: foreignSession ? "sess_from_another_work_item" : session.sessionId, runId: dispatch.runId,
       // forgeContractDigest：谎报"我干的是哪份任务契约"。契约摘要是把这份证据钉在
       // 那次派发上的那根钉子 —— 谎报能过的话，一份真实的提交就能挂到它没做过的那件事上。
-      taskContractDigest: forgeContractDigest ? "sha256:not-the-contract-you-were-given" : contract?.contractDigest,
+      taskContractDigest: omitContractDigest ? undefined
+        : forgeContractDigest ? "sha256:not-the-contract-you-were-given" : contract?.contractDigest,
       // 语言策略摘要绑定的是"这份契约要求用什么语言产出"。omit：一个字都不带；forge：谎报。
       languagePolicyDigest: omitLanguageDigest ? undefined
         : forgeLanguageDigest ? "sha256:not-the-language-policy" : contract?.languagePolicyDigest,
@@ -13450,6 +13451,15 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     || forgedContract.result.error !== "checkpoint_task_contract_digest_mismatch") {
     output.push(`检查点谎报任务契约摘要却没被拦下（实际：${forgedContract.result.error || "已受理"}）`
       + " —— 一份真实的提交可以被挂到它没做过的那份契约上");
+  }
+
+  // 一个字都不带的情形以前是【整道跳过】：谎报被拦，不填反而畅通无阻。
+  const omittedContract = runCase({omitContractDigest: true});
+  if (omittedContract.skipped) { output.push(`契约摘要缺失断言无从验证：${omittedContract.skipped}`); }
+  else if (omittedContract.result.accepted !== false
+    || omittedContract.result.error !== "checkpoint_task_contract_digest_required") {
+    output.push(`检查点不带任务契约摘要就被受理了（实际：${omittedContract.result.error || "已受理"}）`
+      + " —— 谎报会被拦下，不填却整道跳过，那等于把这道守卫交给提交方自己开关");
   }
 
   // 声称推送了、而远端没有那个提交：这条决定"活到底有没有真的交出去"。
