@@ -26,6 +26,10 @@ export function auditArchiveFault() {
 export function appendAuditEntry(state, {actor, action, subject, result = "succeeded", at}) {
   state.auditLog ||= [];
   const entry = {
+    // 这个集合此前【不受任何规范约束】：813 条真实记录一条都没被校验过，
+    // 少一个字段、改一个类型都不会有人发现，而它是事后问责的唯一凭据。
+    // schemaVersion 要在 digestOf 之前打上 —— 链上的哈希覆盖除 rowHash 外的全部字段。
+    schemaVersion: "audit-log-entry/v1",
     id: `audit_${Date.now()}_${Math.random().toString(16).slice(2)}`,
     at: at || new Date().toISOString(),
     actor,

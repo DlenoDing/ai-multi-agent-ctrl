@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aimac.local/spec/audit-log-entry.schema.json",
+  "title": "AuditLogEntry",
+  "description": "问责台账的一行。它是事后回答「谁在什么时候动了什么、结果如何」的唯一凭据，并以 prevHash/rowHash 串成链（rowHash 覆盖除它自己以外的全部字段）。此前这个集合【没有任何规范约束】——813 条真实记录一条都没被校验过，少一个字段、改一个类型都不会有人发现。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "at", "actor", "action", "subject", "result", "stateVersion", "prevHash", "rowHash"],
+  "properties": {
+    "schemaVersion": {"const": "audit-log-entry/v1"},
+    "id": {"type": "string", "pattern": "^audit_[0-9]+_[0-9a-f]+$"},
+    "at": {"type": "string", "format": "date-time"},
+    "actor": {"type": "string", "minLength": 1,
+      "description": "认证出来的调用方（账号 id 或服务名）。绝不取自请求体 —— 那样谁都能把事记到别人头上。"},
+    "action": {"type": "string", "minLength": 1},
+    "subject": {"type": "string", "minLength": 1,
+      "description": "被动的那个对象，形如 Type:id。空着的话这条记录回答不了「动了什么」。"},
+    "result": {"type": "string", "minLength": 1,
+      "description": "succeeded / denied，或具体的拒绝码（如 credentials_invalid）。是开放取值，不是闭集。"},
+    "stateVersion": {"type": "integer", "minimum": 0},
+    "prevHash": {"type": "string", "pattern": "^sha256:[0-9a-f]+$|^sha256:genesis$"},
+    "rowHash": {"type": "string", "pattern": "^sha256:[0-9a-f]+$"}
+  }
+}

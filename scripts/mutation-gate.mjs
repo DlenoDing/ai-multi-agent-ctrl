@@ -3993,6 +3993,16 @@ const MUTATIONS = [
     expect: "没被补回来"
   },
   {
+    // 问责台账此前【不受任何规范约束】：813 条真实记录一条都没被校验过。
+    // 这条变异只改一个字段的类型（既有断言都看不见），规范才管得着。
+    name: "审计行的字段类型要被规范钉住",
+    file: "apps/control-plane-ui/lib/audit-ledger.mjs",
+    gate: "doctor",
+    from: "    stateVersion: Number(state.stateVersion || 0),",
+    to: "    stateVersion: String(state.stateVersion || 0),",
+    expect: "auditLog[0].stateVersion expected integer"
+  },
+  {
     name: "段清单里记着却不在盘上的事件段必须说出来",
     file: "apps/control-plane-ui/lib/project-event-store.mjs",
     check: "verifySealedEventSegmentsAreNotSilentlyLost",
@@ -4097,9 +4107,11 @@ const MUTATIONS = [
     name: "不受规范约束的集合数要棘轮住",
     file: "scripts/doctor.mjs",
     gate: "doctor",
-    from: "maxUncovered: 19});",
-    to: "maxUncovered: 18});",
-    expect: "不受规范约束的集合从 18 涨到 19"
+    from: "maxUncovered: 18});",
+    to: "maxUncovered: 17});",
+    // 期望要挑【这道门自己会打印的那一句】：控制面 e2e 的前缀是"控制面 e2e 产出："，
+    // 契约门那两处（种子/编排产出）用的是别的前缀 —— 只写公共部分会被判成"挂错了门"。
+    expect: "控制面 e2e 产出：不受规范约束的集合"
   },
   {
     name: "运维要用的运行参数不许没写进文档",
