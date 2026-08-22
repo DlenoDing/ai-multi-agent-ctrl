@@ -149,6 +149,29 @@ try {
     if (!String(badFlag.stderr).includes("--verified")) {
       throw new Error("agentctl 拒绝打错的参数时没有列出认得的参数 —— 人看不出自己少打了哪个字母");
     }
+    // 参数【名】打错会被拒，参数【值】写错原先一声不吭，而默认值全都偏向"少做一点"：
+    // --max-uses=abc 变 NaN、=0 静默变成 1、--roles= 静默退回默认。人以为自己要了某件事，
+    // 屏幕上没有任何相反的迹象。而且这几条要在【联网之前】拒 —— 否则人先看到"连不上控制面"，
+    // 会以为是网络问题，而真正的问题是他手上那条命令。
+    for (const [why, argv, expect] of [
+      ["--max-uses 不是数字", ["--max-uses=abc"], "--max-uses"],
+      ["--max-uses 写成 0", ["--max-uses=0"], "--max-uses"],
+      ["--roles 给了空值", ["--roles="], "--roles"]
+    ]) {
+      const badValue = spawnSync(process.execPath,
+        [join(root, "scripts/agentctl.mjs"), "join-token", "create", "--project=prj_control_plane",
+          ...argv, "--server=http://127.0.0.1:9"],
+        {encoding: "utf8", env: {...process.env, AIMAC_BOOTSTRAP_TOKEN: "x"}});
+      const said = String(badValue.stderr || badValue.stdout);
+      // 先核"有没有跑去联网"：值写错却先撞一句「连不上控制面」，是这两条里更误导人的那种，
+      // 也要让它成为这一情形下最先报出来的那句（否则下面那条会抢先，变异就对不上号了）。
+      if (/连不上控制面/u.test(said)) {
+        throw new Error(`agentctl ${why}时先去联网了 —— 人会以为是网络问题，而错的是他手上那条命令`);
+      }
+      if (badValue.status !== 1 || !said.includes(expect)) {
+        throw new Error(`agentctl ${why}时应当场拒绝并点名（退出码 ${badValue.status}）：${said.slice(0, 200)}`);
+      }
+    }
     const verified = runCli(["join-token", "create", "--project=prj_control_plane", "--verified"]);
     if (verified.status !== 0 || !/sha256/u.test(String(verified.stdout))) {
       throw new Error("agentctl --verified 没有给出带校验的安装命令 —— 这个参数等于不存在："

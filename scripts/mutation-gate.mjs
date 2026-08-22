@@ -3652,6 +3652,23 @@ const MUTATIONS = [
     expect: "产出清单的路径爬到仓库之外却没被拦下"
   },
   {
+    name: "agentctl 参数值写错不得静默退回默认",
+    file: "scripts/agentctl.mjs",
+    gate: "agent",
+    from: "    maxUses: parseMaxUses(args[\"max-uses\"])}",
+    to: '    maxUses: Number(args["max-uses"] || 1)}',
+    // 去掉校验之后它自然就跑去联网了 —— 这一情形下最先报的是「先去联网了」那句。
+    expect: "先去联网了"
+  },
+  {
+    name: "agentctl 拒绝参数值时要点名是哪个参数",
+    file: "scripts/agentctl.mjs",
+    gate: "agent",
+    from: "    fail(`--max-uses 认不出：${raw}`,",
+    to: "    fail(`这个参数有问题`,",
+    expect: "应当场拒绝并点名"
+  },
+  {
     name: "不许再从任务组上读已被视图剥掉的字段",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyConsoleDoesNotReadStrippedTaskGroupFields",

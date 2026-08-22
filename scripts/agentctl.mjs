@@ -37,6 +37,13 @@ if (unknownFlags.length) {
      ...(SUBCOMMAND_FLAGS[action].length === 0 ? [`${action} 本身不接参数，只认上面那几个通用的`] : [])]);
 }
 
+// 参数值也要在【联网之前】校验：写错了却先去登录、再撞一句"连不上控制面"，
+// 人会以为是网络问题，而真正的问题是他手上那条命令。
+const joinTokenBody = action === "join-token create"
+  ? {allowedRoles: parseRoles(args.roles), ttlSeconds: parseDurationSeconds(args.ttl || 1800),
+    maxUses: parseMaxUses(args["max-uses"])}
+  : null;
+
 if (action === "doctor") {
   const health = await request("/api/health");
   const manifest = await request("/api/agent/v1/bootstrap-manifest");
@@ -68,9 +75,7 @@ const result = await request("/api/agent-join-tokens", {
   body: {
     projectId,
     nodeName: args["node-name"] || undefined,
-    allowedRoles: args.roles ? String(args.roles).split(",").map((item) => item.trim()).filter(Boolean) : ["agent-runtime"],
-    ttlSeconds: parseDurationSeconds(args.ttl || 1800),
-    maxUses: Number(args["max-uses"] || 1)
+    ...joinTokenBody
   }
 });
 console.log(args.verified ? result.verifiedInstallCommand : result.installCommand);
@@ -138,6 +143,31 @@ function parseArgs(argv) {
     else result[arg.slice(2)] = true;
   }
   return result;
+}
+
+// 参数【名】打错会被上面那段拒掉，参数【值】写错原先一声不吭，而默认值全都偏向"少做一点"：
+// --max-uses=abc 变成 NaN（JSON 里成了 null，服务端按自己的默认走）、--max-uses=0 静默变成 1、
+// --roles= 静默退回 agent-runtime。人以为自己要了某件事，屏幕上没有任何相反的迹象。
+function parseMaxUses(raw) {
+  if (raw === undefined) return 1;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    fail(`--max-uses 认不出：${raw}`,
+      ["要一个 ≥1 的整数（一次性票写 1）",
+       "写 0 原先会被静默当成 1 —— 想让一张票能用多次就明确写次数，别指望它替你猜"]);
+  }
+  return value;
+}
+
+function parseRoles(raw) {
+  if (raw === undefined) return ["agent-runtime"];
+  const roles = String(raw).split(",").map((item) => item.trim()).filter(Boolean);
+  if (!roles.length) {
+    fail(`--roles 是空的：${JSON.stringify(String(raw))}`,
+      ["逗号分隔，例如 --roles=agent-runtime,reviewer",
+       "不写这个参数才是用默认的 agent-runtime；写了却是空的，原先会静默退回默认"]);
+  }
+  return roles;
 }
 
 function parseDurationSeconds(value) {
