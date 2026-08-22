@@ -11,7 +11,7 @@ import { KNOWN_SECOND_DOORS } from "./lib/known-second-doors.mjs";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertStateStoreConfig, ensureStoredState, isStateStoreConflict, readStoredCentralState, readStoredState, writeStoredState 
 } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { capProjectShardCollections, assertProjectShardsMatchCentralIndex, digestProjectShardPayload, canonicalJson } from "../apps/control-plane-ui/lib/state-store.mjs";
@@ -428,7 +428,7 @@ run(verifyHeartbeatDoesNotHideFailedSelfCheck);
 run(verifyTaskGroupBlockersStayBounded);
 run(verifyPerScopeRecordsSurviveTheirCap);
 run(verifyLocalGitWorkerRefusesUnsafeRepositoryState);
-run(verifyDispatchBindingChecksRefuseMissingValues);
+runAsync(verifyAgentRuntimeGuardsRefuseRealAttacks);
 runAsync(verifyTestServersDieWithTheirParent);
 run(verifyRuntimeConstantsSitBeforeItsTopLevelAwait);
 run(verifyAgentFailureReasonsAreCoded);
@@ -10836,34 +10836,126 @@ function verifyLocalGitWorkerRefusesUnsafeRepositoryState(output) {
   console.log("本地 git 工作器：工作树不干净/产出越界/清单越界/远端被改回/一字未变 五种形状全拒，正常情形跑得完 —— 核过");
 }
 
-function verifyDispatchBindingChecksRefuseMissingValues(output) {
-  // agent 收到派发包时核三道绑定。它们都是「两个值必须相等」，而两边【都缺】时 !== 也是 false ——
-  // 一个不带摘要的包会让两道校验整个空转，而它们正是用来拦「发给我的合同其实属于另一趟派发」的。
-  // 这一段只在真 agent 机器上跑（本进程够不着），所以这里核形状；
-  // 另一半 —— 控制面下发的包里这些字段真的在 —— 由控制面 e2e 拿【真派发包】断言。
-  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
-  const body = runtime.match(/^function verifyPackageBinding[\s\S]*?^\}/mu)?.[0] || "";
-  if (!body) {
-    output.push("runtime.mjs 里找不到 verifyPackageBinding —— 这条判据按函数体切，找不到就等于没查");
-    return;
-  }
-  const required = [
-    ["任务合同摘要", /if \(!contractDigest \|\|/u],
-    ["技能集", /if \(!worksetId \|\|/u]
-  ];
-  for (const [what, shape] of required) {
-    if (!shape.test(body)) {
-      output.push(`派发包的${what}绑定又变回了「两个值比一比」—— 两边都缺时它是相等的，`
-        + "于是不带摘要的包会让这道校验整个空转");
+async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
+  // runtime.mjs 是【单文件、只用 node 内置、要下发到远程机器】的，所以它一个东西都不导出，
+  // 于是它里面的守卫长期只能靠形状核对或整套远程 e2e —— 36 个失败码里 32 个零覆盖。
+  // 这里换个办法：把它【复制一份】，在副本末尾追加一行导出，import 副本。
+  // 测的仍然是真代码（逐字节复制），而出厂的那一份一行都不用改 ——
+  // 「不为测试去导出内部函数」那条规矩管的是别动产品代码，不是不许测。
+  // 注意：import 时它的 main() 不会跑（入口判断比的是 process.argv[1] 与自身路径）。
+  const dir = mkdtempSync(join(tmpdir(), "cc-runtime-guards-"));
+  try {
+    const copy = join(dir, "runtime-under-test.mjs");
+    const source = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+    writeFileSync(copy, `${source}\nexport {isSafeCloneUrl, assertAllowedPaths, verifyPackageBinding,`
+      + " verifySkillFiles, classifyPushPermissionDenial, inside};\n");
+    const rt = await import(pathToFileURL(copy).href);
+    const refusalOf = (fn) => { try { fn(); return null; } catch (error) { return String(error.message).split(":")[0]; } };
+
+    // ① 派发包绑定：三道都要「缺了也算不匹配」。此前只有形状核对够得着。
+    const contract = {contractDigest: "sha256:c1", roleSkill: {worksetId: "ws1"}};
+    const goodPackage = {nodeBinding: {nodeId: "n1"}, dispatch: {taskContractDigest: "sha256:c1"},
+      taskContract: contract, skillWorkset: {worksetId: "ws1"}};
+    const bindingCases = [
+      ["合规的派发包", goodPackage, null],
+      ["发给别的节点的", {...goodPackage, nodeBinding: {nodeId: "n2"}}, "dispatch_package_node_binding_mismatch"],
+      ["合同摘要对不上", {...goodPackage, dispatch: {taskContractDigest: "sha256:other"}},
+        "dispatch_task_contract_digest_mismatch"],
+      ["两边都没有合同摘要", {...goodPackage, dispatch: {}, taskContract: {roleSkill: {worksetId: "ws1"}}},
+        "dispatch_task_contract_digest_mismatch"],
+      ["技能集对不上", {...goodPackage, skillWorkset: {worksetId: "other"}},
+        "dispatch_skill_workset_binding_mismatch"],
+      ["两边都没有技能集", {...goodPackage, skillWorkset: {}, taskContract: {contractDigest: "sha256:c1", roleSkill: {}}},
+        "dispatch_skill_workset_binding_mismatch"]
+    ];
+    for (const [what, value, expected] of bindingCases) {
+      const got = refusalOf(() => rt.verifyPackageBinding({nodeId: "n1"}, value));
+      if (got !== expected) {
+        output.push(`派发包绑定：${what}拿到的是 ${got || "放行"}（应为 ${expected || "放行"}）—— `
+          + "这几道拦的是「发给我的合同其实属于另一趟派发」");
+      }
     }
+
+    // ② 产出路径：越界与禁改都要拒，而白名单内的要放行。
+    const target = {pathAllowlist: ["docs/**", "README.md"], pathDenylist: ["docs/secrets/**"]};
+    const pathCases = [
+      ["白名单内的路径", ["docs/a/b.md", "README.md"], null],
+      ["爬到仓库外", ["../etc/passwd"], "repository_path_outside_allowlist"],
+      ["绝对路径", ["/etc/passwd"], "repository_path_outside_allowlist"],
+      ["白名单外", ["src/index.js"], "repository_path_outside_allowlist"],
+      // 最要紧的一例：前缀在白名单里，但用 .. 爬出去。docs/** 的匹配是前缀比较，
+      // 只靠白名单拦不住它 —— 拦住它的是那个单独的 ".." 判断。
+      ["白名单前缀 + 爬出去", ["docs/../../etc/passwd"], "repository_path_outside_allowlist"],
+      ["禁改清单里的", ["docs/secrets/keys.md"], "repository_path_forbidden"],
+      // docs/** 不该顺带匹配 docsx/：前缀比较写成 startsWith("docs") 就会。
+      ["名字只是前缀相同", ["docsx/sneak.md"], "repository_path_outside_allowlist"]
+    ];
+    for (const [what, paths, expected] of pathCases) {
+      const got = refusalOf(() => rt.assertAllowedPaths(paths, target));
+      if (got !== expected) {
+        output.push(`产出路径：${what}拿到的是 ${got || "放行"}（应为 ${expected || "放行"}）—— `
+          + "这道决定执行方能改仓库里的哪些文件");
+      }
+    }
+
+    // ③ 克隆地址：能执行任意命令的 git 传输方式一律不认。
+    const urlCases = [
+      ["普通 https", "https://example.com/a/b.git", true],
+      ["本地路径", "/tmp/some/repo.git", true],
+      ["ext:: 传输（能跑任意命令）", "ext::sh -c whoami", false],
+      ["fd:: 传输", "fd::7", false],
+      ["任意 helper::", "evil::payload", false],
+      ["以横杠开头（会被 git 当成参数）", "--upload-pack=touch /tmp/pwned", false],
+      ["空地址", "", false]
+    ];
+    for (const [what, url, expected] of urlCases) {
+      if (rt.isSafeCloneUrl(url) !== expected) {
+        output.push(`克隆地址：${what}被判成${expected ? "不安全" : "安全"}了 —— `
+          + "这道拦的是「派发里给一个地址就能在 agent 机器上跑命令」");
+      }
+    }
+
+    // ④ 技能文件：内容与控制面给的摘要对不上就不能用缓存那份。
+    const skillDir = join(dir, "skills");
+    mkdirSync(skillDir, {recursive: true});
+    writeFileSync(join(skillDir, "s.md"), "技能正文\n");
+    const realDigest = `sha256:${createHash("sha256").update("技能正文\n").digest("hex")}`;
+    if (!rt.verifySkillFiles(skillDir, [{path: "s.md", contentDigest: realDigest}])) {
+      output.push("技能文件：内容与摘要一致却没被认可 —— 每次派发都要重下一遍技能集");
+    }
+    if (rt.verifySkillFiles(skillDir, [{path: "s.md", contentDigest: "sha256:not-it"}])) {
+      output.push("技能文件：内容与摘要对不上却被当成有效 —— 缓存里被改过的技能会被照着执行");
+    }
+    if (rt.verifySkillFiles(skillDir, [{path: "../outside.md", contentDigest: realDigest}])) {
+      output.push("技能文件：路径爬到缓存目录之外却被当成有效");
+    }
+
+    // ⑤ 推送被拒的分类：认得出权限问题，也要认得出【不是】权限问题 ——
+    // 后者 e2e 验不到（那里只造得出被拒那一种），而误判的代价是把该立刻失败的派发挂着等人。
+    const denialCases = [
+      ["服务端说没权限", "remote: Permission to x.git denied to node-1", true],
+      ["认证失败", "fatal: Authentication failed for 'https://x/y.git'", true],
+      ["要求输入用户名", "could not read Username for 'https://x': terminal prompts disabled", true],
+      ["公钥被拒", "git@x: Permission denied (publickey).", true],
+      ["钩子拒绝", "! [remote rejected] main -> main (pre-receive hook declined)", true],
+      ["连不上", "fatal: unable to access 'https://x/': Could not resolve host: x", false],
+      ["非快进", "! [rejected] main -> main (non-fast-forward)", false],
+      ["仓库不存在", "fatal: repository 'https://x/y.git/' not found", false],
+      ["磁盘满", "fatal: write error: No space left on device", false]
+    ];
+    for (const [what, text, shouldMatch] of denialCases) {
+      const got = rt.classifyPushPermissionDenial(text);
+      if (Boolean(got) !== shouldMatch) {
+        output.push(`推送被拒分类：${what}被判成${got ? `权限问题（${got}）` : "普通失败"} —— `
+          + (shouldMatch ? "它该走 §8 让人来处置，直接失败等于把干完的活丢掉"
+            : "把它挂起来等人处置是错的：人处置不了，只是白等四分钟"));
+      }
+    }
+    console.log(`agent 侧守卫真跑一遍（导出的是副本、出厂那份没动）：派发包绑定 ${bindingCases.length} 例、`
+      + `产出路径 ${pathCases.length} 例、克隆地址 ${urlCases.length} 例、技能文件 3 例、推送被拒分类 ${denialCases.length} 例`);
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
   }
-  // 相等比较本身也不能丢：只判「非空」等于谁的摘要都收。
-  if (!/value\.dispatch\?\.taskContractDigest !== contractDigest/u.test(body)
-    || !/value\.skillWorkset\?\.worksetId !== worksetId/u.test(body)) {
-    output.push("派发包绑定只剩「字段非空」而不再比对两侧的值 —— 换成另一趟派发的摘要照样收");
-  }
-  console.log("派发包绑定：任务合同摘要与技能集都是「缺失即拒 + 两侧必须相等」（形状核对；"
-    + "控制面确实下发这些字段那一半由控制面 e2e 拿真派发包验）");
 }
 
 async function verifyTestServersDieWithTheirParent(output) {

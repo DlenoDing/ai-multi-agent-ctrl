@@ -3596,6 +3596,30 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "产出路径必须拦住「白名单前缀 + 爬出去」",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: 'path.split("/").includes("..")',
+    to: 'path.includes(" ")',
+    expect: "白名单前缀 + 爬出去"
+  },
+  {
+    name: "任意 helper:: 传输方式不得当成安全地址",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: 'if (/^[a-z0-9+.-]*::/iu.test(value) || value.startsWith("ext:") || value.startsWith("fd:")) return false;',
+    to: 'if (value.startsWith("ext:") || value.startsWith("fd:")) return false;',
+    expect: "任意 helper::被判成安全了"
+  },
+  {
+    name: "缓存里被改过的技能文件不得当成有效",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: "return inside(directory, target) && existsSync(target) && sha256(readFileSync(target, \"utf8\")) === file.contentDigest;",
+    to: "return inside(directory, target) && existsSync(target);",
+    expect: "内容与摘要对不上却被当成有效"
+  },
+  {
     name: "审计动作名的另一种写法也要被中文门看见",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "specs",
@@ -3681,18 +3705,18 @@ const MUTATIONS = [
   {
     name: "派发包合同摘要缺失必须当不匹配",
     file: "apps/agent-runtime/runtime.mjs",
-    check: "verifyDispatchBindingChecksRefuseMissingValues",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
     from: "if (!contractDigest || value.dispatch?.taskContractDigest !== contractDigest)",
     to: "if (value.dispatch?.taskContractDigest !== contractDigest)",
-    expect: "又变回了「两个值比一比」"
+    expect: "两边都没有合同摘要"
   },
   {
     name: "派发包绑定不得只判非空",
     file: "apps/agent-runtime/runtime.mjs",
-    check: "verifyDispatchBindingChecksRefuseMissingValues",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
     from: "if (!worksetId || value.skillWorkset?.worksetId !== worksetId)",
     to: "if (!worksetId)",
-    expect: "只剩「字段非空」而不再比对两侧的值"
+    expect: "技能集对不上"
   },
   {
     name: "控制面下发的派发包必须带齐绑定",
