@@ -3596,6 +3596,38 @@ const MUTATIONS = [
     expect: "服务端已经不看这些了"
   },
   {
+    name: "失败计数必须真的累加",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionFailureCapSurvivesHistoryAndReopen",
+    from: "  workItem.executionFailureCount = Number(workItem.executionFailureCount || 0) + 1;",
+    to: "  workItem.executionFailureCount = 1;",
+    expect: "工作项上的计数却是 1"
+  },
+  {
+    name: "agent 上报失败那条路也要记账",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyExecutionFailureCapSurvivesHistoryAndReopen",
+    from: '    if (reportedStatus === "failed") noteWorkItemExecutionFailure(state, dispatch);',
+    to: "",
+    expect: "把派发标成失败时没有记账"
+  },
+  {
+    name: "人重开之后不许按老账把它打回去",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionFailureCapSurvivesHistoryAndReopen",
+    from: "            delete workItem.executionFailureCount;",
+    to: "",
+    expect: "这个杠杆按了等于没按"
+  },
+  {
+    name: "连续失败计数不得从有上限的派发历史现数",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyExecutionFailureCapSurvivesHistoryAndReopen",
+    from: "      const failureCount = Number(workItem.executionFailureCount || 0);",
+    to: "      const failureCount = failedRuns.length;",
+    expect: "被历史上限顶光之后这条上限就不挡了"
+  },
+  {
     name: "不许再说「关了自治周期派发就不会被领走」",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyOrchestratorOffWordingMatchesWhatStillRuns",

@@ -116,8 +116,8 @@ import {
   STRING_LIST_MAX_ITEMS,
   STRING_LIST_MAX_ITEM_LENGTH,
   projectRepositories,
-  isSafeGitRef
-} from "./lib/control-plane-core.mjs";
+  isSafeGitRef,
+  noteWorkItemExecutionFailure} from "./lib/control-plane-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const repositoryRoot = resolve(process.env.AIMAC_REPOSITORY_ROOT || root);
@@ -2863,6 +2863,9 @@ async function handleApi(req, res) {
     // terminalize it later. Without a marker the blocked, node-detached dispatch is orphaned and wedges
     // the close barrier — the operator's approval/denial would be a no-op.
     const permissionTimedOut = reportedStatus === "blocked" && session?.status === "permission_required";
+    // 失败计数记在工作项上（派发历史有 240 条上限，现数会被顶掉 —— 见 noteWorkItemExecutionFailure）。
+    // 这一条路径是 agent 自己上报失败，与编排里那条 markDispatchFailed 是同一件事的两个入口。
+    if (reportedStatus === "failed") noteWorkItemExecutionFailure(state, dispatch);
     dispatch.status = reportedStatus;
     if (permissionTimedOut && !dispatch.blockedReason) dispatch.blockedReason = "permission_request_pending";
     dispatch.failureReason = String(body.reason || "agent_runtime_failure").slice(0, 2000);

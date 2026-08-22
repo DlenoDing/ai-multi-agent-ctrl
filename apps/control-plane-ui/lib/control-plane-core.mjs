@@ -2306,18 +2306,21 @@ function runAutonomousCycleBody(state, request = {}) {
       // 不加阻塞、不动工作项、也没有任何次数上限。实测 8 轮编排为同一个单元造了 8 个派发，
       // 而控制台上 0 条提示 —— 每一轮都在真实烧模型额度，人却完全看不到。
       // 与独立评审的返工上限同理：到点就停下来，把责任明确交回人手上，并说清楚为什么。
+      // 计数取自工作项上的持久值（见 noteWorkItemExecutionFailure）：派发历史会被 240 条上限顶掉，
+      // 拿它现数会让这条上限在忙碌部署里悄悄失效。最近一次失败原因仍从历史里取（取不到就说取不到）。
       const failedRuns = (state.agentDispatches || []).filter((item) =>
         item.taskGroupId === taskGroup.id && item.workItemId === workItem.id && item.status === "failed");
+      const failureCount = Number(workItem.executionFailureCount || 0);
       const maxExecutionAttempts = Math.max(1, Number(process.env.AIMAC_MAX_EXECUTION_ATTEMPTS || 3));
-      if (failedRuns.length >= maxExecutionAttempts && !["verified", "closed"].includes(workItem.status)) {
-        const lastFailure = failedRuns.at(-1)?.failureReason || "unknown";
+      if (failureCount >= maxExecutionAttempts && !["verified", "closed"].includes(workItem.status)) {
+        const lastFailure = failedRuns.at(-1)?.failureReason || "已被历史上限顶掉，看不到了";
         workItem.status = "needs_decision";
         workItem.blockedReason = "execution_failed_repeatedly";
         workItem.updatedAt = new Date().toISOString();
-        addBlocker(taskGroup, "S1", `工作项 ${workItem.id} 连续 ${failedRuns.length} 次执行失败（最近一次：${String(lastFailure).slice(0, 120)}），`
+        addBlocker(taskGroup, "S1", `工作项 ${workItem.id} 连续 ${failureCount} 次执行失败（最近一次：${String(lastFailure).slice(0, 120)}），`
           + "已停止自动重派，需要人工决策处置（重开 / 放弃）");
         recordAdmissionDecision(state, {taskGroup, workItem, outcome: "blocked", reasonCode: "execution_failed_repeatedly",
-          whyThisCellNow: `execution failed ${failedRuns.length} times in a row; automatic re-dispatch stopped so a person can decide`, cycleRef});
+          whyThisCellNow: `execution failed ${failureCount} times in a row; automatic re-dispatch stopped so a person can decide`, cycleRef});
         changed.push({taskGroupId: taskGroup.id, workItemId: workItem.id, status: workItem.status, reason: "execution_failed_repeatedly"});
         continue;
       }
@@ -3259,7 +3262,24 @@ function markDispatchBlocked(state, dispatch, reason) {
   appendEvent(state, "blocker", "AgentDispatch", dispatch.dispatchId, "agent-runtime", {projectId: dispatch.projectId, taskGroupId: dispatch.taskGroupId, reason});
 }
 
+// 「同一个工作项连续多次执行失败就停止自动重派」这条上限，原先是【现数派发历史里 failed 的条数】。
+// 两个方向都会失灵：
+//  ① 派发历史有 240 条上限（capDispatchHistory），失败记录被顶掉之后计数掉回去 —— 又变成无限重派，
+//     而这条上限存在的全部理由就是"别一直空烧模型额度"；
+//  ② 人按了「重开」之后那几条 failed 还在，下一拍立刻又把它打回 needs_decision ——
+//     实测过：重开 → 跑一拍 → 又是 execution_failed_repeatedly，这个杠杆按了等于没按。
+// 改成记在工作项上、只增不减，由人的「重开」清零。
+// （升级影响：老状态没有这个计数，之前被挡住的工作项会重新获得最多 N 次机会，然后照常挡住。）
+export function noteWorkItemExecutionFailure(state, dispatch) {
+  if (!dispatch?.workItemId) return;
+  const taskGroup = (state.taskGroups || []).find((item) => item.id === dispatch.taskGroupId);
+  const workItem = (taskGroup?.workItems || []).find((item) => item.id === dispatch.workItemId);
+  if (!workItem) return;
+  workItem.executionFailureCount = Number(workItem.executionFailureCount || 0) + 1;
+}
+
 function markDispatchFailed(state, dispatch, reason) {
+  noteWorkItemExecutionFailure(state, dispatch);
   dispatch.status = "failed";
   dispatch.failureReason = reason;
   dispatch.updatedAt = new Date().toISOString();
@@ -6045,6 +6065,9 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
               if (bundle.workItemId === workItem.id && bundle.verdict === "changes_requested") bundle.supersededByHumanDecision = true;
             }
             workItem.status = "ready";
+            // 失败计数必须由这一下清零，否则下一拍又按老账把它打回 needs_decision ——
+            // 人按了「重开」却什么也没发生（实测过）。
+            delete workItem.executionFailureCount;
             workItem.reviewState = "reopened_by_human_decision";
             workItem.humanDecisionRef = directive.directiveId;
             workItem.progress = Math.min(Number(workItem.progress || 0), 60);

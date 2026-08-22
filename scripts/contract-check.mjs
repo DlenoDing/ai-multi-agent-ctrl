@@ -45,6 +45,7 @@ import {
   ensureRuntimeCollections,
   organizationQuotaCheck,
   runAutonomousCycle,
+  noteWorkItemExecutionFailure,
   WIP_ACTIVE_DISPATCH_STATUSES,
   wipCapacityForProject,
   makeProjectScopePredicate,
@@ -572,6 +573,7 @@ run(verifyRefusalCodeScanSeesEveryThrowHelper);
 run(verifyRefusalCodeCoverageRatchet);
 await runAsync(verifyGateFetchFailuresNameTheGate);
 run(verifyMcpInputDictionaryHasNoGhosts);
+run(verifyExecutionFailureCapSurvivesHistoryAndReopen);
 run(verifyOrchestratorOffWordingMatchesWhatStillRuns);
 run(verifyConsoleReadsOnlyWhatItsViewDelivers);
 run(verifyServerStateFieldsHaveProducers);
@@ -6007,6 +6009,100 @@ function verifyProjectShardsAreNeverSilentlyDropped(output) {
   } finally {
     rmSync(runtimeDir, {recursive: true, force: true});
   }
+}
+
+function verifyExecutionFailureCapSurvivesHistoryAndReopen(output) {
+  // 「同一个工作项连续多次执行失败就停止自动重派（否则会一直空烧模型额度）」这条上限，
+  // 原先是现数派发历史里 failed 的条数。两个方向都会失灵：
+  //  ① 派发历史有 240 条上限，失败记录被顶掉后计数掉回去 —— 又变回无限重派；
+  //  ② 人按了「重开」之后那几条 failed 还在，下一拍立刻把它打回 needs_decision（实测过：按了等于没按）。
+  const tick = (tune) => {
+    const state = structuredClone(seedState);
+    ensureRuntimeCollections(state, {root});
+    const taskGroup = (state.taskGroups || []).find((item) => (item.workItems || []).length);
+    const workItem = taskGroup.workItems[0];
+    tune(state, taskGroup, workItem);
+    runAutonomousCycle(state, {root, runtimeDir: join(root, ".runtime"), endpoint: "http://127.0.0.1:1", mode: "all"});
+    const after = state.taskGroups.find((item) => item.id === taskGroup.id)
+      .workItems.find((item) => item.id === workItem.id);
+    return {status: after.status, blockedReason: after.blockedReason || null};
+  };
+  const failedHistory = (taskGroup, workItem, count) => [...Array(count)].map((unused, index) => ({
+    dispatchId: `d_fail_${index}`, taskGroupId: taskGroup.id, workItemId: workItem.id,
+    status: "failed", failureReason: "executor_exited_nonzero"
+  }));
+
+  const capped = tick((state, taskGroup, workItem) => {
+    workItem.status = "ready";
+    workItem.executionFailureCount = 3;
+    state.agentDispatches = failedHistory(taskGroup, workItem, 3);
+  });
+  if (capped.blockedReason !== "execution_failed_repeatedly") {
+    output.push(`连续失败到上限却没有停下来（${capped.status}/${capped.blockedReason}）—— 下面两条测不出东西`);
+    return;
+  }
+  // 人按了「重开」：走【真的那条人工指令路径】，不要在夹具里自己把计数删掉 ——
+  // 那样测的是我编的状态，产品里那行清零删掉了也不会红（第一版正是这样）。
+  const reopened = tick((state, taskGroup, workItem) => {
+    workItem.status = "needs_decision";
+    workItem.blockedReason = "execution_failed_repeatedly";
+    workItem.executionFailureCount = 3;
+    state.agentDispatches = failedHistory(taskGroup, workItem, 3);
+    state.humanDirectives = [{directiveId: "hd_reopen", directiveType: "resolve_decision",
+      resolution: "reopen", projectId: taskGroup.projectId, taskGroupId: taskGroup.id,
+      workItemId: workItem.id, status: "queued", instruction: "重开这个单元",
+      issuedBy: "human@local", appliedActions: [], createdAt: new Date().toISOString()}];
+  });
+  if (reopened.blockedReason === "execution_failed_repeatedly") {
+    output.push("人按了「重开」，下一拍又按老账把它打回 needs_decision —— 这个杠杆按了等于没按："
+      + "计数不能从派发历史现数，那几条 failed 记录在重开之后仍然在那里");
+  }
+  // 派发历史被 240 条上限顶光了：上限仍然要挡着，否则忙碌部署里它悄悄失效、一直空烧额度。
+  const evicted = tick((state, taskGroup, workItem) => {
+    workItem.status = "ready";
+    workItem.executionFailureCount = 3;
+    state.agentDispatches = [];
+  });
+  if (evicted.blockedReason !== "execution_failed_repeatedly") {
+    output.push(`失败记录被历史上限顶光之后这条上限就不挡了（${evicted.status}/${evicted.blockedReason}）—— `
+      + "越忙的部署越早失效，而它存在的全部理由就是「别一直空烧模型额度」");
+  }
+  // 上面三条验的都是「有了计数之后怎么用」。计数【是不是真的被产生】是另一半：
+  // 派发被标成 failed 只有两处入口（编排里的 markDispatchFailed、agent 上报的 /fail 路由），
+  // 两处都必须记账 —— 少一处，这条上限就会在那条路径上悄悄失效。
+  const failedWritePoints = [
+    ["apps/control-plane-ui/lib/control-plane-core.mjs", /function markDispatchFailed\(state, dispatch, reason\) \{\s*\n\s*noteWorkItemExecutionFailure\(state, dispatch\);/u],
+    ["apps/control-plane-ui/server.mjs", /if \(reportedStatus === "failed"\) noteWorkItemExecutionFailure\(state, dispatch\);/u]
+  ];
+  for (const [file, shape] of failedWritePoints) {
+    if (!shape.test(readFileSync(join(root, file), "utf8"))) {
+      output.push(`${file.split("/").pop()} 里把派发标成失败时没有记账 —— 走这条路径的失败不计数，`
+        + "「连续多次失败就停止重派」在它上面等于不存在");
+    }
+  }
+  // 记账函数本身也要验：调它一次，计数必须从无到有、并且认得出对应的工作项。
+  // （这里不去构造"让编排自己判一次失败"的情形 —— 那条分支前面还有别的处置会抢先，
+  //   造出来的多半不是它。两半合起来足够：函数会加一 + 两个入口都调了它。）
+  {
+    const state = structuredClone(seedState);
+    ensureRuntimeCollections(state, {root});
+    const taskGroup = (state.taskGroups || []).find((item) => (item.workItems || []).length);
+    const workItem = taskGroup.workItems[0];
+    noteWorkItemExecutionFailure(state, {taskGroupId: taskGroup.id, workItemId: workItem.id});
+    noteWorkItemExecutionFailure(state, {taskGroupId: taskGroup.id, workItemId: workItem.id});
+    if (Number(workItem.executionFailureCount || 0) !== 2) {
+      output.push(`记了两次失败，工作项上的计数却是 ${workItem.executionFailureCount} —— `
+        + "那条「连续多次失败就停止重派」的上限永远到不了");
+    }
+    // 认不出的工作项不能把账记到别人头上，也不能炸。
+    noteWorkItemExecutionFailure(state, {taskGroupId: taskGroup.id, workItemId: "w_not_here"});
+    noteWorkItemExecutionFailure(state, {});
+    if (Number(workItem.executionFailureCount || 0) !== 2) {
+      output.push("给一个认不出的工作项记失败，账记到了别的工作项头上");
+    }
+  }
+  console.log("连续失败上限：到点会停、人重开之后真的重新派下去、失败记录被历史上限顶光也仍然挡着，"
+    + "两处失败入口都记账 —— 核过");
 }
 
 function verifyOrchestratorOffWordingMatchesWhatStillRuns(output) {
@@ -13398,6 +13494,9 @@ function verifyTaskGroupBlockersStayBounded(output) {
       if (!["running", "assigned", "queued"].includes(dispatch.status)) continue;
       dispatch.status = "failed";
       dispatch.failureReason = "executor_crashed";
+      // 与 /api/agent/v1/dispatches/:id/fail 那条真实路径做同一件事：失败计数记在工作项上
+      // （派发历史有 240 条上限，现数会被顶掉）。夹具少这一步，测的就不是真实那条路了。
+      noteWorkItemExecutionFailure(state, dispatch);
       const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
       if (session) session.status = "failed";
     }
@@ -13566,6 +13665,9 @@ function verifyRepeatedExecutionFailureStops(output) {
       if (!["running", "assigned", "queued"].includes(dispatch.status)) continue;
       dispatch.status = "failed";
       dispatch.failureReason = "executor_crashed";
+      // 与 /api/agent/v1/dispatches/:id/fail 那条真实路径做同一件事：失败计数记在工作项上
+      // （派发历史有 240 条上限，现数会被顶掉）。夹具少这一步，测的就不是真实那条路了。
+      noteWorkItemExecutionFailure(state, dispatch);
       const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
       if (session) session.status = "failed";
     }
