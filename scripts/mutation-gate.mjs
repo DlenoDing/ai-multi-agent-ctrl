@@ -3652,6 +3652,16 @@ const MUTATIONS = [
     expect: "产出清单的路径爬到仓库之外却没被拦下"
   },
   {
+    // 这条挂在 docker 门上（要一台真 PostgreSQL）。分片防篡改此前只在 runtime_json 上验过，
+    // 而生产用的是 PG —— 那道守卫存在的全部理由就是"有 DB 写权限的人直接改分片行"。
+    name: "PostgreSQL 上的分片防篡改必须真的生效",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    gate: "docker",
+    from: '  if (stateStoreKind() === "postgresql") assertProjectShardsMatchCentralIndex(shards, centralState);',
+    to: "  if (false) assertProjectShardsMatchCentralIndex(shards, centralState);",
+    expect: "控制面照读照用"
+  },
+  {
     name: "种子与编排产出的不受约束集合数也要棘轮住",
     file: "scripts/contract-check.mjs",
     check: "verifySeedRecordsMatchTheirDeclaredSchemas",
@@ -7201,7 +7211,11 @@ const GATE_COMMANDS = {
   mcp: "scripts/doctor-mcp.mjs",
   // 远程 agent e2e。断言写在哪套 e2e 里，变异就得挂哪个门 ——
   // 挂错门的表现是"单独跑那套 e2e 时红、进了全量门却绿"（实测：一条变异因此假绿）。
-  agent: "scripts/doctor-agent-remote.mjs"
+  agent: "scripts/doctor-agent-remote.mjs",
+  // docker compose e2e（要起一台真 PostgreSQL，几分钟）。只给【非在真数据库上跑就验不到】
+  // 的不变式用 —— 分片防篡改就是这一类：runtime_json 那条路有三道校验且被契约门钉着，
+  // 而生产用的是 PG，那道守卫存在的全部理由就是"有 DB 写权限的人直接改分片行"。
+  docker: "scripts/doctor-docker-compose.mjs"
 };
 function gateInvocation(mutation, workdir) {
   const key = mutation.gate || "contract";

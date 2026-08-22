@@ -103,6 +103,42 @@ try {
   }
   console.log(`PostgreSQL CAS ok: 同版本并发写，1 个成功 / 1 个冲突（${casResults.map((item) => `${item.marker}:${item.outcome}`).join("，")}）`);
 
+  // 分片防篡改此前【只在没人拿来跑生产的那个后端上验过】（runtime_json 有三道校验且被契约门钉着，
+  // 而生产是 PostgreSQL）。这道守卫存在的全部理由，就是"有 DB 写权限的人直接改分片行"——
+  // 那正是这里要做的事：改一行、再让控制面读一次，它必须拒绝开工而不是照读照用。
+  {
+    const psql = (sql) => execFileSync("docker",
+      ["compose", "exec", "-T", "postgres", "psql", "-U", "aimac", "-d", "aimac", "-t", "-A", "-c", sql],
+      {cwd: root, env: composeEnv, encoding: "utf8"}).trim();
+    const target = psql("select project_id from aimac_project_state_shards limit 1");
+    if (!target) {
+      console.log("  --  PostgreSQL 里还没有项目分片，「直接改分片行必须被拒」未被检验");
+    } else {
+      // 整行快照再改：只还原被我改的那个字段是不够的（第一版只还原了 schemaVersion，
+      // 而破坏的是 collections.taskGroups —— 环境就那么坏在那儿，后面的断言全被带倒）。
+      const snapshot = psql(`select shard::text from aimac_project_state_shards where project_id = '${target}'`);
+      // 只动分片里的内容，不碰中央索引里的摘要 —— 这正是"有 DB 写权限的人"能做的那种改动。
+      psql(`update aimac_project_state_shards set shard = jsonb_set(shard, '{collections,taskGroups}', '[]'::jsonb) where project_id = '${target}'`);
+      const probe = spawnSync("curl", ["-fsS", "-o", "/dev/null", "-w", "%{http_code}",
+        "-H", "accept: application/json", "http://127.0.0.1:4317/api/health"],
+        {cwd: root, env: composeEnv, encoding: "utf8"});
+      const tampered = spawnSync("curl", ["-fsS", "-X", "POST", "-H", "content-type: application/json",
+        "-d", JSON.stringify({email: "system.admin@local", token: composeEnv.AIMAC_BOOTSTRAP_TOKEN || "docker-doctor-bootstrap-token"}),
+        "http://127.0.0.1:4317/api/auth/login"], {cwd: root, env: composeEnv, encoding: "utf8"});
+      const said = `${tampered.stdout || ""}${tampered.stderr || ""}`;
+      if (tampered.status === 0 && !/digest_mismatch|shard/u.test(said)) {
+        throw new Error("直接改了 PostgreSQL 里的分片行，控制面照读照用 —— "
+          + `分片防篡改在生产后端上等于不存在（健康检查 ${probe.stdout}，登录回执：${said.slice(0, 160)}）`);
+      }
+      console.log("  PostgreSQL 分片防篡改 ok: 直接改分片行之后控制面拒绝开工，没有把被改过的内容当成真相");
+      // 收拾干净：后面的断言还要用这套环境。整行原样写回，不做"聪明的部分还原"。
+      execFileSync("docker", ["compose", "exec", "-T", "postgres", "psql", "-U", "aimac", "-d", "aimac",
+        "-v", "ON_ERROR_STOP=1", "-c",
+        `update aimac_project_state_shards set shard = $json$${snapshot}$json$::jsonb where project_id = '${target}'`],
+        {cwd: root, env: composeEnv, encoding: "utf8"});
+    }
+  }
+
   const doctor = spawnSync("npm", ["run", "agentctl", "--", "doctor", "--server=http://127.0.0.1:4317"], {cwd: root, env: composeEnv, encoding: "utf8"});
   if (doctor.status !== 0 || !doctor.stdout.includes("agent gateway doctor ok")) throw new Error(`compose agentctl doctor failed: ${doctor.stderr || doctor.stdout}`);
   console.log("docker compose doctor ok: config, build, health, centralized MCP, installer artifacts and PostgreSQL state-store verified");
