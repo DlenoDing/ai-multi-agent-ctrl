@@ -3907,12 +3907,23 @@ const MUTATIONS = [
     expect: "不受规范约束的集合从 3 涨到 4"
   },
   {
-    name: "定不下搜索面的断言数要棘轮住",
+    // 「这条断言指不指得出自己守的是哪一处」现在按【运行时记下的真实目标串】核（原先解析本文件源码，
+    // 看不见插值拼出来的那 9 条）。记账一断，整道自查就静静地变成"核对了 0 条"。
+    name: "断言搜索面自查的记账不得断掉",
     file: "scripts/validate-specs.rb",
     gate: "specs",
-    from: "UNRESOLVED_ASSERTION_SCOPE_CEILING = 11",
-    to: "UNRESOLVED_ASSERTION_SCOPE_CEILING = 10",
-    expect: "定不下搜索面的源码断言从 10 涨到 11"
+    from: "    @probes << needle\n    super",
+    to: "    super",
+    expect: "这道扫描在空转"
+  },
+  {
+    // 源文件必须经 read_source 读进来，否则它上面的 include? 不会被记账。
+    name: "源文件不得绕过 read_source 直接读",
+    file: "scripts/validate-specs.rb",
+    gate: "specs",
+    from: 'console_source = read_source("apps/control-plane-ui/public/app.js")',
+    to: 'console_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))',
+    expect: "没走 read_source"
   },
   {
     name: "不受规范约束的集合数要棘轮住",

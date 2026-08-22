@@ -7,6 +7,38 @@ require "yaml"
 
 ROOT = File.expand_path("..", __dir__)
 
+# 本门有几百条 `xxx_source.include?("整句守卫")` 形式的断言。一条断言的目标串若在被查文件里
+# 能匹配到【多处】，它就指认不出自己守的是哪一处 —— 隔壁复制粘贴出的同形代码会替真守卫把它喂饱。
+# 这道自查原先【解析本文件的源码文本】来找这些断言，于是看不见目标串带插值的那些（循环里逐个查的
+# 那种），11 条静静地没被核过；它还会读到自己写在注释里的例子（`xxx_source` 就是这么冒出来的）。
+# 改成【运行时记账】：源文件读进来时包一层，谁调 include? 就把【真实的目标串】记下来，
+# 跑完再逐条核唯一性。插值不再是问题 —— 记下来的本来就是插值之后的结果。
+class ScopedSource < String
+  attr_reader :source_label, :probes
+
+  ALL = []
+
+  def initialize(text, label)
+    super(text)
+    @source_label = label
+    @probes = []
+    ALL << self
+  end
+
+  def include?(needle)
+    @probes << needle
+    super
+  end
+end
+
+def read_source(*relative)
+  ScopedSource.new(File.read(File.join(ROOT, *relative)), File.join(*relative))
+end
+
+def combine_sources(*sources)
+  ScopedSource.new(sources.join("\n"), sources.map(&:source_label).join(" + "))
+end
+
 def load_json(path)
   JSON.parse(File.read(File.join(ROOT, path)))
 end
@@ -100,7 +132,7 @@ end
 # 安装脚本的失败信息是操作者在【另一台机器上】唯一能看到的东西：控制台在这里帮不上忙。
 # 校验和对不上尤其要紧——它要么是下载损坏、要么是产物被替换过，而人此刻需要知道
 # 是哪个文件、期望什么、实到什么、以及"不要运行它"。这些脚本此刻全都知道。
-installer_source = File.read(File.join(ROOT, "scripts/install-agent.sh"))
+installer_source = read_source("scripts/install-agent.sh")
 checksum_block = installer_source[/checksum verification failed.*?exit 1/m].to_s
 if checksum_block.empty?
   errors << "安装脚本里找不到校验和失败那一段 —— 下面几条在空转"
@@ -384,7 +416,7 @@ end
 # 视图里裁掉的字段，控制台就【不该再引用】—— 引用了就会拿到 undefined，而且那种坏法很隐蔽：
 # 页面不报错，只是永远显示"-"。想渲染它，就先把裁剪去掉。
 # 判据同时防空转：裁剪表为空说明这条配置已经失效（比如字段改了名），也要报出来。
-view_server_source = File.read(File.join(ROOT, "apps/control-plane-ui/server.mjs"))
+view_server_source = read_source("apps/control-plane-ui/server.mjs")
 dropped_block = view_server_source[/const viewDroppedFields = \{(.*?)\n  \};/m].to_s
 dropped_fields = dropped_block.scan(/"([a-zA-Z]+)"/).flatten.uniq - dropped_block.scan(/^\s{4}([a-zA-Z]+):/).flatten
 errors << "视图字段裁剪表是空的 —— 要么删掉这套机制，要么它已经失效" if dropped_fields.empty?
@@ -456,7 +488,7 @@ end
 view_block = File.read(File.join(ROOT, "apps/control-plane-ui/server.mjs"))[/const viewFields = \{(.*?)\n  \};/m].to_s
 view_collections = view_block.scan(/"([a-zA-Z]+)"/).flatten.uniq
 errors << "视图字段一个都没提取到 —— 本条在空转" if view_collections.length < 20
-console_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+console_source = read_source("apps/control-plane-ui/public/app.js")
 unread_by_console = view_collections.reject { |name| console_source.include?("state.#{name}") || console_source.include?("#{name}:") }
 unless unread_by_console.empty?
   errors << "这些集合下发给了控制台却没有一处读：#{unread_by_console.sort.join(", ")} —— " \
@@ -485,8 +517,8 @@ else
   end
 end
 
-server_source = File.read(File.join(ROOT, "apps/control-plane-ui/server.mjs"))
-core_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/control-plane-core.mjs"))
+server_source = read_source("apps/control-plane-ui/server.mjs")
+core_source = read_source("apps/control-plane-ui/lib/control-plane-core.mjs")
 
 # schema 与代码的双向一致：上面几条只查了 schema 内部自洽（enum 与 required 互相覆盖），
 # 没查 schema 里的门是否真的存在于代码。我删掉两道恒不触发的指令包门时，schema 里的残留就是
@@ -504,38 +536,38 @@ missing_schema_checks = code_checks - readiness_check_enum
 errors << "CompletionReadiness schema 里的检查在代码中不存在（schema 残留）: #{stale_schema_checks.sort.join(", ")}" unless stale_schema_checks.empty?
 errors << "代码里的就绪度检查没有登记进 CompletionReadiness schema: #{missing_schema_checks.sort.join(", ")}" unless missing_schema_checks.empty?
 
-state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs"))
+state_store_source = read_source("apps/control-plane-ui/lib/state-store.mjs")
 # The Postgres backend upgraded from per-query `psql` subprocesses to a pooled `pg` client.
 # Because Node has no synchronous Postgres driver, the async pool lives in a worker thread
 # (pg-pool-worker.mjs) driven synchronously from state-store via pg-sync-store.mjs (Atomics.wait
 # + receiveMessageOnPort). The JSONB DDL and version-guarded CAS therefore moved into those files;
 # tamper assertions read the combined source so they stay meaningful after the relocation.
-pg_pool_worker_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/pg-pool-worker.mjs"))
-transition_engine_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/transition-engine.mjs"))
-pg_sync_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/pg-sync-store.mjs"))
-postgres_backend_source = "#{state_store_source}\n#{pg_sync_store_source}\n#{pg_pool_worker_source}"
-project_event_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/project-event-store.mjs"))
-doctor_source = File.read(File.join(ROOT, "scripts/doctor.mjs"))
-mcp_source = File.read(File.join(ROOT, "apps/mcp-server/server.mjs"))
+pg_pool_worker_source = read_source("apps/control-plane-ui/lib/pg-pool-worker.mjs")
+transition_engine_source = read_source("apps/control-plane-ui/lib/transition-engine.mjs")
+pg_sync_store_source = read_source("apps/control-plane-ui/lib/pg-sync-store.mjs")
+postgres_backend_source = combine_sources(state_store_source, pg_sync_store_source, pg_pool_worker_source)
+project_event_store_source = read_source("apps/control-plane-ui/lib/project-event-store.mjs")
+doctor_source = read_source("scripts/doctor.mjs")
+mcp_source = read_source("apps/mcp-server/server.mjs")
 # Gap 2A lifted the pure (state,args) governance/room/lease mutators into control-plane-core.mjs so the
 # MCP surface and future HTTP/runtime/command-bus callers share one implementation. Source-presence
 # assertions for those mutators therefore accept the definition in either the MCP server or shared core.
-mcp_shared_governance_source = "#{mcp_source}\n#{core_source}"
-mcp_doctor_source = File.read(File.join(ROOT, "scripts/doctor-mcp.mjs"))
-agent_doctor_source = File.read(File.join(ROOT, "scripts/doctor-agent-remote.mjs"))
-agent_runtime_source = File.read(File.join(ROOT, "apps/agent-runtime/runtime.mjs"))
-agent_gateway_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/agent-gateway.mjs"))
-public_app_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
-agent_installer_source = File.read(File.join(ROOT, "scripts/install-agent.sh"))
-mcp_register_source = File.read(File.join(ROOT, "scripts/register-mcp-client.mjs"))
-skill_sync_source = File.read(File.join(ROOT, "scripts/sync-agent-skills.mjs"))
-run_with_env_source = File.read(File.join(ROOT, "scripts/run-with-env.mjs"))
-contract_check_source = File.read(File.join(ROOT, "scripts/contract-check.mjs"))
+mcp_shared_governance_source = combine_sources(mcp_source, core_source)
+mcp_doctor_source = read_source("scripts/doctor-mcp.mjs")
+agent_doctor_source = read_source("scripts/doctor-agent-remote.mjs")
+agent_runtime_source = read_source("apps/agent-runtime/runtime.mjs")
+agent_gateway_source = read_source("apps/control-plane-ui/lib/agent-gateway.mjs")
+public_app_source = read_source("apps/control-plane-ui/public/app.js")
+agent_installer_source = read_source("scripts/install-agent.sh")
+mcp_register_source = read_source("scripts/register-mcp-client.mjs")
+skill_sync_source = read_source("scripts/sync-agent-skills.mjs")
+run_with_env_source = read_source("scripts/run-with-env.mjs")
+contract_check_source = read_source("scripts/contract-check.mjs")
 # 规范校验器本体已抽到 scripts/lib/schema-validate.mjs（e2e 那一侧也要用同一份）。
 # 针对校验器行为的源码断言必须跟着走 —— 否则它会去 contract-check 里找一段已经不在那儿的代码。
-schema_validator_source = File.read(File.join(ROOT, "scripts/lib/schema-validate.mjs"))
-docker_up_source = File.read(File.join(ROOT, "scripts/docker-up.sh"))
-env_example_source = File.read(File.join(ROOT, ".env.example"))
+schema_validator_source = read_source("scripts/lib/schema-validate.mjs")
+docker_up_source = read_source("scripts/docker-up.sh")
+env_example_source = read_source(".env.example")
 {
   "server must isolate deterministic agent runtime worker to verification endpoint" => "/api/verification/agent-runtime/run",
   "server must scope state reads by authenticated account" => "scopedStateForAccount",
@@ -718,7 +750,7 @@ errors << "Task contracts of active dispatches must not be evicted" unless core_
 errors << "buildTaskContract must be idempotent against an existing active dispatch" unless core_source.include?("const existingDispatch = (state.agentDispatches || []).find(") && core_source.include?("if (existingContract) return existingContract;") && contract_check_source.include?("buildTaskContract idempotency")
 errors << "close-barrier all_commands_terminal must match the exact task-group subject" unless core_source.include?("command.subject === `TaskGroup:${taskGroupId}`")
 errors << "Postgres central+shards read must be transactionally consistent" unless pg_pool_worker_source.include?("readStateWithShards") && pg_pool_worker_source.include?("ISOLATION LEVEL REPEATABLE READ") && pg_sync_store_source.include?("pgReadStateWithShards") && state_store_source.include?("pgReadStateWithShards()")
-app_js_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+app_js_source = read_source("apps/control-plane-ui/public/app.js")
 i18n_zh_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/i18n-zh.js"))
 # The zh dictionary must not contain duplicate keys — JS last-wins would silently shadow the intended
 # value (a recurring defect this cycle when appending gate/objectType keys). Guard durably.
@@ -1075,7 +1107,7 @@ errors << "判据形态规则必须写明命令/工具调用接口不适用本�
 # 兼容层必须写明退役条件，否则它会无界存在。分片摘要的三路接受是升级兼容，其退役条件是
 # "复用判定按规范序摘要比对，旧格式必被重写"——这个条件只存在于代码推理里时，谁改了复用判定
 # 都不会意识到自己把兼容路径变成了永久的。要求它写在判据旁边。
-state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs"))
+state_store_source = read_source("apps/control-plane-ui/lib/state-store.mjs")
 # 后台自治周期设为 0 时什么都不推进（指令停在待处理、派发不被领走、关闭门不重算），
 # 而控制台上一切如常。与状态机执行模式同形：能悄悄关掉保证的开关必须如实公布。
 # 由 AI 自报、且直接喂给门的字段，缺省不得等于有利结果。这一类已经在两处真实发生过：
@@ -1238,7 +1270,7 @@ errors << "没有任何方案级考察时，验收卡片必须明确提示人自
 # 必须原子落盘。join token 是一次性的，配置一旦被截断，节点既加载不了凭据也无法重新注册 ——
 # 永久变砖。而它在执行期间每条执行事件之前都会被重写一次（约每 1.5 秒），裸 writeFileSync
 # 是截断覆盖，崩在写窗口里就正好毁掉它（实测：同一时刻被 SIGKILL，旧写法留下 0 字节文件）。
-runtime_source = File.read(File.join(ROOT, "apps/agent-runtime/runtime.mjs"))
+runtime_source = read_source("apps/agent-runtime/runtime.mjs")
 errors << "代理本地写必须走 tmp+fsync+rename（裸 writeFileSync 崩在写窗口里会把节点写成永久变砖）" unless runtime_source.include?("function writeDurableJson") && runtime_source.match?(/function writeSecretJson\(path, value\) \{\s*\n\s*writeDurableJson\(path, value\);/m)
 errors << "checkpoint outbox 必须与配置走同一条持久写路径" unless runtime_source.match?(/persistCheckpointOutbox[\s\S]{0,600}?writeDurableJson\(target,/m)
 # 控制面把 shutdown 当作可恢复的排空（finalizeNodeShutdown 只置 offline，心跳允许 offline->online），
@@ -1270,7 +1302,7 @@ end
 # 把写入落到它本来看不到的那个任务组里（提交发现项、终态化评审包、绑定共享定义…）。
 # 同形状的工具本来就有守卫（close_barrier_compute / completion_readiness_compute / room_wait），
 # 缺的只是对称性 —— 而"有的有、有的没有"正是这类洞的常态。
-mcp_source = File.read(File.join(ROOT, "apps/mcp-server/server.mjs"))
+mcp_source = read_source("apps/mcp-server/server.mjs")
 gateway_source_for_tools = File.read(File.join(ROOT, "apps/control-plane-ui/lib/agent-gateway.mjs"))
 agent_tools = %w[DEFAULT_AGENT_MCP_TOOLS CONTROL_ROLE_MCP_TOOLS].flat_map do |const|
   block = gateway_source_for_tools[/const #{const} = \[([\s\S]*?)\];/m, 1].to_s
@@ -1317,7 +1349,7 @@ end
 # 健康检查会报 degraded、盘写不进去回 state_storage_unavailable、入网失败给人话。
 # 这类描述最容易随代码漂：改了行为、忘了文档，运维照着文档判断就会判错。
 # 判据只钉可机器核对的那部分：文档里点名的标识符必须在代码里真的存在。
-readme_source = File.read(File.join(ROOT, "README.md"))
+readme_source = read_source("README.md")
 ops_section = readme_source[/## 出事的时候它怎么说话.*?(?=\n## )/m]
 if ops_section.nil?
   errors << "README 少了「出事的时候它怎么说话」一节 —— 那几条运维行为没有任何地方成文"
@@ -1371,7 +1403,7 @@ end
 # 实测用真实数据整页渲染时露出过四条（task_group:read/control/review/monitor）。
 # 权威来源取两处：permissionForAction 的映射值（每个受守卫动作都要一个权限）、
 # 以及角色包/种子直授里写死的那些。
-console_app_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+console_app_source = read_source("apps/control-plane-ui/public/app.js")
 permission_label_block = console_app_source[/const MEMBER_PERMISSION_OPTIONS.*?function permLabel/m]
 if permission_label_block.nil?
   errors << "权限码本地化门: 找不到 PERMISSION_LABELS 那一段 —— 提取逻辑与代码脱节，本条在空转"
@@ -1531,11 +1563,11 @@ errors << "grantMatchesArgs 必须导出，contract-check 的跨项目归属行�
 # 它一旦出现在【专门验耐久性的门】里，那些门就会在一个不落盘的世界里全绿 ——
 # 崩溃一致性、并发写、空转不落盘这三道验的都是真实落盘行为。
 %w[crash-consistency-gate.mjs concurrent-writer-gate.mjs idle-tick-gate.mjs].each do |gate|
-  gate_source = File.read(File.join(ROOT, "scripts", gate))
+  gate_source = read_source("scripts", gate)
   errors << "#{gate} 不得关闭 AIMAC_PROJECT_EVENT_FSYNC —— 它验的就是真实落盘行为，关掉之后整道门在一个不落盘的世界里全绿" if gate_source.include?("AIMAC_PROJECT_EVENT_FSYNC")
 end
 # 而默认必须是开着的：只有显式 === "false" 才关。写成 !== "true" 之类就会让生产默认不落盘。
-event_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/project-event-store.mjs"))
+event_store_source = read_source("apps/control-plane-ui/lib/project-event-store.mjs")
 fsync_guards = event_store_source.scan(/AIMAC_PROJECT_EVENT_FSYNC\s*(===|!==)\s*"(\w+)"/)
 errors << "事件存储里找不到 fsync 开关判据 —— 提取逻辑与代码脱节" if fsync_guards.size < 3
 fsync_guards.each do |op, value|
@@ -1602,7 +1634,7 @@ errors << "持有权复核必须 fail-closed（复核失败时抛错阻止 push�
 # runtimeMutationPolicy 里那条 auto_publish_role_skill_overlay 是声明了却从没有人执行的禁令。
 # 禁用规则住在 lib/mcp-service-allowlist.mjs（服务令牌白名单的唯一真相源，init 也从那里取数）。
 # 这条判据原先只扫 server.mjs —— 规则一挪出去它就报红，而实际上规则还在。扫真相源本身。
-mcp_service_allowlist_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/mcp-service-allowlist.mjs"))
+mcp_service_allowlist_source = read_source("apps/control-plane-ui/lib/mcp-service-allowlist.mjs")
 ["skill-mcp.skill_source_sync", "skill-mcp.role_skill_overlay_validate"].each do |tool|
   errors << %(#{tool} 必须对 MCP 服务令牌禁用（它改的是角色规则层，不能绕过人工闸门）) unless mcp_service_allowlist_source.include?(%(tool === "#{tool}"))
 end
@@ -1911,7 +1943,7 @@ errors << "the verified-install command must state that its checksum does not pr
 # 接线：清理必须挂在每次写入都会经过的淘汰路径上；重放读取必须区分"响应体过期"与"成功但空"。
 # 交给宿主机上那个 AI CLI 的必须是按派发签发、只对 MCP 有效的凭据，不是节点令牌 ——
 # 节点令牌同时开着心跳、领派发、报事件这些网关端点。
-runtime_source = File.read(File.join(ROOT, "apps/agent-runtime/runtime.mjs"))
+runtime_source = read_source("apps/agent-runtime/runtime.mjs")
 # 撤销必须把写进用户全局 AI 客户端配置的那份凭据也清掉 —— 两条 revoke 分支都要，
 # 否则"空闲时被撤销"这条路上凭据照样留在配置里。shutdown 不清（节点还会回来）。
 errors << "revoking a node must clean the credential it wrote into the operator's global MCP client configs (both revoke branches)" unless runtime_source.scan(/if \(command\.commandType === "revoke"\) removeGlobalRemoteMcpClients\(\);/).size == 2
@@ -1921,7 +1953,7 @@ errors << "the executor credential must be accepted only on the MCP path" unless
 # I/O 回调，所以"每请求几次往返"直接就是可用性问题。两条属性必须钉住（接线检查，正确性由
 # docker compose 的 PG 端到端覆盖）：建表每进程只跑一次；读状态只读一次中央文档，
 # 不再先经 ensureStoredState 把整份文档读出来【只为判断这一行存不存在】。
-state_store_source = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs"))
+state_store_source = read_source("apps/control-plane-ui/lib/state-store.mjs")
 # 自治循环必须有东西驱动它。此前 runAutonomousCycle 的入口只有一个 HTTP 路由和一个 MCP 工具，
 # 而 task_group:orchestrate 不在任何项目角色模板里、且不可委派 —— 除系统管理员外无人能点那个按钮，
 # 系统自己也不动，于是"编排启动后自动生成"这句话永远不会成真。
@@ -2081,7 +2113,7 @@ errors << "RuntimeBootstrapProfile schema must require mcp" unless runtime_schem
   errors << "RuntimeBootstrapProfile commands schema missing #{command_name}" unless runtime_schema.dig("properties", "commands", "properties", command_name)
 end
 errors << "RuntimeBootstrapProfile schema missing mcp property" unless runtime_schema.dig("properties", "mcp", "properties", "toolCount")
-compose_source = File.read(File.join(ROOT, "docker-compose.yml"))
+compose_source = read_source("docker-compose.yml")
 errors << "docker-compose must run control plane with PostgreSQL state store" unless compose_source.include?("AIMAC_STATE_STORE") && compose_source.include?("postgresql")
 %w[AIMAC_BOOTSTRAP_TOKEN AIMAC_MCP_SERVICE_TOKEN AIMAC_LOCAL_SEED_WORKSPACE_OWNER_TOKEN AIMAC_LOCAL_SEED_REVIEWER_TOKEN AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN].each do |env_name|
   errors << "docker-compose must pass #{env_name}" unless compose_source.include?(env_name)
@@ -2391,7 +2423,7 @@ errors << "自治循环正常推进的一拍没有走 finish()，连续失败数
   server_source.match?(/finish\(\{ran: true/)
 # 拓扑阻塞项挡得住 merge，却曾经在界面上一个字都不显示：人只看到"方案卡住了"，
 # 不知道卡在哪、更不知道是不是自己批准的验收项没证据。
-app_source = File.read(File.join(ROOT, "apps/control-plane-ui/public/app.js"))
+app_source = read_source("apps/control-plane-ui/public/app.js")
 errors << "卡住的执行方案没有显示它卡在哪几项 —— 人无从下手" unless app_source.include?("卡在这几项")
 errors << "拓扑阻塞项没有翻成中文（topologyBlockerText 缺失）" unless app_source.include?("topologyBlockerText")
 
@@ -2728,58 +2760,32 @@ puts "控制台后台刷新不得静默吞错：剥注释后 #{swallowed_console
 # 它就【指认不出自己守的是哪一处】—— 隔壁复制粘贴出的同形代码会替真守卫把它喂饱，真守卫被删被改
 # 也一声不响。今天实撞两次（publish 铸造未知契约、MCP 定稿白名单），都是这么裂开的。
 # 只管【整句守卫】：短标识符在源码里出现多次是正常的（同一个函数本来就会被调用多次）。
-self_source = File.read(File.join(ROOT, "scripts/validate-specs.rb"))
-source_paths = {}
-self_source.scan(/^([a-z_]+_source)\s*=\s*File\.read\(File\.join\(ROOT,\s*"([^"]+)"\)\)/) { |v, p| source_paths[v] = p }
-# 多文件拼接出来的源（如 mcp + core）恰恰最容易撞上同形代码：一句话在两个文件里各有一份，
-# 断言就分不清自己命中的是哪一份。把它们展开成成分文件，一起纳入核对。
-composed_sources = {}
-self_source.scan(/^([a-z_]+_source)\s*=\s*"((?:#\{[a-z_]+_source\}|\\n)+)"$/) do |name, body|
-  parts = body.scan(/#\{([a-z_]+_source)\}/).flatten
-  composed_sources[name] = parts if parts.all? { |part| source_paths.key?(part) }
-end
-source_cache = {}
+# 跑完之后逐条核：每一条【整句守卫型】的目标串，在它自己那个源文件里必须只匹配一处。
+# 只管整句守卫：短标识符在源码里出现多次是正常的（同一个函数本来就会被调用多次）。
 scope_errors = []
 scoped_checked = 0
-unresolved = Hash.new(0)
-self_source.each_line.with_index(1) do |line, lineno|
-  line.scan(/\b([a-z_]+_source)\.include\?\(("(?:[^"\\]|\\.)*")\)/) do |var, literal|
-    # 拼接出来的源（多文件合并）与带 #{} 插值的目标串静态定不下来，不能假装查过 —— 点名计数。
-    parts = composed_sources[var] || (source_paths.key?(var) ? [var] : nil)
-    if parts.nil? || literal.include?('#{')
-      unresolved[var] += 1
-      next
-    end
-    needle = literal[1..-2].gsub(/\\(.)/) { { "n" => "\n", "t" => "\t" }.fetch($1, $1) }
+ScopedSource::ALL.each do |source|
+  source.probes.uniq.each do |needle|
+    next unless needle.is_a?(String)
     next unless needle.length >= 22 && needle.match?(/\breturn\b|\bif\s*\(|\bthrow\b|===|!==|&&/)
     scoped_checked += 1
-    where = parts.map { |part| source_paths[part] }.join(" + ")
-    hits = parts.sum do |part|
-      (source_cache[part] ||= File.read(File.join(ROOT, source_paths[part]))).scan(needle).length
-    end
+    hits = source.scan(needle).length
     next if hits < 2
-    scope_errors << "第 #{lineno} 行那条断言在 #{where} 里能匹配 #{hits} 处 —— " \
+    scope_errors << "有一条断言在 #{source.source_label} 里能匹配 #{hits} 处 —— " \
                     "它指认不出自己守的是哪一处，删掉真守卫也不会红。把范围切到那个函数/分支再查：#{needle[0, 60].gsub("\n", "⏎")}"
   end
 end
-# 这道扫描被重构打瞎（提取正则失配、判据收得过窄）时会静默变成"核对了 0 条"而一片绿。
-# 这里用下限而不是精确相等：每加一条源码断言这个数就会变，钉死只会天天改数字；而本门真正要防的
-# 是【整条扫描失灵】那一跳，不是 50→49。50→49 那种漏检由"同形代码就报红"那条变异守着。
-scope_errors << "断言搜索面自查只核对到 #{scoped_checked} 条（远少于既有规模）—— 提取多半已失配，这道扫描在空转" if scoped_checked < 30
-# 「定不下搜索面」的那几条是【没被核对过】的：它们的目标串可能同时匹配到别处，
-# 断言就变成了在验另一段代码。这个数原先只打印，读起来像一句无害的说明 ——
-# 新写一条定不下搜索面的断言，它会静默混进来。棘轮住，只降不升。
-UNRESOLVED_ASSERTION_SCOPE_CEILING = 11
-unresolved_total = unresolved.values.sum
-if unresolved_total > UNRESOLVED_ASSERTION_SCOPE_CEILING
-  scope_errors << "定不下搜索面的源码断言从 #{UNRESOLVED_ASSERTION_SCOPE_CEILING} 涨到 #{unresolved_total} —— " \
-    "新写的断言要指明在哪个源文件里找（否则它可能匹配到别处，验的是另一段代码）"
-elsif unresolved_total < UNRESOLVED_ASSERTION_SCOPE_CEILING
-  scope_errors << "定不下搜索面的源码断言已降到 #{unresolved_total}（棘轮还写着 #{UNRESOLVED_ASSERTION_SCOPE_CEILING}）—— " \
-    "把它改小，否则挡不住下一次回升"
+# 这道扫描被重构打瞎时会静默变成"核对了 0 条"而一片绿。用下限而不是精确相等：
+# 每加一条源码断言这个数就会变，钉死只会天天改数字；本门真正要防的是【整条扫描失灵】那一跳。
+scope_errors << "断言搜索面自查只核对到 #{scoped_checked} 条（远少于既有规模）—— 记账多半没接上，这道扫描在空转" if scoped_checked < 30
+# 源文件必须经 read_source 读进来，否则它上面的 include? 不会被记账 —— 那就又回到"静静地没被核过"。
+unrecorded = File.read(File.join(ROOT, "scripts/validate-specs.rb")).scan(/^\s*[a-z_]+_source = File\.read\(/).length
+if unrecorded.positive?
+  scope_errors << "有 #{unrecorded} 处源文件是直接 File.read 读进来的（没走 read_source）—— " \
+                  "它上面的 include? 断言不会被记账，等于没人核过它们指不指得出自己守的是哪一处"
 end
 fail_with(scope_errors)
-puts "断言搜索面：#{scoped_checked} 条整句守卫型的源码断言，目标串在被查文件里都只匹配一处" \
-     "（另有 #{unresolved.values.sum} 条定不下搜索面：#{unresolved.map { |v, c| "#{v}×#{c}" }.join("、")}，未核对）"
+puts "断言搜索面：#{scoped_checked} 条整句守卫型的源码断言逐条核过，都只匹配一处" \
+     "（按运行时记下的【真实目标串】核 —— 插值拼出来的那 9 条原先看不见，静静地没被核过）"
 
 puts "spec validation ok"
