@@ -3818,6 +3818,54 @@ await runCodedApiErrorCase();
   if (reasons.length < 8) {
     failures.push(`派发出口: 只从生产者提取到 ${reasons.length} 种派发阻塞原因 —— 提取逻辑与代码脱节，本条在空转`);
   }
+  // 工作项那一面此前【整个没有门】：上面那句 isWorkItemTarget 把它排除掉了，理由是
+  // "界面上有 needs_decision 兜底出口"。这句话是对的（workItemExitHint 会退回按 status 取），
+  // 但门自己从没验过那个兜底在不在 —— 只要有人写出一个 status 不在出口表里的阻塞，
+  // 人就会看到一个原因码、没有下一步，而这一面没有任何东西会红。
+  // 判据：每一个写到工作项上的 blockedReason，要么它自己在出口表里，
+  // 要么登记说明【是哪个状态带着出口】。
+  {
+    const workItemHintKeys = new Set(Object.keys(probe.workItemExitHintKeys?.() || {}));
+    const hintBlock = /const WORK_ITEM_EXIT_HINT = \{([\s\S]*?)\n\};/u.exec(
+      fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8"))?.[1] || "";
+    for (const key of hintBlock.matchAll(/^\s{2}([a-z_]+):/gmu)) workItemHintKeys.add(key[1]);
+    // 登记：这些原因自己不在出口表里，但它们【总是与某个带出口的状态一起写】。
+    // 值就写那个状态 —— 门会去核对出口表里确实有它。
+    const CARRIED_BY_STATUS = {
+      dependency_abandoned: "needs_decision",
+      role_drift_guard_blocked: "needs_decision",
+      cell_processing_error: "needs_decision",
+      awaiting_human_split_confirmation: "needs_decision",
+      agent_reported_blocked: "needs_decision",
+      human_confirmation_cancelled_by_dispatch_failure: "needs_decision",
+      human_verification_rejected: "needs_decision",
+      human_confirmation_expired: "needs_decision",
+      human_directive_cancel: "needs_decision",
+      agent_runtime_executor_required: "blocked_resource"
+    };
+    const workItemReasons = new Set([...producerSource.matchAll(/\w*[Ii]tem\.blockedReason\s*=\s*"([a-z_]+)"/gu)]
+      .map((match) => match[1]));
+    if (workItemReasons.size < 8) {
+      failures.push(`工作项出口: 只提取到 ${workItemReasons.size} 种工作项阻塞原因 —— 提取与代码脱节，本条在空转`);
+    }
+    for (const reason of workItemReasons) {
+      if (workItemHintKeys.has(reason)) continue;
+      const carrier = CARRIED_BY_STATUS[reason];
+      if (carrier && workItemHintKeys.has(carrier)) continue;
+      failures.push(`工作项出口: 阻塞原因「${reason}」在 WORK_ITEM_EXIT_HINT 里没有出口`
+        + (carrier ? `，登记说它由状态「${carrier}」带出口，而那个状态也不在表里` : "，也没有登记是哪个状态带着出口")
+        + " —— 人会看到一个原因码、没有下一步");
+    }
+    const staleCarried = Object.keys(CARRIED_BY_STATUS).filter((reason) =>
+      !workItemReasons.has(reason) || workItemHintKeys.has(reason));
+    if (staleCarried.length) {
+      failures.push(`工作项出口: 登记表已过时：${staleCarried.join("、")} 现在要么自己有出口了、要么代码里已经不写这个原因`);
+    }
+    check("工作项那一面的阻塞原因也各有出口",
+      !failures.some((line) => line.startsWith("工作项出口:")),
+      `${workItemReasons.size} 种工作项阻塞原因逐个核过（${Object.keys(CARRIED_BY_STATUS).length} 种登记为由状态带出口）`);
+  }
+
   // 瞬态：不需要人动手，写"出口"反而是教人做无用功。登记的是【为什么它会自己好】。
   const TRANSIENT = {
     claim_expired_requeued: "claim 过期后派发已被重排回队列，下一个节点会认领",
