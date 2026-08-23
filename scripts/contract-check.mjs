@@ -299,6 +299,54 @@ const PUSH_ORDERED_COLLECTIONS = {
   repositoryOutputs: "同上：产出目标按创建顺序排，人对着任务组从上往下看"
 };
 
+// 【判定函数的覆盖账本】。本轮把「把共用判定改成常量，看有没有门会红」这一招做了一遍，
+// 连出四个洞（授权资源匹配 / 产出路径通用匹配器 / 迁移证据非空 / Host 头白名单 + 引导提示）。
+// 手工探一遍不能留住结论，所以固化成账本：【枚举是自动的】（按函数名形状扫 apps 下全部源文件），
+// 只有「这一条凭什么算被守住」是手写的。新加一个判定函数它会自己冒出来，逼人当场表态。
+// 三种状态，含义不同，不许混：
+//   proven     —— 有一条【专属变异】证明过：改坏它，某道门会红。名字必须能在 MUTATIONS 里查到。
+//   probedOnly —— 本轮真探过（改成常量跑门），某道门会红，但没有专属变异。
+//                 这比 proven 弱：那道门的覆盖可能因为别处的改动悄悄消失，而没人会发现。
+//   notProbed  —— 【还没探过】。这个数会被打印出来并只降不升 —— 一个读起来像全覆盖、
+//                 其实没有的棘轮，比没有棘轮更坏（本仓吃过这个亏）。
+const PREDICATE_COVERAGE = {
+  // —— 已有专属变异 ——
+  resourceMatches: {proven: "授权覆不覆盖这个资源必须真判（判错＝系统对人说假话）"},
+  globPathMatches: {proven: "批准范围之外的路径不许放行"},
+  isNonEmptyEvidence: {proven: "空证据不许写进迁移台账"},
+  requestHostAllowed: {proven: "伪造 Host 不得改写交给 agent 的地址"},
+  canExposeBootstrapHint: {proven: "引导提示只给回环 + 本机 Host（它是凭据的一半）"},
+  isTerminalDispatchStatus: {proven: "共用的派发终态判定必须真的在承重"},
+  isSafeGitRemoteUrl: {proven: "agent 那份 git 远端守卫落后于控制面就要被逮到"},
+  // —— 探过、某道门会红，但没有专属变异 ——
+  permissionMatches: {probedOnly: "改成永远为真，控制面 e2e 红（跨租户那批 403 断言接住了）"},
+  rolesAllowed: {probedOnly: "改成永远为真，远程 agent e2e 红（节点角色范围那批用例接住了）"},
+  isStateStoreConflict: {probedOnly: "改成永远为真，控制面 e2e 红（并发写那批用例接住了）"},
+  canReadTaskGroup: {probedOnly: "改成永远为真，控制面 e2e 红（读泄漏那批用例接住了）"},
+  globSegmentMatches: {probedOnly: "改成永远为真，契约门红（产出路径正反表里的段内通配用例接住了）"},
+  // —— 还没探过 ——
+  isSafeCloneUrl: {notProbed: "agent 运行时那份，与 isSafeGitRemoteUrl 同族，未单独探"},
+  pathMatches: {notProbed: "agent 运行时那份产出路径判定，未单独探"},
+  roleAllowed: {notProbed: "rolesAllowed 的单数版，未单独探"},
+  isHumanConfirmationActor: {notProbed: "人工确认主体判定，未单独探"},
+  canUseGitPath: {notProbed: "git 路径合法性，未单独探"},
+  isSafeGitRef: {notProbed: "分支/引用名安全性，未单独探"},
+  isDelegatableGrantPermission: {notProbed: "可委派权限判定，未单独探"},
+  isSystemAccount: {notProbed: "系统账号判定，未单独探"},
+  isLocalHostHeader: {notProbed: "被 requestHostAllowed 与引导提示两条用到，未单独探"},
+  isLocalHostname: {notProbed: "同上，未单独探"},
+  isLoopbackAddress: {notProbed: "要从非回环地址发起连接才验得到，本机 e2e 造不出这个条件"},
+  canReadResource: {notProbed: "读作用域，未单独探"},
+  canReadProject: {notProbed: "读作用域，未单独探"},
+  hasPermission: {notProbed: "判权总入口，未单独探"},
+  isReadOnlyTool: {notProbed: "MCP 只读/写工具划分，未单独探"},
+  isWriteTool: {notProbed: "同上，未单独探"},
+  schemaTypeMatches: {notProbed: "MCP 入参类型校验，未单独探"},
+  hasInputArg: {notProbed: "MCP 入参存在性，未单独探"},
+  hasAnyInputArg: {notProbed: "同上，未单独探"}
+};
+const PREDICATE_NOT_PROBED_CEILING = 19;
+
 const PATH_ALLOWLIST_CASES = [
   // 字面量前缀 + /**：目录本身、目录下任意深度都算，隔壁同前缀的目录不算
   ["docs/**", "docs", true], ["docs/**", "docs/a", true], ["docs/**", "docs/a/b", true],
@@ -700,6 +748,7 @@ run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
 run(verifyEveryGrantedPermissionHasAConsumer);
+run(verifyEveryPredicateDeclaresItsCoverage);
 run(verifyEmptyEvidenceNeverReachesTheLedger);
 run(verifyPathAllowlistMatcherIsExercised);
 run(verifyExecutionTopologyBaselineTellsTheTruth);
@@ -7916,6 +7965,65 @@ function verifyOnlyLiveHumanAccountsCanFinalize(output) {
 // 迁移证据落台账前要把【空的】滤掉（isNonEmptyEvidence）。把它改成永远为真：
 // 契约门 + 控制面 e2e 全绿 —— 于是 undefined/null/空串会作为"证据"写进 transitionEvidence，
 // 台账上那一栏是满的而它什么也没证明（本仓「缺省不得等于有利结果」在证据面上的样子）。
+// 判定函数的覆盖账本：枚举自动、表态手写。见 PREDICATE_COVERAGE 上面那段。
+function verifyEveryPredicateDeclaresItsCoverage(output) {
+  const found = new Map();
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, {withFileTypes: true})) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (!entry.name.endsWith(".mjs")) continue;
+      const text = readFileSync(full, "utf8");
+      for (const hit of text.matchAll(/\n(?:export )?function ((?:is|can|has)[A-Z]\w*|\w+(?:Allowed|Matches))\(/gu)) {
+        if (!found.has(hit[1])) found.set(hit[1], []);
+        found.get(hit[1]).push(full.slice(root.length + 1));
+      }
+    }
+  };
+  walk(join(root, "apps"));
+  if (found.size < 20) {
+    output.push(`判定函数只扫到 ${found.size} 个（远少于既有规模）—— 提取脱节，本条在空转`);
+    return;
+  }
+  // 变异名从登记文件里按文本提取：import 它会把整个变异门跑起来。
+  // 只用来做"这个名字在不在"，多提取几个无害；提取塌了必须出声，否则下面每条 proven 都会被误报。
+  const mutationSource = readFileSync(join(root, "scripts/mutation-gate.mjs"), "utf8");
+  const mutationNames = new Set([...mutationSource.matchAll(/^\s*name: "([^"]+)",$/gmu)].map((hit) => hit[1]));
+  if (mutationNames.size < 900) {
+    output.push(`从变异登记里只提取到 ${mutationNames.size} 个名字（远少于既有规模）——`
+      + " 提取脱节，下面每条 proven 都会被误报成空头支票");
+    return;
+  }
+  let proven = 0;
+  let probedOnly = 0;
+  let notProbed = 0;
+  for (const [name, files] of found) {
+    const entry = PREDICATE_COVERAGE[name];
+    if (!entry) {
+      output.push(`判定函数 ${name}（${files.join("、")}）没有在 PREDICATE_COVERAGE 里表态 ——`
+        + " 要么给它配一条专属变异，要么写明它凭什么还没被探过");
+      continue;
+    }
+    if (entry.proven) {
+      proven += 1;
+      if (!mutationNames.has(entry.proven)) {
+        output.push(`${name} 声称由变异「${entry.proven}」证明，而登记表里查无此名 ——`
+          + " 变异被改名或删掉了，这条声称就是空头支票");
+      }
+    } else if (entry.probedOnly) probedOnly += 1;
+    else notProbed += 1;
+  }
+  for (const name of Object.keys(PREDICATE_COVERAGE)) {
+    if (!found.has(name)) output.push(`PREDICATE_COVERAGE 里的 ${name} 在源码里已经找不到了 —— 登记过时`);
+  }
+  if (notProbed > PREDICATE_NOT_PROBED_CEILING) {
+    output.push(`没探过的判定函数从 ${PREDICATE_NOT_PROBED_CEILING} 个涨到 ${notProbed} 个 ——`
+      + " 这个数只降不升：新加判定函数时要么当场探一遍，要么把上限连同理由一起改");
+  }
+  console.log(`判定函数覆盖：扫到 ${found.size} 个，${proven} 个有专属变异、${probedOnly} 个探过但只靠既有门、`
+    + `${notProbed} 个【还没探过】（上限 ${PREDICATE_NOT_PROBED_CEILING}，只降不升）`);
+}
+
 function verifyEmptyEvidenceNeverReachesTheLedger(output) {
   const refs = requiresValuesToEvidenceRefs({
     real_gate: "commit:abc123",

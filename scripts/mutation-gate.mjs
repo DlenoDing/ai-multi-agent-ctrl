@@ -3176,6 +3176,22 @@ const MUTATIONS = [
     expect: "看不到那个项目"
   },
   {
+    name: "新加的判定函数必须当场表态（没探过的数只降不升）",
+    file: CORE,
+    check: "verifyEveryPredicateDeclaresItsCoverage",
+    from: "export function resourceMatches(grantResource = {}, requestedResource = {}) {",
+    to: "export function isBrandNewUnregisteredPredicate(x) { return Boolean(x); }\nexport function resourceMatches(grantResource = {}, requestedResource = {}) {",
+    expect: "没有在 PREDICATE_COVERAGE 里表态"
+  },
+  {
+    name: "声称由某条变异证明的，那条变异必须真的存在",
+    file: "scripts/contract-check.mjs",
+    check: "verifyEveryPredicateDeclaresItsCoverage",
+    from: '  globPathMatches: {proven: "批准范围之外的路径不许放行"},',
+    to: '  globPathMatches: {proven: "这条变异并不存在"},',
+    expect: "而登记表里查无此名"
+  },
+  {
     name: "引导提示只给回环 + 本机 Host（它是凭据的一半）",
     file: SERVER,
     gate: "doctor",
