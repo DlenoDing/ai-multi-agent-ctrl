@@ -851,6 +851,19 @@ try {
   if (pendingRequest.status !== "pending_approval" || pendingRequest.permission !== "github_push" || !pendingRequest.reason) {
     throw new Error("permission report was not observed and classified as a pending permission request");
   }
+  // 【批准人看到的第一句必须是人话】。控制台那张卡把 reason 原样显示出来，
+  // 而它原先塞的是 900 字 JSON —— 要批准的人得先自己解析一遍才知道在批什么。
+  if (!/执行到「.+」这一步被权限挡住/u.test(pendingRequest.reason)) {
+    throw new Error(`权限单的原因不是人话，批准人看到的是：${String(pendingRequest.reason).slice(0, 120)}`
+      + " —— 卡片上「原因」这一栏直接显示它，要先说清在哪一步、要什么权限、对哪个对象");
+  }
+  // 【仿真开关造出来的必须自己承认】。这个开关没有档位围栏：留在生产节点上，
+  // 每次派发都会凭空冒出一条没有真实原因的审批请求，而人无从判断。
+  // 这一轮正是用 AIMAC_AGENT_SIMULATE_PERMISSION_BLOCK 触发的，所以这里必须看得见那句话。
+  if (!pendingRequest.reason.includes("AIMAC_AGENT_SIMULATE_PERMISSION_BLOCK")) {
+    throw new Error("仿真开关造出来的权限单没有自报身份 —— 人会把它当成真实的权限阻塞去处理，"
+      + `而它其实只要清掉那台节点的环境变量。实际原因：${String(pendingRequest.reason).slice(0, 160)}`);
+  }
   await json(`/api/permission-requests/${pendingRequest.requestId}/resolve`, {
     method: "POST",
     token: login.sessionToken,

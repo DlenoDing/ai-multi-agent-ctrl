@@ -967,6 +967,10 @@ function detectPermissionBlock(dispatchPackage, step) {
   if (!simulate) return null;
   const [capability, resource] = simulate.split("@");
   return {
+    // 【仿真造出来的必须自己承认】。这个开关没有档位围栏：留在生产节点的 systemd 里，
+    // 每次派发都会凭空报「权限被挡」，而人看到的是一条没有真实原因的审批请求 —— 系统在对人说假话。
+    // 不去加围栏（agent 是独立进程，不知道控制面的档位），改成在报文里说清它是怎么来的、怎么关掉。
+    simulated: true,
     step,
     promptType: process.env.AIMAC_AGENT_SIMULATE_PERMISSION_PROMPT_TYPE || "oauth_login_required",
     requestedCapability: capability || "github_push",
@@ -976,13 +980,24 @@ function detectPermissionBlock(dispatchPackage, step) {
   };
 }
 
+// 给人看的那一句：批准人先要知道「在哪一步、要什么、对谁」，而不是一坨 JSON。
+// 仿真开关造出来的还要说清它是怎么来的、怎么关掉 —— 否则那台节点上会一直冒出没有真实原因的审批请求。
+function permissionReasonText(block) {
+  const base = `执行到「${block.step}」这一步被权限挡住：需要 ${block.requestedCapability}`
+    + `（对象 ${block.requestedResource}，提示类型 ${block.promptType}，风险 ${block.riskLevel}）。`;
+  if (!block.simulated) return base;
+  return `⚠ 这一条是仿真开关造出来的，节点上并没有真实的权限阻塞：`
+    + `那台 agent 的环境里设了 AIMAC_AGENT_SIMULATE_PERMISSION_BLOCK。`
+    + `要让它不再冒出来，去那台节点清掉这个环境变量再重启 agent。${base}`;
+}
+
 // §8 permission_report: submit the structured report, hold at the safe retry point (only logs/checkpoint/
 // outbox may continue), poll for resolution, then act per the §8 resolution table.
 async function runPermissionReport(config, dispatchPackage, block, control) {
   const contract = dispatchPackage.taskContract;
   const evidence = await registerEvidenceArtifact(config, dispatchPackage, {
     type: "permission_evidence",
-    content: `permission blocked: ${block.promptType} capability=${block.requestedCapability} resource=${block.requestedResource} step=${block.step}`,
+    content: `${permissionReasonText(block)}\npermission blocked: ${block.promptType} capability=${block.requestedCapability} resource=${block.requestedResource} step=${block.step}`,
     metadata: {promptType: block.promptType, step: block.step, riskLevel: block.riskLevel},
     sensitivity: "internal"
   });
@@ -1013,7 +1028,9 @@ async function runPermissionReport(config, dispatchPackage, block, control) {
     idempotencyKey: `permission:${dispatchPackage.dispatch.dispatchId}:${block.requestedCapability}`,
     permission: block.requestedCapability,
     resource: {resourceType: "external_capability", resourceId: block.requestedResource},
-    reason: JSON.stringify(report).slice(0, 900)
+    // 先说人话再附报文：控制台那张卡把 reason 原样显示给批准人，
+    // 原先塞的是 900 字 JSON —— 要批准的人得先自己解析一遍才知道在批什么。
+    reason: `${permissionReasonText(block)} ${JSON.stringify(report)}`.slice(0, 900)
   });
   const requestId = submitResult.permissionRequest?.requestId;
   if (!requestId) throw permissionBlockedError("agent_permission_request_not_created:权限单没建起来（控制面没回单号），这一趟停在推送前，活还在这台机器上");

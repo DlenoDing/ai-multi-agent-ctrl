@@ -3144,6 +3144,22 @@ const MUTATIONS = [
     expect: "却没有各自的状态词表"
   },
   {
+    name: "仿真造出来的权限单必须自报身份",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "    simulated: true,\n    step,",
+    to: "    step,",
+    expect: "仿真开关造出来的权限单没有自报身份"
+  },
+  {
+    name: "权限单的原因要先说人话",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "    reason: `${permissionReasonText(block)} ${JSON.stringify(report)}`.slice(0, 900)",
+    to: "    reason: JSON.stringify(report).slice(0, 900)",
+    expect: "权限单的原因不是人话"
+  },
+  {
     name: "README 里的默认值与代码对不上要报红",
     file: "README.md",
     check: "verifyCapacityKnobsAreDocumented",
