@@ -3370,6 +3370,14 @@ const MUTATIONS = [
     expect: "没有先归一化"
   },
   {
+    name: "两条读取路径要拼出同一个顺序",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    gate: "contract",
+    from: "  const ordered = [...projectShards].sort((left, right) => String(left.projectId).localeCompare(String(right.projectId)));",
+    to: "  const ordered = [...projectShards].reverse();",
+    expect: "两条读取路径拼出了不同顺序"
+  },
+  {
     name: "丢弃计数要在写→读循环里还在（内存那份也得更新）",
     file: "apps/control-plane-ui/lib/state-store.mjs",
     gate: "contract",

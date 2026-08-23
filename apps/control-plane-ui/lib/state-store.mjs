@@ -745,6 +745,10 @@ function hydrateProjectState(centralState, options, preReadShards) {
             + "请换回能读它的版本，或先做数据迁移。"});
     }
   }
+  // 【顺序要与写入后填缓存那条路一致】——「同一份数据两条读取路径拼出同一个顺序」由契约门守着。
+  // 这里【不需要】再排一次：分片文件名以 projectId 打头，索引与 readdir 给出的本来就是这个顺序
+  //（实测两条路的输出逐字节相同）。曾经加过一个 sort，变异证明它是空操作，撤掉了 ——
+  // 没有判据能分辨的代码就是负担。真正决定顺序的是 hydratedStateFromParts 那一处的 sort。
   for (const shard of shards) {
     for (const collection of projectShardCollections) {
       const items = Array.isArray(shard.collections?.[collection]) ? shard.collections[collection] : [];

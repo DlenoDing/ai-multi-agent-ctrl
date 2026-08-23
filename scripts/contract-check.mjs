@@ -5280,6 +5280,39 @@ function verifyRuntimeJsonConflict(output) {
         ]};
       writeStoredState(evidenceState, options);
       const readBack = readStoredState(options);
+      // 【两条读取路径要拼出同一个顺序】。读状态有两条路：从盘读走 hydrateProjectState，
+      // 而写完立刻读命中的是 writeStoredState 填的缓存，那份由 hydratedStateFromParts 拼。
+      // 两者原先一个按分片读取顺序、一个按 projectId 排序 —— 同样的数据拼出不同顺序的数组，
+      // 而按位置取记录的地方（存在性探针、`.find()`）就会时对时错，且没有任何东西会红。
+      //（今天已经因为「派生值只写在其中一条路上」踩过一次，这是同一对孪生。）
+      {
+        const orderDir = mkdtempSync(join(tmpdir(), "aimac-merge-order-"));
+        const copyDir = mkdtempSync(join(tmpdir(), "aimac-merge-order-copy-"));
+        const mk = (dir) => ({root, runtimeDir: dir, statePath: join(dir, "control-plane-state.json"),
+          seedPath: resolve(root, "data", "seed-state.json"), buildInitialState: () => ({stateVersion: 1, runtime: {}})});
+        try {
+          const stamp = new Date().toISOString();
+          const projects = ["p_zeta", "p_alpha", "p_mid"];
+          writeStoredState({stateVersion: 1, runtime: {},
+            projects: projects.map((id) => ({id, name: id})),
+            taskGroups: projects.map((id) => ({id: `tg_${id}`, projectId: id, status: "active", workItems: []})),
+            agentDispatches: projects.map((id) => ({dispatchId: `d_${id}`, projectId: id,
+              taskGroupId: `tg_${id}`, status: "completed", updatedAt: stamp}))}, mk(orderDir));
+          const fromCache = readStoredState(mk(orderDir));
+          cpSync(orderDir, copyDir, {recursive: true});
+          const fromDisk = readStoredState(mk(copyDir));
+          const idsOf = (state) => (state.agentDispatches || []).map((item) => item.dispatchId).join(",");
+          if (idsOf(fromCache) !== idsOf(fromDisk)) {
+            output.push(`同一份数据，从写入缓存读到的顺序是 ${idsOf(fromCache)}，从盘读到的是 ${idsOf(fromDisk)} ——`
+              + " 两条读取路径拼出了不同顺序，按位置取记录的地方会时对时错");
+          }
+        } finally {
+          for (const dir of [orderDir, copyDir]) {
+            try { rmSync(dir, {recursive: true, force: true}); } catch { /* best effort */ }
+          }
+        }
+      }
+
       // 【丢弃计数必须在写→读循环里还在】。它曾经是「合并时算出来」的派生值，
       // 而 runtime_json 的读取先看缓存、写入又会把【调用方那份没经过合并的对象】填进缓存 ——
       // 于是同进程写完再读，那个数从来不在，界面上的「已被容量上限丢弃」时有时无（实测一次都没出现）。
