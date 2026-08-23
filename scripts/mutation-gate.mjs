@@ -3135,6 +3135,14 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "视图窗口必须留最新的那一批（不能把刚建的藏起来）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "idle",
+    from: "  const newest = new Set([...items].sort((left, right) => timeOf(right) - timeOf(left)).slice(0, limit));\n  return items.filter((item) => newest.has(item));",
+    to: "  return items.slice(0, limit);",
+    expect: "全局取数的窗口里必须留【最新的】那一批"
+  },
+  {
     name: "准入决策不许每记一条就整份重裁",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

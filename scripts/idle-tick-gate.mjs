@@ -266,12 +266,46 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
   await seed(quietId, 12, "quiet");
   const fetchScopedFull = async (projectId) => (await (await fetch(
     `${base}/api/state?view=tasks&limit=200&projectId=${encodeURIComponent(projectId)}`, {headers: auth})).json());
-  const fetchScoped = async (projectId, view = "tasks") => (await (await fetch(
-    `${base}/api/state?view=${view}&limit=10${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ""}`,
+  const fetchScoped = async (projectId, view = "tasks", limit = 10) => (await (await fetch(
+    `${base}/api/state?view=${view}&limit=${limit}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ""}`,
     {headers: auth})).json());
   const unscoped = await fetchScoped(null);
   const scoped = await fetchScoped(quietId);
   const own = (list) => (list || []).filter((item) => item.projectId === quietId).length;
+  // 「全局取数确实被截断了」要有个实有数来对照：不带上限地问一次总数（视图上限是 10，
+  // 这里用 limit=1000 拿到实有）。拿窗口长度自己跟自己比是证明不了截断的。
+  // 把【最老的那个】改一下，让它成为时间上最新的一条。这样判据就不依赖分片的读取顺序：
+  // 它在数组里的位置是「繁忙项目那一段的末尾」，无论哪个分片先被读到，前 10 条里都没有它。
+  // （不这么造的话，最新的那条恰好也排在数组前面，两种取法给出同一个窗口 —— 断言空转。）
+  const groupsForTouch = (await fetchScoped(null, "tasks", 1000)).taskGroups || [];
+  const oldest = groupsForTouch.find((item) => item.name === "busy-任务组-0");
+  if (oldest) {
+    await fetch(`${base}/api/task-groups/${encodeURIComponent(oldest.id)}/control`, {method: "POST",
+      headers: {...auth, "idempotency-key": "touch-oldest-group"},
+      body: JSON.stringify({action: "recompute_readiness"})});
+  }
+  const everyGroup = (await fetchScoped(null, "tasks", 1000)).taskGroups || [];
+  const totalGroups = everyGroup.length;
+  // 【全局窗口必须留最新的那一批】。跨项目合并的顺序是按【分片】来的，与时间无关 ——
+  // 窗口原先取数组前 N 条，于是先写盘的那个项目把窗口占满，后建的记录一条都看不到。
+  // 项目内视图上验不到这件事：分片内部本来就是最新在前，怎么取都一样（第一版打在那面，空转）。
+  const groupTime = (item) => Date.parse(item?.updatedAt || item?.createdAt || "") || 0;
+  const newestOverall = everyGroup.reduce((best, item) => (!best || groupTime(item) > groupTime(best) ? item : best), null);
+  if (!newestOverall || !groupTime(newestOverall)) {
+    console.log("  --  取不到带时间戳的任务组 —— 「全局窗口要留最新的」这条未被检验");
+  } else {
+    if (!oldest || newestOverall.id !== oldest.id) {
+      console.log(`  --  没能把最老的那个组改成最新的（最新是 ${newestOverall.id}）——`
+        + " 「全局窗口要留最新的」这条这一轮在空转");
+    }
+    // unscoped 要在 touch 之后重取，否则拿的是旧窗口。
+    const unscopedAfterTouch = await fetchScoped(null);
+    check((unscopedAfterTouch.taskGroups || []).some((item) => item.id === newestOverall.id),
+      "全局取数的窗口里必须留【最新的】那一批（跨项目是按分片合并的，与时间无关）",
+      `实有 ${totalGroups} 个、窗口 ${(unscopedAfterTouch.taskGroups || []).length} 个；`
+      + `最新的那个（${newestOverall.id}${oldest && newestOverall.id === oldest.id ? "，正是被改过的最老那条" : ""}）`
+      + `${(unscopedAfterTouch.taskGroups || []).some((item) => item.id === newestOverall.id) ? "在" : "不在"}窗口里`);
+  }
   // 逐个字段核对，不只盯 taskGroups：这条断言原先只验了 tasks 视图里的 taskGroups 一个字段，
   // 而基底里的 taskGroups 走的是另一条路、根本没过滤 —— runtime 视图因此长期下发全部项目的
   // 任务组，门却是绿的。可枚举的面就要全量核对。
@@ -328,9 +362,15 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
   // 稳的判据是：全局取数确实被上限截断了，而按项目取数把这个项目的全部取到了。
   // 上限同样作用于按项目取数，所以判据不是"12 个全给"，而是【整个窗口都是本项目的】：
   // 先过滤再截断 → 10 条全是我的；先截断再过滤 → 只剩窗口里恰好属于我的那几条。
-  check(scoped.taskGroups.length === 10 && own(scoped.taskGroups) === 10 && own(unscoped.taskGroups) < 10,
+  // 第三个条件原先是 `own(unscoped) < 10`（全局窗口里本项目的记录不足 10 条）。
+  // 那一条不再确定：视图的截断窗口改成【按时间留最新的那一批】之后，
+  // 谁落在窗口里取决于谁更新，而不是谁排在数组前面 —— 这一轮恰好是安静项目的组最新，10 条全在。
+  // 它本来要区分的「先过滤再截断 vs 先截断再过滤」已经由前两条覆盖（窗口满 10 且全是我的）。
+  // 这里换成直说本意：全局取数确实被上限截断了（窗口满、而实有更多）。
+  check(scoped.taskGroups.length === 10 && own(scoped.taskGroups) === 10
+    && unscoped.taskGroups.length === 10 && totalGroups > 10,
     "全局取数会被上限截断，而按 projectId 取数能把这个项目的记录取全",
-    `全局取数返回 ${unscoped.taskGroups.length} 个（上限 10，说明确实被截断了），`
+    `全局取数返回 ${unscoped.taskGroups.length} 个（上限 10、实有 ${totalGroups} 个，说明确实被截断了），`
     + `其中属于这个项目的 ${own(unscoped.taskGroups)} 个；按项目取数返回 ${scoped.taskGroups.length} 个、全部属于本项目的有 ${own(scoped.taskGroups)} 个（应为 10/10）`);
   // 按项目取全的集合【不许】被标成截断：截断标记如果拿"账号范围的数组"来比，
   // 按项目取数时每个集合都会被标上，界面到处显示"共 N+ 条"，而它其实取全了 ——
@@ -366,7 +406,11 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
     };
     const trueCount = (name) => (stored[name] || []).filter(ownsIt).length
       + shards.reduce((sum, shard) => sum + ((shard.collections || {})[name] || []).filter(ownsIt).length, 0);
-    const candidates = ["admissionDecisions", "modelSelectionDecisions", "sessionPlacementDecisions", "workerLanes",
+    // 追加方向是 push（最新在末尾）的那些排在前面：窗口原先取数组前 N 条，
+    // 藏起来的恰恰是它们最新的记录 —— 这一条只有打在这类集合上才有判别力。
+    // 其余（unshift，最新本来就在前）无论窗口怎么取都一样，打在它们身上等于空转。
+    const candidates = ["repositoryOutputs", "accessGrants", "accounts", "agents",
+      "admissionDecisions", "modelSelectionDecisions", "sessionPlacementDecisions", "workerLanes",
       "agentExecutionEvents", "agentControlCommands", "taskGroups", "workSessions", "agentDispatches"];
     const picked = candidates.find((name) => Array.isArray(view[name]) && view[name].length < trueCount(name));
     if (picked) {

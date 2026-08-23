@@ -1965,7 +1965,19 @@ function cachedStateView(state, account, session, view, limit, projectId) {
 }
 
 function sliceItems(items, limit) {
-  return Array.isArray(items) ? items.slice(0, limit) : [];
+  if (!Array.isArray(items)) return [];
+  if (items.length <= limit) return items;
+  // 窗口必须留【最新的】那一批。各集合的追加方向并不统一：39 个 unshift（最新在前）、
+  // 4 个 push（最新在后）、5 个两种都有 —— 而这里原先一律取前 N 条。
+  // 对 push 的那些，被藏起来的恰恰是刚刚创建的记录：授权、账号、智能体、产出目标都很容易过 200
+  //（视图上限），于是「我刚授的权/刚接的节点在名单里找不到」，而横幅只说了一句"条目更多"。
+  // 不去改八处追加方向：projects[0] 是控制台可见的默认选择，roomMessages 必须保持正序。
+  // 在窗口这一层按时间挑，且只在【真要截断时】才排一次；挑完保持原有相对顺序，
+  // 对本来就是最新在前的那 39 个集合，结果与改动前逐字节相同。
+  // 没有时间戳的记录一律记 0：V8 的排序是稳定的，于是它们退化成原先的「取前 N 条」。
+  const timeOf = (item) => Date.parse(item?.updatedAt || item?.createdAt || item?.issuedAt || "") || 0;
+  const newest = new Set([...items].sort((left, right) => timeOf(right) - timeOf(left)).slice(0, limit));
+  return items.filter((item) => newest.has(item));
 }
 
 // 任务组运行时控制的闭集。守卫与审计的动作名都由它拼出，所以它必须是【服务端定死的】：

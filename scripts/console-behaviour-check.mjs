@@ -3499,7 +3499,7 @@ function runStorageDropDisclosureCase() {
     "什么都没淘汰也报了「已被容量上限丢弃」");
   const dropped = screen({storageDroppedCounts: {agentDispatches: 1200}});
   check("容量淘汰过的记录要说出来，并说清是「没了」而不是「没加载」",
-    /已被容量上限丢弃/u.test(dropped) && /1200/u.test(dropped) && !/只加载了前若干条/u.test(dropped),
+    /已被容量上限丢弃/u.test(dropped) && /1200/u.test(dropped) && !/只加载了【最近的】若干条/u.test(dropped),
     `淘汰时说的是：${(dropped.match(/这些历史记录[^。]*。/u) || ["（什么都没说）"])[0]}`);
   check("淘汰过的集合，屏幕上的数字要带「+」（它是剩下的，不是一共发生过的）",
     /共 \d+\+ 条|\d+\+/u.test(dropped) || /不是「一共发生过的」/u.test(dropped),
@@ -3507,7 +3507,7 @@ function runStorageDropDisclosureCase() {
   // 两种信号要分开：视图截断那句不能被容量淘汰这句顶掉，反之亦然。
   const both = screen({truncatedCollections: ["accounts"], storageDroppedCounts: {agentDispatches: 5}});
   check("视图截断与容量淘汰同时发生时，两句话都要在",
-    /只加载了前若干条/u.test(both) && /已被容量上限丢弃/u.test(both),
+    /只加载了【最近的】若干条/u.test(both) && /已被容量上限丢弃/u.test(both),
     `同时发生时屏幕上只说了：${(both.match(/这[几些][^。]*。/u) || ["（什么都没说）"])[0]}`);
 }
 runStorageDropDisclosureCase();
@@ -4417,7 +4417,7 @@ await runCodedApiErrorCase();
   probe.renderFullPageWith(cutState, admin, null, "sys-overview");
   const cutHtml = String(cutRoot.innerHTML || "");
   check("名单被截断时要在屏上说出来",
-    /只加载了前若干条/.test(cutHtml),
+    /只加载了【最近的】若干条/.test(cutHtml),
     "服务端已经如实登记了哪些名单被截断，而屏幕上一个字都没有 —— 人会把截断后的条数当成全部");
   check("被截断的名单要逐个点名，且是中文",
     /角色技能/.test(cutHtml) && /质量门/.test(cutHtml),
@@ -4428,7 +4428,7 @@ await runCodedApiErrorCase();
     full.truncatedCollections = [];
     loadConsole(fullRoot, {realI18n: true}).renderFullPageWith(full, admin, null, "sys-overview");
     check("没有截断时不要多说一句",
-      !/只加载了前若干条/.test(String(fullRoot.innerHTML || "")),
+      !/只加载了【最近的】若干条/.test(String(fullRoot.innerHTML || "")),
       "什么都没截断却挂着一条提示 —— 噪声会让真的截断被忽略");
   }
 }

@@ -3672,8 +3672,8 @@ function truncationBanner() {
   const droppedEntries = Object.entries(state.storageDroppedCounts || {}).filter(([, count]) => Number(count) > 0);
   const parts = [];
   if (fields.length) {
-    parts.push(`<div class="notice warn-notice">这几份名单只加载了前若干条，实际条目更多：${esc(fields.map(nameOf).join("、"))}`
-      + " —— 不要据此判断「没有别的了」。</div>");
+    parts.push(`<div class="notice warn-notice">这几份名单只加载了【最近的】若干条，实际条目更多：${esc(fields.map(nameOf).join("、"))}`
+      + " —— 更早的记录还在系统里，只是这一屏没取；不要据此判断「没有别的了」。</div>");
   }
   // 与上面那句必须分开：这些不是「没加载」，是【已经被容量淘汰丢掉了】。
   // 说成「只加载了前若干条」会让人去翻页找一批根本不存在的记录。
