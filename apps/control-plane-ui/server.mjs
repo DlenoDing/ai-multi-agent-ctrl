@@ -597,7 +597,11 @@ function beginGuardedWrite(req, state, action, subject, resourceScope = inferRes
 // 幂等记录按数量淘汰最旧项，界住 state.json 无限增长（保留近期重放正确性；幂等键本就是近期重试语义）。
 function evictIdempotencyRecords(state) {
   purgeExpiredIdempotencyPayloads(state);
-  const cap = Number(process.env.AIMAC_IDEMPOTENCY_RECORD_CAP || 5000);
+  // 【与落盘那步用同一个旋钮】。原先这里读 AIMAC_IDEMPOTENCY_RECORD_CAP，而 state-store 的
+  // pruneIdempotencyRecords 读的是 AIMAC_IDEMPOTENCY_MAX_RECORDS —— 同一批记录两个名字、两层上限，
+  // 生效的永远是更严的那个：把 RECORD_CAP 调到 5 万，落盘时照样被裁回 5000，旋钮等于没用。
+  // 上限只能有一个真相源（同一形状今天已经撞到第三次：网关 500/分片 1000、server 120/写入点 500）。
+  const cap = Math.max(100, Number(process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS || 5000));
   const keys = Object.keys(state.idempotencyRecords || {});
   if (keys.length <= cap) return;
   const ordered = keys

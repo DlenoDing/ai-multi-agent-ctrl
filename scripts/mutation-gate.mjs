@@ -3144,6 +3144,24 @@ const MUTATIONS = [
     expect: "却没有各自的状态词表"
   },
   {
+    name: "README 里的默认值与代码对不上要报红",
+    file: "README.md",
+    check: "verifyCapacityKnobsAreDocumented",
+    gate: "contract",
+    from: "| `AIMAC_ADMISSION_DECISION_CAP` | `400` |",
+    to: "| `AIMAC_ADMISSION_DECISION_CAP` | `4000` |",
+    expect: "默认值与代码对不上"
+  },
+  {
+    name: "新增的容量旋钮必须进文档",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyCapacityKnobsAreDocumented",
+    gate: "contract",
+    from: "  const cap = Math.max(100, Number(process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS || 5000));",
+    to: "  const cap = Math.max(100, Number(process.env.AIMAC_BRAND_NEW_CAP || 5000));",
+    expect: "README 里也没写"
+  },
+  {
     name: "标签表少了取值要报红（屏幕会露英文键）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyLabelTablesMatchTheirEnums",

@@ -589,6 +589,7 @@ run(verifyPollingPeekDoesNotCloneOrMutate);
 runAsync(verifyEveryMcpToolAnswersAnEmptyCall);
 runAsync(verifyBoundedNodeCannotWriteIntoAnotherProject);
 runAsync(verifyStateWriteDoesNotCloneTheWorld);
+run(verifyCapacityKnobsAreDocumented);
 run(verifyLabelTablesMatchTheirEnums);
 run(verifyEveryViewCollectionHasAChineseLabel);
 run(verifyViewWindowKnowsEveryTimestampName);
@@ -11251,6 +11252,67 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 截断/容量淘汰的横幅要说出【是哪几份名单】，靠的是界面里手抄的 COLLECTION_LABELS。
 // 缺一个，那一刻横幅上就是一串英文键 —— 而它只在真被截断时才渲染，漏译扫描看不见没渲染的屏。
 // 视图清单（服务端的 viewFields）是权威来源，逐个核对。
+// 容量与保留期旋钮：这些值【没有界面入口】，环境变量是唯一的杠杆 —— 后端有杠杆而人找不到，
+// 等于这个杠杆不存在（本仓反复出现的形态）。控制台现在会说「这些历史记录已被容量上限丢弃」，
+// 那一刻人要的下一句就是「怎么让它留多一点」。README 里那张表就是答案。
+// 表里的默认值【从代码里算出来核对】，不是手抄：`7 * 24 * 60 * 60 * 1000` 这种写法，
+// 手抄很容易写成 7（我第一版抽默认值时就抽成了 7）。
+function verifyCapacityKnobsAreDocumented(output) {
+  const readme = readFileSync(join(root, "README.md"), "utf8");
+  const sources = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/project-event-store.mjs",
+    "apps/mcp-server/server.mjs"];
+  const defaults = new Map();
+  for (const file of sources) {
+    let text = "";
+    try { text = readFileSync(join(root, file), "utf8"); } catch { continue; }
+    for (const match of text.matchAll(/process\.env\.(AIMAC_[A-Z0-9_]+)\s*\|\|\s*([0-9]+(?:\s*\*\s*[0-9]+)*)/gu)) {
+      if (!defaults.has(match[1])) defaults.set(match[1], match[2].replace(/\s+/gu, ""));
+    }
+  }
+  const knobs = [...defaults.keys()].filter((name) => /_CAP$|_MAX_|_MAX$|_TTL_MS$|_LIMIT$|MAX_REUSE$/u.test(name));
+  if (knobs.length < 12) {
+    output.push(`容量旋钮只提取到 ${knobs.length} 个（实际有十几个）—— 提取失配，本条在空转`);
+    return;
+  }
+  // 有些旋钮【界面上就有杠杆】，不该往这张「只能改环境变量」的表里塞：
+  // 组织配额那四个只是新建组织时的默认值，实际配额在「组织管理」页每个组织可改。
+  const KNOBS_WITH_A_UI_LEVER = {
+    AIMAC_ORG_DEFAULT_MAX_AGENTS: "只是新建组织时的默认值；实际配额在「组织管理」页每个组织可改",
+    AIMAC_ORG_DEFAULT_MAX_MEMBERS: "同上",
+    AIMAC_ORG_DEFAULT_MAX_PROJECTS: "同上",
+    AIMAC_ORG_DEFAULT_MAX_TASK_GROUPS: "同上"
+  };
+  const staleLever = Object.keys(KNOBS_WITH_A_UI_LEVER).filter((name) => !knobs.includes(name)).sort();
+  if (staleLever.length) {
+    output.push(`「界面上有杠杆」的登记已过期：${staleLever.join("、")} —— 代码里已经没有这个旋钮了`);
+  }
+  const undocumented = knobs.filter((name) => !readme.includes(name) && !KNOBS_WITH_A_UI_LEVER[name]).sort();
+  if (undocumented.length) {
+    output.push(`这些容量/保留期旋钮没有界面入口、README 里也没写：${undocumented.join("、")} —— `
+      + "到量时人只看到「已被容量上限丢弃」，却不知道能调、更不知道调哪个");
+  }
+  const wrong = [];
+  for (const name of knobs) {
+    if (!readme.includes(name)) continue;
+    const value = String(defaults.get(name).split("*").reduce((product, part) => product * Number(part), 1));
+    // 直接找 README 里那一行（用 split 而不是正则：反引号在模板串里转义容易出错）。
+    const row = readme.split("\n").find((line) => line.includes(name)) || "";
+    // 【精确比第二列，不能用 includes】：把 400 写成 4000，`includes("400")` 照样为真 ——
+    // 子串吞并这个坑本仓在拒绝码上撞过一次，这里是同一个。
+    const cells = row.split("|").map((cell) => cell.trim().replace(/`/gu, ""));
+    const documented = cells[2] || "";
+    if (row && documented !== value) {
+      wrong.push(`${name}（代码 ${value}，README 写的是 ${documented || "（这一行没有默认值那一列）"}）`);
+    }
+  }
+  if (wrong.length) {
+    output.push(`README 里这些旋钮的默认值与代码对不上：${wrong.join("；")} —— `
+      + "照着文档配出来的会与实际不符，而人不会去读源码核对");
+  }
+  console.log(`容量旋钮文档：${knobs.length} 个逐个核过（名字在不在 README、默认值与代码算出来的一致）`);
+}
+
 function verifyLabelTablesMatchTheirEnums(output) {
   const appText = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   let checked = 0;
