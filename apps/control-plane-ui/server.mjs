@@ -110,6 +110,7 @@ import {
   refreshConfirmationsAfterHumanChange,
   revokeAccountSessions,
   REGISTERED_OWNER_ROLES,
+  normalizedExpiry,
   SHARED_DEFINITION_TYPES,
   SHARED_DEFINITION_CONFLICT_POLICIES,
   taskGroupSettledRejection,
@@ -903,6 +904,12 @@ function actorIsProjectOwnerForScope(state, actor, resourceScope = {}) {
 
 // 授权能落在哪几种作用域上 —— 这是个闭集。多一个认不出的取值，跨组织边界就少守一次。
 const GRANTABLE_RESOURCE_TYPES = ["project", "task_group", "organization", "system"];
+
+// 模型能力档案里规范认识的字段（spec/model-capability.schema.json 是 additionalProperties:false）。
+// 与规范双向核对：多一个＝落下来的记录违反规范，少一个＝调用方给的那一项被静默丢掉。
+const MODEL_CAPABILITY_FIELDS = ["aliases", "availability", "capabilityDigest", "costSignals", "limits",
+  "modalities", "modelId", "observedAt", "providerClass", "providerId", "qualitySignals", "strengths",
+  "toolCapabilities"];
 
 
 function sanitizeGrantRequest(state, actor, input = {}, resourceScope = {}) {
@@ -3767,12 +3774,24 @@ async function handleApi(req, res) {
       json(res, guard.status, guard.payload);
       return;
     }
+    // 【只取规范认识的字段】。原先是 `...body` —— 请求体整个摊进持久记录，
+    // 而规范是 additionalProperties:false：多带一个字段，落下来的记录就违反它自己声明的规范，
+    // 而这件事只有在 e2e 恰好造出那种记录时才会被发现。字段清单与规范双向核对（契约门）。
+    const picked = Object.fromEntries(MODEL_CAPABILITY_FIELDS
+      .filter((field) => body[field] !== undefined).map((field) => [field, body[field]]));
+    // 观测时间是【调用方自填的】，而视图窗口按时间挑「最新的那一批」——
+    // 一个填不出日期的字符串（或 "zzz" 这种）会按字典序排到最新，永久占住窗口。认不出就拒。
+    const observedAt = normalizedExpiry(body.observedAt);
+    if (observedAt === false) {
+      json(res, 400, {error: "model_capability_observed_at_invalid", received: String(body.observedAt).slice(0, 60)});
+      return;
+    }
     const profile = {
       ...defaultModelCapabilities(now()).find((item) => item.providerClass === (body.providerClass || "custom")),
-      ...body,
+      ...picked,
       schemaVersion: "model-capability/v1",
       capabilityDigest: body.capabilityDigest || digestOf(body),
-      observedAt: body.observedAt || now()
+      observedAt: observedAt || now()
     };
     state.modelCapabilities = state.modelCapabilities.filter((item) => !(item.providerId === profile.providerId && item.modelId === profile.modelId));
     state.modelCapabilities.unshift(profile);

@@ -3361,6 +3361,31 @@ const MUTATIONS = [
     expect: "容量淘汰过的记录要说出来"
   },
   {
+    name: "模型能力字段清单少一个要报红（调用方给的会被静默丢掉）",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyModelCapabilityFieldsMatchTheSpec",
+    gate: "contract",
+    from: 'const MODEL_CAPABILITY_FIELDS = ["aliases", "availability",',
+    to: 'const MODEL_CAPABILITY_FIELDS = ["availability",',
+    expect: "会静默丢掉这些规范认识的字段"
+  },
+  {
+    name: "规范不认的字段不许摊进模型能力档案",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "      ...picked,",
+    to: "      ...body,",
+    expect: "被原样存进了模型能力档案"
+  },
+  {
+    name: "不是日期的观测时间必须拒绝",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    if (observedAt === false) {",
+    to: "    if (false) {",
+    expect: "收下了一个不是日期的 observedAt"
+  },
+  {
     name: "授权请求卡要显示人名而不是账号 id",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

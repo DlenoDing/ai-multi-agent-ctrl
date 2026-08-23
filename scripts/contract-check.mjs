@@ -590,6 +590,7 @@ runAsync(verifyEveryMcpToolAnswersAnEmptyCall);
 runAsync(verifyBoundedNodeCannotWriteIntoAnotherProject);
 runAsync(verifyStateWriteDoesNotCloneTheWorld);
 run(verifyCapacityKnobsAreDocumented);
+run(verifyModelCapabilityFieldsMatchTheSpec);
 run(verifyLabelTablesMatchTheirEnums);
 run(verifyEveryViewCollectionHasAChineseLabel);
 run(verifyViewWindowKnowsEveryTimestampName);
@@ -11311,6 +11312,31 @@ function verifyCapacityKnobsAreDocumented(output) {
       + "照着文档配出来的会与实际不符，而人不会去读源码核对");
   }
   console.log(`容量旋钮文档：${knobs.length} 个逐个核过（名字在不在 README、默认值与代码算出来的一致）`);
+}
+
+// 模型能力注册那条路由只取【规范认识的字段】（原先是 `...body`，请求体整个摊进持久记录，
+// 而规范是 additionalProperties:false）。字段清单是手抄的 —— 与规范双向核对：
+// 多一个＝落下来的记录违反规范；少一个＝调用方给的那一项被静默丢掉，而他收到的是 201。
+function verifyModelCapabilityFieldsMatchTheSpec(output) {
+  const serverText = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const hit = /const MODEL_CAPABILITY_FIELDS = \[([\s\S]*?)\];/u.exec(serverText);
+  const picked = hit ? [...hit[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]) : [];
+  let spec = null;
+  try { spec = JSON.parse(readFileSync(join(root, "spec/model-capability.schema.json"), "utf8")); } catch { /* below */ }
+  const declared = Object.keys(spec?.properties || {}).filter((key) => key !== "schemaVersion");
+  if (picked.length < 8 || declared.length < 8) {
+    output.push(`模型能力字段核对：代码里 ${picked.length} 个、规范里 ${declared.length} 个 —— 提取失配，本条在空转`);
+    return;
+  }
+  const missing = declared.filter((field) => !picked.includes(field));
+  const extra = picked.filter((field) => !declared.includes(field));
+  if (missing.length) {
+    output.push(`模型能力注册会静默丢掉这些规范认识的字段：${missing.join("、")} —— 调用方给了它，回执却是 201`);
+  }
+  if (extra.length) {
+    output.push(`模型能力字段清单里有规范不认的：${extra.join("、")} —— 落下来的记录会违反 additionalProperties:false`);
+  }
+  console.log(`模型能力字段：代码取 ${picked.length} 个、规范声明 ${declared.length} 个（不含 schemaVersion），两向核过`);
 }
 
 function verifyLabelTablesMatchTheirEnums(output) {

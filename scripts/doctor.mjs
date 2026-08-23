@@ -400,6 +400,34 @@ try {
   if (new Set(stateResult.payload.modelCapabilities.map((profile) => profile.providerClass)).size < 19) {
     throw new Error("model registry does not cover all provider classes");
   }
+  // 【模型能力注册：只收规范认识的字段，且观测时间要是真日期】。
+  // 这条路由原先是 `...body` —— 请求体整个摊进持久记录，而规范是 additionalProperties:false；
+  // observedAt 又是调用方自填的，而视图窗口按时间挑「最新的那一批」，
+  // 一个 "zzz" 这样的字符串会按字典序排到最新、永久占住窗口。
+  {
+    const bogusTime = await jsonFetch(port, "/api/model-capabilities", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-model-cap-bogus-time", authorization: systemAuth},
+      body: JSON.stringify({providerId: "probe", providerClass: "custom", modelId: "probe-1",
+        observedAt: "zzz"})});
+    if (bogusTime.response.status !== 400 || bogusTime.payload?.error !== "model_capability_observed_at_invalid") {
+      throw new Error(`模型能力注册收下了一个不是日期的 observedAt`
+        + `（${bogusTime.response.status}/${bogusTime.payload?.error}）—— 它会按字典序排到最新，`
+        + "把真实记录挤出视图窗口，而屏幕上显示的是 Invalid Date");
+    }
+    const injected = await jsonFetch(port, "/api/model-capabilities", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-model-cap-injected", authorization: systemAuth},
+      body: JSON.stringify({providerId: "probe", providerClass: "custom", modelId: "probe-2",
+        thisFieldIsNotInTheSpec: "注入探针"})});
+    if (!injected.response.ok) {
+      throw new Error(`合法的模型能力注册被拒了（${injected.response.status}/${injected.payload?.error}）`
+        + " —— 上面那条「不是日期就拒」可能变成了「这条路永远拒」");
+    }
+    if (Object.prototype.hasOwnProperty.call(injected.payload || {}, "thisFieldIsNotInTheSpec")) {
+      throw new Error("请求体里规范不认识的字段被原样存进了模型能力档案 ——"
+        + " 规范是 additionalProperties:false，这条记录违反它自己声明的规范，而这件事只有恰好造出它时才会发现");
+    }
+  }
+
   if (!stateResult.payload.skillSources.some((source) => source.sourceId === "agency-agents-zh")) {
     throw new Error("agency-agents-zh skill source is not configured");
   }
