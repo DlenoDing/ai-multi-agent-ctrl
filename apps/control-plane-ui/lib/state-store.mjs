@@ -654,6 +654,15 @@ const shardOpenPredicates = {
 };
 
 export function capProjectShardCollections(shard) {
+  // 裁掉的条数要【记下来】。不记的话，界面拿裁剪后的长度当总数报给人 ——
+  // 「共 5000 条派发」而实际发生过 12000 条，且错得毫无痕迹。
+  // 视图截断早就有 truncatedCollections 在如实报了，存储层这道一直是哑的。
+  // 累加而不是覆盖：每次裁剪都在往外丢，总数是历次之和。
+  const noteDropped = (collection, dropped) => {
+    if (dropped <= 0) return;
+    shard.droppedCounts = shard.droppedCounts || {};
+    shard.droppedCounts[collection] = Number(shard.droppedCounts[collection] || 0) + dropped;
+  };
   for (const collection of projectShardCollections) {
     const items = shard.collections[collection];
     if (!Array.isArray(items)) continue;
@@ -663,12 +672,14 @@ export function capProjectShardCollections(shard) {
     const isOpen = shardOpenPredicates[collection];
     if (!isOpen) {
       shard.collections[collection] = sorted.slice(0, limit);
+      noteDropped(collection, items.length - shard.collections[collection].length);
       continue;
     }
     // Never evict an open/gating item; trim only the oldest non-open beyond the limit.
     const open = sorted.filter((item) => isOpen(item, shard));
     const closed = sorted.filter((item) => !isOpen(item, shard)).slice(0, Math.max(0, limit - open.length));
     shard.collections[collection] = [...open, ...closed];
+    noteDropped(collection, items.length - shard.collections[collection].length);
   }
 }
 
@@ -701,6 +712,17 @@ function hydrateProjectState(centralState, options, preReadShards) {
           hint: `项目 ${shard.projectId || "unknown"} 的分片是「${shard.schemaVersion}」写的，`
             + `这个构建只认 ${[...SUPPORTED_PROJECT_SHARD_SCHEMA_VERSIONS].join(" / ")}。`
             + "请换回能读它的版本，或先做数据迁移。"});
+    }
+  }
+  // 各分片历次裁掉的条数汇总成一份：视图据此告诉人「这个数是不全的，而且缺的那些已经没了」。
+  // 与 truncatedCollections（视图为体积没加载全，记录还在）是两件事，不能混成一句话。
+  state.projectShardDroppedCounts = {};
+  for (const shard of shards) {
+    for (const [collection, dropped] of Object.entries(shard.droppedCounts || {})) {
+      if (Number(dropped) > 0) {
+        state.projectShardDroppedCounts[collection] =
+          Number(state.projectShardDroppedCounts[collection] || 0) + Number(dropped);
+      }
     }
   }
   for (const shard of shards) {

@@ -3627,7 +3627,10 @@ function sinceText(value) {
 }
 
 function countSuffix(field) {
-  return (state.truncatedCollections || []).includes(field) ? "+" : "";
+  // 两种都会让这个数偏小：视图这次没加载全（记录还在），或者容量淘汰已经把老的丢了。
+  // 数字后面都该带 "+"；两者的区别由顶部横幅分开讲清楚。
+  return (state.truncatedCollections || []).includes(field)
+    || Number((state.storageDroppedCounts || {})[field] || 0) > 0 ? "+" : "";
 }
 
 // 有些表把整个集合原样铺开（没有"当前展示 N 条"的页脚），于是视图截断在这些页上连一点痕迹都没有：
@@ -3664,11 +3667,22 @@ function auditWindowNote() {
 }
 
 function truncationBanner() {
+  const nameOf = (field) => COLLECTION_LABELS[field] || t(field);
   const fields = (state.truncatedCollections || []).filter((field) => field !== "truncatedCollections");
-  if (!fields.length) return "";
-  const names = fields.map((field) => COLLECTION_LABELS[field] || t(field)).join("、");
-  return `<div class="notice warn-notice">这几份名单只加载了前若干条，实际条目更多：${esc(names)}`
-    + " —— 不要据此判断「没有别的了」。</div>";
+  const droppedEntries = Object.entries(state.storageDroppedCounts || {}).filter(([, count]) => Number(count) > 0);
+  const parts = [];
+  if (fields.length) {
+    parts.push(`<div class="notice warn-notice">这几份名单只加载了前若干条，实际条目更多：${esc(fields.map(nameOf).join("、"))}`
+      + " —— 不要据此判断「没有别的了」。</div>");
+  }
+  // 与上面那句必须分开：这些不是「没加载」，是【已经被容量淘汰丢掉了】。
+  // 说成「只加载了前若干条」会让人去翻页找一批根本不存在的记录。
+  if (droppedEntries.length) {
+    const detail = droppedEntries.map(([field, count]) => `${nameOf(field)} ${count} 条`).join("、");
+    parts.push(`<div class="notice warn-notice">这些历史记录已被容量上限丢弃，不在系统里了（还在跑或还等着人处置的从不淘汰）：`
+      + `${esc(detail)} —— 屏幕上这几个数是「剩下的」，不是「一共发生过的」。</div>`);
+  }
+  return parts.join("");
 }
 
 // 菜单红点的数字来源。独立成函数而不是内联在 render 里：内联的话，"红点与面板口径一致"这条

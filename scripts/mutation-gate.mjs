@@ -2444,8 +2444,8 @@ const MUTATIONS = [
     name: "被截断的名单要逐个点名",
     file: APP,
     gate: "console",
-    from: "  const names = fields.map((field) => COLLECTION_LABELS[field] || t(field)).join(\"、\");",
-    to: '  const names = "";',
+    from: "esc(fields.map(nameOf).join(\"、\"))",
+    to: '""',
     expect: "人不知道是哪一份"
   },
   {
@@ -3133,6 +3133,38 @@ const MUTATIONS = [
     from: "  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg);",
     to: "  const grantable = candidates;",
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
+  },
+  {
+    name: "容量淘汰丢了多少必须记下来",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    gate: "contract",
+    from: "    if (dropped <= 0) return;",
+    to: "    if (true) return;",
+    expect: "容量淘汰丢了"
+  },
+  {
+    name: "丢弃数要累加而不是覆盖",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    gate: "contract",
+    from: "    shard.droppedCounts[collection] = Number(shard.droppedCounts[collection] || 0) + dropped;",
+    to: "    shard.droppedCounts[collection] = dropped;",
+    expect: "没有把丢弃数累加上去"
+  },
+  {
+    name: "容量淘汰要下发到界面",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    from: "  if (dropped.length) base.storageDroppedCounts = Object.fromEntries(dropped);",
+    to: "",
+    expect: "视图没有下发 storageDroppedCounts"
+  },
+  {
+    name: "容量淘汰不许说成「只是没加载」",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (droppedEntries.length) {",
+    to: "  if (false) {",
+    expect: "容量淘汰过的记录要说出来"
   },
   {
     name: "被人重开过的工作项要看得出来",

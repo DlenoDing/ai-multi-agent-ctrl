@@ -1902,6 +1902,12 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
     }
   }
   if (truncatedCollections.length) base.truncatedCollections = truncatedCollections;
+  // 存储层的容量淘汰是另一回事：视图截断说的是「这次没加载全，记录还在」，
+  // 而这些是【已经被丢掉了】—— 两句话给人的下一步动作完全不同（一个是翻页/收窄范围，
+  // 一个是去归档里找、或者接受它已经没了）。所以单独一个字段，界面分开说。
+  const dropped = Object.entries(state.projectShardDroppedCounts || {})
+    .filter(([field, count]) => Number(count) > 0 && Array.isArray(base[field]));
+  if (dropped.length) base.storageDroppedCounts = Object.fromEntries(dropped);
   return base;
 }
 

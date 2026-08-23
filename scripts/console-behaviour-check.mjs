@@ -3476,6 +3476,42 @@ function runHumanTraceCase() {
     /已不在当前列表里/u.test(dropped) && /由人工指令重开/u.test(dropped),
     `记录被顶掉之后显示的是：${(dropped.match(/执行角色[^执]{0,160}/u) || ["（没渲染出这一行）"])[0]}`);
 }
+// 存储层的容量淘汰一直是哑的：分片裁掉记录不记数、不下发，界面把裁剪后的长度当总数报给人
+//（「共 5000 条派发」而实际发生过 12000）。它与视图截断是两件事 ——
+// 视图截断是「这次没加载全，记录还在」，容量淘汰是「已经没了」，人的下一步动作完全不同。
+function runStorageDropDisclosureCase() {
+  const admin = {accountId: "acct_a", accountType: "system_admin", organizationId: "org_default"};
+  const base = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "active", workItems: [], roles: [], blockers: []}],
+    agentDispatches: [], workSessions: [], agentExecutionEvents: [], accounts: [], accessGrants: [],
+    agents: [], findings: [], closeBarriers: [], qualityGates: [], humanConfirmationRequests: [],
+    truncatedCollections: [], fleet: {online: 1, total: 1}};
+  const screen = (extra) => {
+    const root = el("div");
+    loadConsole(root, {realI18n: true}).renderFullPageWith({...base, ...extra}, admin, "p1", "monitor");
+    return String(root.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+  };
+  const quiet = screen({});
+  check("没有淘汰过时不许多挂一句（误报会让人不再相信这个提示）",
+    !/已被容量上限丢弃/u.test(quiet),
+    "什么都没淘汰也报了「已被容量上限丢弃」");
+  const dropped = screen({storageDroppedCounts: {agentDispatches: 1200}});
+  check("容量淘汰过的记录要说出来，并说清是「没了」而不是「没加载」",
+    /已被容量上限丢弃/u.test(dropped) && /1200/u.test(dropped) && !/只加载了前若干条/u.test(dropped),
+    `淘汰时说的是：${(dropped.match(/这些历史记录[^。]*。/u) || ["（什么都没说）"])[0]}`);
+  check("淘汰过的集合，屏幕上的数字要带「+」（它是剩下的，不是一共发生过的）",
+    /共 \d+\+ 条|\d+\+/u.test(dropped) || /不是「一共发生过的」/u.test(dropped),
+    "数字没有任何「这个数偏小」的痕迹");
+  // 两种信号要分开：视图截断那句不能被容量淘汰这句顶掉，反之亦然。
+  const both = screen({truncatedCollections: ["accounts"], storageDroppedCounts: {agentDispatches: 5}});
+  check("视图截断与容量淘汰同时发生时，两句话都要在",
+    /只加载了前若干条/u.test(both) && /已被容量上限丢弃/u.test(both),
+    `同时发生时屏幕上只说了：${(both.match(/这[几些][^。]*。/u) || ["（什么都没说）"])[0]}`);
+}
+runStorageDropDisclosureCase();
+
 runHumanTraceCase();
 
 runSupersededReasonCase();

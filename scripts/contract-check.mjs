@@ -6408,6 +6408,38 @@ function verifyExecutionFailureCapSurvivesHistoryAndReopen(output) {
   // 上面那条行为断言只走到三处写入点里的【一处】（对账过期那条最容易到达）。
   // 另两处要靠登记：把会话置成终态的地方一共这么几处，每一处都必须同时写下原因。
   // 少写一处，那条路径上的会话就是「失败 / -」，而屏幕上看不出是哪条路径来的。
+  // 容量淘汰丢掉的条数必须【被记下来并下发】，否则界面拿裁剪后的长度当总数报给人
+  //（「共 5000 条派发」而实际发生过 12000，且错得毫无痕迹）。
+  // 上面控制台那几条是渲染分支：直接把 storageDroppedCounts 喂进去，证明不了真裁剪时会记数。
+  {
+    const shard = {collections: {agentDispatches: Array.from({length: 5400}, (_, index) => ({
+      dispatchId: `d_${index}`, status: "completed",
+      updatedAt: new Date(Date.UTC(2026, 0, 1) + index * 60000).toISOString()}))}};
+    capProjectShardCollections(shard);
+    const kept = shard.collections.agentDispatches.length;
+    const dropped = Number(shard.droppedCounts?.agentDispatches || 0);
+    if (kept >= 5400) {
+      output.push("容量淘汰：5400 条派发没有被裁剪 —— 这一段在空转，不是「记数对了」");
+    } else if (dropped !== 5400 - kept) {
+      output.push(`容量淘汰丢了 ${5400 - kept} 条，记下来的却是 ${dropped} —— `
+        + "界面会把裁剪后的长度当成总数报给人，而且错得毫无痕迹");
+    }
+    // 累加而不是覆盖：每次裁剪都在往外丢，报给人的必须是历次之和。
+    shard.collections.agentDispatches = [...shard.collections.agentDispatches,
+      ...Array.from({length: 300}, (_, index) => ({dispatchId: `d2_${index}`, status: "completed",
+        updatedAt: new Date(Date.UTC(2026, 1, 1) + index * 60000).toISOString()}))];
+    capProjectShardCollections(shard);
+    if (Number(shard.droppedCounts?.agentDispatches || 0) <= dropped) {
+      output.push(`第二次裁剪没有把丢弃数累加上去（仍是 ${shard.droppedCounts?.agentDispatches}）——`
+        + " 覆盖式记数只会报出最后一次丢了多少，人看到的是个偏小的数");
+    }
+    // 视图必须把它发下去：不发，界面那两句话永远不出现（改成不发也照样全绿，变异验出来的）。
+    const serverText = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+    if (!/base\.storageDroppedCounts = Object\.fromEntries\(dropped\)/u.test(serverText)) {
+      output.push("视图没有下发 storageDroppedCounts —— 容量淘汰在界面上没有任何痕迹");
+    }
+  }
+
   // 执行拓扑的 mode / runnerKind / isolation 规范里都是 enum，原先原样收。
   // runnerKind 尤其要紧：下面那道「external_runner 必须带授权与本地验证证据」是按字面量比的，
   // 写成 external_runer 就绕过去了，落下来的还是一份看起来正常的拓扑。
