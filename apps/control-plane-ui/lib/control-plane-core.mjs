@@ -7253,6 +7253,13 @@ export function createExecutionTopology(state, args) {
   const at = new Date().toISOString();
   const root = args.root || args.repositoryRoot || process.cwd();
   const branches = normalizeTopologyBranches(args, workItem);
+  // 这三个字段在 spec/execution-topology.schema.json 里都是 enum，这里原先原样收 ——
+  // 打错一个字，落下来的拓扑违反它自己声明的规范，而回执是成功。
+  // （runnerKind 尤其要紧：下面那道「external_runner 必须带授权与本地验证证据」按字面量比，
+  //   写成 external_runer 就绕过去了，落下来的还是一份看起来正常的拓扑。）
+  assertClosedSet(args, "mode", EXECUTION_TOPOLOGY_MODES, "execution_topology_value_not_recognized");
+  assertClosedSet(args, "runnerKind", EXECUTION_TOPOLOGY_RUNNER_KINDS, "execution_topology_value_not_recognized");
+  assertClosedSet(args, "isolation", EXECUTION_TOPOLOGY_ISOLATIONS, "execution_topology_value_not_recognized");
   const mode = args.mode || (branches.length > 1 ? "parallel_active" : "serial");
   const runnerKind = args.runnerKind || (branches.length > 1 ? "git_worktree" : "work_session");
   const isolation = args.isolation || (branches.length > 1 ? "git_worktree" : "new_work_session");
@@ -8372,18 +8379,28 @@ const SHARED_DEFINITION_CREATABLE_STATUSES = ["draft", "owner_assigned", "propos
 // 这两个闭集必须与 spec/shared-definition-contract.schema.json 的 enum 逐字一致
 //（contract-check 双向核对）。放在 core：REST 与 MCP 是同一件事的两个入口，
 // 各抄一份的话必有一天只改一处 —— status 那道守卫就是先只有 core 有、REST 整个绕过去。
+// 「调用方给了个认不出的取值」这件事各处都要拒，形态完全一样 —— 抽成一个，
+// 免得下一处又手抄一遍（抄着抄着就只剩一处还在拒了，status 那道门就是这么变成一边有一边没有的）。
+// 拒绝报文必须带上合法取值：调用方（多半是 agent）要靠它自己改请求重发，而不是穷举。
+function assertClosedSet(args, field, allowed, code) {
+  if (args[field] === undefined || allowed.includes(String(args[field]))) return;
+  const error = new Error(code);
+  error.status = 400;
+  error.details = {field, value: String(args[field]).slice(0, 60), supported: [...allowed]};
+  throw error;
+}
+
 function assertSharedDefinitionClosedSets(args) {
-  for (const [field, allowed] of [["definitionType", SHARED_DEFINITION_TYPES],
-    ["conflictPolicy", SHARED_DEFINITION_CONFLICT_POLICIES]]) {
-    if (args[field] === undefined || allowed.includes(String(args[field]))) continue;
-    const error = new Error(field === "definitionType"
-      ? "shared_definition_type_not_recognized" : "shared_definition_conflict_policy_not_recognized");
-    error.status = 400;
-    error.details = {[field]: String(args[field]).slice(0, 60), supported: [...allowed]};
-    throw error;
-  }
+  assertClosedSet(args, "definitionType", SHARED_DEFINITION_TYPES, "shared_definition_type_not_recognized");
+  assertClosedSet(args, "conflictPolicy", SHARED_DEFINITION_CONFLICT_POLICIES,
+    "shared_definition_conflict_policy_not_recognized");
 }
 // 真正构成"未完成、必须先处理掉"的状态。draft 不在内：它是"还没提出来"，不该阻塞任何人关闭任务组。
+// 执行拓扑的三个闭集（同样与 spec/execution-topology.schema.json 的 enum 双向核对）。
+export const EXECUTION_TOPOLOGY_MODES = ["serial", "parallel_active", "downgraded_serial"];
+export const EXECUTION_TOPOLOGY_RUNNER_KINDS = ["work_session", "subagent", "git_worktree", "external_runner", "none"];
+export const EXECUTION_TOPOLOGY_ISOLATIONS = ["new_work_session", "forked_workspace", "git_worktree", "equivalent", "none"];
+
 export const SHARED_DEFINITION_TYPES = ["terminology", "api_contract", "data_model", "event_schema", "status_semantics", "error_code", "design_token", "quality_standard", "permission_semantics", "instruction_format", "semantic_contract"];
 export const SHARED_DEFINITION_CONFLICT_POLICIES = ["block_and_request_canonical_decision", "owner_reconciles_then_republish"];
 const SHARED_DEFINITION_BLOCKING_STATUSES = ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"];

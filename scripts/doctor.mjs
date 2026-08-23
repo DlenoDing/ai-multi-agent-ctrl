@@ -3666,7 +3666,10 @@ try {
     let advanced = false;
     // 起来之后给足时间：忙机器上一拍编排要跑好一会儿。跑通了就立刻往下走，
     // 所以这个上限只在真的坏了的时候才花掉。秒数由这里算出来，别在报文里另写一个数。
-    const tickWaitAttempts = 180;
+    // 240 秒。这条断言在四路并行跑变异门时反复假红过（三次，每次是不同的变异撞上它）——
+    // 串行单跑同一条变异都会给出各自的预期断言，也就是说慢的是机器不是产品。
+    // 这个上限只在真的坏了的时候才花掉：一推进就立刻往下走。
+    const tickWaitAttempts = 480;
     for (let attempt = 0; attempt < tickWaitAttempts && !advanced; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 500));
       advanced = versionOf() > before;
@@ -3674,7 +3677,8 @@ try {
     if (!advanced) {
       throw new Error(`autonomous orchestrator tick never advanced state on its own (stateVersion stayed ${before}`
         + ` for ${tickWaitAttempts / 2}s after the server answered /api/health) — a person who creates a task group`
-        + ` would wait forever, because nothing drives the cycle: ${tickStderr.slice(0, 400)}`);
+        + ` would wait forever, because nothing drives the cycle. tick server stderr`
+        + `${tickStderr ? `：${tickStderr.slice(0, 400)}` : "【一个字都没有】——它没报错，只是没动"}`);
     }
     console.log("autonomous orchestrator tick ok: state advanced with no request made");
     tickAssertionsPassed = true;

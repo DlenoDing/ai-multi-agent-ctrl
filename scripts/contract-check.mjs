@@ -1726,8 +1726,8 @@ function verifyHumanAndOrganizationContracts(output) {
           workItemId: tg.workItems[0].id, decisionType: "plan_topology", subjectRef: `TaskGroup:${tg.id}`,
           summary: "关后确认", options: [{optionId: "a", label: "A"}]})],
         ["createExecutionTopology", ({st, tg}) => createExecutionTopology(st, {taskGroupId: tg.id,
-          projectId: tg.projectId, workItemId: tg.workItems[0].id, mode: "parallel_branches",
-          runnerKind: "local", isolation: "worktree",
+          projectId: tg.projectId, workItemId: tg.workItems[0].id, mode: "parallel_active",
+          runnerKind: "git_worktree", isolation: "git_worktree",
           branches: [{branchId: "b_after", objective: "关后", ownedPaths: ["docs/**"], resourceScopes: [], acceptanceChecks: ["docs_lint"]}]})],
         ["ruleSourceResolve", ({st, tg}) => ruleSourceResolve(st, {taskGroupId: tg.id, projectId: tg.projectId,
           sourceRef: "reference:after-close"})]
@@ -1764,7 +1764,7 @@ function verifyHumanAndOrganizationContracts(output) {
         ensureRuntimeCollections(st, {root});
         // 确认单的对象必须真实存在（定稿时会重新核对它的实质内容），所以先建一个拓扑当对象。
         const subject = (createExecutionTopology(st, {taskGroupId: "tg_runtime_management", projectId: "prj_control_plane",
-          workItemId: "work_bootstrap", mode: "parallel_branches", runnerKind: "local", isolation: "worktree",
+          workItemId: "work_bootstrap", mode: "parallel_active", runnerKind: "git_worktree", isolation: "git_worktree",
           branches: [{branchId: "b_subject", objective: "定稿对象", ownedPaths: ["docs/**"], resourceScopes: [], acceptanceChecks: ["docs_lint"]}]})).topology;
         const created = createHumanConfirmationRequest(st, {taskGroupId: "tg_runtime_management",
           workItemId: "work_bootstrap", decisionType: "plan_topology", subjectRef: `ExecutionTopology:${subject.topologyId}`,
@@ -1795,7 +1795,7 @@ function verifyHumanAndOrganizationContracts(output) {
         const st = structuredClone(seedState);
         ensureRuntimeCollections(st, {root});
         const topo = (createExecutionTopology(st, {taskGroupId: "tg_runtime_management", projectId: "prj_control_plane",
-          workItemId: "work_bootstrap", mode: "parallel_branches", runnerKind: "local", isolation: "worktree",
+          workItemId: "work_bootstrap", mode: "parallel_active", runnerKind: "git_worktree", isolation: "git_worktree",
           branches: [{branchId: "b_once", objective: "一次性", ownedPaths: ["docs/**"], resourceScopes: [], acceptanceChecks: ["docs_lint"]}]})).topology;
         // 认不出的动作、不存在的分支：这两条守卫此前没有任何用例。它们失效的后果是
         // 拓扑被推进到一个没人定义过的状态、或者往一个不存在的分支上写结果。
@@ -6408,11 +6408,44 @@ function verifyExecutionFailureCapSurvivesHistoryAndReopen(output) {
   // 上面那条行为断言只走到三处写入点里的【一处】（对账过期那条最容易到达）。
   // 另两处要靠登记：把会话置成终态的地方一共这么几处，每一处都必须同时写下原因。
   // 少写一处，那条路径上的会话就是「失败 / -」，而屏幕上看不出是哪条路径来的。
+  // 执行拓扑的 mode / runnerKind / isolation 规范里都是 enum，原先原样收。
+  // runnerKind 尤其要紧：下面那道「external_runner 必须带授权与本地验证证据」是按字面量比的，
+  // 写成 external_runer 就绕过去了，落下来的还是一份看起来正常的拓扑。
+  // （这道守卫加上的第一刻就抓到：本门自己的夹具一直在传 parallel_branches / local / worktree，
+  //   三个取值一个都不在规范里 —— 没人核过，就这么写了很久。）
+  {
+    const st = structuredClone(seedState);
+    ensureRuntimeCollections(st, {root});
+    const topologyArgs = (extra) => ({taskGroupId: "tg_runtime_management", projectId: "prj_control_plane",
+      workItemId: "work_bootstrap", mode: "parallel_active", runnerKind: "git_worktree", isolation: "git_worktree",
+      branches: [{branchId: "b_enum", objective: "闭集探针", ownedPaths: ["docs/**"], resourceScopes: [],
+        acceptanceChecks: ["docs_lint"]}], ...extra});
+    let refused = null;
+    try {
+      createExecutionTopology(st, topologyArgs({runnerKind: "external_runer"}));
+    } catch (error) { refused = error; }
+    if (refused?.message !== "execution_topology_value_not_recognized") {
+      output.push(`执行拓扑：认不出的 runnerKind 被收下了（${refused?.message || "没有抛错"}）——`
+        + " 「external_runner 必须带授权与本地验证证据」那道门是按字面量比的，打错一个字就绕过去了");
+    } else if (!(refused.details?.supported || []).includes("external_runner")
+      || refused.details?.field !== "runnerKind") {
+      output.push(`执行拓扑拒了却没说清是哪个字段、合法取值有哪些（${JSON.stringify(refused.details)}）`);
+    }
+    // 正面对照走同一条路：合法取值必须建得出来，否则上面那条只是「这条路永远抛」。
+    let legit = null;
+    try { legit = createExecutionTopology(st, topologyArgs({topologyId: "topo_enum_ok"})); }
+    catch (error) { legit = {error}; }
+    if (!legit?.topology?.topologyId) {
+      output.push(`合法的 mode/runnerKind/isolation 也建不出拓扑（${legit?.error?.message || "没有返回拓扑"}）`
+        + " —— 上面那条其实是「这条路永远抛」，测不出那道门");
+    }
+  }
+
   // 共享定义契约的两个闭集在两个地方各写了一份：规范里的 enum，与服务端门口的常量。
   // 手抄的两份清单一定会漂 —— 逐字双向核对：服务端多一个＝白拒一个合法取值；
   // 规范多一个＝门口把合法取值挡在外面，而且没有任何东西会告诉写规范的人。
   {
-    const spec = JSON.parse(readFileSync(join(root, "spec/shared-definition-contract.schema.json"), "utf8"));
+    const specOf = (name) => JSON.parse(readFileSync(join(root, `spec/${name}.schema.json`), "utf8"));
     // 常量住在 core（REST 与 MCP 共用一份 —— 各抄一份必有一天只改一处）。
     const serverText = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
     const constantOf = (name) => {
@@ -6420,10 +6453,14 @@ function verifyExecutionFailureCapSurvivesHistoryAndReopen(output) {
       return hit ? [...hit[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]) : null;
     };
     const pairs = [
-      ["definitionType", "SHARED_DEFINITION_TYPES"],
-      ["conflictPolicy", "SHARED_DEFINITION_CONFLICT_POLICIES"]
+      ["shared-definition-contract", "definitionType", "SHARED_DEFINITION_TYPES"],
+      ["shared-definition-contract", "conflictPolicy", "SHARED_DEFINITION_CONFLICT_POLICIES"],
+      ["execution-topology", "mode", "EXECUTION_TOPOLOGY_MODES"],
+      ["execution-topology", "runnerKind", "EXECUTION_TOPOLOGY_RUNNER_KINDS"],
+      ["execution-topology", "isolation", "EXECUTION_TOPOLOGY_ISOLATIONS"]
     ];
-    for (const [field, constantName] of pairs) {
+    for (const [specName, field, constantName] of pairs) {
+      const spec = specOf(specName);
       const declared = spec.properties?.[field]?.enum;
       const enforced = constantOf(constantName);
       if (!Array.isArray(declared) || !declared.length) {
@@ -15252,7 +15289,7 @@ function verifyApprovedAcceptanceChecksHaveEvidence(output) {
     const taskGroup = state.taskGroups[0];
     const workItem = (taskGroup.workItems || [])[0];
     const created = createExecutionTopology(state, {taskGroupId: taskGroup.id, projectId: taskGroup.projectId,
-      workItemId: workItem.id, mode: "serial", runnerKind: "local", isolation: "worktree",
+      workItemId: workItem.id, mode: "serial", runnerKind: "git_worktree", isolation: "git_worktree",
       branches: [{branchId: "b_one", objective: "做一件事", ownedPaths: ["docs/**"], forbiddenPaths: [],
         resourceScopes: [], acceptanceChecks: ["docs_lint", "npm run validate"]}]});
     const topology = created.topology || created;
@@ -15399,7 +15436,7 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     // 两种情况都要造出拓扑：对照组要验的是【AI 提了方案但人没定稿】，
     // 而不是"根本没有方案"—— 后者两条分支都找不到拓扑，判据怎么改都不会红。
     const created = createExecutionTopology(state, {taskGroupId: taskGroup.id, projectId: taskGroup.projectId,
-      workItemId: workItem.id, mode: "parallel_branches", runnerKind: "local", isolation: "worktree",
+      workItemId: workItem.id, mode: "parallel_active", runnerKind: "git_worktree", isolation: "git_worktree",
       branches: [{branchId: "b_docs", objective: "只改文档",
         // 禁区用例故意把 ownedPaths 放宽到全仓：禁区与"只能动这些"是两件事，
         // 宽 ownedPaths + 一条禁区正是常见写法，必须能单独把禁区那一条验出来。
@@ -15815,7 +15852,7 @@ function verifyHumanApprovedPathsBindTheCommit(output) {
     const cardTg = cardState.taskGroups.find((item) => item.id === "tg_runtime_management");
     const cardWork = cardTg.workItems[0];
     const created = createExecutionTopology(cardState, {taskGroupId: cardTg.id, projectId: cardTg.projectId,
-      workItemId: cardWork.id, mode: "parallel_branches", runnerKind: "local", isolation: "worktree",
+      workItemId: cardWork.id, mode: "parallel_active", runnerKind: "git_worktree", isolation: "git_worktree",
       branches: [{branchId: "b_card", objective: "只改文档", ownedPaths: ["docs/**"],
         forbiddenPaths: ["infra/**"], resourceScopes: [], acceptanceChecks: ["docs_lint"]}]});
     const topology = created.topology || created;

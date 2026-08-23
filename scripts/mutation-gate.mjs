@@ -3135,6 +3135,22 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "认不出的执行载体类型必须拒绝",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: '  assertClosedSet(args, "runnerKind", EXECUTION_TOPOLOGY_RUNNER_KINDS, "execution_topology_value_not_recognized");',
+    to: "",
+    expect: "认不出的 runnerKind 被收下了"
+  },
+  {
+    name: "闭集拒绝要说清是哪个字段、合法取值有哪些",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "  error.details = {field, value: String(args[field]).slice(0, 60), supported: [...allowed]};",
+    to: "  error.details = {value: String(args[field]).slice(0, 60)};",
+    expect: "拒了却没说清是哪个字段"
+  },
+  {
     name: "MCP 侧也要拒认不出的共享定义取值",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "mcp",
@@ -3146,8 +3162,8 @@ const MUTATIONS = [
     name: "冲突处置策略不许静默降级成默认",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "mcp",
-    from: '    if (args[field] === undefined || allowed.includes(String(args[field]))) continue;',
-    to: '    if (args[field] === undefined || allowed.includes(String(args[field])) || field === "conflictPolicy") continue;',
+    from: "  assertClosedSet(args, \"conflictPolicy\", SHARED_DEFINITION_CONFLICT_POLICIES,\n    \"shared_definition_conflict_policy_not_recognized\");",
+    to: "",
     expect: "认不出的 conflictPolicy 没有被拒"
   },
   {
