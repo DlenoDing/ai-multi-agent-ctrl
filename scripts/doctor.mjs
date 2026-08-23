@@ -3367,6 +3367,24 @@ try {
     if (!installerText.includes("127.0.0.1")) {
       throw new Error("装机脚本没回落到本地端点 —— 那它填的是什么？这条断言分不清「挡住了」与「填了别的」");
     }
+    // 同一族的第二道：/api/auth/bootstrap-hint 在门后面给出【系统管理员邮箱 + 引导令牌首尾 4 位
+    // + 本地账号令牌提示】—— 源码注释自己写着「在公开的登录页上说出管理员账号叫什么，
+    // 等于把凭据的一半送出去」。门是「回环来源 + 本机 Host + 非生产」，而它一条断言都没有。
+    const hintFromForgedHost = JSON.parse((await rawGet("/api/auth/bootstrap-hint", forged)).body);
+    if (hintFromForgedHost.tokenHintsExposed !== false) {
+      throw new Error(`Host 是 ${forged} 时仍然给出了引导提示：${JSON.stringify(hintFromForgedHost).slice(0, 200)}`);
+    }
+    for (const [field, value] of Object.entries(hintFromForgedHost)) {
+      if (["bootstrapTokenConfigured", "tokenHintsExposed"].includes(field)) continue;
+      throw new Error(`Host 不是本机时，引导提示除了「配没配令牌」还多给了 ${field}=${JSON.stringify(value)}`
+        + " —— 这一栏里任何一个字段都是凭据的一半");
+    }
+    // 正面对照走【同一条路由、同一个函数】，只差 Host 这一个头：否则「没给出来」可能是别的原因。
+    const hintFromLocalHost = JSON.parse((await rawGet("/api/auth/bootstrap-hint", `127.0.0.1:${port}`)).body);
+    if (hintFromLocalHost.tokenHintsExposed !== true || !hintFromLocalHost.systemAdminLogin) {
+      throw new Error(`本机来源也拿不到引导提示（${JSON.stringify(hintFromLocalHost).slice(0, 160)}）——`
+        + " 那上面那条就不作数了：那时任何来源都拿不到，守卫删掉也不会红");
+    }
   }
 
   // 「这条派发还算不算活的」原先在 6 个文件里内联抄了 15 遍，现已收成 lib/lifecycle-states.mjs

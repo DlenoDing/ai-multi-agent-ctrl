@@ -3176,6 +3176,22 @@ const MUTATIONS = [
     expect: "看不到那个项目"
   },
   {
+    name: "引导提示只给回环 + 本机 Host（它是凭据的一半）",
+    file: SERVER,
+    gate: "doctor",
+    from: "  return isLoopbackAddress(req.socket.remoteAddress) && isLocalHostHeader(String(req.headers.host || \"\"));",
+    to: "  return isLoopbackAddress(req.socket.remoteAddress);",
+    expect: "时仍然给出了引导提示"
+  },
+  {
+    name: "本机来源仍要拿得到引导提示（不然上面那条在空转）",
+    file: SERVER,
+    gate: "doctor",
+    from: "function canExposeBootstrapHint(req) {",
+    to: "function canExposeBootstrapHint(req) {\n  if (true) return false;",
+    expect: "本机来源也拿不到引导提示"
+  },
+  {
     name: "伪造 Host 不得改写交给 agent 的地址",
     file: SERVER,
     gate: "doctor",
