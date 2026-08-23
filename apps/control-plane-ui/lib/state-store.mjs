@@ -554,7 +554,22 @@ function externalizeProjectState(state, previousShardIndex = null, options = nul
     centralState[collection] = unscoped;
   }
   for (const shard of shardsByProject.values()) {
+    const droppedBefore = {...(shard.droppedCounts || {})};
     capProjectShardCollections(shard);
+    // 【就地累加到已持久化的那个计数器】，不要另立一个「合并时算出来」的派生值。
+    // 派生的那版是错的：runtime_json 的读取先看缓存，而 writeStoredState 写完会把
+    // 【调用方那份没经过合并的对象】填进缓存 —— 于是写→读循环里那个派生值从来不在，
+    // 界面上的「已被容量上限丢弃」时有时无（实测：同进程写完再读，一次都没有）。
+    // 一份计数、一个地方：内存里那份和落盘那份同时更新，缓存与盘上永远一致。
+    for (const [collection, total] of Object.entries(shard.droppedCounts || {})) {
+      const delta = Number(total) - Number(droppedBefore[collection] || 0);
+      if (delta <= 0) continue;
+      // 只更新 centralState 就够：写完填进缓存的那份是 hydratedStateFromParts(centralState, shards) 拼的，
+      // 不是调用方那个对象。（起初两个都更新，变异门证明了另一个没有可观察差别 —— 删掉。）
+      centralState.centralDroppedCounts = centralState.centralDroppedCounts || {};
+      centralState.centralDroppedCounts[collection] =
+        Number(centralState.centralDroppedCounts[collection] || 0) + delta;
+    }
     // 规范化序列化是整条写路径最贵的一步（实测 2000 单元时占落盘 CPU 的 28%），而这里原先
     // 把同一份文本算了两遍：一次给摘要、一次给字节数。算一次，两处共用。
     const payloadText = projectShardPayloadText(shard);
@@ -728,17 +743,6 @@ function hydrateProjectState(centralState, options, preReadShards) {
           hint: `项目 ${shard.projectId || "unknown"} 的分片是「${shard.schemaVersion}」写的，`
             + `这个构建只认 ${[...SUPPORTED_PROJECT_SHARD_SCHEMA_VERSIONS].join(" / ")}。`
             + "请换回能读它的版本，或先做数据迁移。"});
-    }
-  }
-  // 各分片历次裁掉的条数汇总成一份：视图据此告诉人「这个数是不全的，而且缺的那些已经没了」。
-  // 与 truncatedCollections（视图为体积没加载全，记录还在）是两件事，不能混成一句话。
-  state.projectShardDroppedCounts = {};
-  for (const shard of shards) {
-    for (const [collection, dropped] of Object.entries(shard.droppedCounts || {})) {
-      if (Number(dropped) > 0) {
-        state.projectShardDroppedCounts[collection] =
-          Number(state.projectShardDroppedCounts[collection] || 0) + Number(dropped);
-      }
     }
   }
   for (const shard of shards) {

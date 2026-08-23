@@ -5280,13 +5280,33 @@ function verifyRuntimeJsonConflict(output) {
         ]};
       writeStoredState(evidenceState, options);
       const readBack = readStoredState(options);
-      const kept = (readBack.policyDecisions || []).some((item) => (item.id || item.decisionId) === referencedId);
-      if ((readBack.policyDecisions || []).length > cap + 200) {
-        output.push(`策略决策没有被裁剪（${(readBack.policyDecisions || []).length} 条）—— 这一段在空转`);
-      } else if (!kept) {
-        output.push("被【活跃授权】引用着的策略决策被容量淘汰了 —— 事后问「这条权限是凭什么给的」答不出来；"
-          + "多半是有人在写入点那道保护【之前】又盲切了一刀（那一刀先跑，该捞回来的已经不在数组里）");
+      // 【丢弃计数必须在写→读循环里还在】。它曾经是「合并时算出来」的派生值，
+      // 而 runtime_json 的读取先看缓存、写入又会把【调用方那份没经过合并的对象】填进缓存 ——
+      // 于是同进程写完再读，那个数从来不在，界面上的「已被容量上限丢弃」时有时无（实测一次都没出现）。
+      // 现在改成裁剪时就地累加到随中央态落盘的那一份：内存与盘上同时更新。
+      {
+        const capDir = mkdtempSync(join(tmpdir(), "aimac-drop-count-"));
+        const capOptions = {root, runtimeDir: capDir, statePath: join(capDir, "control-plane-state.json"),
+          seedPath: resolve(root, "data", "seed-state.json"), buildInitialState: () => ({stateVersion: 1, runtime: {}})};
+        try {
+          const stamp = new Date().toISOString();
+          writeStoredState({stateVersion: 1, runtime: {}, projects: [{id: "p_drop", name: "P"}],
+            taskGroups: [{id: "tg_drop", projectId: "p_drop", status: "active", workItems: []}],
+            agentDispatches: Array.from({length: 5200}, (unused, index) => ({dispatchId: `d_${index}`,
+              projectId: "p_drop", taskGroupId: "tg_drop", status: "completed", updatedAt: stamp}))}, capOptions);
+          const cached = readStoredState(capOptions);
+          const onDisk = JSON.parse(readFileSync(capOptions.statePath, "utf8"));
+          const cachedCount = Number(cached.centralDroppedCounts?.agentDispatches || 0);
+          const diskCount = Number(onDisk.centralDroppedCounts?.agentDispatches || 0);
+          if (cachedCount !== 200 || diskCount !== 200) {
+            output.push(`分片裁掉 200 条派发，写完再读拿到的计数是 ${cachedCount}、盘上是 ${diskCount}（都应为 200）——`
+              + " 界面据此说「已被容量上限丢弃」，这个数不在就等于那句话不出现，而人以为剩下的就是全部");
+          }
+        } finally {
+          try { rmSync(capDir, {recursive: true, force: true}); } catch { /* best effort */ }
+        }
       }
+
       // 滞后区：被引用的决策多于 cap 时，「长度 > cap」恒成立 —— 触发线必须相对
       // 【裁完剩下多少】，否则每写一次都要重建引用集合（扫 accessGrants + repositoryOutputs，
       // 实测 5000 规模下 0.244ms/写，占请求预算约 6%，随规模线性涨）。

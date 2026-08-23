@@ -3370,6 +3370,14 @@ const MUTATIONS = [
     expect: "没有先归一化"
   },
   {
+    name: "丢弃计数要在写→读循环里还在（内存那份也得更新）",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    gate: "contract",
+    from: "      centralState.centralDroppedCounts[collection] =\n        Number(centralState.centralDroppedCounts[collection] || 0) + delta;",
+    to: "",
+    expect: "写完再读拿到的计数是"
+  },
+  {
     name: "解析不了的命令超时时间必须当场拒",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",
