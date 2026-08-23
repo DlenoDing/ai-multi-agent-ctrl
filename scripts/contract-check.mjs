@@ -258,6 +258,9 @@ const THROW_HELPERS_WITHOUT_CODES = {
 // 视图窗口更是直接取一端。实测这一刻有五个集合两种都用（accessGrants / accounts /
 // projects / sharedDefinitions / leases），而追加方向本该是每个集合定死的一件事。
 // 纯 push 的要逐个写明为什么 —— 写不出来的就该改成 unshift（那是本仓 39 个集合的约定）。
+// 纯 push（最新在末尾）的集合还有一条附带要求：它的记录必须带一个视图窗口认得的时间字段
+//（updatedAt / createdAt / issuedAt / decidedAt / computedAt / sampledAt / observedAt / at）。
+// 认不出时间的话，窗口会把整份数组当成"单调"而退回取前 N 条 —— 对 push 的集合那正是最旧的一批。
 const PUSH_ORDERED_COLLECTIONS = {
   leases: "改成 unshift 会让 buildTaskContract 绑到另一个产出目标、原目标留着一份 released 的租约"
     + "（实测，契约门里「租约释放后重新取用」那条当场红）—— 产出目标的选取受租约数组顺序影响，"

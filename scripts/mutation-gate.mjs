@@ -3164,8 +3164,8 @@ const MUTATIONS = [
     name: "视图窗口必须留最新的那一批（不能把刚建的藏起来）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "idle",
-    from: "  const keyOf = (item) => item?.updatedAt || item?.createdAt || item?.issuedAt || \"\";",
-    to: "  return items.slice(0, limit);\n  const keyOf = (item) => item?.updatedAt || item?.createdAt || item?.issuedAt || \"\";",
+    from: "  const keyOf = (item) => item?.updatedAt || item?.createdAt || item?.issuedAt",
+    to: "  return items.slice(0, limit);\n  const keyOf = (item) => item?.updatedAt || item?.createdAt || item?.issuedAt",
     expect: "全局取数的窗口里必须留【最新的】那一批"
   },
   {

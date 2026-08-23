@@ -1979,7 +1979,13 @@ function sliceItems(items, limit) {
   // 字典序就是时间序。实测 5000 条时 Date.parse + 排序要 0.85ms/集合，而一次视图要过二十来个集合 ——
   // 相对「每请求 0.2ms」的基线是实打实的回归。改成比字符串后是 0.038ms（22 倍）。
   // 没有时间戳的记 ""，排在最后被先丢掉 —— 与改动前（Date.parse 得 0）行为一致。
-  const keyOf = (item) => item?.updatedAt || item?.createdAt || item?.issuedAt || "";
+  // 名字要认全：有六个集合根本没有 updatedAt/createdAt（准入决策用 decidedAt、准入扫描 sampledAt、
+  // 关闭门与完成度 computedAt、审计台账 at、模型能力 observedAt）。认不出就一律记 ""，
+  // 那时整份数组"看起来单调"，窗口退回按数组顺序取前 N 条 —— 对这几个集合恰好也对（它们都是
+  // 最新在前），但那是碰巧，不是保证：哪天它们改成 push，窗口就会安静地只给最旧的。
+  // 【纯 push 的集合必须带一个这里认得的时间字段】，这条写进了 PUSH_ORDERED_COLLECTIONS 的登记。
+  const keyOf = (item) => item?.updatedAt || item?.createdAt || item?.issuedAt
+    || item?.decidedAt || item?.computedAt || item?.sampledAt || item?.observedAt || item?.at || "";
   // 快路径：数组单调时不必排序。每个集合的追加方向是定死的（契约门守着「不许两种方向混用」），
   // 所以按项目取数时它一定单调；只有【跨分片合并】的全局取数才会不单调，那时才走排序。
   // 只留【降序】这一条快路径：41 个集合是最新在前，走的都是它，而且它有判据守着
