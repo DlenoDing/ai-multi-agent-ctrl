@@ -6812,7 +6812,13 @@ export function pathMatchesAllowlist(path, allowlist) {
   if (!canUseGitPath(path)) return false;
   return (allowlist || []).some((pattern) => {
     if (!canUseGitPath(pattern)) return false;
-    if (pattern.endsWith("/**")) return path === pattern.slice(0, -3) || path.startsWith(pattern.slice(0, -2));
+    // 「前缀/**」这条快路只有在前缀是【字面量】时才成立。原先它对 apps/*/src/** 也照走，
+    // 拿字符串 "apps/*/src/" 去 startsWith —— 一个真实路径都匹配不上，于是这条允许路径
+    // 匹配不到任何东西。表现是【守卫过头且不出声】：人按规则写了它，agent 照它写文件，
+    // 却被判成「写到批准范围之外」，而报文只说越界，不会说「你这条规则本身没生效」。
+    if (pattern.endsWith("/**") && !pattern.slice(0, -3).includes("*")) {
+      return path === pattern.slice(0, -3) || path.startsWith(pattern.slice(0, -2));
+    }
     if (!pattern.includes("*")) return path === pattern;
     return globPathMatches(pattern.split("/"), path.split("/"));
   });

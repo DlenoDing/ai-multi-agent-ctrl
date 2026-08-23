@@ -3176,6 +3176,30 @@ const MUTATIONS = [
     expect: "看不到那个项目"
   },
   {
+    name: "带通配前缀的允许路径必须真的能匹配上",
+    file: CORE,
+    check: "verifyPathAllowlistMatcherIsExercised",
+    from: '    if (pattern.endsWith("/**") && !pattern.slice(0, -3).includes("*")) {',
+    to: '    if (pattern.endsWith("/**")) {',
+    expect: "人按规则写的允许路径没生效"
+  },
+  {
+    name: "批准范围之外的路径不许放行",
+    file: CORE,
+    check: "verifyPathAllowlistMatcherIsExercised",
+    from: "function globPathMatches(patternSegments, pathSegments) {\n  let patternIndex = 0;",
+    to: "function globPathMatches(patternSegments, pathSegments) {\n  if (true) return true;\n  let patternIndex = 0;",
+    expect: "批准范围之外的路径被放行了"
+  },
+  {
+    name: "空证据不许写进迁移台账",
+    file: "apps/control-plane-ui/lib/transition-engine.mjs",
+    check: "verifyEmptyEvidenceNeverReachesTheLedger",
+    from: "  if (value === undefined || value === null) return false;",
+    to: "  if (value === undefined || value === null) return true;",
+    expect: "空证据被写进了台账"
+  },
+  {
     name: "授权覆不覆盖这个资源必须真判（判错＝系统对人说假话）",
     file: CORE,
     gate: "mcp",

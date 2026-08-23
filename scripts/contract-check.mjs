@@ -174,7 +174,7 @@ import {
 import { appendProjectExecutionEvent, readProjectExecutionEventByKey, readProjectExecutionEvents,
   projectEventLogFault
 } from "../apps/control-plane-ui/lib/project-event-store.mjs";
-import { assertTransition, resolveGate, loadStateMachines, loadGateCatalog } from "../apps/control-plane-ui/lib/transition-engine.mjs";
+import { assertTransition, requiresValuesToEvidenceRefs, resolveGate, loadStateMachines, loadGateCatalog } from "../apps/control-plane-ui/lib/transition-engine.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -298,6 +298,29 @@ const PUSH_ORDERED_COLLECTIONS = {
   organizations: "同上：组织数量级小，列表按创建顺序读起来更自然",
   repositoryOutputs: "同上：产出目标按创建顺序排，人对着任务组从上往下看"
 };
+
+const PATH_ALLOWLIST_CASES = [
+  // 字面量前缀 + /**：目录本身、目录下任意深度都算，隔壁同前缀的目录不算
+  ["docs/**", "docs", true], ["docs/**", "docs/a", true], ["docs/**", "docs/a/b", true],
+  ["docs/**", "docsx/a", false],
+  // 通配前缀 + /**：这一族原先一个都匹配不上
+  ["apps/*/src/**", "apps/x/src/a.js", true], ["apps/*/src/**", "apps/x/src/deep/b.js", true],
+  ["apps/*/src/**", "apps/x/src", true],
+  ["apps/*/src/**", "apps/x/y/src/a.js", false], ["apps/*/src/**", "apps/src/a.js", false],
+  ["apps/*/src/**", "appsx/x/src/a.js", false],
+  // 单层通配：* 不跨目录分隔符
+  ["docs/*.md", "docs/a.md", true], ["docs/*.md", "docs/a/b.md", false],
+  ["docs/*.md", "docs/a.mdx", false], ["docs/*.md", "docsx/a.md", false], ["docs/*.md", "a.md", false],
+  ["*", "a", true], ["*", "a/b", false],
+  ["*.md", "a.md", true], ["*.md", "docs/a.md", false],
+  // ** 在中间／开头
+  ["**/*.md", "a.md", true], ["**/*.md", "docs/x/a.md", true], ["**/*.md", "a.txt", false],
+  ["**", "a/b", true],
+  // 段内通配
+  ["docs/a*b.md", "docs/axxb.md", true], ["docs/a*b.md", "docs/ab.mdx", false],
+  // 逃逸：无论什么模式都不许出仓库
+  ["**", "../outside.md", false], ["docs/**", "docs/../../etc/passwd", false]
+];
 
 const CAP_FUNCTION_GUARDS = {
   capIdempotencyRecords: "幂等回执【本身就是一个近期窗口】：裁掉最旧的那批＝那些键的重试会重新执行一次，"
@@ -677,6 +700,8 @@ run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
 run(verifyEveryGrantedPermissionHasAConsumer);
+run(verifyEmptyEvidenceNeverReachesTheLedger);
+run(verifyPathAllowlistMatcherIsExercised);
 run(verifyExecutionTopologyBaselineTellsTheTruth);
 run(verifyIdempotencyPayloadsAreSwept);
 run(verifyNobodyWritesIdempotencyRecordsDirectly);
@@ -7881,6 +7906,62 @@ function verifyOnlyLiveHumanAccountsCanFinalize(output) {
 // 它原先从 process.cwd() 算 —— 而别的每一处调用都是服务端把自己配的 repositoryRoot 传进去的。
 // 从别的工作目录起服务（docker / systemd）时它去 cwd 找仓库，找不到就把「取不到」记成
 // gitHead 自己编的那个 000000000000：证据栏是满的，而它什么也没证明。两件事分开验。
+// 产出路径白名单的【通用】匹配器（带 * 的模式）在四道门上一次都没被走到：
+// e2e 里的允许路径清一色是 docs/** 这种，而 pathMatchesAllowlist 对「前缀/**」有一条快路，
+// 通用匹配器压根不参与。把 globPathMatches 改成永远为真，契约门 + 三套 e2e 全绿。
+// 顺着这一点查出真缺陷：那条快路把前缀当【字面量】做 startsWith，于是 apps/*/src/**
+// 匹配不到任何路径 —— 人按规则写了这条允许路径，agent 照它写文件却被判成越界。
+// 期望值在这里另写一份（不是拿实现跑出来的），正反两个方向都要有：
+// 只验「该匹配的匹配上」会让永远为真的实现全绿；只验「该拒的拒掉」会让永远为假的全绿。
+// 迁移证据落台账前要把【空的】滤掉（isNonEmptyEvidence）。把它改成永远为真：
+// 契约门 + 控制面 e2e 全绿 —— 于是 undefined/null/空串会作为"证据"写进 transitionEvidence，
+// 台账上那一栏是满的而它什么也没证明（本仓「缺省不得等于有利结果」在证据面上的样子）。
+function verifyEmptyEvidenceNeverReachesTheLedger(output) {
+  const refs = requiresValuesToEvidenceRefs({
+    real_gate: "commit:abc123",
+    empty_string: "",
+    only_spaces: "   ",
+    nullish: null,
+    missing: undefined,
+    empty_array: [],
+    array_with_blanks: ["", "   ", null],
+    array_with_one_real: ["", "push:origin/main"]
+  });
+  const joined = refs.join(" | ");
+  for (const bad of ["undefined", "null", "empty_string=", "only_spaces=", "empty_array="]) {
+    if (joined.includes(bad)) {
+      output.push(`空证据被写进了台账：evidenceRefs 里出现 ${JSON.stringify(bad)}（实得 ${joined.slice(0, 160)}）`
+        + " —— 台账上那一栏是满的，而它什么也没证明");
+    }
+  }
+  if (!joined.includes("commit:abc123") || !joined.includes("push:origin/main")) {
+    output.push(`真证据被一起滤掉了（实得 ${joined.slice(0, 160)}）—— 守卫过头，台账反而丢证据`);
+  }
+  if (refs.length !== 2) {
+    output.push(`8 个入参里只有 2 个带真值，落台账的却有 ${refs.length} 条：${joined.slice(0, 160)}`);
+  }
+  console.log(`迁移证据落账：8 种空/非空形态逐个核过，只有 ${refs.length} 条带真值的进了台账`);
+}
+
+function verifyPathAllowlistMatcherIsExercised(output) {
+  let matched = 0;
+  let refused = 0;
+  for (const [pattern, path, expected] of PATH_ALLOWLIST_CASES) {
+    const actual = pathMatchesAllowlist(path, [pattern]);
+    if (actual !== expected) {
+      output.push(`允许路径 ${JSON.stringify(pattern)} 对 ${JSON.stringify(path)} 判成 ${actual}，应为 ${expected}`
+        + (expected ? " —— 人按规则写的允许路径没生效，agent 照它写文件会被判成越界"
+          : " —— 批准范围之外的路径被放行了"));
+    }
+    if (expected) matched += 1; else refused += 1;
+  }
+  if (matched < 8 || refused < 8) {
+    output.push(`允许路径判据只覆盖了 ${matched} 条该匹配、${refused} 条该拒的 —— 单向的表撑不住这条`);
+  }
+  console.log(`产出路径白名单：${PATH_ALLOWLIST_CASES.length} 条正反用例逐个核过`
+    + `（${matched} 条该匹配、${refused} 条该拒；通用匹配器此前四道门都走不到它）`);
+}
+
 function verifyExecutionTopologyBaselineTellsTheTruth(output) {
   const notARepository = mkdtempSync(join(tmpdir(), "cc-no-repo-"));
   try {
