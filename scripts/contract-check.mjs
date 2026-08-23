@@ -7406,8 +7406,12 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
 // 只依赖 node 内置的下发产物，共用不了代码。两份不必逐字相同（严的那份可以更严），
 // 但对【危险形态】的判断必须一致，否则控制面拒的东西 agent 照收，或者反过来。
 // 【控制面 ↔ 单文件 agent 运行时】这一族孪生实现的交叉核对。函数名只提了远端地址，
-// 实际管三对：isSafeGitRemoteUrl（危险地址）、gitFailureDetail（人看到的失败原因）、
-// uniqueStrings（调用方给的角色/证据清单）。新增孪生对时加在这里，别再开一个门。
+// 实际管四对：isSafeGitRemoteUrl（危险地址）、gitFailureDetail（人看到的失败原因）、
+// uniqueStrings（调用方给的角色/证据清单）、inside（路径包含判定）。
+// 新增孪生对时加在这里，别再开一个门。
+// 按函数体重复扫出来的孪生里，另有两对【故意不守】：delay（一行 setTimeout）与
+// trimTrailingSlash/trimSlash（去掉末尾斜杠）—— 它们漂了也不会造出安全或口径问题，
+// 而每加一对都要多编一张期望表，而手编的期望表本身就是错误来源。
 // isSafeGitRemoteUrl 在两侧【各有一份】：控制面（agent-gateway）与 agent 运行时
 // （单文件下发产物，共用不了代码）。今天收紧控制面那份时就差点只改一半 ——
 // 两份对【危险形态】必须判得一样；尾部的差异是有意的（远端 agent 不接受本地路径与 file://，
@@ -7595,6 +7599,44 @@ function verifyGitRemoteGuardTwinsAgree(output) {
   if (agentGuard("/srv/repos/x.git") || agentGuard("file:///srv/x.git")) {
     output.push("agent 运行时接受了本地路径/file:// —— 那会让远端节点去读它自己主机上的仓库");
   }
+  // 同一族里的第四对：inside()（路径包含判定）。两侧目前逐字相同，但共用不了代码 ——
+  // 它守的是「解出来的路径不许跑到根目录外面」：控制面拿它取角色技能源文件，
+  // agent 拿它落内容包、技能集、产出清单（六处）。一侧放宽，那一侧就能被路径逃逸。
+  // 这里不要求逐字相同（那是在盯写法），要求的是【对同一批边界情形给出同样的判断】。
+  // 说清这道判据看不见的一面：inside 只做字符串比对，「解出真实路径」这一步在调用方
+  // （两侧现在都是 resolve(root, normalize(p))）。那一步没被本判据覆盖 —— 它的形状要靠读源码猜，
+  // 而按上下文猜调用形状在本仓错过两次，代价不划算，所以这里只钉两份实现之间不许漂。
+  const insideImpls = [];
+  for (const [label, file] of [["控制面", "apps/control-plane-ui/lib/agent-gateway.mjs"],
+    ["agent 运行时", "apps/agent-runtime/runtime.mjs"]]) {
+    const text = readFileSync(join(root, file), "utf8");
+    const start = text.indexOf("function inside(root, target) {");
+    const body = start < 0 ? "" : text.slice(start, text.indexOf("\n}", start) + 2);
+    if (!body.includes("return")) {
+      output.push(`提不出${label}那份 inside() —— 路径包含判定的孪生核对在空转`);
+      continue;
+    }
+    try {
+      // eslint-disable-next-line no-new-func
+      insideImpls.push([label, new Function("sep", `${body}\nreturn inside;`)("/")]);
+    } catch (error) {
+      output.push(`${label}那份 inside() 取不出来（${error?.message || error}）—— 孪生核对在空转`);
+    }
+  }
+  if (insideImpls.length === 2) {
+    // 期望值另写一份，别拿其中一份实现当标准 —— 那样两份一起错就看不出来。
+    const cases = [["/w", "/w", true], ["/w", "/w/a", true], ["/w", "/w/a/b", true],
+      ["/w/", "/w/a", true], ["/w", "/w2", false], ["/w", "/w2/a", false],
+      ["/w", "/", false], ["/w", "/x", false], ["/w", "", false], ["/w", "/wa", false]];
+    for (const [insideRoot, target, expected] of cases) {
+      for (const [label, impl] of insideImpls) {
+        if (impl(insideRoot, target) !== expected) {
+          output.push(`${label}那份 inside(${JSON.stringify(insideRoot)}, ${JSON.stringify(target)})`
+            + ` 判成 ${!expected}，应为 ${expected} —— 路径包含判定漂了`);
+        }
+      }
+    }
+  }
   // 同一对孪生里还有 gitFailureDetail：它拼的是【人看到的那句失败原因】。
   // 两侧各写一份，一侧改进了措辞另一侧没跟，人在控制台与在 agent 日志里看到的就不是一句话。
   const coreText = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
@@ -7655,7 +7697,8 @@ function verifyGitRemoteGuardTwinsAgree(output) {
     output.push("两份 uniqueStrings 对同一份输入给出不同结果 —— 孪生实现漂了");
   }
   console.log(`git 远端守卫孪生：${dangerous.length} 种危险形态两侧各跑一遍，正常地址两侧都收，本地路径只有控制面收；`
-    + `失败原因文案 ${samples.length} 种也两侧比过`);
+    + `失败原因文案 ${samples.length} 种也两侧比过；`
+    + `路径包含判定 inside() 取到 ${insideImpls.length}/2 份实现、10 种边界情形逐个对期望值核过`);
 }
 
 function verifyGitRefGuardsAgree(output) {

@@ -3152,6 +3152,22 @@ const MUTATIONS = [
     expect: "收下了认不出的单元状态"
   },
   {
+    name: "路径包含判定的孪生不许漂（agent 侧）",
+    file: "apps/agent-runtime/runtime.mjs",
+    check: "verifyGitRemoteGuardTwinsAgree",
+    from: "  const prefix = root.endsWith(sep) ? root : `${root}${sep}`;\n  return target === root || target.startsWith(prefix);",
+    to: "  return target === root || target.startsWith(root);",
+    expect: "路径包含判定漂了"
+  },
+  {
+    name: "路径包含判定的孪生不许漂（控制面侧）",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyGitRemoteGuardTwinsAgree",
+    from: "  const prefix = root.endsWith(sep) ? root : `${root}${sep}`;\n  return target === root || target.startsWith(prefix);",
+    to: "  return target === root || target.startsWith(root);",
+    expect: "路径包含判定漂了"
+  },
+  {
     name: "项目目录命名不许有第二份实现",
     file: STORE,
     gate: "specs",
