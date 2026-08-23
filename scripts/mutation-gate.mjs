@@ -3127,6 +3127,30 @@ const MUTATIONS = [
     expect: "未使用的入网令牌占着配额，页面要显出来并给出合计"
   },
   {
+    name: "设置页空态不许把人指去看一条不存在的横幅",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '"配置还没取回来，这里显示不了已有的配置 —— 不是「还没有配置」。"',
+    to: '"配置没能加载出来，这里显示不了已有的配置（原因见页面顶部的横幅）。"',
+    expect: "必须真的挂着那条横幅"
+  },
+  {
+    name: "取配置失败的原因不许被 catch 吞掉",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: ".catch((error) => { projConfigError = String(error?.message || error); return null; });",
+    to: ".catch(() => null);",
+    expect: "catch 不许把它吞掉"
+  },
+  {
+    name: "「没取过」与「取失败」要分开说",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: 'if (projConfigStatus !== "failed") return',
+    to: 'if (false) return',
+    expect: "配置没取过与取失败要分开说"
+  },
+  {
     name: "没有待用令牌时页面不许多挂一句",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

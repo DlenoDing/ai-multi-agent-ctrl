@@ -224,7 +224,7 @@ globalThis.__probe = {
     ensureProjectSelection();
     return {kept: currentProjectId, options: selectableProjects().map((item) => item.id)};
   },
-  setProjConfigStatus: (status) => { projConfigStatus = status; projConfig = null; },
+  setProjConfigStatus: (status, error) => { projConfigStatus = status; projConfig = null; projConfigError = error || ""; },
   setFetch: (fn) => { globalThis.fetch = fn; },
   // 断连横幅要按【真实加载路径】验：直接改 lastError 只能证明模板会渲染，
   // 证不了加载失败真的会把它设上、也证不了下一次成功真的会把它清掉。
@@ -567,8 +567,8 @@ function check(name, condition, detail) {
     closeBarriers: [], qualityGates: [], findings: [], humanConfirmationRequests: [], humanDirectives: [],
     truncatedCollections: [], fleet: {online: 0, total: 0}};
   const admin = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
-  const settingsText = (status) => {
-    settingsProbe.setProjConfigStatus(status);
+  const settingsText = (status, error) => {
+    settingsProbe.setProjConfigStatus(status, error);
     i18nScanStates.push(["新建项目", withProject, admin, "p1"]);
     settingsProbe.renderFullPageWith(withProject, admin, "p1", "proj-settings");
     return String(settingsRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
@@ -577,10 +577,18 @@ function check(name, condition, detail) {
   check("配置还没取到时说的是'正在加载'，不是'加载失败'",
     /正在加载项目规则配置/.test(unloaded) && !/加载失败/.test(unloaded),
     `未加载时显示：${(unloaded.match(/规则配置 [^ ]*/u) || ["（没有规则配置面板）"])[0]}`);
-  const failed = settingsText("failed");
+  const failed = settingsText("failed", "503 project_config_unavailable");
   check("真的取失败时仍要说清失败、并说明为什么把编辑器藏了",
-    /加载失败/.test(failed) && /误保存清空规则/.test(failed),
+    /这一次没取到/.test(failed) && /误保存清空规则/.test(failed),
     `失败时显示：${(failed.match(/规则配置 [^ ]*/u) || ["（没有规则配置面板）"])[0]}`);
+  // 原先这一段的 catch 是 .catch(() => null)：原因被整个吞掉，界面只能说一句笼统的"加载失败"，
+  // 而三块空态又把人指去看一条并不存在的横幅。原因必须被留下来并出现在屏幕上。
+  check("配置取失败时要把服务端给的原因原样摆出来（不能吞掉只说一句「加载失败」）",
+    failed.includes("503 project_config_unavailable"),
+    `失败原因在屏幕上${failed.includes("503") ? "有" : "没有"}`);
+  check("配置没取过与取失败要分开说，且都不许说「还没有配置」",
+    /配置还没取回来/.test(unloaded) && !/还没有配置仓库/.test(unloaded) && !/还没有配置仓库/.test(failed),
+    `未取过时三块空态说的是：${(unloaded.match(/仓库与凭证引用[^添]*/u) || ["（没渲染出来）"])[0].slice(0, 60)}`);
   // 上面两条是【渲染分支】：它们直接设置状态，因此证明不了"真失败时真的会置成 failed"。
   // 少了这一条，把置位逻辑改成永远 unloaded 也照样全绿（变异验出来的）。
   // 接线只能从源码看：取配置那一段之后必须有一处把状态置成 failed。按语句边界切，不按行数猜。
@@ -4466,11 +4474,13 @@ await runCodedApiErrorCase();
 }
 
   const pageTouchCounts = new Map();
+  const danglingBannerRefs = new Set();
   const seenKeys = new Set();
   const newKeysByState = new Map();
   const scanState = (label, state, account, projectId, pages) => {
     const tCalls = new Map();
-    const context = vm.createContext(makeContext(el("div")));
+    const scanRoot = el("div");
+    const context = vm.createContext(makeContext(scanRoot));
     context.window = {scrollTo: () => {}, addEventListener: () => {}, removeEventListener: () => {}};
     context.scrollTo = () => {};
     vm.runInContext(i18nSource, context, {filename: "i18n-zh.js"});
@@ -4509,6 +4519,15 @@ await runCodedApiErrorCase();
       // 页面名只是线索，判据是"有没有漏译"，不是"漏在哪几页"。
       context.__probe.renderFullPageWith(state, account, projectId, page);
       done.push(`${label}/${page}`);
+      // 「原因见页面顶部的横幅」只有在那一屏【真的挂着横幅】时才是真话。横幅由 lastError 驱动，
+      // 而项目配置这类【子请求】失败不置 lastError（它的 catch 把错误吞了，紧接着 lastError 又被清空）——
+      // 于是设置页三块空态都指着一个不存在的东西。指人去看没有的东西比不说更坏，
+      // 而且这一条只能整屏看：单看那一块的文案永远是对的。
+      const screenText = String(scanRoot.innerHTML || "").replace(/<[^>]+>/gu, " ");
+      if (/页面顶部的横幅|页面顶部的提示|顶部的横幅里/u.test(screenText)
+        && !/连不上控制面或这一页加载失败|控制台这一页自己出错了/u.test(screenText)) {
+        danglingBannerRefs.add(`${label}/${page}`);
+      }
       pageTouchCounts.set(page, Math.max(pageTouchCounts.get(page) || 0, tCalls.get(page) || 0));
     }
     return done;
@@ -4608,6 +4627,11 @@ await runCodedApiErrorCase();
     scanned.push(...scanState(label, state, account, projectId, pages));
   }
   if (scanned.length < 14) failures.push(`漏译扫描: 只渲染了 ${scanned.length} 个页面 —— 本段在空转`);
+  check("说「原因见页面顶部的横幅」的屏，必须真的挂着那条横幅",
+    danglingBannerRefs.size === 0 && scanned.length >= 14,
+    danglingBannerRefs.size
+      ? `这些屏指了一条不存在的横幅：\n    ${[...danglingBannerRefs].join("\n    ")}`
+      : `${scanned.length} 屏都核过了`);
   // 上面那四页的数据各自另走接口取，喂 state 只会渲染空壳。这里走真实的 loadPage，
   // 用一个按路径回真实形状的 fetch 桩把它们填上 —— 形状照抄自真实服务的返回。
   {
@@ -4675,6 +4699,36 @@ await runCodedApiErrorCase();
       scanned.push(`${label}(走接口)/${page}`);
       pageTouchCounts.set(page, Math.max(pageTouchCounts.get(page) || 0, touched));
     }
+
+    // 上面那两条设置页断言是【渲染分支】：探针直接把状态设成 failed，走不到真正的 catch。
+    // 而真实缺陷就出在 catch 上（.catch(() => null) 把原因整个吞了）—— 这一条走真实 loadPage，
+    // 让 /config 这一路真的失败，看屏幕上最后说了什么。
+    const failingConfigFetch = async (url) => {
+      const requested = String(url).replace(/^https?:\/\/[^/]+/u, "").split("?")[0];
+      if (requested.endsWith("/config")) {
+        const body = {error: "project_config_unavailable"};  // 真形状：payload.error 一律是字符串码
+        return {ok: false, status: 503, statusText: "Service Unavailable", headers: {get: () => null},
+          json: async () => body, text: async () => JSON.stringify(body)};
+      }
+      return fetchStub(url);
+    };
+    const failRoot = el("div");
+    const failContext = vm.createContext(makeContext(failRoot));
+    failContext.window = {scrollTo: () => {}, addEventListener: () => {}, removeEventListener: () => {}};
+    failContext.scrollTo = () => {};
+    vm.runInContext(i18nSource, failContext, {filename: "i18n-zh.js"});
+    failContext.t = failContext.window.AIMAC_I18N.t;
+    failContext.console = {log: () => {}, error: () => {}, warn: () => {}};
+    vm.runInContext(appSource + PROBE_EPILOGUE, failContext, {filename: "app.js"});
+    await failContext.__probe.loadPageWith(state, account, projectId, "proj-settings", failingConfigFetch);
+    const failScreen = String(failRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+    check("配置接口真失败时，屏幕上要出现服务端给的原因（catch 不许把它吞掉）",
+      failScreen.includes("project_config_unavailable"),
+      `设置页失败时说的是：${(failScreen.match(/暂时无法读取项目规则配置[^。]*。/u) || ["（没渲染出这句）"])[0]}`);
+    check("配置接口真失败时，不许把人指去看一条不存在的横幅",
+      !/页面顶部的横幅|顶部的横幅里|页面顶部的提示/u.test(failScreen)
+        || /连不上控制面或这一页加载失败|控制台这一页自己出错了/u.test(failScreen),
+      `屏幕上${/页面顶部的横幅/u.test(failScreen) ? "指了横幅但横幅不在" : "没有悬空的横幅指引"}`);
   }
   // 判定必须在【全部扫描做完之后】：这一段起初写在走接口那四页之前，于是它们发现的漏译
   // 只进了计数、没进 failures —— 门报"未命中 1 个"却退出码 0。

@@ -40,6 +40,10 @@ let projConfig = null;
 // null 同时代表"还没取过""取失败了""没选项目"三件事，而界面把三者一律说成"配置接口加载失败" ——
 // 人会去追一个并不存在的故障（实测：渲染一个全新项目的设置页，第一眼就是这句）。分成三态。
 let projConfigStatus = "unloaded"; // unloaded | loaded | failed
+// 配置接口的失败原因原先被 .catch(() => null) 整个吞掉，紧接着 lastError = "" 又把横幅清了 ——
+// 于是设置页三块空态都写着「原因见页面顶部的横幅」，而那一屏顶上根本没有横幅（实测渲染确认）。
+// 指人去看一个不存在的东西比不说更坏：原因留在这里，由空态自己说出来。
+let projConfigError = "";
 let projConfigVersion = null;
 let instructionState = null;
 let loginHint = null;
@@ -504,6 +508,14 @@ const STATUS_LABEL_BY_KIND = {
 // 两句话互相矛盾时，人信的是离数据最近的那一句 —— 于是"接口挂了"被读成"这个组织没有成员"。
 function listEmptyText(what) {
   return lastError ? `${what}没能加载出来（原因见页面顶部的横幅）` : "暂无数据";
+}
+
+// 项目配置是【子请求】，它失败不会置 lastError，所以顶部横幅那条路走不通 ——
+// 这句话必须自己带上原因和出路。三态要分开：没取过与取失败不是一回事。
+function projConfigUnavailableText() {
+  if (projConfigStatus !== "failed") return "配置还没取回来，这里显示不了已有的配置 —— 不是「还没有配置」。";
+  return `配置没能加载出来（配置接口这一次没取到：${projConfigError || "原因未记下"}），`
+    + "这里显示不了已有的配置 —— 不是「还没有配置」。点右上角的 ↻ 刷新再试一次。";
 }
 
 function statusBadge(kind, value, tone) {
@@ -1385,7 +1397,9 @@ async function loadPage() {
       ensureProjectSelection();
       if (currentProjectId) {
         projConfigStatus = "unloaded";
-        const configResult = await api(`/api/projects/${encodeURIComponent(currentProjectId)}/config`).catch(() => null);
+        projConfigError = "";
+        const configResult = await api(`/api/projects/${encodeURIComponent(currentProjectId)}/config`)
+          .catch((error) => { projConfigError = String(error?.message || error); return null; });
         projConfig = configResult?.config || null;
         projConfigStatus = projConfig ? "loaded" : "failed";
         // 记住"我读到的是哪一版"。保存时带回去，服务端据此判断这层配置在我打开之后有没有被别人改过 ——
@@ -4334,7 +4348,7 @@ function renderProjectSettings() {
   // 配置没加载出来时，「还没有配置 X」是假话 —— 那一刻我们并不知道有没有。
   const cfgEmpty = (list, text) => (Array.isArray(list) && list.length)
     ? ""
-    : `<div class="small muted">${esc(rulesLoaded ? text : "配置没能加载出来，这里显示不了已有的配置（原因见页面顶部的横幅）—— 不是「还没有配置」。")}</div>`;
+    : `<div class="small muted">${esc(rulesLoaded ? text : projConfigUnavailableText())}</div>`;
 
   // 这三块要读【config 接口算出来的那份】，不是状态里的原始 project.config。
   // 差别是真实的：仓库登记有两处落点，服务端的 effectiveProjectConfig 已经把它们并成一份
@@ -4369,7 +4383,7 @@ function renderProjectSettings() {
     `, {wide: true}),
     !rulesLoaded
       ? panel("规则配置", projConfigStatus === "failed"
-        ? `<div class="notice warn-notice">暂时无法读取项目规则配置（配置接口加载失败），已隐藏规则编辑器以避免误保存清空规则。请点击右上角刷新重试。</div>`
+        ? `<div class="notice warn-notice">暂时无法读取项目规则配置（配置接口这一次没取到：${esc(projConfigError || "原因未记下")}），已隐藏规则编辑器以避免误保存清空规则。请点击右上角刷新重试。</div>`
         : `<div class="notice">正在加载项目规则配置…</div>`, {wide: true})
       : [
         panel("系统规则", ruleEditorForm({
