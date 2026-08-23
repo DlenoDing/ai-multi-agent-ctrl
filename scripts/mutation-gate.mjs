@@ -3135,6 +3135,24 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "视图窗口认不出的时间字段名要被门看见",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyViewWindowKnowsEveryTimestampName",
+    gate: "contract",
+    from: "    || item?.decidedAt || item?.computedAt",
+    to: "    || item?.computedAt",
+    expect: "视图窗口认不出这些记录的时间"
+  },
+  {
+    name: "时间字段豁免登记过期要报红",
+    file: "scripts/contract-check.mjs",
+    check: "verifyViewWindowKnowsEveryTimestampName",
+    gate: "contract",
+    from: '  "push-ref": "嵌在检查点的证据里（checkpoint.pushRefs），不是顶层集合，不经过视图窗口"',
+    to: '  "push-ref": "嵌在检查点的证据里（checkpoint.pushRefs），不是顶层集合，不经过视图窗口",\n  "agent": "这条登记是假的，用来验过期校验"',
+    expect: "时间字段豁免登记已过期"
+  },
+  {
     name: "同一集合不许被两种方向追加",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyCollectionAppendDirectionIsConsistent",

@@ -253,6 +253,15 @@ const THROW_HELPERS_WITHOUT_CODES = {
 // 这里用【登记制】而不是扫描：我试过按关键词扫函数体判断"有没有活跃保护"，
 // 11 个 cap 里误报了 4 个（capReasoning 压根不是集合裁剪、capLeaseHistory 用的词是 active）——
 // 手编的期望表本身就是错误来源。登记制至少逼着新增者写清楚一句话。
+// 视图窗口靠时间戳挑「最新的那一批」，而它认得的字段名是【写死在代码里的一串 ||】。
+// 手抄清单必漂：新记录换个时间字段名（decidedAt / sampledAt / computedAt / at / observedAt
+// 这几个就是后来才补上的），窗口就认不出它的时间，整份数组"看起来单调"、退回取前 N 条 ——
+// 对最新在末尾的集合，那正是把刚建的藏起来。所以拿【规范】当权威来源全量核对一遍。
+const SPECS_WITHOUT_WINDOW_TIMESTAMP = {
+  "git-automation-policy": "是项目配置的一部分，不是顶层集合，不经过视图窗口",
+  "push-ref": "嵌在检查点的证据里（checkpoint.pushRefs），不是顶层集合，不经过视图窗口"
+};
+
 // 同一个集合被两种方向追加过（一处 unshift、一处 push），「最新的在哪一端」就成了看运气：
 // 界面按数组顺序铺开时，新记录一会儿在顶一会儿在底；任何 `[0]` 取「最新」的读法都会取错；
 // 视图窗口更是直接取一端。实测这一刻有五个集合两种都用（accessGrants / accounts /
@@ -572,6 +581,7 @@ run(verifyPollingPeekDoesNotCloneOrMutate);
 runAsync(verifyEveryMcpToolAnswersAnEmptyCall);
 runAsync(verifyBoundedNodeCannotWriteIntoAnotherProject);
 runAsync(verifyStateWriteDoesNotCloneTheWorld);
+run(verifyViewWindowKnowsEveryTimestampName);
 run(verifyCollectionAppendDirectionIsConsistent);
 run(verifyContentBundleNamesTheDispatchedItem);
 run(verifyMcpToolListCostStaysVisible);
@@ -11228,6 +11238,44 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // agent 真正读到的是执行内容包。运行时给模型的指令里只有工作项 id（`implement only work_x`），
 // 而包里的事项清单只有标题 —— 实测同一个任务组里三项同时 in_progress，agent 得自己把 id 映射到标题。
 // 猜错就是改错文件，而这一步本来不需要存在。所以包里必须能直接读出"这次做的是哪一项"。
+function verifyViewWindowKnowsEveryTimestampName(output) {
+  const serverText = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const at = serverText.indexOf("const keyOf = (item) =>");
+  const expr = at < 0 ? "" : serverText.slice(at, serverText.indexOf(";", at));
+  const recognized = new Set([...expr.matchAll(/item\?\.([a-zA-Z]+)/gu)].map((match) => match[1]));
+  if (recognized.size < 5) {
+    output.push(`视图窗口认得的时间字段只提取到 ${recognized.size} 个 —— 提取失配，本条在空转`);
+    return;
+  }
+  const specs = [];
+  for (const file of readdirSync(join(root, "spec")).filter((name) => name.endsWith(".schema.json"))) {
+    let spec = null;
+    try { spec = JSON.parse(readFileSync(join(root, "spec", file), "utf8")); } catch { continue; }
+    const stamps = Object.entries(spec.properties || {})
+      .filter(([, value]) => value && typeof value === "object" && value.format === "date-time")
+      .map(([key]) => key);
+    if (stamps.length) specs.push([file.replace(".schema.json", ""), stamps]);
+  }
+  if (specs.length < 20) {
+    output.push(`只找到 ${specs.length} 份声明了时间字段的规范（实际有四十来份）—— 提取失配，本条在空转`);
+    return;
+  }
+  const blind = specs.filter(([name, stamps]) => !stamps.some((key) => recognized.has(key))
+    && !SPECS_WITHOUT_WINDOW_TIMESTAMP[name]);
+  if (blind.length) {
+    output.push(`视图窗口认不出这些记录的时间：${blind.map(([name, stamps]) => `${name}(${stamps.join("/")})`).join("、")}`
+      + " —— 认不出就一律当成没有时间，整份数组「看起来单调」、窗口退回取数组前 N 条；"
+      + "对最新在末尾的集合那就是把刚建的藏起来。把字段名加进 keyOf，或登记它为什么不经过视图窗口");
+  }
+  const stale = Object.keys(SPECS_WITHOUT_WINDOW_TIMESTAMP)
+    .filter((name) => !specs.some(([specName, stamps]) => specName === name && !stamps.some((key) => recognized.has(key))));
+  if (stale.length) {
+    output.push(`时间字段豁免登记已过期：${stale.join("、")} —— 它们现在要么没有时间字段、要么窗口已经认得，删掉登记`);
+  }
+  console.log(`视图窗口时间字段：认得 ${recognized.size} 个名字，对着 ${specs.length} 份声明了时间的规范逐份核对，`
+    + `${Object.keys(SPECS_WITHOUT_WINDOW_TIMESTAMP).length} 份已登记为不经过窗口`);
+}
+
 function verifyCollectionAppendDirectionIsConsistent(output) {
   const sources = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs",
