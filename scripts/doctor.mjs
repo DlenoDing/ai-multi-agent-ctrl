@@ -2632,15 +2632,21 @@ try {
       item.resource?.resourceId, item.resourceId, item.scope?.resourceId]
       .some((ref) => ref && mine.has(ref));
     const pickWhy = {};
-    const pick = (collection, idField) => {
+    // usable：这条路由【处置得动】的样本。挑到一条已经终结的记录（比如已撤销的授权），
+    // 路由会在判权之前先回 409，探针就走不到守卫那一步 —— 断言仍然绿，而它什么都没验。
+    // 这不是假想：授权集合的追加方向从 push 改成 unshift 之后，挑中的从"最早那条"变成"最新那条"，
+    // 「系统级作用域只认 system: 权限」那条守卫的变异当场从"能抓到"变成"抓不到"（变异门报的）。
+    const pick = (collection, idField, usable) => {
       const all = wide.payload[collection] || [];
-      const found = all.filter(isForeign).map((item) => item[idField]).find(Boolean);
-      // 没探到时要说清是"集合本来就空"还是"全都归自己"——两者要补的夹具完全不同。
+      const foreign = all.filter(isForeign);
+      const candidates = usable ? foreign.filter(usable) : foreign;
+      const found = candidates.map((item) => item[idField]).find(Boolean);
+      // 没探到时要说清是哪一种：四者要补的夹具完全不同。
       if (!found) {
-        // 三种情形要分开：集合为空 / 都归自己 / id 字段名写错了（第三种最容易把断言变成空转）。
         pickWhy[collection] = !all.length ? "集合为空"
-          : all.some((item) => item[idField]) ? `${all.length} 条但都归本组织`
-            : `${all.length} 条但没有一条有 ${idField} 字段 —— 取 id 的字段名写错了`;
+          : !foreign.length ? `${all.length} 条但都归本组织`
+            : usable && !candidates.length ? `${foreign.length} 条外租户记录，但没有一条处在这条路由处置得动的状态`
+              : `${all.length} 条但没有一条有 ${idField} 字段 —— 取 id 的字段名写错了`;
       }
       return found;
     };
@@ -2650,7 +2656,14 @@ try {
       {method: "POST", path: (id) => `/api/agent-nodes/${id}/control`, id: pick("agentRuntimeNodes", "nodeId")},
       {method: "POST", path: (id) => `/api/task-groups/${id}/control`, id: pick("taskGroups", "id")},
       {method: "POST", path: (id) => `/api/agents/${id}/activate`, id: pick("agents", "id")},
-      {method: "POST", path: (id) => `/api/access-grants/${id}/revoke`, id: pick("accessGrants", "grantId")},
+      // 这条路要挑一份【还活着、且作用域是系统级】的外租户授权：
+      // ① 已撤销的会在判权之前先撞 409，走不到守卫；
+      // ② 守卫「系统级作用域只认 system: 权限」只在 resourceType 不是 project/task_group/organization
+      //    时才走到 —— 挑到一份项目级的授权，这条路由照样能探，但那道守卫根本没被问过。
+      // 两个条件都写出来，挑不到时 pickWhy 会说清是哪一种，不会静静地绿着。
+      {method: "POST", path: (id) => `/api/access-grants/${id}/revoke`,
+        id: pick("accessGrants", "grantId", (grant) => grant.status === "active"
+          && !["project", "task_group", "organization"].includes(grant.resource?.resourceType))},
       {method: "POST", path: (id) => `/api/agent-join-tokens/${id}/revoke`, id: pick("agentJoinTokens", "joinTokenId")},
       {method: "GET", path: (id) => `/api/agent-dispatches/${id}/events`, id: pick("agentDispatches", "dispatchId")},
       {method: "GET", path: (id) => `/api/task-groups/${id}/execution-events`, id: pick("taskGroups", "id")},
