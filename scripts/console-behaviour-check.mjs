@@ -151,7 +151,12 @@ globalThis.__probe = {
   handlerSource: (type) => String(globalThis.__handlers[type]),
   click: (event) => globalThis.__handlers.click(event),
   stubNavigation: () => { render = () => {}; loadPage = async () => {}; toast = {success: () => {}, error: () => {}, info: () => {}}; },
-  renderTaskGroupDetail: (detail, taskGroup) => { tgDetail = detail; return renderTaskGroupDetail(taskGroup); },
+  // 第三个入参可选：明细里有几处要读 state（溯源引用要拿 humanDirectives 解析成人名）。
+  renderTaskGroupDetail: (detail, taskGroup, nextState) => {
+    tgDetail = detail;
+    if (nextState) state = nextState;
+    return renderTaskGroupDetail(taskGroup);
+  },
   loadTaskGroupDetailSource: () => String(loadTaskGroupDetail),
   decisionSelect: (...args) => decisionSelect(...args),
   listEmptyText: (what, failure) => { lastError = failure; return listEmptyText(what); },
@@ -3431,6 +3436,48 @@ function runSupersededReasonCase() {
     /租约过期/u.test(text),
     `仓库产出那一行显示的是：${(text.match(/repo_main[^。]{0,60}/u) || ["（没渲染出这一行）"])[0]}`);
 }
+// 被人重开过的工作项、方案被人拍过板的工作项，屏幕上与从没卡过的长得一模一样 ——
+// 答案一直写在记录里（humanDecisionRef / planFinalizationRef 是 core 有意写的【溯源引用】），
+// 全仓零处读。引用指向的记录被集合上限顶掉时，要说「查不到那条记录」，不能当成没有过这件事。
+function runHumanTraceCase() {
+  const admin = {accountId: "acct_a", accountType: "system_admin", organizationId: "org_default"};
+  const workItem = {id: "w1", title: "被重开过的单元", status: "ready", ownerRole: "orchestrator",
+    humanDecisionRef: "hd_1", planFinalizationRef: "hcr_1", requirements: []};
+  const taskGroup = {id: "tg1", projectId: "p1", name: "任务组", status: "active",
+    workItems: [workItem], roles: [], blockers: []};
+  const base = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [taskGroup],
+    humanDirectives: [{directiveId: "hd_1", taskGroupId: "tg1", directiveType: "resolve_decision",
+      instruction: "重开", status: "applied", issuedBy: "ops@local", appliedActions: [],
+      createdAt: "2026-08-20T01:02:03.000Z"}],
+    humanConfirmationRequests: [{requestId: "hcr_1", taskGroupId: "tg1", workItemId: "w1",
+      status: "answered", question: "选方案", options: [],
+      decision: {selectedOptionId: "a", decidedBy: "lead@local", decidedAt: "2026-08-21T04:05:06.000Z"},
+      createdAt: "2026-08-21T00:00:00.000Z"}],
+    agentDispatches: [], workSessions: [], agentExecutionEvents: [], findings: [], closeBarriers: [],
+    qualityGates: [], accounts: [], accessGrants: [], agents: [], truncatedCollections: [],
+    fleet: {online: 1, total: 1}};
+  const detailOf = (nextState) => String(loadConsole(el("div"), {realI18n: true}).renderTaskGroupDetail(
+    {taskGroupId: "tg1", loadFailed: false, progress: {workItems: [workItem]}, config: null,
+      configVersion: null, roomMessages: [], roomMessageTotal: 0, roomMessagesTruncated: false},
+    taskGroup, nextState)).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+  const resolved = detailOf(base);
+  check("被人重开过的工作项要说出是谁在什么时候重开的",
+    /由人工指令重开：ops@local/u.test(resolved),
+    `工作项那一行显示的是：${(resolved.match(/执行角色[^执]{0,120}/u) || ["（没渲染出这一行）"])[0]}`);
+  check("方案被人定稿过的工作项要说出是谁拍的板",
+    /方案已由人定稿：lead@local/u.test(resolved),
+    `工作项那一行显示的是：${(resolved.match(/执行角色[^执]{0,160}/u) || ["（没渲染出这一行）"])[0]}`);
+  // 引用还在、记录被容量顶掉了：不能因为查不到就当成没发生过。
+  const dropped = detailOf({...base, humanDirectives: [], humanConfirmationRequests: []});
+  check("溯源引用查不到对应记录时要说「查不到」，不能当成没有过这件事",
+    /已不在当前列表里/u.test(dropped) && /由人工指令重开/u.test(dropped),
+    `记录被顶掉之后显示的是：${(dropped.match(/执行角色[^执]{0,160}/u) || ["（没渲染出这一行）"])[0]}`);
+}
+runHumanTraceCase();
+
 runSupersededReasonCase();
 
 runControlCommandReasonCase();

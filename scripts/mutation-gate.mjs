@@ -3135,6 +3135,30 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "被人重开过的工作项要看得出来",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (workItem.humanDecisionRef) {",
+    to: "  if (false) {",
+    expect: "被人重开过的工作项要说出是谁在什么时候重开的"
+  },
+  {
+    name: "方案定稿的溯源要看得出来",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (workItem.planFinalizationRef) {",
+    to: "  if (false) {",
+    expect: "方案被人定稿过的工作项要说出是谁拍的板"
+  },
+  {
+    name: "溯源记录被顶掉时不许当成没发生过",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      : `<span>由人工指令重开（指令 ${esc(workItem.humanDecisionRef)} 已不在当前列表里，查不到是谁下的）</span>`);',
+    to: '      : "");',
+    expect: "溯源引用查不到对应记录时要说「查不到」"
+  },
+  {
     name: "产出目标被顶替时要说出为什么",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

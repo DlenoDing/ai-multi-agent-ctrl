@@ -2692,6 +2692,29 @@ function renderProjectOverview() {
   ].join("");
 }
 
+// 「这条工作项为什么回到就绪 / 它的方案是谁拍的板」—— 答案一直写在记录里
+//（humanDecisionRef / planFinalizationRef，core 里注释写明是【溯源引用】），
+// 而全仓零处读：屏幕上被人重开过的工作项和从没卡过的长得一模一样。
+// 引用指向的记录可能已经被集合上限顶掉 —— 那时要说「查不到那条记录」，不能当成没有过这件事。
+function humanTraceHtml(workItem) {
+  const parts = [];
+  if (workItem.humanDecisionRef) {
+    const directive = (state.humanDirectives || []).find((item) => item.directiveId === workItem.humanDecisionRef);
+    parts.push(directive
+      ? `<span>由人工指令重开：${esc(directive.issuedBy || "?")} · ${esc(fmtTime(directive.createdAt))}</span>`
+      : `<span>由人工指令重开（指令 ${esc(workItem.humanDecisionRef)} 已不在当前列表里，查不到是谁下的）</span>`);
+  }
+  if (workItem.planFinalizationRef) {
+    const request = (state.humanConfirmationRequests || [])
+      .find((item) => item.requestId === workItem.planFinalizationRef);
+    const decision = request?.decision;
+    parts.push(decision
+      ? `<span>方案已由人定稿：${esc(decision.decidedBy || "?")} · ${esc(fmtTime(decision.decidedAt))}</span>`
+      : `<span>方案已由人定稿（确认单 ${esc(workItem.planFinalizationRef)} 已不在当前列表里，查不到是谁定的）</span>`);
+  }
+  return parts.join("");
+}
+
 function taskGroupById(taskGroupId) {
   return (state.taskGroups || []).find((taskGroup) => taskGroup.id === taskGroupId) || null;
 }
@@ -2919,7 +2942,7 @@ function renderTaskGroupDetail(taskGroup) {
       <div class="record">
         <div class="record-title"><strong>${esc(workItem.title)}</strong>${badge(workItem.status)}</div>
         ${progressLine(workItem.progress)}
-        <div class="record-meta"><span>执行角色：${esc(t(workItem.ownerRole))}</span>${workItem.blockedReason ? `<span>受阻原因：${esc(explainCoded(workItem.blockedReason))}</span>` : ""}</div>
+        <div class="record-meta"><span>执行角色：${esc(t(workItem.ownerRole))}</span>${workItem.blockedReason ? `<span>受阻原因：${esc(explainCoded(workItem.blockedReason))}</span>` : ""}${humanTraceHtml(workItem)}</div>
         <!-- 被阻塞的工作项：屏幕上要么给出【出口】，要么明说【系统会自清】。只写一句"受阻原因"
              等于把人留在原地 —— 后端有杠杆而界面没入口，等于这个杠杆不存在；而系统自清的也必须
              说出来，否则人会去找一个并不需要的操作。每一条都按代码里真实的清除路径写：
