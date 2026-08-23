@@ -3361,6 +3361,22 @@ const MUTATIONS = [
     expect: "容量淘汰过的记录要说出来"
   },
   {
+    name: "授权请求卡要显示人名而不是账号 id",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "<span>主体：${esc(accountName(item.subjectId))}</span>",
+    to: '<span>主体：${esc(item.subjectId || "-")}</span>',
+    expect: "「主体」要显示人名"
+  },
+  {
+    name: "溯源里也要显示人名",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "? `<span>由人工指令重开：${esc(accountName(directive.issuedBy))} · ${esc(fmtTime(directive.createdAt))}</span>`",
+    to: '? `<span>由人工指令重开：${esc(directive.issuedBy || "?")} · ${esc(fmtTime(directive.createdAt))}</span>`',
+    expect: "溯源里要显示人名而不是账号 id"
+  },
+  {
     name: "被人重开过的工作项要看得出来",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

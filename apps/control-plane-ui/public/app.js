@@ -2704,7 +2704,7 @@ function humanTraceHtml(workItem) {
   if (workItem.humanDecisionRef) {
     const directive = (state.humanDirectives || []).find((item) => item.directiveId === workItem.humanDecisionRef);
     parts.push(directive
-      ? `<span>由人工指令重开：${esc(directive.issuedBy || "?")} · ${esc(fmtTime(directive.createdAt))}</span>`
+      ? `<span>由人工指令重开：${esc(accountName(directive.issuedBy))} · ${esc(fmtTime(directive.createdAt))}</span>`
       : `<span>由人工指令重开（指令 ${esc(workItem.humanDecisionRef)} 已不在当前列表里，查不到是谁下的）</span>`);
   }
   if (workItem.planFinalizationRef) {
@@ -2712,7 +2712,7 @@ function humanTraceHtml(workItem) {
       .find((item) => item.requestId === workItem.planFinalizationRef);
     const decision = request?.decision;
     parts.push(decision
-      ? `<span>方案已由人定稿：${esc(decision.decidedBy || "?")} · ${esc(fmtTime(decision.decidedAt))}</span>`
+      ? `<span>方案已由人定稿：${esc(accountName(decision.decidedBy))} · ${esc(fmtTime(decision.decidedAt))}</span>`
       : `<span>方案已由人定稿（确认单 ${esc(workItem.planFinalizationRef)} 已不在当前列表里，查不到是谁定的）</span>`);
   }
   return parts.join("");
@@ -3883,7 +3883,7 @@ function renderReview() {
       ${pendingPermissions.map((item) => `
         <div class="record">
           <div class="record-title"><strong>授权请求：${esc(item.permission || "-")}</strong>${badge(item.status)}</div>
-          <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>主体：${esc(item.subjectId || "-")}</span><span>原因：${esc(item.reason || "-")}</span><span>${fmtTime(item.createdAt)}</span></div>
+          <div class="record-meta"><span>任务组：${esc(taskGroupNameOf(item.taskGroupId))}</span><span>主体：${esc(accountName(item.subjectId))}</span><span>原因：${esc(item.reason || "-")}</span><span>${fmtTime(item.createdAt)}</span></div>
           <!-- 卡片此前不显示 resource：一条申请 system:* 的越权请求在批准人眼里与普通任务组授权毫无区别。
                批准的是"给谁、什么权限、在什么资源上"，这三样必须同时可见，否则同意是盲签。 -->
           <div class="record-meta"><span>作用资源：<span class="mono">${esc(item.resource?.resourceType || "-")}${item.resource?.resourceId ? `:${esc(item.resource.resourceId)}` : ""}</span></span>${

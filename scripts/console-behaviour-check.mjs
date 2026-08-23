@@ -3463,6 +3463,16 @@ function runHumanTraceCase() {
     {taskGroupId: "tg1", loadFailed: false, progress: {workItems: [workItem]}, config: null,
       configVersion: null, roomMessages: [], roomMessageTotal: 0, roomMessagesTruncated: false},
     taskGroup, nextState)).replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+  // 【显示人名，不是账号 id】。溯源那两句是给人看的：`acct_ops` 不是人，
+  // 而 accountName() 连服务端下发的 id→名字目录一起兜（tasks 视图不带完整 accounts 集合）。
+  const withNames = {...base, accounts: [
+    {accountId: "ops@local", displayName: "运维小张", accountType: "user_account", status: "active"},
+    {accountId: "lead@local", displayName: "评审组长", accountType: "user_account", status: "active"}]};
+  const named = detailOf(withNames);
+  check("溯源里要显示人名而不是账号 id",
+    /由人工指令重开：运维小张/u.test(named) && /方案已由人定稿：评审组长/u.test(named),
+    `带上账号之后显示的是：${(named.match(/由人工指令重开：[^·]*/u) || ["（没渲染出这一行）"])[0]}`);
+
   const resolved = detailOf(base);
   check("被人重开过的工作项要说出是谁在什么时候重开的",
     /由人工指令重开：ops@local/u.test(resolved),
@@ -3511,6 +3521,32 @@ function runStorageDropDisclosureCase() {
     `同时发生时屏幕上只说了：${(both.match(/这[几些][^。]*。/u) || ["（什么都没说）"])[0]}`);
 }
 runStorageDropDisclosureCase();
+
+// 批准一条授权请求，人要同时看清「给谁、什么权限、在什么资源上」。
+// 「在什么资源上」此前补过；「给谁」一直显示的是 acct_xxx 这样的账号 id —— id 不是人。
+function runPermissionCardNamesTheSubjectCase() {
+  const admin = {accountId: "acct_a", accountType: "system_admin", organizationId: "org_default",
+    permissions: ["project:grant", "task_group:review"]};
+  const state = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active",
+      members: [{accountId: "acct_a", role: "project_owner"}]}],
+    taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "active", workItems: [], roles: [], blockers: []}],
+    accounts: [{accountId: "acct_bob", displayName: "外包小李", accountType: "user_account", status: "active"}],
+    permissionRequests: [{requestId: "pr_1", taskGroupId: "tg1", subjectId: "acct_bob",
+      permission: "github_push", status: "pending_approval",
+      resource: {resourceType: "external_capability", resourceId: "repo:x"},
+      reason: "执行到「before_git_push」这一步被权限挡住", createdAt: "2026-08-23T00:00:00.000Z"}],
+    approvalRequests: [], findings: [], humanConfirmationRequests: [], accessGrants: [], agents: [],
+    agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], truncatedCollections: []};
+  const root = el("div");
+  loadConsole(root, {realI18n: true}).renderFullPageWith(state, admin, "p1", "review");
+  const text = String(root.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+  check("授权请求卡上「主体」要显示人名，不是账号 id（批准的是「给谁」）",
+    /主体：外包小李/u.test(text),
+    `卡片上显示的是：${(text.match(/主体：[^ ]*/u) || ["（没渲染出这张卡）"])[0]}`);
+}
+runPermissionCardNamesTheSubjectCase();
 
 runHumanTraceCase();
 
