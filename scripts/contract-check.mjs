@@ -254,6 +254,8 @@ const THROW_HELPERS_WITHOUT_CODES = {
 // 11 个 cap 里误报了 4 个（capReasoning 压根不是集合裁剪、capLeaseHistory 用的词是 active）——
 // 手编的期望表本身就是错误来源。登记制至少逼着新增者写清楚一句话。
 const CAP_FUNCTION_GUARDS = {
+  capKeepingReferencedLazily: "只在真要裁的那一刻才构建引用集合（原先每次决策都建一遍，要扫全部会话/派发，"
+    + "一轮编排每单元一次＝平方项，5000 单元时约 1.7 秒）；触发线相对上一次裁完剩下多少，保留强度不变",
   capCentralCollection: "中央集合的共用裁剪：受保护项（叠加的 active、问题模式的 suppressed）永远排在额度前面，"
     + "被丢的一定是历史；丢多少一律记进 centralDroppedCounts，界面据此说清「这个数是剩下的」",
   capKeepingReferenced: "仍被别处引用的记录（decisionRecordRef 之类）留在窗口外也不裁",
@@ -9608,10 +9610,13 @@ function verifyLongLivedRecordsDoNotPointAtCappedOnes(output) {
   // 提取要认全三种写法：`= state.X.slice(...)`、`= [新的, ...state.X].slice(...)`、
   // `= capKeepingReferenced(...)`。只认第一种的话，改一次写法这道门就少看见两个集合
   // （实测：我把 core 那处改成 capKeepingReferenced 之后，提取从 5 个掉到 3 个）。
+  // 第四种写法：通用裁剪助手把集合名当【字符串入参】收（capCentralCollection(state, "x", 2000, …)、
+  // capKeepingReferencedLazily(state, "x", 160, …)）。抄四份裁剪逻辑就有三份是盲切，抽成通用的是对的；
+  // 判据要跟上写法，而不是逼代码写回四份 —— 上面那句注释记的就是同一个坑，这已经是第二次。
   for (const match of sources.matchAll(
-    /state\.(\w+) = (?:state\.\1|\[[^\]]*\])\.slice\(0, ([^)]+)\)|state\.(\w+) = capKeepingReferenced\([^,]+, ([^,]+),/gu)) {
-    const name = match[1] || match[3];
-    const raw = (match[2] || match[4] || "").trim();
+    /state\.(\w+) = (?:state\.\1|\[[^\]]*\])\.slice\(0, ([^)]+)\)|state\.(\w+) = capKeepingReferenced\([^,]+, ([^,]+),|cap[A-Za-z]*\(state, "(\w+)", ([0-9]+)/gu)) {
+    const name = match[1] || match[3] || match[5];
+    const raw = (match[2] || match[4] || match[6] || "").trim();
     const bound = Number(raw.match(/\d+/u)?.[0] || 0);
     if (name && bound && bound <= 2000) capped.add(name);
   }
@@ -15132,6 +15137,19 @@ function verifyPerScopeRecordsSurviveTheirCap(output) {
   const untouched = Object.keys(capsUnderTest).filter((key) => !exercised.includes(key));
   console.log(`上限抖动门覆盖：压过上限的集合 ${exercised.join("、") || "无"}`
     + `｜这一轮没压到上限、因而未被检验的：${untouched.join("、") || "无"}`);
+
+  // 引用集合只在【真要裁的那一刻】才建（原先每次决策都建一遍，要扫全部会话/派发 ——
+  // 一轮编排每单元一次就是平方项，实测 5000 单元约 1.7 秒）。判它有没有生效，看地板有没有被记下来：
+  // 不记地板，触发线就只能相对名义上限，而被引用的一旦多于上限，「超了」恒成立 → 又回到每次都建。
+  for (const [field, floorField] of [["modelSelectionDecisions", "modelSelectionDecisionsRetainedFloor"],
+    ["sessionPlacementDecisions", "sessionPlacementDecisionsRetainedFloor"]]) {
+    if ((state[field] || []).length < 160) continue;  // 这一轮没压到上限，上面的覆盖自报会说
+    if (!(Number(state[floorField] || 0) > 0)) {
+      output.push(`${field} 裁过了却没记下「裁完剩多少」（${floorField}=${state[floorField]}）——`
+        + " 触发线只能相对名义上限，而被引用的一旦多于上限就恒超，于是每次决策都要重建一遍引用集合"
+        + "（要扫全部会话/派发，一轮编排每单元一次＝平方项）");
+    }
+  }
 
   // 活着的对象一条都不能少：否则"没被重写"可能只是因为它们压根没被记。
   const liveGroupIds = (state.taskGroups || []).filter((group) => !["closed", "aborted"].includes(group.status)).map((group) => group.id);

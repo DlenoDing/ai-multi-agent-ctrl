@@ -1006,11 +1006,10 @@ export function selectModel(state, request = {}) {
     decision.fallbackPolicyRef = policy?.policyId || "msp_default";
   }
   state.modelSelectionDecisions.unshift(decision);
-  const referencedModelDecisions = new Set([
+  capKeepingReferencedLazily(state, "modelSelectionDecisions", 160, () => new Set([
     ...(state.agentDispatches || []).map((item) => item.modelSelectionDecisionRef),
     ...(state.workSessions || []).map((item) => item.modelSelectionDecisionRef)
-  ].filter(Boolean));
-  state.modelSelectionDecisions = capKeepingReferenced(state.modelSelectionDecisions, 160, referencedModelDecisions);
+  ].filter(Boolean)), "modelSelectionDecisionsRetainedFloor");
   appendEvent(state, "model_selection_decision", "ModelSelectionDecision", decision.decisionId, "model-registry", decision);
   return decision;
 }
@@ -1376,9 +1375,8 @@ export function decideSessionPlacement(state, request = {}) {
     };
   }
   state.sessionPlacementDecisions.unshift(decision);
-  const referencedPlacements = new Set((state.workSessions || [])
-    .map((item) => item.placementDecisionRef).filter(Boolean));
-  state.sessionPlacementDecisions = capKeepingReferenced(state.sessionPlacementDecisions, 160, referencedPlacements);
+  capKeepingReferencedLazily(state, "sessionPlacementDecisions", 160, () => new Set((state.workSessions || [])
+    .map((item) => item.placementDecisionRef).filter(Boolean)), "sessionPlacementDecisionsRetainedFloor");
   appendEvent(state, "session_placement_decision", "SessionPlacementDecision", decision.decisionId, "scheduler", decision);
   return decision;
 }
@@ -3517,6 +3515,19 @@ function activeExecutionForWork(state, taskGroupId, workItemId) {
 const CAP_SLACK = 64;
 function shouldCap(items, limit) {
   return items.length > limit + CAP_SLACK;
+}
+
+// capKeepingReferenced 的两个调用点原先【每次决策都先把引用集合建出来】，而那要扫全部会话/派发。
+// 一轮编排里每个单元各跑一次 → 平方项：实测 5000 单元 + 5000 会话时，这两处合计约 1.7 秒/轮。
+// 引用集合只有在真要裁的那一刻才用得上，所以推迟到那一刻再建（64 次里才有 1 次）。
+// 触发线同样要相对【上一次裁完剩下多少】：被引用的一旦多于 cap，这个集合永远降不到 cap 以下，
+// 「length > cap」就恒成立 —— 那正是 policyDecisions 那处踩过的坑。
+function capKeepingReferencedLazily(state, field, cap, buildReferenced, floorField) {
+  const items = state[field] || [];
+  const floor = Math.max(cap, Number(state[floorField] || 0));
+  if (items.length <= floor + CAP_SLACK) return;
+  state[field] = capKeepingReferenced(items, cap, buildReferenced());
+  state[floorField] = state[field].length;
 }
 
 // 这些 cap 都是"绝不淘汰仍然活跃的记录"。当活跃记录本身就超过上限时（4000 个单元全部排队中，
