@@ -3127,6 +3127,30 @@ const MUTATIONS = [
     expect: "未使用的入网令牌占着配额，页面要显出来并给出合计"
   },
   {
+    name: "编排标失败时会话上也要留下原因",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "    session.blockedReason = reason;\n    session.updatedAt = dispatch.updatedAt;",
+    to: "    session.updatedAt = dispatch.updatedAt;",
+    expect: "markDispatchFailed 里把会话置成终态却没写下原因"
+  },
+  {
+    name: "对账回收会话时也要留下原因",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "      session.blockedReason = dispatch.failureReason;\n      session.updatedAt = at;",
+    to: "      session.updatedAt = at;",
+    expect: "会话上却没有同一个原因"
+  },
+  {
+    name: "agent 自报失败时会话上也要留下原因",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    from: "      session.blockedReason = reportedStatus === \"blocked\"\n        ? (dispatch.blockedReason || session.blockedReason)\n        : (dispatch.failureReason || session.blockedReason);",
+    to: "      if (reportedStatus === \"blocked\") session.blockedReason = dispatch.blockedReason || session.blockedReason;",
+    expect: "agent 自报失败那条路由里把会话置成终态却没写下原因"
+  },
+  {
     name: "「没权限」和「服务端故障」不许并成一句话",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

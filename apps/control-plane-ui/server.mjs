@@ -3033,7 +3033,12 @@ async function handleApi(req, res) {
     dispatch.updatedAt = now();
     if (session) {
       session.status = reportedStatus === "blocked" ? "needs_decision" : reportedStatus === "cancelled" ? "aborted" : "failed";
-      if (reportedStatus === "blocked") session.blockedReason = dispatch.blockedReason || session.blockedReason;
+      // 原因不能只在 blocked 时写：agent 报 failed 是更常见的那条路，而监控页「工作会话」表
+      // 读的就是 session.blockedReason —— 不写就是「失败 / -」，人得自己去派发表里对 id。
+      // 与编排里的 markDispatchFailed 是同一件事的两个入口，两处必须一样。
+      session.blockedReason = reportedStatus === "blocked"
+        ? (dispatch.blockedReason || session.blockedReason)
+        : (dispatch.failureReason || session.blockedReason);
       session.updatedAt = now();
     }
     routeBlockedDispatchToHumanDecision(state, dispatch);

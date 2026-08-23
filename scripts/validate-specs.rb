@@ -2704,6 +2704,11 @@ TRACED_OPAQUE_REASON_SITES = {
     "evidence" => "apps/control-plane-ui/lib/control-plane-core.mjs|function recordAdmissionDecision",
     "codes" => []
   },
+  # 对账过期派发把原因抄到会话上：dispatch.failureReason 就在上一行赋的值，只有这两个取值。
+  "dispatch.failureReason;" => {
+    "evidence" => "apps/control-plane-ui/lib/control-plane-core.mjs|dispatch.failureReason = contract ? \"task_contract_expired\" : \"task_contract_missing\";",
+    "codes" => ["task_contract_expired", "task_contract_missing"]
+  },
   # 条件窗口那一支只有一个取值。
   "windowGate.reasonCode" => {
     "evidence" => "apps/control-plane-ui/lib/control-plane-core.mjs|reasonCode: \"condition_window_deferred\"",

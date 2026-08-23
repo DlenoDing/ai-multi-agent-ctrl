@@ -3598,14 +3598,29 @@ try {
   try {
     const statePath = join(root, doctorRuntimeDir, "control-plane-state.json");
     const versionOf = () => { try { return Number(JSON.parse(readFileSync(statePath, "utf8")).stateVersion || 0); } catch { return 0; } };
+    // 先等这台服务【真的起来】，再开始计时。原先是起了进程就直接数 20 秒 ——
+    // 机器忙的时候（四路并行跑变异门）光启动就吃掉大半，于是它报「没有任何东西驱动周期」，
+    // 而真相是服务还没起来。把原因归错类比不说更坏：这句话会让人去查编排，而问题在负载。
+    let ready = false;
+    for (let attempt = 0; attempt < 60 && !ready; attempt += 1) {
+      ready = await fetch(`http://127.0.0.1:${tickPort}/api/health`).then((response) => response.ok).catch(() => false);
+      if (!ready) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (!ready) {
+      throw new Error(`autonomous orchestrator tick: 这台服务 30 秒都没起来（端口 ${tickPort}）——`
+        + `本条检查没测到编排周期，别把它读成「周期不转」：${tickStderr.slice(0, 400)}`);
+    }
     const before = versionOf();
     let advanced = false;
-    for (let attempt = 0; attempt < 40 && !advanced; attempt += 1) {
+    // 起来之后再给 30 秒：拍子间隔 5 秒，也就是至少 6 次机会。
+    for (let attempt = 0; attempt < 60 && !advanced; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 500));
       advanced = versionOf() > before;
     }
     if (!advanced) {
-      throw new Error(`autonomous orchestrator tick never advanced state on its own (stateVersion stayed ${before}) — a person who creates a task group would wait forever, because nothing drives the cycle: ${tickStderr.slice(0, 400)}`);
+      throw new Error(`autonomous orchestrator tick never advanced state on its own (stateVersion stayed ${before}`
+        + ` for 30s after the server answered /api/health) — a person who creates a task group would wait forever,`
+        + ` because nothing drives the cycle: ${tickStderr.slice(0, 400)}`);
     }
     console.log("autonomous orchestrator tick ok: state advanced with no request made");
     tickAssertionsPassed = true;

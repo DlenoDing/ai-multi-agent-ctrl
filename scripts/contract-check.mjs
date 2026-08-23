@@ -6368,6 +6368,74 @@ function verifyExecutionFailureCapSurvivesHistoryAndReopen(output) {
         + "「连续多次失败就停止重派」在它上面等于不存在");
     }
   }
+  // 派发失败时【会话上也要留下原因】：监控页的「工作会话」表读的是 session.blockedReason，
+  // 只置状态不写原因，那一行就是「失败 / -」—— 人得自己拿 sessionId 去派发表里对。
+  // 实测就是这么一屏：派发行给得出「执行器没能跑完：…」，同一件事的会话行原因是「-」。
+  {
+    const state = structuredClone(seedState);
+    ensureRuntimeCollections(state, {root});
+    const taskGroup = (state.taskGroups || []).find((item) => item.projectId === "prj_control_plane"
+      && (item.workItems || []).length) || (state.taskGroups || []).find((item) => (item.workItems || []).length);
+    const workItem = taskGroup.workItems[0];
+    const at = new Date().toISOString();
+    // 共享 seedState 会被前面的检查改过（人工指令里可能已经排着一条「取消」）——
+    // 那条会抢先把派发标成 cancelled，于是这一段测不到 markDispatchFailed。清干净再造。
+    state.humanDirectives = [];
+    delete taskGroup.pauseReason;
+    if (taskGroup.status === "paused") taskGroup.status = "active";
+    state.workSessions = [{schemaVersion: "work-session/v1", sessionId: "sess_probe_fail",
+      projectId: taskGroup.projectId, taskGroupId: taskGroup.id, workItemId: workItem.id,
+      roleId: workItem.ownerRole || "implementer", agentId: "agent_orchestrator", placement: "new_session",
+      status: "running", startedAt: at, updatedAt: at}];
+    // 让绑定缺一件（产出目标指向不存在的 id）—— 这是 markDispatchFailed 最容易到达的那条入口。
+    state.agentDispatches = [{dispatchId: "d_probe_fail", projectId: taskGroup.projectId,
+      taskGroupId: taskGroup.id, workItemId: workItem.id, sessionId: "sess_probe_fail",
+      status: "queued", repositoryOutputTargetRef: "target_does_not_exist", createdAt: at, updatedAt: at}];
+    runAutonomousCycle(state, {root, runtimeDir: probeRuntimeDir, endpoint: "http://127.0.0.1:1", mode: "all"});
+    const failedDispatch = (state.agentDispatches || []).find((item) => item.dispatchId === "d_probe_fail");
+    const failedSession = (state.workSessions || []).find((item) => item.sessionId === "sess_probe_fail");
+    // 夹具没造出想测的情形也要能自报：否则「派发没失败」会一路绿着冒充「原因写上了」。
+    if (!["failed", "cancelled"].includes(failedDispatch?.status) || !failedDispatch?.failureReason) {
+      output.push(`夹具没让这个派发以失败告终（status=${failedDispatch?.status}/${failedDispatch?.failureReason}）—— `
+        + "「失败原因要写到会话上」这条在空转，不是验过了");
+    } else if (failedSession?.blockedReason !== failedDispatch.failureReason) {
+      output.push(`派发失败了（${failedDispatch.failureReason}），会话上却没有同一个原因`
+        + `（status=${failedSession?.status} / reason=${failedSession?.blockedReason}）——`
+        + " 监控页那一行会显示「失败 / -」，人只能自己拿 sessionId 去派发表里对");
+    }
+  }
+
+  // 上面那条行为断言只走到三处写入点里的【一处】（对账过期那条最容易到达）。
+  // 另两处要靠登记：把会话置成终态的地方一共这么几处，每一处都必须同时写下原因。
+  // 少写一处，那条路径上的会话就是「失败 / -」，而屏幕上看不出是哪条路径来的。
+  // 每一项都要【按函数体切】再查：整份文件 include? 会被隔壁同形代码喂饱 —— 实测过，
+  // settleCellOwnedResources 里正好也是 `session.status = "failed"` 紧跟 `blockedReason = reason`，
+  // 于是把 markDispatchFailed 里那行删掉，整文件正则照样命中，变异一声不吭地绿了。
+  const sliceFn = (source, startMarker) => {
+    const at = source.indexOf(startMarker);
+    if (at < 0) return null;
+    const end = source.indexOf("\n}\n", at);
+    return end < 0 ? null : source.slice(at, end);
+  };
+  const sessionSettlePoints = [
+    ["apps/control-plane-ui/lib/control-plane-core.mjs", "function markDispatchFailed(", "markDispatchFailed 里",
+      /session\.blockedReason = reason;/u],
+    ["apps/control-plane-ui/lib/control-plane-core.mjs", "export function expireStaleQueuedDispatches(", "对账过期派发时",
+      /session\.blockedReason = dispatch\.failureReason;/u],
+    ["apps/control-plane-ui/server.mjs", "if (reportedStatus === \"failed\") noteWorkItemExecutionFailure(state, dispatch);",
+      "agent 自报失败那条路由里",
+      /session\.blockedReason = reportedStatus === "blocked"\s*\n\s*\? \(dispatch\.blockedReason \|\| session\.blockedReason\)\s*\n\s*: \(dispatch\.failureReason \|\| session\.blockedReason\);/u]
+  ];
+  for (const [file, startMarker, where, shape] of sessionSettlePoints) {
+    const body = sliceFn(readFileSync(join(root, file), "utf8"), startMarker);
+    if (body === null) {
+      output.push(`找不到「${where}」那段代码（锚点：${startMarker.slice(0, 40)}）—— 这一项在空转，不是核过了`);
+    } else if (!shape.test(body)) {
+      output.push(`${where}把会话置成终态却没写下原因 —— 监控页「工作会话」那一行会显示「失败 / -」，`
+        + "人只能自己拿 sessionId 去派发表里对（同一件事的三处写入点，少一处就在那条路径上失效）");
+    }
+  }
+
   // 记账函数本身也要验：调它一次，计数必须从无到有、并且认得出对应的工作项。
   // （这里不去构造"让编排自己判一次失败"的情形 —— 那条分支前面还有别的处置会抢先，
   //   造出来的多半不是它。两半合起来足够：函数会加一 + 两个入口都调了它。）

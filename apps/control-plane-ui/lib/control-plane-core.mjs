@@ -3296,6 +3296,10 @@ function markDispatchFailed(state, dispatch, reason) {
   const session = state.workSessions.find((item) => item.sessionId === dispatch.sessionId);
   if (session) {
     session.status = "failed";
+    // 原因要一起写到会话上：监控页的「工作会话」表读的是 session.blockedReason，
+    // 而这里只置了状态 —— 屏幕上是「失败 / -」，同一屏的派发行却给得出原因。
+    // 另一条置失败的路径（settleCellOwnedResources）一直是写的，这一条漏了。
+    session.blockedReason = reason;
     session.updatedAt = dispatch.updatedAt;
   }
   appendEvent(state, "command_failed", "AgentDispatch", dispatch.dispatchId, "agent-runtime", {projectId: dispatch.projectId, taskGroupId: dispatch.taskGroupId, reason});
@@ -6128,6 +6132,9 @@ export function expireStaleQueuedDispatches(state) {
     const session = (state.workSessions || []).find((item) => item.sessionId === dispatch.sessionId);
     if (session && !WORK_SESSION_SETTLED_STATUSES.includes(session.status)) {
       session.status = "recycled";
+      // 原因也要留在会话上：监控页「工作会话」表读的是 blockedReason，只置状态那一行就是
+      // 「已回收 / -」。上一行给 settleCellOwnedResources 传的就是这个原因，别在这儿丢掉。
+      session.blockedReason = dispatch.failureReason;
       session.updatedAt = at;
     }
     expired.push(dispatch.dispatchId);
