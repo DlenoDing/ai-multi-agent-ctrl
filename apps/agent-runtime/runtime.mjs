@@ -301,6 +301,17 @@ async function run(config) {
         const outboxPath = persistCheckpointOutbox(config, claimed.dispatch, checkpoint);
         if (process.env.AIMAC_AGENT_VERIFICATION_DEFER_CHECKPOINT === "true") {
           process.stdout.write(`checkpoint intentionally deferred for verification: ${claimed.dispatch.dispatch.dispatchId}\n`);
+          // 【这件事必须让控制面知道】。这个开关没有档位围栏：留在生产节点上，活干完了（提交、推送都做了）
+          // 而检查点永远不交 —— 派发卡在「进行中」，任务组永远关不掉，而人无从判断为什么。
+          // 原先只往本机 stdout 打一行，控制面一无所知。改成上报一条 attention 事件，
+          // 屏幕上就能看到是这个开关干的、以及怎么关掉。
+          await submitExecutionEvent(config, claimed.dispatch, "blocked", {
+            status: "attention",
+            progressPercent: 95,
+            summary: "检查点被【故意跳过】了：这台 agent 的环境里设了 AIMAC_AGENT_VERIFICATION_DEFER_CHECKPOINT=true。"
+              + "活已经做完（提交与推送都完成了），但控制面收不到检查点，这个派发会一直停在进行中。"
+              + "要让它继续，去那台节点清掉这个环境变量并重启 agent。"
+          }).catch(() => {});
         } else {
           try {
             const result = await submitCheckpoint(config, claimed.dispatch.remoteServices.checkpointPath, checkpoint, claimed.dispatch.dispatch?.claimEpoch);

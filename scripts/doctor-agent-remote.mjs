@@ -767,6 +767,22 @@ try {
   for (const requiredEvent of ["dispatch_received", "skill_synced", "executor_started", "executor_output", "repository_changed", "git_committed", "git_pushed", "checkpoint_prepared", "checkpoint_submitted"]) {
     if (!eventTypes.has(requiredEvent)) throw new Error(`Agent execution event stream missing ${requiredEvent}`);
   }
+  // 【故意跳过检查点这件事，控制面必须知道】。前面那一轮是带着
+  // AIMAC_AGENT_VERIFICATION_DEFER_CHECKPOINT=true 跑的：活干完了（提交、推送都做了），检查点却不交。
+  // 这个开关没有档位围栏 —— 留在生产节点上，派发会一直停在「进行中」、任务组永远关不掉，
+  // 而人无从判断。原先它只往本机 stdout 打一行，控制面一无所知。
+  {
+    const deferNotice = (eventLog.events || [])
+      .find((event) => String(event.summary || "").includes("AIMAC_AGENT_VERIFICATION_DEFER_CHECKPOINT"));
+    if (!deferNotice) {
+      throw new Error("检查点被故意跳过，控制面却一条事件都没收到 —— "
+        + "派发会一直停在「进行中」，而屏幕上看不出是那个环境变量干的");
+    }
+    if (deferNotice.status !== "attention") {
+      throw new Error(`跳过检查点的那条事件状态是 ${deferNotice.status}，不是 attention —— `
+        + "它不会出现在人的待处理面前，等于没说");
+    }
+  }
   if (eventLog.storage?.storageKind !== "project-jsonl" || !eventLog.storage?.storageRef?.includes("project-db/")) throw new Error("Agent execution events were not read from the project-level event store");
   const sessionEventLog = await json(`/api/work-sessions/${completed.sessionId}/execution-events?limit=80`, {token: login.sessionToken});
   // 人在控制台写下的三类规则、以及人已经拍板的定稿决策，都随内容包下载到磁盘 ——

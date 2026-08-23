@@ -3144,6 +3144,14 @@ const MUTATIONS = [
     expect: "却没有各自的状态词表"
   },
   {
+    name: "故意跳过检查点必须报给控制面",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "          await submitExecutionEvent(config, claimed.dispatch, \"blocked\", {\n            status: \"attention\",\n            progressPercent: 95,",
+    to: "          await Promise.resolve({\n            status: \"attention\",\n            progressPercent: 95,",
+    expect: "控制面却一条事件都没收到"
+  },
+  {
     name: "仿真造出来的权限单必须自报身份",
     file: "apps/agent-runtime/runtime.mjs",
     gate: "agent",
