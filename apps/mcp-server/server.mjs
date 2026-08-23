@@ -24,6 +24,7 @@ import {
   createId,
   decideSessionPlacement,
   digestOf,
+  workItemCreateStatus,
   ensureRuntimeCollections,
   evaluateRoleDrift,
   organizationQuotaCheck,
@@ -1260,19 +1261,10 @@ function riskLevelForTool(toolName) {
   return "L1";
 }
 
-// 审计里的"谁"：MCP 主体有三种（节点令牌 / 执行器凭据 / 远程 MCP 主体），都要记得出来。
-// 记成空或统一记成 "mcp" 等于把问责这一栏作废。
-function mcpWorkItemCreateStatus(value) {
-  if (value === undefined || value === null || value === "") return "ready";
-  if (["draft", "ready"].includes(value)) return value;
-  throw Object.assign(new Error("work_item_status_unknown"),
-    {status: 400, details: {status: String(value).slice(0, 60), supported: ["draft", "ready"]}});
-}
-
 // REST 侧（normalizeOwnerRole）把未登记的角色当场拒掉，理由写在那儿：认不出的角色被原样收下之后，
 // 派发时会静默绑上 orchestrator 的技能 —— agent 按别人的角色规则干活，而人以为自己指定了角色。
-// 这一侧原先一点校验都没有：同一个洞，孪生分支只补了一半（上面 status 那条注释讲的正是这件事，
-// 而它自己旁边这一行就没补）。词表用 core 里那份唯一的真相源，不在这里另抄一份。
+// 这一侧原先一点校验都没有：同一个洞，孪生分支只补了一半（隔壁 status 那条当时补了，
+// 而它旁边这一行就没补）。词表用 core 里那份唯一的真相源，不在这里另抄一份。
 function mcpWorkItemOwnerRole(value) {
   const role = String(value || "").trim() || "orchestrator";
   if (!REGISTERED_OWNER_ROLES.includes(role)) {
@@ -1282,6 +1274,8 @@ function mcpWorkItemOwnerRole(value) {
   return role;
 }
 
+// 审计里的「谁」：MCP 主体有三种（节点令牌 / 执行器凭据 / 远程 MCP 主体），都要记得出来。
+// 记成空或统一记成「mcp」等于把问责这一栏作废。
 function mcpPrincipalLabel(principal) {
   const kind = String(principal?.kind || "unknown");
   const id = String(principal?.id || "unknown");
@@ -1797,9 +1791,9 @@ function createWorkItem(state, args) {
   const workItem = {
     id: workItemId,
     title: assertHumanTextWithinLimit(args.title || "AI-native work item", "work_item_title", 200),
-    // 与 REST 侧同规（server.mjs 的 workItemCreateStatus）：不填＝ready 是合理的创建默认，
-    // 填错必须拒 —— 认不出的状态原先降级成"可开跑"。孪生分支只补一半是这类洞最常见的样子。
-    status: mcpWorkItemCreateStatus(args.status),
+    // 与 REST 侧【同一个函数】（core 的 workItemCreateStatus）：不填＝ready 是合理的创建默认，
+    // 填错必须拒 —— 认不出的状态原先降级成「可开跑」。此前两侧各抄一份，已合并。
+    status: workItemCreateStatus(args.status),
     ownerRole: mcpWorkItemOwnerRole(args.roleId || args.ownerRole),
     progress: 0,
     requirements: normalizeMcpStringList(args.requirements, [], "work_item_requirements"),

@@ -785,6 +785,7 @@ try {
   }
   if (eventLog.storage?.storageKind !== "project-jsonl" || !eventLog.storage?.storageRef?.includes("project-db/")) throw new Error("Agent execution events were not read from the project-level event store");
   const sessionEventLog = await json(`/api/work-sessions/${completed.sessionId}/execution-events?limit=80`, {token: login.sessionToken});
+  assertProjectShardAndEventFilesShareOneName();
   // 人在控制台写下的三类规则、以及人已经拍板的定稿决策，都随内容包下载到磁盘 ——
   // 但它们此前【一次都没有出现在交给模型的提示里】。技能集有一句显式的 "load skill workset"，
   // 规则一句都没有。也就是说整套规则体系与人工定稿闸门，在执行这一端是装饰性的。
@@ -1395,6 +1396,48 @@ try {
   await waitForChildExit(server, 3000);
   rmSync(sandbox, {recursive: true, force: true});
   if (server.exitCode && server.exitCode !== 0 && stderr) process.stderr.write(stderr);
+}
+
+// 状态分片（state-store）与事件段（project-event-store）说的是【同一个项目的同一批数据】，
+// 两边各自把 projectId 算成磁盘上的名字。这套算法此前在两个模块里各有一份逐字相同的实现，
+// 只改一处就会让两边指向不同目录 —— 而这件事不报错：一边照常写，另一边把对方的文件
+// 当野文件（「索引说有、存储给不出」那一族）。现在算法收在 lib/project-paths.mjs 一份，
+// 这条断言看的是【真实落盘的名字】：同一个项目的状态分片与事件文件，前缀必须逐字相同。
+function assertProjectShardAndEventFilesShareOneName() {
+  const dir = join(runtimeDir, "project-db");
+  if (!existsSync(dir)) throw new Error("project-db 目录不存在：状态分片与事件段都没落盘");
+  const names = readdirSync(dir);
+  const central = JSON.parse(readFileSync(join(runtimeDir, "control-plane-state.json"), "utf8"));
+  const shardPrefixes = new Map();
+  for (const entry of central.projectStateShards?.projects || []) {
+    const file = String(entry.storageRef || "").split("/").pop() || "";
+    if (file) shardPrefixes.set(entry.projectId, file.split(".")[0]);
+  }
+  const eventPrefixes = new Map();
+  for (const name of names) {
+    if (!name.includes(".execution-events")) continue;
+    const prefix = name.split(".")[0];
+    const indexPath = join(dir, `${prefix}.execution-events.index.json`);
+    if (!existsSync(indexPath)) continue;
+    const index = JSON.parse(readFileSync(indexPath, "utf8"));
+    if (index.projectId) eventPrefixes.set(index.projectId, {prefix, fileId: index.fileId});
+  }
+  const compared = [];
+  for (const [projectId, seen] of eventPrefixes) {
+    const shardPrefix = shardPrefixes.get(projectId);
+    if (!shardPrefix) continue;
+    compared.push(projectId);
+    if (shardPrefix !== seen.prefix) {
+      throw new Error(`项目 ${projectId} 的状态分片与事件文件落在两个名字下：分片 ${shardPrefix} / 事件 ${seen.prefix}`);
+    }
+    if (seen.fileId !== seen.prefix) {
+      throw new Error(`项目 ${projectId} 的事件索引自称 fileId=${seen.fileId}，而文件实际叫 ${seen.prefix}`);
+    }
+  }
+  if (!compared.length) {
+    throw new Error(`没有任何项目同时有状态分片和事件文件，这条断言什么都没核到（分片 ${shardPrefixes.size} 个、事件 ${eventPrefixes.size} 个）`);
+  }
+  console.log(`  ok  状态分片与事件文件同名：${compared.length} 个项目逐字比过（${compared.join("、")}）`);
 }
 
 function setupRepository() {

@@ -8647,7 +8647,7 @@ async function verifyEventIndexRebuildKeepsItsPromises(output) {
       const previousFsync = process.env.AIMAC_PROJECT_EVENT_FSYNC;
       try {
         const copy = join(fsyncDir, "event-store-under-test.mjs");
-        const shimmed = source.replace(
+        const shimmed = absolutizeLibImports(source, join(root, "apps/control-plane-ui/lib")).replace(
           /^import \{[^}]*\} from "node:fs";$/mu,
           [
             'import * as __fs from "node:fs";',
@@ -8660,8 +8660,12 @@ async function verifyEventIndexRebuildKeepsItsPromises(output) {
               + " readSync, renameSync, rmSync, statSync, writeFileSync} = __fs;"
           ].join("\n")
         );
-        if (shimmed === source) {
+        if (!shimmed.includes("__fsynced")) {
           output.push("落盘计数判据没接上：project-event-store 的 node:fs 导入行形状变了，换不进记账壳");
+          return;
+        }
+        if (relativeImportsRemain(shimmed)) {
+          output.push("落盘计数判据的副本里还留着相对导入，它会崩在模块加载上而不是给出结论");
           return;
         }
         writeFileSync(copy, shimmed);
@@ -11905,16 +11909,35 @@ function verifyUnknownStateSchemaIsRefused(output) {
 // 后两次是白花的：填缓存省下的只是下一个读者的一次解析，而解析 2MB 2.65ms 比克隆 4.84ms 还便宜。
 // 改成写完只让缓存失效之后，一轮 50.6ms → 42.7ms。这条判据把它钉住 ——
 // 「更快且仍然全绿」里的全绿可能是自己改出来的，所以既数克隆次数，也验读回来的确实是新值。
+// 「把模块复制一份再跑」这套办法（出厂那份一行不动）现在有两处在用。副本不在原目录里，
+// 所以它的相对导入必须全改成绝对的 —— 原先各自只点名改写了自己认识的那一条，
+// 被测模块一旦多出一条新的相对导入，判据就崩在模块加载上（ERR_MODULE_NOT_FOUND），
+// 既不是红成一句人话，也说不出是谁的问题。这里一次改写全部，并由调用方自证一条没剩。
+function absolutizeLibImports(source, libDir) {
+  return source.replace(/from "\.\/([A-Za-z0-9._-]+\.mjs)"/gu,
+    (unused, name) => `from ${JSON.stringify(join(libDir, name))}`);
+}
+
+// 副本里还留着相对导入就别往下跑了 —— 那条路的尽头是模块加载崩溃，不是结论。
+function relativeImportsRemain(source) {
+  return /from "\.\.?\//u.test(source);
+}
+
 async function verifyStateWriteDoesNotCloneTheWorld(output) {
   const dir = mkdtempSync(join(tmpdir(), "aimac-write-clone-"));
   try {
     const copy = join(dir, "state-store-under-test.mjs");
     const original = readFileSync(join(root, "apps/control-plane-ui/lib/state-store.mjs"), "utf8");
-    // 相对导入要改成绝对的：副本不在原目录里。
+    // 相对导入要改成绝对的：副本不在原目录里。原先只点名改写了 pg-sync-store 那一条 ——
+    // state-store 后来多了一条相对导入，这道判据当场 ERR_MODULE_NOT_FOUND（不是红成一句人话，
+    // 是崩在模块加载上）。改成【所有】相对导入一律改写，并在下面自证一条都没剩。
     const shimmed = `export const __clones = [];\nconst __clone = (value) => { __clones.push(JSON.stringify(value ?? null).length); return structuredClone(value); };\n`
-      + original.replace(/from "\.\/pg-sync-store\.mjs"/u,
-        `from ${JSON.stringify(join(root, "apps/control-plane-ui/lib/pg-sync-store.mjs"))}`)
+      + absolutizeLibImports(original, join(root, "apps/control-plane-ui/lib"))
         .replaceAll("structuredClone(", "__clone(");
+    if (relativeImportsRemain(shimmed)) {
+      output.push("克隆计数判据的副本里还留着相对导入，它会崩在模块加载上而不是给出结论");
+      return;
+    }
     if (!shimmed.includes("__clone(")) {
       output.push("克隆计数判据没接上：state-store 里已经没有 structuredClone 了，提取形状要跟上");
       return;

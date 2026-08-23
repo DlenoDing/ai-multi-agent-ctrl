@@ -8464,6 +8464,19 @@ export const EXECUTION_TOPOLOGY_MODES = ["serial", "parallel_active", "downgrade
 export const EXECUTION_TOPOLOGY_RUNNER_KINDS = ["work_session", "subagent", "git_worktree", "external_runner", "none"];
 export const EXECUTION_TOPOLOGY_ISOLATIONS = ["new_work_session", "forked_workspace", "git_worktree", "equivalent", "none"];
 
+export const WORK_ITEM_CREATE_STATUSES = ["draft", "ready"];
+
+// 建工作项时把 status 归一化。REST（server.mjs）与 MCP（mcp-server）两条路此前各有一份
+// 【逐字相同】的实现（workItemCreateStatus / mcpWorkItemCreateStatus）：两个名字暗示有区别，
+// 实际没有。「同一件事两条路、只改到一条」是本仓反复出问题的形态（今天已撞三次），
+// 所以放在真相源这一份，两侧都 import 它。
+export function workItemCreateStatus(value) {
+  if (value === undefined || value === null || value === "") return "ready";
+  if (WORK_ITEM_CREATE_STATUSES.includes(value)) return value;
+  throw Object.assign(new Error("work_item_status_unknown"),
+    {status: 400, details: {status: String(value).slice(0, 60), supported: WORK_ITEM_CREATE_STATUSES}});
+}
+
 export const SHARED_DEFINITION_TYPES = ["terminology", "api_contract", "data_model", "event_schema", "status_semantics", "error_code", "design_token", "quality_standard", "permission_semantics", "instruction_format", "semantic_contract"];
 export const SHARED_DEFINITION_CONFLICT_POLICIES = ["block_and_request_canonical_decision", "owner_reconciles_then_republish"];
 const SHARED_DEFINITION_BLOCKING_STATUSES = ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"];

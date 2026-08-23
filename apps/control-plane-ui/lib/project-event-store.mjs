@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { legacySafeProjectId, safeProjectId } from "./project-paths.mjs";
 
 export function appendProjectExecutionEvent(runtimeDir, event) {
   return withProjectEventLock(runtimeDir, event.projectId, () => {
@@ -658,17 +659,7 @@ function fsyncDirectory(path) {
   }
 }
 
-function safeProjectId(projectId) {
-  const raw = String(projectId || "unknown");
-  return `p_${createHash("sha256").update(raw).digest("hex").slice(0, 24)}`;
-}
 
-function legacySafeProjectId(projectId) {
-  const raw = String(projectId || "unknown");
-  const safe = raw.replace(/[^A-Za-z0-9._-]+/gu, "_") || "unknown";
-  if (safe === raw) return safe;
-  return `${safe}-${createHash("sha256").update(raw).digest("hex").slice(0, 10)}`;
-}
 
 function withProjectEventLock(runtimeDir, projectId, fn) {
   const lockPath = join(runtimeDir, "locks", `${safeProjectId(projectId)}.execution-events.lock`);

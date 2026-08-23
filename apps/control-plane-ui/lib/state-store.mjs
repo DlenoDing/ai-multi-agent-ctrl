@@ -3,6 +3,7 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, re
 import { hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { pgEnsureTables, pgReadProjectShards, pgReadState, pgReadStateWithShards, pgWriteStateWithProjectShards } from "./pg-sync-store.mjs";
+import { legacySafeProjectId, safeProjectId } from "./project-paths.mjs";
 
 const tableName = "aimac_control_plane_state";
 const projectShardTableName = "aimac_project_state_shards";
@@ -950,10 +951,6 @@ function writeRuntimeJsonCentralState(centralState, options) {
   fsyncDirectory(dirname(options.statePath));
 }
 
-function safeProjectId(projectId) {
-  const raw = String(projectId || "unknown");
-  return `p_${createHash("sha256").update(raw).digest("hex").slice(0, 24)}`;
-}
 
 function runtimeJsonShardGeneration(state) {
   return `sv${Number(state.stateVersion || 0)}-${randomBytes(6).toString("hex")}`;
@@ -963,12 +960,6 @@ function runtimeJsonProjectShardName(projectId, generation) {
   return `${safeProjectId(projectId)}.${String(generation || "legacy").replace(/[^A-Za-z0-9._-]+/gu, "_")}.state.json`;
 }
 
-function legacySafeProjectId(projectId) {
-  const raw = String(projectId || "unknown");
-  const safe = raw.replace(/[^A-Za-z0-9._-]+/gu, "_") || "unknown";
-  if (safe === raw) return safe;
-  return `${safe}-${createHash("sha256").update(raw).digest("hex").slice(0, 10)}`;
-}
 
 function runtimeJsonShardNamesFromCentral(centralState = {}) {
   const metadata = runtimeJsonShardMetadataFromCentral(centralState);

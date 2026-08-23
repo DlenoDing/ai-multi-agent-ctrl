@@ -76,6 +76,7 @@ import {
   defaultModelCapabilities,
   DEFAULT_ORGANIZATION_ID,
   digestOf,
+  workItemCreateStatus,
   effectiveProjectConfig,
   effectiveTaskGroupConfig,
   ensureRuntimeCollections,
@@ -410,12 +411,6 @@ function taskGroupCreateStatus(value) {
     {status: 400, details: {status: String(value).slice(0, 60), supported: TASK_GROUP_STATUSES}});
 }
 
-function workItemCreateStatus(value) {
-  if (value === undefined || value === null || value === "") return "ready";
-  if (["draft", "ready"].includes(value)) return value;
-  throw Object.assign(new Error("work_item_status_unknown"),
-    {status: 400, details: {status: String(value).slice(0, 60), supported: ["draft", "ready"]}});
-}
 
 function audit(state, actor, action, subject, result = "succeeded") {
   ensureControlState(state);
@@ -579,7 +574,7 @@ function beginGuardedWrite(req, state, action, subject, resourceScope = inferRes
     // 而且它先跑：被活跃授权引用、本该被捞回来的那条，在保护看到之前就没了。
     // 容量只由写入点 capPolicyDecisionsKeepingReferenced 管（那里带引用保护）。
     audit(state, "policy-engine", "policy_decision_denied", subject, "denied");
-    commitDirectStateWrite(state);
+    commitUnguardedWrite(state);
     return {status: 403, payload: {error: "policy_denied", actor, requiredPermission, resourceScope}};
   }
   const command = {
@@ -2304,12 +2299,11 @@ function parseBody(req) {
   });
 }
 
-function commitGatewayWrite(state) {
-  state.stateVersion = Number(state.stateVersion || 0) + 1;
-  writeState(state);
-}
-
-function commitDirectStateWrite(state) {
+// 不走 guarded write 的那些路径（agent 网关、以及少数直接改状态的路由）自己把版本号推一格再落盘。
+// 这里原先是【两个逐字相同的函数】：commitGatewayWrite 与 commitDirectStateWrite。
+// 两个名字暗示有区别，实际没有 —— 而「同一件事两条路、只有一条被改到」是本仓反复出问题的形态
+//（今天已经撞到三次：网关/分片两个上限、幂等两个旋钮、读取两条拼装路径）。合成一个。
+function commitUnguardedWrite(state) {
   state.stateVersion = Number(state.stateVersion || 0) + 1;
   writeState(state);
 }
@@ -2401,7 +2395,7 @@ async function waitForAgentControlCommandsDirect(node, options = {}) {
     const result = listAgentControlCommands(latest, currentNode, options);
     if (result.deliveredCount) {
       try {
-        commitGatewayWrite(latest);
+        commitUnguardedWrite(latest);
       } catch (error) {
         if (!isStateStoreConflict(error)) throw error;
       }
@@ -2504,7 +2498,7 @@ function retryExecutionEventProjection(req, body) {
         : appendProjectExecutionEvent(runtimeDir, prepared.event);
       if (storage.event && !storage.duplicate) notifyLongPollWaiters(`project-events:${storage.event.projectId}`);
       const result = recordAgentExecutionEvent(latest, latestNode, storage.event || storedEvent || prepared.event, {allowHistoricalNodeBinding: Boolean(storedEvent || storage.duplicate)});
-      commitGatewayWrite(latest);
+      commitUnguardedWrite(latest);
       return {ok: true, result, storage};
     } catch (error) {
       if (!isStateStoreConflict(error)) return {ok: false, error: error.message};
@@ -2850,7 +2844,7 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/agent/v1/register") {
     const result = registerAgentNode(state, body, {joinToken: bearerToken(req), publicUrl: publicEndpoint(req), idempotencyKey: req.headers["idempotency-key"]});
     audit(state, "agent-gateway", "agent_node_register", `AgentRuntimeNode:${result.node.nodeId}`);
-    commitGatewayWrite(state);
+    commitUnguardedWrite(state);
     json(res, 201, result);
     return;
   }
@@ -2866,7 +2860,7 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/agent/v1/heartbeat") {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     const result = heartbeatAgentNode(state, node, body, {presentedToken: bearerToken(req)});
-    if (result.persistRequired !== false) commitGatewayWrite(state);
+    if (result.persistRequired !== false) commitUnguardedWrite(state);
     json(res, 200, result);
     return;
   }
@@ -2874,7 +2868,7 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/agent/v1/self-check") {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     const result = selfCheckAgentNode(state, node, body);
-    commitGatewayWrite(state);
+    commitUnguardedWrite(state);
     json(res, result.ok ? 200 : 409, result);
     return;
   }
@@ -2895,7 +2889,7 @@ async function handleApi(req, res) {
   if (req.method === "POST" && nodeControlAckMatch) {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     const result = ackAgentControlCommand(state, node, nodeControlAckMatch[1], body);
-    commitGatewayWrite(state);
+    commitUnguardedWrite(state);
     json(res, 200, result);
     return;
   }
@@ -2927,7 +2921,7 @@ async function handleApi(req, res) {
     }
     const result = recordAgentExecutionEvent(state, node, storage.event || prepared.event, {allowHistoricalNodeBinding: Boolean(prepared.historical || storage.duplicate)});
     try {
-      commitGatewayWrite(state);
+      commitUnguardedWrite(state);
       json(res, 202, {...result, storage, centralStateUpdated: true});
     } catch (error) {
       if (!isStateStoreConflict(error)) throw error;
@@ -2940,7 +2934,7 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/agent/v1/dispatches/next") {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     const result = claimNextDispatch(state, node, {runtimeDir, claimTtlSeconds: body.claimTtlSeconds});
-    if (result.dispatch) commitGatewayWrite(state);
+    if (result.dispatch) commitUnguardedWrite(state);
     json(res, 200, result);
     return;
   }
@@ -3029,13 +3023,13 @@ async function handleApi(req, res) {
       repositoryOutputTargetRefs: [target.targetId]};
     const result = acceptAgentCheckpoint(state, boundBody, {root: verificationRoot, repositoryRoot: verificationRoot});
     if (!result.accepted) {
-      commitGatewayWrite(state);
+      commitUnguardedWrite(state);
       json(res, result.status || 409, result);
       return;
     }
     finishNodeDispatch(state, node, dispatch.dispatchId, true);
     audit(state, `agent-node:${node.nodeId}`, "checkpoint_submit", `AgentDispatch:${dispatch.dispatchId}`);
-    commitGatewayWrite(state);
+    commitUnguardedWrite(state);
     json(res, 201, result);
     return;
   }
@@ -3122,7 +3116,7 @@ async function handleApi(req, res) {
     routeBlockedDispatchToHumanDecision(state, dispatch);
     finishNodeDispatch(state, node, dispatch.dispatchId, false);
     audit(state, `agent-node:${node.nodeId}`, `dispatch_${reportedStatus}`, `AgentDispatch:${dispatch.dispatchId}`, reportedStatus);
-    commitGatewayWrite(state);
+    commitUnguardedWrite(state);
     json(res, 200, {ok: true, dispatchId: dispatch.dispatchId, status: dispatch.status});
     return;
   }
@@ -3176,7 +3170,7 @@ async function handleApi(req, res) {
       // 登录失败并没有人审批过，台账上写"已驳回"会让人以为有人拒了他。
       // 真实台账读出来就是"登录 Account:x 已驳回"（拿真实状态渲染时读到的）。
       audit(state, "auth-service", "auth_login", `Account:${email}`, "credentials_invalid");
-      commitDirectStateWrite(state);
+      commitUnguardedWrite(state);
       recordFailedLogin(req);
       json(res, 401, {error: "invalid_credentials"});
       return;
@@ -3239,7 +3233,7 @@ async function handleApi(req, res) {
     const activeCap = Math.max(200, Number(process.env.AIMAC_ACTIVE_SESSION_CAP || 5000));
     state.authSessions = liveSessions.slice(0, activeCap);
     audit(state, "auth-service", "auth_login", `Account:${account.accountId}`);
-    commitDirectStateWrite(state);
+    commitUnguardedWrite(state);
 	    json(res, 200, {sessionToken, expiresAt, account: {accountId: account.accountId, accountType: account.accountType, organizationId: account.organizationId || null, defaultProjectId: account.defaultProjectId || null, email: account.email, displayName: account.displayName, roles: account.roles, permissions: account.permissions, effectivePermissions: accountEffectivePermissions(state, account), passwordSet: Boolean(account.authPolicy?.passwordSet)}});
 	    return;
 	  }
@@ -3254,7 +3248,7 @@ async function handleApi(req, res) {
       session.revokedReason = "logout";
       session.updatedAt = session.revokedAt;
       audit(state, "auth-service", "auth_logout", `Account:${session.accountId}`);
-      commitDirectStateWrite(state);
+      commitUnguardedWrite(state);
     }
     json(res, 200, {ok: true});
     return;
@@ -3715,7 +3709,7 @@ async function handleApi(req, res) {
       recordCheckpointRejection(state, body, result);
       // 走直写提交：这条路径没有 finishGuardedWrite，而裸 writeState 会被"未推进版本号"的守卫拦下
       // （它就是为了拦住这种写法而存在的）。
-      commitDirectStateWrite(state);
+      commitUnguardedWrite(state);
       json(res, result.status || 409, {
         error: result.error,
         ...(result.deniedPaths ? {deniedPaths: result.deniedPaths} : {}),
@@ -5479,7 +5473,7 @@ async function handleApi(req, res) {
     account.authPolicy = {...(account.authPolicy || {}), method: account.authPolicy?.method || "password", passwordSet: true};
     account.updatedAt = now();
     audit(state, account.accountId, "auth_change_password", `Account:${account.accountId}`);
-    commitDirectStateWrite(state);
+    commitUnguardedWrite(state);
     json(res, 200, {ok: true, accountId: account.accountId, passwordSet: true});
     return;
   }
@@ -6034,7 +6028,7 @@ async function handleApi(req, res) {
       return json(res, error.status || 500, {error: error.message});
     }
     audit(state, `agent-node:${node.nodeId}`, "human_confirmation_request", `HumanConfirmationRequest:${request.requestId}`);
-    commitGatewayWrite(state);
+    commitUnguardedWrite(state);
     json(res, 201, {request});
     return;
   }
@@ -6046,7 +6040,7 @@ async function handleApi(req, res) {
     if (!request || request.nodeId !== node.nodeId) return json(res, 404, {error: "human_confirmation_not_found"});
     if (url.searchParams.get("consume") === "true" && request.status === "answered") {
       consumeHumanConfirmation(state, request.requestId, {actor: `agent-node:${node.nodeId}`});
-      commitGatewayWrite(state);
+      commitUnguardedWrite(state);
     }
     json(res, 200, {request});
     return;

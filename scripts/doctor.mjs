@@ -1352,6 +1352,30 @@ try {
     if (normalList.response.status !== 201 || normalList.payload.workItem?.requirements?.length !== 2) {
       throw new Error(`正常长度的要求清单被上限挡掉了（HTTP ${normalList.response.status}）—— 守卫过头了`);
     }
+    // 建单元的 status 归一化，REST 与 MCP 此前各有一份【逐字相同】的实现，现已合成 core 里的一份
+    // （workItemCreateStatus）。合了之后风险换了个样子：不是两份分叉，而是【某一侧不再调它】——
+    // 那一侧会把认不出的状态原样收下，单元带着一个谁也不认的状态进入派发。
+    // MCP 侧由 doctor-mcp 钉着，这里钉 REST 侧：认不出要拒，并且要把合法取值回给调用方。
+    const bogusStatus = await jsonFetch(port, "/api/task-groups/tg_runtime_management/work-items", {
+      method: "POST", headers: {authorization: systemAuth, "Idempotency-Key": "doctor-bogus-status"},
+      body: JSON.stringify({title: "状态写错的单元", ownerRole: "agent-runtime", status: "in_progress"})
+    });
+    if (bogusStatus.response.status !== 400 || bogusStatus.payload.error !== "work_item_status_unknown") {
+      throw new Error(`REST 侧收下了认不出的单元状态 in_progress（HTTP ${bogusStatus.response.status} ${bogusStatus.payload.error || ""}）`);
+    }
+    // REST 与 MCP 的报文外形不同（这一侧把 details 摊平进 payload，MCP 侧嵌在 details 里），
+    // 但「合法取值必须回给调用方」这条要求两侧一样 —— 只报一个码，人只能去翻源码。
+    if (JSON.stringify(bogusStatus.payload.supported || []) !== JSON.stringify(["draft", "ready"])) {
+      throw new Error(`REST 侧拒了却没告诉调用方合法取值是什么：${JSON.stringify(bogusStatus.payload)}`);
+    }
+    // 正面对照走【同一条路由、同一把钥匙】，只差 status 这一个字段 —— 否则「拒了」可能是别的门拒的。
+    const draftItem = await jsonFetch(port, "/api/task-groups/tg_runtime_management/work-items", {
+      method: "POST", headers: {authorization: systemAuth, "Idempotency-Key": "doctor-draft-status"},
+      body: JSON.stringify({title: "草稿单元", ownerRole: "agent-runtime", status: "draft"})
+    });
+    if (draftItem.response.status !== 201 || draftItem.payload.workItem?.status !== "draft") {
+      throw new Error(`合法的 draft 状态也被挡掉了（HTTP ${draftItem.response.status}）—— 守卫过头了`);
+    }
     const after = statSync(join(root, doctorRuntimeDir, "control-plane-state.json")).size;
     if (after > before + 64 * 1024) {
       throw new Error(`被拒的超长写入仍然把状态撑大了：${(before / 1024).toFixed(0)}KB → ${(after / 1024).toFixed(0)}KB`);

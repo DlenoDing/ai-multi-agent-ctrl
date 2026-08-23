@@ -885,7 +885,7 @@ const MUTATIONS = [
     name: "MCP 侧建工作项也不得降级未知状态",
     file: "apps/mcp-server/server.mjs",
     check: "verifyUnknownEnumValuesAreRefusedNotCoerced",
-    from: "    status: mcpWorkItemCreateStatus(args.status),",
+    from: "    status: workItemCreateStatus(args.status),",
     to: '    status: ["draft", "ready"].includes(args.status) ? args.status : "ready",',
     expect: "降级成 ready"
   },
@@ -3142,6 +3142,38 @@ const MUTATIONS = [
     from: 'statusBadge("grant"',
     to: 'statusBadge("grantX"',
     expect: "却没有各自的状态词表"
+  },
+  {
+    name: "REST 侧建单元必须走那份唯一的状态归一化（不调它＝认不出的状态原样收下）",
+    file: SERVER,
+    gate: "doctor",
+    from: "    status: workItemCreateStatus(input.status),",
+    to: '    status: input.status || "ready",',
+    expect: "收下了认不出的单元状态"
+  },
+  {
+    name: "项目目录命名不许有第二份实现",
+    file: STORE,
+    gate: "specs",
+    from: 'import { legacySafeProjectId, safeProjectId } from "./project-paths.mjs";',
+    to: 'import { legacySafeProjectId } from "./project-paths.mjs";\nfunction safeProjectId(projectId) { return `p_${String(projectId)}`; }',
+    expect: "must not keep its own copy of the project directory naming"
+  },
+  {
+    name: "两个存储必须都从真相源取项目目录名",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    gate: "specs",
+    from: 'import { legacySafeProjectId, safeProjectId } from "./project-paths.mjs";',
+    to: 'const safeProjectId = (projectId) => `p_${String(projectId)}`;\nconst legacySafeProjectId = (projectId) => String(projectId);',
+    expect: "must take project directory names from lib/project-paths.mjs"
+  },
+  {
+    name: "同一个项目的状态分片与事件段必须落在同一个名字下",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    gate: "agent",
+    from: '  const primary = join(runtimeDir, "project-db", `${safeProjectId(projectId)}.${suffix}`);',
+    to: '  const primary = join(runtimeDir, "project-db", `${legacySafeProjectId(projectId)}.${suffix}`);',
+    expect: "落在两个名字下"
   },
   {
     name: "故意跳过检查点必须报给控制面",
