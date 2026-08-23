@@ -3152,6 +3152,14 @@ const MUTATIONS = [
     expect: "收下了认不出的单元状态"
   },
   {
+    name: "勘察工具截断时必须自报（它不报红，只会把错的东西摆给你看）",
+    file: "scripts/console-behaviour-check.mjs",
+    gate: "console",
+    from: "  if (!limit || text.length <= limit) return text;",
+    to: "  if (!limit) return text;\n  return text.slice(0, limit);",
+    expect: "勘察工具截断时必须自报"
+  },
+  {
     name: "屏幕上的 MCP 工具数不许手写（手写的数会漂）",
     file: CORE,
     gate: "mcp",

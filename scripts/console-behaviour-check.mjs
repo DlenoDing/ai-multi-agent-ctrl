@@ -304,6 +304,18 @@ function checkWiring(probe) {
 // 真实运行之后的状态里有编不出来的组合。用法：
 //   AIMAC_RENDER_REAL=<运行目录> node scripts/console-behaviour-check.mjs
 // 只打印、不断言 —— 它是勘察工具，不是判据（判据要能报红，而"读一遍"报不了红）。
+// 打印时的截断【必须自报】。本工具是用来找「静默截断」这类缺陷的，而它自己就在
+// 静静地砍掉每页 900 字之后的内容 —— 实测差点据此得出「这张卡没有『你没权限』那句提示」
+// 的相反结论（那句话就在被砍掉的部分里）。截了就说清截在哪、总共多少。
+// 想看全文：AIMAC_RENDER_CHARS=0（不限）或给一个更大的数。
+const renderChars = process.env.AIMAC_RENDER_CHARS === undefined
+  ? 900 : Number(process.env.AIMAC_RENDER_CHARS);
+const clip = (text, limit = renderChars) => {
+  if (!limit || text.length <= limit) return text;
+  return `${text.slice(0, limit)}\n…（本页文本共 ${text.length} 字，这里只打了前 ${limit} 字 ——`
+    + " 下面还有内容，不是页面到此为止；要看全文加 AIMAC_RENDER_CHARS=0）";
+};
+
 if (process.env.AIMAC_RENDER_REAL) {
   const dir = process.env.AIMAC_RENDER_REAL;
   const {readStoredState} = await import(`${root}/apps/control-plane-ui/lib/state-store.mjs`);
@@ -357,8 +369,8 @@ if (process.env.AIMAC_RENDER_REAL) {
   const project = (real.projects || [])[0];
   const taskGroup = (real.taskGroups || [])[0];
   console.log(`=== 真实状态：${(real.projects || []).length} 个项目、${(real.taskGroups || []).length} 个任务组\n`);
-  console.log("=== 任务组页 ===\n" + strip(probe.renderTaskGroupsWith(real, who, project?.id, taskGroup?.id, null)).slice(0, 2400));
-  console.log("\n=== 监控页 ===\n" + strip(probe.renderMonitorWith(real, who, project?.id)).slice(0, 1200));
+  console.log("=== 任务组页 ===\n" + clip(strip(probe.renderTaskGroupsWith(real, who, project?.id, taskGroup?.id, null)), renderChars && Math.max(renderChars, 2400)));
+  console.log("\n=== 监控页 ===\n" + clip(strip(probe.renderMonitorWith(real, who, project?.id)), renderChars && Math.max(renderChars, 1200)));
   // 其余各页走通用入口。渲染不出来（抛异常）本身就是发现：真实数据里有夹具没有的组合。
   // 页 id 必须是真的存在的那几个。第一版写的是 orgs / agents / rules —— 产品对认不出的页 id
   // 会静默回落到默认页，于是这三页渲染出来全是【系统概览】，而我在读它们时以为读的是组织管理。
@@ -387,7 +399,7 @@ if (process.env.AIMAC_RENDER_REAL) {
     try {
       await probe.loadPageWith(real, who, project?.id, page, fetchStub);
       const text = strip(documentRoot.innerHTML || documentRoot.textContent || "");
-      console.log(`\n=== ${page} ===\n` + (text.slice(0, 900) || "（空）"));
+      console.log(`\n=== ${page} ===\n` + (clip(text) || "（空）"));
       if (unserved.size) {
         console.log(`  ↑ 这一页还向 ${[...unserved].join("、")} 取数，勘察桩没有答案 ——`
           + " 上面与之相关的空白是工具的限制，不是产品的空态");
@@ -417,6 +429,16 @@ function check(name, condition, detail) {
   }
   if (!condition) failures.push(`${name}: ${detail}`);
 }
+
+// 勘察工具自己的截断必须自报。它是用来找「静默截断」这类缺陷的，而它每页只打前 900 字、
+// 一声不响 —— 实测据此差点得出「这张卡缺少『你在这个组上没权限』那句提示」的相反结论，
+// 而那句话就在被砍掉的部分里。勘察工具不报红，只是把错的东西摆给你看，所以它的诚实要单独钉。
+check("勘察工具截断时必须自报（否则会让人得出相反结论）",
+  clip("字".repeat(50), 10).includes("只打了前 10 字") && clip("字".repeat(50), 10).includes("共 50 字"),
+  clip("字".repeat(50), 10).slice(0, 80));
+check("没超长时不许硬塞截断提示（那会把完整的一页说成不完整）",
+  clip("短文本", 10) === "短文本" && clip("字".repeat(50), 0) === "字".repeat(50),
+  clip("短文本", 10));
 
 // 场景：人在「打回并要求重做」表单里写了一大段理由，提交时撞上 expectedRound 409
 // （并发下的正常回答，不是故障）。整页重渲染之后，那段理由必须还在。
