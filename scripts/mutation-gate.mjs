@@ -3135,6 +3135,14 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "准入决策不许每记一条就整份重裁",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "    state.admissionDecisionsRetainedFloor = state.admissionDecisions.length;",
+    to: "",
+    expect: "裁过了却没记下「裁完剩多少」"
+  },
+  {
     name: "惰性裁剪要记下地板（否则退回每次决策都扫全量）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

@@ -15141,13 +15141,19 @@ function verifyPerScopeRecordsSurviveTheirCap(output) {
   // 引用集合只在【真要裁的那一刻】才建（原先每次决策都建一遍，要扫全部会话/派发 ——
   // 一轮编排每单元一次就是平方项，实测 5000 单元约 1.7 秒）。判它有没有生效，看地板有没有被记下来：
   // 不记地板，触发线就只能相对名义上限，而被引用的一旦多于上限，「超了」恒成立 → 又回到每次都建。
-  for (const [field, floorField] of [["modelSelectionDecisions", "modelSelectionDecisionsRetainedFloor"],
-    ["sessionPlacementDecisions", "sessionPlacementDecisionsRetainedFloor"]]) {
-    if ((state[field] || []).length < 160) continue;  // 这一轮没压到上限，上面的覆盖自报会说
+  for (const [field, floorField, fieldCap] of [
+    ["modelSelectionDecisions", "modelSelectionDecisionsRetainedFloor", 160],
+    ["sessionPlacementDecisions", "sessionPlacementDecisionsRetainedFloor", 160],
+    // 准入决策是这三个里最贵的：它的保留规则是「每个活单元留最新一条」，
+    // 于是留存恒高于名义上限 400，「超了」永真 —— 原先每记一条就整份重裁一遍，
+    // 而裁一遍要把全部任务组的工作项摊平。实测 8000 单元一轮 3.4 秒里 2.5 秒花在这。
+    ["admissionDecisions", "admissionDecisionsRetainedFloor", 400]]) {
+    if ((state[field] || []).length < fieldCap) continue;  // 这一轮没压到上限，上面的覆盖自报会说
     if (!(Number(state[floorField] || 0) > 0)) {
+      const scans = field === "admissionDecisions" ? "把全部任务组的工作项摊平一遍" : "重建一遍引用集合（扫全部会话/派发）";
       output.push(`${field} 裁过了却没记下「裁完剩多少」（${floorField}=${state[floorField]}）——`
-        + " 触发线只能相对名义上限，而被引用的一旦多于上限就恒超，于是每次决策都要重建一遍引用集合"
-        + "（要扫全部会话/派发，一轮编排每单元一次＝平方项）");
+        + ` 触发线只能相对名义上限，而它的保留规则让留存恒高于上限，「超了」永真，于是每记一条就要${scans}`
+        + "（一轮编排每单元一次＝平方项）");
     }
   }
 

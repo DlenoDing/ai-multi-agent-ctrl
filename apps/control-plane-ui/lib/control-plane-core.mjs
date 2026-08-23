@@ -1912,7 +1912,18 @@ function recordAdmissionDecision(state, input = {}) {
     decidedAt: new Date().toISOString()
   };
   const cap = Math.max(50, Number(process.env.AIMAC_ADMISSION_DECISION_CAP || 400));
-  state.admissionDecisions = capAdmissionDecisions([decision, ...state.admissionDecisions], state, cap);
+  state.admissionDecisions = [decision, ...state.admissionDecisions];
+  // 这里原先【每记一条决策就整份裁一遍】，而裁一遍要把全部任务组的工作项摊平成 liveCellIds。
+  // 更要命的是它的保留规则「每个活单元留最新一条」：8000 个活单元时留存恒在 8400，
+  // 「length > 400」永真 —— 于是一轮编排里每个单元都触发一次 O(全部单元) 的重扫。
+  // 实测 8000 单元一轮 3.4 秒，其中 2.5 秒（72.8%）花在这一个函数上，曲线是标准的平方。
+  // 触发线相对【上一次裁完剩下多少】，涨过 CAP_SLACK 才裁；周期末尾那道 capBoundedHistories
+  // 本来就会再兜一次，所以上界一点没松。
+  const admissionFloor = Math.max(cap, Number(state.admissionDecisionsRetainedFloor || 0));
+  if (state.admissionDecisions.length > admissionFloor + CAP_SLACK) {
+    state.admissionDecisions = capAdmissionDecisions(state.admissionDecisions, state, cap);
+    state.admissionDecisionsRetainedFloor = state.admissionDecisions.length;
+  }
   return decision;
 }
 
