@@ -92,6 +92,12 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const runtimeDir = resolve(root, process.env.AIMAC_RUNTIME_DIR || ".runtime");
 const statePath = resolve(runtimeDir, "control-plane-state.json");
 const seedPath = resolve(root, "data", "seed-state.json");
+// 仓库根一律由服务端定。原先这四处写的是 `args.repositoryRoot || repositoryRoot` ——
+// 调用方给的【优先】，而这个值会流进 git 子进程的 cwd、以及检查点证据校验要比对的那个仓库：
+// 谁调用谁就能指定"拿哪个仓库来验我声称的提交"。全仓没有任何合法调用方传过它
+// （只有判据自己为了造「取不到仓库」的情形传过一次，那条已改走服务端选项）。
+// 词表里那个键留着无妨 —— 只要没有代码读它，它就传不进任何地方；
+// 「谁都不许读 args.repositoryRoot」由 contract-check 的可达性账本钉住。
 const repositoryRoot = resolve(process.env.AIMAC_REPOSITORY_ROOT || root);
 const mcpAuditPath = resolve(runtimeDir, "mcp-audit.jsonl");
 const agentJoinCommand = "create one-time join token in project UI, then run the generated curl installer command on the Agent host";
@@ -1350,7 +1356,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "scheduler-mcp.work_assign":
       return assignWorkItem(state, args);
     case "orchestration-mcp.orchestrator_run":
-      return runAutonomousCycle(state, {...args, root: args.repositoryRoot || repositoryRoot, runtimeDir});
+      return runAutonomousCycle(state, {...args, root: repositoryRoot, runtimeDir});
     case "orchestration-mcp.state_get":
       return stateGet(state, args, context);
     case "room-mcp.room_join":
@@ -1438,7 +1444,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "evidence-mcp.artifact_register":
       return artifactRegister(state, args);
     case "evidence-mcp.checkpoint_submit":
-      return acceptAgentCheckpoint(state, args, {root: args.repositoryRoot || repositoryRoot});
+      return acceptAgentCheckpoint(state, args, {root: repositoryRoot});
     case "evidence-mcp.test_result_submit":
       // 缺省作用域不得等于放行：这些实现在 taskGroupId/roomId 缺省时会落到控制面自己的
       // 任务组（tg_runtime_management）。受限主体必须显式点名一个它有权的作用域，
@@ -2174,7 +2180,7 @@ function nodeProbe(state, args) {
 }
 
 function sessionStart(state, args) {
-  const contract = buildTaskContract(state, {...args, root: args.repositoryRoot || repositoryRoot});
+  const contract = buildTaskContract(state, {...args, root: repositoryRoot});
   return {contract, session: state.workSessions.find((item) => item.sessionId === contract.sessionId)};
 }
 
@@ -2679,7 +2685,7 @@ export function approvalResolve(state, args) {
 function roleDriftGuardBind(state, args) {
   const contract = args.sessionId
     ? state.agentTaskContracts.find((item) => item.sessionId === args.sessionId)
-    : buildTaskContract(state, {...args, root: args.repositoryRoot || repositoryRoot});
+    : buildTaskContract(state, {...args, root: repositoryRoot});
   if (!contract) return {ok: false, error: "task_contract_not_found"};
   const drift = evaluateRoleDrift(state, {sessionId: contract.sessionId, taskGroupId: contract.taskGroupId, actionScopeRefs: args.actionScopeRefs || [`TaskGroup:${contract.taskGroupId}`]});
   return {contractRef: contract.commandId, drift};

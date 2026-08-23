@@ -329,6 +329,11 @@ const MCP_UNREACHABLE_TOOL_ARGS = {
     importId: "同上（外部升级包导入）",
     root: "文件系统根。它流进 git 子进程的 cwd —— 调用方指哪就在哪跑 git"
   },
+  // 词表里【有】这个键，但任何工具都不许读它：它与上面的 root 是同一个能力的两个名字，
+  // 只挡住 root 等于「一条不变式两扇门只守一扇」。全仓没有任何合法调用方传过它，
+  // 而它会流进 git 子进程的 cwd、以及检查点证据校验要比对的那个仓库 ——
+  // 「拿哪个仓库来验我声称的提交」不能由被验方选。不动共用词表，只钉住「没人读它」。
+  inDictionaryButNobodyMayRead: ["repositoryRoot"],
   unreachableByDictionary: {
     permissions: "identity-mcp.grant_create：决定这张授权是什么。MCP 上只能铸出缺省的那一种",
     role: "同上",
@@ -8054,9 +8059,27 @@ function verifyToolArgReachabilityIsRegistered(output) {
   for (const key of Object.keys(MCP_UNREACHABLE_TOOL_ARGS.unreachableByDictionary)) {
     if (!seen.has(key)) output.push(`登记过时：unreachableByDictionary 里的 ${key} 现在没有任何工具读它了`);
   }
+  // ③ 词表里有、但谁都不许读的：按【赋值形状】扫，不点名文件。
+  for (const key of MCP_UNREACHABLE_TOOL_ARGS.inDictionaryButNobodyMayRead) {
+    const walk = (dir) => {
+      for (const entry of readdirSync(dir, {withFileTypes: true})) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        if (!entry.name.endsWith(".mjs")) continue;
+        const text = readFileSync(full, "utf8").split("\n")
+          .filter((line) => !/^\s*(\/\/|\*|\/\*)/u.test(line)).join("\n");
+        for (const hit of text.matchAll(new RegExp(`\\b(args|body|input|payload)\\.${key}\\b`, "gu"))) {
+          output.push(`${full.slice(root.length + 1)} 读了 ${hit[1]}.${key} —— 这个键调用方能传，`
+            + "而它决定「拿哪个仓库来跑 git／验你声称的提交」。仓库根只能由服务端给");
+        }
+      }
+    };
+    walk(join(root, "apps"));
+  }
   console.log(`MCP 入参可达性：词表 ${allowed.size} 个键、${cases.length} 条工具派发逐个核过；`
     + `${Object.keys(MCP_UNREACHABLE_TOOL_ARGS.mustStayUnreachable).length} 个键钉死在词表之外、`
-    + `${Object.keys(MCP_UNREACHABLE_TOOL_ARGS.unreachableByDictionary).length} 个登记为「该填但暂时够不着」`);
+    + `${Object.keys(MCP_UNREACHABLE_TOOL_ARGS.unreachableByDictionary).length} 个登记为「该填但暂时够不着」、`
+    + `${MCP_UNREACHABLE_TOOL_ARGS.inDictionaryButNobodyMayRead.length} 个在词表里但谁都不许读`);
 }
 
 function verifyEveryPredicateDeclaresItsCoverage(output) {
@@ -8176,7 +8199,7 @@ function verifyExecutionTopologyBaselineTellsTheTruth(output) {
       transitionEvidence: [], humanConfirmationRequests: [], auditLog: [], eventLog: []};
     ensureRuntimeCollections(state, {root, runtimeDir: mkdtempSync(join(tmpdir(), "cc-no-repo-rt-"))});
     const created = createExecutionTopology(state, {taskGroupId: "tg_runtime_management",
-      workItemId: "work_probe", repositoryRoot: notARepository, branches: [{branchId: "b1", ownedPaths: ["docs/**"]}]});
+      workItemId: "work_probe", branches: [{branchId: "b1", ownedPaths: ["docs/**"]}]}, {root: notARepository});
     const snapshot = created?.topology?.baseSnapshot || state.executionTopologies[0]?.baseSnapshot;
     if (!snapshot) {
       output.push("执行方案基线判据没能建出方案 —— 这一条什么也没验");

@@ -2643,7 +2643,9 @@ function dispatchWorkItem(state, taskGroup, workItem, contract, repositoryTarget
   return dispatch;
 }
 
-export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {}) {
+export function acceptAgentCheckpoint(state, checkpointInput = {}, serverOptions = {}) {
+  // 第三个参数是【服务端选项】，不是调用方载荷 —— 它原先叫 request，读的人很容易
+  // 当成"调用方给的"，而它决定的是「拿哪个仓库来验你声称的提交」。改名以免下一个人搞错。
   ensureRuntimeCollections(state);
   const taskGroup = state.taskGroups.find((item) => item.id === checkpointInput.taskGroupId);
   const workItem = taskGroup?.workItems?.find((item) => item.id === checkpointInput.workId);
@@ -2715,7 +2717,7 @@ export function acceptAgentCheckpoint(state, checkpointInput = {}, request = {})
   if (!checkpointInput.artifactManifestRefs.every(canUseGitPath)) {
     return {accepted: false, status: 400, error: "artifact_manifest_must_be_git_trackable"};
   }
-  const evidence = validateCheckpointGitEvidence(state, {taskGroup, workItem, session, dispatch, target, checkpointInput, root: request.root || request.repositoryRoot || process.cwd()});
+  const evidence = validateCheckpointGitEvidence(state, {taskGroup, workItem, session, dispatch, target, checkpointInput, root: serverOptions.root || serverOptions.repositoryRoot || process.cwd()});
   if (!evidence.valid) {
     // 只透传 status/error 的话，服务端【已经算出来的】细节（哪几条路径越界、哪个 commit 对不上）
     // 在这里就没了：控制台上的阻塞条只会写"某某检查失败"，人还得自己去猜是哪条路径。
@@ -2828,7 +2830,8 @@ export function runAgentRuntimeWorker(state, request = {}) {
       required: "registered Agent Runtime must claim the dispatch through Agent Gateway"
     };
   }
-  const root = request.repositoryRoot || request.root || process.cwd();
+  // 只认服务端传进来的 root：request 是调用方给的载荷，让它指定仓库根＝让被验方选择"拿哪个仓库来验"。
+  const root = request.root || process.cwd();
   const maxJobs = Number(request.maxJobs || 1);
   const results = [];
   const runnable = (state.agentDispatches || [])
@@ -7333,7 +7336,8 @@ export function createExecutionTopology(state, args, options = {}) {
   // 原先最后回落到 process.cwd() —— 而别的每一处调用都是服务端把 repositoryRoot 显式传进来的。
   // 从别的工作目录起服务（docker / systemd）时，这一处会去 cwd 找仓库，找不到就把
   // "取不到" 记成一个看起来正常的基线提交，而这是下面那步迁移的证据。
-  const root = args.root || args.repositoryRoot || options.root || process.cwd();
+  // 同上：仓库根只由服务端给（两侧调用点都传 {root: repositoryRoot}）。
+  const root = options.root || process.cwd();
   const branches = normalizeTopologyBranches(args, workItem);
   // 这三个字段在 spec/execution-topology.schema.json 里都是 enum，这里原先原样收 ——
   // 打错一个字，落下来的拓扑违反它自己声明的规范，而回执是成功。

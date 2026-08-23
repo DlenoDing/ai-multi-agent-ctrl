@@ -3176,6 +3176,14 @@ const MUTATIONS = [
     expect: "看不到那个项目"
   },
   {
+    name: "仓库根只能由服务端给（被验方不得自选拿哪个仓库来验）",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyToolArgReachabilityIsRegistered",
+    from: "      return acceptAgentCheckpoint(state, args, {root: repositoryRoot});",
+    to: "      return acceptAgentCheckpoint(state, args, {root: args.repositoryRoot || repositoryRoot});",
+    expect: "仓库根只能由服务端给"
+  },
+  {
     name: "调用方自报身份的键不许进共用入参词表",
     file: "apps/mcp-server/server.mjs",
     check: "verifyToolArgReachabilityIsRegistered",
