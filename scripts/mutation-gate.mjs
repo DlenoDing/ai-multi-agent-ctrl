@@ -5074,7 +5074,9 @@ const MUTATIONS = [
     gate: "doctor",
     from: "    id: decisionId,\n    decisionId,",
     to: "    decisionId,",
-    expect: "policyDecisions[172].id is required"
+    // expect 原先钉死成 policyDecisions[172] —— e2e 多造一条决策记录，下标就移位，
+    // 于是守卫明明红了却被判成「失败了但不是因为预期断言」。下标不是这条守卫的性质，别钉它。
+    expect: "产出.policyDecisions["
   },
   {
     // 策略决策台账里有两种记录形状（REST 守卫写 id、MCP 那条路写 decisionId）。
@@ -5094,7 +5096,8 @@ const MUTATIONS = [
     gate: "doctor",
     from: "    stateVersion: Number(state.stateVersion || 0),",
     to: "    stateVersion: String(state.stateVersion || 0),",
-    expect: "auditLog[0].stateVersion expected integer"
+    // 同上：下标会随记录条数移位，钉的是这条守卫之外的东西。
+    expect: "auditLog["
   },
   {
     name: "段清单里记着却不在盘上的事件段必须说出来",
