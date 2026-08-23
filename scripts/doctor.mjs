@@ -25,6 +25,7 @@ import { checkRecordStatusesAreDeclaredStates } from "./lib/state-machine-states
 import { sweepStaleDoctorRuntimeDirs } from "./lib/stale-runtime-dirs.mjs";
 import { assertNoUndefinedInPayload } from "./lib/no-undefined-payload.mjs";
 import {waitForChildExit} from "./lib/child-tracking.mjs";
+import { request as httpRequest } from "node:http";
 
 async function getFreePort() {
   const server = createServer();
@@ -296,7 +297,11 @@ const child = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
     AIMAC_LOCAL_SEED_REVIEWER_TOKEN: "doctor-reviewer-token",
     AIMAC_LOCAL_SEED_AGENT_RUNTIME_TOKEN: "doctor-agent-runtime-token",
     AIMAC_AGENT_RUNTIME_EXECUTOR_COMMAND: doctorRepo.executorCommand,
-    OPENAI_API_KEY: "doctor-provider-key"
+    OPENAI_API_KEY: "doctor-provider-key",
+    // 让「Host 头白名单」这条守卫可被观察：不设允许清单的话，任何 Host 都回落到本地端点，
+    // 于是"挡住了"与"这条路本来就不走 Host"分不开 —— 那时把守卫删掉判据照样绿。
+    AIMAC_ALLOWED_PUBLIC_HOSTS: "aimac.doctor.test",
+    AIMAC_ALLOW_INSECURE_PUBLIC_URL: "true"
   },
   stdio: ["ignore", "pipe", "pipe"]
 });
@@ -3311,6 +3316,56 @@ try {
     }
     if (!stopCommands.length) {
       console.log("  --  这一轮没有落到节点上的派发，pause_dispatch 那一支未被检验（其余派发已确认转为 blocked）");
+    }
+  }
+
+  // 【伪造 Host 头不得改写交给 agent 的地址】。装机脚本与入网令牌的回执里，serverUrl /
+  // installScriptUrl / runtimeUrl / mcpUrl 都是用请求的 Host 头拼出来的。挡住它的是
+  // requestHostAllowed —— 把那道守卫改成永远为真，契约门 + 三套 e2e 全绿，一条断言都没有。
+  // 后果不是信息泄露：装机命令会指向攻击者的主机，而 agent 会【带着一次性入网令牌】去那里注册。
+  // 三种 Host 各验一次，缺任何一种这条都不作数：
+  //   · 白名单里的 → 必须照用（否则"全都回落到本地"也能让下面两条绿）；
+  //   · 伪造的     → 必须回落到本地端点，且回执里一个字都不许出现那个域名；
+  //   · 本机的     → 必须照用（正常部署走的就是这条）。
+  {
+    const forged = "evil.attacker.test";
+    // 必须走 node:http：fetch/undici 把 Host 当禁止头，调用方设的那个会被【静默丢掉】，
+    // 于是判据看着在测"伪造 Host"，实际每次发的都是 127.0.0.1（第一版就是这样，
+    // 表现是白名单那一支拿到本地端点，而我差点据此以为守卫失效）。
+    const rawGet = (path, hostHeader) => new Promise((resolveRaw, rejectRaw) => {
+      const request = httpRequest({host: "127.0.0.1", port, path, method: "GET",
+        headers: {Host: hostHeader, authorization: systemAuth}}, (response) => {
+        let body = "";
+        response.on("data", (chunk) => { body += chunk; });
+        response.on("end", () => resolveRaw({status: response.statusCode, body}));
+      });
+      request.on("error", rejectRaw);
+      request.end();
+    });
+    const readEndpoints = async (hostHeader) => {
+      const manifest = await rawGet("/api/agent/v1/bootstrap-manifest", hostHeader);
+      if (manifest.status !== 200) {
+        throw new Error(`取不到入网清单（Host: ${hostHeader}）：HTTP ${manifest.status} ${manifest.body.slice(0, 160)}`);
+      }
+      return JSON.parse(manifest.body);
+    };
+    const allowed = await readEndpoints("aimac.doctor.test");
+    if (!String(allowed.serverUrl || "").includes("aimac.doctor.test")) {
+      throw new Error(`白名单里的 Host 没被采用（实得 ${allowed.serverUrl}）——`
+        + " 这条断言下面两支就都不作数了：那时任何 Host 都回落到本地，守卫删掉也不会红");
+    }
+    const spoofed = await readEndpoints(forged);
+    const spoofedText = JSON.stringify(spoofed);
+    if (spoofedText.includes(forged)) {
+      throw new Error(`伪造的 Host「${forged}」被写进了交给 agent 的地址：${spoofedText.slice(0, 240)}`
+        + " —— 照这份装机命令跑起来的 agent，会带着一次性入网令牌去攻击者的主机注册");
+    }
+    const installerText = (await rawGet("/install-agent.sh", forged)).body;
+    if (installerText.includes(forged)) {
+      throw new Error(`装机脚本里被写进了伪造的 Host「${forged}」—— 它就是人复制粘贴去执行的那一行`);
+    }
+    if (!installerText.includes("127.0.0.1")) {
+      throw new Error("装机脚本没回落到本地端点 —— 那它填的是什么？这条断言分不清「挡住了」与「填了别的」");
     }
   }
 

@@ -3176,6 +3176,22 @@ const MUTATIONS = [
     expect: "看不到那个项目"
   },
   {
+    name: "伪造 Host 不得改写交给 agent 的地址",
+    file: SERVER,
+    gate: "doctor",
+    from: "function requestHostAllowed(hostHeader) {\n  if (!hostHeader) return false;",
+    to: "function requestHostAllowed(hostHeader) {\n  if (true) return true;\n  if (!hostHeader) return false;",
+    expect: "被写进了交给 agent 的地址"
+  },
+  {
+    name: "白名单里的 Host 必须照用（不然上面那条在空转）",
+    file: SERVER,
+    gate: "doctor",
+    from: "  return allowed.has(hostHeader) || allowed.has(hostname);",
+    to: "  return false;",
+    expect: "白名单里的 Host 没被采用"
+  },
+  {
     name: "带通配前缀的允许路径必须真的能匹配上",
     file: CORE,
     check: "verifyPathAllowlistMatcherIsExercised",
