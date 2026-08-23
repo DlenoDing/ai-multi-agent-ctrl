@@ -3135,6 +3135,22 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "控制命令被拒时要说出节点给的原因",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '    {v: esc(explainCoded(command.ackResult?.reason || "")) || "-", c: "text-clip"},',
+    to: '    {v: "-", c: "text-clip"},',
+    expect: "控制命令被拒时要说出节点给的原因"
+  },
+  {
+    name: "控制命令的原因要查中文词表",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '    {v: esc(explainCoded(command.ackResult?.reason || "")) || "-", c: "text-clip"},',
+    to: '    {v: esc(command.ackResult?.reason || "") || "-", c: "text-clip"},',
+    expect: "原因要查中文词表"
+  },
+  {
     name: "认不出的执行载体类型必须拒绝",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

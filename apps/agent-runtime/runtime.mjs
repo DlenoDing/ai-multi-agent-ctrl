@@ -469,7 +469,7 @@ async function handleControlCommand(config, command, options = {}) {
     if (controlState) {
       controlState.cancelled = true;
       controlState.controlStatus = command.commandType === "pause_dispatch" ? "blocked" : "cancelled";
-      controlState.reason = `dispatch interrupted by control command: ${command.commandType}`;
+      controlState.reason = `执行被控制命令中断：${command.commandType}`;
       const stopResult = await terminateChild(controlState.child, Number(command.payload?.stopTimeoutMs || process.env.AIMAC_AGENT_STOP_TIMEOUT_MS || 10000));
       if (["revoke", "shutdown"].includes(command.commandType)) {
         config.shutdownRequested = true;
@@ -495,7 +495,10 @@ async function handleControlCommand(config, command, options = {}) {
     await ackControlCommand(config, command, "rejected", {reason: "no_active_dispatch_context"});
     return;
   }
-  await ackControlCommand(config, command, "rejected", {reason: "UNSUPPORTED_COMMAND", commandType: command.commandType});
+  // 原先是 UNSUPPORTED_COMMAND —— 一个全大写英文串。它会经 ackResult 一路进控制台的
+  // 「控制通道」表，那一列查的是中文词表，查不到就原样显示英文。改成可查词表的码。
+  await ackControlCommand(config, command, "rejected",
+    {reason: "agent_control_command_unsupported", commandType: command.commandType});
 }
 
 function ackControlCommand(config, command, status, result) {

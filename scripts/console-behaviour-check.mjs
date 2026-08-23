@@ -3384,6 +3384,34 @@ function runOwnerRoleChoiceCase() {
 runOwnerRoleChoiceCase();
 
 runWholeListCapCase();
+// 节点为什么拒了一条控制命令，此前写进 command.ackResult 就再没人读过
+//（全仓只有网关那一处写、零处读）—— 控制通道表里只有一个「已拒绝」，人无处可查。
+// 这是「记了却没人读」与「失败 / -」的合流：字段本来就随视图下发了，缺的只是那一列。
+function runControlCommandReasonCase() {
+  const admin = {accountId: "acct_a", accountType: "system_admin", organizationId: "org_default"};
+  const state = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: []}],
+    taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "active", workItems: [], roles: [], blockers: []}],
+    agentControlCommands: [{commandId: "cmd_1", sequence: 1, nodeId: "node_1", taskGroupId: "tg1",
+      commandType: "pause_dispatch", status: "rejected", dispatchId: "adp_1",
+      ackResult: {reason: "agent_control_command_unsupported"},
+      createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:01.000Z"}],
+    agentRuntimeNodes: [], agentDispatches: [], workSessions: [], agentExecutionEvents: [],
+    workerLanes: [], modelSelectionDecisions: [], sessionPlacementDecisions: [],
+    accounts: [], accessGrants: [], agents: [], truncatedCollections: [], fleet: {online: 1, total: 1}};
+  const monitorRoot = el("div");
+  loadConsole(monitorRoot, {realI18n: true}).renderFullPageWith(state, admin, "p1", "monitor");
+  const text = String(monitorRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+  check("控制命令被拒时要说出节点给的原因（不能只留一个「已拒绝」）",
+    /认不出这条控制命令/u.test(text),
+    `控制通道那一行显示的是：${(text.match(/pause_dispatch[^。]{0,80}/u) || ["（没渲染出这一行）"])[0]}`);
+  check("原因要查中文词表，不能把码原样摆出来",
+    !/agent_control_command_unsupported/u.test(text),
+    "屏幕上出现了英文原因码 —— 它没经过 explainCoded，或者词表里没有这一条");
+}
+runControlCommandReasonCase();
+
 runCrossOrgGrantSelectCase();
 runStuckTopologyLeverCase();
 runBlockerGuideCase();
