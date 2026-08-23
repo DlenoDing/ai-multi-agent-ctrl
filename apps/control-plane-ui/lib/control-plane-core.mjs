@@ -6209,6 +6209,11 @@ function capCommandBus(state) {
 }
 
 export function createCommand(state, input = {}) {
+  const commandTimeoutAt = normalizedExpiry(input.timeoutAt);
+  if (commandTimeoutAt === false) {
+    throw Object.assign(new Error("command_timeout_at_invalid"),
+      {status: 400, received: String(input.timeoutAt).slice(0, 60)});
+  }
   ensureRuntimeCollections(state);
   const at = new Date().toISOString();
   const command = {
@@ -6223,7 +6228,11 @@ export function createCommand(state, input = {}) {
     policyDecisionRef: input.policyDecisionRef || `policy:command:${createId("pd")}`,
     attempts: 0,
     maxAttempts: Math.max(1, Number(input.maxAttempts || 3)),
-    ...(input.timeoutAt ? {timeoutAt: input.timeoutAt} : {}),
+    // 与本仓所有「调用方能给的时间字段」同规：认不出就拒，不落库。
+    // 这里落的是超时判据本身（sweepCommandBus 用 `new Date(timeoutAt).getTime() <= now` 比），
+    // 存进一个解析不了的值＝NaN 比较两个方向都为 false ＝【这条命令永远不会超时】，
+    // 而它会一直挂在 running 上挡着关闭门。今天没有外部入口传它，但这一族里只剩它是敞开的。
+    ...(commandTimeoutAt ? {timeoutAt: commandTimeoutAt} : {}),
     ...(input.targetRef ? {targetRef: input.targetRef} : {}),
     createdAt: at,
     updatedAt: at

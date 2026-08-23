@@ -3361,6 +3361,14 @@ const MUTATIONS = [
     expect: "容量淘汰过的记录要说出来"
   },
   {
+    name: "解析不了的命令超时时间必须当场拒",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "  if (commandTimeoutAt === false) {",
+    to: "  if (false) {",
+    expect: "收下了一个解析不了的 timeoutAt"
+  },
+  {
     name: "把调用方对象摊进落库记录要被门看见",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyCallerObjectsAreNotSpreadIntoRecords",

@@ -6164,6 +6164,24 @@ function verifyCommandBusLifecycle(output) {
   if (cmd6.status !== "timed_out") {
     output.push("command-bus: sweepCommandBus did not time out a running command past its timeoutAt");
   }
+  // 【解析不了的 timeoutAt 必须当场拒，不能落库】。它就是超时判据本身：
+  // 存进一个 NaN，`new Date(timeoutAt).getTime() <= now` 两个方向都是 false ——
+  // 这条命令永远不会超时，一直挂在 running 上挡着关闭门，而没有任何东西会报错。
+  // 本仓所有「调用方能给的时间字段」都是这个规矩（人工确认单那处写着同样的话）。
+  {
+    let refused = null;
+    try { createCommand(state, {type: "repository_push", taskGroupId: tgId, timeoutAt: "zzz"}); }
+    catch (error) { refused = error; }
+    if (refused?.message !== "command_timeout_at_invalid") {
+      output.push(`命令总线收下了一个解析不了的 timeoutAt（${refused?.message || "没有抛错"}）——`
+        + " 它就是超时判据本身，NaN 比较两个方向都是 false，这条命令永远不会超时");
+    }
+    const stillFine = createCommand(state, {type: "repository_push", taskGroupId: tgId,
+      timeoutAt: new Date(Date.now() + 60000).toISOString()});
+    if (!stillFine?.timeoutAt) {
+      output.push("合法的 timeoutAt 没有被存下来 —— 上面那条「认不出就拒」变成了「这条路永远拒」");
+    }
+  }
 }
 
 // 门跑完了才有资格说这句：整轮下来没有碰过开发者的真实运行态。碰了就说明某条探针没有隔离，
