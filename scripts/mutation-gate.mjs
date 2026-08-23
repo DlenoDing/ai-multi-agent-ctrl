@@ -3135,6 +3135,15 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "视图下发的集合都要有中文名",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyEveryViewCollectionHasAChineseLabel",
+    gate: "contract",
+    from: '  instructionMetrics: "指令度量", modelSelectionPolicies: "模型选型策略",',
+    to: '  instructionMetrics: "指令度量",',
+    expect: "界面上却没有中文名"
+  },
+  {
     name: "视图窗口认不出的时间字段名要被门看见",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyViewWindowKnowsEveryTimestampName",

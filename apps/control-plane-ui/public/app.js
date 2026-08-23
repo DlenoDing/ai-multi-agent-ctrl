@@ -3640,7 +3640,11 @@ function countSuffix(field) {
 // 各自调 capNotice 报出来，而界面上有 23 张表在渲染 state 集合 —— 其余 18 张【截了也不说】。
 // 实测真实部署里 roleSkills 269 条被截到 188 条，屏幕上一个字都没有。
 // 逐表加提示要靠每次新增表时都记得，改成整屏报一次并逐个点名：新表以后自动被覆盖。
+// 视图会下发的每一个集合都要有中文名：缺一个，截断/淘汰横幅上就会露出英文键
+//（instructionMetrics、modelSelectionPolicies 原先就缺，而它们只在真被截断那一刻才显出来 ——
+//  漏译扫描看不见没渲染的屏）。契约门按视图清单逐个核对这份表。
 const COLLECTION_LABELS = {
+  instructionMetrics: "指令度量", modelSelectionPolicies: "模型选型策略",
   accessGrants: "访问授权", accounts: "账号", admissionDecisions: "准入判决", agentControlCommands: "控制指令",
   agentDispatches: "派发", agentExecutionEvents: "执行事件", agentJoinTokens: "加入令牌",
   agentRuntimeNodes: "智能体节点", agents: "编排智能体", approvalRequests: "审批请求", auditLog: "审计台账",

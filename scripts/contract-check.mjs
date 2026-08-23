@@ -581,6 +581,7 @@ run(verifyPollingPeekDoesNotCloneOrMutate);
 runAsync(verifyEveryMcpToolAnswersAnEmptyCall);
 runAsync(verifyBoundedNodeCannotWriteIntoAnotherProject);
 runAsync(verifyStateWriteDoesNotCloneTheWorld);
+run(verifyEveryViewCollectionHasAChineseLabel);
 run(verifyViewWindowKnowsEveryTimestampName);
 run(verifyCollectionAppendDirectionIsConsistent);
 run(verifyContentBundleNamesTheDispatchedItem);
@@ -11238,6 +11239,34 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // agent 真正读到的是执行内容包。运行时给模型的指令里只有工作项 id（`implement only work_x`），
 // 而包里的事项清单只有标题 —— 实测同一个任务组里三项同时 in_progress，agent 得自己把 id 映射到标题。
 // 猜错就是改错文件，而这一步本来不需要存在。所以包里必须能直接读出"这次做的是哪一项"。
+// 截断/容量淘汰的横幅要说出【是哪几份名单】，靠的是界面里手抄的 COLLECTION_LABELS。
+// 缺一个，那一刻横幅上就是一串英文键 —— 而它只在真被截断时才渲染，漏译扫描看不见没渲染的屏。
+// 视图清单（服务端的 viewFields）是权威来源，逐个核对。
+function verifyEveryViewCollectionHasAChineseLabel(output) {
+  const appText = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const labelsBlock = /const COLLECTION_LABELS = \{([\s\S]*?)\n\};/u.exec(appText);
+  const labels = new Set(labelsBlock ? [...labelsBlock[1].matchAll(/(\w+):/gu)].map((match) => match[1]) : []);
+  const serverText = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const at = serverText.indexOf("const viewFields = {");
+  let depth = 0;
+  let end = at;
+  for (let index = serverText.indexOf("{", at); at >= 0 && index < serverText.length; index += 1) {
+    if (serverText[index] === "{") depth += 1;
+    else if (serverText[index] === "}") { depth -= 1; if (!depth) { end = index; break; } }
+  }
+  const fields = new Set(at < 0 ? [] : [...serverText.slice(at, end).matchAll(/"(\w+)"/gu)].map((match) => match[1]));
+  if (labels.size < 20 || fields.size < 20) {
+    output.push(`集合中文名核对：提取到 ${labels.size} 个中文名、${fields.size} 个视图集合 —— 提取失配，本条在空转`);
+    return;
+  }
+  const nameless = [...fields].filter((field) => !labels.has(field)).sort();
+  if (nameless.length) {
+    output.push(`这些集合会被视图下发，界面上却没有中文名：${nameless.join("、")} —— `
+      + "被截断或被容量淘汰时，横幅上写的就是这串英文键（而它只在那一刻才渲染，漏译扫描看不见）");
+  }
+  console.log(`集合中文名：视图下发的 ${fields.size} 个集合逐个对过界面的 ${labels.size} 条中文名，${nameless.length} 个缺名`);
+}
+
 function verifyViewWindowKnowsEveryTimestampName(output) {
   const serverText = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
   const at = serverText.indexOf("const keyOf = (item) =>");
