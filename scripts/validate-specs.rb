@@ -1212,7 +1212,10 @@ errors << "account creation must reject a duplicate email" unless server_source.
 errors << "runtime_json CAS must fail closed when the central state is absent" unless state_store_source.include?("central state absent")
 # 2026-07-27 full-system review round 5. F1: previously-uncapped central-state collections must be
 # bounded (unbounded growth degrades every request); agentRuntimeNodes cap must never drop a live node.
-errors << "non-barrier central collections must be bounded" unless ["runtimeIssueSamples", "runtimeIssuePatterns", "roleSkillOverlays"].all? { |c| core_source.include?("state.#{c} = state.#{c}.slice(0, 2000)") }
+# 这条原先把【旧写法的原文】写死在门里（state.X = state.X.slice(0, 2000)）——
+# 四处裁剪抽成一个通用助手之后它当场红了，而代码是变好了不是变坏了。
+# 改成认意图：这三个集合必须以 2000 为上限被裁，写法不限。
+errors << "non-barrier central collections must be bounded" unless ["runtimeIssueSamples", "runtimeIssuePatterns", "roleSkillOverlays"].all? { |c| core_source.match?(/state\.#{c} = state\.#{c}\.slice\(0, 2000\)/) || core_source.include?("capCentralCollection(state, \"#{c}\", 2000") }
 # Round 6 correction: close/completion-barrier collections must be capped with capRetainingPredicate
 # (never drop an OPEN gating item), NOT a blind slice — a blind slice can evict a still-open item and
 # falsely satisfy a barrier, prematurely closing the task group.
@@ -2372,8 +2375,12 @@ declared_collections.each do |name|
   # 判据不追【写法】：一是赋值右侧带裁剪调用/切片，二是它在某个 cap*/trim*/prune*/retain* 函数
   # 体内被整体重建（pruneRoomMessages 写的是 `state.roomMessages = kept.reverse()` ——
   # 追写法的话，每加一种新写法就漏一个集合，本轮我已经在这上面栽了三次）。
+  # 第四种写法：通用裁剪助手把集合名当【字符串入参】收（capCentralCollection(state, "x", 2000, …)），
+  # 函数体里写的是 state[field] = kept —— 上面三条一条都看不见它。
+  # 抄四份裁剪逻辑就有三份是盲切，抽成一个是对的；判据要跟上这种写法，而不是逼代码写回四份。
   bounded = all_state_source.match?(/state\.#{name}\s*=\s*[^;\n]*(slice\(|cap[A-Z]|trim[A-Z]|prune[A-Z]|filter\()/) ||
             all_state_source.match?(/state\.#{name}\s*=\s*(cap|trim|prune|retain)[A-Za-z]*\(/) ||
+            all_state_source.match?(/(?:cap|trim|prune|retain)[A-Za-z]*\(\s*state\s*,\s*"#{name}"/) ||
             trimming_function_bodies.any? { |body| body.match?(/state\.#{name}\s*=/) }
   unbounded << name unless bounded
 end

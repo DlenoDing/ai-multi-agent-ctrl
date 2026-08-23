@@ -254,6 +254,8 @@ const THROW_HELPERS_WITHOUT_CODES = {
 // 11 个 cap 里误报了 4 个（capReasoning 压根不是集合裁剪、capLeaseHistory 用的词是 active）——
 // 手编的期望表本身就是错误来源。登记制至少逼着新增者写清楚一句话。
 const CAP_FUNCTION_GUARDS = {
+  capCentralCollection: "中央集合的共用裁剪：受保护项（叠加的 active、问题模式的 suppressed）永远排在额度前面，"
+    + "被丢的一定是历史；丢多少一律记进 centralDroppedCounts，界面据此说清「这个数是剩下的」",
   capKeepingReferenced: "仍被别处引用的记录（decisionRecordRef 之类）留在窗口外也不裁",
   capReasoning: "不是集合裁剪 —— 它钳的是单个模型的推理档位，与容量无关",
   capPerTaskGroupRecords: "活着的任务组至少留一条（strandedLive）：否则那个组下一拍找不到自己的记录",
@@ -6439,6 +6441,33 @@ function verifyExecutionFailureCapSurvivesHistoryAndReopen(output) {
     const serverText = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
     if (!/base\.storageDroppedCounts = Object\.fromEntries\(dropped\)/u.test(serverText)) {
       output.push("视图没有下发 storageDroppedCounts —— 容量淘汰在界面上没有任何痕迹");
+    }
+  }
+
+  // 角色技能叠加是【人对 agent 能力做的判断】（patch 里就有 forbiddenCapabilityAdds）。
+  // 它原先是 unshift + slice(0, 2000) 盲切：到 2000 条时，一条【生效中】的老叠加被静默删掉，
+  // 人加的那条限制就此撤销，屏幕上什么都不会变。分片层与运行时问题模式早就各自打过同样的补丁。
+  {
+    const capState = structuredClone(seedState);
+    ensureRuntimeCollections(capState, {root});
+    const capBase = capState.roleSkills.find((item) => item.roleSkillId === "system-reviewer")
+      || capState.roleSkills[0];
+    const at = new Date().toISOString();
+    // 2000 条已替代的历史，外加一条【最老的、生效中的】—— 盲切会先丢最老的那条。
+    capState.roleSkillOverlays = [
+      ...Array.from({length: 2000}, (_, index) => ({overlayId: `ovl_old_${index}`, status: "superseded",
+        roleSkillRef: capBase.roleSkillId, scope: {}, patch: {}, createdAt: at})),
+      {overlayId: "ovl_active_oldest", status: "active", roleSkillRef: capBase.roleSkillId,
+        scope: {}, patch: {forbiddenCapabilityAdds: ["cap_banned"]}, createdAt: at}
+    ];
+    registerRoleSkillOverlay(capState, {roleSkillRef: capBase.roleSkillId, patch: {}});
+    if (capState.roleSkillOverlays.length > 2000) {
+      output.push(`角色技能叠加超过 2000 条没有裁剪（${capState.roleSkillOverlays.length}）—— 这一段在空转`);
+    } else if (!capState.roleSkillOverlays.some((item) => item.overlayId === "ovl_active_oldest")) {
+      output.push("容量淘汰把一条【生效中】的角色技能叠加删掉了 —— 那是人对 agent 能力下的限制"
+        + "（patch 里就有 forbiddenCapabilityAdds），容量把它悄悄撤销了，屏幕上什么都不会变");
+    } else if (Number(capState.centralDroppedCounts?.roleSkillOverlays || 0) <= 0) {
+      output.push("角色技能叠加被裁剪了却没记账 —— 界面会把剩下的条数当成一共有过多少");
     }
   }
 

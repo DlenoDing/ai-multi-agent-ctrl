@@ -4010,7 +4010,7 @@ export function collectRuntimeIssue(state, request = {}) {
         createdAt: at
       };
       state.runtimeIssueSamples.unshift(sample);
-      state.runtimeIssueSamples = state.runtimeIssueSamples.slice(0, 2000);
+      capCentralCollection(state, "runtimeIssueSamples", 2000, null);
       return sample;
     }
     pattern = {
@@ -4036,11 +4036,7 @@ export function collectRuntimeIssue(state, request = {}) {
     // 人的判断不能被容量悄悄撤销，这与升级候选那边的保留式裁剪是同一条规矩。
     // 保留式裁剪在这里是错的：它会无条件留下整类，压制一多就成了无界增长（规范门当场抓到）。
     // 正确的做法是【在同一个 2000 的额度里排优先级】：压制过的排到前面，再照旧硬裁。
-    state.runtimeIssuePatterns = [
-      ...state.runtimeIssuePatterns.filter((item) => item.status === "suppressed"),
-      ...state.runtimeIssuePatterns.filter((item) => item.status !== "suppressed")
-    ];
-    state.runtimeIssuePatterns = state.runtimeIssuePatterns.slice(0, 2000);
+    capCentralCollection(state, "runtimeIssuePatterns", 2000, (item) => item.status === "suppressed");
   } else {
     pattern.recurrenceCount += 1;
     pattern.status = pattern.recurrenceCount >= 2 ? "clustered" : "observed";
@@ -4116,7 +4112,10 @@ export function registerRoleSkillOverlay(state, body = {}) {
     ...(overlayTaskGroupId ? {taskGroupId: overlayTaskGroupId} : {})
   };
   state.roleSkillOverlays.unshift(overlay);
-  state.roleSkillOverlays = state.roleSkillOverlays.slice(0, 2000);
+  // 生效中的叠加绝不能被容量淘汰：它是人对 agent 能力做的判断（含 forbiddenCapabilityAdds），
+  // 悄悄删掉等于把那条限制撤了，而屏幕上什么都不会变。
+  capCentralCollection(state, "roleSkillOverlays", 2000,
+    (item) => !["superseded", "rejected"].includes(item.status));
   base.overlayRefs = unique([...(base.overlayRefs || []), overlay.overlayId]);
   appendEvent(state, "decision", "RoleSkillOverlay", overlay.overlayId, "skill-registry", overlay);
   return overlay;
@@ -4895,6 +4894,27 @@ function appendEvent(state, type, subjectType, subjectId, actorId, payload, extr
   return event;
 }
 
+// 中央集合的容量裁剪只有一处正确做法，抄了四份就有三份是盲切。共用这一个：
+// ① 受保护的（还没了结、或人做过判断的）永远排在前面，额度不够时被丢的一定是历史；
+// ② 丢了多少要【记下来】—— 界面据此说清「这个数是剩下的，不是一共发生过的」。
+// 这条规矩是踩出来的：角色技能叠加原先是 unshift + slice(0, 2000) 盲切，
+// 一条【生效中】的叠加（它可能正禁着某个 agent 的某项能力）到 2000 条就被静默删掉，
+// 人加的限制就这么被容量悄悄撤销了。分片层与运行时问题模式早就各自打了同样的补丁。
+function capCentralCollection(state, field, limit, isProtected) {
+  const items = state[field] || [];
+  if (items.length <= limit) return;
+  const ordered = isProtected
+    ? [...items.filter((item) => isProtected(item)), ...items.filter((item) => !isProtected(item))]
+    : items;
+  const kept = ordered.slice(0, limit);
+  const dropped = items.length - kept.length;
+  state[field] = kept;
+  if (dropped > 0) {
+    state.centralDroppedCounts = state.centralDroppedCounts || {};
+    state.centralDroppedCounts[field] = Number(state.centralDroppedCounts[field] || 0) + dropped;
+  }
+}
+
 export const EVENT_LOG_MAX = 240;
 
 // 高频例行事件：agent 每发一条房间消息就产生 3 条（room_message + 命令总线的 admitted/succeeded），
@@ -4975,7 +4995,7 @@ function recordTransition(state, machine, objectId, from, to, actor, requiresVal
   };
   state.transitionEvidence ||= [];
   state.transitionEvidence.unshift(transition);
-  state.transitionEvidence = state.transitionEvidence.slice(0, 240);
+  capCentralCollection(state, "transitionEvidence", 240, null);
   return transition;
 }
 

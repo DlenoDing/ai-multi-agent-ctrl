@@ -750,8 +750,8 @@ const MUTATIONS = [
     name: "被压制的模式不许被容量裁掉",
     file: CORE,
     check: "verifyRuntimeIssuePatternCanBeSettled",
-    from: '      ...state.runtimeIssuePatterns.filter((item) => item.status === "suppressed"),',
-    to: "      ...[],",
+    from: '    capCentralCollection(state, "runtimeIssuePatterns", 2000, (item) => item.status === "suppressed");',
+    to: '    capCentralCollection(state, "runtimeIssuePatterns", 2000, null);',
     expect: "人的判断被容量悄悄撤销了"
   },
   {
@@ -3133,6 +3133,22 @@ const MUTATIONS = [
     from: "  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg);",
     to: "  const grantable = candidates;",
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
+  },
+  {
+    name: "生效中的角色技能叠加不得被容量淘汰",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: '  capCentralCollection(state, "roleSkillOverlays", 2000,\n    (item) => !["superseded", "rejected"].includes(item.status));',
+    to: '  capCentralCollection(state, "roleSkillOverlays", 2000, null);',
+    expect: "把一条【生效中】的角色技能叠加删掉了"
+  },
+  {
+    name: "受保护项要真的排在额度前面",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "  const ordered = isProtected",
+    to: "  const ordered = false",
+    expect: "把一条【生效中】的角色技能叠加删掉了"
   },
   {
     name: "网关切掉的执行事件也要记账",
@@ -7162,8 +7178,8 @@ const MUTATIONS = [
     name: "这条用例必须真的复现'被日常流量顶掉'（上限变大就该报空转）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyWarnModeRejectionsSurviveChurn",
-    from: "  state.transitionEvidence = state.transitionEvidence.slice(0, 240);",
-    to: "  state.transitionEvidence = state.transitionEvidence.slice(0, 24000);",
+    from: '  capCentralCollection(state, "transitionEvidence", 240, null);',
+    to: '  capCentralCollection(state, "transitionEvidence", 24000, null);',
     expect: "本条在空转"
   },
   {
