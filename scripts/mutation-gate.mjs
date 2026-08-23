@@ -3127,6 +3127,38 @@ const MUTATIONS = [
     expect: "未使用的入网令牌占着配额，页面要显出来并给出合计"
   },
   {
+    name: "别的组织的账号不许出现在授权下拉里",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg);",
+    to: "  const grantable = candidates;",
+    expect: "别的组织的账号不许出现在项目成员授权的下拉里"
+  },
+  {
+    name: "换了项目就要换成那个组织的人",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const chosen = projects.find((project) => project.id === memberGrantProjectId) || projects[0];",
+    to: "  const chosen = projects[0];",
+    expect: "换到别组织的项目之后，下拉里换成那个组织的人"
+  },
+  {
+    name: "归属为空要按默认组织算（与服务端同口径）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: 'const organizationOf = (record) => String(record?.organizationId || DEFAULT_ORGANIZATION_ID);',
+    to: 'const organizationOf = (record) => String(record?.organizationId || "");',
+    expect: "归属为空的账号要按「默认组织」算"
+  },
+  {
+    name: "一个可授权的人都没有时要说清",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    ${grantable.length ? \"\" : ",
+    to: "    ${true ? \"\" : ",
+    expect: "一个可授权的账号都没有时要说清"
+  },
+  {
     name: "编排标失败时会话上也要留下原因",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

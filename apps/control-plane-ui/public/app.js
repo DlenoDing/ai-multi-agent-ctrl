@@ -2194,17 +2194,36 @@ function noProjectYetNotice(what) {
     + "先创建一个项目：组织管理员在「项目管理」页，系统管理员在「账号与授权」页。</div>";
 }
 
+// 归属为空的账号（历史上经 MCP 建的那批）服务端按「默认组织」处理，界面必须用同一个口径 ——
+// 两边不一致，屏幕上能选的就会是后端必拒的（或者反过来，把本可以授的人藏起来）。
+// 这个常量与 core 的 DEFAULT_ORGANIZATION_ID 是同一件事，判据每次校验两边一致。
+const DEFAULT_ORGANIZATION_ID = "org_default";
+let memberGrantProjectId = "";
+const organizationOf = (record) => String(record?.organizationId || DEFAULT_ORGANIZATION_ID);
+
 function renderProjectMemberForm() {
   if (!(state.projects || []).length) return noProjectYetNotice("项目成员授权");
+  // 账号下拉此前列的是【全部账号】。而服务端对项目成员授权是无条件按组织判的
+  //（cross_org_member_not_allowed，系统管理员也一样）—— 于是别的组织的人就摆在那里，
+  // 选中提交必然被拒：一个按不动的杠杆。按【所选项目所属的组织】过滤，口径与服务端同一份。
+  const projects = state.projects || [];
+  const chosen = projects.find((project) => project.id === memberGrantProjectId) || projects[0];
+  const selectedOrg = organizationOf(chosen);
+  const candidates = (orgMembers && orgMembers.length ? orgMembers : (state.accounts || []));
+  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg);
+  const elsewhere = candidates.length - grantable.length;
   return `
+    ${grantable.length ? "" : `<div class="notice warn-notice">「${esc(chosen?.name || chosen?.id || "")}」`
+      + `所属的组织下还没有可授权的账号${elsewhere ? `（另有 ${elsewhere} 个账号属于别的组织，授不进来）` : ""}`
+      + " —— 先在上面的「邀请账号」把人邀进这个组织，再回来授权。</div>"}
     <form class="form-grid" data-form="project-member">
       <div class="form-row"><label>项目</label>
-        <select name="projectId">${(state.projects || []).map((project) => `<option value="${esc(project.id)}">${esc(project.name || project.id)}</option>`).join("")}</select>
+        <select name="projectId">${projects.map((project) =>
+          `<option value="${esc(project.id)}"${project.id === chosen?.id ? " selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}</select>
       </div>
       <div class="form-row"><label>账号</label>
         ${decisionSelect("accountId",
-          (orgMembers && orgMembers.length ? orgMembers : (state.accounts || []))
-            .map((account) => [account.accountId, account.displayName || account.accountId]),
+          grantable.map((account) => [account.accountId, account.displayName || account.accountId]),
           "请选择授权对象…")}
       </div>
       <div class="form-row"><label>项目角色</label>
@@ -3029,7 +3048,8 @@ function renderTaskGroupDetail(taskGroup) {
 function decisionSelect(name, options, placeholder = "请选择处置方式…") {
   return `<select name="${esc(name)}" required>`
     + `<option value="" selected disabled>${esc(placeholder)}</option>`
-    + options.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("")
+    + options.map(([value, label, attrs]) =>
+      `<option value="${esc(value)}"${attrs ? ` ${attrs}` : ""}>${esc(label)}</option>`).join("")
     + `</select>`;
 }
 
@@ -4851,6 +4871,14 @@ document.addEventListener("change", async (event) => {
       }
       directiveTaskGroupId = target.value;
       await loadPage();
+      return;
+    }
+    if (target.name === "projectId" && target.closest(`[data-form="project-member"]`)) {
+      // 项目换了，能授权的人也就换了：重渲染，让下拉里只剩这个项目所属组织的人。
+      // （原先想在 DOM 里按组织显隐 option —— 那段既更啰嗦，勘察工具也派发不了 change 事件，
+      //   等于写了一段没有判据的代码。走重渲染这条路，渲染函数本身就能被断言。）
+      memberGrantProjectId = target.value;
+      render();
       return;
     }
     if (target.dataset.select === "exec-scope") {

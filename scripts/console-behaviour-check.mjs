@@ -224,6 +224,7 @@ globalThis.__probe = {
     ensureProjectSelection();
     return {kept: currentProjectId, options: selectableProjects().map((item) => item.id)};
   },
+  setMemberGrantProjectId: (value) => { memberGrantProjectId = value; },
   setProjConfigStatus: (status, error) => { projConfigStatus = status; projConfig = null; projConfigError = error || ""; },
   setFetch: (fn) => { globalThis.fetch = fn; },
   // 断连横幅要按【真实加载路径】验：直接改 lastError 只能证明模板会渲染，
@@ -2856,6 +2857,78 @@ function runWholeListCapCase() {
     "账号名单被视图截断了，页面上却没有任何痕迹 —— 人会把它当成完整名单，据此判断谁有权限");
 }
 
+// 项目成员授权的账号下拉此前列的是【全部账号】，而服务端对这条路是无条件按组织判的
+//（cross_org_member_not_allowed —— 系统管理员也一样）。于是别的组织的人就摆在下拉里，
+// 选中提交必然被拒：一个按不动的杠杆。实测在系统管理员视角的「账号与授权」页上看见了「别组织的人」。
+function runCrossOrgGrantSelectCase() {
+  const admin = {accountId: "acct_a", accountType: "system_admin"};
+  const state = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"},
+      {orgId: "org_other", name: "另一个组织", status: "active"}],
+    projects: [{id: "p_default", name: "本组织项目", organizationId: "org_default", status: "active", members: []}],
+    accounts: [
+      {accountId: "acct_same", displayName: "同组织的人", organizationId: "org_default", accountType: "user_account", status: "active"},
+      {accountId: "acct_other", displayName: "别组织的人", organizationId: "org_other", accountType: "user_account", status: "active"},
+      // 归属为空：服务端按「默认组织」处理（`organizationId || DEFAULT_ORGANIZATION_ID`），
+      // 界面必须用同一个口径，否则会把本可以授的人藏起来。
+      {accountId: "acct_legacy", displayName: "没有归属的人", accountType: "user_account", status: "active"}],
+    accessGrants: [], agents: [], agentRuntimeNodes: [], agentJoinTokens: [],
+    taskGroups: [], truncatedCollections: []};
+  const accountsRoot = el("div");
+  loadConsole(accountsRoot).renderFullPageWith(state, admin, "p_default", "sys-accounts");
+  const html = String(accountsRoot.innerHTML || "");
+  // 只看【项目成员授权】那张表单：同一页上「创建项目」的负责人下拉也列账号，
+  // 整页找会匹到它 —— 第一版就是这么绿的（而它根本没被改）。
+  const formAt = html.indexOf(`data-form="project-member"`);
+  const formHtml = formAt < 0 ? "" : html.slice(formAt, html.indexOf("</form>", formAt));
+  if (!formHtml) throw new Error("跨组织授权用例：页面上没有 project-member 表单 —— 本段在空转");
+  const optionOf = (accountId) => (formHtml.match(new RegExp(`<option value="${accountId}"[^>]*>`, "u")) || [""])[0];
+  check("别的组织的账号不许出现在项目成员授权的下拉里（后端必拒，选了也白选）",
+    optionOf("acct_other") === "",
+    `别组织那一项渲染成了：${optionOf("acct_other") || "（没找到这一项）"}`);
+  check("同组织的账号仍要能选（上一条不能靠把所有人都藏起来通过）",
+    optionOf("acct_same") !== "",
+    `同组织那一项渲染成了：${optionOf("acct_same") || "（没找到这一项）"}`);
+  check("归属为空的账号要按「默认组织」算，与服务端同一口径（否则本可以授的人被藏起来）",
+    optionOf("acct_legacy") !== "",
+    `没有归属那一项渲染成了：${optionOf("acct_legacy") || "（没找到这一项）"}`);
+  // 一个可授权的人都没有时，表单看着完整、点下去必然失败 —— 要当场说清第一步是什么。
+  const emptyRoot = el("div");
+  // 第三个组织：它名下一个账号都没有 —— 这才是「表单看着完整、点下去必然失败」那一屏。
+  loadConsole(emptyRoot).renderFullPageWith({...state,
+    organizations: [...state.organizations, {orgId: "org_empty", name: "空组织", status: "active"}],
+    projects: [{id: "p_empty", name: "空组织的项目", organizationId: "org_empty", status: "active", members: []}]},
+    admin, "p_empty", "sys-accounts");
+  const emptyHtml = String(emptyRoot.innerHTML || "").replace(/<[^>]+>/gu, " ");
+  check("这个组织下一个可授权的账号都没有时要说清，而不是给一个空下拉",
+    /还没有可授权的账号/u.test(emptyHtml) && /属于别的组织/u.test(emptyHtml),
+    `空的时候说的是：${(emptyHtml.match(/[^ ]*所属的组织[^。]*。/u) || ["（什么都没说）"])[0]}`);
+  // 换项目那条路：处理器就两行（记下选的项目 + 重渲染），效果全在渲染函数里 —— 这里直接验效果。
+  const switchedRoot = el("div");
+  const switchedProbe = loadConsole(switchedRoot);
+  switchedProbe.setMemberGrantProjectId("p_other_org");
+  switchedProbe.renderFullPageWith({...state,
+    projects: [...state.projects,
+      {id: "p_other_org", name: "别组织的项目", organizationId: "org_other", status: "active", members: []}]},
+    admin, "p_default", "sys-accounts");
+  const switchedHtml = String(switchedRoot.innerHTML || "");
+  const switchedAt = switchedHtml.indexOf(`data-form="project-member"`);
+  const switchedForm = switchedAt < 0 ? "" : switchedHtml.slice(switchedAt, switchedHtml.indexOf("</form>", switchedAt));
+  check("换到别组织的项目之后，下拉里换成那个组织的人",
+    switchedForm.includes(`<option value="acct_other"`) && !switchedForm.includes(`<option value="acct_same"`),
+    `切过去之后下拉里是：${(switchedForm.match(/<option value="acct[^"]*"/gu) || []).join("、") || "（一项都没有）"}`);
+
+  // 界面这个默认组织常量与 core 那份必须是同一个值：不一致时，归属为空的账号会在
+  // 一边算作「默认组织」、另一边算作别的组织 —— 屏幕能选的正是后端要拒的。
+  const appConstant = /const DEFAULT_ORGANIZATION_ID = "([^"]+)";/u
+    .exec(fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8"));
+  const coreConstant = /export const DEFAULT_ORGANIZATION_ID = "([^"]+)";/u
+    .exec(fs.readFileSync(path.join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8"));
+  check("界面与 core 的「默认组织」必须是同一个值",
+    Boolean(appConstant && coreConstant) && appConstant[1] === coreConstant[1],
+    `界面=${appConstant?.[1] ?? "（没找到）"} / core=${coreConstant?.[1] ?? "（没找到）"}`);
+}
+
 // 卡住的执行方案会永久挡住关闭门，而"人来取消"这条杠杆后端一直有、界面上却没有入口。
 // 后端有杠杆而界面没有入口，等于这个杠杆不存在。
 // 关闭门阻塞类型有 16 种，而"阻塞项人工处置"只处理其中 6 种。指引必须按类型说清去哪；
@@ -3254,6 +3327,7 @@ runOrchestratorVisibilityCase();
 runFirstRunGuidanceCase();
 runOutdatedRuntimeVisibilityCase();
 runWholeListCapCase();
+runCrossOrgGrantSelectCase();
 runStuckTopologyLeverCase();
 runBlockerGuideCase();
 runSelfCheckReasonCase();
