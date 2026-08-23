@@ -1780,6 +1780,38 @@ try {
     console.log("认不出的处置状态 ok: 共享定义处置拒绝未知状态，而合法状态照常走得通");
   }
 
+  // 同一个对象的【建】这条路：status 早就按白名单挡了，而 definitionType / conflictPolicy
+  // 规范里同样是 enum，门口却一直原样收 —— 落下来的记录违反它自己声明的规范，
+  // 而界面把它交给 t()，屏幕上是一串英文。两个字段各验一次，并要求回执给出合法取值。
+  {
+    const create = (key, body) => jsonFetch(port, "/api/shared-definition-contracts", {method: "POST",
+      headers: {"Idempotency-Key": key, authorization: systemAuth},
+      body: JSON.stringify({projectId: "prj_control_plane", ...body})});
+    const bogusType = await create("doctor-sdc-bogus-type", {definitionType: "termnology"});
+    if (bogusType.response.status !== 400 || bogusType.payload?.error !== "shared_definition_type_not_recognized") {
+      throw new Error(`建共享定义：认不出的 definitionType 被收下了`
+        + `（${bogusType.response.status} ${JSON.stringify(bogusType.payload).slice(0, 120)}）`
+        + " —— 落下来的记录违反它自己声明的规范，界面上还会显示成一串英文");
+    }
+    if (!(bogusType.payload?.supported || []).includes("terminology")) {
+      throw new Error(`拒了却没说合法的 definitionType 有哪些（${JSON.stringify(bogusType.payload?.supported)}）`);
+    }
+    const bogusPolicy = await create("doctor-sdc-bogus-policy", {conflictPolicy: "just_do_it"});
+    if (bogusPolicy.response.status !== 400
+      || bogusPolicy.payload?.error !== "shared_definition_conflict_policy_not_recognized") {
+      throw new Error(`建共享定义：认不出的 conflictPolicy 被收下了`
+        + `（${bogusPolicy.response.status} ${JSON.stringify(bogusPolicy.payload).slice(0, 120)}）`);
+    }
+    // 正面对照走同一条路：合法取值必须建得出来，否则上面两条可能只是"这条路永远拒"。
+    const legit = await create("doctor-sdc-legit", {definitionType: "api_contract",
+      conflictPolicy: "owner_reconciles_then_republish"});
+    if (!legit.response.ok) {
+      throw new Error(`合法的 definitionType/conflictPolicy 也建不出来（${legit.response.status} `
+        + `${JSON.stringify(legit.payload).slice(0, 160)}）—— 上面两条其实是「这条路永远拒」，测不出那道门`);
+    }
+    console.log("共享定义闭集 ok: definitionType 与 conflictPolicy 拒绝未知取值并给出合法取值，合法取值照常建得出来");
+  }
+
   // 写入层的两道授权边界，此前都没有点名断言。
   // ① 真人专属动作不得由机器主体执行 —— 这是人工定稿闸门落在【写入层】的那一处：
   //    配置面挡一层、决策点挡一层，这里是第三层，而三层里只要有一层是唯一生效的那层就必须自己会红。

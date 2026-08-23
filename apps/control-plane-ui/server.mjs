@@ -896,6 +896,11 @@ function actorIsProjectOwnerForScope(state, actor, resourceScope = {}) {
 // 授权能落在哪几种作用域上 —— 这是个闭集。多一个认不出的取值，跨组织边界就少守一次。
 const GRANTABLE_RESOURCE_TYPES = ["project", "task_group", "organization", "system"];
 
+// 共享定义契约的两个闭集 —— 取值必须与 spec/shared-definition-contract.schema.json 的 enum
+// 逐字一致，contract-check 双向核对（这边多一个＝落下来的记录违反规范；那边多一个＝门口白拒）。
+const SHARED_DEFINITION_TYPES = ["terminology", "api_contract", "data_model", "event_schema", "status_semantics", "error_code", "design_token", "quality_standard", "permission_semantics", "instruction_format", "semantic_contract"];
+const SHARED_DEFINITION_CONFLICT_POLICIES = ["block_and_request_canonical_decision", "owner_reconciles_then_republish"];
+
 function sanitizeGrantRequest(state, actor, input = {}, resourceScope = {}) {
   const account = state.accounts.find((item) => accountIdOf(item) === actor);
   const role = String(input.role || "viewer");
@@ -4629,6 +4634,19 @@ async function handleApi(req, res) {
       const taskGroup = state.taskGroups.find((item) => item.id === value.slice("TaskGroup:".length));
       return taskGroup && resourceScopeOrganizationId(state, {resourceType: "task_group", resourceId: taskGroup.id}) === definitionOrg;
     });
+    // 这两个字段规范里就是闭集（spec/shared-definition-contract.schema.json 的 enum），
+    // 门口却一直原样收：喂个认不出的取值，落下来的记录违反它自己声明的规范，
+    // 而界面把它交给 t() —— 屏幕上是一串英文。旁边的 status 早就按白名单挡了，这两个漏了。
+    // 常量与规范的 enum 由 contract-check 双向核对，不许手抄漂开。
+    if (body.definitionType !== undefined && !SHARED_DEFINITION_TYPES.includes(String(body.definitionType))) {
+      json(res, 400, {error: "shared_definition_type_not_recognized", supported: [...SHARED_DEFINITION_TYPES]});
+      return;
+    }
+    if (body.conflictPolicy !== undefined && !SHARED_DEFINITION_CONFLICT_POLICIES.includes(String(body.conflictPolicy))) {
+      json(res, 400, {error: "shared_definition_conflict_policy_not_recognized",
+        supported: [...SHARED_DEFINITION_CONFLICT_POLICIES]});
+      return;
+    }
     const definition = {
       schemaVersion: "shared-definition-contract/v1",
       contractId: createId("sdc"),

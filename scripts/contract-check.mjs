@@ -6408,6 +6408,34 @@ function verifyExecutionFailureCapSurvivesHistoryAndReopen(output) {
   // 上面那条行为断言只走到三处写入点里的【一处】（对账过期那条最容易到达）。
   // 另两处要靠登记：把会话置成终态的地方一共这么几处，每一处都必须同时写下原因。
   // 少写一处，那条路径上的会话就是「失败 / -」，而屏幕上看不出是哪条路径来的。
+  // 共享定义契约的两个闭集在两个地方各写了一份：规范里的 enum，与服务端门口的常量。
+  // 手抄的两份清单一定会漂 —— 逐字双向核对：服务端多一个＝白拒一个合法取值；
+  // 规范多一个＝门口把合法取值挡在外面，而且没有任何东西会告诉写规范的人。
+  {
+    const spec = JSON.parse(readFileSync(join(root, "spec/shared-definition-contract.schema.json"), "utf8"));
+    const serverText = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+    const constantOf = (name) => {
+      const hit = new RegExp(`const ${name} = \\[([^\\]]*)\\];`, "u").exec(serverText);
+      return hit ? [...hit[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]) : null;
+    };
+    const pairs = [
+      ["definitionType", "SHARED_DEFINITION_TYPES"],
+      ["conflictPolicy", "SHARED_DEFINITION_CONFLICT_POLICIES"]
+    ];
+    for (const [field, constantName] of pairs) {
+      const declared = spec.properties?.[field]?.enum;
+      const enforced = constantOf(constantName);
+      if (!Array.isArray(declared) || !declared.length) {
+        output.push(`规范里 ${field} 没有 enum 了 —— ${constantName} 这道门口校验失去依据，本条在空转`);
+      } else if (!enforced) {
+        output.push(`服务端找不到 ${constantName} —— 门口不再按闭集校验 ${field}，本条在空转`);
+      } else if (JSON.stringify(declared) !== JSON.stringify(enforced)) {
+        output.push(`${field} 的两份清单对不上：规范 ${JSON.stringify(declared)} / 服务端 ${JSON.stringify(enforced)}`
+          + " —— 服务端多的会白拒合法取值，规范多的会被门口挡在外面");
+      }
+    }
+  }
+
   // 每一项都要【按函数体切】再查：整份文件 include? 会被隔壁同形代码喂饱 —— 实测过，
   // settleCellOwnedResources 里正好也是 `session.status = "failed"` 紧跟 `blockedReason = reason`，
   // 于是把 markDispatchFailed 里那行删掉，整文件正则照样命中，变异一声不吭地绿了。

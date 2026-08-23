@@ -3135,6 +3135,30 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "认不出的共享定义类型必须拒绝",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    if (body.definitionType !== undefined && !SHARED_DEFINITION_TYPES.includes(String(body.definitionType))) {",
+    to: "    if (false) {",
+    expect: "认不出的 definitionType 被收下了"
+  },
+  {
+    name: "认不出的冲突处置策略必须拒绝",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    if (body.conflictPolicy !== undefined && !SHARED_DEFINITION_CONFLICT_POLICIES.includes(String(body.conflictPolicy))) {",
+    to: "    if (false) {",
+    expect: "认不出的 conflictPolicy 被收下了"
+  },
+  {
+    name: "两份共享定义闭集清单必须逐字一致",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    from: 'const SHARED_DEFINITION_CONFLICT_POLICIES = ["block_and_request_canonical_decision",',
+    to: 'const SHARED_DEFINITION_CONFLICT_POLICIES = ["block_and_request_canonical_decisions",',
+    expect: "的两份清单对不上"
+  },
+  {
     name: "认不出的授权作用域类型必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
