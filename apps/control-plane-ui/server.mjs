@@ -110,6 +110,8 @@ import {
   refreshConfirmationsAfterHumanChange,
   revokeAccountSessions,
   REGISTERED_OWNER_ROLES,
+  SHARED_DEFINITION_TYPES,
+  SHARED_DEFINITION_CONFLICT_POLICIES,
   taskGroupSettledRejection,
   capKeepingReferenced,
   STRING_LIST_MAX_ITEMS,
@@ -896,10 +898,6 @@ function actorIsProjectOwnerForScope(state, actor, resourceScope = {}) {
 // 授权能落在哪几种作用域上 —— 这是个闭集。多一个认不出的取值，跨组织边界就少守一次。
 const GRANTABLE_RESOURCE_TYPES = ["project", "task_group", "organization", "system"];
 
-// 共享定义契约的两个闭集 —— 取值必须与 spec/shared-definition-contract.schema.json 的 enum
-// 逐字一致，contract-check 双向核对（这边多一个＝落下来的记录违反规范；那边多一个＝门口白拒）。
-const SHARED_DEFINITION_TYPES = ["terminology", "api_contract", "data_model", "event_schema", "status_semantics", "error_code", "design_token", "quality_standard", "permission_semantics", "instruction_format", "semantic_contract"];
-const SHARED_DEFINITION_CONFLICT_POLICIES = ["block_and_request_canonical_decision", "owner_reconciles_then_republish"];
 
 function sanitizeGrantRequest(state, actor, input = {}, resourceScope = {}) {
   const account = state.accounts.find((item) => accountIdOf(item) === actor);

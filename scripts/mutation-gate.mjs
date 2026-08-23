@@ -3135,6 +3135,22 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "MCP 侧也要拒认不出的共享定义取值",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: "  assertSharedDefinitionClosedSets(args);",
+    to: "",
+    expect: "认不出的 definitionType 没有被拒"
+  },
+  {
+    name: "冲突处置策略不许静默降级成默认",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: '    if (args[field] === undefined || allowed.includes(String(args[field]))) continue;',
+    to: '    if (args[field] === undefined || allowed.includes(String(args[field])) || field === "conflictPolicy") continue;',
+    expect: "认不出的 conflictPolicy 没有被拒"
+  },
+  {
     name: "认不出的共享定义类型必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
@@ -3152,10 +3168,10 @@ const MUTATIONS = [
   },
   {
     name: "两份共享定义闭集清单必须逐字一致",
-    file: "apps/control-plane-ui/server.mjs",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",
-    from: 'const SHARED_DEFINITION_CONFLICT_POLICIES = ["block_and_request_canonical_decision",',
-    to: 'const SHARED_DEFINITION_CONFLICT_POLICIES = ["block_and_request_canonical_decisions",',
+    from: 'export const SHARED_DEFINITION_CONFLICT_POLICIES = ["block_and_request_canonical_decision",',
+    to: 'export const SHARED_DEFINITION_CONFLICT_POLICIES = ["block_and_request_canonical_decisions",',
     expect: "的两份清单对不上"
   },
   {

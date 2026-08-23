@@ -105,6 +105,45 @@ try {
   const missingIdempotency = await mcp("tools/call", {name: "room-mcp.room_send", arguments: {roomId: "room_doctor", payload: {text: "must fail"}}});
   if (missingIdempotency.structuredContent?.result?.error !== "idempotency_key_required") throw new Error("write MCP call without idempotencyKey was not rejected");
 
+  // 建共享定义在 REST 与 MCP 上是【两份实现】，闭集守卫也就要各有各的判据。
+  // core 这一份原先：definitionType 原样收、conflictPolicy 静默降级成默认策略 ——
+  // 后者更隐蔽，调用方打错一个字拿到的是 201，而落下来的是另一个真实生效的策略。
+  // 拒绝回执有两种落点：入口层的拒（idempotency_key_required 那种）落在 structuredContent.result，
+  // 而 core 抛出来的拒走 isError 那条路、落在 content[0].text 里的一段 JSON。
+  // 只读前者的话，抛错型守卫全都会被读成「回执是空的」—— 第一版就是这么误判的。
+  const toolResult = (response) => {
+    const structured = response?.structuredContent?.result;
+    if (structured && Object.keys(structured).length) return structured;
+    try { return JSON.parse(response?.content?.[0]?.text || "{}"); } catch { return {}; }
+  };
+  const bogusDefinitionType = await mcp("tools/call", {name: "definition-mcp.shared_definition_create",
+    arguments: {idempotencyKey: "doctor-mcp-sdc-bogus-type", taskGroupId: "tg_runtime_management",
+      definitionType: "termnology"}});
+  const bogusTypeResult = toolResult(bogusDefinitionType);
+  if (bogusTypeResult.error !== "shared_definition_type_not_recognized") {
+    throw new Error("MCP 建共享定义：认不出的 definitionType 没有被拒（"
+      + `${JSON.stringify(bogusTypeResult).slice(0, 160)}）—— 落下来的记录违反它自己声明的规范`);
+  }
+  if (!(bogusTypeResult.details?.supported || []).includes("terminology")) {
+    throw new Error(`拒了却没说合法取值有哪些（${JSON.stringify(bogusTypeResult.details)}）—— agent 只能穷举重试`);
+  }
+  const bogusConflictPolicy = await mcp("tools/call", {name: "definition-mcp.shared_definition_create",
+    arguments: {idempotencyKey: "doctor-mcp-sdc-bogus-policy", taskGroupId: "tg_runtime_management",
+      conflictPolicy: "just_do_it"}});
+  if (toolResult(bogusConflictPolicy).error !== "shared_definition_conflict_policy_not_recognized") {
+    throw new Error("MCP 建共享定义：认不出的 conflictPolicy 没有被拒（"
+      + `${JSON.stringify(toolResult(bogusConflictPolicy)).slice(0, 160)}）——`
+      + " 静默降级成默认策略的话，打错一个字就是另一个真实生效的策略，而回执是成功");
+  }
+  // 正面对照走同一条路：合法取值必须建得出来，否则上面两条只是「这条路永远拒」。
+  const legitDefinition = await mcp("tools/call", {name: "definition-mcp.shared_definition_create",
+    arguments: {idempotencyKey: "doctor-mcp-sdc-legit", taskGroupId: "tg_runtime_management",
+      definitionType: "api_contract", conflictPolicy: "owner_reconciles_then_republish"}});
+  if (!toolResult(legitDefinition).sharedDefinition?.contractId) {
+    throw new Error("合法取值也建不出共享定义（"
+      + `${JSON.stringify(toolResult(legitDefinition)).slice(0, 200)}）—— 上面两条测不出那道门`);
+  }
+
   const fullState = await mcp("tools/call", {name: "orchestration-mcp.state_get", arguments: {scope: "full"}});
   if (fullState.structuredContent?.result?.error !== "full_state_scope_not_allowed") throw new Error("state_get full scope was not denied");
 

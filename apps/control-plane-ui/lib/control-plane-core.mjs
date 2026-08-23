@@ -8369,14 +8369,31 @@ export function ruleSourceSettle(state, args) {
 
 // 创建时允许声明的状态：只有推进流程的早期态。active/conflicted 等"有实际效力"的状态必须经受控路径。
 const SHARED_DEFINITION_CREATABLE_STATUSES = ["draft", "owner_assigned", "proposed", "reviewing"];
+// 这两个闭集必须与 spec/shared-definition-contract.schema.json 的 enum 逐字一致
+//（contract-check 双向核对）。放在 core：REST 与 MCP 是同一件事的两个入口，
+// 各抄一份的话必有一天只改一处 —— status 那道守卫就是先只有 core 有、REST 整个绕过去。
+function assertSharedDefinitionClosedSets(args) {
+  for (const [field, allowed] of [["definitionType", SHARED_DEFINITION_TYPES],
+    ["conflictPolicy", SHARED_DEFINITION_CONFLICT_POLICIES]]) {
+    if (args[field] === undefined || allowed.includes(String(args[field]))) continue;
+    const error = new Error(field === "definitionType"
+      ? "shared_definition_type_not_recognized" : "shared_definition_conflict_policy_not_recognized");
+    error.status = 400;
+    error.details = {[field]: String(args[field]).slice(0, 60), supported: [...allowed]};
+    throw error;
+  }
+}
 // 真正构成"未完成、必须先处理掉"的状态。draft 不在内：它是"还没提出来"，不该阻塞任何人关闭任务组。
-const SHARED_DEFINITION_CONFLICT_POLICIES = ["block_and_request_canonical_decision", "owner_reconciles_then_republish"];
+export const SHARED_DEFINITION_TYPES = ["terminology", "api_contract", "data_model", "event_schema", "status_semantics", "error_code", "design_token", "quality_standard", "permission_semantics", "instruction_format", "semantic_contract"];
+export const SHARED_DEFINITION_CONFLICT_POLICIES = ["block_and_request_canonical_decision", "owner_reconciles_then_republish"];
 const SHARED_DEFINITION_BLOCKING_STATUSES = ["owner_assigned", "proposed", "reviewing", "change_requested", "conflicted"];
 
 export function sharedDefinitionCreate(state, args) {
   // 与其它承载授权的记录同规:同 id 的冒名契约会顶替掉已生效的那份（目前 governance-mcp.* 对机器
   // 主体禁用故不可达，但不依赖"暂时不可达"）。
   assertUniqueRecordId(state.sharedDefinitions, "contractId", args.contractId, "shared_definition_id_conflict");
+  // definitionType / conflictPolicy 规范里就是 enum，这条路原先原样收 —— 与 REST 那条同一个漏。
+  assertSharedDefinitionClosedSets(args);
   const at = new Date().toISOString();
   const taskGroup = taskGroupForRecord(state, args);
   const projectId = taskGroup?.projectId || args.projectId || "prj_control_plane";
@@ -8407,7 +8424,9 @@ export function sharedDefinitionCreate(state, args) {
     // 必填布尔一个都没有）—— 也就是说，分发给所有 agent 的"本项目规范"载体，自己不符合自己的契约。
     // requiresDecisionRecord/consumerAckRequired 在 schema 里是 const true：规范变更必须有决策记录、
     // 必须要消费方确认，不允许被创建方调低。
-    conflictPolicy: SHARED_DEFINITION_CONFLICT_POLICIES.includes(args.conflictPolicy) ? args.conflictPolicy : "block_and_request_canonical_decision",
+    // 认不出的取值在 assertSharedDefinitionClosedSets 已经拒掉了（原先是静默降级成默认策略 ——
+    // 调用方打错一个字，落下来的是另一个真实生效的策略，而它收到的是 201）。这里只处理"没给"。
+    conflictPolicy: args.conflictPolicy || "block_and_request_canonical_decision",
     changePolicy: {
       requiresDecisionRecord: true,
       invalidatesConsumers: args.changePolicy?.invalidatesConsumers !== false,

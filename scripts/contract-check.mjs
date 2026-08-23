@@ -6413,9 +6413,10 @@ function verifyExecutionFailureCapSurvivesHistoryAndReopen(output) {
   // 规范多一个＝门口把合法取值挡在外面，而且没有任何东西会告诉写规范的人。
   {
     const spec = JSON.parse(readFileSync(join(root, "spec/shared-definition-contract.schema.json"), "utf8"));
-    const serverText = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+    // 常量住在 core（REST 与 MCP 共用一份 —— 各抄一份必有一天只改一处）。
+    const serverText = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
     const constantOf = (name) => {
-      const hit = new RegExp(`const ${name} = \\[([^\\]]*)\\];`, "u").exec(serverText);
+      const hit = new RegExp(`export const ${name} = \\[([^\\]]*)\\];`, "u").exec(serverText);
       return hit ? [...hit[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]) : null;
     };
     const pairs = [
@@ -6428,7 +6429,7 @@ function verifyExecutionFailureCapSurvivesHistoryAndReopen(output) {
       if (!Array.isArray(declared) || !declared.length) {
         output.push(`规范里 ${field} 没有 enum 了 —— ${constantName} 这道门口校验失去依据，本条在空转`);
       } else if (!enforced) {
-        output.push(`服务端找不到 ${constantName} —— 门口不再按闭集校验 ${field}，本条在空转`);
+        output.push(`core 里找不到导出的 ${constantName} —— 门口不再按闭集校验 ${field}，本条在空转`);
       } else if (JSON.stringify(declared) !== JSON.stringify(enforced)) {
         output.push(`${field} 的两份清单对不上：规范 ${JSON.stringify(declared)} / 服务端 ${JSON.stringify(enforced)}`
           + " —— 服务端多的会白拒合法取值，规范多的会被门口挡在外面");
