@@ -3034,8 +3034,8 @@ const MUTATIONS = [
     name: "这条用例必须真的触发容量淘汰（不淘汰就该报空转）",
     file: "apps/control-plane-ui/lib/state-store.mjs",
     check: "verifyOutputTargetKeepsItsPolicyDecision",
-    from: "  if (!Array.isArray(state?.policyDecisions) || state.policyDecisions.length <= cap) return;",
-    to: "  if (!Array.isArray(state?.policyDecisions) || state.policyDecisions.length <= cap * 100) return;",
+    from: "  if (state.policyDecisions.length <= floor + slack) return;",
+    to: "  if (state.policyDecisions.length <= floor * 100) return;",
     expect: "本条在空转"
   },
   {
@@ -3133,6 +3133,14 @@ const MUTATIONS = [
     from: "  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg);",
     to: "  const grantable = candidates;",
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
+  },
+  {
+    name: "裁剪触发线要相对真实地板（否则每写一次都扫全量）",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    gate: "contract",
+    from: "  const floor = Math.max(cap, Number(state.policyDecisionsRetainedFloor || 0));",
+    to: "  const floor = cap;",
+    expect: "裁完之后又写一条就立刻再裁了一遍"
   },
   {
     name: "不许在写入点之前再裁一刀 policyDecisions",

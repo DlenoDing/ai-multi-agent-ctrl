@@ -321,7 +321,19 @@ function assertStateVersionAdvanced(state, expectedStateVersion) {
 // 保留仍被长期对象引用的决策，其余按时间淘汰。数量以活跃长期对象数为界，不会失控。
 function capPolicyDecisionsKeepingReferenced(state) {
   const cap = Math.max(100, Number(process.env.AIMAC_POLICY_DECISIONS_CAP || 500));
-  if (!Array.isArray(state?.policyDecisions) || state.policyDecisions.length <= cap) return;
+  // 滞后区：卡在上限线上会让【每一次写】都重建一遍引用集合（要扫 accessGrants + repositoryOutputs，
+  // 实测 5000 规模下每写 0.32ms，占请求预算约 6%，而且是随规模线性涨的那种）。
+  // 攒够 slack 条再裁一次，摊薄到 1/64；保留强度一个字没变 —— 裁的那一刻照样把被引用的捞回来，
+  // 两次裁剪之间只是多留了不到 64 条。这就是本仓反复撞到的「上限抖动」，同一个修法。
+  const slack = 64;
+  if (!Array.isArray(state?.policyDecisions)) return;
+  // 触发线要相对【真实地板】，不是相对 cap。被活跃授权引用的决策一条都不许删，所以当被引用的
+  // 数量超过 cap 时，这个集合永远降不到 cap 以下 —— 「length > cap」就恒成立，于是每写一次
+  // 都要重建一遍引用集合（要扫 accessGrants + repositoryOutputs）。实测 5000 授权 + 5000 产出时
+  // 每次写 0.244ms，占请求预算约 6%，而且随规模线性涨。
+  // 记住上一次裁完剩下多少，下次涨过「那个数 + slack」才再裁 —— 摊薄成 1/64，保留强度不变。
+  const floor = Math.max(cap, Number(state.policyDecisionsRetainedFloor || 0));
+  if (state.policyDecisions.length <= floor + slack) return;
   const referenced = new Set([
     ...(state.accessGrants || [])
       .filter((grant) => grant.status === "active").map((grant) => grant.policyDecisionRef),
@@ -340,6 +352,7 @@ function capPolicyDecisionsKeepingReferenced(state) {
   const stillReferenced = state.policyDecisions.slice(cap)
     .filter((item) => referenced.has(decisionIdOf(item)) && !keptIds.has(decisionIdOf(item)));
   state.policyDecisions = stillReferenced.length ? [...kept, ...stillReferenced] : kept;
+  state.policyDecisionsRetainedFloor = state.policyDecisions.length;
 }
 
 export function writeStoredState(state, options) {

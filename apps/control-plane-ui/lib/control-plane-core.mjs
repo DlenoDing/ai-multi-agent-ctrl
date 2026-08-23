@@ -4902,7 +4902,9 @@ function appendEvent(state, type, subjectType, subjectId, actorId, payload, extr
 // 人加的限制就这么被容量悄悄撤销了。分片层与运行时问题模式早就各自打了同样的补丁。
 function capCentralCollection(state, field, limit, isProtected) {
   const items = state[field] || [];
-  if (items.length <= limit) return;
+  // 用既有的 shouldCap：卡在上限线上就是每写一次全量重排一次（同一个道理上面已经写过一遍，
+  // 别再声明第二个 CAP_SLACK —— 两个余量常数早晚会漂开）。
+  if (!shouldCap(items, limit)) return;
   const ordered = isProtected
     ? [...items.filter((item) => isProtected(item)), ...items.filter((item) => !isProtected(item))]
     : items;

@@ -5216,7 +5216,10 @@ function verifyRuntimeJsonConflict(output) {
           resource: {resourceType: "project", resourceId: "prj_control_plane"}, createdAt: at}],
         // 新的在前、老的在后：被引用的那条排在 cap 之外，正是保护该捞回来的位置。
         policyDecisions: [
-          ...Array.from({length: cap + 50}, (_, index) => ({id: `pd_filler_${index}`, status: "allowed",
+          // 要越过【触发线】而不只是越过 cap：裁剪有 64 条滞后区（卡在上限线上会让每写一次
+          // 都重建一遍引用集合，实测 0.244ms/写）。夹具只多 50 条的话根本不触发裁剪，
+          // 这一段会静静地空转 —— 下面那句"没有被裁剪"就是防这个的。
+          ...Array.from({length: cap + 200}, (_, index) => ({id: `pd_filler_${index}`, status: "allowed",
             actor: "probe", resource: "Project:prj_control_plane", createdAt: at})),
           {id: referencedId, status: "allowed", actor: "probe",
             resource: "Project:prj_control_plane", createdAt: at}
@@ -5224,11 +5227,45 @@ function verifyRuntimeJsonConflict(output) {
       writeStoredState(evidenceState, options);
       const readBack = readStoredState(options);
       const kept = (readBack.policyDecisions || []).some((item) => (item.id || item.decisionId) === referencedId);
-      if ((readBack.policyDecisions || []).length > cap + 50) {
+      if ((readBack.policyDecisions || []).length > cap + 200) {
         output.push(`策略决策没有被裁剪（${(readBack.policyDecisions || []).length} 条）—— 这一段在空转`);
       } else if (!kept) {
         output.push("被【活跃授权】引用着的策略决策被容量淘汰了 —— 事后问「这条权限是凭什么给的」答不出来；"
           + "多半是有人在写入点那道保护【之前】又盲切了一刀（那一刀先跑，该捞回来的已经不在数组里）");
+      }
+      // 滞后区：被引用的决策多于 cap 时，「长度 > cap」恒成立 —— 触发线必须相对
+      // 【裁完剩下多少】，否则每写一次都要重建引用集合（扫 accessGrants + repositoryOutputs，
+      // 实测 5000 规模下 0.244ms/写，占请求预算约 6%，随规模线性涨）。
+      // 光看长度分辨不出「裁没裁」（全被引用时裁了也不掉），所以放一条【可丢弃的】老记录当探针：
+      // 触发线正确 → 这一写不该裁，探针还在；触发线贴着 cap → 每写都裁，探针被丢掉。
+      {
+        const many = cap + 200;
+        const at2 = new Date().toISOString();
+        const protectedState = {stateVersion: 10, runtime: {},
+          accessGrants: Array.from({length: many}, (_, index) => ({grantId: `g_${index}`, status: "active",
+            policyDecisionRef: `pd_kept_${index}`,
+            subjectRef: {subjectType: "account", subjectId: "acct_probe"},
+            resource: {resourceType: "project", resourceId: "prj_control_plane"}, createdAt: at2})),
+          policyDecisions: Array.from({length: many}, (_, index) => ({id: `pd_kept_${index}`,
+            status: "allowed", actor: "probe", resource: "Project:prj_control_plane", createdAt: at2}))};
+        writeStoredState(protectedState, options);
+        const trimmed = readStoredState(options);
+        const floorLength = (trimmed.policyDecisions || []).length;
+        if (floorLength < many) {
+          output.push(`被活跃授权引用的策略决策被裁掉了（${floorLength} < ${many}）—— 引用保护没起作用`);
+        }
+        // 再写一次：只多一条新的，外加一条【没人引用的】老记录当探针。
+        const withProbe = {...trimmed, stateVersion: Number(trimmed.stateVersion || 10) + 1,
+          policyDecisions: [{id: "pd_newest", status: "allowed", actor: "probe",
+            resource: "Project:prj_control_plane", createdAt: at2}, ...(trimmed.policyDecisions || []),
+            {id: "pd_droppable_probe", status: "allowed", actor: "probe",
+              resource: "Project:prj_control_plane", createdAt: at2}]};
+        writeStoredState(withProbe, {...options, expectedStateVersion: trimmed.__loadedStateVersion});
+        const after = readStoredState(options);
+        if (!(after.policyDecisions || []).some((item) => item.id === "pd_droppable_probe")) {
+          output.push("裁完之后又写一条就立刻再裁了一遍 —— 触发线贴着上限，"
+            + "而被引用的决策本来就多于上限，于是每一次写都要重建引用集合（扫 accessGrants + repositoryOutputs）");
+        }
       }
     }
     // 上面那条只证明【写入点】的保护是好的，证明不了「别处没人在它之前先切一刀」——
@@ -6496,14 +6533,14 @@ function verifyExecutionFailureCapSurvivesHistoryAndReopen(output) {
     const at = new Date().toISOString();
     // 2000 条已替代的历史，外加一条【最老的、生效中的】—— 盲切会先丢最老的那条。
     capState.roleSkillOverlays = [
-      ...Array.from({length: 2000}, (_, index) => ({overlayId: `ovl_old_${index}`, status: "superseded",
+      ...Array.from({length: 2100}, (_, index) => ({overlayId: `ovl_old_${index}`, status: "superseded",
         roleSkillRef: capBase.roleSkillId, scope: {}, patch: {}, createdAt: at})),
       {overlayId: "ovl_active_oldest", status: "active", roleSkillRef: capBase.roleSkillId,
         scope: {}, patch: {forbiddenCapabilityAdds: ["cap_banned"]}, createdAt: at}
     ];
     registerRoleSkillOverlay(capState, {roleSkillRef: capBase.roleSkillId, patch: {}});
-    if (capState.roleSkillOverlays.length > 2000) {
-      output.push(`角色技能叠加超过 2000 条没有裁剪（${capState.roleSkillOverlays.length}）—— 这一段在空转`);
+    if (capState.roleSkillOverlays.length > 2064) {
+      output.push(`角色技能叠加超过上限+滞后区仍没有裁剪（${capState.roleSkillOverlays.length}）—— 这一段在空转`);
     } else if (!capState.roleSkillOverlays.some((item) => item.overlayId === "ovl_active_oldest")) {
       output.push("容量淘汰把一条【生效中】的角色技能叠加删掉了 —— 那是人对 agent 能力下的限制"
         + "（patch 里就有 forbiddenCapabilityAdds），容量把它悄悄撤销了，屏幕上什么都不会变");
@@ -6982,7 +7019,9 @@ function verifyOutputTargetKeepsItsPolicyDecision(output) {
     policyDecisionRef: "pd_must_survive"}];
   // 灌满上限：淘汰只在超过 cap 时发生。
   const cap = Math.max(100, Number(process.env.AIMAC_POLICY_DECISIONS_CAP || 500));
-  for (let index = 0; index < cap + 20; index += 1) {
+  // +200 而不是 +20：裁剪有 64 条滞后区（贴着上限裁会让每写一次都重建一遍引用集合）。
+  // 只多 20 条根本不触发，这一段会静静空转 —— 下面那句自报正是防这个的。
+  for (let index = 0; index < cap + 200; index += 1) {
     probe.policyDecisions.unshift({id: `pd_noise_${index}`, action: "noise", createdAt: "2026-01-02T00:00:00.000Z"});
   }
   const before = probe.policyDecisions.length;
@@ -7016,7 +7055,8 @@ function verifyOutputTargetKeepsItsPolicyDecision(output) {
       resource: {resourceType: "project", resourceId: "prj_control_plane"},
       policyDecisionRef: "pd_mcp_must_survive"}];
     const mcpCap = Math.max(100, Number(process.env.AIMAC_POLICY_DECISIONS_CAP || 500));
-    for (let index = 0; index < mcpCap + 20; index += 1) {
+    // +200：同上，裁剪有 64 条滞后区，只多 20 条不触发。
+    for (let index = 0; index < mcpCap + 200; index += 1) {
       mcpProbe.policyDecisions.unshift({id: `pd_noise_${index}`, action: "noise", createdAt: "2026-01-02T00:00:00.000Z"});
     }
     const mcpBefore = mcpProbe.policyDecisions.length;
