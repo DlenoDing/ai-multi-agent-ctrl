@@ -328,24 +328,24 @@ const PREDICATE_COVERAGE = {
   isSafeCloneUrl: {notProbed: "agent 运行时那份，与 isSafeGitRemoteUrl 同族，未单独探"},
   pathMatches: {notProbed: "agent 运行时那份产出路径判定，未单独探"},
   roleAllowed: {notProbed: "rolesAllowed 的单数版，未单独探"},
-  isHumanConfirmationActor: {notProbed: "人工确认主体判定，未单独探"},
-  canUseGitPath: {notProbed: "git 路径合法性，未单独探"},
-  isSafeGitRef: {notProbed: "分支/引用名安全性，未单独探"},
-  isDelegatableGrantPermission: {notProbed: "可委派权限判定，未单独探"},
+  isHumanConfirmationActor: {probedOnly: "改成永远为真（谁都算真人），契约门红"},
+  canUseGitPath: {probedOnly: "改成永远为真（路径逃逸放行），契约门红"},
+  isSafeGitRef: {probedOnly: "改成永远为真（危险引用名放行），契约门红"},
+  isDelegatableGrantPermission: {probedOnly: "改成永远为真（system:* 也可委派），契约门红"},
   isSystemAccount: {notProbed: "系统账号判定，未单独探"},
   isLocalHostHeader: {notProbed: "被 requestHostAllowed 与引导提示两条用到，未单独探"},
   isLocalHostname: {notProbed: "同上，未单独探"},
   isLoopbackAddress: {notProbed: "要从非回环地址发起连接才验得到，本机 e2e 造不出这个条件"},
   canReadResource: {notProbed: "读作用域，未单独探"},
   canReadProject: {notProbed: "读作用域，未单独探"},
-  hasPermission: {notProbed: "判权总入口，未单独探"},
+  hasPermission: {probedOnly: "改成永远为真，控制面 e2e 红"},
   isReadOnlyTool: {notProbed: "MCP 只读/写工具划分，未单独探"},
-  isWriteTool: {notProbed: "同上，未单独探"},
+  isWriteTool: {probedOnly: "改成永远为假（写工具被当成只读），契约门红"},
   schemaTypeMatches: {notProbed: "MCP 入参类型校验，未单独探"},
   hasInputArg: {notProbed: "MCP 入参存在性，未单独探"},
   hasAnyInputArg: {notProbed: "同上，未单独探"}
 };
-const PREDICATE_NOT_PROBED_CEILING = 19;
+const PREDICATE_NOT_PROBED_CEILING = 13;
 
 const PATH_ALLOWLIST_CASES = [
   // 字面量前缀 + /**：目录本身、目录下任意深度都算，隔壁同前缀的目录不算
