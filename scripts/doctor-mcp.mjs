@@ -811,6 +811,27 @@ try {
     seedPath: join(root, "data/seed-state.json"),
     buildInitialState: () => { throw new Error("mcp doctor: 期望读到本轮跑出的状态，却触发了初始状态创建"); }
   });
+  // 经 MCP 邀请、又【不显式给权限】的人，必须真的能看见那个项目。
+  // 这条路的缺省权限原先写的是 "project:read" —— 一个全系统再无第二处的串：
+  // 接口回成功、控制台上显示"已授权"，而这个人打开控制台什么都没有，任何一处都不说原因。
+  // 判据不看那份权限清单长什么样（那是拿产品的写法当标准），只看【他到底看不看得见】。
+  {
+    const invited = await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.account_invite",
+      arguments: {idempotencyKey: "doctor-mcp-default-grant", email: "default.grant.probe@local",
+        displayName: "缺省授权探针", projectId: "prj_control_plane"}});
+    const accountToken = invited.structuredContent?.result?.accountToken;
+    if (!accountToken) {
+      throw new Error(`MCP 邀请没给出一次性凭据，本条无从验证：${JSON.stringify(invited).slice(0, 200)}`);
+    }
+    const invitedLogin = await api("/api/auth/login", {method: "POST",
+      body: {email: "default.grant.probe@local", token: accountToken}});
+    const seen = await api("/api/state", {token: invitedLogin.sessionToken});
+    if (!(seen.projects || []).some((project) => project.id === "prj_control_plane")) {
+      throw new Error("经 MCP 邀请进项目、没显式给权限的人打开控制台看不到那个项目 ——"
+        + " 授权是发出去了，但它带的权限没有任何守卫会要，等于什么都打不开");
+    }
+  }
+
   const mcpStates = checkRecordStatusesAreDeclaredStates(join(root, "spec/state-machines.yaml"),
     mcpProducedState, "MCP e2e 产出");
   console.log(mcpStates.note);

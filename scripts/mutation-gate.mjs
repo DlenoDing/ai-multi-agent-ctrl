@@ -3152,6 +3152,30 @@ const MUTATIONS = [
     expect: "收下了认不出的单元状态"
   },
   {
+    name: "缺省授权必须真的让人看得见那个项目",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '      permissions: args.grantPermissions || ["project:view"]',
+    to: '      permissions: args.grantPermissions || ["task_group:monitor"]',
+    expect: "看不到那个项目"
+  },
+  {
+    name: "谁也不要的权限串必须被拦下（授出去等于什么都打不开）",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyEveryGrantedPermissionHasAConsumer",
+    from: '      permissions: args.grantPermissions || ["project:view"]',
+    to: '      permissions: args.grantPermissions || ["project:read"]',
+    expect: "没有任何守卫会要它"
+  },
+  {
+    name: "权限词表偏小时必须出声（偏小＝把正常权限报成没人要）",
+    file: SERVER,
+    check: "verifyEveryGrantedPermissionHasAConsumer",
+    from: "function permissionForAction(action) {",
+    to: "function permissionForActionRenamedByMutation(action) {",
+    expect: "提取不到 permissionForAction 的映射"
+  },
+  {
     name: "派发终态那份共用常量要与状态机对上",
     file: "apps/control-plane-ui/lib/lifecycle-states.mjs",
     check: "verifyTerminalStatusListsAgree",

@@ -2792,7 +2792,11 @@ export function accountInvite(state, args) {
       subjectId: account.accountId,
       resource: args.resource || (args.taskGroupId ? {resourceType: "task_group", resourceId: args.taskGroupId} : {resourceType: "project", resourceId: args.projectId}),
       role: args.grantRole || "project_member",
-      permissions: args.grantPermissions || ["project:read"]
+      // 不填权限时的缺省。原先写的是 "project:read" —— 这个权限串【全系统再无第二处】：
+      // 没有任何守卫会要它，可见性判定要的是 project:view。于是经 MCP 邀请、又没显式给权限的人
+      // 拿到一张"看着正常"的授权，实际什么都打不开，而且哪里都不会报错。
+      // REST 那侧同一角色（project_member）给的就是 project:view，这里对齐它。
+      permissions: args.grantPermissions || ["project:view"]
     });
   }
   return {

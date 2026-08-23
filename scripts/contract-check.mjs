@@ -669,6 +669,7 @@ run(verifyWholesaleFieldListMatchesTheWrites);
 run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
+run(verifyEveryGrantedPermissionHasAConsumer);
 run(verifyOnlyLiveHumanAccountsCanFinalize);
 run(verifyGitRemoteGuardRejectsCommandTransports);
 run(verifyGitPathGuardRejectsEscapes);
@@ -7847,6 +7848,65 @@ function verifyOnlyLiveHumanAccountsCanFinalize(output) {
     output.push("账号根本不存在时也判成了「人」—— 一个编造的 actorId 就能定稿");
   }
   console.log(`定稿资格：${cases.length} 种账号形态逐个核对（类型 × 状态两层都验）`);
+}
+
+// 一个【谁也不要的权限串】＝一张看着正常、其实什么都打不开的授权：接口回 201、控制台上
+// 显示"已授权"，而持有它的人点什么都没有权限，任何一处都不会说出原因。
+// 实测抓到一处：MCP 建授权时不填权限的缺省值写的是 "project:read"，而这个串全系统再无第二处
+// —— 可见性判定要的是 project:view（REST 那侧同一角色给的正是它）。
+// 判据形状：把【消费侧】（谁会要权限）枚举成词表，再要求所有出现过的权限串都在词表里。
+// 反过来做（枚举授权侧再看有没有人要）会漏掉这一类，因为死权限在授权侧看起来一切正常。
+function verifyEveryGrantedPermissionHasAConsumer(output) {
+  const serverPath = "apps/control-plane-ui/server.mjs";
+  const serverText = readFileSync(join(root, serverPath), "utf8");
+  const consumers = new Set();
+  // ① 动作 → 所需权限的映射表（受守卫的写路由都从这里取）
+  const mapStart = serverText.indexOf("function permissionForAction(action) {");
+  const mapBody = mapStart < 0 ? "" : serverText.slice(mapStart, serverText.indexOf("\n}\n", mapStart));
+  const fromMap = [...mapBody.matchAll(/return "([a-z_]+:[a-z_*]+)"/gu)].map((hit) => hit[1]);
+  // ② 可见性判定：["a","b"].some((permission) => hasPermission(...))
+  const fromVisibility = [];
+  for (const hit of serverText.matchAll(/\[([^\]]*?)\]\s*\.some\(\s*\(permission\)\s*=>\s*\n?\s*hasPermission/gu)) {
+    fromVisibility.push(...[...hit[1].matchAll(/"([a-z_]+:[a-z_*]+)"/gu)].map((one) => one[1]));
+  }
+  // 两种形状各自都要有产出：少了一种就说明提取与代码脱节，而那时词表偏小 ——
+  // 偏小的词表会把正常权限报成"没人要"，一堆假警报的下场是这道门被整个豁免掉。
+  if (!fromMap.length) output.push("权限消费侧提取不到 permissionForAction 的映射 —— 词表偏小，本条会误报");
+  if (!fromVisibility.length) output.push("权限消费侧提取不到可见性判定里的权限清单 —— 词表偏小，本条会误报");
+  for (const permission of [...fromMap, ...fromVisibility]) consumers.add(permission);
+  if (consumers.size < 15) {
+    output.push(`权限消费侧只提取到 ${consumers.size} 个（远少于既有规模）—— 提取脱节，本条在空转`);
+    return;
+  }
+  const prefixes = new Set([...consumers].map((permission) => permission.split(":")[0]));
+  const orphans = new Map();
+  const walkApps = (dir) => {
+    for (const entry of readdirSync(dir, {withFileTypes: true})) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) { walkApps(full); continue; }
+      if (!entry.name.endsWith(".mjs") && !entry.name.endsWith(".js")) continue;
+      // 剥掉整行注释：本判据修的那处缺陷，理由就写在被测文件的注释里，
+      // 不剥的话它会读到自己写的那个死权限串（本仓「门读到自己写的字」已撞六次）。
+      const text = readFileSync(full, "utf8").split("\n")
+        .filter((line) => !/^\s*(\/\/|\*|\/\*)/u.test(line)).join("\n");
+      for (const hit of text.matchAll(/"((?:project|member|agent|task_group|system|org):[a-z_*]+)"/gu)) {
+        const permission = hit[1];
+        if (consumers.has(permission)) continue;
+        // 通配是授权侧独有的写法（permissionMatches 让 "x:*" 命中任何 "x:y"），
+        // 它当然不会出现在消费侧 —— 只要前缀是真的就行。
+        if (permission.endsWith(":*") && prefixes.has(permission.slice(0, -2))) continue;
+        if (!orphans.has(permission)) orphans.set(permission, new Set());
+        orphans.get(permission).add(full.slice(root.length + 1));
+      }
+    }
+  };
+  walkApps(join(root, "apps"));
+  for (const [permission, files] of orphans) {
+    output.push(`权限串 ${JSON.stringify(permission)} 没有任何守卫会要它（出现在 ${[...files].join("、")}）——`
+      + " 拿到它的人什么都打不开，而接口回的是成功、控制台上显示已授权，没有一处会说出原因");
+  }
+  console.log(`权限词表：消费侧 ${consumers.size} 个（动作映射 ${new Set(fromMap).size} + 可见性判定`
+    + ` ${new Set(fromVisibility).size}），apps 下出现过的权限串逐个核过，${orphans.size} 个没人要`);
 }
 
 function verifyTerminalStatusListsAgree(output) {
