@@ -5140,7 +5140,7 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/execution-topologies") {
     const guard = beginGuardedWrite(req, state, "execution_topology_plan", `ExecutionTopology:${body.topologyId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
     if (guard.status) return json(res, guard.status, guard.payload);
-    const result = createExecutionTopology(state, body);
+    const result = createExecutionTopology(state, body, {root: repositoryRoot});
     audit(state, guard.actor, "execution_topology_plan", `ExecutionTopology:${result.topology.topologyId}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);

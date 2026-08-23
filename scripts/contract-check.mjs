@@ -29,6 +29,7 @@ import {
   summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs, capacitySnapshot
 } from "../apps/mcp-server/server.mjs";
 import {
+  gitHeadOrNull,
   recordIdempotentResult,
   recordOrchestratorTickOutcome,
   acceptAgentCheckpoint,
@@ -676,6 +677,7 @@ run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
 run(verifyEveryGrantedPermissionHasAConsumer);
+run(verifyExecutionTopologyBaselineTellsTheTruth);
 run(verifyIdempotencyPayloadsAreSwept);
 run(verifyNobodyWritesIdempotencyRecordsDirectly);
 run(verifyOnlyLiveHumanAccountsCanFinalize);
@@ -7875,6 +7877,47 @@ function verifyOnlyLiveHumanAccountsCanFinalize(output) {
 // 正文的过期清理与条数淘汰原先只挂在 REST 那个写入点上，MCP 那个只写不清 —— 而 agent 全都走 MCP。
 // 实测曲线：0 条 8.4ms → 5000 条（出厂上限）29.6MB、82.4ms 一轮读写，线性。
 // 两件事分开验：① 那个唯一入口真的会清、也真的会裁；② 谁都不许绕过它直接写。
+// 执行方案的基线快照（gitHead + 工作树摘要）是 planned→eligibility_checked 那步迁移的证据。
+// 它原先从 process.cwd() 算 —— 而别的每一处调用都是服务端把自己配的 repositoryRoot 传进去的。
+// 从别的工作目录起服务（docker / systemd）时它去 cwd 找仓库，找不到就把「取不到」记成
+// gitHead 自己编的那个 000000000000：证据栏是满的，而它什么也没证明。两件事分开验。
+function verifyExecutionTopologyBaselineTellsTheTruth(output) {
+  const notARepository = mkdtempSync(join(tmpdir(), "cc-no-repo-"));
+  try {
+    if (gitHeadOrNull(notARepository) !== null) {
+      output.push("在一个不是仓库的目录上取 git head，没有如实回 null —— 「取不到」被当成了一个提交号");
+    }
+    // 这里【不】比对 GIT_HEAD_UNAVAILABLE 的字面值：判据与实现读的是同一个常量，
+    // 改掉它两边一起变，那条断言恒真（拿产品跟它自己比）。真正承重的是上面那句——
+    // gitHead 的兜底值一旦改成别的东西，gitHeadOrNull 就不再回 null，上面当场红。
+    const state = {stateVersion: 7, executionTopologies: [], taskGroups: [], workItems: [],
+      transitionEvidence: [], humanConfirmationRequests: [], auditLog: [], eventLog: []};
+    ensureRuntimeCollections(state, {root, runtimeDir: mkdtempSync(join(tmpdir(), "cc-no-repo-rt-"))});
+    const created = createExecutionTopology(state, {taskGroupId: "tg_runtime_management",
+      workItemId: "work_probe", repositoryRoot: notARepository, branches: [{branchId: "b1", ownedPaths: ["docs/**"]}]});
+    const snapshot = created?.topology?.baseSnapshot || state.executionTopologies[0]?.baseSnapshot;
+    if (!snapshot) {
+      output.push("执行方案基线判据没能建出方案 —— 这一条什么也没验");
+      return;
+    }
+    if (snapshot.gitHead !== null) {
+      output.push(`仓库取不到时基线快照仍写了 gitHead=${JSON.stringify(snapshot.gitHead)} ——`
+        + " 那是编出来的，而它是 planned→eligibility_checked 那步迁移的证据");
+    }
+  } finally {
+    rmSync(notARepository, {recursive: true, force: true});
+  }
+  // 服务端那份 repositoryRoot 必须真的传进去：不传就回落到 cwd，而这两处是全仓仅有的调用点。
+  for (const [file, needle] of [
+    ["apps/control-plane-ui/server.mjs", "createExecutionTopology(state, body, {root: repositoryRoot})"],
+    ["apps/mcp-server/server.mjs", "createExecutionTopology(state, args, {root: repositoryRoot})"]]) {
+    if (!readFileSync(join(root, file), "utf8").includes(needle)) {
+      output.push(`${file} 建执行方案时没把服务端配的 repositoryRoot 传进去 ——`
+        + " 从别的工作目录起服务时它会去 cwd 找仓库，基线证据变成「取不到」");
+    }
+  }
+}
+
 function verifyIdempotencyPayloadsAreSwept(output) {
   const at = Date.parse("2026-01-02T00:00:00.000Z");
   const old = new Date(at - 3600000).toISOString();

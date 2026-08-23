@@ -1270,8 +1270,8 @@ const MUTATIONS = [
     name: "编排不得按单元起 git 子进程",
     file: CORE,
     check: "verifyOrchestrationDoesNotShellOutPerCell",
-    from: "  return memoizedGitFact(`head\\u0000${root}`, () => git(root, [\"rev-parse\", \"--short=12\", \"HEAD\"], \"000000000000\"));",
-    to: '  return git(root, ["rev-parse", "--short=12", "HEAD"], "000000000000");',
+    from: "  return memoizedGitFact(`head\\u0000${root}`, () => git(root, [\"rev-parse\", \"--short=12\", \"HEAD\"], GIT_HEAD_UNAVAILABLE));",
+    to: "  return git(root, [\"rev-parse\", \"--short=12\", \"HEAD\"], GIT_HEAD_UNAVAILABLE);",
     expect: "个单元的一轮编排调了"
   },
   {
@@ -3174,6 +3174,38 @@ const MUTATIONS = [
     from: '      permissions: args.grantPermissions || ["project:view"]',
     to: '      permissions: args.grantPermissions || ["task_group:monitor"]',
     expect: "看不到那个项目"
+  },
+  {
+    name: "授权覆不覆盖这个资源必须真判（判错＝系统对人说假话）",
+    file: CORE,
+    gate: "mcp",
+    from: "  if (!grantResource.resourceType || !requestedResource.resourceType) return false;",
+    to: "  if (grantResource.resourceType || requestedResource.resourceType) return true;",
+    expect: "授权作用域没起作用"
+  },
+  {
+    name: "取不到仓库时基线证据不许编一个提交号",
+    file: CORE,
+    check: "verifyExecutionTopologyBaselineTellsTheTruth",
+    from: "      gitHead: gitHeadOrNull(root),",
+    to: "      gitHead: gitHead(root),",
+    expect: "那是编出来的"
+  },
+  {
+    name: "建执行方案必须用服务端配的仓库根（不传就回落到 cwd）",
+    file: SERVER,
+    check: "verifyExecutionTopologyBaselineTellsTheTruth",
+    from: "    const result = createExecutionTopology(state, body, {root: repositoryRoot});",
+    to: "    const result = createExecutionTopology(state, body);",
+    expect: "没把服务端配的 repositoryRoot 传进去"
+  },
+  {
+    name: "gitHead 的兜底值改了，「取不到」必须仍然认得出来",
+    file: CORE,
+    check: "verifyExecutionTopologyBaselineTellsTheTruth",
+    from: '["rev-parse", "--short=12", "HEAD"], GIT_HEAD_UNAVAILABLE)',
+    to: '["rev-parse", "--short=12", "HEAD"], "deadbeefcafe")',
+    expect: "没有如实回 null"
   },
   {
     name: "幂等回执正文必须被清（不清＝中央态每次写都整份重写它）",

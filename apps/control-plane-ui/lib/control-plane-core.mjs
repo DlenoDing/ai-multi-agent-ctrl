@@ -4800,8 +4800,20 @@ function memoizedGitFact(key, compute) {
   return value;
 }
 
+// git 答不上来时回落成的那个值。它长得像一个短提交号，所以【必须能被认出来】——
+// 把「这台机器上根本没有那个仓库」记成一个看起来正常的基线提交，是本仓「缺省不得等于
+// 有利结果」那一族最安静的样子：证据栏是满的，而它什么也没证明。
+export const GIT_HEAD_UNAVAILABLE = "000000000000";
+
 export function gitHead(root = process.cwd()) {
-  return memoizedGitFact(`head\u0000${root}`, () => git(root, ["rev-parse", "--short=12", "HEAD"], "000000000000"));
+  return memoizedGitFact(`head\u0000${root}`, () => git(root, ["rev-parse", "--short=12", "HEAD"], GIT_HEAD_UNAVAILABLE));
+}
+
+// 要「取不到就是取不到」的调用方用这个。12 个 0 不可能是真实提交的短号，
+// 而它是 gitHead 唯一会自己编出来的值，所以这个比较是可靠的。
+export function gitHeadOrNull(root = process.cwd()) {
+  const head = gitHead(root);
+  return head === GIT_HEAD_UNAVAILABLE ? null : head;
 }
 
 export function gitRemoteUrl(root = process.cwd(), remote = "origin") {
@@ -7301,7 +7313,7 @@ function globScopesOverlap(left, right) {
   return a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
-export function createExecutionTopology(state, args) {
+export function createExecutionTopology(state, args, options = {}) {
   const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);
   if (settledRejection) return settledRejection;
   const taskGroup = findTaskGroup(state, args.taskGroupId);
@@ -7311,7 +7323,11 @@ export function createExecutionTopology(state, args) {
   const workItemId = args.workItemId || args.workId || workItem?.id;
   if (!workItemId) throw topologyError("execution_topology_requires_work_item", 400);
   const at = new Date().toISOString();
-  const root = args.root || args.repositoryRoot || process.cwd();
+  // 仓库根：调用方可以点名（多仓部署），否则用【服务端自己配的那个】。
+  // 原先最后回落到 process.cwd() —— 而别的每一处调用都是服务端把 repositoryRoot 显式传进来的。
+  // 从别的工作目录起服务（docker / systemd）时，这一处会去 cwd 找仓库，找不到就把
+  // "取不到" 记成一个看起来正常的基线提交，而这是下面那步迁移的证据。
+  const root = args.root || args.repositoryRoot || options.root || process.cwd();
   const branches = normalizeTopologyBranches(args, workItem);
   // 这三个字段在 spec/execution-topology.schema.json 里都是 enum，这里原先原样收 ——
   // 打错一个字，落下来的拓扑违反它自己声明的规范，而回执是成功。
@@ -7347,7 +7363,9 @@ export function createExecutionTopology(state, args) {
     ...((args.localVerificationEvidenceRefs || []).length ? {localVerificationEvidenceRefs: unique(args.localVerificationEvidenceRefs)} : {}),
     baseSnapshot: {
       stateVersion: Math.max(1, Number(state.stateVersion || 1)),
-      gitHead: gitHead(root),
+      // 取不到就如实写 null，不编一个看起来像提交号的值 —— 下面 base_snapshot_ref 那条证据
+      // 是靠它拼出来的，人和后续判据都要分得清「基线是这个提交」与「这台机器上没有那个仓库」。
+      gitHead: gitHeadOrNull(root),
       dirtyDigest: digestOf(gitStatusPaths(root))
     },
     mergePolicy: "parent_serial_after_all_required_reported",
@@ -7429,7 +7447,7 @@ export function advanceExecutionTopology(state, args) {
     transition("planned", "eligibility_checked", "scheduler", {
       topology_plan_ref: `ExecutionTopology:${topology.topologyId}`,
       branch_boundaries_defined: String(branches.length),
-      base_snapshot_ref: `state:${topology.baseSnapshot.stateVersion}:${topology.baseSnapshot.gitHead}`
+      base_snapshot_ref: `state:${topology.baseSnapshot.stateVersion}:${topology.baseSnapshot.gitHead || "git-unavailable"}`
     });
   } else if (action === "start") {
     expect("eligibility_checked");

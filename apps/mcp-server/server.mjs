@@ -1396,7 +1396,7 @@ async function dispatchTool(state, name, args, context = {}) {
     case "scheduler-mcp.capacity_snapshot":
       return capacitySnapshot(state, principalProjectFilter(context));
     case "scheduler-mcp.execution_topology_plan":
-      return createExecutionTopology(state, args);
+      return createExecutionTopology(state, args, {root: repositoryRoot});
     case "scheduler-mcp.execution_topology_advance":
       return advanceExecutionTopology(state, {...args, actor: context?.principal?.id});
     case "scheduler-mcp.derived_task_classify":

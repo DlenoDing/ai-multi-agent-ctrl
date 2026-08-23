@@ -811,6 +811,55 @@ try {
     seedPath: join(root, "data/seed-state.json"),
     buildInitialState: () => { throw new Error("mcp doctor: 期望读到本轮跑出的状态，却触发了初始状态创建"); }
   });
+  // 「这张授权覆不覆盖你问的这个资源」由 core 的 resourceMatches 一个函数决定，
+  // 它管着两件事：权限探询给出的答案、以及建授权时的去重。把它改成【永远为真】之后，
+  // 契约门 + 三套 e2e 全绿 —— 整条门链上一个行为断言都没有。两个方向各验一次：
+  //  · 探询：在项目 A 上有授权的人，问项目 B 必须答"不允许"（答错＝系统告诉人一句假话）；
+  //  · 去重：为项目 B 建授权时，不许把项目 A 的那张当成"已经有了"返回
+  //    （那时调用方以为授权成功，而 B 上根本没有授权，拿到的 grantId 指着另一个资源）。
+  // 用的权限是这条路的缺省 task_group:read —— grant_create 的 permissions/role 两个参数
+  // 在共用入参词表里没有对应键，MCP 上传不进来（这件事另行报给人定，这里只用够得着的参数）。
+  {
+    const probeEmail = "resource-scope-probe@local";
+    const invited = await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.account_invite",
+      arguments: {idempotencyKey: "doctor-mcp-resource-scope", email: probeEmail,
+        displayName: "授权作用域探针", projectId: "prj_control_plane"}});
+    const subjectId = invited.structuredContent?.result?.account?.accountId;
+    if (!subjectId) throw new Error(`授权作用域探针建不出账号：${JSON.stringify(invited).slice(0, 160)}`);
+    const grantedA = await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.grant_create",
+      arguments: {idempotencyKey: "doctor-mcp-resource-scope-a", subjectId,
+        resource: {resourceType: "project", resourceId: "prj_control_plane"}}});
+    const grantA = grantedA.structuredContent?.result?.grant;
+    if (!grantA) throw new Error(`项目 A 的授权建不出来：${JSON.stringify(grantedA.structuredContent?.result || grantedA).slice(0, 200)}`);
+    const otherProject = "prj_doctor_mcp_resource_scope";
+    await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.project_create",
+      arguments: {idempotencyKey: "doctor-mcp-resource-scope-project", projectId: otherProject,
+        name: "授权作用域对照项目"}});
+    const askedB = await mcpAs(admin.sessionToken, "tools/call", {name: "permission-mcp.permission_probe",
+      arguments: {subjectId, permission: "task_group:read",
+        resource: {resourceType: "project", resourceId: otherProject}}});
+    const verdict = askedB.structuredContent?.result;
+    if (verdict?.allowed !== false || (verdict?.grants || []).length) {
+      throw new Error(`在项目 A 上有授权的人，问项目 B 被答成「允许」（命中 ${(verdict?.grants || []).length} 张授权）`
+        + " —— 授权作用域没起作用，而这是系统对人说的一句假话");
+    }
+    const grantedB = await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.grant_create",
+      arguments: {idempotencyKey: "doctor-mcp-resource-scope-b", subjectId,
+        resource: {resourceType: "project", resourceId: otherProject}}});
+    const grantB = grantedB.structuredContent?.result?.grant;
+    if (!grantB) throw new Error(`为项目 B 建不出授权：${JSON.stringify(grantedB.structuredContent?.result || grantedB).slice(0, 200)}`);
+    if (grantB.resource?.resourceId !== otherProject || grantB.grantId === grantA.grantId) {
+      throw new Error(`为项目 B 申请授权，拿回来的却是指着 ${grantB.resource?.resourceId} 的那一张`
+        + "（去重把两个资源当成了同一个）—— 调用方以为授权成功，而 B 上根本没有授权");
+    }
+    const afterGrant = await mcpAs(admin.sessionToken, "tools/call", {name: "permission-mcp.permission_probe",
+      arguments: {subjectId, permission: "task_group:read",
+        resource: {resourceType: "project", resourceId: otherProject}}});
+    if (afterGrant.structuredContent?.result?.allowed !== true) {
+      throw new Error("刚为项目 B 授了权，探询仍答「不允许」—— 守卫过头了，正面这条路被一起堵死");
+    }
+  }
+
   // 控制台「运行参数」里的 MCP 工具数，必须与这台 MCP 服务【真正实现了多少个工具】一致。
   // 它此前是 core 里手写的一个常量 81，而目录里是 85：运维 CLI 按目录算、屏幕上给人看的少 4 个。
   // 这里不拿目录去比目录（那是拿产品的写法当标准），而是问【这台服务自己认得多少个工具】：
