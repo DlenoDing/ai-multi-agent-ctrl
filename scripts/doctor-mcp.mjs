@@ -811,6 +811,21 @@ try {
     seedPath: join(root, "data/seed-state.json"),
     buildInitialState: () => { throw new Error("mcp doctor: 期望读到本轮跑出的状态，却触发了初始状态创建"); }
   });
+  // 控制台「运行参数」里的 MCP 工具数，必须与这台 MCP 服务【真正实现了多少个工具】一致。
+  // 它此前是 core 里手写的一个常量 81，而目录里是 85：运维 CLI 按目录算、屏幕上给人看的少 4 个。
+  // 这里不拿目录去比目录（那是拿产品的写法当标准），而是问【这台服务自己认得多少个工具】：
+  // 逐个 tools/call 空参试探太贵，改用它自己按主体过滤前的全量 —— 系统管理员会话看得到全部。
+  {
+    const adminTools = await mcpAs(admin.sessionToken, "tools/list", {});
+    const implemented = (adminTools.tools || []).length;
+    const shown = (await api("/api/state", {token: admin.sessionToken})).runtime?.mcp?.toolCount;
+    if (!implemented) throw new Error("系统管理员会话一个工具都列不出来 —— 这条断言在空转");
+    if (shown !== implemented) {
+      throw new Error(`控制台运行参数说 MCP 工具数是 ${shown}，而这台服务实际实现了 ${implemented} 个`
+        + " —— 屏幕上并排给人看的两个数由两处各算一遍，必然分叉");
+    }
+  }
+
   // 经 MCP 邀请、又【不显式给权限】的人，必须真的能看见那个项目。
   // 这条路的缺省权限原先写的是 "project:read" —— 一个全系统再无第二处的串：
   // 接口回成功、控制台上显示"已授权"，而这个人打开控制台什么都没有，任何一处都不说原因。

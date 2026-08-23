@@ -3152,6 +3152,14 @@ const MUTATIONS = [
     expect: "收下了认不出的单元状态"
   },
   {
+    name: "屏幕上的 MCP 工具数不许手写（手写的数会漂）",
+    file: CORE,
+    gate: "mcp",
+    from: "    toolCount: mcpToolNames.length,",
+    to: "    toolCount: 81,",
+    expect: "屏幕上并排给人看的两个数"
+  },
+  {
     name: "缺省授权必须真的让人看得见那个项目",
     file: "apps/mcp-server/server.mjs",
     gate: "mcp",

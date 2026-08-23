@@ -632,11 +632,15 @@ expected_mcp_tools = {
   "instruction-mcp" => %w[instruction_envelope_create cache_key_index stable_prefix_get delta_payload_compact],
   "repository-mcp" => %w[repository_output_target_select repository_target_lease_bind artifact_manifest_index]
 }
+# 工具目录已从 mcp-server 收进 lib/mcp-tool-catalog.mjs（控制台要按它算工具数，而 core
+# 不能 import mcp-server）。这条判据原先只读 mcp-server 那一份源，目录搬家后三个 server id
+# 当场"从实现里消失" —— 实现一个字没动。判据要认的是【实现里有没有】，不是它写在哪个文件。
+mcp_implementation_source = mcp_source + read_source("apps/control-plane-ui/lib/mcp-tool-catalog.mjs")
 expected_mcp_tools.each do |server_id, tool_names|
-  errors << "MCP server #{server_id} missing from implementation" unless mcp_source.include?("\"#{server_id}\"")
+  errors << "MCP server #{server_id} missing from implementation" unless mcp_implementation_source.include?("\"#{server_id}\"")
   tool_names.each do |tool_name|
     full_name = "#{server_id}.#{tool_name}"
-    errors << "MCP tool missing from implementation: #{full_name}" unless mcp_source.include?(full_name)
+    errors << "MCP tool missing from implementation: #{full_name}" unless mcp_implementation_source.include?(full_name)
     errors << "MCP doctor does not exercise expected MCP protocol surface" unless mcp_doctor_source.include?("tools/list") && mcp_doctor_source.include?("tools/call")
   end
 end

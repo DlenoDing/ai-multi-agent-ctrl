@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { appendAuditEntry } from "./audit-ledger.mjs";
 import { assertTransition, canonicalTransition, requiresValuesToEvidenceRefs } from "./transition-engine.mjs";
 import { AGENT_DISPATCH_TERMINAL_STATES, isTerminalDispatchStatus } from "./lifecycle-states.mjs";
+import { mcpToolNames } from "./mcp-tool-catalog.mjs";
 
 const controlPlaneRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "../../..");
 const specDigestCache = new Map();
@@ -85,7 +86,6 @@ const embeddedMcpLogicalServers = [
   "ui-console-mcp"
 ];
 
-const embeddedMcpToolCount = 81;
 
 const modelProviderAdapters = providerClasses.map((providerClass) => ({
   schemaVersion: "model-provider/v1",
@@ -538,7 +538,9 @@ export function ensureRuntimeCollections(state, options = {}) {
     protocol: "mcp/streamable-http",
     serverId: "ai-multi-agent-ctrl",
     logicalServers: embeddedMcpLogicalServers,
-    toolCount: embeddedMcpToolCount,
+    // 屏幕上那个数原先是手写的 81，而目录里实际是 85 —— 运维 CLI 按目录算，两处对不上。
+    // 现在由目录算出来：手写的数迟早会漂，而这一处漂了没人会察觉（它看起来就是个参数）。
+    toolCount: mcpToolNames.length,
 	    endpointPath: "/mcp",
 	    hostedBy: "control-plane",
 	    startupCommand: "npm start",
