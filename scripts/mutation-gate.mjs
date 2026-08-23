@@ -3176,6 +3176,22 @@ const MUTATIONS = [
     expect: "看不到那个项目"
   },
   {
+    name: "调用方自报身份的键不许进共用入参词表",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyToolArgReachabilityIsRegistered",
+    from: "    actionReason: string,",
+    to: "    actionReason: string,\n    actor: string,",
+    expect: "它必须一直传不进来"
+  },
+  {
+    name: "工具读了却传不进来的入参必须当场登记",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyToolArgReachabilityIsRegistered",
+    from: "  const permissions = args.permissions || [\"task_group:read\"];",
+    to: "  const permissions = args.permissions || args.brandNewUnregisteredKey || [\"task_group:read\"];",
+    expect: "而共用入参词表里没有这个键"
+  },
+  {
     name: "新加的判定函数必须当场表态（没探过的数只降不升）",
     file: CORE,
     check: "verifyEveryPredicateDeclaresItsCoverage",

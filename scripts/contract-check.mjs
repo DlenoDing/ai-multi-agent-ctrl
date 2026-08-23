@@ -309,6 +309,40 @@ const PUSH_ORDERED_COLLECTIONS = {
 //                 这比 proven 弱：那道门的覆盖可能因为别处的改动悄悄消失，而没人会发现。
 //   notProbed  —— 【还没探过】。这个数会被打印出来并只降不升 —— 一个读起来像全覆盖、
 //                 其实没有的棘轮，比没有棘轮更坏（本仓吃过这个亏）。
+// 【MCP 工具参数的可达性账本】。工具处理函数读 `args.X`，而能不能传进来由那份【共用】的
+// 入参词表决定 —— 两边各自演化，于是出现两类都不出声的问题：
+//   mustStayUnreachable：调用方【绝不能】自己填的东西（自报身份、自填审计/决策引用、自选 id、
+//     甚至文件系统根）。今天挡住它们的就是"词表里没有这个键"—— 属于碰巧安全，所以这里
+//     反过来钉死：这些键【不许】出现在词表里，谁加进去这道门当场红。
+//   unreachableByDictionary：工具确实想要、而调用方传不进来的参数 —— 「杠杆够不着」：
+//     那个参数写了跟没写一样，工具只能按缺省行事，且没有一处会说出原因。
+//     放开它们要动共用词表（影响所有工具），并且 grant_create 那条还得【先补委派校验】
+//     （拒 system:*／通配那一套目前只有 REST 那扇门在守）—— 属人定的事，这里先登记住。
+const MCP_UNREACHABLE_TOOL_ARGS = {
+  mustStayUnreachable: {
+    actor: "调用方自报身份。写进定稿/推进记录里的『谁做的』必须由服务端认定",
+    requestedBy: "同上：发布共享定义的申请人不能自填",
+    auditRef: "自填审计引用＝把自己的动作挂到别人的审计记录上",
+    policyDecisionRef: "自填策略决策引用＝声称『这已经被批过了』",
+    decisionId: "自选决策 id：撞上已有 id 就能顶替别人的决策记录",
+    resolutionId: "同上（规则来源判定）",
+    importId: "同上（外部升级包导入）",
+    root: "文件系统根。它流进 git 子进程的 cwd —— 调用方指哪就在哪跑 git"
+  },
+  unreachableByDictionary: {
+    permissions: "identity-mcp.grant_create：决定这张授权是什么。MCP 上只能铸出缺省的那一种",
+    role: "同上",
+    canonicalOwnerRole: "definition-mcp.shared_definition_create：共享定义的归属角色",
+    producerRole: "同上",
+    changePolicy: "同上：变更策略",
+    allowDirectActivation: "同上：能否直接生效",
+    actionScopeRefs: "governance-mcp.role_drift_guard_bind：这道漂移守卫管到哪些动作",
+    packetRef: "effective_instruction_create / instruction_envelope_create：指令包引用",
+    sharedDefinitionRefs: "同上：这份指令引用了哪些共享定义",
+    reasonCode: "governance-mcp.policy_decision_eval：调用方给出的判定理由码"
+  }
+};
+
 const PREDICATE_COVERAGE = {
   // —— 已有专属变异 ——
   resourceMatches: {proven: "授权覆不覆盖这个资源必须真判（判错＝系统对人说假话）"},
@@ -748,6 +782,7 @@ run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
 run(verifyEveryGrantedPermissionHasAConsumer);
+run(verifyToolArgReachabilityIsRegistered);
 run(verifyEveryPredicateDeclaresItsCoverage);
 run(verifyEmptyEvidenceNeverReachesTheLedger);
 run(verifyPathAllowlistMatcherIsExercised);
@@ -7966,6 +8001,64 @@ function verifyOnlyLiveHumanAccountsCanFinalize(output) {
 // 契约门 + 控制面 e2e 全绿 —— 于是 undefined/null/空串会作为"证据"写进 transitionEvidence，
 // 台账上那一栏是满的而它什么也没证明（本仓「缺省不得等于有利结果」在证据面上的样子）。
 // 判定函数的覆盖账本：枚举自动、表态手写。见 PREDICATE_COVERAGE 上面那段。
+// MCP 工具参数可达性：见 MCP_UNREACHABLE_TOOL_ARGS 上面那段。
+function verifyToolArgReachabilityIsRegistered(output) {
+  const mcpSource = readFileSync(join(root, "apps/mcp-server/server.mjs"), "utf8");
+  const coreSource = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const dictStart = mcpSource.indexOf("\n    accountId: string,");
+  const dictEnd = mcpSource.indexOf("\n  };", dictStart);
+  if (dictStart < 0 || dictEnd < 0) {
+    output.push("取不到 MCP 共用入参词表 —— 本条在空转（词表形状变了，提取要跟上）");
+    return;
+  }
+  const allowed = new Set([...mcpSource.slice(dictStart, dictEnd).matchAll(/^\s+(\w+):/gmu)].map((hit) => hit[1]));
+  if (allowed.size < 100) {
+    output.push(`入参词表只提取到 ${allowed.size} 个键（远少于既有规模）—— 提取脱节，本条在空转`);
+    return;
+  }
+  // ① 绝不能让调用方自己填的：钉死它们【不在】词表里。
+  for (const [key, why] of Object.entries(MCP_UNREACHABLE_TOOL_ARGS.mustStayUnreachable)) {
+    if (allowed.has(key)) {
+      output.push(`入参词表里出现了 ${JSON.stringify(key)} —— 它必须一直传不进来：${why}。`
+        + "（共用词表是所有工具共享的：加一个键等于给每个读它的工具都开了这条路）");
+    }
+  }
+  // ② 工具读了、却传不进来的：必须逐个登记，新出现的要当场表态。
+  const cases = [...mcpSource.matchAll(/case "([\w.-]+)":\s*\n\s*return (\w+)\(/gu)];
+  if (cases.length < 40) {
+    output.push(`只识别到 ${cases.length} 条工具派发（远少于既有规模）—— 提取脱节，本条在空转`);
+    return;
+  }
+  const registered = {...MCP_UNREACHABLE_TOOL_ARGS.mustStayUnreachable,
+    ...MCP_UNREACHABLE_TOOL_ARGS.unreachableByDictionary};
+  const seen = new Set();
+  for (const [, tool, fn] of cases) {
+    let body = null;
+    for (const text of [mcpSource, coreSource]) {
+      const hit = new RegExp(`\\n(?:export )?(?:async )?function ${fn}\\(([^)]*)\\)\\s*\\{\\n([\\s\\S]*?)\\n\\}\\n`, "u").exec(text);
+      if (hit) { body = hit[2]; break; }
+    }
+    if (body === null) continue;
+    for (const hit of body.matchAll(/\bargs\.(\w+)/gu)) {
+      const key = hit[1];
+      if (allowed.has(key)) continue;
+      seen.add(key);
+      if (!registered[key]) {
+        output.push(`${tool} 读了 args.${key}，而共用入参词表里没有这个键 —— 调用方传不进来，`
+          + "这个参数写了跟没写一样，工具只能按缺省行事而没有一处会说出原因。"
+          + "要么把它登记进 MCP_UNREACHABLE_TOOL_ARGS（说明是『绝不能填』还是『该填但暂时够不着』），"
+          + "要么让它真的可达");
+      }
+    }
+  }
+  for (const key of Object.keys(MCP_UNREACHABLE_TOOL_ARGS.unreachableByDictionary)) {
+    if (!seen.has(key)) output.push(`登记过时：unreachableByDictionary 里的 ${key} 现在没有任何工具读它了`);
+  }
+  console.log(`MCP 入参可达性：词表 ${allowed.size} 个键、${cases.length} 条工具派发逐个核过；`
+    + `${Object.keys(MCP_UNREACHABLE_TOOL_ARGS.mustStayUnreachable).length} 个键钉死在词表之外、`
+    + `${Object.keys(MCP_UNREACHABLE_TOOL_ARGS.unreachableByDictionary).length} 个登记为「该填但暂时够不着」`);
+}
+
 function verifyEveryPredicateDeclaresItsCoverage(output) {
   const found = new Map();
   const walk = (dir) => {
