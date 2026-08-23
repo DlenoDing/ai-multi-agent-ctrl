@@ -24,6 +24,7 @@ import {
   createId,
   decideSessionPlacement,
   digestOf,
+  recordIdempotentResult,
   workItemCreateStatus,
   ensureRuntimeCollections,
   evaluateRoleDrift,
@@ -621,7 +622,9 @@ export async function callTool(name, args = {}, context = {}) {
         if (policyDecision && result && typeof result === "object") result.policyDecisionRef = policyDecision.decisionId;
         if (grantCheck.grantRef && result && typeof result === "object") result.mcpGrantRef = grantCheck.grantRef;
         if (isWriteTool(name) && idempotencyKey && result.ok !== false && !effectiveArgs.dryRun) {
-          state.idempotencyRecords[idempotencyKey] = {
+          // 与 REST 那侧同一个入口：写入 + 回执正文过期清理 + 条数淘汰。
+          // 这一侧原先只写不清，而 agent 全都走 MCP —— MCP-only 的部署因此从不清理正文。
+          recordIdempotentResult(state, idempotencyKey, {
             status: 200,
             action: name,
             // 谁写下的这条记录。重放时必须是同一个主体 —— 否则另一个主体拿同样的键就能取走结果。
@@ -632,7 +635,7 @@ export async function callTool(name, args = {}, context = {}) {
             policyDecisionRef: policyDecision?.decisionId,
             mcpGrantRef: grantCheck.grantRef,
             createdAt: new Date().toISOString()
-          };
+          });
         }
       }
     }

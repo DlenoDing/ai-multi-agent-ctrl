@@ -3176,6 +3176,30 @@ const MUTATIONS = [
     expect: "看不到那个项目"
   },
   {
+    name: "幂等回执正文必须被清（不清＝中央态每次写都整份重写它）",
+    file: CORE,
+    check: "verifyIdempotencyPayloadsAreSwept",
+    from: "  purgeExpiredIdempotencyPayloads(state, at);",
+    to: "  void at;",
+    expect: "没有清掉过期的回执正文"
+  },
+  {
+    name: "幂等回执条数淘汰必须跟着写入一起做",
+    file: CORE,
+    check: "verifyIdempotencyPayloadsAreSwept",
+    from: "  capIdempotencyRecords(state);\n}",
+    to: "}",
+    expect: "没有按条数淘汰"
+  },
+  {
+    name: "谁都不许绕过那个唯一入口直写幂等回执",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyNobodyWritesIdempotencyRecordsDirectly",
+    from: "          recordIdempotentResult(state, idempotencyKey, {",
+    to: "          state.idempotencyRecords[idempotencyKey] = ({",
+    expect: "绕过 recordIdempotentResult"
+  },
+  {
     name: "谁也不要的权限串必须被拦下（授出去等于什么都打不开）",
     file: "apps/mcp-server/server.mjs",
     check: "verifyEveryGrantedPermissionHasAConsumer",
@@ -3306,7 +3330,7 @@ const MUTATIONS = [
   },
   {
     name: "新增的容量旋钮必须进文档",
-    file: "apps/control-plane-ui/server.mjs",
+    file: CORE,
     check: "verifyCapacityKnobsAreDocumented",
     gate: "contract",
     from: "  const cap = Math.max(100, Number(process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS || 5000));",

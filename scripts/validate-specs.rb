@@ -2091,7 +2091,14 @@ errors << "the server-side tick must reconcile regardless of whether any task gr
 errors << "the autonomous cycle must have something driving it (no scheduler means a task group never starts)" unless server_source.include?("export function runOrchestratorTick()") && server_source.match?(/setInterval\(runOrchestratorTick/)
 errors << "postgres DDL must be memoized per process (every bridge call blocks the event loop)" unless state_store_source.include?("if (postgresTablesEnsured) return;")
 errors << "the postgres read path must not pay for a full central read just to probe existence" unless state_store_source.match?(/export function readStoredState\(options\) \{\s*\n\s*if \(stateStoreKind\(\) === "postgresql"\) \{/)
-errors << "idempotency payload purge must run on the eviction path taken by every write" unless server_source.include?("purgeExpiredIdempotencyPayloads(state);")
+# 回执正文的清理原先只挂在 REST 那个写入点上，这条判据也就盯着「那句话在 server.mjs 里」。
+# 而 MCP 那个写入点只写不清（agent 全走 MCP），照样一路绿 —— 判据盯的是写法与落点，不是性质。
+# 现在写入收成 core 的 recordIdempotentResult 一个入口：清理与淘汰跟着它走，
+# 「谁都不许绕过它直写」由 contract-check 的 verifyNobodyWritesIdempotencyRecordsDirectly 扫。
+errors << "idempotency payload purge must run inside the single write entry point" unless
+  core_source.match?(/export function recordIdempotentResult\([\s\S]{0,400}?purgeExpiredIdempotencyPayloads\(state, at\);[\s\S]{0,200}?capIdempotencyRecords\(state\);/)
+errors << "a gate must forbid bypassing the idempotency write entry point" unless
+  contract_check_source.include?("verifyNobodyWritesIdempotencyRecordsDirectly")
 errors << "an expired idempotency replay must not be returned as an empty success" unless server_source.include?("idempotent_result_expired")
 errors << "postgres project shards must carry a payload digest in the central index (it is computed outside the runtime_json generation branch)" unless File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).include?("if (!nextGeneration) {") && File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).match?(/if \(!nextGeneration\) \{[\s\S]{0,900}?shard\.storagePayloadDigest = digestOfProjectShardPayloadText\(payloadText\);/)
 errors << "postgres project shards must be integrity-checked where they are merged, not in a read helper the main path skips" unless File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).include?('if (stateStoreKind() === "postgresql") assertProjectShardsMatchCentralIndex(shards, centralState);')

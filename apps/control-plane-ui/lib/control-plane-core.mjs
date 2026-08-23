@@ -8292,6 +8292,31 @@ export function purgeExpiredIdempotencyPayloads(state, at = Date.now()) {
   }
 }
 
+// 幂等回执有【两个写入点】：REST 的 finishGuardedWrite、MCP 的工具派发。
+// 上面那个正文清理原先只挂在 REST 那一侧 —— agent 全都走 MCP，于是 MCP-only 的部署
+// 从来不清理回执正文：实测按出厂上限（5000 条）跑满是 29.6MB 中央态，光这一项
+// 给每一轮读写加 74ms（0 条 8.4ms → 5000 条 82.4ms，线性），而中央文档【每一次任意写入
+// 都要整份重写】。这是本仓反复出问题的那个形状：同一件事两条路，只有一条被改到。
+// 所以把「写下一条幂等回执」收成一个入口，清理与淘汰跟着它走，两侧都不再各自记得。
+export function recordIdempotentResult(state, key, record, at = Date.now()) {
+  state.idempotencyRecords = state.idempotencyRecords || {};
+  state.idempotencyRecords[key] = record;
+  purgeExpiredIdempotencyPayloads(state, at);
+  capIdempotencyRecords(state);
+}
+
+// 条数上限。旋钮与落盘那步（state-store 的 pruneIdempotencyRecords）用【同一个】——
+// 两个名字两层上限时生效的永远是更严的那个，调大的那个等于没用（本仓撞过）。
+export function capIdempotencyRecords(state) {
+  const cap = Math.max(100, Number(process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS || 5000));
+  const keys = Object.keys(state.idempotencyRecords || {});
+  if (keys.length <= cap) return;
+  const ordered = keys
+    .map((key) => ({key, createdAt: state.idempotencyRecords[key]?.createdAt || ""}))
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  for (const {key} of ordered.slice(0, keys.length - cap)) delete state.idempotencyRecords[key];
+}
+
 export function effectivePathDenylist(target) {
   const declared = Array.isArray(target?.pathDenylist) ? target.pathDenylist
     : Array.isArray(target?.forbiddenPathRules) ? target.forbiddenPathRules : [];

@@ -102,7 +102,7 @@ import {
   updateTaskGroupLanguagePolicy,
   HUMAN_ACTOR_KEY,
   effectivePathDenylist,
-  purgeExpiredIdempotencyPayloads,
+  recordIdempotentResult,
   recordCheckpointRejection,
   routeBlockedDispatchToHumanDecision,
   repositoryUrlRegisteredForProject,
@@ -591,21 +591,6 @@ function beginGuardedWrite(req, state, action, subject, resourceScope = inferRes
   return {idempotencyKey, policyDecision, command, actor, bodyDigest, resourceScope};
 }
 
-// 幂等记录按数量淘汰最旧项，界住 state.json 无限增长（保留近期重放正确性；幂等键本就是近期重试语义）。
-function evictIdempotencyRecords(state) {
-  purgeExpiredIdempotencyPayloads(state);
-  // 【与落盘那步用同一个旋钮】。原先这里读 AIMAC_IDEMPOTENCY_RECORD_CAP，而 state-store 的
-  // pruneIdempotencyRecords 读的是 AIMAC_IDEMPOTENCY_MAX_RECORDS —— 同一批记录两个名字、两层上限，
-  // 生效的永远是更严的那个：把 RECORD_CAP 调到 5 万，落盘时照样被裁回 5000，旋钮等于没用。
-  // 上限只能有一个真相源（同一形状今天已经撞到第三次：网关 500/分片 1000、server 120/写入点 500）。
-  const cap = Math.max(100, Number(process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS || 5000));
-  const keys = Object.keys(state.idempotencyRecords || {});
-  if (keys.length <= cap) return;
-  const ordered = keys
-    .map((key) => ({key, createdAt: state.idempotencyRecords[key]?.createdAt || ""}))
-    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
-  for (const {key} of ordered.slice(0, keys.length - cap)) delete state.idempotencyRecords[key];
-}
 
 function finishGuardedWrite(state, guard, status, payload) {
   ensureControlState(state);
@@ -643,8 +628,10 @@ function finishGuardedWrite(state, guard, status, payload) {
   // subject（这次写的是【哪个对象】）必须一起记下来。有二十来条写路由的资源只出现在 URL 里、
   // body 是空的：同一个人、同一个动作、同样的空 body，对两个不同对象用同一个幂等键时，
   // 第二次会命中第一次的记录并把那份结果原样返回 —— 而第二个对象根本没被处理过（实测复现）。
-  state.idempotencyRecords[guard.idempotencyKey] = {status, payload, actor: guard.actor, action: guard.command.type, subject: guard.command.subject, bodyDigest: guard.bodyDigest, createdAt: updatedAt};
-  evictIdempotencyRecords(state);
+  // 写入、正文过期清理、条数淘汰是一件事，收在 core 的 recordIdempotentResult 里 ——
+  // 原先这三步只在这一侧凑齐，MCP 那侧只做了第一步（于是它写下的回执正文永不清理）。
+  recordIdempotentResult(state, guard.idempotencyKey,
+    {status, payload, actor: guard.actor, action: guard.command.type, subject: guard.command.subject, bodyDigest: guard.bodyDigest, createdAt: updatedAt});
   audit(state, "policy-engine", "policy_decision_allowed", guard.command.subject);
   audit(state, "command-bus", "command_succeeded", guard.command.subject);
 }

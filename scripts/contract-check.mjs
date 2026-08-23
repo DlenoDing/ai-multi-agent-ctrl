@@ -29,6 +29,7 @@ import {
   summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs, capacitySnapshot
 } from "../apps/mcp-server/server.mjs";
 import {
+  recordIdempotentResult,
   recordOrchestratorTickOutcome,
   acceptAgentCheckpoint,
   acquireWorkerLane,
@@ -298,6 +299,11 @@ const PUSH_ORDERED_COLLECTIONS = {
 };
 
 const CAP_FUNCTION_GUARDS = {
+  capIdempotencyRecords: "幂等回执【本身就是一个近期窗口】：裁掉最旧的那批＝那些键的重试会重新执行一次，"
+    + "而幂等键的语义就是「几秒到几分钟内的重试」。这里没有「还在用的记录」这个概念 —— "
+    + "没有任何别处引用一条幂等回执，它只被同一个键的重试读到。抖动也不成立：淘汰只在超出上限时发生，"
+    + "被淘汰的键不会再被写回来（同一个键第二次来是命中而不是新增）。落盘那一步（state-store 的 "
+    + "pruneIdempotencyRecords）用同一个旋钮 AIMAC_IDEMPOTENCY_MAX_RECORDS，两层上限只有一个真相源",
   capKeepingReferencedLazily: "只在真要裁的那一刻才构建引用集合（原先每次决策都建一遍，要扫全部会话/派发，"
     + "一轮编排每单元一次＝平方项，5000 单元时约 1.7 秒）；触发线相对上一次裁完剩下多少，保留强度不变",
   capCentralCollection: "中央集合的共用裁剪：受保护项（叠加的 active、问题模式的 suppressed）永远排在额度前面，"
@@ -670,6 +676,8 @@ run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
 run(verifyEveryGrantedPermissionHasAConsumer);
+run(verifyIdempotencyPayloadsAreSwept);
+run(verifyNobodyWritesIdempotencyRecordsDirectly);
 run(verifyOnlyLiveHumanAccountsCanFinalize);
 run(verifyGitRemoteGuardRejectsCommandTransports);
 run(verifyGitPathGuardRejectsEscapes);
@@ -6264,7 +6272,14 @@ if (process.env.AIMAC_CONTRACT_TIMING) {
   const total = CHECK_TIMINGS.reduce((sum, [, ms]) => sum + ms, 0);
   console.log(`计时覆盖：${CHECK_TIMINGS.length} 条检查、合计 ${total} ms`
     + `（进程至此 ${Date.now() - PROCESS_STARTED_AT} ms —— 差额是顶层夹具构造）`);
-  console.log("最慢的 8 条检查：\n  " + CHECK_TIMINGS.sort((a, b) => b[1] - a[1]).slice(0, 8)
+  // 同步检查是【串行】的，异步的彼此重叠 —— 只报"最慢的 8 条"会让人去优化一条与别人并跑的检查，
+  // 而墙钟一点不动。所以两栏分开报：同步合计就是墙钟里省不掉的那一段。
+  const syncTotal = CHECK_TIMINGS.filter(([name]) => !name.endsWith("(async)")).reduce((sum, [, ms]) => sum + ms, 0);
+  const asyncMax = Math.max(0, ...CHECK_TIMINGS.filter(([name]) => name.endsWith("(async)")).map(([, ms]) => ms));
+  console.log(`  其中同步检查串行合计 ${syncTotal} ms（这一段省不掉），`
+    + `最长的一条异步检查 ${asyncMax} ms（异步之间重叠，只有它决定下界）`);
+  const top = Number(process.env.AIMAC_CONTRACT_TIMING) > 1 ? Number(process.env.AIMAC_CONTRACT_TIMING) : 8;
+  console.log(`最慢的 ${top} 条检查：\n  ` + CHECK_TIMINGS.sort((a, b) => b[1] - a[1]).slice(0, top)
     .map(([name, ms]) => `${String(ms).padStart(6)} ms  ${name}`).join("\n  "));
 }
 console.log(ONLY
@@ -7856,6 +7871,88 @@ function verifyOnlyLiveHumanAccountsCanFinalize(output) {
 // —— 可见性判定要的是 project:view（REST 那侧同一角色给的正是它）。
 // 判据形状：把【消费侧】（谁会要权限）枚举成词表，再要求所有出现过的权限串都在词表里。
 // 反过来做（枚举授权侧再看有没有人要）会漏掉这一类，因为死权限在授权侧看起来一切正常。
+// 幂等回执把【整份回执正文】存下来好让重试拿到同样的答复，而中央文档每一次任意写入都要整份重写。
+// 正文的过期清理与条数淘汰原先只挂在 REST 那个写入点上，MCP 那个只写不清 —— 而 agent 全都走 MCP。
+// 实测曲线：0 条 8.4ms → 5000 条（出厂上限）29.6MB、82.4ms 一轮读写，线性。
+// 两件事分开验：① 那个唯一入口真的会清、也真的会裁；② 谁都不许绕过它直接写。
+function verifyIdempotencyPayloadsAreSwept(output) {
+  const at = Date.parse("2026-01-02T00:00:00.000Z");
+  const old = new Date(at - 3600000).toISOString();
+  const fresh = new Date(at - 1000).toISOString();
+  const state = {idempotencyRecords: {
+    stale: {status: 200, payload: {blob: "x"}, createdAt: old},
+    recent: {status: 200, payload: {blob: "y"}, createdAt: fresh}
+  }};
+  recordIdempotentResult(state, "written", {status: 201, payload: {blob: "z"}, createdAt: new Date(at).toISOString()}, at);
+  if (state.idempotencyRecords.stale?.payload !== undefined) {
+    output.push("幂等回执入口没有清掉过期的回执正文 —— 中央态会一直背着它，而每一次任意写入都要整份重写");
+  }
+  if (!state.idempotencyRecords.stale?.payloadExpiredAt) {
+    output.push("清掉正文时没有留下 payloadExpiredAt —— 分不清「本来就没有正文」与「正文已过期」");
+  }
+  if (state.idempotencyRecords.recent?.payload === undefined
+    || state.idempotencyRecords.written?.payload === undefined) {
+    output.push("幂等回执入口把还在重放窗口内的正文也清掉了 —— 重试拿不回同一份答复");
+  }
+  // 条数淘汰：上限下探到 100（函数自己的下限），塞 120 条，必须只剩最新的 100 条。
+  const previousCap = process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS;
+  process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS = "100";
+  try {
+    const capped = {idempotencyRecords: {}};
+    for (let index = 0; index < 120; index += 1) {
+      capped.idempotencyRecords[`k${String(index).padStart(3, "0")}`] =
+        {status: 200, createdAt: new Date(at - (120 - index) * 1000).toISOString()};
+    }
+    recordIdempotentResult(capped, "newest", {status: 200, createdAt: new Date(at).toISOString()}, at);
+    const kept = Object.keys(capped.idempotencyRecords);
+    if (kept.length !== 100) {
+      output.push(`幂等回执入口没有按条数淘汰：塞了 121 条、上限 100，留下 ${kept.length} 条`);
+    }
+    if (!kept.includes("newest") || kept.includes("k000")) {
+      output.push("幂等回执淘汰的不是最旧的那批 —— 刚写下的那条被裁掉时，重试会重新执行一次");
+    }
+  } finally {
+    if (previousCap === undefined) delete process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS;
+    else process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS = previousCap;
+  }
+}
+
+// 绕过那个入口直接写＝这一条写入路径上的正文永不清理，而它看起来一切正常。
+// 按【赋值形状】扫，不点名文件：新开一个写入点时它自动进视野。
+function verifyNobodyWritesIdempotencyRecordsDirectly(output) {
+  let scanned = 0;
+  let entryFound = false;
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, {withFileTypes: true})) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (!entry.name.endsWith(".mjs")) continue;
+      scanned += 1;
+      let text = readFileSync(full, "utf8").split("\n")
+        .filter((line) => !/^\s*(\/\/|\*|\/\*)/u.test(line)).join("\n");
+      // 入口自己那一行当然是直写 —— 把它的函数体切掉再扫。切的是【那个函数】而不是整个文件：
+      // 整份豁免的话，core 里将来新写的直写点会跟着一起隐身。
+      const entryAt = text.indexOf("export function recordIdempotentResult(");
+      if (entryAt >= 0) {
+        const entryEnd = text.indexOf("\n}", entryAt);
+        text = text.slice(0, entryAt) + text.slice(entryEnd < 0 ? text.length : entryEnd);
+        entryFound = true;
+      }
+      for (const hit of text.matchAll(/(\w+)\.idempotencyRecords\[[^\]]+\]\s*=[^=]/gu)) {
+        output.push(`${full.slice(root.length + 1)} 直接给 ${hit[1]}.idempotencyRecords 赋值 ——`
+          + " 绕过 recordIdempotentResult 就意味着这条路径写下的回执正文永不清理（中央态每次写都要整份重写它）");
+      }
+    }
+  };
+  walk(join(root, "apps"));
+  if (scanned < 6) output.push(`幂等写入点扫描只看了 ${scanned} 个源文件 —— 遍历脱节，本条在空转`);
+  if (!entryFound) {
+    output.push("找不到 recordIdempotentResult 那个唯一入口 —— 上面切掉的那段豁免就落空了，"
+      + "而本条会因此把「谁都没直写」报成通过");
+  }
+  console.log(`幂等回执写入点：扫了 ${scanned} 个源文件，没有绕过 recordIdempotentResult 的直写`);
+}
+
 function verifyEveryGrantedPermissionHasAConsumer(output) {
   const serverPath = "apps/control-plane-ui/server.mjs";
   const serverText = readFileSync(join(root, serverPath), "utf8");
