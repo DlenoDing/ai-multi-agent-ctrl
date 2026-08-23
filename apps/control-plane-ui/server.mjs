@@ -893,6 +893,9 @@ function actorIsProjectOwnerForScope(state, actor, resourceScope = {}) {
   );
 }
 
+// 授权能落在哪几种作用域上 —— 这是个闭集。多一个认不出的取值，跨组织边界就少守一次。
+const GRANTABLE_RESOURCE_TYPES = ["project", "task_group", "organization", "system"];
+
 function sanitizeGrantRequest(state, actor, input = {}, resourceScope = {}) {
   const account = state.accounts.find((item) => accountIdOf(item) === actor);
   const role = String(input.role || "viewer");
@@ -900,6 +903,13 @@ function sanitizeGrantRequest(state, actor, input = {}, resourceScope = {}) {
     resourceType: String(input.resourceType || resourceScope.resourceType || "project").slice(0, 100),
     resourceId: String(input.resourceId || resourceScope.resourceId || "prj_control_plane")
   };
+  // 作用域类型此前是任意字符串（只截到 100 字）。认不出的类型在 resourceScopeOrganizationId
+  // 里返回 null，而 null 的含义是「系统级作用域」—— 于是一个打错的类型会让跨组织那道检查
+  // 整个不适用，还会落一条永远匹配不上任何资源、却在名单里显示「启用中」的僵尸授权。
+  if (!GRANTABLE_RESOURCE_TYPES.includes(resource.resourceType)) {
+    return {ok: false, status: 400, error: "grant_resource_type_not_recognized",
+      supported: [...GRANTABLE_RESOURCE_TYPES]};
+  }
   const explicitPermissions = normalizeStringList(input.permissions, []);
   const permissions = explicitPermissions.length
     ? explicitPermissions
@@ -2003,6 +2013,11 @@ function resourceScopeOrganizationId(state, resourceScope = {}) {
   if (resourceScope.resourceType === "organization") return resourceScope.resourceId;
   if (resourceScope.resourceType === "project") {
     const project = state.projects.find((item) => item.id === resourceScope.resourceId);
+    // 这里【故意】不像下面 task_group 那支那样 fail closed：建项目这条路的作用域是
+    // {project, "new"} —— 一个还不存在的项目。改成 UNRESOLVED_ORGANIZATION_SCOPE 之后
+    // hasPermission 会认定「资源不属于你的组织」，非系统账号一律建不了项目（实测 e2e 当场红）。
+    // 打错的项目 id 不会因此松掉组织边界：directPermissionApplies 对 project 作用域的
+    // project:* 直接权限一律 return false，授权也绑着具体资源匹配不上，路由本身还会先 404。
     return project ? project.organizationId || DEFAULT_ORGANIZATION_ID : null;
   }
   if (resourceScope.resourceType === "task_group") {
@@ -3950,7 +3965,11 @@ async function handleApi(req, res) {
     }
     const sanitizedGrant = sanitizeGrantRequest(state, guard.actor, {...body, resourceType: "project", resourceId: project.id}, projectScope(project.id));
     if (!sanitizedGrant.ok) {
-      json(res, sanitizedGrant.status, {error: sanitizedGrant.error, permissions: sanitizedGrant.permissions});
+      json(res, sanitizedGrant.status, {error: sanitizedGrant.error,
+        // 拒绝报文要带上合法取值 —— 这两处此前只转发 error 和 permissions，
+        // 于是「认不出这个作用域类型」拒了，人还是不知道该填什么。
+        ...(sanitizedGrant.permissions ? {permissions: sanitizedGrant.permissions} : {}),
+        ...(sanitizedGrant.supported ? {supported: sanitizedGrant.supported} : {})});
       return;
     }
     project.members = project.members.filter((member) => member.accountId !== accountId);
@@ -4212,7 +4231,11 @@ async function handleApi(req, res) {
     }
     const sanitizedGrant = sanitizeGrantRequest(state, guard.actor, body, resourceScope);
     if (!sanitizedGrant.ok) {
-      json(res, sanitizedGrant.status, {error: sanitizedGrant.error, permissions: sanitizedGrant.permissions});
+      json(res, sanitizedGrant.status, {error: sanitizedGrant.error,
+        // 拒绝报文要带上合法取值 —— 这两处此前只转发 error 和 permissions，
+        // 于是「认不出这个作用域类型」拒了，人还是不知道该填什么。
+        ...(sanitizedGrant.permissions ? {permissions: sanitizedGrant.permissions} : {}),
+        ...(sanitizedGrant.supported ? {supported: sanitizedGrant.supported} : {})});
       return;
     }
     const at = now();

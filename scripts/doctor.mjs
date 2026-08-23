@@ -507,6 +507,24 @@ try {
       throw new Error(`同组织内的正常授权也被拒了（${sameOrg.response.status}/${sameOrg.payload?.error}）`
         + " —— 上面那条跨组织断言其实是「永远拒」，测不出那道守卫");
     }
+    // 作用域类型是个闭集。认不出的取值此前照收：它在 resourceScopeOrganizationId 里返回 null，
+    // 而 null 的含义是「这是系统级作用域、组织边界不适用」—— 打错一个字就让上面那道跨组织检查
+    // 整个不适用，还会落一条永远匹配不上任何资源、名单里却显示「启用中」的僵尸授权。
+    // 同样用系统管理员来授，把「权限不够」排除掉，让这道成为唯一的拦截点。
+    const bogusScope = await jsonFetch(port, "/api/access-grants", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-bogus-scope-grant", authorization: systemAuth},
+      body: JSON.stringify({subjectId: "acct_reviewer", resourceType: "prject", resourceId: "prj_control_plane",
+        role: "project_admin", permissions: ["project:view"]})
+    });
+    if (bogusScope.response.status !== 400 || bogusScope.payload?.error !== "grant_resource_type_not_recognized") {
+      throw new Error(`认不出的授权作用域类型被收下了（HTTP ${bogusScope.response.status}/${bogusScope.payload?.error}）`
+        + " —— 打错一个字，跨组织边界就不适用了，而名单上它看起来是一条正常的启用授权");
+    }
+    if (!(bogusScope.payload?.supported || []).includes("task_group")) {
+      throw new Error(`拒了却没说合法取值是哪几种（${JSON.stringify(bogusScope.payload?.supported)}）`
+        + " —— 人得靠猜才知道该填什么");
+    }
   }
 
   const reviewerRuntimeGrantDenied = await jsonFetch(port, "/api/access-grants", {
@@ -3589,6 +3607,8 @@ try {
       AIMAC_HOST: "127.0.0.1",
       AIMAC_PORT: String(tickPort),
       AIMAC_RUNTIME_DIR: doctorRuntimeDir,
+      // 想过把拍子调密（1000），但被调方是 Math.max(5000, …) —— 传了会被静默改成 5000，
+      // 门当场把这件事指出来了。所以只放宽这边的等待窗口，不去动一个不会生效的旋钮。
       AIMAC_ORCHESTRATOR_INTERVAL_MS: "5000"
     },
     stdio: ["ignore", "pipe", "pipe"]
@@ -3612,15 +3632,17 @@ try {
     }
     const before = versionOf();
     let advanced = false;
-    // 起来之后再给 30 秒：拍子间隔 5 秒，也就是至少 6 次机会。
-    for (let attempt = 0; attempt < 60 && !advanced; attempt += 1) {
+    // 起来之后给足时间：忙机器上一拍编排要跑好一会儿。跑通了就立刻往下走，
+    // 所以这个上限只在真的坏了的时候才花掉。秒数由这里算出来，别在报文里另写一个数。
+    const tickWaitAttempts = 180;
+    for (let attempt = 0; attempt < tickWaitAttempts && !advanced; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 500));
       advanced = versionOf() > before;
     }
     if (!advanced) {
       throw new Error(`autonomous orchestrator tick never advanced state on its own (stateVersion stayed ${before}`
-        + ` for 30s after the server answered /api/health) — a person who creates a task group would wait forever,`
-        + ` because nothing drives the cycle: ${tickStderr.slice(0, 400)}`);
+        + ` for ${tickWaitAttempts / 2}s after the server answered /api/health) — a person who creates a task group`
+        + ` would wait forever, because nothing drives the cycle: ${tickStderr.slice(0, 400)}`);
     }
     console.log("autonomous orchestrator tick ok: state advanced with no request made");
     tickAssertionsPassed = true;

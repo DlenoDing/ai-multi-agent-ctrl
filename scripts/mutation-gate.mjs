@@ -3135,6 +3135,22 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "认不出的授权作用域类型必须拒绝",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "  if (!GRANTABLE_RESOURCE_TYPES.includes(resource.resourceType)) {",
+    to: "  if (false) {",
+    expect: "认不出的授权作用域类型被收下了"
+  },
+  {
+    name: "授权被拒时要说清合法取值是哪几种",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "        ...(sanitizedGrant.supported ? {supported: sanitizedGrant.supported} : {})});\n      return;\n    }\n    const at = now();",
+    to: "        ...(false ? {supported: sanitizedGrant.supported} : {})});\n      return;\n    }\n    const at = now();",
+    expect: "拒了却没说合法取值是哪几种"
+  },
+  {
     name: "界面不许列后端不认的执行角色",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
