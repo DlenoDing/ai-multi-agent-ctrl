@@ -3153,11 +3153,19 @@ const MUTATIONS = [
     expect: "却没写明为什么"
   },
   {
+    name: "项目内窗口也要留最新的（降序快路径那一条）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "idle",
+    from: "  if (descending) return items.slice(0, limit);",
+    to: "  if (descending) return items.slice(items.length - limit);",
+    expect: "按项目取数的窗口里也要留【最新的】那一批"
+  },
+  {
     name: "视图窗口必须留最新的那一批（不能把刚建的藏起来）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "idle",
-    from: "  const newest = new Set([...items].sort((left, right) => timeOf(right) - timeOf(left)).slice(0, limit));\n  return items.filter((item) => newest.has(item));",
-    to: "  return items.slice(0, limit);",
+    from: "  const keyOf = (item) => item?.updatedAt || item?.createdAt || item?.issuedAt || \"\";",
+    to: "  return items.slice(0, limit);\n  const keyOf = (item) => item?.updatedAt || item?.createdAt || item?.issuedAt || \"\";",
     expect: "全局取数的窗口里必须留【最新的】那一批"
   },
   {

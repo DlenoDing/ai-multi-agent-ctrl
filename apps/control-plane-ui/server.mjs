@@ -1975,8 +1975,28 @@ function sliceItems(items, limit) {
   // 在窗口这一层按时间挑，且只在【真要截断时】才排一次；挑完保持原有相对顺序，
   // 对本来就是最新在前的那 39 个集合，结果与改动前逐字节相同。
   // 没有时间戳的记录一律记 0：V8 的排序是稳定的，于是它们退化成原先的「取前 N 条」。
-  const timeOf = (item) => Date.parse(item?.updatedAt || item?.createdAt || item?.issuedAt || "") || 0;
-  const newest = new Set([...items].sort((left, right) => timeOf(right) - timeOf(left)).slice(0, limit));
+  // 【不解析时间】：这些字段规范里都是 date-time（UTC、同格式、定长），
+  // 字典序就是时间序。实测 5000 条时 Date.parse + 排序要 0.85ms/集合，而一次视图要过二十来个集合 ——
+  // 相对「每请求 0.2ms」的基线是实打实的回归。改成比字符串后是 0.038ms（22 倍）。
+  // 没有时间戳的记 ""，排在最后被先丢掉 —— 与改动前（Date.parse 得 0）行为一致。
+  const keyOf = (item) => item?.updatedAt || item?.createdAt || item?.issuedAt || "";
+  // 快路径：数组单调时不必排序。每个集合的追加方向是定死的（契约门守着「不许两种方向混用」），
+  // 所以按项目取数时它一定单调；只有【跨分片合并】的全局取数才会不单调，那时才走排序。
+  // 只留【降序】这一条快路径：41 个集合是最新在前，走的都是它，而且它有判据守着
+  //（空转门里「按项目取数的窗口里也要留最新的那一批」，改成 slice(-limit) 当场红）。
+  // 升序那一条也写过，又删了：这个夹具造不出「按项目取数且升序还超窗口」的情形，
+  // 等于一段没有判据的分支；让它落到下面的排序里，正确，且只贵 0.06ms。
+  let descending = true;
+  let previous = keyOf(items[0]);
+  for (let index = 1; index < items.length; index += 1) {
+    const current = keyOf(items[index]);
+    if (current > previous) { descending = false; break; }
+    previous = current;
+  }
+  if (descending) return items.slice(0, limit);
+  const newest = new Set([...items]
+    .sort((left, right) => (keyOf(right) < keyOf(left) ? -1 : keyOf(right) > keyOf(left) ? 1 : 0))
+    .slice(0, limit));
   return items.filter((item) => newest.has(item));
 }
 

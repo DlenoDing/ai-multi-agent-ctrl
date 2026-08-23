@@ -372,6 +372,23 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
     "全局取数会被上限截断，而按 projectId 取数能把这个项目的记录取全",
     `全局取数返回 ${unscoped.taskGroups.length} 个（上限 10、实有 ${totalGroups} 个，说明确实被截断了），`
     + `其中属于这个项目的 ${own(unscoped.taskGroups)} 个；按项目取数返回 ${scoped.taskGroups.length} 个、全部属于本项目的有 ${own(scoped.taskGroups)} 个（应为 10/10）`);
+  // 项目内取数走的是【降序快路径】（分片内最新在前，窗口直接取前 N 条）。
+  // 它与下面那条全局的不是同一条分支：全局是跨分片合并、不单调，走的是排序那条。
+  // 少了这一条，把快路径写成 slice(-limit) 也不会有任何东西变红（人看到的就是最旧的 10 条）。
+  {
+    const ownGroups = (scoped.taskGroups || []).filter((item) => item.projectId === quietId);
+    const newestOwn = (everyGroup || []).filter((item) => item.projectId === quietId)
+      .reduce((best, item) => (!best || groupTime(item) > groupTime(best) ? item : best), null);
+    if (!newestOwn || ownGroups.length >= 12) {
+      console.log("  --  这个项目的组没有超过窗口 —— 「项目内窗口要留最新的」这条未被检验");
+    } else {
+      check(ownGroups.some((item) => item.id === newestOwn.id),
+        "按项目取数的窗口里也要留【最新的】那一批（分片内最新在前，走的是另一条分支）",
+        `本项目实有 ${(everyGroup || []).filter((item) => item.projectId === quietId).length} 个、窗口 ${ownGroups.length} 个；`
+        + `最新的那个（${newestOwn.id}）${ownGroups.some((item) => item.id === newestOwn.id) ? "在" : "不在"}窗口里`);
+    }
+  }
+
   // 按项目取全的集合【不许】被标成截断：截断标记如果拿"账号范围的数组"来比，
   // 按项目取数时每个集合都会被标上，界面到处显示"共 N+ 条"，而它其实取全了 ——
   // 那是把"我这里就这么多"说成"还有更多"，同样是报数不实。
