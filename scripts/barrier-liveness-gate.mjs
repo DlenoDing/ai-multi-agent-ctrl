@@ -235,17 +235,31 @@ export function checkBarrierLiveness() {
   if (pushLines.length < 3) failuresBootstrap.push(`空转门检查: 只识别到 ${pushLines.length} 条 blockers.push 判据（少于已知的 3 条，提取逻辑与代码脱节）`);
   blocks.push(pushLines.join("\n"));
 
-  // 具名状态常量（pendingStatuses / FOO_TERMINAL 之类）展开成字面量集合
+  // 具名状态常量（pendingStatuses / FOO_TERMINAL 之类）展开成字面量集合。
+  // 也要吃进 core 从 ./lib 里 import 的那些小模块：派发终态那份清单原先内联在 core 里，
+  // 收成 lib/lifecycle-states.mjs 之后本门当场看不见它了（报「没提取到状态字面量」）。
+  const importedLibSources = [...source.matchAll(/from "\.\/([A-Za-z0-9._-]+\.mjs)"/gu)]
+    .map((match) => path.join(root, "apps/control-plane-ui/lib", match[1]))
+    .filter((file) => fs.existsSync(file))
+    .map((file) => fs.readFileSync(file, "utf8"));
+  const declarationSource = [source, ...importedLibSources].join("\n");
   const namedSets = {};
   // 字面量数组：const X = [...] / new Set([...]) / Object.freeze([...])
-  for (const match of source.matchAll(/const ([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:Object\.freeze\(|new Set\(|)+\s*\[(.*?)\]/gs)) {
+  for (const match of declarationSource.matchAll(/const ([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:Object\.freeze\(|new Set\(|)+\s*\[(.*?)\]/gs)) {
     namedSets[match[1]] = [...match[2].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
   }
   // 再解一层别名：const COMMAND_TERMINAL = new Set(COMMAND_TERMINAL_STATES);
   // 不解这一层的话，凡是这样写的门在本门眼里"一个状态字面量都没有"，于是被静默跳过 ——
   // 实测正是这样：all_commands_terminal / all_command_effects_terminal / no_active_dlq /
   // no_unreconciled_command_effect 四道门从来没有被空转检查覆盖过，而本门存在的全部意义就是覆盖它们。
-  for (const match of source.matchAll(/const ([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new Set\(([A-Za-z_][A-Za-z0-9_]*)\)/gu)) {
+  for (const match of declarationSource.matchAll(/const ([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new Set\(([A-Za-z_][A-Za-z0-9_]*)\)/gu)) {
+    if (namedSets[match[2]] && !namedSets[match[1]]) namedSets[match[1]] = namedSets[match[2]];
+  }
+  // 再解一层【谓词函数】：function isX(status) { return SOME_SET.has(status); }
+  // 判据一旦从 `[...].includes(x.status)` 改写成 `isX(x.status)`（这正是把 15 处内联
+  // 收成一份时做的事），本门就一个字面量都提取不到 —— 按名字硬编一张表只会再漂一次，
+  // 所以按【形状】认：凡是这个形状的函数，名字就等价于它包着的那个集合。
+  for (const match of declarationSource.matchAll(/function ([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)\s*\{\s*return ([A-Za-z_][A-Za-z0-9_]*)(?:\.has|\.includes)\(/gu)) {
     if (namedSets[match[2]] && !namedSets[match[1]]) namedSets[match[1]] = namedSets[match[2]];
   }
 
@@ -332,6 +346,13 @@ export function checkBarrierLiveness() {
     for (const named of line.matchAll(/([A-Z_a-z]+(?:STATUSES|TERMINAL|Statuses))\.includes\(/g)) {
       if (namedSets[named[1]] && /\.status/.test(line)) literals.push(...namedSets[named[1]]);
     }
+    // 谓词函数调用：isTerminalDispatchStatus(dispatch.status)
+    const predicateCalls = [];
+    for (const call of line.matchAll(/(?<bang>!?)\s*([A-Za-z_][A-Za-z0-9_]*)\(\s*[\w.?]*\.status\s*\)/gu)) {
+      if (!namedSets[call[2]]) continue;
+      predicateCalls.push(call);
+      literals.push(...namedSets[call[2]]);
+    }
     // 段里比较了 status，却一个状态字面量都没提取到 —— 那不是"没什么可查"，
     // 是提取没认出这里的写法（变量、模板串、具名常量换了命名规则都会这样）。要说出来。
     if (!literals.length) { skipped.push(`${gateName}/${collection}(没提取到状态字面量)`); continue; }
@@ -341,7 +362,10 @@ export function checkBarrierLiveness() {
     // 那些状态有没有生产者】。否定式判据（!TERMINAL.includes(status) 即阻塞）尤其容易漏：
     // 门里写的字面量全都是终态、也都有生产者，可是能让它触发的那些非终态一个都没人写，
     // 于是门照样永远不响。这一整类空转门都只有这样才查得出来。
-    const negated = /!\s*(?:\[|[A-Z_a-z]+(?:STATUSES|TERMINAL|Statuses))/.test(line);
+    // 否定式判据（`!TERMINAL.includes(status)` 即阻塞）要认出来，谓词函数写法同理：
+    // 认不出否定的话，"能让这道门触发的状态"会算反，而算反之后那条空转检查恒为真。
+    const negated = /!\s*(?:\[|[A-Z_a-z]+(?:STATUSES|TERMINAL|Statuses))/.test(line)
+      || predicateCalls.some((call) => call.groups.bang === "!");
     const firingStates = negated ? machine.states.filter((st) => !unique.includes(st)) : unique;
     if (firingStates.length && !firingStates.some((st) => producedStatuses.has(st))) {
       failures.push(`空转门检查: 门 ${gateName} 只有当 ${entity} 处于 ${JSON.stringify(firingStates)} 之一时才会触发，而这些状态全仓没有任何代码写入过 —— 这道门永远不会响`);

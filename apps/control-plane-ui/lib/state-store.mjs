@@ -4,6 +4,7 @@ import { hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { pgEnsureTables, pgReadProjectShards, pgReadState, pgReadStateWithShards, pgWriteStateWithProjectShards } from "./pg-sync-store.mjs";
 import { legacySafeProjectId, safeProjectId } from "./project-paths.mjs";
+import { isTerminalDispatchStatus } from "./lifecycle-states.mjs";
 
 const tableName = "aimac_control_plane_state";
 const projectShardTableName = "aimac_project_state_shards";
@@ -673,9 +674,9 @@ const shardOpenPredicates = {
   agentControlCommands: (item) => ["queued", "delivered", "received"].includes(item.status),
   // 同一形状：capTaskContracts 保留活跃会话的合同突破 160，这里也需要对应谓词。
   agentTaskContracts: (item, shard) => (shard?.collections?.agentDispatches || [])
-    .some((dispatch) => !["completed", "failed", "cancelled"].includes(dispatch.status)
+    .some((dispatch) => !isTerminalDispatchStatus(dispatch.status)
       && dispatch.sessionId === item.sessionId && dispatch.runId === item.runId),
-  agentDispatches: (item) => !["completed", "failed", "cancelled"].includes(item.status), // core 2778
+  agentDispatches: (item) => !isTerminalDispatchStatus(item.status), // core 2778
   roleDriftGuards: (item) => !["closed", "corrected"].includes(item.status), // core 2756
   // 任务组是主实体，工作项内嵌在它里面 —— 淘汰一个任务组等于连同它的全部工作项一起删掉，
   // 而且它是【唯一】一个内存层完全不封顶的分片集合：其余集合都有 core 里的 cap 先行收口，

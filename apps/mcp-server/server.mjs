@@ -84,6 +84,7 @@ import {
   createAgentControlCommand,
   revokeDispatchMcpGrants
 } from "../control-plane-ui/lib/agent-gateway.mjs";
+import { isTerminalDispatchStatus } from "../control-plane-ui/lib/lifecycle-states.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const runtimeDir = resolve(root, process.env.AIMAC_RUNTIME_DIR || ".runtime");
@@ -2215,7 +2216,7 @@ export function sessionMutate(state, args, status) {
   session.updatedAt = new Date().toISOString();
   const controlCommands = [];
   const directDispatches = [];
-  for (const dispatch of state.agentDispatches.filter((item) => item.sessionId === session.sessionId && !["completed", "failed", "cancelled"].includes(item.status))) {
+  for (const dispatch of state.agentDispatches.filter((item) => item.sessionId === session.sessionId && !isTerminalDispatchStatus(item.status))) {
     const commandType = status === "aborted" ? "cancel_dispatch" : status === "paused" ? "pause_dispatch" : null;
     const node = dispatch.assignedNodeId ? state.agentRuntimeNodes.find((item) => item.nodeId === dispatch.assignedNodeId) : null;
     if (commandType && node && ["running", "blocked"].includes(dispatch.status)) {

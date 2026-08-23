@@ -3246,6 +3246,9 @@ function collectRuleFragments(form, layer) {
   return fragments;
 }
 
+// 控制台跑在浏览器里，取不到 lib/lifecycle-states.mjs 那份共用常量，只能自己留一份。
+// 它与真相源（state-machines.yaml 的 AgentDispatch.terminal）由 validate-specs 逐字核对，
+// 并且【整个前端只准有这一份】—— 原先另有一处内联抄写，已改成用这个集合。
 const terminalDispatchStatuses = new Set(["completed", "failed", "cancelled"]);
 
 function findWorkItemDispatch(taskGroupId, workItemId) {
@@ -3461,7 +3464,7 @@ function fleetOfflineNotice() {
   const groups = projectTaskGroups();
   const inScope = (item) => groups.some((taskGroup) => taskGroup.id === item.taskGroupId);
   const waiting = (state.agentDispatches || []).filter((item) =>
-    inScope(item) && !["completed", "failed", "cancelled"].includes(item.status)).length;
+    inScope(item) && !terminalDispatchStatuses.has(item.status)).length;
   if (!waiting) return "";                     // 没有活在等，就不必吓人
   const total = Number(fleet.total || 0);
   return `<div class="notice warn-notice">这个项目有 ${esc(waiting)} 个派发在排队或执行中，`

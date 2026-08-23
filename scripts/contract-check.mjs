@@ -1587,9 +1587,14 @@ function verifyHumanAndOrganizationContracts(output) {
       ReviewBundle: ["consumed", "rejected"]
     };
     const machines = loadStateMachines(root).machines || {};
-    const coreSourceText = readFileSync(resolve(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+    // 镜像要盯的是【那份唯一实现里的字面量】，不是它当初住在哪个文件。
+    // 派发终态原先在 6 个文件里内联抄了 15 遍，已收进 lib/lifecycle-states.mjs 一份 ——
+    // 这条判据当时把文件名写死成 core，收拢之后当场红（字面量没丢，只是搬了家）。
+    const MIRROR_SOURCE = {AgentDispatch: "apps/control-plane-ui/lib/lifecycle-states.mjs"};
     for (const [entity, barrierSet] of Object.entries(barrierTerminal)) {
-      if (!coreSourceText.includes(barrierSet.map((s) => `"${s}"`).join(", "))) output.push(`terminal-set drift gate: barrier ${entity} terminal literal not found in control-plane-core (update this mirror)`);
+      const mirrorFile = MIRROR_SOURCE[entity] || "apps/control-plane-ui/lib/control-plane-core.mjs";
+      const coreSourceText = readFileSync(resolve(root, mirrorFile), "utf8");
+      if (!coreSourceText.includes(barrierSet.map((s) => `"${s}"`).join(", "))) output.push(`terminal-set drift gate: barrier ${entity} terminal literal not found in ${mirrorFile} (update this mirror)`);
       // state-store 的分片保留谓词是同一份集合的镜像，且它无法 import core（避免循环依赖）。
       // 镜像不一致时，持久层与关闭门对"这条记录还算不算未了结"的判断会分叉。
       if (entity === "WorkSession") {
@@ -7858,15 +7863,34 @@ function verifyTerminalStatusListsAgree(output) {
     output.push(`TASK_GROUP_SETTLED_STATUSES（${TASK_GROUP_SETTLED_STATUSES.join("、")}）与规格声明的终态`
       + `（${declared.join("、")}）不一致 —— 差的那个状态上的任务组会被当成"还活着"：写入不再被拒、编排继续推它`);
   }
-  const files = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
-    "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
-    "apps/mcp-server/server.mjs"];
-  const sources = files.map((file) => [file, readFileSync(join(root, file), "utf8")]);
+  // 原先是手写的五个文件名。手抄的清单必漂 —— 控制台那份终态副本（public/app.js）
+  // 从来不在这份清单里，于是「界面把已终结的派发当成还在跑」这一面一直没人核。
+  // 改成扫 apps 下所有 .mjs/.js：没有清单要维护，新文件自动进视野。
+  const sources = [];
+  const walkApps = (dir) => {
+    for (const entry of readdirSync(dir, {withFileTypes: true})) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walkApps(full);
+      else if (entry.name.endsWith(".mjs") || entry.name.endsWith(".js")) {
+        sources.push([full.slice(root.length + 1), readFileSync(full, "utf8")]);
+      }
+    }
+  };
+  walkApps(join(root, "apps"));
+  if (sources.length < 8) {
+    output.push(`终态副本扫描只找到 ${sources.length} 个源文件 —— 遍历脱节，本条在空转`);
+    return;
+  }
   // 有【完整副本】的状态机才纳入：只出现子集的（比如派发的 cancelled/failed，不含 completed）
   // 那是有意为之的语义区分 —— 把它们一起管会产出大量假警报，而假警报的下场是被随手豁免掉。
   const WITH_COPIES = {TaskGroup: "任务组", AgentDispatch: "派发", QualityGate: "质量门"};
   // 实测值。数量对不上就是有人改短了某一处，或新增了一处不完整的判断 —— 两种都要看见。
-  const EXPECTED_COPIES = {TaskGroup: 13, AgentDispatch: 13, QualityGate: 4};
+  // 实测值，扫的是 apps 下【全部】源文件（原先是手写的五个文件名，控制台那份一直在视野外）。
+  // AgentDispatch 从 13 处降到 2 处：那 13 处内联判断已收成 lib/lifecycle-states.mjs 的
+  // isTerminalDispatchStatus()，剩下的两处是它自己那份常量、和控制台在浏览器里取不到 lib 时
+  // 只好自留的那份。数量要求【精确相等】而不是「不少于」：只判下界的话，
+  // 谁再内联抄一份回去（正是刚清理掉的那件事）门是不会红的。
+  const EXPECTED_COPIES = {TaskGroup: 15, AgentDispatch: 2, QualityGate: 6};
   let copies = 0;
   for (const [machine, label] of Object.entries(WITH_COPIES)) {
     const scope = spec.slice(spec.indexOf(`${machine}:`), spec.indexOf(`${machine}:`) + 400);
@@ -7876,33 +7900,39 @@ function verifyTerminalStatusListsAgree(output) {
       output.push(`规格里 ${machine} 的终态提取不到 —— 这一台在空转`);
       continue;
     }
-    const want = [...terms].sort().join(",");
+    // 提取正则用【这台机器自己的词】来造：凡能匹配上又长度相等的，必然是同一集合的排列。
+    // 也就是说这里【不需要】再逐字比一遍 —— 原先那句比对是够不到的分支（排序后永远相等），
+    // 留着会让人以为"成员被换掉会被指名道姓比出来"，其实不会。
+    // 成员被换掉（cancelled 写成 aborted）的真实表现是：那份副本不再匹配，从计数里消失。
+    // 所以【计数就是这道门的判别力所在】，它必须精确相等：少了＝有人改短或换错了一个成员，
+    // 多了＝有人又内联抄了一份。放宽成"按重叠度认副本"试过，当场误报 server.mjs 里的
+    // FAIL_REPORT_STATUSES（blocked/cancelled/failed 是另一个概念，blocked 可恢复）——
+    // 而假警报的下场是被随手豁免掉。
     const alt = terms.map((term) => `"${term}"`).join("|");
     let seen = 0;
     for (const [file, text] of sources) {
       for (const hit of text.matchAll(new RegExp(`\\[((?:${alt})(?:,\\s*(?:${alt}))*)\\]`, "gu"))) {
-        const inline = [...hit[1].matchAll(/"([a-z_]+)"/gu)].map((one) => one[1]).sort();
+        const inline = [...hit[1].matchAll(/"([a-z_]+)"/gu)];
         // 只核对【完整副本】：子集是有意的语义区分，不在本条管辖内。
         if (inline.length !== terms.length) continue;
         seen += 1;
         copies += 1;
-        if (inline.join(",") !== want) {
-          output.push(`${file} 里 ${label}的终态副本写的是 [${inline.join(",")}]，权威是 [${want}] —— `
-            + "对不上的那个状态会被当成还活着：写入不再被拒、编排继续推它");
-        }
       }
     }
-    if (seen < EXPECTED_COPIES[machine]) {
+    if (seen !== EXPECTED_COPIES[machine]) {
       // 只核对"完整副本"意味着【漏掉一个成员】的副本会从视野里消失（长度不等就跳过）——
       // 而那正是最危险的那种改动。所以副本【数量】本身也要对：少一处就说明有一份被改短了，
       // 或者有人新写了一处不完整的判断。（第一版没有这一句，把 ["closed","aborted"] 改成
       // ["closed"] 之后这道门照样绿。）
-      output.push(`${machine} 的完整终态副本只剩 ${seen} 处（应 ${EXPECTED_COPIES[machine]} 处）—— `
-        + "有一份被改短了（漏掉的那个状态从此被当成还活着），或者新写的判断没把终态写全");
+      output.push(seen < EXPECTED_COPIES[machine]
+        ? `${machine} 的完整终态副本只剩 ${seen} 处（应 ${EXPECTED_COPIES[machine]} 处）—— `
+          + "有一份被改短了（漏掉的那个状态从此被当成还活着），或者新写的判断没把终态写全"
+        : `${machine} 的完整终态副本多出到 ${seen} 处（应 ${EXPECTED_COPIES[machine]} 处）—— `
+          + "有人又内联抄了一份终态清单：抄一份就多一处将来会漏改的地方，改用那个共用判定");
     }
   }
-  if (copies < 20) {
-    output.push(`只扫到 ${copies} 处完整终态副本（实测 30）—— 提取脱节，本条在空转`);
+  if (copies < 15) {
+    output.push(`只扫到 ${copies} 处完整终态副本（实测 23）—— 提取脱节，本条在空转`);
   }
   console.log(`终态口径：${Object.keys(WITH_COPIES).length} 台状态机的规格终态、常量与 ${copies} 处完整副本逐字比对`);
 }

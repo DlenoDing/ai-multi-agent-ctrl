@@ -3314,6 +3314,91 @@ try {
     }
   }
 
+  // 「这条派发还算不算活的」原先在 6 个文件里内联抄了 15 遍，现已收成 lib/lifecycle-states.mjs
+  // 一份。收拢之后先做的事是问它有没有判据：把那个判定改成【永远返回 false】，
+  // 控制面 e2e 与 MCP e2e 都全绿 —— 13 个调用点在这两道最快的门上一个行为断言都没有。
+  // 这里补上它最能被观察到的那一面：关闭门里的 AgentDispatch 阻塞项，必须与「该组下确实
+  // 还有未终结的派发」完全一致。两个方向都要出现过，只验一边的话把判定写死成常量也能全绿。
+  // 终态清单在这里【另写一份】：拿产品那份来比，产品错了这条跟着错（门与实现共用盲点）。
+  {
+    const DISPATCH_TERMINAL = ["completed", "failed", "cancelled"];
+    const snapshot = await jsonFetch(port, "/api/state?view=full&limit=500", {headers: {authorization: systemAuth}});
+    const byGroup = new Map();
+    for (const item of snapshot.payload.agentDispatches || []) {
+      if (!item.taskGroupId) continue;
+      if (!byGroup.has(item.taskGroupId)) byGroup.set(item.taskGroupId, []);
+      byGroup.get(item.taskGroupId).push(item);
+    }
+    if (!byGroup.size) throw new Error("收尾时一个带派发的任务组都没有 —— 关闭门派发阻塞项这条在空转");
+    const seen = {live: 0, settled: 0};
+    for (const [taskGroupId, items] of byGroup) {
+      const barrier = await jsonFetch(port, `/api/task-groups/${taskGroupId}/close-barrier/compute`, {
+        method: "POST",
+        headers: {"Idempotency-Key": `doctor-dispatch-barrier-${taskGroupId}`, authorization: systemAuth},
+        body: JSON.stringify({})
+      });
+      if (!barrier.response.ok) {
+        throw new Error(`关闭门算不出来（${taskGroupId}）：HTTP ${barrier.response.status}`);
+      }
+      const objects = barrier.payload?.closeBarrier?.blockingObjects || barrier.payload?.blockingObjects || [];
+      const blocked = objects.some((item) => item.objectType === "AgentDispatch");
+      const live = items.filter((item) => !DISPATCH_TERMINAL.includes(item.status));
+      if (live.length && !blocked) {
+        throw new Error(`任务组 ${taskGroupId} 下还有 ${live.length} 个未终结的派发`
+          + `（${live.map((item) => `${item.dispatchId}:${item.status}`).join(",")}），关闭门却不把它算作阻塞`
+          + " —— 那意味着人可以在 agent 还在跑的时候把任务组关掉");
+      }
+      if (!live.length && blocked) {
+        throw new Error(`任务组 ${taskGroupId} 下 ${items.length} 个派发全部已终结`
+          + `（${items.map((item) => item.status).join("、")}），关闭门却仍说有在跑的派发挡着`
+          + " —— 那是一道永远关不掉的门，而且看不出为什么");
+      }
+      seen[live.length ? "live" : "settled"] += 1;
+    }
+    // 「全部已终结」这个方向天然不出现（本轮跑完只剩一个仍有未终结派发的任务组），
+    // 而它恰恰是把判定写死成 false 时唯一会红的那一面。用【真实产品路径】造出来：
+    // 人下一条 cancel 指令，该组 queued/blocked/running 的派发会全部转 cancelled。
+    // 不去直接改磁盘上的状态 —— 那样测到的是我自己摆的样子，不是系统真会走到的样子。
+    if (!seen.settled) {
+      const cancelled = await jsonFetch(port, "/api/human-directives", {method: "POST",
+        headers: {"Idempotency-Key": "doctor-dispatch-barrier-cancel", authorization: systemAuth},
+        body: JSON.stringify({taskGroupId: "tg_runtime_management", directiveType: "cancel",
+          summary: "验证关闭门的派发阻塞项：人下取消之后该组不应再有在跑的派发"})});
+      if (cancelled.response.status !== 201) {
+        throw new Error(`下不了取消指令（HTTP ${cancelled.response.status}）：`
+          + `${JSON.stringify(cancelled.payload).slice(0, 200)} —— 全部终结那个方向造不出来`);
+      }
+      const afterCancel = await jsonFetch(port, "/api/state?view=full&limit=500", {headers: {authorization: systemAuth}});
+      const remaining = (afterCancel.payload.agentDispatches || []).filter((item) =>
+        item.taskGroupId === "tg_runtime_management" && !DISPATCH_TERMINAL.includes(item.status));
+      if (remaining.length) {
+        throw new Error(`人下了取消，该组仍有 ${remaining.length} 个未终结的派发`
+          + `（${remaining.map((item) => `${item.dispatchId}:${item.status}`).join("、")}）`);
+      }
+      const barrierAfter = await jsonFetch(port, "/api/task-groups/tg_runtime_management/close-barrier/compute", {
+        method: "POST",
+        headers: {"Idempotency-Key": "doctor-dispatch-barrier-settled", authorization: systemAuth},
+        body: JSON.stringify({})
+      });
+      if (!barrierAfter.response.ok) {
+        throw new Error(`取消之后算不出关闭门：HTTP ${barrierAfter.response.status}`);
+      }
+      const objectsAfter = barrierAfter.payload?.closeBarrier?.blockingObjects
+        || barrierAfter.payload?.blockingObjects || [];
+      if (objectsAfter.some((item) => item.objectType === "AgentDispatch")) {
+        throw new Error("该组派发已全部终结，关闭门却仍说有在跑的派发挡着"
+          + " —— 那是一道永远关不掉的门，而且看不出为什么");
+      }
+      seen.settled += 1;
+    }
+    if (!seen.live || !seen.settled) {
+      throw new Error(`关闭门的派发阻塞项只验到一个方向（确有未终结的 ${seen.live} 组、全部终结的 `
+        + `${seen.settled} 组）—— 两个方向都出现过这条才算数`);
+    }
+    console.log(`  ok  关闭门的派发阻塞项：${byGroup.size} 个有派发的任务组逐个核过`
+      + `（${seen.live} 个确有未终结派发、${seen.settled} 个全部已终结，两个方向都出现过）`);
+  }
+
   mainBodyCompleted = true;
 } finally {
   // 【登录限流】。防爆破的实控件，而它一个断言都没有 —— 失效时所有正常登录照旧成功，

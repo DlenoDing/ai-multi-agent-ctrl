@@ -121,6 +121,7 @@ import {
   projectRepositories,
   isSafeGitRef,
   noteWorkItemExecutionFailure} from "./lib/control-plane-core.mjs";
+import { isTerminalDispatchStatus } from "./lib/lifecycle-states.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const repositoryRoot = resolve(process.env.AIMAC_REPOSITORY_ROOT || root);
@@ -2523,7 +2524,7 @@ function applyTaskGroupRuntimeControl(state, taskGroup, action, options = {}) {
       : null;
   if (stopCommandType) {
     for (const dispatch of state.agentDispatches || []) {
-      if (dispatch.taskGroupId !== taskGroup.id || ["completed", "failed", "cancelled"].includes(dispatch.status)) continue;
+      if (dispatch.taskGroupId !== taskGroup.id || isTerminalDispatchStatus(dispatch.status)) continue;
       const node = dispatch.assignedNodeId ? (state.agentRuntimeNodes || []).find((item) => item.nodeId === dispatch.assignedNodeId) : null;
       if (node && ["running", "blocked"].includes(dispatch.status)) {
         const result = createAgentControlCommand(state, node, {
@@ -3064,7 +3065,7 @@ async function handleApi(req, res) {
     // Terminal-state guard (symmetric with the checkpoint route): a late/retried /fail must not corrupt
     // an already-finished dispatch. A /fail against a COMPLETED (successfully checkpointed, possibly
     // reviewed) dispatch is a real conflict; a repeat of the same non-success outcome acks idempotently.
-    if (["completed", "failed", "cancelled"].includes(dispatch.status)) {
+    if (isTerminalDispatchStatus(dispatch.status)) {
       if (dispatch.status === "completed") return json(res, 409, {error: "dispatch_already_completed"});
       return json(res, 200, {ok: true, replayed: true, dispatchId: dispatch.dispatchId, status: dispatch.status});
     }

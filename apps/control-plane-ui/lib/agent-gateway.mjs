@@ -7,6 +7,7 @@ import { cancelPendingConfirmationsForDispatch, createId, digestOf, effectiveTas
   assertHumanTextWithinLimit,
   normalizedExpiry
 } from "./control-plane-core.mjs";
+import { isTerminalDispatchStatus } from "./lifecycle-states.mjs";
 
 const DEFAULT_AGENT_MCP_TOOLS = [
   "agent-control-mcp.node_probe",
@@ -982,7 +983,7 @@ function handleDispatchControlFailure(state, node, command, status) {
     };
     // 取消在下发那一刻就把派发写成了终态 cancelled；把它翻回 blocked 是让终态复活，
     // 编排会把它当活的重新处理。终态就留在终态，只把【失败原因】改成说真话的那一条。
-    if (["completed", "failed", "cancelled"].includes(dispatch.status)) {
+    if (isTerminalDispatchStatus(dispatch.status)) {
       if (dispatch.status === "cancelled") dispatch.failureReason = rejectedReason;
     } else {
       dispatch.status = "blocked";

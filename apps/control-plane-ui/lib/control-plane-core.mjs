@@ -6,6 +6,7 @@ import { dirname, join, relative, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { appendAuditEntry } from "./audit-ledger.mjs";
 import { assertTransition, canonicalTransition, requiresValuesToEvidenceRefs } from "./transition-engine.mjs";
+import { AGENT_DISPATCH_TERMINAL_STATES, isTerminalDispatchStatus } from "./lifecycle-states.mjs";
 
 const controlPlaneRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "../../..");
 const specDigestCache = new Map();
@@ -1444,7 +1445,7 @@ export function buildTaskContract(state, request = {}) {
   // never release. runAutonomousCycle already pre-guards via activeExecutionForWork, so this only
   // affects the direct-call paths.
   const existingDispatch = (state.agentDispatches || []).find((item) =>
-    item.taskGroupId === taskGroup?.id && item.workItemId === workItem?.id && !["completed", "failed", "cancelled"].includes(item.status));
+    item.taskGroupId === taskGroup?.id && item.workItemId === workItem?.id && !isTerminalDispatchStatus(item.status));
   if (existingDispatch) {
     const existingContract = (state.agentTaskContracts || []).find((item) => item.sessionId === existingDispatch.sessionId && item.runId === existingDispatch.runId)
       || (state.agentTaskContracts || []).find((item) => item.sessionId === existingDispatch.sessionId);
@@ -3468,7 +3469,7 @@ export function terminateCellRuntime(state, taskGroupId, workItemId, reason) {
   if (!taskGroupId || !workItemId) return;
   const at = new Date().toISOString();
   for (const dispatch of state.agentDispatches || []) {
-    if (dispatch.taskGroupId === taskGroupId && dispatch.workItemId === workItemId && !["completed", "failed", "cancelled"].includes(dispatch.status)) {
+    if (dispatch.taskGroupId === taskGroupId && dispatch.workItemId === workItemId && !isTerminalDispatchStatus(dispatch.status)) {
       markDispatchFailed(state, dispatch, reason);
       // Mirror every other dispatch-terminalize path: cancel dispatch-bound pending confirmations and
       // revoke the node binding + its issued MCP grants, then clear stop markers. Without this the failed
@@ -3503,7 +3504,7 @@ function activeExecutionForWork(state, taskGroupId, workItemId) {
   const dispatch = (state.agentDispatches || []).find((item) =>
     item.taskGroupId === taskGroupId &&
     item.workItemId === workItemId &&
-    !["completed", "failed", "cancelled"].includes(item.status)
+    !isTerminalDispatchStatus(item.status)
   );
   if (!session && !dispatch) return null;
   return {
@@ -3581,7 +3582,7 @@ function capLeaseHistory(leases, limit = 2000) {
 
 function capDispatchHistory(dispatches, limit) {
   if (dispatches.length <= limit) return dispatches;
-  const terminal = new Set(["completed", "failed", "cancelled"]);
+  const terminal = new Set(AGENT_DISPATCH_TERMINAL_STATES);
   const kept = dispatches.slice(0, limit);
   const keptIds = new Set(kept.map((item) => item.dispatchId));
   // Never drop a still-active dispatch beyond the window (its checkpoint could still arrive).
@@ -3594,7 +3595,7 @@ function capDispatchHistory(dispatches, limit) {
 // the dispatch could never terminalize — permanently wedging the task group's close barrier.
 export function capTaskContracts(contracts, dispatches, limit) {
   if (contracts.length <= limit) return contracts;
-  const terminal = new Set(["completed", "failed", "cancelled"]);
+  const terminal = new Set(AGENT_DISPATCH_TERMINAL_STATES);
   const activeSessionIds = new Set((dispatches || []).filter((item) => !terminal.has(item.status)).map((item) => item.sessionId).filter(Boolean));
   const kept = contracts.slice(0, limit);
   // 去重键必须用记录【真实具备】的身份。原先用的是 item.contractId —— 而真实契约根本没有这个
@@ -3616,7 +3617,7 @@ function enqueueAgentDispatch(state, contract, repositoryTarget) {
   const existing = (state.agentDispatches || []).find((item) =>
     item.taskGroupId === contract.taskGroupId &&
     item.workItemId === contract.workId &&
-    !["completed", "failed", "cancelled"].includes(item.status)
+    !isTerminalDispatchStatus(item.status)
   );
   if (existing) return existing;
   const at = new Date().toISOString();
@@ -3764,7 +3765,7 @@ export function computeCompletionReadiness(state, taskGroupId, request = {}) {
   if (checkFailures.shared_definitions_active) blockers.push({objectType: "SharedDefinitionContract", objectId: taskGroupId, status: "not_active"});
   if (checkFailures.repository_output_target_terminal) blockers.push({objectType: "RepositoryOutputTarget", objectId: taskGroupId, status: "non_terminal"});
   if ((state.workSessions || []).some((session) => session.taskGroupId === taskGroupId && !WORK_SESSION_SETTLED_STATUSES.includes(session.status))) blockers.push({objectType: "WorkSession", objectId: taskGroupId, status: "active"});
-  if ((state.agentDispatches || []).some((dispatch) => dispatch.taskGroupId === taskGroupId && !["completed", "failed", "cancelled"].includes(dispatch.status))) blockers.push({objectType: "AgentDispatch", objectId: taskGroupId, status: "active"});
+  if ((state.agentDispatches || []).some((dispatch) => dispatch.taskGroupId === taskGroupId && !isTerminalDispatchStatus(dispatch.status))) blockers.push({objectType: "AgentDispatch", objectId: taskGroupId, status: "active"});
   const leaseTargetIds = taskGroupTargetIds(state, taskGroupId);
   if ((state.leases || []).some((lease) => lease.status === "active" && leaseTargetIds.has(leaseTargetId(lease)))) blockers.push({objectType: "Lease", objectId: taskGroupId, status: "active"});
   if (checkFailures.all_required_evidence_present) blockers.push({objectType: "Checkpoint", objectId: taskGroupId, status: "missing_git_evidence"});

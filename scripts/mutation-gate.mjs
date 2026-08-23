@@ -3152,6 +3152,46 @@ const MUTATIONS = [
     expect: "收下了认不出的单元状态"
   },
   {
+    name: "派发终态那份共用常量要与状态机对上",
+    file: "apps/control-plane-ui/lib/lifecycle-states.mjs",
+    check: "verifyTerminalStatusListsAgree",
+    from: 'Object.freeze(["completed", "failed", "cancelled"])',
+    to: 'Object.freeze(["completed", "failed", "aborted"])',
+    expect: "完整终态副本只剩"
+  },
+  {
+    name: "控制台那份派发终态副本也在门的视野里",
+    file: APP,
+    check: "verifyTerminalStatusListsAgree",
+    from: 'const terminalDispatchStatuses = new Set(["completed", "failed", "cancelled"]);',
+    to: 'const terminalDispatchStatuses = new Set(["completed", "failed"]);',
+    expect: "完整终态副本只剩"
+  },
+  {
+    name: "谁都不许再内联抄一份派发终态清单",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    check: "verifyTerminalStatusListsAgree",
+    from: "    if (isTerminalDispatchStatus(dispatch.status)) {",
+    to: '    if (["completed", "failed", "cancelled"].includes(dispatch.status)) {',
+    expect: "完整终态副本多出到"
+  },
+  {
+    name: "空转门看不懂的谓词写法必须出声，不许静静跳过",
+    file: "apps/control-plane-ui/lib/lifecycle-states.mjs",
+    gate: "barrier",
+    from: "  return AGENT_DISPATCH_TERMINAL.has(status);",
+    to: '  return status === "completed" || status === "failed" || status === "cancelled";',
+    expect: "有判据被静默跳过"
+  },
+  {
+    name: "共用的派发终态判定必须真的在承重",
+    file: "apps/control-plane-ui/lib/lifecycle-states.mjs",
+    gate: "doctor",
+    from: "  return AGENT_DISPATCH_TERMINAL.has(status);",
+    to: "  return false;",
+    expect: "关闭门却仍说有在跑的派发挡着"
+  },
+  {
     name: "路径包含判定的孪生不许漂（agent 侧）",
     file: "apps/agent-runtime/runtime.mjs",
     check: "verifyGitRemoteGuardTwinsAgree",
@@ -7080,14 +7120,6 @@ const MUTATIONS = [
     from: "    repositories: projectRepositories(project),",
     to: "    repositories: base.repositories ?? [],",
     expect: "没被 effectiveProjectConfig 认出来"
-  },
-  {
-    name: "派发终态副本少写一个＝已取消的派发会被当成还在跑",
-    file: "apps/control-plane-ui/lib/state-store.mjs",
-    check: "verifyTerminalStatusListsAgree",
-    from: '  agentDispatches: (item) => !["completed", "failed", "cancelled"].includes(item.status)',
-    to: '  agentDispatches: (item) => !["completed", "failed"].includes(item.status)',
-    expect: "被改短了"
   },
   {
     name: "终态副本少写一个状态＝那个状态上的任务组仍被当成活的",

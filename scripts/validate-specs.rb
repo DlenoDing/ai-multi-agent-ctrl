@@ -2659,6 +2659,11 @@ STATUS_CONSTANTS_WITHOUT_STATE_MACHINE.each_key do |name|
   next unless entry[1].scan(/"([a-z][a-z_]*)"/).flatten.all? { |lit| declared_states.include?(lit) }
   errors << "登记表已过时：#{name} 里的状态现在都能在状态机里查到，登记该撤掉"
 end
+# 派发终态那一族（「这条派发还算不算活的」，原先内联抄了 15 遍）不在这里守：
+# contract-check 的 verifyTerminalStatusListsAgree 本来就在做同一件事 —— 它扫 apps 下全部源文件，
+# 把三台状态机的完整终态副本逐字对着 spec/state-machines.yaml 比，并要求副本【数量精确相等】
+# （少了＝有人改短，多了＝有人又内联抄一份）。我一开始没搜既有机制，在这里另起了三条同义判据，
+# 已撤掉：两道门守同一条性质，改动时只会改到其中一道。
 puts "状态集合常量：核对了 #{status_constants.length} 个，对着 #{declared_states.size} 个已登记状态" \
      "（#{STATUS_CONSTANTS_WITHOUT_STATE_MACHINE.size} 个已登记为自成真相源）"
 fail_with(errors)
