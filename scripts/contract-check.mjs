@@ -11276,6 +11276,30 @@ function verifyLabelTablesMatchTheirEnums(output) {
   if (checked < LABEL_TABLE_SOURCES.length) {
     output.push(`标签表核对只跑成 ${checked}/${LABEL_TABLE_SOURCES.length} 对 —— 剩下的在空转`);
   }
+  // 状态徽标的【按对象覆盖】：statusBadge(kind, value) 传进来的 kind 必须在 STATUS_LABEL_BY_KIND 里，
+  // 漏一个就静静退回全局词表 —— 而全局词表里一个键会盖住别的对象的意思
+  //（实测过：11 个集合都用 active，组织与账号被显示成「进行中」）。两向都核：
+  // 传了却没有覆盖表＝会串意思；有覆盖表却没人传＝表在空养着，多半是调用点改了名。
+  {
+    const kindBlock = /const STATUS_LABEL_BY_KIND = \{([\s\S]*?)\n\};/u.exec(appText);
+    const kinds = new Set(kindBlock ? [...kindBlock[1].matchAll(/(?:^|[{,\s])([a-zA-Z][a-zA-Z0-9_]*)\s*:\s*\{/gu)]
+      .map((match) => match[1]) : []);
+    const used = new Set([...appText.matchAll(/statusBadge\("([a-zA-Z]+)"/gu)].map((match) => match[1]));
+    if (kinds.size < 3 || used.size < 3) {
+      output.push(`状态徽标按对象覆盖：提取到 ${kinds.size} 个覆盖表、${used.size} 处调用 —— 提取失配，本条在空转`);
+    } else {
+      const uncovered = [...used].filter((kind) => !kinds.has(kind)).sort();
+      const unused = [...kinds].filter((kind) => !used.has(kind)).sort();
+      if (uncovered.length) {
+        output.push(`statusBadge 传了这些对象类型、却没有各自的状态词表：${uncovered.join("、")} —— `
+          + "会静静退回全局词表，而那里一个键会盖住别的对象的意思（active 被显示成「进行中」就是这么来的）");
+      }
+      if (unused.length) {
+        output.push(`状态词表里这些对象类型没有任何调用点：${unused.join("、")} —— 多半是调用点改了名，覆盖已经失效`);
+      }
+      console.log(`状态徽标按对象覆盖：${kinds.size} 张对象词表对着 ${used.size} 处调用，两向核过`);
+    }
+  }
   console.log(`界面标签表：${checked} 对「中文名表 ↔ 规范枚举」双向核对（少一个＝屏幕露英文，多一个＝表里写着不存在的取值）`);
 }
 

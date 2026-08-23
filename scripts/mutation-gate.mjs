@@ -3135,6 +3135,15 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "statusBadge 的对象类型都要有各自的状态词表",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyLabelTablesMatchTheirEnums",
+    gate: "contract",
+    from: 'statusBadge("grant"',
+    to: 'statusBadge("grantX"',
+    expect: "却没有各自的状态词表"
+  },
+  {
     name: "标签表少了取值要报红（屏幕会露英文键）",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyLabelTablesMatchTheirEnums",
