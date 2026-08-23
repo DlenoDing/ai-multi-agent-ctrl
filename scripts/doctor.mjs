@@ -24,6 +24,7 @@ import { UNCOVERED_CEILINGS, sweepRecordsAgainstDeclaredSchemas } from "./lib/sc
 import { checkRecordStatusesAreDeclaredStates } from "./lib/state-machine-states.mjs";
 import { sweepStaleDoctorRuntimeDirs } from "./lib/stale-runtime-dirs.mjs";
 import { assertNoUndefinedInPayload } from "./lib/no-undefined-payload.mjs";
+import {waitForChildExit} from "./lib/child-tracking.mjs";
 
 async function getFreePort() {
   const server = createServer();
@@ -3613,18 +3614,10 @@ try {
     // "Detected unsettled top-level await"，看不出是谁没退出、也跑不到后面的检查
     // （并发跑变异门时实测撞到过，靠肉眼读那句警告才定位）。改成：先礼后兵，还不走就明说。
     tickChild.kill("SIGTERM");
-    const exited = await Promise.race([
-      new Promise((resolve) => tickChild.on("exit", () => resolve(true))),
-      // .unref()：这些定时器只是【上限】，不该把进程吊到上限（同 doctor-agent-remote 的 120s 那处：
-      // 实测输出早就结束、进程还在等定时器自然到期）。真卡住时事件循环由子进程句柄吊着，超时照样生效。
-      new Promise((resolve) => setTimeout(() => resolve(false), 10000).unref())
-    ]);
+    const exited = await waitForChildExit(tickChild, 10000);
     if (!exited) {
       tickChild.kill("SIGKILL");
-      const killed = await Promise.race([
-        new Promise((resolve) => tickChild.on("exit", () => resolve(true))),
-        new Promise((resolve) => setTimeout(() => resolve(false), 5000).unref())
-      ]);
+      const killed = await waitForChildExit(tickChild, 5000);
       // 同一个坑的第二处：这是 finally 里的清理失败。上面那段断言若已经失败，
       // 在这里再抛一个"子进程不退出"会把真正的原因盖掉。所以只在【断言过了】的情况下上升为错误，
       // 否则降级成一行提示 —— 两件事都要说，但不能让清理问题冒充失败原因。

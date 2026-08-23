@@ -21,3 +21,29 @@ export function createChildTracker() {
     }
   };
 }
+
+// 等一个子进程退出，带上限。
+// **必须先看 exitCode/signalCode**：进程若已经退出，`on("exit")` 再也不会触发（事件早发生完了），
+// 而上限那支定时器是 .unref() 的（它只是上限，不该把进程吊到上限）——
+// 两边都吊不住事件循环时，Node 会空转到退出，报一句 "Detected unsettled top-level await"，
+// 看不出是谁没退出、也跑不到后面的检查。
+// 2026-08-23：这个形状在整跑变异门时连着咬了三次，每次都表现为「失败了但不是因为预期断言」，
+// 而单独跑那条变异是好的 —— 最难查的那类假失败。全仓 11 处等待都改走这里。
+export async function waitForChildExit(child, timeoutMs = 10000) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return true;
+  return Promise.race([
+    new Promise((resolve) => child.once("exit", () => resolve(true))),
+    new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs).unref())
+  ]);
+}
+
+// 同上，但要拿到退出码。返回 {code} 或 {timedOut: true}。
+// 已经退出的进程直接给它的 exitCode —— 不先看这一下的话，once(child,"exit") 永不 resolve。
+export async function waitForChildExitCode(child, timeoutMs = 10000) {
+  if (!child) return {timedOut: true};
+  if (child.exitCode !== null || child.signalCode !== null) return {code: child.exitCode};
+  return Promise.race([
+    new Promise((resolve) => child.once("exit", (code) => resolve({code}))),
+    new Promise((resolve) => setTimeout(() => resolve({timedOut: true}), timeoutMs).unref())
+  ]);
+}

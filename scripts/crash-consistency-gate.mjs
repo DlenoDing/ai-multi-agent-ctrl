@@ -12,7 +12,7 @@ installGateFetch("崩溃一致性门");
 
 import {basename, dirname, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
-import {createChildTracker} from "./lib/child-tracking.mjs";
+import {createChildTracker, waitForChildExit} from "./lib/child-tracking.mjs";
 
 // 起过的子进程一律登记，并在【所有】退出路径上收掉。
 // 只在成功路径上 kill 是不够的：断言抛错、超时、Ctrl-C 时服务就成了孤儿（父进程没了、PPID=1），
@@ -95,7 +95,7 @@ const inflight = Promise.all(Array.from({length: 12}, (_, index) => fetch(`${bas
   body: JSON.stringify({quotas: {maxMembers: 90 + index}})}).catch(() => null)));
 await new Promise((resolve) => setTimeout(resolve, 40));
 child.kill("SIGKILL");
-await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000).unref())]);
+await waitForChildExit(child, 3000);
 await inflight;
 
 // ── 第二段：重启，状态必须能读回，且要么 45 要么 99，不能是坏的
@@ -517,7 +517,7 @@ if (leftoversAtKill.length) check(leftoversAfterWrite.length === 0, "崩溃留�
 
 child.kill("SIGTERM");
 
-await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000).unref())]);
+await waitForChildExit(child, 3000);
 
 // 【备份／还原】：设计文档把它列为要求，而此前没有任何东西验过"拷下来的那份还原得回去"。
 // 运维最自然的做法是【不停机直接 cp -R 运行目录】—— 那一刻中央索引与项目分片、事件段清单

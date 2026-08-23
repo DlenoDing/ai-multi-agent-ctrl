@@ -17,6 +17,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describePendingWreckage } from "./lib/mutation-wreckage.mjs";
+import {waitForChildExit} from "./lib/child-tracking.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CORE = "apps/control-plane-ui/lib/control-plane-core.mjs";
@@ -7039,10 +7040,10 @@ const MUTATIONS = [
   },
   {
     name: "race 里的长超时必须 unref（否则活儿做完了进程还吊在上限）",
-    file: "scripts/doctor-mcp.mjs",
+    file: "scripts/lib/child-tracking.mjs",
     check: "verifyRaceTimeoutsDoNotHoldTheProcess",
-    from: "setTimeout(resolveWait, 3000).unref())]);",
-    to: "setTimeout(resolveWait, 3000))]);",
+    from: "new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs).unref())",
+    to: "new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs))",
     expect: "会把进程吊到上限"
   },
   {
@@ -7803,7 +7804,7 @@ const MUTATIONS = [
     name: "无上限地等子进程退出要被门看见",
     file: "scripts/doctor-mcp.mjs",
     check: "verifyChildExitWaitsAreBounded",
-    from: '  await Promise.race([once(child, "exit"), new Promise((resolveWait) => setTimeout(resolveWait, 3000).unref())]);',
+    from: '  await waitForChildExit(child, 3000);',
     to: '  await once(child, "exit");',
     expect: "无上限地等子进程退出"
   },

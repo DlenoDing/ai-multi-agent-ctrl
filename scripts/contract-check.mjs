@@ -8617,19 +8617,22 @@ function verifyRaceTimeoutsDoNotHoldTheProcess(output) {
         cursor += 1;
       }
       const body = source.slice(race.index, cursor);
-      for (const timer of body.matchAll(/setTimeout\(([\s\S]{0,90}?),\s*(\d+)\)(\.unref\(\))?/gu)) {
-        if (Number(timer[2]) < 3000) continue;
+      for (const timer of body.matchAll(/setTimeout\(([\s\S]{0,90}?),\s*([A-Za-z_$][\w$]*|\d+)\)(\.unref\(\))?/gu)) {
+        const isLiteral = /^\d+$/u.test(timer[2]);
+        if (isLiteral && Number(timer[2]) < 3000) continue;
         scanned += 1;
         if (timer[3] || /clearTimeout/u.test(body)) continue;
         holding.push(`${file.slice(root.length + 1)}:${source.slice(0, race.index).split("\n").length}`
-          + `（${timer[2]} ms）`);
+          + `（${isLiteral ? `${timer[2]} ms` : `上限取自 ${timer[2]}`}）`);
       }
     }
   }
-  // 下限贴近实际（当前 10 处）：写成 4 只防得住"扫到 0"，防不住"悄悄少扫一族"——
-  // 今天已经三次遇到"删掉文件清单里一项、分母静静变小而门照样绿"。
-  if (scanned < 8) {
-    output.push(`race 里的长超时只扫到 ${scanned} 处（应至少 8）—— 提取形状或文件清单与代码脱节，本条在空转`);
+  // 下限贴近实际（当前 3 处：等子进程退出的那两个共用函数，加另一处 race）。
+  // 写成 0/1 只防得住"扫到 0"，防不住"悄悄少扫一族"——今天已经三次遇到
+  //"删掉文件清单里一项、分母静静变小而门照样绿"。
+  // 这个数原先是 8：那时 11 处等待各自手写 race；收敛进 lib/child-tracking.mjs 之后只剩两个函数。
+  if (scanned < 3) {
+    output.push(`race 里的长超时只扫到 ${scanned} 处（应至少 3）—— 提取形状或文件清单与代码脱节，本条在空转`);
     return;
   }
   if (holding.length) {
@@ -9624,14 +9627,16 @@ function verifyServerFieldsReachThePerson(output) {
 // （并发跑变异门时真撞到过，靠肉眼读那句警告才定位；修法是先礼后兵再明说）。
 function verifyChildExitWaitsAreBounded(output) {
   const files = ["scripts/doctor.mjs", "scripts/doctor-mcp.mjs", "scripts/doctor-agent-remote.mjs",
-    "scripts/idle-tick-gate.mjs", "scripts/crash-consistency-gate.mjs", "scripts/concurrent-writer-gate.mjs"];
+    "scripts/idle-tick-gate.mjs", "scripts/crash-consistency-gate.mjs", "scripts/concurrent-writer-gate.mjs",
+    // 等待本身已经收敛到这里；不列它，这道门就只在看调用方，看不到真正 await 的那两行。
+    "scripts/lib/child-tracking.mjs"];
   const unbounded = [];
   let checked = 0;
   for (const file of files) {
     const lines = readFileSync(join(root, file), "utf8").split("\n");
     for (const [index, line] of lines.entries()) {
       // 只看真的在等某个子进程退出的那种；process.on("exit") 是本进程的退出钩子，不算。
-      if (!/once\(\w+, "exit"\)|\w+\.on\("exit"/u.test(line)) continue;
+      if (!/once\(\w+, "exit"\)|\w+\.on(?:ce)?\("exit"/u.test(line)) continue;
       if (/^\s*process\.on\("exit"/u.test(line)) continue;
       // 只登记回调、不 await 的不算"等"：判据要问的是"这一行会不会把流程挂住"。
       // 计时包装里的 `c.on("exit", () => times.push(...))` 就是这种（实测被误报过一次）。
@@ -9652,8 +9657,10 @@ function verifyChildExitWaitsAreBounded(output) {
       unbounded.push(`${file}:${index + 1} ${line.trim().slice(0, 70)}`);
     }
   }
-  if (checked < 5) {
-    output.push(`等子进程退出核对：只找到 ${checked} 处 —— 提取多半失配，这道门在空转`);
+  // 实测 3 处：共用件里的两个等待函数，加 doctor.mjs 里那一处。原先是 5 —— 那时 11 处等待各自手写；
+  // 收敛之后这个数当然会降，但它仍然【只增不减】：谁再手写一处它就涨，掉下去只可能是提取失配。
+  if (checked < 3) {
+    output.push(`等子进程退出核对：只找到 ${checked} 处（应至少 3）—— 提取多半失配，这道门在空转`);
     return;
   }
   if (unbounded.length) {

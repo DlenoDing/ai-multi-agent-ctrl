@@ -1,4 +1,5 @@
 import { execFileSync as rawExecFileSync, spawn as rawSpawn, spawnSync as rawSpawnSync } from "node:child_process";
+import {waitForChildExit, waitForChildExitCode} from "./lib/child-tracking.mjs";
 // 【子进程计时】AIMAC_PROC_TIMING=1 打印最贵的几个子进程。
 // 这条 e2e 是提交回路里最慢的一段（实测 145 秒），而它的成本几乎全在等子进程：
 // 32 个子进程合计 81 秒，其中控制面服务的整段生命周期 41 秒、两次 agent 真跑批各 16 秒。
@@ -859,13 +860,7 @@ try {
   // 等 agent 跑完不能无上限：它一旦卡住（等锁、等网络、等子进程），整个 e2e 就挂在这里，
   // 最后死于一句 "Detected unsettled top-level await" —— 看不出是谁没退出。
   // 同形状在控制面 e2e 里实测撞到过一次（后台自治周期的子进程不理 SIGTERM）。
-  const permissionRace = await Promise.race([
-    once(permissionChild, "exit").then(([code]) => ({code})),
-    // .unref()：这个定时器只是【上限】，不该把进程吊到上限。子进程先退出时它没人清 ——
-    // 实测整场 e2e 的输出 41 秒就结束，进程却要 146 秒才退出，多出来的 105 秒全在等它自然到期。
-    // unref 之后它仍会在需要时触发：真卡住时事件循环由子进程句柄吊着，超时照样生效。
-    new Promise((resolve) => setTimeout(() => resolve({timedOut: true}), 120000).unref())
-  ]);
+  const permissionRace = await waitForChildExitCode(permissionChild, 120000);
   if (permissionRace.timedOut) {
     permissionChild.kill("SIGKILL");
     throw new Error(`permission-report Agent 跑了 120 秒还没结束，已强制结束 —— `
@@ -1138,8 +1133,7 @@ try {
 	        // 第一版正是这么写的，整套 e2e 卡死在这一行，查了三轮才落到它头上。
 	        if (deniedChild.exitCode === null && deniedChild.signalCode === null) {
 	          deniedChild.kill("SIGKILL");
-	          await Promise.race([once(deniedChild, "exit"),
-	            new Promise((resolveWait) => setTimeout(resolveWait, 3000).unref())]);
+	          await waitForChildExit(deniedChild, 3000);
 	        }
 	        // 「没造出情形」和「造出了但没检测出来」必须分开：混成一类的话，
 	        // 把检测器改坏之后这一条照样绿（实测 —— 两条变异都骗过了它）。
@@ -1161,10 +1155,7 @@ try {
 	          method: "POST", token: login.sessionToken, idempotencyKey: "doctor-agent-denied-push-resolve",
 	          body: {status: "approved"}
 	        });
-	        const deniedRace = await Promise.race([
-	          once(deniedChild, "exit").then(([code]) => ({code})),
-	          new Promise((resolveWait) => setTimeout(() => resolveWait({timedOut: true}), 120000).unref())
-	        ]);
+	        const deniedRace = await waitForChildExitCode(deniedChild, 120000);
 	        if (deniedRace.timedOut) {
 	          deniedChild.kill("SIGKILL");
 	          throw new Error(`推送被拒后的 agent 跑了 120 秒还没结束（stderr 末尾：${deniedErr.slice(-200)}）`);
@@ -1372,7 +1363,7 @@ try {
 		  console.log("agent remote doctor ok: one-command join, checksum install, credential rotation, initialization, self-check (permission+integrity probe), remote MCP, control command ACK, project/session-level execution event stream, on-demand skill workset, dispatch, commit, push and checkpoint outbox replay, two-step evidence artifact registration, permission_report loop with safe-retry-point recovery, revoke pending+ACK requeue verified");
 } finally {
   server.kill("SIGTERM");
-  await Promise.race([once(server, "exit"), new Promise((resolveWait) => setTimeout(resolveWait, 3000).unref())]);
+  await waitForChildExit(server, 3000);
   rmSync(sandbox, {recursive: true, force: true});
   if (server.exitCode && server.exitCode !== 0 && stderr) process.stderr.write(stderr);
 }

@@ -10,7 +10,7 @@ import {join, dirname, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {tmpdir} from "node:os";
 import {installGateFetch} from "./lib/gate-fetch.mjs";
-import {createChildTracker} from "./lib/child-tracking.mjs";
+import {createChildTracker, waitForChildExit} from "./lib/child-tracking.mjs";
 
 installGateFetch("空转门");
 
@@ -102,7 +102,7 @@ async function verifyFirstRunPath() {
       login.sessionToken ? "ok" : JSON.stringify(login).slice(0, 160));
   }
   firstRunChild.kill("SIGTERM");
-  await Promise.race([once(firstRunChild, "exit"), new Promise((resolve2) => setTimeout(resolve2, 3000).unref())]);
+  await waitForChildExit(firstRunChild, 3000);
 }
 const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-idle-"));
 const fails = [];
@@ -386,7 +386,7 @@ check(advanced, "有真活时自治循环照样推进并落盘（跳过不能把
 }
 
 child.kill("SIGTERM");
-await Promise.race([once(child, "exit"), new Promise((r) => setTimeout(r, 3000).unref())]);
+await waitForChildExit(child, 3000);
 if (fails.length) {
   console.error(`idle tick gate failed: ${fails.join("；")}`);
   process.exit(1);

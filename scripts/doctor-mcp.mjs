@@ -9,6 +9,7 @@ import { assertNoUndefinedInPayload } from "./lib/no-undefined-payload.mjs";
 import { checkRecordStatusesAreDeclaredStates } from "./lib/state-machine-states.mjs";
 import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { projectRepositories } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
+import {waitForChildExit} from "./lib/child-tracking.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const port = await freePort();
@@ -781,7 +782,7 @@ try {
   console.log(`mcp doctor ok: ${listed.tools.length} remote tools, auth, HTTP transport, input policy and remote-only registration verified`);
 } finally {
   child.kill("SIGTERM");
-  await Promise.race([once(child, "exit"), new Promise((resolveWait) => setTimeout(resolveWait, 3000).unref())]);
+  await waitForChildExit(child, 3000);
   rmSync(runtimeDir, {recursive: true, force: true});
   rmSync(configDir, {recursive: true, force: true});
   if (child.exitCode && child.exitCode !== 0 && stderr) process.stderr.write(stderr);
