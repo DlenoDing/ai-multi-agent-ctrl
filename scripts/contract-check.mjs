@@ -598,6 +598,7 @@ runAsync(verifyEveryMcpToolAnswersAnEmptyCall);
 runAsync(verifyBoundedNodeCannotWriteIntoAnotherProject);
 runAsync(verifyStateWriteDoesNotCloneTheWorld);
 run(verifyCapacityKnobsAreDocumented);
+run(verifyCallerSuppliedTimesAreNormalized);
 run(verifyCallerObjectsAreNotSpreadIntoRecords);
 run(verifyModelCapabilityFieldsMatchTheSpec);
 run(verifyLabelTablesMatchTheirEnums);
@@ -11344,6 +11345,36 @@ function verifyCapacityKnobsAreDocumented(output) {
 // 模型能力注册那条路由只取【规范认识的字段】（原先是 `...body`，请求体整个摊进持久记录，
 // 而规范是 additionalProperties:false）。字段清单是手抄的 —— 与规范双向核对：
 // 多一个＝落下来的记录违反规范；少一个＝调用方给的那一项被静默丢掉，而他收到的是 201。
+// 【调用方能给的时间字段，一律要先归一化再落库】。存进一个解析不了的值，
+// 后面所有 `new Date(x).getTime() <= now` 的比较都会拿到 NaN —— 而 NaN 的比较【两个方向都是 false】：
+// 该过期的不过期（命令永远不超时、挡着关闭门），该留着的被判过期（等人拍板的单子凭空消失）。
+// 本仓这一族的规矩是「认不出就拒」（normalizedExpiry 返回 false 即拒），今天全都做到了；
+// 这道门守的是下一个接上入口的人。
+function verifyCallerSuppliedTimesAreNormalized(output) {
+  const files = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs"];
+  const raw = [];
+  let scanned = 0;
+  for (const file of files) {
+    const text = readFileSync(join(root, file), "utf8");
+    scanned += (text.match(/normalizedExpiry\(/gu) || []).length;
+    for (const match of text.matchAll(/^\s*(\w*At):\s*(?:input|body|args)\.(\w+)/gum)) {
+      const line = text.slice(0, match.index).split("\n").length;
+      raw.push(`${file.split("/").pop()}:${line} ${match[1]} ← 调用方的 ${match[2]}`);
+    }
+  }
+  if (scanned < 3) {
+    output.push(`时间归一化只找到 ${scanned} 处 normalizedExpiry 调用 —— 提取失配，本条在空转`);
+    return;
+  }
+  if (raw.length) {
+    output.push(`这些时间字段直接取了调用方给的值、没有先归一化：${raw.join("、")} —— `
+      + "存进一个解析不了的值，后面所有时间比较都拿到 NaN，而 NaN 的比较两个方向都是 false："
+      + "该过期的不过期、该留着的被判过期，且没有任何东西会报错。走 normalizedExpiry，认不出就拒");
+  }
+  console.log(`调用方时间字段：${scanned} 处走了 normalizedExpiry，${raw.length} 处直接取原值`);
+}
+
 function verifyCallerObjectsAreNotSpreadIntoRecords(output) {
   const files = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs"];
