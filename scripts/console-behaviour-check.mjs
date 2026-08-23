@@ -2881,7 +2881,14 @@ function runCrossOrgGrantSelectCase() {
   // 整页找会匹到它 —— 第一版就是这么绿的（而它根本没被改）。
   const formAt = html.indexOf(`data-form="project-member"`);
   const formHtml = formAt < 0 ? "" : html.slice(formAt, html.indexOf("</form>", formAt));
-  if (!formHtml) throw new Error("跨组织授权用例：页面上没有 project-member 表单 —— 本段在空转");
+  // 别在这里 throw：整跑变异门时，另一条变异会把这两个入口整块摘掉，
+  // 抛异常等于把【那条变异自己的预期断言】一起挡住 —— 实测就是这么报的
+  //「失败了但不是因为预期断言」。用普通判据说清楚，让后面的检查照常跑完。
+  if (!formHtml) {
+    check("跨组织授权用例要能找到 project-member 表单（找不到就是本段在空转）", false,
+      "这一页上没有渲染出项目成员授权表单");
+    return;
+  }
   const optionOf = (accountId) => (formHtml.match(new RegExp(`<option value="${accountId}"[^>]*>`, "u")) || [""])[0];
   check("别的组织的账号不许出现在项目成员授权的下拉里（后端必拒，选了也白选）",
     optionOf("acct_other") === "",
@@ -3326,6 +3333,56 @@ runStablePrefixMeasurementCase();
 runOrchestratorVisibilityCase();
 runFirstRunGuidanceCase();
 runOutdatedRuntimeVisibilityCase();
+// 工作项「执行角色」下拉是界面写死的 7 个，而后端按 core 的 REGISTERED_OWNER_ROLES（22 个）判。
+// 两份同一件事的清单，中间没有任何东西钉着 —— 这类必漂。两向都要核：
+// 界面列了 core 不认的 = 选中必被拒的死杠杆；core 认而界面不列的 = 界面够不着的角色。
+// 后者多数是有意的（服务角色不该派活给人指派），但必须【逐个写明】，不能靠"大概是有意的"。
+const OWNER_ROLES_NOT_OFFERED_IN_CONSOLE = {
+  "decision-center": "控制面自身的决策中枢，不是人指派给工作项的执行角色",
+  "scheduler": "控制面自身的调度组件",
+  "work-session": "会话这个概念本身，不是执行角色",
+  "rule-steward": "规则治理由「系统设置」页的规则源与叠加来做，不走工作项派活",
+  "command-bus": "控制面内部服务",
+  "permission-gateway": "控制面内部服务",
+  "policy-engine": "控制面内部服务",
+  "mcp-proxy": "控制面内部服务",
+  "room-broker": "控制面内部服务",
+  "model-registry": "控制面内部服务",
+  "skill-registry": "控制面内部服务",
+  "identity-service": "控制面内部服务",
+  "ui-console-service": "控制面内部服务（种子数据里有工作项挂着它，但那是自举，不是人该选的）",
+  "repository-router": "控制面内部服务",
+  "instruction-optimizer": "控制面内部服务"
+};
+function runOwnerRoleChoiceCase() {
+  const appText = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const coreText = fs.readFileSync(path.join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const listOf = (text, pattern) => {
+    const hit = pattern.exec(text);
+    return hit ? [...hit[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]) : [];
+  };
+  const offered = listOf(appText, /const WORK_ITEM_OWNER_ROLE_CHOICES = \[([^\]]*)\];/u);
+  const registered = listOf(coreText, /export const REGISTERED_OWNER_ROLES = \[([\s\S]*?)\];/u);
+  check("两份执行角色清单都要真的提取到（提取失配的话下面两条在空转）",
+    offered.length >= 5 && registered.length >= 15,
+    `界面提到 ${offered.length} 个、core 提到 ${registered.length} 个`);
+  const notRegistered = offered.filter((role) => !registered.includes(role));
+  check("界面列出的执行角色必须都是后端认的（否则选中提交必被拒）",
+    notRegistered.length === 0,
+    `这些角色下拉里有、后端不认：${notRegistered.join("、")}`);
+  const unexplained = registered.filter((role) =>
+    !offered.includes(role) && !(role in OWNER_ROLES_NOT_OFFERED_IN_CONSOLE));
+  check("后端认而界面不列的角色，每一个都要写明为什么不列",
+    unexplained.length === 0,
+    `这些角色人在界面上够不着，登记册里也没说为什么：${unexplained.join("、")}`);
+  const stale = Object.keys(OWNER_ROLES_NOT_OFFERED_IN_CONSOLE)
+    .filter((role) => !registered.includes(role) || offered.includes(role));
+  check("登记册不许留过期条目（过期的登记会掩护掉下一个）",
+    stale.length === 0,
+    `这些登记已经不成立了：${stale.join("、")}`);
+}
+runOwnerRoleChoiceCase();
+
 runWholeListCapCase();
 runCrossOrgGrantSelectCase();
 runStuckTopologyLeverCase();

@@ -3135,6 +3135,22 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "界面不许列后端不认的执行角色",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: 'const WORK_ITEM_OWNER_ROLE_CHOICES = ["orchestrator",',
+    to: 'const WORK_ITEM_OWNER_ROLE_CHOICES = ["kitchen-sink", "orchestrator",',
+    expect: "界面列出的执行角色必须都是后端认的"
+  },
+  {
+    name: "后端新增的执行角色不许在界面上悄悄够不着",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "console",
+    from: '"repository-router", "instruction-optimizer"];',
+    to: '"repository-router", "instruction-optimizer", "field-engineer"];',
+    expect: "每一个都要写明为什么不列"
+  },
+  {
     name: "换了项目就要换成那个组织的人",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

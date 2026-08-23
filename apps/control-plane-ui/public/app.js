@@ -2197,6 +2197,13 @@ function noProjectYetNotice(what) {
 // 归属为空的账号（历史上经 MCP 建的那批）服务端按「默认组织」处理，界面必须用同一个口径 ——
 // 两边不一致，屏幕上能选的就会是后端必拒的（或者反过来，把本可以授的人藏起来）。
 // 这个常量与 core 的 DEFAULT_ORGANIZATION_ID 是同一件事，判据每次校验两边一致。
+// 工作项的执行角色只列【人会指派的那几个】。core 的 REGISTERED_OWNER_ROLES 有 22 个，
+// 另外 15 个是服务角色（command-bus / mcp-proxy / identity-service…）—— 把它们摆进下拉，
+// 等于让人给一个基础设施组件派活。这是有意收窄，不是漏了。
+// 两份清单没有任何东西钉着就一定会漂：判据两向核对 —— 这里列的必须都是 core 认的
+//（否则是选了必被拒的死杠杆），core 认而这里不列的，必须在登记册里逐个写明为什么。
+const WORK_ITEM_OWNER_ROLE_CHOICES = ["orchestrator", "agent-runtime", "reviewer", "qa", "security", "release", "monitor"];
+
 const DEFAULT_ORGANIZATION_ID = "org_default";
 let memberGrantProjectId = "";
 const organizationOf = (record) => String(record?.organizationId || DEFAULT_ORGANIZATION_ID);
@@ -2727,7 +2734,7 @@ function renderTaskGroups() {
   const groups = projectTaskGroups();
   const canControl = hasPerm("task_group:control");
   const canReview = hasPerm("task_group:review");
-  const roleOptions = [...new Set(["orchestrator", "agent-runtime", "reviewer", "qa", "security", "release", "monitor"])]
+  const roleOptions = WORK_ITEM_OWNER_ROLE_CHOICES
     .map((role) => `<option value="${esc(role)}">${esc(t(role))} (${esc(role)})</option>`).join("");
 
   const createPanels = !canControl ? [] : [
