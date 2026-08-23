@@ -3135,6 +3135,14 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "产出目标被顶替时要说出为什么",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '    {v: badge(target.status) + (target.supersededReason',
+    to: '    {v: badge(target.status) + (false',
+    expect: "产出目标被顶替时要说出为什么"
+  },
+  {
     name: "控制命令被拒时要说出节点给的原因",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

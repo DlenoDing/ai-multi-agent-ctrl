@@ -2619,7 +2619,10 @@ function renderProjectOverview() {
     esc(taskGroupNameOf(target.taskGroupId)),
     `<span class="mono">${esc(target.repositoryId)}</span>`,
     `<span class="mono">${esc(target.branch)}</span>`,
-    badge(target.status),
+    // 「已替代」是个终态，而人接着要问的就是【为什么】。supersededReason 三处都在写，
+    // 全仓零处读 —— 与控制命令的 ackResult 同一形状：字段在记录里，屏幕上只有一个状态徽标。
+    {v: badge(target.status) + (target.supersededReason
+      ? `<div class="small muted">${esc(explainCoded(target.supersededReason))}</div>` : "")},
     `<span class="mono">${esc((target.pathAllowlist || []).join("、"))}</span>`
   ])).join("");
   // 只展示最新 10 条（数组是 unshift 追加的，最新在前）。总数要取【筛完范围之后】的长度：

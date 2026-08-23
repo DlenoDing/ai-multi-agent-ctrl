@@ -3410,6 +3410,29 @@ function runControlCommandReasonCase() {
     !/agent_control_command_unsupported/u.test(text),
     "屏幕上出现了英文原因码 —— 它没经过 explainCoded，或者词表里没有这一条");
 }
+// 「已替代」是终态，人接着要问的就是为什么。supersededReason 三处在写、全仓零处读 ——
+// 与控制命令的 ackResult 同一形状。这两条一起证明：字段在记录里，缺的只是那一眼。
+function runSupersededReasonCase() {
+  const admin = {accountId: "acct_a", accountType: "system_admin", organizationId: "org_default"};
+  const state = {schemaVersion: "runtime-state/v1", stateVersion: 1, runtime: {},
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    projects: [{id: "p1", name: "项目", organizationId: "org_default", status: "active", members: [],
+      progress: {percent: 10, phase: "intake", health: "ok"}}],
+    taskGroups: [{id: "tg1", projectId: "p1", name: "任务组", status: "active", workItems: [], roles: [], blockers: []}],
+    repositoryOutputs: [{targetId: "rot_1", projectId: "p1", taskGroupId: "tg1", repositoryId: "repo_main",
+      branch: "main", status: "superseded", supersededReason: "lease_expired", pathAllowlist: ["docs/**"]}],
+    agentDispatches: [], workSessions: [], agentExecutionEvents: [], humanConfirmationRequests: [],
+    accounts: [], accessGrants: [], agents: [], findings: [], closeBarriers: [], qualityGates: [],
+    truncatedCollections: [], fleet: {online: 1, total: 1}};
+  const overviewRoot = el("div");
+  loadConsole(overviewRoot, {realI18n: true}).renderFullPageWith(state, admin, "p1", "proj-overview");
+  const text = String(overviewRoot.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+  check("产出目标被顶替时要说出为什么（不能只留一个「已替代」）",
+    /租约过期/u.test(text),
+    `仓库产出那一行显示的是：${(text.match(/repo_main[^。]{0,60}/u) || ["（没渲染出这一行）"])[0]}`);
+}
+runSupersededReasonCase();
+
 runControlCommandReasonCase();
 
 runCrossOrgGrantSelectCase();

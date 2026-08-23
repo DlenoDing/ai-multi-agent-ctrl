@@ -66,6 +66,8 @@
     work_item_owner_role_not_registered: "填写的负责角色未在本任务组登记：先在任务组里加上这个角色，或改选已登记的角色",
     idempotent_result_expired: "这次写入早已完成，但它的结果已过可重放期；请刷新页面查看当前状态，不要重复提交",
     grant_subject_account_not_found: "找不到要授权的账号：请先创建该成员，再授予角色",
+    lease_expired: "租约过期，这份产出目标被顶替",
+    skill_source_retired: "技能源已退役",
     agent_control_command_unsupported: "节点认不出这条控制命令（它的运行时版本可能比控制面旧）",
     dispatch_scope_not_active: "这条命令指向的派发已经不是该节点正在跑的那个",
     no_active_dispatch_context: "该节点当时没有在跑任何派发，这条命令没有作用对象",
