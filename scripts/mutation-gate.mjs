@@ -4095,6 +4095,16 @@ const MUTATIONS = [
     expect: "只核对模式：对着残缺目录必须拒绝"
   },
   {
+    // README 对 `npm run doctor` 的描述要与那条命令逐段对得上。文档说"三条真实链路"时，
+    // 它实际还跑 docker 自检（要 Docker）与完整变异门 —— 照着估时间/前置条件的人会判错。
+    name: "doctor 的描述要覆盖命令里的每一段",
+    file: "README.md",
+    check: "verifyDoctorDescriptionMatchesTheCommand",
+    from: "**docker compose e2e（要装 Docker",
+    to: "**（要装 Docker",
+    expect: "而 README 里没提「docker compose e2e」"
+  },
+  {
     // 装机脚本用 nohup 起 agent，重启后不会回来。只说"自己去配 systemd"等于没给出口 ——
     // 少了 enable-linger 那一句，用户一登出服务就被停掉，而人会以为已经常驻了。
     name: "常驻做法要给全（少 enable-linger 等于没给）",

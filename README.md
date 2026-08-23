@@ -53,7 +53,12 @@ npm run shell:start
 npm run docker:up
 ```
 
-`npm run doctor` 会执行控制平面、远程 Streamable HTTP MCP 和公网 Agent Runtime 三条真实链路。Agent 验收覆盖项目管理 UI/API 生成一次性 join token、服务端脚本下载与 SHA256 校验、自动注册、初始化、自检、远程 MCP 鉴权、按任务同步最小 Skill 工作集、模型 executor、Git commit/push、服务端远端 Git 复验和 checkpoint。`npm run skills:sync` 只在系统服务器同步 `DlenoDing/agency-agents-zh` pinned commit，并通过共享 state-store 建立 Skill Registry；Agent 主机不运行此命令，也不保存完整 Skill 仓库。
+`npm run doctor` 是**全量**验收，按顺序跑六段：`npm run validate`（十一道快门，约 70 秒）→
+控制平面 e2e → 远程 Streamable HTTP MCP e2e → 公网 Agent Runtime e2e →
+**docker compose e2e（要装 Docker：它会构建镜像并起一台 PostgreSQL）** → **完整变异门（约 7 分钟，
+870+ 条，逐条验证「守卫失效时确实有东西变红」）**。整条跑完大约半小时，且**没有 Docker 会在第五段失败**。
+平时改完代码想快速自证，跑 `npm run validate` 加那三条 e2e 就够（本仓的提交脚本就是这么做的）。
+Agent 验收覆盖项目管理 UI/API 生成一次性 join token、服务端脚本下载与 SHA256 校验、自动注册、初始化、自检、远程 MCP 鉴权、按任务同步最小 Skill 工作集、模型 executor、Git commit/push、服务端远端 Git 复验和 checkpoint。`npm run skills:sync` 只在系统服务器同步 `DlenoDing/agency-agents-zh` pinned commit，并通过共享 state-store 建立 Skill Registry；Agent 主机不运行此命令，也不保存完整 Skill 仓库。
 
 服务器级环境变量只放系统服务自身需要的 secret：
 

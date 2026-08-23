@@ -452,6 +452,7 @@ run(verifyComposePortsAreNotAccidentallyPublic);
 run(verifyContainerRunsAsNonRoot);
 run(verifySecretWritersTightenUmaskFirst);
 run(verifyAgentInstallerSaysItIsNotPersistent);
+run(verifyDoctorDescriptionMatchesTheCommand);
 run(verifyFalsyDefaultsDoNotFavourTheCaller);
 run(verifyEveryProjectScopedIdIsScopeChecked);
 run(verifyEveryStateCollectionIsTenantScoped);
@@ -16672,6 +16673,44 @@ function verifyFalsyDefaultsDoNotFavourTheCaller(output) {
 // 装的人看到 STARTED 会以为"装好了就一直在"，而节点一失联，排给它的活就停在队列里
 //（控制台上只是显示那个节点没有心跳，不会有人被主动通知）。
 // 这一条与 compose 的 restart 策略是同一族：说清后果，并给出真能照做的出口。
+// README 对 `npm run doctor` 的描述必须与 package.json 里那条命令【逐段对得上】。
+// 2026-08-23 实测漂了：文档说"三条真实链路"，而它实际还跑 docker 自检（要 Docker、构建镜像、
+// 起 PostgreSQL）与完整变异门（约 7 分钟）—— 照着做的人会在二十分钟后卡在一台没装 Docker 的机器上。
+function verifyDoctorDescriptionMatchesTheCommand(output) {
+  const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
+  const command = String(pkg.scripts?.doctor || "");
+  if (!command) {
+    output.push("doctor 描述核对：package.json 里已经没有 doctor 这条命令了 —— 判据要跟着改，否则它在空转");
+    return;
+  }
+  // 命令片段 → README 里必须出现的说法。新增一段而不写进文档，这里会点名它。
+  const SEGMENTS = {
+    "npm run validate": "npm run validate",
+    "scripts/doctor.mjs": "控制平面 e2e",
+    "npm run mcp:doctor": "MCP e2e",
+    "npm run agent:doctor": "Agent Runtime e2e",
+    "npm run docker:doctor": "docker compose e2e",
+    "npm run -s mutation-gate": "完整变异门"
+  };
+  const readme = readFileSync(resolve(root, "README.md"), "utf8");
+  const ran = Object.keys(SEGMENTS).filter((segment) => command.includes(segment));
+  if (ran.length < 4) {
+    output.push(`doctor 描述核对：只从命令里认出 ${ran.length} 段（实测 6）—— 片段登记与命令脱节，本条在空转`);
+    return;
+  }
+  for (const segment of ran) {
+    if (!readme.includes(SEGMENTS[segment])) {
+      output.push(`doctor 描述核对：\`npm run doctor\` 实际会跑 ${segment}，而 README 里没提「${SEGMENTS[segment]}」`
+        + " —— 照着它估时间/估前置条件的人会判错（docker 那段没装 Docker 直接失败）");
+    }
+  }
+  const stale = Object.keys(SEGMENTS).filter((segment) => !ran.includes(segment));
+  if (stale.length) {
+    output.push(`doctor 描述核对：登记表已过时，命令里已经没有这几段：${stale.join("、")}`);
+  }
+  console.log(`doctor 描述核对：命令里的 ${ran.length} 段逐段核过，README 都提到了`);
+}
+
 function verifyAgentInstallerSaysItIsNotPersistent(output) {
   const installer = readFileSync(resolve(root, "scripts/install-agent.sh"), "utf8")
     .split("\n").filter((line) => !/^\s*#/u.test(line)).join("\n");
