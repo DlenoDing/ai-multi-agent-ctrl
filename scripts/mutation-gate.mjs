@@ -3135,6 +3135,22 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "网关切掉的执行事件也要记账",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "contract",
+    from: "    state.centralDroppedCounts.agentExecutionEvents =\n      Number(state.centralDroppedCounts.agentExecutionEvents || 0) + dropped;",
+    to: "",
+    expect: "网关切掉一条执行事件却没记账"
+  },
+  {
+    name: "执行事件上限不许在网关里另写一个数",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "contract",
+    from: "  const executionEventLimit = PROJECT_SHARD_COLLECTION_LIMITS.agentExecutionEvents;",
+    to: "  const executionEventLimit = 500;\n  state.agentExecutionEvents = state.agentExecutionEvents.slice(0, 500);",
+    expect: "又写死了一个执行事件上限"
+  },
+  {
     name: "容量淘汰丢了多少必须记下来",
     file: "apps/control-plane-ui/lib/state-store.mjs",
     gate: "contract",

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { PROJECT_SHARD_COLLECTION_LIMITS } from "./state-store.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { normalize, resolve, sep } from "node:path";
 import { cancelPendingConfirmationsForDispatch, createId, digestOf, effectiveTaskGroupConfig, ensureRuntimeCollections, expireStaleQueuedDispatches, languagePolicyDirective, normalizeTaskGroupLanguagePolicy, organizationQuotaCheck,
@@ -1074,7 +1075,17 @@ export function recordAgentExecutionEvent(state, node, event = {}, options = {})
   if ((state.agentExecutionEvents || []).some((item) => item.eventId === event.eventId)) return {event, duplicate: true};
   state.agentExecutionSequence = Math.max(Number(state.agentExecutionSequence || 0), Number(event.sequence || 0));
   state.agentExecutionEvents.unshift(event);
-  state.agentExecutionEvents = state.agentExecutionEvents.slice(0, 500);
+  // 上限取【存储层那一份】：这里原先写死 500，比分片的 1000 更严 ——
+  // 真正生效的是这个看不见的数，而且它切掉的那些不记账（分片那层的记账根本看不到它们，
+  // 记录在到达分片之前就已经没了）。同一个数 + 记账，界面才说得出「这个数是剩下的」。
+  const executionEventLimit = PROJECT_SHARD_COLLECTION_LIMITS.agentExecutionEvents;
+  if (state.agentExecutionEvents.length > executionEventLimit) {
+    const dropped = state.agentExecutionEvents.length - executionEventLimit;
+    state.agentExecutionEvents = state.agentExecutionEvents.slice(0, executionEventLimit);
+    state.centralDroppedCounts = state.centralDroppedCounts || {};
+    state.centralDroppedCounts.agentExecutionEvents =
+      Number(state.centralDroppedCounts.agentExecutionEvents || 0) + dropped;
+  }
   const at = event.createdAt || new Date().toISOString();
   if (dispatch.status === "running" && dispatch.assignedNodeId === node.nodeId && dispatch.claimExpiresAt) {
     const ttlSeconds = boundedInteger(dispatch.claimTtlSeconds, 60, 21600, 1800);

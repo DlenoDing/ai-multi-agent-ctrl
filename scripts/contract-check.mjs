@@ -22,6 +22,8 @@ import { assertProjectShardsArray, pgWriteStateWithProjectShards } from "../apps
 import { removeGlobalRemoteMcpClients } from "../apps/agent-runtime/runtime.mjs";
 import { buildExecutionContentBundle as buildBundleForCheck, isSafeGitRemoteUrl } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { publicAgentNode, agentRuntimeOutdated, REQUIRED_AGENT_RUNTIME_VERSION } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
+import { recordAgentExecutionEvent } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
+import { PROJECT_SHARD_COLLECTION_LIMITS } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import {
   summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs, capacitySnapshot
@@ -6437,6 +6439,31 @@ function verifyExecutionFailureCapSurvivesHistoryAndReopen(output) {
     const serverText = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
     if (!/base\.storageDroppedCounts = Object\.fromEntries\(dropped\)/u.test(serverText)) {
       output.push("视图没有下发 storageDroppedCounts —— 容量淘汰在界面上没有任何痕迹");
+    }
+  }
+
+  // 同一个集合被切两刀：网关在请求内先切 500，分片写盘再切 1000 —— 真正生效的是那个更严的、
+  // 谁也看不见的数，而且它切掉的记录在到达分片之前就没了，分片那层的记账根本看不到。
+  // 两刀必须是同一个数，且更早那刀也要记账。
+  {
+    const limit = PROJECT_SHARD_COLLECTION_LIMITS.agentExecutionEvents;
+    const node = {nodeId: "node_cap", status: "online"};
+    const at = new Date().toISOString();
+    const st = {agentDispatches: [{dispatchId: "d_cap", assignedNodeId: "node_cap", status: "completed"}],
+      agentExecutionEvents: Array.from({length: limit}, (_, index) => ({eventId: `e_${index}`,
+        dispatchId: "d_cap", sequence: index, createdAt: at}))};
+    recordAgentExecutionEvent(st, node, {eventId: "e_new", dispatchId: "d_cap", sequence: limit + 1, createdAt: at});
+    if (st.agentExecutionEvents.length !== limit) {
+      output.push(`执行事件没有被收到上限内（${st.agentExecutionEvents.length} vs ${limit}）—— 这一段在空转`);
+    } else if (Number(st.centralDroppedCounts?.agentExecutionEvents || 0) !== 1) {
+      output.push(`网关切掉一条执行事件却没记账（centralDroppedCounts=${JSON.stringify(st.centralDroppedCounts)}）`
+        + " —— 记录在到达分片之前就没了，分片那层的记账看不到它，界面会把剩下的当成总数");
+    }
+    const gatewayText = readFileSync(join(root, "apps/control-plane-ui/lib/agent-gateway.mjs"), "utf8");
+    const hardcoded = gatewayText.match(/agentExecutionEvents\.slice\(0, \d+\)/gu);
+    if (hardcoded) {
+      output.push(`网关里又写死了一个执行事件上限：${hardcoded.join("、")} —— `
+        + "两个数只会有一个真正生效，而人看到的是另一个");
     }
   }
 

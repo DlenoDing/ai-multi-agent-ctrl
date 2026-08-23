@@ -1905,7 +1905,12 @@ function stateViewForAccount(state, account, session, view = "full", limit = 80,
   // 存储层的容量淘汰是另一回事：视图截断说的是「这次没加载全，记录还在」，
   // 而这些是【已经被丢掉了】—— 两句话给人的下一步动作完全不同（一个是翻页/收窄范围，
   // 一个是去归档里找、或者接受它已经没了）。所以单独一个字段，界面分开说。
-  const dropped = Object.entries(state.projectShardDroppedCounts || {})
+  // 两份计数：分片裁剪掉的，和记录还没到分片就在中央被切掉的。对人来说是同一件事。
+  const allDropped = {...(state.projectShardDroppedCounts || {})};
+  for (const [field, count] of Object.entries(state.centralDroppedCounts || {})) {
+    allDropped[field] = Number(allDropped[field] || 0) + Number(count || 0);
+  }
+  const dropped = Object.entries(allDropped)
     .filter(([field, count]) => Number(count) > 0 && Array.isArray(base[field]));
   if (dropped.length) base.storageDroppedCounts = Object.fromEntries(dropped);
   return base;

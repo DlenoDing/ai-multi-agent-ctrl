@@ -26,7 +26,9 @@ const projectShardCollections = [
   "humanConfirmationRequests",
   "humanDirectives"
 ];
-const projectShardCollectionLimits = {
+// 这张表是【存储层上限】的唯一真相源。网关那边原先自己又切一刀 500 ——
+// 比这里的 1000 更严，于是真正生效的是一个谁也看不见的数，而且那一刀不记账。
+export const PROJECT_SHARD_COLLECTION_LIMITS = Object.freeze({
   taskGroups: 2000,
   repositoryOutputs: 5000,
   workSessions: 5000,
@@ -42,7 +44,8 @@ const projectShardCollectionLimits = {
   agentExecutionEvents: 1000,
   humanConfirmationRequests: 2000,
   humanDirectives: 2000
-};
+});
+const projectShardCollectionLimits = PROJECT_SHARD_COLLECTION_LIMITS;
 
 export function isStateStoreConflict(error) {
   return error?.code === "AIMAC_STATE_CONFLICT";
