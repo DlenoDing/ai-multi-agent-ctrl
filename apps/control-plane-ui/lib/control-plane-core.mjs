@@ -8106,7 +8106,11 @@ export function policyDecisionEval(state, args) {
   // 这里只管"别无限长"。「仍被长期对象引用的不许删」统一放在 writeStoredState（唯一的落盘入口）
   // ——保留逻辑写在各个淘汰点上，就会有绕过它的路径（MCP 侧走 writeStoredState、绕开了 UI 那道，
   // 实测 10 条活跃授权里 4 条的依据因此没了）。
-  state.policyDecisions = [policyDecision, ...state.policyDecisions].slice(0, Math.max(100, Number(process.env.AIMAC_POLICY_DECISIONS_CAP || 500)));
+  // 这里【不再自己裁】：原先按同一个 500 盲切一刀，而写入点那道保护的做法是
+  // 「先留前 500，再把 500 之外仍被活跃授权引用的捞回来」—— 前面先盲切到 500，
+  // 该被捞回来的那条已经不在数组里了，保护无从生效（旋钮 AIMAC_POLICY_DECISIONS_CAP 也被架空）。
+  // 唯一的落盘入口 writeStoredState 会带保护地裁；两次写之间最多多出几条，可以忽略。
+  state.policyDecisions = [policyDecision, ...state.policyDecisions];
   return {policyDecision};
 }
 

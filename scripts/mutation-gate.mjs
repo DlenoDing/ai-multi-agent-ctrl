@@ -3135,6 +3135,14 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "不许在写入点之前再裁一刀 policyDecisions",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "  state.policyDecisions = [policyDecision, ...state.policyDecisions];",
+    to: "  state.policyDecisions = [policyDecision, ...state.policyDecisions].slice(0, 500);",
+    expect: "里又在裁 policyDecisions"
+  },
+  {
     name: "生效中的角色技能叠加不得被容量淘汰",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

@@ -574,7 +574,9 @@ function beginGuardedWrite(req, state, action, subject, resourceScope = inferRes
   };
   if (!allowed) {
     state.policyDecisions.unshift(policyDecision);
-    state.policyDecisions = state.policyDecisions.slice(0, 120);
+    // 这里原先还按 120 盲切一刀 —— 比写入点那道保护的 500 更严，于是真正生效的是 120，
+    // 而且它先跑：被活跃授权引用、本该被捞回来的那条，在保护看到之前就没了。
+    // 容量只由写入点 capPolicyDecisionsKeepingReferenced 管（那里带引用保护）。
     audit(state, "policy-engine", "policy_decision_denied", subject, "denied");
     commitDirectStateWrite(state);
     return {status: 403, payload: {error: "policy_denied", actor, requiredPermission, resourceScope}};
@@ -6438,7 +6440,10 @@ if (process.env.AIMAC_EXIT_WITH_PARENT === "1") {
 }
 
 server.listen(port, host, () => {
-  console.log(`AI Multi-Agent Ctrl console: http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`);
+  // 打【真正绑上的】端口，不是请求的那个：AIMAC_PORT=0 是"随便给我一个空闲端口"的标准写法，
+  // 而原先这行会打出 http://127.0.0.1:0 —— 照着它连一次都连不上。
+  const boundPort = server.address()?.port || port;
+  console.log(`AI Multi-Agent Ctrl console: http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${boundPort}`);
   console.log(`Centralized MCP endpoint: ${publicEndpoint()}/mcp`);
   console.log(`Agent installer: ${publicEndpoint()}/install-agent.sh`);
 });

@@ -3631,7 +3631,12 @@ try {
 // 只看状态会不会自己往前走 —— 那才是"人建完任务组之后不必点任何东西"这句话的实际含义。
 {
   let tickAssertionsPassed = false;
-  const tickPort = port + 1;
+  // 【不能用 port + 1】：那个端口从来没被预留过。并行跑多份 e2e 时（变异门就是四路并行），
+  // port + 1 很可能正是另一份 e2e 的主端口 —— 于是这台起不来（EADDRINUSE），
+  // 而下面的 /api/health 被【别人家的服务】答应了，看起来"起来了"，
+  // 可它写的是别人的运行态，这边的状态文件永远不动 → 报「什么都没驱动周期」。
+  // 四次完整变异门各被这件事浪费掉一轮（每次撞上的还是不同的变异，看起来像随机假红）。
+  const tickPort = await getFreePort();
   const tickChild = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
     cwd: root,
     env: {
@@ -3655,6 +3660,12 @@ try {
     // 而真相是服务还没起来。把原因归错类比不说更坏：这句话会让人去查编排，而问题在负载。
     let ready = false;
     for (let attempt = 0; attempt < 60 && !ready; attempt += 1) {
+      // 子进程已经退出了就别再等 health：那多半是没绑上端口，而这一刻 health 若还答得出来，
+      // 答话的一定是别人 —— 「起来了」这个判断本身就是错的。
+      if (tickChild.exitCode !== null || tickChild.signalCode !== null) {
+        throw new Error(`autonomous orchestrator tick: 这台服务没能起来（退出码 ${tickChild.exitCode}）——`
+          + ` 本条检查没测到编排周期：${tickStderr.slice(0, 400) || "（stderr 一个字都没有）"}`);
+      }
       ready = await fetch(`http://127.0.0.1:${tickPort}/api/health`).then((response) => response.ok).catch(() => false);
       if (!ready) await new Promise((resolve) => setTimeout(resolve, 500));
     }

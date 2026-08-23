@@ -5202,6 +5202,47 @@ function verifyRuntimeJsonConflict(output) {
       output.push(`拿中央态写回存储没有被拒（${centralOnly || "写进去了"}）—— `
         + "中央态不含项目分片里的集合，这一写会把全部项目数据删掉，而且没有任何提示");
     }
+    // 【被活跃授权引用的策略决策，不许被容量淘汰】。写入点那道保护的做法是
+    // 「先留前 cap 条，再把 cap 之外仍被引用的捞回来」—— 只要有任何一处在它之前先盲切一刀，
+    // 该捞回来的那条就已经不在数组里了。实测过：server 那处按 120 盲切、core 那处按 500 盲切，
+    // 两处都在保护之前跑，于是「这条授权凭什么发的」答不出来（10 条活跃授权里 4 条依据没了）。
+    {
+      const cap = Math.max(100, Number(process.env.AIMAC_POLICY_DECISIONS_CAP || 500));
+      const at = new Date().toISOString();
+      const referencedId = "pd_referenced_by_active_grant";
+      const evidenceState = {stateVersion: 1, runtime: {},
+        accessGrants: [{grantId: "g_probe", status: "active", policyDecisionRef: referencedId,
+          subjectRef: {subjectType: "account", subjectId: "acct_probe"},
+          resource: {resourceType: "project", resourceId: "prj_control_plane"}, createdAt: at}],
+        // 新的在前、老的在后：被引用的那条排在 cap 之外，正是保护该捞回来的位置。
+        policyDecisions: [
+          ...Array.from({length: cap + 50}, (_, index) => ({id: `pd_filler_${index}`, status: "allowed",
+            actor: "probe", resource: "Project:prj_control_plane", createdAt: at})),
+          {id: referencedId, status: "allowed", actor: "probe",
+            resource: "Project:prj_control_plane", createdAt: at}
+        ]};
+      writeStoredState(evidenceState, options);
+      const readBack = readStoredState(options);
+      const kept = (readBack.policyDecisions || []).some((item) => (item.id || item.decisionId) === referencedId);
+      if ((readBack.policyDecisions || []).length > cap + 50) {
+        output.push(`策略决策没有被裁剪（${(readBack.policyDecisions || []).length} 条）—— 这一段在空转`);
+      } else if (!kept) {
+        output.push("被【活跃授权】引用着的策略决策被容量淘汰了 —— 事后问「这条权限是凭什么给的」答不出来；"
+          + "多半是有人在写入点那道保护【之前】又盲切了一刀（那一刀先跑，该捞回来的已经不在数组里）");
+      }
+    }
+    // 上面那条只证明【写入点】的保护是好的，证明不了「别处没人在它之前先切一刀」——
+    // 而真实缺陷正是后者：保护被挪到写入点时，两处旧的盲切没撤。按写法找：任何模块里
+    // 对 policyDecisions 的裁剪都会在落盘之前跑，也就都会把该捞回来的那条先删掉。
+    for (const file of ["apps/control-plane-ui/lib/control-plane-core.mjs",
+      "apps/control-plane-ui/server.mjs", "apps/mcp-server/server.mjs"]) {
+      const text = readFileSync(join(root, file), "utf8");
+      const cuts = text.match(/state\.policyDecisions[^;\n]*\.slice\(0,[^)]*\)/gu);
+      if (cuts) {
+        output.push(`${file.split("/").pop()} 里又在裁 policyDecisions：${cuts.join("、")} —— `
+          + "它会在写入点那道带引用保护的裁剪【之前】跑，被活跃授权引用的那条在保护看到之前就没了");
+      }
+    }
     writeStoredState({stateVersion: 1, runtime: {}}, options);
     const first = readStoredState(options);
     const second = readStoredState(options);
