@@ -261,6 +261,14 @@ const LABEL_TABLE_SOURCES = [
   ["EXECUTION_PROFILE_LABELS", "runtime-bootstrap", "executionProfile"],
   ["TASK_EXECUTION_CLASS_LABELS", "agent-task-contract", "taskExecutionClass"]
 ];
+// 把【调用方给的整个对象】摊进一条要落库的记录，等于放任任意字段注入：
+// 规范多数是 additionalProperties:false，落下来的记录会违反它自己声明的规范，
+// 而这件事只有在 e2e 恰好造出那种记录时才会被发现（模型能力注册就这么躲过了很久）。
+// 例外要登记：把 body 交给一个【显式取字段】的 sanitizer 是安全的，那不是摊进记录。
+const CALLER_SPREAD_EXEMPT = {
+  "server.mjs:sanitizeGrantRequest": "body 交给 sanitizeGrantRequest，它只取 role/resourceType/resourceId/permissions/subjectId"
+};
+
 // 视图窗口靠时间戳挑「最新的那一批」，而它认得的字段名是【写死在代码里的一串 ||】。
 // 手抄清单必漂：新记录换个时间字段名（decidedAt / sampledAt / computedAt / at / observedAt
 // 这几个就是后来才补上的），窗口就认不出它的时间，整份数组"看起来单调"、退回取前 N 条 ——
@@ -590,6 +598,7 @@ runAsync(verifyEveryMcpToolAnswersAnEmptyCall);
 runAsync(verifyBoundedNodeCannotWriteIntoAnotherProject);
 runAsync(verifyStateWriteDoesNotCloneTheWorld);
 run(verifyCapacityKnobsAreDocumented);
+run(verifyCallerObjectsAreNotSpreadIntoRecords);
 run(verifyModelCapabilityFieldsMatchTheSpec);
 run(verifyLabelTablesMatchTheirEnums);
 run(verifyEveryViewCollectionHasAChineseLabel);
@@ -11317,6 +11326,41 @@ function verifyCapacityKnobsAreDocumented(output) {
 // 模型能力注册那条路由只取【规范认识的字段】（原先是 `...body`，请求体整个摊进持久记录，
 // 而规范是 additionalProperties:false）。字段清单是手抄的 —— 与规范双向核对：
 // 多一个＝落下来的记录违反规范；少一个＝调用方给的那一项被静默丢掉，而他收到的是 201。
+function verifyCallerObjectsAreNotSpreadIntoRecords(output) {
+  const files = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs"];
+  const suspects = [];
+  let scanned = 0;
+  for (const file of files) {
+    const lines = readFileSync(join(root, file), "utf8").split("\n");
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!/\.\.\.(body|args|input|payload|request)\b/u.test(lines[index])) continue;
+      if (/^\s*\/\//u.test(lines[index])) continue;
+      scanned += 1;
+      const window = lines.slice(Math.max(0, index - 12), index + 14).join("\n");
+      const persisted = /state\.(\w+)\.(push|unshift)\(/u.exec(window);
+      if (!persisted) continue;
+      const sanitizer = /(\w+)\(state[^)]*\{\s*\.\.\.(body|args|input)/u.exec(lines[index]);
+      const key = `${file.split("/").pop()}:${sanitizer ? sanitizer[1] : `L${index + 1}`}`;
+      if (CALLER_SPREAD_EXEMPT[key]) continue;
+      suspects.push(`${key}（落进 state.${persisted[1]}）`);
+    }
+  }
+  if (scanned < 8) {
+    output.push(`调用方对象展开只扫到 ${scanned} 处（实际有二十来处）—— 提取失配，本条在空转`);
+    return;
+  }
+  if (suspects.length) {
+    output.push(`这些地方把【调用方给的整个对象】摊进了要落库的记录：${suspects.join("、")} —— `
+      + "规范多是 additionalProperties:false，任意字段都会被存下来并让记录违反自己的规范；"
+      + "改成只取规范认识的字段，或把它登记成「交给了显式取字段的 sanitizer」");
+  }
+  const stale = Object.keys(CALLER_SPREAD_EXEMPT).filter((key) =>
+    !files.some((file) => readFileSync(join(root, file), "utf8").includes(key.split(":")[1])));
+  if (stale.length) output.push(`调用方展开豁免登记已过期：${stale.join("、")}`);
+  console.log(`调用方对象展开：${scanned} 处逐个核过（只有落进 state 集合的才算，${Object.keys(CALLER_SPREAD_EXEMPT).length} 处已登记走 sanitizer）`);
+}
+
 function verifyModelCapabilityFieldsMatchTheSpec(output) {
   const serverText = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
   const hit = /const MODEL_CAPABILITY_FIELDS = \[([\s\S]*?)\];/u.exec(serverText);

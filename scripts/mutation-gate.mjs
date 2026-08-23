@@ -3361,6 +3361,15 @@ const MUTATIONS = [
     expect: "容量淘汰过的记录要说出来"
   },
   {
+    name: "把调用方对象摊进落库记录要被门看见",
+    file: "apps/control-plane-ui/server.mjs",
+    check: "verifyCallerObjectsAreNotSpreadIntoRecords",
+    gate: "contract",
+    from: "      ...picked,",
+    to: "      ...picked,\n      ...body,",
+    expect: "摊进了要落库的记录"
+  },
+  {
     name: "模型能力字段清单少一个要报红（调用方给的会被静默丢掉）",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyModelCapabilityFieldsMatchTheSpec",
