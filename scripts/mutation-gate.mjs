@@ -7164,7 +7164,7 @@ const MUTATIONS = [
     check: "verifyWhitelistRefusalsCarryTheWhitelist",
     from: "    \"apps/control-plane-ui/lib/state-store.mjs\", \"apps/control-plane-ui/lib/transition-engine.mjs\",",
     to: "",
-    expect: "白名单式拒绝只扫到 10 处"
+    expect: "白名单式拒绝只扫到"
   },
   {
     name: "产出目标被拒要说出是哪条路径（裸码让 agent 无从自纠）",

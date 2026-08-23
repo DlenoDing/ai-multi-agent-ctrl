@@ -8649,8 +8649,8 @@ function verifyWhitelistRefusalsCarryTheWhitelist(output) {
   // 下限要跟着真实面走：实测 13 处。原先写 10 —— 而"从文件清单里删掉两个文件"恰好降到 10，
   // 不小于 10，于是那条变异绿着过去了（2026-08-23 整跑变异门抓到）。
   // 这个数只增不减：新增白名单式拒绝会把它抬高，掉下去只可能是清单被删或提取失配。
-  if (scanned < 13) {
-    output.push(`白名单式拒绝只扫到 ${scanned} 处（应至少 13）—— 提取形状或文件清单与代码脱节，本条在空转`);
+  if (scanned < 14) {
+    output.push(`白名单式拒绝只扫到 ${scanned} 处（应至少 14）—— 提取形状或文件清单与代码脱节，本条在空转`);
     return;
   }
   if (bare.length) {
