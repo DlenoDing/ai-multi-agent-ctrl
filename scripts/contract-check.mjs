@@ -253,6 +253,22 @@ const THROW_HELPERS_WITHOUT_CODES = {
 // 这里用【登记制】而不是扫描：我试过按关键词扫函数体判断"有没有活跃保护"，
 // 11 个 cap 里误报了 4 个（capReasoning 压根不是集合裁剪、capLeaseHistory 用的词是 active）——
 // 手编的期望表本身就是错误来源。登记制至少逼着新增者写清楚一句话。
+// 同一个集合被两种方向追加过（一处 unshift、一处 push），「最新的在哪一端」就成了看运气：
+// 界面按数组顺序铺开时，新记录一会儿在顶一会儿在底；任何 `[0]` 取「最新」的读法都会取错；
+// 视图窗口更是直接取一端。实测这一刻有五个集合两种都用（accessGrants / accounts /
+// projects / sharedDefinitions / leases），而追加方向本该是每个集合定死的一件事。
+// 纯 push 的要逐个写明为什么 —— 写不出来的就该改成 unshift（那是本仓 39 个集合的约定）。
+const PUSH_ORDERED_COLLECTIONS = {
+  leases: "改成 unshift 会让 buildTaskContract 绑到另一个产出目标、原目标留着一份 released 的租约"
+    + "（实测，契约门里「租约释放后重新取用」那条当场红）—— 产出目标的选取受租约数组顺序影响，"
+    + "那是一处真实的脆弱耦合；要改方向得先把目标选取改成只按 (taskGroupId, workItemId) 定",
+  projects: "projects[0] 是控制台可见的默认选择（没记住上次选的项目时用它），改方向会顺带改掉这个行为",
+  roomMessages: "协作记录按时间正序展示，最新在末尾；它另有自己的 pruneRoomMessages",
+  agents: "登记顺序即创建顺序；窗口已按时间挑最新，方向不再影响可见性",
+  organizations: "同上：组织数量级小，列表按创建顺序读起来更自然",
+  repositoryOutputs: "同上：产出目标按创建顺序排，人对着任务组从上往下看"
+};
+
 const CAP_FUNCTION_GUARDS = {
   capKeepingReferencedLazily: "只在真要裁的那一刻才构建引用集合（原先每次决策都建一遍，要扫全部会话/派发，"
     + "一轮编排每单元一次＝平方项，5000 单元时约 1.7 秒）；触发线相对上一次裁完剩下多少，保留强度不变",
@@ -553,6 +569,7 @@ run(verifyPollingPeekDoesNotCloneOrMutate);
 runAsync(verifyEveryMcpToolAnswersAnEmptyCall);
 runAsync(verifyBoundedNodeCannotWriteIntoAnotherProject);
 runAsync(verifyStateWriteDoesNotCloneTheWorld);
+run(verifyCollectionAppendDirectionIsConsistent);
 run(verifyContentBundleNamesTheDispatchedItem);
 run(verifyMcpToolListCostStaysVisible);
 run(verifyMcpEnvelopeNeverCallsAnErrorSuccess);
@@ -11208,6 +11225,45 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // agent 真正读到的是执行内容包。运行时给模型的指令里只有工作项 id（`implement only work_x`），
 // 而包里的事项清单只有标题 —— 实测同一个任务组里三项同时 in_progress，agent 得自己把 id 映射到标题。
 // 猜错就是改错文件，而这一步本来不需要存在。所以包里必须能直接读出"这次做的是哪一项"。
+function verifyCollectionAppendDirectionIsConsistent(output) {
+  const sources = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
+    "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/mcp-server/server.mjs",
+    "apps/control-plane-ui/lib/state-store.mjs"];
+  const unshifted = new Map();
+  const pushed = new Map();
+  for (const file of sources) {
+    const text = readFileSync(join(root, file), "utf8");
+    for (const match of text.matchAll(/state\.([a-zA-Z]+)\.unshift\(/gu)) {
+      unshifted.set(match[1], [...(unshifted.get(match[1]) || []), file.split("/").pop()]);
+    }
+    for (const match of text.matchAll(/state\.([a-zA-Z]+)\.push\(/gu)) {
+      pushed.set(match[1], [...(pushed.get(match[1]) || []), file.split("/").pop()]);
+    }
+  }
+  if (unshifted.size + pushed.size < 30) {
+    output.push(`集合追加方向：只提取到 ${unshifted.size + pushed.size} 个集合（实际有四十来个）—— 提取失配，本条在空转`);
+    return;
+  }
+  const mixed = [...unshifted.keys()].filter((name) => pushed.has(name)).sort();
+  if (mixed.length) {
+    output.push(`这些集合被两种方向追加过：${mixed.map((name) =>
+      `${name}（unshift@${[...new Set(unshifted.get(name))].join("/")}、push@${[...new Set(pushed.get(name))].join("/")}）`).join("；")}`
+      + " —— 「最新的在哪一端」就成了看运气：界面按数组顺序铺开时新记录一会儿在顶一会儿在底，"
+      + "任何按位置取「最新」的读法都会取错");
+  }
+  const unexplained = [...pushed.keys()].filter((name) => !unshifted.has(name) && !PUSH_ORDERED_COLLECTIONS[name]).sort();
+  if (unexplained.length) {
+    output.push(`这些集合是「最新在末尾」却没写明为什么：${unexplained.join("、")} —— `
+      + "本仓 39 个集合的约定是 unshift（最新在前）；要反着来就得说清理由，否则下一个人按约定读它就会读错");
+  }
+  const stale = Object.keys(PUSH_ORDERED_COLLECTIONS).filter((name) => !pushed.has(name) || unshifted.has(name)).sort();
+  if (stale.length) {
+    output.push(`追加方向登记已过期：${stale.join("、")} —— 它们已经不是纯 push 了，删掉登记`);
+  }
+  console.log(`集合追加方向：${unshifted.size} 个 unshift（最新在前）、${pushed.size} 个 push（已逐个写明为什么），`
+    + `${mixed.length} 个两种混用`);
+}
+
 function verifyContentBundleNamesTheDispatchedItem(output) {
   const probe = structuredClone(seedState);
   ensureRuntimeCollections(probe, {root});

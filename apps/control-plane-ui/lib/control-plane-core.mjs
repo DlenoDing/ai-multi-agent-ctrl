@@ -737,7 +737,7 @@ function ensureDefaultServiceAccounts(state) {
   state.accounts ||= [];
   if (!state.accounts.some((account) => account.accountId === "acct_agent_runtime")) {
     const at = new Date().toISOString();
-    state.accounts.push({
+    state.accounts.unshift({
       schemaVersion: "account/v1",
       accountId: "acct_agent_runtime",
       accountType: "service_account",
@@ -759,7 +759,7 @@ function ensureDefaultAccessGrants(state) {
   const taskGroup = (state.taskGroups || []).find((item) => item.id === "tg_runtime_management") || (state.taskGroups || [])[0];
   if (!taskGroup || state.accessGrants.some((grant) => grant.grantId === "grant_agent_runtime_task_group")) return;
   const at = new Date().toISOString();
-  state.accessGrants.push({
+  state.accessGrants.unshift({
     schemaVersion: "access-control-grant/v1",
     grantId: "grant_agent_runtime_task_group",
     subjectRef: {subjectType: "account", subjectId: "acct_agent_runtime"},
@@ -4517,6 +4517,10 @@ function ensureLease(state, repositoryTarget, holderRef = "orchestrator", taskCo
       createdAt: at,
       updatedAt: at
     };
+    // 【这里必须是 push，不能改成 unshift】。实测把它改成 unshift 之后：租约释放再取用时
+    // buildTaskContract 会绑到【另一个】产出目标，原目标手里留着一份 released 的租约（写锁形同虚设，
+    // 契约门里那条断言当场红）。根因是产出目标的选取受租约数组顺序影响 —— 那是一处真实的脆弱耦合，
+    // 今天靠「这里恒为 push」稳定着。要改方向，得先把目标选取改成只按 (taskGroupId, workItemId) 定。
     state.leases.push(lease);
     if (!capsDeferredToCycleEnd && shouldCap(state.leases, 2000)) state.leases = capLeaseHistory(state.leases);
   } else if (holderRef && lease.holderRef !== holderRef) {
@@ -7720,7 +7724,9 @@ export function claimLease(state, args) {
     createdAt: at,
     updatedAt: at
   };
-  state.leases.unshift(lease);
+  // 与 ensureLease 同向（push）：这个集合的方向是定死的，理由见那一处的注释
+  //（产出目标的选取受租约数组顺序影响，方向一变就会绑错目标）。
+  state.leases.push(lease);
   state.leases = capLeaseHistory(state.leases);
   target.status = "lease_bound";
   target.leaseRef = lease.leaseId;

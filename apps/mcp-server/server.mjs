@@ -1704,7 +1704,7 @@ function createProject(state, args) {
     createdAt: at,
     updatedAt: at
   };
-  state.projects.unshift(project);
+  state.projects.push(project);
   const ownerGrant = ensureMcpProjectOwnerGrant(state, project, ownerAccountId, `policy:mcp:project_create:${projectId}`);
   computeProgressSnapshots(state);
   return {project, ownerGrant};

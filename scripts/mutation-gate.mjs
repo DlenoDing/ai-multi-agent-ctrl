@@ -3135,6 +3135,24 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "同一集合不许被两种方向追加",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyCollectionAppendDirectionIsConsistent",
+    gate: "contract",
+    from: "  state.accessGrants.unshift({",
+    to: "  state.accessGrants.push({",
+    expect: "这些集合被两种方向追加过"
+  },
+  {
+    name: "纯 push 的集合要写明为什么反着来",
+    file: "scripts/contract-check.mjs",
+    check: "verifyCollectionAppendDirectionIsConsistent",
+    gate: "contract",
+    from: '  roomMessages: "协作记录按时间正序展示，最新在末尾；它另有自己的 pruneRoomMessages",',
+    to: "",
+    expect: "却没写明为什么"
+  },
+  {
     name: "视图窗口必须留最新的那一批（不能把刚建的藏起来）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "idle",

@@ -975,7 +975,7 @@ function ensureProjectOwnerGrant(state, project, ownerAccountId, policyDecisionR
     createdAt: at,
     updatedAt: at
   };
-  state.accessGrants.push(grant);
+  state.accessGrants.unshift(grant);
   return grant;
 }
 
@@ -4002,7 +4002,7 @@ async function handleApi(req, res) {
     }
     project.members = project.members.filter((member) => member.accountId !== accountId);
     project.members.push({accountId, role: sanitizedGrant.role});
-    state.accessGrants.push({
+    state.accessGrants.unshift({
       schemaVersion: "access-control-grant/v1",
       grantId: createId("grant"),
       subjectRef: {subjectType: "account", subjectId: accountId},
@@ -4232,7 +4232,7 @@ async function handleApi(req, res) {
       createdAt: at,
       updatedAt: at
     };
-    state.accounts.push(account);
+    state.accounts.unshift(account);
     // 执行者记 guard.actor 而不是服务名：这是真人专属动作，事后要回答"是谁铸的这个账号"。
     // 动作名也必须是【实际发生的那个】—— 系统级邀请此前被记成普通的 account_invite，
     // 而两者的分量完全不同（一个铸的是系统级账号），审计里却分不出来。
@@ -4280,7 +4280,7 @@ async function handleApi(req, res) {
       createdAt: at,
       updatedAt: at
     };
-    state.accessGrants.push(grant);
+    state.accessGrants.unshift(grant);
     audit(state, guard.actor, "access_grant_create", `${grant.resource.resourceType}:${grant.resource.resourceId}`);
     finishGuardedWrite(state, guard, 201, grant);
     writeState(state);
@@ -4692,7 +4692,7 @@ async function handleApi(req, res) {
       createdAt: at,
       updatedAt: at
     };
-    state.sharedDefinitions.push(definition);
+    state.sharedDefinitions.unshift(definition);
     audit(state, guard.actor, "shared_definition_contract_create", `SharedDefinitionContract:${definition.contractId}`);
     finishGuardedWrite(state, guard, 201, definition);
     writeState(state);
@@ -5259,7 +5259,7 @@ async function handleApi(req, res) {
       updatedAt: at
     };
     state.organizations.push(organization);
-    state.accounts.push(adminAccount);
+    state.accounts.unshift(adminAccount);
     audit(state, guard.actor, "org_create", `Organization:${orgId}`);
     finishGuardedWrite(state, guard, 201, {organization, adminAccountId});
     writeState(state);
@@ -5469,7 +5469,7 @@ async function handleApi(req, res) {
       createdAt: at,
       updatedAt: at
     };
-    state.accounts.push(member);
+    state.accounts.unshift(member);
     recomputeOrganizationUsage(state);
     audit(state, guard.actor, "org_member_create", `Account:${accountId}`);
     finishGuardedWrite(state, guard, 201, publicAccountRecord(member));
