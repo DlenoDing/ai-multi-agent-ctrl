@@ -3135,6 +3135,24 @@ const MUTATIONS = [
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
+    name: "标签表少了取值要报红（屏幕会露英文键）",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyLabelTablesMatchTheirEnums",
+    gate: "contract",
+    from: 'const EXECUTION_PROFILE_LABELS = { production: "生产档位", verification: "验证档位" };',
+    to: 'const EXECUTION_PROFILE_LABELS = { verification: "验证档位" };',
+    expect: "少了这些取值的中文名"
+  },
+  {
+    name: "标签表多写了不存在的取值也要报红",
+    file: "apps/control-plane-ui/public/app.js",
+    check: "verifyLabelTablesMatchTheirEnums",
+    gate: "contract",
+    from: 'const EXECUTION_PROFILE_LABELS = { production: "生产档位", verification: "验证档位" };',
+    to: 'const EXECUTION_PROFILE_LABELS = { production: "生产档位", verification: "验证档位", fast: "高速档位" };',
+    expect: "写着系统里没有的取值"
+  },
+  {
     name: "视图下发的集合都要有中文名",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyEveryViewCollectionHasAChineseLabel",

@@ -560,7 +560,10 @@ const STRENGTH_LABELS = {
 function strengthLabel(code) { return STRENGTH_LABELS[String(code || "")] || t(code); }
 
 // 执行档位专用映射（避免 verification 与"验证中"状态冲突）
-const EXECUTION_PROFILE_LABELS = { verification: "验证档位", standard: "标准档位", fast: "高速档位", full: "完整档位" };
+// 与 spec/runtime-bootstrap.schema.json 的 executionProfile 枚举逐字一致（契约门双向核对）。
+// 原先这里有 standard / fast / full 三个档位 —— 系统里根本没有它们，读表的人会以为有；
+// 而真正会出现的 production 反倒不在表里，只能靠 t() 兜出「生产」（与旁边的「验证档位」不齐）。
+const EXECUTION_PROFILE_LABELS = { production: "生产档位", verification: "验证档位" };
 function executionProfileLabel(code) { return EXECUTION_PROFILE_LABELS[String(code || "")] || t(code); }
 
 // 任务执行类别 / 推理档 专用映射（避免 verification 与"验证中"等跨域冲突）

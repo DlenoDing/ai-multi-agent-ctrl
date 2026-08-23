@@ -253,6 +253,14 @@ const THROW_HELPERS_WITHOUT_CODES = {
 // 这里用【登记制】而不是扫描：我试过按关键词扫函数体判断"有没有活跃保护"，
 // 11 个 cap 里误报了 4 个（capReasoning 压根不是集合裁剪、capLeaseHistory 用的词是 active）——
 // 手编的期望表本身就是错误来源。登记制至少逼着新增者写清楚一句话。
+// 界面把枚举翻成中文的那几张表，都是【手抄的】。两个方向都会错：
+// 少一个 → 那一刻屏幕上是英文键；多一个 → 系统里根本没有的取值被写进表里，读表的人会以为有
+//（执行档位表原先写着 standard / fast / full 三个不存在的档位，而真正会出现的 production 不在表里）。
+// 枚举的真相源是规范；逐对双向核对。
+const LABEL_TABLE_SOURCES = [
+  ["EXECUTION_PROFILE_LABELS", "runtime-bootstrap", "executionProfile"],
+  ["TASK_EXECUTION_CLASS_LABELS", "agent-task-contract", "taskExecutionClass"]
+];
 // 视图窗口靠时间戳挑「最新的那一批」，而它认得的字段名是【写死在代码里的一串 ||】。
 // 手抄清单必漂：新记录换个时间字段名（decidedAt / sampledAt / computedAt / at / observedAt
 // 这几个就是后来才补上的），窗口就认不出它的时间，整份数组"看起来单调"、退回取前 N 条 ——
@@ -581,6 +589,7 @@ run(verifyPollingPeekDoesNotCloneOrMutate);
 runAsync(verifyEveryMcpToolAnswersAnEmptyCall);
 runAsync(verifyBoundedNodeCannotWriteIntoAnotherProject);
 runAsync(verifyStateWriteDoesNotCloneTheWorld);
+run(verifyLabelTablesMatchTheirEnums);
 run(verifyEveryViewCollectionHasAChineseLabel);
 run(verifyViewWindowKnowsEveryTimestampName);
 run(verifyCollectionAppendDirectionIsConsistent);
@@ -11242,6 +11251,51 @@ function verifyExhaustedControlRetriesTellTheTruth(output) {
 // 截断/容量淘汰的横幅要说出【是哪几份名单】，靠的是界面里手抄的 COLLECTION_LABELS。
 // 缺一个，那一刻横幅上就是一串英文键 —— 而它只在真被截断时才渲染，漏译扫描看不见没渲染的屏。
 // 视图清单（服务端的 viewFields）是权威来源，逐个核对。
+function verifyLabelTablesMatchTheirEnums(output) {
+  const appText = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  let checked = 0;
+  for (const [table, specName, field] of LABEL_TABLE_SOURCES) {
+    const hit = new RegExp(`const ${table} = \\{([^}]*)\\}`, "u").exec(appText);
+    if (!hit) { output.push(`界面里找不到 ${table} —— 这一对在空转`); continue; }
+    const labelled = [...hit[1].matchAll(/(\w+):/gu)].map((match) => match[1]);
+    let spec = null;
+    try { spec = JSON.parse(readFileSync(join(root, `spec/${specName}.schema.json`), "utf8")); } catch { /* below */ }
+    const declared = findEnumDeep(spec, field);
+    if (!declared) { output.push(`规范 ${specName} 里找不到 ${field} 的枚举 —— ${table} 这一对在空转`); continue; }
+    checked += 1;
+    const missing = declared.filter((value) => !labelled.includes(value));
+    const extra = labelled.filter((value) => !declared.includes(value));
+    if (missing.length) {
+      output.push(`${table} 少了这些取值的中文名：${missing.join("、")} —— 它们出现在屏幕上时是一串英文键`);
+    }
+    if (extra.length) {
+      output.push(`${table} 写着系统里没有的取值：${extra.join("、")} —— 规范 ${specName}.${field} 不认它们，`
+        + "读这张表的人会以为有这些档位/类别");
+    }
+  }
+  if (checked < LABEL_TABLE_SOURCES.length) {
+    output.push(`标签表核对只跑成 ${checked}/${LABEL_TABLE_SOURCES.length} 对 —— 剩下的在空转`);
+  }
+  console.log(`界面标签表：${checked} 对「中文名表 ↔ 规范枚举」双向核对（少一个＝屏幕露英文，多一个＝表里写着不存在的取值）`);
+}
+
+function findEnumDeep(node, field) {
+  if (!node || typeof node !== "object") return null;
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const found = findEnumDeep(item, field);
+      if (found) return found;
+    }
+    return null;
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (key === field && value && typeof value === "object" && Array.isArray(value.enum)) return value.enum;
+    const found = findEnumDeep(value, field);
+    if (found) return found;
+  }
+  return null;
+}
+
 function verifyEveryViewCollectionHasAChineseLabel(output) {
   const appText = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const labelsBlock = /const COLLECTION_LABELS = \{([\s\S]*?)\n\};/u.exec(appText);
