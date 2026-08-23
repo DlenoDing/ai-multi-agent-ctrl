@@ -526,8 +526,11 @@ function statusBadge(kind, value, tone) {
 // 给"请求级失败"打个记号：连不上、超时、服务端回 4xx/5xx —— 这些是控制面那边的事。
 // 没有这个记号的异常是【控制台自己抛的】（我们代码里的缺陷）。两者在屏幕上必须分开说：
 // 一律写"连不上控制面"会把人支去查网络和服务端，而 bug 就在这一页里。
-function requestFailure(error) {
+function requestFailure(error, status) {
   error.requestFailure = true;
+  // 状态码也归在这里：调用点分不清「没权限」和「服务端没给出来」时，只能把两件事写成
+  // 一句「读取失败或无权查看」—— 人看了不知道该去要权限还是该重试（任务组房间那块就是）。
+  if (status !== undefined) error.status = status;
   return error;
 }
 
@@ -992,7 +995,9 @@ async function api(path, options = {}) {
     // 人不知道该查哪个（组织数据没问题、是智能体列表挂了，这两种情况在屏幕上长得一样）。
     // 只给路径，不给查询串 —— 查询串里可能有项目 id 之类，横幅上不必要。
     const requestPath = String(path).split("?")[0];
-    throw requestFailure(new Error(`${response.status} ${detail ? explainCoded(detail) : response.statusText}${hint}（${requestPath}）`));
+    // 状态码要随错误一起带出去：调用点分不清「没权限」和「服务端没给出来」时，
+    // 只能把两件事写成一句「读取失败或无权查看」—— 人看了不知道该去要权限还是该重试。
+    throw requestFailure(new Error(`${response.status} ${detail ? explainCoded(detail) : response.statusText}${hint}（${requestPath}）`), response.status);
   }
   return response.json();
 }
@@ -1452,11 +1457,18 @@ async function loadTaskGroupDetail(taskGroupId) {
   // 项目规则配置、系统概览各修过一次，这是第三处。）
   // 仍要把错误抛出去：横幅要说清原因。但先把 tgDetail 填上，让面板说得出"没能加载出来"。
   let progressFailure = null;
+  // 这两条只有 progress 会把错误抛出去置横幅；它俩失败时这一屏没有任何横幅，
+  // 面板只能自己说清楚。原先原因被 catch 吞了，房间那块于是写成
+  //「读取失败或当前账号无权查看」—— 两件事并成一句，人不知道该去要权限还是该重试。
+  let configFailure = null;
+  let roomFailure = null;
   const [progressResult, configResult, roomResult] = await Promise.all([
     api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/progress`)
       .catch((error) => { progressFailure = error; return null; }),
-    api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/config`).catch(() => null),
-    api(`/api/rooms/${encodeURIComponent(`room_${taskGroupId}`)}/messages?limit=50&tail=1`).catch(() => null)
+    api(`/api/task-groups/${encodeURIComponent(taskGroupId)}/config`)
+      .catch((error) => { configFailure = error; return null; }),
+    api(`/api/rooms/${encodeURIComponent(`room_${taskGroupId}`)}/messages?limit=50&tail=1`)
+      .catch((error) => { roomFailure = error; return null; })
   ]);
   tgDetail = {
     taskGroupId,
@@ -1465,6 +1477,9 @@ async function loadTaskGroupDetail(taskGroupId) {
     config: configResult?.config || null,
     configVersion: configResult?.configVersion || null,
     roomMessages: roomResult?.messages || null,
+    configLoadError: configFailure ? String(configFailure?.message || configFailure) : null,
+    roomLoadError: roomFailure ? String(roomFailure?.message || roomFailure) : null,
+    roomLoadDenied: roomFailure ? roomFailure.status === 403 || roomFailure.status === 401 : false,
     roomMessageTotal: roomResult?.total ?? null,
     roomMessagesTruncated: Boolean(roomResult?.truncated),
   };
@@ -2849,7 +2864,7 @@ function renderTaskGroupDetail(taskGroup) {
         <button class="primary-button" type="submit" ${editDisabled}>保存默认角色</button>
       </form>
     </div>
-  ` : `<div class="notice">暂时无法读取任务组配置（配置接口没取回来）：请点击右上角刷新重试；若一直取不回来，多半是这一台服务端有问题，配置本身没丢。</div>`;
+  ` : `<div class="notice">暂时无法读取任务组配置（${esc(tgDetail.configLoadError || "配置接口没取回来")}）：请点击右上角刷新重试；若一直取不回来，多半是这一台服务端有问题，配置本身没丢。</div>`;
 
   const languagePolicy = taskGroup.languagePolicy || {languageTag: "zh-CN"};
   const controlHtml = canControl ? `
@@ -2955,7 +2970,10 @@ function renderTaskGroupDetail(taskGroup) {
   // 否则这块面板会把 agent 自己署的名当成人说的话展示给人看，比不展示更糟。
   const roomMessages = tgDetail.roomMessages;
   const roomHtml = roomMessages === null
-    ? `<div class="notice">协作记录读取失败或当前账号无权查看该任务组的房间。</div>`
+    ? `<div class="notice warn-notice">${tgDetail.roomLoadDenied
+        ? "当前账号无权查看这个任务组的协作记录 —— 要看的话，请让项目负责人给你这个任务组的查看权限。"
+        : `协作记录没能取回来（${esc(tgDetail.roomLoadError || "服务端没有给出这一块")}）：`
+          + "点右上角的 ↻ 刷新再试一次 —— 这不是「没有协作记录」。"}</div>`
     : !roomMessages.length
       ? `<div class="notice">暂无协作记录。agent 之间若通过房间协商方案，过程会显示在这里。</div>`
       : `<div class="stack">

@@ -706,8 +706,8 @@ const MUTATIONS = [
     name: "报错要说清是哪一次请求失败的",
     file: APP,
     gate: "console",
-    from: "${hint}（${requestPath}）`));",
-    to: "${hint}`));",
+    from: "${hint}（${requestPath}）`), response.status);",
+    to: "${hint}`), response.status);",
     expect: "报错里没有出请求路径"
   },
   {
@@ -3125,6 +3125,30 @@ const MUTATIONS = [
     from: '${Number(reserved) > 0 ? `（另有 ${esc(reserved)} 张未使用的入网令牌占着位，合计 ${held}/${max ?? 0}）` : ""}',
     to: "",
     expect: "未使用的入网令牌占着配额，页面要显出来并给出合计"
+  },
+  {
+    name: "「没权限」和「服务端故障」不许并成一句话",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "${tgDetail.roomLoadDenied\n",
+    to: "${false\n",
+    expect: "房间取数被拒时要说清是没权限"
+  },
+  {
+    name: "房间取数的失败原因不许被 catch 吞掉",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: ".catch((error) => { roomFailure = error; return null; })",
+    to: ".catch(() => null)",
+    expect: "必须把原因记进 tgDetail"
+  },
+  {
+    name: "请求级失败要把状态码带出去",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "if (status !== undefined) error.status = status;",
+    to: "if (false) error.status = status;",
+    expect: "请求级失败要把状态码一起带出去"
   },
   {
     name: "设置页空态不许把人指去看一条不存在的横幅",

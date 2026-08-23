@@ -1262,13 +1262,49 @@ async function runErrorGuidanceCase() {
   // 上面三条是渲染分支，证明不了"真失败时会置上 loadFailed"。接线只能从源码看。
   const appSrc = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const at = appSrc.indexOf("async function loadTaskGroupDetail(");
-  const body = at < 0 ? "" : appSrc.slice(at, at + 1600);
+  // 原先切的是【固定 1600 字】：函数里多加三行注释，要查的那句就溜出窗口，判据当场变红 ——
+  // 变红还算好的，反过来（窗口罩住了隔壁函数的同形代码）就是静默喂饱。按函数结尾切。
+  const bodyEnd = at < 0 ? -1 : appSrc.indexOf("\n}\n", at);
+  const body = at < 0 || bodyEnd < 0 ? "" : appSrc.slice(at, bodyEnd);
   check("progress 取失败时必须把 loadFailed 置上（否则面板永远停在'正在加载'）",
     /progressFailure = error/u.test(body) && /loadFailed: Boolean\(progressFailure\)/u.test(body),
     at < 0 ? "找不到 loadTaskGroupDetail —— 本条在空转" : "取详情那段没有把失败记进 tgDetail");
   check("失败仍要抛出去（横幅要说清原因，不能被吞掉）",
     /if \(progressFailure\) throw progressFailure;/u.test(body),
     "失败被吞了 —— 面板说得出'没加载出来'，横幅却不说为什么");
+
+  // 房间与任务组配置这两条【不会】把错误抛出去（progress 才会），所以这一屏没有横幅，
+  // 面板必须自己说清楚。原先房间那块写的是「协作记录读取失败或当前账号无权查看该任务组的房间」——
+  // 两件事并成一句：人不知道该去要权限，还是该重试。而分辨所需的状态码就在被吞掉的那个错误上。
+  const roomDetail = (extra) => ({taskGroupId: "tg1", loadFailed: false, progress: {}, config: null,
+    configVersion: null, roomMessages: null, roomMessageTotal: null, roomMessagesTruncated: false, ...extra});
+  const denied = String(tgProbe.renderTaskGroupDetail(
+    roomDetail({roomLoadError: "403 policy_denied（/api/rooms/room_tg1/messages）", roomLoadDenied: true}), group))
+    .replace(/<[^>]+>/gu, " ");
+  check("房间取数被拒时要说清是没权限，并说去找谁要",
+    /无权查看这个任务组的协作记录/u.test(denied) && /项目负责人/u.test(denied),
+    `403 时说的是：${(denied.match(/协作记录[^。]{0,60}。/u) || ["（没渲染出这块）"])[0]}`);
+  const roomBroken = String(tgProbe.renderTaskGroupDetail(
+    roomDetail({roomLoadError: "503 room_broker_unavailable（/api/rooms/room_tg1/messages）", roomLoadDenied: false}), group))
+    .replace(/<[^>]+>/gu, " ");
+  check("房间取数出故障时要给原因和出路，且不许说成「没权限」",
+    roomBroken.includes("room_broker_unavailable") && /刷新/u.test(roomBroken) && !/无权/u.test(roomBroken),
+    `503 时说的是：${(roomBroken.match(/协作记录[^。]{0,80}。/u) || ["（没渲染出这块）"])[0]}`);
+  const roomTruly = String(tgProbe.renderTaskGroupDetail(roomDetail({roomMessages: []}), group))
+    .replace(/<[^>]+>/gu, " ");
+  check("真的一条协作记录都没有时，仍要说「暂无」而不是说成故障",
+    /暂无协作记录/u.test(roomTruly) && !/没能取回来/u.test(roomTruly),
+    `空时说的是：${(roomTruly.match(/协作记录[^。]{0,60}。/u) || ["（没渲染出这块）"])[0]}`);
+  // 上面三条是渲染分支。接线：那两条 catch 必须真的把原因和状态码记下来，
+  // 否则 roomLoadDenied 恒为 false —— 403 会被说成「服务端故障，刷新重试」，人白等。
+  check("房间与配置取失败时必须把原因记进 tgDetail（否则面板只能说一句笼统的话）",
+    /roomFailure = error/u.test(body) && /configFailure = error/u.test(body)
+      && /roomLoadDenied: roomFailure \? roomFailure\.status === 403/u.test(body),
+    "取详情那段没有把房间/配置的失败原因记下来");
+  check("请求级失败要把状态码一起带出去（调用点靠它分辨「没权限」和「服务端故障」）",
+    /if \(status !== undefined\) error\.status = status;/u.test(appSrc)
+      && /requestFailure\(new Error\(`\$\{response\.status\}/u.test(appSrc),
+    "requestFailure 没带状态码 —— 调用点只能把没权限和取不回来说成同一句");
 }
 
 // 系统概览这一块"还没取过"与"取失败了"此前共用同一个 null，一律显示"正在加载系统概览…"。
