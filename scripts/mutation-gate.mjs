@@ -3187,7 +3187,7 @@ const MUTATIONS = [
     name: "自选的治理决策 id 不许撞车（撞了就顶替别人那条）",
     file: CORE,
     gate: "doctor",
-    from: '  assertUniqueRecordId(state.policyDecisions, "id", args.decisionId, "policy_decision_id_conflict");',
+    from: '  assertUniqueRecordId(state.policyDecisions, "id", args.decisionId, "policy_decision_id_conflict");\n  assertUniqueRecordId(state.policyDecisions, "decisionId", args.decisionId, "policy_decision_id_conflict");',
     to: "",
     expect: "同一个 decisionId 再铸一条必须拒"
   },

@@ -8158,7 +8158,11 @@ export function policyDecisionEval(state, args) {
   // 别的每一个接受自选 id 的工厂（执行方案/租约/产物/授权/账号）都调了这个断言，这里是漏的。
   // MCP 那侧靠"入参词表里没有 decisionId"挡着（登记在 MCP_UNREACHABLE_TOOL_ARGS 里），
   // 而 REST 这扇门一直开着 —— 同一条不变式两扇门只守一扇。
+  // 两个字段都查：这条记录同时写 id 与 decisionId（同值，历史原因见下面那段注释）。
+  // 只按其中一个查的话，哪天另一个字段没写了，这道防撞车就【悄悄失效】——
+  // 实测：一条删掉 id 字段的变异让它整个不起作用，而它自己看起来一切正常。
   assertUniqueRecordId(state.policyDecisions, "id", args.decisionId, "policy_decision_id_conflict");
+  assertUniqueRecordId(state.policyDecisions, "decisionId", args.decisionId, "policy_decision_id_conflict");
   const at = new Date().toISOString();
   // 这个集合有两处构造（这里与 REST 守卫），字段名一直不一样。**id 是所有读者共用的那个键**
   // —— 容量保护按它认"还被引用着"，只写 decisionId 的话，被活跃授权引用着的决策照样被挤掉
