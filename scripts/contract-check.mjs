@@ -318,6 +318,23 @@ const PUSH_ORDERED_COLLECTIONS = {
 //     那个参数写了跟没写一样，工具只能按缺省行事，且没有一处会说出原因。
 //     放开它们要动共用词表（影响所有工具），并且 grant_create 那条还得【先补委派校验】
 //     （拒 system:*／通配那一套目前只有 REST 那扇门在守）—— 属人定的事，这里先登记住。
+// 【自选 id 的工厂必须防撞车】。调用方能自己给 id 的地方，如果集合是前插/追加的，
+// 撞上一个已有 id 就会把原记录挡在后面：按 id 找的读者从此拿到后写的那条，原记录还在、
+// 只是永远读不到，而且谁也不报错。实测这一族漏了七处，其中 createCommand / createDlqEntry
+// 更重 —— 关闭门要读命令与死信的终态，一条自己写的"已了结"就能把未了结的那条盖住。
+// 不用 assertUniqueRecordId 也行，但必须写明凭什么：
+const CALLER_CHOSEN_ID_WITHOUT_ASSERT = {
+  nodeRegister: "写回时按 nodeId 过滤掉旧的再前插（upsert 语义），不会同时存在两条",
+  roomSend: "同一条消息 id 会先被 find 到并复用，不会新增第二条",
+  roomAck: "按 roomId 找到房间再改它，不新增带 id 的记录",
+  findingSubmit: "同一个 findingId 会先被 find 到走更新分支",
+  createProject: "自己有一条显式的 project_id_conflict 检查（形状不同，不是这个断言）",
+  createTaskGroup: "同上：task_group_id_conflict",
+  createWorkItem: "同上：work_item_id_conflict",
+  createTaskGroupRecord: "同上（REST 侧那份）",
+  createWorkItemRecord: "同上（REST 侧那份）"
+};
+
 const MCP_UNREACHABLE_TOOL_ARGS = {
   mustStayUnreachable: {
     actor: "调用方自报身份。写进定稿/推进记录里的『谁做的』必须由服务端认定",
@@ -787,6 +804,7 @@ run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
 run(verifyEveryGrantedPermissionHasAConsumer);
+run(verifyCallerChosenIdsCannotShadow);
 run(verifyToolArgReachabilityIsRegistered);
 run(verifyEveryPredicateDeclaresItsCoverage);
 run(verifyEmptyEvidenceNeverReachesTheLedger);
@@ -8007,6 +8025,47 @@ function verifyOnlyLiveHumanAccountsCanFinalize(output) {
 // 台账上那一栏是满的而它什么也没证明（本仓「缺省不得等于有利结果」在证据面上的样子）。
 // 判定函数的覆盖账本：枚举自动、表态手写。见 PREDICATE_COVERAGE 上面那段。
 // MCP 工具参数可达性：见 MCP_UNREACHABLE_TOOL_ARGS 上面那段。
+// 自选 id 的工厂：见 CALLER_CHOSEN_ID_WITHOUT_ASSERT 上面那段。
+function verifyCallerChosenIdsCannotShadow(output) {
+  let sites = 0;
+  let guarded = 0;
+  const seen = new Set();
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, {withFileTypes: true})) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (!entry.name.endsWith(".mjs")) continue;
+      // 剥整行注释：这段判据自己的注释里就写着 `args.xxxId || createId(` 这个形状。
+      const text = readFileSync(full, "utf8").split("\n")
+        .filter((line) => !/^\s*(\/\/|\*|\/\*)/u.test(line)).join("\n");
+      for (const hit of text.matchAll(/\b(?:args|body|input|request)\.(\w*[Ii]d)\s*\|\|\s*createId\(/gu)) {
+        const start = Math.max(text.lastIndexOf("\nfunction ", hit.index), text.lastIndexOf("\nexport function ", hit.index));
+        const end = text.indexOf("\n}\n", hit.index);
+        if (start < 0 || end < 0) continue;
+        const segment = text.slice(start, end);
+        const fnName = /\n(?:export )?function (\w+)/u.exec(segment)?.[1] || "?";
+        sites += 1;
+        seen.add(fnName);
+        if (segment.includes("assertUniqueRecordId")) { guarded += 1; continue; }
+        if (CALLER_CHOSEN_ID_WITHOUT_ASSERT[fnName]) continue;
+        output.push(`${full.slice(root.length + 1)} 的 ${fnName}() 收调用方自选的 ${hit[1]} 却不防撞车 ——`
+          + " 撞上已有 id 时按 id 找的读者会拿到后写的那条，原记录还在、只是永远读不到，而且谁也不报错。"
+          + "要么调 assertUniqueRecordId，要么登记进 CALLER_CHOSEN_ID_WITHOUT_ASSERT 写明凭什么不用");
+      }
+    }
+  };
+  walk(join(root, "apps"));
+  if (sites < 20) {
+    output.push(`自选 id 的工厂只扫到 ${sites} 处（远少于既有规模）—— 提取脱节，本条在空转`);
+    return;
+  }
+  for (const name of Object.keys(CALLER_CHOSEN_ID_WITHOUT_ASSERT)) {
+    if (!seen.has(name)) output.push(`登记过时：CALLER_CHOSEN_ID_WITHOUT_ASSERT 里的 ${name} 已经不收自选 id 了`);
+  }
+  console.log(`自选 id 防撞车：${sites} 处工厂逐个核过，${guarded} 处调了 assertUniqueRecordId、`
+    + `${Object.keys(CALLER_CHOSEN_ID_WITHOUT_ASSERT).length} 处登记了凭什么不用`);
+}
+
 function verifyToolArgReachabilityIsRegistered(output) {
   const mcpSource = readFileSync(join(root, "apps/mcp-server/server.mjs"), "utf8");
   const coreSource = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");

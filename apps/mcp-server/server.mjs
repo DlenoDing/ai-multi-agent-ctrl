@@ -2350,6 +2350,10 @@ function resolveRoleSkillView(state, args) {
 const TEST_RESULT_STATUSES = ["passed", "failed", "skipped", "error"];
 
 export function testResultSubmit(state, args) {
+  // 调用方可以自选 id，而这个集合是【前插】的：撞上一个已有 id，按 id 找的读者
+  // 从此拿到后写的那条，原记录还在、只是永远读不到 —— 谁也不报错。
+  // 本仓十一个接受自选 id 的工厂都调了这个断言，这一族是漏的。
+  assertUniqueRecordId(state.testResults, "testResultId", args.testResultId, "test_result_id_conflict");
   const at = new Date().toISOString();
   const taskGroup = taskGroupForRecord(state, args);
   // status 原先缺省即 "passed"：一次不带任何参数的调用就能造出一道【通过】的质量门，
@@ -2717,6 +2721,10 @@ function systemUpgradeCandidateExport(state, args) {
 }
 
 function systemUpgradeExternalImport(state, args) {
+  // 调用方可以自选 id，而这个集合是【前插】的：撞上一个已有 id，按 id 找的读者
+  // 从此拿到后写的那条，原记录还在、只是永远读不到 —— 谁也不报错。
+  // 本仓十一个接受自选 id 的工厂都调了这个断言，这一族是漏的。
+  assertUniqueRecordId(state.externalUpgradeImports, "importId", args.importId, "upgrade_import_id_conflict");
   const at = new Date().toISOString();
   const imported = {
     importId: args.importId || createId("upgrade_import"),
@@ -2979,6 +2987,10 @@ function sharedDefinitionConflictReport(state, args) {
 }
 
 function instructionEnvelopeCreate(state, args, sourceKind) {
+  // 调用方可以自选 id，而这个集合是【前插】的：撞上一个已有 id，按 id 找的读者
+  // 从此拿到后写的那条，原记录还在、只是永远读不到 —— 谁也不报错。
+  // 本仓十一个接受自选 id 的工厂都调了这个断言，这一族是漏的。
+  assertUniqueRecordId(state.instructionMetrics.envelopes, "envelopeId", args.envelopeId, "instruction_envelope_id_conflict");
   const at = new Date().toISOString();
   const taskGroup = taskGroupForRecord(state, args);
   const languagePolicy = normalizeTaskGroupLanguagePolicy(taskGroup?.languagePolicy || args.languagePolicy || args);

@@ -2294,6 +2294,19 @@ try {
   expectStatus(await g2("/api/policy-decisions/evaluate", systemAuth, "g2b-policy-silent", {action: "mcp_tool_call"}), 400, "记策略决策不给判决必须拒绝（缺省不得记成放行）", "policy_decision_verdict_required");
   expectStatus(await g2("/api/policy-decisions/evaluate", systemAuth, "g2b-policy-stringy", {action: "mcp_tool_call", allowed: "false"}), 400, "判决必须是布尔（字符串 \"false\" 不许被记成放行）", "policy_decision_verdict_required");
   expectStatus(await g2("/api/policy-decisions/evaluate", reviewerAuth, "g2b-policy-deny", {action: "mcp_tool_call"}), 403, "policy eval deny", "policy_denied");
+  // 【自选 id 不许撞车】。策略决策是会被别处引用的治理记录（授权与命令上的 policyDecisionRef 指它），
+  // 而这个集合是前插的：撞上一个已有 id，按 id 找的读者从此拿到【后写的那条】——
+  // 一条自己写的"已批准"就这样顶替了原来那条，两条都在、谁也不报错。
+  // 别的每一个接受自选 id 的工厂都调了 assertUniqueRecordId，这一处原先是漏的；
+  // MCP 那侧靠"入参词表里没有 decisionId"挡着，于是同一条不变式两扇门只守了一扇。
+  expectStatus(await g2("/api/policy-decisions/evaluate", systemAuth, "g2b-policy-id-first",
+    {action: "mcp_tool_call", allowed: true, decisionId: "pd_doctor_id_conflict"}), 201, "自选 id 的策略决策先建一条");
+  expectStatus(await g2("/api/policy-decisions/evaluate", systemAuth, "g2b-policy-id-again",
+    {action: "mcp_tool_call", allowed: true, decisionId: "pd_doctor_id_conflict"}), 409,
+    "同一个 decisionId 再铸一条必须拒（否则按 id 找的读者会拿到后写的那条）", "policy_decision_id_conflict");
+  // 正面对照：换个 id 照常收下 —— 否则"拒了"可能只是这条路整个坏了。
+  expectStatus(await g2("/api/policy-decisions/evaluate", systemAuth, "g2b-policy-id-other",
+    {action: "mcp_tool_call", allowed: true, decisionId: "pd_doctor_id_other"}), 201, "换个 id 的策略决策照常收下");
 
   // contracts → project:*
   expectStatus(await g2("/api/contracts", systemAuth, "g2b-contract-ok", {projectId: "prj_control_plane", definitionType: "semantic_contract"}), 201, "contract publish happy");

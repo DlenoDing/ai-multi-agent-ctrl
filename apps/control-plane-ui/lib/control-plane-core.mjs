@@ -6227,6 +6227,10 @@ function capCommandBus(state) {
 }
 
 export function createCommand(state, input = {}) {
+  // 调用方可以自选 id，而这个集合是【前插】的：撞上一个已有 id，按 id 找的读者
+  // 从此拿到后写的那条，原记录还在、只是永远读不到 —— 谁也不报错。
+  // 本仓十一个接受自选 id 的工厂都调了这个断言，这一族是漏的。
+  assertUniqueRecordId(state.commands, "id", input.commandId, "command_id_conflict");
   const commandTimeoutAt = normalizedExpiry(input.timeoutAt);
   if (commandTimeoutAt === false) {
     throw Object.assign(new Error("command_timeout_at_invalid"),
@@ -6386,6 +6390,10 @@ export function toDlq(state, command, input = {}) {
 
 // CommandEffect machine: prepared -> applied -> verifying -> verified (reconciled).
 export function recordCommandEffect(state, command, input = {}) {
+  // 调用方可以自选 id，而这个集合是【前插】的：撞上一个已有 id，按 id 找的读者
+  // 从此拿到后写的那条，原记录还在、只是永远读不到 —— 谁也不报错。
+  // 本仓十一个接受自选 id 的工厂都调了这个断言，这一族是漏的。
+  assertUniqueRecordId(state.commandEffects, "effectId", input.effectId, "command_effect_id_conflict");
   ensureRuntimeCollections(state);
   const at = new Date().toISOString();
   const effect = {
@@ -6457,6 +6465,10 @@ function reconcileCommandEffect(state, effect, input = {}) {
 
 // DLQEntry machine: created -> classified -> assigned -> replayed|discarded|superseded.
 export function createDlqEntry(state, input = {}) {
+  // 调用方可以自选 id，而这个集合是【前插】的：撞上一个已有 id，按 id 找的读者
+  // 从此拿到后写的那条，原记录还在、只是永远读不到 —— 谁也不报错。
+  // 本仓十一个接受自选 id 的工厂都调了这个断言，这一族是漏的。
+  assertUniqueRecordId(state.dlqEntries, "entryId", input.entryId, "dlq_entry_id_conflict");
   ensureRuntimeCollections(state);
   const at = new Date().toISOString();
   const entry = {
@@ -8140,6 +8152,13 @@ export function approvalRequestCreate(state, args) {
 }
 
 export function policyDecisionEval(state, args) {
+  // 调用方可以自选 decisionId，而这个集合是【前插】的：撞上一个已有 id，
+  // 按 id 找的读者（授权/命令上的 policyDecisionRef 就指它）从此拿到的是新写的这条 ——
+  // 一条「我自己批准了自己」的治理记录，就这样顶替了原来那条，两条都在、谁也不报错。
+  // 别的每一个接受自选 id 的工厂（执行方案/租约/产物/授权/账号）都调了这个断言，这里是漏的。
+  // MCP 那侧靠"入参词表里没有 decisionId"挡着（登记在 MCP_UNREACHABLE_TOOL_ARGS 里），
+  // 而 REST 这扇门一直开着 —— 同一条不变式两扇门只守一扇。
+  assertUniqueRecordId(state.policyDecisions, "id", args.decisionId, "policy_decision_id_conflict");
   const at = new Date().toISOString();
   // 这个集合有两处构造（这里与 REST 守卫），字段名一直不一样。**id 是所有读者共用的那个键**
   // —— 容量保护按它认"还被引用着"，只写 decisionId 的话，被活跃授权引用着的决策照样被挤掉

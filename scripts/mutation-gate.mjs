@@ -3176,6 +3176,22 @@ const MUTATIONS = [
     expect: "看不到那个项目"
   },
   {
+    name: "新的自选 id 工厂必须防撞车或登记原因",
+    file: CORE,
+    check: "verifyCallerChosenIdsCannotShadow",
+    from: '  assertUniqueRecordId(state.commands, "id", input.commandId, "command_id_conflict");',
+    to: "",
+    expect: "收调用方自选的 commandId 却不防撞车"
+  },
+  {
+    name: "自选的治理决策 id 不许撞车（撞了就顶替别人那条）",
+    file: CORE,
+    gate: "doctor",
+    from: '  assertUniqueRecordId(state.policyDecisions, "id", args.decisionId, "policy_decision_id_conflict");',
+    to: "",
+    expect: "同一个 decisionId 再铸一条必须拒"
+  },
+  {
     name: "仓库根只能由服务端给（被验方不得自选拿哪个仓库来验）",
     file: "apps/mcp-server/server.mjs",
     check: "verifyToolArgReachabilityIsRegistered",
