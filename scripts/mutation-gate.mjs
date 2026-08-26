@@ -6607,6 +6607,22 @@ const MUTATIONS = [
     expect: "读 args.workItemId，而 tools/list 上它不公布这个键"
   },
   {
+    name: "认不出的质量门状态不许当成通过",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '  if (!TEST_RESULT_STATUSES.includes(String(args.status || ""))) {',
+    to: "  if (false) {",
+    expect: "认不出的质量门状态被当成了通过"
+  },
+  {
+    name: "质量门结果要落在点名的任务组上",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '  const taskGroup = taskGroupForRecordOrRefuse(state, args, "质量门结果");',
+    to: '  const taskGroup = {id: "tg_runtime_management", projectId: "prj_control_plane"};',
+    expect: "test_result_submit 落账不对"
+  },
+  {
     name: "真人停用账号要真的落得下去",
     file: "apps/mcp-server/server.mjs",
     gate: "mcp",

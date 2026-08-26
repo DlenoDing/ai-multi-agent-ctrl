@@ -602,6 +602,53 @@ try {
       throw new Error(`delta_payload_compact 没给出回执：${JSON.stringify(compacted).slice(0, 160)}`);
     }
 
+    // 【质量门、共享定义冲突、指令包这三族也没跑通过】。质量门结果直接喂给关闭门（人看到
+    // 「全通过」时的唯一依据）；冲突上报决定一份共享定义会不会挡住关闭门；指令包是真正发给
+    // agent 的那份规则。三样都只被空参调过。
+    const testResult = await call("evidence-mcp.test_result_submit", {
+      taskGroupId: TG, workItemId: WORK, status: "passed", command: "npm run -s validate",
+      summary: "链路探针的质量门", evidenceRefs: ["evidence:doctor-mcp-chain"]
+    });
+    const submittedTest = testResult.testResult || testResult;
+    if (submittedTest.taskGroupId !== TG || submittedTest.status !== "passed") {
+      throw new Error(`test_result_submit 落账不对：${JSON.stringify(testResult).slice(0, 200)}`);
+    }
+    // 认不出的质量门状态不许当成通过：这条记录直接喂给关闭门。
+    const bogusTest = await mcpAs(admin.sessionToken, "tools/call", {name: "evidence-mcp.test_result_submit",
+      arguments: {idempotencyKey: `doctor-mcp-chain-${++seq}`, taskGroupId: TG, workItemId: WORK,
+        status: "green", command: "npm test", summary: "认不出的状态"}});
+    const bogusTestPayload = bogusTest.structuredContent?.result || JSON.parse(bogusTest.content?.[0]?.text || "{}");
+    const bogusStatus = (bogusTestPayload.testResult || bogusTestPayload).status;
+    if (bogusTestPayload.ok !== false && ["passed", "green"].includes(bogusStatus)) {
+      throw new Error(`认不出的质量门状态被当成了通过（${bogusStatus}）—— 关闭门只看这个字段`);
+    }
+
+    const conflict = await call("definition-mcp.shared_definition_conflict_report", {
+      contractId: "sdc_doctor_mcp_chain", taskGroupId: TG, workItemId: WORK,
+      severity: "medium", summary: "链路探针：同一术语两处定义不一致",
+      evidenceRefs: ["evidence:doctor-mcp-chain"]
+    });
+    if (!conflict || typeof conflict !== "object") {
+      throw new Error(`shared_definition_conflict_report 没给出回执：${JSON.stringify(conflict).slice(0, 160)}`);
+    }
+
+    const packet = await call("governance-mcp.effective_instruction_create", {
+      taskGroupId: TG, workItemId: WORK, recipientRole: "agent-runtime", roleId: "agent-runtime"
+    });
+    const envelope = packet.envelope || packet.effectiveInstruction || packet;
+    if (!envelope || (envelope.taskGroupId && envelope.taskGroupId !== TG)) {
+      throw new Error(`effective_instruction_create 的指令包挂错了任务组：${JSON.stringify(packet).slice(0, 200)}`);
+    }
+
+    // 角色技能定制的【校验】通道：它只算不落账（真正的落账是 role_skill_overlay_create）。
+    const overlayCheck = await call("skill-mcp.role_skill_overlay_validate", {
+      roleSkillRef: "system-agent-runtime", scope: "task_group", taskGroupId: TG,
+      patch: {allowedCapabilityAdds: ["cap_probe"]}
+    });
+    if (!overlayCheck || typeof overlayCheck !== "object") {
+      throw new Error(`role_skill_overlay_validate 没给出回执：${JSON.stringify(overlayCheck).slice(0, 160)}`);
+    }
+
     // 【停用账号这条路的正面】。它刚补上「机器主体不许做」那道门（同族里只有它没有），
     // 而这一族的教训是：只验反面等于只验一半 —— 门要是把真人也挡住了，表现是
     // 「谁都停不了一个账号」，而所有反面断言照样全绿。顺带这两个工具此前也没成功执行过。
@@ -709,7 +756,7 @@ try {
     // 本套 e2e 自己跑通的数（跨门合计另算：契约门在进程内还会跑通一批）。
     // 这个数是【实测出来的】—— 早先一次量到 44，复量不出来，那次多半把别的运行留下的账算了进去；
     // 以能复现的这次为准。棘轮只升不降。
-    const SUCCESSFULLY_EXERCISED_FLOOR = 47;
+    const SUCCESSFULLY_EXERCISED_FLOOR = 51;
     let traced = "";
     try { traced = readFileSync(toolTracePath, "utf8"); } catch { traced = ""; }
     const succeeded = new Set(traced.split("\n").filter((line) => line.startsWith("ok ")).map((line) => line.slice(3)));

@@ -297,7 +297,7 @@ schema_machine_aliases = {
 # 新增一个带 status 枚举的 schema 时，要么建机器、要么登记到这里说明为什么不需要。
 schemas_without_state_machine = Set.new(%w[
   AgentControlCommand AgentExecutionEvent AgentJoinToken InternalReviewRecord Organization WorkerLane
-  AuthSession Agent McpCall RoomParticipant RuntimeIssueSample
+  AuthSession Agent McpCall RoomParticipant RuntimeIssueSample TestResult
 ])
 # RoomParticipant：只有 joined 一个取值 —— 离开是把记录从名单里淘汰掉，而不是改状态，
 # 所以它没有"生命周期"可言。这份规范是 2026-08-26 才补的：room_join 此前【一次都没成功

@@ -105,6 +105,7 @@
     blocked: "受阻",
     completed: "已完成",
     failed: "失败",
+    skipped: "已跳过",
     cancelled: "已取消",
     pending: "待确认",
     pending_approval: "待审批",

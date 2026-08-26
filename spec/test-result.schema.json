@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-multi-agent-ctrl/spec/test-result.schema.json",
+  "title": "TestResult",
+  "description": "一次质量门执行的结果证据。它是事实记录：写下就不再变，没有生命周期（要重跑就是另一条记录）。真正参与关闭门判定的是由它派生出来的 QualityGate（见 spec/quality-gate.schema.json）。这份规范是 2026-08-27 才补的——evidence-mcp.test_result_submit 此前一次都没成功执行过，这个集合从没出现在任何 e2e 产出里，也就没有任何门看得见它。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "testResultId", "projectId", "taskGroupId", "status", "createdAt"],
+  "properties": {
+    "schemaVersion": {"const": "test-result/v1"},
+    "testResultId": {"type": "string", "minLength": 1},
+    "projectId": {"type": "string", "minLength": 1},
+    "taskGroupId": {"type": "string", "minLength": 1},
+    "workItemId": {"type": ["string", "null"]},
+    "status": {"enum": ["passed", "failed", "skipped", "error"]},
+    "gateType": {"type": "string", "minLength": 1},
+    "command": {"type": ["string", "null"]},
+    "summary": {"type": "string"},
+    "evidenceRefs": {"type": "array", "items": {"type": "string"}},
+    "createdAt": {"type": "string", "format": "date-time"}
+  }
+}

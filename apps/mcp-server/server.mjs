@@ -2426,13 +2426,14 @@ export function testResultSubmit(state, args) {
       message: "提交测试结果必须显式给出 status（passed/failed/skipped/error）：缺省不会被当作通过"};
   }
   const testResult = {
+    schemaVersion: "test-result/v1",
     testResultId: args.testResultId || createId("test_result"),
     projectId: taskGroup.projectId,
     taskGroupId: taskGroup.id,
-    workItemId: args.workItemId || args.workId,
+    workItemId: args.workItemId || args.workId || null,
     status: args.status,
     gateType: args.gateType || "test",
-    command: args.command,
+    command: args.command || null,
     summary: args.summary || "",
     evidenceRefs: args.evidenceRefs || [],
     createdAt: at
