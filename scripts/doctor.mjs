@@ -3907,6 +3907,55 @@ try {
     }
     console.log(`  ok  系统概览取数口：${readPaths.length} 个界面读的字段逐个核对，都在响应里`);
 
+  // 【监控页那两条事件流】。控制台的「实时事件流」按作用域取数：派发一条、会话一条
+  //（app.js 里 scope.type === "dispatch" / "session" 分别指向它们）。按状态码记账量出来，
+  // 这两条在整套控制面 e2e 里【从没返回过 2xx】—— 也就是说那一屏的取数口从没被验过：
+  // 它答的是不是这个对象的事件、给不给得出游标，都没人知道。
+  {
+    const liveForEvents = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: doctorSystemAuth}});
+    const anyDispatch = (liveForEvents.payload.agentDispatches || [])[0];
+    const anySession = (liveForEvents.payload.workSessions || [])[0];
+    if (!anyDispatch || !anySession) {
+      throw new Error("本轮没有派发或会话 —— 这两条事件流断言会空转");
+    }
+    const dispatchEvents = await jsonFetch(port,
+      `/api/agent-dispatches/${encodeURIComponent(anyDispatch.dispatchId)}/events?limit=5`,
+      {headers: {authorization: doctorSystemAuth}});
+    if (!dispatchEvents.response.ok || !Array.isArray(dispatchEvents.payload?.events)) {
+      throw new Error(`派发事件流取不到（${dispatchEvents.response.status}/${dispatchEvents.payload?.error}）—— `
+        + "监控页的「实时事件流」就是按这条取数的");
+    }
+    // 游标必须给：没有它，前端每次都只能从头拉，或者干脆停在原地。
+    if (dispatchEvents.payload.nextCursor === undefined) {
+      throw new Error(`派发事件流没给出游标：${JSON.stringify(dispatchEvents.payload).slice(0, 200)}`);
+    }
+    // 答的必须是【这个派发】的事件，不能把别的派发的也带出来。
+    // 【但这套 e2e 里通常一条执行事件都没有】——执行事件由真节点上报，那是 agent 套件的事。
+    // 没有样本时这条断言什么也验不到，所以要自报，而不是让它绿着假装验过了
+    //（本仓的老规矩：夹具没造出想测的情形，断言自己要能说出来）。
+    const dispatchEventSamples = (dispatchEvents.payload.events || []).length;
+    const strayDispatch = (dispatchEvents.payload.events || [])
+      .find((event) => event.dispatchId && event.dispatchId !== anyDispatch.dispatchId);
+    if (strayDispatch) {
+      throw new Error(`派发事件流里混进了别的派发的事件（${strayDispatch.dispatchId}）`);
+    }
+    const sessionEvents = await jsonFetch(port,
+      `/api/work-sessions/${encodeURIComponent(anySession.sessionId)}/execution-events?limit=5`,
+      {headers: {authorization: doctorSystemAuth}});
+    if (!sessionEvents.response.ok || !Array.isArray(sessionEvents.payload?.events)) {
+      throw new Error(`会话事件流取不到（${sessionEvents.response.status}/${sessionEvents.payload?.error}）`);
+    }
+    const sessionEventSamples = (sessionEvents.payload.events || []).length;
+    const straySession = (sessionEvents.payload.events || [])
+      .find((event) => event.sessionId && event.sessionId !== anySession.sessionId);
+    if (straySession) {
+      throw new Error(`会话事件流里混进了别的会话的事件（${straySession.sessionId}）`);
+    }
+    console.log(`  ok  监控页事件流：派发与会话两条取数口都答得出、带游标`
+      + `（本轮样本 ${dispatchEventSamples}/${sessionEventSamples} 条${dispatchEventSamples + sessionEventSamples === 0
+        ? "：一条都没有，所以「只答本对象」这一项本轮没验到 —— 执行事件由真节点上报，在 agent 套件里" : ""}）`);
+  }
+
   // 【接入一个逻辑智能体、再把它停掉】。按状态码记账量出来：POST /api/agents 与
   // /api/agents/:id/activate 在整套控制面 e2e 里【从没返回过 2xx】—— 打过它们的只有空 body
   // 扫描（期待被拒）和几条反面用例。而启停是一条真杠杆：停掉之后编排不该再派活给它。
@@ -4357,6 +4406,39 @@ try {
           throw new Error(`启停智能体时不给 active，拿到的是 ${agentActivateCall.response.status}/${agentActivateCall.payload.error}`);
         }
       }
+      // 【重新初始化运行态：带上确认之后必须真的重置，而且重置完系统还能用】。
+      // 这条路由在整套 e2e 里【从没返回过 2xx】—— 原因也清楚：跑通它会把 doctor 自己的
+      // 状态抹掉。所以放在这台【副本服务】上验：它有自己的运行目录，抹掉无所谓。
+      // 反面（不带确认要拒、报文要说清凭什么认为这里有真实数据）在主体里已经验过。
+      {
+        const beforeWipe = await jsonFetch(sweepPort, "/api/state?view=full&limit=50", {headers: {authorization: sweepAuth}});
+        const liveOrgs = (beforeWipe.payload.organizations || []).filter((item) => item.orgId !== "org_default").length;
+        const liveProjects = (beforeWipe.payload.projects || []).length;
+        const liveTaskGroups = (beforeWipe.payload.taskGroups || []).length;
+        const confirmDestroy = `${liveOrgs}/${liveProjects}/${liveTaskGroups}`;
+        const wiped = await jsonFetch(sweepPort, "/api/bootstrap/init", {
+          method: "POST",
+          headers: {"Idempotency-Key": "doctor-wipe-confirmed", authorization: sweepAuth},
+          body: JSON.stringify({confirmDestroy})
+        });
+        if (!wiped.response.ok) {
+          throw new Error(`带上确认（${confirmDestroy}）仍然重新初始化不了（${wiped.response.status}/`
+            + `${JSON.stringify(wiped.payload)}）—— 那这条出路等于不存在，人只能去删文件`);
+        }
+        // 抹掉之后必须【真的回到种子】，而不是留下一个半新半旧的状态。
+        const afterWipe = await jsonFetch(sweepPort, "/api/state?view=full&limit=50", {headers: {authorization: sweepAuth}});
+        const afterProjects = (afterWipe.payload.projects || []).length;
+        if (afterProjects >= liveProjects) {
+          throw new Error(`重新初始化之后项目数没回落（之前 ${liveProjects}、之后 ${afterProjects}）—— 它没真的重置`);
+        }
+        // 而且重置完系统还得能用：健康检查要说 ok（这一步是本地排障的最后一招，
+        // 它自己把系统弄成不可用的话，人就彻底没路了）。
+        const healthAfterWipe = await jsonFetch(sweepPort, "/api/health", {});
+        if (healthAfterWipe.response.status !== 200 || healthAfterWipe.payload?.status !== "ok") {
+          throw new Error(`重新初始化之后健康检查不 ok（${healthAfterWipe.response.status}/`
+            + `${JSON.stringify(healthAfterWipe.payload).slice(0, 160)}）—— 这是本地排障的最后一招`);
+        }
+      }
       console.log(`带 id 的写路由空 body 扫描 ok: ${paramRoutes.length} 条逐个打过（在运行目录的副本上，用真 id），`
         + `0 个 5xx（空 body 与类型错乱各打一遍）、拒绝都带码（${Object.entries(paramCodes).sort((a, b) => b[1] - a[1]).slice(0, 4)
           .map(([code, n]) => `${code}×${n}`).join("、")}）；另有 ${unresolved.length} 条因为找不到对应的真实对象没扫`
@@ -4631,9 +4713,30 @@ console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条�
   // 一条从没成功执行过的路由看起来是覆盖的 —— 实测 /api/role-skill-overlays 就是这样：
   // 全仓除文档外没有任何调用方，轨迹里那两次全是那条扫描打的，roleSkillOverlays 这个集合
   // 至今没被任何套件产出过。这条棘轮盯住「成功过」的条数，只升不降。
-  const SUCCEEDED_ROUTE_FLOOR = 66;
+  // 【打过、但在本套里只会被拒的那些】。它们不是缺口，但也不能混在一个总数里遮住 ——
+  // 逐条写明是谁在真正跑通它，将来谁失效了这份登记就成了线索。
+  // 与 OTHER_SUITE_COVERS 的区别：那份是"本套【碰都碰不到】"，这份是"本套碰得到但只会被拒"。
+  const SUCCEEDS_ELSEWHERE = {
+    "/api/agent/v1/confirmations": "agent 提运行时确认单：要节点凭据，doctor-agent-remote 里由真节点跑通",
+    "/api/agent/v1/control/": "节点取控制命令并回执：同上",
+    "/api/agent/v1/dispatches/": "认领派发/交检查点/报失败：同上（本套只用它验拒绝）",
+    "/api/agent/v1/events": "节点上报执行事件：同上",
+    "/api/agent/v1/heartbeat": "节点心跳：同上",
+    "/api/role-skill-overlays": "角色技能叠加：doctor-mcp 里建完再用 MCP 解析，验它真的改掉了 agent 拿到的能力",
+    "/api/quality-gates/": "人工豁免质量门：质量门只由 agent 提交的测试结果派生，所以在 doctor-mcp 里验",
+    "/api/checkpoints": "【设计上已关闭】：检查点只能经 agent 网关提交（它少了节点鉴权与认领围栏），这里永远只会被拒"
+  };
+  const SUCCEEDED_ROUTE_FLOOR = 69;
   const neverSucceeded = routes.map((route) => route.route)
-    .filter((route) => !succeeded.has(route) && !OTHER_SUITE_COVERS[route]).sort();
+    .filter((route) => !succeeded.has(route) && !OTHER_SUITE_COVERS[route] && !SUCCEEDS_ELSEWHERE[route]).sort();
+  for (const [route, why] of Object.entries(SUCCEEDS_ELSEWHERE)) {
+    if (!routes.some((item) => item.route === route)) {
+      throw new Error(`SUCCEEDS_ELSEWHERE 里的 ${route} 已经不是一条路由了 —— 登记过期（${why}）`);
+    }
+    if (succeeded.has(route)) {
+      throw new Error(`${route} 登记着"本套只会被拒"，本轮却成功了 —— 登记过期，删掉它让棘轮直接管住（${why}）`);
+    }
+  }
   if (succeeded.size < SUCCEEDED_ROUTE_FLOOR) {
     throw new Error(`本轮成功执行过的路由从 ${SUCCEEDED_ROUTE_FLOOR} 掉到 ${succeeded.size}`
       + ` —— 没成功过的还有 ${neverSucceeded.length} 条：${neverSucceeded.slice(0, 10).join("、")}`
@@ -4644,7 +4747,7 @@ console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条�
   }
   console.log(`路由覆盖 ok: ${routes.length} 条对外路由，本轮真打到 ${hit.size} 条、其中 ${succeeded.size} 条真的成功过`
     + `（按运行时记账，不是源码里搜路径；棘轮 ${SUCCEEDED_ROUTE_FLOOR}，AIMAC_LIST_UNSUCCEEDED_ROUTES=1 可列出没成功过的），`
-    + `${Object.keys(OTHER_SUITE_COVERS).length} 条登记为由 agent 套件覆盖`);
+    + `${Object.keys(OTHER_SUITE_COVERS).length} 条本套碰不到、${Object.keys(SUCCEEDS_ELSEWHERE).length} 条本套只会被拒（各自写明谁在跑通它）`);
 }
 
 // 【明文机密不许落盘】。一次性令牌按设计只在签发那一刻回给调用方一次；如果它同时被写进了

@@ -6618,6 +6618,22 @@ const MUTATIONS = [
     expect: "把新成员的默认项目设成已归档项目没被拒"
   },
   {
+    name: "重新初始化必须让版本号继续前进",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    seed.stateVersion = Number(state.stateVersion || 0) + 1;",
+    to: "",
+    expect: "仍然重新初始化不了"
+  },
+  {
+    name: "重新初始化之后系统还得能用",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    writeState(seed, {allowProjectShardRemoval: true});",
+    to: "    writeState(seed, {});",
+    expect: "仍然重新初始化不了"
+  },
+  {
     name: "检查点的 REST 门必须关着",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

@@ -3638,6 +3638,13 @@ async function handleApi(req, res) {
     }
     const seed = structuredClone(bootstrapBaseline);
     seed.__loadedStateVersion = state.__loadedStateVersion;
+    // 【重置内容，但版本号只能往前走】。种子里的 stateVersion 是 2，而运行态早就推过它 ——
+    // 存储层有一道"写入必须推进 stateVersion"的守卫（它防的是并发写静默覆盖），
+    // 于是这条重置路由在【任何推进过的运行态上】都会被那道守卫拒掉，回一句通用的 500 server_error。
+    // 也就是说控制台上那个"重新初始化运行态"（本地排障的最后一招）一直是坏的，
+    // 而它坏的样子是"服务器故障"，没有任何地方说得出真正的原因。
+    // 内容回到种子与版本号继续前进不矛盾：重置是一次新的写入，不是回到过去。
+    seed.stateVersion = Number(state.stateVersion || 0) + 1;
     seed.runtime.updatedAt = now();
     seed.runtime.executionProfile = executionProfile;
     ensureRuntimeCollections(seed, {root: repositoryRoot, runtimeDir, endpoint: localEndpoint(), executionProfile});
