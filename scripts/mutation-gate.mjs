@@ -6615,6 +6615,32 @@ const MUTATIONS = [
     expect: "把新成员的默认项目设成已归档项目没被拒"
   },
   {
+    name: "同名节点重复注册必须整条替换",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "  state.mcpProbeNodes = [node, ...state.mcpProbeNodes.filter((item) => item.nodeId !== node.nodeId)].slice(0, 200);",
+    to: "  state.mcpProbeNodes = [node, ...state.mcpProbeNodes].slice(0, 200);",
+    expect: "留下了 2 条记录"
+  },
+  {
+    name: "关闭门不许恒说可以关",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    // 打在 satisfied 本身：只改某一个阻塞项的话，别的阻塞项照样把它按住，
+    // 断言测不出区别（第一版就是这么假绿的）。
+    from: "  const satisfied = failedGates.length === 0 && readiness.status === \"clear\";",
+    to: "  const satisfied = true;",
+    expect: "关闭门说这个任务组可以关了"
+  },
+  {
+    name: "撤授权要真的把它撤掉",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "      return grantRevoke(state, args);",
+    to: "      return {grant: state.accessGrants.find((item) => item.grantId === args.grantId) || null};",
+    expect: "撤授权之后状态不是 revoked"
+  },
+  {
     name: "组织概览不许拿数组第一个组织当自己的",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

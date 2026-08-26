@@ -44,6 +44,9 @@ const COLLECTIONS_WITHOUT_STATE_MACHINE = {
   mcpCalls: "spec/mcp-call.schema.json 的 status enum（一次调用要么成了要么没成，没有生命周期）",
   // 这个集合此前【从没在任何 e2e 产出里出现过】（room_join 一次都没成功执行过），所以既没有
   // 规范也没被这道门看见。补规范时确认了它只有 joined 一个状态：离开是把记录淘汰掉，不改状态。
+  // 同因（第五次）：node_register 此前一次都没成功执行过。同 nodeId 再注册整条替换、
+  // 不再上线就被容量淘汰 —— 没有生命周期（真正带凭据与准入的是 AgentRuntimeNode）。
+  mcpProbeNodes: "spec/mcp-probe-node.schema.json 的 status enum（自报即 online，没有生命周期）",
   // 同因（第四次）：system_upgrade_external_import 此前一次都没成功执行过。导入本身不生效 ——
   // 它停在等真人激活那一个状态上，激活走的是另一条路（另一个对象），所以这里没有生命周期。
   externalUpgradeImports: "spec/external-upgrade-import.schema.json 的 status enum（导入即等真人激活，没有生命周期）",

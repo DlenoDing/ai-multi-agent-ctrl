@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-multi-agent-ctrl/spec/mcp-probe-node.schema.json",
+  "title": "McpProbeNode",
+  "description": "经 MCP 自报进来的探针节点：它记录「哪台机器说自己在线、带哪些能力」，只用于展示与容量判断，不参与任何授权（真正的运行时节点是 AgentRuntimeNode，带凭据与准入）。只有 online 一个状态：同 nodeId 再注册就整条替换，不再上线就被容量淘汰，没有生命周期。这份规范是 2026-08-27 才补的——agent-control-mcp.node_register 此前一次都没成功执行过，这个集合从没出现在任何 e2e 产出里。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "nodeId", "status", "endpoint", "registeredAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": {"const": "mcp-probe-node/v1"},
+    "nodeId": {"type": "string", "minLength": 1},
+    "status": {"enum": ["online"]},
+    "endpoint": {"type": "string", "minLength": 1},
+    "capabilityFlags": {"type": "array", "items": {"type": "string"}},
+    "toolSignals": {"type": "array", "items": {"type": "string"}},
+    "mcpServers": {"type": "array", "items": {"type": "string"}},
+    "modelProviders": {"type": "array", "items": {"type": "string"}},
+    "trustScore": {"type": "number", "minimum": 0, "maximum": 1},
+    "lastProbe": {"type": "object"},
+    "registeredAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  }
+}

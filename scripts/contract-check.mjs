@@ -19058,7 +19058,6 @@ function verifyEverySchemaVersionHasASpec(output) {
     "agent-role-skill-index": "技能同步产出的磁盘索引文件",
     "artifact-manifest": "写进 git 仓库的产出清单文件（证据留在提交里，不入控制面状态）",
     "evidence-artifact": "登记证据时的请求体形状，落库后按 artifact.schema.json 存",
-    "mcp-probe-node": "自检探针的临时结构，不落状态",
     "project-execution-event-index": "执行事件的磁盘索引文件",
     "project-execution-event-key": "执行事件的磁盘索引键",
     "project-execution-event-manifest": "执行事件的磁盘清单文件",

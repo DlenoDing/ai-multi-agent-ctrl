@@ -649,6 +649,85 @@ try {
       throw new Error(`role_skill_overlay_validate 没给出回执：${JSON.stringify(overlayCheck).slice(0, 160)}`);
     }
 
+    // 【节点注册、派发查询、关闭门与容量这几族】。它们此前只被空参调过：处理函数里有没有活、
+    // 答的是不是这个租户的东西，都没人验过。
+    const registered = await call("agent-control-mcp.node_register", {
+      nodeId: "node_doctor_mcp_chain", endpoint: "https://probe.local/agent",
+      capabilityFlags: ["git", "node"], trustScore: 0.5
+    });
+    const registeredNode = registered.node || registered;
+    // 第一版这里断言 admission !== "full" —— 而这条记录【根本没有 admission 字段】
+    //（带凭据与准入的是 AgentRuntimeNode，这个只是自报的探针），断言从落地起就是空转的。
+    // 改成验它真实承担的性质：同一个 nodeId 再注册必须【整条替换】而不是并存两条，
+    // 否则同名节点会在名单里堆出多行，而按 nodeId 找的人从此拿到后写的那条。
+    if (registeredNode.nodeId !== "node_doctor_mcp_chain" || registeredNode.status !== "online") {
+      throw new Error(`node_register 没注册出这个节点：${JSON.stringify(registered).slice(0, 200)}`);
+    }
+    await call("agent-control-mcp.node_register", {
+      nodeId: "node_doctor_mcp_chain", endpoint: "https://probe.local/agent-2", trustScore: 0.6});
+    const afterReRegister = await api("/api/state?view=full&limit=200", {token: admin.sessionToken});
+    const sameName = (afterReRegister.mcpProbeNodes || []).filter((item) => item.nodeId === "node_doctor_mcp_chain");
+    if (sameName.length !== 1) {
+      throw new Error(`同一个 nodeId 注册两次留下了 ${sameName.length} 条记录 —— 名单里会堆出同名多行，`
+        + "而按 nodeId 找的人从此拿到后写的那条");
+    }
+    if (sameName[0].endpoint !== "https://probe.local/agent-2") {
+      throw new Error(`重复注册没有替换掉旧记录（endpoint 还是 ${sameName[0].endpoint}）`);
+    }
+    const dispatchStatus = await call("agent-control-mcp.dispatch_status", {dispatchId: chainDispatch.dispatchId});
+    if ((dispatchStatus.dispatch || {}).dispatchId !== chainDispatch.dispatchId) {
+      throw new Error(`dispatch_status 查不到本轮那个派发：${JSON.stringify(dispatchStatus).slice(0, 200)}`);
+    }
+    const assignedAgain = await call("scheduler-mcp.work_assign", {taskGroupId: TG, workItemId: WORK, roleId: "agent-runtime"});
+    if ((assignedAgain.workItem || {}).ownerRole !== "agent-runtime") {
+      throw new Error(`scheduler 侧的 work_assign 没把归属角色写上去：${JSON.stringify(assignedAgain).slice(0, 200)}`);
+    }
+    const capacity = await call("scheduler-mcp.capacity_snapshot", {});
+    if (typeof capacity !== "object" || capacity === null) {
+      throw new Error(`capacity_snapshot 没给出快照：${JSON.stringify(capacity).slice(0, 160)}`);
+    }
+    const resources = await call("resource-mcp.resource_snapshot", {});
+    if (typeof resources !== "object" || resources === null) {
+      throw new Error(`resource_snapshot 没给出快照：${JSON.stringify(resources).slice(0, 160)}`);
+    }
+    const permissionState = await call("permission-mcp.permission_status", {requestId: permissionRequestId});
+    if ((permissionState.permissionRequest || permissionState).requestId !== permissionRequestId) {
+      throw new Error(`permission_status 查不到那条申请：${JSON.stringify(permissionState).slice(0, 200)}`);
+    }
+    const matrix = await call("identity-mcp.permission_matrix_get", {});
+    if (typeof matrix !== "object" || matrix === null) {
+      throw new Error(`permission_matrix_get 没给出矩阵：${JSON.stringify(matrix).slice(0, 160)}`);
+    }
+    const surfaces = await call("ui-console-mcp.management_surface_get", {});
+    if (typeof surfaces !== "object" || surfaces === null) {
+      throw new Error(`management_surface_get 没给出管理面：${JSON.stringify(surfaces).slice(0, 160)}`);
+    }
+    // 关闭门：本轮这个任务组【确实有未了结的东西】（评审计划、确认单、执行方案都刚动过），
+    // 所以它必须报出阻塞项 —— 一个恒为「可以关」的关闭门比没有更坏。
+    const barrier = await call("governance-mcp.close_barrier_compute", {taskGroupId: TG});
+    const barrierBody = barrier.closeBarrier || barrier;
+    if (barrierBody.satisfied === true) {
+      throw new Error(`关闭门说这个任务组可以关了：${JSON.stringify(barrier).slice(0, 240)} —— `
+        + "本轮刚往里放了评审计划/确认单/执行方案，它不该是空的");
+    }
+    const readiness = await call("review-mcp.completion_readiness_compute", {taskGroupId: TG});
+    if (!(readiness.readiness || readiness).status) {
+      throw new Error(`completion_readiness_compute 没给出结论：${JSON.stringify(readiness).slice(0, 200)}`);
+    }
+    // 发一张授权再撤掉它：撤销这条路此前一次都没成功执行过（只验过"机器主体不许撤"）。
+    const chainGrant = await call("identity-mcp.grant_create", {
+      subjectId: "acct_agent_runtime", resource: {resourceType: "task_group", resourceId: TG},
+      grantRole: "reviewer"
+    });
+    const chainGrantId = (chainGrant.grant || chainGrant).grantId;
+    if (!chainGrantId) {
+      throw new Error(`grant_create 没建出授权：${JSON.stringify(chainGrant).slice(0, 200)}`);
+    }
+    const revokedGrant = await call("identity-mcp.grant_revoke", {grantId: chainGrantId});
+    if ((revokedGrant.grant || revokedGrant).status !== "revoked") {
+      throw new Error(`撤授权之后状态不是 revoked：${JSON.stringify(revokedGrant).slice(0, 200)}`);
+    }
+
     // 【角色技能叠加：从没被跑通过的那条真人杠杆】。它改的是 agent 实际拥有的能力
     //（含 forbiddenCapabilityAdds），控制台上明写「真人专属、控制台只读、由人经 API 创建」。
     // 而按状态码记账量出来：/api/role-skill-overlays 全仓除文档外没有任何调用方，
@@ -777,6 +856,15 @@ try {
         + "它会被分发进每个 agent 的任务契约，等于 AI 自行宣布并自我批准了一条全局规范");
     }
 
+    // 消费方绑定要在【定义已经建出来之后】才测得到：不然先撞上「这份定义不存在」，
+    // 看起来也是拒绝，测的却是另一件事。
+    const bound = await call("definition-mcp.shared_definition_consumer_bind",
+      {contractId: "sdc_doctor_mcp_chain", taskGroupId: TG});
+    const boundDefinition = bound.sharedDefinition || bound.definition || bound;
+    if (!(boundDefinition.consumerRefs || []).some((ref) => String(ref).includes(TG))) {
+      throw new Error(`消费方绑定没记上这个任务组：${JSON.stringify(bound).slice(0, 240)}`);
+    }
+
     const BLIND_CALLS = [
       {name: "review-mcp.review_result_consume", args: {status: "passed", summary: "没说是哪个任务组"}},
       {name: "instruction-mcp.instruction_envelope_create", args: {recipientRole: "agent-runtime"}},
@@ -814,7 +902,7 @@ try {
     // 本套 e2e 自己跑通的数（跨门合计另算：契约门在进程内还会跑通一批）。
     // 这个数是【实测出来的】—— 早先一次量到 44，复量不出来，那次多半把别的运行留下的账算了进去；
     // 以能复现的这次为准。棘轮只升不降。
-    const SUCCESSFULLY_EXERCISED_FLOOR = 52;
+    const SUCCESSFULLY_EXERCISED_FLOOR = 65;
     let traced = "";
     try { traced = readFileSync(toolTracePath, "utf8"); } catch { traced = ""; }
     const succeeded = new Set(traced.split("\n").filter((line) => line.startsWith("ok ")).map((line) => line.slice(3)));
