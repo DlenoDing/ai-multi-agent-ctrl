@@ -4272,6 +4272,29 @@ function renderMonitor() {
     && (!definition.projectId || visibleProjectIds.has(definition.projectId))).slice(0, 8);
   const openReviewBundles = (state.reviewBundles || []).filter((item) => inScope(item) && !["consumed", "rejected"].includes(item.status)).slice(0, 8);
   const openUpgradeCandidates = (state.systemUpgradeCandidates || []).filter((item) => inScope(item) && item.status === "candidate_created").slice(0, 8);
+  // 【人写下的定稿理由此前没有任何读取点】。五处人工收尾（评审计划/评审包/升级候选/共享定义/
+  // 规则来源分流）都要求真人填理由、都做了长度校验、都落了库 —— 而全仓一处都不读它：
+  // 收尾之后对象从上面这些"待处置"清单里消失，理由跟着一起消失。留痕是这几条杠杆存在的理由，
+  // 留了痕却没人看得见，等于没留。所以在同一屏上给出"最近的人工定稿"。
+  const finalizations = [
+    ...(state.reviewPlans || []).filter(inScope).map((item) => ({kind: "评审计划",
+      id: item.reviewPlanId, taskGroupId: item.taskGroupId, status: item.status,
+      by: item.resolvedBy, why: item.resolutionJustification, at: item.updatedAt})),
+    ...(state.reviewBundles || []).filter(inScope).map((item) => ({kind: "评审包",
+      id: item.reviewBundleId, taskGroupId: item.taskGroupId, status: item.status,
+      by: item.resolvedBy, why: item.resolutionJustification, at: item.updatedAt})),
+    ...(state.systemUpgradeCandidates || []).filter(inScope).map((item) => ({kind: "升级候选",
+      id: item.candidateId, taskGroupId: item.taskGroupId, status: item.status,
+      by: item.resolvedBy, why: item.resolutionJustification, at: item.updatedAt})),
+    ...(state.ruleSourceResolutions || []).filter(inScope).map((item) => ({kind: "规则来源分流",
+      id: item.sourceRef || item.resolutionId, taskGroupId: item.taskGroupId, status: item.status,
+      by: item.settledBy, why: item.settlementJustification, at: item.updatedAt})),
+    ...(state.sharedDefinitions || []).filter((item) => !item.projectId || visibleProjectIds.has(item.projectId))
+      .map((item) => ({kind: "共享定义契约", id: item.contractId, taskGroupId: item.taskGroupId,
+        status: item.status, by: item.resolvedBy, why: item.resolutionJustification, at: item.updatedAt}))
+  ].filter((item) => item.by || item.why)
+    .sort((a, b) => String(b.at || "").localeCompare(String(a.at || ""))).slice(0, 10);
+
   // 卡住的执行方案会永久挡住关闭门：分支报了 failed 之后拓扑照样进 integrating，merge 只认
   // accepted、cancel 又只有人能做。后端一直有"人来取消"这条杠杆（契约检查专门断言过它必须存在），
   // 但 executionTopologies 根本不在下发字段里，界面上也没有入口 —— 后端有杠杆而界面没有入口，
@@ -4461,6 +4484,20 @@ function renderMonitor() {
               <button class="danger-button" type="submit">终止该执行方案</button>
             </form>`).join("")}
         </div>` : ""}
+    `, {wide: true}) : "",
+    // 上面那一屏是"还要谁来收尾"，这一屏是"已经谁收的尾、为什么"。人写下的定稿理由此前落库之后
+    // 没有任何读取点，而收尾之后对象又从待处置清单里消失 —— 于是这条链上唯一的人类判断不留痕迹。
+    finalizations.length ? panel("最近的人工定稿", `
+      <div class="notice">这些收尾只能由真人做。这里保留他们当时给出的理由 —— 后来的人要靠它判断能不能照做。</div>
+      ${table(["对象", "任务组", "定稿结果", "定稿人", {label: "时间", c: "nowrap"}, "理由"],
+        finalizations.map((item) => row([
+          `${esc(item.kind)} <span class="mono">${esc(item.id || "-")}</span>`,
+          esc(taskGroupNameOf(item.taskGroupId)),
+          badge(item.status),
+          esc(item.by ? accountName(item.by) : "-"),
+          fmtTime(item.at),
+          {v: esc(item.why || "（当时没有填理由）"), c: "text-clip"}
+        ])).join(""))}
     `, {wide: true}) : "",
     panel("关闭门禁", `
       ${table(["任务组", "状态", {label: "阻塞对象数", c: "num"}, {label: "计算时间", c: "nowrap"}, "操作"], barriers, {moreText: moreText(barriersInScope.length, 8, "closeBarriers")})}

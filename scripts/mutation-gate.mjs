@@ -9582,6 +9582,14 @@ const MUTATIONS = [
     to: '  if (false) {\n    return {replay: false, expired: true, error: "idempotent_result_expired",',
     expect: "仍被当成可重放"
   },
+  {
+    name: "人工定稿的理由要在界面上看得见（五处收尾都要求真人写理由，此前全仓没有读取点）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '    finalizations.length ? panel("最近的人工定稿", `',
+    to: '    false ? panel("最近的人工定稿", `',
+    expect: "定稿理由在界面上一个字都找不到"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

@@ -1896,6 +1896,25 @@ function runNoVisibleProjectCase() {
     check("资格检查没过的执行方案要在界面上看得见（它是非终态，会一直挡着关闭门）",
       /topo1/u.test(eligibilityText),
       "界面上找不到它 —— 人只看到任务组「存在阻塞」，点不进去也不知道该做什么");
+    // 五处人工收尾都要求真人写理由、都做了长度校验、都落了库 —— 而此前【全仓一处都不读它】：
+    // 收尾之后对象从"待你收尾"清单里消失，理由跟着一起消失。留痕正是这几条杠杆存在的理由。
+    const finalizedState = structuredClone(stuckState);
+    finalizedState.reviewBundles = [{reviewBundleId: "rb1", taskGroupId: "tg1", status: "consumed",
+      resolvedBy: "u1", resolutionJustification: "外部评审方不再参与，改由内部 QA 覆盖",
+      updatedAt: "2026-08-11T00:00:00.000Z"}];
+    finalizedState.ruleSourceResolutions = [{resolutionId: "rs1", sourceRef: "src:mgp", taskGroupId: "tg1",
+      status: "active", settledBy: "u1", settlementJustification: "与本项目现行规范不冲突，采纳为项目规则",
+      updatedAt: "2026-08-12T00:00:00.000Z"}];
+    const finalizedText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, finalizedState, "monitor", "p1");
+    check("人工定稿的理由要看得见（写了没人读＝没留痕）",
+      /外部评审方不再参与/u.test(finalizedText) && /与本项目现行规范不冲突/u.test(finalizedText),
+      "定稿理由在界面上一个字都找不到 —— 后来的人无从判断当时为什么这么定");
+    check("定稿理由旁边要说得出是谁定的、定成了什么",
+      /最近的人工定稿/u.test(finalizedText) && /管理员/u.test(finalizedText)
+        && /rs1|src:mgp/u.test(finalizedText),
+      "只有理由没有定稿人/对象 —— 一句话悬在那里，追不到是谁在哪件事上说的");
+
     check("给的出口必须是后端在这个状态真接受的那一个（降级），而不是它会拒绝的终止",
       /降级为串行执行/u.test(eligibilityText) && /降级理由/u.test(eligibilityText),
       "没有降级入口 —— 后端有这条杠杆而界面上没有，等于这个杠杆不存在");
