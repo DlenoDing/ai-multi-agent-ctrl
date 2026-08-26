@@ -4456,10 +4456,9 @@ await runCodedApiErrorCase();
 }
 
 // 上面那道门是【按页无差别】的：它只问"有没有哪个视图下发过这个字段"，不问"这一页手上
-// 那份 state 里有没有"。监控页是唯一把两个视图拼起来的页 —— 它从 runtime 视图里【只挑了
-// 几个键搬过来】，其余的即便服务端下发了也到不了 renderMonitor 手上。实测 modelSelectionPolicies
-// 就是这样：runtime 视图带着它（7.7KB），监控页合并时丢掉，别的页又一处都不读 —— 白付的载荷，
-// 而在这一页读它会永远是空数组，界面上不会报错，只会永远显示不出策略名。
+// 那份 state 里有没有"。每一页各取自己那个视图，读别的视图才有的键会永远是空 —— 不报错、
+// 只是显示不出来。监控页更甚：它拼两个视图，而从 runtime 里【只挑几个键搬过来】
+//（实测 modelSelectionPolicies 就这样被丢掉）。所以逐页对一遍，而不是只盯监控页。
 {
   const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const serverSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/server.mjs"), "utf8");
@@ -4473,47 +4472,76 @@ await runCodedApiErrorCase();
     }
     return "";
   };
-  const monitorBranchAt = appSource.indexOf('page === "monitor"');
-  const mergeAt = appSource.indexOf("state = {", monitorBranchAt);
-  const mergeBlock = monitorBranchAt < 0 ? "" : sliceBalanced(appSource, mergeAt, "{", "}");
-  const merged = new Set([...mergeBlock.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:/gmu)].map((m) => m[1]));
-  const tasksLine = serverSource.match(/^\s*tasks: \[([^\]]*)\]/mu);
-  const tasksView = new Set([...(tasksLine?.[1] || "").matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"/gu)].map((m) => m[1]));
   const bodyOf = (name) => {
     const at = appSource.indexOf(`function ${name}(`);
     return at < 0 ? "" : sliceBalanced(appSource, at, "{", "}");
   };
   const readsIn = (text) => [...text.matchAll(/state\s*(?:\|\|\s*\{\})?\s*\)?\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)/gu)]
     .map((m) => m[1]);
-  const renderBody = bodyOf("renderMonitor");
-  // 按【函数体】切会漏掉它调用的通用函数：modelSelectionPolicies 的读取就在
-  // modelDecisionSummaryZh 里，只切 renderMonitor 的话这道门整个看不见它。
-  // 所以把它直接调用的那些本文件函数也展开一层（更深的调用链不展开，就此说明白）。
-  const calledHelpers = new Set([...renderBody.matchAll(/\b([a-z][A-Za-z0-9_]*)\s*\(/gu)].map((m) => m[1]));
-  const monitorReads = new Set([
-    ...readsIn(renderBody),
-    ...[...calledHelpers].flatMap((name) => readsIn(bodyOf(name)))
+  // 页 → 渲染函数、页 → 它取的视图
+  const renderOf = new Map([...appSource.matchAll(/page === "([a-z-]+)"\) body = (render[A-Za-z]+)\(\)/gu)]
+    .map((m) => [m[1], m[2]]));
+  const branchOf = (page) => {
+    const at = appSource.indexOf(`page === "${page}"`);
+    if (at < 0) return "";
+    const next = appSource.slice(at).search(/\n {4}\} else if \(page ===|\n {4}\} else \{/u);
+    return next < 0 ? appSource.slice(at, at + 2000) : appSource.slice(at, at + next);
+  };
+  // 服务端：每个视图的集合清单 + 基底（基底里还有 ...spread 进来的那几项）
+  const viewBlock = sliceBalanced(serverSource, serverSource.indexOf("const viewFields = {"), "{", "}");
+  const viewCols = new Map([...viewBlock.matchAll(/^\s*([a-z]+): \[([\s\S]*?)\]/gmu)]
+    .map((m) => [m[1], [...m[2].matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"/gu)].map((x) => x[1])]));
+  const baseBlock = sliceBalanced(serverSource, serverSource.indexOf("const base = {"), "{", "}");
+  const baseKeys = new Set([
+    ...[...baseBlock.matchAll(/^\s{4}([A-Za-z_][A-Za-z0-9_]*):/gmu)].map((m) => m[1]),
+    // base 上还有一批是后补的（base.x = …，只在真发生时才挂）与各投影里补的那几项。
+    ...[...serverSource.matchAll(/\bbase\.([A-Za-z_][A-Za-z0-9_]*)\s*=/gu)].map((m) => m[1]),
+    ...[...serverSource.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*): state\.[A-Za-z_]/gmu)].map((m) => m[1])
   ]);
-  if (!merged.size || !tasksView.size || monitorReads.size < 5) {
-    failures.push(`监控页接线: 只解析到 合并 ${merged.size} 键 / tasks 视图 ${tasksView.size} 键 / `
-      + `renderMonitor 读 ${monitorReads.size} 键 —— 提取与代码脱节，本条在空转`);
+  // 基底里的 ...xxx 展开：把那个变量声明里出现的键也算成"到得了手上"。
+  // 不认它的话，auditArchiveFault / eventLogFault 这种只在故障时才挂的字段会被判成从不下发（假红）。
+  for (const spread of baseBlock.matchAll(/\.\.\.([A-Za-z_][A-Za-z0-9_]*)\b/gu)) {
+    const declAt = serverSource.indexOf(`const ${spread[1]} =`);
+    if (declAt < 0) continue;
+    const decl = serverSource.slice(declAt, serverSource.indexOf("\n  const ", declAt + 10) + 1 || declAt + 400);
+    for (const key of decl.matchAll(/\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}/gu)) baseKeys.add(key[1]);
+  }
+  if (renderOf.size < 10 || viewCols.size < 5 || baseKeys.size < 10) {
+    failures.push(`按页接线: 只解析到 ${renderOf.size} 页 / ${viewCols.size} 个视图 / ${baseKeys.size} 个基底键`
+      + " —— 提取与代码脱节，本条在空转");
   } else {
-    // base（每个视图都带的那几项：runtime、accountDirectory 之类）不在这两份清单里，
-    // 但它一定到得了手上。按"服务端 base 块里出现过"放行，不另抄一份名字。
-    const baseBlock = sliceBalanced(serverSource, serverSource.indexOf("const base = {"), "{", "}");
-    const baseKeys = new Set([
-      ...[...baseBlock.matchAll(/^\s{4}([A-Za-z_][A-Za-z0-9_]*):/gmu)].map((m) => m[1]),
-      // base 上还有一批是【后补的】（base.x = …，只在真发生时才挂），以及各作用域投影里
-      // 补的那几项。它们同样一定到得了手上，按写法认出来，不另抄一份名字。
-      ...[...serverSource.matchAll(/\bbase\.([A-Za-z_][A-Za-z0-9_]*)\s*=/gu)].map((m) => m[1]),
-      ...[...serverSource.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*): state\.[A-Za-z_]/gmu)].map((m) => m[1])
-    ]);
-    const missing = [...monitorReads]
-      .filter((field) => !merged.has(field) && !tasksView.has(field) && !baseKeys.has(field))
-      .sort();
-    if (missing.length) {
-      failures.push(`监控页接线: renderMonitor 读了 ${missing.join("、")}，而这一页手上那份 state `
-        + "既不来自 tasks 视图、也不在它从 runtime 视图挑出来的合并清单里 —— 永远是空，界面不报错只显示不出来");
+    const broken = [];
+    for (const [page, renderName] of renderOf) {
+      const branch = branchOf(page);
+      const fetched = [...branch.matchAll(/fetchState\("([a-z]+)"/gu)].map((m) => m[1]);
+      if (!fetched.length) continue; // 数据不走 state 的页（组织列表等）另走接口，不在这条的管辖内
+      // 【取了这个视图】不等于【这一页手上有它的全部键】。监控页把两个视图拼起来时，
+      // state 是从 tasksState 铺开的，runtime 那份只挑几个键搬过来 —— 剩下的到不了手上。
+      // 所以按"state 是从哪一份铺开的"算：有 ...xxxState 就只认那一份，其余靠显式列出的键。
+      const spreadVar = branch.match(/state\s*=\s*\{\s*\.\.\.([A-Za-z_][A-Za-z0-9_]*)/u)?.[1];
+      const destructured = branch.match(/\[([^\]]*)\]\s*=\s*await Promise\.all/u)?.[1] || "";
+      const varNames = destructured.split(",").map((name) => name.trim()).filter(Boolean);
+      let views = fetched;
+      if (spreadVar && varNames.length === fetched.length) {
+        const at = varNames.indexOf(spreadVar);
+        if (at >= 0) views = [fetched[at]];
+      } else if (varNames.length === fetched.length && varNames.includes("state")) {
+        // `[state, other] = await Promise.all([...])`：只有 state 那一份是这一页的 state。
+        views = [fetched[varNames.indexOf("state")]];
+      }
+      const renderBody = bodyOf(renderName);
+      // 按【函数体】切会漏掉它调用的通用函数（modelSelectionPolicies 的读取就在
+      // modelDecisionSummaryZh 里）。所以把它直接调用的本文件函数展开一层，更深的不展开。
+      const helpers = new Set([...renderBody.matchAll(/\b([a-z][A-Za-z0-9_]*)\s*\(/gu)].map((m) => m[1]));
+      const reads = new Set([...readsIn(renderBody), ...[...helpers].flatMap((name) => readsIn(bodyOf(name)))]);
+      const available = new Set([...baseKeys, ...views.flatMap((view) => viewCols.get(view) || [])]);
+      for (const key of branch.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*):\s/gmu)) available.add(key[1]);
+      const missing = [...reads].filter((key) => !available.has(key)).sort();
+      if (missing.length) broken.push(`${page}（${renderName}）读了 ${missing.join("、")}`);
+    }
+    if (broken.length) {
+      failures.push(`按页接线: ${broken.join("；")} —— 这几页手上那份 state 里没有这些键`
+        + "（既不在它取的视图里，也不在基底、也不是这一页自己拼上去的）：永远是空，界面不报错只显示不出来");
     }
   }
 }

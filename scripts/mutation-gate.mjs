@@ -9660,7 +9660,15 @@ const MUTATIONS = [
     gate: "console",
     from: "        admissionDecisions: runtimeState.admissionDecisions || [],",
     to: "        _dropped: runtimeState.admissionDecisions || [],",
-    expect: "监控页接线"
+    expect: "按页接线"
+  },
+  {
+    name: "单视图的页读了它那个视图不下发的集合，同样永远是空",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "console",
+    from: '"findings", "qualityGates", "testResults"',
+    to: '"findings", "testResults"',
+    expect: "按页接线"
   },
 ];
 
