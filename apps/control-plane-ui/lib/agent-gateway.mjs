@@ -141,9 +141,14 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
   };
 }
 
+// 【只读的取数不许顺手改状态】。这里原先调 ensureAgentGatewayCollections —— 而它会往下走到
+// ensureRuntimeCollections，把一堆集合补齐、还会重写 project_owner 授权的 permissions。
+// 于是每个 GET（控制台的视图就走这条）都在"读"的名义下改一遍状态。平时看不出来：
+// 每个请求各拿一份克隆，改的是自己那份。共用只读那份是冻的，它当场抛
+// "Cannot assign to read only property 'permissions'" —— 冻结的价值就在这里。
+// 取数只需要容忍集合不存在，不需要把它建出来。
 export function listAgentJoinTokens(state, projectId) {
-  ensureAgentGatewayCollections(state);
-  return state.agentJoinTokens
+  return (state.agentJoinTokens || [])
     .filter((item) => !projectId || item.projectId === projectId)
     .map(publicJoinToken);
 }

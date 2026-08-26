@@ -883,6 +883,7 @@ run(verifyHealthReadDoesNotCloneEveryRequest);
 run(verifyCallerChosenIdsCannotShadow);
 run(verifyToolArgReachabilityIsRegistered);
 run(verifyGrantRoleTablesAgree);
+run(verifyReadOnlyRequestsShareOneFrozenState);
 run(verifyMachinePrincipalRefusalsAreAllRegistered);
 run(verifyPublishedToolSchemasMatchWhatToolsRead);
 run(verifyEveryPredicateDeclaresItsCoverage);
@@ -8435,6 +8436,43 @@ function verifyMachinePrincipalRefusalsAreAllRegistered(output) {
     }
   }
   console.log(`机器主体禁做守卫：从 ${cases.length} 条派发里提取到 ${found.size} 道，与手写登记两向核对一致`);
+}
+
+// 【只读请求不许改状态，也不许每次深拷整份状态】。GET 走的是共用只读那份（冻结的）：
+// 深拷实测 7.98ms/次，而每个 API 请求都走 readState —— 视图与健康那两条早就改成共用只读了，
+// 主路一直是漏的。冻结不只是省钱，它还是【读路径在写】的探照灯：接上之后当场照出三处
+//（取加入令牌顺手 ensure 了一堆集合并重写 project_owner 的 permissions、GET /api/orgs 把重算的
+// 用量写回状态、系统概览重算了一份谁也没读的用量）。这道判据两件事一起守：
+//   ① 共用只读那份必须是冻的（冻结一旦丢掉，读路径的误写会悄悄污染此后所有人的读）；
+//   ② 拿两次共用只读必须是【同一个对象】（一旦有人把它改回每次克隆，这条当场红）。
+function verifyReadOnlyRequestsShareOneFrozenState(output) {
+  const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-shared-read-"));
+  try {
+    const statePath = join(runtimeDir, "control-plane-state.json");
+    const seedPath = join(root, "data/seed-state.json");
+    const options = {root, runtimeDir, statePath, seedPath,
+      buildInitialState: () => structuredClone(seedState)};
+    const first = readStoredState(options, {shared: true});
+    // 断言要压在【第一次】共用读之后：第二次读会把缓存里那份就地冻上，
+    // 放到后面断言的话，"第一次就该是冻的"这件事测不出来（实测：去掉首次冻结那行，判据照样绿）。
+    if (!Object.isFrozen(first) || !Object.isFrozen(first.accounts)) {
+      output.push("第一个拿到共用只读那份的人拿到的不是冻结对象 —— 他若不小心写它，"
+        + "会悄悄污染此后所有人的读；冻结同时也是「读路径在写」的探照灯");
+    }
+    const second = readStoredState(options, {shared: true});
+    if (first !== second) {
+      output.push("连着两次共用只读拿到的不是同一个对象 —— 说明它还在每次克隆整份状态"
+        + "（实测一次 7.98ms，而每个 API 请求都走这条路）");
+    }
+    // 不带 shared 的调用方必须仍然拿到【可改的自己那份】：写入方要先改再落盘。
+    const mutable = readStoredState(options);
+    if (Object.isFrozen(mutable) || mutable === first) {
+      output.push("不带 shared 的调用方拿到了共用/冻结的那一份 —— 写入方会当场抛错，或者两个并发写互相看见对方改到一半");
+    }
+    console.log("只读共用状态：连续两次拿到同一个冻结对象，写入方仍拿到可改的副本");
+  } finally {
+    rmSync(runtimeDir, {recursive: true, force: true});
+  }
 }
 
 function verifyGrantRoleTablesAgree(output) {

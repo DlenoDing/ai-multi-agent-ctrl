@@ -343,6 +343,37 @@ function weakSecret(value) {
   return unsafeSecretValues.has(text) || text.length < 20;
 }
 
+// 【只读请求不必每次深拷 2.3MB】。readState() 每次调用都克隆整份状态（实测 7.98ms），
+// 而每个 API 请求都走它 —— 健康检查那条早就改成"共用只读 + 每次状态变化只付一次"了，
+// 主路一直是漏的。这里同一套办法：状态没变（共用那份的对象身份没换）就复用准备好的那一份，
+// 只把每次都可能变的 runtime 字段浅覆盖一层（几十个顶层键的浅拷是微秒级）。
+// 拿到的是【冻结】的：GET 处理函数若不小心去改状态，会当场抛错而不是悄悄污染此后所有人的读。
+let preparedReadState = {source: null, state: null};
+function readStateForRead() {
+  ensureState();
+  const shared = readStoredState({root, runtimeDir, statePath, seedPath, buildInitialState}, {shared: true});
+  if (preparedReadState.source !== shared) {
+    const fresh = readStoredState({root, runtimeDir, statePath, seedPath, buildInitialState});
+    ensureRuntimeCollections(fresh, {root: repositoryRoot, runtimeDir, endpoint: process.env.AIMAC_PUBLIC_URL || localEndpoint(), executionProfile});
+    markRuntimeStorage(fresh, ".runtime/control-plane-state.json");
+    fresh.runtime.auditLogCap = AUDIT_LOG_CAP;
+    fresh.runtime.nodeHeartbeatTimeoutMs = nodeHeartbeatTimeoutMs();
+    deepFreezeState(fresh);
+    preparedReadState = {source: shared, state: fresh};
+  }
+  // autonomousOrchestrator 是【进程内的活值】（心跳），与盘上那份状态无关：
+  // 它不能被缓存住，所以每次请求都在最外层浅覆盖一次。
+  return {...preparedReadState.state,
+    runtime: {...preparedReadState.state.runtime, autonomousOrchestrator: runtimeOrchestratorStatus}};
+}
+
+function deepFreezeState(value) {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const key of Object.keys(value)) deepFreezeState(value[key]);
+  return value;
+}
+
 function readState() {
   ensureState();
   const state = readStoredState({root, runtimeDir, statePath, seedPath, buildInitialState});
@@ -2868,7 +2899,16 @@ async function handleApi(req, res) {
     }
   }
 
-  const state = readState();
+  // GET 不改状态，走共用只读那份（省掉每请求 7.98ms 的深拷）。其余方法仍拿自己的可变副本：
+  // 写入方要先改再落盘，共享一份会让两个并发请求互相看见对方改到一半的状态。
+  //
+  // 【agent 网关那一族除外】：它的每个处理函数入口都调 ensureAgentGatewayCollections（把集合
+  // 补齐、还会重写 project_owner 授权的 permissions）—— 那是它的既有写法，读写两种请求共用。
+  // 冻结会让它的 GET 当场抛错。把那一族改成"只读不补全"是另一件事（它有十几个入口，
+  // 每个都要单独判断补全是不是必要的）；这里先把【控制台与运维那批 GET】收下 ——
+  // 轮询的主力在那边（视图、进度、事件流、健康、概览），而网关的读多是低频自检。
+  const sharedReadEligible = req.method === "GET" && !url.pathname.startsWith("/api/agent/v1/");
+  const state = sharedReadEligible ? readStateForRead() : readState();
   const body = req.method === "POST" ? await parseBody(req) : {};
   req.bodyDigest = digestOf(body);
 
@@ -5399,8 +5439,9 @@ async function handleApi(req, res) {
   if (req.method === "GET" && url.pathname === "/api/orgs") {
     const reader = requireRead(req, state, {resourceType: "system", resourceId: "organizations"});
     if (reader.status) return json(res, reader.status, reader.payload);
-    recomputeOrganizationUsage(state);
-    json(res, 200, {organizations: state.organizations});
+    // 只读请求把新用量算进【响应】，不写回状态：recomputeOrganizationUsage(state) 会改 org.usage，
+    // 而 GET 走的是共用只读那份（冻的）。同一份计算早就有不改状态的版本，视图那条一直在用。
+    json(res, 200, {organizations: organizationsWithFreshUsage(state, state.organizations)});
     return;
   }
 
@@ -5493,7 +5534,9 @@ async function handleApi(req, res) {
         }
       }
     } catch { storagePartial = true; }
-    recomputeOrganizationUsage(state);
+    // 这里原先调 recomputeOrganizationUsage(state) —— 而这份响应只用到 organizations.length，
+    // 重算出来的用量一个都没被读。也就是说这是一次纯副作用：读路径在改状态。
+    // 用量该由写入方在改动之后重算（它们本来就在做），不该由一个 GET 顺手代劳。
     json(res, 200, {
       server: {platform: platform(), arch: arch(), hostname: hostname(), nodeVersion: process.version, uptimeSeconds: Math.round(process.uptime()), pid: process.pid},
       resources: {rssBytes: memory.rss, heapUsedBytes: memory.heapUsed, cpuSeconds: Math.round(cpuSeconds), loadAverage: loadavg(), totalMemoryBytes: totalmem(), freeMemoryBytes: freemem(), cpuCount: cpus().length},

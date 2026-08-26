@@ -2100,7 +2100,7 @@ errors << "the console must surface which self-check items failed, not just the 
 errors << "the server-side tick must reconcile regardless of whether any task group is open (dead-node sweep cannot depend on a live node)" unless server_source.match?(/const reconciled = recycleExpiredClaims\(state\);[\s\S]{0,400}?const pending = /)
 errors << "the autonomous cycle must have something driving it (no scheduler means a task group never starts)" unless server_source.include?("export function runOrchestratorTick()") && server_source.match?(/setInterval\(runOrchestratorTick/)
 errors << "postgres DDL must be memoized per process (every bridge call blocks the event loop)" unless state_store_source.include?("if (postgresTablesEnsured) return;")
-errors << "the postgres read path must not pay for a full central read just to probe existence" unless state_store_source.match?(/export function readStoredState\(options\) \{\s*\n\s*if \(stateStoreKind\(\) === "postgresql"\) \{/)
+errors << "the postgres read path must not pay for a full central read just to probe existence" unless state_store_source.match?(/export function readStoredState\(options[^)]*\) \{\s*\n\s*if \(stateStoreKind\(\) === "postgresql"\) \{/)
 # 回执正文的清理原先只挂在 REST 那个写入点上，这条判据也就盯着「那句话在 server.mjs 里」。
 # 而 MCP 那个写入点只写不清（agent 全走 MCP），照样一路绿 —— 判据盯的是写法与落点，不是性质。
 # 现在写入收成 core 的 recordIdempotentResult 一个入口：清理与淘汰跟着它走，

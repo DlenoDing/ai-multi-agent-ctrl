@@ -6618,6 +6618,32 @@ const MUTATIONS = [
     expect: "把新成员的默认项目设成已归档项目没被拒"
   },
   {
+    name: "只读请求不许每次深拷整份状态",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyReadOnlyRequestsShareOneFrozenState",
+    from: "      (value) => runtimeJsonStateCacheKey(options, value), {shared: readOptions.shared});",
+    to: "      (value) => runtimeJsonStateCacheKey(options, value));",
+    expect: "还在每次克隆整份状态"
+  },
+  {
+    name: "只读那份必须是冻的",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    check: "verifyReadOnlyRequestsShareOneFrozenState",
+    // 打在【命中】那条冻结上：判据里第一次读其实就是命中（建初始状态时写入方已经填过缓存），
+    // 打在未命中那条上测不出区别（实测：去掉它，判据照样绿）。两处都要在——这里只验得了一处。
+    from: "        //（不带 shared 的调用方拿到的都是克隆），就地冻上是安全的。\n        if (readOptions.shared) deepFreeze(cached);",
+    to: "        //（不带 shared 的调用方拿到的都是克隆），就地冻上是安全的。\n        if (readOptions.shared) { /* 不冻 */ }",
+    expect: "拿到的不是冻结对象"
+  },
+  {
+    name: "只读取数不许顺手补全集合",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "doctor",
+    from: "  return (state.agentJoinTokens || [])\n    .filter((item) => !projectId || item.projectId === projectId)",
+    to: "  ensureAgentGatewayCollections(state);\n  return (state.agentJoinTokens || [])\n    .filter((item) => !projectId || item.projectId === projectId)",
+    expect: "logout fixture bearer could not read state before revocation"
+  },
+  {
     name: "被漂移守卫挡住时要说得出下一步",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

@@ -168,7 +168,7 @@ export function storedStateExists(options) {
   return existsSync(options.statePath);
 }
 
-export function readStoredState(options) {
+export function readStoredState(options, readOptions = {}) {
   if (stateStoreKind() === "postgresql") {
     // PG 分支自己做建表 + 一次读；不再走 ensureStoredState 里那次"只为判断存在性"的全量读。
     mkdirSync(options.runtimeDir, {recursive: true});
@@ -177,17 +177,33 @@ export function readStoredState(options) {
     ensureStoredState(options);
   }
   if (stateStoreKind() !== "postgresql") {
-    const cached = cachedStoredState(hydratedStateCache, options.statePath, (value) => runtimeJsonStateCacheKey(options, value));
+    // shared:true 的调用方原样拿走缓存里那一份（不克隆）。每次命中都 structuredClone 整份状态
+    // 实测 8.18ms —— 而每个 API 请求都走这条路。冻结是共用的安全底座：谁不小心写它当场抛错，
+    // 而不是悄悄污染此后所有人的读（与中央态那条路同一套办法）。
+    const cached = cachedStoredState(hydratedStateCache, options.statePath,
+      (value) => runtimeJsonStateCacheKey(options, value), {shared: readOptions.shared});
     if (cached) {
-      cached.__loadedStateVersion = Number(cached.stateVersion || 0);
+      // 冻上之后这个赋值会抛 —— 所以只在还没冻的时候补，冻的那份在放进缓存之前就打好了。
+      if (!Object.isFrozen(cached)) {
+        cached.__loadedStateVersion = Number(cached.stateVersion || 0);
+        // 缓存也可能是【写入方落盘之后】填的（那一份没冻）。共用方拿走的必须是冻的，
+        // 否则一个不小心写它的读路径会悄悄污染此后所有人的读。缓存里那份没有别人握着
+        //（不带 shared 的调用方拿到的都是克隆），就地冻上是安全的。
+        if (readOptions.shared) deepFreeze(cached);
+      }
       return cached;
     }
     return withRuntimeJsonLock(options, () => {
       const central = parseStateFile(options.statePath);
       assertStateSchemaSupported(central);
       const state = hydrateProjectState(central, options);
-      cacheStoredState(hydratedStateCache, options.statePath, state, runtimeJsonStateCacheKey(options, central));
       state.__loadedStateVersion = Number(state.stateVersion || 0);
+      if (readOptions.shared) {
+        deepFreeze(state);
+        cacheStoredState(hydratedStateCache, options.statePath, state, runtimeJsonStateCacheKey(options, central), {frozen: true});
+        return state;
+      }
+      cacheStoredState(hydratedStateCache, options.statePath, state, runtimeJsonStateCacheKey(options, central));
       return state;
     });
   }
