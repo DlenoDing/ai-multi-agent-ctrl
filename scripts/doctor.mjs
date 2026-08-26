@@ -277,10 +277,15 @@ const doctorRepo = setupDoctorRepository(root);
   }
 }
 
+// 路由记账：这一轮打进服务端的每个请求记一行，收尾时对着路由清单核覆盖面（见文件末尾那条棘轮）。
+const routeTracePath = join(doctorRuntimeDir, "route-trace.log");
+try { rmSync(routeTracePath, {force: true}); } catch { /* 首轮还没有这个文件 */ }
+
 const child = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
   cwd: root,
   env: {
     ...process.env,
+    AIMAC_ROUTE_TRACE: routeTracePath,
     AIMAC_HOST: "127.0.0.1",
     // 我要是被 SIGKILL 掉（或终端被关），finally 跑不了 —— 这个服务端就成了占着端口的孤儿。
     AIMAC_EXIT_WITH_PARENT: "1",
@@ -3753,6 +3758,97 @@ try {
   if (!mainBodyCompleted) {
     console.error("  --  主体断言已经失败，写路由空 body / 类型错乱扫描本轮跳过（跑它只会盖掉真正的原因）");
   } else {
+  // 【控制台专用取数口要真的被打过】。运行时记账（AIMAC_ROUTE_TRACE）量过一次：86 条路由里
+  // 三套 e2e 真跑到 81 条，剩下 5 条从没被执行过 —— 其中 /api/system/overview 与 /api/org/agents
+  // 正是「系统概览」和「组织智能体」两页的取数口。它们 500 也好、少给一个字段也好，
+  // 在任何门里都不会红；而界面直接把这些字段渲染成屏幕上的数字。
+  // 字段清单【从 app.js 自动提取】，不手写：手写的期望表本身就是错误来源，而且下一个人
+  // 在界面上多读一个字段时，手写表不会跟着变。
+  {
+    const appSource = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+    const overview = await jsonFetch(port, "/api/system/overview", {headers: {authorization: doctorSystemAuth}});
+    if (!overview.response.ok) {
+      throw new Error(`系统概览取数口回了 ${overview.response.status}/${overview.payload?.error} —— 「系统概览」整页拿不到数`);
+    }
+    // 只要求【会被直接渲染】的字段存在：写成 `overview.a.b ? … : …` 的是可选标志（例如
+    // storage.partial 只在真的有文件量不到时才带上），缺了在界面上就是"不显示这个提示"，
+    // 那是设计好的。第一版没分这两种，把一个正常的可选标志报成了缺陷。
+    const readPaths = [...new Set([...appSource.matchAll(/\boverview\.(\w+)\.(\w+)(\s*\?)?/gu)]
+      .filter((hit) => !hit[3]).map((hit) => `${hit[1]}.${hit[2]}`))];
+    if (readPaths.length < 10) {
+      throw new Error(`只从 app.js 提取到 ${readPaths.length} 个 overview 字段读取点 —— 提取脱节，这条断言在空转`);
+    }
+    const missing = readPaths.filter((path) => {
+      const [group, key] = path.split(".");
+      return !(overview.payload?.[group] && Object.prototype.hasOwnProperty.call(overview.payload[group], key));
+    });
+    if (missing.length) {
+      throw new Error(`「系统概览」读了这些字段，而取数口不下发：${missing.join("、")} —— 屏幕上会显示成 undefined`);
+    }
+    // 存储占用量不到时必须回 null 而不是 0（0 会被渲染成"0 B"，人据此判断容量）。
+    if (overview.payload.storage?.centralStateBytes === 0) {
+      throw new Error("系统概览把状态库大小报成 0 字节 —— 量不到要回 null，0 是个看起来正常的错数");
+    }
+    console.log(`  ok  系统概览取数口：${readPaths.length} 个界面读的字段逐个核对，都在响应里`);
+
+    // /api/health 是【运维和 docker 健康检查】打的那一条（docker-compose 的 healthcheck 就是它），
+    // 而 doctor 一路只打 /api/runtime/health —— 路由记账量出来才发现它从没被这套 e2e 执行过。
+    // 它必须不要求鉴权（healthcheck 没有凭据），并且如实带上存储故障信号：
+    // 这个接口最重要的性质是"坏的时候要说坏"，绿着的时候顺带证明它没要凭据。
+    const health = await jsonFetch(port, "/api/health", {});
+    if (health.response.status !== 200 || health.payload?.status !== "ok") {
+      throw new Error(`健康检查回了 ${health.response.status}/${JSON.stringify(health.payload).slice(0, 120)} —— `
+        + "docker 的 healthcheck 打的就是它，它一说不 ok，编排系统会把容器判成不健康");
+    }
+    if (health.payload.storageFault) {
+      throw new Error(`健康检查报了存储故障：${JSON.stringify(health.payload.storageFault)}`);
+    }
+
+    const orgAgents = await jsonFetch(port, "/api/org/agents", {headers: {authorization: doctorSystemAuth}});
+    if (!orgAgents.response.ok || !Array.isArray(orgAgents.payload?.agentRuntimeNodes)) {
+      throw new Error(`组织智能体取数口回了 ${orgAgents.response.status}/${orgAgents.payload?.error} —— 「组织智能体」整页拿不到数`);
+    }
+    if (!orgAgents.payload.agentRuntimeNodes.length) {
+      throw new Error("组织智能体取数口一个节点都没回 —— 本轮明明注册过节点，这条断言测不到 display 那一层");
+    }
+    // 界面按 node.display?.X 渲染：可选链让「字段没了」在屏幕上表现为空白而不是报错。
+    const displayKeys = [...new Set([...appSource.matchAll(/\bnode\.display\?\.(\w+)/gu)].map((hit) => hit[1]))];
+    if (displayKeys.length < 3) {
+      throw new Error(`只提取到 ${displayKeys.length} 个 node.display 字段 —— 提取脱节，这条断言在空转`);
+    }
+    const badNode = orgAgents.payload.agentRuntimeNodes.find((node) =>
+      displayKeys.some((key) => !node.display || !Object.prototype.hasOwnProperty.call(node.display, key)));
+    if (badNode) {
+      throw new Error(`节点 ${badNode.nodeId} 的 display 缺字段（界面读 ${displayKeys.join("、")}）—— `
+        + "界面用的是可选链，缺字段不会报错，只会在屏幕上空着");
+    }
+    console.log(`  ok  组织智能体取数口：${orgAgents.payload.agentRuntimeNodes.length} 个节点、${displayKeys.length} 个界面读的 display 字段逐个核对`);
+
+    // 这两条只有文档提到、没有任何代码调用（控制台走的是视图）。它们仍然是对外接口，
+    // 至少要保证「答得出、答的是真数」：skill-registry 那个计数曾经【恒为 0】——
+    // 它从 scoped 里数，而主视图瘦身时把 roleSkills 清空了，只是从没人调过它，没人看见。
+    const skillRegistry = await jsonFetch(port, "/api/skill-registry", {headers: {authorization: doctorSystemAuth}});
+    if (!skillRegistry.response.ok) {
+      throw new Error(`技能注册表取数口回了 ${skillRegistry.response.status}/${skillRegistry.payload?.error}`);
+    }
+    const countedSkills = Object.values(skillRegistry.payload.roleSkillCountBySource || {}).reduce((sum, n) => sum + n, 0);
+    const fullState = await jsonFetch(port, "/api/state?view=full&limit=500", {headers: {authorization: doctorSystemAuth}});
+    const realSkills = (fullState.payload.roleSkills || []).length;
+    if (!realSkills) {
+      throw new Error("整份状态里一条角色技能都没有 —— 下面这条计数对照在空转");
+    }
+    if (countedSkills !== realSkills) {
+      throw new Error(`技能注册表报的角色技能数是 ${countedSkills}，实际 ${realSkills} —— `
+        + "它从被瘦身过的视图里数，会恒为 0；这一族没人调过所以一直没人看见");
+    }
+    const modelRegistry = await jsonFetch(port, "/api/model-registry", {headers: {authorization: doctorSystemAuth}});
+    if (!modelRegistry.response.ok || !(modelRegistry.payload.modelCapabilities || []).length) {
+      throw new Error(`模型注册表取数口没给出模型能力（${modelRegistry.response.status}/${modelRegistry.payload?.error}）`);
+    }
+    console.log(`  ok  技能/模型注册表取数口：角色技能计数 ${countedSkills} 与实际相等、模型能力 ${modelRegistry.payload.modelCapabilities.length} 条`
+      + "（这两条只有文档提到、没有代码调用，此前从未被执行过)");
+  }
+
   // 【REST 写路由的空 body 扫描】——MCP 那侧同形的孪生（85 个工具逐个空参调过）。
   // 人和脚本都会把 body 写漏（前端一个字段没填、curl 忘了 -d），这一刻系统说什么，决定了对方
   // 是能自己改对、还是去查一个不存在的问题。三件事：一个都不许 5xx（那是内部错误，不是回答）、
@@ -3879,7 +3975,7 @@ try {
     const sweepPort = await getFreePort();
     const sweepChild = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {cwd: root,
       stdio: ["ignore", "pipe", "pipe"],
-      env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(sweepPort), AIMAC_RUNTIME_DIR: sweepDir,
+      env: {...process.env, AIMAC_ROUTE_TRACE: routeTracePath, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: String(sweepPort), AIMAC_RUNTIME_DIR: sweepDir,
         AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_BOOTSTRAP_TOKEN: "doctor-bootstrap-token",
         AIMAC_EXIT_WITH_PARENT: "1"}});
     let sweepStderr = "";
@@ -4072,6 +4168,7 @@ try {
   }
   }
 
+
   child.kill("SIGTERM");
 }
 
@@ -4254,6 +4351,70 @@ console.log(`拒绝码点名：${UNNAMED_REFUSALS.length} 条 4xx 断言只判�
   + `（棘轮 ${UNNAMED_REFUSAL_CEILING}，只降不升；AIMAC_LIST_UNNAMED_REFUSALS=1 可列出清单与实测码）`);
 
 console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条记录符合各自声明的 schema（含人工确认与定稿记录）；${doctorSweep.uncoveredNote}`);
+
+// 【每条对外路由都要被真跑过】。「有调用方」和「被执行过」是两件事：前者在源码里搜得到路径，
+// 后者要真有一个请求打进去。用运行时记账量过一次 —— 86 条路由里三套 e2e 只跑到 81 条，
+// 剩下 5 条从没执行过，其中两条正是「系统概览」「组织智能体」两页的取数口（500 了也没人知道），
+// 一条是 agent 查自己确认单的通道（带 ?consume=true 的写副作用 + 跨节点隔离守卫）。
+// 这条棘轮只管【本套 e2e】自己的覆盖面：跨套件攒轨迹要靠文件在多次运行之间留存，
+// 那种"上一次跑剩下的"最会骗人。别的套件负责的那几条逐个登记，写明是谁在管。
+{
+  const OTHER_SUITE_COVERS = {
+    "/api/agent-nodes": "GET 节点清单：doctor-agent-remote 里注册真节点之后读它",
+    "/api/agent/v1/confirmations/": "agent 查自己那张确认单：要节点令牌，在 doctor-agent-remote",
+    "/api/agent/v1/content-bundles/": "内容包下发：要节点令牌，在 doctor-agent-remote",
+    "/api/agent/v1/control": "控制通道取命令：要节点令牌，在 doctor-agent-remote",
+    "/api/agent/v1/nodes/me": "节点自查：要节点令牌，在 doctor-agent-remote",
+    "/api/agent/v1/skill-worksets/": "按需技能集：要节点令牌，在 doctor-agent-remote"
+  };
+  const serverSource = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const literals = new Set();
+  const prefixes = new Set();
+  for (const hit of serverSource.matchAll(/url\.pathname === "(\/api\/[^"]+)"/gu)) literals.add(hit[1]);
+  for (const hit of serverSource.matchAll(/\["(\/api\/[^"]+)", "(\/api\/[^"]+)"\]\.includes\(url\.pathname\)/gu)) {
+    literals.add(hit[1]);
+    literals.add(hit[2]);
+  }
+  for (const hit of serverSource.matchAll(/url\.pathname\.match\(\/\^\\\/api\\\/([a-z0-9\\/_-]+)/gu)) {
+    prefixes.add(`/api/${hit[1].replace(/\\\//gu, "/").replace(/\\/gu, "")}`);
+  }
+  const routes = [...[...literals].map((route) => ({route, literal: true})),
+    ...[...prefixes].map((route) => ({route, literal: false}))];
+  if (routes.length < 60) {
+    throw new Error(`路由只提取到 ${routes.length} 条（应 60+）—— 提取与代码脱节，这条棘轮在空转`);
+  }
+  let traced = "";
+  try { traced = readFileSync(routeTracePath, "utf8"); } catch { traced = ""; }
+  const lines = traced.split("\n").filter(Boolean);
+  if (lines.length < 200) {
+    throw new Error(`路由记账只收到 ${lines.length} 条请求（本轮打了几百个）—— 记账没接上，这条棘轮在空转`);
+  }
+  const hit = new Set();
+  for (const line of lines) {
+    const path = line.split(" ")[1] || "";
+    let best = null;
+    for (const route of routes) {
+      const matches = route.literal ? path === route.route : path.startsWith(route.route);
+      if (matches && (!best || route.route.length > best.route.length)) best = route;
+    }
+    if (best) hit.add(best.route);
+  }
+  const cold = routes.map((route) => route.route).filter((route) => !hit.has(route) && !OTHER_SUITE_COVERS[route]).sort();
+  if (cold.length) {
+    throw new Error(`这些对外路由本轮一次都没被打到：${cold.join("、")} —— `
+      + "「源码里有调用方」不等于「跑得到」；要么在这里打一次并断言它答的是什么，要么登记到 OTHER_SUITE_COVERS 写明是谁在管");
+  }
+  for (const [route, why] of Object.entries(OTHER_SUITE_COVERS)) {
+    if (!routes.some((item) => item.route === route)) {
+      throw new Error(`OTHER_SUITE_COVERS 里的 ${route} 已经不是一条路由了 —— 登记过期（${why}）`);
+    }
+    if (hit.has(route)) {
+      throw new Error(`${route} 登记着"由别的套件覆盖"，本轮却被打到了 —— 登记过期，删掉它让棘轮直接管住（${why}）`);
+    }
+  }
+  console.log(`路由覆盖 ok: ${routes.length} 条对外路由，本轮真打到 ${hit.size} 条（按运行时记账，不是源码里搜路径），`
+    + `${Object.keys(OTHER_SUITE_COVERS).length} 条登记为由 agent 套件覆盖`);
+}
 
 // 【明文机密不许落盘】。一次性令牌按设计只在签发那一刻回给调用方一次；如果它同时被写进了
 // 状态、幂等记录或审计归档，那就等于永久留在磁盘上 —— 而状态文件会随 view=full 出去、

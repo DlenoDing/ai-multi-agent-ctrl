@@ -987,6 +987,25 @@ try {
     if (card.decisionClass === "major") {
       throw new Error("agent 提的单被记成了核心决策 —— 核心决策一律由控制面按真实对象生成，不走这条通道");
     }
+    // agent 回头【查】自己那张单的通道，此前三套 e2e 也从没走过（路由记账量出来的最后一条）。
+    // 它守着两件事：只能查自己节点的单；`?consume=true` 只在人已答复时才销单。
+    const own = await json(`/api/agent/v1/confirmations/${encodeURIComponent(card.requestId)}`,
+      {token: revokeRegistration.nodeToken});
+    if (own.request?.requestId !== card.requestId) {
+      throw new Error(`agent 查不到自己刚提的确认单：${JSON.stringify(own).slice(0, 160)}`);
+    }
+    const foreign = await jsonRaw(`/api/agent/v1/confirmations/${encodeURIComponent(card.requestId)}`,
+      {token: rotatedAgentConfig.nodeToken});
+    if (foreign.response.status !== 404 || foreign.payload?.error !== "human_confirmation_not_found") {
+      throw new Error(`别的节点查得到这张确认单（${foreign.response.status}/${foreign.payload?.error}）—— `
+        + "确认单里写着这台机器在做什么、要不要继续，跨节点必须查不到");
+    }
+    // 人还没答复时销单：必须不销。销掉的话，那张卡片会从人工审核页上消失，而没有人回答过它。
+    const earlyConsume = await json(`/api/agent/v1/confirmations/${encodeURIComponent(card.requestId)}?consume=true`,
+      {token: revokeRegistration.nodeToken});
+    if (earlyConsume.request?.status === "consumed") {
+      throw new Error("人还没答复，agent 一句 consume=true 就把确认单销掉了 —— 那张卡片会从人工审核页上消失，而没人回答过它");
+    }
   }
 
   const revokeResult = await json(`/api/agent-nodes/${revokeRegistration.node.nodeId}/revoke`, {

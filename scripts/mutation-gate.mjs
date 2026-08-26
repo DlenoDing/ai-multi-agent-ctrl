@@ -6607,6 +6607,24 @@ const MUTATIONS = [
     expect: "读 args.workItemId，而 tools/list 上它不公布这个键"
   },
   {
+    name: "路由没被真打过要看得见",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    // 忠实形状：有人【新加了一条路由】而没有任何 e2e 打过它。改名既有路由不行 ——
+    // 那条路由自己的断言会先红，报出来的是"接口 404"，指的不是这道棘轮。
+    from: '  const agentConfirmationMatch = url.pathname.match',
+    to: '  if (req.method === "GET" && url.pathname === "/api/never-called-probe") { json(res, 200, {}); return; }\n  const agentConfirmationMatch = url.pathname.match',
+    expect: "本轮一次都没被打到：/api/never-called-probe"
+  },
+  {
+    name: "路由记账断了要看得见",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    try { appendFileSync(routeTraceFile, `${req.method} ${url.pathname}\\n`); } catch { /* 记账坏了不能影响请求 */ }",
+    to: "    try { if (false) appendFileSync(routeTraceFile, `${req.method} ${url.pathname}\\n`); } catch { /* 记账坏了不能影响请求 */ }",
+    expect: "记账没接上"
+  },
+  {
     name: "收受面不许跟着公布面收窄",
     file: "apps/mcp-server/server.mjs",
     gate: "mcp",

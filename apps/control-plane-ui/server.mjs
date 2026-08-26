@@ -2696,8 +2696,15 @@ function serveStatic(req, res, pathname) {
 
 const execFileAsync = promisify(execFile);
 
+const routeTraceFile = process.env.AIMAC_ROUTE_TRACE || null;
+
 async function handleApi(req, res) {
   const url = new URL(req.url, "http://request.local");
+  // 路由记账（默认关闭，只在门里打开）：「这条路由有没有被真打过」不能靠在 e2e 源码里搜路径 ——
+  // 搜到的是"提到过"，不是"跑到过"。开关关着时这一行只是一次环境变量读取。
+  if (routeTraceFile) {
+    try { appendFileSync(routeTraceFile, `${req.method} ${url.pathname}\n`); } catch { /* 记账坏了不能影响请求 */ }
+  }
   if (req.method === "GET" && ["/api/health", "/api/runtime/health"].includes(url.pathname)) {
     // 存储坏过一次就不能再报 ok：分片损坏时服务照常起、这里照常 200，监控绿着而读数据全 503。
     // healthy 的定义得包含"状态读得出来"。
