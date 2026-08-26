@@ -884,6 +884,69 @@ try {
         + "归属缺失会让三处跨组织边界闸门整条跳过（`X.organizationId && ...` 在 undefined 时不成立）");
     }
 
+    // 【人工豁免质量门：能把一道没过的门放过去的那个杠杆】。它是真人专属，而且是
+    // 「不修就放行」这一类里最重的一个 —— 而按状态码记账量出来，/api/quality-gates/:id/waive
+    // 在整套控制面 e2e 里【从没返回过 2xx】。原因也查清了：REST 侧根本没有造质量门的入口，
+    // 质量门只由 agent 提交的测试结果派生（本套里那条链刚造过），所以这条杠杆只能在这里验。
+    {
+      const failedTest = await call("evidence-mcp.test_result_submit", {
+        taskGroupId: TG, workItemId: WORK, status: "failed", gateType: "waive_probe",
+        command: "npm run -s validate", summary: "链路探针：故意失败的质量门"});
+      const failedGate = failedTest.qualityGate || {};
+      if (failedGate.status !== "failed") {
+        throw new Error(`失败的测试没派生出失败的质量门（${failedGate.status}）：${JSON.stringify(failedTest).slice(0, 240)}`);
+      }
+      // 不给理由不许豁免：那几个字段是这位真人处置理由的唯一存放处（审计只记 actor/action/subject）。
+      const noReason = await api(`/api/quality-gates/${encodeURIComponent(failedGate.gateId)}/waive`, {
+        method: "POST", token: admin.sessionToken, idempotencyKey: "doctor-mcp-waive-no-reason", body: {}})
+        .catch((error) => ({error: String(error?.message || error)}));
+      if (!String(JSON.stringify(noReason)).includes("quality_gate_waive_requires_justification")) {
+        throw new Error(`不给理由就豁免了质量门：${JSON.stringify(noReason).slice(0, 240)}`);
+      }
+      const waived = await api(`/api/quality-gates/${encodeURIComponent(failedGate.gateId)}/waive`, {
+        method: "POST", token: admin.sessionToken, idempotencyKey: "doctor-mcp-waive-ok",
+        body: {justification: "e2e：这条失败与本次交付无关，人工豁免"}});
+      const waivedGate = waived.qualityGate || waived;
+      if (waivedGate.status !== "waived" || !waivedGate.waiveJustification || !waivedGate.waivedBy) {
+        throw new Error(`豁免没落账（状态 ${waivedGate.status}、理由 ${waivedGate.waiveJustification}、`
+          + `处置人 ${waivedGate.waivedBy}）：${JSON.stringify(waived).slice(0, 240)}`);
+      }
+      // 一次性：已了结的门不许被后来者无条件覆写 —— 那位真人的理由是不可恢复的。
+      const again = await api(`/api/quality-gates/${encodeURIComponent(failedGate.gateId)}/waive`, {
+        method: "POST", token: admin.sessionToken, idempotencyKey: "doctor-mcp-waive-again",
+        body: {justification: "第二次豁免"}}).catch((error) => ({error: String(error?.message || error)}));
+      if (!String(JSON.stringify(again)).includes("quality_gate_already_settled")) {
+        throw new Error(`已豁免的质量门被二次处置：${JSON.stringify(again).slice(0, 240)}`);
+      }
+      // 【AI 不许自己把失败的门抹平】：同一个 AI 再交一次"这次过了"而拿不出新证据时，不改判。
+      const retryWithoutEvidence = await call("evidence-mcp.test_result_submit", {
+        taskGroupId: TG, workItemId: WORK, status: "passed", gateType: "waive_probe_2",
+        command: "npm run -s validate", summary: "第一次：失败"});
+      if ((retryWithoutEvidence.qualityGate || {}).status !== "passed") {
+        throw new Error("第一次提交就没建出通过的门 —— 下面那条改判断言会空转");
+      }
+      await call("evidence-mcp.test_result_submit", {
+        taskGroupId: TG, workItemId: WORK, status: "failed", gateType: "waive_probe_2",
+        command: "npm run -s validate", summary: "第二次：失败"});
+      const sneaky = await call("evidence-mcp.test_result_submit", {
+        taskGroupId: TG, workItemId: WORK, status: "passed", gateType: "waive_probe_2",
+        command: "npm run -s validate", summary: "第三次：我又跑了一遍，这次过了（没有新证据）"});
+      // 【评审覆盖要记在真正评审的那个角色名下】。reviewerRole 此前也传不进来，
+      // 于是任何一次评审结论回流都记成 "reviewer" —— qa 评了一次，reviewer 那一格就被填上，
+      // 而评审计划正是按"要求的角色到齐没有"判是否闭合。
+      const qaConsume = await call("review-mcp.review_result_consume", {
+        taskGroupId: TG, workItemId: WORK, reviewerRole: "qa", verdict: "passed", summary: "qa 评审"});
+      const qaPlan = qaConsume.reviewPlan || {};
+      if (qaPlan.coveredReviewerRoles && !qaPlan.coveredReviewerRoles.includes("qa")) {
+        throw new Error(`qa 的评审没记在 qa 名下：${JSON.stringify(qaPlan.coveredReviewerRoles)} —— `
+          + "评审计划按「要求的角色到齐没有」判闭合，记错角色就等于替别人签了字");
+      }
+      if ((sneaky.qualityGate || {}).status === "passed") {
+        throw new Error("AI 用一句「我又跑了一遍、这次过了」把失败的质量门抹平了（没有任何新证据）—— "
+          + "那样一来，能把门判失败的和能把门清掉的是同一个 AI，人看到的「全通过」就是空的");
+      }
+    }
+
     // 【角色技能叠加：从没被跑通过的那条真人杠杆】。它改的是 agent 实际拥有的能力
     //（含 forbiddenCapabilityAdds），控制台上明写「真人专属、控制台只读、由人经 API 创建」。
     // 而按状态码记账量出来：/api/role-skill-overlays 全仓除文档外没有任何调用方，

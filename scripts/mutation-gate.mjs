@@ -3203,8 +3203,11 @@ const MUTATIONS = [
     name: "case 体里先有守卫的工具不许从可达性账本里漏掉",
     file: "scripts/contract-check.mjs",
     check: "verifyToolArgReachabilityIsRegistered",
-    from: 'const cases = [...mcpSource.matchAll(/case "([\\w.-]+)":(?:(?!\\n    case )[\\s\\S]){0,900}?\\n\\s*return (\\w+)\\(/gu)];',
-    to: 'const cases = [...mcpSource.matchAll(/case "([\\w.-]+)":\\s*\\n\\s*return (\\w+)\\(/gu)];',
+    // 这条守的是【case 体里先有别的语句】那种形状：提取要求 case 后面紧跟 return 的话，
+    // 带守卫/注释开头的那些工具会整个掉出账本。（另有一条守「一个 case 里调多个函数」——
+    // 两件事不同：旧提取对这些 case 是匹配上的，只是匹配到了第一个函数。）
+    from: '  const caseBlocks = [...mcpSource.matchAll(/case "([\\w.-]+)":((?:(?!\\n    case ")[\\s\\S]){0,2400}?)(?=\\n    case "|\\n    default:)/gu)];',
+    to: '  const caseBlocks = [...mcpSource.matchAll(/case "([\\w.-]+)":(\\s*\\n\\s*return [^;]*;)/gu)];',
     expect: "登记过时"
   },
   {
@@ -6613,6 +6616,30 @@ const MUTATIONS = [
     from: '  if (project.status === "archived") {\n    return {error: "member_default_project_archived"',
     to: '  if (false) {\n    return {error: "member_default_project_archived"',
     expect: "把新成员的默认项目设成已归档项目没被拒"
+  },
+  {
+    name: "入参可达性要看得见 case 里第二个函数",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyToolArgReachabilityIsRegistered",
+    from: "    gateType: string,",
+    to: "",
+    expect: "读了 args.gateType，而共用入参词表里没有这个键"
+  },
+  {
+    name: "人工豁免质量门必须给理由",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "mcp",
+    from: '    if (!justification) return json(res, 400, {error: "quality_gate_waive_requires_justification"});',
+    to: "    if (false) return json(res, 400, {error: \"x\"});",
+    expect: "不给理由就豁免了质量门"
+  },
+  {
+    name: "已豁免的质量门不许被二次处置",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "mcp",
+    from: '    if (["waived", "passed"].includes(gate.status)) return json(res, 409, {error: "quality_gate_already_settled", qualityGate: gate});',
+    to: "    if (false) return json(res, 409, {error: \"x\"});",
+    expect: "已豁免的质量门被二次处置"
   },
   {
     name: "已了结的会话不许持有产出目标租约",

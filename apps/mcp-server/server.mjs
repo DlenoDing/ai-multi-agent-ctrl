@@ -424,6 +424,16 @@ function commonInputProperties() {
     fencingToken: {type: ["string", "number"]},
     findingId: string,
     findingType: string,
+    // 2026-08-27 接通：这三个键【读了却一直传不进来】，而它们各自决定一件实事 ——
+    //   gateType     一次测试属于哪道质量门。缺了的话所有结果都挤在同一个 gateId 上
+    //                （qg:<任务组>:<工作项>:test），lint 与 build 互相顶替；
+    //   verdict      评审结论。缺了的话评审包一律按"已消费"终态化，"打回"表达不出来；
+    //   reviewerRole 这次评审是哪个角色做的。缺了的话覆盖度永远记在 reviewer 名下，
+    //                qa 的一次评审会把 reviewer 那一格填上（评审计划据此判到不到齐）。
+    // 三者都不是身份、也不是资源地址，开出来不影响作用域判定（作用域覆盖门会核这一点）。
+    gateType: string,
+    verdict: string,
+    reviewerRole: string,
     grantId: string,
     grantPermissions: array,
     grantRole: string,

@@ -362,7 +362,11 @@ const MCP_UNREACHABLE_TOOL_ARGS = {
     changePolicy: "唯一能改的子项是「改了规范要不要作废下游的确认」。开了等于让创建方自己说"
       + "「我改了不用别人重新确认」—— 规范变更的意义就没了",
     actionScopeRefs: "角色漂移守卫管到哪些动作。不填是整个任务组，填了就是【缩小监管范围】",
-    reasonCode: "治理决策上的理由码。它是会被别处引用的记录，理由不该由被判定方自己写"
+    reasonCode: "治理决策上的理由码。它是会被别处引用的记录，理由不该由被判定方自己写",
+    // 2026-08-27 提取修好之后新露出来的（此前这一族的 case 写成
+    // `return 守卫(...) || 处理函数(...)`，而提取只看第一个 return，处理函数读的参数全在视野外）。
+    participantId: "协作室参与者身份。core 里已写死由服务端从已认证主体派生（注释就在那一行）—— "
+      + "自填就能改写别人的那条参与记录"
   },
   // 词表里【有】这个键，但任何工具都不许读它：它与上面的 root 是同一个能力的两个名字，
   // 只挡住 root 等于「一条不变式两扇门只守一扇」。全仓没有任何合法调用方传过它，
@@ -387,7 +391,16 @@ const MCP_UNREACHABLE_TOOL_ARGS = {
     // 经 MCP 处置一条发现项时，只能落到缺省结论上，"凭什么这么处置"说不出来。
     dispositionClass: "governance-mcp.finding_resolve：这条发现项按哪一类处置（已修/不适用/已调整范围/外部阻塞）",
     rootCauseOwner: "同上：外部阻塞类必须说清根因归谁，缺了会被降级成 blocked_external_incomplete",
-    recoveryRef: "同上：外部阻塞的恢复凭据，与 rootCauseOwner 成对使用"
+    recoveryRef: "同上：外部阻塞的恢复凭据，与 rootCauseOwner 成对使用",
+
+    // 调用方自选 id 这一族：留着不开。重试与去重由 idempotencyKey 管（写工具没有它一律拒），
+    // 自选 id 只多一条"撞了谁"的路 —— 两个工厂都有唯一性断言接着，但没有理由把它开出来。
+    testResultId: "evidence-mcp.test_result_submit 的自选记录 id：重试与去重由 idempotencyKey 管，不需要它",
+    ackId: "room-mcp.room_ack 的自选记录 id：ack 是按(房间,参与者)就地替换的，不需要调用方指定 id",
+    // 这两个是"能表达得更细，但今天缺省已经表达了同一件事"：
+    messageRefs: "room-mcp.room_ack 想逐条点名确认了哪几条消息；今天的 ack 是按 cursor 推进的，"
+      + "cursor 已经表达了'读到哪儿了'。要开就得连 ack 的语义一起改（按条 vs 按位点），不是加个键的事",
+    tail: "room-mcp.room_wait 想指定回最近几条；今天由 cursor 决定从哪儿开始，条数由服务端上限管"
   }
 };
 
@@ -8498,9 +8511,16 @@ function verifyToolArgReachabilityIsRegistered(output) {
   // case 体里可以先有别的语句再 return（2026-08-26 给 grant_create/grant_revoke 加了
   // "拒机器主体"的守卫之后，只认"case 紧跟 return"的提取就把这两个工具整个漏掉了，
   // 于是它们的入参登记被报成"没人读了"—— 提取脱节的表现恰恰是【登记看起来过时】）。
-  const cases = [...mcpSource.matchAll(/case "([\w.-]+)":(?:(?!\n    case )[\s\S]){0,900}?\n\s*return (\w+)\(/gu)];
-  if (cases.length < 40) {
-    output.push(`只识别到 ${cases.length} 条工具派发（远少于既有规模）—— 提取脱节，本条在空转`);
+  // 【一条 case 里可能调不止一个函数】。原先只取第一个 `return fn(`，而这一族写的是
+  // `return boundedTaskGroupGuard(state, args, context) || 真正的处理函数(state, args);` ——
+  // 于是这 8 个工具一直在被按【守卫的函数体】检查，真正处理函数读了哪些参数完全不在视野里。
+  // 实测因此漏掉了 evidence-mcp.test_result_submit 的 gateType：它读了、而调用方传不进来，
+  // 结果所有测试结果都挤在同一个 gateId 上（qg:<任务组>:<工作项>:test）。
+  const caseBlocks = [...mcpSource.matchAll(/case "([\w.-]+)":((?:(?!\n    case ")[\s\S]){0,2400}?)(?=\n    case "|\n    default:)/gu)];
+  const cases = caseBlocks.flatMap(([, tool, block]) =>
+    [...new Set([...block.matchAll(/\b(\w+)\(state[,)]/gu)].map((hit) => hit[1]))].map((fn) => [null, tool, fn]));
+  if (caseBlocks.length < 40) {
+    output.push(`只识别到 ${caseBlocks.length} 条工具派发（远少于既有规模）—— 提取脱节，本条在空转`);
     return;
   }
   const registered = {...MCP_UNREACHABLE_TOOL_ARGS.mustStayUnreachable,
