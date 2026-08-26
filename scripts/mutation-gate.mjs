@@ -6615,6 +6615,14 @@ const MUTATIONS = [
     expect: "把新成员的默认项目设成已归档项目没被拒"
   },
   {
+    name: "组织概览不许拿数组第一个组织当自己的",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  const org = (state.organizations || []).find((item) => item.orgId === currentAccount?.organizationId)\n    || (state.organizations || [])[0] || null;',
+    to: "  const org = (state.organizations || [])[0] || null;",
+    expect: "组织概览显示的是这个账号自己的组织"
+  },
+  {
     name: "成员的默认项目不许指向别的组织",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

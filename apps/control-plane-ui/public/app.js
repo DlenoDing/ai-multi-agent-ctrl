@@ -2341,7 +2341,12 @@ function projectNameOf(projectId) {
 /* ---------------- 组织管理员：组织概览 ---------------- */
 
 function renderOrgOverview() {
-  const org = (state.organizations || [])[0] || null;
+  // 按【当前账号自己的组织】取，不要拿数组第一个：今天服务端只给组织管理员下发它自己那一个
+  // （scopedStateForAccount 过滤过），所以 [0] 碰巧总是对的 —— 而"碰巧对"意味着服务端哪天
+  // 多下发一个组织（例如系统管理员视角、或将来支持跨组织视图），这一页就会把【别人组织的
+  // 配额用量】当成自己的显示出来，而不会有任何东西报错。判据与服务端同一个口径：organizationId。
+  const org = (state.organizations || []).find((item) => item.orgId === currentAccount?.organizationId)
+    || (state.organizations || [])[0] || null;
   const projects = state.projects || [];
   const openTaskGroups = (state.taskGroups || []).filter((taskGroup) => !["closed", "aborted"].includes(taskGroup.status));
   const quotaPanel = org

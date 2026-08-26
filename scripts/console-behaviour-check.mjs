@@ -706,6 +706,34 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     taskGroups: [], agentRuntimeNodes: [], agents: [], agentDispatches: [], workSessions: [],
     closeBarriers: [], qualityGates: [], findings: [], humanConfirmationRequests: [], humanDirectives: [],
     truncatedCollections: [], fleet: {online: 0, total: 0}};
+// 【组织概览显示的必须是这个账号自己的组织】。它原先取 state.organizations[0] —— 今天服务端
+// 只给组织管理员下发它自己那一个，所以"数组第一个"碰巧总是对的。而碰巧对意味着：服务端哪天
+// 多下发一个组织（系统管理员视角、或将来的跨组织视图），这一页就会把【别人组织的配额用量】
+// 当成自己的显示出来，且不会有任何东西报错。判据把账号的组织故意放在数组第二位。
+{
+  const orgRoot = el("div");
+  const orgProbe = loadConsole(orgRoot, {realI18n: true});
+  const orgState = {
+    organizations: [
+      {orgId: "org_other", name: "别人的组织", status: "active",
+        usage: {members: 99, projects: 99, taskGroups: 99, agents: 99}, quotas: {maxMembers: 100, maxProjects: 100, maxTaskGroups: 100, maxAgents: 100}},
+      {orgId: "org_mine", name: "我自己的组织", status: "active",
+        usage: {members: 2, projects: 1, taskGroups: 1, agents: 0}, quotas: {maxMembers: 10, maxProjects: 5, maxTaskGroups: 5, maxAgents: 5}}
+    ],
+    projects: [{id: "p1", name: "项目", organizationId: "org_mine", status: "active"}],
+    taskGroups: [], accounts: [], accessGrants: [], agentRuntimeNodes: [],
+    truncatedCollections: [], fleet: {online: 0, total: 0}
+  };
+  const orgAdmin = {accountId: "u_org", email: "org@b.c", accountType: "org_admin", displayName: "组织管理员", organizationId: "org_mine"};
+  orgProbe.renderFullPageWith(orgState, orgAdmin, "p1", "org-overview");
+  const orgHtml = String(orgRoot.innerHTML || "");
+  check("组织概览渲染出了配额面板（否则下面那条在空转）", orgHtml.includes("配额用量"),
+    `组织概览里找不到配额面板（${orgHtml.length} 字）`);
+  check("组织概览显示的是这个账号自己的组织，不是数组第一个",
+    orgHtml.includes("我自己的组织") && !orgHtml.includes("别人的组织"),
+    "取 organizations[0] 的话，服务端一旦多下发一个组织，人看到的就是别人组织的配额用量");
+}
+
 // 【已注销的账号不许出现在授权下拉里】。注销是终态，后端已经拒（grant_subject_account_retired），
 // 界面还摆着它就是把人往死路上引 —— 按下去回来的是一句拒绝。控制台上有两个这样的下拉：
 // 「项目成员授权」的账号选择、「创建项目」的项目负责人选择。判据压在【渲染出来的 HTML】上，
