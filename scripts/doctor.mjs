@@ -1921,6 +1921,120 @@ try {
   if (machinePause.response.status === 403 && machinePause.payload?.error === "principal_not_allowed_for_action") {
     throw new Error("暂停也被当成真人专属挡掉了 —— 收的是取消/中止，暂停是可恢复的运行调节，不该一起锁");
   }
+  // 【账号注销】2026-08-26 人定做出来的能力。规范与状态机里一直写着 retired 是终态，
+  // 而此前全仓没有任何代码能把账号写成它 —— 「配额统计排除 retired」于是成了一句空话。
+  // 「注销」与「停用」的区别只有一条：停用能启用回来，注销回不来。所以判据要验的不是
+  // 那个字段变没变，而是【三条回来的路是不是都断了】：会话、名下授权、登录凭据。
+  {
+    const victimEmail = "retire.probe@local";
+    const invited = await jsonFetch(port, "/api/accounts", {method: "POST",
+      headers: {authorization: systemAuth, "Idempotency-Key": "doctor-retire-invite"},
+      body: JSON.stringify({displayName: "注销探针", email: victimEmail, accountType: "user_account"})});
+    if (invited.response.status !== 201 || !invited.payload.accountToken) {
+      throw new Error(`注销探针建不出来（HTTP ${invited.response.status}）—— 这一条会空转`);
+    }
+    const victimId = invited.payload.account?.accountId || invited.payload.accountId;
+    const victimSession = await loginAs(port, victimEmail, invited.payload.accountToken);
+    // 给它设个口令：一次性邀请令牌在【首次登录时就被消耗】了（登录那处 delete 掉 credentialDigest），
+    // 不设口令的话这个账号根本没有 passwordDigest，"注销要清掉口令"那条断言就是空转的
+    //（变异门实测：把 delete passwordDigest 整行删掉，判据照样绿）。
+    const victimPassword = await jsonFetch(port, "/api/auth/change-password", {method: "POST",
+      headers: {authorization: victimSession}, body: JSON.stringify({newPassword: "doctor-retire-probe-pass"})});
+    if (!victimPassword.response.ok) throw new Error("注销探针设不了口令 —— 「清掉口令那条路」会空转");
+    // 改密会撤掉该账号的【全部】会话（含当前这条）。不重新登录的话，注销那一刻它名下
+    // 一个活会话都没有，"注销要撤销会话"那条断言又成了空转（变异门实测：把 revokeAccountSessions
+    // 换成 0，判据照样绿）。所以拿新口令再登一次，让它手上确实握着一条活会话。
+    // loginAs 传的是 token 字段（一次性凭据那条路），口令登录要 password —— 直接调。
+    const victimRelogin = await jsonFetch(port, "/api/auth/login", {method: "POST",
+      body: JSON.stringify({email: victimEmail, password: "doctor-retire-probe-pass"})});
+    if (!victimRelogin.response.ok || !victimRelogin.payload.sessionToken) {
+      throw new Error(`注销探针用新口令登不回来（HTTP ${victimRelogin.response.status}）—— 后面那条会空转`);
+    }
+    const victimLive = `Bearer ${victimRelogin.payload.sessionToken}`;
+    // 先给它一张授权，好验"名下授权会被撤销"这一条 —— 没有授权的话那一支永远是 0，验不到东西。
+    const granted = await jsonFetch(port, "/api/access-grants", {method: "POST",
+      headers: {authorization: systemAuth, "Idempotency-Key": "doctor-retire-grant"},
+      body: JSON.stringify({subjectId: victimId, resourceType: "task_group",
+        resourceId: "tg_runtime_management", permissions: ["task_group:read"]})});
+    if (granted.response.status !== 201) {
+      throw new Error(`给注销探针发授权失败（HTTP ${granted.response.status}）—— "授权会被撤销"那一支会空转`);
+    }
+    // 机器主体不许注销（真人专属，且不可撤销）。
+    const machineRetire = await jsonFetch(port, `/api/org/members/${victimId}/retire`, {method: "POST",
+      headers: {authorization: agentAuth, "Idempotency-Key": "doctor-retire-machine"}, body: "{}"});
+    if (machineRetire.response.status !== 403 || machineRetire.payload?.error !== "principal_not_allowed_for_action") {
+      throw new Error(`机器主体注销掉了一个账号（HTTP ${machineRetire.response.status}）—— 销毁凭据比铸造更不可逆`);
+    }
+    const retired = await jsonFetch(port, `/api/org/members/${victimId}/retire`, {method: "POST",
+      headers: {authorization: systemAuth, "Idempotency-Key": "doctor-retire-do"}, body: "{}"});
+    if (retired.response.status !== 200 || retired.payload.account?.status !== "retired") {
+      throw new Error(`注销没成功（HTTP ${retired.response.status} ${JSON.stringify(retired.payload).slice(0, 160)}）`);
+    }
+    if (retired.payload.revokedGrants !== 1) {
+      throw new Error(`注销的回执没说清动了什么：撤销授权 ${retired.payload.revokedGrants} 张 ——`
+        + " 人分不出它和「停用」的区别");
+    }
+    // 凭据要按【落盘那份】验，不看回执的自报：一次性邀请令牌在首次登录时就被消耗掉了，
+    // 所以这个账号此刻只剩口令那条路 —— 只盯 credentialDigest 会把"什么都没清"读成正常。
+    {
+      const snapshot = JSON.parse(readFileSync(join(root, doctorRuntimeDir, "control-plane-state.json"), "utf8"));
+      const stored = (snapshot.accounts || []).find((item) => item.accountId === victimId);
+      if (stored?.credentialDigest || stored?.passwordDigest) {
+        throw new Error(`注销之后账号上还留着登录凭据（邀请摘要 ${Boolean(stored?.credentialDigest)} / `
+          + `口令摘要 ${Boolean(stored?.passwordDigest)}）—— 那是一条回来的路，而注销要永久`);
+      }
+      if (stored?.status !== "retired" || !stored?.retiredAt) {
+        throw new Error(`落盘那份没记成注销（status=${stored?.status} retiredAt=${stored?.retiredAt}）`);
+      }
+    }
+    // ① 已签发的会话必须当场失效（只改字段的话，旧令牌还能用到过期）。
+    const stillIn = await jsonFetch(port, "/api/state", {headers: {authorization: victimLive}});
+    if (stillIn.response.status !== 401) {
+      throw new Error(`注销之后旧会话还能用（HTTP ${stillIn.response.status}）—— 那不叫注销`);
+    }
+    // 上面那条只证明"用不了"，而挡住它的可能是【账号状态】那道门 —— 会话本身有没有被撤销，
+    // 它分辨不出来（变异门实测：把 revokeAccountSessions 换成 0，上面那条照样绿）。
+    // 两道门都该在：哪天有一条读会话的路忘了再查账号状态，撤销就是最后那道。所以按落盘那份验。
+    {
+      const snapshot = JSON.parse(readFileSync(join(root, doctorRuntimeDir, "control-plane-state.json"), "utf8"));
+      const live = (snapshot.authSessions || []).filter((item) =>
+        item.accountId === victimId && item.status === "active");
+      if (live.length) {
+        throw new Error(`注销之后它名下还有 ${live.length} 个 active 会话 —— 现在挡住它的只有"账号状态"`
+          + "那一道门，哪条读会话的路忘了再查状态，它就还能用");
+      }
+    }
+    // ② 登录凭据必须被清掉：留着摘要就等于留着一条回来的路，而"永久"要排除的正是它。
+    const loginBack = await jsonFetch(port, "/api/auth/login", {method: "POST",
+      body: JSON.stringify({email: victimEmail, token: invited.payload.accountToken})});
+    // 要点名拒绝码：只判"不是 200"的话，任何一种拒绝都能让它过 —— 包括与本条守卫无关的那种
+    // （少带一个字段就够了），而那时它证明的是"我请求写错了"，不是"这条路被断了"。
+    if (loginBack.response.status !== 401 || loginBack.payload?.error !== "invalid_credentials") {
+      throw new Error(`注销之后用原来那张一次性令牌又登回来了（HTTP ${loginBack.response.status} `
+        + `${loginBack.payload?.error || ""}）—— 凭据没被清除，注销不是永久的`);
+    }
+    // ③ 名下授权必须被撤销：只断会话不断授权的话，别人拿它的 id 仍能通过判权。
+    const afterState = await jsonFetch(port, "/api/state?view=full&limit=500", {headers: {authorization: systemAuth}});
+    const liveGrants = (afterState.payload.accessGrants || []).filter((item) =>
+      item.subjectRef?.subjectId === victimId && item.status === "active");
+    if (liveGrants.length) {
+      throw new Error(`注销之后它名下还有 ${liveGrants.length} 张生效中的授权 —— 账号没了，权限还在`);
+    }
+    // 终态就是终态：再注销一次要拒，而不是静静地又"成功"一遍。
+    const again = await jsonFetch(port, `/api/org/members/${victimId}/retire`, {method: "POST",
+      headers: {authorization: systemAuth, "Idempotency-Key": "doctor-retire-again"}, body: "{}"});
+    if (again.response.status !== 409 || again.payload?.error !== "account_already_retired") {
+      throw new Error(`重复注销没有被拒（HTTP ${again.response.status}）—— 终态被当成可以再来一次`);
+    }
+    // 最后一个管理员不能注销：停用还能撤回，注销撤不回。
+    const lastAdmin = await jsonFetch(port, "/api/org/members/acct_system_owner/retire", {method: "POST",
+      headers: {authorization: systemAuth, "Idempotency-Key": "doctor-retire-last-admin"}, body: "{}"});
+    if (lastAdmin.response.status !== 409 || lastAdmin.payload?.error !== "system_last_admin_cannot_be_retired") {
+      throw new Error(`最后一个系统管理员被注销了（HTTP ${lastAdmin.response.status}）—— 整个部署永久失去系统层控制权`);
+    }
+    console.log("  ok  账号注销：会话/名下授权/登录凭据三条路一起断，重复注销被拒，最后一个管理员注销被拒");
+  }
+
   console.log("写入层授权边界 ok: 机器主体做不了真人专属动作（含新收归的授权面与取消/中止），而真人照常可以；暂停仍归机器");
 
   // 归档是项目的终结态，而归档路由【要求先把所有任务组关掉】（不级联，让人自己收尾）。

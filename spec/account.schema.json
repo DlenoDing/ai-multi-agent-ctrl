@@ -168,6 +168,16 @@
       "type": "string",
       "format": "date-time",
       "description": "凭据被消费的时间；已消费即不可重放。"
+    },
+    "retiredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "注销发生的时刻。retired 是终态，这个时间点之后这个账号不会再有任何变化"
+    },
+    "retiredReason": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "为什么注销。事后只看得到 status=retired 的话，无从判断当初是离职、服务下线还是误操作"
     }
   }
 }

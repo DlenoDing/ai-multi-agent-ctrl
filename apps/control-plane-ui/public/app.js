@@ -497,7 +497,12 @@ function toneOf(value) {
 // 按对象加一层覆盖，命中不了退回全局词表 —— 不改词表，也不给每个枚举值另造新键。
 const STATUS_LABEL_BY_KIND = {
   organization: {active: "启用中", suspended: "已停用", disabled: "已停用"},
-  account: {active: "已启用", suspended: "已停用", disabled: "已停用", invited: "待接受邀请"},
+  // 账号的 retired 要按【对象】覆盖，不能往全局词表里加：那里的 retired 已经被技能源的
+  // 「已退役」占着，同一个对象里加第二个键只有后面那个生效（本仓撞过这个形状）。
+  // 而且这两件事的分量不同：停用还能启用回来，注销是终态 —— 屏幕上写一样的字，
+  // 人就会以为它也能点回来。
+  account: {active: "已启用", suspended: "已停用", disabled: "已停用", invited: "待接受邀请",
+    retired: "已注销（不可恢复）"},
   grant: {active: "生效中", revoked: "已撤销", expired: "已过期"},
   agent: {active: "已启用", disabled: "已停用", retired: "已退役"},
   skillSource: {active: "已启用", retired: "已退役"}
@@ -2426,7 +2431,12 @@ function renderOrgMembers() {
           ? ""
           : account.status === "disabled"
             ? `<button class="secondary-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="active">启用</button>`
-            : `<button class="danger-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="disabled">停用</button>`
+            : `<button class="danger-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="disabled">停用</button>`,
+        // 注销：终态、不可撤销。后端有杠杆而界面没入口＝这个杠杆不存在，所以入口必须在这里。
+        // 已经注销过的不再给按钮 —— 给了也只会拿到 409，而人会以为是自己点错了。
+        account.status === "retired"
+          ? ""
+          : `<button class="danger-button" data-action="member-retire" data-account="${esc(account.accountId)}">注销</button>`
       ].filter(Boolean).join(" ") : "-"
     ]);
   }).join("");
@@ -5215,6 +5225,33 @@ document.addEventListener("click", async (event) => {
       }
       await loadPage();
       toast.success(status === "disabled" ? "已停用成员" : "已启用成员");
+      return;
+    }
+    if (action === "member-retire") {
+      // 注销是【终态且不可撤销】。与停用共用一套话术会害人 —— 停用那句写的是"可以启用回来"，
+      // 而这里回不来。所以三件事都当面说清：会话、名下授权、登录凭据一起断。
+      const isSelfRetire = Boolean(currentAccount?.accountId) && target.dataset.account === currentAccount.accountId;
+      if (!(await confirmDialog({
+        title: isSelfRetire ? "注销你自己的账号" : "注销账号",
+        message: isSelfRetire ? "这是你当前登录的账号，确认永久注销它？" : "确认永久注销该账号？",
+        sub: "注销不可撤销：它的活动会话会被吊销、名下的资源授权会被撤销、登录凭据会被清除，"
+          + "此后无法用任何方式登录回来。只是想暂时停掉的话，请用「停用」——那个可以启用回来。",
+        danger: true, confirmText: "永久注销"
+      }))) return;
+      const retired = await api(`/api/org/members/${encodeURIComponent(target.dataset.account)}/retire`,
+        {method: "POST", body: "{}"});
+      if (isSelfRetire) {
+        // 与停用自己同理：会话在服务端已经没了，再 loadPage 只会撞 401 弹"会话已过期"，
+        // 把真正发生的事盖掉。而这一次连"让别人启用回来"这条出路都没有。
+        clearSession();
+        openModal("已注销你自己的账号", `<div class="notice">你的账号已永久注销，这一台已经登出。
+          注销不可撤销 —— 需要重新参与的话，只能由管理员邀请一个新账号。</div>`);
+        return;
+      }
+      await loadPage();
+      // 回执里带着"这一下动了什么"，原样说给人听：光说"已注销"的话，人不知道授权断没断。
+      toast.success(`账号已注销：吊销会话 ${retired?.revokedSessions ?? "?"} 个、`
+        + `撤销授权 ${retired?.revokedGrants ?? "?"} 张、登录凭据已清除`);
       return;
     }
     if (action === "project-archive") {

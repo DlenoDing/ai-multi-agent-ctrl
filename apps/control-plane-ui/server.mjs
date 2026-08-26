@@ -109,6 +109,7 @@ import {
   ROOM_SENDER_KEY,
   UNSAFE_DELEGATED_GRANT_PERMISSIONS,
   refreshConfirmationsAfterHumanChange,
+  retireAccount,
   revokeAccountSessions,
   REGISTERED_OWNER_ROLES,
   normalizedExpiry,
@@ -1135,6 +1136,9 @@ const HUMAN_ONLY_ACTIONS = [
   // 整道人工闸门被从旁边绕过去。account_invite 强制铸出的正是 user_account（"人"类型）。
   "account_invite",
   "system_account_invite",
+  // 【注销账号】2026-08-26 人定做出来的。它是终态且不可撤销：会话、名下授权、登录凭据一起断。
+  // 铸凭据是真人专属，销毁凭据同理 —— 而且它比铸造更不可逆（铸错了能停用，销错了回不来）。
+  "account_retire",
   // 【组织与授权面】2026-08-26 人定：AI 只负责把任务做完，不许动"谁能干什么"。
   // 这一族原先是机器可做的：拿到相应权限就能建组织、改成员权限与状态、调配额、发放/撤销授权。
   // 它绕得过人工定稿闸门吗？绕不过（闸门认 accountType，而铸账号已是真人专属）——
@@ -2028,6 +2032,10 @@ function permissionForAction(action) {
   if (action === "bootstrap_init") return "system:bootstrap";
   if (action === "system_account_invite") return "system:account_admin";
   if (action === "account_invite") return "member:invite";
+  // 注销与「邀请/停用成员」同属成员治理，权限也该同源：组织管理员管得了自己组织的人。
+  // 不给映射的话会落到兜底的 system:*，变成只有系统管理员够得到 —— 而界面上不会有任何迹象，
+  // 组织管理员只会看到按钮点下去回一句没权限。
+  if (action === "account_retire") return "member:invite";
   if (action === "project_create") return "project:create";
   if (action === "project_member_grant") return "member:invite";
   if (action === "access_grant_create" || action === "access_grant_revoke") return "project:grant";
@@ -5593,6 +5601,30 @@ async function handleApi(req, res) {
       login: reissuePayload.login, secretReturnedOnce: true});
     writeState(state);
     json(res, 200, reissuePayload);
+    return;
+  }
+
+  // 【注销账号】单独一条路由，不和上面那个可恢复的启用/停用开关挤在一起：
+  // 一条路由服务两种风险等级，人点错一次的代价差着数量级，而守卫也只能按一个动作名分类。
+  const orgMemberRetireMatch = url.pathname.match(/^\/api\/org\/members\/([^/]+)\/retire$/);
+  if (req.method === "POST" && orgMemberRetireMatch) {
+    const retireActor = accountFromRequest(req, state)?.account;
+    const retireTarget = resolveOrgMemberTarget(state, retireActor, orgMemberRetireMatch[1]);
+    const guard = beginGuardedWrite(req, state, "account_retire", `Account:${orgMemberRetireMatch[1]}`, retireTarget.scope);
+    if (guard.status) return json(res, guard.status, guard.payload);
+    if (!retireTarget.member) return json(res, 404, {error: "org_member_not_found"});
+    const result = retireAccount(state, retireTarget.member.accountId,
+      {actor: guard.actor, reason: body.reason, auditRef: `audit:account-retire:${retireTarget.member.accountId}`});
+    if (!result.ok) return json(res, result.status, {error: result.error, ...(result.message ? {message: result.message} : {})});
+    recomputeOrganizationUsage(state);
+    audit(state, guard.actor, "account_retire", `Account:${result.account.accountId}`, "retired");
+    // 回执要说清【这一下动了什么】：光回一个 status 的话，人不知道会话/授权有没有一起断，
+    // 而那正是"注销"与"停用"的区别所在。
+    const payload = {account: publicAccountRecord(result.account), revokedSessions: result.revokedSessions,
+      revokedGrants: result.revokedGrants, credentialCleared: result.credentialCleared};
+    finishGuardedWrite(state, guard, 200, payload);
+    writeState(state);
+    json(res, 200, payload);
     return;
   }
 

@@ -617,6 +617,72 @@ export function revokeAccountSessions(state, accountId, reason) {
   return revoked;
 }
 
+// 【账号退役】= 永久注销。它与挂起（suspended）的区别只有一条，但这一条决定了它必须由人来做：
+// 挂起是临时的（状态机里 suspended → active 走得通），退役是【终态】（出不去）。
+// 规范与状态机里一直写着它（Account.terminal = ["retired"]，active/suspended → retired），
+// 而全仓没有任何代码把账号写成 retired —— 配额统计把 retired 排除在外，于是读代码的人
+// 会以为这个能力存在。2026-08-26 人定：把它完整做出来。
+//
+// 「完整」指的是：光改一个 status 字段不叫注销 —— 那样会留下三条活路：
+//   ① 已经签发的会话还能用（挂起那处踩过这个坑，注释就在上面）；
+//   ② 名下的资源授权还在，别人拿它的 id 仍能通过判权；
+//   ③ 邀请令牌/凭据摘要还在，它可以重新登录回来 —— 而这恰恰是"永久"要排除的。
+// 所以三条一起断。这也是它与挂起在实现上的唯一区别（挂起只断前两条，好让人能恢复）。
+export function retireAccount(state, accountId, options = {}) {
+  const account = (state.accounts || []).find((item) => item.accountId === accountId);
+  if (!account) return {ok: false, status: 404, error: "account_not_found"};
+  if (account.status === "retired") {
+    return {ok: false, status: 409, error: "account_already_retired",
+      message: "这个账号已经注销过了。注销是终态，没有再来一次这回事，也不能撤销"};
+  }
+  // 治理主体不能被注销到零 —— 与「停用」那条同规，而且更狠：停用还能撤回，注销撤不回。
+  // 作用域按治理层级取：组织管理员按本组织算，系统管理员按全局算。
+  if (["org_admin", "system_admin"].includes(account.accountType)) {
+    const systemScoped = account.accountType === "system_admin";
+    const remaining = (state.accounts || []).filter((item) => item.accountType === account.accountType
+      && item.status === "active" && item.accountId !== account.accountId
+      && (systemScoped || item.organizationId === account.organizationId));
+    if (!remaining.length) {
+      return {ok: false, status: 409,
+        error: systemScoped ? "system_last_admin_cannot_be_retired" : "org_last_admin_cannot_be_retired",
+        message: "这是最后一个还在用的管理员。注销它之后没有人能再管这一层，而注销不可撤销"};
+    }
+  }
+  const at = new Date().toISOString();
+  const previousStatus = account.status;
+  account.status = "retired";
+  account.retiredAt = at;
+  account.retiredReason = String(options.reason || "").slice(0, 200) || "human_retire_decision";
+  account.updatedAt = at;
+  // ① 会话
+  const revokedSessions = revokeAccountSessions(state, account.accountId, "account_retired");
+  // ② 授权
+  let revokedGrants = 0;
+  for (const grant of (state.accessGrants || []).filter((item) =>
+    item.subjectRef?.subjectId === account.accountId && item.status === "active")) {
+    grant.status = "revoked";
+    grant.revokedReason = "account_retired";
+    grant.updatedAt = at;
+    revokedGrants += 1;
+  }
+  // ③ 凭据。挂起【不】动它（要能恢复），注销必须动：留着摘要就等于留着一条回来的路。
+  // 【两条登录路都要断】：一次性邀请令牌（credentialDigest）与口令（passwordDigest）。
+  // 只断前者是不够的 —— 邀请令牌在首次登录时就被消耗掉了（登录那处 delete 掉它），
+  // 之后这个账号靠的一直是口令。只清 credentialDigest 的话，对一个用过的账号等于什么都没做。
+  const hadCredential = Boolean(account.credentialDigest || account.passwordDigest);
+  delete account.credentialDigest;
+  delete account.credentialExpiresAt;
+  delete account.credentialIssuedAt;
+  delete account.passwordDigest;
+  // 状态机里这一步要两样证据：谁决定的（retire_decision_ref）、审计落在哪（audit_ref）。
+  // 不留证据的话，事后只看得到"这个账号是 retired"，看不到是谁在什么时候按的。
+  recordTransition(state, "Account", account.accountId, previousStatus, "retired", "identity-service", {
+    retire_decision_ref: options.decisionRef || `human-retire:${options.actor || "unknown"}:${at}`,
+    audit_ref: options.auditRef || `audit:account-retire:${account.accountId}:${at}`
+  });
+  return {ok: true, account, previousStatus, revokedSessions, revokedGrants, credentialCleared: hadCredential, at};
+}
+
 // 「谁算这个组织的成员」必须只有一处判据 —— 此前用量与成员列表各写各的，两边算的不是同一批人：
 // 用量把没有 organizationId 的账号兜底进默认组织、也把服务账号算进去；成员列表要求显式匹配、
 // 且排除服务账号。后果是默认组织的"成员 N/50"里含着两个【列表上永远不出现】的账号

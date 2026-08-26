@@ -3208,6 +3208,56 @@ const MUTATIONS = [
     expect: "登记过时"
   },
   {
+    name: "注销必须断掉已签发的会话",
+    file: CORE,
+    gate: "doctor",
+    from: '  const revokedSessions = revokeAccountSessions(state, account.accountId, "account_retired");',
+    to: "  const revokedSessions = 0;",
+    // 接住它的是【落盘那条】断言，不是那次 HTTP —— 请求被"账号状态"那道门先挡了 401，
+    // 所以 HTTP 那条分辨不出会话有没有真被撤。expect 要指向真正会红的那一句。
+    expect: "个 active 会话"
+  },
+  {
+    name: "注销必须撤销名下的资源授权",
+    file: CORE,
+    gate: "doctor",
+    from: "    grant.status = \"revoked\";\n    grant.revokedReason = \"account_retired\";",
+    to: "    grant.revokedReason = \"account_retired\";",
+    expect: "名下还有"
+  },
+  {
+    name: "注销必须清掉口令那条登录路（邀请令牌首次登录就消耗了，只清它等于没清）",
+    file: CORE,
+    gate: "doctor",
+    from: "  delete account.passwordDigest;",
+    to: "",
+    expect: "还留着登录凭据"
+  },
+  {
+    name: "注销是终态：不许再注销一次",
+    file: CORE,
+    gate: "doctor",
+    from: '  if (account.status === "retired") {',
+    to: "  if (false) {",
+    expect: "重复注销没有被拒"
+  },
+  {
+    name: "最后一个管理员不许被注销（注销撤不回）",
+    file: CORE,
+    gate: "doctor",
+    from: '  if (["org_admin", "system_admin"].includes(account.accountType)) {\n    const systemScoped = account.accountType === "system_admin";',
+    to: '  if (false) {\n    const systemScoped = account.accountType === "system_admin";',
+    expect: "最后一个系统管理员被注销了"
+  },
+  {
+    name: "机器主体不许注销账号",
+    file: SERVER,
+    gate: "doctor",
+    from: "  if (HUMAN_ONLY_ACTIONS.includes(action)) return HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(account.accountType);",
+    to: '  if (HUMAN_ONLY_ACTIONS.includes(action)) return action === "account_retire" || HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(account.accountType);',
+    expect: "机器主体注销掉了一个账号"
+  },
+  {
     name: "AI 不许自行发资源授权（2026-08-26 人定）",
     file: SERVER,
     gate: "doctor",

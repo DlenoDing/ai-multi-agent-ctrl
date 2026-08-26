@@ -162,10 +162,12 @@ const MODELED_AHEAD_OF_IMPLEMENTATION = {
   AuditLog: "审计走的是 runtime/audit-log.jsonl 追加文件，不是 state 里的状态机对象",
   Alert: "告警子系统尚未实现，没有任何代码产生 Alert 对象",
   ProgressSnapshot: "进度快照是被裁剪掉的，不走 archived 终态",
-  // 下面这台是【真的缺一条路】，不是建模错误 —— 登记在这里是为了让缺口有名有姓，而不是让门闭嘴。
-  // 同批登记的另外两台已经补上：AgentSkillSource 有了 retired（5572fbe），
-  // RuntimeIssuePattern 有了 suppressed/closed（人在升级候选上的判断传导下来）。
-  Account: "账号只有 active/suspended，没有退役路径（与项目无归档、maxProjects 只增不减同源的产品缺口）"
+  // 同批登记的三台都已补上，这里不再有 Account：
+  //   AgentSkillSource → retired（5572fbe）；
+  //   RuntimeIssuePattern → suppressed/closed（人在升级候选上的判断传导下来）；
+  //   Account → retired（2026-08-26 人定后做出来的：注销是终态，会话/名下授权/两条登录凭据一起断）。
+  // 「登记让缺口有名有姓，而不是让门闭嘴」—— 补上了就得把登记撤掉，
+  // 否则它会替以后的漂移打掩护（这道门自己会催，它刚刚就催了）。
 };
 
 // 机器是不是活的：它至少要有一个状态被真的写过；有终态的话，终态里至少要有一个写得到 ——
