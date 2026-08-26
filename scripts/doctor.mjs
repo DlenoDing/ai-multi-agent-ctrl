@@ -1093,10 +1093,13 @@ try {
   const badTarget = await jsonFetch(port, "/api/repository-output-targets", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-bad-repository-target", authorization: auth},
-    body: JSON.stringify({artifactManifestPath: "/tmp/bad.json", pathAllowlist: ["/tmp/**"]})
+    body: JSON.stringify({taskGroupId: "tg_runtime_management", workItemId: "work_management_ui",
+      artifactManifestPath: "/tmp/bad.json", pathAllowlist: ["/tmp/**"]})
   });
+  // 点名任务组是【为了走到路径这条判据】：不点名的话前面那道「必须说清是哪个任务组」先拒，
+  // 这条断言就永远在测另一件事。报文里也要带上拒绝码 —— 原先只比状态码，两种 400 分不出来。
   if (badTarget.response.status !== 400 || badTarget.payload?.error !== "repository_output_target_must_use_git_trackable_paths") {
-    throw new Error(`expected bad repository target 400, got ${badTarget.response.status}`);
+    throw new Error(`expected bad repository target 400/repository_output_target_must_use_git_trackable_paths, got ${badTarget.response.status}/${badTarget.payload?.error}`);
   }
   const runResult = await jsonFetch(port, "/api/orchestrator/run", {
     method: "POST",

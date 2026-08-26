@@ -3841,7 +3841,7 @@ async function handleApi(req, res) {
     // inject into the default tenant's view.
     const overlayScopesTaskGroup = body.scope === "task_group" || Boolean(body.taskGroupId);
     const overlayGuardScope = overlayScopesTaskGroup
-      ? taskGroupScope(state, body.taskGroupId || "tg_runtime_management")
+      ? taskGroupScope(state, body.taskGroupId)
       : projectScope(body.projectId || "prj_control_plane");
     const guard = beginGuardedWrite(req, state, "role_skill_overlay_create", `AgentRoleSkill:${body.roleSkillRef || "default"}`, overlayGuardScope);
     if (guard.status) {
@@ -4377,19 +4377,19 @@ async function handleApi(req, res) {
     // 不点名任务组时，这份指令信封（发给 agent 的规则包）会挂到控制面自己的管理组上。
     // 判权作用域用那个默认是另一回事（对象还不存在时总得有个作用域），落账不行 —— 记到别人账上。
     if (requireBodyFields(res, body, ["taskGroupId"], "instruction_envelope_task_group_required")) return;
-    const guard = beginGuardedWrite(req, state, "instruction_envelope_create", "InstructionEnvelope:new", taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    const guard = beginGuardedWrite(req, state, "instruction_envelope_create", "InstructionEnvelope:new", taskGroupScope(state, body.taskGroupId));
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
     }
     const at = now();
-    const envelopeTaskGroup = state.taskGroups.find((item) => item.id === (body.taskGroupId || "tg_runtime_management"));
+    const envelopeTaskGroup = state.taskGroups.find((item) => item.id === (body.taskGroupId));
     const envelopeLanguagePolicy = normalizeTaskGroupLanguagePolicy(body.languagePolicy || envelopeTaskGroup?.languagePolicy || {});
     const envelopeLanguagePolicyDigest = digestOf(envelopeLanguagePolicy);
     const envelope = {
       schemaVersion: "instruction-envelope/v1",
       envelopeId: createId("env"),
-      taskGroupId: body.taskGroupId || "tg_runtime_management",
+      taskGroupId: body.taskGroupId,
       recipientRole: body.recipientRole || "orchestrator",
       effectiveInstructionPacketRef: body.effectiveInstructionPacketRef || "eip_runtime_management",
       formatVersion: "ai-native-instruction-envelope/v1",
@@ -4400,7 +4400,7 @@ async function handleApi(req, res) {
       // 与 MCP 那条孪生同规：本项目现行规范一律由服务端带上，调用方给的只能【追加】。
       // 原先是 `|| []` —— 不给就是空，也就是这份指令不受任何规范约束，而 agent 照着它干活。
       sharedDefinitionRefs: mergeSharedDefinitionRefs(
-        activeSharedDefinitionRefs(state, {taskGroupId: body.taskGroupId || "tg_runtime_management"}),
+        activeSharedDefinitionRefs(state, {taskGroupId: body.taskGroupId}),
         body.sharedDefinitionRefs),
       cacheKey: body.cacheKey || `runtime:v1:${Date.now()}`,
       status: "cache_indexed",
@@ -4766,6 +4766,8 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/repository-output-targets") {
+    // 见下方 taskGroupScope：任务组说不清就具名拒绝，不替调用方挑一个。
+    if (requireBodyFields(res, body, ["taskGroupId"], "repository_output_target_task_group_required")) return;
     const pathAllowlist = body.pathAllowlist || ["docs/**", "spec/**"];
     const artifactManifestPath = body.artifactManifestPath || `docs/artifact-manifests/manifest.${Date.now()}.json`;
     // 与 MCP 那两处同规：两种原因分开说，并带上真实取值。
@@ -4803,14 +4805,14 @@ async function handleApi(req, res) {
     // 调用方给的仓库地址必须是本项目登记过的那一个。写入只被授权在任务组作用域上，而地址
     // 决定了改动最终落在哪个仓库 —— 不做这条交叉校验，授权针对的是 A、改动可以落在 B。
     if (body.repositoryUrl) {
-      const urlTaskGroup = state.taskGroups.find((item) => item.id === (body.taskGroupId || "tg_runtime_management"));
+      const urlTaskGroup = state.taskGroups.find((item) => item.id === (body.taskGroupId));
       const urlProject = state.projects.find((item) => item.id === (urlTaskGroup?.projectId || body.projectId));
       if (!repositoryUrlRegisteredForProject(urlProject, body.repositoryUrl)) {
         json(res, 400, {error: "repository_output_target_repository_not_registered_for_project"});
         return;
       }
     }
-    const guard = beginGuardedWrite(req, state, "repository_output_target_select", "RepositoryOutputTarget:new", taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    const guard = beginGuardedWrite(req, state, "repository_output_target_select", "RepositoryOutputTarget:new", taskGroupScope(state, body.taskGroupId));
     if (guard.status) {
       json(res, guard.status, guard.payload);
       return;
@@ -4830,7 +4832,7 @@ async function handleApi(req, res) {
     const remote = body.remote || "origin";
     // Derive the target's project from its task group (the guarded scope), never a free body.projectId, so the
     // stored projectId cannot contradict the taskGroupId the write was authorized against.
-    const targetTaskGroupId = body.taskGroupId || "tg_runtime_management";
+    const targetTaskGroupId = body.taskGroupId;
     const targetTaskGroup = state.taskGroups.find((item) => item.id === targetTaskGroupId);
     const targetProjectId = targetTaskGroup?.projectId || body.projectId || "prj_control_plane";
     const project = state.projects.find((item) => item.id === targetProjectId);
@@ -4885,7 +4887,7 @@ async function handleApi(req, res) {
     const assignTarget = (state.taskGroups || []).find((group) =>
       (group.workItems || []).some((item) => item.id === workItemAssignMatch[1]));
     const guard = beginGuardedWrite(req, state, "work_assign", `WorkItem:${workItemAssignMatch[1]}`,
-      taskGroupScope(state, assignTarget?.id || body.taskGroupId || "tg_runtime_management"));
+      taskGroupScope(state, assignTarget?.id || body.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     // 空 body 原先也能"指派"：它把草稿工作项推进到 ready，归属缺失时还挑一个 orchestrator。
     // 指派是"谁来干这件事"的决定，不该由缺省替人做。（这一条是完整变异门跑出来的：
@@ -4911,7 +4913,8 @@ async function handleApi(req, res) {
     // group, never on the caller-supplied body.taskGroupId — otherwise a reviewer scoped to their own
     // task group could rewrite a finding owned by a different task group/tenant (matches finding_resolve).
     const existingFinding = body.findingId ? (state.findings || []).find((item) => item.findingId === body.findingId) : null;
-    const scopeTaskGroupId = existingFinding?.taskGroupId || body.taskGroupId || "tg_runtime_management";
+    if (!existingFinding && requireBodyFields(res, body, ["taskGroupId"], "finding_task_group_required")) return;
+    const scopeTaskGroupId = existingFinding?.taskGroupId || body.taskGroupId;
     const guard = beginGuardedWrite(req, state, "finding_submit", `Finding:${body.findingId || "new"}`, taskGroupScope(state, scopeTaskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = findingSubmit(state, body);
@@ -4925,7 +4928,7 @@ async function handleApi(req, res) {
   const findingResolveMatch = url.pathname.match(/^\/api\/findings\/([^/]+)\/resolve$/);
   if (req.method === "POST" && findingResolveMatch) {
     const existingFinding = (state.findings || []).find((item) => item.findingId === findingResolveMatch[1]);
-    const guard = beginGuardedWrite(req, state, "finding_resolve", `Finding:${findingResolveMatch[1]}`, taskGroupScope(state, existingFinding?.taskGroupId || "tg_runtime_management"));
+    const guard = beginGuardedWrite(req, state, "finding_resolve", `Finding:${findingResolveMatch[1]}`, taskGroupScope(state, existingFinding?.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     // 真人身份只能由已鉴权账号推导，并且经 Symbol 键传入 —— 请求体里写什么都进不来。
     const resolvingAccount = accountFromRequest(req, state);
@@ -4951,7 +4954,7 @@ async function handleApi(req, res) {
 
   if (req.method === "POST" && url.pathname === "/api/approval-requests") {
     if (requireBodyFields(res, body, ["taskGroupId"], "approval_request_task_group_required")) return;
-    const guard = beginGuardedWrite(req, state, "approval_request_create", `ApprovalRequest:${body.approvalId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    const guard = beginGuardedWrite(req, state, "approval_request_create", `ApprovalRequest:${body.approvalId || "new"}`, taskGroupScope(state, body.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     // Record the proposer as the AUTHENTICATED actor (never client-supplied) for high_risk_no_self_approval.
     const result = approvalRequestCreate(state, {...body, proposedBy: guard.actor});
@@ -4968,7 +4971,7 @@ async function handleApi(req, res) {
   const approvalResolveMatch = url.pathname.match(/^\/api\/approval-requests\/([^/]+)\/resolve$/);
   if (req.method === "POST" && approvalResolveMatch) {
     const existingApproval = (state.approvalRequests || []).find((item) => item.approvalId === approvalResolveMatch[1]);
-    const guard = beginGuardedWrite(req, state, "approval_resolve", `ApprovalRequest:${approvalResolveMatch[1]}`, taskGroupScope(state, existingApproval?.taskGroupId || "tg_runtime_management"));
+    const guard = beginGuardedWrite(req, state, "approval_resolve", `ApprovalRequest:${approvalResolveMatch[1]}`, taskGroupScope(state, existingApproval?.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     // The approver identity is the AUTHENTICATED actor, never a client-supplied resolvedBy — this is what
     // high_risk_no_self_approval and the quorum tally key on.
@@ -5105,7 +5108,7 @@ async function handleApi(req, res) {
 
   if (req.method === "POST" && url.pathname === "/api/artifacts") {
     if (requireBodyFields(res, body, ["taskGroupId"], "artifact_task_group_required")) return;
-    const guard = beginGuardedWrite(req, state, "artifact_register", `Artifact:${body.artifactId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    const guard = beginGuardedWrite(req, state, "artifact_register", `Artifact:${body.artifactId || "new"}`, taskGroupScope(state, body.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = artifactRegister(state, body);
     audit(state, guard.actor, "artifact_register", `Artifact:${result.artifact.artifactId}`);
@@ -5116,7 +5119,9 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/permission-requests") {
-    const guard = beginGuardedWrite(req, state, "permission_request_submit", `PermissionRequest:${body.requestId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    // 见下方 taskGroupScope：任务组说不清就具名拒绝，不替调用方挑一个。
+    if (requireBodyFields(res, body, ["taskGroupId"], "permission_request_task_group_required")) return;
+    const guard = beginGuardedWrite(req, state, "permission_request_submit", `PermissionRequest:${body.requestId || "new"}`, taskGroupScope(state, body.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = permissionRequestSubmit(state, body);
     audit(state, guard.actor, "permission_request_submit", `PermissionRequest:${result.permissionRequest.requestId}`);
@@ -5174,7 +5179,9 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/execution-topologies") {
-    const guard = beginGuardedWrite(req, state, "execution_topology_plan", `ExecutionTopology:${body.topologyId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    // 见下方 taskGroupScope：任务组说不清就具名拒绝，不替调用方挑一个。
+    if (requireBodyFields(res, body, ["taskGroupId"], "execution_topology_task_group_required")) return;
+    const guard = beginGuardedWrite(req, state, "execution_topology_plan", `ExecutionTopology:${body.topologyId || "new"}`, taskGroupScope(state, body.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = createExecutionTopology(state, body, {root: repositoryRoot});
     audit(state, guard.actor, "execution_topology_plan", `ExecutionTopology:${result.topology.topologyId}`);
@@ -5222,7 +5229,9 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/derived-task-requests") {
-    const guard = beginGuardedWrite(req, state, "derived_task_classify", `DerivedTaskRequest:${body.taskGroupId || "tg_runtime_management"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    // 见下方 taskGroupScope：任务组说不清就具名拒绝，不替调用方挑一个。
+    if (requireBodyFields(res, body, ["taskGroupId"], "derived_task_task_group_required")) return;
+    const guard = beginGuardedWrite(req, state, "derived_task_classify", `DerivedTaskRequest:${body.taskGroupId}`, taskGroupScope(state, body.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = classifyDerivedTask(state, body);
     audit(state, guard.actor, "derived_task_classify", `DerivedTaskRequest:${result.roleId}`);
@@ -5233,7 +5242,9 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/review-plans") {
-    const guard = beginGuardedWrite(req, state, "review_plan_create", `ReviewPlan:${body.reviewPlanId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    // 见下方 taskGroupScope：任务组说不清就具名拒绝，不替调用方挑一个。
+    if (requireBodyFields(res, body, ["taskGroupId"], "review_plan_task_group_required")) return;
+    const guard = beginGuardedWrite(req, state, "review_plan_create", `ReviewPlan:${body.reviewPlanId || "new"}`, taskGroupScope(state, body.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = reviewPlanCreate(state, body);
     audit(state, guard.actor, "review_plan_create", `ReviewPlan:${result.reviewPlan.reviewPlanId}`);
@@ -5244,7 +5255,9 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/review-bundles") {
-    const guard = beginGuardedWrite(req, state, "review_bundle_register", `ReviewBundle:${body.reviewBundleId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    // 见下方 taskGroupScope：任务组说不清就具名拒绝，不替调用方挑一个。
+    if (requireBodyFields(res, body, ["taskGroupId"], "review_bundle_task_group_required")) return;
+    const guard = beginGuardedWrite(req, state, "review_bundle_register", `ReviewBundle:${body.reviewBundleId || "new"}`, taskGroupScope(state, body.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = reviewBundleRegister(state, body);
     audit(state, guard.actor, "review_bundle_register", `ReviewBundle:${result.reviewBundle.reviewBundleId}`);
@@ -5255,7 +5268,9 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/rule-source-resolutions") {
-    const guard = beginGuardedWrite(req, state, "rule_source_resolve", `RuleSourceResolution:${body.resolutionId || "new"}`, taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));
+    // 见下方 taskGroupScope：任务组说不清就具名拒绝，不替调用方挑一个。
+    if (requireBodyFields(res, body, ["taskGroupId"], "rule_source_task_group_required")) return;
+    const guard = beginGuardedWrite(req, state, "rule_source_resolve", `RuleSourceResolution:${body.resolutionId || "new"}`, taskGroupScope(state, body.taskGroupId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const result = ruleSourceResolve(state, body);
     audit(state, guard.actor, "rule_source_resolve", `RuleSourceResolution:${result.ruleSourceResolution.resolutionId}`);

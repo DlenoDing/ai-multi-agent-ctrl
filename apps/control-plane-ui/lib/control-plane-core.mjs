@@ -1004,7 +1004,41 @@ export function capKeepingReferenced(items, cap, referencedIds) {
   return stillReferenced.length ? [...kept, ...stillReferenced] : kept;
 }
 
-export function selectModel(state, request = {}) {
+// 【落账的身份不许编】。选型决策与会话放置决策原先三个身份字段各有兜底：taskGroupId 认不出
+// 就写死种子任务组 tg_runtime_management、workItemId 没有就写 "work_unknown"、projectId 退回
+// 调用方自填值。实测三层后果：① 监控页「模型选择记录」上真的出现一行工作项叫 work_unknown，
+// 读的人以为系统里有这么个工作项；② 这两个动作都是【按任务组判的权】（model_selection_decide /
+// session_placement_decide → taskGroupScope），不传 taskGroupId 时归属推导整个退回 request.projectId
+// —— 上一轮修好的「记录进别人项目的台账」从空值这条路原样回来了；③ 派生任务分类本是"还没有
+// 工作项"的预览动作，却顺手把一条真决策写进了台账。
+// 规矩：台账里每一条决策，taskGroupId 与 workItemId 都必须指向真实存在的对象，认不出就【具名拒绝】
+// 而不是猜；只算不落账的预览调用传 options.persist === false，此时只要求任务组认得出（派生任务
+// 总是在某个任务组里派生的，路由也是按它判的权），工作项允许还不存在。
+function resolveDecisionScope(state, request, workItem, options = {}) {
+  const persist = options.persist !== false;
+  const taskGroup = (state.taskGroups || []).find((item) => item.id === (request.taskGroupId || workItem.taskGroupId));
+  if (!taskGroup) {
+    throw Object.assign(new Error("task_group_not_found"), {status: 400,
+      details: {taskGroupId: request.taskGroupId || workItem.taskGroupId || null,
+        message: "这条决策要记在哪个任务组名下必须说清：任务组认不出来时，系统不会替你猜一个"}});
+  }
+  const workItemId = request.workItemId || workItem.id || null;
+  const resolved = workItemId ? (taskGroup.workItems || []).some((item) => item.id === workItemId) : false;
+  if (persist && !resolved) {
+    throw Object.assign(new Error("work_item_not_found"), {status: 400,
+      details: {taskGroupId: taskGroup.id, workItemId,
+        message: workItemId ? `任务组 ${taskGroup.id} 里没有工作项 ${workItemId}`
+          : "这条决策要记在哪个工作项名下必须说清：缺 workItemId 时，系统不会替你写一个占位名"}});
+  }
+  return {
+    projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id,
+    // 预览：工作项还没派生出来，用一个说明性的占位名 —— 它只出现在回执里，永远不进台账。
+    workItemId: resolved ? workItemId : "work_pending_derivation"
+  };
+}
+
+export function selectModel(state, request = {}, options = {}) {
   ensureRuntimeCollections(state);
   const roleId = request.roleId || request.ownerRole || "orchestrator";
   const workItem = request.workItem || findWorkItem(state, request.taskGroupId, request.workItemId) || {};
@@ -1025,17 +1059,13 @@ export function selectModel(state, request = {}) {
   const at = new Date().toISOString();
   const decisionId = createId("msd");
   const modelDecision = shortModelDecision({workItem, request, taskExecution, selected, modelCeiling});
-  const modelDecisionOwner = (state.taskGroups || [])
-    .find((item) => item.id === (request.taskGroupId || workItem.taskGroupId));
+  const decisionScope = resolveDecisionScope(state, request, workItem, options);
   const decision = {
     schemaVersion: "model-selection-decision/v1",
     decisionId,
     // 归属从【被授权的那个作用域】推：这个动作是按任务组判的权（model_selection_decide →
-    // taskGroupScope），而 request.projectId 是调用方自由填的。原先它排在最前，
-    // 于是一条挂在项目甲任务组上的选型决策可以落在项目乙名下（实测复现）。
-    projectId: modelDecisionOwner?.projectId || workItem.projectId || request.projectId || "prj_control_plane",
-    taskGroupId: request.taskGroupId || workItem.taskGroupId || "tg_runtime_management",
-    workItemId: request.workItemId || workItem.id || "work_unknown",
+    // taskGroupScope），而 request.projectId 是调用方自由填的。见 resolveDecisionScope。
+    ...decisionScope,
     status: selected ? "selected" : "rejected",
     roleId,
     roleSkillRef: roleSkill.roleSkillId,
@@ -1083,6 +1113,7 @@ export function selectModel(state, request = {}) {
     decision.denialReason = "no_candidate_satisfied_hard_constraints";
     decision.fallbackPolicyRef = policy?.policyId || "msp_default";
   }
+  if (options.persist === false) return decision;
   state.modelSelectionDecisions.unshift(decision);
   capKeepingReferencedLazily(state, "modelSelectionDecisions", 160, () => new Set([
     ...(state.agentDispatches || []).map((item) => item.modelSelectionDecisionRef),
@@ -1393,6 +1424,7 @@ export function decideSessionPlacement(state, request = {}) {
   ensureRuntimeCollections(state);
   const taskGroup = state.taskGroups?.find((item) => item.id === request.taskGroupId);
   const workItem = request.workItem || findWorkItem(state, request.taskGroupId, request.workItemId) || {};
+  const placementScope = resolveDecisionScope(state, request, workItem);
   const modelDecision = request.modelSelectionDecision || selectModel(state, request);
   const signals = unique([...(request.workSignals || []), ...inferWorkSignals(workItem, taskGroup)]);
   const activeSubagents = state.workSessions.filter((session) => session.parentSessionId === "sess_orch_1" && session.placement === "subagent" && !WORK_SESSION_SETTLED_STATUSES.includes(session.status)).length;
@@ -1403,16 +1435,14 @@ export function decideSessionPlacement(state, request = {}) {
   const decision = {
     schemaVersion: "session-placement-decision/v1",
     decisionId: createId("spd"),
-    // 同上：这个动作也是按任务组判的权（session_placement_decide → taskGroupScope）。
-    projectId: taskGroup?.projectId || request.projectId || "prj_control_plane",
-    taskGroupId: request.taskGroupId || taskGroup?.id || "tg_runtime_management",
-    workItemId: request.workItemId || workItem.id || "work_unknown",
+    // 同上：这个动作也是按任务组判的权（session_placement_decide → taskGroupScope）。见 resolveDecisionScope。
+    ...placementScope,
     status: placement === "new_session" ? "new_session_selected" : "subagent_selected",
     placement,
     workSignals: signals.length ? signals : ["single_turn", "read_only_scan", "no_persistent_state", "no_global_task_ownership"],
     capacitySnapshotRef: `capacity:controller:sess_orch_1:subagents:${activeSubagents}`,
     modelSelectionDecisionRef: modelDecision.decisionId,
-    taskContractRef: request.taskContractRef || `pending-contract:${request.workItemId || workItem.id || "work_unknown"}`,
+    taskContractRef: request.taskContractRef || `pending-contract:${placementScope.workItemId}`,
     rationaleRefs: sustained ? ["policy:new_session_for_sustained_work"] : ["policy:short_contained_subagent"],
     auditRef: request.auditRef || `audit:session-placement:${createId("audit")}`,
     createdAt: at
@@ -1512,9 +1542,18 @@ function taskGroupReadDigest(state, taskGroup) {
 
 export function buildTaskContract(state, request = {}) {
   ensureRuntimeCollections(state);
-  const taskGroup = state.taskGroups.find((item) => item.id === request.taskGroupId) || state.taskGroups[0];
-  const workItem = request.workItem || findWorkItem(state, taskGroup?.id, request.workItemId) || taskGroup?.workItems?.[0];
-  const project = state.projects.find((item) => item.id === taskGroup?.projectId) || state.projects[0];
+  // 【任务契约的对象不许猜】。原先这三行是 `|| state.taskGroups[0]` / `|| workItems[0]` /
+  // `|| state.projects[0]`：MCP 的 session.start 直接把调用方参数递进来，任务组 id 写错或漏填时，
+  // 这里会挑【全系统的第一个任务组】和它的第一条工作项，然后照常铸出会话、租约、worker lane 和
+  // 一份 allowedActionScopeRefs —— agent 拿着这份契约去改的是别人那一组的东西，而调用方看到的是成功。
+  const taskGroup = taskGroupForRecordOrRefuse(state, request, "任务契约");
+  const workItem = request.workItem || findWorkItem(state, taskGroup.id, request.workItemId);
+  if (!workItem) {
+    throw Object.assign(new Error("work_item_not_found"), {status: 400, details: {
+      taskGroupId: taskGroup.id, workItemId: request.workItemId || null,
+      message: `任务契约要针对哪个工作项必须说清：任务组 ${taskGroup.id} 里找不到 ${request.workItemId || "（未填）"}`}});
+  }
+  const project = state.projects.find((item) => item.id === taskGroup.projectId);
   // Idempotency guard: if a non-terminal dispatch already exists for this cell, return its contract
   // instead of minting a new session/lease/worker-lane. Without this, a duplicate build (e.g. two
   // MCP session.start calls, since enqueueAgentDispatch dedups only AFTER buildTaskContract has
@@ -4193,9 +4232,12 @@ export function registerRoleSkillOverlay(state, body = {}) {
     throw Object.assign(new Error("role_skill_overlay_base_not_found"), {status: 404, roleSkillRef: body.roleSkillRef || null});
   }
   const at = new Date().toISOString();
-  const overlayTaskGroupId = body.scope === "task_group" || body.taskGroupId
-    ? (body.taskGroupId || "tg_runtime_management")
-    : null;
+  // 任务组级定制不点名任务组时，原先打到种子任务组上 —— 别人那一组的 agent 从此按这份定制干活。
+  if (body.scope === "task_group" && !body.taskGroupId) {
+    throw Object.assign(new Error("role_skill_overlay_task_group_required"), {status: 400, details: {
+      message: "任务组级的角色定制要说清打在哪个任务组上：说不清时系统不会替你挑一个"}});
+  }
+  const overlayTaskGroupId = body.taskGroupId || null;
   const overlayTaskGroup = overlayTaskGroupId
     ? (state.taskGroups || []).find((item) => item.id === overlayTaskGroupId)
     : null;
@@ -6991,6 +7033,19 @@ export function taskGroupForRecord(state, args) {
     || (workItemId ? (state.taskGroups || []).find((item) => (item.workItems || []).some((work) => work.id === workItemId)) : null);
 }
 
+// 【记录挂在哪个任务组下不许猜】。上面这个解析器认不出时返回 null，各个工厂随后写
+// `taskGroup?.id || args.taskGroupId || "tg_runtime_management"` —— 也就是说漏填/写错任务组的
+// 请求，会把记录挂到种子项目的管理组上（core 里 14 处这么写，MCP 工具直连这些工厂，
+// 路由那边补的「必须点名任务组」它们一概绕得过）。改成认不出就具名拒绝：调用方立刻知道
+// 是哪个字段没说清，而不是收到 201 之后去别人的任务组里找自己的记录。
+function taskGroupForRecordOrRefuse(state, args, what) {
+  const taskGroup = taskGroupForRecord(state, args);
+  if (taskGroup) return taskGroup;
+  throw Object.assign(new Error("task_group_not_found"), {status: 400, details: {
+    taskGroupId: args.taskGroupId || null, workItemId: args.workItemId || args.workId || null,
+    message: `${what}要挂在哪个任务组下必须说清（taskGroupId 或一个认得出的 workItemId）：说不清时系统不会替你挑一个`}});
+}
+
 export function capRetainingOpen(items, terminalStatuses, limit) {
   if (items.length <= limit) return items;
   const terminal = new Set(terminalStatuses);
@@ -7171,9 +7226,20 @@ function pruneRoomMessages(state) {
   state.roomMessages = kept.reverse();
 }
 
+// 房间号漏填时原先回落到 `room_tg_runtime_management` —— 消息就发进了种子任务组的协作室，
+// 那里坐着别的人和别的 agent，而发的人收到的是成功。房间说不清就拒绝。
+function requiredRoomId(args) {
+  const roomId = args.roomId || (args.taskGroupId ? `room_${args.taskGroupId}` : null);
+  if (!roomId) {
+    throw Object.assign(new Error("room_not_specified"), {status: 400, details: {
+      message: "要发到哪个协作室必须说清（roomId 或 taskGroupId）：说不清时消息不会替你投进某个默认房间"}});
+  }
+  return roomId;
+}
+
 export function roomSend(state, args) {
   const at = new Date().toISOString();
-  const roomId = args.roomId || `room_${args.taskGroupId || "tg_runtime_management"}`;
+  const roomId = requiredRoomId(args);
   state.roomMessages ||= [];
   state.roomSequenceByRoom ||= {};
   // (roomId, idempotencyKey) dedup: a retried send with the same key must return the original
@@ -7264,7 +7330,7 @@ function roomEventActor(senderRef) {
 }
 
 export function roomWait(state, args) {
-  const roomId = args.roomId || `room_${args.taskGroupId || "tg_runtime_management"}`;
+  const roomId = requiredRoomId(args);
   const afterSequence = Number(args.afterSequence || args.cursor || 0);
   const limit = Math.max(1, Math.min(500, Number(args.limit || 50)));
   const pending = state.roomMessages
@@ -7420,7 +7486,7 @@ function globScopesOverlap(left, right) {
 export function createExecutionTopology(state, args, options = {}) {
   const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);
   if (settledRejection) return settledRejection;
-  const taskGroup = findTaskGroup(state, args.taskGroupId);
+  const taskGroup = taskGroupForRecordOrRefuse(state, args, "执行拓扑");
   const workItem = (taskGroup?.workItems || []).find((item) => item.id === (args.workItemId || args.workId))
     || (taskGroup?.workItems || []).find((item) => !["superseded", "closed"].includes(item.status))
     || null;
@@ -7457,8 +7523,8 @@ export function createExecutionTopology(state, args, options = {}) {
   const topology = {
     schemaVersion: "execution-topology/v1",
     topologyId,
-    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
-    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
+    projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id,
     workItemId,
     status: "planned",
     mode,
@@ -7773,7 +7839,9 @@ export function classifyDerivedTask(state, args) {
   if (title.includes("test") || title.includes("qa")) signals.push("qa_required");
   if (title.includes("security") || title.includes("permission")) signals.push("security_required");
   const roleId = signals.includes("security_required") ? "security" : signals.includes("qa_required") ? "qa" : signals.includes("review_required") ? "reviewer" : args.roleId || "orchestrator";
-  return {roleId, signals, modelDecision: selectModel(state, {...args, roleId})};
+  // 派生任务分类是【预览】：这时工作项还没派生出来，算得出该用哪个模型，但不能因此往台账里
+  // 写一条真决策（原先它写进去的那条 workItemId 是 "work_unknown"，直接显示在监控页上）。
+  return {roleId, signals, modelDecision: selectModel(state, {...args, roleId}, {persist: false})};
 }
 
 // 租约有 expiresAt，但全仓【没有任何代码读它】—— 也就是说租约从来不会过期。持有它的会话
@@ -7904,12 +7972,12 @@ export function artifactRegister(state, args) {
   // 而这个集合上恰好挂着「registered 但没有自证摘要就挡着关闭门」的判定。
   assertUniqueRecordId(state.artifacts, "artifactId", args.artifactId, "artifact_id_conflict");
   const at = new Date().toISOString();
-  const taskGroup = taskGroupForRecord(state, args);
+  const taskGroup = taskGroupForRecordOrRefuse(state, args, "产出物登记");
   const artifact = {
     schemaVersion: "artifact/v1",
     artifactId: args.artifactId || createId("artifact"),
-    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
-    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
+    projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id,
     workItemId: args.workItemId || args.workId,
     repositoryOutputTargetRef: args.repositoryOutputTargetRef,
     artifactManifestRef: args.artifactManifestRef || args.path,
@@ -8190,13 +8258,13 @@ export function reviewPlanCreate(state, args) {
   // 与 reviewBundleRegister 同一形状：处置走 find(reviewPlanId === x)，同 id 两条只会命中一条，
   // 另一条永远停在 ready 挡着关闭门，而且没有第二条杠杆碰得到它。那边早有守卫，这边漏了。
   assertUniqueRecordId(state.reviewPlans, "reviewPlanId", args.reviewPlanId, "review_plan_id_conflict");
-  const taskGroup = taskGroupForRecord(state, args);
+  const taskGroup = taskGroupForRecordOrRefuse(state, args, "评审计划");
   const at = new Date().toISOString();
   const plan = {
     schemaVersion: "review-plan/v1",
     reviewPlanId: args.reviewPlanId || createId("review_plan"),
-    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
-    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
+    projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id,
     status: "ready",
     reviewScopeRefs: args.reviewScopeRefs || [`TaskGroup:${taskGroup?.id || "tg_runtime_management"}`],
     requiredReviewerRoles: args.requiredReviewerRoles || ["reviewer", "qa"],
@@ -8216,12 +8284,12 @@ export function reviewBundleRegister(state, args) {
   // 这与 claimLease / permissionRequestSubmit 等处是同一条 id 唯一性纪律。
   assertUniqueRecordId(state.reviewBundles, "reviewBundleId", args.reviewBundleId, "review_bundle_id_conflict");
   const at = new Date().toISOString();
-  const taskGroup = taskGroupForRecord(state, args);
+  const taskGroup = taskGroupForRecordOrRefuse(state, args, "评审包");
   const bundle = {
     schemaVersion: "review-bundle/v1",
     reviewBundleId: args.reviewBundleId || createId("review_bundle"),
-    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
-    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
+    projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id,
     // "submitted" is a MODELED ReviewBundle state (was the unmodeled "registered"). It is non-terminal, so
     // it blocks the close barrier's no_pending_review_bundles gate until review_result_consume terminalizes
     // it — that is the resolving lever, so this is a pending external review, not a permanent wedge.
@@ -8243,7 +8311,7 @@ export function approvalRequestCreate(state, args) {
   // 冒名的审批请求可自带 quorum:1 / riskClass:low，让高危多方审批塌缩成一次点击。
   assertUniqueRecordId(state.approvalRequests, "approvalId", args.approvalId, "approval_request_id_conflict");
   const at = new Date().toISOString();
-  const taskGroup = taskGroupForRecord(state, args);
+  const taskGroup = taskGroupForRecordOrRefuse(state, args, "审批请求");
   // manifest 的不变式是「批准只授权那一个确切动作」，而这里原先给了两个占位默认：
   // action 缺省成 "guarded_action"、resource 缺省成 {} —— 一条写着「已批准」却说不清批的是什么
   // 的记录。今天只有关闭门在读它（"有没有待审批"），所以还不构成授权洞；但只要有人照着
@@ -8259,11 +8327,11 @@ export function approvalRequestCreate(state, args) {
     return {ok: false, error: "expires_at_invalid", received: String(args.expiresAt).slice(0, 60),
       message: "到期时间解析不了 —— 落库之后所有比较都会静默失败，所以这里拒绝"};
   }
-  const approvalTaskGroupId = taskGroup?.id || args.taskGroupId || "tg_runtime_management";
+  const approvalTaskGroupId = taskGroup.id;
   const request = {
     schemaVersion: "approval-request/v1",
     approvalId: args.approvalId || createId("approval"),
-    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
+    projectId: taskGroup.projectId,
     taskGroupId: approvalTaskGroupId,
     action: String(args.action).trim(),
     resource: (args.resource && typeof args.resource === "object" && Object.keys(args.resource).length)
@@ -8387,12 +8455,12 @@ export function findingSubmit(state, args) {
       return {finding: existing};
     }
   }
-  const taskGroup = taskGroupForRecord(state, args);
+  const taskGroup = taskGroupForRecordOrRefuse(state, args, "问题单");
   const finding = {
     schemaVersion: "finding/v1",
     findingId: args.findingId || createId("finding"),
-    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
-    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
+    projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id,
     workItemId: args.workItemId || args.workId,
     findingType: args.findingType || "governance",
     severity: args.severity || "medium",
@@ -8600,13 +8668,15 @@ export function ruleSourceResolve(state, args) {
   // 同上：判定走 find(resolutionId === x)，同 id 两条会留下一个永远停在 discovered 的孤儿。
   assertUniqueRecordId(state.ruleSourceResolutions, "resolutionId", args.resolutionId, "rule_source_resolution_id_conflict");
   const at = new Date().toISOString();
+  const ruleSourceTaskGroup = taskGroupForRecordOrRefuse(state, args, "规则来源判定");
   const resolution = {
     schemaVersion: "rule-source-resolution/v1",
     resolutionId: args.resolutionId || createId("rsr"),
     // 此前这条记录不带 projectId/taskGroupId，而两道关闭门都按 taskGroupId 过滤 ——
     // 就算状态名拼对了，过滤器也恒为空集，门照样是空转的。
-    projectId: args.projectId || "prj_control_plane",
-    taskGroupId: args.taskGroupId || "tg_runtime_management",
+    // 归属同样从任务组推（原先取调用方自填的 projectId，会落到别人项目的台账里）。
+    projectId: ruleSourceTaskGroup.projectId,
+    taskGroupId: ruleSourceTaskGroup.id,
     sourceRef: args.sourceRef || "reference:unknown",
     sourceScope: args.sourceScope || "reference_material",
     status: "discovered",

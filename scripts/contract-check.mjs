@@ -120,6 +120,7 @@ import {
   approvalRequestCreate,
   advanceExecutionTopology,
   decideSessionPlacement,
+  classifyDerivedTask,
   roomSend,
   effectivePathDenylist,
   computeEffectiveRulesDigest,
@@ -866,6 +867,7 @@ run(verifyEveryPredicateDeclaresItsCoverage);
 run(verifyEmptyEvidenceNeverReachesTheLedger);
 run(verifyPathAllowlistMatcherIsExercised);
 run(verifyExecutionTopologyBaselineTellsTheTruth);
+run(verifyRecordsCannotBeFiledUnderAGuessedTaskGroup);
 run(verifyIdempotencyPayloadsAreSwept);
 run(verifyNobodyWritesIdempotencyRecordsDirectly);
 run(verifyOnlyLiveHumanAccountsCanFinalize);
@@ -5887,7 +5889,9 @@ function verifyAgentGatewayContracts(output) {
       localizedContract.languagePolicy.fallback !== "return_blocked_for_language_mismatch") {
     output.push("Task-group language policy update did not propagate to new contracts, EIP and output contract");
   }
-	  const deepAnalysisDecision = selectModel(state, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", roleId: "orchestrator", workItem: {id: "work_deep_analysis", title: "深度分析架构方案", ownerRole: "orchestrator", requirements: ["analysis only"]}});
+	  // 这里问的是"这类任务会选什么模型"，工作项是假设出来的（并不在状态里）—— 属于预览调用，
+	  // 传 persist:false：算得出结论，但不会因此往台账里写一条指着不存在工作项的决策。
+	  const deepAnalysisDecision = selectModel(state, {projectId: "prj_control_plane", taskGroupId: "tg_runtime_management", roleId: "orchestrator", workItem: {id: "work_deep_analysis", title: "深度分析架构方案", ownerRole: "orchestrator", requirements: ["analysis only"]}}, {persist: false});
   if (deepAnalysisDecision.taskExecutionClass !== "deep_analysis" || deepAnalysisDecision.escalationAllowed !== false || !deepAnalysisDecision.modelDecision?.startsWith("modelDecision:") || deepAnalysisDecision.modelDecision.length > 240) {
     output.push("Model selection did not create a bounded one-line integration-owner modelDecision");
 	  }
@@ -8445,6 +8449,133 @@ function verifyPathAllowlistMatcherIsExercised(output) {
     + `（${matched} 条该匹配、${refused} 条该拒；通用匹配器此前四道门都走不到它）`);
 }
 
+// 【记录不许挂到猜出来的任务组上】。这一族原先遍布 core：`taskGroup?.id || args.taskGroupId ||
+// "tg_runtime_management"`（14 处）、`state.taskGroups[0]`（任务契约）、`room_${... || "tg_runtime_management"}`
+// （协作室）。后果按严重度排：任务契约会用【全系统第一个任务组的第一条工作项】铸出会话/租约/
+// worker lane 和 allowedActionScopeRefs（agent 拿着它去动别人那一组的东西）；其余工厂把记录挂到
+// 种子项目的管理组上，projectId 还取调用方自填值 —— 判权按任务组判、落账按自填项目，两头对不上。
+// REST 路由那边可以逐条补「必须点名任务组」，但 MCP 工具是直连这些工厂的，绕得过路由。
+// 所以判据钉在 core：每个会落账的工厂，任务组认不出就必须【具名拒绝】，不许替调用方挑一个。
+// 登记制：新增工厂要么进这张表，要么这道门看不见它 —— 表由人写，但每一项都真跑一次。
+function verifyRecordsCannotBeFiledUnderAGuessedTaskGroup(output) {
+  const FOREIGN = "prj_somebody_elses";
+  const fresh = () => {
+    const state = structuredClone(seedState);
+    ensureRuntimeCollections(state, {root});
+    return state;
+  };
+  const realGroup = () => {
+    const state = fresh();
+    const taskGroup = state.taskGroups[0];
+    return {state, taskGroup, workItem: taskGroup.workItems[0]};
+  };
+  // 每一项：不点名任务组时该报的码；点名之后要能成，且归属从任务组推。
+  const FACTORIES = [
+    {what: "选型决策", code: "task_group_not_found",
+      blind: (state) => selectModel(state, {projectId: FOREIGN, roleId: "orchestrator"}),
+      named: (state, tg, wi) => selectModel(state, {taskGroupId: tg.id, workItemId: wi.id, projectId: FOREIGN}),
+      filed: (state) => state.modelSelectionDecisions[0]},
+    {what: "会话放置", code: "task_group_not_found",
+      blind: (state) => decideSessionPlacement(state, {projectId: FOREIGN}),
+      named: (state, tg, wi) => decideSessionPlacement(state, {taskGroupId: tg.id, workItemId: wi.id, projectId: FOREIGN}),
+      filed: (state) => state.sessionPlacementDecisions[0]},
+    {what: "任务契约", code: "task_group_not_found",
+      blind: (state) => buildTaskContract(state, {projectId: FOREIGN, root}),
+      named: (state, tg, wi) => buildTaskContract(state, {taskGroupId: tg.id, workItemId: wi.id, projectId: FOREIGN, root}),
+      filed: (state) => state.agentTaskContracts[0]},
+    {what: "产出物", code: "task_group_not_found",
+      blind: (state) => artifactRegister(state, {projectId: FOREIGN, artifactManifestRef: "docs/a.json"}),
+      named: (state, tg, wi) => artifactRegister(state, {taskGroupId: tg.id, workItemId: wi.id, projectId: FOREIGN, artifactManifestRef: "docs/a.json"}),
+      filed: (state) => state.artifacts[0]},
+    {what: "评审计划", code: "task_group_not_found",
+      blind: (state) => reviewPlanCreate(state, {projectId: FOREIGN}),
+      named: (state, tg) => reviewPlanCreate(state, {taskGroupId: tg.id, projectId: FOREIGN}),
+      filed: (state) => state.reviewPlans[0]},
+    {what: "评审包", code: "task_group_not_found",
+      blind: (state) => reviewBundleRegister(state, {projectId: FOREIGN}),
+      named: (state, tg) => reviewBundleRegister(state, {taskGroupId: tg.id, projectId: FOREIGN}),
+      filed: (state) => state.reviewBundles[0]},
+    {what: "问题单", code: "task_group_not_found",
+      blind: (state) => findingSubmit(state, {projectId: FOREIGN, summary: "x"}),
+      named: (state, tg) => findingSubmit(state, {taskGroupId: tg.id, projectId: FOREIGN, summary: "x"}),
+      filed: (state) => state.findings[0]},
+    {what: "审批请求", code: "task_group_not_found",
+      blind: (state) => approvalRequestCreate(state, {projectId: FOREIGN, action: "probe", proposedBy: "acct_system_owner"}),
+      named: (state, tg) => approvalRequestCreate(state, {taskGroupId: tg.id, projectId: FOREIGN, action: "probe", proposedBy: "acct_system_owner"}),
+      filed: (state) => state.approvalRequests[0]},
+    {what: "规则来源判定", code: "task_group_not_found",
+      blind: (state) => ruleSourceResolve(state, {projectId: FOREIGN, sourceRef: "reference:probe"}),
+      named: (state, tg) => ruleSourceResolve(state, {taskGroupId: tg.id, projectId: FOREIGN, sourceRef: "reference:probe"}),
+      filed: (state) => state.ruleSourceResolutions[0]},
+    {what: "执行方案", code: "task_group_not_found",
+      blind: (state) => createExecutionTopology(state, {projectId: FOREIGN, workItemId: "work_nope"}, {root}),
+      named: (state, tg, wi) => createExecutionTopology(state, {taskGroupId: tg.id, workItemId: wi.id, projectId: FOREIGN}, {root}),
+      filed: (state) => state.executionTopologies[0]},
+    {what: "协作室消息", code: "room_not_specified",
+      blind: (state) => roomSend(state, {body: "probe"}),
+      named: (state, tg) => roomSend(state, {taskGroupId: tg.id, body: "probe"}),
+      filed: null},
+    {what: "任务组级角色定制", code: "role_skill_overlay_task_group_required",
+      blind: (state) => registerRoleSkillOverlay(state, {roleSkillRef: state.roleSkills[0].roleSkillId, scope: "task_group", projectId: FOREIGN, patch: {allowedCapabilityAdds: ["cap_probe"]}}),
+      named: (state, tg) => registerRoleSkillOverlay(state, {roleSkillRef: state.roleSkills[0].roleSkillId, scope: "task_group", taskGroupId: tg.id, projectId: FOREIGN, patch: {allowedCapabilityAdds: ["cap_probe"]}}),
+      filed: null}
+  ];
+  for (const factory of FACTORIES) {
+    let refusedWith = null;
+    try {
+      const state = fresh();
+      factory.blind(state);
+    } catch (error) {
+      refusedWith = error.message;
+    }
+    if (refusedWith !== factory.code) {
+      output.push(`${factory.what}：任务组说不清时没有具名拒绝（拿到的是 ${refusedWith === null ? "一条真记录" : refusedWith}，`
+        + `应为 ${factory.code}）—— 这类兜底会把记录挂到种子任务组上，判权和落账从此对不上`);
+      continue;
+    }
+    // 正面对照走【同一条分支】：点名之后必须成，且归属从任务组推而不是从自填的 projectId 取。
+    const {state, taskGroup, workItem} = realGroup();
+    let named = null;
+    try {
+      named = factory.named(state, taskGroup, workItem);
+    } catch (error) {
+      output.push(`${factory.what}：点名任务组之后仍然被拒（${error.message}）—— 上面那条拒绝测的就不是「说不清」，而是这条路整个不通了`);
+      continue;
+    }
+    if (!named) {
+      output.push(`${factory.what}：点名任务组之后什么也没建出来 —— 正面对照在空转`);
+      continue;
+    }
+    const record = factory.filed ? factory.filed(state) : null;
+    if (factory.filed && !record) {
+      output.push(`${factory.what}：点名任务组之后没有落账 —— 归属那条对照读的是这条记录，读不到就是在空转`);
+      continue;
+    }
+    if (record && (record.projectId !== taskGroup.projectId || (record.taskGroupId && record.taskGroupId !== taskGroup.id))) {
+      output.push(`${factory.what}：落账挂在 ${record.projectId}/${record.taskGroupId}，而任务组是 `
+        + `${taskGroup.projectId}/${taskGroup.id} —— 归属取了调用方自填的值`);
+    }
+  }
+  // 派生任务分类是预览：算得出模型，但不能因此往台账里写一条指着不存在工作项的决策
+  //（原先它写进去的那条 workItemId 是 "work_unknown"，直接显示在监控页「模型选择记录」上）。
+  const previewState = fresh();
+  let preview = null;
+  try {
+    preview = classifyDerivedTask(previewState, {taskGroupId: previewState.taskGroups[0].id, title: "security review"});
+  } catch (error) {
+    // 走落账那条路就会撞上"工作项必须认得出" —— 而预览这时本来就还没有工作项。
+    output.push(`派生任务分类被拒了（${error.message}）—— 它是预览：算模型可以，但不该走落账那条路`);
+  }
+  if (preview && !preview.modelDecision?.selectedModel) {
+    output.push("派生任务分类没有给出模型建议 —— 预览这条路被改坏了");
+  }
+  if (previewState.modelSelectionDecisions.length) {
+    output.push(`派生任务分类往选型台账里写了 ${previewState.modelSelectionDecisions.length} 条决策 —— `
+      + `它没有工作项（记的是 ${previewState.modelSelectionDecisions[0].workItemId}），这条记录会显示在监控页上让人以为真有这个工作项`);
+  }
+  console.log(`记录不许挂到猜出来的任务组上：${FACTORIES.length} 个会落账的工厂逐个真跑（说不清就具名拒绝、点名之后归属从任务组推），派生任务分类只算不落账`);
+}
+
 function verifyExecutionTopologyBaselineTellsTheTruth(output) {
   const notARepository = mkdtempSync(join(tmpdir(), "cc-no-repo-"));
   try {
@@ -8454,8 +8585,11 @@ function verifyExecutionTopologyBaselineTellsTheTruth(output) {
     // 这里【不】比对 GIT_HEAD_UNAVAILABLE 的字面值：判据与实现读的是同一个常量，
     // 改掉它两边一起变，那条断言恒真（拿产品跟它自己比）。真正承重的是上面那句——
     // gitHead 的兜底值一旦改成别的东西，gitHeadOrNull 就不再回 null，上面当场红。
-    const state = {stateVersion: 7, executionTopologies: [], taskGroups: [], workItems: [],
-      transitionEvidence: [], humanConfirmationRequests: [], auditLog: [], eventLog: []};
+    // 任务组要真的存在：执行方案不再接受"认不出就挂到种子任务组上"，夹具也得给它一个真对象。
+    const state = {stateVersion: 7, executionTopologies: [],
+      taskGroups: [{id: "tg_runtime_management", projectId: "prj_control_plane", status: "active",
+        workItems: [{id: "work_probe", status: "ready", ownerRole: "orchestrator", title: "probe"}]}],
+      workItems: [], transitionEvidence: [], humanConfirmationRequests: [], auditLog: [], eventLog: []};
     ensureRuntimeCollections(state, {root, runtimeDir: mkdtempSync(join(tmpdir(), "cc-no-repo-rt-"))});
     const created = createExecutionTopology(state, {taskGroupId: "tg_runtime_management",
       workItemId: "work_probe", branches: [{branchId: "b1", ownedPaths: ["docs/**"]}]}, {root: notARepository});
@@ -13004,7 +13138,9 @@ async function verifyEveryMcpToolAnswersAnEmptyCall(output) {
     // 会被要求点名。它们必须在回答里说清答的是谁 —— 下面的字段名就是判据要核的那一项。
     "review-mcp.completion_readiness_compute": {reason: "缺对象时算控制面自己的任务组", names: "taskGroupId"},
     "governance-mcp.close_barrier_compute": {reason: "缺对象时算控制面自己的任务组", names: "taskGroupId"},
-    "room-mcp.room_wait": {reason: "缺对象时等控制面自己的房间", names: "roomId"},
+    // room_wait 原先也在这张表里（"缺对象时等控制面自己的房间"）。房间号的默认值已经取消：
+    // 同一个 requiredRoomId 也管着 room_send，而"漏填房间号就把消息发进种子任务组的协作室"
+    // 是实打实的错投；为一个便利留着这个默认值，等于让读和写两条路对"房间是谁"给出不同答案。
     "permission-mcp.permission_probe": {reason: "缺对象时探控制面项目上的默认主体", names: "subjectId"},
     "ui-console-mcp.project_progress_get": {reason: "缺对象时给当前项目的进度快照", names: null},
     "ui-console-mcp.task_group_progress_get": {reason: "缺对象时给控制面任务组的进度快照", names: null},

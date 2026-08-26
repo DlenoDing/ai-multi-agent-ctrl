@@ -6599,27 +6599,59 @@ const MUTATIONS = [
     expect: "拿到的不是 409/idempotency_key_reuse_conflict"
   },
   {
+    name: "记录不许挂到猜出来的任务组上（工厂共用的那道）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyRecordsCannotBeFiledUnderAGuessedTaskGroup",
+    from: "  const taskGroup = taskGroupForRecord(state, args);\n  if (taskGroup) return taskGroup;",
+    to: "  const taskGroup = taskGroupForRecord(state, args);\n  if (taskGroup) return taskGroup;\n  return (state.taskGroups || []).find((item) => item.id === \"tg_runtime_management\") || (state.taskGroups || [])[0];",
+    expect: "任务组说不清时没有具名拒绝"
+  },
+  {
+    name: "任务契约不许挑全系统第一个任务组",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyRecordsCannotBeFiledUnderAGuessedTaskGroup",
+    from: "  const taskGroup = taskGroupForRecordOrRefuse(state, request, \"\u4efb\u52a1\u5951\u7ea6\");",
+    to: "  const taskGroup = taskGroupForRecord(state, request) || state.taskGroups[0];",
+    expect: "任务契约：任务组说不清时没有具名拒绝"
+  },
+  {
+    name: "协作室消息不许投进默认房间",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyRecordsCannotBeFiledUnderAGuessedTaskGroup",
+    from: "  const roomId = args.roomId || (args.taskGroupId ? `room_${args.taskGroupId}` : null);",
+    to: "  const roomId = args.roomId || `room_${args.taskGroupId || \"tg_runtime_management\"}`;",
+    expect: "协作室消息：任务组说不清时没有具名拒绝"
+  },
+  {
+    name: "派生任务分类不许往台账里写决策",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyRecordsCannotBeFiledUnderAGuessedTaskGroup",
+    from: "  return {roleId, signals, modelDecision: selectModel(state, {...args, roleId}, {persist: false})};",
+    to: "  return {roleId, signals, modelDecision: selectModel(state, {...args, roleId})};",
+    expect: "派生任务分类被拒了"
+  },
+  {
     name: "选型决策的归属必须从任务组推出来",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyTaskGroupScopedWritesDeriveTheirProject",
-    from: "    projectId: modelDecisionOwner?.projectId || workItem.projectId || request.projectId || \"prj_control_plane\",",
-    to: "    projectId: request.projectId || workItem.projectId || \"prj_control_plane\",",
+    from: "  const decisionScope = resolveDecisionScope(state, request, workItem, options);",
+    to: "  const decisionScope = {...resolveDecisionScope(state, request, workItem, options), projectId: request.projectId || \"prj_control_plane\"};",
     expect: "选型决策落在了调用方自己填的项目名下"
   },
   {
     name: "会话放置决策的归属必须从任务组推出来",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyTaskGroupScopedWritesDeriveTheirProject",
-    from: "    // \u540c\u4e0a\uff1a\u8fd9\u4e2a\u52a8\u4f5c\u4e5f\u662f\u6309\u4efb\u52a1\u7ec4\u5224\u7684\u6743\uff08session_placement_decide \u2192 taskGroupScope\uff09\u3002\n    projectId: taskGroup?.projectId || request.projectId || \"prj_control_plane\",",
-    to: "    projectId: request.projectId || taskGroup?.projectId || \"prj_control_plane\",",
+    from: "  const placementScope = resolveDecisionScope(state, request, workItem);",
+    to: "  const placementScope = {...resolveDecisionScope(state, request, workItem), projectId: request.projectId || taskGroup?.projectId};",
     expect: "会话放置决策落在了调用方自己填的项目名下"
   },
   {
     name: "推归属不得变成丢弃这个字段",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyTaskGroupScopedWritesDeriveTheirProject",
-    from: "    // \u540c\u4e0a\uff1a\u8fd9\u4e2a\u52a8\u4f5c\u4e5f\u662f\u6309\u4efb\u52a1\u7ec4\u5224\u7684\u6743\uff08session_placement_decide \u2192 taskGroupScope\uff09\u3002\n    projectId: taskGroup?.projectId || request.projectId || \"prj_control_plane\",",
-    to: "    projectId: \"prj_wrong_always\",",
+    from: "  const placementScope = resolveDecisionScope(state, request, workItem);",
+    to: "  const placementScope = {...resolveDecisionScope(state, request, workItem), projectId: \"prj_wrong_always\"};",
     expect: "推不出正确归属"
   },
   {
@@ -8942,8 +8974,8 @@ const MUTATIONS = [
     name: "守卫作用域要取自被改的那条记录，不能取自请求体",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    from: 'taskGroupScope(state, assignTarget?.id || body.taskGroupId || "tg_runtime_management"));',
-    to: 'taskGroupScope(state, body.taskGroupId || "tg_runtime_management"));',
+    from: 'taskGroupScope(state, assignTarget?.id || body.taskGroupId));',
+    to: 'taskGroupScope(state, body.taskGroupId));',
     expect: "拒它的不是守卫而是别的东西"
   },
   {
