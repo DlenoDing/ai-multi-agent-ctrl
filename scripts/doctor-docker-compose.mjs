@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from "node:child_process";
+import { dockerFailureAdvice } from "./lib/docker-failure-advice.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
 // 运维起容器走的是 scripts/docker-up.sh。两个 compose 命令都不在时，原先落到 exec 上，
@@ -177,8 +178,19 @@ try {
   spawnSync("docker", ["compose", "down", "-v"], {cwd: root, env: composeEnv, encoding: "utf8", stdio: "pipe"});
 }
 
+// 这道门旁边已经有一条「没装 compose 时给人话」的前置，而【环境把 docker 挡住】的样子不止那一种。
+// 实测撞到两种，两种都只吐一段 Node 崩溃栈：读的人以为是本仓的代码坏了，实际一行都没坏。
+// 判别与措辞收在 lib/docker-failure-advice.mjs 里 —— 那类故障在本机复现不了（镜像一旦缓存
+// 就不再走那条路），抽出来才能拿真实抓到的原话把它验一遍。认不出来的原样抛，不假装懂。
 function run(command, args, options = {}) {
-  execFileSync(command, args, {cwd: root, env: composeEnv, stdio: "pipe", timeout: options.timeout || 60000});
+  try {
+    execFileSync(command, args, {cwd: root, env: composeEnv, stdio: "pipe", timeout: options.timeout || 60000});
+  } catch (error) {
+    const said = `${error?.stdout || ""}${error?.stderr || ""}`;
+    const advice = dockerFailureAdvice(said);
+    if (advice) throw new Error(`${advice}\ndocker 原话：${said.trim().split("\n").slice(0, 3).join(" / ")}`);
+    throw error;
+  }
 }
 
 function json(text) {

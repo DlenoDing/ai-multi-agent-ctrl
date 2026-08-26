@@ -3240,6 +3240,22 @@ const MUTATIONS = [
     expect: "没带上本项目现行规范"
   },
   {
+    name: "docker 被环境挡住时要说人话，而不是吐崩溃栈",
+    file: "scripts/lib/docker-failure-advice.mjs",
+    check: "verifyDockerEnvironmentFailuresSayWhatToDo",
+    from: '  if (/docker-credential-\\S+": executable file not found/u.test(said)) {',
+    to: "  if (false) {",
+    expect: "会原样抛一段崩溃栈"
+  },
+  {
+    name: "认不出的 docker 失败不许被当成环境问题（那会盖住真的代码缺陷）",
+    file: "scripts/lib/docker-failure-advice.mjs",
+    check: "verifyDockerEnvironmentFailuresSayWhatToDo",
+    from: "  return null;",
+    to: '  return "本仓的代码没有问题：连不上 docker 守护进程，多半是环境";',
+    expect: "真有代码缺陷时那句话会把它盖住"
+  },
+  {
     name: "落下去的成员状态必须是规范里声明过的那个（suspended，不是 disabled）",
     file: SERVER,
     gate: "doctor",

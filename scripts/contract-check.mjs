@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {
 execFileSync, spawn, spawnSync } from "node:child_process";
+import { dockerFailureAdvice } from "./lib/docker-failure-advice.mjs";
 import { SCHEMA_FILE_ALIASES, UNCOVERED_CEILINGS, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { OPERATOR_CLIS, OPERATOR_SHELL_ENTRIES, OPERATOR_ENTRY_FILES, ENV_READING_SUPPORT_FILES } from "./lib/operator-entries.mjs";
 import { checkRecordStatusesAreDeclaredStates, extractMachineStates } from "./lib/state-machine-states.mjs";
@@ -422,6 +423,16 @@ const PREDICATE_COVERAGE = {
 };
 const PREDICATE_NOT_PROBED_CEILING = 13;
 
+const DOCKER_FAILURE_SAMPLES = [
+  {what: "凭据助手不在 PATH", said: 'error getting credentials - err: exec: "docker-credential-desktop":'
+    + " executable file not found in $PATH, out: ``", expect: "凭据助手"},
+  {what: "context 指不到", said: 'Failed to initialize: unable to resolve docker endpoint: context'
+    + ' "desktop-linux": context not found: open /tmp/x/contexts/meta/abc/meta.json: no such file or directory',
+    expect: "连不上 docker 守护进程"},
+  {what: "守护进程没起来", said: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock."
+    + " Is the docker daemon running?", expect: "连不上 docker 守护进程"}
+];
+
 const PATH_ALLOWLIST_CASES = [
   // 字面量前缀 + /**：目录本身、目录下任意深度都算，隔壁同前缀的目录不算
   ["docs/**", "docs", true], ["docs/**", "docs/a", true], ["docs/**", "docs/a/b", true],
@@ -823,6 +834,7 @@ run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
 run(verifyEveryGrantedPermissionHasAConsumer);
+run(verifyDockerEnvironmentFailuresSayWhatToDo);
 run(verifyProjectAdminAndOwnerStayOnePerson);
 run(verifyHealthReadDoesNotCloneEveryRequest);
 run(verifyCallerChosenIdsCannotShadow);
@@ -8059,6 +8071,32 @@ function verifyOnlyLiveHumanAccountsCanFinalize(output) {
 //     而分叉之后没有任何东西会红（两个角色照常都能授出去，只是给的东西悄悄不同了）；
 //   · 授权下拉里不许再同时摆两个 —— 摆两个会让人以为它们不一样，从而在两者之间做一次
 //     其实不存在的选择。「项目负责人」这个身份本身留着：建项目时创建者被自动记成它。
+// docker 门被【环境】挡住时该说人话，而不是吐一段 Node 崩溃栈让人以为是本仓坏了。
+// 这类故障在本机复现不了（基础镜像一旦缓存下来就不再走拉取那条路），所以判别逻辑抽成了
+// lib/docker-failure-advice.mjs，这里拿【2026-08-26 真实抓到的那两句 docker 原话】验它 ——
+// "复现不了"不等于"不验"：原话是从真实故障里抄下来的，不是我编的。
+function verifyDockerEnvironmentFailuresSayWhatToDo(output) {
+  for (const sample of DOCKER_FAILURE_SAMPLES) {
+    const advice = dockerFailureAdvice(sample.said);
+    if (!advice) {
+      output.push(`docker 门碰到「${sample.what}」时认不出来，会原样抛一段崩溃栈 ——`
+        + " 读的人会以为是本仓的代码坏了，而实际一行都没坏");
+      continue;
+    }
+    if (!advice.includes(sample.expect)) {
+      output.push(`docker 门对「${sample.what}」给的话不对（应含「${sample.expect}」，实得 ${advice.slice(0, 60)}）`);
+    }
+    if (!advice.includes("本仓的代码没有问题")) {
+      output.push(`docker 门对「${sample.what}」没有说清"这不是代码的问题" —— 那是读的人最先需要知道的一句`);
+    }
+  }
+  // 认不出来的必须回 null 让调用方原样抛：编一句"可能是环境问题"比不说更坏 —— 真有代码缺陷时它会盖住。
+  if (dockerFailureAdvice("TypeError: cannot read property 'x' of undefined") !== null) {
+    output.push("docker 门把一个认不出来的失败也当成环境问题了 —— 真有代码缺陷时那句话会把它盖住");
+  }
+  console.log(`docker 环境故障报文：${DOCKER_FAILURE_SAMPLES.length} 句真实原话逐个核过，认不出的照旧原样抛`);
+}
+
 function verifyProjectAdminAndOwnerStayOnePerson(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
   // 模板已搬进 core（两条路都要用它，各写一份必漂），所以在 core 里核。
