@@ -3177,7 +3177,7 @@ const MUTATIONS = [
   },
   {
     name: "项目管理员与负责人的权限不许各写一份（人定：他们是同一个人）",
-    file: SERVER,
+    file: CORE,
     check: "verifyProjectAdminAndOwnerStayOnePerson",
     from: "  project_admin: [...projectOwnerGrantPermissions],",
     to: '  project_admin: ["project:view", "project:update", "project:grant", "member:invite", "agent:activate", "task_group:read", "task_group:control"],',
@@ -3206,6 +3206,38 @@ const MUTATIONS = [
     from: 'const cases = [...mcpSource.matchAll(/case "([\\w.-]+)":(?:(?!\\n    case )[\\s\\S]){0,900}?\\n\\s*return (\\w+)\\(/gu)];',
     to: 'const cases = [...mcpSource.matchAll(/case "([\\w.-]+)":\\s*\\n\\s*return (\\w+)\\(/gu)];',
     expect: "登记过时"
+  },
+  {
+    name: "MCP 发授权必须按给的权限落（收了却不生效＝调用方以为发出去的是它要的那张）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "  const permissions = args.grantPermissions || args.permissions\n    || permissionsForRoleGrant(role, resource.resourceType);",
+    to: '  const permissions = ["task_group:read"];',
+    expect: "没按给的权限落"
+  },
+  {
+    name: "MCP 发授权必须过委派校验（开这两个参数的前提）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "  if (!delegable.ok) {",
+    to: "  if (false) {",
+    expect: "不可委派的"
+  },
+  {
+    name: "指令包必须带上本项目现行规范（不带＝让 agent 自由发挥）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "    sharedDefinitionRefs: mergeSharedDefinitionRefs(\n      activeSharedDefinitionRefs(state, {taskGroupId: taskGroup?.id || args.taskGroupId}),\n      args.sharedDefinitionRefs),",
+    to: "    sharedDefinitionRefs: args.sharedDefinitionRefs || [],",
+    expect: "没带上本项目现行规范"
+  },
+  {
+    name: "调用方给的规范只能追加，不能替代服务端算出来的那份",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "  const merged = [...(serverRefs || [])];\n  const seen = new Set(merged.map((item) => item?.contractRef || item));",
+    to: "  const merged = [];\n  const seen = new Set(merged.map((item) => item?.contractRef || item));",
+    expect: "没带上本项目现行规范"
   },
   {
     name: "注销必须断掉已签发的会话",
@@ -3348,8 +3380,8 @@ const MUTATIONS = [
     name: "工具读了却传不进来的入参必须当场登记",
     file: "apps/mcp-server/server.mjs",
     check: "verifyToolArgReachabilityIsRegistered",
-    from: "  const permissions = args.permissions || [\"task_group:read\"];",
-    to: "  const permissions = args.permissions || args.brandNewUnregisteredKey || [\"task_group:read\"];",
+    from: "  const role = args.grantRole || args.role || \"agent_operator\";",
+    to: "  const role = args.grantRole || args.brandNewUnregisteredKey || args.role || \"agent_operator\";",
     expect: "而共用入参词表里没有这个键"
   },
   {
@@ -3982,7 +4014,7 @@ const MUTATIONS = [
   },
   {
     name: "认不出的授权作用域类型必须拒绝",
-    file: "apps/control-plane-ui/server.mjs",
+    file: CORE,
     gate: "doctor",
     from: "  if (!GRANTABLE_RESOURCE_TYPES.includes(resource.resourceType)) {",
     to: "  if (false) {",
@@ -6193,7 +6225,7 @@ const MUTATIONS = [
   },
   {
     name: "跨组织授权必须真的被拒（不只是源码里有那个码）",
-    file: "apps/control-plane-ui/server.mjs",
+    file: CORE,
     gate: "doctor",
     from: "    return {ok: false, status: 400, error: \"cross_org_grant_not_allowed\"};",
     to: "    if (false) return {ok: false, status: 400, error: \"cross_org_grant_not_allowed\"};",

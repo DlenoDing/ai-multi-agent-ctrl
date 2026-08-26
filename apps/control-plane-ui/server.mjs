@@ -109,8 +109,11 @@ import {
   ROOM_SENDER_KEY,
   UNSAFE_DELEGATED_GRANT_PERMISSIONS,
   refreshConfirmationsAfterHumanChange,
+  activeSharedDefinitionRefs,
+  permissionsForRoleGrant,
   retireAccount,
   revokeAccountSessions,
+  validateDelegatedGrant,
   REGISTERED_OWNER_ROLES,
   normalizedExpiry,
   SHARED_DEFINITION_TYPES,
@@ -852,34 +855,11 @@ function normalizeInvitedAccount(input = {}, systemScoped = false, delegation = 
   };
 }
 
-const roleGrantPermissionTemplates = Object.freeze({
-  project_owner: [...projectOwnerGrantPermissions],
-  // 2026-08-26 人定：项目管理员与项目负责人是同一个人。原先这里内联抄了与 owner
-  // 一字不差的七项 —— 两份各自演化就会悄悄分叉，而"它们本来就该一样"是产品决定。
-  // 引用同一个常量：以后改 owner 的权限，admin 跟着变，这正是"同一个人"的含义。
-  project_admin: [...projectOwnerGrantPermissions],
-  task_group_owner: ["project:view", "task_group:read", "task_group:control"],
-  agent_operator: ["project:view", "agent:activate", "task_group:read"],
-  reviewer: ["project:view", "task_group:read", "task_group:review"],
-  viewer: ["project:view"],
-  project_member: ["project:view"]
-});
 
-const taskGroupGrantPermissionTemplates = Object.freeze({
-  task_group_owner: ["task_group:read", "task_group:control"],
-  agent_operator: ["task_group:read", "task_group:monitor"],
-  reviewer: ["task_group:read", "task_group:review"],
-  viewer: ["task_group:read"],
-  project_member: ["task_group:read"]
-});
 
 // 与 core 共用同一份判据：两条铸造路径分别维护各自的清单，正是它们标准不一致的原因。
 const unsafeDelegatedGrantPermissions = UNSAFE_DELEGATED_GRANT_PERMISSIONS;
 
-function permissionsForRoleGrant(role, resourceType) {
-  const templates = resourceType === "task_group" ? taskGroupGrantPermissionTemplates : roleGrantPermissionTemplates;
-  return templates[role] || templates.viewer;
-}
 
 function projectIdFromGrantScope(state, resourceScope = {}) {
   if (resourceScope.resourceType === "project") return resourceScope.resourceId;
@@ -905,7 +885,7 @@ function actorIsProjectOwnerForScope(state, actor, resourceScope = {}) {
 }
 
 // 授权能落在哪几种作用域上 —— 这是个闭集。多一个认不出的取值，跨组织边界就少守一次。
-const GRANTABLE_RESOURCE_TYPES = ["project", "task_group", "organization", "system"];
+
 
 // 模型能力档案里规范认识的字段（spec/model-capability.schema.json 是 additionalProperties:false）。
 // 与规范双向核对：多一个＝落下来的记录违反规范，少一个＝调用方给的那一项被静默丢掉。
@@ -924,28 +904,15 @@ function sanitizeGrantRequest(state, actor, input = {}, resourceScope = {}) {
   // 作用域类型此前是任意字符串（只截到 100 字）。认不出的类型在 resourceScopeOrganizationId
   // 里返回 null，而 null 的含义是「系统级作用域」—— 于是一个打错的类型会让跨组织那道检查
   // 整个不适用，还会落一条永远匹配不上任何资源、却在名单里显示「启用中」的僵尸授权。
-  if (!GRANTABLE_RESOURCE_TYPES.includes(resource.resourceType)) {
-    return {ok: false, status: 400, error: "grant_resource_type_not_recognized",
-      supported: [...GRANTABLE_RESOURCE_TYPES]};
-  }
   const explicitPermissions = normalizeStringList(input.permissions, []);
   const permissions = explicitPermissions.length
     ? explicitPermissions
     : permissionsForRoleGrant(role, resource.resourceType);
-  const unsafe = permissions.filter((permission) =>
-    unsafeDelegatedGrantPermissions.has(permission) || permission.startsWith("system:")
-  );
-  if (unsafe.length) {
-    return {ok: false, status: 400, error: "unsafe_grant_permissions", permissions: unsafe};
-  }
-  const subjectAccount = state.accounts.find((item) => accountIdOf(item) === (input.subjectId || "acct_workspace_owner"));
-  const resourceOrg = resourceScopeOrganizationId(state, resource);
-  // 同上 fail closed；另外 subjectAccount 不存在时原先也整条跳过，而 accountId 是调用方可指定的 ——
-  // 可以先给一个"面向未来的 accountId"建 grant，再补建那个账号。授权对象必须已经存在。
-  if (!subjectAccount) return {ok: false, status: 400, error: "grant_subject_account_not_found"};
-  if (resourceOrg && (subjectAccount.organizationId || DEFAULT_ORGANIZATION_ID) !== resourceOrg) {
-    return {ok: false, status: 400, error: "cross_org_grant_not_allowed"};
-  }
+  // 前四条校验（作用域类型、不可委派权限、对象存在、跨组织）已搬进 core 由两侧共用 ——
+  // MCP 的 grant_create 此前一条都没有，靠"入参词表里没有 permissions"碰巧安全。
+  const shared = validateDelegatedGrant(state, {resource, permissions, subjectId: input.subjectId || "acct_workspace_owner",
+    resourceOrganizationId: resourceScopeOrganizationId(state, resource)});
+  if (!shared.ok) return shared;
   if (!isSystemAccount(account)) {
     const denied = permissions.filter((permission) => {
       if (permission === "project:grant" && !actorIsProjectOwnerForScope(state, actor, resourceScope)) return true;
@@ -954,6 +921,19 @@ function sanitizeGrantRequest(state, actor, input = {}, resourceScope = {}) {
     if (denied.length) return {ok: false, status: 403, error: "grant_permission_not_delegable", permissions: denied};
   }
   return {ok: true, role, resource, permissions};
+}
+
+// 服务端算出来的那份在前，调用方追加的在后，按 contractRef 去重（与 MCP 侧同一份语义）。
+function mergeSharedDefinitionRefs(serverRefs, callerRefs) {
+  const merged = [...(serverRefs || [])];
+  const seen = new Set(merged.map((item) => item?.contractRef || item));
+  for (const ref of Array.isArray(callerRefs) ? callerRefs : []) {
+    const key = ref?.contractRef || ref;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(ref);
+  }
+  return merged;
 }
 
 function ensureProjectOwnerGrant(state, project, ownerAccountId, policyDecisionRef, auditRef) {
@@ -4394,7 +4374,11 @@ async function handleApi(req, res) {
       digestRefs: [...new Set([...(body.digestRefs || ["ruleset:runtime:v1"]), `language-policy:${envelopeLanguagePolicyDigest}`])],
       languagePolicy: envelopeLanguagePolicy,
       languagePolicyDigest: envelopeLanguagePolicyDigest,
-      sharedDefinitionRefs: body.sharedDefinitionRefs || [],
+      // 与 MCP 那条孪生同规：本项目现行规范一律由服务端带上，调用方给的只能【追加】。
+      // 原先是 `|| []` —— 不给就是空，也就是这份指令不受任何规范约束，而 agent 照着它干活。
+      sharedDefinitionRefs: mergeSharedDefinitionRefs(
+        activeSharedDefinitionRefs(state, {taskGroupId: body.taskGroupId || "tg_runtime_management"}),
+        body.sharedDefinitionRefs),
       cacheKey: body.cacheKey || `runtime:v1:${Date.now()}`,
       status: "cache_indexed",
       tokenBudget: body.tokenBudget || {maxInputTokens: 4096, targetDeltaTokens: Number(body.estimatedTokens || 320), maxOutputTokens: 1200},

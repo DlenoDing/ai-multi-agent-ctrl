@@ -4673,7 +4673,10 @@ export function recomputeTaskGroup(taskGroup) {
   if (ownedAfter !== ownedBefore) taskGroup.updatedAt = new Date().toISOString();
 }
 
-function activeSharedDefinitionRefs(state, request = {}) {
+// 导出：指令包（REST 与 MCP 两条路）也要用它。原先那两条把 sharedDefinitionRefs 缺省成 []，
+// 也就是说【不给就等于这份指令不受任何项目规范约束】—— 而规范正是防止 agent 走偏的东西。
+// 让调用方"可以声明"就等于允许它不声明；改成服务端自己算、调用方只能追加。
+export function activeSharedDefinitionRefs(state, request = {}) {
   const taskGroup = request.taskGroupId ? (state.taskGroups || []).find((item) => item.id === request.taskGroupId) : null;
   const workItem = request.workItemId ? (taskGroup?.workItems || []).find((item) => item.id === request.workItemId) : null;
   return relatedSharedDefinitions(state, taskGroup || {id: request.taskGroupId, projectId: request.projectId}, workItem).filter((definition) => definition.status === "active").map((definition) => ({
@@ -7939,6 +7942,62 @@ export const UNSAFE_DELEGATED_GRANT_PERMISSIONS = new Set([
 ]);
 // 外部能力申请（github_push、网络访问…）与控制面授权申请共用这条通道，但只有后者会被铸成 grant。
 export const PERMISSION_REQUEST_RESOURCE_TYPES = ["task_group", "project", "external_capability"];
+// 授权可以落在哪几类资源上。认不出的类型此前只被截到 100 字就收下 —— 而"认不出"在
+// 组织归属推导里返回 null，null 的含义是「系统级作用域」：一个打错的类型会让跨组织那道
+// 检查整个不适用，还会落一条永远匹配不上任何资源、却在名单里显示「启用中」的僵尸授权。
+export const GRANTABLE_RESOURCE_TYPES = ["project", "task_group", "organization", "system"];
+
+// 角色 → 这个角色该拿到哪些权限。放在 core 是因为【两条路都要用它】：
+// REST 的 sanitizeGrantRequest 与 MCP 的 grant_create。各写一份的话，同一个角色名
+// 在两条路上给出的权限会悄悄不同，而没有任何东西会红。
+// 2026-08-26 人定：项目管理员与项目负责人是同一个人，所以这里引用同一份常量。
+export const ROLE_GRANT_PERMISSION_TEMPLATES = Object.freeze({
+  project_owner: [...projectOwnerGrantPermissions],
+  project_admin: [...projectOwnerGrantPermissions],
+  task_group_owner: ["project:view", "task_group:read", "task_group:control"],
+  agent_operator: ["project:view", "agent:activate", "task_group:read"],
+  reviewer: ["project:view", "task_group:read", "task_group:review"],
+  viewer: ["project:view"],
+  project_member: ["project:view"]
+});
+
+export const TASK_GROUP_GRANT_PERMISSION_TEMPLATES = Object.freeze({
+  task_group_owner: ["task_group:read", "task_group:control"],
+  agent_operator: ["task_group:read", "task_group:monitor"],
+  reviewer: ["task_group:read", "task_group:review"],
+  viewer: ["task_group:read"]
+});
+
+export function permissionsForRoleGrant(role, resourceType) {
+  const templates = resourceType === "task_group"
+    ? TASK_GROUP_GRANT_PERMISSION_TEMPLATES : ROLE_GRANT_PERMISSION_TEMPLATES;
+  return templates[role] || templates.viewer;
+}
+
+// 【发授权时那几条不看操作者也成立的校验】。抽出来是因为它们此前只有 REST 那扇门在做，
+// 而 MCP 的 grant_create 一条都没有 —— 挡住它的只是"入参词表里没有 permissions 这个键"，
+// 属碰巧安全。2026-08-26 人定把那两个参数开出来，所以校验必须先搬成两侧共用的一份。
+// 【不含】第五条「不能授出自己都没有的权限」：那一条是相对操作者的，REST 里系统账号本来
+// 就跳过它，而 MCP 这条路现在只有真人系统管理员走得到 —— 边界正好对齐，不要把它抄成半份。
+export function validateDelegatedGrant(state, {resource = {}, permissions = [], subjectId,
+  resourceOrganizationId = null} = {}) {
+  if (!GRANTABLE_RESOURCE_TYPES.includes(resource.resourceType)) {
+    return {ok: false, status: 400, error: "grant_resource_type_not_recognized",
+      supported: [...GRANTABLE_RESOURCE_TYPES]};
+  }
+  const unsafe = permissions.filter((permission) => !isDelegatableGrantPermission(permission));
+  if (unsafe.length) return {ok: false, status: 400, error: "unsafe_grant_permissions", permissions: unsafe};
+  // 授权对象必须【已经存在】：accountId 是调用方指定的，否则可以先给一个"面向未来的 id"
+  // 建 grant，再补建那个账号 —— 那时这张授权是在它自己被审视之前就生效的。
+  const subjectAccount = (state.accounts || []).find((item) => (item.accountId || item.id) === subjectId);
+  if (!subjectAccount) return {ok: false, status: 400, error: "grant_subject_account_not_found"};
+  if (resourceOrganizationId
+    && (subjectAccount.organizationId || DEFAULT_ORGANIZATION_ID) !== resourceOrganizationId) {
+    return {ok: false, status: 400, error: "cross_org_grant_not_allowed"};
+  }
+  return {ok: true, subjectAccount};
+}
+
 export function isDelegatableGrantPermission(permission) {
   const value = String(permission || "");
   if (!value) return false;

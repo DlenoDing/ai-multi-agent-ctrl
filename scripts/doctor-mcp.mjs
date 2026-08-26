@@ -866,6 +866,73 @@ try {
     }
   }
 
+  // 【发授权:能表达 + 有校验】2026-08-26 人定开出来的。此前 permissions/role 读了却传不进来，
+  // 于是这个工具只能铸出一种固定授权，而回执是成功 —— 调用方以为发出去的是它要的那张。
+  // 开的同时把 REST 那侧的四条委派校验搬成了两侧共用的一份（此前 MCP 一条都没有，
+  // 挡住它的只是"词表里没这个键"）。正反都要验，否则「开了」和「开成了个筛子」分不开。
+  {
+    const target = {resourceType: "task_group", resourceId: "tg_runtime_management"};
+    // 用一个【干净的】对象：去重逻辑会把"已有一张覆盖更广的授权"原样返回（这是对的），
+    // 拿 acct_agent_runtime 来验的话，看到的是它原有那张，而不是这次发的那张。
+    const grantee = (await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.account_invite",
+      arguments: {idempotencyKey: "doctor-mcp-grant-subject", email: "grant.subject.probe@local",
+        displayName: "发授权探针"}})).structuredContent?.result?.account?.accountId;
+    if (!grantee) throw new Error("发授权探针建不出账号 —— 这一组断言会空转");
+    // ① 能表达：给什么权限就落什么权限，不再被替换成那一种缺省。
+    const minted = await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.grant_create",
+      arguments: {idempotencyKey: "doctor-mcp-grant-explicit", subjectId: grantee,
+        resource: target, grantPermissions: ["task_group:monitor"], grantRole: "agent_operator"}});
+    const grant = minted.structuredContent?.result?.grant;
+    if (!grant || JSON.stringify(grant.permissions) !== JSON.stringify(["task_group:monitor"])) {
+      throw new Error(`MCP 发授权没按给的权限落（实得 ${JSON.stringify(grant?.permissions)}）——`
+        + " 参数收了却不生效，调用方以为发出去的是它要的那张");
+    }
+    // ② 不可委派的一律拒。这是开这两个参数【必须先补】的那道检查：
+    // 拿到 system:account_admin 就能铸系统管理员账号，而人工闸门只认账号类型。
+    for (const unsafe of [["system:*"], ["system:account_admin"], ["project:*"]]) {
+      const refused = await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.grant_create",
+        arguments: {idempotencyKey: `doctor-mcp-grant-unsafe-${unsafe[0]}`, subjectId: grantee,
+          resource: target, grantPermissions: unsafe}});
+      const said = refused.structuredContent?.result;
+      if (said?.error !== "unsafe_grant_permissions") {
+        throw new Error(`MCP 发授权把不可委派的 ${unsafe[0]} 发出去了（${JSON.stringify(said).slice(0, 160)}）——`
+          + " 这条通道能把整片权限一次交出去，而 REST 那侧一直是拒的");
+      }
+    }
+    // ③ 授权对象必须已经存在：否则可以先给一个"面向未来的 id"建授权，再补建那个账号。
+    const ghost = await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.grant_create",
+      arguments: {idempotencyKey: "doctor-mcp-grant-ghost", subjectId: "acct_does_not_exist",
+        resource: target, grantPermissions: ["task_group:read"]}});
+    if (ghost.structuredContent?.result?.error !== "grant_subject_account_not_found") {
+      throw new Error("MCP 给一个不存在的账号发出了授权 —— 那张授权在它自己被审视之前就生效了");
+    }
+    // ④ 认不出的作用域类型要拒：它在组织归属推导里会变成 null（＝系统级），
+    // 于是跨组织那道检查整个不适用，还会落一条永远匹配不上任何资源却显示「启用中」的僵尸授权。
+    const bogusScope = await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.grant_create",
+      arguments: {idempotencyKey: "doctor-mcp-grant-scope", subjectId: grantee,
+        resource: {resourceType: "galaxy", resourceId: "x"}, grantPermissions: ["task_group:read"]}});
+    if (bogusScope.structuredContent?.result?.error !== "grant_resource_type_not_recognized") {
+      throw new Error("MCP 收下了认不出的授权作用域类型 —— 会落一条僵尸授权，而它在名单里显示启用中");
+    }
+  }
+
+  // 【指令包必须带上本项目现行规范】2026-08-26 人定：没有规范，agent 就可能走偏。
+  // 原先 sharedDefinitionRefs 缺省是 [] —— 不给就是"这份指令不受任何规范约束"。
+  // 现在由服务端自己算（与任务合同那条路同一个函数），调用方给的只能追加。
+  {
+    const active = (await mcpAs(admin.sessionToken, "tools/call", {name: "governance-mcp.contract_publish",
+      arguments: {idempotencyKey: "doctor-mcp-def-for-envelope", contractId: "ctr_runtime_language"}}))
+      .structuredContent?.result;
+    const envelope = (await mcpAs(admin.sessionToken, "tools/call", {name: "instruction-mcp.instruction_envelope_create",
+      arguments: {idempotencyKey: "doctor-mcp-envelope-specs", taskGroupId: "tg_runtime_management",
+        roleId: "agent-runtime"}})).structuredContent?.result;
+    const refs = envelope?.instructionEnvelope?.sharedDefinitionRefs;
+    if (!Array.isArray(refs) || !refs.length) {
+      throw new Error(`建指令包时没带上本项目现行规范（实得 ${JSON.stringify(refs)}，已发布的契约 `
+        + `${JSON.stringify(active?.contract?.contractId || active?.error)}）—— 不给规范就是让 agent 自由发挥`);
+    }
+  }
+
   // 控制台「运行参数」里的 MCP 工具数，必须与这台 MCP 服务【真正实现了多少个工具】一致。
   // 它此前是 core 里手写的一个常量 81，而目录里是 85：运维 CLI 按目录算、屏幕上给人看的少 4 个。
   // 这里不拿目录去比目录（那是拿产品的写法当标准），而是问【这台服务自己认得多少个工具】：

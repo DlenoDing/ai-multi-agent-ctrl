@@ -23,7 +23,10 @@ import {
   canUseGitPath,
   createId,
   decideSessionPlacement,
+  activeSharedDefinitionRefs,
   digestOf,
+  permissionsForRoleGrant,
+  validateDelegatedGrant,
   recordIdempotentResult,
   workItemCreateStatus,
   ensureRuntimeCollections,
@@ -2821,6 +2824,20 @@ function accountSuspend(state, args) {
   return {account};
 }
 
+// 服务端算出来的那份在前，调用方追加的在后，按 contractRef 去重。
+// 「只能追加」这条要写死在这里：允许替代的话，一个不给规范的调用就能造出不受约束的指令。
+function mergeSharedDefinitionRefs(serverRefs, callerRefs) {
+  const merged = [...(serverRefs || [])];
+  const seen = new Set(merged.map((item) => item?.contractRef || item));
+  for (const ref of Array.isArray(callerRefs) ? callerRefs : []) {
+    const key = ref?.contractRef || ref;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(ref);
+  }
+  return merged;
+}
+
 function grantCreate(state, args) {
   // 目前 identity-mcp.* 对机器主体是禁用的，所以不可达；但一旦放开，冒名的同 id 授权会让"撤销"
   // 打在冒名那份上而真授权存活。守住它比依赖"暂时不可达"可靠。
@@ -2828,7 +2845,23 @@ function grantCreate(state, args) {
   const at = new Date().toISOString();
   const subjectRef = args.subjectRef || {subjectType: "account", subjectId: args.subjectId || args.accountId || "acct_agent_runtime"};
   const resource = args.resource || {resourceType: args.resourceType || "task_group", resourceId: args.resourceId || args.taskGroupId || "tg_runtime_management"};
-  const permissions = args.permissions || ["task_group:read"];
+  // 2026-08-26 人定：把「这张授权是什么」交回给调用方。此前 permissions/role 两个参数
+  // 【读了却传不进来】（共用入参词表里没有这两个键），于是这个工具只能铸出一种固定授权，
+  // 而回执是成功 —— 调用方以为发出去的是它要的那张。
+  // 用词表里【已经有】的 grantPermissions / grantRole 两个键（accountInvite 一直在用），
+  // 不动共用词表 —— 那是另一件由人来定的事。内部调用方仍可直接给 permissions/role。
+  const role = args.grantRole || args.role || "agent_operator";
+  const permissions = args.grantPermissions || args.permissions
+    || permissionsForRoleGrant(role, resource.resourceType);
+  // 与 REST 那侧【同一份】校验：作用域类型、不可委派权限（拒 system:*／通配）、
+  // 授权对象存在、不许跨组织。这四条此前只有 REST 那扇门在做。
+  const delegable = validateDelegatedGrant(state, {resource, permissions,
+    subjectId: subjectRef.subjectId, resourceOrganizationId: organizationIdForGrantResource(state, resource)});
+  if (!delegable.ok) {
+    return {ok: false, error: delegable.error,
+      ...(delegable.supported ? {supported: delegable.supported} : {}),
+      ...(delegable.permissions ? {permissions: delegable.permissions} : {})};
+  }
   // Idempotency dedup (mirrors ensurePermissionAccessGrant): a fresh-idempotency-key retry must not mint a
   // duplicate active grant covering the same subject/resource/permissions.
   const existing = state.accessGrants.find((item) =>
@@ -2843,7 +2876,7 @@ function grantCreate(state, args) {
     grantId: args.grantId || createId("grant"),
     subjectRef,
     resource,
-    role: args.role || "agent_operator",
+    role,
     permissions,
     status: "active",
     policyDecisionRef: args.policyDecisionRef || `policy:grant:${at}`,
@@ -3019,7 +3052,12 @@ function instructionEnvelopeCreate(state, args, sourceKind) {
     digestRefs: [...new Set([...(args.digestRefs || []), `language-policy:${languagePolicyDigest}`])],
     languagePolicy,
     languagePolicyDigest,
-    sharedDefinitionRefs: args.sharedDefinitionRefs || [],
+    // 【本项目现行规范一律带上】。原先是 `args.sharedDefinitionRefs || []` —— 不给就是空，
+    // 也就是这份指令不受任何规范约束，而 agent 正是照着指令干活的。
+    // 服务端自己算（与任务合同那条路同一个函数），调用方给的只能【追加】不能替代。
+    sharedDefinitionRefs: mergeSharedDefinitionRefs(
+      activeSharedDefinitionRefs(state, {taskGroupId: taskGroup?.id || args.taskGroupId}),
+      args.sharedDefinitionRefs),
     cacheKey: digestOf({role: args.recipientRole || args.roleId, taskGroupId: taskGroup?.id || args.taskGroupId, sourceKind, languagePolicyDigest}),
     tokenBudget: {
       maxInputTokens: Number(tokenBudget.maxInputTokens || 4096),

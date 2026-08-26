@@ -356,15 +356,22 @@ const MCP_UNREACHABLE_TOOL_ARGS = {
   // 「拿哪个仓库来验我声称的提交」不能由被验方选。不动共用词表，只钉住「没人读它」。
   inDictionaryButNobodyMayRead: ["repositoryRoot"],
   unreachableByDictionary: {
-    permissions: "identity-mcp.grant_create：决定这张授权是什么。MCP 上只能铸出缺省的那一种",
-    role: "同上",
+    // 2026-08-26 人定开出来了：grant_create 现在读 grantPermissions / grantRole
+    //（这两个键词表里【本来就有】，accountInvite 一直在用）—— 不动共用词表就把杠杆接通了。
+    // permissions / role 这两个名字仍留在函数里给内部调用方用，从 MCP 上依旧传不进来，
+    // 而它们已经不再是"够不着的杠杆"：同一件事有一个够得着的名字。
+    permissions: "identity-mcp.grant_create 的内部参数名；对外用词表里已有的 grantPermissions（已接通）",
+    role: "同上，对外用 grantRole（已接通）",
     canonicalOwnerRole: "definition-mcp.shared_definition_create：共享定义的归属角色",
     producerRole: "同上",
     changePolicy: "同上：变更策略",
     allowDirectActivation: "同上：能否直接生效",
     actionScopeRefs: "governance-mcp.role_drift_guard_bind：这道漂移守卫管到哪些动作",
     packetRef: "effective_instruction_create / instruction_envelope_create：指令包引用",
-    sharedDefinitionRefs: "同上：这份指令引用了哪些共享定义",
+    // 2026-08-26 人定「没有规范 agent 会走偏」之后改了做法：不是把这个键开给调用方，
+    // 而是【服务端自己算】本项目现行规范填进去（与任务合同那条路同一个函数），
+    // 调用方给的只能追加。让调用方"可以声明"就等于允许它不声明，而那正是要防的那件事。
+    sharedDefinitionRefs: "服务端自己填（activeSharedDefinitionRefs），调用方给的只能追加，不需要这个键",
     reasonCode: "governance-mcp.policy_decision_eval：调用方给出的判定理由码",
     // 2026-08-26 修好 case→函数的提取之后才露出来的（此前 account_invite 的 case 体里
     // 先有一道"拒机器主体"的守卫，旧提取只认"case 紧跟 return"，把它整个漏掉了）。
@@ -8057,7 +8064,9 @@ function verifyOnlyLiveHumanAccountsCanFinalize(output) {
 //     其实不存在的选择。「项目负责人」这个身份本身留着：建项目时创建者被自动记成它。
 function verifyProjectAdminAndOwnerStayOnePerson(output) {
   const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
-  if (!/project_admin: \[\.\.\.projectOwnerGrantPermissions\]/u.test(server)) {
+  // 模板已搬进 core（两条路都要用它，各写一份必漂），所以在 core 里核。
+  const coreForRoles = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  if (!/project_admin: \[\.\.\.projectOwnerGrantPermissions\]/u.test(coreForRoles)) {
     output.push("项目管理员不再引用项目负责人那份权限常量了 —— 2026-08-26 人定两者是同一个人，"
       + "各写一份的话它们会悄悄分叉，而分叉之后没有任何东西会红");
   }
@@ -11506,8 +11515,15 @@ function verifyEveryAssertionIsActuallyRegistered(output) {
 function verifyCrossOrgGrantIsRefusedOnBothDoors(output) {
   const serverSource = readFileSync(resolve(root, "apps/control-plane-ui/server.mjs"), "utf8");
   const mcpSource = readFileSync(resolve(root, "apps/mcp-server/server.mjs"), "utf8");
+  // 2026-08-26：这四条委派校验（含跨组织）已搬进 core 的 validateDelegatedGrant，两侧共用。
+  // 判据不能再只在两个文件里找那个码 —— 搬家之后它当场红，而校验一个字没少。
+  // 改成盯【那条路上有没有过这道校验】：自己写一份、或者调共用那份，都算。
+  const coreSource = readFileSync(resolve(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  if (!coreSource.includes("cross_org_grant_not_allowed")) {
+    output.push("共用的 validateDelegatedGrant 里没有跨组织校验 —— 两侧都指着它，它漏了就是两侧一起漏");
+  }
   for (const [label, source] of [["REST", serverSource], ["MCP", mcpSource]]) {
-    if (!source.includes("cross_org_grant_not_allowed")) {
+    if (!source.includes("cross_org_grant_not_allowed") && !source.includes("validateDelegatedGrant(")) {
       output.push(`${label} 侧铸造授权时不做跨组织校验 —— 同一条不变式只有一扇门守着，等于没守`);
     }
   }
