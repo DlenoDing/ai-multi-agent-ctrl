@@ -3130,8 +3130,8 @@ const MUTATIONS = [
     name: "别的组织的账号不许出现在授权下拉里",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: "  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg);",
-    to: "  const grantable = candidates;",
+    from: '  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg && account.status !== "retired");',
+    to: '  const grantable = candidates.filter((account) => account.status !== "retired");',
     expect: "别的组织的账号不许出现在项目成员授权的下拉里"
   },
   {
@@ -6605,6 +6605,22 @@ const MUTATIONS = [
     from: '  "governance-mcp.finding_submit": ["evidenceRefs", "findingId", "findingType", "severity", "status", "summary", "taskGroupId", "workId", "workItemId"],',
     to: '  "governance-mcp.finding_submit": ["evidenceRefs", "findingId", "findingType", "severity", "status", "summary", "taskGroupId", "workId"],',
     expect: "读 args.workItemId，而 tools/list 上它不公布这个键"
+  },
+  {
+    name: "已注销的账号不许再被授权",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: '  if (subjectAccount.status === "retired") {',
+    to: "  if (false) {",
+    expect: "给已注销账号发授权没被拒"
+  },
+  {
+    name: "已注销的账号不许出现在授权下拉里",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg && account.status !== "retired");',
+    to: "  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg);",
+    expect: "已注销的账号不出现在「账号与授权」页的下拉里"
   },
   {
     name: "界面渲染的枚举缺中文要看得见",

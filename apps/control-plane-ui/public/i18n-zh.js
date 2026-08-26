@@ -82,6 +82,7 @@
     work_item_owner_role_not_registered: "填写的负责角色未在本任务组登记：先在任务组里加上这个角色，或改选已登记的角色",
     idempotent_result_expired: "这次写入早已完成，但它的结果已过可重放期；请刷新页面查看当前状态，不要重复提交",
     grant_subject_account_not_found: "找不到要授权的账号：请先创建该成员，再授予角色",
+    grant_subject_account_retired: "这个账号已注销（不可恢复）：给它发授权不会有任何效果",
     command_timeout_at_invalid: "命令的超时时间不是一个能识别的日期（要 ISO-8601）—— 存进去它就永远不会超时",
     model_capability_observed_at_invalid: "观测时间不是一个能识别的日期（要 ISO-8601，例如 2026-08-23T10:00:00Z）",
     lease_expired: "租约过期，这份产出目标被顶替",

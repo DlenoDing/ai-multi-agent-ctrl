@@ -2019,6 +2019,16 @@ try {
     if (retired.response.status !== 200 || retired.payload.account?.status !== "retired") {
       throw new Error(`注销没成功（HTTP ${retired.response.status} ${JSON.stringify(retired.payload).slice(0, 160)}）`);
     }
+    // 【注销之后再给它发授权一定用不上】。注销那一刻已经撤了它的会话与全部授权，可发授权那条路
+    // 原先只判「主体存不存在」—— 授权照常建出来、回执是成功、名单上显示「启用中」，而这个账号
+    // 永远登不进来。上面那张 revokedGrants=1 说明它注销前确实是授得出去的（正面对照就在同一段里）。
+    const grantToRetired = await jsonFetch(port, "/api/access-grants", {method: "POST",
+      headers: {authorization: systemAuth, "Idempotency-Key": "doctor-retire-grant-after"},
+      body: JSON.stringify({subjectId: victimId, resourceType: "task_group", resourceId: "tg_runtime_management", role: "reviewer"})});
+    if (grantToRetired.response.status !== 400 || grantToRetired.payload?.error !== "grant_subject_account_retired") {
+      throw new Error(`给已注销账号发授权没被拒（${grantToRetired.response.status}/${grantToRetired.payload?.error}）—— `
+        + "那条授权会在名单上显示「启用中」，而它永远用不上");
+    }
     if (retired.payload.revokedGrants !== 1) {
       throw new Error(`注销的回执没说清动了什么：撤销授权 ${retired.payload.revokedGrants} 张 ——`
         + " 人分不出它和「停用」的区别");

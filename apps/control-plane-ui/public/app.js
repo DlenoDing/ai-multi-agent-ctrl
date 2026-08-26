@@ -2204,7 +2204,8 @@ function renderSysAccounts() {
         <div class="form-row"><label>项目名称</label><input name="name" required></div>
         <div class="form-row"><label>项目负责人</label>
           <select name="ownerAccountId">
-            ${(state.accounts || []).map((account) => `<option value="${esc(account.accountId)}">${esc(account.displayName)}</option>`).join("")}
+            ${(state.accounts || []).filter((account) => account.status !== "retired")
+              .map((account) => `<option value="${esc(account.accountId)}">${esc(account.displayName)}</option>`).join("")}
           </select>
         </div>
         <button class="primary-button" type="submit">创建项目</button>
@@ -2260,7 +2261,8 @@ function renderProjectMemberForm() {
   const chosen = projects.find((project) => project.id === memberGrantProjectId) || projects[0];
   const selectedOrg = organizationOf(chosen);
   const candidates = (orgMembers && orgMembers.length ? orgMembers : (state.accounts || []));
-  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg);
+  // 已注销是终态：给它发授权后端会拒（grant_subject_account_retired），摆在这里就是把人往死路上引。
+  const grantable = candidates.filter((account) => organizationOf(account) === selectedOrg && account.status !== "retired");
   const elsewhere = candidates.length - grantable.length;
   return `
     ${grantable.length ? "" : `<div class="notice warn-notice">「${esc(chosen?.name || chosen?.id || "")}」`

@@ -8120,6 +8120,14 @@ export function validateDelegatedGrant(state, {resource = {}, permissions = [], 
   // 建 grant，再补建那个账号 —— 那时这张授权是在它自己被审视之前就生效的。
   const subjectAccount = (state.accounts || []).find((item) => (item.accountId || item.id) === subjectId);
   if (!subjectAccount) return {ok: false, status: 400, error: "grant_subject_account_not_found"};
+  // 【发给已注销账号的授权一定用不上】。注销是终态（Account.terminal = ["retired"]，注销那一刻
+  // 就撤了它的会话与全部授权），可这里原先只判"存不存在" —— 于是授权照常建出来、回执是成功、
+  // 名单上显示「启用中」，而那个账号永远登不进来。控制台的两个下拉里也一直列着这些账号。
+  // 只拒终态：invited（还没接受邀请）是邀请流程自己会走的正常状态，suspended 还能被重新启用。
+  if (subjectAccount.status === "retired") {
+    return {ok: false, status: 400, error: "grant_subject_account_retired",
+      subjectId, message: "这个账号已注销（不可恢复）：给它发授权不会有任何效果，它永远登不进来"};
+  }
   if (resourceOrganizationId
     && (subjectAccount.organizationId || DEFAULT_ORGANIZATION_ID) !== resourceOrganizationId) {
     return {ok: false, status: 400, error: "cross_org_grant_not_allowed"};

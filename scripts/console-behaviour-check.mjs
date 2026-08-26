@@ -679,6 +679,41 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     taskGroups: [], agentRuntimeNodes: [], agents: [], agentDispatches: [], workSessions: [],
     closeBarriers: [], qualityGates: [], findings: [], humanConfirmationRequests: [], humanDirectives: [],
     truncatedCollections: [], fleet: {online: 0, total: 0}};
+// 【已注销的账号不许出现在授权下拉里】。注销是终态，后端已经拒（grant_subject_account_retired），
+// 界面还摆着它就是把人往死路上引 —— 按下去回来的是一句拒绝。控制台上有两个这样的下拉：
+// 「项目成员授权」的账号选择、「创建项目」的项目负责人选择。判据压在【渲染出来的 HTML】上，
+// 而不是源码里搜过滤条件：过滤写在哪一行都行，看得见的只有屏幕上还列不列它。
+{
+  const pickerRoot = el("div");
+  const pickerProbe = loadConsole(pickerRoot, {realI18n: true});
+  const retiredName = "已注销的探针账号";
+  const pickerState = {
+    projects: [{id: "p1", name: "控制面", organizationId: "org_default", status: "active"}],
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    accounts: [
+      {accountId: "acct_live", displayName: "在用探针账号", organizationId: "org_default", status: "active", accountType: "user_account"},
+      {accountId: "acct_gone", displayName: retiredName, organizationId: "org_default", status: "retired", accountType: "user_account"}
+    ],
+    accessGrants: [], agentJoinTokens: [], taskGroups: [], truncatedCollections: [], fleet: {online: 0, total: 0}
+  };
+  const pickerAdmin = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
+  pickerProbe.renderFullPageWith(pickerState, pickerAdmin, "p1", "sys-accounts");
+  // 只看【下拉】：账号列表那张表本来就该把已注销的账号列出来（人要看得到它被注销了），
+  // 搜整页会把那张表也算进去 —— 第一版就是这么误报的。
+  const pickerHtml = String(pickerRoot.innerHTML || "");
+  const selects = pickerHtml.match(/<select[\s\S]*?<\/select>/gu) || [];
+  const selectText = selects.join("\n");
+  check("授权下拉里列得出在用账号（否则下面那条在空转）",
+    selects.length >= 2 && selectText.includes("在用探针账号"),
+    `渲染出的账号与授权页里只有 ${selects.length} 个下拉、且找不到在用账号`);
+  check("已注销的账号不出现在「账号与授权」页的下拉里",
+    !selectText.includes(retiredName),
+    "后端已经拒（grant_subject_account_retired），界面还摆着它就是把人往死路上引");
+  check("账号列表里仍然看得到已注销的账号（否则人不知道它被注销了）",
+    pickerHtml.includes(retiredName),
+    "整页都不显示已注销账号 —— 那是把「不许再授权」做成了「查不到这个人」");
+}
+
   const admin = {accountId: "u1", email: "a@b.c", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"};
   const settingsText = (status, error) => {
     settingsProbe.setProjConfigStatus(status, error);
