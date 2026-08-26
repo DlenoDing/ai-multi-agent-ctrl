@@ -4,6 +4,7 @@ execFileSync, spawn, spawnSync } from "node:child_process";
 import { dockerFailureAdvice } from "./lib/docker-failure-advice.mjs";
 import { mcpToolInputKeys } from "../apps/control-plane-ui/lib/mcp-tool-catalog.mjs";
 import { SCHEMA_FILE_ALIASES, UNCOVERED_CEILINGS, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
+import { HUMAN_ONLY_MCP_TOOL_REFUSALS } from "./lib/known-second-doors.mjs";
 import { OPERATOR_CLIS, OPERATOR_SHELL_ENTRIES, OPERATOR_ENTRY_FILES, ENV_READING_SUPPORT_FILES } from "./lib/operator-entries.mjs";
 import { checkRecordStatusesAreDeclaredStates, extractMachineStates } from "./lib/state-machine-states.mjs";
 import { mcpServiceAllowedTools ,
@@ -869,6 +870,7 @@ run(verifyHealthReadDoesNotCloneEveryRequest);
 run(verifyCallerChosenIdsCannotShadow);
 run(verifyToolArgReachabilityIsRegistered);
 run(verifyGrantRoleTablesAgree);
+run(verifyMachinePrincipalRefusalsAreAllRegistered);
 run(verifyPublishedToolSchemasMatchWhatToolsRead);
 run(verifyEveryPredicateDeclaresItsCoverage);
 run(verifyEmptyEvidenceNeverReachesTheLedger);
@@ -8381,6 +8383,47 @@ function verifyPublishedToolSchemasMatchWhatToolsRead(output) {
 // 记录上的 role 还写着 project_admin —— 名单上显示「项目管理员」，实际什么都打不开。
 // 实测差集：spec 枚举里 4 个角色在项目模板里没有；project_member 一直在发（MCP 的
 // project_member_grant）却漏在 spec 枚举之外 —— 那些记录违反了它们自己声明的规范。
+// 【「机器主体不许做」的守卫必须全部在册】。doctor-mcp 用一张【手写】的表逐个验这些工具：
+// 表里有几条就验几条，而漏登记的那条既没人验、也没人知道它漏了 —— 2026-08-27 实测漏了
+// identity-mcp.account_suspend（它连守卫本身都没有：停一个账号会连带撤销它全部的会话与授权，
+// 而 REST 侧的同一件事早就是真人专属）。手写的期望表本身就是错误来源，所以这里从派发源码
+// 全量提取「拒机器主体」的守卫，与那张表两向核对：多一条要登记，少一条说明表过期了。
+function verifyMachinePrincipalRefusalsAreAllRegistered(output) {
+  const mcpSource = readFileSync(join(root, "apps/mcp-server/server.mjs"), "utf8");
+  // 每个 case 块里若出现 `principal?.kind !== "system_admin"` 之类的守卫并回一个
+  // *_forbidden_for_machine_principal 码，就算它是一道「机器主体不许做」的门。
+  const cases = [...mcpSource.matchAll(/case "([\w.-]+)":(?:(?!\n    case ")[\s\S]){0,2200}?(?=\n    case "|\n    default:)/gu)];
+  if (cases.length < 60) {
+    output.push(`只识别到 ${cases.length} 条工具派发（工具共 ${mcpToolNames.length} 个）—— 提取脱节，本条在空转`);
+    return;
+  }
+  const found = new Map();
+  for (const [block, tool] of cases) {
+    const refusal = /error: "(\w*forbidden_for_machine_principal)"/u.exec(block);
+    if (refusal) found.set(tool, refusal[1]);
+  }
+  if (found.size < 3) {
+    output.push(`只提取到 ${found.size} 道「机器主体不许做」的守卫（实有多条）—— 提取脱节，本条在空转`);
+    return;
+  }
+  for (const [tool, refusal] of found) {
+    const registered = HUMAN_ONLY_MCP_TOOL_REFUSALS[tool];
+    if (!registered) {
+      output.push(`${tool} 有一道「机器主体不许做」的守卫（${refusal}），却不在 HUMAN_ONLY_MCP_TOOL_REFUSALS 里 —— `
+        + "那张表是 doctor-mcp 逐个验这些工具的依据：不在表里就等于没人验过它");
+    } else if (registered !== refusal) {
+      output.push(`${tool} 登记的拒绝码是 ${registered}，源码里实际回的是 ${refusal} —— 登记与实现对不上`);
+    }
+  }
+  for (const [tool, refusal] of Object.entries(HUMAN_ONLY_MCP_TOOL_REFUSALS)) {
+    if (!found.has(tool)) {
+      output.push(`HUMAN_ONLY_MCP_TOOL_REFUSALS 里登记着 ${tool}（${refusal}），而源码里找不到这道守卫 —— `
+        + "要么守卫被删了（那 doctor-mcp 那条断言在空转），要么登记过期");
+    }
+  }
+  console.log(`机器主体禁做守卫：从 ${cases.length} 条派发里提取到 ${found.size} 道，与手写登记两向核对一致`);
+}
+
 function verifyGrantRoleTablesAgree(output) {
   const specRoles = grantSchema?.properties?.role?.enum;
   if (!Array.isArray(specRoles) || specRoles.length < 5) {
@@ -11566,7 +11609,11 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 编不出走到这两道的用例。它们已按仓里的办法登记进 KNOWN_SECOND_DOORS，
   // 照样计入零覆盖（那是事实）。够得着的那一侧（REST 的 access_grant_create/revoke）
   // 有真实行为断言，见 doctor 里「写入层授权边界」那一段。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 21;
+  // 2026-08-27：21 → 22。同一条人定落到同族的第三个工具上（account_suspend 停一个账号会
+  // 连带撤销它全部的会话与授权，而它原先一道门都没有 —— 只锁一边等于没锁）。可达性与上面
+  // 两条完全相同：identity-mcp.* 整族被工具白名单挡着，编不出走到它的用例，已登记进
+  // KNOWN_SECOND_DOORS。够得着的那一侧（REST 的 org_member_status_update）本来就是真人专属。
+  const UNCOVERED_REFUSAL_CODE_CEILING = 22;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];

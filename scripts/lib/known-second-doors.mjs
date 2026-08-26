@@ -21,6 +21,11 @@ export const KNOWN_SECOND_DOORS = {
     "identity-mcp.* 不在派发下发的工具白名单里，mcp_tool_not_granted_to_principal 先拒",
   grant_revoke_forbidden_for_machine_principal:
     "同上；它与 grant_create 是同一件事的两面，一起收归真人",
+  // 2026-08-27 补：同族里只有 account_suspend 一道门都没有（停一个账号会连带撤销它全部的
+  // 会话与授权）。REST 侧的 org_member_status_update / account_retire 早就是真人专属，
+  // 这条孪生一直缺 —— 只锁一边等于没锁。可达性与上面两条相同：工具白名单先拒。
+  account_suspend_forbidden_for_machine_principal:
+    "identity-mcp.* 不在派发下发的工具白名单里，mcp_tool_not_granted_to_principal 先拒",
   mcp_project_create_requires_system_admin:
     "MCP 只认 agent_node / 系统管理员 / 服务令牌三种主体：前两者被工具白名单挡，后者本身就是管理员",
   // 这三条守的是"受限主体必须自报作用域"。实测（2026-08-20，MCP e2e 里用真实受限节点令牌）：
@@ -104,5 +109,9 @@ export const HUMAN_ONLY_MCP_TOOL_REFUSALS = {
   // 2026-08-26 人定：AI 只负责把任务做完，不许动"谁能干什么"。REST 侧的
   // access_grant_create / access_grant_revoke 已收归真人专属，这两个是它们的 MCP 孪生。
   "identity-mcp.grant_create": "grant_create_forbidden_for_machine_principal",
-  "identity-mcp.grant_revoke": "grant_revoke_forbidden_for_machine_principal"
+  "identity-mcp.grant_revoke": "grant_revoke_forbidden_for_machine_principal",
+  // 2026-08-27：同族里只有它一道门都没有（停一个账号会连带撤销它全部的会话与授权）。
+  // 这张表是手写的，而手写的期望表本身就是错误来源 —— 现在由 contract-check 的
+  // verifyMachinePrincipalRefusalsAreAllRegistered 从 mcp-server 的派发里全量提取来核它。
+  "identity-mcp.account_suspend": "account_suspend_forbidden_for_machine_principal"
 };

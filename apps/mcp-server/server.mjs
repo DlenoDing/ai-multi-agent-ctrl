@@ -1618,6 +1618,14 @@ async function dispatchTool(state, name, args, context = {}) {
       }
       return accountInvite(state, args);
     case "identity-mcp.account_suspend":
+      // 与同族的 grant_create / grant_revoke 同规：停用一个账号会连带撤销它【全部】的会话与授权，
+      // 那正是"谁能干什么"这件事。REST 那一侧的 org_member_status_update / account_retire 早已
+      // 收归真人，而这条孪生原先一道门都没有 —— 只锁一边等于没锁（本仓反复出现的形态）。
+      // 挡在决策点上，才与"谁能拿到这个工具"无关：今天 identity-mcp.* 整族被工具白名单挡着，
+      // 而那是【配置】，改一行它就成了最后一道。
+      if (context?.principal?.kind !== "system_admin") {
+        return {ok: false, error: "account_suspend_forbidden_for_machine_principal"};
+      }
       return accountSuspend(state, args);
     case "identity-mcp.grant_create":
       // 2026-08-26 人定：AI 只负责把任务做完，不许动"谁能干什么"。REST 侧的

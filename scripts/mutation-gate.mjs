@@ -6607,6 +6607,32 @@ const MUTATIONS = [
     expect: "读 args.workItemId，而 tools/list 上它不公布这个键"
   },
   {
+    name: "真人停用账号要真的落得下去",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '        return {ok: false, error: "account_suspend_forbidden_for_machine_principal"};\n      }\n      return accountSuspend(state, args);',
+    to: '        return {ok: false, error: "account_suspend_forbidden_for_machine_principal"};\n      }\n      return {ok: false, error: "account_suspend_forbidden_for_machine_principal"};',
+    expect: "工具链断在 identity-mcp.account_suspend"
+  },
+  {
+    name: "停用账号必须连带撤会话与授权",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "  revokeAccountSessions(state, account.accountId, \"account_suspended\");",
+    to: "",
+    expect: "停用之后还留着"
+  },
+  {
+    name: "拒机器主体的守卫漏登记要看得见",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyMachinePrincipalRefusalsAreAllRegistered",
+    from: '        return {ok: false, error: "account_suspend_forbidden_for_machine_principal"};',
+    // 改成【同族的另一个码】而不是随便改名：改名会让提取整个看不见这道门，报出来的是
+    // 「登记过期」那一支；这里要验的是「登记与实现对不上」那一支。
+    to: '        return {ok: false, error: "grant_create_forbidden_for_machine_principal"};',
+    expect: "登记的拒绝码是 account_suspend_forbidden_for_machine_principal，源码里实际回的是"
+  },
+  {
     name: "起跑之前的执行方案也要能终止",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "mcp",

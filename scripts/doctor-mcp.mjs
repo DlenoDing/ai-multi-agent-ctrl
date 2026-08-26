@@ -602,6 +602,49 @@ try {
       throw new Error(`delta_payload_compact 没给出回执：${JSON.stringify(compacted).slice(0, 160)}`);
     }
 
+    // 【停用账号这条路的正面】。它刚补上「机器主体不许做」那道门（同族里只有它没有），
+    // 而这一族的教训是：只验反面等于只验一半 —— 门要是把真人也挡住了，表现是
+    // 「谁都停不了一个账号」，而所有反面断言照样全绿。顺带这两个工具此前也没成功执行过。
+    {
+      const invited = await call("identity-mcp.account_invite",
+        {email: "doctor.mcp.suspend.probe@local", projectId: "prj_control_plane", displayName: "停用探针账号"});
+      const invitedId = invited.account?.accountId || invited.accountId;
+      if (!invitedId) {
+        throw new Error(`account_invite 没建出账号：${JSON.stringify(invited).slice(0, 200)}`);
+      }
+      // 让它【真的有一个会话】再停用：不登录的话，下面那条「停用要连带撤会话」永远绿
+      // ——夹具没造出想测的情形，而断言自己不会说（这一族在本仓撞过多次）。
+      const invitedLogin = await api("/api/auth/login", {method: "POST",
+        body: {email: "doctor.mcp.suspend.probe@local", token: invited.accountToken}});
+      if (!invitedLogin.sessionToken) {
+        throw new Error(`探针账号登不进去：${JSON.stringify(invitedLogin).slice(0, 160)} —— 下面那条断言会在空转`);
+      }
+      const beforeSuspend = await api("/api/state?view=full&limit=200", {token: admin.sessionToken});
+      const sessionsBefore = (beforeSuspend.authSessions || [])
+        .filter((item) => item.accountId === invitedId && item.status === "active").length;
+      const grantsBefore = (beforeSuspend.accessGrants || [])
+        .filter((item) => item.subjectRef?.subjectId === invitedId && item.status === "active").length;
+      if (!sessionsBefore || !grantsBefore) {
+        throw new Error(`停用之前这个账号只有 ${sessionsBefore} 个会话、${grantsBefore} 条授权 —— `
+          + "夹具没造出想测的情形，下面那条「停用要连带撤掉它们」测不到东西");
+      }
+      const suspended = await call("identity-mcp.account_suspend", {accountId: invitedId});
+      if (suspended.account?.status !== "suspended") {
+        throw new Error(`真人停用账号没落下去：${JSON.stringify(suspended).slice(0, 200)} —— `
+          + "那道新门若把真人也挡住了，表现就是「谁都停不了一个账号」，而反面断言照样全绿");
+      }
+      // 停用必须连带撤掉它的会话与授权：只改 status 的话，重新激活会把旧令牌一次性复活。
+      const afterSuspend = await api("/api/state?view=full&limit=200", {token: admin.sessionToken});
+      const liveSessions = (afterSuspend.authSessions || [])
+        .filter((item) => item.accountId === invitedId && item.status === "active");
+      const liveGrants = (afterSuspend.accessGrants || [])
+        .filter((item) => item.subjectRef?.subjectId === invitedId && item.status === "active");
+      if (liveSessions.length || liveGrants.length) {
+        throw new Error(`停用之后还留着 ${liveSessions.length} 个活会话、${liveGrants.length} 条生效授权 —— `
+          + "「停用」若只改状态，重新激活会把停用前的旧令牌一次性复活");
+      }
+    }
+
     // 【MCP 这一侧的工厂也不许替调用方挑任务组】。core 那边已经改成"认不出就具名拒绝"并配了
     // 判据，但 mcp-server 里还有一份【自己的】记录工厂（14 处 `|| "tg_runtime_management"`）——
     // 同一件事两条路只改了一条。最重的两处：产出目标决定 agent 的改动落到哪个仓库/分支/路径；
@@ -666,7 +709,7 @@ try {
     // 本套 e2e 自己跑通的数（跨门合计另算：契约门在进程内还会跑通一批）。
     // 这个数是【实测出来的】—— 早先一次量到 44，复量不出来，那次多半把别的运行留下的账算了进去；
     // 以能复现的这次为准。棘轮只升不降。
-    const SUCCESSFULLY_EXERCISED_FLOOR = 45;
+    const SUCCESSFULLY_EXERCISED_FLOOR = 47;
     let traced = "";
     try { traced = readFileSync(toolTracePath, "utf8"); } catch { traced = ""; }
     const succeeded = new Set(traced.split("\n").filter((line) => line.startsWith("ok ")).map((line) => line.slice(3)));
@@ -1067,7 +1110,9 @@ try {
       "identity-mcp.grant_create": {subjectId: "acct_agent_runtime",
         resource: {resourceType: "task_group", resourceId: "tg_runtime_management"},
         idempotencyKey: "mcp-human-only-7"},
-      "identity-mcp.grant_revoke": {grantId: "grant_probe", idempotencyKey: "mcp-human-only-8"}
+      "identity-mcp.grant_revoke": {grantId: "grant_probe", idempotencyKey: "mcp-human-only-8"},
+      // 2026-08-27 补：停一个账号会连带撤销它全部的会话与授权 —— 与发/撤授权同族。
+      "identity-mcp.account_suspend": {accountId: "acct_agent_runtime", idempotencyKey: "mcp-human-only-9"}
     };
     const HUMAN_ONLY_TOOLS = Object.entries(HUMAN_ONLY_MCP_TOOL_REFUSALS)
       .map(([name, code]) => ({name, code, args: HUMAN_ONLY_ARGS[name]}));
