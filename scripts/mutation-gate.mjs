@@ -9566,6 +9566,14 @@ const MUTATIONS = [
     to: "    if (result.dispatch) commitUnguardedWrite(state);",
     expect: "节点上留的诊断没说是角色不匹配"
   },
+  {
+    name: "「两个键给一个就行」的必填也得由入参层拦，不能落到下游拒绝码上",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "  return keys.some((key) => hasInputArg(args, key));",
+    to: "  return true;",
+    expect: "一个产出目标标识都没给却没被入参层拦下"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

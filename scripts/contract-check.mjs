@@ -431,7 +431,7 @@ const PREDICATE_COVERAGE = {
   isDelegatableGrantPermission: {probedOnly: "改成永远为真（system:* 也可委派），契约门红"},
   isSystemAccount: {probedOnly: "2026-08-27 探过：改成「有账号就算系统账号」，doctor 当场红 —— 「非系统账号建项目时不得替别人挂负责人授权」那条接住了（任何能建项目的人都能替别人挂一份真生效的负责人授权）"},
   isLocalHostHeader: {probedOnly: "2026-08-27 探过：改成恒真，doctor 当场红 —— 伪造的 Host 会被写进交给 agent 的装机地址，照它跑起来的 agent 会带着一次性入网令牌去攻击者主机注册"},
-  isLocalHostname: {notProbed: "同上，未单独探"},
+  isLocalHostname: {probedOnly: "2026-08-27 探过：改成恒真，doctor 当场红 —— 启动时把「公开地址是明文远程」那条警告整个吞掉（人不会知道令牌是明文发出去的）"},
   isLoopbackAddress: {notProbed: "要从非回环地址发起连接才验得到，本机 e2e 造不出这个条件"},
   canReadResource: {probedOnly: "2026-08-27 探过：改成「有账号就能读」，doctor 当场红 —— 跨租户存在性那条接住了（写路由会变成一台「别处有没有这个 id」的探针）"},
   canReadProject: {probedOnly: "2026-08-27 探过：改成「有账号就能读」，doctor 当场红 —— 组织管理员的整份状态载荷里出现了别的租户的 29 个对象"},
@@ -441,9 +441,10 @@ const PREDICATE_COVERAGE = {
   schemaTypeMatches: {probedOnly: "2026-08-27 探过：改成恒真，doctor-mcp 当场红 —— 类型不符的值会被当成合法参数往下传"},
   hasInputArg: {probedOnly: "2026-08-27 探过：改成恒真门链会红，但先报出来的是「空参登记过期」这类症状 —— "
     + "当轮补了点名的那条（doctor-mcp：缺必填、以及只给空白，都要回 mcp_required_argument_missing 并说清缺哪个）"},
-  hasAnyInputArg: {notProbed: "同上，未单独探"}
+  hasAnyInputArg: {probedOnly: "2026-08-27 探过：改成恒真，doctor-mcp 原本【全绿】—— 补了「两个键给一个就行的必填」那条之后才红："
+    + "一个产出目标标识都不给，拒绝码从 mcp_required_argument_missing 变成 repository_output_target_not_found（指向的排查方向是错的）"}
 };
-const PREDICATE_NOT_PROBED_CEILING = 3;
+const PREDICATE_NOT_PROBED_CEILING = 1;
 
 // 【项目归档之后，哪些写动作还能做】。归档是项目的终结态（没有"恢复归档"这条路），
 // 含义是"移出可建新工作的范围、把配额还回去、历史留着"。此前只有【建任务组】一处判了它 ——

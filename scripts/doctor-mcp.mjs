@@ -265,6 +265,20 @@ try {
       + " —— 互斥把正常路径一起堵死了，产出目标会永远卡在被占用状态");
   }
 
+  // 「两个键给一个就行」这类必填，schema 上写不出来（required 是逐个键的），只能由入参策略拦。
+  // 一个都不给时若放行，调用方会一路走到工厂里，拿到的是 target_not_found 一类下游拒绝码 ——
+  // 它指向"这个产出目标不存在"，而真相是"你压根没说是哪个"，排查方向整个是错的。
+  for (const tool of ["resource-mcp.lease_claim", "repository-mcp.repository_target_lease_bind"]) {
+    const neither = await mcp("tools/call", {name: tool, arguments: {
+      idempotencyKey: `doctor-mcp-either-or-${tool.replace(/[^a-z_]/g, "-")}`,
+      holderRef: "session:doctor-a"}});
+    const refusal = neither.structuredContent?.result || {};
+    if (refusal.error !== "mcp_required_argument_missing" || refusal.argument !== "repositoryOutputTargetRef") {
+      throw new Error(`${tool} 一个产出目标标识都没给却没被入参层拦下：`
+        + `${JSON.stringify(refusal).slice(0, 200)} —— 调用方拿到的拒绝码会指向错误的排查方向`);
+    }
+  }
+
   const admin = await api("/api/auth/login", {method: "POST", body: {email: "system.admin@local", token: "doctor-bootstrap-token"}});
   const missingProjectTaskGroup = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.task_group_create", arguments: {idempotencyKey: "doctor-mcp-task-create-missing-project", taskGroupId: "tg_doctor_missing_project", name: "Missing Project Scope"}});
   if (missingProjectTaskGroup.structuredContent?.result?.error !== "mcp_required_argument_missing" || missingProjectTaskGroup.structuredContent?.result?.argument !== "projectId") {
