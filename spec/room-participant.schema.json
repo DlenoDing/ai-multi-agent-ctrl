@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-multi-agent-ctrl/spec/room-participant.schema.json",
+  "title": "RoomParticipant",
+  "description": "协作室参与者名单的一条记录。它不参与任何授权判定（roomSend/roomWait 从不查询它），但会随视图下发给控制台，所以字段形状要被约束住。加入即 joined，没有别的生命周期——离开是把记录淘汰掉，不是改状态。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "participantId", "roomId", "roleId", "cursor", "status", "joinedAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": {"const": "room-participant/v1"},
+    "participantId": {"type": "string", "minLength": 1},
+    "roomId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": ["string", "null"]},
+    "roleId": {"type": "string", "minLength": 1},
+    "cursor": {"type": "integer", "minimum": 0},
+    "status": {"enum": ["joined"]},
+    "joinedAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  }
+}

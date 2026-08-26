@@ -319,6 +319,7 @@
     abandoned: "已放弃",
     replayed: "已重放",
     discarded: "已丢弃",
+    joined: "已加入",
     persisted: "已留存",
     registered: "已登记",
     gc: "已回收",

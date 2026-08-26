@@ -7038,7 +7038,7 @@ export function taskGroupForRecord(state, args) {
 // 请求，会把记录挂到种子项目的管理组上（core 里 14 处这么写，MCP 工具直连这些工厂，
 // 路由那边补的「必须点名任务组」它们一概绕得过）。改成认不出就具名拒绝：调用方立刻知道
 // 是哪个字段没说清，而不是收到 201 之后去别人的任务组里找自己的记录。
-function taskGroupForRecordOrRefuse(state, args, what) {
+export function taskGroupForRecordOrRefuse(state, args, what) {
   const taskGroup = taskGroupForRecord(state, args);
   if (taskGroup) return taskGroup;
   throw Object.assign(new Error("task_group_not_found"), {status: 400, details: {
@@ -7228,7 +7228,7 @@ function pruneRoomMessages(state) {
 
 // 房间号漏填时原先回落到 `room_tg_runtime_management` —— 消息就发进了种子任务组的协作室，
 // 那里坐着别的人和别的 agent，而发的人收到的是成功。房间说不清就拒绝。
-function requiredRoomId(args) {
+export function requiredRoomId(args) {
   const roomId = args.roomId || (args.taskGroupId ? `room_${args.taskGroupId}` : null);
   if (!roomId) {
     throw Object.assign(new Error("room_not_specified"), {status: 400, details: {
@@ -8419,8 +8419,20 @@ const findingTerminalStatuses = ["resolved", "closed", "dismissed", "wontfix"];
 function nonTerminalFindingStatus(status, fallback) {
   // Raising a finding must never terminalize it; only governance-mcp.finding_resolve can. This keeps
   // finding_submit (available to control-role agents) from bypassing the resolve separation of duties.
-  return status && !findingTerminalStatuses.includes(status) ? status : fallback;
+  //
+  // 【认不出的状态一律回落到 open】。这里原先只挡"别把它写成终态"，任何别的字符串都原样收下 ——
+  // 于是 review_result_consume 把【评审结论】（passed / rejected）当作 status 透传进来，
+  // findings 里就出现了状态机里根本没有的 "passed"。凡是按状态机推理的东西（关闭门的了结集、
+  // 非终态过滤、控制台列表）都不认识它，而这不会报任何错：那条发现项既不算已了结、
+  // 也不出现在"待处置"里，就此从两边同时消失。
+  // 建模过的非终态只有 open 一个，所以判据写成"必须是 open"会显得多余；按状态机的全集判，
+  // 将来加了 triaged 之类的新状态，这里自动跟着放行。
+  if (!status) return fallback;
+  return FINDING_MODELED_STATUSES.includes(status) && !findingTerminalStatuses.includes(status) ? status : fallback;
 }
+
+// Finding 建模过的状态全集（spec/state-machines.yaml 的 Finding.states）。终态集在下面单列。
+export const FINDING_MODELED_STATUSES = ["open", "resolved", "closed", "dismissed", "wontfix"];
 
 // Finding 的终态集：门与 findingResolve 必须用同一份，否则两边各自手打就会再次漂移。
 export const FINDING_TERMINAL_STATUSES = ["resolved", "closed", "dismissed", "wontfix"];

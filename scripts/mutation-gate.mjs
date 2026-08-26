@@ -1316,8 +1316,8 @@ const MUTATIONS = [
     name: "MCP 信封不得把带 error 的结果说成成功",
     file: MCP,
     check: "verifyMcpEnvelopeNeverCallsAnErrorSuccess",
-    from: '    ok: result.ok !== false && !(result && typeof result === "object" && result.error),',
-    to: "    ok: result.ok !== false,",
+    from: '  const envelopeOk = result.ok !== false && !(result && typeof result === "object" && result.error);',
+    to: "  const envelopeOk = result.ok !== false;",
     expect: "在信封上说成功、内层却带 error"
   },
   {
@@ -6605,6 +6605,22 @@ const MUTATIONS = [
     from: '  "governance-mcp.finding_submit": ["evidenceRefs", "findingId", "findingType", "severity", "status", "summary", "taskGroupId", "workId", "workItemId"],',
     to: '  "governance-mcp.finding_submit": ["evidenceRefs", "findingId", "findingType", "severity", "status", "summary", "taskGroupId", "workId"],',
     expect: "读 args.workItemId，而 tools/list 上它不公布这个键"
+  },
+  {
+    name: "工具执行覆盖记账断了要看得见",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "    try { appendFileSync(toolTraceFile, `${envelopeOk ? \"ok\" : \"no\"} ${name}\\n`); } catch { /* 记账坏了不能影响调用 */ }",
+    to: "    try { if (false) appendFileSync(toolTraceFile, `${envelopeOk ? \"ok\" : \"no\"} ${name}\\n`); } catch { /* 记账坏了不能影响调用 */ }",
+    expect: "记账没接上"
+  },
+  {
+    name: "认不出的发现项状态必须回落",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: "  return FINDING_MODELED_STATUSES.includes(status) && !findingTerminalStatuses.includes(status) ? status : fallback;",
+    to: "  return !findingTerminalStatuses.includes(status) ? status : fallback;",
+    expect: "Finding 状态机没有登记的状态 passed"
   },
   {
     name: "路由没被真打过要看得见",

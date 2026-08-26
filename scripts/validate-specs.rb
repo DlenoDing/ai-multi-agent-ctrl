@@ -297,8 +297,12 @@ schema_machine_aliases = {
 # 新增一个带 status 枚举的 schema 时，要么建机器、要么登记到这里说明为什么不需要。
 schemas_without_state_machine = Set.new(%w[
   AgentControlCommand AgentExecutionEvent AgentJoinToken InternalReviewRecord Organization WorkerLane
-  AuthSession Agent McpCall
+  AuthSession Agent McpCall RoomParticipant
 ])
+# RoomParticipant：只有 joined 一个取值 —— 离开是把记录从名单里淘汰掉，而不是改状态，
+# 所以它没有"生命周期"可言。这份规范是 2026-08-26 才补的：room_join 此前【一次都没成功
+# 执行过】（85 个 MCP 工具里 48 个如此），于是这个集合从没出现在任何 e2e 产出里，
+# 既没有规范也没有任何门看得见它。
 # Agent（逻辑智能体目录项）与 AuthSession 同理：它没有生命周期，只有启停两态，
 # 而 state-machines.yaml 的机器必须同时出现在 manifest 的 requiredControlObjects 里 ——
 # 那份清单是终端执行域的控制对象。运行时节点那个才是 AgentNode，两者不是一回事。

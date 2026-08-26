@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { mcpToolNames } from "../apps/control-plane-ui/lib/mcp-tool-catalog.mjs";
 import { KNOWN_SECOND_DOORS, HUMAN_ONLY_MCP_TOOL_REFUSALS } from "./lib/known-second-doors.mjs";
 import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -14,6 +15,10 @@ import {waitForChildExit} from "./lib/child-tracking.mjs";
 const root = resolve(new URL("..", import.meta.url).pathname);
 const port = await freePort();
 const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-mcp-doctor-runtime-"));
+// 工具记账：每次 MCP 调用记一行「成没成 + 工具名」，收尾核"成功执行过多少个"（见文件末尾那条棘轮）。
+// 记账文件放在运行目录【之外】：这套 e2e 会对运行目录本身做事（重建、探活），
+// 把这本账放进去等于让被测对象决定证据还在不在。
+const toolTracePath = process.env.AIMAC_TOOL_TRACE || join(mkdtempSync(join(tmpdir(), "aimac-mcp-tool-trace-")), "tool-trace.log");
 const configDir = mkdtempSync(join(tmpdir(), "aimac-mcp-doctor-config-"));
 const token = "doctor-remote-mcp-service-token";
 const baseUrl = `http://127.0.0.1:${port}`;
@@ -30,6 +35,7 @@ const child = spawn(process.execPath, ["apps/control-plane-ui/server.mjs"], {
     AIMAC_PORT: String(port),
     AIMAC_PUBLIC_URL: baseUrl,
     AIMAC_RUNTIME_DIR: runtimeDir,
+    AIMAC_TOOL_TRACE: toolTracePath,
     AIMAC_STATE_STORE: "runtime_json",
     AIMAC_EXECUTION_PROFILE: "production",
     AIMAC_MCP_SERVICE_TOKEN: token,
@@ -269,6 +275,209 @@ try {
   if (normalizedWork?.workItem?.status !== "ready" || normalizedWork.workItem.ownerRole !== "agent-runtime" || !normalizedWork.taskGroup?.roles?.some((role) => role.roleId === "agent-runtime")) {
     throw new Error("MCP work_item_create did not normalize work item status and task group role binding");
   }
+  // 【MCP 工具要真的被成功执行过】。运行时记账量过一次：85 个工具全都被空参调过（那证明它们
+  // "拒得对"），而真正【成功执行】过的只有 37 个 —— agent 日常走的那条链上，session_start、
+  // work_assign、finding_submit、approval_resolve、confirmation_decide 这些一次都没跑通过。
+  // 它们各自的 REST 孪生有 e2e，MCP 这一侧只有"拒绝"被验过：处理函数里有没有活，无人知道。
+  // 这一段按【agent 真实走法】把这条链跑一遍，每一步都断言它答的是什么，而不只是 ok。
+  {
+    const TG = "tg_doctor_mcp_norm";
+    const WORK = "work_doctor_mcp_norm";
+    let seq = 0;
+    const call = async (name, args) => {
+      const envelope = await mcpAs(admin.sessionToken, "tools/call",
+        {name, arguments: {idempotencyKey: `doctor-mcp-chain-${++seq}`, ...args}});
+      const payload = envelope.structuredContent?.result || JSON.parse(envelope.content?.[0]?.text || "{}");
+      if (payload.ok === false || payload.error || payload.result?.error) {
+        throw new Error(`MCP 工具链断在 ${name}：${JSON.stringify(payload).slice(0, 200)}`);
+      }
+      return payload.result ?? payload;
+    };
+
+    const assigned = await call("orchestration-mcp.work_assign", {taskGroupId: TG, workItemId: WORK, roleId: "agent-runtime"});
+    if (assigned.workItem?.ownerRole !== "agent-runtime") {
+      throw new Error(`work_assign 没把归属角色写上去：${JSON.stringify(assigned).slice(0, 160)}`);
+    }
+    const picked = await call("scheduler-mcp.model_select", {taskGroupId: TG, workItemId: WORK, roleId: "agent-runtime"});
+    if (picked.status !== "selected" || !picked.selectedModel?.modelId) {
+      throw new Error(`model_select 没选出模型：${JSON.stringify(picked).slice(0, 200)}`);
+    }
+    if (picked.taskGroupId !== TG || picked.workItemId !== WORK) {
+      throw new Error(`选型决策挂错了对象：${picked.taskGroupId}/${picked.workItemId}`);
+    }
+    const placed = await call("scheduler-mcp.session_place", {taskGroupId: TG, workItemId: WORK, roleId: "agent-runtime"});
+    if (!["new_session", "subagent"].includes(placed.placement)) {
+      throw new Error(`session_place 没给出载体：${JSON.stringify(placed).slice(0, 160)}`);
+    }
+    const derived = await call("scheduler-mcp.derived_task_classify", {taskGroupId: TG, title: "security review of the permission surface"});
+    if (derived.roleId !== "security" || !derived.modelDecision?.selectedModel) {
+      throw new Error(`derived_task_classify 分类不对：${JSON.stringify(derived).slice(0, 160)}`);
+    }
+
+    const started = await call("agent-control-mcp.session_start", {taskGroupId: TG, workItemId: WORK});
+    const contract = started.contract || started;
+    if (!contract.sessionId || contract.taskGroupId !== TG) {
+      throw new Error(`session_start 没给出任务契约：${JSON.stringify(started).slice(0, 200)}`);
+    }
+    const paused = await call("agent-control-mcp.session_pause", {sessionId: contract.sessionId});
+    if (paused.session?.status !== "paused") {
+      throw new Error(`session_pause 之后会话不是 paused：${JSON.stringify(paused).slice(0, 160)}`);
+    }
+    const recovered = await call("agent-control-mcp.session_recover", {sessionId: contract.sessionId});
+    if (recovered.session?.status === "paused") {
+      throw new Error("session_recover 之后会话还停着 —— 恢复没起作用");
+    }
+
+    const finding = await call("governance-mcp.finding_submit",
+      {taskGroupId: TG, workItemId: WORK, findingType: "review", severity: "low", summary: "MCP 链路探针发现项"});
+    const findingId = finding.finding?.findingId;
+    if (!findingId || finding.finding.taskGroupId !== TG) {
+      throw new Error(`finding_submit 没落在这个任务组上：${JSON.stringify(finding).slice(0, 160)}`);
+    }
+    // 不给证据就处置：必须【不了结】，而且回执要说清没了结 —— 否则调用方会以为问题已经关掉，
+    // 而它还开着挡在关闭门上（"按了杠杆看不到它起没起作用"这一族）。
+    const unverified = await call("governance-mcp.finding_resolve", {findingId, status: "resolved"});
+    if (unverified.closed !== false || unverified.downgraded !== "fixed_unverified" || unverified.finding?.status !== "open") {
+      throw new Error("没给证据的处置被当成了了结："
+        + `closed=${unverified.closed} downgraded=${unverified.downgraded} status=${unverified.finding?.status}`);
+    }
+    const resolvedFinding = await call("governance-mcp.finding_resolve",
+      {findingId, status: "resolved", evidenceRefs: ["evidence:doctor-mcp-chain"], resolutionRef: "resolution:doctor-mcp-chain"});
+    if (!["resolved", "closed"].includes(resolvedFinding.finding?.status) || resolvedFinding.closed !== true) {
+      throw new Error(`带上证据之后仍没了结：status=${resolvedFinding.finding?.status} closed=${resolvedFinding.closed}`);
+    }
+
+    const rule = await call("governance-mcp.rule_source_resolve",
+      {taskGroupId: TG, sourceRef: "reference:doctor-mcp-chain", classification: "reference_only"});
+    if (rule.ruleSourceResolution?.taskGroupId !== TG) {
+      throw new Error(`rule_source_resolve 归属不对：${JSON.stringify(rule).slice(0, 160)}`);
+    }
+    const policy = await call("governance-mcp.policy_decision_eval",
+      {action: "doctor_probe", resource: {resourceType: "task_group", resourceId: TG}, subjectRef: {subjectType: "account", subjectId: "acct_system_owner"}, allowed: true});
+    if (!policy.policyDecision?.decisionId) {
+      throw new Error(`policy_decision_eval 没给出决策记录：${JSON.stringify(policy).slice(0, 160)}`);
+    }
+
+    const bundle = await call("review-mcp.review_bundle_register", {taskGroupId: TG, workItemId: WORK});
+    const bundleId = bundle.reviewBundle?.reviewBundleId;
+    if (!bundleId || bundle.reviewBundle.status !== "submitted") {
+      throw new Error(`review_bundle_register 没建出评审包：${JSON.stringify(bundle).slice(0, 160)}`);
+    }
+    const consumed = await call("review-mcp.review_result_consume",
+      {reviewBundleId: bundleId, taskGroupId: TG, workItemId: WORK, status: "passed", summary: "链路探针"});
+    if (consumed.reviewBundle?.status === "submitted") {
+      throw new Error("review_result_consume 之后评审包还停在 submitted —— 它会一直挡着关闭门");
+    }
+
+    const roomJoin = await call("room-mcp.room_join", {taskGroupId: TG, roleId: "agent-runtime", sessionId: contract.sessionId});
+    const roomId = roomJoin.participant?.roomId || roomJoin.roomId;
+    if (roomId !== `room_${TG}`) {
+      throw new Error(`room_join 的房间不是这个任务组的：${roomId} —— ${JSON.stringify(roomJoin).slice(0, 160)}`);
+    }
+    const acked = await call("room-mcp.room_ack", {roomId, sessionId: contract.sessionId, cursor: 0});
+    if (acked.cursor === undefined && acked.ack === undefined && acked.participant === undefined) {
+      throw new Error(`room_ack 没给出回执：${JSON.stringify(acked).slice(0, 160)}`);
+    }
+
+    const manifestIndex = await call("repository-mcp.artifact_manifest_index",
+      {artifactManifestRefs: ["docs/artifact-manifests/runtime-management.json"]});
+    if (!(manifestIndex.artifactManifestRefs || []).includes("docs/artifact-manifests/runtime-management.json")) {
+      throw new Error(`artifact_manifest_index 的索引里没有点名的那份清单：${JSON.stringify(manifestIndex).slice(0, 200)}`);
+    }
+
+    // 这一段收尾：会话取消要真的把它了结掉（前面 pause/recover 都验过了，cancel 放最后）。
+    const cancelled = await call("agent-control-mcp.session_cancel", {sessionId: contract.sessionId});
+    if (!["cancelled", "aborted", "terminated"].includes(cancelled.session?.status)) {
+      throw new Error(`session_cancel 之后会话状态是 ${cancelled.session?.status} —— 没被了结`);
+    }
+    // 【MCP 这一侧的工厂也不许替调用方挑任务组】。core 那边已经改成"认不出就具名拒绝"并配了
+    // 判据，但 mcp-server 里还有一份【自己的】记录工厂（14 处 `|| "tg_runtime_management"`）——
+    // 同一件事两条路只改了一条。最重的两处：产出目标决定 agent 的改动落到哪个仓库/分支/路径；
+    // 评审结论回流会去终态化那个任务组的评审包、把评审覆盖记在它的评审计划上（写在没人点名的对象上）。
+    // 共享定义这一族此前也没成功跑通过（create 只在别的门里被调过，publish/bind 一次都没有）。
+    // 先建一份真的，下面那条"不点名任务组"的负面用例才测得到 bind 里那道守卫 ——
+    // 否则它会先撞上"这份定义不存在"，看起来也是拒绝，测的却是另一件事。
+    const definition = await call("definition-mcp.shared_definition_create", {
+      taskGroupId: TG, contractId: "sdc_doctor_mcp_chain", definitionType: "terminology",
+      conflictPolicy: "owner_reconciles_then_republish", ownerRole: "orchestrator",
+      definition: {term: "链路探针", meaning: "doctor-mcp 用的共享定义"}
+    });
+    if (definition.sharedDefinition?.contractId !== "sdc_doctor_mcp_chain") {
+      throw new Error(`shared_definition_create 没建出定义：${JSON.stringify(definition).slice(0, 160)}`);
+    }
+    // publish 只能【提案】：生效的共享定义会被分发进每个 agent 的任务契约与指令包，
+    // 也就是"本项目认什么规范"。让机器一口气 create+publish 就等于它自行宣布并自我批准一条
+    // 全局规范 —— 定稿闸门要挡的正是这个。这条通道此前一次都没跑通过，这个性质也就没被验过。
+    const published = await call("definition-mcp.shared_definition_publish", {contractId: "sdc_doctor_mcp_chain"});
+    const publishedDefinition = published.sharedDefinition || published.contract;
+    if (publishedDefinition?.status !== "proposed" || published.requiresHumanActivation !== true) {
+      throw new Error("机器 publish 了一份共享定义就直接生效了（status="
+        + `${publishedDefinition?.status} requiresHumanActivation=${published.requiresHumanActivation}）—— `
+        + "它会被分发进每个 agent 的任务契约，等于 AI 自行宣布并自我批准了一条全局规范");
+    }
+
+    const BLIND_CALLS = [
+      {name: "review-mcp.review_result_consume", args: {status: "passed", summary: "没说是哪个任务组"}},
+      {name: "instruction-mcp.instruction_envelope_create", args: {recipientRole: "agent-runtime"}},
+      {name: "repository-mcp.repository_output_target_select", args: {artifactManifestPath: "docs/artifact-manifests/blind.json"}},
+      {name: "evidence-mcp.test_result_submit", args: {status: "passed", command: "npm test"}},
+      {name: "definition-mcp.shared_definition_consumer_bind", args: {contractId: "sdc_doctor_mcp_chain"}},
+      {name: "room-mcp.room_join", args: {roleId: "agent-runtime"}},
+      {name: "room-mcp.room_ack", args: {cursor: 0}}
+    ];
+    // 拒了不等于拒对了：把【是哪道门拒的】记下来一起打印。有的工具在入参层就要求必填
+    // （mcp_required_argument_missing），那是更早的一道；工厂里那道仍然要在，否则入参层的
+    // 必填清单一改，落账就又开始猜了 —— 两道各自独立，这里如实记录当前是哪一道先拒的。
+    const blindRefusals = {};
+    for (const blind of BLIND_CALLS) {
+      const envelope = await mcpAs(admin.sessionToken, "tools/call",
+        {name: blind.name, arguments: {idempotencyKey: `doctor-mcp-blind-${++seq}`, ...blind.args}});
+      const payload = envelope.structuredContent?.result || JSON.parse(envelope.content?.[0]?.text || "{}");
+      const refusal = payload.error || payload.result?.error || null;
+      if (!["task_group_not_found", "work_item_not_found", "room_not_specified", "mcp_required_argument_missing"].includes(refusal)) {
+        throw new Error(`${blind.name} 不点名任务组时没有具名拒绝（拿到 ${refusal || JSON.stringify(payload).slice(0, 160)}）——`
+          + " 这类兜底会把记录挂到种子任务组上：判权按调用方的作用域判，落账落在别人那一组");
+      }
+      blindRefusals[refusal] = (blindRefusals[refusal] || 0) + 1;
+    }
+    console.log(`MCP 工厂归属 ok: ${BLIND_CALLS.length} 个会落账的工具，不点名任务组时逐个具名拒绝（不替调用方挑一个）；`
+      + `拦下它们的门：${Object.entries(blindRefusals).sort((a, b) => b[1] - a[1]).map(([code, n]) => `${code}×${n}`).join("、")}`);
+
+    console.log(`MCP 工具链 ok: agent 日常那条链上的 ${seq} 个工具逐个真跑通（此前它们只被空参调过、只验过"拒得对"）`);
+  }
+
+  // 【成功执行过的工具数只降不升】。空参调用能证明 85 个工具"拒得对"，证明不了它们"做得对" ——
+  // 量过一次：真正成功执行过的只有 26 个。这条棘轮盯住这个数：新工具加进来而没人跑通它，
+  // 比例就会掉；把某条链改坏了，数也会掉。数从记账来（AIMAC_TOOL_TRACE），不是数源码里的调用。
+  {
+    // 本套 e2e 自己跑通的数（跨门合计另算：契约门在进程内还会跑通一批）。
+    // 这个数是【实测出来的】—— 早先一次量到 44，复量不出来，那次多半把别的运行留下的账算了进去；
+    // 以能复现的这次为准。棘轮只升不降。
+    const SUCCESSFULLY_EXERCISED_FLOOR = 28;
+    let traced = "";
+    try { traced = readFileSync(toolTracePath, "utf8"); } catch { traced = ""; }
+    const succeeded = new Set(traced.split("\n").filter((line) => line.startsWith("ok ")).map((line) => line.slice(3)));
+    const calls = traced.split("\n").filter(Boolean).length;
+    // 自证：本套 e2e 自己打的 MCP 调用是 48 次左右（空参那 85 次在 contract-check 的子进程里，
+    // 不在这本账上）。这个下限只用来分辨"记账断了"和"确实没打那么多"。
+    if (calls < 40) {
+      throw new Error(`工具记账只收到 ${calls} 次调用（本套 e2e 约 48 次）—— 记账没接上，这条棘轮在空转`);
+    }
+    for (const tool of succeeded) {
+      if (!mcpToolNames.includes(tool)) throw new Error(`记账里出现了不在工具表里的名字：${tool} —— 提取或工具表脱节`);
+    }
+    if (succeeded.size < SUCCESSFULLY_EXERCISED_FLOOR) {
+      const missing = mcpToolNames.filter((tool) => !succeeded.has(tool));
+      throw new Error(`本轮成功执行过的 MCP 工具从 ${SUCCESSFULLY_EXERCISED_FLOOR} 掉到 ${succeeded.size}`
+        + ` —— 没跑通的还有 ${missing.length} 个：${missing.slice(0, 8).join("、")}${missing.length > 8 ? " 等" : ""}`);
+    }
+    if (succeeded.size > SUCCESSFULLY_EXERCISED_FLOOR) {
+      console.log(`  ↑ 成功执行过的工具涨到 ${succeeded.size}，把 SUCCESSFULLY_EXERCISED_FLOOR 改成这个数（棘轮留着松弛量，下次回退就看不出来了）`);
+    }
+    console.log(`MCP 工具执行覆盖 ok: ${succeeded.size}/${mcpToolNames.length} 个工具本轮真的成功执行过（棘轮 ${SUCCESSFULLY_EXERCISED_FLOOR}，只升不降）；`
+      + `其余 ${mcpToolNames.length - succeeded.size} 个只验过"拒得对"`);
+  }
+
   // 未登记的角色必须在【创建这一刻】被拒。收下之后派发会静默绑上 orchestrator 的技能，
   // agent 按别人的角色规则干活，而人以为自己指定了角色 —— REST 侧早就这么做了，
   // 这一侧原先一点校验都没有（孪生分支只补一半）。

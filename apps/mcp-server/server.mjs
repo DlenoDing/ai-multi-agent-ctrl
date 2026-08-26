@@ -82,7 +82,9 @@ import {
   REGISTERED_OWNER_ROLES,
   taskGroupSettledRejection,
   STRING_LIST_MAX_ITEMS,
-  STRING_LIST_MAX_ITEM_LENGTH
+  STRING_LIST_MAX_ITEM_LENGTH,
+  taskGroupForRecordOrRefuse,
+  requiredRoomId
 } from "../control-plane-ui/lib/control-plane-core.mjs";
 import {
   createAgentControlCommand,
@@ -597,6 +599,8 @@ export function isWriteTool(name) {
   return !isReadOnlyTool(name);
 }
 
+const toolTraceFile = process.env.AIMAC_TOOL_TRACE || null;
+
 export async function callTool(name, args = {}, context = {}) {
   if (!mcpToolNames.includes(name)) {
     const error = new Error(`Unknown tool: ${name}`);
@@ -729,13 +733,19 @@ export async function callTool(name, args = {}, context = {}) {
   //   ② 归档落盘走的是 UI 服务端写状态时的 flushPendingAuditAppends，MCP 的写路径不经过它；
   //   ③ actor 要从 MCP 主体映射过去（agent_node / executor / 远程主体），不能记成空。
   appendMcpAudit(mcpCall);
+  const envelopeOk = result.ok !== false && !(result && typeof result === "object" && result.error);
+  // 工具记账（默认关闭，只在门里打开）：「这个工具有没有被【成功执行】过」不能靠空参调用回答 ——
+  // 85 个工具都被空参调过，而其中大多数当场就被拒了，处理函数一行都没跑到。
+  if (toolTraceFile) {
+    try { appendFileSync(toolTraceFile, `${envelopeOk ? "ok" : "no"} ${name}\n`); } catch { /* 记账坏了不能影响调用 */ }
+  }
   return {
     // 内层带了 error 就不能在信封上说成功。实测有两个进度查询在缺作用域时返回
     // {progressSnapshot: null, error: "scope_ref_required_for_bounded_principal"} 而不带 ok:false，
     // 于是信封是 ok:true —— 只看信封的消费方会把它当成"查到了，只是没有进度"，
     // 而真相是"你没给作用域"。判据放在信封上而不是逐个工具补 ok:false：
     // 那样以后新增的路径还会再漏一次，而这一层是所有工具的必经之处。
-    ok: result.ok !== false && !(result && typeof result === "object" && result.error),
+    ok: envelopeOk,
     tool: name,
     stateVersion: state.stateVersion,
     result,
@@ -2140,15 +2150,16 @@ function redactStateForMcp(state) {
 function roomJoin(state, args) {
   const at = new Date().toISOString();
   const participant = {
+    schemaVersion: "room-participant/v1",
     // participantId 原先取自调用方，而这张表是按 participantId 替换的 —— 传别人的 id 就能覆盖
     // 别人的记录（改掉它的 roleId/cursor/sessionId）。名单不参与授权判定，所以这不是提权；
     // 但一张能被任意改写的名单，一旦将来被呈现给人或被拿来判断，就是错的来源。
     // 与房间消息署名同一处理：身份由已认证主体派生，报文里的自报值不采信。
     participantId: args[ROOM_PARTICIPANT_KEY] || createId("room_participant"),
-    roomId: args.roomId || `room_${args.taskGroupId || "tg_runtime_management"}`,
-    sessionId: args.sessionId,
+    roomId: requiredRoomId(args),
+    sessionId: args.sessionId || null,
     roleId: args.roleId || "agent-runtime",
-    cursor: Number(args.cursor || 0),
+    cursor: Math.max(0, Math.trunc(Number(args.cursor) || 0)),
     status: "joined",
     joinedAt: at,
     updatedAt: at
@@ -2163,7 +2174,7 @@ function roomJoin(state, args) {
 
 function roomAck(state, args) {
   const at = new Date().toISOString();
-  const roomId = args.roomId || `room_${args.taskGroupId || "tg_runtime_management"}`;
+  const roomId = requiredRoomId(args);
   const participantId = args.participantId || args.sessionId || "agent-runtime";
   const existing = (state.roomAcks || []).find((item) => item.roomId === roomId && item.participantId === participantId);
   const ack = {
@@ -2394,7 +2405,8 @@ export function testResultSubmit(state, args) {
   // 本仓十一个接受自选 id 的工厂都调了这个断言，这一族是漏的。
   assertUniqueRecordId(state.testResults, "testResultId", args.testResultId, "test_result_id_conflict");
   const at = new Date().toISOString();
-  const taskGroup = taskGroupForRecord(state, args);
+  // 质量门记录挂在哪个任务组下不许猜：它直接喂给关闭门，记错组＝替别人把门开了。
+  const taskGroup = taskGroupForRecordOrRefuse(state, args, "质量门结果");
   // status 原先缺省即 "passed"：一次不带任何参数的调用就能造出一道【通过】的质量门，
   // 而质量门正是人看到"全通过"时的唯一依据、并直接喂给关闭门。
   // 缺信息永远不该变成通过 —— 误差不对称：错记一次通过，比错记一次未通过危险得多。
@@ -2406,8 +2418,8 @@ export function testResultSubmit(state, args) {
   }
   const testResult = {
     testResultId: args.testResultId || createId("test_result"),
-    projectId: taskGroup?.projectId || args.projectId || "prj_control_plane",
-    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
+    projectId: taskGroup.projectId,
+    taskGroupId: taskGroup.id,
     workItemId: args.workItemId || args.workId,
     status: args.status,
     gateType: args.gateType || "test",
@@ -2653,13 +2665,23 @@ function releasePermissionDeniedSession(state, request, at) {
 }
 
 export function reviewResultConsume(state, args) {
+  // args.status 在这条工具上是【评审结论】（passed / rejected / changes_requested），不是发现项的状态；
+  // 它原样透传给 findingSubmit，于是 findings 里曾出现状态机里没有的 "passed" —— 关闭门的了结集、
+  // 非终态过滤、控制台列表都不认识它，那条发现项从两边同时消失且不报错（这条链此前一次都没跑通过，
+  // 所以没人看见）。真正的修复在 findingSubmit 那一侧：nonTerminalFindingStatus 现在只放行
+  // 状态机里建过模的取值，认不出的一律回落到 open —— 那道守卫管住【所有】调用方，不止这一条工具。
+  // 【这里没有再加一道"先把 status 摘掉"】：两道守卫会互相遮住对方，谁被改坏另一道都接得住，
+  // 于是两道都验不出判别力（本仓 hasPermission 那处注释写过同一条教训：互为冗余的判据没法各自
+  // 判别，也就没法保证它们各自还活着）。同理，归属也只由 findingSubmit 里那道
+  // taskGroupForRecordOrRefuse 管 —— 下面用它已经解析好的任务组，不再自己解析一次。
   const finding = findingSubmit(state, {...args, findingType: args.findingType || "review", severity: args.severity || "info"});
+  const consumeTaskGroup = {id: finding.finding.taskGroupId, projectId: finding.finding.projectId};
   // Terminalize the referenced external review bundle (submitted -> consumed / rejected). Without this a
   // submitted bundle stays non-terminal forever and wedges the close-barrier no_pending_review_bundles gate.
   if (args.reviewBundleId) {
     // 作用域必须覆盖被改变的资源本身：按 id 全局查找意味着 A 任务组的调用方可以把 B 任务组的
     // 评审包终态化，直接替 B 清掉 no_pending_review_bundles 这道阻塞（confused deputy）。
-    const scopedTaskGroupId = args.taskGroupId || "tg_runtime_management";
+    const scopedTaskGroupId = consumeTaskGroup.id;
     const bundle = (state.reviewBundles || []).find((item) => item.reviewBundleId === args.reviewBundleId && item.taskGroupId === scopedTaskGroupId);
     if (bundle && !["consumed", "rejected"].includes(bundle.status)) {
       bundle.status = ["rejected", "changes_requested"].includes(args.verdict) || args.status === "rejected" ? "rejected" : "consumed";
@@ -2669,10 +2691,10 @@ export function reviewResultConsume(state, args) {
   // 评审结论回流 = 该角色的评审覆盖度已到位。不记这一笔，评审计划就永远停在未终结态，
   // 把任务组关闭门卡死（与上面终态化 reviewBundle 是同一个道理）。
   const reviewPlan = reviewPlanRecordCoverage(state, {
-    reviewPlanId: args.reviewPlanId, taskGroupId: args.taskGroupId || "tg_runtime_management",
+    reviewPlanId: args.reviewPlanId, taskGroupId: consumeTaskGroup.id,
     reviewerRole: args.reviewerRole || args.role || "reviewer"
   });
-  const readiness = computeCompletionReadiness(state, args.taskGroupId || "tg_runtime_management", args);
+  const readiness = computeCompletionReadiness(state, consumeTaskGroup.id, args);
   return {finding: finding.finding, readiness, reviewPlan};
 }
 
@@ -3047,7 +3069,10 @@ export function sharedDefinitionPublish(state, args) {
 function sharedDefinitionConsumerBind(state, args) {
   const definition = state.sharedDefinitions.find((item) => item.contractId === args.contractId);
   if (!definition) return {ok: false, error: "shared_definition_not_found"};
-  definition.consumerRefs = [...new Set([...(definition.consumerRefs || []), ...(args.consumerRefs || [args.consumerRef || `TaskGroup:${args.taskGroupId || "tg_runtime_management"}`])])];
+  // 不点名消费方时，原先把【种子任务组】记成这份定义的消费方 —— 那条记录会挡住它的关闭门。
+  const boundConsumers = args.consumerRefs || (args.consumerRef ? [args.consumerRef] : null)
+    || [`TaskGroup:${taskGroupForRecordOrRefuse(state, args, "共享定义消费方绑定").id}`];
+  definition.consumerRefs = [...new Set([...(definition.consumerRefs || []), ...boundConsumers])];
   definition.updatedAt = new Date().toISOString();
   return {sharedDefinition: definition};
 }
@@ -3076,7 +3101,10 @@ function instructionEnvelopeCreate(state, args, sourceKind) {
   // 本仓十一个接受自选 id 的工厂都调了这个断言，这一族是漏的。
   assertUniqueRecordId(state.instructionMetrics.envelopes, "envelopeId", args.envelopeId, "instruction_envelope_id_conflict");
   const at = new Date().toISOString();
-  const taskGroup = taskGroupForRecord(state, args);
+  // REST 那一侧早就要求「必须点名任务组」（instruction_envelope_task_group_required），
+  // 这一侧原先不点名就把这份规则包挂到种子任务组上 —— 同一件事两条路只做了一条。
+  const envelopeTaskGroup = taskGroupForRecordOrRefuse(state, args, "指令信封");
+  const taskGroup = envelopeTaskGroup;
   const languagePolicy = normalizeTaskGroupLanguagePolicy(taskGroup?.languagePolicy || args.languagePolicy || args);
   const languagePolicyDigest = digestOf(languagePolicy);
   const tokenBudget = args.tokenBudget || {};
@@ -3084,7 +3112,7 @@ function instructionEnvelopeCreate(state, args, sourceKind) {
     schemaVersion: "instruction-envelope/v1",
     envelopeId: args.envelopeId || createId("ienv"),
     status: args.status && ["drafted", "compacted", "cache_indexed", "dispatched", "acknowledged", "invalidated"].includes(args.status) ? args.status : "drafted",
-    taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
+    taskGroupId: envelopeTaskGroup.id,
     recipientRole: args.recipientRole || args.roleId || "agent-runtime",
     // packetRef 是 effectiveInstructionPacketRef 的死别名：那个名字不在共用入参词表里，
     // 传不进来。而正名在词表里、能用 —— 留着别名只会让人以为有两种写法。
@@ -3156,8 +3184,18 @@ function deltaPayloadCompact(_state, args) {
 }
 
 export function repositoryOutputTargetSelect(state, args) {
-  const taskGroup = findTaskGroup(state, args.taskGroupId);
-  const workItem = findWorkItem(state, taskGroup?.id, args.workItemId);
+  // 这条工具决定 agent 的改动【落到哪个仓库、哪个分支、哪些路径】。不点名任务组时，原先落到
+  // 种子任务组名下、工作项写成 "work_unknown"、projectId 取调用方自填值 —— 一份谁也说不清
+  // 归属的产出目标。
+  const outputTaskGroup = taskGroupForRecordOrRefuse(state, args, "产出目标");
+  const taskGroup = outputTaskGroup;
+  const workItem = findWorkItem(state, outputTaskGroup.id, args.workItemId || args.workId);
+  const outputWorkItemId = args.workItemId || args.workId || workItem?.id;
+  if (!outputWorkItemId) {
+    throw Object.assign(new Error("work_item_not_found"), {status: 400, details: {
+      taskGroupId: outputTaskGroup.id,
+      message: "产出目标要针对哪个工作项必须说清：说不清时系统不会替你写一个占位名"}});
+  }
   const at = new Date().toISOString();
   const pathAllowlist = args.pathAllowlist || ["docs/**", "apps/**", "scripts/**", "spec/**", "data/**", "package.json", "Dockerfile", "docker-compose.yml", "README.md"];
   const artifactManifestPath = args.artifactManifestPath || `docs/artifact-manifests/${args.workItemId || workItem?.id || "work"}.json`;
@@ -3184,17 +3222,17 @@ export function repositoryOutputTargetSelect(state, args) {
   // 而人看到的验收卡片仍写着"只改文档"。（第四、五轮各复现一次；第四轮我守错了字段。）
   assertUniqueRecordId(state.repositoryOutputs, "targetId", args.targetId, "repository_output_target_id_conflict");
   const activeExisting = (state.repositoryOutputs || []).find((item) =>
-    item.taskGroupId === (args.taskGroupId || taskGroup?.id || "tg_runtime_management") &&
-    item.workItemId === (args.workItemId || workItem?.id || "work_unknown") &&
+    item.taskGroupId === outputTaskGroup.id &&
+    item.workItemId === outputWorkItemId &&
     item.status !== "superseded");
   // 一个工作项同时只能有一份生效的写入边界：已有就原样返回（幂等），要换边界必须先显式 supersede。
   if (activeExisting) return {repositoryOutputTarget: activeExisting, deduplicated: true};
   const target = {
     schemaVersion: "repository-output-target/v1",
     targetId: args.targetId || createId("rot"),
-    projectId: args.projectId || taskGroup?.projectId || "prj_control_plane",
-    taskGroupId: args.taskGroupId || taskGroup?.id || "tg_runtime_management",
-    workItemId: args.workItemId || workItem?.id || "work_unknown",
+    projectId: outputTaskGroup.projectId,
+    taskGroupId: outputTaskGroup.id,
+    workItemId: outputWorkItemId,
     repositoryId: args.repositoryId || "repo_control_plane",
     repositoryUrl: args.repositoryUrl || gitRemoteUrl(repositoryRoot) || "",
     remote: args.remote || "origin",
