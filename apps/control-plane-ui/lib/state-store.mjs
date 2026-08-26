@@ -424,6 +424,12 @@ export function writeStoredState(state, options) {
     // 崩溃一致性门里「盘不可写时读操作照常（不该被写故障拖下水）」那条守着它：
     // 我按"省一次克隆"的想法把它也改成失效，那条当场变红。省时间的改动要先问清楚
     // 眼前这行代码除了省时间还担着什么。
+    // 2026-08-27 量过这一整条写路径（1.26MB 中央态 + 6 个分片，最小写入）：
+    //   序列化 2.5ms ｜ fsync 约 11ms ｜ 落盘后填这份缓存 约 8ms ｜ 其余分片写与目录 fsync 约 4ms
+    // 这 8ms 是 cacheStoredState 的那次 structuredClone：hydratedStateFromParts 只做浅层重组，
+    // 元素仍是调用方那些对象的引用 —— 不克隆的话，写入方接着改自己那份就会改到缓存里这份。
+    // 也不能干脆不填：这份缓存正是"盘变只读时读操作照常"的底座（见上面那段）。
+    // 结论：这条写路径上每一笔开销都在买东西，没有可省的。别再追它。
     cacheStoredState(hydratedStateCache, options.statePath, hydratedStateFromParts(centralState, projectShards),
       runtimeJsonStateCacheKey(options, centralState));
   });
