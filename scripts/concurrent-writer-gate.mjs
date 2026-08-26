@@ -156,11 +156,18 @@ const fire = async (server, auth, tag, count) => {
   }
 };
 await Promise.all([fire(a, authA, "a", 10), fire(b, authB, "b", 10)]);
+// 【凑不够就再补几轮，而不是赌一次】。下面那条"确实产生了足够的并发写入"是【前提】：
+// CPU 一忙、冲突退回一多，被确认的就可能不到 10 条，那时整道门会红 —— 而那与"并发下丢没丢更新"
+// 这件被测性质无关，读的人分不清它是回归还是机器忙（本仓已有一条同形的间歇红：
+// 崩溃一致性门把"这一轮有没有杀在写入中间"写成了断言）。
+for (let extra = 0; created.size < 10 && extra < 3; extra += 1) {
+  await Promise.all([fire(a, authA, `a-补${extra}`, 6), fire(b, authB, `b-补${extra}`, 6)]);
+}
 
 const finalState = JSON.parse(readFileSync(join(runtimeDir, "control-plane-state.json"), "utf8"));
 const names = new Set((finalState.projects || []).map((item) => item.name));
 const lost = [...created].filter((name) => !names.has(name));
-check(created.size >= 10, "确实产生了足够的并发写入（否则这道门什么也没验）",
+check(created.size >= 10, "确实产生了足够的并发写入（否则这道门什么也没验；不够时上面已经补过三轮）",
   `${created.size} 条被确认（冲突退回：a=${conflicts.a} b=${conflicts.b}）`);
 check(lost.length === 0, "被确认成功的写入没有一条丢失（并发下不得丢更新）",
   lost.length ? `丢了 ${lost.length} 条：${lost.slice(0, 3).join("、")}` : "0 条丢失");
