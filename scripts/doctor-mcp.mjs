@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { mcpToolNames } from "../apps/control-plane-ui/lib/mcp-tool-catalog.mjs";
+import { REGISTERED_OWNER_ROLES } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import { KNOWN_SECOND_DOORS, HUMAN_ONLY_MCP_TOOL_REFUSALS } from "./lib/known-second-doors.mjs";
 import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -298,7 +299,17 @@ try {
     if (assigned.workItem?.ownerRole !== "agent-runtime") {
       throw new Error(`work_assign 没把归属角色写上去：${JSON.stringify(assigned).slice(0, 160)}`);
     }
+    // 【套用别人的选型策略也要留痕】。与角色技能回退同一个形态、同样的 10 个角色：
+    // 它们没有自己的 modelSelectionPolicy，于是静默套用策略数组第一条（orchestrator 的
+    // requiredCapabilities / hardConstraints）—— 那决定了这个角色的工作项能选到哪些模型。
+    const borrowedPolicy = await call("scheduler-mcp.model_select", {taskGroupId: TG, workItemId: WORK, roleId: "repository-router"});
+    if (borrowedPolicy.policyFallback?.reason !== "role_has_no_dedicated_model_policy") {
+      throw new Error(`没有专属选型策略的角色套用了别人的策略却不留痕：${JSON.stringify(borrowedPolicy.policyFallback)}`);
+    }
     const picked = await call("scheduler-mcp.model_select", {taskGroupId: TG, workItemId: WORK, roleId: "agent-runtime"});
+    if (picked.policyFallback) {
+      throw new Error(`有专属策略的角色被误标成套用了别人的：${JSON.stringify(picked.policyFallback)} —— 标记会成为没人看的噪音`);
+    }
     if (picked.status !== "selected" || !picked.selectedModel?.modelId) {
       throw new Error(`model_select 没选出模型：${JSON.stringify(picked).slice(0, 200)}`);
     }
@@ -487,6 +498,43 @@ try {
     const resolvedPermission = permissionResolved.permissionRequest || permissionResolved;
     if (resolvedPermission.status !== "approved") {
       throw new Error(`permission_resolve 没落下处置：${JSON.stringify(permissionResolved).slice(0, 200)}`);
+    }
+
+    // 【每个已登记角色，按角色配的东西要么是它自己的、要么留痕】。这一轮撞到两次同形：
+    // 角色技能、选型策略 —— 都是"这个角色没有自己的那一份，就静默套用别人的"，而且都只在
+    // 种子态下表现正常（种子里没有那份真技能文件），真语料一进来就变成"套用了别人的且不留痕"。
+    // 逐条断言治不了本：下一个新角色照样漏。这里按【已登记角色全量】核对，两张表各走一遍。
+    // 放在这套 e2e 里是因为它的服务端已经把技能源真的同步进来了（本轮 281 条）——
+    // 契约门跑的是种子态，那正是"只验到好的那一支"的地方。
+    {
+      const roleGaps = [];
+      for (const roleId of REGISTERED_OWNER_ROLES) {
+        // 「这个角色有没有自己那一份配置」不去重算匹配规则（那会与被测代码共用同一个假设）：
+        // 两张按角色配的表是同源生成的（选型策略按 roleCapabilityHints 的键生成），
+        // 所以用【看得见的那张】——运行态里的 modelSelectionPolicies —— 作为判据，
+        // 再要求两处留痕都与它一致。两张表哪天不同源了，这里也会当场红，那同样是要知道的事。
+        const ownConfig = (liveState.modelSelectionPolicies || []).some((item) => item.roleId === roleId);
+        const skill = await call("skill-mcp.role_skill_resolve", {roleId});
+        const decision = await call("scheduler-mcp.model_select", {taskGroupId: TG, workItemId: WORK, roleId});
+        for (const [what, marker] of [["角色技能", skill.roleSkillFallback], ["选型策略", decision.policyFallback]]) {
+          if (ownConfig && marker) {
+            roleGaps.push(`${roleId}：有自己那一份配置，${what}却被标成套用了 ${marker.boundTo} —— 标记会成为没人看的噪音`);
+          }
+          if (!ownConfig && !marker) {
+            roleGaps.push(`${roleId}：没有自己那一份配置，${what}套用了别人的却不留痕`
+              + `（技能绑到 ${skill.roleSkill?.roleSkillId}，选型依据 ${decision.selectedModel?.modelId}）`);
+          }
+          if (marker && marker.roleId !== roleId) {
+            roleGaps.push(`${roleId}：${what}的留痕里写的角色是 ${marker.roleId}`);
+          }
+        }
+      }
+      if (roleGaps.length) {
+        throw new Error(`按角色配的东西没说清是谁的：\n- ${roleGaps.join("\n- ")}\n`
+          + "—— agent 会按别人的规则/别人的模型约束干活，而记录上一个字都没有");
+      }
+      console.log(`角色配置归属 ok: ${REGISTERED_OWNER_ROLES.length} 个已登记角色，技能与选型策略逐个核对`
+        + `（真语料已同步：${(liveState.roleSkills || []).length} 条技能）；不是自己的一律留痕，是自己的不许乱标`);
     }
 
     // 共享定义这一族此前也没成功跑通过（create 只在别的门里被调过，publish/bind 一次都没有）。

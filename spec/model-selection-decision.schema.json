@@ -46,7 +46,11 @@
     },
     "status": {
       "type": "string",
-      "enum": ["evaluating", "selected", "rejected"]
+      "enum": [
+        "evaluating",
+        "selected",
+        "rejected"
+      ]
     },
     "roleId": {
       "type": "string",
@@ -62,7 +66,13 @@
     },
     "taskExecutionClass": {
       "type": "string",
-      "enum": ["deep_analysis", "implementation", "verification", "short_execution", "mixed_analysis_implementation"]
+      "enum": [
+        "deep_analysis",
+        "implementation",
+        "verification",
+        "short_execution",
+        "mixed_analysis_implementation"
+      ]
     },
     "splitRequired": {
       "type": "boolean"
@@ -72,7 +82,14 @@
     },
     "maxReasoningLevel": {
       "type": "string",
-      "enum": ["low", "standard", "medium", "high", "max", "ultra"]
+      "enum": [
+        "low",
+        "standard",
+        "medium",
+        "high",
+        "max",
+        "ultra"
+      ]
     },
     "escalationAllowed": {
       "type": "boolean"
@@ -87,7 +104,15 @@
     "selectedModel": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["providerClass", "providerId", "modelId", "reasoningLevel", "reasoning", "modelDecision", "capabilityProfileRef"],
+      "required": [
+        "providerClass",
+        "providerId",
+        "modelId",
+        "reasoningLevel",
+        "reasoning",
+        "modelDecision",
+        "capabilityProfileRef"
+      ],
       "properties": {
         "providerClass": {
           "$ref": "#/$defs/providerClass"
@@ -131,7 +156,12 @@
     },
     "selectionMode": {
       "type": "string",
-      "enum": ["dynamic_context", "auto_best", "auto_fast", "cost_aware"]
+      "enum": [
+        "dynamic_context",
+        "auto_best",
+        "auto_fast",
+        "cost_aware"
+      ]
     },
     "modelDecision": {
       "type": "string",
@@ -144,7 +174,14 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["rank", "providerClass", "modelId", "totalScore", "eligible", "capabilityProfileRef"],
+        "required": [
+          "rank",
+          "providerClass",
+          "modelId",
+          "totalScore",
+          "eligible",
+          "capabilityProfileRef"
+        ],
         "properties": {
           "rank": {
             "type": "integer",
@@ -169,19 +206,19 @@
             "type": "string",
             "minLength": 1
           },
-        "reasoningLevel": {
-          "type": "string",
-          "minLength": 1
-        },
-        "reasoning": {
-          "type": "string",
-          "minLength": 1
-        },
-        "modelDecision": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 240
-        },
+          "reasoningLevel": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reasoning": {
+            "type": "string",
+            "minLength": 1
+          },
+          "modelDecision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
           "modelTier": {
             "$ref": "#/$defs/modelTier"
           },
@@ -197,7 +234,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["constraint", "status", "evidenceRefs"],
+        "required": [
+          "constraint",
+          "status",
+          "evidenceRefs"
+        ],
         "properties": {
           "constraint": {
             "type": "string",
@@ -205,7 +246,11 @@
           },
           "status": {
             "type": "string",
-            "enum": ["passed", "failed", "blocked"]
+            "enum": [
+              "passed",
+              "failed",
+              "blocked"
+            ]
           },
           "evidenceRefs": {
             "$ref": "#/$defs/refArray"
@@ -216,16 +261,41 @@
     "scoreBreakdown": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["capabilityFit", "roleSkillFit", "quality", "latency", "cost", "quota", "reliability", "risk"],
+      "required": [
+        "capabilityFit",
+        "roleSkillFit",
+        "quality",
+        "latency",
+        "cost",
+        "quota",
+        "reliability",
+        "risk"
+      ],
       "properties": {
-        "capabilityFit": {"$ref": "#/$defs/score"},
-        "roleSkillFit": {"$ref": "#/$defs/score"},
-        "quality": {"$ref": "#/$defs/score"},
-        "latency": {"$ref": "#/$defs/score"},
-        "cost": {"$ref": "#/$defs/score"},
-        "quota": {"$ref": "#/$defs/score"},
-        "reliability": {"$ref": "#/$defs/score"},
-        "risk": {"$ref": "#/$defs/score"}
+        "capabilityFit": {
+          "$ref": "#/$defs/score"
+        },
+        "roleSkillFit": {
+          "$ref": "#/$defs/score"
+        },
+        "quality": {
+          "$ref": "#/$defs/score"
+        },
+        "latency": {
+          "$ref": "#/$defs/score"
+        },
+        "cost": {
+          "$ref": "#/$defs/score"
+        },
+        "quota": {
+          "$ref": "#/$defs/score"
+        },
+        "reliability": {
+          "$ref": "#/$defs/score"
+        },
+        "risk": {
+          "$ref": "#/$defs/score"
+        }
       }
     },
     "fallbackPolicyRef": {
@@ -246,6 +316,32 @@
     "createdAt": {
       "type": "string",
       "format": "date-time"
+    },
+    "policyFallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "这个角色没有自己的选型策略，套用了别人的（22 个已登记角色里有 10 个如此）。留痕让读的人知道这条决策依据的不是它自己的能力要求与硬约束。",
+      "required": [
+        "roleId",
+        "reason"
+      ],
+      "properties": {
+        "roleId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "boundTo": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "role_has_no_dedicated_model_policy"
+          ]
+        }
+      }
     }
   },
   "allOf": [
@@ -256,10 +352,15 @@
             "const": "selected"
           }
         },
-        "required": ["status"]
+        "required": [
+          "status"
+        ]
       },
       "then": {
-        "required": ["selectedAgentSkillRef", "selectedModel"],
+        "required": [
+          "selectedAgentSkillRef",
+          "selectedModel"
+        ],
         "properties": {
           "hardConstraintResults": {
             "items": {
@@ -268,7 +369,9 @@
                   "const": "passed"
                 }
               },
-              "required": ["status"]
+              "required": [
+                "status"
+              ]
             }
           }
         }
@@ -281,10 +384,15 @@
             "const": "rejected"
           }
         },
-        "required": ["status"]
+        "required": [
+          "status"
+        ]
       },
       "then": {
-        "required": ["denialReason", "fallbackPolicyRef"]
+        "required": [
+          "denialReason",
+          "fallbackPolicyRef"
+        ]
       }
     }
   ],
@@ -329,7 +437,12 @@
     },
     "modelTier": {
       "type": "string",
-      "enum": ["standard", "frontier_economy", "frontier_standard", "frontier_plus"]
+      "enum": [
+        "standard",
+        "frontier_economy",
+        "frontier_standard",
+        "frontier_plus"
+      ]
     }
   }
 }

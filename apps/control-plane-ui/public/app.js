@@ -4189,7 +4189,11 @@ function renderMonitor() {
 
   const decisionsInScope = (state.modelSelectionDecisions || []).filter(inScope);
   const decisions = decisionsInScope.slice(0, 10).map((decision) => row([
-    esc(t(decision.roleId)),
+    // 套用了别人的策略要在【角色】这一列上说出来：这条决策依据的能力要求与硬约束
+    // 不是这个角色自己的（22 个已登记角色里有 10 个没有专属策略）。留痕不显示等于没留。
+    esc(t(decision.roleId)) + (decision.policyFallback
+      ? `<div class="small warn-text">套用了 ${esc(decision.policyFallback.boundTo || "别的角色")} 的选型策略（本角色没有专属策略）</div>`
+      : ""),
     `<span class="mono">${esc(decision.workItemId || "-")}</span>`,
     `<span class="mono">${esc(decision.selectedModel?.modelId || "-")}</span>`,
     badge(decision.status),

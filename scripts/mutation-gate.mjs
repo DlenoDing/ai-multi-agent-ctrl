@@ -6607,6 +6607,24 @@ const MUTATIONS = [
     expect: "读 args.workItemId，而 tools/list 上它不公布这个键"
   },
   {
+    name: "套用别人的选型策略要留痕",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: '    ...(ownPolicy ? {} : {policyFallback: {roleId, boundTo: policy?.policyId || null, reason: "role_has_no_dedicated_model_policy"}}),',
+    to: "",
+    // 先响的是链里那条更具体的断言（点名 repository-router），不是后面那个全量循环 ——
+    // 全量循环守的是【将来新增的角色】，这条变异证明不了它，如实指向真正会红的那一句。
+    expect: "没有专属选型策略的角色套用了别人的策略却不留痕"
+  },
+  {
+    name: "有自己那份配置的角色不许被误标",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: "  const ownPolicy = state.modelSelectionPolicies.find((item) => item.roleId === roleId);",
+    to: "  const ownPolicy = null;",
+    expect: "有专属策略的角色被误标成套用了别人的"
+  },
+  {
     name: "借来的提示项不算自己的技能",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "mcp",
