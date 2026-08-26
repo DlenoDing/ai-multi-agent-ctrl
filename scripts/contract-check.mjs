@@ -420,15 +420,15 @@ const PREDICATE_COVERAGE = {
   canReadTaskGroup: {probedOnly: "改成永远为真，控制面 e2e 红（读泄漏那批用例接住了）"},
   globSegmentMatches: {probedOnly: "改成永远为真，契约门红（产出路径正反表里的段内通配用例接住了）"},
   // —— 还没探过 ——
-  isSafeCloneUrl: {notProbed: "agent 运行时那份，与 isSafeGitRemoteUrl 同族，未单独探"},
-  pathMatches: {notProbed: "agent 运行时那份产出路径判定，未单独探"},
+  isSafeCloneUrl: {probedOnly: "2026-08-27 探过：改成恒真，契约门当场红并点名 —— ext:: / fd:: 这类能跑任意命令的 git 传输会被判成安全（派发里给个地址就能在 agent 机器上执行命令）"},
+  pathMatches: {probedOnly: "2026-08-27 探过：改成恒真，契约门当场红并点名 —— 白名单内外都变成同一个答案（这道决定执行方能改仓库里的哪些文件）"},
   roleAllowed: {notProbed: "rolesAllowed 的单数版，未单独探"},
   isHumanConfirmationActor: {probedOnly: "改成永远为真（谁都算真人），契约门红"},
   canUseGitPath: {probedOnly: "改成永远为真（路径逃逸放行），契约门红"},
   isSafeGitRef: {probedOnly: "改成永远为真（危险引用名放行），契约门红"},
   isDelegatableGrantPermission: {probedOnly: "改成永远为真（system:* 也可委派），契约门红"},
   isSystemAccount: {probedOnly: "2026-08-27 探过：改成「有账号就算系统账号」，doctor 当场红 —— 「非系统账号建项目时不得替别人挂负责人授权」那条接住了（任何能建项目的人都能替别人挂一份真生效的负责人授权）"},
-  isLocalHostHeader: {notProbed: "被 requestHostAllowed 与引导提示两条用到，未单独探"},
+  isLocalHostHeader: {probedOnly: "2026-08-27 探过：改成恒真，doctor 当场红 —— 伪造的 Host 会被写进交给 agent 的装机地址，照它跑起来的 agent 会带着一次性入网令牌去攻击者主机注册"},
   isLocalHostname: {notProbed: "同上，未单独探"},
   isLoopbackAddress: {notProbed: "要从非回环地址发起连接才验得到，本机 e2e 造不出这个条件"},
   canReadResource: {probedOnly: "2026-08-27 探过：改成「有账号就能读」，doctor 当场红 —— 跨租户存在性那条接住了（写路由会变成一台「别处有没有这个 id」的探针）"},
@@ -436,11 +436,12 @@ const PREDICATE_COVERAGE = {
   hasPermission: {probedOnly: "改成永远为真，控制面 e2e 红"},
   isReadOnlyTool: {probedOnly: "2026-08-27 探过：改成「全是只读」，doctor-mcp 当场红 —— 「写工具没有幂等键必须拒」那条接住了（写工具从此不再要求幂等键，重放会造出重复记录）"},
   isWriteTool: {probedOnly: "改成永远为假（写工具被当成只读），契约门红"},
-  schemaTypeMatches: {notProbed: "MCP 入参类型校验，未单独探"},
-  hasInputArg: {notProbed: "MCP 入参存在性，未单独探"},
+  schemaTypeMatches: {probedOnly: "2026-08-27 探过：改成恒真，doctor-mcp 当场红 —— 类型不符的值会被当成合法参数往下传"},
+  hasInputArg: {probedOnly: "2026-08-27 探过：改成恒真门链会红，但先报出来的是「空参登记过期」这类症状 —— "
+    + "当轮补了点名的那条（doctor-mcp：缺必填、以及只给空白，都要回 mcp_required_argument_missing 并说清缺哪个）"},
   hasAnyInputArg: {notProbed: "同上，未单独探"}
 };
-const PREDICATE_NOT_PROBED_CEILING = 10;
+const PREDICATE_NOT_PROBED_CEILING = 5;
 
 // 【项目归档之后，哪些写动作还能做】。归档是项目的终结态（没有"恢复归档"这条路），
 // 含义是"移出可建新工作的范围、把配额还回去、历史留着"。此前只有【建任务组】一处判了它 ——

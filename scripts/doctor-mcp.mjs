@@ -732,6 +732,22 @@ try {
       throw new Error(`撤授权之后状态不是 revoked：${JSON.stringify(revokedGrant).slice(0, 200)}`);
     }
 
+    // 【必填参数缺失必须被具名拒绝】。把 hasInputArg 改成恒真之后，门链会红 —— 但报出来的是
+    // 「空参登记过期」这类症状，没有一条点名"必填缺了要拒"。症状能报红，说明有东西接住了；
+    // 而人拿到那句话不会想到是入参校验塌了。这里补上点名的那条：
+    //   ① 缺了必填要回 mcp_required_argument_missing，并说清缺的是哪个；
+    //   ② 空字符串与只有空格【也算缺】（否则"填了个空串"就绕过去了）。
+    for (const [missingArgs, why] of [[{}, "一个都不给"], [{taskGroupId: "   "}, "只给空白"]]) {
+      const envelope = await mcpAs(admin.sessionToken, "tools/call",
+        {name: "orchestration-mcp.work_item_create",
+          arguments: {idempotencyKey: `doctor-mcp-required-${++seq}`, title: "缺必填探针", ...missingArgs}});
+      const payload = envelope.structuredContent?.result || JSON.parse(envelope.content?.[0]?.text || "{}");
+      if (payload.error !== "mcp_required_argument_missing" || payload.argument !== "taskGroupId") {
+        throw new Error(`${why}时没有点名拒绝（${JSON.stringify(payload).slice(0, 200)}）—— `
+          + "必填缺失若被放行，缺的那一项会一路走到落账，记录挂在谁名下就由缺省决定了");
+      }
+    }
+
     // 【只读面与两条写路】。这些工具此前只被空参调过：答的是不是这个对象、答不上时说不说清楚，
     // 都没人验过。挑各自真正承担的性质来断言，而不是只看 ok。
     const progress = await call("ui-console-mcp.task_group_progress_get", {taskGroupId: TG});

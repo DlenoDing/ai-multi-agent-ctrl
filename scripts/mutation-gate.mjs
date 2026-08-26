@@ -6792,6 +6792,14 @@ const MUTATIONS = [
     expect: "撤授权之后状态不是 revoked"
   },
   {
+    name: "必填参数缺失必须点名拒绝",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "  if (args[key] === undefined || args[key] === null) return false;\n  if (typeof args[key] === \"string\") return args[key].trim().length > 0;",
+    to: "  if (args[key] === undefined || args[key] === null) return false;\n  if (typeof args[key] === \"string\") return true;",
+    expect: "只给空白时没有点名拒绝"
+  },
+  {
     name: "只读成员不许按得动项目配置的写按钮",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
