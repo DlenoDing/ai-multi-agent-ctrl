@@ -1910,6 +1910,17 @@ function runNoVisibleProjectCase() {
     check("人工定稿的理由要看得见（写了没人读＝没留痕）",
       /外部评审方不再参与/u.test(finalizedText) && /与本项目现行规范不冲突/u.test(finalizedText),
       "定稿理由在界面上一个字都找不到 —— 后来的人无从判断当时为什么这么定");
+    // 关闭任务组是真人专属的决定，而屏幕上此前只有一个"已关闭"灰章 —— 追不到是谁定的。
+    const closedState = structuredClone(finalizedState);
+    closedState.taskGroups[0].status = "closed";
+    closedState.closeBarriers = [{taskGroupId: "tg1", satisfied: true, blockingObjects: [],
+      computedAt: "2026-08-12T00:00:00.000Z", confirmedBy: "u1", confirmedAt: "2026-08-12T01:00:00.000Z"}];
+    const closedText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, closedState, "monitor", "p1");
+    check("已关闭的任务组要说得出是谁定稿关闭的（这是真人专属的决定）",
+      /定稿于/u.test(closedText) && /管理员/u.test(closedText),
+      "屏幕上只有一个「已关闭」，谁定的、什么时候定的都追不到");
+
     check("定稿理由旁边要说得出是谁定的、定成了什么",
       /最近的人工定稿/u.test(finalizedText) && /管理员/u.test(finalizedText)
         && /rs1|src:mgp/u.test(finalizedText),

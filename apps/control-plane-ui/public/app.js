@@ -4323,7 +4323,13 @@ function renderMonitor() {
     (barrier.satisfied && hasGroupPerm(barrier.taskGroupId, "task_group:control")
       && taskGroupById(barrier.taskGroupId)?.status !== "closed")
       ? `<button class="primary-button" data-action="close-task-group" data-task="${esc(barrier.taskGroupId)}">关闭任务组</button>`
-      : (taskGroupById(barrier.taskGroupId)?.status === "closed" ? customBadge("已关闭", "gray") : "-")
+      : (taskGroupById(barrier.taskGroupId)?.status === "closed"
+        // 关闭任务组是真人专属的决定，而【谁定的、什么时候定的】此前落在 confirmedBy/confirmedAt 上
+        // 却没有任何读取点：屏幕上只有一个"已关闭"，追不到人。
+        ? `${customBadge("已关闭", "gray")}${barrier.confirmedBy
+          ? `<div class="record-meta">由 ${esc(accountName(barrier.confirmedBy))} 定稿于 ${fmtTime(barrier.confirmedAt)}</div>`
+          : ""}`
+        : "-")
   ])).join("");
 
   // 刚装完打开这一页，十一张表全是"暂无数据" —— 每一张都在说"这里什么都没有"，

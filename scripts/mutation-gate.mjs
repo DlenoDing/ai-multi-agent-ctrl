@@ -9590,6 +9590,14 @@ const MUTATIONS = [
     to: '    false ? panel("最近的人工定稿", `',
     expect: "定稿理由在界面上一个字都找不到"
   },
+  {
+    name: "关闭任务组是真人专属的决定，界面上要说得出是谁定稿的",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '        ? `${customBadge("已关闭", "gray")}${barrier.confirmedBy',
+    to: '        ? `${customBadge("已关闭", "gray")}${false',
+    expect: "谁定的、什么时候定的都追不到"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
