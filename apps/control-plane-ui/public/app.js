@@ -4340,7 +4340,10 @@ function renderMonitor() {
     ...(state.findings || []).filter(inScope).map((item) => ({kind: "评审发现",
       id: item.findingId || item.id, taskGroupId: item.taskGroupId, status: item.status,
       by: item.dispositionedBy, why: item.dispositionClass, at: item.updatedAt}))
-  ].filter((item) => item.by || item.why)
+    // 抬头写着"这些收尾只能由真人做"，那就必须真有一个人在上面 —— 只有 why 没有 by 的
+    // （例如 AI 自己处置掉的发现项）列进来，这一屏就在说假话，而读的人正是照着它判断
+    // "当时是谁拍的板"。真实数据里第一行就是这样：定稿人一栏是个「-」。
+  ].filter((item) => item.by)
     .sort((a, b) => String(b.at || "").localeCompare(String(a.at || ""))).slice(0, 10);
 
   // 卡住的执行方案会永久挡住关闭门：分支报了 failed 之后拓扑照样进 integrating，merge 只认
@@ -4543,7 +4546,7 @@ function renderMonitor() {
     // 没有任何读取点，而收尾之后对象又从待处置清单里消失 —— 于是这条链上唯一的人类判断不留痕迹。
     finalizations.length ? panel("最近的人工定稿", `
       <div class="notice">这些收尾只能由真人做。这里保留他们当时给出的理由 —— 后来的人要靠它判断能不能照做。</div>
-      ${table(["对象", "任务组", "定稿结果", "定稿人", {label: "时间", c: "nowrap"}, "理由"],
+      ${table(["对象", "任务组", "处置后状态", "定稿人", {label: "时间", c: "nowrap"}, "理由"],
         finalizations.map((item) => row([
           `${esc(item.kind)} <span class="mono">${esc(item.id || "-")}</span>`,
           esc(taskGroupNameOf(item.taskGroupId)),

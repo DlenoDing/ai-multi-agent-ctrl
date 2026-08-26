@@ -796,6 +796,7 @@ run(verifyInviteEscalationGuardsShareOnePredicate);
 run(verifyAgentJoinTokenIsSpentExactlyOnce);
 run(verifyServerSideAgentExecutionStaysOffOutsideVerification);
 run(verifyCapsKeepRecordsThatAreStillPointedAt);
+run(verifyCloseBarrierGateNamesReadAsFailures);
 run(verifyHumanWrittenTextIsNeverSilentlyTruncated);
 run(verifyCancelSettlesTheCellsResources);
 run(verifyAdmissionLedgerDoesNotGrowWithFlapping);
@@ -14010,6 +14011,39 @@ function verifyCancelSettlesTheCellsResources(output) {
 // 本仓的既定做法是 assertHumanTextWithinLimit：超了就拒，并说清超出多少、请精简后重提。
 // 实测漏了三处：定稿意见（4000）、规则源处置依据（2000）、共享定义处置依据（2000）。
 // 这里按【字段名】兜底：凡是名字像"人写的理由/意见/说明"的，都不许出现 slice 截断。
+// 关闭门的名字只出现在一个地方：关闭门禁的「阻塞明细」，而那里【只列没过的门】。
+// 名字写成"满足时的样子"就自相矛盾 —— 屏幕上原本印着「无待处理评审包：受阻」
+// 「完成就绪已清：受阻」「质量门禁全通过：受阻」，人读到的是两句打架的话（26 道里 11 道）。
+// 逐条盯不住将来新增的门，所以按 core 里 gateFailures 那份权威清单全量核。
+// 判据是启发式的：说"还没做完"的话必然带 还有/没/未；而以"无"开头的必然是满足时的说法。
+function verifyCloseBarrierGateNamesReadAsFailures(output) {
+  const core = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const at = core.indexOf("const gateFailures = {");
+  if (at < 0) { output.push("关闭门名：找不到 gateFailures —— 提取脱节，本条在空转"); return; }
+  let depth = 0;
+  let end = at;
+  for (let index = core.indexOf("{", at); index < core.length; index += 1) {
+    if (core[index] === "{") depth += 1;
+    else if (core[index] === "}") { depth -= 1; if (!depth) { end = index; break; } }
+  }
+  const gates = [...core.slice(at, end).matchAll(/^\s{4}([a-z_]+):/gmu)].map((m) => m[1]);
+  const dict = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
+  if (gates.length < 20) { output.push(`关闭门名：只提到 ${gates.length} 道门（应 ≥20）—— 提取脱节，本条在空转`); return; }
+  const bad = [];
+  const missing = [];
+  for (const gate of gates) {
+    const label = dict.match(new RegExp(`\\b${gate}: "([^"]*)"`, "u"))?.[1];
+    if (!label) { missing.push(gate); continue; }
+    if (label.startsWith("无") || !/还有|没|未/u.test(label)) bad.push(`${gate}「${label}」`);
+  }
+  if (missing.length) output.push(`关闭门名：${missing.join("、")} 在中文词表里没有名字 —— 阻塞明细上会印出英文键`);
+  if (bad.length) {
+    output.push(`这些关闭门的名字写成了【满足时】的样子，而阻塞明细里只列没过的门：${bad.join("、")}`
+      + " —— 屏幕上会出现「无待处理评审包：受阻」这种自相矛盾的话");
+  }
+  console.log(`关闭门名：${gates.length} 道门逐个核过，都写成了「没过」时该说的话`);
+}
+
 function verifyHumanWrittenTextIsNeverSilentlyTruncated(output) {
   const files = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
     "apps/mcp-server/server.mjs"];

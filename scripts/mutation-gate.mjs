@@ -9670,6 +9670,23 @@ const MUTATIONS = [
     to: '"findings", "testResults"',
     expect: "按页接线"
   },
+  {
+    name: "关闭门的名字要写成没过时的样子（阻塞明细里只列没过的门）",
+    file: "apps/control-plane-ui/public/i18n-zh.js",
+    gate: "contract",
+    from: 'no_pending_review_bundles: "还有评审包没收尾"',
+    to: 'no_pending_review_bundles: "无待处理评审包"',
+    check: "verifyCloseBarrierGateNamesReadAsFailures",
+    expect: "写成了【满足时】的样子"
+  },
+  {
+    name: "没有真人在上面的处置不许列进「人工定稿」",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  ].filter((item) => item.by)",
+    to: "  ].filter((item) => item.by || item.why)",
+    expect: "定稿人一栏是个「-」"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

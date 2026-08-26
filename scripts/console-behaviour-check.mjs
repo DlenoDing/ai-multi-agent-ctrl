@@ -2034,6 +2034,17 @@ function runNoVisibleProjectCase() {
       dispositionClass: "fixed_verified", dispositionedBy: "u1", updatedAt: "2026-08-13T00:00:00.000Z"}];
     const withFindingText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
       organizationId: "org_default"}, finalizedState, "monitor", "p1");
+    // 抬头写着"这些收尾只能由真人做"。AI 自己处置掉的发现项（没有 dispositionedBy）混进来，
+    // 这一屏就在说假话 —— 真实运行态里第一行正是这样：定稿人一栏是个「-」。
+    finalizedState.findings = [...finalizedState.findings,
+      {findingId: "fd_ai", taskGroupId: "tg1", status: "resolved", dispositionClass: "fixed_verified",
+        updatedAt: "2026-08-14T00:00:00.000Z"}];
+    const mixedText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, finalizedState, "monitor", "p1");
+    check("没有真人在上面的处置不许列进「人工定稿」（那一屏抬头就是这么承诺的）",
+      !/fd_ai/u.test(mixedText),
+      "AI 自己处置的记录也被列成了人工定稿，定稿人一栏是个「-」");
+
     check("处置完的发现项也要留得下「谁判的、判成了什么」",
       /fd1/u.test(withFindingText) && /fixed_verified|已修复/u.test(withFindingText),
       "发现项一处置就从界面上整个消失，事后查不到是谁判的");
