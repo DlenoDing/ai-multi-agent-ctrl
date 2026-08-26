@@ -2094,7 +2094,14 @@ errors << "the rule digest must cover the title (it is delivered to the model ve
 errors << "the mutation gate must be wired into the doctor chain" unless File.read(File.join(ROOT, "package.json")).include?("npm run -s mutation-gate")
 errors << "a project must have a way to be archived (otherwise the project quota only ever grows)" unless server_source.include?("project_archive") && server_source.include?('project.status = "archived"')
 errors << "archiving must refuse a project that still has open task groups instead of settling them for the person" unless server_source.include?("project_has_open_task_groups")
-errors << "a successful claim must clear the stale cannot-claim diagnosis" unless agent_gateway_source.match?(/return \{dispatch: null, reason: "no_compatible_dispatch"\};\s*\}\s*delete node\.lastClaimMiss;/)
+# 这条原先钉的是"没领到"那句 return 的【原样】（含它当时的字段顺序），
+# 给那个返回值加一个字段就把门打红了 —— 而它要守的性质压根没变。改成按【次序】核：
+# 认领成功那一支必须先清掉上一次的诊断，再把派发置为 running。
+claim_body = agent_gateway_source[/export function claimNextDispatch\(.*?\n\}\n/m].to_s
+miss_at = claim_body.index('reason: "no_compatible_dispatch"')
+clear_at = claim_body.index("delete node.lastClaimMiss;")
+running_at = claim_body.index('dispatch.status = "running";')
+errors << "a successful claim must clear the stale cannot-claim diagnosis" unless miss_at && clear_at && running_at && clear_at > miss_at && clear_at < running_at
 errors << "the console must surface previousHolderMayHavePushed (an unreviewed push becomes the next holder's baseline)" unless public_app_source.include?("dispatch.previousHolderMayHavePushed")
 errors << "the console must surface which self-check items failed, not just the degraded badge" unless public_app_source.include?("node.selfCheckMissing") && agent_gateway_source.include?("node.selfCheckMissing = missing")
 errors << "the server-side tick must reconcile regardless of whether any task group is open (dead-node sweep cannot depend on a live node)" unless server_source.match?(/const reconciled = recycleExpiredClaims\(state\);[\s\S]{0,400}?const pending = /)

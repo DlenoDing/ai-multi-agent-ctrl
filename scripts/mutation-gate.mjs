@@ -9550,6 +9550,22 @@ const MUTATIONS = [
     // 否则变异门会报"红了但不是预期原因"，看起来像偶发失败（实测追了一轮）。
     expect: "人暂停之后这个派发不是 blocked"
   },
+  {
+    name: "入网令牌上的角色范围在【领活】这一步也要算数",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "agent",
+    from: '  return allowedRoles.includes("*") || allowedRoles.includes(role);',
+    to: "  return true;",
+    expect: "领走了一件派发"
+  },
+  {
+    name: "领不到活时算出来的诊断也要落盘，否则控制台上永远是空的",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "agent",
+    from: "    if (result.dispatch || stateChanged) commitUnguardedWrite(state);",
+    to: "    if (result.dispatch) commitUnguardedWrite(state);",
+    expect: "节点上留的诊断没说是角色不匹配"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

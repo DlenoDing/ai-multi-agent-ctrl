@@ -643,14 +643,12 @@ export function claimNextDispatch(state, node, options = {}) {
     if (haltedCandidates > 0) {
       // 沿用界面既有的形状（queuedCount + reasons[]）：claimMissHint 缺 queuedCount 会整条不渲染 ——
       // 那样这条诊断只存在于返回值里，控制台上依旧什么都看不到。
-      node.lastClaimMiss = {queuedCount: haltedCandidates, at: new Date().toISOString(),
-        reasons: [{reason: "execution_halted"}]};
-      node.updatedAt = new Date().toISOString();
-      return {dispatch: null, reason: "execution_halted"};
+      const haltedChanged = recordClaimMiss(node, {queuedCount: haltedCandidates,
+        at: new Date().toISOString(), reasons: [{reason: "execution_halted"}]});
+      return {dispatch: null, reason: "execution_halted", stateChanged: haltedChanged};
     }
-    node.lastClaimMiss = summarizeClaimMiss(state, node);
-    node.updatedAt = new Date().toISOString();
-    return {dispatch: null, reason: "no_compatible_dispatch"};
+    const missChanged = recordClaimMiss(node, summarizeClaimMiss(state, node));
+    return {dispatch: null, reason: "no_compatible_dispatch", stateChanged: missChanged};
   }
   delete node.lastClaimMiss;
   const at = new Date().toISOString();
@@ -1811,6 +1809,20 @@ function sanitizeAckResult(value) {
   const text = JSON.stringify(value);
   if (text.length > 10000) return {truncated: true, resultDigest: digestOf(text)};
   return JSON.parse(text);
+}
+
+// 诊断算出来了还得【落盘】才有人看得见 —— 而认领路由原先只在真领到活时提交，
+// 也就是恰恰在"没领到"这条路上不写，整个"在线但不领活"的诊断从落地起就没拿到过数据。
+// 反过来，每次空轮询都写一遍 = 一台闲着的节点按轮询频率重写整份状态（空转 churn）。
+// 所以只在【诊断本身变了】时写：at 是时间戳，不参与比较，否则每次都不一样。
+function recordClaimMiss(node, miss) {
+  const shape = (value) => (value
+    ? JSON.stringify({queuedCount: value.queuedCount, reasons: value.reasons})
+    : null);
+  if (shape(miss) === shape(node.lastClaimMiss)) return false;
+  node.lastClaimMiss = miss;
+  node.updatedAt = miss.at;
+  return true;
 }
 
 // 逐条说清"这个排队中的派发为什么这个节点接不了"。只留前几条：人要的是原因，不是清单。

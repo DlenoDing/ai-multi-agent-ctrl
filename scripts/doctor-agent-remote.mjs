@@ -959,6 +959,54 @@ try {
     idempotencyKey: "doctor-agent-revoke-orchestrate",
     body: {mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false}
   });
+  // 【领活那一道也要守角色范围】。上面（注册处）验的是 join_token_role_scope_mismatch，
+  // 而真正决定"这个节点能不能把这件活拿走"的是认领时的 roleAllowed(contract.roleId, node.allowedRoles)。
+  // 把它改成恒真，三道门全绿 —— 令牌上的角色范围在【领活】这一步没有任何判据守着：
+  // 一个只被允许 reviewer 的节点可以领走要求别的角色的派发。
+  // 位置要紧：必须放在【确知有一件排队中的派发】的这一刻（紧接着的 revokeClaim 就要领走它），
+  // 否则"没领到"是因为压根没活可领，断言恒绿。而且这台节点也要过自检，
+  // 不然它会先撞上 node_not_admitted，角色那道门根本轮不到被问。
+  {
+    const reviewerJoin = await json("/api/agent-join-tokens", {
+      method: "POST", token: login.sessionToken, idempotencyKey: "doctor-agent-reviewer-scope-token",
+      body: {projectId: "prj_control_plane", nodeName: "reviewer-only-node", allowedRoles: ["reviewer"],
+        ttlSeconds: 1800, maxUses: 1}
+    });
+    const reviewerNode = await json("/api/agent/v1/register", {
+      method: "POST", token: reviewerJoin.joinToken,
+      body: {nodeName: "reviewer-only-node", requestedRoles: ["reviewer"], runtimeVersion: "doctor",
+        profile: {tools: [], models: [{providerClass: "custom", adapter: "doctor", available: true}]}}
+    });
+    await json("/api/agent/v1/self-check", {
+      method: "POST", token: reviewerNode.nodeToken,
+      body: {checks: okSelfChecks(baseUrl), runtimeVersion: "doctor"}
+    });
+    const scopedClaim = await json("/api/agent/v1/dispatches/next", {
+      method: "POST", token: reviewerNode.nodeToken, body: {claimTtlSeconds: 300}});
+    if (scopedClaim.dispatch) {
+      const taken = JSON.stringify(scopedClaim.dispatch);
+      const takenRole = (taken.match(/"roleId":"([^"]+)"/) || [])[1] || `报文：${taken.slice(0, 160)}`;
+      throw new Error(`只被允许 reviewer 的节点领走了一件派发（角色 ${takenRole}）—— `
+        + "入网令牌上的角色范围在【领活】这一步没有守住");
+    }
+    // 拒了不等于拒对了：得说得出是【角色】不匹配。控制台上"节点在线、派发排队、就是不动"
+    // 这件事，原先三种原因（没准入 / 角色不符 / 跑不了这个模型）长得一模一样。
+    // 诊断不在回执里（agent 拿到的只有 no_compatible_dispatch），它落在节点记录上给【人】看。
+    const scopedNodeList = await json("/api/agent-nodes", {token: login.sessionToken});
+    const scopedNodes = scopedNodeList.agentRuntimeNodes || [];
+    const scopedNodeRecord = scopedNodes.find((item) => item.nodeId === reviewerNode.node.nodeId);
+    if (!scopedNodeRecord) {
+      throw new Error(`受限角色的那台节点在 /api/agent-nodes 里找不到（有 ${scopedNodes.length} 条：`
+        + `${scopedNodes.map((item) => item.nodeName).join(",")}）—— 下面这条会空转`);
+    }
+    const scopedReasons = (scopedNodeRecord.lastClaimMiss?.reasons || []).map((item) => item.reason);
+    if (!scopedReasons.includes("role_not_allowed_on_node")) {
+      throw new Error(`受限角色的节点领不到活，但节点上留的诊断没说是角色不匹配：`
+        + `${JSON.stringify(scopedNodeRecord?.lastClaimMiss || null)} —— `
+        + "控制台上看到的还是「在线的节点 + 排队中的派发」，和模型跑不了长得一模一样");
+    }
+  }
+
   const revokeClaim = await json("/api/agent/v1/dispatches/next", {method: "POST", token: revokeRegistration.nodeToken, body: {claimTtlSeconds: 900}});
   if (!revokeClaim.dispatch) throw new Error(`revoke test could not claim a dispatch: ${requeueOrchestrated.changed?.map((item) => item.workItemId || item.dispatchId).join(",") || "none"}`);
   // git push 之前那道 claim 复核（GET /dispatches/:id/claim）是【另一扇门】：checkpoint 路由自己

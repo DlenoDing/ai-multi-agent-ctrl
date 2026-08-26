@@ -422,7 +422,9 @@ const PREDICATE_COVERAGE = {
   // —— 还没探过 ——
   isSafeCloneUrl: {probedOnly: "2026-08-27 探过：改成恒真，契约门当场红并点名 —— ext:: / fd:: 这类能跑任意命令的 git 传输会被判成安全（派发里给个地址就能在 agent 机器上执行命令）"},
   pathMatches: {probedOnly: "2026-08-27 探过：改成恒真，契约门当场红并点名 —— 白名单内外都变成同一个答案（这道决定执行方能改仓库里的哪些文件）"},
-  roleAllowed: {notProbed: "rolesAllowed 的单数版，未单独探"},
+  roleAllowed: {probedOnly: "2026-08-27 探过：改成恒真，三道门原本【全绿】—— 补了远程 agent e2e 里那条"
+    + "（只被允许 reviewer 的节点在有排队派发的那一刻去认领，必须领不到）之后才红。"
+    + "它守的是入网令牌上的角色范围在【领活】这一步还算不算数：注册时的越界早有判据，领活时没有"},
   isHumanConfirmationActor: {probedOnly: "改成永远为真（谁都算真人），契约门红"},
   canUseGitPath: {probedOnly: "改成永远为真（路径逃逸放行），契约门红"},
   isSafeGitRef: {probedOnly: "改成永远为真（危险引用名放行），契约门红"},
@@ -432,7 +434,7 @@ const PREDICATE_COVERAGE = {
   isLocalHostname: {notProbed: "同上，未单独探"},
   isLoopbackAddress: {notProbed: "要从非回环地址发起连接才验得到，本机 e2e 造不出这个条件"},
   canReadResource: {probedOnly: "2026-08-27 探过：改成「有账号就能读」，doctor 当场红 —— 跨租户存在性那条接住了（写路由会变成一台「别处有没有这个 id」的探针）"},
-  canReadProject: {notProbed: "读作用域，未单独探"},
+  canReadProject: {probedOnly: "2026-08-27 探过：改成「有账号就能读」，doctor 当场红 —— 组织管理员的整份状态载荷里出现了别的租户的 29 个对象"},
   hasPermission: {probedOnly: "改成永远为真，控制面 e2e 红"},
   isReadOnlyTool: {probedOnly: "2026-08-27 探过：改成「全是只读」，doctor-mcp 当场红 —— 「写工具没有幂等键必须拒」那条接住了（写工具从此不再要求幂等键，重放会造出重复记录）"},
   isWriteTool: {probedOnly: "改成永远为假（写工具被当成只读），契约门红"},
@@ -441,7 +443,7 @@ const PREDICATE_COVERAGE = {
     + "当轮补了点名的那条（doctor-mcp：缺必填、以及只给空白，都要回 mcp_required_argument_missing 并说清缺哪个）"},
   hasAnyInputArg: {notProbed: "同上，未单独探"}
 };
-const PREDICATE_NOT_PROBED_CEILING = 5;
+const PREDICATE_NOT_PROBED_CEILING = 3;
 
 // 【项目归档之后，哪些写动作还能做】。归档是项目的终结态（没有"恢复归档"这条路），
 // 含义是"移出可建新工作的范围、把配额还回去、历史留着"。此前只有【建任务组】一处判了它 ——

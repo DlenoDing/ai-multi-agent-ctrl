@@ -3022,8 +3022,11 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/agent/v1/dispatches/next") {
     if (!node) return json(res, 401, {error: "agent_node_auth_required"});
     const result = claimNextDispatch(state, node, {runtimeDir, claimTtlSeconds: body.claimTtlSeconds});
-    if (result.dispatch) commitUnguardedWrite(state);
-    json(res, 200, result);
+    // stateChanged 是给这里看的，不上线：认领失败时网关也会在节点上留下"为什么接不了"的诊断，
+    // 那条诊断同样要落盘，否则控制台上永远是空的。
+    const {stateChanged, ...claimPayload} = result;
+    if (result.dispatch || stateChanged) commitUnguardedWrite(state);
+    json(res, 200, claimPayload);
     return;
   }
 
