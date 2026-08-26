@@ -4304,7 +4304,12 @@ function renderMonitor() {
       by: item.settledBy, why: item.settlementJustification, at: item.updatedAt})),
     ...(state.sharedDefinitions || []).filter((item) => !item.projectId || visibleProjectIds.has(item.projectId))
       .map((item) => ({kind: "共享定义契约", id: item.contractId, taskGroupId: item.taskGroupId,
-        status: item.status, by: item.resolvedBy, why: item.resolutionJustification, at: item.updatedAt}))
+        status: item.status, by: item.resolvedBy, why: item.resolutionJustification, at: item.updatedAt})),
+    // 发现项处置完也从「待你处置」里消失，而 dispositionedBy 同样没有读取点：
+    // "这条发现是谁判的、判成了什么"事后无从查起。
+    ...(state.findings || []).filter(inScope).map((item) => ({kind: "评审发现",
+      id: item.findingId || item.id, taskGroupId: item.taskGroupId, status: item.status,
+      by: item.dispositionedBy, why: item.dispositionClass, at: item.updatedAt}))
   ].filter((item) => item.by || item.why)
     .sort((a, b) => String(b.at || "").localeCompare(String(a.at || ""))).slice(0, 10);
 
@@ -4515,7 +4520,9 @@ function renderMonitor() {
           badge(item.status),
           esc(item.by ? accountName(item.by) : "-"),
           fmtTime(item.at),
-          {v: esc(item.why || "（当时没有填理由）"), c: "text-clip"}
+          // 有的是人写的原话，有的是码（发现项的处置类别）—— 统一过 explainCoded：
+          // 是码就译成人话，是原话就原样出来。
+          {v: esc(item.why ? explainCoded(item.why) : "（当时没有填理由）"), c: "text-clip"}
         ])).join(""))}
     `, {wide: true}) : "",
     panel("关闭门禁", `

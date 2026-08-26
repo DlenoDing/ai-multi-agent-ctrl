@@ -1987,6 +1987,15 @@ function runNoVisibleProjectCase() {
       /定稿于/u.test(closedText) && /管理员/u.test(closedText),
       "屏幕上只有一个「已关闭」，谁定的、什么时候定的都追不到");
 
+    // 发现项处置完也从「待你处置」里消失，处置人同样没有读取点。
+    finalizedState.findings = [{findingId: "fd1", taskGroupId: "tg1", status: "resolved",
+      dispositionClass: "fixed_verified", dispositionedBy: "u1", updatedAt: "2026-08-13T00:00:00.000Z"}];
+    const withFindingText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, finalizedState, "monitor", "p1");
+    check("处置完的发现项也要留得下「谁判的、判成了什么」",
+      /fd1/u.test(withFindingText) && /fixed_verified|已修复/u.test(withFindingText),
+      "发现项一处置就从界面上整个消失，事后查不到是谁判的");
+
     check("定稿理由旁边要说得出是谁定的、定成了什么",
       /最近的人工定稿/u.test(finalizedText) && /管理员/u.test(finalizedText)
         && /rs1|src:mgp/u.test(finalizedText),

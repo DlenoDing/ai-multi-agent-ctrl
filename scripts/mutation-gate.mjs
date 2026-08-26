@@ -9630,6 +9630,14 @@ const MUTATIONS = [
     to: "  if (true) return \"\";",
     expect: "事后追不到依据"
   },
+  {
+    name: "处置完的发现项要留得下「谁判的、判成了什么」",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '    ...(state.findings || []).filter(inScope).map((item) => ({kind: "评审发现",',
+    to: '    ...[].map((item) => ({kind: "评审发现",',
+    expect: "事后查不到是谁判的"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
