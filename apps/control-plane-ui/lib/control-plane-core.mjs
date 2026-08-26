@@ -4494,7 +4494,15 @@ export function resolveRoleSkill(state, roleId, request = {}) {
   // 已登记但没有专属技能的角色回退到通用执行技能。这是正当的，但必须【显式标注】：
   // 原先是静默套用 orchestrator 的提示，于是 agent 拿到的是 orchestrator 的角色规则，
   // 而没有任何地方说明它其实没有属于自己的技能。
-  const hint = roleCapabilityHints[roleId] || roleCapabilityHints.orchestrator;
+  // 【借来的提示项不算"自己的技能"】。22 个已登记角色里有 10 个没有自己的 roleCapabilityHints
+  // （decision-center / rule-steward / permission-gateway / repository-router 等），它们在这里
+  // 借用 orchestrator 的提示项。后果直到技能源真的同步进来才显形：借来的 skillRef 匹配到了
+  // orchestrator 那份技能文件，于是下面把它当成"这个角色自己的技能"，回退标记一个都不留 ——
+  // 也就是说这道留痕在【生产里一直是空的】（种子态没有那份文件，只有种子态下它才留痕，
+  // 所以三套 e2e 全绿）。实测：跑一拍编排让技能源同步之后，repository-router 从
+  // "回退到 system-orchestrator 并留痕" 变成 "绑到 engineering-multi-agent-systems-architect 且无标记"。
+  const ownHint = roleCapabilityHints[roleId];
+  const hint = ownHint || roleCapabilityHints.orchestrator;
   // 技能内容会进任务契约，等于 agent 的行为准则，所以"绑定谁"必须不可顶替。
   // 原先是任意 `endsWith(skillRef)`：造一个 `evil-<skillRef>` 的 id 就能顶替真技能。
   // 但也不能拿 `-` 当锚点——roleSkillId 是 relativePath 把 `/` 换成 `-` 生成的（parseRoleSkillFile），
@@ -4516,7 +4524,9 @@ export function resolveRoleSkill(state, roleId, request = {}) {
   // 22 个已登记角色里只有一半有技能文件。直接抛错会让另一半的工作项【一个都派发不了】——
   // 那是把静默错绑换成了拒绝服务。回退本身是必要的，要修的是"回退得不声不响"：
   // 回退到通用执行技能，但在返回值上留痕，让上游与人都能看到"这个角色没有属于自己的技能"。
-  const ownSkill = skillCandidates[0] || state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`);
+  // 按提示项匹配到的技能，只有在【提示项是这个角色自己的】时才算它自己的技能；
+  // 借用别人提示项匹配到的，本质就是"套用了别人的技能"，必须走下面的留痕分支。
+  const ownSkill = (ownHint ? skillCandidates[0] : null) || state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`);
   const baseSkill = ownSkill || state.roleSkills.find((skill) => skill.roleSkillId === "system-orchestrator") || state.roleSkills[0];
   if (!baseSkill) {
     throw Object.assign(new Error("role_skill_registry_empty"), {status: 409, roleId});

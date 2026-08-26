@@ -6607,6 +6607,22 @@ const MUTATIONS = [
     expect: "读 args.workItemId，而 tools/list 上它不公布这个键"
   },
   {
+    name: "借来的提示项不算自己的技能",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: "  const ownSkill = (ownHint ? skillCandidates[0] : null) || state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`);",
+    to: "  const ownSkill = skillCandidates[0] || state.roleSkills.find((skill) => skill.roleSkillId === `system-${roleId}`);",
+    expect: "拿到了别人的技能却不留痕"
+  },
+  {
+    name: "真人定稿要真的落得下去",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '      if (context?.principal?.kind !== "system_admin") {\n        return {ok: false, error: "human_confirmation_decision_forbidden_for_machine_principal"};',
+    to: '      if (context?.principal?.kind !== "nobody_at_all") {\n        return {ok: false, error: "human_confirmation_decision_forbidden_for_machine_principal"};',
+    expect: "工具链断在 human-review-mcp.confirmation_decide"
+  },
+  {
     name: "工具执行覆盖记账断了要看得见",
     file: "apps/mcp-server/server.mjs",
     gate: "mcp",

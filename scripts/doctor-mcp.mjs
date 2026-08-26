@@ -394,6 +394,101 @@ try {
     // 判据，但 mcp-server 里还有一份【自己的】记录工厂（14 处 `|| "tg_runtime_management"`）——
     // 同一件事两条路只改了一条。最重的两处：产出目标决定 agent 的改动落到哪个仓库/分支/路径；
     // 评审结论回流会去终态化那个任务组的评审包、把评审覆盖记在它的评审计划上（写在没人点名的对象上）。
+    // 【人工定稿这条链的正面从没被跑通过】。三道"真人专属"的处置（确认单定稿 / 审批处置 /
+    // 权限请求处置）都只验过反面：机器主体拿不到、也走不到。可"真人能不能走通"同样是不变式的一半 ——
+    // 定稿闸门若因为别的原因把真人也挡住了（守卫写成拒绝一切、或漏了 system_admin），
+    // 表现是"AI 提的方案永远没人能拍板"，而所有反面断言照样全绿。
+    // 跑一拍编排：派发由它产生（session_start 只铸契约与会话，不入派发队列）。
+    // orchestrator_run 本身也是从没成功执行过的工具之一。
+    const ticked = await call("orchestration-mcp.orchestrator_run", {taskGroupId: TG});
+    // 【技能源真的同步进来之后，回退留痕还要在】。这道留痕原先在生产里是空的：没有自己
+    // roleCapabilityHints 的 10 个角色借用 orchestrator 的提示项，真技能一进来就匹配上了
+    // orchestrator 那份文件，于是被当成"这个角色自己的技能"，标记不留 —— 而种子态里没有那份
+    // 文件，所以三套 e2e 全绿。断言压在【跑过一拍编排之后】，那时技能源已同步（本轮 281 条）。
+    const afterSync = await call("skill-mcp.role_skill_resolve", {roleId: "repository-router"});
+    if (afterSync.roleSkillFallback?.reason !== "role_has_no_dedicated_skill") {
+      throw new Error(`技能源同步之后，没有专属技能的角色拿到了别人的技能却不留痕：`
+        + `绑到 ${afterSync.roleSkill?.roleSkillId} fallback=${JSON.stringify(afterSync.roleSkillFallback)} —— `
+        + "agent 会以为这就是自己角色的规则（22 个已登记角色里有 10 个走这条路）");
+    }
+    if (!ticked || typeof ticked !== "object") {
+      throw new Error(`orchestrator_run 没给出回执：${JSON.stringify(ticked).slice(0, 160)}`);
+    }
+    // 取派发走 REST 全量视图（MCP 的 summary 作用域不带这张表，
+    // 而 full 作用域对 agent 主体是关着的 —— 这里只是取夹具，不是被测面）。
+    const liveState = await api("/api/state?view=full&limit=200", {token: admin.sessionToken});
+    const dispatches = (liveState.agentDispatches || []).filter((item) => item.taskGroupId === TG);
+    const chainDispatch = dispatches.find((item) => item.sessionId === contract.sessionId) || dispatches[0];
+    if (!chainDispatch?.dispatchId) {
+      throw new Error("本轮没有任何派发可用于提确认单 —— 下面这条链在空转");
+    }
+    const submitted = await call("human-review-mcp.confirmation_request_submit", {
+      dispatchId: chainDispatch.dispatchId, sessionId: contract.sessionId, workItemId: WORK,
+      question: {summary: "这一步要不要继续？", detail: "链路探针：两个选项各自的后果"},
+      summary: "链路探针提的运行时确认",
+      options: [{optionId: "go", label: "继续"}, {optionId: "stop", label: "停下"}]
+    });
+    const requestId = submitted.request?.requestId;
+    if (!requestId || submitted.request.status !== "pending") {
+      throw new Error(`confirmation_request_submit 没提出待答的确认单：${JSON.stringify(submitted).slice(0, 200)}`);
+    }
+    const statusBefore = await call("human-review-mcp.confirmation_status", {requestId});
+    if ((statusBefore.request || statusBefore).status !== "pending") {
+      throw new Error(`confirmation_status 报的不是待答：${JSON.stringify(statusBefore).slice(0, 160)}`);
+    }
+    // AI 只能【再分析】：分析之后这张单仍然待答，选项也不许被它预先选好。
+    const analyzed = await call("human-review-mcp.confirmation_analyze", {requestId, summary: "AI 再分析：两个选项的代价对比"});
+    const analyzedRequest = analyzed.request || analyzed;
+    if (analyzedRequest.status !== "pending" || analyzedRequest.selectedOptionId) {
+      throw new Error("AI 一次再分析就把确认单推进了（status="
+        + `${analyzedRequest.status} selectedOptionId=${analyzedRequest.selectedOptionId}）—— AI 只能提案，定稿是真人的`);
+    }
+    // 真人（控制台代表的 system_admin 会话）定稿：这一步必须真的落下去。
+    const decided = await call("human-review-mcp.confirmation_decide", {requestId, selectedOptionId: "go"});
+    const decidedRequest = decided.request || decided;
+    if (decidedRequest.status !== "answered" || decidedRequest.decision?.selectedOptionId !== "go") {
+      throw new Error(`真人定稿没落下去：status=${decidedRequest.status} 选项=${JSON.stringify(decidedRequest.decision)} —— `
+        + "定稿闸门若把真人也挡住了，表现就是「AI 提的方案永远没人能拍板」，而所有反面断言照样全绿");
+    }
+    const consumedConfirmation = await call("human-review-mcp.confirmation_consume", {requestId});
+    if ((consumedConfirmation.request || consumedConfirmation).status !== "consumed") {
+      throw new Error(`confirmation_consume 之后不是 consumed：${JSON.stringify(consumedConfirmation).slice(0, 160)}`);
+    }
+
+    // 审批：低风险单条批准这条路（高风险的多方审批与"不得自批"另有断言）。
+    const approval = await call("governance-mcp.approval_request_create", {
+      taskGroupId: TG, workItemId: WORK, action: "doctor_mcp_chain_probe",
+      resource: {resourceType: "task_group", resourceId: TG}, riskClass: "low"
+    });
+    const approvalId = approval.approvalRequest?.approvalId;
+    if (!approvalId || approval.approvalRequest.taskGroupId !== TG) {
+      throw new Error(`approval_request_create 没建出审批单：${JSON.stringify(approval).slice(0, 200)}`);
+    }
+    const approved = await call("governance-mcp.approval_resolve", {approvalId, status: "approved", allowed: true});
+    if (approved.approvalRequest?.status !== "approved") {
+      throw new Error(`approval_resolve 没落下批准：${JSON.stringify(approved).slice(0, 200)}`);
+    }
+    // 处置一次就定终身：同一张单再处置一次必须原样返回，不许把已批的翻成拒绝。
+    const reResolved = await call("governance-mcp.approval_resolve", {approvalId, status: "rejected", allowed: false});
+    if (reResolved.approvalRequest?.status !== "approved" || reResolved.alreadyResolved !== true) {
+      throw new Error(`已处置的审批单被二次处置改写了：${JSON.stringify(reResolved).slice(0, 200)}`);
+    }
+
+    // 权限请求处置：批准＝把被挡住的那项能力交出去，也是真人专属的第二道门。
+    const permissionRequest = await call("permission-mcp.permission_request_submit", {
+      taskGroupId: TG, workItemId: WORK, permission: "task_group:read", subjectId: "acct_agent_runtime"
+    });
+    const permissionRequestId = permissionRequest.permissionRequest?.requestId;
+    if (!permissionRequestId) {
+      throw new Error(`permission_request_submit 没建出申请：${JSON.stringify(permissionRequest).slice(0, 200)}`);
+    }
+    const permissionResolved = await call("permission-mcp.permission_resolve",
+      {requestId: permissionRequestId, status: "approved", allowed: true, ttlSeconds: 3600});
+    const resolvedPermission = permissionResolved.permissionRequest || permissionResolved;
+    if (resolvedPermission.status !== "approved") {
+      throw new Error(`permission_resolve 没落下处置：${JSON.stringify(permissionResolved).slice(0, 200)}`);
+    }
+
     // 共享定义这一族此前也没成功跑通过（create 只在别的门里被调过，publish/bind 一次都没有）。
     // 先建一份真的，下面那条"不点名任务组"的负面用例才测得到 bind 里那道守卫 ——
     // 否则它会先撞上"这份定义不存在"，看起来也是拒绝，测的却是另一件事。
@@ -453,7 +548,7 @@ try {
     // 本套 e2e 自己跑通的数（跨门合计另算：契约门在进程内还会跑通一批）。
     // 这个数是【实测出来的】—— 早先一次量到 44，复量不出来，那次多半把别的运行留下的账算了进去；
     // 以能复现的这次为准。棘轮只升不降。
-    const SUCCESSFULLY_EXERCISED_FLOOR = 28;
+    const SUCCESSFULLY_EXERCISED_FLOOR = 39;
     let traced = "";
     try { traced = readFileSync(toolTracePath, "utf8"); } catch { traced = ""; }
     const succeeded = new Set(traced.split("\n").filter((line) => line.startsWith("ok ")).map((line) => line.slice(3)));
