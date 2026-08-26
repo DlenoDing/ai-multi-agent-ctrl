@@ -1131,7 +1131,19 @@ const HUMAN_ONLY_ACTIONS = [
   // 原本不受同一条闸门保护 —— 机器主体铸一个"人"、再用返回的令牌登录，就成了合法的定稿人，
   // 整道人工闸门被从旁边绕过去。account_invite 强制铸出的正是 user_account（"人"类型）。
   "account_invite",
-  "system_account_invite"
+  "system_account_invite",
+  // 【组织与授权面】2026-08-26 人定：AI 只负责把任务做完，不许动"谁能干什么"。
+  // 这一族原先是机器可做的：拿到相应权限就能建组织、改成员权限与状态、调配额、发放/撤销授权。
+  // 它绕得过人工定稿闸门吗？绕不过（闸门认 accountType，而铸账号已是真人专属）——
+  // 但"谁能干什么"本身就不该由干活的一方来定，所以整族收归真人。
+  "org_create", "org_member_create", "org_member_permissions_update", "org_member_status_update",
+  "org_quota_update", "org_status_update",
+  "access_grant_create", "access_grant_revoke", "project_member_grant",
+  // 【取消与中止】2026-08-26 人定：AI 可以暂停，取消只能由人发起。
+  // 暂停/恢复是可恢复的节奏调节；而取消与中止会停掉整组在跑的派发，
+  // 并连带作废其名下【人正在等着签字】的确认单 —— 「关闭任务组」早已是真人专属，
+  // 这两个到不了终态，却把人正在等的东西拿走了。
+  "task_group_cancel", "task_group_abort"
 ];
 const HUMAN_ACCOUNT_TYPES_FOR_ACTIONS = ["system_admin", "org_admin", "user_account"];
 
@@ -1163,19 +1175,10 @@ const MACHINE_ALLOWED_ACTIONS = [
   // finding_resolve —— 终态化只对治理角色开放，提交方（control 角色）够不着；
   // rule_source_resolve —— 规则源的最终落定是真人专属的 rule_source_settle。
   "approval_resolve", "finding_resolve", "rule_source_resolve",
-  // 五、组织与授权面。这一族是【留给人定的判断题】，现状原样登记在此：
-  // 机器主体拿到相应权限即可建组织、改成员权限与状态、调配额、发放/撤销资源授权。
-  // 它绕不过人工定稿闸门（闸门认的是 accountType，而铸账号 account_invite 已是真人专属），
-  // 但"机器能不能自行调整组织授权"本身是产品决定，不由我单方改。
-  "org_create", "org_member_create", "org_member_permissions_update", "org_member_status_update",
-  "org_quota_update", "org_status_update",
-  "access_grant_create", "access_grant_revoke", "project_member_grant",
-  // 六、任务组运行控制。pause/resume/request_review/rebound_drift 是可恢复的运行调节；
-  // 而 cancel/abort 会取消整组在跑的派发，并连带作废其名下待人工确认的单子 ——
-  // 「关闭任务组」已经是真人专属，这两个到不了终态却拿掉了人正在等的东西。
-  // 同样登记为现状并留给人定：不由我单方改。
+  // 五、任务组运行控制里【可恢复】的那几个：暂停、恢复、要求评审、纠偏。
+  // 它们改的是节奏不是结论，停了还能再起来，所以机器可以做。
+  // （取消/中止不在这里 —— 见下面真人专属那份清单。）
   "task_group_pause", "task_group_resume", "task_group_request_review", "task_group_rebound_drift",
-  "task_group_cancel", "task_group_abort",
   // 七、首次引导：空库上建出第一个系统账号，那一刻还没有任何"人"可用。
   "bootstrap_init"
 ];

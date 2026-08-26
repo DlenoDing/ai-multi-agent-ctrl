@@ -80,6 +80,22 @@ export function checkHumanOnlyParity() {
   }
   // 每一个真人专属动作都必须能在 REST 侧定位到它的守卫调用。定位不到就等于这个动作
   // 整个跳出了本门的视野 —— 而"跳出视野"与"检查通过"在门的输出上长得一模一样。
+  // 动作名【拼出来的】那一族：`beginGuardedWrite(req, state, `task_group_${action}`, ...)`
+  // 一条路由服务六个控制动作（pause/resume/request_review/rebound_drift/cancel/abort），
+  // 其中四个机器可做、两个真人专属。按字面量提取当然找不到它们。
+  // 不能顺手把这条路由窗口里的函数都算成"真人专属核心函数"——那四个机器可做的动作
+  // 走的是同一批函数，会把 MCP 侧正常的调用误报成越权（假警报的下场是这道门被整个豁免掉）。
+  // 所以登记，并且【自证】：那个插值写法必须还在，改回字面量的话这条登记就过期了，要报出来。
+  const COMPUTED_GUARD_NAME_ACTIONS = {
+    task_group_cancel: "任务组控制路由按 `task_group_${action}` 拼名字，六个动作共用一条路由与一批函数",
+    task_group_abort: "同上"
+  };
+  const computedGuardCall = "beginGuardedWrite(req, state, `task_group_${action}`";
+  if (!srv.includes(computedGuardCall)) {
+    failures.push("真人专属对等门: 任务组控制那条路由不再用 `task_group_${action}` 拼动作名了 —— "
+      + "COMPUTED_GUARD_NAME_ACTIONS 这条登记已过期，把它撤掉，让 cancel/abort 回到正常的定位检查里");
+  }
+  for (const action of Object.keys(COMPUTED_GUARD_NAME_ACTIONS)) locatedActions.add(action);
   const unlocated = [...humanOnlyActions].filter((action) => !locatedActions.has(action));
   if (unlocated.length) {
     failures.push(`真人专属对等门: 这些真人专属动作在 REST 侧找不到对应的守卫调用：${unlocated.join("、")} ——`

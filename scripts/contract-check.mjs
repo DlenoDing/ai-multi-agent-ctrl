@@ -344,7 +344,11 @@ const MCP_UNREACHABLE_TOOL_ARGS = {
     decisionId: "自选决策 id：撞上已有 id 就能顶替别人的决策记录",
     resolutionId: "同上（规则来源判定）",
     importId: "同上（外部升级包导入）",
-    root: "文件系统根。它流进 git 子进程的 cwd —— 调用方指哪就在哪跑 git"
+    root: "文件系统根。它流进 git 子进程的 cwd —— 调用方指哪就在哪跑 git",
+    // 下面两个是 2026-08-26 修好 case→函数提取之后才露出来的，都属于"自报身份"这一族：
+    senderRef: "协作记录的发送者。core 里已经写死由服务端从已认证主体派生（注释就在那一行），"
+      + "调用方自填等于以别人的名义在房间里说话",
+    proposedBy: "审批单的提出人。MCP 那侧已经用 context.principal.id 覆盖了它，词表再挡一层"
   },
   // 词表里【有】这个键，但任何工具都不许读它：它与上面的 root 是同一个能力的两个名字，
   // 只挡住 root 等于「一条不变式两扇门只守一扇」。全仓没有任何合法调用方传过它，
@@ -361,7 +365,18 @@ const MCP_UNREACHABLE_TOOL_ARGS = {
     actionScopeRefs: "governance-mcp.role_drift_guard_bind：这道漂移守卫管到哪些动作",
     packetRef: "effective_instruction_create / instruction_envelope_create：指令包引用",
     sharedDefinitionRefs: "同上：这份指令引用了哪些共享定义",
-    reasonCode: "governance-mcp.policy_decision_eval：调用方给出的判定理由码"
+    reasonCode: "governance-mcp.policy_decision_eval：调用方给出的判定理由码",
+    // 2026-08-26 修好 case→函数的提取之后才露出来的（此前 account_invite 的 case 体里
+    // 先有一道"拒机器主体"的守卫，旧提取只认"case 紧跟 return"，把它整个漏掉了）。
+    // 后果是实打实的：经 MCP 邀请的账号【永远落在默认组织】，而 accountInvite 自己的注释写着
+    // "归属必须在创建时就定下来，不能事后靠迁移补"——三处跨组织边界闸门都写成
+    // `X.organizationId && ...`，归错了组织不会报错，只会一路放行。
+    organizationId: "identity-mcp.account_invite：这个账号属于哪个组织。传不进来＝一律落进默认组织",
+    // finding_resolve 的三个：处置结论、根因归属、恢复凭据。传不进来意味着
+    // 经 MCP 处置一条发现项时，只能落到缺省结论上，"凭什么这么处置"说不出来。
+    dispositionClass: "governance-mcp.finding_resolve：这条发现项按哪一类处置（已修/不适用/已调整范围/外部阻塞）",
+    rootCauseOwner: "同上：外部阻塞类必须说清根因归谁，缺了会被降级成 blocked_external_incomplete",
+    recoveryRef: "同上：外部阻塞的恢复凭据，与 rootCauseOwner 成对使用"
   }
 };
 
@@ -8116,7 +8131,10 @@ function verifyToolArgReachabilityIsRegistered(output) {
     }
   }
   // ② 工具读了、却传不进来的：必须逐个登记，新出现的要当场表态。
-  const cases = [...mcpSource.matchAll(/case "([\w.-]+)":\s*\n\s*return (\w+)\(/gu)];
+  // case 体里可以先有别的语句再 return（2026-08-26 给 grant_create/grant_revoke 加了
+  // "拒机器主体"的守卫之后，只认"case 紧跟 return"的提取就把这两个工具整个漏掉了，
+  // 于是它们的入参登记被报成"没人读了"—— 提取脱节的表现恰恰是【登记看起来过时】）。
+  const cases = [...mcpSource.matchAll(/case "([\w.-]+)":(?:(?!\n    case )[\s\S]){0,900}?\n\s*return (\w+)\(/gu)];
   if (cases.length < 40) {
     output.push(`只识别到 ${cases.length} 条工具派发（远少于既有规模）—— 提取脱节，本条在空转`);
     return;
@@ -8542,7 +8560,21 @@ function verifyHumanOnlyActionNamesStillExist(output) {
       else if (server[index] === ")") { depth -= 1; if (!depth) { end = index; break; } }
     }
     // 调用里出现的所有字符串字面量都收进来：动作名可能写在三元里，也可能与资源标识同列。
-    for (const literal of server.slice(match.index, end).matchAll(/"([a-z_]+)"/gu)) guarded.add(literal[1]);
+    const call = server.slice(match.index, end);
+    for (const literal of call.matchAll(/"([a-z_]+)"/gu)) guarded.add(literal[1]);
+    // 动作名也可能是【拼出来的】：任务组控制那条路由写的是 `task_group_${action}`，
+    // 一条路由服务六个动作。只认字面量的话，cancel/abort 在这道门眼里等于"没有受守卫写入"，
+    // 而它们其实被守着 —— 门看不见写法，不是保护失效。展开成那六个真实动作名。
+    if (call.includes("`task_group_${action}`")) {
+      for (const name of ["pause", "resume", "request_review", "rebound_drift", "cancel", "abort"]) {
+        guarded.add(`task_group_${name}`);
+      }
+    }
+  }
+  // 自证：插值写法不在了，上面那段展开就成了一张永远为真的白名单。
+  if (!server.includes("beginGuardedWrite(req, state, `task_group_${action}`")) {
+    output.push("任务组控制那条路由不再用 `task_group_${action}` 拼动作名了 —— "
+      + "上面那段展开已过期，撤掉它让那六个动作回到正常的字面量提取里");
   }
   if (listed.length < 15 || guarded.size < 40) {
     output.push(`清单 ${listed.length} 条 / 守卫动作 ${guarded.size} 个 —— 提取脱节，本条在空转`);
@@ -11066,7 +11098,13 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 「只认 error: "码"」扩到四种写法后，一直存在的 67 个零覆盖码第一次被看见（另 96 个码里
   // 有 29 个本来就有判据）。棘轮报的数从来只是"我查得见的那部分"，把它当成全貌是自己骗自己。
   // 往下降是接下来的活：优先把要害那批（人机定稿链、凭据、租户边界）配上判据。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 19;
+  // 2026-08-26：19 → 21。抬两格是【人定的产品决定】带来的，不是放松：
+  // "AI 不许动谁能干什么"落到 MCP 侧就是两道新守卫（grant_create / grant_revoke 拒机器主体），
+  // 而 identity-mcp.* 整族本来就不在派发下发的工具白名单里 —— 机器主体连门都进不来，
+  // 编不出走到这两道的用例。它们已按仓里的办法登记进 KNOWN_SECOND_DOORS，
+  // 照样计入零覆盖（那是事实）。够得着的那一侧（REST 的 access_grant_create/revoke）
+  // 有真实行为断言，见 doctor 里「写入层授权边界」那一段。
+  const UNCOVERED_REFUSAL_CODE_CEILING = 21;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];

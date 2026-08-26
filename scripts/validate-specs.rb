@@ -2540,9 +2540,23 @@ errors << "真人专属动作清单没有解析到内容 —— 本条在空转"
 # 动作名不一定是字面量：系统级邀请写成三元表达式（systemScopedInvite ? A : B），
 # 只认字面量的取法会把整条调用漏掉 —— 它于是同时躲开执行者检查和结果检查。
 # 改成先取动作实参的整个表达式，再从里面抽出所有动作名，逐个判。
+# 任务组控制那条路由把动作名拼成 `task_group_${action}`，六个动作共用一条路由。
+# 这份展开表要能自证：插值写法不在了就报过期，免得它悄悄变成一张永远为真的白名单。
+TASK_GROUP_CONTROL_ACTION_NAMES = %w[task_group_pause task_group_resume task_group_request_review
+                                     task_group_rebound_drift task_group_cancel task_group_abort].freeze
+unless server_source.include?('audit(state, guard.actor, `task_group_${action}`')
+  errors << "任务组控制那条路由不再用 `task_group_${action}` 拼审计动作名了 —— " \
+            "TASK_GROUP_CONTROL_ACTION_NAMES 这份展开已过期，撤掉它让那六个动作回到正常提取里"
+end
 raw_audit_calls = server_source.scan(/audit\(state, ([^,]+), ((?:[^,]|\?[^:]*:)+?), (.*?)\);$/m)
 audit_calls = raw_audit_calls.reject { |actor, _, _| actor.strip == "actor" }.flat_map do |actor, action_expr, rest|
-  action_expr.scan(/"([a-z_]+)"/).flatten.map { |action| [actor, action, rest] }
+  names = action_expr.scan(/"([a-z_]+)"/).flatten
+  # 动作名也可能是【拼出来的】：任务组控制那条路由写的是 `task_group_${action}`，
+  # 一条路由服务六个动作。只认字面量的话，它们在这道门眼里等于"从来没被审计过" ——
+  # 而审计其实一直在做（同一行就是），这属于门看不见写法，不是产品缺了留痕。
+  # 展开成那六个真实动作名；哪天路由不再这么拼，下面那条自证会把这段登记报成过期。
+  names += TASK_GROUP_CONTROL_ACTION_NAMES if action_expr.include?('task_group_${action}')
+  names.map { |action| [actor, action, rest] }
 end
 # "带了结果吗"的判据：把字符串和模板串整体挖掉，看 subject 之后还有没有逗号。
 # 上一版要求 subject 必须是模板串（`…`,），于是 subject 写成普通字符串或变量的调用

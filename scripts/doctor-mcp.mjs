@@ -600,7 +600,13 @@ try {
       // 实测：受限节点根本调不到它（工具白名单先回 mcp_tool_not_granted_to_principal），
       // 所以它落进下面的"第二道门"那一支，拒绝码登记在 KNOWN_SECOND_DOORS 里。
       "human-review-mcp.confirmation_decide": {requestId: "hcr_probe", selectedOptionId: "accept",
-        action: "finalize", idempotencyKey: "mcp-human-only-6"}
+        action: "finalize", idempotencyKey: "mcp-human-only-6"},
+      // 2026-08-26 人定收归真人的授权面。入参要给【够得着的合法值】：给 undefined 的话
+      // 会先被入参校验拒掉，看起来像验过了，其实验的是另一道门。
+      "identity-mcp.grant_create": {subjectId: "acct_agent_runtime",
+        resource: {resourceType: "task_group", resourceId: "tg_runtime_management"},
+        idempotencyKey: "mcp-human-only-7"},
+      "identity-mcp.grant_revoke": {grantId: "grant_probe", idempotencyKey: "mcp-human-only-8"}
     };
     const HUMAN_ONLY_TOOLS = Object.entries(HUMAN_ONLY_MCP_TOOL_REFUSALS)
       .map(([name, code]) => ({name, code, args: HUMAN_ONLY_ARGS[name]}));

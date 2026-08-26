@@ -3176,6 +3176,61 @@ const MUTATIONS = [
     expect: "看不到那个项目"
   },
   {
+    name: "拼出来的动作名必须被展开（不展开＝把活的保护误报成失效）",
+    file: "scripts/contract-check.mjs",
+    check: "verifyHumanOnlyActionNamesStillExist",
+    from: 'for (const name of ["pause", "resume", "request_review", "rebound_drift", "cancel", "abort"]) {',
+    to: 'for (const name of ["pause", "resume", "request_review", "rebound_drift"]) {',
+    expect: "已经没有对应的受守卫写入"
+  },
+  {
+    name: "case 体里先有守卫的工具不许从可达性账本里漏掉",
+    file: "scripts/contract-check.mjs",
+    check: "verifyToolArgReachabilityIsRegistered",
+    from: 'const cases = [...mcpSource.matchAll(/case "([\\w.-]+)":(?:(?!\\n    case )[\\s\\S]){0,900}?\\n\\s*return (\\w+)\\(/gu)];',
+    to: 'const cases = [...mcpSource.matchAll(/case "([\\w.-]+)":\\s*\\n\\s*return (\\w+)\\(/gu)];',
+    expect: "登记过时"
+  },
+  {
+    name: "AI 不许自行发资源授权（2026-08-26 人定）",
+    file: SERVER,
+    gate: "doctor",
+    from: "  if (HUMAN_ONLY_ACTIONS.includes(action)) return HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(account.accountType);",
+    to: '  if (HUMAN_ONLY_ACTIONS.includes(action)) return action === "access_grant_create" || HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(account.accountType);',
+    expect: "机器主体做成了真人专属的「发资源授权」"
+  },
+  {
+    name: "AI 不许取消整个任务组（2026-08-26 人定）",
+    file: SERVER,
+    gate: "doctor",
+    from: "  if (HUMAN_ONLY_ACTIONS.includes(action)) return HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(account.accountType);",
+    to: '  if (HUMAN_ONLY_ACTIONS.includes(action)) return action === "task_group_cancel" || HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(account.accountType);',
+    expect: "机器主体做成了真人专属的「取消整个任务组」"
+  },
+  {
+    name: "收的是取消，暂停仍归机器（别把运行调节一起锁死）",
+    file: SERVER,
+    gate: "doctor",
+    from: "  return MACHINE_ALLOWED_ACTIONS.includes(action);",
+    to: '  return MACHINE_ALLOWED_ACTIONS.includes(action) && action !== "task_group_pause";',
+    // 接住它的是【更早】那条既有断言（org_admin 控制不了自己组织项目的任务组），不是本轮新写的
+    // 那条正面对照 —— expect 要指向真正会红的那一句，不然就是把别人的功劳记在自己头上。
+    expect: "could not control its own org project's task group"
+  },
+  {
+    name: "MCP 侧发授权也必须拒机器主体（只锁一边等于没锁）",
+    file: "apps/mcp-server/server.mjs",
+    // 不真跑：identity-mcp.* 整族不在派发下发的工具白名单里，机器主体连门都进不来
+    //（mcp_tool_not_granted_to_principal 先拒），编不出走到这道守卫的用例 ——
+    // 已按仓里的办法登记进 KNOWN_SECOND_DOORS。锚点仍要求唯一：被测代码改写时这条声明要跟着失效。
+    // 够得着的那一侧（REST 的 access_grant_create）有行为断言，见「AI 不许自行发资源授权」。
+    skip: true,
+    gate: "mcp",
+    from: '        return {ok: false, error: "grant_create_forbidden_for_machine_principal"};',
+    to: "        return {ok: true, machinePrincipalSlippedThrough: true};",
+    expect: "grant_create_forbidden_for_machine_principal"
+  },
+  {
     name: "健康检查不许又变回每次请求深拷整份状态",
     file: SERVER,
     check: "verifyHealthReadDoesNotCloneEveryRequest",
@@ -4703,8 +4758,8 @@ const MUTATIONS = [
     name: "受守卫的写动作必须逐个回答过机器能不能做",
     file: "apps/control-plane-ui/server.mjs",
     check: "verifyEveryGuardedActionIsClassified",
-    from: '  "task_group_cancel", "task_group_abort",',
-    to: '  "task_group_cancel",',
+    from: '  "task_group_cancel", "task_group_abort"\n];',
+    to: '  "task_group_cancel"\n];',
     expect: "没有回答过「机器主体能不能做」"
   },
   {
@@ -7368,8 +7423,8 @@ const MUTATIONS = [
     name: "提取认不出三元写法就会把活的保护误报成失效",
     file: "scripts/contract-check.mjs",
     check: "verifyHumanOnlyActionNamesStillExist",
-    from: 'for (const literal of server.slice(match.index, end).matchAll(/"([a-z_]+)"/gu)) guarded.add(literal[1]);',
-    to: 'guarded.add(String(/beginGuardedWrite\\([^,]+,[^,]+,\\s*"([a-z_]+)"/u.exec(server.slice(match.index, end))?.[1] || ""));',
+    from: 'for (const literal of call.matchAll(/"([a-z_]+)"/gu)) guarded.add(literal[1]);',
+    to: 'guarded.add(String(/beginGuardedWrite\\([^,]+,[^,]+,\\s*"([a-z_]+)"/u.exec(call)?.[1] || ""));',
     expect: "已经没有对应的受守卫写入"
   },
   {

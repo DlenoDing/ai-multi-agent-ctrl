@@ -1581,8 +1581,19 @@ async function dispatchTool(state, name, args, context = {}) {
     case "identity-mcp.account_suspend":
       return accountSuspend(state, args);
     case "identity-mcp.grant_create":
+      // 2026-08-26 人定：AI 只负责把任务做完，不许动"谁能干什么"。REST 侧的
+      // access_grant_create / access_grant_revoke 已收归真人专属，这一侧是它的孪生 ——
+      // 只锁一边等于没锁（本仓反复出现的形态，对等门就是为它立的）。
+      // 白名单式，与铸账号那道同规：只放行控制台代表的真人会话，其余一律拒。
+      if (context?.principal?.kind !== "system_admin") {
+        return {ok: false, error: "grant_create_forbidden_for_machine_principal"};
+      }
       return grantCreate(state, args);
     case "identity-mcp.grant_revoke":
+      // 同上：撤授权与发授权是同一件事的两面，一起收归真人。
+      if (context?.principal?.kind !== "system_admin") {
+        return {ok: false, error: "grant_revoke_forbidden_for_machine_principal"};
+      }
       return grantRevoke(state, args);
     case "identity-mcp.permission_matrix_get":
       return permissionMatrixGet(state, principalProjectFilter(context));

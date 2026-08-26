@@ -1893,7 +1893,35 @@ try {
     throw new Error("真人也被'真人专属动作'挡住了 —— 这道门把正常路径一起堵死了");
   }
 
-  console.log("写入层授权边界 ok: 机器主体做不了真人专属动作，而真人照常可以");
+  // 2026-08-26 人定的两条，各验一次反面 + 一次正面对照（都走同一条路由、同一个动作，只换钥匙）：
+  //  ① AI 只做任务，不许动"谁能干什么"；② AI 可以暂停，取消只能由人发起。
+  // 反面要挑这个服务账号【本来就有权限】的动作，否则先撞上 permission_denied，
+  // 验到的是"它没权限"而不是"它不是人"。
+  const humanOnlyByDecision = [
+    {key: "grant", what: "发资源授权", path: "/api/access-grants", body: {subjectId: "acct_agent_runtime",
+      resourceType: "task_group", resourceId: "tg_runtime_management", permissions: ["task_group:read"]}},
+    {key: "cancel", what: "取消整个任务组", path: "/api/task-groups/tg_runtime_management/control", body: {action: "cancel"}},
+    {key: "abort", what: "中止整个任务组", path: "/api/task-groups/tg_runtime_management/control", body: {action: "abort"}}
+  ];
+  for (const item of humanOnlyByDecision) {
+    const denied = await jsonFetch(port, item.path, {method: "POST",
+      // 幂等键走 ASCII：HTTP 头是 Latin-1，中文塞进去在 fetch 那一层就抛 ByteString 了。
+      headers: {"Idempotency-Key": `doctor-machine-${item.key}`, authorization: agentAuth},
+      body: JSON.stringify(item.body)});
+    if (denied.response.status !== 403 || denied.payload?.error !== "principal_not_allowed_for_action") {
+      throw new Error(`机器主体做成了真人专属的「${item.what}」（HTTP ${denied.response.status} `
+        + `${JSON.stringify(denied.payload).slice(0, 140)}）—— 2026-08-26 人定：`
+        + "AI 只负责把任务做完，不许动谁能干什么，也不许取消整组（它会连带作废人正在等签字的单子）");
+    }
+  }
+  // 正面对照：暂停仍然由机器做得了 —— 这条决定要的是"取消归人"，不是"把运行调节也一起锁死"。
+  const machinePause = await jsonFetch(port, "/api/task-groups/tg_runtime_management/control", {method: "POST",
+    headers: {"Idempotency-Key": "doctor-machine-pause-ok", authorization: agentAuth},
+    body: JSON.stringify({action: "pause"})});
+  if (machinePause.response.status === 403 && machinePause.payload?.error === "principal_not_allowed_for_action") {
+    throw new Error("暂停也被当成真人专属挡掉了 —— 收的是取消/中止，暂停是可恢复的运行调节，不该一起锁");
+  }
+  console.log("写入层授权边界 ok: 机器主体做不了真人专属动作（含新收归的授权面与取消/中止），而真人照常可以；暂停仍归机器");
 
   // 归档是项目的终结态，而归档路由【要求先把所有任务组关掉】（不级联，让人自己收尾）。
   // 归档之后还能往里建新任务组的话，那次收尾就白做了：项目重新变活，而它已经不在任何人的视野里

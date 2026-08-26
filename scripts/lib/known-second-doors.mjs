@@ -12,6 +12,15 @@
 export const KNOWN_SECOND_DOORS = {
   agent_checkpoint_must_use_gateway:
     "checkpoint_submit 不在任何派发下发的工具白名单里，mcp_tool_not_granted_to_principal 先拒",
+  // (a) 不可达的第二道门。2026-08-26 人定「AI 不许动谁能干什么」之后，MCP 侧这两个工具
+  // 也收归真人。但 identity-mcp.* 整族本来就不在任何派发下发的工具白名单里 ——
+  // 机器主体连门都进不来（mcp_tool_not_granted_to_principal 先拒），所以这两道是第二层。
+  // 留着它们是对的：拦在前面的是【配置】，配置改一行它们就成了最后一道。
+  // REST 那一侧（access_grant_create / access_grant_revoke）是够得着的，已有行为断言。
+  grant_create_forbidden_for_machine_principal:
+    "identity-mcp.* 不在派发下发的工具白名单里，mcp_tool_not_granted_to_principal 先拒",
+  grant_revoke_forbidden_for_machine_principal:
+    "同上；它与 grant_create 是同一件事的两面，一起收归真人",
   mcp_project_create_requires_system_admin:
     "MCP 只认 agent_node / 系统管理员 / 服务令牌三种主体：前两者被工具白名单挡，后者本身就是管理员",
   // 这三条守的是"受限主体必须自报作用域"。实测（2026-08-20，MCP e2e 里用真实受限节点令牌）：
@@ -91,5 +100,9 @@ export const HUMAN_ONLY_MCP_TOOL_REFUSALS = {
   // 定稿是整套"人工闸门"的最后一道：机器主体替人点了确认，AI 的方案就此获得人的背书。
   // 它与上面五条同族，却一直不在册 —— 而这个工具【三套 e2e 从没调过】（2026-08-22 按
   // MCP 工具清单全量核对时发现：85 个工具里 53 个没被调过，其中 21 个是写工具）。
-  "human-review-mcp.confirmation_decide": "human_confirmation_decision_forbidden_for_machine_principal"
+  "human-review-mcp.confirmation_decide": "human_confirmation_decision_forbidden_for_machine_principal",
+  // 2026-08-26 人定：AI 只负责把任务做完，不许动"谁能干什么"。REST 侧的
+  // access_grant_create / access_grant_revoke 已收归真人专属，这两个是它们的 MCP 孪生。
+  "identity-mcp.grant_create": "grant_create_forbidden_for_machine_principal",
+  "identity-mcp.grant_revoke": "grant_revoke_forbidden_for_machine_principal"
 };
