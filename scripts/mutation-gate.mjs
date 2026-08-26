@@ -8514,8 +8514,8 @@ const MUTATIONS = [
     name: "这条用例必须真的复现'被日常流量顶掉'（上限变大就该报空转）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyWarnModeRejectionsSurviveChurn",
-    from: '  capCentralCollection(state, "transitionEvidence", 240, null);',
-    to: '  capCentralCollection(state, "transitionEvidence", 24000, null);',
+    from: '  capCentralCollection(state, "transitionEvidence", 240,',
+    to: '  capCentralCollection(state, "transitionEvidence", 24000,',
     expect: "本条在空转"
   },
   {
@@ -9704,6 +9704,15 @@ const MUTATIONS = [
     from: '    audit(state, actor, action, subject, "policy_denied");',
     to: '    audit(state, "policy-engine", "policy_decision_denied", subject, "policy_denied");',
     expect: "没写清是谁试图做什么"
+  },
+  {
+    name: "命令流水不许把别的状态机的转移记录挤光",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: '  capCentralCollection(state, "transitionEvidence", 240,\n'
+      + "    (item) => !ROUTINE_TRANSITION_MACHINES.has(item.machine));",
+    to: '  capCentralCollection(state, "transitionEvidence", 240, null);',
+    expect: "被命令流水挤掉了"
   },
 ];
 

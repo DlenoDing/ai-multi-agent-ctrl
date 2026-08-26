@@ -6389,6 +6389,34 @@ function verifyCommandBusLifecycle(output) {
     output.push("command-bus: no-side-effect command should succeed without a CommandEffect");
   }
 
+  // 【命令流水不许把别的状态机挤光】。transitionEvidence 上限 240，而每条命令固定四步
+  //（admitted→dispatched→running→succeeded）—— 实测一份真实运行态里 268 条【全是】Command，
+  // 覆盖时间只有 2.5 秒，WorkItem / Account（含注销）/ ExecutionTopology 的转移一条不剩。
+  // 这个集合任何视角都不下发，唯一的读者是事故时直接看盘，那时要的正是后面这几种。
+  {
+    const churnState = structuredClone(state);
+    churnState.transitionEvidence = [{schemaVersion: "transition-evidence/v1", transitionId: "tr_keep",
+      machine: "Account", objectId: "acct_victim", from: "active", to: "retired",
+      actor: "identity-service", evidenceRefs: [], createdAt: "2026-08-01T00:00:00.000Z"}];
+    for (let index = 0; index < 120; index += 1) {
+      const churn = createCommand(churnState, {type: "control_write", taskGroupId: tgId, subject: `TaskGroup:${tgId}`});
+      dispatchCommand(churnState, churn, {targetRef: "target:x"});
+      markRunning(churnState, churn, {});
+      succeedCommand(churnState, churn, {resultRef: "result:x"});
+    }
+    const evidence = churnState.transitionEvidence || [];
+    if (evidence.length <= 240) {
+      output.push(`命令流水只造出 ${evidence.length} 条转移记录，没到上限 —— 这条断言在空转`);
+    } else if (!evidence.some((item) => item.transitionId === "tr_keep")) {
+      output.push("账号注销那条状态转移被命令流水挤掉了 —— transitionEvidence 上限 240、"
+        + "每条命令占四条，几秒钟就把 WorkItem / Account / ExecutionTopology 的转移冲干净，"
+        + "而这个集合唯一的读者是事故时直接看盘");
+    }
+    if (!evidence.some((item) => item.machine === "Command")) {
+      output.push("受保护那一侧把命令转移整个挤掉了 —— 保护不该反过来吃掉例行记录");
+    }
+  }
+
   // Side-effecting command records a CommandEffect and reconciles it to verified.
   const cmd2 = createCommand(state, {type: "repository_push", taskGroupId: tgId, subject: `TaskGroup:${tgId}`});
   dispatchCommand(state, cmd2, {});

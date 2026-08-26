@@ -5151,6 +5151,11 @@ function transitionEnforcementMode(state) {
 // recordTransition now validates every state-machine transition against the runtime engine
 // before appending transitionEvidence. `requiresValues` maps each `requires` gate id of the
 // modeled transition to its non-empty evidence value.
+// 例行状态机：命令自己的生命周期，每条命令固定四步，是这个集合里唯一的高频来源。
+// 与 ROUTINE_EVENT_TYPES 同规：列例行的，不列重要的 —— 反过来写的话，将来新增的关键状态机
+// 会静默失去保护，而"忘了登记"不会有任何提示。
+const ROUTINE_TRANSITION_MACHINES = new Set(["Command"]);
+
 function recordTransition(state, machine, objectId, from, to, actor, requiresValues = {}) {
   let rejection = null;
   try {
@@ -5186,7 +5191,14 @@ function recordTransition(state, machine, objectId, from, to, actor, requiresVal
   };
   state.transitionEvidence ||= [];
   state.transitionEvidence.unshift(transition);
-  capCentralCollection(state, "transitionEvidence", 240, null);
+  // 【别让命令流水把别的状态机挤光】。capCentralCollection 本来就收一个"受保护"判据，
+  // 而这里一直传的是 null —— 于是 240 条全被命令生命周期占满：每条命令四步
+  //（admitted→dispatched→running→succeeded），实测一份真实运行态里 268 条【全是】Command，
+  // 覆盖时间只有 2.5 秒，WorkItem / Account（含注销）/ ExecutionTopology 的转移一条不剩。
+  // 而这个集合任何视角都不下发、唯一的读者是事故时直接看盘 —— 那时要的正是后面这几种。
+  // 登记的是【例行】而不是【重要】，与事件环同规：将来新增的状态机默认落到受保护那一侧。
+  capCentralCollection(state, "transitionEvidence", 240,
+    (item) => !ROUTINE_TRANSITION_MACHINES.has(item.machine));
   return transition;
 }
 
