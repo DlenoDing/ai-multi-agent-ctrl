@@ -3729,36 +3729,29 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/checkpoints") {
-    const guard = beginGuardedWrite(req, state, "checkpoint_submit", `Checkpoint:${body.taskGroupId || "unknown"}:${body.workId || "unknown"}`, taskGroupScope(state, body.taskGroupId));
-    if (guard.status) {
-      json(res, guard.status, guard.payload);
-      return;
-    }
-    const result = acceptAgentCheckpoint(state, body, {root: repositoryRoot});
-    if (!result.accepted) {
-      // 拒绝时原先只回一个错误码，而服务端**已经算出来**的细节（命中禁区的具体路径、tree 摘要
-      // 对不上的那个 commit）被丢在这里 —— 人拿到的是"改动路径命中禁区"，不知道是哪条路径。
-      // 同时控制面上不留任何痕迹：不写审计、不留事件，于是在 agent 的重放把它判定为终态之前，
-      // 控制台上一个字都不会变，人只会觉得"提交上去了，然后没动静"。
-      audit(state, guard.actor, "checkpoint_rejected", `Checkpoint:${body.taskGroupId || "unknown"}:${body.workId || "unknown"}`, result.error);
-      recordCheckpointRejection(state, body, result);
-      // 走直写提交：这条路径没有 finishGuardedWrite，而裸 writeState 会被"未推进版本号"的守卫拦下
-      // （它就是为了拦住这种写法而存在的）。
-      commitUnguardedWrite(state);
-      json(res, result.status || 409, {
-        error: result.error,
-        ...(result.deniedPaths ? {deniedPaths: result.deniedPaths} : {}),
-        ...(result.commit ? {commit: result.commit} : {}),
-        ...(result.expected ? {expected: result.expected} : {}),
-        ...(result.actual ? {actual: result.actual} : {})
-      });
-      return;
-    }
-    audit(state, guard.actor, "checkpoint_submit", `Checkpoint:${result.checkpoint.taskGroupId}:${result.checkpoint.workId}`);
-    finishGuardedWrite(state, guard, 201, result.checkpoint);
+    // 【检查点只能走 agent 网关】。这条 REST 入口通向同一个 acceptAgentCheckpoint，
+    // 但少了网关那两样：节点凭据鉴权、以及"这个派发是不是你认领的"那道 claim 围栏 ——
+    // 于是持 agent-runtime 服务账号的调用方可以为【别的节点认领的派发】提交检查点。
+    // MCP 那扇同形的门早就明确挡回了（工具白名单 + 决策点各一道），而这一扇一直开着：
+    // 同一件事两条路只关了一条，是本仓反复出现的形态。
+    // 全仓没有任何调用方走它（agent 运行时用的是 /api/agent/v1/dispatches/:id/checkpoint），
+    // 所以关掉它不影响任何现有流程；留着才是把围栏做成可绕过的。
+    // 【先判权、再回"走网关"】。把整条路由关在守卫之前，会顺手把「谁允许提检查点」那道分类
+    // 判定变成不可观测的（真人提交本该 403 principal_not_allowed_for_action，而不是与
+    // agent 服务账号拿到同一句话）—— 关一扇门不该顺手拆掉门上的锁。
+    const guard = beginGuardedWrite(req, state, "checkpoint_submit",
+      `Checkpoint:${body.taskGroupId || "unknown"}:${body.workId || "unknown"}`, taskGroupScope(state, body.taskGroupId));
+    if (guard.status) return json(res, guard.status, guard.payload);
+    // 该走哪条路直接写进 message：单列一个 gatewayPath 字段的话，控制台一处都不读它，
+    // 而"拒绝报文里的字段必须有人看"是本仓的一道门（出错那一刻人最需要它）。
+    audit(state, guard.actor, "checkpoint_rejected", `Checkpoint:${body.taskGroupId || "unknown"}:${body.workId || "unknown"}`,
+      "checkpoint_must_use_agent_gateway");
+    finishGuardedWrite(state, guard, 409, {error: "checkpoint_must_use_agent_gateway"});
     writeState(state);
-    json(res, 201, result.checkpoint);
-    return;
+    return json(res, 409, {error: "checkpoint_must_use_agent_gateway",
+      message: "检查点必须由认领该派发的那个节点、用它自己的节点凭据经 agent 网关提交"
+        + "（POST /api/agent/v1/dispatches/:dispatchId/checkpoint）："
+        + "这条通道少了节点鉴权与认领围栏，无法证明提交者就是干这件活的那一个"});
   }
 
   const skillSyncMatch = url.pathname.match(/^\/api\/skill-sources\/([^/]+)\/sync$/);

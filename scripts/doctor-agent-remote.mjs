@@ -722,6 +722,36 @@ try {
     console.log(reclaimed
       ? `  ok  缺代次拒绝（检查点 + 失败上报）：用 attempts=${reclaimed.attempts} 的派发验过`
       : "  --  这一轮没有被重认领过的派发，'缺代次必须被拒'（检查点与失败上报两条）未被检验");
+    // 【缺 runId / runId 对不上都必须被拒】。这两条边界此前只在 REST 的 /api/checkpoints 上
+    // 被走到过，而那扇门 2026-08-27 关掉了（它少了节点鉴权与认领围栏）—— 判据跟着搬到
+    // 它们真正该被走到的地方：带节点凭据的网关这一条。
+    {
+      const anyClaimed = (await json("/api/state", {token: login.sessionToken})).agentDispatches
+        ?.find((item) => item.sessionId && item.runId);
+      if (!anyClaimed) {
+        throw new Error("本轮没有任何带会话与运行号的派发 —— 「缺 runId 必须被拒」这条会空转");
+      }
+      const missingRun = await jsonRaw(`/api/agent/v1/dispatches/${encodeURIComponent(anyClaimed.dispatchId)}/checkpoint`,
+        {method: "POST", token: JSON.parse(readFileSync(agentConfigPath, "utf8")).nodeToken,
+          body: {sessionId: anyClaimed.sessionId}});
+      // 对不上的 runId：派发是按 (会话, 任务组, 工作项, runId) 找的，找不到就说明这份检查点
+      // 不属于任何一次在跑的运行。这条边界原先也只在那扇已关闭的 REST 门上被走到过。
+      const wrongRun = await jsonRaw(`/api/agent/v1/dispatches/${encodeURIComponent(anyClaimed.dispatchId)}/checkpoint`,
+        {method: "POST", token: JSON.parse(readFileSync(agentConfigPath, "utf8")).nodeToken,
+          body: {sessionId: anyClaimed.sessionId, runId: "run_does_not_exist"}});
+      // 拒了不等于拒对了：真正先响的是网关【自己】那道绑定校验（URL 上的派发与报文里的
+      // runId 对不上），core 里那两条边界排在它后面、走不到 —— 如实点名先响的那一道，
+      // 并把 core 那两条登记进第二道门册（这里不写出它们的码：拒绝码棘轮按"码在门里出现过"
+      // 统计，写出来就会被当成"已有判据"，而登记不是判据）。
+      if (wrongRun.payload?.error !== "checkpoint_replay_binding_mismatch") {
+        throw new Error(`runId 对不上的检查点没被拒（${wrongRun.response.status}/${wrongRun.payload?.error}）—— `
+          + "这份检查点不属于任何一次在跑的运行");
+      }
+      if (missingRun.payload?.error !== "checkpoint_replay_binding_mismatch") {
+        throw new Error(`缺 runId 的检查点没被拒（${missingRun.response.status}/${missingRun.payload?.error}）—— `
+          + "runId 是「这份检查点属于哪次运行」的绑定强制点");
+      }
+    }
     if (reclaimed) {
       const noEpoch = await fetch(`${baseUrl}/api/agent/v1/dispatches/${encodeURIComponent(reclaimed.dispatchId)}/checkpoint`, {
         method: "POST",

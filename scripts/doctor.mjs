@@ -1188,13 +1188,16 @@ try {
   if (ownerCheckpointDenied.response.status !== 403 || ownerCheckpointDenied.payload?.error !== "principal_not_allowed_for_action") {
     throw new Error(`expected owner checkpoint submit 403, got ${ownerCheckpointDenied.response.status}`);
   }
-  const missingRunCheckpointDenied = await jsonFetch(port, "/api/checkpoints", {
+  // 「缺 runId 必须被拒」原先在这里验 —— 而这扇 REST 门 2026-08-27 关掉了（它少了节点鉴权
+  // 与认领围栏）。判据搬到了 doctor-agent-remote 的网关那条路上：那才是检查点真正走的地方。
+  // 这里改验这扇门确实关着，并且说清该走哪条路。
+  const restCheckpointDoor = await jsonFetch(port, "/api/checkpoints", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-agent-checkpoint-missing-run", authorization: agentAuth},
     body: JSON.stringify({taskGroupId: dispatched.taskGroupId, workId: dispatched.workItemId, sessionId: dispatched.sessionId})
   });
-  if (missingRunCheckpointDenied.response.status !== 409 || missingRunCheckpointDenied.payload.error !== "checkpoint_run_id_required") {
-    throw new Error(`expected checkpoint missing runId 409, got ${missingRunCheckpointDenied.response.status}:${missingRunCheckpointDenied.payload.error}`);
+  if (restCheckpointDoor.payload.error !== "checkpoint_must_use_agent_gateway") {
+    throw new Error(`检查点的 REST 门还开着（${restCheckpointDoor.response.status}:${restCheckpointDoor.payload.error}）`);
   }
   const wrongTarget = await jsonFetch(port, "/api/repository-output-targets", {
     method: "POST",
@@ -1223,14 +1226,14 @@ try {
       evidenceRefs: ["evidence:forged"]
     })
   });
-  // 这两条原先只判 409。实测它们落在 `active_agent_dispatch_required` ——
-  // 这一段里的派发还是 queued（不是 running），而"产出目标对不上""清单缺失"那两道门都在它后面，
-  // 也就是说**这两条从来没验到自己声称要验的东西**。收紧成点名码，把这个事实钉在明面上：
-  // 真正验那两道门的是契约门里的伪造夹具（它把派发置为 running 之后逐条走过）。
-  // 这里保留它们的价值是：证明"没有活跃派发就交检查点"这条边界本身还在。
-  if (forgedWrongTarget.response.status !== 409
-    || forgedWrongTarget.payload?.error !== "active_agent_dispatch_required") {
-    throw new Error(`没有活跃派发时交检查点，没有被 active_agent_dispatch_required 拦下`
+  // 这两条原先靠这扇 REST 门走到 core 的边界判定（而且实测落在"没有在跑的派发"那一支上，
+  // 从来没验到自己声称要验的"产出目标对不上/清单缺失"）。门 2026-08-27 关掉之后，
+  // 它们剩下的价值就是：这扇门确实关着。真正验那两道的是契约门里的伪造夹具。
+  // 这两条原先靠 REST 那扇门走到 core 的边界判定；门 2026-08-27 关掉之后，
+  // 边界判定搬去 doctor-agent-remote 的网关那条路验（缺 runId / runId 对不上各一条）。
+  // 这里剩下的价值是：这扇门确实关着，且说清了该走哪条路。
+  if (forgedWrongTarget.payload?.error !== "checkpoint_must_use_agent_gateway") {
+    throw new Error(`检查点的 REST 门还开着`
       + `（${forgedWrongTarget.response.status} ${JSON.stringify(forgedWrongTarget.payload).slice(0, 120)}）`);
   }
   const forgedMissingManifest = await jsonFetch(port, "/api/checkpoints", {
@@ -1251,9 +1254,8 @@ try {
       evidenceRefs: ["evidence:forged"]
     })
   });
-  if (forgedMissingManifest.response.status !== 409
-    || forgedMissingManifest.payload?.error !== "active_agent_dispatch_required") {
-    throw new Error(`没有活跃派发时交检查点（缺清单那一版），没有被 active_agent_dispatch_required 拦下`
+  if (forgedMissingManifest.payload?.error !== "checkpoint_must_use_agent_gateway") {
+    throw new Error(`检查点的 REST 门还开着（缺清单那一版）`
       + `（${forgedMissingManifest.response.status} ${JSON.stringify(forgedMissingManifest.payload).slice(0, 120)}）`);
   }
   const workerResult = await jsonFetch(port, "/api/verification/agent-runtime/run", {
@@ -3905,7 +3907,50 @@ try {
     }
     console.log(`  ok  系统概览取数口：${readPaths.length} 个界面读的字段逐个核对，都在响应里`);
 
-    // 【控制台真人定稿这条路的正面】。按状态码记账量出来：/api/human-confirmations/:id/decide
+  // 【接入一个逻辑智能体、再把它停掉】。按状态码记账量出来：POST /api/agents 与
+  // /api/agents/:id/activate 在整套控制面 e2e 里【从没返回过 2xx】—— 打过它们的只有空 body
+  // 扫描（期待被拒）和几条反面用例。而启停是一条真杠杆：停掉之后编排不该再派活给它。
+  {
+    const created = await jsonFetch(port, "/api/agents", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-agent-create", authorization: doctorSystemAuth},
+      body: JSON.stringify({role: "qa", projectId: "prj_control_plane", displayName: "质量探针智能体"})
+    });
+    if (created.response.status !== 201) {
+      throw new Error(`建不出逻辑智能体（${created.response.status}/${created.payload?.error}）`);
+    }
+    const agentId = created.payload?.agent?.id || created.payload?.id;
+    const agentStatus = created.payload?.agent?.status || created.payload?.status;
+    if (!agentId || agentStatus !== "active") {
+      throw new Error(`新建的智能体状态不对（${agentStatus}）：${JSON.stringify(created.payload).slice(0, 200)}`);
+    }
+    // 停用要真的落下去：界面上的启停按钮只认 active/inactive，落成别的取值那个按钮就永远显示「启用」。
+    const deactivated = await jsonFetch(port, `/api/agents/${encodeURIComponent(agentId)}/activate`, {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-agent-deactivate", authorization: doctorSystemAuth},
+      body: JSON.stringify({active: false})
+    });
+    if (!deactivated.response.ok) {
+      throw new Error(`停用智能体被挡住了（${deactivated.response.status}/${deactivated.payload?.error}）`);
+    }
+    const deactivatedStatus = deactivated.payload?.agent?.status || deactivated.payload?.status;
+    if (deactivatedStatus !== "inactive") {
+      throw new Error(`停用之后状态是 ${deactivatedStatus}（应为 inactive）—— `
+        + "界面的启停按钮只认 active/inactive，落成别的取值那个按钮就永远显示「启用」");
+    }
+    // 再启用回来：这条路两个方向都要走得通（只验一边的话，把它写成恒返回 inactive 也照样绿）。
+    const reactivated = await jsonFetch(port, `/api/agents/${encodeURIComponent(agentId)}/activate`, {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-agent-reactivate", authorization: doctorSystemAuth},
+      body: JSON.stringify({active: true})
+    });
+    if ((reactivated.payload?.agent?.status || reactivated.payload?.status) !== "active") {
+      throw new Error(`重新启用没落下去：${JSON.stringify(reactivated.payload).slice(0, 200)}`);
+    }
+    console.log(`  ok  逻辑智能体：${agentId} 接入、停用、再启用三步都落到状态上`);
+  }
+
+  // 【控制台真人定稿这条路的正面】。按状态码记账量出来：/api/human-confirmations/:id/decide
     // 在整套控制面 e2e 里【从没返回过 2xx】—— 打过它的只有两条反面用例和空 body 扫描。
     // 而这是控制台上「选择定稿」那个按钮走的路，也是整套系统最重要的一道闸门：
     // 它要是把真人也挡住了，表现是「AI 提的方案永远没人能拍板」，而所有反面断言照样全绿。
@@ -4586,7 +4631,7 @@ console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条�
   // 一条从没成功执行过的路由看起来是覆盖的 —— 实测 /api/role-skill-overlays 就是这样：
   // 全仓除文档外没有任何调用方，轨迹里那两次全是那条扫描打的，roleSkillOverlays 这个集合
   // 至今没被任何套件产出过。这条棘轮盯住「成功过」的条数，只升不降。
-  const SUCCEEDED_ROUTE_FLOOR = 64;
+  const SUCCEEDED_ROUTE_FLOOR = 66;
   const neverSucceeded = routes.map((route) => route.route)
     .filter((route) => !succeeded.has(route) && !OTHER_SUITE_COVERS[route]).sort();
   if (succeeded.size < SUCCEEDED_ROUTE_FLOOR) {

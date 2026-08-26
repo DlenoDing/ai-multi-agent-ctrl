@@ -6618,6 +6618,32 @@ const MUTATIONS = [
     expect: "把新成员的默认项目设成已归档项目没被拒"
   },
   {
+    name: "检查点的 REST 门必须关着",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    return json(res, 409, {error: "checkpoint_must_use_agent_gateway",',
+    to: '    if (false) return json(res, 409, {error: "checkpoint_must_use_agent_gateway",',
+    expect: "检查点的 REST 门还开着"
+  },
+  {
+    name: "关门之后仍要先判「谁允许提检查点」",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    const guard = beginGuardedWrite(req, state, \"checkpoint_submit\",\n      `Checkpoint:${body.taskGroupId || \"unknown\"}:${body.workId || \"unknown\"}`, taskGroupScope(state, body.taskGroupId));\n    if (guard.status) return json(res, guard.status, guard.payload);",
+    to: "",
+    expect: "expected owner checkpoint submit 403"
+  },
+  {
+    name: "逻辑智能体停用要真的落到状态上",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (typeof body.active !== "boolean") {',
+    to: "    if (false) {",
+    // 先响的是空 body 扫描那条更早的断言（「一个字段都不给也成功了」）—— 它守的正是
+    // 同一件事的更强形式：路径叫 activate，而停用走的也是它，缺省不能替人选一边。
+    expect: "一个字段都不给】也成功了"
+  },
+  {
     name: "入参可达性要看得见 case 里第二个函数",
     file: "apps/mcp-server/server.mjs",
     check: "verifyToolArgReachabilityIsRegistered",

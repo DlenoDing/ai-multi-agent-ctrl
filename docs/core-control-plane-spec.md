@@ -399,7 +399,7 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/commands` | 创建 command | orchestrator、command-bus、agent-runtime |
 | POST | `/api/leases/claim` | 获取 lease | scheduler、agent-runtime |
 | POST | `/api/leases/:leaseId/release` | 释放 lease | agent-runtime、orchestrator |
-| POST | `/api/checkpoints` | 提交 checkpoint | agent-runtime |
+| POST | `/api/checkpoints` | **已关闭**：一律回 `checkpoint_must_use_agent_gateway`。检查点只能由认领该派发的节点经 `/api/agent/v1/dispatches/:dispatchId/checkpoint` 提交（这条通道少了节点鉴权与认领围栏，无法证明提交者就是干这件活的那一个） | — |
 | POST | `/api/artifacts` | 注册 artifact | agent-runtime、evidence-mcp |
 | POST | `/api/permission-requests` | 提交权限阻断 | permission-gateway、agent-runtime |
 | POST | `/api/approval-requests` | 创建审批状态机对象 | decision-center、policy-engine、orchestrator |
