@@ -1987,6 +1987,21 @@ function runNoVisibleProjectCase() {
       /定稿于/u.test(closedText) && /管理员/u.test(closedText),
       "屏幕上只有一个「已关闭」，谁定的、什么时候定的都追不到");
 
+    // 没选出模型的那一条决策，屏幕上原本只剩一个"任务类型"：为什么没选出来、按的是哪条
+    // 策略的硬约束，都写进了记录却没有任何读取点。人看到的是"这个工作项就是没有模型"。
+    const denialState = structuredClone(stuckState);
+    denialState.modelSelectionDecisions = [{decisionId: "msd1", taskGroupId: "tg1", workItemId: "wi_9",
+      roleId: "implementer", status: "denied", taskExecutionClass: "code_change",
+      denialReason: "no_candidate_satisfied_hard_constraints", fallbackPolicyRef: "msp_impl"}];
+    const denialText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, denialState, "monitor", "p1");
+    check("没选出模型时要说得出为什么、按的是哪条策略",
+      /没有任何候选模型同时满足硬约束/u.test(denialText) && /msp_impl/u.test(denialText),
+      `选型行上只有一个任务类型，人查不下去。渲染出来的片段：${String(denialText).replace(/<[^>]+>/gu, " ").match(/模型选择[\s\S]{0,200}/u)?.[0] || "（这一屏没渲染出模型选择）"}`);
+    check("原因码不许原样摆给人看",
+      !/no_candidate_satisfied_hard_constraints/u.test(denialText),
+      "把 no_candidate_satisfied_hard_constraints 直接印在屏幕上了");
+
     // 关闭门被 artifacts_verified 挡住时，人被告知"等执行方补齐证据，或取消对应工作项" ——
   // 却不知道该盯哪一条产物。artifacts 那时在防泄漏白名单里，但没有任何视图真的下发它。
     {
@@ -4437,6 +4452,69 @@ await runCodedApiErrorCase();
   if (undelivered.length) {
     failures.push(`视图接线: 控制台读了 ${undelivered.join("、")}，但 server.mjs 的任何视图都不下发它 ——`
       + " 读一个从不下发的字段不会报错，只会让界面永远显示空，人以为那里本来就没东西");
+  }
+}
+
+// 上面那道门是【按页无差别】的：它只问"有没有哪个视图下发过这个字段"，不问"这一页手上
+// 那份 state 里有没有"。监控页是唯一把两个视图拼起来的页 —— 它从 runtime 视图里【只挑了
+// 几个键搬过来】，其余的即便服务端下发了也到不了 renderMonitor 手上。实测 modelSelectionPolicies
+// 就是这样：runtime 视图带着它（7.7KB），监控页合并时丢掉，别的页又一处都不读 —— 白付的载荷，
+// 而在这一页读它会永远是空数组，界面上不会报错，只会永远显示不出策略名。
+{
+  const appSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const serverSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const sliceBalanced = (text, from, open, close) => {
+    const at = text.indexOf(open, from);
+    if (at < 0) return "";
+    let depth = 0;
+    for (let index = at; index < text.length; index += 1) {
+      if (text[index] === open) depth += 1;
+      else if (text[index] === close) { depth -= 1; if (!depth) return text.slice(at, index + 1); }
+    }
+    return "";
+  };
+  const monitorBranchAt = appSource.indexOf('page === "monitor"');
+  const mergeAt = appSource.indexOf("state = {", monitorBranchAt);
+  const mergeBlock = monitorBranchAt < 0 ? "" : sliceBalanced(appSource, mergeAt, "{", "}");
+  const merged = new Set([...mergeBlock.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:/gmu)].map((m) => m[1]));
+  const tasksLine = serverSource.match(/^\s*tasks: \[([^\]]*)\]/mu);
+  const tasksView = new Set([...(tasksLine?.[1] || "").matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"/gu)].map((m) => m[1]));
+  const bodyOf = (name) => {
+    const at = appSource.indexOf(`function ${name}(`);
+    return at < 0 ? "" : sliceBalanced(appSource, at, "{", "}");
+  };
+  const readsIn = (text) => [...text.matchAll(/state\s*(?:\|\|\s*\{\})?\s*\)?\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)/gu)]
+    .map((m) => m[1]);
+  const renderBody = bodyOf("renderMonitor");
+  // 按【函数体】切会漏掉它调用的通用函数：modelSelectionPolicies 的读取就在
+  // modelDecisionSummaryZh 里，只切 renderMonitor 的话这道门整个看不见它。
+  // 所以把它直接调用的那些本文件函数也展开一层（更深的调用链不展开，就此说明白）。
+  const calledHelpers = new Set([...renderBody.matchAll(/\b([a-z][A-Za-z0-9_]*)\s*\(/gu)].map((m) => m[1]));
+  const monitorReads = new Set([
+    ...readsIn(renderBody),
+    ...[...calledHelpers].flatMap((name) => readsIn(bodyOf(name)))
+  ]);
+  if (!merged.size || !tasksView.size || monitorReads.size < 5) {
+    failures.push(`监控页接线: 只解析到 合并 ${merged.size} 键 / tasks 视图 ${tasksView.size} 键 / `
+      + `renderMonitor 读 ${monitorReads.size} 键 —— 提取与代码脱节，本条在空转`);
+  } else {
+    // base（每个视图都带的那几项：runtime、accountDirectory 之类）不在这两份清单里，
+    // 但它一定到得了手上。按"服务端 base 块里出现过"放行，不另抄一份名字。
+    const baseBlock = sliceBalanced(serverSource, serverSource.indexOf("const base = {"), "{", "}");
+    const baseKeys = new Set([
+      ...[...baseBlock.matchAll(/^\s{4}([A-Za-z_][A-Za-z0-9_]*):/gmu)].map((m) => m[1]),
+      // base 上还有一批是【后补的】（base.x = …，只在真发生时才挂），以及各作用域投影里
+      // 补的那几项。它们同样一定到得了手上，按写法认出来，不另抄一份名字。
+      ...[...serverSource.matchAll(/\bbase\.([A-Za-z_][A-Za-z0-9_]*)\s*=/gu)].map((m) => m[1]),
+      ...[...serverSource.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*): state\.[A-Za-z_]/gmu)].map((m) => m[1])
+    ]);
+    const missing = [...monitorReads]
+      .filter((field) => !merged.has(field) && !tasksView.has(field) && !baseKeys.has(field))
+      .sort();
+    if (missing.length) {
+      failures.push(`监控页接线: renderMonitor 读了 ${missing.join("、")}，而这一页手上那份 state `
+        + "既不来自 tasks 视图、也不在它从 runtime 视图挑出来的合并清单里 —— 永远是空，界面不报错只显示不出来");
+    }
   }
 }
 

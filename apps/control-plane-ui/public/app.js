@@ -648,6 +648,16 @@ function modelDecisionSummaryZh(decision) {
   if (model) parts.push(`选定模型：${model}`);
   const reasoning = decision.selectedModel?.reasoningLevel || decision.reasoningLevel;
   if (reasoning) parts.push(`推理档：${REASONING_LEVEL_LABELS[reasoning] || reasoning}`);
+  // 没选出模型的那一条此前在屏幕上只剩一个任务类型：为什么没选出来（denialReason）、
+  // 按的是哪条策略的硬约束（fallbackPolicyRef）都写了，却没有任何读取点 ——
+  // 人看到的是"这个工作项就是没有模型"，查不下去。派发时那句报错只在【那一刻】出现。
+  if (decision.denialReason) {
+    parts.push(`未选出模型：${explainCoded(decision.denialReason)}`);
+    // 只报策略【引用】，不去读 modelSelectionPolicies：主视图有意清空了那个集合（没人读），
+    // 而这一行不值得为一个名字把 7.7KB 重新挂回每一次轮询。策略明细有专用端点
+    //（/api/model-selection），拿着这个 id 就能查过去。
+    if (decision.fallbackPolicyRef) parts.push(`按策略 ${decision.fallbackPolicyRef} 的硬约束`);
+  }
   // t() 自己就把空值渲染成 "-"；再兜一个 "-" 进去，等于拿显示文本当词条去查，
   // 开发期的"未映射枚举值"告警里就会混进 "-" 这种噪声，把真正漏译的那几条埋掉。
   return parts.length ? parts.join(" · ") : t(decision.selectionMode);

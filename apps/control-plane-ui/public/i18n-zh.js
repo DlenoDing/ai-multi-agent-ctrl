@@ -86,6 +86,8 @@
     grant_subject_account_retired: "这个账号已注销（不可恢复）：给它发授权不会有任何效果",
     // 注销时人没写理由的缺省值 —— 它会直接出现在账号行上，不译就是把码摆给人看。
     human_retire_decision: "人工决定注销（当时没有填写理由）",
+    // 模型选型没选出候选的唯一原因码。它会直接出现在运行时页的选型行上。
+    no_candidate_satisfied_hard_constraints: "没有任何候选模型同时满足硬约束（能力档 / 推理档 / 上限）",
     member_default_project_not_found: "默认项目指不到任何项目：请从下拉里选一个，或留空表示不指定",
     member_default_project_outside_organization: "默认项目不属于这个组织：成员进不去，等于没设",
     member_default_project_archived: "这个项目已归档（不能再建新工作）：新成员一进来就无事可做",

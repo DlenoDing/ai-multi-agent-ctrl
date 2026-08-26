@@ -9646,6 +9646,22 @@ const MUTATIONS = [
     to: '  if (true) return "";',
     expect: "人不知道该盯哪个格子"
   },
+  {
+    name: "没选出模型时要说得出为什么、按的是哪条策略",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (decision.denialReason) {",
+    to: "  if (false) {",
+    expect: "选型行上只有一个任务类型"
+  },
+  {
+    name: "监控页拼两个视图时丢掉的键，在这一页读它永远是空",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "        admissionDecisions: runtimeState.admissionDecisions || [],",
+    to: "        _dropped: runtimeState.admissionDecisions || [],",
+    expect: "监控页接线"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
