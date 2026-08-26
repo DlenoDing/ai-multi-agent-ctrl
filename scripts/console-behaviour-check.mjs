@@ -362,10 +362,37 @@ if (process.env.AIMAC_RENDER_REAL) {
   // 产品里不会这样：切页会重新加载，成功就清掉 lastError。我为此查过一轮才确认是工具的锅。
   console.log("（横幅里的失败请求可能来自【上一页】：本工具逐页渲染、不重走 loadPage，而 lastError 是全局的；"
     + "产品里切页会重新加载并清掉它 —— 看到「本页很新 + 别的页的 404」这种搭配，那是工具的拼接）\n");
-  console.log("（这些数是服务端视图算出来的，本工具喂的是原始状态 —— 它们显示成 0/缺省是工具的缺省，"
-    + "不是产品算错了：任务组「角色数」(roleCount)、按任务组的权限(taskGroupPermissions)、"
+  const noticeOfDerivedFields = "（这些数是服务端视图算出来的，本工具喂的是原始状态 —— 它们显示成 0/缺省是工具的缺省，"
+    + "不是产品算错了：任务组「角色数」(roleCount)、任务组里嵌的工作项条数(workItemCount/workItemsTruncated)、"
+    + "任务拆解条数(itemCount)、按任务组的权限(taskGroupPermissions)、"
     + "技能源角色数(roleSkillCountBySource，它也决定「系统内置技能（共 N 个）」那个数)、"
-    + "各表的「共 N+ 条」截断标记）\n");
+    + "各表的「共 N+ 条」截断标记）";
+  console.log(`${noticeOfDerivedFields}\n`);
+  // 上面那句提醒是【手写的固定清单】，而手写的清单本身就是漏洞来源：将来投影里多算一个派生字段，
+  // 它不会跟着更新，而屏幕上那个字段会安静地显示成 0 —— 勘察工具不报红，只是把错的东西摆给你看。
+  // 所以从投影函数的源码里现取一遍，核这句话有没有漏。
+  {
+    const serverSource = fs.readFileSync(path.join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+    const at = serverSource.indexOf("function projectTaskGroupsForView(");
+    const body = at < 0 ? "" : serverSource.slice(at, serverSource.indexOf("\n}\n", at));
+    // 只认【真正被返回的那几个对象字面量】里的键。整份函数体里扫的话，
+    // taskAnalysis.items / languagePolicy.languageTag 这类嵌套键会被当成任务组自己的字段（误报三个）。
+    const returned = [
+      body.slice(body.indexOf("const projected = {"), body.indexOf("\n    if (items.length")),
+      ...[...body.matchAll(/return \{[\s\S]*?\};/gu)].map((m) => m[0])
+    ].join("\n");
+    const derived = [...new Set([...returned.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*): [a-z]/gu)].map((m) => m[1]))]
+      .filter((key) => !(real.taskGroups || []).some((group) => group[key] !== undefined));
+    if (at < 0) {
+      console.log("（找不到 projectTaskGroupsForView —— 上面那句「派生字段」提醒已经无人核对，别全信它）\n");
+    } else {
+      const unmentioned = derived.filter((key) => !noticeOfDerivedFields.includes(key));
+      if (unmentioned.length) {
+        console.log(`（上面那句提醒【漏了】这几个同样是视图现算的字段：${unmentioned.join("、")}`
+          + " —— 它们在这份输出里也会显示成 0/缺省，同样不是产品的值）\n");
+      }
+    }
+  }
   // 还有一类是【服务端读取时注入的内存心跳】：盘上那份状态里恒为 null。
   // 拿 npm run init 出来的目录渲染时，系统设置页会显示「后台自治 已关闭」——
   // 而默认其实是 60 秒一拍（AIMAC_ORCHESTRATOR_INTERVAL_MS ?? 60000）。我为此查过一轮才确认。
