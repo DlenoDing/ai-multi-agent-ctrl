@@ -89,7 +89,7 @@ import {
   revokeDispatchMcpGrants
 } from "../control-plane-ui/lib/agent-gateway.mjs";
 import { isTerminalDispatchStatus } from "../control-plane-ui/lib/lifecycle-states.mjs";
-import { mcpToolGroups, mcpToolNames } from "../control-plane-ui/lib/mcp-tool-catalog.mjs";
+import { mcpToolGroups, mcpToolNames, mcpToolInputKeys } from "../control-plane-ui/lib/mcp-tool-catalog.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const runtimeDir = resolve(root, process.env.AIMAC_RUNTIME_DIR || ".runtime");
@@ -263,7 +263,7 @@ export function createMcpToolDefinitions() {
     name,
     title: name,
     description: toolDescriptions[name] || `Execute ${name} through the AI multi-agent control-plane MCP proxy.`,
-    inputSchema: inputSchemaFor(name),
+    inputSchema: publishedInputSchemaFor(name),
     outputSchema: {
       type: "object",
       properties: {
@@ -281,7 +281,17 @@ export function createMcpToolDefinitions() {
   }));
 }
 
-function inputSchemaFor(name) {
+// 【收受面】：调用方传进来的参数按这份校验。这里仍是全量共用词表 —— 收窄它会让"老 agent 多传了
+// 一个现在不再公布的键"从成功变成硬失败，那是把一次文档收窄变成一次线上故障。公布面收窄了，
+// 新的调用方自然只会传公布的那些；这一侧留着容让度，两者的差别写在 publishedInputSchemaFor 上。
+// 收受面的参数词表。三道门此前各自去源码里切它（两处 indexOf 找一行字面量、一处更巧：
+// 它取 tools/list 第一个工具的 properties —— 那只在"每个工具都公布全量词表"时才等于词表，
+// 公布面一收窄它当场只剩 8 个键、判据静静空转）。词表就是这台服务器的入参契约，直接给出来。
+export function mcpAcceptedInputVocabulary() {
+  return Object.keys({...commonInputProperties(), actionReason: {type: "string"}, dryRun: {type: "boolean"}});
+}
+
+function acceptedInputSchemaFor(name) {
   const base = {
     type: "object",
     properties: commonInputProperties(),
@@ -295,9 +305,24 @@ function inputSchemaFor(name) {
       ...base.properties,
       actionReason: {type: "string"},
       dryRun: {type: "boolean"}
-    },
-    ...(requiredInputPropertiesFor(name).length ? {required: requiredInputPropertiesFor(name)} : {})
+    }
   };
+}
+
+// 【公布面】：tools/list 里告诉调用方这个工具收哪几个参数。原先它与收受面是同一份，于是每个工具
+// 都公布全仓 166 个属性的并集 —— 默认服务令牌一次 tools/list 255KB（约 65k token），而中位数的
+// 工具只读 4 个键。读的人（agent 的上下文）既贵又分辨不出该传什么。按 mcpToolInputKeys 收窄；
+// 那张表由 contract-check 每次从派发链重新提取核对，工具多读一个键而表没跟上会当场报红。
+function publishedInputSchemaFor(name) {
+  const accepted = acceptedInputSchemaFor(name);
+  const keys = new Set([...(mcpToolInputKeys[name] || []), ...requiredInputPropertiesFor(name)]);
+  // 写工具的这三个键不来自派发链（守卫与幂等层读它们），但调用方确实该知道自己可以传。
+  if (!isReadOnlyTool(name)) for (const key of ["idempotencyKey", "actionReason", "dryRun"]) keys.add(key);
+  const properties = {};
+  for (const key of keys) {
+    if (accepted.properties[key]) properties[key] = accepted.properties[key];
+  }
+  return {...accepted, properties};
 }
 
 function requiredInputPropertiesFor(name) {
@@ -723,7 +748,7 @@ function validateInputArgs(name, args) {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
     return {ok: false, error: "mcp_input_must_be_object"};
   }
-  const schema = inputSchemaFor(name);
+  const schema = acceptedInputSchemaFor(name);
   const properties = schema.properties || {};
   for (const key of Object.keys(args)) {
     if (!properties[key]) return {ok: false, error: "mcp_input_unknown_property", property: key};

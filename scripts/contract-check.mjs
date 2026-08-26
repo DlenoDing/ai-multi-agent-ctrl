@@ -2,6 +2,7 @@
 import {
 execFileSync, spawn, spawnSync } from "node:child_process";
 import { dockerFailureAdvice } from "./lib/docker-failure-advice.mjs";
+import { mcpToolInputKeys } from "../apps/control-plane-ui/lib/mcp-tool-catalog.mjs";
 import { SCHEMA_FILE_ALIASES, UNCOVERED_CEILINGS, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { OPERATOR_CLIS, OPERATOR_SHELL_ENTRIES, OPERATOR_ENTRY_FILES, ENV_READING_SUPPORT_FILES } from "./lib/operator-entries.mjs";
 import { checkRecordStatusesAreDeclaredStates, extractMachineStates } from "./lib/state-machine-states.mjs";
@@ -27,7 +28,7 @@ import { recordAgentExecutionEvent } from "../apps/control-plane-ui/lib/agent-ga
 import { PROJECT_SHARD_COLLECTION_LIMITS } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import {
-  summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs, capacitySnapshot
+  summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, mcpAcceptedInputVocabulary, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs, capacitySnapshot
 } from "../apps/mcp-server/server.mjs";
 import {
   gitHeadOrNull,
@@ -863,6 +864,7 @@ run(verifyProjectAdminAndOwnerStayOnePerson);
 run(verifyHealthReadDoesNotCloneEveryRequest);
 run(verifyCallerChosenIdsCannotShadow);
 run(verifyToolArgReachabilityIsRegistered);
+run(verifyPublishedToolSchemasMatchWhatToolsRead);
 run(verifyEveryPredicateDeclaresItsCoverage);
 run(verifyEmptyEvidenceNeverReachesTheLedger);
 run(verifyPathAllowlistMatcherIsExercised);
@@ -8267,16 +8269,113 @@ function verifyCallerChosenIdsCannotShadow(output) {
     + `${Object.keys(CALLER_CHOSEN_ID_WITHOUT_ASSERT).length} 处登记了凭什么不用`);
 }
 
+// 【公布的入参必须是这个工具真读的那几个，而且一个都不能少】。tools/list 原先给 85 个工具都公布
+// 同一份共用词表（166 个属性）：默认服务令牌一次 255KB、约 65k token，而中位数的工具只读 4 个键 ——
+// 又贵，又让 agent 分辨不出该传什么。收窄之后风险反过来：表漏了一个键，调用方就"不知道自己可以传"，
+// 而这不会报错，只会让某个能力静静消失。所以这道门每次都【从派发链重新提取一遍】和表对照：
+// case → 处理函数 → 它转调的 core 工厂，按形参名跟（core 里第二个形参常叫 request/body，不叫 args）。
+// 与隔壁 verifyToolArgReachabilityIsRegistered 的区别：那条问"读了却传不进来"（词表缺键），
+// 这条问"传得进来却没公布"（公布表缺键）。两条共用同一份词表，但提取深度不同，故各写各的。
+function verifyPublishedToolSchemasMatchWhatToolsRead(output) {
+  const mcpSource = readFileSync(join(root, "apps/mcp-server/server.mjs"), "utf8");
+  const coreSource = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const dictionary = new Set(mcpAcceptedInputVocabulary());
+  if (dictionary.size < 100) {
+    output.push(`入参词表只提取到 ${dictionary.size} 个键 —— 提取脱节，本条在空转`);
+    return;
+  }
+  const functionAt = (name) => {
+    for (const text of [mcpSource, coreSource]) {
+      const hit = new RegExp(`\\n(?:export )?(?:async )?function ${name}\\(([^)]*)\\)\\s*\\{\\n([\\s\\S]*?)\\n\\}\\n`, "u").exec(text);
+      if (hit) return {params: hit[1], body: hit[2]};
+    }
+    return null;
+  };
+  const collect = (fn, depth, out) => {
+    const target = typeof fn === "string" ? functionAt(fn) : fn;
+    if (!target) return;
+    const argName = (target.params.split(",")[1] || "args").trim().split(/[=\s]/u)[0] || "args";
+    for (const hit of target.body.matchAll(new RegExp(`\\b${argName}\\??\\.(\\w+)`, "gu"))) out.add(hit[1]);
+    if (depth <= 0) return;
+    for (const call of target.body.matchAll(new RegExp(`\\b(\\w+)\\((?:state|[a-z]\\w*),\\s*(?:${argName}\\b|\\{\\s*\\.\\.\\.${argName})`, "gu"))) {
+      if (["JSON", "Object", "Array", "Math"].includes(call[1])) continue;
+      collect(call[1], depth - 1, out);
+    }
+  };
+  const cases = [...mcpSource.matchAll(/case "([\w.-]+)":\s*(?:\{)?([\s\S]*?)(?=\n\s{4}case "|\n\s{4}default:)/gu)];
+  if (cases.length < 60) {
+    output.push(`只识别到 ${cases.length} 条工具派发（工具共 ${mcpToolNames.length} 个）—— 提取脱节，本条在空转`);
+    return;
+  }
+  // 这 5 个没有对象参数。理由与 MCP 空参登记里那几条是分别写的，两处对不上时要当场发现。
+  const NO_OBJECT_ARGS = {
+    "scheduler-mcp.capacity_snapshot": "容量快照：算的是全局在制品，没有对象参数",
+    "model-mcp.model_capabilities": "模型能力表：读的是注册表全量",
+    "identity-mcp.permission_matrix_get": "权限矩阵：系统面全量",
+    "ui-console-mcp.runtime_health_get": "运行时健康：没有对象参数",
+    "ui-console-mcp.management_surface_get": "管理面清单：没有对象参数"
+  };
+  let missing = 0;
+  for (const [, tool, body] of cases) {
+    if (!mcpToolInputKeys[tool]) {
+      output.push(`${tool} 没有登记它读哪几个入参 —— 新工具要么进 mcpToolInputKeys，要么 tools/list 上它看起来一个参数都不收`);
+      continue;
+    }
+    const read = new Set();
+    collect({params: "state, args", body}, 3, read);
+    const published = new Set(mcpToolInputKeys[tool]);
+    for (const key of read) {
+      if (!dictionary.has(key) || published.has(key)) continue;
+      missing += 1;
+      output.push(`${tool} 读 args.${key}，而 tools/list 上它不公布这个键 —— 调用方不会知道可以传，`
+        + "能力就此静静消失（把这个键加进 mcpToolInputKeys）");
+    }
+  }
+  for (const [tool, keys] of Object.entries(mcpToolInputKeys)) {
+    if (!mcpToolNames.includes(tool)) {
+      output.push(`mcpToolInputKeys 里的 ${tool} 已经不是一个工具了 —— 登记过期`);
+      continue;
+    }
+    for (const key of keys) {
+      if (!dictionary.has(key)) {
+        output.push(`${tool} 公布了 ${key}，而共用词表里没有这个键 —— 公布了一个调用方传不进来的参数`);
+      }
+    }
+    if (!keys.length && !NO_OBJECT_ARGS[tool]) {
+      output.push(`${tool} 一个入参都不公布，而它不在"确实没有对象参数"那张表里 —— 要么补键，要么写明为什么`);
+    }
+  }
+  for (const tool of Object.keys(NO_OBJECT_ARGS)) {
+    if (mcpToolInputKeys[tool]?.length) {
+      output.push(`${tool} 登记着"没有对象参数"，实际公布了 ${mcpToolInputKeys[tool].join("、")} —— 登记过期`);
+    }
+  }
+  for (const tool of mcpToolNames) {
+    if (!mcpToolInputKeys[tool]) {
+      output.push(`${tool} 不在 mcpToolInputKeys 里 —— 它的 tools/list 条目会显示成"不收任何参数"`);
+    }
+  }
+  // 体积棘轮：这次是 85 个工具 60KB（原先 493KB）。回涨最可能的原因就是有人把公布面又接回共用词表。
+  const definitions = createMcpToolDefinitions();
+  const bytes = Buffer.byteLength(JSON.stringify(definitions));
+  const PUBLISHED_TOOL_LIST_BYTES_CEILING = 90_000;
+  if (bytes > PUBLISHED_TOOL_LIST_BYTES_CEILING) {
+    output.push(`tools/list 全量公布 ${(bytes / 1024).toFixed(0)}KB，超过上限 ${(PUBLISHED_TOOL_LIST_BYTES_CEILING / 1024).toFixed(0)}KB`
+      + " —— 每个 agent 连上来都要把它读进上下文；多半是公布面又退回了共用词表");
+  }
+  // 收受面【不能】跟着收窄这一条不在这里验：validateInputArgs 没有导出，为判据去导出内部函数
+  // 是本仓明令不做的事。它由 doctor-mcp 用真实的 tools/call 验（多传一个不公布的键仍要被接住）。
+  const advertised = definitions.reduce((total, item) => total + Object.keys(item.inputSchema.properties).length, 0);
+  console.log(`工具入参公布面：${cases.length} 条派发逐个重新提取核对，${mcpToolNames.length} 个工具共公布 ${advertised} 个属性`
+    + `（词表 ${dictionary.size} 个；全量 ${(bytes / 1024).toFixed(0)}KB，上限 ${PUBLISHED_TOOL_LIST_BYTES_CEILING / 1024}KB），漏公布 ${missing} 个（应为 0）；收受面仍容让未公布的键`);
+}
+
 function verifyToolArgReachabilityIsRegistered(output) {
   const mcpSource = readFileSync(join(root, "apps/mcp-server/server.mjs"), "utf8");
   const coreSource = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
-  const dictStart = mcpSource.indexOf("\n    accountId: string,");
-  const dictEnd = mcpSource.indexOf("\n  };", dictStart);
-  if (dictStart < 0 || dictEnd < 0) {
-    output.push("取不到 MCP 共用入参词表 —— 本条在空转（词表形状变了，提取要跟上）");
-    return;
-  }
-  const allowed = new Set([...mcpSource.slice(dictStart, dictEnd).matchAll(/^\s+(\w+):/gmu)].map((hit) => hit[1]));
+  // 词表由服务器自己给出（见 mcpAcceptedInputVocabulary）。原先这里按 "\n    accountId: string,"
+  // 这一行去 indexOf 切源码：词表里第一个键改个名，这道门就静静地什么也没查。
+  const allowed = new Set(mcpAcceptedInputVocabulary());
   if (allowed.size < 100) {
     output.push(`入参词表只提取到 ${allowed.size} 个键（远少于既有规模）—— 提取脱节，本条在空转`);
     return;
@@ -18370,7 +18469,10 @@ function verifyEveryProjectScopedIdIsScopeChecked(output) {
     // cross_org_grant_not_allowed 拦住（那道判定的注释写着它当初正是"两扇门只守一扇"修出来的）。
     subjectId: "授权申请的主体（谁要权限），不是对象地址；跨组织由铸造点的 cross_org_grant_not_allowed 守"
   };
-  const vocabulary = new Set(Object.keys(createMcpToolDefinitions()[0]?.inputSchema?.properties || {}));
+  // 词表取【收受面】而不是某个工具的公布面：公布面按工具收窄之后，"能传进来但没人公布"的键
+  // 恰恰是最该被这道门看住的那一批（原先这里取 tools/list 第一个工具的 properties，
+  // 那只在每个工具都公布全量词表时才等于词表 —— 一收窄就只剩 8 个键，判据静静空转）。
+  const vocabulary = new Set(mcpAcceptedInputVocabulary());
   if (vocabulary.size < 100) {
     output.push(`MCP 作用域覆盖核对：参数词表只取到 ${vocabulary.size} 个键，远少于预期 —— 提取逻辑失效，本条在空转`);
     return;

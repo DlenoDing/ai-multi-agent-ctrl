@@ -419,6 +419,12 @@ const DEAD_EXPORT_ACCEPTED = {
   assignDlqEntry: "同上",
   replayDlqEntry: "同上",
   relatedSharedDefinitionsForTest: "名字里就写明是测试辅助，专为门导出",
+  // 只有门在调，但它不是测试辅助：它是这台服务器【收受面】的入参词表（产品内部直接用
+  // commonInputProperties()）。三道门此前各自去源码里猜这份词表 —— 两处按 "accountId: string,"
+  // 这一行 indexOf 切、第三处取 tools/list 第一个工具的 properties（那只在"每个工具都公布全量
+  // 词表"时才等于词表：公布面一按工具收窄，它当场只剩 8 个键，判据静静空转）。给出一个唯一
+  // 真相源，比让三处继续各猜各的稳。
+  mcpAcceptedInputVocabulary: "只有门在调：MCP 收受面的入参词表，此前三道门各自解析源码去猜它（其中一处在公布面收窄后当场空转）",
   // 这一条不是"暂时没接上"，是【生产上根本没有这种对象】：真实授权是 state.accessGrants
   // （subjectRef/resource/role/permissions，由 server.mjs 三处与 core 一处 push 出来），
   // 而 spec/mcp-grant.schema.json 描述的 MCP 调用信封没有任何生产者。于是契约门那条

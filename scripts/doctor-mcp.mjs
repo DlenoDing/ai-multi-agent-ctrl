@@ -61,6 +61,45 @@ try {
   const listed = await mcp("tools/list", {});
   if (!Array.isArray(listed.tools) || listed.tools.length < 35) throw new Error("remote MCP service allowlist returned an incomplete integration surface");
   if (listed.tools.some((tool) => tool.name === "agent-control-mcp.runtime_run")) throw new Error("remote MCP still exposes server-side Agent execution");
+  // 【工具表要多小、以及它有没有说清自己收什么】。每个 agent 连上来都要把这张表读进上下文：
+  // 原先每个工具都公布同一份 166 个属性的共用词表（服务令牌 44 个工具 = 255KB / 约 65k token），
+  // 读的人既付了这笔钱、又分不出这个工具到底该传哪几个参数。收窄后这里守两件事：
+  // ① 总体积有上限；② 必填参数必须在自己的 properties 里 —— 公布表要是漏了必填键，
+  //    照着 schema 传的调用方会拿到 mcp_required_argument_missing，而 schema 上根本没有那个键。
+  const listedBytes = Buffer.byteLength(JSON.stringify(listed.tools));
+  if (listedBytes > 60_000) {
+    throw new Error(`服务令牌的 tools/list 有 ${(listedBytes / 1024).toFixed(0)}KB（${listed.tools.length} 个工具）——`
+      + " 每个 agent 连上来都要把它读进上下文；上限 60KB");
+  }
+  const unadvertisedRequired = listed.tools
+    .filter((tool) => (tool.inputSchema?.required || []).some((key) => !tool.inputSchema?.properties?.[key]))
+    .map((tool) => tool.name);
+  if (unadvertisedRequired.length) {
+    throw new Error(`这些工具把必填参数挡在了自己的 properties 之外：${unadvertisedRequired.join("、")} —— `
+      + "照着 schema 传的调用方永远填不上它");
+  }
+  const overPublished = listed.tools.filter((tool) => Object.keys(tool.inputSchema?.properties || {}).length > 40).map((tool) => tool.name);
+  if (overPublished.length) {
+    throw new Error(`这些工具公布了 40 个以上的入参：${overPublished.join("、")} —— 多半是公布面又退回了共用词表`);
+  }
+  // 收受面【不能】跟着收窄：多传一个不再公布的键，仍要按原样接住而不是硬失败。
+  const tolerant = await mcp("tools/call", {name: "ui-console-mcp.runtime_health_get", arguments: {sessionId: "sess_probe_unadvertised"}});
+  const tolerantPayload = JSON.parse(tolerant.content?.[0]?.text || "{}");
+  if (tolerantPayload.error === "mcp_input_unknown_property") {
+    throw new Error("收受面跟着公布面一起收窄了：多传一个不公布的键就被拒 —— "
+      + "公布面收窄是文档收窄，不该把老调用方原本成功的调用变成失败");
+  }
+  // 上面那条要能分辨「接住了」和「压根没走到入参校验」。入参校验是 callTool 的第一步（在授权之前），
+  // 所以只要拿到的不是入参层的拒绝，就说明它确实过了那一关 —— 这一步服务令牌还没有项目作用域，
+  // 调用会停在 mcp_principal_project_scope_unresolved 上，那是【入参之后】的门。
+  // （第一版这里要求 ok===true，于是这条断言从落地起就是空转的：自证当场把它抓了出来。）
+  const inputLayerRefusals = ["mcp_input_unknown_property", "mcp_input_type_mismatch", "mcp_input_must_be_object"];
+  if (inputLayerRefusals.includes(tolerantPayload.error) || inputLayerRefusals.includes(tolerantPayload.result?.error)) {
+    throw new Error(`收受面把未公布的键拒在了入参层：${JSON.stringify(tolerantPayload).slice(0, 160)}`);
+  }
+  if (!tolerantPayload.result && tolerantPayload.ok !== true) {
+    throw new Error(`容让度那条在空转：调用连一个可辨认的回执都没有（${JSON.stringify(tolerantPayload).slice(0, 160)}）`);
+  }
   if (listed.tools.some((tool) => tool.name === "identity-mcp.grant_create" || tool.name === "governance-mcp.approval_request_create" || tool.name === "evidence-mcp.checkpoint_submit")) {
     throw new Error("remote MCP service token exposed high-risk admin or Agent checkpoint tools");
   }

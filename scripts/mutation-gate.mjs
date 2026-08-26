@@ -6599,6 +6599,30 @@ const MUTATIONS = [
     expect: "拿到的不是 409/idempotency_key_reuse_conflict"
   },
   {
+    name: "工具公布的入参漏了一个就要被看见",
+    file: "apps/control-plane-ui/lib/mcp-tool-catalog.mjs",
+    check: "verifyPublishedToolSchemasMatchWhatToolsRead",
+    from: '  "governance-mcp.finding_submit": ["evidenceRefs", "findingId", "findingType", "severity", "status", "summary", "taskGroupId", "workId", "workItemId"],',
+    to: '  "governance-mcp.finding_submit": ["evidenceRefs", "findingId", "findingType", "severity", "status", "summary", "taskGroupId", "workId"],',
+    expect: "读 args.workItemId，而 tools/list 上它不公布这个键"
+  },
+  {
+    name: "收受面不许跟着公布面收窄",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "  const schema = acceptedInputSchemaFor(name);",
+    to: "  const schema = publishedInputSchemaFor(name);",
+    expect: "收受面把未公布的键拒在了入参层"
+  },
+  {
+    name: "公布面不许退回共用词表",
+    file: "apps/mcp-server/server.mjs",
+    check: "verifyPublishedToolSchemasMatchWhatToolsRead",
+    from: "    inputSchema: publishedInputSchemaFor(name),",
+    to: "    inputSchema: acceptedInputSchemaFor(name),",
+    expect: "超过上限"
+  },
+  {
     name: "记录不许挂到猜出来的任务组上（工厂共用的那道）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyRecordsCannotBeFiledUnderAGuessedTaskGroup",
