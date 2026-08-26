@@ -6607,6 +6607,22 @@ const MUTATIONS = [
     expect: "读 args.workItemId，而 tools/list 上它不公布这个键"
   },
   {
+    name: "角色技能叠加要真的改掉 agent 拿到的能力",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: "  const capabilities = unique([...(baseSkill.capabilities || []), ...(patch.allowedCapabilityAdds || [])]).filter((capability) => !forbidden.has(capability));",
+    to: "  const capabilities = unique([...(baseSkill.capabilities || []), ...(patch.allowedCapabilityAdds || [])]);",
+    expect: "而解析出来的技能里它还在"
+  },
+  {
+    name: "叠加的作用范围只限它挂的那个任务组",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: "  const taskGroupOverlay = request.taskGroupId ? newest(matching.filter((item) => item.taskGroupId === request.taskGroupId)) : null;",
+    to: "  const taskGroupOverlay = request.taskGroupId ? newest(matching) : null;",
+    expect: "作用范围没守住"
+  },
+  {
     name: "路由只被打过不算覆盖（要真的成功过）",
     file: "scripts/doctor.mjs",
     gate: "doctor",

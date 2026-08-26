@@ -649,6 +649,43 @@ try {
       throw new Error(`role_skill_overlay_validate 没给出回执：${JSON.stringify(overlayCheck).slice(0, 160)}`);
     }
 
+    // 【角色技能叠加：从没被跑通过的那条真人杠杆】。它改的是 agent 实际拥有的能力
+    //（含 forbiddenCapabilityAdds），控制台上明写「真人专属、控制台只读、由人经 API 创建」。
+    // 而按状态码记账量出来：/api/role-skill-overlays 全仓除文档外没有任何调用方，
+    // roleSkillOverlays 这个集合至今没被任何套件产出过 —— 也就没人验过它到底改没改动 agent。
+    {
+      const baseline = await call("skill-mcp.role_skill_resolve", {roleId: "agent-runtime", taskGroupId: TG});
+      const baseCapabilities = baseline.roleSkill?.capabilities || [];
+      if (!baseCapabilities.length) {
+        throw new Error(`agent-runtime 的技能没有能力项：${JSON.stringify(baseline).slice(0, 200)} —— 下面这条断言测不到「被改掉」`);
+      }
+      const forbidden = baseCapabilities[0];
+      const created = await api("/api/role-skill-overlays", {method: "POST", token: admin.sessionToken,
+        idempotencyKey: "doctor-mcp-overlay",
+        body: {roleSkillRef: baseline.roleSkill.roleSkillId.split("+")[0], scope: "task_group", taskGroupId: TG,
+          patch: {forbiddenCapabilityAdds: [forbidden]}}});
+      const overlayRecord = created.overlay || created;
+      if (overlayRecord.taskGroupId !== TG) {
+        throw new Error(`叠加挂错了任务组：${JSON.stringify(created).slice(0, 200)}`);
+      }
+      // 真正要验的是它【改没改掉 agent 拿到的东西】：只落一条记录而不生效，等于人按了一个没接线的开关。
+      const afterOverlay = await call("skill-mcp.role_skill_resolve", {roleId: "agent-runtime", taskGroupId: TG});
+      const afterCapabilities = afterOverlay.roleSkill?.capabilities || [];
+      if (afterCapabilities.includes(forbidden)) {
+        throw new Error(`叠加禁掉了 ${forbidden}，而解析出来的技能里它还在 —— `
+          + "那条记录落了账却没生效：人按了一个没接线的开关（控制台上还写着「正在改动 agent 实际拥有的能力」）");
+      }
+      if (!(afterOverlay.roleSkill?.overlayRefs || []).includes(overlayRecord.overlayId)) {
+        throw new Error(`解析结果没留下是哪条叠加改的（overlayRefs=${JSON.stringify(afterOverlay.roleSkill?.overlayRefs)}）——`
+          + " agent 拿到一份被改过的规则，却看不出被谁改过");
+      }
+      // 别的任务组不该被它波及：叠加的作用范围就是它挂的那一个。
+      const otherGroup = await call("skill-mcp.role_skill_resolve", {roleId: "agent-runtime", taskGroupId: "tg_runtime_management"});
+      if (!(otherGroup.roleSkill?.capabilities || []).includes(forbidden)) {
+        throw new Error(`挂在 ${TG} 上的叠加把 tg_runtime_management 的角色能力也改了 —— 作用范围没守住`);
+      }
+    }
+
     // 【外部升级包导入与角色定制落账】。这两个集合直到今天还没被任何套件产出过 ——
     // 也就没有任何门看得见它们的形状（externalUpgradeImports 连规范都没有，2026-08-27 才补）。
     const upgradeImport = await call("governance-mcp.system_upgrade_external_import", {
