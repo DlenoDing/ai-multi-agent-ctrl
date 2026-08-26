@@ -373,7 +373,13 @@ if (process.env.AIMAC_RENDER_REAL) {
     + "盘上的状态里恒为 null —— 本工具喂的是盘上那份，所以它总显示「已关闭」，那不是产品的默认值）\n");
   const documentRoot = el("div");
   const probe = loadConsole(documentRoot, {realI18n: true});
-  const strip = (html) => String(html).replace(/<[^>]+>/gu, " ").replace(/&nbsp;/gu, " ")
+  // 【禁用的控件要标出来】。剥成纯文本之后，disabled 的按钮和能按的长得一模一样 ——
+  // 读的人会把一屏"已经收起来了"的写按钮当成"摆着一个按不动的杠杆"去查（本轮差点就这么报了：
+  // 只读成员的项目设置页上四个写按钮其实都带 disabled，产品是对的）。
+  // 反过来更危险：真有一个该收而没收的按钮，在这份输出里也看不出来。
+  const strip = (html) => String(html)
+    .replace(/<(button|input|select|textarea)\b[^>]*\bdisabled\b[^>]*>/gu, (tag) => `${tag}〔不可用〕`)
+    .replace(/<[^>]+>/gu, " ").replace(/&nbsp;/gu, " ")
     .split("\n").map((line) => line.replace(/\s+/gu, " ").trim()).filter(Boolean).join("\n");
   const project = (real.projects || [])[0];
   const taskGroup = (real.taskGroups || [])[0];
@@ -448,6 +454,21 @@ if (process.env.AIMAC_RENDER_REAL) {
         continue;
       }
       console.log(`\n=== ${page} ===\n` + (clip(text) || "（空）"));
+      // 【这一屏上有哪些能按的动作】。读页面时最容易漏的一类问题是"摆着一个按不动的杠杆"，
+      // 而剥成文本之后按钮与普通文字长得一样。AIMAC_RENDER_BUTTONS=1 把按钮单列出来，
+      // 并标明是不是禁用的 —— 换个身份跑一遍，就能看出哪些写动作对这个人是敞开的。
+      if (process.env.AIMAC_RENDER_BUTTONS) {
+        const buttons = [...String(documentRoot.innerHTML || "").matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/gu)]
+          .map(([, attrs, label]) => ({
+            label: label.replace(/<[^>]+>/gu, "").replace(/\s+/gu, " ").trim().slice(0, 24),
+            disabled: /\bdisabled\b/u.test(attrs)
+          }))
+          .filter((item) => item.label);
+        const active = buttons.filter((item) => !item.disabled).map((item) => item.label);
+        const off = buttons.filter((item) => item.disabled).map((item) => item.label);
+        console.log(`  ↑ 可按的动作 ${active.length} 个：${active.join("、") || "（无）"}`
+          + (off.length ? `\n  ↑ 已禁用 ${off.length} 个：${off.join("、")}` : ""));
+      }
       if (unserved.size) {
         console.log(`  ↑ 这一页还向 ${[...unserved].join("、")} 取数，勘察桩没有答案 ——`
           + " 上面与之相关的空白是工具的限制，不是产品的空态");
@@ -706,6 +727,39 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     taskGroups: [], agentRuntimeNodes: [], agents: [], agentDispatches: [], workSessions: [],
     closeBarriers: [], qualityGates: [], findings: [], humanConfirmationRequests: [], humanDirectives: [],
     truncatedCollections: [], fleet: {online: 0, total: 0}};
+// 【只读成员那一屏不许有能按的写杠杆】。项目设置页对没有「项目授权管理」权限的人是只读的，
+// 页面也明说了这句话 —— 但那句话与按钮是两处各写各的：按钮少收一个，屏幕上就同时出现
+// "配置为只读"和一个按下去必被拒的保存键。判据按【渲染出来的 HTML】核，不看源码里的条件：
+// 条件写在哪一行都行，看得见的只有这一屏上还有没有能按的写动作。
+{
+  const viewerRoot = el("div");
+  const viewerProbe = loadConsole(viewerRoot, {realI18n: true});
+  const viewerState = {
+    projects: [{id: "p1", name: "只读探针项目", organizationId: "org_default", status: "active"}],
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    accounts: [], accessGrants: [], taskGroups: [], agentJoinTokens: [],
+    truncatedCollections: [], fleet: {online: 0, total: 0}
+  };
+  const viewer = {accountId: "u_viewer", email: "v@b.c", accountType: "user_account",
+    displayName: "只读成员", organizationId: "org_default", permissions: ["project:view"], effectivePermissions: ["project:view"]};
+  viewerProbe.renderFullPageWith(viewerState, viewer, "p1", "proj-settings");
+  const viewerHtml = String(viewerRoot.innerHTML || "");
+  const buttons = [...viewerHtml.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/gu)]
+    .map(([, attrs, label]) => ({label: label.replace(/<[^>]+>/gu, "").replace(/\s+/gu, " ").trim(), disabled: /\bdisabled\b/u.test(attrs)}));
+  const writeLabels = ["添加仓库", "添加基线", "添加角色", "保存项目配置"];
+  const rendered = writeLabels.filter((label) => buttons.some((item) => item.label === label));
+  check("只读成员的项目设置页确实渲染了那几个写按钮（否则下面这条在空转）",
+    rendered.length === writeLabels.length,
+    `只渲染出 ${rendered.length}/${writeLabels.length} 个写按钮：${rendered.join("、") || "（一个都没有）"}`);
+  const pressable = buttons.filter((item) => writeLabels.includes(item.label) && !item.disabled).map((item) => item.label);
+  check("只读成员按不动项目配置上的任何写按钮",
+    pressable.length === 0,
+    `这些写按钮对只读成员仍然可按：${pressable.join("、")} —— 同一屏上还写着「项目配置为只读」`);
+  check("并且屏幕上说清了为什么是只读",
+    viewerHtml.includes("项目配置为只读"),
+    "按钮收起来了却不说为什么，人只会以为页面坏了");
+}
+
 // 【组织概览显示的必须是这个账号自己的组织】。它原先取 state.organizations[0] —— 今天服务端
 // 只给组织管理员下发它自己那一个，所以"数组第一个"碰巧总是对的。而碰巧对意味着：服务端哪天
 // 多下发一个组织（系统管理员视角、或将来的跨组织视图），这一页就会把【别人组织的配额用量】

@@ -6792,6 +6792,14 @@ const MUTATIONS = [
     expect: "撤授权之后状态不是 revoked"
   },
   {
+    name: "只读成员不许按得动项目配置的写按钮",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '        <button class="primary-button" type="submit" ${editDisabled}>保存项目配置</button>',
+    to: '        <button class="primary-button" type="submit">保存项目配置</button>',
+    expect: "这些写按钮对只读成员仍然可按"
+  },
+  {
     name: "组织概览不许拿数组第一个组织当自己的",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
