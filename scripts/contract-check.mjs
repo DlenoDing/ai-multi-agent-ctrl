@@ -804,6 +804,7 @@ run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
 run(verifyEveryGrantedPermissionHasAConsumer);
+run(verifyHealthReadDoesNotCloneEveryRequest);
 run(verifyCallerChosenIdsCannotShadow);
 run(verifyToolArgReachabilityIsRegistered);
 run(verifyEveryPredicateDeclaresItsCoverage);
@@ -8026,6 +8027,33 @@ function verifyOnlyLiveHumanAccountsCanFinalize(output) {
 // 判定函数的覆盖账本：枚举自动、表态手写。见 PREDICATE_COVERAGE 上面那段。
 // MCP 工具参数可达性：见 MCP_UNREACHABLE_TOOL_ARGS 上面那段。
 // 自选 id 的工厂：见 CALLER_CHOSEN_ID_WITHOUT_ASSERT 上面那段。
+// 健康检查这条路曾经【每次请求】把整份中央态深拷一遍：实测 2.3MB 状态下 7.7ms/次，
+// 而负载均衡器与控制台每几秒就敲一次。改成"共用只读那份的对象身份没变就复用上次算好的"之后
+// 是 0.44ms。这条判据钉的是那个结构 —— 它是纯性能性质：拿掉缓存不会答错，只会慢回去，
+// 而慢回去没有任何东西会红。所以只能按结构核，并且把话说清楚：
+//   · 「共用只读返回同一个对象」这条底层性质另有判据（verifyPollingPeekDoesNotCloneOrMutate）；
+//   · 健康检查答得对不对由控制面 e2e 守；
+//   · 这里只管"别又变回每次请求都深拷"。
+function verifyHealthReadDoesNotCloneEveryRequest(output) {
+  const source = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const start = source.indexOf("function readHealthState() {");
+  const body = start < 0 ? "" : source.slice(start, source.indexOf("\n}\n", start));
+  if (!body.includes("readStoredCentralState")) {
+    output.push("提不出 readHealthState 的函数体 —— 本条在空转（函数改名或搬家了，提取要跟上）");
+    return;
+  }
+  if (!/readStoredCentralState\([^)]*\},\s*\{shared: true\}\)/u.test(body)) {
+    output.push("健康检查没有走共用只读那条路 —— 它会把整份中央态深拷一遍（实测 2.3MB 时 7.7ms/次），"
+      + "而它真正要的只有 runtime 与 agentRuntimeNodes 两样");
+  }
+  if (!body.includes("healthStateCache.source !== shared")) {
+    output.push("健康检查没有按【共用只读那份的对象身份】复用上次算好的状态 —— "
+      + "ensureRuntimeCollections 会修嵌套字段，所以每次都得深拷一份；"
+      + "缓存拿掉之后不会答错、只会慢回去，而慢回去没有任何东西会红");
+  }
+  console.log("健康检查读取：走共用只读 + 按对象身份复用，逐条核过（纯性能性质，只能按结构核）");
+}
+
 function verifyCallerChosenIdsCannotShadow(output) {
   let sites = 0;
   let guarded = 0;

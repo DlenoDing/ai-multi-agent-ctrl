@@ -3176,6 +3176,22 @@ const MUTATIONS = [
     expect: "看不到那个项目"
   },
   {
+    name: "健康检查不许又变回每次请求深拷整份状态",
+    file: SERVER,
+    check: "verifyHealthReadDoesNotCloneEveryRequest",
+    from: "  if (healthStateCache.source !== shared) {",
+    to: "  if (true) {",
+    expect: "没有按【共用只读那份的对象身份】复用"
+  },
+  {
+    name: "健康检查必须走共用只读那条路",
+    file: SERVER,
+    check: "verifyHealthReadDoesNotCloneEveryRequest",
+    from: "  const shared = readStoredCentralState({root, runtimeDir, statePath, seedPath, buildInitialState}, {shared: true});",
+    to: "  const shared = readStoredCentralState({root, runtimeDir, statePath, seedPath, buildInitialState});",
+    expect: "没有走共用只读那条路"
+  },
+  {
     name: "新的自选 id 工厂必须防撞车或登记原因",
     file: CORE,
     check: "verifyCallerChosenIdsCannotShadow",
@@ -4717,7 +4733,7 @@ const MUTATIONS = [
     name: "只拷了一半的备份必须报出来",
     file: "apps/control-plane-ui/server.mjs",
     gate: "crash",
-    from: "  const shardFault = projectShardStorageFault({root, runtimeDir, statePath, seedPath, buildInitialState}, state);",
+    from: "  const shardFault = projectShardStorageFault({root, runtimeDir, statePath, seedPath, buildInitialState}, shared);",
     to: "  const shardFault = null;",
     expect: "不许带着空项目照常起来"
   },

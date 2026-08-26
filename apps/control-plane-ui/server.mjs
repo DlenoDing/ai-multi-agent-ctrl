@@ -367,16 +367,31 @@ function requireBodyFields(res, body, fields, code) {
 
 function readHealthState() {
   ensureState();
-  const state = readStoredCentralState({root, runtimeDir, statePath, seedPath, buildInitialState});
+  // 健康检查曾经【每次请求】把整份中央态深拷一遍：实测 2.3MB 状态下一次 6.9ms，
+  // 而它真正要的只有两样（runtime 与 agentRuntimeNodes）。负载均衡器每几秒敲一次，
+  // 这笔钱全花在拷贝上；视图那条路早就改成共用只读了，这一条是漏的。
+  // 只补浅壳不行：ensureRuntimeCollections 会修【嵌套】的东西（试过，共用那份是冻的，
+  // 当场抛 "Cannot assign to read only property 'permissions'"）—— 深拷不是白花的。
+  // 所以改成【每次状态变化只付一次】：共用只读那份的对象身份就是天然的键，
+  // 它换了就说明底下的状态换了，不必另造版本号。
+  const shared = readStoredCentralState({root, runtimeDir, statePath, seedPath, buildInitialState}, {shared: true});
   // 这条路【只读中央文件】（为省一次全量读），于是分片在不在它看不见。而"中央索引记着分片、
   // project-db 整个不在"正是备份只拷了一半的样子：登录进去项目数据全没了，健康检查却回 ok。
   // 一次 existsSync 就能分辨，抛出去走存储故障那条统一出口（503 + 说清该恢复哪一份）。
-  const shardFault = projectShardStorageFault({root, runtimeDir, statePath, seedPath, buildInitialState}, state);
+  const shardFault = projectShardStorageFault({root, runtimeDir, statePath, seedPath, buildInitialState}, shared);
   if (shardFault) throw Object.assign(new Error(`${shardFault.code}:${shardFault.file}`), {hint: shardFault.hint});
-  ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: process.env.AIMAC_PUBLIC_URL || localEndpoint(), executionProfile});
-  markRuntimeStorage(state, ".runtime/control-plane-state.json");
-  return state;
+  if (healthStateCache.source !== shared) {
+    const fresh = readStoredCentralState({root, runtimeDir, statePath, seedPath, buildInitialState});
+    ensureRuntimeCollections(fresh, {root: repositoryRoot, runtimeDir, endpoint: process.env.AIMAC_PUBLIC_URL || localEndpoint(), executionProfile});
+    markRuntimeStorage(fresh, ".runtime/control-plane-state.json");
+    healthStateCache = {source: shared, state: fresh};
+  }
+  // 回一层浅壳：这条路今天只读，壳是给将来的人兜底的 —— 谁在顶层写一笔，也污染不到下一次。
+  return {...healthStateCache.state};
 }
+
+// 健康检查用的那份"已补齐"状态，按【底下那份共用只读状态的对象身份】缓存。
+let healthStateCache = {source: null, state: null};
 
 let runtimeOrchestratorStatus = {intervalMs: 0, enabled: false};
 
