@@ -6607,6 +6607,22 @@ const MUTATIONS = [
     expect: "读 args.workItemId，而 tools/list 上它不公布这个键"
   },
   {
+    name: "起跑之前的执行方案也要能终止",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: '    const cancellableFrom = ["planned", "eligibility_checked", "running", "integrating", "blocked", "needs_reconcile"];',
+    to: '    const cancellableFrom = ["running", "integrating", "blocked", "needs_reconcile"];',
+    expect: "MCP 工具链断在 scheduler-mcp.execution_topology_advance"
+  },
+  {
+    name: "没定稿的执行方案不许启动",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: '      throw topologyError("execution_topology_requires_human_plan_confirmation", 409);',
+    to: '      topology.humanFinalization = {decisionType: "plan_topology", outcome: "confirmed"};',
+    expect: "没定稿的方案被启动了"
+  },
+  {
     name: "角色套不到权限模板不许静默降成只读",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "doctor",

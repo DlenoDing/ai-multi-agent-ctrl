@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-multi-agent-ctrl/spec/runtime-issue-sample.schema.json",
+  "title": "RuntimeIssueSample",
+  "description": "运行时问题的【单次样本】。第一次撞上某个指纹时先记一条样本，再撞上才升级成 RuntimeIssuePattern（一次偶发不该立刻变成一条待处置的模式）。样本只有 sample_recorded 一个状态：它要么被升级成模式、要么被容量淘汰，没有生命周期。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "sampleId", "status", "issueClass", "issueFingerprint", "affectedComponents", "evidenceRefs", "createdAt"],
+  "properties": {
+    "schemaVersion": {"const": "runtime-issue-sample/v1"},
+    "sampleId": {"type": "string", "minLength": 1},
+    "status": {"enum": ["sample_recorded"]},
+    "issueClass": {"type": "string", "minLength": 1},
+    "issueFingerprint": {"type": "string", "minLength": 1},
+    "affectedComponents": {"type": "array", "items": {"type": "string"}},
+    "evidenceRefs": {"type": "array", "items": {"type": "string"}},
+    "sampleRefs": {"type": "array", "items": {"type": "string"}},
+    "createdAt": {"type": "string", "format": "date-time"}
+  }
+}

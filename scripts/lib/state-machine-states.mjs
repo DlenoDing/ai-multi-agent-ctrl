@@ -44,6 +44,8 @@ const COLLECTIONS_WITHOUT_STATE_MACHINE = {
   mcpCalls: "spec/mcp-call.schema.json 的 status enum（一次调用要么成了要么没成，没有生命周期）",
   // 这个集合此前【从没在任何 e2e 产出里出现过】（room_join 一次都没成功执行过），所以既没有
   // 规范也没被这道门看见。补规范时确认了它只有 joined 一个状态：离开是把记录淘汰掉，不改状态。
+  // 同因：runtime_issue_pattern_submit 此前一次都没成功执行过，这个集合从没出现在任何 e2e 产出里。
+  runtimeIssueSamples: "spec/runtime-issue-sample.schema.json 的 status enum（样本要么被升级成模式、要么被容量淘汰，没有生命周期）",
   roomParticipants: "spec/room-participant.schema.json 的 status enum（加入即 joined，离开是淘汰记录而不是改状态）"
 };
 

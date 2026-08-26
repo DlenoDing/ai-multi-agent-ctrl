@@ -401,10 +401,6 @@ try {
     if (!["cancelled", "aborted", "terminated"].includes(cancelled.session?.status)) {
       throw new Error(`session_cancel 之后会话状态是 ${cancelled.session?.status} —— 没被了结`);
     }
-    // 【MCP 这一侧的工厂也不许替调用方挑任务组】。core 那边已经改成"认不出就具名拒绝"并配了
-    // 判据，但 mcp-server 里还有一份【自己的】记录工厂（14 处 `|| "tg_runtime_management"`）——
-    // 同一件事两条路只改了一条。最重的两处：产出目标决定 agent 的改动落到哪个仓库/分支/路径；
-    // 评审结论回流会去终态化那个任务组的评审包、把评审覆盖记在它的评审计划上（写在没人点名的对象上）。
     // 【人工定稿这条链的正面从没被跑通过】。三道"真人专属"的处置（确认单定稿 / 审批处置 /
     // 权限请求处置）都只验过反面：机器主体拿不到、也走不到。可"真人能不能走通"同样是不变式的一半 ——
     // 定稿闸门若因为别的原因把真人也挡住了（守卫写成拒绝一切、或漏了 system_admin），
@@ -537,6 +533,80 @@ try {
         + `（真语料已同步：${(liveState.roleSkills || []).length} 条技能）；不是自己的一律留痕，是自己的不许乱标`);
     }
 
+    // 放在确认单那一段【之后】：建一份执行方案会改变编排这一拍的派发行为，
+    // 放在前面会让下面那条「取一个派发来提确认单」取不到东西（实测撞了一次）。
+    // 【执行方案与角色漂移这两族也没跑通过】。方案决定 agent 的活在哪跑（载体、隔离、分支划分），
+    // 漂移守卫决定「它有没有跑出自己的角色」—— 都是安全性质，而 MCP 这条路上一次都没成功执行过。
+    const topology = await call("scheduler-mcp.execution_topology_plan", {
+      taskGroupId: TG, workItemId: WORK, mode: "parallel_active", runnerKind: "git_worktree", isolation: "git_worktree",
+      branches: [
+        {branchId: "b_probe_1", objective: "链路探针分支一", ownedPaths: ["docs/probe-one/**"],
+          acceptanceChecks: ["npm run -s validate"], outputContract: ["diff", "manifest", "summary", "evidence"]},
+        {branchId: "b_probe_2", objective: "链路探针分支二", ownedPaths: ["docs/probe-two/**"],
+          acceptanceChecks: ["npm run -s validate"], outputContract: ["diff", "manifest", "summary", "evidence"]}
+      ]
+    });
+    const topologyId = topology.topology?.topologyId;
+    if (!topologyId || topology.topology.taskGroupId !== TG) {
+      throw new Error(`execution_topology_plan 没建出方案：${JSON.stringify(topology).slice(0, 200)}`);
+    }
+    // 先做资格检查（planned → eligibility_checked）：start 那道门在这之后才判得到。
+    const checked = await call("scheduler-mcp.execution_topology_advance",
+      {topologyId, action: "check_eligibility", localVerificationEvidenceRefs: ["evidence:doctor-mcp-chain"]});
+    const checkedTopology = checked.topology || checked;
+    if (checkedTopology.status !== "eligibility_checked") {
+      throw new Error(`资格检查之后状态是 ${checkedTopology.status}：${JSON.stringify(checked).slice(0, 240)}`);
+    }
+    // 【方案必须先由人定稿才能启动】：AI 不得自己决定「按哪种方案跑」。这条闸门此前只在
+    // REST 那一侧验过，MCP 这条路一次都没走到 —— 而 agent 走的正是这条。
+    const startedWithoutFinalization = await mcpAs(admin.sessionToken, "tools/call",
+      {name: "scheduler-mcp.execution_topology_advance",
+        arguments: {idempotencyKey: `doctor-mcp-chain-${++seq}`, topologyId, action: "start"}});
+    const startPayload = startedWithoutFinalization.structuredContent?.result
+      || JSON.parse(startedWithoutFinalization.content?.[0]?.text || "{}");
+    if (startPayload.error !== "execution_topology_requires_human_plan_confirmation") {
+      throw new Error(`没定稿的方案被启动了：${JSON.stringify(startPayload).slice(0, 240)} —— `
+        + "AI 就此自己决定了「按哪种方案跑」");
+    }
+    // 取消这条出口要走得通（非终态方案卡住时，人得有路可走）。
+    const cancelledPlan = await call("scheduler-mcp.execution_topology_advance",
+      {topologyId, action: "cancel", cancelRef: "human:doctor-mcp-chain"});
+    const cancelledTopology = cancelledPlan.topology || cancelledPlan;
+    if (!["cancelled", "aborted", "superseded"].includes(cancelledTopology.status)) {
+      throw new Error(`方案取消之后状态是 ${cancelledTopology.status} —— 非终态方案会一直挡着关闭门`);
+    }
+
+    const driftGuard = await call("governance-mcp.role_drift_guard_bind",
+      {sessionId: contract.sessionId, taskGroupId: TG, workItemId: WORK});
+    if (!driftGuard.contractRef && !driftGuard.drift) {
+      throw new Error(`role_drift_guard_bind 没绑上守卫：${JSON.stringify(driftGuard).slice(0, 200)}`);
+    }
+    const rebound = await call("governance-mcp.role_drift_rebound", {sessionId: contract.sessionId, taskGroupId: TG});
+    if (!rebound || typeof rebound !== "object") {
+      throw new Error(`role_drift_rebound 没给出回执：${JSON.stringify(rebound).slice(0, 160)}`);
+    }
+
+    // 运行时问题模式：agent 把「我又撞上这个坑了」报回来，用于后续的系统升级候选。
+    const issuePattern = await call("governance-mcp.runtime_issue_pattern_submit",
+      {taskGroupId: TG, summary: "链路探针：同一处超时反复出现", evidenceRefs: ["evidence:doctor-mcp-chain"]});
+    if (!issuePattern || typeof issuePattern !== "object") {
+      throw new Error(`runtime_issue_pattern_submit 没给出回执：${JSON.stringify(issuePattern).slice(0, 160)}`);
+    }
+    // 指令增量压缩：这条路决定发给 agent 的指令包有多大，是缓存效率那条线的入口。
+    const compacted = await call("instruction-mcp.delta_payload_compact", {
+      payload: {rules: ["a", "b", "c"], scope: "probe"},
+      delta: {rules: ["a", "b", "c", "d"], scope: "probe"},
+      stableRefs: ["rule:a", "rule:b"], locatorRefs: ["state://task-groups/" + TG]
+    });
+    if (!compacted || typeof compacted !== "object") {
+      throw new Error(`delta_payload_compact 没给出回执：${JSON.stringify(compacted).slice(0, 160)}`);
+    }
+
+    // 【MCP 这一侧的工厂也不许替调用方挑任务组】。core 那边已经改成"认不出就具名拒绝"并配了
+    // 判据，但 mcp-server 里还有一份【自己的】记录工厂（14 处 `|| "tg_runtime_management"`）——
+    // 同一件事两条路只改了一条。最重的两处：产出目标决定 agent 的改动落到哪个仓库/分支/路径；
+    // 评审结论回流会去终态化那个任务组的评审包、把评审覆盖记在它的评审计划上（写在没人点名的对象上）。
+
     // 共享定义这一族此前也没成功跑通过（create 只在别的门里被调过，publish/bind 一次都没有）。
     // 先建一份真的，下面那条"不点名任务组"的负面用例才测得到 bind 里那道守卫 ——
     // 否则它会先撞上"这份定义不存在"，看起来也是拒绝，测的却是另一件事。
@@ -596,7 +666,7 @@ try {
     // 本套 e2e 自己跑通的数（跨门合计另算：契约门在进程内还会跑通一批）。
     // 这个数是【实测出来的】—— 早先一次量到 44，复量不出来，那次多半把别的运行留下的账算了进去；
     // 以能复现的这次为准。棘轮只升不降。
-    const SUCCESSFULLY_EXERCISED_FLOOR = 39;
+    const SUCCESSFULLY_EXERCISED_FLOOR = 45;
     let traced = "";
     try { traced = readFileSync(toolTracePath, "utf8"); } catch { traced = ""; }
     const succeeded = new Set(traced.split("\n").filter((line) => line.startsWith("ok ")).map((line) => line.slice(3)));

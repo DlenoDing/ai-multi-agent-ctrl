@@ -1722,6 +1722,18 @@ machines:
         to: "cancelled"
         actor: "orchestrator"
         requires: ["cancel_ref"]
+      # 起跑之前也要有终止出口。原先 planned / eligibility_checked 通向终态的路只有 downgrade，
+      # 而 downgraded 的意思是「改成串行跑」，不是「决定不跑了」—— 人判定这个方案不该执行时，
+      # 只能把它记成一个语义相反的状态，而后来的人会把那条记录读作「已降级执行过」；
+      # 不记的话它就永远非终态，一直挡着关闭门（no_open_execution_topologies）。
+      - from: "planned"
+        to: "cancelled"
+        actor: "orchestrator"
+        requires: ["cancel_ref"]
+      - from: "eligibility_checked"
+        to: "cancelled"
+        actor: "orchestrator"
+        requires: ["cancel_ref"]
 
   DerivedTaskRequest:
     initial: "candidate"

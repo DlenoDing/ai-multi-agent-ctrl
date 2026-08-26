@@ -4153,6 +4153,7 @@ export function collectRuntimeIssue(state, request = {}) {
   if (!pattern) {
     if (matchingSamples.length === 0 && !request.forcePattern) {
       const sample = {
+        schemaVersion: "runtime-issue-sample/v1",
         sampleId: createId("ris"),
         status: "sample_recorded",
         issueClass: request.issueClass || "repeated_failure_fingerprint",
@@ -7790,7 +7791,11 @@ export function advanceExecutionTopology(state, args) {
     // 拓扑照样进入 integrating，而 merge 只认 accepted/reported、cancel 又够不着 —— 两头堵，
     // 并且 no_open_execution_topologies 会一直挡着关闭门。同理，写到批准范围之外留下的
     // owned_paths_disjoint 证据（刻意永不清除）也会让 merge 永远失败，那时唯一正确的出路就是取消。
-    const cancellableFrom = ["running", "integrating", "blocked", "needs_reconcile"];
+    // planned / eligibility_checked 也要能终止：起跑之前通向终态的路原先只有 downgrade，
+    // 而 downgraded 的意思是「改成串行跑」而不是「决定不跑了」—— 人判定这个方案不该执行时，
+    // 只能把它记成一个语义相反的状态；不记的话它就永远非终态，一直挡着关闭门
+    //（no_open_execution_topologies）。这两个状态下还没有任何人定稿，也就不存在"改变人的决定"。
+    const cancellableFrom = ["planned", "eligibility_checked", "running", "integrating", "blocked", "needs_reconcile"];
     if (!cancellableFrom.includes(topology.status)) {
       throw topologyError(`execution_topology_expected_${cancellableFrom.join("_or_")}`, 409,
         {currentStatus: topology.status, allowedStatuses: cancellableFrom,
