@@ -819,6 +819,7 @@ run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
 run(verifyEveryGrantedPermissionHasAConsumer);
+run(verifyProjectAdminAndOwnerStayOnePerson);
 run(verifyHealthReadDoesNotCloneEveryRequest);
 run(verifyCallerChosenIdsCannotShadow);
 run(verifyToolArgReachabilityIsRegistered);
@@ -8049,6 +8050,38 @@ function verifyOnlyLiveHumanAccountsCanFinalize(output) {
 //   · 「共用只读返回同一个对象」这条底层性质另有判据（verifyPollingPeekDoesNotCloneOrMutate）；
 //   · 健康检查答得对不对由控制面 e2e 守；
 //   · 这里只管"别又变回每次请求都深拷"。
+// 2026-08-26 人定：项目管理员与项目负责人【是同一个人】。两件事各钉一条：
+//   · 权限必须一直一样 —— 原先 admin 内联抄了与 owner 一字不差的七项，两份各自演化就会分叉，
+//     而分叉之后没有任何东西会红（两个角色照常都能授出去，只是给的东西悄悄不同了）；
+//   · 授权下拉里不许再同时摆两个 —— 摆两个会让人以为它们不一样，从而在两者之间做一次
+//     其实不存在的选择。「项目负责人」这个身份本身留着：建项目时创建者被自动记成它。
+function verifyProjectAdminAndOwnerStayOnePerson(output) {
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  if (!/project_admin: \[\.\.\.projectOwnerGrantPermissions\]/u.test(server)) {
+    output.push("项目管理员不再引用项目负责人那份权限常量了 —— 2026-08-26 人定两者是同一个人，"
+      + "各写一份的话它们会悄悄分叉，而分叉之后没有任何东西会红");
+  }
+  const console_ = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  // 切到【整份选项清单】的末尾，不是第一个 "]"：第一个 "]" 关的是第一个选项
+  //（["project_admin", "项目管理员"]），于是这里只看得见头一条 —— 变异把它照出来了：
+  // 把 project_owner 摆回第一位时，本条报的是"没有项目管理员"而不是"两个同时出现"。
+  const roleSelect = console_.slice(console_.indexOf('decisionSelect("role", ['));
+  const optionsEnd = roleSelect.indexOf('], "请选择项目角色');
+  if (optionsEnd < 0) {
+    output.push("取不到授权下拉的选项清单 —— 本条在空转（那个下拉改写了，提取要跟上）");
+    return;
+  }
+  const options = roleSelect.slice(0, optionsEnd);
+  if (options.includes('"project_owner"') && options.includes('"project_admin"')) {
+    output.push("授权下拉里又同时出现了「项目负责人」与「项目管理员」—— 2026-08-26 人定它们是同一个人，"
+      + "摆两个会让人在一个其实不存在的选择上做决定");
+  }
+  if (!options.includes('"project_admin"')) {
+    output.push("授权下拉里没有「项目管理员」了 —— 上面那条就成了永远为真（两个都没有当然不会同时出现）");
+  }
+  console.log("项目管理员＝项目负责人（2026-08-26 人定）：权限引用同一常量、授权下拉只留一个，逐条核过");
+}
+
 function verifyHealthReadDoesNotCloneEveryRequest(output) {
   const source = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
   const start = source.indexOf("function readHealthState() {");

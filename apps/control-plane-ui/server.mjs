@@ -853,7 +853,10 @@ function normalizeInvitedAccount(input = {}, systemScoped = false, delegation = 
 
 const roleGrantPermissionTemplates = Object.freeze({
   project_owner: [...projectOwnerGrantPermissions],
-  project_admin: ["project:view", "project:update", "project:grant", "member:invite", "agent:activate", "task_group:read", "task_group:control"],
+  // 2026-08-26 人定：项目管理员与项目负责人是同一个人。原先这里内联抄了与 owner
+  // 一字不差的七项 —— 两份各自演化就会悄悄分叉，而"它们本来就该一样"是产品决定。
+  // 引用同一个常量：以后改 owner 的权限，admin 跟着变，这正是"同一个人"的含义。
+  project_admin: [...projectOwnerGrantPermissions],
   task_group_owner: ["project:view", "task_group:read", "task_group:control"],
   agent_operator: ["project:view", "agent:activate", "task_group:read"],
   reviewer: ["project:view", "task_group:read", "task_group:review"],

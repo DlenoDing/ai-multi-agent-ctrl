@@ -3176,6 +3176,22 @@ const MUTATIONS = [
     expect: "看不到那个项目"
   },
   {
+    name: "项目管理员与负责人的权限不许各写一份（人定：他们是同一个人）",
+    file: SERVER,
+    check: "verifyProjectAdminAndOwnerStayOnePerson",
+    from: "  project_admin: [...projectOwnerGrantPermissions],",
+    to: '  project_admin: ["project:view", "project:update", "project:grant", "member:invite", "agent:activate", "task_group:read", "task_group:control"],',
+    expect: "不再引用项目负责人那份权限常量"
+  },
+  {
+    name: "授权下拉不许又摆回两个同义角色",
+    file: APP,
+    check: "verifyProjectAdminAndOwnerStayOnePerson",
+    from: '          ["project_admin", "项目管理员"],',
+    to: '          ["project_owner", "项目负责人"],\n          ["project_admin", "项目管理员"],',
+    expect: "又同时出现了「项目负责人」与「项目管理员」"
+  },
+  {
     name: "拼出来的动作名必须被展开（不展开＝把活的保护误报成失效）",
     file: "scripts/contract-check.mjs",
     check: "verifyHumanOnlyActionNamesStillExist",
