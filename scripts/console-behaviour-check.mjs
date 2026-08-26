@@ -1987,6 +1987,33 @@ function runNoVisibleProjectCase() {
       /定稿于/u.test(closedText) && /管理员/u.test(closedText),
       "屏幕上只有一个「已关闭」，谁定的、什么时候定的都追不到");
 
+    // 关闭门被 artifacts_verified 挡住时，人被告知"等执行方补齐证据，或取消对应工作项" ——
+  // 却不知道该盯哪一条产物。artifacts 那时在防泄漏白名单里，但没有任何视图真的下发它。
+    {
+    const artifactState = {
+      taskGroups: [{id: "tg1", projectId: "p1", name: "组一", status: "active", workItems: []}],
+      closeBarriers: [{taskGroupId: "tg1", satisfied: false, computedAt: "2026-08-20T00:00:00.000Z",
+        blockingObjects: [{objectType: "CloseBarrierGate", objectId: "tg1", gate: "artifacts_verified",
+          status: "blocked"}]}],
+      artifacts: [
+        {artifactId: "af_missing", taskGroupId: "tg1", workItemId: "wi_7", status: "registered",
+          contentDigestAttested: false},
+        {artifactId: "af_ok", taskGroupId: "tg1", workItemId: "wi_8", status: "verified"}
+      ],
+      humanConfirmationRequests: [], humanDirectives: [], agentDispatches: [], workSessions: [],
+      qualityGates: [], findings: [], permissionRequests: [], approvalRequests: [],
+      truncatedCollections: []
+    };
+    const artifactText = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, artifactState, "monitor", "p1");
+    check("产物没核验挡住关闭门时，要点名是哪一条产物、哪个格子",
+      /af_missing/u.test(artifactText) && /wi_7/u.test(artifactText),
+      "只说了「还有产物没核验」，人不知道该盯哪个格子 —— 而它就在下发的载荷里");
+    check("已核验的产物不要混进「还挡着的」里（那会让人去追一条根本没挡路的记录）",
+      !/af_ok/u.test(artifactText),
+      "把已核验的产物也列成了阻塞");
+  }
+
     // 发现项处置完也从「待你处置」里消失，处置人同样没有读取点。
     finalizedState.findings = [{findingId: "fd1", taskGroupId: "tg1", status: "resolved",
       dispositionClass: "fixed_verified", dispositionedBy: "u1", updatedAt: "2026-08-13T00:00:00.000Z"}];

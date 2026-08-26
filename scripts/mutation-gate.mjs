@@ -9638,6 +9638,14 @@ const MUTATIONS = [
     to: '    ...[].map((item) => ({kind: "评审发现",',
     expect: "事后查不到是谁判的"
   },
+  {
+    name: "产物没核验挡住关闭门时要点名是哪一条（不能只说「还有产物没核验」）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  if (!(barrier.blockingObjects || []).some((obj) => obj.gate === "artifacts_verified")) return "";',
+    to: '  if (true) return "";',
+    expect: "人不知道该盯哪个格子"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

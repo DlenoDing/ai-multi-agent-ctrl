@@ -2154,6 +2154,26 @@ function renderSysSettings() {
 /* ---------------- 系统管理员：账号与授权（保留既有功能） ---------------- */
 
 // 已注销的账号：把"什么时候、为什么"贴在状态旁边。注销不可撤销，这句话是事后唯一的依据。
+// artifacts_verified 这道阻塞此前只说一句"还有产物没核验"，指不出是哪一个 ——
+// 而 artifacts 本来就随视图下发到了控制台，只是一处都没渲染。人被告知"等执行方补齐证据，
+// 或取消对应工作项"，却不知道该盯哪个格子。这里把真正还挡着的那几条摆出来。
+function stillGatingArtifact(item) {
+  if (["verified", "rejected", "gc"].includes(item.status)) return false;
+  return !(item.status === "registered" && item.contentDigestAttested === true);
+}
+
+function gatingArtifactRows(barrier) {
+  if (!(barrier.blockingObjects || []).some((obj) => obj.gate === "artifacts_verified")) return "";
+  const gating = (state.artifacts || [])
+    .filter((item) => item.taskGroupId === barrier.taskGroupId && stillGatingArtifact(item));
+  if (!gating.length) return "";
+  return `<div class="record-meta">还挡着的产物（${gating.length} 条）：`
+    + gating.slice(0, 8).map((item) => `<span class="mono">${esc(item.artifactId || "-")}</span>`
+      + `${item.workItemId ? ` · ${esc(item.workItemId)}` : ""} · ${t(item.status) || esc(item.status)}`
+      + `${item.contentDigestAttested === true ? "" : " · 内容摘要未核验"}`).join("；")
+    + `${gating.length > 8 ? `；…共 ${gating.length} 条，此处显示前 8 条` : ""}</div>`;
+}
+
 function retiredNote(account) {
   if (account.status !== "retired" || !(account.retiredAt || account.retiredReason)) return "";
   return `<div class="record-meta">${esc(fmtTime(account.retiredAt))}`
@@ -3737,7 +3757,7 @@ const COLLECTION_LABELS = {
   accessGrants: "访问授权", accounts: "账号", admissionDecisions: "准入判决", agentControlCommands: "控制指令",
   agentDispatches: "派发", agentExecutionEvents: "执行事件", agentJoinTokens: "加入令牌",
   agentRuntimeNodes: "智能体节点", agents: "编排智能体", approvalRequests: "审批请求", auditLog: "审计台账",
-  checkpoints: "检查点", closeBarriers: "关闭屏障", executionTopologies: "执行拓扑", findings: "评审发现",
+  artifacts: "产物", checkpoints: "检查点", closeBarriers: "关闭屏障", executionTopologies: "执行拓扑", findings: "评审发现",
   humanConfirmationRequests: "人工确认", humanDirectives: "人工指令", modelCapabilities: "模型能力",
   modelSelectionDecisions: "模型选择", organizations: "组织", permissionRequests: "授权请求", projects: "项目",
   qualityGates: "质量门", repositoryOutputs: "仓库产出", reviewBundles: "评审包", reviewPlans: "评审计划",
@@ -4531,6 +4551,7 @@ function renderMonitor() {
         <div class="record" style="margin-top:8px;">
           <div class="record-title"><strong>${esc(taskGroupNameOf(barrier.taskGroupId))}</strong> 阻塞明细</div>
           <div class="chip-row">${(barrier.blockingObjects || []).map((obj) => customBadge(`${t(obj.objectType) || obj.objectType}${obj.gate ? `·${t(obj.gate) || obj.gate}` : ""}：${t(obj.status) || obj.status}`, "red")).join(" ")}</div>
+          ${gatingArtifactRows(barrier)}
         </div>`).join("")}
     `, {wide: true})
   ].join("");
