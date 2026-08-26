@@ -808,6 +808,82 @@ try {
       throw new Error(`房间等待没给出结果：${JSON.stringify(waited).slice(0, 160)}`);
     }
 
+    // 【最后这几族】。指令信封是真正发给 agent 的规则包；受守卫动作分发是"这一步允不允许"的
+    // 判定入口；产出目标租约决定谁在写那个仓库；共享定义发布是"本项目认什么规范"。
+    const envelopeCreated = await call("instruction-mcp.instruction_envelope_create", {
+      taskGroupId: TG, workItemId: WORK, recipientRole: "agent-runtime", roleId: "agent-runtime"});
+    const envelopeBody = envelopeCreated.instructionEnvelope || envelopeCreated.envelope || envelopeCreated;
+    if (envelopeBody.taskGroupId !== TG) {
+      throw new Error(`指令信封挂错了任务组：${JSON.stringify(envelopeCreated).slice(0, 200)}`);
+    }
+    const dispatched = await call("ui-console-mcp.guarded_action_dispatch", {
+      taskGroupId: TG, action: "doctor_mcp_chain_probe",
+      resource: {resourceType: "task_group", resourceId: TG}, allowed: true});
+    if (typeof dispatched !== "object" || dispatched === null) {
+      throw new Error(`受守卫动作分发没给出回执：${JSON.stringify(dispatched).slice(0, 160)}`);
+    }
+    // 产出目标的租约：它决定"现在是谁在写这个仓库"。绑定必须落在【那个目标】上，
+    // 而且要带上持有者 —— 一条没有持有者的租约挡不住任何并发写。
+    const leaseTarget = await call("repository-mcp.repository_output_target_select", {
+      taskGroupId: TG, workItemId: WORK,
+      artifactManifestPath: "docs/artifact-manifests/doctor-mcp-lease.json",
+      pathAllowlist: ["docs/**"]});
+    const leaseTargetId = (leaseTarget.target || leaseTarget.repositoryOutputTarget || leaseTarget).targetId;
+    if (!leaseTargetId) {
+      throw new Error(`产出目标没建出来：${JSON.stringify(leaseTarget).slice(0, 200)}`);
+    }
+    // 反面先验：链里那个会话已经被取消了 —— 已了结的会话不许再持有租约，
+    // 否则"谁在写这个仓库"指向一个早就结束的会话，而并发写从此无人拦。
+    const settledHolder = await mcpAs(admin.sessionToken, "tools/call",
+      {name: "repository-mcp.repository_target_lease_bind",
+        arguments: {idempotencyKey: `doctor-mcp-chain-${++seq}`, targetId: leaseTargetId,
+          repositoryOutputTargetRef: leaseTargetId, holderRef: `session:${contract.sessionId}`,
+          sessionId: contract.sessionId}});
+    const settledPayload = settledHolder.structuredContent?.result || JSON.parse(settledHolder.content?.[0]?.text || "{}");
+    if (settledPayload.error !== "lease_holder_session_settled") {
+      throw new Error(`已了结的会话拿到了租约：${JSON.stringify(settledPayload).slice(0, 240)}`);
+    }
+    // 正面：起一个新会话来持有它。
+    const leaseSession = await call("agent-control-mcp.session_start", {taskGroupId: TG, workItemId: WORK});
+    const leaseSessionId = (leaseSession.contract || leaseSession).sessionId;
+    if (!leaseSessionId || leaseSessionId === contract.sessionId) {
+      throw new Error(`没能起出一个新的会话来持有租约（拿到 ${leaseSessionId}）—— 正面对照会落在已了结的那个上`);
+    }
+    const leaseBound = await call("repository-mcp.repository_target_lease_bind", {
+      targetId: leaseTargetId, repositoryOutputTargetRef: leaseTargetId,
+      holderRef: `session:${leaseSessionId}`, sessionId: leaseSessionId});
+    const boundLease = leaseBound.lease || leaseBound.target || leaseBound;
+    if (!boundLease || !JSON.stringify(leaseBound).includes(leaseTargetId)) {
+      throw new Error(`租约没绑到那个产出目标上：${JSON.stringify(leaseBound).slice(0, 240)}`);
+    }
+    if (!JSON.stringify(leaseBound).includes(leaseSessionId)) {
+      throw new Error(`租约上没有持有者：${JSON.stringify(leaseBound).slice(0, 240)} —— `
+        + "一条没有持有者的租约挡不住任何并发写");
+    }
+
+    // contract_publish 与 shared_definition_publish 是【两条不同的路】，容易被当成一回事：
+    // 后者只能提案（等真人激活），前者是受控的发布路径（REST 侧需 project:*，MCP 侧只放行
+    // 控制台代表的真人会话），直接把契约推到生效。这条区别没人验过 —— 而把 publish 当成
+    // contract_publish 来读的人，会以为机器也能一步让一份规范生效。
+    const publishedContract = await call("governance-mcp.contract_publish", {
+      contractId: "sdc_doctor_mcp_contract_publish", taskGroupId: TG, definitionType: "terminology",
+      conflictPolicy: "owner_reconciles_then_republish", ownerRole: "orchestrator",
+      definition: {term: "受控发布", meaning: "doctor-mcp 链路探针"}});
+    const publishedBody = publishedContract.contract || publishedContract.sharedDefinition || publishedContract;
+    if (publishedBody.status !== "active") {
+      throw new Error(`contract_publish 没把契约推到生效：${JSON.stringify(publishedContract).slice(0, 240)} —— `
+        + "它是受控发布路径，与只能提案的 shared_definition_publish 不是一回事");
+    }
+    const createdProject = await call("orchestration-mcp.project_create", {name: "链路探针项目"});
+    const createdProjectBody = createdProject.project || createdProject;
+    if (!createdProjectBody.id) {
+      throw new Error(`project_create 没建出项目：${JSON.stringify(createdProject).slice(0, 200)}`);
+    }
+    if (!createdProjectBody.organizationId) {
+      throw new Error(`新建的项目没有组织归属：${JSON.stringify(createdProjectBody).slice(0, 200)} —— `
+        + "归属缺失会让三处跨组织边界闸门整条跳过（`X.organizationId && ...` 在 undefined 时不成立）");
+    }
+
     // 【角色技能叠加：从没被跑通过的那条真人杠杆】。它改的是 agent 实际拥有的能力
     //（含 forbiddenCapabilityAdds），控制台上明写「真人专属、控制台只读、由人经 API 创建」。
     // 而按状态码记账量出来：/api/role-skill-overlays 全仓除文档外没有任何调用方，
@@ -982,7 +1058,21 @@ try {
     // 本套 e2e 自己跑通的数（跨门合计另算：契约门在进程内还会跑通一批）。
     // 这个数是【实测出来的】—— 早先一次量到 44，复量不出来，那次多半把别的运行留下的账算了进去；
     // 以能复现的这次为准。棘轮只升不降。
-    const SUCCESSFULLY_EXERCISED_FLOOR = 78;
+    // 这两个【设计上就不该经 MCP 成功】，不是覆盖缺口。登记而不是硬凑一个能过的调用：
+    // 硬凑出来的"成功"只会证明我绕过了那道门。它们各自的拒绝路径另有断言。
+    const NEVER_SUCCEEDS_VIA_MCP = {
+      // 【这里不要写出那个拒绝码】：拒绝码棘轮按"哪些码在门/e2e 的源码里出现过"统计，
+      // 光是在这段登记里写出它，就会把它算成"已有判据"—— 而登记不是判据。
+      // 那份第二道门册的开头写着同一条，我这次照样撞了一次。
+      "evidence-mcp.checkpoint_submit":
+        "检查点必须走 agent 网关（带节点凭据 + claim 围栏）—— MCP 这条路一律被那道门挡回；"
+        + "真实提交在 doctor-agent-remote 里由真节点跑过",
+      "skill-mcp.skill_source_sync":
+        "同步会真的 git clone 一个外部仓库（12MB）：放进这套 e2e 就是每轮都联网拉一次，代价与收益不成比例。"
+        + "同步逻辑本身在本套里【已经真跑过】—— 控制面服务端启动时同步了 281 条角色技能，"
+        + "上面「角色配置归属」那条断言压的就是同步之后的真语料；失败路径另有契约门的用例"
+    };
+    const SUCCESSFULLY_EXERCISED_FLOOR = 83;
     let traced = "";
     try { traced = readFileSync(toolTracePath, "utf8"); } catch { traced = ""; }
     const succeeded = new Set(traced.split("\n").filter((line) => line.startsWith("ok ")).map((line) => line.slice(3)));
@@ -994,6 +1084,13 @@ try {
     }
     for (const tool of succeeded) {
       if (!mcpToolNames.includes(tool)) throw new Error(`记账里出现了不在工具表里的名字：${tool} —— 提取或工具表脱节`);
+    }
+    for (const [tool, why] of Object.entries(NEVER_SUCCEEDS_VIA_MCP)) {
+      if (!mcpToolNames.includes(tool)) throw new Error(`登记里的 ${tool} 已经不是一个工具了 —— 登记过期（${why}）`);
+      if (succeeded.has(tool)) {
+        throw new Error(`${tool} 登记着「设计上不该经 MCP 成功」，本轮却成功了 —— `
+          + `要么那道门失效了，要么登记过期（${why}）`);
+      }
     }
     if (succeeded.size < SUCCESSFULLY_EXERCISED_FLOOR) {
       const missing = mcpToolNames.filter((tool) => !succeeded.has(tool));
@@ -1008,7 +1105,7 @@ try {
       console.log(`  ↑ 成功执行过的工具涨到 ${succeeded.size}，把 SUCCESSFULLY_EXERCISED_FLOOR 改成这个数（棘轮留着松弛量，下次回退就看不出来了）`);
     }
     console.log(`MCP 工具执行覆盖 ok: ${succeeded.size}/${mcpToolNames.length} 个工具本轮真的成功执行过（棘轮 ${SUCCESSFULLY_EXERCISED_FLOOR}，只升不降）；`
-      + `其余 ${mcpToolNames.length - succeeded.size} 个只验过"拒得对"`);
+      + `其余 ${mcpToolNames.length - succeeded.size} 个逐个登记了为什么不该经 MCP 成功`);
   }
 
   // 未登记的角色必须在【创建这一刻】被拒。收下之后派发会静默绑上 orchestrator 的技能，

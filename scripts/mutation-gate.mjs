@@ -6615,6 +6615,22 @@ const MUTATIONS = [
     expect: "把新成员的默认项目设成已归档项目没被拒"
   },
   {
+    name: "已了结的会话不许持有产出目标租约",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: '      return {ok: false, error: "lease_holder_session_settled", holderRef};',
+    to: '      return {ok: true, skipped: "lease_holder_session_settled", holderRef};',
+    expect: "已了结的会话拿到了租约"
+  },
+  {
+    name: "受控发布要真的把契约推到生效",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: '  const contract = sharedDefinitionCreate(state, {...args, status: "active", allowDirectActivation: true}).sharedDefinition;',
+    to: "  const contract = sharedDefinitionCreate(state, {...args}).sharedDefinition;",
+    expect: "contract_publish 没把契约推到生效"
+  },
+  {
     name: "权限探询必须按资源判，不许恒答允许",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "mcp",
