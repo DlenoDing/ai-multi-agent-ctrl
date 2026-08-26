@@ -9687,6 +9687,24 @@ const MUTATIONS = [
     to: "  ].filter((item) => item.by || item.why)",
     expect: "定稿人一栏是个「-」"
   },
+  {
+    name: "问责台账不许被复述动作行的套话占满（在册只有 80 行）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "  recordIdempotentResult(state, guard.idempotencyKey,",
+    to: '  audit(state, "policy-engine", "policy_decision_allowed", guard.command.subject);\n'
+      + '  audit(state, "command-bus", "command_succeeded", guard.command.subject);\n'
+      + "  recordIdempotentResult(state, guard.idempotencyKey,",
+    expect: "复述动作行的套话"
+  },
+  {
+    name: "被策略拒掉的那一次要记清是谁试图做什么（那是它唯一的痕迹）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    audit(state, actor, action, subject, "policy_denied");',
+    to: '    audit(state, "policy-engine", "policy_decision_denied", subject, "policy_denied");',
+    expect: "没写清是谁试图做什么"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

@@ -3355,6 +3355,44 @@ try {
     }
   }
 
+  // 【问责台账不许被套话占满】。它在册只留最近 80 行，而人正要从这里查"谁把这台机器踢出去的"。
+  // 每次守卫写入原先固定附赠两行（policy-engine 策略放行 / command-bus 命令成功），对象与动作行
+  // 完全相同、作者是伪身份 —— 三分之二是复述。实测一份真实运行态：80 行里 79 行是这类噪声，
+  // 只装下 1 条人做的动作。这里既钉住那两行不许回来，也把构成打出来，将来再有谁灌进去看得见。
+  {
+    const ledger = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: systemAuth}});
+    const entries = ledger.payload.auditLog || [];
+    if (entries.length < 20) throw new Error(`台账只有 ${entries.length} 行 —— 下面这条在空转`);
+    const byAction = {};
+    for (const item of entries) byAction[item.action] = (byAction[item.action] || 0) + 1;
+    const echoes = entries.filter((item) => ["policy_decision_allowed", "command_succeeded"].includes(item.action));
+    if (echoes.length) {
+      throw new Error(`问责台账里又出现了复述动作行的套话（${echoes.length} 行）——`
+        + " 台账在册只有 80 行，每写一次占三行的话，人要查的那几条几分钟就被挤出去了");
+    }
+    const top = Object.entries(byAction).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const dominant = top[0];
+    if (dominant && dominant[1] > entries.length * 0.6) {
+      throw new Error(`问责台账里 ${dominant[0]} 一个动作就占了 ${dominant[1]}/${entries.length} 行 ——`
+        + ` 这一屏几乎问不出别的事；构成：${top.map(([a, n]) => `${a}=${n}`).join("、")}`);
+    }
+    // 被策略拒掉的那一次【没有别的动作行】，这一行就是它在台账上唯一的痕迹。
+    // 原先它记的是作者 "policy-engine"、动作 "policy_decision_denied" —— 一屏 27 行长得一模一样，
+    // 「谁试图做什么」两件事都答不出来。
+    const denied = entries.filter((item) => item.result === "policy_denied");
+    if (!denied.length) throw new Error("这一轮台账里没有被策略拒掉的记录 —— 下面两条会空转");
+    const generic = denied.filter((item) => item.action === "policy_decision_denied" || item.actor === "policy-engine");
+    if (generic.length) {
+      throw new Error(`被拒的记录没写清是谁试图做什么（${generic.length}/${denied.length} 行记成了`
+        + " policy-engine / policy_decision_denied）—— 那是这次尝试在台账上唯一的痕迹");
+    }
+    if (new Set(denied.map((item) => item.action)).size < 2) {
+      throw new Error(`所有被拒记录的动作都是同一个（${denied[0].action}）—— 多半又退回了通用标签`);
+    }
+    console.log(`  ok  问责台账构成：${entries.length} 行 / ${Object.keys(byAction).length} 种动作，`
+      + `最多的是 ${top.map(([a, n]) => `${a}=${n}`).join("、")}`);
+  }
+
   // 【打错的接口要说清打错在哪】。这两条守卫此前没有任何断言，而它们是人和 agent 最常撞到的
   // 两个：路径写错、URL 本身不合法。只回一个英文码的话，排障要从头猜起。
   {

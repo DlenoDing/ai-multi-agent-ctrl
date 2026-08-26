@@ -640,7 +640,11 @@ function beginGuardedWrite(req, state, action, subject, resourceScope = inferRes
     // 这里原先还按 120 盲切一刀 —— 比写入点那道保护的 500 更严，于是真正生效的是 120，
     // 而且它先跑：被活跃授权引用、本该被捞回来的那条，在保护看到之前就没了。
     // 容量只由写入点 capPolicyDecisionsKeepingReferenced 管（那里带引用保护）。
-    audit(state, "policy-engine", "policy_decision_denied", subject, "denied");
+    // 被拒的这一次【没有别的动作行】——这一行就是它在台账上唯一的痕迹。而它原先记的是
+    // 作者 "policy-engine"、动作 "policy_decision_denied"：27 行长得一模一样，
+    // 唯一的差别只有对象，「谁试图做什么」两件事都答不出来。改记真实的调用方与真实的动作，
+    // 结果栏写明是被策略挡下的。actor 来自认证，不取自请求体。
+    audit(state, actor, action, subject, "policy_denied");
     commitUnguardedWrite(state);
     return {status: 403, payload: {error: "policy_denied", actor, requiredPermission, resourceScope}};
   }
@@ -698,8 +702,14 @@ function finishGuardedWrite(state, guard, status, payload) {
   // 原先这三步只在这一侧凑齐，MCP 那侧只做了第一步（于是它写下的回执正文永不清理）。
   recordIdempotentResult(state, guard.idempotencyKey,
     {status, payload, actor: guard.actor, action: guard.command.type, subject: guard.command.subject, bodyDigest: guard.bodyDigest, createdAt: updatedAt});
-  audit(state, "policy-engine", "policy_decision_allowed", guard.command.subject);
-  audit(state, "command-bus", "command_succeeded", guard.command.subject);
+  // 【问责台账不再附赠这两行】。它们此前挂在每一次守卫写入上：作者是 policy-engine /
+  // command-bus 两个伪身份，对象与动作行完全相同，说的是"策略放行了"和"命令完成了" ——
+  // 而这两件事，动作行本身（谁 / 何时 / 动了什么 / 结果）已经回答过了。
+  // 代价是实打实的：台账在册上限 80 行，每次写入占 3 行，于是【三分之二是套话】。
+  // 实测一份真实运行态：80 行里 79 行是这类例行噪声，只装下了 1 条人做的动作
+  //（task_group_pause）—— 而"谁把这台机器踢出去的""谁注销了这个账号"正要从这里查。
+  // 策略判定与命令记录本身没有丢：它们在 state.policyDecisions / state.decisionRecords 里，
+  // view=full 照常取得到。去掉的只是台账上那两行复述。
 }
 
 function accountIdOf(account) {
