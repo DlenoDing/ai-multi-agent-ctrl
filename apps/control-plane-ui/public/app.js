@@ -509,6 +509,13 @@ const GRANT_ROLE_LABELS = {
   viewer: "观察者",
   project_member: "项目成员"
 };
+// 已归档的项目不该出现在「签发入网令牌」的目标里：后端已经拒（project_archived），
+// 界面还摆着它就是把人往死路上引 —— 按着选一个，回来的是一句拒绝。
+// 归档意味着"移出可建新工作的范围"，而接一个 agent 进来正是要开新工作。
+function joinTokenTargetProjects() {
+  return (state.projects || []).filter((project) => project.status !== "archived");
+}
+
 function grantRoleLabel(role) {
   return GRANT_ROLE_LABELS[role] || t(role);
 }
@@ -2295,7 +2302,7 @@ function renderJoinTokenSection() {
       <form class="form-grid" data-form="join-token">
         <div class="form-row-inline">
           <div class="form-row"><label>目标项目</label>
-            <select name="projectId">${(state.projects || []).map((project) => `<option value="${esc(project.id)}" ${project.id === currentProjectId ? "selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}</select>
+            <select name="projectId">${joinTokenTargetProjects().map((project) => `<option value="${esc(project.id)}" ${project.id === currentProjectId ? "selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}</select>
           </div>
           <div class="form-row"><label>节点名（可留空）</label><input name="nodeName" placeholder="自动生成"></div>
           <div class="form-row"><label>角色范围</label><input name="allowedRoles" value="agent-runtime"></div>

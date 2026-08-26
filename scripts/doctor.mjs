@@ -2046,6 +2046,12 @@ try {
       body: JSON.stringify({name: "归档探针项目", key: "archive-probe"})});
     const archProjectId = archProject.payload?.id || archProject.payload?.project?.id;
     if (!archProjectId) throw new Error("归档探针造不出项目 —— 下面几条会在空转");
+    // 先备一个在用项目：下面要用它验"收尾与正常路径没被归档那道判据一起挡死"。
+    const cleanupProject = await jsonFetch(port, "/api/projects", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-archive-cleanup-project", authorization: systemAuth},
+      body: JSON.stringify({name: "归档对照在用项目", key: "archive-cleanup"})});
+    const liveProjectForCleanup = cleanupProject.payload?.id || cleanupProject.payload?.project?.id;
+    if (!liveProjectForCleanup) throw new Error("造不出对照的在用项目 —— 收尾那条断言会空转");
     const archived = await jsonFetch(port, `/api/projects/${archProjectId}/archive`, {method: "POST",
       headers: {"Idempotency-Key": "doctor-archive-probe", authorization: systemAuth}, body: "{}"});
     if (!archived.response.ok) throw new Error(`归档一个没有任务组的项目就失败了：${JSON.stringify(archived.payload).slice(0, 160)}`);
@@ -2055,6 +2061,32 @@ try {
     if (afterArchive.response.ok || afterArchive.payload?.error !== "project_archived") {
       throw new Error(`已归档的项目里还能新建任务组（${afterArchive.response.status} ${JSON.stringify(afterArchive.payload).slice(0, 120)}）`
         + " —— 归档前那次逐个关闭白做了，新组也不在任何人的视野里");
+    }
+    // 【归档不只挡建任务组】。归档的含义是"移出可建新工作的范围"，而此前只有建任务组那一处判了 ——
+    // 给一个已归档的项目签发 agent 入网令牌照样成功，而控制台的「加入令牌」下拉里就列着它：
+    // 人按着界面签一张出来，agent 接进去绑到一个不能再建任何工作的项目上，两边都不会报错。
+    const archivedJoinToken = await jsonFetch(port, "/api/agent-join-tokens", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-archive-join-token", authorization: systemAuth},
+      body: JSON.stringify({projectId: archProjectId, roleScope: ["monitor"], ttlSeconds: 600})});
+    if (archivedJoinToken.response.ok || archivedJoinToken.payload?.error !== "project_archived") {
+      throw new Error(`已归档的项目还能签发 agent 入网令牌（${archivedJoinToken.response.status} `
+        + `${JSON.stringify(archivedJoinToken.payload).slice(0, 120)}）—— 接进去的 agent 绑在一个`
+        + "不能再建任何工作的项目上，而界面就摆着这个选项");
+    }
+    const archivedAgent = await jsonFetch(port, "/api/agents", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-archive-agent", authorization: systemAuth},
+      body: JSON.stringify({projectId: archProjectId, role: "monitor"})});
+    if (archivedAgent.response.ok || archivedAgent.payload?.error !== "project_archived") {
+      throw new Error(`已归档的项目还能建智能体（${archivedAgent.response.status} `
+        + `${JSON.stringify(archivedAgent.payload).slice(0, 120)}）—— 与签发入网令牌同族的洞`);
+    }
+    // 收尾动作不许被一起挡死：归档之后还得撤得掉已经发出去的票，否则收不了尾。
+    // 少了这条，把"挡住"写成"全挡"也能让上面两条绿 —— 那时归档项目会变成一个清不干净的死角。
+    const cleanupToken = await jsonFetch(port, "/api/agent-join-tokens", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-archive-cleanup-token", authorization: systemAuth},
+      body: JSON.stringify({projectId: liveProjectForCleanup, roleScope: ["monitor"], ttlSeconds: 600})});
+    if (cleanupToken.response.status !== 201) {
+      throw new Error(`在用项目里签不出入网令牌了（${cleanupToken.response.status}）—— 归档那道判据把正常路径一起堵死了`);
     }
     // 正面对照：没归档的项目必须照常建得出来，否则这道判据把正常路径一起堵死。
     const liveProject = await jsonFetch(port, "/api/projects", {method: "POST",

@@ -141,6 +141,7 @@ function makeContext(documentRoot) {
 const PROBE_EPILOGUE = `
 globalThis.__probe = {
   grantRoleLabel: (role) => grantRoleLabel(role),
+  joinTokenTargetProjects: (nextState) => { state = nextState; return joinTokenTargetProjects(); },
   requestFailureHint: (payload) => requestFailureHint(payload),
   ruleEditorFormWith: (options) => ruleEditorForm(options),
   snapshotFormValues: (formEl) => snapshotFormValues(formEl),
@@ -444,6 +445,24 @@ function check(name, condition, detail) {
       + "（本门的顺序是【名称在前、条件在后】）");
   }
   if (!condition) failures.push(`${name}: ${detail}`);
+}
+
+// 【已归档的项目不许出现在「签发入网令牌」的目标里】。后端已经拒（project_archived）——
+// 界面还摆着它，人按指引选一个，回来的是一句拒绝：那不是"多一个选项"，是把人往死路上引。
+// 只藏选项不锁门也不行（改个请求就绕过去），所以两边都做；这条验的是界面那半。
+{
+  const probe = loadConsole(el("div"), {realI18n: true});
+  const projects = [
+    {id: "prj_live", name: "在用项目", status: "active"},
+    {id: "prj_gone", name: "已归档项目", status: "archived"}
+  ];
+  const targets = probe.joinTokenTargetProjects
+    ? probe.joinTokenTargetProjects({projects}).map((project) => project.id) : null;
+  check("签发入网令牌的目标里不许有已归档的项目",
+    Array.isArray(targets) && !targets.includes("prj_gone"),
+    `实得 ${JSON.stringify(targets)} —— 选了它只会拿回一句 project_archived`);
+  check("在用的项目仍要留在目标里（别把正常路径一起收掉）",
+    Array.isArray(targets) && targets.includes("prj_live"), `实得 ${JSON.stringify(targets)}`);
 }
 
 // 【授权角色：下拉里说的词与列表里显示的词必须是同一个】。此前 reviewer 这个键被两个对象共用：

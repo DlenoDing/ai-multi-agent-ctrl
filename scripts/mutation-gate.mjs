@@ -3248,6 +3248,48 @@ const MUTATIONS = [
     expect: "勘察工具不渲染这些已登记的页面"
   },
   {
+    name: "已归档的项目不许再建智能体",
+    file: SERVER,
+    gate: "doctor",
+    from: '    if (agentProject?.status === "archived") {',
+    to: "    if (false) {",
+    expect: "已归档的项目还能建智能体"
+  },
+  {
+    name: "归档挡住的是新工作，不是收尾（别把在用项目一起挡死）",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "doctor",
+    from: '  if (tokenProject.status === "archived") {',
+    to: "  if (true) {",
+    expect: "在用项目里签不出入网令牌了"
+  },
+  {
+    name: "新的项目级写动作必须回答「归档之后还让不让做」",
+    // 打在【账本】上而不是动作名上：改动作名会先撞「未分类的动作谁都不许做」那道 fail-closed 的门，
+    // 红在别处（实测）。这里要证的是"账本漏一条就会被抓到"。
+    file: "scripts/contract-check.mjs",
+    check: "verifyArchivedProjectWritePolicyIsAnswered",
+    from: '  agent_create: {blocked: "同上，逻辑智能体那一侧"},',
+    to: "",
+    expect: "没有回答「项目归档之后还让不让做」"
+  },
+  {
+    name: "已归档的项目不许再接入 agent（后端这道锁）",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "doctor",
+    from: '  if (tokenProject.status === "archived") {',
+    to: "  if (false) {",
+    expect: "已归档的项目还能签发 agent 入网令牌"
+  },
+  {
+    name: "已归档的项目不许出现在签发入网令牌的目标里（界面这半）",
+    file: APP,
+    gate: "console",
+    from: '  return (state.projects || []).filter((project) => project.status !== "archived");',
+    to: "  return state.projects || [];",
+    expect: "不许有已归档的项目"
+  },
+  {
     name: "授权角色在下拉与列表里必须是同一个词",
     file: APP,
     gate: "console",

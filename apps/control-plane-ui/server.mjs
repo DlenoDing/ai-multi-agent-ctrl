@@ -4096,6 +4096,14 @@ async function handleApi(req, res) {
       json(res, guard.status, guard.payload);
       return;
     }
+    // 归档是项目的终结态（没有"恢复归档"这条路），而建一个逻辑智能体是【往里接入新的干活能力】——
+    // 与签发入网令牌同族。落进去之后它绑在一个不能再建任何工作的项目上，谁也不会报错。
+    // 哪些动作在归档后仍然允许，逐条登记在 contract-check 的 ARCHIVED_PROJECT_WRITE_POLICY 里。
+    const agentProject = (state.projects || []).find((item) => item.id === (body.projectId || "prj_control_plane"));
+    if (agentProject?.status === "archived") {
+      return json(res, 409, {error: "project_archived",
+        message: "该项目已归档，不能再往里接入智能体。要继续这条线，请先另建一个项目"});
+    }
     // 此前这两个字段是【请求体直接落库】：status 想写什么写什么（界面的启停按钮只认
     // active/inactive，别的取值会让那个按钮永远显示「启用」）；trustScore 走 Number(任意输入)，
     // `Number("高")` 得到 NaN，序列化成 null 存进去，而 NaN 参与的比较两个方向都是 false。

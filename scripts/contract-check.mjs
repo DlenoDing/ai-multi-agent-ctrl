@@ -423,6 +423,27 @@ const PREDICATE_COVERAGE = {
 };
 const PREDICATE_NOT_PROBED_CEILING = 13;
 
+// 【项目归档之后，哪些写动作还能做】。归档是项目的终结态（没有"恢复归档"这条路），
+// 含义是"移出可建新工作的范围、把配额还回去、历史留着"。此前只有【建任务组】一处判了它 ——
+// 于是给一个已归档项目签 agent 入网令牌照样成功，而控制台的下拉里就摆着这些项目：
+// 人按界面选一个，接进去的 agent 绑在一个不能再建任何工作的项目上，两边都不报错。
+// 逐条表态，新加以项目为作用域的写动作时必须当场回答"归档之后还让不让做"。
+// blocked：会往终结态项目里【接入新的干活能力或新工作】的，一律挡；
+// allowed：收尾与只读性质的，必须留着 —— 归档之后还得清得掉存量，否则收不了尾。
+const ARCHIVED_PROJECT_WRITE_POLICY = {
+  task_group_create: {blocked: "建新工作。归档前那次逐个关闭白做了，新组也不在任何人的视野里"},
+  agent_join_token_create: {blocked: "接入新的干活能力：agent 会绑在一个不能再建任何工作的项目上"},
+  agent_create: {blocked: "同上，逻辑智能体那一侧"},
+  agent_join_token_revoke: {allowed: "收尾：归档之后还得撤得掉已经发出去的票"},
+  agent_node_revoke: {allowed: "收尾：把还挂着的节点摘掉"},
+  agent_control_command_create: {allowed: "收尾：停掉还在跑的东西这件事，任何时候都不该被挡"},
+  project_member_grant: {allowed: "历史记录保留，就得有人看得到 —— 授只读访问是正当需求"},
+  shared_definition_contract_create: {allowed: "规则层记录，归档项目上它不驱动任何工作；挡它只是多一道没必要的门"},
+  contract_publish: {allowed: "把【已经存在】的定义推到生效，属收尾而非新建"},
+  project_archive: {allowed: "对已归档项目再归档一次直接回 200（幂等），不算新工作"},
+  project_config_update: {allowed: "改的是配置不是工作；归档项目上它不驱动任何东西，挡它会让写错的配置永远留在那里"}
+};
+
 const DOCKER_FAILURE_SAMPLES = [
   {what: "凭据助手不在 PATH", said: 'error getting credentials - err: exec: "docker-credential-desktop":'
     + " executable file not found in $PATH, out: ``", expect: "凭据助手"},
@@ -834,6 +855,7 @@ run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
 run(verifyEveryGrantedPermissionHasAConsumer);
+run(verifyArchivedProjectWritePolicyIsAnswered);
 run(verifySurveyRendersEveryRegisteredPage);
 run(verifyDockerEnvironmentFailuresSayWhatToDo);
 run(verifyProjectAdminAndOwnerStayOnePerson);
@@ -8080,6 +8102,34 @@ function verifyOnlyLiveHumanAccountsCanFinalize(output) {
 // ——组织管理员那四页（概览/项目/成员/智能体）从来没有被读过一次，而"没读过"与"读过没问题"
 // 在那份输出上长得一模一样。这条判据把清单对齐做成会报红的东西（自证那句只在跑勘察时打印，
 // 而勘察是手工触发的 —— 没人跑就等于没人知道）。
+// 项目归档之后的写动作策略：见 ARCHIVED_PROJECT_WRITE_POLICY 上面那段。
+function verifyArchivedProjectWritePolicyIsAnswered(output) {
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const actions = [...new Set([...server.matchAll(
+    /beginGuardedWrite\(req, state, ("[a-z_]+"|`[^`]+`), [^,]+, projectScope\(/gu)]
+    .map((hit) => hit[1].replace(/["`]/gu, "")))];
+  if (actions.length < 8) {
+    output.push(`以项目为作用域的写动作只提取到 ${actions.length} 个 —— 提取脱节，本条在空转`);
+    return;
+  }
+  let blocked = 0;
+  for (const action of actions) {
+    const entry = ARCHIVED_PROJECT_WRITE_POLICY[action];
+    if (!entry) {
+      output.push(`以项目为作用域的写动作 ${action} 没有回答「项目归档之后还让不让做」——`
+        + " 归档是终结态，往里接入新的干活能力不会有任何东西报错。"
+        + "要么挡住它，要么登记进 ARCHIVED_PROJECT_WRITE_POLICY 写明凭什么还能做");
+      continue;
+    }
+    if (entry.blocked) blocked += 1;
+  }
+  for (const action of Object.keys(ARCHIVED_PROJECT_WRITE_POLICY)) {
+    if (!actions.includes(action)) output.push(`登记过时：${action} 已经不是以项目为作用域的写动作了`);
+  }
+  console.log(`项目归档后的写动作：${actions.length} 条逐个表态（${blocked} 条挡住、`
+    + `${actions.length - blocked} 条登记了凭什么还能做）`);
+}
+
 function verifySurveyRendersEveryRegisteredPage(output) {
   const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
   const survey = readFileSync(join(root, "scripts/console-behaviour-check.mjs"), "utf8");

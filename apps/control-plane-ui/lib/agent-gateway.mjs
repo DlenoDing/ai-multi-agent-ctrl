@@ -82,6 +82,14 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
   // 监控看到 5xx 会当成事故，人看到 server_error 会去查服务端日志，而他要做的只是补上 projectId。
   // （下面配额那条早就用了 gatewayError，同一个函数里两种写法 —— 这一条是漏掉的那个。）
   if (!tokenProject) throw gatewayError("join_token_project_not_found", 404, {projectId: projectId || null});
+  // 归档的含义是「移出可建新工作的范围」，而此前只有建任务组那一处判了它 ——
+  // 给已归档项目签出来的入网令牌，接进去的 agent 会绑在一个不能再建任何工作的项目上，
+  // 两边都不报错；而控制台的「加入令牌」下拉里就摆着这些项目。锁落在决策点上，
+  // 界面那份清单也一并收窄（只藏选项不锁门＝改个请求就绕过去了）。
+  if (tokenProject.status === "archived") {
+    throw gatewayError("project_archived", 409, {projectId,
+      hint: "该项目已归档，不能再往里接入 agent。要继续这条线，请先恢复该项目或另建一个项目"});
+  }
   const tokenOrgId = tokenProject.organizationId || "org_default";
   const outstandingJoinTokens = (state.agentJoinTokens || []).filter((item) => item.status === "issued" && (item.organizationId || "org_default") === tokenOrgId && new Date(item.expiresAt).getTime() > Date.now()).length;
   const quota = organizationQuotaCheck(state, tokenOrgId, "agents");
