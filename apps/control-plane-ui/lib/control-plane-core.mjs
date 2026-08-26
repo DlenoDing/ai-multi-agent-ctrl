@@ -8034,7 +8034,15 @@ export function permissionProbe(state, args, filter) {
     (!filter || filter.has(grantResourceProjectId(state, grant)))
   );
   const allowed = grants.some((grant) => (grant.permissions || []).includes(permission) || (grant.permissions || []).includes("*"));
-  return {subjectId, permission, resource, allowed, grants};
+  // 【说清这个 allowed 是按什么算的】。它只看【访问授权】，不看账号自带的直接权限 ——
+  // 对真正的消费方（agent 主体，权力全部来自授权）这就是全部答案；但一个持 system:* 的
+  // 系统账号在这里会被答成 allowed:false，而它其实做得了。字段名叫 allowed，读的人没有
+  // 任何线索知道这一点：一句"不允许"会把人引去查授权，而真正的判权走的是另一条路。
+  // 判权本身不在这里做（那会变成同一件事两处实现，必然漂），改为如实标注依据。
+  return {subjectId, permission, resource, allowed, basis: "access_grants_only",
+    note: "只按访问授权判定；账号自带的直接权限（如系统账号的 system:*）不计入 —— "
+      + "allowed:false 的意思是「没有哪张授权覆盖它」，不等于「这个主体做不了」",
+    grants};
 }
 
 // 授权铸造有两道门：REST 的 sanitizeGrantRequest 做了完整委派校验（拒 system:/通配、拒批准人

@@ -17,6 +17,10 @@ const root = resolve(new URL("..", import.meta.url).pathname);
 const port = await freePort();
 const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-mcp-doctor-runtime-"));
 // 工具记账：每次 MCP 调用记一行「成没成 + 工具名」，收尾核"成功执行过多少个"（见文件末尾那条棘轮）。
+// 【只读本套自己那本账】：这个路径可以被外部 AIMAC_TOOL_TRACE 覆盖，那样一来本套起的
+// 子进程（register-mcp-client、本地起服务那次）也会往同一个文件里记，数会偏大 ——
+// 2026-08-27 实测：带外部 env 手工量到 78，而门自己那本账是 65。要看真实缺口用
+// AIMAC_LIST_UNEXERCISED_TOOLS=1，别拿外部 env 的那份文件去数。
 // 记账文件放在运行目录【之外】：这套 e2e 会对运行目录本身做事（重建、探活），
 // 把这本账放进去等于让被测对象决定证据还在不在。
 const toolTracePath = process.env.AIMAC_TOOL_TRACE || join(mkdtempSync(join(tmpdir(), "aimac-mcp-tool-trace-")), "tool-trace.log");
@@ -728,6 +732,82 @@ try {
       throw new Error(`撤授权之后状态不是 revoked：${JSON.stringify(revokedGrant).slice(0, 200)}`);
     }
 
+    // 【只读面与两条写路】。这些工具此前只被空参调过：答的是不是这个对象、答不上时说不说清楚，
+    // 都没人验过。挑各自真正承担的性质来断言，而不是只看 ok。
+    const progress = await call("ui-console-mcp.task_group_progress_get", {taskGroupId: TG});
+    const progressBody = progress.progress || progress.snapshot || progress;
+    if (progressBody.taskGroupId && progressBody.taskGroupId !== TG) {
+      throw new Error(`任务组进度答的是别的组：${JSON.stringify(progress).slice(0, 200)}`);
+    }
+    const projectProgress = await call("ui-console-mcp.project_progress_get", {projectId: "prj_control_plane"});
+    if (typeof projectProgress !== "object" || projectProgress === null) {
+      throw new Error(`项目进度没给出快照：${JSON.stringify(projectProgress).slice(0, 160)}`);
+    }
+    const models = await call("model-mcp.model_capabilities", {});
+    if (!(models.modelCapabilities || models.capabilities || []).length) {
+      throw new Error(`模型能力表是空的：${JSON.stringify(models).slice(0, 200)}`);
+    }
+    const modelPolicy = await call("model-mcp.model_policy_get", {roleId: "agent-runtime"});
+    if (typeof modelPolicy !== "object" || modelPolicy === null) {
+      throw new Error(`模型策略没给出结果：${JSON.stringify(modelPolicy).slice(0, 160)}`);
+    }
+    const parsedSkill = await call("skill-mcp.role_skill_parse", {roleId: "agent-runtime"});
+    if (typeof parsedSkill !== "object" || parsedSkill === null) {
+      throw new Error(`角色技能解析没给出结果：${JSON.stringify(parsedSkill).slice(0, 160)}`);
+    }
+    const probed = await call("agent-control-mcp.node_probe", {nodeId: "node_doctor_mcp_chain"});
+    if ((probed.node || probed).nodeId !== "node_doctor_mcp_chain") {
+      throw new Error(`节点自检答的是别的节点：${JSON.stringify(probed).slice(0, 200)}`);
+    }
+    // 权限探询必须【两个方向都答对】，而且是【同一个主体、同一项权限、换个资源】——
+    // 只验"有授权时答允许"的话，把判定改成恒真也照样绿（本仓 resourceMatches 那次就是这么发现的）。
+    // 主体挑一个权力确实来自授权的：这个工具只按访问授权判定（basis: access_grants_only），
+    // 拿持 system:* 的系统账号去问，它会答 false —— 那不是缺陷，是它的依据不含直接权限。
+    const probeGrant = await call("identity-mcp.grant_create", {
+      subjectId: "acct_reviewer", resource: {resourceType: "task_group", resourceId: TG}, grantRole: "reviewer"});
+    if (!(probeGrant.grant || probeGrant).grantId) {
+      throw new Error(`探询用的授权没发出来：${JSON.stringify(probeGrant).slice(0, 200)} —— 下面两条会空转`);
+    }
+    const probeAllowed = await call("permission-mcp.permission_probe",
+      {subjectId: "acct_reviewer", permission: "task_group:read", taskGroupId: TG});
+    const probeDenied = await call("permission-mcp.permission_probe",
+      {subjectId: "acct_reviewer", permission: "task_group:read", taskGroupId: "tg_runtime_management"});
+    const allowedAnswer = probeAllowed.allowed ?? probeAllowed.probe?.allowed;
+    const deniedAnswer = probeDenied.allowed ?? probeDenied.probe?.allowed;
+    if (allowedAnswer !== true || deniedAnswer !== false) {
+      throw new Error(`权限探询两个方向没都答对（授权覆盖的那个组答 ${allowedAnswer}、没覆盖的那个组答 ${deniedAnswer}）——`
+        + " 只验一个方向的话，判定改成恒真也照样绿");
+    }
+    if (probeAllowed.basis !== "access_grants_only" || !probeAllowed.note) {
+      throw new Error("权限探询没说清它的 allowed 是按什么算的 —— "
+        + "一句「不允许」会把人引去查授权，而真正的判权走的是另一条路（直接权限不计入）");
+    }
+    const cacheIndex = await call("instruction-mcp.cache_key_index", {});
+    if (typeof cacheIndex !== "object" || cacheIndex === null) {
+      throw new Error(`缓存键索引没给出结果：${JSON.stringify(cacheIndex).slice(0, 160)}`);
+    }
+    const stablePrefix = await call("instruction-mcp.stable_prefix_get", {});
+    if (typeof stablePrefix !== "object" || stablePrefix === null) {
+      throw new Error(`稳定前缀没给出结果：${JSON.stringify(stablePrefix).slice(0, 160)}`);
+    }
+    const artifact = await call("evidence-mcp.artifact_register", {
+      taskGroupId: TG, workItemId: WORK, artifactManifestRef: "docs/artifact-manifests/doctor-mcp-chain.json"});
+    if ((artifact.artifact || artifact).taskGroupId !== TG) {
+      throw new Error(`产出物登记挂错了任务组：${JSON.stringify(artifact).slice(0, 200)}`);
+    }
+    const plan = await call("review-mcp.review_plan_create", {taskGroupId: TG});
+    if ((plan.reviewPlan || plan).taskGroupId !== TG) {
+      throw new Error(`评审计划挂错了任务组：${JSON.stringify(plan).slice(0, 200)}`);
+    }
+    const upgradeCandidate = await call("governance-mcp.system_upgrade_candidate_export", {taskGroupId: TG});
+    if (typeof upgradeCandidate !== "object" || upgradeCandidate === null) {
+      throw new Error(`升级候选导出没给出结果：${JSON.stringify(upgradeCandidate).slice(0, 160)}`);
+    }
+    const waited = await call("room-mcp.room_wait", {roomId, cursor: 0});
+    if (typeof waited !== "object" || waited === null) {
+      throw new Error(`房间等待没给出结果：${JSON.stringify(waited).slice(0, 160)}`);
+    }
+
     // 【角色技能叠加：从没被跑通过的那条真人杠杆】。它改的是 agent 实际拥有的能力
     //（含 forbiddenCapabilityAdds），控制台上明写「真人专属、控制台只读、由人经 API 创建」。
     // 而按状态码记账量出来：/api/role-skill-overlays 全仓除文档外没有任何调用方，
@@ -902,7 +982,7 @@ try {
     // 本套 e2e 自己跑通的数（跨门合计另算：契约门在进程内还会跑通一批）。
     // 这个数是【实测出来的】—— 早先一次量到 44，复量不出来，那次多半把别的运行留下的账算了进去；
     // 以能复现的这次为准。棘轮只升不降。
-    const SUCCESSFULLY_EXERCISED_FLOOR = 65;
+    const SUCCESSFULLY_EXERCISED_FLOOR = 78;
     let traced = "";
     try { traced = readFileSync(toolTracePath, "utf8"); } catch { traced = ""; }
     const succeeded = new Set(traced.split("\n").filter((line) => line.startsWith("ok ")).map((line) => line.slice(3)));
@@ -919,6 +999,10 @@ try {
       const missing = mcpToolNames.filter((tool) => !succeeded.has(tool));
       throw new Error(`本轮成功执行过的 MCP 工具从 ${SUCCESSFULLY_EXERCISED_FLOOR} 掉到 ${succeeded.size}`
         + ` —— 没跑通的还有 ${missing.length} 个：${missing.slice(0, 8).join("、")}${missing.length > 8 ? " 等" : ""}`);
+    }
+    if (process.env.AIMAC_LIST_UNEXERCISED_TOOLS) {
+      const missing = mcpToolNames.filter((tool) => !succeeded.has(tool));
+      console.log(`本轮没跑通的 ${missing.length} 个：\n  ${missing.join("\n  ")}`);
     }
     if (succeeded.size > SUCCESSFULLY_EXERCISED_FLOOR) {
       console.log(`  ↑ 成功执行过的工具涨到 ${succeeded.size}，把 SUCCESSFULLY_EXERCISED_FLOOR 改成这个数（棘轮留着松弛量，下次回退就看不出来了）`);

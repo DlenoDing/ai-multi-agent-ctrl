@@ -6615,6 +6615,22 @@ const MUTATIONS = [
     expect: "把新成员的默认项目设成已归档项目没被拒"
   },
   {
+    name: "权限探询必须按资源判，不许恒答允许",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: "    resourceMatches(grant.resource, resource) &&",
+    to: "    true &&",
+    expect: "权限探询两个方向没都答对"
+  },
+  {
+    name: "权限探询要说清它的 allowed 按什么算",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: '  return {subjectId, permission, resource, allowed, basis: "access_grants_only",',
+    to: "  return {subjectId, permission, resource, allowed,",
+    expect: "没说清它的 allowed 是按什么算的"
+  },
+  {
     name: "同名节点重复注册必须整条替换",
     file: "apps/mcp-server/server.mjs",
     gate: "mcp",
