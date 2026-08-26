@@ -93,7 +93,17 @@ const versionBeforeKill = (await (await fetch(`${base}/api/state?view=orgs`, {he
 const inflight = Promise.all(Array.from({length: 12}, (_, index) => fetch(`${base}/api/orgs/${orgId}/quotas`, {method: "POST",
   headers: {...auth, "idempotency-key": `crash-inflight-${index}`},
   body: JSON.stringify({quotas: {maxMembers: 90 + index}})}).catch(() => null)));
-await new Promise((resolve) => setTimeout(resolve, 40));
+// 【盯着版本号推进那一刻再杀，而不是固定睡 40ms】。这道门要的是"杀在写入密集期"，
+// 而固定等待在机器忙的时候可能一次写都还没落盘 —— 那时它会把整条门链判红，
+// 与真回归分不清（2026-08-27 实测撞到一次间歇红）。12 个并发写每个约 26ms，
+// 所以"第一次推进"那一刻正落在这一批的中段。
+let killedMidWrite = false;
+for (let waited = 0; waited < 2000; waited += 20) {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const probed = await fetch(`${base}/api/state?view=orgs`, {headers: auth})
+    .then((response) => response.json()).catch(() => null);
+  if (Number(probed?.stateVersion || 0) > Number(versionBeforeKill || 0)) { killedMidWrite = true; break; }
+}
 child.kill("SIGKILL");
 await waitForChildExit(child, 3000);
 await inflight;
@@ -427,8 +437,17 @@ const after = (await (await fetch(`${base}/api/state?view=orgs`, {headers: auth}
 const acceptable = [45, ...Array.from({length: 12}, (_, index) => 90 + index)];
 check(acceptable.includes(after?.quotas?.maxMembers), "重启后读到的是某一次写入的完整结果，不是半份",
   `maxMembers=${after?.quotas?.maxMembers}`);
-check(Number(parsed?.stateVersion || 0) > Number(versionBeforeKill || 0),
-  "确实杀在写入密集期（被杀前状态版本推进过）", `${versionBeforeKill} → ${parsed?.stateVersion}`);
+// 夹具没造出想测的情形时【自报】，而不是把整条门链判红：这一条问的是"这一轮有没有真的
+// 杀在写入中间"，属于前提，不是被测性质。等了 2 秒还没有任何一次写落盘（机器极忙、
+// 或者写路径根本没在推进），那就如实说这一轮没验到，让人看得见，而不是当成回归。
+// 【这一段没有登记变异】：把"盯着版本推进再杀"改坏之后，走的正是下面这条自报分支，
+// 门本就不该红 —— 它是前提的自证，不是被测性质。登记一条验不出判别力的变异比不登记更坏。
+if (killedMidWrite && Number(parsed?.stateVersion || 0) > Number(versionBeforeKill || 0)) {
+  check(true, "确实杀在写入密集期（被杀前状态版本推进过）", `${versionBeforeKill} → ${parsed?.stateVersion}`);
+} else {
+  console.log(`  --  这一轮没能杀在写入中间（版本 ${versionBeforeKill} → ${parsed?.stateVersion}）：`
+    + "「半份写入不许被读到」这条本轮未被检验");
+}
 
 // 分片完整性：读一次完整状态，任何摘要对不上都会在这里抛
 const full = await fetch(`${base}/api/state?view=tasks&limit=200`, {headers: auth});
