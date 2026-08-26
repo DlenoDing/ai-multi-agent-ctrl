@@ -8625,6 +8625,20 @@ export function purgeExpiredIdempotencyPayloads(state, at = Date.now()) {
   }
 }
 
+// 命中一条幂等记录时该怎么答 —— 两条路（REST 的 finishGuardedWrite、MCP 的工具派发）
+// 此前各写各的：REST 明确拒绝"空的成功回执"，MCP 那一支直接 ok:true / replayed:true 而正文是
+// undefined —— 看起来像原来那次调用的结果，其实什么内容都没有。而 agent 全都走 MCP。
+// 所以把这个判断收成一个入口，下一次改动不会再只改到一边。
+export function idempotentReplayOutcome(record) {
+  if (!record) return {replay: false};
+  if (record.payload === undefined) {
+    return {replay: false, expired: true, error: "idempotent_result_expired",
+      originalStatus: record.status, completedAt: record.createdAt,
+      payloadExpiredAt: record.payloadExpiredAt};
+  }
+  return {replay: true, status: record.status, payload: record.payload};
+}
+
 // 幂等回执有【两个写入点】：REST 的 finishGuardedWrite、MCP 的工具派发。
 // 上面那个正文清理原先只挂在 REST 那一侧 —— agent 全都走 MCP，于是 MCP-only 的部署
 // 从来不清理回执正文：实测按出厂上限（5000 条）跑满是 29.6MB 中央态，光这一项

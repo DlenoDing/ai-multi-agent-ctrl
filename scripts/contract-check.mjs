@@ -133,6 +133,7 @@ import {
   recordCheckpointRejection,
   routeBlockedDispatchToHumanDecision,
   purgeExpiredIdempotencyPayloads,
+  idempotentReplayOutcome,
   repositoryUrlRegisteredForProject,
   MANDATORY_PATH_DENYLIST,
   advanceWorkItemToReviewRequested,
@@ -8903,6 +8904,23 @@ function verifyIdempotencyPayloadsAreSwept(output) {
     || state.idempotencyRecords.written?.payload === undefined) {
     output.push("幂等回执入口把还在重放窗口内的正文也清掉了 —— 重试拿不回同一份答复");
   }
+  // 正文清掉之后【读它的那一侧怎么答】此前没有判据：REST 明确拒绝空回执，而 MCP 那一支照旧
+  // ok:true / replayed:true、正文是 undefined —— 看起来就是原来那次调用的结果，其实什么都没有。
+  // agent 全都走 MCP。现在两侧同一个判断，所以这里直接压它。
+  const expiredOutcome = idempotentReplayOutcome(state.idempotencyRecords.stale);
+  if (expiredOutcome.replay !== false || expiredOutcome.error !== "idempotent_result_expired") {
+    output.push(`正文过期的幂等记录仍被当成可重放：${JSON.stringify(expiredOutcome)} —— `
+      + "调用方会拿到一个什么内容都没有的成功回执，并以为那就是上一次的结果");
+  }
+  if (!expiredOutcome.payloadExpiredAt || !expiredOutcome.completedAt) {
+    output.push(`拒绝重放时没说清那次写入何时完成、正文何时过期（${JSON.stringify(expiredOutcome)}）—— `
+      + "调用方无从判断该不该改个键重发");
+  }
+  // 正面对照走【同一条分支】：窗口内的记录必须照常重放出原正文，否则上面那条可能是"全都拒了"。
+  const liveOutcome = idempotentReplayOutcome(state.idempotencyRecords.recent);
+  if (liveOutcome.replay !== true || liveOutcome.payload?.blob !== "y") {
+    output.push(`还在重放窗口内的记录没能重放出原正文：${JSON.stringify(liveOutcome)}`);
+  }
   // 条数淘汰：上限下探到 100（函数自己的下限），塞 120 条，必须只剩最新的 100 条。
   const previousCap = process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS;
   process.env.AIMAC_IDEMPOTENCY_MAX_RECORDS = "100";
@@ -9669,10 +9687,10 @@ function verifySideEffectsComeAfterTheGuard(output) {
   //   把标记删掉、分支还在的话，那种变异不该红（回执少个字段，行为没变）；
   //   而真正危险的是【分支本身没了】—— 那时 existingRecord 命中也会继续往下跑到 callTool。
   // 所以锁定"命中记录 → 直接用 existingRecord.payload 出结果"这件事，再确认执行在它之后。
-  const replayAt = mcp.search(/existingRecord\) \{[\s\S]{0,200}?existingRecord\.payload/u);
+  const replayAt = mcp.search(/existingRecord\) \{[\s\S]{0,200}?idempotentReplayOutcome\(existingRecord\)/u);
   const callAt = mcp.indexOf("await callTool(", replayAt < 0 ? 0 : replayAt);
   if (replayAt < 0) {
-    output.push("MCP 侧找不到「命中幂等记录就返回原结果」那一支 —— 重放会把写工具真的再执行一次");
+    output.push("MCP 侧找不到「命中幂等记录就按共用判断出结果」那一支 —— 重放会把写工具真的再执行一次");
   } else if (callAt < 0 || callAt < replayAt) {
     output.push("MCP 侧真正的执行不在幂等重放那一支【之后】—— 命中幂等记录时仍会再跑一次工具");
   }

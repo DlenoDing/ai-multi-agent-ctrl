@@ -29,6 +29,7 @@ import {
   validateGrantRoleTemplate,
   validateDelegatedGrant,
   recordIdempotentResult,
+  idempotentReplayOutcome,
   workItemCreateStatus,
   ensureRuntimeCollections,
   evaluateRoleDrift,
@@ -653,7 +654,14 @@ export async function callTool(name, args = {}, context = {}) {
         || existingRecord.principalRef !== principalRef)) {
         result = {ok: false, error: "idempotency_key_reuse_conflict", idempotencyKey};
       } else if (existingRecord) {
-        result = {ok: true, replayed: true, idempotencyRecord: existingRecord, payload: existingRecord.payload};
+        // 与 REST 同一份判断：正文已过重放窗口时不能回一个"空的成功"。
+        const replay = idempotentReplayOutcome(existingRecord);
+        result = replay.expired
+          ? {ok: false, error: replay.error, idempotencyKey,
+            originalStatus: replay.originalStatus, completedAt: replay.completedAt,
+            payloadExpiredAt: replay.payloadExpiredAt,
+            detail: "那次调用确实执行过，但结果已过重放窗口、不能再重放；换一个幂等键重新发起"}
+          : {ok: true, replayed: true, idempotencyRecord: existingRecord, payload: replay.payload};
       } else {
         const policyDecision = isWriteTool(name)
       ? policyDecisionEval(state, {

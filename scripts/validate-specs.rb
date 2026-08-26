@@ -2116,7 +2116,15 @@ errors << "idempotency payload purge must run inside the single write entry poin
   core_source.match?(/export function recordIdempotentResult\([\s\S]{0,400}?purgeExpiredIdempotencyPayloads\(state, at\);[\s\S]{0,200}?capIdempotencyRecords\(state\);/)
 errors << "a gate must forbid bypassing the idempotency write entry point" unless
   contract_check_source.include?("verifyNobodyWritesIdempotencyRecordsDirectly")
-errors << "an expired idempotency replay must not be returned as an empty success" unless server_source.include?("idempotent_result_expired")
+# 这条原先只问 server.mjs 里出没出现过那个码 —— 而【MCP 那一侧从来没有过它】，判据照样绿：
+# agent 全都走 MCP，拿到的是 ok:true/replayed:true 而正文是 undefined 的空成功回执。
+# 现在两条路共用 core 里那一份判断，所以要问的是：判断在、且两侧都真的经过它。
+core_decides_replay = core_source.include?("export function idempotentReplayOutcome")\
+  && core_source.include?('error: "idempotent_result_expired"')
+errors << "an expired idempotency replay must not be returned as an empty success" unless core_decides_replay
+errors << "both the REST and the MCP replay path must go through the one shared decision (this pair has diverged before)" unless
+  read_source("apps/control-plane-ui/server.mjs").include?("idempotentReplayOutcome(existingRecord)")\
+  && read_source("apps/mcp-server/server.mjs").include?("idempotentReplayOutcome(existingRecord)")
 errors << "postgres project shards must carry a payload digest in the central index (it is computed outside the runtime_json generation branch)" unless File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).include?("if (!nextGeneration) {") && File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).match?(/if \(!nextGeneration\) \{[\s\S]{0,900}?shard\.storagePayloadDigest = digestOfProjectShardPayloadText\(payloadText\);/)
 errors << "postgres project shards must be integrity-checked where they are merged, not in a read helper the main path skips" unless File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs")).include?('if (stateStoreKind() === "postgresql") assertProjectShardsMatchCentralIndex(shards, centralState);')
 errors << "Room participant identity must be derived from the authenticated principal, never from the request body" unless mcp_source.include?("ROOM_PARTICIPANT_KEY") && mcp_source.include?("participantId: args[ROOM_PARTICIPANT_KEY]") && !mcp_source.include?("participantId: string")

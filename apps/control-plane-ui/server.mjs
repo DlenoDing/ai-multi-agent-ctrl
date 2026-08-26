@@ -103,6 +103,7 @@ import {
   HUMAN_ACTOR_KEY,
   effectivePathDenylist,
   recordIdempotentResult,
+  idempotentReplayOutcome,
   recordCheckpointRejection,
   routeBlockedDispatchToHumanDecision,
   repositoryUrlRegisteredForProject,
@@ -594,11 +595,13 @@ function beginGuardedWrite(req, state, action, subject, resourceScope = inferRes
     }
     // 响应体已过重放窗口时不能返回一个空的成功响应 —— 那看起来像原来那次调用的结果，
     // 而它什么内容都没有。明确告诉调用方：那次写入确实发生过，但结果已经不能再重放了。
-    if (existingRecord.payload === undefined) {
-      return {status: 409, payload: {error: "idempotent_result_expired", idempotencyKey,
-        originalStatus: existingRecord.status, completedAt: existingRecord.createdAt}};
+    const replay = idempotentReplayOutcome(existingRecord);
+    if (replay.expired) {
+      return {status: 409, payload: {error: replay.error, idempotencyKey,
+        originalStatus: replay.originalStatus, completedAt: replay.completedAt,
+        payloadExpiredAt: replay.payloadExpiredAt}};
     }
-    return {status: existingRecord.status, payload: existingRecord.payload};
+    return {status: replay.status, payload: replay.payload};
   }
   const drift = writeDriftCheck(state, action, resourceScope);
   if (!drift.allowed) {

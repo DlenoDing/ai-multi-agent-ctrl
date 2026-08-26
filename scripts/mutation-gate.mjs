@@ -9574,6 +9574,14 @@ const MUTATIONS = [
     to: "  return true;",
     expect: "一个产出目标标识都没给却没被入参层拦下"
   },
+  {
+    name: "正文已过重放窗口的幂等记录不得当成可重放（REST 与 MCP 同一份判断）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: '  if (record.payload === undefined) {\n    return {replay: false, expired: true, error: "idempotent_result_expired",',
+    to: '  if (false) {\n    return {replay: false, expired: true, error: "idempotent_result_expired",',
+    expect: "仍被当成可重放"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
