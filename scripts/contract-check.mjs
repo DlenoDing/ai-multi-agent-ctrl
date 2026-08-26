@@ -12896,16 +12896,35 @@ function verifyEveryViewCollectionHasAChineseLabel(output) {
     else if (serverText[index] === "}") { depth -= 1; if (!depth) { end = index; break; } }
   }
   const fields = new Set(at < 0 ? [] : [...serverText.slice(at, end).matchAll(/"(\w+)"/gu)].map((match) => match[1]));
+  // 【横幅的覆盖面不止视图下发的集合】。「已被容量上限丢弃」列的是 storageDroppedCounts 里的
+  // 任何字段，来源有两处：分片裁剪（projectShardCollections）与中央态裁剪（capCentralCollection）。
+  // 这里面有 8 个集合任何视图都不下发 —— 这道门原先看不见它们，而横幅在真被裁到的那一刻
+  // 会印出一串英文键（实测：任务契约、生效指令包、角色漂移守卫、完成就绪度、进度快照、
+  // 运行问题样本/模式、状态转移证据）。
+  const storeText = readFileSync(join(root, "apps/control-plane-ui/lib/state-store.mjs"), "utf8");
+  const shardList = /projectShardCollections = \[([\s\S]*?)\]/u.exec(storeText);
+  const coreText = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const droppable = new Set([
+    ...(shardList ? [...shardList[1].matchAll(/"(\w+)"/gu)].map((m) => m[1]) : []),
+    ...[...coreText.matchAll(/capCentralCollection\(state, "(\w+)"/gu)].map((m) => m[1])
+  ]);
+  if (droppable.size < 8) {
+    output.push(`集合中文名核对：只提取到 ${droppable.size} 个会被容量裁掉的集合 —— 提取失配，这一半在空转`);
+    return;
+  }
+  for (const field of droppable) fields.add(field);
   if (labels.size < 20 || fields.size < 20) {
     output.push(`集合中文名核对：提取到 ${labels.size} 个中文名、${fields.size} 个视图集合 —— 提取失配，本条在空转`);
     return;
   }
   const nameless = [...fields].filter((field) => !labels.has(field)).sort();
   if (nameless.length) {
-    output.push(`这些集合会被视图下发，界面上却没有中文名：${nameless.join("、")} —— `
-      + "被截断或被容量淘汰时，横幅上写的就是这串英文键（而它只在那一刻才渲染，漏译扫描看不见）");
+    output.push(`这些集合会被视图下发、或会被容量裁掉并计入「已丢弃」横幅，而界面上没有中文名：`
+      + `${nameless.join("、")} —— 被截断或被容量淘汰时，横幅上写的就是这串英文键`
+      + "（而它只在那一刻才渲染，漏译扫描看不见）");
   }
-  console.log(`集合中文名：视图下发的 ${fields.size} 个集合逐个对过界面的 ${labels.size} 条中文名，${nameless.length} 个缺名`);
+  console.log(`集合中文名：视图下发的 + 会被容量裁掉的共 ${fields.size} 个集合（其中 ${droppable.size} 个走裁剪那条路）`
+    + `逐个对过界面的 ${labels.size} 条中文名，${nameless.length} 个缺名`);
 }
 
 function verifyViewWindowKnowsEveryTimestampName(output) {

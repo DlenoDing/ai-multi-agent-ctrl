@@ -9714,6 +9714,15 @@ const MUTATIONS = [
     to: '  capCentralCollection(state, "transitionEvidence", 240, null);',
     expect: "被命令流水挤掉了"
   },
+  {
+    name: "会被容量裁掉的集合也要有中文名（横幅只在被裁到那一刻才渲染）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "contract",
+    check: "verifyEveryViewCollectionHasAChineseLabel",
+    from: 'runtimeIssuePatterns: "运行问题模式", transitionEvidence: "状态转移证据",',
+    to: 'runtimeIssuePatterns: "运行问题模式",',
+    expect: "而界面上没有中文名"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

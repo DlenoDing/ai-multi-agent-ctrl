@@ -3763,6 +3763,14 @@ function countSuffix(field) {
 //（instructionMetrics、modelSelectionPolicies 原先就缺，而它们只在真被截断那一刻才显出来 ——
 //  漏译扫描看不见没渲染的屏）。契约门按视图清单逐个核对这份表。
 const COLLECTION_LABELS = {
+  // 【这张表的覆盖面不止「视图下发的集合」】。「已被容量上限丢弃」那条横幅列的是
+  // storageDroppedCounts 里的任何字段，而它的来源有两处：分片裁剪（projectShardCollections）
+  // 与中央态裁剪（capCentralCollection）——里面有 8 个集合任何视图都不下发，
+  // 于是中文名那道门从来没看见它们，而横幅在真被裁到的那一刻会印出一串英文键。
+  agentTaskContracts: "任务契约", effectiveInstructionPackets: "生效指令包",
+  roleDriftGuards: "角色漂移守卫", completionReadiness: "完成就绪度",
+  progressSnapshots: "进度快照", runtimeIssueSamples: "运行问题样本",
+  runtimeIssuePatterns: "运行问题模式", transitionEvidence: "状态转移证据",
   instructionMetrics: "指令度量", modelSelectionPolicies: "模型选型策略",
   accessGrants: "访问授权", accounts: "账号", admissionDecisions: "准入判决", agentControlCommands: "控制指令",
   agentDispatches: "派发", agentExecutionEvents: "执行事件", agentJoinTokens: "加入令牌",
