@@ -38,7 +38,13 @@
     },
     "status": {
       "type": "string",
-      "enum": ["observed", "clustered", "candidate_created", "suppressed", "closed"]
+      "enum": [
+        "observed",
+        "clustered",
+        "candidate_created",
+        "suppressed",
+        "closed"
+      ]
     },
     "issueClass": {
       "type": "string",
@@ -111,7 +117,11 @@
     "collectionPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "forbidsRuntimeAutoUpgrade", "externalUpgradePackageRequired"],
+      "required": [
+        "mode",
+        "forbidsRuntimeAutoUpgrade",
+        "externalUpgradePackageRequired"
+      ],
       "properties": {
         "mode": {
           "type": "string",
@@ -138,6 +148,18 @@
     "updatedAt": {
       "type": "string",
       "format": "date-time"
+    },
+    "settledBy": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "把这条模式了结掉的那个人。它由「系统升级候选处置」传导过来（人判定不处理/已收尾时，背后的模式跟着了结），否则同一件已经判过的事会一直被重新聚类、反复顶上来。"
+    },
+    "settledReason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "了结的依据，形如 system_upgrade_candidate_dismissed —— 指回是哪一次人工处置带来的。"
     }
   },
   "allOf": [
@@ -148,10 +170,14 @@
             "const": "candidate_created"
           }
         },
-        "required": ["status"]
+        "required": [
+          "status"
+        ]
       },
       "then": {
-        "required": ["candidateRef"]
+        "required": [
+          "candidateRef"
+        ]
       }
     }
   ]

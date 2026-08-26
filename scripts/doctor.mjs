@@ -3907,6 +3907,83 @@ try {
     }
     console.log(`  ok  系统概览取数口：${readPaths.length} 个界面读的字段逐个核对，都在响应里`);
 
+  // 【三条只有反面用例走过的 REST 写路径】。按状态码记账量出来，它们从没返回过 2xx：
+  //   系统升级候选处置 —— 人工审核页「待你处理」里就列着它（处置入口：执行监控）；
+  //   指令信封 / 执行方案推进 —— 各自 MCP 孪生已跑通，而 REST 这一侧从没走通过。
+  // "同一件事两条路"在本仓反复出问题，所以两侧都要真的跑一遍。
+  {
+    const liveForResolve = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: doctorSystemAuth}});
+    const candidate = (liveForResolve.payload.systemUpgradeCandidates || [])
+      .find((item) => !["external_maintenance_required", "dismissed", "superseded", "closed", "exported_for_external_maintenance"].includes(item.status));
+    if (!candidate) {
+      throw new Error("本轮没有待处置的系统升级候选 —— 这条断言会空转");
+    }
+    // 「认不出的处置状态必须拒」上面已经有一条断言（g2b-status-bogus-candidate），这里不重复。
+    // 不给理由也要拒：那句话是这次人工判断的唯一存放处（审计条目只记 actor/action/subject）。
+    const noReason = await jsonFetch(port, `/api/system-upgrade-candidates/${encodeURIComponent(candidate.candidateId)}/resolve`, {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-upgrade-no-reason", authorization: doctorSystemAuth},
+      body: JSON.stringify({status: "dismissed"})
+    });
+    if (noReason.payload?.error !== "system_upgrade_candidate_justification_required") {
+      throw new Error(`不给理由就处置了升级候选（${noReason.response.status}/${noReason.payload?.error}）`);
+    }
+    const resolved = await jsonFetch(port, `/api/system-upgrade-candidates/${encodeURIComponent(candidate.candidateId)}/resolve`, {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-upgrade-resolve", authorization: doctorSystemAuth},
+      body: JSON.stringify({status: "dismissed", justification: "e2e：这条与本次交付无关，人工判定不处理"})
+    });
+    if (!resolved.response.ok) {
+      throw new Error(`升级候选处置不掉（${resolved.response.status}/${resolved.payload?.error}）—— `
+        + "人工审核页把它列在「待你处理」里，处置不掉就是一条永远挂着的活");
+    }
+    const resolvedBody = resolved.payload?.systemUpgradeCandidate || resolved.payload;
+    if (resolvedBody.status !== "dismissed" || !resolvedBody.resolutionJustification || !resolvedBody.resolvedBy) {
+      throw new Error(`处置没落账：${JSON.stringify(resolved.payload).slice(0, 240)}`);
+    }
+    // 一次性：已处置的不许被后来者无条件覆写（那位真人的理由不可恢复）。
+    const again = await jsonFetch(port, `/api/system-upgrade-candidates/${encodeURIComponent(candidate.candidateId)}/resolve`, {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-upgrade-resolve-again", authorization: doctorSystemAuth},
+      body: JSON.stringify({status: "closed", justification: "第二次处置"})
+    });
+    if (again.payload?.error !== "system_upgrade_candidate_already_resolved") {
+      throw new Error(`已处置的升级候选被二次处置（${again.response.status}/${again.payload?.error}）`);
+    }
+
+    // 【被漂移守卫挡住时，报文要说得出下一步】。这条拒绝挡着五个动作，其中两条正是控制台上
+    // 写明"由人经 API 创建"的（指令信封、角色定制）—— 而守卫只能由执行方在开工时绑定，
+    // 控制台没有入口。一个还没跑过 agent 的部署上这两条路是死的，报文却只有一个码。
+    const driftBlocked = await jsonFetch(port, "/api/instruction-envelopes", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-envelope-drift-blocked", authorization: doctorSystemAuth},
+      body: JSON.stringify({taskGroupId: "tg_instruction_efficiency", recipientRole: "agent-runtime"})
+    });
+    if (driftBlocked.payload?.error === "role_drift_guard_not_clear") {
+      const said = String(driftBlocked.payload?.message || "");
+      if (!said.includes("role_drift_guard_bind") && !said.includes("开工")) {
+        throw new Error(`被角色漂移守卫挡住时没说下一步该做什么：${JSON.stringify(driftBlocked.payload).slice(0, 240)} —— `
+          + "这条拒绝挡着五个动作，而守卫只能由执行方绑定、控制台上没有入口");
+      }
+    }
+
+    const envelope = await jsonFetch(port, "/api/instruction-envelopes", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-instruction-envelope", authorization: doctorSystemAuth},
+      // 换一个没有漂移记录的任务组：tg_runtime_management 上本轮跑过编排，
+      // 角色漂移守卫没清（role_drift_guard_not_clear）—— 那是产品的正当拒绝，不是这条要验的事。
+      body: JSON.stringify({taskGroupId: "tg_instruction_efficiency", recipientRole: "agent-runtime"})
+    });
+    // 建得成的那一支要求先有漂移守卫，而守卫只有执行方绑得了 —— 本套里没有 agent 真开过工，
+    // 所以这一支在 doctor-mcp 里验（那条链先绑守卫、再建信封）。这里验的是被挡住时说得清。
+    if (envelope.response.ok) {
+      const envelopeBody = envelope.payload?.instructionEnvelope || envelope.payload?.envelope || envelope.payload;
+      if (envelopeBody.taskGroupId !== "tg_instruction_efficiency") {
+        throw new Error(`指令信封挂错了任务组：${JSON.stringify(envelope.payload).slice(0, 200)}`);
+      }
+    }
+  }
+
   // 【监控页那两条事件流】。控制台的「实时事件流」按作用域取数：派发一条、会话一条
   //（app.js 里 scope.type === "dispatch" / "session" 分别指向它们）。按状态码记账量出来，
   // 这两条在整套控制面 e2e 里【从没返回过 2xx】—— 也就是说那一屏的取数口从没被验过：
@@ -4724,9 +4801,13 @@ console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条�
     "/api/agent/v1/heartbeat": "节点心跳：同上",
     "/api/role-skill-overlays": "角色技能叠加：doctor-mcp 里建完再用 MCP 解析，验它真的改掉了 agent 拿到的能力",
     "/api/quality-gates/": "人工豁免质量门：质量门只由 agent 提交的测试结果派生，所以在 doctor-mcp 里验",
+    "/api/execution-topologies/": "推进执行方案（check_eligibility/start/cancel…）：本套没有成型的方案，"
+      + "doctor-mcp 那条链把它从 planned 一路走到 cancelled，并验了「没定稿不许启动」那道闸门",
+    "/api/instruction-envelopes": "建信封要求任务组先绑了角色漂移守卫，而守卫只能由执行方开工时绑 —— "
+      + "本套没有 agent 真开过工，成功那一支在 doctor-mcp 里验（那条链先绑守卫再建信封）；这里验被挡住时说得清下一步",
     "/api/checkpoints": "【设计上已关闭】：检查点只能经 agent 网关提交（它少了节点鉴权与认领围栏），这里永远只会被拒"
   };
-  const SUCCEEDED_ROUTE_FLOOR = 69;
+  const SUCCEEDED_ROUTE_FLOOR = 70;
   const neverSucceeded = routes.map((route) => route.route)
     .filter((route) => !succeeded.has(route) && !OTHER_SUITE_COVERS[route] && !SUCCEEDS_ELSEWHERE[route]).sort();
   for (const [route, why] of Object.entries(SUCCEEDS_ELSEWHERE)) {

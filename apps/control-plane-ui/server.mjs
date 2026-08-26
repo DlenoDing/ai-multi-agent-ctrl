@@ -571,7 +571,18 @@ function beginGuardedWrite(req, state, action, subject, resourceScope = inferRes
   }
   const drift = writeDriftCheck(state, action, resourceScope);
   if (!drift.allowed) {
-    return {status: 409, payload: {error: "role_drift_guard_not_clear", driftSignals: drift.signals}};
+    // 【拒了要说得出下一步】。这里原先只回一个码加一串信号（role_drift_guard_missing:xxx）——
+    // 而这条拒绝挡着五个动作（建指令信封、建角色定制、选产出目标、检查点、运行时开工），
+    // 其中两条正是控制台上写明"由人经 API 创建"的那两条。人看到这句话完全不知道该做什么：
+    // 守卫【只能由执行方在开工时绑定】（MCP 的 role_drift_guard_bind），控制台上没有入口，
+    // 所以一个还没跑过 agent 的部署上，这两条路是死的，而报文一个字都没解释。
+    const missing = drift.signals.some((signal) => String(signal).startsWith("role_drift_guard_missing:"));
+    return {status: 409, payload: {error: "role_drift_guard_not_clear", driftSignals: drift.signals,
+      message: missing
+        ? "这个任务组还没有绑定角色漂移守卫。它由执行方在开工时绑定（agent 认领派发后调 role_drift_guard_bind），"
+          + "控制台上没有手动入口 —— 先让这个任务组真正派发一次，或改在已经开过工的任务组上做这件事"
+        : "已绑定的角色漂移守卫没有把这个任务组列进它的作用域（allowedActionScopeRefs）："
+          + "执行方绑守卫时限定了监管范围，这次写入落在范围之外 —— 让执行方重新绑定（role_drift_rebound）后再试"}};
   }
   const at = now();
   const requiredPermission = permissionForAction(action);

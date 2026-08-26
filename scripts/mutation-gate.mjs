@@ -6618,6 +6618,30 @@ const MUTATIONS = [
     expect: "把新成员的默认项目设成已归档项目没被拒"
   },
   {
+    name: "被漂移守卫挡住时要说得出下一步",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    const missing = drift.signals.some((signal) => String(signal).startsWith(\"role_drift_guard_missing:\"));",
+    to: "    const missing = false;",
+    expect: "被角色漂移守卫挡住时没说下一步该做什么"
+  },
+  {
+    name: "认不出的升级候选处置状态必须拒",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    const nextStatus = ["exported_for_external_maintenance", "dismissed", "closed"].includes(body.status) ? body.status : null;',
+    to: "    const nextStatus = body.status || null;",
+    expect: "认不出的升级候选状态必须拒绝"
+  },
+  {
+    name: "已处置的升级候选不许被二次处置",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '      return json(res, 409, {error: "system_upgrade_candidate_already_resolved", systemUpgradeCandidate: candidate});',
+    to: "      candidate.status = \"candidate_created\";",
+    expect: "已处置的升级候选被二次处置"
+  },
+  {
     name: "重新初始化必须让版本号继续前进",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
