@@ -10353,8 +10353,19 @@ function verifyMutationsAreRegisteredAgainstTheRightGate(output) {
     idle: "scripts/idle-tick-gate.mjs", specs: "scripts/validate-specs.rb",
     doctor: "scripts/doctor.mjs", mcp: "scripts/doctor-mcp.mjs", agent: "scripts/doctor-agent-remote.mjs"
   };
+  // 门的源码要【连它 import 的 scripts/lib/* 一起算】：有些断言文案住在共用模块里
+  //（schema-validate 那句「拼进了 undefined / [object Object] / NaN」两道门都在用）。
+  // 只读门自己那个文件的话，这类变异会被报成"挂错了门"——而它在那道门上确实会红（实测）。
+  // 误报和漏报一样会让人不再信这道门，所以把共用模块并进来。
   const sources = new Map();
-  for (const [gate, rel] of Object.entries(GATE_SOURCES)) sources.set(gate, readFileSync(join(root, rel), "utf8"));
+  for (const [gate, rel] of Object.entries(GATE_SOURCES)) {
+    let text = readFileSync(join(root, rel), "utf8");
+    for (const hit of text.matchAll(/from "\.\/lib\/([A-Za-z0-9._-]+\.mjs)"/gu)) {
+      const libPath = join(root, "scripts/lib", hit[1]);
+      if (existsSync(libPath)) text += readFileSync(libPath, "utf8");
+    }
+    sources.set(gate, text);
+  }
   const mutations = readFileSync(join(root, "scripts/mutation-gate.mjs"), "utf8");
   const offenders = [];
   let checked = 0;

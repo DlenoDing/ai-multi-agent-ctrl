@@ -512,6 +512,13 @@ const GRANT_ROLE_LABELS = {
 // 已归档的项目不该出现在「签发入网令牌」的目标里：后端已经拒（project_archived），
 // 界面还摆着它就是把人往死路上引 —— 按着选一个，回来的是一句拒绝。
 // 归档意味着"移出可建新工作的范围"，而接一个 agent 进来正是要开新工作。
+// 人停下来的任务组只有真人能恢复（后端同规）。判据是停因，而不是"谁在看这一屏"——
+// 机器主体也会渲染这一屏（agent 侧的只读视图），给它一个按不动的按钮不如直接说清楚。
+function canResumeTaskGroup(taskGroup) {
+  if (!String(taskGroup?.pauseReason || "").startsWith("human_directive")) return true;
+  return ["system_admin", "org_admin", "user_account"].includes(currentAccount?.accountType);
+}
+
 function joinTokenTargetProjects() {
   return (state.projects || []).filter((project) => project.status !== "archived");
 }
@@ -937,6 +944,9 @@ function requestFailureHint(payload) {
     Array.isArray(payload.openTaskGroupIds) && payload.openTaskGroupIds.length
       ? `还没关掉的任务组：${payload.openTaskGroupIds.join("、")}` : "",
     payload.minLength ? `至少需要 ${payload.minLength} 位` : "",
+    // 「这是人停下来的」那条拒绝带着停因：不显示的话，人只知道自己点不动，
+    // 不知道是谁、因为什么把它停下来的 —— 而那正是他下一步要去问的人。
+    payload.pauseReason ? `停因：${t(payload.pauseReason)}` : "",
     // "现在是什么状态、只能转到哪几个"是一对：只给其中一个，人还是不知道能做什么。
     payload.currentStatus ? `当前状态：${payload.currentStatus}` : "",
     Array.isArray(payload.allowedStatuses) && payload.allowedStatuses.length
@@ -2861,8 +2871,18 @@ function renderTaskGroups() {
         </details>` : ""}
         <div class="button-row">
           <button class="secondary-button" data-action="tg-detail" data-task="${esc(taskGroup.id)}">${expanded ? "收起详情" : "查看详情"}</button>
-          ${hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="pause">暂停</button>
-          <button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="resume">恢复</button>` : ""}
+          ${/* 暂停与恢复按【当前状态】二选一 —— 两个一直摆着的话，总有一个是按了什么都不会发生的：
+                对已经停下来的组点「暂停」、对在跑的组点「恢复」，回执都是 200，而屏幕一点没变。
+                成员那一行早就是二选一（启用 XOR 停用），这里是漏的。
+                人停下来的（停因以 human_directive 开头）后端只让真人恢复 —— 机器主体连按钮都不该看见，
+                否则按下去只会拿回一句 403，而人不知道自己为什么点不动。 */ ""}
+          ${hasGroupPerm(taskGroup.id, "task_group:control") ? (
+            String(taskGroup.goalExecutionStatus || "").startsWith("active_paused")
+              ? (canResumeTaskGroup(taskGroup)
+                ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="resume">恢复</button>`
+                : `<span class="notice">这个任务组是人停下来的（停因：${esc(t(taskGroup.pauseReason))}），只有真人能恢复它</span>`)
+              : `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="pause">暂停</button>`
+          ) : ""}
           ${hasGroupPerm(taskGroup.id, "task_group:review") || hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="secondary-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="request_review">请求评审</button>` : ""}
           ${hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="danger-button" data-action="task-control" data-task="${esc(taskGroup.id)}" data-task-action="rebound_drift">纠偏</button>` : ""}
         </div>

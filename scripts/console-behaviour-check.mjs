@@ -142,6 +142,10 @@ const PROBE_EPILOGUE = `
 globalThis.__probe = {
   grantRoleLabel: (role) => grantRoleLabel(role),
   joinTokenTargetProjects: (nextState) => { state = nextState; return joinTokenTargetProjects(); },
+  canResumeTaskGroupAs: (taskGroup, accountType) => {
+    currentAccount = {accountId: "probe", accountType};
+    return canResumeTaskGroup(taskGroup);
+  },
   requestFailureHint: (payload) => requestFailureHint(payload),
   ruleEditorFormWith: (options) => ruleEditorForm(options),
   snapshotFormValues: (formEl) => snapshotFormValues(formEl),
@@ -445,6 +449,28 @@ function check(name, condition, detail) {
       + "（本门的顺序是【名称在前、条件在后】）");
   }
   if (!condition) failures.push(`${name}: ${detail}`);
+}
+
+// 【暂停与恢复按当前状态二选一】。两个按钮一直摆着的话，总有一个按了什么都不会发生：
+// 对已经停下来的组点「暂停」、对在跑的组点「恢复」，回执都是 200 而屏幕一点没变。
+// 再加一条：人停下来的（停因 human_directive*）后端只让真人恢复 —— 机器主体不该看见那个按钮，
+// 否则按下去只拿回一句 403，人不知道自己为什么点不动。
+{
+  const probe = loadConsole(el("div"), {realI18n: true});
+  const paused = {id: "tg_p", goalExecutionStatus: "active_paused_by_control"};
+  const running = {id: "tg_r", goalExecutionStatus: "active"};
+  const humanStopped = {id: "tg_h", goalExecutionStatus: "active_paused_by_freeze",
+    pauseReason: "human_directive_cancel"};
+  const canResume = (taskGroup, accountType) => probe.canResumeTaskGroupAs
+    ? probe.canResumeTaskGroupAs(taskGroup, accountType) : null;
+  check("人停下来的任务组：真人可以恢复", canResume(humanStopped, "org_admin") === true, "真人被挡住了");
+  check("人停下来的任务组：机器主体不许恢复",
+    canResume(humanStopped, "service_account") === false,
+    "机器主体看得到恢复按钮 —— 按下去只会拿回 403，而「取消归人」那条也就等于没有");
+  check("不是人停下来的组，机器主体照常可以恢复（别把正常路径一起挡死）",
+    canResume(paused, "service_account") === true, "把普通暂停也一起锁上了");
+  check("在跑的组不该显示「恢复」（按了什么都不会发生）",
+    !String(running.goalExecutionStatus).startsWith("active_paused"), "状态判断本身错了");
 }
 
 // 【已归档的项目不许出现在「签发入网令牌」的目标里】。后端已经拒（project_archived）——

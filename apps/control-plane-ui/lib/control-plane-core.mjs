@@ -2695,7 +2695,12 @@ function dispatchWorkItem(state, taskGroup, workItem, contract, repositoryTarget
       task_contract_created: contract.contractDigest || contract.contractId,
       effective_instruction_packet_ref: contract.effectiveInstructionPacketRef,
       repository_output_target_ref: contract.repositoryOutputTargetRef,
-      shared_definition_refs_resolved: contract.sharedDefinitionRefs?.length ? contract.sharedDefinitionRefs.join(",") : undefined,
+      // 这个清单里是【对象】（{contractRef, definitionDigest, status}），直接 join 会拼出
+      // "[object Object],[object Object]" —— 证据栏是满的，而它一个契约号都没说出来。
+      // 取 contractRef：那才是人和后续判据要拿去查的东西。
+      shared_definition_refs_resolved: contract.sharedDefinitionRefs?.length
+        ? contract.sharedDefinitionRefs.map((ref) => ref?.contractRef || ref).filter(Boolean).join(",")
+        : undefined,
       split_basis_digest: contract.splitBasisDigest || undefined
     });
     workItem.status = "ready";

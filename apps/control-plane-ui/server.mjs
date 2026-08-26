@@ -4196,8 +4196,23 @@ async function handleApi(req, res) {
       json(res, guard.status, guard.payload);
       return;
     }
+    // 【人停下来的，机器不许恢复】。取消是真人专属，但"撤销这个取消"此前走的是这条路：
+    // resume 无条件把状态写回 active，而 task_group_resume 在【机器可做】那份清单里 ——
+    // 于是人下了取消，AI 点一下恢复就把这个决定翻掉，记录上还留着「停因：人工指令取消」。
+    // 判据是 pauseReason：只有人工指令那条路会写它（human_directive / human_directive_cancel）。
+    if (action === "resume" && String(taskGroup.pauseReason || "").startsWith("human_directive")
+      && !HUMAN_ACCOUNT_TYPES_FOR_ACTIONS.includes(accountFromRequest(req, state)?.account?.accountType)) {
+      return json(res, 403, {error: "human_stop_requires_human_resume", pauseReason: taskGroup.pauseReason,
+        message: "这个任务组是人停下来的（停因：" + taskGroup.pauseReason + "），只有真人能恢复它 ——"
+          + "否则「取消归人」这条就等于没有：停下来之后随手一恢复就翻过去了"});
+    }
     if (action === "pause") taskGroup.goalExecutionStatus = "active_paused_by_control";
-    if (action === "resume") taskGroup.goalExecutionStatus = "active";
+    if (action === "resume") {
+      taskGroup.goalExecutionStatus = "active";
+      // 停因要一起清掉：不清的话屏幕上会同时写着「进行中」和「停因：人工指令取消」，
+      // 而人只会信离数据最近的那一句。人工指令那条路的 resume 早就在清它，这一条是漏的。
+      delete taskGroup.pauseReason;
+    }
     if (action === "request_review") taskGroup.reviewState = "review_requested";
     if (action === "rebound_drift") taskGroup.health = "attention";
     const runtimeControl = applyTaskGroupRuntimeControl(state, taskGroup, action, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});

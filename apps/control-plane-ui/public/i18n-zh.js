@@ -33,6 +33,7 @@
     execution_topology_not_found: "找不到对应的执行拓扑：它可能已被取代或所属任务组已终结",
     org_last_admin_cannot_be_disabled: "这是本组织最后一个在用的管理员：停用它之后没有人能再管理该组织",
     account_already_retired: "这个账号已经注销过了。注销是终态，没有再来一次这回事，也不能撤销",
+    human_stop_requires_human_resume: "这个任务组是人停下来的，只有真人能恢复它 —— 否则「取消归人」这条就等于没有",
     org_last_admin_cannot_be_retired: "这是本组织最后一个在用的管理员：注销它之后没有人能再管理该组织，而注销不可撤销",
     system_last_admin_cannot_be_retired: "这是最后一个在用的系统管理员：注销它之后整个部署永久失去系统层控制权",
     skill_source_sync_failed: "技能源同步失败（仓库取不下来：地址不对 / 需要认证 / 指定的分支不存在 / 网络不通）：该源已标记为 stale，agent 用的还是上一次同步下来的技能",

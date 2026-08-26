@@ -3661,6 +3661,40 @@ try {
       + `（${seen.live} 个确有未终结派发、${seen.settled} 个全部已终结，两个方向都出现过）`);
   }
 
+  // 【人停下来的，机器不许恢复】。取消是真人专属（2026-08-26 人定），但"撤销这个取消"
+  // 走的是另一条路：任务组控制路由的 resume 无条件把 goalExecutionStatus 写回 active，
+  // 而它在【机器可做】那份清单里 —— 于是人下了取消，AI 点一下恢复就把这个决定翻掉了，
+  // 记录上还留着"停因：人工指令取消"。上面那段刚用真人指令取消过 tg_runtime_management。
+  {
+    const before = await jsonFetch(port, "/api/state", {headers: {authorization: systemAuth}});
+    const stopped = (before.payload.taskGroups || []).find((item) => item.id === "tg_runtime_management");
+    if (stopped?.pauseReason !== "human_directive_cancel") {
+      throw new Error(`这条断言的前提没成立：tg_runtime_management 的停因是 ${stopped?.pauseReason} ——`
+        + " 上面那次人工取消没生效，下面验的就不是「人停下来的」那件事");
+    }
+    const machineResume = await jsonFetch(port, "/api/task-groups/tg_runtime_management/control", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-machine-resume-human-stop", authorization: agentAuth},
+      body: JSON.stringify({action: "resume"})});
+    if (machineResume.response.status !== 403
+      || machineResume.payload?.error !== "human_stop_requires_human_resume") {
+      throw new Error(`机器恢复了一个【人停下来的】任务组（HTTP ${machineResume.response.status} `
+        + `${JSON.stringify(machineResume.payload).slice(0, 140)}）—— 取消归人，而撤销这个取消却不归人，`
+        + "等于那条决定根本没落地");
+    }
+    // 正面对照：真人恢复必须走得通，否则这道门把唯一的出路也堵死了 —— 那时被取消的组永远起不来。
+    const humanResume = await jsonFetch(port, "/api/task-groups/tg_runtime_management/control", {method: "POST",
+      headers: {"Idempotency-Key": "doctor-human-resume-human-stop", authorization: systemAuth},
+      body: JSON.stringify({action: "resume"})});
+    if (humanResume.response.status !== 200) {
+      throw new Error(`真人也恢复不了自己停下来的组（HTTP ${humanResume.response.status}）—— 唯一的出路被堵死了`);
+    }
+    const after = await jsonFetch(port, "/api/state", {headers: {authorization: systemAuth}});
+    const resumed = (after.payload.taskGroups || []).find((item) => item.id === "tg_runtime_management");
+    if (resumed?.pauseReason) {
+      throw new Error(`恢复之后「停因」还挂着（${resumed.pauseReason}）—— 屏幕上会同时写着"进行中"和"停因：…"`);
+    }
+  }
+
   mainBodyCompleted = true;
 } finally {
   // 【登录限流】。防爆破的实控件，而它一个断言都没有 —— 失效时所有正常登录照旧成功，

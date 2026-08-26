@@ -3248,6 +3248,46 @@ const MUTATIONS = [
     expect: "勘察工具不渲染这些已登记的页面"
   },
   {
+    name: "界面上「人停下来的」也不许给机器主体恢复按钮",
+    file: APP,
+    gate: "console",
+    from: '  if (!String(taskGroup?.pauseReason || "").startsWith("human_directive")) return true;',
+    to: "  return true;",
+    expect: "机器主体看得到恢复按钮"
+  },
+  {
+    name: "别把普通暂停也一起锁上（正常路径要留着）",
+    file: APP,
+    gate: "console",
+    from: '  return ["system_admin", "org_admin", "user_account"].includes(currentAccount?.accountType);',
+    to: "  return false;",
+    expect: "真人被挡住了"
+  },
+  {
+    name: "人停下来的任务组，机器不许恢复（否则「取消归人」等于没有）",
+    file: SERVER,
+    gate: "doctor",
+    from: '    if (action === "resume" && String(taskGroup.pauseReason || "").startsWith("human_directive")',
+    to: "    if (false",
+    expect: "机器恢复了一个【人停下来的】任务组"
+  },
+  {
+    name: "恢复要把「停因」一起清掉（不清＝屏幕同时写着进行中和停因）",
+    file: SERVER,
+    gate: "doctor",
+    from: "      delete taskGroup.pauseReason;",
+    to: "",
+    expect: "恢复之后「停因」还挂着"
+  },
+  {
+    name: "迁移证据里不许把对象拼成 [object Object]",
+    file: CORE,
+    gate: "doctor",
+    from: '        ? contract.sharedDefinitionRefs.map((ref) => ref?.contractRef || ref).filter(Boolean).join(",")',
+    to: '        ? contract.sharedDefinitionRefs.join(",")',
+    expect: "[object Object]"
+  },
+  {
     name: "已归档的项目不许再建智能体",
     file: SERVER,
     gate: "doctor",
@@ -4740,8 +4780,9 @@ const MUTATIONS = [
     name: "任务组列表的控制按钮必须按组判权",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
-    from: '${hasGroupPerm(taskGroup.id, "task_group:control") ? `<button class="secondary-button" data-action="task-control"',
-    to: '${canControl ? `<button class="secondary-button" data-action="task-control"',
+    // 锚点跟着改到「暂停/恢复」二选一之后那一处（2026-08-26 把两个常驻按钮改成按状态出一个）。
+    from: '          ${hasGroupPerm(taskGroup.id, "task_group:control") ? (',
+    to: "          ${canControl ? (",
     expect: "别人那段也有"
   },
   {
