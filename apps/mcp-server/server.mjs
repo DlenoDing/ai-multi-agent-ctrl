@@ -2761,7 +2761,22 @@ export function accountInvite(state, args) {
   // 成员配额（那条统计唯一没有默认组织兜底）。归属必须在创建时就定下来，不能事后靠迁移补。
   assertUniqueRecordId(state.accounts, "accountId", args.accountId, "account_id_conflict");
   const accountId = args.accountId || createId("acct");
-  const organizationId = String(args.organizationId || "").trim()
+  // 组织归属必须在创建时定下来（上面那段注释讲的正是它）—— 而 organizationId 此前
+  // 【读了却传不进来】（共用入参词表里没有这个键），于是经 MCP 邀请的账号一律落进默认组织，
+  // 事后再迁移正是这里明说不该做的事。2026-08-26 接通它，并当场校验：
+  // 指到一个不存在的组织时必须拒 —— 那样建出来的账号谁也管不到，而它照样占着名额。
+  // 归属【从项目推导】，不从调用方自报的 organizationId 取。两个理由：
+  //   · 安全：organizationId 一旦进共用入参词表就对【所有】工具可用，有界主体只带这一个 id
+  //     就可能越过租户边界（作用域覆盖那道门当场把这一点指出来了）；而 projectId 本来就在
+  //     词表里，也已经被那道门覆盖。
+  //   · 贴人的想法：说的是「这个人要来做哪个项目」，组织跟着项目走，不用另填一个 id。
+  // 指到一个不存在的项目时必须拒 —— 否则账号会静静落进默认组织，而归属事后补不了。
+  const attributionProjectId = String(args.projectId || "").trim();
+  const attributionProject = attributionProjectId
+    ? (state.projects || []).find((item) => item.id === attributionProjectId) : null;
+  // 「项目不存在」不在这里判：所有工具的通用前置（mcpArgumentScopeGuard）已经先拒了 ——
+  // 在这里再写一遍是死代码，而死守卫读起来像覆盖。行为断言仍留着，验的是那道门的效果。
+  const organizationId = (attributionProject?.organizationId || "").trim()
     || (state.organizations || []).find((item) => item.orgId === DEFAULT_ORGANIZATION_ID)?.orgId
     || DEFAULT_ORGANIZATION_ID;
   const accountToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
@@ -3046,7 +3061,9 @@ function instructionEnvelopeCreate(state, args, sourceKind) {
     status: args.status && ["drafted", "compacted", "cache_indexed", "dispatched", "acknowledged", "invalidated"].includes(args.status) ? args.status : "drafted",
     taskGroupId: taskGroup?.id || args.taskGroupId || "tg_runtime_management",
     recipientRole: args.recipientRole || args.roleId || "agent-runtime",
-    effectiveInstructionPacketRef: args.effectiveInstructionPacketRef || args.packetRef || "eip:runtime",
+    // packetRef 是 effectiveInstructionPacketRef 的死别名：那个名字不在共用入参词表里，
+    // 传不进来。而正名在词表里、能用 —— 留着别名只会让人以为有两种写法。
+    effectiveInstructionPacketRef: args.effectiveInstructionPacketRef || "eip:runtime",
     formatVersion: "ai-native-instruction-envelope/v1",
     stablePrefixDigest: digestOf(args.stablePrefix || "ai-native-control-plane"),
     digestRefs: [...new Set([...(args.digestRefs || []), `language-policy:${languagePolicyDigest}`])],

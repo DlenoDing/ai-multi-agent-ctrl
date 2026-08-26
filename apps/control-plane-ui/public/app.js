@@ -2429,9 +2429,11 @@ function renderOrgMembers() {
           : "",
         account.invitationWithdrawn
           ? ""
-          : account.status === "disabled"
+          // 状态名统一成规范里声明过的 suspended（此前写的是 disabled，而规范与状态机里都没有它）。
+          // 判断处两个都认：盘上还可能有没被归一过的旧记录。
+          : ["disabled", "suspended"].includes(account.status)
             ? `<button class="secondary-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="active">启用</button>`
-            : `<button class="danger-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="disabled">停用</button>`,
+            : `<button class="danger-button" data-action="member-status" data-account="${esc(account.accountId)}" data-status="suspended">停用</button>`,
         // 注销：终态、不可撤销。后端有杠杆而界面没入口＝这个杠杆不存在，所以入口必须在这里。
         // 已经注销过的不再给按钮 —— 给了也只会拿到 409，而人会以为是自己点错了。
         account.status === "retired"
@@ -5207,7 +5209,7 @@ document.addEventListener("click", async (event) => {
       // 原先这里两样都不说：弹窗写"该成员"，随后 loadPage 撞 401 弹"会话已过期"，
       // 紧接着又弹一个"已停用成员"的成功提示 —— 两条自相矛盾的话，而人始终不知道自己停用了自己。
       const isSelf = Boolean(currentAccount?.accountId) && target.dataset.account === currentAccount.accountId;
-      if (status === "disabled" && !(await confirmDialog({
+      if (status === "suspended" && !(await confirmDialog({
         title: isSelf ? "停用你自己的账号" : "停用成员",
         message: isSelf ? "这是你当前登录的账号，确认停用它？" : "确认停用该成员？",
         sub: isSelf
@@ -5216,7 +5218,7 @@ document.addEventListener("click", async (event) => {
         danger: true, confirmText: "停用"
       }))) return;
       await api(`/api/org/members/${encodeURIComponent(target.dataset.account)}/status`, {method: "POST", body: JSON.stringify({status})});
-      if (isSelf && status === "disabled") {
+      if (isSelf && status === "suspended") {
         // 会话已经在服务端没了，再 loadPage 只会撞 401 弹一句"会话已过期"，把真正发生的事盖掉。
         clearSession();
         openModal("已停用你自己的账号", `<div class="notice">你的账号已停用，这一台已经登出。
@@ -5224,7 +5226,7 @@ document.addEventListener("click", async (event) => {
         return;
       }
       await loadPage();
-      toast.success(status === "disabled" ? "已停用成员" : "已启用成员");
+      toast.success(status === "suspended" ? "已停用成员" : "已启用成员");
       return;
     }
     if (action === "member-retire") {

@@ -348,7 +348,14 @@ const MCP_UNREACHABLE_TOOL_ARGS = {
     // 下面两个是 2026-08-26 修好 case→函数提取之后才露出来的，都属于"自报身份"这一族：
     senderRef: "协作记录的发送者。core 里已经写死由服务端从已认证主体派生（注释就在那一行），"
       + "调用方自填等于以别人的名义在房间里说话",
-    proposedBy: "审批单的提出人。MCP 那侧已经用 context.principal.id 覆盖了它，词表再挡一层"
+    proposedBy: "审批单的提出人。MCP 那侧已经用 context.principal.id 覆盖了它，词表再挡一层",
+    // 2026-08-26 定：下面四个开了都是【削弱】，一律保持关着。
+    allowDirectActivation: "它绕过共享定义的状态守卫，让调用方直接指定状态 —— "
+      + "自选 conflicted 就能把整个项目的关闭门永久锁死，而人没有任何杠杆可清（源码注释里写着）",
+    changePolicy: "唯一能改的子项是「改了规范要不要作废下游的确认」。开了等于让创建方自己说"
+      + "「我改了不用别人重新确认」—— 规范变更的意义就没了",
+    actionScopeRefs: "角色漂移守卫管到哪些动作。不填是整个任务组，填了就是【缩小监管范围】",
+    reasonCode: "治理决策上的理由码。它是会被别处引用的记录，理由不该由被判定方自己写"
   },
   // 词表里【有】这个键，但任何工具都不许读它：它与上面的 root 是同一个能力的两个名字，
   // 只挡住 root 等于「一条不变式两扇门只守一扇」。全仓没有任何合法调用方传过它，
@@ -362,23 +369,13 @@ const MCP_UNREACHABLE_TOOL_ARGS = {
     // 而它们已经不再是"够不着的杠杆"：同一件事有一个够得着的名字。
     permissions: "identity-mcp.grant_create 的内部参数名；对外用词表里已有的 grantPermissions（已接通）",
     role: "同上，对外用 grantRole（已接通）",
-    canonicalOwnerRole: "definition-mcp.shared_definition_create：共享定义的归属角色",
-    producerRole: "同上",
-    changePolicy: "同上：变更策略",
-    allowDirectActivation: "同上：能否直接生效",
-    actionScopeRefs: "governance-mcp.role_drift_guard_bind：这道漂移守卫管到哪些动作",
-    packetRef: "effective_instruction_create / instruction_envelope_create：指令包引用",
+
     // 2026-08-26 人定「没有规范 agent 会走偏」之后改了做法：不是把这个键开给调用方，
     // 而是【服务端自己算】本项目现行规范填进去（与任务合同那条路同一个函数），
     // 调用方给的只能追加。让调用方"可以声明"就等于允许它不声明，而那正是要防的那件事。
     sharedDefinitionRefs: "服务端自己填（activeSharedDefinitionRefs），调用方给的只能追加，不需要这个键",
-    reasonCode: "governance-mcp.policy_decision_eval：调用方给出的判定理由码",
-    // 2026-08-26 修好 case→函数的提取之后才露出来的（此前 account_invite 的 case 体里
-    // 先有一道"拒机器主体"的守卫，旧提取只认"case 紧跟 return"，把它整个漏掉了）。
-    // 后果是实打实的：经 MCP 邀请的账号【永远落在默认组织】，而 accountInvite 自己的注释写着
-    // "归属必须在创建时就定下来，不能事后靠迁移补"——三处跨组织边界闸门都写成
-    // `X.organizationId && ...`，归错了组织不会报错，只会一路放行。
-    organizationId: "identity-mcp.account_invite：这个账号属于哪个组织。传不进来＝一律落进默认组织",
+
+
     // finding_resolve 的三个：处置结论、根因归属、恢复凭据。传不进来意味着
     // 经 MCP 处置一条发现项时，只能落到缺省结论上，"凭什么这么处置"说不出来。
     dispositionClass: "governance-mcp.finding_resolve：这条发现项按哪一类处置（已修/不适用/已调整范围/外部阻塞）",

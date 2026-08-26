@@ -2162,8 +2162,10 @@ try {
     headers: {"Idempotency-Key": "doctor-system-member-status", authorization: systemAuth},
     body: JSON.stringify({status: "disabled"})
   });
-  if (systemActsOnMember.response.status !== 200 || systemActsOnMember.payload.status !== "disabled") {
-    throw new Error(`系统管理员动不了它列得出来的组织成员（应 200 disabled，得到 ${systemActsOnMember.response.status}:${systemActsOnMember.payload.error}）—— 界面上的停用按钮按下去必然失败`);
+  // 入参仍认 disabled（老客户端/旧脚本还在用），但落下去的一律是规范里声明过的 suspended ——
+  // 这一条同时钉住两件事：那条兼容路还在，而写进状态里的名字已经统一。
+  if (systemActsOnMember.response.status !== 200 || systemActsOnMember.payload.status !== "suspended") {
+    throw new Error(`系统管理员动不了它列得出来的组织成员（应 200 suspended，得到 ${systemActsOnMember.response.status}:${systemActsOnMember.payload.status || systemActsOnMember.payload.error}）—— 界面上的停用按钮按下去必然失败，或者落下去的状态不在规范里`);
   }
   const systemRestoresMember = await jsonFetch(port, `/api/org/members/${encodeURIComponent(memberAccountId)}/status`, {
     method: "POST",

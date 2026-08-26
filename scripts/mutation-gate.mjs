@@ -3240,6 +3240,26 @@ const MUTATIONS = [
     expect: "没带上本项目现行规范"
   },
   {
+    name: "落下去的成员状态必须是规范里声明过的那个（suspended，不是 disabled）",
+    file: SERVER,
+    gate: "doctor",
+    // 只动【落盘的那个值】，不动 nextMemberStatus —— 动后者会连带打破"最后一个管理员"那道保护，
+    // 于是红在别处，证明的就不是这条了。这样一来，唯一能接住它的就是产出规范核对。
+    from: "    member.status = nextMemberStatus;",
+    to: '    member.status = nextMemberStatus === "suspended" ? "disabled" : nextMemberStatus;',
+    // 接住它的是【产出规范核对】那道扫描（accounts[].status 不在 enum 里），比那句断言更早红 ——
+    // 这正是把状态名统一到规范上之后想要的效果：规范自己成了判据。
+    expect: "落下去的状态不在规范里"
+  },
+  {
+    name: "经 MCP 邀请的账号要落进项目所属的组织",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '  const organizationId = (attributionProject?.organizationId || "").trim()',
+    to: '  const organizationId = ""',
+    expect: "没落进项目所属的组织"
+  },
+  {
     name: "注销必须断掉已签发的会话",
     file: CORE,
     gate: "doctor",
@@ -4709,7 +4729,7 @@ const MUTATIONS = [
     name: "改成员状态的缺省不得等于启用",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    from: '    if (!["active", "disabled"].includes(String(body.status || ""))) {',
+    from: '    if (!["active", "disabled", "suspended"].includes(String(body.status || ""))) {',
     to: "    if (false) {",
     expect: "一个字段都不给】也成功了"
   },
@@ -7960,14 +7980,6 @@ const MUTATIONS = [
     expect: "失败被吞了"
   },
   {
-    name: "账号退役一旦被接上，登记必须当场过期",
-    file: "apps/mcp-server/server.mjs",
-    check: "verifyInertMechanismsStayRegistered",
-    from: "  account.status = \"suspended\";",
-    to: "  account.status = \"retired\";",
-    expect: "已经有人接上生产者"
-  },
-  {
     name: "账号退役登记的依据没了要报（登记不得指着不存在的东西）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyInertMechanismsStayRegistered",
@@ -8108,7 +8120,9 @@ const MUTATIONS = [
     file: "scripts/contract-check.mjs",
     check: "verifyLongLivedRecordsDoNotPointAtCappedOnes",
     from: "    decisionRecordRef: \"decisionRecords\",",
-    to: "    decisionRef: \"decisionRecords\",",
+    // 假名字要挑一个【产品里不可能出现】的：上一版用的是 decisionRef，而后来
+    // 账号注销那处真写了一个 options.decisionRef，这条变异当场变成假绿（名字不再是幽灵）。
+    to: "    decisionRecordReferenceTypo: \"decisionRecords\",",
     expect: "根本不存在"
   },
   {

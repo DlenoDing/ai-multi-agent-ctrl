@@ -5625,18 +5625,22 @@ async function handleApi(req, res) {
     if (!member) return json(res, 404, {error: "org_member_not_found"});
     // 缺省不得等于"启用"：空 body 打过来原先会把成员置成 active —— 一个被停用的账号
     // 就这么被静默恢复了（实测 200）。认不出的取值也一样要拒，并把合法值列出来。
-    if (!["active", "disabled"].includes(String(body.status || ""))) {
+    // 2026-08-26：落下去的状态一律用规范里声明过的那个 —— suspended。
+    // 此前这条路写的是 disabled，而 spec/account.schema.json 与状态机里【都没有这个值】：
+    // 两个名字一件事，而规范那份从来没被强制过。入参上继续认 disabled（老客户端、
+    // 界面上那个按钮都在用它），但永不再写进状态里。
+    if (!["active", "disabled", "suspended"].includes(String(body.status || ""))) {
       // 字段名用仓里既有的 supported：控制台已经会把它渲染成「可用的取值：…」。
       // 自己新造一个 allowed 的话，服务端算出来了、界面一处都不读 —— 出错那一刻人还是得猜。
-      return json(res, 400, {error: "member_status_required", supported: ["active", "disabled"],
-        message: "改成员状态必须显式给出 status（active / disabled）—— 缺省不会被当作启用"});
+      return json(res, 400, {error: "member_status_required", supported: ["active", "suspended"],
+        message: "改成员状态必须显式给出 status（active / suspended）—— 缺省不会被当作启用"});
     }
-    const nextMemberStatus = body.status === "disabled" ? "disabled" : "active";
+    const nextMemberStatus = ["disabled", "suspended"].includes(body.status) ? "suspended" : "active";
     // 治理主体不能被停到零。原先只写了 org_admin 这一支，而系统管理员的 organizationId 是 null、
     // 与它自己调用时的 orgId 恰好相等，所以这条路由够得着它 —— 全新部署里唯一的系统管理员可以把
     // 自己停掉：会话当场吊销、无法登录，而铸一个新的系统管理员要 system:account_admin，
     // 于是整个部署永久失去系统层控制权。作用域按治理层级取：组织管理员按本组织算，系统管理员按全局算。
-    if (nextMemberStatus === "disabled" && ["org_admin", "system_admin"].includes(member.accountType)) {
+    if (nextMemberStatus === "suspended" && ["org_admin", "system_admin"].includes(member.accountType)) {
       const systemScoped = member.accountType === "system_admin";
       const remainingAdmins = (state.accounts || []).filter((item) => item.accountType === member.accountType
         && item.status === "active" && item.accountId !== member.accountId
@@ -5655,10 +5659,10 @@ async function handleApi(req, res) {
     if (nextMemberStatus === "active" && (member.status === "invited" || member.invitationWithdrawn)) {
       return json(res, 409, {error: "org_member_invitation_pending", message: "该成员尚未接受邀请，置为 active 会让它两条登录路径全断且无法恢复；请用「重发邀请」给它一份新的一次性令牌"});
     }
-    if (nextMemberStatus === "disabled" && member.status === "invited") member.invitationWithdrawn = true;
+    if (nextMemberStatus === "suspended" && member.status === "invited") member.invitationWithdrawn = true;
     member.status = nextMemberStatus;
     member.updatedAt = now();
-    if (member.status === "disabled") revokeAccountSessions(state, member.accountId, "member_disabled");
+    if (member.status === "suspended") revokeAccountSessions(state, member.accountId, "member_disabled");
     recomputeOrganizationUsage(state);
     audit(state, guard.actor, "org_member_status_update", `Account:${member.accountId}`, member.status);
     finishGuardedWrite(state, guard, 200, publicAccountRecord(member));

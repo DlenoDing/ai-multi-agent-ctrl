@@ -446,6 +446,13 @@ function ensureTaskGroupLanguagePolicies(state) {
 
 export function ensureRuntimeCollections(state, options = {}) {
   if (state.__runtimeEnsured) return state;
+  // 【存量归一】历史上有一条路把账号状态写成 disabled，而 spec/account.schema.json 与
+  // 状态机里都只有 suspended —— 两个名字一件事。写入侧已经改成只写 suspended，
+  // 但盘上那些旧记录还在：不归一的话，"按已登记状态匹配"的那些判定会漏掉它们，
+  // 而漏掉的表现是"这个人看起来还是启用的"。在这里就地改，一次性、幂等。
+  for (const account of state.accounts || []) {
+    if (account.status === "disabled") account.status = "suspended";
+  }
   state.stateVersion ||= 1;
   state.idempotencyRecords ||= {};
   state.policyDecisions ||= [];
@@ -677,7 +684,9 @@ export function retireAccount(state, accountId, options = {}) {
   // 状态机里这一步要两样证据：谁决定的（retire_decision_ref）、审计落在哪（audit_ref）。
   // 不留证据的话，事后只看得到"这个账号是 retired"，看不到是谁在什么时候按的。
   recordTransition(state, "Account", account.accountId, previousStatus, "retired", "identity-service", {
-    retire_decision_ref: options.decisionRef || `human-retire:${options.actor || "unknown"}:${at}`,
+    // 决定引用由服务端拼：谁按的（actor）+ 什么时候。原先还认一个 options.decisionRef，
+    // 而没有任何调用方传它 —— 死参数除了让人以为"可以自己指定"之外没有作用。
+    retire_decision_ref: `human-retire:${options.actor || "unknown"}:${at}`,
     audit_ref: options.auditRef || `audit:account-retire:${account.accountId}:${at}`
   });
   return {ok: true, account, previousStatus, revokedSessions, revokedGrants, credentialCleared: hadCredential, at};
@@ -8711,8 +8720,11 @@ export function sharedDefinitionCreate(state, args) {
     // 就能横扫整个项目。空数组一律回落到本任务组作用域。
     scopeRefs: (Array.isArray(args.scopeRefs) && args.scopeRefs.length ? args.scopeRefs : null)
       || [scopedTaskGroupId ? `TaskGroup:${scopedTaskGroupId}` : `Project:${projectId}`],
-    canonicalOwnerRole: args.canonicalOwnerRole || args.ownerRole || "orchestrator",
-    producerRole: args.producerRole || args.ownerRole || "orchestrator",
+    // 这两个原先各自还认一个自己的名字（canonicalOwnerRole / producerRole），而那两个名字
+    // 在共用入参词表里【没有】—— 传不进来，等于死别名：能设的一直只有 ownerRole，
+    // 而且它一设就同时决定这两项。留着死别名只会让人以为可以把两者设成不同的。
+    canonicalOwnerRole: args.ownerRole || "orchestrator",
+    producerRole: args.ownerRole || "orchestrator",
     consumerRefs: args.consumerRefs || [],
     definitionDigest: digestOf(args.definition || args),
     repositoryOutputTargetRef: args.repositoryOutputTargetRef || "rot_shared_definition",

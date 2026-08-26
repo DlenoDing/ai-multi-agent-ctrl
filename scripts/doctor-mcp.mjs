@@ -916,6 +916,46 @@ try {
     }
   }
 
+  // 【经 MCP 邀请的账号要能落进指定组织】。此前 organizationId 读了却传不进来，
+  // 于是一律落进默认组织 —— 而 accountInvite 自己的注释写着"归属必须在创建时就定下来，
+  // 不能事后靠迁移补"（三处跨组织闸门都写成 `X.organizationId && ...`，归错了不会报错）。
+  {
+    // 探针项目必须落在【非默认组织】里：落在默认组织的话，"从项目推导"与"回落到默认组织"
+    // 给出同一个答案，这条断言就分辨不出来（变异实测：把推导整段去掉，判据照样绿）。
+    const otherOrg = await api("/api/orgs", {method: "POST", token: admin.sessionToken,
+      idempotencyKey: "doctor-mcp-attribution-org",
+      body: {name: "归属探针组织", admin: {email: "attribution.admin@other.local", displayName: "归属探针管理员"}}});
+    const otherOrgId = otherOrg?.organization?.orgId;
+    const otherAdminToken = otherOrg?.adminAccount?.accountToken || otherOrg?.accountToken;
+    if (!otherOrgId || !otherAdminToken) {
+      throw new Error(`建不出第二个组织或拿不到它的管理员令牌（${JSON.stringify(otherOrg).slice(0, 200)}）`);
+    }
+    const otherAdmin = await api("/api/auth/login", {method: "POST",
+      body: {email: "attribution.admin@other.local", token: otherAdminToken}});
+    const otherProject = await api("/api/org/projects", {method: "POST", token: otherAdmin.sessionToken,
+      idempotencyKey: "doctor-mcp-attribution-project", body: {name: "归属探针项目"}});
+    // 这条路由的回执只给 id；项目的归属就是建它那个人的组织，即上面新建的那个。
+    const homeOrg = otherOrgId;
+    const probeProjectId = otherProject?.id;
+    if (!probeProjectId) throw new Error(`在另一个组织里建不出项目（${JSON.stringify(otherProject).slice(0, 160)}）`);
+    // 归属跟着【项目】走：说的是"这个人要来做哪个项目"，不另填组织 id。
+    const invited = (await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.account_invite",
+      arguments: {idempotencyKey: "doctor-mcp-org-attribution", email: "org.attribution.probe@local",
+        displayName: "归属探针", projectId: probeProjectId}})).structuredContent?.result;
+    if (invited?.account?.organizationId !== homeOrg) {
+      throw new Error(`经 MCP 邀请的账号没落进项目所属的组织（实得 ${invited?.account?.organizationId}，`
+        + `要的是 ${homeOrg}）—— 归属只能在建账号时定，事后迁移补不了`);
+    }
+    // 指到一个不存在的项目必须拒：否则账号会静静落进默认组织，而归属事后补不了。
+    const ghostProject = (await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.account_invite",
+      arguments: {idempotencyKey: "doctor-mcp-org-ghost", email: "org.ghost.probe@local",
+        displayName: "空项目探针", projectId: "prj_does_not_exist"}})).structuredContent?.result;
+    if (ghostProject?.error !== "project_not_found") {
+      throw new Error(`往一个不存在的项目上建出了账号（${JSON.stringify(ghostProject).slice(0, 160)}）——`
+        + " 它会静静落进默认组织，而归属事后补不了");
+    }
+  }
+
   // 【指令包必须带上本项目现行规范】2026-08-26 人定：没有规范，agent 就可能走偏。
   // 原先 sharedDefinitionRefs 缺省是 [] —— 不给就是"这份指令不受任何规范约束"。
   // 现在由服务端自己算（与任务合同那条路同一个函数），调用方给的只能追加。
