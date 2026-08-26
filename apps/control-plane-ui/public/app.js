@@ -519,8 +519,15 @@ function canResumeTaskGroup(taskGroup) {
   return ["system_admin", "org_admin", "user_account"].includes(currentAccount?.accountType);
 }
 
-function joinTokenTargetProjects() {
+// 已归档的项目不该出现在任何「把人或机器放进去开工」的选择器里：后端两条路都已拒
+// （project_archived / member_default_project_archived）。两处用同一份口径 ——
+// 上一轮只滤了入网令牌那个下拉，成员的「默认项目」照旧列着归档项目（同一件事两处只改一处）。
+function assignableProjects() {
   return (state.projects || []).filter((project) => project.status !== "archived");
+}
+
+function joinTokenTargetProjects() {
+  return assignableProjects();
 }
 
 function grantRoleLabel(role) {
@@ -2490,7 +2497,7 @@ function renderOrgMembers() {
         <div class="form-row"><label>默认项目</label>
           <select name="defaultProjectId">
             <option value="">（不指定）</option>
-            ${(state.projects || []).map((project) => `<option value="${esc(project.id)}">${esc(project.name || project.id)}</option>`).join("")}
+            ${assignableProjects().map((project) => `<option value="${esc(project.id)}">${esc(project.name || project.id)}</option>`).join("")}
           </select>
         </div>
         <div class="form-row"><label>权限分配</label>${permissionCheckboxes()}</div>

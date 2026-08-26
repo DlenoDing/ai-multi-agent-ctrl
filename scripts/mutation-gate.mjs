@@ -6607,6 +6607,30 @@ const MUTATIONS = [
     expect: "读 args.workItemId，而 tools/list 上它不公布这个键"
   },
   {
+    name: "成员的默认项目不许指向已归档的项目",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '  if (project.status === "archived") {\n    return {error: "member_default_project_archived"',
+    to: '  if (false) {\n    return {error: "member_default_project_archived"',
+    expect: "把新成员的默认项目设成已归档项目没被拒"
+  },
+  {
+    name: "成员的默认项目不许指向别的组织",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '  if ((project.organizationId || DEFAULT_ORGANIZATION_ID) !== organizationId) {',
+    to: "  if (false) {",
+    expect: "默认项目指向别的组织的项目没被拒"
+  },
+  {
+    name: "成员的默认项目必须指得到",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '  if (!project) {\n    return {error: "member_default_project_not_found"',
+    to: '  if (false) {\n    return {error: "member_default_project_not_found"',
+    expect: "默认项目指向一个不存在的 id 没被拒"
+  },
+  {
     name: "已注销的账号不许再被授权",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "doctor",

@@ -259,6 +259,9 @@ globalThis.__probe = {
   },
   api: (path, options) => api(path, options),
   setPage: (value) => { page = value; },
+  // 渲染之后【实际停在哪一页】。render() 会把「当前身份菜单里没有的页」静默改写成默认页，
+  // 而调用方只拿到 HTML，看不出这件事 —— 会把别的页的内容当成自己要读的那一页。
+  currentPage: () => page,
   backgroundRefreshFailure: (error) => reportBackgroundRefreshFailure(error),
   // 「上一次加载成功」是按页记的：钩子要把当前页那一格也填上，否则它模拟的其实是
   // 「别的页成过、这一页从没成过」——那是另一种情形（下面单独有断言）。
@@ -402,6 +405,13 @@ if (process.env.AIMAC_RENDER_REAL) {
         + "它们在这份输出里既不出现也不报错，等于从来没被读过）");
     }
   }
+  // 页 id → 标题（取自 app.js 的 PAGE_META）：下面用它核对"渲染出来的是不是要读的那一页"。
+  const pageTitles = Object.fromEntries([...fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8")
+    .matchAll(/^\s*"([a-z][a-z0-9-]+)":\s*\["([^"]+)"/gmu)].map((hit) => [hit[1], hit[2]]));
+  if (Object.keys(pageTitles).length < 10) {
+    throw new Error(`只提取到 ${Object.keys(pageTitles).length} 个页标题 —— 提取脱节，下面那条"读的是不是这一页"的核对会空转`);
+  }
+
   for (const page of SURVEY_PAGES) {
     const unserved = new Set();
     const fetchStub = async (path) => {
@@ -420,6 +430,23 @@ if (process.env.AIMAC_RENDER_REAL) {
     try {
       await probe.loadPageWith(real, who, project?.id, page, fetchStub);
       const text = strip(documentRoot.innerHTML || documentRoot.textContent || "");
+      // 【渲染出来的必须就是要读的那一页】。控制台在 render() 里会把「当前身份菜单里没有的页」
+      // 静默改写成默认页（app.js: !MENUS[perspective].some(...) → defaultPageFor）。于是用系统
+      // 管理员视角读 org-* 那四页时，屏幕上其实是【系统概览】，而这份输出照旧把它印在
+      // "=== org-members ===" 标题下面 —— 读的人会以为自己读过了成员管理。
+      // 勘察工具骗自己比门骗自己更难发现：它不报红，只是把错的东西摆给你看。
+      // 判据问的是【控制台实际停在哪一页】，不是从文本里猜标题：页头前面还有 logo 与整条导航，
+      // 按标题猜会把 8 页都误判成"没读成"（第一版就是这样）。
+      // 【这一段没有登记变异】：它只在 AIMAC_RENDER_REAL 这个按需勘察模式下跑，门链里没有任何
+      // 一道会执行到它 —— 把它改坏，没有东西会红。登记一条验不出判别力的变异比不登记更坏，
+      // 所以这里如实写明：它是勘察工具的自证，不是一道门。
+      const landedOn = probe.currentPage();
+      if (landedOn !== page) {
+        console.log(`\n=== ${page} ===\n（没读成：控制台实际停在「${pageTitles[landedOn] || landedOn}」——`
+          + "当前身份的菜单里没有这一页，render() 会把它静默改写成默认页。"
+          + "换个视角再读：AIMAC_RENDER_AS=<该身份的邮箱>）");
+        continue;
+      }
       console.log(`\n=== ${page} ===\n` + (clip(text) || "（空）"));
       if (unserved.size) {
         console.log(`  ↑ 这一页还向 ${[...unserved].join("、")} 取数，勘察桩没有答案 ——`

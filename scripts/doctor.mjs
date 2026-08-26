@@ -1765,6 +1765,69 @@ try {
     body: JSON.stringify({projectId: orgProject.payload.id, title: "组织任务组"})
   });
   if (orgTaskGroup.response.status !== 201) throw new Error(`org task group create failed: ${orgTaskGroup.response.status}`);
+  // 【成员的默认项目要指得到、且还能开工】。这个字段原先原样收下：可以指向已归档的项目
+  // （新成员一进来就落在一个开不了新工作的地方），也可以指向一个根本不存在的 id ——
+  // 两种都没有任何提示。控制台的「默认项目」下拉此前也照旧列着归档项目
+  //（入网令牌那个下拉上一轮已经滤掉了 —— 同一件事两处只改了一处）。
+  {
+    // 这个组织的项目配额是按用例算好的，直接建会撞 org_quota_exceeded ——
+    // 先用系统身份抬一格（配额本身另有断言守着，这里只是给探针腾地方）。
+    const quotaBump = await jsonFetch(port, `/api/orgs/${encodeURIComponent(orgId)}/quotas`, {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-member-default-quota-bump", authorization: systemAuth},
+      body: JSON.stringify({quotas: {maxProjects: 12, maxMembers: 24}})
+    });
+    if (!quotaBump.response.ok) {
+      throw new Error(`抬不动项目配额（${quotaBump.response.status}/${quotaBump.payload?.error}）—— 下面这一条会空转`);
+    }
+    const archivedForMember = await jsonFetch(port, "/api/projects", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-member-default-archived-project", authorization: orgAdminAuth},
+      body: JSON.stringify({name: "默认项目探针（待归档）"})
+    });
+    const archivedProjectId = archivedForMember.payload?.id || archivedForMember.payload?.project?.id;
+    if (!archivedProjectId) {
+      throw new Error(`建不出探针项目（${archivedForMember.response.status}/${archivedForMember.payload?.error}）—— 这一条会空转`);
+    }
+    // 归档之前必须收得下，否则下面那条拒绝测的是别的东西。
+    const beforeArchive = await jsonFetch(port, "/api/org/members", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-member-default-before-archive", authorization: orgAdminAuth},
+      body: JSON.stringify({displayName: "默认项目探针甲", email: "default.project.probe1@local", defaultProjectId: archivedProjectId})
+    });
+    if (!beforeArchive.response.ok) {
+      throw new Error(`项目还没归档时就设不了默认项目（${beforeArchive.response.status}/${beforeArchive.payload?.error}）—— 正面对照不成立`);
+    }
+    await jsonFetch(port, `/api/projects/${encodeURIComponent(archivedProjectId)}/archive`, {
+      method: "POST", headers: {"Idempotency-Key": "doctor-member-default-archive", authorization: orgAdminAuth}, body: "{}"});
+    const afterArchive = await jsonFetch(port, "/api/org/members", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-member-default-after-archive", authorization: orgAdminAuth},
+      body: JSON.stringify({displayName: "默认项目探针乙", email: "default.project.probe2@local", defaultProjectId: archivedProjectId})
+    });
+    if (afterArchive.response.status !== 400 || afterArchive.payload?.error !== "member_default_project_archived") {
+      throw new Error(`把新成员的默认项目设成已归档项目没被拒（${afterArchive.response.status}/${afterArchive.payload?.error}）`);
+    }
+    const ghostProject = await jsonFetch(port, "/api/org/members", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-member-default-ghost", authorization: orgAdminAuth},
+      body: JSON.stringify({displayName: "默认项目探针丙", email: "default.project.probe3@local", defaultProjectId: "prj_does_not_exist"})
+    });
+    if (ghostProject.payload?.error !== "member_default_project_not_found") {
+      throw new Error(`默认项目指向一个不存在的 id 没被拒（${ghostProject.response.status}/${ghostProject.payload?.error}）`);
+    }
+    // 指向【别的组织】的项目：这个成员根本进不去，等于没设 —— 而它同样一声不吭地收下了。
+    const foreignProjectDefault = await jsonFetch(port, "/api/org/members", {
+      method: "POST",
+      headers: {"Idempotency-Key": "doctor-member-default-foreign", authorization: orgAdminAuth},
+      body: JSON.stringify({displayName: "默认项目探针丁", email: "default.project.probe4@local", defaultProjectId: "prj_control_plane"})
+    });
+    if (foreignProjectDefault.payload?.error !== "member_default_project_outside_organization") {
+      throw new Error(`默认项目指向别的组织的项目没被拒（${foreignProjectDefault.response.status}/`
+        + `${foreignProjectDefault.payload?.error}）—— 那个成员进不去，等于没设`);
+    }
+  }
+
   // 跨租户隔离：不逐条枚举字段，而是把【别的租户的 id】收集起来，在组织管理员拿到的整份载荷里
   // 全文搜。逐条断言只能覆盖"我想到的那些集合"，而本仓这类漏洞恰恰出在没想到的那一个上
   //（视图基底不过滤 taskGroups、按 taskGroupId 归属的 worker lane、用复数 projectIds 的节点，

@@ -895,6 +895,27 @@ const MODEL_CAPABILITY_FIELDS = ["aliases", "availability", "capabilityDigest", 
   "toolCapabilities"];
 
 
+// 成员的默认项目：不指定是允许的（「（不指定）」是下拉里的第一项），但一旦指定就必须
+// 指得到、属于本组织、且不是已归档 —— 归档意味着"移出可建新工作的范围"，把新成员的落脚点
+// 设在那里，等于让他一进来就站在一个开不了工的地方，而没有任何地方会提示他为什么。
+function validateDefaultProject(state, defaultProjectId, organizationId) {
+  if (defaultProjectId === undefined || defaultProjectId === null || defaultProjectId === "") return null;
+  const project = (state.projects || []).find((item) => item.id === defaultProjectId);
+  if (!project) {
+    return {error: "member_default_project_not_found", defaultProjectId: String(defaultProjectId).slice(0, 80),
+      message: "默认项目指不到任何项目：请从下拉里选一个，或留空表示不指定"};
+  }
+  if ((project.organizationId || DEFAULT_ORGANIZATION_ID) !== organizationId) {
+    return {error: "member_default_project_outside_organization", defaultProjectId: project.id,
+      message: "默认项目不属于这个组织：成员进不去，等于没设"};
+  }
+  if (project.status === "archived") {
+    return {error: "member_default_project_archived", defaultProjectId: project.id,
+      message: "这个项目已归档（不能再建新工作）：把新成员的落脚点设在这里，他一进来就无事可做"};
+  }
+  return null;
+}
+
 function sanitizeGrantRequest(state, actor, input = {}, resourceScope = {}) {
   const account = state.accounts.find((item) => accountIdOf(item) === actor);
   const role = String(input.role || "viewer");
@@ -5548,6 +5569,11 @@ async function handleApi(req, res) {
     const accountId = createId("acct");
     const memberToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
     const permissions = sanitizeMemberPermissions(body.permissions, ["project:view"]);
+    // 【默认项目要指得到、且还能开工】。这个字段原先原样收下：可以指向一个已归档的项目
+    //（新成员一进来就落在一个开不了新工作的项目上），也可以指向一个根本不存在的 id，
+    // 而两种都不会有任何提示。与入网令牌那条同一口径 —— 归档意味着"移出可建新工作的范围"。
+    const defaultProjectRefusal = validateDefaultProject(state, body.defaultProjectId, orgId);
+    if (defaultProjectRefusal) return json(res, 400, defaultProjectRefusal);
     const member = {
       schemaVersion: "account/v1",
       accountId,
@@ -5589,7 +5615,12 @@ async function handleApi(req, res) {
         message: "改成员授权至少要给 permissions 或 defaultProjectId 之一 —— 两样都不给时这条接口什么也不会改"});
     }
     member.permissions = sanitizeMemberPermissions(body.permissions, member.permissions || ["project:view"]);
-    if (body.defaultProjectId !== undefined) member.defaultProjectId = body.defaultProjectId || null;
+    if (body.defaultProjectId !== undefined) {
+      // 同上：改成员的默认项目也要指得到、且还能开工（这条路原先也是原样收下）。
+      const refusal = validateDefaultProject(state, body.defaultProjectId, member.organizationId || DEFAULT_ORGANIZATION_ID);
+      if (refusal) return json(res, 400, refusal);
+      member.defaultProjectId = body.defaultProjectId || null;
+    }
     member.updatedAt = now();
     audit(state, guard.actor, "org_member_permissions_update", `Account:${member.accountId}`);
     finishGuardedWrite(state, guard, 200, publicAccountRecord(member));
