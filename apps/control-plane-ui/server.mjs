@@ -2708,7 +2708,12 @@ async function handleApi(req, res) {
   // 路由记账（默认关闭，只在门里打开）：「这条路由有没有被真打过」不能靠在 e2e 源码里搜路径 ——
   // 搜到的是"提到过"，不是"跑到过"。开关关着时这一行只是一次环境变量读取。
   if (routeTraceFile) {
-    try { appendFileSync(routeTraceFile, `${req.method} ${url.pathname}\n`); } catch { /* 记账坏了不能影响请求 */ }
+    // 记在【响应结束时】而不是请求开始时：要的是状态码。「这条路由被打过」和「它成功过」
+    // 是两件事 —— 空 body 扫描会把每条写路由都打一遍（并期待被拒），只记「打过」的话，
+    // 一条从没成功执行过的路由看起来是覆盖的（实测 /api/role-skill-overlays 就是这样）。
+    res.once("finish", () => {
+      try { appendFileSync(routeTraceFile, `${req.method} ${url.pathname} ${res.statusCode}\n`); } catch { /* 记账坏了不能影响请求 */ }
+    });
   }
   if (req.method === "GET" && ["/api/health", "/api/runtime/health"].includes(url.pathname)) {
     // 存储坏过一次就不能再报 ok：分片损坏时服务照常起、这里照常 200，监控绿着而读数据全 503。

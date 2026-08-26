@@ -649,6 +649,27 @@ try {
       throw new Error(`role_skill_overlay_validate 没给出回执：${JSON.stringify(overlayCheck).slice(0, 160)}`);
     }
 
+    // 【外部升级包导入与角色定制落账】。这两个集合直到今天还没被任何套件产出过 ——
+    // 也就没有任何门看得见它们的形状（externalUpgradeImports 连规范都没有，2026-08-27 才补）。
+    const upgradeImport = await call("governance-mcp.system_upgrade_external_import", {
+      packageRef: "upgrade-package:doctor-mcp-chain", evidenceRefs: ["evidence:doctor-mcp-chain"]
+    });
+    const importedPackage = upgradeImport.externalUpgradeImport || upgradeImport;
+    // 导入【本身不得生效】：它必须停在等真人激活上，并且明确禁止正在跑的运行时据此自我改写。
+    if (importedPackage.status !== "imported_pending_admin_activation" || importedPackage.forbidsActiveRuntimeSelfMutation !== true) {
+      throw new Error(`导入的升级包没有停在等真人激活上：${JSON.stringify(upgradeImport).slice(0, 200)} —— `
+        + "导入即生效等于让系统按外来的包自我改写");
+    }
+    // 说不清是哪个包的导入必须拒：那条记录带着安全承诺，却谁也追不回来。
+    const namelessImport = await mcpAs(admin.sessionToken, "tools/call",
+      {name: "governance-mcp.system_upgrade_external_import",
+        arguments: {idempotencyKey: `doctor-mcp-chain-${++seq}`, evidenceRefs: ["evidence:nameless"]}});
+    const namelessPayload = namelessImport.structuredContent?.result || JSON.parse(namelessImport.content?.[0]?.text || "{}");
+    if (namelessPayload.error !== "upgrade_import_requires_package_ref") {
+      throw new Error(`没点名包的导入被收下了：${JSON.stringify(namelessPayload).slice(0, 200)}`);
+    }
+
+
     // 【停用账号这条路的正面】。它刚补上「机器主体不许做」那道门（同族里只有它没有），
     // 而这一族的教训是：只验反面等于只验一半 —— 门要是把真人也挡住了，表现是
     // 「谁都停不了一个账号」，而所有反面断言照样全绿。顺带这两个工具此前也没成功执行过。
@@ -756,7 +777,7 @@ try {
     // 本套 e2e 自己跑通的数（跨门合计另算：契约门在进程内还会跑通一批）。
     // 这个数是【实测出来的】—— 早先一次量到 44，复量不出来，那次多半把别的运行留下的账算了进去；
     // 以能复现的这次为准。棘轮只升不降。
-    const SUCCESSFULLY_EXERCISED_FLOOR = 51;
+    const SUCCESSFULLY_EXERCISED_FLOOR = 52;
     let traced = "";
     try { traced = readFileSync(toolTracePath, "utf8"); } catch { traced = ""; }
     const succeeded = new Set(traced.split("\n").filter((line) => line.startsWith("ok ")).map((line) => line.slice(3)));

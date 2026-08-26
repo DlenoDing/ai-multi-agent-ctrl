@@ -6607,6 +6607,22 @@ const MUTATIONS = [
     expect: "读 args.workItemId，而 tools/list 上它不公布这个键"
   },
   {
+    name: "路由只被打过不算覆盖（要真的成功过）",
+    file: "scripts/doctor.mjs",
+    gate: "doctor",
+    from: "    if (/^2\\d\\d$/u.test(status)) succeeded.add(best.route);",
+    to: "    succeeded.add(best.route);",
+    expect: "两个数一样大"
+  },
+  {
+    name: "控制台真人定稿要真的落得下去",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: '  if (!option) throw Object.assign(new Error("human_confirmation_option_invalid"), {status: 400});',
+    to: '  if (option || !option) throw Object.assign(new Error("human_confirmation_option_invalid"), {status: 400});',
+    expect: "真人定稿被挡住了"
+  },
+  {
     name: "认不出的质量门状态不许当成通过",
     file: "apps/mcp-server/server.mjs",
     gate: "mcp",
@@ -6744,8 +6760,8 @@ const MUTATIONS = [
     name: "路由记账断了要看得见",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    from: "    try { appendFileSync(routeTraceFile, `${req.method} ${url.pathname}\\n`); } catch { /* 记账坏了不能影响请求 */ }",
-    to: "    try { if (false) appendFileSync(routeTraceFile, `${req.method} ${url.pathname}\\n`); } catch { /* 记账坏了不能影响请求 */ }",
+    from: "      try { appendFileSync(routeTraceFile, `${req.method} ${url.pathname} ${res.statusCode}\\n`); } catch { /* 记账坏了不能影响请求 */ }",
+    to: "      try { if (false) appendFileSync(routeTraceFile, `${req.method} ${url.pathname} ${res.statusCode}\\n`); } catch { /* 记账坏了不能影响请求 */ }",
     expect: "记账没接上"
   },
   {

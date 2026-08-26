@@ -3832,6 +3832,49 @@ try {
     }
     console.log(`  ok  系统概览取数口：${readPaths.length} 个界面读的字段逐个核对，都在响应里`);
 
+    // 【控制台真人定稿这条路的正面】。按状态码记账量出来：/api/human-confirmations/:id/decide
+    // 在整套控制面 e2e 里【从没返回过 2xx】—— 打过它的只有两条反面用例和空 body 扫描。
+    // 而这是控制台上「选择定稿」那个按钮走的路，也是整套系统最重要的一道闸门：
+    // 它要是把真人也挡住了，表现是「AI 提的方案永远没人能拍板」，而所有反面断言照样全绿。
+    {
+      const liveForDecide = await jsonFetch(port, "/api/state?view=full&limit=200", {headers: {authorization: doctorSystemAuth}});
+      const pending = (liveForDecide.payload.humanConfirmationRequests || [])
+        .find((item) => item.status === "pending" && (item.options || []).length);
+      if (!pending) {
+        throw new Error("本轮没有待答的人工确认单（带选项的）—— 下面这条定稿断言在空转");
+      }
+      const option = pending.options.find((item) => item.optionId !== "none") || pending.options[0];
+      const decided = await jsonFetch(port, `/api/human-confirmations/${encodeURIComponent(pending.requestId)}/decide`, {
+        method: "POST",
+        headers: {"Idempotency-Key": "doctor-human-finalize-happy", authorization: doctorSystemAuth},
+        body: JSON.stringify({selectedOptionId: option.optionId, action: "finalize",
+          expectedRound: Number(pending.round || 1), inputText: "e2e：按这个选项定稿"})
+      });
+      if (!decided.response.ok) {
+        throw new Error(`真人定稿被挡住了（${decided.response.status}/${decided.payload?.error}）—— `
+          + "这是控制台「选择定稿」按钮走的那条路；挡住真人，整套人工闸门就没有出口");
+      }
+      const decidedRequest = decided.payload.request || decided.payload;
+      if (decidedRequest.status !== "answered" || decidedRequest.decision?.selectedOptionId !== option.optionId) {
+        throw new Error(`定稿没落到记录上：${JSON.stringify(decided.payload).slice(0, 240)}`);
+      }
+      // 定了就是定了：同一张单再定一次必须 409 并说清是谁、什么时候、定的哪一个 ——
+      // 输的那一方需要的正是这几个字段（否则他只能自己去翻记录）。
+      const again = await jsonFetch(port, `/api/human-confirmations/${encodeURIComponent(pending.requestId)}/decide`, {
+        method: "POST",
+        headers: {"Idempotency-Key": "doctor-human-finalize-again", authorization: doctorSystemAuth},
+        body: JSON.stringify({selectedOptionId: option.optionId, action: "finalize", expectedRound: Number(pending.round || 1)})
+      });
+      if (again.response.status !== 409 || again.payload?.error !== "human_confirmation_not_pending") {
+        throw new Error(`已定稿的确认单被二次定稿（${again.response.status}/${again.payload?.error}）`);
+      }
+      if (!again.payload.decidedBy || !again.payload.decidedAt) {
+        throw new Error(`二次定稿的拒绝报文没说清是谁、什么时候定的：${JSON.stringify(again.payload).slice(0, 200)} —— `
+          + "两个人同时打开同一张单时，输的那一方只能靠这几个字段知道发生了什么");
+      }
+      console.log(`  ok  控制台真人定稿：${pending.requestId} 定稿落账、二次定稿 409 且说清了是谁定的`);
+    }
+
     // /api/health 是【运维和 docker 健康检查】打的那一条（docker-compose 的 healthcheck 就是它），
     // 而 doctor 一路只打 /api/runtime/health —— 路由记账量出来才发现它从没被这套 e2e 执行过。
     // 它必须不要求鉴权（healthcheck 没有凭据），并且如实带上存储故障信号：
@@ -4431,14 +4474,27 @@ console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条�
     throw new Error(`路由记账只收到 ${lines.length} 条请求（本轮打了几百个）—— 记账没接上，这条棘轮在空转`);
   }
   const hit = new Set();
+  const succeeded = new Set();
   for (const line of lines) {
-    const path = line.split(" ")[1] || "";
+    const [, path = "", status = ""] = line.split(" ");
     let best = null;
     for (const route of routes) {
       const matches = route.literal ? path === route.route : path.startsWith(route.route);
       if (matches && (!best || route.route.length > best.route.length)) best = route;
     }
-    if (best) hit.add(best.route);
+    if (!best) continue;
+    hit.add(best.route);
+    if (/^2\d\d$/u.test(status)) succeeded.add(best.route);
+  }
+  if (!succeeded.size) {
+    throw new Error("路由记账里一条 2xx 都没有 —— 状态码没记上（这条棘轮会退化成只看「打过」）");
+  }
+  // 自证：本套 e2e 里【必然】有「打过但从没成功过」的路由 —— 空 body 扫描会把每条写路由都
+  // 打一遍并期待被拒。两个数一样大，只能说明状态码没在过滤（那这条棘轮就退化成了只看「打过」，
+  // 而那正是它要修的毛病）。
+  if (hit.size === succeeded.size) {
+    throw new Error(`打到 ${hit.size} 条、成功 ${succeeded.size} 条，两个数一样大 —— `
+      + "状态码没在过滤，这条棘轮退化成了只看「打过」");
   }
   const cold = routes.map((route) => route.route).filter((route) => !hit.has(route) && !OTHER_SUITE_COVERS[route]).sort();
   if (cold.length) {
@@ -4453,7 +4509,23 @@ console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条�
       throw new Error(`${route} 登记着"由别的套件覆盖"，本轮却被打到了 —— 登记过期，删掉它让棘轮直接管住（${why}）`);
     }
   }
-  console.log(`路由覆盖 ok: ${routes.length} 条对外路由，本轮真打到 ${hit.size} 条（按运行时记账，不是源码里搜路径），`
+  // 【打过 ≠ 成功过】。空 body 扫描会把每条写路由都打一遍（并期待被拒），只看「打过」的话，
+  // 一条从没成功执行过的路由看起来是覆盖的 —— 实测 /api/role-skill-overlays 就是这样：
+  // 全仓除文档外没有任何调用方，轨迹里那两次全是那条扫描打的，roleSkillOverlays 这个集合
+  // 至今没被任何套件产出过。这条棘轮盯住「成功过」的条数，只升不降。
+  const SUCCEEDED_ROUTE_FLOOR = 64;
+  const neverSucceeded = routes.map((route) => route.route)
+    .filter((route) => !succeeded.has(route) && !OTHER_SUITE_COVERS[route]).sort();
+  if (succeeded.size < SUCCEEDED_ROUTE_FLOOR) {
+    throw new Error(`本轮成功执行过的路由从 ${SUCCEEDED_ROUTE_FLOOR} 掉到 ${succeeded.size}`
+      + ` —— 没成功过的还有 ${neverSucceeded.length} 条：${neverSucceeded.slice(0, 10).join("、")}`
+      + `${neverSucceeded.length > 10 ? " 等" : ""}`);
+  }
+  if (process.env.AIMAC_LIST_UNSUCCEEDED_ROUTES) {
+    console.log(`没成功过的路由 ${neverSucceeded.length} 条：\n  ${neverSucceeded.join("\n  ")}`);
+  }
+  console.log(`路由覆盖 ok: ${routes.length} 条对外路由，本轮真打到 ${hit.size} 条、其中 ${succeeded.size} 条真的成功过`
+    + `（按运行时记账，不是源码里搜路径；棘轮 ${SUCCEEDED_ROUTE_FLOOR}，AIMAC_LIST_UNSUCCEEDED_ROUTES=1 可列出没成功过的），`
     + `${Object.keys(OTHER_SUITE_COVERS).length} 条登记为由 agent 套件覆盖`);
 }
 

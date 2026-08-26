@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-multi-agent-ctrl/spec/external-upgrade-import.schema.json",
+  "title": "ExternalUpgradeImport",
+  "description": "从外部导入的一个系统升级包的登记。导入【本身不生效】：它落在 imported_pending_admin_activation 上等真人激活，并显式带着 forbidsActiveRuntimeSelfMutation —— 正在跑的运行时不得据此自我改写。这份规范是 2026-08-27 才补的：governance-mcp.system_upgrade_external_import 一次都没成功执行过，这个集合从没出现在任何 e2e 产出里。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "importId", "packageRef", "status", "forbidsActiveRuntimeSelfMutation", "createdAt"],
+  "properties": {
+    "schemaVersion": {"const": "external-upgrade-import/v1"},
+    "importId": {"type": "string", "minLength": 1},
+    "packageRef": {"type": "string", "minLength": 1},
+    "status": {"enum": ["imported_pending_admin_activation"]},
+    "forbidsActiveRuntimeSelfMutation": {"const": true},
+    "evidenceRefs": {"type": "array", "items": {"type": "string"}},
+    "createdAt": {"type": "string", "format": "date-time"}
+  }
+}

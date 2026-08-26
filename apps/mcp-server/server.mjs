@@ -2797,9 +2797,17 @@ function systemUpgradeExternalImport(state, args) {
   // 本仓十一个接受自选 id 的工厂都调了这个断言，这一族是漏的。
   assertUniqueRecordId(state.externalUpgradeImports, "importId", args.importId, "upgrade_import_id_conflict");
   const at = new Date().toISOString();
+  const packageRef = String(args.packageRef || args.externalUpgradePackageRef || "").trim();
+  // 导入一个说不清是什么的包，等于在台账上留一条谁也追不回来的记录（它还带着
+  // forbidsActiveRuntimeSelfMutation 这种安全承诺）——包标识必须由调用方说清。
+  if (!packageRef) {
+    return {ok: false, error: "upgrade_import_requires_package_ref",
+      message: "导入外部升级包必须点名是哪个包（packageRef）：说不清的包在台账上追不回来"};
+  }
   const imported = {
+    schemaVersion: "external-upgrade-import/v1",
     importId: args.importId || createId("upgrade_import"),
-    packageRef: args.packageRef || args.externalUpgradePackageRef,
+    packageRef,
     status: "imported_pending_admin_activation",
     forbidsActiveRuntimeSelfMutation: true,
     evidenceRefs: args.evidenceRefs || [],

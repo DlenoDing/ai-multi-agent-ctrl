@@ -322,6 +322,7 @@
     discarded: "已丢弃",
     joined: "已加入",
     persisted: "已留存",
+    imported_pending_admin_activation: "已导入，等管理员激活",
     registered: "已登记",
     gc: "已回收",
     opened: "已开启",
