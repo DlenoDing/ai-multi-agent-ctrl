@@ -14020,9 +14020,20 @@ function verifyHumanWrittenTextIsNeverSilentlyTruncated(output) {
   const truncated = [];
   for (const file of files) {
     const text = readFileSync(join(root, file), "utf8").replace(/\/\/[^\n]*/gu, (line) => " ".repeat(line.length));
-    const shape = /(?:^|[.\s])(\w*(?:[Jj]ustification|inputText|instruction|objective|rationale))\s*=\s*[^\n=][^\n]{0,90}?\.slice\(0,\s*(\d{2,5})\)/gmu;
+    // 名字白名单是手编的，而手编的清单本身就是漏洞来源：`retiredReason`（注销依据，200 字
+    // 静默截断）就整个不在里面，把它退回 slice 三道门全绿。所以放宽两件事：
+    //   ① 名字加上 *Reason / detail 这两族；
+    //   ② 值必须来自【调用方给的原文】（args./body./options./input.），这样机器自己拼的码
+    //      （blockedReason = "x"）不会被误报，而人或 agent 写的原文一个都跑不掉。
+    // 错误回执里回显非法取值的那种截断是对的（本来就该短），按同一句里的 error:/ok: false 排除。
+    const shape = /(?:^|[.\s{,])(\w*(?:[Jj]ustification|[Rr]eason|[Dd]etail|inputText|instruction|objective|rationale))\s*[=:]\s*[^\n=][^\n]{0,90}?\.slice\(0,\s*(\d{2,5})\)/gmu;
     for (const match of text.matchAll(shape)) {
-      if (!/^(?:\w*[Jj]ustification|inputText|instruction|objective|rationale)$/u.test(match[1])) continue;
+      if (!/^(?:\w*[Jj]ustification|\w*[Rr]eason|\w*[Dd]etail|inputText|instruction|objective|rationale)$/u.test(match[1])) continue;
+      // 只认【调用方给的原文】：机器自己拼的字符串不在这条纪律的管辖内。
+      if (!/\b(?:args|body|options|input|decision|request)\.\w+/u.test(match[0])) continue;
+      // 回显非法入参的错误回执：截断本来就是对的。
+      const lineStart = text.lastIndexOf("\n", match.index) + 1;
+      if (/\berror:|\bok:\s*false|\breceived:/u.test(text.slice(lineStart, match.index + match[0].length))) continue;
       truncated.push(`${file.split("/").pop()}:${text.slice(0, match.index).split("\n").length}（${match[1]} → ${match[2]} 字）`);
     }
   }
@@ -14035,7 +14046,9 @@ function verifyHumanWrittenTextIsNeverSilentlyTruncated(output) {
   }
   if (truncated.length) {
     output.push(`这些【人写的文本】被 slice 静默截断了：${truncated.join("、")} —— `
-      + "台账上记的与他写的不是一句话；改用 assertHumanTextWithinLimit（超了就拒，并说清超出多少）");
+      + "台账上记的与他写的不是一句话。两条出路按【谁写的】选："
+      + "人写的用 assertHumanTextWithinLimit（超了就拒、说清超出多少，让他自己精简）；"
+      + "agent 写的用 clampVisibleText（拒掉等于这次上报整个落不了地，所以照截但把切口留给人看见）");
   }
   console.log(`人写文本不许静默截断：${guarded} 处走了长度校验，${truncated.length} 处仍在 slice 截断（应为 0）`);
 }

@@ -659,7 +659,10 @@ export function retireAccount(state, accountId, options = {}) {
   const previousStatus = account.status;
   account.status = "retired";
   account.retiredAt = at;
-  account.retiredReason = String(options.reason || "").slice(0, 200) || "human_retire_decision";
+  // 原先是 slice 静默截断：账上记的与他写的不是一句话，而注销不可撤销、这句话就是事后唯一的依据。
+  // 与同批其余人写文本（各类 justification、定稿意见、规则来源处置）同规：超了就拒，别偷偷改短。
+  account.retiredReason = assertHumanTextWithinLimit(options.reason || "", "account_retire_reason", 200)
+    || "human_retire_decision";
   account.updatedAt = at;
   // ① 会话
   const revokedSessions = revokeAccountSessions(state, account.accountId, "account_retired");
@@ -5982,7 +5985,9 @@ export function submitAiConfirmationAnalysis(state, requestId, input = {}, optio
     action: "analysis",
     assessment,
     summary,
-    ...(input.detail ? {detail: String(input.detail).slice(0, 4000)} : {}),
+    // 人要照着这段分析定稿。裸 slice 读起来仍然完整，人却在对着半句话拍板 ——
+    // 用 clampVisibleText：上限照旧，但切掉的地方要看得见。
+    ...(input.detail ? {detail: clampVisibleText(input.detail, 4000)} : {}),
     ...(Array.isArray(input.concerns) && input.concerns.length ? {concerns: unique(input.concerns).slice(0, 20)} : {}),
     at
   });
@@ -6939,7 +6944,7 @@ export function performIndependentReview(state, taskGroup, workItem, request = {
 // 保留全文（不像 question.summary 还有 detail 兜底），截断后的这一份就是记录本身。
 // 上限保留（防无界负载），但截断必须留痕：宁可让人看到"这里被切掉了"，也不能让人误以为读完了。
 // 不改成超长即拒（规则编辑器那套）：那会让一次完整的互审因为超长整个丢掉，代价比截断更大。
-function clampVisibleText(value, max) {
+export function clampVisibleText(value, max) {
   const text = String(value || "");
   if (text.length <= max) return text;
   const marker = "…（已截断）";

@@ -9614,6 +9614,22 @@ const MUTATIONS = [
     to: "      request.cancelReason = reason;",
     expect: "作废原因写成了 object"
   },
+  {
+    name: "注销依据不许静默截断（注销不可撤销，这句话是事后唯一的依据）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: '  account.retiredReason = assertHumanTextWithinLimit(options.reason || "", "account_retire_reason", 200)\n    || "human_retire_decision";',
+    to: '  account.retiredReason = String(options.reason || "").slice(0, 200) || "human_retire_decision";',
+    expect: "被 slice 静默截断了"
+  },
+  {
+    name: "已注销的账号要说得出什么时候、为什么",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  if (account.status !== "retired" || !(account.retiredAt || account.retiredReason)) return "";',
+    to: "  if (true) return \"\";",
+    expect: "事后追不到依据"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

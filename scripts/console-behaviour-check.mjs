@@ -1728,6 +1728,34 @@ function runReviewAxisCase() {
     }],
     qualityGates: []
   });
+  // 注销不可撤销，而"什么时候、为什么"此前落在 retiredAt/retiredReason 上、全仓没有读取点：
+  // 屏幕上只有一个「已注销」，事后追不到依据。
+  {
+    const dictProbe = loadConsole(el("div"), {realI18n: true});
+    const accountsHtml = dictProbe.renderSysAccountsWith({
+      accounts: [
+        {accountId: "u1", displayName: "李四", email: "l@x", accountType: "user_account",
+          status: "retired", roles: [], retiredAt: "2026-08-20T00:00:00.000Z",
+          retiredReason: "离职交接完成"},
+        {accountId: "u2", displayName: "王五", email: "w@x", accountType: "user_account",
+          status: "retired", roles: [], retiredAt: "2026-08-21T00:00:00.000Z",
+          retiredReason: "human_retire_decision"},
+        {accountId: "u3", displayName: "张三", email: "z@x", accountType: "user_account",
+          status: "active", roles: []}
+      ],
+      accessGrants: [], mcpGrants: [], auditLog: []
+    }, {accountId: "u3", accountType: "system_admin", displayName: "张三"});
+    check("已注销的账号要说得出什么时候、为什么（注销不可撤销）",
+      /离职交接完成/u.test(accountsHtml) && /2026-08-20/u.test(accountsHtml),
+      "账号行上只有一个「已注销」，事后追不到依据");
+    check("没填理由时的缺省值也要是人话，不能把 human_retire_decision 摆给人看",
+      /当时没有填写理由/u.test(accountsHtml) && !/human_retire_decision/u.test(accountsHtml),
+      String(accountsHtml).replace(/<[^>]+>/gu, " ").match(/王五[^|]{0,80}/u)?.[0] || "（没渲染出来）");
+    check("还在用的账号不要多贴一行（常亮的提示等于没有提示）",
+      !/张三[\s\S]{0,120}record-meta/u.test(accountsHtml),
+      "活跃账号身上也贴了注销说明");
+  }
+
   // 人正要回答的确认单被系统作废时，「已答历史」里原本是【一行空的 cancelled】：
   // 没有选项、没有内容、没有确认人。为什么消失了，只写在 cancelReason 上而全仓没人读它。
   {

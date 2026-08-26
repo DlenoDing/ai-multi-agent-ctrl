@@ -84,6 +84,8 @@
     grant_subject_account_not_found: "找不到要授权的账号：请先创建该成员，再授予角色",
     checkpoint_must_use_agent_gateway: "检查点必须由认领该派发的节点经 agent 网关提交",
     grant_subject_account_retired: "这个账号已注销（不可恢复）：给它发授权不会有任何效果",
+    // 注销时人没写理由的缺省值 —— 它会直接出现在账号行上，不译就是把码摆给人看。
+    human_retire_decision: "人工决定注销（当时没有填写理由）",
     member_default_project_not_found: "默认项目指不到任何项目：请从下拉里选一个，或留空表示不指定",
     member_default_project_outside_organization: "默认项目不属于这个组织：成员进不去，等于没设",
     member_default_project_archived: "这个项目已归档（不能再建新工作）：新成员一进来就无事可做",

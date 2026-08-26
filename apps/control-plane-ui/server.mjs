@@ -92,6 +92,7 @@ import {
   runAgentRuntimeWorker,
   runAutonomousCycle,
   assertHumanTextWithinLimit,
+  clampVisibleText,
   settleCellOwnedResources,
   runCommandLifecycle,
   selectModel,
@@ -3195,7 +3196,7 @@ async function handleApi(req, res) {
     if (reportedStatus === "failed") noteWorkItemExecutionFailure(state, dispatch);
     dispatch.status = reportedStatus;
     if (permissionTimedOut && !dispatch.blockedReason) dispatch.blockedReason = "permission_request_pending";
-    dispatch.failureReason = String(body.reason || "agent_runtime_failure").slice(0, 2000);
+    dispatch.failureReason = clampVisibleText(body.reason || "agent_runtime_failure", 2000);
     dispatch.updatedAt = now();
     if (session) {
       session.status = reportedStatus === "blocked" ? "needs_decision" : reportedStatus === "cancelled" ? "aborted" : "failed";

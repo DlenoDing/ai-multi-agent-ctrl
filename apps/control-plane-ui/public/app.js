@@ -2153,12 +2153,21 @@ function renderSysSettings() {
 
 /* ---------------- 系统管理员：账号与授权（保留既有功能） ---------------- */
 
+// 已注销的账号：把"什么时候、为什么"贴在状态旁边。注销不可撤销，这句话是事后唯一的依据。
+function retiredNote(account) {
+  if (account.status !== "retired" || !(account.retiredAt || account.retiredReason)) return "";
+  return `<div class="record-meta">${esc(fmtTime(account.retiredAt))}`
+    + `${account.retiredReason ? ` · ${esc(explainCoded(account.retiredReason))}` : ""}</div>`;
+}
+
 function renderSysAccounts() {
   const accounts = (state.accounts || []).map((account) => row([
     esc(account.displayName),
     esc(account.email),
     badge(account.accountType),
-    statusBadge("account", account.status),
+    // 注销不可撤销，而"为什么注销、什么时候注销的"此前落在 retiredAt/retiredReason 上、
+    // 全仓没有任何读取点：屏幕上只有一个「已注销」，事后追不到依据。
+    `${statusBadge("account", account.status)}${retiredNote(account)}`,
     esc((account.roles || []).map((role) => t(role)).join("、"))
   ])).join("");
   const grants = (state.accessGrants || []).map((grant) => row([
@@ -2465,7 +2474,7 @@ function renderOrgMembers() {
       `<strong>${esc(account.displayName)}</strong>${isSelf ? ` ${customBadge("本人", "blue")}` : ""}`,
       esc(account.email),
       badge(account.accountType),
-      statusBadge("account", account.status),
+      `${statusBadge("account", account.status)}${retiredNote(account)}`,
       esc((account.roles || []).map((role) => t(role)).join("、")),
       manageable ? [
         `<button class="secondary-button" data-action="member-perms" data-account="${esc(account.accountId)}">权限</button>`,
