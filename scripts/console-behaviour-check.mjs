@@ -140,6 +140,7 @@ function makeContext(documentRoot) {
 // 若这些绑定被改名，尾插会在加载时抛 ReferenceError —— 本门直接失败，而不是悄悄测了个空。
 const PROBE_EPILOGUE = `
 globalThis.__probe = {
+  grantRoleLabel: (role) => grantRoleLabel(role),
   requestFailureHint: (payload) => requestFailureHint(payload),
   ruleEditorFormWith: (options) => ruleEditorForm(options),
   snapshotFormValues: (formEl) => snapshotFormValues(formEl),
@@ -380,8 +381,23 @@ if (process.env.AIMAC_RENDER_REAL) {
   // 实测这条假线索骗过我一次：系统管理员的「组织列表」显示暂无数据，而真实状态里有组织。
   // 办法：走真实 loadPage，state 类请求喂真状态；其余接口【不编数据】（编出来的是假故障），
   // 而是记下来、在那一页下面明说"这里的空白是勘察桩答不了，不是产品的空"。
-  for (const page of ["proj-overview", "review", "directives", "sys-orgs", "sys-accounts",
-    "sys-settings", "sys-overview", "proj-settings"]) {
+  // 页面清单要与 app.js 里【登记过的那 14 页】对齐。原先这里只列了 8 页 + 上面两页 ——
+  // 组织管理员那四页（概览/项目/成员/智能体）从来没有被读过一次，而"没读过"与"读过没问题"
+  // 在这份输出上长得一模一样。下面那条自证会把漏掉的页点名。
+  const SURVEY_PAGES = ["proj-overview", "review", "directives", "sys-orgs", "sys-accounts",
+    "sys-settings", "sys-overview", "proj-settings",
+    "org-overview", "org-projects", "org-members", "org-agents"];
+  {
+    const registered = [...fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8").matchAll(/^\s*"([a-z][a-z0-9-]+)":\s*\["/gmu)].map((hit) => hit[1]);
+    // tg 与 monitor 走上面两个专用入口（要额外传项目/任务组），不在这个通用循环里。
+    const covered = new Set([...SURVEY_PAGES, "tg", "monitor"]);
+    const missed = [...new Set(registered)].filter((page) => !covered.has(page));
+    if (missed.length) {
+      console.log(`（注意：app.js 登记了这些页而本工具没渲染 —— ${missed.join("、")}；`
+        + "它们在这份输出里既不出现也不报错，等于从来没被读过）");
+    }
+  }
+  for (const page of SURVEY_PAGES) {
     const unserved = new Set();
     const fetchStub = async (path) => {
       const url = String(path);
@@ -428,6 +444,30 @@ function check(name, condition, detail) {
       + "（本门的顺序是【名称在前、条件在后】）");
   }
   if (!condition) failures.push(`${name}: ${detail}`);
+}
+
+// 【授权角色：下拉里说的词与列表里显示的词必须是同一个】。此前 reviewer 这个键被两个对象共用：
+// 执行角色那边是「评审员」（agent 干活的角色），而授权下拉写的是「评审人」——
+// 于是"按指引去授评审人"，授完在项目列表里看到的是"评审员"，人会怀疑自己授错了角色。
+// 判据不比对字面量表，而是问【同一个角色 id 在两处渲染出来的词一样不一样】。
+{
+  const probe = loadConsole(el("div"), {realI18n: true});
+  const appText = fs.readFileSync(path.join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const dropdown = appText.slice(appText.indexOf('decisionSelect("role", ['));
+  const options = [...dropdown.slice(0, dropdown.indexOf('], "请选择项目角色')).matchAll(/\["([a-z_]+)",\s*`?([^"`\]]*)/gu)]
+    .map((hit) => [hit[1], hit[2]]);
+  check("授权角色下拉不是空的（空了下面那条就成了永远为真）", options.length >= 4, `实得 ${options.length} 项`);
+  // 不在这张表里的角色要回落到全局词表，而不是把角色 id 原样摆到屏幕上。
+  // 用一个【确实不在新表、但全局词表里有】的角色来验，否则这条分支永远走不到（变异实测）。
+  const fallback = probe.grantRoleLabel ? probe.grantRoleLabel("qa") : null;
+  check("授权角色词表里没有的角色要回落到全局中文，不许掉成英文 id",
+    Boolean(fallback) && fallback !== "qa" && !/^[a-z_]+$/u.test(fallback), `实得「${fallback}」`);
+  for (const [roleId] of options) {
+    const listed = probe.grantRoleLabel ? probe.grantRoleLabel(roleId) : null;
+    check(`授权角色「${roleId}」在下拉与列表里必须是同一个词`,
+      Boolean(listed) && dropdown.includes(listed),
+      `列表里渲染成「${listed}」，而下拉里找不到这个词 —— 人按指引授的和事后看到的对不上`);
+  }
 }
 
 // 勘察工具自己的截断必须自报。它是用来找「静默截断」这类缺陷的，而它每页只打前 900 字、

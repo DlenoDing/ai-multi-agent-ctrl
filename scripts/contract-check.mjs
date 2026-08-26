@@ -834,6 +834,7 @@ run(verifyEveryDecisionTypeIsClassified);
 run(verifyHumanOnlyActionNamesStillExist);
 run(verifyTerminalStatusListsAgree);
 run(verifyEveryGrantedPermissionHasAConsumer);
+run(verifySurveyRendersEveryRegisteredPage);
 run(verifyDockerEnvironmentFailuresSayWhatToDo);
 run(verifyProjectAdminAndOwnerStayOnePerson);
 run(verifyHealthReadDoesNotCloneEveryRequest);
@@ -8075,6 +8076,32 @@ function verifyOnlyLiveHumanAccountsCanFinalize(output) {
 // 这类故障在本机复现不了（基础镜像一旦缓存下来就不再走拉取那条路），所以判别逻辑抽成了
 // lib/docker-failure-advice.mjs，这里拿【2026-08-26 真实抓到的那两句 docker 原话】验它 ——
 // "复现不了"不等于"不验"：原话是从真实故障里抄下来的，不是我编的。
+// 【读真实产出的那套勘察，页面清单不许漏】。app.js 登记了 14 页，而勘察工具原先只渲染 8 页
+// ——组织管理员那四页（概览/项目/成员/智能体）从来没有被读过一次，而"没读过"与"读过没问题"
+// 在那份输出上长得一模一样。这条判据把清单对齐做成会报红的东西（自证那句只在跑勘察时打印，
+// 而勘察是手工触发的 —— 没人跑就等于没人知道）。
+function verifySurveyRendersEveryRegisteredPage(output) {
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const survey = readFileSync(join(root, "scripts/console-behaviour-check.mjs"), "utf8");
+  const registered = [...new Set([...app.matchAll(/^\s*"([a-z][a-z0-9-]+)":\s*\["/gmu)].map((hit) => hit[1]))];
+  if (registered.length < 10) {
+    output.push(`只从 app.js 提取到 ${registered.length} 个登记页面 —— 提取脱节，本条在空转`);
+    return;
+  }
+  const listed = survey.slice(survey.indexOf("const SURVEY_PAGES = ["));
+  const covered = new Set([...listed.slice(0, listed.indexOf("];")).matchAll(/"([a-z][a-z0-9-]+)"/gu)]
+    .map((hit) => hit[1]));
+  // 这两页走专用入口（要额外传项目/任务组），不在通用循环里，但确实被渲染。
+  covered.add("tg");
+  covered.add("monitor");
+  const missed = registered.filter((page) => !covered.has(page));
+  if (missed.length) {
+    output.push(`勘察工具不渲染这些已登记的页面：${missed.join("、")} —— 它们在那份输出里既不出现`
+      + "也不报错，等于从来没被读过；而「读真实产出」正是靠人去读它发现问题的");
+  }
+  console.log(`勘察页面清单：app.js 登记 ${registered.length} 页，勘察覆盖 ${covered.size} 页，漏 ${missed.length} 页`);
+}
+
 function verifyDockerEnvironmentFailuresSayWhatToDo(output) {
   for (const sample of DOCKER_FAILURE_SAMPLES) {
     const advice = dockerFailureAdvice(sample.said);

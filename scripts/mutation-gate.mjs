@@ -3240,6 +3240,30 @@ const MUTATIONS = [
     expect: "没带上本项目现行规范"
   },
   {
+    name: "勘察工具漏了已登记的页面要被抓到（没读过≠读过没问题）",
+    file: "scripts/console-behaviour-check.mjs",
+    check: "verifySurveyRendersEveryRegisteredPage",
+    from: '    "org-overview", "org-projects", "org-members", "org-agents"];',
+    to: '    "org-overview", "org-projects", "org-members"];',
+    expect: "勘察工具不渲染这些已登记的页面"
+  },
+  {
+    name: "授权角色在下拉与列表里必须是同一个词",
+    file: APP,
+    gate: "console",
+    from: '  reviewer: "评审人",',
+    to: '  reviewer: "评审员",',
+    expect: "在下拉与列表里必须是同一个词"
+  },
+  {
+    name: "授权角色词表回落到全局词表，不许掉成英文",
+    file: APP,
+    gate: "console",
+    from: "  return GRANT_ROLE_LABELS[role] || t(role);",
+    to: "  return GRANT_ROLE_LABELS[role] || role;",
+    expect: "不许掉成英文 id"
+  },
+  {
     name: "docker 被环境挡住时要说人话，而不是吐崩溃栈",
     file: "scripts/lib/docker-failure-advice.mjs",
     check: "verifyDockerEnvironmentFailuresSayWhatToDo",

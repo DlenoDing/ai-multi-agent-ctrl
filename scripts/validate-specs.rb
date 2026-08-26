@@ -1806,7 +1806,13 @@ member_permission_block = app_js_source[/const MEMBER_PERMISSION_OPTIONS = \[(.*
 errors << %(成员权限勾选框不得提供 task_group:* 直接权限（服务端一律不认，界面在说谎）) if member_permission_block.include?('"task_group:')
 # 钉的是「授权表单的角色候选里有 reviewer」这个属性，不是它当年那一段标记。原先钉 `<option value="reviewer">`
 # 整串，把角色下拉改成经 decisionSelect 渲染就会假红 —— 而"能不能把人工审核权交出去"一点没变。
-errors << %(项目成员授权必须能授予「评审人」角色，否则没有任何界面能把人工审核权交出去) unless app_js_source.match?(/\["reviewer",\s*"评审人/)
+# 盯的是「这个下拉里有 reviewer 这个选项」，不是它当时那句中文长什么样：
+# 2026-08-26 把授权角色的中文收进 GRANT_ROLE_LABELS（执行角色的「评审员」与授权角色的
+# 「评审人」此前共用一个全局词表键），选项文案改成从那张表拼出来，这条当场红 —— 而能力一点没变。
+errors << %(项目成员授权必须能授予「评审人」角色，否则没有任何界面能把人工审核权交出去) unless
+  app_js_source.match?(/\["reviewer",\s*(?:"评审人|`\$\{GRANT_ROLE_LABELS\.reviewer\})/)
+errors << %(授权角色词表里没有 reviewer 的中文 —— 上面那条会拼出一个空标签) unless
+  app_js_source.match?(/reviewer: "评审人"/)
 
 human_lever_forms.each do |action, form_kind|
   next unless server_source.include?("\"#{action}\"")

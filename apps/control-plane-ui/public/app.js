@@ -495,6 +495,24 @@ function toneOf(value) {
 // 任务组的 active 才是"进行中"。而词表是全局的、一个键只能有一个值 —— 最常见的那个意思会盖住
 // 其余全部，屏幕上就出现了"账号：进行中""组织：进行中"（读真实渲染读出来的）。
 // 按对象加一层覆盖，命中不了退回全局词表 —— 不改词表，也不给每个枚举值另造新键。
+// 【授权角色】的中文，与【执行角色】分开。两者共用过同一个全局词表键 reviewer：
+// 执行角色那边是「评审员」（agent 干活的角色），而授权这边人看到的是「评审人」——
+// 授权下拉里写着"选评审人"，授出去之后列表里显示"评审员"，同一件事两个词。
+// 这和状态词表那次是同一个形状：一个全局键盖住了另一个对象的意思，所以按对象另立一张。
+// 没登记的角色回落到全局词表 —— 那边至少还有中文，不会掉成英文。
+const GRANT_ROLE_LABELS = {
+  project_owner: "项目负责人",
+  project_admin: "项目管理员",
+  task_group_owner: "任务组负责人",
+  reviewer: "评审人",
+  agent_operator: "智能体操作员",
+  viewer: "观察者",
+  project_member: "项目成员"
+};
+function grantRoleLabel(role) {
+  return GRANT_ROLE_LABELS[role] || t(role);
+}
+
 const STATUS_LABEL_BY_KIND = {
   organization: {active: "启用中", suspended: "已停用", disabled: "已停用"},
   // 账号的 retired 要按【对象】覆盖，不能往全局词表里加：那里的 retired 已经被技能源的
@@ -2122,7 +2140,7 @@ function renderSysAccounts() {
   const grants = (state.accessGrants || []).map((grant) => row([
     `<span class="mono">${esc(grant.subjectRef?.subjectId || "-")}</span>`,
     resourceScopeLabel(grant.resource),
-    esc(t(grant.role)),
+    esc(grantRoleLabel(grant.role)),
     statusBadge("grant", grant.status),
     esc((grant.permissions || []).map(permLabel).join("、")),
     grant.status === "active" ? `<button class="danger-button" data-action="revoke-grant" data-grant="${esc(grant.grantId)}">撤销</button>` : "-"
@@ -2251,7 +2269,7 @@ function renderProjectMemberForm() {
         ${decisionSelect("role", [
           ["project_admin", "项目管理员"],
           ["task_group_owner", "任务组负责人"],
-          ["reviewer", "评审人（可做人工定稿/验收）"],
+          ["reviewer", `${GRANT_ROLE_LABELS.reviewer}（可做人工定稿/验收）`],
           ["agent_operator", "智能体操作员"],
           ["viewer", "观察者"]
         ], "请选择项目角色…")}
@@ -2558,7 +2576,7 @@ function renderOrgProjects() {
     progressLine(project.progress?.percent),
     badge(project.progress?.phase),
     badge(project.progress?.health),
-    esc((project.members || []).map((member) => `${accountName(member.accountId)}（${t(member.role)}）`).join("、")),
+    esc((project.members || []).map((member) => `${accountName(member.accountId)}（${grantRoleLabel(member.role)}）`).join("、")),
     // 项目此前没有任何终结路径，于是组织的项目配额只增不减、建满之后再也建不了新的。
     hasPerm("project:update") && project.status !== "archived"
       ? `<button class="secondary-button" data-action="project-archive" data-project="${esc(project.id)}">归档</button>`
