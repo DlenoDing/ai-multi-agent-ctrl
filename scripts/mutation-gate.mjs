@@ -9598,6 +9598,22 @@ const MUTATIONS = [
     to: '        ? `${customBadge("已关闭", "gray")}${false',
     expect: "谁定的、什么时候定的都追不到"
   },
+  {
+    name: "被系统作废的确认单要说得出为什么（人正要回答的问题凭空消失）",
+    file: "apps/control-plane-ui/public/app.js",
+    from: '    {v: request.status === "cancelled"',
+    to: '    {v: false',
+    gate: "console",
+    expect: "已答历史里是一行空的"
+  },
+  {
+    name: "作废原因的声明是字符串，不得把 {actor, summary} 整个写进去",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: '      request.cancelReason = String(reason?.summary || reason || "subject_removed_by_human");',
+    to: "      request.cancelReason = reason;",
+    expect: "作废原因写成了 object"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

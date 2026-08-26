@@ -3958,6 +3958,14 @@ function verifyHumanAndOrganizationContracts(output) {
     if (gnCard.status !== "cancelled") {
       output.push("卡片刷新: 格子已被放弃，验收卡片仍停在 pending 且三个动作都会被快照校验拒掉（只能等 7 天过期）");
     }
+    // 作废【原因】的声明是字符串，而这一支原先把整个 {actor, summary} 对象写了进去：
+    // 记录不合规范，人看到的会是 [object Object]。e2e 走不到这一支（要工作项先被人放弃），
+    // 所以那道"压真实产出"的规范扫描一直没碰到它 —— 同一个字段在另一处写的是 dispatch_failed 这类码。
+    if (typeof gnCard.cancelReason !== "string" || !gnCard.cancelReason) {
+      output.push(`卡片刷新: 作废原因写成了 ${typeof gnCard.cancelReason}`
+        + `（${JSON.stringify(gnCard.cancelReason)}）—— 规范声明它是字符串，人看到的会是 [object Object]`);
+    }
+    validateSchema(gnCard, humanConfirmationSchema, "HumanConfirmationRequest:cancelled-by-human-change", output);
 
     // 权限请求原样收下调用方给的 workId / sessionId，不校验它们属于声明的任务组。于是：
     // (a) 把别的项目【已了结】的会话复活成 permission_required —— 对方关闭门就此永久被挡；

@@ -3937,7 +3937,11 @@ function renderReview() {
     {v: esc(request.question?.summary || "-"), c: "text-clip"},
     badge(request.status),
     esc(request.decision?.selectedLabel || request.decision?.selectedOptionId || "-"),
-    {v: esc(request.decision?.inputText || "-"), c: "text-clip"},
+    // 被系统作废的单子在这张表里原本是【一行空的 cancelled】：没有选项、没有内容、没有确认人。
+    // 人正要回答的问题凭空消失，而作废原因落在 cancelReason 上、全仓没有任何读取点。
+    {v: request.status === "cancelled"
+      ? esc(`已作废：${explainCoded(request.cancelReason) || request.cancelReason || "（没有记下原因）"}`)
+      : esc(request.decision?.inputText || "-"), c: "text-clip"},
     esc(request.decision?.decidedBy ? accountName(request.decision.decidedBy) : "-"),
     {v: fmtTime(request.decision?.decidedAt || request.updatedAt), c: "nowrap"}
   ])).join("");

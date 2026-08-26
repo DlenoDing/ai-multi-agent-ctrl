@@ -5682,7 +5682,11 @@ export function refreshConfirmationsAfterHumanChange(state, taskGroupId, workIte
     const snapshot = subjectContentSnapshot(state, request);
     if (snapshot === null) {
       request.status = "cancelled";
-      request.cancelReason = reason;
+      // cancelReason 的声明是字符串（spec/human-confirmation-request.schema.json）。
+      // 这里的 reason 是 {actor, summary}：直接写进去会产出一条不合规范的记录，
+      // 而任何渲染点看到的都是 [object Object]。e2e 走不到这一支（要工作项先被人放弃），
+      // 所以规范扫描一直没压到它 —— 同一个字段在另一处写的是 dispatch_failed 这类码。
+      request.cancelReason = String(reason?.summary || reason || "subject_removed_by_human");
       request.updatedAt = at;
       affected.push(request.requestId);
       continue;

@@ -1728,6 +1728,44 @@ function runReviewAxisCase() {
     }],
     qualityGates: []
   });
+  // 人正要回答的确认单被系统作废时，「已答历史」里原本是【一行空的 cancelled】：
+  // 没有选项、没有内容、没有确认人。为什么消失了，只写在 cancelReason 上而全仓没人读它。
+  {
+    const cancelledHtml = probe.renderReviewWith({
+      taskGroups: [{id: "tg1", projectId: null, name: "组一"}],
+      humanConfirmationRequests: [
+        {requestId: "hcr_c1", taskGroupId: "tg1", status: "cancelled", decisionClass: "operational",
+          question: {summary: "还要不要继续"}, options: [], cancelReason: "dispatch_failed",
+          updatedAt: "2026-08-20T00:00:00.000Z"},
+        {requestId: "hcr_c2", taskGroupId: "tg1", status: "cancelled", decisionClass: "operational",
+          question: {summary: "验收确认"}, options: [], cancelReason: "工作项已由人工放弃",
+          updatedAt: "2026-08-20T01:00:00.000Z"}
+      ],
+      qualityGates: []
+    });
+    check("被作废的确认单要说得出为什么（人正要回答的问题凭空消失）",
+      /已作废/u.test(cancelledHtml) && /工作项已由人工放弃/u.test(cancelledHtml),
+      "已答历史里是一行空的「已取消」：没有选项、没有内容、没有确认人，也没有原因");
+    // 另一处写的是 dispatch_failed 这类码 —— 直接摆给人看等于没说。用真词表验它被译过。
+    // 用变量传选项，不复制 loadConsole(el("div"), {realI18n: true}) 这串字面量 ——
+    // 「真词表对照要能红」那条变异的锚点正是它，出现两次就点不准被测的那一处。
+    const withRealDict = {realI18n: true};
+    const realProbe = loadConsole(el("div"), withRealDict);
+    const codedHtml = realProbe.renderReviewWith({
+      taskGroups: [{id: "tg1", projectId: null, name: "组一"}],
+      humanConfirmationRequests: [{requestId: "hcr_c3", taskGroupId: "tg1", status: "cancelled",
+        decisionClass: "operational", question: {summary: "还要不要继续"}, options: [],
+        cancelReason: "dispatch_failed", updatedAt: "2026-08-20T00:00:00.000Z"}],
+      qualityGates: []
+    }, {accountId: "u1", accountType: "system_admin", displayName: "管理员"});
+    check("码型的作废原因要译成人话，不能把 dispatch_failed 摆给人看",
+      /派发已失败/u.test(codedHtml) && !/dispatch_failed/u.test(codedHtml),
+      String(codedHtml).replace(/<[^>]+>/gu, " ").match(/已作废[^ ]{0,40}/u)?.[0] || "（没渲染出来）");
+    check("作废原因不得以 [object Object] 的样子出现在人眼前（这个字段两处一处写码、一处写对象）",
+      !/\[object Object\]/u.test(cancelledHtml),
+      String(cancelledHtml).replace(/<[^>]+>/gu, " ").match(/已作废[^ ]{0,60}/u)?.[0] || "（没渲染出来）");
+  }
+
   // 证据引用在两层各截了一次（服务端建卡时留前 20、界面再显示前 12），两层都不说总数的话，
   // 人会以为证据就这些 —— 而定稿正是照着证据做的。
   {
