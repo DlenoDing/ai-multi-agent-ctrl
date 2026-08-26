@@ -2902,11 +2902,13 @@ async function handleApi(req, res) {
   // GET 不改状态，走共用只读那份（省掉每请求 7.98ms 的深拷）。其余方法仍拿自己的可变副本：
   // 写入方要先改再落盘，共享一份会让两个并发请求互相看见对方改到一半的状态。
   //
-  // 【agent 网关那一族除外】：它的每个处理函数入口都调 ensureAgentGatewayCollections（把集合
-  // 补齐、还会重写 project_owner 授权的 permissions）—— 那是它的既有写法，读写两种请求共用。
-  // 冻结会让它的 GET 当场抛错。把那一族改成"只读不补全"是另一件事（它有十几个入口，
-  // 每个都要单独判断补全是不是必要的）；这里先把【控制台与运维那批 GET】收下 ——
-  // 轮询的主力在那边（视图、进度、事件流、健康、概览），而网关的读多是低频自检。
+  // 【agent 网关那一族整族排除】。它有好几条 GET 是【设计上就会写】的：取控制命令要把 queued
+  // 标成 delivered、confirmations 带 ?consume=true 要销单、内容包下发要记投递 —— 而这些写发生在
+  // 被调用的 helper 里，处理函数体上看不出来（试过按"处理函数体里有没有写"静态分类，
+  // control 与内容包都被判成了纯读，跑起来才发现是错的）。
+  // 逐条列白名单就是拿【没被 e2e 覆盖的那几条网关 GET】去赌：漏判一条，生产上那条路直接 500。
+  // 而网关最热的那条（长轮询取控制命令）本来就要写，收窄排除面买到的时间很少、风险却是实的。
+  // 控制台与运维那批 GET 才是轮询主力，它们已经在共用只读里。
   const sharedReadEligible = req.method === "GET" && !url.pathname.startsWith("/api/agent/v1/");
   const state = sharedReadEligible ? readStateForRead() : readState();
   const body = req.method === "POST" ? await parseBody(req) : {};

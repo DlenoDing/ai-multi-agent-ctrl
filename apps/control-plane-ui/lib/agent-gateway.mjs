@@ -276,17 +276,23 @@ export function registerAgentNode(state, input = {}, options = {}) {
 
 const nodeTokenCache = new Map();
 
+// 【鉴权是纯读】：它只按令牌找节点，不该顺手把一堆集合补齐（那一路会走到
+// ensureRuntimeCollections，连 project_owner 授权的 permissions 都会重写）。而它在【每一个】
+// 网关请求上都跑。取数只需要容忍集合不存在。
+// 【这一条没有登记变异】：网关那一族目前整族拿可变状态（它有几条 GET 设计上就要写），
+// 所以把这行 ensure 加回去今天不会让任何门变红 —— 它是预防性的，不是有判据的守卫。
+// 登记一条验不出判别力的变异比不登记更坏，所以如实写在这里。
 export function authenticateAgentNode(state, bearerToken) {
-  ensureAgentGatewayCollections(state);
   const token = String(bearerToken || "");
   if (!token.startsWith("aimac_node_")) return null;
+  const nodes = state.agentRuntimeNodes || [];
   const cachedNodeId = nodeTokenCache.get(token);
   if (cachedNodeId) {
-    const node = state.agentRuntimeNodes.find((item) => item.nodeId === cachedNodeId);
+    const node = nodes.find((item) => item.nodeId === cachedNodeId);
     if (node && nodeAcceptsToken(node, token)) return node;
     nodeTokenCache.delete(token);
   }
-  for (const node of state.agentRuntimeNodes) {
+  for (const node of nodes) {
     if (nodeAcceptsToken(node, token)) {
       if (nodeTokenCache.size > 5000) nodeTokenCache.clear();
       nodeTokenCache.set(token, node.nodeId);
