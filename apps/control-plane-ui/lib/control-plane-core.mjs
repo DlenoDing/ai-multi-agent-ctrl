@@ -8066,17 +8066,43 @@ export const TASK_GROUP_GRANT_PERMISSION_TEMPLATES = Object.freeze({
   viewer: ["task_group:read"]
 });
 
-export function permissionsForRoleGrant(role, resourceType) {
-  const templates = resourceType === "task_group"
-    ? TASK_GROUP_GRANT_PERMISSION_TEMPLATES : ROLE_GRANT_PERMISSION_TEMPLATES;
-  return templates[role] || templates.viewer;
+export function grantPermissionTemplates(resourceType) {
+  return resourceType === "task_group" ? TASK_GROUP_GRANT_PERMISSION_TEMPLATES : ROLE_GRANT_PERMISSION_TEMPLATES;
 }
+
+export function permissionsForRoleGrant(role, resourceType) {
+  // 认不出的角色原先【静默降成 viewer】：调用方要的是 project_admin，拿到的是一张只读授权，
+  // 而回执是成功、记录上的 role 还写着 project_admin —— 一条自相矛盾的授权，
+  // 名单上显示「项目管理员」，实际什么都打不开。套不到模板由下面的校验当场拒掉，
+  // 这里保留 viewer 只是为了让调用点在拒绝之前不至于拿到 undefined。
+  return grantPermissionTemplates(resourceType)[role] || GRANT_ROLE_PERMISSION_FALLBACK;
+}
+
+const GRANT_ROLE_PERMISSION_FALLBACK = Object.freeze(["project:view"]);
 
 // 【发授权时那几条不看操作者也成立的校验】。抽出来是因为它们此前只有 REST 那扇门在做，
 // 而 MCP 的 grant_create 一条都没有 —— 挡住它的只是"入参词表里没有 permissions 这个键"，
 // 属碰巧安全。2026-08-26 人定把那两个参数开出来，所以校验必须先搬成两侧共用的一份。
 // 【不含】第五条「不能授出自己都没有的权限」：那一条是相对操作者的，REST 里系统账号本来
 // 就跳过它，而 MCP 这条路现在只有真人系统管理员走得到 —— 边界正好对齐，不要把它抄成半份。
+// 【角色套不到模板就拒绝，不许静默降级】。role 同时是模板的键：spec 的枚举里有 10 个取值，
+// 而项目模板只有 6 个键、任务组模板只有 4 个 —— 差集里的角色（system_owner/workspace_owner…
+// 以及任务组作用域上的 project_admin）原先一律静默拿到 viewer 那一份。
+// 给了显式 permissions 时角色只是个标签（种子里的 system_owner 授权就是这样），不要求有模板。
+export function validateGrantRoleTemplate(role, resourceType, hasExplicitPermissions) {
+  if (hasExplicitPermissions) return {ok: true};
+  const templates = grantPermissionTemplates(resourceType);
+  if (templates[role]) return {ok: true};
+  // status 与 supported 两个字段名不是随便起的：两条 REST 路由按 sanitizedGrant.status 回状态码、
+  // 只转发 permissions/supported 两个附加字段。名字对不上的后果实测是 500 server_error ——
+  // 一次「少填了个字段」被报成服务器故障（本仓撞过的老形态）。
+  return {ok: false, status: 400, error: "grant_role_has_no_permission_template",
+    role: String(role || "").slice(0, 60), resourceType: String(resourceType || "").slice(0, 60),
+    supported: Object.keys(templates),
+    message: `这个作用域上没有 ${role} 这个角色的权限模板 —— 不指定 permissions 时套不出该给哪些权限，`
+      + "系统不会替你降成只读（那会发出一张名字和实际权限对不上的授权）"};
+}
+
 export function validateDelegatedGrant(state, {resource = {}, permissions = [], subjectId,
   resourceOrganizationId = null} = {}) {
   if (!GRANTABLE_RESOURCE_TYPES.includes(resource.resourceType)) {

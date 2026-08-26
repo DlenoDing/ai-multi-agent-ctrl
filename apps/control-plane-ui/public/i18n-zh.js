@@ -910,6 +910,7 @@
 
     unsafe_grant_permissions: "包含不允许下放的权限",
     grant_permission_not_delegable: "存在不可下放的权限",
+    grant_role_has_no_permission_template: "这个作用域上没有该角色的权限模板：请改用支持的角色，或直接指定权限",
     cross_org_member_not_allowed: "不允许跨组织添加成员",
     project_invite_cannot_grant_system_account_or_permission: "项目邀请不能授予系统级账号或权限",
 

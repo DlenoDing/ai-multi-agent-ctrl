@@ -31,6 +31,9 @@ import {
   summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, mcpAcceptedInputVocabulary, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs, capacitySnapshot
 } from "../apps/mcp-server/server.mjs";
 import {
+  ROLE_GRANT_PERMISSION_TEMPLATES,
+  TASK_GROUP_GRANT_PERMISSION_TEMPLATES,
+  validateGrantRoleTemplate,
   gitHeadOrNull,
   recordIdempotentResult,
   recordOrchestratorTickOutcome,
@@ -550,6 +553,7 @@ const VIEW_OMITTED_UNREAD_COLLECTIONS = {
 const seedState = loadJson("data/seed-state.json");
 const runtimeSchema = loadJson("spec/runtime-bootstrap.schema.json");
 const mcpGrantSchema = loadJson("spec/mcp-grant.schema.json");
+const grantSchema = loadJson("spec/access-control-grant.schema.json");
 const joinTokenSchema = loadJson("spec/agent-join-token.schema.json");
 const agentDispatchSchema = loadJson("spec/agent-dispatch.schema.json");
 const agentControlCommandSchema = loadJson("spec/agent-control-command.schema.json");
@@ -864,6 +868,7 @@ run(verifyProjectAdminAndOwnerStayOnePerson);
 run(verifyHealthReadDoesNotCloneEveryRequest);
 run(verifyCallerChosenIdsCannotShadow);
 run(verifyToolArgReachabilityIsRegistered);
+run(verifyGrantRoleTablesAgree);
 run(verifyPublishedToolSchemasMatchWhatToolsRead);
 run(verifyEveryPredicateDeclaresItsCoverage);
 run(verifyEmptyEvidenceNeverReachesTheLedger);
@@ -8368,6 +8373,65 @@ function verifyPublishedToolSchemasMatchWhatToolsRead(output) {
   const advertised = definitions.reduce((total, item) => total + Object.keys(item.inputSchema.properties).length, 0);
   console.log(`工具入参公布面：${cases.length} 条派发逐个重新提取核对，${mcpToolNames.length} 个工具共公布 ${advertised} 个属性`
     + `（词表 ${dictionary.size} 个；全量 ${(bytes / 1024).toFixed(0)}KB，上限 ${PUBLISHED_TOOL_LIST_BYTES_CEILING / 1024}KB），漏公布 ${missing} 个（应为 0）；收受面仍容让未公布的键`);
+}
+
+// 【授权角色的三张表必须解释得通】。role 同时是三样东西：落库字段（spec 的 enum 钉住取值）、
+// 权限模板的键（决定不带 permissions 时给哪些权限）、界面上的中文标签。三张表原先两两都对不上，
+// 而对不上的结果是【静默降成 viewer】：调用方要 project_admin，拿到一张只读授权，回执是成功、
+// 记录上的 role 还写着 project_admin —— 名单上显示「项目管理员」，实际什么都打不开。
+// 实测差集：spec 枚举里 4 个角色在项目模板里没有；project_member 一直在发（MCP 的
+// project_member_grant）却漏在 spec 枚举之外 —— 那些记录违反了它们自己声明的规范。
+function verifyGrantRoleTablesAgree(output) {
+  const specRoles = grantSchema?.properties?.role?.enum;
+  if (!Array.isArray(specRoles) || specRoles.length < 5) {
+    output.push("取不到 spec/access-control-grant.schema.json 的 role 枚举 —— 本条在空转");
+    return;
+  }
+  const uiSource = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const labelBlock = /const GRANT_ROLE_LABELS = \{([\s\S]*?)\n\};/u.exec(uiSource);
+  if (!labelBlock) {
+    output.push("取不到控制台的授权角色词表（GRANT_ROLE_LABELS）—— 本条在空转");
+    return;
+  }
+  const uiRoles = [...labelBlock[1].matchAll(/^\s*([a-z_]+):/gmu)].map((hit) => hit[1]);
+  const projectRoles = Object.keys(ROLE_GRANT_PERMISSION_TEMPLATES);
+  const taskGroupRoles = Object.keys(TASK_GROUP_GRANT_PERMISSION_TEMPLATES);
+  // ① 模板的键必须都在 spec 枚举里：不在的话，按这个角色发出去的记录违反自己的规范。
+  for (const role of [...new Set([...projectRoles, ...taskGroupRoles])]) {
+    if (!specRoles.includes(role)) {
+      output.push(`权限模板里有 ${role}，而 spec 的 role 枚举没有 —— 按它发出去的授权记录违反自己声明的规范`);
+    }
+  }
+  // ② 界面标签也必须都在 spec 枚举里：否则屏幕上会出现一个系统里不存在的角色名。
+  for (const role of uiRoles) {
+    if (!specRoles.includes(role)) {
+      output.push(`控制台的角色词表里有 ${role}，而 spec 的 role 枚举没有 —— 屏幕上会出现一个系统里不存在的角色`);
+    }
+  }
+  // ③ 枚举里【没有模板】的角色不必都补模板（system_owner 这类是靠显式 permissions 发的），
+  //    但必须【拒绝】而不是静默降级。这里直接压在共用校验上，两个方向各验一次。
+  for (const [resourceType, templateRoles] of [["project", projectRoles], ["task_group", taskGroupRoles]]) {
+    for (const role of specRoles) {
+      const verdict = validateGrantRoleTemplate(role, resourceType, false);
+      const hasTemplate = templateRoles.includes(role);
+      if (hasTemplate && verdict.ok !== true) {
+        output.push(`${resourceType} 作用域上 ${role} 有模板，共用校验却拒了它（${verdict.error}）`);
+      }
+      if (!hasTemplate && verdict.ok !== false) {
+        output.push(`${resourceType} 作用域上 ${role} 没有权限模板，却被放行 —— 它会静默拿到 `
+          + `${JSON.stringify(permissionsForRoleGrant(role, resourceType))}，而记录上的角色名写着 ${role}`);
+      }
+    }
+    // 给了显式权限时角色只是标签，不要求有模板（种子里的 system_owner 授权就是这样发的）。
+    const labelled = validateGrantRoleTemplate("system_owner", resourceType, true);
+    if (labelled.ok !== true) {
+      output.push(`带着显式 permissions 发授权时，${resourceType} 上的 system_owner 也被拒了（${labelled.error}）`
+        + " —— 那会让种子里那张系统所有者授权发不出来");
+    }
+  }
+  console.log(`授权角色三表对照：spec ${specRoles.length} 个取值、项目模板 ${projectRoles.length} 个、`
+    + `任务组模板 ${taskGroupRoles.length} 个、界面词表 ${uiRoles.length} 个，逐个交叉核对；`
+    + "套不到模板的一律具名拒绝（不静默降成只读）");
 }
 
 function verifyToolArgReachabilityIsRegistered(output) {

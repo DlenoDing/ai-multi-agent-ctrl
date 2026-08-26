@@ -26,6 +26,7 @@ import {
   activeSharedDefinitionRefs,
   digestOf,
   permissionsForRoleGrant,
+  validateGrantRoleTemplate,
   validateDelegatedGrant,
   recordIdempotentResult,
   workItemCreateStatus,
@@ -2913,7 +2914,11 @@ function grantCreate(state, args) {
   // 用词表里【已经有】的 grantPermissions / grantRole 两个键（accountInvite 一直在用），
   // 不动共用词表 —— 那是另一件由人来定的事。内部调用方仍可直接给 permissions/role。
   const role = args.grantRole || args.role || "agent_operator";
-  const permissions = args.grantPermissions || args.permissions
+  const explicitGrantPermissions = args.grantPermissions || args.permissions;
+  // 与 REST 那侧【同一份】：角色套不到模板就拒，不静默降成 viewer。
+  const roleTemplate = validateGrantRoleTemplate(role, resource.resourceType, Boolean(explicitGrantPermissions));
+  if (!roleTemplate.ok) return roleTemplate;
+  const permissions = explicitGrantPermissions
     || permissionsForRoleGrant(role, resource.resourceType);
   // 与 REST 那侧【同一份】校验：作用域类型、不可委派权限（拒 system:*／通配）、
   // 授权对象存在、不许跨组织。这四条此前只有 REST 那扇门在做。

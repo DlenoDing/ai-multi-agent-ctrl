@@ -96,8 +96,10 @@
         "task_group_owner",
         "agent_operator",
         "reviewer",
-        "viewer"
-      ]
+        "viewer",
+        "project_member"
+      ],
+      "description": "授权上的角色名。它同时是【模板的键】：不带 permissions 发授权时按角色套模板，套不到就拒绝（不再静默降成 viewer）。project_member 一直在用（MCP 的 project_member_grant 就发这种），却漏在这份枚举之外——那些记录违反了它们自己声明的规范。"
     },
     "permissions": {
       "type": "array",

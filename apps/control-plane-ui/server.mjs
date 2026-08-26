@@ -111,6 +111,7 @@ import {
   refreshConfirmationsAfterHumanChange,
   activeSharedDefinitionRefs,
   permissionsForRoleGrant,
+  validateGrantRoleTemplate,
   retireAccount,
   revokeAccountSessions,
   validateDelegatedGrant,
@@ -905,6 +906,10 @@ function sanitizeGrantRequest(state, actor, input = {}, resourceScope = {}) {
   // 里返回 null，而 null 的含义是「系统级作用域」—— 于是一个打错的类型会让跨组织那道检查
   // 整个不适用，还会落一条永远匹配不上任何资源、却在名单里显示「启用中」的僵尸授权。
   const explicitPermissions = normalizeStringList(input.permissions, []);
+  // 角色套不到模板就拒（与 MCP 那侧同一份校验）：原先静默降成 viewer，发出去的授权
+  // 名字写着「项目管理员」而实际只读。
+  const roleTemplate = validateGrantRoleTemplate(role, resource.resourceType, explicitPermissions.length > 0);
+  if (!roleTemplate.ok) return roleTemplate;
   const permissions = explicitPermissions.length
     ? explicitPermissions
     : permissionsForRoleGrant(role, resource.resourceType);

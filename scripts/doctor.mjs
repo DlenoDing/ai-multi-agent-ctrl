@@ -481,6 +481,47 @@ try {
   if (!reviewerScopedGrant.response.ok) {
     throw new Error("failed to create reviewer scoped grant");
   }
+  // 【角色套不到权限模板就拒，不静默降成只读】。role 同时是模板的键：spec 枚举里有 11 个取值，
+  // 项目模板只有 7 个、任务组模板只有 4 个。差集里的角色原先一律静默拿到 viewer 那一份 ——
+  // 调用方要的是 system_admin，拿到的是一张只读授权，回执是成功、记录上的 role 还写着
+  // system_admin：名单上显示那个角色名，实际什么都打不开。
+  const noTemplateGrant = await jsonFetch(port, "/api/access-grants", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-grant-role-without-template", authorization: systemAuth},
+    body: JSON.stringify({subjectId: "acct_reviewer", resourceType: "project", resourceId: "prj_control_plane", role: "system_admin"})
+  });
+  if (noTemplateGrant.response.status !== 400 || noTemplateGrant.payload?.error !== "grant_role_has_no_permission_template") {
+    throw new Error(`套不到模板的角色没被拒（${noTemplateGrant.response.status}/${noTemplateGrant.payload?.error}）—— `
+      + "它会静默拿到 viewer 的权限，而记录上的角色名写着 system_admin");
+  }
+  if (!(noTemplateGrant.payload?.supported || []).includes("reviewer")) {
+    throw new Error(`拒绝报文里没有列出这个作用域支持的角色：${JSON.stringify(noTemplateGrant.payload)} —— 调用方无从自纠`);
+  }
+  // 任务组作用域上没有 project_admin 的模板（项目作用域上有）—— 同一个角色名，两个作用域两种答案。
+  const noTemplateOnTaskGroup = await jsonFetch(port, "/api/access-grants", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-grant-role-without-template-tg", authorization: systemAuth},
+    body: JSON.stringify({subjectId: "acct_reviewer", resourceType: "task_group", resourceId: "tg_runtime_management", role: "project_admin"})
+  });
+  if (noTemplateOnTaskGroup.payload?.error !== "grant_role_has_no_permission_template") {
+    throw new Error(`任务组作用域上套不到模板的角色没被拒（${noTemplateOnTaskGroup.payload?.error}）`);
+  }
+  // 正面对照【与上面两条同一个操作者】：换个账号就是换了一条分支 —— 工作区所有者本来就没有
+  // task_group:review，拿它做正面对照，拒的是「不可下放」而不是「套不到模板」。
+  // 正面对照走同一条分支：有模板的角色不带 permissions 也要发得出来，且拿到的是模板那一份。
+  const templatedGrant = await jsonFetch(port, "/api/access-grants", {
+    method: "POST",
+    headers: {"Idempotency-Key": "doctor-grant-role-with-template", authorization: systemAuth},
+    body: JSON.stringify({subjectId: "acct_reviewer", resourceType: "task_group", resourceId: "tg_runtime_management", role: "reviewer"})
+  });
+  if (!templatedGrant.response.ok) {
+    throw new Error(`有模板的角色发不出授权（${templatedGrant.response.status}/${templatedGrant.payload?.error}）—— `
+      + "上面那两条测的就不是「套不到模板」，而是这条路整个不通了");
+  }
+  if (!(templatedGrant.payload?.grant?.permissions || templatedGrant.payload?.permissions || []).includes("task_group:review")) {
+    throw new Error(`按角色发出来的授权没有拿到模板那一份权限：${JSON.stringify(templatedGrant.payload).slice(0, 200)}`);
+  }
+
   const reviewerOrchestrateDenied = await jsonFetch(port, "/api/orchestrator/run", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-reviewer-orchestrate-denied", authorization: reviewerAuth},

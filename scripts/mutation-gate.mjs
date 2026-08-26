@@ -3211,7 +3211,7 @@ const MUTATIONS = [
     name: "MCP 发授权必须按给的权限落（收了却不生效＝调用方以为发出去的是它要的那张）",
     file: "apps/mcp-server/server.mjs",
     gate: "mcp",
-    from: "  const permissions = args.grantPermissions || args.permissions\n    || permissionsForRoleGrant(role, resource.resourceType);",
+    from: "  const permissions = explicitGrantPermissions\n    || permissionsForRoleGrant(role, resource.resourceType);",
     to: '  const permissions = ["task_group:read"];',
     expect: "没按给的权限落"
   },
@@ -6605,6 +6605,22 @@ const MUTATIONS = [
     from: '  "governance-mcp.finding_submit": ["evidenceRefs", "findingId", "findingType", "severity", "status", "summary", "taskGroupId", "workId", "workItemId"],',
     to: '  "governance-mcp.finding_submit": ["evidenceRefs", "findingId", "findingType", "severity", "status", "summary", "taskGroupId", "workId"],',
     expect: "读 args.workItemId，而 tools/list 上它不公布这个键"
+  },
+  {
+    name: "角色套不到权限模板不许静默降成只读",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: "  if (templates[role]) return {ok: true};",
+    to: "  if (templates[role] || true) return {ok: true};",
+    expect: "套不到模板的角色没被拒"
+  },
+  {
+    name: "授权角色三表不一致要看得见",
+    file: "spec/access-control-grant.schema.json",
+    check: "verifyGrantRoleTablesAgree",
+    from: '        "project_member"',
+    to: '        "project_member_typo"',
+    expect: "而 spec 的 role 枚举没有"
   },
   {
     name: "套用别人的选型策略要留痕",
