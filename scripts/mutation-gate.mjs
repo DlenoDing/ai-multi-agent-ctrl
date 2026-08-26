@@ -6607,6 +6607,23 @@ const MUTATIONS = [
     expect: "读 args.workItemId，而 tools/list 上它不公布这个键"
   },
   {
+    name: "界面渲染的枚举缺中文要看得见",
+    file: "apps/control-plane-ui/public/i18n-zh.js",
+    gate: "specs",
+    from: '    api_contract: "接口契约",',
+    to: "",
+    expect: "会被控制台原样渲染成英文"
+  },
+  {
+    name: "渲染字段提取断了要看得见",
+    file: "scripts/validate-specs.rb",
+    check: "",
+    gate: "specs",
+    from: 'rendered_fields = app_js_source.scan(/\\b(?:t|badge)\\(\\s*[A-Za-z_$][\\w$]*\\??\\.(?:[\\w$]+\\??\\.)?([\\w$]+)/).flatten.uniq',
+    to: 'rendered_fields = app_js_source.scan(/\\bNOPE_NO_SUCH_CALL\\(([\\w$]+)/).flatten.uniq',
+    expect: "一个 t()/badge() 渲染字段都没提取到"
+  },
+  {
     name: "角色技能叠加要真的改掉 agent 拿到的能力",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "mcp",

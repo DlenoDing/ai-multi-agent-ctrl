@@ -2521,6 +2521,37 @@ Dir.glob(File.join(ROOT, "spec", "*.schema.json")).each do |file|
 end
 spec_status_values = spec_status_values.uniq
 errors << "spec 里的状态枚举一个都没提取到 —— 本条在空转" if spec_status_values.length < 100
+
+# 上面那条只管 status 一族。而控制台还用 t()/badge() 原样渲染【别的】枚举字段
+# （definitionType / resourceType / issueClass / kind / reason / placement…），它们同样会
+# 在屏幕上变成一串英文 —— 实测「共享定义归属」那张表的类型列就是中英混排（11 个类型 8 个没中文）。
+# 判据不去猜哪些枚举"重要"，而是【从 app.js 提取界面真的渲染了哪些字段】，再要求这些字段的
+# 枚举取值都有中文：界面多渲染一个字段，这道门自动跟着扩面。
+rendered_fields = app_js_source.scan(/\b(?:t|badge)\(\s*[A-Za-z_$][\w$]*\??\.(?:[\w$]+\??\.)?([\w$]+)/).flatten.uniq
+errors << "从控制台源码里一个 t()/badge() 渲染字段都没提取到 —— 本条在空转" if rendered_fields.length < 20
+rendered_enum_values = []
+Dir.glob(File.join(ROOT, "spec", "*.schema.json")).each do |file|
+  document = JSON.parse(File.read(file))
+  collect_rendered = lambda do |node, key|
+    return unless node.is_a?(Hash) || node.is_a?(Array)
+    if node.is_a?(Hash)
+      if node["enum"].is_a?(Array) && rendered_fields.include?(key.to_s)
+        node["enum"].each { |value| rendered_enum_values << value if value.is_a?(String) && value.match?(/\A[a-z][a-z0-9_]*\z/) }
+      end
+      node.each { |child_key, child| collect_rendered.call(child, child_key) }
+    else
+      node.each { |child| collect_rendered.call(child, key) }
+    end
+  end
+  collect_rendered.call(document, nil)
+end
+rendered_without_chinese = rendered_enum_values.uniq.reject { |value| i18n_zh_source.match?(/\n\s*#{Regexp.escape(value)}:/) }
+unless rendered_without_chinese.empty?
+  errors << "这些枚举取值会被控制台原样渲染成英文：#{rendered_without_chinese.sort.take(20).join(", ")}" \
+            "#{rendered_without_chinese.length > 20 ? " 等 #{rendered_without_chinese.length} 个" : ""} —— " \
+            "它们所在的字段出现在 t()/badge() 里（不是 status 那一族，上面那条看不见它们）"
+end
+
 statuses_without_chinese = spec_status_values.reject { |value| i18n_zh_source.match?(/\n\s*#{Regexp.escape(value)}:/) }
 unless statuses_without_chinese.empty?
   errors << "这些状态没有中文：#{statuses_without_chinese.sort.join(", ")} —— " \
