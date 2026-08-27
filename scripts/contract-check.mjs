@@ -15732,7 +15732,8 @@ function verifyConsoleHintsNameRealControls(output) {
   const i18n = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
   const prose = `${app}\n${i18n}`.split("\n").filter((line) => !/^\s*\/\//u.test(line)).join("\n");
   const mentions = new Map();
-  for (const hit of prose.matchAll(/(?:点|按|打开|进|回到)(?:右侧的|右上角的|下面的|上面的|左侧的|顶栏的|这一页的|下方的)?「([^」]{1,20})」/gu)) mentions.set(hit[1], (mentions.get(hit[1]) || 0) + 1);
+  // 「按「已上报」处理」是「当作 X」，不是「按下 X」：后面跟 处理/计/算/对待/看待 的不算导航。
+  for (const hit of prose.matchAll(/(?:点|按|打开|进|回到)(?:右侧的|右上角的|下面的|上面的|左侧的|顶栏的|这一页的|下方的)?「([^」]{1,20})」(?!处理|计|算|对待|看待)/gu)) mentions.set(hit[1], (mentions.get(hit[1]) || 0) + 1);
   for (const hit of prose.matchAll(/「([^」]{1,20})」(?:按钮|面板|页签|标签页|页(?![面眉脚]))/gu)) mentions.set(hit[1], (mentions.get(hit[1]) || 0) + 1);
   if (mentions.size < 10) { output.push(`控制台提示里只提出 ${mentions.size} 个带导航语气的点名 —— 提取脱节`); return; }
   const realNames = new Set();
@@ -15742,9 +15743,13 @@ function verifyConsoleHintsNameRealControls(output) {
   for (const hit of app.matchAll(/panel\("([^"]{1,24})"/gu)) realNames.add(hit[1]);
   for (const hit of app.matchAll(/<label[^>]*>([^<]{1,40})<\/label>/gu)) realNames.add(hit[1].trim());
   for (const hit of app.matchAll(/(?:label|title): "([^"]{1,24})"/gu)) realNames.add(hit[1]);
-  const matchers = [...realNames].map((name) => name.includes("${")
-    ? new RegExp(`^${name.split(/\$\{[^}]*\}/u).map((part) => part.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")).join(".*")}`, "u")
-    : null).filter(Boolean);
+  // 整个文案就是一个占位（${esc(confirmText)}）的模板会变成 ^.* 什么都吃：至少要有两个字面字符才当模板（变异实测假绿）。
+  const matchers = [...realNames].map((name) => {
+    if (!name.includes("${")) return null;
+    const literalParts = name.split(/\$\{[^}]*\}/u);
+    if (literalParts.join("").length < 2) return null;
+    return new RegExp(`^${literalParts.map((part) => part.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")).join(".*")}`, "u");
+  }).filter(Boolean);
   const exists = (name) => [...realNames].some((real) => real.startsWith(name)) || matchers.some((matcher) => matcher.test(name));
   const dangling = [...mentions.entries()].filter(([name]) => !exists(name));
   if (dangling.length) output.push(`控制台提示里点名了界面上没有的按钮/面板/页：${dangling.map(([name, count]) => `「${name}」×${count}`).join("、")} —— 人满屏找不到它`);
