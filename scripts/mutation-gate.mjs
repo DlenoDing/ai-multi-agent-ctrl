@@ -10414,6 +10414,15 @@ const MUTATIONS = [
     expect: "init 写下的引导审计行没上链"
   },
   {
+    name: "台账行只能由共用构造写（skills:sync 原先手拼一行）",
+    file: "scripts/sync-agent-skills.mjs",
+    gate: "contract",
+    check: "verifyLedgerRowsGoThroughTheSharedBuilder",
+    from: 'appendAuditEntry(state, {actor: "skill-registry", action: "skill_source_sync", subject: `AgentSkillSource:${sourceId}`, result: "succeeded"});',
+    to: 'state.auditLog.unshift({id: `audit_skill_sync_${Date.now()}`, at: new Date().toISOString(), actor: "skill-registry", action: "skill_source_sync", subject: `AgentSkillSource:${sourceId}`, result: "succeeded"});',
+    expect: "直接往 auditLog 里 unshift"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

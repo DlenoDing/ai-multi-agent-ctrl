@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureRuntimeCollections, syncSkillSource } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import { markRuntimeStorage, readStoredState, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { appendAuditEntry } from "../apps/control-plane-ui/lib/audit-ledger.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeDir = resolve(root, process.env.AIMAC_RUNTIME_DIR || ".runtime");
@@ -53,14 +54,9 @@ const state = readStoredState(stateStoreOptions());
 ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, executionProfile});
 const result = syncSkillSource(state, sourceId, {root, runtimeDir});
 markRuntimeStorage(state, ".runtime/control-plane-state.json");
-state.auditLog.unshift({
-  id: `audit_skill_sync_${Date.now()}`,
-  at: new Date().toISOString(),
-  actor: "skill-registry",
-  action: "skill_source_sync",
-  subject: `AgentSkillSource:${sourceId}`,
-  result: "succeeded"
-});
+// 台账行要经共用构造走（schemaVersion / prevHash / rowHash）：手拼一条等于往哈希链里塞一行散的
+//（init 那处同病，同日改掉）。
+appendAuditEntry(state, {actor: "skill-registry", action: "skill_source_sync", subject: `AgentSkillSource:${sourceId}`, result: "succeeded"});
 // 版本号必须自己推进：CAS 只断言"中央还是我读到的那个版本"，不推进的话，之后拿着同一个期望值
 // 写入的人照样成立，会把这次同步整份覆盖掉 —— 而且按 stateVersion 做键的视图缓存不会失效。
 state.stateVersion = Number(state.stateVersion || 0) + 1;

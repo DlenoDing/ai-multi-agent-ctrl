@@ -960,6 +960,7 @@ run(verifyWorkStatusEnumConvergence);
 run(verifyTransitionEngine);
 run(verifyCommandBusLifecycle);
 run(verifyInitLedgerStartsHashed);
+run(verifyLedgerRowsGoThroughTheSharedBuilder);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
 // 汇总之前把所有 async 检查等干净。少了这一句，它们推进的错误会赶不上报告。
@@ -15554,6 +15555,24 @@ function verifyInitLedgerStartsHashed(output) {
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
+}
+
+// 【台账行只能由共用构造写】。同一天在两处找到手拼的台账行（init 的引导行、skills:sync 的同步行）：
+// 没有 schemaVersion、没有 rowHash/prevHash，往哈希链里塞一行散的。按写法扫：产品与脚本里凡是直接
+// 往 auditLog 里 unshift/push 的，除了构造本身，一律红。
+function verifyLedgerRowsGoThroughTheSharedBuilder(output) {
+  const under = (dir) => readdirSync(dir, {recursive: true}).map(String).map((name) => join(dir, name));
+  const files = [...under(join(root, "apps")), ...under(join(root, "scripts"))]
+    .filter((file) => file.endsWith(".mjs") && !file.endsWith("audit-ledger.mjs") && !file.endsWith("mutation-gate.mjs") && !file.includes("/public/") && !file.includes("/node_modules/"));
+  let scanned = 0;
+  for (const file of files) {
+    const text = readFileSync(file, "utf8").split("\n").filter((line) => !/^\s*\/\//u.test(line)).join("\n");
+    scanned += 1;
+    for (const hit of text.matchAll(/auditLog\.(unshift|push)\(/gu)) {
+      output.push(`${file.slice(root.length + 1)} 直接往 auditLog 里 ${hit[1]} —— 手拼的台账行没有 schemaVersion / rowHash，等于往哈希链里塞一行散的；一律走 appendAuditEntry`);
+    }
+  }
+  if (scanned < 20) output.push(`台账写法扫描只扫到 ${scanned} 个文件 —— 文件枚举脱节，本条在空转`);
 }
 
 // 见文件开头 DEVELOPER_RUNTIME_DIGEST_AT_START 的注释。先在临时目录上自证摘要真的看得见改动
