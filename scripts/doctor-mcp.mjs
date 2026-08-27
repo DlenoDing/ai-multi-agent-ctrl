@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { assertNoUndefinedInPayload } from "./lib/no-undefined-payload.mjs";
 import { checkRecordStatusesAreDeclaredStates } from "./lib/state-machine-states.mjs";
 import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
+import { createSchemaValidator } from "./lib/schema-validate.mjs";
 import { projectRepositories } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import {waitForChildExit} from "./lib/child-tracking.mjs";
 
@@ -340,6 +341,20 @@ try {
         + " 人从审计页看到一次 MCP 写入，无法跳到它的入参/返回摘要");
     }
     console.log(`  ok  两本账按 ref 对上：${humanRow.ref}`);
+    // 【归档文件要按它自己声明的规范逐行校验】。契约门的规范扫描只走 state 里的集合，
+    // mcp-audit.jsonl 这个文件从没被任何门验过 —— 本机上一份旧归档就整份缺 schemaVersion，
+    // 没人知道。这里把这一轮写出的每一行都压一遍 mcp-call/v1。
+    const {validateSchema} = createSchemaValidator(resolve(root, "spec"));
+    const mcpCallSchema = JSON.parse(readFileSync(resolve(root, "spec/mcp-call.schema.json"), "utf8"));
+    const archiveErrors = [];
+    for (const [index, line] of archiveLines.entries()) {
+      validateSchema(JSON.parse(line), mcpCallSchema, `mcp-audit.jsonl:${index + 1}`, archiveErrors);
+    }
+    if (archiveErrors.length) {
+      throw new Error(`MCP 归档里有 ${archiveErrors.length} 处不合 mcp-call/v1：${archiveErrors.slice(0, 3).join("；")} ——`
+        + " 归档是这本账唯一的完整来源，写出来的行就得合它自己声明的规范");
+    }
+    console.log(`  ok  MCP 归档 ${archiveLines.length} 行逐行合 mcp-call/v1`);
   }
 
   // 【MCP 归档写不进去：不挡业务、不泄路径、要报警、恢复要自清】。归档是 agent 调用记录的

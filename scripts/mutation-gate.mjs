@@ -10030,6 +10030,14 @@ const MUTATIONS = [
     expect: "进了某个角色的派发白名单"
   },
   {
+    name: "MCP 归档写出的行要合它自己声明的规范（文件从没被任何门验过）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '    schemaVersion: "mcp-call/v1",\n    callId: createId("mcp_call"),',
+    to: '    callId: createId("mcp_call"),',
+    expect: "不合 mcp-call/v1"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",
