@@ -978,6 +978,7 @@ run(verifyInstallerDocsMatchScriptAndTemplate);
 run(verifyDocumentedNpmScriptsExist);
 run(verifyConsoleHintsNameRealControls);
 run(verifyMcpCallConventionsAreDocumented);
+run(verifyMcpToolTableMatchesImplementation);
 run(verifyConsoleRuntimeConstantsHaveOneWriter);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
@@ -15735,6 +15736,23 @@ function verifyConsoleRuntimeConstantsHaveOneWriter(output) {
     if (!body || !body.includes("decorateRuntimeForConsole(")) output.push(`${reader} 没调 decorateRuntimeForConsole —— 这条路上界面拿不到词表`);
   }
   console.log(`界面 runtime 常量：${numericKeys.length} 个数值只在 decorateRuntimeForConsole 里赋值，三份词表只来自 core 的 consoleVocabularies，服务端两条读路径与勘察工具都经过它`);
+}
+
+// 【核心规范 §5 的 MCP 工具表要与实现一致（两个方向）】。2026-08-28 核出实现里有而表里没有的 8 个（整个 human-review-mcp、
+// execution_topology_advance、finding_resolve、approval_resolve）。名字从 mcp-server 源码里的 "xxx-mcp.tool" 字面量取。
+function verifyMcpToolTableMatchesImplementation(output) {
+  const mcp = readFileSync(join(root, "apps/mcp-server/server.mjs"), "utf8");
+  const real = new Set([...mcp.matchAll(/"([a-z][a-z-]*-mcp\.[a-z_]+)"/gu)].map((hit) => hit[1]));
+  const doc = readFileSync(join(root, "docs/core-control-plane-spec.md"), "utf8");
+  const section = doc.slice(doc.indexOf("## 5. MCP tools"), doc.indexOf("\n## 6.", doc.indexOf("## 5. MCP tools")));
+  const documented = new Set();
+  for (const row of section.matchAll(/^\| `([a-z-]+-mcp)` \| (.+) \|$/gmu)) for (const tool of row[2].matchAll(/`([a-z_]+)`/gu)) documented.add(`${row[1]}.${tool[1]}`);
+  if (real.size < 40 || documented.size < 40) { output.push(`MCP 工具名只提取到 实现 ${real.size} / 表 ${documented.size} 个 —— 提取脱节`); return; }
+  const docOnly = [...documented].filter((name) => !real.has(name));
+  const realOnly = [...real].filter((name) => !documented.has(name));
+  if (docOnly.length) output.push(`核心规范 §5 工具表里有而实现没有的工具：${docOnly.join("、")}`);
+  if (realOnly.length) output.push(`实现里有而核心规范 §5 工具表没有的工具：${realOnly.join("、")} —— 客户端照表找不到它`);
+  if (!docOnly.length && !realOnly.length) console.log(`核心规范 §5 工具表与实现一致：${real.size} 个工具两个方向都对上`);
 }
 
 // 【MCP 写工具的调用约定要写在核心规范 §5 里，且用的是实现里的名字】。幂等键必填、同键重放的回执形状、

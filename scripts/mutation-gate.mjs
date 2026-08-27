@@ -3377,9 +3377,18 @@ const MUTATIONS = [
     file: "docs/core-control-plane-spec.md",
     gate: "contract",
     check: "verifyMcpCallConventionsAreDocumented",
-    from: "原回执在 `idempotencyRecord.payload` 里",
-    to: "原回执在 `record.payload` 里",
-    expect: "核心规范 §5 没写 MCP 写工具的调用约定里的 idempotencyRecord"
+    from: "回 `{ok: true, dryRun: true, wouldCall, argumentDigest, persisted: false}`",
+    to: "回 `{ok: true, dryRun: true, willCall, argumentDigest, persisted: false}`",
+    expect: "核心规范 §5 没写 MCP 写工具的调用约定里的 wouldCall"
+  },
+  {
+    name: "核心规范的 MCP 工具表要与实现一致",
+    file: "docs/core-control-plane-spec.md",
+    gate: "contract",
+    check: "verifyMcpToolTableMatchesImplementation",
+    from: "`execution_topology_plan`、`execution_topology_advance`、",
+    to: "`execution_topology_plan`、",
+    expect: "实现里有而核心规范 §5 工具表没有的工具"
   },
   {
     name: "认不出的升级候选状态必须拒绝",
