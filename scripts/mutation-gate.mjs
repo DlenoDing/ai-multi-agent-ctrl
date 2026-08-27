@@ -2454,8 +2454,8 @@ const MUTATIONS = [
     name: "没有可用技能源时要说清后果",
     file: APP,
     gate: "console",
-    from: '        return `<div class="notice warn-notice">${esc(why)}，所有角色都在用系统内置技能（共 ${builtIn} 个）。`',
-    to: '        return "" || `<div class="notice">${esc("")}${builtIn}`',
+    from: '        return `<div class="notice warn-notice">${esc(why)}，${esc(fallback)}</div>`;',
+    to: '        return "";',
     expect: "人看不出所有角色已经落到系统内置技能上"
   },
   {
@@ -3116,6 +3116,22 @@ const MUTATIONS = [
     from: "    /node -e process\\.on\\('SIGTERM', \\(\\) => \\{\\}\\); setInterval\\(\\(\\) => \\{\\}, 1000\\); console\\.log\\('up'\\);\\s*$/u\n  ];",
     to: "  ];",
     expect: "孤儿探针清理的挑选函数认错了"
+  },
+  {
+    name: "台账上限不明时不许说「都在这一屏内」",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (!cap) return `台账共 ${shown} 条；服务端没给出保留上限，判断不了更早的记录是否已被挤出这一屏 —— 完整记录以归档文件为准。`;",
+    to: "",
+    expect: "也不许说「都在这一屏内」"
+  },
+  {
+    name: "内置技能为 0 时要说没有任何角色技能可用",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "        const fallback = builtIn\n",
+    to: "        const fallback = true\n",
+    expect: "内置技能也为 0 时要说「没有任何角色技能可用」"
   },
   {
     name: "认不出的升级候选状态必须拒绝",

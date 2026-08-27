@@ -2174,8 +2174,11 @@ function renderSysSettings() {
           ? `已接入 ${neverSynced.length} 个技能源，但一个角色技能都还没取下来`
             + "（新部署要先点右侧的「同步」把它拉下来；同步失败时这一行会显示原因）"
           : "当前没有可用的技能源";
-        return `<div class="notice warn-notice">${esc(why)}，所有角色都在用系统内置技能（共 ${builtIn} 个）。`
-          + "派发照常进行，但 agent 拿到的是通用角色规则，不是你们自己的那一份。</div>";
+        // 内置技能也是 0 个时，「都在用系统内置技能（共 0 个）」是一句自相矛盾的话：此时 agent 手上没有任何角色技能。
+        const fallback = builtIn
+          ? `所有角色都在用系统内置技能（共 ${builtIn} 个）。派发照常进行，但 agent 拿到的是通用角色规则，不是你们自己的那一份。`
+          : "而系统内置技能也是 0 个：现在没有任何角色技能可用，agent 只拿得到通用角色规则。";
+        return `<div class="notice warn-notice">${esc(why)}，${esc(fallback)}</div>`;
       })()),
     // 角色技能叠加会【改掉 agent 实际拥有的能力】（含 forbiddenCapabilityAdds），它是真人专属动作，
     // 数据也一直下发到这一页 —— 却从没有被渲染过：人看不到某个项目/任务组的角色规则被谁改过、改成了什么。
@@ -3921,6 +3924,8 @@ function auditWindowNote() {
   if (cap && shown >= cap) {
     return `这一屏只保留最近 ${cap} 条；更早的记录在归档文件里，不在这一屏内。`;
   }
+  // 上限不明时不能落到「都在这一屏内」那句：那是有利的一句，而此时恰恰判断不了有没有被挤掉。
+  if (!cap) return `台账共 ${shown} 条；服务端没给出保留上限，判断不了更早的记录是否已被挤出这一屏 —— 完整记录以归档文件为准。`;
   return `台账共 ${shown} 条，都在这一屏内；归档文件里是同一份完整记录。`;
 }
 

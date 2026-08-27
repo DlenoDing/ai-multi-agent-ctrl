@@ -13,6 +13,7 @@
 // DOM 桩只做被测代码真正用到的那点事。桩不认识的选择器一律抛错而不是返回空集 ——
 // 静默返回空集会让断言"匹配到 0 个元素所以没发现问题"从而永远通过，那是本仓踩过的坑。
 import { accountEffectivePermissions, consoleVocabularies, effectiveProjectConfig } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
+import { AUDIT_LOG_CAP } from "../apps/control-plane-ui/lib/audit-ledger.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
@@ -427,7 +428,7 @@ if (process.env.AIMAC_RENDER_REAL) {
   const who = whoOnDisk ? {...whoOnDisk, effectivePermissions: accountEffectivePermissions(real, whoOnDisk)} : whoOnDisk;
   // 盘上的状态没有下发给界面的词表（那是服务端读路径装饰上去的）：不补上，邀请/授权表单会写着「词表未下发」——
   // 与 effectivePermissions 同一类由工具自己制造的假缺陷。用与服务端同一个函数，不另抄一份。
-  real.runtime = {...(real.runtime || {}), ...consoleVocabularies()};
+  real.runtime = {...(real.runtime || {}), ...consoleVocabularies(), auditLogCap: AUDIT_LOG_CAP};
   if (wantWho && who?.email !== wantWho) {
     console.log(`（要的是 ${wantWho}，真实状态里没有这个账号 —— 下面渲染的是 ${who?.email}）`);
   }
@@ -567,6 +568,12 @@ if (process.env.AIMAC_RENDER_REAL) {
       if (projectConfig) {
         const project = (real.projects || []).find((item) => item.id === decodeURIComponent(projectConfig[1]));
         if (project) return ok({projectId: project.id, config: effectiveProjectConfig(project), configVersion: "survey"});
+      }
+      // 人工指令页按任务组取指令流水；桩不答，这一页就挂着一条「从来没有加载成功过」横幅。形状照服务端那条路由。
+      const directives = url.match(/\/api\/task-groups\/([^/?]+)\/human-directives(?:\?|$)/u);
+      if (directives) {
+        const taskGroupId = decodeURIComponent(directives[1]);
+        return ok({humanDirectives: (real.humanDirectives || []).filter((item) => item.taskGroupId === taskGroupId)});
       }
       unserved.add(url.split("?")[0]);
       return {ok: false, status: 404, statusText: "Not Found", headers,
@@ -1889,6 +1896,12 @@ async function runErrorGuidanceCase() {
   check("技能源接了但一条都没取下来时要说出来（新部署撞的就是这个）",
     /一个角色技能都还没取下来/u.test(neverSynced) && /同步/u.test(neverSynced),
     `未同步时说的是：${JSON.stringify(neverSynced.slice(0, 140))}`);
+  // 内置技能也是 0 个时，不能说「都在用系统内置技能（共 0 个）」——那时 agent 没有任何角色技能。
+  const nothingAtAll = skillProbe.skillSourceNotice(
+    [{sourceId: "agency-agents-zh", status: "configured"}], {});
+  check("内置技能也为 0 时要说「没有任何角色技能可用」，不许说「都在用内置技能（共 0 个）」",
+    /没有任何角色技能可用/u.test(nothingAtAll) && !/共 0 个/u.test(nothingAtAll),
+    `说的是：${JSON.stringify(nothingAtAll.slice(0, 160))}`);
   const allRetired = skillProbe.skillSourceNotice(
     [{sourceId: "agency-agents-zh", status: "retired"}], builtIn);
   check("全退役时仍照旧提示（这条不能因为改条件而丢掉）",
@@ -3583,6 +3596,10 @@ function runPendingTruncationCase() {
     check("服务端没给上限时，界面不许自己编一个",
       !/只保留最近 80 条/.test(noCap),
       "界面在没拿到 auditLogCap 的情况下报出了 80 —— 那个数是写死的");
+    // 上限不明也不许落到有利的那句：此时恰恰判断不了有没有被挤掉（真实渲染里 80 条正好卡在上限，却写着「都在这一屏内」）。
+    check("服务端没给上限时，界面也不许说「都在这一屏内」，要说判断不了",
+      !/都在这一屏内/.test(noCap) && /没给出保留上限/.test(noCap),
+      `实得：${(noCap.match(/台账[^<]{0,80}/u) || ["（没有这句脚注）"])[0]}`);
   }
 
   // 全新组织的第一屏：一个项目都没有，而「智能体加入令牌」和「项目成员授权」两张表单
