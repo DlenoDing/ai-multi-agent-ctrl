@@ -3317,10 +3317,10 @@ const MUTATIONS = [
     name: "文档里写着的环境变量名必须有代码在读",
     file: "README.md",
     gate: "contract",
-    check: "verifyDocumentedEnvNamesAreReadByCode",
+    check: "verifyDocumentedEnvVarsAreRealKnobs",
     from: "| `AIMAC_ROOM_MESSAGE_MAX_BYTES` | `32768` |",
     to: "| `AIMAC_ROOM_MESSAGE_MAX_BYTE` | `32768` |",
-    expect: "没有任何代码在读的环境变量"
+    expect: "代码里【一处都没有】"
   },
   {
     name: "认不出的升级候选状态必须拒绝",

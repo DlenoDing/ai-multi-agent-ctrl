@@ -976,7 +976,6 @@ run(verifyDefaultBackupTargetIsGitIgnored);
 run(verifyBootstrapEchoSamplesMatchRuntime);
 run(verifyInstallerDocsMatchScriptAndTemplate);
 run(verifyDocumentedNpmScriptsExist);
-run(verifyDocumentedEnvNamesAreReadByCode);
 run(verifyConsoleRuntimeConstantsHaveOneWriter);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
@@ -15718,34 +15717,6 @@ function verifyConsoleRuntimeConstantsHaveOneWriter(output) {
   console.log(`界面 runtime 常量：${numericKeys.length} 个数值只在 decorateRuntimeForConsole 里赋值，三份词表只来自 core 的 consoleVocabularies，服务端两条读路径与勘察工具都经过它`);
 }
 
-// 【文档里提到的 AIMAC_* 环境变量名都得有代码在读】。旋钮文档门守的是反方向（代码读的旋钮要有文档）；
-// 这一条守：文档写着的名字改名之后不能还留在文档里（人照着文档设了个没人读的变量，什么也不会发生）。
-// 家族引用（`AIMAC_ROOM_*`，以 _ 结尾）跳过。
-function verifyDocumentedEnvNamesAreReadByCode(output) {
-  const docFiles = ["README.md", ...readdirSync(join(root, "docs")).filter((name) => name.endsWith(".md")).map((name) => `docs/${name}`)];
-  const mentioned = new Map();
-  for (const file of docFiles) {
-    for (const hit of readFileSync(join(root, file), "utf8").matchAll(/\bAIMAC_[A-Z0-9_]+\b/gu)) {
-      if (hit[0].endsWith("_")) continue;
-      if (!mentioned.has(hit[0])) mentioned.set(hit[0], file);
-    }
-  }
-  if (mentioned.size < 30) { output.push(`文档里只提出 ${mentioned.size} 个 AIMAC_* 名 —— 提取脱节`); return; }
-  const codeFiles = [];
-  const walk = (dir) => { for (const entry of readdirSync(join(root, dir), {withFileTypes: true})) {
-    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-    const rel = `${dir}/${entry.name}`;
-    if (entry.isDirectory()) walk(rel); else if (/\.(mjs|sh|yml|yaml)$/u.test(entry.name)) codeFiles.push(rel);
-  } };
-  walk("apps"); walk("scripts");
-  for (const extra of ["docker-compose.yml", "Dockerfile"]) { try { readFileSync(join(root, extra)); codeFiles.push(extra); } catch { /* 没有就算了 */ } }
-  const readByCode = new Set();
-  for (const file of codeFiles) for (const hit of readFileSync(join(root, file), "utf8").matchAll(/AIMAC_[A-Z0-9_]+/gu)) readByCode.add(hit[0]);
-  const stale = [...mentioned.entries()].filter(([name]) => !readByCode.has(name));
-  if (stale.length) output.push(`文档里写着但没有任何代码在读的环境变量：${stale.map(([name, file]) => `${name}（${file}）`).join("、")} —— 人照着设了什么也不会发生`);
-  else console.log(`文档里提到的 ${mentioned.size} 个 AIMAC_* 环境变量都有代码在读`);
-}
-
 // 【文档里提到的 npm run <name> 都得真有】。README/docs 共提到 12 个脚本名；改名一个脚本，文档就开始指一条不存在的命令，
 // 而人是照着文档敲的。名字从文档里提，对 package.json 的 scripts。
 function verifyDocumentedNpmScriptsExist(output) {
@@ -16562,9 +16533,13 @@ function verifyDocumentedEnvVarsAreRealKnobs(output) {
   // 不剥的话它们会把自己喂饱 —— 代码里明明改了名，判据照绿（实测撞到，本仓的老形状）。
   const code = sources.map((text) => text.split("\n")
     .filter((line) => !/^\s*(\/\/|\*|\/\*)/u.test(line)).join("\n")).join("\n");
+  // 存在性按【整个名字】判，不按子串：README 里把 AIMAC_ROOM_MESSAGE_MAX_BYTES 写成 …_BYTE 时，子串 includes 会在 …_BYTES 上命中（2026-08-28 变异实测假绿）。
+  const knobsInCode = new Set([...code.matchAll(/AIMAC_[A-Z0-9_]+/gu)].map((hit) => hit[0]));
   const documented = new Map();
   for (const file of ["README.md", ...readdirSync(join(root, "docs")).filter((n) => n.endsWith(".md")).map((n) => `docs/${n}`)]) {
     for (const match of readFileSync(join(root, file), "utf8").matchAll(/\b(AIMAC_[A-Z0-9_]+)/gu)) {
+      // `AIMAC_ROOM_*` 这类家族引用以 _ 结尾，不是一个具体名字（子串判据时代它们靠碰巧过关）。
+      if (match[1].endsWith("_")) continue;
       if (!documented.has(match[1])) documented.set(match[1], file);
     }
   }
@@ -16579,7 +16554,7 @@ function verifyDocumentedEnvVarsAreRealKnobs(output) {
   // 真实变量由运维自己接后缀）。这类按前缀匹配，其余按词边界 —— 混作一谈会两头误报。
   const ghosts = [...documented]
     .filter(([name]) => (name.endsWith("_")
-      ? !code.includes(name)
+      ? !knobsInCode.has(name)
       : !new RegExp(`\\b${name}\\b`, "u").test(code))).sort();
   if (ghosts.length) {
     output.push(`文档里写着这些环境变量，而代码里【一处都没有】：`
