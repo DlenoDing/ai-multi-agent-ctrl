@@ -9757,6 +9757,14 @@ const MUTATIONS = [
       + '    ...[].filter((item) => !hasGroupPerm(item.taskGroupId, "task_group:review"))',
     expect: "人什么都看不到"
   },
+  {
+    name: "建工作项的下拉里不许出现他没权限的任务组",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '            const addable = groups.filter((taskGroup) => hasGroupPerm(taskGroup.id, "task_group:control"));',
+    to: "            const addable = groups;",
+    expect: "选了也只会被后端拒掉"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

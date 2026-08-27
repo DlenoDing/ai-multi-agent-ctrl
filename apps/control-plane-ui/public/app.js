@@ -2876,7 +2876,6 @@ function languageSelectOptions(selected) {
 function renderTaskGroups() {
   const groups = projectTaskGroups();
   const canControl = hasPerm("task_group:control");
-  const canReview = hasPerm("task_group:review");
   const roleOptions = WORK_ITEM_OWNER_ROLE_CHOICES
     .map((role) => `<option value="${esc(role)}">${esc(t(role))} (${esc(role)})</option>`).join("");
 
@@ -2894,7 +2893,24 @@ function renderTaskGroups() {
     panel("创建工作项", `
       <form class="form-grid" data-form="work-item-create">
         <div class="form-row"><label>所属任务组</label>
-          <select name="taskGroupId" ${groups.length ? "" : "disabled"}>${groups.map((taskGroup) => `<option value="${esc(taskGroup.id)}">${esc(taskGroup.name || taskGroup.id)}</option>`).join("")}</select>
+          ${(() => {
+            // 【下拉里只放他真能往里加的组】。原先列的是项目下【全部】任务组，而建工作项
+            // 后端是按任务组判 task_group:control 的 —— 只在 tg1 上有权的人能选中 tg2 提交，
+            // 然后拿到一句拒绝。按组过滤，并在一个都没有时说清是"没有组"还是"都没权限"。
+            const addable = groups.filter((taskGroup) => hasGroupPerm(taskGroup.id, "task_group:control"));
+            if (!addable.length) {
+              return `<select name="taskGroupId" disabled></select>`
+                + `<div class="small warn-text">${groups.length
+                  ? `这个项目有 ${groups.length} 个任务组，但你在其中任何一个上都没有「任务组控制」权限 ——`
+                    + "权限按【任务组】授予，找项目负责人在具体的组上授予后再来"
+                  : "这个项目还没有任务组，先在上面建一个"}</div>`;
+            }
+            return `<select name="taskGroupId">${addable.map((taskGroup) =>
+              `<option value="${esc(taskGroup.id)}">${esc(taskGroup.name || taskGroup.id)}</option>`).join("")}</select>`
+              + `${addable.length < groups.length
+                ? `<div class="small">另有 ${groups.length - addable.length} 个组你没有「任务组控制」权限，没有列出来</div>`
+                : ""}`;
+          })()}
         </div>
         <div class="form-row"><label>工作项标题</label><input name="title" required></div>
         <div class="form-row"><label>执行角色</label><select name="ownerRole">${roleOptions}</select></div>
@@ -4322,7 +4338,6 @@ function renderMonitor() {
     .filter((qg) => groups.some((taskGroup) => taskGroup.id === qg.taskGroupId) && !["passed", "waived"].includes(qg.status))
     .slice(0, 8);
   const failingTests = (state.testResults || []).filter((tr) => groups.some((taskGroup) => taskGroup.id === tr.taskGroupId) && ["failed", "error"].includes(tr.status));
-  const canCloseTaskGroup = hasPerm("task_group:control"); // endpoint maps task_group_* -> task_group:control
   const canReviewGates = hasPerm("task_group:review");     // quality_gate_waive / review_plan_resolve
   const openReviewPlans = (state.reviewPlans || []).filter((plan) => inScope(plan) && !["closed", "rejected", "superseded"].includes(plan.status)).slice(0, 8);
   const openRuleSources = (state.ruleSourceResolutions || []).filter((item) => inScope(item) && !["reference_only", "quarantined", "rejected", "superseded", "active"].includes(item.status)).slice(0, 8);

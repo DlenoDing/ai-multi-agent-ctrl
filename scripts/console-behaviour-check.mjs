@@ -2071,6 +2071,30 @@ function runNoVisibleProjectCase() {
       !/no_candidate_satisfied_hard_constraints/u.test(denialText),
       "把 no_candidate_satisfied_hard_constraints 直接印在屏幕上了");
 
+    // 同一条纪律在【建工作项】那个下拉上：它原先列的是项目下全部任务组，而后端按组判
+    // task_group:control —— 只在 tg1 上有权的人能选中 tg2 提交，然后拿到一句拒绝。
+    {
+      const pickState = structuredClone(stuckState);
+      pickState.taskGroups = [
+        {id: "tg1", projectId: "p1", name: "我有权的组", status: "development", workItems: []},
+        {id: "tg2", projectId: "p1", name: "别人的组", status: "development", workItems: []}
+      ];
+      pickState.taskGroupPermissions = {tg1: ["task_group:control"]};
+      pickState.taskGroupPermissionsDefault = [];
+      const picker = {accountId: "u8", accountType: "org_member", displayName: "成员",
+        organizationId: "org_default", effectivePermissions: ["task_group:control", "project:read"]};
+      const pickText = renderAs(picker, pickState, "tg", "p1");
+      check("建工作项的下拉里不许出现他没权限的任务组（选了也只会被后端拒掉）",
+        /我有权的组/u.test(pickText) && /另有 1 个组你没有/u.test(pickText),
+        String(pickText).replace(/<[^>]+>/gu, " ").match(/所属任务组[^|]{0,90}/u)?.[0] || "（这一段没渲染出来）");
+      const noneState = structuredClone(pickState);
+      noneState.taskGroupPermissions = {};
+      const noneText = renderAs(picker, noneState, "tg", "p1");
+      check("一个都没权限时要说清是「都没权限」而不是「没有任务组」",
+        /都没有「任务组控制」权限/u.test(noneText),
+        "下拉是空的，人分不清这个项目没有任务组、还是他一个都动不了");
+    }
+
     // 【在别的组上有同名权限，不等于这个组上有】。面板级那三个判据走的是 effectivePermissions
     // （跨资源并集，服务端注释里写明它只是 UI 提示），而下面每一段按任务组过滤 ——
     // 于是"在 tg1 上有评审权、待收尾的计划都在 tg2"这种人：警告不显示、列表也空，
