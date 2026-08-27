@@ -4342,6 +4342,13 @@ async function handleApi(req, res) {
     // 归档是项目的终结态（没有"恢复归档"这条路），而建一个逻辑智能体是【往里接入新的干活能力】——
     // 与签发入网令牌同族。落进去之后它绑在一个不能再建任何工作的项目上，谁也不会报错。
     // 哪些动作在归档后仍然允许，逐条登记在 contract-check 的 ARCHIVED_PROJECT_WRITE_POLICY 里。
+    // 【角色要在已登记的执行角色里】。原先任意字符串照收：写成 reviwer 的智能体，派工时 agentForRole 找不到同名角色
+    // 就退回「随便哪个在跑的」—— 人建的那个永远不会被选中，而谁也没报错。与任务组/入网令牌两处同一份词表。
+    const unknownAgentRoles = unknownOwnerRoles([String(body.role || "")]);
+    if (unknownAgentRoles.length) {
+      return json(res, 400, {error: "agent_role_not_registered", unknownRoles: unknownAgentRoles, supported: REGISTERED_OWNER_ROLES,
+        message: `智能体角色「${unknownAgentRoles.join("、")}」不在已登记的执行角色里 —— 可用：${REGISTERED_OWNER_ROLES.join("、")}`});
+    }
     const agentProject = (state.projects || []).find((item) => item.id === (body.projectId || "prj_control_plane"));
     if (agentProject?.status === "archived") {
       return json(res, 409, {error: "project_archived",

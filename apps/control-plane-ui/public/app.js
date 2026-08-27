@@ -2329,7 +2329,8 @@ function renderSysAccounts() {
       <form class="form-grid" data-form="agent-create" style="margin-top:12px;">
         <div class="form-row-inline">
           <div class="form-row"><label>名称</label><input name="name" required></div>
-          <div class="form-row"><label>角色</label><input name="role" value="reviewer" required></div>
+          <div class="form-row"><label>角色（只认已登记的执行角色）</label><input name="role" value="reviewer" required list="agent-role-options">
+            <datalist id="agent-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
           <div class="form-row"><label>模型策略</label>
             <select name="model"><option value="auto_best">自动最优</option><option value="auto_fast">自动快速</option><option value="cost_aware">成本优先</option></select>
           </div>

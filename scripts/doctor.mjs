@@ -741,13 +741,18 @@ try {
   for (const [index, [label, body, code]] of [
     ["认不出的状态", {name: "Stray status agent", role: "reviewer", status: "paused"}, "agent_status_unknown"],
     ["不是数的信任分", {name: "Stray trust agent", role: "reviewer", trustScore: "高"}, "agent_trust_score_invalid"],
-    ["超出范围的信任分", {name: "Out of range agent", role: "reviewer", trustScore: 7}, "agent_trust_score_invalid"]
+    ["超出范围的信任分", {name: "Out of range agent", role: "reviewer", trustScore: 7}, "agent_trust_score_invalid"],
+    // 写错的角色原先照收：派工时找不到同名角色就退回随便哪个在跑的，人建的那个永远不会被选中而谁也不报错。
+    ["没登记的角色", {name: "Typo role agent", role: "reviwer"}, "agent_role_not_registered"]
   ].entries()) {
     const rejected = await jsonFetch(port, "/api/agents", {
       method: "POST",
       headers: {"Idempotency-Key": `doctor-agent-reject-${code}-${index}`, authorization: systemAuth},
       body: JSON.stringify({projectId: "prj_control_plane", model: "auto_best", ...body})
     });
+    if (code === "agent_role_not_registered" && !((rejected.payload?.unknownRoles || []).includes("reviwer") && (rejected.payload?.supported || []).includes("reviewer"))) {
+      throw new Error(`建智能体时「${label}」的拒绝要点名 reviwer 并列出可用角色（含 reviewer），实际 ${JSON.stringify(rejected.payload).slice(0, 160)}`);
+    }
     if (rejected.response.status !== 400 || rejected.payload?.error !== code) {
       throw new Error(`建智能体时「${label}」必须被拒绝（期望 400 ${code}）：`
         + `实际 ${rejected.response.status} ${JSON.stringify(rejected.payload).slice(0, 200)}`);

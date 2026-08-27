@@ -718,6 +718,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     // 【今天新加的三个拒绝码，提示要点名它们各自算好的东西】：拼错的角色/权限是哪几个、可用的是哪些。
     // 只显示一个码等于把人打回去猜；服务端每一种都算好了（unknownRoles / unknownPermissions / supported）。
     for (const [label, payload, mustName] of [
+      ["智能体角色没登记", {error: "agent_role_not_registered", unknownRoles: ["reviwer"], supported: ["reviewer", "qa"]}, ["reviwer", "reviewer"]],
       ["账号角色不在词表", {error: "account_role_unknown", unknownRoles: ["project_member"], supported: ["member", "viewer"]}, ["project_member", "member"]],
       ["权限不在词表", {error: "permission_unknown", unknownPermissions: ["project:veiw"], supported: ["project:view"]}, ["project:veiw", "project:view"]],
       ["执行角色未登记", {error: "task_group_role_not_registered", unknownOwnerRoles: ["reviewr"], supported: ["reviewer"]}, ["reviewr", "reviewer", "执行角色"]]

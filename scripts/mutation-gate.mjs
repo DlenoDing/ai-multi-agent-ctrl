@@ -3015,6 +3015,14 @@ const MUTATIONS = [
     expect: "建组织时填错的配额该回 400"
   },
   {
+    name: "智能体角色要在已登记的执行角色里（写错的不能照收）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (unknownAgentRoles.length) {',
+    to: '    if (false) {',
+    expect: "建智能体时「没登记的角色」必须被拒绝"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
