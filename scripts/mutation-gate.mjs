@@ -9926,6 +9926,14 @@ const MUTATIONS = [
     to: "  let names = new Set(allowedTools.slice(0, allowedTools.length - 1));",
     expect: "与真实 tools/list 的"
   },
+  {
+    name: "项目切换器要标出哪些是已归档（切过去只能看，而归档不可撤销）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '${project.status === "archived" ? "（已归档 · 只读）" : ""}',
+    to: "",
+    expect: "要标出哪些是已归档"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

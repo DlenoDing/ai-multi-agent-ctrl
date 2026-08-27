@@ -1769,6 +1769,27 @@ function runReviewAxisCase() {
     }],
     qualityGates: []
   });
+  // 切换器把已归档的项目和在用的混在一起、没有任何标记 —— 人要先切过去、点一下保存、
+  // 拿到一句 409 才知道那是个只读的死项目。归档不可撤销，这件事该在选它之前就看得见。
+  {
+    const switchRoot = el("div");
+    loadConsole(switchRoot, {realI18n: true}).renderFullPageWith({
+      projects: [
+        {id: "p_live", name: "在用项目", organizationId: "org_default", status: "active", config: {}, members: []},
+        {id: "p_arch", name: "老项目", organizationId: "org_default", status: "archived", config: {}, members: []}
+      ],
+      taskGroups: [], accounts: [], accessGrants: [], truncatedCollections: []
+    }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"},
+      "p_live", "proj-overview");
+    const switchHtml = String(switchRoot.innerHTML || "");
+    check("项目切换器要标出哪些是已归档（切过去只能看，而归档不可撤销）",
+      /老项目（已归档 · 只读）/u.test(switchHtml),
+      switchHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/当前项目[^|]{0,60}/u)?.[0] || "（切换器没渲染出来）");
+    check("在用的项目不要被加上这个后缀",
+      !/在用项目（已归档/u.test(switchHtml),
+      "在用项目也被标成了已归档");
+  }
+
   // 归档是项目的终结态、且不可撤销：后端已经拒（project_archived），而项目切换器列得出
   // 已归档的项目 —— 选中它之后这一页的写入口原先照常摆着，人点「保存项目配置」只拿回一句 409。
   {

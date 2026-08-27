@@ -1794,7 +1794,10 @@ function render() {
       <div class="project-switch">
         <span>当前项目</span>
         <select id="project-switcher" aria-label="当前项目">
-          ${selectableProjects().map((project) => `<option value="${esc(project.id)}" ${project.id === currentProjectId ? "selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}
+          ${/* 已归档的项目仍然列在这里（人要能回去看它当时的记录），但必须标出来：
+                归档是终态且不可撤销，切过去之后配置只能看、成员授权也发不进去。
+                不标的话，人得先切过去、再点一下保存、拿到一句 409 才知道。 */ ""}
+          ${selectableProjects().map((project) => `<option value="${esc(project.id)}" ${project.id === currentProjectId ? "selected" : ""}>${esc(project.name || project.id)}${project.status === "archived" ? "（已归档 · 只读）" : ""}</option>`).join("")}
         </select>
       </div>
     `
