@@ -355,30 +355,30 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | 方法 | 路径 | 作用 | 允许 actor |
 | --- | --- | --- | --- |
 | POST | `/api/projects` | 创建项目 | orchestrator |
-| GET | `/api/projects/:projectId` | 读取项目 | orchestrator、scheduler、agent-runtime、monitor、admin read-only |
+| GET | `/api/projects/:projectId` | **未实现**（设计意向；项目快照经 `/api/projects` 列表或 `/api/state?view=projects` 读）— 读取项目 | orchestrator、scheduler、agent-runtime、monitor、admin read-only |
 | GET | `/api/projects/:projectId/progress` | 读取项目进度快照 | orchestrator、monitor、ui-console-service |
 | POST | `/api/projects/:projectId/members` | 授予项目成员权限 | ui-console-service、identity-service、policy-engine |
 | POST | `/api/task-groups` | 创建任务组 | orchestrator |
-| GET | `/api/task-groups/:taskGroupId` | 读取任务组快照 | orchestrator、scheduler、agent-runtime、monitor、admin read-only |
+| GET | `/api/task-groups/:taskGroupId` | **未实现**（设计意向；任务组快照经 `/api/task-groups/:taskGroupId/progress` 与 `/api/state` 读）— 读取任务组快照 | orchestrator、scheduler、agent-runtime、monitor、admin read-only |
 | GET | `/api/task-groups/:taskGroupId/progress` | 读取任务组进度快照 | orchestrator、monitor、ui-console-service |
 | GET | `/api/task-groups/:taskGroupId/readiness` | 计算任务组完成就绪和关闭屏障 | orchestrator、monitor、ui-console-service |
 | POST | `/api/task-groups/:taskGroupId/language-policy` | 设置任务组统一语言策略 | orchestrator、ui-console-service |
 | POST | `/api/task-groups/:taskGroupId/control` | 暂停、恢复、请求复验或纠偏 | orchestrator、ui-console-service |
 | POST | `/api/task-groups/:taskGroupId/work-items` | 创建 work item（挂在任务组下创建；改派走 `/api/work-items/:workItemId/assign`） | orchestrator、decision-center |
 | POST | `/api/work-items/:workItemId/assign` | 分配或改派 | scheduler、orchestrator |
-| POST | `/api/effective-instruction-packets` | 创建强化后的有效指令包 | orchestrator、policy-engine |
+| POST | `/api/effective-instruction-packets` | **未实现**（设计意向；指令包在派发链内部生成，没有独立接口）— 创建强化后的有效指令包 | orchestrator、policy-engine |
 | POST | `/api/instruction-envelopes` | 创建压缩后的角色指令信封 | orchestrator、instruction-optimizer |
-| POST | `/api/role-drift-guards` | 绑定或更新角色漂移防护对象 | orchestrator、monitor |
-| POST | `/api/role-drift-guards/:guardId/rebound` | 暂停跑偏角色并重签任务契约 | orchestrator |
+| POST | `/api/role-drift-guards` | **未实现**（设计意向；角色漂移防护对象随派发链落账，没有独立接口）— 绑定或更新角色漂移防护对象 | orchestrator、monitor |
+| POST | `/api/role-drift-guards/:guardId/rebound` | **未实现**（设计意向；同上）— 暂停跑偏角色并重签任务契约 | orchestrator |
 | GET | `/api/model-registry` | 读取模型能力画像、选择策略和选择记录 | model-registry、scheduler、ui-console-service |
 | POST | `/api/model-capabilities` | 注册或覆盖模型能力画像 | model-registry、policy-engine |
 | POST | `/api/model-selection/decide` | 根据角色 skill、任务能力和策略生成模型选择决策 | scheduler、model-registry |
-| POST | `/api/model-selection-decisions` | 记录模型和 Agent 自动选择结果 | model-registry、scheduler |
+| POST | `/api/model-selection-decisions` | **未实现**（设计意向；选择记录由 `/api/model-selection/decide` 一并落账）— 记录模型和 Agent 自动选择结果 | model-registry、scheduler |
 | GET | `/api/skill-registry` | 读取 skill source、role skill 和 overlay 索引 | skill-registry、scheduler、ui-console-service |
 | POST | `/api/skill-sources/:sourceId/sync` | 同步 pinned skill source 并生成 digest 索引 | skill-registry |
 | POST | `/api/role-skill-overlays` | 创建项目或任务组级 role skill overlay | skill-registry、decision-center |
 | POST | `/api/session-placement/decide` | 生成新 WorkSession 或 subagent 放置决策 | scheduler |
-| POST | `/api/session-placement-decisions` | 记录新会话或子 Agent placement | scheduler |
+| POST | `/api/session-placement-decisions` | **未实现**（设计意向；放置记录由 `/api/session-placement/decide` 一并落账）— 记录新会话或子 Agent placement | scheduler |
 | POST | `/api/orchestrator/run` | 执行 Orchestrator 自治调度循环 | orchestrator |
 | POST | `/api/agent-join-tokens` | 生成项目/角色/MCP scope 绑定的一次性 Agent 加入令牌 | agent-gateway |
 | POST | `/api/agent/v1/register` | 消费 join token，注册轻量 Agent Runtime 并签发节点凭证 | agent-gateway |
@@ -393,10 +393,10 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/review-plans` | 创建或更新互审计划 | reviewer、orchestrator |
 | POST | `/api/review-bundles` | 注册 redacted review bundle 和 advisory result | reviewer、security |
 | POST | `/api/rule-source-resolutions` | 解析外部/旧项目/互审材料是否可成为 active rule | rule-steward、orchestrator |
-| POST | `/api/completion-readiness/compute` | 计算 WorkSession/TaskGroup 完成就绪 | orchestrator、monitor |
+| POST | `/api/completion-readiness/compute` | **未实现**（设计意向；完成就绪经 `/api/task-groups/:taskGroupId/readiness` 计算）— 计算 WorkSession/TaskGroup 完成就绪 | orchestrator、monitor |
 | POST | `/api/rooms/:roomId/messages` | 发送 room message | room-broker、agent-runtime、orchestrator |
 | GET | `/api/rooms/:roomId/messages?after=` | 按 cursor 补读消息 | room-broker、agent-runtime、orchestrator |
-| POST | `/api/commands` | 创建 command | orchestrator、command-bus、agent-runtime |
+| POST | `/api/commands` | **未实现**（设计意向；控制命令走 agent 网关 `/api/agent/v1/control`（人经控制台/MCP 下发））— 创建 command | orchestrator、command-bus、agent-runtime |
 | POST | `/api/leases/claim` | 获取 lease | scheduler、agent-runtime |
 | POST | `/api/leases/:leaseId/release` | 释放 lease | agent-runtime、orchestrator |
 | POST | `/api/checkpoints` | **已关闭**：一律回 `checkpoint_must_use_agent_gateway`。检查点只能由认领该派发的节点经 `/api/agent/v1/dispatches/:dispatchId/checkpoint` 提交（这条通道少了节点鉴权与认领围栏，无法证明提交者就是干这件活的那一个） | — |
@@ -408,12 +408,12 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | POST | `/api/contracts` | 注册或更新契约对象 | orchestrator、decision-center |
 | POST | `/api/shared-definition-contracts` | 创建或更新共享定义合同 | orchestrator、decision-center |
 | POST | `/api/repository-output-targets` | 为 WorkItem 选择项目 Git 仓库输出目标 | orchestrator、repository-router |
-| POST | `/api/integration-batches` | 创建集成批次 | release、orchestrator |
+| POST | `/api/integration-batches` | **未实现**（设计意向；集成批次在编排链内部处理，没有独立接口）— 创建集成批次 | release、orchestrator |
 | POST | `/api/runtime-issues` | 收集重复运行期问题并生成升级候选，不触发运行时自修改 | monitor |
-| POST | `/api/runtime-issue-patterns` | 聚合重复运行问题 | monitor |
+| POST | `/api/runtime-issue-patterns` | **未实现**（设计意向；运行时问题经 `/api/runtime-issues` 读）— 聚合重复运行问题 | monitor |
 | POST | `/api/system-upgrade-candidates/:candidateId/resolve` | 处置升级候选项（导出证据包尚未落地） | monitor、rule-steward |
-| POST | `/api/system-upgrade-candidates/import-external-result` | 导入系统外独立升级后的版本化结果 | admin console、orchestrator import service |
-| POST | `/api/close-barriers/compute` | 计算并校验关闭屏障 | orchestrator |
+| POST | `/api/system-upgrade-candidates/import-external-result` | **未实现**（设计意向；外部维护结果经 `/api/system-upgrade-candidates/:candidateId/resolve` 处置）— 导入系统外独立升级后的版本化结果 | admin console、orchestrator import service |
+| POST | `/api/close-barriers/compute` | **未实现**（设计意向；关闭门经 `/api/task-groups/:taskGroupId/readiness` 重算）— 计算并校验关闭屏障 | orchestrator |
 | POST | `/api/agent/v1/register` | 使用一次性 join token 初始化 Agent Runtime 节点 | agent-runtime |
 | POST | `/api/agent/v1/heartbeat` | Agent Runtime 心跳与凭据轮换 | agent-runtime |
 | POST | `/api/agent/v1/self-check` | Agent Runtime 初始化自检与准入 | agent-runtime |

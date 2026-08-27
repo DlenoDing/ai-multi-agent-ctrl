@@ -874,7 +874,7 @@ run(verifyStorageFaultKindsHaveChinese);
 run(verifyEmptyTaskGroupIsNotComplete);
 run(verifyWholesaleConfigWritesArePreconditioned);
 run(verifyGatesDoNotCloneFromTheNetwork);
-run(verifyDocumentedApiPathsExist);
+runAsync(verifyDocumentedApiPathsExist);
 run(verifyRaceTimeoutsDoNotHoldTheProcess);
 run(verifyWhitelistRefusalsCarryTheWhitelist);
 // ── 写新判据时的两条硬要求（本会话各撞过三次以上，写在这里免得下次又逐条补）──────────
@@ -10850,7 +10850,7 @@ function verifyRaceTimeoutsDoNotHoldTheProcess(output) {
   console.log(`race 里的长超时：${scanned} 处逐个核对，${holding.length} 处会吊住进程（应为 0）`);
 }
 
-function verifyDocumentedApiPathsExist(output) {
+async function verifyDocumentedApiPathsExist(output) {
   const NOT_YET_IMPLEMENTED = {
     "/api/close-barriers/compute": "终态规格里的编排接口，当前由自治周期内部计算，没有对外路由",
     "/api/completion-readiness/compute": "同上",
@@ -10867,13 +10867,18 @@ function verifyDocumentedApiPathsExist(output) {
     "/api/role-drift-guards/:guardId/rebound": "同上",
     "/api/runtime-issue-patterns": "模式由 /api/runtime-issues 归并产生，没有独立的集合路由",
     "/api/session-placement-decisions": "放置决策由编排内部产生，没有独立的集合路由",
-    "/api/system-upgrade-candidates/import-external-result": "外部结果回填尚未落地"
+    "/api/system-upgrade-candidates/import-external-result": "外部结果回填尚未落地",
+    // 2026-08-28 存在性判据改成真打之后补上：它是 WebSocket upgrade 路径，普通 HTTP 回 404 是对的。
+    "/api/realtime": "WebSocket upgrade 路径：握手在 upgrade 事件里接，普通 HTTP 请求回 404 是对的",
+    // 同日真打抓出的两条：老判据按正则前缀把 /api/projects/:id/progress 当成了 /api/projects/:id（它自己注释里警告过的那种假阳性）。
+    "/api/projects/:projectId": "单个项目没有独立读路由：经 /api/projects 列表或 /api/state?view=projects 读",
+    "/api/task-groups/:taskGroupId": "单个任务组没有独立读路由：经 /api/task-groups/:taskGroupId/progress 或 /api/state 读"
   };
   const servers = ["apps/control-plane-ui/server.mjs", "apps/mcp-server/server.mjs"]
     .map((file) => readFileSync(join(root, file), "utf8")).join("\n");
   const documented = new Map();
-  for (const file of readdirSync(join(root, "docs")).filter((name) => name.endsWith(".md"))) {
-    const text = readFileSync(join(root, "docs", file), "utf8");
+  for (const file of ["README.md", ...readdirSync(join(root, "docs")).filter((name) => name.endsWith(".md")).map((name) => `docs/${name}`)]) {
+    const text = readFileSync(join(root, file), "utf8");
     for (const match of text.matchAll(/(\/api\/[A-Za-z0-9/_:{}.-]+)/gu)) {
       const path = match[1].replace(/[.,)`]+$/u, "");
       if (!documented.has(path)) documented.set(path, file);
@@ -10883,43 +10888,35 @@ function verifyDocumentedApiPathsExist(output) {
     output.push(`文档里的 API 路径只提取到 ${documented.size} 条（应至少 50）—— 提取形状与文档脱节，本条在空转`);
     return;
   }
-  // 存在性判据原先是"把路径切成段，每段都要在服务端源码里出现过"——**子串匹配的假阳性**：
-  // `/api/commands` 的 "commands" 在源码里出现 16 次（全是 agentControlCommands 之类），
-  // 于是这条根本不存在的接口被判成存在（2026-08-22 按文档接口清单反查时发现）。
-  // 改成按【真实注册的路由】核：字面路由取 url.pathname === "..."，带参数的取 match(/^\/api\/xxx/)
-  // 的前缀，再按前缀比对 —— 与"源码里出现过这个词"完全是两回事。
-  // 三种注册写法都要认：字面量、写在数组里的一组（["/api/health", "/api/runtime/health"].includes）、
-  // 以及带参数的正则路由。少认一种就会把真实存在的接口报成"撞 404"（第一版漏了数组那种）。
-  const literalRoutes = new Set([...servers.matchAll(/url\.pathname === "(\/api\/[^"]+)"/gu)].map((m) => m[1]));
-  for (const match of servers.matchAll(/\[([^\]]*"\/api\/[^\]]*)\]\.includes\(url\.pathname\)/gu)) {
-    for (const inner of match[1].matchAll(/"(\/api\/[^"]+)"/gu)) literalRoutes.add(inner[1]);
+  // 存在性判据的三版：①把路径切段在源码里找词（子串假阳性：/api/commands 因 agentControlCommands 被判存在）；
+  // ②按三种注册写法抠路由（字面量 / 数组 includes / 正则）—— 少认一种写法就把真路由报成 404，多认一种也只是碰巧；
+  // ③2026-08-28 起真起一台服务端逐条打：四种方法都回 api_not_found 的才算没人接。写法再多也与它无关。
+  // 占位段（:id/{id}）换成 x_probe；真路由对未知 id 回 401/404/405 之类而不是 api_not_found。
+  const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-doc-paths-"));
+  const child = spawn(process.execPath, [join(root, "apps/control-plane-ui/server.mjs")], {cwd: root, stdio: ["ignore", "pipe", "pipe"],
+    env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: "0", AIMAC_EXIT_WITH_PARENT: "1", AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_RUNTIME_DIR: runtimeDir, AIMAC_PUBLIC_URL: ""}});
+  let banner = "";
+  child.stdout.on("data", (chunk) => { banner += String(chunk); });
+  const served = new Map();
+  try {
+    await new Promise((resolve) => { const tick = setInterval(() => { if (/console: http/u.test(banner)) { clearInterval(tick); resolve(); } }, 50); setTimeout(() => { clearInterval(tick); resolve(); }, 20000); });
+    const port = banner.match(/console: http:\/\/127\.0\.0\.1:(\d+)/u)?.[1];
+    if (!port) { output.push("为核对文档接口起的服务端没打出端口 —— 本条在空转"); return; }
+    for (const path of new Set([...documented.keys(), ...Object.keys(NOT_YET_IMPLEMENTED)])) {
+      const probePath = path.replace(/\/(?::[A-Za-z]+|\{[^}]+\}|<[^>]+>)/gu, "/x_probe");
+      let notFoundEverywhere = true;
+      for (const method of ["GET", "POST", "PUT", "DELETE"]) {
+        const response = await fetch(`http://127.0.0.1:${port}${probePath}`, {method, headers: {"content-type": "application/json"}, body: method === "GET" ? undefined : "{}"}).catch(() => null);
+        const body = response ? await response.json().catch(() => ({})) : {};
+        if (!(response?.status === 404 && body.error === "api_not_found")) { notFoundEverywhere = false; break; }
+      }
+      served.set(path, !notFoundEverywhere);
+    }
+  } finally {
+    try { child.kill("SIGKILL"); } catch { /* 已经走了 */ }
+    rmSync(runtimeDir, {recursive: true, force: true});
   }
-  // 带参数的路由用【完整正则原文】而不是只取第一段：只取前缀的话，
-  // /api/system-upgrade-candidates/:id 会把文档里根本不存在的
-  // /api/system-upgrade-candidates/import-external-result 也算成"已建好"（第一版就是这样）。
-  const paramRoutes = [...servers.matchAll(/url\.pathname\.match\(\/\^(.+?)\$?\/[a-z]*\)/gu)]
-    .flatMap((m) => {
-      const raw = m[1].replace(/\\\//gu, "/").replace(/\(\[\^\/\]\+\)/gu, "*").replace(/\$$/u, "");
-      // 一条正则可以同时注册多个末段：/(?:activate|activation)$/ 是一个路由、两个路径。
-      const branch = /\(\?:([^)]+)\)/u.exec(raw);
-      if (!branch) return [raw];
-      return branch[1].split("|").map((one) => raw.replace(branch[0], one));
-    });
-  if (literalRoutes.size < 40) {
-    output.push(`只认出 ${literalRoutes.size} 条字面路由（服务端有几十条）—— 提取形状没对上，本条在空转`);
-    return;
-  }
-  const liveInServer = (path) => {
-    const clean = path.replace(/\/[:{][^/]*\}?/gu, "").replace(/\/$/u, "");
-    if (literalRoutes.has(path) || literalRoutes.has(clean)) return true;
-    // 带参数的路由按【段数与形状】比：把文档里的 :id/{id} 段与路由里的 * 段对齐，逐段相等才算命中。
-    const wanted = path.replace(/\/[:{][^/]*\}?/gu, "/*").replace(/\/$/u, "").split("/");
-    return paramRoutes.some((route) => {
-      const parts = route.replace(/\/$/u, "").split("/");
-      return parts.length === wanted.length
-        && parts.every((part, index) => part === "*" || wanted[index] === "*" || part === wanted[index]);
-    });
-  };
+  const liveInServer = (path) => served.get(path) === true;
   const missing = [...documented].filter(([path]) => !liveInServer(path) && !NOT_YET_IMPLEMENTED[path]);
   if (missing.length) {
     output.push("文档里点名的这些接口在服务端不存在，照着它接入的人会撞 404：\n  "

@@ -3305,6 +3305,15 @@ const MUTATIONS = [
     expect: "在 package.json 里不存在"
   },
   {
+    name: "文档里提到的 /api 路径必须真有人接",
+    file: "README.md",
+    gate: "contract",
+    check: "verifyDocumentedApiPathsExist",
+    from: "- **备份用 `npm run backup [运行目录] [备份目录]`",
+    to: "- 健康检查也可以打 `/api/healthz`。\n- **备份用 `npm run backup [运行目录] [备份目录]`",
+    expect: "撞 404"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
@@ -9019,8 +9028,8 @@ const MUTATIONS = [
     name: "文档点名的接口必须真存在（照着它接入的人会撞 404）",
     file: "docs/core-control-plane-spec.md",
     check: "verifyDocumentedApiPathsExist",
-    from: "| POST | `/api/integration-batches` | 创建集成批次 | release、orchestrator |",
-    to: "| POST | `/api/integration-batches-v2` | 创建集成批次 | release、orchestrator |",
+    from: "| POST | `/api/integration-batches` | **未实现**（设计意向；集成批次在编排链内部处理，没有独立接口）— 创建集成批次 | release、orchestrator |",
+    to: "| POST | `/api/integration-batches-v2` | **未实现**（设计意向；集成批次在编排链内部处理，没有独立接口）— 创建集成批次 | release、orchestrator |",
     expect: "撞 404"
   },
   {
