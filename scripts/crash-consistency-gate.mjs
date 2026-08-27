@@ -157,6 +157,10 @@ try { parsed = JSON.parse(readFileSync(statePath, "utf8")); } catch (error) { pa
     check(blocked.status === 503 && blocked.payload.error === "state_storage_unavailable",
       "盘写不进去时给的是稳定错误码，不是 500 加一句原始报错",
       `HTTP ${blocked.status} ${blocked.payload.error || ""}`);
+    // 不经控制台词表的调用方（REST/MCP/agent）要在正文里读到该查什么：与健康检查的 hint 是同一句。
+    check(/写不进磁盘/u.test(String(blocked.payload.message || "")) && /剩余空间|只读|写权限/u.test(String(blocked.payload.message || "")),
+      "盘写不进去的 503 正文要带一句说清该查什么（空间/只读挂载/写权限）",
+      `message=${JSON.stringify(blocked.payload.message || null)}`);
     check(!JSON.stringify(blocked.payload).includes(roDir),
       "写失败的报文里不带服务器的绝对路径", JSON.stringify(blocked.payload).slice(0, 90));
     const stillReads = await call("/api/state?view=tasks&limit=10", {headers: auth});

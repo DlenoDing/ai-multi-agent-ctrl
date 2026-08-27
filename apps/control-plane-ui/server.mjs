@@ -348,6 +348,9 @@ function assertRuntimeSecurity() {
 // 启动期的失败是运维最常撞到的一刻（npm start 起不来）。这一族此前全是裸 throw ——
 // 人看到的是一段 Node 崩溃栈加一个机器码，既不说规则是什么，也不说下一步。
 // 与 [state-store] / [startup] 端口那几条同规：一句人话 + 下一步，退出码 1。
+// 写不进磁盘的那句话只有这一份：健康检查的 hint、写请求的 message、stderr 三处共用。
+const STORAGE_UNAVAILABLE_HINT = "状态写不进磁盘（读操作不受影响）：按 code 指出的原因处理 —— 检查运行目录的剩余空间、挂载是不是只读、以及本进程对它的写权限；恢复可写之后健康检查会自动转回 ok，不必重启";
+
 function startupError(summary, nextSteps) {
   return Object.assign(new Error(summary), {nextSteps});
 }
@@ -2928,8 +2931,7 @@ async function handleApi(req, res) {
             ? "状态已经不是本进程启动时那一份了：先把数据恢复回去，然后【重启本进程】——"
               + "当前进程还接着那份被换掉的状态，不重启光恢复数据没用"
             : lastStorageFault.kind === "state_storage_unavailable"
-              ? "状态写不进磁盘（读操作不受影响）：按 code 指出的原因处理 —— 检查运行目录的剩余空间、"
-                + "挂载是不是只读、以及本进程对它的写权限；恢复可写之后本接口会自动转回 ok，不必重启"
+              ? STORAGE_UNAVAILABLE_HINT
               : "状态读不出来：按 file/code 指出的线索恢复（文件损坏就还原那一份，数据库掉线就把它接回来），恢复之后本接口会自动转回 ok"});
         return;
       }
@@ -6838,13 +6840,14 @@ function respondApiError(res, error, requestLabel = "") {
     return;
   }
   if (["EACCES", "EPERM", "ENOSPC", "EROFS", "EDQUOT", "EMFILE", "ENFILE"].includes(error?.code)) {
-    console.error(`[state-write] ${error.code}: ${error.message}`);
+    console.error(`[state-write] ${error.code}: ${error.message} —— ${STORAGE_UNAVAILABLE_HINT}`);
     // 健康页必须跟着变：原先只有"状态损坏"那一支登记 lastStorageFault，写不进磁盘这一支不登记 ——
     // 于是磁盘一个字都写不进去了，/api/health 仍然回 status:"ok"，监控探针一路绿灯，
     // 而每一次写操作都在 503（实测：把运行目录 chmod 500 之后正是这样）。
     // 健康页自己会在故障消失后把它清掉（那一支已有自愈判据），所以这里只管登记。
     lastStorageFault = {kind: "state_storage_unavailable", file: basename(statePath), code: error.code, at: now()};
-    json(res, 503, {error: "state_storage_unavailable", code: error.code, retryable: true});
+    // REST/MCP/agent 这些不经控制台词表的调用方，也要在正文里读到该查什么。
+    json(res, 503, {error: "state_storage_unavailable", code: error.code, retryable: true, message: STORAGE_UNAVAILABLE_HINT});
     return;
   }
   // 兜底这一支原先【一个字都不打】，而它上面每一支都打。于是一个未预期的 500 在服务端

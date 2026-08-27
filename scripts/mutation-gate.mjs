@@ -3235,6 +3235,14 @@ const MUTATIONS = [
     expect: "运行态目录不可写时该退出码 1"
   },
   {
+    name: "盘写不进去的 503 正文要带一句说清该查什么",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "crash",
+    from: '    json(res, 503, {error: "state_storage_unavailable", code: error.code, retryable: true, message: STORAGE_UNAVAILABLE_HINT});',
+    to: '    json(res, 503, {error: "state_storage_unavailable", code: error.code, retryable: true});',
+    expect: "503 正文要带一句说清该查什么"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
