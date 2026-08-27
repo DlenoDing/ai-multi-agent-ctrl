@@ -10374,7 +10374,8 @@ const MUTATIONS = [
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
     from: "onlineNodes: nodeHealth.onlineNodes, overdueNodes: nodeHealth.overdueNodes.length},",
-    to: "onlineNodes: state.agentRuntimeNodes.filter((node) => node.status === \"online\").length},",
+    // (state.agentRuntimeNodes || [])：这条路上它可能不存在，裸访问会把 /health 整个打成 500，先红的就成了第一个读健康的老断言。
+    to: "onlineNodes: (state.agentRuntimeNodes || []).filter((node) => node.status === \"online\").length},",
     expect: "agentGateway 少了 overdueNodes"
   },
   {
