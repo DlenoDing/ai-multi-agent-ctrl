@@ -361,6 +361,8 @@ async function run(config) {
       await selfCheck(config).catch((error) => process.stderr.write(`re-admission self-check failed: ${error.message}\n`));
     }
     if (claimed.dispatch) {
+      // 领到活先说一句：原先从「正在等待派发」到「dispatch completed」之间一个字都不打，人不知道它在干什么。
+      process.stdout.write(`领到派发 ${claimed.dispatch.dispatch.dispatchId}：工作项 ${claimed.dispatch.dispatch.workItemId || claimed.dispatch.taskContract?.workItemId || "?"}（角色 ${claimed.dispatch.taskContract?.roleId || claimed.dispatch.dispatch.roleId || "?"}），开始执行\n`);
       try {
         const control = startControlWatcher(config, claimed.dispatch);
         let checkpoint;
@@ -401,6 +403,7 @@ async function run(config) {
             unlinkSync(outboxPath);
             await submitExecutionEvent(config, claimed.dispatch, "checkpoint_submitted", {progressPercent: 100, summary: "Checkpoint accepted by control plane.", evidenceRefs: [`checkpoint:${result.checkpoint?.runId || "accepted"}`]}).catch(() => {});
             process.stdout.write(`dispatch completed: ${claimed.dispatch.dispatch.dispatchId} checkpoint=${result.checkpoint?.runId || "accepted"}\n`);
+            process.stdout.write(`派发 ${claimed.dispatch.dispatch.dispatchId} 已完成：检查点已被控制面接受\n`);
             cleanupSessionDirectory(config, claimed.dispatch);
           } catch (error) {
             process.stderr.write(`checkpoint pending retry: ${claimed.dispatch.dispatch.dispatchId} ${error.message}\n`);
@@ -416,6 +419,7 @@ async function run(config) {
           (reportError) => process.stderr.write(`dispatch failure report failed: ${claimed.dispatch.dispatch.dispatchId} (${reportError?.message || reportError}) —— 控制面那边它仍是 running，要等认领过期才回收\n`)
         );
         process.stderr.write(`dispatch failed: ${claimed.dispatch.dispatch.dispatchId} ${error.message}\n`);
+        process.stderr.write(`派发 ${claimed.dispatch.dispatch.dispatchId} 执行失败：${String(error.message || error).slice(0, 200)} —— 已如实报回控制面；到控制台「执行监控」页看原因与处置\n`);
         cleanupSessionDirectory(config, claimed.dispatch);
       }
     }

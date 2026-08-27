@@ -563,6 +563,10 @@ try {
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024
   });
+  // 领到活的那一刻终端上要有一句人话（原先到 dispatch completed 之间一个字不打）。
+  if (!/领到派发 adp_[a-z0-9_]+：工作项 .+（角色 .+），开始执行/u.test(run.stdout)) {
+    throw new Error(`agentctl run 领到派发时没说一句人话：${run.stdout.slice(0, 300).replace(/\n/g, " | ")}`);
+  }
   if (run.status !== 0 || !run.stdout.includes("checkpoint intentionally deferred")) {
     // 【报错路径自己不许崩】。这一段是为了把"远端上到底有什么"一并说出来，可它假设远端至少有两个提交：
     // agent 这一轮要是根本没推上去，远端就只有初始那一个，`HEAD^` 直接 fatal ——
@@ -1333,6 +1337,7 @@ try {
 	        // agent 明明领到了派发还失败了，那就是缺陷，不是这一轮没赶上。
 	        const agentText = String(deniedOut + deniedErr);
 	        if (/dispatch failed/u.test(agentText)) {
+	          if (!/执行失败：.+已如实报回控制面/u.test(agentText)) throw new Error(`派发执行失败时终端上没有一句人话：${agentText.slice(-300).replace(/\n/g, " | ")}`);
 	          throw new Error("推送被远端拒掉，agent 直接把派发判失败了，没有走 §8 上报权限单 —— "
 	            + `活白干，人也拿不到「发凭据 / 改派 / 中止」这几个选项：${agentText.slice(-200)}`);
 	        }
