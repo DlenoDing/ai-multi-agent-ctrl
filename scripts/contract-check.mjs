@@ -15697,8 +15697,14 @@ function verifyConsoleRuntimeConstantsHaveOneWriter(output) {
     if (new RegExp(`runtime\\.${key} = `, "u").test(source)) output.push(`server.mjs 里还有 runtime.${key} = 的旁路赋值 —— 词表只能来自 consoleVocabularies`);
   }
   if (!helper.includes("consoleVocabularies()")) output.push("decorateRuntimeForConsole 没调 consoleVocabularies —— 界面拿不到词表");
+  // 按结构切勘察模式那一段（从 if (process.env.AIMAC_RENDER_REAL) 到逐页循环），不按字符数：第一版用 1500 字的窗口，
+  // 勘察工具多加一段合成视角就假红了。
   const survey = readFileSync(join(root, "scripts/console-behaviour-check.mjs"), "utf8");
-  if (!/AIMAC_RENDER_REAL[\s\S]{0,1500}consoleVocabularies\(\)/u.test(survey)) output.push("勘察工具（AIMAC_RENDER_REAL）没用 consoleVocabularies 装饰真实状态 —— 它读到的表单会写着「词表未下发」");
+  const renderStart = survey.indexOf("if (process.env.AIMAC_RENDER_REAL) {");
+  const renderEnd = renderStart < 0 ? -1 : survey.indexOf("for (const page of SURVEY_PAGES)", renderStart);
+  const renderBlock = renderStart >= 0 && renderEnd > renderStart ? survey.slice(renderStart, renderEnd) : "";
+  if (!renderBlock) output.push("找不到勘察工具的 AIMAC_RENDER_REAL 段（或逐页循环）—— 下面这条在空转");
+  else if (!renderBlock.includes("consoleVocabularies()")) output.push("勘察工具（AIMAC_RENDER_REAL）没用 consoleVocabularies 装饰真实状态 —— 它读到的表单会写着「词表未下发」");
   for (const reader of ["readStateForRead", "readState"]) {
     const body = bodyOf(reader);
     if (!body || !body.includes("decorateRuntimeForConsole(")) output.push(`${reader} 没调 decorateRuntimeForConsole —— 这条路上界面拿不到词表`);

@@ -420,7 +420,14 @@ if (process.env.AIMAC_RENDER_REAL) {
   // 视角可换：AIMAC_RENDER_AS=<邮箱>。默认系统管理员，但不同视角看到的是不同的页与不同的空态，
   // 只读一个人的屏幕会漏掉另一类人才撞得到的死胡同（"请联系组织管理员"那次就是这么发现的）。
   const wantWho = process.env.AIMAC_RENDER_AS;
-  const whoOnDisk = (wantWho && (real.accounts || []).find((item) => item.email === wantWho))
+  // 组织管理员四页（org-*）只有 org_admin 身份的菜单里才有；真实状态里常常没有这样的账号（本仓就没有）。
+  // AIMAC_RENDER_AS=org_admin 时合成一个挂在第一个组织上的组织管理员来读这四页 —— 输出里标明是合成的。
+  const syntheticOrgAdmin = wantWho === "org_admin" && !(real.accounts || []).some((item) => item.email === "org_admin")
+    ? {accountId: "acct_survey_org_admin", email: "org_admin", accountType: "org_admin", displayName: "组织管理员（勘察合成）",
+      organizationId: (real.organizations || [])[0]?.orgId || "org_default", status: "active", roles: ["org_admin"]}
+    : null;
+  if (syntheticOrgAdmin) console.log(`（AIMAC_RENDER_AS=org_admin：真实状态里没有组织管理员账号，合成了一个挂在 ${syntheticOrgAdmin.organizationId} 上的来读 org-* 四页）`);
+  const whoOnDisk = syntheticOrgAdmin || (wantWho && (real.accounts || []).find((item) => item.email === wantWho))
     || (real.accounts || []).find((item) => item.accountType === "system_admin") || (real.accounts || [])[0];
   // 盘上的账号只有直接权限；控制台判权读的是服务端算出来的 effectivePermissions（直接 ∪ 授权）。
   // 不补上它，一个靠授权拿到评审权的人在这份输出里会被写成「当前账号无人工审核权限」——
@@ -568,6 +575,16 @@ if (process.env.AIMAC_RENDER_REAL) {
       if (projectConfig) {
         const project = (real.projects || []).find((item) => item.id === decodeURIComponent(projectConfig[1]));
         if (project) return ok({projectId: project.id, config: effectiveProjectConfig(project), configVersion: "survey"});
+      }
+      // 组织管理员四页取成员与节点：形状照服务端两条 GET（{orgId, members} / {orgId, agentRuntimeNodes}）。
+      if (/\/api\/org\/members(?:\?|$)/u.test(url)) {
+        const orgId = who?.organizationId;
+        return ok({orgId, members: (real.accounts || []).filter((item) => item.organizationId === orgId)});
+      }
+      if (/\/api\/org\/agents(?:\?|$)/u.test(url)) {
+        const orgId = who?.organizationId;
+        const orgProjects = new Set((real.projects || []).filter((item) => item.organizationId === orgId).map((item) => item.id));
+        return ok({orgId, agentRuntimeNodes: (real.agentRuntimeNodes || []).filter((node) => orgProjects.has(node.projectId))});
       }
       // 人工指令页按任务组取指令流水；桩不答，这一页就挂着一条「从来没有加载成功过」横幅。形状照服务端那条路由。
       const directives = url.match(/\/api\/task-groups\/([^/?]+)\/human-directives(?:\?|$)/u);
