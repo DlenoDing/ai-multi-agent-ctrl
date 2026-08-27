@@ -6390,6 +6390,47 @@ function verifyCommandBusLifecycle(output) {
     output.push("command-bus: no-side-effect command should succeed without a CommandEffect");
   }
 
+  // 【同族里有的有门、有的没有】—— 上一条就是这么找到的（建工作项有、派活没有）。
+  // 把"往终结的任务组里造关闭门阻塞对象"这一族点齐：评审包与契约发布早有这道门，
+  // 而评审计划、共享定义契约漏了。它们落在已关闭的组上就成了「待你收尾」里永远清不掉的一条：
+  // 收尾它不会有任何效果，也没有第二条杠杆碰得到它。
+  {
+    const deadState = structuredClone(seedState);
+    ensureRuntimeCollections(deadState, {root});
+    const deadGroup = deadState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    deadGroup.status = "closed";
+    const cases = [
+      ["评审计划", () => reviewPlanCreate(deadState, {taskGroupId: deadGroup.id, requiredReviewerRoles: ["reviewer"]})],
+      ["共享定义契约", () => sharedDefinitionCreate(deadState, {taskGroupId: deadGroup.id,
+        projectId: deadGroup.projectId, contractId: "sdc_dead_probe", definitionType: "terminology",
+        name: "探针", ownerRole: "orchestrator", producerRole: "orchestrator", conflictPolicy: "owner_reconciles_then_republish"})]
+    ];
+    for (const [label, run] of cases) {
+      let result;
+      try { result = run(); } catch (error) { result = {ok: false, error: String(error.message || error)}; }
+      if (result?.ok !== false || result?.error !== "task_group_settled") {
+        output.push(`已关闭的任务组里还能造「${label}」：${JSON.stringify(result).slice(0, 160)} ——`
+          + " 它会一直挂在「待你收尾」里，而收尾它不会有任何效果");
+      }
+    }
+    // 人工指令在【下达那一刻】就该说清楚，而不是提交成功、过一会儿在流水里变成"已驳回"。
+    let directiveError = null;
+    try {
+      createHumanDirective(deadState, {taskGroupId: deadGroup.id, directiveType: "pause"}, {actor: "acct_system_owner"});
+    } catch (error) { directiveError = error; }
+    if (directiveError?.message !== "task_group_already_terminal") {
+      output.push(`对已关闭的任务组还能下达人工指令（${directiveError?.message || "没有抛错"}）——`
+        + " 人提交成功、过一会儿才在流水里看到一条「已驳回」，还得自己猜为什么");
+    }
+    // 正面对照走同一条分支：没关的组照常造得出来。
+    const liveState = structuredClone(seedState);
+    ensureRuntimeCollections(liveState, {root});
+    const livePlan = reviewPlanCreate(liveState, {taskGroupId: "tg_runtime_management", requiredReviewerRoles: ["reviewer"]});
+    if (livePlan?.ok === false) {
+      output.push(`没关闭的任务组里也造不出评审计划了：${JSON.stringify(livePlan).slice(0, 160)}`);
+    }
+  }
+
   // 【终态这一层还要往下看一格】：任务组还活着，而工作项自己已经了结。
   // 派活不会把它退出终态（状态只在 draft→ready 那一步动），但归属角色被改写、时间被刷新、
   // 还现算一条模型选型决策 —— 屏幕上它看起来又活了；被人工放弃的那些更糟，人的决定像被翻掉。

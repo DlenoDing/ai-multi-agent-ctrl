@@ -9836,6 +9836,36 @@ const MUTATIONS = [
       + "  if (settledRejection) return settledRejection;\n  // 工作项自己也有终态。",
     expect: "已关闭的任务组里还能派活"
   },
+  {
+    name: "终结的任务组里不得再造评审计划（孪生的评审包早有这道门）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);\n"
+      + "  if (settledRejection) return settledRejection;\n"
+      + "  const at = new Date().toISOString();\n  const plan = {",
+    to: "  const at = new Date().toISOString();\n  const plan = {",
+    expect: "还能造「评审计划」"
+  },
+  {
+    name: "终结的任务组里不得再造共享定义契约（孪生的契约发布早有这道门）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "  if (args.taskGroupId) {\n"
+      + "    const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);\n"
+      + "    if (settledRejection) return settledRejection;\n  }",
+    to: "  if (false) {}",
+    expect: "还能造「共享定义契约」"
+  },
+  {
+    name: "对终结的任务组下达人工指令要当场拒（而不是先收下、过一会儿变成「已驳回」）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "  const terminalRefusal = taskGroupRuntimeControlRefusal(taskGroup, input.directiveType);\n"
+      + "  if (terminalRefusal) throw Object.assign(new Error(terminalRefusal.error), {status: 409, details: terminalRefusal});",
+    to: "  const terminalRefusal = null;\n"
+      + "  if (terminalRefusal) throw Object.assign(new Error(terminalRefusal.error), {status: 409, details: terminalRefusal});",
+    expect: "还能下达人工指令"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

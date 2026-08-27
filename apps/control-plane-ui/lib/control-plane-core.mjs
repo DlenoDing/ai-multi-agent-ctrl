@@ -6090,6 +6090,10 @@ export function createHumanDirective(state, input = {}, options = {}) {
   const taskGroup = input.taskGroupId ? (state.taskGroups || []).find((item) => item.id === input.taskGroupId) : null;
   const projectId = taskGroup?.projectId || input.projectId;
   if (!projectId) throw Object.assign(new Error("human_directive_project_required"), {status: 400});
+  // 终结的任务组不接受运行控制（消费循环已经会拒），在【下达那一刻】就说清楚 ——
+  // 否则人提交成功、过一会儿在流水里看到一条"已驳回"，还得自己去猜为什么。
+  const terminalRefusal = taskGroupRuntimeControlRefusal(taskGroup, input.directiveType);
+  if (terminalRefusal) throw Object.assign(new Error(terminalRefusal.error), {status: 409, details: terminalRefusal});
   // 认不出的类型【不能降级成便条】：pause/cancel 拼错一个字母，原先会被记成一条 free_text 便条，
   // 活照跑，而人以为自己已经把它停了（HTTP 200、无任何提示）。实测传 supplementary_requirement
   // 拿到的记录是 free_text。不填是另一回事 —— 那就是想写条便条，降级到 free_text 是保守的。
@@ -8389,6 +8393,11 @@ export function reviewPlanCreate(state, args) {
   // 另一条永远停在 ready 挡着关闭门，而且没有第二条杠杆碰得到它。那边早有守卫，这边漏了。
   assertUniqueRecordId(state.reviewPlans, "reviewPlanId", args.reviewPlanId, "review_plan_id_conflict");
   const taskGroup = taskGroupForRecordOrRefuse(state, args, "评审计划");
+  // 终结的任务组里不得再造【关闭门的阻塞对象】：评审计划会一直挂在「待你收尾」里，
+  // 而那个组已经关了 —— 收尾它不会有任何效果，也没有第二条杠杆能把它清掉。
+  // 孪生的 reviewBundleRegister 早有这道门，这边漏了（与上面那条唯一性守卫同一个形状）。
+  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);
+  if (settledRejection) return settledRejection;
   const at = new Date().toISOString();
   const plan = {
     schemaVersion: "review-plan/v1",
@@ -8931,6 +8940,12 @@ export function sharedDefinitionCreate(state, args) {
   assertUniqueRecordId(state.sharedDefinitions, "contractId", args.contractId, "shared_definition_id_conflict");
   // definitionType / conflictPolicy 规范里就是 enum，这条路原先原样收 —— 与 REST 那条同一个漏。
   assertSharedDefinitionClosedSets(args);
+  // 与 contractPublish（它早有这道门）同规：终结的任务组里不得再造共享定义契约 ——
+  // 它是关闭门的阻塞对象，落在已关闭的组上就成了谁也处置不掉的死记录。
+  if (args.taskGroupId) {
+    const settledRejection = taskGroupSettledRejection(state, args.taskGroupId);
+    if (settledRejection) return settledRejection;
+  }
   const at = new Date().toISOString();
   const taskGroup = taskGroupForRecord(state, args);
   const projectId = taskGroup?.projectId || args.projectId || "prj_control_plane";
