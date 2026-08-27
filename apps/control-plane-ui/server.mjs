@@ -6080,7 +6080,7 @@ async function handleApi(req, res) {
     } catch (error) {
       // 这条路由原先只回传 error.message，把核心函数特意附带的字段全丢了：轮次过期时人拿不到
       // 当前轮次，被别人抢先定稿时拿不到"是谁、定了什么"。这些字段正是这两种冲突下人唯一需要的东西。
-      return json(res, error.status || 500, {error: error.message,
+      return json(res, error.status || 500, {...(error.details || {}), error: error.message,
         ...(error.currentRound !== undefined ? {currentRound: error.currentRound} : {}),
         ...(error.currentStatus !== undefined ? {currentStatus: error.currentStatus} : {}),
         ...(error.decidedBy ? {decidedBy: error.decidedBy} : {}),

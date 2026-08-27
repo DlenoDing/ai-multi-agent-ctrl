@@ -5812,9 +5812,13 @@ export function decideHumanConfirmation(state, requestId, decision = {}, options
   //   finalize —— 明确选择定稿。到此为止 AI 不得再改（applyHumanFinalization 上锁）。
   // 默认值必须 fail-safe：核心决策在动作缺失时按【revise】处理（不可逆的定稿绝不能靠默认值发生），
   // 运行时确认单保留原有的 finalize 默认（它不锁定任何东西，只是回答一个执行期问题）。
-  const action = ["revise", "reject", "finalize"].includes(decision.action)
-    ? decision.action
-    : (selectedOptionId === "none" || request.decisionClass === "major" ? "revise" : "finalize");
+  // action 认不出就拒，不缺省成 finalize：定稿是整套人工闸门里最重、不可逆的一步。此前一个不带 action 的
+  // 决定（MCP 调用漏了这个键、旧客户端）会被当成定稿落下去；控制台那侧同日已改为拒绝，服务端才是那道门。
+  if (!["revise", "reject", "finalize"].includes(decision.action)) {
+    throw Object.assign(new Error("human_confirmation_action_required"),
+      {status: 400, details: {supported: ["revise", "reject", "finalize"], hint: "revise＝交 AI 再分析（不锁定）；finalize＝定稿并上锁；reject＝打回。系统不会替你选一个"}});
+  }
+  const action = decision.action;
   request.round = Number(request.round || 1);
   request.deliberation ||= [];
 

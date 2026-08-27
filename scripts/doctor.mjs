@@ -4312,6 +4312,16 @@ try {
         throw new Error("本轮没有待答的人工确认单（带选项的）—— 下面这条定稿断言在空转");
       }
       const option = pending.options.find((item) => item.optionId !== "none") || pending.options[0];
+      // 【不带 action 的决定要拒，不能当成定稿】：定稿是最重、不可逆的一步，缺省不得是它。
+      {
+        const noAction = await jsonFetch(port, `/api/human-confirmations/${encodeURIComponent(pending.requestId)}/decide`, {
+          method: "POST", headers: {"Idempotency-Key": `doctor-hcr-no-action-${pending.requestId}`, authorization: doctorSystemAuth},
+          body: JSON.stringify({selectedOptionId: option.optionId, expectedRound: Number(pending.round || 1)})
+        });
+        if (noAction.response.status !== 400 || noAction.payload?.error !== "human_confirmation_action_required" || !Array.isArray(noAction.payload?.supported)) {
+          throw new Error(`不带 action 的定稿决定该回 400 human_confirmation_action_required 并列出可选动作，实际 ${noAction.response.status} ${JSON.stringify(noAction.payload).slice(0, 200)} —— 缺省被当成了定稿`);
+        }
+      }
       const decided = await jsonFetch(port, `/api/human-confirmations/${encodeURIComponent(pending.requestId)}/decide`, {
         method: "POST",
         headers: {"Idempotency-Key": "doctor-human-finalize-happy", authorization: doctorSystemAuth},

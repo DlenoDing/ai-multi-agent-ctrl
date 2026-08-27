@@ -273,6 +273,7 @@
     dispatch_fail_claim_epoch_stale: "这条失败上报来自该派发的上一次认领，当前持有者已换代 —— 不能用它把正在跑的这一轮标记为失败或阻塞",
     join_token_role_scope_mismatch: "申请的角色超出入网令牌的授权范围",
     join_token_role_not_registered: "入网令牌的角色范围里有未登记的执行角色（这张票没有任何节点能用）",
+    human_confirmation_action_required: "定稿决定必须明写动作（交 AI 再分析 / 定稿 / 打回），系统不会替你选一个",
     lease_already_active: "该资源已有生效租约",
     lease_fencing_token_mismatch: "租约栅栏令牌不匹配（可能有更晚的持有者）",
     lease_fencing_token_required: "必须带上租约栅栏令牌",

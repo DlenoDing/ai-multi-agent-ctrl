@@ -638,7 +638,8 @@ try {
         + `${analyzedRequest.status} selectedOptionId=${analyzedRequest.selectedOptionId}）—— AI 只能提案，定稿是真人的`);
     }
     // 真人（控制台代表的 system_admin 会话）定稿：这一步必须真的落下去。
-    const decided = await call("human-review-mcp.confirmation_decide", {requestId, selectedOptionId: "go"});
+    // action 要明写：服务端不再把缺省当成定稿（那是最重的动作）。
+    const decided = await call("human-review-mcp.confirmation_decide", {requestId, selectedOptionId: "go", action: "finalize"});
     const decidedRequest = decided.request || decided;
     if (decidedRequest.status !== "answered" || decidedRequest.decision?.selectedOptionId !== "go") {
       throw new Error(`真人定稿没落下去：status=${decidedRequest.status} 选项=${JSON.stringify(decidedRequest.decision)} —— `

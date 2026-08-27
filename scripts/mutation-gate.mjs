@@ -10381,6 +10381,14 @@ const MUTATIONS = [
     expect: "review-bundle-resolve：status 空着要拒"
   },
   {
+    name: "服务端定稿决定不带 action 要拒（缺省曾是 finalize——最重的不可逆动作）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: '  if (!["revise", "reject", "finalize"].includes(decision.action)) {\n    throw Object.assign(new Error("human_confirmation_action_required"),',
+    to: '  if (!["revise", "reject", "finalize"].includes(decision.action)) decision.action = (selectedOptionId === "none" || request.decisionClass === "major" ? "revise" : "finalize");\n  if (false) {\n    throw Object.assign(new Error("human_confirmation_action_required"),',
+    expect: "缺省被当成了定稿"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

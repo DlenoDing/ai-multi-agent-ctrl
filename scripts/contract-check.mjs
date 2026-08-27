@@ -5280,7 +5280,7 @@ function verifyHumanAndOrganizationContracts(output) {
     if (dupe.requestId !== request.requestId) output.push("Human confirmation did not dedupe an identical pending request");
     let noneRejected = false;
     try {
-      decideHumanConfirmation(state, request.requestId, {selectedOptionId: "none"}, {actor: "acct_ct"});
+      decideHumanConfirmation(state, request.requestId, {action: "revise", selectedOptionId: "none"}, {actor: "acct_ct"});
     } catch (error) {
       noneRejected = error.message === "human_confirmation_input_required_for_none";
     }
@@ -5339,7 +5339,7 @@ function verifyHumanAndOrganizationContracts(output) {
         output.push("正常长度的定稿意见没有被原样存下 —— 存下来的与人写的不是同一句话");
       }
     }
-    const decided = decideHumanConfirmation(state, request.requestId, {selectedOptionId: request.options[0].optionId, inputText: "采用方案A"}, {actor: "acct_ct"});
+    const decided = decideHumanConfirmation(state, request.requestId, {action: "finalize", selectedOptionId: request.options[0].optionId, inputText: "采用方案A"}, {actor: "acct_ct"});
     if (decided.status !== "answered") output.push("Human confirmation decision did not move the request to answered");
     const requeued = (state.agentDispatches || []).find((item) => item.dispatchId === dispatch.dispatchId);
     if (requeued.status !== "queued") output.push("Answered human confirmation did not requeue its blocked dispatch");
