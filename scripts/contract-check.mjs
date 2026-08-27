@@ -786,6 +786,7 @@ run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
 runAsync(verifyStoppingAnExecutorTellsTheTruth);
 runAsync(verifyLocalEndpointUsesBoundPort);
+runAsync(verifyStartupSaysWhatIsWrongOnDisk);
 run(verifyMcpToolCrashIsNotDisguisedAsRefusal);
 run(verifyDocumentedEnvVarsAreRealKnobs);
 run(verifyReplayRemoteCheckDistinguishesLostFromMovedOn);
@@ -15750,6 +15751,55 @@ function verifyConsoleRoleExamplesAreRegistered(output) {
   if (!freeRoleInputs.length) output.push("没找到任何自由填角色的输入框 —— 这条在空转（表单改写了，提取要跟上）");
   if (withoutList.length) output.push(`控制台里自由填角色的输入框没挂词表：${withoutList.join("、")} —— 服务端只认已登记的执行角色，不给词表就是自造拼错陷阱`);
   console.log(`控制台自由填角色的输入框 ${freeRoleInputs.length} 个都挂着词表，${examples.length} 个示例都是已登记角色`);
+}
+
+// 【启动期盘上故障要说人话】。状态文件被截断：服务照常起（这是有意的：健康检查要能报出 storageFault），
+// 但终端上原先一个字都不说，横幅看起来健康；运行态目录不可写：原先只有一句 Node 的 EACCES 原话。
+async function verifyStartupSaysWhatIsWrongOnDisk(output) {
+  const outputBefore = output.length;
+  const spawnServer = (runtimeDir) => spawn(process.execPath, [join(root, "apps/control-plane-ui/server.mjs")], {
+    cwd: root, stdio: ["ignore", "pipe", "pipe"],
+    env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: "0", AIMAC_EXIT_WITH_PARENT: "1", AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_RUNTIME_DIR: runtimeDir, AIMAC_PUBLIC_URL: ""}
+  });
+  const collect = (child, doneWhen, maxMs) => new Promise((resolve) => {
+    let out = ""; let err = ""; let exitCode = null;
+    child.stdout.on("data", (chunk) => { out += String(chunk); });
+    child.stderr.on("data", (chunk) => { err += String(chunk); });
+    child.on("exit", (code) => { exitCode = code; });
+    const tick = setInterval(() => { if (doneWhen(out, err, exitCode)) { clearInterval(tick); resolve({out, err, exitCode}); } }, 50);
+    setTimeout(() => { clearInterval(tick); resolve({out, err, exitCode}); }, maxMs);
+  });
+  const corruptDir = mkdtempSync(join(tmpdir(), "aimac-startup-corrupt-"));
+  writeFileSync(join(corruptDir, "control-plane-state.json"), '{"schemaVersion":"runtime-state/v1","stateVersion":3,"projects":[{"id":"p');
+  const corrupt = spawnServer(corruptDir);
+  try {
+    const seen = await collect(corrupt, (out, err) => /Agent installer:/u.test(out) && /运行态文件损坏/u.test(err), 20000);
+    if (!/Agent installer:/u.test(seen.out)) output.push(`状态文件损坏时服务该照常起来（健康检查要能报 storageFault），实际没起来：${seen.err.slice(0, 200).replace(/\n/g, " ")}`);
+    if (!/\[startup\] 运行态文件损坏：control-plane-state\.json/u.test(seen.err) || !/npm run backup/u.test(seen.err)) {
+      output.push(`状态文件损坏时终端上没说（要点名文件、说清服务虽起来但数据面不可用、给出还原步骤）：${seen.err.slice(0, 200).replace(/\n/g, " ") || "（stderr 是空的，横幅看起来健康）"}`);
+    }
+  } finally {
+    try { corrupt.kill("SIGKILL"); } catch { /* 已经走了 */ }
+    rmSync(corruptDir, {recursive: true, force: true});
+  }
+  if (typeof process.getuid === "function" && process.getuid() === 0) {
+    console.log("（以 root 运行，chmod 500 挡不住写入 —— 「运行态目录不可写」那一支这次没验）");
+  } else {
+    const lockedDir = mkdtempSync(join(tmpdir(), "aimac-startup-locked-"));
+    chmodSync(lockedDir, 0o500);
+    const locked = spawnServer(lockedDir);
+    try {
+      const seen = await collect(locked, (out, err, exitCode) => exitCode !== null, 20000);
+      if (seen.exitCode !== 1 || !/\[startup\] 运行态目录不可写：/u.test(seen.err) || !seen.err.includes(lockedDir) || !/AIMAC_RUNTIME_DIR/u.test(seen.err)) {
+        output.push(`运行态目录不可写时该退出码 1 并点名目录、给出两条出路（改权限 / AIMAC_RUNTIME_DIR），实际 exit=${seen.exitCode}：${seen.err.slice(0, 200).replace(/\n/g, " ")}`);
+      }
+    } finally {
+      try { locked.kill("SIGKILL"); } catch { /* 已经走了 */ }
+      chmodSync(lockedDir, 0o700);
+      rmSync(lockedDir, {recursive: true, force: true});
+    }
+  }
+  if (output.length === outputBefore) console.log("启动期盘上故障：状态文件损坏会在终端点名并给还原步骤（服务照常起）；目录不可写会退出并说清出路");
 }
 
 // 【本地端点要用真正绑上的端口】。AIMAC_PORT=0 时原先只有横幅的控制台那一行修过：MCP/安装器两行、

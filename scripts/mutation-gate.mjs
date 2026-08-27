@@ -3217,6 +3217,24 @@ const MUTATIONS = [
     expect: "校验失败时没有一句人话"
   },
   {
+    name: "状态文件损坏时启动要在终端点名并给还原步骤",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    check: "verifyStartupSaysWhatIsWrongOnDisk",
+    from: "  console.error(`[startup] 运行态文件损坏：${corruptAtStartup[2]}（${corruptAtStartup[1]}）—— 服务照常起来、/api/health 会报 storageFault，但数据面不可用。`",
+    to: "  console.error(`[startup] ${corruptAtStartup[1]}`",
+    expect: "状态文件损坏时终端上没说"
+  },
+  {
+    name: "运行态目录不可写时启动要说清出路",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    check: "verifyStartupSaysWhatIsWrongOnDisk",
+    from: '  if (!["EACCES", "EPERM", "EROFS"].includes(error?.code)) return null;',
+    to: '  return null;',
+    expect: "运行态目录不可写时该退出码 1"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

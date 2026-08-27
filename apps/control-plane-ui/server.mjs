@@ -352,6 +352,13 @@ function startupError(summary, nextSteps) {
   return Object.assign(new Error(summary), {nextSteps});
 }
 
+// 启动期写不进运行态目录（EACCES/EPERM/EROFS）：assertRuntimeSecurity 读运行时配置时就会碰到，ensureState 也会。
+// 两处 catch 用同一句：点名目录、给两条出路。返回 null 表示不是这一类。
+function startupDiskProblem(error) {
+  if (!["EACCES", "EPERM", "EROFS"].includes(error?.code)) return null;
+  return `运行态目录不可写：${runtimeDir}（${error.code}）—— 给这个目录写权限（chown/chmod 给运行服务的用户），或用 AIMAC_RUNTIME_DIR 指到一个能写的目录`;
+}
+
 function weakSecret(value) {
   const text = String(value || "").trim();
   return unsafeSecretValues.has(text) || text.length < 20;
@@ -6864,11 +6871,31 @@ server.requestTimeout = Math.max(server.headersTimeout, Number(process.env.AIMAC
 try {
   assertRuntimeSecurity();
 } catch (error) {
-  console.error(`[startup] ${error.message}`);
+  console.error(`[startup] ${startupDiskProblem(error) || error.message}`);
   for (const step of error.nextSteps || []) console.error(`  · ${step}`);
   process.exit(1);
 }
-ensureState();
+// 启动期最常撞到的两种盘上故障要说人话：目录写不进（EACCES/EPERM/EROFS）原先只吐一句 Node 原话；
+// 状态文件损坏原先一个字都不说 —— 横幅照常打、看起来健康，只有 /api/health 才报 storageFault。
+try {
+  ensureState();
+} catch (error) {
+  const diskProblem = startupDiskProblem(error);
+  if (diskProblem) {
+    console.error(`[startup] ${diskProblem}`);
+    process.exit(1);
+  }
+  throw error;
+}
+try {
+  readState();
+} catch (error) {
+  const corruptAtStartup = storageFaultCodePattern.exec(String(error?.message || ""));
+  if (!corruptAtStartup) throw error;
+  lastStorageFault = {kind: corruptAtStartup[1], file: corruptAtStartup[2], at: new Date().toISOString()};
+  console.error(`[startup] 运行态文件损坏：${corruptAtStartup[2]}（${corruptAtStartup[1]}）—— 服务照常起来、/api/health 会报 storageFault，但数据面不可用。`
+    + `恢复：停掉服务，把最近一次 npm run backup 的整目录拷回 ${runtimeDir} 再启动；没有备份就删掉这份坏文件让下次启动按种子重建（会丢掉全部运行数据）`);
+}
 // 运行目录的身份（设备+inode）在启动时记一次：目录被清掉又重建时它会变。
 // 不能记【状态文件】的 inode —— 原子写每次 rename 都会换掉那个文件的 inode，
 // 那样第一次写入之后系统就会被判成 degraded（实测把 agent e2e 打挂了）。
