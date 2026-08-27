@@ -746,13 +746,31 @@ export function nodeHeartbeatTimeoutMs() {
   return boundedInteger(process.env.AIMAC_NODE_HEARTBEAT_TIMEOUT_MS, 60000, 86400000, 900000);
 }
 
+// 「这个节点的心跳过期了没」只有这一处判据：扫描把它标 offline 用它，健康检查算"在线节点数"也用它。
+// 原先健康检查按 node.status === "online" 数 —— 而 status 只在扫描跑过之后才翻成 offline（扫描挂在
+// 编排拍上），于是一批早就没心跳的节点在监控眼里一直"在线"。
+export function agentNodeHeartbeatOverdue(node, nowMs = Date.now(), graceMs = nodeHeartbeatTimeoutMs()) {
+  if (!["online", "degraded", "draining", "initializing"].includes(node?.status)) return false;
+  const lastBeat = new Date(node.lastHeartbeatAt || node.registeredAt || 0).getTime();
+  return Boolean(lastBeat) && nowMs - lastBeat >= graceMs;
+}
+
+export function agentNodeHealthSummary(state, nowMs = Date.now()) {
+  const graceMs = nodeHeartbeatTimeoutMs();
+  const nodes = state.agentRuntimeNodes || [];
+  const overdueNodes = nodes.filter((node) => agentNodeHeartbeatOverdue(node, nowMs, graceMs)).map((node) => ({
+    nodeId: node.nodeId, nodeName: node.nodeName || null, status: node.status, lastHeartbeatAt: node.lastHeartbeatAt || null,
+    overdueMs: nowMs - new Date(node.lastHeartbeatAt || node.registeredAt || 0).getTime()
+  }));
+  const overdueIds = new Set(overdueNodes.map((node) => node.nodeId));
+  return {onlineNodes: nodes.filter((node) => node.status === "online" && !overdueIds.has(node.nodeId)).length, overdueNodes};
+}
+
 export function sweepDeadAgentNodes(state, nowMs = Date.now()) {
   const graceMs = nodeHeartbeatTimeoutMs();
   const swept = [];
   for (const node of state.agentRuntimeNodes || []) {
-    if (!["online", "degraded", "draining", "initializing"].includes(node.status)) continue;
-    const lastBeat = new Date(node.lastHeartbeatAt || node.registeredAt || 0).getTime();
-    if (!lastBeat || nowMs - lastBeat < graceMs) continue;
+    if (!agentNodeHeartbeatOverdue(node, nowMs, graceMs)) continue;
     node.status = "offline";
     node.admission = "read_only";
     node.offlineReason = "heartbeat_timeout";

@@ -2943,6 +2943,10 @@ try {
       // 【已经知道的故障不能只讲给控制台听】。那条提示只有系统账号在归档页看得见，
       // 而盯着健康检查的是监控 —— 原先这里照样回 200 ok 且一个字都不提：问责记录正在丢，监控一片绿。
       const healthWhileFaulted = await jsonFetch(port, "/api/health");
+      // 接线：健康检查的节点数要来自共用判据那个汇总（带 overdueNodes 字段），不是按 status 数的旧写法。
+      if (typeof healthWhileFaulted.payload?.agentGateway?.overdueNodes !== "number") {
+        throw new Error(`/api/health 的 agentGateway 少了 overdueNodes —— 在线节点数没走共用的心跳判据（${JSON.stringify(healthWhileFaulted.payload?.agentGateway)}）`);
+      }
       const warned = (healthWhileFaulted.payload.warnings || [])
         .find((item) => item.kind === "audit_archive_write_failed");
       if (!warned) {

@@ -10211,6 +10211,22 @@ const MUTATIONS = [
     expect: "该带 skill_source_stale 警告"
   },
   {
+    name: "心跳过期判据（扫描与健康检查共用）",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "contract",
+    from: "  return Boolean(lastBeat) && nowMs - lastBeat >= graceMs;",
+    to: "  return false;",
+    expect: "没把心跳过期、status 仍为 online 的节点列成 overdueNodes"
+  },
+  {
+    name: "健康检查的在线节点数要走共用判据（不能退回按 status 数）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "onlineNodes: nodeHealth.onlineNodes, overdueNodes: nodeHealth.overdueNodes.length},",
+    to: "onlineNodes: state.agentRuntimeNodes.filter((node) => node.status === \"online\").length},",
+    expect: "agentGateway 少了 overdueNodes"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

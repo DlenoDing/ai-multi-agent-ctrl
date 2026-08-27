@@ -35,7 +35,7 @@ import {
   requestAgentNodeRevocation,
   revokeDispatchMcpGrants,
   selfCheckAgentNode,
-  validateDispatchClaim, nodeHeartbeatTimeoutMs } from "./lib/agent-gateway.mjs";
+  validateDispatchClaim, nodeHeartbeatTimeoutMs, agentNodeHealthSummary} from "./lib/agent-gateway.mjs";
 import { approvalResolve, assignWorkItem, handleMcpJsonRpc, isWriteTool, permissionResolve, createMcpToolDefinitions, mcpAuditFault } from "../mcp-server/server.mjs";
 import {
   recordOrchestratorTickOutcome,
@@ -2897,7 +2897,11 @@ async function handleApi(req, res) {
       .filter((source) => source.status === "stale" || source.status === "quarantined")
       .map((source) => ({sourceId: source.sourceId, status: source.status,
         lastSyncError: String(source.lastSyncError || "").slice(0, 200), lastSyncFailedAt: source.lastSyncFailedAt || null}));
+    // 在线节点数按【心跳没过期】数，不按 status 数：status 只在扫描跑过之后才翻成 offline。
+    const nodeHealth = agentNodeHealthSummary(state);
     const warnings = [
+      ...(nodeHealth.overdueNodes.length ? [{kind: "agent_node_heartbeat_overdue", nodes: nodeHealth.overdueNodes,
+        hint: "这些节点的心跳已经超过阈值、只是还没被扫描标成 offline：它们名下的活不会推进。先看节点机器是不是还活着，再决定重启节点或撤销它"}] : []),
       ...(skillSourceFaults.length ? [{kind: "skill_source_stale", sources: skillSourceFaults,
         hint: "技能源同步不上：agent 用的还是上一次同步下来的技能。按 lastSyncError 排查（地址 / 认证 / 分支 / 网络），修好后在「AI 智能体」页点「同步」，或等自治周期重试"}] : []),
       ...(mcpFault ? [{kind: "mcp_audit_write_failed", lostEntries: mcpFault.lostEntries,
@@ -2922,7 +2926,7 @@ async function handleApi(req, res) {
       runtime: state.runtime.status,
       publicUrl: publicEndpoint(req),
       mcp: {transport: "streamable-http", endpoint: `${publicEndpoint(req)}/mcp`, hostedBy: "control-plane"},
-      agentGateway: {endpoint: `${publicEndpoint(req)}/api/agent/v1`, onlineNodes: state.agentRuntimeNodes.filter((node) => node.status === "online").length},
+      agentGateway: {endpoint: `${publicEndpoint(req)}/api/agent/v1`, onlineNodes: nodeHealth.onlineNodes, overdueNodes: nodeHealth.overdueNodes.length},
       at: now()
     });
     return;

@@ -27,7 +27,7 @@ import { buildExecutionContentBundle as buildBundleForCheck, isSafeGitRemoteUrl 
 import { publicAgentNode, agentRuntimeOutdated, REQUIRED_AGENT_RUNTIME_VERSION } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { recordAgentExecutionEvent } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { PROJECT_SHARD_COLLECTION_LIMITS } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens, mcpToolsForRoles } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
+import { agentNodeHealthSummary, sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens, mcpToolsForRoles } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import {
   summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, mcpAcceptedInputVocabulary, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs, capacitySnapshot, assignWorkItem, inferMcpArgumentProjectIds
 } from "../apps/mcp-server/server.mjs";
@@ -3803,6 +3803,21 @@ function verifyHumanAndOrganizationContracts(output) {
       {commandId: "cmd_zombie", nodeId: "node_dead", status: "queued", updatedAt: staleAt},
       {commandId: "cmd_live", nodeId: "node_live", status: "queued", updatedAt: staleAt}
     ];
+    // 健康检查算"在线节点数"要与扫描用同一个判据：扫描还没跑、status 还是 online 的过期节点，
+    // 不许算进 onlineNodes，而要单列成 overdueNodes 报给监控。
+    {
+      const before = structuredClone(deadNodeState);
+      const summary = agentNodeHealthSummary(before, nowMs);
+      const deadIds = (before.agentRuntimeNodes || []).filter((node) => node.status === "online").map((node) => node.nodeId);
+      if (!summary.overdueNodes.length || !summary.overdueNodes.every((node) => deadIds.includes(node.nodeId))) {
+        output.push(`健康检查的节点汇总没把心跳过期、status 仍为 online 的节点列成 overdueNodes（${JSON.stringify(summary).slice(0, 160)}）—— 监控眼里死节点一直"在线"`);
+      }
+      // 夹具里一台死、一台活：在线数必须是「status 为 online」减去「其中心跳过期的」。
+      const expectedOnline = deadIds.length - summary.overdueNodes.length;
+      if (summary.onlineNodes !== expectedOnline) {
+        output.push(`健康检查把心跳过期的节点算进了 onlineNodes（${summary.onlineNodes}，应为 ${expectedOnline}）—— status 只在扫描之后才翻成 offline，按它数就是按过时的字数`);
+      }
+    }
     const sweptNodes = sweepDeadAgentNodes(deadNodeState, nowMs);
     if (!sweptNodes.includes("node_dead")) {
       output.push("死节点清扫: 长期无心跳的节点仍停在 online（节点集合永不裁剪，组织配额被永久占用）");
@@ -11635,6 +11650,9 @@ function verifyServerFieldsReachThePerson(output) {
   // 这些字段确实只发给机器（agent 运行时、装机脚本、MCP 客户端、健康探针），界面不该显示，
   // 逐个写明是谁在读 —— 登记不是免检，是把"为什么不用显示"钉住。
   const MACHINE_FACING_FIELDS = {
+    // /api/health 的节点汇总：盯着它的是监控与负载均衡器，控制台的节点页有自己的「心跳已超时」派生
+    // （同一判据），不再读这个数。
+    overdueNodes: "监控读 /api/health.agentGateway.overdueNodes（控制台节点页按同一判据自己派生）",
     replayed: "派发重放标记，agent 运行时据此判断要不要重复执行",
     transport: "入网自检读它（agentctl 比对 streamable-http），不是给人看的",
     // publicUrl 只出现在 /api/health 里，而控制台压根不渲染健康页 —— 它是运维/装机直接

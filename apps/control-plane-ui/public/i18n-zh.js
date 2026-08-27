@@ -998,6 +998,7 @@
     cross_org_member_not_allowed: "不允许跨组织添加成员",
     account_role_unknown: "账号角色不在词表里（授权模板的角色名不是账号角色）",
     skill_source_stale: "技能源同步不上，agent 用的还是上一次同步下来的技能",
+    agent_node_heartbeat_overdue: "节点心跳已超时、尚未被标成离线",
     role_skill_overlay_patch_unknown_keys: "角色技能叠加的 patch 里有认不出的键",
     project_invite_cannot_grant_system_account_or_permission: "项目邀请不能授予系统级账号或权限",
 
