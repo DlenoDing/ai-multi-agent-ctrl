@@ -3278,6 +3278,24 @@ const MUTATIONS = [
     expect: "回显样例与 agentctl 真打的不一致"
   },
   {
+    name: "协议文档的安装参数表要含脚本认的每个参数",
+    file: "docs/agent-runtime-protocol.md",
+    gate: "contract",
+    check: "verifyInstallerDocsMatchScriptAndTemplate",
+    from: "| `--no-daemon` | 只安装、不起常驻进程 |\n",
+    to: "",
+    expect: "参数表少了脚本认的参数"
+  },
+  {
+    name: "文档里带校验的安装样例要与签票模板一致",
+    file: "docs/agent-runtime-protocol.md",
+    gate: "contract",
+    check: "verifyInstallerDocsMatchScriptAndTemplate",
+    from: " || { printf '%s\\n' '安装脚本校验失败：下载可能被篡改或不完整 —— 别继续装；重新执行这条命令，仍失败就找控制面管理员' >&2; exit 1; } && \\",
+    to: " && \\",
+    expect: "没有模板里那句「安装脚本校验失败」"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

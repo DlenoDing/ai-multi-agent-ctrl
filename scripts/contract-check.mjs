@@ -974,6 +974,7 @@ run(verifyConsoleRoleExamplesAreRegistered);
 run(verifyAgentRunAnnouncesItself);
 run(verifyDefaultBackupTargetIsGitIgnored);
 run(verifyBootstrapEchoSamplesMatchRuntime);
+run(verifyInstallerDocsMatchScriptAndTemplate);
 run(verifyConsoleRuntimeConstantsHaveOneWriter);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
@@ -15716,6 +15717,29 @@ function verifyConsoleRuntimeConstantsHaveOneWriter(output) {
     if (!body || !body.includes("decorateRuntimeForConsole(")) output.push(`${reader} 没调 decorateRuntimeForConsole —— 这条路上界面拿不到词表`);
   }
   console.log(`界面 runtime 常量：${numericKeys.length} 个数值只在 decorateRuntimeForConsole 里赋值，三份词表只来自 core 的 consoleVocabularies，服务端两条读路径与勘察工具都经过它`);
+}
+
+// 【安装脚本的文档要与脚本、与签票模板一致】。协议文档自称「完整清单」的参数表没有门盯着；两份文档里
+// 带校验的安装样例在模板加了「校验失败」那句之后没跟上。参数从 scripts/install-agent.sh 的 case 分支取，
+// 校验失败那句从 agent-gateway 的模板取：模板里有的，样例里就得有。
+function verifyInstallerDocsMatchScriptAndTemplate(output) {
+  const script = readFileSync(join(root, "scripts/install-agent.sh"), "utf8");
+  const flags = [...new Set([...script.matchAll(/^\s*(--[a-z-]+(?:\|--[a-z-]+)*)\)/gmu)].flatMap((hit) => hit[1].split("|")))];
+  if (flags.length < 8) { output.push(`从 install-agent.sh 只提出 ${flags.length} 个参数 —— 提取脱节`); return; }
+  const protocol = readFileSync(join(root, "docs/agent-runtime-protocol.md"), "utf8");
+  const tableAt = protocol.indexOf("全部参数（");
+  const table = tableAt < 0 ? "" : protocol.slice(tableAt, protocol.indexOf("\n## ", tableAt));
+  const missing = flags.filter((flag) => !table.includes(`\`${flag}\``) && !table.includes(`${flag}\``));
+  if (!table) output.push("协议文档里找不到「全部参数（」那张表");
+  else if (missing.length) output.push(`协议文档自称完整的参数表少了脚本认的参数：${missing.join("、")}`);
+  const gateway = readFileSync(join(root, "apps/control-plane-ui/lib/agent-gateway.mjs"), "utf8");
+  if (gateway.includes("安装脚本校验失败")) {
+    for (const file of ["docs/agent-runtime-protocol.md", "docs/multi-agent-project-orchestration-system-design.md"]) {
+      const doc = readFileSync(join(root, file), "utf8");
+      if (!doc.includes("安装脚本校验失败")) output.push(`${file} 里带校验的安装样例没有模板里那句「安装脚本校验失败」—— 人照文档拷的命令与控制台签出来的不是一条`);
+    }
+  }
+  console.log(`安装脚本文档：${flags.length} 个参数都在协议文档的表里，两份文档的带校验样例与签票模板一致`);
 }
 
 // 【文档里的 bootstrap 回显样例要与 agentctl 真打的一致】。设计文档的样例曾列着 resourceClass/quotaClass/models…

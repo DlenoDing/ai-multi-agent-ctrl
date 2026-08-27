@@ -34,7 +34,7 @@ AIMAC_JOIN_TOKEN
 cd "$tmp" && \
 curl -fsSLO https://control.example.com/install-agent.sh && \
 curl -fsSLO https://control.example.com/install-agent.sh.sha256 && \
-( if command -v sha256sum >/dev/null 2>&1; then sha256sum -c install-agent.sh.sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 -c install-agent.sh.sha256; else printf '%s\n' 'sha256sum or shasum is required' >&2; exit 1; fi ) && \
+( if command -v sha256sum >/dev/null 2>&1; then sha256sum -c install-agent.sh.sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 -c install-agent.sh.sha256; else printf '%s\n' 'sha256sum or shasum is required' >&2; exit 1; fi ) || { printf '%s\n' '安装脚本校验失败：下载可能被篡改或不完整 —— 别继续装；重新执行这条命令，仍失败就找控制面管理员' >&2; exit 1; } && \
 sh install-agent.sh \
   --server https://control.example.com \
   --join-token-file "$tmp/aimac.join" \
