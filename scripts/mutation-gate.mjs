@@ -3607,7 +3607,9 @@ const MUTATIONS = [
     gate: "mcp",
     from: "  if (!grantResource.resourceType || !requestedResource.resourceType) return false;",
     to: "  if (grantResource.resourceType || requestedResource.resourceType) return true;",
-    expect: "授权作用域没起作用"
+    // 先红的不是「授权作用域没起作用」那一句，而是权限探询的双向对照
+    //（"没覆盖的那个组答 true"）—— 按实际先红的那一句写。
+    expect: "两个方向没都答对"
   },
   {
     name: "取不到仓库时基线证据不许编一个提交号",
@@ -3820,7 +3822,7 @@ const MUTATIONS = [
     gate: "contract",
     from: '  instructionMetrics: "指令度量", modelSelectionPolicies: "模型选型策略",',
     to: '  instructionMetrics: "指令度量",',
-    expect: "界面上却没有中文名"
+    expect: "而界面上没有中文名"
   },
   {
     name: "视图窗口认不出的时间字段名要被门看见",
@@ -4171,7 +4173,8 @@ const MUTATIONS = [
     gate: "doctor",
     from: "        ...(sanitizedGrant.supported ? {supported: sanitizedGrant.supported} : {})});\n      return;\n    }\n    const at = now();",
     to: "        ...(false ? {supported: sanitizedGrant.supported} : {})});\n      return;\n    }\n    const at = now();",
-    expect: "拒了却没说合法取值是哪几种"
+    // 先红的是 doctor 里那条点名的断言，不是通用那句 —— 按实际先红的写。
+    expect: "没有列出这个作用域支持的角色"
   },
   {
     name: "界面不许列后端不认的执行角色",
@@ -4767,8 +4770,12 @@ const MUTATIONS = [
     name: "关闭任务组按钮必须按行判权",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
+    // 原先 to 写的是 canCloseTaskGroup —— 那个变量后来被删了（它一处都没被用过，
+    // 是上一轮把逐行判权改成 hasGroupPerm 时留下的死变量）。变异引用一个不存在的标识符，
+    // 结果是【渲染当场崩】而不是断言失败：门红了，但红在 ReferenceError 上。
+    // 改用它当年代表的那个东西：跨资源并集。
     from: '    (barrier.satisfied && hasGroupPerm(barrier.taskGroupId, "task_group:control")',
-    to: "    (barrier.satisfied && canCloseTaskGroup",
+    to: '    (barrier.satisfied && hasPerm("task_group:control")',
     expect: "按钮出现了 2 个"
   },
   {
@@ -9316,8 +9323,8 @@ const MUTATIONS = [
     name: "抛错展开进报文的字段也要被门扫到",
     file: "apps/control-plane-ui/public/app.js",
     check: "verifyServerFieldsReachThePerson",
-    from: '    Array.isArray(payload.deniedPaths) && payload.deniedPaths.length\n      ? `踩到禁区的路径：${payload.deniedPaths.join("、")}` : "",',
-    to: '        "",',
+    from: '    pathList(payload.deniedPaths, "踩到禁区的路径"),',
+    to: '    "",',
     expect: "拒绝报文里带了 deniedPaths"
   },
   {

@@ -907,6 +907,16 @@ function associateFormLabels() {
 // 那是【网络失败时才走到】的一段，断言够不着，于是这九十行报文谁也没验过：
 // 实测配额拒绝会多打一句"故障类型：agents"（词表里没这个键，屏幕上是英文码，说的还是错的）。
 // 抽成纯函数：进去一个服务端载荷，出来一句给人看的话，门可以直接拿真载荷调它。
+// 越界这件事对人只有一个问题："到底是哪几条路"。服务端每一种都算好了（deniedPaths /
+// outsidePaths / trespassedPaths / forbiddenPaths / changedPaths / approvedPaths），
+// 而此前只有第一种被读 —— 那道「下发的字段有没有人接」的判据只扫 server.mjs，
+// 这一族是 core 在拒绝里算的，整族不在它视野里（跑完整变异门时一条变异假绿才发现）。
+function pathList(paths, label) {
+  if (!Array.isArray(paths) || !paths.length) return "";
+  return `${label}：${paths.slice(0, 8).join("、")}`
+    + `${paths.length > 8 ? `（共 ${paths.length} 条，此处显示前 8 条）` : ""}`;
+}
+
 function requestFailureHint(payload) {
   let hint = "";
   // 服务端在 403 里已经写明了缺哪个权限、作用在哪个资源上，前端原先只取 error 字段丢掉其余，
@@ -973,8 +983,28 @@ function requestFailureHint(payload) {
     Array.isArray(payload.allowedStatuses) && payload.allowedStatuses.length
       ? `可以转到：${payload.allowedStatuses.join("、")}` : "",
     // 踩了禁区时，到底是哪几条路径 —— 不说的话人得自己拿 diff 去比对。
-    Array.isArray(payload.deniedPaths) && payload.deniedPaths.length
-      ? `踩到禁区的路径：${payload.deniedPaths.join("、")}` : "",
+    // deniedPaths 的【同族兄弟】此前一个都没读：那道「下发的字段有没有人接」的判据只扫
+    // server.mjs，而这些字段是 core 在拒绝里算出来的，整族不在它视野里（跑完整变异门才发现）。
+    // 越界这件事对人只有一个问题："到底是哪几条路"，而服务端每一种都已经算好了。
+    // 逐个写成 payload.X 而不是 payload[field]：那道判据要确认字段【真的从回执里取出来了】，
+    // 动态取它认不出来（而认不出来就等于这几族又回到"没人读"的状态）。
+    pathList(payload.deniedPaths, "踩到禁区的路径"),
+    pathList(payload.outsidePaths, "落在允许范围之外的路径"),
+    pathList(payload.trespassedPaths, "越到别人边界里的路径"),
+    pathList(payload.forbiddenPaths, "被明令禁止的路径"),
+    pathList(payload.changedPaths, "这次实际改动的路径"),
+    pathList(payload.approvedPaths, "已获准的路径"),
+    // 锁被别人占着时，"被谁占着"决定了下一步是去找他还是等它过期。
+    payload.holderRef ? `当前持有者：${payload.holderRef}` : "",
+    payload.activeLeaseRef ? `还生效的租约：${payload.activeLeaseRef}` : "",
+    payload.maxBytes ? `上限 ${payload.maxBytes} 字节` : "",
+    payload.mismatchedField ? `对不上的字段：${payload.mismatchedField}` : "",
+    // 授权被拒时：作用域类型与角色决定了他该改哪一项再提交。
+    payload.resourceType ? `作用域类型：${explainCoded(payload.resourceType)}` : "",
+    payload.role ? `角色：${grantRoleLabel(payload.role)}` : "",
+    payload.taskGroupStatus ? `任务组当前状态：${t(payload.taskGroupStatus)}` : "",
+    payload.assessment ? `评估结论：${explainCoded(payload.assessment)}` : "",
+    payload.dispositionClass ? `处置类别：${explainCoded(payload.dispositionClass)}` : "",
     // expected / actual 是一对：只说"应该是 X"而不说"实际是什么"，人还是不知道差在哪。
     // （前端原先一个都没读；同名的 expectedConfigVersion 是另一回事，别混。）
     payload.expected !== undefined && payload.actual !== undefined

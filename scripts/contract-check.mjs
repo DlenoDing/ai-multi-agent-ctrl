@@ -11627,6 +11627,15 @@ function verifyServerFieldsReachThePerson(output) {
   for (const match of server.matchAll(/\.\.\.\((?:error|result)\.(\w+)\s*(?:!==\s*undefined\s*)?\?/gu)) {
     refusalFields.add(match[1]);
   }
+  // 【第三条路：core 直接 return 的拒绝】。这道判据原先只读 server.mjs —— 而拒绝报文里
+  // 相当一部分字段是 core 在 `return {ok:false, …}` / `return {valid:false, …}` 里算出来的，
+  // 路由原样转发给人。整族不在视野里：跑完整变异门时，一条针对 deniedPaths 的变异【假绿】了，
+  // 才发现这道门根本看不见它。实测这样补进来后现出 10 个字段（越界路径那一族、
+  // 锁的持有者、字节上限、对不上的字段名），控制台当时一个都没读。
+  const coreSrc = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  for (const match of coreSrc.matchAll(/return \{(?:ok|valid): false,([^}]{0,300})\}/gu)) {
+    for (const key of match[1].matchAll(/(^|[\s,])([a-zA-Z][a-zA-Z0-9_]{3,})\s*:/gu)) refusalFields.add(key[2]);
+  }
   if (refusalFields.size < 8) {
     output.push(`拒绝报文字段只提取到 ${refusalFields.size} 个 —— 提取多半失配，这一支在空转`);
     return;
@@ -14437,8 +14446,14 @@ function verifyHumanWrittenTextIsNeverSilentlyTruncated(output) {
     const shape = /(?:^|[.\s{,])(\w*(?:[Jj]ustification|[Rr]eason|[Dd]etail|inputText|instruction|objective|rationale))\s*[=:]\s*[^\n=][^\n]{0,90}?\.slice\(0,\s*(\d{2,5})\)/gmu;
     for (const match of text.matchAll(shape)) {
       if (!/^(?:\w*[Jj]ustification|\w*[Rr]eason|\w*[Dd]etail|inputText|instruction|objective|rationale)$/u.test(match[1])) continue;
-      // 只认【调用方给的原文】：机器自己拼的字符串不在这条纪律的管辖内。
-      if (!/\b(?:args|body|options|input|decision|request)\.\w+/u.test(match[0])) continue;
+      // 只认【调用方给的原文】—— 但这一条只用来给【新放宽的那两族】（*Reason / *Detail）把关：
+      // 机器自己拼的码（blockedReason = "x"）不该被误报。原始那几族（justification / inputText /
+      // instruction / objective / rationale）本来就无条件覆盖，套上这一条会把
+      // 「先取到局部变量再 slice」的站点筛掉 —— 实测共享定义处置依据就是这么丢掉覆盖的
+      //（`definition.resolutionJustification = definitionJustification.slice(0, 2000)` 这一行里
+      //  没有 args./body.，于是把守卫改坏之后这道门照样绿）。收紧只能加在新放宽的那一半上。
+      const widenedFamily = /^(?:\w*[Rr]eason|\w*[Dd]etail)$/u.test(match[1]);
+      if (widenedFamily && !/\b(?:args|body|options|input|decision|request)\.\w+/u.test(match[0])) continue;
       // 回显非法入参的错误回执：截断本来就是对的。
       const lineStart = text.lastIndexOf("\n", match.index) + 1;
       if (/\berror:|\bok:\s*false|\breceived:/u.test(text.slice(lineStart, match.index + match[0].length))) continue;
