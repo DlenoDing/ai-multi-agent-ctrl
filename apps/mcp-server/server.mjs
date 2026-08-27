@@ -1864,9 +1864,16 @@ function createWorkItem(state, args) {
   return {taskGroupId: taskGroup.id, workItem, taskGroup};
 }
 
+// 【不点名就不猜】。这里原先有个 `: taskGroup?.workItems?.[0]` 兜底：不给 workItemId 时
+// 悄悄取该组的【第一个】工作项。findTaskGroup 那个同形的 taskGroups[0] 兜底早就被拿掉了
+//（它会把记录记到别的租户名下），而这一个留到了现在，后果在 repositoryOutputTargetSelect 上
+// 最直接：它下一行写着 `args.workItemId || args.workId || workItem?.id`，于是那句
+// 「说不清时系统不会替你写一个占位名」的拒绝【永远不会触发】—— 产出目标绑到了另一个格子上，
+// agent 的改动落到别人的路径边界里。不点名就返回 null，让上面那道拒绝真正接得住。
 function findWorkItem(state, taskGroupId, workItemId) {
+  if (!workItemId) return null;
   const taskGroup = findTaskGroup(state, taskGroupId);
-  return workItemId ? taskGroup?.workItems?.find((item) => item.id === workItemId) || null : taskGroup?.workItems?.[0] || null;
+  return taskGroup?.workItems?.find((item) => item.id === workItemId) || null;
 }
 
 export function assignWorkItem(state, args) {

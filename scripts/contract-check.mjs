@@ -6390,6 +6390,36 @@ function verifyCommandBusLifecycle(output) {
     output.push("command-bus: no-side-effect command should succeed without a CommandEffect");
   }
 
+  // 【不点名就不猜】。findWorkItem 原先在不给 workItemId 时取该组的【第一个】工作项 ——
+  // 而 repositoryOutputTargetSelect 下一行写的是 `args.workItemId || args.workId || workItem?.id`，
+  // 于是它那句「说不清时系统不会替你写一个占位名」的拒绝【永远不会触发】：产出目标绑到了
+  // 另一个格子上，agent 的改动落到别人的路径边界里。同形的 taskGroups[0] 兜底早就被拿掉了。
+  {
+    const guessState = structuredClone(seedState);
+    ensureRuntimeCollections(guessState, {root});
+    const guessGroup = guessState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    if ((guessGroup.workItems || []).length < 2) {
+      output.push("不点名就不猜：这个任务组里不足两个工作项 —— 猜错格子这件事验不出来，本条在空转");
+    } else {
+      let refusal = null;
+      try {
+        repositoryOutputTargetSelect(guessState, {taskGroupId: guessGroup.id,
+          repositoryId: "repo_control_plane", branch: "main"});
+      } catch (error) { refusal = error; }
+      if (refusal?.message !== "work_item_not_found") {
+        output.push(`产出目标不点名工作项时没有被拒（${refusal?.message || "根本没抛错"}）——`
+          + ` 它会绑到该组的第一个格子（${guessGroup.workItems[0].id}）上，而 agent 的改动`
+          + "会落到别人的路径边界里");
+      }
+      // 正面对照：点了名的照常建得出来（否则这道判据把正常路径一起堵死）。
+      const named = repositoryOutputTargetSelect(guessState, {taskGroupId: guessGroup.id,
+        workItemId: guessGroup.workItems[1].id, repositoryId: "repo_control_plane", branch: "main"});
+      if (!named || named.ok === false) {
+        output.push(`点了名的产出目标也建不出来了：${JSON.stringify(named).slice(0, 160)}`);
+      }
+    }
+  }
+
   // 【同族里有的有门、有的没有】—— 上一条就是这么找到的（建工作项有、派活没有）。
   // 把"往终结的任务组里造关闭门阻塞对象"这一族点齐：评审包与契约发布早有这道门，
   // 而评审计划、共享定义契约漏了。它们落在已关闭的组上就成了「待你收尾」里永远清不掉的一条：

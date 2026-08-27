@@ -9866,6 +9866,17 @@ const MUTATIONS = [
       + "  if (terminalRefusal) throw Object.assign(new Error(terminalRefusal.error), {status: 409, details: terminalRefusal});",
     expect: "还能下达人工指令"
   },
+  {
+    name: "不点名工作项就不许猜（原先取该组第一个，把上面那道拒绝整个架空）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "contract",
+    from: "  if (!workItemId) return null;\n"
+      + "  const taskGroup = findTaskGroup(state, taskGroupId);\n"
+      + "  return taskGroup?.workItems?.find((item) => item.id === workItemId) || null;",
+    to: "  const taskGroup = findTaskGroup(state, taskGroupId);\n"
+      + "  return workItemId ? taskGroup?.workItems?.find((item) => item.id === workItemId) || null : taskGroup?.workItems?.[0] || null;",
+    expect: "没有被拒"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
