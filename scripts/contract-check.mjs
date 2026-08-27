@@ -962,6 +962,7 @@ run(verifyCommandBusLifecycle);
 run(verifyInitLedgerStartsHashed);
 run(verifyLedgerRowsGoThroughTheSharedBuilder);
 run(verifyOperatorKnobsAreDocumented);
+run(verifyAgentctlUnknownCommandListsCommands);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
 // 汇总之前把所有 async 检查等干净。少了这一句，它们推进的错误会赶不上报告。
@@ -15613,6 +15614,17 @@ function verifyOperatorKnobsAreDocumented(output) {
     output.push(`agent 节点侧旋钮无文档面的从 ${AGENT_KNOBS_UNDOCUMENTED_CEILING} 涨到 ${agentUndocumented.length} —— 新加的要写进 docs/agent-runtime-protocol.md：${agentUndocumented.join("、")}`);
   } else if (agentUndocumented.length < AGENT_KNOBS_UNDOCUMENTED_CEILING) {
     output.push(`agent 节点侧旋钮无文档面的已降到 ${agentUndocumented.length}，把 AGENT_KNOBS_UNDOCUMENTED_CEILING 改成这个数 —— 棘轮留着松弛量，下一次回退就看不出来了`);
+  }
+}
+
+// 【agentctl 打错命令要列出可用命令】。原先只回 "unknown command: start"，装机的人不知道有哪四个命令、
+// 旋钮去哪儿查。真起一次子进程打一个不存在的命令，要看到四个命令名与文档指路，退出码 2。
+function verifyAgentctlUnknownCommandListsCommands(output) {
+  const run = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "strat"], {cwd: root, encoding: "utf8", env: {...process.env, AIMAC_AGENT_WORK_DIR: mkdtempSync(join(tmpdir(), "aimac-agentctl-usage-"))}});
+  const said = `${run.stdout || ""}${run.stderr || ""}`;
+  const missing = ["bootstrap", "self-check", "status", "run", "agent-runtime-protocol.md"].filter((word) => !said.includes(word));
+  if (run.status !== 2 || missing.length) {
+    output.push(`agentctl 打错命令没有列出可用命令（exit ${run.status}，缺 ${missing.join("、") || "无"}）：${said.slice(0, 160).replace(/\n/g, " ")} —— 装机的人不知道有哪几个命令`);
   }
 }
 

@@ -13,6 +13,16 @@ const RUNTIME_VERSION = "0.3.0";
 const runtimeFilePath = fileURLToPath(import.meta.url);
 const args = parseArgs(process.argv.slice(2));
 const command = args._[0] || "run";
+// 认不出的命令要把可用的命令列出来：装机的人打错一个词（agentctl start）时，原先只看到
+// "unknown command: start"，既不知道有哪几个命令、也不知道旋钮在哪儿查。
+const USAGE = [
+  "用法：agentctl <命令> [参数]",
+  "  bootstrap   用一次性入网令牌注册这台节点（--server --join-token-file [--node-name] [--roles]）",
+  "  self-check  检查本机执行器、凭据与网络，不领活",
+  "  status      打印这台节点的注册状态与最近一次心跳",
+  "  run         常驻领活并执行（缺省命令；--once 只领一件）",
+  "环境变量（工作目录、执行器、超时、重试、排障开关）见 docs/agent-runtime-protocol.md §11。"
+].join("\n");
 function defaultDataRoot() {
   if (platform() === "darwin") return join(homedir(), "Library", "Application Support", "aimac-agent");
   if (platform() === "win32") return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "aimac-agent");
@@ -98,11 +108,13 @@ function explainAgentFailure(error) {
 }
 
 async function main() {
+  if (command === "help" || command === "--help" || args.help === true) { console.log(USAGE); return; }
   if (command === "bootstrap") return bootstrap();
   if (command === "self-check") return selfCheck(loadConfig());
   if (command === "status") return status(loadConfig());
   if (command === "run") { installChildReaper(); return run(loadConfig()); }
-  throw new Error(`unknown command: ${command}`);
+  console.error(`认不出的命令：${command}\n${USAGE}`);
+  process.exit(2);
 }
 
 async function bootstrap() {

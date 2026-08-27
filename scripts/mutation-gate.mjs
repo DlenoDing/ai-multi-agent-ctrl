@@ -10432,6 +10432,15 @@ const MUTATIONS = [
     expect: "运维要碰的环境旋钮没进 README 的表：AIMAC_MCP_AUDIT_ROTATIONS"
   },
   {
+    name: "agentctl 打错命令要列出可用命令（原先只回 unknown command）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "contract",
+    check: "verifyAgentctlUnknownCommandListsCommands",
+    from: "  console.error(`认不出的命令：${command}\\n${USAGE}`);\n  process.exit(2);",
+    to: "  throw new Error(`unknown command: ${command}`);",
+    expect: "agentctl 打错命令没有列出可用命令"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",
