@@ -576,6 +576,17 @@ try {
     if (JSON.stringify(vocab.payload?.runtime?.knownPermissions) !== JSON.stringify(typo.payload.supported)) {
       throw new Error("界面拿到的权限词表（runtime.knownPermissions）与拒绝报文里的 supported 不是同一份 —— 照着表单填也会被拒");
     }
+    // 授权表单的「角色」是权限模板名：界面拿到的模板词表也要与拒绝报文里的 supported 是同一份。
+    const typoGrantRole = await jsonFetch(port, "/api/access-grants", {
+      method: "POST", headers: {"Idempotency-Key": "doctor-typo-grant-role", authorization: systemAuth},
+      body: JSON.stringify({subjectId: "acct_workspace_owner", resourceType: "project", resourceId: "prj_control_plane", role: "veiwer"})
+    });
+    if (typoGrantRole.response.status !== 400 || typoGrantRole.payload?.error !== "grant_role_has_no_permission_template") {
+      throw new Error(`拼错的授权角色该回 400 grant_role_has_no_permission_template，实际 ${typoGrantRole.response.status} ${JSON.stringify(typoGrantRole.payload).slice(0, 160)}`);
+    }
+    if (JSON.stringify(vocab.payload?.runtime?.grantRoleTemplates?.project) !== JSON.stringify(typoGrantRole.payload.supported)) {
+      throw new Error(`界面拿到的授权角色词表（runtime.grantRoleTemplates.project）与拒绝报文里的 supported 不是同一份：${JSON.stringify(vocab.payload?.runtime?.grantRoleTemplates)} vs ${JSON.stringify(typoGrantRole.payload.supported)}`);
+    }
     console.log("  ok  拼错的权限在授权与邀请两条路都被拒并点名，界面拿到的词表与拒绝报文同一份");
   }
   // 任务组作用域上没有 project_admin 的模板（项目作用域上有）—— 同一个角色名，两个作用域两种答案。

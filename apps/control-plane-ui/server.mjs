@@ -93,7 +93,7 @@ import {
   ACCOUNT_ROLES,
   unknownAccountRoles,
   KNOWN_PERMISSIONS,
-  unknownPermissions,
+  unknownPermissions, grantPermissionTemplates,
   unknownOwnerRoles,
   runAgentRuntimeWorker,
   runAutonomousCycle,
@@ -373,6 +373,7 @@ function readStateForRead() {
     // （界面自己那张标签表里混着授权模板的角色名，正是要避开的混淆）。
     fresh.runtime.accountRoles = [...ACCOUNT_ROLES];
     fresh.runtime.knownPermissions = [...KNOWN_PERMISSIONS];
+    fresh.runtime.grantRoleTemplates = grantRoleTemplateNames();
     deepFreezeState(fresh);
     preparedReadState = {source: shared, state: fresh};
   }
@@ -404,6 +405,7 @@ function readState() {
   // （界面自己那张标签表里混着授权模板的角色名，正是要避开的混淆）。
   state.runtime.accountRoles = [...ACCOUNT_ROLES];
   state.runtime.knownPermissions = [...KNOWN_PERMISSIONS];
+  state.runtime.grantRoleTemplates = grantRoleTemplateNames();
   return state;
 }
 
@@ -794,6 +796,12 @@ function unregisteredDefaultRoles(list) {
 function defaultRoleRefusal(unknownRoles) {
   return {error: "config_default_role_not_registered", unknownOwnerRoles: unknownRoles.slice(0, 10), supported: [...REGISTERED_OWNER_ROLES],
     message: `默认角色「${unknownRoles.slice(0, 10).join("、")}」不在已登记的执行角色里 —— 可用：${REGISTERED_OWNER_ROLES.join("、")}`};
+}
+
+// 授权表单的「角色」是权限模板名（viewer/editor/…），按作用域各有一份；服务端套不出模板就拒，
+// 所以词表要下发给界面（与 knownPermissions 同规），拒绝报文里的 supported 与它必须是同一份。
+function grantRoleTemplateNames() {
+  return {project: Object.keys(grantPermissionTemplates("project")), task_group: Object.keys(grantPermissionTemplates("task_group"))};
 }
 
 function normalizeStringList(value, fallback = [], field = "list") {

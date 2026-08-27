@@ -718,6 +718,7 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     // 【今天新加的三个拒绝码，提示要点名它们各自算好的东西】：拼错的角色/权限是哪几个、可用的是哪些。
     // 只显示一个码等于把人打回去猜；服务端每一种都算好了（unknownRoles / unknownPermissions / supported）。
     for (const [label, payload, mustName] of [
+      ["配置默认角色没登记", {error: "config_default_role_not_registered", unknownOwnerRoles: ["reviwer"], supported: ["reviewer", "qa"]}, ["reviwer", "reviewer"]],
       ["智能体角色没登记", {error: "agent_role_not_registered", unknownRoles: ["reviwer"], supported: ["reviewer", "qa"]}, ["reviwer", "reviewer"]],
       ["账号角色不在词表", {error: "account_role_unknown", unknownRoles: ["project_member"], supported: ["member", "viewer"]}, ["project_member", "member"]],
       ["权限不在词表", {error: "permission_unknown", unknownPermissions: ["project:veiw"], supported: ["project:view"]}, ["project:veiw", "project:view"]],
@@ -4110,6 +4111,15 @@ function runWholeListCapCase() {
       check("邀请与授权表单要列出服务端下发的权限词表（拼错一个字母的权限现在会被拒）",
         (permHtml.match(/<datalist id="known-permission-options">/gu) || []).length === 2 && permHtml.includes('<option value="task_group:review">'),
         "两个权限输入框没有各自的 datalist，或 datalist 里少了服务端下发的权限");
+    }
+    {
+      const grantRoot = el("div");
+      loadConsole(grantRoot).renderFullPageWith({...base, runtime: {...(base.runtime || {}), grantRoleTemplates: {project: ["viewer", "editor"], task_group: ["viewer", "operator"]}}}, admin, null, "sys-accounts");
+      const grantHtml = grantRoot.innerHTML;
+      check("授权表单的「角色」要列出服务端下发的权限模板名（套不出模板就 400）",
+        /<input name="role" value="viewer" list="grant-role-options">/u.test(grantHtml) && /<datalist id="grant-role-options">/u.test(grantHtml)
+          && ["viewer", "editor", "operator"].every((role) => grantHtml.includes(`<option value="${role}">`)),
+        "授权表单的角色输入框没挂词表，或 datalist 里少了服务端下发的模板名");
     }
     check("邀请表单要列出服务端下发的账号角色词表（自由文本配枚举校验＝拼错一次就 400）",
       hasList && ["member", "viewer", "reviewer"].every((role) => html.includes(`<option value="${role}">`)),

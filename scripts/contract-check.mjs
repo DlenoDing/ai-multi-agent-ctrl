@@ -967,6 +967,7 @@ run(verifyInitLedgerStartsHashed);
 run(verifyLedgerRowsGoThroughTheSharedBuilder);
 run(verifyOperatorKnobsAreDocumented);
 run(verifyAgentctlUnknownCommandListsCommands);
+run(verifyConsoleRoleExamplesAreRegistered);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
 // 汇总之前把所有 async 检查等干净。少了这一句，它们推进的错误会赶不上报告。
@@ -15619,6 +15620,24 @@ function verifyOperatorKnobsAreDocumented(output) {
   } else if (agentUndocumented.length < AGENT_KNOBS_UNDOCUMENTED_CEILING) {
     output.push(`agent 节点侧旋钮无文档面的已降到 ${agentUndocumented.length}，把 AGENT_KNOBS_UNDOCUMENTED_CEILING 改成这个数 —— 棘轮留着松弛量，下一次回退就看不出来了`);
   }
+}
+
+// 【控制台里自由填角色的输入框：示例必须是已登记的执行角色，且都挂着词表】。服务端五扇门（建任务组/入网令牌/
+// 建智能体/项目配置/任务组配置）现在都按 REGISTERED_OWNER_ROLES 拒；项目设置的角色行原先示例写着
+// backend-developer —— 人照着示例填，得到的就是一句拒绝。示例与词表都盯着那一行自己的形状。
+function verifyConsoleRoleExamplesAreRegistered(output) {
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const examples = [...app.matchAll(/name="(roleId|role|roles|defaultRoles|allowedRoles)"[^>]*placeholder="[^"]*如 ([A-Za-z_-]+)[）)]/gu)];
+  for (const [, field, example] of examples) {
+    if (!REGISTERED_OWNER_ROLES.includes(example)) {
+      output.push(`控制台 ${field} 输入框的示例「${example}」不是已登记的执行角色 —— 人照着示例填就会被服务端拒`);
+    }
+  }
+  const freeRoleInputs = [...app.matchAll(/<input name="(roleId|role|roles|defaultRoles|allowedRoles)"[^>]*>/gu)];
+  const withoutList = freeRoleInputs.filter(([tag]) => !/\blist="/u.test(tag)).map(([, field]) => field);
+  if (!freeRoleInputs.length) output.push("没找到任何自由填角色的输入框 —— 这条在空转（表单改写了，提取要跟上）");
+  if (withoutList.length) output.push(`控制台里自由填角色的输入框没挂词表：${withoutList.join("、")} —— 服务端只认已登记的执行角色，不给词表就是自造拼错陷阱`);
+  console.log(`控制台自由填角色的输入框 ${freeRoleInputs.length} 个都挂着词表，${examples.length} 个示例都是已登记角色`);
 }
 
 // 【agentctl 打错命令要列出可用命令】。原先只回 "unknown command: start"，装机的人不知道有哪四个命令、

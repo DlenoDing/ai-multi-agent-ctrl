@@ -3055,6 +3055,31 @@ const MUTATIONS = [
     expect: "任务组配置里写错的默认角色该被拒"
   },
   {
+    name: "控制台角色输入框的示例必须是已登记的执行角色",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "contract",
+    check: "verifyConsoleRoleExamplesAreRegistered",
+    from: 'placeholder="角色 ID（只认已登记的执行角色，如 reviewer）"',
+    to: 'placeholder="角色 ID（只认已登记的执行角色，如 backend-developer）"',
+    expect: "不是已登记的执行角色"
+  },
+  {
+    name: "授权表单的角色要挂服务端下发的权限模板词表",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '<input name="role" value="viewer" list="grant-role-options"><datalist id="grant-role-options">',
+    to: '<input name="role" value="viewer" list="grant-role-options"><datalist id="grant-role-options-detached">',
+    expect: "授权表单的「角色」要列出服务端下发的权限模板名"
+  },
+  {
+    name: "界面拿到的授权角色词表要与拒绝报文的 supported 同一份",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '  state.runtime.grantRoleTemplates = grantRoleTemplateNames();',
+    to: '  state.runtime.grantRoleTemplates = {project: ["viewer"], task_group: ["viewer"]};',
+    expect: "与拒绝报文里的 supported 不是同一份"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

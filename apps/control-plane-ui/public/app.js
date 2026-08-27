@@ -2304,7 +2304,7 @@ function renderSysAccounts() {
           <select name="resourceType"><option value="project">项目</option><option value="task_group">任务组</option></select>
         </div>
         <div class="form-row"><label>资源 ID</label><input name="resourceId" required placeholder="prj_... / tg_..."></div>
-        <div class="form-row"><label>角色</label><input name="role" value="viewer"></div>
+        <div class="form-row"><label>角色（权限模板；只认服务端词表里的）</label><input name="role" value="viewer" list="grant-role-options"><datalist id="grant-role-options">${[...new Set(Object.values(state.runtime?.grantRoleTemplates || {}).flat())].map((role) => `<option value="${esc(role)}">${esc(t(role))}</option>`).join("")}</datalist></div>
         <div class="form-row"><label>权限（逗号分隔；只认服务端词表里的）</label><input name="permissions" value="project:view" list="known-permission-options"><datalist id="known-permission-options">${(state.runtime?.knownPermissions || []).map((permission) => `<option value="${esc(permission)}">${esc(t(permission))}</option>`).join("")}</datalist></div>
         <button class="primary-button" type="submit">新增授权</button>
       </form>
@@ -3141,7 +3141,8 @@ function renderTaskGroupDetail(taskGroup) {
       }))}
       <form class="form-grid" data-form="tg-config" data-task="${esc(taskGroup.id)}">
         <div class="form-row"><label>默认角色（逗号分隔角色 ID）</label>
-          <input name="defaultRoles" data-orig="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" value="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" ${editDisabled}>
+          <input name="defaultRoles" list="config-role-options" data-orig="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" value="${esc((config.defaultRoles || []).map((role) => role.roleId || role).join(","))}" ${editDisabled}>
+          <datalist id="config-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist>
         </div>
         <div class="record-meta">
           <span>仓库配置：${(config.repositories || []).length} 条（在「项目设置」页维护，任务组可覆盖）</span>
@@ -4767,7 +4768,7 @@ function cfgBaselineRow(item = {}) {
 function cfgRoleRow(role = {}) {
   return `
     <div class="cfg-row" data-cfg-kind="role">
-      <input name="roleId" placeholder="角色 ID（如 backend-developer）" value="${esc(role.roleId || "")}">
+      <input name="roleId" placeholder="角色 ID（只认已登记的执行角色，如 reviewer）" list="config-role-options" value="${esc(role.roleId || "")}">
       <input name="roleSkillRef" placeholder="角色规则引用（可选）" value="${esc(role.roleSkillRef || "")}">
       <button type="button" class="danger-button" data-action="cfg-del">删除</button>
     </div>
@@ -4827,6 +4828,7 @@ function renderProjectSettings() {
           <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="baseline" data-target="proj-baseline" ${editDisabled}>添加基线</button></div>
         </div>
         <div class="form-row"><label>默认角色</label>
+          <datalist id="config-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist>
           <div class="cfg-rows" data-cfg-list="proj-roles">${defaultRoles.map((role) => cfgRoleRow(role)).join("")}${cfgEmpty(defaultRoles, "还没有项目默认角色：任务组会各自指定角色，指定不到时回退到系统内置角色。")}</div>
           <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="role" data-target="proj-roles" ${editDisabled}>添加角色</button></div>
         </div>
