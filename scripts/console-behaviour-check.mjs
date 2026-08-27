@@ -2095,6 +2095,23 @@ function runNoVisibleProjectCase() {
         "下拉是空的，人分不清这个项目没有任务组、还是他一个都动不了");
     }
 
+    // 同一条纪律在人工指令页那个下拉上（它走 taskGroupSelector，另一条代码路径）。
+    {
+      const dirState = structuredClone(stuckState);
+      dirState.taskGroups = [
+        {id: "tg1", projectId: "p1", name: "我有权的组", status: "development", workItems: []},
+        {id: "tg2", projectId: "p1", name: "别人的组", status: "development", workItems: []}
+      ];
+      dirState.taskGroupPermissions = {};
+      dirState.taskGroupPermissionsDefault = [];
+      const member = {accountId: "u7", accountType: "org_member", displayName: "成员",
+        organizationId: "org_default", effectivePermissions: ["task_group:control", "project:read"]};
+      const dirText = renderAs(member, dirState, "directives", "p1");
+      check("人工指令的目标任务组下拉空了，也要说清是「都没权限」而不是「没有任务组」",
+        /都没有/u.test(dirText) && /按【任务组】授予/u.test(dirText),
+        String(dirText).replace(/<[^>]+>/gu, " ").match(/目标任务组[^|]{0,80}/u)?.[0] || "（这一段没渲染出来）");
+    }
+
     // 【在别的组上有同名权限，不等于这个组上有】。面板级那三个判据走的是 effectivePermissions
     // （跨资源并集，服务端注释里写明它只是 UI 提示），而下面每一段按任务组过滤 ——
     // 于是"在 tg1 上有评审权、待收尾的计划都在 tg2"这种人：警告不显示、列表也空，

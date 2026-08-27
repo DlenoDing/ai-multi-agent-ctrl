@@ -9765,6 +9765,16 @@ const MUTATIONS = [
     to: "            const addable = groups;",
     expect: "选了也只会被后端拒掉"
   },
+  {
+    name: "任务组下拉被权限过滤空了，要说清是「都没权限」而不是「没有任务组」",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (!groups.length) {\n"
+      + '    return `<select data-select="${selectName}" disabled></select>`',
+    to: "  if (false) {\n"
+      + '    return `<select data-select="${selectName}" disabled></select>`',
+    expect: "而不是「没有任务组」"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

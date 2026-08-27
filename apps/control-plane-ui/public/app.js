@@ -3403,13 +3403,28 @@ function findWorkItemDispatch(taskGroupId, workItemId) {
 // requirePermission：只列出【在那个任务组上真有这个权限】的组。人工指令表单用它 ——
 // 原先列出全部组，选到自己没权限的那个，提交必然 403，而人是照着下拉选的。
 function taskGroupSelector(selectedId, selectName, requirePermission = null) {
+  const all = projectTaskGroups();
   const groups = requirePermission
-    ? projectTaskGroups().filter((taskGroup) => hasGroupPerm(taskGroup.id, requirePermission))
-    : projectTaskGroups();
+    ? all.filter((taskGroup) => hasGroupPerm(taskGroup.id, requirePermission))
+    : all;
+  // 【过滤空了要说清是哪一种空】。原先一个都不剩时渲染的是一个空下拉：人分不清
+  // "这个项目没有任务组" 和 "有，但你一个都动不了" —— 而这两件事的下一步完全不同
+  //（前者去建一个，后者去找人授权）。权限是按【任务组】给的，还要说这一句：
+  // 他在别的组上可能确实有，不说就会以为界面坏了。
+  if (!groups.length) {
+    return `<select data-select="${selectName}" disabled></select>`
+      + `<div class="small warn-text">${all.length
+        ? `这个项目有 ${all.length} 个任务组，但你在其中任何一个上都没有「${esc(requirePermission || "")}」权限 ——`
+          + "权限按【任务组】授予，找项目负责人在具体的组上授予后再来"
+        : "这个项目还没有任务组"}</div>`;
+  }
   return `
     <select data-select="${selectName}">
       ${groups.map((taskGroup) => `<option value="${esc(taskGroup.id)}" ${taskGroup.id === selectedId ? "selected" : ""}>${esc(taskGroup.name || taskGroup.id)}</option>`).join("")}
     </select>
+    ${groups.length < all.length
+      ? `<div class="small">另有 ${all.length - groups.length} 个组你没有这个权限，没有列出来</div>`
+      : ""}
   `;
 }
 
