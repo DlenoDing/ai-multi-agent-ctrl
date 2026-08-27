@@ -9775,6 +9775,22 @@ const MUTATIONS = [
       + '    return `<select data-select="${selectName}" disabled></select>`',
     expect: "而不是「没有任务组」"
   },
+  {
+    name: "终结状态必须被所有写入口尊重：已关闭的任务组不接受运行控制",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "  if (!taskGroup || !CLOSED_TASK_GROUP_STATUSES.has(taskGroup.status)) return null;",
+    to: "  if (true) return null;",
+    expect: "关闭是真人做的终局决定"
+  },
+  {
+    name: "人工指令那条路也要过同一道终态检查（同一件事两条路）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "    const terminalRefusal = taskGroupRuntimeControlRefusal(taskGroup, directive.directiveType);",
+    to: "    const terminalRefusal = null;",
+    expect: "两条路只挡住一条"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

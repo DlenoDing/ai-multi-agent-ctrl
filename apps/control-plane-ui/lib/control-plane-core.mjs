@@ -6182,6 +6182,26 @@ export function expireStaleHumanConfirmations(state) {
   return expired;
 }
 
+// 【终结状态必须被所有写入口尊重】—— 而任务组的运行控制有【两条路】：
+//   REST 的 /api/task-groups/:id/control（暂停 / 恢复 / 请求评审 / 纠偏），
+//   以及人工指令的消费循环（同样能暂停、取消、改优先级、追加要求）。
+// 两条路原先都没有终态检查：一个已经关闭的组照样能被改成「已被控制暂停」、被重开评审、
+// 被打成需关注 —— 而关闭是真人做的终局决定，改它等于把那个决定悄悄翻掉。
+// 收成一个判断，两侧都过它（本仓反复出问题的形状就是"同一件事两条路只改一条"）。
+// recompute_readiness 例外：它什么都不改，人在事后还要看这个组当时为什么能关。
+export function taskGroupRuntimeControlRefusal(taskGroup, action) {
+  if (!taskGroup || !CLOSED_TASK_GROUP_STATUSES.has(taskGroup.status)) return null;
+  if (action === "recompute_readiness") return null;
+  return {
+    error: "task_group_already_terminal",
+    status: taskGroup.status,
+    action,
+    message: `这个任务组已经是终态（${taskGroup.status === "aborted" ? "已中止" : "已关闭"}），`
+      + "不能再暂停 / 恢复 / 请求评审 / 纠偏 —— 关闭是真人做的终局决定，"
+      + "改它等于把那个决定翻掉。要继续推进这件事，请新建一个任务组；这个组保留下来是为了留痕。"
+  };
+}
+
 export function consumeQueuedHumanDirectives(state, request = {}) {
   const applied = [];
   // Apply oldest-first (FIFO): humanDirectives is stored newest-first (unshift), so reverse the
@@ -6192,6 +6212,16 @@ export function consumeQueuedHumanDirectives(state, request = {}) {
     directive.status = "acknowledged";
     directive.updatedAt = at;
     const taskGroup = directive.taskGroupId ? (state.taskGroups || []).find((item) => item.id === directive.taskGroupId) : null;
+    // 与 REST 那条控制路径同一份判断：终态的组不再接受运行控制类指令。
+    // 不写这一句的话，人对一个已关闭的组下「暂停」，这里会照做并把它改成 active_paused_by_freeze。
+    const terminalRefusal = taskGroupRuntimeControlRefusal(taskGroup, directive.directiveType);
+    if (terminalRefusal) {
+      directive.status = "rejected";
+      directive.rejectReason = terminalRefusal.message;
+      directive.updatedAt = new Date().toISOString();
+      applied.push({directiveId: directive.directiveId, status: directive.status, appliedActions: directive.appliedActions});
+      continue;
+    }
     try {
       if (directive.directiveType === "pause" && taskGroup) {
         taskGroup.goalExecutionStatus = "active_paused_by_freeze";

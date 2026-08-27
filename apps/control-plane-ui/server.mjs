@@ -104,6 +104,7 @@ import {
   HUMAN_ACTOR_KEY,
   effectivePathDenylist,
   recordIdempotentResult,
+  taskGroupRuntimeControlRefusal,
   idempotentReplayOutcome,
   recordCheckpointRejection,
   routeBlockedDispatchToHumanDecision,
@@ -4317,6 +4318,12 @@ async function handleApi(req, res) {
     const action = String(body.action || "recompute_readiness");
     if (!TASK_GROUP_CONTROL_ACTIONS.includes(action)) {
       json(res, 400, {error: "unsupported_task_group_control_action", supported: TASK_GROUP_CONTROL_ACTIONS});
+      return;
+    }
+    // 终态的组不再接受运行控制 —— 与人工指令那条路共用同一份判断（两条路都能暂停/取消/改优先级）。
+    const terminalRefusal = taskGroupRuntimeControlRefusal(taskGroup, action);
+    if (terminalRefusal) {
+      json(res, 409, terminalRefusal);
       return;
     }
     const guard = beginGuardedWrite(req, state, `task_group_${action}`, `TaskGroup:${taskGroup.id}`, taskGroupScope(state, taskGroup.id));

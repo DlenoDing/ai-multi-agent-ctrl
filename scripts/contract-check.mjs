@@ -52,6 +52,7 @@ import {
   gitHead,
   createHumanDirective,
   consumeQueuedHumanDirectives,
+  taskGroupRuntimeControlRefusal,
   defaultSystemRules,
   effectiveTaskGroupConfig,
   ensureRuntimeCollections,
@@ -6387,6 +6388,52 @@ function verifyCommandBusLifecycle(output) {
   const done = succeedCommand(state, cmd, {resultRef: "result:x"});
   if (done.command.status !== "succeeded" || done.commandEffect) {
     output.push("command-bus: no-side-effect command should succeed without a CommandEffect");
+  }
+
+  // 【终结状态必须被所有写入口尊重】。任务组的运行控制有两条路：REST 的 /control，
+  // 以及人工指令的消费循环 —— 两条路原先都没有终态检查，一个已关闭的组照样能被改成
+  // 「已被控制暂停」、被重开评审、被打成需关注，而关闭是真人做的终局决定。
+  {
+    for (const action of ["pause", "resume", "request_review", "rebound_drift", "cancel"]) {
+      const refusal = taskGroupRuntimeControlRefusal({id: "tg_x", status: "closed"}, action);
+      if (!refusal || refusal.error !== "task_group_already_terminal") {
+        output.push(`已关闭的任务组还接受「${action}」：${JSON.stringify(refusal)} —— `
+          + "关闭是真人做的终局决定，改它等于把那个决定悄悄翻掉");
+      } else if (!refusal.message || !refusal.status) {
+        output.push(`拒了，但没说清它现在是什么状态、下一步该做什么：${JSON.stringify(refusal)}`);
+      }
+    }
+    if (taskGroupRuntimeControlRefusal({id: "tg_x", status: "aborted"}, "pause")?.error !== "task_group_already_terminal") {
+      output.push("已中止的任务组没有被同一道检查接住 —— 终态有两种（closed / aborted）");
+    }
+    // 正面对照走同一条分支：没结束的组照常按得动；只读的重算即便在终态也照常允许。
+    if (taskGroupRuntimeControlRefusal({id: "tg_x", status: "development"}, "pause")) {
+      output.push("还在跑的任务组也被这道终态检查挡住了");
+    }
+    if (taskGroupRuntimeControlRefusal({id: "tg_x", status: "closed"}, "recompute_readiness")) {
+      output.push("只读的重算在终态也被挡住了 —— 它什么都不改，而人事后正要看这个组当时为什么能关");
+    }
+    // 【人工指令那条路真的过了这道门】：光验判断函数本身，把消费循环里那一句删掉照样绿。
+    const closedState = structuredClone(seedState);
+    ensureRuntimeCollections(closedState, {root});
+    const closedGroup = closedState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    closedGroup.status = "closed";
+    closedGroup.goalExecutionStatus = "active";
+    closedState.humanDirectives = [{directiveId: "hd_terminal", projectId: closedGroup.projectId,
+      taskGroupId: closedGroup.id, directiveType: "pause", status: "queued", appliedActions: [],
+      issuedBy: "acct_system_owner", createdAt: "2026-08-10T00:00:00.000Z"}];
+    consumeQueuedHumanDirectives(closedState, {});
+    const settled = closedState.humanDirectives[0];
+    if (settled.status !== "rejected") {
+      output.push(`对已关闭的任务组下「暂停」，人工指令那条路照做了（status=${settled.status}，`
+        + `组现在是 ${closedGroup.goalExecutionStatus}）—— 同一件事两条路只挡住一条`);
+    }
+    if (closedGroup.goalExecutionStatus !== "active") {
+      output.push(`已关闭的任务组被人工指令改成了 ${closedGroup.goalExecutionStatus}`);
+    }
+    if (!String(settled.rejectReason || "").includes("终态")) {
+      output.push(`指令被拒了但没说清为什么：${settled.rejectReason}`);
+    }
   }
 
   // 【命令流水不许把别的状态机挤光】。transitionEvidence 上限 240，而每条命令固定四步
