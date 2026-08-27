@@ -92,6 +92,8 @@ import {
   accountEffectivePermissions,
   ACCOUNT_ROLES,
   unknownAccountRoles,
+  KNOWN_PERMISSIONS,
+  unknownPermissions,
   runAgentRuntimeWorker,
   runAutonomousCycle,
   assertHumanTextWithinLimit,
@@ -369,6 +371,7 @@ function readStateForRead() {
     // 账号角色词表下发给界面：邀请表单原先是自由文本，而服务端现在按枚举拒 —— 词表只能来自服务端
     // （界面自己那张标签表里混着授权模板的角色名，正是要避开的混淆）。
     fresh.runtime.accountRoles = [...ACCOUNT_ROLES];
+    fresh.runtime.knownPermissions = [...KNOWN_PERMISSIONS];
     deepFreezeState(fresh);
     preparedReadState = {source: shared, state: fresh};
   }
@@ -399,6 +402,7 @@ function readState() {
   // 账号角色词表下发给界面：邀请表单原先是自由文本，而服务端现在按枚举拒 —— 词表只能来自服务端
   // （界面自己那张标签表里混着授权模板的角色名，正是要避开的混淆）。
   state.runtime.accountRoles = [...ACCOUNT_ROLES];
+  state.runtime.knownPermissions = [...KNOWN_PERMISSIONS];
   return state;
 }
 
@@ -897,6 +901,15 @@ function normalizeInvitedAccount(input = {}, systemScoped = false, delegation = 
     !permission.startsWith("org:") &&
     !unsafeDelegatedGrantPermissions.has(permission) &&
     !permission.endsWith(":*"));
+  {
+    const unknown = unknownPermissions(shapeSafe);
+    if (unknown.length) {
+      const error = new Error("permission_unknown");
+      error.status = 400;
+      error.details = {unknownPermissions: unknown.slice(0, 10), supported: [...KNOWN_PERMISSIONS]};
+      throw error;
+    }
+  }
   if (delegation && !isSystemAccount(delegation.account)) {
     const notDelegable = shapeSafe.filter((permission) => !hasPermission(delegation.state, delegation.actor, permission, delegation.resourceScope));
     if (notDelegable.length) {
@@ -4236,6 +4249,7 @@ async function handleApi(req, res) {
         // 拒绝报文要带上合法取值 —— 这两处此前只转发 error 和 permissions，
         // 于是「认不出这个作用域类型」拒了，人还是不知道该填什么。
         ...(sanitizedGrant.permissions ? {permissions: sanitizedGrant.permissions} : {}),
+        ...(sanitizedGrant.unknownPermissions ? {unknownPermissions: sanitizedGrant.unknownPermissions} : {}),
         ...(sanitizedGrant.supported ? {supported: sanitizedGrant.supported} : {})});
       return;
     }
@@ -4538,6 +4552,7 @@ async function handleApi(req, res) {
         // 拒绝报文要带上合法取值 —— 这两处此前只转发 error 和 permissions，
         // 于是「认不出这个作用域类型」拒了，人还是不知道该填什么。
         ...(sanitizedGrant.permissions ? {permissions: sanitizedGrant.permissions} : {}),
+        ...(sanitizedGrant.unknownPermissions ? {unknownPermissions: sanitizedGrant.unknownPermissions} : {}),
         ...(sanitizedGrant.supported ? {supported: sanitizedGrant.supported} : {})});
       return;
     }

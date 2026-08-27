@@ -8246,6 +8246,8 @@ export function validateDelegatedGrant(state, {resource = {}, permissions = [], 
   }
   const unsafe = permissions.filter((permission) => !isDelegatableGrantPermission(permission));
   if (unsafe.length) return {ok: false, status: 400, error: "unsafe_grant_permissions", permissions: unsafe};
+  const unknown = unknownPermissions(permissions);
+  if (unknown.length) return {ok: false, status: 400, error: "permission_unknown", unknownPermissions: unknown.slice(0, 10), supported: [...KNOWN_PERMISSIONS]};
   // 授权对象必须【已经存在】：accountId 是调用方指定的，否则可以先给一个"面向未来的 id"
   // 建 grant，再补建那个账号 —— 那时这张授权是在它自己被审视之前就生效的。
   const subjectAccount = (state.accounts || []).find((item) => (item.accountId || item.id) === subjectId);
@@ -8263,6 +8265,15 @@ export function validateDelegatedGrant(state, {resource = {}, permissions = [], 
     return {ok: false, status: 400, error: "cross_org_grant_not_allowed"};
   }
   return {ok: true, subjectAccount};
+}
+
+// 权限的正面词表：有人【消费】的那些（判权入口 permissionForAction 的映射 + 可见性判定里的清单，
+// 由契约门 verifyEveryGrantedPermissionHasAConsumer 双向对表）。此前只有"安全筛"（拒 system:*／通配／不可委派），
+// 没有正面词表：project:veiw 这样拼错一个字母的权限一路存进授权，回执成功，实际什么都打不开
+// —— 与上次 MCP 缺省 project:read 是同一种病，只是这次由人手打。
+export const KNOWN_PERMISSIONS = Object.freeze(["agent:activate", "member:invite", "org:*", "org:member_admin", "org:project_admin", "project:*", "project:create", "project:grant", "project:update", "project:view", "system:*", "system:account_admin", "system:bootstrap", "system:model_registry", "system:skill_sync", "task_group:*", "task_group:checkpoint_submit", "task_group:control", "task_group:monitor", "task_group:orchestrate", "task_group:read", "task_group:review"]);
+export function unknownPermissions(permissions) {
+  return (Array.isArray(permissions) ? permissions : []).filter((permission) => !KNOWN_PERMISSIONS.includes(String(permission)));
 }
 
 export function isDelegatableGrantPermission(permission) {

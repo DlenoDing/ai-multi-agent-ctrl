@@ -3625,6 +3625,14 @@ function runWholeListCapCase() {
     loadConsole(vocabRoot).renderFullPageWith({...base, runtime: {...(base.runtime || {}), accountRoles: ["member", "viewer", "reviewer"]}}, admin, null, "sys-accounts");
     const html = vocabRoot.innerHTML;
     const hasList = /<datalist id="account-role-options">/u.test(html);
+    {
+      const permRoot = el("div");
+      loadConsole(permRoot).renderFullPageWith({...base, runtime: {...(base.runtime || {}), knownPermissions: ["project:view", "task_group:review"]}}, admin, null, "sys-accounts");
+      const permHtml = permRoot.innerHTML;
+      check("邀请与授权表单要列出服务端下发的权限词表（拼错一个字母的权限现在会被拒）",
+        (permHtml.match(/<datalist id="known-permission-options">/gu) || []).length === 2 && permHtml.includes('<option value="task_group:review">'),
+        "两个权限输入框没有各自的 datalist，或 datalist 里少了服务端下发的权限");
+    }
     check("邀请表单要列出服务端下发的账号角色词表（自由文本配枚举校验＝拼错一次就 400）",
       hasList && ["member", "viewer", "reviewer"].every((role) => html.includes(`<option value="${role}">`)),
       hasList ? "datalist 里少了服务端下发的角色" : "邀请表单没有账号角色的 datalist —— 人只能凭记忆打，打错一个字母就被拒");

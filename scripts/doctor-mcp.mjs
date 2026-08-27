@@ -922,6 +922,14 @@ try {
       throw new Error(`completion_readiness_compute 没给出结论：${JSON.stringify(readiness).slice(0, 200)}`);
     }
     // 发一张授权再撤掉它：撤销这条路此前一次都没成功执行过（只验过"机器主体不许撤"）。
+    // 期待被拒的调用不走 call()（它把任何 ok:false 当链断）。
+    const typoEnvelope = await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.grant_create",
+      arguments: {idempotencyKey: "doctor-mcp-typo-permission", subjectId: "acct_agent_runtime",
+        resource: {resourceType: "task_group", resourceId: TG}, grantRole: "reviewer", grantPermissions: ["project:veiw"]}});
+    const typoGrant = typoEnvelope.structuredContent?.result || JSON.parse(typoEnvelope.content?.[0]?.text || "{}");
+    if ((typoGrant.result || typoGrant).error !== "permission_unknown") {
+      throw new Error(`MCP 建授权带拼错的权限该被拒（permission_unknown），实际 ${JSON.stringify(typoGrant).slice(0, 200)}`);
+    }
     const chainGrant = await call("identity-mcp.grant_create", {
       subjectId: "acct_agent_runtime", resource: {resourceType: "task_group", resourceId: TG},
       grantRole: "reviewer"

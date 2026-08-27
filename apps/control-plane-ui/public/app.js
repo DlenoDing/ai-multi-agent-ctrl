@@ -996,6 +996,7 @@ function requestFailureHint(payload) {
     // 动态取它认不出来（而认不出来就等于这几族又回到"没人读"的状态）。
     pathList(payload.deniedPaths, "踩到禁区的路径"),
     pathList(payload.unknownRoles, "不在词表里的账号角色"),
+    pathList(payload.unknownPermissions, "不在词表里的权限"),
     pathList(payload.unknownKeys, "认不出的键"),
     pathList(payload.outsidePaths, "落在允许范围之外的路径"),
     // 这两对说的都是【人批准的那份方案】怎么划的界，不是泛指的边界 —— 措辞照它的来源写：
@@ -2278,7 +2279,7 @@ function renderSysAccounts() {
         <div class="form-row"><label>角色（逗号分隔；只认服务端词表里的：${esc((state.runtime?.accountRoles || []).map((role) => t(role)).join("、") || "词表未下发")}）</label>
           <input name="roles" value="viewer" list="account-role-options">
           <datalist id="account-role-options">${(state.runtime?.accountRoles || []).map((role) => `<option value="${esc(role)}">${esc(t(role))}</option>`).join("")}</datalist></div>
-        <div class="form-row"><label>默认权限（逗号分隔）</label><input name="permissions" value="project:view"></div>
+        <div class="form-row"><label>默认权限（逗号分隔；只认服务端词表里的）</label><input name="permissions" value="project:view" list="known-permission-options"><datalist id="known-permission-options">${(state.runtime?.knownPermissions || []).map((permission) => `<option value="${esc(permission)}">${esc(t(permission))}</option>`).join("")}</datalist></div>
         <button class="primary-button" type="submit">邀请并签发一次性令牌</button>
       </form>
     `),
@@ -2290,7 +2291,7 @@ function renderSysAccounts() {
         </div>
         <div class="form-row"><label>资源 ID</label><input name="resourceId" required placeholder="prj_... / tg_..."></div>
         <div class="form-row"><label>角色</label><input name="role" value="viewer"></div>
-        <div class="form-row"><label>权限（逗号分隔）</label><input name="permissions" value="project:view"></div>
+        <div class="form-row"><label>权限（逗号分隔；只认服务端词表里的）</label><input name="permissions" value="project:view" list="known-permission-options"><datalist id="known-permission-options">${(state.runtime?.knownPermissions || []).map((permission) => `<option value="${esc(permission)}">${esc(t(permission))}</option>`).join("")}</datalist></div>
         <button class="primary-button" type="submit">新增授权</button>
       </form>
     `),

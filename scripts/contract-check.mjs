@@ -162,7 +162,7 @@ import {
   roomWait,
   syncSkillSource,
   classifyExecutorSpawnFailure,
-  REGISTERED_OWNER_ROLES, ACCOUNT_ROLES} from "../apps/control-plane-ui/lib/control-plane-core.mjs";
+  REGISTERED_OWNER_ROLES, ACCOUNT_ROLES, KNOWN_PERMISSIONS} from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import {
   ackAgentControlCommand,
   authenticateAgentNode,
@@ -9423,6 +9423,17 @@ function verifyEveryGrantedPermissionHasAConsumer(output) {
   if (!fromMap.length) output.push("权限消费侧提取不到 permissionForAction 的映射 —— 词表偏小，本条会误报");
   if (!fromVisibility.length) output.push("权限消费侧提取不到可见性判定里的权限清单 —— 词表偏小，本条会误报");
   for (const permission of [...fromMap, ...fromVisibility]) consumers.add(permission);
+  // 产品侧的正面词表 KNOWN_PERMISSIONS 要与消费侧对表：消费的必须在词表里（否则正常权限被当拼错拒掉），
+  // 词表里的必须在产品源码里真的出现过（否则是没人要的僵尸项）。org:* 由控制台 hasPerm 按通配消费，
+  // 这里的消费侧提取看不见它，故单独允许。
+  {
+    const productText = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/mcp-server/server.mjs", "apps/control-plane-ui/public/app.js"]
+      .map((file) => readFileSync(join(root, file), "utf8").split("\n").filter((line) => !/^\s*\/\//u.test(line)).join("\n")).join("\n");
+    const notInConstant = [...consumers].filter((permission) => !KNOWN_PERMISSIONS.includes(permission)).sort();
+    if (notInConstant.length) output.push(`权限词表：有人消费的 ${notInConstant.join("、")} 不在 KNOWN_PERMISSIONS 里 —— 正常权限会被当成拼错拒掉`);
+    const zombie = KNOWN_PERMISSIONS.filter((permission) => !consumers.has(permission) && permission !== "org:*" && !productText.includes(`"${permission}"`)).sort();
+    if (zombie.length) output.push(`权限词表：KNOWN_PERMISSIONS 里的 ${zombie.join("、")} 没有任何消费者也没在产品源码里出现 —— 僵尸项，发出去什么都打不开`);
+  }
   if (consumers.size < 15) {
     output.push(`权限消费侧只提取到 ${consumers.size} 个（远少于既有规模）—— 提取脱节，本条在空转`);
     return;

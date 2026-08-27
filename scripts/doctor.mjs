@@ -519,6 +519,28 @@ try {
   if (idempotencyConflict.response.status !== 409 || idempotencyConflict.payload?.error !== "idempotency_key_reuse_conflict") {
     throw new Error(`expected idempotency conflict 409, got ${idempotencyConflict.response.status}`);
   }
+  // 【拼错的权限要被拒并点名】。原先只有安全筛：project:veiw 一路存进授权，回执成功，实际什么都打不开。
+  {
+    const typo = await jsonFetch(port, "/api/access-grants", {
+      method: "POST", headers: {"Idempotency-Key": "doctor-typo-permission-grant", authorization: auth},
+      body: JSON.stringify({subjectId: "acct_reviewer", resourceType: "task_group", resourceId: "tg_runtime_management", role: "task_group_owner", permissions: ["project:veiw"]})
+    });
+    if (typo.response.status !== 400 || typo.payload?.error !== "permission_unknown" || !(typo.payload?.unknownPermissions || []).includes("project:veiw")) {
+      throw new Error(`拼错的权限建授权该回 400 permission_unknown 并点名，实际 ${typo.response.status} ${JSON.stringify(typo.payload).slice(0, 200)} —— 一张什么都打不开的授权带着成功回执发了出去`);
+    }
+    const typoInvite = await jsonFetch(port, "/api/accounts", {
+      method: "POST", headers: {"Idempotency-Key": "doctor-typo-permission-invite", authorization: auth},
+      body: JSON.stringify({projectId: "prj_control_plane", displayName: "权限探针", email: "typo-perm@local", roles: "viewer", permissions: "project:veiw"})
+    });
+    if (typoInvite.response.status !== 400 || typoInvite.payload?.error !== "permission_unknown") {
+      throw new Error(`拼错的缺省权限邀请账号该回 400 permission_unknown，实际 ${typoInvite.response.status} ${JSON.stringify(typoInvite.payload).slice(0, 200)}`);
+    }
+    const vocab = await jsonFetch(port, "/api/state", {headers: {authorization: auth}});
+    if (JSON.stringify(vocab.payload?.runtime?.knownPermissions) !== JSON.stringify(typo.payload.supported)) {
+      throw new Error("界面拿到的权限词表（runtime.knownPermissions）与拒绝报文里的 supported 不是同一份 —— 照着表单填也会被拒");
+    }
+    console.log("  ok  拼错的权限在授权与邀请两条路都被拒并点名，界面拿到的词表与拒绝报文同一份");
+  }
   const reviewerScopedGrant = await jsonFetch(port, "/api/access-grants", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-reviewer-scoped-grant", authorization: auth},
@@ -2869,7 +2891,9 @@ try {
     headers: {authorization: systemAuth, "Idempotency-Key": key},
     body: JSON.stringify({subjectId: "acct_agent_runtime", resourceType, resourceId, role, permissions})
   }), 201, `授予服务账号 ${permissions.join(",")}`);
-  await gateGrant("gate-grant-tg", "task_group", "tg_runtime_management", "task_group_owner", ["task_group:configure", "task_group:control", "task_group:review"]);
+  // 原先这里还授了 task_group:configure —— 全系统没有任何判定消费这个串（配置、指令、关闭门都按 task_group:control 判），
+  // 它是一个没人要的词，权限正面词表（KNOWN_PERMISSIONS）落地第一跑就把它拒了。
+  await gateGrant("gate-grant-tg", "task_group", "tg_runtime_management", "task_group_owner", ["task_group:control", "task_group:review"]);
   await gateGrant("gate-grant-proj", "project", "prj_control_plane", "project_admin", ["project:update"]);
   // 现在服务账号权限齐备，仍必须被真人守卫拒绝 —— 403 只可能来自 HUMAN_ONLY_ACTIONS。
   expectStatus(await g2("/api/task-groups/tg_runtime_management/config", agentAuth, "gate-tgconfig-deny", {languagePolicy: {primaryLanguage: "zh-CN"}}), 403, "机器主体持权限仍不得变更任务组规则/配置", "principal_not_allowed_for_action");

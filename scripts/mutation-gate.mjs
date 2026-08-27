@@ -10243,6 +10243,23 @@ const MUTATIONS = [
     expect: "邀请表单没有账号角色的 datalist"
   },
   {
+    name: "拼错的权限要被拒（原先只有安全筛，project:veiw 一路存进授权）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: "  const unknown = unknownPermissions(permissions);\n  if (unknown.length) return {ok: false, status: 400, error: \"permission_unknown\",",
+    to: "  const unknown = [];\n  if (unknown.length) return {ok: false, status: 400, error: \"permission_unknown\",",
+    expect: "拼错的权限建授权该回 400 permission_unknown"
+  },
+  {
+    name: "权限词表要含所有被消费的权限（漏一个＝正常权限被当拼错拒掉）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyEveryGrantedPermissionHasAConsumer",
+    from: '"project:view", "system:*"',
+    to: '"system:*"',
+    expect: "不在 KNOWN_PERMISSIONS 里"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",
