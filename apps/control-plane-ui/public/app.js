@@ -3312,8 +3312,10 @@ function renderTaskGroupDetail(taskGroup) {
 // 而 select 默认选中第一项 —— 于是一个人点开表单直接提交，拿到的就是最重的处置，而他并没有做过
 // 这个判断。规则源与共享定义那两条尤其要命：默认值等于"规则层变更默认发生"。
 // 用禁用的占位项 + required：浏览器会在提交前拦下，人必须说出他决定的是什么。
-function decisionSelect(name, options, placeholder = "请选择处置方式…") {
-  return `<select name="${esc(name)}" required>`
+// required 缺省为真：处置/授权类下拉空着不许提交。唯一的例外是「只对某一种类型生效」的下拉
+// （人工指令的处置方式）—— 浏览器的约束校验不看类型，required 会把别的类型也拦住。
+function decisionSelect(name, options, placeholder = "请选择处置方式…", {required = true} = {}) {
+  return (required ? `<select name="${esc(name)}" required>` : `<select name="${esc(name)}">`)
     + `<option value="" selected disabled>${esc(placeholder)}</option>`
     + options.map(([value, label, attrs]) =>
       `<option value="${esc(value)}"${attrs ? ` ${attrs}` : ""}>${esc(label)}</option>`).join("")
@@ -4221,7 +4223,9 @@ function renderDirectives() {
             <select name="directiveType">${DIRECTIVE_TYPES.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("")}</select>
           </div>
           <div class="form-row"><label>决策处置方式</label>
-            ${decisionSelect("resolution", [["reopen", "重开（返回就绪，重置返工计数）"], ["abandon", "放弃（置为已替代，解除关闭阻塞）"]])}
+            <!-- 不带 required：这个下拉只对「决策处置」类型生效，而浏览器的约束校验不看类型 ——
+                 带上就连提交「补充要求」也会被拦住，逼人选一个随后被丢掉的处置方式。空着提交由处理器按类型拒。 -->
+            ${decisionSelect("resolution", [["reopen", "重开（返回就绪，重置返工计数）"], ["abandon", "放弃（置为已替代，解除关闭阻塞）"]], "请选择处置方式…", {required: false})}
             <span class="small muted">仅“决策处置”类型生效</span>
           </div>
           <div class="form-row"><label>目标工作项 ID</label><input name="workItemId" placeholder="留空只处置该组处于“待人工决策”的格子；要放弃其它状态的工作项必须点名填写它的 ID" /></div>
@@ -5127,12 +5131,14 @@ document.addEventListener("submit", async (event) => {
       if (["add_requirement", "free_text"].includes(data.directiveType) && !String(data.instruction || "").trim()) {
         throw new Error("补充要求 / 自由指令必须填写指令内容");
       }
+      // 缺省 reopen 是替人做的决定：决策处置必须自己选重开还是放弃。
+      if (data.directiveType === "resolve_decision" && !data.resolution) throw new Error("决策处置必须选择处置方式（重开 / 放弃）—— 系统不会替你选一个");
       await api("/api/human-directives", {method: "POST", body: JSON.stringify({
         projectId: currentProjectId,
         taskGroupId: directiveTaskGroupId,
         directiveType: data.directiveType,
         instruction: data.instruction || "",
-        ...(data.directiveType === "resolve_decision" ? {resolution: data.resolution || "reopen", ...(String(data.workItemId || "").trim() ? {workItemId: data.workItemId.trim()} : {})} : {})
+        ...(data.directiveType === "resolve_decision" ? {resolution: data.resolution, ...(String(data.workItemId || "").trim() ? {workItemId: data.workItemId.trim()} : {})} : {})
       })});
       formTouched = false;
       await loadPage();

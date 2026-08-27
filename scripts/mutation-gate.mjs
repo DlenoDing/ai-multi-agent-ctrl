@@ -3023,6 +3023,22 @@ const MUTATIONS = [
     expect: "建智能体时「没登记的角色」必须被拒绝"
   },
   {
+    name: "人工指令的处置方式下拉不许 required（会拦住别的指令类型）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '"请选择处置方式…", {required: false})}',
+    to: '"请选择处置方式…", {required: true})}',
+    expect: "处置方式下拉不带 required"
+  },
+  {
+    name: "决策处置：处置方式空着要拒，不缺省成 reopen",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      if (data.directiveType === "resolve_decision" && !data.resolution) throw new Error("决策处置必须选择处置方式（重开 / 放弃）—— 系统不会替你选一个");',
+    to: '      if (data.directiveType === "resolve_decision" && !data.resolution) data.resolution = "reopen";',
+    expect: "处置方式空着要拒，不缺省成 reopen"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

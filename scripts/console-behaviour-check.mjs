@@ -1044,6 +1044,48 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         probe.setFetch(previousFetch);
       }
     }
+    // 【人工指令的三种提交】。非决策类型正文不带 resolution；决策处置空着要拒、不缺省成 reopen；选了就原样发。
+    // （渲染属性那条 —— 处置方式下拉不带 required —— 在 runNoVisibleProjectCase 里，跟指令页夹具在一起。）
+    {
+        const recorded = [];
+        const toasts = [];
+        const previousFetch = globalThis.fetch;
+        probe.setFetch(async (url, init = {}) => {
+          recorded.push({url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null});
+          return {ok: true, status: 201, headers: {get: () => null}, json: async () => ({ok: true})};
+        });
+        probe.captureToastKind("error", (message) => toasts.push(String(message)));
+        const mkDirective = (type, resolution, instruction, workItemId = "") => el("form", {dataset: {form: "directive-create"}}, [
+          el("select", {name: "directiveType", value: type}),
+          el("select", {name: "resolution", value: resolution}),
+          el("input", {name: "workItemId", value: workItemId}),
+          el("textarea", {name: "instruction", value: instruction}),
+          el("button", {type: "submit"})
+        ]);
+        const lastPost = () => recorded.filter((item) => item.method === "POST" && /human-directives$/u.test(item.url)).at(-1);
+        try {
+          const addForm = mkDirective("add_requirement", "", "补充一条要求");
+          await probe.submit({target: addForm, submitter: addForm.children[4], preventDefault: () => {}});
+          const added = lastPost();
+          check("提交「补充要求」不需要处置方式、正文里也不带 resolution",
+            added?.body?.directiveType === "add_requirement" && !("resolution" in (added.body || {})),
+            added ? `发出去的是 ${JSON.stringify(added.body)}` : `没发出去（toast：${JSON.stringify(toasts).slice(0, 120)}）`);
+          recorded.length = 0;
+          const emptyResolve = mkDirective("resolve_decision", "", "");
+          await probe.submit({target: emptyResolve, submitter: emptyResolve.children[4], preventDefault: () => {}});
+          check("决策处置：处置方式空着要拒，不缺省成 reopen",
+            !lastPost() && toasts.some((message) => /选择处置方式/u.test(message)),
+            lastPost() ? `空着也发了 ${JSON.stringify(lastPost().body)}` : `没拒（toast：${JSON.stringify(toasts).slice(0, 120)}）`);
+          const abandonForm = mkDirective("resolve_decision", "abandon", "", " w_9 ");
+          await probe.submit({target: abandonForm, submitter: abandonForm.children[4], preventDefault: () => {}});
+          const abandoned = lastPost();
+          check("决策处置：选「放弃」并点名工作项，发出的正是 abandon 与去掉空白的 id",
+            abandoned?.body?.resolution === "abandon" && abandoned?.body?.workItemId === "w_9",
+            `发出去的是 ${JSON.stringify(abandoned?.body)}`);
+        } finally {
+          probe.setFetch(previousFetch);
+        }
+    }
     // 【配置编辑器不许插一行保存时会被丢掉的行】。cfg-add 原先对认不出的 kind 兜底插「业务规则」行，
     // 而保存只收 repo / baseline / role —— 人填了就丢。先自证点击真的会插行（repo），再验未知 kind 不插。
     {
@@ -2993,6 +3035,20 @@ function runNoVisibleProjectCase() {
     check("人工指令的「目标任务组」下拉只列出你真能控制的组",
       /我能控的/u.test(directiveText) && !/别人的组/u.test(directiveText),
       "下拉列出了没有控制权的任务组 —— 人照着它选一个，提交必然 403");
+    // 【处置方式下拉不许 required】。它只对「决策处置」类型生效，浏览器的约束校验却不看类型：一旦 required，
+    // 提交「补充要求」也会被拦住（门的 probe.submit 绕过约束校验，只能看渲染出来的属性 —— renderAs 会剥掉标签，
+    // 这里要拿原始 HTML）。
+    {
+      const rawRoot = el("div");
+      loadConsole(rawRoot, {realI18n: true}).renderFullPageWith(directiveState,
+        {accountId: "u_op", accountType: "member", displayName: "操作员", organizationId: "org_default",
+          effectivePermissions: ["project:view", "task_group:read", "task_group:control"]}, "p1", "directives");
+      const formHtml = String(rawRoot.innerHTML || "");
+      const resolutionTag = formHtml.match(/<select name="resolution"[^>]*>/u)?.[0] || "";
+      check("人工指令表单要渲染出来、处置方式下拉不带 required",
+        /data-form="directive-create"/u.test(formHtml) && resolutionTag && !/\brequired\b/u.test(resolutionTag),
+        !resolutionTag ? "表单或下拉没渲染出来（这条什么也没验）" : `下拉是 ${resolutionTag} —— 提交「补充要求」会被浏览器拦住`);
+    }
   }
   // 监控页上的「关闭任务组 / 豁免质量门」也一样：动作按【那一行所属的任务组】判。
   {
