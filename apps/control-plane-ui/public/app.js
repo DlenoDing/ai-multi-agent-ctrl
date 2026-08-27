@@ -5213,12 +5213,15 @@ document.addEventListener("submit", async (event) => {
       // fixed_verified without evidence is downgraded server-side to fixed_unverified (still blocks) —
       // require evidence up front so the operator isn't misled by a success toast on a still-blocking
       // disposition. (not_applicable / scope_adjusted need no evidence.)
-      if ((data.dispositionClass || "fixed_verified") === "fixed_verified" && !evidenceRefs.length) {
+      // 两个下拉都是 required，但处理器原先仍给了缺省（resolved / fixed_verified）—— 那正是最重的判断；
+      // 绕过 required 的任何提交（程序化、桩、浏览器差异）都会替人做了它。空着就拒。
+      if (!data.dispositionClass || !data.status) throw new Error("请选择处置类别与处置状态 —— 系统不会替你选一个");
+      if (data.dispositionClass === "fixed_verified" && !evidenceRefs.length) {
         throw new Error("“已修复并验证”需填写证据引用（evidence:...），否则将被降级为不可闭合并继续阻塞关闭门禁");
       }
       await api(`/api/findings/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({
-        status: data.status || "resolved",
-        dispositionClass: data.dispositionClass || "fixed_verified",
+        status: data.status,
+        dispositionClass: data.dispositionClass,
         evidenceRefs
       })});
       await loadPage();

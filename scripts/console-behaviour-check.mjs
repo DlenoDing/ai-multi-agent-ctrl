@@ -33,6 +33,7 @@ class StubElement {
     this.children = children;
     for (const child of children) if (child && typeof child === "object") child.parentElement = this;
     this.classList = {add() {}, remove() {}, contains() { return false; }, toggle() {}};
+    this.style = {};   // 弹窗遮罩要设 style.zIndex：桩没有 style 的话确认框那条路在第一行就抛错（变异态里看见的）。
   }
   // 提交处理器第一行就是 event.target.closest("form[data-form]")：桩没有 closest 的话，任何表单提交在门里都跑不到。
   closest(selector) {
@@ -882,6 +883,40 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         check("定稿表单没有提交器时要拒绝并说明用按钮提交（不许缺省成定稿）",
           !posted && toasts.some((message) => /按钮/u.test(message)),
           posted ? `没有提交器居然发出了 ${JSON.stringify(recorded[0]?.body)}` : `没拒绝：没有说明用按钮提交的提示（toast：${JSON.stringify(toasts).slice(0, 120)}）—— 它把缺省当成了定稿去走确认框，人点的可能是打回`);
+      } finally {
+        probe.setFetch(previousFetch);
+      }
+    }
+    // 【发现项处置：处置类别/状态空着就拒，不缺省成 resolved + fixed_verified】。两个下拉是 required，
+    // 但处理器原先仍有缺省 —— 缺省恰是最重的判断，绕过 required 的提交会替人做了它。
+    {
+      const recorded = [];
+      const toasts = [];
+      const previousFetch = globalThis.fetch;
+      probe.setFetch(async (url, init = {}) => {
+        recorded.push({url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null});
+        return {ok: true, status: 200, headers: {get: () => null}, json: async () => ({ok: true})};
+      });
+      probe.captureToastKind("error", (message) => toasts.push(String(message)));
+      const mkForm = (cls, status) => el("form", {dataset: {form: "finding-resolve", request: "finding_1"}}, [
+        el("select", {name: "dispositionClass", value: cls}),
+        el("select", {name: "status", value: status}),
+        el("input", {name: "evidenceRefs", value: "evidence:probe"}),
+        el("button", {type: "submit"})
+      ]);
+      try {
+        const emptyForm = mkForm("", "");
+        await probe.submit({target: emptyForm, submitter: emptyForm.children[3], preventDefault: () => {}});
+        const postedEmpty = recorded.some((item) => item.method === "POST");
+        check("发现项处置空着类别/状态要拒（不缺省成最重的 resolved + fixed_verified）",
+          !postedEmpty && toasts.some((message) => /处置类别/u.test(message)),
+          postedEmpty ? `空着也发出了 ${JSON.stringify(recorded[0]?.body)} —— 替人做了最重的判断` : `没拒（toast：${JSON.stringify(toasts).slice(0, 120)}）`);
+        recorded.length = 0;
+        const chosen = mkForm("not_applicable", "dismissed");
+        await probe.submit({target: chosen, submitter: chosen.children[3], preventDefault: () => {}});
+        const post = recorded.find((item) => item.method === "POST" && /findings\/finding_1\/resolve$/u.test(item.url));
+        check("发现项处置发出的是人选的类别与状态", post?.body?.dispositionClass === "not_applicable" && post?.body?.status === "dismissed",
+          `发出去的是 ${JSON.stringify(post?.body)}`);
       } finally {
         probe.setFetch(previousFetch);
       }

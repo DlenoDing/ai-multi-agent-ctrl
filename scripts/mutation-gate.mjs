@@ -10349,6 +10349,14 @@ const MUTATIONS = [
     expect: "它把缺省当成了定稿去走确认框"
   },
   {
+    name: "发现项处置空着类别/状态要拒（处理器原先缺省成最重的 resolved + fixed_verified）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      if (!data.dispositionClass || !data.status) throw new Error("请选择处置类别与处置状态 —— 系统不会替你选一个");',
+    to: '      data.dispositionClass ||= "fixed_verified"; data.status ||= "resolved";',
+    expect: "替人做了最重的判断"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",
