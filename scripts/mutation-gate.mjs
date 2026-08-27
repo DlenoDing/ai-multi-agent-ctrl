@@ -10309,6 +10309,14 @@ const MUTATIONS = [
     expect: "未知 kind 插了"
   },
   {
+    name: "成员创建只发勾选的权限（收错就是替人多发权限）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      const permissions = [...form.querySelectorAll("input[name=\'perm\']:checked")].map((input) => input.value);\n      const result = await api("/api/org/members"',
+    to: '      const permissions = [...form.querySelectorAll("input[name=\'perm\']")].map((input) => input.value);\n      const result = await api("/api/org/members"',
+    expect: "没勾的权限也发了"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

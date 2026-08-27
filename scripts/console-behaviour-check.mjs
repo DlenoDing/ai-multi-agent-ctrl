@@ -31,14 +31,22 @@ class StubElement {
     this.value = attrs.value === undefined ? "" : attrs.value;
     this.checked = attrs.checked === true;
     this.children = children;
+    for (const child of children) if (child && typeof child === "object") child.parentElement = this;
     this.classList = {add() {}, remove() {}, contains() { return false; }, toggle() {}};
+  }
+  // 提交处理器第一行就是 event.target.closest("form[data-form]")：桩没有 closest 的话，任何表单提交在门里都跑不到。
+  closest(selector) {
+    for (let node = this; node; node = node.parentElement) {
+      if (node.#matches(selector)) return node;
+    }
+    return null;
   }
 
   // toast 会给容器设 role/aria-live 之类：桩里少了这些方法，任何走到 toast 的路径都会
   // 以 "setAttribute is not a function" 收场 —— 那是桩的故障，不是被测代码的。
   setAttribute(name, value) { this.attributes = {...(this.attributes || {}), [name]: value}; }
-  appendChild(child) { this.children.push(child); return child; }
-  insertBefore(child) { this.children.unshift(child); return child; }
+  appendChild(child) { this.children.push(child); if (child && typeof child === "object") child.parentElement = this; return child; }
+  insertBefore(child) { this.children.unshift(child); if (child && typeof child === "object") child.parentElement = this; return child; }
   getAttribute(name) { return (this.attributes || {})[name] ?? null; }
   removeAttribute(name) { if (this.attributes) delete this.attributes[name]; }
   addEventListener() {}
@@ -67,6 +75,15 @@ class StubElement {
     if (/^\.[a-zA-Z0-9_-]+$/.test(selector)) return false;
     const named = selector.match(/^\[name="(.*)"\]$/s);
     if (named) return this.name === named[1].replace(/\\(.)/g, "$1");
+    // 表单提交路径用的形状：input[name='perm']:checked、textarea[name='ruleContent']、select[name='languageTag']。
+    const tagNamed = selector.match(/^([a-z]+)\[name='([^']*)'\](:checked)?$/);
+    if (tagNamed) {
+      return this.tagName === tagNamed[1].toUpperCase() && this.name === tagNamed[2] && (!tagNamed[3] || this.checked === true);
+    }
+    // 提交按钮：button[type='submit'], button:not([type='button'])
+    if (selector === "button[type='submit'], button:not([type='button'])") {
+      return this.tagName === "BUTTON" && this.type !== "button";
+    }
     const formSel = selector.match(/^form\[data-form\]$/);
     if (formSel) return this.tagName === "FORM" && this.dataset.form !== undefined;
     // 纯 data 属性选择器（render 之后的 restoreFilters 会查 [data-filter-input]）：
@@ -96,6 +113,27 @@ class StubElement {
   // 配置编辑器的「加一行」走 insertAdjacentHTML；桩没有它的话点击会在这一行抛错、被吞成"点了没反应"。
   insertAdjacentHTML(_position, html) { this.innerHTML = `${this.innerHTML || ""}${html}`; }
 }
+
+// 提交处理器用 new FormData(form, submitter) 取值：按后代里带 name 的控件收，未勾选的 checkbox/radio 不收，
+// 最后带上点击的那个提交按钮的 name/value（批准/拒绝那种双按钮表单就靠它）。
+class StubFormData {
+  constructor(form, submitter) {
+    this.pairs = [];
+    const walk = (node) => {
+      for (const child of node.children || []) {
+        if (child.name && ["INPUT", "SELECT", "TEXTAREA"].includes(child.tagName)) {
+          if ((child.type === "checkbox" || child.type === "radio") && !child.checked) { walk(child); continue; }
+          this.pairs.push([child.name, child.value]);
+        }
+        walk(child);
+      }
+    };
+    walk(form);
+    if (submitter?.name) this.pairs.push([submitter.name, submitter.value ?? ""]);
+  }
+  entries() { return this.pairs[Symbol.iterator](); }
+}
+if (!globalThis.FormData) globalThis.FormData = StubFormData;
 
 function el(tag, attrs, children) { return new StubElement(tag, attrs, children); }
 
@@ -131,6 +169,7 @@ function makeContext(documentRoot) {
     // 那是桩的故障，不是被测代码的（与上面 setAttribute 那条同理）。
     console: {log: noop, warn: noop, error: noop, info: noop, debug: noop},
     fetch: async () => { throw new Error("行为门不应发起网络请求"); },
+    FormData: StubFormData,
     WebSocket: class { constructor() { this.close = noop; } },
     location: {origin: "http://localhost", protocol: "http:", host: "localhost", href: "http://localhost/"},
     // 会话存储要是【真的能存】的桩：草稿跨过会话过期这条路径全靠它，
@@ -186,6 +225,7 @@ globalThis.__probe = {
   renderSource: () => String(render),
   handlerSource: (type) => String(globalThis.__handlers[type]),
   click: (event) => globalThis.__handlers.click(event),
+  submit: (event) => globalThis.__handlers.submit(event),
   stubNavigation: () => { render = () => {}; loadPage = async () => {}; toast = {success: () => {}, error: () => {}, info: () => {}}; },
   // 第三个入参可选：明细里有几处要读 state（溯源引用要拿 humanDirectives 解析成人名）。
   renderTaskGroupDetail: (detail, taskGroup, nextState) => {
@@ -673,6 +713,38 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
       if (process.env.AIMAC_PRINT_HINTS) console.log(`[hint] ${label}: ${hint}`);
       check(`拒绝提示「${label}」要点名拼错的与可用的`, mustName.every((word) => String(hint).includes(word)),
         `提示里少了 ${mustName.filter((word) => !String(hint).includes(word)).join("、")}：${String(hint).slice(0, 160)}`);
+    }
+    // 【成员创建表单提交的正文要与勾选一致】。这是全站第一条走到 submit 处理器的用例：此前门只模拟点击与渲染，
+    // 每个表单真正发出去的正文一条都没被钉过。权限按 input[name='perm']:checked 收 —— 收错（把没勾的也收进去）
+    // 就是给人多发权限。
+    {
+      const recorded = [];
+      const previousFetch = globalThis.fetch;
+      probe.setFetch(async (url, init = {}) => {
+        recorded.push({url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null});
+        return {ok: true, status: 201, headers: {get: () => null}, json: async () => ({account: {accountId: "acct_new", email: "new@local"}, accountToken: "aimac_account_probe"})};
+      });
+      try {
+        const form = el("form", {dataset: {form: "member-create"}}, [
+          el("input", {name: "displayName", value: "新成员"}),
+          el("input", {name: "email", value: "new@local"}),
+          el("select", {name: "defaultProjectId", value: "p1"}),
+          el("input", {name: "perm", type: "checkbox", value: "project:view", checked: true}),
+          el("input", {name: "perm", type: "checkbox", value: "project:grant", checked: false}),
+          el("button", {type: "submit"})
+        ]);
+        await probe.submit({target: form, submitter: form.children[5], preventDefault: () => {}});
+        const post = recorded.find((item) => item.method === "POST" && /\/api\/org\/members$/u.test(item.url));
+        if (!post) {
+          check("成员创建提交要真的发出 POST /api/org/members", false, `没记录到提交（记录：${JSON.stringify(recorded).slice(0, 160)}）—— 下面那条什么也没验`);
+        } else {
+          check("成员创建提交的权限要且只要勾选的那些",
+            JSON.stringify(post.body.permissions) === JSON.stringify(["project:view"]) && post.body.defaultProjectId === "p1",
+            `发出去的是 ${JSON.stringify(post.body.permissions)}／defaultProjectId=${post.body.defaultProjectId} —— 没勾的权限也发了，等于替人多发权限`);
+        }
+      } finally {
+        probe.setFetch(previousFetch);
+      }
     }
     // 【配置编辑器不许插一行保存时会被丢掉的行】。cfg-add 原先对认不出的 kind 兜底插「业务规则」行，
     // 而保存只收 repo / baseline / role —— 人填了就丢。先自证点击真的会插行（repo），再验未知 kind 不插。
