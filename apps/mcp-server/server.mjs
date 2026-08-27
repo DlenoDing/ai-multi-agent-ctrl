@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renam
 import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredState, writeStoredState } from "../control-plane-ui/lib/state-store.mjs";
+import { ensureStoredState, isStateStoreConflict, markRuntimeStorage, readStoredState, withDirectoryLock, writeStoredState } from "../control-plane-ui/lib/state-store.mjs";
 import { appendAuditEntry, flushPendingAuditAppends } from "../control-plane-ui/lib/audit-ledger.mjs";
 import { isSafeGitRemoteUrl } from "../control-plane-ui/lib/agent-gateway.mjs";
 import {
@@ -1350,10 +1350,11 @@ function appendMcpAudit(event) {
       at: new Date().toISOString(),
       lostEntries: Number(mcpAuditFaultState?.lostEntries || 0) + 1,
       // 只留错误码与一句话，不留路径：这个对象会随健康检查端给系统账号，也会进日志。
-      error: String(error?.code || error?.message || error).slice(0, 120),
+      // 取码不取路径：EACCES 这类有 error.code；锁超时的 message 现在就是裸码（共用锁不再拼路径）。
+      error: String(error?.code || error?.message || error).split(":")[0].slice(0, 120),
       // 锁超时与磁盘写不进去是两件事：前者是【另一个活着的进程】持锁超过 10 秒（或多副本
       // 共用一个运行目录），后者才该去查空间/挂载/权限。健康检查的 hint 按这个分支说。
-      kind: String(error?.message) === "mcp_audit_lock_timeout" ? "lock_timeout" : "write_failed"
+      kind: String(error?.message || "").startsWith("mcp_audit_lock_timeout") ? "lock_timeout" : "write_failed"
     };
     try { console.error(`[mcp-audit] 归档写入失败，1 条调用记录未落盘：${mcpAuditFaultState.error}`); } catch { /* 记日志不能再把服务打死 */ }
   }
@@ -1382,55 +1383,10 @@ function pruneMcpAuditRotations() {
   for (const item of rotated.slice(keep)) unlinkSync(join(dir, item.name));
 }
 
-// 持锁进程已死 => 立刻可破。判不出持有者（锁刚建好、pid 还没落盘的毫秒级窗口，或进程死在那个
-// 窗口里）时给一个短宽限期，而不是让 30 秒的阈值把写工具堵在门外。
-function mcpAuditLockIsStale(lockPath) {
-  let owner = null;
-  try { owner = JSON.parse(readFileSync(join(lockPath, "owner.json"), "utf8")); } catch { owner = null; }
-  const pid = Number(owner?.pid || 0);
-  if (pid && pid !== process.pid) {
-    try { process.kill(pid, 0); return false; } catch (error) { if (error?.code !== "EPERM") return true; return false; }
-  }
-  // 【自己 pid 的锁只可能是残锁】。appendMcpAudit 只在本进程里、且同步执行，不存在"本进程另一处
-  // 正活着持有它"的情形 —— 能留下来的只有 finally 里 rmSync 失败、或上一次异常路径没走到。
-  // 这里原先写的是 return false（视为活锁），于是每次写工具都等满 10 秒才 lock_timeout；
-  // 而等待用的是 Atomics.wait，主线程整个冻住：实测这 10 秒里 /api/health 也卡了 9.5 秒。
-  // 状态库那把锁（state-store）对同 pid 早就是 return true，这一把写反了。
-  if (pid === process.pid) return true;
-  try { return Date.now() - statSync(lockPath).mtimeMs > 2000; } catch { return false; }
-}
-
+// 拿锁与破锁走 state-store 那一份（三把目录锁共用）：记 host、按持锁进程存活破锁、
+// 自己 pid 视为残锁、阈值与超时配套 —— 这里原先自抄的那份把同 pid 判成活锁、又不记 host。
 function withMcpAuditLock(fn) {
-  const lockPath = `${mcpAuditPath}.lock`;
-  const deadline = Date.now() + 10000;
-  for (;;) {
-    try {
-      mkdirSync(lockPath);
-      // 与状态库那把锁同规：把持锁者写进锁里。进程被硬杀时锁会留下，而"谁持有它、它还活着吗"
-      // 是唯一能安全破锁的依据。只按时间兜底的话（阈值 30s > 获取超时 10s），
-      // 崩溃后约 30 秒内每个写工具调用都要么直接失败、要么白等 10 秒才通过。
-      // 原子写，理由同状态库那把锁：撕裂读与"还没写"分不开，会让活着的持有者被提前破锁。
-      try {
-        const ownerTemporary = join(lockPath, `owner.${process.pid}.tmp`);
-        writeFileSync(ownerTemporary, JSON.stringify({pid: process.pid, at: new Date().toISOString()}));
-        renameSync(ownerTemporary, join(lockPath, "owner.json"));
-      } catch { /* 锁已拿到，记不上持有者不该让写入失败 */ }
-      break;
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      if (mcpAuditLockIsStale(lockPath)) {
-        rmSync(lockPath, {recursive: true, force: true});
-        continue;
-      }
-      if (Date.now() > deadline) throw new Error("mcp_audit_lock_timeout");
-      sleepSync(25);
-    }
-  }
-  try {
-    return fn();
-  } finally {
-    rmSync(lockPath, {recursive: true, force: true});
-  }
+  return withDirectoryLock(`${mcpAuditPath}.lock`, {timeoutCode: "mcp_audit_lock_timeout"}, fn);
 }
 
 async function dispatchTool(state, name, args, context = {}) {
@@ -2268,9 +2224,6 @@ function roomAck(state, args) {
   return {ack};
 }
 
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
 
 function nodeRegister(state, args) {
   const at = new Date().toISOString();

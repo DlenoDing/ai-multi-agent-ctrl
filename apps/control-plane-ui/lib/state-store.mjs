@@ -1113,8 +1113,20 @@ function fsyncDirectory(path) {
 }
 
 function withRuntimeJsonLock(options, fn) {
-  const lockDir = `${options.statePath}.lock`;
-  const deadline = Date.now() + 10000;
+  return withDirectoryLock(`${options.statePath}.lock`, {timeoutCode: "state_store_lock_timeout"}, fn);
+}
+
+// 【三把目录锁共用这一份拿锁与破锁】。此前状态库、MCP 审计归档、项目事件存储各抄了一份，
+// 三份对同一种情形的判定不一致：MCP 那把把"自己 pid 的残锁"判成活锁（每次写工具白等 10 秒且
+// Atomics.wait 冻住整个控制面）、不记 host（共享目录下会把别的机器上活着的锁判成死锁破掉）；
+// 事件存储那把只按 30 秒时间判陈旧、不看持锁进程 —— 而获取超时是 10 秒，30 > 10 正是
+// 2026-08-12 在状态库锁上修过的那个坑（崩溃后 30 秒内每次写入要么失败要么白等 10 秒），
+// 当时注释写着"同一形状在 MCP 审计锁上一模一样地存在"，却漏了第三把。
+// 同一件事三份实现，不一致的那份多半是错的；收成一份，将来只有一处会错。
+export function withDirectoryLock(lockDir, options, fn) {
+  const timeoutMs = Number(options?.timeoutMs || 10000);
+  const timeoutCode = options?.timeoutCode || "directory_lock_timeout";
+  const deadline = Date.now() + timeoutMs;
   while (true) {
     try {
       mkdirSync(lockDir);
@@ -1133,8 +1145,12 @@ function withRuntimeJsonLock(options, fn) {
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
       clearStaleLock(lockDir);
-      if (Date.now() > deadline) throw new Error(`state_store_lock_timeout:${lockDir}`);
-      sleepSync(50);
+      // message 只留码：调用方按 error.message 分辨"是锁超时还是磁盘写失败"，而且这条 message
+      // 会随健康检查端给系统账号、也可能落进给远程 agent 的回执 —— 服务端本地路径不该跟着走。
+      // 路径挂在 error.lockDir 上，运维要看时从日志里取。
+      if (Date.now() > deadline) throw Object.assign(new Error(timeoutCode), {lockDir});
+      // 25ms 而不是 50ms：等待是 Atomics.wait 主线程忙等，粒度越粗、整个进程冻住的尾巴越长。
+      sleepSync(25);
     }
   }
   try {
@@ -1153,7 +1169,12 @@ function lockOwnerAlive(lockDir) {
   // 持有者，会把一把【活着的】锁判成死锁并破掉 —— 那正是这套锁要防的事。
   // 主机对不上就退回时间兜底：宁可等，也不能在另一台机器正在写的时候闯进去。
   if (owner.host && owner.host !== hostname()) return null;
-  if (pid === process.pid) return true;
+  // 【自己 pid 的锁只可能是残锁 —— 返回的是"活着吗"，所以这里是 false】。拿锁在本进程里是同步的，
+  // 不存在"本进程另一处正活着持有它"；能留下的只有 finally 里 rmSync 失败、或异常路径没走到。
+  // 原先这行写的是 return true（当成活着），于是每次拿锁都等满 10 秒才超时，而等待是 Atomics.wait
+  // 主线程忙等 —— 整个控制面被冻住（在 MCP 那把锁上实测 /api/health 卡 9.5 秒；三把锁收成一份后
+  // 才发现状态库这把从来就是这样，只是没人造过）。函数名是 Alive 不是 Stale，别把 true 读反。
+  if (pid === process.pid) return false;
   try { process.kill(pid, 0); return true; } catch (error) { return error?.code === "EPERM"; }
 }
 

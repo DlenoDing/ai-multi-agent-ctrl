@@ -2122,6 +2122,11 @@ try {
     const contendedHealth = await api("/api/health");
     const lockWarning = (contendedHealth.warnings || []).find((item) => item.kind === "mcp_audit_write_failed");
     if (!lockWarning) throw new Error("锁超时丢了一条归档记录，健康检查却没报");
+    // 故障对象里记的必须是【裸码】mcp_audit_lock_timeout：既是分辨"锁"与"磁盘"的依据，
+    // 也不许带服务端路径（这个对象会随健康检查端出去）。
+    if (lockWarning.error !== "mcp_audit_lock_timeout") {
+      throw new Error(`锁超时记成了 ${JSON.stringify(lockWarning.error)} —— 该是裸码 mcp_audit_lock_timeout，不带路径`);
+    }
     // 匹配文案里真有的那句（「锁被另一个活着的进程持着」），别按自己脑子里的词序写 ——
     // 第一版写成「另一个活着的进程持着锁」，产品是对的、断言自己红了。
     if (!/另一个活着的进程持着/u.test(String(lockWarning.hint || ""))) {

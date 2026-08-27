@@ -487,18 +487,25 @@ end
 # 正确做法是按【持锁进程是否还活着】判，时间只作兜底；这里钉住"两把锁都这么做了"。
 # 判据要落在【获取锁的那个循环里真的调了它】上：只查函数是否存在的话，
 # 把调用点改成 if (false) 它照样绿（第一版就是这样）。
-[["apps/control-plane-ui/lib/state-store.mjs", /function withRuntimeJsonLock\(.*?\n\}/m, "clearStaleLock(lockDir)"],
- ["apps/mcp-server/server.mjs", /function withMcpAuditLock\(.*?\n\}/m, "mcpAuditLockIsStale(lockPath)"]].each do |file, body_pattern, call|
-  source = File.read(File.join(ROOT, file))
-  body = source[body_pattern].to_s
-  errors << "#{file} 里找不到获取目录锁的那段循环 —— 本条在空转" if body.empty?
-  errors << "#{file} 的目录锁没有在获取时判陈旧（#{call} 没被调用）：只靠时间兜底会让崩溃后约 30 秒写不进去" unless
-    body.include?(call)
-  # 原先要求 owner.json 与 JSON.stringify({pid 按这个先后顺序出现在同一段里。改成原子写之后
-  # （先写临时文件、再改名到 owner.json）顺序颠倒了，这条就误报 —— 判据问的是"记没记 pid"，
-  # 不该连带规定它用哪种写法。两件事分开问：写了 pid，且落点是 owner.json。
-  errors << "#{file} 的锁里没有记下持锁者 pid —— 破锁就只能靠时间" unless
-    body.include?("JSON.stringify({pid: process.pid") && body.include?("owner.json")
+# 三把目录锁（状态库 / MCP 审计归档 / 项目事件存储）2026-08-27 收成 state-store 的 withDirectoryLock 一份。
+# 判据分两层：① 共用函数本身要在获取时判陈旧、要记持锁者 pid（核一处）；
+# ② 三把锁【每一把】都必须真的走共用函数 —— 谁自己再抄一份，就又回到"三份判定不一致"的样子。
+# 原先这里按【各包装函数的函数体】核"有没有调判陈旧"，收成一份后包装体只剩一行 return，字面量落点搬家了。
+shared_lock = File.read(File.join(ROOT, "apps/control-plane-ui/lib/state-store.mjs"))[/function withDirectoryLock\(.*?\n\}/m].to_s
+errors << "state-store 里找不到 withDirectoryLock 的函数体 —— 三把锁的共用判据在空转" if shared_lock.empty?
+errors << "共用目录锁没有在获取时判陈旧（clearStaleLock(lockDir) 没被调用）：只靠时间兜底会让崩溃后约 30 秒写不进去" unless
+  shared_lock.include?("clearStaleLock(lockDir)")
+errors << "共用目录锁没有记下持锁者 pid —— 破锁就只能靠时间" unless
+  shared_lock.include?("JSON.stringify({pid: process.pid") && shared_lock.include?("owner.json")
+[["apps/control-plane-ui/lib/state-store.mjs", /function withRuntimeJsonLock\(.*?\n\}/m],
+ ["apps/mcp-server/server.mjs", /function withMcpAuditLock\(.*?\n\}/m],
+ ["apps/control-plane-ui/lib/project-event-store.mjs", /function withProjectEventLock\(.*?\n\}/m]].each do |file, body_pattern|
+  body = File.read(File.join(ROOT, file))[body_pattern].to_s
+  errors << "#{file} 里找不到那把目录锁的包装函数 —— 本条在空转" if body.empty?
+  errors << "#{file} 的目录锁没有走 state-store 的 withDirectoryLock —— 又抄了一份判定，三把锁就会再次各说各的" unless
+    body.include?("withDirectoryLock(")
+  errors << "#{file} 的目录锁包装里又出现了自己的等待循环（mkdirSync/EEXIST）—— 判定必须只有一份" if
+    body.include?("EEXIST")
 end
 
 # 视图下发的每个集合都要有人读。控制台是轮询的，多发一个集合就是每次请求都多付一笔 ——

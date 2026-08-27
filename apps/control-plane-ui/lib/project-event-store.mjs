@@ -1,3 +1,4 @@
+import { withDirectoryLock } from "./state-store.mjs";
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -661,41 +662,13 @@ function fsyncDirectory(path) {
 
 
 
+// 拿锁与破锁走 state-store 那一份（三把目录锁共用）。这里原先只按 30 秒时间判陈旧、不看持锁进程，
+// 而获取超时是 10 秒：30 > 10，崩溃后 30 秒内每次写事件要么失败要么白等 10 秒 ——
+// 正是 2026-08-12 在状态库锁上修过的那个坑，当时漏了这第三把。
 function withProjectEventLock(runtimeDir, projectId, fn) {
   const lockPath = join(runtimeDir, "locks", `${safeProjectId(projectId)}.execution-events.lock`);
   mkdirSync(dirname(lockPath), {recursive: true});
-  const startedAt = Date.now();
-  for (;;) {
-    try {
-      mkdirSync(lockPath);
-      break;
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      if (Date.now() - startedAt > Number(process.env.AIMAC_PROJECT_EVENT_LOCK_TIMEOUT_MS || 10000)) {
-        throw new Error(`project_event_lock_timeout:${projectId}`);
-      }
-      if (lockStale(lockPath)) {
-        try { rmSync(lockPath, {recursive: true, force: true}); } catch {}
-        continue;
-      }
-      sleepSync(25);
-    }
-  }
-  try {
-    return fn();
-  } finally {
-    rmSync(lockPath, {recursive: true, force: true});
-  }
+  return withDirectoryLock(lockPath, {timeoutCode: `project_event_lock_timeout:${projectId}`,
+    timeoutMs: Number(process.env.AIMAC_PROJECT_EVENT_LOCK_TIMEOUT_MS || 10000)}, fn);
 }
 
-function lockStale(lockPath) {
-  try {
-    return Date.now() - statSync(lockPath).mtimeMs > Number(process.env.AIMAC_PROJECT_EVENT_LOCK_STALE_MS || 30000);
-  } catch {
-    return false;
-  }
-}
-
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}

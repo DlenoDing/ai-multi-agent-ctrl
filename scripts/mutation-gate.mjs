@@ -1182,14 +1182,6 @@ const MUTATIONS = [
     expect: "找不到那次改名"
   },
   {
-    name: "锁持有者文件必须原子写（MCP）",
-    file: MCP,
-    check: "verifySharedJsonWritesAreAtomic",
-    from: '        renameSync(ownerTemporary, join(lockPath, "owner.json"));',
-    to: "        void ownerTemporary;",
-    expect: "找不到那次改名"
-  },
-  {
     // 兜底错误处理里那行日志引用了不在作用域的 req/url —— 每一个走到兜底的请求都会让服务端进程
     // 直接退出。症状只是偶发 ECONNREFUSED，追了三轮。请求信息必须显式传参。
     name: "兜底错误处理不得引用作用域外的变量",
@@ -9969,11 +9961,13 @@ const MUTATIONS = [
     expect: "而 /api/health 没说"
   },
   {
-    name: "本进程自己的 MCP 审计残锁要立刻破掉（不许白等 10 秒并冻住整个控制面）",
-    file: "apps/mcp-server/server.mjs",
+    name: "本进程自己的残锁要立刻破掉（不许白等 10 秒并冻住整个控制面；三把锁共用这一处）",
+    // 三把目录锁收成 state-store 的 withDirectoryLock 之后，这个判定只剩一处。
+    // 断言仍在 doctor-mcp（它造自己 pid 的残锁、量写工具与 /api/health 的耗时）。
+    file: "apps/control-plane-ui/lib/state-store.mjs",
     gate: "mcp",
-    from: "  if (pid === process.pid) return true;",
-    to: "  if (pid === process.pid) return false;",
+    from: "  if (pid === process.pid) return false;",
+    to: "  if (pid === process.pid) return true;",
     expect: "同 pid 的锁只可能是残锁"
   },
   {

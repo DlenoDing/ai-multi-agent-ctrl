@@ -248,8 +248,11 @@ const AGENT_RUNTIME_CLI_THROWS = new Set([
 ]);
 
 const REFUSAL_CODE_THROW_HELPERS = ["topologyError", "gatewayError"];
+// timeoutCode: 也算一种抛码写法：三把目录锁收成 withDirectoryLock 一份之后，各自的 *_lock_timeout
+// 由调用方以 timeoutCode: "…" 传入、在共用函数里拼成模板串抛出 —— 只认 new Error("字面量") 的话，
+// 这一族整个从产品码集合里消失，第二道门的登记会被误判成"产品里已不存在"（实测就这么报了）。
 const REFUSAL_CODE_FORMS = new RegExp(
-  `(?:error:\\s*|new Error\\(\\s*|${REFUSAL_CODE_THROW_HELPERS.map((name) => `${name}\\(\\s*`).join("|")})"([a-z0-9_]{6,})"`, "gu");
+  `(?:error:\\s*|timeoutCode:\\s*|new Error\\(\\s*|${REFUSAL_CODE_THROW_HELPERS.map((name) => `${name}\\(\\s*`).join("|")})"([a-z0-9_]{6,})"`, "gu");
 // 抛错工厂里【不产生拒绝码】的，登记在这里并写明理由 —— 否则下面那条判据会要求把它纳入扫描面。
 const THROW_HELPERS_WITHOUT_CODES = {
   throwStateStoreConflict: "第一个参数是拼给运维看的自然语言（\"...expected N, found M\"），不是拒绝码；"
@@ -12034,10 +12037,10 @@ function verifySharedJsonWritesAreAtomic(output) {
     {file: "apps/control-plane-ui/server.mjs", what: "runtime-config.json（两个副本共用一个 runtime 目录时互读）",
       forbidden: "writeFileSync(configPath,", requiredRename: "renameSync(temporary, configPath)"},
     {file: "apps/control-plane-ui/lib/state-store.mjs", what: "锁的 owner.json（破锁判据的唯一依据）",
-      forbidden: 'writeFileSync(join(lockDir, "owner.json")', requiredRename: 'renameSync(ownerTemporary, join(lockDir, "owner.json"))'},
-    {file: "apps/mcp-server/server.mjs", what: "锁的 owner.json（同上）",
-      forbidden: 'writeFileSync(join(lockPath, "owner.json")', requiredRename: 'renameSync(ownerTemporary, join(lockPath, "owner.json"))'}
+      forbidden: 'writeFileSync(join(lockDir, "owner.json")', requiredRename: 'renameSync(ownerTemporary, join(lockDir, "owner.json"))'}
   ];
+  // MCP 审计锁那条登记已删：三把目录锁收成 state-store 的 withDirectoryLock 一份，
+  // owner.json 的原子写只剩上面 state-store 那一处。
   // 写给人/agent 看、没有任何代码读、撕裂也不致命的，登记豁免并写明理由。
   const NOT_SHARED = {
     "apps/control-plane-ui/lib/control-plane-core.mjs":
@@ -12107,7 +12110,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 连带撤销它全部的会话与授权，而它原先一道门都没有 —— 只锁一边等于没锁）。可达性与上面
   // 两条完全相同：identity-mcp.* 整族被工具白名单挡着，编不出走到它的用例，已登记进
   // KNOWN_SECOND_DOORS。够得着的那一侧（REST 的 org_member_status_update）本来就是真人专属。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 22;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 21;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];

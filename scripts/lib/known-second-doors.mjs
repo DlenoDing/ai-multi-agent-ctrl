@@ -61,10 +61,6 @@ export const KNOWN_SECOND_DOORS = {
     + "（modelId / modelDecision / modelSelectionDecisionRef 三个一起写入），"
     + "正常路径造不出缺字段的 contract；enqueueAgentDispatch 不导出，也不为测试去导它。"
     + "它守的是上游哪天漏填 —— 那时事后说不清「为什么用了这个模型」",
-  mcp_audit_lock_timeout:
-    "(b) 够得着但代价不成比例：要造它得占住审计锁并让持锁进程【活着】（否则会被判为陈旧锁破掉），"
-    + "然后白等满 10 秒的获取超时。契约门现在整体 14 秒，为这一条加 10 秒是 70% 的增幅。"
-    + "锁本身的正确性另有覆盖：破锁判据、崩溃后恢复都在 crash-consistency 与并发写入门里",
     agent_runtime_no_git_changes:
     "本地工作器每趟都会重写产出清单，而清单里带 createdAt —— 于是总有一个文件在变，"
     + "hasStaged 永远为真。产出内容一字未变时撞的是检查点那道 artifact_output_ref_not_changed_in_commit"
