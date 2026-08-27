@@ -750,12 +750,13 @@ try {
       headers: {"Idempotency-Key": `doctor-agent-reject-${code}-${index}`, authorization: systemAuth},
       body: JSON.stringify({projectId: "prj_control_plane", model: "auto_best", ...body})
     });
-    if (code === "agent_role_not_registered" && !((rejected.payload?.unknownRoles || []).includes("reviwer") && (rejected.payload?.supported || []).includes("reviewer"))) {
-      throw new Error(`建智能体时「${label}」的拒绝要点名 reviwer 并列出可用角色（含 reviewer），实际 ${JSON.stringify(rejected.payload).slice(0, 160)}`);
-    }
     if (rejected.response.status !== 400 || rejected.payload?.error !== code) {
       throw new Error(`建智能体时「${label}」必须被拒绝（期望 400 ${code}）：`
         + `实际 ${rejected.response.status} ${JSON.stringify(rejected.payload).slice(0, 200)}`);
+    }
+    // 报文细节的断言放在状态断言之后：判定被拿掉时先红的必须是「必须被拒绝」那一句。
+    if (code === "agent_role_not_registered" && !((rejected.payload?.unknownRoles || []).includes("reviwer") && (rejected.payload?.supported || []).includes("reviewer"))) {
+      throw new Error(`建智能体时「${label}」的拒绝要点名 reviwer 并列出可用角色（含 reviewer），实际 ${JSON.stringify(rejected.payload).slice(0, 160)}`);
     }
   }
   const delegatedDenyStateBefore = await jsonFetch(port, "/api/state?view=system&limit=20", {
