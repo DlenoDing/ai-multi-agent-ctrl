@@ -173,6 +173,7 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | `AIMAC_MCP_SUMMARY_CAP` | `25` | MCP 摘要视图每个集合的条数 | agent 拿到的摘要只含最近若干条 |
 | `AIMAC_MCP_SUMMARY_WORK_ITEM_CAP` | `20` | MCP 摘要里每个任务组内嵌的工作项数 | 同上 |
 | `AIMAC_MCP_AUDIT_MAX_BYTES` | `67108864` | MCP 调用台账单文件大小（64 MiB），到量轮转 | 更早的调用记录进了轮转文件 |
+| `AIMAC_MCP_AUDIT_ROTATIONS` | `20` | 保留多少份轮转出去的 MCP 调用台账；超过的按最旧删除（默认约 1.28 GiB 之后开始丢最早的 agent 调用记录，不告警） | 更早的记录不在任何地方了 |
 | `AIMAC_ROOM_PARTICIPANTS_MAX` | `5000` | 房间参与者总数 | 超出后新参与者加不进来 |
 | `AIMAC_ROOM_SEQUENCE_MAX_ROOMS` | `5000` | 记着序号的房间数 | 太老的房间序号从头开始 |
 | `AIMAC_PROJECT_EVENT_KEY_FILE_CAP` | `5000` | 项目事件的幂等键文件条数 | 更早的事件重放不再去重 |
