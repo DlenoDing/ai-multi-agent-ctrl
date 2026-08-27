@@ -12060,6 +12060,24 @@ function verifySharedJsonWritesAreAtomic(output) {
   for (const [rel, reason] of Object.entries(NOT_SHARED)) {
     if (!existsSync(join(root, rel))) output.push(`原子写豁免登记里的 ${rel} 不存在了（${reason}）—— 登记过期`);
   }
+  // 【豁免的理由要自证，不能只核文件还在】。"技能索引 index.json 全仓没有任何读者"是登记时手写的：
+  // 谁将来加一个读者（比如按索引找技能正文），直写就会让它读到半截 JSON，而这条登记照旧绿着。
+  // 所以按产品源码重新数一遍读者：读了就不再是"没有读者"，要么改成原子写、要么把登记改掉。
+  {
+    const productFiles = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+      "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs", "apps/mcp-server/server.mjs"];
+    const readers = [];
+    for (const rel of productFiles) {
+      const text = readFileSync(join(root, rel), "utf8").replace(/\/\/[^\n]*/gu, "");
+      for (const hit of text.matchAll(/readFileSync\([^)]*\b(indexPath|"index\.json"|'index\.json')/gu)) {
+        readers.push(`${rel.split("/").pop()}:${text.slice(0, hit.index).split("\n").length}`);
+      }
+    }
+    if (readers.length) {
+      output.push(`技能索引 index.json 现在有读者了（${readers.join("、")}），而它仍是直写 —— `
+        + "读者会读到半截 JSON。要么改成 tmp+rename，要么把 NOT_SHARED 里那条豁免删掉");
+    }
+  }
 }
 
 // 棘轮的扫描面必须跟得上产品里制造拒绝的写法。少认一种写法，棘轮报出的数就只是"我查得见的那部分"，

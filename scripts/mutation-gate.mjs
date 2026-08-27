@@ -9971,6 +9971,15 @@ const MUTATIONS = [
     expect: "同 pid 的锁只可能是残锁"
   },
   {
+    name: "原子写豁免「index.json 没有读者」要自证：谁加了读者，这条就得红",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifySharedJsonWritesAreAtomic",
+    from: '  const indexPath = join(sourceDir, "index.json");\n  writeFileSync(indexPath, `${JSON.stringify(index, null, 2)}\\n`);',
+    to: '  const indexPath = join(sourceDir, "index.json");\n  writeFileSync(indexPath, `${JSON.stringify(index, null, 2)}\\n`);\n  void JSON.parse(readFileSync(indexPath, "utf8"));',
+    expect: "现在有读者了"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",
