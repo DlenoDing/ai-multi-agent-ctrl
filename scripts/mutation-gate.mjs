@@ -10038,6 +10038,14 @@ const MUTATIONS = [
     expect: "不合 mcp-call/v1"
   },
   {
+    name: "技能集缓存清单坏了要重新同步，不能让节点之后每件活都崩在 JSON.parse",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: '    try { workset = JSON.parse(readFileSync(manifestPath, "utf8")); } catch { workset = null; }',
+    to: '    workset = JSON.parse(readFileSync(manifestPath, "utf8"));',
+    expect: "agent 领活没有走到执行器"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

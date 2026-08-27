@@ -1419,6 +1419,20 @@ try {
       method: "POST", token: login.sessionToken, idempotencyKey: "doctor-agent-rewind-orchestrate",
       body: {mode: "single", taskGroupId: "tg_runtime_management", autoSyncSkills: false}
     });
+    // 【顺带：技能集缓存清单坏了】。skill-worksets/<id>/skill-workset.json 是 agent 自己写在本机的缓存，
+    // 每次领活都会读回来 —— 这份文件此前从没被任何门碰过。它坏掉（截断、手改、磁盘错）不该让这个
+    // 节点之后的每一件活都崩在同一行：缓存读不出来就重新同步，摘要会把内容重新钉住。
+    // 搭在这一轮上（同一件活只剩这一次可派发）：这一轮要能推上去、被回退、被发现，
+    // 本身就证明领活时缓存那一步没崩；下面先验缓存、再验回退，免得归错因。
+    const cacheRoot = join(agentWorkDir, "skill-worksets");
+    const manifests = existsSync(cacheRoot)
+      ? readdirSync(cacheRoot).map((name) => join(cacheRoot, name, "skill-workset.json")).filter((path) => existsSync(path))
+      : [];
+    if (!manifests.length) {
+      throw new Error("「缓存清单坏了」这条没造出想测的情形：前两轮派发之后本机没有任何技能集缓存清单"
+        + `（${cacheRoot}）—— 下面的断言什么也没验`);
+    }
+    for (const path of manifests) writeFileSync(path, "{\"worksetDigest\": \"sha256:trunc");
     const rewindRun = spawnSync(process.execPath, [runtimePath, "run", "--work-dir", agentWorkDir, "--once"], {
       env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false"},
       encoding: "utf8", maxBuffer: 32 * 1024 * 1024
@@ -1428,6 +1442,19 @@ try {
       throw new Error("「推完被回退」这条没造出想测的情形：这一轮 agent 没领到任何派发"
         + `（编排回执：${JSON.stringify(rewindOrchestrated.changed || []).slice(0, 300)}）`);
     }
+    if (/Unterminated string in JSON|Unexpected token|Unexpected end of JSON|SyntaxError/u.test(rewindText)) {
+      throw new Error("技能集缓存清单坏了一份，agent 领活没有走到执行器 —— 这是缓存，读不出来该重新同步，"
+        + `而不是让这个节点之后每一件活都死在同一行（agent 输出尾：${rewindText.slice(-300)}）`);
+    }
+    const healed = manifests.filter((path) => {
+      try { return Boolean(JSON.parse(readFileSync(path, "utf8")).worksetDigest); } catch { return false; }
+    });
+    // 只会修这一轮真用到的那份；没被读到的坏清单留着，下次用到它时同样走重新同步。
+    if (!healed.length) {
+      throw new Error(`坏掉的缓存清单一份都没被重新同步回来（0/${manifests.length} 份可读）—— `
+        + "下一次领活还会撞上同一份坏文件");
+    }
+    console.log(`  ok  技能集缓存清单坏了时 agent 重新同步而不是崩掉（${healed.length}/${manifests.length} 份清单被这一轮用到并修复）`);
     if (!/push_verification_failed/u.test(rewindText)) {
       throw new Error("推上去之后远端被回退，agent 没有发现 —— 它会带着「已推送」的检查点回去，"
         + `而那份产出并不在远端（agent 输出：${rewindText.slice(-300)}）`);

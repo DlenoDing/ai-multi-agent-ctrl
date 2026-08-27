@@ -1545,7 +1545,13 @@ function syncSkillWorkset(config, dispatchPackage) {
   const expected = dispatchPackage.skillWorkset;
   const directory = join(config.skillCacheDir, expected.worksetId);
   const manifestPath = join(directory, "skill-workset.json");
-  let workset = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, "utf8")) : null;
+  // 这是缓存，不是账本：清单读不出来（被截断、被人手改坏、磁盘错）就当没有，走下面的重新同步 ——
+  // 摘要与逐文件校验会把内容重新钉住。原先这里是裸 JSON.parse，一份坏清单会让这个节点之后
+  // 领到的每一件活都在同一行崩掉（而且报出去的是 SyntaxError，没人看得出是缓存坏了）。
+  let workset = null;
+  if (existsSync(manifestPath)) {
+    try { workset = JSON.parse(readFileSync(manifestPath, "utf8")); } catch { workset = null; }
+  }
   if (!workset || workset.worksetDigest !== expected.worksetDigest || !verifySkillFiles(directory, workset.files || [])) {
     workset = syncJson(`${config.serverUrl}${expected.downloadPath}`, config.nodeToken);
     if (workset.worksetDigest !== expected.worksetDigest) throw new Error("skill_workset_digest_mismatch:技能集摘要与控制面给的对不上");
