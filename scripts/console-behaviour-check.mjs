@@ -921,6 +921,42 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         probe.setFetch(previousFetch);
       }
     }
+    // 【三个收尾/处置表单：status 空着就拒，不缺省成肯定的那一项】。下拉里都有「驳回」，缺省却分别是
+    // 激活为全局规范 / 视为已完成评审 / 视为已消费 —— 空着提交等于替人做了最重的判断。
+    for (const [kind, route, heavy] of [
+      ["shared-definition-resolve", /shared-definition-contracts\/req_1\/resolve$/u, "active"],
+      ["review-plan-resolve", /review-plans\/req_1\/resolve$/u, "closed"],
+      ["review-bundle-resolve", /review-bundles\/req_1\/resolve$/u, "consumed"]
+    ]) {
+      const recorded = [];
+      const toasts = [];
+      const previousFetch = globalThis.fetch;
+      probe.setFetch(async (url, init = {}) => {
+        recorded.push({url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null});
+        return {ok: true, status: 200, headers: {get: () => null}, json: async () => ({ok: true})};
+      });
+      probe.captureToastKind("error", (message) => toasts.push(String(message)));
+      const mkForm = (status) => el("form", {dataset: {form: kind, request: "req_1"}}, [
+        el("select", {name: "status", value: status}),
+        el("input", {name: "justification", value: "探针理由"}),
+        el("button", {type: "submit"})
+      ]);
+      try {
+        const emptyForm = mkForm("");
+        await probe.submit({target: emptyForm, submitter: emptyForm.children[2], preventDefault: () => {}});
+        const postedEmpty = recorded.find((item) => item.method === "POST" && route.test(item.url));
+        check(`${kind}：status 空着要拒，不缺省成 ${heavy}`,
+          !postedEmpty && toasts.some((message) => /请选择/u.test(message)),
+          postedEmpty ? `空着也发出了 ${JSON.stringify(postedEmpty.body)} —— 替人做了最重的判断` : `没拒（toast：${JSON.stringify(toasts).slice(0, 100)}）`);
+        recorded.length = 0;
+        const rejectForm = mkForm("rejected");
+        await probe.submit({target: rejectForm, submitter: rejectForm.children[2], preventDefault: () => {}});
+        const post = recorded.find((item) => item.method === "POST" && route.test(item.url));
+        check(`${kind}：选「驳回」发的就是 rejected`, post?.body?.status === "rejected", `发出去的是 ${JSON.stringify(post?.body)}`);
+      } finally {
+        probe.setFetch(previousFetch);
+      }
+    }
     // 【配置编辑器不许插一行保存时会被丢掉的行】。cfg-add 原先对认不出的 kind 兜底插「业务规则」行，
     // 而保存只收 repo / baseline / role —— 人填了就丢。先自证点击真的会插行（repo），再验未知 kind 不插。
     {

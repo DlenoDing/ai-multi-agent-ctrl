@@ -10357,6 +10357,30 @@ const MUTATIONS = [
     expect: "替人做了最重的判断"
   },
   {
+    name: "共享定义契约处置：status 空着要拒（缺省曾是激活为全局规范）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      if (!data.status) throw new Error("请选择处置方式 —— 系统不会替你选一个");\n      await api(`/api/shared-definition-contracts/',
+    to: '      data.status ||= "active";\n      await api(`/api/shared-definition-contracts/',
+    expect: "shared-definition-resolve：status 空着要拒"
+  },
+  {
+    name: "评审计划收尾：status 空着要拒（缺省曾是视为已完成评审）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      if (!data.status) throw new Error("请选择收尾方式 —— 系统不会替你选一个");\n      await api(`/api/review-plans/',
+    to: '      data.status ||= "closed";\n      await api(`/api/review-plans/',
+    expect: "review-plan-resolve：status 空着要拒"
+  },
+  {
+    name: "评审包收尾：status 空着要拒（缺省曾是视为已消费）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      if (!data.status) throw new Error("请选择收尾方式 —— 系统不会替你选一个");\n      await api(`/api/review-bundles/',
+    to: '      data.status ||= "consumed";\n      await api(`/api/review-bundles/',
+    expect: "review-bundle-resolve：status 空着要拒"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

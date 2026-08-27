@@ -5142,13 +5142,16 @@ document.addEventListener("submit", async (event) => {
     }
     if (kind === "review-plan-resolve") {
       if (!String(data.justification || "").trim()) throw new Error("收尾评审计划必须写明理由（例如：外部评审方不再参与）");
-      await api(`/api/review-plans/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "closed", justification: data.justification})});
+      // 缺省 closed＝「视为已完成评审」，是最重的收尾方式；空着就拒。
+      if (!data.status) throw new Error("请选择收尾方式 —— 系统不会替你选一个");
+      await api(`/api/review-plans/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status, justification: data.justification})});
       await loadPage();
       return;
     }
     if (kind === "review-bundle-resolve") {
       if (!String(data.justification || "").trim()) throw new Error("收尾评审包必须写明理由");
-      await api(`/api/review-bundles/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "consumed", justification: data.justification})});
+      if (!data.status) throw new Error("请选择收尾方式 —— 系统不会替你选一个");
+      await api(`/api/review-bundles/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status, justification: data.justification})});
       await loadPage();
       return;
     }
@@ -5204,7 +5207,9 @@ document.addEventListener("submit", async (event) => {
     }
     if (kind === "shared-definition-resolve") {
       if (!String(data.justification || "").trim()) throw new Error("处置共享定义契约必须写明理由");
-      await api(`/api/shared-definition-contracts/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "active", justification: data.justification})});
+      // 下拉里有「驳回」，缺省却是「激活为全局规范」—— 空着提交等于替人做了最重的判断。空着就拒。
+      if (!data.status) throw new Error("请选择处置方式 —— 系统不会替你选一个");
+      await api(`/api/shared-definition-contracts/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status, justification: data.justification})});
       await loadPage();
       return;
     }
