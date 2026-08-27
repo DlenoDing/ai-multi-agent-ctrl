@@ -171,6 +171,21 @@ try {
     }
   }
 
+  // 【PostgreSQL 读路径读出来的记录要按规范与状态机核一遍】。三套 e2e 都在 runtime_json 上扫产出，
+  // 生产用的 PG 后端（分片按 project_id 读回再水合）此前从没被任何门按规范验过。走产品自己的读路径。
+  {
+    const sweep = spawnSync(process.execPath, ["scripts/lib/pg-sweep-probe.mjs"], {cwd: root, env: pgEnv, encoding: "utf8"});
+    const line = String(sweep.stdout || "").trim().split("\n").pop() || "";
+    let report = null;
+    try { report = JSON.parse(line); } catch { report = null; }
+    if (sweep.status !== 0 || !report) {
+      throw new Error(`PostgreSQL 产出核对探针没跑成（exit ${sweep.status}）：${String(sweep.stderr || sweep.stdout).slice(-300)}`);
+    }
+    if (report.errors.length) {
+      throw new Error(`docker 部署（PostgreSQL 后端）读出来的记录不符合规范/状态机：\n- ${report.errors.join("\n- ")}\n没带 schemaVersion 的记录样本：${JSON.stringify(report.samples || {}).slice(0, 600)}`);
+    }
+    console.log(`  PostgreSQL 产出规范核对 ok: ${report.validated} 条记录符合各自声明的 schema；${report.uncoveredNote}；${report.statesNote}`);
+  }
   const doctor = spawnSync("npm", ["run", "agentctl", "--", "doctor", "--server=http://127.0.0.1:4317"], {cwd: root, env: composeEnv, encoding: "utf8"});
   if (doctor.status !== 0 || !doctor.stdout.includes("agent gateway doctor ok")) throw new Error(`compose agentctl doctor failed: ${doctor.stderr || doctor.stdout}`);
   console.log("docker compose doctor ok: config, build, health, centralized MCP, installer artifacts and PostgreSQL state-store verified");

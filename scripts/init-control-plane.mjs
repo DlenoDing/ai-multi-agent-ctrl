@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { digestOf, ensureRuntimeCollections } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
+import { appendAuditEntry } from "../apps/control-plane-ui/lib/audit-ledger.mjs";
 import { markRuntimeStorage, stateStoreKind, storedStateExists, writeStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { mcpServiceAllowedTools } from "../apps/control-plane-ui/lib/mcp-service-allowlist.mjs";
 import { createMcpToolDefinitions } from "../apps/mcp-server/server.mjs";
@@ -62,14 +63,11 @@ function buildState() {
   state.runtime.executionProfile = executionProfile;
   ensureRuntimeCollections(state, {root: repositoryRoot, runtimeDir, endpoint: process.env.AIMAC_PUBLIC_URL || `http://${process.env.AIMAC_HOST || "127.0.0.1"}:${Number(process.env.AIMAC_PORT || 4317)}`, executionProfile});
   markRuntimeStorage(state, ".runtime/control-plane-state.json");
-  state.auditLog.unshift({
-    id: `audit_bootstrap_${Date.now()}`,
-    at: now,
-    actor: "bootstrap",
-    action: "runtime_initialized",
-    subject: "RuntimeBootstrapProfile:runtime_local",
-    result: "succeeded"
-  });
+  // 引导审计行要经共用的台账构造走：原先在这里手拼一条（没有 schemaVersion、没有 rowHash/prevHash），
+  // 于是每一份经 `npm run init` 初始化的部署，哈希链的第一行都是没上链的 —— docker 门在 PostgreSQL 后端上
+  // 第一次按规范扫产出就把它报了出来（doctor 走的是种子路径，从没见过它）。
+  appendAuditEntry(state, {actor: "bootstrap", action: "runtime_initialized",
+    subject: "RuntimeBootstrapProfile:runtime_local", result: "succeeded", at: now});
   return state;
 }
 

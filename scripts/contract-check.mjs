@@ -959,6 +959,7 @@ run(verifyApprovalDecisionRequired);
 run(verifyWorkStatusEnumConvergence);
 run(verifyTransitionEngine);
 run(verifyCommandBusLifecycle);
+run(verifyInitLedgerStartsHashed);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
 // 汇总之前把所有 async 检查等干净。少了这一句，它们推进的错误会赶不上报告。
@@ -15526,6 +15527,32 @@ function verifyRejectedWritesLeaveStateUntouched(output) {
     output.push(`被拒写入留痕：夹具没造出想测的情形 —— 机器主体落闸没被拒（${rejectedB || "没抛"}），下面那条什么也没验`);
   } else if (JSON.stringify(stB.closeBarriers || []) !== beforeB) {
     output.push("被拒写入留痕：computeCloseBarrier 拒绝机器主体（403）之前已经写了 closeBarriers —— 先写后校验");
+  }
+}
+
+// 【init 写下的第一条审计行必须上链】。init-control-plane 原先手拼引导行（没有 schemaVersion、没有 rowHash），
+// 每一份经 `npm run init` 初始化的部署，哈希链第一行都是没上链的；三套 e2e 走的是种子路径，从没见过它，
+// 直到 docker 门在 PostgreSQL 后端上按规范扫产出才报出来。这里真跑一次 init 进临时目录，读回第一行。
+function verifyInitLedgerStartsHashed(output) {
+  const dir = mkdtempSync(join(tmpdir(), "aimac-init-ledger-"));
+  try {
+    const run = spawnSync(process.execPath, [join(root, "scripts/init-control-plane.mjs")], {
+      cwd: root, encoding: "utf8",
+      env: {...process.env, AIMAC_RUNTIME_DIR: join(dir, "runtime"), AIMAC_STATE_STORE: "runtime_json", DATABASE_URL: ""}
+    });
+    if (run.status !== 0) {
+      output.push(`init 进临时目录没跑成（exit ${run.status}）：${String(run.stderr || run.stdout).slice(-200)} —— 下面那条什么也没验`);
+      return;
+    }
+    const state = JSON.parse(readFileSync(join(dir, "runtime", "control-plane-state.json"), "utf8"));
+    const rows = state.auditLog || [];
+    const bootstrap = rows.find((row) => row.action === "runtime_initialized");
+    if (!bootstrap) { output.push("init 之后台账里没有 runtime_initialized 那一行 —— 夹具没造出想测的情形"); return; }
+    if (bootstrap.schemaVersion !== "audit-log-entry/v1" || !/^sha256:/u.test(String(bootstrap.rowHash || "")) || !bootstrap.prevHash) {
+      output.push(`init 写下的引导审计行没上链：${JSON.stringify({schemaVersion: bootstrap.schemaVersion, rowHash: bootstrap.rowHash, prevHash: bootstrap.prevHash})} —— 每份部署的哈希链第一行都是散的`);
+    }
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
   }
 }
 

@@ -10397,6 +10397,23 @@ const MUTATIONS = [
     expect: "人看到成功而配额没动"
   },
   {
+    name: "docker 部署（PostgreSQL 后端）读出来的记录也要压规范（此前从没被任何门验过；变异让门自己种进 PG 的项目掉 schemaVersion）",
+    file: "scripts/lib/pg-cas-probe.mjs",
+    gate: "docker",
+    from: '  projects: [...(state?.projects || []), {schemaVersion: "project/v1", id: `prj_cas_${marker}`,',
+    to: '  projects: [...(state?.projects || []), {id: `prj_cas_${marker}`,',
+    expect: "docker 部署产出 projects"
+  },
+  {
+    name: "init 的引导审计行要经共用台账构造上链（原先手拼、无 schemaVersion 无 rowHash）",
+    file: "scripts/init-control-plane.mjs",
+    gate: "contract",
+    check: "verifyInitLedgerStartsHashed",
+    from: '  appendAuditEntry(state, {actor: "bootstrap", action: "runtime_initialized",\n    subject: "RuntimeBootstrapProfile:runtime_local", result: "succeeded", at: now});',
+    to: '  state.auditLog.unshift({id: `audit_bootstrap_${Date.now()}`, at: now, actor: "bootstrap", action: "runtime_initialized", subject: "RuntimeBootstrapProfile:runtime_local", result: "succeeded"});',
+    expect: "init 写下的引导审计行没上链"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

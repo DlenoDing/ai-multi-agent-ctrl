@@ -12,8 +12,10 @@ const expected = Number(process.argv[3]);
 // project_state_shard_missing。探针不该破坏被测系统。
 const {central: state, shards} = pgReadStateWithShards();
 const next = {...state, stateVersion: expected + 1,
-  projects: [...(state?.projects || []), {id: `prj_cas_${marker}`, name: `cas-${marker}`,
-    organizationId: "org_default", status: "active", members: []}]};
+  // 探针写进去的项目要合它自己的规范（schemaVersion / ownerAccountId / progress 都是必填）：
+  // 原先只写了 id/name/status，PG 产出规范核对第一跑就把这条自己种下的记录报了出来。
+  projects: [...(state?.projects || []), {schemaVersion: "project/v1", id: `prj_cas_${marker}`, name: `cas-${marker}`,
+    organizationId: "org_default", status: "active", ownerAccountId: "acct_system_owner", members: [], progress: {percent: 0, phase: "probe", health: "normal", updatedAt: new Date().toISOString()}}]};
 try {
   pgWriteStateWithProjectShards(next, shards || [], expected);
   console.log(JSON.stringify({marker, outcome: "written", expected}));
