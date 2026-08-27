@@ -3498,14 +3498,6 @@ const MUTATIONS = [
     expect: "同一个 decisionId 再铸一条必须拒"
   },
   {
-    name: "仓库根只能由服务端给（被验方不得自选拿哪个仓库来验）",
-    file: "apps/mcp-server/server.mjs",
-    check: "verifyToolArgReachabilityIsRegistered",
-    from: "      return acceptAgentCheckpoint(state, args, {root: repositoryRoot});",
-    to: "      return acceptAgentCheckpoint(state, args, {root: args.repositoryRoot || repositoryRoot});",
-    expect: "仓库根只能由服务端给"
-  },
-  {
     name: "调用方自报身份的键不许进共用入参词表",
     file: "apps/mcp-server/server.mjs",
     check: "verifyToolArgReachabilityIsRegistered",
@@ -10184,6 +10176,22 @@ const MUTATIONS = [
     from: "  AgentSkillSource:\n    initial: \"configured\"\n    terminal: [\"retired\"]\n    states:\n      - \"configured\"\n      - \"syncing\"\n      - \"indexed\"\n      - \"active\"\n      - \"stale\"\n      - \"quarantined\"\n      - \"retired\"\n",
     to: "  AgentSkillSource:\n    initial: \"configured\"\n    terminal: [\"retired\"]\n    states:\n      - \"configured\"\n      - \"syncing\"\n      - \"indexed\"\n      - \"stale\"\n      - \"quarantined\"\n      - \"retired\"\n",
     expect: "skillSources 里出现了 AgentSkillSource 状态机没有登记的状态 active"
+  },
+  {
+    name: "检查点经 MCP 对任何主体都要挡回（REST 早就对所有人拒，MCP 只拒节点且够不到）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "      return {ok: false, error: \"checkpoint_must_use_agent_gateway\", retryable: false,",
+    to: "      if (context?.principal?.kind === \"agent_node\") return {ok: false, error: \"checkpoint_must_use_agent_gateway\", retryable: false,",
+    expect: "管理员经 MCP 提交检查点该被同一道门挡回"
+  },
+  {
+    name: "「设计上不该经 MCP 成功」的登记要真调过并被挡回（没调≠没成功）",
+    file: "scripts/doctor-mcp.mjs",
+    gate: "mcp",
+    from: '    const cp = await mcpAs(admin.sessionToken, "tools/call", {name: "evidence-mcp.checkpoint_submit",',
+    to: '    const cp = await (async () => ({content: [{text: JSON.stringify({result: {error: "checkpoint_must_use_agent_gateway"}})}]}))(admin.sessionToken, "tools/call", {name: "evidence-mcp.checkpoint_submit",',
+    expect: "可本轮根本没调过它"
   },
   {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",

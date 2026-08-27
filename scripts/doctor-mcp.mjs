@@ -1348,6 +1348,28 @@ try {
   // 【成功执行过的工具数只降不升】。空参调用能证明 85 个工具"拒得对"，证明不了它们"做得对" ——
   // 量过一次：真正成功执行过的只有 26 个。这条棘轮盯住这个数：新工具加进来而没人跑通它，
   // 比例就会掉；把某条链改坏了，数也会掉。数从记账来（AIMAC_TOOL_TRACE），不是数源码里的调用。
+  // 【检查点不能经 MCP 提交 —— 对谁都不能】。REST 那条路对所有调用方都拒；MCP 这条原先只在授权层拒节点主体
+  // （那支还够不到），系统管理员的会话一路走进受理函数。这里用管理员会话真调一次，要拿到与 REST 同一个码。
+  {
+    // 前面还有一道租约门（active_mcp_lease_required）：远程主体调需租约的工具要带活租约 + 围栏令牌。
+    // 租约任何远程主体都能 claim 到，所以它不是"检查点不能经 MCP 提交"的那道门 —— 先拿一张，
+    // 让调用真的走到受理点前的最后一道门。
+    const cpLease = await mcpAs(admin.sessionToken, "tools/call", {name: "resource-mcp.lease_claim",
+      arguments: {idempotencyKey: "doctor-mcp-checkpoint-lease", repositoryOutputTargetRef: targetId, holderRef: "session:sess_doctor_probe"}});
+    const cpLeaseRecord = cpLease.structuredContent?.result?.lease;
+    if (!cpLeaseRecord?.leaseId || !cpLeaseRecord?.fencingToken) {
+      throw new Error(`「检查点不能经 MCP 提交」这条没造出想测的情形：管理员拿不到租约（${JSON.stringify(cpLease).slice(0, 200)}），调用会停在租约门上，测不到受理点前的那道门`);
+    }
+    const cp = await mcpAs(admin.sessionToken, "tools/call", {name: "evidence-mcp.checkpoint_submit",
+      arguments: {idempotencyKey: "doctor-mcp-checkpoint-via-mcp", taskGroupId: "tg_runtime_management", workId: "work_management_ui",
+        sessionId: "sess_doctor_probe", runId: "run_doctor_probe", leaseId: cpLeaseRecord.leaseId, fencingToken: cpLeaseRecord.fencingToken}});
+    const cpPayload = JSON.parse(cp.content?.[0]?.text || "{}");
+    const cpInner = cpPayload.result || cpPayload;
+    if (cpInner.error !== "checkpoint_must_use_agent_gateway") {
+      throw new Error(`管理员经 MCP 提交检查点该被同一道门挡回（checkpoint_must_use_agent_gateway），实际 ${JSON.stringify(cpPayload).slice(0, 220)} —— 绕开网关就没有认领代次、围栏与证据链校验`);
+    }
+    console.log("  ok  检查点经 MCP 对任何主体都被挡回（与 REST 同一道门、同一句话）");
+  }
   {
     // 本套 e2e 自己跑通的数（跨门合计另算：契约门在进程内还会跑通一批）。
     // 这个数是【实测出来的】—— 早先一次量到 44，复量不出来，那次多半把别的运行留下的账算了进去；
@@ -1359,7 +1381,8 @@ try {
       // 光是在这段登记里写出它，就会把它算成"已有判据"—— 而登记不是判据。
       // 那份第二道门册的开头写着同一条，我这次照样撞了一次。
       "evidence-mcp.checkpoint_submit":
-        "检查点必须走 agent 网关（带节点凭据 + claim 围栏）—— MCP 这条路一律被那道门挡回；"
+        "检查点必须走 agent 网关（带节点凭据 + claim 围栏）—— MCP 这条路在工具受理点上对【任何主体】拒"
+        + "（checkpoint_must_use_agent_gateway，与 REST 同一道门；上面「检查点不能经 MCP 提交」那条真调过并拿到这个码）；"
         + "真实提交在 doctor-agent-remote 里由真节点跑过",
       "skill-mcp.skill_source_sync":
         "同步会真的 git clone 一个外部仓库（12MB）：放进这套 e2e 就是每轮都联网拉一次，代价与收益不成比例。"
@@ -1370,6 +1393,7 @@ try {
     let traced = "";
     try { traced = readFileSync(toolTracePath, "utf8"); } catch { traced = ""; }
     const succeeded = new Set(traced.split("\n").filter((line) => line.startsWith("ok ")).map((line) => line.slice(3)));
+    const refused = new Set(traced.split("\n").filter((line) => line.startsWith("no ")).map((line) => line.slice(3)));
     const calls = traced.split("\n").filter(Boolean).length;
     // 自证：本套 e2e 自己打的 MCP 调用是 48 次左右（空参那 85 次在 contract-check 的子进程里，
     // 不在这本账上）。这个下限只用来分辨"记账断了"和"确实没打那么多"。
@@ -1384,6 +1408,12 @@ try {
       if (succeeded.has(tool)) {
         throw new Error(`${tool} 登记着「设计上不该经 MCP 成功」，本轮却成功了 —— `
           + `要么那道门失效了，要么登记过期（${why}）`);
+      }
+      // 「没成功」与「没调」长得一样：登记说它会被门挡回，本轮就得真的调过一次并被挡回。
+      // checkpoint_submit 就这样挂了很久 —— 登记写着"一律被那道门挡回"，而那道门只拒节点主体（还够不到），
+      // 管理员会话一路走进受理函数；这一套 e2e 从没调过它，登记因此一直是"真的"。
+      if (!refused.has(tool)) {
+        throw new Error(`${tool} 登记着「设计上不该经 MCP 成功」，可本轮根本没调过它 —— 「没成功」与「没调」长得一样，登记只有在真调过并被挡回时才算数（${why}）`);
       }
     }
     if (succeeded.size < SUCCESSFULLY_EXERCISED_FLOOR) {

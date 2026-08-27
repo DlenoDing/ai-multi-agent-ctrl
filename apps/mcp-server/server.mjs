@@ -1554,7 +1554,13 @@ async function dispatchTool(state, name, args, context = {}) {
     case "evidence-mcp.artifact_register":
       return artifactRegister(state, args);
     case "evidence-mcp.checkpoint_submit":
-      return acceptAgentCheckpoint(state, args, {root: repositoryRoot});
+      // 与 REST 同一道门、同一句话：检查点只能由认领该派发的节点经 agent 网关提交（那里才有认领代次、
+      // 围栏与证据链校验）。REST 对【所有】调用方都拒；这里原先只在授权层拒节点主体（而且那支够不到），
+      // 系统管理员的会话一路走进 acceptAgentCheckpoint —— 能绕开网关造出一条检查点。
+      // 两条孪生路只守了一条。登记表里那句「MCP 这条路一律被那道门挡回」此前从没被真调过一次。
+      return {ok: false, error: "checkpoint_must_use_agent_gateway", retryable: false,
+        message: "检查点必须由认领该派发的那个节点、用它自己的节点凭据经 agent 网关提交"
+          + "（POST /api/agent/v1/dispatches/:dispatchId/checkpoint）：这条通道少了节点鉴权与认领围栏，无法证明提交者就是干这件活的那一个"};
     case "evidence-mcp.test_result_submit":
       // 缺省作用域不得等于放行：这些实现在 taskGroupId/roomId 缺省时会落到控制面自己的
       // 任务组（tg_runtime_management）。受限主体必须显式点名一个它有权的作用域，
