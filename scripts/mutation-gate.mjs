@@ -3337,7 +3337,8 @@ const MUTATIONS = [
     gate: "agent",
     from: "    for (const item of checks) process.stdout.write(`  ${item.status === \"ok\" ? \"✓\" : \"✗\"} ${item.checkId}${item.detail ? ` — ${item.detail}` : \"\"}\\n`);",
     to: "",
-    expect: "self-check 没有逐项列出"
+    // 逐项清单一拿掉，流程里更早的「坏执行器命令」那块先红（它也读这份清单）：先红的那句才是判据。
+    expect: "self-check 没点名找不到哪个执行器命令"
   },
   {
     name: "agentctl status 第一行要是给人看的一句",
