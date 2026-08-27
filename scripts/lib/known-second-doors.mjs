@@ -37,15 +37,18 @@ export const KNOWN_SECOND_DOORS = {
   // grantMatchesArgs：它拿【原始参数】逐字段与授权比，对不上就 mcp_grant_scope_mismatch。
   // 两句话差别很大 —— 按"覆盖"去理解的话，会以为这里天然安全而不去看那道比对。
   room_id_required_for_bounded_principal:
-    "派发绑定的授权会把省掉的 roomId 补成本派发自己的房间，受限主体造不出'不点名'的调用",
+    "派发绑定的授权会把省掉的 taskGroupId 补上（applyAgentGrantScopeArgs），boundedRoomGuard 再由 taskGroupId 推出"
+    + " room_<taskGroupId> —— 受限主体因此造不出'既不点名 roomId 也没有 taskGroupId'的调用。"
+    + "（2026-08-27 核过：登记原先写成'补 roomId'，函数里并没有这一行；承重的是 taskGroupId 那一步）",
   scope_ref_required_for_bounded_principal: "同上，缺的作用域参数由 applyAgentGrantScopeArgs 填上",
   task_group_id_required_for_bounded_principal: "同上，缺的 taskGroupId 由 applyAgentGrantScopeArgs 填上",
   idempotency_record_principal_unknown:
     "只有【本次主体绑定改动之前写下的】旧幂等记录才触发；新部署造不出这种记录，"
     + "而 e2e 只走 HTTP、碰不到状态内部（去改状态文件造它，夹具比守卫还脆）",
   mcp_principal_project_scope_unresolved:
-    "给【将来新增的工具/参数】留的兜底（源码注释里明写着 defends future-added tools）："
-    + "现有每个带资源地址的参数都推得出 projectId，走不到这一支",
+    "给【将来新增的工具/参数】留的 fail-closed 兜底（源码注释里明写着 defends future-added tools）。"
+    + "2026-08-27 核过一次：地址键清单后加的六个键里有五个没跟上解析分支，受限主体只传 reviewPlanId 就会撞它 ——"
+    + " 已补齐并立门（契约门按清单逐键喂样例）。现有每个键都能解析，所以今天仍走不到；将来加键忘了加解析，那道门先红",
   mcp_dispatch_bound_grant_required:
     "受限节点调没被授予的工具时，mcp_tool_not_granted_to_principal 先拒（工具白名单在授权检查之前）",
   project_id_required:

@@ -29,7 +29,7 @@ import { recordAgentExecutionEvent } from "../apps/control-plane-ui/lib/agent-ga
 import { PROJECT_SHARD_COLLECTION_LIMITS } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import {
-  summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, mcpAcceptedInputVocabulary, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs, capacitySnapshot, assignWorkItem
+  summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, mcpAcceptedInputVocabulary, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs, capacitySnapshot, assignWorkItem, inferMcpArgumentProjectIds
 } from "../apps/mcp-server/server.mjs";
 import {
   ROLE_GRANT_PERMISSION_TEMPLATES,
@@ -6459,6 +6459,54 @@ function verifyCommandBusLifecycle(output) {
     }
     console.log(`抛错渲染：${thrown} 处带 details 的抛错逐个核过，0 处 details.error 与抛出码不一致；`
       + `${renders.length} 处 4xx 渲染都把 error 写在展开之后`);
+  }
+
+  // 【地址键清单里的每个键都要能解析出项目】。RESOURCE_ADDRESSING_ARG_KEYS 后来加了六个键，
+  // 解析函数只跟着补了一个：受限主体只传 reviewPlanId 之类去做一件正当的事，会撞那道
+  // "指到了解析不出的资源"的 fail-closed 兜底（第二道门登记里写着它今天走不到 —— 这条断言守的正是
+  // "将来加键忘了加解析"，所以这里【不写它的码名】，否则棘轮会把它误判成可达而要求删登记）。
+  // 每个键单独出现时都必须解析得出那条记录所属的项目；认不出的 id 仍要解析为空（fail-closed 那支不能被顺手放行）。
+  {
+    const probe = {
+      projects: [{id: "prj_probe"}],
+      taskGroups: [{id: "tg_probe", projectId: "prj_probe"}],
+      workSessions: [{sessionId: "sess_probe", taskGroupId: "tg_probe"}],
+      agentDispatches: [{dispatchId: "adp_probe", taskGroupId: "tg_probe", projectId: "prj_probe"}],
+      permissionRequests: [{requestId: "preq_probe", taskGroupId: "tg_probe"}],
+      sharedDefinitions: [{contractId: "sdc_probe", projectId: "prj_probe"}],
+      // 这几类记录工厂里一律写 projectId，解析函数也只按 projectId 找（不经任务组推）——
+      // 夹具要照工厂的形状造，否则红的是夹具不是产品（第一版就这样红过一回）。
+      leases: [{leaseId: "lease_probe", taskGroupId: "tg_probe", repositoryOutputTargetRef: "rot_probe"}],
+      // 工厂里这两类都写 projectId（核过对象字面量），夹具照工厂形状造。
+      findings: [{findingId: "fd_probe", projectId: "prj_probe", taskGroupId: "tg_probe"}],
+      approvalRequests: [{approvalId: "apr_probe", projectId: "prj_probe", taskGroupId: "tg_probe"}],
+      repositoryOutputs: [{targetId: "rot_probe", projectId: "prj_probe", taskGroupId: "tg_probe"}],
+      reviewPlans: [{reviewPlanId: "rp_probe", projectId: "prj_probe", taskGroupId: "tg_probe"}],
+      reviewBundles: [{reviewBundleId: "rb_probe", projectId: "prj_probe", taskGroupId: "tg_probe"}],
+      instructionMetrics: {envelopes: [{envelopeId: "ienv_probe", taskGroupId: "tg_probe"}]},
+      accessGrants: [{grantId: "grant_probe", resource: {resourceType: "task_group", resourceId: "tg_probe"}}],
+      agentRuntimeNodes: [{nodeId: "node_probe", projectIds: ["prj_probe"]}],
+      executionTopologies: [{topologyId: "topo_probe", projectId: "prj_probe", taskGroupId: "tg_probe"}]
+    };
+    const sampleFor = {projectId: "prj_probe", taskGroupId: "tg_probe", workId: "wi_probe", workItemId: "wi_probe",
+      dispatchId: "adp_probe", sessionId: "sess_probe", requestId: "preq_probe", contractId: "sdc_probe",
+      leaseId: "lease_probe", findingId: "fd_probe", approvalId: "apr_probe", repositoryOutputTargetRef: "rot_probe",
+      targetId: "rot_probe", envelopeId: "ienv_probe", grantId: "grant_probe", nodeId: "node_probe",
+      reviewBundleId: "rb_probe", reviewPlanId: "rp_probe", topologyId: "topo_probe"};
+    probe.taskGroups[0].workItems = [{id: "wi_probe"}];
+    const unresolvable = [];
+    for (const key of RESOURCE_ADDRESSING_ARG_KEYS) {
+      if (!(key in sampleFor)) { output.push(`地址键清单里新出现的 ${key} 这条判据还没有样例 —— 补一条，否则它就是下一个漏解析的`); continue; }
+      const resolved = inferMcpArgumentProjectIds(probe, {[key]: sampleFor[key]});
+      if (!resolved.has("prj_probe")) unresolvable.push(key);
+    }
+    if (unresolvable.length) {
+      output.push(`这些地址键在清单里、解析函数却认不出：${unresolvable.join("、")} —— 受限主体只传它去做一件正当的事，`
+        + "会被当成「指到了解析不出的资源」拒掉（那道兜底的登记写着它今天走不到）");
+    }
+    if (inferMcpArgumentProjectIds(probe, {reviewPlanId: "rp_does_not_exist"}).size) {
+      output.push("认不出的 reviewPlanId 也解析出了项目 —— fail-closed 那一支被顺手放行了");
+    }
   }
 
   // 【点了名却认不出，不等于没点名】。共享定义契约是 core 里最后一个还走宽松解析的工厂：

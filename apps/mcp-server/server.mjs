@@ -1123,7 +1123,7 @@ function validateRemotePrincipalScope(state, principal, args = {}, meta = {}) {
   return {allowed: true};
 }
 
-function inferMcpArgumentProjectIds(state, args = {}) {
+export function inferMcpArgumentProjectIds(state, args = {}) {
   const projectIds = new Set();
   if (args.projectId) projectIds.add(String(args.projectId));
   const explicitResource = explicitMcpResourceScope(args);
@@ -1156,11 +1156,22 @@ function inferMcpArgumentProjectIds(state, args = {}) {
   }
   if (args.findingId) {
     const finding = (state.findings || []).find((item) => item.findingId === args.findingId);
+    // 工厂写 projectId；再经 taskGroupId 推一次是给早期只带 taskGroupId 的旧记录兜底，不改变今天的行为。
     if (finding?.projectId) projectIds.add(finding.projectId);
+    // 内联而不调下面那个 const 助手：它声明在本函数靠后处，在这里调会撞 TDZ（改完当场崩过）。
+    else if (finding?.taskGroupId) {
+      const owner = (state.taskGroups || []).find((item) => item.id === finding.taskGroupId);
+      if (owner?.projectId) projectIds.add(owner.projectId);
+    }
   }
   if (args.approvalId) {
     const approval = (state.approvalRequests || []).find((item) => item.approvalId === args.approvalId);
+    // 同上：旧记录兜底。
     if (approval?.projectId) projectIds.add(approval.projectId);
+    else if (approval?.taskGroupId) {
+      const owner = (state.taskGroups || []).find((item) => item.id === approval.taskGroupId);
+      if (owner?.projectId) projectIds.add(owner.projectId);
+    }
   }
   if (args.contractId) {
     // Shared-definition tools (publish/consumer_bind/conflict_report) are addressed solely by contractId;
@@ -1202,6 +1213,37 @@ function inferMcpArgumentProjectIds(state, args = {}) {
       || (state.humanConfirmationRequests || []).find((item) => item.requestId === args.requestId);
     projectIdForTaskGroupId(request?.taskGroupId);
     projectIdForSessionId(request?.sessionId);
+  }
+  // 【清单里的每个地址键都要能解析】。RESOURCE_ADDRESSING_ARG_KEYS 后来加进了六个"单独一个就能指到
+  // 一条项目级记录"的键（envelopeId / grantId / nodeId / reviewBundleId / reviewPlanId / topologyId），
+  // 而这里只跟着补了 topologyId：其余五个进了清单、却没有解析分支。后果是受限主体只传其中一个
+  //（收尾评审计划就只传 reviewPlanId）时，projectIds 为空、又命中"带了地址键"，于是撞
+  // mcp_principal_project_scope_unresolved —— 一次正当调用被当成"指到了解析不出的资源"拒掉，
+  // 而那条码的登记写着"走不到"。清单与解析必须同一份人维护：加一个键就加一支解析。
+  if (args.reviewPlanId) {
+    const plan = (state.reviewPlans || []).find((item) => item.reviewPlanId === args.reviewPlanId);
+    if (plan?.projectId) projectIds.add(plan.projectId);
+    projectIdForTaskGroupId(plan?.taskGroupId);
+  }
+  if (args.reviewBundleId) {
+    const bundle = (state.reviewBundles || []).find((item) => item.reviewBundleId === args.reviewBundleId);
+    if (bundle?.projectId) projectIds.add(bundle.projectId);
+    projectIdForTaskGroupId(bundle?.taskGroupId);
+  }
+  if (args.envelopeId) {
+    const envelope = (state.instructionMetrics?.envelopes || []).find((item) => item.envelopeId === args.envelopeId);
+    projectIdForTaskGroupId(envelope?.taskGroupId);
+  }
+  if (args.grantId) {
+    // 访问授权挂在 resource 上：项目级直接是项目，任务组级经任务组推。
+    const grant = (state.accessGrants || []).find((item) => item.grantId === args.grantId);
+    if (grant?.resource?.resourceType === "project" && grant.resource.resourceId) projectIds.add(grant.resource.resourceId);
+    if (grant?.resource?.resourceType === "task_group") projectIdForTaskGroupId(grant.resource.resourceId);
+  }
+  if (args.nodeId) {
+    // 一台节点可以同时服务多个项目：全部算进去，受限主体只要在其中任一个上无权就会被挡。
+    const node = (state.agentRuntimeNodes || []).find((item) => item.nodeId === args.nodeId);
+    for (const projectId of node?.projectIds || []) if (projectId) projectIds.add(projectId);
   }
   return projectIds;
 }

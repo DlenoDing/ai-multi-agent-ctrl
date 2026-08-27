@@ -9940,7 +9940,9 @@ const MUTATIONS = [
     check: "verifyMcpToolCrashIsNotDisguisedAsRefusal",
     from: "      if (!error.status) {\n        const tool = message.params?.name || \"unknown\";",
     to: "      if (false) {\n        const tool = message.params?.name || \"unknown\";",
-    expect: "被伪装成了正当拒绝"
+    // 第 60 拍把这条检查改成了形状核，先红的是它自己那句「没有单独的兜底」，
+    // 不再是进程内探针的「被伪装成了正当拒绝」—— 全量变异门跑出来才发现 expect 没跟上。
+    expect: "没有单独的兜底"
   },
   {
     name: "MCP 归档写不进去时不得把业务写入一起打死、不得泄服务端路径",
@@ -9978,6 +9980,14 @@ const MUTATIONS = [
     from: '  const indexPath = join(sourceDir, "index.json");\n  writeFileSync(indexPath, `${JSON.stringify(index, null, 2)}\\n`);',
     to: '  const indexPath = join(sourceDir, "index.json");\n  writeFileSync(indexPath, `${JSON.stringify(index, null, 2)}\\n`);\n  void JSON.parse(readFileSync(indexPath, "utf8"));',
     expect: "现在有读者了"
+  },
+  {
+    name: "地址键清单里的每个键都要能解析出项目（加一个键就加一支解析）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "contract",
+    from: "  if (args.reviewPlanId) {\n    const plan = (state.reviewPlans || []).find((item) => item.reviewPlanId === args.reviewPlanId);",
+    to: "  if (false) {\n    const plan = (state.reviewPlans || []).find((item) => item.reviewPlanId === args.reviewPlanId);",
+    expect: "解析函数却认不出"
   },
   {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
