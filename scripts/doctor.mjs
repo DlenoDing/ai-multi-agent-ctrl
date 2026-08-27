@@ -2437,6 +2437,30 @@ try {
   if (orgProjectConfig.response.status !== 200) {
     throw new Error(`org_admin could not edit its own org project config, got ${orgProjectConfig.response.status}`);
   }
+  // 【两层配置的默认角色都要在已登记的执行角色里】。原先自由写入：建任务组继承它、且那一步只查调用方自己填的角色。
+  {
+    const badProjectRole = await jsonFetch(port, `/api/projects/${orgProject.payload.id}/config`, {
+      method: "POST", headers: {"Idempotency-Key": "doctor-org-proj-config-bad-role", authorization: orgAdminAuth},
+      body: JSON.stringify({defaultRoles: [{roleId: "reviwer"}, {roleId: "reviewer"}], expectedConfigVersion: orgProjectConfig.payload.configVersion})
+    });
+    if (badProjectRole.response.status !== 400 || badProjectRole.payload?.error !== "config_default_role_not_registered") {
+      throw new Error(`项目配置里写错的默认角色该被拒（400 config_default_role_not_registered），实际 ${badProjectRole.response.status} ${JSON.stringify(badProjectRole.payload).slice(0, 160)} —— 它会随每个新任务组落地`);
+    }
+    if (!(badProjectRole.payload.unknownOwnerRoles || []).includes("reviwer") || (badProjectRole.payload.unknownOwnerRoles || []).includes("reviewer") || !(badProjectRole.payload.supported || []).includes("reviewer")) {
+      throw new Error(`项目配置默认角色的拒绝要只点名 reviwer 并列出可用角色，实际 ${JSON.stringify(badProjectRole.payload).slice(0, 160)}`);
+    }
+    // 任务组那扇门要 task_group:control：用主流程里以 auth 建的那个任务组（组织管理员在自己组织的任务组上并没有这项权限）。
+    const probeTaskGroupId = createdTaskGroup.payload.taskGroup.id;
+    const tgConfigRead = await jsonFetch(port, `/api/task-groups/${encodeURIComponent(probeTaskGroupId)}/config`, {headers: {authorization: auth}});
+    const badTaskGroupRole = await jsonFetch(port, `/api/task-groups/${encodeURIComponent(probeTaskGroupId)}/config`, {
+      method: "POST", headers: {"Idempotency-Key": "doctor-tg-config-bad-role", authorization: auth},
+      body: JSON.stringify({defaultRoles: [{roleId: "reviwer"}], expectedConfigVersion: tgConfigRead.payload?.configVersion})
+    });
+    if (badTaskGroupRole.response.status !== 400 || badTaskGroupRole.payload?.error !== "config_default_role_not_registered") {
+      throw new Error(`任务组配置里写错的默认角色该被拒（400 config_default_role_not_registered），实际 ${badTaskGroupRole.response.status} ${JSON.stringify(badTaskGroupRole.payload).slice(0, 160)}`);
+    }
+    console.log("  ok  项目/任务组两层配置里写错的默认角色都被拒并点名");
+  }
   // 组织管理员离职后在控制台上下不了线（成员查找把 org_admin 整个排除在外），只能靠系统管理员
   // 专属的 MCP 工具。允许停用，但不得把组织锁死。
   const lastAdminDisable = await jsonFetch(port, `/api/org/members/${orgCreate.payload.organization.initialAdminAccountId}/status`, {

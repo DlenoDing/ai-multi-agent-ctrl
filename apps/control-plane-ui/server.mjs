@@ -783,6 +783,19 @@ function publicAccountRecord(account) {
 // 两边必须同规，少补一侧 agent 就能从那扇门把状态撑大。
 // 上限取自 core 那份唯一真相源（见 import）——两侧各抄一份字面量会悄悄分叉。
 
+// 项目/任务组两层配置的 defaultRoles 原先自由写入：建任务组时把它继承进 roles，而那一步只查调用方自己填的角色 ——
+// 写成 reviwer 的默认角色会随每个新任务组一起落地，谁也派不了工、谁也不报错。与建任务组/入网令牌/智能体共用一份词表，在写入的门上拒。
+function unregisteredDefaultRoles(list) {
+  const roleIds = (Array.isArray(list) ? list : [])
+    .map((item) => (typeof item === "string" ? item : item?.roleId))
+    .map((id) => String(id || "").trim()).filter(Boolean);
+  return unknownOwnerRoles(roleIds);
+}
+function defaultRoleRefusal(unknownRoles) {
+  return {error: "config_default_role_not_registered", unknownOwnerRoles: unknownRoles.slice(0, 10), supported: [...REGISTERED_OWNER_ROLES],
+    message: `默认角色「${unknownRoles.slice(0, 10).join("、")}」不在已登记的执行角色里 —— 可用：${REGISTERED_OWNER_ROLES.join("、")}`};
+}
+
 function normalizeStringList(value, fallback = [], field = "list") {
   const source = Array.isArray(value)
     ? value
@@ -6277,6 +6290,8 @@ async function handleApi(req, res) {
     if (archivedForConfig) return json(res, 409, archivedForConfig);
     const projectPrecondition = configPreconditionFailure(body, project.config);
     if (projectPrecondition) return json(res, 409, projectPrecondition);
+    const unknownProjectDefaultRoles = unregisteredDefaultRoles(body.defaultRoles);
+    if (unknownProjectDefaultRoles.length) return json(res, 400, defaultRoleRefusal(unknownProjectDefaultRoles));
     project.config = {
       ...(project.config || {}),
       ...(body.repositories !== undefined ? {repositories: Array.isArray(body.repositories) ? body.repositories : []} : {}),
@@ -6316,6 +6331,8 @@ async function handleApi(req, res) {
     if (!taskGroup) return json(res, 404, {error: "task_group_not_found"});
     const taskGroupPrecondition = configPreconditionFailure(body, taskGroup.configOverrides);
     if (taskGroupPrecondition) return json(res, 409, taskGroupPrecondition);
+    const unknownTaskGroupDefaultRoles = unregisteredDefaultRoles(body.defaultRoles);
+    if (unknownTaskGroupDefaultRoles.length) return json(res, 400, defaultRoleRefusal(unknownTaskGroupDefaultRoles));
     const mergedOverrides = {
       ...(taskGroup.configOverrides || {}),
       ...(body.repositories !== undefined ? {repositories: Array.isArray(body.repositories) ? body.repositories : []} : {}),

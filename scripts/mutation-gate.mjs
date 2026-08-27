@@ -3039,6 +3039,22 @@ const MUTATIONS = [
     expect: "处置方式空着要拒，不缺省成 reopen"
   },
   {
+    name: "项目配置的默认角色要在已登记的执行角色里",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (unknownProjectDefaultRoles.length) return json(res, 400, defaultRoleRefusal(unknownProjectDefaultRoles));',
+    to: '    if (false) return json(res, 400, defaultRoleRefusal(unknownProjectDefaultRoles));',
+    expect: "项目配置里写错的默认角色该被拒"
+  },
+  {
+    name: "任务组配置的默认角色要在已登记的执行角色里（第二扇门）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (unknownTaskGroupDefaultRoles.length) return json(res, 400, defaultRoleRefusal(unknownTaskGroupDefaultRoles));',
+    to: '    if (false) return json(res, 400, defaultRoleRefusal(unknownTaskGroupDefaultRoles));',
+    expect: "任务组配置里写错的默认角色该被拒"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

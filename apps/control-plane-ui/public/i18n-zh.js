@@ -274,6 +274,7 @@
     dispatch_fail_claim_epoch_stale: "这条失败上报来自该派发的上一次认领，当前持有者已换代 —— 不能用它把正在跑的这一轮标记为失败或阻塞",
     join_token_role_scope_mismatch: "申请的角色超出入网令牌的授权范围",
     agent_role_not_registered: "智能体角色不在已登记的执行角色里（照角色下拉里的填）",
+    config_default_role_not_registered: "默认角色不在已登记的执行角色里（照角色下拉里的填）",
     join_token_role_not_registered: "入网令牌的角色范围里有未登记的执行角色（这张票没有任何节点能用）",
     human_confirmation_action_required: "定稿决定必须明写动作（交 AI 再分析 / 定稿 / 打回），系统不会替你选一个",
     lease_already_active: "该资源已有生效租约",
