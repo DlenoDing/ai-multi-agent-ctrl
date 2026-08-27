@@ -10276,6 +10276,14 @@ const MUTATIONS = [
     expect: "MCP 建组带拼错的执行角色该被拒"
   },
   {
+    name: "拒绝报文要带构造函数算好的细节与正确状态码（不能一律 404 只转 error）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    if (result.alreadyResolved) return json(res, 409, {error: \"finding_already_resolved\", finding: result.finding});\n    if (result.ok === false) return json(res, refusalStatus(result), refusalPayload(result));",
+    to: "    if (result.alreadyResolved) return json(res, 409, {error: \"finding_already_resolved\", finding: result.finding});\n    if (result.ok === false) return json(res, 404, {error: result.error});",
+    expect: "发现项处置状态认不出该回 400 finding_status_unknown"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

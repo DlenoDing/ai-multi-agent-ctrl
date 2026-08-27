@@ -4203,7 +4203,7 @@ async function handleApi(req, res) {
     }
     const result = createWorkItemRecord(state, taskGroup.id, body, {auditRef: `audit:${guard.idempotencyKey}`});
     if (result.ok === false) {
-      json(res, result.status || 409, {error: result.error});
+      json(res, refusalStatus(result, 409), refusalPayload(result));
       return;
     }
     audit(state, guard.actor, "task_group_work_item_create", `WorkItem:${taskGroup.id}:${result.workItem.id}`);
@@ -5139,7 +5139,7 @@ async function handleApi(req, res) {
         message: "指派必须点名负责角色（roleId 或 ownerRole）—— 缺省不会替你挑一个"});
     }
     const result = assignWorkItem(state, {...body, workItemId: workItemAssignMatch[1]});
-    if (result.ok === false) return json(res, 404, {error: result.error});
+    if (result.ok === false) return json(res, refusalStatus(result), refusalPayload(result));
     audit(state, guard.actor, "work_assign", `WorkItem:${result.workItem.id}`);
     finishGuardedWrite(state, guard, 201, result);
     writeState(state);
@@ -5182,7 +5182,7 @@ async function handleApi(req, res) {
     // 权限那条最重 —— 拒绝方拿到 200，而权限其实已经授出。仓里另有五条处置路径本来就这么做
     // （质量门/评审计划/评审包/升级候选/共享定义），i18n 里也有现成的"可能是另一个人刚处理完"。
     if (result.alreadyResolved) return json(res, 409, {error: "finding_already_resolved", finding: result.finding});
-    if (result.ok === false) return json(res, 404, {error: result.error});
+    if (result.ok === false) return json(res, refusalStatus(result), refusalPayload(result));
     recomputeBarrierAfterResolve(state, existingFinding?.taskGroupId);
     audit(state, guard.actor, "finding_resolve", `Finding:${result.finding.findingId}`);
     finishGuardedWrite(state, guard, 200, result);
@@ -5219,7 +5219,7 @@ async function handleApi(req, res) {
     // 权限那条最重 —— 拒绝方拿到 200，而权限其实已经授出。仓里另有五条处置路径本来就这么做
     // （质量门/评审计划/评审包/升级候选/共享定义），i18n 里也有现成的"可能是另一个人刚处理完"。
     if (result.alreadyResolved) return json(res, 409, {error: "approval_already_resolved", approvalRequest: result.approvalRequest});
-    if (result.ok === false) return json(res, result.error === "high_risk_no_self_approval" ? 403 : 404, {error: result.error});
+    if (result.ok === false) return json(res, result.error === "high_risk_no_self_approval" ? 403 : refusalStatus(result), refusalPayload(result));
     recomputeBarrierAfterResolve(state, existingApproval?.taskGroupId);
     audit(state, guard.actor, "approval_resolve", `ApprovalRequest:${result.approvalRequest.approvalId}`);
     finishGuardedWrite(state, guard, 200, result);
@@ -5408,7 +5408,7 @@ async function handleApi(req, res) {
     // 权限那条最重 —— 拒绝方拿到 200，而权限其实已经授出。仓里另有五条处置路径本来就这么做
     // （质量门/评审计划/评审包/升级候选/共享定义），i18n 里也有现成的"可能是另一个人刚处理完"。
     if (result.alreadyResolved) return json(res, 409, {error: "permission_request_already_resolved", permissionRequest: result.permissionRequest});
-    if (result.ok === false) return json(res, 404, {error: result.error});
+    if (result.ok === false) return json(res, refusalStatus(result), refusalPayload(result));
     recomputeBarrierAfterResolve(state, existingPermission?.taskGroupId);
     audit(state, guard.actor, "permission_resolve", `PermissionRequest:${result.permissionRequest.requestId}`, result.permissionRequest.status);
     finishGuardedWrite(state, guard, 200, result);
@@ -5456,7 +5456,7 @@ async function handleApi(req, res) {
         ...(error.allowedStatuses ? {allowedStatuses: error.allowedStatuses} : {}),
         ...(error.hint ? {message: error.hint} : {})});
     }
-    if (result.ok === false) return json(res, 404, {error: result.error});
+    if (result.ok === false) return json(res, refusalStatus(result), refusalPayload(result));
     // 同上：拓扑已到终态时回 409，而不是回 200 让后到者以为自己推进了它。
     if (result.alreadyTerminal) return json(res, 409, {error: "execution_topology_already_terminal", topology: result.topology});
     recomputeBarrierAfterResolve(state, existingTopology.taskGroupId);
@@ -6724,6 +6724,22 @@ function skillSourceFailureStatus(error) {
   if (code === "pinned_commit_mismatch") return 409;
   if (code === "skill_source_unsafe_git_input") return 400;
   return 0;
+}
+
+// 记录构造函数回 ok:false 时，路由要把它算好的细节一起带出去（supported / allowed / required / 了结原因），
+// 状态码按它给的来，没给就按码的家族判：不存在 404、与现状冲突 409、其余是入参问题 400。
+// 原先五条路由对所有 ok:false 一律 404 + 只转发 error：「发现项状态认不出」被说成"找不到"，
+// 而它算好的 supported 一个字都没出去。
+function refusalStatus(result, fallback = 400) {
+  if (Number.isInteger(result?.status)) return result.status;
+  const code = String(result?.error || "");
+  if (/_not_found$/u.test(code)) return 404;
+  if (/_settled$|_conflict$|already|_terminal$/u.test(code)) return 409;
+  return fallback;
+}
+function refusalPayload(result) {
+  const {ok: _ok, status: _status, ...details} = result || {};
+  return {...details, error: result?.error};
 }
 
 function respondApiError(res, error, requestLabel = "") {

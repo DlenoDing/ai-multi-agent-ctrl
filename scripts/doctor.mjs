@@ -2649,6 +2649,14 @@ try {
   const findingOk = expectStatus(await g2("/api/findings", reviewerAuth, "g2b-finding-ok", {taskGroupId: "tg_runtime_management", findingType: "review", severity: "low", summary: "doctor finding"}), 201, "finding submit happy");
   expectStatus(await g2("/api/findings", invitedAuth, "g2b-finding-deny", {taskGroupId: "tg_runtime_management", summary: "denied"}), 403, "finding submit deny", "policy_denied");
   expectStatus(await g2("/api/findings", orgAdminAuth, "g2b-finding-crossorg", {taskGroupId: "tg_runtime_management", summary: "cross org"}), 403, "finding submit cross-tenant deny", "policy_denied");
+  // 【认不出的处置状态要回 400 并给出可用取值】。原先这条路对所有 ok:false 一律 404「找不到」，
+  // 而构造函数算好的 supported 一个字都没出去 —— 人不知道自己填错了什么、该填什么。
+  {
+    const bogus = await g2(`/api/findings/${findingOk.payload.finding.findingId}/resolve`, reviewerAuth, "g2b-finding-bogus-status", {status: "bogus"});
+    if (bogus.response.status !== 400 || bogus.payload?.error !== "finding_status_unknown" || !Array.isArray(bogus.payload?.supported) || !bogus.payload.supported.length) {
+      throw new Error(`发现项处置状态认不出该回 400 finding_status_unknown 并带 supported，实际 ${bogus.response.status} ${JSON.stringify(bogus.payload).slice(0, 200)} —— 说成「找不到」且不给可用取值`);
+    }
+  }
   expectStatus(await g2(`/api/findings/${findingOk.payload.finding.findingId}/resolve`, reviewerAuth, "g2b-finding-resolve-ok", {status: "resolved", evidenceRefs: ["evidence:doctor"], rootCauseOwner: "reviewer"}), 200, "finding resolve happy");
   // 已定过的缺陷不得被第二次处置：回 200 意味着后到的那个人以为自己改掉了结论，而记录没动。
   expectStatus(await g2(`/api/findings/${findingOk.payload.finding.findingId}/resolve`, reviewerAuth,
