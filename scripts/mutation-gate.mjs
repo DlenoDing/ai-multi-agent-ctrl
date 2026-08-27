@@ -3340,6 +3340,14 @@ const MUTATIONS = [
     expect: "self-check 没有逐项列出"
   },
   {
+    name: "agentctl status 第一行要是给人看的一句",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "  process.stdout.write(`节点 ${node.nodeName || config.nodeName}（${node.nodeId || config.nodeId}）：状态",
+    to: "  process.stdout.write(`${JSON.stringify(result, null, 2)}\\n`);\n  process.stdout.write(`节点 ${node.nodeName || config.nodeName}（${node.nodeId || config.nodeId}）：状态",
+    expect: "status 第一行该是给人看的一句"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

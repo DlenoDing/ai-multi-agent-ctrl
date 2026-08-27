@@ -356,6 +356,15 @@ try {
   if (!install.stdout.includes("下一步：agentctl run")) {
     throw new Error(`bootstrap 成功后没告诉人下一步该跑什么（agentctl run）：${install.stdout.slice(-300).replace(/\n/g, " ")}`);
   }
+  // status 原先只有一大段 JSON：第一行要是给人看的一句（节点、状态、准入、心跳、角色）。
+  {
+    const statusRun = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "status"],
+      {cwd: root, encoding: "utf8", timeout: 60000, env: {...process.env, AIMAC_AGENT_WORK_DIR: agentWorkDir, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true"}});
+    const firstLine = String(statusRun.stdout || "").split("\n")[0] || "";
+    if (statusRun.status !== 0 || !/^节点 .+：状态 \S+，准入 \S+，最近心跳 .+，角色 /u.test(firstLine)) {
+      throw new Error(`agentctl status 第一行该是给人看的一句（节点/状态/准入/心跳/角色），实际：${JSON.stringify(firstLine.slice(0, 200))}`);
+    }
+  }
   // 单独跑 self-check 是排障用的：要逐项列出查了什么、结果如何、准入到哪一档，不能只有一句 ok。
   {
     const selfCheck = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "self-check"],

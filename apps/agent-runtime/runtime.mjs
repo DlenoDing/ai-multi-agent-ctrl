@@ -245,6 +245,10 @@ async function selfCheck(config, {verbose = false} = {}) {
 
 async function status(config) {
   const result = await jsonRequest(`${config.serverUrl}/api/agent/v1/nodes/me`, {token: config.nodeToken});
+  // 先给人一句：节点是谁、状态、准入档位、最近心跳、角色；完整记录（机器读的）跟在后面。原先只有一大段 JSON。
+  const node = result.node || {};
+  const heartbeat = node.lastHeartbeatAt ? `${Math.max(0, Math.round((Date.now() - new Date(node.lastHeartbeatAt).getTime()) / 1000))} 秒前` : "还没有";
+  process.stdout.write(`节点 ${node.nodeName || config.nodeName}（${node.nodeId || config.nodeId}）：状态 ${node.status || "?"}，准入 ${node.admission || "?"}，最近心跳 ${heartbeat}，角色 ${(node.allowedRoles || config.allowedRoles || []).join("、") || "-"}${node.runtimeOutdated ? "；运行时版本已过旧，重新执行安装命令即可更新" : ""}\n`);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
