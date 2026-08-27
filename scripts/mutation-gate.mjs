@@ -10284,6 +10284,15 @@ const MUTATIONS = [
     expect: "发现项处置状态认不出该回 400 finding_status_unknown"
   },
   {
+    name: "真实运行态守卫要看得见三份文件（少看一份＝那一份被写了也不红）",
+    file: "scripts/contract-check.mjs",
+    gate: "contract",
+    check: "verifyGatesLeaveDeveloperRuntimeUntouched",
+    from: 'const DEVELOPER_RUNTIME_FILES = ["control-plane-state.json", "audit-log.jsonl", "mcp-audit.jsonl"];',
+    to: 'const DEVELOPER_RUNTIME_FILES = ["control-plane-state.json", "audit-log.jsonl"];',
+    expect: "这道守卫看不见改动"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

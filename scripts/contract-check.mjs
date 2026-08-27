@@ -609,6 +609,17 @@ const developerStateBefore = existsSync(developerStatePath)
   ? `${statSync(developerStatePath).size}:${statSync(developerStatePath).mtimeMs}` : "(不存在)";
 const probeRuntimeDir = mkdtempSync(join(tmpdir(), "aimac-contract-runtime-"));
 process.env.AIMAC_RUNTIME_DIR = probeRuntimeDir;
+// 【门不许碰开发者的真实运行态】。ESM 导入先于上一行求值：mcp-server / server.mjs 在导入时就把 runtimeDir
+// 定死在 .runtime，本进程直接调它们的任何写工具都会写进开发者的真实部署（2026-08-27 在真实审计台账里
+// 数出 80/80 条都是门写进去的失败 MCP 调用）。这里在所有检查跑之前记下三份文件的摘要，最后一条检查再比一次。
+const DEVELOPER_RUNTIME_FILES = ["control-plane-state.json", "audit-log.jsonl", "mcp-audit.jsonl"];
+function developerRuntimeDigest(dir) {
+  return DEVELOPER_RUNTIME_FILES.map((name) => {
+    const path = join(dir, name);
+    return existsSync(path) ? createHash("sha256").update(readFileSync(path)).digest("hex").slice(0, 16) : "absent";
+  }).join(" ");
+}
+const DEVELOPER_RUNTIME_DIGEST_AT_START = developerRuntimeDigest(join(root, ".runtime"));
 process.on("exit", () => { try { rmSync(probeRuntimeDir, {recursive: true, force: true}); } catch { /* best effort */ } });
 
 const errors = [];
@@ -948,6 +959,7 @@ run(verifyApprovalDecisionRequired);
 run(verifyWorkStatusEnumConvergence);
 run(verifyTransitionEngine);
 run(verifyCommandBusLifecycle);
+run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
 // 汇总之前把所有 async 检查等干净。少了这一句，它们推进的错误会赶不上报告。
 await Promise.all(pendingAsyncChecks);
@@ -15513,6 +15525,28 @@ function verifyRejectedWritesLeaveStateUntouched(output) {
     output.push(`被拒写入留痕：夹具没造出想测的情形 —— 机器主体落闸没被拒（${rejectedB || "没抛"}），下面那条什么也没验`);
   } else if (JSON.stringify(stB.closeBarriers || []) !== beforeB) {
     output.push("被拒写入留痕：computeCloseBarrier 拒绝机器主体（403）之前已经写了 closeBarriers —— 先写后校验");
+  }
+}
+
+// 见文件开头 DEVELOPER_RUNTIME_DIGEST_AT_START 的注释。先在临时目录上自证摘要真的看得见改动
+// （否则"没变"与"没在看"长得一样），再拿真实 .runtime 比一次。
+function verifyGatesLeaveDeveloperRuntimeUntouched(output) {
+  const sandbox = mkdtempSync(join(tmpdir(), "cc-runtime-guard-"));
+  try {
+    for (const name of DEVELOPER_RUNTIME_FILES) writeFileSync(join(sandbox, name), `${name}\n`);
+    const before = developerRuntimeDigest(sandbox);
+    writeFileSync(join(sandbox, "mcp-audit.jsonl"), "{\"extra\":1}\n", {flag: "a"});
+    if (developerRuntimeDigest(sandbox) === before) {
+      output.push("真实运行态守卫：往 mcp-audit.jsonl 追加一行后摘要没变 —— 这道守卫看不见改动，在空转");
+      return;
+    }
+  } finally {
+    rmSync(sandbox, {recursive: true, force: true});
+  }
+  const now = developerRuntimeDigest(join(root, ".runtime"));
+  if (now !== DEVELOPER_RUNTIME_DIGEST_AT_START) {
+    output.push(`真实运行态守卫：这道门跑完之后开发者的 .runtime 变了（${DEVELOPER_RUNTIME_DIGEST_AT_START} → ${now}）—— `
+      + "有检查在本进程里调了会写状态的函数（模块在导入时就把 runtimeDir 定死在 .runtime）；改成子进程并给它临时目录");
   }
 }
 
