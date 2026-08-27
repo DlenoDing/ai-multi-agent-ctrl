@@ -3243,6 +3243,23 @@ const MUTATIONS = [
     expect: "503 正文要带一句说清该查什么"
   },
   {
+    name: "启动时连不上数据库要说人话（不是 pg 桥的崩溃栈）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    check: "verifyStartupSaysDatabaseUnreachable",
+    from: "  if (databaseUnavailable(error)) {\n    console.error(`[startup] 连不上 DATABASE_URL 指向的数据库",
+    to: "  if (false) {\n    console.error(`[startup] 连不上 DATABASE_URL 指向的数据库",
+    expect: "启动时连不上数据库该退出码 1"
+  },
+  {
+    name: "库掉线时写请求要 503 + 稳定码 + 一句话，不回驱动原话",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "docker",
+    from: "  if (databaseUnavailable(error)) {\n    // 实测把 PG 停掉",
+    to: "  if (false) {\n    // 实测把 PG 停掉",
+    expect: "库掉线时写请求该回 503"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

@@ -171,6 +171,41 @@ try {
     }
   }
 
+  // 【库掉线时的报文】。实测停掉 PG：读写一律 500 server_error 加驱动原话（带库的地址）。要的是 503 + 稳定码 + 一句该查什么，
+  // 地址不回给调用方；健康检查 degraded；库回来之后不重启就恢复。
+  {
+    const login = json(execFileSync("curl", ["-fsSL", "-X", "POST", "-H", "content-type: application/json",
+      "-d", JSON.stringify({email: "system.admin@local", token: composeEnv.AIMAC_BOOTSTRAP_TOKEN}),
+      "http://127.0.0.1:4317/api/auth/login"], {cwd: root, encoding: "utf8"}));
+    if (!login.sessionToken) throw new Error("compose 登录失败，拿不到会话令牌，库掉线那条没法验");
+    const curlJson = (args) => {
+      const raw = execFileSync("curl", ["-s", "-m", "30", "-w", "\n%{http_code}", ...args], {cwd: root, encoding: "utf8"});
+      const at = raw.lastIndexOf("\n");
+      return {status: Number(raw.slice(at + 1)), body: raw.slice(0, at), payload: (() => { try { return JSON.parse(raw.slice(0, at)); } catch { return {}; } })()};
+    };
+    execFileSync("docker", ["compose", "stop", "postgres"], {cwd: root, env: composeEnv, encoding: "utf8"});
+    try {
+      const blocked = curlJson(["-X", "POST", "-H", `authorization: Bearer ${login.sessionToken}`, "-H", "content-type: application/json",
+        "-H", "idempotency-key: docker-pg-down-1", "-d", JSON.stringify({name: "库掉线时建的项目"}), "http://127.0.0.1:4317/api/projects"]);
+      if (blocked.status !== 503 || blocked.payload.error !== "state_storage_unavailable" || !/数据库连不上/u.test(String(blocked.payload.message || ""))) {
+        throw new Error(`库掉线时写请求该回 503 state_storage_unavailable 并说清该查什么，实际 HTTP ${blocked.status} ${blocked.body.slice(0, 200)}`);
+      }
+      if (/ECONNREFUSED|5432|postgres:\/\//u.test(blocked.body)) throw new Error(`库掉线的拒绝报文把库的地址或驱动原话回给了调用方：${blocked.body.slice(0, 200)}`);
+      const degraded = curlJson(["http://127.0.0.1:4317/api/health"]);
+      if (degraded.status !== 503 || degraded.payload.status !== "degraded") throw new Error(`库掉线时健康检查该 503 degraded，实际 ${degraded.status} ${degraded.body.slice(0, 160)}`);
+    } finally {
+      execFileSync("docker", ["compose", "start", "postgres"], {cwd: root, env: composeEnv, encoding: "utf8"});
+    }
+    let recovered = null;
+    for (let attempt = 0; attempt < 45; attempt += 1) {
+      execFileSync("sleep", ["2"]);
+      const probe = curlJson(["http://127.0.0.1:4317/api/health"]);
+      if (probe.status === 200 && probe.payload.status === "ok") { recovered = probe; break; }
+    }
+    if (!recovered) throw new Error("库回来 90 秒后健康检查还没转回 ok —— 库掉线要能不重启就恢复");
+    console.log("  PostgreSQL 掉线 ok: 写请求 503 + 稳定码 + 一句话（不带库地址）、健康 degraded；库回来后不重启自动恢复");
+  }
+
   // 【PostgreSQL 读路径读出来的记录要按规范与状态机核一遍】。三套 e2e 都在 runtime_json 上扫产出，
   // 生产用的 PG 后端（分片按 project_id 读回再水合）此前从没被任何门按规范验过。走产品自己的读路径。
   {

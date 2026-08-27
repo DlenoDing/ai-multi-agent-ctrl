@@ -787,6 +787,7 @@ run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
 runAsync(verifyStoppingAnExecutorTellsTheTruth);
 runAsync(verifyLocalEndpointUsesBoundPort);
 runAsync(verifyStartupSaysWhatIsWrongOnDisk);
+runAsync(verifyStartupSaysDatabaseUnreachable);
 run(verifyMcpToolCrashIsNotDisguisedAsRefusal);
 run(verifyDocumentedEnvVarsAreRealKnobs);
 run(verifyReplayRemoteCheckDistinguishesLostFromMovedOn);
@@ -15751,6 +15752,28 @@ function verifyConsoleRoleExamplesAreRegistered(output) {
   if (!freeRoleInputs.length) output.push("没找到任何自由填角色的输入框 —— 这条在空转（表单改写了，提取要跟上）");
   if (withoutList.length) output.push(`控制台里自由填角色的输入框没挂词表：${withoutList.join("、")} —— 服务端只认已登记的执行角色，不给词表就是自造拼错陷阱`);
   console.log(`控制台自由填角色的输入框 ${freeRoleInputs.length} 个都挂着词表，${examples.length} 个示例都是已登记角色`);
+}
+
+// 【启动时连不上 DATABASE_URL 指向的库要说人话】。原先是一段 pg 桥的崩溃栈（file:///…pg-sync-store.mjs:92 …）。
+// 指一个没人监听的端口起服务：退出码 1、一句点名 DATABASE_URL 的话、没有栈、不带密码。
+async function verifyStartupSaysDatabaseUnreachable(output) {
+  const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-startup-pgdead-"));
+  const child = spawn(process.execPath, [join(root, "apps/control-plane-ui/server.mjs")], {
+    cwd: root, stdio: ["ignore", "pipe", "pipe"],
+    env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: "0", AIMAC_EXIT_WITH_PARENT: "1", AIMAC_ORCHESTRATOR_INTERVAL_MS: "0", AIMAC_RUNTIME_DIR: runtimeDir,
+      AIMAC_STATE_STORE: "postgresql", DATABASE_URL: "postgres://aimac:secret-pw-0123456789@127.0.0.1:9/aimac", AIMAC_PUBLIC_URL: ""}
+  });
+  let err = ""; let exitCode = null;
+  child.stderr.on("data", (chunk) => { err += String(chunk); });
+  child.on("exit", (code) => { exitCode = code; });
+  await new Promise((resolve) => { const tick = setInterval(() => { if (exitCode !== null) { clearInterval(tick); resolve(); } }, 50); setTimeout(() => { clearInterval(tick); resolve(); }, 20000); });
+  try { child.kill("SIGKILL"); } catch { /* 已经走了 */ }
+  rmSync(runtimeDir, {recursive: true, force: true});
+  if (exitCode !== 1 || !/\[startup\] 连不上 DATABASE_URL 指向的数据库/u.test(err) || /\n\s+at /u.test(err) || err.includes("secret-pw")) {
+    output.push(`启动时连不上数据库该退出码 1、一句点名 DATABASE_URL 的话、不带栈也不带密码，实际 exit=${exitCode}：${err.slice(0, 200).replace(/\n/g, " ")}`);
+  } else {
+    console.log("启动时连不上 DATABASE_URL 指向的库：一句人话、退出码 1、没有栈、不带密码");
+  }
 }
 
 // 【启动期盘上故障要说人话】。状态文件被截断：服务照常起（这是有意的：健康检查要能报出 storageFault），

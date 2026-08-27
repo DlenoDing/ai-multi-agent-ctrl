@@ -351,6 +351,16 @@ function assertRuntimeSecurity() {
 // 写不进磁盘的那句话只有这一份：健康检查的 hint、写请求的 message、stderr 三处共用。
 const STORAGE_UNAVAILABLE_HINT = "状态写不进磁盘（读操作不受影响）：按 code 指出的原因处理 —— 检查运行目录的剩余空间、挂载是不是只读、以及本进程对它的写权限；恢复可写之后健康检查会自动转回 ok，不必重启";
 
+// PostgreSQL 后端连不上：与「盘写不进去」同规 —— 稳定错误码 + 一句该查什么；驱动原话（带库的地址）只进 stderr，不回给调用方。
+const DATABASE_UNAVAILABLE_HINT = "数据库连不上：确认 DATABASE_URL 指向的库在跑、地址/端口/用户名密码对、网络与防火墙通；库回来之后自动恢复，不必重启";
+const DATABASE_UNAVAILABLE_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "EPIPE",
+  "AIMAC_PG_BRIDGE_TIMEOUT", "57P01", "57P02", "57P03", "08000", "08001", "08003", "08004", "08006"]);
+function databaseUnavailable(error) {
+  if (process.env.AIMAC_STATE_STORE !== "postgresql") return false;
+  if (DATABASE_UNAVAILABLE_CODES.has(String(error?.code || ""))) return true;
+  return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|terminat(ed|ing) connection|Connection terminated|the database system is (starting|shutting)/iu.test(String(error?.message || ""));
+}
+
 function startupError(summary, nextSteps) {
   return Object.assign(new Error(summary), {nextSteps});
 }
@@ -6839,6 +6849,14 @@ function respondApiError(res, error, requestLabel = "") {
     json(res, 503, {error: "state_storage_corrupt", kind: corrupt[1], file: corrupt[2], retryable: false});
     return;
   }
+  if (databaseUnavailable(error)) {
+    // 实测把 PG 停掉：读写一律 500 server_error + "connect ECONNREFUSED 127.0.0.1:55433" —— 库的地址回给了调用方，
+    // 而健康检查早就会说 degraded。这里与磁盘那一支同规：503 + 稳定码 + 一句话，地址只留在 stderr。
+    console.error(`[state-store] ${error.code || "database"}: ${error.message} —— ${DATABASE_UNAVAILABLE_HINT}`);
+    lastStorageFault = {kind: "state_unreadable", code: error.code || null, at: now()};
+    json(res, 503, {error: "state_storage_unavailable", code: error.code || "database_unreachable", retryable: true, message: DATABASE_UNAVAILABLE_HINT});
+    return;
+  }
   if (["EACCES", "EPERM", "ENOSPC", "EROFS", "EDQUOT", "EMFILE", "ENFILE"].includes(error?.code)) {
     console.error(`[state-write] ${error.code}: ${error.message} —— ${STORAGE_UNAVAILABLE_HINT}`);
     // 健康页必须跟着变：原先只有"状态损坏"那一支登记 lastStorageFault，写不进磁盘这一支不登记 ——
@@ -6886,6 +6904,11 @@ try {
   const diskProblem = startupDiskProblem(error);
   if (diskProblem) {
     console.error(`[startup] ${diskProblem}`);
+    process.exit(1);
+  }
+  // 启动时连不上 DATABASE_URL 指向的库：原先是一段 pg 桥的崩溃栈。驱动原话不含密码（只有主机:端口），可以打。
+  if (databaseUnavailable(error)) {
+    console.error(`[startup] 连不上 DATABASE_URL 指向的数据库（${error.code || "?"}：${error.message}）—— 确认库在跑、地址/端口/用户名密码对、网络与防火墙通；服务不会带着一个连不上的库启动`);
     process.exit(1);
   }
   throw error;
