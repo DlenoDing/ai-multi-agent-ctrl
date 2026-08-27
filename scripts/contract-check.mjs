@@ -979,6 +979,7 @@ run(verifyDocumentedNpmScriptsExist);
 run(verifyConsoleHintsNameRealControls);
 run(verifyMcpCallConventionsAreDocumented);
 run(verifyMcpToolTableMatchesImplementation);
+run(verifyI18nKeysAreReachable);
 run(verifyConsoleRuntimeConstantsHaveOneWriter);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
@@ -15738,6 +15739,37 @@ function verifyConsoleRuntimeConstantsHaveOneWriter(output) {
     if (!body || !body.includes("decorateRuntimeForConsole(")) output.push(`${reader} 没调 decorateRuntimeForConsole —— 这条路上界面拿不到词表`);
   }
   console.log(`界面 runtime 常量：${numericKeys.length} 个数值只在 decorateRuntimeForConsole 里赋值，三份词表只来自 core 的 consoleVocabularies，服务端两条读路径与勘察工具都经过它`);
+}
+
+// 【i18n 词表里的键都得有人产出】。「产出的码要有词条」那条门只守一个方向；码改名之后旧词条留在词表里没人看得见。
+// 可达的三种来源：① 代码/规范/种子里的字面量；② 模板前缀（`kind_${x}`）或后缀（`${field}_too_long`）；③ 登记的例外。
+// 2026-08-28 清掉 11 个孤儿（如 policy_decision_allowed、human_confirmation_decision_forbidden_for_agent）。
+function verifyI18nKeysAreReachable(output) {
+  const I18N_ORPHAN_EXEMPTIONS = {};
+  const i18n = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
+  const keys = [...i18n.matchAll(/^\s{4}([a-z][a-z0-9_]+):\s/gmu)].map((hit) => hit[1]);
+  if (keys.length < 500) { output.push(`i18n 只提出 ${keys.length} 个键 —— 提取脱节`); return; }
+  const codeFiles = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs",
+    "apps/control-plane-ui/lib/state-store.mjs", "apps/control-plane-ui/lib/audit-ledger.mjs", "apps/mcp-server/server.mjs", "apps/control-plane-ui/public/app.js",
+    "apps/agent-runtime/runtime.mjs", "data/seed-state.json"];
+  const specFiles = [];
+  const walk = (dir) => { for (const entry of readdirSync(join(root, dir), {withFileTypes: true})) {
+    const rel = `${dir}/${entry.name}`; if (entry.isDirectory()) walk(rel); else if (/\.(json|ya?ml|md)$/u.test(entry.name)) specFiles.push(rel);
+  } };
+  walk("spec");
+  const corpus = [...codeFiles, ...specFiles].map((rel) => readFileSync(join(root, rel), "utf8")).join("\n");
+  const templated = (key) => {
+    const segments = key.split("_");
+    for (let index = segments.length - 1; index >= 1; index -= 1) {
+      const prefix = segments.slice(0, index).join("_"); const suffix = segments.slice(index).join("_");
+      if (corpus.includes(`${prefix}_\${`) || corpus.includes(`\`${prefix}\${`)) return true;
+      if (corpus.includes(`}_${suffix}`)) return true;
+    }
+    return false;
+  };
+  const orphans = keys.filter((key) => !I18N_ORPHAN_EXEMPTIONS[key] && !containsWholeIdentifier(corpus, key) && !templated(key));
+  if (orphans.length) output.push(`i18n 里这些键没有任何代码/规范/种子/模板能产出（码改名后留下的孤儿？删掉，或登记进 I18N_ORPHAN_EXEMPTIONS 说明谁在用）：${orphans.join("、")}`);
+  else console.log(`i18n 词表 ${keys.length} 个键都有来源（字面量 / 模板前后缀 / 规范值）`);
 }
 
 // 【核心规范 §5 的 MCP 工具表要与实现一致（两个方向）】。2026-08-28 核出实现里有而表里没有的 8 个（整个 human-review-mcp、

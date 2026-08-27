@@ -3391,6 +3391,15 @@ const MUTATIONS = [
     expect: "实现里有而核心规范 §5 工具表没有的工具"
   },
   {
+    name: "i18n 词表里的键都得有人产出（孤儿词条要被抓到）",
+    file: "apps/control-plane-ui/public/i18n-zh.js",
+    gate: "contract",
+    check: "verifyI18nKeysAreReachable",
+    from: "    mcp_token_invalid: \"MCP 令牌不对或已失效\",",
+    to: "    mcp_token_invalid: \"MCP 令牌不对或已失效\",\n    mcp_token_expired_orphan: \"没人产出的孤儿词条\",",
+    expect: "没有任何代码/规范/种子/模板能产出"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
