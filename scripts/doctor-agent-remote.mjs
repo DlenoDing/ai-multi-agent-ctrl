@@ -356,6 +356,16 @@ try {
   if (!install.stdout.includes("下一步：agentctl run")) {
     throw new Error(`bootstrap 成功后没告诉人下一步该跑什么（agentctl run）：${install.stdout.slice(-300).replace(/\n/g, " ")}`);
   }
+  // 单独跑 self-check 是排障用的：要逐项列出查了什么、结果如何、准入到哪一档，不能只有一句 ok。
+  {
+    const selfCheck = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "self-check"],
+      {cwd: root, encoding: "utf8", timeout: 60000, env: {...process.env, AIMAC_AGENT_WORK_DIR: agentWorkDir, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true"}});
+    const said = String(selfCheck.stdout || "");
+    if (selfCheck.status !== 0 || !/agent self-check: ok（准入 (full|limited|read_only)）/u.test(said)
+      || !["runtime", "filesystem", "git", "gateway", "remote_mcp"].every((item) => new RegExp(`^  [✓✗] ${item}\\b`, "mu").test(said))) {
+      throw new Error(`agentctl self-check 没有逐项列出查了什么与准入档位（exit ${selfCheck.status}）：${said.slice(0, 300).replace(/\n/g, " | ")}`);
+    }
+  }
 
   const agentConfigPath = join(agentWorkDir, "agent-config.json");
   const agentConfig = JSON.parse(readFileSync(agentConfigPath, "utf8"));

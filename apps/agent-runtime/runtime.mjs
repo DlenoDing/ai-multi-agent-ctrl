@@ -78,7 +78,9 @@ if (invokedPath && invokedPath === realpathSync(fileURLToPath(import.meta.url)))
   try {
     await main();
   } catch (error) {
-    console.error(`\n安装/接入失败：${explainAgentFailure(error)}`);
+    // 前缀按命令说：self-check 不是在安装，status 也不是。
+    const failurePrefix = {bootstrap: "安装/接入失败", "self-check": "自检失败", status: "读取节点状态失败", run: "运行失败"}[command] || "失败";
+    console.error(`\n${failurePrefix}：${explainAgentFailure(error)}`);
     if (process.env.AIMAC_AGENT_DEBUG === "1") console.error(error);
     else console.error("（要看完整堆栈：AIMAC_AGENT_DEBUG=1 重跑一次）");
     process.exit(1);
@@ -123,7 +125,7 @@ function explainAgentFailure(error) {
 async function main() {
   if (command === "help" || command === "--help" || args.help === true) { console.log(USAGE); return; }
   if (command === "bootstrap") return bootstrap();
-  if (command === "self-check") return selfCheck(loadConfig());
+  if (command === "self-check") return selfCheck(loadConfig(), {verbose: true});
   if (command === "status") return status(loadConfig());
   if (command === "run") { installChildReaper(); return run(loadConfig()); }
   console.error(`认不出的命令：${command}\n${USAGE}`);
@@ -196,7 +198,7 @@ async function bootstrap() {
   ].join("\n"));
 }
 
-async function selfCheck(config) {
+async function selfCheck(config, {verbose = false} = {}) {
   const checks = [];
   const profile = probeProfile(config.executorCommand);
   checks.push(check("runtime", Number(process.versions.node.split(".")[0]) >= 20, `node ${process.versions.node}; runtime ${RUNTIME_VERSION}`));
@@ -232,7 +234,12 @@ async function selfCheck(config) {
   }
   checks.push(check("remote_mcp", mcpOk, mcpDetail));
   const result = await jsonRequest(config.gateway.selfCheckUrl, {method: "POST", token: config.nodeToken, body: {checks, runtimeVersion: RUNTIME_VERSION, profile}});
-  process.stdout.write(`agent self-check: ${result.ok ? "ok" : "failed"}\n`);
+  // 单独跑 agentctl self-check 的人是来排障的：一句 ok/failed 不够，要逐项说查了什么、结果如何、准入到哪一档。
+  // bootstrap 里顺带跑的那次保持一行（它的输出有安装脚本/e2e 在解析）。
+  if (verbose) {
+    for (const item of checks) process.stdout.write(`  ${item.status === "ok" ? "✓" : "✗"} ${item.checkId}${item.detail ? ` — ${item.detail}` : ""}\n`);
+  }
+  process.stdout.write(`agent self-check: ${result.ok ? "ok" : "failed"}${verbose ? `（准入 ${result.admission || "?"}${result.ok ? "" : `；没过的：${(result.missingChecks || []).join("、")}`}）` : ""}\n`);
   return result;
 }
 

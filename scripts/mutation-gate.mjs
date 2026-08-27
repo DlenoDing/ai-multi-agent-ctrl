@@ -3332,6 +3332,14 @@ const MUTATIONS = [
     expect: "点名了界面上没有的按钮"
   },
   {
+    name: "agentctl self-check 要逐项列出查了什么与准入档位",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "    for (const item of checks) process.stdout.write(`  ${item.status === \"ok\" ? \"✓\" : \"✗\"} ${item.checkId}${item.detail ? ` — ${item.detail}` : \"\"}\\n`);",
+    to: "",
+    expect: "self-check 没有逐项列出"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
