@@ -25,7 +25,7 @@ npm run init
 npm start
 ```
 
-`npm run dev` 与 `npm start` 是同一条命令（没有热重载之类的区别），留给习惯敲 dev 的人。
+`npm run dev` 与 `npm run mcp:start` 都与 `npm start` 是同一条命令（没有热重载之类的区别；MCP 与控制台同端启动），留给习惯敲这两个名字的人。
 
 默认控制台地址：
 
