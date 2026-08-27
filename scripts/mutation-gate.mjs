@@ -10022,6 +10022,14 @@ const MUTATIONS = [
     expect: "要用词表里的中文"
   },
   {
+    name: "派发白名单里永远不能出现 identity-mcp.*（四条「机器主体永远拿不到」的登记靠它）",
+    file: GATEWAY,
+    gate: "contract",
+    from: '  "orchestration-mcp.orchestrator_run",\n  "orchestration-mcp.state_get",',
+    to: '  "orchestration-mcp.orchestrator_run",\n  "identity-mcp.grant_create",\n  "orchestration-mcp.state_get",',
+    expect: "进了某个角色的派发白名单"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

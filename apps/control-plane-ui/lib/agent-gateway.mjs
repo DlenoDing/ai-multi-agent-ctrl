@@ -1724,7 +1724,7 @@ export function buildSkillWorkset(state, contract, options) {
   };
 }
 
-function mcpToolsForRoles(roles) {
+export function mcpToolsForRoles(roles) {
   const control = roles.some((role) => ["orchestrator", "scheduler", "monitor", "reviewer", "security"].includes(role));
   return uniqueStrings([...DEFAULT_AGENT_MCP_TOOLS, ...(control ? CONTROL_ROLE_MCP_TOOLS : [])]);
 }

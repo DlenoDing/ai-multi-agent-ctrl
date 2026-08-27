@@ -27,7 +27,7 @@ import { buildExecutionContentBundle as buildBundleForCheck, isSafeGitRemoteUrl 
 import { publicAgentNode, agentRuntimeOutdated, REQUIRED_AGENT_RUNTIME_VERSION } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { recordAgentExecutionEvent } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import { PROJECT_SHARD_COLLECTION_LIMITS } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
+import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens, mcpToolsForRoles } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import {
   summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, mcpAcceptedInputVocabulary, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs, capacitySnapshot, assignWorkItem, inferMcpArgumentProjectIds
 } from "../apps/mcp-server/server.mjs";
@@ -161,7 +161,8 @@ import {
   appendHumanGuidance,
   roomWait,
   syncSkillSource,
-  classifyExecutorSpawnFailure
+  classifyExecutorSpawnFailure,
+  REGISTERED_OWNER_ROLES,
 } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import {
   ackAgentControlCommand,
@@ -6459,6 +6460,24 @@ function verifyCommandBusLifecycle(output) {
     }
     console.log(`抛错渲染：${thrown} 处带 details 的抛错逐个核过，0 处 details.error 与抛出码不一致；`
       + `${renders.length} 处 4xx 渲染都把 error 写在展开之后`);
+  }
+
+  // 【第二道门登记里那句"不在任何派发下发的工具白名单里"要自证】。四条登记（checkpoint 必须走网关、
+  // 机器主体不得发/撤授权、不得停用账号）都靠同一个前提：identity-mcp.* 与 checkpoint_submit 永远不会
+  // 出现在节点的 allowedMcpTools 里 —— 而那份白名单只由 mcpToolsForRoles(角色) 推出。谁往某个角色的
+  // 工具表里加一条 identity-mcp.grant_create，这四条"走不到"当场变成"走得到且没人守"。按全部登记角色的并集核。
+  {
+    const roles = Array.isArray(REGISTERED_OWNER_ROLES) ? REGISTERED_OWNER_ROLES : [];
+    const union = new Set(roles.flatMap((role) => mcpToolsForRoles([role]) || []));
+    if (union.size < 5 || roles.length < 5) {
+      output.push(`派发白名单自证：只算出 ${union.size} 个工具 / ${roles.length} 个角色 —— 提取脱节，本条在空转`);
+    } else {
+      const leaked = [...union].filter((tool) => tool.startsWith("identity-mcp.") || /\.checkpoint_submit$/u.test(tool) || tool === "checkpoint_submit");
+      if (leaked.length) {
+        output.push(`这些工具进了某个角色的派发白名单：${leaked.join("、")} —— 第二道门登记里"机器主体永远拿不到它"的四条前提就此不成立，`
+          + "对应的真人专属守卫变成走得到且没人验");
+      }
+    }
   }
 
   // 【地址键清单里的每个键都要能解析出项目】。RESOURCE_ADDRESSING_ARG_KEYS 后来加了六个键，
