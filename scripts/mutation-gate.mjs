@@ -10317,6 +10317,14 @@ const MUTATIONS = [
     expect: "没勾的权限也发了"
   },
   {
+    name: "规则编辑器只发本层改过的规则（没动过的继承规则不再发）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "    if (!owned && !isNew && !dirty) continue;",
+    to: "    if (false) continue;",
+    expect: "没动过的继承规则被复制到本层"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

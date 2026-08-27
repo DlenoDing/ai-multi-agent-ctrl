@@ -104,6 +104,15 @@ class StubElement {
   }
 
   querySelectorAll(selector) {
+    // 后代组合（规则编辑器收行时查 `[data-cfg-list='X'] [data-rule-row]`）：先找匹配前半的祖先，再在其后代里找后半。
+    const combo = /^(\S+)\s+(\S+)$/.exec(selector.trim());
+    if (combo && !selector.includes(",")) {
+      const out = [];
+      for (const ancestor of this.#descendants().filter((el) => el.#matches(combo[1]))) {
+        for (const node of ancestor.#descendants().filter((el) => el.#matches(combo[2]))) if (!out.includes(node)) out.push(node);
+      }
+      return out;
+    }
     return this.#descendants().filter((el) => el.#matches(selector));
   }
 
@@ -741,6 +750,41 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
           check("成员创建提交的权限要且只要勾选的那些",
             JSON.stringify(post.body.permissions) === JSON.stringify(["project:view"]) && post.body.defaultProjectId === "p1",
             `发出去的是 ${JSON.stringify(post.body.permissions)}／defaultProjectId=${post.body.defaultProjectId} —— 没勾的权限也发了，等于替人多发权限`);
+        }
+      } finally {
+        probe.setFetch(previousFetch);
+      }
+    }
+    // 【规则编辑器保存时只发本层改过的规则】。继承来的、没动过的规则不能再发一遍（发了＝在本层复制一份覆盖，
+    // 从此上层再改它这里不跟）；改过的必须发。这条走真实的 submit 处理器 + collectRuleFragments。
+    {
+      const recorded = [];
+      const previousFetch = globalThis.fetch;
+      probe.setFetch(async (url, init = {}) => {
+        recorded.push({url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null});
+        return {ok: true, status: 200, headers: {get: () => null}, json: async () => ({ok: true})};
+      });
+      const ruleRow = (id, title, content, {dirty}) => el("div", {dataset: {ruleRow: "", ruleId: id, ruleCategory: "business", ruleSource: "default",
+        origTitle: title, origContent: content, origEnabled: "1"}}, [
+        el("input", {name: "ruleTitle", value: title}),
+        el("input", {name: "ruleEnabled", type: "checkbox", checked: true}),
+        el("textarea", {name: "ruleContent", value: dirty ? `${content}（本层改写）` : content})
+      ]);
+      try {
+        const list = el("div", {dataset: {cfgList: "rules-probe"}}, [
+          ruleRow("rule_untouched", "没动过的继承规则", "原文", {dirty: false}),
+          ruleRow("rule_dirty", "改过的继承规则", "原文", {dirty: true})
+        ]);
+        const form = el("form", {dataset: {form: "project-rules", list: "rules-probe", category: "business", project: "p1"}}, [list, el("button", {type: "submit"})]);
+        await probe.submit({target: form, submitter: form.children[1], preventDefault: () => {}});
+        const post = recorded.find((item) => item.method === "POST" && /\/api\/projects\/p1\/config$/u.test(item.url));
+        const sent = (post?.body?.businessRules || []).map((item) => item.ruleId);
+        if (!post) {
+          check("规则编辑器提交要真的发出 POST /api/projects/:id/config", false, `没记录到提交（${JSON.stringify(recorded).slice(0, 160)}）—— 下面那条什么也没验`);
+        } else {
+          check("规则编辑器只发本层改过的规则（没动过的继承规则不再发一遍）",
+            sent.includes("rule_dirty") && !sent.includes("rule_untouched"),
+            `发出去的是 ${JSON.stringify(sent)} —— 没动过的继承规则被复制到本层，从此上层再改它这里不跟`);
         }
       } finally {
         probe.setFetch(previousFetch);
