@@ -3365,6 +3365,14 @@ const MUTATIONS = [
     expect: "文档行没写界"
   },
   {
+    name: "试运行回执不带幻影的 policyDecisionRef",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "        if (decoratable && policyDecision && !(isWriteTool(name) && effectiveArgs.dryRun)) result = {...result, policyDecisionRef: policyDecision.decisionId};",
+    to: "        if (decoratable && policyDecision) result = {...result, policyDecisionRef: policyDecision.decisionId};",
+    expect: "试运行回执带了幻影的 policyDecisionRef"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
@@ -10547,8 +10555,8 @@ const MUTATIONS = [
     name: "MCP 回执装饰不许写进工具返回的活记录（副本上做）",
     file: "apps/mcp-server/server.mjs",
     gate: "mcp",
-    from: "        if (decoratable && policyDecision) result = {...result, policyDecisionRef: policyDecision.decisionId};",
-    to: "        if (decoratable && policyDecision) result.policyDecisionRef = policyDecision.decisionId;",
+    from: "        if (decoratable && policyDecision && !(isWriteTool(name) && effectiveArgs.dryRun)) result = {...result, policyDecisionRef: policyDecision.decisionId};",
+    to: "        if (decoratable && policyDecision && !(isWriteTool(name) && effectiveArgs.dryRun)) result.policyDecisionRef = policyDecision.decisionId;",
     expect: "policyDecisionRef is not allowed by schema"
   },
   {

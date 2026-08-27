@@ -271,6 +271,10 @@ try {
   }
   const dryRun = await mcp("tools/call", {name: "room-mcp.room_send", arguments: {idempotencyKey: "doctor-room-dry-run", dryRun: true, roomId: "room_doctor", payload: {text: "dry run"}}});
   const stateAfterDryRun = await mcp("tools/call", {name: "orchestration-mcp.state_get", arguments: {scope: "summary"}});
+  // 试运行不落账，回执里就不能带 policyDecisionRef（那条决策随请求消失，引用指向不存在的记录），且要明说 persisted:false。
+  if (dryRun.structuredContent?.result?.policyDecisionRef !== undefined || dryRun.structuredContent?.result?.persisted !== false) {
+    throw new Error(`试运行回执带了幻影的 policyDecisionRef 或没说 persisted:false：${JSON.stringify(dryRun.structuredContent?.result).slice(0, 200)}`);
+  }
   if (!dryRun.structuredContent?.result?.dryRun || stateBeforeDryRun.structuredContent?.stateVersion !== stateAfterDryRun.structuredContent?.stateVersion) throw new Error("write MCP dryRun changed stateVersion");
 
   const roomSend = await mcp("tools/call", {name: "room-mcp.room_send", arguments: {idempotencyKey: "doctor-room-send", roomId: "room_doctor", payload: {text: "remote MCP"}}});

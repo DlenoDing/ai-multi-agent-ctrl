@@ -688,7 +688,10 @@ export async function callTool(name, args = {}, context = {}) {
         // 就红在「覆盖层记录里不许有 policyDecisionRef」。返回的是活记录还是副本由各工具决定，
         // 这里一律不碰它，装饰只落在回执上。
         const decoratable = result && typeof result === "object" && !Array.isArray(result);
-        if (decoratable && policyDecision) result = {...result, policyDecisionRef: policyDecision.decisionId};
+        // 试运行不落账（下面 writeState 跳过它）：这一拍在内存里记的决策随请求一起消失，回执里给出 decisionId 就是一个
+        // 指向不存在记录的引用。试运行回执不带它，并明说 persisted:false。
+        if (decoratable && policyDecision && !(isWriteTool(name) && effectiveArgs.dryRun)) result = {...result, policyDecisionRef: policyDecision.decisionId};
+        if (decoratable && isWriteTool(name) && effectiveArgs.dryRun) result = {...result, persisted: false};
         if (decoratable && grantCheck.grantRef) result = {...result, mcpGrantRef: grantCheck.grantRef};
         if (isWriteTool(name) && idempotencyKey && result.ok !== false && !effectiveArgs.dryRun) {
           // 与 REST 那侧同一个入口：写入 + 回执正文过期清理 + 条数淘汰。
