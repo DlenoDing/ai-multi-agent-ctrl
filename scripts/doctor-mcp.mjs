@@ -930,14 +930,6 @@ try {
       throw new Error(`completion_readiness_compute 没给出结论：${JSON.stringify(readiness).slice(0, 200)}`);
     }
     // 发一张授权再撤掉它：撤销这条路此前一次都没成功执行过（只验过"机器主体不许撤"）。
-    // 期待被拒的调用不走 call()（它把任何 ok:false 当链断）。
-    const typoEnvelope = await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.grant_create",
-      arguments: {idempotencyKey: "doctor-mcp-typo-permission", subjectId: "acct_agent_runtime",
-        resource: {resourceType: "task_group", resourceId: TG}, grantRole: "reviewer", grantPermissions: ["project:veiw"]}});
-    const typoGrant = typoEnvelope.structuredContent?.result || JSON.parse(typoEnvelope.content?.[0]?.text || "{}");
-    if ((typoGrant.result || typoGrant).error !== "permission_unknown") {
-      throw new Error(`MCP 建授权带拼错的权限该被拒（permission_unknown），实际 ${JSON.stringify(typoGrant).slice(0, 200)}`);
-    }
     const chainGrant = await call("identity-mcp.grant_create", {
       subjectId: "acct_agent_runtime", resource: {resourceType: "task_group", resourceId: TG},
       grantRole: "reviewer"
@@ -2135,6 +2127,16 @@ try {
         resource: target, grantPermissions: ["task_group:read"]}});
     if (ghost.structuredContent?.result?.error !== "grant_subject_account_not_found") {
       throw new Error("MCP 给一个不存在的账号发出了授权 —— 那张授权在它自己被审视之前就生效了");
+    }
+    // ④ 拼错的权限要被拒并点名（正面词表）。放在 ①②③ 之后：它与「按给的权限落」「委派校验」观察的是同一道门，
+    // 排在前面会先红，让那两条老登记失去判别力证明（完整变异门实测就是这样红的）。
+    // 期待被拒的调用不走 call()（它把任何 ok:false 当链断）。
+    const typoEnvelope = await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.grant_create",
+      arguments: {idempotencyKey: "doctor-mcp-typo-permission", subjectId: "acct_agent_runtime",
+        resource: target, grantRole: "reviewer", grantPermissions: ["project:veiw"]}});
+    const typoGrant = typoEnvelope.structuredContent?.result || JSON.parse(typoEnvelope.content?.[0]?.text || "{}");
+    if ((typoGrant.result || typoGrant).error !== "permission_unknown") {
+      throw new Error(`MCP 建授权带拼错的权限该被拒（permission_unknown），实际 ${JSON.stringify(typoGrant).slice(0, 200)}`);
     }
     // ④ 认不出的作用域类型要拒：它在组织归属推导里会变成 null（＝系统级），
     // 于是跨组织那道检查整个不适用，还会落一条永远匹配不上任何资源却显示「启用中」的僵尸授权。
