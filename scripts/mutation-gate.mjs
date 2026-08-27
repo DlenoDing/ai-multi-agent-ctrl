@@ -3296,6 +3296,15 @@ const MUTATIONS = [
     expect: "没有模板里那句「安装脚本校验失败」"
   },
   {
+    name: "文档里提到的 npm run 命令必须真有",
+    file: "README.md",
+    gate: "contract",
+    check: "verifyDocumentedNpmScriptsExist",
+    from: "- **备份用 `npm run backup [运行目录] [备份目录]`",
+    to: "- **备份用 `npm run backups [运行目录] [备份目录]`",
+    expect: "在 package.json 里不存在"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

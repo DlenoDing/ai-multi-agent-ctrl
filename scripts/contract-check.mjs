@@ -975,6 +975,7 @@ run(verifyAgentRunAnnouncesItself);
 run(verifyDefaultBackupTargetIsGitIgnored);
 run(verifyBootstrapEchoSamplesMatchRuntime);
 run(verifyInstallerDocsMatchScriptAndTemplate);
+run(verifyDocumentedNpmScriptsExist);
 run(verifyConsoleRuntimeConstantsHaveOneWriter);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
@@ -15717,6 +15718,22 @@ function verifyConsoleRuntimeConstantsHaveOneWriter(output) {
     if (!body || !body.includes("decorateRuntimeForConsole(")) output.push(`${reader} 没调 decorateRuntimeForConsole —— 这条路上界面拿不到词表`);
   }
   console.log(`界面 runtime 常量：${numericKeys.length} 个数值只在 decorateRuntimeForConsole 里赋值，三份词表只来自 core 的 consoleVocabularies，服务端两条读路径与勘察工具都经过它`);
+}
+
+// 【文档里提到的 npm run <name> 都得真有】。README/docs 共提到 12 个脚本名；改名一个脚本，文档就开始指一条不存在的命令，
+// 而人是照着文档敲的。名字从文档里提，对 package.json 的 scripts。
+function verifyDocumentedNpmScriptsExist(output) {
+  const scripts = Object.keys(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).scripts || {});
+  const files = ["README.md", ...readdirSync(join(root, "docs")).filter((name) => name.endsWith(".md")).map((name) => `docs/${name}`)];
+  const mentioned = new Map();
+  for (const file of files) {
+    const text = readFileSync(join(root, file), "utf8");
+    for (const hit of text.matchAll(/npm run(?: -s)? ([a-zA-Z][a-zA-Z0-9:_-]*)/gu)) mentioned.set(hit[1], file);
+  }
+  if (mentioned.size < 8) { output.push(`文档里只提出 ${mentioned.size} 个 npm run 名 —— 提取脱节`); return; }
+  const missing = [...mentioned.entries()].filter(([name]) => !scripts.includes(name));
+  if (missing.length) output.push(`文档里提到的 npm run 命令在 package.json 里不存在：${missing.map(([name, file]) => `${name}（${file}）`).join("、")}`);
+  else console.log(`文档里提到的 ${mentioned.size} 个 npm run 命令在 package.json 里都有`);
 }
 
 // 【安装脚本的文档要与脚本、与签票模板一致】。协议文档自称「完整清单」的参数表没有门盯着；两份文档里
