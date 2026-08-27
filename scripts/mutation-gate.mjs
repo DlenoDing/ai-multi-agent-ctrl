@@ -10078,6 +10078,24 @@ const MUTATIONS = [
     expect: "MCP 同步在缓存坏掉时该回 ok:false"
   },
   {
+    name: "被拒的授权请求不得留在状态里（写入要在会话校验之后）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyRejectedWritesLeaveStateUntouched",
+    from: "  if (args.sessionId) {\n    // 这里会把【任意】sessionId 的会话直接推到 permission_required",
+    to: "  state.permissionRequests = capRetainingOpen([request, ...state.permissionRequests], [\"approved\", \"rejected\", \"resolved\", \"revoked\", \"expired\", \"cancelled\"], 2000);\n  if (args.sessionId) {\n    // 这里会把【任意】sessionId 的会话直接推到 permission_required",
+    expect: "permissionRequestSubmit 被拒（400）之后状态里多了一条授权请求"
+  },
+  {
+    name: "拒绝机器主体落闸要在写 closeBarriers 之前",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyRejectedWritesLeaveStateUntouched",
+    from: "  if (request.mutate === true && taskGroup && !isHumanConfirmationActor(state, request.actor)) {\n    throw Object.assign(new Error(\"task_group_close_requires_human_actor\"), {status: 403});\n  }\n  state.closeBarriers = capPerTaskGroupRecords([barrier, ...state.closeBarriers.filter((item) => item.taskGroupId !== taskGroupId)], state, 80);",
+    to: "  state.closeBarriers = capPerTaskGroupRecords([barrier, ...state.closeBarriers.filter((item) => item.taskGroupId !== taskGroupId)], state, 80);\n  if (request.mutate === true && taskGroup && !isHumanConfirmationActor(state, request.actor)) {\n    throw Object.assign(new Error(\"task_group_close_requires_human_actor\"), {status: 403});\n  }",
+    expect: "拒绝机器主体（403）之前已经写了 closeBarriers"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

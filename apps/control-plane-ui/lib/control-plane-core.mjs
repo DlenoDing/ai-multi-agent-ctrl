@@ -4072,13 +4072,15 @@ export function computeCloseBarrier(state, taskGroupId, request = {}) {
   // 必须让 barrier 指向【存在状态里的那一个对象】，不能 Object.assign 出一份副本：
   // 下面 mutate 路径会往 barrier 上写 confirmedBy/confirmedAt，写在副本上等于人工确认没进账本。
   if (sameBarrier) barrier = previousBarrier;
-  state.closeBarriers = capPerTaskGroupRecords([barrier, ...state.closeBarriers.filter((item) => item.taskGroupId !== taskGroupId)], state, 80);
   // 关闭任务组是核心定稿动作：只有真人账号可以落闸。机器主体即使拿到 task_group:control 也不行 ——
   // 否则一个服务账号就能替 AI 把任务组关掉，人工闸门在最后一步被绕过。这里对**任何**落闸请求先行拒绝
   // （而不是等门禁满足后才拒），机器主体的关闭意图应当被明确报错，而不是静默无效。
+  // 机器主体的落闸请求要在【写入之前】拒绝：同一函数里先写 closeBarriers 再抛 403，
+  // 抛错后的状态就带着一份本次算出的门禁 —— 被拒的请求不该在状态里留下任何东西。
   if (request.mutate === true && taskGroup && !isHumanConfirmationActor(state, request.actor)) {
     throw Object.assign(new Error("task_group_close_requires_human_actor"), {status: 403});
   }
+  state.closeBarriers = capPerTaskGroupRecords([barrier, ...state.closeBarriers.filter((item) => item.taskGroupId !== taskGroupId)], state, 80);
   // 已关闭的任务组不得被再关一次。关闭不产生新的阻塞项，所以门在关闭之后仍然 satisfied ——
   // 而两张各自过时的页面都会显示"关闭任务组"按钮，第二个人点下去会把 humanFinalization 整个盖掉：
   // finalizedBy / contentDigest / confirmationRef 全变成他的。而那份记录正是"关闭之后 AI 不得再改"
@@ -8327,7 +8329,6 @@ export function permissionRequestSubmit(state, args) {
     error.status = 400;
     throw error;
   }
-  state.permissionRequests = capRetainingOpen([request, ...state.permissionRequests], ["approved", "rejected", "resolved", "revoked", "expired", "cancelled"], 2000);
   if (args.sessionId) {
     // 这里会把【任意】sessionId 的会话直接推到 permission_required：既能把别的格子、甚至
     // 别的项目里【已经了结】的会话复活成非终态（对方的关闭门就此永久被挡），也能配合随后的
@@ -8350,6 +8351,10 @@ export function permissionRequestSubmit(state, args) {
       session.updatedAt = at;
     }
   }
+  // 【写入放在所有校验之后】。原先在会话作用域/已了结两道校验之前就已经把请求推进了状态：
+  // 校验抛 400/409 时那份状态带着一条不该存在的请求 —— 今天的两个调用方（REST/MCP）都会丢掉
+  // 抛错后的状态，所以没出事；但「被拒的提交不留痕」是这个函数自己该守的契约，不该靠调用方。
+  state.permissionRequests = capRetainingOpen([request, ...state.permissionRequests], ["approved", "rejected", "resolved", "revoked", "expired", "cancelled"], 2000);
   return {permissionRequest: request};
 }
 

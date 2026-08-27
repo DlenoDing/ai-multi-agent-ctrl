@@ -762,6 +762,7 @@ runAsync(verifyAgentRuntimeGuardsRefuseRealAttacks);
 runAsync(verifyTestServersDieWithTheirParent);
 run(verifyRuntimeConstantsSitBeforeItsTopLevelAwait);
 run(verifyStaleE2eRuntimeDirsGetSwept);
+run(verifyRejectedWritesLeaveStateUntouched);
 run(verifyAgentFailureCodeCoverageRatchet);
 run(verifyAgentFailureReasonsAreCoded);
 run(verifyTruncatedExecutorOutputSaysSo);
@@ -15388,6 +15389,41 @@ function verifyRuntimeConstantsSitBeforeItsTopLevelAwait(output) {
   }
   console.log(`runtime.mjs：顶层 await（第 ${awaitLine + 1} 行）之后没有模块级常量（TDZ 语义当场探过），`
     + "且子进程起来后的异常会杀掉子进程再抛 —— 核过");
+}
+
+// 【被拒的写入不得在状态里留痕】。core 里两个函数原先"先写、后校验、校验不过就抛"：
+// permissionRequestSubmit 在会话作用域/已了结两道校验之前就把请求推进了 permissionRequests，
+// computeCloseBarrier 在拒绝机器主体落闸（403）之前就写了 closeBarriers。今天的调用方（REST/MCP）
+// 都会丢掉抛错后的状态，所以没出事 —— 但这是函数自己该守的契约，不该靠每个调用方都记得丢。
+// 判法：在克隆态上造一次必被拒的调用，抛出之后集合与调用前逐字节相同。
+function verifyRejectedWritesLeaveStateUntouched(output) {
+  const stA = structuredClone(seedState);
+  stA.permissionRequests ||= [];   // 种子里没有这个集合；被测函数自己不会补，先写后校验的写法会在这里炸成 TypeError 而不是留痕
+  stA.workSessions = [...(stA.workSessions || []), {sessionId: "sess_scope_probe", taskGroupId: "tg_instruction_efficiency", status: "active"}];
+  const tg = stA.taskGroups.find((item) => item.id === "tg_runtime_management");
+  const beforeA = JSON.stringify(stA.permissionRequests || []);
+  let rejectedA = null;
+  try {
+    permissionRequestSubmit(stA, {taskGroupId: tg.id, projectId: tg.projectId, requestedCapability: "net",
+      requestedResource: "x", promptType: "network", sessionId: "sess_scope_probe"});
+  } catch (error) { rejectedA = String(error?.message || error); }
+  if (rejectedA !== "permission_request_session_scope_mismatch") {
+    output.push(`被拒写入留痕：夹具没造出想测的情形 —— 跨任务组的 sessionId 没被拒（${rejectedA || "没抛"}），下面那条什么也没验`);
+  } else if (JSON.stringify(stA.permissionRequests || []) !== beforeA) {
+    output.push("被拒写入留痕：permissionRequestSubmit 被拒（400）之后状态里多了一条授权请求 —— 先写后校验；"
+      + "哪个调用方在抛错后还写状态，这条不该存在的请求就会进账本并挡住关闭门");
+  }
+  const stB = structuredClone(seedState);
+  const beforeB = JSON.stringify(stB.closeBarriers || []);
+  let rejectedB = null;
+  try {
+    computeCloseBarrier(stB, "tg_runtime_management", {mutate: true, actor: "nobody_machine"});
+  } catch (error) { rejectedB = String(error?.message || error); }
+  if (rejectedB !== "task_group_close_requires_human_actor") {
+    output.push(`被拒写入留痕：夹具没造出想测的情形 —— 机器主体落闸没被拒（${rejectedB || "没抛"}），下面那条什么也没验`);
+  } else if (JSON.stringify(stB.closeBarriers || []) !== beforeB) {
+    output.push("被拒写入留痕：computeCloseBarrier 拒绝机器主体（403）之前已经写了 closeBarriers —— 先写后校验");
+  }
 }
 
 function verifyStaleE2eRuntimeDirsGetSwept(output) {
