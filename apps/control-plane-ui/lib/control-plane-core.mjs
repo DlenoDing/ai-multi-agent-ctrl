@@ -5550,6 +5550,22 @@ function accountIdentity(account) {
   return account?.accountId || account?.id || null;
 }
 
+// 控制台判「这件事我能不能处置」读的 effectivePermissions：直接权限 ∪ 生效授权 ∪ 项目负责人提示。
+// 它是【跨资源的并集、只作 UI 提示】，写路由仍按资源逐条判。放在 core 是因为有两个消费者：
+// server 的账号视图，以及读真实产出的勘察工具 —— 后者原先喂的是原始账号（permissions 为空），
+// 于是一个手握 task_group:review 授权的评审员在勘察输出里被写成「当前账号无人工审核权限」，
+// 差点当成产品缺陷去查。各写一份的话，两边会悄悄不同而没有任何东西会红。
+export function accountEffectivePermissions(state, account) {
+  const accountId = accountIdentity(account);
+  const direct = account?.permissions || [];
+  const granted = (state.accessGrants || [])
+    .filter((grant) => grant.status === "active" && grant.subjectRef?.subjectType === "account" && grant.subjectRef?.subjectId === accountId)
+    .flatMap((grant) => grant.permissions || []);
+  const owns = (state.projects || []).some((project) => project.ownerAccountId === accountId);
+  const ownerHint = owns ? projectOwnerGrantPermissions : [];
+  return [...new Set([...direct, ...granted, ...ownerHint])];
+}
+
 // 定稿内容摘要：只覆盖【实质内容】。AI 之后要改这些字段就是"分歧"，必须重新回到人工确认。
 export function decisionContentDigest(subject) {
   return digestOf({

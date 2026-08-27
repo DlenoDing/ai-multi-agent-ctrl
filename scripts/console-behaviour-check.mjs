@@ -12,6 +12,7 @@
 //
 // DOM 桩只做被测代码真正用到的那点事。桩不认识的选择器一律抛错而不是返回空集 ——
 // 静默返回空集会让断言"匹配到 0 个元素所以没发现问题"从而永远通过，那是本仓踩过的坑。
+import { accountEffectivePermissions } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
@@ -357,12 +358,16 @@ if (process.env.AIMAC_RENDER_REAL) {
   // 视角可换：AIMAC_RENDER_AS=<邮箱>。默认系统管理员，但不同视角看到的是不同的页与不同的空态，
   // 只读一个人的屏幕会漏掉另一类人才撞得到的死胡同（"请联系组织管理员"那次就是这么发现的）。
   const wantWho = process.env.AIMAC_RENDER_AS;
-  const who = (wantWho && (real.accounts || []).find((item) => item.email === wantWho))
+  const whoOnDisk = (wantWho && (real.accounts || []).find((item) => item.email === wantWho))
     || (real.accounts || []).find((item) => item.accountType === "system_admin") || (real.accounts || [])[0];
+  // 盘上的账号只有直接权限；控制台判权读的是服务端算出来的 effectivePermissions（直接 ∪ 授权）。
+  // 不补上它，一个靠授权拿到评审权的人在这份输出里会被写成「当前账号无人工审核权限」——
+  // 本轮就差点把它当产品缺陷去查。用的是与服务端同一个函数，不另抄一份。
+  const who = whoOnDisk ? {...whoOnDisk, effectivePermissions: accountEffectivePermissions(real, whoOnDisk)} : whoOnDisk;
   if (wantWho && who?.email !== wantWho) {
     console.log(`（要的是 ${wantWho}，真实状态里没有这个账号 —— 下面渲染的是 ${who?.email}）`);
   }
-  console.log(`=== 视角：${who?.email}（${who?.accountType}）`);
+  console.log(`=== 视角：${who?.email}（${who?.accountType}；有效权限：${(who?.effectivePermissions || []).join("、") || "无"}）`);
   // 这里喂进去的是【完整状态】：服务端的 scopedStateForAccount 没有导出（导入 server.mjs 会把服务起起来），
   // 所以下面渲染出来的东西没经过按账号的可见性过滤。非系统账号在真实控制台上收到的会更少。
   // 不写这一句的话，两个方向都会误判：把"成员看到了别人的项目"当成越权缺陷（其实是工具没过滤），
@@ -2655,6 +2660,23 @@ function runNoVisibleProjectCase() {
       check("有权的那张卡照常给表单",
         /选择定稿/u.test(reviewText),
         "有权的组上也没有定稿表单 —— 上面那条测的就不是「够不着」了");
+    }
+    // 【靠授权拿到评审权的人，控制台要认】。effectivePermissions 由服务端算（直接 ∪ 生效授权），
+    // 这里不手写它，而是用服务端那同一个函数从授权算出来 —— 函数漏掉授权那一支时，这条会红。
+    {
+      const grantedReviewer = {accountId: "u_granted_rev", accountType: "user_account", displayName: "靠授权的评审员",
+        organizationId: "org_default", permissions: []};
+      const grantState = {
+        ...reviewScopeState,
+        accessGrants: [{grantId: "g_rev", status: "active", subjectRef: {subjectType: "account", subjectId: "u_granted_rev"},
+          resourceType: "task_group", resourceId: "tg1", permissions: ["task_group:read", "task_group:review"]}]
+      };
+      const effective = accountEffectivePermissions(grantState, grantedReviewer);
+      const grantedText = renderAs({...grantedReviewer, effectivePermissions: effective}, grantState, "review", "p1");
+      check("靠授权拿到评审权的人，人工审核页不许说他「无权限」",
+        effective.includes("task_group:review") && !/仅可查看/u.test(grantedText),
+        `服务端算出的有效权限是 [${effective.join("、")}]，页面${/仅可查看/u.test(grantedText) ? "写着「仅可查看」" : "没写「仅可查看」"} —— `
+          + "他手里的授权白发了，人以为是自己没权而不是页面漏算");
     }
   }
   // 按钮同理：任务组列表上「暂停 / 恢复 / 纠偏」这些是按任务组授权的，而控制台原先用跨资源并集判 ——

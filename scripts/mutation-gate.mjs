@@ -10046,6 +10046,14 @@ const MUTATIONS = [
     expect: "agent 领活没有走到执行器"
   },
   {
+    name: "有效权限并集要含生效授权（server 与勘察工具共用这一个函数）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "console",
+    from: "  return [...new Set([...direct, ...granted, ...ownerHint])];",
+    to: "  return [...new Set([...direct, ...ownerHint])];",
+    expect: "他手里的授权白发了"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

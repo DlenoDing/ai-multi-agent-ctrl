@@ -89,6 +89,7 @@ import {
   registerRoleSkillOverlay,
   normalizeTaskGroupLanguagePolicy,
   projectOwnerGrantPermissions,
+  accountEffectivePermissions,
   runAgentRuntimeWorker,
   runAutonomousCycle,
   assertHumanTextWithinLimit,
@@ -717,18 +718,6 @@ function finishGuardedWrite(state, guard, status, payload) {
 
 function accountIdOf(account) {
   return account.accountId || account.id;
-}
-
-function accountEffectivePermissions(state, account) {
-  // Union of direct permissions and all active grant permissions for this account. Resource-scope-agnostic,
-  // so it is a superset used only as a UI capability hint; the backend still enforces per-scope on every write.
-  const direct = account.permissions || [];
-  const granted = (state.accessGrants || [])
-    .filter((grant) => grant.status === "active" && grant.subjectRef?.subjectType === "account" && grant.subjectRef?.subjectId === accountIdOf(account))
-    .flatMap((grant) => grant.permissions || []);
-  const owns = (state.projects || []).some((project) => project.ownerAccountId === accountIdOf(account));
-  const ownerHint = owns ? projectOwnerGrantPermissions : [];
-  return [...new Set([...direct, ...granted, ...ownerHint])];
 }
 
 function isSystemAccount(account) {
