@@ -1769,6 +1769,35 @@ function runReviewAxisCase() {
     }],
     qualityGates: []
   });
+  // 【已归档的项目不该出现在任何"把人或机器放进去开工"的选择器里】。后端两条路都已拒
+  //（project_archived / member_default_project_archived），而「项目成员授权」那个下拉
+  // 原先列的是全部项目 —— 选中一个归档项目提交，回执是 409，人只看到一个按不动的杠杆。
+  {
+    const grantProbe = loadConsole(el("div"), {realI18n: true});
+    const mixedHtml = grantProbe.renderSysAccountsWith({
+      accounts: [{accountId: "u1", displayName: "管理员", email: "a@x", accountType: "system_admin",
+        status: "active", roles: [], organizationId: "org_default"}],
+      projects: [
+        {id: "p_live", name: "在用项目", organizationId: "org_default", status: "active"},
+        {id: "p_arch", name: "老项目", organizationId: "org_default", status: "archived"}
+      ],
+      accessGrants: [], mcpGrants: [], auditLog: [], agents: [], agentJoinTokens: []
+    }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"});
+    const memberSection = String(mixedHtml).split("项目成员授权")[1] || "";
+    check("「项目成员授权」的项目下拉里不许出现已归档的项目（后端会拒）",
+      /在用项目/u.test(memberSection) && !/老项目/u.test(memberSection),
+      memberSection.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").slice(0, 120) || "（这一块没渲染出来）");
+    const allArchivedHtml = grantProbe.renderSysAccountsWith({
+      accounts: [{accountId: "u1", displayName: "管理员", email: "a@x", accountType: "system_admin",
+        status: "active", roles: [], organizationId: "org_default"}],
+      projects: [{id: "p_arch", name: "老项目", organizationId: "org_default", status: "archived"}],
+      accessGrants: [], mcpGrants: [], auditLog: [], agents: [], agentJoinTokens: []
+    }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"});
+    check("全部项目都已归档时要说清是「都归档了」，而不是渲染一个空下拉或「还没有项目」",
+      /全部已归档/u.test(String(allArchivedHtml).split("项目成员授权")[1] || ""),
+      "人分不清这个组织没有项目、还是有但都归档了 —— 这两件事的下一步不同");
+  }
+
   // 切换器把已归档的项目和在用的混在一起、没有任何标记 —— 人要先切过去、点一下保存、
   // 拿到一句 409 才知道那是个只读的死项目。归档不可撤销，这件事该在选它之前就看得见。
   {

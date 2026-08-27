@@ -9934,6 +9934,22 @@ const MUTATIONS = [
     to: "",
     expect: "要标出哪些是已归档"
   },
+  {
+    name: "「项目成员授权」的项目下拉里不许出现已归档的项目（后端已拒 project_archived）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const projects = openProjects;",
+    to: "  const projects = state.projects || [];",
+    expect: "不许出现已归档的项目"
+  },
+  {
+    name: "项目全部已归档时要说清是「都归档了」，不是渲染一个空下拉",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (!openProjects.length) {",
+    to: "  if (false) {",
+    expect: "要说清是「都归档了」"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

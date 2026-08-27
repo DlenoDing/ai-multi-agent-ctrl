@@ -2307,10 +2307,19 @@ const organizationOf = (record) => String(record?.organizationId || DEFAULT_ORGA
 
 function renderProjectMemberForm() {
   if (!(state.projects || []).length) return noProjectYetNotice("项目成员授权");
+  // 已归档的项目不能再发成员授权（后端拒 project_archived）。这里原先列的是【全部项目】——
+  // 与上面 assignableProjects 那段注释说的是同一件事，而它点名的两处之外还漏了这第三处：
+  // 选中一个归档项目提交，回执是 409，人只看到一个按不动的杠杆。
+  const openProjects = assignableProjects();
+  if (!openProjects.length) {
+    return `<div class="notice warn-notice">你能看到的项目【全部已归档】（共 `
+      + `${(state.projects || []).length} 个）：归档是终态、不可撤销，发不进成员授权。`
+      + "要继续这条线，请先新建一个项目。</div>";
+  }
   // 账号下拉此前列的是【全部账号】。而服务端对项目成员授权是无条件按组织判的
   //（cross_org_member_not_allowed，系统管理员也一样）—— 于是别的组织的人就摆在那里，
   // 选中提交必然被拒：一个按不动的杠杆。按【所选项目所属的组织】过滤，口径与服务端同一份。
-  const projects = state.projects || [];
+  const projects = openProjects;
   const chosen = projects.find((project) => project.id === memberGrantProjectId) || projects[0];
   const selectedOrg = organizationOf(chosen);
   const candidates = (orgMembers && orgMembers.length ? orgMembers : (state.accounts || []));
