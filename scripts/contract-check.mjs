@@ -29,7 +29,7 @@ import { recordAgentExecutionEvent } from "../apps/control-plane-ui/lib/agent-ga
 import { PROJECT_SHARD_COLLECTION_LIMITS } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { sweepDeadAgentNodes, validateDispatchClaim, recycleExpiredClaims, buildExecutionContentBundle, buildSkillWorkset, listAgentJoinTokens } from "../apps/control-plane-ui/lib/agent-gateway.mjs";
 import {
-  summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, mcpAcceptedInputVocabulary, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs, capacitySnapshot
+  summaryState as mcpSummaryState, RESOURCE_ADDRESSING_ARG_KEYS, createMcpGrant, createMcpToolDefinitions, mcpAcceptedInputVocabulary, handleMcpJsonRpc, mcpToolNames, permissionResolve, approvalResolve, reviewResultConsume, repositoryOutputTargetSelect, sharedDefinitionPublish, sessionMutate, accountInvite, testResultSubmit , grantMatchesArgs, capacitySnapshot, assignWorkItem
 } from "../apps/mcp-server/server.mjs";
 import {
   ROLE_GRANT_PERMISSION_TEMPLATES,
@@ -6388,6 +6388,48 @@ function verifyCommandBusLifecycle(output) {
   const done = succeedCommand(state, cmd, {resultRef: "result:x"});
   if (done.command.status !== "succeeded" || done.commandEffect) {
     output.push("command-bus: no-side-effect command should succeed without a CommandEffect");
+  }
+
+  // 【终态这一层还要往下看一格】：任务组还活着，而工作项自己已经了结。
+  // 派活不会把它退出终态（状态只在 draft→ready 那一步动），但归属角色被改写、时间被刷新、
+  // 还现算一条模型选型决策 —— 屏幕上它看起来又活了；被人工放弃的那些更糟，人的决定像被翻掉。
+  // REST 与 MCP 走的是同一个 assignWorkItem，所以补一处就够，但两侧都要有断言压着。
+  {
+    const wiState = structuredClone(seedState);
+    ensureRuntimeCollections(wiState, {root});
+    const wiGroup = wiState.taskGroups.find((item) => item.id === "tg_runtime_management");
+    const settledItem = (wiGroup.workItems || [])[0];
+    if (!settledItem) {
+      output.push("派活终态：这个任务组里没有工作项 —— 下面几条在空转");
+    } else {
+      for (const terminal of ["superseded", "closed", "aborted", "verified"]) {
+        settledItem.status = terminal;
+        const before = settledItem.ownerRole;
+        const decisionsBefore = (wiState.modelSelectionDecisions || []).length;
+        const result = assignWorkItem(wiState, {taskGroupId: wiGroup.id, workItemId: settledItem.id, roleId: "qa"});
+        if (result.ok !== false || result.error !== "work_item_settled") {
+          output.push(`已了结（${terminal}）的工作项还能被派活：${JSON.stringify(result).slice(0, 160)} ——`
+            + " 它永远不会再跑，而屏幕上看起来又活了");
+        }
+        if (settledItem.ownerRole !== before) {
+          output.push(`派活被拒了，但归属角色已经被改成 ${settledItem.ownerRole} —— 拒绝发生在改写之后`);
+        }
+        if ((wiState.modelSelectionDecisions || []).length !== decisionsBefore) {
+          output.push("派活被拒了，却还是现算了一条模型选型决策 —— 拒绝发生在选型之后");
+        }
+      }
+      // 正面对照走同一条分支：还没了结的格子照常派得动。
+      settledItem.status = "ready";
+      const live = assignWorkItem(wiState, {taskGroupId: wiGroup.id, workItemId: settledItem.id, roleId: "qa"});
+      if (live.ok === false) output.push(`还没了结的工作项也派不动了：${JSON.stringify(live).slice(0, 160)}`);
+      // 任务组那一层：建工作项有这道门，派活原先没有。
+      wiGroup.status = "closed";
+      const onClosed = assignWorkItem(wiState, {taskGroupId: wiGroup.id, workItemId: settledItem.id, roleId: "qa"});
+      if (onClosed.ok !== false || onClosed.error !== "task_group_settled") {
+        output.push(`已关闭的任务组里还能派活：${JSON.stringify(onClosed).slice(0, 160)} ——`
+          + " 建工作项那条路有这道门，派活这条没有");
+      }
+    }
   }
 
   // 【终结状态必须被所有写入口尊重】。任务组的运行控制有两条路：REST 的 /control，

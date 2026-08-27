@@ -9818,6 +9818,24 @@ const MUTATIONS = [
     to: '  const editDisabled = canEdit ? "" : "disabled";',
     expect: "不能摆一个按不动的保存按钮"
   },
+  {
+    name: "已了结的工作项不许再被派活（它永远不会再跑，而屏幕上看起来又活了）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "contract",
+    from: "  if (WORK_ITEM_SETTLED_STATUSES.includes(workItem.status)) {",
+    to: "  if (false) {",
+    expect: "还能被派活"
+  },
+  {
+    name: "已关闭的任务组里不许再派活（建工作项那条路有这道门，派活这条原先没有）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "contract",
+    from: "  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);\n"
+      + "  if (settledRejection) return settledRejection;\n  // 工作项自己也有终态。",
+    to: "  const settledRejection = null;\n"
+      + "  if (settledRejection) return settledRejection;\n  // 工作项自己也有终态。",
+    expect: "已关闭的任务组里还能派活"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

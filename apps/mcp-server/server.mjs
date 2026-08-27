@@ -83,6 +83,7 @@ import {
   resolveRoleSkill,
   REGISTERED_OWNER_ROLES,
   taskGroupSettledRejection,
+  WORK_ITEM_SETTLED_STATUSES,
   STRING_LIST_MAX_ITEMS,
   STRING_LIST_MAX_ITEM_LENGTH,
   taskGroupForRecordOrRefuse,
@@ -1872,6 +1873,17 @@ export function assignWorkItem(state, args) {
   const taskGroup = findTaskGroup(state, args.taskGroupId);
   const workItem = findWorkItem(state, taskGroup?.id, args.workItemId);
   if (!taskGroup || !workItem) return {ok: false, error: "work_item_not_found"};
+  // 与建工作项同规：终结的任务组不得再派活（那处有这道门，这处原先没有）。
+  const settledRejection = taskGroupSettledRejection(state, taskGroup.id);
+  if (settledRejection) return settledRejection;
+  // 工作项自己也有终态。派活【不会】把它退出终态（状态只在 draft→ready 那一步动），
+  // 但归属角色被改写、更新时间被刷新、还现算一条模型选型决策 —— 屏幕上它看起来又活了，
+  // 而它永远不会再被执行；被人工放弃(superseded)的那些更糟：人的决定看起来被翻掉了。
+  if (WORK_ITEM_SETTLED_STATUSES.includes(workItem.status)) {
+    return {ok: false, error: "work_item_settled", workItemId: workItem.id, workItemStatus: workItem.status,
+      message: `这个工作项已经是终态（${workItem.status}），不能再派活。`
+        + "要继续这条线，请在这个任务组里新建一个工作项 —— 重新派一个已了结的格子不会让它再跑起来"};
+  }
   workItem.ownerRole = args.roleId || args.ownerRole || workItem.ownerRole || "orchestrator";
   if (workItem.status === "draft") workItem.status = "ready";
   workItem.updatedAt = new Date().toISOString();
