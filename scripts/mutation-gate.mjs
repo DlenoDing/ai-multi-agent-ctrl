@@ -3373,6 +3373,15 @@ const MUTATIONS = [
     expect: "试运行回执带了幻影的 policyDecisionRef"
   },
   {
+    name: "MCP 写工具的调用约定要写在核心规范里",
+    file: "docs/core-control-plane-spec.md",
+    gate: "contract",
+    check: "verifyMcpCallConventionsAreDocumented",
+    from: "原回执在 `idempotencyRecord.payload` 里",
+    to: "原回执在 `record.payload` 里",
+    expect: "核心规范 §5 没写 MCP 写工具的调用约定里的 idempotencyRecord"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

@@ -977,6 +977,7 @@ run(verifyBootstrapEchoSamplesMatchRuntime);
 run(verifyInstallerDocsMatchScriptAndTemplate);
 run(verifyDocumentedNpmScriptsExist);
 run(verifyConsoleHintsNameRealControls);
+run(verifyMcpCallConventionsAreDocumented);
 run(verifyConsoleRuntimeConstantsHaveOneWriter);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
@@ -15734,6 +15735,23 @@ function verifyConsoleRuntimeConstantsHaveOneWriter(output) {
     if (!body || !body.includes("decorateRuntimeForConsole(")) output.push(`${reader} 没调 decorateRuntimeForConsole —— 这条路上界面拿不到词表`);
   }
   console.log(`界面 runtime 常量：${numericKeys.length} 个数值只在 decorateRuntimeForConsole 里赋值，三份词表只来自 core 的 consoleVocabularies，服务端两条读路径与勘察工具都经过它`);
+}
+
+// 【MCP 写工具的调用约定要写在核心规范 §5 里，且用的是实现里的名字】。幂等键必填、同键重放的回执形状、
+// 同键异参的拒绝码、dryRun 的回执 —— 客户端只能从文档学这些；名字从 mcp-server 源码取，源码里没有的名字不许写进文档。
+function verifyMcpCallConventionsAreDocumented(output) {
+  const mcp = readFileSync(join(root, "apps/mcp-server/server.mjs"), "utf8");
+  const doc = readFileSync(join(root, "docs/core-control-plane-spec.md"), "utf8");
+  const sectionStart = doc.indexOf("## 5. MCP tools");
+  const sectionEnd = doc.indexOf("\n## 6.", sectionStart);
+  const section = sectionStart < 0 || sectionEnd < 0 ? "" : doc.slice(sectionStart, sectionEnd);
+  if (!section) { output.push("核心规范里找不到「## 5. MCP tools」到「## 6.」这一节 —— 本条在空转"); return; }
+  const tokens = ["idempotency_key_required", "idempotency_key_reuse_conflict", "replayed", "idempotencyRecord", "wouldCall", "persisted", "dryRun", "argumentDigest"];
+  for (const token of tokens) {
+    if (!containsWholeIdentifier(mcp, token)) output.push(`调用约定里要写的名字 ${token} 在 mcp-server 源码里已经不存在 —— 文档在描述一个不存在的形状`);
+    else if (!containsWholeIdentifier(section, token)) output.push(`核心规范 §5 没写 MCP 写工具的调用约定里的 ${token} —— 客户端只能从文档学它`);
+  }
+  if (output.length === 0 || !output.some((line) => line.includes("调用约定") || line.includes("核心规范 §5"))) console.log(`核心规范 §5 写明了 MCP 写工具的 ${tokens.length} 个调用约定名字，且都在实现里`);
 }
 
 // 【控制台提示里点名的按钮/面板/页要真的在界面上】。「点「选择定稿」」「到「账号与授权」页」这类话没人盯着：

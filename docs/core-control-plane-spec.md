@@ -452,6 +452,16 @@ HTTP API 供 Orchestrator、Agent Runtime、系统 MCP adapter、自动化验证
 | `instruction-mcp` | `instruction_envelope_create`、`cache_key_index`、`stable_prefix_get`、`delta_payload_compact` |
 | `repository-mcp` | `repository_output_target_select`、`repository_target_lease_bind`、`artifact_manifest_index` |
 
+### 5.1 调用约定（写工具）
+
+客户端照 `tools/list` 拼调用时要知道的四件事（都由 doctor-mcp 与契约门守着，与实现一致）：
+
+- **写工具必须带 `idempotencyKey`**（发布的 schema 里它在 `required` 中）；没带回 `idempotency_key_required`，什么也不做。
+- **同一个键、同样的入参再调**：不重复执行，回 `{ok: true, replayed: true, idempotencyRecord: {...}}`，原回执在 `idempotencyRecord.payload` 里（同一主体才能取回；换主体拿同一个键取不到）。
+- **同一个键、不同的入参**：回 `idempotency_key_reuse_conflict`，不执行。
+- **`dryRun: true`**：只过授权与入参校验，不执行、不落账，回 `{ok: true, dryRun: true, wouldCall, argumentDigest, persisted: false}`；试运行回执不带 `policyDecisionRef`（那条决策不会被持久化）。
+- 被拒绝的调用（未授权、入参不合法）仍会记一条策略决策与审计（`auditRef`），这就是拒绝也会推进 `stateVersion` 的原因。
+
 ## 6. 事件模型
 
 所有重要变化都写入 `room_messages` 或 `commands/outbox`，WS 只推送事件 ID。
