@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dleno.local/spec/room-ack.schema.json",
+  "title": "RoomAck",
+  "description": "协作室里某个参与者的读取游标（按 roomId+participantId 唯一，就地替换而非追加）。由 MCP 的 room_ack 工具写入。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "ackId",
+    "roomId",
+    "participantId",
+    "messageRefs",
+    "cursor",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "room-ack/v1"
+    },
+    "ackId": {
+      "type": "string",
+      "pattern": "^room_ack_"
+    },
+    "roomId": {
+      "type": "string"
+    },
+    "participantId": {
+      "type": "string"
+    },
+    "messageRefs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "cursor": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

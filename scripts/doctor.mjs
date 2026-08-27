@@ -1123,6 +1123,18 @@ try {
     throw new Error(`邀请方铸出了自己并不拥有的权限（应 403，得到 ${undelegatableInvite.response.status}）`);
   }
 
+  // 【账号角色要在词表里】。三条建账号的路原先都不查枚举：MCP 那条把授权模板的角色名写进账号，
+  // 调用方还能塞任意字符串。这里用授权模板的角色名（project_member）当探针 —— 它最像"对的"。
+  {
+    const badRole = await jsonFetch(port, "/api/accounts", {
+      method: "POST", headers: {"Idempotency-Key": "doctor-invite-bad-role", authorization: auth},
+      body: JSON.stringify({projectId: "prj_control_plane", displayName: "角色探针", email: "bad-role@local", roles: "project_member"})
+    });
+    if (badRole.response.status !== 400 || badRole.payload?.error !== "account_role_unknown" || !(badRole.payload?.unknownRoles || []).includes("project_member")) {
+      throw new Error(`用不在词表里的账号角色建账号该回 400 account_role_unknown（并点名那个角色），实际 ${badRole.response.status} ${JSON.stringify(badRole.payload).slice(0, 200)}`);
+    }
+    console.log("  ok  不在词表里的账号角色被拒并点名（project_member 是授权模板的角色，不是账号角色）");
+  }
   const invitedAccount = await jsonFetch(port, "/api/accounts", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-invited-account-login", authorization: auth},

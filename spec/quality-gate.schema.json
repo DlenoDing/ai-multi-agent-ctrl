@@ -17,6 +17,7 @@
     "updatedAt"
   ],
   "properties": {
+    "reassertedWithoutNewEvidenceCount": {"type": "integer", "minimum": 0},
     "schemaVersion": {
       "const": "quality-gate/v1"
     },

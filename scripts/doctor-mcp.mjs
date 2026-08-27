@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { assertNoUndefinedInPayload } from "./lib/no-undefined-payload.mjs";
 import { checkRecordStatusesAreDeclaredStates } from "./lib/state-machine-states.mjs";
 import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
-import { createSchemaValidator } from "./lib/schema-validate.mjs";
+import { UNCOVERED_CEILINGS, createSchemaValidator, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
 import { projectRepositories } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import {waitForChildExit} from "./lib/child-tracking.mjs";
 
@@ -1181,6 +1181,18 @@ try {
         idempotencyKey: "doctor-mcp-overlay",
         body: {roleSkillRef: baseline.roleSkill.roleSkillId.split("+")[0], scope: "task_group", taskGroupId: TG,
           patch: {forbiddenCapabilityAdds: [forbidden]}}});
+      // patch 里认不出的键要拒：规范 additionalProperties:false，静默收下就是一条永远不合规范的记录。
+      const badPatch = await fetch(`${baseUrl}/api/role-skill-overlays`, {
+        method: "POST",
+        headers: {"content-type": "application/json", authorization: `Bearer ${admin.sessionToken}`, "Idempotency-Key": "doctor-mcp-overlay-bad-key"},
+        body: JSON.stringify({roleSkillRef: baseline.roleSkill.roleSkillId.split("+")[0], scope: "task_group", taskGroupId: TG,
+          patch: {forbiddenCapabilityAdds: [forbidden], forbiddenCapabilityAdd: ["typo"]}})
+      });
+      const badPatchPayload = await badPatch.json().catch(() => ({}));
+      if (badPatch.status !== 400 || badPatchPayload.error !== "role_skill_overlay_patch_unknown_keys" || !(badPatchPayload.unknownKeys || []).includes("forbiddenCapabilityAdd")) {
+        throw new Error(`覆盖层 patch 带认不出的键该回 400 role_skill_overlay_patch_unknown_keys（并点名那个键），实际 ${badPatch.status} ${JSON.stringify(badPatchPayload).slice(0, 200)}`);
+      }
+      console.log("  ok  覆盖层 patch 里认不出的键被拒并点名（拼错一个字母不会存成永远不合规范的记录）");
       const overlayRecord = created.overlay || created;
       if (overlayRecord.taskGroupId !== TG) {
         throw new Error(`叠加挂错了任务组：${JSON.stringify(created).slice(0, 200)}`);
@@ -1988,6 +2000,16 @@ try {
   // 用的权限是这条路的缺省 task_group:read —— grant_create 的 permissions/role 两个参数
   // 在共用入参词表里没有对应键，MCP 上传不进来（这件事另行报给人定，这里只用够得着的参数）。
   {
+    const badRole = await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.account_invite",
+      arguments: {idempotencyKey: "doctor-mcp-bad-role", email: "bad-role-mcp@local", displayName: "角色探针", projectId: "prj_control_plane", roles: ["project_member"]}});
+    const badRolePayload = JSON.parse(badRole.content?.[0]?.text || "{}");
+    const badInner = badRolePayload.result || badRolePayload;
+    if (badInner.error !== "account_role_unknown") {
+      throw new Error(`MCP 用不在词表里的账号角色建账号该被拒（account_role_unknown），实际 ${JSON.stringify(badRolePayload).slice(0, 200)}`);
+    }
+    console.log("  ok  MCP 建账号时不在词表里的角色被拒（原先缺省就写着授权模板的 project_member）");
+  }
+  {
     const probeEmail = "resource-scope-probe@local";
     const invited = await mcpAs(admin.sessionToken, "tools/call", {name: "identity-mcp.account_invite",
       arguments: {idempotencyKey: "doctor-mcp-resource-scope", email: probeEmail,
@@ -2213,6 +2235,24 @@ try {
     console.log(`  ok  别的活进程持锁：等了 ${waited}ms 才超时、业务照常、健康提示指向锁`);
   }
 
+  // 【MCP 这套 e2e 跑出来的记录也要压规范】。控制面与远程 agent 两套早就各自扫了自己的产出，
+  // 这一套此前一条都没扫过 —— 85 个工具经 core 写进状态的记录（以及只有 MCP 才写的 mcpCalls）
+  // 从没被任何门按它们自己声明的规范验过。与另两套同一个函数、同一条棘轮。
+  {
+    const finalState = readStoredState({
+      root, runtimeDir,
+      statePath: join(runtimeDir, "control-plane-state.json"),
+      seedPath: join(root, "data/seed-state.json"),
+      buildInitialState: () => { throw new Error("mcp doctor: 期望读到本轮跑出的状态，却触发了初始状态创建"); }
+    });
+    const mcpSweep = sweepRecordsAgainstDeclaredSchemas(finalState, {
+      specDir: join(root, "spec"), label: "MCP e2e 产出", minValidated: 50, maxUncovered: UNCOVERED_CEILINGS["MCP e2e 产出"]});
+    if (mcpSweep.errors.length) {
+      throw new Error(`mcp doctor: e2e 真实产出的记录不符合它们自己声明的规范：\n- ${mcpSweep.errors.slice(0, 200).join("\n- ")}`);
+    }
+    if (!(finalState.mcpCalls || []).length) throw new Error("MCP e2e 产出规范核对没造出想测的情形：状态里一条 mcpCalls 都没有 —— 扫描没压到 MCP 自己写的记录");
+    console.log(`MCP e2e 产出规范核对 ok: ${mcpSweep.validated} 条记录符合各自声明的 schema（含 ${(finalState.mcpCalls || []).length} 条 mcpCalls）；${mcpSweep.uncoveredNote}`);
+  }
   console.log(`mcp doctor ok: ${listed.tools.length} remote tools, auth, HTTP transport, input policy and remote-only registration verified`);
 } finally {
   child.kill("SIGTERM");

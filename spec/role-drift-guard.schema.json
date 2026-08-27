@@ -29,6 +29,7 @@
     "updatedAt"
   ],
   "properties": {
+    "closeReason": {"type": "string", "maxLength": 200},
     "schemaVersion": {
       "type": "string",
       "const": "role-drift-guard/v1"

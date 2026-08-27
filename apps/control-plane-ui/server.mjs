@@ -90,6 +90,8 @@ import {
   normalizeTaskGroupLanguagePolicy,
   projectOwnerGrantPermissions,
   accountEffectivePermissions,
+  ACCOUNT_ROLES,
+  unknownAccountRoles,
   runAgentRuntimeWorker,
   runAutonomousCycle,
   assertHumanTextWithinLimit,
@@ -4434,6 +4436,13 @@ async function handleApi(req, res) {
         state, actor: guard.actor, resourceScope: inviteScope,
         account: state.accounts.find((item) => accountIdOf(item) === guard.actor)
       });
+    {
+      const unknownRoles = unknownAccountRoles(invitedAccount.roles);
+      if (unknownRoles.length) {
+        return json(res, 400, {error: "account_role_unknown", unknownRoles: unknownRoles.slice(0, 10), supported: ACCOUNT_ROLES,
+          message: "账号角色不在词表里：这些名字界面显示不出、判权时谁也不认（授权用的 project_member 之类是授权模板的角色，不是账号角色）"});
+      }
+    }
     } catch (error) {
       // 不可委派是授权判定，不是入参格式问题 —— 与 sanitizeGrantRequest 的 403 保持同一口径。
       const status = error.message === "invite_permission_not_delegable" ? 403 : 400;
@@ -5725,6 +5734,14 @@ async function handleApi(req, res) {
     // 而两种都不会有任何提示。与入网令牌那条同一口径 —— 归档意味着"移出可建新工作的范围"。
     const defaultProjectRefusal = validateDefaultProject(state, body.defaultProjectId, orgId);
     if (defaultProjectRefusal) return json(res, 400, defaultProjectRefusal);
+    const orgMemberRoles = normalizeStringList(body.roles, ["member"]).filter((role) => role !== "system_admin" && role !== "org_admin");
+    {
+      const unknownRoles = unknownAccountRoles(orgMemberRoles);
+      if (unknownRoles.length) {
+        return json(res, 400, {error: "account_role_unknown", unknownRoles: unknownRoles.slice(0, 10), supported: ACCOUNT_ROLES,
+          message: "账号角色不在词表里：这些名字界面显示不出、判权时谁也不认"});
+      }
+    }
     const member = {
       schemaVersion: "account/v1",
       accountId,
@@ -5733,7 +5750,7 @@ async function handleApi(req, res) {
       displayName: String(body.displayName || "新成员"),
       email: String(body.email || `member-${Date.now()}@local`),
       status: "invited",
-      roles: normalizeStringList(body.roles, ["member"]).filter((role) => role !== "system_admin" && role !== "org_admin"),
+      roles: orgMemberRoles,
       permissions,
       defaultProjectId: body.defaultProjectId || null,
       authPolicy: {method: "invite_token", mfaRequired: false, passwordSet: false, sessionTtlSeconds: 28800},

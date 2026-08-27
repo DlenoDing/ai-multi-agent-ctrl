@@ -995,6 +995,8 @@ function requestFailureHint(payload) {
     // 逐个写成 payload.X 而不是 payload[field]：那道判据要确认字段【真的从回执里取出来了】，
     // 动态取它认不出来（而认不出来就等于这几族又回到"没人读"的状态）。
     pathList(payload.deniedPaths, "踩到禁区的路径"),
+    pathList(payload.unknownRoles, "不在词表里的账号角色"),
+    pathList(payload.unknownKeys, "认不出的键"),
     pathList(payload.outsidePaths, "落在允许范围之外的路径"),
     // 这两对说的都是【人批准的那份方案】怎么划的界，不是泛指的边界 —— 措辞照它的来源写：
     // approvedPaths 是方案里各分支的 ownedPaths，forbiddenPaths 是方案里明写的禁区。

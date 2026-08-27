@@ -153,6 +153,7 @@ export const SCHEMA_FILE_ALIASES = {"control-event": "control-events"};
 export const UNCOVERED_CEILINGS = {
   "控制面 e2e 产出": 0,
   "远程 agent e2e 产出": 0,
+  "MCP e2e 产出": 0,
   "种子数据": 0,
   "编排产出": 0
 };

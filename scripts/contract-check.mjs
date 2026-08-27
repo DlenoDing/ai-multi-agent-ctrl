@@ -162,8 +162,7 @@ import {
   roomWait,
   syncSkillSource,
   classifyExecutorSpawnFailure,
-  REGISTERED_OWNER_ROLES,
-} from "../apps/control-plane-ui/lib/control-plane-core.mjs";
+  REGISTERED_OWNER_ROLES, ACCOUNT_ROLES} from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import {
   ackAgentControlCommand,
   authenticateAgentNode,
@@ -764,6 +763,7 @@ run(verifyRuntimeConstantsSitBeforeItsTopLevelAwait);
 run(verifyStaleE2eRuntimeDirsGetSwept);
 run(verifyRejectedWritesLeaveStateUntouched);
 run(verifyAssignedFieldsAreDeclaredBySpec);
+run(verifyAccountRolesConstantMatchesSpec);
 run(verifyAgentFailureCodeCoverageRatchet);
 run(verifyAgentFailureReasonsAreCoded);
 run(verifyTruncatedExecutorOutputSaysSo);
@@ -15392,6 +15392,16 @@ function verifyRuntimeConstantsSitBeforeItsTopLevelAwait(output) {
     + "且子进程起来后的异常会杀掉子进程再抛 —— 核过");
 }
 
+// 账号角色词表：core 的 ACCOUNT_ROLES 与 spec/account.schema.json 的枚举必须逐字相同（顺序也相同，
+// 便于对照）。三条建账号的路都拿它拒绝认不出的角色；常量与规范一旦漂开，拒的就不是规范里那份。
+function verifyAccountRolesConstantMatchesSpec(output) {
+  const spec = JSON.parse(readFileSync(join(root, "spec/account.schema.json"), "utf8"));
+  const expected = spec.properties?.roles?.items?.enum || [];
+  if (JSON.stringify([...ACCOUNT_ROLES]) !== JSON.stringify(expected)) {
+    output.push(`账号角色词表：core 的 ACCOUNT_ROLES [${ACCOUNT_ROLES.join("、")}] 与规范枚举 [${expected.join("、")}] 不同 —— 建账号时拒的不是规范里那份`);
+  }
+}
+
 // 【代码给某类记录写的每个字段，它的规范都要声明】。四个 additionalProperties:false 的规范
 // （派发 / 发现 / 控制命令 / 任务契约）此前共有 15 个字段只在代码里写、规范里没有 ——
 // 它们全在 e2e 从没走到的分支上（重认领、节点停机、发现项处置、命令过期……），规范扫描因此
@@ -15405,7 +15415,8 @@ function verifyAssignedFieldsAreDeclaredBySpec(output) {
     command: "agent-control-command", barrier: "close-barrier", organization: "organization", plan: "review-plan",
     bundle: "review-bundle", envelope: "instruction-envelope", directive: "human-directive", token: "agent-join-token",
     lease: "lease", artifact: "artifact", checkpoint: "checkpoint", contract: "agent-task-contract",
-    topology: "execution-topology", capability: "model-capability", provider: "model-provider", gate: "quality-gate"
+    topology: "execution-topology", capability: "model-capability", provider: "model-provider", gate: "quality-gate",
+    guard: "role-drift-guard"
   };
   const sources = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
     "apps/mcp-server/server.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs"]

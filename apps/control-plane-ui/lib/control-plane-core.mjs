@@ -4238,6 +4238,18 @@ export function collectRuntimeIssue(state, request = {}) {
 }
 
 export function registerRoleSkillOverlay(state, body = {}) {
+  // 【调用方只给了 patch 的一部分也要补齐】。原先 `body.patch || 缺省`：给了就原样存，
+  // 只带一个键的 patch 存进去就缺了另外三个必填字段 —— 规范扫描第一次压到 MCP 产出就红在这里
+  // （REST 建覆盖层那条路在 doctor 里从没走过）。认不出的键要拒：规范 additionalProperties:false，
+  // 一个拼错的键会让这条记录永远不合规范，而拒绝比静默丢掉那个键诚实。
+  const OVERLAY_PATCH_DEFAULTS = {allowedCapabilityAdds: [], forbiddenCapabilityAdds: [], instructionRef: "overlay:empty", modelRequirementPatchRef: "overlay:model:none"};
+  const givenPatch = body.patch && typeof body.patch === "object" ? body.patch : {};
+  const unknownPatchKeys = Object.keys(givenPatch).filter((key) => !(key in OVERLAY_PATCH_DEFAULTS));
+  if (unknownPatchKeys.length) {
+    throw Object.assign(new Error("role_skill_overlay_patch_unknown_keys"),
+      {status: 400, details: {unknownKeys: unknownPatchKeys.slice(0, 10), supported: Object.keys(OVERLAY_PATCH_DEFAULTS)}});
+  }
+  const overlayPatch = {...OVERLAY_PATCH_DEFAULTS, ...givenPatch};
   ensureRuntimeCollections(state);
   // roleSkillRef 打错一个字，overlay 原先会静默挂到【数组第一个】技能上并返回 201 ——
   // 角色定制打在了别人身上，而调用方看到的是成功。
@@ -4262,8 +4274,8 @@ export function registerRoleSkillOverlay(state, body = {}) {
     scope: body.scope || "project",
     roleSkillRef: base.roleSkillId,
     baseRoleSkillDigest: base.contentDigest,
-    overlayDigest: digestOf(body.patch || {}),
-    patch: body.patch || {allowedCapabilityAdds: [], forbiddenCapabilityAdds: [], instructionRef: "overlay:empty", modelRequirementPatchRef: "overlay:model:none"},
+    overlayDigest: digestOf(overlayPatch),
+    patch: overlayPatch,
     decisionRecordRef: body.decisionRecordRef || `decision:overlay:${base.roleSkillId}`,
     auditRef: body.auditRef || `audit:overlay:${base.roleSkillId}`,
     createdAt: at,
@@ -8163,6 +8175,15 @@ export const GRANTABLE_RESOURCE_TYPES = ["project", "task_group", "organization"
 // REST 的 sanitizeGrantRequest 与 MCP 的 grant_create。各写一份的话，同一个角色名
 // 在两条路上给出的权限会悄悄不同，而没有任何东西会红。
 // 2026-08-26 人定：项目管理员与项目负责人是同一个人，所以这里引用同一份常量。
+// 账号角色的全部词表 —— 与 spec/account.schema.json 的 roles 枚举逐字相同（契约门对表）。
+// 此前三条建账号的路各有各的缺省（viewer / member / project_member），而且都不查枚举：
+// MCP 那条把授权模板的角色名 project_member 写进了账号的 roles，规范扫描第一次压到 MCP 产出就红了；
+// 调用方（含 AI）还能把任意字符串塞成角色，界面上显示成一串英文、判权时谁也不认。
+export const ACCOUNT_ROLES = Object.freeze(["system_owner", "system_admin", "system_auditor", "workspace_owner", "project_owner", "project_admin", "task_group_owner", "agent_operator", "service_agent_runtime", "reviewer", "viewer", "org_admin", "member"]);
+export function unknownAccountRoles(roles) {
+  return (Array.isArray(roles) ? roles : []).filter((role) => !ACCOUNT_ROLES.includes(role));
+}
+
 export const ROLE_GRANT_PERMISSION_TEMPLATES = Object.freeze({
   project_owner: [...projectOwnerGrantPermissions],
   project_admin: [...projectOwnerGrantPermissions],

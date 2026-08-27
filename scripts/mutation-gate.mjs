@@ -10105,6 +10105,63 @@ const MUTATIONS = [
     expect: "写了 agent-dispatch 规范没声明的字段 previousNodeId"
   },
   {
+    name: "MCP e2e 产出要压规范（状态里的 mcpCalls 与归档是两份，只坏状态那份时只有这道扫描看得见）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "    state.mcpCalls.unshift(mcpCall);",
+    to: "    state.mcpCalls.unshift({...mcpCall, status: \"done\"});",
+    expect: "MCP e2e 产出"
+  },
+  {
+    name: "MCP 建账号缺省角色要是账号角色（project_member 是授权模板的名字）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '  const accountRoles = Array.isArray(args.roles) && args.roles.length ? args.roles : ["member"];',
+    to: '  const accountRoles = Array.isArray(args.roles) && args.roles.length ? args.roles : ["project_member"];',
+    expect: "account_role_unknown"
+  },
+  {
+    name: "MCP 建账号要拒绝不在词表里的角色",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "  const unknownRoles = unknownAccountRoles(accountRoles);\n  if (unknownRoles.length) {",
+    to: "  const unknownRoles = [];\n  if (unknownRoles.length) {",
+    expect: "MCP 用不在词表里的账号角色建账号该被拒"
+  },
+  {
+    name: "REST 建账号要拒绝不在词表里的角色",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "      const unknownRoles = unknownAccountRoles(invitedAccount.roles);",
+    to: "      const unknownRoles = [];",
+    expect: "用不在词表里的账号角色建账号该回 400 account_role_unknown"
+  },
+  {
+    name: "账号角色常量要与规范枚举逐字相同",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyAccountRolesConstantMatchesSpec",
+    from: 'export const ACCOUNT_ROLES = Object.freeze(["system_owner", ',
+    to: 'export const ACCOUNT_ROLES = Object.freeze([',
+    expect: "与规范枚举"
+  },
+  {
+    name: "覆盖层 patch 只给一部分也要补齐必填（原先给了就原样存）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: "  const overlayPatch = {...OVERLAY_PATCH_DEFAULTS, ...givenPatch};",
+    to: "  const overlayPatch = body.patch || OVERLAY_PATCH_DEFAULTS;",
+    expect: "patch.allowedCapabilityAdds is required"
+  },
+  {
+    name: "MCP 回执装饰不许写进工具返回的活记录（副本上做）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "        if (decoratable && policyDecision) result = {...result, policyDecisionRef: policyDecision.decisionId};",
+    to: "        if (decoratable && policyDecision) result.policyDecisionRef = policyDecision.decisionId;",
+    expect: "policyDecisionRef is not allowed by schema"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

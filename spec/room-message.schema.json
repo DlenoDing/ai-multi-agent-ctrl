@@ -7,13 +7,14 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "messageId", "roomId", "sequence", "senderRef", "payload", "payloadDigest", "status", "createdAt"],
   "properties": {
+    "idempotencyKey": {"type": "string", "maxLength": 200},
     "schemaVersion": {"const": "room-message/v1"},
     "messageId": {"type": "string", "pattern": "^room_msg_"},
     "roomId": {"type": "string", "minLength": 1},
     "sequence": {"type": "integer", "minimum": 1},
     "senderRef": {
       "type": "string",
-      "pattern": "^(account:[^:\\s]+|agent_node:[^:\\s]+|unattributed)$",
+      "pattern": "^(account:[^:\\s]+|agent_node:[^:\\s]+|system_service:[^:\\s]+|unattributed)$",
       "description": "只有三种形状：account:<id> / agent_node:<id> / unattributed。这条 pattern 顺带挡住 \"account:undefined\" —— 那是账号 id 没取到时插值拼出来的，长得像正常署名（2026-08-23 实测每一条真人发的消息都是它）。身份不明要如实写 unattributed。"
     },
     "payload": {"type": "object"},

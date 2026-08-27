@@ -87,8 +87,7 @@ import {
   STRING_LIST_MAX_ITEMS,
   STRING_LIST_MAX_ITEM_LENGTH,
   taskGroupForRecordOrRefuse,
-  requiredRoomId
-} from "../control-plane-ui/lib/control-plane-core.mjs";
+  requiredRoomId, ACCOUNT_ROLES, unknownAccountRoles} from "../control-plane-ui/lib/control-plane-core.mjs";
 import {
   createAgentControlCommand,
   revokeDispatchMcpGrants
@@ -677,8 +676,14 @@ export async function callTool(name, args = {}, context = {}) {
         result = isWriteTool(name) && effectiveArgs.dryRun
           ? {ok: true, dryRun: true, wouldCall: name, argumentDigest}
           : await dispatchTool(state, name, effectiveArgs, {principal: context.principal, grantCheck});
-        if (policyDecision && result && typeof result === "object") result.policyDecisionRef = policyDecision.decisionId;
-        if (grantCheck.grantRef && result && typeof result === "object") result.mcpGrantRef = grantCheck.grantRef;
+        // 【装饰回执要在副本上做】。原先直接往 result 上写 policyDecisionRef / mcpGrantRef ——
+        // 而有的工具返回的就是它刚存进状态的那条记录本身（registerRoleSkillOverlay 返回的正是
+        // state.roleSkillOverlays[0]）：两个"回执字段"就此写进了持久化记录，规范扫描第一次压到 MCP 产出
+        // 就红在「覆盖层记录里不许有 policyDecisionRef」。返回的是活记录还是副本由各工具决定，
+        // 这里一律不碰它，装饰只落在回执上。
+        const decoratable = result && typeof result === "object" && !Array.isArray(result);
+        if (decoratable && policyDecision) result = {...result, policyDecisionRef: policyDecision.decisionId};
+        if (decoratable && grantCheck.grantRef) result = {...result, mcpGrantRef: grantCheck.grantRef};
         if (isWriteTool(name) && idempotencyKey && result.ok !== false && !effectiveArgs.dryRun) {
           // 与 REST 那侧同一个入口：写入 + 回执正文过期清理 + 条数淘汰。
           // 这一侧原先只写不清，而 agent 全都走 MCP —— MCP-only 的部署因此从不清理正文。
@@ -2271,6 +2276,7 @@ function roomAck(state, args) {
   const participantId = args.participantId || args.sessionId || "agent-runtime";
   const existing = (state.roomAcks || []).find((item) => item.roomId === roomId && item.participantId === participantId);
   const ack = {
+    schemaVersion: "room-ack/v1",
     ackId: existing?.ackId || args.ackId || createId("room_ack"),
     roomId,
     participantId,
@@ -2925,6 +2931,14 @@ export function accountInvite(state, args) {
   const organizationId = (attributionProject?.organizationId || "").trim()
     || (state.organizations || []).find((item) => item.orgId === DEFAULT_ORGANIZATION_ID)?.orgId
     || DEFAULT_ORGANIZATION_ID;
+  // 缺省是 member（与 REST 的组织成员邀请、规范里「受邀成员的默认角色」一致）。原先写的 project_member
+  // 是【授权模板】的角色名，不是账号角色 —— 规范扫描第一次压到 MCP 产出就红在这里。
+  const accountRoles = Array.isArray(args.roles) && args.roles.length ? args.roles : ["member"];
+  const unknownRoles = unknownAccountRoles(accountRoles);
+  if (unknownRoles.length) {
+    return {ok: false, error: "account_role_unknown", unknownRoles: unknownRoles.slice(0, 10), supported: ACCOUNT_ROLES,
+      message: "账号角色不在词表里：这些名字界面显示不出、判权时谁也不认（授权用的角色请走 grantRole）"};
+  }
   const accountToken = `aimac_account_${randomBytes(32).toString("base64url")}`;
   const account = {
     schemaVersion: "account/v1",
@@ -2934,7 +2948,7 @@ export function accountInvite(state, args) {
     displayName: args.displayName || args.email || "Project User",
     email: args.email || `${createId("user")}@local`,
     status: "invited",
-    roles: args.roles || ["project_member"],
+    roles: accountRoles,
     permissions: [],
     authPolicy: {method: "invite_token", mfaRequired: false, passwordSet: false, sessionTtlSeconds: 3600},
     credentialDigest: digestOf(`account-invite:${accountId}:${accountToken}`),

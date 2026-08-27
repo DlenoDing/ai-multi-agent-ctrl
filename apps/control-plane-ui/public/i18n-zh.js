@@ -996,6 +996,8 @@
     grant_permission_not_delegable: "存在不可下放的权限",
     grant_role_has_no_permission_template: "这个作用域上没有该角色的权限模板：请改用支持的角色，或直接指定权限",
     cross_org_member_not_allowed: "不允许跨组织添加成员",
+    account_role_unknown: "账号角色不在词表里（授权模板的角色名不是账号角色）",
+    role_skill_overlay_patch_unknown_keys: "角色技能叠加的 patch 里有认不出的键",
     project_invite_cannot_grant_system_account_or_permission: "项目邀请不能授予系统级账号或权限",
 
     wip_capacity_reached: "在制品已达上限",
