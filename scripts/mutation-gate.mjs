@@ -10459,6 +10459,24 @@ const MUTATIONS = [
     expect: "没说清是哪一种连不上"
   },
   {
+    name: "令牌文件不存在要说是哪个文件、令牌从哪来（不是 Node 的 ENOENT 原话）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "contract",
+    check: "verifyAgentctlUnknownCommandListsCommands",
+    from: "    if (!existsSync(tokenPath)) throw new Error(`入网令牌文件不存在：${tokenPath} —— ${JOIN_TOKEN_ORIGIN}`);",
+    to: "",
+    expect: "令牌文件不存在时没说清"
+  },
+  {
+    name: "令牌文件是空的要说「空的」而不是「缺 --join-token-file」",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "contract",
+    check: "verifyAgentctlUnknownCommandListsCommands",
+    from: "    if (!token) throw new Error(`入网令牌文件是空的：${tokenPath} —— ${JOIN_TOKEN_ORIGIN}`);",
+    to: "",
+    expect: "令牌文件是空的时没说清"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

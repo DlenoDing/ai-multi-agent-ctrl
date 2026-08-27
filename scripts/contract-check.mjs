@@ -240,7 +240,10 @@ const OPERATOR_FACING_ENV_VARS = [
 
 const AGENT_RUNTIME_CLI_THROWS = new Set([
   "unknown command: ${command}",
-  "bootstrap requires --server and --join-token-file",
+  "bootstrap 缺 --server <控制面地址>",
+  "bootstrap 缺入网令牌：给 --join-token-file",
+  "入网令牌文件不存在：",
+  "入网令牌文件是空的：",
   "agent self-check failed: ${check.missingChecks.join(\",\")}",
   // 只给在这台机器上敲命令的人看：没注册就没有控制面可报，说清"还没注册"和下一步跑什么。
   "这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <入网令牌文件>，令牌由控制面管理员在「AI 智能体」页签发",
@@ -15644,6 +15647,18 @@ function verifyAgentctlUnknownCommandListsCommands(output) {
     output.push(`bootstrap 连不上控制面时没说清是哪一种连不上（exit ${dead.status}）：${deadSaid.slice(0, 160).replace(/\n/g, " ")} —— 屏幕上只有一句 fetch failed`);
   }
   rmSync(deadDir, {recursive: true, force: true});
+  // 令牌文件不存在／是空的：原先一句是 Node 的 ENOENT 原话、一句报成「缺 --join-token-file」（明明给了）。
+  const tokDir = mkdtempSync(join(tmpdir(), "aimac-agentctl-token-"));
+  writeFileSync(join(tokDir, "empty"), "\n");
+  for (const [file, want, label] of [["missing", /入网令牌文件不存在：.*missing/u, "不存在"], ["empty", /入网令牌文件是空的：.*empty/u, "是空的"]]) {
+    const run = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "bootstrap", "--server", "http://127.0.0.1:9", "--join-token-file", join(tokDir, file)],
+      {cwd: root, encoding: "utf8", timeout: 60000, env: {...process.env, AIMAC_AGENT_WORK_DIR: tokDir, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true"}});
+    const said = `${run.stdout || ""}${run.stderr || ""}`;
+    if (run.status === 0 || !want.test(said) || !/AI 智能体/u.test(said)) {
+      output.push(`bootstrap 的令牌文件${label}时没说清是哪个文件、令牌从哪来（exit ${run.status}）：${said.slice(0, 160).replace(/\n/g, " ")}`);
+    }
+  }
+  rmSync(tokDir, {recursive: true, force: true});
 }
 
 // 见文件开头 DEVELOPER_RUNTIME_DIGEST_AT_START 的注释。先在临时目录上自证摘要真的看得见改动

@@ -13,6 +13,7 @@ const RUNTIME_VERSION = "0.3.0";
 const runtimeFilePath = fileURLToPath(import.meta.url);
 const args = parseArgs(process.argv.slice(2));
 const command = args._[0] || "run";
+const JOIN_TOKEN_ORIGIN = "入网令牌由控制面管理员在「AI 智能体」页签发，保存成文件后用 --join-token-file 指过来";
 // 认不出的命令要把可用的命令列出来：装机的人打错一个词（agentctl start）时，原先只看到
 // "unknown command: start"，既不知道有哪几个命令、也不知道旋钮在哪儿查。
 const USAGE = [
@@ -133,7 +134,8 @@ async function bootstrap() {
   mkdirSync(workDir, {recursive: true});
   const serverUrl = trimSlash(args.server || process.env.AIMAC_SERVER_URL || "");
   const joinToken = readJoinToken();
-  if (!serverUrl || !joinToken) throw new Error("bootstrap requires --server and --join-token-file");
+  if (!serverUrl) throw new Error("bootstrap 缺 --server <控制面地址>");
+  if (!joinToken) throw new Error(`bootstrap 缺入网令牌：给 --join-token-file <文件> 或 --join-token <令牌> —— ${JOIN_TOKEN_ORIGIN}`);
   requireSecureServerUrl(serverUrl);
   const configuredExecutor = args["executor-command"] || process.env.AIMAC_AGENT_EXECUTOR_COMMAND || "";
   const profile = probeProfile(configuredExecutor);
@@ -2219,7 +2221,15 @@ function globalClientConfigurationEnabled() {
 }
 
 function readJoinToken() {
-  if (args["join-token-file"]) return readFileSync(resolve(String(args["join-token-file"])), "utf8").trim();
+  if (args["join-token-file"]) {
+    // 原先这里直接 readFileSync：文件不存在时屏幕上是 Node 的 "ENOENT: no such file or directory, open '…'"，
+    // 文件是空的时报成「缺 --join-token-file」（明明给了）。两种都是新节点最先撞到的话。
+    const tokenPath = resolve(String(args["join-token-file"]));
+    if (!existsSync(tokenPath)) throw new Error(`入网令牌文件不存在：${tokenPath} —— ${JOIN_TOKEN_ORIGIN}`);
+    const token = readFileSync(tokenPath, "utf8").trim();
+    if (!token) throw new Error(`入网令牌文件是空的：${tokenPath} —— ${JOIN_TOKEN_ORIGIN}`);
+    return token;
+  }
   return String(args["join-token"] || process.env.AIMAC_AGENT_JOIN_TOKEN || "").trim();
 }
 
