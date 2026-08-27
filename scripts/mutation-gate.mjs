@@ -10173,9 +10173,17 @@ const MUTATIONS = [
     name: "「没有状态机」的登记要机械核：机器其实存在的登记必须红",
     file: "scripts/lib/state-machine-states.mjs",
     gate: "agent",
-    from: '  accessGrants: "spec/access-control-grant.schema.json 的 status enum",\n',
-    to: '  accessGrants: "spec/access-control-grant.schema.json 的 status enum",\n  agentDispatches: "spec/agent-dispatch.schema.json 的 status enum",\n',
+    from: '  workerLanes: "spec/worker-lane.schema.json 的 status enum",\n',
+    to: '  workerLanes: "spec/worker-lane.schema.json 的 status enum",\n  agentDispatches: "spec/agent-dispatch.schema.json 的 status enum",\n',
     expect: "登记为「没有状态机」，而 AgentDispatch 状态机明明在"
+  },
+  {
+    name: "七个曾被登记豁免的集合现在按机器对表（技能源同步成功后必为 active）",
+    file: "spec/state-machines.yaml",
+    gate: "doctor",
+    from: "  AgentSkillSource:\n    initial: \"configured\"\n    terminal: [\"retired\"]\n    states:\n      - \"configured\"\n      - \"syncing\"\n      - \"indexed\"\n      - \"active\"\n      - \"stale\"\n      - \"quarantined\"\n      - \"retired\"\n",
+    to: "  AgentSkillSource:\n    initial: \"configured\"\n    terminal: [\"retired\"]\n    states:\n      - \"configured\"\n      - \"syncing\"\n      - \"indexed\"\n      - \"stale\"\n      - \"quarantined\"\n      - \"retired\"\n",
+    expect: "skillSources 里出现了 AgentSkillSource 状态机没有登记的状态 active"
   },
   {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
