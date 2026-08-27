@@ -9918,6 +9918,14 @@ const MUTATIONS = [
     to: '  user_console: "用户控制台", system_policy: "系统策略",',
     expect: "没有中文名"
   },
+  {
+    name: "装机时印给运维的「放行几个工具 / 多少 token」要与真实 tools/list 对得上",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "  let names = new Set(allowedTools);",
+    to: "  let names = new Set(allowedTools.slice(0, allowedTools.length - 1));",
+    expect: "与真实 tools/list 的"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

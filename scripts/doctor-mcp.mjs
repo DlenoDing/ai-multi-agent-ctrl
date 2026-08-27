@@ -1,5 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { mcpToolNames } from "../apps/control-plane-ui/lib/mcp-tool-catalog.mjs";
+import { mcpServiceAllowedTools } from "../apps/control-plane-ui/lib/mcp-service-allowlist.mjs";
+import { createMcpToolDefinitions } from "../apps/mcp-server/server.mjs";
 import { REGISTERED_OWNER_ROLES } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import { KNOWN_SECOND_DOORS, HUMAN_ONLY_MCP_TOOL_REFUSALS } from "./lib/known-second-doors.mjs";
 import { once } from "node:events";
@@ -82,6 +84,32 @@ try {
     throw new Error(`服务令牌的 tools/list 有 ${(listedBytes / 1024).toFixed(0)}KB（${listed.tools.length} 个工具）——`
       + " 每个 agent 连上来都要把它读进上下文；上限 60KB");
   }
+  // 【装机时打给运维的那两个数要与真实 tools/list 对得上】。init 会印一句
+  // 「默认放行 N 个工具，一次 tools/list 约 Mk token」—— 它按 mcpServiceAllowedTools ∩ 工具表
+  // 现算，而运维照着它判断"这台客户端连上来要付多少上下文"。这两个数此前【没有任何判据
+  // 把它们与真的跑一次 tools/list 对过】：服务端若另加一层过滤，印出来的就是一句好看的假话。
+  //（同形状撞过一次：运行参数里手写的「MCP 工具数 81」实际 85。）
+  {
+    const allowedNames = new Set(mcpServiceAllowedTools());
+    const advertised = createMcpToolDefinitions().filter((tool) => allowedNames.has(tool.name));
+    if (advertised.length !== listed.tools.length) {
+      throw new Error(`装机时印的「默认放行 ${advertised.length} 个工具」与真实 tools/list 的`
+        + ` ${listed.tools.length} 个对不上 —— 运维照着那句话配额度，而它是假的`);
+    }
+    const listedNames = new Set(listed.tools.map((tool) => tool.name));
+    const drift = advertised.map((tool) => tool.name).filter((name) => !listedNames.has(name));
+    if (drift.length) {
+      throw new Error(`数对上了但名字对不上：${drift.slice(0, 5).join("、")} 在白名单里却没出现在 tools/list`);
+    }
+    const advertisedKiloTokens = Math.round(Buffer.byteLength(JSON.stringify(advertised), "utf8") / 4 / 1000);
+    const realKiloTokens = Math.round(listedBytes / 4 / 1000);
+    if (Math.abs(advertisedKiloTokens - realKiloTokens) > 2) {
+      throw new Error(`装机时印的「约 ${advertisedKiloTokens}k token」与真实 tools/list 的`
+        + ` ${realKiloTokens}k 差得太多 —— 那句话是给人估上下文成本用的`);
+    }
+    console.log(`  ok  装机印的两个数与真实 tools/list 对上了：${listed.tools.length} 个工具 / 约 ${realKiloTokens}k token`);
+  }
+
   const unadvertisedRequired = listed.tools
     .filter((tool) => (tool.inputSchema?.required || []).some((key) => !tool.inputSchema?.properties?.[key]))
     .map((tool) => tool.name);
