@@ -3090,6 +3090,16 @@ const MUTATIONS = [
     expect: "readStateForRead 没调 decorateRuntimeForConsole"
   },
   {
+    // 失败分支只在偶发红时才跑：这条变异逼它跑一次，免得分支里的引用错误（第一版就写了个没导入的 os）到出事那天才炸。
+    name: "停执行器检查的失败分支要真能报出来（不是 ReferenceError）",
+    file: "scripts/contract-check.mjs",
+    gate: "contract",
+    check: "verifyStoppingAnExecutorTellsTheTruth",
+    from: "      const giveUp = setTimeout(() => finish(false), 20000);",
+    to: "      const giveUp = setTimeout(() => finish(false), 0);",
+    expect: "没能在宽限期后被 SIGKILL 收掉"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

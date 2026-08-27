@@ -15,7 +15,7 @@ import { describePendingWreckage } from "./lib/mutation-wreckage.mjs";
 import { sweepStaleDoctorRuntimeDirs } from "./lib/stale-runtime-dirs.mjs";
 import { KNOWN_SECOND_DOORS } from "./lib/known-second-doors.mjs";
 import { chmodSync, cpSync, existsSync, utimesSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, loadavg } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertStateStoreConfig, ensureStoredState, isStateStoreConflict, readStoredCentralState, readStoredState, writeStoredState 
@@ -16213,7 +16213,7 @@ async function verifyStoppingAnExecutorTellsTheTruth(output) {
       // 偶发红时要能看出是哪一种：子进程没起来（up 没等到）、SIGKILL 发了但 close 没来、还是退出码/信号异常。
       output.push("一个忽略 SIGTERM 的执行器没能在宽限期后被 SIGKILL 收掉 —— "
         + "人按了终止，进程还在跑，而回执会说它停了"
-        + `（up ${sawUp ? "已看到" : "8 秒内没看到"}；等了 ${Date.now() - stopStartedAt}ms；exitCode=${child.exitCode} signalCode=${child.signalCode} killed=${child.killed}；负载 ${os.loadavg().map((n) => n.toFixed(1)).join("/")}）`);
+        + `（up ${sawUp ? "已看到" : "8 秒内没看到"}；等了 ${Date.now() - stopStartedAt}ms；exitCode=${child.exitCode} signalCode=${child.signalCode} killed=${child.killed}；负载 ${loadavg().map((n) => n.toFixed(1)).join("/")}）`);
     }
   } finally {
     try { process.kill(-child.pid, "SIGKILL"); } catch { /* 已经收掉了 */ }
