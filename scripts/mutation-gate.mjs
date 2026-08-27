@@ -10096,6 +10096,15 @@ const MUTATIONS = [
     expect: "拒绝机器主体（403）之前已经写了 closeBarriers"
   },
   {
+    name: "代码写的字段规范要声明（删掉一个已声明的，核对要红）",
+    file: "spec/agent-dispatch.schema.json",
+    gate: "contract",
+    check: "verifyAssignedFieldsAreDeclaredBySpec",
+    from: '    "previousNodeId": {"type": ["string", "null"]},\n',
+    to: "",
+    expect: "写了 agent-dispatch 规范没声明的字段 previousNodeId"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

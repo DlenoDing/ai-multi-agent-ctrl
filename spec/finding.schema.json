@@ -7,6 +7,9 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "findingId", "projectId", "taskGroupId", "findingType", "severity", "status", "summary", "evidenceRefs", "createdAt", "updatedAt"],
   "properties": {
+    "dispositionedBy": {"type": "string"},
+    "lastResolutionAttempt": {"type": "object", "additionalProperties": false, "required": ["attemptedStatus", "dispositionClass", "reason", "at"], "properties": {"attemptedStatus": {"type": "string"}, "dispositionClass": {"type": "string"}, "reason": {"type": "string"}, "at": {"type": "string", "format": "date-time"}}},
+    "recoveryRef": {"type": "string"},
     "schemaVersion": {"const": "finding/v1"},
     "findingId": {"type": "string", "pattern": "^finding"},
     "projectId": {"type": "string", "pattern": "^prj"},

@@ -763,6 +763,7 @@ runAsync(verifyTestServersDieWithTheirParent);
 run(verifyRuntimeConstantsSitBeforeItsTopLevelAwait);
 run(verifyStaleE2eRuntimeDirsGetSwept);
 run(verifyRejectedWritesLeaveStateUntouched);
+run(verifyAssignedFieldsAreDeclaredBySpec);
 run(verifyAgentFailureCodeCoverageRatchet);
 run(verifyAgentFailureReasonsAreCoded);
 run(verifyTruncatedExecutorOutputSaysSo);
@@ -15389,6 +15390,42 @@ function verifyRuntimeConstantsSitBeforeItsTopLevelAwait(output) {
   }
   console.log(`runtime.mjs：顶层 await（第 ${awaitLine + 1} 行）之后没有模块级常量（TDZ 语义当场探过），`
     + "且子进程起来后的异常会杀掉子进程再抛 —— 核过");
+}
+
+// 【代码给某类记录写的每个字段，它的规范都要声明】。四个 additionalProperties:false 的规范
+// （派发 / 发现 / 控制命令 / 任务契约）此前共有 15 个字段只在代码里写、规范里没有 ——
+// 它们全在 e2e 从没走到的分支上（重认领、节点停机、发现项处置、命令过期……），规范扫描因此
+// 从来没红过；哪天门第一次走到那条分支，就会像技能源同步失败态那样当场红在"规范不认识这个字段"上。
+// 判法按【变量名 → 规范】登记：只登记名字不歧义的变量；session（有 auth-session 与 work-session）、
+// decision（选型 / 放置 / 决策记录）、grant（access / mcp）、request 各指多种记录，扫出来的是误报，故不登记。
+function verifyAssignedFieldsAreDeclaredBySpec(output) {
+  const VAR_TO_SPEC = {
+    taskGroup: "task-group", dispatch: "agent-dispatch", node: "agent-runtime-node", source: "agent-skill-source",
+    finding: "finding", approval: "approval-request", project: "project", account: "account", lane: "worker-lane",
+    command: "agent-control-command", barrier: "close-barrier", organization: "organization", plan: "review-plan",
+    bundle: "review-bundle", envelope: "instruction-envelope", directive: "human-directive", token: "agent-join-token",
+    lease: "lease", artifact: "artifact", checkpoint: "checkpoint", contract: "agent-task-contract",
+    topology: "execution-topology", capability: "model-capability", provider: "model-provider", gate: "quality-gate"
+  };
+  const sources = ["apps/control-plane-ui/lib/control-plane-core.mjs", "apps/control-plane-ui/server.mjs",
+    "apps/mcp-server/server.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs"]
+    .map((file) => readFileSync(join(root, file), "utf8")).join("\n");
+  let scanned = 0;
+  for (const [variable, specName] of Object.entries(VAR_TO_SPEC)) {
+    let schema;
+    try { schema = JSON.parse(readFileSync(join(root, `spec/${specName}.schema.json`), "utf8")); }
+    catch { output.push(`字段声明核对：登记表指向的规范 spec/${specName}.schema.json 读不到`); continue; }
+    if (schema.additionalProperties !== false) continue;
+    const declared = new Set(Object.keys(schema.properties || {}));
+    const assigned = new Set([...sources.matchAll(new RegExp(`\\b${variable}\\.(\\w+)\\s*(?:=[^=]|\\|\\|=|\\?\\?=|\\+=)`, "gu"))].map((m) => m[1]));
+    scanned += assigned.size;
+    const missing = [...assigned].filter((field) => !field.startsWith("__") && !declared.has(field)).sort();
+    if (missing.length) {
+      output.push(`字段声明核对：代码给 ${variable} 写了 ${specName} 规范没声明的字段 ${missing.join("、")} —— `
+        + "规范 additionalProperties:false，第一个走到这条分支的门会红在「不认识这个字段」上；补进规范（按赋值处的类型）");
+    }
+  }
+  if (scanned < 100) output.push(`字段声明核对：只扫到 ${scanned} 个赋值字段（应有几百个）—— 正则形状没对上源码，这条在空转`);
 }
 
 // 【被拒的写入不得在状态里留痕】。core 里两个函数原先"先写、后校验、校验不过就抛"：

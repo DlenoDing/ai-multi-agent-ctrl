@@ -44,6 +44,7 @@
     "outputContract"
   ],
   "properties": {
+    "rulesChangedAfterContract": {"type": "object", "additionalProperties": false, "required": ["previousDigest", "currentDigest", "at"], "properties": {"previousDigest": {"type": "string"}, "currentDigest": {"type": "string"}, "at": {"type": "string", "format": "date-time"}}},
     "contractVersion": {
       "type": "string",
       "const": "agent-task-contract/v1"

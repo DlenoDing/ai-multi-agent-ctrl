@@ -6,6 +6,12 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "commandId", "sequence", "nodeId", "commandType", "status", "requiresAck", "createdBy", "createdAt", "updatedAt"],
   "properties": {
+    "attempts": {"type": "integer", "minimum": 0},
+    "commandEffectRef": {"type": "string"},
+    "expiredReason": {"type": "string"},
+    "failureRef": {"type": "string"},
+    "resultRef": {"type": "string"},
+    "targetRef": {"type": "string"},
     "schemaVersion": {"type": "string", "const": "agent-control-command/v1"},
     "commandId": {"type": "string", "minLength": 1},
     "sequence": {"type": "integer", "minimum": 1},

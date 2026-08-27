@@ -33,6 +33,11 @@
     "updatedAt"
   ],
   "properties": {
+    "previousHolderMayHavePushed": {"type": "boolean"},
+    "previousNodeId": {"type": ["string", "null"]},
+    "recycledFromNodeId": {"type": ["string", "null"]},
+    "rulesChangedAfterContract": {"type": "boolean"},
+    "shutdownPending": {"type": "boolean"},
     "schemaVersion": {
       "type": "string",
       "const": "agent-dispatch/v1"
