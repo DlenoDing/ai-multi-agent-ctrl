@@ -1299,6 +1299,15 @@ function promptDialog(options = {}) {
   });
 }
 
+// 配额输入框清空后 Number("") 是 0：建组织时服务端把 0 钳成 1（一个只装得下一个人的组织，没有任何提示），
+// 改配额时被告知「你填了 0」（明明是留空）。留空＝这一项不改/用缺省，就不要把它发出去。
+function quotaField(value) {
+  return String(value ?? "").trim() === "" ? undefined : Number(value);
+}
+function quotaBody(data) {
+  return {maxMembers: quotaField(data.maxMembers), maxProjects: quotaField(data.maxProjects), maxTaskGroups: quotaField(data.maxTaskGroups), maxAgents: quotaField(data.maxAgents)};
+}
+
 function confirmDialog(options = {}) {
   const {title = "确认操作", message = "", sub = "", danger = false, confirmText = "确定", cancelText = "取消"} = options;
   return new Promise((resolve) => {
@@ -4901,7 +4910,7 @@ document.addEventListener("submit", async (event) => {
       const result = await api("/api/orgs", {method: "POST", body: JSON.stringify({
         name: data.name,
         admin: {displayName: data.adminName, email: data.adminEmail},
-        quotas: {maxMembers: Number(data.maxMembers), maxProjects: Number(data.maxProjects), maxTaskGroups: Number(data.maxTaskGroups), maxAgents: Number(data.maxAgents)}
+        quotas: quotaBody(data)
       })});
       await loadPage();
       oneTimeTokenModal(`组织「${result.organization?.name || data.name}」创建成功`, result.adminAccount?.email || data.adminEmail, result.accountToken || "-", "请将令牌交给该组织的初始组织管理员，首次登录后建议立即设置密码。");
@@ -4909,7 +4918,7 @@ document.addEventListener("submit", async (event) => {
     }
     if (kind === "org-quotas") {
       await api(`/api/orgs/${encodeURIComponent(form.dataset.org)}/quotas`, {method: "POST", body: JSON.stringify({
-        quotas: {maxMembers: Number(data.maxMembers), maxProjects: Number(data.maxProjects), maxTaskGroups: Number(data.maxTaskGroups), maxAgents: Number(data.maxAgents)}
+        quotas: quotaBody(data)
       })});
       closeModal();
       await loadPage();
@@ -5160,7 +5169,9 @@ document.addEventListener("submit", async (event) => {
     }
     if (kind === "upgrade-candidate-resolve") {
       if (!String(data.justification || "").trim()) throw new Error("处置系统升级候选项必须写明理由");
-      await api(`/api/system-upgrade-candidates/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status || "dismissed", justification: data.justification})});
+      // 缺省 dismissed＝「不予处理」：下拉里有占位项，空着提交原先就替人判了一个。
+      if (!data.status) throw new Error("请选择判定 —— 系统不会替你选一个（「不予处理」不是缺省）");
+      await api(`/api/system-upgrade-candidates/${encodeURIComponent(form.dataset.request)}/resolve`, {method: "POST", body: JSON.stringify({status: data.status, justification: data.justification})});
       await loadPage();
       return;
     }
@@ -5172,7 +5183,9 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     if (kind === "rule-source-settle") {
-      await api(`/api/rule-source-resolutions/${encodeURIComponent(form.dataset.request)}/settle`, {method: "POST", body: JSON.stringify({status: data.status || "reference_only", justification: data.justification || ""})});
+      // 缺省 reference_only＝「仅作参考」：那是一条终态，空着提交原先就替人把来源判死了。
+      if (!data.status) throw new Error("请选择判定 —— 系统不会替你选一个（「仅作参考」不是缺省）");
+      await api(`/api/rule-source-resolutions/${encodeURIComponent(form.dataset.request)}/settle`, {method: "POST", body: JSON.stringify({status: data.status, justification: data.justification || ""})});
       await loadPage();
       return;
     }

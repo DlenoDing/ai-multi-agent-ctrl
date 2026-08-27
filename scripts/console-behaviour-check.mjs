@@ -926,7 +926,10 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     for (const [kind, route, heavy] of [
       ["shared-definition-resolve", /shared-definition-contracts\/req_1\/resolve$/u, "active"],
       ["review-plan-resolve", /review-plans\/req_1\/resolve$/u, "closed"],
-      ["review-bundle-resolve", /review-bundles\/req_1\/resolve$/u, "consumed"]
+      ["review-bundle-resolve", /review-bundles\/req_1\/resolve$/u, "consumed"],
+      // 后补的两张：升级候选缺省「不予处理」、规则来源缺省「仅作参考」（终态）。
+      ["upgrade-candidate-resolve", /system-upgrade-candidates\/req_1\/resolve$/u, "dismissed"],
+      ["rule-source-settle", /rule-source-resolutions\/req_1\/settle$/u, "reference_only"]
     ]) {
       const recorded = [];
       const toasts = [];
@@ -953,6 +956,32 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         await probe.submit({target: rejectForm, submitter: rejectForm.children[2], preventDefault: () => {}});
         const post = recorded.find((item) => item.method === "POST" && route.test(item.url));
         check(`${kind}：选「驳回」发的就是 rejected`, post?.body?.status === "rejected", `发出去的是 ${JSON.stringify(post?.body)}`);
+      } finally {
+        probe.setFetch(previousFetch);
+      }
+    }
+    // 【配额留空就不发那一项】。清空的输入框 Number("") 是 0：改配额会被告知「你填了 0」，建组织被钳成 1 人。
+    {
+      const recorded = [];
+      const previousFetch = globalThis.fetch;
+      probe.setFetch(async (url, init = {}) => {
+        recorded.push({url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null});
+        return {ok: true, status: 200, headers: {get: () => null}, json: async () => ({ok: true})};
+      });
+      try {
+        const quotaForm = el("form", {dataset: {form: "org-quotas", org: "org_1"}}, [
+          el("input", {name: "maxMembers", value: ""}),
+          el("input", {name: "maxProjects", value: "30"}),
+          el("input", {name: "maxTaskGroups", value: " "}),
+          el("input", {name: "maxAgents", value: "7"}),
+          el("button", {type: "submit"})
+        ]);
+        await probe.submit({target: quotaForm, submitter: quotaForm.children[4], preventDefault: () => {}});
+        const post = recorded.find((item) => item.method === "POST" && /orgs\/org_1\/quotas$/u.test(item.url));
+        const quotas = post?.body?.quotas || {};
+        check("改配额：留空的项不发、填了的按数发",
+          post && !("maxMembers" in quotas) && !("maxTaskGroups" in quotas) && quotas.maxProjects === 30 && quotas.maxAgents === 7,
+          post ? `发出去的是 ${JSON.stringify(quotas)} —— 留空成了 0` : "没记录到提交");
       } finally {
         probe.setFetch(previousFetch);
       }

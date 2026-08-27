@@ -1888,6 +1888,16 @@ try {
       }
       void before;
       console.log("  ok  填错的配额（非数/负数/空）被拒并点名，不再悄悄保持原值");
+      // 建组织走的是另一条路：原先只 boundedQuota —— 非数回落到缺省、0 钳成 1，带着 201 建出一个只装得下一个人的组织。
+      const badCreate = await jsonFetch(port, "/api/orgs", {
+        method: "POST", headers: {"Idempotency-Key": "doctor-org-create-bad-quota", authorization: systemAuth},
+        body: JSON.stringify({name: "配额填错的组织", admin: {displayName: "探针管理员", email: "quota-probe-admin@local"}, quotas: {maxMembers: 0, maxAgents: "many"}})
+      });
+      const badKeys = (badCreate.payload?.invalid || []).map((item) => item.key).sort().join(",");
+      if (badCreate.response.status !== 400 || badCreate.payload?.error !== "org_quota_invalid" || badKeys !== "maxAgents,maxMembers") {
+        throw new Error(`建组织时填错的配额该回 400 org_quota_invalid 并点名 maxAgents,maxMembers，实际 ${badCreate.response.status} ${JSON.stringify(badCreate.payload).slice(0, 160)} —— 0 被钳成 1、非数回落缺省，组织照样建出来`);
+      }
+      console.log("  ok  建组织时填错的配额同样被拒并点名（不再钳成 1 或回落缺省）");
     }
     const quotaBump = await jsonFetch(port, `/api/orgs/${encodeURIComponent(orgId)}/quotas`, {
       method: "POST",

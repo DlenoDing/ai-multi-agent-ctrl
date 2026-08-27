@@ -2967,6 +2967,38 @@ const MUTATIONS = [
     expect: "一个「报文里的 X」都没认出来"
   },
   {
+    name: "升级候选处置：status 空着要拒，不缺省成「不予处理」",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      if (!data.status) throw new Error("请选择判定 —— 系统不会替你选一个（「不予处理」不是缺省）");',
+    to: '      if (!data.status) data.status = "dismissed";',
+    expect: "upgrade-candidate-resolve：status 空着要拒"
+  },
+  {
+    name: "规则来源判定：status 空着要拒，不缺省成「仅作参考」",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      if (!data.status) throw new Error("请选择判定 —— 系统不会替你选一个（「仅作参考」不是缺省）");',
+    to: '      if (!data.status) data.status = "reference_only";',
+    expect: "rule-source-settle：status 空着要拒"
+  },
+  {
+    name: "配额留空就不发那一项（不是发 0）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  return String(value ?? "").trim() === "" ? undefined : Number(value);',
+    to: '  return Number(value);',
+    expect: "改配额：留空的项不发"
+  },
+  {
+    name: "建组织时填错的配额要拒（不是钳成 1 或回落缺省）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    if (invalidCreateQuotas.length) return json(res, 400, quotaInvalidPayload(invalidCreateQuotas));',
+    to: '    if (false) return json(res, 400, quotaInvalidPayload(invalidCreateQuotas));',
+    expect: "建组织时填错的配额该回 400"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
@@ -10392,8 +10424,8 @@ const MUTATIONS = [
     name: "填错的配额要拒（原先悄悄保持原值并回 200）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    from: "    if (invalidQuotas.length) {\n      return json(res, 400, {error: \"org_quota_invalid\",",
-    to: "    if (false) {\n      return json(res, 400, {error: \"org_quota_invalid\",",
+    from: '    if (invalidQuotas.length) return json(res, 400, quotaInvalidPayload(invalidQuotas));',
+    to: '    if (false) return json(res, 400, quotaInvalidPayload(invalidQuotas));',
     expect: "人看到成功而配额没动"
   },
   {
