@@ -10194,6 +10194,15 @@ const MUTATIONS = [
     expect: "可本轮根本没调过它"
   },
   {
+    name: "第二道门登记里点名的第一道门必须存在且被验过（拿没验的门作保要红）",
+    file: "scripts/lib/known-second-doors.mjs",
+    gate: "contract",
+    check: "verifyRefusalCodeCoverageRatchet",
+    from: '  mcp_project_create_requires_system_admin:\n    "MCP 只认 agent_node / 系统管理员 / 服务令牌三种主体：前两者被工具白名单挡，后者本身就是管理员",',
+    to: '  mcp_project_create_requires_system_admin:\n    "MCP 只认 agent_node / 系统管理员 / 服务令牌三种主体：mcp_tool_not_granted_to_nobody 先拒",',
+    expect: "作保的门不存在"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

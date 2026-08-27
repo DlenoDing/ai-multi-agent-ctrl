@@ -12235,6 +12235,19 @@ function verifyRefusalCodeCoverageRatchet(output) {
       output.push(`第二道门登记里的 ${code} 现在已经有判据了 —— 说明它变得可达了，从登记里删掉并确认那条判据验的是什么`);
     }
   }
+  // 【登记里点名的"第一道门"必须是真被验过的门】。每条第二道门登记都靠一句「X 先拒」立足 ——
+  // 而 X 若本身没人验过，这句就是拿一个未验的门给另一个未验的门作保（checkpoint_submit 就这样
+  // 挂了很久：登记说"MCP 这条路一律被那道门挡回"，那道门其实只拒节点、管理员一路走进受理函数）。
+  for (const [code, reason] of Object.entries(KNOWN_SECOND_DOORS)) {
+    for (const match of String(reason).matchAll(/([a-z]+(?:_[a-z]+)+)\s*先拒/gu)) {
+      const firstDoor = match[1];
+      if (!codes.has(firstDoor)) {
+        output.push(`第二道门登记 ${code} 说「${firstDoor} 先拒」，可产品代码里没有这个码 —— 作保的门不存在`);
+      } else if (uncovered.includes(firstDoor)) {
+        output.push(`第二道门登记 ${code} 说「${firstDoor} 先拒」，可 ${firstDoor} 自己就是零覆盖 —— 拿一个没验过的门给另一个没验过的门作保`);
+      }
+    }
+  }
   // 要摘牌就得先看得见名单。门本身不打印它（75 行噪音），按需打开。
   if (process.env.AIMAC_LIST_UNCOVERED_CODES) {
     console.log(`零覆盖拒绝码 ${uncovered.length} 个：\n  ${uncovered.join("\n  ")}`);
