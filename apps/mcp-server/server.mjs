@@ -326,7 +326,10 @@ function publishedInputSchemaFor(name) {
   for (const key of keys) {
     if (accepted.properties[key]) properties[key] = accepted.properties[key];
   }
-  return {...accepted, properties};
+  // 写工具没带 idempotencyKey 会被拒（idempotency_key_required），发布出去的 schema 就得把它标成 required ——
+  // 原先 required 里没有它，客户端照 tools/list 拼的第一次调用必然被拒，而它不知道为什么。
+  const required = isReadOnlyTool(name) ? accepted.required : [...new Set([...(accepted.required || []), "idempotencyKey"])];
+  return {...accepted, properties, ...(required?.length ? {required} : {})};
 }
 
 function requiredInputPropertiesFor(name) {

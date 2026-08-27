@@ -89,6 +89,14 @@ try {
   }
 
   const initialized = await mcp("initialize", {protocolVersion: "2025-06-18", capabilities: {}, clientInfo: {name: "doctor", version: "1"}});
+  // 写工具的 schema 要把 idempotencyKey 标成 required（服务端没带就拒），读工具不许标。
+  {
+    const listedForRequired = await mcp("tools/list", {});
+    const writeToolsMissing = (listedForRequired.tools || []).filter((tool) => Array.isArray(tool.inputSchema?.properties && Object.keys(tool.inputSchema.properties)) && Object.keys(tool.inputSchema.properties).includes("dryRun") && !(tool.inputSchema.required || []).includes("idempotencyKey")).map((tool) => tool.name);
+    if (writeToolsMissing.length) throw new Error(`这些写工具发布的 schema 没把 idempotencyKey 标成 required，而服务端没带就拒：${writeToolsMissing.slice(0, 8).join("、")}`);
+    const readToolsWrong = (listedForRequired.tools || []).filter((tool) => !Object.keys(tool.inputSchema?.properties || {}).includes("dryRun") && (tool.inputSchema.required || []).includes("idempotencyKey")).map((tool) => tool.name);
+    if (readToolsWrong.length) throw new Error(`读工具不该把 idempotencyKey 标成 required：${readToolsWrong.slice(0, 8).join("、")}`);
+  }
   if (initialized.serverInfo?.name !== "ai-multi-agent-ctrl") throw new Error("remote MCP initialize failed");
   const listed = await mcp("tools/list", {});
   if (!Array.isArray(listed.tools) || listed.tools.length < 35) throw new Error("remote MCP service allowlist returned an incomplete integration surface");

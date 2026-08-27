@@ -3348,6 +3348,14 @@ const MUTATIONS = [
     expect: "status 第一行该是给人看的一句"
   },
   {
+    name: "写工具发布的 schema 要把 idempotencyKey 标成 required",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '  const required = isReadOnlyTool(name) ? accepted.required : [...new Set([...(accepted.required || []), "idempotencyKey"])];',
+    to: '  const required = accepted.required;',
+    expect: "没把 idempotencyKey 标成 required"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
