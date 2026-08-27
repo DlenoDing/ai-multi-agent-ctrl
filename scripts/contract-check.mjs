@@ -968,6 +968,7 @@ run(verifyLedgerRowsGoThroughTheSharedBuilder);
 run(verifyOperatorKnobsAreDocumented);
 run(verifyAgentctlUnknownCommandListsCommands);
 run(verifyConsoleRoleExamplesAreRegistered);
+run(verifyConsoleRuntimeConstantsHaveOneWriter);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
 // 汇总之前把所有 async 检查等干净。少了这一句，它们推进的错误会赶不上报告。
@@ -15620,6 +15621,32 @@ function verifyOperatorKnobsAreDocumented(output) {
   } else if (agentUndocumented.length < AGENT_KNOBS_UNDOCUMENTED_CEILING) {
     output.push(`agent 节点侧旋钮无文档面的已降到 ${agentUndocumented.length}，把 AGENT_KNOBS_UNDOCUMENTED_CEILING 改成这个数 —— 棘轮留着松弛量，下一次回退就看不出来了`);
   }
+}
+
+// 【下发给界面的 runtime 常量只有一个写入点，且两条读路径都经过它】。readStateForRead 与 readState 原先各抄一份，
+// 一条补了新词表另一条没补，界面在两种请求下拿到两种词表；而 doctor 只看得见其中一条。
+function verifyConsoleRuntimeConstantsHaveOneWriter(output) {
+  const source = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const bodyOf = (name) => {
+    const at = source.indexOf(`\nfunction ${name}(`);
+    if (at < 0) return null;
+    return source.slice(at, source.indexOf("\n}\n", at));
+  };
+  const helper = bodyOf("decorateRuntimeForConsole");
+  if (!helper) { output.push("找不到 decorateRuntimeForConsole —— 界面 runtime 常量的唯一写入点没了"); return; }
+  const keys = ["auditLogCap", "nodeHeartbeatTimeoutMs", "accountRoles", "knownPermissions", "grantRoleTemplates"];
+  for (const key of keys) {
+    const everywhere = source.match(new RegExp(`runtime\\.${key} = `, "gu")) || [];
+    const inHelper = helper.match(new RegExp(`runtime\\.${key} = `, "gu")) || [];
+    if (inHelper.length !== 1 || everywhere.length !== 1) {
+      output.push(`runtime.${key} 有 ${everywhere.length} 处赋值（helper 里 ${inHelper.length} 处）—— 只能在 decorateRuntimeForConsole 里赋一次`);
+    }
+  }
+  for (const reader of ["readStateForRead", "readState"]) {
+    const body = bodyOf(reader);
+    if (!body || !body.includes("decorateRuntimeForConsole(")) output.push(`${reader} 没调 decorateRuntimeForConsole —— 这条路上界面拿不到词表`);
+  }
+  console.log(`界面 runtime 常量 ${keys.length} 个都只在 decorateRuntimeForConsole 里赋值，两条读路径都经过它`);
 }
 
 // 【控制台里自由填角色的输入框：示例必须是已登记的执行角色，且都挂着词表】。服务端五扇门（建任务组/入网令牌/

@@ -3075,10 +3075,19 @@ const MUTATIONS = [
     name: "界面拿到的授权角色词表要与拒绝报文的 supported 同一份",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    // /api/state 走的是 readStateForRead 的 fresh. 那条路；改 state. 那条 doctor 看不见（第一版就这么假绿过）。
-    from: '    fresh.runtime.grantRoleTemplates = grantRoleTemplateNames();',
-    to: '    fresh.runtime.grantRoleTemplates = {project: ["viewer"], task_group: ["viewer"]};',
+    // 现在只有 decorateRuntimeForConsole 一个写入点，两条读路径都经过它。
+    from: '  state.runtime.grantRoleTemplates = grantRoleTemplateNames();',
+    to: '  state.runtime.grantRoleTemplates = {project: ["viewer"], task_group: ["viewer"]};',
     expect: "与拒绝报文里的 supported 不是同一份"
+  },
+  {
+    name: "共享只读路径也要经过界面 runtime 常量的唯一写入点",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    check: "verifyConsoleRuntimeConstantsHaveOneWriter",
+    from: '    decorateRuntimeForConsole(fresh);',
+    to: '    void fresh;',
+    expect: "readStateForRead 没调 decorateRuntimeForConsole"
   },
   {
     name: "认不出的升级候选状态必须拒绝",
@@ -10344,8 +10353,8 @@ const MUTATIONS = [
     name: "账号角色词表要下发给界面（与拒绝报文里的 supported 同一份）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    from: "    fresh.runtime.accountRoles = [...ACCOUNT_ROLES];",
-    to: "    fresh.runtime.accountRoles = undefined;",
+    from: "  state.runtime.accountRoles = [...ACCOUNT_ROLES];",
+    to: "  state.runtime.accountRoles = undefined;",
     expect: "与拒绝报文里的 supported 不是同一份"
   },
   {
