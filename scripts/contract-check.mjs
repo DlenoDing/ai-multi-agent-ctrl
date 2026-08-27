@@ -15589,7 +15589,9 @@ function verifyOperatorKnobsAreDocumented(output) {
   const INTERNAL = {
     "排障/记账": /^AIMAC_(ROUTE_TRACE|TOOL_TRACE|SERVER_ERROR_DEBUG|AGENT_DEBUG|EXPOSE_BOOTSTRAP_HINT)$/u,
     "仿真/门专用": /^AIMAC_(AGENT_SIMULATE_|AGENT_VERIFICATION_DEFER|AGENT_ONCE|EXIT_WITH_PARENT|MCP_INTERNAL_STDIO|LOCAL_SEED_|AGENT_KEEP_SESSION_DIRS|PROJECT_EVENT_ALLOW_FULL_KEY_SCAN|MCP_ALLOW_FULL_STATE)/u,
-    "agent 节点侧配置（agentctl --help 与 docs/agent-runtime-protocol.md 管）": /^AIMAC_AGENT_/u,
+    // 说实话：今天 agentctl 没有 --help 列旋钮、docs/agent-runtime-protocol.md 也只提了 1 个。这一族登记在这里
+    // 只是不让它混进运维族；无文档面的数量由下面的棘轮钉住（只许降）。
+    "agent 节点侧配置（尚无文档面，棘轮 AGENT_KNOBS_UNDOCUMENTED_CEILING 钉住数量）": /^AIMAC_AGENT_/u,
     "存储/事件内部调参": /^AIMAC_(PROJECT_EVENT_|RUNTIME_JSON_|HEARTBEAT_PERSIST_FLOOR_MS|KEEP_ALIVE_TIMEOUT_MS|REQUEST_TIMEOUT_MS|REALTIME_HEARTBEAT_MS|REGISTER_REPLAY_WINDOW_MS|REVOCATION_ACK_TIMEOUT_MS|WIP_|ENERGY_WATTS_PER_CPU|OLLAMA_MODEL|MCP_SERVICE_ALLOWED_TOOLS|SERVER_URL|NODE_RETIRE_TIMEOUT_MS|DOCTOR_|MUTATION_|LIST_|PRINT_)/u
   };
   const missing = [];
@@ -15603,6 +15605,15 @@ function verifyOperatorKnobsAreDocumented(output) {
   if (knobs.length < 60) output.push(`环境旋钮登记核对只扫到 ${knobs.length} 个 AIMAC_* —— 提取脱节，本条在空转`);
   if (missing.length) output.push(`运维要碰的环境旋钮没进 README 的表：${missing.join("、")} —— 决定丢不丢数据/允不允许明文的旋钮不能只写在代码里`);
   if (unclassified.length) output.push(`新的环境旋钮既不在 README 也没在内部族里登记：${unclassified.join("、")} —— 先分类（运维族进 README，内部族写明为什么不登）`);
+  // agent 节点侧旋钮无文档面的数量：棘轮。降了就改小，涨了就红 —— 新加的 agent 旋钮必须写进 docs/agent-runtime-protocol.md。
+  const AGENT_KNOBS_UNDOCUMENTED_CEILING = 28;
+  const agentDoc = readFileSync(join(root, "docs/agent-runtime-protocol.md"), "utf8");
+  const agentUndocumented = knobs.filter((knob) => /^AIMAC_AGENT_/u.test(knob) && !readme.includes(`\`${knob}\``) && !agentDoc.includes(knob)).sort();
+  if (agentUndocumented.length > AGENT_KNOBS_UNDOCUMENTED_CEILING) {
+    output.push(`agent 节点侧旋钮无文档面的从 ${AGENT_KNOBS_UNDOCUMENTED_CEILING} 涨到 ${agentUndocumented.length} —— 新加的要写进 docs/agent-runtime-protocol.md：${agentUndocumented.join("、")}`);
+  } else if (agentUndocumented.length < AGENT_KNOBS_UNDOCUMENTED_CEILING) {
+    output.push(`agent 节点侧旋钮无文档面的已降到 ${agentUndocumented.length}，把 AGENT_KNOBS_UNDOCUMENTED_CEILING 改成这个数 —— 棘轮留着松弛量，下一次回退就看不出来了`);
+  }
 }
 
 // 见文件开头 DEVELOPER_RUNTIME_DIGEST_AT_START 的注释。先在临时目录上自证摘要真的看得见改动
