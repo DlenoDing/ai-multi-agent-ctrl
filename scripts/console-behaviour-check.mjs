@@ -50,7 +50,8 @@ class StubElement {
   insertBefore(child) { this.children.unshift(child); if (child && typeof child === "object") child.parentElement = this; return child; }
   getAttribute(name) { return (this.attributes || {})[name] ?? null; }
   removeAttribute(name) { if (this.attributes) delete this.attributes[name]; }
-  addEventListener() {}
+  // 记下监听器：确认弹窗（confirmDialog）把 click 挂在遮罩上等人点，门要能替人点「取消」/「确认」。
+  addEventListener(type, handler) { (this.listeners ||= {})[type] = handler; }
   removeEventListener() {}
   remove() {}
   // 弹窗那条路要 document.body.classList.add("modal-open") 与 mask.querySelector(...).focus()。
@@ -269,6 +270,7 @@ globalThis.__probe = {
   statusBadge: (kind, value) => statusBadge(kind, value),
   captureToast: (sink) => { toast.info = (message) => sink(message); },
   captureToastKind: (kind, sink) => { toast[kind] = (message) => sink(message); },
+  bodyChildren: () => document.body.children || [],
   translate: (key) => t(key),
   filteredEmptyText: (query, hidden) => filteredEmptyText(query, hidden),
   applyFilterForSource: () => String(applyFilterFor),
@@ -982,6 +984,61 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         check("改配额：留空的项不发、填了的按数发",
           post && !("maxMembers" in quotas) && !("maxTaskGroups" in quotas) && quotas.maxProjects === 30 && quotas.maxAgents === 7,
           post ? `发出去的是 ${JSON.stringify(quotas)} —— 留空成了 0` : "没记录到提交");
+      } finally {
+        probe.setFetch(previousFetch);
+      }
+    }
+    // 【终止/降级执行方案：理由空着要拒且不开弹窗；弹窗点「取消」不发；点「确认」发的正是那个动作与理由】。
+    // 两者都是不可逆终态转移，还会改写人的定稿记录 —— 此前门从没走到过这两条提交路径，
+    // 确认弹窗在桩里更是从没开过（它等一次真实点击）。
+    for (const [kind, field, action, confirmText] of [
+      ["topology-cancel", "cancelRef", "cancel", "确认终止"],
+      ["topology-downgrade", "downgradeReason", "downgrade", "确认降级"]
+    ]) {
+      const recorded = [];
+      const toasts = [];
+      const previousFetch = globalThis.fetch;
+      probe.setFetch(async (url, init = {}) => {
+        recorded.push({url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null});
+        return {ok: true, status: 200, headers: {get: () => null}, json: async () => ({ok: true})};
+      });
+      probe.captureToastKind("error", (message) => toasts.push(String(message)));
+      const mkForm = (reason) => el("form", {dataset: {form: kind, request: "req_1"}}, [
+        el("input", {name: field, value: reason}),
+        el("button", {type: "submit"})
+      ]);
+      const masks = () => probe.bodyChildren().filter((node) => node && node.className === "modal-mask");
+      const posted = () => recorded.find((item) => item.method === "POST" && /execution-topologies\/req_1\/advance$/u.test(item.url));
+      const clickDialog = async (form, choice) => {
+        // 桩里 remove() 是空操作，上一轮的遮罩还留在 body 上：要等的是【新】挂上来的那一个。
+        const before = masks().length;
+        const pending = probe.submit({target: form, submitter: form.children[1], preventDefault: () => {}});
+        for (let i = 0; i < 10 && masks().length <= before; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+        if (masks().length <= before) { await Promise.race([pending, new Promise((resolve) => setTimeout(resolve, 50))]); return {mask: null, opened: false}; }
+        const mask = masks().at(-1);
+        if (!mask?.listeners?.click) return {mask, opened: false};
+        mask.listeners.click({target: {closest: () => ({dataset: {confirm: choice}})}});
+        await pending;
+        return {mask, opened: true};
+      };
+      try {
+        const emptyForm = mkForm("   ");
+        const maskCountBefore = masks().length;
+        await probe.submit({target: emptyForm, submitter: emptyForm.children[1], preventDefault: () => {}});
+        check(`${kind}：理由空着要拒、不开确认弹窗、不发请求`,
+          !posted() && masks().length === maskCountBefore && toasts.some((message) => /必须写明理由/u.test(message)),
+          posted() ? `空着也发了 ${JSON.stringify(posted().body)}` : `没拒（弹窗 ${masks().length - maskCountBefore} 个；toast：${JSON.stringify(toasts).slice(0, 100)}）`);
+        const cancelForm = mkForm("探针理由：方案走不通");
+        const cancelled = await clickDialog(cancelForm, "cancel");
+        check(`${kind}：确认弹窗要真的开、写着「${confirmText}」，点「取消」不发请求`,
+          cancelled.opened && String(cancelled.mask.innerHTML || "").includes(confirmText) && !posted(),
+          !cancelled.opened ? "弹窗没开（或没挂 click 监听）" : posted() ? `点了取消还是发了 ${JSON.stringify(posted().body)}` : "弹窗上没有确认按钮的字");
+        const okForm = mkForm("探针理由：方案走不通");
+        const confirmed = await clickDialog(okForm, "ok");
+        const post = posted();
+        check(`${kind}：点「${confirmText}」发出的是 ${action} 与人写的理由`,
+          confirmed.opened && post?.body?.action === action && post?.body?.[field] === "探针理由：方案走不通",
+          `发出去的是 ${JSON.stringify(post?.body)}（弹窗${confirmed.opened ? "开了" : "没开"}；toast：${JSON.stringify(toasts).slice(0, 200)}；请求：${JSON.stringify(recorded.map((item) => item.url)).slice(0, 200)}）`);
       } finally {
         probe.setFetch(previousFetch);
       }

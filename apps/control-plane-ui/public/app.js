@@ -1343,7 +1343,8 @@ function confirmDialog(options = {}) {
     document.addEventListener("keydown", onKey);
     document.body.appendChild(mask);
     // Destructive dialogs focus Cancel (safer default); others focus the confirm button.
-    mask.querySelector(danger ? '[data-confirm="cancel"]' : '[data-confirm="ok"]').focus();
+    // 焦点只是便利：找不到按钮（比如渲染被裁掉）也不能让整个确认流程带着异常死掉 —— 那会让人按了「终止」却得到一句 TypeError。
+    mask.querySelector(danger ? '[data-confirm="cancel"]' : '[data-confirm="ok"]')?.focus();
   });
 }
 

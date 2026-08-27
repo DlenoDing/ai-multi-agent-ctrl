@@ -2967,6 +2967,22 @@ const MUTATIONS = [
     expect: "一个「报文里的 X」都没认出来"
   },
   {
+    name: "终止执行方案：理由空着要拒（不开弹窗）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      if (!cancelRef) throw new Error("终止执行方案必须写明理由（它会写进定稿记录）");',
+    to: '      if (!cancelRef && false) throw new Error("终止执行方案必须写明理由（它会写进定稿记录）");',
+    expect: "topology-cancel：理由空着要拒"
+  },
+  {
+    name: "降级执行方案：弹窗点「取消」就不能发",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      }))) return "__skip_success__";\n      await api(`/api/execution-topologies/${encodeURIComponent(form.dataset.request)}/advance`,\n        {method: "POST", body: JSON.stringify({action: "downgrade", downgradeReason})});',
+    to: '      }))) { /* mutated: ignore the answer */ }\n      await api(`/api/execution-topologies/${encodeURIComponent(form.dataset.request)}/advance`,\n        {method: "POST", body: JSON.stringify({action: "downgrade", downgradeReason})});',
+    expect: "点「取消」不发请求"
+  },
+  {
     name: "升级候选处置：status 空着要拒，不缺省成「不予处理」",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",
