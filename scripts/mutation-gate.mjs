@@ -10341,6 +10341,14 @@ const MUTATIONS = [
     expect: "发出去的 expectedConfigVersion=undefined"
   },
   {
+    name: "人工定稿表单认不出 action 要拒，不缺省成 finalize（最重的不可逆动作不能是缺省）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      const action = ["revise", "finalize", "reject"].find((value) => value === data.action);\n      if (!action) throw new Error("请用下方的「提交修改意见」「选择定稿」或「打回返工」按钮提交 —— 系统不会替你选一个");',
+    to: '      const action = ["revise", "finalize", "reject"].find((value) => value === data.action) || "finalize";',
+    expect: "它把缺省当成了定稿去走确认框"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

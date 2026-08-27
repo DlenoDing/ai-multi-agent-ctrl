@@ -5083,7 +5083,10 @@ document.addEventListener("submit", async (event) => {
       if (!selectedOptionId) throw new Error("请先选择一个选项");
       if (selectedOptionId === "none" && !String(data.inputText || "").trim()) throw new Error("选择“不选择（自定义输入）”时必须填写确认内容");
       // action 来自被点击的按钮：revise（交 AI 再分析，不锁定）/ finalize（定稿并上锁）/ reject（打回）。
-      const action = ["revise", "finalize", "reject"].includes(data.action) ? data.action : "finalize";
+      // 认不出 action 就拒，不缺省成 finalize：定稿是整套人工闸门里最重、不可逆的一步，
+      // 提交器丢了（程序化 requestSubmit、桩、旧浏览器）时把它当缺省，等于替人做了最重的决定。
+      const action = ["revise", "finalize", "reject"].find((value) => value === data.action);
+      if (!action) throw new Error("请用下方的「提交修改意见」「选择定稿」或「打回返工」按钮提交 —— 系统不会替你选一个");
       if (action === "revise" && !String(data.inputText || "").trim()) throw new Error("提交修改意见时请填写你的方案或意见");
       // 定稿与打回都是一次性的：服务端对已非 pending 的确认单直接 409，点错不能改。而这三个按钮
       // 并排在同一行里，一个是"再商量一轮"，另两个是"永久锁定"或"打回"，视觉差别只有按钮配色。

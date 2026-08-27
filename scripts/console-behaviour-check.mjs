@@ -849,6 +849,43 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         probe.setFetch(previousFetch);
       }
     }
+    // 【人工定稿表单：action 只能来自点下去的按钮，认不出就拒，不缺省成 finalize】。定稿是整套闸门里最重、
+    // 不可逆的一步；提交器丢了就当 finalize，等于替人做了最重的决定（确认框会问"确认定稿"，而人点的可能是打回）。
+    {
+      const recorded = [];
+      const toasts = [];
+      const previousFetch = globalThis.fetch;
+      probe.setFetch(async (url, init = {}) => {
+        recorded.push({url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null});
+        return {ok: true, status: 200, headers: {get: () => null}, json: async () => ({ok: true})};
+      });
+      probe.captureToastKind("error", (message) => toasts.push(String(message)));
+      const mkForm = () => el("form", {dataset: {form: "hcr-decide", request: "hcr_1", round: "2"}}, [
+        el("input", {name: "selectedOptionId", type: "radio", value: "opt_a", checked: true}),
+        el("textarea", {name: "inputText", value: "我的意见"}),
+        el("button", {type: "submit", name: "action", value: "revise"}),
+        el("button", {type: "submit", name: "action", value: "finalize"}),
+        el("button", {type: "submit", name: "action", value: "reject"})
+      ]);
+      try {
+        const reviseForm = mkForm();
+        await probe.submit({target: reviseForm, submitter: reviseForm.children[2], preventDefault: () => {}});
+        const revisePost = recorded.find((item) => item.method === "POST" && /human-confirmations\/hcr_1\/decide$/u.test(item.url));
+        check("定稿表单点「提交修改意见」发 revise 且带本轮 expectedRound",
+          revisePost?.body?.action === "revise" && revisePost?.body?.expectedRound === 2 && revisePost?.body?.selectedOptionId === "opt_a",
+          `发出去的是 ${JSON.stringify(revisePost?.body)}`);
+        recorded.length = 0; toasts.length = 0;
+        const orphanForm = mkForm();
+        // 没有提交器：修好的代码当场拒（错误 toast）；缺省成 finalize 的代码会去等确认框（桩里永远不回来），所以加个超时。
+        await Promise.race([probe.submit({target: orphanForm, submitter: null, preventDefault: () => {}}), new Promise((resolve) => setTimeout(resolve, 150))]);
+        const posted = recorded.some((item) => item.method === "POST");
+        check("定稿表单没有提交器时要拒绝并说明用按钮提交（不许缺省成定稿）",
+          !posted && toasts.some((message) => /按钮/u.test(message)),
+          posted ? `没有提交器居然发出了 ${JSON.stringify(recorded[0]?.body)}` : `没拒绝：没有说明用按钮提交的提示（toast：${JSON.stringify(toasts).slice(0, 120)}）—— 它把缺省当成了定稿去走确认框，人点的可能是打回`);
+      } finally {
+        probe.setFetch(previousFetch);
+      }
+    }
     // 【配置编辑器不许插一行保存时会被丢掉的行】。cfg-add 原先对认不出的 kind 兜底插「业务规则」行，
     // 而保存只收 repo / baseline / role —— 人填了就丢。先自证点击真的会插行（repo），再验未知 kind 不插。
     {
