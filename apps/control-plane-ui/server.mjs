@@ -366,6 +366,9 @@ function readStateForRead() {
     markRuntimeStorage(fresh, ".runtime/control-plane-state.json");
     fresh.runtime.auditLogCap = AUDIT_LOG_CAP;
     fresh.runtime.nodeHeartbeatTimeoutMs = nodeHeartbeatTimeoutMs();
+    // 账号角色词表下发给界面：邀请表单原先是自由文本，而服务端现在按枚举拒 —— 词表只能来自服务端
+    // （界面自己那张标签表里混着授权模板的角色名，正是要避开的混淆）。
+    fresh.runtime.accountRoles = [...ACCOUNT_ROLES];
     deepFreezeState(fresh);
     preparedReadState = {source: shared, state: fresh};
   }
@@ -393,6 +396,9 @@ function readState() {
   // 判死阈值下发给界面：节点行上的"在线"来自 node.status，而它只有在扫描跑过之后才翻成 offline
   // （扫描挂在编排拍上）。界面要据此说出"心跳已经超时、只是还没被标记"，而不是照抄一个过时的字。
   state.runtime.nodeHeartbeatTimeoutMs = nodeHeartbeatTimeoutMs();
+  // 账号角色词表下发给界面：邀请表单原先是自由文本，而服务端现在按枚举拒 —— 词表只能来自服务端
+  // （界面自己那张标签表里混着授权模板的角色名，正是要避开的混淆）。
+  state.runtime.accountRoles = [...ACCOUNT_ROLES];
   return state;
 }
 

@@ -1143,6 +1143,12 @@ try {
     if (badRole.response.status !== 400 || badRole.payload?.error !== "account_role_unknown" || !(badRole.payload?.unknownRoles || []).includes("project_member")) {
       throw new Error(`用不在词表里的账号角色建账号该回 400 account_role_unknown（并点名那个角色），实际 ${badRole.response.status} ${JSON.stringify(badRole.payload).slice(0, 200)}`);
     }
+    // 界面拿到的词表与拒绝报文里的 supported 必须是同一份：人看着表单里的词表填，服务端就不该再拒。
+    const vocabState = await jsonFetch(port, "/api/state", {headers: {authorization: auth}});
+    const delivered = vocabState.payload?.runtime?.accountRoles;
+    if (JSON.stringify(delivered) !== JSON.stringify(badRole.payload.supported)) {
+      throw new Error(`界面拿到的账号角色词表（runtime.accountRoles=${JSON.stringify(delivered)}）与拒绝报文里的 supported 不是同一份 —— 照着表单填也会被拒`);
+    }
     console.log("  ok  不在词表里的账号角色被拒并点名（project_member 是授权模板的角色，不是账号角色）");
   }
   const invitedAccount = await jsonFetch(port, "/api/accounts", {

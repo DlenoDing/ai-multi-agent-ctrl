@@ -3618,6 +3618,17 @@ function runWholeListCapCase() {
   // 而界面上 23 张表里此前只有 5 张接了）。所以这里要按【整页】渲染，narrow probe 看不到外壳。
   const fullRoot = el("div");
   loadConsole(fullRoot).renderFullPageWith({...base}, admin, null, "sys-accounts");
+  // 【邀请表单要给出账号角色词表】。服务端按枚举拒认不出的角色（account_role_unknown），
+  // 表单却是自由文本 —— 词表必须来自服务端下发的 runtime.accountRoles，界面自己那张标签表里混着授权模板的角色名。
+  {
+    const vocabRoot = el("div");
+    loadConsole(vocabRoot).renderFullPageWith({...base, runtime: {...(base.runtime || {}), accountRoles: ["member", "viewer", "reviewer"]}}, admin, null, "sys-accounts");
+    const html = vocabRoot.innerHTML;
+    const hasList = /<datalist id="account-role-options">/u.test(html);
+    check("邀请表单要列出服务端下发的账号角色词表（自由文本配枚举校验＝拼错一次就 400）",
+      hasList && ["member", "viewer", "reviewer"].every((role) => html.includes(`<option value="${role}">`)),
+      hasList ? "datalist 里少了服务端下发的角色" : "邀请表单没有账号角色的 datalist —— 人只能凭记忆打，打错一个字母就被拒");
+  }
   check("名单完整时不加多余提示",
     !String(fullRoot.innerHTML || "").includes("不要据此判断"),
     "名单没有被截断也提示了不完整 —— 误报会让人不再相信这个提示");

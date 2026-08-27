@@ -10227,6 +10227,22 @@ const MUTATIONS = [
     expect: "agentGateway 少了 overdueNodes"
   },
   {
+    name: "账号角色词表要下发给界面（与拒绝报文里的 supported 同一份）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    fresh.runtime.accountRoles = [...ACCOUNT_ROLES];",
+    to: "    fresh.runtime.accountRoles = undefined;",
+    expect: "与拒绝报文里的 supported 不是同一份"
+  },
+  {
+    name: "邀请表单要渲染账号角色词表",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '          <datalist id="account-role-options">${(state.runtime?.accountRoles || []).map((role) => `<option value="${esc(role)}">${esc(t(role))}</option>`).join("")}</datalist></div>',
+    to: '          </div>',
+    expect: "邀请表单没有账号角色的 datalist"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",
