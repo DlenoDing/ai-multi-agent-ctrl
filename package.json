@@ -13,8 +13,8 @@
   },
   "scripts": {
     "init": "node scripts/run-with-env.mjs scripts/init-control-plane.mjs",
-    "dev": "node scripts/run-with-env.mjs apps/control-plane-ui/server.mjs",
     "start": "node scripts/run-with-env.mjs apps/control-plane-ui/server.mjs",
+    "dev": "node scripts/run-with-env.mjs apps/control-plane-ui/server.mjs",
     "shell:start": "./scripts/start.sh",
     "mcp:start": "node scripts/run-with-env.mjs apps/control-plane-ui/server.mjs",
     "mcp:doctor": "node scripts/run-with-env.mjs scripts/doctor-mcp.mjs",

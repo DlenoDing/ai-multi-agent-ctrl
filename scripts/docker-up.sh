@@ -89,7 +89,14 @@ POSTGRES_PASSWORD=${POSTGRES_PASSWORD_VALUE}
 EOF
 chmod 600 "$ENV_FILE"
 
+# 起容器之前把人接下来要找的三样说清：密钥在哪个文件、控制台在哪、拿哪把令牌登录。
+# 原先直接 exec 进 compose 的日志流，人只看得到服务端横幅里的地址，令牌得自己去猜在 .runtime/docker.env。
+announce_keys() {
+  printf '%s\n' "docker-up: 密钥已写在 ${ENV_FILE}（权限 600，别提交进仓库）。起来后打开控制台 ${AIMAC_PUBLIC_URL:-http://127.0.0.1:4317}，登录账号 system.admin@local，令牌是该文件里的 AIMAC_BOOTSTRAP_TOKEN；远程 MCP 客户端用 AIMAC_MCP_SERVICE_TOKEN。" >&2
+}
+
 if docker compose version >/dev/null 2>&1; then
+  announce_keys
   exec docker compose --env-file "$ENV_FILE" up --build "$@"
 fi
 # 两个都没有时，原先会落到下面那行 exec 上，人看到的是 "docker-compose: command not found" ——
@@ -103,4 +110,5 @@ if ! command -v docker-compose >/dev/null 2>&1; then
   exit 1
 fi
 
+announce_keys
 exec docker-compose --env-file "$ENV_FILE" up --build "$@"

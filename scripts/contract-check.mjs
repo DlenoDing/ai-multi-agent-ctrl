@@ -980,6 +980,7 @@ run(verifyConsoleHintsNameRealControls);
 run(verifyMcpCallConventionsAreDocumented);
 run(verifyMcpToolTableMatchesImplementation);
 run(verifyI18nKeysAreReachable);
+run(verifyDockerUpTellsWhereTheKeysAre);
 run(verifyConsoleRuntimeConstantsHaveOneWriter);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
@@ -15739,6 +15740,28 @@ function verifyConsoleRuntimeConstantsHaveOneWriter(output) {
     if (!body || !body.includes("decorateRuntimeForConsole(")) output.push(`${reader} 没调 decorateRuntimeForConsole —— 这条路上界面拿不到词表`);
   }
   console.log(`界面 runtime 常量：${numericKeys.length} 个数值只在 decorateRuntimeForConsole 里赋值，三份词表只来自 core 的 consoleVocabularies，服务端两条读路径与勘察工具都经过它`);
+}
+
+// 【docker-up 起容器之前要说清密钥文件、控制台地址、登录账号与令牌】。原先直接 exec 进 compose 日志流，人只看到横幅里的地址。
+// 用一个假 docker（compose version 回 0、compose up 立刻回 0）驱动脚本，不需要真 Docker；密钥文件指到临时目录。
+function verifyDockerUpTellsWhereTheKeysAre(output) {
+  const dir = mkdtempSync(join(tmpdir(), "aimac-docker-up-"));
+  const shimDir = join(dir, "bin");
+  mkdirSync(shimDir);
+  writeFileSync(join(shimDir, "docker"), "#!/bin/sh\nif [ \"$1\" = compose ] && [ \"$2\" = version ]; then echo 'Docker Compose version v9.9.9 (shim)'; exit 0; fi\nif [ \"$1\" = compose ]; then echo \"shim compose $*\"; exit 0; fi\necho \"shim docker $*\"; exit 0\n", {mode: 0o755});
+  const envFile = join(dir, "docker.env");
+  const run = spawnSync("bash", [join(root, "scripts/docker-up.sh")], {cwd: root, encoding: "utf8", timeout: 60000,
+    env: {...process.env, PATH: `${shimDir}:${process.env.PATH}`, AIMAC_DOCKER_ENV_FILE: envFile}});
+  const said = `${run.stdout || ""}${run.stderr || ""}`;
+  let mode = null; try { mode = statSync(envFile).mode & 0o777; } catch { /* 没写出来 */ }
+  rmSync(dir, {recursive: true, force: true});
+  if (run.status !== 0 || !/密钥已写在/u.test(said) || !said.includes(envFile) || !/system\.admin@local/u.test(said) || !/AIMAC_BOOTSTRAP_TOKEN/u.test(said)) {
+    output.push(`docker-up 起容器前没说清密钥文件/控制台地址/登录账号/哪把令牌（exit ${run.status}）：${said.slice(0, 240).replace(/\n/g, " | ")}`);
+  } else if (mode !== 0o600) {
+    output.push(`docker-up 生成的密钥文件权限不是 600（实际 ${mode === null ? "没写出来" : mode.toString(8)}）`);
+  } else {
+    console.log("docker-up：起容器前说清了密钥文件（600）、控制台地址、登录账号与令牌");
+  }
 }
 
 // 【i18n 词表里的键都得有人产出】。「产出的码要有词条」那条门只守一个方向；码改名之后旧词条留在词表里没人看得见。

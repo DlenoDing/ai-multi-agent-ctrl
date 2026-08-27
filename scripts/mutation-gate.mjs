@@ -3400,6 +3400,15 @@ const MUTATIONS = [
     expect: "没有任何代码/规范/种子/模板能产出"
   },
   {
+    name: "docker-up 起容器前要说清密钥在哪、怎么登录",
+    file: "scripts/docker-up.sh",
+    gate: "contract",
+    check: "verifyDockerUpTellsWhereTheKeysAre",
+    from: "  announce_keys\n  exec docker compose --env-file",
+    to: "  exec docker compose --env-file",
+    expect: "docker-up 起容器前没说清"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
