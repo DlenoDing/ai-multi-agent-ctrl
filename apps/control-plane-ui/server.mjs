@@ -36,7 +36,7 @@ import {
   revokeDispatchMcpGrants,
   selfCheckAgentNode,
   validateDispatchClaim, nodeHeartbeatTimeoutMs } from "./lib/agent-gateway.mjs";
-import { approvalResolve, assignWorkItem, handleMcpJsonRpc, isWriteTool, permissionResolve, createMcpToolDefinitions } from "../mcp-server/server.mjs";
+import { approvalResolve, assignWorkItem, handleMcpJsonRpc, isWriteTool, permissionResolve, createMcpToolDefinitions, mcpAuditFault } from "../mcp-server/server.mjs";
 import {
   recordOrchestratorTickOutcome,
   canUseGitPath,
@@ -2897,7 +2897,13 @@ async function handleApi(req, res) {
     // 重启既修不好满了的磁盘，还会把正在跑的东西一起打断。所以照常 ok，但把警告一起端出来。
     const auditFault = sharedAuditArchiveFault();
     const eventFault = projectEventLogFault();
+    // MCP 那本归档是 agent 调用记录的【唯一】完整来源（状态里只留最近 300 条）。
+    const mcpFault = mcpAuditFault();
     const warnings = [
+      ...(mcpFault ? [{kind: "mcp_audit_write_failed", lostEntries: mcpFault.lostEntries,
+        error: mcpFault.error, at: mcpFault.at,
+        hint: "MCP 调用归档写不进去了，这段时间 agent 做过什么事后查不到：检查运行目录剩余空间、"
+          + "挂载是否只读、以及本进程对 mcp-audit.jsonl 的写权限；恢复之后下一次调用会自动转回正常"}] : []),
       ...(auditFault ? [{kind: "audit_archive_write_failed", lostEntries: auditFault.lostEntries,
         error: auditFault.error, at: auditFault.at,
         hint: "问责台账的归档写不进去了，这段时间的操作事后查不到：检查运行目录剩余空间、"

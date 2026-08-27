@@ -9951,6 +9951,24 @@ const MUTATIONS = [
     expect: "被伪装成了正当拒绝"
   },
   {
+    name: "MCP 归档写不进去时不得把业务写入一起打死、不得泄服务端路径",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "    mcpAuditFaultState = null;\n  } catch (error) {\n    mcpAuditFaultState = {",
+    to: "    mcpAuditFaultState = null;\n  } catch (error) {\n    throw error; mcpAuditFaultState = {",
+    // 先红的是 mcp() 助手自己：它看到 JSON-RPC error 就抛（那正是「EACCES 撞进错误码分支」的样子），
+    // 轮不到后面那句「业务调用也被打死了」。按实际先红的写。
+    expect: "MCP tools/call failed"
+  },
+  {
+    name: "MCP 归档写失败要端到健康检查上（监控不能一片绿）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "mcp",
+    from: "    const mcpFault = mcpAuditFault();",
+    to: "    const mcpFault = null;",
+    expect: "而 /api/health 没说"
+  },
+  {
     name: "「项目成员授权」的项目下拉里不许出现已归档的项目（后端已拒 project_archived）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

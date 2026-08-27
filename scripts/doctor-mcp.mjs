@@ -5,7 +5,7 @@ import { createMcpToolDefinitions } from "../apps/mcp-server/server.mjs";
 import { REGISTERED_OWNER_ROLES } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import { KNOWN_SECOND_DOORS, HUMAN_ONLY_MCP_TOOL_REFUSALS } from "./lib/known-second-doors.mjs";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -305,6 +305,52 @@ try {
       throw new Error(`${tool} 一个产出目标标识都没给却没被入参层拦下：`
         + `${JSON.stringify(refusal).slice(0, 200)} —— 调用方拿到的拒绝码会指向错误的排查方向`);
     }
+  }
+
+  // 【MCP 归档写不进去：不挡业务、不泄路径、要报警、恢复要自清】。归档是 agent 调用记录的
+  // 【唯一】完整来源（状态里只留最近 300 条）。此前 appendMcpAudit 没有 try/catch：磁盘满/只读时
+  // Node 的 EACCES 带着 error.code 一路撞进「有 code 就当 JSON-RPC 错误码」那条分支 ——
+  // 远程 agent 拿到 {code:"EACCES", message:"…open '/var/folders/…/mcp-audit.jsonl'"}：
+  // 服务端路径泄出去、stderr 一个字没有、健康检查也不知道（用真服务端造过）。
+  {
+    const mcpAuditPath = join(runtimeDir, "mcp-audit.jsonl");
+    if (!existsSync(mcpAuditPath)) throw new Error("到这一步 MCP 归档文件还不存在 —— 下面这条会空转");
+    chmodSync(mcpAuditPath, 0o444);
+    let duringFault;
+    try {
+      duringFault = await mcp("tools/call", {name: "room-mcp.room_join", arguments: {
+        idempotencyKey: "doctor-mcp-audit-fault", taskGroupId: "tg_runtime_management",
+        roomId: "room_tg_runtime_management", sessionId: "sess_doctor_audit_fault", roleId: "reviewer"}});
+    } finally {
+      // 恢复权限这一步自己也可能抛（文件被轮转走了之类）：包起来，别让它替换掉主体断言的失败原因。
+      try { chmodSync(mcpAuditPath, 0o644); } catch { /* 归档文件若已不在，下面读健康检查照样能验 */ }
+    }
+    const body = duringFault.structuredContent;
+    if (duringFault.error || body?.ok !== true) {
+      throw new Error(`归档写不进去时业务调用也被打死了：${JSON.stringify(duringFault).slice(0, 200)} ——`
+        + " 归档落不了盘不该把 agent 的工作一起挡死");
+    }
+    if (/\/var\/folders|\/tmp\/|mcp-audit\.jsonl/u.test(JSON.stringify(duringFault))) {
+      throw new Error("归档故障把服务端本地路径泄给了远程调用方");
+    }
+    const faulted = await api("/api/health");
+    const warned = (faulted.warnings || []).find((item) => item.kind === "mcp_audit_write_failed");
+    if (!warned || !warned.lostEntries || !warned.hint) {
+      throw new Error(`MCP 归档写不进去，而 /api/health 没说（${JSON.stringify(faulted.warnings || null)}）——`
+        + " 这段时间 agent 做过什么事后查不到，而监控一片绿");
+    }
+    if (!/\[mcp-audit\] 归档写入失败/u.test(stderr)) {
+      throw new Error("MCP 归档写失败在服务端 stderr 上一个字都没有 —— 运维无从知道");
+    }
+    // 恢复之后要自己清掉：只置不清的警告等于噪声。
+    await mcp("tools/call", {name: "room-mcp.room_join", arguments: {
+      idempotencyKey: "doctor-mcp-audit-recovered", taskGroupId: "tg_runtime_management",
+      roomId: "room_tg_runtime_management", sessionId: "sess_doctor_audit_recovered", roleId: "reviewer"}});
+    const recovered = await api("/api/health");
+    if ((recovered.warnings || []).some((item) => item.kind === "mcp_audit_write_failed")) {
+      throw new Error("MCP 归档恢复正常之后，健康检查上的警告还挂着");
+    }
+    console.log("  ok  MCP 归档写不进去：业务照常、不泄路径、健康检查报警、恢复后自清");
   }
 
   const admin = await api("/api/auth/login", {method: "POST", body: {email: "system.admin@local", token: "doctor-bootstrap-token"}});

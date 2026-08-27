@@ -1325,12 +1325,35 @@ function mcpAuditSubject(toolName, args) {
   return toolName;
 }
 
+// 【归档写不进去，不能把业务写入一起打死，更不能把服务端路径泄给远程调用方】。
+// 这里原先没有 try/catch：磁盘满 / 挂载只读 / 权限变了时，appendFileSync 抛的 EACCES 带着
+// Node 的 error.code，一路撞进 tools/call 那条「有 code 就当 JSON-RPC 错误码」的分支 ——
+// 远程 agent 拿到的是 {code:"EACCES", message:"…open '/var/folders/…/mcp-audit.jsonl'"}：
+// 服务端本地路径原样泄出去，而 stderr 一个字没有、健康检查也不知道（真造过一次）。
+// 与审计归档那侧（audit-ledger 的 archiveFault）同规：不挡业务写入、记下丢了几条、
+// 打到 stderr、下次写成功就清零，并由 /api/health 端出去。状态里的 mcpCalls 只留最近 300 条，
+// 归档是那本账【唯一】的完整来源 —— 它断了而没人知道，事后问责就少了一段。
+let mcpAuditFaultState = null;
+export function mcpAuditFault() {
+  return mcpAuditFaultState;
+}
 function appendMcpAudit(event) {
-  mkdirSync(runtimeDir, {recursive: true});
-  withMcpAuditLock(() => {
-    rotateMcpAuditIfNeeded();
-    appendFileSync(mcpAuditPath, `${JSON.stringify(event)}\n`);
-  });
+  try {
+    mkdirSync(runtimeDir, {recursive: true});
+    withMcpAuditLock(() => {
+      rotateMcpAuditIfNeeded();
+      appendFileSync(mcpAuditPath, `${JSON.stringify(event)}\n`);
+    });
+    mcpAuditFaultState = null;
+  } catch (error) {
+    mcpAuditFaultState = {
+      at: new Date().toISOString(),
+      lostEntries: Number(mcpAuditFaultState?.lostEntries || 0) + 1,
+      // 只留错误码与一句话，不留路径：这个对象会随健康检查端给系统账号，也会进日志。
+      error: String(error?.code || error?.message || error).slice(0, 120)
+    };
+    try { console.error(`[mcp-audit] 归档写入失败，1 条调用记录未落盘：${mcpAuditFaultState.error}`); } catch { /* 记日志不能再把服务打死 */ }
+  }
 }
 
 function rotateMcpAuditIfNeeded() {
