@@ -16196,7 +16196,9 @@ async function verifyStoppingAnExecutorTellsTheTruth(output) {
   try {
     // 等它把 "up" 打出来再动手：没等到就 SIGTERM 的话，handler 可能还没装上，
     // 这一条就变成"验一个普通进程能不能被 SIGTERM 杀掉"，而不是它想验的那件事。
-    await new Promise((resolve) => { child.stdout.once("data", resolve); setTimeout(resolve, 8000); });
+    let sawUp = false;
+    await new Promise((resolve) => { child.stdout.once("data", () => { sawUp = true; resolve(); }); setTimeout(resolve, 8000); });
+    const stopStartedAt = Date.now();
     const stopped = await new Promise((resolve) => {
       let done = false;
       const finish = (value) => { if (!done) { done = true; resolve(value); } };
@@ -16208,8 +16210,10 @@ async function verifyStoppingAnExecutorTellsTheTruth(output) {
       try { process.kill(-child.pid, "SIGTERM"); } catch { finish(true); }
     });
     if (!stopped) {
+      // 偶发红时要能看出是哪一种：子进程没起来（up 没等到）、SIGKILL 发了但 close 没来、还是退出码/信号异常。
       output.push("一个忽略 SIGTERM 的执行器没能在宽限期后被 SIGKILL 收掉 —— "
-        + "人按了终止，进程还在跑，而回执会说它停了");
+        + "人按了终止，进程还在跑，而回执会说它停了"
+        + `（up ${sawUp ? "已看到" : "8 秒内没看到"}；等了 ${Date.now() - stopStartedAt}ms；exitCode=${child.exitCode} signalCode=${child.signalCode} killed=${child.killed}；负载 ${os.loadavg().map((n) => n.toFixed(1)).join("/")}）`);
     }
   } finally {
     try { process.kill(-child.pid, "SIGKILL"); } catch { /* 已经收掉了 */ }
