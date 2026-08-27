@@ -9877,6 +9877,14 @@ const MUTATIONS = [
       + "  return workItemId ? taskGroup?.workItems?.find((item) => item.id === workItemId) || null : taskGroup?.workItems?.[0] || null;",
     expect: "没有被拒"
   },
+  {
+    name: "节点服务多个项目时要逐个判权（原先只按 projectIds[0]）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "  const projectIds = (node?.projectIds || []).slice(1);",
+    to: "  const projectIds = [];",
+    expect: "节点跨项目判定算错了"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

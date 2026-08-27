@@ -53,6 +53,7 @@ import {
   createHumanDirective,
   consumeQueuedHumanDirectives,
   taskGroupRuntimeControlRefusal,
+  nodeProjectsBeyondPermission,
   defaultSystemRules,
   effectiveTaskGroupConfig,
   ensureRuntimeCollections,
@@ -6388,6 +6389,47 @@ function verifyCommandBusLifecycle(output) {
   const done = succeedCommand(state, cmd, {resultRef: "result:x"});
   if (done.command.status !== "succeeded" || done.commandEffect) {
     output.push("command-bus: no-side-effect command should succeed without a CommandEffect");
+  }
+
+  // 【一台节点可能同时服务多个项目】。吊销它、给它下节点级命令，影响的是它服务的全部项目，
+  // 而那两条路原先只按 projectIds[0] 判权：在第一个项目上有权的人能停掉一台同时给别人干活的
+  // 节点。这里按【源码形状】核：两处 projectIds?.[0] 之前必须先过跨项目补判。
+  // （行为侧够不着：e2e 里造不出"一台节点同时服务两个项目、而调用方只在其中一个上有权"
+  //   的组合 —— 入网令牌是按单个项目签的，要造它得先手改状态；如实说明，不编一条够不到的用例。）
+  {
+    const serverSrc = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+    if (!/function refuseIfNodeServesUnauthorizedProjects\(/u.test(serverSrc)) {
+      output.push("节点跨项目补判那个函数不见了 —— 吊销/节点级命令会退回只按 projectIds[0] 判权");
+    }
+    const uses = [...serverSrc.matchAll(/refuseIfNodeServesUnauthorizedProjects\(req, state, targetNode\)/gu)].length;
+    // 判定本身单独压一遍（只核接线的话，把 missing 算错照样绿）：
+    // 一台服务两个项目的节点，调用方只在第一个上有权 —— 第二个必须被点出来。
+    const nodeProbeState = {projects: [{id: "prj_a"}, {id: "prj_b"}]};
+    const twoProjectNode = {nodeId: "node_x", projectIds: ["prj_a", "prj_b"]};
+    const onlyOnA = (_state, _accountId, _perm, scope) => scope.resourceId === "prj_a";
+    const beyond = nodeProjectsBeyondPermission(nodeProbeState, "acct_x", twoProjectNode, onlyOnA);
+    if (beyond.join(",") !== "prj_b") {
+      output.push(`节点跨项目判定算错了：只在 prj_a 上有权时应点出 prj_b，实际 ${JSON.stringify(beyond)} ——`
+        + " 拒绝码 agent_node_serves_other_projects 会拒错人或漏拒");
+    }
+    if (nodeProjectsBeyondPermission(nodeProbeState, "acct_x", twoProjectNode, () => true).length) {
+      output.push("两个项目都有权时也被判成越界 —— agent_node_serves_other_projects 会挡住正常路径");
+    }
+    if (nodeProjectsBeyondPermission(nodeProbeState, "acct_x", {nodeId: "n", projectIds: ["prj_a"]}, onlyOnA).length) {
+      output.push("只服务一个项目的节点也被判成跨项目 —— 那台节点根本没有第二个项目");
+    }
+    if (uses !== 2) {
+      output.push(`节点跨项目补判只接了 ${uses} 处（应 2 处：吊销、节点级控制命令）——`
+        + " 少接一处，那条路就还是只按第一个项目判权");
+    }
+    // 接线要在【判权之前】：接在后面等于先放行再补判。
+    for (const marker of ["agent_node_revoke", "agent_control_command_create"]) {
+      const at = serverSrc.indexOf(`beginGuardedWrite(req, state, "${marker}"`);
+      const before = at < 0 ? "" : serverSrc.slice(Math.max(0, at - 700), at);
+      if (at < 0 || !before.includes("refuseIfNodeServesUnauthorizedProjects")) {
+        output.push(`${marker} 的跨项目补判不在守卫之前 —— 那样是先放行再补判`);
+      }
+    }
   }
 
   // 【不点名就不猜】。findWorkItem 原先在不给 workItemId 时取该组的【第一个】工作项 ——

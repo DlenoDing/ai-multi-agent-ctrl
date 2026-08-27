@@ -105,6 +105,7 @@ import {
   effectivePathDenylist,
   recordIdempotentResult,
   taskGroupRuntimeControlRefusal,
+  nodeProjectsBeyondPermission,
   projectArchivedRefusal,
   idempotentReplayOutcome,
   recordCheckpointRejection,
@@ -2093,6 +2094,23 @@ function sliceItems(items, limit) {
 // 审计日志也成了可写入的留言板。
 const TASK_GROUP_CONTROL_ACTIONS = ["recompute_readiness", "pause", "resume", "request_review", "rebound_drift", "cancel", "abort"];
 
+// 【一台节点可能同时服务多个项目】。吊销它、给它下控制命令，影响的是它服务的【全部】项目，
+// 而这两条路原先只按 projectIds[0] 判权：在第一个项目上有权的人，能停掉一台同时给别人干活的
+// 节点；反过来，只在第二个项目上有权的人被挡在门外，而那台节点正在他的项目里跑。
+// 作用域取第一个是为了让审计/命令记录有一个确定的落点 —— 那没问题，问题是【判权也只判了它】。
+// 这里在守卫之外把其余项目逐个补判：任一项目上没有 agent:activate 就整体拒绝。
+function refuseIfNodeServesUnauthorizedProjects(req, state, node) {
+  const account = accountFromRequest(req, state)?.account;
+  if (!account) return {status: 401, payload: {error: "auth_required"}};
+  if (isSystemAccount(account)) return null;
+  const missing = nodeProjectsBeyondPermission(state, accountIdOf(account), node, hasPermission);
+  if (!missing.length) return null;
+  return {status: 403, payload: {error: "agent_node_serves_other_projects", nodeId: node.nodeId,
+    nodeProjectIds: node.projectIds, missingOn: missing,
+    message: "这台节点同时服务多个项目，停它会影响到你没有权限的那几个："
+      + `${missing.join("、")}。请先在这些项目上取得「智能体管理」权限，或让各自的负责人各停各的`}};
+}
+
 function permissionForAction(action) {
   if (action === "bootstrap_init") return "system:bootstrap";
   if (action === "system_account_invite") return "system:account_admin";
@@ -3500,6 +3518,8 @@ async function handleApi(req, res) {
       return json(res, denial.status, denial.payload);
     }
     const projectId = targetNode.projectIds?.[0];
+    const crossProject = refuseIfNodeServesUnauthorizedProjects(req, state, targetNode);
+    if (crossProject) return json(res, crossProject.status, crossProject.payload);
     const guard = beginGuardedWrite(req, state, "agent_node_revoke", `Project:${projectId}`, projectScope(projectId));
     if (guard.status) return json(res, guard.status, guard.payload);
     const payload = requestAgentNodeRevocation(state, targetNode, body, {actor: guard.actor, idempotencyKey: guard.idempotencyKey});
@@ -3535,6 +3555,12 @@ async function handleApi(req, res) {
       return json(res, 409, {error: "dispatch_not_resumable"});
     }
     const taskScopedControl = ["pause_dispatch", "cancel_dispatch", "resume_dispatch"].includes(commandType) && targetDispatch;
+    // 派发级的命令按【那条派发所属的任务组】判权（下面那一支），作用域是准的。
+    // 节点级的命令不一样：它影响这台节点服务的【全部】项目，而这里只按 projectIds[0] 判。
+    if (!taskScopedControl) {
+      const crossProject = refuseIfNodeServesUnauthorizedProjects(req, state, targetNode);
+      if (crossProject) return json(res, crossProject.status, crossProject.payload);
+    }
     const projectId = targetNode.projectIds?.[0];
     const guard = taskScopedControl
       ? beginGuardedWrite(req, state, "task_group_agent_control_command_create", `TaskGroup:${targetDispatch.taskGroupId}`, taskGroupScope(state, targetDispatch.taskGroupId))

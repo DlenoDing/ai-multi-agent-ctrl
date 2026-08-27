@@ -6209,6 +6209,18 @@ export function projectArchivedRefusal(project, whatCannotBeDone) {
   };
 }
 
+// 【一台节点可能同时服务多个项目】。吊销它、给它下节点级命令，影响的是它服务的【全部】项目，
+// 而那两条路只按 projectIds[0] 判权：在第一个项目上有权的人能停掉一台同时给别人干活的节点；
+// 反过来，只在第二个项目上有权的人被挡在门外，而那台节点正在他的项目里跑。
+// 作用域取第一个是为了让审计/命令记录有确定落点 —— 那没问题，问题是【判权也只判了它】。
+// 判定放在 core 且只依赖 state：路由那层只做接线，这样它能被真正压一遍（而不是只核源码形状）。
+export function nodeProjectsBeyondPermission(state, accountId, node, hasPermissionFn) {
+  const projectIds = (node?.projectIds || []).slice(1);
+  if (!projectIds.length) return [];
+  return projectIds.filter((projectId) =>
+    !hasPermissionFn(state, accountId, "agent:activate", {resourceType: "project", resourceId: projectId}));
+}
+
 export function taskGroupRuntimeControlRefusal(taskGroup, action) {
   if (!taskGroup || !TASK_GROUP_SETTLED_STATUSES.includes(taskGroup.status)) return null;
   if (action === "recompute_readiness") return null;

@@ -90,6 +90,8 @@
     task_group_already_terminal: "这个任务组已经结束了（终态），不能再对它做运行控制",
     // 已了结的工作项不能再派活（重新派一个已了结的格子不会让它再跑起来）。
     work_item_settled: "这个工作项已经了结了（终态），不能再派活",
+    // 一台节点可能同时服务多个项目：停它会影响到你没有权限的那几个。
+    agent_node_serves_other_projects: "这台节点还在给别的项目干活，而你在那些项目上没有「智能体管理」权限",
     // 模型选型没选出候选的唯一原因码。它会直接出现在运行时页的选型行上。
     no_candidate_satisfied_hard_constraints: "没有任何候选模型同时满足硬约束（能力档 / 推理档 / 上限）",
     member_default_project_not_found: "默认项目指不到任何项目：请从下拉里选一个，或留空表示不指定",
