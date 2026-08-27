@@ -10037,6 +10037,12 @@ function verifyHintMapsHaveNoDuplicateKeys(output) {
   console.log(`重复键：${scanned} 张对象字面量、${keys} 个键逐个查过`);
 }
 
+// 标识符的存在性要按【整个名字】判：整段源码 .includes(name) 是子串判据，`…_BYTE` 会在 `…_BYTES` 上命中、
+// `policyDecisionRef` 会在 `policyDecisionRefs` 上命中（2026-08-28 变异实测假绿）。函数声明会提升，放哪都不会 TDZ。
+function containsWholeIdentifier(text, name) {
+  return new RegExp(`(^|[^A-Za-z0-9_])${name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?![A-Za-z0-9_])`, "u").test(text);
+}
+
 function verifyFirstScreenPointsAtRealPlaces(output) {
   const init = readFileSync(join(root, "scripts/init-control-plane.mjs"), "utf8")
     .replace(/\/\/[^\n]*/gu, (text) => " ".repeat(text.length));
@@ -11549,7 +11555,7 @@ function verifyLongLivedRecordsDoNotPointAtCappedOnes(output) {
     decisionRecordRef: "decisionRecords",
     modelSelectionDecisionRef: "modelSelectionDecisions"
   };
-  const phantomFields = Object.keys(REF_FIELDS_INTO_CAPPED).filter((field) => !sources.includes(field));
+  const phantomFields = Object.keys(REF_FIELDS_INTO_CAPPED).filter((field) => !containsWholeIdentifier(sources, field));
   if (phantomFields.length) {
     output.push(`引用字段登记里这些名字在产品代码里根本不存在：${phantomFields.join("、")} —— `
       + "名字打错的那一项会静默不查，而门看起来覆盖了它");
@@ -16953,13 +16959,13 @@ function verifyOperatorEnvVarsAreDocumented(output) {
   const code = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/agent-runtime/runtime.mjs", "apps/mcp-server/server.mjs"]
     .map((file) => readFileSync(join(root, file), "utf8")).join("\n");
-  const missing = OPERATOR_FACING_ENV_VARS.filter((name) => !docs.includes(name));
+  const missing = OPERATOR_FACING_ENV_VARS.filter((name) => !containsWholeIdentifier(docs, name));
   if (missing.length) {
     output.push(`这些运维会用到的运行参数，文档里一个字都没写：${missing.join("、")} —— `
       + "人只能去读源码才知道它存在（实测改端口就是这样）");
   }
   // 登记表本身也要跟着代码走：登记了一个代码里已经不读的变量，文档就在写一件不存在的事。
-  const stale = OPERATOR_FACING_ENV_VARS.filter((name) => !code.includes(name));
+  const stale = OPERATOR_FACING_ENV_VARS.filter((name) => !containsWholeIdentifier(code, name));
   if (stale.length) {
     output.push(`这些变量登记为「运维会用到」，而产品代码已经不读它们了：${stale.join("、")} —— `
       + "文档里那一行在说一件不存在的事，该撤");
