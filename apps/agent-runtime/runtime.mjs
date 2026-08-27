@@ -93,7 +93,7 @@ function explainAgentFailure(error) {
   const known = {
     join_token_invalid: "这张入网票不对（或已经不在服务端了）—— 找控制面管理员在「AI 智能体」页重新签发一张",
     join_token_expired: "这张入网票已经过期 —— 找控制面管理员重新签发",
-    join_token_consumed: "这张入网票已经被用过了（一次性）—— 重新签发一张，别复用",
+    join_token_consumed: "这张入网票已经被用过了（一次性）—— 换机器要重新签发一张；同一台机器重跑安装命令不用重签（会拿回同一个节点）",
     join_token_not_active: "这张入网票已被吊销 —— 找控制面管理员确认后重新签发",
     join_token_must_be_one_time: "这张票不是一次性票，服务端拒绝用它注册 —— 重新签发",
     join_token_node_name_mismatch: "节点名与签发这张票时指定的不一致 —— 用 --node-name 改成票上那个名字",
@@ -2006,6 +2006,7 @@ async function jsonRequest(url, options = {}) {
   if (!response.ok) {
     const error = new Error(`${payload.error || "request_failed"}: ${payload.message || response.status}`);
     error.status = response.status;
+    error.code = payload.error || "request_failed";
     throw error;
   }
   return payload;
@@ -2040,6 +2041,9 @@ function retryableControlPlaneError(error) {
   // 可重试的写冲突 —— 那会让一个【已经失去 claim】的节点反复重试，直到耗尽次数才停，
   // 期间它仍然认为自己该继续干活。失去持有权不是暂时性故障，重试改变不了它。
   if (error?.nonRetryable === true) return false;
+  // 入网票的终局拒绝（用过了/过期/吊销/不对/节点名或角色不匹配）与「缺节点名」都是 4xx 里的永久错误：
+  // 服务端回 409 的那几种原先被当成写冲突重试四次（屏幕上三行「retryable conflict」，而重试改变不了它）。
+  if (/^(join_token_[a-z_]+|node_name_required)$/u.test(String(error?.code || message.split(":")[0]))) return false;
   // 服务端【答复了】的（带 HTTP 状态码）只按状态码判：写冲突/限流/5xx 可重试，其余不重试。
   // 原先这里还拿整条报文做子串匹配，而控制面有一批【永久】拒绝码本身就带着 timeout / abort 字样
   // （agent_node_heartbeat_timeout、dispatch_revocation_ack_timeout、dispatch_shutdown_ack_timeout…）——

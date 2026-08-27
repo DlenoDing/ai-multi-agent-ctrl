@@ -3201,6 +3201,22 @@ const MUTATIONS = [
     expect: "该列出可用键（含 projectId）"
   },
   {
+    name: "入网票的终局拒绝不许当成写冲突重试",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "  if (/^(join_token_[a-z_]+|node_name_required)$/u.test(String(error?.code || message.split(\":\")[0]))) return false;",
+    to: "",
+    expect: "该一次就说「已经被用过了」且不重试"
+  },
+  {
+    name: "带校验的安装命令在校验失败时要有一句人话",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "agent",
+    from: " || { printf '%s\\\\n' '安装脚本校验失败：下载可能被篡改或不完整 —— 别继续装；重新执行这条命令，仍失败就找控制面管理员' >&2; exit 1; }",
+    to: "",
+    expect: "校验失败时没有一句人话"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

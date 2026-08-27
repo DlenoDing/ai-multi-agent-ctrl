@@ -229,6 +229,7 @@ try {
   });
   if (!joinResult.installCommand.includes(`${baseUrl}/install-agent.sh`)) throw new Error("join token did not produce a server-hosted install command");
   if (joinResult.installCommand.includes("--join-token ") || !joinResult.installCommand.includes("--join-token-file")) throw new Error("join token install command exposed token in argv");
+  if (!joinResult.verifiedInstallCommand.includes("安装脚本校验失败")) throw new Error("带校验的安装命令在校验失败时没有一句人话 —— 人只看到 sha256sum 的 FAILED，不知道该不该继续");
   if (!joinResult.verifiedInstallCommand.includes("( if command -v sha256sum") || !joinResult.verifiedInstallCommand.includes("elif command -v shasum")) throw new Error("join token did not produce a portable checksum-verified install command");
 
   // 装 agent 的人是在自己的机器上跑一条命令：失败时不能只丢一段 Node 崩溃栈。
@@ -487,6 +488,20 @@ try {
   if (reuse.payload?.tokenStatus !== "consumed") {
     throw new Error(`拒绝报文里没有说清令牌现在是什么状态（tokenStatus=${reuse.payload?.tokenStatus}）—— `
       + "人拿着一张不work的令牌，得知道是用过了、过期了还是被吊销了");
+  }
+  // 同一件事从 agentctl 这头看：用过的票换台机器再 bootstrap，原先被当成写冲突重试四次（三行「retryable conflict」），
+  // 而它是终局拒绝。要一次就说清，且屏幕上不许出现重试的话。
+  {
+    const reuseDir = mkdtempSync(join(tmpdir(), "aimac-reuse-"));
+    writeFileSync(join(reuseDir, "join.token"), `${joinResult.joinToken}\n`);
+    const startedAt = Date.now();
+    const reuseCli = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "bootstrap", "--server", baseUrl, "--join-token-file", join(reuseDir, "join.token")],
+      {cwd: root, encoding: "utf8", timeout: 60000, env: {...process.env, AIMAC_AGENT_WORK_DIR: reuseDir, AIMAC_AGENT_NODE_NAME: "doctor-other-host", AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true"}});
+    const said = `${reuseCli.stdout || ""}${reuseCli.stderr || ""}`;
+    rmSync(reuseDir, {recursive: true, force: true});
+    if (reuseCli.status === 0 || /retryable control-plane conflict/u.test(said) || !/已经被用过了/u.test(said)) {
+      throw new Error(`用过的票换机器 bootstrap：该一次就说「已经被用过了」且不重试（exit ${reuseCli.status}，${Date.now() - startedAt}ms）：${said.slice(0, 260).replace(/\n/g, " ")}`);
+    }
   }
 
   const orchestrated = await json("/api/orchestrator/run", {
