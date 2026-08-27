@@ -596,14 +596,14 @@ runtime_start
 | --- | --- | --- | --- |
 | `AIMAC_AGENT_EXECUTOR_COMMAND` | 按本机可用的 CLI 自动选 | 模型执行器命令（也可用 `--executor-command`） | 命令不存在时派发全部失败 |
 | `AIMAC_AGENT_EXECUTION_TIMEOUT_MS` | `7200000` | 单次执行器运行上限（2 小时；0＝不限） | 超时的派发判失败 |
-| `AIMAC_AGENT_EXECUTION_KEEPALIVE_MS` | `60000` | 执行期间给控制面发心跳的间隔（最低 15 秒，且不超过控制面的心跳阈值） | 过长会被控制面判离线 |
+| `AIMAC_AGENT_EXECUTION_KEEPALIVE_MS` | `60000` | 执行期间给控制面发心跳的间隔（最低 15 秒，且不超过控制面的心跳阈值）（下限 15000，更小的值按它生效） | 过长会被控制面判离线 |
 | `AIMAC_AGENT_STOP_TIMEOUT_MS` | `10000` | 取消时等执行器优雅退出多久再强杀 | — |
 | `AIMAC_AGENT_OUTPUT_CAPTURE_MAX_CHARS` | `33554432`（32 MiB；最低 1024） | 执行器输出截留上限，超过的部分不进证据 | 太小会截掉关键报错 |
 | `AIMAC_AGENT_SANDBOX_MODE` | 自动探测（容器→`container`） | 上报的沙箱模式标签 | 只影响展示与准入判断 |
 | `AIMAC_AGENT_LIBRARY_MAX_MB` | `2048` | 本机内容库（技能/规则文件）总大小上限（最低 64） | 超过后同步被拒 |
-| `AIMAC_AGENT_SESSION_TTL_HOURS` | `72` | 任务会话目录保留时长，过期由清扫回收 | — |
+| `AIMAC_AGENT_SESSION_TTL_HOURS` | `72` | 任务会话目录保留时长，过期由清扫回收（下限 1，更小的值按它生效） | — |
 | `AIMAC_AGENT_KEEP_SESSION_DIRS` | `false` | 不清扫会话目录（排障用） | 盘会一直涨 |
-| `AIMAC_AGENT_SWEEP_INTERVAL_MS` | `3600000` | 清扫间隔（最低 5 分钟） | — |
+| `AIMAC_AGENT_SWEEP_INTERVAL_MS` | `3600000` | 清扫间隔（最低 5 分钟）（下限 300000，更小的值按它生效） | — |
 
 ### 11.3 网络与重试
 

@@ -78,10 +78,10 @@ export AIMAC_MCP_SERVICE_TOKEN='<central-mcp-service-token>'
 | `AIMAC_RUNTIME_DIR` | `.runtime` | 运行态落盘目录（状态、项目分片、审计台账、锁） |
 | `AIMAC_REPOSITORY_ROOT` | 仓库根 | 核验档位下本机工作副本的根目录 |
 | `AIMAC_EXECUTION_PROFILE` | `production` | `verification` 时控制面自己跑工作器（只用于本机核验） |
-| `AIMAC_ORCHESTRATOR_INTERVAL_MS` | `60000` | 后台自治周期。**写 0 关掉它**：关掉后不再产生新派发，但【已排队的派发仍会被在线 agent 领走】，要连它们一起停到任务组页「暂停执行」 |
+| `AIMAC_ORCHESTRATOR_INTERVAL_MS` | `60000` | 后台自治周期。**写 0 关掉它**：关掉后不再产生新派发，但【已排队的派发仍会被在线 agent 领走】，要连它们一起停到任务组页「暂停执行」（下限 5000，更小的值按它生效） |
 | `AIMAC_TRANSITION_STRICT` | `true` | 非法状态迁移一律拒绝；`false` 是宽松模式（放行但记账） |
 | `AIMAC_TRUST_PROXY` | `false` | 置于反向代理之后时才开，决定是否采信 `X-Forwarded-*` |
-| `AIMAC_MAX_EXECUTION_ATTEMPTS` | `3` | 同一工作项连续失败多少次后停止自动重派（停下来之后由人在「人工指令」页处置） |
+| `AIMAC_MAX_EXECUTION_ATTEMPTS` | `3` | 同一工作项连续失败多少次后停止自动重派（停下来之后由人在「人工指令」页处置）（下限 1，更小的值按它生效） |
 
 本地演示/验收账号可选用 seed 覆盖变量；生产环境应在管理界面里创建用户、项目成员、任务组授权和服务账号授权，不把用户或项目凭证作为统一服务器 secret：
 
@@ -164,15 +164,15 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 
 | 环境变量 | 默认 | 它兜住什么 | 到量时人看到什么 |
 | --- | --- | --- | --- |
-| `AIMAC_POLICY_DECISIONS_CAP` | `500` | 策略决策（每次受守卫的写入一条）；被活跃授权引用的从不淘汰 | 授权的「凭什么发的」查不到更早的 |
-| `AIMAC_ADMISSION_DECISION_CAP` | `400` | 准入判决；每个活单元的最新一条从不淘汰 | 更早的「为什么这一轮没跑它」查不到 |
+| `AIMAC_POLICY_DECISIONS_CAP` | `500` | 策略决策（每次受守卫的写入一条）；被活跃授权引用的从不淘汰（下限 100，更小的值按它生效） | 授权的「凭什么发的」查不到更早的 |
+| `AIMAC_ADMISSION_DECISION_CAP` | `400` | 准入判决；每个活单元的最新一条从不淘汰（下限 50，更小的值按它生效） | 更早的「为什么这一轮没跑它」查不到 |
 | `AIMAC_ADMISSION_SCAN_CAP` | `200` | 每轮编排的准入扫描快照 | 同上，按任务组保留 |
-| `AIMAC_TASK_GROUP_BLOCKER_CAP` | `50` | 单个任务组同时挂着的阻塞项 | 阻塞项列表下方说明有多少条没列出 |
-| `AIMAC_ACTIVE_SESSION_CAP` | `5000` | 活跃工作会话总数 | 超出后新会话建不出来 |
-| `AIMAC_IDEMPOTENCY_MAX_RECORDS` | `5000` | 幂等记录条数（写路径与落盘用同一个值） | 太老的幂等键会被当成新请求（重放不再去重） |
+| `AIMAC_TASK_GROUP_BLOCKER_CAP` | `50` | 单个任务组同时挂着的阻塞项（下限 10，更小的值按它生效） | 阻塞项列表下方说明有多少条没列出 |
+| `AIMAC_ACTIVE_SESSION_CAP` | `5000` | 活跃工作会话总数（下限 200，更小的值按它生效） | 超出后新会话建不出来 |
+| `AIMAC_IDEMPOTENCY_MAX_RECORDS` | `5000` | 幂等记录条数（写路径与落盘用同一个值）（下限 100，更小的值按它生效） | 太老的幂等键会被当成新请求（重放不再去重） |
 | `AIMAC_MCP_SUMMARY_CAP` | `25` | MCP 摘要视图每个集合的条数 | agent 拿到的摘要只含最近若干条 |
-| `AIMAC_MCP_SUMMARY_WORK_ITEM_CAP` | `20` | MCP 摘要里每个任务组内嵌的工作项数 | 同上 |
-| `AIMAC_MCP_AUDIT_MAX_BYTES` | `67108864` | MCP 调用台账单文件大小（64 MiB），到量轮转 | 更早的调用记录进了轮转文件 |
+| `AIMAC_MCP_SUMMARY_WORK_ITEM_CAP` | `20` | MCP 摘要里每个任务组内嵌的工作项数（下限 5，更小的值按它生效） | 同上 |
+| `AIMAC_MCP_AUDIT_MAX_BYTES` | `67108864` | MCP 调用台账单文件大小（64 MiB），到量轮转（下限 1048576，更小的值按它生效） | 更早的调用记录进了轮转文件 |
 | `AIMAC_MCP_AUDIT_ROTATIONS` | `20` | 保留多少份轮转出去的 MCP 调用台账；超过的按最旧删除（默认约 1.28 GiB 之后开始丢最早的 agent 调用记录，不告警） | 更早的记录不在任何地方了 |
 | `AIMAC_ALLOW_INSECURE_PUBLIC_URL` | `false` | 允许 `AIMAC_PUBLIC_URL` 用 http 指向非本机主机（否则启动被拒，且对外地址回落成本机） | 会话令牌、入网令牌明文走网络 |
 | `AIMAC_ALLOWED_PUBLIC_HOSTS` | 空 | 逗号分隔的 Host 头白名单；不在名单里的 Host 一律按本机地址算，防止把对外地址算成攻击者给的域名 | 反代域名没登记时装机地址会错 |
@@ -191,24 +191,24 @@ Docker 镜像不在 build 阶段执行 bootstrap init，避免随机管理 token
 | `AIMAC_LOGIN_ATTEMPTS_PER_MINUTE` | `10` | 同一来源每分钟允许的登录尝试次数（最低 3） | 超过后登录被限流 |
 | `AIMAC_NODE_HEARTBEAT_TIMEOUT_MS` | `900000` | 节点多久没心跳算离线（15 分钟；允许 1 分钟到 24 小时）。健康检查的在线数与节点页的「心跳已超时」用同一阈值 | 过短会把慢网络的节点误判离线 |
 | `AIMAC_NODE_RETIRE_TIMEOUT_MS` | `604800000` | 离线多久后节点被退役、名额释放（7 天；允许 1 小时到 30 天） | 退役后要重新入网 |
-| `AIMAC_ROOM_PARTICIPANTS_MAX` | `5000` | 房间参与者总数 | 超出后新参与者加不进来 |
-| `AIMAC_ROOM_SEQUENCE_MAX_ROOMS` | `5000` | 记着序号的房间数 | 太老的房间序号从头开始 |
+| `AIMAC_ROOM_PARTICIPANTS_MAX` | `5000` | 房间参与者总数（下限 100，更小的值按它生效） | 超出后新参与者加不进来 |
+| `AIMAC_ROOM_SEQUENCE_MAX_ROOMS` | `5000` | 记着序号的房间数（下限 100，更小的值按它生效） | 太老的房间序号从头开始 |
 | `AIMAC_PROJECT_EVENT_KEY_FILE_CAP` | `5000` | 项目事件的幂等键文件条数 | 更早的事件重放不再去重 |
 | `AIMAC_REVIEW_MAX_REWORK_ATTEMPTS` | `3` | 一个工作项最多返工几次 | 到量后转人工处置，不再自动重来 |
 | `AIMAC_STATE_VIEW_CACHE_MAX_ENTRIES` | `200` | 视图缓存条目数 | 只影响命中率，不影响内容 |
 | `AIMAC_STATE_VIEW_CACHE_TTL_MS` | `60000` | 视图缓存存活时间（60 秒） | 同上 |
-| `AIMAC_IDEMPOTENCY_TTL_MS` | `604800000` | 幂等记录保留期（7 天） | 同上 |
+| `AIMAC_IDEMPOTENCY_TTL_MS` | `604800000` | 幂等记录保留期（7 天）（下限 3600000，更小的值按它生效） | 同上 |
 | `AIMAC_IDEMPOTENCY_PAYLOAD_TTL_MS` | `600000` | 幂等**回执内容**保留期（10 分钟）；键还在，重放会回 `idempotent_result_expired` | 重放拿不回原来的回执 |
 | `AIMAC_ROOM_MESSAGES_MAX_PER_ROOM` | `1000` | 单个房间的协作消息条数 | 协作记录只显示最近若干条 |
 | `AIMAC_ROOM_MESSAGES_MAX_TOTAL` | `10000` | 全部房间的消息总条数 | 同上 |
-| `AIMAC_ROOM_MESSAGES_MAX_TOTAL_BYTES` | `67108864` | 协作消息总体积（64 MiB） | 同上 |
-| `AIMAC_ROOM_MESSAGES_TTL_MS` | `604800000` | 协作消息保留期（7 天） | 同上 |
-| `AIMAC_ROOM_MESSAGE_MAX_BYTES` | `32768` | 单条协作消息大小（32 KiB） | 超长的消息会被拒收 |
+| `AIMAC_ROOM_MESSAGES_MAX_TOTAL_BYTES` | `67108864` | 协作消息总体积（64 MiB）（下限 1048576，更小的值按它生效） | 同上 |
+| `AIMAC_ROOM_MESSAGES_TTL_MS` | `604800000` | 协作消息保留期（7 天）（下限 60000，更小的值按它生效） | 同上 |
+| `AIMAC_ROOM_MESSAGE_MAX_BYTES` | `32768` | 单条协作消息大小（32 KiB）（下限 1024，更小的值按它生效） | 超长的消息会被拒收 |
 | `AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES` | `67108864` | 项目事件库单段大小（64 MiB），到量轮转 | 轮转时要重建索引，段越大重建越久 |
 | `AIMAC_WORKER_LANE_MAX_REUSE` | `50` | 一条执行载体最多复用多少代 | 到量后退役、下次建新的 |
-| `AIMAC_VIEW_LEDGER_LIMIT` | `60` | 视图里台账类集合的下发条数 | 名单顶部横幅说「只加载了最近的若干条」 |
-| `AIMAC_PROGRESS_WORK_ITEM_CAP` | `300` | 任务组明细一次下发的工作项数 | 明细页说清总数与当前展示数 |
-| `AIMAC_VIEW_EMBEDDED_WORK_ITEM_CAP` | `20` | 任务组列表里内嵌的工作项数 | 列表页说清总数与当前展示数 |
+| `AIMAC_VIEW_LEDGER_LIMIT` | `60` | 视图里台账类集合的下发条数（下限 1，更小的值按它生效） | 名单顶部横幅说「只加载了最近的若干条」 |
+| `AIMAC_PROGRESS_WORK_ITEM_CAP` | `300` | 任务组明细一次下发的工作项数（下限 20，更小的值按它生效） | 明细页说清总数与当前展示数 |
+| `AIMAC_VIEW_EMBEDDED_WORK_ITEM_CAP` | `20` | 任务组列表里内嵌的工作项数（下限 5，更小的值按它生效） | 列表页说清总数与当前展示数 |
 
 改这些值只影响**保留多少**，不影响正确性：还在跑的、还等着人处置的记录从不被淘汰
 （这条由契约门的「容量裁剪必须说明它凭什么不裁掉还在用的记录」守着）。

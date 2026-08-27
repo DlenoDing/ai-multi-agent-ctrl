@@ -11421,6 +11421,18 @@ function verifyEnvValuesAreNotSilentlyClamped(output) {
     output.push("这些环境变量传了却会被静默改写：\n  " + offenders.join("\n  ")
       + "\n  —— 传的人收不到任何提示；按被调方真正会用的值算，否则所有基于它的等待/阈值都是错的");
   }
+  // 【钳得住的旋钮，文档行要写明界】：Math.max(1024, …) 会把运维设的 64 悄悄抬成 1024，而 README 只写默认值与用途。
+  // 21 个这样的行 2026-08-28 补上了「（下限 N，更小的值按它生效）」；这里按同一份提取核每一行。
+  {
+    const docText = ["README.md", "docs/agent-runtime-protocol.md"].map((rel) => readFileSync(join(root, rel), "utf8")).join("\n");
+    const undocumentedBound = [];
+    for (const [name, {bound}] of clamps) {
+      const row = docText.split("\n").find((line) => line.startsWith("|") && line.includes(`\`${name}\``));
+      if (!row) continue;
+      if (!row.includes(String(bound)) && !/下限|上限|最小|最大|至少|最多|不低于|不高于/u.test(row)) undocumentedBound.push(`${name}（${bound}）`);
+    }
+    if (undocumentedBound.length) output.push(`这些旋钮会被钳制，而文档行没写界（运维设了更小/更大的值会被悄悄改写）：${undocumentedBound.join("、")}`);
+  }
   console.log(`环境变量钳制：${clamps.size} 处钳制、${checked} 处传值逐个核对，${offenders.length} 处会被改写（应为 0）`);
 }
 

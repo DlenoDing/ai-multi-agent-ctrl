@@ -3356,6 +3356,15 @@ const MUTATIONS = [
     expect: "没把 idempotencyKey 标成 required"
   },
   {
+    name: "会被钳制的旋钮文档行要写明界",
+    file: "README.md",
+    gate: "contract",
+    check: "verifyEnvValuesAreNotSilentlyClamped",
+    from: "单条协作消息大小（32 KiB）（下限 1024，更小的值按它生效）",
+    to: "单条协作消息大小（32 KiB）",
+    expect: "文档行没写界"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
