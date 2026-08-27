@@ -10203,6 +10203,14 @@ const MUTATIONS = [
     expect: "作保的门不存在"
   },
   {
+    name: "技能源 stale/quarantined 要进 /api/health 的 warnings（监控不能一片绿）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '      .filter((source) => source.status === "stale" || source.status === "quarantined")',
+    to: '      .filter((source) => false)',
+    expect: "该带 skill_source_stale 警告"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

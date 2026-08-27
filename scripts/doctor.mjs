@@ -481,6 +481,12 @@ try {
     if (String(failedSync.payload.lastSyncError || "") !== failedSource.lastSyncError) {
       throw new Error("同步失败的回执里带的原因与落盘的不是同一句 —— 两处会各说各话");
     }
+    // 【监控要看得见】：这件事此前只在技能源面板上看得见，/api/health 一片绿。
+    const healthStale = await jsonFetch(port, "/api/health");
+    const staleWarning = (healthStale.payload?.warnings || []).find((item) => item.kind === "skill_source_stale");
+    if (healthStale.response.status !== 200 || !staleWarning || !(staleWarning.sources || []).some((item) => item.sourceId === "agency-agents-zh" && item.lastSyncError)) {
+      throw new Error(`技能源 stale 时 /api/health 该带 skill_source_stale 警告（且点名源与原因），实际 ${healthStale.response.status} ${JSON.stringify(healthStale.payload?.warnings || null).slice(0, 200)} —— 监控一片绿，agent 一直用旧技能`);
+    }
     rmSync(clonedRepo, {force: true});
     const resync = await jsonFetch(port, "/api/skill-sources/agency-agents-zh/sync", {
       method: "POST", headers: {"Idempotency-Key": "doctor-skill-sync-after-repair", authorization: systemAuth}, body: "{}"
@@ -490,6 +496,10 @@ try {
     const repaired = (afterRepair.payload.skillSources || []).find((item) => item.sourceId === "agency-agents-zh");
     if (repaired?.status !== "active" || repaired?.lastSyncError) {
       throw new Error(`重新同步成功后面板没有回到 active / 清掉上次的失败原因（${repaired?.status}／「${repaired?.lastSyncError || "空"}」）—— 修好了还挂着旧错，人以为没修好`);
+    }
+    const healthRepaired = await jsonFetch(port, "/api/health");
+    if ((healthRepaired.payload?.warnings || []).some((item) => item.kind === "skill_source_stale")) {
+      throw new Error("技能源修好并重新同步之后 /api/health 还挂着 skill_source_stale —— 修好了监控还在响");
     }
     console.log("  ok  技能源同步失败时 stale 与失败原因真的落盘（面板会变），修好后重新同步回到 active");
   }

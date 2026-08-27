@@ -2890,7 +2890,16 @@ async function handleApi(req, res) {
     const eventFault = projectEventLogFault();
     // MCP 那本归档是 agent 调用记录的【唯一】完整来源（状态里只留最近 300 条）。
     const mcpFault = mcpAuditFault();
+    // 技能源同步不上（stale）或被隔离（quarantined）：agent 从此一直用上一次同步下来的技能，
+    // 而这件事此前只在控制台的技能源面板上看得见 —— 盯着这个接口的监控一片绿。
+    // 与上面同规：不报 503（对外服务照常），把它端出来。状态就在 readHealthState 那份壳里，不另读。
+    const skillSourceFaults = (state.skillSources || [])
+      .filter((source) => source.status === "stale" || source.status === "quarantined")
+      .map((source) => ({sourceId: source.sourceId, status: source.status,
+        lastSyncError: String(source.lastSyncError || "").slice(0, 200), lastSyncFailedAt: source.lastSyncFailedAt || null}));
     const warnings = [
+      ...(skillSourceFaults.length ? [{kind: "skill_source_stale", sources: skillSourceFaults,
+        hint: "技能源同步不上：agent 用的还是上一次同步下来的技能。按 lastSyncError 排查（地址 / 认证 / 分支 / 网络），修好后在「AI 智能体」页点「同步」，或等自治周期重试"}] : []),
       ...(mcpFault ? [{kind: "mcp_audit_write_failed", lostEntries: mcpFault.lostEntries,
         error: mcpFault.error, at: mcpFault.at,
         hint: mcpFault.kind === "lock_timeout"
