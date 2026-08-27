@@ -996,6 +996,7 @@ function requestFailureHint(payload) {
     // 动态取它认不出来（而认不出来就等于这几族又回到"没人读"的状态）。
     pathList(payload.deniedPaths, "踩到禁区的路径"),
     pathList(payload.unknownRoles, "不在词表里的账号角色"),
+    pathList(payload.unknownOwnerRoles, "未登记的执行角色"),
     pathList(payload.unknownPermissions, "不在词表里的权限"),
     pathList(payload.unknownKeys, "认不出的键"),
     pathList(payload.outsidePaths, "落在允许范围之外的路径"),

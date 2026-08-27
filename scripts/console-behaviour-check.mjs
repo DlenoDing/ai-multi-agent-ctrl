@@ -654,7 +654,20 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
   {
     // 真词表：这段话里要不要露出英文码，取决于词表有没有那个键。
     const probe = loadConsole(el("div"), {realI18n: true});
+    // 【今天新加的三个拒绝码，提示要点名它们各自算好的东西】：拼错的角色/权限是哪几个、可用的是哪些。
+    // 只显示一个码等于把人打回去猜；服务端每一种都算好了（unknownRoles / unknownPermissions / supported）。
+    for (const [label, payload, mustName] of [
+      ["账号角色不在词表", {error: "account_role_unknown", unknownRoles: ["project_member"], supported: ["member", "viewer"]}, ["project_member", "member"]],
+      ["权限不在词表", {error: "permission_unknown", unknownPermissions: ["project:veiw"], supported: ["project:view"]}, ["project:veiw", "project:view"]],
+      ["执行角色未登记", {error: "task_group_role_not_registered", unknownOwnerRoles: ["reviewr"], supported: ["reviewer"]}, ["reviewr", "reviewer", "执行角色"]]
+    ]) {
+      const hint = probe.requestFailureHint(payload);
+      if (process.env.AIMAC_PRINT_HINTS) console.log(`[hint] ${label}: ${hint}`);
+      check(`拒绝提示「${label}」要点名拼错的与可用的`, mustName.every((word) => String(hint).includes(word)),
+        `提示里少了 ${mustName.filter((word) => !String(hint).includes(word)).join("、")}：${String(hint).slice(0, 160)}`);
+    }
     const quotaHint = probe.requestFailureHint({error: "org_quota_exceeded", kind: "agents", quota: 3, usage: 3});
+    if (process.env.AIMAC_PRINT_HINTS) console.log(`[hint] 配额: ${String(quotaHint).slice(0, 60)}`);
     check("配额拒绝要说清是哪一类、用了多少、上限多少", quotaHint.includes("智能体 3/3"), quotaHint.slice(0, 90));
     check("智能体配额要说清只有吊销才腾得出来（关停/停用都不减）", quotaHint.includes("吊销"), quotaHint.slice(0, 120));
     check("配额里的 kind 是「哪一类配额」，不能被当成「故障类型」再打一遍（词表里没有 agents，会露出英文码）",

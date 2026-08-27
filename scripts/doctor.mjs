@@ -376,7 +376,7 @@ try {
       method: "POST", headers: {authorization: systemAuth, "Idempotency-Key": "doctor-typo-owner-role"},
       body: JSON.stringify({projectId: "prj_control_plane", name: "角色探针", roles: "orchestrator,reviewr"})
     });
-    if (typoRole.response.status !== 400 || typoRole.payload?.error !== "task_group_role_not_registered" || !(typoRole.payload?.unknownRoles || []).includes("reviewr")) {
+    if (typoRole.response.status !== 400 || typoRole.payload?.error !== "task_group_role_not_registered" || !(typoRole.payload?.unknownOwnerRoles || []).includes("reviewr")) {
       throw new Error(`拼错的执行角色建组该回 400 task_group_role_not_registered 并点名，实际 ${typoRole.response.status} ${JSON.stringify(typoRole.payload).slice(0, 200)} —— 一个派发必炸的角色带着成功回执进了任务组`);
     }
     console.log("  ok  拼错的执行角色在建组时就被拒并点名（不再等到派发才炸）");

@@ -1830,7 +1830,7 @@ function createTaskGroup(state, args) {
   {
     const requestedRoleIds = (Array.isArray(args.roles) ? args.roles : []).map((role) => typeof role === "string" ? role : role?.roleId).filter(Boolean);
     const unknownRoles = unknownOwnerRoles(requestedRoleIds);
-    if (unknownRoles.length) return {ok: false, error: "task_group_role_not_registered", unknownRoles: unknownRoles.slice(0, 10), supported: [...REGISTERED_OWNER_ROLES]};
+    if (unknownRoles.length) return {ok: false, error: "task_group_role_not_registered", unknownOwnerRoles: unknownRoles.slice(0, 10), supported: [...REGISTERED_OWNER_ROLES]};
   }
   const at = new Date().toISOString();
   const languagePolicy = normalizeTaskGroupLanguagePolicy(args.languagePolicy || args);

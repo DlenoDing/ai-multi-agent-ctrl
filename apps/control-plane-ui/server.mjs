@@ -1088,7 +1088,7 @@ function createTaskGroupRecord(state, input = {}, options = {}) {
   {
     const unknownRoles = unknownOwnerRoles(userRoleIds);
     if (unknownRoles.length) {
-      return {ok: false, status: 400, error: "task_group_role_not_registered", unknownRoles: unknownRoles.slice(0, 10), supported: [...REGISTERED_OWNER_ROLES]};
+      return {ok: false, status: 400, error: "task_group_role_not_registered", unknownOwnerRoles: unknownRoles.slice(0, 10), supported: [...REGISTERED_OWNER_ROLES]};
     }
   }
   const roleIdSet = new Set();
