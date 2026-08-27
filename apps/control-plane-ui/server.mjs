@@ -139,6 +139,9 @@ import {
   noteWorkItemExecutionFailure} from "./lib/control-plane-core.mjs";
 import { isTerminalDispatchStatus } from "./lib/lifecycle-states.mjs";
 
+// 真正绑上的端口（listen 回调写入）；localEndpoint 用它。放在模块顶部：读状态的路径在 listen 之前就会调它。
+let boundPort = 0;
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const repositoryRoot = resolve(process.env.AIMAC_REPOSITORY_ROOT || root);
 const publicDir = join(root, "apps", "control-plane-ui", "public");
@@ -1327,8 +1330,11 @@ function validPathAllowlist(paths) {
   return pathAllowlistValid(paths);
 }
 
+// 【本地端点要用真正绑上的端口】。AIMAC_PORT=0 是"随便给我一个空闲端口"的标准写法：原先这里用配置的 port，
+// 于是启动横幅的 MCP/安装器两行、/health 的 publicUrl 回落、以及 ensureRuntimeCollections 写进运行态的服务端点
+// 全是 http://127.0.0.1:0 —— 只有控制台那一行修过。boundPort 由 listen 回调写入（声明在模块顶部，免得 TDZ）。
 function localEndpoint() {
-  return `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`;
+  return `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${boundPort || port}`;
 }
 
 function publicEndpoint(req) {
@@ -6907,7 +6913,17 @@ if (process.env.AIMAC_EXIT_WITH_PARENT === "1") {
 server.listen(port, host, () => {
   // 打【真正绑上的】端口，不是请求的那个：AIMAC_PORT=0 是"随便给我一个空闲端口"的标准写法，
   // 而原先这行会打出 http://127.0.0.1:0 —— 照着它连一次都连不上。
-  const boundPort = server.address()?.port || port;
+  boundPort = server.address()?.port || port;
+  // 运行态里的服务端点在 listen 之前就按配置端口写过一次（ensureState），之后只有写请求才会重写：
+  // AIMAC_PORT=0 时它们会一直是 :0，控制台「系统服务」表照抄。端口与配置不同就补写一遍。
+  if (boundPort !== port) {
+    try {
+      const rebound = readState();
+      // 存储层要求每次写都推进版本（同版本并发写会被它拒掉）：与写路由同一写法。
+      rebound.stateVersion = Number(rebound.stateVersion || 0) + 1;
+      writeState(rebound);
+    } catch (error) { console.error(`补写服务端点失败（不影响运行）：${error.message}`); }
+  }
   console.log(`AI Multi-Agent Ctrl console: http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${boundPort}`);
   console.log(`Centralized MCP endpoint: ${publicEndpoint()}/mcp`);
   console.log(`Agent installer: ${publicEndpoint()}/install-agent.sh`);

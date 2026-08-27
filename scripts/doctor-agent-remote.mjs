@@ -351,6 +351,10 @@ try {
   });
   if (install.status !== 0 || !install.stdout.includes("AGENT_JOINED") || !install.stdout.includes(`remoteMcp=${baseUrl}/mcp`)) throw new Error(`Agent one-command bootstrap failed: ${install.stderr || install.stdout}`);
   assertAgentScopedMcpConfig(agentWorkDir, baseUrl);
+  // 机器行之后要有给人看的一句：接入成功之后该干什么。原先输出到 skills=on_demand 就停了，新节点的人不知道下一步是 agentctl run。
+  if (!install.stdout.includes("下一步：agentctl run")) {
+    throw new Error(`bootstrap 成功后没告诉人下一步该跑什么（agentctl run）：${install.stdout.slice(-300).replace(/\n/g, " ")}`);
+  }
 
   const agentConfigPath = join(agentWorkDir, "agent-config.json");
   const agentConfig = JSON.parse(readFileSync(agentConfigPath, "utf8"));

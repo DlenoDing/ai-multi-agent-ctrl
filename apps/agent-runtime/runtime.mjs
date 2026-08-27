@@ -190,6 +190,8 @@ async function bootstrap() {
     `schedulerAdmission=${check.admission}`,
     `remoteMcp=${config.gateway.mcpUrl}`,
     `skills=on_demand`,
+    // 上面是给安装脚本/e2e 解析的机器行（AGENT_JOINED…），下面这句是给敲命令的人看的：接入成功之后该干什么。
+    `已接入控制面 ${serverUrl}（节点 ${config.nodeName}）。下一步：agentctl run 让这台节点开始领活；agentctl status 随时看它的状态；要装成常驻服务见 docs/agent-runtime-protocol.md`,
     ""
   ].join("\n"));
 }
@@ -240,6 +242,8 @@ async function status(config) {
 }
 
 async function run(config) {
+  // 起来先说一句：原先 run 在领到活之前一个字都不打，人看到的是一块空屏，分不清是在等派发还是根本没连上。
+  process.stdout.write(`节点 ${config.nodeName}（${config.nodeId}）已按角色 ${(config.allowedRoles || []).join("、") || "-"} 接到控制面 ${config.serverUrl}，正在等待派发（Ctrl+C 停止）\n`);
   // 控制面把 shutdown 当作【可恢复的排空】：finalizeNodeShutdown 只把节点置为 offline，
   // 而 heartbeatAgentNode 明确允许 offline -> online 复活。代理端却把 shutdownRequested 写死后
   // 全仓没有任何一处清除它 —— 重启即立刻退出，运维想让这个节点回来只能手改 agent-config.json，

@@ -3134,6 +3134,41 @@ const MUTATIONS = [
     expect: "内置技能也为 0 时要说「没有任何角色技能可用」"
   },
   {
+    name: "本地端点要用真正绑上的端口（AIMAC_PORT=0 不许打出 :0）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    check: "verifyLocalEndpointUsesBoundPort",
+    from: "  return `http://${host === \"0.0.0.0\" ? \"127.0.0.1\" : host}:${boundPort || port}`;",
+    to: "  return `http://${host === \"0.0.0.0\" ? \"127.0.0.1\" : host}:${port}`;",
+    expect: "端口不一致或仍是 0"
+  },
+  {
+    name: "agentctl run 起来要先说一句（不许空屏）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "contract",
+    check: "verifyAgentRunAnnouncesItself",
+    from: "  process.stdout.write(`节点 ${config.nodeName}（${config.nodeId}）已按角色 ${(config.allowedRoles || []).join(\"、\") || \"-\"} 接到控制面 ${config.serverUrl}，正在等待派发（Ctrl+C 停止）\\n`);",
+    to: "",
+    expect: "起来没先说清自己是谁"
+  },
+  {
+    name: "bootstrap 成功后要告诉人下一步（agentctl run）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "    `已接入控制面 ${serverUrl}（节点 ${config.nodeName}）。下一步：agentctl run 让这台节点开始领活；agentctl status 随时看它的状态；要装成常驻服务见 docs/agent-runtime-protocol.md`,",
+    to: "",
+    expect: "没告诉人下一步该跑什么"
+  },
+  {
+    name: "AIMAC_PORT=0 时 listen 后要补写运行态里的服务端点",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    check: "verifyLocalEndpointUsesBoundPort",
+    from: "  if (boundPort !== port) {\n    try {\n      const rebound = readState();",
+    to: "  if (false) {\n    try {\n      const rebound = readState();",
+    expect: "写进运行态的服务端点没用真正绑上的端口"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

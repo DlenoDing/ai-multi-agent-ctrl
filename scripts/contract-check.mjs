@@ -785,6 +785,7 @@ run(verifyTruncatedExecutorOutputSaysSo);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
 runAsync(verifyStoppingAnExecutorTellsTheTruth);
+runAsync(verifyLocalEndpointUsesBoundPort);
 run(verifyMcpToolCrashIsNotDisguisedAsRefusal);
 run(verifyDocumentedEnvVarsAreRealKnobs);
 run(verifyReplayRemoteCheckDistinguishesLostFromMovedOn);
@@ -968,6 +969,7 @@ run(verifyLedgerRowsGoThroughTheSharedBuilder);
 run(verifyOperatorKnobsAreDocumented);
 run(verifyAgentctlUnknownCommandListsCommands);
 run(verifyConsoleRoleExamplesAreRegistered);
+run(verifyAgentRunAnnouncesItself);
 run(verifyConsoleRuntimeConstantsHaveOneWriter);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
@@ -15712,6 +15714,26 @@ function verifyConsoleRuntimeConstantsHaveOneWriter(output) {
   console.log(`界面 runtime 常量：${numericKeys.length} 个数值只在 decorateRuntimeForConsole 里赋值，三份词表只来自 core 的 consoleVocabularies，服务端两条读路径与勘察工具都经过它`);
 }
 
+// 【agentctl run 起来要先说一句】。原先领到活之前一个字都不打：人看到的是一块空屏，分不清是在等派发还是根本没连上。
+// 伪造一份最小的 agent-config.json、指向没人监听的端口，跑 run --once：第一行得是「正在等待派发」那句（在任何请求之前）。
+function verifyAgentRunAnnouncesItself(output) {
+  const workDir = mkdtempSync(join(tmpdir(), "aimac-run-announce-"));
+  writeFileSync(join(workDir, "agent-config.json"), JSON.stringify({
+    serverUrl: "http://127.0.0.1:9", nodeId: "node_probe", nodeName: "probe-node", allowedRoles: ["agent-runtime"],
+    nodeToken: "aimac_node_probe", gateway: {baseUrl: "http://127.0.0.1:9/api/agent/v1", mcpUrl: "http://127.0.0.1:9/mcp"}
+  }));
+  const run = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "run", "--once"],
+    {cwd: root, encoding: "utf8", timeout: 60000, env: {...process.env, AIMAC_AGENT_WORK_DIR: workDir, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true",
+      AIMAC_AGENT_REQUEST_TIMEOUT_MS: "2000", AIMAC_AGENT_RETRY_ATTEMPTS: "1"}});
+  rmSync(workDir, {recursive: true, force: true});
+  const firstLine = String(run.stdout || "").split("\n")[0] || "";
+  if (!/probe-node/u.test(firstLine) || !/正在等待派发/u.test(firstLine) || !/127\.0\.0\.1:9/u.test(firstLine)) {
+    output.push(`agentctl run 起来没先说清自己是谁、接的是哪台控制面、在等派发（第一行：${JSON.stringify(firstLine.slice(0, 160))}；stderr：${String(run.stderr || "").slice(0, 120).replace(/\n/g, " ")}）`);
+  } else {
+    console.log("agentctl run 起来先说一句（节点、角色、控制面、正在等待派发）");
+  }
+}
+
 // 【控制台里自由填角色的输入框：示例必须是已登记的执行角色，且都挂着词表】。服务端五扇门（建任务组/入网令牌/
 // 建智能体/项目配置/任务组配置）现在都按 REGISTERED_OWNER_ROLES 拒；项目设置的角色行原先示例写着
 // backend-developer —— 人照着示例填，得到的就是一句拒绝。示例与词表都盯着那一行自己的形状。
@@ -15728,6 +15750,44 @@ function verifyConsoleRoleExamplesAreRegistered(output) {
   if (!freeRoleInputs.length) output.push("没找到任何自由填角色的输入框 —— 这条在空转（表单改写了，提取要跟上）");
   if (withoutList.length) output.push(`控制台里自由填角色的输入框没挂词表：${withoutList.join("、")} —— 服务端只认已登记的执行角色，不给词表就是自造拼错陷阱`);
   console.log(`控制台自由填角色的输入框 ${freeRoleInputs.length} 个都挂着词表，${examples.length} 个示例都是已登记角色`);
+}
+
+// 【本地端点要用真正绑上的端口】。AIMAC_PORT=0 时原先只有横幅的控制台那一行修过：MCP/安装器两行、
+// 以及 ensureRuntimeCollections 写进运行态的服务端点都还是 http://127.0.0.1:0 —— 照着复制一次都连不上。
+// 真起一台 AIMAC_PORT=0 的服务端：三行横幅同一个端口，且写进运行态的服务端点带的也是它。
+async function verifyLocalEndpointUsesBoundPort(output) {
+  const outputBefore = output.length;
+  const runtimeDir = mkdtempSync(join(tmpdir(), "aimac-bound-port-"));
+  const child = spawn(process.execPath, [join(root, "apps/control-plane-ui/server.mjs")], {
+    cwd: root, stdio: ["ignore", "pipe", "pipe"],
+    env: {...process.env, AIMAC_HOST: "127.0.0.1", AIMAC_PORT: "0", AIMAC_EXIT_WITH_PARENT: "1", AIMAC_ORCHESTRATOR_INTERVAL_MS: "0",
+      AIMAC_RUNTIME_DIR: runtimeDir, AIMAC_PUBLIC_URL: ""}
+  });
+  let banner = "";
+  child.stdout.on("data", (chunk) => { banner += String(chunk); });
+  try {
+    await new Promise((resolve) => {
+      const tick = setInterval(() => { if (/Agent installer:/u.test(banner)) { clearInterval(tick); resolve(); } }, 50);
+      setTimeout(() => { clearInterval(tick); resolve(); }, 20000);
+    });
+    const ports = [...banner.matchAll(/127\.0\.0\.1:(\d+)/gu)].map((hit) => hit[1]);
+    const consolePort = ports[0];
+    if (ports.length < 3 || !consolePort || consolePort === "0" || ports.some((port) => port !== consolePort)) {
+      output.push(`AIMAC_PORT=0 时启动横幅三行的端口不一致或仍是 0：${JSON.stringify(ports)} —— 照着 MCP/安装器那两行复制一次都连不上`);
+      return;
+    }
+    // 起一次请求让读路径跑一遍（ensureRuntimeCollections 在读路径上写服务端点），再读盘上的运行态。
+    await fetch(`http://127.0.0.1:${consolePort}/api/health`).catch(() => null);
+    const stored = JSON.parse(readFileSync(join(runtimeDir, "control-plane-state.json"), "utf8"));
+    const endpoints = (stored.runtime?.services || []).map((service) => service.endpoint).filter(Boolean);
+    if (!endpoints.length) output.push("运行态里没有任何服务端点 —— 下面这条在空转（ensureRuntimeCollections 的形状变了？）");
+    const wrong = endpoints.filter((endpoint) => !String(endpoint).includes(`:${consolePort}`));
+    if (wrong.length) output.push(`写进运行态的服务端点没用真正绑上的端口 ${consolePort}：${JSON.stringify(wrong).slice(0, 200)}`);
+  } finally {
+    try { child.kill("SIGKILL"); } catch { /* 已经走了 */ }
+    rmSync(runtimeDir, {recursive: true, force: true});
+  }
+  if (output.length === outputBefore) console.log("AIMAC_PORT=0：横幅三行同一个端口，运行态里的服务端点也带真正绑上的端口");
 }
 
 // 【agentctl 打错命令要列出可用命令】。原先只回 "unknown command: start"，装机的人不知道有哪四个命令、
