@@ -27,9 +27,6 @@ npm start
 
 `npm run dev` 与 `npm start` 是同一条命令（没有热重载之类的区别），留给习惯敲 dev 的人。
 
-```bash
-```
-
 默认控制台地址：
 
 ```text
