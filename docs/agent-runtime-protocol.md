@@ -110,12 +110,13 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.aimac.agent.plist
 
 ```text
 AGENT_JOINED
-nodeId=agent_...
+nodeId=node_...
 nodeName=...
 agentProfileDigest=sha256:...
 schedulerAdmission=read_only|limited|full
 remoteMcp=https://control.example.com/mcp
 skills=on_demand
+已接入控制面 https://control.example.com（节点 ...）。下一步：agentctl run 让这台节点开始领活；agentctl status 随时看它的状态；要装成常驻服务见 docs/agent-runtime-protocol.md
 ```
 
 ## 3. 初始化握手

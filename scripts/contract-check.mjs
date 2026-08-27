@@ -973,6 +973,7 @@ run(verifyAgentctlUnknownCommandListsCommands);
 run(verifyConsoleRoleExamplesAreRegistered);
 run(verifyAgentRunAnnouncesItself);
 run(verifyDefaultBackupTargetIsGitIgnored);
+run(verifyBootstrapEchoSamplesMatchRuntime);
 run(verifyConsoleRuntimeConstantsHaveOneWriter);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
@@ -15715,6 +15716,32 @@ function verifyConsoleRuntimeConstantsHaveOneWriter(output) {
     if (!body || !body.includes("decorateRuntimeForConsole(")) output.push(`${reader} 没调 decorateRuntimeForConsole —— 这条路上界面拿不到词表`);
   }
   console.log(`界面 runtime 常量：${numericKeys.length} 个数值只在 decorateRuntimeForConsole 里赋值，三份词表只来自 core 的 consoleVocabularies，服务端两条读路径与勘察工具都经过它`);
+}
+
+// 【文档里的 bootstrap 回显样例要与 agentctl 真打的一致】。设计文档的样例曾列着 resourceClass/quotaClass/models…
+// 六行运行时根本不打的键，协议文档的样例缺了后来加的那句人话 —— 没有门盯着的样例一定会漂。
+// 键从 runtime.mjs 里 AGENT_JOINED 那段取，按顺序对两份文档 ```text 块里的 key= 行。
+function verifyBootstrapEchoSamplesMatchRuntime(output) {
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const at = runtime.indexOf('"AGENT_JOINED",');
+  const block = at < 0 ? "" : runtime.slice(at, runtime.indexOf("].join(", at));
+  const printed = [...block.matchAll(/`([a-zA-Z]+)=/gu)].map((hit) => hit[1]);
+  if (printed.length < 5) { output.push(`从 runtime.mjs 提不出 AGENT_JOINED 回显的键（只有 ${printed.length} 个）—— 提取脱节，下面在空转`); return; }
+  const humanLine = /下一步：agentctl run/u.test(block);
+  for (const [file, marker] of [["docs/agent-runtime-protocol.md", "加入成功回显"], ["docs/multi-agent-project-orchestration-system-design.md", "加入成功后的标准回显"]]) {
+    const doc = readFileSync(join(root, file), "utf8");
+    const markerAt = doc.indexOf(marker);
+    const fenceStart = markerAt < 0 ? -1 : doc.indexOf("```text", markerAt);
+    const fenceEnd = fenceStart < 0 ? -1 : doc.indexOf("```", fenceStart + 7);
+    const sample = fenceStart < 0 || fenceEnd < 0 ? "" : doc.slice(fenceStart + 7, fenceEnd);
+    if (!sample) { output.push(`${file} 里找不到「${marker}」后的 \`\`\`text 样例块`); continue; }
+    const documented = [...sample.matchAll(/^([a-zA-Z]+)=/gmu)].map((hit) => hit[1]);
+    if (documented.join(",") !== printed.join(",")) {
+      output.push(`${file} 的 bootstrap 回显样例与 agentctl 真打的不一致：文档 [${documented.join(",")}]，运行时 [${printed.join(",")}]`);
+    }
+    if (humanLine && !/下一步：agentctl run/u.test(sample)) output.push(`${file} 的回显样例少了运行时那句「下一步：agentctl run」`);
+  }
+  console.log(`bootstrap 回显样例：两份文档与运行时的 ${printed.length} 个键逐个对过`);
 }
 
 // 【npm run backup 的默认目标必须被 .gitignore 挡住】。默认落在运行目录同级的 .runtime-backup-<时间戳>/，

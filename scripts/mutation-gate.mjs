@@ -3269,6 +3269,15 @@ const MUTATIONS = [
     expect: "没被 .gitignore 挡住"
   },
   {
+    name: "协议文档的 bootstrap 回显样例要与运行时一致",
+    file: "docs/agent-runtime-protocol.md",
+    gate: "contract",
+    check: "verifyBootstrapEchoSamplesMatchRuntime",
+    from: "remoteMcp=https://control.example.com/mcp\nskills=on_demand\n已接入控制面",
+    to: "remoteMcp=https://control.example.com/mcp\n已接入控制面",
+    expect: "回显样例与 agentctl 真打的不一致"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

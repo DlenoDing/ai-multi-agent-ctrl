@@ -889,17 +889,16 @@ docker run -d --name ai-agent-runtime --restart unless-stopped \
 
 ```text
 AGENT_JOINED
-nodeId=agent_...
+nodeId=node_...
 nodeName=...
 agentProfileDigest=sha256:...
-resourceClass=small|medium|large|xlarge
-quotaClass=low|normal|high|unknown
-models=<count>
-modelAliases=deep_reasoning,balanced,fast_fix
-mcpServers=<count>
-gitProfiles=<count>
 schedulerAdmission=read_only|limited|full
+remoteMcp=https://control.example.com/mcp
+skills=on_demand
+已接入控制面 https://control.example.com（节点 ...）。下一步：agentctl run 让这台节点开始领活；agentctl status 随时看它的状态；要装成常驻服务见 docs/agent-runtime-protocol.md
 ```
+
+（前七行是给安装脚本/e2e 解析的机器行，最后一句是给敲命令的人看的；resourceClass/quotaClass/models 等不在回显里，它们在节点档案（node_probe）中查。）
 
 入口总控会话生成的 Agent Runtime bootstrap 指令：
 
