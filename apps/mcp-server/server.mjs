@@ -1350,7 +1350,10 @@ function appendMcpAudit(event) {
       at: new Date().toISOString(),
       lostEntries: Number(mcpAuditFaultState?.lostEntries || 0) + 1,
       // 只留错误码与一句话，不留路径：这个对象会随健康检查端给系统账号，也会进日志。
-      error: String(error?.code || error?.message || error).slice(0, 120)
+      error: String(error?.code || error?.message || error).slice(0, 120),
+      // 锁超时与磁盘写不进去是两件事：前者是【另一个活着的进程】持锁超过 10 秒（或多副本
+      // 共用一个运行目录），后者才该去查空间/挂载/权限。健康检查的 hint 按这个分支说。
+      kind: String(error?.message) === "mcp_audit_lock_timeout" ? "lock_timeout" : "write_failed"
     };
     try { console.error(`[mcp-audit] 归档写入失败，1 条调用记录未落盘：${mcpAuditFaultState.error}`); } catch { /* 记日志不能再把服务打死 */ }
   }
@@ -1388,7 +1391,12 @@ function mcpAuditLockIsStale(lockPath) {
   if (pid && pid !== process.pid) {
     try { process.kill(pid, 0); return false; } catch (error) { if (error?.code !== "EPERM") return true; return false; }
   }
-  if (pid === process.pid) return false;
+  // 【自己 pid 的锁只可能是残锁】。appendMcpAudit 只在本进程里、且同步执行，不存在"本进程另一处
+  // 正活着持有它"的情形 —— 能留下来的只有 finally 里 rmSync 失败、或上一次异常路径没走到。
+  // 这里原先写的是 return false（视为活锁），于是每次写工具都等满 10 秒才 lock_timeout；
+  // 而等待用的是 Atomics.wait，主线程整个冻住：实测这 10 秒里 /api/health 也卡了 9.5 秒。
+  // 状态库那把锁（state-store）对同 pid 早就是 return true，这一把写反了。
+  if (pid === process.pid) return true;
   try { return Date.now() - statSync(lockPath).mtimeMs > 2000; } catch { return false; }
 }
 

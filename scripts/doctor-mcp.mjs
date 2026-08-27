@@ -5,7 +5,7 @@ import { createMcpToolDefinitions } from "../apps/mcp-server/server.mjs";
 import { REGISTERED_OWNER_ROLES } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import { KNOWN_SECOND_DOORS, HUMAN_ONLY_MCP_TOOL_REFUSALS } from "./lib/known-second-doors.mjs";
 import { once } from "node:events";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -351,6 +351,43 @@ try {
       throw new Error("MCP 归档恢复正常之后，健康检查上的警告还挂着");
     }
     console.log("  ok  MCP 归档写不进去：业务照常、不泄路径、健康检查报警、恢复后自清");
+  }
+
+  // 【本进程自己的残锁不许让写工具白等 10 秒、更不许冻住整个控制面】。appendMcpAudit 只在本进程
+  // 同步执行，同 pid 的锁只可能是残锁（finally 里 rmSync 失败 / 异常路径没走到）；原先判成活锁，
+  // 每次写工具等满 10 秒才 lock_timeout —— 而等待用 Atomics.wait，主线程整个冻住：
+  // 实测那 10 秒里 /api/health 也卡了 9.5 秒。状态库那把锁对同 pid 早就是「视为陈旧」。
+  {
+    const lockPath = join(runtimeDir, "mcp-audit.jsonl.lock");
+    mkdirSync(lockPath, {recursive: true});
+    writeFileSync(join(lockPath, "owner.json"), JSON.stringify({pid: child.pid, at: new Date().toISOString()}));
+    const startedAt = Date.now();
+    const healthProbe = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const t0 = Date.now();
+      await api("/api/health");
+      return Date.now() - t0;
+    })();
+    const staleLocked = await mcp("tools/call", {name: "room-mcp.room_join", arguments: {
+      idempotencyKey: "doctor-mcp-stale-self-lock", taskGroupId: "tg_runtime_management",
+      roomId: "room_tg_runtime_management", sessionId: "sess_doctor_stale_lock", roleId: "reviewer"}});
+    const elapsed = Date.now() - startedAt;
+    const healthMs = await healthProbe;
+    try { rmSync(lockPath, {recursive: true, force: true}); } catch { /* 已被产品破掉 */ }
+    if (staleLocked.error || staleLocked.structuredContent?.ok !== true) {
+      throw new Error(`本进程自己的残锁把写工具挡死了：${JSON.stringify(staleLocked).slice(0, 160)}`);
+    }
+    if (elapsed > 3000) {
+      throw new Error(`本进程自己的残锁让写工具等了 ${elapsed}ms —— 同 pid 的锁只可能是残锁，该立刻破掉而不是等满 10 秒`);
+    }
+    if (healthMs > 3000) {
+      throw new Error(`等锁期间 /api/health 也被冻了 ${healthMs}ms —— Atomics.wait 把整个控制面钉住了`);
+    }
+    const afterStale = await api("/api/health");
+    if ((afterStale.warnings || []).some((item) => item.kind === "mcp_audit_write_failed")) {
+      throw new Error("残锁被破掉之后健康检查还挂着归档警告 —— 这次写入明明成功了");
+    }
+    console.log(`  ok  本进程的残锁被立刻破掉：写工具 ${elapsed}ms、期间 /api/health ${healthMs}ms，没有整个冻住`);
   }
 
   const admin = await api("/api/auth/login", {method: "POST", body: {email: "system.admin@local", token: "doctor-bootstrap-token"}});
@@ -2063,6 +2100,36 @@ try {
 
   const localStart = spawnSync(process.execPath, ["apps/mcp-server/server.mjs"], {cwd: root, encoding: "utf8"});
   if (localStart.status === 0 || !localStart.stderr.includes("Local MCP stdio startup is disabled")) throw new Error("Agent-local MCP stdio server was not disabled");
+  // 【别的活进程持锁：要等满、要报 lock_timeout、健康提示要指向锁而不是磁盘】。用 doctor 自己的
+  // pid 造锁 —— 它活着，产品不许破它（那正是这把锁要保护的并发场景）。这 10 秒里控制面会冻住
+  //（Atomics.wait），所以放在所有别的断言之后，别让它和别的请求抢。
+  {
+    const lockPath = join(runtimeDir, "mcp-audit.jsonl.lock");
+    mkdirSync(lockPath, {recursive: true});
+    writeFileSync(join(lockPath, "owner.json"), JSON.stringify({pid: process.pid, at: new Date().toISOString()}));
+    const startedAt = Date.now();
+    const contended = await mcp("tools/call", {name: "room-mcp.room_join", arguments: {
+      idempotencyKey: "doctor-mcp-alive-lock", taskGroupId: "tg_runtime_management",
+      roomId: "room_tg_runtime_management", sessionId: "sess_doctor_alive_lock", roleId: "reviewer"}});
+    const waited = Date.now() - startedAt;
+    try { rmSync(lockPath, {recursive: true, force: true}); } catch { /* 尽力而为 */ }
+    if (waited < 9000) {
+      throw new Error(`别的活进程持着锁，写工具却只等了 ${waited}ms 就过了 —— 把活锁当残锁破掉了，并发写归档会撕裂`);
+    }
+    if (contended.error || contended.structuredContent?.ok !== true) {
+      throw new Error(`锁超时把业务写入一起打死了：${JSON.stringify(contended).slice(0, 160)}`);
+    }
+    const contendedHealth = await api("/api/health");
+    const lockWarning = (contendedHealth.warnings || []).find((item) => item.kind === "mcp_audit_write_failed");
+    if (!lockWarning) throw new Error("锁超时丢了一条归档记录，健康检查却没报");
+    // 匹配文案里真有的那句（「锁被另一个活着的进程持着」），别按自己脑子里的词序写 ——
+    // 第一版写成「另一个活着的进程持着锁」，产品是对的、断言自己红了。
+    if (!/另一个活着的进程持着/u.test(String(lockWarning.hint || ""))) {
+      throw new Error(`锁超时的健康提示指错了方向（${String(lockWarning.hint).slice(0, 60)}…）—— 这是别的进程持锁，而不是「查磁盘」`);
+    }
+    console.log(`  ok  别的活进程持锁：等了 ${waited}ms 才超时、业务照常、健康提示指向锁`);
+  }
+
   console.log(`mcp doctor ok: ${listed.tools.length} remote tools, auth, HTTP transport, input policy and remote-only registration verified`);
 } finally {
   child.kill("SIGTERM");

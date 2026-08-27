@@ -9969,6 +9969,24 @@ const MUTATIONS = [
     expect: "而 /api/health 没说"
   },
   {
+    name: "本进程自己的 MCP 审计残锁要立刻破掉（不许白等 10 秒并冻住整个控制面）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "  if (pid === process.pid) return true;",
+    to: "  if (pid === process.pid) return false;",
+    expect: "同 pid 的锁只可能是残锁"
+  },
+  {
+    name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "mcp",
+    from: '        hint: mcpFault.kind === "lock_timeout"',
+    to: '        hint: false',
+    // 真跑：doctor-mcp 用【自己的 pid】造一把活锁（探针进程活着，产品不许破它），
+    // 等满 10 秒换一条真断言 —— 那 10 秒里控制面会冻住，所以那条断言放在其它断言都做完之后。
+    expect: "而不是「查磁盘」"
+  },
+  {
     name: "「项目成员授权」的项目下拉里不许出现已归档的项目（后端已拒 project_archived）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

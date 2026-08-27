@@ -2902,8 +2902,12 @@ async function handleApi(req, res) {
     const warnings = [
       ...(mcpFault ? [{kind: "mcp_audit_write_failed", lostEntries: mcpFault.lostEntries,
         error: mcpFault.error, at: mcpFault.at,
-        hint: "MCP 调用归档写不进去了，这段时间 agent 做过什么事后查不到：检查运行目录剩余空间、"
-          + "挂载是否只读、以及本进程对 mcp-audit.jsonl 的写权限；恢复之后下一次调用会自动转回正常"}] : []),
+        hint: mcpFault.kind === "lock_timeout"
+          ? "MCP 调用归档的锁被另一个活着的进程持着超过 10 秒（多半是多个控制面进程共用了同一个运行目录）："
+            + "这段时间 agent 的调用记录丢了，且每次写工具都会白等 10 秒并冻住整个控制面；"
+            + "确认只有一个控制面进程在写这个目录"
+          : "MCP 调用归档写不进去了，这段时间 agent 做过什么事后查不到：检查运行目录剩余空间、"
+            + "挂载是否只读、以及本进程对 mcp-audit.jsonl 的写权限；恢复之后下一次调用会自动转回正常"}] : []),
       ...(auditFault ? [{kind: "audit_archive_write_failed", lostEntries: auditFault.lostEntries,
         error: auditFault.error, at: auditFault.at,
         hint: "问责台账的归档写不进去了，这段时间的操作事后查不到：检查运行目录剩余空间、"

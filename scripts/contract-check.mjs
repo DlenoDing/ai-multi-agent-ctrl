@@ -11200,9 +11200,14 @@ function verifyMutationsAreRegisteredAgainstTheRightGate(output) {
     "崩溃", "并发", "空转", "控制台", "契约", "规范", "装机", "加载期自检", "doctor"];
   const vague = [];
   let skipCount = 0;
-  for (const entry of mutations.matchAll(/name: "([^"]+)"[\s\S]{0,600}?skip: "([^"]+)"/gu)) {
+  // 【按条目切，别用距离窗口】。原先是 name…{0,600}…skip 一把扫：一条【没有 skip】的条目紧挨着
+  // 一条【有 skip】的，窗口会从前者的 name 扫到后者的 skip，把别人的理由算到它头上 —— 实测报出
+  // 「残锁那条没点名门」，而那条根本没有 skip。逐个 {…} 切出来，在块内找。
+  for (const block of mutations.matchAll(/\{\s*(?:\/\/[^\n]*\n\s*)*name: "([^"]+)"[\s\S]*?\n  \}/gu)) {
+    const skip = /skip: "([^"]+)"/u.exec(block[0]);
+    if (!skip) continue;
     skipCount += 1;
-    if (!NAMED_GATES.some((gate) => entry[2].includes(gate))) vague.push(entry[1]);
+    if (!NAMED_GATES.some((gate) => skip[1].includes(gate))) vague.push(block[1]);
   }
   if (skipCount < 20) {
     output.push(`skip 理由核对：只解析出 ${skipCount} 条 skip —— 提取多半失配，这一支在空转`);
