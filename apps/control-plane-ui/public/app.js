@@ -990,10 +990,12 @@ function requestFailureHint(payload) {
     // 动态取它认不出来（而认不出来就等于这几族又回到"没人读"的状态）。
     pathList(payload.deniedPaths, "踩到禁区的路径"),
     pathList(payload.outsidePaths, "落在允许范围之外的路径"),
-    pathList(payload.trespassedPaths, "越到别人边界里的路径"),
-    pathList(payload.forbiddenPaths, "被明令禁止的路径"),
+    // 这两对说的都是【人批准的那份方案】怎么划的界，不是泛指的边界 —— 措辞照它的来源写：
+    // approvedPaths 是方案里各分支的 ownedPaths，forbiddenPaths 是方案里明写的禁区。
+    pathList(payload.trespassedPaths, "踩进了方案禁区的路径"),
+    pathList(payload.forbiddenPaths, "人批准的方案里划为禁区的路径"),
     pathList(payload.changedPaths, "这次实际改动的路径"),
-    pathList(payload.approvedPaths, "已获准的路径"),
+    pathList(payload.approvedPaths, "人批准的方案允许改的路径"),
     // 锁被别人占着时，"被谁占着"决定了下一步是去找他还是等它过期。
     payload.holderRef ? `当前持有者：${payload.holderRef}` : "",
     payload.activeLeaseRef ? `还生效的租约：${payload.activeLeaseRef}` : "",
