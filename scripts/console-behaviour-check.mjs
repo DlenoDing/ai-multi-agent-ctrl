@@ -347,7 +347,18 @@ if (process.env.AIMAC_RENDER_REAL) {
   // 不写这一句的话，两个方向都会误判：把"成员看到了别人的项目"当成越权缺陷（其实是工具没过滤），
   // 或者反过来以为这里能验出越权（越权由 doctor 的读泄漏用例守着，不是这里）。
   if (who?.accountType !== "system_admin") {
-    console.log("（注意：喂进去的是完整状态，未经服务端按账号过滤 —— 这一视角实际收到的会更少；越权与否由 e2e 的读泄漏用例守，不看这里）");
+    // 光说"会更少"不够：逐页读的时候很容易把一份跨组织的清单当成产品的事实
+    //（本轮就差点把组织管理员那屏的「项目一览 7 个 / 配额 项目 1/12」报成两个数打架，
+    //  而那 7 个里大半根本不属于他的组织）。给个【下界】：按组织归属数得出来，
+    //  不复制服务端那套授权判定（复制一份出来本身就是缺陷来源），所以只多不少地说"至少"。
+    const myOrg = who?.organizationId || "org_default";
+    const foreignProjects = (real.projects || []).filter((item) => (item.organizationId || "org_default") !== myOrg);
+    const myProjectIds = new Set((real.projects || [])
+      .filter((item) => (item.organizationId || "org_default") === myOrg).map((item) => item.id));
+    const foreignGroups = (real.taskGroups || []).filter((item) => item.projectId && !myProjectIds.has(item.projectId));
+    console.log("（注意：喂进去的是完整状态，未经服务端按账号过滤 —— 这一视角实际收到的会更少；"
+      + `按组织归属数，这份输出里【至少】有 ${foreignProjects.length} 个项目、${foreignGroups.length} 个任务组`
+      + `不属于 ${myOrg}，真实控制台不会给他。越权与否由 e2e 的读泄漏用例守，不看这里）`);
   }
   // 有几块内容【不在状态里】：它们由页面加载后另发请求取（执行事件走长轮询、待确认数走计数接口、
   // 评审/指令走各自的接口）。这个工具只喂状态、不发请求，所以那几块渲出来永远是「暂无数据」——
