@@ -2290,7 +2290,7 @@ try {
     // 人按着界面签一张出来，agent 接进去绑到一个不能再建任何工作的项目上，两边都不会报错。
     const archivedJoinToken = await jsonFetch(port, "/api/agent-join-tokens", {method: "POST",
       headers: {"Idempotency-Key": "doctor-archive-join-token", authorization: systemAuth},
-      body: JSON.stringify({projectId: archProjectId, roleScope: ["monitor"], ttlSeconds: 600})});
+      body: JSON.stringify({projectId: archProjectId, allowedRoles: ["monitor"], ttlSeconds: 600})});
     if (archivedJoinToken.response.ok || archivedJoinToken.payload?.error !== "project_archived") {
       throw new Error(`已归档的项目还能签发 agent 入网令牌（${archivedJoinToken.response.status} `
         + `${JSON.stringify(archivedJoinToken.payload).slice(0, 120)}）—— 接进去的 agent 绑在一个`
