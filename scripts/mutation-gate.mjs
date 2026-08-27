@@ -10423,6 +10423,15 @@ const MUTATIONS = [
     expect: "直接往 auditLog 里 unshift"
   },
   {
+    name: "运维旋钮必须在 README 表里（删掉一行核对要红）",
+    file: "README.md",
+    gate: "contract",
+    check: "verifyOperatorKnobsAreDocumented",
+    from: "| `AIMAC_MCP_AUDIT_ROTATIONS` | `20` |",
+    to: "| `AIMAC-MCP-AUDIT-ROTATIONS（已删）` | `20` |",
+    expect: "运维要碰的环境旋钮没进 README 的表：AIMAC_MCP_AUDIT_ROTATIONS"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

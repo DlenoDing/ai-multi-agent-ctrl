@@ -961,6 +961,7 @@ run(verifyTransitionEngine);
 run(verifyCommandBusLifecycle);
 run(verifyInitLedgerStartsHashed);
 run(verifyLedgerRowsGoThroughTheSharedBuilder);
+run(verifyOperatorKnobsAreDocumented);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
 // 汇总之前把所有 async 检查等干净。少了这一句，它们推进的错误会赶不上报告。
@@ -15573,6 +15574,35 @@ function verifyLedgerRowsGoThroughTheSharedBuilder(output) {
     }
   }
   if (scanned < 20) output.push(`台账写法扫描只扫到 ${scanned} 个文件 —— 文件枚举脱节，本条在空转`);
+}
+
+// 【运维要碰的环境旋钮必须在 README 的表里】。产品读 117 个 AIMAC_*，README 曾只登了 40 个；决定「什么时候
+// 开始丢 agent 调用记录」的 AIMAC_MCP_AUDIT_ROTATIONS 就是漏掉的一个。不是每个旋钮都该进 README（排障/仿真/门用
+// 的不该摆给运维），所以按名字族分：运维族缺一行就红；内部族逐族写明为什么不登；两族都不在的新旋钮也红，
+// 不许新旋钮悄悄溜进"没人分类"的缝里。
+function verifyOperatorKnobsAreDocumented(output) {
+  const under = (dir) => readdirSync(dir, {recursive: true}).map(String).map((name) => join(dir, name)).filter((file) => file.endsWith(".mjs") && !file.includes("/node_modules/"));
+  const text = under(join(root, "apps")).map((file) => readFileSync(file, "utf8")).join("\n");
+  const knobs = [...new Set([...text.matchAll(/process\.env\.(AIMAC_[A-Z0-9_]+)/gu)].map((m) => m[1]))].sort();
+  const readme = readFileSync(join(root, "README.md"), "utf8");
+  const OPERATOR = /^AIMAC_(ALLOW|ALLOWED|AGENT_ALLOW|ORG_DEFAULT_|PG_|MCP_AUDIT_|NODE_|LOGIN_|TRUST_PROXY|HOST$|PORT$|PUBLIC_URL|RUNTIME_DIR|STATE_STORE|BOOTSTRAP|REPOSITORY_ROOT)/u;
+  const INTERNAL = {
+    "排障/记账": /^AIMAC_(ROUTE_TRACE|TOOL_TRACE|SERVER_ERROR_DEBUG|AGENT_DEBUG|EXPOSE_BOOTSTRAP_HINT)$/u,
+    "仿真/门专用": /^AIMAC_(AGENT_SIMULATE_|AGENT_VERIFICATION_DEFER|AGENT_ONCE|EXIT_WITH_PARENT|MCP_INTERNAL_STDIO|LOCAL_SEED_|AGENT_KEEP_SESSION_DIRS|PROJECT_EVENT_ALLOW_FULL_KEY_SCAN|MCP_ALLOW_FULL_STATE)/u,
+    "agent 节点侧配置（agentctl --help 与 docs/agent-runtime-protocol.md 管）": /^AIMAC_AGENT_/u,
+    "存储/事件内部调参": /^AIMAC_(PROJECT_EVENT_|RUNTIME_JSON_|HEARTBEAT_PERSIST_FLOOR_MS|KEEP_ALIVE_TIMEOUT_MS|REQUEST_TIMEOUT_MS|REALTIME_HEARTBEAT_MS|REGISTER_REPLAY_WINDOW_MS|REVOCATION_ACK_TIMEOUT_MS|WIP_|ENERGY_WATTS_PER_CPU|OLLAMA_MODEL|MCP_SERVICE_ALLOWED_TOOLS|SERVER_URL|NODE_RETIRE_TIMEOUT_MS|DOCTOR_|MUTATION_|LIST_|PRINT_)/u
+  };
+  const missing = [];
+  const unclassified = [];
+  for (const knob of knobs) {
+    const documented = readme.includes(`\`${knob}\``);
+    if (OPERATOR.test(knob)) { if (!documented) missing.push(knob); continue; }
+    if (documented) continue;
+    if (!Object.values(INTERNAL).some((pattern) => pattern.test(knob))) unclassified.push(knob);
+  }
+  if (knobs.length < 60) output.push(`环境旋钮登记核对只扫到 ${knobs.length} 个 AIMAC_* —— 提取脱节，本条在空转`);
+  if (missing.length) output.push(`运维要碰的环境旋钮没进 README 的表：${missing.join("、")} —— 决定丢不丢数据/允不允许明文的旋钮不能只写在代码里`);
+  if (unclassified.length) output.push(`新的环境旋钮既不在 README 也没在内部族里登记：${unclassified.join("、")} —— 先分类（运维族进 README，内部族写明为什么不登）`);
 }
 
 // 见文件开头 DEVELOPER_RUNTIME_DIGEST_AT_START 的注释。先在临时目录上自证摘要真的看得见改动
