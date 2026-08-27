@@ -10062,6 +10062,22 @@ const MUTATIONS = [
     expect: "没有无条件收掉 -startup 目录"
   },
   {
+    name: "技能源同步失败时 stale/lastSyncError 要落盘（按钮那条路原先一抛就丢）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "      finishGuardedWrite(state, guard, status, payload);\n      writeState(state);\n      json(res, status, payload);",
+    to: "      finishGuardedWrite(state, guard, status, payload);\n      json(res, status, payload);",
+    expect: "技能源同步失败后状态没落盘"
+  },
+  {
+    name: "MCP 同步失败也要落盘（工具一抛包装层就不写状态）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "        if (![\"skill_source_sync_failed\", \"pinned_commit_mismatch\", \"skill_source_unsafe_git_input\"].includes(code)) throw error;",
+    to: "        throw error;",
+    expect: "MCP 同步在缓存坏掉时该回 ok:false"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

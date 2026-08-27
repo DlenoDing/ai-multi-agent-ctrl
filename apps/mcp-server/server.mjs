@@ -1521,7 +1521,18 @@ async function dispatchTool(state, name, args, context = {}) {
       if (context?.principal?.kind !== "system_admin") {
         return {ok: false, error: "rule_layer_mutation_forbidden_for_machine_principal"};
       }
-      return syncSkillSource(state, args.sourceId || "agency-agents-zh", {root, runtimeDir});
+      try {
+        return syncSkillSource(state, args.sourceId || "agency-agents-zh", {root, runtimeDir});
+      } catch (error) {
+        // 与 REST 同规：失败前已写进状态的 stale / lastSyncError 要随这次调用落盘（包装层只在
+        // 工具【返回】时写状态，抛出去就丢了）。认不出的错照旧抛，那是服务端自己的问题。
+        const code = String(error?.message || "").split(":")[0];
+        if (!["skill_source_sync_failed", "pinned_commit_mismatch", "skill_source_unsafe_git_input"].includes(code)) throw error;
+        const source = (state.skillSources || []).find((item) => item.sourceId === (args.sourceId || "agency-agents-zh"));
+        return {ok: false, error: code, retryable: code === "skill_source_sync_failed", sourceId: source?.sourceId || null,
+          sourceStatus: source?.status || null, lastSyncError: source?.lastSyncError || null,
+          message: String(error.message).slice(0, 400)};
+      }
     case "skill-mcp.role_skill_parse":
       return roleSkillParse(state, args);
     case "skill-mcp.role_skill_overlay_validate":

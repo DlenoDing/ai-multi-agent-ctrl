@@ -3887,7 +3887,26 @@ async function handleApi(req, res) {
       json(res, guard.status, guard.payload);
       return;
     }
-    const result = syncSkillSource(state, skillSyncMatch[1], {root, runtimeDir});
+    let result;
+    try {
+      result = syncSkillSource(state, skillSyncMatch[1], {root, runtimeDir});
+    } catch (error) {
+      // 【失败也要落盘】。syncSkillSource 在抛之前已经把 source.status（stale / quarantined）与
+      // lastSyncError 写进状态 —— 而这条路上一抛，本请求那份状态就丢了：面板照旧显示上一次的状态，
+      // 人看到的只是一条一闪而过的 500「server_error」，连词表里那句「该源已标记为 stale」都是假话。
+      // 自治周期那条路（catch 之后接着写）一直是对的，按钮这条路漏了。
+      const status = skillSourceFailureStatus(error);
+      if (!status) throw error;
+      const source = (state.skillSources || []).find((item) => item.sourceId === skillSyncMatch[1]);
+      const payload = {error: String(error.message).split(":")[0], sourceId: skillSyncMatch[1],
+        sourceStatus: source?.status || null, lastSyncError: source?.lastSyncError || null,
+        message: String(error.message).slice(0, 400)};
+      audit(state, guard.actor, "skill_source_sync", `AgentSkillSource:${skillSyncMatch[1]}`, payload.error);
+      finishGuardedWrite(state, guard, status, payload);
+      writeState(state);
+      json(res, status, payload);
+      return;
+    }
     audit(state, guard.actor, "skill_source_sync", `AgentSkillSource:${skillSyncMatch[1]}`);
     finishGuardedWrite(state, guard, 200, result);
     writeState(state);
@@ -6636,6 +6655,15 @@ if (orchestratorIntervalMs > 0) {
 realtimeHeartbeat.unref();
 
 let lastStorageFault = null;
+
+// 技能源同步的三种业务失败各给一个状态码；认不出的照旧当 500 抛出去（那才是真的服务端问题）。
+function skillSourceFailureStatus(error) {
+  const code = String(error?.message || "").split(":")[0];
+  if (code === "skill_source_sync_failed") return 502;
+  if (code === "pinned_commit_mismatch") return 409;
+  if (code === "skill_source_unsafe_git_input") return 400;
+  return 0;
+}
 
 function respondApiError(res, error, requestLabel = "") {
   if (res.headersSent) {

@@ -457,6 +457,42 @@ try {
   if (!skillSync.response.ok || skillSync.payload.roleSkillCount < 260 || skillSync.payload.actualCommit !== "1d2345927e4a70c426472c37771e31f9333d7e0a") {
     throw new Error("agency-agents-zh sync did not verify pinned role index");
   }
+  // 【同步失败那一刻，面板要变】。syncSkillSource 失败前把 stale / lastSyncError 写进状态再抛，
+  // 而按钮这条路原先一抛就丢了那份状态：面板照旧「active」，人只看到一条 500「server_error」，
+  // 词表里那句「该源已标记为 stale」是假话。造法：把克隆下来的 repo 目录换成一个文件（缓存坏了），
+  // fetch 必然失败；断言状态与原因真的落了盘，然后修回来、再同步一次让后面的块照旧拿到 active。
+  {
+    const clonedRepo = join(root, doctorRuntimeDir, "skill-sources", "agency-agents-zh", "repo");
+    if (!existsSync(clonedRepo)) throw new Error(`「同步失败要落盘」这条没造出想测的情形：成功同步之后找不到克隆目录 ${clonedRepo}`);
+    rmSync(clonedRepo, {recursive: true, force: true});
+    writeFileSync(clonedRepo, "not a git repository\n");
+    const failedSync = await jsonFetch(port, "/api/skill-sources/agency-agents-zh/sync", {
+      method: "POST", headers: {"Idempotency-Key": "doctor-skill-sync-broken-cache", authorization: systemAuth}, body: "{}"
+    });
+    if (failedSync.response.status !== 502 || failedSync.payload?.error !== "skill_source_sync_failed") {
+      throw new Error(`技能源缓存坏掉时同步该回 502 skill_source_sync_failed，实际 ${failedSync.response.status} ${JSON.stringify(failedSync.payload).slice(0, 200)}`);
+    }
+    const afterFail = await jsonFetch(port, "/api/state?view=full", {headers: {authorization: systemAuth}});
+    const failedSource = (afterFail.payload.skillSources || []).find((item) => item.sourceId === "agency-agents-zh");
+    if (failedSource?.status !== "stale" || !failedSource?.lastSyncError) {
+      throw new Error(`技能源同步失败后状态没落盘：面板上仍是 ${failedSource?.status || "无"}、原因「${failedSource?.lastSyncError || "空"}」—— `
+        + "人按了「同步」得到一条一闪而过的错误，面板却照旧，词表里那句「已标记为 stale」是假话");
+    }
+    if (String(failedSync.payload.lastSyncError || "") !== failedSource.lastSyncError) {
+      throw new Error("同步失败的回执里带的原因与落盘的不是同一句 —— 两处会各说各话");
+    }
+    rmSync(clonedRepo, {force: true});
+    const resync = await jsonFetch(port, "/api/skill-sources/agency-agents-zh/sync", {
+      method: "POST", headers: {"Idempotency-Key": "doctor-skill-sync-after-repair", authorization: systemAuth}, body: "{}"
+    });
+    if (!resync.response.ok) throw new Error(`修好缓存之后重新同步没成功：${resync.response.status} ${JSON.stringify(resync.payload).slice(0, 200)}`);
+    const afterRepair = await jsonFetch(port, "/api/state?view=full", {headers: {authorization: systemAuth}});
+    const repaired = (afterRepair.payload.skillSources || []).find((item) => item.sourceId === "agency-agents-zh");
+    if (repaired?.status !== "active" || repaired?.lastSyncError) {
+      throw new Error(`重新同步成功后面板没有回到 active / 清掉上次的失败原因（${repaired?.status}／「${repaired?.lastSyncError || "空"}」）—— 修好了还挂着旧错，人以为没修好`);
+    }
+    console.log("  ok  技能源同步失败时 stale 与失败原因真的落盘（面板会变），修好后重新同步回到 active");
+  }
   const modelDecision = await jsonFetch(port, "/api/model-selection/decide", {
     method: "POST",
     headers: {"Idempotency-Key": "doctor-model-selection", authorization: systemAuth},

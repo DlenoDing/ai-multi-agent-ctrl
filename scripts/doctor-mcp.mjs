@@ -675,6 +675,34 @@ try {
       throw new Error(`permission_resolve 没落下处置：${JSON.stringify(permissionResolved).slice(0, 200)}`);
     }
 
+    // 【MCP 这条路同步失败也要落盘】。REST 那条按钮路在 doctor 里验过；MCP 的包装层只在工具
+    // 【返回】时写状态，工具一抛就丢 —— 失败前写进状态的 stale / lastSyncError 就没了。
+    // 不联网：服务端启动时已经把仓库克隆进运行目录，把 repo 目录换成一个文件，fetch 必然失败。
+    {
+      const clonedRepo = join(runtimeDir, "skill-sources", "agency-agents-zh", "repo");
+      if (!existsSync(clonedRepo)) {
+        throw new Error(`「MCP 同步失败要落盘」这条没造出想测的情形：运行目录里没有克隆好的 ${clonedRepo}`);
+      }
+      rmSync(clonedRepo, {recursive: true, force: true});
+      writeFileSync(clonedRepo, "not a git repository\n");
+      const broken = await mcpAs(admin.sessionToken, "tools/call",
+        {name: "skill-mcp.skill_source_sync", arguments: {sourceId: "agency-agents-zh", idempotencyKey: "mcp-doctor-broken-cache"}});
+      const brokenPayload = JSON.parse(broken.content?.[0]?.text || "{}");
+      // 包装层把工具结果装在 result 里（{ok, tool, stateVersion, result}）；工具一抛，result 整个没有、
+      // 顶层只剩 server_error —— 那正是这条要抓的。
+      const brokenInner = brokenPayload.result || {};
+      if (brokenPayload.ok !== false || brokenInner.error !== "skill_source_sync_failed") {
+        throw new Error(`MCP 同步在缓存坏掉时该回 ok:false + skill_source_sync_failed，实际 ${JSON.stringify(brokenPayload).slice(0, 240)}`);
+      }
+      const afterBroken = await api("/api/state?view=full&limit=200", {token: admin.sessionToken});
+      const brokenSource = (afterBroken.skillSources || []).find((item) => item.sourceId === "agency-agents-zh");
+      if (brokenSource?.status !== "stale" || !brokenSource?.lastSyncError) {
+        throw new Error(`MCP 同步失败后状态没落盘：面板上仍是 ${brokenSource?.status || "无"}、原因「${brokenSource?.lastSyncError || "空"}」`);
+      }
+      rmSync(clonedRepo, {force: true});
+      console.log("  ok  MCP 同步失败时 stale 与失败原因真的落盘（不联网：把克隆目录换成文件造的）");
+    }
+
     // 【每个已登记角色，按角色配的东西要么是它自己的、要么留痕】。这一轮撞到两次同形：
     // 角色技能、选型策略 —— 都是"这个角色没有自己的那一份，就静默套用别人的"，而且都只在
     // 种子态下表现正常（种子里没有那份真技能文件），真语料一进来就变成"套用了别人的且不留痕"。

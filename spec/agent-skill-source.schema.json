@@ -47,6 +47,10 @@
       "type": "string",
       "enum": ["configured", "syncing", "indexed", "active", "stale", "quarantined", "retired"]
     },
+    "updatedAt": {"type": "string", "format": "date-time"},
+    "lastSyncError": {"type": "string", "maxLength": 600},
+    "lastSyncFailedAt": {"type": "string", "format": "date-time"},
+    "retiredAt": {"type": "string", "format": "date-time"},
     "stateVersion": {
       "type": "integer",
       "minimum": 1
