@@ -12,7 +12,7 @@
 //
 // DOM 桩只做被测代码真正用到的那点事。桩不认识的选择器一律抛错而不是返回空集 ——
 // 静默返回空集会让断言"匹配到 0 个元素所以没发现问题"从而永远通过，那是本仓踩过的坑。
-import { accountEffectivePermissions, consoleVocabularies, effectiveProjectConfig } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
+import { accountEffectivePermissions, consoleVocabularies, effectiveProjectConfig, effectiveTaskGroupConfig } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import { AUDIT_LOG_CAP } from "../apps/control-plane-ui/lib/audit-ledger.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -523,7 +523,19 @@ if (process.env.AIMAC_RENDER_REAL) {
   const project = (real.projects || [])[0];
   const taskGroup = (real.taskGroups || [])[0];
   console.log(`=== 真实状态：${(real.projects || []).length} 个项目、${(real.taskGroups || []).length} 个任务组\n`);
-  console.log("=== 任务组页 ===\n" + clip(strip(probe.renderTaskGroupsWith(real, who, project?.id, taskGroup?.id, null)), renderChars && Math.max(renderChars, 2400)));
+  // 明细卡此前一直传 null → 每份真实渲染都停在「正在加载任务组详情…」，明细从来没被读过。
+  // 按 loadTaskGroupDetail 拼三份：progress（就是任务组记录本身那几个字段）、config（与服务端同一个 effectiveTaskGroupConfig）、房间消息。
+  const realDetail = taskGroup ? {
+    taskGroupId: taskGroup.id, loadFailed: false,
+    progress: {taskGroupId: taskGroup.id, phase: taskGroup.phase, progress: taskGroup.progress, health: taskGroup.health, languagePolicy: taskGroup.languagePolicy,
+      roles: taskGroup.roles, taskAnalysis: taskGroup.taskAnalysis || null, workItems: (taskGroup.workItems || []).slice(0, 20), workItemCount: (taskGroup.workItems || []).length,
+      blockers: taskGroup.blockers, repositoryOutputs: (real.repositoryOutputs || []).filter((target) => target.taskGroupId === taskGroup.id)},
+    config: effectiveTaskGroupConfig(real, taskGroup), configVersion: "survey",
+    roomMessages: (real.roomMessages || []).filter((message) => message.roomId === `room_${taskGroup.id}`).slice(-50),
+    roomMessageTotal: (real.roomMessages || []).filter((message) => message.roomId === `room_${taskGroup.id}`).length,
+    configLoadError: null, roomLoadError: null, roomLoadDenied: false
+  } : null;
+  console.log("=== 任务组页 ===\n" + clip(strip(probe.renderTaskGroupsWith(real, who, project?.id, taskGroup?.id, realDetail)), renderChars && Math.max(renderChars, 2400)));
   console.log("\n=== 监控页 ===\n" + clip(strip(probe.renderMonitorWith(real, who, project?.id)), renderChars && Math.max(renderChars, 1200)));
   // 其余各页走通用入口。渲染不出来（抛异常）本身就是发现：真实数据里有夹具没有的组合。
   // 页 id 必须是真的存在的那几个。第一版写的是 orgs / agents / rules —— 产品对认不出的页 id
