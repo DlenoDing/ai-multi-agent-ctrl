@@ -15679,19 +15679,31 @@ function verifyConsoleRuntimeConstantsHaveOneWriter(output) {
   };
   const helper = bodyOf("decorateRuntimeForConsole");
   if (!helper) { output.push("找不到 decorateRuntimeForConsole —— 界面 runtime 常量的唯一写入点没了"); return; }
-  const keys = ["auditLogCap", "nodeHeartbeatTimeoutMs", "accountRoles", "knownPermissions", "grantRoleTemplates"];
-  for (const key of keys) {
+  const numericKeys = ["auditLogCap", "nodeHeartbeatTimeoutMs"];
+  for (const key of numericKeys) {
     const everywhere = source.match(new RegExp(`runtime\\.${key} = `, "gu")) || [];
     const inHelper = helper.match(new RegExp(`runtime\\.${key} = `, "gu")) || [];
     if (inHelper.length !== 1 || everywhere.length !== 1) {
       output.push(`runtime.${key} 有 ${everywhere.length} 处赋值（helper 里 ${inHelper.length} 处）—— 只能在 decorateRuntimeForConsole 里赋一次`);
     }
   }
+  // 三份词表只在 core 的 consoleVocabularies 里定义：服务端 helper 与勘察工具（AIMAC_RENDER_REAL）都调它，
+  // 服务端里不许再有 runtime.accountRoles = … 这样的旁路赋值。
+  const core = readFileSync(join(root, "apps/control-plane-ui/lib/control-plane-core.mjs"), "utf8");
+  const vocabAt = core.indexOf("\nexport function consoleVocabularies(");
+  const vocabBody = vocabAt < 0 ? "" : core.slice(vocabAt, core.indexOf("\n}\n", vocabAt));
+  for (const key of ["accountRoles", "knownPermissions", "grantRoleTemplates"]) {
+    if (!new RegExp(`\\b${key}:`, "u").test(vocabBody)) output.push(`core 的 consoleVocabularies 里没有 ${key} —— 词表的唯一来源缺了一份`);
+    if (new RegExp(`runtime\\.${key} = `, "u").test(source)) output.push(`server.mjs 里还有 runtime.${key} = 的旁路赋值 —— 词表只能来自 consoleVocabularies`);
+  }
+  if (!helper.includes("consoleVocabularies()")) output.push("decorateRuntimeForConsole 没调 consoleVocabularies —— 界面拿不到词表");
+  const survey = readFileSync(join(root, "scripts/console-behaviour-check.mjs"), "utf8");
+  if (!/AIMAC_RENDER_REAL[\s\S]{0,1500}consoleVocabularies\(\)/u.test(survey)) output.push("勘察工具（AIMAC_RENDER_REAL）没用 consoleVocabularies 装饰真实状态 —— 它读到的表单会写着「词表未下发」");
   for (const reader of ["readStateForRead", "readState"]) {
     const body = bodyOf(reader);
     if (!body || !body.includes("decorateRuntimeForConsole(")) output.push(`${reader} 没调 decorateRuntimeForConsole —— 这条路上界面拿不到词表`);
   }
-  console.log(`界面 runtime 常量 ${keys.length} 个都只在 decorateRuntimeForConsole 里赋值，两条读路径都经过它`);
+  console.log(`界面 runtime 常量：${numericKeys.length} 个数值只在 decorateRuntimeForConsole 里赋值，三份词表只来自 core 的 consoleVocabularies，服务端两条读路径与勘察工具都经过它`);
 }
 
 // 【控制台里自由填角色的输入框：示例必须是已登记的执行角色，且都挂着词表】。服务端五扇门（建任务组/入网令牌/
@@ -16251,7 +16263,10 @@ async function verifyStoppingAnExecutorTellsTheTruth(output) {
       const killTimer = setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch { /* 已经走了 */ } }, 300);
       // 这条验的是「SIGKILL 收得掉」，不是「多快收掉」。5 秒在机器被别的门压满时会偶发红
       //（实测：docker e2e 与变异门同时在跑那一次）—— 时限放宽到 20 秒，判据不变。
-      const giveUp = setTimeout(() => finish(false), 20000);
+      // 到时不能直接判 false：本文件里同步的 run(...) 会用 spawnSync 把事件循环一口气挡住二三十秒，
+      // 解封时「到期的定时器」先于「早就到了的 close 事件」执行 —— 实测「等了 39767ms」而子进程其实早死了。
+      // 让一拍 setImmediate（排在 poll 阶段之后），把已经到了的 I/O 先派发掉，再下结论。
+      const giveUp = setTimeout(() => setImmediate(() => finish(false)), 20000);
       child.once("close", () => { clearTimeout(killTimer); clearTimeout(giveUp); finish(true); });
       try { process.kill(-child.pid, "SIGTERM"); } catch { finish(true); }
     });

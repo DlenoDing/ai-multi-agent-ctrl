@@ -12,7 +12,7 @@
 //
 // DOM 桩只做被测代码真正用到的那点事。桩不认识的选择器一律抛错而不是返回空集 ——
 // 静默返回空集会让断言"匹配到 0 个元素所以没发现问题"从而永远通过，那是本仓踩过的坑。
-import { accountEffectivePermissions } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
+import { accountEffectivePermissions, consoleVocabularies, effectiveProjectConfig } from "../apps/control-plane-ui/lib/control-plane-core.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
@@ -425,6 +425,9 @@ if (process.env.AIMAC_RENDER_REAL) {
   // 不补上它，一个靠授权拿到评审权的人在这份输出里会被写成「当前账号无人工审核权限」——
   // 本轮就差点把它当产品缺陷去查。用的是与服务端同一个函数，不另抄一份。
   const who = whoOnDisk ? {...whoOnDisk, effectivePermissions: accountEffectivePermissions(real, whoOnDisk)} : whoOnDisk;
+  // 盘上的状态没有下发给界面的词表（那是服务端读路径装饰上去的）：不补上，邀请/授权表单会写着「词表未下发」——
+  // 与 effectivePermissions 同一类由工具自己制造的假缺陷。用与服务端同一个函数，不另抄一份。
+  real.runtime = {...(real.runtime || {}), ...consoleVocabularies()};
   if (wantWho && who?.email !== wantWho) {
     console.log(`（要的是 ${wantWho}，真实状态里没有这个账号 —— 下面渲染的是 ${who?.email}）`);
   }
@@ -557,6 +560,14 @@ if (process.env.AIMAC_RENDER_REAL) {
       const ok = (payload) => ({ok: true, status: 200, headers, json: async () => payload});
       if (url.includes("/api/state")) return ok(real);
       if (url.includes("/api/orgs")) return ok({organizations: real.organizations || []});
+      // 项目设置页从配置接口取规则/仓库/角色行；桩不答它，这一页就只剩一条「暂时无法读取」横幅，
+      // 规则编辑器与角色行从来没在这份输出里出现过。config 用与服务端同一个 effectiveProjectConfig；
+      // configVersion 只在保存时当乐观锁用，读文本不需要真值。
+      const projectConfig = url.match(/\/api\/projects\/([^/?]+)\/config(?:\?|$)/u);
+      if (projectConfig) {
+        const project = (real.projects || []).find((item) => item.id === decodeURIComponent(projectConfig[1]));
+        if (project) return ok({projectId: project.id, config: effectiveProjectConfig(project), configVersion: "survey"});
+      }
       unserved.add(url.split("?")[0]);
       return {ok: false, status: 404, statusText: "Not Found", headers,
         json: async () => ({error: "probe_stub_has_no_answer"})};

@@ -8216,6 +8216,17 @@ export function grantPermissionTemplates(resourceType) {
   return resourceType === "task_group" ? TASK_GROUP_GRANT_PERMISSION_TEMPLATES : ROLE_GRANT_PERMISSION_TEMPLATES;
 }
 
+// 【下发给界面的三份词表只有这一个来源】：服务端两条读路径经 decorateRuntimeForConsole 用它；
+// 勘察工具（AIMAC_RENDER_REAL）直接读盘上的状态、不经服务端，也用它 —— 否则它读到的邀请/授权表单
+// 会写着「词表未下发」，一个由工具自己制造的假缺陷。
+export function consoleVocabularies() {
+  return {
+    accountRoles: [...ACCOUNT_ROLES],
+    knownPermissions: [...KNOWN_PERMISSIONS],
+    grantRoleTemplates: {project: Object.keys(grantPermissionTemplates("project")), task_group: Object.keys(grantPermissionTemplates("task_group"))}
+  };
+}
+
 export function permissionsForRoleGrant(role, resourceType) {
   // 认不出的角色原先【静默降成 viewer】：调用方要的是 project_admin，拿到的是一张只读授权，
   // 而回执是成功、记录上的 role 还写着 project_admin —— 一条自相矛盾的授权，

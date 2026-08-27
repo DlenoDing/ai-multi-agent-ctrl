@@ -93,7 +93,7 @@ import {
   ACCOUNT_ROLES,
   unknownAccountRoles,
   KNOWN_PERMISSIONS,
-  unknownPermissions, grantPermissionTemplates,
+  unknownPermissions, consoleVocabularies,
   unknownOwnerRoles,
   runAgentRuntimeWorker,
   runAutonomousCycle,
@@ -370,11 +370,9 @@ function decorateRuntimeForConsole(state) {
   // 判死阈值：节点行上的"在线"来自 node.status，而它只有在扫描跑过之后才翻成 offline（扫描挂在编排拍上）。
   // 界面要据此说出"心跳已经超时、只是还没被标记"，而不是照抄一个过时的字。
   state.runtime.nodeHeartbeatTimeoutMs = nodeHeartbeatTimeoutMs();
-  // 三份词表：邀请/授权/角色表单原先是自由文本，而服务端按枚举拒 —— 词表只能来自服务端
-  // （界面自己那张标签表里混着授权模板的角色名，正是要避开的混淆）。
-  state.runtime.accountRoles = [...ACCOUNT_ROLES];
-  state.runtime.knownPermissions = [...KNOWN_PERMISSIONS];
-  state.runtime.grantRoleTemplates = grantRoleTemplateNames();
+  // 三份词表（accountRoles / knownPermissions / grantRoleTemplates）：邀请/授权/角色表单原先是自由文本，
+  // 而服务端按枚举拒 —— 词表只能来自服务端，且只有 core 的 consoleVocabularies 一个来源（勘察工具也用它）。
+  Object.assign(state.runtime, consoleVocabularies());
   return state;
 }
 
@@ -799,12 +797,6 @@ function unregisteredDefaultRoles(list) {
 function defaultRoleRefusal(unknownRoles) {
   return {error: "config_default_role_not_registered", unknownOwnerRoles: unknownRoles.slice(0, 10), supported: [...REGISTERED_OWNER_ROLES],
     message: `默认角色「${unknownRoles.slice(0, 10).join("、")}」不在已登记的执行角色里 —— 可用：${REGISTERED_OWNER_ROLES.join("、")}`};
-}
-
-// 授权表单的「角色」是权限模板名（viewer/editor/…），按作用域各有一份；服务端套不出模板就拒，
-// 所以词表要下发给界面（与 knownPermissions 同规），拒绝报文里的 supported 与它必须是同一份。
-function grantRoleTemplateNames() {
-  return {project: Object.keys(grantPermissionTemplates("project")), task_group: Object.keys(grantPermissionTemplates("task_group"))};
 }
 
 function normalizeStringList(value, fallback = [], field = "list") {

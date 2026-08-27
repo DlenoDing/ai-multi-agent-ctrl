@@ -3073,11 +3073,11 @@ const MUTATIONS = [
   },
   {
     name: "界面拿到的授权角色词表要与拒绝报文的 supported 同一份",
-    file: "apps/control-plane-ui/server.mjs",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "doctor",
     // 现在只有 decorateRuntimeForConsole 一个写入点，两条读路径都经过它。
-    from: '  state.runtime.grantRoleTemplates = grantRoleTemplateNames();',
-    to: '  state.runtime.grantRoleTemplates = {project: ["viewer"], task_group: ["viewer"]};',
+    from: '    grantRoleTemplates: {project: Object.keys(grantPermissionTemplates("project")), task_group: Object.keys(grantPermissionTemplates("task_group"))}',
+    to: '    grantRoleTemplates: {project: ["viewer"], task_group: ["viewer"]}',
     expect: "与拒绝报文里的 supported 不是同一份"
   },
   {
@@ -3095,8 +3095,8 @@ const MUTATIONS = [
     file: "scripts/contract-check.mjs",
     gate: "contract",
     check: "verifyStoppingAnExecutorTellsTheTruth",
-    from: "      const giveUp = setTimeout(() => finish(false), 20000);",
-    to: "      const giveUp = setTimeout(() => finish(false), 0);",
+    from: "      const giveUp = setTimeout(() => setImmediate(() => finish(false)), 20000);",
+    to: "      const giveUp = setTimeout(() => setImmediate(() => finish(false)), 0);",
     expect: "没能在宽限期后被 SIGKILL 收掉"
   },
   {
@@ -10380,10 +10380,10 @@ const MUTATIONS = [
   },
   {
     name: "账号角色词表要下发给界面（与拒绝报文里的 supported 同一份）",
-    file: "apps/control-plane-ui/server.mjs",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "doctor",
-    from: "  state.runtime.accountRoles = [...ACCOUNT_ROLES];",
-    to: "  state.runtime.accountRoles = undefined;",
+    from: "    accountRoles: [...ACCOUNT_ROLES],",
+    to: "    accountRoles: undefined,",
     expect: "与拒绝报文里的 supported 不是同一份"
   },
   {
