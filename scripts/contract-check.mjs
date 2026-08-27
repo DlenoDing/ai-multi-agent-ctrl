@@ -15335,13 +15335,21 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
 // 【契约门自己留下的孤儿探针要在下一次进门时清掉】。verifyTestServersDieWithTheirParent 起一个 parent.mjs
 //（setInterval 常驻）再杀它；杀之前抛了异常、或门本身被 SIGKILL，parent.mjs 就挂到 launchd 下永远活着 ——
 // 实测积到 17 个、最久 4 天。这里按 ps 输出挑出年龄超过阈值的 parent.mjs（脚本路径形状唯一，不会误杀别的进程）。
+// 门自己 spawn 的探针，按命令行形状认（两种都只有契约门会起）：
+//   ① cc-orphan-*/parent.mjs（服务端随父死的探针）；② node -e "process.on('SIGTERM', () => {}); setInterval…"（忽略 SIGTERM 的执行器）。
+// ②实测积到 20 个、最久 5 天 18 小时 —— 它的 finally 用进程组杀，门本身被杀时 finally 不跑。
+// 签名清单放在函数体里：本文件的 run(...) 是同步逐条执行的，模块级 const 若声明在调用它的 run 之后就是 TDZ。
 export function staleOrphanProbeParents(psOutput, minAgeSeconds = 600) {
+  const signatures = [
+    /\/T\/cc-orphan-[^/]+\/parent\.mjs\s*$/u,
+    /node -e process\.on\('SIGTERM', \(\) => \{\}\); setInterval\(\(\) => \{\}, 1000\); console\.log\('up'\);\s*$/u
+  ];
   const pids = [];
   for (const line of String(psOutput || "").split("\n")) {
     const match = line.match(/^\s*(\d+)\s+(\S+)\s+(.*)$/u);
     if (!match) continue;
     const [, pid, etime, command] = match;
-    if (!/\/T\/cc-orphan-[^/]+\/parent\.mjs\s*$/u.test(command)) continue;
+    if (!signatures.some((signature) => signature.test(command))) continue;
     // etime 形如 SS、MM:SS、HH:MM:SS、D-HH:MM:SS
     const [days, clock] = etime.includes("-") ? etime.split("-") : ["0", etime];
     const parts = clock.split(":").map(Number);
@@ -15357,9 +15365,11 @@ async function verifyTestServersDieWithTheirParent(output) {
   // 2026-08-22 在这台机器上数出【79 个】，最久的活了 8 天 —— 全是被打断的 e2e 留下的。
   const outputBefore = output.length;
   // 先自检挑选函数（假 ps 输出：一个陈旧的、一个刚起的、一个别的进程），再按真实 ps 输出清陈旧探针。
-  const sample = "  111 4-06:00:52 node /var/folders/x/T/cc-orphan-abc/parent.mjs\n  222 00:05 node /var/folders/x/T/cc-orphan-def/parent.mjs\n  333 4-06:00:52 node apps/control-plane-ui/server.mjs\n";
-  if (staleOrphanProbeParents(sample).join(",") !== "111") {
-    output.push(`孤儿探针清理的挑选函数认错了：期望只挑 111，实际 ${JSON.stringify(staleOrphanProbeParents(sample))}`);
+  const sample = "  111 4-06:00:52 node /var/folders/x/T/cc-orphan-abc/parent.mjs\n  222 00:05 node /var/folders/x/T/cc-orphan-def/parent.mjs\n  333 4-06:00:52 node apps/control-plane-ui/server.mjs\n"
+    + "  444 5-18:08:00 /opt/node/bin/node -e process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); console.log('up');\n"
+    + "  555 00:03 /opt/node/bin/node -e process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); console.log('up');\n";
+  if (staleOrphanProbeParents(sample).join(",") !== "111,444") {
+    output.push(`孤儿探针清理的挑选函数认错了：期望只挑 111,444，实际 ${JSON.stringify(staleOrphanProbeParents(sample))}`);
   }
   const ps = spawnSync("ps", ["-axo", "pid,etime,command"], {encoding: "utf8"});
   const stale = staleOrphanProbeParents(ps.stdout);
@@ -16226,7 +16236,8 @@ async function verifyStoppingAnExecutorTellsTheTruth(output) {
   }
   // 行为面：按同样的形状真起一个【忽略 SIGTERM】的子进程，确认这套先礼后兵能把它收掉，
   // 而且收掉的是整个进程组。
-  const script = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); console.log('up');";
+  // 尾巴上的 setTimeout 是寿命上限：门在 25 秒内就完事，两分钟到了它自己退出，免得门被杀时它永远活着。
+  const script = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); console.log('up'); setTimeout(() => process.exit(0), 120000);";
   const child = spawn(process.execPath, ["-e", script], {detached: true, stdio: ["ignore", "pipe", "ignore"]});
   try {
     // 等它把 "up" 打出来再动手：没等到就 SIGTERM 的话，handler 可能还没装上，

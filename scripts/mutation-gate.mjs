@@ -3109,6 +3109,15 @@ const MUTATIONS = [
     expect: "孤儿探针清理的挑选函数认错了"
   },
   {
+    name: "孤儿探针清理也要认得忽略 SIGTERM 的那种探针",
+    file: "scripts/contract-check.mjs",
+    gate: "contract",
+    check: "verifyTestServersDieWithTheirParent",
+    from: "    /node -e process\\.on\\('SIGTERM', \\(\\) => \\{\\}\\); setInterval\\(\\(\\) => \\{\\}, 1000\\); console\\.log\\('up'\\);\\s*$/u\n  ];",
+    to: "  ];",
+    expect: "孤儿探针清理的挑选函数认错了"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
