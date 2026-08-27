@@ -1737,6 +1737,9 @@ STOP_OR_RETURN=...
 
 ## 19. API 和工具接口
 
+> 本节是设计目标清单，含尚未实现的工具与接口（如 `work_claim`、`pr_create`、`environment_*`）。
+> **已实现的 MCP 工具以 `docs/core-control-plane-spec.md` §5 的表为准（契约门按 mcp-server 源码两向核对），写工具的调用约定见其 §5.1。**
+
 ### 19.1 Room MCP/HTTP 工具
 
 | 工具 | 作用 |

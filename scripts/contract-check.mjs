@@ -13680,10 +13680,12 @@ function verifyMcpToolListCostStaysVisible(output) {
       + "远程 MCP 客户端每次会话都要吞这一份（按 token 计费）；"
       + "要么收窄公布的入参模式，要么显式抬高这个上限并说明为什么值得");
   }
+  const distinctPropertySets = new Set(tools.map((tool) => Object.keys(tool.inputSchema?.properties || {}).sort().join(","))).size;
   console.log(`tools/list 成本：默认服务令牌实际拿到 ${defaultTools.length} 个工具 ${(defaultBytes / 1024).toFixed(0)}KB`
     + `（约 ${Math.round(defaultBytes / 4 / 1000)}k token）；工具表总量 ${tools.length} 个 ${(bytes / 1024).toFixed(0)}KB。`
     + `其中 inputSchema 占 ${Math.round(schemaBytes * 100 / bytes)}%，每个工具公布 ${properties} 个属性`
-    + "——是全仓参数名的并集，不是它自己的");
+    // 这句原先是写死的「是全仓参数名的并集」：发布 schema 改成按工具过滤之后它就不再成立，门却还在说。按真实形状算。
+    + (distinctPropertySets > 1 ? `——按工具各自发布（${distinctPropertySets} 种不同的属性集）` : "——是全仓参数名的并集，不是它自己的"));
 }
 
 // MCP 的返回信封是机器消费方唯一会看的那个字段。内层带了 error 却在信封上说成功，
