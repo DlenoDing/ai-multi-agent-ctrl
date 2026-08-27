@@ -4698,7 +4698,14 @@ function renderProjectSettings() {
   const rulesLoaded = projConfig !== null;
   const resolved = projConfig || {};
   const canEdit = hasPerm("project:update");
-  const editDisabled = canEdit ? "" : "disabled";
+  // 归档是项目的终结态、且不可撤销：后端已经拒（project_archived），界面上这些写入口
+  // 就不该还摆着 —— 摆着一个按不动的杠杆，人会以为是自己哪里填错了。
+  const archived = project.status === "archived";
+  const editDisabled = canEdit && !archived ? "" : "disabled";
+  const archivedNotice = archived
+    ? `<div class="notice warn-notice">这个项目已归档（终态，不可撤销）：配置只能看、不能改，`
+      + "成员授权也发不进去了。要继续这条线，请另建一个项目。</div>"
+    : "";
   const readOnlyNotice = canEdit ? "" : `<div class="notice warn-notice">当前账号无“项目授权管理”权限，项目配置为只读。</div>`;
 
   // 三块配置为空时，页面原先只剩一个"添加 X"按钮 —— 人分不清"这个项目没配"
@@ -4721,6 +4728,7 @@ function renderProjectSettings() {
 
   return [
     panel(`项目设置 · ${esc(project.name)}`, `
+      ${archivedNotice}
       ${readOnlyNotice}
       <form class="form-grid" data-form="project-config" data-project="${esc(project.id)}">
         <div class="form-row"><label>仓库与凭证引用（凭证只存引用，不落明文）</label>

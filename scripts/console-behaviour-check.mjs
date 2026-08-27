@@ -1769,6 +1769,33 @@ function runReviewAxisCase() {
     }],
     qualityGates: []
   });
+  // 归档是项目的终结态、且不可撤销：后端已经拒（project_archived），而项目切换器列得出
+  // 已归档的项目 —— 选中它之后这一页的写入口原先照常摆着，人点「保存项目配置」只拿回一句 409。
+  {
+    const archRoot = el("div");
+    loadConsole(archRoot, {realI18n: true}).renderFullPageWith({
+      projects: [{id: "p_arch", name: "归档项目", organizationId: "org_default", status: "archived",
+        config: {}, members: []}],
+      taskGroups: [], accounts: [], accessGrants: [], truncatedCollections: []
+    }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"},
+      "p_arch", "proj-settings");
+    const archHtml = String(archRoot.innerHTML || "");
+    check("已归档项目的设置页要说明它只能看，不能摆一个按不动的保存按钮",
+      /已归档（终态，不可撤销）/u.test(archHtml)
+        && /<button[^>]*\bdisabled\b[^>]*>\s*保存项目配置/u.test(archHtml),
+      archHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/项目设置[^|]{0,120}/u)?.[0] || "（这一页没渲染出来）");
+    const liveRoot = el("div");
+    loadConsole(liveRoot, {realI18n: true}).renderFullPageWith({
+      projects: [{id: "p_live", name: "在用项目", organizationId: "org_default", status: "active",
+        config: {}, members: []}],
+      taskGroups: [], accounts: [], accessGrants: [], truncatedCollections: []
+    }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"},
+      "p_live", "proj-settings");
+    check("在用项目照常能改（否则这道判据把正常路径一起堵死了）",
+      !/已归档（终态，不可撤销）/u.test(String(liveRoot.innerHTML || "")),
+      "在用项目也被标成了归档");
+  }
+
   // 【同一个词在不同对象上意思不同，只能按对象覆盖】。入网令牌的 consumed 是"这张一次性票
   // 被用掉了"，而全局词表里 consumed 已经被评审包的「已采纳」占着 —— 真实运行态里两张用过的
   // 加入令牌就写着「已采纳」，读起来像有人批准了什么。（active / retired 都撞过同一个形状。）

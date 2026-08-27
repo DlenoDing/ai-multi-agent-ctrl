@@ -2223,7 +2223,43 @@ try {
     if (!liveGroup.response.ok) {
       throw new Error(`未归档的项目里也建不出任务组（${liveGroup.response.status} ${JSON.stringify(liveGroup.payload).slice(0, 120)}）—— 这道判据把正常路径堵死了`);
     }
-    console.log("项目归档终态 ok: 归档后建不了新任务组，未归档的照常建得出来");
+    // 这道判据原先只长在【建任务组 / 建智能体 / 签入网令牌】三处，而改配置、发成员授权
+    // 两条路照样接受已归档的项目：改动真的落下来，而那个项目已经不在任何人的视野里
+    //（概览按在用项目列、编排跳过它）—— 人以为自己配好了、把人加进去了。
+    // 配置更新还有一道【版本前置】：不带 expectedConfigVersion 会先被它拒掉，
+    // 那样这条断言就分不清是"归档挡住的"还是"版本挡住的"（拿掉归档检查照样红，但红错了原因）。
+    // 带上真实版本号，让"没有归档检查就真的写进去"这件事被验出来。
+    const archivedConfig = await jsonFetch(port, `/api/projects/${encodeURIComponent(archProjectId)}/config`,
+      {headers: {authorization: systemAuth}});
+    const archivedConfigVersion = archivedConfig.payload?.configVersion
+      || archivedConfig.payload?.currentConfigVersion || archivedConfig.payload?.config?.configVersion;
+    if (!archivedConfigVersion) {
+      throw new Error(`取不到已归档项目的配置版本（${JSON.stringify(archivedConfig.payload).slice(0, 160)}）——`
+        + " 下面那条会撞在版本前置上而不是归档判据上");
+    }
+    for (const [what, path, payload] of [
+      ["改项目配置", `/api/projects/${encodeURIComponent(archProjectId)}/config`,
+        {baselineData: [], expectedConfigVersion: archivedConfigVersion}],
+      ["发成员授权", `/api/projects/${encodeURIComponent(archProjectId)}/members`,
+        {accountId: "acct_reviewer", role: "project_viewer"}]
+    ]) {
+      const hit = await jsonFetch(port, path, {method: "POST",
+        headers: {"Idempotency-Key": `doctor-archived-${encodeURIComponent(what)}`, authorization: systemAuth},
+        body: JSON.stringify(payload)});
+      if (hit.response.ok || hit.payload?.error !== "project_archived") {
+        throw new Error(`已归档的项目还能「${what}」（${hit.response.status} `
+          + `${JSON.stringify(hit.payload).slice(0, 140)}）—— 归档是终态，改动落进一个没人看得见的项目`);
+      }
+      // 【拒绝话术不许指一条不存在的路】。归档在状态机里没有出边，全仓也没有取消归档的入口，
+      // 而这句话原先写着"请先恢复该项目" —— 人照着找一圈才发现做不到。
+      if (/恢复该项目/.test(String(hit.payload?.message || ""))) {
+        throw new Error(`拒绝话术让人去「恢复该项目」，而归档不可撤销、系统里没有这条路：${hit.payload.message}`);
+      }
+      if (!/不可撤销/.test(String(hit.payload?.message || ""))) {
+        throw new Error(`拒了但没说清归档是不可撤销的：${JSON.stringify(hit.payload).slice(0, 160)}`);
+      }
+    }
+    console.log("项目归档终态 ok: 归档后建不了新任务组 / 改不了配置 / 发不了成员授权，未归档的照常建得出来");
   }
 
   // 跨租户存在性探针（REST 侧）：受限账号问一个项目 id，"查无此物"与"别处真有"必须给同一个答案。

@@ -105,6 +105,7 @@ import {
   effectivePathDenylist,
   recordIdempotentResult,
   taskGroupRuntimeControlRefusal,
+  projectArchivedRefusal,
   idempotentReplayOutcome,
   recordCheckpointRejection,
   routeBlockedDispatchToHumanDecision,
@@ -1063,10 +1064,8 @@ function createTaskGroupRecord(state, input = {}, options = {}) {
   // 归档之后还能往里建新任务组的话，那次收尾就白做了：项目重新变活，而它已经不在任何人的视野里
   // （概览按 active 列、编排跳过 archived）—— 新组从此没人看、没人推，是一条谁也处置不掉的活。
   // 与任务组终结后的写入判据（core 的 taskGroupSettledRejection）同规，只是高一层。
-  if (project.status === "archived") {
-    return {ok: false, status: 409, error: "project_archived",
-      message: "该项目已归档，不能再往里新建任务组。要继续这条线，请先恢复该项目或另建一个项目"};
-  }
+  const archivedForCreate = projectArchivedRefusal(project, "不能再往里新建任务组");
+  if (archivedForCreate) return {ok: false, status: 409, ...archivedForCreate};
   const taskGroupId = input.taskGroupId || createId("tg");
   if (state.taskGroups.some((item) => item.id === taskGroupId)) {
     return {ok: false, status: 409, error: "task_group_id_conflict"};
@@ -4153,6 +4152,10 @@ async function handleApi(req, res) {
       json(res, 400, {error: "cross_org_member_not_allowed"});
       return;
     }
+    // 归档是项目的终结态：往一个已归档的项目里发成员授权，授权会真的落下来，
+    // 而那个项目已经不在任何人的视野里 —— 人以为自己把人加进去了。与建任务组同规。
+    const archivedForGrant = projectArchivedRefusal(project, "不能再往里发成员授权");
+    if (archivedForGrant) return json(res, 409, archivedForGrant);
     const guard = beginGuardedWrite(req, state, "project_member_grant", `Project:${project.id}`, projectScope(project.id));
     if (guard.status) {
       json(res, guard.status, guard.payload);
@@ -6124,6 +6127,10 @@ async function handleApi(req, res) {
       const denial = missingProjectDenial(guard.actorAccount || accountFromRequest(req, state)?.account);
       return json(res, denial.status, denial.payload);
     }
+    // 归档之后改配置改不出任何效果：那个项目不在概览里、编排也跳过它。
+    // 而这一页的项目切换器是列得出已归档项目的，人选中它、点「保存项目配置」，回执还是 200。
+    const archivedForConfig = projectArchivedRefusal(project, "不能再改它的配置");
+    if (archivedForConfig) return json(res, 409, archivedForConfig);
     const projectPrecondition = configPreconditionFailure(body, project.config);
     if (projectPrecondition) return json(res, 409, projectPrecondition);
     project.config = {

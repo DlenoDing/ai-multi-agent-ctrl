@@ -1566,8 +1566,8 @@ const MUTATIONS = [
     name: "归档的项目不得再建任务组（REST）",
     file: SERVER,
     skip: "判别力由控制面 e2e 覆盖（已用 mutate-probe 实证：MCP 那份同形变异当场变红）",
-    from: '  if (project.status === "archived") {\n    return {ok: false, status: 409, error: "project_archived",',
-    to: '  if (false) {\n    return {ok: false, status: 409, error: "project_archived",',
+    from: '  const archivedForCreate = projectArchivedRefusal(project, "不能再往里新建任务组");',
+    to: "  const archivedForCreate = null;",
     expect: "归档前那次逐个关闭白做了"
   },
   {
@@ -9790,6 +9790,30 @@ const MUTATIONS = [
     from: "    const terminalRefusal = taskGroupRuntimeControlRefusal(taskGroup, directive.directiveType);",
     to: "    const terminalRefusal = null;",
     expect: "两条路只挡住一条"
+  },
+  {
+    name: "已归档的项目不许再改配置（归档是终态，改动落进一个没人看得见的项目）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    const archivedForConfig = projectArchivedRefusal(project, "不能再改它的配置");',
+    to: "    const archivedForConfig = null;",
+    expect: "已归档的项目还能「改项目配置」"
+  },
+  {
+    name: "拒绝话术不许指一条不存在的路（归档不可撤销，没有「恢复该项目」）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "doctor",
+    from: "    message: `该项目已归档（终态，不可撤销）：${whatCannotBeDone}。`",
+    to: "    message: `该项目已归档：${whatCannotBeDone}。要继续这条线，请先恢复该项目。`",
+    expect: "而归档不可撤销、系统里没有这条路"
+  },
+  {
+    name: "已归档项目的设置页不许摆一个按不动的保存按钮",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  const editDisabled = canEdit && !archived ? "" : "disabled";',
+    to: '  const editDisabled = canEdit ? "" : "disabled";',
+    expect: "不能摆一个按不动的保存按钮"
   },
 ];
 

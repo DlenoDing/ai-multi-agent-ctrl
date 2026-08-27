@@ -6189,6 +6189,20 @@ export function expireStaleHumanConfirmations(state) {
 // 被打成需关注 —— 而关闭是真人做的终局决定，改它等于把那个决定悄悄翻掉。
 // 收成一个判断，两侧都过它（本仓反复出问题的形状就是"同一件事两条路只改一条"）。
 // recompute_readiness 例外：它什么都不改，人在事后还要看这个组当时为什么能关。
+// 【归档是项目的终结态，而且没有出口】—— 状态机里 archived 没有出边，全仓也没有取消归档的路。
+// 所以拒绝话术里不能写"请先恢复该项目"：那是一条不存在的路，人照着找一圈才发现做不到。
+// 这道判据原先只长在【建任务组】那一处，而项目配置更新、成员授权两条路照样接受已归档的项目：
+// 改动落进一个谁也看不见的项目（概览按 active 列、编排跳过 archived），人以为自己配好了。
+export function projectArchivedRefusal(project, whatCannotBeDone) {
+  if (!project || project.status !== "archived") return null;
+  return {
+    error: "project_archived",
+    projectId: project.id,
+    message: `该项目已归档（终态，不可撤销）：${whatCannotBeDone}。`
+      + "要继续这条线，请另建一个项目 —— 归档之后它不在任何人的视野里（概览按在用项目列、编排跳过它）"
+  };
+}
+
 export function taskGroupRuntimeControlRefusal(taskGroup, action) {
   if (!taskGroup || !CLOSED_TASK_GROUP_STATUSES.has(taskGroup.status)) return null;
   if (action === "recompute_readiness") return null;
