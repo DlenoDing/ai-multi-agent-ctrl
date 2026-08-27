@@ -10441,6 +10441,15 @@ const MUTATIONS = [
     expect: "agentctl 打错命令没有列出可用命令"
   },
   {
+    name: "没注册的节点跑 status 要说「还没注册」并指路 bootstrap（原先一句英文加路径）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "contract",
+    check: "verifyAgentctlUnknownCommandListsCommands",
+    from: "    throw new Error(`这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <入网令牌文件>，令牌由控制面管理员在「AI 智能体」页签发`);",
+    to: "    throw new Error(`agent is not initialized: ${configPath}`);",
+    expect: "没注册的节点跑 status，报文没说「还没注册」"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

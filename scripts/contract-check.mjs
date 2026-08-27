@@ -242,7 +242,8 @@ const AGENT_RUNTIME_CLI_THROWS = new Set([
   "unknown command: ${command}",
   "bootstrap requires --server and --join-token-file",
   "agent self-check failed: ${check.missingChecks.join(\",\")}",
-  "agent is not initialized: ${configPath}",
+  // 只给在这台机器上敲命令的人看：没注册就没有控制面可报，说清"还没注册"和下一步跑什么。
+  "这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <入网令牌文件>，令牌由控制面管理员在「AI 智能体」页签发",
   "agent config is not valid JSON: ${configPath}（开头：${jsonHead(text)}）—— 重新跑一次安装命令即可重建",
   "public Agent Gateway requires HTTPS; set AIMAC_AGENT_ALLOW_INSECURE_HTTP=true only for isolated"
 ]);
@@ -15625,6 +15626,12 @@ function verifyAgentctlUnknownCommandListsCommands(output) {
   const missing = ["bootstrap", "self-check", "status", "run", "agent-runtime-protocol.md"].filter((word) => !said.includes(word));
   if (run.status !== 2 || missing.length) {
     output.push(`agentctl 打错命令没有列出可用命令（exit ${run.status}，缺 ${missing.join("、") || "无"}）：${said.slice(0, 160).replace(/\n/g, " ")} —— 装机的人不知道有哪几个命令`);
+  }
+  // 没注册就跑 status：要说"还没注册"和下一步（bootstrap），不能是一句英文加路径。
+  const fresh = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "status"], {cwd: root, encoding: "utf8", env: {...process.env, AIMAC_AGENT_WORK_DIR: mkdtempSync(join(tmpdir(), "aimac-agentctl-fresh-"))}});
+  const freshSaid = `${fresh.stdout || ""}${fresh.stderr || ""}`;
+  if (fresh.status === 0 || !/还没注册/u.test(freshSaid) || !/bootstrap/u.test(freshSaid)) {
+    output.push(`没注册的节点跑 status，报文没说「还没注册」或没指路 bootstrap（exit ${fresh.status}）：${freshSaid.slice(0, 160).replace(/\n/g, " ")} —— 新节点最先撞到的一句话是英文加路径`);
   }
 }
 

@@ -2052,7 +2052,11 @@ function syncJson(url, token) {
 }
 
 function loadConfig() {
-  if (!existsSync(configPath)) throw new Error(`agent is not initialized: ${configPath}`);
+  // 还没注册就跑 status / self-check / run，是新节点最先撞到的一句话：要说清"没注册"和下一步该跑什么，
+  // 而不是一句英文加一个路径（路径留着，那是这台机器上自己的文件）。
+  if (!existsSync(configPath)) {
+    throw new Error(`这台节点还没注册（找不到 ${configPath}）—— 先跑 agentctl bootstrap --server <控制面地址> --join-token-file <入网令牌文件>，令牌由控制面管理员在「AI 智能体」页签发`);
+  }
   const text = readFileSync(configPath, "utf8");
   try {
     return JSON.parse(text);
