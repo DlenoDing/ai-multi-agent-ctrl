@@ -3100,6 +3100,15 @@ const MUTATIONS = [
     expect: "没能在宽限期后被 SIGKILL 收掉"
   },
   {
+    name: "孤儿探针清理只认 cc-orphan parent.mjs 且按年龄挑（挑选函数自检）",
+    file: "scripts/contract-check.mjs",
+    gate: "contract",
+    check: "verifyTestServersDieWithTheirParent",
+    from: "    if (age >= minAgeSeconds) pids.push(Number(pid));",
+    to: "    pids.push(Number(pid));",
+    expect: "孤儿探针清理的挑选函数认错了"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

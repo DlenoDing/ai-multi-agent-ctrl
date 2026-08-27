@@ -15332,10 +15332,40 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
   }
 }
 
+// 【契约门自己留下的孤儿探针要在下一次进门时清掉】。verifyTestServersDieWithTheirParent 起一个 parent.mjs
+//（setInterval 常驻）再杀它；杀之前抛了异常、或门本身被 SIGKILL，parent.mjs 就挂到 launchd 下永远活着 ——
+// 实测积到 17 个、最久 4 天。这里按 ps 输出挑出年龄超过阈值的 parent.mjs（脚本路径形状唯一，不会误杀别的进程）。
+export function staleOrphanProbeParents(psOutput, minAgeSeconds = 600) {
+  const pids = [];
+  for (const line of String(psOutput || "").split("\n")) {
+    const match = line.match(/^\s*(\d+)\s+(\S+)\s+(.*)$/u);
+    if (!match) continue;
+    const [, pid, etime, command] = match;
+    if (!/\/T\/cc-orphan-[^/]+\/parent\.mjs\s*$/u.test(command)) continue;
+    // etime 形如 SS、MM:SS、HH:MM:SS、D-HH:MM:SS
+    const [days, clock] = etime.includes("-") ? etime.split("-") : ["0", etime];
+    const parts = clock.split(":").map(Number);
+    while (parts.length < 3) parts.unshift(0);
+    const age = Number(days) * 86400 + parts[0] * 3600 + parts[1] * 60 + parts[2];
+    if (age >= minAgeSeconds) pids.push(Number(pid));
+  }
+  return pids;
+}
+
 async function verifyTestServersDieWithTheirParent(output) {
   // e2e 起的服务端在父进程被 SIGKILL 时会成为孤儿：finally 跑不了，它就一直占着端口和内存。
   // 2026-08-22 在这台机器上数出【79 个】，最久的活了 8 天 —— 全是被打断的 e2e 留下的。
   const outputBefore = output.length;
+  // 先自检挑选函数（假 ps 输出：一个陈旧的、一个刚起的、一个别的进程），再按真实 ps 输出清陈旧探针。
+  const sample = "  111 4-06:00:52 node /var/folders/x/T/cc-orphan-abc/parent.mjs\n  222 00:05 node /var/folders/x/T/cc-orphan-def/parent.mjs\n  333 4-06:00:52 node apps/control-plane-ui/server.mjs\n";
+  if (staleOrphanProbeParents(sample).join(",") !== "111") {
+    output.push(`孤儿探针清理的挑选函数认错了：期望只挑 111，实际 ${JSON.stringify(staleOrphanProbeParents(sample))}`);
+  }
+  const ps = spawnSync("ps", ["-axo", "pid,etime,command"], {encoding: "utf8"});
+  const stale = staleOrphanProbeParents(ps.stdout);
+  for (const pid of stale) { try { process.kill(pid, "SIGKILL"); } catch { /* 已经走了 */ } }
+  if (stale.length) console.log(`清掉了 ${stale.length} 个上次留下的孤儿探针 parent.mjs（${stale.join("、")}）`);
+  let orphanProbeParent = null;
   const runner = mkdtempSync(join(tmpdir(), "cc-orphan-"));
   try {
     // 一个"起服务端然后自己被杀"的父进程。它只负责把服务端拉起来并把 pid 报出来。
@@ -15349,9 +15379,12 @@ async function verifyTestServersDieWithTheirParent(output) {
       '  stdio: ["ignore", "ignore", "ignore"]',
       "});",
       'process.stdout.write(`${child.pid}\n`);',
-      "setInterval(() => {}, 1000);"
+      // 常驻是为了让门来杀它；门没来（异常/被 SIGKILL）它也不能永远活着：两分钟到了自己带着子进程退出。
+      "setInterval(() => {}, 1000);",
+      'setTimeout(() => { try { child.kill("SIGKILL"); } catch {} process.exit(0); }, 120000);'
     ].join("\n"));
     const parent = spawn(process.execPath, [parentScript], {stdio: ["ignore", "pipe", "ignore"]});
+    orphanProbeParent = parent;
     const childPid = await new Promise((resolve) => {
       let buffer = "";
       parent.stdout.on("data", (chunk) => {
@@ -15395,6 +15428,8 @@ async function verifyTestServersDieWithTheirParent(output) {
       }
     }
   } finally {
+    // 只删目录不杀进程＝留下一个 setInterval 常驻的 parent.mjs。
+    try { orphanProbeParent?.kill("SIGKILL"); } catch { /* 已经走了 */ }
     rmSync(runner, {recursive: true, force: true});
   }
   if (output.length === outputBefore) {
