@@ -6,6 +6,8 @@ coverage/
 .env.*
 !.env.example
 .runtime/
+# npm run backup 的默认目标是运行目录的同级 .runtime-backup-<时间戳>/：里面有 runtime-config.json（含引导令牌与 MCP 服务令牌）与整份状态，绝不能进仓库
+.runtime-backup-*/
 *.log
 tmp/
 artifacts/

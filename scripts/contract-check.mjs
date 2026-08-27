@@ -972,6 +972,7 @@ run(verifyOperatorKnobsAreDocumented);
 run(verifyAgentctlUnknownCommandListsCommands);
 run(verifyConsoleRoleExamplesAreRegistered);
 run(verifyAgentRunAnnouncesItself);
+run(verifyDefaultBackupTargetIsGitIgnored);
 run(verifyConsoleRuntimeConstantsHaveOneWriter);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
@@ -15714,6 +15715,18 @@ function verifyConsoleRuntimeConstantsHaveOneWriter(output) {
     if (!body || !body.includes("decorateRuntimeForConsole(")) output.push(`${reader} 没调 decorateRuntimeForConsole —— 这条路上界面拿不到词表`);
   }
   console.log(`界面 runtime 常量：${numericKeys.length} 个数值只在 decorateRuntimeForConsole 里赋值，三份词表只来自 core 的 consoleVocabularies，服务端两条读路径与勘察工具都经过它`);
+}
+
+// 【npm run backup 的默认目标必须被 .gitignore 挡住】。默认落在运行目录同级的 .runtime-backup-<时间戳>/，
+// 里面是 runtime-config.json（引导令牌、MCP 服务令牌）加整份状态；.gitignore 原先只有 .runtime/ ——
+// 备份一次再 git add -A，令牌就进了仓库。用 git 自己的判定，不猜 .gitignore 的写法。
+function verifyDefaultBackupTargetIsGitIgnored(output) {
+  const probe = spawnSync("git", ["check-ignore", "-q", ".runtime-backup-20260101000000/runtime-config.json"], {cwd: root, encoding: "utf8"});
+  if (probe.status !== 0) {
+    output.push("npm run backup 的默认目标 .runtime-backup-<时间戳>/ 没被 .gitignore 挡住 —— 备份一次再 git add -A，引导令牌与 MCP 服务令牌就进了仓库");
+  } else {
+    console.log("npm run backup 的默认目标（.runtime-backup-<时间戳>/）被 .gitignore 挡住了");
+  }
 }
 
 // 【agentctl run 起来要先说一句】。原先领到活之前一个字都不打：人看到的是一块空屏，分不清是在等派发还是根本没连上。

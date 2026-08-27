@@ -3260,6 +3260,15 @@ const MUTATIONS = [
     expect: "库掉线时写请求该回 503"
   },
   {
+    name: "备份的默认目标必须被 .gitignore 挡住（里面有令牌）",
+    file: ".gitignore",
+    gate: "contract",
+    check: "verifyDefaultBackupTargetIsGitIgnored",
+    from: ".runtime-backup-*/\n",
+    to: "",
+    expect: "没被 .gitignore 挡住"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
