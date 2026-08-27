@@ -90,6 +90,18 @@ class StubElement {
 
 function el(tag, attrs, children) { return new StubElement(tag, attrs, children); }
 
+// 【走 probe.click 的用例都要自查：弹窗/动作真的执行了，而不是崩成横幅】。归档弹窗的四条断言
+// 从第 54 拍起一直在「控制台这一页自己出错了」那条横幅旁边凑期望串（StubElement 缺 classList，
+// openModal 第一行就抛）。任何点击用例拿到 HTML 后先过这一道，再断言自己关心的内容。
+function assertNoCrashBanner(html, where) {
+  const crashed = /控制台这一页自己出错了/u.exec(String(html));
+  check(`【探针自查】${where}：点击没有崩成页面级横幅`,
+    !crashed,
+    `${where} 的 HTML 里有崩溃横幅 —— 这个用例后面的断言看的是横幅旁边的页面，不是它以为的那块：`
+      + String(html).replace(/<[^>]+>/gu, " ").match(/控制台这一页自己出错了.{0,120}/u)?.[0]);
+}
+
+
 // 桩里 innerHTML 是普通属性，父节点取不到子节点的内容；而 toast 是 appendChild 到 body 上的
 // 独立图层（真实浏览器里正因如此，#app 重渲染抹不掉它）。要断言 toast 说了什么，得走子树。
 function stubSubtreeText(node) {
@@ -1167,6 +1179,7 @@ async function runAuditChainBreakNoticeCase() {
   button.closest = (selector) => (selector === "[data-action]" ? button : null);
   await probe.click({target: button, preventDefault: () => {}});
   const shown = String(root.innerHTML || "");
+  assertNoCrashBanner(shown, "归档弹窗（哈希链）");
   check("哈希链告警要说清一共几处不一致",
     /7 处不一致/.test(shown),
     `篡改告警没有给出总数（${shown.slice(0, 120)}）`);
@@ -1196,9 +1209,7 @@ async function runArchiveFaultNoticeCase() {
   };
   const faulted = await openArchive({entries: [], chain: {verified: 0, breaks: []},
     archiveFault: {lostEntries: 4, error: "EACCES: permission denied"}});
-  check("【探针自查】老用例的弹窗有没有被同一条崩溃横幅顶掉",
-    !/Cannot read properties of undefined \(reading &#39;add&#39;\)/u.test(faulted),
-    "老用例的 HTML 里也有那条崩溃横幅 —— 这几条归档断言一直在看横幅、不是弹窗");
+  assertNoCrashBanner(faulted, "归档弹窗（故障态）");
   check("归档写失败过时，这一屏要说清自己不完整",
     /这份归档不完整/u.test(faulted) && /4/u.test(faulted),
     `查历史的人看到的是一屏记录，却不知道有条目从没落盘（${faulted.slice(0, 140)}）`);
@@ -5483,10 +5494,12 @@ await runCodedApiErrorCase();
     taskGroups: [], agentDispatches: [], workSessions: [], closeBarriers: [], qualityGates: [], findings: [],
     humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []}, admin, null, "sys-overview");
   probe.setFetch(async () => { throw new Error("fetch failed"); });
-  const button = {dataset: {action: "logout"}, disabled: false, textContent: "登出"};
+  const button = {dataset: {action: "logout"}, disabled: false, textContent: "登出",
+    classList: {add() {}, remove() {}}};
   button.closest = (selector) => (selector === "[data-action]" ? button : null);
   await probe.click({target: button, preventDefault: () => {}});
   const shown = stubSubtreeText(root);
+  assertNoCrashBanner(shown, "登出失败提示");
   check("服务端没确认登出时必须说出来",
     /服务端未确认作废/.test(shown),
     `登出请求失败被吞掉了 —— 人以为凭据已经失效，实际那次会话还有效（${shown.slice(0, 160)}）`);
