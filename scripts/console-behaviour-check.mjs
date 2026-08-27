@@ -1941,6 +1941,29 @@ function runReviewAxisCase() {
       "连未使用的令牌都不显示状态了 —— 上面那条可能是把整列砍掉了");
   }
 
+  // 审计表上服务名 actor 此前印的是原始英文（"auth-service"），而词表里明明有「认证服务」——
+  // accountName 一律回落成原始 id，从不看词表。只对非账号形状、且词表真有的 id 走 t()。
+  {
+    const actorProbe = loadConsole(el("div"), {realI18n: true});
+    const html = actorProbe.renderSysOverviewWith({
+      accounts: [{accountId: "acct_u1", displayName: "张三", email: "z@x", accountType: "system_admin", status: "active", roles: []}],
+      auditLog: [
+        {id: "a1", at: "2026-08-27T00:00:00.000Z", actor: "auth-service", action: "auth_logout", subject: "Account:acct_u1", result: "succeeded"},
+        {id: "a2", at: "2026-08-27T00:00:01.000Z", actor: "acct_u1", action: "task_group_pause", subject: "TaskGroup:tg_1", result: "succeeded"},
+        {id: "a3", at: "2026-08-27T00:00:02.000Z", actor: "acct_ghost", action: "task_group_pause", subject: "TaskGroup:tg_1", result: "succeeded"}
+      ],
+      services: [], truncatedCollections: []
+    }, {accountId: "acct_u1", accountType: "system_admin", displayName: "张三"}, null);
+    const text = String(html).replace(/<[^>]+>/gu, " ");
+    check("审计表上的服务名 actor 要用词表里的中文（auth-service → 认证服务）",
+      /认证服务/u.test(text) && !/auth-service/u.test(text),
+      text.match(/退出登录[^|]{0,60}/u)?.[0] || "（审计表没渲染出来）");
+    check("账号 actor 仍按账号池显示名（张三）",
+      /张三/u.test(text), "账号 actor 不再解析成显示名");
+    check("认不出的账号 id 仍原样回落，不许被当成词表键",
+      /acct_ghost/u.test(text), "不认识的账号 id 被吞掉或译错了");
+  }
+
   // 注销不可撤销，而"什么时候、为什么"此前落在 retiredAt/retiredReason 上、全仓没有读取点：
   // 屏幕上只有一个「已注销」，事后追不到依据。
   {

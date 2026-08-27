@@ -458,7 +458,13 @@ function accountName(accountId) {
   // Fall back to the lightweight server-provided id->displayName directory (views like tasks don't
   // carry the full accounts collection), then to the raw id — never the t() dictionary (an account id
   // is never an i18n key, and t() would emit a console warning + the raw id anyway).
-  return (state.accountDirectory && state.accountDirectory[accountId]) || accountId;
+  if (state.accountDirectory && state.accountDirectory[accountId]) return state.accountDirectory[accountId];
+  // 服务名 actor（auth-service / policy-engine / bootstrap…）不是账号，但词表里【有】它们的中文——
+  // 这里原先一律回落成原始 id，于是审计表上印着 "auth-service" 而词表里的「认证服务」没人用。
+  // 只在 id 不是账号形状且词表真有这个键时才走 t()，仍不给不认识的 id 找词表（那会触发漏译警告）。
+  const dict = (typeof I18N !== "undefined" && I18N.dict) || {};
+  if (!/^(acct_|mcp:)/u.test(String(accountId)) && Object.prototype.hasOwnProperty.call(dict, accountId)) return t(accountId);
+  return accountId;
 }
 
 function escapeHtml(value) {

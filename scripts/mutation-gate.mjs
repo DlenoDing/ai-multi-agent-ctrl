@@ -10014,6 +10014,14 @@ const MUTATIONS = [
     expect: "归档页没显示它指向的 MCP 归档行"
   },
   {
+    name: "审计表上的服务名 actor 要走词表（auth-service → 认证服务）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  if (!/^(acct_|mcp:)/u.test(String(accountId)) && Object.prototype.hasOwnProperty.call(dict, accountId)) return t(accountId);",
+    to: "",
+    expect: "要用词表里的中文"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",
