@@ -22,19 +22,29 @@ export function extractMachineStates(yamlText, machine) {
 }
 
 // 集合名 -> 机器名。默认按单复数推导，对不上的在这里点名。
-const STATE_MACHINE_BY_COLLECTION = {agentRuntimeNodes: "AgentNode"};
+const STATE_MACHINE_BY_COLLECTION = {
+  agentRuntimeNodes: "AgentNode",
+  // 单数化只砍一个 s：agentDispatches → AgentDispatche，找不到机器 —— 于是这个集合当年被"登记豁免"了。
+  agentDispatches: "AgentDispatch"
+};
 
 // 没有同名状态机的集合要登记。不登记就静默跳过，而"跳过"和"查过了没问题"长得一模一样。
 // 绝大多数的理由是同一条：它的 status 由自己那份 schema 的 enum 守住（那道核对压在真实记录上）。
 const COLLECTIONS_WITHOUT_STATE_MACHINE = {
   accessGrants: "spec/access-control-grant.schema.json 的 status enum",
+  // 执行事件是【某一刻的上报】而不是有生命周期的对象：status 是上报时的阶段（running / attention /
+  // completed / failed），同一件事会有多条、各带各的阶段，不存在"从 A 转到 B"。枚举由它自己的规范钉住。
+  // 只有远程 agent e2e 才产得出这类记录 —— 给那套 e2e 补上状态对表时才第一次撞到它。
+  agentExecutionEvents: "spec/agent-execution-event.schema.json 的 status enum（上报阶段，不是生命周期）",
   sharedDefinitions: "spec/shared-definition-contract.schema.json 的 status enum",
   repositoryOutputs: "spec/repository-output-target.schema.json 的 status enum",
   managementSurfaces: "spec/management-console-surface.schema.json 的 status enum",
   skillSources: "spec/agent-skill-source.schema.json 的 status enum",
   roleSkills: "spec/agent-role-skill.schema.json 的 status enum",
   completionReadiness: "spec/completion-readiness.schema.json 的 status enum",
-  agentDispatches: "spec/agent-dispatch.schema.json 的 status enum",
+  // agentDispatches 原先也登记在这里（"按规范枚举"）—— 而 AgentDispatch 状态机一直存在、代码写的六个状态
+  // 与它逐字相同。登记等于把最要紧的生命周期对象从对表里豁免掉了：给远程 agent e2e 补对表、
+  // 拿"从机器里删掉 completed"做变异时门不红，才发现。已撤销登记，按机器对表。
   workerLanes: "spec/worker-lane.schema.json 的 status enum",
   organizations: "spec/organization.schema.json 的 status enum",
   authSessions: "spec/auth-session.schema.json 的 status enum",
@@ -73,6 +83,14 @@ export function checkRecordStatusesAreDeclaredStates(specPath, sourceState, labe
   const yamlText = readFileSync(specPath, "utf8");
   const errors = [];
   let checked = 0;
+  // 【登记要机械核】：登记"没有状态机"的集合，机器若其实存在，这条登记就是在把它从对表里豁免掉
+  // （agentDispatches 就这样被豁免了很久 —— 单数化砍出 AgentDispatche 找不到机器，有人就登记了它）。
+  for (const collection of Object.keys(COLLECTIONS_WITHOUT_STATE_MACHINE)) {
+    const machine = machineNameForCollection(collection);
+    if (extractMachineStates(yamlText, machine).length) {
+      errors.push(`${label}：${collection} 登记为「没有状态机」，而 ${machine} 状态机明明在 spec/state-machines.yaml 里 —— 这条登记把它从对表里豁免掉了，删掉登记按机器对表`);
+    }
+  }
   const seenWithoutMachine = new Set();
   const unregistered = [];
   for (const [collection, items] of Object.entries(sourceState || {})) {

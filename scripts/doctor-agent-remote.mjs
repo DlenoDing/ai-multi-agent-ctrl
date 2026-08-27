@@ -34,6 +34,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { readStoredState } from "../apps/control-plane-ui/lib/state-store.mjs";
 import { UNCOVERED_CEILINGS, sweepRecordsAgainstDeclaredSchemas } from "./lib/schema-validate.mjs";
+import { checkRecordStatusesAreDeclaredStates } from "./lib/state-machine-states.mjs";
 import { assertNoUndefinedInPayload } from "./lib/no-undefined-payload.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
@@ -1328,6 +1329,13 @@ try {
 	    throw new Error(`agent remote doctor: e2e 真实产出的记录不符合它们自己声明的规范：\n- ${sweep.errors.slice(0, 200).join("\n- ")}`);
 	  }
 	  console.log(`e2e 产出规范核对 ok: ${sweep.validated} 条记录符合各自声明的 schema（含 checkpoint 的 commit/push 证据）；${sweep.uncoveredNote}`);
+	  // 状态取值对表：与规范核对同源（都压在本轮真跑出来的记录上），查的是记录的状态在
+	  // spec/state-machines.yaml 里登记过没有。控制面与 MCP 两套早就各查各的，这一套此前没有 ——
+	  // 而 agent 网关那条路（认领 / 心跳 / 停机 / 命令投递）写的状态，只有这一套 e2e 才产得出来。
+	  const agentStates = checkRecordStatusesAreDeclaredStates(join(root, "spec/state-machines.yaml"),
+	    producedState, "远程 agent e2e 产出");
+	  console.log(agentStates.note);
+	  if (agentStates.errors.length) throw new Error(`agent remote doctor: ${agentStates.errors.join("\n- ")}`);
 
   // 【执行器跑完一个字都没改】。真实里这意味着模型空转：额度烧了、活没动。
   // agent 必须把它判成失败并如实报回控制面 —— 不能当成做完了去提交一个空 commit，

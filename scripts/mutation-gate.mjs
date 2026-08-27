@@ -10162,6 +10162,22 @@ const MUTATIONS = [
     expect: "policyDecisionRef is not allowed by schema"
   },
   {
+    name: "远程 agent e2e 的产出也要对状态机（网关写的状态只有它产得出来）",
+    file: "spec/state-machines.yaml",
+    gate: "agent",
+    from: '    initial: "queued"\n    terminal: ["completed", "failed", "cancelled"]\n    states:\n      - "queued"\n      - "running"\n      - "blocked"\n      - "completed"\n',
+    to: '    initial: "queued"\n    terminal: ["completed", "failed", "cancelled"]\n    states:\n      - "queued"\n      - "running"\n      - "blocked"\n',
+    expect: "completed"
+  },
+  {
+    name: "「没有状态机」的登记要机械核：机器其实存在的登记必须红",
+    file: "scripts/lib/state-machine-states.mjs",
+    gate: "agent",
+    from: '  accessGrants: "spec/access-control-grant.schema.json 的 status enum",\n',
+    to: '  accessGrants: "spec/access-control-grant.schema.json 的 status enum",\n  agentDispatches: "spec/agent-dispatch.schema.json 的 status enum",\n',
+    expect: "登记为「没有状态机」，而 AgentDispatch 状态机明明在"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",
