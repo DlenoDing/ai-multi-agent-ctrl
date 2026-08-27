@@ -2481,7 +2481,19 @@ const PERMISSION_LABELS = {
 function permLabel(code) {
   return PERMISSION_LABELS[String(code || "")] || t(code);
 }
-const RESOURCE_TYPE_LABELS = {project: "项目", task_group: "任务组", organization: "组织", system: "系统"};
+// 授权列表里那一列写的是"这份授权作用在什么东西上"。这张表原先只有四项，而规范里
+// resourceType 有 17 个取值、代码另外还产出 state —— 真实数据里的 system_console 恰恰不在表里，
+// 于是系统负责人那一行显示成「system_console： system」。手编的清单又一次落在权威来源后面，
+// 所以现在按【规范枚举 ∪ 代码实际产出】全量核（契约门在守这条）。
+const RESOURCE_TYPE_LABELS = {
+  project: "项目", task_group: "任务组", organization: "组织", system: "系统",
+  system_console: "系统控制台", user_console: "用户控制台", system_policy: "系统策略",
+  agent: "智能体", shared_definition: "共享定义", environment: "环境", state: "运行态",
+  mcp_server: "MCP 服务", mcp_tool: "MCP 工具",
+  git_repo: "Git 仓库", git_worktree: "Git 工作树",
+  file_path: "文件路径", dir_path: "目录路径", artifact_path: "产物路径",
+  db_schema: "数据库 schema", db_table: "数据库表"
+};
 function resourceScopeLabel(resource) {
   const type = resource?.resourceType;
   const typeLabel = RESOURCE_TYPE_LABELS[type] || (type || "-");

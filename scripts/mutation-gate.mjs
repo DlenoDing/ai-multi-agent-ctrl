@@ -9910,6 +9910,14 @@ const MUTATIONS = [
     to: "    json(res, error.status, {error: error.message, ...(error.details || {})});",
     expect: "把 error 写在 ...details 之前"
   },
+  {
+    name: "授权作用在什么东西上，那一列不许露英文（真实数据里的 system_console 就露过）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "contract",
+    from: '  system_console: "系统控制台", user_console: "用户控制台", system_policy: "系统策略",',
+    to: '  user_console: "用户控制台", system_policy: "系统策略",',
+    expect: "没有中文名"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

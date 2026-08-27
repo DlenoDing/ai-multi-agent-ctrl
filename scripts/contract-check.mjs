@@ -6391,6 +6391,38 @@ function verifyCommandBusLifecycle(output) {
     output.push("command-bus: no-side-effect command should succeed without a CommandEffect");
   }
 
+  // 【授权作用在什么东西上，那一列不许露英文】。RESOURCE_TYPE_LABELS 是手编的，原先只有四项，
+  // 而规范里 resourceType 有 17 个取值、代码另外还产出 state —— 真实数据里的 system_console
+  // 恰恰不在表里，系统负责人那一行显示成「system_console： system」。
+  // 漏译扫描看不见它：这一列只在【真有这类授权】时才渲染出那个值。按两个权威来源全量核。
+  {
+    const appText = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+    const table = /const RESOURCE_TYPE_LABELS = \{([\s\S]*?)\n\};/u.exec(appText);
+    const labelled = new Set(table ? [...table[1].matchAll(/(\w+):/gu)].map((m) => m[1]) : []);
+    const declared = new Set();
+    for (const file of readdirSync(join(root, "spec")).filter((name) => name.endsWith(".schema.json"))) {
+      const text = readFileSync(join(root, "spec", file), "utf8");
+      for (const hit of text.matchAll(/resourceType"\s*:\s*\{[^}]*?"enum"\s*:\s*\[([\s\S]*?)\]/gu)) {
+        for (const value of hit[1].matchAll(/"([a-z_]+)"/gu)) declared.add(value[1]);
+      }
+    }
+    for (const file of ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+      "apps/mcp-server/server.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs"]) {
+      const text = readFileSync(join(root, file), "utf8");
+      for (const hit of text.matchAll(/resourceType:\s*"([a-z_]+)"/gu)) declared.add(hit[1]);
+    }
+    if (labelled.size < 10 || declared.size < 10) {
+      output.push(`资源类型中文名：提取到 ${labelled.size} 个标签 / ${declared.size} 个取值 —— 提取脱节，本条在空转`);
+    } else {
+      const nameless = [...declared].filter((value) => !labelled.has(value)).sort();
+      if (nameless.length) {
+        output.push(`授权列表里这些资源类型没有中文名：${nameless.join("、")} ——`
+          + " 它只在真有这类授权时才渲染，漏译扫描看不见（实测 system_console 就这样露了英文）");
+      }
+      console.log(`资源类型中文名：规范枚举 + 代码产出共 ${declared.size} 个取值逐个对过界面的 ${labelled.size} 条中文名`);
+    }
+  }
+
   // 【抛出的那个码永远赢】。路由把 4xx 异常渲染成 `{...details, error: message}`：
   // message 按本仓的纪律就是【稳定错误码】（人话放 details）。原先 error 写在展开【之前】，
   // 谁在 details 里放一个 error 字段就会把它悄悄换掉 —— 客户端与 e2e 断言看到的是另一个码。
