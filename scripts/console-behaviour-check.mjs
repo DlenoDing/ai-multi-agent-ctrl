@@ -229,6 +229,9 @@ globalThis.__probe = {
   },
   restoreDraft: () => { const ok = restoreDraftAfterRelogin(); return {ok, page, projectId: currentProjectId, pending: pendingFormRestore}; },
   renderFullPageWith: (nextState, account, projectId, pageId) => { state = nextState; currentAccount = account; currentProjectId = projectId; page = pageId; authToken = authToken || "probe-token"; render(); },
+  // 「待人工确认」那个数不在 state 里：它由 loadPage 从计数接口取回来放进模块级变量。
+  // 不给探针一个入口的话，凡是依赖它的那一格都只能在 0 上被验，而真实产品里它常常不是 0。
+  setPendingConfirmCount: (count) => { pendingConfirmCount = Number(count) || 0; },
   renderTaskGroupsWith: (nextState, account, projectId, detailId, detail) => { state = nextState; currentAccount = account; currentProjectId = projectId; expandedTaskGroupId = detailId; if (detail !== undefined) tgDetail = detail; return renderTaskGroups(); },
   selectProjectWith: (nextState, account, projectId) => {
     state = nextState; currentAccount = account; currentProjectId = projectId;
@@ -1932,9 +1935,12 @@ function runNoVisibleProjectCase() {
     projects, taskGroups, accounts: [], agentRuntimeNodes: [], agentDispatches: [], workSessions: [],
     humanConfirmationRequests: [], humanDirectives: [], closeBarriers: [], qualityGates: [],
     findings: [], truncatedCollections: [], fleet: {online: 0, total: 0}});
-  const renderAs = (account, state, pageId, projectId = "") => {
+  const renderAs = (account, state, pageId, projectId = "", pendingConfirmCount) => {
     const root = el("div");
-    loadConsole(root, {realI18n: true}).renderFullPageWith(state, account, projectId, pageId);
+    const probeHere = loadConsole(root, {realI18n: true});
+    // 「待人工确认」那个数由计数接口给、不在 state 里 —— 不显式喂它，依赖它的那一格永远在 0 上被验。
+    if (pendingConfirmCount !== undefined) probeHere.setPendingConfirmCount(pendingConfirmCount);
+    probeHere.renderFullPageWith(state, account, projectId, pageId);
     return String(root.innerHTML || "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
   };
   // 指路要指【这个人自己菜单里有的那一页】。刚装完的第一屏最容易犯这个错：监控页那条
@@ -2561,6 +2567,26 @@ function runNoVisibleProjectCase() {
     check("并且要给出去处（否则人知道有事却不知道去哪）",
       /人工审核/u.test(overview),
       "说了还有事，没说去哪看");
+
+    // 反过来：这个数【不按权限过滤】（它是项目层面的事实），而旁边那句"等你处理"是按权限算的。
+    // 于是只读成员看到的是一个光秃秃的数：管理员那边还有「另有 N 项等你处理 → 去哪处置」，
+    // 他这边什么都没有，点进人工审核页才被告知"只能看、不能动"（真实运行态上就是这样）。
+    const viewerState = structuredClone(todoState);
+    viewerState.reviewPlans = [];
+    viewerState.humanConfirmationRequests = [{requestId: "hcr1", projectId: "p1", taskGroupId: "tg1",
+      status: "pending", decisionClass: "major", question: {summary: "验收确认"}, options: [],
+      createdAt: "2026-08-10T00:00:00.000Z"}];
+    const viewerText = renderAs({accountId: "u2", accountType: "org_member", displayName: "只读成员",
+      organizationId: "org_default", permissions: ["project:read"], taskGroupPermissions: {}},
+      viewerState, "proj-overview", "p1", 1);
+    check("够不着的那个数要说清「你没权限、在等谁」，不能只摆一个数字",
+      /没有定稿权限/u.test(viewerText) && /有权的人/u.test(viewerText),
+      String(viewerText).replace(/<[^>]+>/gu, " ").match(/待人工确认[^|]{0,60}/u)?.[0] || "（这一格没渲染出来）");
+    const adminSame = renderAs({accountId: "u1", accountType: "system_admin", displayName: "管理员",
+      organizationId: "org_default"}, viewerState, "proj-overview", "p1", 1);
+    check("有权的人不要看到这句（给有权的人说「你没权限」会让他去找别人）",
+      !/没有定稿权限/u.test(adminSame),
+      "有处置权的人也被告知自己没有权限");
   }
   // 「重新初始化运行态」这个按钮就在系统管理员的落地页上，一点抹掉全部数据。
   // 它的说明原先写着"仅用于本地环境排障"—— 而服务端【没有任何环境判据】，生产同样点得动

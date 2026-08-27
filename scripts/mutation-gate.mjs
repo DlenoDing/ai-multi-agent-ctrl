@@ -9739,6 +9739,14 @@ const MUTATIONS = [
     to: "    badge(token.status),",
     expect: "那是评审包的词"
   },
+  {
+    name: "够不着的那个数要说清「你没权限、在等谁」",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "            if (!others && pendingConfirmCount > 0 && !todo.total) {",
+    to: "            if (false) {",
+    expect: "不能只摆一个数字"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

@@ -2789,6 +2789,13 @@ function renderProjectOverview() {
             // 两个数出自同一处判据（pendingForMe），这里把差额说出来并给出去处。
             const todo = pendingForMe();
             const others = Math.max(0, todo.total - pendingConfirmCount);
+            // 这个数【不按权限过滤】（它是项目层面的事实），而旁边那句"等你处理"是按权限算的。
+            // 只读成员看到的因此是一个光秃秃的数：管理员那边还有「另有 N 项等你处理 → 去哪处置」，
+            // 他这边什么都没有，点进人工审核页才被告知"只能看、不能动"。
+            // 口径不改（改了就与人工审核页那张卡对不上），把这件事直接说出来。
+            if (!others && pendingConfirmCount > 0 && !todo.total) {
+              return `<div class="small">这些你都没有定稿权限，只能看 —— 它们在等各自任务组里有权的人处置</div>`;
+            }
             if (!others) return "";
             return `<div class="small warn-text">另有 ${others} 项${todo.partial ? "+" : ""}等你处理`
               + `（评审计划、发现项、授权请求…）—— 到「人工审核」页看汇总</div>`;
