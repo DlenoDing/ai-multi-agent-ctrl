@@ -6025,10 +6025,15 @@ async function handleApi(req, res) {
     } catch (error) {
       // 带上错误自己挂的细节（认不出的类型要连合法清单一起给）：只回一个码，调用方只能猜。
       // 与 state_view_unknown 那条同规。
-      return json(res, error.status || 500, {error: error.message,
+      // 【抛出的那个码永远赢】。原先 error 写在最前面，后面的 ...details 展开时会把它盖掉 ——
+      // 而 message 按本仓的纪律就是【稳定错误码】（人话放 details）。今天 13 处带 details 的抛错
+      // 里没有一处不一致，所以这不是在修一个现存缺陷，而是把这类静默替换变成结构上不可能：
+      // 谁将来在 details 里写一个 error 字段，客户端与 e2e 断言看到的码都不会被悄悄换掉。
+      return json(res, error.status || 500, {
         ...(error.directiveType ? {directiveType: error.directiveType} : {}),
         ...(error.supported ? {supported: error.supported} : {}),
-        ...(error.details || {})});
+        ...(error.details || {}),
+        error: error.message});
     }
     const controlAction = {pause: "pause", resume: "resume", cancel: "cancel"}[directive.directiveType];
     const directiveTaskGroup = directive.taskGroupId ? state.taskGroups.find((item) => item.id === directive.taskGroupId) : null;
@@ -6639,7 +6644,8 @@ function respondApiError(res, error, requestLabel = "") {
     return;
   }
   if (error.status && error.status < 500) {
-    json(res, error.status, {error: error.message, ...(error.details || {})});
+    // 同上：抛出的码写在展开【之后】，details 里若有同名字段也盖不掉它。
+    json(res, error.status, {...(error.details || {}), error: error.message});
     return;
   }
   // 盘写不进去（满盘 / 只读挂载 / 权限 / 配额）：原样把 Node 的错误抛回去有两处不妥 ——

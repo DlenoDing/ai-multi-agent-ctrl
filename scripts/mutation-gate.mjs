@@ -9901,6 +9901,15 @@ const MUTATIONS = [
     to: "  if (false) {",
     expect: "契约还是落下来了"
   },
+  {
+    name: "4xx 渲染时抛出的那个码永远赢（details 里的同名字段不得盖掉它）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    check: "verifyCommandBusLifecycle",
+    from: "    json(res, error.status, {...(error.details || {}), error: error.message});",
+    to: "    json(res, error.status, {error: error.message, ...(error.details || {})});",
+    expect: "把 error 写在 ...details 之前"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

@@ -6391,6 +6391,40 @@ function verifyCommandBusLifecycle(output) {
     output.push("command-bus: no-side-effect command should succeed without a CommandEffect");
   }
 
+  // 【抛出的那个码永远赢】。路由把 4xx 异常渲染成 `{...details, error: message}`：
+  // message 按本仓的纪律就是【稳定错误码】（人话放 details）。原先 error 写在展开【之前】，
+  // 谁在 details 里放一个 error 字段就会把它悄悄换掉 —— 客户端与 e2e 断言看到的是另一个码。
+  // 今天没有一处不一致（下面顺带核着），所以这条守的是"将来不会有"。
+  {
+    const sources = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
+      "apps/mcp-server/server.mjs", "apps/control-plane-ui/lib/agent-gateway.mjs"];
+    let thrown = 0;
+    const mismatched = [];
+    for (const file of sources) {
+      const src = readFileSync(join(root, file), "utf8");
+      for (const hit of src.matchAll(/new Error\("([a-z_]+)"\)[^;]{0,400}?details:\s*\{([\s\S]{0,300}?)\}\}\)/gu)) {
+        thrown += 1;
+        const inner = /(^|[\s,{])error:\s*"([a-z_]+)"/u.exec(hit[2]);
+        if (inner && inner[2] !== hit[1]) mismatched.push(`${file.split("/").pop()}：抛 ${hit[1]} 而 details.error=${inner[2]}`);
+      }
+    }
+    if (thrown < 8) {
+      output.push(`带 details 的抛错只提取到 ${thrown} 处 —— 提取脱节，本条在空转`);
+    } else if (mismatched.length) {
+      output.push(`这些抛错的 details 里带了一个不同的 error 码：${mismatched.join("、")} ——`
+        + " 渲染时会盖掉抛出的那个码，客户端与断言看到的是另一件事");
+    }
+    // 接线：渲染 4xx 时 error 必须写在展开【之后】。
+    const serverSrc = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+    const renders = [...serverSrc.matchAll(/json\(res, error\.status[^;]{0,200}?\);/gu)].map((m) => m[0]);
+    const unsafe = renders.filter((text) => /\{\s*error: error\.message,[\s\S]*\.\.\.\(error\.details/u.test(text));
+    if (unsafe.length) {
+      output.push(`有 ${unsafe.length} 处把 error 写在 ...details 之前 —— details 里的同名字段会把抛出的码盖掉`);
+    }
+    console.log(`抛错渲染：${thrown} 处带 details 的抛错逐个核过，0 处 details.error 与抛出码不一致；`
+      + `${renders.length} 处 4xx 渲染都把 error 写在展开之后`);
+  }
+
   // 【点了名却认不出，不等于没点名】。共享定义契约是 core 里最后一个还走宽松解析的工厂：
   // 写错一个任务组 id 的请求会拿到 201，记录挂着悬空的 taskGroupId、落进【种子项目】——
   // 而它是关闭门的阻塞对象，于是出现在控制面项目的「待你收尾」里，谁也说不清它是谁的。
