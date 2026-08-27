@@ -2305,9 +2305,20 @@ try {
     }
     // 收尾动作不许被一起挡死：归档之后还得撤得掉已经发出去的票，否则收不了尾。
     // 少了这条，把"挡住"写成"全挡"也能让上面两条绿 —— 那时归档项目会变成一个清不干净的死角。
+    // 【拼错的角色范围要在签票时就拒】。原先照收：票显示为已签发，节点拿它注册时才被拒 —— 失败推迟到另一台机器上。
+    {
+      const typoScope = await jsonFetch(port, "/api/agent-join-tokens", {method: "POST",
+        headers: {"Idempotency-Key": "doctor-typo-role-scope-token", authorization: systemAuth},
+        body: JSON.stringify({projectId: liveProjectForCleanup, allowedRoles: ["agent-runtim"], ttlSeconds: 600})});
+      if (typoScope.response.status !== 400 || typoScope.payload?.error !== "join_token_role_not_registered" || !(typoScope.payload?.unknownOwnerRoles || []).includes("agent-runtim")) {
+        throw new Error(`拼错的角色范围签票该回 400 join_token_role_not_registered 并点名，实际 ${typoScope.response.status} ${JSON.stringify(typoScope.payload).slice(0, 200)} —— 一张没有任何节点能用的票带着「已签发」发了出去`);
+      }
+      console.log("  ok  拼错的角色范围在签票时就被拒并点名（不再等节点注册时才炸）");
+    }
     const cleanupToken = await jsonFetch(port, "/api/agent-join-tokens", {method: "POST",
       headers: {"Idempotency-Key": "doctor-archive-cleanup-token", authorization: systemAuth},
-      body: JSON.stringify({projectId: liveProjectForCleanup, roleScope: ["monitor"], ttlSeconds: 600})});
+      // 原先这里写的是 roleScope —— 网关只读 allowedRoles，这个键从来没被读过（票一直按缺省 agent-runtime 签）。
+      body: JSON.stringify({projectId: liveProjectForCleanup, allowedRoles: ["monitor"], ttlSeconds: 600})});
     if (cleanupToken.response.status !== 201) {
       throw new Error(`在用项目里签不出入网令牌了（${cleanupToken.response.status}）—— 归档那道判据把正常路径一起堵死了`);
     }

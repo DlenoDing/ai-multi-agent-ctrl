@@ -272,6 +272,7 @@
     approval_decision_required: "处理审批必须显式给出结论（批准/拒绝/取消）—— 缺省不会被当作批准",
     dispatch_fail_claim_epoch_stale: "这条失败上报来自该派发的上一次认领，当前持有者已换代 —— 不能用它把正在跑的这一轮标记为失败或阻塞",
     join_token_role_scope_mismatch: "申请的角色超出入网令牌的授权范围",
+    join_token_role_not_registered: "入网令牌的角色范围里有未登记的执行角色（这张票没有任何节点能用）",
     lease_already_active: "该资源已有生效租约",
     lease_fencing_token_mismatch: "租约栅栏令牌不匹配（可能有更晚的持有者）",
     lease_fencing_token_required: "必须带上租约栅栏令牌",

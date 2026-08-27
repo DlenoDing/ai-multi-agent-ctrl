@@ -10293,6 +10293,14 @@ const MUTATIONS = [
     expect: "这道守卫看不见改动"
   },
   {
+    name: "入网令牌的角色范围要在签票时拒绝未登记角色（原先节点注册时才炸）",
+    file: "apps/control-plane-ui/lib/agent-gateway.mjs",
+    gate: "doctor",
+    from: '    const unknownRoles = unknownOwnerRoles(allowedRoles.filter((role) => role !== "*"));',
+    to: "    const unknownRoles = [];",
+    expect: "拼错的角色范围签票该回 400 join_token_role_not_registered"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

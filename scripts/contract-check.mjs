@@ -3696,8 +3696,9 @@ function verifyHumanAndOrganizationContracts(output) {
     // 任何持 project:view 的项目成员。读的门槛比签发低一整级，拿到即可冒充节点。
     const jtLeakState = structuredClone(seedState);
     ensureRuntimeCollections(jtLeakState, {root});
-    const jtLeakToken = createAgentJoinToken(jtLeakState, {projectId: "prj_control_plane", allowedRoles: ["executor"], maxUses: 1}, {actor: "acct_workspace_owner"});
-    registerAgentNode(jtLeakState, {nodeName: "leak-probe", requestedRoles: ["executor"]},
+    // 夹具原先写的是 executor —— 全系统没有这个角色，票与节点只是字符串相等；签票现在按登记册拒未登记角色，夹具跟着改成真角色。
+    const jtLeakToken = createAgentJoinToken(jtLeakState, {projectId: "prj_control_plane", allowedRoles: ["agent-runtime"], maxUses: 1}, {actor: "acct_workspace_owner"});
+    registerAgentNode(jtLeakState, {nodeName: "leak-probe", requestedRoles: ["agent-runtime"]},
       {joinToken: jtLeakToken.joinToken || jtLeakToken.token, idempotencyKey: "leak-probe-key"});
     const jtPublished = JSON.stringify(listAgentJoinTokens(jtLeakState));
     if (/aimac_node_/u.test(jtPublished)) {
@@ -3715,14 +3716,14 @@ function verifyHumanAndOrganizationContracts(output) {
     // join token 是一次性的，代理无法重新注册，只能人工介入。
     const regState = structuredClone(seedState);
     ensureRuntimeCollections(regState, {root});
-    const joinToken = createAgentJoinToken(regState, {projectId: "prj_control_plane", allowedRoles: ["executor"], maxUses: 1}, {actor: "acct_workspace_owner"});
+    const joinToken = createAgentJoinToken(regState, {projectId: "prj_control_plane", allowedRoles: ["agent-runtime"], maxUses: 1}, {actor: "acct_workspace_owner"});
     const rawJoin = joinToken.joinToken || joinToken.token;
     const regKey = "idem-register-probe";
-    const first = registerAgentNode(regState, {nodeName: "node-probe", requestedRoles: ["executor"]}, {joinToken: rawJoin, idempotencyKey: regKey});
+    const first = registerAgentNode(regState, {nodeName: "node-probe", requestedRoles: ["agent-runtime"]}, {joinToken: rawJoin, idempotencyKey: regKey});
     const nodeCountAfterFirst = regState.agentRuntimeNodes.length;
     let replayResult = null; let replayError = null;
     try {
-      replayResult = registerAgentNode(regState, {nodeName: "node-probe", requestedRoles: ["executor"]}, {joinToken: rawJoin, idempotencyKey: regKey});
+      replayResult = registerAgentNode(regState, {nodeName: "node-probe", requestedRoles: ["agent-runtime"]}, {joinToken: rawJoin, idempotencyKey: regKey});
     } catch (error) { replayError = error.message; }
     if (replayError) {
       output.push(`注册幂等: 响应丢失后的重试被拒（${replayError}）—— 留下一个永远不心跳、永久占配额的僵尸节点，且 join token 已消耗无法重注册`);
@@ -3736,7 +3737,7 @@ function verifyHumanAndOrganizationContracts(output) {
     }
     let reuseRejected = false;
     try {
-      registerAgentNode(regState, {nodeName: "node-probe", requestedRoles: ["executor"]}, {joinToken: rawJoin, idempotencyKey: "idem-someone-else"});
+      registerAgentNode(regState, {nodeName: "node-probe", requestedRoles: ["agent-runtime"]}, {joinToken: rawJoin, idempotencyKey: "idem-someone-else"});
     } catch { reuseRejected = true; }
     if (!reuseRejected) {
       output.push("注册幂等: 换一个幂等键仍能用同一个一次性 join token 再注册一台（重放判据把重试与重用混为一谈）");

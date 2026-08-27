@@ -5,8 +5,7 @@ import { normalize, resolve, sep } from "node:path";
 import { cancelPendingConfirmationsForDispatch, createId, digestOf, effectiveTaskGroupConfig, ensureRuntimeCollections, expireStaleQueuedDispatches, languagePolicyDirective, normalizeTaskGroupLanguagePolicy, organizationQuotaCheck,
   computeEffectiveRulesDigest, applyEffectiveRulesDigest, settleCellOwnedResources,
   assertHumanTextWithinLimit,
-  normalizedExpiry
-} from "./control-plane-core.mjs";
+  normalizedExpiry, REGISTERED_OWNER_ROLES, unknownOwnerRoles} from "./control-plane-core.mjs";
 import { isTerminalDispatchStatus } from "./lifecycle-states.mjs";
 
 const DEFAULT_AGENT_MCP_TOOLS = [
@@ -104,6 +103,15 @@ export function createAgentJoinToken(state, input = {}, options = {}) {
   if (input.maxUses !== undefined && Number(input.maxUses) !== 1) throw gatewayError("join_token_must_be_one_time", 400);
   const maxUses = 1;
   const allowedRoles = uniqueStrings(input.allowedRoles?.length ? input.allowedRoles : ["agent-runtime"]);
+  // 角色范围只认已登记的执行角色（"*" 表示不限）。原先任何字符串都照收：拼错成 agent-runtim 的票签得出来、
+  // 界面上显示为已签发，节点拿它注册时才以 join_token_role_scope_mismatch 被拒 —— 失败推迟到另一台机器上的另一个人。
+  {
+    const unknownRoles = unknownOwnerRoles(allowedRoles.filter((role) => role !== "*"));
+    if (unknownRoles.length) {
+      throw gatewayError("join_token_role_not_registered", 400, {unknownOwnerRoles: unknownRoles.slice(0, 10), supported: [...REGISTERED_OWNER_ROLES],
+        hint: "角色范围里有未登记的执行角色：这张票没有任何节点能用。按 supported 里的名字填，或填 * 表示不限"});
+    }
+  }
   const token = `aimac_join_${randomBytes(32).toString("base64url")}`;
   const at = new Date().toISOString();
   const record = {

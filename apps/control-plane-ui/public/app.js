@@ -2423,7 +2423,8 @@ function renderJoinTokenSection() {
             <select name="projectId">${joinTokenTargetProjects().map((project) => `<option value="${esc(project.id)}" ${project.id === currentProjectId ? "selected" : ""}>${esc(project.name || project.id)}</option>`).join("")}</select>
           </div>
           <div class="form-row"><label>节点名（可留空）</label><input name="nodeName" placeholder="自动生成"></div>
-          <div class="form-row"><label>角色范围</label><input name="allowedRoles" value="agent-runtime"></div>
+          <div class="form-row"><label>角色范围（逗号分隔；只认已登记的执行角色，* 表示不限）</label><input name="allowedRoles" value="agent-runtime" list="join-token-role-options">
+            <datalist id="join-token-role-options"><option value="*">不限</option>${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
           <div class="form-row"><label>有效期（秒）</label><input name="ttlSeconds" type="number" min="60" max="86400" value="1800"></div>
         </div>
         <button class="primary-button" type="submit">签发一次性加入令牌</button>
