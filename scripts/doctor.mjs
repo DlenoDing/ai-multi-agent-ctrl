@@ -1873,6 +1873,22 @@ try {
   {
     // 这个组织的项目配额是按用例算好的，直接建会撞 org_quota_exceeded ——
     // 先用系统身份抬一格（配额本身另有断言守着，这里只是给探针腾地方）。
+    // 【填错的配额要拒，不能悄悄保持原值】。原先空/非数回落到当前值、负数钳到 1，回 200 —— 人看到成功提示而配额没动。
+    {
+      const before = await jsonFetch(port, `/api/orgs?ids=${encodeURIComponent(orgId)}`, {headers: {authorization: systemAuth}});
+      for (const [label, slug, quotas] of [["非数", "nan", {maxMembers: "abc"}], ["负数", "negative", {maxAgents: -3}], ["空", "null", {maxProjects: null}]]) {
+        // 头部只能是 Latin-1：幂等键用 ASCII 的 slug，标签只进报错文案。
+        const bad = await jsonFetch(port, `/api/orgs/${encodeURIComponent(orgId)}/quotas`, {
+          method: "POST", headers: {"Idempotency-Key": `doctor-quota-bad-${slug}`, authorization: systemAuth}, body: JSON.stringify({quotas})
+        });
+        const key = Object.keys(quotas)[0];
+        if (bad.response.status !== 400 || bad.payload?.error !== "org_quota_invalid" || !(bad.payload?.invalid || []).some((item) => item.key === key)) {
+          throw new Error(`配额填「${label}」该回 400 org_quota_invalid 并点名 ${key}，实际 ${bad.response.status} ${JSON.stringify(bad.payload).slice(0, 160)} —— 人看到成功而配额没动`);
+        }
+      }
+      void before;
+      console.log("  ok  填错的配额（非数/负数/空）被拒并点名，不再悄悄保持原值");
+    }
     const quotaBump = await jsonFetch(port, `/api/orgs/${encodeURIComponent(orgId)}/quotas`, {
       method: "POST",
       headers: {"Idempotency-Key": "doctor-member-default-quota-bump", authorization: systemAuth},

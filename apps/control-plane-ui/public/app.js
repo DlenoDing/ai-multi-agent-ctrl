@@ -997,6 +997,9 @@ function requestFailureHint(payload) {
     pathList(payload.deniedPaths, "踩到禁区的路径"),
     pathList(payload.unknownRoles, "不在词表里的账号角色"),
     pathList(payload.unknownOwnerRoles, "未登记的执行角色"),
+    Array.isArray(payload.invalid) && payload.invalid.length
+      ? `填错的项：${payload.invalid.map((item) => `${item.key}=${JSON.stringify(item.received)}`).join("、")}` : "",
+    payload.limits && payload.limits.min !== undefined ? `允许范围：${payload.limits.min} 到 ${payload.limits.max}` : "",
     pathList(payload.unknownPermissions, "不在词表里的权限"),
     pathList(payload.unknownKeys, "认不出的键"),
     pathList(payload.outsidePaths, "落在允许范围之外的路径"),

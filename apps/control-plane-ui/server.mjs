@@ -5607,6 +5607,19 @@ async function handleApi(req, res) {
       return json(res, 400, {error: "org_quota_update_empty", supported: quotaKeys,
         message: "改配额至少要给一项 —— 一项都不给时这条接口什么也不会改"});
     }
+    // 【填了但认不出的配额要拒，不能悄悄保持原值】。原先 boundedQuota 对空/非数一律回落到当前值、负数钳到 1，
+    // 路由照样回 200：人改了配额、看到成功提示，而配额一个字都没动 —— 照做了却没效果。
+    const invalidQuotas = [];
+    for (const key of ["maxMembers", "maxProjects", "maxTaskGroups", "maxAgents"]) {
+      const raw = body.quotas?.[key] !== undefined ? body.quotas[key] : body[key];
+      if (raw === undefined) continue;
+      const numeric = Number(raw);
+      if (!Number.isFinite(numeric) || !Number.isInteger(numeric) || numeric < 1 || numeric > 1_000_000) invalidQuotas.push({key, received: raw === null ? null : String(raw).slice(0, 40)});
+    }
+    if (invalidQuotas.length) {
+      return json(res, 400, {error: "org_quota_invalid", invalid: invalidQuotas, limits: {min: 1, max: 1_000_000},
+        message: `配额必须是 1 到 1000000 的整数：${invalidQuotas.map((item) => `${item.key}=${JSON.stringify(item.received)}`).join("、")}`});
+    }
     for (const key of ["maxMembers", "maxProjects", "maxTaskGroups", "maxAgents"]) {
       if (body.quotas?.[key] !== undefined) organization.quotas[key] = boundedQuota(body.quotas[key], organization.quotas[key]);
       else if (body[key] !== undefined) organization.quotas[key] = boundedQuota(body[key], organization.quotas[key]);

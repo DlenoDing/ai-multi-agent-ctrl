@@ -10389,6 +10389,14 @@ const MUTATIONS = [
     expect: "缺省被当成了定稿"
   },
   {
+    name: "填错的配额要拒（原先悄悄保持原值并回 200）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    if (invalidQuotas.length) {\n      return json(res, 400, {error: \"org_quota_invalid\",",
+    to: "    if (false) {\n      return json(res, 400, {error: \"org_quota_invalid\",",
+    expect: "人看到成功而配额没动"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

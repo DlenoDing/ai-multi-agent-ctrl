@@ -41,6 +41,7 @@
     org_status_required: "改组织状态必须明确给出：启用还是停用（不给不会被当作启用）",
     agent_activation_flag_required: "启用还是停用这个智能体，必须明确给出",
     org_quota_update_empty: "没有要改的配额：至少给一项",
+    org_quota_invalid: "配额必须是 1 到 1000000 的整数（填错的那项没有改）",
     member_status_required: "改成员状态必须明确给出：启用还是停用（不给不会被当作启用）",
     member_permissions_update_empty: "没有要改的内容：权限与默认项目至少给一样",
     account_email_required: "邀请账号必须填邮箱",
