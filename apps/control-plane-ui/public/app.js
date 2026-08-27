@@ -3310,15 +3310,6 @@ function sectionBlock(title, body) {
   return `<div class="record" style="background:#fff;"><div class="record-title"><strong>${esc(title)}</strong></div><div style="margin-top:8px;">${body}</div></div>`;
 }
 
-function cfgBusinessRow(rule = {}) {
-  return `
-    <div class="cfg-row" data-cfg-kind="business">
-      <input name="brTitle" placeholder="规则标题" value="${esc(rule.title || "")}">
-      <textarea name="brContent" placeholder="规则内容">${esc(rule.content || "")}</textarea>
-      <button type="button" class="danger-button" data-action="cfg-del">删除</button>
-    </div>
-  `;
-}
 
 /* ---------------- 规则管理（系统规则 / 业务规则） ----------------
  * 三级继承：默认 → 项目 → 任务组。GET /config 返回解析后的规则视图，
@@ -5785,7 +5776,10 @@ document.addEventListener("click", async (event) => {
       const container = document.querySelector(`[data-cfg-list='${target.dataset.target}']`);
       if (!container) return;
       const kind = target.dataset.kind;
-      const html = kind === "repo" ? cfgRepoRow() : kind === "baseline" ? cfgBaselineRow() : kind === "role" ? cfgRoleRow() : cfgBusinessRow();
+      // 认不出的 kind 不插行：原先兜底插一行「业务规则」行（没有任何按钮会加它），而保存只收 repo / baseline / role ——
+      // 那一行人填了就丢。规则有自己的编辑器（ruleTitle / ruleContent）。
+      const html = kind === "repo" ? cfgRepoRow() : kind === "baseline" ? cfgBaselineRow() : kind === "role" ? cfgRoleRow() : "";
+      if (!html) return;
       container.insertAdjacentHTML("beforeend", html);
       formTouched = true;
       return;

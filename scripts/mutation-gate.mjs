@@ -10301,6 +10301,14 @@ const MUTATIONS = [
     expect: "拼错的角色范围签票该回 400 join_token_role_not_registered"
   },
   {
+    name: "配置编辑器对认不出的 kind 不插行（原先兜底插一行保存时会丢的行）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '      const html = kind === "repo" ? cfgRepoRow() : kind === "baseline" ? cfgBaselineRow() : kind === "role" ? cfgRoleRow() : "";',
+    to: '      const html = kind === "repo" ? cfgRepoRow() : kind === "baseline" ? cfgBaselineRow() : kind === "role" ? cfgRoleRow() : `<div class="cfg-row" data-cfg-kind="business"><input name="brTitle"></div>`;',
+    expect: "未知 kind 插了"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

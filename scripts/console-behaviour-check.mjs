@@ -77,6 +77,12 @@ class StubElement {
       const key = dataSel[1].replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
       return this.dataset[key] !== undefined;
     }
+    // 带值的 data 选择器（配置编辑器加行时查 [data-cfg-list='xxx']）：同样按 dataset 判。
+    const dataValueSel = selector.match(/^\[data-([a-z-]+)=['"]([^'"]*)['"]\]$/);
+    if (dataValueSel) {
+      const key = dataValueSel[1].replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+      return this.dataset[key] === dataValueSel[2];
+    }
     throw new Error(`DOM 桩不认识选择器 ${JSON.stringify(selector)} —— 桩已与被测代码脱节，不能据此下结论`);
   }
 
@@ -87,6 +93,8 @@ class StubElement {
   querySelector(selector) {
     return this.querySelectorAll(selector)[0] || null;
   }
+  // 配置编辑器的「加一行」走 insertAdjacentHTML；桩没有它的话点击会在这一行抛错、被吞成"点了没反应"。
+  insertAdjacentHTML(_position, html) { this.innerHTML = `${this.innerHTML || ""}${html}`; }
 }
 
 function el(tag, attrs, children) { return new StubElement(tag, attrs, children); }
@@ -665,6 +673,29 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
       if (process.env.AIMAC_PRINT_HINTS) console.log(`[hint] ${label}: ${hint}`);
       check(`拒绝提示「${label}」要点名拼错的与可用的`, mustName.every((word) => String(hint).includes(word)),
         `提示里少了 ${mustName.filter((word) => !String(hint).includes(word)).join("、")}：${String(hint).slice(0, 160)}`);
+    }
+    // 【配置编辑器不许插一行保存时会被丢掉的行】。cfg-add 原先对认不出的 kind 兜底插「业务规则」行，
+    // 而保存只收 repo / baseline / role —— 人填了就丢。先自证点击真的会插行（repo），再验未知 kind 不插。
+    {
+      const cfgRoot = el("div");
+      const cfgList = el("div", {dataset: {cfgList: "probe-list"}}); cfgRoot.appendChild(cfgList);
+      const cfgProbe = loadConsole(cfgRoot, {realI18n: true});
+      // 桩的形状照「归档弹窗」那条：closest 要按选择器分辨（一律 null 会让处理器认不出这是个动作按钮）。
+      const mkButton = (kind) => {
+        const b = {dataset: {action: "cfg-add", target: "probe-list", kind}, disabled: false, textContent: "添加", classList: {add() {}, remove() {}}};
+        b.closest = (selector) => (selector === "[data-action]" ? b : null);
+        return b;
+      };
+      const list = () => cfgRoot.querySelector("[data-cfg-list='probe-list']");
+      await cfgProbe.click({target: mkButton("repo"), preventDefault: () => {}});
+      const repoRows = (list()?.innerHTML.match(/data-cfg-kind="repo"/gu) || []).length;
+      if (repoRows !== 1) {
+        check("配置编辑器点击探针要真的能插行（repo）", false, `夹具没插出 repo 行（${repoRows}）—— 下面那条什么也没验`);
+      } else {
+        await cfgProbe.click({target: mkButton("business"), preventDefault: () => {}});
+        const extra = (list()?.innerHTML.match(/class="cfg-row"/gu) || []).length - 1;
+        check("认不出的 kind 不许插一行保存时会被丢掉的行", extra === 0, `未知 kind 插了 ${extra} 行 —— 人填了保存就丢`);
+      }
     }
     const quotaHint = probe.requestFailureHint({error: "org_quota_exceeded", kind: "agents", quota: 3, usage: 3});
     if (process.env.AIMAC_PRINT_HINTS) console.log(`[hint] 配额: ${String(quotaHint).slice(0, 60)}`);
