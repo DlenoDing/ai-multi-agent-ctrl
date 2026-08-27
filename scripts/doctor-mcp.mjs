@@ -59,6 +59,11 @@ try {
   await waitForHealth();
   const unauthenticated = await fetch(`${baseUrl}/mcp`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({jsonrpc: "2.0", id: 1, method: "initialize", params: {}})});
   if (unauthenticated.status !== 401) throw new Error(`remote MCP did not reject unauthenticated request: ${unauthenticated.status}`);
+  // 客户端读到的是正文：要说清带什么、去哪拿，不能是一句裸码。
+  const unauthenticatedBody = await unauthenticated.json().catch(() => ({}));
+  if (unauthenticatedBody.error !== "mcp_auth_required" || !/Authorization/u.test(String(unauthenticatedBody.message || ""))) {
+    throw new Error(`不带令牌的 MCP 请求该回 mcp_auth_required 并说清要带 Authorization 与令牌从哪来，实际 ${JSON.stringify(unauthenticatedBody).slice(0, 200)}`);
+  }
   // 「不带令牌」和「带一个错的令牌」是两条不同的路：前者在最外层就被挡下，后者要一路走到
   // 服务令牌摘要比对那一句。此前只测了前者 —— 实测把那句比对改成 `if (true)`（任何令牌都算
   // 服务主体，等于整个 MCP 面免鉴权），三套 e2e 无一报红。
@@ -68,6 +73,19 @@ try {
   if (bogusToken.status !== 401) {
     throw new Error(`带一个错的令牌也被放行了（HTTP ${bogusToken.status}）—— `
       + "服务令牌比对失效时，任何人都能以服务主体身份调 MCP");
+  }
+  const bogusBody = await bogusToken.json().catch(() => ({}));
+  if (bogusBody.error !== "mcp_token_invalid" || !/不对或已失效/u.test(String(bogusBody.message || ""))) {
+    throw new Error(`带错令牌该回 mcp_token_invalid 并说清「不对或已失效」，实际 ${JSON.stringify(bogusBody).slice(0, 200)} —— 与「没带令牌」混成一句，客户端分不清该换令牌还是该加头`);
+  }
+  // 打错工具名：JSON-RPC 错误里要指路 tools/list，并列出同一前缀下的名字。
+  const unknownTool = await fetch(`${baseUrl}/mcp`, {method: "POST",
+    headers: {"content-type": "application/json", authorization: `Bearer ${token}`},
+    body: JSON.stringify({jsonrpc: "2.0", id: 9001, method: "tools/call", params: {name: "ui-console-mcp.runtime_health_gett", arguments: {}}})});
+  const unknownToolBody = await unknownTool.json().catch(() => ({}));
+  const unknownToolMessage = String(unknownToolBody.error?.message || "");
+  if (unknownToolBody.error?.code !== -32602 || !/tools\/list/u.test(unknownToolMessage) || !/runtime_health_get/u.test(unknownToolMessage)) {
+    throw new Error(`打错工具名该回 -32602 并指路 tools/list、列出同前缀的名字，实际 ${JSON.stringify(unknownToolBody).slice(0, 240)}`);
   }
 
   const initialized = await mcp("initialize", {protocolVersion: "2025-06-18", capabilities: {}, clientInfo: {name: "doctor", version: "1"}});
@@ -164,6 +182,17 @@ try {
 
   const unknownInput = await mcp("tools/call", {name: "ui-console-mcp.runtime_health_get", arguments: {unknownProperty: true}});
   if (unknownInput.structuredContent?.result?.error !== "mcp_input_unknown_property") throw new Error("MCP input schema did not reject unknown properties");
+  // 拒未知键时要列出可用键（不然客户端只知道错了、不知道该叫什么）；受限主体不给作用域时要说清给哪个字段。
+  const unknownKeyed = await mcp("tools/call", {name: "ui-console-mcp.project_progress_get", arguments: {projectId: "prj_control_plane", bogusKey: 1}});
+  const unknownKeyedResult = unknownKeyed.structuredContent?.result || {};
+  if (unknownKeyedResult.error !== "mcp_input_unknown_property" || !(unknownKeyedResult.supported || []).includes("projectId")) {
+    throw new Error(`拒未知键 bogusKey 时该列出可用键（含 projectId），实际 ${JSON.stringify(unknownKeyedResult).slice(0, 200)}`);
+  }
+  const noScope = await mcp("tools/call", {name: "ui-console-mcp.project_progress_get", arguments: {}});
+  const noScopeResult = noScope.structuredContent?.result || {};
+  if (noScopeResult.error !== "scope_ref_required_for_bounded_principal" || !/projectId/u.test(String(noScopeResult.message || ""))) {
+    throw new Error(`受限主体不给作用域时该说清要 projectId，实际 ${JSON.stringify(noScopeResult).slice(0, 200)} —— 一句裸码让客户端不知道该补哪个字段`);
+  }
 
   // 入参校验的另外两支此前没有任何断言：类型不对、以及整个 arguments 根本不是对象。
   // 塌了的话，一个数组或一个字符串会被当成参数对象往下传，工具拿到的是 undefined ——

@@ -3169,6 +3169,38 @@ const MUTATIONS = [
     expect: "写进运行态的服务端点没用真正绑上的端口"
   },
   {
+    name: "MCP 带错令牌要与没带令牌分开说（mcp_token_invalid）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "mcp",
+    from: '    const presented = Boolean(String(req.headers.authorization || "").trim());',
+    to: '    const presented = false;',
+    expect: "带错令牌该回 mcp_token_invalid"
+  },
+  {
+    name: "MCP 打错工具名要指路 tools/list 并列同前缀的名字",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "    const error = new Error(`Unknown tool: ${name} —— 用 tools/list 取可用工具名${sameNamespace.length ? `；前缀 ${namespace} 下有：${sameNamespace.join(\"、\")}` : \"\"}`);",
+    to: "    const error = new Error(`Unknown tool: ${name}`);",
+    expect: "打错工具名该回 -32602 并指路 tools/list"
+  },
+  {
+    name: "受限主体不给作用域时要说清给哪个字段",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '      message: `你是受限主体，这个查询要点名作用域：给 ${scopeType === "project" ? "projectId" : "taskGroupId"} —— 不给的话系统不会替你猜一个（那会把别的租户的进度泄出去）`};',
+    to: '      };',
+    expect: "受限主体不给作用域时该说清要 projectId"
+  },
+  {
+    name: "MCP 拒未知键时要列出可用键",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: '    if (!properties[key]) return {ok: false, error: "mcp_input_unknown_property", property: key, supported: Object.keys(publishedInputSchemaFor(name).properties || {})};',
+    to: '    if (!properties[key]) return {ok: false, error: "mcp_input_unknown_property", property: key};',
+    expect: "该列出可用键（含 projectId）"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

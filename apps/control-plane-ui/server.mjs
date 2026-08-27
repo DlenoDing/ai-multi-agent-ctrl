@@ -2493,14 +2493,19 @@ function serveAgentAsset(req, res, pathname) {
 async function handleMcp(req, res) {
   if (req.method !== "POST") {
     res.writeHead(405, {allow: "POST", "content-type": "application/json; charset=utf-8"});
-    res.end(JSON.stringify({error: "mcp_streamable_http_requires_post"}));
+    res.end(JSON.stringify({error: "mcp_streamable_http_requires_post",
+      message: "这是 MCP 端点（streamable HTTP，只收 POST 的 JSON-RPC）—— 用 MCP 客户端连它；控制台在站点根路径 /"}));
     return;
   }
   const state = readState();
   const context = mcpContextFromRequest(req, state);
   if (!context) {
+    // 「没带令牌」与「带了个错的」是两回事：前者要告诉它带什么、去哪拿；后者要告诉它这把不对或已失效。原先都是一句裸码。
+    const presented = Boolean(String(req.headers.authorization || "").trim());
     res.writeHead(401, {"www-authenticate": "Bearer", "content-type": "application/json; charset=utf-8", "cache-control": "no-store"});
-    res.end(JSON.stringify({error: "mcp_auth_required"}));
+    res.end(JSON.stringify(presented
+      ? {error: "mcp_token_invalid", message: "Authorization 里的令牌不对或已失效 —— 服务令牌以 AIMAC_MCP_SERVICE_TOKEN 配置在控制面；节点令牌由 agentctl bootstrap 写在 agent-config.json；账号会话令牌来自登录接口，会话撤销后要重新登录"}
+      : {error: "mcp_auth_required", message: "这个 MCP 端点要带 Authorization: Bearer <令牌> —— 服务令牌（AIMAC_MCP_SERVICE_TOKEN）、节点令牌（agentctl bootstrap 签发）或账号会话令牌（登录接口）三种之一"}));
     return;
   }
   const message = await parseBody(req);

@@ -40,7 +40,6 @@ export const KNOWN_SECOND_DOORS = {
     "派发绑定的授权会把省掉的 taskGroupId 补上（applyAgentGrantScopeArgs），boundedRoomGuard 再由 taskGroupId 推出"
     + " room_<taskGroupId> —— 受限主体因此造不出'既不点名 roomId 也没有 taskGroupId'的调用。"
     + "（2026-08-27 核过：登记原先写成'补 roomId'，函数里并没有这一行；承重的是 taskGroupId 那一步）",
-  scope_ref_required_for_bounded_principal: "同上，缺的作用域参数由 applyAgentGrantScopeArgs 填上",
   task_group_id_required_for_bounded_principal: "同上，缺的 taskGroupId 由 applyAgentGrantScopeArgs 填上",
   idempotency_record_principal_unknown:
     "只有【本次主体绑定改动之前写下的】旧幂等记录才触发；新部署造不出这种记录，"

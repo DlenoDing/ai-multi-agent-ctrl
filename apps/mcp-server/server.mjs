@@ -615,7 +615,10 @@ const toolTraceFile = process.env.AIMAC_TOOL_TRACE || null;
 
 export async function callTool(name, args = {}, context = {}) {
   if (!mcpToolNames.includes(name)) {
-    const error = new Error(`Unknown tool: ${name}`);
+    // 只说 Unknown tool 等于让客户端去猜：指路 tools/list，并把同一前缀下的名字列出来（多半是拼错了后半截）。
+    const namespace = String(name).split(".")[0];
+    const sameNamespace = mcpToolNames.filter((item) => item.split(".")[0] === namespace).slice(0, 12);
+    const error = new Error(`Unknown tool: ${name} —— 用 tools/list 取可用工具名${sameNamespace.length ? `；前缀 ${namespace} 下有：${sameNamespace.join("、")}` : ""}`);
     error.code = -32602;
     throw error;
   }
@@ -793,7 +796,8 @@ function validateInputArgs(name, args) {
   const schema = acceptedInputSchemaFor(name);
   const properties = schema.properties || {};
   for (const key of Object.keys(args)) {
-    if (!properties[key]) return {ok: false, error: "mcp_input_unknown_property", property: key};
+    // supported 列的是【发布给客户端的】键（tools/list 里那份），不是内部接受词表（那是全局并集，列出来对客户端没用）。
+    if (!properties[key]) return {ok: false, error: "mcp_input_unknown_property", property: key, supported: Object.keys(publishedInputSchemaFor(name).properties || {})};
     if (!schemaTypeMatches(args[key], properties[key].type)) {
       return {ok: false, error: "mcp_input_type_mismatch", property: key, expectedType: properties[key].type};
     }
@@ -3128,7 +3132,8 @@ function progressGet(state, args, scopeType, filter) {
   // A bounded principal must address an in-scope ref; without one, returning the first snapshot of
   // the scope type would disclose an arbitrary tenant's progress. Deny rather than guess.
   if (filter) {
-    if (!scopeRef) return {progressSnapshot: null, error: "scope_ref_required_for_bounded_principal"};
+    if (!scopeRef) return {progressSnapshot: null, error: "scope_ref_required_for_bounded_principal",
+      message: `你是受限主体，这个查询要点名作用域：给 ${scopeType === "project" ? "projectId" : "taskGroupId"} —— 不给的话系统不会替你猜一个（那会把别的租户的进度泄出去）`};
     const projectId = scopeType === "project" ? scopeRef : state.taskGroups.find((item) => item.id === scopeRef)?.projectId;
     if (!projectId || !filter.has(projectId)) return {progressSnapshot: null, error: "out_of_scope"};
   }

@@ -275,6 +275,7 @@
     join_token_role_scope_mismatch: "申请的角色超出入网令牌的授权范围",
     agent_role_not_registered: "智能体角色不在已登记的执行角色里（照角色下拉里的填）",
     config_default_role_not_registered: "默认角色不在已登记的执行角色里（照角色下拉里的填）",
+    mcp_token_invalid: "MCP 令牌不对或已失效",
     join_token_role_not_registered: "入网令牌的角色范围里有未登记的执行角色（这张票没有任何节点能用）",
     human_confirmation_action_required: "定稿决定必须明写动作（交 AI 再分析 / 定稿 / 打回），系统不会替你选一个",
     lease_already_active: "该资源已有生效租约",

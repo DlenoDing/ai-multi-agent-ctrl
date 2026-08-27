@@ -12251,7 +12251,7 @@ function verifyRefusalCodeCoverageRatchet(output) {
   // 连带撤销它全部的会话与授权，而它原先一道门都没有 —— 只锁一边等于没锁）。可达性与上面
   // 两条完全相同：identity-mcp.* 整族被工具白名单挡着，编不出走到它的用例，已登记进
   // KNOWN_SECOND_DOORS。够得着的那一侧（REST 的 org_member_status_update）本来就是真人专属。
-  const UNCOVERED_REFUSAL_CODE_CEILING = 21;
+  const UNCOVERED_REFUSAL_CODE_CEILING = 20;
   const PRODUCT = ["apps/control-plane-ui/server.mjs", "apps/control-plane-ui/lib/control-plane-core.mjs",
     "apps/control-plane-ui/lib/agent-gateway.mjs", "apps/control-plane-ui/lib/state-store.mjs",
     "apps/mcp-server/server.mjs"];
