@@ -6391,6 +6391,38 @@ function verifyCommandBusLifecycle(output) {
     output.push("command-bus: no-side-effect command should succeed without a CommandEffect");
   }
 
+  // 【点了名却认不出，不等于没点名】。共享定义契约是 core 里最后一个还走宽松解析的工厂：
+  // 写错一个任务组 id 的请求会拿到 201，记录挂着悬空的 taskGroupId、落进【种子项目】——
+  // 而它是关闭门的阻塞对象，于是出现在控制面项目的「待你收尾」里，谁也说不清它是谁的。
+  {
+    const sdcState = structuredClone(seedState);
+    ensureRuntimeCollections(sdcState, {root});
+    const base = {contractId: "sdc_probe_x", definitionType: "terminology", name: "探针",
+      ownerRole: "orchestrator", producerRole: "orchestrator",
+      conflictPolicy: "owner_reconciles_then_republish"};
+    let bogus = null;
+    try { sharedDefinitionCreate(sdcState, {...base, taskGroupId: "tg_does_not_exist"}); }
+    catch (error) { bogus = error; }
+    if (bogus?.message !== "task_group_not_found") {
+      const filed = (sdcState.sharedDefinitions || []).find((item) => item.contractId === "sdc_probe_x");
+      output.push(`点名了一个认不出的任务组，共享定义契约照样建出来了（projectId=${filed?.projectId}，`
+        + `taskGroupId=${filed?.taskGroupId}）—— 它会出现在那个项目的「待你收尾」里`);
+    }
+    let noWhere = null;
+    try { sharedDefinitionCreate(sdcState, {...base, contractId: "sdc_probe_y"}); }
+    catch (error) { noWhere = error; }
+    if (noWhere?.message !== "project_required") {
+      const filed = (sdcState.sharedDefinitions || []).find((item) => item.contractId === "sdc_probe_y");
+      output.push(`既没点名任务组也没点名项目，契约还是落下来了（projectId=${filed?.projectId}）——`
+        + " 硬回落到种子项目就是「缺省等于有利结果」");
+    }
+    // 正面对照走同一条分支：项目级（点名 projectId）与任务组级都要照常建得出来。
+    const projectLevel = sharedDefinitionCreate(sdcState, {...base, contractId: "sdc_probe_p", projectId: "prj_control_plane"});
+    if (!projectLevel?.sharedDefinition) output.push(`项目级共享定义契约也建不出来了：${JSON.stringify(projectLevel).slice(0, 160)}`);
+    const groupLevel = sharedDefinitionCreate(sdcState, {...base, contractId: "sdc_probe_g", taskGroupId: "tg_runtime_management"});
+    if (!groupLevel?.sharedDefinition) output.push(`任务组级共享定义契约也建不出来了：${JSON.stringify(groupLevel).slice(0, 160)}`);
+  }
+
   // 【一台节点可能同时服务多个项目】。吊销它、给它下节点级命令，影响的是它服务的全部项目，
   // 而那两条路原先只按 projectIds[0] 判权：在第一个项目上有权的人能停掉一台同时给别人干活的
   // 节点。这里按【源码形状】核：两处 projectIds?.[0] 之前必须先过跨项目补判。

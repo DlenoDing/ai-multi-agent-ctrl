@@ -8959,9 +8959,25 @@ export function sharedDefinitionCreate(state, args) {
     if (settledRejection) return settledRejection;
   }
   const at = new Date().toISOString();
+  // 【点了名却认不出，不等于没点名】。上面那个解析器把这两件事都返回 null，而下面原先是
+  // `taskGroup?.id || args.taskGroupId` + `|| "prj_control_plane"`：写错一个任务组 id 的请求
+  // 会拿到 201，记录挂着一个悬空的 taskGroupId、落进【种子项目】—— 而它是关闭门的阻塞对象，
+  // 于是出现在控制面项目的「待你收尾」里，谁也说不清它是谁的。
+  // core 里另外 14 处工厂早就改成「认不出就具名拒绝」了，这一处是漏网的最后一个。
+  // 契约本身允许【项目级】（不挂任务组）—— 那种情况必须点名 projectId，不再硬回落到种子项目。
   const taskGroup = taskGroupForRecord(state, args);
-  const projectId = taskGroup?.projectId || args.projectId || "prj_control_plane";
-  const scopedTaskGroupId = taskGroup?.id || args.taskGroupId;
+  if (!taskGroup && args.taskGroupId) {
+    throw Object.assign(new Error("task_group_not_found"), {status: 400, details: {
+      taskGroupId: args.taskGroupId,
+      message: "共享定义契约点名了一个认不出的任务组：说不清时系统不会替你挑一个，"
+        + "也不会把它记到控制面项目名下。要建项目级契约就别填 taskGroupId、改填 projectId"}});
+  }
+  if (!taskGroup && !args.projectId) {
+    throw Object.assign(new Error("project_required"), {status: 400, details: {
+      message: "共享定义契约要挂在哪里必须说清：填 taskGroupId（任务组级）或 projectId（项目级）"}});
+  }
+  const projectId = taskGroup?.projectId || args.projectId;
+  const scopedTaskGroupId = taskGroup?.id || null;
   const definition = {
     schemaVersion: "shared-definition-contract/v1",
     contractId: args.contractId || createId("sdc"),

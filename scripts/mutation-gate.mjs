@@ -9885,6 +9885,22 @@ const MUTATIONS = [
     to: "  const projectIds = [];",
     expect: "节点跨项目判定算错了"
   },
+  {
+    name: "点了名却认不出的任务组，共享定义契约不得照建（core 里最后一个走宽松解析的工厂）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "  if (!taskGroup && args.taskGroupId) {",
+    to: "  if (false) {",
+    expect: "点名了一个认不出的任务组"
+  },
+  {
+    name: "既没点名任务组也没点名项目时不得硬回落到种子项目",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    from: "  if (!taskGroup && !args.projectId) {",
+    to: "  if (false) {",
+    expect: "契约还是落下来了"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
