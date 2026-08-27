@@ -730,6 +730,8 @@ export async function callTool(name, args = {}, context = {}) {
         actor: mcpPrincipalLabel(context.principal),
         action: "mcp_tool_call",
         subject: mcpAuditSubject(name, effectiveArgs),
+        // 指向 mcp-audit.jsonl 里那一行：人看的账与机器的账从此能对上。
+        ref: mcpCall.callId,
         result: mcpCall.status,
         at
       });

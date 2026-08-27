@@ -30,6 +30,7 @@ class StubElement {
     this.value = attrs.value === undefined ? "" : attrs.value;
     this.checked = attrs.checked === true;
     this.children = children;
+    this.classList = {add() {}, remove() {}, contains() { return false; }, toggle() {}};
   }
 
   // toast 会给容器设 role/aria-live 之类：桩里少了这些方法，任何走到 toast 的路径都会
@@ -42,6 +43,14 @@ class StubElement {
   addEventListener() {}
   removeEventListener() {}
   remove() {}
+  // 弹窗那条路要 document.body.classList.add("modal-open") 与 mask.querySelector(...).focus()。
+  // 桩上没有这三样时，openModal 在第一行就抛 TypeError → 被页面级 catch 吞成「控制台这一页自己
+  // 出错了」横幅 —— 而归档弹窗的四条断言此前一直在那条横幅旁边的页面上凑到期望串、绿着，
+  // 弹窗从来没真的开过（第 67 拍加「探针自查」才发现）。
+  // 实例属性而不是 getter：runDoubleSubmitGuardCase 会给自己的桩按钮换一个 classList 间谍来观察防重。
+  querySelector() { return new StubElement("div"); }
+  querySelectorAll() { return []; }
+  focus() {}
 
   #descendants() {
     return this.children.flatMap((child) => [child, ...child.#descendants()]);
@@ -1147,7 +1156,12 @@ async function runAuditChainBreakNoticeCase() {
     json: async () => ({entries: [], chain: {verified: 12, breaks}})}));
   // 事件处理是 event.target.closest("[data-action]") 取按钮的：closest 返回 null 时它直接退出
   // （第一版就这么空转了，两条断言都在看一个没渲染的弹窗）。
-  const button = {dataset: {action: "open-audit-archive"}, disabled: false, textContent: "查看审计归档"};
+  // 桩要带 classList：产品对【每个】动作按钮都做 guardBtn.classList.add("is-loading")（防重提交，
+  // 第 54 拍改成一律禁用），桩上没有它就在那一行抛 TypeError → 被页面级 catch 吞成「控制台这一页
+  // 自己出错了」横幅 —— 而这几条归档断言的期望串恰好都能在横幅之外的页面上凑到，于是一直绿着，
+  // 看的根本不是弹窗。下面那条「探针自查」就是为这件事立的。
+  const button = {dataset: {action: "open-audit-archive"}, disabled: false, textContent: "查看审计归档",
+    classList: {add() {}, remove() {}}};
   // closest 必须按选择器分辨：一律返回自己的话，前面 target.closest(".rule-row") 那一支会先命中，
   // 然后在没有 classList 的桩上抛错、被 try 吞掉 —— 表现为"点了没反应"。
   button.closest = (selector) => (selector === "[data-action]" ? button : null);
@@ -1174,13 +1188,17 @@ async function runArchiveFaultNoticeCase() {
       humanConfirmationRequests: [], humanDirectives: [], truncatedCollections: []}, admin, null, "sys-overview");
     probe.setFetch(async () => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
       json: async () => payload}));
-    const button = {dataset: {action: "open-audit-archive"}, disabled: false, textContent: "查看审计归档"};
+    const button = {dataset: {action: "open-audit-archive"}, disabled: false, textContent: "查看审计归档",
+      classList: {add() {}, remove() {}}};
     button.closest = (selector) => (selector === "[data-action]" ? button : null);
     await probe.click({target: button, preventDefault: () => {}});
     return String(root.innerHTML || "");
   };
   const faulted = await openArchive({entries: [], chain: {verified: 0, breaks: []},
     archiveFault: {lostEntries: 4, error: "EACCES: permission denied"}});
+  check("【探针自查】老用例的弹窗有没有被同一条崩溃横幅顶掉",
+    !/Cannot read properties of undefined \(reading &#39;add&#39;\)/u.test(faulted),
+    "老用例的 HTML 里也有那条崩溃横幅 —— 这几条归档断言一直在看横幅、不是弹窗");
   check("归档写失败过时，这一屏要说清自己不完整",
     /这份归档不完整/u.test(faulted) && /4/u.test(faulted),
     `查历史的人看到的是一屏记录，却不知道有条目从没落盘（${faulted.slice(0, 140)}）`);
@@ -1197,6 +1215,21 @@ async function runArchiveFaultNoticeCase() {
   // 服务端一直下发着 windowTruncated/bytesScanned/fileBytes，这里此前一个都没渲染。
   const windowed = await openArchive({entries: [], chain: {verified: 200, breaks: []}, archiveFault: null,
     windowTruncated: true, bytesScanned: 512 * 1024, fileBytes: 420 * 1024 * 1024});
+  // 经 MCP 写入的行带 ref = mcp-audit.jsonl 里那一行的 callId。这一屏下面那句「摘要另存于
+  // mcp-audit.jsonl」正是让人去那本账里查，而这里原先不显示 ref —— 等于让人去翻一本没有索引的账。
+  const linked = await openArchive({chain: {verified: 2, breaks: []}, archiveFault: null, entries: [
+    {id: "audit_1", at: "2026-08-27T00:00:00.000Z", actor: "mcp:agent_node:node_1", action: "mcp_tool_call",
+      subject: "room-mcp.room_join · taskGroupId=tg_1", result: "succeeded", ref: "mcp_call_abc123"},
+    {id: "audit_2", at: "2026-08-27T00:00:01.000Z", actor: "u1", action: "task_group_pause",
+      subject: "TaskGroup:tg_1", result: "succeeded"}
+  ]});
+  check("归档页要显示每一行指向的 MCP 归档行",
+    /mcp_call_abc123/u.test(linked),
+    "归档页没显示它指向的 MCP 归档行 —— 人看到一次 MCP 写入，无法跳到它的入参/返回摘要");
+  check("REST 侧的行没有 ref 时不许渲染成 undefined",
+    !/undefined/u.test(linked),
+    `没有 ref 的行把 undefined 印在了屏幕上：${(linked.match(/.{0,80}undefined.{0,40}/u) || [""])[0]}`);
+
   check("只校验了尾部一窗时要说出来",
     /只读了归档末尾/u.test(windowed),
     `这一屏说"未发现改动"，却没说窗口之外的记录一条都没查过（${windowed.slice(0, 160)}）`);

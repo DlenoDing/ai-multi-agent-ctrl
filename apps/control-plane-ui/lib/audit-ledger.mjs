@@ -23,7 +23,7 @@ export function auditArchiveFault() {
   return archiveFault;
 }
 
-export function appendAuditEntry(state, {actor, action, subject, result = "succeeded", at}) {
+export function appendAuditEntry(state, {actor, action, subject, result = "succeeded", at, ref}) {
   state.auditLog ||= [];
   const entry = {
     // 这个集合此前【不受任何规范约束】：813 条真实记录一条都没被校验过，
@@ -37,6 +37,11 @@ export function appendAuditEntry(state, {actor, action, subject, result = "succe
     subject,
     result,
     stateVersion: Number(state.stateVersion || 0),
+    // 【两本账要能对上】。经 MCP 改的状态在这本人看的账上只有一句 mcp_tool_call + 主题；
+    // 入参/返回摘要在另一本 mcp-audit.jsonl 里，而这一行原先没有任何键能跳过去 ——
+    // 界面上那句"摘要另存于 mcp-audit.jsonl"等于让人去一本没有索引的账里翻。
+    // ref 记那边的 callId。只在给了时写（REST 侧的行没有），且放在 rowHash 之前，让链覆盖它。
+    ...(ref ? {ref} : {}),
     prevHash: state.auditLog[0]?.rowHash || state.auditChainHead || "sha256:genesis"
   };
   entry.rowHash = digestOf(entry);

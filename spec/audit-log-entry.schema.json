@@ -18,6 +18,8 @@
     "result": {"type": "string", "minLength": 1,
       "description": "succeeded / denied，或具体的拒绝码（如 credentials_invalid）。是开放取值，不是闭集。"},
     "stateVersion": {"type": "integer", "minimum": 0},
+    "ref": {"type": "string", "minLength": 1,
+      "description": "经 MCP 写入的行指向 mcp-audit.jsonl 里那一行的 callId，两本账据此能对上。REST 侧的行没有它，所以不进 required。"},
     "prevHash": {"type": "string", "pattern": "^sha256:[0-9a-f]+$|^sha256:genesis$"},
     "rowHash": {"type": "string", "pattern": "^sha256:[0-9a-f]+$"}
   }

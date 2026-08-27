@@ -327,6 +327,19 @@ try {
         + " 归档是这本账唯一的完整来源，而 argumentDigest 不可逆，事后说不清 agent 动了哪个任务组/工作项");
     }
     console.log(`  ok  归档带主题：${last.subject}`);
+    // 【两本账要能对上】。人看的 audit-log.jsonl 里那行 mcp_tool_call 必须带 ref，等于机器那本
+    // mcp-audit.jsonl 里同一次调用的 callId —— 否则界面那句"摘要另存于 mcp-audit.jsonl"
+    // 是让人去一本没有索引的账里翻。
+    const humanLines = readFileSync(join(runtimeDir, "audit-log.jsonl"), "utf8").split("\n").filter(Boolean)
+      .map((line) => JSON.parse(line));
+    const humanRow = [...humanLines].reverse().find((row) => row.action === "mcp_tool_call"
+      && String(row.subject || "").startsWith("room-mcp.room_join"));
+    if (!humanRow) throw new Error("人看的账里找不到刚才那次 MCP 调用 —— 下面这条会空转");
+    if (humanRow.ref !== last.callId) {
+      throw new Error(`两本账对不上：人看的账那行 ref=${JSON.stringify(humanRow.ref)}，机器账的 callId=${last.callId} ——`
+        + " 人从审计页看到一次 MCP 写入，无法跳到它的入参/返回摘要");
+    }
+    console.log(`  ok  两本账按 ref 对上：${humanRow.ref}`);
   }
 
   // 【MCP 归档写不进去：不挡业务、不泄路径、要报警、恢复要自清】。归档是 agent 调用记录的

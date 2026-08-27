@@ -5423,7 +5423,10 @@ document.addEventListener("click", async (event) => {
         esc(accountName(entry.actor)),
         esc(t(entry.action)),
         {v: esc(entry.subject), c: "text-clip"},
-        badge(entry.result || "ok")
+        badge(entry.result || "ok"),
+        // 经 MCP 写入的行带 ref = mcp-audit.jsonl 里那一行的 callId。不显示的话，下面那句
+        // 「摘要另存于 mcp-audit.jsonl」等于让人去一本没有索引的账里翻。REST 侧的行没有它，留空。
+        entry.ref ? `<span class="mono">${esc(entry.ref)}</span>` : "-"
       ])).join("");
       const chain = archive.chain || {verified: 0, breaks: []};
       const chainNotice = chain.breaks?.length
@@ -5449,7 +5452,7 @@ document.addEventListener("click", async (event) => {
           ${chainNotice}
           ${windowNotice}
           ${archive.windowTruncated ? `<div class="small muted">归档文件共 ${Math.round((archive.fileBytes || 0) / 1024)} KB，这里只读了末尾 ${Math.round((archive.bytesScanned || 0) / 1024)} KB —— 更早的记录需要直接查归档文件。</div>` : ""}
-          ${table(["时间", "操作者", "动作", {label: "对象", c: "text-clip"}, "结果"], rows, {emptyText: "归档里还没有记录"})}
+          ${table(["时间", "操作者", "动作", {label: "对象", c: "text-clip"}, "结果", {label: "MCP 归档行", c: "nowrap"}], rows, {emptyText: "归档里还没有记录"})}
         </div>
       `);
       return;
