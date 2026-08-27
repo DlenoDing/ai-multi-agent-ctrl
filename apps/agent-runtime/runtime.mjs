@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { accessSync, closeSync, constants as fsConstants, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir, hostname, platform, arch, cpus, totalmem, networkInterfaces } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -125,7 +125,11 @@ function explainAgentFailure(error) {
 async function main() {
   if (command === "help" || command === "--help" || args.help === true) { console.log(USAGE); return; }
   if (command === "bootstrap") return bootstrap();
-  if (command === "self-check") return selfCheck(loadConfig(), {verbose: true});
+  if (command === "self-check") {
+    const result = await selfCheck(loadConfig(), {verbose: true});
+    if (!result.ok) process.exitCode = 1;
+    return result;
+  }
   if (command === "status") return status(loadConfig());
   if (command === "run") { installChildReaper(); return run(loadConfig()); }
   console.error(`认不出的命令：${command}\n${USAGE}`);
@@ -204,7 +208,9 @@ async function selfCheck(config, {verbose = false} = {}) {
   checks.push(check("runtime", Number(process.versions.node.split(".")[0]) >= 20, `node ${process.versions.node}; runtime ${RUNTIME_VERSION}`));
   checks.push(check("filesystem", writableDirectory(config.workDir), config.workDir));
   checks.push(check("git", executableVersion("git", ["--version"]).available, executableVersion("git", ["--version"]).version));
-  checks.push(check("model_executor", profile.models.some((item) => item.available === true), modelExecutorDetail(profile)));
+  // 人明确配了执行器命令而它找不到：即使机器上另有 codex/claude 自动探到，派发用的仍是配的那个 —— 这一项必须不过。
+  const configuredExecutorBroken = profile.models.find((item) => item.adapter === "custom_command" && item.available === false);
+  checks.push(check("model_executor", !configuredExecutorBroken && profile.models.some((item) => item.available === true), modelExecutorDetail(profile)));
   // 失败原因原先被 catch {} 整个吞掉，上报的 detail 只有一个 URL —— 人在控制台看到
   // "自检未通过：gateway"，分不清是 DNS、TLS、401 还是服务端根本没起，只能上机器翻日志。
   // 这一侧知道确切原因，就必须把它带上去。
@@ -233,14 +239,40 @@ async function selfCheck(config, {verbose = false} = {}) {
     mcpDetail = `${config.gateway.mcpUrl} — ${String(error?.message || error).slice(0, 200)}`;
   }
   checks.push(check("remote_mcp", mcpOk, mcpDetail));
-  const result = await jsonRequest(config.gateway.selfCheckUrl, {method: "POST", token: config.nodeToken, body: {checks, runtimeVersion: RUNTIME_VERSION, profile}});
+  // 先把逐项结果打出来再上报：上报时准入不到 full 网关回 409，原先这一步直接抛异常，人要的那份清单一行都没打出来。
   // 单独跑 agentctl self-check 的人是来排障的：一句 ok/failed 不够，要逐项说查了什么、结果如何、准入到哪一档。
   // bootstrap 里顺带跑的那次保持一行（它的输出有安装脚本/e2e 在解析）。
   if (verbose) {
     for (const item of checks) process.stdout.write(`  ${item.status === "ok" ? "✓" : "✗"} ${item.checkId}${item.detail ? ` — ${item.detail}` : ""}\n`);
   }
+  let result;
+  try {
+    result = await jsonRequest(config.gateway.selfCheckUrl, {method: "POST", token: config.nodeToken, body: {checks, runtimeVersion: RUNTIME_VERSION, profile}});
+  } catch (error) {
+    // 409 且带 admission：这是「没通过」的正常回执，不是请求故障。
+    if (error?.status === 409 && error?.payload?.admission) result = {ok: false, ...error.payload};
+    else throw error;
+  }
   process.stdout.write(`agent self-check: ${result.ok ? "ok" : "failed"}${verbose ? `（准入 ${result.admission || "?"}${result.ok ? "" : `；没过的：${(result.missingChecks || []).join("、")}`}）` : ""}\n`);
   return result;
+}
+
+// 把网关「没派发」的回执翻成人话：原因 + 排队里为什么轮不到本节点（角色/模型/契约）。
+function describeClaimMiss(claimed) {
+  const detail = claimed.missDetail || {};
+  const reasons = Array.isArray(detail.reasons) ? detail.reasons : [];
+  const why = reasons.slice(0, 3).map((item) => {
+    if (item.reason === "role_not_allowed_on_node") return `${item.dispatchId} 要 ${item.requiredRole} 角色（本节点只有 ${(item.nodeRoles || []).join("、") || "-"}）`;
+    if (item.reason === "model_not_runnable_on_node") return `${item.dispatchId} 要 ${item.requiredModel} 模型（本节点能跑 ${(item.nodeProviders || []).join("、") || "-"}）`;
+    if (item.reason === "task_contract_expired") return `${item.dispatchId} 的任务契约已过期`;
+    if (item.reason === "task_contract_missing") return `${item.dispatchId} 没有任务契约`;
+    return `${item.dispatchId || ""} ${item.reason}`.trim();
+  }).join("；");
+  const queued = Number.isFinite(detail.queuedCount) ? `排队中 ${detail.queuedCount} 个` : "";
+  if (claimed.reason === "node_not_admitted") return `没有可领的派发：本节点未获准入（准入 ${detail.admission || "?"}，状态 ${detail.status || "?"}）—— 跑 agentctl self-check 看哪一项没过`;
+  if (claimed.reason === "execution_halted") return `没有可领的派发：任务组已暂停执行（${queued || "有派发在排队"}），等人在控制台点「恢复执行」`;
+  if (claimed.reason === "no_compatible_dispatch") return `没有可领的派发：${queued ? `${queued}，但` : ""}没有适合本节点的${why ? `：${why}` : "（可能根本没有排队的派发）"}`;
+  return `没有可领的派发：${claimed.reason || "unknown"}`;
 }
 
 async function status(config) {
@@ -274,6 +306,7 @@ async function run(config) {
   let lastSweepAt = Date.now();
   let lastHeartbeat = 0;
   let lastAdmissionSelfCheckAt = 0;
+  let lastMissLine = "";
   const once = args.once === true || process.env.AIMAC_AGENT_ONCE === "true";
   for (;;) {
    try {
@@ -314,6 +347,15 @@ async function run(config) {
       continue;
     }
     const claimed = await retryableAgentRequest(() => jsonRequest(config.gateway.dispatchUrl, {method: "POST", token: config.nodeToken, body: {claimTtlSeconds: Number(args["claim-ttl"] || 1800)}}), "dispatch_claim");
+    // 没领到活要说为什么：原先 run --once 打完一句「正在等待派发」就静默退出，人不知道是没活、角色不对还是没准入。
+    // 常驻时同一原因只说一次（原因变了再说），不刷屏。
+    if (!claimed.dispatch) {
+      const missLine = describeClaimMiss(claimed);
+      if (once || missLine !== lastMissLine) process.stdout.write(`${missLine}\n`);
+      lastMissLine = missLine;
+    } else {
+      lastMissLine = "";
+    }
     if (!claimed.dispatch && claimed.reason === "node_not_admitted" && Date.now() - lastAdmissionSelfCheckAt > 5 * 60 * 1000) {
       lastAdmissionSelfCheckAt = Date.now();
       await selfCheck(config).catch((error) => process.stderr.write(`re-admission self-check failed: ${error.message}\n`));
@@ -1902,7 +1944,12 @@ function probeProfile(executorCommand = "") {
   if (tools.find((tool) => tool.name === "claude")?.available) models.push({providerClass: "anthropic", adapter: "claude", available: true}, {providerClass: "aws_bedrock", adapter: "claude", available: true});
   if (tools.find((tool) => tool.name === "gemini")?.available) models.push({providerClass: "google", adapter: "gemini", available: true}, {providerClass: "vertex_ai", adapter: "gemini", available: true});
   if (tools.find((tool) => tool.name === "ollama")?.available) models.push({providerClass: "ollama", adapter: "ollama", available: true});
-  if (executorCommand) models.push({providerClass: "custom", adapter: "custom_command", available: true});
+  // 原先只要配了命令就算 available：命令写错（或没装）的节点照样准入 full，每一次派发都在执行那一刻才失败。
+  if (executorCommand) {
+    const exists = commandExists(executorCommand);
+    models.push({providerClass: "custom", adapter: "custom_command", available: exists,
+      ...(exists ? {} : {detail: `找不到执行器命令 ${String(executorCommand).trim().split(/\s+/u)[0]}（检查拼写、是否已安装、是否在 PATH 里）`})});
+  }
   if (!models.length) models.push({providerClass: "custom", adapter: "unconfigured", available: false});
   const capabilityFlags = ["git", "remote_mcp", "skill_workset_cache"];
   if (models.some((item) => item.available === true)) capabilityFlags.push("model_agent_executor");
@@ -1967,7 +2014,7 @@ function detectSandboxMode() {
 
 function modelExecutorDetail(profile) {
   return (profile.models || [])
-    .map((item) => `${item.providerClass}:${item.adapter}:${item.available === true ? "available" : "unavailable"}`)
+    .map((item) => `${item.providerClass}:${item.adapter}:${item.available === true ? "available" : "unavailable"}${item.detail ? `（${item.detail}）` : ""}`)
     .join(",") || "no model executor detected";
 }
 
@@ -1978,6 +2025,14 @@ function executableVersion(name, versionArgs) {
 
 function commandAvailable(name) {
   return executableVersion(name, ["--version"]).available;
+}
+
+// 配置的执行器命令存不存在：绝对/相对路径看文件可执行，裸名字在 PATH 里找。不跑 --version（自定义执行器未必认它）。
+function commandExists(command) {
+  const first = String(command || "").trim().split(/\s+/u)[0];
+  if (!first) return false;
+  if (first.includes("/")) { try { accessSync(first, fsConstants.X_OK); return true; } catch { return false; } }
+  return String(process.env.PATH || "").split(":").some((dir) => { try { accessSync(join(dir, first), fsConstants.X_OK); return true; } catch { return false; } });
 }
 
 function diskFree(path) {
@@ -2018,6 +2073,7 @@ async function jsonRequest(url, options = {}) {
     const error = new Error(`${payload.error || "request_failed"}: ${payload.message || response.status}`);
     error.status = response.status;
     error.code = payload.error || "request_failed";
+    error.payload = payload;
     throw error;
   }
   return payload;

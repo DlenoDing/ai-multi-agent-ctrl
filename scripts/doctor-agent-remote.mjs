@@ -315,6 +315,33 @@ try {
   }
   const noExecutorClaim = await json("/api/agent/v1/dispatches/next", {method: "POST", token: noExecutorRegistration.nodeToken, body: {claimTtlSeconds: 900}});
   if (noExecutorClaim.dispatch || noExecutorClaim.reason !== "node_not_admitted") throw new Error("agent without model executor was allowed to claim dispatch");
+  // 【配了执行器命令但它不存在】：原先只要配了就算 available，节点准入 full、每次派发都在执行那一刻才失败。
+  // 真跑 agentctl：bootstrap 不得给 full；self-check 要点名找不到哪个命令；run --once 要说清为什么没领到活。
+  {
+    const bogusJoin = await json("/api/agent-join-tokens", {method: "POST", token: login.sessionToken, idempotencyKey: "doctor-agent-bogus-executor-token",
+      body: {projectId: "prj_control_plane", nodeName: "bogus-executor-node", allowedRoles: ["*"], ttlSeconds: 1800, maxUses: 1}});
+    const bogusDir = join(sandbox, "bogus-executor-work");
+    mkdirSync(bogusDir, {recursive: true});
+    writeFileSync(join(bogusDir, "join.token"), `${bogusJoin.joinToken}\n`);
+    const bogusEnv = {...process.env, AIMAC_AGENT_WORK_DIR: bogusDir, AIMAC_AGENT_NODE_NAME: "bogus-executor-node", AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true",
+      AIMAC_AGENT_CONFIGURE_CLIENTS: "false", AIMAC_AGENT_EXECUTOR_COMMAND: "/nonexistent/aimac-executor"};
+    const bogusBootstrap = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "bootstrap", "--server", baseUrl, "--join-token-file", join(bogusDir, "join.token")],
+      {cwd: root, encoding: "utf8", timeout: 60000, env: bogusEnv});
+    const bootstrapSaid = `${bogusBootstrap.stdout || ""}${bogusBootstrap.stderr || ""}`;
+    if (/schedulerAdmission=full/u.test(bootstrapSaid)) {
+      throw new Error(`配了不存在的执行器命令，bootstrap 还是给了 full 准入：${bootstrapSaid.slice(0, 200).replace(/\n/g, " ")}`);
+    }
+    const bogusSelfCheck = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "self-check"], {cwd: root, encoding: "utf8", timeout: 60000, env: bogusEnv});
+    const selfCheckSaid = String(bogusSelfCheck.stdout || "");
+    if (!/找不到执行器命令 \/nonexistent\/aimac-executor/u.test(selfCheckSaid) || !/✗ model_executor/u.test(selfCheckSaid)) {
+      throw new Error(`self-check 没点名找不到哪个执行器命令：${selfCheckSaid.slice(0, 300).replace(/\n/g, " | ")}`);
+    }
+    const bogusRun = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "run", "--once"], {cwd: root, encoding: "utf8", timeout: 60000, env: {...bogusEnv, AIMAC_AGENT_REQUEST_TIMEOUT_MS: "5000"}});
+    const runSaid = String(bogusRun.stdout || "");
+    if (!/没有可领的派发：本节点未获准入/u.test(runSaid)) {
+      throw new Error(`run --once 没领到活时没说为什么：${runSaid.slice(0, 300).replace(/\n/g, " | ")}`);
+    }
+  }
 
   const verifiedJoinResult = await json("/api/agent-join-tokens", {
     method: "POST",

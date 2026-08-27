@@ -3409,6 +3409,22 @@ const MUTATIONS = [
     expect: "docker-up 起容器前没说清"
   },
   {
+    name: "配了不存在的执行器命令不得算 available",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "    const exists = commandExists(executorCommand);",
+    to: "    const exists = true;",
+    expect: "bootstrap 还是给了 full 准入"
+  },
+  {
+    name: "agentctl 没领到活要说为什么",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "      if (once || missLine !== lastMissLine) process.stdout.write(`${missLine}\\n`);",
+    to: "",
+    expect: "没领到活时没说为什么"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

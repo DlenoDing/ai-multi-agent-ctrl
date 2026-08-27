@@ -611,7 +611,7 @@ export function authenticateExecutorPrincipal(state, token) {
 
 export function claimNextDispatch(state, node, options = {}) {
   ensureAgentGatewayCollections(state);
-  if (node.status !== "online" || node.admission !== "full") return {dispatch: null, reason: "node_not_admitted"};
+  if (node.status !== "online" || node.admission !== "full") return {dispatch: null, reason: "node_not_admitted", missDetail: {admission: node.admission, status: node.status}};
   recycleExpiredClaims(state);
   expireStaleQueuedDispatches(state);
   // 治理动作必须挡住【已经排队】的派发，不只是挡住新建。
@@ -653,10 +653,12 @@ export function claimNextDispatch(state, node, options = {}) {
       // 那样这条诊断只存在于返回值里，控制台上依旧什么都看不到。
       const haltedChanged = recordClaimMiss(node, {queuedCount: haltedCandidates,
         at: new Date().toISOString(), reasons: [{reason: "execution_halted"}]});
-      return {dispatch: null, reason: "execution_halted", stateChanged: haltedChanged};
+      return {dispatch: null, reason: "execution_halted", stateChanged: haltedChanged, missDetail: {queuedCount: haltedCandidates}};
     }
-    const missChanged = recordClaimMiss(node, summarizeClaimMiss(state, node));
-    return {dispatch: null, reason: "no_compatible_dispatch", stateChanged: missChanged};
+    // 未命中的摘要（排队几个、每个为什么轮不到本节点）原先只落到节点记录给控制台看；agent 自己的终端上一个字没有。一并回给它。
+    const miss = summarizeClaimMiss(state, node);
+    const missChanged = recordClaimMiss(node, miss);
+    return {dispatch: null, reason: "no_compatible_dispatch", stateChanged: missChanged, missDetail: miss};
   }
   delete node.lastClaimMiss;
   const at = new Date().toISOString();
