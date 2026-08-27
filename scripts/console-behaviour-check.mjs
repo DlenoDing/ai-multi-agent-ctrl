@@ -1022,12 +1022,12 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
         return {mask, opened: true};
       };
       try {
-        const emptyForm = mkForm("   ");
-        const maskCountBefore = masks().length;
-        await probe.submit({target: emptyForm, submitter: emptyForm.children[1], preventDefault: () => {}});
+        // 空理由也走 clickDialog：要是弹窗竟然开了（校验被拿掉），门要能看见它并替人点「取消」把提交放行，
+        // 而不是永远等一次点击 —— 挂死不是红。
+        const empty = await clickDialog(mkForm("   "), "cancel");
         check(`${kind}：理由空着要拒、不开确认弹窗、不发请求`,
-          !posted() && masks().length === maskCountBefore && toasts.some((message) => /必须写明理由/u.test(message)),
-          posted() ? `空着也发了 ${JSON.stringify(posted().body)}` : `没拒（弹窗 ${masks().length - maskCountBefore} 个；toast：${JSON.stringify(toasts).slice(0, 100)}）`);
+          !empty.opened && !posted() && toasts.some((message) => /必须写明理由/u.test(message)),
+          posted() ? `空着也发了 ${JSON.stringify(posted().body)}` : `没拒（弹窗${empty.opened ? "开了" : "没开"}；toast：${JSON.stringify(toasts).slice(0, 100)}）`);
         const cancelForm = mkForm("探针理由：方案走不通");
         const cancelled = await clickDialog(cancelForm, "cancel");
         check(`${kind}：确认弹窗要真的开、写着「${confirmText}」，点「取消」不发请求`,
