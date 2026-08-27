@@ -15762,8 +15762,12 @@ function verifyI18nKeysAreReachable(output) {
     const segments = key.split("_");
     for (let index = segments.length - 1; index >= 1; index -= 1) {
       const prefix = segments.slice(0, index).join("_"); const suffix = segments.slice(index).join("_");
-      if (corpus.includes(`${prefix}_\${`) || corpus.includes(`\`${prefix}\${`)) return true;
-      if (corpus.includes(`}_${suffix}`)) return true;
+      // 一段的前缀（mcp_${name}）会把所有 mcp_* 都算成模板产出（变异实测假绿）：前缀要么至少两段，要么就是键去掉最后一段；
+      // 后缀同理（_too_long 两段；或就是键去掉第一段）。
+      const prefixCounts = index >= 2 || index === segments.length - 1;
+      const suffixCounts = segments.length - index >= 2 || index === 1;
+      if (prefixCounts && (corpus.includes(`${prefix}_\${`) || corpus.includes(`\`${prefix}\${`))) return true;
+      if (suffixCounts && corpus.includes(`}_${suffix}`)) return true;
     }
     return false;
   };
