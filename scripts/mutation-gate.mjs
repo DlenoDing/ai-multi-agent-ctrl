@@ -3075,8 +3075,9 @@ const MUTATIONS = [
     name: "界面拿到的授权角色词表要与拒绝报文的 supported 同一份",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    from: '  state.runtime.grantRoleTemplates = grantRoleTemplateNames();',
-    to: '  state.runtime.grantRoleTemplates = {project: ["viewer"], task_group: ["viewer"]};',
+    // /api/state 走的是 readStateForRead 的 fresh. 那条路；改 state. 那条 doctor 看不见（第一版就这么假绿过）。
+    from: '    fresh.runtime.grantRoleTemplates = grantRoleTemplateNames();',
+    to: '    fresh.runtime.grantRoleTemplates = {project: ["viewer"], task_group: ["viewer"]};',
     expect: "与拒绝报文里的 supported 不是同一份"
   },
   {
