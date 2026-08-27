@@ -11229,11 +11229,35 @@ function verifyServerFieldsReachThePerson(output) {
     serverUrl: "装机脚本写进 agent 配置",
     installScriptUrl: "一条命令加入时给人复制的地址，由 init 打印而非界面渲染",
     checkpoint: "检查点回执，agent 运行时读",
-    tokenSource: "启动诊断：令牌来自环境变量还是本地配置，运维看日志"
+    tokenSource: "启动诊断：令牌来自环境变量还是本地配置，运维看日志",
+    // 下面这七个原先【整族在这道判据的视野之外】：它取 200 回执用的是 [^}]，遇到第一个嵌套
+    // 花括号就停 —— /api/health 里 mcp:{...} 之后的、以及装机清单里的字段，一个都没被扫到。
+    // 提取改成花括号配对之后它们才现身，逐个查明是谁在读：
+    agentGateway: "/api/health 里的网关地址与在线节点数，运维直接 curl 这个接口；控制台不渲染健康页",
+    hostedBy: "只在 /api/health 里，运维直接读这个接口时看的自述（这个 MCP 端点由控制面托管）；没有程序读它",
+    localMcpServerAllowed: "装机清单，agentctl 自检明确比对它必须是 false（不许 agent 自带本地 MCP）",
+    mcpUrl: "装机清单，agent 运行时写进 config.gateway.mcpUrl 并据此握手",
+    runtimeUrl: "装机清单，install-agent.sh 下载运行时用",
+    runtimeChecksumUrl: "装机清单，install-agent.sh 下完运行时比对 sha256 用",
+    installScriptChecksumUrl: "装机清单，agentctl 的 verified 模式先下它再校验安装脚本",
+    skillSynchronization: "装机清单，声明技能由服务端按需下发（docker-compose 的部署自检比对它）"
   };
   const fields = new Set();
-  for (const match of server.matchAll(/json\(res,\s*200,\s*\{([^}]{10,400})\}/gu)) {
-    for (const field of match[1].matchAll(/(^|[\s,{])([a-zA-Z][a-zA-Z0-9_]{3,})\s*:/gu)) fields.add(field[2]);
+  // 【按花括号配对切，别用 [^}]】。负向字符类遇到第一个 `}` 就停 —— 回执里只要出现一处嵌套
+  // 对象或 `...(cond ? {x} : {})` 这种条件展开，它后面的字段就整族落在视野之外。
+  // 实测：给 /api/health 加了一个条件展开的 warnings 之后，runtime / publicUrl / endpoint /
+  // transport 全部"消失"，门反过来报"登记过期，删掉它"—— 指向的位置离真正的问题十万八千里。
+  for (const match of server.matchAll(/json\(res,\s*200,\s*\{/gu)) {
+    const start = match.index + match[0].length - 1;
+    let depth = 0;
+    let end = start;
+    for (let index = start; index < server.length; index += 1) {
+      if (server[index] === "{") depth += 1;
+      else if (server[index] === "}") { depth -= 1; if (!depth) { end = index; break; } }
+    }
+    const body = server.slice(start + 1, end);
+    if (body.length < 10) continue;
+    for (const field of body.matchAll(/(^|[\s,{])([a-zA-Z][a-zA-Z0-9_]{3,})\s*:/gu)) fields.add(field[2]);
   }
   if (fields.size < 30) {
     output.push(`下发字段判据只提取到 ${fields.size} 个字段 —— 提取多半失配，这道判据在空转`);

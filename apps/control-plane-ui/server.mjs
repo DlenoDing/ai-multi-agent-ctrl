@@ -2868,8 +2868,25 @@ async function handleApi(req, res) {
         hint: "状态在运行中被重建成了空的（原文件消失）：先确认运行目录没被清、挂载还在，再从备份还原"});
       return;
     }
+    // 【已经知道的故障不能只讲给控制台听】。审计归档写不进去（磁盘满 / 权限变了）与
+    // 执行事件日志损坏，服务端本来就记着，控制台也会弹提示 —— 但那条提示只有系统账号看得见，
+    // 而盯着这个接口的是监控。原先这两种情况这里照样回 200 ok：问责记录正在丢，监控一片绿。
+    // 不报 503：这两样都不影响对外服务，而 503 会让编排把容器摘掉甚至重启 ——
+    // 重启既修不好满了的磁盘，还会把正在跑的东西一起打断。所以照常 ok，但把警告一起端出来。
+    const auditFault = sharedAuditArchiveFault();
+    const eventFault = projectEventLogFault();
+    const warnings = [
+      ...(auditFault ? [{kind: "audit_archive_write_failed", lostEntries: auditFault.lostEntries,
+        error: auditFault.error, at: auditFault.at,
+        hint: "问责台账的归档写不进去了，这段时间的操作事后查不到：检查运行目录剩余空间、"
+          + "挂载是否只读、以及本进程对 audit-log.jsonl 的写权限；恢复之后下一次写入会自动转回正常"}] : []),
+      ...(eventFault ? [{kind: "project_event_log_damaged", error: String(eventFault).slice(0, 200),
+        hint: "执行事件日志有损坏行：重建索引时会跳过它，后果是序号可能被重用、幂等键可能失效 ——"
+          + " 按日志里指出的段文件排查"}] : [])
+    ];
     json(res, 200, {
       status: "ok",
+      ...(warnings.length ? {warnings} : {}),
       runtime: state.runtime.status,
       publicUrl: publicEndpoint(req),
       mcp: {transport: "streamable-http", endpoint: `${publicEndpoint(req)}/mcp`, hostedBy: "control-plane"},

@@ -2846,6 +2846,22 @@ try {
       if (!fault || !fault.lostEntries || !fault.error) {
         throw new Error(`归档写失败了，查历史那一屏却毫无察觉：archiveFault=${JSON.stringify(fault)}`);
       }
+      // 【已经知道的故障不能只讲给控制台听】。那条提示只有系统账号在归档页看得见，
+      // 而盯着健康检查的是监控 —— 原先这里照样回 200 ok 且一个字都不提：问责记录正在丢，监控一片绿。
+      const healthWhileFaulted = await jsonFetch(port, "/api/health");
+      const warned = (healthWhileFaulted.payload.warnings || [])
+        .find((item) => item.kind === "audit_archive_write_failed");
+      if (!warned) {
+        throw new Error("审计归档写不进去，而 /api/health 一个字都没提（"
+          + `${JSON.stringify(healthWhileFaulted.payload).slice(0, 200)}）—— 监控看到的是一片绿`);
+      }
+      if (!warned.lostEntries || !warned.hint) {
+        throw new Error(`健康检查提了这个故障，但没说丢了几条、也没说该怎么办：${JSON.stringify(warned)}`);
+      }
+      if (healthWhileFaulted.response.status !== 200) {
+        throw new Error(`归档写不进去时健康检查回了 ${healthWhileFaulted.response.status} ——`
+          + " 这不影响对外服务，报非 200 会让编排把容器摘掉甚至重启，而重启修不好满了的磁盘");
+      }
       const recovered = await jsonFetch(port, `/api/orgs/${orgId}/quotas`, {
         method: "POST", headers: {authorization: systemAuth, "Idempotency-Key": "doctor-archive-recover"},
         body: JSON.stringify({quotas: {maxMembers: 62}})
@@ -2855,6 +2871,11 @@ try {
       if (afterRecovery.payload.archiveFault) {
         throw new Error(`归档恢复正常之后故障标记没清掉：${JSON.stringify(afterRecovery.payload.archiveFault)}`
           + " —— 只置不清的标记会让人以为一直在坏");
+      }
+      // 健康检查上的警告也要跟着消失，否则监控会一直报警而现场早就好了。
+      const healthAfter = await jsonFetch(port, "/api/health");
+      if ((healthAfter.payload.warnings || []).some((item) => item.kind === "audit_archive_write_failed")) {
+        throw new Error("归档恢复正常之后，健康检查上的警告还挂着 —— 只置不清的警告等于噪声");
       }
     }
 

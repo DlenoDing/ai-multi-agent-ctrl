@@ -9723,6 +9723,14 @@ const MUTATIONS = [
     to: 'runtimeIssuePatterns: "运行问题模式",',
     expect: "而界面上没有中文名"
   },
+  {
+    name: "已经知道的故障不能只讲给控制台听：健康检查也要报审计归档写不进去",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    const auditFault = sharedAuditArchiveFault();",
+    to: "    const auditFault = null;",
+    expect: "一个字都没提"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
