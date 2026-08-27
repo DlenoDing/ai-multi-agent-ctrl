@@ -9942,6 +9942,15 @@ const MUTATIONS = [
     expect: "要标出哪些是已归档"
   },
   {
+    name: "MCP 工具崩溃不得伪装成正当拒绝（要回 server_error、打日志、说清别重试）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "contract",
+    check: "verifyMcpToolCrashIsNotDisguisedAsRefusal",
+    from: "      if (!error.status) {\n        const tool = message.params?.name || \"unknown\";",
+    to: "      if (false) {\n        const tool = message.params?.name || \"unknown\";",
+    expect: "被伪装成了正当拒绝"
+  },
+  {
     name: "「项目成员授权」的项目下拉里不许出现已归档的项目（后端已拒 project_archived）",
     file: "apps/control-plane-ui/public/app.js",
     gate: "console",

@@ -3375,6 +3375,23 @@ export async function handleMcpJsonRpc(message, context = {}) {
       if (error.code) {
         return {jsonrpc: "2.0", id: message.id, error: {code: error.code, message: error.message}};
       }
+      // 【服务端自己崩了，不能伪装成一次正当拒绝】。工厂抛的业务拒绝带 status（4xx），
+      // 而 TypeError / ReferenceError 这类程序错误什么都不带 —— 原先两者走同一条路：
+      // error 字段里是一句 "Cannot read properties of undefined (reading 'x')"，与
+      // task_group_not_found 那类稳定码放在同一个字段里，agent 会当成"我的请求被拒了"去改参数重发；
+      // 而服务端 stderr 一个字都没有（实测），运维无从知道有 bug。REST 那条路早有这道兜底
+      //（打日志 + 回 server_error），MCP 这条没有 —— 同一件事两条路只做了一条。
+      // 堆栈默认不打（生产日志会被贴进工单），要看用 AIMAC_SERVER_ERROR_DEBUG=1。
+      if (!error.status) {
+        const tool = message.params?.name || "unknown";
+        try {
+          console.error(`[mcp] tool crashed: ${tool}: ${String(error?.message || error).slice(0, 300)}`
+            + (process.env.AIMAC_SERVER_ERROR_DEBUG === "1" ? `\n${error?.stack || ""}` : ""));
+        } catch { /* 记录错误的代码不能再把服务打死 */ }
+        return {jsonrpc: "2.0", id: message.id, result: toolResult({ok: false, tool, error: "server_error",
+          retryable: false,
+          message: "这是服务端自己的问题，不是你的请求有误：改参数重发不会有用，请把这条回执交给运维（服务端日志里有同一时刻的 [mcp] tool crashed 记录）"}, true)};
+      }
       // details 原先在这里被整个丢掉：报文只剩一个错误码。而读它的多半是 agent，
       // 它要靠"合法取值有哪些"自己改请求重发 —— 特意写好的 supported/registeredRoles
       // 一路都没送出去（work_item_status_unknown 那条从加上到现在一直如此）。

@@ -764,6 +764,7 @@ run(verifyTruncatedExecutorOutputSaysSo);
 run(verifyExecutorBackedWorkerRefusesUnsafeOutput);
 run(verifyHumanCollaborationEntryPointsRefuseEmptyInput);
 runAsync(verifyStoppingAnExecutorTellsTheTruth);
+run(verifyMcpToolCrashIsNotDisguisedAsRefusal);
 run(verifyDocumentedEnvVarsAreRealKnobs);
 run(verifyReplayRemoteCheckDistinguishesLostFromMovedOn);
 run(verifyEvidenceRedactionCoversKnownSecrets);
@@ -10120,6 +10121,41 @@ function verifySizeAccountingDoesNotSwallowFailures(output) {
 //   ③ 已有的 KV 文件不被重写 —— 这不只是省时间：GC 按 mtime 淘汰最旧的，重建把全部文件的 mtime
 //      刷新一遍之后，"谁最旧"就成了乱的，它会把该留的删掉；
 //   ④ 文件真丢了的那个键，重建仍然要把它补回来（跳过的只能是"已经在的"）。
+// 【服务端自己崩了，不能伪装成一次正当拒绝】。tools/call 的 catch 原先把 TypeError 这类程序错误
+// 与业务拒绝走同一条路：error 字段里是一句 "Cannot read properties of undefined…"，与
+// task_group_not_found 那类稳定码放在同一个字段里，agent 会当成"我的请求被拒了"去改参数重发；
+// 而 stderr 一个字都没有（用真服务端 + mutate-probe 实证过）。REST 那条路早有兜底，MCP 没有。
+// 这条只能【按形状核】：产品里没有仅凭入参就能真崩的路径（这是好事），e2e 走真 HTTP、
+// principal 由令牌解析，造不出会崩的 principal；在本进程直接调 handleMcpJsonRpc 又会写进开发者的
+// 真实 .runtime（我第一版就这么写，被「不许动真实运行态」那道检查当场抓住）。
+// 判别力已用 mutate-probe 加真服务端实证：拿掉兜底 → 回执 error 变成异常原文、stderr 为空。
+function verifyMcpToolCrashIsNotDisguisedAsRefusal(output) {
+  const mcp = readFileSync(join(root, "apps/mcp-server/server.mjs"), "utf8");
+  const at = mcp.indexOf('if (message.method === "tools/call")');
+  const block = at < 0 ? "" : mcp.slice(at, at + 2400);
+  if (!block.includes("catch (error)")) {
+    output.push("tools/call 的 catch 找不到了 —— 提取脱节，本条在空转");
+    return;
+  }
+  // 截到那个 return 语句结束（含 retryable / message），别只截到 error: "server_error" 为止。
+  const crashBranch = /if \(!error\.status\) \{[\s\S]{0,900}?error: "server_error"[\s\S]{0,400}?\}, true\)\};/u.exec(block);
+  if (!crashBranch) {
+    output.push("MCP 工具崩溃（不带 status 的异常）没有单独的兜底：它会与业务拒绝走同一条路，"
+      + "error 字段里是一句 JS 异常原文 —— agent 会当成自己的请求有误去改参数重发");
+    return;
+  }
+  if (!/console\.error\([^)]*tool crashed/u.test(crashBranch[0])) {
+    output.push("MCP 工具崩溃没有打到 stderr —— 运维无从知道有 bug");
+  }
+  if (!/retryable: false/u.test(crashBranch[0]) || !/服务端自己的问题/u.test(crashBranch[0])) {
+    output.push("崩溃回执没说清「这不是你的错、别重试」");
+  }
+  // 兜底必须【只接不带 status 的】：接宽了会把业务拒绝一起吞成 server_error。
+  if (!/if \(!error\.status\)/u.test(block)) {
+    output.push("崩溃兜底的判定不是「不带 status」—— 会把业务拒绝一起吞掉");
+  }
+}
+
 async function verifyEventIndexRebuildKeepsItsPromises(output) {
   const previousCap = process.env.AIMAC_PROJECT_EVENT_SEGMENT_MAX_BYTES;
   const previousKeys = process.env.AIMAC_PROJECT_EVENT_IDEMPOTENCY_KEYS;
