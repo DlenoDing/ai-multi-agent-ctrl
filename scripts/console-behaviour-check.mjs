@@ -1755,6 +1755,31 @@ function runReviewAxisCase() {
     }],
     qualityGates: []
   });
+  // 【同一个词在不同对象上意思不同，只能按对象覆盖】。入网令牌的 consumed 是"这张一次性票
+  // 被用掉了"，而全局词表里 consumed 已经被评审包的「已采纳」占着 —— 真实运行态里两张用过的
+  // 加入令牌就写着「已采纳」，读起来像有人批准了什么。（active / retired 都撞过同一个形状。）
+  {
+    const tokenProbe = loadConsole(el("div"), {realI18n: true});
+    const tokenHtml = tokenProbe.renderSysAccountsWith({
+      accounts: [{accountId: "u1", displayName: "管理员", email: "a@x", accountType: "system_admin",
+        status: "active", roles: []}],
+      projects: [{id: "p1", name: "项目一", status: "active"}],
+      accessGrants: [], mcpGrants: [], auditLog: [], agents: [],
+      agentJoinTokens: [
+        {joinTokenId: "ajt_used", projectId: "p1", allowedRoles: ["monitor"], status: "consumed",
+          useCount: 1, maxUses: 1, expiresAt: "2026-08-27T00:00:00.000Z"},
+        {joinTokenId: "ajt_open", projectId: "p1", allowedRoles: ["monitor"], status: "issued",
+          useCount: 0, maxUses: 1, expiresAt: "2026-08-27T00:00:00.000Z"}
+      ]
+    }, {accountId: "u1", accountType: "system_admin", displayName: "管理员"});
+    check("用掉的入网令牌不能写成「已采纳」（那是评审包的词）",
+      /已使用/u.test(tokenHtml) && !/已采纳/u.test(tokenHtml),
+      String(tokenHtml).replace(/<[^>]+>/gu, " ").match(/ajt_used[^|]{0,80}/u)?.[0] || "（令牌表没渲染出来）");
+    check("还能用的令牌照常显示「已签发」（正面对照走同一条分支）",
+      /已签发/u.test(tokenHtml),
+      "连未使用的令牌都不显示状态了 —— 上面那条可能是把整列砍掉了");
+  }
+
   // 注销不可撤销，而"什么时候、为什么"此前落在 retiredAt/retiredReason 上、全仓没有读取点：
   // 屏幕上只有一个「已注销」，事后追不到依据。
   {

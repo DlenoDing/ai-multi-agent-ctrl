@@ -544,7 +544,11 @@ const STATUS_LABEL_BY_KIND = {
     retired: "已注销（不可恢复）"},
   grant: {active: "生效中", revoked: "已撤销", expired: "已过期"},
   agent: {active: "已启用", disabled: "已停用", retired: "已退役"},
-  skillSource: {active: "已启用", retired: "已退役"}
+  skillSource: {active: "已启用", retired: "已退役"},
+  // 入网令牌的 consumed 是"这张一次性票被用掉了"，而全局词表里 consumed 已经被评审包的
+  // 「已采纳」占着 —— 屏幕上一张用过的加入令牌写着「已采纳」，读起来像有人批准了什么。
+  // 同一个词在不同对象上意思不同时，只能按【对象】覆盖（本仓 active/retired 都撞过这个形状）。
+  joinToken: {issued: "已签发", consumed: "已使用（一次性票已用掉）", expired: "已过期", revoked: "已撤销"}
 };
 
 // 加载失败时，列表为空【不等于】没有记录 —— 它可能压根没取回来。
@@ -2349,7 +2353,7 @@ function renderJoinTokenSection() {
     `<span class="mono">${esc(token.joinTokenId)}</span>`,
     esc(projectNameOf(token.projectId)),
     esc((token.allowedRoles || []).join("、")),
-    badge(token.status),
+    statusBadge("joinToken", token.status),
     {v: `${token.useCount ?? 0}/${token.maxUses ?? 1}`, c: "num"},
     {v: fmtTime(token.expiresAt), c: "nowrap"},
     token.status === "issued" ? `<button class="danger-button" data-action="revoke-join-token" data-token-id="${esc(token.joinTokenId)}">撤销</button>` : "-"

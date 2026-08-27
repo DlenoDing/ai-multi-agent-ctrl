@@ -9731,6 +9731,14 @@ const MUTATIONS = [
     to: "    const auditFault = null;",
     expect: "一个字都没提"
   },
+  {
+    name: "用掉的入网令牌不能写成「已采纳」（全局词表里那个词是评审包的）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '    statusBadge("joinToken", token.status),',
+    to: "    badge(token.status),",
+    expect: "那是评审包的词"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），
