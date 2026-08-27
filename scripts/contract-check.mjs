@@ -15633,6 +15633,17 @@ function verifyAgentctlUnknownCommandListsCommands(output) {
   if (fresh.status === 0 || !/还没注册/u.test(freshSaid) || !/bootstrap/u.test(freshSaid)) {
     output.push(`没注册的节点跑 status，报文没说「还没注册」或没指路 bootstrap（exit ${fresh.status}）：${freshSaid.slice(0, 160).replace(/\n/g, " ")} —— 新节点最先撞到的一句话是英文加路径`);
   }
+  // 连不上控制面时，要说清是哪一种连不上（域名/端口/超时/证书）。Node 的 fetch 把原因藏在 cause 里，
+  // 原先屏幕上只有一句 "fetch failed"。这里打一个没人监听的端口。
+  const deadDir = mkdtempSync(join(tmpdir(), "aimac-agentctl-dead-"));
+  writeFileSync(join(deadDir, "token"), "aimac_join_probe\n");
+  const dead = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "bootstrap", "--server", "http://127.0.0.1:9", "--join-token-file", join(deadDir, "token")],
+    {cwd: root, encoding: "utf8", timeout: 60000, env: {...process.env, AIMAC_AGENT_WORK_DIR: deadDir, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_REQUEST_TIMEOUT_MS: "2000", AIMAC_AGENT_RETRY_ATTEMPTS: "1"}});
+  const deadSaid = `${dead.stdout || ""}${dead.stderr || ""}`;
+  if (dead.status === 0 || !/连不上控制面/u.test(deadSaid) || !/端口|bad port|ECONNREFUSED/u.test(deadSaid)) {
+    output.push(`bootstrap 连不上控制面时没说清是哪一种连不上（exit ${dead.status}）：${deadSaid.slice(0, 160).replace(/\n/g, " ")} —— 屏幕上只有一句 fetch failed`);
+  }
+  rmSync(deadDir, {recursive: true, force: true});
 }
 
 // 见文件开头 DEVELOPER_RUNTIME_DIGEST_AT_START 的注释。先在临时目录上自证摘要真的看得见改动

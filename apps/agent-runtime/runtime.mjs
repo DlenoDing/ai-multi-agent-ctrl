@@ -104,6 +104,18 @@ function explainAgentFailure(error) {
   const hit = known[code] || known[error?.code];
   if (hit) return `${hit}\n（服务端原话：${detail}）`;
   if (status === 401 || status === 403) return `控制面拒绝了这次接入（HTTP ${status}）：${detail}`;
+  // Node 的 fetch 把真正的原因藏在 error.cause 里，外面只剩一句 "fetch failed"：域名解析不了、端口没人听、
+  // 超时、证书不对，四种在屏幕上长得一样。原先 ECONNREFUSED 那条映射看的是 error.code，从来没命中过。
+  const cause = error?.cause;
+  if (String(error?.message || "") === "fetch failed" || cause) {
+    const causeCode = String(cause?.code || cause?.name || "");
+    const causeText = String(cause?.message || cause || "").slice(0, 120);
+    if (causeCode === "ENOTFOUND" || /ENOTFOUND|EAI_AGAIN/u.test(causeText)) return `连不上控制面：域名解析不了（${causeText}）—— 检查 --server 里的主机名拼写与本机 DNS`;
+    if (causeCode === "ECONNREFUSED" || /ECONNREFUSED|bad port/u.test(causeText)) return `连不上控制面：地址或端口没人监听（${causeText}）—— 确认 --server 的地址和端口，以及控制面确实在跑`;
+    if (/TIMEOUT|TimeoutError|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/u.test(`${causeCode} ${causeText}`)) return `连不上控制面：超时或网络不通（${causeText}）—— 检查防火墙、代理与到控制面的路由`;
+    if (/CERT|TLS|SSL|self[- ]signed|certificate/iu.test(`${causeCode} ${causeText}`)) return `连不上控制面：证书校验失败（${causeText}）—— 控制面的 https 证书要能被这台机器信任`;
+    return `连不上控制面（${causeText || detail}）—— 确认 --server 的地址、端口与网络`;
+  }
   return detail;
 }
 

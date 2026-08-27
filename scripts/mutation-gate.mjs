@@ -10450,6 +10450,15 @@ const MUTATIONS = [
     expect: "没注册的节点跑 status，报文没说「还没注册」"
   },
   {
+    name: "连不上控制面要说清是哪一种（fetch 的原因藏在 cause 里）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "contract",
+    check: "verifyAgentctlUnknownCommandListsCommands",
+    from: '  if (String(error?.message || "") === "fetch failed" || cause) {',
+    to: '  if (false) {',
+    expect: "没说清是哪一种连不上"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",
