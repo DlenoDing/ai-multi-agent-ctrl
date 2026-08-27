@@ -4365,7 +4365,7 @@ function renderMonitor() {
   ].filter((item) => item.by)
     .sort((a, b) => String(b.at || "").localeCompare(String(a.at || ""))).slice(0, 10);
 
-  // 卡住的执行方案会永久挡住关闭门：分支报了 failed 之后拓扑照样进 integrating，merge 只认
+  // 卡住的执行方案会永久挡住关闭门：分支报了 failed 之后拓扑照样进 integrating，merge 只认  // 卡住的执行方案会永久挡住关闭门：分支报了 failed 之后拓扑照样进 integrating，merge 只认
   // accepted、cancel 又只有人能做。后端一直有"人来取消"这条杠杆（契约检查专门断言过它必须存在），
   // 但 executionTopologies 根本不在下发字段里，界面上也没有入口 —— 后端有杠杆而界面没有入口，
   // 等于这个杠杆不存在：人只看到"存在阻塞 · N 项"里的一个红 chip，然后无从下手。
@@ -4381,6 +4381,42 @@ function renderMonitor() {
     .slice(0, 8);
   const canControlRules = hasPerm("task_group:control");   // rule_source_settle
   const canUpdateProject = hasPerm("project:update");      // shared_definition_resolve
+  // 【够不着的那几条要按任务组数，不能按跨资源并集判】。canReviewGates 之类走的是
+  // effectivePermissions —— 服务端注释里就写着它只是 UI 提示、是所有资源上的并集。
+  // 于是在 tg1 上有评审权的人，canReviewGates 为真：那句"你没有权限"的警告不显示；
+  // 而下面每一段又按任务组过滤，tg2 里那两条待收尾的评审计划一条都不列 ——
+  // 结果是它们既不显示、也不解释，人只看到任务组上「存在阻塞」，而它们正挡着关闭门。
+  // 改成逐项数：够不着的有几条、在哪几个组、缺哪个权限，都说出来。
+  const outOfReach = [
+    ...openReviewPlans.filter((item) => !hasGroupPerm(item.taskGroupId, "task_group:review"))
+      .map((item) => ["评审计划", item.taskGroupId, "人工审核(task_group:review)"]),
+    ...openReviewBundles.filter((item) => !hasGroupPerm(item.taskGroupId, "task_group:review"))
+      .map((item) => ["评审包", item.taskGroupId, "人工审核(task_group:review)"]),
+    ...openRuleSources.filter((item) => !hasGroupPerm(item.taskGroupId, "task_group:control"))
+      .map((item) => ["规则来源", item.taskGroupId, "任务组控制(task_group:control)"]),
+    ...openUpgradeCandidates.filter((item) => !hasGroupPerm(item.taskGroupId, "task_group:control"))
+      .map((item) => ["升级候选", item.taskGroupId, "任务组控制(task_group:control)"]),
+    ...(canUpdateProject ? [] : blockingDefinitions.map((item) => ["共享定义契约", item.taskGroupId, "项目更新(project:update)"]))
+  ];
+  const outOfReachBlockerNotice = () => {
+    if (!outOfReach.length) return "";
+    const byPerm = new Map();
+    for (const [kind, taskGroupId, perm] of outOfReach) {
+      if (!byPerm.has(perm)) byPerm.set(perm, {count: 0, kinds: new Set(), groups: new Set()});
+      const bucket = byPerm.get(perm);
+      bucket.count += 1;
+      bucket.kinds.add(kind);
+      if (taskGroupId) bucket.groups.add(taskGroupNameOf(taskGroupId));
+    }
+    const lines = [...byPerm].map(([perm, bucket]) =>
+      `${[...bucket.kinds].join("、")} ${bucket.count} 项`
+      + `${bucket.groups.size ? `（${[...bucket.groups].slice(0, 3).join("、")}${bucket.groups.size > 3 ? "…" : ""}）` : ""}`
+      + ` —— 需要「${perm}」`);
+    return `<div class="notice warn-notice">其中 ${outOfReach.length} 项你处置不了，它们仍然挡着关闭门：`
+      + `${esc(lines.join("；"))}。权限按【任务组】授予（在别的组上有同名权限不算），`
+      + "只能在「项目成员授权」里按角色授予（例如\"评审人\"），请找项目负责人或组织管理员授予后再来。</div>";
+  };
+
   // 同段其余六处都按 inScope 过滤，唯独关闭门禁没有 —— 于是在项目 A 的监控页上会列出项目 B 的
   // 门禁，并且直接给出"关闭任务组"按钮。关闭是最不可逆的一步（写 humanFinalization 且只能关一次），
   // 在错误的项目抬头下点它，人以为关的是 A 的任务组。
@@ -4472,9 +4508,7 @@ function renderMonitor() {
     (openReviewPlans.length || openRuleSources.length || blockingDefinitions.length || openReviewBundles.length || openUpgradeCandidates.length || stuckTopologies.length
       || downgradableTopologies.length) ? panel("阻塞项人工处置", `
       <div class="notice">下面这些阻塞只能由人来收尾：AI 要么不该有权决定（采纳规则、激活规范），要么已经无法推进（评审角色不再参与）。</div>
-      ${(!canReviewGates && (openReviewPlans.length || openReviewBundles.length)) || (!canControlRules && (openRuleSources.length || openUpgradeCandidates.length)) || (!canUpdateProject && blockingDefinitions.length)
-        ? `<div class="notice warn-notice">其中有些阻塞需要你没有的权限才能处置：评审计划/评审包需要「人工审核(task_group:review)」，规则来源/升级候选需要「任务组控制(task_group:control)」，共享定义契约需要「项目更新(project:update)」。这类权限只能在「项目成员授权」里按角色授予（例如"评审人"），请找项目负责人或组织管理员授予后再来。</div>`
-        : ""}
+      ${outOfReachBlockerNotice()}
       ${canReviewGates && openReviewPlans.length ? `
         <div class="record" style="margin-top:8px;">
           <div class="record-title">评审计划（要求的评审角色到齐即自动闭合；到不齐时由你收尾）</div>

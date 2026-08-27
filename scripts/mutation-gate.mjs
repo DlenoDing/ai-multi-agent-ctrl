@@ -9747,6 +9747,16 @@ const MUTATIONS = [
     to: "            if (false) {",
     expect: "不能只摆一个数字"
   },
+  {
+    name: "在别的组上有同名权限，不等于这个组上有：够不着的阻塞项要按任务组数出来",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const outOfReach = [\n"
+      + '    ...openReviewPlans.filter((item) => !hasGroupPerm(item.taskGroupId, "task_group:review"))',
+    to: "  const outOfReach = [\n"
+      + '    ...[].filter((item) => !hasGroupPerm(item.taskGroupId, "task_group:review"))',
+    expect: "人什么都看不到"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

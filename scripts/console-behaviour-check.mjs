@@ -2071,6 +2071,41 @@ function runNoVisibleProjectCase() {
       !/no_candidate_satisfied_hard_constraints/u.test(denialText),
       "把 no_candidate_satisfied_hard_constraints 直接印在屏幕上了");
 
+    // 【在别的组上有同名权限，不等于这个组上有】。面板级那三个判据走的是 effectivePermissions
+    // （跨资源并集，服务端注释里写明它只是 UI 提示），而下面每一段按任务组过滤 ——
+    // 于是"在 tg1 上有评审权、待收尾的计划都在 tg2"这种人：警告不显示、列表也空，
+    // 那两条计划既不显示也不解释，而它们正挡着关闭门。
+    const reachState = structuredClone(stuckState);
+    reachState.taskGroups = [
+      {id: "tg1", projectId: "p1", name: "我有权的组", status: "development", workItems: []},
+      {id: "tg2", projectId: "p1", name: "别人的组", status: "development", workItems: []}
+    ];
+    reachState.reviewPlans = [
+      {reviewPlanId: "rp_far1", projectId: "p1", taskGroupId: "tg2", status: "planned",
+        requiredReviewerRoles: ["reviewer"], coveredReviewerRoles: []},
+      {reviewPlanId: "rp_far2", projectId: "p1", taskGroupId: "tg2", status: "planned",
+        requiredReviewerRoles: ["reviewer"], coveredReviewerRoles: []}
+    ];
+    reachState.executionTopologies = [];
+    // 按任务组的权限由【视图】下发在 state 上（服务端只列与默认集不同的那些组），不在账号上。
+    reachState.taskGroupPermissions = {tg1: ["task_group:review"]};
+    reachState.taskGroupPermissionsDefault = [];
+    const partialReviewer = {accountId: "u9", accountType: "org_member", displayName: "评审员",
+      organizationId: "org_default", effectivePermissions: ["task_group:review", "project:read"]};
+    const reachText = renderAs(partialReviewer, reachState, "monitor", "p1");
+    check("在别的组上有同名权限的人，也要被告知这几条他够不着（它们仍挡着关闭门）",
+      /你处置不了/u.test(reachText) && /2 项/u.test(reachText) && /别人的组/u.test(reachText),
+      "警告没出来：跨资源并集判成「有权」，而按组过滤又把这两条计划整个滤掉 —— 人什么都看不到");
+    check("要说清权限是按任务组给的（否则他会以为自己已经有了）",
+      /按【任务组】授予/u.test(reachText),
+      "只说缺权限，没说这个权限是按组给的 —— 他在别的组上确实有，会以为界面坏了");
+    // 正面对照：全都够得着时不要多说一句（常亮的警告等于没有警告）。
+    const fullReachState = structuredClone(reachState);
+    fullReachState.taskGroupPermissions = {tg1: ["task_group:review"], tg2: ["task_group:review"]};
+    check("全都够得着时不要多说一句",
+      !/你处置不了/u.test(renderAs(partialReviewer, fullReachState, "monitor", "p1")),
+      "有权处置的人也被告知自己处置不了");
+
     // 关闭门被 artifacts_verified 挡住时，人被告知"等执行方补齐证据，或取消对应工作项" ——
   // 却不知道该盯哪一条产物。artifacts 那时在防泄漏白名单里，但没有任何视图真的下发它。
     {
