@@ -2809,8 +2809,12 @@ async function handleApi(req, res) {
     // 记在【响应结束时】而不是请求开始时：要的是状态码。「这条路由被打过」和「它成功过」
     // 是两件事 —— 空 body 扫描会把每条写路由都打一遍（并期待被拒），只记「打过」的话，
     // 一条从没成功执行过的路由看起来是覆盖的（实测 /api/role-skill-overlays 就是这样）。
+    // 第四列是耗时（毫秒，追加在末尾：读账的门只按位置取前三列，多一列不打坏它）——
+    // 「哪条路由慢」此前只能靠单独起服务端手工压，现在跑完一轮 e2e 顺手就能排出来。
+    const startedAt = process.hrtime.bigint();
     res.once("finish", () => {
-      try { appendFileSync(routeTraceFile, `${req.method} ${url.pathname} ${res.statusCode}\n`); } catch { /* 记账坏了不能影响请求 */ }
+      const elapsedMs = (Number(process.hrtime.bigint() - startedAt) / 1e6).toFixed(1);
+      try { appendFileSync(routeTraceFile, `${req.method} ${url.pathname} ${res.statusCode} ${elapsedMs}\n`); } catch { /* 记账坏了不能影响请求 */ }
     });
   }
   if (req.method === "GET" && ["/api/health", "/api/runtime/health"].includes(url.pathname)) {

@@ -7041,8 +7041,8 @@ const MUTATIONS = [
     name: "路由记账断了要看得见",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
-    from: "      try { appendFileSync(routeTraceFile, `${req.method} ${url.pathname} ${res.statusCode}\\n`); } catch { /* 记账坏了不能影响请求 */ }",
-    to: "      try { if (false) appendFileSync(routeTraceFile, `${req.method} ${url.pathname} ${res.statusCode}\\n`); } catch { /* 记账坏了不能影响请求 */ }",
+    from: "      try { appendFileSync(routeTraceFile, `${req.method} ${url.pathname} ${res.statusCode} ${elapsedMs}\\n`); } catch { /* 记账坏了不能影响请求 */ }",
+    to: "      try { if (false) appendFileSync(routeTraceFile, `${req.method} ${url.pathname} ${res.statusCode} ${elapsedMs}\\n`); } catch { /* 记账坏了不能影响请求 */ }",
     expect: "记账没接上"
   },
   {

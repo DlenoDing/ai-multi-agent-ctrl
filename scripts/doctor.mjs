@@ -4850,6 +4850,24 @@ console.log(`控制面 e2e 产出规范核对 ok: ${doctorSweep.validated} 条�
   if (lines.length < 200) {
     throw new Error(`路由记账只收到 ${lines.length} 条请求（本轮打了几百个）—— 记账没接上，这条棘轮在空转`);
   }
+  // 【顺手把慢的路由报出来】。账上第四列是耗时（毫秒）。不设阈值、不判红：e2e 里的写请求
+  // 底价就是 fsync（实测 20–35ms），技能源同步是真 git clone（秒级），设个数字只会被调来调去。
+  // 但每轮打出来，谁变慢了当轮就看得见 —— 此前「哪条路由慢」只能单独起服务端手工压。
+  {
+    const byRoute = new Map();
+    for (const line of lines) {
+      const [method, path = "", , ms = ""] = line.split(" ");
+      const elapsed = Number(ms);
+      if (!Number.isFinite(elapsed)) continue;
+      const key = `${method} ${path.replace(/\/[a-z]+_[A-Za-z0-9_]+/gu, "/:id")}`;
+      const bucket = byRoute.get(key) || {total: 0, count: 0, max: 0};
+      bucket.total += elapsed; bucket.count += 1; bucket.max = Math.max(bucket.max, elapsed);
+      byRoute.set(key, bucket);
+    }
+    const slowest = [...byRoute].sort((a, b) => b[1].total / b[1].count - a[1].total / a[1].count).slice(0, 5)
+      .map(([key, bucket]) => `${key} 均 ${(bucket.total / bucket.count).toFixed(1)}ms（${bucket.count} 次，最慢 ${bucket.max.toFixed(0)}ms）`);
+    if (slowest.length) console.log(`  ..  本轮最慢的路由（按均值）：\n      ${slowest.join("\n      ")}`);
+  }
   const hit = new Set();
   const succeeded = new Set();
   for (const line of lines) {
