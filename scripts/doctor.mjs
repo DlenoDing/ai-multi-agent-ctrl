@@ -5001,9 +5001,10 @@ const [code, signal] = exitRace.pair || [null, "SIGKILL"];
 try { rmSync(doctorRepo.base, {recursive: true, force: true}); } catch {}
 if (!process.env.AIMAC_DOCTOR_RUNTIME_DIR) { try { rmSync(join(root, doctorRuntimeDir), {recursive: true, force: true}); } catch {} }
 // 启动期那批用的是另一个目录（<主目录>-startup），原先从来没被收过 —— 736 个就是这么来的。
-if (!process.env.AIMAC_DOCTOR_RUNTIME_DIR) {
-  try { rmSync(join(root, `${doctorRuntimeDir}-startup`), {recursive: true, force: true}); } catch { /* 清不掉就留给下一轮的过期清理 */ }
-}
+// 【不看主目录是不是人指定的】：AIMAC_DOCTOR_RUNTIME_DIR 留主目录是给人读真实产出用的，
+// 而 -startup 那份只在监听前的四条失败用例里用过，之后没有任何东西读它 —— 人指定了名字的
+// 运行每跑一次就多留一个空壳（实测五个），而过期清理按名字前缀只认它自己造的那些、不会碰这些。
+try { rmSync(join(root, `${doctorRuntimeDir}-startup`), {recursive: true, force: true}); } catch { /* 清不掉就留给下一轮的过期清理 */ }
 if (code && signal !== "SIGTERM") {
   throw new Error(`doctor server exited with ${code}: ${stderr}`);
 }

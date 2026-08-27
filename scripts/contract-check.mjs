@@ -15444,6 +15444,15 @@ function verifyStaleE2eRuntimeDirsGetSwept(output) {
     if (!/sweepStaleDoctorRuntimeDirs\(/u.test(doctorSource)) {
       output.push("控制面 e2e 没有调用过期目录清理 —— 它每次提交都跑一遍，留下的目录没人收");
     }
+    // 启动期目录（<主目录>-startup）在监听前的用例之后没人读，收尾要【无条件】收掉：
+    // 它若被套在「主目录不是人指定的」那个判断里，人指定名字的每一轮都会多留一个空壳，
+    // 而过期清理按前缀只认自己造的目录，永远不会碰它们。
+    // 判法看【那一行自己】：无条件的写法顶格（^try {），被套进 if 里就会缩进 —— 不去猜前文的
+    // if 有没有闭合（上一版猜过，被前一行"一行写完的 if { try {…} catch {} }"骗了，正常态就红）。
+    const startupCleanupUnconditional = /^try \{ rmSync\(join\(root, `\$\{doctorRuntimeDir\}-startup`\)/mu.test(doctorSource);
+    if (!startupCleanupUnconditional) {
+      output.push("控制面 e2e 收尾没有无条件收掉 -startup 目录 —— 人指定 AIMAC_DOCTOR_RUNTIME_DIR 的每一轮都会多留一个空壳，过期清理按前缀认不出它们");
+    }
     if (!/rmSync\(join\(root, `\$\{doctorRuntimeDir\}-startup`\)/u.test(doctorSource)) {
       output.push("控制面 e2e 收尾时没收启动期那份运行目录（<主目录>-startup）—— 实测 736 个就是这么来的");
     }

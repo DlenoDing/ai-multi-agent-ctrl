@@ -10054,6 +10054,14 @@ const MUTATIONS = [
     expect: "他手里的授权白发了"
   },
   {
+    name: "e2e 收尾要无条件收掉 -startup 目录（人指定主目录名时也收）",
+    file: "scripts/doctor.mjs",
+    gate: "contract",
+    from: "try { rmSync(join(root, `${doctorRuntimeDir}-startup`), {recursive: true, force: true}); } catch { /* 清不掉就留给下一轮的过期清理 */ }",
+    to: "if (!process.env.AIMAC_DOCTOR_RUNTIME_DIR) {\n  try { rmSync(join(root, `${doctorRuntimeDir}-startup`), {recursive: true, force: true}); } catch { /* 清不掉就留给下一轮的过期清理 */ }\n}",
+    expect: "没有无条件收掉 -startup 目录"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",
