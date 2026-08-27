@@ -15606,7 +15606,7 @@ function verifyOperatorKnobsAreDocumented(output) {
   if (missing.length) output.push(`运维要碰的环境旋钮没进 README 的表：${missing.join("、")} —— 决定丢不丢数据/允不允许明文的旋钮不能只写在代码里`);
   if (unclassified.length) output.push(`新的环境旋钮既不在 README 也没在内部族里登记：${unclassified.join("、")} —— 先分类（运维族进 README，内部族写明为什么不登）`);
   // agent 节点侧旋钮无文档面的数量：棘轮。降了就改小，涨了就红 —— 新加的 agent 旋钮必须写进 docs/agent-runtime-protocol.md。
-  const AGENT_KNOBS_UNDOCUMENTED_CEILING = 28;
+  const AGENT_KNOBS_UNDOCUMENTED_CEILING = 0;
   const agentDoc = readFileSync(join(root, "docs/agent-runtime-protocol.md"), "utf8");
   const agentUndocumented = knobs.filter((knob) => /^AIMAC_AGENT_/u.test(knob) && !readme.includes(`\`${knob}\``) && !agentDoc.includes(knob)).sort();
   if (agentUndocumented.length > AGENT_KNOBS_UNDOCUMENTED_CEILING) {

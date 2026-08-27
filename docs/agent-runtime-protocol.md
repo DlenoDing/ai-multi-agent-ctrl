@@ -572,3 +572,55 @@ runtime_start
 4. 默认不允许访问其它项目目录、全局 SSH key、宿主敏感路径和未授权网络。
 5. 默认不自动批准 OS、Keychain、sudo、UAC、Screen Recording、Accessibility 权限弹窗；这些场景只能建模为外部能力边界、预授权能力、改派或中止。
 6. 所有 command、MCP 写操作、Git 写操作和权限处理都必须进入 audit。
+
+## 11. 节点环境变量
+
+节点侧的旋钮都是环境变量（部分也有同名命令行参数，参数优先）。控制面侧的旋钮见仓库 README 的环境变量表。
+
+### 11.1 接入
+
+| 变量 | 默认 | 它决定什么 | 改错了的表现 |
+| --- | --- | --- | --- |
+| `AIMAC_AGENT_JOIN_TOKEN` | 无 | 一次性入网令牌（也可用 `--join-token`） | 没给就无法注册 |
+| `AIMAC_AGENT_NODE_NAME` | 主机名 | 节点名（也可用 `--node-name`）；票上指定了名字时必须一致 | 不一致被拒：join_token_node_name_mismatch |
+| `AIMAC_AGENT_REGION` | 无 | 上报给控制面的地区标签，只用于展示 | — |
+| `AIMAC_AGENT_DATA_ROOT` / `AIMAC_AGENT_WORK_DIR` | 平台默认数据目录 | 节点工作根目录（也可用 `--work-dir`）：配置、仓库、技能缓存、任务目录、发件箱都在它之下 | 换目录等于换了一台节点 |
+| `AIMAC_AGENT_CONFIGURE_CLIENTS` | `false` | 注册后把远程 MCP 配置写进本机 codex / claude / cursor 的配置文件 | 开了会改用户自己的配置文件（原子写） |
+| `AIMAC_AGENT_CONFIGURE_GLOBAL_CLIENTS` | `false` | 同上，但写全局配置而非项目级 | 同上 |
+| `AIMAC_AGENT_ALLOW_INSECURE_HTTP` | `false` | 允许用 http 连非本机控制面 | 节点凭据明文走网络 |
+
+### 11.2 执行
+
+| 变量 | 默认 | 它决定什么 | 改错了的表现 |
+| --- | --- | --- | --- |
+| `AIMAC_AGENT_EXECUTOR_COMMAND` | 按本机可用的 CLI 自动选 | 模型执行器命令（也可用 `--executor-command`） | 命令不存在时派发全部失败 |
+| `AIMAC_AGENT_EXECUTION_TIMEOUT_MS` | `7200000` | 单次执行器运行上限（2 小时；0＝不限） | 超时的派发判失败 |
+| `AIMAC_AGENT_EXECUTION_KEEPALIVE_MS` | `60000` | 执行期间给控制面发心跳的间隔（最低 15 秒，且不超过控制面的心跳阈值） | 过长会被控制面判离线 |
+| `AIMAC_AGENT_STOP_TIMEOUT_MS` | `10000` | 取消时等执行器优雅退出多久再强杀 | — |
+| `AIMAC_AGENT_OUTPUT_CAPTURE_MAX_CHARS` | `33554432`（32 MiB；最低 1024） | 执行器输出截留上限，超过的部分不进证据 | 太小会截掉关键报错 |
+| `AIMAC_AGENT_SANDBOX_MODE` | 自动探测（容器→`container`） | 上报的沙箱模式标签 | 只影响展示与准入判断 |
+| `AIMAC_AGENT_LIBRARY_MAX_MB` | `2048` | 本机内容库（技能/规则文件）总大小上限（最低 64） | 超过后同步被拒 |
+| `AIMAC_AGENT_SESSION_TTL_HOURS` | `72` | 任务会话目录保留时长，过期由清扫回收 | — |
+| `AIMAC_AGENT_KEEP_SESSION_DIRS` | `false` | 不清扫会话目录（排障用） | 盘会一直涨 |
+| `AIMAC_AGENT_SWEEP_INTERVAL_MS` | `3600000` | 清扫间隔（最低 5 分钟） | — |
+
+### 11.3 网络与重试
+
+| 变量 | 默认 | 它决定什么 | 改错了的表现 |
+| --- | --- | --- | --- |
+| `AIMAC_AGENT_REQUEST_TIMEOUT_MS` | `30000` | 单个控制面请求超时（最低 1 秒） | — |
+| `AIMAC_AGENT_RETRY_ATTEMPTS` | `4`（最低 1） | 可重试请求的尝试次数 | — |
+| `AIMAC_AGENT_REPLAY_MAX_ATTEMPTS` | `30` | 发件箱里一条检查点最多重放多少次，超过挪进恢复区并上报（最低 3） | 太小会把暂时性故障当成永久失败 |
+| `AIMAC_AGENT_PERMISSION_POLL_ATTEMPTS` | `240` | 等人处置权限申请时轮询多少次（最低 1） | 与间隔相乘就是等待上限（默认约 4 分钟） |
+| `AIMAC_AGENT_PERMISSION_POLL_INTERVAL_MS` | `1000` | 上述轮询间隔（最低 200 毫秒） | — |
+
+### 11.4 排障与仿真（生产不要开）
+
+| 变量 | 默认 | 它决定什么 | 改错了的表现 |
+| --- | --- | --- | --- |
+| `AIMAC_AGENT_DEBUG` | 无 | 设为 `1` 时失败打完整堆栈 | — |
+| `AIMAC_AGENT_ONCE` | `false` | 只领一件活就退出（也可用 `--once`；e2e 用） | 常驻服务开了会不断退出重启 |
+| `AIMAC_AGENT_VERIFICATION_DEFER_CHECKPOINT` | `false` | 干完活但不提交检查点（验证用）。开着时会向控制面上报一条 attention 事件说明是它干的 | 派发永远停在「进行中」 |
+| `AIMAC_AGENT_SIMULATE_PERMISSION_BLOCK` | 无 | 仿真一次权限阻塞（e2e 用） | 真实派发会被假阻塞 |
+| `AIMAC_AGENT_SIMULATE_PERMISSION_PROMPT_TYPE` | `oauth_login_required` | 仿真阻塞的提示类型 | — |
+| `AIMAC_AGENT_SIMULATE_PERMISSION_RISK` | `L2` | 仿真阻塞的风险等级 | — |
