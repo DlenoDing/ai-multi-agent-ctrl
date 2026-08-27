@@ -3323,6 +3323,15 @@ const MUTATIONS = [
     expect: "代码里【一处都没有】"
   },
   {
+    name: "控制台提示里点名的按钮必须真的在界面上",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "contract",
+    check: "verifyConsoleHintsNameRealControls",
+    from: "你再决定。只有点「选择定稿」才锁定。",
+    to: "你再决定。只有点「选择定案」才锁定。",
+    expect: "点名了界面上没有的按钮"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

@@ -976,6 +976,7 @@ run(verifyDefaultBackupTargetIsGitIgnored);
 run(verifyBootstrapEchoSamplesMatchRuntime);
 run(verifyInstallerDocsMatchScriptAndTemplate);
 run(verifyDocumentedNpmScriptsExist);
+run(verifyConsoleHintsNameRealControls);
 run(verifyConsoleRuntimeConstantsHaveOneWriter);
 run(verifyGatesLeaveDeveloperRuntimeUntouched);   // 必须最后跑：比的是前面所有检查跑完之后
 
@@ -15721,6 +15722,33 @@ function verifyConsoleRuntimeConstantsHaveOneWriter(output) {
     if (!body || !body.includes("decorateRuntimeForConsole(")) output.push(`${reader} 没调 decorateRuntimeForConsole —— 这条路上界面拿不到词表`);
   }
   console.log(`界面 runtime 常量：${numericKeys.length} 个数值只在 decorateRuntimeForConsole 里赋值，三份词表只来自 core 的 consoleVocabularies，服务端两条读路径与勘察工具都经过它`);
+}
+
+// 【控制台提示里点名的按钮/面板/页要真的在界面上】。「点「选择定稿」」「到「账号与授权」页」这类话没人盯着：
+// 按钮改了文案，提示还指着旧名字，人满屏找不到。只认带导航语气的点名（点/按/打开/进 + 「X」，或「X」按钮/面板/页/页签），
+// 名字要是某个真实按钮/页标题/面板名/表单标签的前缀；模板文案（新增${catLabel}规则）里的 ${…} 当通配。
+function verifyConsoleHintsNameRealControls(output) {
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const i18n = readFileSync(join(root, "apps/control-plane-ui/public/i18n-zh.js"), "utf8");
+  const prose = `${app}\n${i18n}`.split("\n").filter((line) => !/^\s*\/\//u.test(line)).join("\n");
+  const mentions = new Map();
+  for (const hit of prose.matchAll(/(?:点|按|打开|进|回到)(?:右侧的|右上角的|下面的|上面的|左侧的|顶栏的|这一页的|下方的)?「([^」]{1,20})」/gu)) mentions.set(hit[1], (mentions.get(hit[1]) || 0) + 1);
+  for (const hit of prose.matchAll(/「([^」]{1,20})」(?:按钮|面板|页签|标签页|页(?![面眉脚]))/gu)) mentions.set(hit[1], (mentions.get(hit[1]) || 0) + 1);
+  if (mentions.size < 10) { output.push(`控制台提示里只提出 ${mentions.size} 个带导航语气的点名 —— 提取脱节`); return; }
+  const realNames = new Set();
+  for (const hit of app.matchAll(/<button[^>]*>([^<]{1,40})<\/button>/gu)) realNames.add(hit[1].trim());
+  for (const hit of app.matchAll(/confirmText: "([^"]{1,24})"/gu)) realNames.add(hit[1]);
+  for (const hit of app.matchAll(/^\s*"([a-z][a-z0-9-]+)":\s*\["([^"]+)"/gmu)) realNames.add(hit[2]);
+  for (const hit of app.matchAll(/panel\("([^"]{1,24})"/gu)) realNames.add(hit[1]);
+  for (const hit of app.matchAll(/<label[^>]*>([^<]{1,40})<\/label>/gu)) realNames.add(hit[1].trim());
+  for (const hit of app.matchAll(/(?:label|title): "([^"]{1,24})"/gu)) realNames.add(hit[1]);
+  const matchers = [...realNames].map((name) => name.includes("${")
+    ? new RegExp(`^${name.split(/\$\{[^}]*\}/u).map((part) => part.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")).join(".*")}`, "u")
+    : null).filter(Boolean);
+  const exists = (name) => [...realNames].some((real) => real.startsWith(name)) || matchers.some((matcher) => matcher.test(name));
+  const dangling = [...mentions.entries()].filter(([name]) => !exists(name));
+  if (dangling.length) output.push(`控制台提示里点名了界面上没有的按钮/面板/页：${dangling.map(([name, count]) => `「${name}」×${count}`).join("、")} —— 人满屏找不到它`);
+  else console.log(`控制台提示里 ${mentions.size} 个带导航语气的点名都对得上真实的按钮/页/面板/标签`);
 }
 
 // 【文档里提到的 npm run <name> 都得真有】。README/docs 共提到 12 个脚本名；改名一个脚本，文档就开始指一条不存在的命令，
