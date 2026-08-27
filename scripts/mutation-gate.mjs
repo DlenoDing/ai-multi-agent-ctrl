@@ -9779,8 +9779,11 @@ const MUTATIONS = [
     name: "终结状态必须被所有写入口尊重：已关闭的任务组不接受运行控制",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",
-    from: "  if (!taskGroup || !CLOSED_TASK_GROUP_STATUSES.has(taskGroup.status)) return null;",
-    to: "  if (true) return null;",
+    // 两个函数现在长得一样了（都是 !taskGroup || !TASK_GROUP_SETTLED_STATUSES.includes(...)），
+    // 锚点必须带上函数头，否则点不准被测的那一处。
+    from: "export function taskGroupRuntimeControlRefusal(taskGroup, action) {\n"
+      + "  if (!taskGroup || !TASK_GROUP_SETTLED_STATUSES.includes(taskGroup.status)) return null;",
+    to: "export function taskGroupRuntimeControlRefusal(taskGroup, action) {\n  if (true) return null;",
     expect: "关闭是真人做的终局决定"
   },
   {

@@ -9158,7 +9158,10 @@ function verifyTerminalStatusListsAgree(output) {
   // isTerminalDispatchStatus()，剩下的两处是它自己那份常量、和控制台在浏览器里取不到 lib 时
   // 只好自留的那份。数量要求【精确相等】而不是「不少于」：只判下界的话，
   // 谁再内联抄一份回去（正是刚清理掉的那件事）门是不会红的。
-  const EXPECTED_COPIES = {TaskGroup: 15, AgentDispatch: 2, QualityGate: 6};
+  // 15→14：CLOSED_TASK_GROUP_STATUSES 与 TASK_GROUP_SETTLED_STATUSES 原是两个名字装同一个
+  // 集合（["closed","aborted"]），已合成一份。份数是"有没有哪份被改短"的探针，不是越多越好 ——
+  // 清理掉一份重复时要连着把这个数改小，否则这道门会拦住一次正确的去重。
+  const EXPECTED_COPIES = {TaskGroup: 14, AgentDispatch: 2, QualityGate: 6};
   let copies = 0;
   for (const [machine, label] of Object.entries(WITH_COPIES)) {
     const scope = spec.slice(spec.indexOf(`${machine}:`), spec.indexOf(`${machine}:`) + 400);

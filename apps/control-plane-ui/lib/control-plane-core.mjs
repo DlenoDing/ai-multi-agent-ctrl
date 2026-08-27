@@ -2056,11 +2056,13 @@ function recordAdmissionDecision(state, input = {}) {
 // 每个任务组一条的派生记录（完成度检查、关闭门）。上限小于任务组数时，直接 slice 会造成上限抖动：
 // 被挤掉的任务组下一拍重算出一份全新记录，再把别人挤掉 —— 每拍全量重写，而账本永远只覆盖一部分。
 // 与 capDispatchHistory 同规：还活着（未关闭/未中止）的任务组，它那条一律不裁。
-const CLOSED_TASK_GROUP_STATUSES = new Set(["closed", "aborted"]);
+// 终态集合只有一份：TASK_GROUP_SETTLED_STATUSES（在 taskGroupSettledRejection 处声明并导出）。
+// 这里原先另立了一个同内容的常量 —— 两个名字装同一个集合，早晚会漂开一个
+//（本仓在"两层上限"上撞过：生效的永远是更严的那个，调另一个等于没用）。
 function capPerTaskGroupRecords(records, state, limit) {
   if (records.length <= limit) return records;
   const liveGroupIds = new Set((state.taskGroups || [])
-    .filter((group) => !CLOSED_TASK_GROUP_STATUSES.has(group.status))
+    .filter((group) => !TASK_GROUP_SETTLED_STATUSES.includes(group.status))
     .map((group) => group.id));
   const kept = records.slice(0, limit);
   const keptGroupIds = new Set(kept.map((item) => item.taskGroupId));
@@ -6204,7 +6206,7 @@ export function projectArchivedRefusal(project, whatCannotBeDone) {
 }
 
 export function taskGroupRuntimeControlRefusal(taskGroup, action) {
-  if (!taskGroup || !CLOSED_TASK_GROUP_STATUSES.has(taskGroup.status)) return null;
+  if (!taskGroup || !TASK_GROUP_SETTLED_STATUSES.includes(taskGroup.status)) return null;
   if (action === "recompute_readiness") return null;
   return {
     error: "task_group_already_terminal",
