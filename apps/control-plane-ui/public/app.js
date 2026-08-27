@@ -2959,7 +2959,8 @@ function renderTaskGroups() {
         <div class="form-row"><label>任务组名称</label><input name="name" required></div>
         <div class="form-row"><label>目标描述</label><textarea name="objective" required placeholder="描述该任务组要达成的目标"></textarea></div>
         <div class="form-row"><label>统一语言</label><select name="languageTag">${languageSelectOptions("zh-CN")}</select></div>
-        <div class="form-row"><label>初始角色（逗号分隔）</label><input name="roles" value="orchestrator,agent-runtime,reviewer"></div>
+        <div class="form-row"><label>初始角色（逗号分隔；只认已登记的执行角色）</label><input name="roles" value="orchestrator,agent-runtime,reviewer" list="owner-role-options">
+          <datalist id="owner-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist></div>
         ${currentProjectId ? "" : noVisibleProjectNotice()}
         <button class="primary-button" type="submit" ${currentProjectId ? "" : "disabled"}>创建任务组</button>
       </form>

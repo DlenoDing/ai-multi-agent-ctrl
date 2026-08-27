@@ -369,6 +369,18 @@ try {
       + `（期望 401 invalid_credentials，得到 ${wrongSecret.response.status} ${wrongSecret.payload?.error || ""}）`);
   }
   const systemAuth = await loginAs(port, "system.admin@local", "doctor-bootstrap-token");
+  // 【拼错的执行角色要在建组时就拒】。原先任何字符串都收下、标 ready、"派发时再解析"，
+  // 建组回执成功，到派发那一刻才以 role_skill_role_not_registered 炸出来。
+  {
+    const typoRole = await jsonFetch(port, "/api/task-groups", {
+      method: "POST", headers: {authorization: systemAuth, "Idempotency-Key": "doctor-typo-owner-role"},
+      body: JSON.stringify({projectId: "prj_control_plane", name: "角色探针", roles: "orchestrator,reviewr"})
+    });
+    if (typoRole.response.status !== 400 || typoRole.payload?.error !== "task_group_role_not_registered" || !(typoRole.payload?.unknownRoles || []).includes("reviewr")) {
+      throw new Error(`拼错的执行角色建组该回 400 task_group_role_not_registered 并点名，实际 ${typoRole.response.status} ${JSON.stringify(typoRole.payload).slice(0, 200)} —— 一个派发必炸的角色带着成功回执进了任务组`);
+    }
+    console.log("  ok  拼错的执行角色在建组时就被拒并点名（不再等到派发才炸）");
+  }
   // 留一份给【后面别的块】用：这一路下去有一段故意打十几次错密码验限流，那之后再 login 会被挡，
   // 报出来的是"登录失败"，与那些断言要验的事毫无关系。
   doctorSystemAuth = systemAuth;

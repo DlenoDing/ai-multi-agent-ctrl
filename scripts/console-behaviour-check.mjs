@@ -3293,6 +3293,14 @@ function runPendingTruncationCase() {
       progress: {workItems: Array.from({length: 300}, (_, index) => ({id: `w${index}`, title: `单元${index}`, status: "draft"})),
         workItemCount: 4000, workItemsTruncated: true, blockers: []}};
     const detailHtml = probe.renderTaskGroupsWith(detailState, admin, "p1", "tg1", truncatedProgress);
+    // 【建组表单要列出已登记的执行角色】：自由文本配登记册校验＝拼错一次就 400（建组时现在就拒，不等派发）。
+    if (!/创建任务组/u.test(detailHtml)) {
+      check("建组表单的夹具要真的渲染出「创建任务组」面板", false, "夹具没渲染出建组面板 —— 下面那条什么也没验");
+    } else {
+      check("建组表单要列出已登记的执行角色（自由文本配登记册校验＝拼错一次就 400）",
+        /<datalist id="owner-role-options">/u.test(detailHtml) && detailHtml.includes('<option value="reviewer">'),
+        "建组表单没有执行角色的 datalist，或里面少了 reviewer");
+    }
     // 判据要各自独立：标题与提示里都写着"共 4000 个"，用同一个模式匹配的话，
     // 删掉标题那一处它照样绿（第一版就是这样）。
     check("明细页的小节标题要带上真实总数",

@@ -94,6 +94,7 @@ import {
   unknownAccountRoles,
   KNOWN_PERMISSIONS,
   unknownPermissions,
+  unknownOwnerRoles,
   runAgentRuntimeWorker,
   runAutonomousCycle,
   assertHumanTextWithinLimit,
@@ -1084,6 +1085,12 @@ function createTaskGroupRecord(state, input = {}, options = {}) {
   const at = now();
   const inheritedRoleIds = (project.config?.defaultRoles || []).map((role) => role.roleId).filter(Boolean);
   const userRoleIds = normalizeStringList(input.roles, []);
+  {
+    const unknownRoles = unknownOwnerRoles(userRoleIds);
+    if (unknownRoles.length) {
+      return {ok: false, status: 400, error: "task_group_role_not_registered", unknownRoles: unknownRoles.slice(0, 10), supported: [...REGISTERED_OWNER_ROLES]};
+    }
+  }
   const roleIdSet = new Set();
   const roles = [];
   for (const roleId of userRoleIds) {
@@ -4157,7 +4164,10 @@ async function handleApi(req, res) {
     }
     const result = createTaskGroupRecord(state, body, {auditRef: `audit:${guard.idempotencyKey}`});
     if (result.ok === false) {
-      json(res, result.status || 409, {error: result.error});
+      // 拒绝报文要把记录构造函数算好的细节一起带出去（unknownRoles / supported / 归档原因）：
+      // 原先只转发 error，人拿到一个码却不知道哪个角色错、该填什么。error 写在展开之后，谁也盖不掉它。
+      const {ok: _ok, status: _status, ...details} = result;
+      json(res, result.status || 409, {...details, error: result.error});
       return;
     }
     audit(state, guard.actor, "task_group_create", `TaskGroup:${result.taskGroup.id}`);

@@ -441,6 +441,14 @@ try {
   }
 
   const admin = await api("/api/auth/login", {method: "POST", body: {email: "system.admin@local", token: "doctor-bootstrap-token"}});
+  {
+    const typoRoleGroup = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.task_group_create",
+      arguments: {idempotencyKey: "doctor-mcp-typo-owner-role", projectId: "prj_control_plane", name: "角色探针", roles: ["orchestrator", "reviewr"]}});
+    const typoRolePayload = typoRoleGroup.structuredContent?.result || JSON.parse(typoRoleGroup.content?.[0]?.text || "{}");
+    if ((typoRolePayload.result || typoRolePayload).error !== "task_group_role_not_registered") {
+      throw new Error(`MCP 建组带拼错的执行角色该被拒（task_group_role_not_registered），实际 ${JSON.stringify(typoRolePayload).slice(0, 200)}`);
+    }
+  }
   const missingProjectTaskGroup = await mcpAs(admin.sessionToken, "tools/call", {name: "orchestration-mcp.task_group_create", arguments: {idempotencyKey: "doctor-mcp-task-create-missing-project", taskGroupId: "tg_doctor_missing_project", name: "Missing Project Scope"}});
   if (missingProjectTaskGroup.structuredContent?.result?.error !== "mcp_required_argument_missing" || missingProjectTaskGroup.structuredContent?.result?.argument !== "projectId") {
     throw new Error("MCP task_group_create without projectId was not rejected by input policy");

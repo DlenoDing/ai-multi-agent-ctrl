@@ -10260,6 +10260,22 @@ const MUTATIONS = [
     expect: "不在 KNOWN_PERMISSIONS 里"
   },
   {
+    name: "REST 建组要拒绝未登记的执行角色（原先等到派发才炸）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: "    const unknownRoles = unknownOwnerRoles(userRoleIds);",
+    to: "    const unknownRoles = [];",
+    expect: "拼错的执行角色建组该回 400 task_group_role_not_registered"
+  },
+  {
+    name: "MCP 建组要拒绝未登记的执行角色（孪生分支只补一半＝没补）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "    const unknownRoles = unknownOwnerRoles(requestedRoleIds);",
+    to: "    const unknownRoles = [];",
+    expect: "MCP 建组带拼错的执行角色该被拒"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

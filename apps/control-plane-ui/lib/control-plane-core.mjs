@@ -8180,6 +8180,13 @@ export const GRANTABLE_RESOURCE_TYPES = ["project", "task_group", "organization"
 // MCP 那条把授权模板的角色名 project_member 写进了账号的 roles，规范扫描第一次压到 MCP 产出就红了；
 // 调用方（含 AI）还能把任意字符串塞成角色，界面上显示成一串英文、判权时谁也不认。
 export const ACCOUNT_ROLES = Object.freeze(["system_owner", "system_admin", "system_auditor", "workspace_owner", "project_owner", "project_admin", "task_group_owner", "agent_operator", "service_agent_runtime", "reviewer", "viewer", "org_admin", "member"]);
+// 任务组的执行角色只认已登记的（REGISTERED_OWNER_ROLES）。建组时原先任何字符串都收下、标成 ready、
+// 写着"派发时再解析" —— 拼错的 reviewr 要等到派发那一刻才以 role_skill_role_not_registered 炸出来，
+// 而建组的回执早就是成功。REST 与 MCP 两份建组实现共用这一处判定。
+export function unknownOwnerRoles(roleIds) {
+  return (Array.isArray(roleIds) ? roleIds : []).filter((roleId) => !REGISTERED_OWNER_ROLES.includes(String(roleId)));
+}
+
 export function unknownAccountRoles(roles) {
   return (Array.isArray(roles) ? roles : []).filter((role) => !ACCOUNT_ROLES.includes(role));
 }

@@ -87,7 +87,7 @@ import {
   STRING_LIST_MAX_ITEMS,
   STRING_LIST_MAX_ITEM_LENGTH,
   taskGroupForRecordOrRefuse,
-  requiredRoomId, ACCOUNT_ROLES, unknownAccountRoles} from "../control-plane-ui/lib/control-plane-core.mjs";
+  requiredRoomId, ACCOUNT_ROLES, unknownAccountRoles, unknownOwnerRoles} from "../control-plane-ui/lib/control-plane-core.mjs";
 import {
   createAgentControlCommand,
   revokeDispatchMcpGrants
@@ -1826,6 +1826,12 @@ function createTaskGroup(state, args) {
   if (state.taskGroups.some((item) => item.id === taskGroupId)) return {ok: false, error: "task_group_id_conflict"};
   const quota = organizationQuotaCheck(state, project.organizationId || DEFAULT_ORGANIZATION_ID, "taskGroups");
   if (!quota.allowed) return {ok: false, error: quota.error, quota};
+  // 与 REST 侧同一处判定：执行角色不在登记册里就拒，别让拼错的角色等到派发才炸。
+  {
+    const requestedRoleIds = (Array.isArray(args.roles) ? args.roles : []).map((role) => typeof role === "string" ? role : role?.roleId).filter(Boolean);
+    const unknownRoles = unknownOwnerRoles(requestedRoleIds);
+    if (unknownRoles.length) return {ok: false, error: "task_group_role_not_registered", unknownRoles: unknownRoles.slice(0, 10), supported: [...REGISTERED_OWNER_ROLES]};
+  }
   const at = new Date().toISOString();
   const languagePolicy = normalizeTaskGroupLanguagePolicy(args.languagePolicy || args);
   const taskGroup = {
