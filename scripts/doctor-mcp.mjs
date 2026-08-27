@@ -307,6 +307,28 @@ try {
     }
   }
 
+  // 【归档里要写清对哪条记录动的手】。subject 原先只进 state.auditLog（在册 80 行），归档里只有
+  // 不可逆的 argumentDigest；界面让人去归档查，查到的是哈希。这里真调一次带地址键的写工具，
+  // 读归档最后一行：必须带 subject，且写的是这次指到的那个键。
+  {
+    const subjectProbe = await mcp("tools/call", {name: "room-mcp.room_join", arguments: {
+      idempotencyKey: "doctor-mcp-audit-subject", taskGroupId: "tg_runtime_management",
+      roomId: "room_tg_runtime_management", sessionId: "sess_doctor_audit_subject", roleId: "reviewer"}});
+    if (subjectProbe.error || subjectProbe.structuredContent?.ok !== true) {
+      throw new Error(`主题探针那次调用没成功，下面这条会空转：${JSON.stringify(subjectProbe).slice(0, 160)}`);
+    }
+    const archiveLines = readFileSync(join(runtimeDir, "mcp-audit.jsonl"), "utf8").split("\n").filter(Boolean);
+    const last = JSON.parse(archiveLines[archiveLines.length - 1]);
+    if (last.toolName !== "room-mcp.room_join") {
+      throw new Error(`归档最后一行不是刚才那次调用（${last.toolName}）—— 这条断言读错了行`);
+    }
+    if (typeof last.subject !== "string" || !last.subject.includes("room-mcp.room_join") || !/=/u.test(last.subject)) {
+      throw new Error(`归档里没写清对哪条记录动的手：subject=${JSON.stringify(last.subject)} ——`
+        + " 归档是这本账唯一的完整来源，而 argumentDigest 不可逆，事后说不清 agent 动了哪个任务组/工作项");
+    }
+    console.log(`  ok  归档带主题：${last.subject}`);
+  }
+
   // 【MCP 归档写不进去：不挡业务、不泄路径、要报警、恢复要自清】。归档是 agent 调用记录的
   // 【唯一】完整来源（状态里只留最近 300 条）。此前 appendMcpAudit 没有 try/catch：磁盘满/只读时
   // Node 的 EACCES 带着 error.code 一路撞进「有 code 就当 JSON-RPC 错误码」那条分支 ——

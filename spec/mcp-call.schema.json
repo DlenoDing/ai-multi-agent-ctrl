@@ -13,6 +13,8 @@
     "idempotencyKey": {"type": "string", "minLength": 1},
     "status": {"enum": ["succeeded", "failed"], "description": "这个对象没有生命周期：一次调用要么成了要么没成，写下就不再变。"},
     "readOnly": {"type": "boolean"},
+    "subject": {"type": "string", "minLength": 1,
+      "description": "工具名 + 它指到的那条记录（形如 tool · workItemId=xxx）。归档是这本账唯一的完整来源，argumentDigest 不可逆，没有这一列事后说不清 agent 对哪条记录动过手。2026-08-27 起写入；更早的记录没有，所以不进 required。"},
     "argumentDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "resultDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "untrustedResult": {"const": true, "description": "恒为 true。写成别的值等于宣称「这一条的返回可以当事实用」，而全系统没有任何机制支撑那个宣称。"},

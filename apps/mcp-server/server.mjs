@@ -706,6 +706,11 @@ export async function callTool(name, args = {}, context = {}) {
     idempotencyKey: args.idempotencyKey || createId("idem_mcp"),
     status: result.ok === false ? "failed" : "succeeded",
     readOnly: isReadOnlyTool(name),
+    // 【对哪条记录动的手，要进归档】。这个字段原先只写进 state.auditLog（在册 80 行，几分钟就被顶掉），
+    // 归档 mcp-audit.jsonl 里只有 argumentDigest —— 一个不可逆的 sha256。而界面上那句
+    // 「入参与返回摘要另存于 mcp-audit.jsonl」正是让人去归档里查，查到的是一串哈希，
+    // 说不清 agent 对哪个任务组/工作项做过什么。归档是这本账唯一的完整来源，缺的恰是最要紧的一列。
+    subject: mcpAuditSubject(name, effectiveArgs),
     argumentDigest,
     resultDigest: digestOf(result),
     untrustedResult: true,

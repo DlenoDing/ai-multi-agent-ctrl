@@ -9990,6 +9990,14 @@ const MUTATIONS = [
     expect: "解析函数却认不出"
   },
   {
+    name: "MCP 归档要写清对哪条记录动的手（argumentDigest 不可逆，没有 subject 事后查不到）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "mcp",
+    from: "    subject: mcpAuditSubject(name, effectiveArgs),\n    argumentDigest,",
+    to: "    argumentDigest,",
+    expect: "归档里没写清对哪条记录动的手"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",
