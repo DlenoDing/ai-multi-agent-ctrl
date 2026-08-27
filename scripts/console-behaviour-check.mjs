@@ -1769,6 +1769,32 @@ function runReviewAxisCase() {
     }],
     qualityGates: []
   });
+  // 同一条纪律在任务组页：当前项目已归档时，两个创建表单后端一定拒（归档要求先把所有任务组
+  // 关掉，之后还能往里建新组的话，那次收尾就白做了）。摆着它们就是按不动的杠杆。
+  {
+    const archRoot = el("div");
+    loadConsole(archRoot, {realI18n: true}).renderFullPageWith({
+      projects: [{id: "p_arch", name: "老项目", organizationId: "org_default", status: "archived", config: {}, members: []}],
+      taskGroups: [], accounts: [], accessGrants: [], truncatedCollections: []
+    }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"},
+      "p_arch", "tg");
+    const archHtml = String(archRoot.innerHTML || "");
+    check("已归档项目的任务组页不许摆着「创建任务组 / 创建工作项」表单",
+      /建不了新的任务组或工作项/u.test(archHtml)
+        && !/data-form="task-group-create"/u.test(archHtml)
+        && !/data-form="work-item-create"/u.test(archHtml),
+      archHtml.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").match(/创建任务组[^|]{0,80}/u)?.[0] || "（这一页没渲染出来）");
+    const liveRoot = el("div");
+    loadConsole(liveRoot, {realI18n: true}).renderFullPageWith({
+      projects: [{id: "p_live", name: "在用项目", organizationId: "org_default", status: "active", config: {}, members: []}],
+      taskGroups: [], accounts: [], accessGrants: [], truncatedCollections: []
+    }, {accountId: "u1", accountType: "system_admin", displayName: "管理员", organizationId: "org_default"},
+      "p_live", "tg");
+    check("在用项目上照常摆着创建表单（否则这道判据把正常路径一起堵死）",
+      /data-form="task-group-create"/u.test(String(liveRoot.innerHTML || "")),
+      "在用项目上也建不了任务组了");
+  }
+
   // 【已归档的项目不该出现在任何"把人或机器放进去开工"的选择器里】。后端两条路都已拒
   //（project_archived / member_default_project_archived），而「项目成员授权」那个下拉
   // 原先列的是全部项目 —— 选中一个归档项目提交，回执是 409，人只看到一个按不动的杠杆。

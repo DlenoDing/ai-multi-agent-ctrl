@@ -9950,6 +9950,14 @@ const MUTATIONS = [
     to: "  if (false) {",
     expect: "要说清是「都归档了」"
   },
+  {
+    name: "已归档项目的任务组页不许摆着创建表单（后端一定拒）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: '  const archivedProject = currentProject()?.status === "archived";',
+    to: "  const archivedProject = false;",
+    expect: "不许摆着「创建任务组 / 创建工作项」表单"
+  },
 ];
 
 // 崩溃安全：这个脚本会把真实源文件改坏再还原。一旦中途被打断（Ctrl-C / 被杀 / 抛错），

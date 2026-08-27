@@ -2903,7 +2903,14 @@ function renderTaskGroups() {
   const roleOptions = WORK_ITEM_OWNER_ROLE_CHOICES
     .map((role) => `<option value="${esc(role)}">${esc(t(role))} (${esc(role)})</option>`).join("");
 
-  const createPanels = !canControl ? [] : [
+  // 当前项目已归档时，这两个创建表单后端一定拒（project_archived）—— 归档路由要求先把
+  // 所有任务组关掉，归档之后还能往里建新组，那次收尾就白做了。摆着它们就是按不动的杠杆。
+  const archivedProject = currentProject()?.status === "archived";
+  const createPanels = archivedProject
+    ? [panel("创建任务组", `<div class="notice warn-notice">这个项目已归档（终态，不可撤销）：`
+      + "建不了新的任务组或工作项，已有的记录只能看。要继续这条线，请在上方切换到一个在用的项目，"
+      + "或新建一个项目。</div>", {wide: true})]
+    : !canControl ? [] : [
     panel("创建任务组", `
       <form class="form-grid" data-form="task-group-create">
         <div class="form-row"><label>任务组名称</label><input name="name" required></div>
