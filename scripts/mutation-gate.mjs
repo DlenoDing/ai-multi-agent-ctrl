@@ -10325,6 +10325,22 @@ const MUTATIONS = [
     expect: "没动过的继承规则被复制到本层"
   },
   {
+    name: "提交要带上点下去的那个按钮（丢了提交器＝每次批准都变成拒绝）",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "  const data = Object.fromEntries(new FormData(form, event.submitter).entries());",
+    to: "  const data = Object.fromEntries(new FormData(form).entries());",
+    expect: "缺省把批准变成了拒绝"
+  },
+  {
+    name: "项目配置保存要带并发令牌 expectedConfigVersion",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "console",
+    from: "body: JSON.stringify({repositories, baselineData, defaultRoles, expectedConfigVersion: projConfigVersion})",
+    to: "body: JSON.stringify({repositories, baselineData, defaultRoles})",
+    expect: "发出去的 expectedConfigVersion=undefined"
+  },
+  {
     name: "归档锁超时的健康提示要指向「另一个进程持锁」而不是「查磁盘」",
     file: "apps/control-plane-ui/server.mjs",
     gate: "mcp",

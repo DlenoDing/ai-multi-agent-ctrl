@@ -230,6 +230,7 @@ globalThis.__probe = {
   restorePendingForm: () => restorePendingForm(),
   setPending: (value) => { pendingFormRestore = value; },
   getFormTouched: () => formTouched,
+  setProjConfigVersion: (value) => { projConfigVersion = value; },
   setFormTouched: (value) => { formTouched = value; },
   renderSource: () => String(render),
   handlerSource: (type) => String(globalThis.__handlers[type]),
@@ -787,6 +788,64 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
             `发出去的是 ${JSON.stringify(sent)} —— 没动过的继承规则被复制到本层，从此上层再改它这里不跟`);
         }
       } finally {
+        probe.setFetch(previousFetch);
+      }
+    }
+    // 【批准/拒绝双按钮表单：点哪个就发哪个】。status 由点下去的那个按钮（event.submitter）带上，
+    // 缺省是 rejected（安全方向）—— 提交器丢了，每一次批准都会变成拒绝，而人看到的回执是"已处理"。
+    {
+      const recorded = [];
+      const previousFetch = globalThis.fetch;
+      probe.setFetch(async (url, init = {}) => {
+        recorded.push({url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null});
+        return {ok: true, status: 200, headers: {get: () => null}, json: async () => ({ok: true})};
+      });
+      try {
+        const mkForm = () => el("form", {dataset: {form: "perm-resolve", request: "perm_1"}}, [
+          el("button", {type: "submit", name: "status", value: "approved"}),
+          el("button", {type: "submit", name: "status", value: "rejected"})
+        ]);
+        const approveForm = mkForm();
+        await probe.submit({target: approveForm, submitter: approveForm.children[0], preventDefault: () => {}});
+        const rejectForm = mkForm();
+        await probe.submit({target: rejectForm, submitter: rejectForm.children[1], preventDefault: () => {}});
+        const posts = recorded.filter((item) => item.method === "POST" && /permission-requests\/perm_1\/resolve$/u.test(item.url)).map((item) => item.body?.status);
+        if (posts.length !== 2) {
+          check("批准/拒绝表单要真的各发出一次处置", false, `记录到 ${posts.length} 次（${JSON.stringify(recorded).slice(0, 160)}）—— 下面那条什么也没验`);
+        } else {
+          check("点「批准」发 approved、点「拒绝」发 rejected（提交器丢了每次批准都会变成拒绝）",
+            posts[0] === "approved" && posts[1] === "rejected",
+            `发出去的是 ${JSON.stringify(posts)} —— 点的按钮没带进正文，缺省把批准变成了拒绝`);
+        }
+      } finally {
+        probe.setFetch(previousFetch);
+      }
+    }
+    // 【项目配置保存要带并发令牌】。expectedConfigVersion 是乐观并发的凭据：不带它，两个管理员各改一处、后保存的会把前一个的改动整个覆盖，谁都不会被告知。
+    {
+      const recorded = [];
+      const previousFetch = globalThis.fetch;
+      probe.setFetch(async (url, init = {}) => {
+        recorded.push({url: String(url), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null});
+        return {ok: true, status: 200, headers: {get: () => null}, json: async () => ({ok: true, configVersion: "cv_8"})};
+      });
+      try {
+        probe.setProjConfigVersion("cv_7");
+        const repoRow = el("div", {dataset: {cfgKind: "repo"}}, [
+          el("input", {name: "repoId", value: "repo_a"}), el("input", {name: "repoBranch", value: "main"}), el("input", {name: "repoCred", value: "secret://a"})
+        ]);
+        const form = el("form", {dataset: {form: "project-config", project: "p1"}}, [repoRow, el("button", {type: "submit"})]);
+        await probe.submit({target: form, submitter: form.children[1], preventDefault: () => {}});
+        const post = recorded.find((item) => item.method === "POST" && /\/api\/projects\/p1\/config$/u.test(item.url));
+        if (!post) {
+          check("项目配置保存要真的发出 POST", false, `没记录到提交（${JSON.stringify(recorded).slice(0, 160)}）—— 下面那条什么也没验`);
+        } else {
+          check("项目配置保存要带 expectedConfigVersion（不带＝两个管理员互相覆盖而不自知）",
+            post.body.expectedConfigVersion === "cv_7" && (post.body.repositories || []).length === 1,
+            `发出去的 expectedConfigVersion=${JSON.stringify(post.body.expectedConfigVersion)}、repositories=${(post.body.repositories || []).length} 条`);
+        }
+      } finally {
+        probe.setProjConfigVersion(null);
         probe.setFetch(previousFetch);
       }
     }
