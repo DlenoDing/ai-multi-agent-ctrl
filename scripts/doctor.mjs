@@ -2312,6 +2312,29 @@ try {
       body: JSON.stringify({name: "归档探针项目", key: "archive-probe"})});
     const archProjectId = archProject.payload?.id || archProject.payload?.project?.id;
     if (!archProjectId) throw new Error("归档探针造不出项目 —— 下面几条会在空转");
+    // 【有未终结任务组的项目，归档必须被拒并点名要先关哪些】。不级联终结是有意的：归档一个还有活的项目
+    // 等于替人把那些工作组一并处置了。原先只有「空项目能归档」和「归档后不能再建」被验，这条拒绝路径没门 ——
+    // 把 openGroups 判据改成永远放行，项目连着活着的任务组一起被静默归档（概览按 active 列、编排跳过 archived，
+    // 那些组从此没人看没人推），而所有门照绿。
+    {
+      const openProj = await jsonFetch(port, "/api/projects", {method: "POST",
+        headers: {"Idempotency-Key": "doctor-archive-open-proj", authorization: systemAuth},
+        body: JSON.stringify({name: "归档拒绝探针项目", key: "archive-refuse"})});
+      const openProjId = openProj.payload?.id || openProj.payload?.project?.id;
+      const openTg = await jsonFetch(port, "/api/task-groups", {method: "POST",
+        headers: {"Idempotency-Key": "doctor-archive-open-tg", authorization: systemAuth},
+        body: JSON.stringify({projectId: openProjId, title: "未终结的任务组"})});
+      const openTgId = openTg.payload?.taskGroup?.id || openTg.payload?.id;
+      if (!openProjId || !openTgId) throw new Error("归档拒绝探针造不出项目/任务组 —— 下面这条在空转");
+      const refused = await jsonFetch(port, `/api/projects/${encodeURIComponent(openProjId)}/archive`, {method: "POST",
+        headers: {"Idempotency-Key": "doctor-archive-refused", authorization: systemAuth}, body: "{}"});
+      if (refused.response.status !== 409 || refused.payload?.error !== "project_has_open_task_groups"
+        || !(refused.payload?.openTaskGroupIds || []).includes(openTgId)) {
+        throw new Error(`有未终结任务组的项目该拒绝归档并点名（409 project_has_open_task_groups + openTaskGroupIds 含该组），`
+          + `实际 ${refused.response.status} ${JSON.stringify(refused.payload).slice(0, 180)} —— 归档会把活着的任务组静默孤立`);
+      }
+      console.log("  ok  有未终结任务组的项目归档被拒并点名要先关哪些");
+    }
     // 先备一个在用项目：下面要用它验"收尾与正常路径没被归档那道判据一起挡死"。
     const cleanupProject = await jsonFetch(port, "/api/projects", {method: "POST",
       headers: {"Idempotency-Key": "doctor-archive-cleanup-project", authorization: systemAuth},

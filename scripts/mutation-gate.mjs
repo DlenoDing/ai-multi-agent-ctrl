@@ -3541,6 +3541,14 @@ const MUTATIONS = [
     expect: "混进了非连接类 SQLSTATE"
   },
   {
+    name: "有未终结任务组的项目归档必须被拒（不级联孤立）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    const openGroups = (state.taskGroups || []).filter((item) => item.projectId === project.id\n      && !["closed", "aborted"].includes(item.status));',
+    to: '    const openGroups = (state.taskGroups || []).filter((item) => item.projectId === project.id\n      && false);',
+    expect: "该拒绝归档并点名"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
