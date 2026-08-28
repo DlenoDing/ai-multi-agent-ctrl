@@ -975,6 +975,7 @@ run(verifyOperatorKnobsAreDocumented);
 run(verifyAgentctlUnknownCommandListsCommands);
 run(verifyConsoleRoleExamplesAreRegistered);
 run(verifyAgentRunAnnouncesItself);
+run(verifyOutboxReplayCleansSessionDir);
 runAsync(verifyAgentAnnouncesOutageOnceAndRecovery);
 runAsync(verifyAgentSaysWhyItStops);
 run(verifyDefaultBackupTargetIsGitIgnored);
@@ -16164,6 +16165,24 @@ async function verifyAgentAnnouncesOutageOnceAndRecovery(output) {
   } else {
     console.log("控制面中途断掉：agent 只说一句连不上、接上说一句已重新接上，中间不刷屏");
   }
+}
+
+// 【outbox 重放成功要清会话目录，不留到 TTL 清扫】。提交失败走 outbox 那条路：会话工作目录（git 工作树）当时没清，
+// 重放成功时若不清，就攒到 72h TTL 才走 —— 提交常失败的节点会攒一地。结构核：outbox 记 sessionDir、重放成功后 removeSessionDirectoryPath。
+function verifyOutboxReplayCleansSessionDir(output) {
+  const runtime = readFileSync(join(root, "apps/agent-runtime/runtime.mjs"), "utf8");
+  const persistAt = runtime.indexOf("function persistCheckpointOutbox(");
+  const persistBody = persistAt < 0 ? "" : runtime.slice(persistAt, runtime.indexOf("\n}\n", persistAt));
+  if (!/sessionDir: sessionDirectory\(config, dispatchPackage\)/u.test(persistBody)) {
+    output.push("outbox 条目没记 sessionDir —— 重放那条路上没法把会话工作目录清掉，只能等 72h TTL 清扫");
+  }
+  const flushAt = runtime.indexOf("async function flushCheckpointOutbox(");
+  const flushBody = flushAt < 0 ? "" : runtime.slice(flushAt, runtime.indexOf("\nasync function ", flushAt + 1));
+  const replaySuccess = flushBody.slice(0, flushBody.indexOf("checkpoint replayed:") + 20);
+  if (!/removeSessionDirectoryPath\(item\.sessionDir\)/u.test(replaySuccess)) {
+    output.push("outbox 重放成功后没清会话目录（removeSessionDirectoryPath(item.sessionDir)）—— git 工作树会一直留到 TTL 清扫");
+  }
+  if (output.length === 0) console.log("outbox 重放：条目记了 sessionDir、重放成功即清会话目录，核过");
 }
 
 // 【agentctl run 起来要先说一句】。原先领到活之前一个字都不打：人看到的是一块空屏，分不清是在等派发还是根本没连上。

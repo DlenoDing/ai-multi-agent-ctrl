@@ -672,6 +672,8 @@ async function flushCheckpointOutbox(config) {
       await submitCheckpoint(config, item.checkpointPath, item.checkpoint, item.claimEpoch);
       await submitExecutionEventForDispatch(config, item.dispatchId, "checkpoint_submitted", {progressPercent: 100, summary: "Checkpoint replay accepted by control plane.", evidenceRefs: [`checkpoint:${item.checkpoint?.runId || "accepted"}`]}).catch(() => {});
       unlinkSync(path);
+      // 重放成功＝这个派发彻底完了：把它当初留下的会话工作目录也清掉，不要等 TTL 清扫。
+      removeSessionDirectoryPath(item.sessionDir);
       process.stdout.write(`checkpoint replayed: ${item.dispatchId}\n`);
       process.stdout.write(`已补交检查点 ${item.dispatchId}（上次没交上的，这次控制面接受了）\n`);
     } catch (error) {
@@ -718,7 +720,9 @@ function persistCheckpointOutbox(config, dispatchPackage, checkpoint) {
   const target = join(outboxDir, `${safeName(dispatchPackage.dispatch.dispatchId)}.json`);
   // 原先是 tmp+rename 但没有 fsync：rename 本身原子，可内容还没落盘就断电的话，恢复后拿到的是
   // 一个存在但内容不完整的 outbox 条目 —— 而它承载的是【已经 push 成功】的检查点。
-  writeDurableJson(target, {dispatchId: dispatchPackage.dispatch.dispatchId, claimEpoch: dispatchPackage.dispatch.claimEpoch, checkpointPath: dispatchPackage.remoteServices.checkpointPath, repositoryOutputTarget: dispatchPackage.repositoryOutputTarget, checkpoint, createdAt: new Date().toISOString()});
+  // sessionDir 一并记下：提交失败后走 outbox 重放的那条路上，重放成功时要靠它把会话工作目录也清掉，
+  // 否则那份 git 工作树会一直留到 72h TTL 清扫才走（提交常失败的节点会攒一地）。
+  writeDurableJson(target, {dispatchId: dispatchPackage.dispatch.dispatchId, claimEpoch: dispatchPackage.dispatch.claimEpoch, checkpointPath: dispatchPackage.remoteServices.checkpointPath, repositoryOutputTarget: dispatchPackage.repositoryOutputTarget, checkpoint, sessionDir: sessionDirectory(config, dispatchPackage), createdAt: new Date().toISOString()});
   return target;
 }
 
@@ -936,15 +940,18 @@ function syncContentBundleGitTransfer(config, bundle, bundleDir) {
   }
 }
 
-function cleanupSessionDirectory(config, dispatchPackage) {
+function removeSessionDirectoryPath(dir) {
   if (process.env.AIMAC_AGENT_KEEP_SESSION_DIRS === "true") return;
   if (process.env.AIMAC_AGENT_VERIFICATION_DEFER_CHECKPOINT === "true") return;
   try {
-    const dir = sessionDirectory(config, dispatchPackage);
-    if (existsSync(dir)) rmSync(dir, {recursive: true, force: true});
+    if (dir && existsSync(dir)) rmSync(dir, {recursive: true, force: true});
   } catch (error) {
     process.stderr.write(`session directory cleanup failed: ${error.message}\n`);
   }
+}
+
+function cleanupSessionDirectory(config, dispatchPackage) {
+  removeSessionDirectoryPath(sessionDirectory(config, dispatchPackage));
 }
 
 function verifyCheckpointReplayRemote(config, item) {

@@ -3514,6 +3514,15 @@ const MUTATIONS = [
     expect: "用重赋值往 auditLog 塞了拼好的行"
   },
   {
+    name: "outbox 重放成功要清会话目录（不留到 TTL）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "contract",
+    check: "verifyOutboxReplayCleansSessionDir",
+    from: "      removeSessionDirectoryPath(item.sessionDir);",
+    to: "",
+    expect: "重放成功后没清会话目录"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
