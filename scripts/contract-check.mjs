@@ -780,6 +780,7 @@ run(verifyStaleE2eRuntimeDirsGetSwept);
 run(verifyRejectedWritesLeaveStateUntouched);
 run(verifyPostgresWriteIsVersionGuarded);
 run(verifyPgBridgeFailuresAreStorageUnavailable);
+run(verifyDatabaseUnavailableCodesStayConnectionClass);
 run(verifyAssignedFieldsAreDeclaredBySpec);
 run(verifyAccountRolesConstantMatchesSpec);
 run(verifyAgentFailureCodeCoverageRatchet);
@@ -15662,6 +15663,26 @@ function verifyAssignedFieldsAreDeclaredBySpec(output) {
 // 桥是瞬时的：下一次调用 resetBridge 重开就恢复，和 DB 短暂不可用同类。原先只有 timeout 那支挂了稳定码 ——
 // worker 直接退出/崩溃的 fatal 抛出「pg worker exited…」没码，databaseUnavailable 认不出，于是 500 + health 仍 ok。
 // 跨文件核：桥的 fatal/no-response 抛出点都带 AIMAC_PG_BRIDGE_FATAL，且 server 的 databaseUnavailable 码集同时含 TIMEOUT 与 FATAL。
+// 【databaseUnavailable 的 SQLSTATE 只许是连接类（08*/57*）】。它把命中的错误当成瞬时、可重试、503 state_storage_unavailable。
+// 一旦有人往里加一个永久错误类（23* 完整性约束、42* 语法/未定义、22* 数据异常…），一个真的写坏了的 bug 就会被
+// 当成「数据库偶尔抽风、重试一下」而永远掩盖。非 SQLSTATE 的项（ECONN*/EPIPE/AIMAC_PG_BRIDGE_*）豁免。
+function verifyDatabaseUnavailableCodesStayConnectionClass(output) {
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const at = server.indexOf("const DATABASE_UNAVAILABLE_CODES");
+  const setSrc = at < 0 ? "" : server.slice(at, server.indexOf("]);", at));
+  if (!setSrc) { output.push("找不到 DATABASE_UNAVAILABLE_CODES —— 本条在空转"); return; }
+  const codes = [...setSrc.matchAll(/"([^"]+)"/gu)].map((hit) => hit[1]);
+  if (codes.length < 8) { output.push(`DATABASE_UNAVAILABLE_CODES 只提出 ${codes.length} 个 —— 提取脱节`); return; }
+  const sqlstates = codes.filter((code) => /^[0-9A-Z]{5}$/u.test(code) && /^[0-9]/u.test(code));
+  const offenders = sqlstates.filter((code) => !/^(08|57|53)/u.test(code));
+  if (offenders.length) {
+    output.push(`databaseUnavailable 的码集里混进了非连接类 SQLSTATE：${offenders.join("、")} —— 只有 08*(连接异常)/57*(运维干预)/53*(资源不足) 是瞬时可重试的；`
+      + "23*/42*/22* 这些是永久错误，当成「重试一下」会把真 bug 永久掩盖");
+  }
+  if (sqlstates.length < 3) output.push(`码集里几乎没有 SQLSTATE（只有 ${sqlstates.length} 个）—— 提取形状没对上，本条在空转`);
+  if (output.length === 0) console.log(`databaseUnavailable 码集：${sqlstates.length} 个 SQLSTATE 全是连接类（08/57/53），没有永久错误类混入`);
+}
+
 function verifyPgBridgeFailuresAreStorageUnavailable(output) {
   const bridge = readFileSync(join(root, "apps/control-plane-ui/lib/pg-sync-store.mjs"), "utf8");
   const src = bridge.split("\n").filter((line) => !/^\s*\/\//u.test(line)).join("\n");

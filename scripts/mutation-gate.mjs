@@ -3532,6 +3532,15 @@ const MUTATIONS = [
     expect: "worker exit 的 fatal 没打"
   },
   {
+    name: "databaseUnavailable 码集不得混进永久错误类 SQLSTATE",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    check: "verifyDatabaseUnavailableCodesStayConnectionClass",
+    from: '"AIMAC_PG_BRIDGE_TIMEOUT", "AIMAC_PG_BRIDGE_FATAL", "57P01",',
+    to: '"AIMAC_PG_BRIDGE_TIMEOUT", "AIMAC_PG_BRIDGE_FATAL", "23505", "57P01",',
+    expect: "混进了非连接类 SQLSTATE"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
