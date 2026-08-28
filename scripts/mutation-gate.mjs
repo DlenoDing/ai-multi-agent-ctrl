@@ -114,6 +114,24 @@ const MUTATIONS = [
     expect: "still-running session was freed"
   },
   {
+    name: "人工确认未到期不得被提前回收（continue 守卫）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyExpiredConfirmationsNeverAutoRelease",
+    from: "    if (!request.expiresAt || new Date(request.expiresAt).getTime() > nowMs) continue;",
+    to: "    if (!request.expiresAt || new Date(request.expiresAt).getTime() < nowMs) continue;",
+    expect: "未到期的请求被提前回收了"
+  },
+  {
+    name: "人工确认超时不得把派发放回执行（超时≠放行）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyExpiredConfirmationsNeverAutoRelease",
+    from: "        dispatch.blockedReason = \"human_confirmation_expired_needs_decision\";",
+    to: "        dispatch.status = \"queued\";",
+    expect: "到期的派发被放回执行/未升级为人工决策"
+  },
+  {
     name: "记录上限不得裁掉活着任务组的记录（strandedLive）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

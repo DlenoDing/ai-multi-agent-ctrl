@@ -101,6 +101,7 @@ import {
   FINDING_TERMINAL_STATUSES,
   artifactRegister,
   expireStaleLeases,
+  expireStaleHumanConfirmations,
   refreshConfirmationsAfterHumanChange,
   HUMAN_ACTOR_KEY,
   // 真人闸门的三份闭集：判据按闭集展开，新增一个取值时自动进入检验面，不必回来改断言。
@@ -819,6 +820,7 @@ run(verifyRuntimeFileWritesAreRegistered);
 run(verifyEveryWriteRouteIsGuardedOrRegistered);
 run(verifyEveryCapExplainsWhatItKeeps);
 run(verifyCapKeepsLiveTaskGroupRecords);
+run(verifyExpiredConfirmationsNeverAutoRelease);
 run(verifyOneProjectWriteTouchesOneShard);
 run(verifyPanelGatesCoverEveryBlockInside);
 run(verifyTopologyBlockerPartsAllHaveChinese);
@@ -17955,6 +17957,55 @@ function verifyEveryWriteRouteIsGuardedOrRegistered(output) {
 // 【记录上限裁剪不得把活着任务组的记录裁掉】。capPerTaskGroupRecords 的 strandedLive 兜底：超限时，
 // 落在窗口外、但属于未终结任务组、且该组在窗口内没有别的记录的那几条，要补回来。原先只在 CAP_FUNCTION_GUARDS
 // 里登记了「留一条」的理由，从没真跑过它 —— strandedLive 断了，活着的组下一拍找不到自己的关闭门/就绪记录而无人报错。
+// 【人工确认超时≠放行，且未到期绝不能被提前回收】。expireStaleHumanConfirmations 是人工闸门的
+// 回收器：过期的请求必须升级为「需人工决策」并【继续挡着】派发（历史上这里曾把 blocked 改回 queued，
+// 等于给每道人工闸门开了 7 天绕过通道）；而未到期的请求必须原样留下（否则人还没回答闸门就自己了结）。
+// 此前它虽已导出却在任何门里都没被真跑过 —— 两条不变式全靠源码没人动。
+function verifyExpiredConfirmationsNeverAutoRelease(output) {
+  const past = "2000-01-01T00:00:00.000Z";
+  const future = "2999-01-01T00:00:00.000Z";
+  const state = {
+    stateVersion: 1,
+    eventLog: [],
+    humanConfirmationRequests: [
+      {requestId: "hcr_past", status: "pending", expiresAt: past, dispatchId: "disp_past", workItemId: "wi_past", taskGroupId: "tg1", question: {summary: "q"}},
+      {requestId: "hcr_future", status: "pending", expiresAt: future, dispatchId: "disp_future", workItemId: "wi_future", taskGroupId: "tg1", question: {summary: "q"}}
+    ],
+    agentDispatches: [
+      {dispatchId: "disp_past", sessionId: "sess_past", status: "blocked", blockedReason: "awaiting_human_confirmation"},
+      {dispatchId: "disp_future", sessionId: "sess_future", status: "blocked", blockedReason: "awaiting_human_confirmation"}
+    ],
+    workSessions: [
+      {sessionId: "sess_past", status: "active", blockedReason: "awaiting_human_confirmation"},
+      {sessionId: "sess_future", status: "active", blockedReason: "awaiting_human_confirmation"}
+    ],
+    taskGroups: [
+      {id: "tg1", status: "development", blockers: [], workItems: [
+        {id: "wi_past", status: "blocked", blockedReason: "awaiting_human_confirmation"},
+        {id: "wi_future", status: "blocked", blockedReason: "awaiting_human_confirmation"}
+      ]}
+    ]
+  };
+  const expired = expireStaleHumanConfirmations(state);
+  const req = (id) => state.humanConfirmationRequests.find((item) => item.requestId === id);
+  const disp = (id) => state.agentDispatches.find((item) => item.dispatchId === id);
+  // 负例（本轮目标）：未到期的确认请求绝不能被提前回收。
+  if (expired.includes("hcr_future") || req("hcr_future").status !== "pending") {
+    output.push("人工确认过期：未到期的请求被提前回收了 —— 那道人工闸门会在人还没回答前就自己了结");
+  }
+  if (disp("disp_future").blockedReason !== "awaiting_human_confirmation" || disp("disp_future").status !== "blocked") {
+    output.push("人工确认过期：未到期请求对应的派发被动了 —— 它还该原样停在等待确认");
+  }
+  // 正例：到期的请求标 expired，且【绝不】把派发放回 queued（超时≠放行）。
+  if (!expired.includes("hcr_past") || req("hcr_past").status !== "expired") {
+    output.push("人工确认过期：到期的请求没有被标记为 expired");
+  }
+  if (disp("disp_past").status !== "blocked" || disp("disp_past").blockedReason !== "human_confirmation_expired_needs_decision") {
+    output.push("人工确认过期：到期的派发被放回执行/未升级为人工决策 —— 超时被当成了放行");
+  }
+  if (output.length === 0) console.log("人工确认过期：未到期的保住原样、到期的升级为人工决策且绝不放行，逐条核过");
+}
+
 function verifyCapKeepsLiveTaskGroupRecords(output) {
   const state = {taskGroups: [
     {id: "tg_live", status: "development"},
