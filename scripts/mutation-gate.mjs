@@ -105,6 +105,15 @@ const MUTATIONS = [
     expect: "掀动了一个已 verified 的工作项"
   },
   {
+    name: "会话还在跑的 worker lane 不得被 idle",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '      } else if (!session || ["completed_objective", "closed", "recycled"].includes(session.status)) {',
+    to: '      } else if (true) {',
+    expect: "still-running session was freed"
+  },
+  {
     name: "关闭门未满足时真人也不能落闸（satisfied 才 close）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

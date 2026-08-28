@@ -1565,6 +1565,13 @@ function verifyHumanAndOrganizationContracts(output) {
     laneState.workSessions = [{sessionId: "sess_a", status: "completed_objective"}, {sessionId: "sess_b", status: "active"}];
     maintainWorkerLanes(laneState);
     if (laneState.workerLanes.find((lane) => lane.laneId === laneA.lane.laneId)?.status !== "idle") output.push("worker lane not released after its session terminated");
+    // 反例：会话还在跑（sess_b active）的载体不得被 maintain 顺手 idle —— 否则它会在原会话还在执行时被另一个会话抢走。
+    {
+      const laneBAfter = laneState.workerLanes.find((lane) => lane.laneId === laneB.lane.laneId);
+      if (laneBAfter?.status !== "busy" || laneBAfter?.currentSessionId !== "sess_b") {
+        output.push("worker lane with a still-running session was freed（会话还在跑的载体被 idle 了，会被另一会话抢走）");
+      }
+    }
     const laneReuse = acquireWorkerLane(laneState, {roleId: "reviewer", sessionId: "sess_c"});
     if (laneReuse.mode !== "reuse_lane" || laneReuse.lane.laneId !== laneA.lane.laneId || laneReuse.lane.reuseGeneration !== 1) {
       output.push("idle worker lane was not reused with a bumped reuse generation");
