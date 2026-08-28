@@ -3206,6 +3206,14 @@ const MUTATIONS = [
     expect: "起来没先说清自己是谁"
   },
   {
+    name: "人工确认未定稿不得被 consume 销单（核心守卫）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "mcp",
+    from: '  if (request.status === "answered") {',
+    to: '  if (request.status !== "consumed") {',
+    expect: "MCP 一句 confirmation_consume 就把确认单销掉了"
+  },
+  {
     name: "仓库地址规范化：.git 与结尾斜杠同时出现时不能判成两个仓库（剥离顺序）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

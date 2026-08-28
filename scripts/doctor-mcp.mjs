@@ -678,6 +678,15 @@ try {
       throw new Error("AI 一次再分析就把确认单推进了（status="
         + `${analyzedRequest.status} selectedOptionId=${analyzedRequest.selectedOptionId}）—— AI 只能提案，定稿是真人的`);
     }
+    // 人还没定稿就 consume：必须【不】销单。这条走的是 MCP —— 它不像 agent 那条路会先在路由上
+    // 拦「只有 answered 才 consume」，而是无条件调 consumeHumanConfirmation，核心里那道
+    // `status === "answered" 才推进` 的守卫是这里唯一的防线。守卫塌了，AI 一句 consume 就能把
+    // 一张没人回答过的确认单从人工审核页上抹掉，而定稿从没发生。
+    const earlyConsume = await call("human-review-mcp.confirmation_consume", {requestId});
+    if ((earlyConsume.request || earlyConsume).status === "consumed") {
+      throw new Error("人还没定稿，MCP 一句 confirmation_consume 就把确认单销掉了 —— 那张卡片会从人工审核页消失，而没人回答过它");
+    }
+
     // 真人（控制台代表的 system_admin 会话）定稿：这一步必须真的落下去。
     // action 要明写：服务端不再把缺省当成定稿（那是最重的动作）。
     const decided = await call("human-review-mcp.confirmation_decide", {requestId, selectedOptionId: "go", action: "finalize"});
