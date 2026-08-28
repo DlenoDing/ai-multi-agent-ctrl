@@ -96,6 +96,15 @@ const MUTATIONS = [
     expect: "MCP 授权匹配"
   },
   {
+    name: "放弃工作项不得碰已终结的格子",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "        const abandonable = (item) => !WORK_ITEM_SETTLED_STATUSES.includes(item.status);",
+    to: "        const abandonable = () => true;",
+    expect: "掀动了一个已 verified 的工作项"
+  },
+  {
     name: "关闭门未满足时真人也不能落闸（satisfied 才 close）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

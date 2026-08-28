@@ -1808,6 +1808,17 @@ function verifyHumanAndOrganizationContracts(output) {
     abandonTg.workItems = [{id: "wi_abandon", title: "放弃项", status: "needs_decision", blockedReason: "role_drift_guard_blocked", ownerRole: "agent-runtime", progress: 10}];
     createHumanDirective(abandonState, {taskGroupId: "tg_runtime_management", directiveType: "resolve_decision", workItemId: "wi_abandon", resolution: "abandon"}, {actor: "acct_ct"});
     consumeQueuedHumanDirectives(abandonState);
+    // 【放弃不得碰已终结的工作项】：点名一个 verified 的格子去放弃，abandonable 过滤应把它挡在外面，
+    // 否则一条人工指令能把已验收/已关闭的工作项重新掀成 superseded（终态被改写）。
+    {
+      const settledTg = abandonState.taskGroups.find((item) => item.id === "tg_runtime_management");
+      settledTg.workItems.push({id: "wi_verified_keep", title: "已验收别动", status: "verified", ownerRole: "agent-runtime", progress: 100});
+      createHumanDirective(abandonState, {taskGroupId: "tg_runtime_management", directiveType: "resolve_decision", workItemId: "wi_verified_keep", resolution: "abandon"}, {actor: "acct_workspace_owner"});
+      consumeQueuedHumanDirectives(abandonState);
+      if (settledTg.workItems.find((item) => item.id === "wi_verified_keep").status !== "verified") {
+        output.push("resolve_decision abandon 掀动了一个已 verified 的工作项 —— 放弃不得改写已终结格子的终态");
+      }
+    }
     if (abandonTg.workItems.find((item) => item.id === "wi_abandon").status !== "superseded") output.push("resolve_decision abandon did not supersede the needs_decision cell");
 
     // close-barrier must ignore a stale (older stateVersion) cached readiness (else close_barrier_compute
