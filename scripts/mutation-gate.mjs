@@ -96,6 +96,15 @@ const MUTATIONS = [
     expect: "MCP 授权匹配"
   },
   {
+    name: "关闭门未满足时真人也不能落闸（satisfied 才 close）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: "  if (satisfied && request.mutate === true && taskGroup) {",
+    to: "  if (request.mutate === true && taskGroup) {",
+    expect: "真人落闸却把任务组关掉了"
+  },
+  {
     name: "核心决策必须真人定稿",
     check: "verifyHumanAndOrganizationContracts",
     file: CORE,
