@@ -3206,6 +3206,15 @@ const MUTATIONS = [
     expect: "起来没先说清自己是谁"
   },
   {
+    name: "仓库地址规范化：.git 与结尾斜杠同时出现时不能判成两个仓库（剥离顺序）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyHumanAndOrganizationContracts",
+    from: '  return String(url || "").trim().replace(/\\/+$/u, "").replace(/\\.git$/u, "").replace(/\\/+$/u, "").toLowerCase();',
+    to: '  return String(url || "").trim().replace(/\\.git$/u, "").replace(/\\/+$/u, "").toLowerCase();',
+    expect: "as a different repository from the registered"
+  },
+  {
     name: "会话清理不得删掉未到期的会话目录（mtime<cutoff 判据）",
     file: "apps/agent-runtime/runtime.mjs",
     gate: "agent",

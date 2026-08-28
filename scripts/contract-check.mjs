@@ -5147,7 +5147,10 @@ function verifyHumanAndOrganizationContracts(output) {
       }
       // .git 后缀与结尾斜杠不该造成差异，否则人会以为自己填的是同一个仓库却被拒。
       // （登记地址本身可能已带 .git —— 判据要两种写法都认，不能只测其中一种。）
-      for (const variant of [registeredUrl.replace(/\.git$/u, ""), `${registeredUrl.replace(/\.git$/u, "")}.git`, `${registeredUrl}/`]) {
+      // base.git/ 这个【.git 与结尾斜杠同时出现】的组合是排序最容易踩错的一格：先剥 .git 再剥斜杠的话，
+      // "…/repo.git/" 里的 .git 不在结尾、剥不掉，同一个仓库被判成两个。显式造出这一格，不靠"种子 URL 恰好以 .git 结尾"。
+      const repoBase = registeredUrl.replace(/\.git$/u, "");
+      for (const variant of [repoBase, `${repoBase}.git`, `${registeredUrl}/`, `${repoBase}.git/`, `${repoBase}/`]) {
         if (!repositoryUrlRegisteredForProject(registeredProject, variant)) {
           output.push(`the repository binding check treats ${JSON.stringify(variant)} as a different repository from the registered ${JSON.stringify(registeredUrl)}`);
         }
