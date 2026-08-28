@@ -114,6 +114,15 @@ const MUTATIONS = [
     expect: "still-running session was freed"
   },
   {
+    name: "记录上限不得裁掉活着任务组的记录（strandedLive）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyCapKeepsLiveTaskGroupRecords",
+    from: "    .filter((item) => liveGroupIds.has(item.taskGroupId) && !keptGroupIds.has(item.taskGroupId));\n  return strandedLive.length ? [...kept, ...strandedLive] : kept;",
+    to: "    .filter((item) => liveGroupIds.has(item.taskGroupId) && !keptGroupIds.has(item.taskGroupId));\n  return kept;",
+    expect: "活着的任务组（tg_live）的唯一记录被裁掉了"
+  },
+  {
     name: "关闭门未满足时真人也不能落闸（satisfied 才 close）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

@@ -43,7 +43,7 @@ import {
   maintainWorkerLanes,
   rotateWorkerLane,
   buildTaskContract,
-  computeCloseBarrier,
+  computeCloseBarrier, capPerTaskGroupRecords,
   computeProgressSnapshots,
   createHumanConfirmationRequest,
   decideHumanConfirmation,
@@ -818,6 +818,7 @@ run(verifyOverlayOwnershipComesFromItsTaskGroup);
 run(verifyRuntimeFileWritesAreRegistered);
 run(verifyEveryWriteRouteIsGuardedOrRegistered);
 run(verifyEveryCapExplainsWhatItKeeps);
+run(verifyCapKeepsLiveTaskGroupRecords);
 run(verifyOneProjectWriteTouchesOneShard);
 run(verifyPanelGatesCoverEveryBlockInside);
 run(verifyTopologyBlockerPartsAllHaveChinese);
@@ -17949,6 +17950,34 @@ function verifyEveryWriteRouteIsGuardedOrRegistered(output) {
   }
   console.log(`写路由守卫：${starts.length} 个写路由块逐个核对，${starts.length - unguarded.length} 个走 guarded write、`
     + `${unguarded.length} 个登记了替代鉴权`);
+}
+
+// 【记录上限裁剪不得把活着任务组的记录裁掉】。capPerTaskGroupRecords 的 strandedLive 兜底：超限时，
+// 落在窗口外、但属于未终结任务组、且该组在窗口内没有别的记录的那几条，要补回来。原先只在 CAP_FUNCTION_GUARDS
+// 里登记了「留一条」的理由，从没真跑过它 —— strandedLive 断了，活着的组下一拍找不到自己的关闭门/就绪记录而无人报错。
+function verifyCapKeepsLiveTaskGroupRecords(output) {
+  const state = {taskGroups: [
+    {id: "tg_live", status: "development"},
+    {id: "tg_dead", status: "closed"}
+  ]};
+  const records = [
+    {id: "r1", taskGroupId: "tg_dead"},
+    {id: "r2", taskGroupId: "tg_dead"},
+    {id: "r3", taskGroupId: "tg_dead"},
+    {id: "r_live", taskGroupId: "tg_live"}
+  ];
+  const capped = capPerTaskGroupRecords(records, state, 2);
+  const ids = capped.map((item) => item.id);
+  if (!ids.includes("r_live")) {
+    output.push("记录上限：活着的任务组（tg_live）的唯一记录被裁掉了 —— 那个组下一拍会找不到自己的记录（关闭门/完成就绪会读空）");
+  }
+  if (ids.includes("r3")) {
+    output.push("记录上限：已终结任务组的窗口外记录没被裁 —— strandedLive 把死组的也一并留了，上限形同虚设");
+  }
+  // 正例：没超限时原样返回。
+  const under = capPerTaskGroupRecords(records.slice(0, 2), state, 2);
+  if (under.length !== 2) output.push("记录上限：没超限时不该改动记录集");
+  if (output.length === 0) console.log("记录上限：超限时活着任务组的记录被保住、死组的照裁，逐条核过");
 }
 
 function verifyEveryCapExplainsWhatItKeeps(output) {

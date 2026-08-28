@@ -2059,7 +2059,7 @@ function recordAdmissionDecision(state, input = {}) {
 // 终态集合只有一份：TASK_GROUP_SETTLED_STATUSES（在 taskGroupSettledRejection 处声明并导出）。
 // 这里原先另立了一个同内容的常量 —— 两个名字装同一个集合，早晚会漂开一个
 //（本仓在"两层上限"上撞过：生效的永远是更严的那个，调另一个等于没用）。
-function capPerTaskGroupRecords(records, state, limit) {
+export function capPerTaskGroupRecords(records, state, limit) {
   if (records.length <= limit) return records;
   const liveGroupIds = new Set((state.taskGroups || [])
     .filter((group) => !TASK_GROUP_SETTLED_STATUSES.includes(group.status))
