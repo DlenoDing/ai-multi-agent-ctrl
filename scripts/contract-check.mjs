@@ -914,6 +914,7 @@ run(verifySurveyRendersEveryRegisteredPage);
 run(verifyDockerEnvironmentFailuresSayWhatToDo);
 run(verifyProjectAdminAndOwnerStayOnePerson);
 run(verifyHealthReadDoesNotCloneEveryRequest);
+run(verifyGetReadPathReusesSharedSnapshot);
 run(verifyCallerChosenIdsCannotShadow);
 run(verifyToolArgReachabilityIsRegistered);
 run(verifyGrantRoleTablesAgree);
@@ -8734,6 +8735,31 @@ function verifyProjectAdminAndOwnerStayOnePerson(output) {
     output.push("授权下拉里没有「项目管理员」了 —— 上面那条就成了永远为真（两个都没有当然不会同时出现）");
   }
   console.log("项目管理员＝项目负责人（2026-08-26 人定）：权限引用同一常量、授权下拉只留一个，逐条核过");
+}
+
+// 【GET 读路径要走共用只读快照、并按对象身份复用】。健康那条只管 readHealthState；主 GET（/api/state 等）走
+// readStateForRead。原先「每请求全量克隆」正是这里栽过的，修好之后没有门拦回退：把分发改成一律 readState()、
+// 或去掉 readStateForRead 里的复用判据，每个 GET 就又深拷+重新派生一遍，而只会慢回去、不会红。纯性能，只能按结构核。
+function verifyGetReadPathReusesSharedSnapshot(output) {
+  const source = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  if (!/sharedReadEligible\s*\?\s*readStateForRead\(\)\s*:\s*readState\(\)/u.test(source)) {
+    output.push("可共用的 GET 没有走 readStateForRead（分发的三元没了）—— 每个 GET 会深拷整份中央态并重新派生，"
+      + "而这正是「每请求全量克隆」修好过的那处");
+  }
+  if (!/req\.method === "GET" && !url\.pathname\.startsWith\("\/api\/agent\/v1\/"\)/u.test(source.replace(/\!/g, "!"))) {
+    output.push("sharedReadEligible 的判据变了（不再是「GET 且非 agent 网关」）—— 提取脱节或语义改了，这条要跟上");
+  }
+  const start = source.indexOf("function readStateForRead() {");
+  const body = start < 0 ? "" : source.slice(start, source.indexOf("\n}\n", start));
+  if (!body) { output.push("提不出 readStateForRead 的函数体 —— 本条在空转"); return; }
+  if (!/preparedReadState\.source !== shared/u.test(body)) {
+    output.push("readStateForRead 没有按【共用只读那份的对象身份】复用上次冻结好的快照 —— "
+      + "状态没变时每个 GET 也会重新 readStoredState + ensureRuntimeCollections + deepFreeze 一遍");
+  }
+  if (!/deepFreezeState\(fresh\)/u.test(body)) {
+    output.push("readStateForRead 没有冻结那份共用快照 —— 复用一份可被就地改写的对象，一个 GET 的顺手改动会串到下一个");
+  }
+  console.log("GET 读路径：可共用的 GET 走 readStateForRead、按对象身份复用冻结快照，逐条核过（纯性能性质，只能按结构核）");
 }
 
 function verifyHealthReadDoesNotCloneEveryRequest(output) {

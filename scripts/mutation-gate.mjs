@@ -3478,6 +3478,24 @@ const MUTATIONS = [
     expect: "近游标读没走尾窗"
   },
   {
+    name: "可共用的 GET 要走 readStateForRead（不能每请求深拷）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    check: "verifyGetReadPathReusesSharedSnapshot",
+    from: "  const state = sharedReadEligible ? readStateForRead() : readState();",
+    to: "  const state = readState(); void sharedReadEligible;",
+    expect: "每请求全量克隆"
+  },
+  {
+    name: "readStateForRead 要按对象身份复用冻结快照",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    check: "verifyGetReadPathReusesSharedSnapshot",
+    from: "  if (preparedReadState.source !== shared) {",
+    to: "  if (true) {",
+    expect: "没有按【共用只读那份的对象身份】复用"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
