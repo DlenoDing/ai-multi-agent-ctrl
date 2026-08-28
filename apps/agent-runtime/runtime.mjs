@@ -260,6 +260,17 @@ async function selfCheck(config, {verbose = false} = {}) {
 }
 
 // 把网关「没派发」的回执翻成人话：原因 + 排队里为什么轮不到本节点（角色/模型/契约）。
+// 控制面要求退出的两种：关停排空（重启就能回来）与吊销（令牌作废，要重签票）。原先一句英文，不说是哪种、为什么。
+function markShutdownRequested(config, command) {
+  config.shutdownRequested = true;
+  config.shutdownKind = command.commandType;
+  config.shutdownReason = String(command.payload?.reason || command.reason || "").slice(0, 200);
+}
+function announceShutdown(config) {
+  const revoked = config.shutdownKind === "revoke";
+  process.stdout.write(`控制面要求本节点退出（${revoked ? "已被吊销" : "关停排空"}${config.shutdownReason ? `：${config.shutdownReason}` : ""}）—— ${revoked ? "本节点的令牌已失效，要再接入得重新签一张入网令牌" : "重启进程即可回来"}\n`);
+}
+
 function describeClaimMiss(claimed) {
   const detail = claimed.missDetail || {};
   const reasons = Array.isArray(detail.reasons) ? detail.reasons : [];
@@ -297,7 +308,10 @@ async function run(config) {
   if (config.shutdownRequested) {
     delete config.shutdownRequested;
     writeSecretJson(configPath, config);
-    process.stdout.write("agent runtime restarting after a control-plane shutdown; rejoining\n");
+    process.stdout.write(config.shutdownKind === "revoke"
+      ? "上次是被控制面吊销的：本节点的令牌已失效，下面的重连多半会被拒 —— 要再接入得重新签一张入网令牌重跑 bootstrap\n"
+      : "上次是控制面要求关停排空的，现在重新接入（控制面允许 offline→online 复活）\n");
+    delete config.shutdownKind; delete config.shutdownReason;
   }
   const sweepIntervalMs = Math.max(5 * 60 * 1000, Number(process.env.AIMAC_AGENT_SWEEP_INTERVAL_MS || 60 * 60 * 1000));
   const runSweeps = () => {
@@ -317,7 +331,7 @@ async function run(config) {
       lastSweepAt = Date.now();
     }
     if (config.shutdownRequested) {
-      process.stdout.write("agent runtime shutdown requested by control plane\n");
+      announceShutdown(config);
       return;
     }
     const outboxPending = await flushCheckpointOutbox(config);
@@ -334,7 +348,7 @@ async function run(config) {
     }
     await pollControlCommands(config, {waitMs: 0});
     if (config.shutdownRequested) {
-      process.stdout.write("agent runtime shutdown requested by control plane\n");
+      announceShutdown(config);
       return;
     }
     if (outboxPending > 0) {
@@ -575,7 +589,7 @@ async function handleControlCommand(config, command, options = {}) {
       controlState.reason = `执行被控制命令中断：${command.commandType}`;
       const stopResult = await terminateChild(controlState.child, Number(command.payload?.stopTimeoutMs || process.env.AIMAC_AGENT_STOP_TIMEOUT_MS || 10000));
       if (["revoke", "shutdown"].includes(command.commandType)) {
-        config.shutdownRequested = true;
+        markShutdownRequested(config, command);
         writeSecretJson(configPath, config);
       }
       if (command.commandType === "revoke") removeGlobalRemoteMcpClients();
@@ -589,7 +603,7 @@ async function handleControlCommand(config, command, options = {}) {
       return;
     }
     if (["revoke", "shutdown"].includes(command.commandType)) {
-      config.shutdownRequested = true;
+      markShutdownRequested(config, command);
       writeSecretJson(configPath, config);
       if (command.commandType === "revoke") removeGlobalRemoteMcpClients();
       await ackControlCommand(config, command, "completed", {reason: "node-level shutdown accepted while idle"});

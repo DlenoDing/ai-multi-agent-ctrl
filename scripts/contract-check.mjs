@@ -973,6 +973,7 @@ run(verifyAgentctlUnknownCommandListsCommands);
 run(verifyConsoleRoleExamplesAreRegistered);
 run(verifyAgentRunAnnouncesItself);
 runAsync(verifyAgentAnnouncesOutageOnceAndRecovery);
+runAsync(verifyAgentSaysWhyItStops);
 run(verifyDefaultBackupTargetIsGitIgnored);
 run(verifyBootstrapEchoSamplesMatchRuntime);
 run(verifyInstallerDocsMatchScriptAndTemplate);
@@ -15940,6 +15941,43 @@ function verifyDefaultBackupTargetIsGitIgnored(output) {
     output.push("npm run backup 的默认目标 .runtime-backup-<时间戳>/ 没被 .gitignore 挡住 —— 备份一次再 git add -A，引导令牌与 MCP 服务令牌就进了仓库");
   } else {
     console.log("npm run backup 的默认目标（.runtime-backup-<时间戳>/）被 .gitignore 挡住了");
+  }
+}
+
+// 【控制面要求节点退出时，agent 要说是关停排空还是吊销、为什么、接下来怎么办】。原先一句英文 shutdown requested。
+// 假控制面在控制轮询里递一条 shutdown 命令（带 reason），agent 该打出那句并干净退出。
+async function verifyAgentSaysWhyItStops(output) {
+  const workDir = mkdtempSync(join(tmpdir(), "aimac-shutdown-"));
+  const {createServer: createHttpServer} = await import("node:http");
+  const fake = createHttpServer((req, res) => {
+    res.writeHead(200, {"content-type": "application/json"});
+    if (req.method === "GET" && /control/u.test(String(req.url))) {
+      res.end(JSON.stringify({commands: [{commandId: "acc_probe", sequence: 1, commandType: "shutdown", payload: {reason: "探针：关停排空"}}], nextCursor: 1}));
+    } else res.end("{}");
+  });
+  const port = await new Promise((resolve) => fake.listen(0, "127.0.0.1", () => resolve(fake.address().port)));
+  const base = `http://127.0.0.1:${port}`;
+  writeFileSync(join(workDir, "agent-config.json"), JSON.stringify({
+    serverUrl: base, workDir, nodeId: "node_shutdown_probe", nodeName: "shutdown-probe", allowedRoles: ["agent-runtime"], nodeToken: "aimac_node_probe",
+    gateway: {baseUrl: `${base}/api/agent/v1`, dispatchUrl: `${base}/api/agent/v1/dispatches/next`, mcpUrl: `${base}/mcp`, selfCheckUrl: `${base}/api/agent/v1/self-check`,
+      heartbeatUrl: `${base}/api/agent/v1/heartbeat`, controlUrl: `${base}/api/agent/v1/control`}
+  }));
+  // 必须用异步 spawn 而不是 spawnSync：本检查里的假控制面就跑在这个进程里，spawnSync 会把事件循环整段阻塞，
+  // 假服务器一个请求都答不上，agent 只会 control_poll 超时（第一版就这么假红的）。
+  const agent = spawn(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "run"], {cwd: root, stdio: ["ignore", "pipe", "pipe"],
+    env: {...process.env, AIMAC_AGENT_WORK_DIR: workDir, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_REQUEST_TIMEOUT_MS: "3000"}});
+  let said = ""; let exitCode = null;
+  agent.stdout.on("data", (chunk) => { said += String(chunk); });
+  agent.stderr.on("data", (chunk) => { said += String(chunk); });
+  agent.on("exit", (code) => { exitCode = code; });
+  await new Promise((resolve) => { const tick = setInterval(() => { if (exitCode !== null) { clearInterval(tick); resolve(); } }, 50); setTimeout(() => { clearInterval(tick); resolve(); }, 20000); });
+  try { agent.kill("SIGKILL"); } catch { /* 已经走了 */ }
+  await new Promise((resolve) => fake.close(() => resolve()));
+  rmSync(workDir, {recursive: true, force: true});
+  if (exitCode !== 0 || !/控制面要求本节点退出（关停排空：探针：关停排空）—— 重启进程即可回来/u.test(said)) {
+    output.push(`控制面要求退出时 agent 没说是哪种/为什么/接下来怎么办（exit ${exitCode}）：${said.slice(0, 300).replace(/\n/g, " | ")}`);
+  } else {
+    console.log("控制面要求退出：agent 说清了关停排空/吊销、原因与接下来怎么办，并干净退出");
   }
 }
 

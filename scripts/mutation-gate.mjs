@@ -3451,6 +3451,15 @@ const MUTATIONS = [
     expect: "该只说一句「连不上」"
   },
   {
+    name: "控制面要求退出时 agent 要说是关停还是吊销、为什么",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "contract",
+    check: "verifyAgentSaysWhyItStops",
+    from: "  config.shutdownReason = String(command.payload?.reason || command.reason || \"\").slice(0, 200);",
+    to: "  config.shutdownReason = \"\";",
+    expect: "没说是哪种/为什么"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
