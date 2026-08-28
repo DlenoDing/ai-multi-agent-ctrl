@@ -36,6 +36,8 @@ const configPath = join(workDir, "agent-config.json");
 // of orphaning a detached model CLI that keeps holding the checkout and calling MCP/pushing.
 // Declared BEFORE the top-level `await main()` so installChildReaper() doesn't hit a temporal dead zone.
 const activeChildProcesses = new Set();
+// 控制面断线的起点（run 循环与重试共用）：放在顶层 await 之前，否则整个运行期都在 TDZ 里。
+let outageSince = 0;
 // 这个文件的模块体在下面就 `await main()` —— 顶层 await 会把模块求值挂起，
 // 【它之后声明的模块级 const 在整个运行期都停在 TDZ 里】。第一版把这个常量放在
 // createBoundedOutput 旁边（1350 行），结果执行器一起来就 ReferenceError，而且不是报错
@@ -431,7 +433,10 @@ async function run(config) {
     // (the installer runs it under a bare `nohup &` with no restart supervisor). Per-dispatch failures are
     // already handled by the inner try/catch; this catches everything else — log and continue after a
     // backoff so a control-plane blip degrades to a retry instead of killing the whole fleet.
-    process.stderr.write(`agent runtime loop iteration error (continuing): ${String(error?.message || error)}\n`);
+    // 连不上控制面只在开始时说一句（每拍都刷一行 fetch failed 没有信息量）；别的错误照旧逐条说。
+    if (!announceOutageIfNeeded(error, config.pollIntervalSeconds)) {
+      process.stderr.write(`agent runtime loop iteration error (continuing): ${String(error?.message || error)}\n`);
+    }
     if (once) return;
     await delay(config.pollIntervalSeconds * 1000);
    }
@@ -515,7 +520,7 @@ async function pollControlCommands(config, options = {}) {
   try {
     result = await retryableAgentRequest(() => jsonRequest(url.href, {token: config.nodeToken, timeoutMs: Math.max(0, Math.min(30000, Number(options.waitMs || 0))) + 15000}), "control_poll");
   } catch (error) {
-    process.stderr.write(`control poll deferred: ${error.message}\n`);
+    if (!announceOutageIfNeeded(error, config.pollIntervalSeconds)) process.stderr.write(`control poll deferred: ${error.message}\n`);
     return {commands: [], nextCursor: config.controlCursor || 0};
   }
   for (const command of result.commands || []) {
@@ -654,6 +659,7 @@ async function flushCheckpointOutbox(config) {
       await submitExecutionEventForDispatch(config, item.dispatchId, "checkpoint_submitted", {progressPercent: 100, summary: "Checkpoint replay accepted by control plane.", evidenceRefs: [`checkpoint:${item.checkpoint?.runId || "accepted"}`]}).catch(() => {});
       unlinkSync(path);
       process.stdout.write(`checkpoint replayed: ${item.dispatchId}\n`);
+      process.stdout.write(`已补交检查点 ${item.dispatchId}（上次没交上的，这次控制面接受了）\n`);
     } catch (error) {
       const attempts = Number(item.replayAttempts || 0) + 1;
       const attemptCap = Math.max(3, Number(process.env.AIMAC_AGENT_REPLAY_MAX_ATTEMPTS || 30));
@@ -2070,6 +2076,7 @@ async function jsonRequest(url, options = {}) {
     ...(options.body ? {body: JSON.stringify(options.body)} : {}),
     signal: AbortSignal.timeout(timeoutMs)
   });
+  announceRecoveryIfNeeded();
   const text = await response.text();
   let payload;
   try { payload = text ? JSON.parse(text) : {}; } catch { payload = {message: text}; }
@@ -2095,7 +2102,9 @@ async function retryableAgentRequest(fn, label) {
     } catch (error) {
       if (!retryableControlPlaneError(error) || attempt >= attempts) throw error;
       const waitMs = Math.min(2000, 150 * attempt + Math.floor(Math.random() * 150));
-      process.stderr.write(`${label} retryable control-plane conflict; retry ${attempt}/${attempts} after ${waitMs}ms\n`);
+      // 「conflict」是 409 那类的词；连不上是另一回事，且断线期间只说一句（announceOutageIfNeeded），逐次重试不刷屏。
+      if (error?.status) process.stderr.write(`${label} 控制面回了 HTTP ${error.status}（可重试），${waitMs}ms 后第 ${attempt}/${attempts} 次重试\n`);
+      else if (!outageSince) process.stderr.write(`${label} 连不上控制面（${shortCause(error)}），${waitMs}ms 后第 ${attempt}/${attempts} 次重试\n`);
       await delay(waitMs);
     }
   }
@@ -2103,6 +2112,30 @@ async function retryableAgentRequest(fn, label) {
   // 留着是因为一旦有人把下限改没了，没有它就会静静地返回 undefined —— 那比抛错难查得多。
   // （它因此在「agent 侧失败码零覆盖」的清单上会一直挂着，那是如实的，不要为它编一个够不到的用例。）
   throw new Error(`agent_control_plane_retry_exhausted:${label} 反复冲突，重试次数用完了`);
+}
+
+// 控制面中途断掉时的口径：连不上（没有 HTTP 状态码）只在开始时说一句、接上时说一句，中间不刷屏；
+// 有状态码的重试（409/429/5xx）照旧逐次说，那是另一类事。
+function shortCause(error) {
+  const text = `${error?.code || ""} ${error?.cause?.code || ""} ${error?.cause?.message || ""} ${error?.message || ""}`;
+  if (/ECONNREFUSED|bad port/u.test(text)) return "地址或端口没人监听";
+  if (/ENOTFOUND|EAI_AGAIN/u.test(text)) return "域名解析不了";
+  if (/TIMEOUT|ETIMEDOUT|abort/iu.test(text)) return "超时";
+  if (/CERT|TLS|SSL|certificate/iu.test(text)) return "证书校验失败";
+  return String(error?.cause?.message || error?.message || error).slice(0, 80);
+}
+function announceOutageIfNeeded(error, pollIntervalSeconds) {
+  if (error?.status) return false;
+  if (outageSince) return true;
+  outageSince = Date.now();
+  process.stderr.write(`控制面连不上（${shortCause(error)}）—— 每 ${pollIntervalSeconds} 秒重试一次，接上后自动恢复；期间不领新活、已领的照常执行\n`);
+  return true;
+}
+function announceRecoveryIfNeeded() {
+  if (!outageSince) return;
+  const seconds = Math.round((Date.now() - outageSince) / 1000);
+  outageSince = 0;
+  process.stderr.write(`已重新接上控制面（中断约 ${seconds} 秒）\n`);
 }
 
 function retryableControlPlaneError(error) {

@@ -3442,6 +3442,15 @@ const MUTATIONS = [
     expect: "派发执行失败时终端上没有一句人话"
   },
   {
+    name: "控制面中途断掉时 agent 只说一句连不上（不刷屏）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "contract",
+    check: "verifyAgentAnnouncesOutageOnceAndRecovery",
+    from: "  if (outageSince) return true;\n  outageSince = Date.now();",
+    to: "  outageSince = Date.now();",
+    expect: "该只说一句「连不上」"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

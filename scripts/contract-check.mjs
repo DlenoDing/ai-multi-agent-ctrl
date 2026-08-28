@@ -972,6 +972,7 @@ run(verifyOperatorKnobsAreDocumented);
 run(verifyAgentctlUnknownCommandListsCommands);
 run(verifyConsoleRoleExamplesAreRegistered);
 run(verifyAgentRunAnnouncesItself);
+runAsync(verifyAgentAnnouncesOutageOnceAndRecovery);
 run(verifyDefaultBackupTargetIsGitIgnored);
 run(verifyBootstrapEchoSamplesMatchRuntime);
 run(verifyInstallerDocsMatchScriptAndTemplate);
@@ -15942,12 +15943,50 @@ function verifyDefaultBackupTargetIsGitIgnored(output) {
   }
 }
 
+// 【控制面中途断掉，agent 只说一句「连不上」、接上说一句「已重新接上」，中间不刷屏】。实测断线 12 秒里每 2 秒刷 8 行英文
+// （retryable control-plane conflict ×6 —— 「conflict」是 409 的词、这里是连不上；loop iteration error；control poll deferred）。
+// 指一个先没人听、4 秒后才起一个假控制面（什么都回 {}）的端口跑 run，读它的终端。
+async function verifyAgentAnnouncesOutageOnceAndRecovery(output) {
+  const workDir = mkdtempSync(join(tmpdir(), "aimac-outage-"));
+  const {createServer: createNetServer} = await import("node:net");
+  const {createServer: createHttpServer} = await import("node:http");
+  const port = await new Promise((resolve) => { const probe = createNetServer(); probe.listen(0, "127.0.0.1", () => { const {port: free} = probe.address(); probe.close(() => resolve(free)); }); });
+  writeFileSync(join(workDir, "agent-config.json"), JSON.stringify({
+    serverUrl: `http://127.0.0.1:${port}`, workDir: workDir, nodeId: "node_outage_probe", nodeName: "outage-probe", allowedRoles: ["agent-runtime"], nodeToken: "aimac_node_probe",
+    gateway: {baseUrl: `http://127.0.0.1:${port}/api/agent/v1`, dispatchUrl: `http://127.0.0.1:${port}/api/agent/v1/dispatches/next`, mcpUrl: `http://127.0.0.1:${port}/mcp`, selfCheckUrl: `http://127.0.0.1:${port}/api/agent/v1/self-check`}
+  }));
+  const agent = spawn(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "run"], {cwd: root, stdio: ["ignore", "pipe", "pipe"],
+    env: {...process.env, AIMAC_AGENT_WORK_DIR: workDir, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_POLL_INTERVAL_SECONDS: "1", AIMAC_AGENT_REQUEST_TIMEOUT_MS: "1500", AIMAC_AGENT_RETRY_ATTEMPTS: "2"}});
+  let said = "";
+  agent.stdout.on("data", (chunk) => { said += String(chunk); });
+  agent.stderr.on("data", (chunk) => { said += String(chunk); });
+  let fake = null;
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    fake = createHttpServer((req, res) => { res.writeHead(200, {"content-type": "application/json"}); res.end("{}"); });
+    await new Promise((resolve) => fake.listen(port, "127.0.0.1", resolve));
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+  } finally {
+    try { agent.kill("SIGKILL"); } catch { /* 已经走了 */ }
+    if (fake) await new Promise((resolve) => fake.close(() => resolve()));
+    rmSync(workDir, {recursive: true, force: true});
+  }
+  const outageLines = (said.match(/控制面连不上（/gu) || []).length;
+  const recoveryLines = (said.match(/已重新接上控制面/gu) || []).length;
+  const noise = (said.match(/retryable control-plane conflict|loop iteration error|control poll deferred/gu) || []).length;
+  if (outageLines !== 1 || recoveryLines !== 1 || noise !== 0) {
+    output.push(`控制面中途断掉时 agent 该只说一句「连不上」、接上说一句「已重新接上」、不刷屏：实际 连不上×${outageLines} 已重新接上×${recoveryLines} 英文噪音×${noise}：${said.slice(0, 400).replace(/\n/g, " | ")}`);
+  } else {
+    console.log("控制面中途断掉：agent 只说一句连不上、接上说一句已重新接上，中间不刷屏");
+  }
+}
+
 // 【agentctl run 起来要先说一句】。原先领到活之前一个字都不打：人看到的是一块空屏，分不清是在等派发还是根本没连上。
 // 伪造一份最小的 agent-config.json、指向没人监听的端口，跑 run --once：第一行得是「正在等待派发」那句（在任何请求之前）。
 function verifyAgentRunAnnouncesItself(output) {
   const workDir = mkdtempSync(join(tmpdir(), "aimac-run-announce-"));
   writeFileSync(join(workDir, "agent-config.json"), JSON.stringify({
-    serverUrl: "http://127.0.0.1:9", nodeId: "node_probe", nodeName: "probe-node", allowedRoles: ["agent-runtime"],
+    serverUrl: "http://127.0.0.1:9", workDir: workDir, nodeId: "node_probe", nodeName: "probe-node", allowedRoles: ["agent-runtime"],
     nodeToken: "aimac_node_probe", gateway: {baseUrl: "http://127.0.0.1:9/api/agent/v1", mcpUrl: "http://127.0.0.1:9/mcp"}
   }));
   const run = spawnSync(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "run", "--once"],
