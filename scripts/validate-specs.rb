@@ -1606,9 +1606,14 @@ errors << "grantMatchesArgs 必须导出，contract-check 的跨项目归属行�
 # 关掉 fsync 是"这道门不验耐久性"的声明，不是"这套系统不需要耐久性"。
 # 它一旦出现在【专门验耐久性的门】里，那些门就会在一个不落盘的世界里全绿 ——
 # 崩溃一致性、并发写、空转不落盘这三道验的都是真实落盘行为。
+# 两个 fsync 开关同规守：事件存储（AIMAC_PROJECT_EVENT_FSYNC）与【中央状态文件本身】（AIMAC_RUNTIME_JSON_FSYNC）。
+# 后者原先没门守——而 crash-consistency-gate 的核心断言正是 control-plane-state.json 不许写成半份，
+# 那道门里一旦有人 AIMAC_RUNTIME_JSON_FSYNC=false 提速，它就会在一个状态文件不落盘的世界里全绿。
 %w[crash-consistency-gate.mjs concurrent-writer-gate.mjs idle-tick-gate.mjs].each do |gate|
   gate_source = read_source("scripts", gate)
-  errors << "#{gate} 不得关闭 AIMAC_PROJECT_EVENT_FSYNC —— 它验的就是真实落盘行为，关掉之后整道门在一个不落盘的世界里全绿" if gate_source.include?("AIMAC_PROJECT_EVENT_FSYNC")
+  %w[AIMAC_PROJECT_EVENT_FSYNC AIMAC_RUNTIME_JSON_FSYNC].each do |knob|
+    errors << "#{gate} 不得关闭 #{knob} —— 它验的就是真实落盘行为，关掉之后整道门在一个不落盘的世界里全绿" if gate_source.include?(knob)
+  end
 end
 # 而默认必须是开着的：只有显式 === "false" 才关。写成 !== "true" 之类就会让生产默认不落盘。
 event_store_source = read_source("apps/control-plane-ui/lib/project-event-store.mjs")
@@ -1616,6 +1621,13 @@ fsync_guards = event_store_source.scan(/AIMAC_PROJECT_EVENT_FSYNC\s*(===|!==)\s*
 errors << "事件存储里找不到 fsync 开关判据 —— 提取逻辑与代码脱节" if fsync_guards.size < 3
 fsync_guards.each do |op, value|
   errors << %(fsync 开关必须"默认开、显式 false 才关"，现在写的是 #{op} "#{value}" —— 这会让生产默认不落盘) unless value == "false"
+end
+# 中央状态文件的 fsync 开关同规：默认必须开、只有显式 "false" 才关（writeDurableFile 与 fsyncDirectory 各一处）。
+state_store_source_for_fsync = read_source("apps/control-plane-ui/lib/state-store.mjs")
+runtime_fsync_guards = state_store_source_for_fsync.scan(/AIMAC_RUNTIME_JSON_FSYNC\s*(===|!==)\s*"(\w+)"/)
+errors << "state-store 里找不到 AIMAC_RUNTIME_JSON_FSYNC 开关判据 —— 提取逻辑与代码脱节" if runtime_fsync_guards.size < 2
+runtime_fsync_guards.each do |op, value|
+  errors << %(中央状态文件 fsync 开关必须"默认开、显式 false 才关"，现在写的是 #{op} "#{value}" —— 这会让生产默认不落盘) unless value == "false"
 end
 
 # 跑得久的活靠心跳续认领：认领到期会被控制面回收重排，而代理 push 前的持有权复核会让整轮工作作废
