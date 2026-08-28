@@ -778,6 +778,7 @@ runAsync(verifyTestServersDieWithTheirParent);
 run(verifyRuntimeConstantsSitBeforeItsTopLevelAwait);
 run(verifyStaleE2eRuntimeDirsGetSwept);
 run(verifyRejectedWritesLeaveStateUntouched);
+run(verifyPostgresWriteIsVersionGuarded);
 run(verifyAssignedFieldsAreDeclaredBySpec);
 run(verifyAccountRolesConstantMatchesSpec);
 run(verifyAgentFailureCodeCoverageRatchet);
@@ -15650,6 +15651,37 @@ function verifyAssignedFieldsAreDeclaredBySpec(output) {
 // computeCloseBarrier 在拒绝机器主体落闸（403）之前就写了 closeBarriers。今天的调用方（REST/MCP）
 // 都会丢掉抛错后的状态，所以没出事 —— 但这是函数自己该守的契约，不该靠每个调用方都记得丢。
 // 判法：在克隆态上造一次必被拒的调用，抛出之后集合与调用前逐字节相同。
+// 【PostgreSQL 写路径的 CAS 不得退化成「后写覆盖」】。runtime_json 那条 CAS 有并发写门 + 三条变异守；
+// PG 这条只有 docker doctor 行为验过，而 docker 不在 commit.sh 链里 —— 有人把带版本的守卫 UPDATE 改成
+// 无条件 UPSERT（INSERT..ON CONFLICT DO UPDATE），PG 部署就变成后写覆盖丢更新，而 commit.sh 全绿。
+// 纯结构核（不需要真 PG）：expectedVersion 非空那支必须是【带 stateVersion 比对的 UPDATE】、rowCount 0 判冲突，
+// 且那支不得用 ON CONFLICT 兜底建行。
+function verifyPostgresWriteIsVersionGuarded(output) {
+  const worker = readFileSync(join(root, "apps/control-plane-ui/lib/pg-pool-worker.mjs"), "utf8");
+  const start = worker.indexOf("async function writeStateWithShards(");
+  const body = start < 0 ? "" : worker.slice(start, worker.indexOf("\nasync function ", start + 1) > 0 ? worker.indexOf("\nasync function ", start + 1) : start + 4000);
+  if (!body) { output.push("提不出 writeStateWithShards 的函数体 —— 本条在空转"); return; }
+  // 守卫支只取到中央行那条写入语句结束（第一个 RETURNING id）：再往后是分片 upsert，那里的 ON CONFLICT 是
+  // 按 project_id 的正当写法，不该被这条判据当成绕过 CAS。
+  const elseStart = body.indexOf("} else {");
+  // 剥掉 // 注释：本函数的注释里就写着「INSERT..ON CONFLICT would silently create…」在解释为什么不能那么写，
+  // 不剥就会拿这句解释当成"用了 ON CONFLICT"喂饱判据。
+  const centralWrite = (elseStart < 0 ? "" : body.slice(elseStart, body.indexOf("RETURNING id", elseStart) + "RETURNING id".length)).replace(/\/\/[^\n]*/gu, "");
+  if (!/expectedVersion === null \|\| expectedVersion === undefined/u.test(body)) {
+    output.push("PG 写没有按 expectedVersion 分「首次插入」与「带版本守卫更新」两支 —— CAS 的立足点没了");
+  }
+  if (!/UPDATE \$\{ident\(table\)\}[\s\S]*?WHERE id = \$1 AND COALESCE\(\(state->>'stateVersion'\)::bigint, 0\) = \$3/u.test(centralWrite)) {
+    output.push("PG 的带版本守卫写不是「UPDATE … WHERE id=$1 AND stateVersion=$3」—— 版本对不上就不该写中的那道 CAS 变了");
+  }
+  if (/ON CONFLICT/u.test(centralWrite)) {
+    output.push("PG 的守卫更新那支用了 ON CONFLICT —— 行不存在时会被静默建出来，绕过 CAS（成后写覆盖）");
+  }
+  if (!/rowCount === 0[\s\S]{0,200}conflict: true/u.test(body)) {
+    output.push("PG 写没有把 rowCount 0 判为冲突 —— 版本对不上时静默什么都不做，调用方以为写成功了");
+  }
+  if (output.length === 0) console.log("PostgreSQL 写路径的 CAS：按 expectedVersion 分支、带 stateVersion 的守卫 UPDATE、rowCount 0 判冲突、守卫支不兜底建行，逐条核过（结构核，不需要真 PG）");
+}
+
 function verifyRejectedWritesLeaveStateUntouched(output) {
   const stA = structuredClone(seedState);
   stA.permissionRequests ||= [];   // 种子里没有这个集合；被测函数自己不会补，先写后校验的写法会在这里炸成 TypeError 而不是留痕

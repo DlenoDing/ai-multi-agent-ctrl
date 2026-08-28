@@ -3496,6 +3496,15 @@ const MUTATIONS = [
     expect: "没有按【共用只读那份的对象身份】复用"
   },
   {
+    name: "PG 写的守卫 UPDATE 不得退化成无条件 UPSERT",
+    file: "apps/control-plane-ui/lib/pg-pool-worker.mjs",
+    gate: "contract",
+    check: "verifyPostgresWriteIsVersionGuarded",
+    from: "    if (expectedVersion === null || expectedVersion === undefined) {",
+    to: "    if (true) {",
+    expect: "PG 的带版本守卫写不是"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
