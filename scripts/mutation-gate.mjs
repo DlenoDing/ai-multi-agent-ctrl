@@ -3434,6 +3434,14 @@ const MUTATIONS = [
     expect: "领到派发时没说一句人话"
   },
   {
+    name: "agentctl 派发失败时要说一句人话",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "        process.stderr.write(`派发 ${claimed.dispatch.dispatch.dispatchId} 执行失败：",
+    to: "        void (`派发 ${claimed.dispatch.dispatch.dispatchId} 执行失败：",
+    expect: "派发执行失败时终端上没有一句人话"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

@@ -1337,7 +1337,6 @@ try {
 	        // agent 明明领到了派发还失败了，那就是缺陷，不是这一轮没赶上。
 	        const agentText = String(deniedOut + deniedErr);
 	        if (/dispatch failed/u.test(agentText)) {
-	          if (!/执行失败：.+已如实报回控制面/u.test(agentText)) throw new Error(`派发执行失败时终端上没有一句人话：${agentText.slice(-300).replace(/\n/g, " | ")}`);
 	          throw new Error("推送被远端拒掉，agent 直接把派发判失败了，没有走 §8 上报权限单 —— "
 	            + `活白干，人也拿不到「发凭据 / 改派 / 中止」这几个选项：${agentText.slice(-200)}`);
 	        }
@@ -1436,6 +1435,10 @@ try {
     if (!/executor_produced_no_changes/u.test(nochangeText)) {
       throw new Error("执行器一个字都没改，agent 侧没有报出 executor_produced_no_changes —— "
         + `它要么当成做完了、要么悄悄退了（agent 输出：${nochangeText.slice(-300)}）`);
+    }
+    // 失败那一刻终端上要有一句人话（英文 dispatch failed 行留给脚本）。
+    if (!/执行失败：.+已如实报回控制面/u.test(nochangeText)) {
+      throw new Error(`派发执行失败时终端上没有一句人话：${nochangeText.slice(-300).replace(/\n/g, " | ")}`);
     }
     if (!String(nochangeDispatch.failureReason || "").includes("executor_produced_no_changes")) {
       throw new Error("agent 判了失败，而控制面上这条派发的失败原因不是它（"
