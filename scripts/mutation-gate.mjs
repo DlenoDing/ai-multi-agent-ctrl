@@ -3206,6 +3206,22 @@ const MUTATIONS = [
     expect: "起来没先说清自己是谁"
   },
   {
+    name: "会话清理不得删掉未到期的会话目录（mtime<cutoff 判据）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "            if (statSync(sessionDir).mtimeMs < cutoff) {",
+    to: "            if (statSync(sessionDir).mtimeMs > cutoff) {",
+    expect: "未到期的会话目录被清理器删掉了"
+  },
+  {
+    name: "会话清理清掉到期目录时必须出声（回收可见）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "agent",
+    from: "              process.stdout.write(`stale session directory removed: ${sessionDir}\\n`);",
+    to: "              void sessionDir;",
+    expect: "清掉了到期目录却一个字没说"
+  },
+  {
     name: "bootstrap 成功后要告诉人下一步（agentctl run）",
     file: "apps/agent-runtime/runtime.mjs",
     gate: "agent",

@@ -701,6 +701,39 @@ try {
   }
   rmSync(libraryDir, {recursive: true, force: true});
 
+  // 【清理器的合格性过滤：未到期的会话目录绝不能被清掉】。清理器每一拍都在对真实磁盘做 rmSync(recursive)：
+  // 若 mtime<cutoff 的判据被写反或去掉，一个刚写过、正在被使用的会话目录会在清理拍里被连根删除，活的工作直接没了。
+  // 下面那条只读把戏验的是「清不掉时要出声」（故障路径），且在 root 身份下会整段跳过。这里自带一棵【可写】子树、
+  // 抢在只读那段前面单独跑一次 —— 到期的必须真被清掉，未到期的必须原样留下，且清除要说得出。
+  {
+    const freshSweepDir = join(agentWorkDir, "orgs", "org_fresh", "projects", "prj_f", "task-groups", "tg_f", "sessions");
+    const staleOne = join(freshSweepDir, "s_old");
+    const freshOne = join(freshSweepDir, "s_new");
+    mkdirSync(staleOne, {recursive: true});
+    mkdirSync(freshOne, {recursive: true});
+    const longAgo2 = new Date("2020-01-01T00:00:00Z");
+    utimesSync(staleOne, longAgo2, longAgo2);
+    // s_new 保持默认 mtime（此刻），远新于 1 小时的 cutoff。
+    const freshRun = spawnSync(process.execPath, [runtimePath, "run", "--work-dir", agentWorkDir, "--once"], {
+      env: {...process.env, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_CONFIGURE_CLIENTS: "false", AIMAC_AGENT_SESSION_TTL_HOURS: "1"},
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024
+    });
+    const freshOut = `${freshRun.stdout || ""}${freshRun.stderr || ""}`;
+    // 先查未到期的那条（承重的负例：清理器不得删掉正在用的会话）——它也是 cutoff 判据被写反时最先红的一条。
+    if (!existsSync(freshOne)) {
+      throw new Error(`未到期的会话目录被清理器删掉了 —— 正在使用的会话会被连根删除: ${freshOut.slice(-600)}`);
+    }
+    if (existsSync(staleOne)) {
+      throw new Error(`到期的会话目录没被清掉（清理的正路断了，盘会一直涨）: ${freshOut.slice(-600)}`);
+    }
+    if (!freshOut.includes("stale session directory removed")) {
+      throw new Error(`清掉了到期目录却一个字没说，回收不可见: ${freshOut.slice(-600)}`);
+    }
+    rmSync(join(agentWorkDir, "orgs", "org_fresh"), {recursive: true, force: true});
+    console.log("  --  会话清理：未到期的原样留、到期的真被清、且清除可见，逐条核过");
+  }
+
   // 孪生分支：陈旧会话目录的清理同样会失败，同样只有"若干天后盘满"这一个症状。
   const sessionsDir = join(agentWorkDir, "orgs", "org_probe", "projects", "prj_probe", "task-groups", "tg_probe", "sessions");
   const staleSessionDir = join(sessionsDir, "s_stale");
