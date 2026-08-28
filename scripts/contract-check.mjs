@@ -15752,6 +15752,17 @@ function verifyLedgerRowsGoThroughTheSharedBuilder(output) {
     for (const hit of text.matchAll(/auditLog\.(unshift|push)\(/gu)) {
       output.push(`${file.slice(root.length + 1)} 直接往 auditLog 里 ${hit[1]} —— 手拼的台账行没有 schemaVersion / rowHash，等于往哈希链里塞一行散的；一律走 appendAuditEntry`);
     }
+    // push/unshift 不是唯一的追加法：拼一个数组重赋值（.auditLog = [{...}]）或 splice 同样能塞进未上链的行。
+    // 只在【产品代码 apps/】收这两种（scripts/ 里造夹具的 mcpAudit.auditLog = [{...}] 是测试数据，不是真台账）；
+    // 空重置 = [] 与 ||= [] 不含 [{ 不会命中。
+    if (file.includes("/apps/")) {
+      for (const hit of text.matchAll(/\.auditLog\s*=\s*\[\s*\{/gu)) {
+        output.push(`${file.slice(root.length + 1)} 用重赋值往 auditLog 塞了拼好的行（.auditLog = [{…}]）—— 绕过 appendAuditEntry 的哈希链；一律走 appendAuditEntry`);
+      }
+      for (const hit of text.matchAll(/auditLog\.splice\(/gu)) {
+        output.push(`${file.slice(root.length + 1)} 用 splice 改 auditLog —— 同样绕过哈希链构造；一律走 appendAuditEntry`);
+      }
+    }
   }
   if (scanned < 20) output.push(`台账写法扫描只扫到 ${scanned} 个文件 —— 文件枚举脱节，本条在空转`);
 }

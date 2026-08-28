@@ -3505,6 +3505,15 @@ const MUTATIONS = [
     expect: "CAS 的立足点没了"
   },
   {
+    name: "重赋值往 auditLog 塞拼好的行也要被抓到",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "contract",
+    check: "verifyLedgerRowsGoThroughTheSharedBuilder",
+    from: "  appendAuditEntry(state, {actor, action, subject, result, at: now()});",
+    to: "  state.auditLog = [{actor, action, subject, result}, ...state.auditLog]; void appendAuditEntry;",
+    expect: "用重赋值往 auditLog 塞了拼好的行"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
