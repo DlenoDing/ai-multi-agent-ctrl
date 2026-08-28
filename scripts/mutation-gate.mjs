@@ -3523,6 +3523,15 @@ const MUTATIONS = [
     expect: "重放成功后没清会话目录"
   },
   {
+    name: "pg 桥 worker 崩溃要归存储不可用 503（不是 500）",
+    file: "apps/control-plane-ui/lib/pg-sync-store.mjs",
+    gate: "contract",
+    check: "verifyPgBridgeFailuresAreStorageUnavailable",
+    from: 'state.fatal = Object.assign(new Error(`pg worker exited with code ${code}`), {code: "AIMAC_PG_BRIDGE_FATAL"});',
+    to: 'state.fatal = new Error(`pg worker exited with code ${code}`);',
+    expect: "worker exit 的 fatal 没打"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

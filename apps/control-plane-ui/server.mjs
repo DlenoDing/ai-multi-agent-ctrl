@@ -354,7 +354,7 @@ const STORAGE_UNAVAILABLE_HINT = "状态写不进磁盘（读操作不受影响�
 // PostgreSQL 后端连不上：与「盘写不进去」同规 —— 稳定错误码 + 一句该查什么；驱动原话（带库的地址）只进 stderr，不回给调用方。
 const DATABASE_UNAVAILABLE_HINT = "数据库连不上：确认 DATABASE_URL 指向的库在跑、地址/端口/用户名密码对、网络与防火墙通；库回来之后自动恢复，不必重启";
 const DATABASE_UNAVAILABLE_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "EPIPE",
-  "AIMAC_PG_BRIDGE_TIMEOUT", "57P01", "57P02", "57P03", "08000", "08001", "08003", "08004", "08006"]);
+  "AIMAC_PG_BRIDGE_TIMEOUT", "AIMAC_PG_BRIDGE_FATAL", "57P01", "57P02", "57P03", "08000", "08001", "08003", "08004", "08006"]);
 function databaseUnavailable(error) {
   if (process.env.AIMAC_STATE_STORE !== "postgresql") return false;
   if (DATABASE_UNAVAILABLE_CODES.has(String(error?.code || ""))) return true;

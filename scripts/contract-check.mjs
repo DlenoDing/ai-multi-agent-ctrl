@@ -779,6 +779,7 @@ run(verifyRuntimeConstantsSitBeforeItsTopLevelAwait);
 run(verifyStaleE2eRuntimeDirsGetSwept);
 run(verifyRejectedWritesLeaveStateUntouched);
 run(verifyPostgresWriteIsVersionGuarded);
+run(verifyPgBridgeFailuresAreStorageUnavailable);
 run(verifyAssignedFieldsAreDeclaredBySpec);
 run(verifyAccountRolesConstantMatchesSpec);
 run(verifyAgentFailureCodeCoverageRatchet);
@@ -15657,6 +15658,24 @@ function verifyAssignedFieldsAreDeclaredBySpec(output) {
 // 无条件 UPSERT（INSERT..ON CONFLICT DO UPDATE），PG 部署就变成后写覆盖丢更新，而 commit.sh 全绿。
 // 纯结构核（不需要真 PG）：expectedVersion 非空那支必须是【带 stateVersion 比对的 UPDATE】、rowCount 0 判冲突，
 // 且那支不得用 ON CONFLICT 兜底建行。
+// 【pg 桥自身死掉（worker error/exit、无响应）要归「存储不可用」503，不落成 500 server_error】。
+// 桥是瞬时的：下一次调用 resetBridge 重开就恢复，和 DB 短暂不可用同类。原先只有 timeout 那支挂了稳定码 ——
+// worker 直接退出/崩溃的 fatal 抛出「pg worker exited…」没码，databaseUnavailable 认不出，于是 500 + health 仍 ok。
+// 跨文件核：桥的 fatal/no-response 抛出点都带 AIMAC_PG_BRIDGE_FATAL，且 server 的 databaseUnavailable 码集同时含 TIMEOUT 与 FATAL。
+function verifyPgBridgeFailuresAreStorageUnavailable(output) {
+  const bridge = readFileSync(join(root, "apps/control-plane-ui/lib/pg-sync-store.mjs"), "utf8");
+  const src = bridge.split("\n").filter((line) => !/^\s*\/\//u.test(line)).join("\n");
+  if (!/worker\.on\("exit"[\s\S]{0,160}AIMAC_PG_BRIDGE_FATAL/u.test(src)) output.push("pg 桥 worker exit 的 fatal 没打 AIMAC_PG_BRIDGE_FATAL —— worker 崩了会落成 500 server_error 而非 503");
+  if (!/worker\.on\("error"[\s\S]{0,120}AIMAC_PG_BRIDGE_FATAL/u.test(src)) output.push("pg 桥 worker error 的 fatal 没打 AIMAC_PG_BRIDGE_FATAL");
+  if (!/no response for op[\s\S]{0,60}AIMAC_PG_BRIDGE_FATAL/u.test(src)) output.push("pg 桥「无响应」抛出没打 AIMAC_PG_BRIDGE_FATAL");
+  const server = readFileSync(join(root, "apps/control-plane-ui/server.mjs"), "utf8");
+  const setLine = server.slice(server.indexOf("const DATABASE_UNAVAILABLE_CODES"), server.indexOf("]);", server.indexOf("const DATABASE_UNAVAILABLE_CODES")));
+  for (const code of ["AIMAC_PG_BRIDGE_TIMEOUT", "AIMAC_PG_BRIDGE_FATAL"]) {
+    if (!setLine.includes(code)) output.push(`server 的 databaseUnavailable 码集缺 ${code} —— 这类桥故障不会被归成 503 state_storage_unavailable`);
+  }
+  if (output.length === 0) console.log("pg 桥故障（worker exit/error/无响应）都带稳定码且被 databaseUnavailable 归为 503，跨文件核过");
+}
+
 function verifyPostgresWriteIsVersionGuarded(output) {
   const worker = readFileSync(join(root, "apps/control-plane-ui/lib/pg-pool-worker.mjs"), "utf8");
   const start = worker.indexOf("async function writeStateWithShards(");

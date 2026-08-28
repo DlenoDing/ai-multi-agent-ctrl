@@ -36,8 +36,10 @@ function getBridge() {
   // of hanging. Note: a crash DURING an in-flight call is not observable here — the error/exit event
   // is queued and cannot run while the main thread is parked in Atomics.wait, so that call still waits
   // out the full queryTimeoutMs before throwing a bridge timeout. That is inherent to the sync bridge.
-  worker.on("error", (error) => { state.fatal = error; });
-  worker.on("exit", (code) => { if (code !== 0 && !state.fatal) state.fatal = new Error(`pg worker exited with code ${code}`); });
+  // 桥自身死掉（子进程 error/exit）与 DB 不可用是同一类：瞬时、下一次调用 resetBridge 重开就恢复。
+  // 打上 AIMAC_STATE_CONFLICT 之外的稳定码，让上层按「存储不可用」503 处理，而不是落成 500 server_error。
+  worker.on("error", (error) => { if (error && !error.code) error.code = "AIMAC_PG_BRIDGE_FATAL"; state.fatal = error; });
+  worker.on("exit", (code) => { if (code !== 0 && !state.fatal) state.fatal = Object.assign(new Error(`pg worker exited with code ${code}`), {code: "AIMAC_PG_BRIDGE_FATAL"}); });
   // Do not keep the process alive solely for the pool worker.
   worker.unref();
   channel.port1.unref();
@@ -85,7 +87,7 @@ function call(op, args) {
   }
   if (!received) {
     if (active.fatal) { resetBridge(); throw active.fatal; }
-    throw new Error(`pg bridge: no response for op ${op}`);
+    throw Object.assign(new Error(`pg bridge: no response for op ${op}`), {code: "AIMAC_PG_BRIDGE_FATAL"});
   }
   const response = received.message;
   if (!response.ok) {
