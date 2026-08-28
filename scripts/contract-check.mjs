@@ -696,6 +696,7 @@ const MACHINE_FACING_ERRORS = {
 };
 
 run(verifyAgentGatewayContracts);
+run(verifyExecutionEventTailStaysBounded);
 run(verifyHumanAndOrganizationContracts);
 
 for (const toolName of ["ui-console-mcp.runtime_health_get", "room-mcp.room_send", "agent-control-mcp.dispatch_status"]) {
@@ -5921,6 +5922,42 @@ function verifyRuntimeJsonConflict(output) {
     if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = previousDatabaseUrl;
     rmSync(runtimeDir, {recursive: true, force: true});
+  }
+}
+
+// 【执行事件流的热路径要走尾窗读，不能整文件扫】。监控台每 5 秒轮询、按游标往前读；日志涨到几十 MB 时，
+// 若每次都 readFileSync 整个文件，一次刷新就是几十 MB 的读 + 解析。readEventSource 对超过 tail 窗口的文件只读末尾一段；
+// 只有从 0（或早于窗口）回补历史时才整读。这里造一个超过窗口的日志，验「近游标读＝tail-window、从 0 读＝full」。
+function verifyExecutionEventTailStaysBounded(output) {
+  const dir = mkdtempSync(join(tmpdir(), "aimac-evt-tail-"));
+  const projectId = "prj_tail_probe";
+  const priorTail = process.env.AIMAC_PROJECT_EVENT_TAIL_BYTES;
+  process.env.AIMAC_PROJECT_EVENT_TAIL_BYTES = "65536"; // 窗口取下限 64KB
+  try {
+    let lastSeq = 0;
+    for (let index = 0; index < 900; index += 1) {
+      const stored = appendProjectExecutionEvent(dir, {projectId, taskGroupId: "tg_tail", dispatchId: "adp_tail",
+        eventKey: `tail-${index}`, eventType: "checkpoint_submitted", summary: "x".repeat(120),
+        payload: {progressPercent: index % 100, note: "y".repeat(60)}});
+      lastSeq = stored.event?.sequence || lastSeq;
+    }
+    if (lastSeq < 100) { output.push(`造事件失败（只写到 seq ${lastSeq}）—— 本条无从验`); return; }
+    const recent = readProjectExecutionEvents(dir, projectId, {afterSequence: lastSeq - 5, limit: 120});
+    // afterSequence 0 是「给我最新的」＝也走 tail（开页那次）；真正的整读是【游标停在窗口之前的历史】那次。
+    const staleCursor = readProjectExecutionEvents(dir, projectId, {afterSequence: 2, limit: 120});
+    if (recent.storage?.readMode !== "tail-window") {
+      output.push(`执行事件近游标读没走尾窗（readMode=${recent.storage?.readMode}）—— 日志一大，监控台每次刷新都在整文件扫`);
+    }
+    if (recent.events.length > 6) {
+      output.push(`执行事件近游标读回了 ${recent.events.length} 条（应只有游标之后的几条）—— 分页没生效`);
+    }
+    if (staleCursor.storage?.readMode !== "full") {
+      output.push(`游标停在尾窗之前回补历史时 readMode 应为 full（实际 ${staleCursor.storage?.readMode}）—— 提取或语义变了，这条在空转`);
+    }
+    if (output.length === 0) console.log(`执行事件流：日志超过尾窗时，近游标读走 tail-window（只回 ${recent.events.length} 条）、从 0 回补才整读`);
+  } finally {
+    if (priorTail === undefined) delete process.env.AIMAC_PROJECT_EVENT_TAIL_BYTES; else process.env.AIMAC_PROJECT_EVENT_TAIL_BYTES = priorTail;
+    rmSync(dir, {recursive: true, force: true});
   }
 }
 

@@ -3469,6 +3469,15 @@ const MUTATIONS = [
     expect: "会改服务端状态却没有任何确认"
   },
   {
+    name: "执行事件流热路径要走尾窗读（不能整文件扫）",
+    file: "apps/control-plane-ui/lib/project-event-store.mjs",
+    gate: "contract",
+    check: "verifyExecutionEventTailStaysBounded",
+    from: "  if (size <= maxBytes) return readFileSync(path, \"utf8\");",
+    to: "  return readFileSync(path, \"utf8\");",
+    expect: "近游标读没走尾窗"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
