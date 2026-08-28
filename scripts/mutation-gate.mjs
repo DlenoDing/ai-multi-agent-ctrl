@@ -3502,7 +3502,7 @@ const MUTATIONS = [
     check: "verifyPostgresWriteIsVersionGuarded",
     from: "    if (expectedVersion === null || expectedVersion === undefined) {",
     to: "    if (true) {",
-    expect: "PG 的带版本守卫写不是"
+    expect: "CAS 的立足点没了"
   },
   {
     name: "认不出的升级候选状态必须拒绝",
