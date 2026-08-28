@@ -979,6 +979,7 @@ run(verifyBootstrapEchoSamplesMatchRuntime);
 run(verifyInstallerDocsMatchScriptAndTemplate);
 run(verifyDocumentedNpmScriptsExist);
 run(verifyConsoleHintsNameRealControls);
+run(verifyWriteActionsAreConfirmedOrRegistered);
 run(verifyMcpCallConventionsAreDocumented);
 run(verifyMcpToolTableMatchesImplementation);
 run(verifyI18nKeysAreReachable);
@@ -15833,6 +15834,46 @@ function verifyMcpCallConventionsAreDocumented(output) {
     else if (!containsWholeIdentifier(section, token)) output.push(`核心规范 §5 没写 MCP 写工具的调用约定里的 ${token} —— 客户端只能从文档学它`);
   }
   if (output.length === 0 || !output.some((line) => line.includes("调用约定") || line.includes("核心规范 §5"))) console.log(`核心规范 §5 写明了 MCP 写工具的 ${tokens.length} 个调用约定名字，且都在实现里`);
+}
+
+// 【每个会改服务端状态的控制台动作，要么有确认（弹窗或输入规模确认），要么登记为「不具破坏性」并写明理由】。
+// 现有两道门只管「弹窗措辞↔danger」；没人管【新加的写动作根本没弹窗】。判据按 action === "x" 切块，块内出现
+// 状态改写的 api({method: POST/DELETE/PUT}) 即算写动作。
+function verifyWriteActionsAreConfirmedOrRegistered(output) {
+  // 登记表放函数体：本文件的 run 同步执行，模块级 const 声明在它之后就是 TDZ。
+  const NON_DESTRUCTIVE_CONSOLE_ACTIONS = {
+    "logout": "登出只作废自己这次会话，clearSession 已提示共用设备找管理员吊销",
+    "sync-skill-source": "同步只是按固定提交重新拉取技能源，不改已有数据",
+    "orchestrator-run": "跑一拍编排是推进既定流程，不删不改既有记录（被挡住会如实说）",
+    "decide-model": "记录一次模型选择决策，可被下一次决策覆盖"
+  };
+  const TYPED_CONFIRMATION_CONSOLE_ACTIONS = {
+    "bootstrap-init": "重置运行态：用「按当前真实规模逐字输入」的更强确认（confirmToken），不是普通弹窗"
+  };
+  const app = readFileSync(join(root, "apps/control-plane-ui/public/app.js"), "utf8");
+  const actions = [...app.matchAll(/action === "([a-z-]+)"/gu)];
+  if (actions.length < 15) { output.push(`只切出 ${actions.length} 个 data-action 处理块 —— 提取脱节`); return; }
+  let writeActions = 0;
+  for (let index = 0; index < actions.length; index += 1) {
+    const name = actions[index][1];
+    const start = actions[index].index;
+    const end = index + 1 < actions.length ? actions[index + 1].index : Math.min(app.length, start + 1200);
+    const block = app.slice(start, end);
+    if (!/method: "(POST|DELETE|PUT)"/u.test(block)) continue;
+    writeActions += 1;
+    if (/confirmDialog\(/u.test(block)) continue;
+    if (TYPED_CONFIRMATION_CONSOLE_ACTIONS[name]) continue;
+    if (NON_DESTRUCTIVE_CONSOLE_ACTIONS[name]) continue;
+    output.push(`控制台动作「${name}」会改服务端状态却没有任何确认 —— 加 confirmDialog，或登记进 NON_DESTRUCTIVE_CONSOLE_ACTIONS 并写明为什么不具破坏性`);
+  }
+  // 登记表本身要跟着代码走：登记了一个已经不存在或已经加了弹窗的动作，登记就成了误导。
+  const names = new Set(actions.map((match) => match[1]));
+  for (const registry of [NON_DESTRUCTIVE_CONSOLE_ACTIONS, TYPED_CONFIRMATION_CONSOLE_ACTIONS]) {
+    for (const name of Object.keys(registry)) {
+      if (!names.has(name)) output.push(`登记表里的动作「${name}」在 app.js 里已经不存在 —— 从登记里删掉`);
+    }
+  }
+  console.log(`控制台写动作：${writeActions} 个逐个核对，都有确认或登记为不具破坏性（登记 ${Object.keys(NON_DESTRUCTIVE_CONSOLE_ACTIONS).length}+${Object.keys(TYPED_CONFIRMATION_CONSOLE_ACTIONS).length} 项）`);
 }
 
 // 【控制台提示里点名的按钮/面板/页要真的在界面上】。「点「选择定稿」」「到「账号与授权」页」这类话没人盯着：

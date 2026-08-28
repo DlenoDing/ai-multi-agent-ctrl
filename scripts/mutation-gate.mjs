@@ -3460,6 +3460,15 @@ const MUTATIONS = [
     expect: "没说是哪种/为什么"
   },
   {
+    name: "会改状态的控制台动作没确认要被抓到",
+    file: "apps/control-plane-ui/public/app.js",
+    gate: "contract",
+    check: "verifyWriteActionsAreConfirmedOrRegistered",
+    from: '    if (action === "revoke-grant") {',
+    to: '    if (action === "revoke-grant-x") { await api("/api/x", {method: "POST", body: "{}"}); return; }\n    if (action === "revoke-grant") {',
+    expect: "会改服务端状态却没有任何确认"
+  },
+  {
     name: "认不出的升级候选状态必须拒绝",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",
