@@ -8148,11 +8148,16 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
   const state = structuredClone(seedState);
   ensureRuntimeCollections(state, {root});
   const orgId = DEFAULT_ORGANIZATION_ID;
+  const soon = new Date(Date.now() + 3600000).toISOString();
+  const past = new Date(Date.now() - 1000).toISOString();
   state.agentJoinTokens = [
-    {tokenId: "jt_1", status: "issued", organizationId: orgId},
-    {tokenId: "jt_2", status: "issued", organizationId: orgId},
-    {tokenId: "jt_used", status: "consumed", organizationId: orgId},
-    {tokenId: "jt_revoked", status: "revoked", organizationId: orgId}
+    {tokenId: "jt_1", status: "issued", organizationId: orgId, expiresAt: soon},
+    {tokenId: "jt_2", status: "issued", organizationId: orgId, expiresAt: soon},
+    {tokenId: "jt_used", status: "consumed", organizationId: orgId, expiresAt: soon},
+    {tokenId: "jt_revoked", status: "revoked", organizationId: orgId, expiresAt: soon},
+    // issued 但已过期：只在兑换时才会被标 expired，没人兑换就永停在 issued。它兑换不了（兑换侧查
+    // expiresAt 拒）却不该继续占页面上那格 —— 与 createAgentJoinToken 的占位统计同口径，过期不算。
+    {tokenId: "jt_stale", status: "issued", organizationId: orgId, expiresAt: past}
   ];
   recomputeOrganizationUsage(state);
   const usage = (state.organizations || []).find((org) => org.orgId === orgId)?.usage;
@@ -8161,8 +8166,8 @@ function verifyOutstandingJoinTokensHoldTheirQuotaSlot(output) {
     return;
   }
   if (usage.agentsReserved !== 2) {
-    output.push(`未使用的入网令牌没有被算成占位（agentsReserved=${usage.agentsReserved}，应为 2 —— `
-      + "两张 issued，另外两张已用/已撤销不算）；页面就会显示「还剩一格」而签发被拒");
+    output.push(`入网令牌占位算错（agentsReserved=${usage.agentsReserved}，应为 2 —— `
+      + "两张 issued 且未过期；已用/已撤销/【已过期】的都不算）；过期令牌若还占位，页面显示「还剩一格」而签发口径其实早已放开那格，两个数各说各的");
   }
   const nodesOnly = usage.agents;
   state.agentJoinTokens = [];

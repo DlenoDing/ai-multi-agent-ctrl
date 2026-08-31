@@ -3933,12 +3933,20 @@ const MUTATIONS = [
     expect: "没有已归档项目时不要多说一句"
   },
   {
+    name: "过期的入网令牌不得继续占配额位（与签发侧同口径）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    check: "verifyOutstandingJoinTokensHoldTheirQuotaSlot",
+    from: '    if (token.status !== "issued" || !(new Date(token.expiresAt).getTime() > Date.now())) continue;',
+    to: '    if (token.status !== "issued") continue;',
+    expect: "占位算错"
+  },
+  {
     name: "未使用的入网令牌必须算成配额占位",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     check: "verifyOutstandingJoinTokensHoldTheirQuotaSlot",
-    from: '    if (token.status !== "issued") continue;',
-    to: '    if (token.status !== "issuedX") continue;',
-    expect: "没有被算成占位"
+    from: '    if (token.status !== "issued" || !(new Date(token.expiresAt).getTime() > Date.now())) continue;',
+    to: '    if (token.status !== "issuedX" || !(new Date(token.expiresAt).getTime() > Date.now())) continue;',
+    expect: "占位算错"
   },
   {
     name: "占位不得并进 agents（否则节点被自己那张令牌顶掉一格）",
@@ -3946,7 +3954,7 @@ const MUTATIONS = [
     check: "verifyOutstandingJoinTokensHoldTheirQuotaSlot",
     from: '    bump(token.organizationId || DEFAULT_ORGANIZATION_ID, "agentsReserved");',
     to: '    bump(token.organizationId || DEFAULT_ORGANIZATION_ID, "agents");',
-    expect: "没有被算成占位"
+    expect: "占位算错"
   },
   {
     name: "页面要显出占位并给出合计（否则还剩一格却签不出来）",

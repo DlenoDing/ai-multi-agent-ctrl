@@ -750,7 +750,11 @@ export function recomputeOrganizationUsage(state) {
   // 屏幕上并排的两个数必须出自同一处统计。不能直接并进 agents：节点注册时查的也是 agents，
   // 并进去的话，节点会被自己那张正在兑换的令牌顶掉一格，永远注册不上。所以单列一项。
   for (const token of state.agentJoinTokens || []) {
-    if (token.status !== "issued") continue;
+    // 与 createAgentJoinToken 的占位统计【同一口径】：issued 且【未过期】。过期令牌只在兑换时才被标
+    // expired（无独立清扫器），一张没人兑换的令牌过期后 status 永停在 issued —— 只按 status 数的话，
+    // 它既兑换不了（兑换侧查 expiresAt 拒）又永久占着页面上那格「未使用令牌占位」，两个数各算各的。
+    // `> Date.now()`：expiresAt 写坏成 NaN 时 `NaN > now` 为 false ＝不占位（安全方向，同签发侧）。
+    if (token.status !== "issued" || !(new Date(token.expiresAt).getTime() > Date.now())) continue;
     bump(token.organizationId || DEFAULT_ORGANIZATION_ID, "agentsReserved");
   }
   for (const org of state.organizations || []) org.usage = usage.get(org.orgId);
