@@ -514,6 +514,16 @@ const MUTATIONS = [
     expect: "看不出还有更多"
   },
   {
+    // 项目设置的配置行（仓库/基线/角色）对只读成员必须收起「删除」：cfg-del 是本地暂存，保存已禁用，
+    // 只读成员点了删本地行却存不下＝按了看不到效果的死动作。去掉 cfgRepoRow 的 readOnly 门即让删除对只读成员出现。
+    name: "只读成员的配置行不许摆删除按钮",
+    file: APP,
+    gate: "console",
+    from: "      <input name=\"repoCred\" placeholder=\"凭证引用（如 env:AIMAC_REPO_TOKEN_X）\" value=\"${esc(repo.credentialSecretRef || \"\")}\" ${ro}>\n      ${readOnly ? \"\" : `<button type=\"button\" class=\"danger-button\" data-action=\"cfg-del\">删除</button>`}",
+    to: "      <input name=\"repoCred\" placeholder=\"凭证引用（如 env:AIMAC_REPO_TOKEN_X）\" value=\"${esc(repo.credentialSecretRef || \"\")}\" ${ro}>\n      <button type=\"button\" class=\"danger-button\" data-action=\"cfg-del\">删除</button>",
+    expect: "不许有「删除」按钮"
+  },
+  {
     name: "房间消息被截断时界面要说清共有多少条",
     file: APP,
     gate: "console",

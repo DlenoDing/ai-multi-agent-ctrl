@@ -4794,35 +4794,42 @@ function renderMonitor() {
 
 /* ---------------- 成员：项目设置 ---------------- */
 
-function cfgRepoRow(repo = {}) {
+// readOnly：无“项目授权管理”权限或项目已归档时，这几行只能看不能改。此前输入始终可编辑、删除按钮
+// 始终启用（而同页的 rule 行、添加/保存按钮都按 readOnly 置灰了）—— read-only 的成员因此能就地改字段、
+// 删行（本地暂存 formTouched），却存不下（保存按钮已禁用、后端也会拒 project_config_update），
+// 是「按了看不到效果」的死动作。与 ruleRow 同规：输入加 readonly、删除按钮 readOnly 时干脆不渲染。
+function cfgRepoRow(repo = {}, readOnly = false) {
+  const ro = readOnly ? "readonly" : "";
   return `
     <div class="cfg-row" data-cfg-kind="repo">
-      <input name="repoId" placeholder="仓库 ID" value="${esc(repo.id || "")}">
-      <input name="repoUrl" placeholder="仓库地址（git@... / https://...）" value="${esc(repo.url || "")}">
-      <input name="repoBranch" placeholder="默认分支" value="${esc(repo.defaultBranch || "main")}">
-      <input name="repoCred" placeholder="凭证引用（如 env:AIMAC_REPO_TOKEN_X）" value="${esc(repo.credentialSecretRef || "")}">
-      <button type="button" class="danger-button" data-action="cfg-del">删除</button>
+      <input name="repoId" placeholder="仓库 ID" value="${esc(repo.id || "")}" ${ro}>
+      <input name="repoUrl" placeholder="仓库地址（git@... / https://...）" value="${esc(repo.url || "")}" ${ro}>
+      <input name="repoBranch" placeholder="默认分支" value="${esc(repo.defaultBranch || "main")}" ${ro}>
+      <input name="repoCred" placeholder="凭证引用（如 env:AIMAC_REPO_TOKEN_X）" value="${esc(repo.credentialSecretRef || "")}" ${ro}>
+      ${readOnly ? "" : `<button type="button" class="danger-button" data-action="cfg-del">删除</button>`}
     </div>
   `;
 }
 
-function cfgBaselineRow(item = {}) {
+function cfgBaselineRow(item = {}, readOnly = false) {
+  const ro = readOnly ? "readonly" : "";
   return `
     <div class="cfg-row" data-cfg-kind="baseline">
-      <input name="blName" placeholder="名称" value="${esc(item.name || "")}">
-      <input name="blLocator" placeholder="定位（如 git:docs/baseline/...）" value="${esc(item.locator || "")}">
-      <input name="blDigest" placeholder="内容摘要（可选）" value="${esc(item.digest || "")}">
-      <button type="button" class="danger-button" data-action="cfg-del">删除</button>
+      <input name="blName" placeholder="名称" value="${esc(item.name || "")}" ${ro}>
+      <input name="blLocator" placeholder="定位（如 git:docs/baseline/...）" value="${esc(item.locator || "")}" ${ro}>
+      <input name="blDigest" placeholder="内容摘要（可选）" value="${esc(item.digest || "")}" ${ro}>
+      ${readOnly ? "" : `<button type="button" class="danger-button" data-action="cfg-del">删除</button>`}
     </div>
   `;
 }
 
-function cfgRoleRow(role = {}) {
+function cfgRoleRow(role = {}, readOnly = false) {
+  const ro = readOnly ? "readonly" : "";
   return `
     <div class="cfg-row" data-cfg-kind="role">
-      <input name="roleId" placeholder="角色 ID（只认已登记的执行角色，如 reviewer）" list="config-role-options" value="${esc(role.roleId || "")}">
-      <input name="roleSkillRef" placeholder="角色规则引用（可选）" value="${esc(role.roleSkillRef || "")}">
-      <button type="button" class="danger-button" data-action="cfg-del">删除</button>
+      <input name="roleId" placeholder="角色 ID（只认已登记的执行角色，如 reviewer）" list="config-role-options" value="${esc(role.roleId || "")}" ${ro}>
+      <input name="roleSkillRef" placeholder="角色规则引用（可选）" value="${esc(role.roleSkillRef || "")}" ${ro}>
+      ${readOnly ? "" : `<button type="button" class="danger-button" data-action="cfg-del">删除</button>`}
     </div>
   `;
 }
@@ -4871,17 +4878,17 @@ function renderProjectSettings() {
       ${readOnlyNotice}
       <form class="form-grid" data-form="project-config" data-project="${esc(project.id)}">
         <div class="form-row"><label>仓库与凭证引用（凭证只存引用，不落明文）</label>
-          <div class="cfg-rows" data-cfg-list="proj-repos">${repos.map((repo) => cfgRepoRow(repo)).join("")}${cfgEmpty(repos, "还没有配置仓库：执行方没有可提交的目标，产出会卡在「没有产出目标」而落不了地。点下面的「添加仓库」配一个（凭证只填引用名，不填明文）。")}</div>
+          <div class="cfg-rows" data-cfg-list="proj-repos">${repos.map((repo) => cfgRepoRow(repo, Boolean(editDisabled))).join("")}${cfgEmpty(repos, "还没有配置仓库：执行方没有可提交的目标，产出会卡在「没有产出目标」而落不了地。点下面的「添加仓库」配一个（凭证只填引用名，不填明文）。")}</div>
 
           <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="repo" data-target="proj-repos" ${editDisabled}>添加仓库</button></div>
         </div>
         <div class="form-row"><label>基线数据</label>
-          <div class="cfg-rows" data-cfg-list="proj-baseline">${baselineData.map((item) => cfgBaselineRow(item)).join("")}${cfgEmpty(baselineData, "还没有基线数据：这一项是可选的，空着不影响执行，只是 agent 少一份可对照的现状材料。")}</div>
+          <div class="cfg-rows" data-cfg-list="proj-baseline">${baselineData.map((item) => cfgBaselineRow(item, Boolean(editDisabled))).join("")}${cfgEmpty(baselineData, "还没有基线数据：这一项是可选的，空着不影响执行，只是 agent 少一份可对照的现状材料。")}</div>
           <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="baseline" data-target="proj-baseline" ${editDisabled}>添加基线</button></div>
         </div>
         <div class="form-row"><label>默认角色</label>
           <datalist id="config-role-options">${WORK_ITEM_OWNER_ROLE_CHOICES.map((roleId) => `<option value="${esc(roleId)}">${esc(t(roleId))}</option>`).join("")}</datalist>
-          <div class="cfg-rows" data-cfg-list="proj-roles">${defaultRoles.map((role) => cfgRoleRow(role)).join("")}${cfgEmpty(defaultRoles, "还没有项目默认角色：任务组会各自指定角色，指定不到时回退到系统内置角色。")}</div>
+          <div class="cfg-rows" data-cfg-list="proj-roles">${defaultRoles.map((role) => cfgRoleRow(role, Boolean(editDisabled))).join("")}${cfgEmpty(defaultRoles, "还没有项目默认角色：任务组会各自指定角色，指定不到时回退到系统内置角色。")}</div>
           <div class="button-row"><button type="button" class="secondary-button" data-action="cfg-add" data-kind="role" data-target="proj-roles" ${editDisabled}>添加角色</button></div>
         </div>
         <button class="primary-button" type="submit" ${editDisabled}>保存项目配置</button>

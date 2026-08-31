@@ -1363,6 +1363,37 @@ check("没超长时不许硬塞截断提示（那会把完整的一页说成不�
     "按钮收起来了却不说为什么，人只会以为页面坏了");
 }
 
+// 【只读成员的配置行也不许有能按的删除、也不许可编辑】。上一条只验了页脚的添加/保存；配置行（仓库/基线/角色）
+// 的输入与每行的「删除」是另一处——它们此前始终可编辑、可删（cfg-del 本地暂存 formTouched），而保存已禁用，
+// 于是只读成员能删掉一行、屏幕真的少一行，却存不下、也没有保存入口＝按了看不到效果的死动作（同页 rule 行早就按
+// readOnly 收起了删除、输入设 readonly，唯独 repo/baseline/role 三种行漏了）。配置行经 config 接口取，故用带桩的 loadWithFetch。
+{
+  const roCfgRoot = el("div");
+  const roCfgProbe = loadConsole(roCfgRoot, {realI18n: true});
+  const roViewer = {accountId: "u_ro", email: "ro@b.c", accountType: "user_account", displayName: "只读成员",
+    organizationId: "org_default", permissions: ["project:view"], effectivePermissions: ["project:view"]};
+  const roSeed = {projects: [{id: "p1", name: "只读配置项目", organizationId: "org_default", status: "active"}],
+    organizations: [{orgId: "org_default", name: "默认组织", status: "active"}],
+    accounts: [], accessGrants: [], taskGroups: [], agentJoinTokens: [], truncatedCollections: [], fleet: {online: 0, total: 0}};
+  const roCfg = {repositories: [{id: "r1", url: "https://example.test/repo.git", defaultBranch: "main"}], baselineData: [], defaultRoles: []};
+  const roFetch = async (target) => ({ok: true, status: 200, statusText: "OK", headers: {get: () => null},
+    json: async () => String(target).includes("/config") ? {projectId: "p1", config: roCfg, configVersion: 1} : roSeed,
+    text: async () => JSON.stringify(roSeed)});
+  await roCfgProbe.loadWithFetch(roSeed, roViewer, "p1", "proj-settings", roFetch);
+  const roHtml = String(roCfgRoot.innerHTML || "");
+  check("只读成员的项目设置里确实渲染了配置行（否则下面两条在空转）",
+    roHtml.includes("example.test/repo.git"),
+    `只读成员的项目设置里没有渲染出仓库行（${roHtml.length} 字）`);
+  const cfgDelButtons = [...roHtml.matchAll(/data-action="cfg-del"/gu)].length;
+  check("只读成员的配置行不许有「删除」按钮（点了删本地行却存不下＝按了看不到效果）",
+    cfgDelButtons === 0,
+    `只读成员的项目设置配置行上仍有 ${cfgDelButtons} 个 cfg-del 删除按钮`);
+  const repoUrlInput = /<input[^>]*name="repoUrl"[^>]*>/u.exec(roHtml);
+  check("只读成员的配置输入必须是 readonly（否则能就地改、却存不下）",
+    repoUrlInput && /\breadonly\b/u.test(repoUrlInput[0]),
+    `只读成员的仓库地址输入不是 readonly：${repoUrlInput ? repoUrlInput[0].slice(0, 100) : "（没找到 repoUrl 输入）"}`);
+}
+
 // 【组织概览显示的必须是这个账号自己的组织】。它原先取 state.organizations[0] —— 今天服务端
 // 只给组织管理员下发它自己那一个，所以"数组第一个"碰巧总是对的。而碰巧对意味着：服务端哪天
 // 多下发一个组织（系统管理员视角、或将来的跨组织视图），这一页就会把【别人组织的配额用量】
