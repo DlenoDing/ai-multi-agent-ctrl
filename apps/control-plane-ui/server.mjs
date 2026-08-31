@@ -2876,7 +2876,12 @@ function serveStatic(req, res, pathname) {
     staticFileCache.set(target, cached);
   }
   const content = cached.content;
-  res.writeHead(200, {"content-type": mimeTypes[extname(target)] || "application/octet-stream", "x-content-type-options": "nosniff"});
+  // 管理台上全是不可逆按钮（归档/吊销/注销账号），而它从不被任何页面合法内嵌 —— 禁止内嵌即封死
+  // clickjacking；referrer 对内不使用（全仓无 document.referrer）、对外不该泄漏控制台路径。
+  // 这三个头对正常使用零影响。完整 script-src CSP 不在此列：它需要真浏览器验证（门套件跑不了
+  // 浏览器，配错会静默弄坏控制台 —— 模板里满是内联 style），没有判据作保的防线不加。
+  res.writeHead(200, {"content-type": mimeTypes[extname(target)] || "application/octet-stream", "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY", "content-security-policy": "frame-ancestors 'none'", "referrer-policy": "no-referrer"});
   res.end(content);
 }
 

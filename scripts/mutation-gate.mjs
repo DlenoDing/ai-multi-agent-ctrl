@@ -3206,6 +3206,14 @@ const MUTATIONS = [
     expect: "起来没先说清自己是谁"
   },
   {
+    name: "控制台页面必须带防内嵌响应头（clickjacking）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '    "x-frame-options": "DENY", "content-security-policy": "frame-ancestors \'none\'", "referrer-policy": "no-referrer"});',
+    to: '    "referrer-policy": "no-referrer"});',
+    expect: "缺安全响应头 x-frame-options"
+  },
+  {
     name: "realtime 复核必须查到会话层（改密/登出要断活连接）",
     file: "apps/control-plane-ui/lib/control-plane-core.mjs",
     gate: "contract",

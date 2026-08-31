@@ -324,6 +324,21 @@ const exitPromise = once(child, "exit");
 let mainBodyCompleted = false;
 try {
   const health = await waitForHealth(port);
+  {
+    // 【控制台页面必须带防内嵌与防 referrer 泄漏的响应头】。管理台上全是不可逆按钮（归档/吊销/
+    // 注销账号），被恶意页面 iframe 内嵌一层就是 clickjacking 的全部前置条件。
+    const page = await fetch(`http://127.0.0.1:${port}/`);
+    await page.text();
+    const must = {"x-frame-options": "DENY", "content-security-policy": "frame-ancestors 'none'",
+      "x-content-type-options": "nosniff", "referrer-policy": "no-referrer"};
+    for (const [name, want] of Object.entries(must)) {
+      const got = page.headers.get(name);
+      if (got !== want) {
+        throw new Error(`控制台页面缺安全响应头 ${name}（得到 ${JSON.stringify(got)}，应为 ${JSON.stringify(want)}）`
+          + " —— 没有它，恶意页面把管理台内嵌一层就能骗人隔着透明框点「吊销/归档」");
+      }
+    }
+  }
   console.log(`control console health ok: ${health.status}`);
   const stateReadDenied = await jsonFetch(port, "/api/state");
   if (stateReadDenied.response.status !== 401) {
