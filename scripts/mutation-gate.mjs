@@ -3307,6 +3307,15 @@ const MUTATIONS = [
     expect: "NaN 不安全的旧形态"
   },
   {
+    name: "路径段净化器不得放出纯点段（safeName 的 .. 守卫）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "contract",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: "  return /^\\.+$/u.test(cleaned) ? `_${cleaned}` : cleaned;",
+    to: "  return cleaned;",
+    expect: "safeName 放过了纯点段"
+  },
+  {
     name: "恢复清理的递归删除必须有界（sessionDir 界外不删）",
     file: "apps/agent-runtime/runtime.mjs",
     gate: "contract",

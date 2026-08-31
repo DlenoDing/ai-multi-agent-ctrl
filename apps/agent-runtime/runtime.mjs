@@ -2385,7 +2385,11 @@ function readJoinToken() {
 }
 
 function safeName(value) {
-  return String(value).replace(/[^A-Za-z0-9._-]+/gu, "_");
+  const cleaned = String(value).replace(/[^A-Za-z0-9._-]+/gu, "_");
+  // 段内的点无害（s.md），但【整段就是点】的（"." / ".." / "..."）是路径逃逸段：safeName 全部
+  // 用于路径组件（会话目录各层、outbox 文件名、仓库根），一个名为 ".." 的段就是父目录。id 由控制面
+  // 签发、正常不含点，但一个叫「safe」的净化器不该把 .. 放出去 —— 前缀一个 _ 让它变成寻常段。
+  return /^\.+$/u.test(cleaned) ? `_${cleaned}` : cleaned;
 }
 
 function trimSlash(value) {

@@ -15047,7 +15047,7 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
       + " retryableControlPlaneError, retryableAgentRequest, syncContentBundle, syncSkillWorkset,"
       + " applyPermissionResolution, mcpToolCall, prepareRepository,"
       + " syncContentBundleGitTransfer, writeArtifactManifest,"
-      + " ensureCleanWorktree, buildExecutionPrompt, runKnownModelCli, jsonHead, syncJson, removeSessionDirectoryPath};\n");
+      + " ensureCleanWorktree, buildExecutionPrompt, runKnownModelCli, jsonHead, syncJson, removeSessionDirectoryPath, safeName};\n");
     const rt = await import(pathToFileURL(copy).href);
     const refusalOf = (fn) => { try { fn(); return null; } catch (error) { return String(error.message).split(":")[0]; } };
 
@@ -15077,6 +15077,20 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
       rmSync(guardWork, {recursive: true, force: true});
       rmSync(outsideDir, {recursive: true, force: true});
       rmSync(escapeDir, {recursive: true, force: true});
+    }
+
+    {
+      // 【路径段净化器不得放出纯点段】。safeName 全部用于路径组件，"." / ".." / "..." 作为整段
+      // 就是路径逃逸；段内的点（s.md）必须原样保留。
+      if (rt.safeName("..") === ".." || rt.safeName(".") === "." || rt.safeName("...") === "...") {
+        output.push("safeName 放过了纯点段（.. / . / ...）—— 一个名为 .. 的路径段就是父目录，会话目录/outbox 会写到意外位置");
+      }
+      if (rt.safeName("s.md") !== "s.md" || rt.safeName("tg_ab.c1") !== "tg_ab.c1") {
+        output.push("safeName 把段内的点也改了 —— 合法的带点名（s.md / 带点 id）被破坏");
+      }
+      if (rt.safeName("../../etc").includes("/")) {
+        output.push("safeName 放过了路径分隔符 —— 段里还能塞进目录层级");
+      }
     }
 
     // ⓪ 下载回来的不是 JSON（中间有代理/登录页把响应换掉、或令牌失效回了一段文本）：
