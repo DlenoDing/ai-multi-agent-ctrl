@@ -3206,6 +3206,14 @@ const MUTATIONS = [
     expect: "起来没先说清自己是谁"
   },
   {
+    name: "视图响应必须按 accept-encoding 压缩",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "doctor",
+    from: '  const useGzip = /\\bgzip\\b/u.test(String(req.headers["accept-encoding"] || "")) && entry.gzip;',
+    to: "  const useGzip = false;",
+    expect: "视图响应没有按 accept-encoding 压缩"
+  },
+  {
     name: "静态资源必须按 accept-encoding 压缩（首载三倍字节）",
     file: "apps/control-plane-ui/server.mjs",
     gate: "doctor",

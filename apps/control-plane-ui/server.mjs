@@ -2114,16 +2114,28 @@ function stateViewCacheKey(account, session, stateVersion, view, limit, projectI
 function cachedStateView(state, account, session, view, limit, projectId) {
   const key = stateViewCacheKey(account, session, state.stateVersion, view, limit, projectId);
   const cached = stateViewCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) return cached.payload;
+  if (cached && cached.expiresAt > Date.now()) return cached;
   const payload = JSON.stringify(stateViewForAccount(state, account, session, view, limit, projectId));
-  stateViewCache.set(key, {payload, expiresAt: Date.now() + stateViewCacheTtlMs});
+  // gzip 在【缓存填充】这一次做（每 (键, stateVersion) 只一次），发送路径零压缩 CPU。
+  // 视图动辄上百 KB 且每次状态变更都要整下一份 —— 见 jsonView 的协商。
+  const entry = {payload, gzip: gzipSync(payload), expiresAt: Date.now() + stateViewCacheTtlMs};
+  stateViewCache.set(key, entry);
   if (stateViewCache.size > stateViewMaxEntries) {
     for (const cacheKey of stateViewCache.keys()) {
       stateViewCache.delete(cacheKey);
       if (stateViewCache.size <= stateViewMaxEntries) break;
     }
   }
-  return payload;
+  return entry;
+}
+
+// 视图条目的协商发送：客户端接受 gzip 且条目带压缩体就发压缩体。cache-control 基线 no-store，
+// 带 ETag 的调用方用 extraHeaders 覆盖成 no-cache（与 jsonString 同规）；Vary 让缓存分开两种表示。
+function jsonView(req, res, entry, extraHeaders) {
+  const useGzip = /\bgzip\b/u.test(String(req.headers["accept-encoding"] || "")) && entry.gzip;
+  res.writeHead(200, {"content-type": "application/json; charset=utf-8", "cache-control": "no-store",
+    vary: "accept-encoding", ...(useGzip ? {"content-encoding": "gzip"} : {}), ...(extraHeaders || {})});
+  res.end(useGzip ? entry.gzip : entry.payload);
 }
 
 function sliceItems(items, limit) {
@@ -3071,15 +3083,18 @@ async function handleApi(req, res) {
       // "更快地把它发一遍"，而是【根本不发】：ETag 对上就回 304，一个字节的载荷都不用付。
       // 签名里除了 stateVersion，还要带上不写盘的运行时事实（自治循环健康度、归档故障）——
       // 它们会变而 stateVersion 不变，只按版本号做 ETag 会让那条停摆告警迟迟不出现。
-      const etag = stateViewEtag(peekKey, central);
+      // ETag 按【表示】区分（gzip 加 -gz，与静态资源同规）：强 ETag 标识的是这一份字节。
+      // 客户端换 accept-encoding 后第一次会拿 200（新表示+新 ETag），之后照常 304。
+      const wantsGzipView = /\bgzip\b/u.test(String(req.headers["accept-encoding"] || ""));
+      const etag = stateViewEtag(peekKey, central).replace(/"$/u, wantsGzipView ? '-gz"' : '"');
       if (req.headers["if-none-match"] === etag) {
-        res.writeHead(304, {etag, "cache-control": "no-cache"});
+        res.writeHead(304, {etag, "cache-control": "no-cache", vary: "accept-encoding"});
         res.end();
         return;
       }
       const peeked = stateViewCache.get(peekKey);
       if (peeked && peeked.expiresAt > Date.now()) {
-        jsonString(res, 200, peeked.payload, {etag, "cache-control": "no-cache"});
+        jsonView(req, res, peeked, {etag, "cache-control": "no-cache"});
         return;
       }
       req.stateViewEtag = etag;
@@ -3540,7 +3555,7 @@ async function handleApi(req, res) {
     }
     const view = url.searchParams.get("view") || "full";
     const limit = Number(url.searchParams.get("limit") || 80);
-    jsonString(res, 200, cachedStateView(state, reader.account, reader.session, view, limit, url.searchParams.get("projectId") || null),
+    jsonView(req, res, cachedStateView(state, reader.account, reader.session, view, limit, url.searchParams.get("projectId") || null),
       req.stateViewEtag ? {etag: req.stateViewEtag, "cache-control": "no-cache"} : undefined);
     return;
   }

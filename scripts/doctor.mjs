@@ -468,6 +468,29 @@ try {
   if (stateResult.payload.runtime.services.some((service) => service.status === "simulated")) {
     throw new Error("runtime services must not be simulated");
   }
+  {
+    // 【视图响应要能压缩与 304】：视图动辄上百 KB 且每次状态变更整下一份。gzip 在缓存填充做、
+    // 发送零压缩 CPU；ETag 按表示区分（-gz）；undici 自动解压，拿解压体与 identity 体逐字节比。
+    const gz = await fetch(`http://127.0.0.1:${port}/api/state?view=tasks&limit=80`,
+      {headers: {authorization: systemAuth, "accept-encoding": "gzip"}});
+    const gzBody = Buffer.from(await gz.arrayBuffer());
+    const gzEtag = gz.headers.get("etag") || "";
+    if (gz.headers.get("content-encoding") !== "gzip" || gz.headers.get("vary") !== "accept-encoding" || !gzEtag.includes("-gz")) {
+      throw new Error(`视图响应没有按 accept-encoding 压缩（content-encoding=${gz.headers.get("content-encoding")}，vary=${gz.headers.get("vary")}，etag=${gzEtag}）—— 每次状态变更白传三倍字节`);
+    }
+    const id = await fetch(`http://127.0.0.1:${port}/api/state?view=tasks&limit=80`,
+      {headers: {authorization: systemAuth, "accept-encoding": "identity"}});
+    const idBody = Buffer.from(await id.arrayBuffer());
+    if (id.headers.get("content-encoding") || Buffer.compare(idBody, gzBody) !== 0) {
+      throw new Error(`视图压缩表示与原文不一致或 identity 拿到压缩体（${idBody.length} vs ${gzBody.length}）`);
+    }
+    const revalid = await fetch(`http://127.0.0.1:${port}/api/state?view=tasks&limit=80`,
+      {headers: {authorization: systemAuth, "accept-encoding": "gzip", "if-none-match": gzEtag}});
+    await revalid.arrayBuffer();
+    if (revalid.status !== 304) {
+      throw new Error(`视图带 If-None-Match 没有 304（HTTP ${revalid.status}）—— 轮询常态每 5 秒整下一份`);
+    }
+  }
   if (new Set(stateResult.payload.modelCapabilities.map((profile) => profile.providerClass)).size < 19) {
     throw new Error("model registry does not cover all provider classes");
   }
