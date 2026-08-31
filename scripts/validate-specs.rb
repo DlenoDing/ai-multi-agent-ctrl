@@ -1710,6 +1710,9 @@ realtime_heartbeat_body = server_source[/const realtimeHeartbeat = setInterval\(
 errors << "找不到实时心跳这一段 —— 提取逻辑与代码脱节" if realtime_heartbeat_body.empty?
 errors << %(必须有独立的过期会话清扫（不能只依赖"下一次有人登录"）) unless realtime_heartbeat_body.include?("authSessions") &&
   realtime_heartbeat_body.include?(%(status = "expired")) && realtime_heartbeat_body.include?("writeState(")
+# 已建立的连接每拍要按【统一谓词】复核主体（账号+会话+节点三层）：只查账号的话，改密/登出撤掉的
+# 会话、吊销掉的节点，它们的 socket 照旧收 wake 直到自己断开 —— 撤销只对新连接生效等于撤销了一半。
+errors << "已建立的 WebSocket 必须按谓词复核主体（realtimePrincipalStillValid）" unless realtime_heartbeat_body.include?("realtimePrincipalStillValid(")
 
 # 控制台里唯一能一次性摧毁全部租户的按钮，原先与"刷新页面"是同一种交互成本：两次单击，
 # 文案只说"重置为种子数据"。有真实租户数据时必须显式带上要摧毁的规模。

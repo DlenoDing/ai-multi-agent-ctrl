@@ -64,7 +64,7 @@ import {
   computeCloseBarrier,
   computeCompletionReadiness,
   computeProgressSnapshots,
-  countInFlightDispatchesByProject,
+  countInFlightDispatchesByProject, realtimePrincipalStillValid,
   makeProjectScopePredicate,
   wipCapacityForProject,
   cancelPendingConfirmationsForDispatch,
@@ -6548,7 +6548,7 @@ function authorizeRealtime(req) {
     const account = (state.accounts || []).find((item) => item.accountId === session.accountId);
     // 全仓唯一不检查账号状态的认证路径：被挂起/停用的账号照样能建立 WebSocket，
     // 而已建立的连接在会话被撤销之后也从不重新校验、永不断开。
-    if (account && account.status === "active") return {kind: "account", accountId: account.accountId};
+    if (account && account.status === "active") return {kind: "account", accountId: account.accountId, sessionId: session.sessionId};
   }
   const node = authenticateAgentNode(state, token);
   if (node) return {kind: "agent", nodeId: node.nodeId};
@@ -6663,13 +6663,10 @@ const realtimeHeartbeat = setInterval(() => {
     }
   }
   for (const client of realtimeClients) {
-    if (revalidationState && client.principal?.kind === "account") {
-      const account = (revalidationState.accounts || []).find((item) => item.accountId === client.principal.accountId);
-      if (!account || account.status !== "active") {
-        realtimeClients.delete(client);
-        try { client.close(4401, "principal_no_longer_active"); } catch { try { client.terminate(); } catch {} }
-        continue;
-      }
+    if (revalidationState && client.principal && !realtimePrincipalStillValid(revalidationState, client.principal)) {
+      realtimeClients.delete(client);
+      try { client.close(4401, "principal_no_longer_active"); } catch { try { client.terminate(); } catch {} }
+      continue;
     }
     if (client.isAlive === false) {
       realtimeClients.delete(client);

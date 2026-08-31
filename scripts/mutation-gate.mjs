@@ -3206,6 +3206,23 @@ const MUTATIONS = [
     expect: "起来没先说清自己是谁"
   },
   {
+    name: "realtime 复核必须查到会话层（改密/登出要断活连接）",
+    file: "apps/control-plane-ui/lib/control-plane-core.mjs",
+    gate: "contract",
+    check: "verifyRealtimeRevalidationSeversRevokedPrincipals",
+    from: '    const session = (state.authSessions || []).find((item) => item.sessionId === principal.sessionId);\n    return Boolean(session && session.status === "active" && new Date(session.expiresAt || 0).getTime() > nowMs);',
+    to: "    return true;",
+    expect: "会话被撤销后仍判有效"
+  },
+  {
+    name: "realtime 心跳必须真调统一谓词（不调＝撤销只对新连接生效）",
+    file: "apps/control-plane-ui/server.mjs",
+    gate: "specs",
+    from: "    if (revalidationState && client.principal && !realtimePrincipalStillValid(revalidationState, client.principal)) {",
+    to: "    if (false) {",
+    expect: "必须按谓词复核主体"
+  },
+  {
     name: "授权处置的缺省回退必须是拒绝（不是放行）",
     file: APP,
     gate: "console",

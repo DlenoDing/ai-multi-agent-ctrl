@@ -44,7 +44,7 @@ import {
   maintainWorkerLanes,
   rotateWorkerLane,
   buildTaskContract,
-  computeCloseBarrier, capPerTaskGroupRecords,
+  computeCloseBarrier, capPerTaskGroupRecords, realtimePrincipalStillValid,
   computeProgressSnapshots,
   createHumanConfirmationRequest,
   decideHumanConfirmation,
@@ -822,6 +822,7 @@ run(verifyRuntimeFileWritesAreRegistered);
 run(verifyEveryWriteRouteIsGuardedOrRegistered);
 run(verifyEveryCapExplainsWhatItKeeps);
 run(verifyCapKeepsLiveTaskGroupRecords);
+run(verifyRealtimeRevalidationSeversRevokedPrincipals);
 run(verifyExpiredConfirmationsNeverAutoRelease);
 run(verifyEnvKnobsAreNaNSafe);
 run(verifyOneProjectWriteTouchesOneShard);
@@ -18129,6 +18130,37 @@ function verifyExpiredConfirmationsNeverAutoRelease(output) {
     output.push("人工确认过期：到期的派发被放回执行/未升级为人工决策 —— 超时被当成了放行");
   }
   if (output.length === 0) console.log("人工确认过期：未到期的保住原样、到期的升级为人工决策且绝不放行，逐条核过");
+}
+
+// 【撤销必须对已建立的 WebSocket 生效】：六种主体形态逐个过谓词（接线由 validate-specs 钉在心跳体里）。
+function verifyRealtimeRevalidationSeversRevokedPrincipals(output) {
+  const nowMs = Date.now();
+  const state = {
+    accounts: [
+      {accountId: "acct_ok", status: "active"},
+      {accountId: "acct_susp", status: "suspended"}
+    ],
+    authSessions: [
+      {sessionId: "sess_ok", accountId: "acct_ok", status: "active", expiresAt: new Date(nowMs + 3600000).toISOString()},
+      {sessionId: "sess_revoked", accountId: "acct_ok", status: "revoked", expiresAt: new Date(nowMs + 3600000).toISOString()},
+      {sessionId: "sess_expired", accountId: "acct_ok", status: "active", expiresAt: new Date(nowMs - 1000).toISOString()}
+    ],
+    agentRuntimeNodes: [
+      {nodeId: "node_ok", status: "online"},
+      {nodeId: "node_off", status: "offline"},
+      {nodeId: "node_revoked", status: "revoked"}
+    ]
+  };
+  const valid = (p) => realtimePrincipalStillValid(state, p, nowMs);
+  if (!valid({kind: "account", accountId: "acct_ok", sessionId: "sess_ok"})) output.push("realtime 复核：正常账号+活会话被误踢（复核把正常连接一起断了）");
+  if (valid({kind: "account", accountId: "acct_susp", sessionId: "sess_ok"})) output.push("realtime 复核：被挂起的账号仍判有效");
+  if (valid({kind: "account", accountId: "acct_ok", sessionId: "sess_revoked"})) output.push("realtime 复核：会话被撤销后仍判有效 —— 改密/登出撤掉的会话，socket 照旧收 wake");
+  if (valid({kind: "account", accountId: "acct_ok", sessionId: "sess_expired"})) output.push("realtime 复核：会话过期后仍判有效");
+  if (!valid({kind: "agent", nodeId: "node_ok"})) output.push("realtime 复核：在线节点被误踢");
+  if (!valid({kind: "agent", nodeId: "node_off"})) output.push("realtime 复核：offline 是暂态，不该踢（网络抖动就断长连接会造成风暴）");
+  if (valid({kind: "agent", nodeId: "node_revoked"})) output.push("realtime 复核：被吊销的节点仍判有效");
+  if (valid({kind: "mystery", id: "x"})) output.push("realtime 复核：认不出的主体类型被放行 —— 白名单缺省该是踢");
+  if (output.length === 0) console.log("realtime 复核谓词：账号/会话/节点三层、八种形态逐个核过（撤销对活连接生效）");
 }
 
 function verifyCapKeepsLiveTaskGroupRecords(output) {

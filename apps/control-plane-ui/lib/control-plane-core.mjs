@@ -2060,6 +2060,25 @@ function recordAdmissionDecision(state, input = {}) {
 // 终态集合只有一份：TASK_GROUP_SETTLED_STATUSES（在 taskGroupSettledRejection 处声明并导出）。
 // 这里原先另立了一个同内容的常量 —— 两个名字装同一个集合，早晚会漂开一个
 //（本仓在"两层上限"上撞过：生效的永远是更严的那个，调另一个等于没用）。
+// 【撤销必须对已建立的 WebSocket 生效】—— realtime 心跳复核用的唯一谓词（server.mjs import 不进
+// 单测，收在这里）。账号主体：账号被挂起/注销、或【这条会话】被撤销/过期都判失效 —— 改密与登出
+// 撤的是会话而账号还在，只查账号等于会话撤销对活连接不生效（先前正是如此：过期会话被清扫标掉后，
+// 它的 socket 照旧收 wake 直到自己断开）。agent 主体：节点被吊销判失效（offline 是暂态、不踢）。
+// 认不出的主体一律判失效（白名单：新增主体类型忘了来这里登记时，默认是踢、不是放）。
+export function realtimePrincipalStillValid(state, principal, nowMs = Date.now()) {
+  if (principal?.kind === "account") {
+    const account = (state.accounts || []).find((item) => item.accountId === principal.accountId);
+    if (!account || account.status !== "active") return false;
+    const session = (state.authSessions || []).find((item) => item.sessionId === principal.sessionId);
+    return Boolean(session && session.status === "active" && new Date(session.expiresAt || 0).getTime() > nowMs);
+  }
+  if (principal?.kind === "agent") {
+    const node = (state.agentRuntimeNodes || []).find((item) => item.nodeId === principal.nodeId);
+    return Boolean(node && node.status !== "revoked");
+  }
+  return false;
+}
+
 export function capPerTaskGroupRecords(records, state, limit) {
   if (records.length <= limit) return records;
   const liveGroupIds = new Set((state.taskGroups || [])
