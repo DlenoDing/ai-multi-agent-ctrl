@@ -673,7 +673,7 @@ async function flushCheckpointOutbox(config) {
       await submitExecutionEventForDispatch(config, item.dispatchId, "checkpoint_submitted", {progressPercent: 100, summary: "Checkpoint replay accepted by control plane.", evidenceRefs: [`checkpoint:${item.checkpoint?.runId || "accepted"}`]}).catch(() => {});
       unlinkSync(path);
       // 重放成功＝这个派发彻底完了：把它当初留下的会话工作目录也清掉，不要等 TTL 清扫。
-      removeSessionDirectoryPath(item.sessionDir);
+      removeSessionDirectoryPath(config, item.sessionDir);
       process.stdout.write(`checkpoint replayed: ${item.dispatchId}\n`);
       process.stdout.write(`已补交检查点 ${item.dispatchId}（上次没交上的，这次控制面接受了）\n`);
     } catch (error) {
@@ -940,18 +940,27 @@ function syncContentBundleGitTransfer(config, bundle, bundleDir) {
   }
 }
 
-function removeSessionDirectoryPath(dir) {
+function removeSessionDirectoryPath(config, dir) {
   if (process.env.AIMAC_AGENT_KEEP_SESSION_DIRS === "true") return;
   if (process.env.AIMAC_AGENT_VERIFICATION_DEFER_CHECKPOINT === "true") return;
+  // 【递归删除必须有界】。dir 有一条来路是 outbox 磁盘文件里读回的 item.sessionDir ——
+  // 一个盘上的值直接驱动 rmSync(recursive)。文件被写坏/被人改过、或 --work-dir 迁移后旧条目
+  // 还带着旧根时，「恢复清理」都不该删到本机工作目录之外：resolve 之后必须落在 <workDir>/orgs/ 里，
+  // 界外一律不删、说一声留给人处理（多占一点盘是可见的、可修的；删错目录不是）。
+  const sessionsRoot = resolve(join(config.workDir, "orgs")) + sep;
+  if (!dir || !resolve(dir).startsWith(sessionsRoot)) {
+    if (dir) process.stderr.write(`session directory cleanup skipped (outside ${sessionsRoot}): ${dir}\n`);
+    return;
+  }
   try {
-    if (dir && existsSync(dir)) rmSync(dir, {recursive: true, force: true});
+    if (existsSync(dir)) rmSync(dir, {recursive: true, force: true});
   } catch (error) {
     process.stderr.write(`session directory cleanup failed: ${error.message}\n`);
   }
 }
 
 function cleanupSessionDirectory(config, dispatchPackage) {
-  removeSessionDirectoryPath(sessionDirectory(config, dispatchPackage));
+  removeSessionDirectoryPath(config, sessionDirectory(config, dispatchPackage));
 }
 
 function verifyCheckpointReplayRemote(config, item) {

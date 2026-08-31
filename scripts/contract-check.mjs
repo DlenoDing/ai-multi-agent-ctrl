@@ -14967,9 +14967,37 @@ async function verifyAgentRuntimeGuardsRefuseRealAttacks(output) {
       + " retryableControlPlaneError, retryableAgentRequest, syncContentBundle, syncSkillWorkset,"
       + " applyPermissionResolution, mcpToolCall, prepareRepository,"
       + " syncContentBundleGitTransfer, writeArtifactManifest,"
-      + " ensureCleanWorktree, buildExecutionPrompt, runKnownModelCli, jsonHead, syncJson};\n");
+      + " ensureCleanWorktree, buildExecutionPrompt, runKnownModelCli, jsonHead, syncJson, removeSessionDirectoryPath};\n");
     const rt = await import(pathToFileURL(copy).href);
     const refusalOf = (fn) => { try { fn(); return null; } catch (error) { return String(error.message).split(":")[0]; } };
+
+    {
+      // 【恢复清理的递归删除必须有界】。outbox 条目里的 sessionDir 是盘上读回的值：
+      // 写坏/被人改过/旧 work-dir 的条目指到界外时必须不删（否则一个坏值能删到任意路径）；
+      // 界内正常清；带 ../ 的要按 resolve 后的真实落点判，不吃字面前缀。
+      const guardWork = mkdtempSync(join(tmpdir(), "aimac-rm-bound-"));
+      const outsideDir = mkdtempSync(join(tmpdir(), "aimac-rm-outside-"));
+      writeFileSync(join(outsideDir, "keep.txt"), "x");
+      rt.removeSessionDirectoryPath({workDir: guardWork}, outsideDir);
+      if (!existsSync(join(outsideDir, "keep.txt"))) {
+        output.push("恢复清理把工作目录之外的目录删掉了 —— outbox 条目里一个写坏的 sessionDir 就能删到任意路径");
+      }
+      const insideDir = join(guardWork, "orgs", "org_g", "projects", "p", "task-groups", "t", "sessions", "s");
+      mkdirSync(insideDir, {recursive: true});
+      rt.removeSessionDirectoryPath({workDir: guardWork}, insideDir);
+      if (existsSync(insideDir)) {
+        output.push("界内的会话目录没被清掉 —— 边界守卫把正常清理一起堵死了");
+      }
+      const escapeDir = mkdtempSync(join(tmpdir(), "aimac-rm-escape-"));
+      writeFileSync(join(escapeDir, "keep.txt"), "x");
+      rt.removeSessionDirectoryPath({workDir: guardWork}, `${guardWork}/orgs/../../${escapeDir.split("/").pop()}`);
+      if (!existsSync(join(escapeDir, "keep.txt"))) {
+        output.push("带 ../ 的 sessionDir 逃出了边界 —— 守卫必须按 resolve 后的真实路径判，不吃字面前缀");
+      }
+      rmSync(guardWork, {recursive: true, force: true});
+      rmSync(outsideDir, {recursive: true, force: true});
+      rmSync(escapeDir, {recursive: true, force: true});
+    }
 
     // ⓪ 下载回来的不是 JSON（中间有代理/登录页把响应换掉、或令牌失效回了一段文本）：
     // 此前是裸 JSON.parse，抛出的是 "Unexpected token < in JSON at position 0" ——
@@ -16263,8 +16291,8 @@ function verifyOutboxReplayCleansSessionDir(output) {
   const flushAt = runtime.indexOf("async function flushCheckpointOutbox(");
   const flushBody = flushAt < 0 ? "" : runtime.slice(flushAt, runtime.indexOf("\nasync function ", flushAt + 1));
   const replaySuccess = flushBody.slice(0, flushBody.indexOf("checkpoint replayed:") + 20);
-  if (!/removeSessionDirectoryPath\(item\.sessionDir\)/u.test(replaySuccess)) {
-    output.push("outbox 重放成功后没清会话目录（removeSessionDirectoryPath(item.sessionDir)）—— git 工作树会一直留到 TTL 清扫");
+  if (!/removeSessionDirectoryPath\(config, item\.sessionDir\)/u.test(replaySuccess)) {
+    output.push("outbox 重放成功后没清会话目录（removeSessionDirectoryPath(config, item.sessionDir)）—— git 工作树会一直留到 TTL 清扫");
   }
   if (output.length === 0) console.log("outbox 重放：条目记了 sessionDir、重放成功即清会话目录，核过");
 }

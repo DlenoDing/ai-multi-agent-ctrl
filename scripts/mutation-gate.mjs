@@ -3206,6 +3206,15 @@ const MUTATIONS = [
     expect: "起来没先说清自己是谁"
   },
   {
+    name: "恢复清理的递归删除必须有界（sessionDir 界外不删）",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "contract",
+    check: "verifyAgentRuntimeGuardsRefuseRealAttacks",
+    from: "  if (!dir || !resolve(dir).startsWith(sessionsRoot)) {",
+    to: "  if (!dir) {",
+    expect: "就能删到任意路径"
+  },
+  {
     name: "备份不得删掉源（源=目标守卫）",
     file: "scripts/backup-runtime.mjs",
     gate: "crash",
@@ -3638,7 +3647,7 @@ const MUTATIONS = [
     file: "apps/agent-runtime/runtime.mjs",
     gate: "contract",
     check: "verifyOutboxReplayCleansSessionDir",
-    from: "      removeSessionDirectoryPath(item.sessionDir);",
+    from: "      removeSessionDirectoryPath(config, item.sessionDir);",
     to: "",
     expect: "重放成功后没清会话目录"
   },
