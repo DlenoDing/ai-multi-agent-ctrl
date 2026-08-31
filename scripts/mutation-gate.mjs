@@ -11859,6 +11859,22 @@ async function run() {
   }
   const mutations = selectedMutations();
   refuseMalformedRegistry(mutations);
+  // docker gate 的变异要起一台真 PostgreSQL 容器；本机 docker 守护进程不可用时，它们的【基线】e2e
+  // 就跑不起来，会被误报成「失败但不是因为预期断言」混进结论、盖住真正的红。启动时探一次：不可用
+  // 就动态给这些变异挂 skip（附环境原因，计入 skipped 而非 failures），daemon 起着时照常真跑。
+  // docker 门本就不在 commit.sh 链、需 daemon 时手跑；这只影响【无 docker 环境下的完整变异门】。
+  let dockerUp = false;
+  try { execFileSync("docker", ["info"], {stdio: "ignore", timeout: 5000}); dockerUp = true; } catch { dockerUp = false; }
+  if (!dockerUp) {
+    let dockerSkipped = 0;
+    for (const mutation of mutations) {
+      if (mutation.gate === "docker" && !mutation.skip) {
+        mutation.skip = "docker 守护进程不可用，本环境跳过（daemon 起后手跑 npm run -s mutation-gate 复证这几条）";
+        dockerSkipped += 1;
+      }
+    }
+    if (dockerSkipped) console.log(`（docker 守护进程不可用：${dockerSkipped} 条 docker gate 变异本环境跳过，不计入失败）`);
+  }
   if (workingTreeIsClean()) {
     const {failures, checked, workers, serialQueue} = await runParallel(mutations);
     if (failures.length) {
