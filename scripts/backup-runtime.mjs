@@ -9,6 +9,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import { clampEnvNumber } from "../apps/control-plane-ui/lib/env-number.mjs";
+import { projectShardIntegrityProblem } from "../apps/control-plane-ui/lib/state-store.mjs";
 
 // 认不出的参数一律拒（与仓里其它运维入口同一形状）：`--verify` 这种打错的名字被当成"没给"的话，
 // 命令会照跑，而人以为自己开了某个开关。备份只吃两个位置参数。
@@ -63,14 +64,15 @@ function verify(dir) {
     if (!name) { problems.push(`项目 ${entry.projectId} 的索引条目没有 storageRef`); continue; }
     const shardPath = join(projectDb, name);
     if (!existsSync(shardPath)) { problems.push(`项目 ${entry.projectId} 的分片 ${name} 不在`); continue; }
-    // 比的是分片【自己记着的正文字节数】，与存储层读取时那道校验同源 —— 不要拿文件大小去比
-    // （那是另一个数：文件里还有 schemaVersion、generation 这些字段，第一版就是这么错的）。
     let shard = null;
     try { shard = JSON.parse(readFileSync(shardPath, "utf8")); }
     catch (error) { problems.push(`项目 ${entry.projectId} 的分片 ${name} 解析不了：${String(error.message).slice(0, 60)}`); continue; }
-    if (entry.storagePayloadBytes && Number(entry.storagePayloadBytes) !== Number(shard.storagePayloadBytes || 0)) {
-      problems.push(`项目 ${entry.projectId} 的分片 ${name} 正文长度与索引对不上`
-        + `（索引 ${entry.storagePayloadBytes}、分片 ${shard.storagePayloadBytes || 0}）`);
+    // 与控制面【启动读取】完全同一道判据（projectShardIntegrityProblem，从存储层复用，不各写一份）：
+    // 既比字节数、也比摘要（含升级兼容的三变体）。此前这里只比字节数、漏了摘要 —— 于是同长度的内容损坏
+    // 能过备份核对，却在还原启动时被 project_state_shard_payload_digest_mismatch 挡下，备份给了假信心。
+    const integrity = projectShardIntegrityProblem(entry, shard);
+    if (integrity) {
+      problems.push(`项目 ${entry.projectId} 的分片 ${name} 与索引对不上（${integrity.split(":")[0]}）`);
     }
   }
   if (existsSync(projectDb)) {

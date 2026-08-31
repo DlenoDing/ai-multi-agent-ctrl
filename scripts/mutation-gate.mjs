@@ -720,6 +720,17 @@ const MUTATIONS = [
     expect: "临时路径必须是另一条路径"
   },
   {
+    // 备份校验器与启动读取共用 projectShardIntegrityProblem：既比字节也比摘要。拿掉摘要那道，同长度的
+    // 内容损坏（字节数不变、正文变了）就过了备份核对，还原启动时才被 project_state_shard_payload_digest_mismatch
+    // 挡下 = 备份给了假信心。crash 门里那条「同长度损坏也必须拒绝」即红。
+    name: "分片完整性判据必须比摘要而不只比字节",
+    file: "apps/control-plane-ui/lib/state-store.mjs",
+    gate: "crash",
+    from: "  if (entry.storagePayloadDigest && entry.storagePayloadDigest !== digestProjectShardPayload(shard)",
+    to: "  if (false && entry.storagePayloadDigest !== digestProjectShardPayload(shard)",
+    expect: "同长度的内容损坏也必须拒绝"
+  },
+  {
     // writer 这道门此前也只有一条登记变异（丢更新）。并发下"同一张定稿卡恰好一个人定成"
     // 是人工闸门在多进程部署下的立足点，而它从没被人看着红过：拿掉"已非待确认"这道守卫，
     // 两个进程会各自定稿成功，两份都写进磁盘 —— 谁批的、批了哪一版，从此说不清。

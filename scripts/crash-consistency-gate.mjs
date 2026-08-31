@@ -666,6 +666,34 @@ await waitForChildExit(child, 3000);
           "只核对模式：对着上面那份刚核过的备份必须通过（否则它就是个恒假的实现）",
           `退出码 ${checkedGoodRun.status}：${`${checkedGoodRun.stdout || ""}${checkedGoodRun.stderr || ""}`.trim().split("\n")[0].slice(0, 110)}`);
 
+        // digest 那道：同长度的内容损坏（字节数不变、正文内容变了）。只比字节数会漏过它，而还原启动时
+        // project_state_shard_payload_digest_mismatch 会挡下 = 备份给了假信心。备份校验器必须与启动读取同一道判据
+        // （复用 projectShardIntegrityProblem），既比字节也比摘要。拿上面那份【刚核过的好备份】的副本，
+        // 翻转一个分片正文里一个字符（保持长度与 storagePayloadBytes 字段不动），--verify 必须拒绝。
+        {
+          const digestBadDir = join(backupBase, "digest-bad");
+          cpSync(copyDir, digestBadDir, {recursive: true});
+          const shardDir = join(digestBadDir, "project-db");
+          const shardFile = existsSync(shardDir) ? readdirSync(shardDir).find((n) => n.endsWith(".state.json")) : null;
+          if (shardFile) {
+            const p = join(shardDir, shardFile);
+            const text = readFileSync(p, "utf8");
+            // 翻转正文里第一个 a-y 字母为下一个字母：长度不变、storagePayloadBytes 字段（数字）不动、内容摘要变。
+            const corrupted = text.replace(/[a-y]/u, (c) => String.fromCharCode(c.charCodeAt(0) + 1));
+            check(corrupted !== text && corrupted.length === text.length,
+              "digest 用例造得出同长度损坏（否则下面那条在空转）", `变了=${corrupted !== text} 等长=${corrupted.length === text.length}`);
+            writeFileSync(p, corrupted);
+            const checkedDigestBad = spawnSync(process.execPath, ["scripts/backup-runtime.mjs", "--verify", digestBadDir],
+              {cwd: root, encoding: "utf8"});
+            const digestSaid = `${checkedDigestBad.stdout || ""}${checkedDigestBad.stderr || ""}`;
+            check(checkedDigestBad.status !== 0 && /digest|对不上/u.test(digestSaid),
+              "只核对模式：同长度的内容损坏也必须拒绝（只比字节数会漏过它，还原启动时才被 digest 挡下）",
+              `退出码 ${checkedDigestBad.status}：${digestSaid.trim().split("\n")[0].slice(0, 120)}`);
+          } else {
+            check(false, "digest 用例需要好备份里至少有一个分片（否则这条无法验证摘要那道）", "project-db 里没有 .state.json");
+          }
+        }
+
         // 【备份脚本不许成为数据销毁器】。它每次尝试都先 rmSync(target, recursive) —— 三种真实敲得出的
         // 参数形状会让这一步删掉不该删的东西：源=目标（删掉的就是源）、参数写反（把活运行目录当 target
         // 整个删掉换成旧备份）。守卫必须在 rm 之前拒绝，且拒绝后目录一字不动。

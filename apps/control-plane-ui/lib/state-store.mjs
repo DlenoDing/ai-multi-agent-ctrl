@@ -503,6 +503,28 @@ function readPostgresProjectShards() {
   return pgReadProjectShards();
 }
 
+// 一个索引条目与它的分片是否对得上：字节数一致、且摘要落在三个可接受变体之一里；对得上返回 null，
+// 否则返回稳定错误码。抽成一处【唯一判据】，让启动读取（下面这个 assert）与备份校验器（scripts/backup-runtime.mjs）
+// 共用它 —— 否则备份校验器会各写一份、少查一道（此前它只比字节数、不比摘要，于是同长度的内容损坏能过
+// 备份核对却在还原启动时被 digest 挡下 = 备份给了假信心）。
+// 三路接受是【升级兼容】：插入序与旧版摘要来自本模块早期的两种写法，让升级后的第一次读取不至于把存量
+// 存储判成被篡改。它有明确的退役条件，不是长期双路径：externalizeProjectState 的复用判定只认【规范序】
+// 摘要（digestProjectShardPayload），旧格式必然不匹配 -> 该分片不可复用 -> 下一次写入必被重写为规范序，
+// 升级后完成一个写入周期，后两条兼容分支即成不可达代码，可连同 insertionOrderDigest*/legacyDigest* 一并删除。
+// 【若把复用判定改成也接受旧格式摘要，退役条件当场失效、兼容路径变永久】—— 改复用判定时必须同时处置这里。
+// 「没有摘要就整道跳过」是【查过的】不是漏网：写入侧两分支都必写摘要，缺摘要的条目必不可复用、下次落盘即补上。
+export function projectShardIntegrityProblem(entry, shard) {
+  if (entry.storagePayloadBytes && Number(entry.storagePayloadBytes) !== Number(shard.storagePayloadBytes || 0)) {
+    return `project_state_shard_payload_size_mismatch:${shard.projectId}`;
+  }
+  if (entry.storagePayloadDigest && entry.storagePayloadDigest !== digestProjectShardPayload(shard)
+    && entry.storagePayloadDigest !== insertionOrderDigestProjectShardPayload(shard)
+    && entry.storagePayloadDigest !== legacyDigestProjectShardPayload(shard)) {
+    return `project_state_shard_payload_digest_mismatch:${shard.projectId}`;
+  }
+  return null;
+}
+
 // 与 runtime_json 那三道校验同一意图：中央索引记着每个分片的摘要与字节数，读出来的分片必须对得上。
 // 失败一律抛错（fail-closed）—— 分片被改过而控制面照常运行，比读不出来危险得多。
 export function assertProjectShardsMatchCentralIndex(shards, centralState) {
@@ -513,25 +535,8 @@ export function assertProjectShardsMatchCentralIndex(shards, centralState) {
   for (const shard of shards) {
     const entry = indexed.get(shard.projectId);
     if (!entry) continue; // 索引里没有这个项目：由上层的可见性/租户过滤处理，不在完整性校验范围内
-    if (entry.storagePayloadBytes && Number(entry.storagePayloadBytes) !== Number(shard.storagePayloadBytes || 0)) {
-      throw new Error(`project_state_shard_payload_size_mismatch:${shard.projectId}`);
-    }
-    // 三路接受是【升级兼容】：插入序与旧版摘要来自本模块早期的两种写法，用于让升级后的第一次读取
-    // 不至于把自己的存量存储判成被篡改。它有明确的退役条件，不是长期双路径：
-    // externalizeProjectState 的复用判定比对的是【规范序】摘要（digestProjectShardPayload），
-    // 旧格式必然不匹配 -> 该分片不可复用 -> 下一次写入必被重写为规范序。因此升级后完成一次写入周期，
-    // 下面两条兼容分支即成为不可达代码，可以连同 insertionOrderDigest*/legacyDigest* 一并删除。
-    // 【若有人把复用判定改成也接受旧格式摘要，这个退役条件当场失效、兼容路径变成永久的】——
-    // 那属于 sys.scope-convergence 禁止的长期双路径，改动复用判定时必须同时处置这里。
-    // 「没有摘要就整道跳过」在这里是【查过的】，不是漏网：写入侧两条分支都必写摘要，
-    // 而复用判定要求「上一份的摘要 === 这次算出来的」—— 缺摘要的条目必然不可复用、下一次写入就被补上，
-    // 所以这个状态最多存活到下一次落盘。能删掉索引里这个字段的人，同样能把摘要重算成对的，
-    // 拦不住他。（2026-08-22 顺着「填了才查」这个形状把全仓 20 处逐个看过一遍的结论。）
-    if (entry.storagePayloadDigest && entry.storagePayloadDigest !== digestProjectShardPayload(shard)
-      && entry.storagePayloadDigest !== insertionOrderDigestProjectShardPayload(shard)
-      && entry.storagePayloadDigest !== legacyDigestProjectShardPayload(shard)) {
-      throw new Error(`project_state_shard_payload_digest_mismatch:${shard.projectId}`);
-    }
+    const problem = projectShardIntegrityProblem(entry, shard);
+    if (problem) throw new Error(problem);
   }
   // 索引里有、却一个分片都没读到：这是"分片被删掉"的形态，必须与被改写同等对待。
   const present = new Set(shards.map((shard) => shard.projectId));
