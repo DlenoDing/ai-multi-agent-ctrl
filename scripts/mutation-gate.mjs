@@ -3316,6 +3316,14 @@ const MUTATIONS = [
     expect: "让读取越界"
   },
   {
+    name: "MCP 审批身份不得回退到客户端入参（结构守卫）",
+    file: "apps/mcp-server/server.mjs",
+    gate: "specs",
+    from: "      return approvalResolve(state, {...args, resolvedBy: context?.principal?.id || null});",
+    to: "      return approvalResolve(state, {...args, resolvedBy: context?.principal?.id || args.resolvedBy});",
+    expect: "不得回退到客户端入参"
+  },
+  {
     name: "路径段净化器不得放出纯点段（safeName 的 .. 守卫）",
     file: "apps/agent-runtime/runtime.mjs",
     gate: "contract",

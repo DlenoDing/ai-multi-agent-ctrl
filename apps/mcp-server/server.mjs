@@ -1657,7 +1657,10 @@ async function dispatchTool(state, name, args, context = {}) {
       return boundedTaskGroupGuard(state, args, context) || computeCompletionReadiness(state, args.taskGroupId || "tg_runtime_management", args);
     case "governance-mcp.approval_request_create":
       // Proposer identity is the authenticated MCP principal (for high_risk_no_self_approval), not client args.
-      return approvalRequestCreate(state, {...args, proposedBy: context?.principal?.id || args.proposedBy || null});
+      // proposedBy 是 high_risk_no_self_approval（resolver===proposedBy）的判据根基：绝不能回退到
+      // 客户端字段——否则创建时把 proposedBy 设成别人、再用真身份 approve 就绕过了自批。principal 缺失
+      // （不该发生，认证层更早就拒）时用 null 而非 args.proposedBy。
+      return approvalRequestCreate(state, {...args, proposedBy: context?.principal?.id || null});
     case "governance-mcp.policy_decision_eval":
       return policyDecisionEval(state, args);
     case "governance-mcp.finding_submit":
@@ -1667,7 +1670,10 @@ async function dispatchTool(state, name, args, context = {}) {
       return findingResolve(state, args);
     case "governance-mcp.approval_resolve":
       // Approver identity is the authenticated MCP principal (high_risk_no_self_approval + quorum tally).
-      return approvalResolve(state, {...args, resolvedBy: context?.principal?.id || args.resolvedBy});
+      // resolvedBy 同理：它是投票人身份，自批防护与"必须有真人票"都建立在它可信之上。回退到
+      // args.resolvedBy 等于让调用方自选投票人（伪造成别人绕自批、伪造成真人绕真人票）。principal
+      // 缺失时用 null（approvalResolve 里落到 "policy-engine" 非真人，安全卡在 quorum_collecting）。
+      return approvalResolve(state, {...args, resolvedBy: context?.principal?.id || null});
     case "governance-mcp.contract_publish":
       // 共享定义契约一旦 active 就进入每个后续任务契约与指令包，且不在阻塞集里，不会留下可见阻塞。
       // REST 的 contract_publish 是真人专属，这里是同一个函数的第二道门。

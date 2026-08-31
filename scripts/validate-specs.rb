@@ -943,6 +943,10 @@ errors << "the terminal-set drift gate must also bind ReviewBundle" unless contr
 # H1: the modeled non-negotiable high_risk_no_self_approval + AI-quorum must be enforced (was a single-call
 # pending->approved with no proposer check). Proposer/approver identity must come from the authenticated actor.
 errors << "high_risk_no_self_approval must be enforced in approvalResolve" unless mcp_source.include?("high_risk_no_self_approval") && mcp_source.include?("resolver === request.proposedBy")
+# H1 的根基是 proposedBy/resolvedBy 由【认证主体】派生。MCP 输入白名单已把这两个字段挡在工具入参外
+# （行为上够不着），但 MCP 派发那两行绝不能把身份回退到 args（|| args.proposedBy / || args.resolvedBy）——
+# 那是一条"若白名单将来放开这字段就立刻成洞"的死回退，指向不可信输入。结构钉死它不回退到入参。
+errors << "MCP 审批的 proposedBy/resolvedBy 不得回退到客户端入参（自批防护根基，指向不可信输入的死回退）" if mcp_source.include?("proposedBy: context?.principal?.id || args.proposedBy") || mcp_source.include?("resolvedBy: context?.principal?.id || args.resolvedBy")
 errors << "approval must require a distinct-approver quorum before terminalizing" unless mcp_source.include?("request.approvals = [...new Set([...(request.approvals || []), resolver])]") && mcp_source.include?("request.approvals.length < quorum")
 errors << "approver/proposer identity must be the authenticated actor, not client input" unless server_source.include?("resolvedBy: guard.actor") && server_source.include?("proposedBy: guard.actor") && mcp_source.include?("proposedBy: context?.principal?.id")
 errors << "high_risk_no_self_approval / quorum need behavioral coverage" unless contract_check_source.include?("H1: a high-risk request was self-approved") && contract_check_source.include?("H1: a quorum-2 request terminalized on the first")
