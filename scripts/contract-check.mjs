@@ -16412,12 +16412,20 @@ async function verifyAgentAnnouncesOutageOnceAndRecovery(output) {
   const {createServer: createNetServer} = await import("node:net");
   const {createServer: createHttpServer} = await import("node:http");
   const port = await new Promise((resolve) => { const probe = createNetServer(); probe.listen(0, "127.0.0.1", () => { const {port: free} = probe.address(); probe.close(() => resolve(free)); }); });
+  // 轮询/心跳间隔要写进 config —— run 读的是 config.pollIntervalSeconds，不读环境变量。
+  // （原先这里靠环境变量 AIMAC_AGENT_POLL_INTERVAL_SECONDS 设间隔，而 runtime 根本不读它，
+  //  于是 config 里缺这个字段 → pollIntervalSeconds=undefined → delay(NaN) 被当 0 → agent 其实在【热转】，
+  //  探针恰好借这个 bug 快速轮询。热转已在 run() 顶部按下限归一修掉，这里显式给一个 1 秒间隔，合 4 秒观察窗。）
   writeFileSync(join(workDir, "agent-config.json"), JSON.stringify({
     serverUrl: `http://127.0.0.1:${port}`, workDir: workDir, nodeId: "node_outage_probe", nodeName: "outage-probe", allowedRoles: ["agent-runtime"], nodeToken: "aimac_node_probe",
-    gateway: {baseUrl: `http://127.0.0.1:${port}/api/agent/v1`, dispatchUrl: `http://127.0.0.1:${port}/api/agent/v1/dispatches/next`, mcpUrl: `http://127.0.0.1:${port}/mcp`, selfCheckUrl: `http://127.0.0.1:${port}/api/agent/v1/self-check`}
+    pollIntervalSeconds: 1, heartbeatIntervalSeconds: 5,
+    // heartbeatUrl 必须给：心跳每拍最先跑，缺它 jsonRequest(undefined) 抛「Invalid URL」——那是客户端错、
+    // 假服务器起来也修不好，会永远盖住 claim 那条恢复路径。（此前 config 没这字段却能过，是因为 heartbeatIntervalSeconds
+    //  也缺 → `huge >= NaN` 恒 false → 心跳从不触发；间隔归一后心跳会真跑，URL 就得是真的。）
+    gateway: {baseUrl: `http://127.0.0.1:${port}/api/agent/v1`, dispatchUrl: `http://127.0.0.1:${port}/api/agent/v1/dispatches/next`, heartbeatUrl: `http://127.0.0.1:${port}/api/agent/v1/heartbeat`, mcpUrl: `http://127.0.0.1:${port}/mcp`, selfCheckUrl: `http://127.0.0.1:${port}/api/agent/v1/self-check`}
   }));
   const agent = spawn(process.execPath, [join(root, "apps/agent-runtime/runtime.mjs"), "run"], {cwd: root, stdio: ["ignore", "pipe", "pipe"],
-    env: {...process.env, AIMAC_AGENT_WORK_DIR: workDir, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_POLL_INTERVAL_SECONDS: "1", AIMAC_AGENT_REQUEST_TIMEOUT_MS: "1500", AIMAC_AGENT_RETRY_ATTEMPTS: "2"}});
+    env: {...process.env, AIMAC_AGENT_WORK_DIR: workDir, AIMAC_AGENT_ALLOW_INSECURE_HTTP: "true", AIMAC_AGENT_REQUEST_TIMEOUT_MS: "1500", AIMAC_AGENT_RETRY_ATTEMPTS: "2"}});
   let said = "";
   agent.stdout.on("data", (chunk) => { said += String(chunk); });
   agent.stderr.on("data", (chunk) => { said += String(chunk); });

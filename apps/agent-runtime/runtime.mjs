@@ -298,6 +298,13 @@ async function status(config) {
 }
 
 async function run(config) {
+  // 轮询/心跳间隔正常由控制面下发（5/30）。但 run 走的是【盘上】的 agent-config.json，而运维会手改
+  // 这个文件（见下面清 shutdownRequested 那段的注释）—— 手滑把它改成负数或非数字，裸的 `|| 5` 兜不住
+  // （只挡 falsy），delay(负/NaN) 会被 setTimeout 当 0：循环热转、每毫秒打一次控制面，单个坏配置的节点
+  // 就能拖垮控制面。这里按下限归一（与本函数下面 env 来源的 sweepIntervalMs 用同一个 clamp 同规）：
+  // 负/串/0 一律抬到安全下限，大值不拦（那只是节点领活变慢，是运维的选择，不是隐患）。
+  config.pollIntervalSeconds = clampEnvNumber(config.pollIntervalSeconds, 1, 5);
+  config.heartbeatIntervalSeconds = clampEnvNumber(config.heartbeatIntervalSeconds, 5, 30);
   // 起来先说一句：原先 run 在领到活之前一个字都不打，人看到的是一块空屏，分不清是在等派发还是根本没连上。
   process.stdout.write(`节点 ${config.nodeName}（${config.nodeId}）已按角色 ${(config.allowedRoles || []).join("、") || "-"} 接到控制面 ${config.serverUrl}，正在等待派发（Ctrl+C 停止）\n`);
   // 控制面把 shutdown 当作【可恢复的排空】：finalizeNodeShutdown 只把节点置为 offline，

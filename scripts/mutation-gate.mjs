@@ -1896,6 +1896,15 @@ const MUTATIONS = [
     expect: "这一族从此不被检验"
   },
   {
+    // 盘上 config 的轮询间隔被手改成负数/非数字时，裸 `|| 5` 兜不住 → delay(负/NaN)=setTimeout 当 0 = 热转打爆控制面。
+    name: "盘上轮询间隔坏值必须归一而不是热转",
+    file: "apps/agent-runtime/runtime.mjs",
+    gate: "specs",
+    from: "  config.pollIntervalSeconds = clampEnvNumber(config.pollIntervalSeconds, 1, 5);",
+    to: "  config.pollIntervalSeconds = config.pollIntervalSeconds || 5;",
+    expect: "clamp persisted poll/heartbeat intervals against hot-spin"
+  },
+  {
     // 孪生分支：陈旧会话目录清不掉时同样只有"若干天后盘满"这一个症状。
     name: "陈旧会话清不掉时必须出声",
     file: "apps/agent-runtime/runtime.mjs",
